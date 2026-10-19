@@ -18,7 +18,7 @@ from esl.rad import parse_rad, write_rad
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TCL_DIR = os.path.join(ROOT, "resources", "tcl")
 MOCK = os.path.join(os.path.dirname(__file__), "fixtures", "hwmock.tcl")
-TCLSH = shutil.which("tclsh") or shutil.which("tclsh8.6")
+TCLSH = os.environ.get("ESL_TCLSH") or shutil.which("tclsh") or shutil.which("tclsh8.6")
 pytestmark = pytest.mark.skipif(TCLSH is None, reason="tclsh 없음")
 
 
@@ -307,3 +307,98 @@ def test_extract_without_part_lists_components(tmp_path):
     done = json.loads((out / "done.json").read_text())
     assert done["ok"] is False and done["code"] == "INPUT_INVALID" and "not found" in done["error"]
     assert len(done["components"]) == 2
+
+
+# ---------------- 결과 로드 순서(HyperWorks 2026.1 실기: AddModel 만으로는 "No results loaded")
+
+def _mock_only(tmp_path, body):
+    drv = tmp_path / "m.tcl"
+    drv.write_text(f"source {{{MOCK}}}\n" + body)
+    return subprocess.run([TCLSH, str(drv)], capture_output=True, text=True, timeout=30)
+
+
+def test_mock_requires_setresult_before_result_ctrl(tmp_path):
+    """mock 자체가 실기처럼 SetResult 전 GetResultCtrlHandle 을 2051 로 거부하는지."""
+    (tmp_path / "x.h3d").write_bytes(b"")
+    r = _mock_only(tmp_path, f"""
+hwi GetSessionHandle s
+s GetProjectHandle p
+p GetPageHandle pg 1
+pg GetWindowHandle w 1
+w GetClientHandle c
+c AddModel x
+c GetModelHandle m 1
+puts [catch {{m GetResultCtrlHandle r}} e]|$e|[s GetError]
+m SetResult {{{tmp_path / 'x.h3d'}}}
+puts [catch {{m GetResultCtrlHandle r}} e]
+""")
+    lines = r.stdout.strip().splitlines()
+    assert lines[0] == "1|2051|ERROR:No results loaded.  (poIModel::GetResultCtrlHandle)", r.stderr
+    assert lines[1] == "0"
+
+
+@pytest.mark.parametrize("script", ["esl_h3d_probe.tcl", "esl_h3d_extract.tcl"])
+def test_setresult_called_before_result_ctrl(tmp_path, script):
+    m, t, eps, u, drv, out = _setup(tmp_path, script=script)
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    j = json.loads((out / ("probe.json" if "probe" in script else "done.json")).read_text())
+    assert j["ok"] is True, j.get("errorInfo")
+    sd = j["steps_done"]
+    i_model = sd.index("GetModelHandle")
+    i_set = sd.index("SetResult[SetResult]")
+    i_res = sd.index("GetResultCtrlHandle")
+    assert i_model < i_set < i_res
+    assert sd.index("Draw") < i_res
+    assert "SetResult_retry" not in j["api"]
+
+
+@pytest.mark.parametrize("script", ["esl_h3d_probe.tcl", "esl_h3d_extract.tcl"])
+def test_setresult_failure_is_reported(tmp_path, script):
+    m, t, eps, u, drv, out = _setup(tmp_path, script=script,
+                                    mock_extra="set ::mock::fail_at {model_SetResult}")
+    assert _run(drv).returncode == 0
+    j = json.loads((out / ("probe.json" if "probe" in script else "done.json")).read_text())
+    assert j["ok"] is False and j["failed_step"] == "GetResultCtrlHandle"
+    assert "2051" in j["error"] and "SetResult failed" in j["error"]
+    assert "GetError: mock: model_SetResult failed" in j["api"]["SetResult"]
+    assert "No results loaded" in j["api"]["GetResultCtrlHandle"]
+    assert any(w.startswith("SetResult failed") for w in j["warnings"])
+
+
+# ---------------- Tcl 8.5 호환(실기 HyperWorks 2026.1 의 tcl_patchLevel = 8.5.9)
+
+_TCL86_ONLY = [
+    r"\blmap\b", r"\btry\b\s*\{", r"\bthrow\b", r"\bstring\s+cat\b", r"\bfile\s+tempfile\b",
+    r"\bzlib\b", r"\bcoroutine\b", r"\byield\b", r"\btailcall\b", r"\binfo\s+object\b",
+    r"\binfo\s+class\b", r"\boo::", r"-stride\b", r"\bdict\s+map\b", r"\bchan\s+pipe\b",
+    r"\bchan\s+(push|pop)\b", r"\bbinary\s+(en|de)code\b", r"\blsearch\b[^\n]*-bisect\b",
+    r"\binfo\s+errorstack\b", r"-errorstack\b", r"\bstring\s+is\s+entier\b", r"\blpop\b",
+    r"\bledit\b", r"\blseq\b", r"\blremove\b", r"\bstring\s+insert\b", r"\bfile\s+home\b",
+    r"\bnextto\b", r"\btimerate\b", r"\bself\b", r"\bmy\s",
+]
+
+
+def test_tcl_sources_avoid_tcl86_only_features():
+    import re
+    for path in (os.path.join(TCL_DIR, "esl_h3d_extract.tcl"), os.path.join(TCL_DIR, "esl_h3d_probe.tcl"), MOCK):
+        for no, line in enumerate(open(path, encoding="ascii"), 1):
+            code = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+            for pat in _TCL86_ONLY:
+                assert not re.search(pat, code), f"{os.path.basename(path)}:{no}: Tcl 8.6 전용 '{pat}': {line.strip()}"
+
+
+TCLSH85 = os.environ.get("ESL_TCLSH85") or shutil.which("tclsh8.5")
+
+
+@pytest.mark.skipif(TCLSH85 is None, reason="tclsh8.5 없음 (ESL_TCLSH85 로 지정 가능)")
+@pytest.mark.parametrize("script", ["esl_h3d_probe.tcl", "esl_h3d_extract.tcl"])
+def test_tcl_scripts_run_on_tcl85(tmp_path, script):
+    m, t, eps, u, drv, out = _setup(tmp_path, script=script)
+    r = subprocess.run([TCLSH85, str(drv)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    j = json.loads((out / ("probe.json" if "probe" in script else "done.json")).read_text())
+    assert j["ok"] is True, j.get("errorInfo")
+    assert j["env"]["tcl_version"] == "8.5"
+    if "extract" in script:
+        assert pack_results(out, m, tmp_path / "npz")["n_frames"] == 3

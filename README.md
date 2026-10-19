@@ -33,6 +33,8 @@ h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows P
      다른 파트는 명령창에서 `ESL_extract.bat <h3d> <파트 이름|ID>`)
    여러 파일을 한 번에 놓아도 된다. 끝나면 `ok`·`failed_step`·`error` 요약을 보여 주고 출력 폴더를 연다.
    h3d가 있는 폴더·`protected_roots` 아래로는 출력하지 않으며(거부), 경로에 `%`·`!`·`&`가 있으면 거부한다.
+   h3d는 **원본 위치의 파일을 그대로** 끌어다 놓는다(읽기 전용으로 사용). 배포 폴더(`...\app\current`) 안의 h3d는
+   거부한다 — update 때 지워질 수 있다. `update.bat`은 교체·정리할 배포 폴더에 배포 산출물 이외 파일이 있으면 중단한다.
    hw 콘솔 출력은 출력 폴더의 `probe_console.log` / `extract_console.log`.
 
 ### 2.2 수동 실행

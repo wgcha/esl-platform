@@ -12,6 +12,10 @@ namespace eval ::mock {
     variable last_error ""
     variable hwc_calls {}
     variable hwc_loaded 0
+    # results attached to the model (AddModel reads the model only; SetResult or
+    # "hwc open animation modelandresult" load results), and the SetResult arguments seen
+    variable res_loaded 0
+    variable setresult_calls {}
     variable no_comp_query 0
     variable names [dict create]
 }
@@ -36,7 +40,10 @@ proc ::mock::obj {name type} {
 proc hwc {args} {
     lappend ::mock::hwc_calls $args
     ::mock::maybe_fail "hwc_[lindex $args 0]"
-    if {[lrange $args 0 1] eq {open animation}} { set ::mock::hwc_loaded 1 }
+    if {[lrange $args 0 1] eq {open animation}} {
+        set ::mock::hwc_loaded 1
+        set ::mock::res_loaded [expr {[lindex $args 2] eq "modelandresult"}]
+    }
     return
 }
 proc hwi {cmd args} {
@@ -59,13 +66,29 @@ proc ::mock::win_SetClientType {t} {
     set ::mock::st(client) $t
 }
 proc ::mock::win_GetClientHandle {h} { ::mock::obj $h post }
-proc ::mock::post_AddModel {f} { return 1 }
+proc ::mock::post_AddModel {f} { set ::mock::res_loaded 0; return 1 }
 proc ::mock::post_GetModelReaderList {} { return {H3DReader} }
 proc ::mock::post_GetActiveModel {} { return $::mock::hwc_loaded }
 proc ::mock::post_GetModelList {} { return [expr {$::mock::hwc_loaded ? 1 : {}}] }
 proc ::mock::post_GetModelHandle {h id} { ::mock::obj $h model }
 proc ::mock::post_Draw {} { return }
-proc ::mock::model_GetResultCtrlHandle {h} { ::mock::obj $h res }
+proc ::mock::model_SetResult {f} {
+    lappend ::mock::setresult_calls $f
+    if {![file isfile $f]} {
+        set ::mock::last_error "ERROR:Cannot open result file.  (poIModel::SetResult)"
+        return -code error -errorcode {NONE} 2051
+    }
+    set ::mock::res_loaded 1
+    return
+}
+# like HyperWorks 2026.1: no result control before results are loaded
+proc ::mock::model_GetResultCtrlHandle {h} {
+    if {!$::mock::res_loaded} {
+        set ::mock::last_error "ERROR:No results loaded.  (poIModel::GetResultCtrlHandle)"
+        return -code error -errorcode {NONE} 2051
+    }
+    ::mock::obj $h res
+}
 proc ::mock::model_GetQueryCtrlHandle {h} { ::mock::obj $h qry }
 proc ::mock::model_AddSelectionSet {type} {
     variable seq; variable sets
