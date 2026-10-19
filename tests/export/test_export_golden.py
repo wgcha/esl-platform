@@ -186,7 +186,37 @@ def test_csv_writer(tmp_path):
 
 
 def test_f20_overflow_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(EslError) as ei:
         radioss.f20(1.0, "{:.20E}")
-    with pytest.raises(ValueError):
+    assert ei.value.code == "CONFIG_INVALID"
+    with pytest.raises(EslError) as ei:
         radioss.i10(10 ** 10)
+    assert ei.value.code == "ID_RANGE_COLLISION" and "I10" in ei.value.message
+
+
+def test_outputs_ascii_only_with_non_ascii_header(small, tmp_path):
+    """inc·fem 은 ASCII 전용: 한글·기호가 섞인 헤더(파트 title 등)도 치환되어 기록."""
+    model, F, sup = small
+    mask, plan = _plan(model, F, sup)
+    hdr = ["part 7 '차체 후방'", "|F_c| > 1e-9·max|F| — t*", ""]
+    paths = [str(tmp_path / n) for n in ("a.inc", "b.inc", "c.fem")]
+    radioss.write_cload_inc(paths[0], model.node_id, F, mask, plan, "ramp", 1e-3, NF, hdr)
+    radioss.write_bcs_inc(paths[1], sup, plan, hdr)
+    optistruct.write_force_fem(paths[2], model, F, mask, sup, plan, NF, hdr)
+    for p in paths:
+        raw = open(p, "rb").read()
+        assert all(b < 128 for b in raw), p
+        assert b"\\ucc28" in raw          # '차' → \ucc28 (정보 보존)
+
+
+def test_node_id_too_wide_is_esl_error(small, tmp_path):
+    model, F, sup = small
+    mask, plan = _plan(model, F, sup)
+    big = model.node_id.copy()
+    big[0] = 12_345_678_901
+    with pytest.raises(EslError) as ei:
+        radioss.write_cload_inc(str(tmp_path / "x.inc"), big, F, mask, plan, "ramp", 1e-3, NF, [])
+    assert ei.value.code == "ID_RANGE_COLLISION" and "12345678901" in ei.value.message
+    with pytest.raises(EslError) as ei:
+        radioss.write_bcs_inc(str(tmp_path / "y.inc"), [(12_345_678_901, "123")] + sup[1:], plan, [])
+    assert ei.value.code == "ID_RANGE_COLLISION"

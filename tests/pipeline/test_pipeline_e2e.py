@@ -14,6 +14,8 @@ from esl import cli
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CFG = os.path.join(ROOT, "config", "esl.example.yaml")
+# 합성 사례 변위는 float64 로 저장(write_results_csv) → 잡음 바닥도 float64 기준
+CFG64_TEXT = open(CFG, encoding="utf-8").read().replace("disp_precision: float32", "disp_precision: float64")
 
 
 def _snapshot(d):
@@ -27,7 +29,7 @@ def _snapshot(d):
 
 
 def _args(case, out, *extra):
-    return ["run", "--config", CFG, "--rad", case["rad"], "--results", case["csv"], "--out", out, *extra]
+    return ["run", "--config", case["cfg"], "--rad", case["rad"], "--results", case["csv"], "--out", out, *extra]
 
 
 @pytest.fixture(scope="module")
@@ -35,6 +37,10 @@ def case(tmp_path_factory):
     root = str(tmp_path_factory.mktemp("e2e"))
     c = synth_case.build(root)
     c["root"] = root
+    c["cfg"] = os.path.join(root, "esl64.yaml")
+    assert "disp_precision: float64" in CFG64_TEXT
+    with open(c["cfg"], "w", encoding="utf-8") as fh:
+        fh.write(CFG64_TEXT)
     c["in_snapshot"] = _snapshot(os.path.join(root, "in"))
     out = os.path.join(root, "out")
     env = dict(os.environ)
@@ -75,6 +81,8 @@ def test_e2e_all(case):
     # 강체 대회전 확인 + F_eq
     summ = json.load(open(os.path.join(out, "04_esl", "esl_summary.json"), encoding="utf-8"))
     assert summ["kabsch"]["rot_deg"] >= 20.0
+    assert summ["noise"]["disp_precision"] == "float64"
+    assert summ["noise"]["force_rel"] < 1e-3 and summ["noise"]["hotspot_strain_rel"] < 1e-6
     z = np.load(os.path.join(out, "04_esl", "f_eq.npz"), allow_pickle=False)
     assert np.array_equal(z["node_id"], case["node_id"])
     f, Fa, R = z["f"], case["F_app"], case["R"]
@@ -93,7 +101,8 @@ def test_e2e_all(case):
     # 검증
     val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
     m = {x["metric"]: x["value"] for x in val["metrics"]}
-    assert val["verdict"] == "PASS"
+    assert val["verdict"] == "PASS" and val["fail_reasons"] == []
+    assert m["noise_hotspot_strain_rel"] < 1e-6
     assert m["disp_rms_rel"] < 1e-8
     assert m["reaction_rel"] < 1e-8
     assert m["hotspot1_strain_rel_err"] < 1e-6        # float32 저장 한계
@@ -117,6 +126,8 @@ def test_e2e_all(case):
         if line.startswith(("FORCE,", "SPC1,")):
             ids.append(int(line.split(",")[1]))
     assert ids and all(off <= v <= off + 999999 for v in ids)
+    for fn in ("esl_cload.inc", "esl_bcs.inc", "esl_force.fem"):         # inc·fem 전체 ASCII
+        assert all(b < 128 for b in open(os.path.join(exp, fn), "rb").read()), fn
     # 비영 성분 수 = /CLOAD 수
     n_cload = sum(1 for line in open(os.path.join(exp, "esl_cload.inc"), encoding="utf-8")
                   if line.startswith("/CLOAD/"))

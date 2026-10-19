@@ -8,10 +8,12 @@ case:
   part_title_match: exact_ci         # exact | exact_ci (공백 정규화 후 대소문자 무시)
   rad_include_max_depth: 8
   material_override: {}              # {mat_id: {E: , nu: }} — 파서 미지원 law 보완
+  include_path_map: {}               # {Windows 접두: 로컬 경로} 예 {"D:/proj/cae": "/data/cae"} — #include 절대경로 치환
 
 extract:
   frame_stride: 1                    # 프레임 간격(1=전부)
   shell_layer: max                   # max | top | bottom  (ε_eq 층 선택, max = 층별 최대)
+  disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
 
 tstar:
   top_n_times: 5                     # 후보 시점 수
@@ -33,6 +35,9 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   hotspot_strain_rel_err_max: 0.10   # |ε_val−ε_rad|/ε_rad (hotspot 1위)
   reaction_rel_max: 1.0e-6           # Σ|R_321|/Σ|F_eq| (자기평형이면 ≈0)
   hotspot_eval_count: 3              # 오차 표에 보일 hotspot 수
+  noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
+  noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
+  noise_strain_rel_max: 0.05         # hotspot |Δε_eq|/ε_eq (잡음) 초과 시 verdict FAIL (NOISE_FLOOR)
 
 export:
   radioss: {id_offset: 9000000, ramp_time: 1.0e-3, func_mode: ramp}   # ramp | constant

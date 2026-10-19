@@ -21,6 +21,8 @@ def base():
 def test_example_loads():
     cfg = config.load_config(CFG)
     assert cfg["export"]["radioss"]["id_offset"] == 9000000
+    assert cfg["extract"]["disp_precision"] == "float32"          # H3D 기본 저장 정밀도
+    assert cfg["validation"]["noise_samples"] == 3 and cfg["case"]["include_path_map"] == {}
     assert config.redacted_settings(cfg) == cfg and config.redacted_settings(cfg) is not cfg
 
 
@@ -70,6 +72,14 @@ _DEL = object()
     ("schema_version", 2, "schema_version"),
     ("extra_section", {}, "extra_section"),
     ("tstar.unknown", 1, "tstar.unknown"),
+    ("extract.disp_precision", "float16", "extract.disp_precision"),
+    ("extract.disp_precision", _DEL, "extract.disp_precision"),
+    ("validation.noise_samples", 0, "validation.noise_samples"),
+    ("validation.noise_strain_rel_max", 0.0, "validation.noise_strain_rel_max"),
+    ("validation.noise_force_rel_warn", "0.1", "validation.noise_force_rel_warn"),
+    ("case.include_path_map", [], "case.include_path_map"),
+    ("case.include_path_map", {"D:/x": ""}, "case.include_path_map.D:/x"),
+    ("case.include_path_map", {"D:/x": 3}, "case.include_path_map.D:/x"),
 ])
 def test_invalid(base, path, value, key):
     cfg = copy.deepcopy(base)

@@ -117,6 +117,17 @@ def _material_override(key, v):
             _num(0.0, lo_open=True)(f"{key}.{mk}.rho", mv["rho"])
 
 
+def _path_map(key, v):
+    """{Windows 접두: 로컬 경로} (include 경로 치환). 빈 사전 허용."""
+    if not isinstance(v, dict):
+        raise _bad(key, f"{{원래 접두: 로컬 경로}} 사전이어야 함 (값 {v!r})")
+    for mk, mv in v.items():
+        if not isinstance(mk, str) or not mk.strip():
+            raise _bad(f"{key}.{mk}", "접두는 비어 있지 않은 문자열")
+        if not isinstance(mv, str) or not mv.strip():
+            raise _bad(f"{key}.{mk}", f"로컬 경로는 비어 있지 않은 문자열 (값 {mv!r})")
+
+
 # ---------------------------------------------------------------- 스키마
 # 값 = 검사기 함수 또는 하위 스키마(dict). 모든 키 필수.
 SCHEMA: dict[str, Any] = {
@@ -126,10 +137,12 @@ SCHEMA: dict[str, Any] = {
         "part_title_match": _enum("exact", "exact_ci"),
         "rad_include_max_depth": _int(0, 64),
         "material_override": _material_override,
+        "include_path_map": _path_map,
     },
     "extract": {
         "frame_stride": _int(1),
         "shell_layer": _enum("max", "top", "bottom"),
+        "disp_precision": _enum("float32", "float64"),
     },
     "tstar": {
         "top_n_times": _int(1),
@@ -151,6 +164,9 @@ SCHEMA: dict[str, Any] = {
         "hotspot_strain_rel_err_max": _num(0.0, lo_open=True),
         "reaction_rel_max": _num(0.0, lo_open=True),
         "hotspot_eval_count": _int(1),
+        "noise_samples": _int(1, 100),
+        "noise_force_rel_warn": _num(0.0, lo_open=True),
+        "noise_strain_rel_max": _num(0.0, lo_open=True),
     },
     "export": {
         "radioss": {

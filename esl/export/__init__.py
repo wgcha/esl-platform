@@ -71,9 +71,14 @@ def force_mask(f, zero_tol_rel: float) -> np.ndarray:
     return np.abs(f) > float(zero_tol_rel) * ref
 
 
+def ascii_text(s) -> str:
+    """inc·fem 주석/title 용 ASCII 전용 문자열(비 ASCII 는 \\uXXXX 로 치환)."""
+    return str(s).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def dof_flags(dofs: str) -> str:
     """'13' → '101' (Tx Ty Tz 순)."""
     return "".join("1" if str(k) in str(dofs) else "0" for k in (1, 2, 3))
 
 
-__all__ = ["plan_ids", "all_ids", "force_mask", "dof_flags", "ID_SPAN"]
+__all__ = ["plan_ids", "all_ids", "force_mask", "dof_flags", "ascii_text", "ID_SPAN"]

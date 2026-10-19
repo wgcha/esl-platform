@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from esl.export import ascii_text
+
 
 def pshell_groups(elem_pid, thickness):
     """(원 PID, 두께) 고유 조합(정렬) 과 요소별 그룹 번호."""
@@ -36,7 +38,7 @@ def write_force_fem(path, model, f, mask, supports, plan: dict, num_format: str,
     mid = int(mat["id"])
     spc, load = plan["fem_spc_sid"], plan["fem_load_sid"]
 
-    L = [f"$ {ln}" if ln else "$" for ln in header_lines]
+    L = [f"$ {ascii_text(ln)}" if ln else "$" for ln in header_lines]
     L += [
         "SUBCASE 1",
         "  LABEL ESL_FORCE",
@@ -50,7 +52,7 @@ def write_force_fem(path, model, f, mask, supports, plan: dict, num_format: str,
     ]
     for i in range(node_id.size):
         L.append(f"GRID,{int(node_id[i])},,{g(x0[i, 0])},{g(x0[i, 1])},{g(x0[i, 2])}")
-    L.append("$ ---- 요소 (Radioss element ID), PID = (원 PID, 두께) 조합별 생성 ID")
+    L.append("$ ---- elements (Radioss element ID), PID = generated ID per (Radioss PID, thickness)")
     conn = np.asarray(model.conn, dtype=np.int64)
     et = np.asarray(model.elem_type).astype(int)
     for e in range(conn.shape[0]):
@@ -58,22 +60,22 @@ def write_force_fem(path, model, f, mask, supports, plan: dict, num_format: str,
         n = [int(node_id[c]) for c in conn[e, :et[e]]]
         card = "CQUAD4" if et[e] == 4 else "CTRIA3"
         L.append(f"{card},{int(model.elem_id[e])},{pid}," + ",".join(str(v) for v in n))
-    L.append("$ ---- PSHELL: 생성 PID ← (Radioss PID, 두께)")
+    L.append("$ ---- PSHELL: generated PID <- (Radioss PID, thickness)")
     for k, (opid, t) in enumerate(groups):
         L.append(f"$ PSHELL {plan['pshell'][k]} <- Radioss PID {opid}, T={g(t)}")
         L.append(f"PSHELL,{plan['pshell'][k]},{mid},{g(t)},{mid},,{mid}")
     L.append(f"MAT1,{mid},{g(mat['E'])},,{g(mat['nu'])}")
-    L.append("$ ---- FORCE (F_eq, 구조물에 가해지는 외력)")
+    L.append("$ ---- FORCE (F_eq, external force applied to the structure)")
     n_force = 0
     for i in np.flatnonzero(mask.any(axis=1)):
         fx, fy, fz = (f[i, c] if mask[i, c] else 0.0 for c in range(3))
         L.append(f"FORCE,{load},{int(node_id[i])},0,{g(1.0)},{g(fx)},{g(fy)},{g(fz)}")
         n_force += 1
-    L.append("$ ---- SPC1 (3-2-1 정정 구속)")
+    L.append("$ ---- SPC1 (3-2-1 statically determinate supports)")
     for nid, dofs in supports:
         L.append(f"SPC1,{spc},{dofs},{int(nid)}")
     L.append("ENDDATA")
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with open(path, "w", encoding="ascii", newline="\n") as fh:
         fh.write("\n".join(L) + "\n")
     return {"n_grid": int(node_id.size), "n_elem": int(conn.shape[0]), "n_pshell": len(groups),
             "n_force": n_force, "n_spc1": len(supports),

@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from esl.errors import EslError
+from esl.export import ascii_text
+
 _RULER = "#---1----|----2----|----3----|----4----|----5----|----6----|----7----|----8----|----9----|---10----|"
 _DIR = ("X", "Y", "Z")
 
@@ -24,14 +27,15 @@ _DIR = ("X", "Y", "Z")
 def i10(v) -> str:
     s = str(int(v))
     if len(s) > 10:
-        raise ValueError(f"I10 칸 초과: {v}")
+        raise EslError("ID_RANGE_COLLISION", f"ID {v} 가 Radioss I10 칸(10자리)을 넘음 — 노드·요소 ID 또는 "
+                                             f"export.radioss.id_offset 확인")
     return s.rjust(10)
 
 
 def f20(x, num_format: str) -> str:
     s = num_format.format(float(x))
     if len(s) > 20:
-        raise ValueError(f"F20 칸 초과: {s}")
+        raise EslError("CONFIG_INVALID", f"export.num_format: 실수 '{s}' 가 F20 칸(20자)을 넘음")
     return s.rjust(20)
 
 
@@ -40,7 +44,7 @@ def a10(s: str) -> str:
 
 
 def _comment_header(lines) -> list[str]:
-    return ["#" + (" " + ln if ln else "") for ln in lines]
+    return ["#" + (" " + ascii_text(ln) if ln else "") for ln in lines]
 
 
 def funct_card(fid: int, func_mode: str, ramp_time: float, num_format: str) -> list[str]:
@@ -57,7 +61,7 @@ def funct_card(fid: int, func_mode: str, ramp_time: float, num_format: str) -> l
 
 
 def grnod_node_card(gid: int, title: str, node_ids) -> list[str]:
-    L = [f"/GRNOD/NODE/{int(gid)}", title, "#  node_ID1  node_ID2  node_ID3  node_ID4  node_ID5"
+    L = [f"/GRNOD/NODE/{int(gid)}", ascii_text(title), "#  node_ID1  node_ID2  node_ID3  node_ID4  node_ID5"
          "  node_ID6  node_ID7  node_ID8  node_ID9 node_ID10"]
     ids = [int(n) for n in node_ids]
     for k in range(0, len(ids), 10):
@@ -68,7 +72,7 @@ def grnod_node_card(gid: int, title: str, node_ids) -> list[str]:
 def cload_card(lid: int, title: str, fct_id: int, comp: int, grnd_id: int, value: float,
                num_format: str) -> list[str]:
     return [
-        f"/CLOAD/{int(lid)}", title,
+        f"/CLOAD/{int(lid)}", ascii_text(title),
         "#funct_IDT       Dir   skew_ID   sens_ID   grnd_ID            Ascale_x            Fscale_Y",
         i10(fct_id) + a10(_DIR[comp]) + i10(0) + i10(0) + i10(grnd_id)
         + f20(1.0, num_format) + f20(value, num_format),
@@ -79,7 +83,7 @@ def bcs_card(bid: int, title: str, tra: str, grnd_id: int) -> list[str]:
     if len(tra) != 3 or set(tra) - {"0", "1"}:
         raise ValueError(f"Tra 플래그: {tra}")
     return [
-        f"/BCS/{int(bid)}", title,
+        f"/BCS/{int(bid)}", ascii_text(title),
         "#  Tra rot   skew_ID  grnod_ID",
         f"   {tra} 000" + i10(0) + i10(grnd_id),
     ]
@@ -109,7 +113,7 @@ def write_cload_inc(path, node_id, f, mask, plan: dict, func_mode: str, ramp_tim
                                 f[i, c], num_format)
                 k_load += 1
     L.append(_RULER)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with open(path, "w", encoding="ascii", newline="\n") as fh:
         fh.write("\n".join(L) + "\n")
     return {"n_cload": k_load, "n_grnod": int(loaded.size)}
 
@@ -127,6 +131,6 @@ def write_bcs_inc(path, supports, plan: dict, header_lines) -> dict:
         L += grnod_node_card(gid, f"ESL_321_N{int(nid)}", [int(nid)])
         L += bcs_card(bid, f"ESL_321_N{int(nid)}_DOF{dofs}", dof_flags(dofs), gid)
     L.append(_RULER)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with open(path, "w", encoding="ascii", newline="\n") as fh:
         fh.write("\n".join(L) + "\n")
     return {"n_bcs": len(supports)}

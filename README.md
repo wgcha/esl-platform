@@ -34,6 +34,15 @@ rem (2) CSV 추출 → D:\run\esl_csv (frames.csv, model.csv, strain.csv, disp.c
 `ESL_CONFIG` 경로를 쓴다. 모든 키 필수(코드에 기본값 없음): 대상 파트 title, t* 탐색, 3-2-1 후보,
 솔버, 판정 기준, ID 오프셋·서식, 단위 라벨. 잘못되면 `CONFIG_INVALID: <키>: <이유>`.
 
+- `case.include_path_map`: rad 안 Windows 절대경로 include 를 로컬 경로로 치환(`{"D:/proj/cae": "/data/cae"}`).
+- `extract.disp_precision`: 변위 결과의 저장 정밀도(`float32` | `float64`, H3D 는 보통 float32).
+  S4 가 이 정밀도의 잡음 바닥(δ = 0.5·ulp·max|X0+u|, 고정 시드 ±δ 섭동 `validation.noise_samples` 개)을
+  추정해 `esl_summary.json`·`run.json`·콘솔에 `noise.force_rel`(rms(F_noise)/rms(F_eq)),
+  `noise.hotspot_strain_rel`(평가 hotspot ε_eq 상대 변화)을 남긴다. `force_rel > validation.noise_force_rel_warn`
+  이면 경고, `hotspot_strain_rel > validation.noise_strain_rel_max` 이면 검증 verdict FAIL(사유 `NOISE_FLOOR`).
+  강체 대변위(좌표 수천 mm)에 비해 변형이 작으면 float32 변위로는 F_eq 가 잡음에 묻힌다 → TCL 출력을
+  배정밀도로 받거나 판정 결과를 참고용으로만 쓴다.
+
 ## 4. 실행
 
 ```bash
@@ -45,7 +54,10 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 
 - 콘솔: 단계별 1줄 요약(t*, ΣF·평형 오차, disp_rms_rel·hotspot 오차·PASS/FAIL, 내보내기 ID 범위).
 - 종료코드 0 = 성공(검증 FAIL도 계산은 성공), 1 = 오류. 오류는 stderr 에 `CODE: message` 한 줄 + `run.json`.
-- 입력 폴더에는 쓰지 않는다(`--out` 이 입력 폴더와 겹치면 `INPUT_INVALID`).
+- 입력 폴더에는 쓰지 않는다. `--out` 이 rad 폴더·rad 가 실제로 읽은 include 파일의 폴더·결과 CSV 폴더와
+  겹치면(안이거나 포함) `INPUT_INVALID`. 판정은 심볼릭 링크를 푼 실제 경로(realpath) 기준이며, 모든 쓰기
+  (백업 이동 포함) 직전에 대상 실제 경로가 출력 폴더 안인지 다시 확인한다(출력 안 링크가 밖을 가리켜도 거부).
+- inc·fem 은 ASCII 전용(비 ASCII 문자는 `\uXXXX` 로 치환). ID 가 I10 칸을 넘으면 `ID_RANGE_COLLISION`.
 - 다시 실행하면 그 단계 폴더의 기존 파일은 `_backup/<UTC 시각>/` 으로 **이동**한다(삭제 없음).
 
 ## 5. 출력 폴더
