@@ -19,6 +19,9 @@
    `<work_root>\<h3d 이름>\probe` / `csv`, 다른 파트는 `ESL_extract.bat <h3d> <part>`. 끝나면 `probe.json`/`done.json`의
    `ok`·`failed_step`·`error`를 요약하고 출력 폴더를 연다. 콘솔 로그는 `*_console.log`.
    h3d 폴더·`protected_roots` 아래 출력과 `%`·`!`·`&`가 든 경로는 거부한다.
+   **h3d를 배포 폴더(`...\app\current` 등)에 복사하지 말 것**: 배포 폴더 안의 h3d는 거부한다(update 때 지워질 수 있음).
+   원본 위치의 h3d를 그대로 끌어다 놓는다(읽기 전용으로 사용). `update.bat`은 교체·정리할 폴더에 배포 산출물
+   (`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외 파일이 있으면 아무것도 지우거나 옮기지 않고 목록을 보여 주고 중단한다.
 
 ### 1.2 수동 실행
 
@@ -127,11 +130,19 @@ strain_system	elemental
 - `GetPageHandle`: 활성 페이지 → 페이지 1. `GetWindowHandle`: 활성 창 → 창 1 → 창 0 → `hwIProject GetWindowHandle`.
 - `SetClientType`: `GetClientType`이 이미 Animation이면 생략, 아니면 `Animation` → `animation` → `HyperView` → `hwc client animation`.
 - `AddModel`: 반환값 0(Null_ID = 로드 실패)도 실패로 처리 → `file nativename` 경로로 재시도 → `hwc open animation modelandresult <h3d> <h3d>` → `hwc open animation model <h3d>` (모델 id는 `GetActiveModel`/`GetModelList`).
+- 결과 로드: `AddModel`은 모델만 읽는다. `GetModelHandle` 뒤 `poIModel SetResult <h3d>`(실패 시 `file nativename` 경로)
+  → `poIPost Draw` → `GetResultCtrlHandle`. SetResult 없이 `GetResultCtrlHandle`을 부르면 HyperWorks 2026.1에서
+  `2051` / GetError `ERROR:No results loaded.  (poIModel::GetResultCtrlHandle)`로 실패했다(실기). SetResult 실패는
+  `api.SetResult`(GetError 포함)·`warnings`에 남고 `GetResultCtrlHandle` 오류 문구에 덧붙는다.
 - component 목록: component(또는 part) 선택 집합 질의 `component.id component.name` → `part.id part.name` → `component.id component.label` → `GetComponentHandle`/`GetPartHandle` + `GetLabel`/`GetName`.
+
+**Tcl 버전**: HyperWorks 2026.1의 내장 Tcl은 8.5.9(실기 `env.tcl_patchLevel`)이다. 두 TCL은 Tcl 8.5 문법만 쓴다
+(`lmap`·`try`/`throw`·`string cat`·`file tempfile`·`zlib`·`oo::`·`-stride` 등 8.6 전용 기능 금지, `tests/io/test_tcl_mock.py` 정적 검사).
+`ESL_TCLSH85=<tclsh8.5 경로>`를 주면 mock 시험을 Tcl 8.5로도 돌린다.
 
 **숫자 오류(예: `"2051"`)**: hwi/poI 메서드는 실패 시 숫자 오류 코드를 Tcl 오류로 던진다(문서: "Returns Success (0) or an error code").
 번호별 의미는 Altair가 공개하지 않았다 — `api`의 `GetError:` 메시지(hwISession GetError)와 `failed_step`이 실제 원인을 알려 준다.
-알려진 후보: 배치(-b) 모드에서 활성 page/window 없음, 클라이언트 타입 문자열 불일치, AddModel 실패(0 반환) 뒤 `GetModelHandle 0`, handle 이름 충돌.
+알려진 후보: `GetResultCtrlHandle`에서 "No results loaded"(SetResult 전 호출 — 수정됨), 배치(-b) 모드에서 활성 page/window 없음, 클라이언트 타입 문자열 불일치, AddModel 실패(0 반환) 뒤 `GetModelHandle 0`, handle 이름 충돌.
 
 ### 이슈에 붙일 것
 

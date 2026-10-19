@@ -5,6 +5,8 @@
 #  2) 설정: %LOCALAPPDATA%\esl\esl_deploy.json (없으면 config\esl_deploy.example.json 으로 생성)
 #  3) 배포: resources\tcl\*.tcl, README, 실행기를 <deploy_dir>\<git 짧은 해시>\ 로 복사 후
 #     <deploy_dir>\current 를 디렉터리 교체로 갱신(실패 시 이전 current 유지). 버전 폴더는 최근 5개만 유지
+#     지우거나 옮길 폴더에 배포 산출물(*.tcl, *.bat, *.ps1, README, VERSION.txt) 이외 파일(복사해 둔 h3d 등)이
+#     있으면 아무것도 바꾸지 않고 목록을 보여 주고 중단
 #  4) 실행 래퍼: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat (h3d 드래그&드롭)
 #  5) 점검표: hw.exe, TCL, work_root 쓰기, git 상태
 #
@@ -163,11 +165,35 @@ function Assert-InsideDeployDir([string]$Path) {
     return $full
 }
 
-# 링크를 따라가지 않고 파일·폴더를 하나씩 지운다(deploy_dir 아래만). 링크를 만나면 중단.
+# 배포 산출물: *.tcl, *.bat, *.ps1, README*, VERSION.txt (+ TCL 이 쓰는 esl_*_fallback.json 진단 파일).
+# 그 밖의 파일·하위 폴더(사용자가 복사해 둔 h3d 등)가 있는 폴더는 지우거나 옮기지 않는다.
+$DeployFilePattern = '^(?:[^\\/]+\.(?:tcl|bat|ps1)|README(?:\.md|\.txt)?|VERSION\.txt|esl_[a-z_]+_fallback\.json)$'
+
+function Get-ForeignFiles([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
+    $out = @()
+    foreach ($e in @(Get-ChildItem -Force -LiteralPath $Dir)) {
+        if ($e.PSIsContainer -or ($e.Name -notmatch $DeployFilePattern)) { $out += $e.FullName }
+    }
+    return $out
+}
+
+# 배포 산출물 이외 파일이 있으면 목록을 경고하고 중단(아무것도 지우거나 옮기지 않음)
+function Assert-OnlyDeployFiles([string]$Dir) {
+    $foreign = @(Get-ForeignFiles $Dir)
+    if ($foreign.Count -eq 0) { return }
+    Say "    배포 폴더에 배포 산출물이 아닌 파일이 있어 지우거나 옮기지 않고 중단합니다: $Dir" 'Red'
+    foreach ($p in $foreign) { Say "      $p" 'Yellow' }
+    Say '    h3d 등 데이터는 배포 폴더에 두지 마세요(update 때 정리됨). 위 파일을 다른 곳으로 옮긴 뒤 다시 실행하세요.' 'Yellow'
+    throw "배포 폴더에 사용자 파일 $($foreign.Count)개: $Dir"
+}
+
+# 링크를 따라가지 않고 파일·폴더를 하나씩 지운다(deploy_dir 아래만). 링크·사용자 파일을 만나면 중단.
 function Remove-DeployTree([string]$Path) {
     $full = Assert-InsideDeployDir $Path
     if (-not (Test-Path -LiteralPath $full)) { return }
     if (Test-IsLink $full) { throw "링크(junction/symlink)는 지우지 않습니다: $full" }
+    Assert-OnlyDeployFiles $full
     foreach ($f in [IO.Directory]::GetFiles($full)) {
         $fi = New-Object IO.FileInfo($f)
         if ($fi.Attributes -band [IO.FileAttributes]::ReadOnly) { $fi.Attributes = $fi.Attributes -bxor [IO.FileAttributes]::ReadOnly }
@@ -203,6 +229,26 @@ function Publish-Deployment($Cfg, [string]$Version) {
     New-Item -ItemType Directory -Force -Path $script:DeployDir | Out-Null
     if (Test-IsLink $script:DeployDir) { throw "deploy_dir 가 링크입니다. 실제 폴더를 지정하세요: $($script:DeployDir)" }
     $verDir = Join-Path $script:DeployDir $Version
+    $current = Join-Path $script:DeployDir 'current'
+    $staging = Join-Path $script:DeployDir 'current.new'
+
+    # 사전 점검: 교체·정리로 지우거나 옮길 폴더(current, current.new, 같은 버전, 정리 대상 버전)에
+    # 배포 산출물 이외 파일이 있으면 아무것도 바꾸기 전에 중단
+    $versions = @(Get-ChildItem -LiteralPath $script:DeployDir -Directory |
+        Where-Object { $_.Name -match '^[0-9a-f]{7,40}$' -and $_.Name -ne $Version } |
+        Sort-Object LastWriteTime -Descending)
+    $excess = @($versions | Select-Object -Skip ($KeepVersions - 1))
+    $touched = @($current, $staging, $verDir) + @($excess | ForEach-Object { $_.FullName })
+    $foreignAll = @()
+    foreach ($d in $touched) { $foreignAll += @(Get-ForeignFiles $d) }
+    if ($foreignAll.Count -gt 0) {
+        Say '배포 폴더에 배포 산출물(*.tcl, *.bat, *.ps1, README, VERSION.txt)이 아닌 파일이 있습니다. 지우거나 옮기지 않고 중단합니다:' 'Red'
+        foreach ($p in $foreignAll) { Say "    $p" 'Yellow' }
+        Say '    h3d 는 배포 폴더에 복사하지 말고 원본 위치의 파일을 ESL_*.bat 위로 끌어다 놓으세요. 위 파일을 다른 곳으로 옮긴 뒤 다시 실행하세요.' 'Yellow'
+        Add-Check 'deploy' 'FAIL' "배포 폴더에 사용자 파일 $($foreignAll.Count)개 (목록은 로그)"
+        throw "배포 폴더에 배포 산출물이 아닌 파일 $($foreignAll.Count)개 - 업데이트 중단(변경 없음)"
+    }
+
     if (Test-Path -LiteralPath $verDir) { Remove-DeployTree $verDir }
     New-Item -ItemType Directory -Force -Path $verDir | Out-Null
     foreach ($s in $sources) { Copy-Item -LiteralPath $s.FullName -Destination $verDir -Force; Say "    복사: $($s.Name)" }
@@ -213,8 +259,6 @@ function Publish-Deployment($Cfg, [string]$Version) {
     (Get-Item -LiteralPath $verDir).LastWriteTime = Get-Date
 
     # current 교체: current.new 준비 -> current 를 current.old.<ts> 로 -> current.new 를 current 로
-    $current = Join-Path $script:DeployDir 'current'
-    $staging = Join-Path $script:DeployDir 'current.new'
     $oldDir = Join-Path $script:DeployDir ('current.old.' + (Get-Date).ToString('yyyyMMdd_HHmmss'))
     if (Test-Path -LiteralPath $staging) { Remove-DeployTree $staging }
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
@@ -222,6 +266,8 @@ function Publish-Deployment($Cfg, [string]$Version) {
     $hadCurrent = Test-Path -LiteralPath $current
     if ($hadCurrent) {
         if (Test-IsLink $current) { throw "current 가 링크입니다: $current" }
+        try { Assert-OnlyDeployFiles $current }   # 사전 점검 이후 생긴 파일 대비(옮기기 직전 재확인)
+        catch { Remove-DeployTree $staging; throw }
         try { [IO.Directory]::Move($current, $oldDir) }
         catch {
             Remove-DeployTree $staging
@@ -238,11 +284,7 @@ function Publish-Deployment($Cfg, [string]$Version) {
     }
     Say "    current -> $Version" 'Green'
 
-    # 오래된 버전 정리: 최근 $KeepVersions 개 초과분만
-    $versions = @(Get-ChildItem -LiteralPath $script:DeployDir -Directory |
-        Where-Object { $_.Name -match '^[0-9a-f]{7,40}$' -and $_.Name -ne $Version } |
-        Sort-Object LastWriteTime -Descending)
-    $excess = @($versions | Select-Object -Skip ($KeepVersions - 1))
+    # 오래된 버전 정리: 최근 $KeepVersions 개 초과분만 (사전 점검한 목록; Remove-DeployTree 가 다시 확인)
     if ($excess.Count -gt 0) {
         Say ("    오래된 버전 정리 대상: {0}" -f (($excess | ForEach-Object { $_.Name }) -join ', '))
         foreach ($d in $excess) {

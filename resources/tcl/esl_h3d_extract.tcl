@@ -298,7 +298,23 @@ proc ::esl::open_model {h3d} {
         hwc_modelandresult "hwc open animation modelandresult $q$h3d$q $q$h3d$q; ::esl::active_model $C" \
         hwc_model "hwc open animation model $q$h3d$q; ::esl::active_model $C"]]
     ::esl::do GetModelHandle {$C GetModelHandle $M $mid}
-    ::esl::do GetResultCtrlHandle {$M GetResultCtrlHandle $R}
+    # AddModel reads the model only. Results must be attached with poIModel SetResult (and the
+    # client drawn) before GetResultCtrlHandle, else HyperView raises 2051 "No results loaded"
+    # (seen on HyperWorks 2026.1). A SetResult failure is kept (with GetError) in api/warnings
+    # and added to the GetResultCtrlHandle error.
+    set sr_err ""
+    if {[catch {::esl::alt SetResult [list \
+            SetResult [list $M SetResult $h3d] \
+            SetResult_native [list $M SetResult [file nativename $h3d]]]} sr_err]} {
+        ::esl::warn "SetResult failed: $sr_err"
+    } else {
+        set sr_err ""
+    }
+    if {[catch {::esl::do Draw {$C Draw}} e]} { ::esl::warn "Draw after SetResult failed: $e" }
+    if {[catch {::esl::do GetResultCtrlHandle {$M GetResultCtrlHandle $R}} e opts]} {
+        if {$sr_err ne ""} { append e " (results not loaded; SetResult failed: $sr_err)" }
+        return -options $opts $e
+    }
     ::esl::do GetQueryCtrlHandle {$M GetQueryCtrlHandle $Q}
     return [dict create S $S P $P PG $PG W $W C $C M $M R $R Q $Q mid $mid]
 }
@@ -729,7 +745,7 @@ proc ::esl::run {arglist} {
     set subcases {}
     catch {set subcases [::esl::do GetSubcaseList {$res GetSubcaseList}]}
     if {[llength $subcases] == 0} {
-        catch {::esl::do SetResult {$model SetResult $h3d}}
+        catch {::esl::do SetResult_retry {$model SetResult $h3d}}
         catch {set subcases [::esl::do GetSubcaseList_retry {$res GetSubcaseList}]}
     }
     if {[lsearch -exact $subcases $sc] < 0} {

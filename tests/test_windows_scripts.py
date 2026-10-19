@@ -6,6 +6,10 @@ update.bat -> scripts/windows/update.ps1 위임, 파괴적 git 명령·무조건
 import json
 import os
 import re
+import shutil
+import subprocess
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAT = os.path.join(ROOT, "update.bat")
@@ -212,3 +216,71 @@ def test_readme_sections():
         text = open(p, encoding="utf-8").read()
         assert "Windows 설치·업데이트" in text and "update.bat" in text
         assert "ESL_extract.bat" in text and "수동 실행" in text
+
+
+# ---- 배포 폴더 보호(사용자가 h3d 를 deploy_dir\current 에 복사해 실행한 사례) ---------------------
+
+def test_runner_rejects_h3d_inside_deploy_dir():
+    text = _read(RUN_PS1)
+    guard = _function_body(text, "Assert-InputOutsideDeploy")
+    assert "Resolve-RealPath $H3d" in guard and "Test-PathUnder $cand $root" in guard
+    assert "@($DeployDir, $PSScriptRoot)" in guard and "throw" in guard
+    assert "원본 위치의 h3d를 그대로 끌어다 놓으세요(읽기 전용으로 사용)" in guard
+    assert "$deployDir = Expand-ConfigPath ([string]$cfg.deploy_dir)" in text
+    # h3d 마다, 출력 폴더 검사·생성·hw 실행보다 먼저
+    loop = text[text.index("foreach ($h3d in $h3ds)"):]
+    i = loop.index("Assert-InputOutsideDeploy $h3d $deployDir")
+    assert i < loop.index("Assert-OutputAllowed $outDir") < loop.index("Start-Process -FilePath $hwExe")
+
+
+def test_update_keeps_foreign_files_in_deploy_dir():
+    text = _read(UPDATE_PS1)
+    pat = re.search(r"^\$DeployFilePattern = '([^']+)'", text, re.M).group(1)
+    rx = re.compile(pat, re.I)              # PowerShell -match 는 대소문자 무시
+    for ok in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_extract.bat", "README.md", "VERSION.txt",
+               "esl_probe_fallback.json", "esl_extract_done_fallback.json"):
+        assert rx.match(ok), ok
+    for bad in ("model.h3d", "run_0001.h3d", "notes.txt", "probe.json", "data.csv", "x.tcl.h3d", "README.md.bak"):
+        assert not rx.match(bad), bad
+    # Remove-DeployTree: deploy_dir 확인 -> 링크 확인 -> 사용자 파일 확인 후에만 삭제
+    body = _function_body(text, "Remove-DeployTree")
+    a = body.index("Assert-InsideDeployDir")
+    b = body.index("Test-IsLink $full")
+    c = body.index("Assert-OnlyDeployFiles $full")
+    d = body.index("[IO.File]::Delete(")
+    assert a < b < c < d
+    guard = _function_body(text, "Assert-OnlyDeployFiles")
+    assert "Get-ForeignFiles" in guard and "throw" in guard and "foreach ($p in $foreign)" in guard
+    fn = _function_body(text, "Get-ForeignFiles")
+    assert "PSIsContainer" in fn and "-notmatch $DeployFilePattern" in fn   # 하위 폴더도 사용자 것으로 본다
+    # 사전 점검: current/current.new/같은 버전/정리 대상 버전을 Move·삭제보다 먼저 확인
+    pub = _function_body(text, "Publish-Deployment")
+    pre = pub.index("$touched = @($current, $staging, $verDir) + @($excess")
+    assert pre < pub.index("Remove-DeployTree $verDir") < pub.index("[IO.Directory]::Move($current, $oldDir)")
+    assert pub.index("Assert-OnlyDeployFiles $current") < pub.index("[IO.Directory]::Move($current, $oldDir)")
+    assert "throw \"배포 폴더에 배포 산출물이 아닌 파일" in pub
+
+
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
+    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+
+
+@pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
+def test_ps1_parse_and_foreign_files_with_pwsh(tmp_path):
+    for p in PS1_FILES:
+        r = subprocess.run([PWSH, "-NoProfile", "-Command",
+                            "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("
+                            f"'{p}',[ref]$t,[ref]$e); $e.Count"], capture_output=True, text=True, timeout=120)
+        assert r.stdout.strip() == "0", (p, r.stdout, r.stderr)
+    text = _read(UPDATE_PS1)
+    pat_line = re.search(r"^\$DeployFilePattern = '[^']+'", text, re.M).group(0)
+    d = tmp_path / "current"
+    d.mkdir()
+    for n in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_probe.bat", "README.md", "VERSION.txt", "big.h3d"):
+        (d / n).write_text("x")
+    (d / "sub").mkdir()
+    script = tmp_path / "t.ps1"
+    script.write_text(pat_line + "\n" + _function_body(text, "Get-ForeignFiles").join(
+        ["function Get-ForeignFiles([string]$Dir) ", ""]) + f"\n(Get-ForeignFiles '{d}' | ForEach-Object {{ Split-Path -Leaf $_ }} | Sort-Object) -join ','\n")
+    r = subprocess.run([PWSH, "-NoProfile", "-File", str(script)], capture_output=True, text=True, timeout=120)
+    assert r.stdout.strip() == "big.h3d,sub", (r.stdout, r.stderr)

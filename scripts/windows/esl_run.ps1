@@ -5,6 +5,7 @@
 #
 # 출력 폴더 = <work_root>\<h3d 파일명(확장자 제외)>\probe | csv
 # h3d 가 있는 폴더(공유 SPDM 등)와 protected_roots 아래에는 절대 쓰지 않는다(출력 폴더가 그 아래면 거부).
+# 배포 폴더(deploy_dir) 안의 h3d 는 받지 않는다(update 때 지워질 수 있음): 원본 위치의 h3d 를 그대로 쓴다.
 # 설정: %LOCALAPPDATA%\esl\esl_deploy.json (update.bat 이 만든다). 실행할 때마다 다시 읽는다.
 [CmdletBinding()]
 param(
@@ -64,6 +65,18 @@ function Assert-OutputAllowed([string]$OutDir, [string]$H3dDir, [string[]]$Prote
     }
 }
 
+# 입력 h3d 가 배포 폴더(deploy_dir, 이 실행기 폴더) 아래면 거부: update 의 current 교체·버전 정리 때
+# 지워질 수 있다. 원본 위치의 h3d 를 그대로(읽기 전용으로) 쓰게 한다. 링크를 푼 경로로도 확인.
+function Assert-InputOutsideDeploy([string]$H3d, [string]$DeployDir) {
+    foreach ($cand in @($H3d, (Resolve-RealPath $H3d))) {
+        foreach ($root in @($DeployDir, $PSScriptRoot)) {
+            if ($root -and (Test-PathUnder $cand $root)) {
+                throw "h3d 가 배포 폴더 안에 있습니다(update 때 지워질 수 있음): $cand (배포 폴더: $root)  -> 원본 위치의 h3d를 그대로 끌어다 놓으세요(읽기 전용으로 사용). 배포 폴더에 복사한 h3d 는 다른 곳으로 옮기세요."
+            }
+        }
+    }
+}
+
 function Quote-Arg([string]$Value) { return '"' + $Value + '"' }
 
 function Show-Result([string]$JsonPath, [string]$Kind) {
@@ -117,6 +130,7 @@ try {
     $workRoot = Expand-ConfigPath ([string]$cfg.work_root)
     $defaultPart = [string]$cfg.default_part
     $protected = @(@($cfg.protected_roots) | Where-Object { $_ } | ForEach-Object { Expand-ConfigPath ([string]$_) })
+    $deployDir = Expand-ConfigPath ([string]$cfg.deploy_dir)
     if (-not $hwExe -or -not (Test-Path -LiteralPath $hwExe -PathType Leaf)) {
         throw "hw.exe 를 찾을 수 없습니다: '$hwExe'  -> 설정 hw_exe 를 고치세요: $ConfigPath"
     }
@@ -171,6 +185,7 @@ try {
         Say "    출력: $outDir"
         if ($part) { Say "    파트: $part" }
         try {
+            Assert-InputOutsideDeploy $h3d $deployDir
             Assert-OutputAllowed $outDir $h3dDir $protected
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             Assert-OutputAllowed $outDir $h3dDir $protected   # 만든 뒤 링크 경로로 다시 확인
