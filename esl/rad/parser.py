@@ -206,6 +206,108 @@ class RadModel:
     warnings: list = field(default_factory=list)
 
 
+def _include_spec(line: str) -> str:
+    return line.strip().strip('"').strip("'").strip()
+
+
+def _resolve_include(orig: str, root_dir: str, src: str, path_map: dict | None):
+    """include 경로 해석(parse_rad·scan_includes 공용).
+
+    반환 (찾은 경로 | None, 파일명 대체 여부, 후보 경로들, Windows 절대 여부, 매핑 결과).
+    순서: include_path_map 접두 치환 → 절대 경로 → rad 폴더·포함하는 파일 폴더 기준 상대 경로
+    → (절대·매핑 경로를 못 찾으면) 파일명만으로 rad 폴더·포함하는 파일 폴더.
+    """
+    name = orig.replace("\\", "/")
+    src_dir = os.path.dirname(os.path.abspath(src))
+    win_abs = _is_windows_abs(name)
+    mapped = _map_path(name, path_map)
+    if mapped is not None:
+        cands = [mapped]
+    elif os.path.isabs(name) or win_abs:
+        cands = [name]
+    else:
+        cands = [os.path.join(root_dir, name), os.path.join(src_dir, name)]
+    for c in cands:
+        if os.path.isfile(c):
+            return c, False, cands, win_abs, mapped
+    base = name.rstrip("/").rsplit("/", 1)[-1]
+    if base and (win_abs or os.path.isabs(name) or mapped is not None):
+        for d in dict.fromkeys((root_dir, src_dir)):
+            c = os.path.join(d, base)
+            if os.path.isfile(c):
+                return c, True, cands, win_abs, mapped
+    return None, False, cands, win_abs, mapped
+
+
+def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8) -> list[str]:
+    """본문을 해석하지 않고 ``/INCLUDE``·``#include`` 줄만 따라가 include 파일 경로 목록을 돌려준다.
+
+    출력 폴더 보호(입력 폴더 쓰기 금지)용 가벼운 스캐너. 경로 해석 규칙은 parse_rad 와 같다.
+    오류를 던지지 않는다: 읽을 수 없는 파일은 건너뛰고, 찾지 못한 include 는 후보 경로를 그대로
+    넣어(그 폴더도 보호) 돌려준다. 순환·깊이 초과는 더 따라가지 않는다.
+    """
+    root = os.path.abspath(os.fspath(rad_path))
+    root_dir = os.path.dirname(root)
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(p: str) -> None:
+        p = os.path.normpath(os.path.abspath(p))
+        if p not in out:
+            out.append(p)
+
+    def walk(path: str, depth: int) -> None:
+        key = os.path.normcase(os.path.realpath(path))
+        if key in seen:
+            return
+        seen.add(key)
+        try:
+            fh = open(path, "rb")
+        except OSError:
+            return
+        specs: list[str] = []
+        with fh:
+            pending = False
+            for raw in fh:
+                line = _decode(raw)
+                if pending:
+                    if not line.strip() or line.startswith("#"):
+                        continue
+                    pending = False
+                    specs.append(_include_spec(line))
+                    continue
+                if line.startswith("#"):
+                    if line[:8].lower() == "#include":
+                        specs.append(_include_spec(line[8:]))
+                    continue
+                if line.startswith("/"):
+                    head = line.split()[0] if line.split() else line
+                    pieces = [x for x in head.split("/") if x]
+                    kw = pieces[0].upper() if pieces else ""
+                    if kw == "END":
+                        break
+                    if kw == "INCLUDE":
+                        rest = line.strip()[len("/INCLUDE"):].strip()
+                        if rest:
+                            specs.append(_include_spec(rest))
+                        else:
+                            pending = True
+        for orig in specs:
+            if not orig:
+                continue
+            found, _, cands, _, _ = _resolve_include(orig, root_dir, path, include_path_map)
+            if found is None:
+                for c in cands:
+                    add(c)
+                continue
+            add(found)
+            if depth + 1 <= max_depth:
+                walk(os.path.normpath(found), depth + 1)
+
+    walk(root, 0)
+    return out
+
+
 @dataclass
 class _Card:
     kw: str
@@ -225,6 +327,7 @@ class _Deck:
         self.path_map = dict(path_map) if path_map else None
         self.node_id = array("q")
         self.node_xyz = array("d")
+        self.node_unit = array("q")     # 각 노드 정의가 속한 /NODE 블록의 unit_ID (없으면 0)
         # 쉘: id, part, n1..n4 (6개씩), 두께, 타입
         self.sh_int = array("q")
         self.sh_thk = array("d")
@@ -291,36 +394,19 @@ class _Deck:
             raise _err(f"/INCLUDE 다음에 경로가 없음: {path}")
 
     def _include(self, spec: str, src: str, depth: int, lineno: int) -> None:
-        orig = spec.strip().strip('"').strip("'").strip()
+        orig = _include_spec(spec)
         if not orig:
             raise _err(f"인클루드 경로가 비어 있음 ({src}:{lineno})")
         if depth + 1 > self.max_depth:
             raise _err(f"인클루드 깊이 제한({self.max_depth}) 초과 ({src}:{lineno}): {orig}")
-        name = orig.replace("\\", "/")
-        src_dir = os.path.dirname(os.path.abspath(src))
-        win_abs = _is_windows_abs(name)
-        mapped = _map_path(name, self.path_map)
-        if mapped is not None:
-            cands = [mapped]
-        elif os.path.isabs(name) or win_abs:
-            cands = [name]
-        else:
-            cands = [os.path.join(self.root_dir, name), os.path.join(src_dir, name)]
-        for c in cands:
-            if os.path.isfile(c):
-                self._enter(c, depth)
-                return
-        # 대체: 파일명만으로 rad 폴더·포함하는 파일 폴더에서 찾기
-        base = name.rstrip("/").rsplit("/", 1)[-1]
-        if base and (win_abs or os.path.isabs(name) or mapped is not None):
-            for d in dict.fromkeys((self.root_dir, src_dir)):
-                c = os.path.join(d, base)
-                if os.path.isfile(c):
-                    self.warnings.append(
-                        f"인클루드 경로 {orig!r} 를 찾지 못해 파일명으로 대체: {os.path.normpath(c)} "
-                        f"({src}:{lineno}) — include_path_map 확인 권장")
-                    self._enter(c, depth)
-                    return
+        found, by_base, cands, win_abs, mapped = _resolve_include(orig, self.root_dir, src, self.path_map)
+        if found is not None:
+            if by_base:
+                self.warnings.append(
+                    f"인클루드 경로 {orig!r} 를 찾지 못해 파일명으로 대체: {os.path.normpath(found)} "
+                    f"({src}:{lineno}) — include_path_map 확인 권장")
+            self._enter(found, depth)
+            return
         hint = ""
         if win_abs or mapped is not None:
             hint = (" — Windows 절대 경로면 include_path_map={'<드라이브>:/원래/접두': '/리눅스/경로'} 로 매핑하거나 "
@@ -359,6 +445,7 @@ class _Deck:
                 x, y, z = (_f(line[10:30]) or 0.0), (_f(line[30:50]) or 0.0), (_f(line[50:70]) or 0.0)
                 self.node_id.append(nid)
                 self.node_xyz.extend((x, y, z))
+                self.node_unit.append(int(c.unit or 0))
                 if nid > self.max_ids["node"]:
                     self.max_ids["node"] = nid
             elif kw in _SHELL_KW:
@@ -404,20 +491,22 @@ class _Deck:
                     "title": title,
                     "prop_id": _i(_cell(data, 0)),
                     "mat_id": _i(_cell(data, 1)),
-                    "file": c.file, "line": c.line,
+                    "file": c.file, "line": c.line, "unit": c.unit,
                 }
             elif c.kw == "PROP" and c.hid is not None:
                 sub = c.sub or ""
                 thick = None
                 if sub in ("SHELL", "TYPE1") and len(c.rows) >= 4:
                     thick = _f(c.rows[3][20:40])
-                self.props[c.hid] = {"type": sub, "thick": thick, "file": c.file, "line": c.line}
+                self.props[c.hid] = {"type": sub, "thick": thick, "file": c.file, "line": c.line,
+                                     "unit": c.unit}
             elif c.kw == "MAT" and c.hid is not None:
                 sub = c.sub or ""
                 law = _LAW.get(sub)
                 ent: dict[str, Any] = {"law": law or sub, "supported": law is not None,
                                        "E": None, "nu": None, "rho": None,
-                                       "file": c.file, "line": c.line}
+                                       "file": c.file, "line": c.line, "unit": c.unit,
+                                       "sub": sub}
                 if law is not None:
                     rows = c.rows
                     if len(rows) >= 2:
@@ -551,6 +640,23 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
         mrec = {"id": int(mat_id), "law": mat["law"], "E": float(mat["E"]), "nu": float(mat["nu"]),
                 "rho": mat["rho"], "source": "rad"}
 
+    # ---------------- unit_ID (변환하지 않음 → 경고만)
+    unit_warn: list[str] = []
+
+    def _uw(card: str, unit) -> None:
+        if unit:
+            unit_warn.append(f"UNIT_ID_IGNORED: {card} unit={int(unit)} — 단위 변환 없이 값 그대로 사용")
+
+    _uw(f"/PART/{part_id}", part.get("unit"))
+    if prop is not None:
+        _uw(f"/PROP/{prop['type']}/{prop_id}", prop.get("unit"))
+    if mat is not None and ov is None:
+        _uw(f"/MAT/{mat.get('sub') or mat['law']}/{mat_id}", mat.get("unit"))
+    if len(deck.node_unit):
+        nu_all = np.frombuffer(deck.node_unit, dtype=np.int64)[src_idx[pos]]
+        for u in np.unique(nu_all[nu_all != 0]).tolist():
+            _uw("/NODE", u)
+
     ne = elem_id.size
     return RadModel(
         node_id=node_id.astype(np.int64),
@@ -568,7 +674,7 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
         mats=[mrec],
         max_ids=dict(deck.max_ids),
         includes=list(deck.includes),
-        warnings=list(deck.warnings),
+        warnings=list(deck.warnings) + unit_warn,
     )
 
 

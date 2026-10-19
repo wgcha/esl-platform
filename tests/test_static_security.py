@@ -1,4 +1,5 @@
-"""T-SEC-1: esl/ 아래 pickle, allow_pickle=True, shell=True, os.system, 드라이브 문자·POSIX 절대경로 리터럴 0건.
+"""T-SEC-1: esl/ 아래 pickle·shelve·marshal·read_pickle, allow_pickle=True, shell= 키워드, os.system·exec*·spawn*·popen,
+subprocess import, 드라이브 문자·POSIX 절대경로(/home /tmp /var /etc /opt /usr ...) 리터럴 0건.
 
 resources/tcl/*.tcl 도 드라이브 문자 절대경로 리터럴 0건(주석 행·README 제외).
 """
@@ -10,16 +11,25 @@ PKG = os.path.join(ROOT, "esl")
 
 PATTERNS = {
     "pickle": re.compile(r"\bpickle\b|\bcPickle\b|\bdill\b"),
+    "shelve/marshal/read_pickle": re.compile(r"\bshelve\b|\bmarshal\b|\bread_pickle\b"),
     "allow_pickle=True": re.compile(r"allow_pickle\s*=\s*True"),
-    "shell=True": re.compile(r"shell\s*=\s*True"),
-    "os.system": re.compile(r"\bos\s*\.\s*system\b|\bos\s*\.\s*popen\b"),
+    # shell= 키워드 자체 금지(shell=True 뿐 아니라 shell=1 등 참값 우회도 차단)
+    "shell=": re.compile(r"\bshell\s*=(?!=)"),
+    "os.system/exec/spawn/popen": re.compile(r"\bos\s*\.\s*(?:system|popen|exec\w*|spawn\w*)\b"),
+    "from os import": re.compile(r"\bfrom\s+os\s+import\b[^#\n]*\b(?:system|popen|exec\w*|spawn\w*)\b"),
+    "subprocess": re.compile(r"\bimport\s+[^#\n]*\bsubprocess\b|\bfrom\s+subprocess\b|"
+                             r"__import__\(\s*[\"']subprocess"),
     # 문자열 리터럴 안의 드라이브 문자 절대경로 (C:\ , D:/ ...)
     "drive_abs_path": re.compile(r"""["'][A-Za-z]:[\\/]"""),
-    # 문자열 리터럴 안의 POSIX 절대경로 (사용자·임시·데이터 마운트)
-    "posix_abs_path": re.compile(r"""["'](/home/|/tmp/|/data\b|/mnt\b|/root/|/Users/)"""),
+    # 문자열 리터럴 안의 POSIX 절대경로 (사용자·임시·데이터 마운트·시스템 폴더)
+    "posix_abs_path": re.compile(r"""["'](/home/|/tmp/|/data\b|/mnt\b|/root/|/Users/|/var/|/etc/|/opt/|/usr/)"""),
     "unc_path": re.compile(r"""["']\\\\\\\\[A-Za-z0-9]"""),
     "program_files": re.compile(r"Program Files", re.I),
 }
+
+
+def _hits(text: str) -> list[str]:
+    return [name for line in text.splitlines() for name, rx in PATTERNS.items() if rx.search(line)]
 
 
 def _py_files():
@@ -92,3 +102,48 @@ def test_no_subprocess_in_core():
     """P1a 코어에는 외부 실행 자체가 없음."""
     bad = [p for p in _py_files() if re.search(r"^\s*(import|from)\s+subprocess\b", open(p, encoding="utf-8").read(), re.M)]
     assert bad == []
+
+
+def test_forbidden_patterns_self_check():
+    """위반 문자열이 각각 걸리고, 정상 코드는 걸리지 않는지(정규식 자가 점검)."""
+    bad = {
+        "import subprocess": "subprocess",
+        "import os, subprocess as sp": "subprocess",
+        "from subprocess import run": "subprocess",
+        "m = __import__('subprocess')": "subprocess",
+        "from os import system": "from os import",
+        "from os import path, popen": "from os import",
+        "from os import execv": "from os import",
+        "os.execvp('a', [])": "os.system/exec/spawn/popen",
+        "os.spawnl(0, 'a')": "os.system/exec/spawn/popen",
+        "os.popen('ls')": "os.system/exec/spawn/popen",
+        "os.system('ls')": "os.system/exec/spawn/popen",
+        "run(cmd, shell=True)": "shell=",
+        "run(cmd, shell=1)": "shell=",
+        "run(cmd, shell = 'yes')": "shell=",
+        "import shelve": "shelve/marshal/read_pickle",
+        "pd.read_pickle(p)": "shelve/marshal/read_pickle",
+        "import marshal": "shelve/marshal/read_pickle",
+        "import pickle": "pickle",
+        "np.load(p, allow_pickle=True)": "allow_pickle=True",
+        'p = "/var/log/x"': "posix_abs_path",
+        "p = '/etc/passwd'": "posix_abs_path",
+        'p = "/opt/esl"': "posix_abs_path",
+        'p = "/usr/bin/python"': "posix_abs_path",
+        'p = "C:/esl"': "drive_abs_path",
+    }
+    for text, name in bad.items():
+        assert name in _hits(text), (text, name, _hits(text))
+    ok = [
+        "from os import path",
+        "import os.path",
+        "sm = ctx.shell(drill_factor=1.0)",
+        "if shell == 1: pass",
+        "x = os.path.join(a, 'usr', 'var')",
+        "p = 'a/var/b'",
+        "sub = process(x)",
+        "np.load(p, allow_pickle=False)",
+        "ShellModel(x0)",
+    ]
+    for text in ok:
+        assert _hits(text) == [], (text, _hits(text))

@@ -269,3 +269,44 @@ def test_include_windows_abs_unresolved_message(tmp_path):
     assert ei.value.code == "RAD_PARSE_ERROR"
     msg = str(ei.value)
     assert "D:/elsewhere/nothere.inc" in msg and "include_path_map" in msg
+
+
+def test_unit_id_ignored_warnings(tmp_path):
+    p = tmp_path / "unit_0000.rad"
+    p.write_text(_UNIT_DECK)
+    w = [x.split(" — ")[0] for x in parse_rad(p, "unit part").warnings if x.startswith("UNIT_ID_IGNORED")]
+    # /PROP/SHELL/9 · /MAT/LAW2/9 (대상 파트가 쓰지 않음) 는 경고 없음
+    assert w == ["UNIT_ID_IGNORED: /PART/10 unit=9", "UNIT_ID_IGNORED: /PROP/SHELL/1 unit=9",
+                 "UNIT_ID_IGNORED: /MAT/ELAST/1 unit=9", "UNIT_ID_IGNORED: /NODE unit=9"]
+    # unit 0 · 없음 → 경고 없음
+    q = tmp_path / "nounit_0000.rad"
+    q.write_text(_UNIT_DECK.replace("/NODE/9", "/NODE/0").replace("/PART/10/9", "/PART/10")
+                 .replace("/MAT/ELAST/1/9", "/MAT/ELAST/1").replace("/PROP/SHELL/1/9", "/PROP/SHELL/1/0"))
+    assert not [x for x in parse_rad(q, "unit part").warnings if x.startswith("UNIT_ID_IGNORED")]
+    # material_override 를 쓰면 /MAT 값은 쓰지 않으므로 /MAT 경고 없음
+    m = parse_rad(p, "unit part", material_override={1: {"E": 1.0e5, "nu": 0.3}})
+    assert not any("/MAT/" in x for x in m.warnings if x.startswith("UNIT_ID_IGNORED"))
+
+
+# ---------------------------------------------------------------- scan_includes
+def test_scan_includes_matches_parse_rad():
+    from esl.rad import scan_includes
+    assert scan_includes(MAIN) == parse_rad(MAIN, "main board").includes
+
+
+def test_scan_includes_lenient_and_path_map(tmp_path):
+    from esl.rad import scan_includes
+    d = _win_inc_deck(tmp_path, '/INCLUDE "C:\\Users\\Eng\\Proj\\inc\\level1.inc"')
+    # 매핑 없음 → 찾지 못한 후보 경로를 돌려줌(오류 없음)
+    assert scan_includes(d / "main.rad") == [os.path.normpath(os.path.abspath("C:/Users/Eng/Proj/inc/level1.inc"))]
+    got = scan_includes(d / "main.rad", include_path_map={"c:/users/eng/PROJ": str(d)})
+    assert [os.path.basename(p) for p in got] == ["level1.inc", "level2.inc"]
+    # 깊이 제한 0: 최상위 rad 의 include 만(그 안은 따라가지 않음 — 보호용이라 parse_rad 보다 한 단 넉넉)
+    assert [os.path.basename(p) for p in scan_includes(d / "main.rad", {"c:/users/eng/PROJ": str(d)}, 0)] == \
+        ["level1.inc"]
+    # 순환 include → 무한 반복 없음, 다음 비주석 행 경로·/END 뒤 무시
+    a, b = tmp_path / "a.rad", tmp_path / "b.inc"
+    a.write_text('/INCLUDE\n# c\n"b.inc"\n/END\n#include never.inc\n')
+    b.write_text("#include a.rad\n")
+    assert scan_includes(a) == [os.path.normpath(str(b)), os.path.normpath(str(a))]
+    assert scan_includes(tmp_path / "missing.rad") == []

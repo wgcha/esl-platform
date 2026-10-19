@@ -3,7 +3,9 @@
 - 각 단계는 앞 단계의 **디스크 산출물만** 읽는다 → ``stage`` 하나만 다시 돌려 재개 가능.
 - 입력(rad·결과 CSV 폴더)에는 쓰지 않는다. 출력 폴더가 입력 폴더와 겹치면 ``INPUT_INVALID``.
   겹침은 ``os.path.realpath`` 기준(심볼릭 링크·``..`` 우회 차단). 보호 대상 = rad 폴더, rad 가 실제로 읽은
-  include 파일의 폴더, 결과 CSV 폴더. 모든 쓰기(백업 이동 포함) 직전에 대상 realpath 가 출력 루트
+  include 파일의 폴더, 결과 CSV 폴더. include 목록은 단계와 무관하게 어떤 쓰기보다 먼저
+  ``scan_includes``(본문 해석 없는 include 트리 스캔, 설정 로드 뒤 include_path_map 으로 재스캔)와 이전 실행
+  기록(run.json·model_meta.json)의 합집합으로 정한다. 모든 쓰기(백업 이동 포함) 직전에 대상 realpath 가 출력 루트
   realpath 안이고 보호 대상 밖인지 다시 확인한다.
 - S4 는 변위 저장 정밀도(``extract.disp_precision``)의 잡음 바닥을 추정해 ``esl_summary.json`` 의
   ``noise`` 에 기록한다(검증 기준 초과 시 S5 verdict FAIL, 사유 ``NOISE_FLOOR``).
@@ -42,7 +44,7 @@ from esl.export import csvout, optistruct, radioss
 from esl.io import pack_results
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel
-from esl.rad import parse_rad
+from esl.rad import parse_rad, scan_includes
 
 STAGES = ("extract", "tstar", "esl", "validate", "export")
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = (
@@ -256,6 +258,7 @@ class Context:
     warnings: list = field(default_factory=list)
     protected: list = field(default_factory=list)
     out_real: str = ""
+    includes: list = field(default_factory=list)
 
     def p(self, *parts) -> str:
         return os.path.join(self.out, *parts)
@@ -276,8 +279,11 @@ class Context:
         return self.guard(os.path.join(d, name))
 
     def protect(self, includes) -> None:
-        """rad 가 실제로 읽은 include 폴더를 보호 대상에 추가하고 출력 겹침을 다시 검사."""
-        self.protected = protected_dirs(self.rad, self.results, includes)
+        """include 폴더를 보호 대상에 추가(기존 목록과 합집합)하고 출력 겹침을 다시 검사."""
+        for p in includes:
+            if p not in self.includes:
+                self.includes.append(p)
+        self.protected = protected_dirs(self.rad, self.results, self.includes)
         self.out_real = check_overlap(self.out, self.protected)
 
     def fresh_dir(self, sub: str) -> str:
@@ -811,6 +817,28 @@ def _known_includes(out: str) -> list[str]:
     return paths
 
 
+_PRESCAN_DEPTH = 64     # 설정을 읽기 전 사전 스캔 깊이(보호 목적이므로 넉넉히)
+
+
+def _scan_includes_safe(rad: str, include_path_map=None, max_depth: int = _PRESCAN_DEPTH) -> list[str]:
+    """rad 의 include 트리(본문 해석 없음). rad 가 없거나 읽기 실패면 빈 목록."""
+    if not os.path.isfile(rad):
+        return []
+    try:
+        return scan_includes(rad, include_path_map=include_path_map or None, max_depth=max_depth)
+    except (OSError, ValueError):
+        return []
+
+
+def _union(*lists) -> list[str]:
+    out: list[str] = []
+    for lst in lists:
+        for p in lst:
+            if p not in out:
+                out.append(p)
+    return out
+
+
 def _check_paths(rad: str, results: str, out: str, includes=()) -> tuple[list, str]:
     """보호 폴더 목록과 출력 realpath. 겹치면 INPUT_INVALID."""
     prot = protected_dirs(rad, results, includes)
@@ -829,9 +857,10 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
     if out is None or rad is None or results is None:
         raise EslError("INPUT_INVALID", "--rad, --results, --out 이 모두 필요")
     rad, results, out = (os.path.abspath(os.fspath(p)) for p in (rad, results, out))
-    prot, out_real = _check_paths(rad, results, out)
-    if os.path.isdir(out):
-        prot, out_real = _check_paths(rad, results, out, _known_includes(out))
+    # 어떤 쓰기(폴더 생성·백업 이동·run.json)보다 먼저: rad 의 include 트리 + 이전 실행 기록의 include 를
+    # 보호 대상에 넣고 출력 겹침 검사 (단계와 무관하게 항상)
+    includes = _union(_scan_includes_safe(rad), _known_includes(out) if os.path.isdir(out) else [])
+    prot, out_real = _check_paths(rad, results, out, includes)
     if stage != "all" and stage not in STAGES:
         raise EslError("INPUT_INVALID", f"--stage 는 {list(STAGES) + ['all']} 중 하나 (값 {stage})")
     rj = os.path.join(out, RUN_JSON)
@@ -847,7 +876,8 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
     record.setdefault("history", []).append(inv)
     record["error"] = None
     ctx = Context(cfg=cfg or {}, config_path="", rad=rad, results=results, out=out, ts=ts, frame=frame,
-                  support_nodes=support_nodes, echo=echo, record=record, protected=prot, out_real=out_real)
+                  support_nodes=support_nodes, echo=echo, record=record, protected=prot, out_real=out_real,
+                  includes=list(includes))
     cur = "config"
     try:
         ctx.guard(rj)               # run.json 이 밖을 가리키는 링크면 아무 단계도 실행하지 않음
@@ -858,6 +888,10 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
         else:
             ctx.cfg = _config.validate_settings(cfg)
             ctx.config_path = os.path.abspath(config_path) if config_path else ""
+        cc = ctx.cfg.get("case") or {}
+        # 설정의 include_path_map 으로 다시 스캔(매핑 경로의 include 폴더도 보호)
+        ctx.protect(_scan_includes_safe(rad, cc.get("include_path_map"),
+                                        max(int(cc.get("rad_include_max_depth") or 8), _PRESCAN_DEPTH)))
         snap = _config.redacted_settings(ctx.cfg)
         csha = hashlib.sha256(json.dumps(snap, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         record["config"] = {"path": ctx.config_path, "sha256": csha, "snapshot": snap}

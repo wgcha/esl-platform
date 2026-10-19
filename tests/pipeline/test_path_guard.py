@@ -239,3 +239,78 @@ def test_include_path_map_from_config(case, tmp_path):
     assert [os.path.realpath(p) for p in meta["includes"]] == [os.path.realpath(os.path.join(inc, "model.inc"))]
     run = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))
     assert run["config"]["snapshot"]["case"]["include_path_map"] == {"D:/proj/cae": inc.replace("\\", "/")}
+
+
+# ------------------------------------------------------------------ 새 out + --stage (verify2/fs3.py I·J·L)
+def _rel_include_deck(case, tmp_path, via_link=False):
+    """rad 폴더 밖 형제 폴더의 include(상대 경로 ../incdir/model.inc, 또는 링크 ../inclink/model.inc)."""
+    inc = tmp_path / "incdir"
+    inc.mkdir()
+    shutil.copy(case["rad"], inc / "model.inc")
+    name = "incdir"
+    if via_link:
+        os.symlink(str(inc), str(tmp_path / "inclink"))
+        name = "inclink"
+    deck = tmp_path / "deck"
+    deck.mkdir()
+    (deck / "main_0000.rad").write_text(f'#RADIOSS STARTER\n/INCLUDE "../{name}/model.inc"\n', encoding="utf-8")
+    return str(deck / "main_0000.rad"), str(inc)
+
+
+def test_new_out_is_include_dir_later_stage_no_write(case, tmp_path, capsys):
+    """(I) out = include 폴더, --stage tstar, run.json·model_meta.json 없음 → 아무것도 쓰거나 옮기지 않음."""
+    rad, inc = _rel_include_deck(case, tmp_path)
+    # include 폴더에 있던 run.json(사용자 파일)도 _backup 으로 옮기지 않아야 함
+    with open(os.path.join(inc, "run.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}\n")
+    before = _snapshot(inc)
+    assert cli.main(_args(case, inc, "--stage", "tstar", rad=rad)) == 1
+    err = _err(capsys)
+    assert err.startswith("INPUT_INVALID: ") and "include" in err
+    assert _snapshot(inc) == before
+    assert sorted(os.listdir(inc)) == ["model.inc", "run.json"]
+
+
+def test_new_out_under_include_dir_export_stage_no_write(case, tmp_path, capsys):
+    """(J) out = include 폴더/sub, --stage export → sub 폴더도 만들지 않음."""
+    rad, inc = _rel_include_deck(case, tmp_path)
+    before = _snapshot(inc)
+    assert cli.main(_args(case, os.path.join(inc, "sub"), "--stage", "export", rad=rad)) == 1
+    assert _err(capsys).startswith("INPUT_INVALID: ")
+    assert _snapshot(inc) == before and sorted(os.listdir(inc)) == ["model.inc"]
+
+
+@needs_symlink
+def test_new_out_under_include_symlink_esl_stage_no_write(case, tmp_path, capsys):
+    """(L) include 를 링크 폴더로 참조, out = 링크/o3, --stage esl → 실제 include 폴더에 쓰지 않음."""
+    rad, inc = _rel_include_deck(case, tmp_path, via_link=True)
+    before = _snapshot(inc)
+    assert cli.main(_args(case, str(tmp_path / "inclink" / "o3"), "--stage", "esl", rad=rad)) == 1
+    assert _err(capsys).startswith("INPUT_INVALID: ")
+    assert _snapshot(inc) == before and sorted(os.listdir(inc)) == ["model.inc"]
+
+
+def test_prerequisite_missing_new_out_outside_inputs(case, tmp_path, capsys):
+    """단계 시작 전 실패(PREREQUISITE_MISSING): 보호 검사를 통과한 출력에만 run.json 기록, 입력 불변."""
+    rad, inc = _rel_include_deck(case, tmp_path)
+    before = _snapshot(inc)
+    out = str(tmp_path / "fresh")
+    assert cli.main(_args(case, out, "--stage", "tstar", rad=rad)) == 1
+    assert _err(capsys).startswith("PREREQUISITE_MISSING: ")
+    assert sorted(os.listdir(out)) == ["run.json"]
+    assert json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))["error"]["code"] == "PREREQUISITE_MISSING"
+    assert _snapshot(inc) == before
+    _inputs_unchanged(case)
+
+
+def test_include_path_map_dir_protected_on_later_stage(case, tmp_path, capsys):
+    """설정 include_path_map 으로만 찾는 include 폴더도 --stage tstar 새 out 에서 보호."""
+    rad, inc = _include_deck(case, tmp_path, spec_prefix="D:/proj/cae")
+    cfg = tmp_path / "map.yaml"
+    cfg.write_text(open(case["cfg"], encoding="utf-8").read().replace(
+        "include_path_map: {}", "include_path_map: {\"D:/proj/cae\": \"" + inc.replace("\\", "/") + "\"}"),
+        encoding="utf-8")
+    before = _snapshot(inc)
+    assert cli.main(_args(case, os.path.join(inc, "o"), "--stage", "tstar", rad=rad, cfg=str(cfg))) == 1
+    assert _err(capsys).startswith("INPUT_INVALID: ")
+    assert _snapshot(inc) == before and sorted(os.listdir(inc)) == ["model.inc"]

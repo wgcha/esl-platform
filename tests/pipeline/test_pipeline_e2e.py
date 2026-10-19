@@ -240,3 +240,26 @@ def test_export_id_range_collision(case, tmp_path, capsys):
     assert cli.main(args) == 1
     assert capsys.readouterr().err.startswith("ID_RANGE_COLLISION: ")
     assert os.path.isfile(os.path.join(out, "06_export", "esl_cload.inc"))     # 기존 산출물 유지
+
+
+def test_unit_id_ignored_warning(case, tmp_path, capsys):
+    """대상 파트의 /PART·/PROP·/MAT·/NODE 헤더 unit_ID ≠ 0 → 변환 없이 경고(run.json·콘솔)."""
+    d = tmp_path / "unit_in"
+    d.mkdir()
+    txt = open(case["rad"], encoding="utf-8").read()
+    for a, b in (("/NODE\n", "/NODE/3\n"), ("/PART/7\n", "/PART/7/3\n"), ("/PROP/SHELL/70\n", "/PROP/SHELL/70/3\n"),
+                 ("/MAT/LAW1/700\n", "/MAT/LAW1/700/3\n"), ("/MAT/LAW1/701\n", "/MAT/LAW1/701/5\n")):
+        assert a in txt
+        txt = txt.replace(a, b)
+    rad = d / "unit_0000.rad"
+    rad.write_text(txt, encoding="utf-8")
+    out = str(tmp_path / "o")
+    assert cli.main(["run", "--config", case["cfg"], "--rad", str(rad), "--results", case["csv"], "--out", out,
+                     "--stage", "extract"]) == 0
+    con = capsys.readouterr().out
+    w = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))["stages"]["extract"]["warnings"]
+    got = sorted(x.split(" — ")[0] for x in w if x.startswith("UNIT_ID_IGNORED"))
+    assert got == ["UNIT_ID_IGNORED: /MAT/LAW1/700 unit=3", "UNIT_ID_IGNORED: /NODE unit=3",
+                   "UNIT_ID_IGNORED: /PART/7 unit=3", "UNIT_ID_IGNORED: /PROP/SHELL/70 unit=3"]
+    assert "unit=5" not in json.dumps(w)              # 대상 파트가 쓰지 않는 카드는 경고 없음
+    assert con.count("경고: UNIT_ID_IGNORED") == 4

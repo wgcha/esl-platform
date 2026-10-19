@@ -23,3 +23,4 @@
 - (P1a) 대상 파트는 조립체에서 떼어 낸 자유물체로 본다: 전 노드 Kabsch로 강체 제거, 전 노드 F_eq(자기평형), 3-2-1 정정 구속(반력≈0). zero/residual 옵션은 폐기(근거: 사용자 확인 — BC점은 임의점, 실제 정적 고정 없음).
 - (P1a) ε_eq는 TCL이 내보낸 면내 텐서로 Python이 계산: 비압축 von Mises (2/√3)·sqrt(exx²+eyy²+exx·eyy+exy²), layer 최대. 판정 기준 임시값 유지(사용자 확인 1번).
 - (P1a) 플랫폼(API·DB·워커·UI)은 P1b로 미루고, 계산 코어 + CLI를 먼저 만든다.
+- (P1a) 변위 정밀도 잡음은 감지만 한다(잡음 바닥 추정 → 경고·NOISE_FLOOR FAIL). 정규화 필터는 실제 h3d로 잡음 수준 측정 후 결정(근거: Verifier float32 정량화, 2 mm 변형에서 절점력 잡음 13배·hotspot 1.8%).
