@@ -24,3 +24,6 @@
 - (P1a) ε_eq는 TCL이 내보낸 면내 텐서로 Python이 계산: 비압축 von Mises (2/√3)·sqrt(exx²+eyy²+exx·eyy+exy²), layer 최대. 판정 기준 임시값 유지(사용자 확인 1번).
 - (P1a) 플랫폼(API·DB·워커·UI)은 P1b로 미루고, 계산 코어 + CLI를 먼저 만든다.
 - (P1a) 변위 정밀도 잡음은 감지만 한다(잡음 바닥 추정 → 경고·NOISE_FLOOR FAIL). 정규화 필터는 실제 h3d로 잡음 수준 측정 후 결정(근거: Verifier float32 정량화, 2 mm 변형에서 절점력 잡음 13배·hotspot 1.8%).
+- (P1a-2, 2026-10-19) h3d에는 순간 총변형률이 없고 Max_Strain·Plastic Strain(요소별 max-hold, Mid layer)만 있다 → t* = 최종 최대값에 처음 도달한 프레임(first-reach). 기본 지표 Max_Strain, Plastic Strain 결과도 병기(근거: #1 probe, 사용자 지시).
+- (P1a-2) TCL은 3패스(최종 프레임 전 요소 → 상위 요소 전 프레임 이력 → 후보 프레임만 전 노드 변위·전 요소 변형률)로 CSV 크기를 줄인다(근거: 22만 요소×126 프레임 전량 추출은 수 GB).
+- (P1a-2) 22만 요소 대응으로 CHOLMOD(scikit-sparse) 백엔드를 추가한다(근거: SuperLU 10만 요소 7.3 GB, 클라우드 15 GB).

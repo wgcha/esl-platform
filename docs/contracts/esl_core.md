@@ -115,3 +115,40 @@ class RadModel:
 | T-NOISE-1 | 변위 정밀도(`extract.disp_precision`) 잡음 바닥 추정: `noise.force_rel` 경고, `noise.hotspot_strain_rel > noise_strain_rel_max` → FAIL(`NOISE_FLOOR`). float32 합성 사례에서 검출 |
 | T-FS-1 | 출력 경로 겹침 검사는 realpath 기준(심링크 우회 불가), 보호 대상 = rad 폴더·include 폴더·CSV 폴더 |
 | T-SEC-1 | 정적: `pickle`, `allow_pickle=True`, `shell=True`, `os.system`, 하드코딩 절대경로 0건 |
+
+---
+
+## 7. 실데이터 반영 (P1a-2, 2026-10-19) — §3.2·§3.3·§4 tstar·§5 S2/S5를 대체
+
+근거: #1 probe(HyperWorks 2026.1, Tcl 8.5.9). h3d 결과 유형 = `Displacement`, `Max_Strain`(텐서 XX YY ZZ XY YZ ZX + 불변량 vonMises 등, layer `Mid`만), `Plastic Strain`(스칼라, `Mid`), `Von Mises`, `Velocity`, `Contact Forces`. 프레임 126개(0~0.125 s, 1 ms). chassis_rear = component id 10, 223,415 요소.
+
+### 7.1 지표 의미
+- `Max_Strain`, `Plastic Strain`은 **요소별 누적 최대(max-hold)** 값이다: 한 번 최대에 도달하면 이후 그 값을 유지. 순간 총변형률은 h3d에 없다.
+- 따라서 t*는 "값이 처음 최대에 도달한 프레임(first-reach)"이다. `first_reach(e) = min{f : v[f,e] ≥ v[F-1,e]·(1−rtol)}`, rtol = 설정 `tstar.reach_rtol`(기본 1e-6).
+- 지표 선택 `tstar.metric`: `max_strain`(기본, Max_Strain 텐서로 계산한 ε_eq) | `plastic_strain`. 두 지표 결과는 항상 둘 다 tstar.json에 기록.
+- 층: `Mid`만 존재 → ε_eq는 막(중립면) 변형률 기준. 솔버 비교도 z=0(막) 변형률. `extract.layers: [mid]`.
+- ε_eq 공식은 §4 그대로(비압축 in-plane, exx·eyy·exy). 전단 규약(`extract.shear_convention: auto|tensor|engineering`) — auto는 HyperView `vonMises`와 가장 잘 맞는 쪽을 고르고 최대 상대 불일치를 extract 요약에 기록(> 5%면 경고).
+
+### 7.2 TCL 추출(1회 실행, 3 패스) — 출력 CSV
+| 패스 | 대상 | 파일 | 헤더 |
+|---|---|---|---|
+| — | 전 프레임 시간 | `frames.csv` | `frame_index,time` |
+| — | 파트 노드 초기좌표 | `model.csv` | `node_id,x0,y0,z0` |
+| A | 마지막 프레임, 파트 전 요소 | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+| B | 전 프레임, 집합 H만 | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+| C | 후보 프레임 D, 파트 전 노드·전 요소 | `disp.csv`, `strain_frames.csv` | `frame_index,node_id,ux,uy,uz` / `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+- H = (final vm_hv 상위 `hot_k`) ∪ (final epsp 상위 `hot_k`), `hot_k` 기본 200.
+- D = 각 지표(vm_hv, epsp)에 대해 H를 최종값 내림차순으로 훑으며 first-reach 프레임을 서로 다른 것만 `top_n_times`(기본 5)개까지 모은 합집합(≤10). rank 1 = 최종값 1위 요소의 first-reach.
+- TCL 인자: `-part`(필수 또는 request.txt), 선택 `-hot_k`, `-top_n`. 결과 유형·성분·layer 이름 기본값은 위 probe 값. done.json에 `candidate_frames:{max_strain:[...],plastic_strain:[...]}`, `hot_k`, `reach_rtol`, 패스별 행 수·소요시간.
+- 수치 `%.17g`, Tcl 8.5 호환 유지.
+
+### 7.3 Python 패킹(`pack_results`) — npz
+`final.npz`{elem_id(E,), vm_hv(E,)f4, eps(E,3)f4[exx,eyy,exy], ezz(E,)f4, epsp(E,)f4}, `history.npz`{time(F,), frame_index(F,), elem_id(H,), vm_hv(F,H), eps(F,H,3), ezz(F,H), epsp(F,H)}, `strain_frames.npz`{frame_index(D,), time(D,), elem_id(E,), vm_hv(D,E), eps(D,E,3), ezz(D,E), epsp(D,E)}, `disp.npz`{frame_index(D,), time(D,), node_id(N,), u(D,N,3)f8}. 기존 strain_tensor.npz 형식은 폐기(합성 E2E도 새 형식으로).
+
+### 7.4 S2·S5 규칙
+- tstar.json: 지표별 `{tstar:{frame_index,time,elem_id,value}, candidates:[{rank,frame_index,time,elem_id,value}], history:{time, m(f)=max_{e∈H} v[f,e]}}`. Python이 history.npz로 first-reach를 재계산해 TCL의 D와 일치 확인(불일치 경고).
+- hotspot(검증 대상) = t*에서 "상승 중"인 H 요소: `v[t*,e] > v[t*−1,e]·(1+rtol)` (t*=0이면 v>0). 이들의 hold 값은 t*의 순간값과 같다. 거리 필터(`hotspot_min_dist`, 요소 중심) 후 상위 `top_k_hotspots`. rank 1(최종값 1위)은 정의상 포함.
+- S5: 솔버 막 변형률 ε_eq vs 위 hotspot의 Radioss ε_eq(같은 공식). 상승 중이 아닌 요소는 비교 제외(이유 기록).
+
+### 7.5 솔버 규모
+- 22만 요소(약 1.35M dof)는 SuperLU로 15 GB 메모리에 들어가지 않는다. `solver.backend: auto|cholmod|superlu` — auto = CHOLMOD(scikit-sparse) 있으면 사용, 없으면 SuperLU + 요소 수 경고. 목표: 22만 요소 S4+S5가 15 GB·4코어에서 완료.
