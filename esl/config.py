@@ -69,6 +69,12 @@ def _int_list(key, v):
         raise _bad(key, f"정수 목록이어야 함 (값 {v!r})")
 
 
+def _layers(key, v):
+    if not isinstance(v, list) or not v or len(set(map(str, v))) != len(v) \
+            or any(x not in ("mid", "bottom", "top") for x in v):
+        raise _bad(key, f"[mid|bottom|top] 중복 없는 비어 있지 않은 목록이어야 함 (값 {v!r})")
+
+
 def _time_window(key, v):
     if not isinstance(v, list) or len(v) != 2:
         raise _bad(key, f"[t_min, t_max] 2개 목록이어야 함 (null 허용) (값 {v!r})")
@@ -141,10 +147,14 @@ SCHEMA: dict[str, Any] = {
     },
     "extract": {
         "frame_stride": _int(1),
-        "shell_layer": _enum("max", "top", "bottom"),
+        "layers": _layers,
+        "shear_convention": _enum("auto", "tensor", "engineering"),
+        "hot_k": _int(1, 200),
         "disp_precision": _enum("float32", "float64"),
     },
     "tstar": {
+        "metric": _enum("max_strain", "plastic_strain"),
+        "reach_rtol": _num(0.0, 1.0, hi_open=True),
         "top_n_times": _int(1),
         "top_k_hotspots": _int(1),
         "hotspot_min_dist": _num(0.0),
@@ -156,6 +166,7 @@ SCHEMA: dict[str, Any] = {
         "node_ids": _int_list,
     },
     "solver": {
+        "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative"),
         "drill_factor": _num(0.0, 1.0, lo_open=True),
         "equilibrium_warn_rel": _num(0.0, lo_open=True),
     },
@@ -164,6 +175,7 @@ SCHEMA: dict[str, Any] = {
         "hotspot_strain_rel_err_max": _num(0.0, lo_open=True),
         "reaction_rel_max": _num(0.0, lo_open=True),
         "hotspot_eval_count": _int(1),
+        "full_solve": _enum("auto", "always", "never"),
         "noise_samples": _int(1, 100),
         "noise_force_rel_warn": _num(0.0, lo_open=True),
         "noise_strain_rel_max": _num(0.0, lo_open=True),

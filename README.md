@@ -52,13 +52,16 @@ h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows P
 
 ```bat
 set HW="C:\Program Files\Altair\2026.1\hwdesktop\hw\bin\win64\hw.exe"
-rem (1) 결과 이름 확인 → probe.json 을 보고 request.txt 작성
-%HW% -clientconfig hwpost.dat -b -tcl resources\tcl\esl_h3d_probe.tcl   -input D:\run\drop.h3d -config D:\run\request.txt -output D:\run\probe
-rem (2) CSV 추출 → D:\run\esl_csv (frames.csv, model.csv, strain.csv, disp.csv, done.json)
-%HW% -clientconfig hwpost.dat -b -tcl resources\tcl\esl_h3d_extract.tcl -input D:\run\drop.h3d -config D:\run\request.txt -output D:\run\esl_csv
+rem (1) 결과 이름 확인 → probe.json (기본 이름 Max_Strain/Plastic Strain/Mid 와 다를 때만 request.txt 작성)
+%HW% -clientconfig hwpost.dat -b -tcl resources\tcl\esl_h3d_probe.tcl   -input D:\run\drop.h3d -output D:\run\probe
+rem (2) 3패스 CSV 추출 → D:\run\esl_csv
+rem     (frames, model, final, history, strain_frames, disp .csv + done.json; 진행률은 콘솔)
+%HW% -clientconfig hwpost.dat -b -tcl resources\tcl\esl_h3d_extract.tcl -input D:\run\drop.h3d -part chassis_rear -output D:\run\esl_csv [-hot_k 200] [-top_n 5]
 ```
 
-`_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
+h3d 의 `Max_Strain`·`Plastic Strain` 은 요소별 누적 최대(max-hold)라서 t* = 최종값에 처음 도달한 프레임(first-reach).
+TCL 은 마지막 프레임 전 요소(A) → 상위 요소 H 전 프레임 이력(B) → 후보 프레임 D 만 전 노드 변위·전 요소 변형률(C)을
+뽑는다(22만 요소·D ≤ 10 에서 CSV 약 0.55 GB). `_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
 
 ## 3. 설정
 
@@ -67,6 +70,14 @@ rem (2) CSV 추출 → D:\run\esl_csv (frames.csv, model.csv, strain.csv, disp.c
 솔버, 판정 기준, ID 오프셋·서식, 단위 라벨. 잘못되면 `CONFIG_INVALID: <키>: <이유>`.
 
 - `case.include_path_map`: rad 안 Windows 절대경로 include 를 로컬 경로로 치환(`{"D:/proj/cae": "/data/cae"}`).
+- `tstar.metric`: `max_strain`(기본, Max_Strain 텐서의 ε_eq) | `plastic_strain`. 두 지표의 t*·후보·hotspot 은 항상
+  `tstar.json` 에 함께 기록. `tstar.reach_rtol`(기본 1e-6) = first-reach 허용오차. hotspot = t* 에서 값이 상승 중인 H 요소.
+  Python 이 history 로 TCL 의 후보 프레임 D 를 재계산해 다르면 경고(`tcl_check`).
+- `extract.layers: [mid]`: 검증 ε_eq 층(h3d 는 Mid 만 → 솔버도 막 z=0 변형률). `extract.shear_convention: auto`:
+  h3d XY 가 텐서/공학 전단인지 HyperView vonMises 와 비교해 판정(최대 불일치 > 5% 경고). `extract.hot_k`: TCL 값과 다르면 경고.
+- `solver.backend`: `auto` | `cholmod` | `pardiso` | `superlu` | `iterative`(ShellModel 에 전달).
+  `validation.full_solve`: `auto`(직접법 메모리 추정 ≤ 가용 메모리 80% 면 S5 전체 solve) | `always` | `never`.
+  생략하면 S5 는 u_rel + 응축 회전으로 막 변형률 hotspot 만 비교하고 `disp_rms_rel`·반력은 `skipped`(판정은 hotspot 기준).
 - `extract.disp_precision`: 변위 결과의 저장 정밀도(`float32` | `float64`, H3D 는 보통 float32).
   S4 가 이 정밀도의 잡음 바닥(δ = 0.5·ulp·max|X0+u|, 고정 시드 ±δ 섭동 `validation.noise_samples` 개)을
   추정해 `esl_summary.json`·`run.json`·콘솔에 `noise.force_rel`(rms(F_noise)/rms(F_eq)),
@@ -80,7 +91,7 @@ rem (2) CSV 추출 → D:\run\esl_csv (frames.csv, model.csv, strain.csv, disp.c
 ```bash
 python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /data/esl_csv --out /work/case01
 #   [--stage extract|tstar|esl|validate|export|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
-#   [--frame N]                    t* 수동 지정(frame_index, 후보 목록 안에서만 → 아니면 FRAME_NOT_CANDIDATE)
+#   [--frame N]                    t* 수동 지정(frame_index, 후보 프레임 D 안에서만 → 아니면 FRAME_NOT_CANDIDATE)
 #   [--support-nodes 101,202,303]  3-2-1 후보 노드 ID(3개 이상, 대상 파트 밖 → NODE_NOT_IN_PART)
 ```
 
@@ -96,11 +107,11 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 
 | 폴더 | 내용 |
 |---|---|
-| `01_extract/` | `model.npz`, `model_meta.json`, `strain_tensor.npz`, `disp.npz`, `frames.json` |
-| `02_tstar/` | `tstar.json`(자동·선택 t*, 후보, hotspot), `history.csv`, `hotspots.csv`, `candidates.csv` |
+| `01_extract/` | `model.npz`, `model_meta.json`, `final.npz`, `history.npz`, `strain_frames.npz`, `disp.npz`(D 프레임만), `frames.json`(D, 전단 규약 판정) |
+| `02_tstar/` | `tstar.json`(지표 2개의 first-reach t*·후보·hotspot·TCL 일치 확인, 선택 t*), `history.csv`(m(f) 지표별), `hotspots.csv`, `candidates.csv`(지표별) |
 | `03_bc/` | `support.json`(3-2-1 노드 ID·dof, PCA 평면) |
 | `04_esl/` | `u_rel.npz/csv`(강체 제거 변위), `f_eq.npz/csv`(전 노드 F_eq), `esl_summary.json`(평형·Kabsch) |
-| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷), `compare.csv` |
+| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단), `compare.csv`(전체 solve 때만) |
 | `06_export/` | `esl_cload.inc`, `esl_bcs.inc`, `esl_force.fem`, `f_eq.csv`, `u_rel.csv`, `reactions_321.csv`, `tstar_candidates.csv`, `hotspots.csv`, `validation.csv` |
 | `run.json` | 입력 경로·sha256, 설정 스냅샷, 단계별 요약·경고·소요시간, 실행 이력·오류 |
 

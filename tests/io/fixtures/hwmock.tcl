@@ -105,10 +105,17 @@ proc ::mock::model_GetSelectionSetHandle {h id} {
 proc ::mock::set_Clear {id} { variable sets; set sets($id,ids) {} }
 proc ::mock::set_GetSize {id} { variable sets; return [llength $sets($id,ids)] }
 proc ::mock::set_GetList {id} { variable sets; return $sets($id,ids) }
+# Add accumulates (Clear empties). Supported: "all", "component N", "id|element|node <ids/ranges>"
+# (space or comma separated, ranges a-b). ::mock::no_range rejects multi-id/range strings,
+# ::mock::no_id_add rejects every id string (fallback tests). ::mock::add_calls counts Add calls.
+set ::mock::no_range 0
+set ::mock::no_id_add 0
+set ::mock::add_calls 0
 proc ::mock::set_Add {id s} {
     variable sets
+    incr ::mock::add_calls
+    set t $sets($id,type)
     if {$s eq "all"} {
-        set t $sets($id,type)
         set ids {}
         dict for {pid d} $::mock::parts {
             switch -- $t {
@@ -120,16 +127,53 @@ proc ::mock::set_Add {id s} {
         set sets($id,ids) $ids
         return
     }
-    if {![regexp {^component (\d+)$} $s -> pid]} { error "mock: unsupported selection '$s'" }
-    set key [expr {$sets($id,type) eq "element" ? "elems" : "nodes"}]
-    set sets($id,ids) [dict get $::mock::parts $pid $key]
+    if {[regexp {^component (\d+)$} $s -> pid]} {
+        set key [expr {$t eq "element" ? "elems" : "nodes"}]
+        set new [dict get $::mock::parts $pid $key]
+    } elseif {[regexp {^(id|element|node) (.+)$} $s -> kw rest]} {
+        if {$kw ne "id" && $kw ne $t} { error "mock: '$kw' ids in a $t set" }
+        if {$::mock::no_id_add} { error "mock: id selection not supported" }
+        set toks [split [string map {, " "} $rest] " "]
+        set new {}
+        foreach tok $toks {
+            if {$tok eq ""} { continue }
+            if {[regexp {^(\d+)-(\d+)$} $tok -> a b]} {
+                if {$::mock::no_range} { error "mock: ranges not supported" }
+                for {set i $a} {$i <= $b} {incr i} { lappend new $i }
+            } elseif {[string is integer -strict $tok]} {
+                lappend new $tok
+            } else {
+                error "mock: bad id token '$tok'"
+            }
+        }
+        if {$::mock::no_range && [llength $new] > 1} { error "mock: several ids not supported" }
+        # only existing entities are added
+        set all {}
+        dict for {pid d} $::mock::parts { lappend all {*}[dict get $d [expr {$t eq "element" ? "elems" : "nodes"}]] }
+        set ok {}
+        foreach i $new { if {[lsearch -exact $all $i] >= 0} { lappend ok $i } }
+        set new $ok
+    } else {
+        error "mock: unsupported selection '$s'"
+    }
+    foreach i $new {
+        if {[lsearch -exact $sets($id,ids) $i] < 0} { lappend sets($id,ids) $i }
+    }
 }
 proc ::mock::res_GetSubcaseList {} { return {1} }
 proc ::mock::res_SetCurrentSubcase {sc} { return }
 proc ::mock::res_GetSimulationList {sc} { return $::mock::sims }
-proc ::mock::res_GetDataTypeList {sc} { return {Strain Displacement} }
+# result types: dtinfo = dict type -> {comps {...} layers {...}} (layers {} = no layer list)
+if {![info exists ::mock::dtinfo]} {
+    set ::mock::dtinfo [dict create \
+        Displacement {comps {X Y Z Mag} layers {}} \
+        Max_Strain {comps {XX YY ZZ XY YZ ZX vonMises} layers {Mid}} \
+        {Plastic Strain} {comps {{Scalar value}} layers {Mid}}]
+}
+proc ::mock::res_GetDataTypeList {sc} { return [dict keys $::mock::dtinfo] }
 proc ::mock::res_GetContourCtrlHandle {h} { ::mock::obj $h con }
-proc ::mock::res_SetCurrentSimulation {i} { set ::mock::st(sim) $i }
+set ::mock::sim_calls {}
+proc ::mock::res_SetCurrentSimulation {i} { set ::mock::st(sim) $i; lappend ::mock::sim_calls $i }
 proc ::mock::con_SetDataType {t} { set ::mock::st(dtype) $t; set ::mock::st(layer) "" }
 proc ::mock::con_SetDataComponent {c} { set ::mock::st(comp) $c }
 proc ::mock::con_SetLayer {l} { set ::mock::st(layer) $l }
@@ -153,6 +197,8 @@ proc ::mock::qry_GetIteratorHandle {h} {
         if {$st(query) eq "component.id component.name"} {
             if {$::mock::no_comp_query} { error "mock: unknown query field component.name" }
             lappend recs [list $id [dict get $::mock::names $id]]
+        } elseif {$st(query) in {element.id node.id}} {
+            lappend recs [list $id]
         } elseif {$st(query) eq "node.id node.coords"} {
             lappend recs [list $id [dict get $::mock::coords $id]]
         } else {
@@ -173,12 +219,11 @@ proc ::mock::it_Next {h} { lset ::mock::it($h) 0 [expr {[lindex $::mock::it($h) 
 proc ::mock::it_Valid {h} { lassign $::mock::it($h) i r; return [expr {$i < [llength $r]}] }
 proc ::mock::it_GetDataList {h} { lassign $::mock::it($h) i r; return [lindex $r $i] }
 proc ::mock::it_ReleaseHandle {h} { rename ::$h {} }
-proc ::mock::res_GetDataComponentList {sc dt} {
-    return [expr {$dt eq "Strain" ? {XX YY ZZ XY YZ ZX vonMises} : {X Y Z Mag}}]
-}
+proc ::mock::res_GetDataComponentList {sc dt} { return [dict get $::mock::dtinfo $dt comps] }
 proc ::mock::res_GetLayerList {sc dt} {
-    if {$dt ne "Strain"} { error "no layers" }
-    return {Lower Upper Max Min}
+    set l [dict get $::mock::dtinfo $dt layers]
+    if {[llength $l] == 0} { error "no layers" }
+    return $l
 }
 proc ::mock::model_GetComponentHandle {h id} {
     catch {rename ::$h {}}

@@ -1,4 +1,4 @@
-# ESL 계산 코어 설정 예시 (계약 docs/contracts/esl_core.md §5, 원형 esl.md §2).
+# ESL 계산 코어 설정 예시 (계약 docs/contracts/esl_core.md §5·§7, 원형 esl.md §2).
 # 실제 사용: 이 파일을 config/esl.yaml 로 복사(git 제외)하거나 env ESL_CONFIG 로 경로 지정.
 # 모든 키 필수(코드에 기본값 없음). 알 수 없는 키는 CONFIG_INVALID.
 schema_version: 1
@@ -11,13 +11,17 @@ case:
   include_path_map: {}               # {Windows 접두: 로컬 경로} 예 {"D:/proj/cae": "/data/cae"} — #include 절대경로 치환
 
 extract:
-  frame_stride: 1                    # 프레임 간격(1=전부)
-  shell_layer: max                   # max | top | bottom  (ε_eq 층 선택, max = 층별 최대)
+  frame_stride: 1                    # history 프레임 간격(1=전부, 후보 프레임 D 는 항상 포함)
+  layers: [mid]                      # 솔버 ε_eq 층: mid(막 z=0) | bottom | top (여럿이면 최대). h3d 는 Mid 만 있음
+  shear_convention: auto             # auto | tensor | engineering  h3d exy 규약(auto = HyperView vonMises 와 비교)
+  hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고)
   disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
 
 tstar:
-  top_n_times: 5                     # 후보 시점 수
-  top_k_hotspots: 10
+  metric: max_strain                 # max_strain (Max_Strain 텐서 ε_eq) | plastic_strain. 두 지표 모두 tstar.json 에 기록
+  reach_rtol: 1.0e-6                 # first-reach: v[f] ≥ v_final·(1−rtol) 인 첫 프레임
+  top_n_times: 5                     # 후보 시점 수(지표별)
+  top_k_hotspots: 10                 # t* 에서 상승 중인 H 요소 중 상위
   hotspot_min_dist: 20.0             # 모델 길이 단위. hotspot 간 최소 거리
   time_window: [null, null]          # [t_min, t_max] (null = 전체)
   exclude_elem_ids: []               # 특이점 제외용 요소 ID
@@ -27,6 +31,7 @@ support:
   node_ids: []                       # candidates=node_ids 일 때 3개 이상. CLI --support-nodes 가 우선
 
 solver:
+  backend: auto                      # auto(설치된 직접법 CHOLMOD/PARDISO, 없으면 SuperLU) | cholmod | pardiso | superlu | iterative
   drill_factor: 1.0e-4               # 드릴링 강성 = drill_factor·E·t·A
   equilibrium_warn_rel: 1.0e-6       # S4 |ΣF|/Σ|F|, 합모멘트/(Σ|F|·L) 경고 임계
 
@@ -35,6 +40,8 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   hotspot_strain_rel_err_max: 0.10   # |ε_val−ε_rad|/ε_rad (hotspot 1위)
   reaction_rel_max: 1.0e-6           # Σ|R_321|/Σ|F_eq| (자기평형이면 ≈0)
   hotspot_eval_count: 3              # 오차 표에 보일 hotspot 수
+  full_solve: auto                   # S5 전체 재해석 solve(F_eq, 3-2-1): auto(직접법 메모리 추정 ≤ 가용 메모리 80% 면 수행) | always | never
+                                     #   생략 시 hotspot 변형률(u_rel + 응축 회전)만 비교, disp_rms_rel·반력은 skipped
   noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
   noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
   noise_strain_rel_max: 0.05         # hotspot |Δε_eq|/ε_eq (잡음) 초과 시 verdict FAIL (NOISE_FLOOR)

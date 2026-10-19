@@ -1,4 +1,4 @@
-"""T-E2E-1: 합성 사례 → CLI --stage all → t*·F_eq·검증·내보내기. 재개·수동 옵션·오류 경로."""
+"""T-E2E-1: 합성 사례(max-hold 지표, §7) → CLI --stage all → first-reach t*·F_eq·검증·내보내기. 재개·수동 옵션·오류 경로."""
 import json
 import os
 import shutil
@@ -11,6 +11,7 @@ import pytest
 
 import synth_case
 from esl import cli
+from esl.io import RESULT_FILES
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CFG = os.path.join(ROOT, "config", "esl.example.yaml")
@@ -70,13 +71,35 @@ def test_e2e_all(case):
     assert run["error"] is None and set(run["stages"]) == {"extract", "tstar", "esl", "validate", "export"}
     assert all(s["status"] == "done" and s["elapsed_s"] >= 0 for s in run["stages"].values())
     assert len(run["inputs"]["rad"]["sha256"]) == 64
-    assert set(run["inputs"]["results_files"]) == {"frames.csv", "model.csv", "strain.csv", "disp.csv", "done.json"}
+    assert set(run["inputs"]["results_files"]) == set(RESULT_FILES)
     assert run["config"]["snapshot"]["case"]["part_title"] == "chassis rear"
 
-    # t*
+    # 추출: 전단 규약 auto → 공학 전단(합성 XY = γ), D = 두 지표 후보 합집합
+    ex = run["stages"]["extract"]["summary"]
+    assert ex["shear"]["convention"] == "engineering" and ex["shear"]["max_rel_mismatch"] < 1e-6
+    assert ex["frames_D"] == sorted({synth_case.T_STAR_FRAME, synth_case.SECOND_PEAK_FRAME})
+    assert ex["n_hot"] == 200
+    for fn in ("final.npz", "history.npz", "strain_frames.npz", "disp.npz"):
+        assert os.path.isfile(os.path.join(out, "01_extract", fn))
+    assert not os.path.exists(os.path.join(out, "01_extract", "strain_tensor.npz"))
+
+    # t* (first-reach): 지표 2개 모두 기록, TCL D 와 Python 재계산 일치
     tj = json.load(open(os.path.join(out, "02_tstar", "tstar.json"), encoding="utf-8"))
-    assert tj["selected"]["frame_index"] == synth_case.T_STAR_FRAME
+    assert tj["metric"] == "max_strain" and tj["selected"]["frame_index"] == synth_case.T_STAR_FRAME
     assert [c["frame_index"] for c in tj["candidates"]] == [synth_case.T_STAR_FRAME, synth_case.SECOND_PEAK_FRAME]
+    assert set(tj["metrics"]) == {"max_strain", "plastic_strain"}
+    for m, rec in tj["metrics"].items():
+        assert rec["tstar"]["frame_index"] == synth_case.T_STAR_FRAME, m
+        assert rec["tcl_check"]["match"] is True, (m, rec["tcl_check"])
+        assert len(rec["history"]["m"]) == len(synth_case.A_T)
+    # first-reach 정의 재확인: rank 1 요소의 max-hold 값은 t* 에서 처음 최종값에 도달
+    e1 = list(case["elem_id"]).index(tj["selected"]["elem_id"])
+    eqh = case["eq_hold"][:, e1]
+    assert eqh[synth_case.T_STAR_FRAME] == eqh[-1] > eqh[synth_case.T_STAR_FRAME - 1]
+    assert tj["selected"]["value"] == pytest.approx(case["eq_hold"][-1].max(), rel=1e-6)
+    assert all(h["rising"] for h in tj["hotspots"])
+    with open(os.path.join(out, "02_tstar", "candidates.csv"), encoding="utf-8") as fh:
+        assert sum(1 for line in fh if line.startswith("plastic_strain,")) == 2
 
     # 강체 대회전 확인 + F_eq
     summ = json.load(open(os.path.join(out, "04_esl", "esl_summary.json"), encoding="utf-8"))
@@ -106,7 +129,10 @@ def test_e2e_all(case):
     assert m["disp_rms_rel"] < 1e-8
     assert m["reaction_rel"] < 1e-8
     assert m["hotspot1_strain_rel_err"] < 1e-6        # float32 저장 한계
+    assert len(val["hotspots"]) == val["criteria"]["hotspot_eval_count"] == 3
     assert all(h["rel_err"] < 1e-6 for h in val["hotspots"])
+    assert val["hotspots"][0]["elem_id"] == tj["selected"]["elem_id"]          # rank 1 포함
+    assert val["criteria"]["layers"] == ["mid"]
     assert val["criteria"]["disp_rms_rel_max"] == 0.01      # 설정 스냅샷
 
     # 내보내기 파일·ID 범위
@@ -167,8 +193,9 @@ def test_frame_manual_second_candidate(case, tmp_path):
     out = _copy_out(case, tmp_path)
     assert cli.main(_args(case, out, "--stage", "esl", "--frame", str(synth_case.SECOND_PEAK_FRAME))) == 0
     f = np.load(os.path.join(out, "04_esl", "f_eq.npz"), allow_pickle=False)["f"]
-    a = synth_case.A_T[synth_case.SECOND_PEAK_FRAME]
-    expect = a * (case["F_app"] + case["R"])
+    k = synth_case.SECOND_PEAK_FRAME
+    a, b = synth_case.A_T[k], synth_case.B_T[k]
+    expect = a * (case["F_app"] + case["R"]) + b * (case["F2"] + case["R2"])
     assert np.abs(f - expect).max() / np.abs(expect).max() < 1e-6
     summ = json.load(open(os.path.join(out, "04_esl", "esl_summary.json"), encoding="utf-8"))
     assert summ["frame"]["source"] == "user"
@@ -263,3 +290,49 @@ def test_unit_id_ignored_warning(case, tmp_path, capsys):
                    "UNIT_ID_IGNORED: /PART/7 unit=3", "UNIT_ID_IGNORED: /PROP/SHELL/70 unit=3"]
     assert "unit=5" not in json.dumps(w)              # 대상 파트가 쓰지 않는 카드는 경고 없음
     assert con.count("경고: UNIT_ID_IGNORED") == 4
+
+
+def test_validate_without_full_solve(case, tmp_path, capsys):
+    """validation.full_solve: never → hotspot 변형률(u_rel + 응축 회전)만 비교, disp·반력 skipped, 판정은 hotspot."""
+    out = _copy_out(case, tmp_path)
+    cfg = tmp_path / "nofull.yaml"
+    cfg.write_text(open(case["cfg"], encoding="utf-8").read().replace("full_solve: auto", "full_solve: never"),
+                   encoding="utf-8")
+    args = ["run", "--config", str(cfg), "--rad", case["rad"], "--results", case["csv"], "--out", out,
+            "--stage", "validate"]
+    assert cli.main(args) == 0
+    o = capsys.readouterr().out
+    assert "disp_rms_rel=skipped" in o and "PASS" in o
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    m = {x["metric"]: x for x in val["metrics"]}
+    assert val["verdict"] == "PASS" and val["full_solve"]["run"] is False
+    assert m["disp_rms_rel"]["status"] == "skipped" and m["disp_rms_rel"]["pass"] is None
+    assert m["reaction_rel"]["status"] == "skipped" and val["reactions"] == []
+    assert m["hotspot1_strain_rel_err"]["value"] < 1e-6 and len(val["hotspots"]) == 3
+    assert not os.path.exists(os.path.join(out, "05_val", "compare.csv"))
+    assert cli.main(args[:-1] + ["export"]) == 0                       # 내보내기는 그대로 동작
+
+
+def test_full_solve_auto_memory_decision(monkeypatch):
+    from esl import config, pipeline
+    cfg = config.load_config(CFG)
+    ctx = pipeline.Context(cfg=cfg, config_path="", rad="", results="", out="", ts="", frame=None,
+                           support_nodes=None, echo=print, record={})
+
+    class Direct:
+        pass
+
+    monkeypatch.setattr(pipeline, "available_memory", lambda: 512 * 2 ** 30)
+    d = pipeline.full_solve_decision(ctx, Direct(), 300_000)            # 30만 요소 ≈ 24 GB 추정 < 512 GB
+    assert d["run"] is True and d["mem_need_est"] == pytest.approx(2.4e10)
+    monkeypatch.setattr(pipeline, "available_memory", lambda: 15 * 2 ** 30)
+    d = pipeline.full_solve_decision(ctx, Direct(), 300_000)
+    assert d["run"] is False and "GB" in d["reason"]
+    it = Direct()
+    it.is_direct = False
+    monkeypatch.setattr(pipeline, "available_memory", lambda: None)
+    assert pipeline.full_solve_decision(ctx, it, 10)["run"] is False
+    assert pipeline.full_solve_decision(ctx, Direct(), 10 ** 9)["run"] is True    # 모르면 수행(상한 거부 없음)
+    cfg["validation"]["full_solve"] = "always"
+    monkeypatch.setattr(pipeline, "available_memory", lambda: 1)
+    assert pipeline.full_solve_decision(ctx, it, 300_000)["run"] is True

@@ -23,6 +23,10 @@ def test_example_loads():
     assert cfg["export"]["radioss"]["id_offset"] == 9000000
     assert cfg["extract"]["disp_precision"] == "float32"          # H3D 기본 저장 정밀도
     assert cfg["validation"]["noise_samples"] == 3 and cfg["case"]["include_path_map"] == {}
+    assert cfg["extract"]["layers"] == ["mid"] and cfg["extract"]["shear_convention"] == "auto"
+    assert cfg["extract"]["hot_k"] == 200 and cfg["tstar"]["metric"] == "max_strain"
+    assert cfg["tstar"]["reach_rtol"] == 1e-6 and cfg["solver"]["backend"] == "auto"
+    assert cfg["validation"]["full_solve"] == "auto"
     assert config.redacted_settings(cfg) == cfg and config.redacted_settings(cfg) is not cfg
 
 
@@ -55,7 +59,20 @@ _DEL = object()
     ("validation.disp_rms_rel_max", -0.1, "validation.disp_rms_rel_max"),
     ("validation.hotspot_eval_count", 0, "validation.hotspot_eval_count"),
     ("validation.hotspot_eval_count", 2.5, "validation.hotspot_eval_count"),
-    ("extract.shell_layer", "middle", "extract.shell_layer"),
+    ("extract.layers", ["middle"], "extract.layers"),
+    ("extract.layers", [], "extract.layers"),
+    ("extract.layers", ["mid", "mid"], "extract.layers"),
+    ("extract.layers", "mid", "extract.layers"),
+    ("extract.shear_convention", "gamma", "extract.shear_convention"),
+    ("extract.hot_k", 0, "extract.hot_k"),
+    ("extract.hot_k", 201, "extract.hot_k"),
+    ("tstar.metric", "vm", "tstar.metric"),
+    ("tstar.metric", _DEL, "tstar.metric"),
+    ("tstar.reach_rtol", 1.0, "tstar.reach_rtol"),
+    ("tstar.reach_rtol", -1e-6, "tstar.reach_rtol"),
+    ("solver.backend", "mumps", "solver.backend"),
+    ("validation.full_solve", "maybe", "validation.full_solve"),
+    ("validation.full_solve", _DEL, "validation.full_solve"),
     ("extract.frame_stride", True, "extract.frame_stride"),
     ("tstar.time_window", [0.5, 0.1], "tstar.time_window"),
     ("tstar.time_window", [None], "tstar.time_window"),
