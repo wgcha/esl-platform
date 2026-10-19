@@ -92,10 +92,10 @@ class RadModel:
 ## 5. Impl-C 파이프라인·CLI·내보내기
 
 - CLI: `python -m esl run --config cfg.yaml --rad X_0000.rad --results <csv_dir> --out <case_dir> [--frame N] [--support-nodes id1,id2,id3] [--stage extract|tstar|esl|validate|export|all]`. 각 단계는 앞 단계 산출물을 읽어 재개 가능. 입력 폴더에는 쓰지 않음, 출력 폴더 기존 파일 덮어쓰기 시 `_backup/<timestamp>/`로 이동.
-- 출력 폴더(`esl.md` §3.1 준용): `01_extract/`(model.npz, model_meta.json, strain_tensor.npz, disp.npz), `02_tstar/`(tstar.json, history.csv, hotspots.csv, candidates.csv), `03_bc/support.json`(3-2-1 노드 ID·dof, pca 평면), `04_esl/`(u_rel.npz/csv, f_eq.npz/csv, esl_summary.json), `05_val/`(compare.csv, validation.json), `06_export/`(esl_cload.inc, esl_bcs.inc, esl_force.fem, *.csv), `run.json`(입력 경로·sha256·설정 스냅샷·단계별 요약).
+- 출력 폴더(`esl.md` §3.1 준용): `01_extract/`(model.npz, model_meta.json, strain_tensor.npz, disp.npz), `02_tstar/`(tstar.json, history.csv, hotspots.csv, candidates.csv), `03_bc/support.json`(3-2-1 노드 ID·dof, pca 평면), `04_esl/`(u_rel.npz/csv, f_eq.npz/csv, esl_summary.json), `05_val/`(compare.csv, validation.json), `06_export/`(esl_cload.inc, esl_bcs.inc, esl_force.fem, f_eq.csv, u_rel.csv, reactions_321.csv, tstar_candidates.csv, hotspots.csv, validation.csv), `run.json`(입력 경로·sha256·설정 스냅샷·단계별 요약).
 - S4: t* 프레임 `u` → `remove_rigid` → `F_eq = condensed_forces(u_rel)`. 평형: `|ΣF|/Σ|F|`, 합모멘트(중심 기준)/(Σ|F|·L_bbox) 기록, `> 1e-6`이면 경고.
 - S5: `solve(F_eq, 321)` → u_val; `u_val`에서 최소제곱 미소 강체(또는 kabsch.fit) 제거 후 `u_rel`과 비교 → `disp_rms_rel = RMS(Δ)/max|u_rel|`, 반력 합 `|R|/Σ|F|`. hotspot: `strains(u_val)` ε_eq(layer max) vs Radioss t* ε_eq, 상위 `hotspot_eval_count`. 판정 기준은 설정.
-- 내보내기: `esl.md` §8 규약, 단 `/CLOAD`·FORCE = **전 노드** 비영 성분(`force_zero_tol_rel`), `esl_bcs.inc` = 노드별 `/GRNOD/NODE` + `/BCS`(3-2-1 dof 플래그, 회전 000). `.fem` = 쉘 bulk(GRID, CQUAD4/CTRIA3, (PID,t) 조합별 PSHELL, MAT1) + FORCE + SPC1(3-2-1), SUBCASE DISP/SPCF/STRAIN 출력. ID ∈ `[id_offset, id_offset+999999]`, `max_ids`와 겹치면 `ID_RANGE_COLLISION`.
+- 내보내기: `esl.md` §8 규약, 단 `/CLOAD`·FORCE = **전 노드** 비영 성분(`force_zero_tol_rel`), `esl_bcs.inc` = 노드별 `/GRNOD/NODE` + `/BCS`(3-2-1 dof 플래그, 회전 000). `.fem` = 쉘 bulk(GRID, CQUAD4/CTRIA3, (PID,t) 조합별 PSHELL, MAT1) + FORCE + SPC1(3-2-1), SUBCASE DISP/SPCF/STRAIN 출력. ID ∈ `[id_offset, id_offset+999999]`를 off+1부터 순차 배정(esl.md §8의 고정 오프셋 대체), `max_ids`(func·grnod·load·bcs·prop) 중 하나라도 ≥ id_offset이면 `ID_RANGE_COLLISION`. inc·fem은 ASCII 전용. validation.csv hotspot 열은 `eps_rad,eps_val,rel_err`(자체 솔버 값).
 - 설정(`config/esl.example.yaml`): `esl.md` §2에서 `case`, `extract`(frame_stride, eq 모드), `tstar`, `support`(candidates: pca4, `node_ids` 수동), `solver`(drill_factor), `validation`, `export`, `units`만. 판정 기준·오프셋은 설정에서만 읽음.
 
 ## 6. 검증 항목 (Verifier)
@@ -107,9 +107,11 @@ class RadModel:
 | T-SH-1 | K 대칭, 강체 6모드 `‖K·r‖/‖K‖‖r‖ < 1e-10`(평판), 막 patch test 정확(1e-10), 굽힘 patch(상수 곡률) 정확 |
 | T-SH-2 | 외팔보 판(쿼드·트라이 각각) 끝단 처짐 vs 보 이론 ±3%, 막 면내 굽힘 ±3%(QM6) |
 | T-SH-3 | `solve(condensed_forces(u))` = u + 강체(제거 후 RMS 1e-9), 회전 강체 변위장에서 `strains`≈0 |
-| T-KB-1~2 | `esl.md` V-KB-1·2(전 노드 기준) |
+| T-KB-1~2 | `esl.md` V-KB-1·2(전 노드 기준). 잔차 경고/실패 임계는 폐기(전 노드 적합에서 잔차 = 변형 자체) |
 | T-SUP-1 | 기울어진 판에서 pca 4꼭지점 정확, pick_321 비특이, 공선 후보 → `SUPPORT_DEGENERATE` |
 | T-TS-1 | `esl.md` V-TS-1 |
 | T-E2E-1 | 합성 사례: 판 메시 + 3-2-1 지지 하중 F_app로 변형 u_d → 프레임별 대회전·병진 강체운동 합성 → CSV(TCL 포맷) + rad fixture → `run --stage all` → F_eq(비지지 노드) = F_app (rel 1e-6), `disp_rms_rel < 1e-8`, 반력≈0, 내보내기 파일 생성·ID 범위 |
 | T-EXP-1 | inc·fem 골든(소형 메시): /CLOAD 수 = 비영 성분 수, /BCS 플래그, FORCE·SPC1, 두께별 PID |
+| T-NOISE-1 | 변위 정밀도(`extract.disp_precision`) 잡음 바닥 추정: `noise.force_rel` 경고, `noise.hotspot_strain_rel > noise_strain_rel_max` → FAIL(`NOISE_FLOOR`). float32 합성 사례에서 검출 |
+| T-FS-1 | 출력 경로 겹침 검사는 realpath 기준(심링크 우회 불가), 보호 대상 = rad 폴더·include 폴더·CSV 폴더 |
 | T-SEC-1 | 정적: `pickle`, `allow_pickle=True`, `shell=True`, `os.system`, 하드코딩 절대경로 0건 |
