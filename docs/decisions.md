@@ -29,3 +29,4 @@
 - (P1a-2) 22만 요소 대응으로 CHOLMOD(scikit-sparse) 백엔드를 추가한다(근거: SuperLU 10만 요소 7.3 GB, 클라우드 15 GB).
 - (P1b, 2026-10-19) extract 실기 확인 전이지만 플랫폼(API·DB·워커·UI)을 병행 구현한다. 플랫폼은 코어를 esl.pipeline.run 단일 진입점으로만 호출하고 서버에서 외부 프로그램을 실행하지 않는다(근거: 사용자 지시, 코어-플랫폼 결합 최소화). 운영은 physicsai와 같은 사내 Windows 서버 가정.
 - (P1b, 2026-10-19) 규모 기준: 대상 파트 최대 약 30만 쉘 요소, 운영 서버 RAM 최대 512 GB → 직접법(CHOLMOD/Pardiso) 기본, S5 전체계 재해석 기본 수행(근거: 사용자 확인, probe chassis_rear 223,415 요소).
+- (P2, 2026-10-19) 보고서는 PDF 대신 자체 완결 HTML 단일 파일(inline SVG, 외부 의존 없음)로 한다. PPTX는 선택 옵션, LibreOffice 변환 없음(근거: 사용자 지시).
