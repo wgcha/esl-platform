@@ -1,0 +1,8 @@
+{
+  "hw_exe": "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe",
+  "work_root": "%USERPROFILE%\\esl_work",
+  "deploy_dir": "%LOCALAPPDATA%\\esl\\app",
+  "branch": "",
+  "default_part": "chassis_rear",
+  "protected_roots": []
+}
