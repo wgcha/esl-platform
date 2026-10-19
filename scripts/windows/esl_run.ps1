@@ -1,4 +1,5 @@
-﻿# esl_run.ps1 -- ESL_probe.bat / ESL_extract.bat 가 부르는 실행기 (update.ps1 이 deploy_dir\current 로 배포)
+﻿# esl_run.ps1 -- ESL_probe.bat / ESL_extract.bat 가 (current\esl_launch.ps1 을 거쳐) 부르는 실행기
+#   update.ps1 이 deploy_dir\versions\<버전>\ 에 TCL 과 함께 배포한다. TCL 은 이 파일과 같은 폴더의 것을 쓴다.
 #
 #   ESL_probe.bat   <h3d> [<h3d> ...] [<part>]
 #   ESL_extract.bat <h3d> [<h3d> ...] [<part>]      (part 기본값 = 설정 default_part)
@@ -65,7 +66,7 @@ function Assert-OutputAllowed([string]$OutDir, [string]$H3dDir, [string[]]$Prote
     }
 }
 
-# 입력 h3d 가 배포 폴더(deploy_dir, 이 실행기 폴더) 아래면 거부: update 의 current 교체·버전 정리 때
+# 입력 h3d 가 배포 폴더(deploy_dir, 이 실행기 폴더) 아래면 거부: update 의 예전 구조 정리·버전 정리 때
 # 지워질 수 있다. 원본 위치의 h3d 를 그대로(읽기 전용으로) 쓰게 한다. 링크를 푼 경로로도 확인.
 function Assert-InputOutsideDeploy([string]$H3d, [string]$DeployDir) {
     foreach ($cand in @($H3d, (Resolve-RealPath $H3d))) {

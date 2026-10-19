@@ -1,7 +1,8 @@
-"""Windows 원클릭 업데이트 스크립트 정적 검사 (pwsh 없는 환경용).
+"""Windows 원클릭 업데이트 스크립트 검사.
 
-update.bat -> scripts/windows/update.ps1 위임, 파괴적 git 명령·무조건 재귀 삭제 없음,
-실행기(esl_run.ps1)의 h3d 폴더·보호 폴더 출력 거부, 예시 설정 키, 인코딩·줄끝 규칙.
+정적 검사(pwsh 없어도 실행): update.bat -> scripts/windows/update.ps1 위임, 파괴적 git 명령·무조건 재귀 삭제·
+폴더 rename 없음, 실행기(esl_run.ps1)의 h3d 폴더·보호 폴더 출력 거부, 예시 설정 키, 인코딩·줄끝 규칙.
+pwsh 가 있으면(Linux 도 가능) 파싱 오류 0 과 배포 함수(esl_deploy_lib.ps1)·Publish-Deployment·런처를 임시 폴더에서 실제 실행.
 """
 import json
 import os
@@ -16,8 +17,10 @@ BAT = os.path.join(ROOT, "update.bat")
 WIN = os.path.join(ROOT, "scripts", "windows")
 UPDATE_PS1 = os.path.join(WIN, "update.ps1")
 RUN_PS1 = os.path.join(WIN, "esl_run.ps1")
+LIB_PS1 = os.path.join(WIN, "esl_deploy_lib.ps1")
+LAUNCH_PS1 = os.path.join(WIN, "esl_launch.ps1")
 EXAMPLE = os.path.join(ROOT, "config", "esl_deploy.example.json")
-PS1_FILES = [UPDATE_PS1, RUN_PS1]
+PS1_FILES = [UPDATE_PS1, RUN_PS1, LIB_PS1, LAUNCH_PS1]
 
 
 def _read(p: str) -> str:
@@ -108,48 +111,94 @@ def test_no_recursive_remove_item():
     for p in PS1_FILES:
         for ln in _code_lines(p):
             assert not re.search(r"Remove-Item\b.*-Recurse|\brm\s+-r|\brmdir\b|\brd\s+/s", ln, re.I), f"{p}: {ln}"
-
-
 def test_deletes_only_inside_deploy_dir():
-    text = _read(UPDATE_PS1)
-    code = "\n".join(_code_lines(UPDATE_PS1))
+    lib = _read(LIB_PS1)
+    lib_code = "\n".join(_code_lines(LIB_PS1))
+    upd_code = "\n".join(_code_lines(UPDATE_PS1))
     # 폴더 삭제는 Remove-DeployTree 안에서만, 그 첫 줄은 deploy_dir 안 확인
-    body = _function_body(text, "Remove-DeployTree")
+    body = _function_body(lib, "Remove-DeployTree")
     assert body.split("\n")[1].strip().startswith("$full = Assert-InsideDeployDir")
-    assert "Test-IsLink" in body
-    assert code.count("[IO.Directory]::Delete(") == 1 and "[IO.Directory]::Delete(" in body
-    guard = _function_body(text, "Assert-InsideDeployDir")
-    assert "Test-PathUnder" in guard and "-ieq $script:DeployDir" in guard
-    # 파일 삭제: Remove-DeployTree 안, 또는 work_root 쓰기 시험 임시 파일 1개
-    file_deletes = [ln.strip() for ln in code.splitlines() if "[IO.File]::Delete(" in ln]
-    assert sorted(file_deletes) == sorted(["[IO.File]::Delete($f)", "[IO.File]::Delete($probe)"])
-    assert "Remove-Item" not in code
-    assert "Remove-Item" not in "\n".join(_code_lines(RUN_PS1))
+    assert "Test-IsLink" in body and "Get-ForeignFiles $full" in body
+    assert lib_code.count("[IO.Directory]::Delete(") == 1 and "[IO.Directory]::Delete(" in body
+    assert "[IO.Directory]::Delete(" not in upd_code
+    assert body.count("Remove-DeployTree") == 0, "재귀 삭제 금지(하위 폴더가 있으면 사용자 것으로 보고 거부)"
+    guard = _function_body(lib, "Assert-InsideDeployDir")
+    assert "Test-PathUnder" in guard and "-ieq $root" in guard
+    one = _function_body(lib, "Remove-DeployFile")
+    assert one.split("\n")[1].strip().startswith("$full = Assert-InsideDeployDir")
+    assert "Test-IsLink" in one and "-notmatch $DeployFilePattern" in one
+    # 파일 삭제: Remove-DeployTree/Remove-DeployFile, 포인터 임시 파일, work_root 쓰기 시험 임시 파일
+    lib_deletes = sorted(ln.strip() for ln in lib_code.splitlines() if "[IO.File]::Delete(" in ln)
+    assert lib_deletes == sorted(["[IO.File]::Delete($f)", "[IO.File]::Delete($full)",
+                                  "try { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } } catch { }"])
+    upd_deletes = [ln.strip() for ln in upd_code.splitlines() if "[IO.File]::Delete(" in ln]
+    assert upd_deletes == ["[IO.File]::Delete($probe)"]
+    for p in PS1_FILES:
+        assert "Remove-Item" not in "\n".join(_code_lines(p)), p
 
 
-def test_lock_log_retry_and_retention():
+def test_no_folder_rename_pointer_swap_instead():
+    """실기 오류(current 폴더 Move 가 탐색기·cmd 잠금으로 실패) 재발 방지: 폴더 rename 없음, 포인터 파일 교체."""
+    for p in PS1_FILES:
+        code = "\n".join(_code_lines(p))
+        assert "[IO.Directory]::Move(" not in code and "Rename-Item" not in code, p
+        assert "Move-Item" not in code, p
+    lib = _read(LIB_PS1)
+    setp = _function_body(lib, "Set-CurrentVersion")
+    assert "[IO.File]::Replace($tmp, $dst, [NullString]::Value)" in setp   # $null 은 "" 로 바뀌어 예외
+    assert "[IO.File]::Move($tmp, $dst)" in setp and "$Retries" in setp and "Start-Sleep" in setp
+    assert ".tmp-" in setp and "throw" in setp
+    upd = _read(UPDATE_PS1)
+    assert ". (Join-Path $PSScriptRoot 'esl_deploy_lib.ps1')" in upd
+    pub = _function_body(upd, "Publish-Deployment")
+    # 순서: 버전 폴더 작성 -> 포인터 교체 -> 런처 -> 예전 구조 정리 -> 오래된 버전 정리
+    order = [pub.index("Find-VersionSlot"), pub.index("Set-CurrentVersion"), pub.index("Update-LauncherFile"),
+             pub.index("Get-LegacyArtifacts"), pub.index("Select-VersionsToPrune")]
+    assert order == sorted(order)
+    assert "$KeepVersions = 5" in upd and "Select-VersionsToPrune $all $active $KeepVersions" in pub
+    assert "if ($launchersOk)" in pub          # 예전 런처가 남아 있으면 예전 산출물을 지우지 않음
+    for fn in ("Read-CurrentVersion", "Find-VersionSlot", "Get-LegacyDeployDirs", "Update-LauncherFile"):
+        assert re.search(r"^function " + fn + r"\b", lib, re.M), fn
+
+
+def test_lock_log_retry():
     text = _read(UPDATE_PS1)
     assert "[IO.FileShare]::None" in text and "DeleteOnClose" in text
     assert re.search(r"Join-Path \$EslHome 'logs'", text) and "update_{0}.log" in text
     assert "$FetchRetries = 4" in text and "$delay *= 2" in text
-    assert "$KeepVersions = 5" in text
     assert "--untracked-files=no" in text and "작업 트리 변경 있음" in text
-    assert "'current.new'" in text and "[IO.Directory]::Move($oldDir, $current)" in text   # 실패 시 되돌림
 
 
-# ---- 실행 래퍼 ----------------------------------------------------------------------------------
+def test_ps5_compatible_syntax():
+    """PowerShell 5.1 에 없는 연산자(??, ?., 삼항, &&, ||) 금지 (문자열 밖 대략 검사)."""
+    for p in PS1_FILES:
+        for ln in _code_lines(p):
+            code = re.sub(r"'[^']*'|\"[^\"]*\"", "''", ln)
+            assert "??" not in code and "?." not in code, f"{p}: {ln}"
+            assert "&&" not in code and "||" not in code, f"{p}: {ln}"
+            assert not re.search(r"\s\?\s[^:]+\s:\s", code), f"{p}: {ln}"
 
-def test_wrapper_template():
-    text = _read(UPDATE_PS1)
-    body = _function_body(text, "New-Wrapper")
-    assert '-File `"%~dp0esl_run.ps1`" -Mode $Mode %*' in body
+
+# ---- 런처 ---------------------------------------------------------------------------------------
+
+def test_launcher_template():
+    lib = _read(LIB_PS1)
+    body = _function_body(lib, "Get-LauncherBat")
+    assert '-File `"%~dp0esl_launch.ps1`" -Mode $Mode %*' in body
     assert "DisableDelayedExpansion" in body and "'pause'" in body
-    assert '-join "`r`n"' in body and "[Text.Encoding]::ASCII" in body
-    assert "New-Wrapper $verDir 'ESL_probe.bat' 'probe'" in text
-    assert "New-Wrapper $verDir 'ESL_extract.bat' 'extract'" in text
-    # 템플릿 문자열 자체도 ASCII (bat 은 ASCII 로 저장)
+    assert '-join "`r`n"' in body
+    assert "esl_run.ps1" not in body.split("powershell.exe")[1]   # 버전 폴더를 직접 가리키지 않음
     for s in re.findall(r"'([^']*)'", body):
         s.encode("ascii")
+    pub = _function_body(_read(UPDATE_PS1), "Publish-Deployment")
+    assert "[Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'probe'))" in pub
+    assert "[Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'extract'))" in pub
+    launch = _read(LAUNCH_PS1)
+    assert "Split-Path -Parent $PSScriptRoot" in launch and "'current_version.txt'" in launch
+    assert "'versions'" in launch and "& $runner -Mode $Mode @Items" in launch and "exit $LASTEXITCODE" in launch
+    # 런처의 버전 이름 검사 = 라이브러리 규칙
+    vpat = re.search(r"^\$VersionNamePattern = '([^']+)'", lib, re.M).group(1)
+    assert f"-cnotmatch '{vpat}'" in launch
 
 
 def test_runner_rejects_h3d_folder_and_protected_roots():
@@ -234,53 +283,233 @@ def test_runner_rejects_h3d_inside_deploy_dir():
 
 
 def test_update_keeps_foreign_files_in_deploy_dir():
-    text = _read(UPDATE_PS1)
-    pat = re.search(r"^\$DeployFilePattern = '([^']+)'", text, re.M).group(1)
+    lib = _read(LIB_PS1)
+    pat = re.search(r"^\$DeployFilePattern = '([^']+)'", lib, re.M).group(1)
     rx = re.compile(pat, re.I)              # PowerShell -match 는 대소문자 무시
     for ok in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_extract.bat", "README.md", "VERSION.txt",
                "esl_probe_fallback.json", "esl_extract_done_fallback.json"):
         assert rx.match(ok), ok
     for bad in ("model.h3d", "run_0001.h3d", "notes.txt", "probe.json", "data.csv", "x.tcl.h3d", "README.md.bak"):
         assert not rx.match(bad), bad
-    # Remove-DeployTree: deploy_dir 확인 -> 링크 확인 -> 사용자 파일 확인 후에만 삭제
-    body = _function_body(text, "Remove-DeployTree")
+    body = _function_body(lib, "Remove-DeployTree")
     a = body.index("Assert-InsideDeployDir")
     b = body.index("Test-IsLink $full")
-    c = body.index("Assert-OnlyDeployFiles $full")
+    c = body.index("Get-ForeignFiles $full")
     d = body.index("[IO.File]::Delete(")
     assert a < b < c < d
-    guard = _function_body(text, "Assert-OnlyDeployFiles")
-    assert "Get-ForeignFiles" in guard and "throw" in guard and "foreach ($p in $foreign)" in guard
-    fn = _function_body(text, "Get-ForeignFiles")
+    fn = _function_body(lib, "Get-ForeignFiles")
     assert "PSIsContainer" in fn and "-notmatch $DeployFilePattern" in fn   # 하위 폴더도 사용자 것으로 본다
-    # 사전 점검: current/current.new/같은 버전/정리 대상 버전을 Move·삭제보다 먼저 확인
-    pub = _function_body(text, "Publish-Deployment")
-    pre = pub.index("$touched = @($current, $staging, $verDir) + @($excess")
-    assert pre < pub.index("Remove-DeployTree $verDir") < pub.index("[IO.Directory]::Move($current, $oldDir)")
-    assert pub.index("Assert-OnlyDeployFiles $current") < pub.index("[IO.Directory]::Move($current, $oldDir)")
-    assert "throw \"배포 폴더에 배포 산출물이 아닌 파일" in pub
+    legacy = _function_body(lib, "Get-LegacyArtifacts")
+    assert "PSIsContainer" in legacy and "ReparsePoint" in legacy and "$LauncherNames -contains" in legacy
 
+
+# ---- pwsh 로 실제 실행 (Linux 임시 폴더) -----------------------------------------------------------
 
 PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
     "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+needs_pwsh = pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
 
 
-@pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
-def test_ps1_parse_and_foreign_files_with_pwsh(tmp_path):
+def _pwsh_file(script, *args, timeout=180):
+    return subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script), *map(str, args)],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def _lib_script(tmp_path, body: str, name="t.ps1"):
+    p = tmp_path / name
+    p.write_text(f". '{LIB_PS1}'\n$ErrorActionPreference = 'Stop'\n" + body, encoding="utf-8")
+    return p
+
+
+@needs_pwsh
+def test_ps1_parse_with_pwsh():
     for p in PS1_FILES:
         r = subprocess.run([PWSH, "-NoProfile", "-Command",
                             "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile("
                             f"'{p}',[ref]$t,[ref]$e); $e.Count"], capture_output=True, text=True, timeout=120)
         assert r.stdout.strip() == "0", (p, r.stdout, r.stderr)
-    text = _read(UPDATE_PS1)
-    pat_line = re.search(r"^\$DeployFilePattern = '[^']+'", text, re.M).group(0)
+
+
+@needs_pwsh
+def test_lib_pure_functions_with_pwsh(tmp_path):
     d = tmp_path / "current"
     d.mkdir()
-    for n in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_probe.bat", "README.md", "VERSION.txt", "big.h3d"):
+    for n in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_probe.bat", "ESL_extract.bat", "esl_launch.ps1",
+              "README.md", "VERSION.txt", "esl_probe_fallback.json", "big.h3d"):
         (d / n).write_text("x")
     (d / "sub").mkdir()
-    script = tmp_path / "t.ps1"
-    script.write_text(pat_line + "\n" + _function_body(text, "Get-ForeignFiles").join(
-        ["function Get-ForeignFiles([string]$Dir) ", ""]) + f"\n(Get-ForeignFiles '{d}' | ForEach-Object {{ Split-Path -Leaf $_ }} | Sort-Object) -join ','\n")
-    r = subprocess.run([PWSH, "-NoProfile", "-File", str(script)], capture_output=True, text=True, timeout=120)
-    assert r.stdout.strip() == "big.h3d,sub", (r.stdout, r.stderr)
+    (d / "sub" / "a.tcl").write_text("x")
+    dep = tmp_path / "dep"
+    for n in ("abc1234", "current.new", "current.old.20260101_000000", "versions", "mydata", "abc"):
+        (dep / n).mkdir(parents=True)
+    script = _lib_script(tmp_path, f"""
+function leaf($xs) {{ (@($xs) | ForEach-Object {{ Split-Path -Leaf $_ }} | Sort-Object) -join ',' }}
+"foreign=" + (leaf (Get-ForeignFiles '{d}'))
+"legacy=" + (leaf (Get-LegacyArtifacts '{d}'))
+"islegacy=" + (Test-LegacyLayout '{d}')
+"legacydirs=" + (leaf (Get-LegacyDeployDirs '{dep}'))
+"names=" + ((@('1a2b3c4', '1a2b3c4-2', '1A2B3C4', '..', 'abc', '1a2b3c4-x', '1a2b3c4\\..') | ForEach-Object {{ Test-VersionName $_ }}) -join ',')
+$t0 = Get-Date '2026-01-01'
+$vs = @(1..8 | ForEach-Object {{ [pscustomobject]@{{ Name = ('a' * 6) + $_; LastWriteTime = $t0.AddDays($_) }} }})
+$vs += [pscustomobject]@{{ Name = 'notaversion'; LastWriteTime = $t0 }}
+"prune_active_new=" + ((Select-VersionsToPrune $vs 'aaaaaa8' 5) -join ',')
+"prune_active_old=" + ((Select-VersionsToPrune $vs 'aaaaaa1' 5) -join ',')
+"prune_few=" + (@(Select-VersionsToPrune $vs[0..2] 'aaaaaa1' 5).Count)
+"under=" + (Test-PathUnder '{tmp_path}/a/b' '{tmp_path}/a') + ',' + (Test-PathUnder '{tmp_path}/ab' '{tmp_path}/a')
+""")
+    r = _pwsh_file(script)
+    out = dict(ln.split("=", 1) for ln in r.stdout.strip().splitlines() if "=" in ln)
+    assert out["foreign"] == "big.h3d,sub", (r.stdout, r.stderr)
+    assert out["legacy"] == "esl_h3d_probe.tcl,esl_probe_fallback.json,esl_run.ps1,README.md,VERSION.txt"
+    assert out["islegacy"] == "True"
+    assert out["legacydirs"] == "abc1234,current.new,current.old.20260101_000000"
+    assert out["names"] == "True,True,False,False,False,False,False"
+    assert out["prune_active_new"] == "aaaaaa3,aaaaaa2,aaaaaa1"
+    assert out["prune_active_old"] == "aaaaaa3,aaaaaa2"          # 활성 버전은 오래돼도 유지
+    assert out["prune_few"] == "0"
+    assert out["under"] == "True,False"
+
+
+@needs_pwsh
+def test_pointer_swap_and_launcher_file_with_pwsh(tmp_path):
+    dep = tmp_path / "dep"
+    dep.mkdir()
+    bad = tmp_path / "bad"
+    (bad / "current_version.txt").mkdir(parents=True)      # 교체 불가(폴더) -> 재시도 후 실패
+    cur = tmp_path / "cur"
+    cur.mkdir()
+    (cur / "locked.bat").mkdir()                            # 쓰기 불가 대역
+    script = _lib_script(tmp_path, f"""
+"first=" + (Set-CurrentVersion '{dep}' 'abc1234' 3 10)
+"read1=" + (Read-CurrentVersion '{dep}')
+"second=" + (Set-CurrentVersion '{dep}' 'def5678-2' 3 10)
+"read2=" + (Read-CurrentVersion '{dep}')
+"tmpleft=" + @(Get-ChildItem '{dep}' -Filter '*.tmp-*').Count
+try {{ Set-CurrentVersion '{dep}' '..\\evil' 3 10; 'badname=accepted' }} catch {{ 'badname=rejected' }}
+try {{ Set-CurrentVersion '{bad}' 'abc1234' 3 10; 'fail=no' }} catch {{ 'fail=' + ($_.Exception.Message -match '3 회 시도') }}
+"badtmp=" + @(Get-ChildItem '{bad}' -Filter '*.tmp-*').Count
+[IO.File]::WriteAllText('{dep}/current_version.txt', 'garbage..')
+"readbad=[" + (Read-CurrentVersion '{dep}') + "]"
+$b = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'probe'))
+"w1=" + (Update-LauncherFile '{cur}/ESL_probe.bat' $b)
+"w2=" + (Update-LauncherFile '{cur}/ESL_probe.bat' $b)
+"w3=" + ((Update-LauncherFile '{cur}/locked.bat' $b) -like 'locked:*')
+""")
+    r = _pwsh_file(script)
+    out = dict(ln.split("=", 1) for ln in r.stdout.strip().splitlines() if "=" in ln)
+    assert out.get("first") == "1", (r.stdout, r.stderr)
+    assert out["read1"] == "abc1234" and out["second"] == "1" and out["read2"] == "def5678-2"
+    assert out["tmpleft"] == "0" and out["badname"] == "rejected"
+    assert out["fail"] == "True" and out["badtmp"] == "0"
+    assert out["readbad"] == "[]"
+    assert (out["w1"], out["w2"], out["w3"]) == ("written", "same", "True")
+    bat = (cur / "ESL_probe.bat").read_bytes()
+    bat.decode("ascii")
+    assert bat.count(b"\n") == bat.count(b"\r\n") and b"-Mode probe %*" in bat
+    assert b"Output: <work_root>\\<h3d name>\\probe\r\n" in bat
+
+
+def _publish_harness(tmp_path):
+    """update.ps1 의 Publish-Deployment 를 그대로 떼어 내 Linux 임시 폴더에서 실행하는 스크립트."""
+    upd = _read(UPDATE_PS1)
+    pub = _function_body(upd, "Publish-Deployment")
+    sd = tmp_path / "scripts"
+    sd.mkdir()
+    (sd / "esl_launch.ps1").write_bytes(open(LAUNCH_PS1, "rb").read())
+    (sd / "esl_run.ps1").write_text(       # 실행기 대역: 자기 폴더·인자를 출력하고 7 로 종료
+        "param([string]$Mode,[Parameter(ValueFromRemainingArguments=$true)][string[]]$Items=@())\n"
+        "Write-Output \"RUN $PSScriptRoot $Mode $($Items -join '|')\"\nexit 7\n")
+    repo = tmp_path / "repo"
+    (repo / "resources" / "tcl").mkdir(parents=True)
+    for n in ("esl_h3d_probe.tcl", "esl_h3d_extract.tcl", "README.md"):
+        (repo / "resources" / "tcl" / n).write_text(n)
+    h = sd / "h.ps1"
+    h.write_text(f". '{LIB_PS1}'\n$ErrorActionPreference = 'Stop'\n"
+                 "function Say($m, $c) { Write-Host \"SAY $m\" }\nfunction Stage($m) { }\nfunction Write-Log($m) { }\n"
+                 "function Add-Check($a, $b, $c) { Write-Host \"CHECK $a $b\" }\n"
+                 "$RepoRoot = $args[0]; $script:DeployDir = $args[1]; $KeepVersions = 5\n"
+                 "function Publish-Deployment($Cfg, [string]$Version) " + pub + "\n"
+                 "$r = Publish-Deployment $null $args[2]\nWrite-Host \"RESULT $($r.Version)\"\n", encoding="utf-8")
+    return h, repo
+
+
+@needs_pwsh
+def test_publish_migrates_legacy_layout_with_pwsh(tmp_path):
+    h, repo = _publish_harness(tmp_path)
+    dep = tmp_path / "dep"
+    cur = dep / "current"
+    (cur / "sub").mkdir(parents=True)
+    for n in ("esl_h3d_probe.tcl", "esl_h3d_extract.tcl", "esl_run.ps1", "ESL_probe.bat", "ESL_extract.bat",
+              "README.md", "VERSION.txt", "esl_probe_fallback.json", "big.h3d"):
+        (cur / n).write_text("old")
+    (cur / "sub" / "keep.h3d").write_text("u")
+    for n in ("abc1234", "def5678", "current.old.20260101_000000"):
+        (dep / n).mkdir()
+    (dep / "abc1234" / "x.tcl").write_text("x")
+    (dep / "def5678" / "user.h3d").write_text("u")          # 사용자 파일이 있는 예전 폴더는 남김
+
+    r = _pwsh_file(h, repo, dep, "1111111")
+    assert r.returncode == 0 and "RESULT 1111111" in r.stdout + r.stderr, (r.stdout, r.stderr)
+    assert (dep / "current_version.txt").read_text().strip() == "1111111"
+    v = dep / "versions" / "1111111"
+    assert sorted(os.listdir(v)) == ["README.md", "VERSION.txt", "esl_h3d_extract.tcl", "esl_h3d_probe.tcl", "esl_run.ps1"]
+    assert sorted(os.listdir(cur)) == ["ESL_extract.bat", "ESL_probe.bat", "big.h3d", "esl_launch.ps1", "sub"]
+    assert (cur / "big.h3d").read_text() == "old" and (cur / "sub" / "keep.h3d").read_text() == "u"
+    assert not (dep / "abc1234").exists() and not (dep / "current.old.20260101_000000").exists()
+    assert (dep / "def5678" / "user.h3d").exists()
+
+    # 같은 내용 재실행: 재사용, 포인터 그대로
+    r = _pwsh_file(h, repo, dep, "1111111")
+    assert "재사용" in r.stdout and "활성 버전 그대로" in r.stdout, r.stdout
+    # 같은 해시에 내용이 다르면 기존 폴더를 고치지 않고 -2
+    (repo / "resources" / "tcl" / "esl_h3d_probe.tcl").write_text("changed")
+    r = _pwsh_file(h, repo, dep, "1111111")
+    assert (dep / "current_version.txt").read_text().strip() == "1111111-2", r.stdout
+    assert (v / "esl_h3d_probe.tcl").read_text() == "esl_h3d_probe.tcl"
+
+    # 런처: 포인터가 가리키는 versions 폴더의 실행기로 인자 전달, 종료 코드 전달
+    r = _pwsh_file(cur / "esl_launch.ps1", "-Mode", "extract", "/x y/a.h3d", "mypart")
+    assert r.returncode == 7, (r.stdout, r.stderr)
+    assert f"RUN {dep / 'versions' / '1111111-2'} extract /x y/a.h3d|mypart" in r.stdout
+    (dep / "current_version.txt").write_text("..")
+    r = _pwsh_file(cur / "esl_launch.ps1", "-Mode", "probe", "a.h3d")
+    assert r.returncode == 1 and "update.bat" in r.stdout
+
+
+@needs_pwsh
+def test_publish_prunes_old_versions_with_pwsh(tmp_path):
+    import time
+    h, repo = _publish_harness(tmp_path)
+    dep = tmp_path / "dep"
+    vroot = dep / "versions"
+    now = time.time()
+    names = [f"aaaaaa{i}" for i in range(1, 8)]
+    for i, n in enumerate(names):
+        (vroot / n).mkdir(parents=True)
+        (vroot / n / "esl_run.ps1").write_text("x")
+        if n == "aaaaaa2":
+            (vroot / n / "copied.h3d").write_text("u")     # 사용자 파일 -> 건너뜀(오류 아님)
+        os.utime(vroot / n, (now - 1000 + i, now - 1000 + i))
+    (vroot / "notes").mkdir()                              # 버전 이름이 아닌 폴더는 건드리지 않음
+    r = _pwsh_file(h, repo, dep, "2222222")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    left = sorted(os.listdir(vroot))
+    # 새 버전 + 최근 4개 유지, 나머지 정리(사용자 파일 있는 aaaaaa2 는 남김)
+    assert left == ["2222222", "aaaaaa2", "aaaaaa4", "aaaaaa5", "aaaaaa6", "aaaaaa7", "notes"], (left, r.stdout)
+    assert "정리 건너뜀" in r.stdout
+
+
+@needs_pwsh
+def test_publish_keeps_legacy_files_when_launcher_locked_with_pwsh(tmp_path):
+    h, repo = _publish_harness(tmp_path)
+    dep = tmp_path / "dep"
+    cur = dep / "current"
+    cur.mkdir(parents=True)
+    for n in ("esl_h3d_probe.tcl", "esl_run.ps1", "ESL_probe.bat"):
+        (cur / n).write_text("old")
+    (cur / "ESL_extract.bat").mkdir()                      # 갱신 불가 대역 -> 경고만
+    r = _pwsh_file(h, repo, dep, "3333333")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "CHECK 런처 ESL_extract.bat WARN" in r.stdout
+    assert (cur / "esl_run.ps1").exists() and (cur / "esl_h3d_probe.tcl").exists()   # 예전 런처용으로 남김
+    assert (dep / "current_version.txt").read_text().strip() == "3333333"
