@@ -10,6 +10,7 @@ from __future__ import annotations
 import html as _html
 import json
 import math
+import re
 from string import Template
 from typing import Any, Iterable, Sequence
 
@@ -167,11 +168,20 @@ def _clean(o):
     return o
 
 
-def json_script(id_: str, obj: Any) -> str:
-    """``<script type="application/json">`` (``</`` 이스케이프 → 문서 밖으로 새지 않음)."""
+_SCRIPT_BREAK = re.compile(r"<(?=/|!--|script)", re.I)
+
+
+def json_text(obj: Any) -> str:
+    """inline ``<script type="application/json">`` 본문용 JSON. ``</``(``</script`` 포함)·``<!--``·``<script`` 의
+    ``<`` 를 ``\\u003c`` 로 바꿔(대소문자 무관) 스크립트 블록이 닫히거나 이중 이스케이프 상태로 들어가지 않게 한다.
+    ``<`` 는 JSON 문자열 안에만 나오므로 결과는 같은 값의 유효한 JSON."""
     txt = json.dumps(_clean(obj), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    txt = txt.replace("</", "<\\/").replace("<!--", "<\\!--")
-    return f'<script type="application/json" id="{esc(id_)}">{txt}</script>'
+    return _SCRIPT_BREAK.sub(r"\\u003c", txt)
+
+
+def json_script(id_: str, obj: Any) -> str:
+    """``<script type="application/json">`` (``json_text`` 이스케이프 → 문서 밖으로 새지 않음)."""
+    return f'<script type="application/json" id="{esc(id_)}">{json_text(obj)}</script>'
 
 
 def page(title: str, body: str, script: str = "", data: dict | None = None, version: str = "",

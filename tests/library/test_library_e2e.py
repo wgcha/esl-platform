@@ -13,6 +13,7 @@ import pytest
 
 import synth_lib
 from esl import cli as core_cli
+from esl.library import analysis
 from esl.library import cli as lcli
 from esl.library import store
 from esl.mech.shell import ShellModel
@@ -159,7 +160,12 @@ def test_mapping_conservation_and_outputs(lib, analyzed):
     res, arr, d = analyzed["res"], analyzed["arr"], analyzed["dir"]
     assert res["cases"][0]["self"] is True
     tgt = store.load_entry(lib["root"], lib["ids"][0], raw=True)
-    assert np.allclose(arr["mapped_F"][0], tgt.raw["f"])
+    # mapped_loads.npz = 대표·최악 케이스만 (첫 축 = load_cases 수)
+    assert arr["mapped_F"].shape == (len(res["load_cases"]), tgt.raw["node_id"].size, 3)
+    assert arr["load_case_index"].tolist() == [lc["case_index"] for lc in res["load_cases"]]
+    for lc, f in zip(res["load_cases"], analysis.load_case_forces(res, arr)):
+        if res["cases"][lc["case_index"]]["self"]:
+            assert np.allclose(f, tgt.raw["f"])
     m = res["mapping"]
     assert m["n_self"] == 1 and m["n_mapped"] == 5 and m["conservation_rel_max"] < 1e-10
     for c in res["cases"][1:]:
@@ -209,7 +215,7 @@ def test_optdeck_and_report(lib, analyzed, tmp_path):
             p = ln.split(",")
             if p[0] == "FORCE" and int(p[1]) == s["load_sid"]:
                 F[np.searchsorted(nid, int(p[2]))] = [float(x) for x in p[5:8]]
-        ref = arr["mapped_F"][res["load_cases"][k]["case_index"]]
+        ref = analysis.load_case_forces(res, arr)[k]
         assert np.abs(F - ref).max() <= 1e-8 * np.abs(ref).max()
         u, R = sm.solve(F, spc)
         assert np.abs(R).sum() / np.linalg.norm(F, axis=1).sum() < 1e-6

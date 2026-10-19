@@ -8,7 +8,7 @@ import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
-import { dt } from "../../lib/format";
+import { dt, pv } from "../../lib/format";
 import { DROP_LABEL, DROP_TYPES, NORM_LABEL, VerdictBadge, entryLabel, sceneText, uniq } from "./common";
 
 interface Filters {
@@ -21,7 +21,6 @@ interface Filters {
 
 const EMPTY: Filters = { model: "", drop_type: "", orient: "", verdict: "", retired: false };
 const forceReason = (e: EntryOut) => e.force_reason ?? e.quality.confirmed_fail?.reason ?? null;
-const pv = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${v.toFixed(1)}%`);
 
 function EditRow({ e, onDone }: { e: EntryOut; onDone: (changed: boolean) => void }) {
   const [mass, setMass] = useState(e.model.product_mass != null ? String(e.model.product_mass) : "");

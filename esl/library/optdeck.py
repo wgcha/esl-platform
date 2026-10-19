@@ -21,6 +21,7 @@
 - weighted: ``DRESP1, RID, WCOMP, WCOMP`` + ``DESOBJ(MIN) = RID`` + subcase마다 ``WEIGHT = w``.  [확신도: 중]
 - BEADFRAC(선택): ``DRESP1, BID, BEADF, BEADFRAC, DTPG, , , DTPG_ID`` + ``DCONSTR, CID, BID, , UB`` + ``DESGLB = CID``.
   [확신도: 중하 — 실행 확인 전 기본 꺼짐]
+- 3-2-1 지지: 강체 6모드 구속 행렬 rank 6·σmin/σmax ≥ 1e-6 아니면 ``SUPPORT_DEGENERATE``.
 - 비설계 영역: ``nondesign_pids``, ``design_pids``(주면 그 밖은 비설계), ``nondesign_node_ids`` 반경
   ``nondesign_radius`` 안 노드를 쓰는 요소 → 별도 PSHELL(비설계)로 분리해 DTPG 목록에서 제외.
 """
@@ -32,6 +33,7 @@ import numpy as np
 
 from esl.errors import EslError
 from esl.library import _util as U
+from esl.mech import supports as msup
 
 DEFAULT_DESIGN = {
     "design_pids": None, "nondesign_pids": [], "nondesign_node_ids": [], "nondesign_radius": 0.0,
@@ -146,6 +148,36 @@ def design_mask(mesh: dict, d: dict) -> tuple[np.ndarray, dict]:
     return des, why
 
 
+def support_rank(X: np.ndarray, sup_pos: list[int], dofs: list[str]) -> dict:
+    """3-2-1 지지의 강체 6모드 구속 행렬 (구속 dof 행 × [병진 3, 회전 3]) rank·σmin/σmax.
+
+    회전 열은 지지점 중심 기준·최대 거리 L 로 무차원화(``esl.mech.supports`` 와 같은 규약), 회전 dof(4-6)는 1/L 행.
+    """
+    P = np.asarray(X, dtype=np.float64)[sup_pos]
+    ctr = P.mean(axis=0)
+    L = max(float(np.max(np.linalg.norm(P - ctr, axis=1))), 1e-300)
+    rows = []
+    for p, ds in zip(P, dofs):
+        r = (p - ctr) / L
+        for ch in ds:
+            d = int(ch) - 1
+            row = np.zeros(6)
+            if d < 3:
+                row[d] = 1.0
+                for i in range(3):
+                    w = np.zeros(3)
+                    w[i] = 1.0
+                    row[3 + i] = np.cross(w, r)[d]
+            else:
+                row[d] = 1.0 / L
+            rows.append(row)
+    A = np.array(rows).reshape(-1, 6)
+    s = np.linalg.svd(A, compute_uv=False) if A.size else np.zeros(0)
+    ratio = float(s[5] / s[0]) if s.size >= 6 and s[0] > 0 else 0.0
+    rank = int(np.sum(s > msup.DEGENERATE_RATIO * s[0])) if s.size and s[0] > 0 else 0
+    return {"rank": rank, "sigma_ratio": ratio, "n_rows": int(A.shape[0])}
+
+
 def _ascii(s) -> str:
     return str(s).encode("ascii", "backslashreplace").decode("ascii")
 
@@ -178,6 +210,14 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
     miss = [n for n, _ in sup if n not in set(nid.tolist())]
     if miss:
         raise EslError("NODE_NOT_IN_PART", f"3-2-1 노드 {miss} 가 대상 메시에 없음")
+    bad_dof = [(n, dof) for n, dof in sup if not dof or any(c not in "123456" for c in dof)]
+    if bad_dof:
+        raise EslError("INPUT_INVALID", f"3-2-1 dof 는 1-6 숫자 문자열: {bad_dof}")
+    pos = {int(v): i for i, v in enumerate(nid.tolist())}
+    sr = support_rank(X, [pos[n] for n, _ in sup], [dof for _, dof in sup])
+    if sr["rank"] < 6 or sr["sigma_ratio"] < msup.DEGENERATE_RATIO:
+        raise EslError("SUPPORT_DEGENERATE", f"3-2-1 지지가 강체 6모드를 구속하지 못함 (rank {sr['rank']}, "
+                                             f"σmin/σmax={sr['sigma_ratio']:.2e}): {sup}")
 
     des, why = design_mask(target_mesh, d)
     if not des.any():
@@ -342,7 +382,7 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
         "design_pids": design_pids, "nondesign_pids": nondesign_pids, "pshell_map": pmap,
         "n_design_elems": int(des.sum()), "n_nondesign_elems": int((~des).sum()), "nondesign_reasons": why,
         "bead": {**b, "skip": skip}, "beadfrac_max": d["beadfrac_max"], "supports": sup,
-        "confidence": CONFIDENCE})
+        "support_check": sr, "confidence": CONFIDENCE})
 
 
 def _readme(d, deck, load_cases, refs, design_pids, nondesign_pids, why, des, spc_sid, load_sids, dtpg_id, comp_rid,

@@ -404,13 +404,13 @@ def _lib_optdeck(spec: dict, echo) -> dict:
     if not np.array_equal(np.asarray(arrays["node_id"]), np.asarray(mesh["node_id"])):
         raise CoreError("ID_MISMATCH", "mapped_loads.npz node_id 가 대상 메시와 다름")
     sup = [(s["node_id"], s["dof"]) for s in tgt.meta["esl"]["supports"]]
-    F = np.asarray(arrays["mapped_F"])
+    an = _mod("esl.library.analysis")
     cases = res["cases"]
     lcs = []
-    for lc in res["load_cases"]:
+    for lc, f in zip(res["load_cases"], _wrap(an.load_case_forces, res, arrays)):
         c = cases[lc["case_index"]]
         lcs.append({"label": f"{lc['label']}_{c.get('drop_class') or ''}{c.get('orient') or ''}",
-                    "entry_id": lc["entry_id"], "f": F[lc["case_index"]], "weight": 1.0})
+                    "entry_id": lc["entry_id"], "f": f, "weight": 1.0})
     oc = dict(cfg["optdeck"])
     obj = (L.get("options") or {}).get("objective")
     if obj:

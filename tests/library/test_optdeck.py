@@ -44,7 +44,8 @@ def load_cases():
             {"label": "REP2_Face3", "entry_id": "Ebbb", "f": f2}]
 
 
-SUP = [(101, "123"), (110, "12"), (103, "2")]
+# 판 = XZ 평면(법선 Y). 101(0,0,0) xyz, 110(30,0,0) yz → Rz·Ry, 103(0,0,20) y → Rx : 강체 6모드 구속(비특이).
+SUP = [(101, "123"), (110, "23"), (103, "2")]
 DESIGN = {"nondesign_node_ids": [112], "nondesign_radius": 10.5, "id_offset": 500}
 
 
@@ -125,7 +126,8 @@ def test_deck_structure_free(tmp_path):
             near = any(np.linalg.norm(m["x0"][v - 101] - m["x0"][11]) <= 10.5 for v in nodes)
             assert pmap[int(f[1])]["design"] is (not near)
     # SPC1 3-2-1
-    assert [(f[1], int(f[2])) for n, f in cards if n == "SPC1"] == [("123", 101), ("12", 110), ("2", 103)]
+    assert [(f[1], int(f[2])) for n, f in cards if n == "SPC1"] == [("123", 101), ("23", 110), ("2", 103)]
+    assert s["support_check"]["rank"] == 6 and s["support_check"]["sigma_ratio"] >= 1e-6
 
 
 def test_weighted_beadfrac_and_fixed_format(tmp_path):
@@ -156,3 +158,22 @@ def test_rejects():
     with pytest.raises(EslError):
         od.card("DTPG", ["123456789"], "fixed")
     assert od.real(1.0) == "1." and od.real(1.5e-12, 8) == "1.5E-12" and od.real(-210000.0) == "-210000."
+
+
+def test_rejects_degenerate_support():
+    """강체 6모드를 다 구속하지 못하는 3-2-1 → SUPPORT_DEGENERATE (덱 파일을 쓰지 않음)."""
+    m = small_mesh()
+    cases = {
+        "판 법선(Y) 회전 자유": [(101, "123"), (110, "12"), (103, "2")],
+        "공선 지지점": [(101, "123"), (104, "23"), (107, "3")],          # x 축 위 세 점
+        "dof 부족(5개)": [(101, "123"), (110, "2"), (103, "2")],
+    }
+    for why, sup in cases.items():
+        with pytest.raises(EslError) as e:
+            od.write(m, load_cases(), sup, DESIGN, "unused")
+        assert e.value.code == "SUPPORT_DEGENERATE", why
+    with pytest.raises(EslError) as e:
+        od.write(m, load_cases(), [(101, "123"), (110, "2x"), (103, "2")], DESIGN, "unused")
+    assert e.value.code == "INPUT_INVALID"
+    sr = od.support_rank(m["x0"], [0, 9, 2], ["123", "23", "2"])
+    assert sr["rank"] == 6 and sr["n_rows"] == 6

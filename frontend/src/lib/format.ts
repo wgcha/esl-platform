@@ -1,7 +1,21 @@
 export const fmt = (v: number | null | undefined, digits = 3) =>
   v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toPrecision(digits);
-export const fmtFixed = (v: number | null | undefined, d = 2) => (v === null || v === undefined ? "–" : v.toFixed(d));
-export const pct = (v: number | null | undefined, d = 1) => (v === null || v === undefined ? "–" : `${(v * 100).toFixed(d)}%`);
+/** toFixed + 부호 있는 0 정규화: 반올림 결과가 0 이면 "-0.0" 대신 "0.0" */
+export function fixedZ(v: number, d = 1): string {
+  const s = v.toFixed(d);
+  return Number(s) === 0 ? (0).toFixed(d) : s;
+}
+export const fmtFixed = (v: number | null | undefined, d = 2) => (v === null || v === undefined ? "–" : fixedZ(v, d));
+export const pct = (v: number | null | undefined, d = 1) => (v === null || v === undefined ? "–" : `${fixedZ(v * 100, d)}%`);
+const bad = (v: number | null | undefined): v is null | undefined => v === null || v === undefined || !Number.isFinite(v);
+/** 값이 이미 % 단위 */
+export const pv = (v: number | null | undefined, d = 1) => (bad(v) ? "–" : `${fixedZ(v, d)}%`);
+/** 값이 이미 % 단위, 부호 표시(+/−). 반올림해 0 이면 부호 없이 "0.0%" */
+export const spv = (v: number | null | undefined, d = 1) => {
+  if (bad(v)) return "–";
+  const s = fixedZ(v, d);
+  return `${Number(s) > 0 ? "+" : ""}${s}%`;
+};
 export const sci = (v: number | null | undefined) => (v === null || v === undefined ? "–" : v.toExponential(2));
 export const vec = (a: number[] | undefined, f: (x: number) => string = sci) => (a ? `(${a.map(f).join(", ")})` : "–");
 export function bytes(n: number) {

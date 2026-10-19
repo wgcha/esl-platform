@@ -52,7 +52,7 @@ PSHELL,507,504,2.500000000E+00,504,,504
 MAT1,504,2.100000000E+05,,3.000000000E-01
 $ ---- SPC1 (3-2-1 statically determinate supports; loads are self-equilibrated)
 SPC1,501,123,101
-SPC1,501,12,110
+SPC1,501,23,110
 SPC1,501,2,103
 $ ---- DTPG: bead (topography) design on design PSHELLs; draw direction = element normal (no NORM)
 DTPG,508,PSHELL,505

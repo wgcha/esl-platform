@@ -130,3 +130,13 @@ def test_report_tolerates_missing_stages_and_escapes(case, tmp_path):
     assert "<script>alert(1)</script>" not in doc and "&lt;script&gt;alert(1)&lt;/script&gt;&amp;" in doc
     assert doc.count("자료 없음") >= 5 and _data(doc)["map"] is None
     _assert_self_contained(doc)
+
+
+def test_json_script_escapes_script_breakers():
+    from esl.report.html import json_script
+
+    v = "x</script><SCRIPT>a</Script><!--y"
+    out = json_script("d", {"v": v})
+    body = out[len('<script type="application/json" id="d">'):-len("</script>")]
+    assert not re.search(r"</script|<script|<!--", body, re.I)
+    assert json.loads(body) == {"v": v}

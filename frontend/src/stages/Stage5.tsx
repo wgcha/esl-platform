@@ -7,7 +7,7 @@ import { ErrHistogram } from "../components/ErrHistogram";
 import { ReportLink } from "../components/ReportLink";
 import { LibraryRegister } from "../components/LibraryRegister";
 import { usePolling } from "../lib/usePolling";
-import { dt, fmt, pct, sci } from "../lib/format";
+import { dt, fmt, pct, pv, sci, spv } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, submitJob, useAction } from "./common";
 
@@ -21,9 +21,6 @@ export const FAIL_REASON_LABEL: Record<string, string> = {
   FIELD_P90_ERR: "전 요소 |오차| P90이 기준 초과",
 };
 
-/** 값이 이미 % 단위 */
-const pv = (v: number | null | undefined, d = 1) => (v === null || v === undefined || !Number.isFinite(v) ? "–" : `${v.toFixed(d)}%`);
-const spv = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`);
 
 /** 최대변형률 비교 수치(계약 §7.2) */
 function StrainCompare({ f }: { f: FieldSummary }) {

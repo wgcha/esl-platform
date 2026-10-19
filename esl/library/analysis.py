@@ -19,6 +19,10 @@
 5. 최악 케이스(옵션 worst_case): 클러스터마다 Σ_i|f_i| 최대 씬을 추가 하중 케이스로. (자기평형 하중의 합력 벡터는 ≈0
    이므로 '합력 최대'는 절점력 크기 합으로 정의.)
 6. 통계 뷰: 씬 유형(Corner/Edge/Face)·orient·인치·시나리오별 Σ|f| 분포와 셀 포락, 검증 오차 분포, SVD 계수 산점.
+
+저장(§10): 대상 절점 하중은 케이스별로 만들어 누적량만 남기고(전체 K×N×3 을 들지 않음), ``mapped_loads.npz`` 의
+``mapped_F`` 는 대표·최악 케이스만 (L,N,3) — ``load_case_index``(L,)·``load_case_entry_id``(L,) 와 같은 순서.
+``load_case_forces(result, arrays)`` 로 ``result["load_cases"]`` 순서의 하중을 꺼낸다.
 """
 from __future__ import annotations
 
@@ -148,6 +152,40 @@ def _q(v):
             "median": float(np.median(v)), "p75": float(np.percentile(v, 75)), "max": float(v.max())}
 
 
+def _target_case_force(e, target, tx, tfr, factor, mopts):
+    """항목 e 의 대상 메시 절점 하중 (N,3)·매핑 정보. 대상과 같은 메시면 원본 F_eq 그대로."""
+    if e.meta.get("mesh_sha256") == target.meta.get("mesh_sha256"):
+        if e.raw is None:
+            raise EslError("INPUT_INVALID", f"대상과 같은 메시 항목 {e.entry_id}: 원본 F_eq(raw) 필요")
+        fk = np.array(e.raw["f"], dtype=np.float64)
+        info = {"self": True, "conservation_rel_max": 0.0, "merged_groups": [], "equilibrium_after": None,
+                "equilibrate_correction_rel": 0.0}
+    else:
+        fk, info = mp.to_target(e.summary_for_mapping(), tx, tfr, dict(mopts))
+        fk = np.array(fk, dtype=np.float64)
+        info.pop("F_cells", None)
+        info["self"] = False
+    return fk * float(factor), info
+
+
+def load_case_forces(result: dict, arrays: dict) -> list:
+    """result["load_cases"] 순서의 대상 절점 하중 (N,3) 목록 (mapped_loads.npz = 대표·최악 케이스만)."""
+    F = np.asarray(arrays["mapped_F"])
+    if "load_case_index" in arrays:
+        pos = {int(k): i for i, k in enumerate(np.asarray(arrays["load_case_index"]).tolist())}
+    elif F.shape[0] == int(result.get("n_cases") or -1):      # 이전 형식(전체 K×N×3)
+        pos = {k: k for k in range(F.shape[0])}
+    else:
+        raise EslError("INPUT_INVALID", "mapped_loads.npz 에 load_case_index 가 없음(분석 다시 실행)")
+    out = []
+    for lc in result["load_cases"]:
+        k = int(lc["case_index"])
+        if k not in pos:
+            raise EslError("INPUT_INVALID", f"mapped_loads.npz 에 하중 케이스 {lc.get('label')}(case {k}) 가 없음")
+        out.append(F[pos[k]])
+    return out
+
+
 # ---------------------------------------------------------------- 본체
 def run(entries, target=None, opts: dict | None = None):
     o = dict(DEFAULT_OPTS)
@@ -187,39 +225,42 @@ def run(entries, target=None, opts: dict | None = None):
         tfr = target.meta["frame"]
         nx, ny = int(target.meta["grid"]["nx"]), int(target.meta["grid"]["ny"])
         N = tx.shape[0]
-        F = np.zeros((K, N, 3))
-        for k, e in enumerate(entries):
-            same = e.meta.get("mesh_sha256") == target.meta.get("mesh_sha256")
-            if same:
-                if e.raw is None:
-                    raise EslError("INPUT_INVALID", f"대상과 같은 메시 항목 {e.entry_id}: 원본 F_eq(raw) 필요")
-                F[k] = np.asarray(e.raw["f"], dtype=np.float64)
-                info = {"self": True, "conservation_rel_max": 0.0, "merged_groups": [], "equilibrium_after": None,
-                        "equilibrate_correction_rel": 0.0}
-            else:
-                fk, info = mp.to_target(e.summary_for_mapping(), tx, tfr,
-                                        {"moment_scale": o["moment_scale"], "equilibrate": o["equilibrate"]})
-                info.pop("F_cells", None)
-                info["self"] = False
-                F[k] = fk
-            F[k] *= factors[k]
-            case_info.append(info)
-        G, cnt = _cell_sums_local(tx, F, tfr, nx, ny)
-        if o["svd_feature"] == "nodal":
-            X = F.reshape(K, -1)
-        elif o["svd_feature"] == "cell":
-            Lc = float(np.sqrt(tfr["L_xi"] * tfr["L_eta"] / (nx * ny)))
-            Mc = np.stack([nz.grid_summary(tx, F[k], nx, ny, tfr, top_n=1)["cell_M_loc"] for k in range(K)])
-            X = np.concatenate([G.reshape(K, -1), (Mc / Lc).reshape(K, -1)], axis=1)
-        else:
+        if o["svd_feature"] not in ("cell", "nodal"):
             raise EslError("INPUT_INVALID", f"svd_feature: cell|nodal (값 {o['svd_feature']!r})")
-        nmag = np.linalg.norm(F, axis=2)
-        arrays.update(mapped_F=F, node_id=np.asarray(target.raw["node_id"]), node_env_mag=nmag.max(axis=0),
-                      node_env_case=np.argmax(nmag, axis=0).astype(np.int64),
+        mopts = {"moment_scale": o["moment_scale"], "equilibrate": o["equilibrate"]}
+        # 케이스별 스트리밍: 전체 K×N×3 을 들고 있지 않고 케이스마다 하중을 만들어 셀 합·포락·특징만 누적한다.
+        # (nodal 특징은 정의상 K×3N 이므로 그 경우만 특징 행렬로 메모리에 둔다.) 저장할 대표·최악 하중은 선택 후 재계산.
+        G = np.zeros((K, nx, ny, 3))
+        Mc = np.zeros((K, nx, ny, 3)) if o["svd_feature"] == "cell" else None
+        Xn = np.zeros((K, 3 * N)) if o["svd_feature"] == "nodal" else None
+        node_env_mag = np.zeros(N)
+        node_env_case = np.zeros(N, dtype=np.int64)
+        sum_abs = np.zeros(K)
+        cnt = None
+        for k, e in enumerate(entries):
+            fk, info = _target_case_force(e, target, tx, tfr, factors[k], mopts)
+            case_info.append(info)
+            Gk, cnt = _cell_sums_local(tx, fk[None], tfr, nx, ny)
+            G[k] = Gk[0]
+            if Mc is not None:
+                Mc[k] = nz.grid_summary(tx, fk, nx, ny, tfr, top_n=1)["cell_M_loc"]
+            if Xn is not None:
+                Xn[k] = fk.reshape(-1)
+            mk = np.linalg.norm(fk, axis=1)
+            up = mk > node_env_mag if k else np.ones(N, dtype=bool)
+            node_env_mag[up] = mk[up]
+            node_env_case[up] = k
+            sum_abs[k] = float(mk.sum())
+        if Xn is not None:
+            X = Xn
+        else:
+            Lc = float(np.sqrt(tfr["L_xi"] * tfr["L_eta"] / (nx * ny)))
+            X = np.concatenate([G.reshape(K, -1), (Mc / Lc).reshape(K, -1)], axis=1)
+        arrays.update(node_id=np.asarray(target.raw["node_id"]), node_env_mag=node_env_mag,
+                      node_env_case=node_env_case,
                       target_xi_eta=nz.local_coords(tfr, tx)[:, :2],
                       outline=boundary_outline(tx, target.raw["conn"], target.raw["elem_type"], tfr),
                       cell_count=cnt)
-        sum_abs = nmag.sum(axis=1)
     else:
         grids = {(int(e.meta["grid"]["nx"]), int(e.meta["grid"]["ny"])) for e in entries}
         if len(grids) != 1:
@@ -288,6 +329,14 @@ def run(entries, target=None, opts: dict | None = None):
             if c["worst"] != c["medoid"]:
                 load_cases.append({"label": f"WORST{c['id'] + 1}", "case_index": c["worst"],
                                    "entry_id": c["worst_entry"], "role": "worst", "cluster": c["id"]})
+
+    if target is not None:
+        # 저장 하중: 대표·최악 케이스만 (load_case_index 순서, 중복 제거). 케이스별로 다시 만든다(결정적).
+        sel = list(dict.fromkeys(int(lc["case_index"]) for lc in load_cases))
+        arrays["load_case_index"] = np.asarray(sel, dtype=np.int64)
+        arrays["load_case_entry_id"] = np.array([briefs[k]["entry_id"] for k in sel])
+        arrays["mapped_F"] = np.stack([_target_case_force(entries[k], target, tx, tfr, factors[k], mopts)[0]
+                                       for k in sel])
 
     cases = []
     for k, b in enumerate(briefs):

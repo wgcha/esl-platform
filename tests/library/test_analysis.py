@@ -1,4 +1,7 @@
 """P2 §3·§8 분석 단위 시험: 정규화 계수, k-medoids 재현성, SVD 모드 수, 대상 없는 격자 분석·포락·최악 케이스."""
+import json
+import re
+
 import numpy as np
 import pytest
 
@@ -7,6 +10,7 @@ from esl.errors import EslError
 from esl.library import analysis as an
 from esl.library import normalization as nm
 from esl.library import normalize as nz
+from esl.library import report_analysis as ra
 from esl.library.entry import LibraryEntry
 
 
@@ -83,7 +87,10 @@ def test_run_with_target_self_and_worst(entries):
     res, arr = an.run(entries, tgt, {"n_representative": 2, "worst_case": True, "normalization": "mass"})
     c0 = res["cases"][0]
     assert c0["self"] is True and c0["scale_factor"] == 1.0
-    assert np.allclose(arr["mapped_F"][0], tgt.raw["f"])                          # 대상 자체 = 원본 그대로
+    Fs = an.load_case_forces(res, arr)
+    for lc, f in zip(res["load_cases"], Fs):                                      # 대상 자체 = 원본 그대로
+        if lc["case_index"] == 0:
+            assert np.allclose(f, tgt.raw["f"])
     assert res["cases"][1]["scale_factor"] == pytest.approx(1 / 1.44)              # mass 정규화
     assert res["mapping"]["conservation_rel_max"] < 1e-10
     worst = [lc for lc in res["load_cases"] if lc["role"] == "worst"]
@@ -93,8 +100,33 @@ def test_run_with_target_self_and_worst(entries):
         assert res["cases"][lc["case_index"]]["sum_abs_f"] == max(sums)
     lab = {c["entry_id"]: c["cluster"] for c in res["cases"]}
     assert lab["a1"] == lab["a2"] == lab["a3"] != lab["b1"] == lab["b2"]
-    assert arr["outline"].shape[1:] == (2, 2) and arr["mapped_F"].shape == (5, tgt.raw["x0"].shape[0], 3)
+    n_lc = len(res["load_cases"])
+    assert arr["outline"].shape[1:] == (2, 2) and arr["mapped_F"].shape == (n_lc, tgt.raw["x0"].shape[0], 3)
 
+
+def test_saved_loads_only_representative_and_worst(entries):
+    """mapped_loads 는 대표+최악 케이스만 (첫 축 = 대표+최악 수); 포락·Σ|f| 는 전 케이스 스트리밍 결과와 일치."""
+    tgt = entries[0]
+    opts = {"n_representative": 1, "worst_case": True}
+    res, arr = an.run(entries, tgt, opts)
+    roles = [lc["role"] for lc in res["load_cases"]]
+    assert roles == ["medoid", "worst"]
+    assert arr["mapped_F"].shape[0] == len(res["load_cases"]) == 2 < res["n_cases"]
+    assert arr["load_case_index"].tolist() == [lc["case_index"] for lc in res["load_cases"]]
+    assert arr["load_case_entry_id"].tolist() == [lc["entry_id"] for lc in res["load_cases"]]
+    o = dict(an.DEFAULT_OPTS, **opts)
+    mo = {"moment_scale": o["moment_scale"], "equilibrate": o["equilibrate"]}
+    tx = np.asarray(tgt.raw["x0"], dtype=np.float64)
+    full = np.stack([an._target_case_force(e, tgt, tx, tgt.meta["frame"], 1.0, mo)[0] for e in entries])
+    mag = np.linalg.norm(full, axis=2)
+    assert np.allclose(arr["node_env_mag"], mag.max(axis=0))
+    assert np.array_equal(arr["node_env_case"], np.argmax(mag, axis=0))
+    assert np.allclose([c["sum_abs_f"] for c in res["cases"]], mag.sum(axis=1))
+    for lc, f in zip(res["load_cases"], an.load_case_forces(res, arr)):
+        assert np.allclose(f, full[lc["case_index"]])
+    bad = {k: v for k, v in arr.items() if k != "load_case_index"}
+    with pytest.raises(EslError):
+        an.load_case_forces(res, bad)
 
 def test_run_errors(entries):
     with pytest.raises(EslError):
@@ -103,3 +135,18 @@ def test_run_errors(entries):
     with pytest.raises(EslError) as e:
         an.run(entries[:2] + [other], None)
     assert e.value.code == "GRID_MISMATCH"
+
+
+def test_report_inline_json_escaped(entries, tmp_path):
+    """분석 보고서 inline JSON 블롭: </script·<script·<!-- 가 블록을 깨지 않음(Case 보고서와 같은 헬퍼)."""
+    evil = "A</script><script>alert(1)</script><!--x</SCRIPT"
+    res, arr = an.run(entries, entries[0], {"n_representative": 2})
+    res["analysis_id"] = evil
+    out = str(tmp_path / "report.html")
+    ra.write(res, out, arr, None, {"analysis_id": evil})
+    doc = open(out, encoding="utf-8").read()
+    m = re.search(r"<script type='application/json' id='esl-data'>(.*?)</script>", doc, re.S)
+    blob = m.group(1)
+    assert not re.search(r"</script|<script|<!--", blob, re.I)
+    assert json.loads(blob)["analysis_id"] == evil
+    assert doc.count("<script") == 2 and "<script>alert(1)" not in doc

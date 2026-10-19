@@ -12,6 +12,7 @@ import re
 import sys
 import threading
 
+import numpy as np
 import pytest
 from esl_test_support import API, REPO, H, create_case, make_settings_dict, wait_for
 from p2_support import seed_entry, seed_run
@@ -156,6 +157,11 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     adir = a["folder_path"]
     for n in ("analysis.json", "mapped_loads.npz", "envelope.csv", "representatives.csv", "report.html"):
         assert os.path.isfile(os.path.join(adir, n)), n
+    with np.load(os.path.join(adir, "mapped_loads.npz"), allow_pickle=False) as z:   # 대표·최악 케이스만 저장
+        assert z["mapped_F"].shape[0] == len(res["load_cases"]) == z["load_case_index"].size
+        assert z["load_case_entry_id"].tolist() == [lc["entry_id"] for lc in res["load_cases"]]
+    dn = client.get(f"{API}/library/analyses/{a['id']}/download", params={"rel": "mapped_loads.npz"}, headers=R)
+    assert dn.status_code == 200 and dn.content[:2] == b"PK"
     rp = client.get(f"{API}/library/analyses/{a['id']}/report", headers=H("tok-general"))
     assert rp.status_code == 200 and rp.headers["content-security-policy"] == CSP
     assert not re.search(r"(src|href)=\"https?://", rp.text) and e0["id"] in rp.text

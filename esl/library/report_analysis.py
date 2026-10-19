@@ -13,13 +13,13 @@
 from __future__ import annotations
 
 import html
-import json
 import math
 import os
 
 import numpy as np
 
 from esl.library import _util as U
+from esl.report.html import json_text
 
 MAX_OUTLINE_SEGMENTS = 30000
 SHAPES = ("circle", "square", "triangle", "diamond", "cross", "circle", "square", "triangle")
@@ -571,7 +571,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     if r.get("warnings"):
         S.append("<h3>경고</h3><ul class='small'>" + "".join(f"<li>{_e(w)}</li>" for w in r["warnings"]) + "</ul>")
     data = {"analysis_id": info.get("analysis_id"), "n_cases": r["n_cases"], "load_cases": r["load_cases"]}
-    blob = json.dumps(U.jsonable(data), ensure_ascii=False).replace("</", "<\\/")
+    blob = json_text(U.jsonable(data))          # Case 보고서와 같은 이스케이프(</, <!--, <script)
     doc = ("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
            f"<title>ESL 종합분석</title><style>{CSS}</style></head><body><main>" + "".join(S)

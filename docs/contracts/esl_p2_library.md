@@ -81,6 +81,9 @@
 - 매핑 후 최소노름 평형 보정(기본 켬, 보정량 기록).
 - DTPG SKIP=BC 고정(전 노드 FORCE이므로 LOAD/BOTH 금지). 덱은 사용자 측 `optistruct -check`로 문법 확인 필요. `card_format: free|fixed`.
 - 저장: `mapped_loads.npz`는 대표·최악 케이스만 저장(전체 K×N×3은 필요 시 재계산) — 규모(22만×수백 씬) 대응.
+  형식: `mapped_F` (L,N,3) + `load_case_index` (L,)·`load_case_entry_id` (L,) (L = 대표+최악 수, `load_cases` 순서). 분석은 케이스별로 하중을 만들어 셀 합·절점 포락·Σ|f|만 누적(nodal 특징만 K×3N 메모리), 선택 케이스는 재계산. 꺼내기: `analysis.load_case_forces(result, arrays)`.
+- 덱: `optdeck.write`는 3-2-1 지지의 강체 6모드 구속 행렬 rank 6·σmin/σmax ≥ 1e-6 아니면 `SUPPORT_DEGENERATE`(optdeck.json `support_check`).
+- 보고서 inline JSON(Case·분석 공통 `esl.report.html.json_text`): `</`·`<!--`·`<script`의 `<` → `\u003c`.
 - 제품 질량(`mass` 정규화): 기본값(파트 질량)은 제품 질량이 아니므로 `mass` 모드는 항목 메타 `product_mass`가 있을 때만 허용, 없으면 `NORMALIZATION_META_MISSING`. 사용자 입력(UI) 또는 rad 전체 질량 계산 옵션.
 
 ## 11. 플랫폼 계약 (P2 UI·API)
