@@ -1,0 +1,132 @@
+"""esl_h3d_extract.tcl 을 가짜 hwi(tests/io/fixtures/hwmock.tcl)로 tclsh 에서 실행 → pack_results 왕복.
+
+실제 HyperView API 동작 검증이 아니라, TCL 문법·흐름·CSV 포맷이 pack_results 와 맞는지만 본다.
+tclsh 가 없으면 건너뛴다.
+"""
+import json
+import os
+import shutil
+import subprocess
+
+import numpy as np
+import pytest
+
+from esl.errors import EslError
+from esl.io import pack_results
+from esl.rad import parse_rad, write_rad
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+TCL_DIR = os.path.join(ROOT, "resources", "tcl")
+MOCK = os.path.join(os.path.dirname(__file__), "fixtures", "hwmock.tcl")
+TCLSH = shutil.which("tclsh") or shutil.which("tclsh8.6")
+pytestmark = pytest.mark.skipif(TCLSH is None, reason="tclsh 없음")
+
+
+def _tcl_list(items):
+    return "{" + " ".join(str(i) for i in items) + "}"
+
+
+def _setup(tmp_path, eng=True, drop_layer=None):
+    nid = np.array([1, 2, 3, 4, 5, 6])
+    x0 = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0.25]], float)
+    eid = np.array([10, 11])
+    conn = np.array([[1, 2, 5, 4], [2, 3, 6, 5]])
+    rad = write_rad(tmp_path / "m.rad", nid, x0, eid, [4, 4], conn, 7, "plate", 1, 1.0, 1, 2e5, 0.3)
+    m = parse_rad(rad, "plate")
+    F = 5
+    rng = np.random.default_rng(3)
+    eps = np.round(rng.normal(size=(F, 2, 2, 3)) * 1e-3, 9)
+    u = np.round(rng.normal(size=(F, 6, 3)), 9)
+    u[0] = 0.0
+    t = np.arange(F) * 1e-3
+    vals = []
+    for f in range(F):
+        for li, lay in enumerate(("Lower", "Upper")):
+            if lay == drop_layer:
+                continue
+            for e in range(2):
+                for c, comp in enumerate(("XX", "YY", "XY")):
+                    v = eps[f, e, li, c] * (2 if (eng and comp == "XY") else 1)
+                    vals.append(f"{{Strain {comp} {lay} {f} {eid[e]}}} {float(v)!r}")
+        for n in range(6):
+            for c, comp in enumerate("XYZ"):
+                vals.append(f"{{Displacement {comp} {{}} {f} {nid[n]}}} {float(u[f, n, c])!r}")
+    # 다른 파트(8) 요소·노드도 h3d 에 있음
+    data = [
+        "set ::mock::sims {" + " ".join(f'"Time = {ti:.6E}"' for ti in t) + "}",
+        "set ::mock::parts [dict create 7 [dict create elems {10 11} nodes {1 2 3 4 5 6}] "
+        "8 [dict create elems {99} nodes {900}]]",
+        "set ::mock::coords [dict create " + " ".join(f"{nid[n]} {_tcl_list(x0[n].tolist())}" for n in range(6))
+        + " 900 {9 9 9}]",
+        "set ::mock::vals [dict create " + " ".join(vals) + "]",
+    ]
+    (tmp_path / "data.tcl").write_text("\n".join(data) + "\n")
+    req = tmp_path / "request.txt"
+    req.write_text("# test\npart_id\t7\nframe_stride\t2\nshear_is_engineering\t" + ("1" if eng else "0") + "\n")
+    (tmp_path / "x.h3d").write_bytes(b"")
+    out = tmp_path / "csv"
+    drv = tmp_path / "drv.tcl"
+    drv.write_text(
+        "set ::ESL_NO_EXIT 1\n"
+        f"source {{{MOCK}}}\nsource {{{tmp_path / 'data.tcl'}}}\n"
+        f"set ::argv [list -input {{{tmp_path / 'x.h3d'}}} -config {{{req}}} -output {{{out}}}]\n"
+        f"source {{{os.path.join(TCL_DIR, 'esl_h3d_extract.tcl')}}}\n"
+    )
+    return m, t, eps, u, drv, out
+
+
+def _run(drv):
+    return subprocess.run([TCLSH, str(drv)], capture_output=True, text=True, timeout=60)
+
+
+def test_extract_tcl_with_mock_roundtrip(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path)
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["n_frames"] == 3 and done["n_elems"] == 2 and done["n_nodes"] == 6
+    res = pack_results(out, m, tmp_path / "npz")
+    assert res["n_frames"] == 3
+    with np.load(tmp_path / "npz" / "strain_tensor.npz", allow_pickle=False) as z:
+        assert z["frame_index"].tolist() == [0, 2, 4]
+        assert np.allclose(z["time"], t[::2])
+        assert np.allclose(z["eps"], eps[::2].astype(np.float32))   # XY 공학전단 → /2
+    with np.load(tmp_path / "npz" / "disp.npz", allow_pickle=False) as z:
+        assert np.allclose(z["u"], u[::2])
+
+
+def test_extract_tcl_missing_layer_writes_failure(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, drop_layer="Upper")
+    r = _run(drv)
+    assert r.returncode == 0  # ESL_NO_EXIT: 종료코드 대신 done.json 확인
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is False and done["code"] == "H3D_MISSING_RESULT"
+    with pytest.raises(EslError) as ei:
+        pack_results(out, m, tmp_path / "npz")
+    assert ei.value.code == "H3D_MISSING_RESULT"
+
+
+def test_tcl_scripts_are_complete_ascii():
+    for name in ("esl_h3d_extract.tcl", "esl_h3d_probe.tcl"):
+        src = open(os.path.join(TCL_DIR, name), "rb").read()
+        assert all(b < 128 for b in src), name
+        chk = subprocess.run([TCLSH], input=f"puts [info complete {{{src.decode()}}}]\n",
+                             capture_output=True, text=True, timeout=30)
+        assert chk.stdout.strip() == "1", (name, chk.stderr)
+
+
+def test_probe_tcl_with_mock(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path)
+    txt = drv.read_text().replace("esl_h3d_extract.tcl", "esl_h3d_probe.tcl")
+    drv.write_text(txt)
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    probe = json.loads((out / "probe.json").read_text())
+    assert probe["ok"] is True
+    sc = probe["subcases"][0]
+    assert sc["n_simulations"] == 5
+    dts = {d["name"]: d for d in sc["data_types"]}
+    assert dts["Strain"]["layers"] == ["Lower", "Upper", "Max", "Min"]
+    assert "XY" in dts["Strain"]["components"]
+    sel = {s["string"]: s["size"] for s in probe["selection"]["element"]}
+    assert sel["component 7"] == 2 and sel["part 7"] == -1
