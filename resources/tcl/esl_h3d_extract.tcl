@@ -8,7 +8,7 @@
 # reached (first-reach). One run, three passes:
 #   (A) last frame, all part elements          -> final.csv
 #   (B) every frame, hot set H only            -> history.csv
-#       H = top hot_k by final vonMises U top hot_k by final plastic strain (values > 0, |H| <= hist_max)
+#       H = top hot_k by final vonMises U top hot_k by final plastic strain (values > 0, no size cap)
 #   (C) candidate frames D, all part elements and nodes -> strain_frames.csv, disp.csv
 #       D = for each metric (vonMises, plastic strain): walk H by final value (descending, ties: lower id)
 #       and collect distinct first-reach frames, up to top_n per metric.
@@ -38,7 +38,7 @@
 #   part_id, part_title, subcase (1), strain_type (Max_Strain), strain_comps (XX YY ZZ XY),
 #   vm_comp (vonMises), strain_layer (Mid), epsp_type (Plastic Strain; empty = no plastic strain, 0),
 #   epsp_comp (Scalar value), epsp_layer (Mid), disp_type (Displacement), disp_comps (X Y Z),
-#   hot_k (200), hist_max (400), top_n (5), reach_rtol (1e-6), chunk (50000),
+#   hot_k (200, no upper cap; > 1000 warns), top_n (5), reach_rtol (1e-6), chunk (50000),
 #   elem_selection / node_selection (optional HyperView selection string, e.g. "component 12"),
 #   strain_system (elemental | analysis | global | none; default elemental).
 #   -hot_k / -top_n arguments override request.txt.
@@ -635,7 +635,7 @@ proc ::esl::read_config {path extra} {
         strain_type "Max_Strain" strain_comps "XX YY ZZ XY" vm_comp "vonMises" strain_layer "Mid" \
         epsp_type "Plastic Strain" epsp_comp "Scalar value" epsp_layer "Mid" \
         disp_type "Displacement" disp_comps "X Y Z" \
-        hot_k 200 hist_max 400 top_n 5 reach_rtol 1e-6 chunk 50000 \
+        hot_k 200 top_n 5 reach_rtol 1e-6 chunk 50000 \
         elem_selection "" node_selection "" strain_system "elemental"]
     set cfg [::esl::read_request $path $defaults]
     dict for {k v} $extra { dict set cfg $k $v }
@@ -643,7 +643,7 @@ proc ::esl::read_config {path extra} {
     if {$p ne "" && ![string is integer -strict $p]} {
         ::esl::fail INPUT_INVALID "part_id must be an integer (use part_title or -part for names): $p"
     }
-    foreach k {hot_k hist_max top_n chunk} {
+    foreach k {hot_k top_n chunk} {
         set v [dict get $cfg $k]
         if {![string is integer -strict $v] || $v < 1} { ::esl::fail INPUT_INVALID "$k must be an integer >= 1: $v" }
     }
@@ -1002,12 +1002,9 @@ proc ::esl::run {arglist} {
     }
     set rtol [dict get $cfg reach_rtol]
     set top_n [dict get $cfg top_n]
-    set hist_max [dict get $cfg hist_max]
     set hot_k [dict get $cfg hot_k]
-    if {2 * $hot_k > $hist_max} {
-        set hot_k [expr {$hist_max / 2}]
-        if {$hot_k < 1} { set hot_k 1 }
-        ::esl::warn "hot_k reduced to $hot_k (|H| <= hist_max $hist_max)"
+    if {$hot_k > 1000} {
+        ::esl::warn "hot_k $hot_k is large: history.csv grows to n_frames x |H| rows (|H| <= 2*hot_k)"
     }
     set csize [dict get $cfg chunk]
     set efields [::esl::elem_fields $cfg]
@@ -1248,7 +1245,7 @@ proc ::esl::run {arglist} {
     dict for {k2 v2} $::esl::chunk_how { lappend ch_json "[::esl::jstr $k2]:[::esl::jstr $v2]" }
     if {[::esl::write_done $out 1 [list part_id $pid part_title [::esl::jstr $ptitle] \
         part_spec [::esl::jstr $spec] n_frames $nsim n_elems $nelem n_nodes $nnode n_hot $nh \
-        hot_k $hot_k hist_max $hist_max top_n $top_n reach_rtol [::esl::num $rtol] \
+        hot_k $hot_k top_n $top_n reach_rtol [::esl::num $rtol] \
         candidate_frames "\{\"max_strain\":[::esl::jints [lindex $cand_vm 0]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 0]]\}" \
         candidate_elems "\{\"max_strain\":[::esl::jints [lindex $cand_vm 1]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 1]]\}" \
         frames_D [::esl::jints $D] \

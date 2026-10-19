@@ -17,12 +17,13 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   const [frame, setFrame] = useState<number | null>(c.tstar?.frame_index ?? null);
   const act = useAction(reload);
   const blk = tv.data?.metrics[metric];
+  const hotspots = blk?.hotspots ?? tv.data?.hotspots ?? [];
 
   // 지표를 바꾸면 그 지표의 현재 t*(또는 자동값)를 기본 선택
   useEffect(() => {
     if (!tv.data) return;
     if (c.tstar && c.tstar.metric === metric) setFrame(c.tstar.frame_index);
-    else setFrame(tv.data.metrics[metric]?.tstar.frame_index ?? null);
+    else setFrame(tv.data.metrics[metric]?.tstar?.frame_index ?? null);
   }, [metric, tv.data, c.tstar?.metric, c.tstar?.frame_index]);
 
   const unchanged = !!c.tstar && c.tstar.metric === metric && c.tstar.frame_index === frame;
@@ -56,7 +57,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
             }
           >
             {c.tstar && (
-              <div className="small muted">
+              <div className="small muted" data-testid="current-tstar">
                 현재 t*: {METRIC_LABEL[c.tstar.metric]} · 프레임 {c.tstar.frame_index} · {c.tstar.time.toFixed(3)} s · 요소 {c.tstar.elem_id} · {c.tstar.source === "auto" ? "자동" : "사용자 선택"}
               </div>
             )}
@@ -73,32 +74,37 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                     <th>시간 (s)</th>
                     <th>요소</th>
                     <th>값</th>
+                    <th>변위(D)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {blk?.candidates.map((k) => (
-                    <tr key={k.frame_index} className={frame === k.frame_index ? "hl" : undefined} onClick={() => allowed && setFrame(k.frame_index)}>
-                      <td>
-                        <input
-                          type="radio"
-                          name="tstar"
-                          aria-label={`프레임 ${k.frame_index}`}
-                          checked={frame === k.frame_index}
-                          disabled={!allowed}
-                          onChange={() => setFrame(k.frame_index)}
-                        />
-                      </td>
-                      <td>{k.rank}</td>
-                      <td>{k.frame_index}</td>
-                      <td>{k.time.toFixed(3)}</td>
-                      <td>{k.elem_id}</td>
-                      <td>{fmt(k.value, 4)}</td>
-                    </tr>
-                  ))}
+                  {blk?.candidates.map((k) => {
+                    const pickable = allowed && k.in_D !== false;
+                    return (
+                      <tr key={k.frame_index} className={frame === k.frame_index ? "hl" : undefined} onClick={() => pickable && setFrame(k.frame_index)}>
+                        <td>
+                          <input
+                            type="radio"
+                            name="tstar"
+                            aria-label={`프레임 ${k.frame_index}`}
+                            checked={frame === k.frame_index}
+                            disabled={!pickable}
+                            onChange={() => setFrame(k.frame_index)}
+                          />
+                        </td>
+                        <td>{k.rank}</td>
+                        <td>{k.frame_index}</td>
+                        <td>{k.time.toFixed(3)}</td>
+                        <td>{k.elem_id}</td>
+                        <td>{fmt(k.value, 4)}</td>
+                        <td>{k.in_D === false ? <span className="bad-text" title="변위가 추출되지 않은 프레임 — t*로 고를 수 없음">없음</span> : "있음"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </Card>
-            <Card title="hotspot">
+            <Card title={`hotspot (t* 프레임 ${blk?.tstar?.frame_index ?? "–"}에서 상승 중 = 검증 대상)`}>
               <table className="tbl compact">
                 <thead>
                   <tr>
@@ -110,13 +116,25 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {tv.data.hotspots.map((h) => (
+                  {hotspots.map((h) => (
                     <tr key={h.elem_id}>
                       <td>{h.rank}</td>
                       <td>{h.elem_id}</td>
                       <td>{fmt(h.value, 4)}</td>
-                      <td className="mono small">{h.centroid.map((v) => v.toFixed(1)).join(", ")}</td>
-                      <td>{h.rising ? <span className="warn-text" title="t* 이후에도 값이 커지는 요소">상승 중</span> : "–"}</td>
+                      <td className="mono small">{h.centroid ? h.centroid.map((v) => v.toFixed(1)).join(", ") : "–"}</td>
+                      <td>
+                        {h.rising === null ? (
+                          "?"
+                        ) : h.rising ? (
+                          <span className="ok-text" title="t* 프레임에서 값이 오르는 중 — hold 값 = 순간값이라 검증에 쓴다">
+                            상승 중
+                          </span>
+                        ) : (
+                          <span className="muted" title="t* 이전에 이미 최대 도달 — 검증 비교에서 제외">
+                            아님
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

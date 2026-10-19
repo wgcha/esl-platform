@@ -168,8 +168,9 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
         hots.append({"elem_id": h.get("elem_id"), "eps_rad": _f(h.get("eps_rad")),
                      "eps_val": _f(h.get("eps_val", h.get("eps_os"))), "rel_err": _f(h.get("rel_err")),
                      "rank": h.get("rank")})
-    excluded = [{"elem_id": e.get("elem_id"), "reason": e.get("reason")} for e in (val.get("excluded") or [])
-                if isinstance(e, dict)]
+    # 코어 validation.json 키는 hotspots_excluded(이전 형식 excluded 도 허용)
+    excluded = [{"elem_id": e.get("elem_id"), "reason": e.get("reason")}
+                for e in (val.get("hotspots_excluded") or val.get("excluded") or []) if isinstance(e, dict)]
     verdict = val.get("verdict")
     if verdict not in ("PASS", "FAIL"):
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict 오류: {verdict}")

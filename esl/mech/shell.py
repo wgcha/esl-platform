@@ -329,6 +329,10 @@ class _CG:
         self.mem_est_mb = 0.0
         self.iters = []
         self.resid = []
+        self.notes = []
+        self.refine_max = 3
+        # 참 잔차가 rtol 에 못 미쳐도 이 값 이하면 수용(경고). ShellModel.solve 의 해 잔차 허용(1e-8)과 같음
+        self.floor_accept = max(1e-8, 10 * self.rtol)
 
     def solve(self, b):
         b = np.asarray(b, dtype=np.float64)
@@ -340,9 +344,32 @@ class _CG:
         def cb(_xk):
             cnt[0] += 1
         x, info = spla.cg(self._A, b, rtol=self.rtol, atol=0.0, maxiter=self.maxiter, M=self._M, callback=cb)
-        r = float(np.linalg.norm(self._A @ x - b) / nb)
+        res = b - self._A @ x
+        r = float(np.linalg.norm(res) / nb)
+        # 점화식 잔차는 수렴했지만 참 잔차가 남은 경우(조건수): 잔차 방정식으로 반복 개선
+        for _ in range(self.refine_max):
+            if info != 0 or r <= 10 * self.rtol or not np.all(np.isfinite(x)):
+                break
+            nr = np.linalg.norm(res)
+            dx, info = spla.cg(self._A, res, rtol=min(0.5, self.rtol * nb / nr), atol=0.0,
+                               maxiter=max(1, self.maxiter - cnt[0]), M=self._M, callback=cb)
+            x2 = x + dx
+            res2 = b - self._A @ x2
+            r2 = float(np.linalg.norm(res2) / nb)
+            if not r2 < 0.5 * r:            # 정체(부동소수 바닥) → 중단
+                if r2 < r:
+                    x, res, r = x2, res2, r2
+                break
+            x, res, r = x2, res2, r2
         self.iters.append(cnt[0])
         self.resid.append(r)
+        if r > 10 * self.rtol and info == 0 and np.all(np.isfinite(x)) and r <= self.floor_accept:
+            msg = (f"CG 참 잔차 {r:.2e} 가 rtol {self.rtol:.0e} 에 못 미침(부동소수 바닥) — "
+                   f"허용 바닥 {self.floor_accept:.0e} 이내라 수용")
+            if msg not in self.notes:
+                self.notes.append(msg)
+                warnings.warn(msg, RuntimeWarning, stacklevel=2)
+            return x
         if info != 0 or not np.all(np.isfinite(x)) or r > 10 * self.rtol:
             raise EslError("SOLVER_NOT_CONVERGED",
                            f"CG 미수렴 (반복 {cnt[0]}/{self.maxiter}, 상대잔차 {r:.2e} > rtol {self.rtol:.0e}, "
@@ -412,6 +439,8 @@ def _record_iter(f, info):
     if isinstance(f, _CG) and f.iters:
         info["iterations"] = list(f.iters[-10:])
         info["resid_rel"] = list(f.resid[-10:])
+        if f.notes:
+            info["notes"] = list(f.notes)
 
 
 def _principal_submatrix(K: sp.csr_matrix, keep: np.ndarray) -> sp.csr_matrix:

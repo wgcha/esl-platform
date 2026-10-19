@@ -3,7 +3,7 @@
 - 계산은 `esl.pipeline.run(...)` 단일 진입점(계약 esl_platform_p1b.md §2). 코어 시그니처가 바뀌는 중일 수 있어
   `inspect.signature`로 받는 인자만 골라 넘긴다(설정은 `cfg=`(dict) 또는 `config_path_or_dict`/`config_path`).
 - 동기 API(지지점 제안·저장, 경로 확인)에 필요한 소규모 보조 함수(`list_parts`, `scan_includes`,
-  `pca_corners`, `pick_321`, 설정 검증)도 여기서만 import 한다. 없으면 `CoreUnavailable`.
+  `pca_corners`, `pick_321`, 설정 검증, `/status` 용 솔버 백엔드 조회)도 여기서만 import 한다. 없으면 `CoreUnavailable`.
 - 코어 오류(`esl.errors.EslError`)는 `CoreError(code, message)`로 바꿔 플랫폼 코드가 코어 예외 타입에 묶이지 않게 한다.
 """
 
@@ -74,19 +74,21 @@ def stages() -> tuple[str, ...]:
 
 
 def solver_backends(core_cfg: dict | None) -> dict[str, Any]:
-    """`GET /status` tools: 설정의 solver.backend 와 import 가능한 백엔드."""
-    avail = []
+    """`GET /status` tools: 코어 ShellModel 과 같은 규칙(esl.mech.shell)으로 해석한 solver.backend 와 사용 가능 목록.
+
+    - ``solver_backend``: 설정 값을 ``resolve_backend`` 로 해석한 값(= ShellModel.stats["backend"]; auto → 설치된
+      직접법 1순위). 설정 백엔드가 미설치면 설정 값 그대로.
+    - ``solver_backends_available``: ``available_backends()`` (우선순위 순) + ``iterative``(항상 가능).
+    """
+    requested = str(((core_cfg or {}).get("solver") or {}).get("backend") or "auto")
+    shell = _mod("esl.mech.shell")
+    avail = list(shell.available_backends())
+    if "iterative" not in avail:
+        avail.append("iterative")
     try:
-        importlib.import_module("scipy.sparse.linalg")
-        avail.append("superlu")
-    except ImportError:  # pragma: no cover
-        pass
-    try:
-        importlib.import_module("sksparse.cholmod")
-        avail.append("cholmod")
-    except ImportError:
-        pass
-    backend = ((core_cfg or {}).get("solver") or {}).get("backend") or "superlu"
+        backend = shell.resolve_backend(requested)
+    except Exception:  # 미설치 백엔드 지정 → 작업 실행 시 코어가 INPUT_INVALID
+        backend = requested
     return {"solver_backend": backend, "solver_backends_available": avail}
 
 

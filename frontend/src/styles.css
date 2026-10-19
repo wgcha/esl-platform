@@ -64,6 +64,9 @@ h3 {
 .warn-text {
   color: var(--warn);
 }
+.ok-text {
+  color: var(--ok);
+}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -705,4 +708,27 @@ input:disabled {
   width: 140px;
   height: 10px;
   border-radius: 2px;
+}
+
+/* ⑥ 다운로드 한도 초과(413): 경로가 길어도 표가 넘치지 않게 줄바꿈 */
+.hscroll {
+  overflow-x: auto;
+}
+.tbl td .too-large {
+  white-space: normal;
+  min-width: 18rem;
+  max-width: 36rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.too-large .path {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+details.card > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
 }

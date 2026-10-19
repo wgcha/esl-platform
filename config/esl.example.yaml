@@ -14,7 +14,7 @@ extract:
   frame_stride: 1                    # history 프레임 간격(1=전부, 후보 프레임 D 는 항상 포함)
   layers: [mid]                      # 솔버 ε_eq 층: mid(막 z=0) | bottom | top (여럿이면 최대). h3d 는 Mid 만 있음
   shear_convention: auto             # auto | tensor | engineering  h3d exy 규약(auto = HyperView vonMises 와 비교)
-  hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고)
+  hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고, 상한 없음·1000 초과 경고)
   disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
 
 tstar:
@@ -31,7 +31,9 @@ support:
   node_ids: []                       # candidates=node_ids 일 때 3개 이상. CLI --support-nodes 가 우선
 
 solver:
-  backend: auto                      # auto(설치된 직접법 CHOLMOD/PARDISO, 없으면 SuperLU) | cholmod | pardiso | superlu | iterative
+  backend: auto                      # auto(CHOLMOD → PARDISO → SuperLU, 직접법 메모리 부족 시 반복법) | cholmod | pardiso | superlu | iterative
+  iter_rtol: 1.0e-10                 # 반복법(CG) 상대잔차. S5 전체계 solve 는 min(이 값, 1e-12)
+  iter_maxiter: null                 # 반복법 최대 반복(null = 자동)
   drill_factor: 1.0e-4               # 드릴링 강성 = drill_factor·E·t·A
   equilibrium_warn_rel: 1.0e-6       # S4 |ΣF|/Σ|F|, 합모멘트/(Σ|F|·L) 경고 임계
 

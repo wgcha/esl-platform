@@ -22,7 +22,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
     ? "파트 title을 입력하세요."
     : rad.result && !rad.result.ok
       ? "rad 경로에 문제가 있습니다."
-      : res.result && !(res.result.ok && res.result.done.ok)
+      : res.result && !(res.result.ok && res.result.done?.ok)
         ? "결과 폴더(done.json)에 문제가 있습니다."
         : null;
 
@@ -67,9 +67,21 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                 <Stat label="노드" value={s.n_nodes.toLocaleString()} />
                 <Stat label="요소" value={s.n_elems.toLocaleString()} />
                 <Stat label="프레임" value={s.n_frames} />
-                <Stat label="종료 시각" value={`${s.t_end} s`} />
+                <Stat label="후보 프레임(D)" value={s.disp_frames.length} hint={s.disp_frames.join(", ")} />
               </div>
-              <div className="small muted">단위 {s.units_label} · 파트 id {c.part_id ?? "–"}</div>
+              <div className="small muted">
+                QUAD {s.n_quad?.toLocaleString() ?? "–"} · TRIA {s.n_tria?.toLocaleString() ?? "–"} · 단위 {s.units_label || "–"} · 파트 id {c.part_id ?? "–"}
+                {c.h3d_path ? ` · h3d ${c.h3d_path}` : ""}
+              </div>
+              {s.warnings.length > 0 && (
+                <ul className="reasons">
+                  {s.warnings.map((w) => (
+                    <li key={w} className="small warn-text">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <table className="tbl compact">
                 <thead>
                   <tr>
@@ -80,7 +92,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {s.mat.map((m) => (
+                  {s.mats.map((m) => (
                     <tr key={m.id}>
                       <td>{m.id}</td>
                       <td>{m.law}</td>

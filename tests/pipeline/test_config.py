@@ -65,7 +65,7 @@ _DEL = object()
     ("extract.layers", "mid", "extract.layers"),
     ("extract.shear_convention", "gamma", "extract.shear_convention"),
     ("extract.hot_k", 0, "extract.hot_k"),
-    ("extract.hot_k", 201, "extract.hot_k"),
+    ("extract.hot_k", 2.5, "extract.hot_k"),
     ("tstar.metric", "vm", "tstar.metric"),
     ("tstar.metric", _DEL, "tstar.metric"),
     ("tstar.reach_rtol", 1.0, "tstar.reach_rtol"),

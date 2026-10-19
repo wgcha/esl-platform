@@ -80,8 +80,7 @@ chunk	50000
 | `strain_layer` | `Mid` | 변형률 layer(실데이터는 Mid만 있음) |
 | `epsp_type` / `epsp_comp` / `epsp_layer` | `Plastic Strain` / `Scalar value` / `Mid` | 소성 변형률(max-hold). `epsp_type`을 비우면 소성 0 + 경고 |
 | `disp_type` / `disp_comps` | `Displacement` / `X Y Z` | 변위 결과 유형·성분 |
-| `hot_k` | `200` | H = 최종 vonMises 상위 hot_k ∪ 최종 소성 상위 hot_k(값 > 0). `-hot_k`가 우선 |
-| `hist_max` | `400` | \|H\| 상한(2·hot_k > hist_max면 hot_k를 줄이고 경고) |
+| `hot_k` | `200` | H = 최종 vonMises 상위 hot_k ∪ 최종 소성 상위 hot_k(값 > 0). 상한 없음(1000 초과 시 경고). `-hot_k`가 우선 |
 | `top_n` | `5` | 지표별 후보 프레임 수. `-top_n`이 우선 |
 | `reach_rtol` | `1e-6` | first-reach 허용오차: `v[f] ≥ v_last·(1−rtol)`인 첫 프레임 |
 | `chunk` | `50000` | 요소·노드 질의 청크 크기(id 범위 선택 집합을 청크마다 한 번 만들어 재사용, 행은 바로 파일로) |
@@ -109,7 +108,7 @@ h3d의 `Max_Strain`·`Plastic Strain`은 **요소별 누적 최대(max-hold)**�
   모두 실패하면 파트 전 요소 청크를 프레임마다 질의해 H만 남긴다(느림, 경고·`passes.B.hot_selection`).
   청크 선택도 같은 방법이며 실패하면 파트 전체 집합 한 번 질의(메모리 큼, 경고·`chunks`).
 - 프레임 루프는 `SetCurrentSimulation` → `Draw` → 질의. 진행률(패스·프레임·청크)을 콘솔에 `ESL extract HH:MM:SS pass B frame 12/126 ...`으로 찍는다.
-- `done.json` 성공: `{"ok":true,"part_id","part_title","n_frames","n_elems","n_nodes","n_hot","hot_k","hist_max","top_n","reach_rtol",
+- `done.json` 성공: `{"ok":true,"part_id","part_title","n_frames","n_elems","n_nodes","n_hot","hot_k","top_n","reach_rtol",
   "candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"candidate_elems":{...},"frames_D":[..],
   "passes":{"A":{"frame","rows","chunks","seconds"},"B":{"frames","n_hot","rows","hot_selection","seconds"},"C":{"frames","rows_strain","rows_disp","elem_chunks","node_chunks","seconds"}},
   "chunk","chunks","strain_type","strain_layer","strain_comps","vm_comp","epsp_type","epsp_layer","disp_type","exy":"raw (as stored in h3d)",

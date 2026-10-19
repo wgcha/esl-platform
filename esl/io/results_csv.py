@@ -421,7 +421,7 @@ def max_hold(eq_inst, *arrays):
 
 def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None, ezz=None, epsp=None,
                       frame_index=None, h3d="synthetic.h3d", write_done=True, extra_nodes=None, extra_elems=None,
-                      hot_k=200, top_n=5, reach_rtol=1e-6, hist_max=400, frames_D=None) -> str:
+                      hot_k=200, top_n=5, reach_rtol=1e-6, frames_D=None) -> str:
     """TCL 3패스 출력(§7.2) 생성기. 시험·E2E 용 — H·D 는 TCL 과 같은 규칙(esl.mech.tstar)으로 정한다.
 
     - ``eps``: (F,E,3) h3d 에 저장된 [exx,eyy,exy] (이미 max-hold 된 Max_Strain 텐서; exy 규약은 호출자 몫).
@@ -450,7 +450,7 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
     xe = [] if extra_elems is None else [int(v) for v in extra_elems]
     g = "{:.17g}".format
 
-    H = tstar.hot_set(vm[-1], ep[-1], hot_k, hist_max)
+    H = tstar.hot_set(vm[-1], ep[-1], hot_k)
     cand = {}
     cel = {}
     for m, v in (("max_strain", vm[:, H]), ("plastic_strain", ep[:, H])):

@@ -57,6 +57,14 @@ def _enum(*vals):
     return chk
 
 
+def _opt(chk_fn):
+    """None 허용 + 그 외는 chk_fn 검사."""
+    def chk(key, v):
+        if v is not None:
+            chk_fn(key, v)
+    return chk
+
+
 def _str(nonempty=True):
     def chk(key, v):
         if not isinstance(v, str) or (nonempty and not v.strip()):
@@ -149,7 +157,7 @@ SCHEMA: dict[str, Any] = {
         "frame_stride": _int(1),
         "layers": _layers,
         "shear_convention": _enum("auto", "tensor", "engineering"),
-        "hot_k": _int(1, 200),
+        "hot_k": _int(1),               # 상한 없음(크면 extract 단계 경고)
         "disp_precision": _enum("float32", "float64"),
     },
     "tstar": {
@@ -167,6 +175,8 @@ SCHEMA: dict[str, Any] = {
     },
     "solver": {
         "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative"),
+        "iter_rtol": _num(0.0, 1.0, lo_open=True, hi_open=True),
+        "iter_maxiter": _opt(_int(1)),          # null = 자동(ShellModel 기본)
         "drill_factor": _num(0.0, 1.0, lo_open=True),
         "equilibrium_warn_rel": _num(0.0, lo_open=True),
     },

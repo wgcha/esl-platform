@@ -91,6 +91,9 @@ def test_v_ls_3_no_lease_in_responses(client, engine, mini_inputs, worker_factor
     st = client.get(f"{API}/status", headers=H("tok-admin")).json()
     assert st["worker"]["online"] is True
     assert set(st["tools"]) == {"solver_backend", "solver_backends_available"}
+    from esl.mech.shell import available_backends, resolve_backend
+    assert st["tools"]["solver_backends_available"] == [*available_backends(), "iterative"]
+    assert st["tools"]["solver_backend"] == resolve_backend("auto")          # 설정 auto → ShellModel.stats.backend 와 같음
 
 
 def test_light_lane_independent_of_slot(client, engine, mini_inputs):

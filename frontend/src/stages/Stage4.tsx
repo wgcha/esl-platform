@@ -51,15 +51,24 @@ export function Stage4({ c, reload, allowed }: StageProps) {
         <>
           <Card title="결과" right={r.status === "READY" ? <Badge kind="ok">READY</Badge> : <Badge kind="bad">FAILED</Badge>}>
             <div className="stats">
-              <Stat label="강체 회전각" value={`${fmtFixed(r.kabsch.rot_deg, 2)}°`} />
-              <Stat label="변형 RMS / max" value={`${fmtFixed(r.kabsch.rms_def, 3)} / ${fmtFixed(r.kabsch.max_def, 3)}`} hint="강체 제거 후 상대 변위(mm)" />
-              <Stat label="ΣF" value={<span className="mono small">{vec(r.forces.sum_f)}</span>} />
-              <Stat label="ΣM" value={<span className="mono small">{vec(r.forces.sum_m)}</span>} />
-              <Stat label="평형 오차" value={sci(r.forces.equilibrium_rel)} />
-              <Stat label="잡음 (힘)" value={pct(r.forces.noise.force_rel, 2)} />
-              <Stat label="잡음 (hotspot 변형률)" value={pct(r.forces.noise.hotspot_strain_rel, 2)} />
-              <Stat label="하중 노드 수" value={r.forces.n_nodes_loaded.toLocaleString()} />
+              <Stat label="강체 회전각" value={`${fmtFixed(r.kabsch?.rot_deg, 2)}°`} />
+              <Stat label="변형 RMS / max" value={`${fmtFixed(r.kabsch?.rms_def, 3)} / ${fmtFixed(r.kabsch?.max_def, 3)}`} hint="강체 제거 후 상대 변위(mm)" />
+              <Stat label="ΣF" value={<span className="mono small">{vec(r.forces?.sum_f ?? undefined)}</span>} />
+              <Stat label="ΣM" value={<span className="mono small">{vec(r.forces?.sum_m ?? undefined)}</span>} />
+              <Stat label="평형 오차" value={sci(r.forces?.equilibrium_rel)} hint={r.forces?.moment_rel != null ? `모멘트 ${sci(r.forces.moment_rel)}` : undefined} />
+              <Stat label="잡음 (힘)" value={pct(r.forces?.noise.force_rel, 2)} hint={r.forces?.noise.disp_precision ?? undefined} />
+              <Stat label="잡음 (hotspot 변형률)" value={pct(r.forces?.noise.hotspot_strain_rel, 2)} />
+              <Stat label="하중 노드 수" value={r.forces?.n_nodes_loaded?.toLocaleString() ?? "–"} />
             </div>
+            {r.warnings.length > 0 && (
+              <ul className="reasons">
+                {r.warnings.map((w) => (
+                  <li key={w} className="small warn-text">
+                    {w}
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
           <Card title="F_eq 상위 노드">
             {forces.data ? (

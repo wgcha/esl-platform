@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
-import inspect
 import json
 import os
 import time as _time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -54,6 +54,7 @@ D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export")
 BACKUP_DIR = "_backup"
 RUN_JSON = "run.json"
+HOT_K_WARN = 1000          # extract.hot_k 상한은 없고 이보다 크면 경고
 _HASH_CHUNK = 4 * 1024 * 1024
 
 
@@ -189,13 +190,10 @@ class StoredModel:
     max_ids: dict = field(default_factory=dict)
     includes: list = field(default_factory=list)
 
-    def shell(self, drill_factor: float, backend: str = "auto") -> tuple[ShellModel, bool]:
-        """(ShellModel, backend 인자 전달 여부). ShellModel 에 backend 키워드가 있을 때만 넘긴다."""
-        kw: dict[str, Any] = {"drill_factor": drill_factor}
-        has = "backend" in inspect.signature(ShellModel).parameters
-        if has:
-            kw["backend"] = backend
-        return ShellModel(self.x0, self.conn, self.elem_type, self.thickness, self.E, self.nu, **kw), has
+    def shell(self, drill_factor: float, backend: str = "auto", iter_rtol: float = 1e-10,
+              iter_maxiter: int | None = None) -> ShellModel:
+        return ShellModel(self.x0, self.conn, self.elem_type, self.thickness, self.E, self.nu,
+                          drill_factor=drill_factor, backend=backend, iter_rtol=iter_rtol, iter_maxiter=iter_maxiter)
 
     def centroids(self) -> np.ndarray:
         q = self.elem_type == 4
@@ -447,6 +445,8 @@ def stage_extract(ctx: Context) -> dict:
     meta = _read_json(fpath)
     meta["shear"] = sh
     _write_json(fpath, meta)
+    if ecfg["hot_k"] > HOT_K_WARN:
+        ctx.warnings.append(f"extract.hot_k={ecfg['hot_k']} > {HOT_K_WARN}: history 이력이 n_frames×2·hot_k 행까지 커짐")
     if meta.get("hot_k") not in (None, ecfg["hot_k"]):
         ctx.warnings.append(f"TCL hot_k={meta.get('hot_k')} ≠ 설정 extract.hot_k={ecfg['hot_k']} "
                             f"(TCL 을 -hot_k {ecfg['hot_k']} 로 다시 실행하거나 설정을 맞출 것)")
@@ -700,12 +700,30 @@ def noise_floor(ctx: Context, sm: ShellModel, X0, u_total, u_rel, F, hot_pos) ->
                          "noise_strain_rel_max": vcfg["noise_strain_rel_max"]}}
 
 
+S5_ITER_RTOL_MAX = 1e-12      # S5 전체계 solve 가 반복법일 때 상대잔차 상한(esl_core §7.5)
+
+
 def _shell(ctx: Context, model: StoredModel) -> ShellModel:
-    backend = ctx.cfg["solver"]["backend"]
-    sm, used = model.shell(ctx.cfg["solver"]["drill_factor"], backend)
-    if not used and backend != "auto":
-        ctx.warnings.append(f"solver.backend={backend} 무시: ShellModel 에 backend 인자가 없음(SuperLU)")
+    scfg = ctx.cfg["solver"]
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always", RuntimeWarning)
+        sm = model.shell(scfg["drill_factor"], scfg["backend"], scfg["iter_rtol"], scfg["iter_maxiter"])
+    ctx.warnings.extend(str(w.message) for w in wl)
     return sm
+
+
+def _solver_call(ctx: Context, fn, *args):
+    """ShellModel 호출 중 RuntimeWarning(메모리 부족 → 반복법 전환, SuperLU 폴백 등)을 run 경고로 옮긴다."""
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always", RuntimeWarning)
+        out = fn(*args)
+    ctx.warnings.extend(str(w.message) for w in wl)
+    return out
+
+
+def solver_stats(sm: ShellModel) -> dict:
+    """ShellModel.stats(JSON 직렬화 가능한 사본)."""
+    return _jsonable(sm.stats)
 
 
 # ====================================================================== S3+S4 esl
@@ -751,7 +769,7 @@ def stage_esl(ctx: Context) -> dict:
     u = dz["u"][fpos]
     u_rel, R, t, kinfo = kabsch.remove_rigid(X0, u)
     sm = _shell(ctx, model)
-    F = sm.condensed_forces(u_rel)
+    F = _solver_call(ctx, sm.condensed_forces, u_rel)
     mag = np.linalg.norm(F, axis=1)
     sum_abs = float(mag.sum())
     sumF = F.sum(axis=0)
@@ -801,7 +819,7 @@ def stage_esl(ctx: Context) -> dict:
                        "n_nodes_nonzero": int(np.sum(mag > 0))},
             "supports": sup_rec["supports"], "support_mode": mode, "noise": noise,
             "drill_factor": ctx.cfg["solver"]["drill_factor"], "backend": ctx.cfg["solver"]["backend"],
-            "created_at": _utcnow()}
+            "solver": solver_stats(sm), "created_at": _utcnow()}
     _write_json(ctx.f(d, "esl_summary.json"), summ)
     ctx.echo(f"[esl] frame {sel['frame_index']}: 강체회전 {kinfo['rot_deg']:.2f}°, ΣF=|{np.linalg.norm(sumF):.3e}|, "
              f"Σ|F|={sum_abs:.3e}, 평형 오차 {eq_rel:.2e} (모멘트 {mom_rel:.2e}), "
@@ -812,7 +830,8 @@ def stage_esl(ctx: Context) -> dict:
     noise_short = {k: noise[k] for k in ("disp_precision", "delta", "n_samples", "force_rel", "hotspot_strain_rel")}
     return {"noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
-            "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode}
+            "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
+            "solver": solver_stats(sm)}
 
 
 # ====================================================================== S5 validate
@@ -856,7 +875,7 @@ def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
     if mode == "never":
         return {**rec, "run": False, "reason": "설정 never"}
     if not direct:
-        return {**rec, "run": False, "reason": "반복법 솔버만 가능"}
+        return {**rec, "run": True, "reason": f"auto: 반복법(rtol ≤ {S5_ITER_RTOL_MAX:g}), 직접법 메모리 불필요"}
     if avail is not None and need > FULL_SOLVE_MEM_FRAC * avail:
         return {**rec, "run": False,
                 "reason": f"직접법 메모리 추정 {need / 1e9:.1f} GB > 가용 {avail / 1e9:.1f} GB × {FULL_SOLVE_MEM_FRAC}"}
@@ -884,7 +903,9 @@ def stage_validate(ctx: Context) -> dict:
     sm = _shell(ctx, model)
     fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
     if fs["run"]:
-        u_val, Rr = sm.solve(F, spc)
+        # 반복법이면 전체계는 rtol = min(설정, 1e-12) (직접법이면 영향 없음)
+        sm.iter_opts["rtol"] = min(float(ctx.cfg["solver"]["iter_rtol"]), S5_ITER_RTOL_MAX)
+        u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
         # 미소 강체 제거 후 비교(양쪽 모두 같은 사영 → 선형 왕복의 수치 일관성)
         d_val, _, _ = kabsch.remove_linear_rigid(X0, u_val[:, :3])
         d_rel, a_rel, w_rel = kabsch.remove_linear_rigid(X0, u_rel)
@@ -901,7 +922,7 @@ def stage_validate(ctx: Context) -> dict:
     else:
         # 전체 solve 생략: S4 의 u_rel + 응축 회전(rotations_for)으로 막 변형률 → hotspot 비교만
         ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — hotspot 변형률만 비교, disp_rms_rel·반력 skipped")
-        u_val = _with_rot(sm, u_rel)
+        u_val = _solver_call(ctx, _with_rot, sm, u_rel)
         Rr = None
         disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
         eps_sol = sm.strains(u_val)
@@ -990,7 +1011,7 @@ def stage_validate(ctx: Context) -> dict:
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
             "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
-            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}}
+            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm)}
 
 # ====================================================================== export
 def stage_export(ctx: Context) -> dict:

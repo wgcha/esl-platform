@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
 import { NO_PERMISSION } from "../app/AppContext";
 import { STALE_TEXT } from "../stages/StageFrame";
+import { TOO_LARGE_TEXT } from "../stages/Stage6";
 
 const PRIMARY = ["추출 실행", "t* 확정", "지지점 저장", "ESL 계산", "검증 실행", "내보내기"];
 const TITLES = ["① 입력", "② t*", "③ 지지점", "④ ESL", "⑤ 검증", "⑥ 내보내기"];
@@ -135,20 +136,64 @@ describe("단계별 핵심 요소", () => {
   it("⑤ FAIL 배지·사유·제외 요소", async () => {
     renderApp(url("c-demo", 5));
     expect(await screen.findByText("FAIL")).toBeTruthy();
-    expect(screen.getByText(/104012 ε_eq 오차/)).toBeTruthy();
-    expect(screen.getByText("지지점 인접(경계 영향)")).toBeTruthy();
+    expect(screen.getByText(/HOTSPOT_STRAIN — hotspot 1위 ε_eq 오차/)).toBeTruthy();
+    expect(screen.getByText(/상승 중 아님/)).toBeTruthy();
   });
 
   it("⑥ 대상 체크 3개·폴더 경로·파일 목록", async () => {
     renderApp(url("c-demo", 6));
     expect((await screen.findAllByRole("checkbox")).length).toBe(3);
     expect((await screen.findByTestId("folder-path")).textContent).toContain("rear40");
-    expect(await screen.findByText("06_export/exp-1/esl_cload.inc")).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "다운로드" }).length).toBe(7);
+    expect(await screen.findByText("06_export/esl_cload.inc")).toBeTruthy();
+    // esl_force.fem(31.9 MB) > 20 MB: 다운로드 대신 안내 + 경로 복사
+    expect(screen.getAllByRole("link", { name: "다운로드" }).length).toBe(6);
+    const tl = screen.getByTestId("too-large");
+    expect(tl.textContent).toContain(TOO_LARGE_TEXT);
+    expect(tl.textContent).toContain("rear40\\06_export\\esl_force.fem");
+    expect(within(tl).getByRole("button", { name: "경로 복사" })).toBeTruthy();
+  });
+
+  it("⑥ 다운로드가 413 ARTIFACT_TOO_LARGE면 안내 + 서버가 준 경로 복사", async () => {
+    const { server } = renderApp(url("c-demo", 6));
+    await screen.findByText("06_export/esl_cload.inc");
+    // 목록의 downloadable 이 낡았다고 가정: u_rel.csv 를 서버 쪽에서 크게 만든다
+    const a = server.artifacts["c-demo"].find((x) => x.rel.endsWith("u_rel.csv"))!;
+    a.size = 64 * 1024 * 1024;
+    const row = screen.getByText("06_export/u_rel.csv").closest("tr")!;
+    fireEvent.click(within(row).getByRole("link", { name: "다운로드" }));
+    const tl = await within(row).findByTestId("too-large");
+    expect(tl.textContent).toContain(TOO_LARGE_TEXT);
+    expect(tl.textContent).toContain("한도 20.0 MB");
+    expect(tl.textContent).toContain("u_rel.csv");
   });
 });
 
 describe("작업 진행", () => {
+  it("⑤ 검증 실행 → 완료(Case version 불변) 후 새 검증 결과·이력 표시", async () => {
+    const { container, server } = renderApp(url("c-demo", 5));
+    await screen.findByText("FAIL");
+    const v0 = server.findCase("c-demo")!.version;
+    const btn = primaries(container)[0] as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    expect(await screen.findByTestId("job-progress")).toBeTruthy();
+    server.drain();
+    expect(server.findCase("c-demo")!.version).toBe(v0);
+    expect(await screen.findByText("검증 이력", {}, { timeout: 6000 })).toBeTruthy();
+  }, 10000);
+
+  it("실행 중 작업: 취소 버튼 → CANCELED", async () => {
+    const { container, server } = renderApp(url("c-new", 1));
+    await screen.findByText("done.json 정상");
+    const btn = primaries(container)[0] as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    const jp = await screen.findByTestId("job-progress");
+    expect(within(jp).getByRole("button", { name: "취소" })).toBeTruthy();
+    fireEvent.click(within(jp).getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(server.jobs[0].state).toBe("CANCELED"));
+  });
+
   it("① 추출 실행 → 진행 표시 → 완료 후 결과", async () => {
     const { container, server } = renderApp(url("c-new", 1));
     await screen.findByText("done.json 정상");

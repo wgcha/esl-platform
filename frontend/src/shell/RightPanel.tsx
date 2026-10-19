@@ -1,15 +1,18 @@
 import { api } from "../api/endpoints";
-import type { JobSummary } from "../api/types";
+import type { JobOut } from "../api/types";
 import { usePolling } from "../lib/usePolling";
 import { JOB_STATE_LABEL } from "../lib/format";
 
 const TYPE_LABEL: Record<string, string> = { CASE_EXTRACT: "추출", ESL_SOLVE: "ESL 계산", VALIDATE: "검증", EXPORT: "내보내기" };
 
-function JobRow({ j }: { j: JobSummary }) {
+function JobRow({ j }: { j: JobOut }) {
   return (
     <li className={`qrow ${j.state.toLowerCase()}`}>
       <span className="qtype">{TYPE_LABEL[j.job_type] ?? j.job_type}</span>
-      <span className="qcase">{j.case_title ?? j.case_id}</span>
+      <span className="qcase" title={j.case_id}>
+        {j.created_by_name}
+        {j.queue_position ? ` #${j.queue_position}` : ""}
+      </span>
       <span className="qstate">{JOB_STATE_LABEL[j.state]}</span>
     </li>
   );
@@ -31,7 +34,10 @@ export function RightPanel() {
           <div className="kv">
             <span className={`dot ${s.worker.online ? "ok" : "bad"}`} />
             <span>{s.worker.online ? "동작 중" : "응답 없음"}</span>
-            <span className="muted"> · 솔버 {s.tools.solver_backend}</span>
+            <span className="muted" title={`사용 가능: ${s.tools.solver_backends_available.join(", ")}`}>
+              {" "}
+              · 솔버 {s.tools.solver_backend}
+            </span>
             {!s.config.ok && <div className="small bad-text">설정 오류: {s.config.errors.join(", ")}</div>}
           </div>
         ) : (

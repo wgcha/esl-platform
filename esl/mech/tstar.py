@@ -131,10 +131,10 @@ def _desc_order(vals) -> np.ndarray:
     return np.lexsort((np.arange(vals.size), -vals))
 
 
-def hot_set(final_vm, final_epsp, hot_k: int, hist_max: int = 400) -> np.ndarray:
-    """H = (최종 vm 상위 hot_k) ∪ (최종 epsp 상위 hot_k), 값 > 0 인 요소만. 2·hot_k > hist_max 면 hot_k 를 줄임.
+def hot_set(final_vm, final_epsp, hot_k: int) -> np.ndarray:
+    """H = (최종 vm 상위 hot_k) ∪ (최종 epsp 상위 hot_k), 값 > 0 인 요소만(|H| 상한 없음).
     반환: 오름차순 위치."""
-    k = int(min(int(hot_k), int(hist_max) // 2))
+    k = int(hot_k)
     out: set[int] = set()
     for vals in (final_vm, final_epsp):
         vals = np.asarray(vals, dtype=np.float64)

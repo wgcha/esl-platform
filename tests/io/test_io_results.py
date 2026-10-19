@@ -226,7 +226,7 @@ def test_generator_matches_tstar_rules():
     assert tstar.candidate_frames(vm, 1e-6, 5) == [(3, 1), (2, 0)]        # 같은 프레임(2) 중복 제거
     assert tstar.hot_set(vm[-1], np.zeros(3), 2).tolist() == [0, 1]
     assert tstar.hot_set(vm[-1], np.array([0, 0, 0.1]), 1).tolist() == [1, 2]
-    assert tstar.hot_set(vm[-1], vm[-1], 300, hist_max=2).tolist() == [1]     # 2·hot_k ≤ hist_max
+    assert tstar.hot_set(vm[-1], vm[-1], 300).tolist() == [0, 1, 2]           # |H| 상한 없음
 
 
 def test_max_hold_and_decide_shear():

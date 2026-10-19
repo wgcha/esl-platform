@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/endpoints";
-import type { Plane, SupportSuggest } from "../api/types";
+import type { SupportSuggest } from "../api/types";
 import { Card, Empty } from "../components/ui";
 import { PlaneScatter, type Marker } from "../components/PlaneScatter";
 import { usePolling } from "../lib/usePolling";
@@ -10,11 +10,6 @@ import { blockReason, useAction } from "./common";
 const ROLE = ["1번 (3방향 고정)", "2번 (2방향 고정)", "3번 (1방향 고정)"];
 const AX: Record<string, string> = { "1": "x", "2": "y", "3": "z" };
 export const dofText = (d: string) => (/^[123]+$/.test(d) ? `${d} (${d.split("").map((k) => AX[k]).join("·")})` : d);
-
-function project(p: Plane, xyz: number[]): [number, number] {
-  const d = xyz.map((v, k) => v - p.origin[k]);
-  return [d[0] * p.e1[0] + d[1] * p.e1[1] + d[2] * p.e1[2], d[0] * p.e2[0] + d[1] * p.e2[1] + d[2] * p.e2[2]];
-}
 
 export function Stage3({ c, reload, allowed }: StageProps) {
   const ready = !!c.extract_summary;
@@ -64,7 +59,11 @@ export function Stage3({ c, reload, allowed }: StageProps) {
     const byId = new Map<number, [number, number]>();
     for (const [id, a, b] of pv.points) byId.set(id, [a, b]);
     const out: Marker[] = [];
-    if (suggest) suggest.corners.forEach((xyz, k) => out.push({ label: `C${k + 1}`, ...toAB(project(pv.plane, xyz)), kind: "corner" }));
+    if (suggest)
+      suggest.corners.forEach((id, k) => {
+        const ab = byId.get(id);
+        if (ab) out.push({ label: `C${k + 1}`, a: ab[0], b: ab[1], kind: "corner" });
+      });
     nums.forEach((id, k) => {
       const ab = byId.get(id);
       if (ab) out.push({ label: `${k + 1}: ${id}`, a: ab[0], b: ab[1], kind: "support" });
@@ -121,8 +120,4 @@ export function Stage3({ c, reload, allowed }: StageProps) {
       )}
     </StageFrame>
   );
-}
-
-function toAB([a, b]: [number, number]) {
-  return { a, b };
 }

@@ -58,7 +58,12 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
     <div className="inspect" aria-label="rad 확인 결과">
       <div>
         {r.ok ? <Badge kind="ok">rad 읽기 가능</Badge> : <Badge kind="bad">문제 있음</Badge>}
-        {r.units_label && <span className="muted"> 단위 {r.units_label}</span>}
+        {r.target_part && (
+          <span className="muted">
+            {" "}
+            대상 파트 {r.target_part.title} (id {r.target_part.id})
+          </span>
+        )}
         {r.problems.map((p) => (
           <div key={p} className="small bad-text">
             {p}
@@ -78,7 +83,7 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
             <tr key={p.id} className={want && p.title.toLowerCase() === want ? "hl" : undefined}>
               <td>{p.id}</td>
               <td>{p.title}</td>
-              <td>{p.n_elems.toLocaleString()}</td>
+              <td>{p.n_elems?.toLocaleString() ?? "–"}</td>
             </tr>
           ))}
         </tbody>
@@ -98,17 +103,19 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
 }
 
 export function ResultsInspectView({ r }: { r: InspectResultsResult }) {
-  const cf = r.done.candidate_frames;
+  const d = r.done;
+  const cf = d?.candidate_frames ?? {};
   return (
     <div className="inspect" aria-label="결과 폴더 확인 결과">
       <div>
-        {r.ok && r.done.ok ? <Badge kind="ok">done.json 정상</Badge> : <Badge kind="bad">done.json 문제</Badge>}
+        {r.ok && d?.ok ? <Badge kind="ok">done.json 정상</Badge> : <Badge kind="bad">done.json 문제</Badge>}
         <span className="muted">
           {" "}
-          파트 {r.done.part_spec ?? "–"} (id {r.done.part_id ?? "–"}) · 프레임 {r.n_frames} · 후보 프레임 Max_Strain {cf.max_strain?.length ?? 0}개, Plastic {cf.plastic_strain?.length ?? 0}개
+          파트 {d?.part_spec ?? "–"} (id {d?.part_id ?? "–"}) · 프레임 {r.n_frames ?? "–"} · hot_k {d?.hot_k ?? "–"} · 후보 프레임 Max_Strain [
+          {(cf.max_strain ?? []).join(", ")}], Plastic [{(cf.plastic_strain ?? []).join(", ")}]
         </span>
       </div>
-      {[...r.problems, ...r.done.warnings].map((p) => (
+      {[...r.problems, ...(d?.warnings ?? [])].map((p) => (
         <div key={p} className="small bad-text">
           {p}
         </div>

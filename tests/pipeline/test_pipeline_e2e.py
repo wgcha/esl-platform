@@ -331,8 +331,56 @@ def test_full_solve_auto_memory_decision(monkeypatch):
     it = Direct()
     it.is_direct = False
     monkeypatch.setattr(pipeline, "available_memory", lambda: None)
-    assert pipeline.full_solve_decision(ctx, it, 10)["run"] is False
+    assert pipeline.full_solve_decision(ctx, it, 10)["run"] is True      # 반복법: 메모리 추정 무관, rtol≤1e-12
     assert pipeline.full_solve_decision(ctx, Direct(), 10 ** 9)["run"] is True    # 모르면 수행(상한 거부 없음)
     cfg["validation"]["full_solve"] = "always"
     monkeypatch.setattr(pipeline, "available_memory", lambda: 1)
     assert pipeline.full_solve_decision(ctx, it, 300_000)["run"] is True
+
+
+def test_solver_stats_recorded(case):
+    """ShellModel.stats 가 esl_summary.json·run.json(esl·validate 요약)에 기록된다."""
+    out = case["out"]
+    summ = json.load(open(os.path.join(out, "04_esl", "esl_summary.json"), encoding="utf-8"))
+    from esl.mech.shell import available_backends
+    assert summ["solver"]["backend"] == available_backends()[0] and summ["solver"]["backend_requested"] == "auto"
+    assert "K_rr" in summ["solver"] and summ["solver"]["n_elems"] > 0
+    run = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))
+    assert run["stages"]["esl"]["summary"]["solver"]["K_rr"]["backend_used"]
+    assert "K_ff" in run["stages"]["validate"]["summary"]["solver"]
+
+
+def test_validate_iterative_backend_rtol(case, tmp_path, capsys):
+    """solver.backend=iterative: S5 전체계 solve 수행(auto), rtol = min(설정 iter_rtol, 1e-12), stats 기록."""
+    out = _copy_out(case, tmp_path)
+    cfg = tmp_path / "iter.yaml"
+    cfg.write_text(open(case["cfg"], encoding="utf-8").read()
+                   .replace("backend: auto", "backend: iterative").replace("iter_maxiter: null", "iter_maxiter: 50000"),
+                   encoding="utf-8")
+    args = ["run", "--config", str(cfg), "--rad", case["rad"], "--results", case["csv"], "--out", out,
+            "--stage", "validate"]
+    assert cli.main(args) == 0, capsys.readouterr()
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    assert val["full_solve"]["run"] is True and val["verdict"] == "PASS"
+    run = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))
+    st = run["stages"]["validate"]["summary"]["solver"]
+    assert st["backend"] == "iterative" and st["K_ff"]["backend_used"] == "iterative"
+    assert max(st["K_ff"]["resid_rel"]) <= 1e-8
+    assert st["K_ff"]["rtol"] == 1e-12 and st["K_ff"]["maxiter"] == 50000
+
+
+def test_config_solver_iter_keys(tmp_path):
+    from esl import config
+    from esl.errors import EslError
+    import yaml
+    cfg = config.load_config(CFG)
+    assert cfg["solver"]["iter_rtol"] == 1e-10 and cfg["solver"]["iter_maxiter"] is None
+    for key, bad in (("iter_rtol", 0.0), ("iter_rtol", 1.0), ("iter_maxiter", 0), ("iter_maxiter", 1.5)):
+        c = yaml.safe_load(open(CFG, encoding="utf-8"))
+        c["solver"][key] = bad
+        with pytest.raises(EslError) as ei:
+            config.validate_settings(c)
+        assert f"solver.{key}" in ei.value.message
+    c = yaml.safe_load(open(CFG, encoding="utf-8"))
+    c["extract"]["hot_k"] = 5000                                     # 상한 없음
+    assert config.validate_settings(c)["extract"]["hot_k"] == 5000

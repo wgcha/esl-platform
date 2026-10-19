@@ -1,10 +1,10 @@
 import { NavLink } from "react-router-dom";
-import type { StageState, StageStatus } from "../api/types";
+import type { StageStateName as StageState, StageStatus } from "../api/types";
 
 export const STAGE_NAMES = ["입력", "t*", "지지점", "ESL", "검증", "내보내기"] as const;
 const STATE_LABEL: Record<StageState, string> = { none: "없음", running: "실행 중", done: "완료", stale: "이전 단계 변경됨", failed: "실패" };
 
-export function StageStepper({ base, current, status }: { base: string; current: number; status: Record<string, StageStatus> | undefined }) {
+export function StageStepper({ base, current, status }: { base: string; current: number; status: Record<string, StageStatus> | null | undefined }) {
   return (
     <nav className="stepper" aria-label="단계">
       <ol>

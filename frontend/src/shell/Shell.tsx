@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Role } from "../api/types";
 import { Link } from "react-router-dom";
 import { ROLE_LABEL, useApp } from "../app/AppContext";
 import { RightPanel } from "./RightPanel";
@@ -11,7 +12,7 @@ export interface Crumb {
 /** 상단 경로바 + (스텝퍼) + 본문 + 우측 패널 */
 export function Shell({ crumbs, projectId, stepper, children }: { crumbs: Crumb[]; projectId?: string; stepper?: ReactNode; children: ReactNode }) {
   const { me, error } = useApp();
-  const role = me?.is_global_admin ? "전역 관리자" : projectId && me?.roles[projectId] ? ROLE_LABEL[me.roles[projectId]] : null;
+  const role = me?.is_global_admin ? "전역 관리자" : projectId && me?.roles[projectId] ? (ROLE_LABEL[me.roles[projectId] as Role] ?? me.roles[projectId]) : null;
   return (
     <div className="app">
       <header className="topbar">

@@ -10,7 +10,8 @@
     "build:mock": "vite build --mode mock --outDir dist-mock",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "check:api": "node scripts/check-api.mjs"
   },
   "dependencies": {
     "react": "18.3.1",
