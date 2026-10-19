@@ -18,6 +18,25 @@ python -m pytest -q         # 시험
 h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows PC에서 TCL로 CSV 폴더를 만든다
 (자세한 내용: `resources/tcl/README.md`).
 
+### 2.1 Windows 설치·업데이트 (권장)
+
+1. 저장소 클론 폴더(예: `Documents\GitHub\esl-platform`)의 **`update.bat` 더블클릭**.
+   git 최신화(작업 트리 변경이 있으면 중단, fast-forward만) → TCL 배포 → 실행 래퍼 생성 → 점검표 출력.
+   다시 실행하면 같은 방식으로 업데이트된다. 로그: `%LOCALAPPDATA%\esl\logs\update_<시각>.log`.
+2. 처음 실행 시 설정 파일 `%LOCALAPPDATA%\esl\esl_deploy.json`이 `config/esl_deploy.example.json` 값으로 만들어진다.
+   `hw_exe`(HyperWorks hw.exe), `work_root`(출력 폴더, **공유 SPDM 폴더 금지**, 기본 `%USERPROFILE%\esl_work`),
+   `protected_roots`(쓰기 금지 폴더 목록, 예 `["F:/Hyper_work"]`), `default_part`, `branch`(빈 값 = 현재 브랜치)를
+   확인·수정하고 `update.bat`을 다시 실행한다. 점검표의 FAIL이 없어야 한다.
+3. 화면에 안내된 폴더(`%LOCALAPPDATA%\esl\app\current`)에서 h3d 파일을
+   - `ESL_probe.bat` 위로 끌어다 놓기 → `<work_root>\<h3d 이름>\probe\probe.json`
+   - `ESL_extract.bat` 위로 끌어다 놓기 → `<work_root>\<h3d 이름>\csv\` (파트 = `default_part`;
+     다른 파트는 명령창에서 `ESL_extract.bat <h3d> <파트 이름|ID>`)
+   여러 파일을 한 번에 놓아도 된다. 끝나면 `ok`·`failed_step`·`error` 요약을 보여 주고 출력 폴더를 연다.
+   h3d가 있는 폴더·`protected_roots` 아래로는 출력하지 않으며(거부), 경로에 `%`·`!`·`&`가 있으면 거부한다.
+   hw 콘솔 출력은 출력 폴더의 `probe_console.log` / `extract_console.log`.
+
+### 2.2 수동 실행
+
 ```bat
 set HW="C:\Program Files\Altair\2026.1\hwdesktop\hw\bin\win64\hw.exe"
 rem (1) 결과 이름 확인 → probe.json 을 보고 request.txt 작성

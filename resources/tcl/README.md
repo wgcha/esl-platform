@@ -9,6 +9,19 @@
 
 ## 1. 실행 (Windows, HyperWorks 2022~2026)
 
+### 1.1 Windows 설치·업데이트 (권장: 드래그&드롭)
+
+1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행 래퍼를
+   `%LOCALAPPDATA%\esl\app\<git 해시>\`에 복사하고 `...\app\current`로 교체한다(최근 5개 버전 유지).
+2. 설정 파일 `%LOCALAPPDATA%\esl\esl_deploy.json`(처음 실행 시 생성): `hw_exe`, `work_root`(출력 루트 — 공유 SPDM 폴더 금지),
+   `protected_roots`, `default_part`를 확인하고 `update.bat`을 다시 실행해 점검표가 모두 OK인지 본다.
+3. `...\app\current\ESL_probe.bat` / `ESL_extract.bat` 위로 h3d를 끌어다 놓는다. 출력은
+   `<work_root>\<h3d 이름>\probe` / `csv`, 다른 파트는 `ESL_extract.bat <h3d> <part>`. 끝나면 `probe.json`/`done.json`의
+   `ok`·`failed_step`·`error`를 요약하고 출력 폴더를 연다. 콘솔 로그는 `*_console.log`.
+   h3d 폴더·`protected_roots` 아래 출력과 `%`·`!`·`&`가 든 경로는 거부한다.
+
+### 1.2 수동 실행
+
 ```bat
 set HW="C:\Program Files\Altair\2026.1\hwdesktop\hw\bin\win64\hw.exe"
 set TCL=C:\esl\resources\tcl
