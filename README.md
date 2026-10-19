@@ -33,9 +33,20 @@ h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows P
      다른 파트는 명령창에서 `ESL_extract.bat <h3d> <파트 이름|ID>`)
    여러 파일을 한 번에 놓아도 된다. 끝나면 `ok`·`failed_step`·`error` 요약을 보여 주고 출력 폴더를 연다.
    h3d가 있는 폴더·`protected_roots` 아래로는 출력하지 않으며(거부), 경로에 `%`·`!`·`&`가 있으면 거부한다.
-   h3d는 **원본 위치의 파일을 그대로** 끌어다 놓는다(읽기 전용으로 사용). 배포 폴더(`...\app\current`) 안의 h3d는
-   거부한다 — update 때 지워질 수 있다. `update.bat`은 교체·정리할 배포 폴더에 배포 산출물 이외 파일이 있으면 중단한다.
-   hw 콘솔 출력은 출력 폴더의 `probe_console.log` / `extract_console.log`.
+   h3d는 **원본 위치의 파일을 그대로** 끌어다 놓는다(읽기 전용으로 사용). 배포 폴더(`%LOCALAPPDATA%\esl\app` 아래) 안의
+   h3d는 거부한다. hw 콘솔 출력은 출력 폴더의 `probe_console.log` / `extract_console.log`.
+4. 배포 구조(`deploy_dir`, 기본 `%LOCALAPPDATA%\esl\app`) — **폴더 이름 바꾸기(rename)를 하지 않으므로** `current` 폴더를
+   탐색기로 열어 둔 채, 명령창이 그 폴더에 있는 채, ESL 실행 중에도 `update.bat`을 돌려도 된다.
+   - `versions\<git 해시>\`: TCL·`esl_run.ps1`·README·`VERSION.txt`. 버전마다 새 폴더(같은 해시에 내용이 다르면 `<해시>-2`).
+   - `current_version.txt`: 활성 버전 이름. 임시 파일을 쓴 뒤 파일 단위로 교체(잠겨 있으면 3회 재시도, 실패 시 이전 버전 유지).
+   - `current\`: 고정 실행 폴더. 런처 `ESL_probe.bat`, `ESL_extract.bat`, `esl_launch.ps1`만 둔다. 런처는 실행할 때마다
+     `current_version.txt`를 읽어 해당 `versions` 폴더의 실행기·TCL을 쓴다. 이미 시작한 작업은 자기 버전 폴더를 계속 쓴다.
+     런처는 내용이 바뀐 경우에만 덮어쓰며, 잠겨 있으면 경고만 한다(런처는 버전과 무관).
+   - 이전 구조(`current`에 TCL·`esl_run.ps1`이 직접 있던 설치)는 첫 업데이트 때 그 배포 산출물만 파일 단위로 정리한다
+     (못 지우면 경고만, 동작에는 영향 없음). 예전 `<해시>`·`current.old.*` 폴더도 정리한다.
+   - 오래된 `versions`는 최근 5개 + 활성 버전만 남긴다. 잠겨 있으면 건너뛰고 다음 업데이트에서 다시 시도한다.
+   - 배포 산출물(`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외의 파일(복사해 둔 h3d 등)과 하위 폴더는 지우거나 옮기지
+     않는다. 그런 파일이 있는 폴더는 정리하지 않고 목록만 경고한다.
 
 ### 2.2 수동 실행
 

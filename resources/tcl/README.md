@@ -11,17 +11,22 @@
 
 ### 1.1 Windows 설치·업데이트 (권장: 드래그&드롭)
 
-1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행 래퍼를
-   `%LOCALAPPDATA%\esl\app\<git 해시>\`에 복사하고 `...\app\current`로 교체한다(최근 5개 버전 유지).
+1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행기를
+   `%LOCALAPPDATA%\esl\app\versions\<git 해시>\`에 복사하고 활성 버전 파일 `...\app\current_version.txt`만 교체한다
+   (폴더 rename 없음 — `current`를 탐색기로 열어 둔 채·실행 중에도 업데이트 가능, 최근 5개 + 활성 버전 유지).
+   `...\app\current\`에는 런처(`ESL_probe.bat`, `ESL_extract.bat`, `esl_launch.ps1`)만 있고, 실행할 때마다
+   `current_version.txt`가 가리키는 `versions` 폴더의 TCL을 쓴다. 예전 구조(`current`에 TCL이 직접 있음)는 첫 업데이트 때
+   배포 산출물만 파일 단위로 정리한다(사용자 파일은 그대로).
 2. 설정 파일 `%LOCALAPPDATA%\esl\esl_deploy.json`(처음 실행 시 생성): `hw_exe`, `work_root`(출력 루트 — 공유 SPDM 폴더 금지),
    `protected_roots`, `default_part`를 확인하고 `update.bat`을 다시 실행해 점검표가 모두 OK인지 본다.
 3. `...\app\current\ESL_probe.bat` / `ESL_extract.bat` 위로 h3d를 끌어다 놓는다. 출력은
    `<work_root>\<h3d 이름>\probe` / `csv`, 다른 파트는 `ESL_extract.bat <h3d> <part>`. 끝나면 `probe.json`/`done.json`의
    `ok`·`failed_step`·`error`를 요약하고 출력 폴더를 연다. 콘솔 로그는 `*_console.log`.
    h3d 폴더·`protected_roots` 아래 출력과 `%`·`!`·`&`가 든 경로는 거부한다.
-   **h3d를 배포 폴더(`...\app\current` 등)에 복사하지 말 것**: 배포 폴더 안의 h3d는 거부한다(update 때 지워질 수 있음).
-   원본 위치의 h3d를 그대로 끌어다 놓는다(읽기 전용으로 사용). `update.bat`은 교체·정리할 폴더에 배포 산출물
-   (`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외 파일이 있으면 아무것도 지우거나 옮기지 않고 목록을 보여 주고 중단한다.
+   **h3d를 배포 폴더(`...\app` 아래)에 복사하지 말 것**: 배포 폴더 안의 h3d는 거부한다.
+   원본 위치의 h3d를 그대로 끌어다 놓는다(읽기 전용으로 사용). `update.bat`은 배포 산출물
+   (`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외 파일·하위 폴더를 지우거나 옮기지 않으며, 그런 파일이 있는 폴더는
+   정리하지 않고 목록만 경고한다.
 
 ### 1.2 수동 실행
 
