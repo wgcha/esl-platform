@@ -1,4 +1,4 @@
-"""작업·step 저장소: 생성(E1), claim(E2, SLOT CAS·LIGHT 1개), 취소(E3/E7), 종료(E5~E7), 리퍼(E8).
+"""작업·step 저장소: 생성(E1), claim(E2, SLOT CAS·LIGHT 1개·Case 당 RUNNING 1개), 취소(E3/E7), 종료(E5~E7), 리퍼(E8).
 
 호출자가 트랜잭션을 연다(`with engine.begin() as conn`). lease_token 은 이 계층 밖(API 응답)으로 나가지 않는다.
 """
@@ -10,7 +10,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, insert, literal, select, update
+from sqlalchemy import and_, exists, func, insert, literal, select, update
 from sqlalchemy.engine import Connection
 
 from ..db.tables import job_queue_seq, job_steps, jobs, notifications, worker_slot
@@ -134,6 +134,13 @@ def notify(conn: Connection, job: dict[str, Any], event: str) -> None:
 
 
 # ---------------------------------------------------------------- claim(E2)
+def _case_idle():
+    """claim 조건: 같은 Case 에 RUNNING 작업이 없을 것(lane 무관). DB 부분 unique ux_jobs_case_running 이 최종 보장."""
+    other = jobs.alias("running_same_case")
+    return ~exists(select(literal(1)).select_from(other).where(and_(other.c.case_id == jobs.c.case_id,
+                                                                    other.c.state == RUNNING)))
+
+
 def claim_slot(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any] | None:
     """SLOT 레인 claim: worker_slot 단일 행 CAS(lease_generation) + 작업 QUEUED→RUNNING."""
     slot = conn.execute(select(worker_slot).where(worker_slot.c.id == 1).with_for_update()).one()
@@ -148,7 +155,8 @@ def claim_slot(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any]
         conn.execute(update(worker_slot).where(worker_slot.c.id == 1).values(holder_job_id=None, **_NO_LEASE))
     target = conn.execute(
         select(jobs.c.id, jobs.c.version, jobs.c.started_at)
-        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "SLOT", jobs.c.cancel_requested_at.is_(None)))
+        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "SLOT", jobs.c.cancel_requested_at.is_(None),
+                    _case_idle()))
         .order_by(jobs.c.queue_seq).limit(1).with_for_update(skip_locked=True)
     ).first()
     if target is None:
@@ -184,7 +192,8 @@ def claim_light(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any
         return None
     target = conn.execute(
         select(jobs.c.id, jobs.c.version, jobs.c.lease_generation)
-        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "LIGHT", jobs.c.cancel_requested_at.is_(None)))
+        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "LIGHT", jobs.c.cancel_requested_at.is_(None),
+                    _case_idle()))
         .order_by(jobs.c.queue_seq).limit(1).with_for_update(skip_locked=True)
     ).first()
     if target is None:

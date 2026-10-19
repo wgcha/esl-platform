@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from typing import Any
 
 import numpy as np
@@ -14,6 +15,8 @@ from sqlalchemy.engine import Connection
 
 from esl_platform.core import core_outputs as co
 from esl_platform.core.repositories import cases as cases_repo
+
+from . import esl_snapshot
 
 SHA_MAX_BYTES = 256 * 1024 * 1024
 KIND_BY_DIR = {co.D_EXTRACT: "EXTRACT", co.D_TSTAR: "TSTAR", co.D_BC: "SUPPORT", co.D_ESL: "ESL",
@@ -120,10 +123,23 @@ def register_extract(conn: Connection, job: dict[str, Any], case: dict[str, Any]
     return {"extract": summary, "tstar": tstar}
 
 
+def _lineage(conn: Connection, job: dict[str, Any]) -> set[str]:
+    """작업 id + 재시도 원본들(retry_of_job_id 사슬). 코어 단계가 원본 작업에서 끝나고 등록만 재시도한 경우."""
+    from esl_platform.core.repositories import jobs as jobs_repo
+
+    out, cur = set(), job
+    while cur is not None and cur["id"] not in out and len(out) < 50:
+        out.add(cur["id"])
+        cur = jobs_repo.get_job(conn, cur["retry_of_job_id"]) if cur.get("retry_of_job_id") else None
+    return out
+
+
 # ---------------------------------------------------------------- ④ ESL
 def register_esl(conn: Connection, job: dict[str, Any], case: dict[str, Any], cdir: str) -> dict[str, Any]:
     p = job["params"] or {}
     summ = _need(co.esl_summary, cdir)
+    if summ.get("tag") not in _lineage(conn, job):
+        raise RegisterError("OUTPUT_INVALID", f"04_esl/esl_summary.json 이 이 작업의 결과가 아닙니다(tag={summ.get('tag')})")
     rec = co.stage_record(cdir, "esl")
     k = summ.get("kabsch") or {}
     fo = summ.get("forces") or {}
@@ -149,10 +165,15 @@ def register_esl(conn: Connection, job: dict[str, Any], case: dict[str, Any], cd
     if want and sorted(s["node_id"] for s in supports) != want:
         warnings.append(f"코어 3-2-1 노드 {[s['node_id'] for s in supports]} 가 지지점 세트 {want} 와 다릅니다")
     fr = summ.get("frame") or {}
+    rid = str(uuid.uuid4())
+    try:
+        snap_rel = esl_snapshot.save(cdir, rid)
+    except OSError as exc:
+        raise RegisterError("OUTPUT_INVALID", f"ESL 산출물 스냅샷 실패: {exc}") from None
     run = cases_repo.insert_esl_run(
-        conn, case_id=case["id"], job_id=job["id"], frame_index=int(fr.get("frame_index", p.get("frame_index"))),
+        conn, id=rid, case_id=case["id"], job_id=job["id"], frame_index=int(fr.get("frame_index", p.get("frame_index"))),
         time=_f(fr.get("time")), metric=p.get("metric") or "max_strain", support_set_id=p["support_set_id"],
-        kabsch=kabsch, forces=forces, supports=supports, warnings=warnings, dir_rel=co.D_ESL, status="READY",
+        kabsch=kabsch, forces=forces, supports=supports, warnings=warnings, dir_rel=snap_rel, status="READY",
         inputs_hash=p["inputs_hash"],
     )
     cases_repo.update_case(conn, case["id"], None, current_esl_run_id=run["id"])
@@ -163,6 +184,10 @@ def register_esl(conn: Connection, job: dict[str, Any], case: dict[str, Any], cd
 def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, Any], cdir: str) -> dict[str, Any]:
     p = job["params"] or {}
     val = _need(co.validation_json, cdir)
+    run = cases_repo.get_esl_run(conn, p["esl_run_id"])
+    ref = val.get("esl_ref")
+    if run is None or (ref is not None and co.esl_tag(cdir) is not None and ref != run["job_id"]):
+        raise RegisterError("OUTPUT_INVALID", "validation.json 이 대상 ESL 결과의 검증이 아닙니다")
     hots = []
     for h in val.get("hotspots") or []:
         hots.append({"elem_id": h.get("elem_id"), "eps_rad": _f(h.get("eps_rad")),
@@ -189,13 +214,18 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
 def register_export(conn: Connection, job: dict[str, Any], case: dict[str, Any], cdir: str) -> dict[str, Any]:
     rec = co.stage_record(cdir, "export")
     s = rec.get("summary") or {}
+    run = cases_repo.get_esl_run(conn, (job["params"] or {}).get("esl_run_id"))
+    ref = s.get("esl_ref")
+    if run is None or (ref is not None and co.esl_tag(cdir) is not None and ref != run["job_id"]):
+        raise RegisterError("OUTPUT_INVALID", "06_export 가 대상 ESL 결과의 내보내기가 아닙니다")
     files = list(s.get("files") or [])
     if not files:
         d = os.path.join(cdir, co.D_EXPORT)
         files = sorted(os.listdir(d)) if os.path.isdir(d) else []
     if not files:
         raise RegisterError("TOOL_OUTPUT_MISSING", "06_export 에 파일이 없습니다")
-    return {"export_dir": co.D_EXPORT, "files": files, "targets": (job["params"] or {}).get("targets"),
+    return {"export_dir": co.D_EXPORT, "files": files, "targets": s.get("targets") or (job["params"] or {}).get("targets"),
+            "validation_used": s.get("validation_used"),
             "id_range": s.get("id_range"), "validation_verdict": (job["params"] or {}).get("validation_verdict"),
             "warnings": list(rec.get("warnings") or [])}
 

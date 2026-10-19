@@ -384,3 +384,44 @@ def test_config_solver_iter_keys(tmp_path):
     c = yaml.safe_load(open(CFG, encoding="utf-8"))
     c["extract"]["hot_k"] = 5000                                     # 상한 없음
     assert config.validate_settings(c)["extract"]["hot_k"] == 5000
+
+
+def test_export_targets_only_selected(case, tmp_path, capsys):
+    """export_targets: 선택한 대상 파일만 생성(csv 만이면 ID 계획·충돌 검사 생략)."""
+    from esl import pipeline
+    out = _copy_out(case, tmp_path)
+    base = ["run", "--config", case["cfg"], "--rad", case["rad"], "--results", case["csv"], "--out", out,
+            "--stage", "export"]
+    assert cli.main(base + ["--export-targets", "csv"]) == 0
+    files = sorted(os.listdir(os.path.join(out, "06_export")))
+    assert files == ["f_eq.csv", "hotspots.csv", "reactions_321.csv", "tstar_candidates.csv", "u_rel.csv",
+                     "validation.csv"]
+    rec = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))["stages"]["export"]["summary"]
+    assert rec["targets"] == ["csv"] and rec["id_range"] is None
+    assert cli.main(base + ["--export-targets", "fem"]) == 0
+    assert sorted(os.listdir(os.path.join(out, "06_export"))) == ["esl_force.fem"]
+    assert cli.main(base + ["--export-targets", "radioss_inc,csv"]) == 0
+    got = set(os.listdir(os.path.join(out, "06_export")))
+    assert {"esl_cload.inc", "esl_bcs.inc", "f_eq.csv"} <= got and "esl_force.fem" not in got
+    capsys.readouterr()
+    assert cli.main(base + ["--export-targets", "xls"]) == 1
+    assert capsys.readouterr().err.startswith("INPUT_INVALID: ")
+    with pytest.raises(Exception):
+        pipeline.normalize_export_targets([])
+
+
+def test_export_ignores_validation_of_other_esl(case, tmp_path):
+    """validation.json 의 esl_ref 가 현재 esl_summary.json 과 다르면 내보내기에 검증 결과를 쓰지 않음."""
+    from esl import pipeline
+    out = _copy_out(case, tmp_path)
+    kw = dict(rad=case["rad"], results=case["csv"], out=out, config_path=case["cfg"], echo=lambda m: None)
+    pipeline.run(stage="esl", tag="run-A", **kw)
+    pipeline.run(stage="validate", **kw)
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    assert val["esl_ref"] == "run-A"
+    pipeline.run(stage="esl", tag="run-B", **kw)           # 04_esl = B, 05_val = A 의 검증
+    rec = pipeline.run(stage="export", export_targets=["csv"], **kw)
+    s = rec["stages"]["export"]
+    assert s["summary"]["validation_used"] is False and s["summary"]["esl_ref"] == "run-B"
+    assert "validation.csv" not in os.listdir(os.path.join(out, "06_export"))
+    assert any("현재 ESL" in w for w in s["warnings"])

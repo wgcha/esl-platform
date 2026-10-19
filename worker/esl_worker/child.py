@@ -3,14 +3,19 @@
 - stdout·stderr(파일 기술자 1·2 포함)를 step 로그 파일로 돌리고 코어 `echo`도 같은 파일에 쓴다.
 - 결과는 `result_path`에 JSON `{ok, code?, message?}`로 남긴다(부모가 읽음). 종료코드 0 = 성공, 1 = 실패.
 - 취소는 부모가 이 프로세스를 terminate/kill 한다(코어는 외부 프로그램을 띄우지 않으므로 손자 프로세스 없음).
+- 고아 방지: 부모(워커)가 비정상 종료하면(kill·크래시) 감시 스레드가 `PARENT_CHECK_S` 안에 이 프로세스를
+  끝낸다(`os._exit(PARENT_LOST_EXIT)`). 판정 = multiprocessing 부모 sentinel 닫힘(Windows·POSIX 공통) 또는
+  POSIX 에서 getppid() 가 spec.parent_pid 와 달라짐(재부모화).
 """
 
 from __future__ import annotations
 
 import importlib
 import json
+import multiprocessing
 import os
 import sys
+import threading
 import time
 import traceback
 from typing import Any
@@ -49,8 +54,36 @@ def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
     from esl_worker import core_adapter
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],
-                                    frame=spec.get("frame"), support_nodes=spec.get("support_nodes"), echo=echo)
+                                    frame=spec.get("frame"), support_nodes=spec.get("support_nodes"), echo=echo,
+                                    export_targets=spec.get("export_targets"), tag=spec.get("tag"))
     return {"error": (rec or {}).get("error")}
+
+
+PARENT_CHECK_S = 0.5
+PARENT_LOST_EXIT = 3
+
+
+def parent_alive(parent_pid: int | None) -> bool:
+    pp = multiprocessing.parent_process()
+    if pp is not None and not pp.is_alive():
+        return False
+    if parent_pid and os.name != "nt" and os.getppid() != parent_pid:
+        return False
+    return True
+
+
+def start_parent_watch(parent_pid: int | None, on_lost=None, interval: float = PARENT_CHECK_S) -> threading.Thread:
+    def watch() -> None:
+        while True:
+            time.sleep(interval)
+            if not parent_alive(parent_pid):
+                if on_lost is not None:
+                    on_lost()
+                os._exit(PARENT_LOST_EXIT)
+
+    t = threading.Thread(target=watch, name="esl-parent-watch", daemon=True)
+    t.start()
+    return t
 
 
 def _resolve(target: str):
@@ -66,6 +99,8 @@ def child_entry(spec: dict[str, Any]) -> None:
         fh.write(str(msg) + "\n")
         fh.flush()
 
+    start_parent_watch(spec.get("parent_pid"),
+                       on_lost=lambda: echo("[esl-worker] 부모 워커 프로세스가 사라져 코어 실행을 중단합니다"))
     t0 = time.time()
     echo(f"[esl-worker] pid {os.getpid()} stage={spec.get('stage')} 시작")
     code = 0

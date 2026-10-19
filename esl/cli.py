@@ -1,5 +1,6 @@
 """CLI: ``python -m esl run --config cfg.yaml --rad X_0000.rad --results <csv_dir> --out <case_dir>
-[--stage extract|tstar|esl|validate|export|all] [--frame N] [--support-nodes id1,id2,id3]``.
+[--stage extract|tstar|esl|validate|export|all] [--frame N] [--support-nodes id1,id2,id3]
+[--export-targets radioss_inc,fem,csv]``.
 
 종료코드 0 = 성공(검증 FAIL 이어도 계산 자체는 성공), 1 = 오류. 오류는 stderr 에 ``CODE: message`` 한 줄,
 출력 폴더를 쓸 수 있으면 run.json 에도 기록.
@@ -39,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--stage", default="all", choices=list(STAGES) + ["all"])
     r.add_argument("--frame", type=int, default=None, help="t* 수동 지정(frame_index, 후보 안에서만)")
     r.add_argument("--support-nodes", default=None, help="3-2-1 후보 노드 ID (콤마, 3개 이상)")
+    r.add_argument("--export-targets", default=None, help="내보낼 대상(콤마): radioss_inc, fem, csv (기본 전부)")
     return p
 
 
@@ -48,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         a = build_parser().parse_args(argv)
         sn = _parse_ids(a.support_nodes) if a.support_nodes else None
         run(config_path=a.config, rad=a.rad, results=a.results, out=a.out, stage=a.stage, frame=a.frame,
-            support_nodes=sn, argv=argv)
+            support_nodes=sn, argv=argv, export_targets=a.export_targets)
         return 0
     except EslError as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)

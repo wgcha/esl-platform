@@ -137,7 +137,7 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
         dup = [c for c in cases_repo.list_cases(conn, body.project_id, "ACTIVE") if c["title"] == body.title]
         if dup:
             raise conflict("CASE_NAME_EXISTS", "같은 제목의 Case 가 있습니다")
-        if any(c["folder_name"] == body.folder_name for c in cases_repo.list_cases(conn, None, None)):
+        if any(c["folder_name"].lower() == body.folder_name.lower() for c in cases_repo.list_cases(conn, None, None)):
             raise conflict("FOLDER_EXISTS", "같은 폴더 이름의 Case 가 있습니다")
     if os.path.lexists(cdir):
         raise conflict("FOLDER_EXISTS", "산출물 폴더가 이미 있습니다")
@@ -161,8 +161,10 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
             json.dump({"id": case["id"], "project_id": case["project_id"], "title": case["title"],
                        "rad_path": rad, "results_dir": results, "h3d_path": case["h3d_path"],
                        "created_at": case["created_at"].isoformat()}, fh, ensure_ascii=False, indent=2)
-    except IntegrityError:
+    except IntegrityError as exc:
         shutil.rmtree(cdir, ignore_errors=True)
+        if "folder" in str(exc.orig if hasattr(exc, "orig") else exc):
+            raise conflict("FOLDER_EXISTS", "같은 폴더 이름(대소문자 무시)의 Case 가 있습니다") from None
         raise conflict("CASE_NAME_EXISTS", "같은 제목 또는 폴더의 Case 가 있습니다") from None
     except BaseException:
         shutil.rmtree(cdir, ignore_errors=True)

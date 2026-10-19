@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -170,11 +171,19 @@ def overlaps(a: str, b: str) -> bool:
 
 
 WIN_ABS = re.compile(r"^[A-Za-z]:[/\\\\]")
+WIN_UNC = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
 
 def is_abs_path(p: str) -> bool:
-    """이 OS 의 절대경로 또는 Windows 드라이브 절대경로(예시 설정을 Linux 에서도 검증하기 위함)."""
-    return bool(p) and (os.path.isabs(p) or bool(WIN_ABS.match(p)))
+    """Windows 드라이브 절대경로(예시 설정을 Linux 에서도 검증하기 위함) 또는 POSIX 호스트의 `/` 절대경로.
+
+    Windows 호스트에서는 드라이브 없는 루트 상대(`\\x`, `/x`)·드라이브 상대(`C:x`)를 받지 않는다(os.path.isabs 미사용).
+    """
+    if not p:
+        return False
+    if WIN_ABS.match(p) or WIN_UNC.match(p):
+        return True
+    return os.name != "nt" and posixpath.isabs(p)
 
 
 def _path_issue(key: str, p: str) -> Issue | None:

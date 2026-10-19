@@ -33,11 +33,14 @@ def forces(ctx: AppContext, run_id: str, top: int) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         run = _run(conn, run_id)
         case = load_case(conn, run["case_id"])
-    if case.get("current_esl_run_id") != run_id:
-        raise conflict("ESL_RUN_NOT_CURRENT", "이후 ESL 계산으로 산출물이 바뀌었습니다(현재 결과만 하중표 제공)")
     cdir = case_dir(ctx, case)
+    src = co.esl_source_dir(cdir, run)       # runs/<id>/ 스냅샷 또는 같은 실행의 04_esl
+    if src is None:
+        if case.get("current_esl_run_id") != run_id or co.esl_tag(cdir) is not None:
+            raise conflict("ESL_RUN_NOT_CURRENT", "이 ESL 결과의 산출물이 없습니다(이후 ESL 계산으로 바뀜)")
+        src = cdir                          # tag 기록 이전 형식의 현재 결과
     try:
-        fz = co.f_eq(cdir)
+        fz = co.f_eq(src)
         nid_m, x0 = co.model_nodes(cdir)
     except (co.OutputMissing, OSError, ValueError, KeyError):
         raise conflict("PREREQUISITE_MISSING", "ESL 산출물(04_esl/f_eq.npz)이 없습니다", missing=["esl"]) from None

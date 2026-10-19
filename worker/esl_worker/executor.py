@@ -1,6 +1,13 @@
 """작업 실행기: step 순서대로 코어 단계(spawn 자식 프로세스) → 등록 step(DB).
 
-- 시작 시 입력 지문(size·mtime) 재확인 → 다르면 FAILED `INPUT_CHANGED`.
+- 시작 시 입력 지문(size·mtime) 재확인 → 다르면 FAILED `INPUT_CHANGED`. CASE_EXTRACT 는 rad include 가
+  input_roots 안인지 다시 확인 → 밖이면 FAILED `PATH_OUTSIDE_ROOT`.
+- VALIDATE·EXPORT 는 시작 직전 사전조건 재확인: 대상 ESL 실행이 아직 Case 의 현재 결과인지(VALIDATE 는 비stale
+  까지) → 아니면 FAILED `PREREQUISITE_MISSING`(stale). 디스크 04_esl 이 그 실행의 것인지(esl_summary.json tag =
+  ESL_SOLVE 작업 id) 확인하고, 다르면 runs/<esl_run_id>/ 스냅샷에서 되돌린다(불가 → `PREREQUISITE_MISSING`).
+  같은 Case 의 작업은 claim 단계에서 동시에 1개만 RUNNING 이므로 확인 뒤 실행 중에 바뀌지 않는다.
+- 코어 호출 인자: tag = 작업 id(ESL 결과 식별), export 는 params.targets → export_targets.
+- run() 의 예기치 않은 예외는 즉시 FAILED `INTERNAL_ERROR`(lease 만료를 기다리지 않음).
 - 자식 대기 중 `heartbeat_interval_s`마다 lease 갱신(실패 → 자식 종료, 상태를 더 쓰지 않음),
   `cancel_check_interval_s`마다 취소 플래그 확인 → terminate(→ grace 후 kill) → CANCELED(E7).
 - 로그: `<case>/logs/<job_id>/step_<NN>_<key>.log`. 실행 시간 한도 없음.
@@ -15,13 +22,14 @@ import os
 import time
 from typing import Any
 
-from esl_platform.core.errors import LeaseLost
-from esl_platform.core.inputs import changed_inputs
+from esl_platform.core.errors import DomainError, LeaseLost
+from esl_platform.core.inputs import changed_inputs, esl_run_stale
+from esl_platform.core.paths import check_includes
 from esl_platform.core.repositories import cases as cases_repo
 from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 
-from . import register
+from . import esl_snapshot, register
 from .child import child_entry
 
 log = logging.getLogger("esl_worker.executor")
@@ -91,6 +99,7 @@ class Executor:
             if changed:
                 self._finish(FAILED, "INPUT_CHANGED", f"입력 파일이 바뀌었습니다: {changed[:3]}")
                 return FAILED
+            self._precheck()
             for st in steps:
                 if st["state"] != "PENDING":
                     continue
@@ -110,8 +119,52 @@ class Executor:
             self._kill_child()
             log.error("lease 를 잃었습니다 — 작업 %s 상태를 더 쓰지 않습니다", job["id"])
             return "LEASE_LOST"
+        except Exception as exc:  # noqa: BLE001 - 예기치 않은 오류 → 즉시 FAILED(lease 만료 대기 없음)
+            self._kill_child()
+            log.exception("작업 %s 실행 오류", job["id"])
+            try:
+                self._finish(FAILED, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}"[:450])
+            except LeaseLost:
+                return "LEASE_LOST"
+            return FAILED
         finally:
             self._kill_child()
+
+    # ---------------------------------------------------------------- 사전조건 재확인
+    def _precheck(self) -> None:
+        jt = self.job["job_type"]
+        p = self.job["params"] or {}
+        if jt == "CASE_EXTRACT":
+            from . import core_adapter
+
+            cc = ((p.get("settings") or {}).get("case")) or {}
+            try:
+                incs = core_adapter.scan_includes(self.case["rad_path"], int(cc.get("rad_include_max_depth") or 8),
+                                                  cc.get("include_path_map") or None)
+                check_includes(self.settings, incs)
+            except DomainError as exc:
+                raise _StepFailed(exc.code, exc.message) from None
+            return
+        if jt not in ("VALIDATE", "EXPORT"):
+            return
+        stale = "대상 ESL 결과가 더 이상 최신이 아닙니다(이후 ESL 계산 또는 입력 변경) — 현재 결과로 새 작업을 만드세요"
+        with self._tx() as conn:
+            case = cases_repo.get_case(conn, self.job["case_id"])
+            run = cases_repo.get_esl_run(conn, p.get("esl_run_id")) if p.get("esl_run_id") else None
+        if (run is None or run["case_id"] != case["id"] or run["status"] != "READY"
+                or case.get("current_esl_run_id") != run["id"]):
+            raise _StepFailed("PREREQUISITE_MISSING", stale)
+        if jt == "VALIDATE" and esl_run_stale(case, run):
+            raise _StepFailed("PREREQUISITE_MISSING", stale)
+        try:
+            how = esl_snapshot.ensure_on_disk(self.cdir, run)
+        except (LookupError, OSError) as exc:
+            raise _StepFailed("PREREQUISITE_MISSING", f"ESL 산출물이 대상 결과와 다릅니다: {exc}") from None
+        if how != "current":
+            with self._tx() as conn:
+                jobs_repo.add_warnings(conn, self.job["id"], self.token,
+                                       [f"04_esl 을 ESL 결과 {run['id']} 스냅샷에서 되돌림" if how == "restored"
+                                        else "04_esl 에 실행 태그가 없음(이전 형식) — 현재 산출물로 진행"])
 
     def _run_step(self, st: dict[str, Any]) -> None:
         no, key = st["step_no"], st["step_key"]
@@ -179,7 +232,9 @@ class Executor:
         spec = {"cfg": p.get("settings") or {}, "rad": case["rad_path"], "results": case["results_dir"],
                 "out": self.cdir, "stage": stage, "frame": frame, "support_nodes": support,
                 "log_path": log_path, "result_path": result_path, "priority": self.settings.worker.priority,
-                "target": self.worker.core_target, "job_id": self.job["id"]}
+                "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
+                "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
+                "parent_pid": os.getpid()}
         self.proc = _SPAWN.Process(target=child_entry, args=(spec,), name=f"esl-core-{stage}")
         self.proc.start()
         with self._tx() as conn:

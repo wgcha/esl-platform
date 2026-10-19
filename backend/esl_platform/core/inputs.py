@@ -89,3 +89,12 @@ def case_inputs_hash(case: dict[str, Any]) -> str:
     es = case.get("extract_summary") or {}
     return inputs_hash(extract_job_id=es.get("job_id"), part_title=case["part_title"], tstar=case.get("tstar"),
                        support_set_id=case.get("current_support_set_id"))
+
+
+def extract_stale(case: dict[str, Any]) -> bool:
+    es = case.get("extract_summary") or {}
+    return bool(es) and es.get("requested_part_title") != case["part_title"]
+
+
+def esl_run_stale(case: dict[str, Any], run: dict[str, Any]) -> bool:
+    return run["inputs_hash"] != case_inputs_hash(case) or extract_stale(case)

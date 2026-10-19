@@ -103,3 +103,63 @@ def test_case_create_and_duplicates(client, mini_inputs, esl_root):
     assert r.status_code == 200 and r.json()["status"] == "ARCHIVED"
     r = client.post(f"{API}/cases/{c['id']}/jobs", json={"job_type": "CASE_EXTRACT", "params": {}}, headers=W)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "CASE_ARCHIVED"
+
+
+# ---------------------------------------------------------------- Windows/POSIX 경로 의미(플랫폼 독립)
+@pytest.mark.parametrize("raw,nt,posix", [
+    ("C:\\data\\x.rad", True, False),
+    ("C:/data/x.rad", True, False),
+    ("\\\\srv\\share\\x.rad", True, False),
+    ("//srv/share/x.rad", True, True),
+    ("\\inputs\\x.rad", False, False),        # 드라이브 없는 루트 상대
+    ("/inputs/x.rad", False, True),           # Windows 에서는 현재 드라이브 루트 상대
+    ("C:x.rad", False, False),                # 드라이브 상대
+    ("C:", False, False),
+    ("\\\\srv", False, False),                # 공유 이름 없는 UNC
+    ("inputs\\x.rad", False, False),
+    ("x.rad", False, False),
+    ("", False, False),
+])
+def test_fully_qualified_by_flavor(raw, nt, posix):
+    from esl_platform.core.paths import is_fully_qualified
+
+    assert is_fully_qualified(raw, "nt") is nt
+    assert is_fully_qualified(raw, "posix") is posix
+
+
+@pytest.mark.parametrize("raw", ["\\inputs\\x.rad", "/inputs/x.rad", "C:x.rad", "C:inputs\\x.rad"])
+def test_lexical_check_rejects_partial_windows_paths(raw):
+    from esl_platform.core.errors import DomainError
+    from esl_platform.core.paths import lexical_check
+
+    with pytest.raises(DomainError) as ei:
+        lexical_check(raw, "nt")
+    assert ei.value.code == "PATH_UNSAFE"
+
+
+def test_lexical_check_normalizes_by_flavor():
+    from esl_platform.core.errors import DomainError
+    from esl_platform.core.paths import lexical_check
+
+    assert lexical_check("C:/data//in/x.rad", "nt") == "C:\\data\\in\\x.rad"
+    assert lexical_check("/data//in/./x.rad", "posix") == "/data/in/x.rad"
+    for bad in ("C:\\data\\..\\x.rad", "/data/../x.rad", "C:\\a&b.rad"):
+        with pytest.raises(DomainError):
+            lexical_check(bad, "nt" if bad.startswith("C") else "posix")
+
+
+def test_api_rejects_root_relative_and_drive_relative(client):
+    for raw in ("\\inputs\\x.rad", "C:x.rad"):
+        r = _inspect(client, "RAD", raw)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "PATH_UNSAFE", raw
+
+
+def test_config_abs_path_flavor(monkeypatch):
+    from esl_platform.core import config
+
+    assert config.is_abs_path("C:\\esl") and config.is_abs_path("\\\\srv\\share\\esl")
+    assert not config.is_abs_path("\\esl") and not config.is_abs_path("C:esl")
+    monkeypatch.setattr(config.os, "name", "nt")
+    assert not config.is_abs_path("/esl")              # Windows 호스트: 드라이브 없는 루트 상대 거부
+    monkeypatch.setattr(config.os, "name", "posix")
+    assert config.is_abs_path("/esl")

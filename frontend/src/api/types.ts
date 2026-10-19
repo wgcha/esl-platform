@@ -51,11 +51,29 @@ export interface Health {
   version: string;
 }
 
+/** 설정 검증 오류 1건(키 경로 + 메시지) */
+export interface ConfigIssue {
+  key: string;
+  message: string;
+}
+export interface ConfigStatus {
+  ok: boolean;
+  errors: ConfigIssue[];
+}
+export interface WorkerStatus {
+  online: boolean;
+  last_seen_at?: string | null;
+  limiter?: string | null;
+}
+/** 코어 solver.backend 해석값(= ShellModel.stats.backend)과 사용 가능 백엔드(iterative 포함) */
+export interface ToolsStatus {
+  solver_backend: string;
+  solver_backends_available: string[];
+}
 export interface StatusOut {
-  config: { ok: boolean; errors: string[]; [k: string]: unknown };
-  worker: { online: boolean; last_seen_at: string | null; limiter?: string | null };
-  /** 코어 solver.backend 해석값(= ShellModel.stats.backend)과 사용 가능 백엔드(iterative 포함) */
-  tools: { solver_backend: string; solver_backends_available: string[] };
+  config: ConfigStatus;
+  worker: WorkerStatus;
+  tools: ToolsStatus;
   version: string;
   core_version: string;
 }

@@ -1,7 +1,7 @@
 // 목 서버: fetch 래퍼 수준. 백엔드 실제 응답 모양(openapi_p1b.json + 자유 형식 응답은 서비스 코드)을 흉내 낸다.
 // tick()마다 작업이 한 걸음 진행된다.
 import type {
-  ArtifactOut, CaseOut, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
+  ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
   ValidationOut,
 } from "../api/types";
 import {
@@ -44,6 +44,8 @@ export class MockServer {
   tstarMetrics = makeTstarMetrics();
   seq = 10;
   workerOnline = true;
+  /** GET /status config.errors (백엔드 형식 {key, message}[]) */
+  configErrors: ConfigIssue[] = [];
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -216,7 +218,7 @@ export class MockServer {
       return {
         status: 200,
         body: {
-          config: { ok: true, errors: [] },
+          config: { ok: this.configErrors.length === 0, errors: this.configErrors },
           worker: { online: this.workerOnline, last_seen_at: this.now(), limiter: "posix" },
           tools: { solver_backend: "cholmod", solver_backends_available: ["cholmod", "pardiso", "superlu", "iterative"] },
           version: "mock",

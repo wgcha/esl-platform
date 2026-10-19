@@ -225,3 +225,33 @@ def metric_value(val: dict[str, Any], name: str) -> float | None:
             return None if v is None else float(v)
     v = val.get(name)
     return None if v is None else float(v)
+
+
+# ---------------------------------------------------------------- ESL 실행 스냅샷(runs/<esl_run_id>/)
+# 코어 04_esl·03_bc 는 ESL 계산마다 새로 쓰인다(이전 것은 _backup 으로 이동). 등록 시 그 내용을
+# runs/<esl_run_id>/{03_bc,04_esl} 로 보존(하드링크, 안 되면 복사)해 두고, 검증·내보내기 직전에 디스크의
+# 04_esl 이 그 실행의 것인지(esl_summary.json tag = ESL_SOLVE 작업 id) 확인한다. 다르면 스냅샷에서 되돌린다.
+RUNS_DIR = "runs"
+SNAPSHOT_DIRS = (D_BC, D_ESL)
+
+
+def run_snapshot_dir(case_dir: str, run_id: str) -> str:
+    return _p(case_dir, RUNS_DIR, run_id)
+
+
+def esl_tag(esl_dir_parent: str) -> str | None:
+    """<parent>/04_esl/esl_summary.json 의 tag(없거나 못 읽으면 None)."""
+    try:
+        return read_json(_p(esl_dir_parent, D_ESL, "esl_summary.json")).get("tag")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def esl_source_dir(case_dir: str, run: dict[str, Any]) -> str | None:
+    """ESL 실행 run 의 04_esl 이 있는 상위 폴더: 스냅샷(우선) 또는 Case 폴더(디스크 tag 가 같을 때). 없으면 None."""
+    snap = run_snapshot_dir(case_dir, run["id"])
+    if esl_tag(snap) == run["job_id"]:
+        return snap
+    if esl_tag(case_dir) == run["job_id"]:
+        return case_dir
+    return None

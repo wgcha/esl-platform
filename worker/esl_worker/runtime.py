@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from esl_platform import __version__
 from esl_platform.core.config import LoadedConfig, Settings
@@ -61,7 +62,8 @@ class Worker:
                 if lane == "SLOT":
                     return jobs_repo.claim_slot(conn, self.worker_id, ttl)
                 return jobs_repo.claim_light(conn, self.worker_id, ttl)
-        except jobs_repo.ClaimRace:
+        except (jobs_repo.ClaimRace, IntegrityError):
+            # IntegrityError = 같은 Case 의 다른 작업이 동시에 RUNNING 이 됨(ux_jobs_case_running) → 다음 주기에
             return None
 
     def run_once(self, lane: str = "SLOT") -> str | None:

@@ -331,6 +331,45 @@
         "title": "CasePatch",
         "type": "object"
       },
+      "ConfigIssue": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "message"
+        ],
+        "title": "ConfigIssue",
+        "type": "object"
+      },
+      "ConfigStatus": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigIssue"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "errors"
+        ],
+        "title": "ConfigStatus",
+        "type": "object"
+      },
       "EslRunOut": {
         "properties": {
           "case_id": {
@@ -1034,27 +1073,21 @@
       "StatusOut": {
         "properties": {
           "config": {
-            "additionalProperties": true,
-            "title": "Config",
-            "type": "object"
+            "$ref": "#/components/schemas/ConfigStatus"
           },
           "core_version": {
             "title": "Core Version",
             "type": "string"
           },
           "tools": {
-            "additionalProperties": true,
-            "title": "Tools",
-            "type": "object"
+            "$ref": "#/components/schemas/ToolsStatus"
           },
           "version": {
             "title": "Version",
             "type": "string"
           },
           "worker": {
-            "additionalProperties": true,
-            "title": "Worker",
-            "type": "object"
+            "$ref": "#/components/schemas/WorkerStatus"
           }
         },
         "required": [
@@ -1315,6 +1348,27 @@
         "title": "SupportSuggestReq",
         "type": "object"
       },
+      "ToolsStatus": {
+        "properties": {
+          "solver_backend": {
+            "title": "Solver Backend",
+            "type": "string"
+          },
+          "solver_backends_available": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Solver Backends Available",
+            "type": "array"
+          }
+        },
+        "required": [
+          "solver_backend",
+          "solver_backends_available"
+        ],
+        "title": "ToolsStatus",
+        "type": "object"
+      },
       "TstarPut": {
         "additionalProperties": false,
         "properties": {
@@ -1484,6 +1538,42 @@
           "stale"
         ],
         "title": "ValidationOut",
+        "type": "object"
+      },
+      "WorkerStatus": {
+        "properties": {
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "limiter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limiter"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "online"
+        ],
+        "title": "WorkerStatus",
         "type": "object"
       }
     }

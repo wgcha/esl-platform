@@ -50,6 +50,7 @@ from esl.mech.shell import ShellModel
 from esl.rad import parse_rad, scan_includes
 
 STAGES = ("extract", "tstar", "esl", "validate", "export")
+EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export")
 BACKUP_DIR = "_backup"
@@ -263,6 +264,8 @@ class Context:
     protected: list = field(default_factory=list)
     out_real: str = ""
     includes: list = field(default_factory=list)
+    tag: str | None = None                      # 호출자 실행 태그(esl_summary.json·validation.json 에 기록)
+    export_targets: tuple = EXPORT_TARGETS      # 내보낼 대상(radioss_inc | fem | csv)
 
     def p(self, *parts) -> str:
         return os.path.join(self.out, *parts)
@@ -819,7 +822,7 @@ def stage_esl(ctx: Context) -> dict:
                        "n_nodes_nonzero": int(np.sum(mag > 0))},
             "supports": sup_rec["supports"], "support_mode": mode, "noise": noise,
             "drill_factor": ctx.cfg["solver"]["drill_factor"], "backend": ctx.cfg["solver"]["backend"],
-            "solver": solver_stats(sm), "created_at": _utcnow()}
+            "solver": solver_stats(sm), "tag": ctx.tag, "created_at": _utcnow()}
     _write_json(ctx.f(d, "esl_summary.json"), summ)
     ctx.echo(f"[esl] frame {sel['frame_index']}: 강체회전 {kinfo['rot_deg']:.2f}°, ΣF=|{np.linalg.norm(sumF):.3e}|, "
              f"Σ|F|={sum_abs:.3e}, 평형 오차 {eq_rel:.2e} (모멘트 {mom_rel:.2e}), "
@@ -983,7 +986,7 @@ def stage_validate(ctx: Context) -> dict:
     verdict = "PASS" if all(m["pass"] for m in metrics if m["pass"] is not None) else "FAIL"
     fail_reasons = [_FAIL_REASON[m["metric"]] for m in metrics if m["pass"] is False]
     reactions = [] if Rr is None else [{"node_id": int(nid[i]), "dof": d, "r": Rr[i].tolist()} for i, d in spc]
-    val = {"schema": "esl/validation/2", "frame": summ["frame"], "verdict": verdict,
+    val = {"schema": "esl/validation/2", "frame": summ["frame"], "verdict": verdict, "esl_ref": esl_ref(summ),
            "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "metrics": metrics,
            "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded, "reactions": reactions,
            "reaction_sum": None if Rr is None else Rr.sum(axis=0), "created_at": _utcnow()}
@@ -1014,9 +1017,27 @@ def stage_validate(ctx: Context) -> dict:
             "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm)}
 
 # ====================================================================== export
+def esl_ref(summ: dict) -> str | None:
+    """esl_summary.json 식별자: 호출자 태그(있으면) 아니면 생성 시각. validation.json 의 esl_ref 와 대조."""
+    return summ.get("tag") or summ.get("created_at")
+
+
+def normalize_export_targets(targets) -> tuple:
+    if targets is None:
+        return EXPORT_TARGETS
+    if isinstance(targets, str):
+        targets = [t for t in targets.replace(" ", "").split(",") if t]
+    t = list(dict.fromkeys(str(x) for x in targets))
+    bad = [x for x in t if x not in EXPORT_TARGETS]
+    if bad or not t:
+        raise EslError("INPUT_INVALID", f"export_targets 는 {list(EXPORT_TARGETS)} 중 1개 이상 (값 {list(targets)})")
+    return tuple(x for x in EXPORT_TARGETS if x in t)
+
+
 def stage_export(ctx: Context) -> dict:
     _require(ctx.out, [f"{D_BC}/support.json", f"{D_ESL}/u_rel.npz", f"{D_ESL}/f_eq.npz",
                        f"{D_ESL}/esl_summary.json", f"{D_TSTAR}/tstar.json"])
+    targets = normalize_export_targets(ctx.export_targets)
     model = load_model(ctx.out)
     nid, X0 = model.node_id, model.x0
     ur = _load_npz(ctx.p(D_ESL, "u_rel.npz"))
@@ -1026,6 +1047,9 @@ def stage_export(ctx: Context) -> dict:
     tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
     vpath = ctx.p(D_VAL, "validation.json")
     val = _read_json(vpath) if os.path.isfile(vpath) else None
+    if val is not None and "esl_ref" in val and val["esl_ref"] != esl_ref(summ):
+        ctx.warnings.append("검증(05_val) 결과가 현재 ESL(04_esl) 결과의 것이 아님 — 검증 결과 없이 내보냄")
+        val = None
     if val is None:
         ctx.warnings.append("검증(05_val) 결과 없음 — validation.csv·reactions_321.csv 생략")
     elif val.get("verdict") != "PASS":
@@ -1034,55 +1058,70 @@ def stage_export(ctx: Context) -> dict:
     ecfg = ctx.cfg["export"]
     rcfg = ecfg["radioss"]
     mask = force_mask(F, ecfg["force_zero_tol_rel"])
-    groups, _ = optistruct.pshell_groups(model.elem_pid, model.thickness)
-    plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup), len(groups),
-                    int(mask.any(axis=1).sum()), int(mask.sum()))
-    lo, hi = plan["range"]
-    ids = all_ids(plan)
-    assert all(lo <= v <= hi for v in ids)
+    want_ids = "radioss_inc" in targets or "fem" in targets
+    plan = None
+    lo = hi = None
+    if want_ids:      # ID 범위 계획·충돌 검사는 inc·fem 을 쓸 때만(csv 는 ID 를 만들지 않음)
+        groups, _ = optistruct.pshell_groups(model.elem_pid, model.thickness)
+        plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup), len(groups),
+                        int(mask.any(axis=1).sum()), int(mask.sum()))
+        lo, hi = plan["range"]
+        ids = all_ids(plan)
+        assert all(lo <= v <= hi for v in ids)
 
     fr = summ["frame"]
     units = ctx.cfg["units"]
     hdr = [f"ESL export (esl {esl.__version__})  generated {_utcnow()}",
            f"part {model.part_id} '{model.part_title}'  frame {fr['frame_index']}  t* = {fr['time']!r} ({fr['source']})",
            f"units: {units['label']} (force {units['force']}, length {units['length']}); rad /BEGIN: '{model.units_label}'",
-           f"generated ID range [{lo}, {hi}], used up to {plan['max_used']}",
+           f"generated ID range [{lo}, {hi}], used up to {plan['max_used'] if plan else None}",
            f"validation: {val['verdict'] if val else 'N/A'}"]
     d = ctx.fresh_dir(D_EXPORT)
     nf = ecfg["num_format"]
     supports_ids = [(int(s["node_id"]), s["dof"]) for s in sup]
-    rc = radioss.write_cload_inc(ctx.f(d, "esl_cload.inc"), nid, F, mask, plan, rcfg["func_mode"],
-                                 rcfg["ramp_time"], nf, hdr + [f"/CLOAD: |F_c| > {ecfg['force_zero_tol_rel']:g}*max|F|"])
-    rb = radioss.write_bcs_inc(ctx.f(d, "esl_bcs.inc"), supports_ids, plan,
-                               hdr + ["3-2-1 statically determinate supports (Tx Ty Tz flags, rotations free)"])
-    fo = optistruct.write_force_fem(ctx.f(d, "esl_force.fem"), model, F, mask, supports_ids, plan, nf,
-                                    hdr + [f"SPC SID {plan['fem_spc_sid']}, LOAD SID {plan['fem_load_sid']}"])
-    fmt = ctx.csvfmt()
-    is_bc = fz["is_bc"]
-    csvout.write_csv(ctx.f(d, "f_eq.csv"), csvout.F_EQ_HEADER, csvout.f_eq_rows(nid, X0, F, is_bc), fmt)
-    csvout.write_csv(ctx.f(d, "u_rel.csv"), csvout.U_REL_HEADER,
-                     ((int(nid[i]), *ur["u_rel"][i], *ur["u_total"][i]) for i in range(nid.size)), fmt)
-    csvout.write_csv(ctx.f(d, "tstar_candidates.csv"), csvout.CANDIDATES_HEADER,
-                     ((x["rank"], x["frame_index"], x["time"], x["eps_max"], x["elem_id"]) for x in tj["candidates"]),
-                     fmt)
-    csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
-                     ((x["rank"], x["elem_id"], x["eps_eq"], *x["centroid"]) for x in tj["hotspots"]), fmt)
-    files = ["esl_cload.inc", "esl_bcs.inc", "esl_force.fem", "f_eq.csv", "u_rel.csv",
-             "tstar_candidates.csv", "hotspots.csv"]
-    if val is not None:
-        rs = val["reactions"]
-        tot = np.sum([r["r"] for r in rs], axis=0) if rs else np.zeros(3)
-        rows = [(r["node_id"], r["dof"], *r["r"]) for r in rs] + [("SUM", None, *tot)]
-        csvout.write_csv(ctx.f(d, "reactions_321.csv"), csvout.REACTIONS_HEADER, rows, fmt)
-        csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
-        files += ["reactions_321.csv", "validation.csv"]
-    ctx.echo(f"[export] 파일 {len(files)}개, /CLOAD {rc['n_cload']} (노드 {rc['n_grnod']}), /BCS {rb['n_bcs']}, "
-             f"FORCE {fo['n_force']}, PSHELL {fo['n_pshell']}, ID [{lo}..{plan['max_used']}] ⊂ [{lo}, {hi}]")
-    return {"files": files, "id_range": [lo, hi], "id_max_used": plan["max_used"], "n_cload": rc["n_cload"],
-            "n_cload_nodes": rc["n_grnod"], "n_bcs": rb["n_bcs"], "n_force": fo["n_force"],
-            "n_pshell": fo["n_pshell"], "pshell_map": fo["pshell_map"],
-            "id_plan": {k: (v if not isinstance(v, list) or len(v) <= 6 else [v[0], v[-1]])
-                        for k, v in plan.items()}}
+    files: list[str] = []
+    out: dict = {"targets": list(targets)}
+    if "radioss_inc" in targets:
+        rc = radioss.write_cload_inc(ctx.f(d, "esl_cload.inc"), nid, F, mask, plan, rcfg["func_mode"],
+                                     rcfg["ramp_time"], nf,
+                                     hdr + [f"/CLOAD: |F_c| > {ecfg['force_zero_tol_rel']:g}*max|F|"])
+        rb = radioss.write_bcs_inc(ctx.f(d, "esl_bcs.inc"), supports_ids, plan,
+                                   hdr + ["3-2-1 statically determinate supports (Tx Ty Tz flags, rotations free)"])
+        files += ["esl_cload.inc", "esl_bcs.inc"]
+        out.update(n_cload=rc["n_cload"], n_cload_nodes=rc["n_grnod"], n_bcs=rb["n_bcs"])
+    if "fem" in targets:
+        fo = optistruct.write_force_fem(ctx.f(d, "esl_force.fem"), model, F, mask, supports_ids, plan, nf,
+                                        hdr + [f"SPC SID {plan['fem_spc_sid']}, LOAD SID {plan['fem_load_sid']}"])
+        files += ["esl_force.fem"]
+        out.update(n_force=fo["n_force"], n_pshell=fo["n_pshell"], pshell_map=fo["pshell_map"])
+    if "csv" in targets:
+        fmt = ctx.csvfmt()
+        is_bc = fz["is_bc"]
+        csvout.write_csv(ctx.f(d, "f_eq.csv"), csvout.F_EQ_HEADER, csvout.f_eq_rows(nid, X0, F, is_bc), fmt)
+        csvout.write_csv(ctx.f(d, "u_rel.csv"), csvout.U_REL_HEADER,
+                         ((int(nid[i]), *ur["u_rel"][i], *ur["u_total"][i]) for i in range(nid.size)), fmt)
+        csvout.write_csv(ctx.f(d, "tstar_candidates.csv"), csvout.CANDIDATES_HEADER,
+                         ((x["rank"], x["frame_index"], x["time"], x["eps_max"], x["elem_id"])
+                          for x in tj["candidates"]), fmt)
+        csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
+                         ((x["rank"], x["elem_id"], x["eps_eq"], *x["centroid"]) for x in tj["hotspots"]), fmt)
+        files += ["f_eq.csv", "u_rel.csv", "tstar_candidates.csv", "hotspots.csv"]
+        if val is not None:
+            rs = val["reactions"]
+            tot = np.sum([r["r"] for r in rs], axis=0) if rs else np.zeros(3)
+            rows = [(r["node_id"], r["dof"], *r["r"]) for r in rs] + [("SUM", None, *tot)]
+            csvout.write_csv(ctx.f(d, "reactions_321.csv"), csvout.REACTIONS_HEADER, rows, fmt)
+            csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
+            files += ["reactions_321.csv", "validation.csv"]
+    ctx.echo(f"[export] 대상 {list(targets)}, 파일 {len(files)}개"
+             + (f", /CLOAD {out['n_cload']} (노드 {out['n_cload_nodes']}), /BCS {out['n_bcs']}" if "n_cload" in out else "")
+             + (f", FORCE {out['n_force']}, PSHELL {out['n_pshell']}" if "n_force" in out else "")
+             + (f", ID [{lo}..{plan['max_used']}] ⊂ [{lo}, {hi}]" if plan else ""))
+    out.update(files=files, id_range=[lo, hi] if plan else None, id_max_used=plan["max_used"] if plan else None,
+               id_plan=None if plan is None else {k: (v if not isinstance(v, list) or len(v) <= 6 else [v[0], v[-1]])
+                                                  for k, v in plan.items()},
+               esl_ref=esl_ref(summ), validation_used=val is not None)
+    return out
 
 
 _STAGE_FN = {"extract": stage_extract, "tstar": stage_tstar, "esl": stage_esl,
@@ -1141,10 +1180,17 @@ def _new_record(out: str) -> dict:
 
 def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", frame: int | None = None,
         support_nodes: list[int] | None = None, cfg: dict | None = None,
-        echo: Callable[[str], None] = print, argv: list[str] | None = None) -> dict:
-    """파이프라인 실행. 실패 시 run.json 에 오류를 기록하고 EslError 를 다시 던진다."""
+        echo: Callable[[str], None] = print, argv: list[str] | None = None,
+        export_targets=None, tag: str | None = None) -> dict:
+    """파이프라인 실행. 실패 시 run.json 에 오류를 기록하고 EslError 를 다시 던진다.
+
+    ``export_targets``: export 단계에서 만들 대상(``radioss_inc``·``fem``·``csv`` 의 부분집합, 기본 전부).
+    ``tag``: 호출자 실행 태그 — esl 단계가 ``esl_summary.json`` 의 ``tag`` 로 기록하고, validate 가 그 값을
+    ``validation.json`` 의 ``esl_ref`` 로 남긴다(export 는 esl_ref 가 다른 검증 결과를 쓰지 않음).
+    """
     if out is None or rad is None or results is None:
         raise EslError("INPUT_INVALID", "--rad, --results, --out 이 모두 필요")
+    targets = normalize_export_targets(export_targets)
     rad, results, out = (os.path.abspath(os.fspath(p)) for p in (rad, results, out))
     # 어떤 쓰기(폴더 생성·백업 이동·run.json)보다 먼저: rad 의 include 트리 + 이전 실행 기록의 include 를
     # 보호 대상에 넣고 출력 겹침 검사 (단계와 무관하게 항상)
@@ -1161,12 +1207,13 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
             record = _new_record(out)
     ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     inv = {"started_at": _utcnow(), "stage": stage, "frame": frame, "support_nodes": support_nodes,
+           "export_targets": list(targets), "tag": tag,
            "rad": rad, "results": results, "argv": argv, "ok": False, "error": None}
     record.setdefault("history", []).append(inv)
     record["error"] = None
     ctx = Context(cfg=cfg or {}, config_path="", rad=rad, results=results, out=out, ts=ts, frame=frame,
                   support_nodes=support_nodes, echo=echo, record=record, protected=prot, out_real=out_real,
-                  includes=list(includes))
+                  includes=list(includes), tag=tag, export_targets=targets)
     cur = "config"
     try:
         ctx.guard(rj)               # run.json 이 밖을 가리키는 링크면 아무 단계도 실행하지 않음

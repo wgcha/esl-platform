@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 
 from ...core.auth import Principal
 from ...core.errors import DomainError, forbidden, not_found
-from ...core.inputs import case_inputs_hash
+from ...core.inputs import esl_run_stale, extract_stale  # noqa: F401 - 서비스들이 여기서 import
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.jobs import LEASE_COLUMNS
@@ -84,15 +84,6 @@ def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) 
         d["steps"] = [{k: v for k, v in s.items() if k not in ("outputs", "log_rel", "id", "job_id")}
                       for s in jobs_repo.get_steps(conn, job["id"])]
     return d
-
-
-def esl_run_stale(case: dict[str, Any], run: dict[str, Any]) -> bool:
-    return run["inputs_hash"] != case_inputs_hash(case) or extract_stale(case)
-
-
-def extract_stale(case: dict[str, Any]) -> bool:
-    es = case.get("extract_summary") or {}
-    return bool(es) and es.get("requested_part_title") != case["part_title"]
 
 
 def esl_run_out(case: dict[str, Any], run: dict[str, Any], conn: Connection | None = None) -> dict[str, Any]:

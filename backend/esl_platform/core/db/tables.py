@@ -68,6 +68,8 @@ cases = Table(
     Column("version", BigInteger, nullable=False, server_default="1"),
     CheckConstraint("status IN ('ACTIVE','ARCHIVED')", name="ck_cases_status"),
     CheckConstraint("folder_name ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'", name="ck_cases_folder_name"),
+    CheckConstraint("lower(split_part(folder_name, '.', 1)) !~ '^(con|prn|aux|nul|com[1-9]|lpt[1-9])$'"
+                    " AND folder_name !~ '[. ]$'", name="ck_cases_folder_reserved"),
     CheckConstraint("length(btrim(title)) > 0", name="ck_cases_title"),
     CheckConstraint("version >= 1", name="ck_cases_version"),
     CheckConstraint(
@@ -76,6 +78,8 @@ cases = Table(
     ),
 )
 Index("ix_cases_project", cases.c.project_id, cases.c.status)
+# 0002: Windows 예약 장치명(CON·PRN·AUX·NUL·COM1-9·LPT1-9, 확장자 포함)·끝 점/공백 금지, 대소문자 무시 UNIQUE
+Index("ux_cases_folder_lower", func.lower(cases.c.folder_name), unique=True)
 Index("ux_cases_project_title_active", cases.c.project_id, cases.c.title, unique=True,
       postgresql_where=text("status = 'ACTIVE'"))
 
@@ -139,6 +143,8 @@ Index("ix_jobs_state_lane_seq", jobs.c.state, jobs.c.lane, jobs.c.queue_seq)
 Index("ix_jobs_case_created", jobs.c.case_id, jobs.c.created_at.desc())
 Index("ux_jobs_case_type_active", jobs.c.case_id, jobs.c.job_type, unique=True,
       postgresql_where=text("state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+# 0002: 같은 Case 의 작업은 lane 과 무관하게 동시에 RUNNING 1개(산출물 폴더 직렬화)
+Index("ux_jobs_case_running", jobs.c.case_id, unique=True, postgresql_where=text("state = 'RUNNING'"))
 
 job_steps = Table(
     "job_steps",

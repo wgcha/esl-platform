@@ -14,7 +14,7 @@ from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, forbidden, unprocessable
 from ...core.inputs import case_inputs_hash, changed_inputs, fingerprint
-from ...core.paths import check_input_path
+from ...core.paths import check_includes, check_input_path
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.state_machine import CANCELED, FAILED, INTERRUPTED, TERMINAL
@@ -67,15 +67,15 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
         s = ctx.settings
         rad = check_input_path(s, case["rad_path"], "RAD")
         res = check_input_path(s, case["results_dir"], "RESULTS")
-        incs = [i["path"] for i in (case["input_fingerprint"].get("includes") or [])]
-        try:
-            from esl_worker import core_adapter
+        from esl_worker import core_adapter
 
-            cc = (ctx.config.core or {}).get("case") or {}
+        cc = (ctx.config.core or {}).get("case") or {}
+        try:
             incs = core_adapter.scan_includes(rad, int(cc.get("rad_include_max_depth") or 8),
                                               cc.get("include_path_map") or None)
-        except Exception:  # noqa: BLE001 - include 스캔 실패는 이전 목록 유지
-            pass
+        except core_adapter.CoreError:  # 스캔 실패는 이전 목록 유지
+            incs = [i["path"] for i in (case["input_fingerprint"].get("includes") or [])]
+        check_includes(s, incs)
         return {"settings": core_settings_for(ctx, case), "input_fingerprint": fingerprint(rad, res, incs),
                 "part_title": case["part_title"]}
 
@@ -192,6 +192,13 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
         params = dict(job["params"])
+        if job["failure_code"] == "INPUT_CHANGED":
+            # 입력이 바뀌어 실패한 작업: 예전 지문으로 재시도하면 또 실패 → CASE_EXTRACT 는 현재 입력으로 다시
+            # 준비(새 지문, 처음 step 부터), 그 밖의 작업은 추출부터 다시 해야 하므로 거부.
+            if job["job_type"] != "CASE_EXTRACT":
+                raise conflict("INPUT_CHANGED", "입력 파일이 추출 이후 바뀌었습니다. 추출(①)부터 다시 실행하세요")
+            params = _prepare(ctx, conn, case, "CASE_EXTRACT", {})
+            start = 1
         try:
             with conn.begin_nested():
                 new = jobs_repo.insert_job(conn, case_id=job["case_id"], project_id=job["project_id"],
@@ -200,6 +207,8 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
                                            resume_from_step=start if start > 1 else None)
         except IntegrityError:
             raise conflict("CASE_JOB_BUSY", "같은 Case 에서 같은 종류의 작업이 대기 중이거나 실행 중입니다") from None
+        if job["failure_code"] == "INPUT_CHANGED":
+            cases_repo.update_case(conn, case["id"], None, input_fingerprint=params["input_fingerprint"])
         return job_out(conn, new, with_steps=True)
 
 

@@ -12,7 +12,7 @@ from esl_worker import core_adapter
 from ... import __version__
 from ...core.auth import Principal
 from ...core.inputs import results_files
-from ...core.paths import check_input_path
+from ...core.paths import check_includes, check_input_path
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import workers as workers_repo
 from ..context import AppContext
@@ -125,12 +125,16 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
     problems: list[str] = []
     parts: list[dict] = []
     includes: list[dict] = []
+    # include 가 input_roots 밖이면 본문(파트 title 등)을 읽기 전에 거부(422 PATH_OUTSIDE_ROOT)
+    try:
+        inc_paths = core_adapter.scan_includes(path, depth, pmap)
+    except core_adapter.CoreError as exc:
+        inc_paths = []
+        problems.append(f"{exc.code}: {exc.message}")
+    check_includes(ctx.settings, inc_paths)
+    includes = [{"path": p, "ok": os.path.isfile(p)} for p in inc_paths]
     try:
         parts = core_adapter.list_parts(path, depth, pmap)
-    except core_adapter.CoreError as exc:
-        problems.append(f"{exc.code}: {exc.message}")
-    try:
-        includes = [{"path": p, "ok": os.path.isfile(p)} for p in core_adapter.scan_includes(path, depth, pmap)]
     except core_adapter.CoreError as exc:
         problems.append(f"{exc.code}: {exc.message}")
     for inc in includes:

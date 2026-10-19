@@ -93,6 +93,7 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 #   [--stage extract|tstar|esl|validate|export|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
 #   [--frame N]                    t* 수동 지정(frame_index, 후보 프레임 D 안에서만 → 아니면 FRAME_NOT_CANDIDATE)
 #   [--support-nodes 101,202,303]  3-2-1 후보 노드 ID(3개 이상, 대상 파트 밖 → NODE_NOT_IN_PART)
+#   [--export-targets radioss_inc,fem,csv]  export 단계에서 만들 대상(기본 전부)
 ```
 
 - 콘솔: 단계별 1줄 요약(t*, ΣF·평형 오차, disp_rms_rel·hotspot 오차·PASS/FAIL, 내보내기 ID 범위).
@@ -114,6 +115,10 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 | `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단), `compare.csv`(전체 solve 때만) |
 | `06_export/` | `esl_cload.inc`, `esl_bcs.inc`, `esl_force.fem`, `f_eq.csv`, `u_rel.csv`, `reactions_321.csv`, `tstar_candidates.csv`, `hotspots.csv`, `validation.csv` |
 | `run.json` | 입력 경로·sha256, 설정 스냅샷, 단계별 요약·경고·소요시간, 실행 이력·오류 |
+| `runs/<esl_run_id>/` | (플랫폼) ESL 실행별 `03_bc`·`04_esl` 복사본. 검증·내보내기 직전 04_esl 의 `tag`(ESL 작업 id)가 대상 실행과 다르면 여기서 되돌림 |
+
+- export 대상: `radioss_inc` = `esl_cload.inc`·`esl_bcs.inc`, `fem` = `esl_force.fem`, `csv` = 나머지 csv.
+  `validation.json` 의 `esl_ref` 가 현재 `esl_summary.json`(tag 또는 생성 시각)과 다르면 검증 결과를 쓰지 않는다.
 
 생성 ID(/FUNCT, /GRNOD, /CLOAD, /BCS, PSHELL, SID)는 모두 `[id_offset, id_offset+999999]`.
 rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.

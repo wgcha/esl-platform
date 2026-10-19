@@ -90,3 +90,6 @@ def test_write_api_503_when_config_invalid(tmp_path, engine, fake_dashboard):
         assert r.status_code == 503 and r.json()["detail"]["code"] == "CONFIG_INVALID"
         st = c.get(f"{API}/status", headers=H("tok-power")).json()
         assert st["config"]["ok"] is False and st["config"]["errors"]
+        # 형식: {key, message}[] (프런트 ConfigIssue)
+        assert all(set(e) == {"key", "message"} and all(isinstance(v, str) for v in e.values())
+                   for e in st["config"]["errors"])

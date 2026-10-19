@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FOLDER_RE = r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$"
+WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
+
+
+def check_folder_name(v: str) -> str:
+    """Case 폴더명: FOLDER_RE + Windows 예약 장치명(확장자 붙어도)·끝 점/공백 금지."""
+    if v != v.rstrip(" .") or v.endswith((" ", ".")):
+        raise ValueError("폴더 이름은 점이나 공백으로 끝날 수 없습니다")
+    if WIN_RESERVED.match(v.split(".", 1)[0].strip()):
+        raise ValueError(f"Windows 예약 이름은 폴더 이름으로 쓸 수 없습니다: {v}")
+    return v
 
 
 class _Req(BaseModel):
@@ -38,6 +49,11 @@ class CaseCreate(_Req):
         if not v.strip():
             raise ValueError("빈 제목")
         return v.strip()
+
+    @field_validator("folder_name")
+    @classmethod
+    def _folder(cls, v: str) -> str:
+        return check_folder_name(v)
 
 
 class CasePatch(_Req):
@@ -288,9 +304,30 @@ class ArtifactOut(_Out):
     created_at: datetime
 
 
+class ConfigIssue(_Out):
+    key: str
+    message: str
+
+
+class ConfigStatus(_Out):
+    ok: bool
+    errors: list[ConfigIssue]
+
+
+class WorkerStatus(_Out):
+    online: bool
+    last_seen_at: datetime | None = None
+    limiter: str | None = None
+
+
+class ToolsStatus(_Out):
+    solver_backend: str
+    solver_backends_available: list[str]
+
+
 class StatusOut(_Out):
-    config: dict[str, Any]
-    worker: dict[str, Any]
-    tools: dict[str, Any]
+    config: ConfigStatus
+    worker: WorkerStatus
+    tools: ToolsStatus
     version: str
     core_version: str

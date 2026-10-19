@@ -53,3 +53,10 @@
   - V-P1B-2: 작업 취소 시 코어 프로세스 종료, 출력 폴더 일관(부분 산출물은 다음 실행 때 `_backup/`).
   - V-P1B-3: input_roots 밖·esl_root 겹침·심링크 경로 거부(코어 보호와 이중).
 - 완료 = `scripts/test-all`(Linux, PG 있음) 통과.
+
+## 7. 검증 결함 반영 (2026-10-19)
+- `esl.pipeline.run`에 선택 인자 `export_targets`(radioss_inc|fem|csv, CLI `--export-targets`)와 `tag`(ESL 작업 id → esl_summary.json 기록) 추가.
+- Case 폴더에 플랫폼 전용 `runs/<esl_run_id>/`(03_bc·04_esl 스냅샷). VALIDATE·EXPORT는 실행 직전 대상 run의 스냅샷을 04_esl로 복원(현재 것은 `_backup/`), 스냅샷이 없으면 FAILED `PREREQUISITE_MISSING`.
+- 같은 Case는 lane과 무관하게 RUNNING 1개(`ux_jobs_case_running`). 실행 직전 사전조건 재확인.
+- include가 input_roots 밖이면 422 `PATH_OUTSIDE_ROOT`(파일 내용 비노출). Case 폴더명: Windows 예약어·끝 점/공백 거부, 대소문자 무시 UNIQUE.
+- INPUT_CHANGED 실패 재시도: CASE_EXTRACT는 현재 fingerprint로 재실행, 그 외 409 `INPUT_CHANGED`.

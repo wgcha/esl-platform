@@ -38,7 +38,7 @@ export function RightPanel() {
               {" "}
               · 솔버 {s.tools.solver_backend}
             </span>
-            {!s.config.ok && <div className="small bad-text">설정 오류: {s.config.errors.join(", ")}</div>}
+            {!s.config.ok && <div className="small bad-text">설정 오류: {s.config.errors.map((e) => `${e.key}: ${e.message}`).join(", ")}</div>}
           </div>
         ) : (
           <div className="muted">{status.error ?? "불러오는 중…"}</div>

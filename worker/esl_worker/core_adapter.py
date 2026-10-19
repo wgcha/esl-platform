@@ -118,6 +118,8 @@ def run_pipeline(
     frame: int | None = None,
     support_nodes: list[int] | None = None,
     echo: Callable[[str], None] | None = None,
+    export_targets: list[str] | None = None,
+    tag: str | None = None,
 ) -> dict:
     """`esl.pipeline.run` 1회 호출. 받지 않는 인자는 넘기지 않는다(시그니처 검사)."""
     fn = _attr("esl.pipeline", "run")
@@ -145,6 +147,14 @@ def run_pipeline(
         kw["support_nodes"] = [int(n) for n in support_nodes]
     if echo is not None and "echo" in params:
         kw["echo"] = echo
+    if export_targets is not None:
+        if "export_targets" not in params:
+            raise CoreUnavailable("esl.pipeline.run 인자 export_targets")
+        kw["export_targets"] = [str(t) for t in export_targets]
+    if tag is not None:
+        if "tag" not in params:
+            raise CoreUnavailable("esl.pipeline.run 인자 tag")
+        kw["tag"] = str(tag)
     rec = _wrap(fn, **kw)
     return rec if isinstance(rec, dict) else {}
 
