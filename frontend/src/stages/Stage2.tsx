@@ -27,7 +27,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   }, [metric, tv.data, c.tstar?.metric, c.tstar?.frame_index]);
 
   const unchanged = !!c.tstar && c.tstar.metric === metric && c.tstar.frame_index === frame;
-  const prereq = !ready ? "① 추출을 먼저 실행하세요." : frame === null ? "후보 시점을 고르세요." : unchanged ? "현재 확정된 t*와 같습니다." : null;
+  const prereq = !ready ? "① 추출을 먼저 실행하세요" : frame === null ? "후보 시점을 고르세요" : unchanged ? "현재 확정된 t*와 같습니다" : null;
 
   const confirm = () => act.run(() => api.putTstar(c.id, { version: c.version, metric, frame_index: frame! }));
 
@@ -39,7 +39,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
       primary={{ label: "t* 확정", onClick: confirm, disabledReason: blockReason(allowed, c, 2, prereq), busy: act.busy }}
     >
       {!ready ? (
-        <Empty>① 입력 단계에서 추출을 먼저 실행하세요.</Empty>
+        <Empty>① 입력 단계에서 추출을 먼저 실행하세요</Empty>
       ) : !tv.data ? (
         <Empty>불러오는 중…</Empty>
       ) : (
@@ -61,19 +61,19 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                 현재 t*: {METRIC_LABEL[c.tstar.metric]} · 프레임 {c.tstar.frame_index} · {c.tstar.time.toFixed(3)} s · 요소 {c.tstar.elem_id} · {c.tstar.source === "auto" ? "자동" : "사용자 선택"}
               </div>
             )}
-            {blk ? <MaxHoldChart time={blk.history.time} value={blk.history.value} candidates={blk.candidates} selectedFrame={frame} label={METRIC_LABEL[metric]} /> : <Empty>이 지표의 결과가 없습니다.</Empty>}
+            {blk ? <MaxHoldChart time={blk.history.time} value={blk.history.value} candidates={blk.candidates} selectedFrame={frame} label={METRIC_LABEL[metric]} /> : <Empty>이 지표의 결과가 없습니다</Empty>}
           </Card>
           <div className="grid2">
             <Card title="후보 시점">
-              <table className="tbl compact">
+              <table className="table compact">
                 <thead>
                   <tr>
                     <th />
                     <th>순위</th>
-                    <th>프레임</th>
-                    <th>시간 (s)</th>
+                    <th className="num">프레임</th>
+                    <th className="num">시간 (s)</th>
                     <th>요소</th>
-                    <th>값</th>
+                    <th className="num">값</th>
                     <th>변위(D)</th>
                   </tr>
                 </thead>
@@ -93,11 +93,11 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                           />
                         </td>
                         <td>{k.rank}</td>
-                        <td>{k.frame_index}</td>
-                        <td>{k.time.toFixed(3)}</td>
+                        <td className="num">{k.frame_index}</td>
+                        <td className="num">{k.time.toFixed(3)}</td>
                         <td>{k.elem_id}</td>
-                        <td>{fmt(k.value, 4)}</td>
-                        <td>{k.in_D === false ? <span className="bad-text" title="변위가 추출되지 않은 프레임 — t*로 고를 수 없음">없음</span> : "있음"}</td>
+                        <td className="num">{fmt(k.value, 4)}</td>
+                        <td>{k.in_D === false ? <span className="error-text" title="변위가 추출되지 않은 프레임 — t*로 고를 수 없음">없음</span> : "있음"}</td>
                       </tr>
                     );
                   })}
@@ -105,12 +105,12 @@ export function Stage2({ c, reload, allowed }: StageProps) {
               </table>
             </Card>
             <Card title={`hotspot (t* 프레임 ${blk?.tstar?.frame_index ?? "–"}에서 상승 중 = 검증 대상)`}>
-              <table className="tbl compact">
+              <table className="table compact">
                 <thead>
                   <tr>
                     <th>순위</th>
                     <th>요소</th>
-                    <th>값</th>
+                    <th className="num">값</th>
                     <th>중심 좌표</th>
                     <th>상승 중</th>
                   </tr>
@@ -120,7 +120,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                     <tr key={h.elem_id}>
                       <td>{h.rank}</td>
                       <td>{h.elem_id}</td>
-                      <td>{fmt(h.value, 4)}</td>
+                      <td className="num">{fmt(h.value, 4)}</td>
                       <td className="mono small">{h.centroid ? h.centroid.map((v) => v.toFixed(1)).join(", ") : "–"}</td>
                       <td>
                         {h.rising === null ? (

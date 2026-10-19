@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/endpoints";
 import type { SupportSuggest } from "../api/types";
-import { Card, Empty } from "../components/ui";
+import { Card, Empty, Field } from "../components/ui";
 import { PlaneScatter, type Marker } from "../components/PlaneScatter";
 import { usePolling } from "../lib/usePolling";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -44,13 +44,13 @@ export function Stage3({ c, reload, allowed }: StageProps) {
   const sameAsKnown = !!known && valid && known.node_ids.every((x, k) => x === nums[k]);
   const sameAsCurrent = !!current && valid && current.node_ids.every((x, k) => x === nums[k]);
   const prereq = !ready
-    ? "① 추출을 먼저 실행하세요."
+    ? "① 추출을 먼저 실행하세요"
     : !valid
-      ? "노드 ID 3개를 숫자로 입력하세요."
+      ? "노드 ID 3개를 숫자로 입력하세요"
       : new Set(nums).size < 3
-        ? "세 노드가 서로 달라야 합니다."
+        ? "세 노드가 서로 달라야 합니다"
         : sameAsCurrent
-          ? "현재 저장된 지지점과 같습니다."
+          ? "현재 저장된 지지점과 같습니다"
           : null;
 
   const markers = useMemo<Marker[]>(() => {
@@ -82,7 +82,7 @@ export function Stage3({ c, reload, allowed }: StageProps) {
       primary={{ label: "지지점 저장", onClick: save, disabledReason: blockReason(allowed, c, 3, prereq), busy: act.busy }}
     >
       {!ready ? (
-        <Empty>① 입력 단계에서 추출을 먼저 실행하세요.</Empty>
+        <Empty>① 입력 단계에서 추출을 먼저 실행하세요</Empty>
       ) : (
         <div className="grid-main">
           <Card title={`PCA 평면 (t* 프레임 ${c.tstar?.frame_index ?? "–"})`}>
@@ -96,8 +96,7 @@ export function Stage3({ c, reload, allowed }: StageProps) {
           <Card title="3-2-1 지지 노드">
             <div className="form">
               {ROLE.map((r, k) => (
-                <label key={k}>
-                  {r}
+                <Field key={k} label={r} hint={`dof ${sameAsKnown && known ? dofText(known.dofs[k]) : "저장 시 자동 결정"}`}>
                   <input
                     className="mono"
                     inputMode="numeric"
@@ -106,10 +105,7 @@ export function Stage3({ c, reload, allowed }: StageProps) {
                     disabled={!allowed}
                     onChange={(e) => setIds((old) => old.map((v, i) => (i === k ? e.target.value : v)))}
                   />
-                  <span className="small muted">
-                    dof {sameAsKnown && known ? dofText(known.dofs[k]) : "저장 시 자동 결정"}
-                  </span>
-                </label>
+                </Field>
               ))}
             </div>
             <div className="small muted">

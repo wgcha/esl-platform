@@ -35,17 +35,19 @@ export function usePathInspect<P extends Purpose>(purpose: P, initial = "") {
   }
 
   const field = (label: string, placeholder: string) => (
-    <div className="path-field">
-      <label>
-        {label}
-        <span className="row">
-          <input className="mono" value={path} placeholder={placeholder} onChange={(e) => setPath(e.target.value)} />
-          <button type="button" className="btn" disabled={!path.trim() || busy} onClick={() => inspect()}>
-            {busy ? "확인 중…" : "확인"}
-          </button>
-        </span>
-      </label>
-      {error && <div className="small bad-text">{error}</div>}
+    <div className="pathinput path-field">
+      <span className="field-label">{label}</span>
+      <div className="pathinput-row">
+        <input type="text" className="mono" value={path} placeholder={placeholder} aria-label={label} spellCheck={false} onChange={(e) => setPath(e.target.value)} />
+        <button type="button" className="btn" disabled={!path.trim() || busy} onClick={() => inspect()}>
+          {busy ? "확인 중…" : "확인"}
+        </button>
+      </div>
+      {error && (
+        <div className="small error-text" role="alert">
+          {error}
+        </div>
+      )}
     </div>
   );
 
@@ -55,7 +57,7 @@ export function usePathInspect<P extends Purpose>(purpose: P, initial = "") {
 export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitle: string }) {
   const want = partTitle.trim().toLowerCase();
   return (
-    <div className="inspect" aria-label="rad 확인 결과">
+    <div className={r.ok ? "inspect ok" : "inspect bad"} aria-label="rad 확인 결과">
       <div>
         {r.ok ? <Badge kind="ok">rad 읽기 가능</Badge> : <Badge kind="bad">문제 있음</Badge>}
         {r.target_part && (
@@ -65,17 +67,17 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
           </span>
         )}
         {r.problems.map((p) => (
-          <div key={p} className="small bad-text">
+          <div key={p} className="small error-text">
             {p}
           </div>
         ))}
       </div>
-      <table className="tbl compact">
+      <table className="table compact">
         <thead>
           <tr>
             <th>파트 id</th>
             <th>title</th>
-            <th>요소 수</th>
+            <th className="num">요소 수</th>
           </tr>
         </thead>
         <tbody>
@@ -83,7 +85,7 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
             <tr key={p.id} className={want && p.title.toLowerCase() === want ? "hl" : undefined}>
               <td>{p.id}</td>
               <td>{p.title}</td>
-              <td>{p.n_elems?.toLocaleString() ?? "–"}</td>
+              <td className="num">{p.n_elems?.toLocaleString() ?? "–"}</td>
             </tr>
           ))}
         </tbody>
@@ -92,7 +94,7 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
         <div className="small">
           include:{" "}
           {r.includes.map((i) => (
-            <span key={i.path} className={i.ok ? "muted" : "bad-text"}>
+            <span key={i.path} className={i.ok ? "muted" : "error-text"}>
               {i.path.split(/[\\/]/).pop()} {i.ok ? "✓" : "✗"}{" "}
             </span>
           ))}
@@ -106,7 +108,7 @@ export function ResultsInspectView({ r }: { r: InspectResultsResult }) {
   const d = r.done;
   const cf = d?.candidate_frames ?? {};
   return (
-    <div className="inspect" aria-label="결과 폴더 확인 결과">
+    <div className={r.ok && d?.ok ? "inspect ok" : "inspect bad"} aria-label="결과 폴더 확인 결과">
       <div>
         {r.ok && d?.ok ? <Badge kind="ok">done.json 정상</Badge> : <Badge kind="bad">done.json 문제</Badge>}
         <span className="muted">
@@ -116,7 +118,7 @@ export function ResultsInspectView({ r }: { r: InspectResultsResult }) {
         </span>
       </div>
       {[...r.problems, ...(d?.warnings ?? [])].map((p) => (
-        <div key={p} className="small bad-text">
+        <div key={p} className="small error-text">
           {p}
         </div>
       ))}

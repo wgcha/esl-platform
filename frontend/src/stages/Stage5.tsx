@@ -27,7 +27,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const act = useAction(reload);
   const v = val.data;
 
-  const prereq = !runId ? "④ ESL을 먼저 계산하세요." : run.data?.stale ? "④ ESL을 다시 계산하세요(입력이 바뀜)." : null;
+  const prereq = !runId ? "④ ESL을 먼저 계산하세요" : run.data?.stale ? "④ ESL을 다시 계산하세요(입력이 바뀜)" : null;
   const crit = v?.criteria ?? {};
   const hsMax = num(crit.hotspot_strain_rel_err_max);
   const dispMax = num(crit.disp_rms_rel_max);
@@ -47,7 +47,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
       }}
     >
       {!v ? (
-        <Empty>{runId ? "아직 검증하지 않았습니다." : "④ ESL을 먼저 계산하세요."}</Empty>
+        <Empty>{runId ? "아직 검증하지 않았습니다" : "④ ESL을 먼저 계산하세요"}</Empty>
       ) : (
         <>
           <Card title="판정" right={v.verdict === "PASS" ? <Badge kind="ok">PASS</Badge> : <Badge kind="bad">FAIL</Badge>}>
@@ -75,7 +75,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             {v.fail_reasons.length > 0 && (
               <ul className="reasons">
                 {v.fail_reasons.map((f) => (
-                  <li key={f} className="bad-text">
+                  <li key={f} className="error-text">
                     {f}
                     {FAIL_REASON_LABEL[f] ? ` — ${FAIL_REASON_LABEL[f]}` : ""}
                   </li>
@@ -85,13 +85,13 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           </Card>
           <div className="grid2">
             <Card title="hotspot ε_eq 오차">
-              <table className="tbl compact">
+              <table className="table compact">
                 <thead>
                   <tr>
                     <th>요소</th>
-                    <th>ε (Radioss)</th>
-                    <th>ε (검증)</th>
-                    <th>오차</th>
+                    <th className="num">ε (Radioss)</th>
+                    <th className="num">ε (검증)</th>
+                    <th className="num">오차</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -100,9 +100,9 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                     return (
                       <tr key={h.elem_id} className={over ? "bad-row" : undefined}>
                         <td>{h.elem_id}</td>
-                        <td>{fmt(h.eps_rad, 4)}</td>
-                        <td>{fmt(h.eps_val, 4)}</td>
-                        <td>{pct(h.rel_err)}</td>
+                        <td className="num">{fmt(h.eps_rad, 4)}</td>
+                        <td className="num">{fmt(h.eps_val, 4)}</td>
+                        <td className="num">{pct(h.rel_err)}</td>
                       </tr>
                     );
                   })}
@@ -111,7 +111,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             </Card>
             <Card title="제외 요소">
               {v.excluded.length ? (
-                <table className="tbl compact">
+                <table className="table compact">
                   <thead>
                     <tr>
                       <th>요소</th>
@@ -134,10 +134,10 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           </div>
           {history.data && history.data.length > 1 && (
             <Card title="검증 이력">
-              <table className="tbl compact">
+              <table className="table compact">
                 <thead>
                   <tr>
-                    <th>시각</th>
+                    <th className="num">시각</th>
                     <th>판정</th>
                     <th>ESL 결과</th>
                     <th />
@@ -146,7 +146,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                 <tbody>
                   {history.data.map((h) => (
                     <tr key={h.id} className={h.id === v.id ? "hl" : undefined}>
-                      <td>{dt(h.created_at)}</td>
+                      <td className="num">{dt(h.created_at)}</td>
                       <td>{h.verdict}</td>
                       <td className="mono small">{h.esl_run_id}</td>
                       <td>{h.stale ? <span className="muted">이전 입력</span> : ""}</td>

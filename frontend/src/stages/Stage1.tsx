@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/endpoints";
-import { Card, Empty, Stat } from "../components/ui";
+import { Card, Empty, Field, Stat } from "../components/ui";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, submitJob, useAction } from "./common";
@@ -19,11 +19,11 @@ export function Stage1({ c, reload, allowed }: StageProps) {
   }, [c.id]);
 
   const prereq = !partTitle.trim()
-    ? "파트 title을 입력하세요."
+    ? "파트 title을 입력하세요"
     : rad.result && !rad.result.ok
-      ? "rad 경로에 문제가 있습니다."
+      ? "rad 경로에 문제가 있습니다"
       : res.result && !(res.result.ok && res.result.done?.ok)
-        ? "결과 폴더(done.json)에 문제가 있습니다."
+        ? "결과 폴더(done.json)에 문제가 있습니다"
         : null;
 
   const run = () =>
@@ -43,20 +43,17 @@ export function Stage1({ c, reload, allowed }: StageProps) {
       <div className="grid2">
         <Card title="입력 경로">
           <div className="form">
-            <div className="ro">
-              <span className="ro-label">rad 경로</span>
-              <span className="mono">{c.rad_path}</span>
-            </div>
+            <Field label="rad 경로">
+              <span className="mono readonly-path">{c.rad_path}</span>
+            </Field>
             {rad.result ? <RadInspectView r={rad.result} partTitle={partTitle} /> : <div className="small muted">{rad.error ?? "확인 중…"}</div>}
-            <div className="ro">
-              <span className="ro-label">결과 폴더</span>
-              <span className="mono">{c.results_dir}</span>
-            </div>
+            <Field label="결과 폴더">
+              <span className="mono readonly-path">{c.results_dir}</span>
+            </Field>
             {res.result ? <ResultsInspectView r={res.result} /> : <div className="small muted">{res.error ?? "확인 중…"}</div>}
-            <label>
-              파트 title
+            <Field label="파트 title">
               <input value={partTitle} disabled={!allowed} onChange={(e) => setPartTitle(e.target.value)} />
-            </label>
+            </Field>
             {partTitle.trim() !== c.part_title && <div className="small warn-text">바꾸면 이후 단계가 모두 다시 계산 대상이 됩니다.</div>}
           </div>
         </Card>
@@ -82,13 +79,13 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                   ))}
                 </ul>
               )}
-              <table className="tbl compact">
+              <table className="table compact">
                 <thead>
                   <tr>
                     <th>재료 id</th>
                     <th>law</th>
-                    <th>E</th>
-                    <th>ν</th>
+                    <th className="num">E</th>
+                    <th className="num">ν</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -96,15 +93,15 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                     <tr key={m.id}>
                       <td>{m.id}</td>
                       <td>{m.law}</td>
-                      <td>{m.E?.toLocaleString() ?? "–"}</td>
-                      <td>{m.nu ?? "–"}</td>
+                      <td className="num">{m.E?.toLocaleString() ?? "–"}</td>
+                      <td className="num">{m.nu ?? "–"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </>
           ) : (
-            <Empty>아직 추출하지 않았습니다. 경로를 확인한 뒤 "추출 실행"을 누르세요.</Empty>
+            <Empty>아직 추출하지 않았습니다. 경로를 확인한 뒤 "추출 실행"을 누르세요</Empty>
           )}
         </Card>
       </div>

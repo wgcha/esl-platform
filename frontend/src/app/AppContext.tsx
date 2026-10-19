@@ -37,4 +37,4 @@ export function canRun(me: Me | null, projectId: string | undefined) {
   return r === "power" || r === "admin";
 }
 
-export const NO_PERMISSION = "실행 권한이 없습니다 — 이 프로젝트의 '실행(power)' 이상 역할이 필요합니다.";
+export const NO_PERMISSION = "실행 권한이 없습니다 — 이 프로젝트의 '실행(power)' 이상 역할이 필요합니다";

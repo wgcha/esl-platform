@@ -21,7 +21,8 @@ describe("V-UI-1 라우트·주 버튼", () => {
       // 경로바·스텝퍼
       expect(screen.getByRole("link", { name: "대시보드로" }).getAttribute("href")).toBe("/");
       const crumbs = screen.getByRole("navigation", { name: "경로" });
-      expect(within(crumbs).getByText("ESL")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "ESL 처음으로" }).getAttribute("href")).toBe("/");
+      expect(within(crumbs).getByText("등가정적하중")).toBeTruthy();
       await within(crumbs).findByText("후방 충돌 40kph");
       expect(screen.getByRole("navigation", { name: "단계" }).querySelectorAll("li").length).toBe(6);
     });

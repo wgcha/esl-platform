@@ -10,13 +10,20 @@ export function bytes(n: number) {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
-export const dt = (iso: string | null | undefined) => (iso ? iso.replace("T", " ").slice(0, 16) : "–");
+/** 시각 표기(PhysicsAI fmtTime 과 같음): 현지 시각 "M/D HH:mm" */
+export function dt(iso: string | null | undefined): string {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "–";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 export const METRIC_LABEL = { max_strain: "Max_Strain", plastic_strain: "Plastic" } as const;
 export const JOB_STATE_LABEL: Record<string, string> = {
   QUEUED: "대기",
   RUNNING: "실행 중",
-  SUCCEEDED: "완료",
+  SUCCEEDED: "성공",
   FAILED: "실패",
-  CANCELED: "취소",
-  INTERRUPTED: "중단",
+  CANCELED: "취소됨",
+  INTERRUPTED: "중단됨",
 };

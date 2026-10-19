@@ -25,17 +25,15 @@ async function copyText(text: string) {
   }
 }
 
-/** 경로 표시 + 복사 버튼 */
+/** 경로 표시 + 복사 버튼(PhysicsAI CodeLine·CopyButton 과 같은 모양) */
 export function CopyPath({ path, testId }: { path: string; testId?: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <span className="row">
-      <span className="mono path" data-testid={testId}>
-        {path}
-      </span>
+    <div className="codeline">
+      <code data-testid={testId}>{path}</code>
       <button
         type="button"
-        className="btn"
+        className="btn small ghost"
         onClick={async () => {
           if (await copyText(path)) {
             setCopied(true);
@@ -45,7 +43,7 @@ export function CopyPath({ path, testId }: { path: string; testId?: string }) {
       >
         {copied ? "복사됨" : "경로 복사"}
       </button>
-    </span>
+    </div>
   );
 }
 
@@ -84,20 +82,20 @@ function DownloadCell({ a }: { a: ArtifactOut }) {
       >
         다운로드
       </a>
-      {error && <div className="small bad-text">{error}</div>}
+      {error && <div className="small error-text">{error}</div>}
     </>
   );
 }
 
 function FileTable({ files }: { files: ArtifactOut[] }) {
   return (
-    <div className="hscroll">
-      <table className="tbl compact">
+    <div className="table-wrap">
+      <table className="table compact">
         <thead>
           <tr>
             <th>파일</th>
             <th>종류</th>
-            <th>크기</th>
+            <th className="num">크기</th>
             <th />
           </tr>
         </thead>
@@ -106,7 +104,7 @@ function FileTable({ files }: { files: ArtifactOut[] }) {
             <tr key={a.id}>
               <td className="mono">{a.rel}</td>
               <td>{a.kind}</td>
-              <td>{bytes(a.size)}</td>
+              <td className="num">{bytes(a.size)}</td>
               <td>
                 <DownloadCell a={a} />
               </td>
@@ -126,7 +124,7 @@ export function Stage6({ c, reload, allowed }: StageProps) {
   const others = (arts.data ?? []).filter((a) => !a.rel.startsWith("06_export/"));
   const runId = c.current_esl_run_id;
   const folder = c.folder_path;
-  const prereq = !runId ? "④ ESL을 먼저 계산하세요." : targets.length === 0 ? "내보낼 대상을 하나 이상 고르세요." : null;
+  const prereq = !runId ? "④ ESL을 먼저 계산하세요" : targets.length === 0 ? "내보낼 대상을 하나 이상 고르세요" : null;
 
   return (
     <StageFrame
@@ -166,7 +164,7 @@ export function Stage6({ c, reload, allowed }: StageProps) {
         {exported.length ? (
           <FileTable files={exported} />
         ) : (
-          <Empty>{arts.data ? "아직 내보낸 파일이 없습니다." : "불러오는 중…"}</Empty>
+          <Empty>{arts.data ? "아직 내보낸 파일이 없습니다" : "불러오는 중…"}</Empty>
         )}
       </Card>
       {others.length > 0 && (
