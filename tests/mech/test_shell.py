@@ -282,3 +282,113 @@ def test_strain_layer_convention():
     u[:, 4] = -a * X[:, 0]
     eps = m.strains(u)
     assert np.allclose(eps[:, 1, 0], -a * 0.01) and np.allclose(eps[:, 0, 0], a * 0.01)
+
+
+# ---------------------------------------------------------------- 백엔드 (esl_core §7.5)
+from esl.mech import shell as _shell  # noqa: E402
+
+
+@pytest.mark.parametrize("backend", ["cholmod", "pardiso", "superlu"])
+@pytest.mark.parametrize("kind,curved", [("quad", False), ("tria", False), ("quad", True)])
+def test_roundtrip_backend(backend, kind, curved):
+    """T-SH-3 왕복을 백엔드별로 + SuperLU 결과와 일치 (미설치 백엔드는 skip)."""
+    if backend not in _shell.available_backends():
+        pytest.skip(f"{backend} 미설치")
+    m, Xg = _plate_model(kind, curved)
+    m.backend = backend
+    ref, _ = _plate_model(kind, curved)
+    ref.backend = "superlu"
+    u = _smooth_field(Xg)
+    F = m.condensed_forces(u)
+    Fr = ref.condensed_forces(u)
+    assert np.abs(F - Fr).max() < 1e-10 * np.abs(Fr).max()
+    spc = supports.pick_321(Xg, supports.pca_corners(Xg)["idx"])
+    uv, R = m.solve(F, spc)
+    res, _, _ = kabsch.remove_linear_rigid(Xg, uv[:, :3] - u)
+    umax = np.abs(u).max()
+    assert np.sqrt(np.mean(np.sum(res ** 2, 1))) / umax < 1e-9
+    assert np.abs(R).sum() < 1e-9 * np.abs(F).sum()
+    assert m.stats["K_rr"]["backend_used"] == backend and m.stats["K_ff"]["backend_used"] == backend
+    for k in ("factor_s", "nnz_L", "mem_est_mb"):
+        assert k in m.stats["K_ff"]
+
+
+def test_backend_selection():
+    X, c, t = rect_quads(10.0, 5.0, 4, 2)
+    m = ShellModel(X, c, t, 1.0, E, NU)
+    assert m.backend == _shell.available_backends()[0] and m.stats["backend"] == m.backend
+    with pytest.raises(EslError) as ei:
+        ShellModel(X, c, t, 1.0, E, NU, backend="mumps")
+    assert ei.value.code == "INPUT_INVALID"
+    assert ShellModel(X, c, t, 1.0, E, NU, backend="superlu").backend == "superlu"
+
+
+def test_not_pd_fallback_and_singular(monkeypatch):
+    """비양정치 → 메모리 여유 있으면 SuperLU 폴백 + 경고, 없으면 SOLVER_SINGULAR (규모 상한 없음)."""
+    import scipy.sparse as sps
+    A = sps.csr_matrix(np.array([[1.0, 2.0], [2.0, 1.0]]))
+    for b in _shell.available_backends():
+        if b == "superlu":
+            continue
+        st = {}
+        with pytest.warns(RuntimeWarning):
+            f = _shell._factorize(A, b, st, "A")
+        assert st["A"]["backend_used"] == "superlu" and "fallback" in st["A"]
+        assert np.allclose(A @ f.solve(np.array([1.0, 0.0])), [1.0, 0.0])
+        monkeypatch.setattr(_shell, "available_memory_bytes", lambda: 1)
+        with pytest.raises(EslError) as ei:
+            with pytest.warns(RuntimeWarning):
+                _shell._factorize(A, b, {}, "A")
+        assert ei.value.code == "SOLVER_SINGULAR"
+        monkeypatch.undo()
+
+
+def test_available_memory():
+    m = _shell.available_memory_bytes()
+    assert m is None or m > 0
+
+
+@pytest.mark.parametrize("kind,curved", [("quad", False), ("tria", False), ("quad", True)])
+def test_roundtrip_iterative(kind, curved):
+    """반복법(CG): K_rr 블록 야코비, K_ff pyamg(없으면 skip). rtol 1e-12 에서 T-SH-3 왕복."""
+    if _shell._pyamg() is None:
+        pytest.skip("pyamg 미설치")
+    m, Xg = _plate_model(kind, curved)
+    m.backend = "iterative"
+    m.iter_opts = {"rtol": 1e-12, "maxiter": None}
+    ref, _ = _plate_model(kind, curved)
+    ref.backend = "superlu"
+    u = _smooth_field(Xg)
+    F = m.condensed_forces(u)
+    Fr = ref.condensed_forces(u)
+    assert np.abs(F - Fr).max() < 1e-8 * np.abs(Fr).max()
+    assert m.stats["K_rr"]["backend_used"] == "iterative" and m.stats["K_rr"]["iterations"][-1] > 0
+    spc = supports.pick_321(Xg, supports.pca_corners(Xg)["idx"])
+    uv, R = m.solve(Fr, spc)
+    res, _, _ = kabsch.remove_linear_rigid(Xg, uv[:, :3] - u)
+    assert np.sqrt(np.mean(np.sum(res ** 2, 1))) / np.abs(u).max() < 1e-7
+    assert m.stats["K_ff"]["precond"].startswith("pyamg")
+
+
+def test_iterative_not_converged():
+    m, Xg = _plate_model("quad")
+    m.backend = "iterative"
+    m.iter_opts = {"rtol": 1e-14, "maxiter": 2}
+    with pytest.raises(EslError) as ei:
+        m.condensed_forces(_smooth_field(Xg))
+    assert ei.value.code == "SOLVER_NOT_CONVERGED"
+
+
+def test_auto_switches_to_iterative_on_low_memory(monkeypatch):
+    if _shell._pyamg() is None:
+        pytest.skip("pyamg 미설치")
+    m, Xg = _plate_model("quad")
+    u = _smooth_field(Xg)
+    ref, _ = _plate_model("quad")
+    ref.backend = "superlu"
+    Fr = ref.condensed_forces(u)
+    monkeypatch.setattr(_shell, "available_memory_bytes", lambda: 1000)
+    with pytest.warns(RuntimeWarning, match="반복법"):
+        F = m.condensed_forces(u)
+    assert m.stats["K_rr"]["backend_used"] == "iterative"
+    assert np.abs(F - Fr).max() < 1e-7 * np.abs(F).max()
