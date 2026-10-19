@@ -26,7 +26,7 @@ def _tcl_list(items):
     return "{" + " ".join(str(i) for i in items) + "}"
 
 
-def _setup(tmp_path, eng=True, drop_layer=None):
+def _setup(tmp_path, eng=True, drop_layer=None, extra_req="", mock_extra=""):
     nid = np.array([1, 2, 3, 4, 5, 6])
     x0 = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0.25]], float)
     eid = np.array([10, 11])
@@ -60,9 +60,11 @@ def _setup(tmp_path, eng=True, drop_layer=None):
         + " 900 {9 9 9}]",
         "set ::mock::vals [dict create " + " ".join(vals) + "]",
     ]
+    if mock_extra:
+        data.append(mock_extra)
     (tmp_path / "data.tcl").write_text("\n".join(data) + "\n")
     req = tmp_path / "request.txt"
-    req.write_text("# test\npart_id\t7\nframe_stride\t2\nshear_is_engineering\t" + ("1" if eng else "0") + "\n")
+    req.write_text("# test\npart_id\t7\nframe_stride\t2\nshear_is_engineering\t" + ("1" if eng else "0") + "\n" + extra_req)
     (tmp_path / "x.h3d").write_bytes(b"")
     out = tmp_path / "csv"
     drv = tmp_path / "drv.tcl"
@@ -93,6 +95,12 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
         assert np.allclose(z["eps"], eps[::2].astype(np.float32))   # XY 공학전단 → /2
     with np.load(tmp_path / "npz" / "disp.npz", allow_pickle=False) as z:
         assert np.allclose(z["u"], u[::2])
+        assert np.array_equal(z["u"], u[::2])   # %.17g: 질의 값이 비트 단위로 보존
+    assert done["disp_value_format"] == "%.17g"
+    assert done["strain_system"] == "elemental"
+    assert "SetResolvedIn" in done["strain_system_call"] and "Elemental System" in done["strain_system_call"]
+    assert done["backup_dir"] == ""
+    assert not (out / "_backup").exists()
 
 
 def test_extract_tcl_missing_layer_writes_failure(tmp_path):
@@ -130,3 +138,52 @@ def test_probe_tcl_with_mock(tmp_path):
     assert "XY" in dts["Strain"]["components"]
     sel = {s["string"]: s["size"] for s in probe["selection"]["element"]}
     assert sel["component 7"] == 2 and sel["part 7"] == -1
+
+
+def test_extract_tcl_backs_up_previous_outputs(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path)
+    assert _run(drv).returncode == 0
+    first = {n: (out / n).read_bytes() for n in ("done.json", "frames.csv", "model.csv", "strain.csv", "disp.csv")}
+    (out / "notes.txt").write_text("user file")
+    (out / "extra.csv").write_text("old,csv\n")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    bdirs = list((out / "_backup").iterdir())
+    assert len(bdirs) == 1
+    b = bdirs[0]
+    for n, data in first.items():
+        assert (b / n).read_bytes() == data          # 이전 산출물은 삭제 없이 이동
+    assert (b / "extra.csv").read_text() == "old,csv\n"
+    assert not (out / "extra.csv").exists()
+    assert (out / "notes.txt").read_text() == "user file"   # csv/json 외 파일은 그대로
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["backup_dir"].endswith(b.name)
+    assert any("moved to" in w for w in done["warnings"])
+    pack_results(out, m, tmp_path / "npz")
+    # 세 번째 실행: 같은 초에 실행돼도 다른 백업 폴더
+    assert _run(drv).returncode == 0
+    assert len(list((out / "_backup").iterdir())) == 2
+
+
+def test_extract_tcl_system_call_unavailable_warns(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, mock_extra="set ::mock::no_system 1")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["strain_system_call"] == ""
+    ws = [w for w in done["warnings"] if "result system" in w]
+    assert len(ws) == 1                              # 경고는 한 번만
+    res = pack_results(out, m, tmp_path / "npz")
+    assert any("result system" in w for w in res["warnings"])
+
+
+def test_extract_tcl_strain_system_none_and_invalid(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, extra_req="strain_system\tnone\n")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["strain_system"] == "none" and done["strain_system_call"] == ""
+    (tmp_path / "b").mkdir()
+    m, t, eps, u, drv, out = _setup(tmp_path / "b", extra_req="strain_system\tmaterial\n")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is False and done["code"] == "INPUT_INVALID"

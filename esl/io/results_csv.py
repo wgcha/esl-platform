@@ -143,7 +143,9 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
         raise EslError("ID_MISMATCH", f"model.csv 에 대상 파트 노드 {int((~seen).sum())}개가 없음: "
                                       f"{node_id[~seen][:10].tolist()}")
     bbox = float(np.linalg.norm(x0.max(axis=0) - x0.min(axis=0))) if N else 0.0
-    tol = 1e-6 * max(bbox, 1e-300)
+    # TCL·h3d 좌표는 float32 일 수 있음 → 원점에서 먼 소형 파트는 절대 반올림 오차가 bbox 기준을 넘는다.
+    xmax = float(np.abs(x0).max()) if N else 0.0
+    tol = max(1e-6 * bbox, 2.0 * float(np.finfo(np.float32).eps) * xmax * np.sqrt(3.0), 1e-300)
     dev = np.linalg.norm(xm - x0, axis=1)
     if np.any(dev > tol):
         bad = np.argsort(-dev)[:5]

@@ -62,6 +62,15 @@ proc ::mock::res_SetCurrentSimulation {i} { set ::mock::st(sim) $i }
 proc ::mock::con_SetDataType {t} { set ::mock::st(dtype) $t; set ::mock::st(layer) "" }
 proc ::mock::con_SetDataComponent {c} { set ::mock::st(comp) $c }
 proc ::mock::con_SetLayer {l} { set ::mock::st(layer) $l }
+# result system: only "SetResolvedIn {Elemental System}" style is accepted, unless ::mock::no_system is set
+set ::mock::no_system 0
+set ::mock::system_calls {}
+proc ::mock::con_SetResolvedIn {sys} {
+    if {$::mock::no_system} { error "mock: SetResolvedIn not available" }
+    if {$sys ni {"Elemental System" "Analysis System" "Global System"}} { error "mock: bad system '$sys'" }
+    lappend ::mock::system_calls $sys
+    set ::mock::st(system) $sys
+}
 proc ::mock::con_SetAverageMode {m} { return }
 proc ::mock::con_SetEnableState {s} { return }
 proc ::mock::qry_SetSelectionSet {id} { set ::mock::st(qset) $id }

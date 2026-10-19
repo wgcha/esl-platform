@@ -146,3 +146,126 @@ def test_writer_roundtrip(tmp_path):
     # 스칼라 두께
     p2 = write_rad(tmp_path / "t.rad", nid, x0, eid, et, conn, 5, "S", 11, 0.7, 21, 1e3, 0.25)
     assert parse_rad(p2, "s").thickness.tolist() == [0.7] * 3
+
+
+# ---------------------------------------------------------------- 헤더 unit_ID 접미
+_UNIT_DECK = """\
+/BEGIN
+run
+      2022         0
+                  Mg                  mm                   s
+                  Mg                  mm                   s
+/UNIT/9
+unit_mm
+                  Mg                  mm                   s
+/NODE/9
+         1                 0.0                 0.0                 0.0
+         2                10.0                 0.0                 0.0
+         3                10.0                10.0                 0.0
+         4                 0.0                10.0                 0.0
+/PART/10/9
+Unit Part
+         1         1         0
+/SHELL/10
+       100         1         2         3         4
+/MAT/ELAST/1/9
+steel
+            7.85E-09
+            210000.0                 0.3
+/MAT/LAW2/9
+alu_id9
+            2.70E-09
+             70000.0                0.33
+/PROP/SHELL/1/9
+prop1
+        24
+#                 Hm                  Hf                  Hr                  Dm                  Dn
+
+         5                           1.6
+/PROP/SHELL/9
+prop9
+        24
+
+         5                           9.9
+/TABLE/1/321/9
+tab
+/FUNCT/55/9
+f
+/GRNOD/NODE/66/9
+g
+/CLOAD/7/9
+c
+/BCS/3/9
+b
+/END
+"""
+
+
+def test_header_unit_suffix_not_read_as_id(tmp_path):
+    p = tmp_path / "unit_0000.rad"
+    p.write_text(_UNIT_DECK)
+    m = parse_rad(p, "unit part")
+    assert m.part_id == 10
+    # /MAT/ELAST/1/9 의 id 는 1 (unit 9 아님) — /MAT/LAW2/9 (id 9) 와 섞이지 않음
+    assert m.mats[0]["id"] == 1 and m.mats[0]["E"] == 210000.0 and m.mats[0]["nu"] == 0.3
+    assert m.thickness.tolist() == [1.6]
+    assert m.elem_pid.tolist() == [1]
+    # /NODE/9 는 unit 이라 노드 ID 집계와 무관, /TABLE/1/321 은 차원 1 · ID 321
+    assert m.max_ids == {"node": 4, "elem": 100, "part": 10, "prop": 9, "mat": 9,
+                         "func": 321, "grnod": 66, "load": 7, "bcs": 3}
+
+
+def test_split_header_layouts():
+    import esl.rad.parser as P
+    sh = P._split_header
+    assert sh(["MAT", "LAW1", "5", "2"]) == ("MAT", "LAW1", 5, 2)
+    assert sh(["MAT", "LAW36", "5"]) == ("MAT", "LAW36", 5, None)
+    assert sh(["PROP", "SHELL", "3", "1"]) == ("PROP", "SHELL", 3, 1)
+    assert sh(["PART", "8", "1"]) == ("PART", None, 8, 1)
+    assert sh(["NODE", "1"]) == ("NODE", None, None, 1)
+    assert sh(["SHELL", "10"]) == ("SHELL", None, 10, None)
+    assert sh(["TABLE", "1", "77", "4"])[2:] == (77, 4)
+
+
+# ---------------------------------------------------------------- Windows 절대 include
+def _win_inc_deck(tmp_path, inc_line):
+    d = tmp_path / "deck"
+    shutil.copytree(FIX, d)
+    txt = (d / "main.rad").read_text()
+    txt = txt.replace("#include inc/level1.inc", inc_line)
+    (d / "main.rad").write_text(txt)
+    return d
+
+
+def test_include_windows_abs_with_path_map(tmp_path):
+    d = _win_inc_deck(tmp_path, '/INCLUDE "C:\\Users\\Eng\\Proj\\inc\\level1.inc"')
+    # level1.inc 는 다시 상대경로 inc/level2.inc 를 포함
+    m = parse_rad(d / "main.rad", "bracket",
+                  include_path_map={"c:/users/eng/PROJ": str(d)})
+    assert m.part_id == 30
+    assert os.path.normpath(str(d / "inc" / "level1.inc")) in m.includes
+    assert not any("파일명으로 대체" in w for w in m.warnings)
+
+
+def test_include_unc_with_path_map(tmp_path):
+    d = _win_inc_deck(tmp_path, '/INCLUDE "\\\\fileserver\\cae\\inc\\level1.inc"')
+    m = parse_rad(d / "main.rad", "cover plate", include_path_map={"//FILESERVER/cae": str(d)})
+    assert m.part_id == 20
+
+
+def test_include_windows_abs_basename_fallback(tmp_path):
+    d = _win_inc_deck(tmp_path, '/INCLUDE "D:/elsewhere/level1.inc"')
+    # rad 폴더에 level1.inc 를 두면 파일명으로 찾고 경고
+    shutil.copy(d / "inc" / "level1.inc", d / "level1.inc")
+    m = parse_rad(d / "main.rad", "cover plate")
+    assert m.part_id == 20
+    assert any("D:/elsewhere/level1.inc" in w and "파일명으로 대체" in w for w in m.warnings)
+
+
+def test_include_windows_abs_unresolved_message(tmp_path):
+    d = _win_inc_deck(tmp_path, '/INCLUDE "D:/elsewhere/nothere.inc"')
+    with pytest.raises(EslError) as ei:
+        parse_rad(d / "main.rad", "main board")
+    assert ei.value.code == "RAD_PARSE_ERROR"
+    msg = str(ei.value)
+    assert "D:/elsewhere/nothere.inc" in msg and "include_path_map" in msg

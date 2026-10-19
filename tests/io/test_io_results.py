@@ -151,6 +151,27 @@ def test_coordinate_mismatch(tmp_path):
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
 
 
+
+def test_coordinate_float32_far_from_origin(tmp_path):
+    # 원점에서 ~2000 mm 떨어진 1 mm 소형 파트: float32 좌표 반올림(~1e-4)은 1e-6·bbox 보다 크다
+    nid = np.array([1, 2, 3, 4], dtype=np.int64)
+    off = np.array([2000.123456789, -1500.987654321, 800.5555555])
+    x0 = off + np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], float)
+    p = write_rad(tmp_path / "f_0000.rad", nid, x0, np.array([1]), [4], np.array([[1, 2, 3, 4]]),
+                  1, "tiny", 1, 1.0, 1, 2e5, 0.3)
+    m = parse_rad(p, "tiny")
+    t, u, eps = _data(m)
+    x32 = m.x0.astype(np.float32).astype(np.float64)
+    assert np.linalg.norm(x32 - m.x0, axis=1).max() > 1e-6 * np.sqrt(2)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x32, u, m.elem_id, eps)
+    pack_results(rd, m, tmp_path / "o")
+    # 실제 불일치(1e-3)는 여전히 검출
+    xb = m.x0.copy()
+    xb[1, 1] += 1e-3
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, xb, u, m.elem_id, eps)
+    assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+
+
 def test_layer_required_and_missing_files(tmp_path):
     m = _model(tmp_path)
     t, u, eps = _data(m)

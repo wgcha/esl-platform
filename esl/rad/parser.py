@@ -64,6 +64,70 @@ _FORTRAN_EXP = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))([+-]\d+)$")
 _WS = re.compile(r"\s+")
 
 
+_INT_RE = re.compile(r"[+-]?\d+")
+# 헤더의 '첫 번째 숫자' 가 ID 가 아닌 키워드 → 숫자 토큰 중 ID 위치(없으면 None), unit 위치.
+#   /NODE/unit_ID, /TABLE/dim/table_ID(/unit_ID)
+_HEADER_NUM_LAYOUT = {"NODE": (None, 0), "CNODE": (None, 0), "TABLE": (1, 2)}
+
+
+def _split_header(pieces: list[str]) -> tuple[str, str | None, int | None, int | None]:
+    """키워드 헤더 ``/KW[/SUB...]/<ID>[/<unit_ID>]`` → (kw, sub, id, unit_id).
+
+    Radioss 2017+ 규약: 영문 subtype 뒤 첫 정수 = 카드 ID, 둘째 정수 = unit_ID
+    (예 /MAT/LAW1/mat_ID/unit_ID, /PROP/SHELL/prop_ID/unit_ID, /PART/part_ID/unit_ID,
+    /SHELL/part_ID, /GRNOD/NODE/grnod_ID, /CLOAD/load_ID/unit_ID).
+    예외: /NODE/unit_ID (ID 없음), /TABLE/1/table_ID (첫 정수 = 차원).
+    """
+    kw = pieces[0].upper() if pieces else ""
+    sub = None
+    nums: list[int] = []
+    for p in pieces[1:]:
+        if _INT_RE.fullmatch(p):
+            nums.append(int(p))
+        elif not nums and sub is None:
+            sub = p.upper()
+    id_pos, unit_pos = _HEADER_NUM_LAYOUT.get(kw, (0, 1))
+    hid = nums[id_pos] if id_pos is not None and len(nums) > id_pos else None
+    unit = nums[unit_pos] if len(nums) > unit_pos else None
+    return kw, sub, hid, unit
+
+
+_WIN_ABS = re.compile(r"^(?:[A-Za-z]:/|//)")
+
+
+def _is_windows_abs(p: str) -> bool:
+    """``C:/..``, ``C:\\..``(구분자 정규화 후), UNC ``\\\\srv\\share``."""
+    return bool(_WIN_ABS.match(p.replace("\\", "/")))
+
+
+def _norm_prefix(p: str) -> str:
+    p = p.replace("\\", "/")
+    while "//" in p[2:]:
+        p = p[:2] + p[2:].replace("//", "/")
+    return p.rstrip("/")
+
+
+def _map_path(name: str, path_map: dict | None) -> str | None:
+    """include_path_map 접두 치환(대소문자 무시, 구분자 정규화, 가장 긴 접두 우선). 해당 없으면 None."""
+    if not path_map:
+        return None
+    n = _norm_prefix(name)
+    nl = n.casefold()
+    best = None
+    for k, v in path_map.items():
+        kp = _norm_prefix(str(k))
+        if not kp:
+            continue
+        kl = kp.casefold()
+        if nl == kl or nl.startswith(kl + "/"):
+            if best is None or len(kp) > len(best[0]):
+                best = (kp, str(v))
+    if best is None:
+        return None
+    rest = n[len(best[0]):].lstrip("/")
+    return os.path.join(best[1], *rest.split("/")) if rest else best[1]
+
+
 def _err(msg: str) -> EslError:
     return EslError("RAD_PARSE_ERROR", msg)
 
@@ -150,13 +214,15 @@ class _Card:
     file: str
     line: int
     rows: list = field(default_factory=list)
+    unit: int | None = None
 
 
 class _Deck:
     """한 번의 순차 스캔으로 필요한 카드만 수집."""
 
-    def __init__(self, max_depth: int):
+    def __init__(self, max_depth: int, path_map: dict | None = None):
         self.max_depth = max_depth
+        self.path_map = dict(path_map) if path_map else None
         self.node_id = array("q")
         self.node_xyz = array("d")
         # 쉘: id, part, n1..n4 (6개씩), 두께, 타입
@@ -225,33 +291,51 @@ class _Deck:
             raise _err(f"/INCLUDE 다음에 경로가 없음: {path}")
 
     def _include(self, spec: str, src: str, depth: int, lineno: int) -> None:
-        name = spec.strip().strip('"').strip("'").strip()
-        if not name:
+        orig = spec.strip().strip('"').strip("'").strip()
+        if not orig:
             raise _err(f"인클루드 경로가 비어 있음 ({src}:{lineno})")
         if depth + 1 > self.max_depth:
-            raise _err(f"인클루드 깊이 제한({self.max_depth}) 초과 ({src}:{lineno}): {name}")
-        name = name.replace("\\", "/")
-        cands = [name] if os.path.isabs(name) else [
-            os.path.join(self.root_dir, name),
-            os.path.join(os.path.dirname(os.path.abspath(src)), name),
-        ]
+            raise _err(f"인클루드 깊이 제한({self.max_depth}) 초과 ({src}:{lineno}): {orig}")
+        name = orig.replace("\\", "/")
+        src_dir = os.path.dirname(os.path.abspath(src))
+        win_abs = _is_windows_abs(name)
+        mapped = _map_path(name, self.path_map)
+        if mapped is not None:
+            cands = [mapped]
+        elif os.path.isabs(name) or win_abs:
+            cands = [name]
+        else:
+            cands = [os.path.join(self.root_dir, name), os.path.join(src_dir, name)]
         for c in cands:
             if os.path.isfile(c):
-                full = os.path.normpath(c)
-                self.includes.append(full)
-                self.scan(full, depth + 1)
+                self._enter(c, depth)
                 return
-        raise _err(f"인클루드 파일을 찾을 수 없음 ({src}:{lineno}): {name}")
+        # 대체: 파일명만으로 rad 폴더·포함하는 파일 폴더에서 찾기
+        base = name.rstrip("/").rsplit("/", 1)[-1]
+        if base and (win_abs or os.path.isabs(name) or mapped is not None):
+            for d in dict.fromkeys((self.root_dir, src_dir)):
+                c = os.path.join(d, base)
+                if os.path.isfile(c):
+                    self.warnings.append(
+                        f"인클루드 경로 {orig!r} 를 찾지 못해 파일명으로 대체: {os.path.normpath(c)} "
+                        f"({src}:{lineno}) — include_path_map 확인 권장")
+                    self._enter(c, depth)
+                    return
+        hint = ""
+        if win_abs or mapped is not None:
+            hint = (" — Windows 절대 경로면 include_path_map={'<드라이브>:/원래/접두': '/리눅스/경로'} 로 매핑하거나 "
+                    "include 파일을 rad 폴더에 두십시오"
+                    + (f" (매핑 결과 {mapped!r} 도 없음)" if mapped is not None else ""))
+        raise _err(f"인클루드 파일을 찾을 수 없음 ({src}:{lineno}): {orig}{hint}")
+
+    def _enter(self, c: str, depth: int) -> None:
+        full = os.path.normpath(c)
+        self.includes.append(full)
+        self.scan(full, depth + 1)
 
     def _new_card(self, pieces: list[str], path: str, lineno: int) -> _Card:
-        kw = pieces[0].upper()
-        hid = None
-        body = pieces
-        if len(pieces) > 1 and re.fullmatch(r"[+-]?\d+", pieces[-1]):
-            hid = int(pieces[-1])
-            body = pieces[:-1]
-        sub = body[1].upper() if len(body) > 1 else None
-        card = _Card(kw, sub, hid, path, lineno)
+        kw, sub, hid, unit = _split_header(pieces)
+        card = _Card(kw, sub, hid, path, lineno, unit=unit)
         key = _HEADER_ID_KEY.get(kw)
         if key is not None and hid is not None and kw not in _SHELL_KW and kw not in _OTHER_ELEM_KW:
             if hid > self.max_ids[key]:
@@ -259,6 +343,10 @@ class _Deck:
         if kw in _SHELL_KW or kw in _OTHER_ELEM_KW:
             if hid is None:
                 raise _err(f"/{kw} 카드에 part_ID 가 없음 ({path}:{lineno})")
+        if kw in ("MAT", "PROP", "PART") and hid is not None:
+            reg = {"MAT": self.mats, "PROP": self.props, "PART": self.parts}[kw]
+            if hid in reg:
+                self.warnings.append(f"/{kw} ID {hid} 가 중복 정의됨 — 뒤의 정의 사용 ({path}:{lineno})")
         return card
 
     def _row(self, c: _Card, line: str, lineno: int) -> None:
@@ -368,12 +456,13 @@ def _valid_E_nu(E: Any, nu: Any) -> bool:
     return math.isfinite(E) and E > 0 and math.isfinite(nu) and -1.0 < nu < 0.5
 
 
-def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_override=None) -> RadModel:
+def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_override=None,
+              include_path_map: dict[str, str] | None = None) -> RadModel:
     """Radioss starter 를 읽어 대상 쉘 파트의 RadModel 을 만든다."""
     if match not in ("exact_ci", "exact"):
         raise EslError("CONFIG_INVALID", f"알 수 없는 title 비교 방식: {match}")
     path = os.fspath(path)
-    deck = _Deck(max_include_depth)
+    deck = _Deck(max_include_depth, include_path_map)
     deck.scan(path)
 
     # ---------------- 파트 해석
@@ -483,9 +572,9 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
     )
 
 
-def list_parts(path, max_include_depth=8) -> list[dict]:
+def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None) -> list[dict]:
     """모든 /PART 의 {id, title, n_elems} (플랫폼 /paths/inspect 용 보조)."""
-    deck = _Deck(max_include_depth)
+    deck = _Deck(max_include_depth, include_path_map)
     deck.scan(os.fspath(path))
     sh = np.frombuffer(deck.sh_int, dtype=np.int64).reshape(-1, 6) if len(deck.sh_int) else np.zeros((0, 6), np.int64)
     ids, counts = np.unique(sh[:, 1], return_counts=True)
