@@ -19,7 +19,7 @@
 | `VALIDATE` | validate | SLOT | READY·비stale esl_run |
 | `EXPORT` | export | LIGHT | READY esl_run |
 - SLOT은 동시 1개(메모리: 22만 요소 솔버). 워커는 코어 호출을 **별도 프로세스**(multiprocessing spawn)로 실행해 취소 시 종료 가능하게 하고, 코어 콘솔 출력을 step 로그로 저장.
-- 호출 인터페이스: `esl.pipeline.run(config_path_or_dict, rad, results, out, stage=..., frame=..., support_nodes=...)`(현 CLI와 같은 의미). 플랫폼은 코어 내부 모듈을 직접 부르지 않는다. 코어 설정은 플랫폼 설정 `core:` 블록(= `config/esl.example.yaml` 내용)을 Case 작업 시점에 스냅샷.
+- 호출 인터페이스: `esl.pipeline.run(config_path_or_dict, rad, results, out, stage=..., frame=..., support_nodes=...)`(현 CLI와 같은 의미). 플랫폼은 코어 내부 모듈을 직접 부르지 않는다. 예외(동기 API용): `esl.config.load_config/validate_settings`, `esl.rad.list_parts/scan_includes`, `esl.mech.supports.pca_corners/pick_321` — `worker/esl_worker/core_adapter.py` 한 곳에서만 import. 코어 설정은 플랫폼 설정 `core:` 블록(= `config/esl.example.yaml` 내용)을 Case 작업 시점에 스냅샷.
 - 작업 결과 등록: 코어 `run.json`·각 단계 json을 읽어 DB 요약 컬럼(§3) 채움. 대용량 배열은 DB에 넣지 않음.
 
 ## 3. 데이터 모델 차이 (`esl.md` §3 기준)

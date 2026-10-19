@@ -151,4 +151,7 @@ class RadModel:
 - S5: 솔버 막 변형률 ε_eq vs 위 hotspot의 Radioss ε_eq(같은 공식). 상승 중이 아닌 요소는 비교 제외(이유 기록).
 
 ### 7.5 솔버 규모
-- 22만 요소(약 1.35M dof)는 SuperLU로 15 GB 메모리에 들어가지 않는다. `solver.backend: auto|cholmod|superlu` — auto = CHOLMOD(scikit-sparse) 있으면 사용, 없으면 SuperLU + 요소 수 경고. 목표: 22만 요소 S4+S5가 15 GB·4코어에서 완료.
+- `solver.backend: auto|cholmod|pardiso|superlu|iterative`. auto = cholmod → pardiso → superlu, 예상 직접법 메모리 > 가용×0.95면 경고 후 iterative. 규모 상한 없음. `solver.iter_rtol`(기본 1e-10, S5 전체계는 1e-12 권장), `solver.iter_maxiter`.
+- 실패 코드 추가: `SOLVER_NOT_CONVERGED`(반복법 미수렴).
+- 실측(4코어): 22만 요소 pardiso 약 2분·9.8 GB, 30만 요소 약 3분·13 GB. 100만 요소 추정 40–45 GB(운영 512 GB 서버 기준 직접법 가능).
+- 큰 얇은 패널의 왕복 RMS는 조건수 때문에 1e-8~1e-7 수준(백엔드 무관) — 검증 기준(`disp_rms_rel_max`)보다 충분히 작음.
