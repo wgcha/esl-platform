@@ -26,7 +26,8 @@ def _tcl_list(items):
     return "{" + " ".join(str(i) for i in items) + "}"
 
 
-def _setup(tmp_path, eng=True, drop_layer=None, extra_req="", mock_extra=""):
+def _setup(tmp_path, eng=True, drop_layer=None, extra_req="", mock_extra="", config=True, cli="",
+           part_line="part_id\t7\n", script="esl_h3d_extract.tcl", prelude=""):
     nid = np.array([1, 2, 3, 4, 5, 6])
     x0 = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0.25]], float)
     eid = np.array([10, 11])
@@ -56,6 +57,7 @@ def _setup(tmp_path, eng=True, drop_layer=None, extra_req="", mock_extra=""):
         "set ::mock::sims {" + " ".join(f'"Time = {ti:.6E}"' for ti in t) + "}",
         "set ::mock::parts [dict create 7 [dict create elems {10 11} nodes {1 2 3 4 5 6}] "
         "8 [dict create elems {99} nodes {900}]]",
+        "set ::mock::names [dict create 7 chassis_rear 8 {Other Part}]",
         "set ::mock::coords [dict create " + " ".join(f"{nid[n]} {_tcl_list(x0[n].tolist())}" for n in range(6))
         + " 900 {9 9 9}]",
         "set ::mock::vals [dict create " + " ".join(vals) + "]",
@@ -64,15 +66,16 @@ def _setup(tmp_path, eng=True, drop_layer=None, extra_req="", mock_extra=""):
         data.append(mock_extra)
     (tmp_path / "data.tcl").write_text("\n".join(data) + "\n")
     req = tmp_path / "request.txt"
-    req.write_text("# test\npart_id\t7\nframe_stride\t2\nshear_is_engineering\t" + ("1" if eng else "0") + "\n" + extra_req)
+    req.write_text("# test\n" + part_line + "frame_stride\t2\nshear_is_engineering\t" + ("1" if eng else "0") + "\n" + extra_req)
     (tmp_path / "x.h3d").write_bytes(b"")
     out = tmp_path / "csv"
     drv = tmp_path / "drv.tcl"
     drv.write_text(
-        "set ::ESL_NO_EXIT 1\n"
+        "set ::ESL_NO_EXIT 1\n" + prelude +
         f"source {{{MOCK}}}\nsource {{{tmp_path / 'data.tcl'}}}\n"
-        f"set ::argv [list -input {{{tmp_path / 'x.h3d'}}} -config {{{req}}} -output {{{out}}}]\n"
-        f"source {{{os.path.join(TCL_DIR, 'esl_h3d_extract.tcl')}}}\n"
+        f"set ::argv [list -input {{{tmp_path / 'x.h3d'}}} " + (f"-config {{{req}}} " if config else "")
+        + f"-output {{{out}}} {cli}]\n"
+        f"source {{{os.path.join(TCL_DIR, script)}}}\n"
     )
     return m, t, eps, u, drv, out
 
@@ -121,6 +124,16 @@ def test_tcl_scripts_are_complete_ascii():
         chk = subprocess.run([TCLSH], input=f"puts [info complete {{{src.decode()}}}]\n",
                              capture_output=True, text=True, timeout=30)
         assert chk.stdout.strip() == "1", (name, chk.stderr)
+
+
+def test_tcl_common_block_identical():
+    """두 TCL 은 각자 단독 실행되도록 공통 블록(진단·세션 열기·파트 이름)을 복사해 둔다 — 내용이 같아야 함."""
+    blocks = []
+    for name in ("esl_h3d_extract.tcl", "esl_h3d_probe.tcl"):
+        src = open(os.path.join(TCL_DIR, name), encoding="ascii").read()
+        a, b = src.index("# Common block"), src.index("# end of common block")
+        blocks.append(src[a:b])
+    assert blocks[0] == blocks[1]
 
 
 def test_probe_tcl_with_mock(tmp_path):
@@ -187,3 +200,110 @@ def test_extract_tcl_strain_system_none_and_invalid(tmp_path):
     assert _run(drv).returncode == 0
     done = json.loads((out / "done.json").read_text())
     assert done["ok"] is False and done["code"] == "INPUT_INVALID"
+
+
+# ---------------- 진단(단계 추적·오류 기록)·대체 경로·파트 이름
+
+def test_probe_records_failed_step_and_errorinfo(tmp_path):
+    """SetClientType 의 모든 대체 값이 HyperView 식 숫자 오류 "2051" 로 실패 → probe.json 에 단계·errorInfo."""
+    m, t, eps, u, drv, out = _setup(tmp_path, script="esl_h3d_probe.tcl", config=False,
+                                    mock_extra="set ::mock::fail_at {win_SetClientType hwc_client}")
+    r = _run(drv)
+    assert r.returncode == 0
+    p = json.loads((out / "probe.json").read_text())
+    assert p["ok"] is False and p["failed_step"] == "SetClientType"
+    assert "2051" in p["error"] and "2051" in p["errorInfo"] and "SetClientType" in p["errorInfo"]
+    assert "GetSessionHandle" in p["steps_done"] and any(s.startswith("GetWindowHandle") for s in p["steps_done"])
+    assert "GetError: mock: win_SetClientType failed" in p["api"]["SetClientType"]
+    assert p["env"]["tcl_version"] and p["env"]["input_ext"] == ".h3d" and p["env"]["input_size"] == "0"
+    assert "errorCode" in p and "SetClientType/Animation" in p["traces"]
+    assert "failed at step 'SetClientType'" in r.stderr
+
+
+def test_probe_addmodel_falls_back_to_hwc_and_lists_components(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, script="esl_h3d_probe.tcl", config=False,
+                                    mock_extra="set ::mock::fail_at {post_AddModel}")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    p = json.loads((out / "probe.json").read_text())
+    assert p["ok"] is True, p.get("errorInfo")
+    assert p["api"]["AddModel"].startswith("ok: hwc_modelandresult")
+    assert "2051" in p["api"]["AddModel.failed"]
+    assert p["api"]["SetClientType"].startswith("ok: Animation")
+    comps = {c["name"]: c for c in p["components"]}
+    assert comps["chassis_rear"]["id"] == 7 and comps["chassis_rear"]["n_elems"] == 2
+    assert comps["Other Part"]["n_elems"] == 1
+    assert p["selection"] is None and p["part_id"] is None
+    assert p["subcases"][0]["n_simulations"] == 5
+
+
+def test_probe_part_title_argument_and_handle_fallback(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, script="esl_h3d_probe.tcl", config=False,
+                                    cli="-part {Chassis Rear}", mock_extra="set ::mock::no_comp_query 1")
+    assert _run(drv).returncode == 0
+    p = json.loads((out / "probe.json").read_text())
+    assert p["ok"] is True and p["part_id"] == 7
+    assert p["components_source"].startswith("handles")
+    sel = {s["string"]: s["size"] for s in p["selection"]["element"]}
+    assert sel["component 7"] == 2
+
+
+def test_probe_unwritable_output_uses_fallback(tmp_path):
+    fb = tmp_path / "fb"
+    m, t, eps, u, drv, out = _setup(tmp_path, script="esl_h3d_probe.tcl", config=False,
+                                    prelude=f"set ::ESL_FALLBACK_DIR {{{fb}}}\n")
+    out.write_text("not a directory")            # 출력 폴더 생성 실패
+    r = _run(drv)
+    p = json.loads((fb / "esl_probe_fallback.json").read_text())
+    assert p["ok"] is False and p["failed_step"] == "mkdir_output"
+    assert '"failed_step":"mkdir_output"' in r.stderr
+
+
+def test_extract_records_failed_step_on_2051(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, mock_extra="set ::mock::fail_at {post_GetModelHandle}")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is False and done["code"] == "TOOL_LOG_ERROR"
+    assert done["failed_step"] == "GetModelHandle" and done["error"] == "2051"
+    assert "GetModelHandle" in done["errorInfo"] and "AddModel[AddModel]" in done["steps_done"]
+    with pytest.raises(EslError) as ei:
+        pack_results(out, m, tmp_path / "npz")
+    assert ei.value.code == "TOOL_LOG_ERROR"
+
+
+def test_extract_part_title_without_config(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, eng=False, config=False, cli="-part CHASSIS_rear")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["part_id"] == 7 and done["part_title"] == "chassis_rear" and done["n_frames"] == 5
+    assert done["strain_system"] == "elemental" and done["subcase"] == "1"
+    res = pack_results(out, m, tmp_path / "npz")
+    assert res["n_frames"] == 5
+
+
+def test_extract_part_priority_and_title_in_request(tmp_path):
+    # -part 인자 > request.txt part_id
+    m, t, eps, u, drv, out = _setup(tmp_path, cli="-part 7", part_line="part_id\t8\n")
+    assert _run(drv).returncode == 0
+    assert json.loads((out / "done.json").read_text())["part_id"] == 7
+    (tmp_path / "b").mkdir()
+    m, t, eps, u, drv, out = _setup(tmp_path / "b", part_line="part_title\tchassis rear\n")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["part_id"] == 7
+
+
+def test_extract_without_part_lists_components(tmp_path):
+    m, t, eps, u, drv, out = _setup(tmp_path, config=False)
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is False and done["code"] == "INPUT_INVALID" and "-part" in done["error"]
+    assert {c["name"] for c in done["components"]} == {"chassis_rear", "Other Part"}
+    (tmp_path / "b").mkdir()
+    m, t, eps, u, drv, out = _setup(tmp_path / "b", config=False, cli="-part no_such_part")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is False and done["code"] == "INPUT_INVALID" and "not found" in done["error"]
+    assert len(done["components"]) == 2

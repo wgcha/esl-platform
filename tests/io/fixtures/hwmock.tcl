@@ -5,16 +5,42 @@ namespace eval ::mock {
     variable seq 0
     variable sets
     variable st
-    array set st {sim 0 dtype "" comp "" layer "" query "" qset 0}
+    array set st {sim 0 dtype "" comp "" layer "" query "" qset 0 client Model}
+    # failure injection: list of "<type>_<Method>" (e.g. win_SetClientType, post_AddModel,
+    # hwi_GetSessionHandle) that raise the numeric error "2051" like HyperView does
+    variable fail_at {}
+    variable last_error ""
+    variable hwc_calls {}
+    variable hwc_loaded 0
+    variable no_comp_query 0
+    variable names [dict create]
+}
+
+proc ::mock::maybe_fail {key} {
+    if {$key in $::mock::fail_at} {
+        set ::mock::last_error "mock: $key failed (2051)"
+        return -code error -errorcode {NONE} 2051
+    }
+}
+proc ::mock::call {type method args} {
+    ::mock::maybe_fail ${type}_$method
+    return [::mock::${type}_$method {*}$args]
 }
 
 proc ::mock::obj {name type} {
     if {![string match ::* $name]} { set name ::$name }
     catch {rename $name {}}
-    proc $name {method args} "return \[::mock::${type}_\$method {*}\$args\]"
+    proc $name {method args} "return \[::mock::call $type \$method {*}\$args\]"
 }
 
+proc hwc {args} {
+    lappend ::mock::hwc_calls $args
+    ::mock::maybe_fail "hwc_[lindex $args 0]"
+    if {[lrange $args 0 1] eq {open animation}} { set ::mock::hwc_loaded 1 }
+    return
+}
 proc hwi {cmd args} {
+    ::mock::maybe_fail hwi_$cmd
     switch -- $cmd {
         OpenStack - CloseStack { return }
         GetSessionHandle { ::mock::obj [lindex $args 0] sess }
@@ -26,9 +52,17 @@ proc ::mock::proj_GetActivePage {} { return 1 }
 proc ::mock::proj_GetPageHandle {h id} { ::mock::obj $h page }
 proc ::mock::page_GetActiveWindow {} { return 1 }
 proc ::mock::page_GetWindowHandle {h id} { ::mock::obj $h win }
-proc ::mock::win_SetClientType {t} { if {$t ne "Animation"} { error "bad client $t" } }
+proc ::mock::sess_GetError {} { set m $::mock::last_error; set ::mock::last_error ""; return $m }
+proc ::mock::win_GetClientType {} { return $::mock::st(client) }
+proc ::mock::win_SetClientType {t} {
+    if {$t ne "Animation"} { error "bad client $t" }
+    set ::mock::st(client) $t
+}
 proc ::mock::win_GetClientHandle {h} { ::mock::obj $h post }
 proc ::mock::post_AddModel {f} { return 1 }
+proc ::mock::post_GetModelReaderList {} { return {H3DReader} }
+proc ::mock::post_GetActiveModel {} { return $::mock::hwc_loaded }
+proc ::mock::post_GetModelList {} { return [expr {$::mock::hwc_loaded ? 1 : {}}] }
 proc ::mock::post_GetModelHandle {h id} { ::mock::obj $h model }
 proc ::mock::post_Draw {} { return }
 proc ::mock::model_GetResultCtrlHandle {h} { ::mock::obj $h res }
@@ -47,8 +81,22 @@ proc ::mock::model_GetSelectionSetHandle {h id} {
 }
 proc ::mock::set_Clear {id} { variable sets; set sets($id,ids) {} }
 proc ::mock::set_GetSize {id} { variable sets; return [llength $sets($id,ids)] }
+proc ::mock::set_GetList {id} { variable sets; return $sets($id,ids) }
 proc ::mock::set_Add {id s} {
     variable sets
+    if {$s eq "all"} {
+        set t $sets($id,type)
+        set ids {}
+        dict for {pid d} $::mock::parts {
+            switch -- $t {
+                component - part { lappend ids $pid }
+                element { lappend ids {*}[dict get $d elems] }
+                node { lappend ids {*}[dict get $d nodes] }
+            }
+        }
+        set sets($id,ids) $ids
+        return
+    }
     if {![regexp {^component (\d+)$} $s -> pid]} { error "mock: unsupported selection '$s'" }
     set key [expr {$sets($id,type) eq "element" ? "elems" : "nodes"}]
     set sets($id,ids) [dict get $::mock::parts $pid $key]
@@ -79,7 +127,10 @@ proc ::mock::qry_GetIteratorHandle {h} {
     variable sets; variable st
     set recs {}
     foreach id $sets($st(qset),ids) {
-        if {$st(query) eq "node.id node.coords"} {
+        if {$st(query) eq "component.id component.name"} {
+            if {$::mock::no_comp_query} { error "mock: unknown query field component.name" }
+            lappend recs [list $id [dict get $::mock::names $id]]
+        } elseif {$st(query) eq "node.id node.coords"} {
             lappend recs [list $id [dict get $::mock::coords $id]]
         } else {
             set key [list $st(dtype) $st(comp) $st(layer) $st(sim) $id]
@@ -106,3 +157,9 @@ proc ::mock::res_GetLayerList {sc dt} {
     if {$dt ne "Strain"} { error "no layers" }
     return {Lower Upper Max Min}
 }
+proc ::mock::model_GetComponentHandle {h id} {
+    catch {rename ::$h {}}
+    proc ::$h {method args} "return \[::mock::comp_\$method $id {*}\$args\]"
+}
+proc ::mock::comp_GetLabel {id} { return [dict get $::mock::names $id] }
+proc ::mock::comp_ReleaseHandle {id} { return }
