@@ -1,0 +1,301 @@
+"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3). SQLAlchemy Core, PostgreSQL 전용.
+
+공통: ID = UUID4 VARCHAR(36), 시간 TIMESTAMPTZ(DB 시계), 파일 본문·대용량 배열 저장 금지(경로·sha256·요약만),
+갱신 행은 `version BIGINT` 낙관적 잠금.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    Sequence,
+    SmallInteger,
+    String,
+    Table,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+
+metadata = MetaData(
+    naming_convention={
+        "ix": "ix_%(table_name)s_%(column_0_name)s",
+        "uq": "uq_%(table_name)s_%(column_0_name)s",
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+        "pk": "pk_%(table_name)s",
+    }
+)
+ID = String(36)
+TS = TIMESTAMP(timezone=True)
+
+TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
+JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT")
+ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "RUN", "LOG")
+
+job_queue_seq = Sequence("job_queue_seq", metadata=metadata)
+
+cases = Table(
+    "cases",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("project_id", String, nullable=False),
+    Column("folder_name", String(64), nullable=False, unique=True),
+    Column("title", String(200), nullable=False),
+    Column("status", String, nullable=False, server_default="ACTIVE"),
+    Column("rad_path", String, nullable=False),
+    Column("results_dir", String, nullable=False),
+    Column("h3d_path", String, nullable=True),
+    Column("input_fingerprint", JSONB, nullable=False),
+    Column("part_title", String(200), nullable=False),
+    Column("part_id", BigInteger, nullable=True),
+    Column("extract_summary", JSONB, nullable=True),
+    Column("tstar", JSONB, nullable=True),
+    Column("current_support_set_id", ID, nullable=True),
+    Column("current_esl_run_id", ID, nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    Column("version", BigInteger, nullable=False, server_default="1"),
+    CheckConstraint("status IN ('ACTIVE','ARCHIVED')", name="ck_cases_status"),
+    CheckConstraint("folder_name ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'", name="ck_cases_folder_name"),
+    CheckConstraint("length(btrim(title)) > 0", name="ck_cases_title"),
+    CheckConstraint("version >= 1", name="ck_cases_version"),
+    CheckConstraint(
+        "tstar IS NULL OR (tstar ? 'frame_index' AND tstar ? 'metric' AND tstar->>'source' IN ('auto','user'))",
+        name="ck_cases_tstar",
+    ),
+)
+Index("ix_cases_project", cases.c.project_id, cases.c.status)
+Index("ux_cases_project_title_active", cases.c.project_id, cases.c.title, unique=True,
+      postgresql_where=text("status = 'ACTIVE'"))
+
+jobs = Table(
+    "jobs",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("job_type", String, nullable=False),
+    Column("stage", SmallInteger, nullable=False),
+    Column("lane", String, nullable=False),
+    Column("state", String, nullable=False),
+    Column("holds_slot", Boolean, nullable=False, server_default=text("false")),
+    Column("queue_seq", BigInteger, nullable=True),
+    Column("queued_at", TS, nullable=True),
+    Column("started_at", TS, nullable=True),
+    Column("finished_at", TS, nullable=True),
+    Column("current_step_no", Integer, nullable=True),
+    Column("progress_pct", Float, nullable=True),
+    Column("progress_label", String, nullable=True),
+    Column("params", JSONB, nullable=False),
+    Column("result", JSONB, nullable=True),
+    Column("warnings", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("env_snapshot", JSONB, nullable=True),
+    Column("failure_code", String, nullable=True),
+    Column("failure_message", String(500), nullable=True),
+    Column("cancel_requested_at", TS, nullable=True),
+    Column("cancel_requested_by", String, nullable=True),
+    Column("retry_of_job_id", ID, ForeignKey("jobs.id"), nullable=True),
+    Column("resume_from_step", Integer, nullable=True),
+    Column("lease_owner_id", String, nullable=True),
+    Column("lease_token", String, nullable=True),
+    Column("lease_generation", BigInteger, nullable=False, server_default="0"),
+    Column("lease_acquired_at", TS, nullable=True),
+    Column("lease_expires_at", TS, nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    Column("version", BigInteger, nullable=False, server_default="1"),
+    CheckConstraint("job_type IN ('CASE_EXTRACT','ESL_SOLVE','VALIDATE','EXPORT')", name="ck_jobs_job_type"),
+    CheckConstraint("lane IN ('SLOT','LIGHT')", name="ck_jobs_lane"),
+    CheckConstraint("stage BETWEEN 1 AND 6", name="ck_jobs_stage"),
+    CheckConstraint("state IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELED','INTERRUPTED')",
+                    name="ck_jobs_state"),
+    CheckConstraint("holds_slot = (state = 'RUNNING' AND lane = 'SLOT')", name="ck_jobs_holds_slot"),
+    CheckConstraint("(queue_seq IS NOT NULL) = (state = 'QUEUED')", name="ck_jobs_queue_seq"),
+    CheckConstraint(
+        "(lease_owner_id IS NULL AND lease_token IS NULL AND lease_acquired_at IS NULL AND lease_expires_at IS NULL)"
+        " OR (lease_owner_id IS NOT NULL AND lease_token IS NOT NULL AND lease_acquired_at IS NOT NULL"
+        " AND lease_expires_at IS NOT NULL AND lease_expires_at > lease_acquired_at)",
+        name="ck_jobs_lease_identity",
+    ),
+    CheckConstraint("lease_token IS NULL OR state = 'RUNNING'", name="ck_jobs_lease_state"),
+    CheckConstraint("(state NOT IN ('FAILED','INTERRUPTED')) OR failure_code IS NOT NULL",
+                    name="ck_jobs_failure_code"),
+    CheckConstraint("version >= 1", name="ck_jobs_version"),
+)
+Index("ix_jobs_state_lane_seq", jobs.c.state, jobs.c.lane, jobs.c.queue_seq)
+Index("ix_jobs_case_created", jobs.c.case_id, jobs.c.created_at.desc())
+Index("ux_jobs_case_type_active", jobs.c.case_id, jobs.c.job_type, unique=True,
+      postgresql_where=text("state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+
+job_steps = Table(
+    "job_steps",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("job_id", ID, ForeignKey("jobs.id"), nullable=False),
+    Column("step_no", Integer, nullable=False),
+    Column("step_key", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("core_stage", String, nullable=True),
+    Column("state", String, nullable=False, server_default="PENDING"),
+    Column("started_at", TS, nullable=True),
+    Column("finished_at", TS, nullable=True),
+    Column("exit_code", Integer, nullable=True),
+    Column("progress_pct", Float, nullable=True),
+    Column("log_rel", String, nullable=True),
+    Column("outputs", JSONB, nullable=True),
+    Column("failure_code", String, nullable=True),
+    Column("failure_message", String(500), nullable=True),
+    UniqueConstraint("job_id", "step_no", name="uq_job_steps_job_step"),
+    CheckConstraint("kind IN ('INTERNAL')", name="ck_job_steps_kind"),
+    CheckConstraint("state IN ('PENDING','RUNNING','SUCCEEDED','FAILED','SKIPPED','CANCELED')",
+                    name="ck_job_steps_state"),
+    CheckConstraint("state <> 'FAILED' OR failure_code IS NOT NULL", name="ck_job_steps_failure_code"),
+)
+
+support_sets = Table(
+    "support_sets",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False, index=True),
+    Column("node_ids", JSONB, nullable=False),
+    Column("dofs", JSONB, nullable=False),
+    Column("source", String, nullable=False),
+    Column("plane", JSONB, nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("source IN ('auto','user')", name="ck_support_sets_source"),
+    CheckConstraint("jsonb_typeof(node_ids) = 'array' AND jsonb_array_length(node_ids) = 3",
+                    name="ck_support_sets_node_ids"),
+    CheckConstraint("jsonb_typeof(dofs) = 'array' AND jsonb_array_length(dofs) = 3", name="ck_support_sets_dofs"),
+)
+
+esl_runs = Table(
+    "esl_runs",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False, index=True),
+    Column("job_id", ID, ForeignKey("jobs.id"), nullable=False),
+    Column("frame_index", Integer, nullable=False),
+    Column("time", Float, nullable=True),
+    Column("metric", String, nullable=False),
+    Column("support_set_id", ID, ForeignKey("support_sets.id"), nullable=False),
+    Column("kabsch", JSONB, nullable=True),
+    Column("forces", JSONB, nullable=True),
+    Column("supports", JSONB, nullable=True),
+    Column("warnings", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("dir_rel", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("inputs_hash", String(64), nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("status IN ('READY','FAILED')", name="ck_esl_runs_status"),
+    CheckConstraint("frame_index >= 0", name="ck_esl_runs_frame"),
+)
+
+validations = Table(
+    "validations",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("esl_run_id", ID, ForeignKey("esl_runs.id"), nullable=False, index=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False),
+    Column("job_id", ID, ForeignKey("jobs.id"), nullable=False),
+    Column("disp_rms_rel", Float, nullable=True),
+    Column("reaction_rel", Float, nullable=True),
+    Column("hotspots", JSONB, nullable=False),
+    Column("excluded", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("verdict", String, nullable=False),
+    Column("fail_reasons", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("criteria", JSONB, nullable=False),
+    Column("dir_rel", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("verdict IN ('PASS','FAIL')", name="ck_validations_verdict"),
+)
+
+artifacts = Table(
+    "artifacts",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False),
+    Column("job_id", ID, ForeignKey("jobs.id"), nullable=True),
+    Column("kind", String, nullable=False),
+    Column("rel", String, nullable=False),
+    Column("size", BigInteger, nullable=False),
+    Column("sha256", String(64), nullable=True),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    UniqueConstraint("case_id", "rel", name="uq_artifacts_case_rel"),
+    CheckConstraint("kind IN ('CASE','EXTRACT','TSTAR','SUPPORT','ESL','VALIDATION','EXPORT','RUN','LOG')",
+                    name="ck_artifacts_kind"),
+    CheckConstraint("size >= 0", name="ck_artifacts_size"),
+    CheckConstraint("rel NOT LIKE '/%' AND rel NOT LIKE '%..%'", name="ck_artifacts_rel"),
+)
+
+notifications = Table(
+    "notifications",
+    metadata,
+    Column("seq", BigInteger, primary_key=True, autoincrement=True),
+    Column("user_id", String, nullable=False),
+    Column("event", String, nullable=False),
+    Column("job_id", ID, nullable=True),
+    Column("case_id", ID, nullable=True),
+    Column("project_id", String, nullable=True),
+    Column("title", String(120), nullable=False),
+    Column("body", String(500), nullable=False, server_default=""),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("read_at", TS, nullable=True),
+    CheckConstraint(
+        "event IN ('JOB_STARTED','JOB_SUCCEEDED','JOB_FAILED','JOB_CANCELED','JOB_INTERRUPTED')",
+        name="ck_notifications_event",
+    ),
+)
+Index("ix_notifications_user_seq", notifications.c.user_id, notifications.c.seq.desc())
+
+worker_slot = Table(
+    "worker_slot",
+    metadata,
+    Column("id", SmallInteger, primary_key=True),
+    Column("holder_job_id", ID, nullable=True),
+    Column("lease_owner_id", String, nullable=True),
+    Column("lease_token", String, nullable=True),
+    Column("lease_generation", BigInteger, nullable=False, server_default="0"),
+    Column("lease_acquired_at", TS, nullable=True),
+    Column("lease_expires_at", TS, nullable=True),
+    CheckConstraint("id = 1", name="ck_worker_slot_single"),
+    CheckConstraint(
+        "(lease_owner_id IS NULL AND lease_token IS NULL AND lease_acquired_at IS NULL AND lease_expires_at IS NULL)"
+        " OR (lease_owner_id IS NOT NULL AND lease_token IS NOT NULL AND lease_acquired_at IS NOT NULL"
+        " AND lease_expires_at IS NOT NULL AND lease_expires_at > lease_acquired_at)",
+        name="ck_worker_slot_lease_identity",
+    ),
+    CheckConstraint("(holder_job_id IS NULL) = (lease_token IS NULL)", name="ck_worker_slot_holder"),
+)
+
+worker_heartbeats = Table(
+    "worker_heartbeats",
+    metadata,
+    Column("worker_id", String, primary_key=True),
+    Column("host", String, nullable=False),
+    Column("pid", Integer, nullable=False),
+    Column("app_version", String, nullable=False),
+    Column("started_at", TS, nullable=False, server_default=func.now()),
+    Column("last_seen_at", TS, nullable=False, server_default=func.now()),
+    Column("limiter", String, nullable=True),
+    Column("info", JSONB, nullable=True),
+)
+
+__all__ = [
+    "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
+    "artifacts", "notifications", "worker_slot", "worker_heartbeats", "TERMINAL_STATES", "JOB_TYPES",
+    "ARTIFACT_KINDS",
+]

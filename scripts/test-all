@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# ESL 전체 시험: 코어 pytest(tests/) + 플랫폼 backend/tests + worker/tests(PostgreSQL) + openapi 최신 여부.
+# PostgreSQL: ESL_TEST_DATABASE_URL 이 있으면 그대로 쓰고, 없으면 PG_BIN(기본 /usr/lib/postgresql/<최신>/bin)으로
+# 임시 클러스터를 initdb 로 띄워 끝나면 지운다(root 로 실행 중이면 postgres 사용자로 실행).
+# 사용: bash scripts/test-all [pytest 추가 인자]
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+PYTHON="${PYTHON:-python3}"
+export PYTHONPATH="$REPO_ROOT/backend:$REPO_ROOT/worker:$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+PG_DIR=""
+PG_CTL=""
+as_pg() { if [ "$(id -u)" = "0" ]; then runuser -u postgres -- "$@"; else "$@"; fi; }
+cleanup() {
+  if [ -n "$PG_DIR" ]; then
+    as_pg "$PG_CTL" -D "$PG_DIR/data" -m immediate stop >/dev/null 2>&1 || true
+    rm -rf "$PG_DIR"
+  fi
+}
+trap cleanup EXIT
+
+if [ -z "${ESL_TEST_DATABASE_URL:-}" ]; then
+  if [ -z "${PG_BIN:-}" ]; then
+    PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+  fi
+  if [ -z "$PG_BIN" ] || [ ! -x "$PG_BIN/initdb" ]; then
+    PG_BIN="$(dirname "$(command -v initdb 2>/dev/null || echo /nonexistent/initdb)")"
+  fi
+  [ -x "$PG_BIN/initdb" ] || { echo "PostgreSQL(initdb)을 찾을 수 없습니다: PG_BIN 또는 ESL_TEST_DATABASE_URL 지정"; exit 1; }
+  PG_CTL="$PG_BIN/pg_ctl"
+  PG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/esl-pg-XXXXXX")"
+  if [ "$(id -u)" = "0" ]; then chown postgres "$PG_DIR"; chmod 700 "$PG_DIR"; fi
+  PORT="$("$PYTHON" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+  echo "== 임시 PostgreSQL: $PG_BIN (port $PORT, $PG_DIR) =="
+  as_pg "$PG_BIN/initdb" -D "$PG_DIR/data" -A trust -U postgres -E UTF8 --no-sync >/dev/null
+  as_pg "$PG_CTL" -D "$PG_DIR/data" -l "$PG_DIR/log" -w \
+    -o "-p $PORT -k $PG_DIR -c listen_addresses=127.0.0.1 -c fsync=off -c max_connections=200" start >/dev/null
+  export ESL_TEST_DATABASE_URL="postgresql+psycopg://postgres@127.0.0.1:$PORT/postgres"
+fi
+
+echo "== 코어 pytest (tests/) =="
+"$PYTHON" -m pytest -q -p no:cacheprovider tests "$@"
+echo "== 플랫폼 backend pytest =="
+"$PYTHON" -m pytest -q -p no:cacheprovider backend/tests "$@"
+echo "== 워커 pytest =="
+"$PYTHON" -m pytest -q -p no:cacheprovider worker/tests "$@"
+echo "== openapi_p1b.json 최신 여부 =="
+"$PYTHON" scripts/dump_openapi.py --check
+echo "== 전체 통과 =="
