@@ -1,0 +1,12 @@
+# ESL 플랫폼(P1b) 의존성: API·DB·워커. 코어(esl)는 pyproject.toml(numpy, scipy, pyyaml).
+fastapi>=0.110
+uvicorn>=0.27
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+alembic>=1.13
+httpx>=0.27
+pydantic>=2.5
+pyyaml>=6
+numpy
+scipy
+pytest>=8

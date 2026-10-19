@@ -5,23 +5,28 @@
 > 실제 h3d에는 **반드시 `esl_h3d_probe.tcl`을 먼저 실행**해 subcase·결과 유형·성분·layer 이름과
 > 파트 선택 문자열이 맞는지 확인한 뒤 `request.txt`를 채운다.
 
-계약: `docs/contracts/esl_core.md` §3.2.
+계약: `docs/contracts/esl_core.md` §7.2(추출 3패스), 진단·공통 블록은 §3.2 그대로.
 
 ## 1. 실행 (Windows, HyperWorks 2022~2026)
 
 ### 1.1 Windows 설치·업데이트 (권장: 드래그&드롭)
 
-1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행 래퍼를
-   `%LOCALAPPDATA%\esl\app\<git 해시>\`에 복사하고 `...\app\current`로 교체한다(최근 5개 버전 유지).
+1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행기를
+   `%LOCALAPPDATA%\esl\app\versions\<git 해시>\`에 복사하고 활성 버전 파일 `...\app\current_version.txt`만 교체한다
+   (폴더 rename 없음 — `current`를 탐색기로 열어 둔 채·실행 중에도 업데이트 가능, 최근 5개 + 활성 버전 유지).
+   `...\app\current\`에는 런처(`ESL_probe.bat`, `ESL_extract.bat`, `esl_launch.ps1`)만 있고, 실행할 때마다
+   `current_version.txt`가 가리키는 `versions` 폴더의 TCL을 쓴다. 예전 구조(`current`에 TCL이 직접 있음)는 첫 업데이트 때
+   배포 산출물만 파일 단위로 정리한다(사용자 파일은 그대로).
 2. 설정 파일 `%LOCALAPPDATA%\esl\esl_deploy.json`(처음 실행 시 생성): `hw_exe`, `work_root`(출력 루트 — 공유 SPDM 폴더 금지),
    `protected_roots`, `default_part`를 확인하고 `update.bat`을 다시 실행해 점검표가 모두 OK인지 본다.
 3. `...\app\current\ESL_probe.bat` / `ESL_extract.bat` 위로 h3d를 끌어다 놓는다. 출력은
    `<work_root>\<h3d 이름>\probe` / `csv`, 다른 파트는 `ESL_extract.bat <h3d> <part>`. 끝나면 `probe.json`/`done.json`의
    `ok`·`failed_step`·`error`를 요약하고 출력 폴더를 연다. 콘솔 로그는 `*_console.log`.
    h3d 폴더·`protected_roots` 아래 출력과 `%`·`!`·`&`가 든 경로는 거부한다.
-   **h3d를 배포 폴더(`...\app\current` 등)에 복사하지 말 것**: 배포 폴더 안의 h3d는 거부한다(update 때 지워질 수 있음).
-   원본 위치의 h3d를 그대로 끌어다 놓는다(읽기 전용으로 사용). `update.bat`은 교체·정리할 폴더에 배포 산출물
-   (`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외 파일이 있으면 아무것도 지우거나 옮기지 않고 목록을 보여 주고 중단한다.
+   **h3d를 배포 폴더(`...\app` 아래)에 복사하지 말 것**: 배포 폴더 안의 h3d는 거부한다.
+   원본 위치의 h3d를 그대로 끌어다 놓는다(읽기 전용으로 사용). `update.bat`은 배포 산출물
+   (`*.tcl`, `*.bat`, `*.ps1`, README, `VERSION.txt`) 이외 파일·하위 폴더를 지우거나 옮기지 않으며, 그런 파일이 있는 폴더는
+   정리하지 않고 목록만 경고한다.
 
 ### 1.2 수동 실행
 
@@ -34,6 +39,7 @@ rem (1) probe: h3d 안의 component(=Radioss part) 목록·결과 유형·성분
 
 rem (2) extract: 대상 파트를 title(또는 숫자 id)로 지정 → CSV 폴더 (클라우드 입력 <results_dir>)
 %HW% -clientconfig hwpost.dat -b -tcl %TCL%\esl_h3d_extract.tcl -input D:\run\drop.h3d -part chassis_rear -output D:\run\esl_csv
+rem    선택: -hot_k 200 (이력 요소 수) -top_n 5 (지표별 후보 프레임 수)
 ```
 
 - `-part <title|id>`: 숫자면 component(part) id, 아니면 title. title은 **대소문자·공백·언더스코어를 무시**하고 비교한다(`Chassis Rear` = `chassis_rear`). 우선순위: `-part` 인자 > request.txt `part_id` > request.txt `part_title`.
@@ -46,52 +52,74 @@ rem (2) extract: 대상 파트를 title(또는 숫자 id)로 지정 → CSV 폴�
 
 ## 2. 고급 옵션: request.txt (`key<TAB>value`, `#` 줄은 주석, 선택)
 
-기본값으로 충분하면 만들 필요 없다. 바꿀 키만 적으면 된다.
+기본값은 실데이터 probe(HyperWorks 2026.1) 이름이다. 바꿀 키만 적으면 된다.
 
 ```text
 # 키와 값 사이는 반드시 TAB 한 개
 part_title	chassis_rear
-subcase	1
-frame_stride	1
-strain_type	Strain
-strain_comps	XX YY XY
-layer_bottom	Lower
-layer_top	Upper
-shear_is_engineering	0
-disp_type	Displacement
-strain_system	elemental
+strain_type	Max_Strain
+strain_comps	XX YY ZZ XY
+vm_comp	vonMises
+strain_layer	Mid
+epsp_type	Plastic Strain
+epsp_comp	Scalar value
+epsp_layer	Mid
+hot_k	200
+top_n	5
+reach_rtol	1e-6
+chunk	50000
 ```
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| `part_id` | (빈 값) | 대상 Radioss part ID (HyperView component ID). `-part` 인자가 우선 |
-| `part_title` | (빈 값) | part_id가 없을 때 title로 찾음(대소문자·공백·언더스코어 무시) |
+| `part_id` / `part_title` | (빈 값) | 대상 파트. `-part` 인자가 우선, title은 대소문자·공백·언더스코어 무시 |
 | `subcase` | `1` | subcase ID |
-| `frame_stride` | `1` | simulation 인덱스 0, s, 2s, … 만 출력 |
-| `strain_type` | `Strain` | 변형률 텐서 결과 유형 이름(probe의 `data_types[].name`) |
-| `strain_comps` | `XX YY XY` | exx, eyy, exy 순서의 성분 이름 3개 |
-| `layer_bottom` / `layer_top` | `Lower` / `Upper` | HyperView layer 이름(probe의 `layers`) |
-| `layer_mid` | (빈 값=생략) | 지정 시 `mid` 행도 출력(선택) |
-| `shear_is_engineering` | `0` | `1`이면 h3d XY가 공학전단 γ로 보고 TCL이 exy = XY/2로 출력 |
+| `strain_type` | `Max_Strain` | 요소별 max-hold 변형률 텐서 결과 유형 |
+| `strain_comps` | `XX YY ZZ XY` | exx, eyy, ezz, exy 순서 성분 이름 4개. **XY는 h3d 값 그대로** 출력(텐서/공학 전단은 Python이 `vonMises`와 비교해 판정, 설정 `extract.shear_convention`) |
+| `vm_comp` | `vonMises` | HyperView 등가변형률 성분(전단 규약 판정·H 선택·후보 프레임용) |
+| `strain_layer` | `Mid` | 변형률 layer(실데이터는 Mid만 있음) |
+| `epsp_type` / `epsp_comp` / `epsp_layer` | `Plastic Strain` / `Scalar value` / `Mid` | 소성 변형률(max-hold). `epsp_type`을 비우면 소성 0 + 경고 |
 | `disp_type` / `disp_comps` | `Displacement` / `X Y Z` | 변위 결과 유형·성분 |
-| `strain_system` | `elemental` | 변형률 텐서를 풀어낼 결과 좌표계: `elemental`(요소 국부계, 계약 기준) / `analysis` / `global` / `none`(호출 안 함). **미검증**: `SetResolvedIn` → `SetResultSystem` → `SetSystemType` → `SetSystem` 순으로 `"Elemental System"`·`Elemental` 등을 시도하고, 모두 실패하면 HyperView 기본계를 그대로 쓰며 `done.json` `warnings`에 1회 기록(계속 진행). 성공한 호출은 `done.json` `strain_system_call` |
-| `elem_selection` / `node_selection` | (빈 값) | 선택 문자열 직접 지정(예: `component 12`). 비우면 `component N` → `comp N` → `part N` 순으로 시도하고, 모두 실패하면 `all`(다른 파트 행은 Python이 버림, 경고 기록) |
+| `hot_k` | `200` | H = 최종 vonMises 상위 hot_k ∪ 최종 소성 상위 hot_k(값 > 0). 상한 없음(1000 초과 시 경고). `-hot_k`가 우선 |
+| `top_n` | `5` | 지표별 후보 프레임 수. `-top_n`이 우선 |
+| `reach_rtol` | `1e-6` | first-reach 허용오차: `v[f] ≥ v_last·(1−rtol)`인 첫 프레임 |
+| `chunk` | `50000` | 요소·노드 질의 청크 크기(id 범위 선택 집합을 청크마다 한 번 만들어 재사용, 행은 바로 파일로) |
+| `strain_system` | `elemental` | 텐서 결과 좌표계 `elemental`/`analysis`/`global`/`none`. **미검증**: `SetResolvedIn` → `SetResultSystem` → `SetSystemType` → `SetSystem` 순으로 시도, 모두 실패하면 기본계 + `warnings` 1회. 성공한 호출은 `done.json` `strain_system_call` |
+| `elem_selection` / `node_selection` | (빈 값) | 파트 선택 문자열 직접 지정(예: `component 12`). 비우면 `component N` → `comp N` → `part N` → `all`(다른 파트 행은 Python이 버림) |
 
-## 3. 출력 (`-output` 폴더)
+## 3. 3패스 추출과 출력 (`-output` 폴더)
 
-| 파일 | 헤더 | 비고 |
-|---|---|---|
-| `frames.csv` | `frame_index,time` | frame_index = subcase 안 simulation 인덱스(0부터). time = simulation 라벨의 `=` 뒤 숫자(없으면 마지막 숫자, 그것도 없으면 인덱스 + 경고) |
-| `model.csv` | `node_id,x0,y0,z0` | 첫 출력 프레임의 `node.coords`(프레임 0 = 비변형 가정). Python이 rad 좌표와 `max(1e-6·bbox, 2·eps_f32·max\|x\|·√3)` 허용오차로 비교(h3d float32 좌표 고려) |
-| `strain.csv` | `frame_index,elem_id,layer,exx,eyy,exy` | layer = `bottom`,`top`(필수), `mid`(선택). 요소 국부계 텐서(h3d 저장계 그대로, 평균 없음) |
-| `disp.csv` | `frame_index,node_id,ux,uy,uz` | 전역계 변위 |
-| `done.json` | | 성공 `{"ok":true,"part_id","part_title","part_spec","n_frames","n_elems","n_nodes","h3d","subcase","elem_selection","node_selection","disp_value_format":"%.17g","value_format":"%.17g","strain_system","strain_system_call","backup_dir","warnings":[]}` / 실패 `{"ok":false,"code","error","failed_step","errorCode","errorInfo","h3d","part_spec","part_id",...}`. 성공·실패 모두 `steps_done`,`api`,`traces`,`env`,`components` 포함(§6) |
+h3d의 `Max_Strain`·`Plastic Strain`은 **요소별 누적 최대(max-hold)**다(한 번 최대에 도달하면 그 값을 유지).
+그래서 t*는 "최종값에 처음 도달한 프레임(first-reach)"이고, 전 요소 × 전 프레임을 뽑지 않고 3패스로 줄인다.
 
-- 실패 code: `H3D_MISSING_RESULT`(subcase·결과 유형·layer 없음), `INPUT_INVALID`(인자·request.txt 오류, 파트 미지정·이름 불일치), `TOOL_OUTPUT_MISSING`(h3d 없음), 그 외 Tcl 오류는 `TOOL_LOG_ERROR`.
-- 시작 시 출력 폴더에 이전 산출물(`done.json`, `*.csv`)이 있으면 **삭제하지 않고** `<output>/_backup/<YYYYmmdd_HHMMSS>[_N]/`로 `file rename` 한 뒤 새로 쓴다(그 외 파일은 그대로). 이동 사실은 `warnings`와 `backup_dir`에 남는다. `done.json`은 마지막에 쓰며, 없으면 Python은 `TOOL_OUTPUT_MISSING`.
-- 수치 출력: 질의 결과 문자열을 그대로 쓰지 않고 모든 시간·좌표·변형률·변위를 `format %.17g`로 쓴다(double 왕복 무손실). `done.json`의 `disp_value_format`에 기록.
-- **정밀도 주의**: h3d 변위는 float32로 저장될 수 있다(유효숫자 ~7자리). `disp.csv`는 대상 파트 기준 상대좌표가 아니라 **전역 변위**이므로, 원점에서 멀거나 강체 이동이 큰 파트는 변형 성분이 float32 잡음에 묻혀 F_eq(등가 하중)에 잡음이 생길 수 있다. `%.17g`는 저장된 값을 손실 없이 옮길 뿐 h3d 자체 정밀도를 높이지 못한다.
-- 클라우드 쪽: `esl.io.pack_results(<폴더>, model, out_dir)`.
+| 패스 | 대상 | 파일 | 헤더 |
+|---|---|---|---|
+| — | 전 프레임 시간 | `frames.csv` | `frame_index,time` |
+| — | 프레임 0 파트 노드 좌표 | `model.csv` | `node_id,x0,y0,z0` |
+| A | 마지막 프레임, 파트 전 요소(청크) | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+| B | 전 프레임, 집합 H(≤ 400 요소, id 선택 집합 1개) | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+| C | 후보 프레임 D, 파트 전 요소·전 노드(청크) | `strain_frames.csv`, `disp.csv` | 위와 같음 / `frame_index,node_id,ux,uy,uz` |
+
+- **H**: 패스 A에서 청크마다 상위 hot_k를 갱신(값 내림차순, 동률은 낮은 id). 
+- **D**: 지표(vonMises, 소성)마다 H를 최종값 내림차순으로 훑으며 first-reach 프레임 `min{f : v[f] ≥ v_last·(1−reach_rtol)}`을
+  서로 다른 것만 `top_n`개 모은 합집합(≤ 2·top_n). rank 1 = 최종값 1위 요소의 first-reach. 후보가 없으면 D = 마지막 프레임 + 경고.
+  Python(`esl.mech.tstar.candidate_frames`)이 history로 같은 규칙을 재계산해 일치를 확인한다.
+- **패스 B 선택 집합**(미검증): `id a-b c ...` → `element a-b c ...` → 콤마 형식 → id마다 `Add "id N"`/`"element N"`, 크기(`GetSize`, 없으면 질의 개수)로 확인.
+  모두 실패하면 파트 전 요소 청크를 프레임마다 질의해 H만 남긴다(느림, 경고·`passes.B.hot_selection`).
+  청크 선택도 같은 방법이며 실패하면 파트 전체 집합 한 번 질의(메모리 큼, 경고·`chunks`).
+- 프레임 루프는 `SetCurrentSimulation` → `Draw` → 질의. 진행률(패스·프레임·청크)을 콘솔에 `ESL extract HH:MM:SS pass B frame 12/126 ...`으로 찍는다.
+- `done.json` 성공: `{"ok":true,"part_id","part_title","n_frames","n_elems","n_nodes","n_hot","hot_k","top_n","reach_rtol",
+  "candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"candidate_elems":{...},"frames_D":[..],
+  "passes":{"A":{"frame","rows","chunks","seconds"},"B":{"frames","n_hot","rows","hot_selection","seconds"},"C":{"frames","rows_strain","rows_disp","elem_chunks","node_chunks","seconds"}},
+  "chunk","chunks","strain_type","strain_layer","strain_comps","vm_comp","epsp_type","epsp_layer","disp_type","exy":"raw (as stored in h3d)",
+  "value_format":"%.17g","strain_system","strain_system_call","backup_dir","warnings":[]}` + §6 진단 항목. 실패 `{"ok":false,"code","error","failed_step",...}`.
+- 실패 code: `H3D_MISSING_RESULT`(subcase·결과 유형·성분·layer 없음 — 가능하면 `GetDataComponentList`/`GetLayerList`로 미리 확인, 값 없음),
+  `INPUT_INVALID`(인자·request.txt 오류, 파트 미지정·이름 불일치), `TOOL_OUTPUT_MISSING`(h3d 없음), 그 외 Tcl 오류는 `TOOL_LOG_ERROR`.
+- 시작 시 출력 폴더의 이전 산출물(`done.json`, `*.csv`)은 **삭제하지 않고** `<output>/_backup/<YYYYmmdd_HHMMSS>[_N]/`로 옮긴다(그 외 파일은 그대로).
+- 수치는 모두 `format %.17g`(double 왕복 무손실). h3d 변위는 float32일 수 있다 — `%.17g`는 저장값을 옮길 뿐 정밀도를 높이지 못한다(클라우드 S4 잡음 바닥 추정).
+- **CSV 크기 추정**(22만 요소·노드, D ≤ 10, 126 프레임, %.17g): `strain_frames.csv` ≈ 150 B/행 × 220만 행 ≈ 330 MB,
+  `disp.csv` ≈ 80 B/행 × 220만 행 ≈ 180 MB, `final.csv` ≈ 30 MB, `history.csv` ≈ 400 × 126 행 ≈ 8 MB → 합계 약 0.55 GB(전량 추출 시 수 GB).
+- 클라우드 쪽: `esl.io.pack_results(<폴더>, model, out_dir)` → `final.npz`, `history.npz`, `strain_frames.npz`, `disp.npz`(§7.3).
 
 ## 4. probe.json
 
@@ -105,8 +133,10 @@ strain_system	elemental
 
 1. 스크립트 인자 전달: `hw ... -tcl script -input ...`의 추가 인자가 Tcl `$argv`로 들어오는지(안 되면 환경변수 사용).
 2. 파트 선택 문자열(`component N` 등)과 `poISelectionSet Clear/GetSize` 이름.
-3. `poIContourCtrl SetLayer`, `SetAverageMode none` 이름·값, 요소 중심값이 `element.id contour.value` 한 행으로 나오는지(코너값이면 여러 행).
-4. 텐서 성분 이름(`XX YY XY`)과 h3d XY가 텐서 전단인지 공학 전단인지(Radioss 쉘 변형률 — `shear_is_engineering`로 조정).
+3. `poIContourCtrl SetLayer`, `SetAverageMode none` 이름·값, 요소 중심값이 `element.id contour.value` 한 행으로 나오는지(코너값이면 첫 행만 사용).
+4. h3d XY가 텐서 전단인지 공학 전단인지 — Python이 `vonMises`와 비교해 자동 판정(`extract.shear_convention: auto`), 최대 불일치 > 5%면 경고.
+4a. **id 선택 문자열**(`id a-b c`, `element a-b`, 콤마 형식, `Add "id N"` 반복)과 `poISelectionSet GetList`/`GetSize`, `node.id`/`element.id`만 있는 질의.
+4b. `Max_Strain`의 텐서 성분이 vonMises와 같은 프레임 값으로 hold되는지(성분별 hold면 hold 텐서의 ε_eq ≠ vonMises — 전단 판정 불일치로 드러남).
 5. 결과 좌표계(**미검증**): `strain_system=elemental`이면 contour에 요소 국부계("Elemental System")를 명시 설정하려 시도한다. API 이름(`SetResolvedIn` 등)·값 문자열이 버전마다 다를 수 있어, 실패 시 경고만 남기고 기본계로 계속한다 — `done.json` `strain_system_call`이 비어 있으면 HyperView에서 결과계를 직접 확인할 것.
 6. simulation 라벨에서 시간 추출 형식, `SetCurrentSimulation` 후 `Draw` 필요 여부.
 7. `node.coords`가 원좌표인지 현재 변형좌표인지(프레임 0이면 같음).

@@ -24,3 +24,10 @@
 - (P1a) ε_eq는 TCL이 내보낸 면내 텐서로 Python이 계산: 비압축 von Mises (2/√3)·sqrt(exx²+eyy²+exx·eyy+exy²), layer 최대. 판정 기준 임시값 유지(사용자 확인 1번).
 - (P1a) 플랫폼(API·DB·워커·UI)은 P1b로 미루고, 계산 코어 + CLI를 먼저 만든다.
 - (P1a) 변위 정밀도 잡음은 감지만 한다(잡음 바닥 추정 → 경고·NOISE_FLOOR FAIL). 정규화 필터는 실제 h3d로 잡음 수준 측정 후 결정(근거: Verifier float32 정량화, 2 mm 변형에서 절점력 잡음 13배·hotspot 1.8%).
+- (P1a-2, 2026-10-19) h3d에는 순간 총변형률이 없고 Max_Strain·Plastic Strain(요소별 max-hold, Mid layer)만 있다 → t* = 최종 최대값에 처음 도달한 프레임(first-reach). 기본 지표 Max_Strain, Plastic Strain 결과도 병기(근거: #1 probe, 사용자 지시).
+- (P1a-2) TCL은 3패스(최종 프레임 전 요소 → 상위 요소 전 프레임 이력 → 후보 프레임만 전 노드 변위·전 요소 변형률)로 CSV 크기를 줄인다(근거: 22만 요소×126 프레임 전량 추출은 수 GB).
+- (P1a-2) 22만 요소 대응으로 CHOLMOD(scikit-sparse) 백엔드를 추가한다(근거: SuperLU 10만 요소 7.3 GB, 클라우드 15 GB).
+- (P1b, 2026-10-19) extract 실기 확인 전이지만 플랫폼(API·DB·워커·UI)을 병행 구현한다. 플랫폼은 코어를 esl.pipeline.run 단일 진입점으로만 호출하고 서버에서 외부 프로그램을 실행하지 않는다(근거: 사용자 지시, 코어-플랫폼 결합 최소화). 운영은 physicsai와 같은 사내 Windows 서버 가정.
+- (P1b, 2026-10-19) 규모 기준: 대상 파트 최대 약 30만 쉘 요소, 운영 서버 RAM 최대 512 GB → 직접법(CHOLMOD/Pardiso) 기본, S5 전체계 재해석 기본 수행(근거: 사용자 확인, probe chassis_rear 223,415 요소).
+- (P2, 2026-10-19) 보고서는 PDF 대신 자체 완결 HTML 단일 파일(inline SVG, 외부 의존 없음)로 한다. PPTX는 선택 옵션, LibreOffice 변환 없음(근거: 사용자 지시).
+- (P2, 2026-10-19) P2 계약 확정(파일명 해석·설계영역/비드 기본값·하중 정규화 가정 승인). ESL 재현 정확도(전 요소 % 오차, 최대변형률 비교)와 겹쳐보기를 P2-0으로 먼저 구현(근거: 사용자 요청).

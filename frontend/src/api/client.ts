@@ -1,0 +1,127 @@
+// esl.md §5: 접두 /esl/api, 비GET에 X-ESL-Request: 1, 오류 {detail:{code,message}}.
+import type { ApiErrorDetail } from "./types";
+
+export const API_PREFIX = "/esl/api";
+
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  detail: ApiErrorDetail;
+  constructor(status: number, detail: ApiErrorDetail) {
+    super(detail.message);
+    this.status = status;
+    this.code = detail.code;
+    this.detail = detail;
+  }
+}
+
+const FALLBACK: Record<number, string> = {
+  401: "로그인이 필요합니다. 대시보드에서 로그인하세요.",
+  403: "권한이 없습니다.",
+  404: "대상을 찾을 수 없습니다.",
+  409: "현재 상태에서는 처리할 수 없습니다.",
+  413: "파일이 커서 다운로드 대신 경로를 복사하세요.",
+  422: "입력값을 확인하세요.",
+  503: "서버를 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
+};
+
+type Query = Record<string, string | number | boolean | null | undefined>;
+
+export function buildUrl(path: string, query?: Query): string {
+  let url = API_PREFIX + path;
+  if (query) {
+    const qs = Object.entries(query)
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join("&");
+    if (qs) url += "?" + qs;
+  }
+  return url;
+}
+
+export async function request<T>(method: string, path: string, opts: { query?: Query; body?: unknown } = {}): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (method !== "GET") headers["X-ESL-Request"] = "1";
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts.query), {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    });
+  } catch {
+    throw new ApiError(0, { code: "NETWORK_ERROR", message: "서버에 연결할 수 없습니다." });
+  }
+  if (!res.ok) {
+    let detail: ApiErrorDetail = { code: `HTTP_${res.status}`, message: FALLBACK[res.status] ?? `요청 실패 (${res.status})` };
+    try {
+      const b = await res.json();
+      if (b && typeof b.detail === "object" && b.detail) detail = { ...detail, ...b.detail };
+    } catch {
+      /* 본문 없음 */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/** 오류 코드별 안내(서버 메시지 대신) */
+export const CODE_TEXT: Record<string, string> = {
+  JOB_NOT_TERMINAL: "작업이 아직 끝나지 않았습니다 — 실패·중단·취소된 작업만 재시도할 수 있습니다.",
+  JOB_TERMINAL: "이미 끝난 작업입니다.",
+  CASE_JOB_BUSY: "같은 작업이 이미 대기 중이거나 실행 중입니다.",
+  ARTIFACT_TOO_LARGE: "파일이 커서 다운로드 대신 경로를 복사하세요.",
+  CSRF_HEADER_REQUIRED: "요청 헤더(X-ESL-Request)가 없습니다.",
+};
+
+const MISSING_TEXT: Record<string, string> = {
+  extract: "① 추출",
+  tstar: "② t*",
+  support_set: "③ 지지점",
+  disp_frame: "t* 프레임 변위",
+  esl_run: "④ ESL 결과",
+  current_esl_run: "현재 ESL 결과",
+  fresh_esl_run: "최신 ESL 결과(④ 다시 계산)",
+};
+
+export function errorText(e: unknown): string {
+  if (e instanceof ApiError) {
+    const base = CODE_TEXT[e.code] ?? e.message;
+    const miss = Array.isArray(e.detail.missing) ? e.detail.missing : [];
+    return miss.length ? `${base} (필요: ${miss.map((m) => MISSING_TEXT[m] ?? m).join(", ")})` : base;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** 파일 다운로드(GET). 실패하면 ApiError(413 ARTIFACT_TOO_LARGE 면 detail.rel·path·size·limit). */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "GET", credentials: "same-origin" });
+  } catch {
+    throw new ApiError(0, { code: "NETWORK_ERROR", message: "서버에 연결할 수 없습니다." });
+  }
+  if (!res.ok) {
+    let detail: ApiErrorDetail = { code: `HTTP_${res.status}`, message: FALLBACK[res.status] ?? `요청 실패 (${res.status})` };
+    try {
+      const b = await res.json();
+      if (b && typeof b.detail === "object" && b.detail) detail = { ...detail, ...b.detail };
+    } catch {
+      /* 본문 없음 */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  const blob = await res.blob();
+  if (typeof URL.createObjectURL !== "function") return; // 시험 환경(jsdom)
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}

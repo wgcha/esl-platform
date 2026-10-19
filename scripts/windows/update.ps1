@@ -3,14 +3,16 @@
 #  1) git 최신화: 작업 트리 변경이 있으면 중단, fetch(재시도) -> 브랜치 checkout -> merge --ff-only
 #     (reset·force 는 쓰지 않는다. fast-forward 가 안 되면 중단)
 #  2) 설정: %LOCALAPPDATA%\esl\esl_deploy.json (없으면 config\esl_deploy.example.json 으로 생성)
-#  3) 배포: resources\tcl\*.tcl, README, 실행기를 <deploy_dir>\<git 짧은 해시>\ 로 복사 후
-#     <deploy_dir>\current 를 디렉터리 교체로 갱신(실패 시 이전 current 유지). 버전 폴더는 최근 5개만 유지
-#     지우거나 옮길 폴더에 배포 산출물(*.tcl, *.bat, *.ps1, README, VERSION.txt) 이외 파일(복사해 둔 h3d 등)이
-#     있으면 아무것도 바꾸지 않고 목록을 보여 주고 중단
-#  4) 실행 래퍼: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat (h3d 드래그&드롭)
-#  5) 점검표: hw.exe, TCL, work_root 쓰기, git 상태
+#  3) 배포 (폴더 rename 없음 - 탐색기·명령창·실행 중인 hw 가 폴더를 잡고 있어도 됨):
+#     resources\tcl\*.tcl, README, esl_run.ps1 -> <deploy_dir>\versions\<git 짧은 해시>\ (새 폴더, 같은 내용이면 재사용)
+#     활성 버전 = <deploy_dir>\current_version.txt (임시 파일 작성 후 파일 단위 교체, 3회 재시도)
+#  4) 런처: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat, esl_launch.ps1 (버전 무관, 바뀐 경우만 덮어쓰기)
+#     예전 구조(current 에 TCL·esl_run.ps1 이 직접 있음)는 그 배포 산출물만 파일 단위로 정리(사용자 파일은 그대로)
+#     오래된 versions 는 최근 5개 + 활성 버전만 남기고 정리(잠겼거나 사용자 파일이 있으면 건너뜀)
+#  5) 점검표: hw.exe, 활성 버전, TCL, 런처, work_root 쓰기, git 상태
 #
-# 삭제는 Remove-DeployTree 한 곳에서만 하며, deploy_dir 아래(링크 아님)인 것만 지운다.
+# 삭제는 esl_deploy_lib.ps1 의 Remove-DeployTree / Remove-DeployFile 에서만 하며, deploy_dir 아래(링크 아님)의
+# 배포 산출물만 지운다. 사용자 파일(배포 산출물 이외)이 있는 폴더는 지우지 않는다.
 [CmdletBinding()]
 param(
     [string]$Branch = '',
@@ -48,16 +50,8 @@ function Expand-ConfigPath([string]$Value) {
     $expanded = [Environment]::ExpandEnvironmentVariables($Value.Trim())
     return [IO.Path]::GetFullPath($expanded.Replace('/', '\')).TrimEnd('\')
 }
-function Test-PathUnder([string]$Child, [string]$Parent) {
-    if (-not $Child -or -not $Parent) { return $false }
-    $c = [IO.Path]::GetFullPath($Child).TrimEnd('\') + '\'
-    $p = [IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
-    return $c.StartsWith($p, [StringComparison]::OrdinalIgnoreCase)
-}
-function Test-IsLink([string]$Path) {
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    return [bool]((Get-Item -Force -LiteralPath $Path).Attributes -band [IO.FileAttributes]::ReparsePoint)
-}
+# 배포 함수(Test-PathUnder, Remove-DeployTree, 포인터 교체, 버전 정리 등): Linux pwsh 로도 시험하는 공용 파일
+. (Join-Path $PSScriptRoot 'esl_deploy_lib.ps1')
 
 # ---- git -------------------------------------------------------------------------------------
 function Invoke-Git([string[]]$GitArgs) {
@@ -156,154 +150,116 @@ function Get-DeployConfig {
 }
 
 # ---- 배포 ------------------------------------------------------------------------------------
-function Assert-InsideDeployDir([string]$Path) {
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    if (-not $script:DeployDir) { throw 'deploy_dir 미정' }
-    if ($full -ieq $script:DeployDir -or -not (Test-PathUnder $full $script:DeployDir)) {
-        throw "deploy_dir 밖 경로는 지우지 않습니다: $full"
-    }
-    return $full
-}
-
-# 배포 산출물: *.tcl, *.bat, *.ps1, README*, VERSION.txt (+ TCL 이 쓰는 esl_*_fallback.json 진단 파일).
-# 그 밖의 파일·하위 폴더(사용자가 복사해 둔 h3d 등)가 있는 폴더는 지우거나 옮기지 않는다.
-$DeployFilePattern = '^(?:[^\\/]+\.(?:tcl|bat|ps1)|README(?:\.md|\.txt)?|VERSION\.txt|esl_[a-z_]+_fallback\.json)$'
-
-function Get-ForeignFiles([string]$Dir) {
-    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
-    $out = @()
-    foreach ($e in @(Get-ChildItem -Force -LiteralPath $Dir)) {
-        if ($e.PSIsContainer -or ($e.Name -notmatch $DeployFilePattern)) { $out += $e.FullName }
-    }
-    return $out
-}
-
-# 배포 산출물 이외 파일이 있으면 목록을 경고하고 중단(아무것도 지우거나 옮기지 않음)
-function Assert-OnlyDeployFiles([string]$Dir) {
-    $foreign = @(Get-ForeignFiles $Dir)
-    if ($foreign.Count -eq 0) { return }
-    Say "    배포 폴더에 배포 산출물이 아닌 파일이 있어 지우거나 옮기지 않고 중단합니다: $Dir" 'Red'
-    foreach ($p in $foreign) { Say "      $p" 'Yellow' }
-    Say '    h3d 등 데이터는 배포 폴더에 두지 마세요(update 때 정리됨). 위 파일을 다른 곳으로 옮긴 뒤 다시 실행하세요.' 'Yellow'
-    throw "배포 폴더에 사용자 파일 $($foreign.Count)개: $Dir"
-}
-
-# 링크를 따라가지 않고 파일·폴더를 하나씩 지운다(deploy_dir 아래만). 링크·사용자 파일을 만나면 중단.
-function Remove-DeployTree([string]$Path) {
-    $full = Assert-InsideDeployDir $Path
-    if (-not (Test-Path -LiteralPath $full)) { return }
-    if (Test-IsLink $full) { throw "링크(junction/symlink)는 지우지 않습니다: $full" }
-    Assert-OnlyDeployFiles $full
-    foreach ($f in [IO.Directory]::GetFiles($full)) {
-        $fi = New-Object IO.FileInfo($f)
-        if ($fi.Attributes -band [IO.FileAttributes]::ReadOnly) { $fi.Attributes = $fi.Attributes -bxor [IO.FileAttributes]::ReadOnly }
-        [IO.File]::Delete($f)
-    }
-    foreach ($d in [IO.Directory]::GetDirectories($full)) { Remove-DeployTree $d }
-    [IO.Directory]::Delete($full, $false)
-}
-
-function New-Wrapper([string]$Dir, [string]$Name, [string]$Mode) {
-    $usage = if ($Mode -eq 'probe') { 'ESL_probe.bat <h3d> [<h3d> ...] [<part>]' } else { 'ESL_extract.bat <h3d> [<h3d> ...] [<part>]   (part default: setting default_part)' }
-    $lines = @(
-        '@echo off',
-        'setlocal DisableDelayedExpansion',
-        "rem $usage",
-        'rem Drag and drop h3d file(s) onto this file. Output: <work_root>\<h3d name>\' + $(if ($Mode -eq 'probe') { 'probe' } else { 'csv' }),
-        'rem Generated by scripts\windows\update.ps1 - do not edit (overwritten on update).',
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0esl_run.ps1`" -Mode $Mode %*",
-        'echo.',
-        'pause',
-        'exit /b 0'
-    )
-    [IO.File]::WriteAllText((Join-Path $Dir $Name), (($lines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
-}
+# 폴더 rename 없음: 새 버전은 versions\<해시>\ 에 쓰고, 활성 버전은 current_version.txt 파일 하나만 교체한다.
+# current\ 에는 버전과 무관한 런처만 둔다(내용이 바뀐 경우에만 파일 단위 덮어쓰기, 잠겨 있으면 경고).
 
 function Publish-Deployment($Cfg, [string]$Version) {
     Stage "배포 (버전 $Version)"
     $tclDir = Join-Path $RepoRoot 'resources\tcl'
-    $sources = @(Get-ChildItem -LiteralPath $tclDir -Filter '*.tcl' -File) + @(Get-Item -LiteralPath (Join-Path $tclDir 'README.md'))
     $runner = Join-Path $PSScriptRoot 'esl_run.ps1'
-    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "실행기 없음: $runner" }
+    $launchPs1 = Join-Path $PSScriptRoot 'esl_launch.ps1'
+    foreach ($f in @($runner, $launchPs1)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "실행기 없음: $f" } }
+    $sources = @(@(Get-ChildItem -LiteralPath $tclDir -Filter '*.tcl' -File | ForEach-Object { $_.FullName }) +
+        @((Join-Path $tclDir 'README.md'), $runner))
 
     New-Item -ItemType Directory -Force -Path $script:DeployDir | Out-Null
     if (Test-IsLink $script:DeployDir) { throw "deploy_dir 가 링크입니다. 실제 폴더를 지정하세요: $($script:DeployDir)" }
-    $verDir = Join-Path $script:DeployDir $Version
-    $current = Join-Path $script:DeployDir 'current'
-    $staging = Join-Path $script:DeployDir 'current.new'
-
-    # 사전 점검: 교체·정리로 지우거나 옮길 폴더(current, current.new, 같은 버전, 정리 대상 버전)에
-    # 배포 산출물 이외 파일이 있으면 아무것도 바꾸기 전에 중단
-    $versions = @(Get-ChildItem -LiteralPath $script:DeployDir -Directory |
-        Where-Object { $_.Name -match '^[0-9a-f]{7,40}$' -and $_.Name -ne $Version } |
-        Sort-Object LastWriteTime -Descending)
-    $excess = @($versions | Select-Object -Skip ($KeepVersions - 1))
-    $touched = @($current, $staging, $verDir) + @($excess | ForEach-Object { $_.FullName })
-    $foreignAll = @()
-    foreach ($d in $touched) { $foreignAll += @(Get-ForeignFiles $d) }
-    if ($foreignAll.Count -gt 0) {
-        Say '배포 폴더에 배포 산출물(*.tcl, *.bat, *.ps1, README, VERSION.txt)이 아닌 파일이 있습니다. 지우거나 옮기지 않고 중단합니다:' 'Red'
-        foreach ($p in $foreignAll) { Say "    $p" 'Yellow' }
-        Say '    h3d 는 배포 폴더에 복사하지 말고 원본 위치의 파일을 ESL_*.bat 위로 끌어다 놓으세요. 위 파일을 다른 곳으로 옮긴 뒤 다시 실행하세요.' 'Yellow'
-        Add-Check 'deploy' 'FAIL' "배포 폴더에 사용자 파일 $($foreignAll.Count)개 (목록은 로그)"
-        throw "배포 폴더에 배포 산출물이 아닌 파일 $($foreignAll.Count)개 - 업데이트 중단(변경 없음)"
+    $versionsRoot = Join-Path $script:DeployDir 'versions'
+    $currentDir = Join-Path $script:DeployDir 'current'
+    foreach ($d in @($versionsRoot, $currentDir)) {
+        if (Test-IsLink $d) { throw "링크(junction/symlink)는 쓰지 않습니다. 지우고 다시 실행하세요: $d" }
+        New-Item -ItemType Directory -Force -Path $d | Out-Null
     }
+    $previous = Read-CurrentVersion $script:DeployDir
 
-    if (Test-Path -LiteralPath $verDir) { Remove-DeployTree $verDir }
-    New-Item -ItemType Directory -Force -Path $verDir | Out-Null
-    foreach ($s in $sources) { Copy-Item -LiteralPath $s.FullName -Destination $verDir -Force; Say "    복사: $($s.Name)" }
-    Copy-Item -LiteralPath $runner -Destination $verDir -Force
-    New-Wrapper $verDir 'ESL_probe.bat' 'probe'
-    New-Wrapper $verDir 'ESL_extract.bat' 'extract'
-    [IO.File]::WriteAllText((Join-Path $verDir 'VERSION.txt'), ("version={0}`r`nrepo={1}`r`ndeployed={2}`r`n" -f $Version, $RepoRoot, (Get-Date).ToString('s')), (New-Object Text.UTF8Encoding($false)))
-    (Get-Item -LiteralPath $verDir).LastWriteTime = Get-Date
+    # 1) 버전 폴더: 같은 내용이 있으면 재사용, 없으면 새 폴더에 쓴다(기존 폴더는 고치지 않음)
+    $slot = Find-VersionSlot $versionsRoot $Version $sources
+    if ($slot.Reuse) {
+        Say "    versions\$($slot.Name) 재사용(내용 같음)"
+    }
+    else {
+        New-Item -ItemType Directory -Force -Path $slot.Path | Out-Null
+        foreach ($s in $sources) { Copy-Item -LiteralPath $s -Destination $slot.Path -Force; Say "    복사: $(Split-Path -Leaf $s)" }
+        [IO.File]::WriteAllText((Join-Path $slot.Path 'VERSION.txt'), ("version={0}`r`nrepo={1}`r`ndeployed={2}`r`n" -f $slot.Name, $RepoRoot, (Get-Date).ToString('s')), (New-Object Text.UTF8Encoding($false)))
+        Say "    versions\$($slot.Name) 작성" 'Green'
+    }
+    (Get-Item -LiteralPath $slot.Path).LastWriteTime = Get-Date   # 정리 때 최근 버전으로 남게
 
-    # current 교체: current.new 준비 -> current 를 current.old.<ts> 로 -> current.new 를 current 로
-    $oldDir = Join-Path $script:DeployDir ('current.old.' + (Get-Date).ToString('yyyyMMdd_HHmmss'))
-    if (Test-Path -LiteralPath $staging) { Remove-DeployTree $staging }
-    New-Item -ItemType Directory -Force -Path $staging | Out-Null
-    foreach ($f in [IO.Directory]::GetFiles($verDir)) { Copy-Item -LiteralPath $f -Destination $staging -Force }
-    $hadCurrent = Test-Path -LiteralPath $current
-    if ($hadCurrent) {
-        if (Test-IsLink $current) { throw "current 가 링크입니다: $current" }
-        try { Assert-OnlyDeployFiles $current }   # 사전 점검 이후 생긴 파일 대비(옮기기 직전 재확인)
-        catch { Remove-DeployTree $staging; throw }
-        try { [IO.Directory]::Move($current, $oldDir) }
-        catch {
-            Remove-DeployTree $staging
-            throw "current 를 교체하지 못했습니다(열린 창·탐색기·실행 중인 ESL 을 닫고 다시 실행). 이전 버전은 그대로입니다: $($_.Exception.Message)"
+    # 2) 활성 버전 포인터 교체(임시 파일 -> 파일 단위 교체, 3회 재시도). 실패하면 이전 버전 그대로 throw.
+    if ($previous -ceq $slot.Name) { Say "    활성 버전 그대로: $($slot.Name)" 'Green' }
+    else {
+        $tries = Set-CurrentVersion $script:DeployDir $slot.Name 3 1000
+        Say ("    활성 버전: {0} -> {1}{2}" -f $(if ($previous) { $previous } else { '(없음)' }), $slot.Name, $(if ($tries -gt 1) { " ($tries 회째 성공)" } else { '' })) 'Green'
+    }
+    Write-Log "POINTER $($slot.Name)"
+
+    # 3) current 런처: 내용이 바뀐 경우에만 덮어쓰기. 잠겨 있으면 경고만(런처는 버전과 무관)
+    $want = [ordered]@{
+        'ESL_probe.bat'   = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'probe'))
+        'ESL_extract.bat' = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'extract'))
+        'esl_launch.ps1'  = [IO.File]::ReadAllBytes($launchPs1)
+    }
+    $launchersOk = $true
+    foreach ($name in $want.Keys) {
+        $r = Update-LauncherFile (Join-Path $currentDir $name) $want[$name]
+        if ($r -eq 'written') { Say "    런처 갱신: current\$name" }
+        elseif ($r -ne 'same') {
+            $launchersOk = $false
+            Say "    런처를 갱신하지 못했습니다(다음 update 에서 다시 시도): current\$name - $r" 'Yellow'
+            Add-Check "런처 $name" 'WARN' "갱신 못 함: $r"
         }
     }
-    try { [IO.Directory]::Move($staging, $current) }
-    catch {
-        if ($hadCurrent) { [IO.Directory]::Move($oldDir, $current) }
-        throw "current 교체 실패, 이전 버전으로 되돌렸습니다: $($_.Exception.Message)"
-    }
-    if ($hadCurrent) {
-        try { Remove-DeployTree $oldDir } catch { Say "    이전 current 정리 실패(무시): $oldDir" 'Yellow' }
-    }
-    Say "    current -> $Version" 'Green'
 
-    # 오래된 버전 정리: 최근 $KeepVersions 개 초과분만 (사전 점검한 목록; Remove-DeployTree 가 다시 확인)
-    if ($excess.Count -gt 0) {
-        Say ("    오래된 버전 정리 대상: {0}" -f (($excess | ForEach-Object { $_.Name }) -join ', '))
-        foreach ($d in $excess) {
-            try { Remove-DeployTree $d.FullName; Write-Log "REMOVED $($d.FullName)" }
-            catch { Say "    정리 실패(무시): $($d.FullName) - $($_.Exception.Message)" 'Yellow' }
+    # 4) 예전 구조 이전: current 에 직접 있던 배포 산출물(TCL, esl_run.ps1 등)만 파일 단위로 정리.
+    #    런처가 모두 새 것일 때만(예전 런처가 남았으면 예전 파일이 필요). 잠겨 못 지우면 경고만.
+    $legacy = @(Get-LegacyArtifacts $currentDir)
+    if ($legacy.Count -gt 0) {
+        if ($launchersOk) {
+            Say "    예전 구조 정리: current 의 배포 산출물 $($legacy.Count)개"
+            foreach ($f in $legacy) {
+                try { Remove-DeployFile $f; Write-Log "REMOVED $f" }
+                catch { Say "    지우지 못함(무시, 동작에는 영향 없음): $f - $($_.Exception.Message)" 'Yellow' }
+            }
         }
+        else { Say '    예전 런처가 남아 있어 current 의 예전 배포 산출물은 이번에는 그대로 둡니다.' 'Yellow' }
     }
-    return $current
+    $foreign = @(Get-ForeignFiles $currentDir)
+    if ($foreign.Count -gt 0) {
+        Say "    current 에 배포 산출물이 아닌 파일 $($foreign.Count)개(그대로 둠). h3d 는 원본 위치에서 끌어다 놓으세요(current 안의 h3d 는 거부):" 'Yellow'
+        foreach ($p in $foreign) { Say "      $p" 'Yellow' }
+    }
+    foreach ($d in @(Get-LegacyDeployDirs $script:DeployDir)) {
+        try { Remove-DeployTree $d; Say "    예전 버전 폴더 정리: $d"; Write-Log "REMOVED $d" }
+        catch { Say "    예전 폴더를 남겨 둠(다음 update 에서 다시 시도): $d - $($_.Exception.Message)" 'Yellow' }
+    }
+
+    # 5) 오래된 버전 정리: 최근 $KeepVersions 개 + 활성 버전 유지. 잠김·사용자 파일이면 건너뜀(오류 아님)
+    $active = Read-CurrentVersion $script:DeployDir
+    $all = @(Get-ChildItem -Force -LiteralPath $versionsRoot -Directory)
+    $prune = @(Select-VersionsToPrune $all $active $KeepVersions)
+    foreach ($name in $prune) {
+        $d = Join-Path $versionsRoot $name
+        try { Remove-DeployTree $d; Say "    오래된 버전 정리: versions\$name"; Write-Log "REMOVED $d" }
+        catch { Say "    정리 건너뜀(다음 update 에서 다시 시도): versions\$name - $($_.Exception.Message)" 'Yellow' }
+    }
+
+    return [pscustomobject]@{ Current = $currentDir; Active = (Join-Path $versionsRoot $active); Version = $active }
 }
 
 # ---- 점검 ------------------------------------------------------------------------------------
-function Test-Environment($Cfg, [string]$CurrentDir, [string]$WorkRoot, [string[]]$Protected) {
+function Test-Environment($Cfg, $Deploy, [string]$WorkRoot, [string[]]$Protected) {
     Stage '점검'
     $hw = Expand-ConfigPath ([string]$Cfg.hw_exe)
     if ($hw -and (Test-Path -LiteralPath $hw -PathType Leaf)) { Add-Check 'hw.exe' 'OK' $hw }
     else { Add-Check 'hw.exe' 'FAIL' "없음: '$hw' -> 설정 hw_exe 수정" }
 
-    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1', 'ESL_probe.bat', 'ESL_extract.bat')) {
-        $p = Join-Path $CurrentDir $n
+    if ($Deploy.Version) { Add-Check $PointerName 'OK' $Deploy.Version } else { Add-Check $PointerName 'FAIL' '활성 버전을 읽지 못함' }
+    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1')) {
+        $p = Join-Path $Deploy.Active $n
+        if (Test-Path -LiteralPath $p -PathType Leaf) { Add-Check $n 'OK' $p } else { Add-Check $n 'FAIL' "없음: $p" }
+    }
+    foreach ($n in $LauncherNames) {
+        $p = Join-Path $Deploy.Current $n
         if (Test-Path -LiteralPath $p -PathType Leaf) { Add-Check $n 'OK' $p } else { Add-Check $n 'FAIL' "없음: $p" }
     }
 
@@ -365,9 +321,10 @@ try {
     if ($SkipGit) { Add-Check 'git' 'WARN' '-SkipGit: git 최신화 생략' } else { Update-Repository $want }
 
     $version = ((Invoke-GitChecked @('rev-parse', '--short', 'HEAD') '버전 확인').Output | Select-Object -First 1).Trim()
-    $currentDir = Publish-Deployment $cfg $version
-    Add-Check 'deploy' 'OK' "$currentDir ($version)"
-    Test-Environment $cfg $currentDir $workRoot $protected
+    $deploy = Publish-Deployment $cfg $version
+    $currentDir = $deploy.Current
+    Add-Check 'deploy' 'OK' "$($deploy.Active) (활성 $($deploy.Version))"
+    Test-Environment $cfg $deploy $workRoot $protected
 
     Show-Checks
     $failed = @($script:Checks | Where-Object { $_.'결과' -eq 'FAIL' })

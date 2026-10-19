@@ -15,7 +15,8 @@
 
 출력 폴더::
 
-  01_extract/  model.npz, model_meta.json, strain_tensor.npz, disp.npz, frames.json
+  01_extract/  model.npz, model_meta.json, final.npz, history.npz, strain_frames.npz, disp.npz, frames.json
+               (§7.3; frames.json 에 전단 규약 판정 shear 추가)
   02_tstar/    tstar.json, history.csv, hotspots.csv, candidates.csv
   03_bc/       support.json
   04_esl/      u_rel.npz, u_rel.csv, f_eq.npz, f_eq.csv, esl_summary.json
@@ -31,6 +32,7 @@ import hashlib
 import json
 import os
 import time as _time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -41,17 +43,19 @@ from esl import config as _config
 from esl.errors import EslError
 from esl.export import all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
-from esl.io import pack_results
+from esl.io import RESULT_FILES, decide_shear, pack_results, tensor_eps
+from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel
 from esl.rad import parse_rad, scan_includes
 
 STAGES = ("extract", "tstar", "esl", "validate", "export")
+EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export")
 BACKUP_DIR = "_backup"
 RUN_JSON = "run.json"
-RESULT_FILES = ("frames.csv", "model.csv", "strain.csv", "disp.csv", "done.json")
+HOT_K_WARN = 1000          # extract.hot_k 상한은 없고 이보다 크면 경고
 _HASH_CHUNK = 4 * 1024 * 1024
 
 
@@ -187,9 +191,10 @@ class StoredModel:
     max_ids: dict = field(default_factory=dict)
     includes: list = field(default_factory=list)
 
-    def shell(self, drill_factor: float) -> ShellModel:
+    def shell(self, drill_factor: float, backend: str = "auto", iter_rtol: float = 1e-10,
+              iter_maxiter: int | None = None) -> ShellModel:
         return ShellModel(self.x0, self.conn, self.elem_type, self.thickness, self.E, self.nu,
-                          drill_factor=drill_factor)
+                          drill_factor=drill_factor, backend=backend, iter_rtol=iter_rtol, iter_maxiter=iter_maxiter)
 
     def centroids(self) -> np.ndarray:
         q = self.elem_type == 4
@@ -259,6 +264,8 @@ class Context:
     protected: list = field(default_factory=list)
     out_real: str = ""
     includes: list = field(default_factory=list)
+    tag: str | None = None                      # 호출자 실행 태그(esl_summary.json·validation.json 에 기록)
+    export_targets: tuple = EXPORT_TARGETS      # 내보낼 대상(radioss_inc | fem | csv)
 
     def p(self, *parts) -> str:
         return os.path.join(self.out, *parts)
@@ -316,26 +323,33 @@ class Context:
         return csvout.CsvFormat(c["delimiter"], c["float_format"])
 
 
-def _eq_by_layer(eps, mode: str) -> np.ndarray:
-    """eps (..., 2, 3) → ε_eq (...) — 설정 extract.shell_layer."""
-    if mode == "max":
-        return strain.eps_eq_max_layer(eps)
-    if mode == "bottom":
-        return strain.eps_eq(eps[..., 0, :])
-    if mode == "top":
-        return strain.eps_eq(eps[..., 1, :])
-    raise EslError("CONFIG_INVALID", f"extract.shell_layer: {mode}")
+def _solver_eq(eps, layers) -> np.ndarray:
+    """ShellModel.strains (..., 2, 3) → ε_eq (...) — 설정 extract.layers (mid = (bottom+top)/2 = 막 z=0, 여럿이면 최대)."""
+    eps = np.asarray(eps, dtype=np.float64)
+    vals = []
+    for lay in layers:
+        if lay == "mid":
+            e = 0.5 * (eps[..., 0, :] + eps[..., 1, :])
+        elif lay == "bottom":
+            e = eps[..., 0, :]
+        elif lay == "top":
+            e = eps[..., 1, :]
+        else:
+            raise EslError("CONFIG_INVALID", f"extract.layers: {lay}")
+        vals.append(strain.eps_eq(e))
+    return np.max(np.stack(vals), axis=0)
 
 
-def _exclude_mask(ctx: Context, elem_id) -> np.ndarray | None:
+def _exclude_mask(ctx: Context, all_ids, sub_ids=None) -> np.ndarray | None:
+    """tstar.exclude_elem_ids → sub_ids(기본 all_ids) 위 bool 마스크. 대상 파트에 없는 ID 는 경고."""
     ids = ctx.cfg["tstar"]["exclude_elem_ids"]
     if not ids:
         return None
     ids = np.asarray(ids, dtype=np.int64)
-    known = np.isin(ids, elem_id)
+    known = np.isin(ids, all_ids)
     if not known.all():
         ctx.warnings.append(f"tstar.exclude_elem_ids 중 대상 파트에 없는 요소 무시: {ids[~known][:10].tolist()}")
-    return np.isin(elem_id, ids)
+    return np.isin(all_ids if sub_ids is None else sub_ids, ids)
 
 
 def _ids_to_idx(sorted_ids: np.ndarray, ids, what: str) -> np.ndarray:
@@ -364,9 +378,46 @@ def _check_inputs_unchanged(ctx: Context) -> None:
             ctx.warnings.append(f"입력 파일이 추출 이후 바뀜(size/mtime): {p} — extract 부터 다시 실행 권장")
 
 
+# ---------------------------------------------------------------------- 01_extract 읽기 도구
+def _frames_meta(ctx: Context) -> dict:
+    return _read_json(ctx.p(D_EXTRACT, "frames.json"))
+
+
+def _shear_factor(ctx: Context, meta: dict) -> float:
+    sh = meta.get("shear")
+    if not isinstance(sh, dict) or "factor" not in sh:
+        ctx.warnings.append("frames.json 에 전단 규약(shear) 없음 — 텐서 규약으로 가정(extract 다시 실행 권장)")
+        return 1.0
+    return float(sh["factor"])
+
+
+def _history(ctx: Context, model: StoredModel):
+    """history.npz + H 의 모델 위치."""
+    hz = _load_npz(ctx.p(D_EXTRACT, "history.npz"))
+    hp = _lookup_pos(model.elem_id, hz["elem_id"])
+    if np.any(hp < 0):
+        raise EslError("ID_MISMATCH", "history.npz elem_id 중 model.npz 에 없는 요소가 있음")
+    return hz, hp
+
+
+def _lookup_pos(sorted_ids, ids) -> np.ndarray:
+    sorted_ids = np.asarray(sorted_ids)
+    ids = np.asarray(ids)
+    pos = np.searchsorted(sorted_ids, ids)
+    pc = np.minimum(pos, max(sorted_ids.size - 1, 0))
+    return np.where(sorted_ids[pc] == ids, pc, -1)
+
+
+def _metric_series(hz: dict, factor: float) -> dict:
+    """지표 이력 (F,H): max_strain = ε_eq(Max_Strain 텐서, 규약 보정), plastic_strain = epsp."""
+    return {"max_strain": strain.eps_eq(tensor_eps(hz["eps"], factor)),
+            "plastic_strain": np.asarray(hz["epsp"], dtype=np.float64)}
+
+
 # ====================================================================== S1 extract
 def stage_extract(ctx: Context) -> dict:
     c = ctx.cfg["case"]
+    ecfg = ctx.cfg["extract"]
     if not os.path.isfile(ctx.rad):
         raise EslError("INPUT_INVALID", f"rad 파일이 없음: {ctx.rad}")
     if not os.path.isdir(ctx.results):
@@ -377,11 +428,34 @@ def stage_extract(ctx: Context) -> dict:
                       include_path_map=c["include_path_map"] or None)
     ctx.protect(list(model.includes))          # include 폴더도 보호 → 겹치면 쓰기 전에 INPUT_INVALID
     d = ctx.fresh_dir(D_EXTRACT)
-    for fn in ("model.npz", "model_meta.json", "strain_tensor.npz", "disp.npz", "frames.json"):
+    for fn in ("model.npz", "model_meta.json", "final.npz", "history.npz", "strain_frames.npz", "disp.npz",
+               "frames.json"):
         ctx.f(d, fn)
     save_model(d, model)
-    info = pack_results(ctx.results, model, d, frame_stride=ctx.cfg["extract"]["frame_stride"])
+    info = pack_results(ctx.results, model, d, frame_stride=ecfg["frame_stride"])
     ctx.warnings += list(getattr(model, "warnings", [])) + list(info.get("warnings", []))
+
+    # 전단 규약(§7.1): 최종 프레임 전 요소의 HyperView vonMises 와 비교
+    fz = _load_npz(os.path.join(d, "final.npz"))
+    sh = decide_shear(fz["vm_hv"], fz["eps"], ecfg["shear_convention"])
+    mm = sh["max_rel_mismatch"]
+    if mm is None:
+        ctx.warnings.append("전단 규약 판정 불가(vonMises 가 모두 0) — 텐서 규약으로 가정")
+    elif mm > SHEAR_MISMATCH_WARN:
+        ctx.warnings.append(f"ε_eq(§4 공식, {sh['convention']}) 와 HyperView vonMises 의 최대 상대 불일치 {mm:.3g} > "
+                            f"{SHEAR_MISMATCH_WARN:g} (요소 {sh['n_used']}개, 중앙값 {sh['median'][sh['convention']]:.3g})")
+    fpath = ctx.f(d, "frames.json")
+    meta = _read_json(fpath)
+    meta["shear"] = sh
+    _write_json(fpath, meta)
+    if ecfg["hot_k"] > HOT_K_WARN:
+        ctx.warnings.append(f"extract.hot_k={ecfg['hot_k']} > {HOT_K_WARN}: history 이력이 n_frames×2·hot_k 행까지 커짐")
+    if meta.get("hot_k") not in (None, ecfg["hot_k"]):
+        ctx.warnings.append(f"TCL hot_k={meta.get('hot_k')} ≠ 설정 extract.hot_k={ecfg['hot_k']} "
+                            f"(TCL 을 -hot_k {ecfg['hot_k']} 로 다시 실행하거나 설정을 맞출 것)")
+    rt = meta.get("reach_rtol")
+    if rt is not None and not np.isclose(float(rt), ctx.cfg["tstar"]["reach_rtol"], rtol=1e-9, atol=0.0):
+        ctx.warnings.append(f"TCL reach_rtol={rt} ≠ 설정 tstar.reach_rtol={ctx.cfg['tstar']['reach_rtol']}")
 
     # 입력 지문(sha256 청크 해시)
     inputs = {"rad": _fingerprint(ctx.rad, True),
@@ -396,82 +470,193 @@ def stage_extract(ctx: Context) -> dict:
     s = {"part_id": model.part_id, "part_title": model.part_title, "units_label": model.units_label,
          "n_nodes": int(model.node_id.size), "n_elems": int(model.elem_id.size),
          "n_quad": int(np.sum(et == 4)), "n_tria": int(np.sum(et == 3)), "n_frames": info["n_frames"],
+         "n_hot": info["n_hot"], "frames_D": info["frames_D"], "candidate_frames": info["candidate_frames"],
+         "shear": {"convention": sh["convention"], "mode": sh["mode"], "max_rel_mismatch": mm,
+                   "median": sh["median"]},
          "mats": model.mats, "max_ids": model.max_ids}
     ctx.echo(f"[extract] 파트 {model.part_id} '{model.part_title}': 노드 {s['n_nodes']}, 요소 {s['n_elems']} "
-             f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 프레임 {s['n_frames']}")
+             f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 이력 프레임 {s['n_frames']}, H {s['n_hot']}요소, "
+             f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}"
+             + (f" (vonMises 최대 불일치 {mm:.2e})" if mm is not None else ""))
     return s
 
 
 # ====================================================================== S2 tstar
 def _select_frame(tj: dict, frame: int | None) -> dict:
+    """자동 t* 또는 --frame (후보 프레임 D 안에서만)."""
     if frame is None:
         return dict(tj["selected"])
-    for cnd in tj["candidates"]:
-        if int(cnd["frame_index"]) == int(frame):
-            return {"frame_index": int(cnd["frame_index"]), "time": cnd["time"], "elem_id": cnd["elem_id"],
-                    "eps_eq": cnd["eps_max"], "source": "user"}
-    raise EslError("FRAME_NOT_CANDIDATE",
-                   f"frame {frame} 은 후보 시점이 아님 (후보 frame_index: {[c['frame_index'] for c in tj['candidates']]})")
+    D = {int(x["frame_index"]): x for x in tj["frames_D"]}
+    if int(frame) not in D:
+        raise EslError("FRAME_NOT_CANDIDATE",
+                       f"frame {frame} 은 후보 프레임 D 가 아님 (D: {sorted(D)} — 변위·변형률은 D 프레임에만 있음)")
+    c = next((c for c in tj["candidates"] if int(c["frame_index"]) == int(frame)), None)
+    return {"frame_index": int(frame), "time": float(D[int(frame)]["time"]),
+            "elem_id": c["elem_id"] if c else None, "value": c["value"] if c else None,
+            "metric": tj["metric"], "source": "user"}
 
 
 def stage_tstar(ctx: Context) -> dict:
-    _require(ctx.out, [f"{D_EXTRACT}/strain_tensor.npz"])
+    _require(ctx.out, [f"{D_EXTRACT}/history.npz", f"{D_EXTRACT}/frames.json", f"{D_EXTRACT}/strain_frames.npz"])
     model = load_model(ctx.out)
-    st = _load_npz(ctx.p(D_EXTRACT, "strain_tensor.npz"))
-    if not np.array_equal(st["elem_id"], model.elem_id):
-        raise EslError("ID_MISMATCH", "strain_tensor.npz elem_id 가 model.npz 와 다름")
+    meta = _frames_meta(ctx)
+    factor = _shear_factor(ctx, meta)
+    hz, hp = _history(ctx, model)
     tcfg = ctx.cfg["tstar"]
-    mode = ctx.cfg["extract"]["shell_layer"]
-    eq = _eq_by_layer(st["eps"], mode)                    # (F,E)
-    C = model.centroids()
+    metric = tcfg["metric"]
+    rtol = float(tcfg["reach_rtol"])
+    C = model.centroids()[hp]
+    ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
     tw = tcfg["time_window"]
-    res = tstar.scan(st["time"], eq, C, tcfg["top_n_times"], tcfg["top_k_hotspots"], tcfg["hotspot_min_dist"],
-                     time_window=(tw[0], tw[1]), exclude_mask=_exclude_mask(ctx, model.elem_id))
-    fidx = st["frame_index"]
-    eid = model.elem_id
-    ts = res["tstar"]
-    auto = {"frame_index": int(fidx[ts["frame_pos"]]), "time": ts["time"], "elem_id": int(eid[ts["elem_pos"]]),
-            "eps_eq": ts["eps_eq"], "source": "auto"}
-    cands = [{"rank": c["rank"], "frame_index": int(fidx[c["frame_pos"]]), "time": c["time"],
-              "eps_max": c["eps_max"], "elem_id": int(eid[c["elem_pos"]])} for c in res["candidates"]]
-    hots = [{"rank": h["rank"], "elem_id": int(eid[h["elem_pos"]]), "eps_eq": h["eps_eq"],
-             "centroid": h["centroid"]} for h in res["hotspots"]]
-    tj = {"schema": "esl/tstar/1", "shell_layer": mode, "auto": auto, "candidates": cands, "hotspots": hots,
+    series = _metric_series(hz, factor)
+    tclq = {"max_strain": np.asarray(hz["vm_hv"], np.float64), "plastic_strain": series["plastic_strain"]}
+    fidx = hz["frame_index"].astype(np.int64)
+    hid = hz["elem_id"]
+    D = [int(x) for x in meta["frames_D"]]
+    tD = dict(zip(D, meta["time_D"]))
+    tcl_top_n = int(meta.get("top_n") or tcfg["top_n_times"])
+    tcl_rtol = float(meta["reach_rtol"]) if meta.get("reach_rtol") is not None else rtol
+    full = int(meta.get("frame_stride", 1)) == 1 and int(meta.get("n_frames_h3d", fidx.size)) == fidx.size
+
+    out: dict[str, dict] = {}
+    for m in METRICS:
+        # TCL 의 D 와 같은 양(vm_hv·epsp)·규칙으로 재계산해 일치 확인
+        tcl = (meta.get("candidate_frames") or {}).get(m)
+        if full:
+            py = [int(fidx[f]) for f, _ in tstar.candidate_frames(tclq[m], tcl_rtol, tcl_top_n)]
+            match = None if tcl is None else (py == [int(x) for x in tcl])
+        else:
+            py, match = None, None
+        check = {"tcl": tcl, "python": py, "match": match,
+                 "note": None if full else "frame_stride>1: 전 프레임 이력이 아니라 비교 생략"}
+        if match is False:
+            ctx.warnings.append(f"[{m}] TCL 후보 프레임 {tcl} ≠ Python 재계산 {py} (history.npz float32 반올림 등)")
+        try:
+            r = tstar.scan_reach(hz["time"], series[m], C, tcfg["top_n_times"], tcfg["top_k_hotspots"],
+                                 tcfg["hotspot_min_dist"], rtol, time_window=(tw[0], tw[1]), exclude_mask=ex)
+        except EslError as exc:
+            if m == metric:
+                raise
+            ctx.warnings.append(f"[{m}] t* 계산 불가: {exc.message}")
+            out[m] = {"error": f"{exc.code}: {exc.message}", "tcl_check": check}
+            continue
+        cands = [{"rank": c["rank"], "frame_index": int(fidx[c["frame_pos"]]), "time": c["time"],
+                  "elem_id": int(hid[c["elem_pos"]]), "value": c["value"], "eps_max": c["value"],
+                  "in_D": int(fidx[c["frame_pos"]]) in tD} for c in r["candidates"]]
+        ts = dict(cands[0])
+        adjusted = None
+        if not ts["in_D"]:
+            alt = next((c for c in cands if c["in_D"]), None)
+            msg = (f"[{m}] t* frame {ts['frame_index']} 이 후보 프레임 D {D} 에 없음(변위 없음)"
+                   + (f" → D 안의 후보 frame {alt['frame_index']} 사용" if alt else ""))
+            if alt is None and m == metric:
+                raise EslError("FRAME_NOT_CANDIDATE", msg + " — TCL 을 다시 실행(-top_n 증가)하거나 --frame 으로 D 안에서 지정")
+            ctx.warnings.append(msg)
+            adjusted = {"from": ts["frame_index"], "to": alt["frame_index"] if alt else None}
+            if alt is not None:
+                ts = dict(alt)
+        hots = [{"rank": h["rank"], "elem_id": int(hid[h["elem_pos"]]), "value": h["value"], "eps_eq": h["value"],
+                 "rising": h["rising"], "centroid": h["centroid"]} for h in r["hotspots"]]
+        out[m] = {"tstar": {k: ts[k] for k in ("frame_index", "time", "elem_id", "value")},
+                  "candidates": cands, "hotspots": hots, "adjusted": adjusted, "tcl_check": check,
+                  "history": {"time": r["history"]["time"], "m": r["history"]["m"]}}
+
+    sel_m = out[metric]
+    auto = {**sel_m["tstar"], "eps_eq": sel_m["tstar"]["value"], "metric": metric, "source": "auto"}
+    tj = {"schema": "esl/tstar/2", "metric": metric, "reach_rtol": rtol,
+          "shear": meta.get("shear", {}).get("convention"),
+          "frames_D": [{"frame_index": f, "time": tD[f]} for f in D],
+          "metrics": {m: {k: v for k, v in rec.items() if k != "history"} for m, rec in out.items()},
+          "auto": auto, "candidates": sel_m["candidates"], "hotspots": sel_m["hotspots"],
           "settings": dict(tcfg), "created_at": _utcnow()}
-    tj["selected"] = _select_frame({"selected": auto, "candidates": cands}, ctx.frame)
+    for m, rec in out.items():
+        if "history" in rec:
+            tj["metrics"][m]["history"] = {"time": rec["history"]["time"], "m": rec["history"]["m"]}
+    tj["selected"] = auto
+    tj["selected"] = _select_frame(tj, ctx.frame)
 
     d = ctx.fresh_dir(D_TSTAR)
     _write_json(ctx.f(d, "tstar.json"), tj)
     fmt = ctx.csvfmt()
-    h = res["history"]
-    csvout.write_csv(ctx.f(d, "history.csv"), csvout.HISTORY_HEADER,
-                     zip(h["time"], h["eps_max"], h["eps_hotspot1"]), fmt)
+    hist_cols = [out[m]["history"]["m"] if "history" in out[m] else np.full(fidx.size, np.nan) for m in METRICS]
+    csvout.write_csv(ctx.f(d, "history.csv"), ("frame_index", "time", "m_max_strain", "m_plastic_strain"),
+                     zip(fidx.tolist(), hz["time"], *hist_cols), fmt)
     csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
-                     ((x["rank"], x["elem_id"], x["eps_eq"], *x["centroid"]) for x in hots), fmt)
-    csvout.write_csv(ctx.f(d, "candidates.csv"), csvout.CANDIDATES_HEADER,
-                     ((x["rank"], x["frame_index"], x["time"], x["eps_max"], x["elem_id"]) for x in cands), fmt)
+                     ((x["rank"], x["elem_id"], x["value"], *x["centroid"]) for x in sel_m["hotspots"]), fmt)
+    csvout.write_csv(ctx.f(d, "candidates.csv"),
+                     ("metric", "rank", "frame_index", "time", "value", "elem_id", "in_D"),
+                     ((m, x["rank"], x["frame_index"], x["time"], x["value"], x["elem_id"], x["in_D"])
+                      for m in METRICS for x in out[m].get("candidates", [])), fmt)
     sel = tj["selected"]
-    ctx.echo(f"[tstar] t* = frame {sel['frame_index']} (time {sel['time']:.6g}, {sel['source']}), "
-             f"ε_eq max {sel['eps_eq']:.4g} @ elem {sel['elem_id']}, 후보 {len(cands)}개, hotspot {len(hots)}개")
-    return {"selected": sel, "auto": auto, "n_candidates": len(cands), "n_hotspots": len(hots)}
+    other = [m for m in METRICS if m != metric][0]
+    o = out[other].get("tstar")
+    ctx.echo(f"[tstar] t* = frame {sel['frame_index']} (time {sel['time']:.6g}, {sel['source']}, {metric} "
+             f"first-reach), 값 {auto['value']:.4g} @ elem {auto['elem_id']}, 후보 {len(sel_m['candidates'])}개, "
+             f"hotspot {len(sel_m['hotspots'])}개; {other}: "
+             + (f"t* frame {o['frame_index']} (값 {o['value']:.4g})" if o else "없음")
+             + f"; D {D}")
+    return {"selected": sel, "auto": auto, "metric": metric,
+            "tstar_by_metric": {m: out[m].get("tstar") for m in METRICS},
+            "tcl_check": {m: out[m]["tcl_check"]["match"] for m in METRICS},
+            "n_candidates": len(sel_m["candidates"]), "n_hotspots": len(sel_m["hotspots"])}
 
 
 # ====================================================================== 평가 hotspot·잡음 바닥
 NOISE_SEED = 20240917          # 잡음 섭동 고정 시드(재현성)
 _PRECISION = {"float32": np.float32, "float64": np.float64}
+SHEAR_MISMATCH_WARN = 0.05     # ε_eq vs HyperView vonMises 최대 상대 불일치 경고(§7.1)
 
 
-def _eval_hotspots(ctx: Context, model: StoredModel, st: dict, frame_index: int, time: float):
-    """t* 프레임 Radioss ε_eq 기준 평가 hotspot(상위 validation.hotspot_eval_count) 과 ε_rad (E,)."""
-    hit = np.flatnonzero(st["frame_index"] == int(frame_index))
-    if hit.size != 1:
-        raise EslError("FRAME_NOT_CANDIDATE", f"strain_tensor.npz 에 frame {frame_index} 이 없음")
-    mode = ctx.cfg["extract"]["shell_layer"]
-    eps_rad = _eq_by_layer(st["eps"][int(hit[0])], mode)            # (E,)
-    hs = tstar.scan(np.array([float(time)]), eps_rad[None, :], model.centroids(), 1,
-                    ctx.cfg["validation"]["hotspot_eval_count"], ctx.cfg["tstar"]["hotspot_min_dist"],
-                    exclude_mask=_exclude_mask(ctx, model.elem_id))["hotspots"]
-    return hs, eps_rad
+def _eval_hotspots(ctx: Context, model: StoredModel, frame_index: int):
+    """프레임 frame_index 의 검증 hotspot(§7.4)과 Radioss ε_eq (E,) (strain_frames, Mid=막, 전단 규약 보정).
+
+    hotspot = 그 프레임에서 지표(tstar.metric)가 상승 중인 H 요소(+ 그 프레임에 최종값에 처음 도달한 1위 요소),
+    거리 필터 후 상위 top_k_hotspots. 각 요소의 Max_Strain ε_eq 도 상승 중이어야 비교 가능(hold 값 = 순간값),
+    아니면 comparable=False, reason 기록. 비교 가능한 것 중 앞에서 hotspot_eval_count 개를 compared=True.
+    """
+    meta = _frames_meta(ctx)
+    factor = _shear_factor(ctx, meta)
+    hz, hp = _history(ctx, model)
+    fh = np.flatnonzero(hz["frame_index"].astype(np.int64) == int(frame_index))
+    sz = _load_npz(ctx.p(D_EXTRACT, "strain_frames.npz"))
+    fd = np.flatnonzero(sz["frame_index"].astype(np.int64) == int(frame_index))
+    if fh.size != 1 or fd.size != 1:
+        raise EslError("FRAME_NOT_CANDIDATE", f"history.npz·strain_frames.npz 에 frame {frame_index} 이 없음")
+    if not np.array_equal(sz["elem_id"], model.elem_id):
+        raise EslError("ID_MISMATCH", "strain_frames.npz elem_id 가 model.npz 와 다름")
+    f = int(fh[0])
+    tcfg = ctx.cfg["tstar"]
+    rtol = float(tcfg["reach_rtol"])
+    series = _metric_series(hz, factor)
+    v = series[tcfg["metric"]]
+    eqh = series["max_strain"]
+    ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
+    fr = tstar.first_reach(v, rtol)
+    fin = v[-1]
+    first = None
+    for e in np.lexsort((np.arange(fin.size), -fin)):
+        if fr[e] == f and fin[e] > 0 and (ex is None or not ex[e]):
+            first = int(e)
+            break
+    C = model.centroids()
+    hs = tstar.rising_hotspots(v, f, C[hp], tcfg["top_k_hotspots"], tcfg["hotspot_min_dist"], rtol,
+                               exclude_mask=ex, first=first)
+    eps_rad = strain.eps_eq(tensor_eps(sz["eps"][int(fd[0])], factor))          # (E,)
+    n_eval = int(ctx.cfg["validation"]["hotspot_eval_count"])
+    out, k = [], 0
+    for h in hs:
+        e = h["elem_pos"]
+        mp = int(hp[e])
+        rise = bool(eqh[f, e] > eqh[f - 1, e] * (1.0 + rtol)) if f > 0 else bool(eqh[f, e] > 0)
+        rec = {"rank": h["rank"], "elem_pos": mp, "elem_id": int(model.elem_id[mp]), "value": h["value"],
+               "eps_rad": float(eps_rad[mp]), "comparable": rise, "compared": False,
+               "reason": None if rise else "Max_Strain hold 값이 이 프레임에서 상승 중이 아님(순간값 아님)",
+               "centroid": C[mp].tolist()}
+        if rise and k < n_eval:
+            rec["compared"] = True
+            k += 1
+        out.append(rec)
+    return out, eps_rad
 
 
 def _with_rot(sm: ShellModel, u_t: np.ndarray) -> np.ndarray:
@@ -485,18 +670,19 @@ def noise_floor(ctx: Context, sm: ShellModel, X0, u_total, u_rel, F, hot_pos) ->
     δ = 0.5·ulp(precision)·max|X0+u| (= eps_mach/2·max|x|; float32 → 2^-24·max|x|).
     고정 시드 균일 ±δ 섭동 n 개 → F_noise = condensed_forces(noise), ε(u_rel+noise) (회전은 condensation).
     force_rel = max_s rms(F_noise)/rms(F_eq), hotspot_strain_rel = max_s max_h |ε_eq(u_rel+n)−ε_eq(u_rel)|/ε_eq(u_rel).
+    ε_eq 는 extract.layers(기본 막 z=0).
     """
     prec = ctx.cfg["extract"]["disp_precision"]
     vcfg = ctx.cfg["validation"]
     n_s = int(vcfg["noise_samples"])
-    mode = ctx.cfg["extract"]["shell_layer"]
+    layers = ctx.cfg["extract"]["layers"]
     xmax = float(np.max(np.abs(np.asarray(X0) + np.asarray(u_total)))) if np.size(X0) else 0.0
     delta = 0.5 * float(np.finfo(_PRECISION[prec]).eps) * xmax
     rms = lambda a: float(np.sqrt(np.mean(np.sum(np.asarray(a) ** 2, axis=1)))) if np.size(a) else 0.0
     rms_f = rms(F)
     hot_pos = np.asarray(hot_pos, dtype=np.int64)
     eps_rel = sm.strains(_with_rot(sm, u_rel))
-    eq0 = _eq_by_layer(eps_rel, mode)[hot_pos]
+    eq0 = _solver_eq(eps_rel, layers)[hot_pos]
     rng = np.random.default_rng(NOISE_SEED)
     f_rel, s_rel = [], []
     for _ in range(n_s):
@@ -504,7 +690,7 @@ def noise_floor(ctx: Context, sm: ShellModel, X0, u_total, u_rel, F, hot_pos) ->
         fn = sm.condensed_forces(n)
         f_rel.append(rms(fn) / rms_f if rms_f > 0 else float("inf"))
         if hot_pos.size:
-            eq1 = _eq_by_layer(eps_rel + sm.strains(_with_rot(sm, n)), mode)[hot_pos]
+            eq1 = _solver_eq(eps_rel + sm.strains(_with_rot(sm, n)), layers)[hot_pos]
             with np.errstate(divide="ignore", invalid="ignore"):
                 r = np.where(eq0 > 0, np.abs(eq1 - eq0) / np.where(eq0 > 0, eq0, 1.0), np.inf)
             s_rel.append(float(np.max(r)))
@@ -515,6 +701,32 @@ def noise_floor(ctx: Context, sm: ShellModel, X0, u_total, u_rel, F, hot_pos) ->
             "hotspot_elem_pos": hot_pos.tolist(),
             "criteria": {"noise_force_rel_warn": vcfg["noise_force_rel_warn"],
                          "noise_strain_rel_max": vcfg["noise_strain_rel_max"]}}
+
+
+S5_ITER_RTOL_MAX = 1e-12      # S5 전체계 solve 가 반복법일 때 상대잔차 상한(esl_core §7.5)
+
+
+def _shell(ctx: Context, model: StoredModel) -> ShellModel:
+    scfg = ctx.cfg["solver"]
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always", RuntimeWarning)
+        sm = model.shell(scfg["drill_factor"], scfg["backend"], scfg["iter_rtol"], scfg["iter_maxiter"])
+    ctx.warnings.extend(str(w.message) for w in wl)
+    return sm
+
+
+def _solver_call(ctx: Context, fn, *args):
+    """ShellModel 호출 중 RuntimeWarning(메모리 부족 → 반복법 전환, SuperLU 폴백 등)을 run 경고로 옮긴다."""
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always", RuntimeWarning)
+        out = fn(*args)
+    ctx.warnings.extend(str(w.message) for w in wl)
+    return out
+
+
+def solver_stats(sm: ShellModel) -> dict:
+    """ShellModel.stats(JSON 직렬화 가능한 사본)."""
+    return _jsonable(sm.stats)
 
 
 # ====================================================================== S3+S4 esl
@@ -529,7 +741,8 @@ def _support_candidates(ctx: Context, model: StoredModel):
 
 
 def stage_esl(ctx: Context) -> dict:
-    _require(ctx.out, [f"{D_EXTRACT}/disp.npz", f"{D_EXTRACT}/strain_tensor.npz", f"{D_TSTAR}/tstar.json"])
+    _require(ctx.out, [f"{D_EXTRACT}/disp.npz", f"{D_EXTRACT}/history.npz", f"{D_EXTRACT}/strain_frames.npz",
+                       f"{D_EXTRACT}/frames.json", f"{D_TSTAR}/tstar.json"])
     _check_inputs_unchanged(ctx)
     model = load_model(ctx.out)
     tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
@@ -539,7 +752,8 @@ def stage_esl(ctx: Context) -> dict:
         raise EslError("ID_MISMATCH", "disp.npz node_id 가 model.npz 와 다름")
     hit = np.flatnonzero(dz["frame_index"] == int(sel["frame_index"]))
     if hit.size != 1:
-        raise EslError("FRAME_NOT_CANDIDATE", f"disp.npz 에 frame {sel['frame_index']} 이 없음")
+        raise EslError("FRAME_NOT_CANDIDATE", f"disp.npz 에 frame {sel['frame_index']} 이 없음 "
+                                              f"(D: {dz['frame_index'].tolist()})")
     fpos = int(hit[0])
     X0 = model.x0
     nid = model.node_id
@@ -557,8 +771,8 @@ def stage_esl(ctx: Context) -> dict:
     # ---- S3 강체 제거, S4 F_eq
     u = dz["u"][fpos]
     u_rel, R, t, kinfo = kabsch.remove_rigid(X0, u)
-    sm = model.shell(ctx.cfg["solver"]["drill_factor"])
-    F = sm.condensed_forces(u_rel)
+    sm = _shell(ctx, model)
+    F = _solver_call(ctx, sm.condensed_forces, u_rel)
     mag = np.linalg.norm(F, axis=1)
     sum_abs = float(mag.sum())
     sumF = F.sum(axis=0)
@@ -577,10 +791,9 @@ def stage_esl(ctx: Context) -> dict:
     is_bc = np.zeros(nid.size, dtype=bool)
     is_bc[[i for i, _ in sup]] = True
 
-    # ---- 변위 정밀도 잡음 바닥
-    hs, _ = _eval_hotspots(ctx, model, _load_npz(ctx.p(D_EXTRACT, "strain_tensor.npz")),
-                           int(sel["frame_index"]), float(sel["time"]))
-    noise = noise_floor(ctx, sm, X0, u, u_rel, F, [h["elem_pos"] for h in hs])
+    # ---- 변위 정밀도 잡음 바닥 (검증 hotspot 기준)
+    hs, _ = _eval_hotspots(ctx, model, int(sel["frame_index"]))
+    noise = noise_floor(ctx, sm, X0, u, u_rel, F, [h["elem_pos"] for h in hs if h["compared"]])
     noise["hotspot_elem_id"] = [int(model.elem_id[e]) for e in noise.pop("hotspot_elem_pos")]
     vcfg = ctx.cfg["validation"]
     if noise["force_rel"] > vcfg["noise_force_rel_warn"]:
@@ -608,7 +821,8 @@ def stage_esl(ctx: Context) -> dict:
                        "max_f": {"node_id": int(nid[imax]), "mag": float(mag[imax])},
                        "n_nodes_nonzero": int(np.sum(mag > 0))},
             "supports": sup_rec["supports"], "support_mode": mode, "noise": noise,
-            "drill_factor": ctx.cfg["solver"]["drill_factor"], "created_at": _utcnow()}
+            "drill_factor": ctx.cfg["solver"]["drill_factor"], "backend": ctx.cfg["solver"]["backend"],
+            "solver": solver_stats(sm), "tag": ctx.tag, "created_at": _utcnow()}
     _write_json(ctx.f(d, "esl_summary.json"), summ)
     ctx.echo(f"[esl] frame {sel['frame_index']}: 강체회전 {kinfo['rot_deg']:.2f}°, ΣF=|{np.linalg.norm(sumF):.3e}|, "
              f"Σ|F|={sum_abs:.3e}, 평형 오차 {eq_rel:.2e} (모멘트 {mom_rel:.2e}), "
@@ -619,17 +833,65 @@ def stage_esl(ctx: Context) -> dict:
     noise_short = {k: noise[k] for k in ("disp_precision", "delta", "n_samples", "force_rel", "hotspot_strain_rel")}
     return {"noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
-            "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode}
+            "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
+            "solver": solver_stats(sm)}
 
 
 # ====================================================================== S5 validate
+DIRECT_BYTES_PER_ELEM = 80e3     # 직접법 인수분해 메모리 추정(SuperLU 실측 10만 요소 7.3 GB → 73 KB/요소, 보수적)
+FULL_SOLVE_MEM_FRAC = 0.8
+
+
+def available_memory() -> int | None:
+    """가용 메모리(바이트): /proc/meminfo MemAvailable, 없으면 sysconf, 모르면 None."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        return int(os.sysconf("SC_AVPHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def _solver_is_direct(sm: ShellModel) -> bool:
+    """ShellModel 이 직접법(SuperLU·CHOLMOD)인지. 반복법임을 밝히는 속성이 있을 때만 False."""
+    flag = getattr(sm, "is_direct", None)
+    if isinstance(flag, bool):
+        return flag
+    name = str(getattr(sm, "backend", "") or getattr(sm, "backend_name", "")).lower()
+    return not any(k in name for k in ("cg", "iter", "amg", "gmres"))
+
+
+def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
+    """validation.full_solve: always | never | auto(직접법이고 메모리 추정 ≤ 가용 × 0.8 이면 수행)."""
+    mode = ctx.cfg["validation"]["full_solve"]
+    need = float(DIRECT_BYTES_PER_ELEM * n_elems)
+    avail = available_memory()
+    direct = _solver_is_direct(sm)
+    rec = {"mode": mode, "direct": direct, "mem_need_est": need, "mem_avail": avail}
+    if mode == "always":
+        return {**rec, "run": True, "reason": "설정 always"}
+    if mode == "never":
+        return {**rec, "run": False, "reason": "설정 never"}
+    if not direct:
+        return {**rec, "run": True, "reason": f"auto: 반복법(rtol ≤ {S5_ITER_RTOL_MAX:g}), 직접법 메모리 불필요"}
+    if avail is not None and need > FULL_SOLVE_MEM_FRAC * avail:
+        return {**rec, "run": False,
+                "reason": f"직접법 메모리 추정 {need / 1e9:.1f} GB > 가용 {avail / 1e9:.1f} GB × {FULL_SOLVE_MEM_FRAC}"}
+    return {**rec, "run": True, "reason": "auto: 직접법, 메모리 충분" if avail is not None else "auto: 가용 메모리 모름"}
+
+
 _FAIL_REASON = {"disp_rms_rel": "DISP_RMS", "hotspot1_strain_rel_err": "HOTSPOT_STRAIN",
                 "reaction_rel": "REACTION", "noise_hotspot_strain_rel": "NOISE_FLOOR"}
 
 
 def stage_validate(ctx: Context) -> dict:
-    _require(ctx.out, [f"{D_EXTRACT}/strain_tensor.npz", f"{D_BC}/support.json", f"{D_ESL}/u_rel.npz",
-                       f"{D_ESL}/f_eq.npz", f"{D_ESL}/esl_summary.json"])
+    _require(ctx.out, [f"{D_EXTRACT}/strain_frames.npz", f"{D_EXTRACT}/history.npz", f"{D_BC}/support.json",
+                       f"{D_ESL}/u_rel.npz", f"{D_ESL}/f_eq.npz", f"{D_ESL}/esl_summary.json"])
     model = load_model(ctx.out)
     nid, X0 = model.node_id, model.x0
     ur = _load_npz(ctx.p(D_ESL, "u_rel.npz"))
@@ -641,34 +903,55 @@ def stage_validate(ctx: Context) -> dict:
     u_rel, F = ur["u_rel"], fz["f"]
     spc = [(int(i), s["dof"]) for i, s in zip(_ids_to_idx(nid, [s["node_id"] for s in sup], "support.json"), sup)]
 
-    sm = model.shell(ctx.cfg["solver"]["drill_factor"])
-    u_val, Rr = sm.solve(F, spc)
-    # 미소 강체 제거 후 비교(양쪽 모두 같은 사영 → 선형 왕복의 수치 일관성)
-    d_val, _, _ = kabsch.remove_linear_rigid(X0, u_val[:, :3])
-    d_rel, a_rel, w_rel = kabsch.remove_linear_rigid(X0, u_rel)
-    delta = d_val - d_rel
-    umax = float(np.max(np.linalg.norm(u_rel, axis=1)))
-    dn = np.linalg.norm(delta, axis=1)
-    disp_rms_rel = float(np.sqrt(np.mean(dn ** 2)) / umax) if umax > 0 else float("inf")
-    disp_max_rel = float(dn.max() / umax) if umax > 0 else float("inf")
-    sum_abs = float(np.linalg.norm(F, axis=1).sum())
-    reac_abs_rel = float(np.linalg.norm(Rr, axis=1).sum() / sum_abs) if sum_abs > 0 else 0.0
-    reac_sum_rel = float(np.linalg.norm(Rr.sum(axis=0)) / sum_abs) if sum_abs > 0 else 0.0
-    lin_rigid_rel = float(np.max(np.linalg.norm(u_rel - d_rel, axis=1)) / umax) if umax > 0 else 0.0
+    sm = _shell(ctx, model)
+    fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
+    if fs["run"]:
+        # 반복법이면 전체계는 rtol = min(설정, 1e-12) (직접법이면 영향 없음)
+        sm.iter_opts["rtol"] = min(float(ctx.cfg["solver"]["iter_rtol"]), S5_ITER_RTOL_MAX)
+        u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
+        # 미소 강체 제거 후 비교(양쪽 모두 같은 사영 → 선형 왕복의 수치 일관성)
+        d_val, _, _ = kabsch.remove_linear_rigid(X0, u_val[:, :3])
+        d_rel, a_rel, w_rel = kabsch.remove_linear_rigid(X0, u_rel)
+        delta = d_val - d_rel
+        umax = float(np.max(np.linalg.norm(u_rel, axis=1)))
+        dn = np.linalg.norm(delta, axis=1)
+        disp_rms_rel = float(np.sqrt(np.mean(dn ** 2)) / umax) if umax > 0 else float("inf")
+        disp_max_rel = float(dn.max() / umax) if umax > 0 else float("inf")
+        sum_abs = float(np.linalg.norm(F, axis=1).sum())
+        reac_abs_rel = float(np.linalg.norm(Rr, axis=1).sum() / sum_abs) if sum_abs > 0 else 0.0
+        reac_sum_rel = float(np.linalg.norm(Rr.sum(axis=0)) / sum_abs) if sum_abs > 0 else 0.0
+        lin_rigid_rel = float(np.max(np.linalg.norm(u_rel - d_rel, axis=1)) / umax) if umax > 0 else 0.0
+        eps_sol = sm.strains(u_val)
+    else:
+        # 전체 solve 생략: S4 의 u_rel + 응축 회전(rotations_for)으로 막 변형률 → hotspot 비교만
+        ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — hotspot 변형률만 비교, disp_rms_rel·반력 skipped")
+        u_val = _solver_call(ctx, _with_rot, sm, u_rel)
+        Rr = None
+        disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
+        eps_sol = sm.strains(u_val)
 
-    # hotspot ε_eq: Radioss(t* 프레임) vs 검증 해
-    st = _load_npz(ctx.p(D_EXTRACT, "strain_tensor.npz"))
-    mode = ctx.cfg["extract"]["shell_layer"]
-    hs, eps_rad = _eval_hotspots(ctx, model, st, int(summ["frame"]["frame_index"]), float(summ["frame"]["time"]))
-    eps_val = _eq_by_layer(sm.strains(u_val), mode)
+    # hotspot ε_eq: Radioss(t* 프레임, Mid) vs 검증 해 막 변형률(extract.layers)
+    layers = ctx.cfg["extract"]["layers"]
+    hs, eps_rad = _eval_hotspots(ctx, model, int(summ["frame"]["frame_index"]))
+    eps_val = _solver_eq(eps_sol, layers)
     vcfg = ctx.cfg["validation"]
-    hots = []
+    hots, excluded = [], []
     for h in hs:
         e = h["elem_pos"]
-        er, ev = float(eps_rad[e]), float(eps_val[e])
-        hots.append({"rank": h["rank"], "elem_id": int(model.elem_id[e]), "eps_rad": er, "eps_val": ev,
-                     "rel_err": abs(ev - er) / er if er > 0 else float("inf"), "centroid": h["centroid"]})
+        rec = {"rank": h["rank"], "elem_id": h["elem_id"], "metric_value": h["value"], "centroid": h["centroid"]}
+        if h["compared"]:
+            er, ev = float(eps_rad[e]), float(eps_val[e])
+            rec.update(eps_rad=er, eps_val=ev, rel_err=abs(ev - er) / er if er > 0 else float("inf"))
+            hots.append(rec)
+        elif not h["comparable"]:
+            rec.update(reason=h["reason"], eps_rad=float(eps_rad[e]), eps_val=float(eps_val[e]))
+            excluded.append(rec)
+    if excluded:
+        ctx.warnings.append(f"hotspot {len(excluded)}개 비교 제외(상승 중 아님): "
+                            f"{[x['elem_id'] for x in excluded][:10]}")
     h1 = hots[0]["rel_err"] if hots else float("inf")
+    if not hots:
+        ctx.warnings.append("비교 가능한(상승 중인) hotspot 이 없음 → hotspot 변형률 기준 FAIL")
 
     noise = summ.get("noise")
     if noise is None:
@@ -680,14 +963,19 @@ def stage_validate(ctx: Context) -> dict:
             "reaction_rel_max": vcfg["reaction_rel_max"], "hotspot_eval_count": vcfg["hotspot_eval_count"],
             "noise_strain_rel_max": vcfg["noise_strain_rel_max"],
             "noise_force_rel_warn": vcfg["noise_force_rel_warn"],
-            "disp_precision": noise["disp_precision"] if noise else None, "shell_layer": mode}
+            "disp_precision": noise["disp_precision"] if noise else None, "layers": list(layers),
+            "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"]}
+
+    def judged(name, v, c):
+        if v is None:
+            return {"metric": name, "value": None, "criterion": c, "pass": None, "status": "skipped"}
+        return {"metric": name, "value": v, "criterion": c, "pass": bool(v <= c)}
+
     metrics = [
-        {"metric": "disp_rms_rel", "value": disp_rms_rel, "criterion": crit["disp_rms_rel_max"],
-         "pass": bool(disp_rms_rel <= crit["disp_rms_rel_max"])},
+        judged("disp_rms_rel", disp_rms_rel, crit["disp_rms_rel_max"]),
         {"metric": "hotspot1_strain_rel_err", "value": h1, "criterion": crit["hotspot_strain_rel_err_max"],
          "pass": bool(h1 <= crit["hotspot_strain_rel_err_max"])},
-        {"metric": "reaction_rel", "value": reac_abs_rel, "criterion": crit["reaction_rel_max"],
-         "pass": bool(reac_abs_rel <= crit["reaction_rel_max"])},
+        judged("reaction_rel", reac_abs_rel, crit["reaction_rel_max"]),
         {"metric": "disp_max_rel", "value": disp_max_rel, "criterion": None, "pass": None},
         {"metric": "reaction_sum_rel", "value": reac_sum_rel, "criterion": None, "pass": None},
         {"metric": "u_rel_linear_rigid_rel", "value": lin_rigid_rel, "criterion": None, "pass": None},
@@ -697,37 +985,59 @@ def stage_validate(ctx: Context) -> dict:
     ]
     verdict = "PASS" if all(m["pass"] for m in metrics if m["pass"] is not None) else "FAIL"
     fail_reasons = [_FAIL_REASON[m["metric"]] for m in metrics if m["pass"] is False]
-    reactions = [{"node_id": int(nid[i]), "dof": d, "r": Rr[i].tolist()} for i, d in spc]
-    val = {"schema": "esl/validation/1", "frame": summ["frame"], "verdict": verdict,
+    reactions = [] if Rr is None else [{"node_id": int(nid[i]), "dof": d, "r": Rr[i].tolist()} for i, d in spc]
+    val = {"schema": "esl/validation/2", "frame": summ["frame"], "verdict": verdict, "esl_ref": esl_ref(summ),
            "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "metrics": metrics,
-           "hotspots": hots, "reactions": reactions, "reaction_sum": Rr.sum(axis=0),
-           "created_at": _utcnow()}
+           "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded, "reactions": reactions,
+           "reaction_sum": None if Rr is None else Rr.sum(axis=0), "created_at": _utcnow()}
 
     d = ctx.fresh_dir(D_VAL)
     _write_json(ctx.f(d, "validation.json"), val)
     fmt = ctx.csvfmt()
     csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
-    csvout.write_csv(ctx.f(d, "compare.csv"),
-                     ("node_id", "ux_rel", "uy_rel", "uz_rel", "ux_val", "uy_val", "uz_val", "d_mag"),
-                     ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
+    if fs["run"]:
+        csvout.write_csv(ctx.f(d, "compare.csv"),
+                         ("node_id", "ux_rel", "uy_rel", "uz_rel", "ux_val", "uy_val", "uz_val", "d_mag"),
+                         ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
     if verdict != "PASS":
         ctx.warnings.append("검증 FAIL: " + ", ".join(f"{m['metric']}({_FAIL_REASON[m['metric']]})"
                                                      for m in metrics if m["pass"] is False))
-    ctx.echo(f"[validate] disp_rms_rel={disp_rms_rel:.2e} (≤{crit['disp_rms_rel_max']:g}), "
-             f"hotspot1 rel_err={h1:.2e} (≤{crit['hotspot_strain_rel_err_max']:g}), "
-             f"반력 Σ|R|/Σ|F|={reac_abs_rel:.2e} (≤{crit['reaction_rel_max']:g}), "
+    fmt_v = lambda v: "skipped" if v is None else f"{v:.2e}"
+    ctx.echo(f"[validate] disp_rms_rel={fmt_v(disp_rms_rel)} (≤{crit['disp_rms_rel_max']:g}), "
+             f"hotspot1 rel_err={h1:.2e} (≤{crit['hotspot_strain_rel_err_max']:g}, 막 ε_eq, 비교 {len(hots)}·"
+             f"제외 {len(excluded)}), "
+             f"반력 Σ|R|/Σ|F|={fmt_v(reac_abs_rel)} (≤{crit['reaction_rel_max']:g}), "
              + (f"잡음 hotspot_strain_rel={n_strain:.2e} (≤{crit['noise_strain_rel_max']:g})"
                 if n_strain is not None else "잡음 N/A")
              + f" → {verdict}" + (f" {fail_reasons}" if fail_reasons else ""))
     return {"verdict": verdict, "fail_reasons": fail_reasons, "noise_hotspot_strain_rel": n_strain,
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
-            "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel}
-
+            "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
+            "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
+            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm)}
 
 # ====================================================================== export
+def esl_ref(summ: dict) -> str | None:
+    """esl_summary.json 식별자: 호출자 태그(있으면) 아니면 생성 시각. validation.json 의 esl_ref 와 대조."""
+    return summ.get("tag") or summ.get("created_at")
+
+
+def normalize_export_targets(targets) -> tuple:
+    if targets is None:
+        return EXPORT_TARGETS
+    if isinstance(targets, str):
+        targets = [t for t in targets.replace(" ", "").split(",") if t]
+    t = list(dict.fromkeys(str(x) for x in targets))
+    bad = [x for x in t if x not in EXPORT_TARGETS]
+    if bad or not t:
+        raise EslError("INPUT_INVALID", f"export_targets 는 {list(EXPORT_TARGETS)} 중 1개 이상 (값 {list(targets)})")
+    return tuple(x for x in EXPORT_TARGETS if x in t)
+
+
 def stage_export(ctx: Context) -> dict:
     _require(ctx.out, [f"{D_BC}/support.json", f"{D_ESL}/u_rel.npz", f"{D_ESL}/f_eq.npz",
                        f"{D_ESL}/esl_summary.json", f"{D_TSTAR}/tstar.json"])
+    targets = normalize_export_targets(ctx.export_targets)
     model = load_model(ctx.out)
     nid, X0 = model.node_id, model.x0
     ur = _load_npz(ctx.p(D_ESL, "u_rel.npz"))
@@ -737,6 +1047,9 @@ def stage_export(ctx: Context) -> dict:
     tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
     vpath = ctx.p(D_VAL, "validation.json")
     val = _read_json(vpath) if os.path.isfile(vpath) else None
+    if val is not None and "esl_ref" in val and val["esl_ref"] != esl_ref(summ):
+        ctx.warnings.append("검증(05_val) 결과가 현재 ESL(04_esl) 결과의 것이 아님 — 검증 결과 없이 내보냄")
+        val = None
     if val is None:
         ctx.warnings.append("검증(05_val) 결과 없음 — validation.csv·reactions_321.csv 생략")
     elif val.get("verdict") != "PASS":
@@ -745,55 +1058,70 @@ def stage_export(ctx: Context) -> dict:
     ecfg = ctx.cfg["export"]
     rcfg = ecfg["radioss"]
     mask = force_mask(F, ecfg["force_zero_tol_rel"])
-    groups, _ = optistruct.pshell_groups(model.elem_pid, model.thickness)
-    plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup), len(groups),
-                    int(mask.any(axis=1).sum()), int(mask.sum()))
-    lo, hi = plan["range"]
-    ids = all_ids(plan)
-    assert all(lo <= v <= hi for v in ids)
+    want_ids = "radioss_inc" in targets or "fem" in targets
+    plan = None
+    lo = hi = None
+    if want_ids:      # ID 범위 계획·충돌 검사는 inc·fem 을 쓸 때만(csv 는 ID 를 만들지 않음)
+        groups, _ = optistruct.pshell_groups(model.elem_pid, model.thickness)
+        plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup), len(groups),
+                        int(mask.any(axis=1).sum()), int(mask.sum()))
+        lo, hi = plan["range"]
+        ids = all_ids(plan)
+        assert all(lo <= v <= hi for v in ids)
 
     fr = summ["frame"]
     units = ctx.cfg["units"]
     hdr = [f"ESL export (esl {esl.__version__})  generated {_utcnow()}",
            f"part {model.part_id} '{model.part_title}'  frame {fr['frame_index']}  t* = {fr['time']!r} ({fr['source']})",
            f"units: {units['label']} (force {units['force']}, length {units['length']}); rad /BEGIN: '{model.units_label}'",
-           f"generated ID range [{lo}, {hi}], used up to {plan['max_used']}",
+           f"generated ID range [{lo}, {hi}], used up to {plan['max_used'] if plan else None}",
            f"validation: {val['verdict'] if val else 'N/A'}"]
     d = ctx.fresh_dir(D_EXPORT)
     nf = ecfg["num_format"]
     supports_ids = [(int(s["node_id"]), s["dof"]) for s in sup]
-    rc = radioss.write_cload_inc(ctx.f(d, "esl_cload.inc"), nid, F, mask, plan, rcfg["func_mode"],
-                                 rcfg["ramp_time"], nf, hdr + [f"/CLOAD: |F_c| > {ecfg['force_zero_tol_rel']:g}*max|F|"])
-    rb = radioss.write_bcs_inc(ctx.f(d, "esl_bcs.inc"), supports_ids, plan,
-                               hdr + ["3-2-1 statically determinate supports (Tx Ty Tz flags, rotations free)"])
-    fo = optistruct.write_force_fem(ctx.f(d, "esl_force.fem"), model, F, mask, supports_ids, plan, nf,
-                                    hdr + [f"SPC SID {plan['fem_spc_sid']}, LOAD SID {plan['fem_load_sid']}"])
-    fmt = ctx.csvfmt()
-    is_bc = fz["is_bc"]
-    csvout.write_csv(ctx.f(d, "f_eq.csv"), csvout.F_EQ_HEADER, csvout.f_eq_rows(nid, X0, F, is_bc), fmt)
-    csvout.write_csv(ctx.f(d, "u_rel.csv"), csvout.U_REL_HEADER,
-                     ((int(nid[i]), *ur["u_rel"][i], *ur["u_total"][i]) for i in range(nid.size)), fmt)
-    csvout.write_csv(ctx.f(d, "tstar_candidates.csv"), csvout.CANDIDATES_HEADER,
-                     ((x["rank"], x["frame_index"], x["time"], x["eps_max"], x["elem_id"]) for x in tj["candidates"]),
-                     fmt)
-    csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
-                     ((x["rank"], x["elem_id"], x["eps_eq"], *x["centroid"]) for x in tj["hotspots"]), fmt)
-    files = ["esl_cload.inc", "esl_bcs.inc", "esl_force.fem", "f_eq.csv", "u_rel.csv",
-             "tstar_candidates.csv", "hotspots.csv"]
-    if val is not None:
-        rs = val["reactions"]
-        tot = np.sum([r["r"] for r in rs], axis=0) if rs else np.zeros(3)
-        rows = [(r["node_id"], r["dof"], *r["r"]) for r in rs] + [("SUM", None, *tot)]
-        csvout.write_csv(ctx.f(d, "reactions_321.csv"), csvout.REACTIONS_HEADER, rows, fmt)
-        csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
-        files += ["reactions_321.csv", "validation.csv"]
-    ctx.echo(f"[export] 파일 {len(files)}개, /CLOAD {rc['n_cload']} (노드 {rc['n_grnod']}), /BCS {rb['n_bcs']}, "
-             f"FORCE {fo['n_force']}, PSHELL {fo['n_pshell']}, ID [{lo}..{plan['max_used']}] ⊂ [{lo}, {hi}]")
-    return {"files": files, "id_range": [lo, hi], "id_max_used": plan["max_used"], "n_cload": rc["n_cload"],
-            "n_cload_nodes": rc["n_grnod"], "n_bcs": rb["n_bcs"], "n_force": fo["n_force"],
-            "n_pshell": fo["n_pshell"], "pshell_map": fo["pshell_map"],
-            "id_plan": {k: (v if not isinstance(v, list) or len(v) <= 6 else [v[0], v[-1]])
-                        for k, v in plan.items()}}
+    files: list[str] = []
+    out: dict = {"targets": list(targets)}
+    if "radioss_inc" in targets:
+        rc = radioss.write_cload_inc(ctx.f(d, "esl_cload.inc"), nid, F, mask, plan, rcfg["func_mode"],
+                                     rcfg["ramp_time"], nf,
+                                     hdr + [f"/CLOAD: |F_c| > {ecfg['force_zero_tol_rel']:g}*max|F|"])
+        rb = radioss.write_bcs_inc(ctx.f(d, "esl_bcs.inc"), supports_ids, plan,
+                                   hdr + ["3-2-1 statically determinate supports (Tx Ty Tz flags, rotations free)"])
+        files += ["esl_cload.inc", "esl_bcs.inc"]
+        out.update(n_cload=rc["n_cload"], n_cload_nodes=rc["n_grnod"], n_bcs=rb["n_bcs"])
+    if "fem" in targets:
+        fo = optistruct.write_force_fem(ctx.f(d, "esl_force.fem"), model, F, mask, supports_ids, plan, nf,
+                                        hdr + [f"SPC SID {plan['fem_spc_sid']}, LOAD SID {plan['fem_load_sid']}"])
+        files += ["esl_force.fem"]
+        out.update(n_force=fo["n_force"], n_pshell=fo["n_pshell"], pshell_map=fo["pshell_map"])
+    if "csv" in targets:
+        fmt = ctx.csvfmt()
+        is_bc = fz["is_bc"]
+        csvout.write_csv(ctx.f(d, "f_eq.csv"), csvout.F_EQ_HEADER, csvout.f_eq_rows(nid, X0, F, is_bc), fmt)
+        csvout.write_csv(ctx.f(d, "u_rel.csv"), csvout.U_REL_HEADER,
+                         ((int(nid[i]), *ur["u_rel"][i], *ur["u_total"][i]) for i in range(nid.size)), fmt)
+        csvout.write_csv(ctx.f(d, "tstar_candidates.csv"), csvout.CANDIDATES_HEADER,
+                         ((x["rank"], x["frame_index"], x["time"], x["eps_max"], x["elem_id"])
+                          for x in tj["candidates"]), fmt)
+        csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
+                         ((x["rank"], x["elem_id"], x["eps_eq"], *x["centroid"]) for x in tj["hotspots"]), fmt)
+        files += ["f_eq.csv", "u_rel.csv", "tstar_candidates.csv", "hotspots.csv"]
+        if val is not None:
+            rs = val["reactions"]
+            tot = np.sum([r["r"] for r in rs], axis=0) if rs else np.zeros(3)
+            rows = [(r["node_id"], r["dof"], *r["r"]) for r in rs] + [("SUM", None, *tot)]
+            csvout.write_csv(ctx.f(d, "reactions_321.csv"), csvout.REACTIONS_HEADER, rows, fmt)
+            csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
+            files += ["reactions_321.csv", "validation.csv"]
+    ctx.echo(f"[export] 대상 {list(targets)}, 파일 {len(files)}개"
+             + (f", /CLOAD {out['n_cload']} (노드 {out['n_cload_nodes']}), /BCS {out['n_bcs']}" if "n_cload" in out else "")
+             + (f", FORCE {out['n_force']}, PSHELL {out['n_pshell']}" if "n_force" in out else "")
+             + (f", ID [{lo}..{plan['max_used']}] ⊂ [{lo}, {hi}]" if plan else ""))
+    out.update(files=files, id_range=[lo, hi] if plan else None, id_max_used=plan["max_used"] if plan else None,
+               id_plan=None if plan is None else {k: (v if not isinstance(v, list) or len(v) <= 6 else [v[0], v[-1]])
+                                                  for k, v in plan.items()},
+               esl_ref=esl_ref(summ), validation_used=val is not None)
+    return out
 
 
 _STAGE_FN = {"extract": stage_extract, "tstar": stage_tstar, "esl": stage_esl,
@@ -852,10 +1180,17 @@ def _new_record(out: str) -> dict:
 
 def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", frame: int | None = None,
         support_nodes: list[int] | None = None, cfg: dict | None = None,
-        echo: Callable[[str], None] = print, argv: list[str] | None = None) -> dict:
-    """파이프라인 실행. 실패 시 run.json 에 오류를 기록하고 EslError 를 다시 던진다."""
+        echo: Callable[[str], None] = print, argv: list[str] | None = None,
+        export_targets=None, tag: str | None = None) -> dict:
+    """파이프라인 실행. 실패 시 run.json 에 오류를 기록하고 EslError 를 다시 던진다.
+
+    ``export_targets``: export 단계에서 만들 대상(``radioss_inc``·``fem``·``csv`` 의 부분집합, 기본 전부).
+    ``tag``: 호출자 실행 태그 — esl 단계가 ``esl_summary.json`` 의 ``tag`` 로 기록하고, validate 가 그 값을
+    ``validation.json`` 의 ``esl_ref`` 로 남긴다(export 는 esl_ref 가 다른 검증 결과를 쓰지 않음).
+    """
     if out is None or rad is None or results is None:
         raise EslError("INPUT_INVALID", "--rad, --results, --out 이 모두 필요")
+    targets = normalize_export_targets(export_targets)
     rad, results, out = (os.path.abspath(os.fspath(p)) for p in (rad, results, out))
     # 어떤 쓰기(폴더 생성·백업 이동·run.json)보다 먼저: rad 의 include 트리 + 이전 실행 기록의 include 를
     # 보호 대상에 넣고 출력 겹침 검사 (단계와 무관하게 항상)
@@ -872,12 +1207,13 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
             record = _new_record(out)
     ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     inv = {"started_at": _utcnow(), "stage": stage, "frame": frame, "support_nodes": support_nodes,
+           "export_targets": list(targets), "tag": tag,
            "rad": rad, "results": results, "argv": argv, "ok": False, "error": None}
     record.setdefault("history", []).append(inv)
     record["error"] = None
     ctx = Context(cfg=cfg or {}, config_path="", rad=rad, results=results, out=out, ts=ts, frame=frame,
                   support_nodes=support_nodes, echo=echo, record=record, protected=prot, out_real=out_real,
-                  includes=list(includes))
+                  includes=list(includes), tag=tag, export_targets=targets)
     cur = "config"
     try:
         ctx.guard(rj)               # run.json 이 밖을 가리키는 링크면 아무 단계도 실행하지 않음
