@@ -11,6 +11,9 @@
 - 자식 대기 중 `heartbeat_interval_s`마다 lease 갱신(실패 → 자식 종료, 상태를 더 쓰지 않음),
   `cancel_check_interval_s`마다 취소 플래그 확인 → terminate(→ grace 후 kill) → CANCELED(E7).
 - 로그: `<case>/logs/<job_id>/step_<NN>_<key>.log`. 실행 시간 한도 없음.
+- P2(계약 esl_p2_library.md §11): LIB_ANALYZE 는 Case 가 없고 작업 폴더 = `<esl_root>/_analysis/<id>/`(로그도 그 아래),
+  입력 지문 확인 대신 항목 폴더 존재 확인, 대상이 없으면 OPTDECK step 은 SKIPPED. VALIDATE 등록이 끝나면
+  설정 `report.auto` 일 때 CASE_REPORT(LIGHT)를 같은 트랜잭션에서 큐에 넣는다(이미 대기 중이면 경고만).
 """
 
 from __future__ import annotations
@@ -24,10 +27,11 @@ from typing import Any
 
 from esl_platform.core.errors import DomainError, LeaseLost
 from esl_platform.core.inputs import changed_inputs, esl_run_stale
-from esl_platform.core.paths import check_includes
+from esl_platform.core.paths import ANALYSIS_DIR, check_includes, esl_subdir
 from esl_platform.core.repositories import cases as cases_repo
 from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
+from sqlalchemy.exc import IntegrityError
 
 from . import esl_snapshot, register
 from .child import child_entry
@@ -57,6 +61,8 @@ class Executor:
         self.token = job["lease_token"]
         self.slot = job["lane"] == "SLOT"
         self.proc = None
+        self.case: dict[str, Any] | None = None
+        self.lib: dict[str, Any] | None = None
 
     # ---------------------------------------------------------------- 도우미
     def _tx(self):
@@ -90,16 +96,19 @@ class Executor:
         job = self.job
         try:
             with self.engine.connect() as conn:
-                case = cases_repo.get_case(conn, job["case_id"])
                 steps = jobs_repo.get_steps(conn, job["id"])
-            self.case = case
-            self.cdir = os.path.join(self.settings.storage.esl_root, case["folder_name"])
-            fp = (job["params"] or {}).get("input_fingerprint") or case["input_fingerprint"]
-            changed = changed_inputs(fp)
-            if changed:
-                self._finish(FAILED, "INPUT_CHANGED", f"입력 파일이 바뀌었습니다: {changed[:3]}")
-                return FAILED
-            self._precheck()
+                case = cases_repo.get_case(conn, job["case_id"]) if job.get("case_id") else None
+            if job["job_type"] == "LIB_ANALYZE":
+                self._prepare_analysis()
+            else:
+                self.case = case
+                self.cdir = os.path.join(self.settings.storage.esl_root, case["folder_name"])
+                fp = (job["params"] or {}).get("input_fingerprint") or case["input_fingerprint"]
+                changed = changed_inputs(fp)
+                if changed:
+                    self._finish(FAILED, "INPUT_CHANGED", f"입력 파일이 바뀌었습니다: {changed[:3]}")
+                    return FAILED
+                self._precheck()
             for st in steps:
                 if st["state"] != "PENDING":
                     continue
@@ -119,7 +128,7 @@ class Executor:
             self._kill_child()
             log.error("lease 를 잃었습니다 — 작업 %s 상태를 더 쓰지 않습니다", job["id"])
             return "LEASE_LOST"
-        except Exception as exc:  # noqa: BLE001 - 예기치 않은 오류 → 즉시 FAILED(lease 만료 대기 없음)
+        except Exception as exc:
             self._kill_child()
             log.exception("작업 %s 실행 오류", job["id"])
             try:
@@ -129,6 +138,30 @@ class Executor:
             return FAILED
         finally:
             self._kill_child()
+
+    # ---------------------------------------------------------------- LIB_ANALYZE 준비
+    def _prepare_analysis(self) -> None:
+        """작업 폴더 <esl_root>/_analysis/<id>/(안전 경로) + 항목 폴더(params dir_rel → 절대경로) 확인."""
+        p = self.job["params"] or {}
+        aid = self.job["analysis_id"]
+        try:
+            self.cdir = esl_subdir(self.settings, ANALYSIS_DIR, aid)
+            lib_root = esl_subdir(self.settings, "_library")
+            os.makedirs(self.cdir, exist_ok=True)
+
+            def resolve(it):
+                if it is None:
+                    return None
+                d = esl_subdir(self.settings, *it["dir_rel"].split("/"))
+                if not os.path.isfile(os.path.join(d, "entry.json")):
+                    raise _StepFailed("PREREQUISITE_MISSING", f"라이브러리 항목 폴더가 없습니다: {it['dir_rel']}")
+                return {"id": it["id"], "dir": d, "overlay": it.get("overlay")}
+
+            self.lib = {"cfg": p.get("settings") or {}, "lib_root": lib_root, "analysis_id": aid,
+                        "entries": [resolve(it) for it in p.get("entries") or []], "target": resolve(p.get("target")),
+                        "options": p.get("options") or {}, "filters": p.get("filters") or {}, "title": p.get("title")}
+        except DomainError as exc:
+            raise _StepFailed(exc.code, exc.message) from None
 
     # ---------------------------------------------------------------- 사전조건 재확인
     def _precheck(self) -> None:
@@ -166,8 +199,17 @@ class Executor:
                                        [f"04_esl 을 ESL 결과 {run['id']} 스냅샷에서 되돌림" if how == "restored"
                                         else "04_esl 에 실행 태그가 없음(이전 형식) — 현재 산출물로 진행"])
 
+    def _register_artifacts(self, conn, rels: list[str]) -> None:
+        if self.case is not None:
+            register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, rels)
+
     def _run_step(self, st: dict[str, Any]) -> None:
         no, key = st["step_no"], st["step_key"]
+        if st["core_stage"] == "lib_optdeck" and not (self.lib or {}).get("target"):
+            with self._tx() as conn:
+                jobs_repo.step_update(conn, self.job["id"], self.token, no, state="SKIPPED", started_at=_now(conn),
+                                      finished_at=_now(conn), outputs={"skipped": "대상 모델 없음 — 덱 생성 안 함"})
+            return
         log_rel = f"logs/{self.job['id']}/step_{no:02d}_{key}.log"
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, no, state="RUNNING", log_rel=log_rel,
@@ -175,7 +217,12 @@ class Executor:
         log_path = os.path.join(self.cdir, log_rel)
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         try:
-            if st["core_stage"]:
+            if st["core_stage"] and self.case is None:
+                self._run_core(st, log_path)
+                outputs = {"core_stage": st["core_stage"]}
+                with self._tx() as conn:
+                    jobs_repo.patch_result(conn, self.job["id"], self.token, {st["core_stage"]: {"status": "done"}})
+            elif st["core_stage"]:
                 self._run_core(st, log_path)
                 outputs = {"core_stage": st["core_stage"]}
                 rels = [self._stage_dir(st["core_stage"]), "run.json", log_rel]
@@ -192,27 +239,44 @@ class Executor:
             else:
                 with self._tx() as conn:
                     jobs_repo.assert_lease(conn, self.job["id"], self.token)
-                    case = cases_repo.get_case(conn, self.case["id"], for_update=True)
+                    case = cases_repo.get_case(conn, self.case["id"], for_update=True) if self.case else None
                     try:
                         res = register.REGISTER[self.job["job_type"]](conn, self.job, case, self.cdir)
                     except register.RegisterError as exc:
                         raise _StepFailed(exc.code, exc.message) from None
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {"registered": _jsonable(res)})
+                    if self.job["job_type"] == "VALIDATE" and self.settings.report.auto:
+                        self._queue_report(conn, res)
                 outputs = {"registered": True}
                 with open(log_path, "a", encoding="utf-8") as fh:
                     fh.write(f"[esl-worker] {key}: DB 등록 완료\n")
                 with self._tx() as conn:
-                    register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, [log_rel])
+                    self._register_artifacts(conn, [log_rel])
         except _StepFailed as exc:
             with self._tx() as conn:
                 jobs_repo.step_update(conn, self.job["id"], self.token, no, state="FAILED", failure_code=exc.code,
                                       failure_message=exc.message[:500], exit_code=exc.exit_code,
                                       finished_at=_now(conn))
-                register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, [log_rel, "run.json"])
+                self._register_artifacts(conn, [log_rel, "run.json"])
             raise
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, no, state="SUCCEEDED", exit_code=0,
                                   progress_pct=100.0, finished_at=_now(conn), outputs=outputs)
+
+    def _queue_report(self, conn, res: dict[str, Any]) -> None:
+        """VALIDATE 성공 → CASE_REPORT(LIGHT) 자동 큐(설정 report.auto). 같은 Case 에 대기 중인 보고서가 있으면 경고만."""
+        p = self.job["params"] or {}
+        params = {"settings": p.get("settings") or {}, "validation_id": res.get("validation_id"),
+                  "esl_run_id": p.get("esl_run_id"), "auto": True}
+        try:
+            with conn.begin_nested():
+                rj = jobs_repo.insert_job(conn, case_id=self.case["id"], project_id=self.job["project_id"],
+                                          job_type="CASE_REPORT", params=params, created_by=self.job["created_by"],
+                                          created_by_name=self.job["created_by_name"])
+            jobs_repo.patch_result(conn, self.job["id"], self.token, {"report_job_id": rj["id"]})
+        except IntegrityError:
+            jobs_repo.add_warnings(conn, self.job["id"], self.token,
+                                   ["보고서 작업이 이미 대기 중이라 자동 보고서를 추가하지 않았습니다"])
 
     @staticmethod
     def _stage_dir(stage: str) -> str:
@@ -229,7 +293,8 @@ class Executor:
         result_path = log_path[:-4] + ".result.json"
         if os.path.exists(result_path):
             os.remove(result_path)
-        spec = {"cfg": p.get("settings") or {}, "rad": case["rad_path"], "results": case["results_dir"],
+        spec = {"cfg": p.get("settings") or {}, "rad": case["rad_path"] if case else None,
+                "results": case["results_dir"] if case else None, "lib": self.lib,
                 "out": self.cdir, "stage": stage, "frame": frame, "support_nodes": support,
                 "log_path": log_path, "result_path": result_path, "priority": self.settings.worker.priority,
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],

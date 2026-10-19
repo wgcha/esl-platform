@@ -20,7 +20,7 @@ from . import esl_snapshot
 
 SHA_MAX_BYTES = 256 * 1024 * 1024
 KIND_BY_DIR = {co.D_EXTRACT: "EXTRACT", co.D_TSTAR: "TSTAR", co.D_BC: "SUPPORT", co.D_ESL: "ESL",
-               co.D_VAL: "VALIDATION", co.D_EXPORT: "EXPORT"}
+               co.D_VAL: "VALIDATION", co.D_EXPORT: "EXPORT", co.D_REPORT: "REPORT"}
 
 
 class RegisterError(RuntimeError):
@@ -201,12 +201,19 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict 오류: {verdict}")
     disp = co.metric_value(val, "disp_rms_rel")
     reac = co.metric_value(val, "reaction_rel")
+    fld = val.get("field") if isinstance(val.get("field"), dict) else None
     v = cases_repo.insert_validation(
         conn, esl_run_id=p["esl_run_id"], case_id=case["id"], job_id=job["id"], disp_rms_rel=disp,
         reaction_rel=reac, hotspots=hots, excluded=excluded, verdict=verdict,
         fail_reasons=list(val.get("fail_reasons") or []), criteria=dict(val.get("criteria") or {}),
-        dir_rel=co.D_VAL,
+        field=_jsonable(fld) if fld is not None else None, dir_rel=co.D_VAL,
     )
+    # 이 실행의 검증 스냅샷 runs/<esl_run_id>/05_val (라이브러리 등록·겹쳐보기 API 가 이후 검증과 무관하게 읽음)
+    if os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):
+        try:
+            esl_snapshot.save_validation(cdir, run["id"], v["id"])
+        except OSError as exc:
+            raise RegisterError("OUTPUT_INVALID", f"검증 산출물 스냅샷 실패: {exc}") from None
     return {"validation_id": v["id"], "verdict": verdict, "disp_rms_rel": disp, "reaction_rel": reac}
 
 
@@ -230,5 +237,89 @@ def register_export(conn: Connection, job: dict[str, Any], case: dict[str, Any],
             "warnings": list(rec.get("warnings") or [])}
 
 
+# ---------------------------------------------------------------- Case 보고서(P2)
+def register_case_report(conn: Connection, job: dict[str, Any], case: dict[str, Any], cdir: str) -> dict[str, Any]:
+    rel = f"{co.D_REPORT}/{co.REPORT_HTML}"
+    path = os.path.join(cdir, co.D_REPORT, co.REPORT_HTML)
+    if not os.path.isfile(path) or os.path.islink(path):
+        raise RegisterError("TOOL_OUTPUT_MISSING", f"보고서가 없습니다: {rel}")
+    s = co.stage_record(cdir, "report").get("summary") or {}
+    p = job["params"] or {}
+    return {"report_rel": rel, "bytes": os.path.getsize(path), "verdict": s.get("verdict"),
+            "validation_id": p.get("validation_id"), "esl_run_id": p.get("esl_run_id"), "auto": bool(p.get("auto")),
+            "missing": s.get("missing") or []}
+
+
+# ---------------------------------------------------------------- 라이브러리 종합분석(P2)
+def _analysis_summary(res: dict[str, Any], opt: dict[str, Any] | None) -> dict[str, Any]:
+    cases = res.get("cases") or []
+    svd = res.get("svd") or {}
+    r = int(svd.get("n_modes") or 0)
+    cum = svd.get("cum_energy") or []
+    def eid(k):
+        return cases[k]["entry_id"] if 0 <= k < len(cases) else None
+    groups = {}
+    for key, g in ((res.get("stats") or {}).get("groups") or {}).items():
+        groups[key] = {v: {"n": x.get("n"), "sum_abs_f": x.get("sum_abs_f")} for v, x in g.items()}
+    out = {
+        "n_cases": res.get("n_cases"), "grid": res.get("grid"),
+        "target": None if not res.get("target") else {"entry_id": res["target"].get("entry_id"),
+                                                       "model": res["target"].get("model")},
+        "svd": {"n_modes": r, "threshold": svd.get("threshold"), "feature": svd.get("feature"),
+                "cum_energy_at_r": cum[r - 1] if 0 < r <= len(cum) else None, "energy": (svd.get("energy") or [])[:20]},
+        "load_cases": [{k: lc.get(k) for k in ("label", "role", "cluster", "entry_id", "case_index")}
+                       for lc in res.get("load_cases") or []],
+        "clusters": [{"id": c.get("id"), "size": c.get("size"), "medoid_entry": c.get("medoid_entry"),
+                      "worst_entry": c.get("worst_entry"), "mean_dist": c.get("mean_dist"),
+                      "members": [eid(m) for m in c.get("members") or []]} for c in res.get("clusters") or []],
+        "envelope": res.get("envelope"), "mapping": res.get("mapping"),
+        "stats": {"groups": groups, "verification_summary": (res.get("stats") or {}).get("verification_summary")},
+        "cases": [{k: c.get(k) for k in ("index", "entry_id", "product", "inch", "drop_class", "orient", "scene",
+                                          "scenario", "verdict", "cluster", "is_medoid", "is_worst", "sum_abs_f",
+                                          "scale_factor", "svd_coef")} for c in cases],
+        "warnings": list(res.get("warnings") or []),
+        "optdeck": None,
+    }
+    if opt:
+        out["optdeck"] = {k: opt.get(k) for k in ("deck", "files", "objective", "n_subcases", "n_design_elems",
+                                                  "n_nondesign_elems", "card_format", "reference_compliance")}
+    return out
+
+
+def register_lib_analyze(conn: Connection, job: dict[str, Any], case: Any, adir: str) -> dict[str, Any]:
+    from esl_platform.core.repositories import library as lib_repo
+
+    an = lib_repo.get_analysis(conn, job["analysis_id"], for_update=True)
+    if an is None:
+        raise RegisterError("ANALYSIS_NOT_FOUND", "분석 행이 없습니다")
+    try:
+        res = co.read_json(os.path.join(adir, "analysis.json"))
+    except (OSError, ValueError) as exc:
+        raise RegisterError("TOOL_OUTPUT_MISSING", f"analysis.json 을 읽을 수 없습니다: {exc}") from None
+    if res.get("analysis_id") not in (None, an["id"]):
+        raise RegisterError("OUTPUT_INVALID", f"analysis.json 이 이 분석의 것이 아닙니다({res.get('analysis_id')})")
+    opt = None
+    op = os.path.join(adir, "opt", "optdeck.json")
+    if os.path.isfile(op):
+        try:
+            opt = co.read_json(op)
+        except (OSError, ValueError):
+            opt = None
+    base = an["dir_rel"]
+    summary = _jsonable(_analysis_summary(res, opt))
+    lib_repo.update_analysis(
+        conn, an["id"], result=summary, result_rel=f"{base}/analysis.json",
+        report_rel=f"{base}/report.html" if os.path.isfile(os.path.join(adir, "report.html")) else None,
+        optdeck_rel=f"{base}/opt" if opt is not None else None)
+    return {"analysis_id": an["id"], "n_cases": summary["n_cases"],
+            "load_cases": [lc["entry_id"] for lc in summary["load_cases"]], "optdeck": opt is not None}
+
+
+def _jsonable(o: Any) -> Any:
+    import json
+
+    return json.loads(json.dumps(o, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x)))
+
+
 REGISTER = {"CASE_EXTRACT": register_extract, "ESL_SOLVE": register_esl, "VALIDATE": register_validation,
-            "EXPORT": register_export}
+            "EXPORT": register_export, "CASE_REPORT": register_case_report, "LIB_ANALYZE": register_lib_analyze}

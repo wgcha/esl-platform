@@ -50,8 +50,12 @@ def _write_result(path: str, d: dict[str, Any]) -> None:
 
 
 def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
-    """기본 대상: 어댑터로 esl.pipeline.run 1회."""
+    """기본 대상: 어댑터로 esl.pipeline.run 1회. 라이브러리 단계(lib_*)는 어댑터의 run_library_stage."""
     from esl_worker import core_adapter
+
+    if str(spec.get("stage") or "").startswith("lib_"):
+        core_adapter.run_library_stage(spec, echo)
+        return {"error": None}
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],
                                     frame=spec.get("frame"), support_nodes=spec.get("support_nodes"), echo=echo,

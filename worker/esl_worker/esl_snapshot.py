@@ -72,3 +72,26 @@ def ensure_on_disk(cdir: str, run: dict[str, Any]) -> str:
     if co.esl_tag(cdir) != want:  # pragma: no cover - 방어
         raise LookupError("스냅샷 복원 후에도 04_esl tag 가 다릅니다")
     return "restored"
+
+
+def save_validation(cdir: str, run_id: str, validation_id: str) -> str:
+    """현재 05_val → runs/<run_id>/05_val (+ 표식 파일 = 검증 DB id). 이전 스냅샷은 _backup/<ts>/runs/<id>/05_val 로 이동.
+
+    라이브러리 등록(코어 entry.build 가 run 스냅샷의 05_val 을 우선 읽음)과 겹쳐보기 API 가 같은 Case 의 이후 검증과
+    무관하게 이 검증의 산출물을 읽게 한다. 반환: 스냅샷 상대경로.
+    """
+    src = _inside(cdir, os.path.join(cdir, co.D_VAL))
+    dst = _inside(cdir, co.val_snapshot_dir(cdir, run_id))
+    tmp = dst + ".tmp"
+    if os.path.lexists(tmp):
+        shutil.rmtree(tmp)
+    _copy_tree(src, tmp)
+    with open(os.path.join(tmp, co.VAL_MARKER), "w", encoding="utf-8") as fh:
+        fh.write(validation_id)
+    if os.path.lexists(dst):
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+        bdir = _inside(cdir, os.path.join(cdir, "_backup", ts, co.RUNS_DIR, run_id))
+        os.makedirs(bdir, exist_ok=True)
+        os.replace(dst, os.path.join(bdir, co.VAL_SNAPSHOT))
+    os.replace(tmp, dst)
+    return f"{co.RUNS_DIR}/{run_id}/{co.VAL_SNAPSHOT}"

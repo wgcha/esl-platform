@@ -46,6 +46,19 @@ def case_dir(ctx: AppContext, case: dict[str, Any]) -> str:
     return os.path.join(ctx.settings.storage.esl_root, case["folder_name"])
 
 
+def analysis_dir(ctx: AppContext, analysis: dict[str, Any]) -> str:
+    """<esl_root>/_analysis/<id> (dir_rel 은 esl_root 기준 상대경로)."""
+    return os.path.join(ctx.settings.storage.esl_root, *analysis["dir_rel"].split("/"))
+
+
+def require_library_config(ctx: AppContext) -> dict[str, Any]:
+    require_config_ok(ctx)
+    if ctx.config.library is None:
+        raise DomainError("LIBRARY_CONFIG_MISSING", "라이브러리 설정(library)이 없어 등록·분석을 할 수 없습니다",
+                          status=503)
+    return ctx.config.library
+
+
 def require_active_case(case: dict[str, Any]) -> None:
     if case["status"] != "ACTIVE":
         raise DomainError("CASE_ARCHIVED", "보관된 Case 입니다", status=409)
