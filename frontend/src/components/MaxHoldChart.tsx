@@ -5,7 +5,7 @@ import type { TstarCandidate } from "../api/types";
 
 const M = { l: 58, r: 14, t: 18, b: 40 };
 
-function useWidth<T extends HTMLElement>(fallback = 600) {
+export function useWidth<T extends HTMLElement>(fallback = 600) {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(fallback);
   useLayoutEffect(() => {
@@ -30,7 +30,7 @@ function tickFmt(ts: number[]) {
   return (v: number) => v.toFixed(d);
 }
 
-function ticks(min: number, max: number, n = 5) {
+export function ticks(min: number, max: number, n = 5) {
   const span = max - min || 1;
   const step0 = span / n;
   const mag = 10 ** Math.floor(Math.log10(step0));

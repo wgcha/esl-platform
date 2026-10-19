@@ -223,7 +223,8 @@ export interface InspectResultsResult {
 }
 
 // ---------------------------------------------------------------- 작업
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT";
+/** P2(계약 esl_p2_library.md §11): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석) */
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -248,7 +249,10 @@ export type JobStep = StepOut;
 
 export interface JobOut {
   id: string;
-  case_id: string;
+  /** 라이브러리 작업(LIB_ANALYZE)은 null */
+  case_id: string | null;
+  /** LIB_ANALYZE 의 analysis_runs.id */
+  analysis_id?: string | null;
   project_id: string;
   job_type: JobType;
   stage: number;
@@ -481,6 +485,8 @@ export interface ValidationOut {
   dir_rel: string;
   created_at: string;
   stale: boolean;
+  /** P2 §7.2·§11: 전 요소 재현 정확도 요약(validation.json field). 예전 검증은 null/없음 */
+  field?: FieldSummary | null;
 }
 export type Validation = ValidationOut;
 
@@ -500,3 +506,391 @@ export interface ArtifactOut {
 export type Artifact = ArtifactOut;
 
 export type ExportTarget = "radioss_inc" | "fem" | "csv";
+
+// ================================================================ P2 (계약 esl_p2_library.md §7·§11)
+// openapi_p1b.json 갱신 전: 계약 §11 + 코어(esl/pipeline.py _field_compare, esl/report/field.py summarize) 기준.
+
+// ---------------------------------------------------------------- 전 요소 비교 요약 (validation.field)
+/** 비교 사유 코드(field.REASONS): OK 만 비교 대상 */
+export type FieldReason = "OK" | "HOLD" | "LOW" | "EXCLUDED" | "NO_PREV";
+
+export interface FieldRow {
+  elem_id: number;
+  eps_rad: number;
+  eps_esl: number;
+  err_pct: number | null;
+  valid: boolean;
+  reason: string;
+  xi?: number;
+  eta?: number;
+}
+
+/** 최대변형률 비교: t* 상승 요소 중 ε_rad 최대 요소와 같은 요소의 ESL 값, ESL 전체 최대 */
+export interface FieldMax {
+  elem_id: number;
+  eps_rad: number;
+  eps_esl: number;
+  err_pct: number;
+  abs_err_pct: number;
+  eps_esl_max: number;
+  eps_esl_max_elem_id: number;
+  peak_err_pct: number;
+  xi?: number;
+  eta?: number;
+  esl_max_xi?: number;
+  esl_max_eta?: number;
+}
+
+export interface FieldQuantiles {
+  mean: number;
+  p50: number;
+  p90: number;
+  p95: number;
+  max: number;
+}
+
+export interface FieldHist {
+  edges: number[];
+  counts: number[];
+  range_pct: number | null;
+  n: number;
+  n_clipped: number;
+}
+
+export interface FieldSummary {
+  n_elems: number;
+  n_rising: number;
+  n_valid: number;
+  n_ok?: number;
+  n_hold?: number;
+  n_low?: number;
+  n_excluded?: number;
+  n_no_prev?: number;
+  max: FieldMax | null;
+  /** valid 요소 |오차| % 분위수 */
+  abs_err_pct: FieldQuantiles | null;
+  /** 오차 ≤5·10·20 % 요소 비율(0~1), 키 "5"·"10"·"20" */
+  frac_within: Record<string, number> | null;
+  top: FieldRow[];
+  worst: FieldRow[];
+  hist: FieldHist;
+  /** 판정 기준(%): 최대변형률 오차·P90 */
+  criteria?: { max_err_pct_max: number; p90_err_max: number };
+  min_rel?: number;
+  prev_source?: string;
+  reason_text?: Record<string, string>;
+  note?: string;
+}
+
+// ---------------------------------------------------------------- 겹쳐보기 자료 (GET /validations/{id}/field, /section)
+export type FieldLayer = "rad" | "esl" | "err";
+/** [elem_id, a, b, value, reason] — (a, b) = PCA 평면 실좌표(ξ, η). value: err 레이어는 valid 아니면 null */
+export type FieldPoint = [number, number, number, number | null, string];
+
+export interface FieldPlane {
+  origin: number[];
+  e1: number[];
+  e2: number[];
+}
+
+/** rad·esl = 두 레이어 공통 [min, max](유한값 전체), err = ±R %(|오차| P99 기준). 값이 없으면 null */
+export interface ColorRange {
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface FieldOut {
+  validation_id: string;
+  layer: FieldLayer;
+  n_total: number;
+  n_returned: number;
+  decimated: boolean;
+  /** 다운샘플 격자 칸 크기 [dξ, dη] (다운샘플 안 하면 null) */
+  cell?: number[] | null;
+  plane: FieldPlane;
+  color_range: ColorRange;
+  points: FieldPoint[];
+}
+
+export type SectionAxis = "xi" | "eta";
+/** 단면선: s = 단면 방향 실좌표, w0 = 초기 면외 좌표, w_rad·w_esl = 면외 변위(Radioss u_rel·ESL u_val) */
+export interface SectionOut {
+  validation_id: string;
+  axis: SectionAxis;
+  at: number;
+  band: number;
+  n_elems: number;
+  s: number[];
+  w_rad: number[];
+  w_esl: number[];
+  w0: number[];
+}
+
+// ---------------------------------------------------------------- 라이브러리 (library_entries)
+export type EntryStatus = "ACTIVE" | "RETIRED";
+export type DropType = "Corner" | "Edge" | "Face";
+
+export interface EntryModel {
+  name?: string | null;
+  inch?: number | null;
+  version?: string | null;
+  date?: string | null;
+  project?: string | null;
+  /** 제품 질량(kg, 사용자 입력). mass 정규화에 필요(없으면 NORMALIZATION_META_MISSING) */
+  product_mass?: number | null;
+  /** 파트 질량(rad 계산) — 제품 질량 아님 */
+  part_mass?: number | null;
+  part_id?: number | null;
+  part_title?: string | null;
+  units_label?: string | null;
+  n_nodes?: number | null;
+  n_elems?: number | null;
+}
+
+export interface EntryScene {
+  project?: string | null;
+  scenario?: string | null;
+  seq?: number | null;
+  drop_type?: string | null;
+  /** ISTA orient 면 수로 본 분류(Corner|Edge|Face) */
+  drop_class?: string | null;
+  round?: string | null;
+  scene_no?: number | null;
+  orient?: string | null;
+  faces?: number[] | null;
+  suffix?: string | null;
+  variant?: string | null;
+  raw?: string | null;
+  warnings?: string[];
+}
+
+/** FAIL 확정 등록 기록 */
+export interface ConfirmedFail {
+  reason: string | null;
+  by: string;
+  by_name: string;
+  at: string;
+}
+
+export interface EntryQuality {
+  verdict?: string | null;
+  fail_reasons?: string[];
+  field_max_err_pct?: number | null;
+  field_p90_err_pct?: number | null;
+  hotspot1_rel_err?: number | null;
+  disp_rms_rel?: number | null;
+  reaction_rel?: number | null;
+  noise?: Record<string, unknown> | null;
+  confirmed_fail?: ConfirmedFail | null;
+}
+
+export interface EntryOut {
+  id: string;
+  project_id: string;
+  case_id: string;
+  case_title?: string | null;
+  esl_run_id: string;
+  validation_id?: string | null;
+  status: EntryStatus;
+  retired_by_id?: string | null;
+  retired_at?: string | null;
+  retire_reason?: string | null;
+  model: EntryModel;
+  scene: EntryScene;
+  quality: EntryQuality;
+  tstar?: Record<string, unknown> | null;
+  summary?: Record<string, unknown> | null;
+  dir_rel: string;
+  summary_rel: string;
+  sha256: string;
+  registered_by: string;
+  registered_by_name: string;
+  registered_at: string;
+  updated_at: string;
+  note?: string | null;
+  force_reason?: string | null;
+  warnings: string[];
+  version: number;
+}
+export type LibraryEntry = EntryOut;
+
+export interface EntryCreate {
+  esl_run_id: string;
+  validation_id?: string | null;
+  note?: string | null;
+  /** 검증 FAIL 을 확정 등록할 때 필수 */
+  force_reason?: string | null;
+}
+
+export interface EntryModelPatch {
+  name?: string | null;
+  inch?: number | null;
+  version?: string | null;
+  date?: string | null;
+  product_mass?: number | null;
+}
+
+export interface EntryScenePatch {
+  project?: string | null;
+  scenario?: string | null;
+  seq?: number | null;
+  drop_type?: DropType | null;
+  round?: string | null;
+  scene_no?: number | null;
+  orient?: string | null;
+  suffix?: string | null;
+  variant?: string | null;
+}
+
+export interface EntryPatch {
+  version: number;
+  model?: EntryModelPatch | null;
+  scene?: EntryScenePatch | null;
+  note?: string | null;
+}
+
+export interface EntryRetire {
+  reason?: string | null;
+}
+
+export interface EntryQuery {
+  project_id: string;
+  model?: string;
+  inch?: string;
+  drop_type?: string;
+  drop_class?: string;
+  orient?: string;
+  scenario?: string;
+  verdict?: string;
+  status?: EntryStatus;
+}
+
+// ---------------------------------------------------------------- 종합분석 (analysis_runs)
+export type Normalization = "none" | "mass" | "inch2";
+export type Objective = "minmax" | "weighted";
+
+/** 비우면 전체. entry_ids 를 주면 다른 필터 무시 */
+export interface AnalysisFilters {
+  entry_ids?: string[] | null;
+  model?: string[] | null;
+  inch?: number[] | null;
+  drop_type?: string[] | null;
+  drop_class?: string[] | null;
+  orient?: string[] | null;
+  scenario?: string[] | null;
+  verdict?: string[] | null;
+}
+
+export interface AnalysisOptions {
+  normalization?: Normalization | null;
+  n_representative?: number | null;
+  objective?: Objective | null;
+  svd_energy?: number | null;
+  worst_case?: boolean | null;
+  /** 정규화 대상 값(대상 항목 메타가 없을 때) */
+  target_mass?: number | null;
+  target_inch?: number | null;
+}
+
+export interface AnalysisCreate {
+  project_id: string;
+  title?: string | null;
+  target_entry_id?: string | null;
+  filters?: AnalysisFilters;
+  options?: AnalysisOptions;
+}
+
+/** analysis_runs.result (워커 register._analysis_summary) */
+export interface AnalysisCase {
+  index: number;
+  entry_id: string;
+  product: string | null;
+  inch: number | null;
+  drop_class: string | null;
+  orient: string | null;
+  scene: number | string | null;
+  scenario: string | null;
+  verdict: string | null;
+  cluster: number;
+  is_medoid: boolean;
+  is_worst: boolean;
+  sum_abs_f: number;
+  scale_factor: number;
+  svd_coef: number[];
+}
+
+export interface AnalysisLoadCase {
+  label: string;
+  role: "medoid" | "worst";
+  cluster: number;
+  entry_id: string;
+  case_index: number;
+}
+
+export interface AnalysisCluster {
+  id: number;
+  size: number;
+  medoid_entry: string;
+  worst_entry: string;
+  mean_dist: number;
+  members: (string | null)[];
+}
+
+export interface AnalysisResult {
+  n_cases: number;
+  grid: { nx: number; ny: number } | null;
+  target: { entry_id: string; model: Record<string, unknown> | null } | null;
+  svd: { n_modes: number; threshold: number | null; feature: string | null; cum_energy_at_r: number | null; energy: number[] };
+  load_cases: AnalysisLoadCase[];
+  clusters: AnalysisCluster[];
+  envelope: { max: number; argmax_cell: number[] } | null;
+  mapping: Record<string, unknown> | null;
+  stats: Record<string, unknown> | null;
+  cases: AnalysisCase[];
+  warnings: string[];
+  optdeck: {
+    deck: string;
+    files: string[];
+    objective: string;
+    n_subcases: number;
+    n_design_elems: number;
+    n_nondesign_elems: number;
+    card_format: string;
+    reference_compliance: unknown;
+  } | null;
+}
+
+export interface AnalysisOut {
+  id: string;
+  project_id: string;
+  title?: string | null;
+  target_entry_id?: string | null;
+  filters: AnalysisFilters;
+  options: AnalysisOptions;
+  entry_ids: string[];
+  n_entries: number;
+  /** 연동 작업(LIB_ANALYZE) 상태, 작업이 없으면 NONE */
+  status: JobState | "NONE";
+  job_id?: string | null;
+  job?: JobOut | null;
+  result?: AnalysisResult | null;
+  dir_rel: string;
+  folder_path: string;
+  result_rel?: string | null;
+  report_rel?: string | null;
+  optdeck_rel?: string | null;
+  created_by: string;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+}
+export type Analysis = AnalysisOut;
+
+/** GET /library/analyses/{id}/files — 다운로드는 GET /library/analyses/{id}/download?rel= */
+export interface AnalysisFileOut {
+  rel: string;
+  kind: "report" | "optdeck" | "analysis" | "log" | "other";
+  size: number;
+  path: string;
+  downloadable: boolean;
+}

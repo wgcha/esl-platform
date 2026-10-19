@@ -930,3 +930,253 @@ details.card > .table-wrap {
   font-size: 0.82rem;
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------------- P2: 겹쳐보기·단면선·라이브러리 */
+:root {
+  /* 비교 시리즈(코어 보고서 --s1·--s2·--s3·--na 와 같은 값) */
+  --series-rad: #2563c9;
+  --series-esl: #d9480f;
+  --series-init: #7a8291;
+  --na: #9aa1ab;
+}
+.topbar-menu {
+  display: inline-flex;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.topbar-menu:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.topbar-menu.on {
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.stat-sub {
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.stat.bad .stat-value {
+  color: var(--bad);
+}
+.stat.ok .stat-value {
+  color: var(--ok);
+}
+.ovl {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.ctrl-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+.range-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-2);
+}
+.range-field input[type="range"] {
+  width: 11rem;
+  accent-color: var(--accent);
+}
+.range-field input:disabled {
+  opacity: 0.4;
+}
+.range-val {
+  min-width: 3.2rem;
+}
+.ovl-box {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ovl-box canvas {
+  display: block;
+}
+.ovl-box .ovl-top {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.overlay .mk-hot circle {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: var(--text);
+  stroke-width: 1.6;
+}
+.overlay .mk-hot text {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text);
+}
+.overlay .mk-max circle,
+.overlay .mk-max path {
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 2.6;
+}
+.ovl-tip {
+  position: absolute;
+  z-index: 2;
+  max-width: 300px;
+  padding: 0.3rem 0.5rem;
+  border-radius: 5px;
+  background: rgba(26, 30, 36, 0.92);
+  color: #fff;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+.ovl-tip.grey {
+  border-left: 3px solid var(--na);
+}
+.lg.na {
+  background: var(--na);
+}
+.lg.hot {
+  border-radius: 50%;
+  border: 1.5px solid var(--text);
+  background: #fff;
+}
+.lg.max {
+  border-radius: 50%;
+  border: 2px solid var(--bad);
+}
+.lg.ln-init,
+.lg.ln-rad,
+.lg.ln-esl {
+  width: 1.1rem;
+  height: 0;
+  border-top: 2px dashed var(--series-init);
+  vertical-align: middle;
+}
+.lg.ln-rad {
+  border-top: 4px solid color-mix(in srgb, var(--series-rad) 75%, transparent);
+}
+.lg.ln-esl {
+  border-top: 2px solid var(--series-esl);
+}
+.chart .ln-init,
+.ovl svg .ln-init {
+  fill: none;
+  stroke: var(--series-init);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 3;
+}
+.ovl svg .ln-rad {
+  fill: none;
+  stroke: var(--series-rad);
+  stroke-width: 4;
+  opacity: 0.75;
+}
+.ovl svg .ln-esl {
+  fill: none;
+  stroke: var(--series-esl);
+  stroke-width: 1.6;
+}
+.hist-bar {
+  fill: var(--series-rad);
+}
+.hist-bar.zero {
+  fill: #0f9d8a;
+}
+
+/* 대화상자 */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(26, 30, 36, 0.35);
+}
+.modal {
+  width: min(34rem, calc(100vw - 2rem));
+  display: grid;
+  gap: 0.7rem;
+  padding: 1.1rem 1.2rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 32px rgba(26, 30, 36, 0.18);
+}
+.modal h3 {
+  font-size: 1.05rem;
+}
+.modal textarea {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  resize: vertical;
+}
+.modal textarea[aria-invalid="true"]:focus {
+  outline-color: color-mix(in srgb, var(--bad) 45%, transparent);
+}
+.modal-actions {
+  justify-content: flex-end;
+}
+
+/* 라이브러리 */
+.filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.6rem 0.9rem;
+}
+.filters .field {
+  min-width: 9rem;
+}
+.table tr.retired td {
+  color: var(--muted);
+}
+.table td input[type="number"],
+.table td input:not([type]),
+.table td select {
+  height: 1.8rem;
+  width: 7rem;
+}
+.table td .actions {
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+}
+details.card.adv > .card-body {
+  padding-top: 0.8rem;
+}
+.env-map {
+  display: grid;
+  gap: 0.4rem;
+}
+.env-map svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.env-map .outline {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1;
+}
+.ovl .legend .lg,
+.env-map .legend .lg {
+  margin-right: 0.3rem;
+}
+.link.error-text {
+  color: var(--bad);
+}

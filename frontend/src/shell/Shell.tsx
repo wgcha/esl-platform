@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Role } from "../api/types";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ROLE_LABEL, useApp } from "../app/AppContext";
 import { RightPanel } from "./RightPanel";
 
@@ -29,6 +29,8 @@ export function PathBar({ crumbs }: { crumbs: Crumb[] }) {
 export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: string }) {
   const { me } = useApp();
   const role = projectId && me ? (me.roles[projectId] as Role | undefined) : undefined;
+  const loc = useLocation();
+  const libOn = /\/library(\/|$)/.test(loc.pathname);
   return (
     <header className="topbar">
       <Link to="/" className="brand" aria-label="ESL 처음으로">
@@ -36,6 +38,13 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
         <span className="brand-name">ESL</span>
       </Link>
       <PathBar crumbs={[ROOT_CRUMB, ...crumbs]} />
+      {projectId && (
+        <nav aria-label="전역 메뉴">
+          <Link to={`/p/${projectId}/library`} className={libOn ? "topbar-menu on" : "topbar-menu"} aria-current={libOn ? "page" : undefined}>
+            라이브러리
+          </Link>
+        </nav>
+      )}
       <div className="topbar-right">
         <a className="topbar-link" href="/">
           대시보드로

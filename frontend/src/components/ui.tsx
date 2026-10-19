@@ -40,11 +40,12 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
-export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+export function Stat({ label, value, hint, sub, tone }: { label: string; value: ReactNode; hint?: string; sub?: ReactNode; tone?: "bad" | "ok" }) {
   return (
-    <div className="stat" title={hint}>
+    <div className={tone ? `stat ${tone}` : "stat"} title={hint}>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
+      {sub !== undefined && <div className="stat-sub">{sub}</div>}
     </div>
   );
 }

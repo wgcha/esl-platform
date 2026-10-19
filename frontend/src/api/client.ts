@@ -75,6 +75,12 @@ export const CODE_TEXT: Record<string, string> = {
   CASE_JOB_BUSY: "같은 작업이 이미 대기 중이거나 실행 중입니다.",
   ARTIFACT_TOO_LARGE: "파일이 커서 다운로드 대신 경로를 복사하세요.",
   CSRF_HEADER_REQUIRED: "요청 헤더(X-ESL-Request)가 없습니다.",
+  ENTRY_EXISTS: "이 ESL 결과는 이미 라이브러리에 등록되어 있습니다.",
+  VALIDATION_NOT_PASS: "검증 FAIL 결과는 확정 사유와 함께만 등록할 수 있습니다.",
+  MAPPING_DEGENERATE: "대상 메시로 하중을 옮길 수 없는 항목이 있습니다(매핑 퇴화) — 필터에서 빼고 다시 실행하세요.",
+  GRID_MISMATCH: "항목들의 정규화 격자가 달라 대상 없이 묶을 수 없습니다 — 설계 대상을 고르세요.",
+  NORMALIZATION_META_MISSING: "질량 정규화에 필요한 제품 질량이 없는 항목이 있습니다 — 라이브러리에서 입력하세요.",
+  VERSION_CONFLICT: "다른 사용자가 먼저 수정했습니다 — 새로 고친 뒤 다시 시도하세요.",
 };
 
 const MISSING_TEXT: Record<string, string> = {

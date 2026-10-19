@@ -3,13 +3,20 @@ import type { JobOut } from "../api/types";
 import { usePolling } from "../lib/usePolling";
 import { JobStatusBadge } from "../components/ui";
 
-const TYPE_LABEL: Record<string, string> = { CASE_EXTRACT: "추출", ESL_SOLVE: "ESL 계산", VALIDATE: "검증", EXPORT: "내보내기" };
+const TYPE_LABEL: Record<string, string> = {
+  CASE_EXTRACT: "추출",
+  ESL_SOLVE: "ESL 계산",
+  VALIDATE: "검증",
+  EXPORT: "내보내기",
+  CASE_REPORT: "보고서",
+  LIB_ANALYZE: "종합분석",
+};
 
 function JobRow({ j }: { j: JobOut }) {
   return (
     <li className={`qrow ${j.state.toLowerCase()}`}>
       <span className="qtitle">{TYPE_LABEL[j.job_type] ?? j.job_type}</span>
-      <span className="qmeta ellipsis" title={j.case_id}>
+      <span className="qmeta ellipsis" title={j.case_id ?? j.analysis_id ?? undefined}>
         {j.created_by_name}
         {j.queue_position ? ` #${j.queue_position}` : ""}
       </span>
@@ -64,9 +71,9 @@ export function RightPanel() {
         )}
       </section>
       {light.length > 0 && (
-        <section className="panel" aria-label="내보내기 대기열">
+        <section className="panel" aria-label="보고서·내보내기 대기열">
           <header className="panel-head">
-            <h2>내보내기 대기열</h2>
+            <h2>보고서·내보내기 대기열</h2>
           </header>
           <ul className="qlist">
             {light.map((j) => (
