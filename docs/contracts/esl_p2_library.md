@@ -75,3 +75,27 @@
 1. P2-0(§7) 코어+TCL → 플랫폼·UI.
 2. P2-a/b/c 코어(`esl/library/`: 메타 파싱·정규화 요약·매핑·SVD/k-medoids·DTPG 덱·HTML 보고서) — 순수 함수 + CLI.
 3. 플랫폼: 라이브러리 테이블·API·분석 작업·UI(라이브러리 목록, 분석 생성, 보고서 보기).
+
+## 10. 구현 반영 (2026-10-19, 코어 f4ff26f)
+- 대표 선택 특징: 기본 `analysis.svd_feature: cell`(대상 격자 셀 합력·합모멘트, 케이스별 단위 노름 정규화) — 절점력 특징은 원본/매핑 해상도 차이로 같은 패턴 유사도가 붕괴(cos 0.05)하므로. `nodal`은 옵션. 크기는 최악 케이스 옵션·minmax가 담당.
+- 매핑 후 최소노름 평형 보정(기본 켬, 보정량 기록).
+- DTPG SKIP=BC 고정(전 노드 FORCE이므로 LOAD/BOTH 금지). 덱은 사용자 측 `optistruct -check`로 문법 확인 필요. `card_format: free|fixed`.
+- 저장: `mapped_loads.npz`는 대표·최악 케이스만 저장(전체 K×N×3은 필요 시 재계산) — 규모(22만×수백 씬) 대응.
+- 제품 질량(`mass` 정규화): 기본값(파트 질량)은 제품 질량이 아니므로 `mass` 모드는 항목 메타 `product_mass`가 있을 때만 허용, 없으면 `NORMALIZATION_META_MISSING`. 사용자 입력(UI) 또는 rad 전체 질량 계산 옵션.
+
+## 11. 플랫폼 계약 (P2 UI·API)
+### DB (Alembic 0003)
+- `library_entries`: id, case_id, esl_run_id, validation_id, status(`ACTIVE`|`RETIRED`), retired_by_id, model{name, inch, version, date, product_mass?}, scene{project, scenario, seq, drop_type, round, scene_no, orient, suffix, variant, raw}, quality{verdict, field_max_err_pct, field_p90_err_pct, noise}, tstar, summary_rel(npz 경로), sha256, registered_by/at, note. unique(esl_run_id) WHERE ACTIVE.
+- `analysis_runs`: id, project_id, target_entry_id, filters JSONB, options JSONB, status(job 연동), result_rel, report_rel, optdeck_rel, created_by/at.
+### 작업 유형 추가
+- `CASE_REPORT`(LIGHT): 코어 `report` 단계 → `07_report/report.html`. VALIDATE 성공 시 자동 큐(설정 `report.auto`, 기본 true).
+- `LIB_ANALYZE`(SLOT): esl.library analyze + optdeck + report → `<esl_root>/_analysis/<id>/`.
+### API
+- `GET /validations/{id}/field?layer=rad|esl|err&max_points=` → `{n_total, n_returned, decimated, plane:{origin,e1,e2}, color_range:{min,max}, points:[[elem_id, a, b, value, reason]]}`; `GET /validations/{id}/section?axis=xi|eta&at=0.5` → `{s[], w_rad[], w_esl[], w0[]}`; validation 응답에 `field` 요약.
+- `GET /cases/{id}/report` → HTML(`Content-Type: text/html`, CSP `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:`), `?download=1`이면 첨부.
+- `POST /library/entries` `{esl_run_id, validation_id?, note?, force_reason?}`(FAIL은 force_reason 필수, power 이상) → 201; `POST /library/entries/{id}/retire`; `PATCH /library/entries/{id}` `{version, model.product_mass?, scene.*}`(메타 수정만); `GET /library/entries?project_id=&model=&drop_type=&orient=&verdict=&status=`.
+- `POST /library/analyses` `{project_id, target_entry_id?, filters, options}` → 201 + LIB_ANALYZE 작업; `GET /library/analyses`, `GET /library/analyses/{id}`(요약: 대표·포락·통계), `GET /library/analyses/{id}/report`(HTML, 위 CSP), `GET /library/analyses/{id}/files`(optdeck 등 다운로드 목록).
+- 오류 코드 추가: ENTRY_EXISTS, VALIDATION_NOT_PASS, MAPPING_DEGENERATE, GRID_MISMATCH, NORMALIZATION_META_MISSING.
+### UI
+- ⑤ 검증: 기존 표 + **겹쳐보기 카드**(레이어 전환 Radioss/ESL/오차, 불투명도 슬라이더, 공통 색범위, 회색=비교불가, hotspot 표시) + 단면선 카드(배율 슬라이더) + 최대변형률 비교 수치·분위수·히스토그램 + "보고서 보기"(새 탭) + "라이브러리 등록"(주 버튼은 '검증 실행' 유지, 등록은 결과 카드 안 보조 버튼).
+- 상단 경로바 옆 전역 메뉴 1개 "라이브러리": `/esl/p/:projectId/library`(항목 표: 모델·인치·씬·verdict·오차, 필터, 메타 수정) → `/esl/p/:projectId/library/analyses/new`(대상 선택·필터·옵션 최소: 정규화 모드, 대표 수, 목적 minmax|weighted) → `/esl/p/:projectId/library/analyses/:id`(진행·요약·보고서 보기·덱 다운로드). 화면당 주 버튼 1개.
