@@ -10,7 +10,7 @@
 ## 1. 실행 (Windows, HyperWorks 2022~2026)
 
 ```bat
-set HW="C:\Program Files\Altair\2024\hwdesktop\hw\bin\win64\hw.exe"
+set HW="C:\Program Files\Altair\2026.1\hwdesktop\hw\bin\win64\hw.exe"
 set TCL=C:\esl\resources\tcl
 
 rem (1) probe: 이름 확인용 probe.json

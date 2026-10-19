@@ -19,7 +19,7 @@ h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows P
 (자세한 내용: `resources/tcl/README.md`).
 
 ```bat
-set HW="C:\Program Files\Altair\2024\hwdesktop\hw\bin\win64\hw.exe"
+set HW="C:\Program Files\Altair\2026.1\hwdesktop\hw\bin\win64\hw.exe"
 rem (1) 결과 이름 확인 → probe.json 을 보고 request.txt 작성
 %HW% -clientconfig hwpost.dat -b -tcl resources\tcl\esl_h3d_probe.tcl   -input D:\run\drop.h3d -config D:\run\request.txt -output D:\run\probe
 rem (2) CSV 추출 → D:\run\esl_csv (frames.csv, model.csv, strain.csv, disp.csv, done.json)
