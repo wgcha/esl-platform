@@ -102,3 +102,21 @@
 ### UI
 - ⑤ 검증: 기존 표 + **겹쳐보기 카드**(레이어 전환 Radioss/ESL/오차, 불투명도 슬라이더, 공통 색범위, 회색=비교불가, hotspot 표시) + 단면선 카드(배율 슬라이더) + 최대변형률 비교 수치·분위수·히스토그램 + "보고서 보기"(새 탭) + "라이브러리 등록"(주 버튼은 '검증 실행' 유지, 등록은 결과 카드 안 보조 버튼).
 - 상단 경로바 옆 전역 메뉴 1개 "라이브러리": `/esl/p/:projectId/library`(항목 표: 모델·인치·씬·verdict·오차, 필터, 메타 수정) → `/esl/p/:projectId/library/analyses/new`(대상 선택·필터·옵션 최소: 정규화 모드, 대표 수, 목적 minmax|weighted) → `/esl/p/:projectId/library/analyses/:id`(진행·요약·보고서 보기·덱 다운로드). 화면당 주 버튼 1개.
+
+## 12. 최적화 하중 구성 변경 · 설계 버전 비교 (2026-10-19 확정)
+### 12.1 덱 하중 케이스
+- 설정 `optdeck.cases: all | representative | representative+worst`, **기본 `all`**: 필터에 걸린 모든 씬 ESL(대상 메시로 매핑)을 각각 subcase로 넣고 minmax 컴플라이언스.
+- `optdeck.max_cases`(기본 60): `all`에서 씬 수가 이를 넘으면 `representative+worst`로 자동 축소하고 경고 + 보고서에 "제외된 씬과 사유" 표. 상한으로 거부하지 않는다(축소만).
+- 같은 K이므로 subcase 수는 해석 비용에 거의 영향 없음(분해 1회, 다중 RHS) — 보고서에 subcase 수·축소 여부 명시.
+- 대표 케이스(k-medoids)는 덱 구성이 아니라 **보고서의 하중 패턴 설명용**으로 유지.
+- 저장(`mapped_loads.npz`): 덱에 들어간 케이스 전부(= all이면 전 씬). 규모 경고는 유지.
+- API·UI: 분석 생성 옵션에 "최적화 하중: 모든 씬(기본) / 대표 / 대표+최악" 1개 추가, 상세 화면에 subcase 수·축소 여부 표시.
+
+### 12.2 설계 버전 비교(ESLSO 수렴 판정)
+- 목적: 비드 반영 설계의 **검증 낙하** 결과를 이전 설계와 비교해 추가 반복 필요 여부를 판단.
+- 짝 지정: 같은 `model`(제품명)·같은 씬 키(`scenario, seq, drop_type, round, scene_no, orient, suffix`)에서 `version`이 다른 라이브러리 항목. 기준/비교 버전은 사용자가 선택(기본: 직전 버전).
+- 지표(씬별): 하중 패턴 유사도 `cos`(대상 격자 셀 합력·합모멘트, 단위 노름), 합력 크기 비, hotspot 위치 이동(정규화 좌표 거리), 최대변형률 비(ε_max 신/구), 검증 품질 변화. 집계: 씬 cos 최소·평균, 대표 케이스 동일 여부(같은 k로 재군집 후 매칭).
+- 판정(설정, 임시값): `convergence.cos_min: 0.9`, `convergence.rep_same: true` 만족 → "수렴(반복 불필요)", 아니면 "추가 반복 권장" + 바뀐 씬 목록.
+- 산출: `<esl_root>/_compare/<id>/`(compare.json, report.html — 씬별 표, 셀 포락 차이 히트맵, 수렴 판정). 작업 `LIB_COMPARE`(LIGHT).
+- API: `POST /library/comparisons` `{project_id, model, base_version, new_version, filters?}`, `GET /library/comparisons[/{id}[/report]]`. 오류 `NO_PAIRED_SCENES`.
+- UI: 라이브러리 목록에 "버전 비교" 진입(주 버튼은 기존 유지, 보조), 비교 상세 화면(판정 배지·씬 표·보고서 보기).
