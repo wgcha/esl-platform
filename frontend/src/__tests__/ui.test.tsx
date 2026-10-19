@@ -1,0 +1,165 @@
+// V-UI-1: 6단계 라우트, 단계당 주 버튼 1개, 권한 없는 사용자 비활성, stale 배너 + 단계별 핵심 요소
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { renderApp } from "../test/render";
+import { NO_PERMISSION } from "../app/AppContext";
+import { STALE_TEXT } from "../stages/StageFrame";
+
+const PRIMARY = ["추출 실행", "t* 확정", "지지점 저장", "ESL 계산", "검증 실행", "내보내기"];
+const TITLES = ["① 입력", "② t*", "③ 지지점", "④ ESL", "⑤ 검증", "⑥ 내보내기"];
+const url = (c: string, n: number) => `/p/p-body/c/${c}/stage/${n}`;
+const primaries = (container: HTMLElement) => container.querySelectorAll("button[data-primary]");
+
+describe("V-UI-1 라우트·주 버튼", () => {
+  for (let n = 1; n <= 6; n++) {
+    it(`단계 ${n}: 제목과 주 버튼 1개`, async () => {
+      const { container } = renderApp(url("c-demo", n));
+      expect(await screen.findByRole("heading", { level: 2, name: TITLES[n - 1] })).toBeTruthy();
+      await waitFor(() => expect(primaries(container).length).toBe(1));
+      expect(primaries(container)[0].textContent).toBe(PRIMARY[n - 1]);
+      // 경로바·스텝퍼
+      expect(screen.getByRole("link", { name: "대시보드로" }).getAttribute("href")).toBe("/");
+      const crumbs = screen.getByRole("navigation", { name: "경로" });
+      expect(within(crumbs).getByText("ESL")).toBeTruthy();
+      await within(crumbs).findByText("후방 충돌 40kph");
+      expect(screen.getByRole("navigation", { name: "단계" }).querySelectorAll("li").length).toBe(6);
+    });
+  }
+
+  it("잘못된 단계 번호는 ①로", async () => {
+    renderApp(url("c-demo", 9));
+    expect(await screen.findByRole("heading", { level: 2, name: "① 입력" })).toBeTruthy();
+  });
+
+  it("프로젝트 선택 → Case 목록", async () => {
+    renderApp("/");
+    fireEvent.click(await screen.findByRole("link", { name: /차체 후방 충돌/ }));
+    expect(await screen.findByRole("heading", { name: "Case 목록" })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "후방 충돌 40kph" })).toBeTruthy();
+  });
+});
+
+describe("V-UI-1 권한", () => {
+  it("조회 사용자: 모든 단계 주 버튼 비활성 + 툴팁", async () => {
+    for (let n = 1; n <= 6; n++) {
+      const { container, unmount } = renderApp(url("c-demo", n), "general");
+      await screen.findByRole("heading", { level: 2, name: TITLES[n - 1] });
+      await waitFor(() => expect(screen.getByTestId("user").textContent).toContain("조회"));
+      const btn = primaries(container)[0] as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.parentElement!.getAttribute("title")).toBe(NO_PERMISSION);
+      unmount();
+    }
+  });
+
+  it("조회 사용자: 새 Case 비활성", async () => {
+    renderApp("/p/p-body", "general");
+    await waitFor(() => expect((screen.getByRole("button", { name: "새 Case" }) as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("실행 사용자: ④ ESL 계산 활성", async () => {
+    const { container } = renderApp(url("c-demo", 4), "power");
+    await screen.findByText("F_eq 상위 노드");
+    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false));
+  });
+});
+
+describe("V-UI-1 stale", () => {
+  it("t*가 바뀐 Case의 ④에 stale 배너, 스텝퍼 점 stale", async () => {
+    renderApp(url("c-stale", 4));
+    expect(await screen.findByText(STALE_TEXT)).toBeTruthy();
+    const dots = screen.getByRole("navigation", { name: "단계" }).querySelectorAll("[data-state]");
+    expect(dots[3].getAttribute("data-state")).toBe("stale");
+    expect(dots[0].getAttribute("data-state")).toBe("done");
+  });
+
+  it("최신 Case에는 배너 없음", async () => {
+    renderApp(url("c-demo", 4));
+    await screen.findByText("F_eq 상위 노드");
+    expect(screen.queryByTestId("stale-banner")).toBeNull();
+  });
+
+  it("stale ESL이면 ⑤ 검증 실행 비활성", async () => {
+    const { container } = renderApp(url("c-stale", 5));
+    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).parentElement!.getAttribute("title")).toMatch(/다시 계산/));
+  });
+});
+
+describe("단계별 핵심 요소", () => {
+  it("① inspect 요약과 추출 결과", async () => {
+    renderApp(url("c-demo", 1));
+    expect(await screen.findByText("done.json 정상")).toBeTruthy();
+    expect(await screen.findByText("rad 읽기 가능")).toBeTruthy();
+    expect(screen.getByText("7,200")).toBeTruthy(); // 노드 수(추출 결과)
+  });
+
+  it("② 지표 토글 2개, 곡선·t* 표시, 후보 라디오, t* 확정은 바꿔야 활성", async () => {
+    const { container } = renderApp(url("c-demo", 2));
+    expect(await screen.findByRole("img", { name: /max-hold 곡선/ })).toBeTruthy();
+    expect(screen.getAllByRole("radio", { name: /Max_Strain|Plastic/ }).length).toBe(2);
+    expect(screen.getByTestId("tstar-marker")).toBeTruthy();
+    const btn = primaries(container)[0] as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "프레임 92" }));
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "Plastic" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "프레임 84" })).toBeTruthy());
+    expect(screen.getAllByText("상승 중").length).toBeGreaterThan(0);
+  });
+
+  it("②에서 t*를 바꾸면 ④가 stale", async () => {
+    const { container, server } = renderApp(url("c-demo", 2));
+    fireEvent.click(await screen.findByRole("radio", { name: "프레임 92" }));
+    fireEvent.click(primaries(container)[0]);
+    await waitFor(() => expect(server.findCase("c-demo")!.tstar!.frame_index).toBe(92));
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "단계" }).querySelectorAll("[data-state]")[3].getAttribute("data-state")).toBe("stale"),
+    );
+  });
+
+  it("③ 노드 입력 3칸에 자동값, 산점 표시", async () => {
+    renderApp(url("c-demo", 3));
+    const inputs = await screen.findAllByRole("textbox", { name: /지지 노드/ });
+    expect(inputs.length).toBe(3);
+    await waitFor(() => expect((inputs[0] as HTMLInputElement).value).toBe("1"));
+    expect(await screen.findAllByTestId("support-marker")).toHaveLength(3);
+  });
+
+  it("④ 회전각·평형 오차·F_eq 표", async () => {
+    renderApp(url("c-demo", 4));
+    expect(await screen.findByText("1.84°")).toBeTruthy();
+    expect(screen.getByText("평형 오차")).toBeTruthy();
+    expect(await screen.findByText("3542")).toBeTruthy();
+  });
+
+  it("⑤ FAIL 배지·사유·제외 요소", async () => {
+    renderApp(url("c-demo", 5));
+    expect(await screen.findByText("FAIL")).toBeTruthy();
+    expect(screen.getByText(/104012 ε_eq 오차/)).toBeTruthy();
+    expect(screen.getByText("지지점 인접(경계 영향)")).toBeTruthy();
+  });
+
+  it("⑥ 대상 체크 3개·폴더 경로·파일 목록", async () => {
+    renderApp(url("c-demo", 6));
+    expect((await screen.findAllByRole("checkbox")).length).toBe(3);
+    expect((await screen.findByTestId("folder-path")).textContent).toContain("rear40");
+    expect(await screen.findByText("06_export/exp-1/esl_cload.inc")).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "다운로드" }).length).toBe(7);
+  });
+});
+
+describe("작업 진행", () => {
+  it("① 추출 실행 → 진행 표시 → 완료 후 결과", async () => {
+    const { container, server } = renderApp(url("c-new", 1));
+    await screen.findByText("done.json 정상");
+    const btn = primaries(container)[0] as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    expect(await screen.findByTestId("job-progress")).toBeTruthy();
+    expect(server.jobs[0].job_type).toBe("CASE_EXTRACT");
+    server.drain();
+    expect(screen.getByText(/아직 추출하지 않았습니다/)).toBeTruthy();
+    expect(await screen.findByText("7,200", {}, { timeout: 6000 })).toBeTruthy();
+    expect(screen.queryByText(/아직 추출하지 않았습니다/)).toBeNull();
+  }, 10000);
+});
