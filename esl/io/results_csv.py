@@ -6,9 +6,15 @@ TCL 3패스 출력::
   model.csv          node_id,x0,y0,z0                                   첫 프레임 노드 좌표
   final.csv          elem_id,vm_hv,exx,eyy,ezz,exy,epsp                 (A) 마지막 프레임, 파트 전 요소
   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp     (B) 전 프레임, 집합 H
-  strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp     (C) 후보 프레임 D, 파트 전 요소
+  strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp     (C) 후보 프레임 D + 직전 프레임
+                                                                        P = {f−1 ≥ 0 : f∈D}, 파트 전 요소
   disp.csv           frame_index,node_id,ux,uy,uz                       (C) 후보 프레임 D, 파트 전 노드
-  done.json          {"ok":true, "candidate_frames":{"max_strain":[..],"plastic_strain":[..]}, "hot_k", ...}
+  done.json          {"ok":true, "candidate_frames":{"max_strain":[..],"plastic_strain":[..]}, "frames_D",
+                      "prev_frames", "strain_frames", "hot_k", ...}
+
+strain_frames.npz 의 ``prev_*`` (계약 esl_p2_library.md §7.1): D 의 각 f 에 대해 f−1 프레임 값(전 요소 "상승 중"
+마스크용). f=0 이면 prev_frame_index=−1·값 0. 예전 TCL 출력(직전 프레임 행 없음)이면 prev_available=False·값 0 +
+경고(이 경우 비교는 history 의 H 요소만 상승 여부를 안다).
 
 exy 는 h3d 값 그대로(전단 규약은 pipeline 이 ``decide_shear`` 로 판정). CSV 는 ``csv`` 모듈로 청크(기본 20만 행)
 단위로 읽어 사전할당 배열에 채운다(22만 요소 × D ≤ 10 프레임 = 220만 행도 파일 전체를 메모리에 올리지 않음).
@@ -147,10 +153,12 @@ def _missing_msg(name, got, ids, frames, what="요소"):
             f"프레임 {int(miss_f.sum())}개 (예 {frames[miss_f][:5].tolist()})")
 
 
-def _read_frame_table(path, frames, ids, key, what, name):
+def _read_frame_table(path, frames, ids, key, what, name, optional=None):
     """frame_index,<key>,<값> 표 → 사전할당 배열에 청크 단위로 채움 + 전부 채워졌는지 검사.
 
     key=elem_id → _alloc6 사전(f4), key=node_id → u (len(frames), len(ids), 3) f8.
+    optional (len(frames),) bool: 이 프레임은 행이 하나도 없어도 됨(일부만 있으면 ID_MISMATCH).
+    optional 을 주면 (값, 프레임별 존재 여부) 를 돌려준다.
     """
     six = key == "elem_id"
     fh, cols = _open_csv(path, ["frame_index", key] + (SCOLS if six else ["ux", "uy", "uz"]), "H3D_MISSING_RESULT")
@@ -175,9 +183,18 @@ def _read_frame_table(path, frames, ids, key, what, name):
             got[fp[k], ip[k]] = True
     if n_rows == 0:
         raise EslError("H3D_MISSING_RESULT", f"{name} 에 데이터가 없음")
-    if not np.all(got):
-        raise EslError("ID_MISMATCH", _missing_msg(name, got, ids, frames, what))
-    return out
+    if optional is None:
+        if not np.all(got):
+            raise EslError("ID_MISMATCH", _missing_msg(name, got, ids, frames, what))
+        return out
+    opt = np.asarray(optional, dtype=bool)
+    present = got.any(axis=1)
+    need = ~opt | present                     # 필수 프레임 + 일부라도 있는 선택 프레임은 전부 있어야 함
+    if not np.all(got[need]):
+        g = got.copy()
+        g[~need] = True
+        raise EslError("ID_MISMATCH", _missing_msg(name, g, ids, frames, what))
+    return out, present
 
 
 def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
@@ -298,9 +315,37 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
     if done.get("n_hot") not in (None, int(hist_id.size)):
         warnings.append(f"done.json n_hot={done.get('n_hot')} ≠ history.csv 대상 파트 요소 {hist_id.size}")
 
-    # ---------------- strain_frames.csv / disp.csv (C)
-    sv = _read_frame_table(os.path.join(results_dir, "strain_frames.csv"), D, elem_id, "elem_id", "요소",
-                           "strain_frames.csv")
+    # ---------------- strain_frames.csv / disp.csv (C): D + 직전 프레임 P (§P2 7.1)
+    # 직전 프레임 = frames.csv 순서에서 바로 앞 프레임(TCL 은 0..F−1 연속이라 f−1), 첫 프레임이면 −1
+    dpos_all = _lookup(all_fi, D)
+    prevD = np.where(dpos_all > 0, all_fi[np.maximum(dpos_all - 1, 0)], -1).astype(np.int64)
+    P = np.array(sorted(set(prevD[prevD >= 0].tolist())), dtype=np.int64)
+    if np.any(_lookup(all_fi, P) < 0):
+        raise EslError("ID_MISMATCH", f"직전 프레임 {P.tolist()} 중 frames.csv 에 없는 것이 있음")
+    U = np.array(sorted(set(D.tolist()) | set(P.tolist())), dtype=np.int64)
+    sv_all, present = _read_frame_table(os.path.join(results_dir, "strain_frames.csv"), U, elem_id, "elem_id",
+                                        "요소", "strain_frames.csv", optional=~np.isin(U, D))
+    du = _lookup(U, D)
+    sv = {k: a[du] for k, a in sv_all.items()}
+    prev_ok = np.ones(D.size, dtype=bool)
+    prev = {k: np.zeros_like(a) for k, a in sv.items()}
+    for i, pf in enumerate(prevD.tolist()):
+        if pf < 0:
+            continue
+        j = int(_lookup(U, np.array([pf]))[0])
+        if present[j]:
+            for k in prev:
+                prev[k][i] = sv_all[k][j]
+        else:
+            prev_ok[i] = False
+    del sv_all
+    if not prev_ok.all():
+        miss = prevD[~prev_ok].tolist()
+        warnings.append(f"strain_frames.csv 에 직전 프레임 {miss} 의 행이 없음(예전 TCL 출력) — 전 요소 '상승 중' "
+                        f"마스크를 만들 수 없어 재현 정확도 비교는 history(H) 요소만 가능. TCL 을 다시 실행할 것")
+    prev_frames_done = done.get("prev_frames")
+    if isinstance(prev_frames_done, list) and sorted(int(x) for x in prev_frames_done) != P.tolist():
+        warnings.append(f"done.json prev_frames={prev_frames_done} ≠ D 에서 계산한 직전 프레임 {P.tolist()}")
     u = _read_frame_table(os.path.join(results_dir, "disp.csv"), D, node_id, "node_id", "노드", "disp.csv")
 
     for key, val in (("n_elems", E), ("n_nodes", N)):
@@ -317,14 +362,16 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
     savez_stream(os.path.join(out_dir, "history.npz"), time=hist_t, frame_index=hist_fi.astype(np.int32),
                  elem_id=hist_id, **hv)
     savez_stream(os.path.join(out_dir, "strain_frames.npz"), frame_index=D.astype(np.int32), time=tD,
-                 elem_id=elem_id, **sv)
-    del sv
+                 elem_id=elem_id, **sv, prev_frame_index=prevD.astype(np.int32), prev_vm_hv=prev["vm_hv"],
+                 prev_eps=prev["eps"], prev_epsp=prev["epsp"], prev_available=prev_ok)
+    del sv, prev
     savez_stream(os.path.join(out_dir, "disp.npz"), frame_index=D.astype(np.int32), time=tD, node_id=node_id, u=u)
     meta = {
         "schema": "esl/frames/2",
         "frame_index": hist_fi.tolist(), "time": hist_t.tolist(), "frame_stride": frame_stride,
         "n_frames_h3d": int(all_fi.size), "n_frames": int(hist_fi.size),
         "frames_D": D.tolist(), "time_D": tD.tolist(), "candidate_frames": cand,
+        "prev_frame_index": prevD.tolist(), "prev_available": prev_ok.tolist(),
         "candidate_elems": done.get("candidate_elems"),
         "hot_k": done.get("hot_k"), "top_n": done.get("top_n"), "reach_rtol": done.get("reach_rtol"),
         "n_hot": int(hist_id.size), "n_elems": int(E), "n_nodes": int(N),
@@ -337,7 +384,8 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
     with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
     return {"n_frames": int(hist_fi.size), "n_elems": int(E), "n_nodes": int(N), "n_hot": int(hist_id.size),
-            "frames_D": D.tolist(), "candidate_frames": cand, "warnings": warnings}
+            "frames_D": D.tolist(), "prev_frames": P.tolist(), "prev_available": bool(prev_ok.all()),
+            "candidate_frames": cand, "warnings": warnings}
 
 
 def _scan_frames(path: str) -> np.ndarray:
@@ -421,13 +469,15 @@ def max_hold(eq_inst, *arrays):
 
 def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None, ezz=None, epsp=None,
                       frame_index=None, h3d="synthetic.h3d", write_done=True, extra_nodes=None, extra_elems=None,
-                      hot_k=200, top_n=5, reach_rtol=1e-6, frames_D=None) -> str:
+                      hot_k=200, top_n=5, reach_rtol=1e-6, frames_D=None, write_prev=True) -> str:
     """TCL 3패스 출력(§7.2) 생성기. 시험·E2E 용 — H·D 는 TCL 과 같은 규칙(esl.mech.tstar)으로 정한다.
 
     - ``eps``: (F,E,3) h3d 에 저장된 [exx,eyy,exy] (이미 max-hold 된 Max_Strain 텐서; exy 규약은 호출자 몫).
     - ``vm_hv``: (F,E) HyperView vonMises(기본 ε_eq(eps) 텐서 규약), ``ezz`` 기본 −(exx+eyy), ``epsp`` 기본 0.
     - ``u``: (F,N,3) 전 프레임 변위(D 프레임만 쓴다). ``frames_D`` 를 주면 D 를 그것으로 강제.
     - ``extra_nodes``/``extra_elems``: 다른 파트 행 흉내용 추가 ID (값은 0).
+    - ``write_prev``: strain_frames.csv 에 직전 프레임 P = {f−1 ≥ 0 : f∈D} 행도 씀(TCL 패스 C 와 같음).
+      False 면 예전 TCL 출력(직전 프레임 없음) 흉내.
     """
     from esl.mech import strain, tstar
 
@@ -466,6 +516,9 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
             cand[m] = [cand[m][i] for i in keep]
             cel[m] = [cel[m][i] for i in keep]
     dpos = [int(np.flatnonzero(fi == f)[0]) for f in Dset]
+    Pset = sorted({int(fi[k - 1]) for k in dpos if k > 0})          # 직전 프레임(frames 순서)
+    CF = sorted(set(Dset) | set(Pset)) if write_prev else list(Dset)
+    spos = [int(np.flatnonzero(fi == f)[0]) for f in CF]
 
     def row(a):
         return ",".join(g(x) for x in a)
@@ -494,7 +547,7 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
                 fh.write(f"{int(fi[k])},{int(elem_id[e])},{row(vals[k, e])}\n")
     with open(os.path.join(d, "strain_frames.csv"), "w", encoding="utf-8", newline="") as fh:
         fh.write("frame_index,elem_id," + ",".join(SCOLS) + "\n")
-        for k in dpos:
+        for k in spos:
             for e in range(E):
                 fh.write(f"{int(fi[k])},{int(elem_id[e])},{row(vals[k, e])}\n")
             for e in xe:
@@ -511,6 +564,7 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
             "ok": True, "n_frames": int(F), "n_elems": int(E + len(xe)), "n_nodes": int(node_id.size + len(xn)),
             "n_hot": int(H.size), "hot_k": int(hot_k), "top_n": int(top_n), "reach_rtol": float(reach_rtol),
             "candidate_frames": cand, "candidate_elems": cel, "frames_D": Dset, "h3d": h3d,
+            **({"prev_frames": Pset, "strain_frames": CF} if write_prev else {}),
             "strain_type": "Max_Strain", "strain_layer": "Mid", "epsp_type": "Plastic Strain", "epsp_layer": "Mid",
             "disp_type": "Displacement", "warnings": []}
         with open(os.path.join(d, "done.json"), "w", encoding="utf-8") as fh:

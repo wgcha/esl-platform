@@ -57,7 +57,9 @@ def test_float32_e2e_warns_and_fails(f32):
     assert n["hotspot_strain_rel"] > 0.05                    # FAIL 기준 초과
     assert len(n["hotspot_elem_id"]) == 3
     val = _j(out, "05_val", "validation.json")
-    assert val["verdict"] == "FAIL" and val["fail_reasons"] == ["NOISE_FLOOR"]
+    # float32 잡음은 전 요소 비교에도 드러남(작은 변형률 valid 요소의 |오차| P90) → FIELD_P90_ERR 동반 가능
+    assert val["verdict"] == "FAIL" and val["fail_reasons"][0] == "NOISE_FLOOR"
+    assert set(val["fail_reasons"]) <= {"NOISE_FLOOR", "FIELD_P90_ERR", "FIELD_MAX_ERR"}
     m = {x["metric"]: x for x in val["metrics"]}
     assert m["noise_hotspot_strain_rel"]["pass"] is False
     assert m["noise_hotspot_strain_rel"]["criterion"] == 0.05
@@ -65,11 +67,12 @@ def test_float32_e2e_warns_and_fails(f32):
     es = run["stages"]["esl"]
     assert es["summary"]["noise"]["force_rel"] == n["force_rel"]
     assert any("잡음 바닥" in w and "F_eq" in w for w in es["warnings"])
-    assert run["stages"]["validate"]["summary"]["fail_reasons"] == ["NOISE_FLOOR"]
+    assert run["stages"]["validate"]["summary"]["fail_reasons"] == val["fail_reasons"]
     s = f32["stdout"]
     assert "잡음 바닥(float32" in s and "force_rel=" in s and "hotspot_strain_rel=" in s
     assert "NOISE_FLOOR" in s and "→ FAIL" in s
-    print(f"\nfloat32 E2E: noise.force_rel={n['force_rel']:.3e}, hotspot_strain_rel={n['hotspot_strain_rel']:.3e}")
+    print(f"\nfloat32 E2E: noise.force_rel={n['force_rel']:.3e}, hotspot_strain_rel={n['hotspot_strain_rel']:.3e}, "
+          f"field max/p90 = {m['field_max_err_pct']['value']:.3g}/{m['field_p90_err_pct']['value']:.3g} %")
 
 
 def test_float32_data_with_float64_setting_is_not_flagged(f32, tmp_path):

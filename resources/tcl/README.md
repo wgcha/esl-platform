@@ -98,28 +98,33 @@ h3d의 `Max_Strain`·`Plastic Strain`은 **요소별 누적 최대(max-hold)**�
 | — | 프레임 0 파트 노드 좌표 | `model.csv` | `node_id,x0,y0,z0` |
 | A | 마지막 프레임, 파트 전 요소(청크) | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | B | 전 프레임, 집합 H(≤ 400 요소, id 선택 집합 1개) | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
-| C | 후보 프레임 D, 파트 전 요소·전 노드(청크) | `strain_frames.csv`, `disp.csv` | 위와 같음 / `frame_index,node_id,ux,uy,uz` |
+| C | 후보 프레임 D, 파트 전 요소·전 노드(청크) + 직전 프레임 P, 파트 전 요소 | `strain_frames.csv`, `disp.csv` | 위와 같음 / `frame_index,node_id,ux,uy,uz` |
 
 - **H**: 패스 A에서 청크마다 상위 hot_k를 갱신(값 내림차순, 동률은 낮은 id). 
 - **D**: 지표(vonMises, 소성)마다 H를 최종값 내림차순으로 훑으며 first-reach 프레임 `min{f : v[f] ≥ v_last·(1−reach_rtol)}`을
   서로 다른 것만 `top_n`개 모은 합집합(≤ 2·top_n). rank 1 = 최종값 1위 요소의 first-reach. 후보가 없으면 D = 마지막 프레임 + 경고.
   Python(`esl.mech.tstar.candidate_frames`)이 history로 같은 규칙을 재계산해 일치를 확인한다.
+- **직전 프레임 P**(계약 `esl_p2_library.md` §7.1): D 의 각 f 에 대해 f−1(≥ 0). D 에 이미 있는 프레임은 한 번만 쓴다.
+  P 프레임은 전 요소 Max_Strain·Plastic 만(변위 없음) `strain_frames.csv` 에 같은 형식으로 추가(frame_index 로 구분) →
+  클라우드에서 전 요소 "상승 중" 마스크 `v[f] > v[f−1]·(1+rtol)`(f=0 이면 v>0)를 만든다. 패스 C 질의량은 최대 2배.
+  진행률 줄에 `(prev)` 표시. `done.json` `prev_frames`(P), `strain_frames`(D ∪ P), `passes.C.prev_frames`.
 - **패스 B 선택 집합**(미검증): `id a-b c ...` → `element a-b c ...` → 콤마 형식 → id마다 `Add "id N"`/`"element N"`, 크기(`GetSize`, 없으면 질의 개수)로 확인.
   모두 실패하면 파트 전 요소 청크를 프레임마다 질의해 H만 남긴다(느림, 경고·`passes.B.hot_selection`).
   청크 선택도 같은 방법이며 실패하면 파트 전체 집합 한 번 질의(메모리 큼, 경고·`chunks`).
 - 프레임 루프는 `SetCurrentSimulation` → `Draw` → 질의. 진행률(패스·프레임·청크)을 콘솔에 `ESL extract HH:MM:SS pass B frame 12/126 ...`으로 찍는다.
 - `done.json` 성공: `{"ok":true,"part_id","part_title","n_frames","n_elems","n_nodes","n_hot","hot_k","top_n","reach_rtol",
-  "candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"candidate_elems":{...},"frames_D":[..],
-  "passes":{"A":{"frame","rows","chunks","seconds"},"B":{"frames","n_hot","rows","hot_selection","seconds"},"C":{"frames","rows_strain","rows_disp","elem_chunks","node_chunks","seconds"}},
+  "candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"candidate_elems":{...},"frames_D":[..],"prev_frames":[..],"strain_frames":[..],
+  "passes":{"A":{"frame","rows","chunks","seconds"},"B":{"frames","n_hot","rows","hot_selection","seconds"},"C":{"frames","prev_frames","strain_frames","rows_strain","rows_disp","elem_chunks","node_chunks","seconds"}},
   "chunk","chunks","strain_type","strain_layer","strain_comps","vm_comp","epsp_type","epsp_layer","disp_type","exy":"raw (as stored in h3d)",
   "value_format":"%.17g","strain_system","strain_system_call","backup_dir","warnings":[]}` + §6 진단 항목. 실패 `{"ok":false,"code","error","failed_step",...}`.
 - 실패 code: `H3D_MISSING_RESULT`(subcase·결과 유형·성분·layer 없음 — 가능하면 `GetDataComponentList`/`GetLayerList`로 미리 확인, 값 없음),
   `INPUT_INVALID`(인자·request.txt 오류, 파트 미지정·이름 불일치), `TOOL_OUTPUT_MISSING`(h3d 없음), 그 외 Tcl 오류는 `TOOL_LOG_ERROR`.
 - 시작 시 출력 폴더의 이전 산출물(`done.json`, `*.csv`)은 **삭제하지 않고** `<output>/_backup/<YYYYmmdd_HHMMSS>[_N]/`로 옮긴다(그 외 파일은 그대로).
 - 수치는 모두 `format %.17g`(double 왕복 무손실). h3d 변위는 float32일 수 있다 — `%.17g`는 저장값을 옮길 뿐 정밀도를 높이지 못한다(클라우드 S4 잡음 바닥 추정).
-- **CSV 크기 추정**(22만 요소·노드, D ≤ 10, 126 프레임, %.17g): `strain_frames.csv` ≈ 150 B/행 × 220만 행 ≈ 330 MB,
+- **CSV 크기 추정**(22만 요소·노드, D ≤ 10, 126 프레임, %.17g): `strain_frames.csv` ≈ 150 B/행 × 220만 행 ≈ 330 MB
+  (직전 프레임 P 포함 시 최대 약 2배 ≈ 660 MB),
   `disp.csv` ≈ 80 B/행 × 220만 행 ≈ 180 MB, `final.csv` ≈ 30 MB, `history.csv` ≈ 400 × 126 행 ≈ 8 MB → 합계 약 0.55 GB(전량 추출 시 수 GB).
-- 클라우드 쪽: `esl.io.pack_results(<폴더>, model, out_dir)` → `final.npz`, `history.npz`, `strain_frames.npz`, `disp.npz`(§7.3).
+- 클라우드 쪽: `esl.io.pack_results(<폴더>, model, out_dir)` → `final.npz`, `history.npz`, `strain_frames.npz`(+ `prev_*`), `disp.npz`(§7.3).
 
 ## 4. probe.json
 

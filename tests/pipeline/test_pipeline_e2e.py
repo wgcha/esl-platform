@@ -64,11 +64,11 @@ def _copy_out(case, tmp_path):
 def test_e2e_all(case):
     p = case["proc"]
     assert p.returncode == 0, p.stderr
-    for key in ("[extract]", "[tstar]", "[esl]", "[validate]", "[export]", "PASS", "t* = frame 6"):
+    for key in ("[extract]", "[tstar]", "[esl]", "[validate]", "[export]", "[report]", "PASS", "t* = frame 6"):
         assert key in p.stdout
     out = case["out"]
     run = json.load(open(os.path.join(out, "run.json"), encoding="utf-8"))
-    assert run["error"] is None and set(run["stages"]) == {"extract", "tstar", "esl", "validate", "export"}
+    assert run["error"] is None and set(run["stages"]) == {"extract", "tstar", "esl", "validate", "export", "report"}
     assert all(s["status"] == "done" and s["elapsed_s"] >= 0 for s in run["stages"].values())
     assert len(run["inputs"]["rad"]["sha256"]) == 64
     assert set(run["inputs"]["results_files"]) == set(RESULT_FILES)
@@ -134,6 +134,37 @@ def test_e2e_all(case):
     assert val["hotspots"][0]["elem_id"] == tj["selected"]["elem_id"]          # rank 1 포함
     assert val["criteria"]["layers"] == ["mid"]
     assert val["criteria"]["disp_rms_rel_max"] == 0.01      # 설정 스냅샷
+
+    # 전 요소 재현 정확도(계약 esl_p2_library.md §7.2): 같은 솔버로 만든 합성 → 오차 ≈ 0 → PASS
+    fs = val["field"]
+    assert m["field_max_err_pct"] < 1e-4 and m["field_p90_err_pct"] < 1e-4
+    assert fs["prev_source"] == "strain_frames" and fs["prev_frame_index"] == synth_case.T_STAR_FRAME - 1
+    assert fs["max"]["elem_id"] == tj["selected"]["elem_id"]                 # 최대변형률 요소 = t* rank 1
+    assert fs["max"]["eps_rad"] == pytest.approx(tj["selected"]["value"], rel=1e-6)
+    assert fs["max"]["eps_esl_max_elem_id"] == fs["max"]["elem_id"]
+    assert fs["frac_within"] == {"5": 1.0, "10": 1.0, "20": 1.0}
+    assert fs["n_valid"] > 0.5 * fs["n_elems"] and fs["n_hold"] > 0          # 패턴 2 부근은 hold(비교 불가)
+    assert fs["n_valid"] + fs["n_hold"] + fs["n_low"] + fs["n_excluded"] + fs["n_no_prev"] == fs["n_elems"]
+    assert len(fs["top"]) == 20 and len(fs["hist"]["counts"]) == 20 and sum(fs["hist"]["counts"]) == fs["n_valid"]
+    assert fs["criteria"] == {"max_err_pct_max": 10.0, "p90_err_max": 20.0}
+    z = np.load(os.path.join(out, "05_val", "compare_field.npz"), allow_pickle=False)
+    E = len(case["elem_id"])
+    assert np.array_equal(z["elem_id"], case["elem_id"]) and z["reason"].dtype == np.int8
+    assert z["centroid2d"].shape == (E, 2) and z["centroid3d"].shape == (E, 3)
+    for k in ("eps_rad", "eps_esl", "rel_err", "valid", "n0", "w_rel", "w_val"):
+        assert z[k].shape == (E,), k
+    assert int(z["valid"].sum()) == fs["n_valid"] and np.all(z["reason"][z["valid"]] == 0)
+    # rising 정의 재확인: 순간 ε 가 직전 프레임 hold 보다 크면 상승 중
+    eqh = case["eq_hold"]
+    ft = synth_case.T_STAR_FRAME
+    rising = eqh[ft] > eqh[ft - 1] * (1 + 1e-6)
+    assert np.array_equal(z["rising"], rising)
+    for a in ("xi", "eta"):                      # 단면선(ξ·η = 0.5): 전체 solve → u_val ≈ u_rel
+        assert z[f"sec_{a}_s"].size > 5 and np.allclose(z[f"sec_{a}_w_val"], z[f"sec_{a}_w_rel"], atol=1e-8)
+        assert np.all(np.diff(z[f"sec_{a}_s"]) > 0)
+    assert np.abs(z["w_rel"]).max() > 0.1                                   # 면외 변형이 있음
+    rep = os.path.join(out, "07_report", "report.html")
+    assert os.path.getsize(rep) > 10_000 and run["stages"]["report"]["summary"]["verdict"] == "PASS"
 
     # 내보내기 파일·ID 범위
     exp = os.path.join(out, "06_export")
@@ -310,6 +341,10 @@ def test_validate_without_full_solve(case, tmp_path, capsys):
     assert m["reaction_rel"]["status"] == "skipped" and val["reactions"] == []
     assert m["hotspot1_strain_rel_err"]["value"] < 1e-6 and len(val["hotspots"]) == 3
     assert not os.path.exists(os.path.join(out, "05_val", "compare.csv"))
+    # 전 요소 비교는 full_solve=never 에서도 동작(u_rel + 응축 회전 → ESL 막 변형률)
+    assert m["field_max_err_pct"]["value"] < 1e-4 and m["field_p90_err_pct"]["pass"] is True
+    z = np.load(os.path.join(out, "05_val", "compare_field.npz"), allow_pickle=False)
+    assert np.array_equal(z["w_val"], z["w_rel"]) and int(z["valid"].sum()) == val["field"]["n_valid"] > 0
     assert cli.main(args[:-1] + ["export"]) == 0                       # 내보내기는 그대로 동작
 
 
@@ -425,3 +460,87 @@ def test_export_ignores_validation_of_other_esl(case, tmp_path):
     assert s["summary"]["validation_used"] is False and s["summary"]["esl_ref"] == "run-B"
     assert "validation.csv" not in os.listdir(os.path.join(out, "06_export"))
     assert any("현재 ESL" in w for w in s["warnings"])
+
+
+def _set_cfg(src, dst, *pairs):
+    txt = open(src, encoding="utf-8").read()
+    for a, b in pairs:
+        assert a in txt, a
+        txt = txt.replace(a, b)
+    with open(dst, "w", encoding="utf-8") as fh:
+        fh.write(txt)
+    return str(dst)
+
+
+def test_field_distorted_radioss_strain_fails(case, tmp_path, capsys):
+    """의도적 왜곡: 합성 Radioss ε(strain_frames 의 t*·직전 프레임 텐서)를 10% 키움 →
+    rel_err = 1/1.1 − 1 = −9.09% 가 전 valid 요소에 균일 → 기준 5% 로 FAIL(FIELD_MAX_ERR, FIELD_P90_ERR)."""
+    out = _copy_out(case, tmp_path)
+    p = os.path.join(out, "01_extract", "strain_frames.npz")
+    z = dict(np.load(p, allow_pickle=False))
+    for k in ("eps", "prev_eps", "vm_hv", "prev_vm_hv"):
+        z[k] = (z[k] * np.float32(1.1)).astype(np.float32)
+    np.savez_compressed(p, **z)
+    expect = 100.0 * (1.0 / 1.1 - 1.0)
+    cfg = _set_cfg(case["cfg"], tmp_path / "c.yaml", ("max_err_pct_max: 10.0", "max_err_pct_max: 5.0"),
+                   ("p90_err_max: 20.0", "p90_err_max: 5.0"))
+    args = ["run", "--config", cfg, "--rad", case["rad"], "--results", case["csv"], "--out", out, "--stage", "validate"]
+    assert cli.main(args) == 0
+    assert "FAIL" in capsys.readouterr().out
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    fs = val["field"]
+    m = {x["metric"]: x for x in val["metrics"]}
+    assert fs["max"]["err_pct"] == pytest.approx(expect, abs=1e-3)            # ≈ −9.09 %
+    assert m["field_max_err_pct"]["value"] == pytest.approx(-expect, abs=1e-3) and m["field_max_err_pct"]["pass"] is False
+    assert fs["abs_err_pct"]["p90"] == pytest.approx(-expect, abs=1e-3) and fs["frac_within"]["5"] == 0.0
+    assert val["verdict"] == "FAIL" and {"FIELD_MAX_ERR", "FIELD_P90_ERR"} <= set(val["fail_reasons"])
+    # 기본 기준(10%·20%)이면 9.09% 는 통과 — hotspot 기준(10%)도 통과
+    assert cli.main(args[:2] + [case["cfg"]] + args[3:]) == 0
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    assert val["verdict"] == "PASS" and val["field"]["max"]["abs_err_pct"] == pytest.approx(-expect, abs=1e-3)
+    # 15% 키우면 기본 기준으로도 FIELD_MAX_ERR
+    z2 = dict(z)
+    for k in ("eps", "prev_eps", "vm_hv", "prev_vm_hv"):
+        z2[k] = (z[k] / np.float32(1.1) * np.float32(1.15)).astype(np.float32)
+    np.savez_compressed(p, **z2)
+    assert cli.main(args[:2] + [case["cfg"]] + args[3:]) == 0
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    assert "FIELD_MAX_ERR" in val["fail_reasons"] and "FIELD_P90_ERR" not in val["fail_reasons"]
+
+
+def test_field_old_extract_without_prev_uses_history(case, tmp_path):
+    """예전 추출(strain_frames.npz 에 prev_* 없음) → H 요소만 history 로 상승 판정, 나머지 NO_PREV + 경고."""
+    out = _copy_out(case, tmp_path)
+    p = os.path.join(out, "01_extract", "strain_frames.npz")
+    z = {k: v for k, v in np.load(p, allow_pickle=False).items() if not k.startswith("prev_")}
+    np.savez_compressed(p, **z)
+    rec = __import__("esl.pipeline", fromlist=["run"]).run(
+        config_path=case["cfg"], rad=case["rad"], results=case["csv"], out=out, stage="validate", echo=lambda m: None)
+    val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
+    fs = val["field"]
+    assert fs["prev_source"] == "history_H" and fs["n_no_prev"] == len(case["elem_id"]) - 200
+    assert 0 < fs["n_valid"] <= 200 and val["verdict"] == "PASS"
+    assert any("NO_PREV" in w for w in rec["stages"]["validate"]["warnings"])
+
+
+def test_report_failure_keeps_previous_stages(case, tmp_path, monkeypatch, capsys):
+    """--stage all 에서 report 가 실패해도 run 은 성공, 앞 단계 산출물 유지, run.json stages.report = failed."""
+    from esl import pipeline
+    from esl.report import case_report
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(case_report, "build_case_report", boom)
+    out = str(tmp_path / "o")
+    rec = pipeline.run(config_path=case["cfg"], rad=case["rad"], results=case["csv"], out=out, stage="all",
+                       echo=print)
+    assert rec["error"] is None and rec["stages"]["report"]["status"] == "failed"
+    assert rec["stages"]["report"]["error"]["code"] == "INTERNAL_ERROR"
+    assert rec["stages"]["export"]["status"] == "done"
+    assert os.path.isfile(os.path.join(out, "06_export", "esl_cload.inc"))
+    assert "보고서 생성 실패" in capsys.readouterr().out
+    # report 단계만 직접 실행하면 오류로 보고
+    with pytest.raises(RuntimeError):
+        pipeline.run(config_path=case["cfg"], rad=case["rad"], results=case["csv"], out=out, stage="report",
+                     echo=lambda m: None)

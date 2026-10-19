@@ -61,7 +61,9 @@ rem     (frames, model, final, history, strain_frames, disp .csv + done.json; �
 
 h3d 의 `Max_Strain`·`Plastic Strain` 은 요소별 누적 최대(max-hold)라서 t* = 최종값에 처음 도달한 프레임(first-reach).
 TCL 은 마지막 프레임 전 요소(A) → 상위 요소 H 전 프레임 이력(B) → 후보 프레임 D 만 전 노드 변위·전 요소 변형률(C)을
-뽑는다(22만 요소·D ≤ 10 에서 CSV 약 0.55 GB). `_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
+뽑는다(22만 요소·D ≤ 10 에서 CSV 약 0.55 GB). 패스 C 는 D 의 각 f 에 대해 직전 프레임 f−1 의 전 요소 변형률도
+`strain_frames.csv` 에 함께 쓴다(전 요소 "상승 중" 마스크용, `done.json` `prev_frames`; strain_frames.csv 가 최대 2배).
+예전 TCL 출력(직전 프레임 없음)도 읽히지만 재현 정확도 비교는 H 요소만 가능(경고) — TCL 을 다시 실행할 것. `_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
 
 ## 3. 설정
 
@@ -85,12 +87,19 @@ TCL 은 마지막 프레임 전 요소(A) → 상위 요소 H 전 프레임 이�
   이면 경고, `hotspot_strain_rel > validation.noise_strain_rel_max` 이면 검증 verdict FAIL(사유 `NOISE_FLOOR`).
   강체 대변위(좌표 수천 mm)에 비해 변형이 작으면 float32 변위로는 F_eq 가 잡음에 묻힌다 → TCL 출력을
   배정밀도로 받거나 판정 결과를 참고용으로만 쓴다.
+- `compare`(ESL 재현 정확도 전 요소 비교, 계약 `esl_p2_library.md` §7.2): t* 에서 상승 중인 요소
+  (`v[t*] > v[t*−1]·(1+tstar.reach_rtol)`, v = Max_Strain ε_eq)의 Radioss ε_rad 와 검증 해 막 변형률 ε_esl 을 비교,
+  `rel_err = (ε_esl − ε_rad)/ε_rad`. valid = 상승 중 ∧ ε_rad ≥ `min_rel`·max ε_rad. 판정:
+  최대변형률 요소(상승 요소 중 ε_rad 최대)의 |오차| ≤ `max_err_pct_max`(%, 기본 10, 아니면 `FIELD_MAX_ERR`),
+  valid 요소 |오차| 90 분위 ≤ `p90_err_max`(%, 기본 20, 아니면 `FIELD_P90_ERR`). `full_solve: never` 에서도
+  동작(u_rel + 응축 회전). **기존 `config/esl.yaml` 에는 `compare`·`report` 절을 예시에서 복사해 추가해야 한다**(모든 키 필수).
+- `report.max_points`(기본 20000): 보고서 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플), `report.top_forces`.
 
 ## 4. 실행
 
 ```bash
 python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /data/esl_csv --out /work/case01
-#   [--stage extract|tstar|esl|validate|export|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
+#   [--stage extract|tstar|esl|validate|export|report|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
 #   [--frame N]                    t* 수동 지정(frame_index, 후보 프레임 D 안에서만 → 아니면 FRAME_NOT_CANDIDATE)
 #   [--support-nodes 101,202,303]  3-2-1 후보 노드 ID(3개 이상, 대상 파트 밖 → NODE_NOT_IN_PART)
 #   [--export-targets radioss_inc,fem,csv]  export 단계에서 만들 대상(기본 전부)
@@ -103,17 +112,20 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
   (백업 이동 포함) 직전에 대상 실제 경로가 출력 폴더 안인지 다시 확인한다(출력 안 링크가 밖을 가리켜도 거부).
 - inc·fem 은 ASCII 전용(비 ASCII 문자는 `\uXXXX` 로 치환). ID 가 I10 칸을 넘으면 `ID_RANGE_COLLISION`.
 - 다시 실행하면 그 단계 폴더의 기존 파일은 `_backup/<UTC 시각>/` 으로 **이동**한다(삭제 없음).
+- `report` 단계(export 뒤): 있는 산출물로 `07_report/report.html` 을 만든다(없는 절은 "자료 없음").
+  `--stage all` 에서 보고서가 실패해도 앞 단계 결과·종료코드 0 은 유지되고 `run.json` `stages.report` 가 `failed`.
 
 ## 5. 출력 폴더
 
 | 폴더 | 내용 |
 |---|---|
-| `01_extract/` | `model.npz`, `model_meta.json`, `final.npz`, `history.npz`, `strain_frames.npz`, `disp.npz`(D 프레임만), `frames.json`(D, 전단 규약 판정) |
+| `01_extract/` | `model.npz`, `model_meta.json`, `final.npz`, `history.npz`, `strain_frames.npz`(D 프레임 + `prev_frame_index`·`prev_vm_hv`·`prev_eps`·`prev_epsp`·`prev_available`: 각 f 의 직전 프레임, f=0 이면 −1·0), `disp.npz`(D 프레임만), `frames.json`(D, 직전 프레임, 전단 규약 판정) |
 | `02_tstar/` | `tstar.json`(지표 2개의 first-reach t*·후보·hotspot·TCL 일치 확인, 선택 t*), `history.csv`(m(f) 지표별), `hotspots.csv`, `candidates.csv`(지표별) |
 | `03_bc/` | `support.json`(3-2-1 노드 ID·dof, PCA 평면) |
 | `04_esl/` | `u_rel.npz/csv`(강체 제거 변위), `f_eq.npz/csv`(전 노드 F_eq), `esl_summary.json`(평형·Kabsch) |
-| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단), `compare.csv`(전체 solve 때만) |
+| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단, `field` = 전 요소 비교 요약: 최대변형률 비교·\|오차\| 분위수·≤5/10/20% 비율·상위 N·히스토그램), `compare_field.npz`(요소별 `elem_id`, `centroid2d`(PCA 평면 ξ,η 실좌표)·`centroid3d`, `eps_rad`, `eps_esl`, `rel_err`, `valid`, `rising`, `reason` i1(0 OK·1 HOLD·2 LOW·3 EXCLUDED·4 NO_PREV), 면외 `n0`·`w_rel`·`w_val`, 단면선 `sec_xi_*`·`sec_eta_*`, PCA 평면), `compare.csv`(전체 solve 때만) |
 | `06_export/` | `esl_cload.inc`, `esl_bcs.inc`, `esl_force.fem`, `f_eq.csv`, `u_rel.csv`, `reactions_321.csv`, `tstar_candidates.csv`, `hotspots.csv`, `validation.csv` |
+| `07_report/` | `report.html`: 자체 완결 Case 보고서(외부 의존 0, inline SVG·JSON·소량 JS, 라이트/다크) — 입력 요약, t* 곡선(두 지표), 지지점, F_eq 상위, 검증, 전 요소 재현 정확도, 겹쳐보기(Radioss ε/ESL ε/오차 % + 불투명도 슬라이더), 단면선 겹치기(배율 슬라이더), 상위 N 표, 히스토그램, 의미 주석 |
 | `run.json` | 입력 경로·sha256, 설정 스냅샷, 단계별 요약·경고·소요시간, 실행 이력·오류 |
 | `runs/<esl_run_id>/` | (플랫폼) ESL 실행별 `03_bc`·`04_esl` 복사본. 검증·내보내기 직전 04_esl 의 `tag`(ESL 작업 id)가 대상 실행과 다르면 여기서 되돌림 |
 

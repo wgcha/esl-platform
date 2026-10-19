@@ -1,5 +1,5 @@
 """CLI: ``python -m esl run --config cfg.yaml --rad X_0000.rad --results <csv_dir> --out <case_dir>
-[--stage extract|tstar|esl|validate|export|all] [--frame N] [--support-nodes id1,id2,id3]
+[--stage extract|tstar|esl|validate|export|report|all] [--frame N] [--support-nodes id1,id2,id3]
 [--export-targets radioss_inc,fem,csv]``.
 
 종료코드 0 = 성공(검증 FAIL 이어도 계산 자체는 성공), 1 = 오류. 오류는 stderr 에 ``CODE: message`` 한 줄,

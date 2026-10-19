@@ -154,7 +154,13 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
     assert done["frames_D"] == D and done["hot_k"] == 2 and done["top_n"] == 3
     assert {"A", "B", "C"} <= set(done["passes"]) and done["passes"]["B"]["frames"] == F
     assert done["passes"]["B"]["hot_selection"].startswith("range")
-    assert done["passes"]["C"]["rows_strain"] == 6 * len(D) and done["passes"]["C"]["rows_disp"] == 12 * len(D)
+    # 패스 C: D + 직전 프레임 P = {f−1 ≥ 0} (D 에 있으면 중복 없음) 전 요소, 변위는 D 만
+    P = sorted({f - 1 for f in D if f > 0})
+    CF = sorted(set(D) | set(P))
+    assert done["prev_frames"] == P and done["strain_frames"] == CF
+    assert done["passes"]["C"]["prev_frames"] == P and done["passes"]["C"]["strain_frames"] == CF
+    assert done["passes"]["C"]["rows_strain"] == 6 * len(CF) and done["passes"]["C"]["rows_disp"] == 12 * len(D)
+    assert "(prev)" in r.stdout or set(P) <= set(D)
     assert "pass B frame 8/8" in r.stdout and "pass C frame" in r.stdout          # 진행률
     assert done["value_format"] == "%.17g" and done["strain_system"] == "elemental"
     assert "SetResolvedIn" in done["strain_system_call"] and "Elemental System" in done["strain_system_call"]
@@ -169,6 +175,11 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
     assert np.array_equal(d["u"], ref["u"][D])          # %.17g: 질의 값이 비트 단위로 보존
     h = _load(tmp_path / "npz" / "history.npz")
     assert h["vm_hv"].shape == (F, H.size) and np.allclose(h["eps"][..., 2], ref["xy"][:, H, 2])   # exy 원값
+    s = _load(tmp_path / "npz" / "strain_frames.npz")
+    assert s["prev_available"].all() and s["prev_frame_index"].tolist() == [f - 1 if f > 0 else -1 for f in D]
+    for i, f in enumerate(D):
+        if f > 0:
+            assert np.array_equal(s["prev_vm_hv"][i], ref["vm"][f - 1].astype(np.float32))
 
 
 def test_extract_tcl_chunked_selection(tmp_path):
