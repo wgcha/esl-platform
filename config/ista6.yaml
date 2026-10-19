@@ -1,0 +1,36 @@
+# ISTA 6 낙하 시험 면 번호·낙하 높이 표 (계약 docs/contracts/esl_p2_library.md §2).
+# 라이브러리 설정(config/library.example.yaml)의 library.ista6 가 이 파일을 가리킨다.
+#
+# 면 번호(ISTA 공통 포장 면 식별 규약, 직육면체 포장):
+#   1 = 윗면(top), 2 = 오른쪽 측면, 3 = 바닥면(bottom), 4 = 왼쪽 측면, 5 = 앞쪽 끝면(near end), 6 = 뒤쪽 끝면(far end)
+#   마주보는 면 쌍: (1,3) (2,4) (5,6). 꼭지점 = 서로 다른 쌍에서 1개씩 3개 면, 모서리 = 서로 다른 쌍의 2개 면, 면 = 1개.
+#   예) Corner146 = 윗면·왼쪽·뒤쪽 꼭지점, Edge34 = 바닥·왼쪽 모서리, Face3 = 바닥면.
+# TODO(사용자 확인): 적용 절차(ISTA 6-Amazon / 6-SAMSCLUB 등)와 TV 포장에서 면 2/4·5/6 이 제품의 어느 쪽인지.
+#   아래 normal_local 은 제품 정규화 좌표계(ξ=가로 +, η=세로 위 +, n=후면 바깥 +) 기준 면 바깥 법선의 **가정값**이다.
+#   통계 뷰의 충격 방향(impact_dir_local)에만 쓰이며 매핑·최적화 계산에는 쓰지 않는다.
+schema: esl/ista6/1
+standard: "ISTA 6 (절차명 확인 필요)"
+
+faces:
+  1: {name: top,       ko: "윗면",       normal_local: [0, 1, 0]}
+  2: {name: right,     ko: "오른쪽 측면", normal_local: [1, 0, 0]}    # 가정: 화면을 마주 볼 때 오른쪽 = +ξ
+  3: {name: bottom,    ko: "바닥면",     normal_local: [0, -1, 0]}
+  4: {name: left,      ko: "왼쪽 측면",   normal_local: [-1, 0, 0]}
+  5: {name: near_end,  ko: "앞쪽 끝면",   normal_local: [0, 0, -1]}   # 가정: 화면(전면) 쪽
+  6: {name: far_end,   ko: "뒤쪽 끝면",   normal_local: [0, 0, 1]}    # 가정: 후면(n 방향)
+
+opposite_pairs: [[1, 3], [2, 4], [5, 6]]
+
+# 낙하 유형 → 충돌 면 수
+drop_types: {Face: 1, Edge: 2, Corner: 3}
+
+# 낙하 높이 표: 포장 총중량 구간별. 값은 TODO — 적용 절차의 표를 사용자가 입력(null = 미입력, 보고서에 '미입력' 표시).
+heights:
+  length_unit: mm
+  weight_unit: kg
+  bins:
+    - {weight_min: 0.0,  weight_max: 10.0,  Face: null, Edge: null, Corner: null}   # TODO 사용자 입력
+    - {weight_min: 10.0, weight_max: 20.0,  Face: null, Edge: null, Corner: null}   # TODO 사용자 입력
+    - {weight_min: 20.0, weight_max: 30.0,  Face: null, Edge: null, Corner: null}   # TODO 사용자 입력
+    - {weight_min: 30.0, weight_max: 50.0,  Face: null, Edge: null, Corner: null}   # TODO 사용자 입력
+    - {weight_min: 50.0, weight_max: null,  Face: null, Edge: null, Corner: null}   # TODO 사용자 입력
