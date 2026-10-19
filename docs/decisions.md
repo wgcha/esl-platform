@@ -18,3 +18,8 @@
 - 외부 실행은 워커에서만, argv 템플릿(argv[0]은 {hw}/{optistruct} 허용목록) + shell=False. 경로·실행파일·판정 기준은 설정 파일에서만 읽는다.
 - 좌표는 Radioss 전역계, 단위 변환 없음, 힘 부호는 OptiStruct SPCF 그대로(구조물에 가해지는 외력).
 - P1 요소 범위는 쉘(QUAD4/TRIA3) + 재료 LAW1/2/36 E·ν(미지원은 설정 override), 솔리드는 P2.
+- (P1a) 계산은 클라우드(Linux, Altair 없음)에서 한다. h3d는 사용자가 Windows에서 HyperView TCL로 1회 CSV 변환해 입력으로 준다(근거: h3d 비공개 포맷, 클라우드에 Altair 없음).
+- (P1a) S4·S5 선형정적은 자체 Python 쉘 솔버(QM6 막 + MITC4/DKT 굽힘)로 하고, OptiStruct .fem은 교차검증용 내보내기로만 만든다.
+- (P1a) 대상 파트는 조립체에서 떼어 낸 자유물체로 본다: 전 노드 Kabsch로 강체 제거, 전 노드 F_eq(자기평형), 3-2-1 정정 구속(반력≈0). zero/residual 옵션은 폐기(근거: 사용자 확인 — BC점은 임의점, 실제 정적 고정 없음).
+- (P1a) ε_eq는 TCL이 내보낸 면내 텐서로 Python이 계산: 비압축 von Mises (2/√3)·sqrt(exx²+eyy²+exx·eyy+exy²), layer 최대. 판정 기준 임시값 유지(사용자 확인 1번).
+- (P1a) 플랫폼(API·DB·워커·UI)은 P1b로 미루고, 계산 코어 + CLI를 먼저 만든다.
