@@ -336,7 +336,8 @@ $env:PGPASSWORD = $null
 | `storage.input_roots` | rad·결과 폴더 선택 허용 루트(읽기 전용). 비면 Case 생성 불가 | 설치 시 입력 |
 | `storage.spdm_roots` | 겹침 검사용 SPDM 루트 | `[]` |
 | `worker.heartbeat_interval_s` / `lease_ttl_s` | 하트비트 / 리스(취소·중단 감지) | `10` / `60` |
-| `worker.max_logical_cores` / `max_memory_gb` / `priority` / `limiter` | 자원 제한(Windows: Job Object — 메모리·CPU 비율·우선순위·워커 종료 시 자식 종료 / POSIX: nice·RLIMIT_AS·affinity). `limiter`: auto|windows_job|posix|none | `16` / `32` / `below_normal` / `auto` |
+| `worker.max_logical_cores` / `max_memory_gb` / `priority` / `limiter` | 자원 제한(Windows: Job Object — 메모리(커밋 합계)·CPU 비율·우선순위·워커 종료 시 자식 종료 / POSIX: nice·RLIMIT_AS·affinity). `limiter`: auto|windows_job|posix|none. `max_memory_gb` 근거: 서버 RAM 512 GB, 30만 요소 직접법 RSS 약 13 GB·100만 요소 추정 45 GB(×1.5 ≈ 68 GB) 수용 + 대시보드·physicsai 공유 여유 — 서버 RAM 이 다르면 약 1/4 | `16` / `128` / `below_normal` / `auto` |
+| `worker.vm_headroom` | POSIX 전용: RLIMIT_AS(가상 주소 공간) = `max_memory_gb` × 이 값(가상 크기 VmPeak 가 실사용 RSS 보다 큼). Windows Job 메모리는 커밋 기준이라 곱하지 않음. 없으면 1.5 | `1.5` |
 | `ui.max_preview_points` | ⑤ 겹쳐보기·2D 산점 최대 점 수 | `20000` |
 | `core.config_path` | 코어 설정(`esl.yaml` — t*·솔버·판정 기준 `validation`·`compare`) | `esl.yaml` |
 | `report.auto` | VALIDATE 성공 시 Case 보고서 자동 | `true` |
@@ -344,6 +345,8 @@ $env:PGPASSWORD = $null
 
 - 코어 `esl.yaml`의 `solver.backend: auto` → Windows에서 `pardiso`(pypardiso·MKL). `extract.disp_precision`은 TCL 출력 정밀도(H3D 보통 `float32`).
 - 판정 기준(`validation.*`, `compare.*`)과 ISTA 6 낙하 높이 표는 **임시값·TODO** — 사내 확인 후 교체(§15).
+- 라이브러리 설정(`library.yaml`)의 설계 버전 비교 수렴 기준 `convergence`: `cos_min`(기본 0.95), `rep_same`(기본 true — 짝 대표(medoid)의 cos ≥ `cos_min` 이면 같은 대표, medoid 씬이 달라도 됨), `min_nodes_per_cell`(기본 64 — 셀당 노드 중앙값이 이보다 작으면 경고, 16 미만이면 "판정 신뢰 낮음" 배지), `coarsen`(false|half — 2×2 셀 묶음으로 cos 계산, 12×7 이하 격자에서는 무시). 설치본 `library.yaml`은 업데이트 때 덮어쓰지 않으므로 빠진 키는 이 기본값으로 채운다(이전 기본 0.9 를 적어 둔 파일은 그 값이 유지됨).
+- 오류 코드 `SOLVER_OUT_OF_MEMORY`: 쉘 솔버(조립·분해·해)나 코어 처리 중 메모리 부족(MemoryError, PARDISO error -2, CHOLMOD out-of-memory). 비양정치·구속 부족(`SOLVER_SINGULAR`)과 구분된다 — 13장 FAQ.
 
 ---
 
@@ -401,6 +404,8 @@ cd D:\esl                                   # git 폴더 설치는 <git>\.runtim
 **Q. 경로를 넣으면 `PATH_OUTSIDE_ROOT`.** rad·결과 폴더(와 rad의 include)는 `storage.input_roots` 아래여야 한다. 공유를 추가했으면 설정 `storage.input_roots`에 넣고 백엔드 재시작.
 
 **Q. 매핑 드라이브(E: → `\\서버\share`)를 입력·ESL 루트로 쓰는데 워커만 못 읽는다.** 매핑 드라이브는 로그온 세션별이다. `Background`(세션 0)에서는 사용자가 매핑한 드라이브가 보이지 않는다 → UNC 경로를 쓰거나 `Interactive`로 등록.
+
+**Q. 작업이 `SOLVER_OUT_OF_MEMORY`로 실패한다.** 코어 자식이 메모리 한도에 걸렸다. `worker.max_memory_gb`(Windows: Job 안 코어 자식 커밋 합계 — SLOT·LIGHT 동시 실행분 포함, POSIX: × `vm_headroom` 가상 한도)와 서버 가용 메모리를 확인하고, 동시에 도는 다른 작업을 줄이거나 코어 `solver.backend: iterative`(반복법)를 쓴다. 특이(`SOLVER_SINGULAR`)와는 원인이 다르다(구속·메시 문제가 아님).
 
 **Q. ESL 계산이 매우 느리거나 메모리 부족.** 환경 점검 `solver.backend`가 `superlu`면 pypardiso/MKL이 로드되지 않은 것이다(`solver.pypardiso` 메시지). 묶음 설치면 wheels에 mkl·intel-openmp·tbb가 있는지 확인. 코어 `validation.full_solve`(auto|never)도 본다.
 
@@ -476,5 +481,5 @@ $env:ESL_INSTALL_SERVICE_PASSWORD = '…'      # Background 모드일 때
 | 작업 스케줄러 등록·Interactive/Background·재부팅 자동 기동·icacls ACL | 미검증 | E0-3·E0-4 |
 | pypardiso + MKL Windows 휠 실제 로드(`mkl_rt.2.dll`) | 미검증(Linux에서 같은 lock 버전 + pardiso로 플랫폼 시험 159건 통과) | 환경 점검 `solver.pypardiso` |
 | Caddy 스니펫·대시보드 `SIMDASH_ESL_ENABLED`(대시보드 쪽 지원) | 대시보드 변경 필요(이 저장소 밖) | E0-5 |
-| 워커 자원 제한: `worker.limiter`·`max_logical_cores`·`max_memory_gb`·`priority` | 적용됨(Windows Job Object). 할당 실패 시 작업 step이 `LIMITER_FAILED`로 실패 — `python -m esl_platform.check`의 `worker.limiter` 행 확인 | §4.3 |
+| 워커 자원 제한: `worker.limiter`·`max_logical_cores`·`max_memory_gb`·`vm_headroom`·`priority` | **적용됨(실기 미검증)** — POSIX는 Linux 자식 프로세스 실제 적용 시험, Windows Job Object는 가짜 kernel32 인자 시험 + 64비트 구조체 배치(basic 64 B·extended 144 B·JobMemoryLimit 오프셋 120·CPU 8 B) 단언만. 할당 실패 시 작업 step이 `LIMITER_FAILED`, 한도 초과는 `SOLVER_OUT_OF_MEMORY` — `python -m esl_platform.check`의 `worker.limiter` 행 확인 | §4.3, E2E E0 |
 | 판정 기준(`validation`·`compare`)·ISTA 6 낙하 높이 | 임시값·TODO | 코어 `esl.yaml`, `ista6.yaml` |

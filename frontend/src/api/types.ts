@@ -971,12 +971,38 @@ interface Range3 {
   mean: number | null;
 }
 
+/** 판정 기준(§12.4: cos_min 기본 0.95, 셀당 노드 하한 64, coarsen false|half) */
+export interface ComparisonCriteria {
+  cos_min: number;
+  rep_same: boolean;
+  min_nodes_per_cell?: number;
+  coarsen?: false | "half";
+}
+
+/** 셀당 노드 해상도(§12.4): ok | warn(< min_nodes_per_cell) | low(< 16, 판정 신뢰 낮음) | unknown */
+export type ComparisonReliability = "ok" | "warn" | "low" | "unknown";
+
+export interface ComparisonResolution {
+  nodes_per_cell_min: number | null;
+  nodes_per_cell_base_min: number | null;
+  nodes_per_cell_new_min: number | null;
+  min_nodes_per_cell: number;
+  low_trust_below: number;
+  level: ComparisonReliability;
+  label: string;
+  coarsen: false | "half";
+  coarsen_applied: boolean;
+  feature_grid: { nx: number; ny: number };
+}
+
 export interface ComparisonResult {
   convergence: {
     verdict: ComparisonVerdict;
     label: string;
     converged: boolean;
-    criteria: { cos_min: number; rep_same: boolean };
+    criteria: ComparisonCriteria;
+    reliability?: ComparisonReliability;
+    reliability_label?: string;
     reasons: string[];
     changed_scenes: { label: string; base_entry: string; new_entry: string; cos: number; reasons: string[] }[];
   };
@@ -992,11 +1018,22 @@ export interface ComparisonResult {
     n_verdict_changed: number;
     n_changed: number;
   };
-  criteria: { cos_min: number; rep_same: boolean };
+  criteria: ComparisonCriteria;
+  resolution?: ComparisonResolution | null;
   n_base: number;
   n_new: number;
   n_paired: number;
-  representatives: { k: number; rep_same: boolean; partition_same: boolean; partition_agreement: number; matching: unknown[] };
+  representatives: {
+    k: number;
+    rep_same: boolean;
+    /** medoid_cos = 짝 medoid cos ≥ cos_min, base_kept = 기준 대표가 새 버전에서도 거의 최적 */
+    rep_basis?: "medoid_cos" | "base_kept" | null;
+    medoid_id_same?: boolean;
+    partition_same: boolean;
+    partition_agreement: number;
+    base_reps_cost_excess?: number;
+    matching: unknown[];
+  };
   scenes: ComparisonScene[];
   unpaired: { base_only: { label: string; entry_id: string }[]; new_only: { label: string; entry_id: string }[] } | null;
   warnings: string[];

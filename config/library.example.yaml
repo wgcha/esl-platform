@@ -46,6 +46,8 @@ optdeck:
   max_cases: 60                      # all 에서 씬 수가 이를 넘으면 representative+worst 로 자동 축소(경고 + 보고서 제외 표)
   solver: {drill_factor: 1.0e-4, backend: auto}   # reference_compliance: solve 일 때
 
-convergence:                         # 설계 버전 비교(ESLSO 수렴 판정, §12.2) — 임시값
-  cos_min: 0.9                       # 짝 씬 하중 패턴 유사도 cos 최소가 이 값 이상
-  rep_same: true                     # 같은 k 재군집 후 대표 케이스(medoid)가 같아야 수렴
+convergence:                         # 설계 버전 비교(ESLSO 수렴 판정, §12.2·§12.4) — 없는 키는 아래 값으로 채움
+  cos_min: 0.95                      # 짝 씬 하중 패턴 유사도 cos 최소가 이 값 이상(실모델 셀당 노드 ≥64 에서 같은 패턴 ≥0.99)
+  rep_same: true                     # 같은 k 재군집·매칭 후 짝 medoid cos ≥ cos_min 이어야 수렴(medoid 씬 ID 는 달라도 됨)
+  min_nodes_per_cell: 64             # 셀당 노드 중앙값이 이보다 작으면 경고(16 미만이면 "판정 신뢰 낮음")
+  coarsen: false                     # false | half(2×2 셀 묶음으로 cos 계산 — 성긴 메시용, 12×7 이하 격자에서는 무시)

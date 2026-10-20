@@ -10,14 +10,25 @@
 - Job 핸들은 워커가 끝까지 쥔다: 워커 프로세스가 어떻게 끝나든(kill·크래시 포함) OS 가 핸들을 닫고 KILL_ON_JOB_CLOSE 로
   자식이 강제 종료된다(자식의 부모 감시 스레드와 이중 보호).
 - kernel32 는 주입 가능(Linux 단위 시험에서 가짜로 인자 검증).
+- 메모리 한도에 worker.vm_headroom 을 곱하지 않는다: JobMemoryLimit 은 Job 안 프로세스의 커밋(실제 확보한 사설
+  메모리) 합계라 POSIX RLIMIT_AS(가상 주소 공간 — 예약만 한 영역 포함)와 달리 실사용에 가깝다(계수 1.0).
+- 구조체는 64비트 Windows 고정 크기로 정의한다(DWORD = uint32, SIZE_T·ULONG_PTR = uint64, LARGE_INTEGER = int64):
+  Linux 에서도 같은 배치가 되어 시험이 Windows 배치(basic 64 B, extended 144 B, JobMemoryLimit 오프셋 120,
+  CPU rate 8 B)를 단언할 수 있다. 32비트 Python 에서는 Job 을 만들지 않는다(LimiterError).
 """
 
 from __future__ import annotations
 
 import ctypes
 import os
-from ctypes import wintypes
 from typing import Any
+
+# 64비트 Windows 고정 폭 형식(wintypes 는 Linux 에서 DWORD=c_ulong 64비트라 배치가 달라짐)
+DWORD = ctypes.c_uint32
+SIZE_T = ctypes.c_uint64
+ULONG_PTR = ctypes.c_uint64
+ULONGLONG = ctypes.c_uint64
+LARGE_INTEGER = ctypes.c_int64
 
 JobObjectExtendedLimitInformation = 9
 JobObjectCpuRateControlInformation = 15
@@ -41,39 +52,45 @@ LIMIT_FLAGS = (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_JOB_MEMORY 
 
 class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
     _fields_ = [
-        ("PerProcessUserTimeLimit", ctypes.c_int64),
-        ("PerJobUserTimeLimit", ctypes.c_int64),
-        ("LimitFlags", wintypes.DWORD),
-        ("MinimumWorkingSetSize", ctypes.c_size_t),
-        ("MaximumWorkingSetSize", ctypes.c_size_t),
-        ("ActiveProcessLimit", wintypes.DWORD),
-        ("Affinity", ctypes.c_size_t),
-        ("PriorityClass", wintypes.DWORD),
-        ("SchedulingClass", wintypes.DWORD),
+        ("PerProcessUserTimeLimit", LARGE_INTEGER),     # 0
+        ("PerJobUserTimeLimit", LARGE_INTEGER),         # 8
+        ("LimitFlags", DWORD),                          # 16 (+4 정렬)
+        ("MinimumWorkingSetSize", SIZE_T),              # 24
+        ("MaximumWorkingSetSize", SIZE_T),              # 32
+        ("ActiveProcessLimit", DWORD),                  # 40 (+4 정렬)
+        ("Affinity", ULONG_PTR),                        # 48
+        ("PriorityClass", DWORD),                       # 56
+        ("SchedulingClass", DWORD),                     # 60 → 64 B
     ]
 
 
 class IO_COUNTERS(ctypes.Structure):
-    _fields_ = [(n, ctypes.c_uint64) for n in ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+    _fields_ = [(n, ULONGLONG) for n in ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
                                               "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
 
 
 class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
     _fields_ = [
-        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-        ("IoInfo", IO_COUNTERS),
-        ("ProcessMemoryLimit", ctypes.c_size_t),
-        ("JobMemoryLimit", ctypes.c_size_t),
-        ("PeakProcessMemoryUsed", ctypes.c_size_t),
-        ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),   # 0
+        ("IoInfo", IO_COUNTERS),                                        # 64 (48 B)
+        ("ProcessMemoryLimit", SIZE_T),                                 # 112
+        ("JobMemoryLimit", SIZE_T),                                     # 120
+        ("PeakProcessMemoryUsed", SIZE_T),                              # 128
+        ("PeakJobMemoryUsed", SIZE_T),                                  # 136 → 144 B
     ]
 
 
 class JOBOBJECT_CPU_RATE_CONTROL_INFORMATION(ctypes.Structure):
-    _fields_ = [("ControlFlags", wintypes.DWORD), ("CpuRate", wintypes.DWORD)]
+    _fields_ = [("ControlFlags", DWORD), ("CpuRate", DWORD)]          # CpuRate 는 union 첫 멤버 → 8 B
 
 
 def load_kernel32() -> Any:
+    from ctypes import wintypes
+
+    from .limiter import LimiterError
+
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise LimiterError("Job Object 제한은 64비트 Python 에서만 지원합니다")
     k = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     k.CreateJobObjectW.restype = wintypes.HANDLE
     k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]

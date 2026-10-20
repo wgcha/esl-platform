@@ -14,6 +14,7 @@ import threading
 
 import numpy as np
 import pytest
+import yaml
 from esl_test_support import API, REPO, H, create_case, make_settings_dict, wait_for
 from p2_support import seed_entry, seed_run
 
@@ -28,9 +29,21 @@ SPECS = [("50QX10A", 1.0, 24, 16, "A", "Corner146"), ("60QX10A", 1.2, 30, 20, "B
          ("50QX10A", 1.0, 30, 20, "A", "Face3")]
 
 
+# 합성 메시(가로 24~30 요소, 절점 425~651)는 기본 정규화 격자 24×14 에서 셀당 노드 1~2 개라 셀 합이 계단(aliasing)져
+# 같은 패턴도 cos ≈ 0.85 다(§12.4 셀당 노드 하한 64). 시험 라이브러리 설정은 격자를 6×4 로 줄여(셀당 16~27 노드,
+# 같은 패턴 cos ≈ 0.999) 기본 수렴 기준 cos_min 0.95 를 그대로 쓴다.
+E2E_GRID = (6, 4)
+
+
 @pytest.fixture()
 def settings_dict(tmp_path):
-    return make_settings_dict(tmp_path, report={"auto": True}, ui={"max_preview_points": 200})
+    lib = yaml.safe_load((REPO / "config" / "library.example.yaml").read_text(encoding="utf-8"))
+    lib["library"]["grid"] = {"nx": E2E_GRID[0], "ny": E2E_GRID[1]}
+    lib["library"]["ista6"] = str(REPO / "config" / lib["library"]["ista6"])
+    lp = tmp_path / "library.e2e.yaml"
+    lp.write_text(yaml.safe_dump(lib, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return make_settings_dict(tmp_path, report={"auto": True}, ui={"max_preview_points": 200},
+                              library={"config_path": str(lp)})
 
 
 def _snapshot(d):
@@ -128,7 +141,7 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
         ("Corner", "146", "FREE", 1)
     assert e0["quality"]["verdict"] == "PASS" and e0["quality"]["field_max_err_pct"] is not None
     assert e0["validation_id"] == c0["validation_id"] and e0["status"] == "ACTIVE" and e0["note"] == "합성"
-    assert e0["summary"]["grid"]["nx"] == 24 and e0["summary"]["grid"]["ny"] == 14 and e0["summary"]["mesh_sha256"]
+    assert (e0["summary"]["grid"]["nx"], e0["summary"]["grid"]["ny"]) == E2E_GRID and e0["summary"]["mesh_sha256"]
     edir = os.path.join(str(esl_root), *e0["dir_rel"].split("/"))
     assert sorted(os.listdir(edir)) == ["entry.json", "raw.npz", "summary.npz"]
     assert _sha(os.path.join(edir, "summary.npz")) == e0["sha256"]
@@ -204,11 +217,9 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     key = {k: e0["scene"][k] for k in ("scenario", "seq", "drop_type", "round", "scene_no", "orient", "suffix")}
     patch(entries[2], {"version": "v002"}, key)
     patch(entries[1], {"name": "50QX10A", "version": "v003"}, key)
-    # 합성 메시(가로 24~30 요소)는 정규화 격자(24×14)와 해상도가 비슷해 셀 합이 계단(aliasing)진다 → 같은 패턴도
-    # cos ≈ 0.85. 실제 모델(수십만 요소)과 달라 기준을 0.8 로 낮춘다(옵션 cos_min).
+    # 기본 수렴 기준(cos_min 0.95) 그대로 — 격자 6×4 로 셀당 노드 16 이상(E2E_GRID 주석)
     r = client.post(f"{API}/library/comparisons", json={"project_id": "p-1", "model": "50QX10A",
-                                                        "new_version": "v002",
-                                                        "options": {"n_representative": 1, "cos_min": 0.8}},
+                                                        "new_version": "v002", "options": {"n_representative": 1}},
                     headers=W)
     assert r.status_code == 201, r.text
     cm = r.json()
@@ -217,7 +228,11 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     cm = client.get(f"{API}/library/comparisons/{cm['id']}", headers=R).json()
     assert cm["status"] == "SUCCEEDED" and cm["verdict"] == "CONVERGED", cm["result"]["convergence"]
     cr = cm["result"]
-    assert cr["convergence"]["label"] == "수렴(반복 불필요)" and cr["aggregate"]["cos_min"] > 0.8
+    assert cr["convergence"]["label"] == "수렴(반복 불필요)" and cr["aggregate"]["cos_min"] > 0.99
+    assert cr["criteria"]["cos_min"] == 0.95 and cr["convergence"]["criteria"]["min_nodes_per_cell"] == 64
+    rs = cr["resolution"]                         # 셀당 노드 16~64 → 경고(신뢰 낮음은 아님), API 응답에 포함
+    assert rs["level"] == "warn" and 16 <= rs["nodes_per_cell_min"] < 64 and cr["convergence"]["reliability"] == "warn"
+    assert any("셀당 노드" in w for w in cr["warnings"])
     assert cr["scenes"][0]["base_entry"] == e0["id"] and cr["scenes"][0]["new_entry"] == entries[2]["id"]
     assert cm["report_rel"] == f"_compare/{cm['id']}/report.html" and cm["result_rel"].endswith("compare.json")
     rp = client.get(f"{API}/library/comparisons/{cm['id']}/report", headers=H("tok-general"))
@@ -226,7 +241,7 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     lg = client.get(f"{API}/jobs/{cm['job']['id']}/log", params={"step": 1}, headers=R).json()
     assert lg["eof"] and any("[lib_compare]" in ln for ln in lg["lines"])
     r = client.post(f"{API}/library/comparisons", json={"project_id": "p-1", "model": "50QX10A",
-                                                        "new_version": "v003", "options": {"cos_min": 0.8}}, headers=W)
+                                                        "new_version": "v003"}, headers=W)
     assert r.status_code == 201 and r.json()["base_version"] == "v002"
     _run(client, worker, r.json()["job"]["id"], lane="LIGHT")
     c3 = client.get(f"{API}/library/comparisons/{r.json()['id']}", headers=R).json()

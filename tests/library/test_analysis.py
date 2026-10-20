@@ -171,6 +171,23 @@ def test_deck_all_default_and_max_cases_reduction(entries, tmp_path):
     with pytest.raises(EslError):
         an.run(entries, tgt, {"deck_cases": "everything"})
 
+@pytest.mark.parametrize("max_cases, n_rep", [(1, 5), (2, 5), (3, 2), (4, 5), (4, 2)])
+def test_deck_reduction_never_exceeds_max_cases(entries, max_cases, n_rep):
+    """§12.4: 자동 축소(대표+최악) 후 subcase ≤ max_cases — 대표 수 자동 조정 + 경고(max_cases 1 이면 대표만)."""
+    res, _ = an.run(entries, entries[0], {"n_representative": n_rep, "max_cases": max_cases})
+    d = res["deck"]
+    assert d["reduced"] is True and d["n_subcases"] <= max_cases and d["n_subcases"] == len(d["cases"])
+    assert d["n_subcases"] + len(d["excluded"]) == 5
+    k = len(res["clusters"])
+    if 2 * min(n_rep, 5) > max_cases:
+        assert k == max(1, max_cases // 2)
+        assert any("대표 수" in w and f"max_cases {max_cases}" in w for w in res["warnings"])
+    if max_cases == 1:
+        assert d["mode"] == "representative" and [x["role"] for x in d["cases"]] == ["medoid"]
+    else:
+        assert d["mode"] == "representative+worst"
+
+
 def test_run_errors(entries):
     with pytest.raises(EslError):
         an.run([], None)

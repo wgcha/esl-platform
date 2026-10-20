@@ -355,6 +355,14 @@ def run(entries, target=None, opts: dict | None = None):
     kk = int(min(int(o["n_representative"]), K))
     if kk < int(o["n_representative"]):
         warns.append(f"항목 {K}개 < n_representative {o['n_representative']} — 대표 {kk}개")
+    if reduced and 2 * kk > max_cases:
+        # §12.4 자동 축소 후 subcase(대표 + 클러스터별 최악 ≤ 2k) ≤ max_cases: 대표 수를 줄인다(max_cases 1 이면 대표만).
+        k2 = max(1, max_cases // 2)
+        if max_cases < 2:
+            deck_mode = "representative"
+        warns.append(f"자동 축소 덱 subcase ≤ max_cases {max_cases} 를 위해 대표 수 {kk} → {k2}"
+                     + (" (max_cases 1 — 최악 제외, 대표만)" if max_cases < 2 else ""))
+        kk = k2
     med, labels, cost = kmedoids(D, kk, int(o["seed"]), int(o["n_init"]))
     arrays.update(svd_S=S, svd_scores=scores, dist=D, labels=labels.astype(np.int64))
 
@@ -383,6 +391,8 @@ def run(entries, target=None, opts: dict | None = None):
 
     # ---- 덱 하중 케이스(§12.1)
     deck = _deck_plan(o["deck_cases"], deck_mode, reduced, max_cases, clusters, briefs, K)
+    if reduced and deck["n_subcases"] > max_cases:      # 위 대표 수 조정으로 일어나지 않음(방어)
+        raise EslError("INPUT_INVALID", f"자동 축소 덱 subcase {deck['n_subcases']} > max_cases {max_cases}")
     if target is not None:
         # 저장 하중: 덱 케이스 전부 + 보고서 대표·최악 (덱 순서 먼저, 중복 제거).
         sel = list(dict.fromkeys([int(lc["case_index"]) for lc in deck["cases"]]

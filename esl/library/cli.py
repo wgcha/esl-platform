@@ -8,7 +8,7 @@
            [--optdeck-cases all|representative|representative+worst] [--max-cases N]
   optdeck  --root R --analysis AID [--reference-compliance none|solve]
   report   --root R --analysis AID
-  compare  --root R --model M [--base-version V] [--new-version V] [--filter k=v ...] [--id CID]
+  compare  --root R --model M [--base-version V] [--new-version V] [--filter k=v ...] [--id CID] [--coarsen half]
            [--cos-min C] [--n-representative N]
 
 공통 ``--config library.yaml`` (없으면 env ESL_LIBRARY_CONFIG). 입력 Case 폴더에는 쓰지 않고(겹치면 INPUT_INVALID),
@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--id", default=None, help="비교 ID (기본 C<UTC 시각>)")
     c.add_argument("--cos-min", type=float, default=None, help="수렴 기준 cos 최소(기본 설정 convergence.cos_min)")
     c.add_argument("--n-representative", type=int, default=None, help="재군집 k(기본 설정 analysis.n_representative)")
+    c.add_argument("--coarsen", choices=("false", "half"), default=None,
+                   help="cos 를 2×2 셀 묶음으로(기본 설정 convergence.coarsen)")
     return p
 
 
@@ -261,6 +263,8 @@ def cmd_compare(a, echo) -> dict:
     crit = dict(cfg["convergence"])
     if a.cos_min is not None:
         crit["cos_min"] = a.cos_min
+    if a.coarsen is not None:
+        crit["coarsen"] = "half" if a.coarsen == "half" else False
     k = a.n_representative or cfg["analysis"]["n_representative"]
     res = cmp.compare(base, new, crit, {"n_representative": k, "seed": cfg["analysis"]["seed"],
                                         "n_init": cfg["analysis"]["n_init"]})
@@ -274,7 +278,8 @@ def cmd_compare(a, echo) -> dict:
     cv = res["convergence"]
     echo(f"[compare] {cid}: {a.model} {base_v} → {new_v}, 짝 {res['n_paired']}개, cos 최소 "
          f"{res['aggregate']['cos_min']:.4f}, 대표 동일 {res['representatives']['rep_same']} → {cv['label']}"
-         f" ({d}: {', '.join(files)})")
+         + (f" [{cv['reliability_label']}]" if cv.get("reliability") in ("warn", "low") else "")
+         + f" ({d}: {', '.join(files)})")
     for x in res["warnings"]:
         echo(f"  경고: {x}")
     return res

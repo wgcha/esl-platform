@@ -53,7 +53,7 @@ def test_rerun_is_idempotent_and_preserves_user_edits(tmp_path):
     inp = _inputs(tmp_path)
     r1 = _run("write", inp)
     cfg = Path(r1["config_path"])
-    text = cfg.read_text(encoding="utf-8").replace("max_memory_gb: 32", "max_memory_gb: 96").replace("port: 8110", "port: 8120")
+    text = cfg.read_text(encoding="utf-8").replace("max_memory_gb: 128", "max_memory_gb: 96").replace("port: 8110", "port: 8120")
     cfg.write_text(text, encoding="utf-8")
     (cfg.parent / "esl.yaml").write_text((cfg.parent / "esl.yaml").read_text(encoding="utf-8") + "# 사용자 수정\n", encoding="utf-8")
     inp["deploy_defaults"]["esl_root"] = str(tmp_path / "other_root")    # 기존 deploy.json 값이 우선

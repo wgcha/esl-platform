@@ -14,7 +14,14 @@
   최대변형률 ε_max 신/구(t* 의 eps_max, 없으면 hotspot1 eps_rad), 검증 품질 변화(verdict·hotspot 오차·전 요소 p90).
 - 집계: cos 최소·평균, 합력비·ε_max 비 범위, hotspot 이동 최대.
 - 대표 동일 여부: 짝 씬만으로 버전별 같은 k 로 k-medoids(거리 = 단위 특징 현 길이 √(2−2cos)) → 클러스터를 멤버
-  겹침 최대로 매칭(헝가리안) → 매칭된 쌍마다 medoid 씬이 같은지. ``rep_same`` = 모두 같음.
+  겹침 최대로 매칭(헝가리안) → 매칭된 쌍마다 기준 medoid(기준 버전 특징)와 비교 medoid(비교 버전 특징)의 cos 가
+  ``cos_min`` 이상이면 같은 대표(§12.4 — medoid ID 동일은 요구하지 않음: 비슷한 씬이 여럿이면 medoid 가 그중
+  어느 것이든 될 수 있다). ``rep_same`` = 모든 쌍이 같은 대표. 보조 규칙(``rep_basis = base_kept``): 기준 대표를
+  새 버전 특징에 그대로 쓴 군집 비용이 새 최적보다 ``REP_COST_TOL``(5%) 이하로만 크고 기준 대표 씬 자체의 버전 간
+  cos 가 ``cos_min`` 이상이면 대표 유지(연속적인 씬 분포에서 거의 같은 비용의 다른 분할로 뒤집히는 경우).
+- 해상도(§12.4): 항목별 셀당 노드 수(비어 있지 않은 셀) 중앙값의 최소가 ``min_nodes_per_cell``(기본 64) 미만이면
+  경고, 16 미만이면 "판정 신뢰 낮음". ``coarsen: half`` 면 특징을 2×2 셀 묶음(합력 합, 모멘트는 묶음 중심으로 이동)
+  으로 계산한다(12×7 이하 격자에서는 무시).
 - 판정: ``cos_min ≥ criteria.cos_min`` 이고 (``criteria.rep_same`` 이면) ``rep_same`` → ``CONVERGED``
   "수렴(반복 불필요)", 아니면 ``ITERATE`` "추가 반복 권장" + 바뀐 씬 목록(cos 미달·대표 변경).
 - 셀 포락 차이: 버전별 짝 씬의 셀 max|F_cell| (nx,ny) 와 차이(신 − 구) — 보고서 히트맵.
@@ -33,11 +40,15 @@ import numpy as np
 from esl.errors import EslError
 from esl.library import _util as U
 from esl.library import analysis as an
+from esl.library import normalize as nz
 from esl.library import report_analysis as ra
 from esl.report.html import json_text
 
 SCENE_KEYS = ("scenario", "seq", "drop_type", "round", "scene", "orient", "suffix")
-DEFAULT_CRITERIA = {"cos_min": 0.9, "rep_same": True}
+DEFAULT_CRITERIA = {"cos_min": 0.95, "rep_same": True, "min_nodes_per_cell": 64, "coarsen": False}
+LOW_TRUST_NODES_PER_CELL = 16          # 셀당 노드 중앙값이 이보다 작으면 "판정 신뢰 낮음"
+COARSEN_MIN_GRID = (12, 7)             # 이 이하(두 방향 모두) 격자에서는 coarsen 무시
+REP_COST_TOL = 0.05                    # 기준 대표를 새 버전에 그대로 쓸 때 허용 군집 비용 증가(상대)
 DEFAULT_OPTS = {"n_representative": 5, "seed": 0, "n_init": 8}
 VERDICT_LABEL = {"CONVERGED": "수렴(반복 불필요)", "ITERATE": "추가 반복 권장"}
 
@@ -49,8 +60,8 @@ def _vkey(v):
 
 
 def sort_versions(versions) -> list[str]:
-    """자연 정렬(v2 < v10). None 은 제외."""
-    return sorted({str(v) for v in versions if v is not None and str(v).strip()}, key=_vkey)
+    """자연 정렬(v2 < v10). None 은 제외. 자연 순서가 같으면(v100·v0100, V1·v1) 원문 사전순 — 결정적."""
+    return sorted({str(v) for v in versions if v is not None and str(v).strip()}, key=lambda v: (_vkey(v), v))
 
 
 def previous_version(versions, new) -> str | None:
@@ -86,14 +97,60 @@ def scene_label(meta: dict) -> str:
     return " ".join(parts)
 
 
-def _feature(e) -> np.ndarray:
+def coarsen_half(F, M, C):
+    """2×2 셀 묶음: 합력 합, 모멘트는 묶음 중심(소속 셀 중심 평균)으로 이동 M' = Σ(M + (c − c') × F).
+    F, M, C: (nx, ny, 3) 같은 좌표계. 홀수 변의 마지막 묶음은 1열(행). 반환 (F2, M2, C2) (⌈nx/2⌉, ⌈ny/2⌉, 3)."""
+    nx, ny = F.shape[:2]
+    mx, my = (nx + 1) // 2, (ny + 1) // 2
+    I, J = np.arange(nx) // 2, np.arange(ny) // 2
+
+    def pool(G):
+        out = np.zeros((mx, my) + G.shape[2:])
+        np.add.at(out, (I[:, None], J[None, :]), G)
+        return out
+
+    cnt = pool(np.ones((nx, ny)))
+    C2 = pool(C) / cnt[..., None]
+    F2 = pool(F)
+    M2 = pool(M + np.cross(C - C2[I][:, J], F))
+    return F2, M2, C2
+
+
+def _coarse_on(coarsen, nx, ny) -> bool:
+    return coarsen == "half" and not (nx <= COARSEN_MIN_GRID[0] and ny <= COARSEN_MIN_GRID[1])
+
+
+def _feature(e, coarsen=False) -> np.ndarray:
     g = e.meta["grid"]
     nx, ny = int(g["nx"]), int(g["ny"])
     fr = e.meta["frame"]
-    Lc = float(np.sqrt(float(fr["L_xi"]) * float(fr["L_eta"]) / (nx * ny)))
     F = np.asarray(e.summary["cell_F_loc"], dtype=np.float64)
     M = np.asarray(e.summary["cell_M_loc"], dtype=np.float64)
+    if _coarse_on(coarsen, nx, ny):
+        C = e.summary.get("cell_center") if hasattr(e.summary, "get") else None
+        C = nz.cell_centers(fr, nx, ny) if C is None else np.asarray(C, dtype=np.float64)
+        Cl = C.reshape(-1, 3) @ nz.rotation(fr).T            # 국부 좌표(F·M 과 같은 좌표계)
+        F, M, _ = coarsen_half(F, M, Cl.reshape(nx, ny, 3))
+        nx, ny = F.shape[:2]
+    Lc = float(np.sqrt(float(fr["L_xi"]) * float(fr["L_eta"]) / (nx * ny)))
     return np.concatenate([F.reshape(-1), (M / Lc).reshape(-1)])
+
+
+def nodes_per_cell(e, coarsen=False):
+    """셀당 노드 수 중앙값(비어 있지 않은 셀, coarsen 이면 묶음 셀). cell_n 이 없으면 None."""
+    n = e.summary.get("cell_n") if hasattr(e.summary, "get") else None
+    if n is None:
+        return None
+    n = np.asarray(n, dtype=np.float64)
+    if n.ndim != 2:
+        return None
+    if _coarse_on(coarsen, *n.shape):
+        mx, my = (n.shape[0] + 1) // 2, (n.shape[1] + 1) // 2
+        out = np.zeros((mx, my))
+        np.add.at(out, ((np.arange(n.shape[0]) // 2)[:, None], (np.arange(n.shape[1]) // 2)[None, :]), n)
+        n = out
+    n = n[n > 0]
+    return float(np.median(n)) if n.size else None
 
 
 def _num(v):
@@ -171,8 +228,9 @@ def _chord(Xu) -> np.ndarray:
 
 
 def _clusters(Xu, k, seed, n_init):
-    med, labels, _ = an.kmedoids(_chord(Xu), k, seed, n_init)
-    return [{"medoid": int(m), "members": np.flatnonzero(labels == ci).tolist()} for ci, m in enumerate(med)]
+    D = _chord(Xu)
+    med, labels, cost = an.kmedoids(D, k, seed, n_init)
+    return [{"medoid": int(m), "members": np.flatnonzero(labels == ci).tolist()} for ci, m in enumerate(med)], D, cost
 
 
 def _assign(O: np.ndarray):
@@ -191,31 +249,94 @@ def _assign(O: np.ndarray):
         return sorted(out)
 
 
-def representatives(Xb, Xn, labels, k, seed=0, n_init=8) -> dict:
-    """버전별 같은 k 재군집 → 겹침 최대 매칭 → medoid 동일 여부."""
+def representatives(Xb, Xn, labels, k, seed=0, n_init=8, cos_min=DEFAULT_CRITERIA["cos_min"]) -> dict:
+    """버전별 같은 k 재군집 → 겹침 최대 매칭 → 짝 medoid cos ≥ cos_min 이면 같은 대표(§12.4).
+    Xb, Xn: 단위 특징(행 = 짝 씬)."""
     K = Xb.shape[0]
     k = int(min(max(int(k), 1), K))
-    cb = _clusters(Xb, k, seed, n_init)
-    cn = _clusters(Xn, k, seed, n_init)
+    cb, _, _ = _clusters(Xb, k, seed, n_init)
+    cn, Dn, cost_n = _clusters(Xn, k, seed, n_init)
     O = np.array([[len(set(a["members"]) & set(b["members"])) for b in cn] for a in cb], dtype=float)
+    # 매칭 점수 = 멤버 겹침(정수) + 짝 medoid cos 동점 깨기(0..0.5 < 1)
+    Cm = np.array([[float(np.clip(Xb[a["medoid"]] @ Xn[b["medoid"]], -1.0, 1.0)) for b in cn] for a in cb])
     match = []
-    for i, j in _assign(O):
+    for i, j in _assign(O + 0.25 * (Cm + 1.0)):
         a, b = cb[i], cn[j]
+        mcos = float(np.clip(Xb[a["medoid"]] @ Xn[b["medoid"]], -1.0, 1.0))
         match.append({"base_cluster": i, "new_cluster": j, "overlap": int(O[i, j]), "base_size": len(a["members"]),
                       "new_size": len(b["members"]), "base_medoid": a["medoid"], "new_medoid": b["medoid"],
                       "base_medoid_label": labels[a["medoid"]], "new_medoid_label": labels[b["medoid"]],
-                      "medoid_same": a["medoid"] == b["medoid"],
+                      "medoid_same": a["medoid"] == b["medoid"], "medoid_cos": mcos,
+                      "rep_same": a["medoid"] == b["medoid"] or mcos >= cos_min,
                       "members_same": set(a["members"]) == set(b["members"])})
     match.sort(key=lambda m: -m["base_size"])
     agree = sum(m["overlap"] for m in match) / K if K else 1.0
+    # 보조 규칙: 씬 분포가 연속적이면 k-medoids 해가 거의 같은 비용의 다른 분할로 뒤집힐 수 있다(대표가 이웃 씬으로
+    # 바뀜). 기준 대표를 새 버전 특징에 그대로 썼을 때 비용이 새 최적보다 REP_COST_TOL 이하로만 크고 기준 대표 씬
+    # 자체의 버전 간 cos 가 모두 cos_min 이상이면 대표가 유지된 것으로 본다.
+    mb = [c["medoid"] for c in cb]
+    cost_kept = an._cost(Dn, mb)
+    excess = (cost_kept - cost_n) / cost_n if cost_n > 0 else 0.0
+    self_cos = [float(Xb[m] @ Xn[m]) for m in mb]
+    kept = bool(excess <= REP_COST_TOL and min(self_cos) >= cos_min)
+    by_medoid = all(m["rep_same"] for m in match)
 
     def brief(cs):
         return [{"cluster": ci, "medoid": c["medoid"], "medoid_label": labels[c["medoid"]], "size": len(c["members"]),
                  "members": [labels[m] for m in c["members"]]} for ci, c in enumerate(cs)]
 
     return {"k": k, "base": brief(cb), "new": brief(cn), "matching": match,
-            "rep_same": all(m["medoid_same"] for m in match), "partition_same": all(m["members_same"] for m in match),
+            "rep_same": by_medoid or kept, "rep_basis": "medoid_cos" if by_medoid else ("base_kept" if kept else None),
+            "cos_min": float(cos_min), "base_reps_cost_excess": float(excess), "cost_tol": REP_COST_TOL,
+            "medoid_id_same": all(m["medoid_same"] for m in match), "partition_same": all(m["members_same"] for m in match),
             "partition_agreement": float(agree)}
+
+
+# ---------------------------------------------------------------- 해상도(§12.4)
+RELIABILITY_LABEL = {"ok": "해상도 충분", "warn": "셀당 노드 부족(판정 주의)", "low": "판정 신뢰 낮음",
+                     "unknown": "셀당 노드 정보 없음"}
+
+
+def _coarsen_mode(v):
+    if v in (None, False) or (isinstance(v, str) and v.strip().lower() in ("", "false", "none", "off", "no")):
+        return False
+    if isinstance(v, str) and v.strip().lower() == "half":
+        return "half"
+    raise EslError("INPUT_INVALID", f"coarsen 은 false | half (값 {v!r})")
+
+
+def _resolution(pairs, nx, ny, coarsen, min_npc, warns) -> dict:
+    """항목별 셀당 노드 중앙값 → 버전별·전체 최소, 경고 수준 ok|warn|low|unknown."""
+    applied = _coarse_on(coarsen, nx, ny)
+    if coarsen and not applied:
+        warns.append(f"coarsen={coarsen}: 격자 {nx}×{ny} 가 {COARSEN_MIN_GRID[0]}×{COARSEN_MIN_GRID[1]} 이하라 무시")
+    fx, fy = ((nx + 1) // 2, (ny + 1) // 2) if applied else (nx, ny)
+
+    def side(i):
+        v = [nodes_per_cell(p[i], coarsen) for p in pairs]
+        v = [x for x in v if x is not None]
+        return min(v) if v else None
+
+    b, n = side(1), side(2)
+    vals = [x for x in (b, n) if x is not None]
+    npc = min(vals) if vals else None
+    if npc is None:
+        level = "unknown"
+    elif npc < min(LOW_TRUST_NODES_PER_CELL, min_npc):      # 하한을 16 아래로 낮췄으면 그 값까지 허용
+        level = "low"
+    elif npc < min_npc:
+        level = "warn"
+    else:
+        level = "ok"
+    if level in ("warn", "low"):
+        warns.append(f"셀당 노드 중앙값 {npc:g} < {min_npc:g}(특징 격자 {fx}×{fy}) — 메시가 격자에 비해 성겨 같은 패턴도 "
+                     f"cos 가 낮게 나올 수 있다"
+                     + (f"; {min(LOW_TRUST_NODES_PER_CELL, min_npc):g} 미만이라 판정 신뢰 낮음" if level == "low" else "")
+                     + ("" if applied else " (격자를 줄이거나 convergence.coarsen: half 고려)"))
+    return {"nodes_per_cell_min": npc, "nodes_per_cell_base_min": b, "nodes_per_cell_new_min": n,
+            "min_nodes_per_cell": int(min_npc), "low_trust_below": LOW_TRUST_NODES_PER_CELL,
+            "level": level, "label": RELIABILITY_LABEL[level], "coarsen": coarsen or False, "coarsen_applied": applied,
+            "feature_grid": {"nx": fx, "ny": fy}}
 
 
 # ---------------------------------------------------------------- 본체
@@ -231,6 +352,9 @@ def compare(base_entries, new_entries, criteria: dict | None = None, opts: dict 
     o = dict(DEFAULT_OPTS, **{k: v for k, v in (opts or {}).items() if v is not None})
     if not 0 < float(crit["cos_min"]) <= 1:
         raise EslError("INPUT_INVALID", f"cos_min 은 (0, 1] (값 {crit['cos_min']})")
+    crit["coarsen"] = _coarsen_mode(crit.get("coarsen"))
+    if isinstance(crit["min_nodes_per_cell"], bool) or not float(crit["min_nodes_per_cell"]) >= 0:
+        raise EslError("INPUT_INVALID", f"min_nodes_per_cell 은 0 이상 (값 {crit['min_nodes_per_cell']})")
     warns: list[str] = []
     base_entries, new_entries = list(base_entries), list(new_entries)
     prods = {_norm((e.meta.get("model") or {}).get("product")) for e in base_entries + new_entries}
@@ -247,8 +371,10 @@ def compare(base_entries, new_entries, criteria: dict | None = None, opts: dict 
     if base_only or new_only:
         warns.append(f"짝 없는 씬: 기준에만 {len(base_only)}개, 비교에만 {len(new_only)}개 — 비교에서 제외")
 
-    Xb = np.stack([_feature(b) for _, b, _ in pairs])
-    Xn = np.stack([_feature(n) for _, _, n in pairs])
+    coarsen = crit["coarsen"]
+    res_info = _resolution(pairs, nx, ny, coarsen, float(crit["min_nodes_per_cell"]), warns)
+    Xb = np.stack([_feature(b, coarsen) for _, b, _ in pairs])
+    Xn = np.stack([_feature(n, coarsen) for _, _, n in pairs])
     nb, nn = np.linalg.norm(Xb, axis=1), np.linalg.norm(Xn, axis=1)
     zero = [pairs[i][1 if nb[i] <= 0 else 2].entry_id for i in range(len(pairs)) if nb[i] <= 0 or nn[i] <= 0]
     if zero:
@@ -281,11 +407,12 @@ def compare(base_entries, new_entries, criteria: dict | None = None, opts: dict 
             else qn["hotspot1_rel_err"] - qb["hotspot1_rel_err"],
             "changed": bool(reasons), "reasons": reasons})
 
-    reps = representatives(Xbu, Xnu, labels, o["n_representative"], int(o["seed"]), int(o["n_init"]))
-    for m in reps["matching"]:
-        if not m["medoid_same"]:
+    reps = representatives(Xbu, Xnu, labels, o["n_representative"], int(o["seed"]), int(o["n_init"]), cos_min_c)
+    for m in (reps["matching"] if not reps["rep_same"] else []):
+        if not m["rep_same"]:
             for idx, side in ((m["base_medoid"], "기준"), (m["new_medoid"], "비교")):
-                r = f"대표 변경({side} 대표 클러스터 {m['base_cluster'] + 1}: {m['base_medoid_label']} → {m['new_medoid_label']})"
+                r = (f"대표 변경({side} 대표 클러스터 {m['base_cluster'] + 1}: {m['base_medoid_label']} → "
+                     f"{m['new_medoid_label']}, medoid cos {m['medoid_cos']:.3f})")
                 if r not in scenes[idx]["reasons"]:
                     scenes[idx]["reasons"].append(r)
                 scenes[idx]["changed"] = True
@@ -301,11 +428,14 @@ def compare(base_entries, new_entries, criteria: dict | None = None, opts: dict 
     if agg["cos_min"] < cos_min_c:
         reasons.append(f"씬 cos 최소 {agg['cos_min']:.3f} < 기준 {cos_min_c:g} ({agg['n_below_cos']}개 씬)")
     if crit["rep_same"] and not reps["rep_same"]:
-        n_diff = sum(1 for m in reps["matching"] if not m["medoid_same"])
-        reasons.append(f"대표 케이스 변경 {n_diff}/{reps['k']}개 클러스터(k={reps['k']} 재군집 매칭)")
+        n_diff = sum(1 for m in reps["matching"] if not m["rep_same"])
+        reasons.append(f"대표 케이스 변경 {n_diff}/{reps['k']}개 클러스터(k={reps['k']} 재군집 매칭, 짝 medoid cos "
+                       f"< {cos_min_c:g})")
     verdict = "ITERATE" if reasons else "CONVERGED"
     conv = {"verdict": verdict, "label": VERDICT_LABEL[verdict], "converged": verdict == "CONVERGED",
-            "criteria": {"cos_min": cos_min_c, "rep_same": bool(crit["rep_same"])}, "reasons": reasons,
+            "criteria": {"cos_min": cos_min_c, "rep_same": bool(crit["rep_same"]),
+                         "min_nodes_per_cell": int(crit["min_nodes_per_cell"]), "coarsen": coarsen or False},
+            "reliability": res_info["level"], "reliability_label": res_info["label"], "reasons": reasons,
             "changed_scenes": [{"label": s["label"], "base_entry": s["base_entry"], "new_entry": s["new_entry"],
                                 "cos": s["cos"], "reasons": s["reasons"]} for s in scenes if s["changed"]]}
 
@@ -321,6 +451,7 @@ def compare(base_entries, new_entries, criteria: dict | None = None, opts: dict 
         "n_base": len(base_entries), "n_new": len(new_entries), "n_paired": len(pairs),
         "scene_keys": list(SCENE_KEYS), "scenes": scenes, "unpaired": {"base_only": base_only, "new_only": new_only},
         "aggregate": agg, "representatives": reps, "convergence": conv, "grid": {"nx": nx, "ny": ny},
+        "resolution": res_info,
         "envelope": {"base": eb, "new": en_, "diff": en_ - eb, "base_max": float(eb.max()), "new_max": float(en_.max()),
                      "frame": {k: fr.get(k) for k in ("L_xi", "L_eta")}},
         "warnings": warns,
@@ -370,9 +501,17 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
     S = [f"<header><h1>{_e(title)}</h1><div class='sub'>비교 ID <b>{_e(r.get('comparison_id', '—'))}</b> · 모델 "
          f"<b>{_e(r.get('model'))}</b> · 기준 <b>{_e(r.get('base_version'))}</b> → 비교 <b>{_e(r.get('new_version'))}</b>"
          f" · 생성 {_e(r.get('created_at'))}</div></header>"]
+    rs = r.get("resolution") or {}
+    lvl = rs.get("level")
+    badge = ""
+    if lvl in ("warn", "low", "unknown"):
+        npc = rs.get("nodes_per_cell_min")
+        badge = (f"<span class='rel {'fail' if lvl == 'low' else 'warn'}' id='reliability'>{_e(rs.get('label'))}"
+                 + (f" · 셀당 노드 {npc:g} &lt; {rs.get('min_nodes_per_cell'):g}" if npc is not None else "")
+                 + "</span>")
     S.append(f"<div class='card'><span class='verdict {cls}'>{'✓' if cv['converged'] else '!'} {_e(cv['label'])}</span>"
-             f"<span class='muted small'> 판정 기준: 씬 cos 최소 ≥ {cv['criteria']['cos_min']:g}"
-             f"{' 그리고 대표 케이스 동일' if cv['criteria']['rep_same'] else ''}</span>"
+             f"{badge}<span class='muted small'> 판정 기준: 씬 cos 최소 ≥ {cv['criteria']['cos_min']:g}"
+             f"{' 그리고 대표 케이스 동일(짝 medoid cos ≥ 기준)' if cv['criteria']['rep_same'] else ''}</span>"
              + ("<ul class='small'>" + "".join(f"<li>{_e(x)}</li>" for x in cv["reasons"]) + "</ul>"
                 if cv["reasons"] else "<p class='small muted'>모든 짝 씬의 하중 패턴이 기준 이상으로 같고 대표 케이스가 "
                                       "그대로다 — 추가 비드 최적화 반복이 필요 없다.</p>") + "</div>")
@@ -381,7 +520,9 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
              ("합력비 범위", f"{_r(fr_q['min'])}–{_r(fr_q['max'])}"),
              ("ε_max 비 최대", _r(er_q["max"])), ("hotspot 이동 최대", _r(hs_q["max"])),
              ("대표 동일", f"{'예' if reps['rep_same'] else '아니오'} (k={reps['k']})"),
-             ("바뀐 씬", f"{agg['n_changed']}")]
+             ("바뀐 씬", f"{agg['n_changed']}"),
+             ("셀당 노드(중앙값 최소)", "—" if rs.get("nodes_per_cell_min") is None
+              else f"{rs['nodes_per_cell_min']:g}" + (" (2×2 묶음)" if rs.get("coarsen_applied") else ""))]
     S.append("<div class='tiles'>" + "".join(f"<div class='tile'><div class='v'>{_e(v)}</div><div class='k'>{_e(k)}"
                                              "</div></div>" for k, v in tiles) + "</div>")
     # ---- 씬 표
@@ -429,15 +570,21 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
              + "</div></div>")
     # ---- 대표
     S.append(f"<h2>3. 대표 케이스 재군집 (k = {reps['k']})</h2><p class='muted small'>버전별로 짝 씬만 같은 k 로 "
-             f"k-medoids → 멤버 겹침 최대로 클러스터 매칭. 멤버 일치율 {_pct(reps['partition_agreement'])}.</p>"
+             f"k-medoids → 멤버 겹침 최대로 클러스터 매칭 → 짝 medoid 의 cos 가 기준 이상이면 같은 대표(medoid 씬이 달라도 됨). 멤버 일치율 {_pct(reps['partition_agreement'])}."
+             + (f" 짝 medoid cos 는 일부 기준 미달이지만 기준 대표를 새 버전에 그대로 써도 군집 비용 증가가 "
+                f"{_pct(reps.get('base_reps_cost_excess'))} ≤ {_pct(reps.get('cost_tol'))} 이고 기준 대표 씬의 버전 간 cos 가 "
+                "기준 이상이라 대표 유지로 본다(거의 같은 비용의 다른 분할)." if reps.get("rep_basis") == "base_kept" else "")
+             + "</p>"
              "<table><thead><tr><th>클러스터</th><th>기준 대표</th><th>비교 대표</th><th>크기 구/신</th><th>겹침</th>"
-             "<th>대표 동일</th></tr></thead><tbody>"
+             "<th>medoid cos</th><th>대표 동일</th></tr></thead><tbody>"
              + "".join(f"<tr><td>C{m['base_cluster'] + 1}</td><td>{_e(m['base_medoid_label'])}</td>"
                        f"<td>{_e(m['new_medoid_label'])}</td><td class='num'>{m['base_size']} / {m['new_size']}</td>"
-                       f"<td class='num'>{m['overlap']}</td><td>{'<span class=pass>예</span>' if m['medoid_same'] else '<span class=fail>아니오</span>'}"
+                       f"<td class='num'>{m['overlap']}</td><td class='num'>{_r(m.get('medoid_cos'), 4)}</td>"
+                       f"<td>{'<span class=pass>예</span>' if m.get('rep_same', m['medoid_same']) else '<span class=fail>아니오</span>'}"
                        "</td></tr>" for m in reps["matching"]) + "</tbody></table>")
     S.append("<h2>4. 한계</h2><ul class='lim'><li>하중 패턴은 정규화 격자 셀 합력·합모멘트로 비교한다 — 셀보다 작은 "
-             "국부 변화는 cos 에 작게 나타난다.</li><li>합력비는 Σ|f_i| (자기평형 하중의 합력 벡터는 ≈ 0) 기준이다.</li>"
+             "국부 변화는 cos 에 작게 나타난다.</li><li>셀당 노드가 적으면(중앙값 64 미만, 특히 16 미만) 메시 해상도 차이만으로도 "
+             "cos 가 낮아진다 — 이때 판정은 참고용이다.</li><li>합력비는 Σ|f_i| (자기평형 하중의 합력 벡터는 ≈ 0) 기준이다.</li>"
              "<li>판정 기준(cos_min, rep_same)은 임시값이며 실제 반복 사례로 조정해야 한다.</li></ul>")
     if r.get("warnings"):
         S.append("<h3>경고</h3><ul class='small'>" + "".join(f"<li>{_e(w)}</li>" for w in r["warnings"]) + "</ul>")
@@ -445,7 +592,8 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
             "new_version": r.get("new_version"), "convergence": cv, "aggregate": agg}
     blob = json_text(U.jsonable(data))
     css = ra.CSS + (".verdict{display:inline-block;font-size:18px;font-weight:700;padding:4px 12px;border-radius:6px;"
-                    "border:1px solid currentColor;margin-right:10px}tr.chg td:first-child{font-weight:600}")
+                    "border:1px solid currentColor;margin-right:10px}.rel{display:inline-block;font-size:13px;font-weight:600;"
+                    "padding:2px 8px;border-radius:6px;border:1px solid currentColor;margin-right:10px.rel.warn{color:var(--neg)}tr.chg td:first-child{font-weight:600}")
     doc = ("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
            f"<title>ESL 설계 버전 비교</title><style>{css}</style></head><body><main>" + "".join(S)

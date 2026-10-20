@@ -106,6 +106,11 @@ def _fmt(k, v):
         raise _bad(k, f"실수 format (값 {v!r})") from None
 
 
+def _coarsen(k, v):
+    if v is not False and v != "half":
+        raise _bad(k, f"false | half (값 {v!r})")
+
+
 SCHEMA = {
     "schema_version": _enum(1),
     "library": {
@@ -135,13 +140,17 @@ SCHEMA = {
         "solver": {"drill_factor": _num(0.0, 1.0, lo_open=True),
                    "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative")},
     },
-    "convergence": {"cos_min": _num(0.0, 1.0, lo_open=True), "rep_same": _bool},
+    "convergence": {"cos_min": _num(0.0, 1.0, lo_open=True), "rep_same": _bool, "min_nodes_per_cell": _int(0),
+                    "coarsen": _coarsen},
 }
 
 # §12 에서 추가된 키: 이전 설정 파일(설치본 library.yaml 은 업데이트 때 덮어쓰지 않음)과 호환되도록 없으면 기본값으로 채운다.
 # (그 밖의 키는 여전히 모두 필수.)
+# §12.4: convergence 기본 cos_min 0.95, min_nodes_per_cell 64, coarsen false (블록이 있어도 빠진 키는 채움).
 DEFAULTS = {("optdeck", "cases"): "all", ("optdeck", "max_cases"): 60,
-            ("convergence",): {"cos_min": 0.9, "rep_same": True}}
+            ("convergence",): {"cos_min": 0.95, "rep_same": True, "min_nodes_per_cell": 64, "coarsen": False},
+            ("convergence", "cos_min"): 0.95, ("convergence", "rep_same"): True,
+            ("convergence", "min_nodes_per_cell"): 64, ("convergence", "coarsen"): False}
 
 
 def fill_defaults(cfg):

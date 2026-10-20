@@ -41,9 +41,14 @@ def probe(spec, echo):
     echo("probe 완료")
 
 
-def _run_child(tmp_path, lim, name="step_01_X"):
+def oom(spec, echo):
+    """코어가 EslError 로 바꾸지 못한 MemoryError(솔버 밖 대형 배열 등)."""
+    raise MemoryError("Unable to allocate 14.4 MiB for an array")
+
+
+def _run_child(tmp_path, lim, name="step_01_X", target="test_limiter:probe"):
     log = tmp_path / f"{name}.log"
-    spec = {"log_path": str(log), "result_path": str(log) + ".result.json", "target": "test_limiter:probe",
+    spec = {"log_path": str(log), "result_path": str(log) + ".result.json", "target": target,
             "stage": "extract", "parent_pid": os.getpid(), "out": str(tmp_path / f"{name}.probe.json")}
     w = _worker(lim)
     gate = limiter.prepare(w, spec)
@@ -85,15 +90,35 @@ def test_posix_applied_in_child(tmp_path, monkeypatch):
     code, res, got, log, applied = _run_child(tmp_path, lim)
     assert code == 0 and res == {"ok": True}, log
     assert got["nice"] == min(19, base_nice + 5)
-    assert got["rlimit_as"] == [3 * GB, 3 * GB]
+    assert got["rlimit_as"] == [int(4.5 * GB), int(4.5 * GB)]     # max_memory_gb 3 × vm_headroom 1.5(기본)
     assert got["cpus"] == cpus[:cores]
     assert got["omp"] == str(cores)
     assert applied.startswith("posix: nice +5(below_normal)")
     line = next(ln for ln in log.splitlines() if "자원 제한" in ln)
-    assert line.startswith("[esl-worker] 자원 제한 posix: nice") and "메모리 3 GB(RLIMIT_AS)" in line
+    assert line.startswith("[esl-worker] 자원 제한 posix: nice") and "메모리 3 GB × 1.5 = 4.5 GB(RLIMIT_AS, 가상)" in line
     assert f"CPU 선호도 {cores}/{len(cpus)} 코어" in line
     # 부모(워커)에는 영향 없음
     assert os.nice(0) == base_nice and sorted(os.sched_getaffinity(0)) == cpus
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 전용")
+def test_posix_vm_headroom_setting(tmp_path):
+    """worker.vm_headroom: RLIMIT_AS = max_memory_gb × 계수(1.0 이면 그대로). 이전 형식 계획(계수 없음) = 1.0."""
+    lim = limiter.create(_cfg(max_memory_gb=2, vm_headroom=1.0), os_name="posix")
+    assert lim.limits.vm_headroom == 1.0 and "2 GB × 1 = 2 GB(RLIMIT_AS, 가상)" in lim.summary()["text"]
+    code, res, got, log, _ = _run_child(tmp_path, lim)
+    assert code == 0 and got["rlimit_as"] == [2 * GB, 2 * GB], log
+    assert limiter.Limits.from_cfg(_cfg()).vm_headroom == 1.5           # 설정 없음 → 기본 1.5
+    assert limiter.plan(limiter.create(_cfg(vm_headroom=2.0), os_name="posix"))["vm_headroom"] == 2.0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 전용")
+def test_child_memory_error_is_out_of_memory(tmp_path):
+    """자식에서 새어 나온 MemoryError → SOLVER_OUT_OF_MEMORY(INTERNAL_ERROR·SOLVER_SINGULAR 아님)."""
+    lim = limiter.create(_cfg(limiter="none"))
+    code, res, got, log, _ = _run_child(tmp_path, lim, target="test_limiter:oom")
+    assert code == 1 and res["ok"] is False and res["code"] == "SOLVER_OUT_OF_MEMORY"
+    assert "메모리 부족" in res["message"] and "실패 SOLVER_OUT_OF_MEMORY" in log
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX 전용")
@@ -166,7 +191,7 @@ def test_windows_job_arguments():
         assert flags & f
     assert not flags & 0x00000800  # BREAKAWAY_OK 없음(손자도 Job 안)
     assert ext.BasicLimitInformation.PriorityClass == lw.BELOW_NORMAL_PRIORITY_CLASS == 0x4000
-    assert ext.JobMemoryLimit == 32 * GB
+    assert ext.JobMemoryLimit == 32 * GB          # 커밋 기준 — vm_headroom 을 곱하지 않음(기본 1.5 여도)
     _, job, cls, cpu, size = k.calls[2]
     assert (job, cls, size) == (k.JOB, 15, ctypes.sizeof(lw.JOBOBJECT_CPU_RATE_CONTROL_INFORMATION))
     assert cpu.ControlFlags == lw.JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | lw.JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP == 0x5
@@ -257,3 +282,23 @@ def test_worker_status_shows_limiter(worker_factory):
         hb = workers_repo.latest(conn)
     assert hb["limiter"] == w.limiter and hb["limiter"].startswith("posix: nice +5(below_normal)")
     assert hb["info"]["limits"]["mode"] == "posix" and hb["info"]["limits"]["max_memory_gb"] == 32
+
+
+def test_windows_struct_layout_64bit():
+    """64비트 Windows 배치를 Linux 에서도 단언(고정 폭 정의): basic 64 B, extended 144 B, JobMemoryLimit 오프셋 120,
+    CPU rate 8 B."""
+    B, X, C = lw.JOBOBJECT_BASIC_LIMIT_INFORMATION, lw.JOBOBJECT_EXTENDED_LIMIT_INFORMATION, \
+        lw.JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
+    assert ctypes.sizeof(B) == 64 and ctypes.sizeof(lw.IO_COUNTERS) == 48
+    assert ctypes.sizeof(X) == 144 and ctypes.sizeof(C) == 8
+    assert [(n, getattr(B, n).offset) for n, _ in B._fields_] == [
+        ("PerProcessUserTimeLimit", 0), ("PerJobUserTimeLimit", 8), ("LimitFlags", 16), ("MinimumWorkingSetSize", 24),
+        ("MaximumWorkingSetSize", 32), ("ActiveProcessLimit", 40), ("Affinity", 48), ("PriorityClass", 56),
+        ("SchedulingClass", 60)]
+    assert (X.IoInfo.offset, X.ProcessMemoryLimit.offset, X.JobMemoryLimit.offset, X.PeakProcessMemoryUsed.offset,
+            X.PeakJobMemoryUsed.offset) == (64, 112, 120, 128, 136)
+    assert (C.ControlFlags.offset, C.CpuRate.offset) == (0, 4)
+    ext = X()
+    ext.JobMemoryLimit = 32 * GB
+    raw = bytes(ext)
+    assert int.from_bytes(raw[120:128], "little") == 32 * GB and not any(raw[:120]) and not any(raw[128:])

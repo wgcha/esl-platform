@@ -79,6 +79,8 @@ class WorkerCfg(_M):
     limiter: Literal["auto", "none", "posix", "windows_job"]
     max_logical_cores: int = Field(ge=1)
     max_memory_gb: float = Field(gt=0)
+    # POSIX RLIMIT_AS(가상 주소 공간) = max_memory_gb × vm_headroom. Windows Job 메모리는 커밋 기준이라 곱하지 않음.
+    vm_headroom: float = Field(default=1.5, ge=1.0, le=8.0)
     priority: Literal["normal", "below_normal", "idle"]
     heartbeat_interval_s: float = Field(gt=0)
     lease_ttl_s: float = Field(gt=0)

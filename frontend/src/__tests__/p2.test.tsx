@@ -391,7 +391,10 @@ describe("설계 버전 비교(§12.2)", () => {
     const { container } = renderApp("/p/p-body/library/comparisons/cmp-1");
     const v = await screen.findByTestId("verdict");
     expect(within(v).getByText("추가 반복 권장")).toBeTruthy();
-    expect(screen.getByText(/씬 cos 최소 0.842 < 기준 0.9/)).toBeTruthy();
+    expect(screen.getByText(/씬 cos 최소 0.842 < 기준 0.95/)).toBeTruthy();
+    // §12.4 셀당 노드 하한 미만 → 판정 옆 경고 배지 1개
+    expect(within(v).getAllByTestId("reliability")).toHaveLength(1);
+    expect(within(v).getByText("셀당 노드 부족(판정 주의)")).toBeTruthy();
     const rows = within(screen.getByRole("table", { name: "씬별 비교" })).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(3);
     expect(rows.filter((r) => r.className === "hl")).toHaveLength(1);

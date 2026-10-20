@@ -5,8 +5,13 @@
   코어 step 을 FAILED `LIMITER_FAILED`로 끝낸다(제한 없이 실행하는 경로 없음). none/null = 제한 없음.
 - windows_job(esl_worker.limiter_windows): 워커 1개당 Job Object 1개 — 우선순위 클래스·Job 메모리·CPU 상한(CpuRate),
   KILL_ON_JOB_CLOSE(워커가 죽으면 OS 가 자식을 종료 — 자식의 부모 감시와 이중 보호). 부모가 자식 시작 직후 할당.
-- posix: 자식 안에서 nice(below_normal +5, idle +15) · RLIMIT_AS(max_memory_gb) · sched_setaffinity(현재 허용 CPU 중
-  앞쪽 max_logical_cores 개)를 적용(자식마다 따로 — 메모리 한도는 프로세스 1개 기준).
+- posix: 자식 안에서 nice(below_normal +5, idle +15) · RLIMIT_AS(max_memory_gb × vm_headroom) · sched_setaffinity(현재
+  허용 CPU 중 앞쪽 max_logical_cores 개)를 적용(자식마다 따로 — 메모리 한도는 프로세스 1개 기준).
+  RLIMIT_AS 는 가상 주소 공간(VmPeak) 한도라 실제 사용(RSS) 보다 크게 잡힌다 — BLAS/OpenMP 스레드 스택·메모리 맵·
+  할당자 예약 때문에 VmPeak 가 RSS 보다 크다(Verifier v6, 9만 요소·1 스레드: pardiso VmPeak 4.4 / VmHWM 3.8 GB,
+  cholmod 4.0 / 3.7 GB — 스레드마다 glibc arena(최대 64 MB)·스택 예약이 더해져 다중 스레드에서 더 벌어짐)라
+  `worker.vm_headroom`(기본 1.5) 을 곱해 max_memory_gb 가 "실사용 메모리" 의미가 되게 한다.
+  Windows Job 메모리(JobMemoryLimit)는 커밋 기준(실제 확보한 메모리)이라 계수를 곱하지 않는다(1.0).
 - 공통(null 제외): 자식에 OMP/MKL/OPENBLAS_NUM_THREADS 가 없으면 min(max_logical_cores, 논리 코어 수)로 정한다.
 - 시작 신호(gate): 부모는 자식 spawn 직후 제한을 건 다음 Pipe 로 시작 신호(+적용 결과)를 보낸다. 자식은 신호를 받기 전에는
   코어를 import·실행하지 않는다(Windows 에서 Job 할당 전 계산 구간이 없도록 — CREATE_SUSPENDED → resume 대신).
@@ -24,6 +29,7 @@ FAILURE_CODE = "LIMITER_FAILED"
 NICE_INC = {"normal": 0, "below_normal": 5, "idle": 15}
 GATE_TIMEOUT_S = 120.0
 THREAD_ENV = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+DEFAULT_VM_HEADROOM = 1.5
 
 
 class LimiterError(Exception):
@@ -35,11 +41,16 @@ class Limits:
     priority: str = "normal"
     max_memory_gb: float | None = None
     max_logical_cores: int | None = None
+    vm_headroom: float = DEFAULT_VM_HEADROOM     # POSIX RLIMIT_AS 에만 곱함(Windows Job 은 커밋 기준 → 1.0)
 
     @classmethod
     def from_cfg(cls, worker_cfg: Any) -> Limits:
         return cls(priority=worker_cfg.priority, max_memory_gb=float(worker_cfg.max_memory_gb),
-                   max_logical_cores=int(worker_cfg.max_logical_cores))
+                   max_logical_cores=int(worker_cfg.max_logical_cores),
+                   vm_headroom=float(getattr(worker_cfg, "vm_headroom", None) or DEFAULT_VM_HEADROOM))
+
+    def rlimit_as_gb(self) -> float | None:
+        return None if not self.max_memory_gb else float(self.max_memory_gb) * float(self.vm_headroom or 1.0)
 
 
 def resolve_mode(name: str | None, os_name: str | None = None) -> str:
@@ -84,7 +95,8 @@ class PosixLimiter(NullLimiter):
     def summary(self) -> dict[str, Any]:
         lim = self.limits
         return {"mode": self.mode, **asdict(lim),
-                "text": f"nice +{NICE_INC.get(lim.priority, 0)}({lim.priority}), 메모리 {lim.max_memory_gb:g} GB(RLIMIT_AS), "
+                "text": f"nice +{NICE_INC.get(lim.priority, 0)}({lim.priority}), 메모리 {lim.max_memory_gb:g} GB × "
+                        f"{lim.vm_headroom:g} = {lim.rlimit_as_gb():g} GB(RLIMIT_AS, 가상), "
                         f"CPU 선호도 최대 {lim.max_logical_cores} 코어"}
 
 
@@ -241,7 +253,8 @@ def apply_posix(p: dict[str, Any]) -> dict[str, Any]:
         except ImportError:
             parts.append("메모리 한도 미지원(resource 없음)")
         else:
-            want = int(float(gb) * 2**30)
+            hr = float(p.get("vm_headroom") or 1.0)     # 이전 형식 계획(계수 없음) = 1.0
+            want = int(float(gb) * hr * 2**30)
             _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
             if hard != resource.RLIM_INFINITY and hard < want:
                 want = hard
@@ -250,7 +263,7 @@ def apply_posix(p: dict[str, Any]) -> dict[str, Any]:
             except (ValueError, OSError) as exc:
                 raise LimiterError(f"RLIMIT_AS 적용 실패: {exc}") from None
             out["rlimit_as"] = want
-            parts.append(f"메모리 {want / 2**30:g} GB(RLIMIT_AS)")
+            parts.append(f"메모리 {float(gb):g} GB × {hr:g} = {want / 2**30:g} GB(RLIMIT_AS, 가상)")
     cores = p.get("max_logical_cores")
     if cores:
         if hasattr(os, "sched_setaffinity"):

@@ -28,15 +28,15 @@ SCENES = {1: ("A", "B", 0.0), 2: ("A", "B", 0.25), 3: ("A", "B", -0.25),
           4: ("B", "A", 0.0), 5: ("B", "A", 0.25), 6: ("B", "A", -0.25)}
 
 
-def _entry(eid, version, scene, mix, amp=1.0, mesh=(24, 16), with_raw=False):
+def _entry(eid, version, scene, mix, amp=1.0, mesh=(24, 16), with_raw=False, grid=GRID):
     X0, conn, et, thk = synth_lib.plate_xz(mesh[0], mesh[1], 1.0)
     fr = nz.frame(X0, None, conn, et)
     p, q, w = mix
     f = amp * (synth_lib.pattern_load(X0, conn, et, p, fr) + w * synth_lib.pattern_load(X0, conn, et, q, fr))
-    gs = nz.grid_summary(X0, f, GRID[0], GRID[1], fr)
+    gs = nz.grid_summary(X0, f, grid[0], grid[1], fr)
     hx = 0.2 + 0.1 * scene + (0.0 if version == "v001" else 0.01)
     meta = {"entry_id": eid, "status": "active", "mesh_sha256": f"m{mesh}", "frame": fr,
-            "grid": {"nx": GRID[0], "ny": GRID[1], "top_n": 10},
+            "grid": {"nx": grid[0], "ny": grid[1], "top_n": 10},
             "model": {"product": "50QX10A", "inch": 50, "version": version, "mass": {"value": 10.0}},
             "scene": {"scenario": "FREE", "seq": scene, "drop_type": "Corner" if scene < 4 else "Face",
                       "drop_class": "Corner" if scene < 4 else "Face", "orient": "3", "scene": scene, "round": None,
@@ -57,12 +57,12 @@ def _entry(eid, version, scene, mix, amp=1.0, mesh=(24, 16), with_raw=False):
     return LibraryEntry(meta=U.jsonable(meta), summary=gs, raw=raw)
 
 
-def _version(version, mesh, amp, changed=None, with_raw=False, scenes=SCENES):
+def _version(version, mesh, amp, changed=None, with_raw=False, scenes=SCENES, grid=GRID):
     out = []
     for s, mix in scenes.items():
         if changed and s in changed:
             mix = changed[s]
-        out.append(_entry(f"{version}_s{s}", version, s, mix, amp * (1 + 0.1 * s), mesh, with_raw))
+        out.append(_entry(f"{version}_s{s}", version, s, mix, amp * (1 + 0.1 * s), mesh, with_raw, grid))
     return out
 
 
@@ -123,6 +123,25 @@ def test_versions_sorting():
     assert cmp.sort_versions(["v10", "v2", "v001", None]) == ["v001", "v2", "v10"]
     assert cmp.previous_version(["v001", "v002", "v010"], "v010") == "v002"
     assert cmp.previous_version(["v001"], "v001") is None
+    # §12.4 자연 순서 동률(v100·v0100, V1·v1) → 원문 사전순(결정적)
+    assert cmp.sort_versions(["v100", "v0100", "v99", "v1", "V1"]) == ["V1", "v1", "v99", "v0100", "v100"]
+    assert cmp.previous_version(["v0100", "v100", "v99"], "v100") == "v0100"
+    assert cmp.previous_version(["v0100", "v100", "v99"], "v0100") == "v99"
+
+
+def test_versions_sorting_hash_seed_independent():
+    """집합 순회 순서(PYTHONHASHSEED)와 무관하게 같은 결과."""
+    import subprocess
+    import sys
+
+    code = ("from esl.library import compare as c; vs = ['v100', 'v0100', 'v100a', 'V100', 'v2', 'v02', 'v010', 'v10'];"
+            "print(c.sort_versions(vs), c.previous_version(vs, 'v100'))")
+    outs = set()
+    for seed in ("1", "2", "12345"):
+        env = dict(os.environ, PYTHONHASHSEED=seed, PYTHONPATH=synth_lib.ROOT)
+        outs.add(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                                check=True).stdout)
+    assert len(outs) == 1, outs
 
 
 def test_report_self_contained_and_escaped(tmp_path):
@@ -157,7 +176,8 @@ def test_cli_compare(tmp_path, capsys):
     d = store.compare_dir(root, "C1")
     res = json.load(open(os.path.join(d, "compare.json"), encoding="utf-8"))
     assert (res["base_version"], res["new_version"], res["n_paired"]) == ("v001", "v002", 6)
-    assert res["criteria"] == {"cos_min": 0.9, "rep_same": True}
+    assert res["criteria"] == {"cos_min": 0.95, "rep_same": True, "min_nodes_per_cell": 64, "coarsen": False}
+    assert res["resolution"]["level"] == "low" and any("셀당 노드" in x for x in lines)
     assert os.path.isfile(os.path.join(d, "report.html"))
     rc = lcli.main(["compare", "--root", root, "--config", LCFG, "--model", "50QX10A", "--new-version", "v001"],
                    echo=lines.append)
@@ -165,3 +185,88 @@ def test_cli_compare(tmp_path, capsys):
     rc = lcli.main(["compare", "--root", root, "--config", LCFG, "--model", "50QX10A", "--base-version", "v001",
                     "--new-version", "v002", "--filter", "scene=9"], echo=lines.append)
     assert rc == 1 and "NO_PAIRED_SCENES" in capsys.readouterr().err
+
+
+def _v3b_scenes(K, seed=3):
+    """Verifier v3b: 두 패턴 계열(A 주·B 주) 의 연속적 섞음 비율 — k-medoids 분할이 거의 같은 비용으로 뒤집히기 쉬움."""
+    rng = np.random.default_rng(seed)
+    return {s: (("A", "B") if s % 2 else ("B", "A")) + (float(rng.uniform(-.5, .5)),) for s in range(1, K + 1)}
+
+
+@pytest.mark.parametrize("K", [12, 24])
+def test_rep_same_relaxed_same_pattern_converges(K):
+    """§12.4: 같은 패턴(메시·크기만 변경)은 k 와 무관하게 CONVERGED — medoid 씬 ID 가 달라도 짝 medoid cos ≥ cos_min
+    이면 같은 대표, 연속 분포에서 분할이 뒤집히면 기준 대표 유지 규칙."""
+    sc = _v3b_scenes(K)
+    base = _version("v001", (24, 16), 1.0, scenes=sc)
+    for mesh in ((30, 20), (48, 32)):
+        new = _version("v002", mesh, 1.1, scenes=sc)
+        for k in (2, 3, 5, 8):
+            r = cmp.compare(base, new, None, {"n_representative": k})        # 기본 cos_min 0.95
+            assert r["criteria"]["cos_min"] == 0.95
+            assert r["convergence"]["verdict"] == "CONVERGED", (K, mesh, k, r["convergence"]["reasons"])
+            reps = r["representatives"]
+            assert reps["rep_same"] and reps["rep_basis"] in ("medoid_cos", "base_kept")
+            assert all("medoid_cos" in m for m in reps["matching"])
+    # 메시 변경 + k=2: medoid 씬 ID 는 바뀌지만(구 규칙이면 ITERATE) 짝 medoid cos 로 같은 대표
+    r = cmp.compare(base, _version("v002", (30, 20), 1.1, scenes=sc), None, {"n_representative": 2})
+    if not r["representatives"]["medoid_id_same"]:
+        assert r["representatives"]["rep_same"]
+
+
+def test_rep_same_relaxed_pattern_change_iterates():
+    sc = _v3b_scenes(24)
+    base = _version("v001", (24, 16), 1.0, scenes=sc)
+    chg = {2: ("A", "B", 0.3), 4: ("A", "B", 0.0), 6: ("A", "B", 0.1)}       # B 주 → A 주
+    new = _version("v002", (30, 20), 1.1, scenes=sc, changed=chg)
+    for k in (2, 5, 8):
+        r = cmp.compare(base, new, None, {"n_representative": k})
+        cv = r["convergence"]
+        assert cv["verdict"] == "ITERATE" and r["aggregate"]["n_below_cos"] == 3
+        assert {c["label"].split()[1] for c in cv["changed_scenes"]} >= {"#2", "#4", "#6"}
+
+
+def test_resolution_warning_and_coarsen():
+    """셀당 노드 중앙값 < 64 경고, < 16 "판정 신뢰 낮음", coarsen half 는 2×2 묶음(12×7 이하 격자에서는 무시)."""
+    base = _version("v001", (24, 16), 1.0)              # 8×6 격자 → 셀당 약 9 노드
+    new = _version("v002", (30, 20), 1.1)
+    r = cmp.compare(base, new)
+    rs = r["resolution"]
+    assert rs["level"] == "low" and rs["label"] == "판정 신뢰 낮음" and rs["nodes_per_cell_min"] < 16
+    assert r["convergence"]["reliability"] == "low" and any("판정 신뢰 낮음" in w for w in r["warnings"])
+    r = cmp.compare(base, new, {"min_nodes_per_cell": 4})
+    assert r["resolution"]["level"] == "ok" and not any("셀당 노드" in w for w in r["warnings"])
+    r = cmp.compare(base, new, {"coarsen": "half"})
+    assert not r["resolution"]["coarsen_applied"] and any("무시" in w for w in r["warnings"])
+    with pytest.raises(EslError):
+        cmp.compare(base, new, {"coarsen": "quarter"})
+    # 24×14 격자(가로 48 요소 메시 → 셀당 약 4~5 노드): half 로 묶으면 셀당 노드 ×4, cos 회복
+    g = (24, 14)
+    b2 = _version("v001", (48, 32), 1.0, grid=g)
+    n2 = _version("v002", (60, 40), 1.1, grid=g)
+    raw = cmp.compare(b2, n2, None, {"n_representative": 2})
+    half = cmp.compare(b2, n2, {"coarsen": "half"}, {"n_representative": 2})
+    assert half["resolution"]["coarsen_applied"] and half["resolution"]["feature_grid"] == {"nx": 12, "ny": 7}
+    assert half["resolution"]["nodes_per_cell_min"] >= 3.5 * raw["resolution"]["nodes_per_cell_min"]
+    assert half["aggregate"]["cos_min"] > raw["aggregate"]["cos_min"]
+    assert np.asarray(half["envelope"]["diff"]).shape == g           # 포락 히트맵은 원래 격자
+
+
+def test_coarsen_half_conserves_resultants():
+    rng = np.random.default_rng(0)
+    for nx, ny in ((6, 4), (7, 5)):
+        F, M = rng.normal(size=(nx, ny, 3)), rng.normal(size=(nx, ny, 3))
+        C = np.stack(list(np.meshgrid(np.arange(nx) + .5, np.arange(ny) + .5, indexing="ij")) + [np.zeros((nx, ny))], -1)
+        F2, M2, C2 = cmp.coarsen_half(F, M, C)
+        assert F2.shape == ((nx + 1) // 2, (ny + 1) // 2, 3)
+        assert np.allclose(F2.sum((0, 1)), F.sum((0, 1)))
+        tm = (M + np.cross(C, F)).sum((0, 1))
+        assert np.allclose((M2 + np.cross(C2, F2)).sum((0, 1)), tm)     # 원점 합모멘트 보존
+
+
+def test_report_reliability_badge(tmp_path):
+    r = cmp.compare(_version("v001", (24, 16), 1.0), _version("v002", (30, 20), 1.0), None, {"n_representative": 2})
+    r.update(comparison_id="C1", model="50QX10A", base_version="v001", new_version="v002")
+    cmp.save(r, str(tmp_path), U.Writer(str(tmp_path)))
+    doc = open(tmp_path / "report.html", encoding="utf-8").read()
+    assert doc.count("id='reliability'") == 1 and "판정 신뢰 낮음" in doc and "medoid cos" in doc

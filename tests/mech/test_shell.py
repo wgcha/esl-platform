@@ -392,3 +392,116 @@ def test_auto_switches_to_iterative_on_low_memory(monkeypatch):
         F = m.condensed_forces(u)
     assert m.stats["K_rr"]["backend_used"] == "iterative"
     assert np.abs(F - Fr).max() < 1e-7 * np.abs(F).max()
+
+
+# ---------------------------------------------------------------- 메모리 부족(SOLVER_OUT_OF_MEMORY, §12.4 Verifier v6)
+def test_out_of_memory_pardiso_code_minus2(monkeypatch):
+    """PARDISO error -2(메모리 부족) → SOLVER_OUT_OF_MEMORY (SOLVER_SINGULAR 아님). 그 밖 오류는 SOLVER_SINGULAR."""
+    import scipy.sparse as sps
+
+    class _Err(Exception):
+        def __init__(self, value):
+            super().__init__(f"PARDISO error {value}")
+            self.value = value
+
+    def fake_cls(code):
+        class S:
+            def __init__(self, mtype):
+                pass
+
+            def set_iparm(self, i, v):
+                pass
+
+            def factorize(self, A):
+                raise _Err(code)
+
+            def free_memory(self, everything=False):
+                pass
+        return S
+
+    A = sps.csr_matrix(np.eye(3))
+    monkeypatch.setattr(_shell, "_pardiso_solver_cls", lambda: fake_cls(-2))
+    with pytest.raises(EslError) as ei:
+        _shell._Pardiso(A)
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY" and "error -2" in ei.value.message
+    monkeypatch.setattr(_shell, "_pardiso_solver_cls", lambda: fake_cls(-3))
+    with pytest.raises(EslError) as ei:
+        _shell._Pardiso(A)
+    assert ei.value.code == "SOLVER_SINGULAR"
+
+
+def test_out_of_memory_cholmod(monkeypatch):
+    """CHOLMOD out-of-memory(CholmodError 하위 — 이전 판의 비양정치 기반 클래스)도 비양정치 폴백이 아니라 OOM."""
+    import types
+
+    import scipy.sparse as sps
+
+    class CholmodError(Exception):
+        pass
+
+    class CholmodOutOfMemoryError(CholmodError):
+        pass
+
+    def cholesky(A):
+        raise CholmodOutOfMemoryError("CHOLMOD out of memory")
+
+    ch = types.SimpleNamespace(CholmodError=CholmodError, CholmodOutOfMemoryError=CholmodOutOfMemoryError,
+                               cholesky=cholesky)
+    monkeypatch.setattr(_shell, "_cholmod_module", lambda: ch)
+    with pytest.raises(EslError) as ei:
+        _shell._factorize(sps.csr_matrix(np.eye(3)), "cholmod", {}, "A")
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY"
+    # 메시지로만 알리는 판(CholmodError("... out of memory ..."))
+    ch.CholmodOutOfMemoryError = None
+
+    def cholesky2(A):
+        raise CholmodError("CHOLMOD error: out of memory")
+
+    ch.cholesky = cholesky2
+    with pytest.raises(EslError) as ei:
+        _shell._factorize(sps.csr_matrix(np.eye(3)), "cholmod", {}, "A")
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY"
+
+
+def test_out_of_memory_memoryerror_anywhere(monkeypatch):
+    """조립·분해·해 어디서든 MemoryError → SOLVER_OUT_OF_MEMORY (Verifier v6: RLIMIT_AS 아래 numpy 할당 실패)."""
+    m, Xg = _plate_model("quad")
+    m.backend = "superlu"
+
+    def boom(A):
+        raise MemoryError("Unable to allocate 222. MiB for an array")
+
+    monkeypatch.setitem(_shell._IMPL, "superlu", boom)
+    spc = supports.pick_321(Xg, supports.pca_corners(Xg)["idx"])
+    with pytest.raises(EslError) as ei:
+        m.solve(np.ones((m.n_nodes, 3)) * 0.0 + np.eye(1, 3, 2), spc)
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY" and "MemoryError" in ei.value.message
+    with pytest.raises(EslError) as ei:
+        m.condensed_forces(_smooth_field(Xg))
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY"
+    m2, _ = _plate_model("quad")
+    monkeypatch.setattr(type(m2), "_block_K", lambda self: (_ for _ in ()).throw(MemoryError("K")))
+    with pytest.raises(EslError) as ei:
+        m2.K()
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY" and "강성 조립" in ei.value.message
+
+
+def test_out_of_memory_superlu_malloc(monkeypatch):
+    """SuperLU 할당 실패(Verifier v6 RLIMIT_AS 1.6 GB: RuntimeError 'SUPERLU_MALLOC fails ...') → OOM, 특이는 그대로."""
+    import scipy.sparse as sps
+
+    def splu_oom(*a, **k):
+        raise RuntimeError("SUPERLU_MALLOC fails for buf in mxCallocInt() at line 68")
+
+    monkeypatch.setattr(_shell.spla, "splu", splu_oom)
+    with pytest.raises(EslError) as ei:
+        _shell._SuperLU(sps.csc_matrix(np.eye(2)))
+    assert ei.value.code == "SOLVER_OUT_OF_MEMORY"
+
+    def splu_sing(*a, **k):
+        raise RuntimeError("Factor is exactly singular")
+
+    monkeypatch.setattr(_shell.spla, "splu", splu_sing)
+    with pytest.raises(EslError) as ei:
+        _shell._SuperLU(sps.csc_matrix(np.eye(2)))
+    assert ei.value.code == "SOLVER_SINGULAR"

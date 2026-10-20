@@ -121,6 +121,11 @@ def child_entry(spec: dict[str, Any]) -> None:
             echo(f"[esl-worker] 실패 {exc.code}: {exc.message}")
             _write_result(spec["result_path"], {"ok": False, "code": exc.code, "message": exc.message})
             code = 1
+        except MemoryError as exc:  # 코어가 EslError 로 바꾸지 못한 메모리 부족(솔버 밖 대형 배열 등) — 특이·내부 오류와 구분
+            msg = f"코어 처리 중 메모리 부족(MemoryError: {str(exc)[:200]}) — worker.max_memory_gb·vm_headroom·서버 메모리 확인"
+            echo(f"[esl-worker] 실패 SOLVER_OUT_OF_MEMORY: {msg}")
+            _write_result(spec["result_path"], {"ok": False, "code": "SOLVER_OUT_OF_MEMORY", "message": msg})
+            code = 1
     except BaseException as exc:  # noqa: BLE001 - 자식 프로세스 최상위
         traceback.print_exc(file=fh)
         _write_result(spec["result_path"], {"ok": False, "code": "INTERNAL_ERROR",

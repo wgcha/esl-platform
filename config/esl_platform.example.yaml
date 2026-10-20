@@ -24,6 +24,7 @@ worker:
   limiter: auto                       # auto | none | posix | windows_job
   max_logical_cores: 16
   max_memory_gb: 32
+  vm_headroom: 1.5                    # POSIX RLIMIT_AS = max_memory_gb × 이 값(가상 주소 여유). Windows Job(커밋 기준)은 1.0
   priority: below_normal              # normal | below_normal | idle
   heartbeat_interval_s: 10
   lease_ttl_s: 60

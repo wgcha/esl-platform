@@ -134,3 +134,5 @@
 - `rep_same` 완화: 버전별 medoid를 헝가리안 매칭한 뒤, 짝 medoid 간 cos ≥ cos_min이면 같은 대표로 본다(medoid ID 동일 요구 폐기).
 - 버전 자연 정렬 동률(v100·v0100)은 원문 사전순으로 결정적 처리.
 - 자동 축소 후 subcase 수는 max_cases를 넘지 않는다(대표 수 자동 조정 + 경고).
+- 대표 유지 보조 규칙(구현 반영): 기준 버전 대표를 새 버전에 그대로 적용했을 때 군집 비용 증가 ≤ 5%(`convergence.rep_cost_tol`, 기본 0.05)이고 그 대표 씬들의 cos ≥ cos_min이면 대표 유지(`rep_basis=base_kept`). k-medoids의 거의 같은 비용 분할 간 뒤집힘으로 인한 거짓 ITERATE 방지.
+- 메모리: 오류 코드 `SOLVER_OUT_OF_MEMORY` 신설. POSIX RLIMIT_AS = max_memory_gb × `worker.vm_headroom`(기본 1.5), Windows Job은 커밋 기준 1.0. 운영 예시 max_memory_gb 128(서버 RAM 512 GB).

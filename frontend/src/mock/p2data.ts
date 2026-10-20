@@ -279,7 +279,7 @@ export function makeEntries(projectId: string): EntryOut[] {
 }
 
 /** comparisons.result (워커 _compare_summary 형식). cos 목록 = 짝 씬 순서 */
-export function makeComparisonResult(pairs: { base: EntryOut; next: EntryOut }[], cosMin = 0.9): ComparisonResult {
+export function makeComparisonResult(pairs: { base: EntryOut; next: EntryOut }[], cosMin = 0.95): ComparisonResult {
   const COS = [0.987, 0.962, 0.842, 0.975, 0.991];
   const scenes = pairs.map((p, i) => {
     const cos = COS[i % COS.length];
@@ -310,7 +310,9 @@ export function makeComparisonResult(pairs: { base: EntryOut; next: EntryOut }[]
       verdict,
       label: verdict === "CONVERGED" ? "수렴(반복 불필요)" : "추가 반복 권장",
       converged: verdict === "CONVERGED",
-      criteria: { cos_min: cosMin, rep_same: true },
+      criteria: { cos_min: cosMin, rep_same: true, min_nodes_per_cell: 64, coarsen: false },
+      reliability: "warn",
+      reliability_label: "셀당 노드 부족(판정 주의)",
       reasons,
       changed_scenes: changed.map((x) => ({ label: x.label, base_entry: x.base_entry, new_entry: x.new_entry, cos: x.cos, reasons: x.reasons })),
     },
@@ -326,14 +328,27 @@ export function makeComparisonResult(pairs: { base: EntryOut; next: EntryOut }[]
       n_verdict_changed: 0,
       n_changed: changed.length,
     },
-    criteria: { cos_min: cosMin, rep_same: true },
+    criteria: { cos_min: cosMin, rep_same: true, min_nodes_per_cell: 64, coarsen: false },
+    // 시연: 셀당 노드 48 < 64 → 경고 배지 1개
+    resolution: {
+      nodes_per_cell_min: 48,
+      nodes_per_cell_base_min: 48,
+      nodes_per_cell_new_min: 52,
+      min_nodes_per_cell: 64,
+      low_trust_below: 16,
+      level: "warn",
+      label: "셀당 노드 부족(판정 주의)",
+      coarsen: false,
+      coarsen_applied: false,
+      feature_grid: { nx: 24, ny: 14 },
+    },
     n_base: pairs.length,
     n_new: pairs.length,
     n_paired: pairs.length,
-    representatives: { k: Math.min(2, pairs.length), rep_same: true, partition_same: true, partition_agreement: 1, matching: [] },
+    representatives: { k: Math.min(2, pairs.length), rep_same: true, rep_basis: "medoid_cos", medoid_id_same: true, partition_same: true, partition_agreement: 1, matching: [] },
     scenes,
     unpaired: { base_only: [], new_only: [] },
-    warnings: [],
+    warnings: ["셀당 노드 중앙값 48 < 64(특징 격자 24×14) — 메시가 격자에 비해 성겨 같은 패턴도 cos 가 낮게 나올 수 있다"],
   };
 }
 

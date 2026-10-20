@@ -156,7 +156,7 @@ export class MockServer {
   private finishComparison(c: ComparisonOut) {
     const { pairs } = pairEntries(this.entries, c.model, c.base_version, c.new_version);
     c.status = "SUCCEEDED";
-    c.result = makeComparisonResult(pairs, c.options.cos_min ?? 0.9);
+    c.result = makeComparisonResult(pairs, c.options.cos_min ?? 0.95);
     c.verdict = c.result.convergence.verdict;
     c.result_rel = `${c.dir_rel}/compare.json`;
     c.report_rel = `${c.dir_rel}/report.html`;

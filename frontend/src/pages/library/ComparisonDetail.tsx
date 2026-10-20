@@ -2,7 +2,7 @@
 // 요약 = ComparisonOut.result(워커 _compare_summary).
 import { useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
-import type { ComparisonResult, ComparisonVerdict, JobState } from "../../api/types";
+import type { ComparisonResolution, ComparisonResult, ComparisonVerdict, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
@@ -18,6 +18,21 @@ export const VERDICT_TEXT: Record<ComparisonVerdict, string> = { CONVERGED: "수
 
 export function ComparisonVerdictBadge({ v }: { v: ComparisonVerdict }) {
   return <Badge kind={v === "CONVERGED" ? "ok" : "warn"}>{VERDICT_TEXT[v]}</Badge>;
+}
+
+/** 셀당 노드 해상도 경고 배지(§12.4) — 충분하면 표시하지 않음 */
+export function ReliabilityBadge({ rs }: { rs: ComparisonResolution | null | undefined }) {
+  if (!rs || rs.level === "ok") return null;
+  const npc = rs.nodes_per_cell_min;
+  const tip =
+    npc == null
+      ? "항목에 셀당 노드 수 정보가 없습니다"
+      : `셀당 노드 중앙값 ${npc} < ${rs.min_nodes_per_cell}${rs.coarsen_applied ? " (2×2 묶음)" : ""} — 메시가 격자에 비해 성겨 같은 패턴도 cos 가 낮게 나올 수 있습니다`;
+  return (
+    <span title={tip} data-testid="reliability">
+      <Badge kind={rs.level === "low" ? "bad" : "warn"}>{rs.label}</Badge>
+    </span>
+  );
 }
 
 const n3 = (v: number | null | undefined, d = 3) => (v == null || !Number.isFinite(v) ? "–" : v.toFixed(d));
@@ -97,9 +112,10 @@ export function ComparisonDetail() {
         <Card title="판정">
           <div className="verdict-row" data-testid="verdict">
             <ComparisonVerdictBadge v={cv.verdict} />
+            <ReliabilityBadge rs={r.resolution} />
             <span className="small muted">
               기준: 씬 cos 최소 ≥ {cv.criteria.cos_min}
-              {cv.criteria.rep_same ? " · 대표 케이스 동일" : ""}
+              {cv.criteria.rep_same ? " · 대표 케이스 동일(짝 medoid cos ≥ 기준)" : ""}
             </span>
           </div>
           {cv.reasons.length > 0 ? (

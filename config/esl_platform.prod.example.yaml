@@ -29,8 +29,13 @@ storage:
 worker:
   limiter: auto                       # auto | none | posix | windows_job (Windows는 Job Object로 메모리·CPU·우선순위 제한)
   max_logical_cores: 16
-  max_memory_gb: 32                   # 22만 요소 직접법 솔버 기준(현재 워커는 제한하지 않음 — §15). 서버 메모리에 맞게
-  priority: below_normal              # normal | below_normal | idle (POSIX nice 만 — Windows 에서는 아직 적용 안 됨, §15)
+  max_memory_gb: 128                  # 코어 자식 메모리 한도(Windows: Job 커밋 합계 — SLOT·LIGHT 동시 실행분 포함, 초과 시
+                                      # SOLVER_OUT_OF_MEMORY). 근거: 운영 서버 RAM 512 GB(decisions.md), 30만 요소 직접법 RSS 약
+                                      # 13 GB, 100만 요소 추정 45 GB(POSIX 는 × vm_headroom 1.5 ≈ 68 GB 가상)를 수용하고 대시보드·
+                                      # physicsai 와 나눠 쓸 여유를 남김. 서버 RAM 이 다르면 그 1/4 정도로
+  vm_headroom: 1.5                    # POSIX 전용: RLIMIT_AS(가상 주소 공간) = max_memory_gb × 이 값(VmPeak > RSS 여유).
+                                      # Windows Job 메모리는 커밋 기준이라 곱하지 않음(1.0)
+  priority: below_normal              # normal | below_normal | idle (Windows: Job 우선순위 클래스, POSIX: nice)
   heartbeat_interval_s: 10
   lease_ttl_s: 60
   claim_interval_s: 2

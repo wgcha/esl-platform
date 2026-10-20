@@ -332,9 +332,10 @@ def _compare_summary(res: dict[str, Any]) -> dict[str, Any]:
     reps = res.get("representatives") or {}
     return {
         "convergence": res.get("convergence"), "aggregate": res.get("aggregate"), "criteria": res.get("criteria"),
+        "resolution": res.get("resolution"),
         "n_base": res.get("n_base"), "n_new": res.get("n_new"), "n_paired": res.get("n_paired"),
-        "representatives": {k: reps.get(k) for k in ("k", "rep_same", "partition_same", "partition_agreement",
-                                                      "matching")},
+        "representatives": {k: reps.get(k) for k in ("k", "rep_same", "rep_basis", "medoid_id_same", "partition_same",
+                                                      "partition_agreement", "base_reps_cost_excess", "matching")},
         "scenes": [{k: s.get(k) for k in ("label", "base_entry", "new_entry", "cos", "force_ratio", "hotspot_shift",
                                           "eps_ratio", "quality_base", "quality_new", "changed", "reasons")}
                    for s in res.get("scenes") or []],
