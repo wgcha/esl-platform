@@ -40,3 +40,15 @@
 - bundle: zip 내용·크기 상한·경로 탈출.
 - 버전: VERSION↔CHANGELOG 일치, API, 배지 로직.
 - UI: 새 Case 두 탭 흐름(mock + 실서버 Playwright), 가이드·업데이트 내역 페이지, 주 버튼 1개 규칙.
+
+## 6. 서버 측 h3d 추출 · 워커 동시 실행 (2026-10-20 사용자 확인)
+- 확인: 운영 서버에 HyperView 2026.1·라이선스 있음. 사용자 PC 경로(예 `F:\Hyper_work`)는 서버에서 보이지 않음 → 서버 입력은 **업로드**(`storage.upload_root`, 예 `E:/VD_SIMULATION_WEB/esl-input`) 또는 그 안의 폴더 선택뿐. 산출물은 `storage.esl_root`(예 `E:/VD_SIMULATION_WEB/esl-data`). `storage.browse_spdm` 기본 false.
+- Case 입력 = **rad(+include) 필수 + h3d 또는 추출 결과 폴더 중 하나**. 기본은 h3d(서버 추출), 결과 폴더는 대안(PC에서 `ESL_extract.bat`으로 미리 추출한 경우).
+- `CASE_EXTRACT` 작업 첫 step `H3D_EXTRACT`(LOCAL, h3d 입력일 때만): 워커가 `commands.h3d_extract` argv 템플릿(argv[0] = `{hw}` → `altair.hw_exe_path`, P0 `esl.md` §4.4 규칙 — shell=False, 메타문자 거부)으로 `resources/tcl/esl_h3d_extract.tcl`(배포 스냅샷 안 경로)을 실행해 `<case>/01_extract/raw/`에 CSV를 만든 뒤 기존 pack 단계로 이어진다. h3d는 읽기만. 성공 판정 = 종료코드 0 + done.json ok. 실패 시 done.json의 failed_step·error·errorInfo를 step 로그·실패 코드(`H3D_EXTRACT_FAILED`)로.
+- 설정: `altair.hw_exe_path`(기본 `C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe`), `altair.max_concurrent_hw`(동시 hw 수, 기본 2 — 라이선스 한도에 맞춰 조정), 추출 옵션(part·hot_k·top_n)은 Case 값.
+- 워커 동시 실행: `worker.slots`(SLOT 레인 동시 작업 수, 기본 2), LIGHT 레인 별도. 같은 Case 직렬화(기존 규칙)는 유지. GPU 사용 없음. 자원 제한(Job Object)은 작업별로 `max_memory_gb`·코어를 slots로 나눠 적용(설정 `worker.per_job_memory_gb` 우선).
+- 환경 점검: `altair.hw_exe_path` 존재, TCL 존재, `worker.slots`.
+- 사용자 PC 추출(update.bat·ESL_extract.bat)은 대안으로 유지.
+
+## 7. 범위 밖(나중, P4)
+- PBS/HPC 제출(OptiStruct 비드 덱 실행, 검증 낙하 Radioss) 및 결과 h3d 자동 Case 등록 — physicsai `hpc.*`·대시보드 SCX relay 구현을 참고해 별도 계약.
