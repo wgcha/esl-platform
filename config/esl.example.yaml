@@ -48,6 +48,18 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
   noise_strain_rel_max: 0.05         # hotspot |Δε_eq|/ε_eq (잡음) 초과 시 verdict FAIL (NOISE_FLOOR)
 
+compare:                             # ESL 재현 정확도 전 요소 비교 (계약 esl_p2_library.md §7.2, 판정 기준은 임시값)
+  min_rel: 0.1                       # valid = t* 에서 상승 중 ∧ ε_rad ≥ min_rel·max ε_rad(상승 요소)
+  max_err_pct_max: 10.0              # 최대변형률 요소 |ε_esl−ε_rad|/ε_rad (%) 상한 → 초과 시 FAIL(FIELD_MAX_ERR)
+  p90_err_max: 20.0                  # valid 요소 |오차| 90 분위 (%) 상한 → 초과 시 FAIL(FIELD_P90_ERR)
+  top_n: 20                          # 상위 N 요소 표
+  hist_bins: 20                      # 오차 히스토그램 bin 수
+  section_band: 0.02                 # 단면선(ξ=0.5, η=0.5) 요소 띠 반폭(정규화 좌표, 요소 크기보다 작으면 요소 크기)
+
+report:                              # Case HTML 보고서 <case>/07_report/report.html (자체 완결, 외부 의존 없음)
+  max_points: 20000                  # 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플)
+  top_forces: 20                     # F_eq 상위 표 행 수
+
 export:
   radioss: {id_offset: 9000000, ramp_time: 1.0e-3, func_mode: ramp}   # ramp | constant
   force_zero_tol_rel: 1.0e-9         # |F 성분|/max|F| 이하 성분은 /CLOAD·FORCE 생략

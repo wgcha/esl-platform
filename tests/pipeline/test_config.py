@@ -27,6 +27,9 @@ def test_example_loads():
     assert cfg["extract"]["hot_k"] == 200 and cfg["tstar"]["metric"] == "max_strain"
     assert cfg["tstar"]["reach_rtol"] == 1e-6 and cfg["solver"]["backend"] == "auto"
     assert cfg["validation"]["full_solve"] == "auto"
+    assert cfg["compare"] == {"min_rel": 0.1, "max_err_pct_max": 10.0, "p90_err_max": 20.0, "top_n": 20,
+                              "hist_bins": 20, "section_band": 0.02}
+    assert cfg["report"] == {"max_points": 20000, "top_forces": 20}
     assert config.redacted_settings(cfg) == cfg and config.redacted_settings(cfg) is not cfg
 
 
@@ -97,6 +100,16 @@ _DEL = object()
     ("case.include_path_map", [], "case.include_path_map"),
     ("case.include_path_map", {"D:/x": ""}, "case.include_path_map.D:/x"),
     ("case.include_path_map", {"D:/x": 3}, "case.include_path_map.D:/x"),
+    ("compare", _DEL, "compare"),
+    ("compare.min_rel", 1.5, "compare.min_rel"),
+    ("compare.max_err_pct_max", 0, "compare.max_err_pct_max"),
+    ("compare.p90_err_max", _DEL, "compare.p90_err_max"),
+    ("compare.top_n", 0, "compare.top_n"),
+    ("compare.hist_bins", 1, "compare.hist_bins"),
+    ("compare.section_band", 0.0, "compare.section_band"),
+    ("report", _DEL, "report"),
+    ("report.max_points", 10, "report.max_points"),
+    ("report.top_forces", 2.5, "report.top_forces"),
 ])
 def test_invalid(base, path, value, key):
     cfg = copy.deepcopy(base)

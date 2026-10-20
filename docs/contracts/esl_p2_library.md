@@ -75,3 +75,64 @@
 1. P2-0(§7) 코어+TCL → 플랫폼·UI.
 2. P2-a/b/c 코어(`esl/library/`: 메타 파싱·정규화 요약·매핑·SVD/k-medoids·DTPG 덱·HTML 보고서) — 순수 함수 + CLI.
 3. 플랫폼: 라이브러리 테이블·API·분석 작업·UI(라이브러리 목록, 분석 생성, 보고서 보기).
+
+## 10. 구현 반영 (2026-10-19, 코어 f4ff26f)
+- 대표 선택 특징: 기본 `analysis.svd_feature: cell`(대상 격자 셀 합력·합모멘트, 케이스별 단위 노름 정규화) — 절점력 특징은 원본/매핑 해상도 차이로 같은 패턴 유사도가 붕괴(cos 0.05)하므로. `nodal`은 옵션. 크기는 최악 케이스 옵션·minmax가 담당.
+- 매핑 후 최소노름 평형 보정(기본 켬, 보정량 기록).
+- DTPG SKIP=BC 고정(전 노드 FORCE이므로 LOAD/BOTH 금지). 덱은 사용자 측 `optistruct -check`로 문법 확인 필요. `card_format: free|fixed`.
+- 저장: `mapped_loads.npz`는 대표·최악 케이스만 저장(전체 K×N×3은 필요 시 재계산) — 규모(22만×수백 씬) 대응.
+  형식: `mapped_F` (L,N,3) + `load_case_index` (L,)·`load_case_entry_id` (L,) (L = 대표+최악 수, `load_cases` 순서). 분석은 케이스별로 하중을 만들어 셀 합·절점 포락·Σ|f|만 누적(nodal 특징만 K×3N 메모리), 선택 케이스는 재계산. 꺼내기: `analysis.load_case_forces(result, arrays)`.
+- 덱: `optdeck.write`는 3-2-1 지지의 강체 6모드 구속 행렬 rank 6·σmin/σmax ≥ 1e-6 아니면 `SUPPORT_DEGENERATE`(optdeck.json `support_check`).
+- 보고서 inline JSON(Case·분석 공통 `esl.report.html.json_text`): `</`·`<!--`·`<script`의 `<` → `\u003c`.
+- 제품 질량(`mass` 정규화): 기본값(파트 질량)은 제품 질량이 아니므로 `mass` 모드는 항목 메타 `product_mass`가 있을 때만 허용, 없으면 `NORMALIZATION_META_MISSING`. 사용자 입력(UI) 또는 rad 전체 질량 계산 옵션.
+
+## 11. 플랫폼 계약 (P2 UI·API)
+### DB (Alembic 0003)
+- `library_entries`: id, case_id, esl_run_id, validation_id, status(`ACTIVE`|`RETIRED`), retired_by_id, model{name, inch, version, date, product_mass?}, scene{project, scenario, seq, drop_type, round, scene_no, orient, suffix, variant, raw}, quality{verdict, field_max_err_pct, field_p90_err_pct, noise}, tstar, summary_rel(npz 경로), sha256, registered_by/at, note. unique(esl_run_id) WHERE ACTIVE.
+- `analysis_runs`: id, project_id, target_entry_id, filters JSONB, options JSONB, status(job 연동), result_rel, report_rel, optdeck_rel, created_by/at.
+### 작업 유형 추가
+- `CASE_REPORT`(LIGHT): 코어 `report` 단계 → `07_report/report.html`. VALIDATE 성공 시 자동 큐(설정 `report.auto`, 기본 true).
+- `LIB_ANALYZE`(SLOT): esl.library analyze + optdeck + report → `<esl_root>/_analysis/<id>/`.
+### API
+- `GET /validations/{id}/field?layer=rad|esl|err&max_points=` → `{n_total, n_returned, decimated, plane:{origin,e1,e2}, color_range:{min,max}, points:[[elem_id, a, b, value, reason]]}`; `GET /validations/{id}/section?axis=xi|eta&at=0.5` → `{s[], w_rad[], w_esl[], w0[]}`; validation 응답에 `field` 요약.
+- `GET /cases/{id}/report` → HTML(`Content-Type: text/html`, CSP `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:`), `?download=1`이면 첨부.
+- `POST /library/entries` `{esl_run_id, validation_id?, note?, force_reason?}`(FAIL은 force_reason 필수, power 이상) → 201; `POST /library/entries/{id}/retire`; `PATCH /library/entries/{id}` `{version, model.product_mass?, scene.*}`(메타 수정만); `GET /library/entries?project_id=&model=&drop_type=&orient=&verdict=&status=`.
+- `POST /library/analyses` `{project_id, target_entry_id?, filters, options}` → 201 + LIB_ANALYZE 작업; `GET /library/analyses`, `GET /library/analyses/{id}`(요약: 대표·포락·통계), `GET /library/analyses/{id}/report`(HTML, 위 CSP), `GET /library/analyses/{id}/files`(optdeck 등 다운로드 목록).
+- 오류 코드 추가: ENTRY_EXISTS, VALIDATION_NOT_PASS, MAPPING_DEGENERATE, GRID_MISMATCH, NORMALIZATION_META_MISSING.
+### UI
+- ⑤ 검증: 기존 표 + **겹쳐보기 카드**(레이어 전환 Radioss/ESL/오차, 불투명도 슬라이더, 공통 색범위, 회색=비교불가, hotspot 표시) + 단면선 카드(배율 슬라이더) + 최대변형률 비교 수치·분위수·히스토그램 + "보고서 보기"(새 탭) + "라이브러리 등록"(주 버튼은 '검증 실행' 유지, 등록은 결과 카드 안 보조 버튼).
+- 상단 경로바 옆 전역 메뉴 1개 "라이브러리": `/esl/p/:projectId/library`(항목 표: 모델·인치·씬·verdict·오차, 필터, 메타 수정) → `/esl/p/:projectId/library/analyses/new`(대상 선택·필터·옵션 최소: 정규화 모드, 대표 수, 목적 minmax|weighted) → `/esl/p/:projectId/library/analyses/:id`(진행·요약·보고서 보기·덱 다운로드). 화면당 주 버튼 1개.
+
+## 12. 최적화 하중 구성 변경 · 설계 버전 비교 (2026-10-19 확정)
+### 12.1 덱 하중 케이스
+- 설정 `optdeck.cases: all | representative | representative+worst`, **기본 `all`**: 필터에 걸린 모든 씬 ESL(대상 메시로 매핑)을 각각 subcase로 넣고 minmax 컴플라이언스.
+- `optdeck.max_cases`(기본 60): `all`에서 씬 수가 이를 넘으면 `representative+worst`로 자동 축소하고 경고 + 보고서에 "제외된 씬과 사유" 표. 상한으로 거부하지 않는다(축소만).
+- 같은 K이므로 subcase 수는 해석 비용에 거의 영향 없음(분해 1회, 다중 RHS) — 보고서에 subcase 수·축소 여부 명시.
+- 대표 케이스(k-medoids)는 덱 구성이 아니라 **보고서의 하중 패턴 설명용**으로 유지.
+- 저장(`mapped_loads.npz`): 덱에 들어간 케이스 전부(= all이면 전 씬). 규모 경고는 유지.
+- API·UI: 분석 생성 옵션에 "최적화 하중: 모든 씬(기본) / 대표 / 대표+최악" 1개 추가, 상세 화면에 subcase 수·축소 여부 표시.
+
+### 12.2 설계 버전 비교(ESLSO 수렴 판정)
+- 목적: 비드 반영 설계의 **검증 낙하** 결과를 이전 설계와 비교해 추가 반복 필요 여부를 판단.
+- 짝 지정: 같은 `model`(제품명)·같은 씬 키(`scenario, seq, drop_type, round, scene_no, orient, suffix`)에서 `version`이 다른 라이브러리 항목. 기준/비교 버전은 사용자가 선택(기본: 직전 버전).
+- 지표(씬별): 하중 패턴 유사도 `cos`(대상 격자 셀 합력·합모멘트, 단위 노름), 합력 크기 비, hotspot 위치 이동(정규화 좌표 거리), 최대변형률 비(ε_max 신/구), 검증 품질 변화. 집계: 씬 cos 최소·평균, 대표 케이스 동일 여부(같은 k로 재군집 후 매칭).
+- 판정(설정, 임시값): `convergence.cos_min: 0.9`, `convergence.rep_same: true` 만족 → "수렴(반복 불필요)", 아니면 "추가 반복 권장" + 바뀐 씬 목록.
+- 산출: `<esl_root>/_compare/<id>/`(compare.json, report.html — 씬별 표, 셀 포락 차이 히트맵, 수렴 판정). 작업 `LIB_COMPARE`(LIGHT).
+- API: `POST /library/comparisons` `{project_id, model, base_version, new_version, filters?}`, `GET /library/comparisons[/{id}[/report]]`. 오류 `NO_PAIRED_SCENES`.
+- UI: 라이브러리 목록에 "버전 비교" 진입(주 버튼은 기존 유지, 보조), 비교 상세 화면(판정 배지·씬 표·보고서 보기).
+
+### 12.3 구현 반영 (2026-10-20)
+- 설정: `optdeck.cases`·`optdeck.max_cases`·`convergence.{cos_min, rep_same}` 는 없으면 기본값(all·60·0.9·true)으로 채운다(설치본 library.yaml 은 업데이트 때 덮어쓰지 않으므로). 그 밖의 키는 여전히 필수.
+- 분석 결과 `deck`: `{requested, mode, reduced, max_cases, n_cases, n_subcases, cases[{label, case_index, entry_id, role}], excluded[{case_index, entry_id, scene, reason}]}`. all 의 subcase 라벨 `S###`(씬 순서), 대표/최악은 `REP#`/`WORST#`. `mapped_loads.npz` = 덱 케이스 전부 + 보고서 대표·최악(합집합, 덱 순서 먼저). 덱 작성은 `analysis.optdeck_load_cases`. 분석 옵션 `optdeck_cases`(API·CLI `--optdeck-cases`), 상한은 설정만.
+- 비교 특징 = 각 항목 정규화 격자 셀 합력·합모멘트(§8 과 같은 특징, 같은 nx×ny 필요 — GRID_MISMATCH). 합력비 = Σ|f_i| 신/구, ε_max = t* eps_max(없으면 hotspot1 eps_rad), hotspot 이동 = hotspot1 (ξ,η) 거리. 대표 동일 = 짝 씬만 버전별 같은 k(설정 analysis.n_representative, 옵션으로 변경) k-medoids(거리 √(2−2cos)) → 멤버 겹침 최대 매칭(헝가리안) → 모든 쌍의 medoid 씬이 같음.
+- 같은 버전에 같은 씬 키가 여럿이면 최근 등록 항목. 기준 버전 기본 = 비교 버전 직전(자연 정렬 v2 < v10). API: `new_version` 필수, `base_version`·`filters`(inch·drop_type·drop_class·orient·scenario·verdict)·`options`(cos_min·n_representative)·`title` 선택. 오류: `VERSION_NOT_FOUND`(422), `NO_PAIRED_SCENES`(422, 생성 시점 DB 메타 기준), `GRID_MISMATCH`, 같은 버전 `INVALID_PARAMS`.
+- DB 0004: `comparisons`(verdict CONVERGED|ITERATE, result 요약), `jobs.comparison_id`(작업 대상 = Case | 분석 | 비교 중 하나), stage 9 = 버전 비교. 보고서 CSP·경로 보호는 분석 보고서와 같음.
+- 합성 시험 메시(가로 24~30 요소)는 격자 24×14 와 해상도가 비슷해 셀 합이 계단져 같은 패턴도 cos ≈ 0.85 — 실제 모델(수십만 요소)에는 해당 없음. E2E 는 cos_min 0.8 옵션으로 시험.
+
+### 12.4 검증 반영 (2026-10-20, Verifier HEAD 7906d23)
+- `convergence.cos_min` 기본 **0.95**(실모델 셀당 노드 ≥64 기준, 같은 패턴 ≥0.99 여유). 셀당 노드 중앙값 `convergence.min_nodes_per_cell`(기본 64) 미만이면 경고 + 보고서 표시(16 미만이면 "판정 신뢰 낮음"). 옵션 `convergence.coarsen: false|half`(기본 false, 12×7 이하 격자에서는 무시).
+- `rep_same` 완화: 버전별 medoid를 헝가리안 매칭한 뒤, 짝 medoid 간 cos ≥ cos_min이면 같은 대표로 본다(medoid ID 동일 요구 폐기).
+- 버전 자연 정렬 동률(v100·v0100)은 원문 사전순으로 결정적 처리.
+- 자동 축소 후 subcase 수는 max_cases를 넘지 않는다(대표 수 자동 조정 + 경고).
+- 대표 유지 보조 규칙(구현 반영): 기준 버전 대표를 새 버전에 그대로 적용했을 때 군집 비용 증가 ≤ 5%(`convergence.rep_cost_tol`, 기본 0.05)이고 그 대표 씬들의 cos ≥ cos_min이면 대표 유지(`rep_basis=base_kept`). k-medoids의 거의 같은 비용 분할 간 뒤집힘으로 인한 거짓 ITERATE 방지.
+- 메모리: 오류 코드 `SOLVER_OUT_OF_MEMORY` 신설. POSIX RLIMIT_AS = max_memory_gb × `worker.vm_headroom`(기본 1.5), Windows Job은 커밋 기준 1.0. 운영 예시 max_memory_gb 128(서버 RAM 512 GB).

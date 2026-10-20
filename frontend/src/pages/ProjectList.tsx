@@ -6,19 +6,19 @@ import { Empty } from "../components/ui";
 export function ProjectList() {
   const { projects, me } = useApp();
   return (
-    <Shell crumbs={[{ label: "ESL" }]}>
-      <h2>프로젝트 선택</h2>
+    <Shell crumbs={[]}>
+      <h1 className="page-title">프로젝트 선택</h1>
       {!me ? (
         <Empty>불러오는 중…</Empty>
       ) : projects.length === 0 ? (
-        <Empty>볼 수 있는 프로젝트가 없습니다.</Empty>
+        <Empty>표시할 프로젝트가 없습니다</Empty>
       ) : (
-        <ul className="tiles">
+        <ul className="tile-list">
           {projects.map((p) => (
             <li key={p.id}>
               <Link className="tile" to={`/p/${p.id}`}>
-                <strong>{p.name}</strong>
-                <span className="muted">{p.product_name ?? ""}</span>
+                <span className="tile-title">{p.name}</span>
+                <span className="muted small">{p.product_name ?? ""}</span>
               </Link>
             </li>
           ))}

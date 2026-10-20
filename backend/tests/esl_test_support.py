@@ -30,6 +30,7 @@ for _p in (REPO / "backend", REPO / "worker", REPO, REPO / "tests" / "pipeline")
 API = "/esl/api"
 CORE_EXAMPLE = REPO / "config" / "esl.example.yaml"
 PLATFORM_EXAMPLE = REPO / "config" / "esl_platform.example.yaml"
+LIBRARY_EXAMPLE = REPO / "config" / "library.example.yaml"
 
 
 # ---------------------------------------------------------------- PostgreSQL
@@ -162,6 +163,8 @@ def make_settings_dict(base: Path, **overrides: Any) -> dict[str, Any]:
     d["worker"].update({"heartbeat_interval_s": 0.3, "lease_ttl_s": 3, "claim_interval_s": 0.1,
                         "cancel_check_interval_s": 0.2, "terminate_grace_s": 2, "state_dir": str(base / "state")})
     d["core"] = {"settings": core_settings()}
+    d["library"] = {"config_path": str(LIBRARY_EXAMPLE)}
+    d["report"] = {"auto": False}       # 기존 시험은 자동 보고서 없이(자동 큐 시험은 report={"auto": True})
     for k, v in overrides.items():
         if isinstance(v, dict) and isinstance(d.get(k), dict):
             d[k] = {**d[k], **v}

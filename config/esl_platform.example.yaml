@@ -1,4 +1,4 @@
-# ESL 플랫폼(P1b) 설정 예시 (계약 docs/contracts/esl_platform_p1b.md, 원형 esl.md §2).
+# ESL 플랫폼(P1b·P2) 설정 예시 (계약 docs/contracts/esl_platform_p1b.md·esl_p2_library.md §11, 원형 esl.md §2).
 # 실제 사용: config/esl_platform.yaml(git 제외)로 복사하거나 env ESL_PLATFORM_CONFIG 로 경로 지정.
 # env ESL_PROFILE 이 profile 보다 우선. 모든 키 필수, 알 수 없는 키는 CONFIG_INVALID(쓰기 API 503).
 # 서버에서 외부 프로그램을 실행하지 않으므로 altair·commands·resources 키는 없다.
@@ -24,6 +24,7 @@ worker:
   limiter: auto                       # auto | none | posix | windows_job
   max_logical_cores: 16
   max_memory_gb: 32
+  vm_headroom: 1.5                    # POSIX RLIMIT_AS = max_memory_gb × 이 값(가상 주소 여유). Windows Job(커밋 기준)은 1.0
   priority: below_normal              # normal | below_normal | idle
   heartbeat_interval_s: 10
   lease_ttl_s: 60
@@ -34,9 +35,13 @@ worker:
   state_dir: "./state"
 ui:
   max_artifact_bytes: 20971520
-  max_preview_points: 20000           # 지지점 화면 2D 산점 최대 점 수
+  max_preview_points: 20000           # 2D 산점·겹쳐보기(/validations/{id}/field) 최대 점 수(초과 시 다운샘플)
   poll_job_ms: 2000
   poll_queue_ms: 5000
 logging: {level: INFO, mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']}
 core:                                 # 코어 설정: config_path(이 파일 기준 상대경로 가능) 또는 settings(코어 설정 그대로)
   config_path: esl.example.yaml
+report:
+  auto: true                          # VALIDATE 성공 시 Case 보고서(CASE_REPORT, LIGHT) 자동 큐 → <case>/07_report/report.html
+library:                              # 라이브러리·종합분석·덱 설정(esl.library.settings 스키마): config_path 또는 settings
+  config_path: library.example.yaml   # 항목 <esl_root>/_library/entries/<id>/, 분석 <esl_root>/_analysis/<id>/

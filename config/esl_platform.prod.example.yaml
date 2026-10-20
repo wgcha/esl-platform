@@ -1,0 +1,59 @@
+# ESL 플랫폼 운영 설정 예시(profile: prod) — Windows 서버(대시보드 simulation_workbench·physicsai-platform 과 같은 PC).
+# 설치 스크립트(deploy/setup.ps1·install.ps1)가 이 파일로 <런타임>\config\esl_platform.yaml 을 만들고(없을 때만),
+# 같은 폴더에 코어 설정 esl.yaml(config/esl.example.yaml), 라이브러리 설정 library.yaml(config/library.example.yaml),
+# ISTA 6 표 ista6.yaml(config/ista6.yaml)을 없을 때만 복사한다. 이후 값은 그 파일에서 직접 고친다(다시 설치해도 덮어쓰지 않음).
+# 스키마는 config/esl_platform.example.yaml 과 같다(모든 키 필수, 알 수 없는 키는 CONFIG_INVALID — 쓰기 API 503, 워커 기동 거부).
+# 경로: 절대경로('/' 권장), 공백·& | < > ^ % ! " 금지. esl_root 는 input_roots·spdm_roots 와 겹치면 안 된다(SPDM 밖).
+schema_version: 1
+profile: prod                         # 운영. dev_static 인증 금지
+server:
+  host: 127.0.0.1                     # 루프백 전용(외부 접속은 대시보드 Caddy /esl/ 경유)
+  port: 8110                          # physicsai(8100)·시연(8190·8191)과 겹치지 않게. Caddy ESL_PORT 와 같게
+  base_path: /esl                     # API = /esl/api, 프런트 = /esl/ (프런트 빌드 base 와 같아야 함 — 바꾸지 않는다)
+database:
+  url_env: ESL_DATABASE_URL           # 값이 아니라 환경변수 이름. 실행기(esl_service.py)가 <런타임>\secrets\database_url 을 이 이름으로 넣는다
+  pool_size: 5
+auth:
+  mode: dashboard                     # 대시보드 세션 쿠키 introspection(같은 origin)
+  dashboard_internal_url: "http://127.0.0.1:8000"    # 대시보드 백엔드(start.ps1 -BackendPort 기본 8000)
+  dashboard_public_login_url: "/home/"               # 로그인·"대시보드로" 링크 — 설치 스크립트가 대시보드 .env WINDOWS_WEB_BASE_PATH 로 맞춤
+  cookie_name: analysis_canvas_session
+  introspection_path: /api/auth/me
+  projects_path: /api/projects
+  cache_ttl_s: 30
+  timeout_s: 3
+storage:
+  esl_root: "E:/shared/ESL_WORK"      # Case 산출물 루트(쓰기, SPDM 밖). 설치 스크립트가 deploy.json esl_root 로 채우고 폴더를 만든다
+  input_roots: []                     # rad·결과 CSV 폴더를 고를 수 있는 루트(읽기 전용). 비어 있으면 Case 를 만들 수 없다
+  spdm_roots: []                      # SPDM master 루트(겹침 검사용 — esl_root 가 이 안에 있으면 거부)
+worker:
+  limiter: auto                       # auto | none | posix | windows_job (Windows는 Job Object로 메모리·CPU·우선순위 제한)
+  max_logical_cores: 16
+  max_memory_gb: 128                  # 코어 자식 메모리 한도(Windows: Job 커밋 합계 — SLOT·LIGHT 동시 실행분 포함, 초과 시
+                                      # SOLVER_OUT_OF_MEMORY). 근거: 운영 서버 RAM 512 GB(decisions.md), 30만 요소 직접법 RSS 약
+                                      # 13 GB, 100만 요소 추정 45 GB(POSIX 는 × vm_headroom 1.5 ≈ 68 GB 가상)를 수용하고 대시보드·
+                                      # physicsai 와 나눠 쓸 여유를 남김. 서버 RAM 이 다르면 그 1/4 정도로
+  vm_headroom: 1.5                    # POSIX 전용: RLIMIT_AS(가상 주소 공간) = max_memory_gb × 이 값(VmPeak > RSS 여유).
+                                      # Windows Job 메모리는 커밋 기준이라 곱하지 않음(1.0)
+  priority: below_normal              # normal | below_normal | idle (Windows: Job 우선순위 클래스, POSIX: nice)
+  heartbeat_interval_s: 10
+  lease_ttl_s: 60
+  claim_interval_s: 2
+  cancel_check_interval_s: 2
+  terminate_grace_s: 5
+  env_passthrough: []
+  state_dir: "./state"                # 작업 폴더(<런타임>) 기준 → <런타임>\state
+ui:
+  max_artifact_bytes: 20971520
+  max_preview_points: 20000
+  poll_job_ms: 2000
+  poll_queue_ms: 5000
+logging:
+  level: INFO
+  mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']
+core:                                 # 코어 설정: config_path(이 파일 기준 상대경로) 또는 settings
+  config_path: esl.yaml               # = config/esl.example.yaml 복사본 — 판정 기준(validation·compare)은 사내 확인 후 교체
+report:
+  auto: true                          # VALIDATE 성공 시 Case 보고서(CASE_REPORT) 자동 → <case>\07_report\report.html
+library:                              # 라이브러리·종합분석·덱(esl.library.settings): config_path 또는 settings
+  config_path: library.yaml           # library.yaml 의 library.ista6 = ista6.yaml(같은 폴더). 블록을 지우면 라이브러리 쓰기 API 503

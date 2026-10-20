@@ -87,7 +87,7 @@ def queue_lane(conn: Connection, lane: str) -> tuple[dict[str, Any] | None, list
 def insert_job(
     conn: Connection,
     *,
-    case_id: str,
+    case_id: str | None,
     project_id: str,
     job_type: str,
     params: dict[str, Any],
@@ -95,14 +95,18 @@ def insert_job(
     created_by_name: str,
     retry_of_job_id: str | None = None,
     resume_from_step: int | None = None,
+    analysis_id: str | None = None,
+    comparison_id: str | None = None,
 ) -> dict[str, Any]:
-    """E1. 같은 Case·job_type 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409."""
+    """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409."""
     check_transition(None, QUEUED)
     jt = JOB_TYPES[job_type]
     job_id = str(uuid.uuid4())
     seq = conn.execute(select(job_queue_seq.next_value())).scalar_one()
     conn.execute(insert(jobs).values(
-        id=job_id, case_id=case_id, project_id=project_id, job_type=job_type, stage=jt.stage, lane=jt.lane,
+        id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, project_id=project_id,
+        job_type=job_type,
+        stage=jt.stage, lane=jt.lane,
         state=QUEUED, holds_slot=False, queue_seq=seq, queued_at=func.now(), params=params,
         created_by=created_by, created_by_name=created_by_name, retry_of_job_id=retry_of_job_id,
         resume_from_step=resume_from_step,

@@ -16,7 +16,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
   const r = run.data;
 
   const missing = [!c.tstar && "② t*", !c.current_support_set_id && "③ 지지점"].filter(Boolean);
-  const prereq = missing.length ? `${missing.join("·")}을(를) 먼저 확정하세요.` : null;
+  const prereq = missing.length ? `${missing.join("·")}을(를) 먼저 확정하세요` : null;
 
   return (
     <StageFrame
@@ -44,7 +44,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
         )}
       </Card>
       {!runId ? (
-        <Empty>아직 ESL을 계산하지 않았습니다.</Empty>
+        <Empty>아직 ESL을 계산하지 않았습니다</Empty>
       ) : !r ? (
         <Empty>불러오는 중…</Empty>
       ) : (
@@ -72,18 +72,18 @@ export function Stage4({ c, reload, allowed }: StageProps) {
           </Card>
           <Card title="F_eq 상위 노드">
             {forces.data ? (
-              <div className="scroll">
-                <table className="tbl compact">
+              <div className="table-wrap scroll">
+                <table className="table compact">
                   <thead>
                     <tr>
                       <th>노드</th>
-                      <th>x</th>
-                      <th>y</th>
-                      <th>z</th>
-                      <th>Fx</th>
-                      <th>Fy</th>
-                      <th>Fz</th>
-                      <th>|F|</th>
+                      <th className="num">x</th>
+                      <th className="num">y</th>
+                      <th className="num">z</th>
+                      <th className="num">Fx</th>
+                      <th className="num">Fy</th>
+                      <th className="num">Fz</th>
+                      <th className="num">|F|</th>
                       <th />
                     </tr>
                   </thead>
@@ -91,13 +91,13 @@ export function Stage4({ c, reload, allowed }: StageProps) {
                     {forces.data.rows.map((f) => (
                       <tr key={f.node_id}>
                         <td>{f.node_id}</td>
-                        <td>{f.x.toFixed(1)}</td>
-                        <td>{f.y.toFixed(1)}</td>
-                        <td>{f.z.toFixed(1)}</td>
-                        <td>{f.fx.toFixed(1)}</td>
-                        <td>{f.fy.toFixed(1)}</td>
-                        <td>{f.fz.toFixed(1)}</td>
-                        <td>
+                        <td className="num">{f.x.toFixed(1)}</td>
+                        <td className="num">{f.y.toFixed(1)}</td>
+                        <td className="num">{f.z.toFixed(1)}</td>
+                        <td className="num">{f.fx.toFixed(1)}</td>
+                        <td className="num">{f.fy.toFixed(1)}</td>
+                        <td className="num">{f.fz.toFixed(1)}</td>
+                        <td className="num">
                           <strong>{f.mag.toFixed(1)}</strong>
                         </td>
                         <td>{f.is_support && <Badge kind="info">지지점</Badge>}</td>

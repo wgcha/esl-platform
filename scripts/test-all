@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ESL 전체 시험: 코어 pytest(tests/) + 플랫폼 backend/tests + worker/tests(PostgreSQL) + openapi 최신 여부
+# + 서버 배포 시험 tests/deploy(설정 생성·실행기·환경 점검·묶음 구조·시연, pwsh 있으면 PowerShell 스크립트 파싱·순수 함수)
 # + 프런트(vitest·typecheck·build·check:api).
+# 배포 시험의 Windows 휠 실제 내려받기는 ESL_TEST_NETWORK=1 일 때만(약 260 MB).
 # PostgreSQL: ESL_TEST_DATABASE_URL 이 있으면 그대로 쓰고, 없으면 PG_BIN(기본 /usr/lib/postgresql/<최신>/bin)으로
 # 임시 클러스터를 initdb 로 띄워 끝나면 지운다(root 로 실행 중이면 postgres 사용자로 실행).
 # 사용: bash scripts/test-all [pytest 추가 인자]
@@ -41,11 +43,13 @@ if [ -z "${ESL_TEST_DATABASE_URL:-}" ]; then
 fi
 
 echo "== 코어 pytest (tests/) =="
-"$PYTHON" -m pytest -q -p no:cacheprovider tests "$@"
+"$PYTHON" -m pytest -q -p no:cacheprovider tests --ignore=tests/deploy "$@"
 echo "== 플랫폼 backend pytest =="
 "$PYTHON" -m pytest -q -p no:cacheprovider backend/tests "$@"
 echo "== 워커 pytest =="
 "$PYTHON" -m pytest -q -p no:cacheprovider worker/tests "$@"
+echo "== 서버 배포 pytest (tests/deploy) =="
+"$PYTHON" -m pytest -q -p no:cacheprovider tests/deploy "$@"
 echo "== openapi_p1b.json 최신 여부 =="
 "$PYTHON" scripts/dump_openapi.py --check
 

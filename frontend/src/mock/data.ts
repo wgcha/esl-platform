@@ -248,6 +248,9 @@ export const VALIDATION_CRITERIA = {
   layers: ["mid"],
   metric: "max_strain",
   full_solve: "auto",
+  field_max_err_pct_max: 10,
+  field_p90_err_max: 20,
+  field_min_rel: 0.1,
 };
 
 export function makeValidation(id: string, runId: string, caseId: string): ValidationOut {
@@ -266,7 +269,7 @@ export function makeValidation(id: string, runId: string, caseId: string): Valid
     ],
     excluded: [{ elem_id: 101250, reason: "t* 프레임에서 상승 중 아님(hold 값 ≠ 순간값)" }],
     verdict: "FAIL",
-    fail_reasons: ["HOTSPOT_STRAIN", "REACTION"],
+    fail_reasons: ["HOTSPOT_STRAIN", "REACTION", "FIELD_MAX_ERR"],
     criteria: VALIDATION_CRITERIA,
     dir_rel: "05_val",
     created_at: "2026-10-18T03:20:00Z",

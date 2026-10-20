@@ -79,6 +79,8 @@ class WorkerCfg(_M):
     limiter: Literal["auto", "none", "posix", "windows_job"]
     max_logical_cores: int = Field(ge=1)
     max_memory_gb: float = Field(gt=0)
+    # POSIX RLIMIT_AS(가상 주소 공간) = max_memory_gb × vm_headroom. Windows Job 메모리는 커밋 기준이라 곱하지 않음.
+    vm_headroom: float = Field(default=1.5, ge=1.0, le=8.0)
     priority: Literal["normal", "below_normal", "idle"]
     heartbeat_interval_s: float = Field(gt=0)
     lease_ttl_s: float = Field(gt=0)
@@ -108,6 +110,22 @@ class CoreCfg(_M):
     settings: dict[str, Any] | None = None
 
 
+class ReportCfg(_M):
+    """Case 보고서(계약 esl_p2_library.md §11): VALIDATE 성공 시 CASE_REPORT 자동 큐."""
+
+    auto: bool = True
+
+
+class LibraryCfg(_M):
+    """라이브러리 설정(esl.library.settings 스키마): `config_path`(상대경로는 이 설정 파일 기준) 또는 `settings`.
+
+    `settings` 의 `library.ista6` 상대경로도 이 설정 파일 기준.
+    """
+
+    config_path: str | None = None
+    settings: dict[str, Any] | None = None
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -119,6 +137,8 @@ class Settings(_M):
     ui: UiCfg
     logging: LoggingCfg
     core: CoreCfg
+    report: ReportCfg = ReportCfg()
+    library: LibraryCfg | None = None   # 없으면 라이브러리 쓰기 API 503(LIBRARY_CONFIG_MISSING)
 
     @property
     def api_prefix(self) -> str:
@@ -141,6 +161,7 @@ class LoadedConfig:
     path: str | None = None
     sha256: str | None = None
     core: dict[str, Any] | None = None  # 검증된 코어 설정(작업 생성 시 스냅샷)
+    library: dict[str, Any] | None = None  # 검증된 라이브러리 설정(+ _ista6), 없으면 None
 
     @property
     def ok(self) -> bool:
@@ -208,6 +229,26 @@ def _schema(d: Any) -> tuple[Settings | None, list[Issue]]:
         return None, out
 
 
+def _library(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str, Any] | None]:
+    lc = s.library
+    if lc is None:
+        return [], None
+    if (lc.config_path is None) == (lc.settings is None):
+        return [Issue("library", "config_path 와 settings 중 정확히 하나가 필요합니다")], None
+    from esl_worker.core_adapter import CoreError, load_library_config, validate_library_settings
+
+    base = base_dir or os.getcwd()
+    try:
+        if lc.config_path is not None:
+            p = lc.config_path if os.path.isabs(lc.config_path) else os.path.join(base, lc.config_path)
+            if not os.path.isfile(p):
+                return [Issue("library.config_path", f"파일이 없습니다: {p}")], None
+            return [], load_library_config(p)
+        return [], validate_library_settings(lc.settings, base)
+    except CoreError as exc:
+        return [Issue("library", f"{exc.code}: {exc.message}")], None
+
+
 def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str, Any] | None]:
     issues: list[Issue] = []
     st = s.storage
@@ -270,6 +311,12 @@ def validate_settings(d: Any, *, base_dir: str | None = None) -> tuple[Settings 
     return s, sem, core
 
 
+def validate_library(s: Settings | None, *, base_dir: str | None = None) -> tuple[list[Issue], dict | None]:
+    if s is None:
+        return [], None
+    return _library(s, base_dir)
+
+
 def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None, base_dir: str | None = None,
                      path: str | None = None, sha256: str | None = None) -> LoadedConfig:
     env = os.environ if environ is None else environ
@@ -278,7 +325,8 @@ def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None
     if prof and isinstance(d, dict):
         d["profile"] = prof
     s, issues, core = validate_settings(d, base_dir=base_dir)
-    return LoadedConfig(s, issues, path, sha256, core)
+    lib_issues, lib = validate_library(s, base_dir=base_dir)
+    return LoadedConfig(s, issues + lib_issues, path, sha256, core, lib)
 
 
 def load_config(path: str | None = None, *, environ: dict[str, str] | None = None) -> LoadedConfig:

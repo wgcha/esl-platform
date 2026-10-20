@@ -10,6 +10,9 @@
 #   (B) every frame, hot set H only            -> history.csv
 #       H = top hot_k by final vonMises U top hot_k by final plastic strain (values > 0, no size cap)
 #   (C) candidate frames D, all part elements and nodes -> strain_frames.csv, disp.csv
+#       + previous frames P = { f-1 >= 0 : f in D } (not already in D), all part elements only
+#       -> strain_frames.csv (same format, told apart by frame_index; for the all-element
+#       "rising" mask v[f] > v[f-1]*(1+rtol), contract esl_p2_library.md 7.1)
 #       D = for each metric (vonMises, plastic strain): walk H by final value (descending, ties: lower id)
 #       and collect distinct first-reach frames, up to top_n per metric.
 #   first_reach(e) = min{ f : v[f,e] >= v[last,e]*(1-reach_rtol) }
@@ -19,9 +22,10 @@
 #   model.csv          node_id,x0,y0,z0                                 (part nodes, frame 0)
 #   final.csv          elem_id,vm_hv,exx,eyy,ezz,exy,epsp               (A)
 #   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (B)
-#   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C)
+#   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
 #   disp.csv           frame_index,node_id,ux,uy,uz                     (C)
 #   done.json          {"ok":true,"candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"frames_D",
+#                       "prev_frames" (f-1 >= 0 of each f in D),"strain_frames" (D U prev),
 #                       "hot_k","reach_rtol","passes":{...},...} or {"ok":false,"code","error","failed_step",
 #                       "errorCode","errorInfo","steps_done","api","traces","env","components",...}
 #                      (ALWAYS written; if <dir> cannot be written: stderr + esl_extract_done_fallback.json)
@@ -1202,29 +1206,44 @@ proc ::esl::run {arglist} {
     ::esl::progress "candidate frames: max_strain [lindex $cand_vm 0], plastic_strain [lindex $cand_ep 0] -> D = $D"
 
     # ---- pass C: candidate frames D, all part elements and nodes (chunked)
+    #      + previous frames P (f-1 >= 0 of each f in D): all part elements only (no displacement).
+    #      Frames of P that are already in D are written once (as D frames).
+    set P {}
+    foreach fi $D {
+        if {$fi > 0} { lappend P [expr {$fi - 1}] }
+    }
+    set P [lsort -integer -unique $P]
+    set Pextra {}
+    foreach fi $P {
+        if {[lsearch -exact -integer $D $fi] < 0} { lappend Pextra $fi }
+    }
+    set CF [lsort -integer -unique [concat $D $Pextra]]
     set t0 [::esl::ms]
     set fs [::esl::open_csv [file join $out strain_frames.csv] "frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
     set fds [::esl::open_csv [file join $out disp.csv] "frame_index,node_id,ux,uy,uz"]
     set srows 0
     set drows 0
     set k 0
-    foreach fi $D {
+    foreach fi $CF {
         incr k
+        set isD [expr {[lsearch -exact -integer $D $fi] >= 0}]
+        set tag [expr {$isD ? "" : " (prev)"}]
         ::esl::set_sim $res $post $fi
         set ci 0
         foreach ch $echunks {
             incr ci
-            ::esl::progress "pass C frame $fi ($k/[llength $D]) elements chunk $ci/$ne_ch"
+            ::esl::progress "pass C frame $fi$tag ($k/[llength $CF]) elements chunk $ci/$ne_ch"
             set acc [::esl::collect $con $qry [lindex $ch 0] element $efields "pass C frame $fi chunk $ci"]
             lassign [::esl::emit $fs "$fi," $acc $nreal $epad] n m
             incr srows $n
             if {$m > 0} { ::esl::note "pass C: elements without all values skipped" $m }
             unset acc
         }
+        if {!$isD} { continue }
         set ci 0
         foreach ch $nchunks {
             incr ci
-            ::esl::progress "pass C frame $fi ($k/[llength $D]) nodes chunk $ci/$nn_ch"
+            ::esl::progress "pass C frame $fi ($k/[llength $CF]) nodes chunk $ci/$nn_ch"
             set acc [::esl::collect $con $qry [lindex $ch 0] node $dfields "pass C frame $fi chunk $ci"]
             lassign [::esl::emit $fds "$fi," $acc 3 0] n m
             incr drows $n
@@ -1234,7 +1253,7 @@ proc ::esl::run {arglist} {
     }
     close $fs
     close $fds
-    lappend ::esl::passes "\"C\":\{\"frames\":[::esl::jints $D],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
+    lappend ::esl::passes "\"C\":\{\"frames\":[::esl::jints $D],\"prev_frames\":[::esl::jints $P],\"strain_frames\":[::esl::jints $CF],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
 
     ::esl::step CloseStack
     catch {hwi CloseStack}
@@ -1248,7 +1267,7 @@ proc ::esl::run {arglist} {
         hot_k $hot_k top_n $top_n reach_rtol [::esl::num $rtol] \
         candidate_frames "\{\"max_strain\":[::esl::jints [lindex $cand_vm 0]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 0]]\}" \
         candidate_elems "\{\"max_strain\":[::esl::jints [lindex $cand_vm 1]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 1]]\}" \
-        frames_D [::esl::jints $D] \
+        frames_D [::esl::jints $D] prev_frames [::esl::jints $P] strain_frames [::esl::jints $CF] \
         passes "\{[join $::esl::passes ,]\}" chunk $csize chunks "\{[join $ch_json ,]\}" \
         subcase [::esl::jstr $sc] elem_selection [::esl::jstr [lindex $esel 0]] \
         node_selection [::esl::jstr [lindex $nsel 0]] \
@@ -1263,7 +1282,7 @@ proc ::esl::run {arglist} {
         error "done.json could not be written"
     }
     set ::esl::written 1
-    ::esl::progress "done: $nelem elements, $nnode nodes, H $nh, D $D"
+    ::esl::progress "done: $nelem elements, $nnode nodes, H $nh, D $D, prev $P"
 }
 
 set ::esl::part_spec ""

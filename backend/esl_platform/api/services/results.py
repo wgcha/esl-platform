@@ -105,3 +105,111 @@ def artifact_file(ctx: AppContext, aid: str) -> tuple[str, str]:
         raise DomainError("ARTIFACT_TOO_LARGE", "파일이 커서 다운로드할 수 없습니다. 경로를 복사해 여세요", status=413,
                           rel=a["rel"], path=path, size=size, limit=ctx.settings.ui.max_artifact_bytes)
     return path, os.path.basename(path)
+
+
+# ---------------------------------------------------------------- P2: 전 요소 비교(계약 esl_p2_library.md §7.3·§11)
+def _compare_field(ctx: AppContext, vid: str) -> dict[str, np.ndarray]:
+    """검증 vid 의 05_val/compare_field.npz: run 스냅샷(runs/<id>/05_val, 표식 = vid) 또는 (vid 가 Case 최신 검증이면)
+    Case 05_val. 이후 검증으로 바뀌었으면 409 VALIDATION_FILES_GONE."""
+    with ctx.engine.connect() as conn:
+        val = cases_repo.get_validation(conn, vid)
+        if val is None:
+            raise not_found("VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다")
+        case = load_case(conn, val["case_id"])
+        latest = cases_repo.list_validations(conn, case_id=case["id"])
+    cdir = case_dir(ctx, case)
+    snap = co.val_snapshot_dir(cdir, val["esl_run_id"])
+    if co.val_marker(snap) == vid:
+        d = snap
+    elif latest and latest[0]["id"] == vid:
+        d = os.path.join(cdir, co.D_VAL)
+    else:
+        raise conflict("VALIDATION_FILES_GONE", "이 검증의 산출물이 이후 검증으로 바뀌었습니다(같은 ESL 결과로 다시 검증)")
+    path = safe_case_file(cdir, os.path.relpath(os.path.join(d, "compare_field.npz"), cdir))
+    if not os.path.isfile(path):
+        raise conflict("PREREQUISITE_MISSING", "전 요소 비교 산출물(compare_field.npz)이 없습니다(이전 코어 버전의 검증)",
+                       missing=["compare_field"])
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            return {k: z[k] for k in z.files}
+    except (OSError, ValueError) as exc:
+        raise DomainError("OUTPUT_INVALID", f"compare_field.npz 를 읽을 수 없습니다: {exc}", status=500) from None
+
+
+def _fin(v: float) -> float | None:
+    return float(v) if np.isfinite(v) else None
+
+
+def field(ctx: AppContext, vid: str, layer: str, max_points: int | None) -> dict[str, Any]:
+    from esl_worker import core_adapter
+
+    z = _compare_field(ctx, vid)
+    try:
+        eid = np.asarray(z["elem_id"], np.int64)
+        c2 = np.asarray(z["centroid2d"], np.float64)
+        er = np.asarray(z["eps_rad"], np.float64)
+        ee = np.asarray(z["eps_esl"], np.float64)
+        rel = np.asarray(z["rel_err"], np.float64)
+        valid = np.asarray(z["valid"], bool)
+        reason = np.asarray(z["reason"], np.int64)
+        plane = {"origin": z["plane_origin"].tolist(), "e1": z["plane_e1"].tolist(), "e2": z["plane_e2"].tolist()}
+    except KeyError as exc:
+        raise DomainError("OUTPUT_INVALID", f"compare_field.npz 키 없음: {exc}", status=500) from None
+    mp = ctx.settings.ui.max_preview_points
+    mp = min(int(max_points), mp) if max_points else mp
+    idx, cell = core_adapter.field_downsample(c2[:, 0], c2[:, 1], er, valid, mp)
+    idx = np.asarray(idx, np.int64)
+    if layer == "rad":
+        val = er
+    elif layer == "esl":
+        val = ee
+    else:
+        val = np.where(valid, 100.0 * rel, np.nan)
+    if layer == "err":
+        R = core_adapter.field_err_range(100.0 * rel[valid]) if valid.any() else None
+        cr = {"min": -float(R), "max": float(R)} if R else {"min": None, "max": None}
+    else:
+        both = np.concatenate([er[np.isfinite(er)], ee[np.isfinite(ee)]])
+        cr = {"min": float(both.min()), "max": float(both.max())} if both.size else {"min": None, "max": None}
+    names = core_adapter.field_reasons()
+    v = val[idx]
+    points = [[i, a, b, (x if x == x and abs(x) != float("inf") else None), names.get(r, str(r))]
+              for i, a, b, x, r in zip(eid[idx].tolist(), c2[idx, 0].tolist(), c2[idx, 1].tolist(), v.tolist(),
+                                       reason[idx].tolist())]
+    return {"validation_id": vid, "layer": layer, "n_total": int(eid.size), "n_returned": int(idx.size),
+            "decimated": cell is not None, "cell": None if cell is None else [float(cell[0]), float(cell[1])],
+            "plane": plane, "color_range": cr, "points": points}
+
+
+def section(ctx: AppContext, vid: str, axis: str, at: float) -> dict[str, Any]:
+    from esl_worker import core_adapter
+
+    z = _compare_field(ctx, vid)
+    try:
+        c2 = np.asarray(z["centroid2d"], np.float64)
+        bx, by = (float(x) for x in np.asarray(z["sec_band"], np.float64)[:2])
+        rng = z["xi_range"] if axis == "xi" else z["eta_range"]
+        n0, w_rel, w_val = z["n0"], z["w_rel"], z["w_val"]
+    except KeyError as exc:
+        raise conflict("PREREQUISITE_MISSING", f"단면선 자료가 없습니다(compare_field.npz 키 {exc})",
+                       missing=["section"]) from None
+    fixed = core_adapter.field_normalize(c2[:, 0] if axis == "xi" else c2[:, 1], rng)
+    along = c2[:, 1] if axis == "xi" else c2[:, 0]
+    band = bx if axis == "xi" else by
+    sec = core_adapter.field_section(fixed, along, n0, w_rel, w_val, at, band)
+
+    def lst(a):
+        return [float(x) for x in np.asarray(a, np.float64).tolist()]
+
+    return {"validation_id": vid, "axis": axis, "at": float(at), "band": float(band), "n_elems": int(sec["n_elems"]),
+            "s": lst(sec["s"]), "w_rad": lst(sec["w_rel"]), "w_esl": lst(sec["w_val"]), "w0": lst(sec["n0"])}
+
+
+def case_report(ctx: AppContext, case_id: str) -> tuple[str, str]:
+    with ctx.engine.connect() as conn:
+        case = load_case(conn, case_id)
+    cdir = case_dir(ctx, case)
+    path = safe_case_file(cdir, f"{co.D_REPORT}/{co.REPORT_HTML}")
+    if not os.path.isfile(path):
+        raise not_found("REPORT_NOT_FOUND", "보고서가 아직 없습니다(검증 후 자동 생성 또는 CASE_REPORT 작업)")
+    return path, f"{case['folder_name']}_report.html"

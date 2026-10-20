@@ -28,6 +28,6 @@ export const submitJob = (c: Case, jt: JobType, params: Record<string, unknown> 
 /** 주 버튼 비활성 사유(우선순위: 권한 → 실행 중 → 사전조건) */
 export function blockReason(allowed: boolean, c: Case, stage: number, prereq: string | null = null) {
   if (!allowed) return NO_PERMISSION;
-  if (c.stage_status?.[String(stage)]?.state === "running") return "작업이 진행 중입니다.";
+  if (c.stage_status?.[String(stage)]?.state === "running") return "작업이 진행 중입니다";
   return prereq;
 }

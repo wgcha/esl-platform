@@ -16,9 +16,14 @@ from typing import Any
 import numpy as np
 
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export"
+D_REPORT = "07_report"
+REPORT_HTML = "report.html"
 RUN_JSON = "run.json"
 METRICS = ("max_strain", "plastic_strain")
-STAGE_DIRS = {"extract": D_EXTRACT, "tstar": D_TSTAR, "esl": D_ESL, "validate": D_VAL, "export": D_EXPORT}
+STAGE_DIRS = {"extract": D_EXTRACT, "tstar": D_TSTAR, "esl": D_ESL, "validate": D_VAL, "export": D_EXPORT,
+              "report": D_REPORT}
+VAL_SNAPSHOT = "05_val"                    # runs/<esl_run_id>/05_val (그 실행의 최신 검증)
+VAL_MARKER = "platform_validation_id.txt"  # 스냅샷 05_val 이 어느 검증(DB id)의 것인지
 
 
 class OutputMissing(RuntimeError):
@@ -255,3 +260,15 @@ def esl_source_dir(case_dir: str, run: dict[str, Any]) -> str | None:
     if esl_tag(case_dir) == run["job_id"]:
         return case_dir
     return None
+
+
+def val_snapshot_dir(case_dir: str, run_id: str) -> str:
+    return _p(case_dir, RUNS_DIR, run_id, VAL_SNAPSHOT)
+
+
+def val_marker(d: str) -> str | None:
+    try:
+        with open(os.path.join(d, VAL_MARKER), encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None

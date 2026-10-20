@@ -3,6 +3,8 @@
 - stdout·stderr(파일 기술자 1·2 포함)를 step 로그 파일로 돌리고 코어 `echo`도 같은 파일에 쓴다.
 - 결과는 `result_path`에 JSON `{ok, code?, message?}`로 남긴다(부모가 읽음). 종료코드 0 = 성공, 1 = 실패.
 - 취소는 부모가 이 프로세스를 terminate/kill 한다(코어는 외부 프로그램을 띄우지 않으므로 손자 프로세스 없음).
+- 자원 제한(esl_worker.limiter): 코어 import 전에 부모의 시작 신호를 기다리고(Windows 는 그 전에 Job Object 에 들어감)
+  POSIX 는 nice·RLIMIT_AS·CPU 선호도를 스스로 건다. 적용 결과는 로그 `[esl-worker] 자원 제한 …` 줄. 실패 → `LIMITER_FAILED`.
 - 고아 방지: 부모(워커)가 비정상 종료하면(kill·크래시) 감시 스레드가 `PARENT_CHECK_S` 안에 이 프로세스를
   끝낸다(`os._exit(PARENT_LOST_EXIT)`). 판정 = multiprocessing 부모 sentinel 닫힘(Windows·POSIX 공통) 또는
   POSIX 에서 getppid() 가 spec.parent_pid 와 달라짐(재부모화).
@@ -33,15 +35,6 @@ def _redirect(log_path: str):
     return fh
 
 
-def _lower_priority(priority: str) -> None:
-    if priority == "normal" or not hasattr(os, "nice"):
-        return
-    try:
-        os.nice(5 if priority == "below_normal" else 15)
-    except OSError:
-        pass
-
-
 def _write_result(path: str, d: dict[str, Any]) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -50,8 +43,12 @@ def _write_result(path: str, d: dict[str, Any]) -> None:
 
 
 def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
-    """기본 대상: 어댑터로 esl.pipeline.run 1회."""
+    """기본 대상: 어댑터로 esl.pipeline.run 1회. 라이브러리 단계(lib_*)는 어댑터의 run_library_stage."""
     from esl_worker import core_adapter
+
+    if str(spec.get("stage") or "").startswith("lib_"):
+        core_adapter.run_library_stage(spec, echo)
+        return {"error": None}
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],
                                     frame=spec.get("frame"), support_nodes=spec.get("support_nodes"), echo=echo,
@@ -93,7 +90,6 @@ def _resolve(target: str):
 
 def child_entry(spec: dict[str, Any]) -> None:
     fh = _redirect(spec["log_path"])
-    _lower_priority(spec.get("priority", "normal"))
 
     def echo(msg: str) -> None:
         fh.write(str(msg) + "\n")
@@ -105,6 +101,15 @@ def child_entry(spec: dict[str, Any]) -> None:
     echo(f"[esl-worker] pid {os.getpid()} stage={spec.get('stage')} 시작")
     code = 0
     try:
+        from esl_worker import limiter
+
+        try:  # 부모 시작 신호(Windows Job 할당 뒤) 대기 + 자식 쪽 제한(POSIX nice·RLIMIT_AS·CPU 선호도) — 코어 import 전
+            limiter.child_setup(spec, echo)
+        except limiter.LimiterError as exc:
+            echo(f"[esl-worker] 실패 {exc.code}: {exc}")
+            _write_result(spec["result_path"], {"ok": False, "code": exc.code, "message": str(exc)[:450]})
+            fh.flush()
+            os._exit(1)
         from esl_worker.core_adapter import CoreError
 
         try:
@@ -115,6 +120,11 @@ def child_entry(spec: dict[str, Any]) -> None:
         except CoreError as exc:
             echo(f"[esl-worker] 실패 {exc.code}: {exc.message}")
             _write_result(spec["result_path"], {"ok": False, "code": exc.code, "message": exc.message})
+            code = 1
+        except MemoryError as exc:  # 코어가 EslError 로 바꾸지 못한 메모리 부족(솔버 밖 대형 배열 등) — 특이·내부 오류와 구분
+            msg = f"코어 처리 중 메모리 부족(MemoryError: {str(exc)[:200]}) — worker.max_memory_gb·vm_headroom·서버 메모리 확인"
+            echo(f"[esl-worker] 실패 SOLVER_OUT_OF_MEMORY: {msg}")
+            _write_result(spec["result_path"], {"ok": False, "code": "SOLVER_OUT_OF_MEMORY", "message": msg})
             code = 1
     except BaseException as exc:  # noqa: BLE001 - 자식 프로세스 최상위
         traceback.print_exc(file=fh)

@@ -20,10 +20,14 @@
   02_tstar/    tstar.json, history.csv, hotspots.csv, candidates.csv
   03_bc/       support.json
   04_esl/      u_rel.npz, u_rel.csv, f_eq.npz, f_eq.csv, esl_summary.json
-  05_val/      validation.json, validation.csv, compare.csv
+  05_val/      validation.json(+ field: 전 요소 재현 정확도 요약), validation.csv, compare.csv,
+               compare_field.npz (계약 esl_p2_library.md §7.2)
   06_export/   esl_cload.inc, esl_bcs.inc, esl_force.fem, f_eq.csv, u_rel.csv, reactions_321.csv,
                tstar_candidates.csv, hotspots.csv, validation.csv
+  07_report/   report.html (자체 완결 Case 보고서, §5·§7.3)
   run.json
+
+``--stage all`` 에서 report 단계가 실패해도 앞 단계 산출물·성공 상태는 유지된다(run.json stages.report = failed + 경고).
 """
 from __future__ import annotations
 
@@ -48,11 +52,12 @@ from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel
 from esl.rad import parse_rad, scan_includes
+from esl.report import field as _field
 
-STAGES = ("extract", "tstar", "esl", "validate", "export")
+STAGES = ("extract", "tstar", "esl", "validate", "export", "report")
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
-D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT = (
-    "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export")
+D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT, D_REPORT = (
+    "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export", "07_report")
 BACKUP_DIR = "_backup"
 RUN_JSON = "run.json"
 HOT_K_WARN = 1000          # extract.hot_k 상한은 없고 이보다 크면 경고
@@ -886,7 +891,97 @@ def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
 
 
 _FAIL_REASON = {"disp_rms_rel": "DISP_RMS", "hotspot1_strain_rel_err": "HOTSPOT_STRAIN",
-                "reaction_rel": "REACTION", "noise_hotspot_strain_rel": "NOISE_FLOOR"}
+                "reaction_rel": "REACTION", "noise_hotspot_strain_rel": "NOISE_FLOOR",
+                "field_max_err_pct": "FIELD_MAX_ERR", "field_p90_err_pct": "FIELD_P90_ERR"}
+
+
+def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, eps_esl, d_rel, d_val):
+    """전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2) → (npz 배열 dict, validation.json field 요약).
+
+    eps_rad = t* 프레임 Max_Strain ε_eq(전단 규약 보정, strain_frames), eps_esl = 검증 해 ε_eq(extract.layers, 기본 막).
+    상승 중 마스크: strain_frames.npz 의 prev_*(직전 프레임) → 없으면(예전 TCL 출력) history.npz 의 H 요소만.
+    d_rel·d_val (N,3): 단면선용 변위(전체 solve 면 양쪽 미소 강체 제거, 아니면 둘 다 u_rel).
+    """
+    meta = _frames_meta(ctx)
+    factor = _shear_factor(ctx, meta)
+    rtol = float(ctx.cfg["tstar"]["reach_rtol"])
+    ccfg = ctx.cfg["compare"]
+    E = int(model.elem_id.size)
+    with np.load(ctx.p(D_EXTRACT, "strain_frames.npz"), allow_pickle=False) as z:
+        files = set(z.files)
+        fd = int(np.flatnonzero(z["frame_index"].astype(np.int64) == int(frame_index))[0])
+        if "prev_eps" in files:
+            pfi = int(z["prev_frame_index"][fd])
+            pok = bool(z["prev_available"][fd]) if "prev_available" in files else True
+            prev_eps = z["prev_eps"][fd] if (pok and pfi >= 0) else None
+        else:
+            pfi, pok, prev_eps = int(frame_index) - 1, False, None
+    known = None
+    if pfi < 0 and pok:
+        rising = _field.rising_mask(eps_rad, None, rtol)
+        prev_source = "first_frame"
+    elif pok:
+        rising = _field.rising_mask(eps_rad, strain.eps_eq(tensor_eps(prev_eps, factor)), rtol)
+        prev_source = "strain_frames"
+    else:
+        # 예전 TCL 출력: H 요소만 history 로 판정(f−1 이 history 에 있을 때)
+        hz, hp = _history(ctx, model)
+        hfi = hz["frame_index"].astype(np.int64)
+        rising = np.zeros(E, bool)
+        known = np.zeros(E, bool)
+        jf = np.flatnonzero(hfi == int(frame_index))
+        jp = np.flatnonzero(hfi == pfi)
+        if jf.size == 1 and jp.size == 1:
+            eqh = strain.eps_eq(tensor_eps(hz["eps"], factor))
+            rising[hp] = _field.rising_mask(eps_rad[hp], eqh[int(jp[0])], rtol)
+            known[hp] = True
+        prev_source = "history_H"
+        ctx.warnings.append(f"직전 프레임(frame {pfi}) 전 요소 값이 없음(예전 TCL 출력) — 상승 중 판정은 history H "
+                            f"요소 {int(known.sum())}개만, 나머지는 비교 불가(NO_PREV). TCL 을 다시 실행할 것")
+    ex = _exclude_mask(ctx, model.elem_id)
+    valid, reason, max_rad, imax = _field.classify(eps_rad, rising, ccfg["min_rel"], exclude=ex, known=known)
+    rel = _field.rel_error(eps_esl, eps_rad)
+
+    # 기하: PCA 평면 실좌표(ξ, η), 면외 n, 단면선
+    C3 = model.centroids()
+    pl = _field.plane_coords(model.x0, C3)
+    c2 = np.stack([pl["xi"], pl["eta"]], axis=1)
+    n = pl["n"]
+    w_rel = _field.elem_mean(model.conn, model.elem_type, np.asarray(d_rel) @ n)
+    w_val = _field.elem_mean(model.conn, model.elem_type, np.asarray(d_val) @ n)
+    size = _field.elem_size(model.x0, model.conn, model.elem_type)
+    bx, by = _field.section_band(ccfg["section_band"], size, pl["xi_range"], pl["eta_range"])
+    xin = _field.normalize(pl["xi"], pl["xi_range"])
+    etn = _field.normalize(pl["eta"], pl["eta_range"])
+    sec_xi = _field.section(xin, pl["eta"], pl["n0"], w_rel, w_val, 0.5, bx)      # ξ=0.5 고정, η 방향
+    sec_eta = _field.section(etn, pl["xi"], pl["n0"], w_rel, w_val, 0.5, by)     # η=0.5 고정, ξ 방향
+
+    summ = _field.summarize(model.elem_id, eps_rad, eps_esl, rel, valid, reason, rising, imax,
+                            ccfg["top_n"], ccfg["hist_bins"], c2=c2)
+    summ.update(schema="esl/field/1", frame_index=int(frame_index), prev_frame_index=pfi, prev_source=prev_source,
+                rtol=rtol, min_rel=float(ccfg["min_rel"]), max_rad=max_rad,
+                reason_codes={str(k): v for k, v in _field.REASONS.items()}, reason_text=_field.REASON_TEXT,
+                definition={"rel_err": "(eps_esl - eps_rad)/eps_rad", "abs_err_pct": "100*|rel_err| (valid 요소)",
+                            "max_err_pct": "max.abs_err_pct: t* 상승 요소 중 ε_rad 최대 요소의 오차",
+                            "valid": "rising ∧ eps_rad ≥ min_rel·max_rad ∧ 제외 아님",
+                            "rising": "v[t*] > v[t*−1]·(1+rtol), t*=첫 프레임이면 v>0 (v = Max_Strain ε_eq)",
+                            "eps_esl": f"검증 해 ε_eq({'·'.join(ctx.cfg['extract']['layers'])}, 막 z=0 기본)"},
+                plane={k: pl[k].tolist() for k in ("origin", "e1", "e2", "n", "xi_range", "eta_range")},
+                sections={"xi": {"at": 0.5, "band": bx, "n_elems": sec_xi["n_elems"]},
+                          "eta": {"at": 0.5, "band": by, "n_elems": sec_eta["n_elems"]}},
+                note=_field.SEMANTIC_NOTE)
+    arrays = dict(
+        elem_id=model.elem_id.astype(np.int64), centroid2d=c2, centroid3d=C3,
+        eps_rad=np.asarray(eps_rad, np.float64), eps_esl=np.asarray(eps_esl, np.float64), rel_err=rel,
+        valid=valid, rising=rising, reason=reason.astype(np.int8), elem_size=size,
+        n0=pl["n0"], w_rel=w_rel, w_val=w_val,
+        plane_origin=pl["origin"], plane_e1=pl["e1"], plane_e2=pl["e2"], plane_n=n,
+        xi_range=pl["xi_range"], eta_range=pl["eta_range"],
+        frame_index=np.int64(frame_index), prev_frame_index=np.int64(pfi),
+        **{f"sec_xi_{k}": sec_xi[k] for k in ("s", "n0", "w_rel", "w_val")},
+        **{f"sec_eta_{k}": sec_eta[k] for k in ("s", "n0", "w_rel", "w_val")},
+        sec_band=np.array([bx, by]))
+    return arrays, summ
 
 
 def stage_validate(ctx: Context) -> dict:
@@ -926,6 +1021,7 @@ def stage_validate(ctx: Context) -> dict:
         # 전체 solve 생략: S4 의 u_rel + 응축 회전(rotations_for)으로 막 변형률 → hotspot 비교만
         ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — hotspot 변형률만 비교, disp_rms_rel·반력 skipped")
         u_val = _solver_call(ctx, _with_rot, sm, u_rel)
+        d_rel = d_val = u_rel
         Rr = None
         disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
         eps_sol = sm.strains(u_val)
@@ -953,6 +1049,15 @@ def stage_validate(ctx: Context) -> dict:
     if not hots:
         ctx.warnings.append("비교 가능한(상승 중인) hotspot 이 없음 → hotspot 변형률 기준 FAIL")
 
+    # 전 요소 재현 정확도(§P2 7.2)
+    ccfg = ctx.cfg["compare"]
+    farr, fsum = _field_compare(ctx, model, int(summ["frame"]["frame_index"]), eps_rad, eps_val, d_rel, d_val)
+    f_max = fsum["max"]["abs_err_pct"] if fsum["max"] else float("inf")
+    f_p90 = fsum["abs_err_pct"]["p90"] if fsum["abs_err_pct"] else float("inf")
+    if fsum["max"] is None:
+        ctx.warnings.append("전 요소 비교: t* 에서 상승 중인(비교 가능한) 요소가 없음 → FIELD 기준 FAIL")
+    fsum["criteria"] = {"max_err_pct_max": ccfg["max_err_pct_max"], "p90_err_max": ccfg["p90_err_max"]}
+
     noise = summ.get("noise")
     if noise is None:
         ctx.warnings.append("esl_summary.json 에 잡음 바닥(noise) 없음 — esl 단계를 다시 실행 권장")
@@ -964,7 +1069,9 @@ def stage_validate(ctx: Context) -> dict:
             "noise_strain_rel_max": vcfg["noise_strain_rel_max"],
             "noise_force_rel_warn": vcfg["noise_force_rel_warn"],
             "disp_precision": noise["disp_precision"] if noise else None, "layers": list(layers),
-            "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"]}
+            "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"],
+            "field_max_err_pct_max": ccfg["max_err_pct_max"], "field_p90_err_max": ccfg["p90_err_max"],
+            "field_min_rel": ccfg["min_rel"]}
 
     def judged(name, v, c):
         if v is None:
@@ -982,6 +1089,10 @@ def stage_validate(ctx: Context) -> dict:
         {"metric": "noise_hotspot_strain_rel", "value": n_strain, "criterion": crit["noise_strain_rel_max"],
          "pass": None if n_strain is None else bool(n_strain <= crit["noise_strain_rel_max"])},
         {"metric": "noise_force_rel", "value": n_force, "criterion": None, "pass": None},
+        {"metric": "field_max_err_pct", "value": f_max, "criterion": ccfg["max_err_pct_max"],
+         "pass": bool(f_max <= ccfg["max_err_pct_max"])},
+        {"metric": "field_p90_err_pct", "value": f_p90, "criterion": ccfg["p90_err_max"],
+         "pass": bool(f_p90 <= ccfg["p90_err_max"])},
     ]
     verdict = "PASS" if all(m["pass"] for m in metrics if m["pass"] is not None) else "FAIL"
     fail_reasons = [_FAIL_REASON[m["metric"]] for m in metrics if m["pass"] is False]
@@ -989,10 +1100,11 @@ def stage_validate(ctx: Context) -> dict:
     val = {"schema": "esl/validation/2", "frame": summ["frame"], "verdict": verdict, "esl_ref": esl_ref(summ),
            "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "metrics": metrics,
            "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded, "reactions": reactions,
-           "reaction_sum": None if Rr is None else Rr.sum(axis=0), "created_at": _utcnow()}
+           "reaction_sum": None if Rr is None else Rr.sum(axis=0), "field": fsum, "created_at": _utcnow()}
 
     d = ctx.fresh_dir(D_VAL)
     _write_json(ctx.f(d, "validation.json"), val)
+    np.savez_compressed(ctx.f(d, "compare_field.npz"), **farr)
     fmt = ctx.csvfmt()
     csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
     if fs["run"]:
@@ -1010,7 +1122,15 @@ def stage_validate(ctx: Context) -> dict:
              + (f"잡음 hotspot_strain_rel={n_strain:.2e} (≤{crit['noise_strain_rel_max']:g})"
                 if n_strain is not None else "잡음 N/A")
              + f" → {verdict}" + (f" {fail_reasons}" if fail_reasons else ""))
-    return {"verdict": verdict, "fail_reasons": fail_reasons, "noise_hotspot_strain_rel": n_strain,
+    fa = fsum["abs_err_pct"]
+    ctx.echo(f"[validate] 전 요소 비교: 최대변형률 요소 오차 {f_max:.3g}% (≤{ccfg['max_err_pct_max']:g}), "
+             f"|오차| P90 {f_p90:.3g}% (≤{ccfg['p90_err_max']:g}), valid {fsum['n_valid']}/{fsum['n_elems']} "
+             f"(상승 {fsum['n_rising']}, hold {fsum['n_hold']}, low {fsum['n_low']})"
+             + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else ""))
+    field_short = {"max_err_pct": f_max, "p90_err_pct": f_p90, "n_valid": fsum["n_valid"],
+                   "n_rising": fsum["n_rising"], "n_elems": fsum["n_elems"], "prev_source": fsum["prev_source"]}
+    return {"verdict": verdict, "fail_reasons": fail_reasons, "field": field_short,
+            "noise_hotspot_strain_rel": n_strain,
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
             "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
@@ -1124,8 +1244,30 @@ def stage_export(ctx: Context) -> dict:
     return out
 
 
+# ====================================================================== report
+def stage_report(ctx: Context) -> dict:
+    """Case HTML 보고서 07_report/report.html (있는 산출물만으로 생성, 없는 절은 "자료 없음")."""
+    from esl.report import case_report
+
+    _require(ctx.out, [f"{D_EXTRACT}/model.npz", f"{D_EXTRACT}/model_meta.json"])
+    rcfg = ctx.cfg["report"]
+    doc, info = case_report.build_case_report(ctx.out, record=ctx.record, max_points=rcfg["max_points"],
+                                              top_forces=rcfg["top_forces"])
+    d = ctx.fresh_dir(D_REPORT)
+    path = ctx.f(d, case_report.REPORT_NAME)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc)
+    size = os.path.getsize(path)
+    if info["missing"]:
+        ctx.warnings.append(f"보고서: 없는 산출물 {info['missing']} — 해당 절은 '자료 없음'")
+    ctx.echo(f"[report] {os.path.join(D_REPORT, case_report.REPORT_NAME)} ({size / 1024:.0f} KB), 판정 "
+             f"{info['verdict'] or 'N/A'}, 2D 점 {info['n_points']}"
+             + (f"/{info['n_elems']} (다운샘플)" if info.get("downsampled") else ""))
+    return {"path": f"{D_REPORT}/{case_report.REPORT_NAME}", "bytes": size, **info}
+
+
 _STAGE_FN = {"extract": stage_extract, "tstar": stage_tstar, "esl": stage_esl,
-             "validate": stage_validate, "export": stage_export}
+             "validate": stage_validate, "export": stage_export, "report": stage_report}
 
 
 # ====================================================================== 진입점
@@ -1237,7 +1379,20 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
             ctx.warnings = []
             t0 = _time.perf_counter()
             started = _utcnow()
-            summary = _STAGE_FN[st](ctx)
+            if st == "report" and stage == "all":
+                # 보고서는 부가 산출물: 실패해도 앞 단계 산출물·성공 상태 유지(run.json 에 failed + 경고)
+                try:
+                    summary = _STAGE_FN[st](ctx)
+                except Exception as exc:  # noqa: BLE001
+                    code = exc.code if isinstance(exc, EslError) else "INTERNAL_ERROR"
+                    msg = exc.message if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"
+                    err = {"code": code, "message": msg, "stage": st, "at": _utcnow()}
+                    record["stages"][st] = {"status": "failed", "finished_at": _utcnow(), "error": err,
+                                            "warnings": list(ctx.warnings)}
+                    echo(f"  경고: 보고서 생성 실패(앞 단계 결과는 유지): {code}: {msg}")
+                    continue
+            else:
+                summary = _STAGE_FN[st](ctx)
             el = _time.perf_counter() - t0
             record["stages"][st] = {"status": "done", "started_at": started, "finished_at": _utcnow(),
                                     "elapsed_s": round(el, 4), "config_sha256": csha, "summary": summary,

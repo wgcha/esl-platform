@@ -19,8 +19,9 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.state_machine import CANCELED, FAILED, INTERRUPTED, TERMINAL
 from ..context import AppContext
-from ..schemas import EslSolveParams, ExportParams, RunRefParams
+from ..schemas import CaseReportParams, EslSolveParams, ExportParams, RunRefParams
 from .common import (
+    analysis_dir,
     case_dir,
     esl_run_stale,
     extract_stale,
@@ -80,6 +81,18 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
                 "part_title": case["part_title"]}
 
     missing: list[str] = []
+    if job_type == "CASE_REPORT":
+        p = _params(CaseReportParams, raw)
+        if not case.get("extract_summary") or extract_stale(case):
+            raise conflict("PREREQUISITE_MISSING", "추출(①)이 먼저 필요합니다", missing=["extract"])
+        out = {"settings": core_settings_for(ctx, case, metric=(case.get("tstar") or {}).get("metric")),
+               "validation_id": None, "esl_run_id": case.get("current_esl_run_id"), "auto": False}
+        if p.validation_id:
+            val = cases_repo.get_validation(conn, p.validation_id)
+            if val is None or val["case_id"] != case["id"]:
+                raise unprocessable("INVALID_PARAMS", "이 Case 의 검증 결과가 아닙니다")
+            out.update(validation_id=val["id"], esl_run_id=val["esl_run_id"])
+        return out
     if job_type == "ESL_SOLVE":
         p = _params(EslSolveParams, raw)
         if not case.get("extract_summary") or extract_stale(case):
@@ -188,6 +201,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
         if job["state"] not in (FAILED, INTERRUPTED, CANCELED):
             code = "JOB_TERMINAL" if job["state"] in TERMINAL else "JOB_NOT_TERMINAL"
             raise conflict(code, "실패·중단·취소된 작업만 재시도할 수 있습니다")
+        if job["job_type"] == "LIB_ANALYZE":
+            return _retry_analysis(conn, principal, job)
+        if job["job_type"] == "LIB_COMPARE":
+            return _retry_comparison(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -212,6 +229,45 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
         return job_out(conn, new, with_steps=True)
 
 
+def _retry_analysis(conn, principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
+    """LIB_ANALYZE 재시도: 같은 분석 폴더에서 실패 step 부터(이전 step 산출물 재사용, 덮어쓰기는 _backup)."""
+    from ...core.repositories import library as lib_repo
+
+    an = lib_repo.get_analysis(conn, job["analysis_id"], for_update=True)
+    if an is None:
+        raise DomainError("ANALYSIS_NOT_FOUND", "분석을 찾을 수 없습니다", status=404)
+    start = jobs_repo.first_failed_step(conn, job["id"])
+    try:
+        with conn.begin_nested():
+            new = jobs_repo.insert_job(conn, case_id=None, analysis_id=an["id"], project_id=job["project_id"],
+                                       job_type="LIB_ANALYZE", params=dict(job["params"]),
+                                       created_by=principal.user_id, created_by_name=principal.display_name,
+                                       retry_of_job_id=job["id"], resume_from_step=start if start > 1 else None)
+    except IntegrityError:
+        raise conflict("ANALYSIS_JOB_BUSY", "이 분석의 작업이 대기 중이거나 실행 중입니다") from None
+    lib_repo.update_analysis(conn, an["id"], job_id=new["id"])
+    return job_out(conn, new, with_steps=True)
+
+
+def _retry_comparison(conn, principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
+    """LIB_COMPARE 재시도: 같은 params(생성 시점 항목·메타 스냅샷)로 처음부터(산출물 덮어쓰기는 _backup)."""
+    from ...core.repositories import library as lib_repo
+
+    c = lib_repo.get_comparison(conn, job["comparison_id"], for_update=True)
+    if c is None:
+        raise DomainError("COMPARISON_NOT_FOUND", "비교를 찾을 수 없습니다", status=404)
+    try:
+        with conn.begin_nested():
+            new = jobs_repo.insert_job(conn, case_id=None, comparison_id=c["id"], project_id=job["project_id"],
+                                       job_type="LIB_COMPARE", params=dict(job["params"]),
+                                       created_by=principal.user_id, created_by_name=principal.display_name,
+                                       retry_of_job_id=job["id"])
+    except IntegrityError:
+        raise conflict("COMPARISON_JOB_BUSY", "이 비교의 작업이 대기 중이거나 실행 중입니다") from None
+    lib_repo.update_comparison(conn, c["id"], job_id=new["id"], verdict=None)
+    return job_out(conn, new, with_steps=True)
+
+
 # ---------------------------------------------------------------- 로그
 def _masker(ctx: AppContext):
     pats = [re.compile(p) for p in ctx.settings.logging.mask_patterns]
@@ -227,7 +283,16 @@ def _masker(ctx: AppContext):
 def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         job = load_job(conn, job_id)
-        case = load_case(conn, job["case_id"])
+        if job.get("analysis_id"):
+            from ...core.repositories import library as lib_repo
+
+            base = analysis_dir(ctx, lib_repo.get_analysis(conn, job["analysis_id"]))
+        elif job.get("comparison_id"):
+            from ...core.repositories import library as lib_repo
+
+            base = analysis_dir(ctx, lib_repo.get_comparison(conn, job["comparison_id"]))
+        else:
+            base = case_dir(ctx, load_case(conn, job["case_id"]))
         steps = jobs_repo.get_steps(conn, job_id)
     if not steps:
         return {"step": 0, "lines": [], "next_cursor": 0, "eof": True}
@@ -241,7 +306,7 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int) -> dict
     terminal = job["state"] in TERMINAL or st["state"] in ("SUCCEEDED", "FAILED", "SKIPPED", "CANCELED")
     if not st["log_rel"]:
         return {"step": st["step_no"], "lines": [], "next_cursor": 0, "eof": terminal}
-    path = os.path.join(case_dir(ctx, case), st["log_rel"])
+    path = os.path.join(base, st["log_rel"])
     if not os.path.isfile(path):
         return {"step": st["step_no"], "lines": [], "next_cursor": cursor, "eof": terminal}
     size = os.path.getsize(path)

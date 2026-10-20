@@ -127,3 +127,30 @@ def safe_case_file(case_root: str, rel: str) -> str:
     if not is_within(os.path.realpath(p), os.path.realpath(case_root)):
         raise _unsafe("산출물 경로가 Case 폴더 밖입니다")
     return p
+
+
+# ---------------------------------------------------------------- P2: esl_root 아래 플랫폼 폴더(_library, _analysis)
+LIBRARY_DIR = "_library"      # 라이브러리 항목 <esl_root>/_library/entries/<id>/ (Case 폴더명은 _ 로 시작 불가 → 충돌 없음)
+ANALYSIS_DIR = "_analysis"    # 종합분석 <esl_root>/_analysis/<id>/ (계약 §3)
+COMPARE_DIR = "_compare"      # 설계 버전 비교 <esl_root>/_compare/<id>/ (계약 §12.2)
+_SEG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
+
+
+def esl_subdir(settings: Settings, *parts: str) -> str:
+    """esl_root 아래 플랫폼 폴더 절대경로. 성분 문자 제한, root 아래 심링크 성분·realpath 탈출 거부(PATH_UNSAFE).
+
+    입력 루트와는 설정 검증에서 이미 겹치지 않음(esl_root ∩ input_roots = ∅).
+    """
+    root = os.path.normpath(settings.storage.esl_root)
+    cur = root
+    for seg in parts:
+        if not _SEG.match(seg or "") or seg in (".", ".."):
+            raise _unsafe("잘못된 폴더 이름")
+        cur = os.path.join(cur, seg)
+        if os.path.islink(cur):
+            raise _unsafe("심볼릭 링크 경로는 허용하지 않습니다")
+    if not is_within(os.path.realpath(cur), os.path.realpath(root)):
+        raise _unsafe("실제 경로가 esl_root 밖입니다")
+    if any(overlaps(cur, r) for r in settings.storage.input_roots):
+        raise _unsafe("입력 루트와 겹치는 경로에는 쓰지 않습니다")
+    return cur

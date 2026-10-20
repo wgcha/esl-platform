@@ -18,7 +18,10 @@ python -m pytest -q         # 시험
 h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows PC에서 TCL로 CSV 폴더를 만든다
 (자세한 내용: `resources/tcl/README.md`).
 
-### 2.1 Windows 설치·업데이트 (권장)
+### 2.1 Windows 설치·업데이트 (권장) — **사용자 PC**(HyperView TCL 배포)
+
+> 이 절의 루트 `update.bat`은 **사용자 PC**용(HyperView TCL·`ESL_probe.bat`·`ESL_extract.bat`)이다.
+> 서버(백엔드·워커·DB·화면) 설치·업데이트는 §6 `deploy\`(`deploy\setup.ps1`·`deploy\update-repo.ps1`·`deploy\install.bat`·`deploy\update.bat`)이며 서로 무관하다.
 
 1. 저장소 클론 폴더(예: `Documents\GitHub\esl-platform`)의 **`update.bat` 더블클릭**.
    git 최신화(작업 트리 변경이 있으면 중단, fast-forward만) → TCL 배포 → 실행 래퍼 생성 → 점검표 출력.
@@ -61,7 +64,9 @@ rem     (frames, model, final, history, strain_frames, disp .csv + done.json; �
 
 h3d 의 `Max_Strain`·`Plastic Strain` 은 요소별 누적 최대(max-hold)라서 t* = 최종값에 처음 도달한 프레임(first-reach).
 TCL 은 마지막 프레임 전 요소(A) → 상위 요소 H 전 프레임 이력(B) → 후보 프레임 D 만 전 노드 변위·전 요소 변형률(C)을
-뽑는다(22만 요소·D ≤ 10 에서 CSV 약 0.55 GB). `_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
+뽑는다(22만 요소·D ≤ 10 에서 CSV 약 0.55 GB). 패스 C 는 D 의 각 f 에 대해 직전 프레임 f−1 의 전 요소 변형률도
+`strain_frames.csv` 에 함께 쓴다(전 요소 "상승 중" 마스크용, `done.json` `prev_frames`; strain_frames.csv 가 최대 2배).
+예전 TCL 출력(직전 프레임 없음)도 읽히지만 재현 정확도 비교는 H 요소만 가능(경고) — TCL 을 다시 실행할 것. `_0000.rad`(+ include)와 CSV 폴더를 계산 환경으로 옮긴다.
 
 ## 3. 설정
 
@@ -85,12 +90,19 @@ TCL 은 마지막 프레임 전 요소(A) → 상위 요소 H 전 프레임 이�
   이면 경고, `hotspot_strain_rel > validation.noise_strain_rel_max` 이면 검증 verdict FAIL(사유 `NOISE_FLOOR`).
   강체 대변위(좌표 수천 mm)에 비해 변형이 작으면 float32 변위로는 F_eq 가 잡음에 묻힌다 → TCL 출력을
   배정밀도로 받거나 판정 결과를 참고용으로만 쓴다.
+- `compare`(ESL 재현 정확도 전 요소 비교, 계약 `esl_p2_library.md` §7.2): t* 에서 상승 중인 요소
+  (`v[t*] > v[t*−1]·(1+tstar.reach_rtol)`, v = Max_Strain ε_eq)의 Radioss ε_rad 와 검증 해 막 변형률 ε_esl 을 비교,
+  `rel_err = (ε_esl − ε_rad)/ε_rad`. valid = 상승 중 ∧ ε_rad ≥ `min_rel`·max ε_rad. 판정:
+  최대변형률 요소(상승 요소 중 ε_rad 최대)의 |오차| ≤ `max_err_pct_max`(%, 기본 10, 아니면 `FIELD_MAX_ERR`),
+  valid 요소 |오차| 90 분위 ≤ `p90_err_max`(%, 기본 20, 아니면 `FIELD_P90_ERR`). `full_solve: never` 에서도
+  동작(u_rel + 응축 회전). **기존 `config/esl.yaml` 에는 `compare`·`report` 절을 예시에서 복사해 추가해야 한다**(모든 키 필수).
+- `report.max_points`(기본 20000): 보고서 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플), `report.top_forces`.
 
 ## 4. 실행
 
 ```bash
 python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /data/esl_csv --out /work/case01
-#   [--stage extract|tstar|esl|validate|export|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
+#   [--stage extract|tstar|esl|validate|export|report|all]   기본 all, 하나만 주면 그 단계만(앞 단계 산출물로 재개)
 #   [--frame N]                    t* 수동 지정(frame_index, 후보 프레임 D 안에서만 → 아니면 FRAME_NOT_CANDIDATE)
 #   [--support-nodes 101,202,303]  3-2-1 후보 노드 ID(3개 이상, 대상 파트 밖 → NODE_NOT_IN_PART)
 #   [--export-targets radioss_inc,fem,csv]  export 단계에서 만들 대상(기본 전부)
@@ -103,17 +115,20 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
   (백업 이동 포함) 직전에 대상 실제 경로가 출력 폴더 안인지 다시 확인한다(출력 안 링크가 밖을 가리켜도 거부).
 - inc·fem 은 ASCII 전용(비 ASCII 문자는 `\uXXXX` 로 치환). ID 가 I10 칸을 넘으면 `ID_RANGE_COLLISION`.
 - 다시 실행하면 그 단계 폴더의 기존 파일은 `_backup/<UTC 시각>/` 으로 **이동**한다(삭제 없음).
+- `report` 단계(export 뒤): 있는 산출물로 `07_report/report.html` 을 만든다(없는 절은 "자료 없음").
+  `--stage all` 에서 보고서가 실패해도 앞 단계 결과·종료코드 0 은 유지되고 `run.json` `stages.report` 가 `failed`.
 
 ## 5. 출력 폴더
 
 | 폴더 | 내용 |
 |---|---|
-| `01_extract/` | `model.npz`, `model_meta.json`, `final.npz`, `history.npz`, `strain_frames.npz`, `disp.npz`(D 프레임만), `frames.json`(D, 전단 규약 판정) |
+| `01_extract/` | `model.npz`, `model_meta.json`, `final.npz`, `history.npz`, `strain_frames.npz`(D 프레임 + `prev_frame_index`·`prev_vm_hv`·`prev_eps`·`prev_epsp`·`prev_available`: 각 f 의 직전 프레임, f=0 이면 −1·0), `disp.npz`(D 프레임만), `frames.json`(D, 직전 프레임, 전단 규약 판정) |
 | `02_tstar/` | `tstar.json`(지표 2개의 first-reach t*·후보·hotspot·TCL 일치 확인, 선택 t*), `history.csv`(m(f) 지표별), `hotspots.csv`, `candidates.csv`(지표별) |
 | `03_bc/` | `support.json`(3-2-1 노드 ID·dof, PCA 평면) |
 | `04_esl/` | `u_rel.npz/csv`(강체 제거 변위), `f_eq.npz/csv`(전 노드 F_eq), `esl_summary.json`(평형·Kabsch) |
-| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단), `compare.csv`(전체 solve 때만) |
+| `05_val/` | `validation.json`·`validation.csv`(지표·판정·기준값 스냅샷, 비교 제외 hotspot 과 이유, full_solve 판단, `field` = 전 요소 비교 요약: 최대변형률 비교·\|오차\| 분위수·≤5/10/20% 비율·상위 N·히스토그램), `compare_field.npz`(요소별 `elem_id`, `centroid2d`(PCA 평면 ξ,η 실좌표)·`centroid3d`, `eps_rad`, `eps_esl`, `rel_err`, `valid`, `rising`, `reason` i1(0 OK·1 HOLD·2 LOW·3 EXCLUDED·4 NO_PREV), 면외 `n0`·`w_rel`·`w_val`, 단면선 `sec_xi_*`·`sec_eta_*`, PCA 평면), `compare.csv`(전체 solve 때만) |
 | `06_export/` | `esl_cload.inc`, `esl_bcs.inc`, `esl_force.fem`, `f_eq.csv`, `u_rel.csv`, `reactions_321.csv`, `tstar_candidates.csv`, `hotspots.csv`, `validation.csv` |
+| `07_report/` | `report.html`: 자체 완결 Case 보고서(외부 의존 0, inline SVG·JSON·소량 JS, 라이트/다크) — 입력 요약, t* 곡선(두 지표), 지지점, F_eq 상위, 검증, 전 요소 재현 정확도, 겹쳐보기(Radioss ε/ESL ε/오차 % + 불투명도 슬라이더), 단면선 겹치기(배율 슬라이더), 상위 N 표, 히스토그램, 의미 주석 |
 | `run.json` | 입력 경로·sha256, 설정 스냅샷, 단계별 요약·경고·소요시간, 실행 이력·오류 |
 | `runs/<esl_run_id>/` | (플랫폼) ESL 실행별 `03_bc`·`04_esl` 복사본. 검증·내보내기 직전 04_esl 의 `tag`(ESL 작업 id)가 대상 실행과 다르면 여기서 되돌림 |
 
@@ -122,3 +137,35 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 
 생성 ID(/FUNCT, /GRNOD, /CLOAD, /BCS, PSHELL, SID)는 모두 `[id_offset, id_offset+999999]`.
 rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.
+
+## 6. 서버 배포 (Windows Server — 대시보드·physicsai-platform과 같은 PC)
+
+ESL 플랫폼(백엔드 API·워커·PostgreSQL DB·웹 화면 `/esl/`)을 대시보드(simulation_workbench)·physicsai-platform과 **같은 서버·같은 실행 환경**
+(Python 3.12.13, PostgreSQL 18 같은 인스턴스에 별도 DB `esl`·역할 `esl_app`, Node 22.23.2, Caddy 하위 경로, Windows 작업 스케줄러)에 설치한다.
+physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용: [관리자 매뉴얼](docs/manual/admin.md), 현장 확인: [E2E 체크리스트](docs/e2e-checklist.md).
+
+| 용도 | 실행(일반 PowerShell, 관리자 권한 불필요) |
+|---|---|
+| 서버 설치 — git 폴더(권장, 인터넷·사내 프록시) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\setup.ps1 -DashboardRoot <대시보드>` |
+| 서버 업데이트 — git 폴더(git pull 포함, 질문 없음) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\update-repo.ps1` |
+| 폐쇄망 묶음 만들기(준비 PC) | `deploy\collect-offline.ps1` 또는 `bash deploy/collect-offline.sh` → `dist/esl-offline-<ver>.zip` |
+| 폐쇄망 설치 / 업데이트(묶음의 deploy 폴더, `deploy.json`) | `deploy\install.bat`(= `deploy\install.ps1`) / `deploy\update.bat`(= `deploy\update.ps1`) |
+| 작업 등록 해제 | `deploy\uninstall-tasks.ps1` |
+| 시연(Altair·대시보드 없이 합성 Case, 포트 8191) | `deploy\demo\start-demo.bat` / `stop-demo.bat` |
+| 환경 점검(경로 쓰기·DB·migration·솔버 백엔드·pypardiso·설정 검증 표) | `<런타임>\venv\Scripts\python.exe <런타임>\app\esl_service.py check --runtime <런타임>` (개발: `python -m esl_platform.check`) |
+| **사용자 PC** TCL 배포(서버와 무관) | 저장소 루트 `update.bat`(§2.1) |
+
+- 런타임(git 폴더 설치 `<git>\.runtime`, 묶음 `install_root`): `venv`, `app`(코드 스냅샷 — 서비스는 git 폴더가 아니라 이 복사본을 실행), `frontend`, `config\esl_platform.yaml`
+  (+ `esl.yaml`·`library.yaml`·`ista6.yaml`, 예시 `config/esl_platform.prod.example.yaml`), `secrets\database_url`(현재 사용자·SYSTEM만 읽기), `logs`, `state`, `_backup`.
+- 작업 스케줄러 `ESL-Backend`·`ESL-Worker` = `venv\Scripts\python.exe <런타임>\app\esl_service.py backend|worker --runtime <런타임>`(실행기가 설정·DB 파일을
+  자기 프로세스 환경에만 넣음 — 비밀값은 인자·로그에 없음). 실행 시간 제한 없음, `Interactive`(기본)·`Background`.
+- 비밀번호(PostgreSQL 관리자·앱 역할·Background 실행 계정)는 화면 입력(`Read-Host -AsSecureString`) 또는 `-PasswordsFromEnv`
+  (`ESL_INSTALL_PG_ADMIN_PASSWORD`·`ESL_INSTALL_DB_PASSWORD`·`ESL_INSTALL_SERVICE_PASSWORD`)로만 받는다.
+- 솔버 의존성은 `deploy/requirements.lock`(physicsai와 겹치는 패키지는 같은 버전)에 pypardiso + MKL Windows 휠·pyamg·psutil 포함, scikit-sparse는 Windows 제외.
+- 접속: 대시보드 Caddyfile의 catch-all 앞에 `deploy/caddy/esl.caddy`(`/esl/api/*` → `127.0.0.1:8110`, `/esl/*` → 프런트 빌드), Caddy 환경변수 `ESL_PORT`·`ESL_FRONTEND_ROOT`.
+
+### 6.1 대시보드 쪽 요청 사항(이 저장소 밖)
+
+1. physicsai `SIMDASH_PHYSICSAI_ENABLED`와 같은 패턴으로 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`일 때 대시보드 메뉴에 ESL(`/esl/`) 링크 표시.
+2. (Caddy 없이 대시보드 Vite 서버만 쓰는 구성) `VITE_ESL_TARGET=http://127.0.0.1:8110`일 때 Vite가 `/esl` 전체를 그 주소로 경로 그대로 프록시
+   — ESL 쪽은 `deploy.json` `"backend_serves_frontend": true`로 백엔드가 `/esl/` 화면도 서빙한다(관리자 매뉴얼 §2.6.2).

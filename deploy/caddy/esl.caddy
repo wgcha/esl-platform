@@ -1,0 +1,16 @@
+# ESL Caddy 스니펫(physicsai deploy/caddy/physicsai.caddy와 같은 구조).
+# 대시보드 Caddyfile의 사이트 블록 안, catch-all `handle` **앞**(physicsai 스니펫 옆)에 넣는다.
+# 환경변수: ESL_PORT(= esl_platform.yaml server.port, 기본 8110), ESL_FRONTEND_ROOT(= deploy.json caddy_frontend_root)
+# 경로 /esl/ 은 프런트 빌드 base·server.base_path 와 같아야 한다(바꾸지 않는다).
+redir /esl /esl/ 308
+
+handle /esl/api/* {
+	reverse_proxy 127.0.0.1:{$ESL_PORT:8110}
+}
+
+handle /esl/* {
+	root * {$ESL_FRONTEND_ROOT}
+	uri strip_prefix /esl
+	try_files {path} /index.html
+	file_server
+}

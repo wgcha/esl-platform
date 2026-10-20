@@ -1,0 +1,528 @@
+"""ESL 설치(deploy/setup.ps1 — git 폴더, deploy/install.ps1 — 오프라인 묶음)의 설정 파일 계획·작성. 설치 venv의 Python으로 부른다.
+
+  python setup_config.py plan  --inputs <inputs.json> [--out <결과.json>]   계획만 계산해 JSON으로 출력(파일을 바꾸지 않음)
+  python setup_config.py write --inputs <inputs.json> [--out <결과.json>]   계획대로 deploy.json(git 폴더 설치만)·설정 파일을 쓰고
+                                                       (바뀌는 기존 파일은 먼저 <런타임>\\_backup\\<UTC>로 복사) esl_root 폴더를 만든 뒤
+                                                       설정 검증 결과(esl_platform.core.config.load_config)를 JSON으로 출력
+
+입력(JSON): mode(repo|bundle), source_root(config/*.example.yaml 이 있는 저장소·묶음 루트), code_root(검증용 코드 — backend·worker·esl),
+  runtime_dir, stamp, deploy_path(bundle: 사용자가 쓴 deploy.json — 이 파일은 바꾸지 않음), deploy_defaults, deploy_explicit,
+  dashboard_web_base_path(선택 — 없으면 대시보드 .env 의 WINDOWS_WEB_BASE_PATH 한 줄만 읽음).
+
+규칙(physicsai-platform deploy/setup_config.py 와 같은 원칙)
+- 이미 있는 파일은 보존한다: 사용자가 고친 값은 덮어쓰지 않고, 빠진 키(또는 비어 있는 storage 경로)만 보충한다.
+- 새 esl_platform.yaml 은 config/esl_platform.prod.example.yaml(주석 유지)에서 만들고 storage.esl_root·input_roots·spdm_roots(deploy.json),
+  auth.dashboard_public_login_url(대시보드 웹 경로)을 넣는다. 같은 폴더에 코어 설정 esl.yaml·라이브러리 설정 library.yaml·ista6.yaml 을
+  없을 때만 예시에서 복사한다(설정이 가리키는 상대 경로일 때만).
+- 경로 검사: 절대경로, 공백·& | < > ^ % ! " 없음, esl_root 가 input_roots·spdm_roots 와 겹치지 않음(SPDM 밖), input_roots 존재.
+  문제가 있으면 경고하고 그 폴더는 만들지 않는다(최종 판정은 플랫폼 설정 검증).
+- Altair·resources·commands 는 없다(서버에서 외부 프로그램을 실행하지 않음). 솔버 의존성(pypardiso·MKL)은 requirements.lock.
+- 비밀번호·DB URL 은 다루지 않는다.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.dont_write_bytecode = True
+
+HERE = Path(__file__).resolve().parent
+CONFIG_NAME = "esl_platform.yaml"
+PROD_EXAMPLE = "esl_platform.prod.example.yaml"
+# 설정 폴더에 함께 두는 파일: (설정 키 경로, 기본 파일 이름, 원본 예시)
+COMPANIONS = ((("core", "config_path"), "esl.yaml", "esl.example.yaml"),
+              (("library", "config_path"), "library.yaml", "library.example.yaml"))
+ISTA6 = ("ista6.yaml", "ista6.yaml")   # library.yaml 의 library.ista6 기본값(같은 폴더)
+DEPLOY_KEY_ORDER = ("install_mode", "repo_root", "install_root", "dashboard_root", "python_exe", "pg_bin", "pg_host", "pg_port",
+                    "db_name", "db_role", "config_path", "service_user", "run_mode", "caddy_frontend_root",
+                    "backend_serves_frontend", "esl_root", "input_roots", "spdm_roots")
+LIST_KEYS = ("input_roots", "spdm_roots")
+_UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
+_WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
+
+
+# ---------------------------------------------------------------------------
+# 공용
+# ---------------------------------------------------------------------------
+
+def fwd(p: str) -> str:
+    return p.replace("\\", "/") if p else p
+
+
+def unsafe(p: str) -> bool:
+    return bool(_UNSAFE.search(p))
+
+
+def is_abs(p: str) -> bool:
+    return bool(_WIN_ABS.match(p)) or (os.name != "nt" and p.startswith("/"))
+
+
+def _norm(p: str) -> str:
+    return fwd(p).rstrip("/").casefold()
+
+
+def overlaps(a: str, b: str) -> bool:
+    """대소문자 무시(Windows 규칙)로 a 가 b 안이거나 b 가 a 안."""
+    x, y = _norm(a), _norm(b)
+    return x == y or x.startswith(y + "/") or y.startswith(x + "/")
+
+
+def as_list(v: Any) -> list[str]:
+    """문자열 또는 목록(PowerShell 5.1 ConvertTo-Json 은 원소 1개 배열을 문자열로 낼 수 있음) → 빈 값 뺀 목록."""
+    if v is None:
+        return []
+    if isinstance(v, dict) and "value" in v:   # PowerShell 5.1 이 PSObject 로 감싼 배열을 {"value": [...], "Count": n} 로 낼 때
+        v = v["value"]
+    items = [v] if isinstance(v, str) else list(v)
+    return [fwd(str(x).strip()) for x in items if str(x).strip()]
+
+
+def _yaml():
+    import yaml  # 설치 venv에 있음(requirements.lock)
+
+    return yaml
+
+
+def check_paths(esl_root: str, input_roots: list[str], spdm_roots: list[str]) -> tuple[list[str], bool]:
+    """경로 검사 → (경고 목록, esl_root 를 만들어도 되는지)."""
+    warn: list[str] = []
+    ok_root = bool(esl_root)
+    if not esl_root:
+        warn.append("ESL 루트(esl_root)가 비어 있습니다 — 설정 검증에 실패해 워커가 작업을 받지 않습니다(-EslRoot 또는 deploy.json esl_root)")
+    else:
+        if not is_abs(esl_root):
+            warn.append(f"ESL 루트가 절대경로가 아닙니다: {esl_root}")
+            ok_root = False
+        if unsafe(esl_root):
+            warn.append(f"ESL 루트 경로에 공백·특수문자가 있습니다(쓸 수 없음): {esl_root}")
+            ok_root = False
+    for key, roots in (("input_roots", input_roots), ("spdm_roots", spdm_roots)):
+        for r in roots:
+            if not is_abs(r) or unsafe(r):
+                warn.append(f"{key} 경로가 절대경로가 아니거나 공백·특수문자가 있습니다: {r}")
+            if esl_root and overlaps(esl_root, r):
+                warn.append(f"ESL 루트가 {key}({r})와 겹칩니다 — 산출물은 입력·SPDM 폴더 밖에 둡니다")
+                ok_root = False
+    for r in input_roots:
+        if is_abs(r) and not unsafe(r) and not os.path.isdir(r):
+            warn.append(f"입력 루트 폴더가 없습니다(공유 연결·이름 확인): {r}")
+    if not input_roots:
+        warn.append("입력 루트(input_roots)가 비어 있습니다 — rad·결과 폴더를 고를 수 없습니다(설정 파일 storage.input_roots에 추가)")
+    return warn, ok_root
+
+
+# ---------------------------------------------------------------------------
+# YAML 텍스트 편집(주석·순서 유지). 결과는 항상 다시 읽어 검증한다(physicsai setup_config.py 와 같은 방식).
+# ---------------------------------------------------------------------------
+
+_VALUE = re.compile(r"""^(?P<pre>[ \t]*[^:#\s][^:]*:[ \t]*)(?P<val>"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^#\r\n]*?)(?P<post>[ \t]+#.*)?$""")
+
+
+def literal(v: Any) -> str:
+    if isinstance(v, list):
+        return "[" + ", ".join(json.dumps(x, ensure_ascii=False) for x in v) + "]"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    s = "" if v is None else str(v)
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", s) and s.lower() not in ("true", "false", "null", "yes", "no", "on", "off", "y", "n"):
+        return s
+    return json.dumps(s, ensure_ascii=False)
+
+
+def _block(lines: list[str], section: str) -> tuple[int, int, str] | None:
+    hdr = re.compile(rf"^{re.escape(section)}:[ \t]*(#.*)?$")
+    for i, ln in enumerate(lines):
+        if hdr.match(ln):
+            end = len(lines)
+            indent = ""
+            for j in range(i + 1, len(lines)):
+                s = lines[j]
+                if re.match(r"^[^\s#]", s):
+                    end = j
+                    break
+                if not indent and s.strip() and not s.lstrip().startswith("#"):
+                    indent = s[: len(s) - len(s.lstrip())]
+            return i, end, indent or "  "
+    return None
+
+
+def set_yaml_value(text: str, path: tuple[str, ...], value: Any, note: str = "") -> str:
+    """path(최상위 또는 2단계)의 값을 바꾸거나(줄 끝 주석 유지) 없으면 넣는다."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    lit = literal(value)
+    comment = f"  # {note}" if note else ""
+    if len(path) == 1:
+        rx = re.compile(rf"^{re.escape(path[0])}:")
+        for i, ln in enumerate(lines):
+            if rx.match(ln):
+                m = _VALUE.match(ln)
+                lines[i] = m.group("pre") + lit + (m.group("post") or "") if m else f"{path[0]}: {lit}"
+                return nl.join(lines)
+        insert_at = next((i for i, ln in enumerate(lines) if re.match(r"^[^\s#]", ln)), len(lines))
+        lines.insert(insert_at, f"{path[0]}: {lit}{comment}")
+        return nl.join(lines)
+    section, key = path
+    b = _block(lines, section)
+    if b is None:
+        if lines and lines[-1] == "":
+            lines.pop()
+        lines += [f"{section}:", f"  {key}: {lit}{comment}", ""]
+        return nl.join(lines)
+    start, end, indent = b
+    rx = re.compile(rf"^{re.escape(indent)}{re.escape(key)}:")
+    for i in range(start + 1, end):
+        if rx.match(lines[i]):
+            m = _VALUE.match(lines[i])
+            lines[i] = m.group("pre") + lit + (m.group("post") or "") if m else f"{indent}{key}: {lit}"
+            return nl.join(lines)
+    lines.insert(start + 1, f"{indent}{key}: {lit}{comment}")
+    return nl.join(lines)
+
+
+def duplicate_top_keys(text: str) -> list[str]:
+    """최상위 키가 두 번 나오면(흐름 표기 `storage: {...}` 옆에 블록을 덧붙인 경우 등) 그 이름들. YAML 은 뒤 값으로 덮어써 검증을 속인다."""
+    seen: set[str] = set()
+    dup: list[str] = []
+    for ln in text.splitlines():
+        m = re.match(r"^([A-Za-z_][\w\-]*)\s*:", ln)
+        if m:
+            if m.group(1) in seen:
+                dup.append(m.group(1))
+            seen.add(m.group(1))
+    return dup
+
+
+def _get(data: Any, path: tuple[str, ...]) -> tuple[bool, Any]:
+    for k in path:
+        if not isinstance(data, dict) or k not in data:
+            return False, None
+        data = data[k]
+    return True, data
+
+
+def _set(data: dict, path: tuple[str, ...], value: Any) -> None:
+    for k in path[:-1]:
+        data = data.setdefault(k, {})
+    data[path[-1]] = value
+
+
+# 대시보드 웹 경로: 운영 대시보드는 Vite가 WINDOWS_WEB_BASE_PATH(기본 /home/)에서 열린다(physicsai phase3 D3-38과 같은 규칙).
+LOGIN_URL_PATH = ("auth", "dashboard_public_login_url")
+LOGIN_URL_OLD_DEFAULTS = ("/", "", None)
+DASHBOARD_WEB_BASE_KEY = "WINDOWS_WEB_BASE_PATH"
+DASHBOARD_WEB_BASE_DEFAULT = "/home/"
+_WEB_BASE_OK = re.compile(r"^/(?:[A-Za-z0-9._~\-]+/)*$")
+
+
+def read_dashboard_env_value(dashboard_root: str, key: str) -> str | None:
+    """대시보드 <root>/.env에서 key 한 줄의 값만 읽는다(따옴표 제거). 파일·키가 없으면 None. 다른 줄은 보관하지 않는다."""
+    if not dashboard_root:
+        return None
+    env = Path(dashboard_root) / ".env"
+    if not env.is_file():
+        return None
+    rx = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(.*?)\s*$")
+    for line in env.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        m = rx.match(line)
+        if m:
+            v = m.group(1)
+            if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
+                v = v[1:-1]
+            return v.strip()
+    return None
+
+
+def normalize_web_base(raw: str | None) -> tuple[str, str | None]:
+    v = (raw or "").strip()
+    if not v:
+        return DASHBOARD_WEB_BASE_DEFAULT, None
+    v = "/" + v.strip("/") + "/" if v.strip("/") else "/"
+    if not _WEB_BASE_OK.match(v) or any(seg in (".", "..") for seg in v.split("/")):
+        return "", f"대시보드 .env의 {DASHBOARD_WEB_BASE_KEY} 값을 링크 경로로 쓸 수 없습니다(영숫자·._~-·/만) — auth.dashboard_public_login_url을 직접 정하세요"
+    return v, None
+
+
+def dashboard_login_url(inputs: dict[str, Any], dashboard_root: str) -> tuple[str, str | None]:
+    given = inputs.get("dashboard_web_base_path")
+    raw = given if isinstance(given, str) else read_dashboard_env_value(dashboard_root, DASHBOARD_WEB_BASE_KEY)
+    return normalize_web_base(raw)
+
+
+def _read_json(p: Path) -> dict[str, Any] | None:
+    if not p.is_file():
+        return None
+    return json.loads(p.read_text(encoding="utf-8-sig"))
+
+
+# ---------------------------------------------------------------------------
+# deploy.json
+# ---------------------------------------------------------------------------
+
+def merge_deploy(existing: dict[str, Any] | None, defaults: dict[str, Any], explicit: dict[str, Any]) -> tuple[dict, list, list]:
+    """명시 인자 > 기존 파일 > 파생 기본값(기존 값은 덮어쓰지 않음). (deploy, 보충 키, 인자로 바꾼 키)."""
+    deploy = dict(existing or {})
+    added, overridden = [], []
+    for k in list(DEPLOY_KEY_ORDER) + [k for k in defaults if k not in DEPLOY_KEY_ORDER]:
+        if k in explicit:
+            if k in deploy and deploy[k] != explicit[k]:
+                overridden.append(k)
+            elif k not in deploy:
+                added.append(k)
+            deploy[k] = explicit[k]
+        elif (k not in deploy or deploy[k] in (None, "")) and k in defaults and defaults[k] not in (None, ""):
+            if k not in deploy:
+                added.append(k)
+            deploy[k] = defaults[k]
+    for k in LIST_KEYS:
+        if k in deploy:
+            deploy[k] = as_list(deploy[k])
+    ordered = {k: deploy[k] for k in DEPLOY_KEY_ORDER if k in deploy}
+    ordered.update({k: v for k, v in deploy.items() if k not in ordered})
+    return ordered, added, overridden
+
+
+# ---------------------------------------------------------------------------
+# 계획
+# ---------------------------------------------------------------------------
+
+def plan(inputs: dict[str, Any]) -> dict[str, Any]:
+    yaml = _yaml()
+    src = Path(inputs.get("source_root") or HERE.parent)
+    runtime = Path(inputs["runtime_dir"])
+    mode = str(inputs.get("mode") or "repo")
+    warnings: list[str] = []
+
+    # ---- deploy.json --------------------------------------------------------------------------------
+    deploy_path = Path(inputs.get("deploy_path") or (runtime / "deploy.json"))
+    existing = _read_json(deploy_path)
+    deploy, added, overridden = merge_deploy(existing, dict(inputs.get("deploy_defaults") or {}),
+                                             dict(inputs.get("deploy_explicit") or {}))
+    deploy_write = mode == "repo"   # 묶음 설치는 사용자가 쓴 deploy.json 을 바꾸지 않는다(메모리에서만 기본값 보충)
+    deploy_changed = deploy_write and (existing is None or deploy != existing)
+
+    esl_root = fwd(str(deploy.get("esl_root") or ""))
+    input_roots = as_list(deploy.get("input_roots"))
+    spdm_roots = as_list(deploy.get("spdm_roots"))
+    path_warn, root_ok = check_paths(esl_root, input_roots, spdm_roots)
+    warnings += path_warn
+
+    # ---- esl_platform.yaml ----------------------------------------------------------------------------
+    example_path = src / "config" / PROD_EXAMPLE
+    example_text = example_path.read_text(encoding="utf-8")
+    example = yaml.safe_load(example_text) or {}
+    config_path = Path(deploy.get("config_path") or (runtime / "config" / CONFIG_NAME))
+    if config_path.is_file():
+        source, base_text = "existing", config_path.read_text(encoding="utf-8-sig")
+    else:
+        source, base_text = "example", example_text
+    try:
+        base = yaml.safe_load(base_text) or {}
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"설정 파일 YAML 형식 오류 — 직접 고친 뒤 다시 실행하세요: {config_path} ({exc})")
+    if not isinstance(base, dict):
+        raise SystemExit(f"설정 파일 최상위가 매핑이 아닙니다: {config_path}")
+    new_file = source == "example"
+
+    desired: dict[tuple[str, ...], Any] = {("profile",): "prod"}
+    for k in ("host", "port", "base_path"):
+        desired[("server", k)] = (example.get("server") or {}).get(k)
+    desired[("storage", "esl_root")] = esl_root
+    desired[("storage", "input_roots")] = input_roots
+    desired[("storage", "spdm_roots")] = spdm_roots
+    # 비어 있으면 채워도 되는 키(경로 값). 사용자가 넣은 다른 값은 보존
+    fill_empty = {("storage", "esl_root"), ("storage", "input_roots"), ("storage", "spdm_roots")}
+
+    text = base_text
+    rows, changed = [], []
+    for path, want in desired.items():
+        key = ".".join(path)
+        has, cur = _get(base, path)
+        if new_file:
+            if want is None or (has and cur == want):
+                rows.append({"key": key, "value": cur, "action": "예시 값"})
+                continue
+            if path in fill_empty and want in ("", []):
+                rows.append({"key": key, "value": cur, "action": "예시 값(지정 없음)"})
+                continue
+            text = set_yaml_value(text, path, want)
+            rows.append({"key": key, "value": want, "action": "새로 씀"})
+            changed.append(key)
+        elif not has:
+            if want in (None, "", []):
+                rows.append({"key": key, "value": cur, "action": "없음"})
+                continue
+            text = set_yaml_value(text, path, want, "setup이 보충")
+            rows.append({"key": key, "value": want, "action": "보충"})
+            changed.append(key)
+        elif path in fill_empty and cur in (None, "", []) and want not in (None, "", []):
+            text = set_yaml_value(text, path, want)
+            rows.append({"key": key, "value": want, "action": "빈 값 채움"})
+            changed.append(key)
+        else:
+            note = "유지" if cur == want or want in (None, "", []) else "유지(설정 파일 값 — 바꾸려면 파일을 직접 수정)"
+            rows.append({"key": key, "value": cur, "action": note})
+    upgraded: dict[tuple[str, ...], Any] = {}
+    # 이전 설정에 library 블록이 없으면(P2 이전) 같은 폴더 library.yaml 로 보충 — 라이브러리 쓰기 API 가 503 이 되지 않게
+    if not new_file and "library" not in base:
+        text = set_yaml_value(text, ("library", "config_path"), "library.yaml", "setup이 보충 — P2 라이브러리")
+        upgraded[("library", "config_path")] = "library.yaml"
+        rows.append({"key": "library.config_path", "value": "library.yaml", "action": "보충(새 설정 절)"})
+    # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
+    login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
+    if login_warn:
+        warnings.append(login_warn)
+    has, cur = _get(base, LOGIN_URL_PATH)
+    if login_want and (new_file or not has or cur in LOGIN_URL_OLD_DEFAULTS) and cur != login_want:
+        text = set_yaml_value(text, LOGIN_URL_PATH, login_want, "" if has else "setup이 보충")
+        upgraded[LOGIN_URL_PATH] = login_want
+        rows.append({"key": ".".join(LOGIN_URL_PATH), "value": login_want, "action": "대시보드 웹 경로로 맞춤"})
+    else:
+        rows.append({"key": ".".join(LOGIN_URL_PATH), "value": cur,
+                     "action": "유지" if cur == login_want or not has else "유지(설정 파일 값 — 바꾸려면 파일을 직접 수정)"})
+    if new_file:
+        hdr = ("# ESL 플랫폼 설정 — deploy/setup_config.py 가 config/esl_platform.prod.example.yaml 에서 생성. "
+               "값은 이 파일에서 직접 고친다(다시 설치·업데이트해도 덮어쓰지 않음).")
+        nl = "\r\n" if "\r\n" in text else "\n"
+        first, _, rest = text.partition(nl)
+        text = (hdr + nl + rest) if first.startswith("#") else (hdr + nl + text)
+
+    # 편집 결과 검증: 바꾼 키는 원하는 값, 나머지는 원본과 같아야 한다(아니면 쓰지 않고 안내)
+    config_ok = True
+    try:
+        after = yaml.safe_load(text) or {}
+        expect = copy.deepcopy(base)
+        for key in changed:
+            _set(expect, tuple(key.split(".")), desired[tuple(key.split("."))])
+        for path, want in upgraded.items():
+            _set(expect, path, want)
+        if after != expect or duplicate_top_keys(text):
+            config_ok = False
+    except yaml.YAMLError:
+        config_ok = False
+    if not config_ok:
+        warnings.append(f"설정 파일을 자동으로 보충하지 못했습니다(형식이 예상과 다름 — 흐름 표기 등) — 다음 키를 직접 고치세요: "
+                        f"{', '.join(changed + ['.'.join(p) for p in upgraded])}")
+        text, changed, upgraded = base_text, [], {}
+    changed += [".".join(p) for p in upgraded]
+    config_changed = new_file or bool(changed)
+
+    # ---- 함께 두는 파일(코어·라이브러리·ISTA6): 설정이 같은 폴더의 상대 이름을 가리킬 때만, 없을 때만 복사 -----------------
+    final = yaml.safe_load(text) or {}
+    cfg_dir = config_path.parent
+    companions: list[dict[str, Any]] = []
+    for path, default_name, example_name in COMPANIONS:
+        has, rel = _get(final, path)
+        if not has or not isinstance(rel, str) or not rel:
+            continue
+        target = Path(rel) if os.path.isabs(rel) or _WIN_ABS.match(rel) else cfg_dir / rel
+        exists = target.is_file()
+        relative = not (os.path.isabs(rel) or _WIN_ABS.match(rel))
+        companions.append({"key": ".".join(path), "path": str(target), "source": str(src / "config" / example_name),
+                           "exists": exists, "copy": (not exists) and relative})
+        if path[0] == "library" and relative:
+            ista_target = cfg_dir / ISTA6[0]
+            companions.append({"key": "library.ista6", "path": str(ista_target), "source": str(src / "config" / ISTA6[1]),
+                               "exists": ista_target.is_file(), "copy": not ista_target.is_file()})
+        if not exists and not relative:
+            warnings.append(f"{'.'.join(path)} 파일이 없습니다: {rel}")
+    return {
+        "mode": mode, "deploy_path": str(deploy_path), "deploy_exists": existing is not None, "deploy": deploy,
+        "deploy_write": deploy_write, "deploy_added": added if existing is not None else [], "deploy_overridden": overridden,
+        "deploy_changed": deploy_changed, "config_path": str(config_path), "config_source": source,
+        "config_changed": config_changed, "config_rows": rows, "config_changed_keys": changed, "config_text": text,
+        "companions": companions, "esl_root": esl_root, "esl_root_ok": root_ok, "input_roots": input_roots,
+        "spdm_roots": spdm_roots, "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 쓰기
+# ---------------------------------------------------------------------------
+
+def _backup(p: Path, runtime: Path, stamp: str) -> str:
+    dest = runtime / "_backup" / stamp / p.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(p, dest)
+    return str(dest)
+
+
+def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
+    runtime = Path(inputs["runtime_dir"])
+    stamp = str(inputs.get("stamp") or "backup")
+    out: dict[str, Any] = {"backups": [], "written": [], "created": []}
+    for sub in ("config", "logs", "state"):
+        (runtime / sub).mkdir(parents=True, exist_ok=True)
+    deploy_path = Path(pl["deploy_path"])
+    if pl["deploy_write"] and pl["deploy_changed"]:
+        if deploy_path.is_file():
+            out["backups"].append(_backup(deploy_path, runtime, stamp))
+        deploy_path.parent.mkdir(parents=True, exist_ok=True)
+        deploy_path.write_text(json.dumps(pl["deploy"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        out["written"].append(str(deploy_path))
+    cfg = Path(pl["config_path"])
+    if pl["config_changed"]:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        if cfg.is_file():
+            out["backups"].append(_backup(cfg, runtime, stamp))
+        with open(cfg, "w", encoding="utf-8", newline="") as f:
+            f.write(pl["config_text"])
+        out["written"].append(str(cfg))
+    for c in pl["companions"]:
+        if c["copy"] and not os.path.exists(c["path"]):
+            Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(c["source"], c["path"])
+            out["written"].append(c["path"])
+    root = pl["esl_root"]
+    if root and pl["esl_root_ok"] and not os.path.isdir(root):
+        Path(root).mkdir(parents=True, exist_ok=True)
+        out["created"].append(root)
+    out["validation"] = validate(str(cfg), inputs.get("code_root"))
+    return out
+
+
+def validate(config_path: str, code_root: str | None = None) -> dict[str, Any]:
+    root = Path(code_root) if code_root else HERE.parent
+    for p in (root / "worker", root / "backend", root):
+        if p.is_dir() and str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    try:
+        from esl_platform.core.config import load_config
+    except ImportError as exc:  # pragma: no cover - 설치 venv·코드에는 있음
+        return {"ok": None, "issues": [f"(검증 생략: {exc})"], "warnings": []}
+    lc = load_config(config_path, environ={})
+    return {"ok": lc.ok, "issues": [f"{i.key}: {i.message}" for i in lc.issues], "warnings": []}
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="setup_config.py")
+    ap.add_argument("action", choices=("plan", "write"))
+    ap.add_argument("--inputs", required=True, help="입력 JSON 파일(setup.ps1·install.ps1 이 만든다)")
+    ap.add_argument("--out", default="", help="결과 JSON 파일(UTF-8). 비우면 표준 출력")
+    args = ap.parse_args(argv)
+    inputs = _read_json(Path(args.inputs)) or {}
+    pl = plan(inputs)
+    if args.action == "write":
+        pl["write"] = write(inputs, pl)
+    pl.pop("config_text", None)
+    data = json.dumps(pl, ensure_ascii=False)
+    if args.out:
+        Path(args.out).write_text(data, encoding="utf-8")  # PowerShell 5.1은 -Encoding UTF8로 읽는다
+    else:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(data)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

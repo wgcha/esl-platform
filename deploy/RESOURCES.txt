@@ -1,0 +1,15 @@
+ESL 서버 반입 자원 안내(physicsai deploy/RESOURCES.txt 대응)
+
+ESL 서버는 외부 프로그램(Altair HyperView·OptiStruct 등)을 실행하지 않는다. 그래서 physicsai의 resources.*·altair.* 같은
+원본 반입 자원·실행 파일 설정이 없다. 서버에 따로 복사할 파일은 없다.
+
+  계산 코어(esl)            묶음 app\esl (설치 스크립트가 <런타임>\app\esl로 배치)
+  솔버 의존성               묶음 wheels — deploy\requirements.lock 고정: pypardiso(+mkl·intel-openmp·tbb, Windows MKL 휠),
+                            pyamg, psutil, numpy·scipy. scikit-sparse(CHOLMOD)는 Windows 휠이 없어 제외(solver.backend auto → pardiso)
+  코어 설정                 <런타임>\config\esl.yaml (config/esl.example.yaml 복사 — 판정 기준 validation·compare는 사내 확인 후 교체)
+  라이브러리 설정           <런타임>\config\library.yaml + ista6.yaml (config/library.example.yaml, config/ista6.yaml 복사 — 낙하 높이 표는 TODO)
+
+입력 데이터(rad + 결과 CSV 폴더)는 사용자 PC에서 HyperView TCL로 만든다(저장소 루트 update.bat — 사용자 PC용, 서버 설치와 무관).
+서버는 그 폴더를 storage.input_roots 아래에서 읽기만 한다. 설치 후 환경 점검:
+  <런타임>\venv\Scripts\python.exe <런타임>\app\esl_service.py check --runtime <런타임>
+경로에는 공백·cmd 메타문자(& | < > ^ % ! ")를 쓰지 않는다.

@@ -1,5 +1,7 @@
 import { request, API_PREFIX } from "./client";
 import type {
+  AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
+  SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
   ValidationOut,
@@ -43,4 +45,25 @@ export const api = {
   downloadUrl: (artifactId: string) => `${API_PREFIX}/artifacts/${artifactId}/download`,
   exportJob: (caseId: string, esl_run_id: string, targets: ExportTarget[]) =>
     request<JobOut>("POST", `/cases/${caseId}/jobs`, { body: { job_type: "EXPORT", params: { esl_run_id, targets } } }),
+
+  // ---- P2 (계약 esl_p2_library.md §11)
+  field: (vid: string, layer: FieldLayer, maxPoints?: number) =>
+    request<FieldOut>("GET", `/validations/${vid}/field`, { query: { layer, max_points: maxPoints } }),
+  section: (vid: string, axis: SectionAxis, at = 0.5) => request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at } }),
+  caseReportUrl: (caseId: string) => `${API_PREFIX}/cases/${caseId}/report`,
+  libraryEntries: (q: EntryQuery) => request<EntryOut[]>("GET", "/library/entries", { query: { ...q } }),
+  createEntry: (body: EntryCreate) => request<EntryOut>("POST", "/library/entries", { body }),
+  patchEntry: (id: string, body: EntryPatch) => request<EntryOut>("PATCH", `/library/entries/${id}`, { body }),
+  retireEntry: (id: string, reason?: string) => request<EntryOut>("POST", `/library/entries/${id}/retire`, { body: { reason: reason ?? null } }),
+  analyses: (projectId: string) => request<AnalysisOut[]>("GET", "/library/analyses", { query: { project_id: projectId } }),
+  createAnalysis: (body: AnalysisCreate) => request<AnalysisOut>("POST", "/library/analyses", { body }),
+  analysis: (id: string) => request<AnalysisOut>("GET", `/library/analyses/${id}`),
+  analysisFiles: (id: string) => request<AnalysisFileOut[]>("GET", `/library/analyses/${id}/files`),
+  analysisReportUrl: (id: string) => `${API_PREFIX}/library/analyses/${id}/report`,
+  analysisDownloadUrl: (id: string, rel: string) => `${API_PREFIX}/library/analyses/${id}/download` + `?rel=${encodeURIComponent(rel)}`,
+  // ---- 설계 버전 비교(§12.2)
+  comparisons: (projectId: string) => request<ComparisonOut[]>("GET", "/library/comparisons", { query: { project_id: projectId } }),
+  createComparison: (body: ComparisonCreate) => request<ComparisonOut>("POST", "/library/comparisons", { body }),
+  comparison: (id: string) => request<ComparisonOut>("GET", `/library/comparisons/${id}`),
+  comparisonReportUrl: (id: string) => `${API_PREFIX}/library/comparisons/${id}/report`,
 };

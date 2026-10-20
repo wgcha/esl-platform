@@ -73,7 +73,8 @@ def test_pack_roundtrip_shapes_dtypes(tmp_path):
     f, h, s, d = (_load(out / n) for n in ("final.npz", "history.npz", "strain_frames.npz", "disp.npz"))
     assert set(f) == {"elem_id", "vm_hv", "eps", "ezz", "epsp"}
     assert set(h) == {"time", "frame_index", "elem_id", "vm_hv", "eps", "ezz", "epsp"}
-    assert set(s) == {"time", "frame_index", "elem_id", "vm_hv", "eps", "ezz", "epsp"}
+    assert set(s) == {"time", "frame_index", "elem_id", "vm_hv", "eps", "ezz", "epsp", "prev_frame_index",
+                      "prev_vm_hv", "prev_eps", "prev_epsp", "prev_available"}
     assert set(d) == {"time", "frame_index", "node_id", "u"}
     assert f["elem_id"].tolist() == m.elem_id.tolist() == [3, 7] and f["elem_id"].dtype == np.int64
     for z in (f, h, s):
@@ -84,6 +85,17 @@ def test_pack_roundtrip_shapes_dtypes(tmp_path):
     assert np.allclose(h["time"], t) and np.array_equal(h["epsp"], ep.astype(np.float32))
     assert s["vm_hv"].shape == (len(D), 2) and s["frame_index"].tolist() == D
     assert np.array_equal(s["eps"], eps[dpos].astype(np.float32))
+    # 직전 프레임(§P2 7.1): frames 순서의 바로 앞 프레임, 첫 프레임이면 −1·값 0
+    assert s["prev_frame_index"].dtype == np.int32 and s["prev_available"].all()
+    assert s["prev_eps"].shape == (len(D), 2, 3) and s["prev_vm_hv"].shape == s["prev_epsp"].shape == (len(D), 2)
+    for i, k in enumerate(dpos):
+        if k == 0:
+            assert s["prev_frame_index"][i] == -1 and not s["prev_eps"][i].any() and not s["prev_vm_hv"][i].any()
+        else:
+            assert s["prev_frame_index"][i] == fi[k - 1]
+            assert np.array_equal(s["prev_eps"][i], eps[k - 1].astype(np.float32))
+            assert np.array_equal(s["prev_vm_hv"][i], vm[k - 1].astype(np.float32))
+            assert np.array_equal(s["prev_epsp"][i], ep[k - 1].astype(np.float32))
     assert d["u"].shape == (len(D), 6, 3) and d["u"].dtype == np.float64 and np.array_equal(d["u"], u[dpos])
     assert d["node_id"].tolist() == m.node_id.tolist() and np.allclose(d["time"], t[dpos])
     meta = json.loads((out / "frames.json").read_text(encoding="utf-8"))
@@ -278,3 +290,38 @@ def test_no_pickle_in_sources():
             if f.endswith(".py"):
                 src = open(os.path.join(root, sub, f), encoding="utf-8").read()
                 assert "import pickle" not in src and "allow_pickle=True" not in src
+
+
+# ---------------- 직전 프레임(prev, 계약 esl_p2_library.md §7.1)
+
+def test_prev_frames_written_and_packed(tmp_path):
+    """D 의 각 f 에 대해 f−1 프레임 전 요소 행(D 에 이미 있으면 중복 없음), done.json prev_frames·strain_frames."""
+    m = _model(tmp_path)
+    rd, (t, u, eps, vm, ep) = _write(m, tmp_path / "csv", F=7, frames_D=[0, 3, 4])
+    done = json.load(open(os.path.join(rd, "done.json")))
+    assert done["frames_D"] == [0, 3, 4] and done["prev_frames"] == [2, 3] and done["strain_frames"] == [0, 2, 3, 4]
+    rows = [l.split(",")[0] for l in open(os.path.join(rd, "strain_frames.csv")).read().splitlines()[1:]]
+    assert sorted(set(rows)) == ["0", "2", "3", "4"] and len(rows) == 4 * 2          # 프레임 3 은 한 번만
+    r = pack_results(rd, m, tmp_path / "o")
+    assert r["prev_frames"] == [2, 3] and r["prev_available"] is True
+    s = _load(tmp_path / "o" / "strain_frames.npz")
+    assert s["frame_index"].tolist() == [0, 3, 4] and s["prev_frame_index"].tolist() == [-1, 2, 3]
+    assert not s["prev_eps"][0].any() and not s["prev_vm_hv"][0].any()            # f=0 → 0 배열
+    assert np.array_equal(s["prev_eps"][1], eps[2].astype(np.float32))
+    assert np.array_equal(s["prev_eps"][2], s["eps"][1])                           # prev(4)=3 = D 의 3
+    meta = json.loads((tmp_path / "o" / "frames.json").read_text(encoding="utf-8"))
+    assert meta["prev_frame_index"] == [-1, 2, 3] and meta["prev_available"] == [True, True, True]
+
+
+def test_prev_frames_missing_old_tcl_output(tmp_path):
+    """예전 TCL 출력(직전 프레임 행 없음) → 경고 + prev_available=False, 일부만 있으면 ID_MISMATCH."""
+    m = _model(tmp_path)
+    rd, _ = _write(m, tmp_path / "csv", F=7, frames_D=[3, 5], write_prev=False)
+    r = pack_results(rd, m, tmp_path / "o")
+    assert r["prev_available"] is False and any("직전 프레임" in w for w in r["warnings"])
+    s = _load(tmp_path / "o" / "strain_frames.npz")
+    assert s["prev_available"].tolist() == [False, False] and s["prev_frame_index"].tolist() == [2, 4]
+    assert not s["prev_eps"].any()
+    rd, _ = _write(m, tmp_path / "csv2", F=7, frames_D=[3, 5])
+    _drop(rd, "strain_frames.csv", lambda l: l.startswith(f"2,{m.elem_id[0]},"))   # 프레임 2 일부 요소만 남김
+    assert _code(pack_results, rd, m, tmp_path / "o2") == "ID_MISMATCH"

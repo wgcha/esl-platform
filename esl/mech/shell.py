@@ -27,9 +27,14 @@ auto = 설치된 직접법 중 cholmod → pardiso → superlu 우선, 직접법
 넘으면 반복법(CG; K_rr 노드 3×3 블록 야코비, K_ff pyamg 평활 집적 AMG)으로 전환하고 경고.
 규모 상한은 없다. 분해 정보는 `ShellModel.stats` 에 기록(백엔드, 분해 시간, nnz(L), 메모리 추정,
 피크 RSS, 반복 수·잔차).
+
+메모리 부족(MemoryError, PARDISO error -2, CHOLMOD out-of-memory)은 특이(SOLVER_SINGULAR)와 구분해
+``SOLVER_OUT_OF_MEMORY`` 로 낸다(조립·응축·분해·해·변형률 회복 어디서든). 워커 메모리 한도(RLIMIT_AS·Job 메모리)에
+걸린 경우도 이 코드다.
 """
 from __future__ import annotations
 
+import functools
 import glob
 import os
 import sys
@@ -202,6 +207,44 @@ class _NotPD(Exception):
     """양정치가 아님(분해 중 0/음 피벗)."""
 
 
+OOM_CODE = "SOLVER_OUT_OF_MEMORY"
+_OOM_HINT = ("서버 메모리·worker.max_memory_gb(POSIX 는 × worker.vm_headroom) 확인, 동시 작업 줄이기 또는 "
+             "solver.backend: iterative")
+
+
+def _is_oom(exc: BaseException) -> bool:
+    """메모리 부족 예외인가: MemoryError, CHOLMOD out-of-memory(클래스 이름·메시지), 'out of memory' 메시지,
+    SuperLU 할당 실패(RuntimeError 'SUPERLU_MALLOC fails ...')."""
+    if isinstance(exc, MemoryError):
+        return True
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return ("outofmemory" in name or "out of memory" in msg or "not enough memory" in msg
+            or "malloc fails" in msg)     # SuperLU: "SUPERLU_MALLOC fails for buf in mxCallocInt()"
+
+
+def _oom_error(what: str, exc: BaseException | str) -> EslError:
+    detail = exc if isinstance(exc, str) else f"{type(exc).__name__}: {str(exc)[:200]}"
+    return EslError(OOM_CODE, f"{what}: 메모리 부족({detail}) — {_OOM_HINT}")
+
+
+def _oom_guard(what: str):
+    """메서드에서 나온 메모리 부족 예외 → EslError(SOLVER_OUT_OF_MEMORY). EslError 는 그대로."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            try:
+                return fn(*a, **kw)
+            except EslError:
+                raise
+            except Exception as exc:
+                if _is_oom(exc):
+                    raise _oom_error(what, exc) from exc
+                raise
+        return wrapper
+    return deco
+
+
 class _SuperLU:
     name = "superlu"
 
@@ -211,6 +254,8 @@ class _SuperLU:
             self._lu = spla.splu(A, permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0,
                                  options={"SymmetricMode": True})
         except RuntimeError as exc:   # "Factor is exactly singular"
+            if _is_oom(exc):
+                raise _oom_error("SuperLU 분해", exc) from exc
             raise EslError("SOLVER_SINGULAR", f"희소 분해 실패: {exc}") from exc
         self.nnz_L = int(self._lu.L.nnz + self._lu.U.nnz)
         self.mem_est_mb = self.nnz_L * 12 / 2 ** 20
@@ -235,6 +280,7 @@ class _Cholmod:
         else:
             A = sp.csc_matrix(A)
         not_pd = getattr(ch, "CholmodNotPositiveDefiniteError", None) or getattr(ch, "CholmodError")
+        oom = getattr(ch, "CholmodOutOfMemoryError", None)
         try:
             if new_api:
                 f = ch.CholeskyFactor(A, lower=True)     # 기호 분석 (AMD, 필요 시 METIS)
@@ -250,8 +296,12 @@ class _Cholmod:
                 except Exception:
                     nnz = -1
                 self.order = ""
-        except not_pd as exc:
-            raise _NotPD(str(exc)) from exc
+        except Exception as exc:
+            if _is_oom(exc) or (oom is not None and isinstance(exc, oom)):   # 기반 클래스(not_pd)보다 먼저
+                raise _oom_error("CHOLMOD 분해", exc) from exc
+            if isinstance(exc, not_pd):
+                raise _NotPD(str(exc)) from exc
+            raise
         self._f = f
         self.nnz_L = int(nnz)
         self.mem_est_mb = max(self.nnz_L, 0) * 12 / 2 ** 20
@@ -280,8 +330,8 @@ class _Pardiso:
             code = getattr(exc, "value", None)
             if code == -4:               # zero pivot
                 raise _NotPD(f"PARDISO error {code}") from exc
-            if code == -2:
-                raise EslError("SOLVER_SINGULAR", f"PARDISO 메모리 부족 (error {code})") from exc
+            if code == -2 or _is_oom(exc):   # -2 = not enough memory (MKL PARDISO error 표)
+                raise _oom_error("PARDISO 분해", f"error {code}" if code == -2 else exc) from exc
             raise EslError("SOLVER_SINGULAR", f"PARDISO 분해 실패: {exc}") from exc
         ip = self._s.get_iparm
         self.nnz_L = int(ip(18))
@@ -380,6 +430,7 @@ class _CG:
 _IMPL = {"superlu": _SuperLU, "cholmod": _Cholmod, "pardiso": _Pardiso}
 
 
+@_oom_guard("희소 분해")
 def _factorize(A, backend: str = "superlu", stats: dict | None = None, label: str = "A", *,
                auto: bool = False, dof_per_node: int = 6, iter_opts: dict | None = None,
                iter_setup=None):
@@ -583,6 +634,7 @@ class ShellModel:
         self.stats["nnz_blocks"] = int(nb)
         return self._Kb
 
+    @_oom_guard("강성 조립")
     def K(self) -> sp.csr_matrix:
         if self._K is None:
             Kb = self._block_K()
@@ -627,6 +679,7 @@ class ShellModel:
         if not used.all():
             raise EslError("SOLVER_SINGULAR", f"요소에 연결되지 않은 노드 {int((~used).sum())}개")
 
+    @_oom_guard("응축 하중(K_rr)")
     def condensed_forces(self, u_t) -> np.ndarray:
         """전 노드 병진 강제(u_t), 회전 자유 → F = (K_tt − K_tr K_rr⁻¹ K_rt) u_t  (N,3)."""
         u_t = np.asarray(u_t, dtype=np.float64)
@@ -646,6 +699,7 @@ class ShellModel:
         _record_iter(self._krr, self.stats["K_rr"])
         return F.reshape(self.n_nodes, 3)
 
+    @_oom_guard("회전 회복")
     def rotations_for(self, u_t) -> np.ndarray:
         """condensed_forces 상태의 회전 θ = −K_rr⁻¹ K_rt u_t  (N,3) (변형률 평가용 보조)."""
         self.condensed_forces(np.zeros((self.n_nodes, 3)))
@@ -689,6 +743,7 @@ class ShellModel:
             if s[-1] < 1e-8 * s[0]:
                 raise EslError("SOLVER_SINGULAR", f"연결 성분 {k}: 구속이 강체 모드를 막지 못함 (σmin/σmax={s[-1] / s[0]:.2e})")
 
+    @_oom_guard("정적 해(K_ff)")
     def solve(self, F, spc):
         """병진 하중 F (N,3), spc=[(node_idx, "123" 부분집합)] → (u (N,6), R (N,3) 반력)."""
         F = np.asarray(F, dtype=np.float64)
@@ -758,6 +813,7 @@ class ShellModel:
         return u.reshape(self.n_nodes, 6), R
 
     # ------------------------------------------------------------------
+    @_oom_guard("변형률 회복")
     def strains(self, u) -> np.ndarray:
         """u (N,6) → eps (E,2,3): 요소 중심, layer 0=bottom(z=−t/2), 1=top(+t/2), 국부 텐서 (exx,eyy,exy)."""
         u = np.asarray(u, dtype=np.float64)

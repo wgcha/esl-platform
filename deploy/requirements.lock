@@ -1,0 +1,47 @@
+# ESL 서버 런타임 의존성 고정 버전(Windows x64, Python 3.12 — 대시보드와 같은 3.12.13, cp312 win_amd64).
+# requirements-platform.txt(플랫폼)·pyproject.toml(코어 esl + fast: pypardiso·pyamg·psutil)의 하한을 만족하는 정확 버전.
+# physicsai-platform deploy/requirements.lock 과 겹치는 패키지는 같은 버전(같은 서버·같은 Python에서 같은 동작).
+# Windows 전용 의존성(colorama·tzdata, MKL 런타임 mkl·intel-openmp·tbb·...)을 포함한다. scikit-sparse는 Windows 휠이 없어 제외.
+# 플랫폼·코어 코드는 여기에 없다(PyPI에서 받지 않음) — 설치 스크립트가 <런타임>\app 으로 복사한다.
+# 생성 방법(인터넷 되는 준비 PC): pip install --dry-run --ignore-installed --report r.json --only-binary=:all: --platform win_amd64
+#   --python-version 3.12 --target <임시> -r <하한 목록> (-c physicsai lock) 결과에서 고정.
+# 검증: pip download -r deploy/requirements.lock --only-binary=:all: --platform win_amd64 --python-version 3.12 -d <폴더> 가
+#   추가 패키지 없이 끝나야 한다(tests/deploy/test_requirements_lock.py, 네트워크 시험은 ESL_TEST_NETWORK=1). 갱신 시 scripts/test-all 재실행.
+alembic==1.20.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+click==8.5.0
+colorama==0.4.6
+fastapi==0.142.4
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+intel-cmplr-lib-ur==2026.2.0
+intel-openmp==2026.2.0
+Mako==1.4.3
+MarkupSafe==3.0.3
+mkl==2026.2.0
+numpy==2.4.6
+onemkl-license==2026.2.0
+opentelemetry-api==1.45.1
+psutil==7.2.2
+psycopg==3.3.6
+psycopg-binary==3.3.6
+pyamg==5.3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pypardiso==0.4.7
+PyYAML==6.0.3
+scipy==1.17.1
+SQLAlchemy==2.1.4
+starlette==1.6.0
+tbb==2023.2.0
+tcmlib==1.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2025.2
+umf==1.2.0
+uvicorn==0.53.0

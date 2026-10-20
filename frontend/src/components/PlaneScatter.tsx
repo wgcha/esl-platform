@@ -91,12 +91,18 @@ export function PlaneScatter({ points, markers, valueLabel }: { points: [number,
           })}
         </svg>
       </div>
-      <div className="legend">
+      <div className="legend small">
         <span>{valueLabel}</span>
         <span className="mono">{geo.vmin.toPrecision(3)}</span>
         <span className="ramp" style={{ background: `linear-gradient(90deg, ${[0, 0.25, 0.5, 0.75, 1].map(seqColor).join(",")})` }} />
         <span className="mono">{geo.vmax.toPrecision(3)}</span>
-        <span className="muted">· 점 {points.length.toLocaleString()}개 · □ 평면 꼭지점 · ○ 지지점</span>
+        <span className="muted">점 {points.length.toLocaleString()}개</span>
+        <span>
+          <span className="lg corner" /> 평면 꼭지점
+        </span>
+        <span>
+          <span className="lg support" /> 지지점
+        </span>
       </div>
     </div>
   );

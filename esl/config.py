@@ -190,6 +190,18 @@ SCHEMA: dict[str, Any] = {
         "noise_force_rel_warn": _num(0.0, lo_open=True),
         "noise_strain_rel_max": _num(0.0, lo_open=True),
     },
+    "compare": {                                # 전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2)
+        "min_rel": _num(0.0, 1.0),
+        "max_err_pct_max": _num(0.0, lo_open=True),
+        "p90_err_max": _num(0.0, lo_open=True),
+        "top_n": _int(1, 1000),
+        "hist_bins": _int(2, 200),
+        "section_band": _num(0.0, 0.5, lo_open=True),
+    },
+    "report": {                                 # Case HTML 보고서(§5·§7.3)
+        "max_points": _int(100, 1_000_000),
+        "top_forces": _int(1, 1000),
+    },
     "export": {
         "radioss": {
             "id_offset": _int(1, 9_999_999_999 - 999_999),   # 생성 ID 가 I10 에 들어가야 함

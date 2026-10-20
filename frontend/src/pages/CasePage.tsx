@@ -43,7 +43,6 @@ export function CasePage() {
     <Shell
       projectId={projectId}
       crumbs={[
-        { label: "ESL", to: "/" },
         { label: project?.name ?? projectId, to: `/p/${projectId}` },
         { label: c?.title ?? "Case", to: `${base}/stage/1` },
         { label: `${"①②③④⑤⑥"[stage - 1]} ${STAGE_NAMES[stage - 1]}` },
