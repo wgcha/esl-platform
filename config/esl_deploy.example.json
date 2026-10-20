@@ -4,5 +4,6 @@
   "deploy_dir": "%LOCALAPPDATA%\\esl\\app",
   "branch": "",
   "default_part": "chassis_rear",
-  "protected_roots": []
+  "protected_roots": [],
+  "server_url": ""
 }
