@@ -10,14 +10,16 @@
      secrets\database_url, deploy.json, logs, state, _backup
   ③ venv에 deploy\requirements.lock(고정 버전, pypardiso·MKL 포함 — 사내 pip 설정·프록시 그대로)
   ④ 설정 계획(setup_config.py): deploy.json·esl_platform.yaml — 이미 있으면 보존하고 빠진 키만 보충. profile prod, server.port 8110,
-     storage.esl_root(폴더 생성, SPDM 밖)·input_roots·spdm_roots, auth.dashboard_public_login_url(대시보드 웹 경로), core·library 설정 파일
+     server.frontend_root(= .runtime\frontend — 백엔드가 /esl/ 직접 서빙, 키가 없을 때만 — 바꾼 값·null 유지),
+     storage.esl_root(폴더 생성, SPDM 밖)·input_roots·spdm_roots, auth.dashboard_public_login_url(대시보드 웹 경로), core·library 설정 파일,
+     대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED(없을 때만 끝에 추가 — 기존 값 보존, 바꾸기 전 _backup\<UTC>\dashboard.env)
   ⑤ 확인 표 출력 후 Y/N(-NonInteractive면 생략)
   ⑥ 기존 설치가 있으면 대기열 확인 후 작업 중지 → 패키지 갱신 → 코드 스냅샷(.runtime\app, 이전 것은 _backup) → 설정 작성 → 프런트 배치
      (소스가 바뀌었을 때만 Node 22로 빌드 — 대시보드 고정 Node 우선)
   ⑦ DB(대시보드와 같은 PostgreSQL 18에 esl DB·esl_app 역할 — 없을 때만, 기존 연결이 되면 비밀번호를 다시 묻지 않음)
      → DB 접속 정보 파일 .runtime\secrets\database_url(현재 사용자·SYSTEM만 읽기) → alembic upgrade head(0001~0004)
      → 작업 스케줄러 ESL-Backend·ESL-Worker(현재 사용자 Interactive·Limited, 실행기 esl_service.py --runtime) → 시작·health → 환경 점검 표
-  ⑧ 접속 연결 안내: 대시보드 Caddyfile에 deploy\caddy\esl.caddy, 대시보드 .env SIMDASH_ESL_ENABLED=true
+  ⑧ 접속 연결 안내: 대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED=true(백엔드가 /esl/ 직접 서빙 — 추가했으면 대시보드 재시작), Caddy는 대안(esl.caddy)
   업데이트: powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\update-repo.ps1 (git pull 포함)
 .PARAMETER DashboardRoot
   대시보드 폴더. 기본: deploy.json 값 → <git 폴더의 부모>\simdashboard(있으면). .env의 POSTGRES_BIN·DATABASE_URL(host·port만)과 .tools의 Python 3.12·Node 22를 쓴다
@@ -194,7 +196,7 @@ $defaults = [ordered]@{
     install_mode = 'repo'; repo_root = $repo; install_root = $rt; dashboard_root = $dashRoot; python_exe = $basePy.Exe
     pg_bin = $pgBin; pg_host = $pgHost; pg_port = [int]$pgPort; db_name = $dbName; db_role = $dbRole
     config_path = (Join-Path $rt 'config\esl_platform.yaml'); service_user = $svcUser; run_mode = $runModeV
-    caddy_frontend_root = (Join-Path $rt 'frontend'); backend_serves_frontend = $false
+    caddy_frontend_root = (Join-Path $rt 'frontend')
     esl_root = $eslRootV; input_roots = [string[]]@($inputRootsV | ForEach-Object { "$_" }); spdm_roots = [string[]]@($spdmRootsV | ForEach-Object { "$_" })
 }
 $inputs = [ordered]@{ mode = 'repo'; source_root = $repo; code_root = $repo; runtime_dir = $rt; stamp = $stamp
@@ -220,7 +222,8 @@ $rows = @(
     [pscustomobject]@{ 항목 = '설정 파일'; 값 = "$($plan.config_path) — $cfgState" }
     [pscustomobject]@{ 항목 = 'deploy.json'; 값 = "$deployPath — $(if (-not $plan.deploy_exists) { '새로 만듦' } elseif ($plan.deploy_changed) { "보충: $(@($plan.deploy_added) -join ', ')$(if (@($plan.deploy_overridden).Count) { " / 인자로 바꿈: $(@($plan.deploy_overridden) -join ', ')" })" } else { '변경 없음' })" }
     [pscustomobject]@{ 항목 = '작업 실행'; 값 = "$($d.service_user) / $($d.run_mode)  (ESL-Backend·ESL-Worker, 작업 폴더 $rt)" }
-    [pscustomobject]@{ 항목 = '프런트 배치'; 값 = "$($d.caddy_frontend_root) (Caddy root)" }
+    [pscustomobject]@{ 항목 = '프런트 배치'; 값 = "$($d.caddy_frontend_root) (백엔드가 /esl/ 서빙 — 설정 server.frontend_root)" }
+    [pscustomobject]@{ 항목 = '대시보드 .env'; 값 = (Format-EslDashboardEnvPlan $plan.dashboard_env) }
 )
 Write-Host ''
 Write-Host ($rows | Format-Table -AutoSize -Wrap | Out-String -Width 240)
@@ -257,6 +260,7 @@ $inputs['code_root'] = (Join-Path $rt 'app')
 $result = Invoke-EslSetupConfig -VenvPy $venvPy -Action write -RuntimeDir $rt -Inputs $inputs
 $d = $result.deploy
 Write-EslConfigValidation -Result $result | Out-Null
+$envResult = $result.write.dashboard_env
 
 # ---- 프런트 → <런타임>\frontend: 소스가 바뀌었을 때만 Node 22로 빌드(결과를 변수에 받지 않는다 — npm 콘솔 그대로) ----------
 Install-EslFrontendFromRepo -RepoRoot $repo -Dest $d.caddy_frontend_root -BackupDir $backupDir -StampFile (Join-Path $rt 'frontend-source.sha256') `
@@ -269,7 +273,7 @@ Write-EslRuntimeSecret -RuntimeDir $rt -DbUrl $url -ServiceUser $d.service_user
 Remove-Variable -Name url, existingUrl -ErrorAction SilentlyContinue
 Invoke-EslMigration -VenvPy $venvPy -RuntimeDir $rt -ConfigPath $d.config_path
 Register-EslTasks -VenvPy $venvPy -WorkDir $rt -ServiceUser $d.service_user -RunMode $d.run_mode -RuntimeDir $rt -ConfigPath $d.config_path `
-    -Frontend (Get-EslTaskFrontend $d) -PasswordsFromEnv:$PasswordsFromEnv -NonInteractive:$NonInteractive
+    -PasswordsFromEnv:$PasswordsFromEnv -NonInteractive:$NonInteractive
 $ep = Get-EslEndpoint -ConfigPath $d.config_path -VenvPy $venvPy -Launcher (Get-EslLauncher $rt)
 if ($NoStart) {
     Write-Step '-NoStart: 작업 시작·health 확인을 건너뜁니다(Start-ScheduledTask -TaskName ESL-Backend, ESL-Worker로 시작)'
@@ -281,7 +285,8 @@ if ($NoStart) {
 # ---- ⑧ 안내 -----------------------------------------------------------------------------------------
 Write-Host ''
 Write-Step '설치 완료. 남은 연결 작업:'
-Write-EslConnectGuide -Port $ep.Port -BasePath $ep.BasePath -DashboardRoot "$($d.dashboard_root)" -FrontendRoot "$($d.caddy_frontend_root)" -SnippetDir (Join-Path $PSScriptRoot 'caddy')
-Write-Step '  4) 설정은 이 파일에서 고칩니다(입력 루트 storage.input_roots, 판정 기준은 같은 폴더 esl.yaml):'
+Write-EslConnectGuide -Port $ep.Port -BasePath $ep.BasePath -DashboardRoot "$($d.dashboard_root)" -FrontendRoot "$($d.caddy_frontend_root)" `
+    -SnippetDir (Join-Path $PSScriptRoot 'caddy') -EnvResult $envResult
+Write-Step '  3) 설정은 이 파일에서 고칩니다(입력 루트 storage.input_roots, 판정 기준은 같은 폴더 esl.yaml):'
 Write-Step "     $($d.config_path)  (고친 뒤 Stop/Start-ScheduledTask ESL-Worker, ESL-Backend → 환경 점검: & '$venvPy' '$(Get-EslLauncher $rt)' check --runtime '$rt')"
 Write-Step "업데이트(일반 PowerShell, git pull 포함):  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"

@@ -375,31 +375,23 @@ function Export-EslTasks {
 function Get-EslTaskArguments {
     <#
       작업 실행 인자: "<런타임>\app\esl_service.py" backend|worker --runtime "<런타임>" [--config "<설정>"](설정이 <런타임>\config\esl_platform.yaml이
-      아닐 때만) [--frontend "<프런트>"](backend이고 -Frontend가 있을 때 — 대시보드 Vite 프록시 구성). 비밀값 없음(파일 경로만).
+      아닐 때만). 비밀값 없음(파일 경로만). 프런트 정적 서빙은 인자가 아니라 설정 server.frontend_root(유일한 출처).
     #>
     param([Parameter(Mandatory = $true)][ValidateSet('backend', 'worker')][string]$Command, [Parameter(Mandatory = $true)][string]$RuntimeDir,
-          [string]$ConfigPath = '', [string]$Frontend = '')
+          [string]$ConfigPath = '')
     $rt = $RuntimeDir.TrimEnd('\', '/')
     $a = "`"$(Get-EslLauncher $rt)`" $Command --runtime `"$rt`""
     $defCfg = Join-Path (Join-Path $rt 'config') 'esl_platform.yaml'
     if ($ConfigPath -and -not ([IO.Path]::GetFullPath($ConfigPath) -ieq [IO.Path]::GetFullPath($defCfg))) { $a += " --config `"$ConfigPath`"" }
-    if ($Command -eq 'backend' -and $Frontend) { $a += " --frontend `"$($Frontend.TrimEnd('\', '/'))`"" }
     return $a
 }
 
 function Get-EslTaskSpecs {
-    param([Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '', [string]$Frontend = '')
+    param([Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '')
     return @(
-        @{ Name = 'ESL-Backend'; Args = (Get-EslTaskArguments -Command backend -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath -Frontend $Frontend) },
+        @{ Name = 'ESL-Backend'; Args = (Get-EslTaskArguments -Command backend -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath) },
         @{ Name = 'ESL-Worker'; Args = (Get-EslTaskArguments -Command worker -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath) }
     )
-}
-
-function Get-EslTaskFrontend {
-    <# deploy.json backend_serves_frontend가 true면 백엔드가 프런트를 서빙(caddy_frontend_root). 아니면 빈 값(Caddy가 서빙 — 기본). #>
-    param($Deploy)
-    if ($Deploy -and "$($Deploy.backend_serves_frontend)" -match '^(?i:true|1|yes)$') { return "$($Deploy.caddy_frontend_root)" }
-    return ''
 }
 
 function Grant-EslTaskAccess {
@@ -424,7 +416,7 @@ function Register-EslTasks {
     #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$WorkDir,
           [Parameter(Mandatory = $true)][string]$ServiceUser, [Parameter(Mandatory = $true)][ValidateSet('Background', 'Interactive')][string]$RunMode,
-          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '', [string]$Frontend = '',
+          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '',
           [switch]$PasswordsFromEnv, [switch]$NonInteractive)
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 999 `
         -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable `
@@ -436,7 +428,7 @@ function Register-EslTasks {
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $svcPw = Read-EslSecret "작업 실행 계정($ServiceUser) 비밀번호" 'ESL_INSTALL_SERVICE_PASSWORD' -FromEnv:$PasswordsFromEnv -NonInteractive:$NonInteractive
     }
-    foreach ($t in (Get-EslTaskSpecs -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath -Frontend $Frontend)) {
+    foreach ($t in (Get-EslTaskSpecs -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath)) {
         $action = New-ScheduledTaskAction -Execute $VenvPy -Argument $t.Args -WorkingDirectory $WorkDir
         try {
             if (Get-ScheduledTask -TaskName $t.Name -ErrorAction SilentlyContinue) {
@@ -469,8 +461,8 @@ function Register-EslTasks {
 function Test-EslTasksCurrent {
     <# 등록된 두 작업의 실행 파일·인자·작업 폴더가 원하는 값과 같으면 $true(다시 등록할 필요 없음). #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$WorkDir,
-          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '', [string]$Frontend = '')
-    foreach ($t in (Get-EslTaskSpecs -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath -Frontend $Frontend)) {
+          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '')
+    foreach ($t in (Get-EslTaskSpecs -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath)) {
         $cur = Get-ScheduledTask -TaskName $t.Name -ErrorAction SilentlyContinue
         if (-not $cur -or -not $cur.Actions.Count) { return $false }
         $a = $cur.Actions[0]
@@ -485,9 +477,9 @@ function Update-EslTaskRegistration {
       Background는 비밀번호가 필요해 자동으로 다시 등록하지 않고 안내만 한다. 새 코드(venv·app)가 배치된 뒤에 부를 것.
     #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$WorkDir,
-          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '', [string]$Frontend = '',
+          [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '',
           [string]$ServiceUser = '', [string]$RunMode = 'Interactive')
-    if (Test-EslTasksCurrent -VenvPy $VenvPy -WorkDir $WorkDir -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath -Frontend $Frontend) {
+    if (Test-EslTasksCurrent -VenvPy $VenvPy -WorkDir $WorkDir -RuntimeDir $RuntimeDir -ConfigPath $ConfigPath) {
         Write-EslStep '작업 등록 그대로(실행 파일·인자 확인)'
         return $false
     }
@@ -499,7 +491,7 @@ function Update-EslTaskRegistration {
     }
     Write-EslStep '작업 다시 등록(실행기 esl_service.py --runtime <런타임>)'
     Register-EslTasks -VenvPy $VenvPy -WorkDir $WorkDir -ServiceUser $ServiceUser -RunMode 'Interactive' -RuntimeDir $RuntimeDir `
-        -ConfigPath $ConfigPath -Frontend $Frontend -NonInteractive
+        -ConfigPath $ConfigPath -NonInteractive
     return $true
 }
 
@@ -692,24 +684,50 @@ function Write-EslConfigValidation {
     return $true
 }
 
+function Format-EslDashboardEnvPlan {
+    <# 확인 표 한 칸: setup_config.py plan의 dashboard_env(대시보드 .env 연결 키 계획) → "VITE_ESL_TARGET 추가, SIMDASH_ESL_ENABLED 이미 있음 (경로)". #>
+    param($Plan)
+    if (-not $Plan) { return '(대시보드 없음 — 끝에 넣을 줄 안내)' }
+    if (-not $Plan.exists) { return "$($Plan.path) 없음 — 끝에 넣을 줄 안내" }
+    $parts = @(@($Plan.rows) | ForEach-Object { "$($_.key) $($_.action)" })
+    $tail = if (@($Plan.add).Count) { ' — 바꾸기 전 _backup에 사본, 대시보드 재시작 필요' } else { '' }
+    return "$($parts -join ', ')$tail ($($Plan.path))"
+}
+
 function Write-EslConnectGuide {
     <#
-      접속 연결 안내(설치·업데이트 끝). 기본: 대시보드 Caddyfile에 deploy\caddy\esl.caddy(Caddy가 프런트 서빙, /esl/api → 백엔드).
-      대안: 대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED(대시보드 쪽 지원 필요 — README 요청 사항) + deploy.json backend_serves_frontend=true.
-      대시보드 .env는 읽기만 한다(두 키가 이미 있는지 확인).
+      접속 연결 안내(설치·업데이트 끝, physicsai Write-PhysicsAIConnectGuide와 같은 문구). 기본: 대시보드 Vite 프록시(/esl → 이 백엔드, 경로 그대로)
+      + 백엔드의 프런트 직접 서빙(esl_platform.yaml server.frontend_root). Caddy는 대안.
+      git 폴더 설치는 setup_config.py가 대시보드 .env에 두 키를 없을 때만 추가한다(-EnvResult = 그 결과: write.dashboard_env). 이 함수는 .env를 읽기만 한다.
+      -Bundle(묶음 install.ps1): Caddy 기준 안내 + Vite 프록시를 고르는 방법.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][int]$Port, [string]$BasePath = '/esl', [string]$DashboardRoot = '', [string]$FrontendRoot = '', [string]$SnippetDir = '')
+    param([Parameter(Mandatory = $true)][int]$Port, [string]$BasePath = '/esl', [string]$DashboardRoot = '', [string]$FrontendRoot = '',
+          [string]$SnippetDir = '', $EnvResult = $null, [switch]$Bundle)
     $b = '/' + $BasePath.Trim('/')
-    $snippet = if ($SnippetDir) { [IO.Path]::Combine($SnippetDir, 'esl.caddy') } else { 'deploy\caddy\esl.caddy' }
-    Write-EslStep "  1) 대시보드 Caddyfile 사이트 블록 안, catch-all handle 앞(physicsai 스니펫 옆)에 $snippet 내용을 넣고"
-    Write-EslStep "     Caddy 실행 환경변수 ESL_PORT=$Port , ESL_FRONTEND_ROOT=$FrontendRoot 로 Caddy 설정을 다시 읽으세요"
-    $envFile = if ($DashboardRoot) { [IO.Path]::Combine($DashboardRoot, '.env') } else { '' }
-    $hasOn = $false
+    $envFile = if ($DashboardRoot) { [IO.Path]::Combine($DashboardRoot, '.env') } else { '' }   # Join-Path는 없는 드라이브에서 오류
+    $target = "http://127.0.0.1:$Port"
+    $hasOn = $false; $hasTarget = $false
     if ($envFile -and (Test-Path -LiteralPath $envFile -PathType Leaf)) {
         $hasOn = [bool](Select-String -LiteralPath $envFile -Pattern '^\s*SIMDASH_ESL_ENABLED\s*=\s*"?(true|1|yes|on)"?\s*$' -Quiet)
+        $hasTarget = [bool](Select-String -LiteralPath $envFile -Pattern ('^\s*VITE_ESL_TARGET\s*=\s*"?' + [regex]::Escape($target) + '/?"?\s*$') -Quiet)
     }
     $where = if ($envFile) { $envFile } else { '대시보드 .env' }
-    Write-EslStep "  2) $where 에 SIMDASH_ESL_ENABLED=true$(if ($hasOn) { ' — 이미 들어 있음' } else { ' (대시보드 ESL 메뉴 — 대시보드 쪽 지원 필요, README 요청 사항)' })"
-    Write-EslStep "  3) 접속: http://<대시보드 주소>$b/ (대시보드에 로그인한 상태로). 이 PC 확인용 health: http://127.0.0.1:$Port$b/api/health"
+    $snippet = if ($SnippetDir) { [IO.Path]::Combine($SnippetDir, 'esl.caddy') } else { 'deploy\caddy\esl.caddy' }
+    if ($Bundle) {
+        Write-EslStep "  1) (묶음 설치 — Caddy 기준) 대시보드 Caddyfile 사이트 블록 안, catch-all handle 앞(physicsai 스니펫 옆)에 $snippet 내용을 넣고"
+        Write-EslStep "     Caddy 환경변수 ESL_PORT=$Port , ESL_FRONTEND_ROOT=$FrontendRoot 로 Caddy 설정을 다시 읽으세요"
+        Write-EslStep "     Caddy 없이 대시보드 Vite 프록시로 쓰려면: 설정 server.frontend_root: $($FrontendRoot.Replace('\', '/')) (백엔드 재시작) +"
+        Write-EslStep "     $where 에 VITE_ESL_TARGET=$target , SIMDASH_ESL_ENABLED=true$(if ($hasOn -and $hasTarget) { ' — 이미 들어 있음' } else { ' 를 넣고 대시보드를 다시 시작하세요' })"
+        Write-EslStep "  2) 접속: http://<대시보드 주소>$b/ (대시보드에 로그인한 상태로). 이 PC 확인용 health: $target$b/api/health"
+        return
+    }
+    $added = @(if ($EnvResult) { @($EnvResult.added) | Where-Object { $_ } })
+    $state = ' 를 넣고 대시보드를 다시 시작하세요'
+    if ($added.Count) { $state = " — 추가함($($added -join ', '), 이전 .env 사본: $($EnvResult.backup)). 대시보드를 다시 시작하세요" }
+    elseif ($hasOn -and $hasTarget) { $state = ' — 이미 들어 있음' }
+    Write-EslStep "  1) $where 에 VITE_ESL_TARGET=$target , SIMDASH_ESL_ENABLED=true$state"
+    Write-EslStep "     (대시보드 Vite가 $b 전체를 이 백엔드로 넘기고, 백엔드가 프런트 $FrontendRoot 를 $b/ 아래에 서빙 — 설정 server.frontend_root)"
+    Write-EslStep "  2) 접속: http://<대시보드 주소>$b/ (대시보드에 로그인한 상태로). 이 PC 확인용 health: $target$b/api/health"
+    Write-EslStep "  Caddy를 쓰는 설치: $snippet (Caddy 환경변수 ESL_PORT=$Port, ESL_FRONTEND_ROOT=$FrontendRoot)"
 }

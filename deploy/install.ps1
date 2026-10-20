@@ -9,7 +9,8 @@
   deploy.json의 esl_root·input_roots·spdm_roots를 넣음, 있으면 보존·빠진 키만 보충, esl.yaml·library.yaml·ista6.yaml 없을 때만 복사, ESL 루트 폴더 생성)
   ⑥ DB 역할·DB(없을 때만 생성) ⑦ DB 접속 정보 파일 <install_root>\secrets\database_url(현재 사용자·SYSTEM만 읽기 — 머신 환경변수 쓰지 않음)
   ⑧ alembic upgrade head(0001~0004) ⑨ 작업 스케줄러 등록(ESL-Backend, ESL-Worker — 실행기 app\esl_service.py backend|worker --runtime <install_root>)
-  ⑩ 시작·health·환경 점검 표 ⑪ Caddy 스니펫 안내.
+  ⑩ 시작·health·환경 점검 표 ⑪ 연결 안내 — 묶음은 Caddy 기준(esl.caddy 스니펫). Caddy 없이 대시보드 Vite 프록시로 쓰려면
+  설정 server.frontend_root를 caddy_frontend_root로 두고 대시보드 .env에 VITE_ESL_TARGET·SIMDASH_ESL_ENABLED(관리자 매뉴얼 §2.6.1).
   경로 문자열은 deploy.json(예: deploy.example.json 복사)과 매개변수에만 있다. 비밀번호는 Read-Host -AsSecureString으로
   받아 PGPASSWORD 프로세스 환경변수로만 전달하고 로그·설정 파일·명령 인자에 남기지 않는다.
   deploy.json에 dashboard_root(선택)가 있으면 대시보드 .env의 POSTGRES_BIN과 DATABASE_URL의 host·port, 대시보드 고정 Python 3.12를
@@ -117,7 +118,7 @@ Invoke-EslMigration -VenvPy $venvPy -RuntimeDir $root -ConfigPath $configPath
 
 # ---- ⑨ 작업 스케줄러 등록(ExecutionTimeLimit 0·RestartCount 999·IgnoreNew — install-common.ps1) ---------------------------------
 Register-EslTasks -VenvPy $venvPy -WorkDir $root -ServiceUser $ServiceUser -RunMode $RunMode -RuntimeDir $root -ConfigPath $configPath `
-    -Frontend (Get-EslTaskFrontend $d) -PasswordsFromEnv:$PasswordsFromEnv
+    -PasswordsFromEnv:$PasswordsFromEnv
 
 # ---- ⑩ 시작·health·환경 점검 ------------------------------------------------------------------------
 $ep = Get-EslEndpoint -ConfigPath $configPath -VenvPy $venvPy -Launcher (Get-EslLauncher $root)
@@ -128,8 +129,8 @@ if ($NoStart) {
 Start-EslTasksAndWait -HealthUrl $ep.Health -LogDir (Join-Path $root 'logs') | Out-Null
 Invoke-EslCheck -VenvPy $venvPy -RuntimeDir $root -ConfigPath $configPath | Out-Null
 
-# ---- ⑪ Caddy 안내 --------------------------------------------------------------------------
+# ---- ⑪ 연결 안내(묶음은 Caddy 기준 + Vite 프록시를 고르는 방법) --------------------------------------------------------------------------
 Write-Host ''
 Write-Step '설치 완료. 남은 연결 작업:'
-Write-EslConnectGuide -Port $ep.Port -BasePath $ep.BasePath -DashboardRoot "$($cfg.dashboard_root)" -FrontendRoot $frontendRoot -SnippetDir (Join-Path $PSScriptRoot 'caddy')
-Write-Step "  4) 설정: $configPath (입력 루트 storage.input_roots, 판정 기준은 같은 폴더 esl.yaml). 고친 뒤 Stop/Start-ScheduledTask ESL-Worker, ESL-Backend"
+Write-EslConnectGuide -Port $ep.Port -BasePath $ep.BasePath -DashboardRoot "$($cfg.dashboard_root)" -FrontendRoot $frontendRoot -SnippetDir (Join-Path $PSScriptRoot 'caddy') -Bundle
+Write-Step "  3) 설정: $configPath (입력 루트 storage.input_roots, 판정 기준은 같은 폴더 esl.yaml). 고친 뒤 Stop/Start-ScheduledTask ESL-Worker, ESL-Backend"

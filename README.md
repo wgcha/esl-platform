@@ -141,7 +141,7 @@ rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.
 ## 6. 서버 배포 (Windows Server — 대시보드·physicsai-platform과 같은 PC)
 
 ESL 플랫폼(백엔드 API·워커·PostgreSQL DB·웹 화면 `/esl/`)을 대시보드(simulation_workbench)·physicsai-platform과 **같은 서버·같은 실행 환경**
-(Python 3.12.13, PostgreSQL 18 같은 인스턴스에 별도 DB `esl`·역할 `esl_app`, Node 22.23.2, Caddy 하위 경로, Windows 작업 스케줄러)에 설치한다.
+(Python 3.12.13, PostgreSQL 18 같은 인스턴스에 별도 DB `esl`·역할 `esl_app`, Node 22.23.2, 대시보드 주소의 하위 경로 `/esl/`, Windows 작업 스케줄러)에 설치한다.
 physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용: [관리자 매뉴얼](docs/manual/admin.md), 현장 확인: [E2E 체크리스트](docs/e2e-checklist.md).
 
 | 용도 | 실행(일반 PowerShell, 관리자 권한 불필요) |
@@ -162,10 +162,15 @@ physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용:
 - 비밀번호(PostgreSQL 관리자·앱 역할·Background 실행 계정)는 화면 입력(`Read-Host -AsSecureString`) 또는 `-PasswordsFromEnv`
   (`ESL_INSTALL_PG_ADMIN_PASSWORD`·`ESL_INSTALL_DB_PASSWORD`·`ESL_INSTALL_SERVICE_PASSWORD`)로만 받는다.
 - 솔버 의존성은 `deploy/requirements.lock`(physicsai와 겹치는 패키지는 같은 버전)에 pypardiso + MKL Windows 휠·pyamg·psutil 포함, scikit-sparse는 Windows 제외.
-- 접속: 대시보드 Caddyfile의 catch-all 앞에 `deploy/caddy/esl.caddy`(`/esl/api/*` → `127.0.0.1:8110`, `/esl/*` → 프런트 빌드), Caddy 환경변수 `ESL_PORT`·`ESL_FRONTEND_ROOT`.
+- 접속(기본 — physicsai와 같음): **대시보드 Vite 프록시 + 백엔드 정적 서빙**. 대시보드 `.env`의 `VITE_ESL_TARGET=http://127.0.0.1:8110`이면
+  대시보드 Vite가 `/esl` 전체를 경로 그대로 ESL 백엔드로 넘기고, 백엔드가 `/esl/api/*`는 API로, 그 밖은 설정 `server.frontend_root`(git 폴더 설치
+  `<git>\.runtime\frontend`)의 화면으로 응답한다. `SIMDASH_ESL_ENABLED=true`이면 대시보드 사이드바에 ESL 버튼. git 폴더 설치(`setup.ps1`·`update-repo.ps1`)는
+  두 줄을 대시보드 `.env`에 **없을 때만** 추가하고(기존 값 보존, 바꾸기 전 `.runtime\_backup\<UTC>\dashboard.env`) "대시보드를 다시 시작하세요"를 안내한다.
+  접속 `http://<대시보드 주소>/esl/`, 이 PC health `http://127.0.0.1:8110/esl/api/health`(관리자 매뉴얼 §2.6.1).
+- 대안: 대시보드 앞에 Caddy를 쓰는 설치(폐쇄망 묶음 설치의 기준)는 Caddyfile catch-all 앞에 `deploy/caddy/esl.caddy`(`/esl/api/*` → `127.0.0.1:8110`,
+  `/esl/*` → 프런트 빌드), Caddy 환경변수 `ESL_PORT`·`ESL_FRONTEND_ROOT`(§2.6.2).
 
-### 6.1 대시보드 쪽 요청 사항(이 저장소 밖)
+### 6.1 대시보드 쪽 지원(이 저장소 밖)
 
-1. physicsai `SIMDASH_PHYSICSAI_ENABLED`와 같은 패턴으로 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`일 때 대시보드 메뉴에 ESL(`/esl/`) 링크 표시.
-2. (Caddy 없이 대시보드 Vite 서버만 쓰는 구성) `VITE_ESL_TARGET=http://127.0.0.1:8110`일 때 Vite가 `/esl` 전체를 그 주소로 경로 그대로 프록시
-   — ESL 쪽은 `deploy.json` `"backend_serves_frontend": true`로 백엔드가 `/esl/` 화면도 서빙한다(관리자 매뉴얼 §2.6.2).
+대시보드 코드는 이 저장소에서 바꾸지 않는다. 대시보드 쪽이 physicsai(`VITE_PHYSICSAI_TARGET`·`SIMDASH_PHYSICSAI_ENABLED`)와 같은 방식으로
+`VITE_ESL_TARGET`(`/esl` 경로 그대로 프록시)·`SIMDASH_ESL_ENABLED`(사이드바 ESL 버튼)를 지원하는 버전이어야 한다.

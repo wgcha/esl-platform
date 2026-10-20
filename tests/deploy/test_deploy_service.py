@@ -20,7 +20,7 @@ PY = sys.executable
 LAUNCHER = DEPLOY / "esl_service.py"
 
 
-def _runtime(tmp_path: Path, url: str = "", port: int = 8110) -> Path:
+def _runtime(tmp_path: Path, url: str = "", port: int = 8110, frontend_root: str | None = None) -> Path:
     """설치 런타임 흉내: config/esl_platform.yaml(+esl.yaml·library.yaml·ista6.yaml), secrets/database_url."""
     rt = tmp_path / "rt"
     cfgd = rt / "config"
@@ -29,6 +29,7 @@ def _runtime(tmp_path: Path, url: str = "", port: int = 8110) -> Path:
     (tmp_path / "esl_root").mkdir()
     (tmp_path / "inputs").mkdir()
     d["server"]["port"] = port
+    d["server"]["frontend_root"] = frontend_root
     d["storage"] = {"esl_root": str(tmp_path / "esl_root"), "input_roots": [str(tmp_path / "inputs")], "spdm_roots": []}
     d["worker"].update({"heartbeat_interval_s": 0.5, "lease_ttl_s": 5, "claim_interval_s": 0.2})
     (cfgd / "esl_platform.yaml").write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
@@ -79,44 +80,6 @@ def test_server_settings_block_and_flow(tmp_path):
     assert svc.server_settings(str(p))["port"] == 8110
 
 
-def test_safe_static_path(tmp_path, fake_frontend):
-    d = str(fake_frontend)
-    assert svc.safe_static_path(d, "index.html")
-    assert svc.safe_static_path(d, "assets/app-abc123.js")
-    for bad in ("../etc/passwd", "assets/../../x", "C:/Windows/win.ini", "a\\b", "", "assets/", "./index.html", "nope.js"):
-        assert svc.safe_static_path(d, bad) is None, bad
-    (tmp_path / "secret.txt").write_text("x")
-    os.symlink(tmp_path / "secret.txt", fake_frontend / "link.txt")
-    assert svc.safe_static_path(d, "link.txt") is None                   # 빌드 폴더 밖을 가리키는 링크
-
-
-def test_add_frontend_routes(fake_frontend):
-    from fastapi import APIRouter, FastAPI
-    from fastapi.testclient import TestClient
-
-    app = FastAPI()
-    r = APIRouter()
-
-    @r.get("/health")
-    def _h():
-        return {"status": "ok"}
-
-    app.include_router(r, prefix="/esl/api")
-    svc.add_frontend(app, "/esl", str(fake_frontend))
-    c = TestClient(app, follow_redirects=False)
-    assert c.get("/esl/api/health").json() == {"status": "ok"}
-    assert c.get("/esl").status_code == 308 and c.get("/esl").headers["location"] == "/esl/"
-    assert c.get("/").headers["location"] == "/esl/"
-    ix = c.get("/esl/")
-    assert ix.status_code == 200 and "ESL" in ix.text and ix.headers["cache-control"] == "no-cache"
-    deep = c.get("/esl/cases/abc/2")                                     # 화면 내부 경로 → index.html
-    assert deep.status_code == 200 and deep.text == ix.text
-    a = c.get("/esl/assets/app-abc123.js")
-    assert a.status_code == 200 and "immutable" in a.headers["cache-control"]
-    assert c.get("/esl/api/nope").status_code == 404                     # API 404 는 정적 처리로 가지 않음
-    assert c.get("/esl/..%2f..%2fetc/passwd").text == ix.text            # 밖으로 못 나감(index.html)
-
-
 def test_endpoint_command(tmp_path):
     rt = _runtime(tmp_path, port=8123)
     r = subprocess.run([PY, str(LAUNCHER), "endpoint", "--runtime", str(rt)], capture_output=True, text=True, timeout=60)
@@ -142,10 +105,26 @@ def _wait_health(port: int, proc: subprocess.Popen, timeout: float = 60) -> None
     raise AssertionError("health 시간 초과")
 
 
-def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url):
-    """작업 스케줄러와 같은 인자(--runtime)로: migrate → backend(로그 파일·health) → worker(heartbeat) → check 표."""
+def _get(url: str) -> tuple[int, dict[str, str], str]:
+    import urllib.error
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
+            return None
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+    try:
+        with opener.open(url, timeout=10) as r:
+            return r.status, dict(r.headers), r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read().decode("utf-8")
+
+
+def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url, fake_frontend):
+    """작업 스케줄러와 같은 인자(--runtime, --frontend 없음)로: migrate → backend(로그 파일·health·설정 server.frontend_root 정적 서빙)
+    → worker(heartbeat) → check 표."""
     port = free_port()
-    rt = _runtime(tmp_path, url=empty_db_url, port=port)
+    rt = _runtime(tmp_path, url=empty_db_url, port=port, frontend_root=str(fake_frontend))
     env = {k: v for k, v in os.environ.items() if k not in ("ESL_DATABASE_URL", "ESL_PLATFORM_CONFIG")}
     r = subprocess.run([PY, str(LAUNCHER), "migrate", "--runtime", str(rt)], capture_output=True, text=True, env=env, timeout=120)
     assert r.returncode == 0, r.stderr + r.stdout
@@ -155,6 +134,16 @@ def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url):
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         procs.append(be)
         _wait_health(port, be)
+        # 대시보드 Vite 프록시가 넘기는 그대로(/esl 경로 유지): 화면은 백엔드가 서빙, API 404 는 JSON
+        st_, h, body = _get(f"http://127.0.0.1:{port}/esl/cases/abc")
+        assert st_ == 200 and "<title>ESL</title>" in body and h["cache-control"] == "no-cache"
+        st_, h, _ = _get(f"http://127.0.0.1:{port}/esl/assets/app-abc123.js")
+        assert st_ == 200 and "max-age=31536000" in h["cache-control"]
+        st_, h, _ = _get(f"http://127.0.0.1:{port}/esl")
+        assert st_ == 308 and h["location"] == "/esl/"
+        st_, h, body = _get(f"http://127.0.0.1:{port}/esl/api/nope")
+        assert st_ == 404 and json.loads(body)["detail"]["code"] == "NOT_FOUND"
+        assert _get(f"http://127.0.0.1:{port}/")[0] == 404                   # 운영은 '/'를 가로채지 않음(대시보드 몫)
         wk = subprocess.Popen([PY, str(LAUNCHER), "worker", "--runtime", str(rt)], cwd=rt, env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         procs.append(wk)
@@ -166,6 +155,7 @@ def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url):
         st = {i["key"]: i["status"] for i in out["items"]}
         assert st["config.valid"] == "OK" and st["db.connection"] == "OK" and st["db.migration_head"] == "OK", out
         assert st["worker.heartbeat"] == "OK" and st["storage.esl_root.write"] == "OK"
+        assert st["server.frontend_root"] == "OK"
         assert empty_db_url.rsplit("@", 1)[0] not in r.stdout                 # 사용자:비밀번호 부분 비노출
     finally:
         for p in procs:
@@ -175,7 +165,7 @@ def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url):
             except subprocess.TimeoutExpired:
                 p.kill()
     blog = (rt / "logs" / "backend.log").read_text(encoding="utf-8")
-    assert "백엔드 시작" in blog and "Uvicorn running" in blog
+    assert "백엔드 시작" in blog and "Uvicorn running" in blog and "프런트 정적 서빙(server.frontend_root)" in blog
     assert "워커 시작" in (rt / "logs" / "worker.log").read_text(encoding="utf-8")
     assert (rt / "state").is_dir()
     for f in (rt / "logs").iterdir():

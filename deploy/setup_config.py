@@ -12,11 +12,16 @@
 규칙(physicsai-platform deploy/setup_config.py 와 같은 원칙)
 - 이미 있는 파일은 보존한다: 사용자가 고친 값은 덮어쓰지 않고, 빠진 키(또는 비어 있는 storage 경로)만 보충한다.
 - 새 esl_platform.yaml 은 config/esl_platform.prod.example.yaml(주석 유지)에서 만들고 storage.esl_root·input_roots·spdm_roots(deploy.json),
-  auth.dashboard_public_login_url(대시보드 웹 경로)을 넣는다. 같은 폴더에 코어 설정 esl.yaml·라이브러리 설정 library.yaml·ista6.yaml 을
+  auth.dashboard_public_login_url(대시보드 웹 경로)을 넣는다. git 폴더 설치(mode repo)는 server.frontend_root(프런트 배치 폴더 —
+  백엔드가 /esl/ 직접 서빙, 대시보드 Vite 프록시 기본 구성) = deploy.json caddy_frontend_root(기본 <런타임>/frontend)를 키가 없을 때만
+  넣는다(사용자가 바꾼 값·null 은 유지). 묶음 설치(mode bundle)는 Caddy 기준이라 넣지 않는다(예시 값 null). 같은 폴더에 코어 설정 esl.yaml·라이브러리 설정 library.yaml·ista6.yaml 을
   없을 때만 예시에서 복사한다(설정이 가리키는 상대 경로일 때만).
 - 경로 검사: 절대경로, 공백·& | < > ^ % ! " 없음, esl_root 가 input_roots·spdm_roots 와 겹치지 않음(SPDM 밖), input_roots 존재.
   문제가 있으면 경고하고 그 폴더는 만들지 않는다(최종 판정은 플랫폼 설정 검증).
 - Altair·resources·commands 는 없다(서버에서 외부 프로그램을 실행하지 않음). 솔버 의존성(pypardiso·MKL)은 requirements.lock.
+- 대시보드 .env(git 폴더 설치만): VITE_ESL_TARGET=http://127.0.0.1:<server.port>·SIMDASH_ESL_ENABLED=true 를 **없을 때만 끝에 추가**한다
+  (이미 있으면 "이미 있음", 다른 값이면 그대로 두고 경고 — 기존 값·다른 줄·인코딩(BOM)·줄 끝은 보존). 바꾸기 전에 <런타임>/_backup/<UTC>/dashboard.env
+  로 복사한다. 추가했으면 대시보드를 다시 시작해야 반영된다. .env 가 없으면 만들지 않고 안내만 한다.
 - 비밀번호·DB URL 은 다루지 않는다.
 """
 
@@ -43,7 +48,7 @@ COMPANIONS = ((("core", "config_path"), "esl.yaml", "esl.example.yaml"),
 ISTA6 = ("ista6.yaml", "ista6.yaml")   # library.yaml 의 library.ista6 기본값(같은 폴더)
 DEPLOY_KEY_ORDER = ("install_mode", "repo_root", "install_root", "dashboard_root", "python_exe", "pg_bin", "pg_host", "pg_port",
                     "db_name", "db_role", "config_path", "service_user", "run_mode", "caddy_frontend_root",
-                    "backend_serves_frontend", "esl_root", "input_roots", "spdm_roots")
+                    "esl_root", "input_roots", "spdm_roots")
 LIST_KEYS = ("input_roots", "spdm_roots")
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
@@ -259,6 +264,62 @@ def dashboard_login_url(inputs: dict[str, Any], dashboard_root: str) -> tuple[st
     return normalize_web_base(raw)
 
 
+# 대시보드 Vite 프록시 연결(physicsai VITE_PHYSICSAI_TARGET·SIMDASH_PHYSICSAI_ENABLED 와 같은 패턴)
+ENV_TARGET_KEY = "VITE_ESL_TARGET"
+ENV_ENABLED_KEY = "SIMDASH_ESL_ENABLED"
+_TRUE = ("true", "1", "yes", "on")
+
+
+def _env_unquote(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
+        v = v[1:-1]
+    return v.strip()
+
+
+def plan_dashboard_env(dashboard_root: str, port: Any) -> dict[str, Any] | None:
+    """대시보드 .env 연결 키 계획 → {path, exists, rows[{key, want, value, action}], add[줄], warnings}. dashboard_root 가 없으면 None.
+
+    action: "추가"(없음 — 끝에 넣음) | "이미 있음"(같은 값) | "유지(다른 값)"(바꾸지 않음 — 경고)."""
+    if not dashboard_root:
+        return None
+    env = Path(dashboard_root) / ".env"
+    target = f"http://127.0.0.1:{port}"
+    wants = ((ENV_TARGET_KEY, target), (ENV_ENABLED_KEY, "true"))
+    out: dict[str, Any] = {"path": str(env), "exists": env.is_file(), "rows": [], "add": [], "warnings": []}
+    if not env.is_file():
+        out["warnings"].append(f"대시보드 .env가 없습니다: {env} — {ENV_TARGET_KEY}={target}, {ENV_ENABLED_KEY}=true 를 직접 넣고 대시보드를 다시 시작하세요")
+        for k, w in wants:
+            out["rows"].append({"key": k, "want": w, "value": None, "action": "없음(.env 없음)"})
+        return out
+    found: dict[str, str] = {}
+    for line in env.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
+        if m and m.group(1) in (ENV_TARGET_KEY, ENV_ENABLED_KEY) and m.group(1) not in found:
+            found[m.group(1)] = _env_unquote(m.group(2))
+    for k, w in wants:
+        cur = found.get(k)
+        if cur is None:
+            out["rows"].append({"key": k, "want": w, "value": None, "action": "추가"})
+            out["add"].append(f"{k}={w}")
+            continue
+        same = cur.rstrip("/") == w if k == ENV_TARGET_KEY else cur.lower() in _TRUE
+        out["rows"].append({"key": k, "want": w, "value": cur, "action": "이미 있음" if same else "유지(다른 값)"})
+        if not same:
+            out["warnings"].append(f"대시보드 .env의 {k}={cur} 는 그대로 둡니다(이 설치 값 {w}) — 다르면 직접 고치고 대시보드를 다시 시작하세요")
+    return out
+
+
+def write_dashboard_env(env_path: str, lines: list[str]) -> None:
+    """.env 끝에 줄을 덧붙인다 — 기존 바이트(BOM·인코딩·다른 줄)는 그대로, 줄 끝은 파일 방식(CRLF/LF)을 따른다."""
+    raw = Path(env_path).read_bytes()
+    nl = b"\r\n" if b"\r\n" in raw or b"\n" not in raw else b"\n"
+    add = b"" if not raw or raw.endswith(b"\n") else nl
+    add += nl.join(ln.encode("utf-8") for ln in lines) + nl
+    with open(env_path, "ab") as f:
+        f.write(add)
+
+
 def _read_json(p: Path) -> dict[str, Any] | None:
     if not p.is_file():
         return None
@@ -337,6 +398,11 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     desired: dict[tuple[str, ...], Any] = {("profile",): "prod"}
     for k in ("host", "port", "base_path"):
         desired[("server", k)] = (example.get("server") or {}).get(k)
+    if mode == "repo" or str(deploy.get("backend_serves_frontend")).lower() in ("true", "1", "yes"):
+        # 백엔드가 /esl/ 를 직접 서빙(대시보드 Vite 프록시 기본 구성). 프런트 배치 폴더 = deploy.json caddy_frontend_root(기본 <런타임>/frontend).
+        # 기존 파일에 키가 없을 때만 보충 — 사용자가 null(Caddy 등 외부 서빙)이나 다른 경로로 바꾼 값은 유지.
+        # 묶음 설치는 Caddy 기준이라 넣지 않는다 — 단 이전 deploy.json "backend_serves_frontend": true(작업 인자 --frontend 방식)는 이 키로 이어받는다
+        desired[("server", "frontend_root")] = fwd(str(deploy.get("caddy_frontend_root") or (runtime / "frontend")))
     desired[("storage", "esl_root")] = esl_root
     desired[("storage", "input_roots")] = input_roots
     desired[("storage", "spdm_roots")] = spdm_roots
@@ -436,7 +502,15 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
                                "exists": ista_target.is_file(), "copy": not ista_target.is_file()})
         if not exists and not relative:
             warnings.append(f"{'.'.join(path)} 파일이 없습니다: {rel}")
+    # ---- 대시보드 .env(Vite 프록시 연결 — git 폴더 설치만) -------------------------------------------------------
+    dash_env = None
+    if mode == "repo":
+        port = ((final.get("server") or {}) if isinstance(final, dict) else {}).get("port") or 8110
+        dash_env = plan_dashboard_env(str(deploy.get("dashboard_root") or ""), port)
+        if dash_env:
+            warnings += dash_env["warnings"]
     return {
+        "dashboard_env": dash_env,
         "mode": mode, "deploy_path": str(deploy_path), "deploy_exists": existing is not None, "deploy": deploy,
         "deploy_write": deploy_write, "deploy_added": added if existing is not None else [], "deploy_overridden": overridden,
         "deploy_changed": deploy_changed, "config_path": str(config_path), "config_source": source,
@@ -450,8 +524,8 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
 # 쓰기
 # ---------------------------------------------------------------------------
 
-def _backup(p: Path, runtime: Path, stamp: str) -> str:
-    dest = runtime / "_backup" / stamp / p.name
+def _backup(p: Path, runtime: Path, stamp: str, name: str = "") -> str:
+    dest = runtime / "_backup" / stamp / (name or p.name)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(p, dest)
     return str(dest)
@@ -483,6 +557,15 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
             Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(c["source"], c["path"])
             out["written"].append(c["path"])
+    de = pl.get("dashboard_env")
+    out["dashboard_env"] = {"added": [], "backup": None}
+    if de and de["exists"] and de["add"]:
+        env = Path(de["path"])
+        bk = _backup(env, runtime, stamp, "dashboard.env")
+        out["backups"].append(bk)
+        write_dashboard_env(str(env), de["add"])
+        out["written"].append(str(env))
+        out["dashboard_env"] = {"added": [ln.split("=", 1)[0] for ln in de["add"]], "backup": bk}
     root = pl["esl_root"]
     if root and pl["esl_root_ok"] and not os.path.isdir(root):
         Path(root).mkdir(parents=True, exist_ok=True)

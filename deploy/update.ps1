@@ -69,7 +69,7 @@ try {
 
     # ---- ④' 작업 정의 갱신 — 새 venv·app 배치가 끝난 뒤에만 ------------------------------------
     $taskReg = 'trying'
-    $re = Update-EslTaskRegistration -VenvPy $venvPy -WorkDir $root -RuntimeDir $root -ConfigPath $configPath -Frontend (Get-EslTaskFrontend $cfg) `
+    $re = Update-EslTaskRegistration -VenvPy $venvPy -WorkDir $root -RuntimeDir $root -ConfigPath $configPath `
         -ServiceUser "$($cfg.service_user)" -RunMode $runMode
     $taskReg = if (@($re)[-1] -eq $true) { 'done' } else { 'unchanged' }
 
