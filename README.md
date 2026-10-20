@@ -18,7 +18,10 @@ python -m pytest -q         # 시험
 h3d는 클라우드에서 읽지 않는다. Altair HyperView가 있는 Windows PC에서 TCL로 CSV 폴더를 만든다
 (자세한 내용: `resources/tcl/README.md`).
 
-### 2.1 Windows 설치·업데이트 (권장)
+### 2.1 Windows 설치·업데이트 (권장) — **사용자 PC**(HyperView TCL 배포)
+
+> 이 절의 루트 `update.bat`은 **사용자 PC**용(HyperView TCL·`ESL_probe.bat`·`ESL_extract.bat`)이다.
+> 서버(백엔드·워커·DB·화면) 설치·업데이트는 §6 `deploy\`(`deploy\setup.ps1`·`deploy\update-repo.ps1`·`deploy\install.bat`·`deploy\update.bat`)이며 서로 무관하다.
 
 1. 저장소 클론 폴더(예: `Documents\GitHub\esl-platform`)의 **`update.bat` 더블클릭**.
    git 최신화(작업 트리 변경이 있으면 중단, fast-forward만) → TCL 배포 → 실행 래퍼 생성 → 점검표 출력.
@@ -134,3 +137,35 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 
 생성 ID(/FUNCT, /GRNOD, /CLOAD, /BCS, PSHELL, SID)는 모두 `[id_offset, id_offset+999999]`.
 rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.
+
+## 6. 서버 배포 (Windows Server — 대시보드·physicsai-platform과 같은 PC)
+
+ESL 플랫폼(백엔드 API·워커·PostgreSQL DB·웹 화면 `/esl/`)을 대시보드(simulation_workbench)·physicsai-platform과 **같은 서버·같은 실행 환경**
+(Python 3.12.13, PostgreSQL 18 같은 인스턴스에 별도 DB `esl`·역할 `esl_app`, Node 22.23.2, Caddy 하위 경로, Windows 작업 스케줄러)에 설치한다.
+physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용: [관리자 매뉴얼](docs/manual/admin.md), 현장 확인: [E2E 체크리스트](docs/e2e-checklist.md).
+
+| 용도 | 실행(일반 PowerShell, 관리자 권한 불필요) |
+|---|---|
+| 서버 설치 — git 폴더(권장, 인터넷·사내 프록시) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\setup.ps1 -DashboardRoot <대시보드>` |
+| 서버 업데이트 — git 폴더(git pull 포함, 질문 없음) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\update-repo.ps1` |
+| 폐쇄망 묶음 만들기(준비 PC) | `deploy\collect-offline.ps1` 또는 `bash deploy/collect-offline.sh` → `dist/esl-offline-<ver>.zip` |
+| 폐쇄망 설치 / 업데이트(묶음의 deploy 폴더, `deploy.json`) | `deploy\install.bat`(= `deploy\install.ps1`) / `deploy\update.bat`(= `deploy\update.ps1`) |
+| 작업 등록 해제 | `deploy\uninstall-tasks.ps1` |
+| 시연(Altair·대시보드 없이 합성 Case, 포트 8191) | `deploy\demo\start-demo.bat` / `stop-demo.bat` |
+| 환경 점검(경로 쓰기·DB·migration·솔버 백엔드·pypardiso·설정 검증 표) | `<런타임>\venv\Scripts\python.exe <런타임>\app\esl_service.py check --runtime <런타임>` (개발: `python -m esl_platform.check`) |
+| **사용자 PC** TCL 배포(서버와 무관) | 저장소 루트 `update.bat`(§2.1) |
+
+- 런타임(git 폴더 설치 `<git>\.runtime`, 묶음 `install_root`): `venv`, `app`(코드 스냅샷 — 서비스는 git 폴더가 아니라 이 복사본을 실행), `frontend`, `config\esl_platform.yaml`
+  (+ `esl.yaml`·`library.yaml`·`ista6.yaml`, 예시 `config/esl_platform.prod.example.yaml`), `secrets\database_url`(현재 사용자·SYSTEM만 읽기), `logs`, `state`, `_backup`.
+- 작업 스케줄러 `ESL-Backend`·`ESL-Worker` = `venv\Scripts\python.exe <런타임>\app\esl_service.py backend|worker --runtime <런타임>`(실행기가 설정·DB 파일을
+  자기 프로세스 환경에만 넣음 — 비밀값은 인자·로그에 없음). 실행 시간 제한 없음, `Interactive`(기본)·`Background`.
+- 비밀번호(PostgreSQL 관리자·앱 역할·Background 실행 계정)는 화면 입력(`Read-Host -AsSecureString`) 또는 `-PasswordsFromEnv`
+  (`ESL_INSTALL_PG_ADMIN_PASSWORD`·`ESL_INSTALL_DB_PASSWORD`·`ESL_INSTALL_SERVICE_PASSWORD`)로만 받는다.
+- 솔버 의존성은 `deploy/requirements.lock`(physicsai와 겹치는 패키지는 같은 버전)에 pypardiso + MKL Windows 휠·pyamg·psutil 포함, scikit-sparse는 Windows 제외.
+- 접속: 대시보드 Caddyfile의 catch-all 앞에 `deploy/caddy/esl.caddy`(`/esl/api/*` → `127.0.0.1:8110`, `/esl/*` → 프런트 빌드), Caddy 환경변수 `ESL_PORT`·`ESL_FRONTEND_ROOT`.
+
+### 6.1 대시보드 쪽 요청 사항(이 저장소 밖)
+
+1. physicsai `SIMDASH_PHYSICSAI_ENABLED`와 같은 패턴으로 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`일 때 대시보드 메뉴에 ESL(`/esl/`) 링크 표시.
+2. (Caddy 없이 대시보드 Vite 서버만 쓰는 구성) `VITE_ESL_TARGET=http://127.0.0.1:8110`일 때 Vite가 `/esl` 전체를 그 주소로 경로 그대로 프록시
+   — ESL 쪽은 `deploy.json` `"backend_serves_frontend": true`로 백엔드가 `/esl/` 화면도 서빙한다(관리자 매뉴얼 §2.6.2).

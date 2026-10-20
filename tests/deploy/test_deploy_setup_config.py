@@ -1,0 +1,209 @@
+"""deploy/setup_config.py 순수 로직: 설정 생성·보충(사용자 값 보존), deploy.json 해석·병합, 대시보드 .env(웹 경로) 자동 채움, 경로 검사."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+import setup_config as sc
+import yaml
+from conftest import ROOT
+
+
+def _inputs(tmp_path: Path, **deploy) -> dict:
+    rt = tmp_path / "rt"
+    base = {"install_mode": "repo", "install_root": str(rt), "config_path": str(rt / "config" / "esl_platform.yaml"),
+            "db_name": "esl", "db_role": "esl_app", "esl_root": str(tmp_path / "esl_root"),
+            "input_roots": [str(tmp_path / "inputs")], "spdm_roots": [str(tmp_path / "spdm")]}
+    base.update(deploy)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    return {"mode": "repo", "source_root": str(ROOT), "code_root": str(ROOT), "runtime_dir": str(rt), "stamp": "T1",
+            "deploy_defaults": base, "deploy_explicit": {}}
+
+
+def _run(action: str, inputs: dict) -> dict:
+    pl = sc.plan(inputs)
+    if action == "write":
+        pl["write"] = sc.write(inputs, pl)
+    return pl
+
+
+def test_new_install_creates_valid_config(tmp_path):
+    inp = _inputs(tmp_path)
+    r = _run("write", inp)
+    cfg = Path(r["config_path"])
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert d["profile"] == "prod" and d["server"]["port"] == 8110 and d["server"]["base_path"] == "/esl"
+    assert d["storage"]["esl_root"] == sc.fwd(str(tmp_path / "esl_root"))
+    assert d["storage"]["input_roots"] == [sc.fwd(str(tmp_path / "inputs"))]
+    assert d["auth"]["dashboard_public_login_url"] == "/home/"         # 대시보드 .env 없음 → Vite 기본 /home/
+    for n in ("esl.yaml", "library.yaml", "ista6.yaml"):
+        assert (cfg.parent / n).is_file(), n
+    assert (tmp_path / "esl_root").is_dir()
+    assert r["write"]["validation"]["ok"] is True, r["write"]["validation"]
+    dj = json.loads((tmp_path / "rt" / "deploy.json").read_text(encoding="utf-8"))
+    assert list(dj)[:3] == ["install_mode", "install_root", "db_name"] or dj["install_mode"] == "repo"
+    assert "password" not in json.dumps(dj).lower()
+    assert cfg.read_text(encoding="utf-8").startswith("# ESL 플랫폼 설정")
+    assert r["warnings"] == []
+
+
+def test_rerun_is_idempotent_and_preserves_user_edits(tmp_path):
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    text = cfg.read_text(encoding="utf-8").replace("max_memory_gb: 32", "max_memory_gb: 96").replace("port: 8110", "port: 8120")
+    cfg.write_text(text, encoding="utf-8")
+    (cfg.parent / "esl.yaml").write_text((cfg.parent / "esl.yaml").read_text(encoding="utf-8") + "# 사용자 수정\n", encoding="utf-8")
+    inp["deploy_defaults"]["esl_root"] = str(tmp_path / "other_root")    # 기존 deploy.json 값이 우선
+    r2 = _run("write", inp)
+    assert r2["config_changed"] is False and r2["deploy_changed"] is False and r2["write"]["written"] == []
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert d["worker"]["max_memory_gb"] == 96 and d["server"]["port"] == 8120
+    assert d["storage"]["esl_root"] == sc.fwd(str(tmp_path / "esl_root"))
+    assert "# 사용자 수정" in (cfg.parent / "esl.yaml").read_text(encoding="utf-8")
+    port_row = next(x for x in r2["config_rows"] if x["key"] == "server.port")
+    assert port_row["action"].startswith("유지(설정 파일 값")
+
+
+def test_explicit_argument_overrides_deploy_json(tmp_path):
+    inp = _inputs(tmp_path)
+    _run("write", inp)
+    inp["deploy_explicit"] = {"run_mode": "Background"}
+    r = _run("plan", inp)
+    assert r["deploy"]["run_mode"] == "Background" and r["deploy_overridden"] == [] and "run_mode" in r["deploy_added"]
+    _run("write", inp)
+    inp["deploy_explicit"] = {"run_mode": "Interactive"}
+    r = _run("plan", inp)
+    assert r["deploy_overridden"] == ["run_mode"]
+
+
+def test_existing_config_empty_storage_filled_and_backup(tmp_path):
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    t = cfg.read_text(encoding="utf-8")
+    t = t.replace(f'["{sc.fwd(str(tmp_path / "inputs"))}"]', "[]")
+    cfg.write_text(t, encoding="utf-8")
+    r2 = _run("write", inp)
+    assert "storage.input_roots" in r2["config_changed_keys"]
+    row = next(x for x in r2["config_rows"] if x["key"] == "storage.input_roots")
+    assert row["action"] == "빈 값 채움"
+    assert r2["write"]["backups"] and Path(r2["write"]["backups"][0]).is_file()
+    assert "_backup" in r2["write"]["backups"][0]
+
+
+def test_old_config_without_library_gets_block(tmp_path):
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    lines = cfg.read_text(encoding="utf-8").splitlines()
+    i = next(i for i, ln in enumerate(lines) if ln.startswith("library:"))
+    cfg.write_text("\n".join(lines[:i]) + "\n", encoding="utf-8")
+    (cfg.parent / "library.yaml").unlink()
+    r2 = _run("write", inp)
+    assert "library.config_path" in r2["config_changed_keys"]
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["library"] == {"config_path": "library.yaml"}
+    assert (cfg.parent / "library.yaml").is_file()
+    assert r2["write"]["validation"]["ok"] is True
+
+
+def test_flow_style_config_not_rewritten(tmp_path):
+    """흐름 표기(예시 dev 설정 복사본)는 줄 편집으로 안전하게 고칠 수 없으면 바꾸지 않고 안내."""
+    inp = _inputs(tmp_path)
+    cfg = tmp_path / "rt" / "config" / "esl_platform.yaml"
+    cfg.parent.mkdir(parents=True)
+    t = (ROOT / "config" / "esl_platform.example.yaml").read_text(encoding="utf-8")
+    t = t.replace('auth:\n  mode: dashboard', 'auth:\n  mode: dashboard').replace(
+        'storage:\n  esl_root: "E:/shared/ESL_WORK"', 'storage: {esl_root: "", input_roots: [], spdm_roots: []}\nx_old:\n  esl_root: "E:/shared/ESL_WORK"')
+    t = t.split("x_old:")[0] + "worker:" + t.split("worker:", 1)[1]
+    cfg.write_text(t, encoding="utf-8")
+    before = cfg.read_text(encoding="utf-8")
+    r = _run("write", inp)
+    assert cfg.read_text(encoding="utf-8") == before
+    assert any("자동으로 보충하지 못했습니다" in w for w in r["warnings"])
+
+
+def test_dashboard_env_login_url(tmp_path):
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    (dash / ".env").write_text('DATABASE_URL=postgresql://u:Zq9pwXY@127.0.0.1:5434/db\nWINDOWS_WEB_BASE_PATH="web"\n', encoding="utf-8")
+    inp = _inputs(tmp_path, dashboard_root=str(dash))
+    r = _run("write", inp)
+    d = yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))
+    assert d["auth"]["dashboard_public_login_url"] == "/web/"
+    assert "Zq9pwXY" not in json.dumps(r, ensure_ascii=False)
+    # 사용자가 바꾼 값은 보존, 이전 기본값 "/" 는 대시보드 경로로
+    cfg = Path(r["config_path"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('"/web/"', '"/custom/"'), encoding="utf-8")
+    _run("write", inp)
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["auth"]["dashboard_public_login_url"] == "/custom/"
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('"/custom/"', '"/"'), encoding="utf-8")
+    inp["dashboard_web_base_path"] = "/home"                    # setup.ps1 이 dashboard-env.ps1 로 읽어 넘긴 값 우선
+    _run("write", inp)
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["auth"]["dashboard_public_login_url"] == "/home/"
+
+
+@pytest.mark.parametrize("raw,want,warn", [("", "/home/", False), ("/", "/", False), ("a/b", "/a/b/", False),
+                                           ("../x", "", True), ("a b", "", True)])
+def test_normalize_web_base(raw, want, warn):
+    v, w = sc.normalize_web_base(raw)
+    assert v == want and bool(w) == warn
+
+
+def test_path_checks():
+    w, ok = sc.check_paths("E:/shared/ESL_WORK", ["E:/shared/ESL_WORK/in"], [])
+    assert not ok and any("겹칩니다" in x for x in w)
+    w, ok = sc.check_paths("E:/SPDM/master/esl", [], ["e:/spdm/MASTER"])    # 대소문자 무시(Windows)
+    assert not ok and any("spdm_roots" in x for x in w) and any("비어 있습니다" in x for x in w)
+    w, ok = sc.check_paths("E:/my work/esl", [], [])
+    assert not ok and any("공백" in x for x in w)
+    w, ok = sc.check_paths("relative/esl", [], [])
+    assert not ok and any("절대경로" in x for x in w)
+    w, ok = sc.check_paths("", [], [])
+    assert not ok and any("비어 있습니다" in x for x in w)
+    w, ok = sc.check_paths("E:/ESL_WORK", ["E:/ESL_IN&OUT"], [])
+    assert ok and any("특수문자" in x for x in w)
+    assert sc.overlaps("E:/a/b", "e:\\A") and not sc.overlaps("E:/ab", "E:/a")
+
+
+def test_unsafe_esl_root_not_created(tmp_path):
+    inp = _inputs(tmp_path, esl_root=str(tmp_path / "bad dir"))
+    r = _run("write", inp)
+    assert not (tmp_path / "bad dir").exists() and r["esl_root_ok"] is False
+    assert r["write"]["validation"]["ok"] is False                        # 플랫폼 설정 검증도 거부
+
+
+def test_merge_deploy_lists_and_strings():
+    d, added, _ = sc.merge_deploy({"input_roots": "E:/in", "pg_bin": ""}, {"pg_bin": "E:/pg/bin", "spdm_roots": []}, {})
+    assert d["input_roots"] == ["E:/in"]                                  # PS 5.1 ConvertTo-Json 단일 원소 → 문자열
+    assert d["pg_bin"] == "E:/pg/bin"                                     # 비어 있으면 기본값(대시보드 환경)으로
+    assert d["spdm_roots"] == [] and "spdm_roots" in added
+    assert sc.as_list(None) == [] and sc.as_list(["a\\b", " ", "c"]) == ["a/b", "c"]
+    assert sc.as_list({"value": ["E:/x"], "Count": 1}) == ["E:/x"]          # PS 5.1 이 PSObject 배열을 감싼 형태
+
+
+def test_bundle_mode_does_not_write_deploy_json(tmp_path):
+    dj = tmp_path / "deploy.json"
+    dj.write_text(json.dumps({"install_root": str(tmp_path / "rt"), "esl_root": str(tmp_path / "esl_root"),
+                              "input_roots": [str(tmp_path / "inputs")], "pg_bin": ""}), encoding="utf-8")
+    before = dj.read_text(encoding="utf-8")
+    inp = _inputs(tmp_path)
+    inp.update({"mode": "bundle", "deploy_path": str(dj)})
+    inp["deploy_defaults"] = {"pg_bin": "E:/pg", "config_path": str(tmp_path / "rt" / "config" / "esl_platform.yaml")}
+    r = _run("write", inp)
+    assert dj.read_text(encoding="utf-8") == before and r["deploy_write"] is False
+    assert r["deploy"]["pg_bin"] == "E:/pg"
+    assert r["write"]["validation"]["ok"] is True
+
+
+def test_cli_plan_out_file(tmp_path):
+    inp = _inputs(tmp_path)
+    f = tmp_path / "in.json"
+    f.write_text(json.dumps(inp), encoding="utf-8")
+    out = tmp_path / "out.json"
+    assert sc.main(["plan", "--inputs", str(f), "--out", str(out)]) == 0
+    d = json.loads(out.read_text(encoding="utf-8"))
+    assert "config_text" not in d and d["config_source"] == "example"
+    assert not Path(d["config_path"]).exists()                           # plan 은 파일을 바꾸지 않음

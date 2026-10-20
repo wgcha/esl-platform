@@ -1,0 +1,18 @@
+{
+  "install_root": "D:\\esl",
+  "dashboard_root": "",
+  "python_exe": "D:\\Python312\\python.exe",
+  "pg_bin": "E:\\PostgreSQL\\18\\bin",
+  "pg_host": "127.0.0.1",
+  "pg_port": 5432,
+  "db_name": "esl",
+  "db_role": "esl_app",
+  "config_path": "D:\\esl\\config\\esl_platform.yaml",
+  "service_user": "CORP\\svc_esl",
+  "run_mode": "Interactive",
+  "caddy_frontend_root": "D:\\esl\\frontend",
+  "backend_serves_frontend": false,
+  "esl_root": "E:/shared/ESL_WORK",
+  "input_roots": ["E:/shared/ESL_INPUT"],
+  "spdm_roots": []
+}
