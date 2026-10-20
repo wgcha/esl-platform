@@ -11,7 +11,8 @@
      실행 중인 서비스는 <런타임>\app 복사본을 쓰므로 git pull이 실행 중 코드를 바꾸지 않는다.
   ① 대기·실행 중 작업 확인(DB 직접 조회) → 있으면 안내 후 중단(-Force면 진행)
   ② 작업 2개 중지 ③ venv 의존성 갱신(deploy\requirements.lock) ④ 코드 스냅샷 <런타임>\app(이전 것은 _backup)
-  ⑤ 설정 보충(setup_config.py: 기존 값 유지, 새로 생긴 관리 키만 — 바뀌면 먼저 _backup 복사)
+  ⑤ 설정 보충(setup_config.py: 기존 값 유지, 새로 생긴 관리 키만 — 바뀌면 먼저 _backup 복사. server.frontend_root가 없으면 .runtime\frontend,
+     대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED는 없을 때만 추가 — 추가했으면 대시보드 재시작 안내)
   ⑥ 프런트: 소스가 바뀌었을 때만 Node 22로 빌드 → <런타임>\frontend(이전 것은 _backup)
   ⑥' 작업 정의가 지금 설치와 다르면 다시 등록(Interactive만) — 새 코드 배치가 끝난 뒤에만
   ⑦ alembic upgrade head ⑧ 작업 시작·health·환경 점검. 끝 줄은 "업데이트 성공 — 접속: …" 또는 "업데이트 실패 — 접속: …".
@@ -141,7 +142,6 @@ try {
     $stage = '준비'
     $venvPy = Join-Path $rt 'venv\Scripts\python.exe'
     $dbUrl = Get-EslDbUrl -RuntimeDir $rt
-    $frontendForTask = Get-EslTaskFrontend $cfg
 
     # venv가 Python 3.12로 실행되지 않으면(대시보드 Python 교체 등) 옮기고 새로 만든다 — 아무것도 바꾸기 전에 Python부터 확인
     $why = ''
@@ -181,6 +181,10 @@ try {
     if ($dash -and $dash.WebBasePath) { $inputs['dashboard_web_base_path'] = "$($dash.WebBasePath)" }
     $result = Invoke-EslSetupConfig -VenvPy $venvPy -Action write -RuntimeDir $rt -Inputs $inputs
     Write-EslConfigValidation -Result $result | Out-Null
+    $envAdded = @($result.write.dashboard_env.added | Where-Object { $_ })
+    if ($envAdded.Count) {
+        Write-Step "대시보드 .env에 $($envAdded -join ', ') 추가(이전 사본: $($result.write.dashboard_env.backup)) — 대시보드를 다시 시작해야 /esl/ 연결이 반영됩니다"
+    }
 
     # ---- ⑥ 프런트: 소스가 바뀌었을 때만 Node 22로 빌드(결과를 변수에 받지 않는다) -----------------------
     $stage = '프런트 배치'
@@ -190,7 +194,7 @@ try {
     # ---- ⑥' 작업 정의 갱신 — 새 코드가 배치된 뒤에만 -------------------------------------------------
     $stage = '작업 등록'
     $runMode = if ("$($cfg.run_mode)" -eq 'Background') { 'Background' } else { 'Interactive' }
-    Update-EslTaskRegistration -VenvPy $venvPy -WorkDir $rt -RuntimeDir $rt -ConfigPath $cfg.config_path -Frontend $frontendForTask `
+    Update-EslTaskRegistration -VenvPy $venvPy -WorkDir $rt -RuntimeDir $rt -ConfigPath $cfg.config_path `
         -ServiceUser "$($cfg.service_user)" -RunMode $runMode | Out-Null
 
     # ---- ⑦ migration(실행기가 런타임 DB 파일을 읽음) ------------------------------------------

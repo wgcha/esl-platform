@@ -1,7 +1,7 @@
 """ESL 플랫폼 환경 점검 CLI: `python -m esl_platform.check [--runtime <런타임>] [--config <설정>] [--json]`.
 
 관리 화면의 환경 점검이 없으므로(`GET /status`는 설정·워커·솔버 요약만) 설치·업데이트·설정 변경 뒤 이 표로 확인한다.
-항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), esl_root 쓰기·여유 공간, input_roots·spdm_roots 읽기,
+항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), 프런트 정적 서빙(server.frontend_root — 폴더·index.html, null 이면 SKIP), esl_root 쓰기·여유 공간, input_roots·spdm_roots 읽기,
 worker.state_dir 쓰기, 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
@@ -299,6 +299,10 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         items.append(Item("config.auth", WARN if s.profile == "dev" else FAIL, "auth.mode=dev_static(개발·시연 전용)"))
     else:
         items.append(Item("config.auth", OK, f"dashboard {s.auth.dashboard_internal_url} (쿠키 {s.auth.cookie_name})"))
+    from esl_platform.api.frontend_static import root_status
+
+    fe_status, fe_msg = root_status(s.server.frontend_root, s.server.base_path)
+    items.append(Item("server.frontend_root", fe_status, fe_msg))
     if s.library is None:
         items.append(Item("config.library", WARN, "library 블록 없음 — 라이브러리·분석 쓰기 API 503(LIBRARY_CONFIG_MISSING)"))
     elif lc.library is not None:

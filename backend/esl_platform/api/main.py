@@ -71,6 +71,10 @@ def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
 
     for r in (system, cases, jobs, results, library):
         app.include_router(r.router, prefix=prefix)
+    if ctx.settings.server.frontend_root:  # 운영 기본: 대시보드 Vite 프록시가 /esl 전체를 넘긴다(Caddy 없이) — '/'는 가로채지 않음
+        from .frontend_static import mount_frontend
+
+        mount_frontend(app, ctx.settings.server.base_path, ctx.settings.server.frontend_root)
     return app
 
 

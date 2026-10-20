@@ -189,8 +189,9 @@ def test_caddy_snippet():
 def test_deploy_example_json():
     d = json.loads((DEPLOY / "deploy.example.json").read_text(encoding="utf-8"))
     for k in ("install_root", "dashboard_root", "python_exe", "pg_bin", "pg_host", "pg_port", "db_name", "db_role", "config_path",
-              "service_user", "run_mode", "caddy_frontend_root", "backend_serves_frontend", "esl_root", "input_roots", "spdm_roots"):
+              "service_user", "run_mode", "caddy_frontend_root", "esl_root", "input_roots", "spdm_roots"):
         assert k in d, k
+    assert "backend_serves_frontend" not in d          # 프런트 정적 서빙은 설정 server.frontend_root 가 유일한 출처
     assert d["db_name"] == "esl" and d["db_role"] == "esl_app" and d["run_mode"] in ("Interactive", "Background")
     assert isinstance(d["input_roots"], list) and isinstance(d["spdm_roots"], list)
     for k in ("altair_root", "original_app_root", "resources"):
@@ -234,7 +235,7 @@ def test_prod_example_config():
     dev = yaml.safe_load((ROOT / "config" / "esl_platform.example.yaml").read_text(encoding="utf-8"))
     assert d["profile"] == "prod" and d["auth"]["mode"] == "dashboard" and "dev_static_principal" not in d["auth"]
     assert set(d) == set(dev)                                       # 같은 스키마(최상위 키)
-    assert d["server"] == {"host": "127.0.0.1", "port": 8110, "base_path": "/esl"}
+    assert d["server"] == {"host": "127.0.0.1", "port": 8110, "base_path": "/esl", "frontend_root": None}   # setup.ps1 이 채움
     assert d["core"] == {"config_path": "esl.yaml"} and d["library"] == {"config_path": "library.yaml"}
     assert d["database"]["url_env"] == "ESL_DATABASE_URL"
     for k in ("altair", "resources", "commands"):
@@ -253,8 +254,9 @@ def test_client_update_bat_untouched_and_separate():
 def test_readme_deploy_section():
     t = (ROOT / "README.md").read_text(encoding="utf-8")
     for s in ("deploy\\setup.ps1", "deploy\\update-repo.ps1", "deploy\\install.ps1", "deploy\\update.bat", "esl.caddy",
-              "SIMDASH_ESL_ENABLED", "start-demo.bat", "esl_platform.check", "사용자 PC"):
+              "SIMDASH_ESL_ENABLED", "VITE_ESL_TARGET", "server.frontend_root", "start-demo.bat", "esl_platform.check", "사용자 PC"):
         assert s in t, s
+    assert "backend_serves_frontend" not in t
 
 
 def test_deploy_python_no_bytecode_and_no_secrets():
@@ -269,7 +271,14 @@ def test_docs_exist():
     admin = (ROOT / "docs" / "manual" / "admin.md").read_text(encoding="utf-8")
     for s in ("## 2. 설치", "## 3. 업데이트", "## 4. 설정 파일", "## 10. 환경 점검", "## 13. 문제 해결", "## 14. 시연 모드"):
         assert s in admin, s
+    # 접속 연결: physicsai 와 같은 순서 — Vite 프록시 + 백엔드 정적 서빙이 기본, Caddy 는 대안
+    a, b = admin.index("#### 2.6.1 대시보드 Vite 프록시 + 백엔드 정적 서빙(기본)"), admin.index("#### 2.6.2 Caddy(대안)")
+    assert a < b
+    for s in ("VITE_ESL_TARGET=http://127.0.0.1:8110", "SIMDASH_ESL_ENABLED=true", "http://<대시보드 주소>/esl/",
+              "http://127.0.0.1:8110/esl/api/health", "server.frontend_root", "dashboard.env"):
+        assert s in admin[a:b], s
     e2e = (ROOT / "docs" / "e2e-checklist.md").read_text(encoding="utf-8")
+    assert "VITE_ESL_TARGET" in e2e and "server.frontend_root" in e2e
     for s in ("①", "②", "③", "④", "⑤", "⑥", "라이브러리", "보고서"):
         assert s in e2e, s
 

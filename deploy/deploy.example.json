@@ -11,7 +11,6 @@
   "service_user": "CORP\\svc_esl",
   "run_mode": "Interactive",
   "caddy_frontend_root": "D:\\esl\\frontend",
-  "backend_serves_frontend": false,
   "esl_root": "E:/shared/ESL_WORK",
   "input_roots": ["E:/shared/ESL_INPUT"],
   "spdm_roots": []

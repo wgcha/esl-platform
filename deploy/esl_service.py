@@ -12,8 +12,9 @@ ESL_DATABASE_URL)만 읽으므로, 이 실행기가 `<런타임>/config/esl_plat
 작업 인자에는 파일 경로만 있고 비밀값은 인자·로그에 남지 않는다. --runtime 이 없으면 기존 환경변수를 그대로 쓴다(시연·개발).
 
 - 로그: --runtime 이 있으면 `<런타임>/logs/backend.log`·`worker.log`(10 MB × 5 회전, 표준 출력·오류 포함). 없거나 --console 이면 콘솔.
-- --frontend: 백엔드가 `{base_path}/`(기본 /esl/) 아래에서 프런트 빌드를 직접 서빙(시연 모드, 또는 Caddy 없이 대시보드
-  Vite 프록시로 /esl 전체를 넘기는 구성). 운영 기본은 Caddy(deploy/caddy/esl.caddy)가 프런트를 서빙한다.
+- 프런트 정적 서빙: 운영은 설정 `server.frontend_root`(유일한 출처 — 대시보드 Vite 프록시가 /esl 전체를 경로 그대로 넘기는 기본
+  구성, 규칙은 esl_platform.api.frontend_static). Caddy 를 쓰는 설치는 null 로 두고 Caddy(deploy/caddy/esl.caddy)가 서빙.
+  --frontend 는 시연 모드 전용(설정에 server.frontend_root 가 없을 때만, `/` → `{base_path}/` 포함).
 - 코드 위치: 이 파일 옆(설치본 `<런타임>/app/`) 또는 부모(저장소 `deploy/`)의 backend·worker·esl 을 sys.path 에 넣는다.
 """
 
@@ -168,50 +169,6 @@ def _log_level(cfg: str) -> str:
         return "INFO"
 
 
-# ---------------------------------------------------------------- 프런트 정적 서빙(--frontend)
-def safe_static_path(dist: str, rel: str) -> str | None:
-    """dist 안의 파일 경로(없거나 밖을 가리키면 None). '..'·드라이브·역슬래시·콜론은 거부."""
-    if not rel or "\\" in rel or ":" in rel or "\x00" in rel:
-        return None
-    parts = rel.split("/")
-    if any(p in ("", ".", "..") for p in parts):
-        return None
-    root = os.path.realpath(dist)
-    p = os.path.realpath(os.path.join(root, *parts))
-    if os.path.commonpath([p, root]) != root or not os.path.isfile(p):
-        return None
-    return p
-
-
-def add_frontend(app: Any, base_path: str, dist: str) -> None:
-    """`{base}` → 308 `{base}/`, `{base}/<파일>` 그대로, 없는 경로는 index.html(화면 내부 경로). `{base}/api/...` 는 API 404 유지."""
-    from starlette.exceptions import HTTPException
-    from starlette.responses import FileResponse, RedirectResponse
-
-    base = "/" + base_path.strip("/")
-    index = os.path.join(dist, "index.html")
-
-    @app.get("/", include_in_schema=False)
-    def _root() -> RedirectResponse:
-        return RedirectResponse(base + "/", status_code=307)
-
-    @app.get(base, include_in_schema=False)
-    def _base() -> RedirectResponse:
-        return RedirectResponse(base + "/", status_code=308)
-
-    @app.get(base + "/{rel:path}", include_in_schema=False)
-    def _static(rel: str) -> FileResponse:
-        if rel == "api" or rel.startswith("api/"):
-            raise HTTPException(status_code=404)
-        p = safe_static_path(dist, rel) if rel else None
-        if p is not None:
-            cache = "public, max-age=31536000, immutable" if rel.startswith("assets/") else "no-cache"
-            return FileResponse(p, headers={"Cache-Control": cache})
-        if not os.path.isfile(index):
-            raise HTTPException(status_code=404, detail="프런트 빌드가 없습니다")
-        return FileResponse(index, headers={"Cache-Control": "no-cache"})
-
-
 # ---------------------------------------------------------------- 명령
 def cmd_backend(args: argparse.Namespace, cfg: str) -> int:
     import uvicorn
@@ -224,11 +181,16 @@ def cmd_backend(args: argparse.Namespace, cfg: str) -> int:
         logging.getLogger("esl_service").error("기동 거부: %s", exc)
         print(f"기동 거부: {exc}", file=sys.stderr)
         return 2
-    if args.frontend:
-        dist = os.path.abspath(args.frontend)
-        if not os.path.isfile(os.path.join(dist, "index.html")):
-            logging.getLogger("esl_service").warning("프런트 빌드(index.html)가 없습니다: %s — 화면 요청은 404", dist)
-        add_frontend(app, srv["base_path"], dist)
+    configured = app.state.ctx.settings.server.frontend_root
+    if configured:   # 운영: 설정 server.frontend_root(유일한 출처) — create_app 이 이미 서빙 라우트를 붙였다
+        logging.getLogger("esl_service").info("프런트 정적 서빙(server.frontend_root): %s", configured)
+        if args.frontend:
+            logging.getLogger("esl_service").warning("--frontend 는 무시합니다(설정 server.frontend_root 가 우선): %s", args.frontend)
+    elif args.frontend:   # 시연: 실행기 인자로 서빙 + '/' → {base}/
+        from esl_platform.api.frontend_static import mount_frontend
+
+        base = "/" + str(srv["base_path"]).strip("/")
+        mount_frontend(app, base, os.path.abspath(args.frontend), root_redirect=base + "/")
     logging.getLogger("esl_service").info("백엔드 시작: http://%s:%s%s/api (설정 %s)", srv["host"], srv["port"],
                                          srv["base_path"], cfg)
     uvicorn.run(app, host=str(srv["host"]), port=int(srv["port"]), log_config=None, access_log=False)
@@ -277,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("command", choices=("backend", "worker", "migrate", "check", "endpoint"))
     ap.add_argument("--runtime", default="", help="설치 런타임 폴더(config/esl_platform.yaml, secrets/database_url, logs)")
     ap.add_argument("--config", default="", help="플랫폼 설정 파일(기본 <런타임>/config/esl_platform.yaml 또는 env ESL_PLATFORM_CONFIG)")
-    ap.add_argument("--frontend", default="", help="(backend) 프런트 빌드 폴더를 {base_path}/ 아래에서 직접 서빙")
+    ap.add_argument("--frontend", default="", help="(backend, 시연 전용) 프런트 빌드 폴더를 {base_path}/ 아래에서 직접 서빙 — 운영은 설정 server.frontend_root")
     ap.add_argument("--log-dir", default="", help="로그 폴더(기본 <런타임>/logs, 런타임이 없으면 콘솔)")
     ap.add_argument("--console", action="store_true", help="로그를 파일 대신 콘솔로(문제 해결 — 작업을 멈추고 직접 띄울 때)")
     args, rest = ap.parse_known_args(argv)

@@ -17,7 +17,7 @@
 
 | 구성 요소 | 실행 형태 | 역할 | 기본 위치·포트 |
 |---|---|---|---|
-| 프런트엔드 | 정적 파일(Vite build, base `/esl/`) | 화면 ①~⑥·라이브러리·분석. 대시보드 Caddy가 서빙(§2.6.1) | git 폴더 설치 `<git>\.runtime\frontend`, 묶음 `<install_root>\frontend`(= `deploy.json` `caddy_frontend_root`) |
+| 프런트엔드 | 정적 파일(Vite build, base `/esl/`) | 화면 ①~⑥·라이브러리·분석. ESL 백엔드가 `/esl/` 아래에 서빙(`server.frontend_root`, §2.6.1 — Caddy를 쓰는 설치는 Caddy가 서빙, §2.6.2) | git 폴더 설치 `<git>\.runtime\frontend`, 묶음 `<install_root>\frontend`(= `deploy.json` `caddy_frontend_root`) |
 | 백엔드(API) | 실행기 `esl_service.py backend`(uvicorn, `esl_platform.api.main`) | 입력 검증·권한·작업 생성·조회·보고서. **외부 프로그램을 실행하지 않는다** | `127.0.0.1:8110`, 접두 `/esl/api` |
 | 워커 | 실행기 `esl_service.py worker`(`esl_worker`) | 대기열 claim, 코어(`esl.pipeline.run`)를 자식 프로세스(spawn)로 실행, 취소, 보고서·라이브러리 분석 | PC당 1개 |
 | DB | PostgreSQL 18(대시보드와 **같은 인스턴스, 별도** DB `esl`·역할 `esl_app`) | Case·작업·결과 요약. 대용량 배열은 파일 | 대시보드 `.env` `DATABASE_URL`의 host·port |
@@ -26,10 +26,12 @@
 ```text
 브라우저 ── http://<대시보드 주소>/esl/…   (같은 origin → 대시보드 세션 쿠키 analysis_canvas_session 이 함께 전송)
    │
-대시보드 Caddy ─┬─ /esl/api/*  → ESL 백엔드 127.0.0.1:8110 (deploy\caddy\esl.caddy)
-               ├─ /esl/*      → 프런트 정적 파일(ESL_FRONTEND_ROOT, strip_prefix /esl, SPA index.html)
-               ├─ /physicsai/* → PhysicsAI(별도 스니펫)
-               └─ 그 밖        → 대시보드(기존)
+대시보드 Vite(start.ps1) ─┬─ /esl/*        → ESL 백엔드 127.0.0.1:8110 (경로 그대로, .env VITE_ESL_TARGET)
+                          │                    ├─ /esl/api/* → API
+                          │                    └─ 그 밖      → 프런트 정적 파일(server.frontend_root, 없는 경로는 index.html)
+                          ├─ /physicsai/*  → PhysicsAI(VITE_PHYSICSAI_TARGET)
+                          └─ 그 밖          → 대시보드(기존)
+   (대안: 대시보드 앞 Caddy — /esl/api/* → 백엔드, /esl/* → 정적 파일, deploy\caddy\esl.caddy, §2.6.2)
 ESL 백엔드 ── GET /api/auth/me, /api/projects ──▶ 대시보드 백엔드(루프백 127.0.0.1:8000)
      │
 PostgreSQL `esl` ◀── claim/renew/release ── esl_worker ── spawn ── esl.pipeline(extract·tstar·esl·validate·export·report) / esl.library
@@ -39,11 +41,12 @@ PostgreSQL `esl` ◀── claim/renew/release ── esl_worker ── spawn �
 
 - **같은 Windows Server PC**에서 대시보드(simulation_workbench)·physicsai-platform과 나란히 돈다. 실행 환경도 같다: Python **3.12.13**(대시보드 `.tools\python\cpython-3.12.13-*`), PostgreSQL **18**(같은 인스턴스), Node **22.23.2**(프런트 빌드 때만).
 - 로그인 공유: 사용자는 대시보드에서 로그인한다. ESL 백엔드는 쿠키 토큰으로 대시보드 `GET /api/auth/me`를 호출해 사용자·역할을 확인한다(30초 캐시, `auth.*`). 권한은 대시보드 역할 그대로(조회 = ACTIVE 사용자, 실행 = 프로젝트 `power`·`admin`, 전역 관리 = `is_global_admin`).
-- **대시보드 쪽 요청 사항(이 저장소 밖)**: physicsai와 같은 패턴으로 대시보드 `.env`에 `SIMDASH_ESL_ENABLED=true`를 두면 대시보드 메뉴에 ESL 링크가 보이도록(physicsai `SIMDASH_PHYSICSAI_ENABLED`와 같은 방식) — 대시보드 저장소 변경이 필요하다(README "서버 배포" 요청 사항). Caddy 대신 대시보드 Vite 프록시를 쓰는 구성이면 `VITE_ESL_TARGET=http://127.0.0.1:8110`로 `/esl` 전체를 백엔드에 넘기는 프록시도 대시보드 쪽에 필요하다(§2.6.2).
+- 대시보드 코드는 바꾸지 않는다. 대시보드 `.env`에 두 줄(`VITE_ESL_TARGET`, `SIMDASH_ESL_ENABLED`)만 넣는다(§2.6.1 — git 폴더 설치는 `setup.ps1`이 없을 때만 넣는다). 대시보드는 `VITE_ESL_TARGET`이면 `/esl` 경로를 그대로 이 백엔드로 프록시하고, `SIMDASH_ESL_ENABLED=true`이면 사이드바에 ESL 버튼을 보인다(physicsai `VITE_PHYSICSAI_TARGET`·`SIMDASH_PHYSICSAI_ENABLED`와 같은 방식 — 대시보드 쪽 지원 버전 필요). Caddy를 쓰는 설치는 대신 Caddyfile에 ESL용 스니펫을 추가한다(§2.6.2).
 
 ### 1.3 경로 `/esl/`
 
 - 백엔드 라우트 접두 `{server.base_path}/api`(기본 `/esl/api`)와 프런트 빌드 base `/esl/`(frontend/vite.config.ts)는 같아야 한다. `server.base_path`를 바꾸지 않는다.
+- 대시보드 Vite 프록시는 `/esl` 전체를 접두 그대로 백엔드로 넘기고, 백엔드가 `/esl/api/*`는 API로, 그 밖은 `server.frontend_root`의 정적 파일(없는 경로는 `index.html`)로 응답한다(§2.6.1). Caddy를 쓰면 `/esl/api/*`만 백엔드로 넘기고 프런트는 Caddy가 `uri strip_prefix /esl` 후 정적 파일을 준다(§2.6.2).
 
 ---
 
@@ -77,13 +80,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 | ① | Python 3.12 선택(관리자 권한 확인 없음) |
 | ② | 런타임 폴더 `<git>\.runtime\`: `venv`, `app`(코드 스냅샷), `frontend`(배치), `config\esl_platform.yaml`(+`esl.yaml`·`library.yaml`·`ista6.yaml`), `secrets\database_url`, `deploy.json`, `logs`, `state`, `_backup` |
 | ③ | `.runtime\venv`에 `deploy\requirements.lock` 설치(사내 pip 설정 `pip.ini`·`PIP_INDEX_URL`·`HTTPS_PROXY` 그대로) |
-| ④ | 설정 계획(`deploy\setup_config.py`): `deploy.json`·`esl_platform.yaml`을 **새로 만들거나, 있으면 보존하고 빠진 키만 보충**(사용자가 고친 값은 덮어쓰지 않음, 비어 있는 storage 경로만 채움). 새 설정 = `config\esl_platform.prod.example.yaml`(`profile: prod`, `server.port: 8110`) + `storage.esl_root`(폴더 생성)·`input_roots`·`spdm_roots` + `auth.dashboard_public_login_url`(대시보드 `.env` `WINDOWS_WEB_BASE_PATH`, 기본 `/home/`). 같은 폴더에 `esl.yaml`(코어 판정 기준)·`library.yaml`·`ista6.yaml`을 없을 때만 예시에서 복사. 경로 검사: 절대경로, 공백·`& | < > ^ % ! "` 없음, ESL 루트가 입력·SPDM 루트와 겹치지 않음 |
-| ⑤ | 확인 표(위치·Python·PostgreSQL·ESL 루트·입력 루트·설정 처리·작업 실행) → `Y/N` |
-| ⑥ | 이미 설치돼 있으면 대기열 확인(실행 중 작업이 있으면 중단, `-Force`) → 기존 작업 정의를 `_backup\<UTC>\tasks\*.xml`로 → 작업 중지 → 의존성 갱신 → 코드 스냅샷(이전 `app`은 `_backup`) → 설정 작성(바뀌는 기존 파일은 먼저 `_backup` 복사) → 프런트 배치(이전 것은 `_backup`) |
+| ④ | 설정 계획(`deploy\setup_config.py`): `deploy.json`·`esl_platform.yaml`을 **새로 만들거나, 있으면 보존하고 빠진 키만 보충**(사용자가 고친 값은 덮어쓰지 않음, 비어 있는 storage 경로만 채움). 새 설정 = `config\esl_platform.prod.example.yaml`(`profile: prod`, `server.port: 8110`) + `server.frontend_root`(= `.runtime\frontend` — 백엔드가 `/esl/` 직접 서빙. 키가 없을 때만 보충, 사용자가 바꾼 값·`null`은 유지) + `storage.esl_root`(폴더 생성)·`input_roots`·`spdm_roots` + `auth.dashboard_public_login_url`(대시보드 `.env` `WINDOWS_WEB_BASE_PATH`, 기본 `/home/`). 같은 폴더에 `esl.yaml`(코어 판정 기준)·`library.yaml`·`ista6.yaml`을 없을 때만 예시에서 복사. 경로 검사: 절대경로, 공백·`& | < > ^ % ! "` 없음, ESL 루트가 입력·SPDM 루트와 겹치지 않음. 대시보드 `.env` 연결 키 계획(§2.6.1 — 추가/이미 있음/유지) |
+| ⑤ | 확인 표(위치·Python·PostgreSQL·ESL 루트·입력 루트·설정 처리·작업 실행·프런트 배치·대시보드 `.env`) → `Y/N` |
+| ⑥ | 이미 설치돼 있으면 대기열 확인(실행 중 작업이 있으면 중단, `-Force`) → 기존 작업 정의를 `_backup\<UTC>\tasks\*.xml`로 → 작업 중지 → 의존성 갱신 → 코드 스냅샷(이전 `app`은 `_backup`) → 설정 작성(바뀌는 기존 파일은 먼저 `_backup` 복사 — 대시보드 `.env`는 `_backup\<UTC>\dashboard.env`) → 프런트 배치(이전 것은 `_backup`) |
 | ⑦ | DB 역할·DB(없을 때만) → `.runtime\secrets\database_url` → `alembic upgrade head`(실행기 `migrate` — 0001~0004) → 작업 스케줄러 `ESL-Backend`·`ESL-Worker`(§2.5) → 시작·health(`http://127.0.0.1:8110/esl/api/health`) → **환경 점검 표**(§10) |
-| ⑧ | 접속 연결 안내(§2.6): Caddy 스니펫·환경변수, 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`(대시보드 지원 필요), 접속 주소 |
+| ⑧ | 접속 연결 안내(§2.6.1): 대시보드 `.env`에 `VITE_ESL_TARGET=http://127.0.0.1:<server.port>`·`SIMDASH_ESL_ENABLED=true`(④에서 없을 때만 추가 → "추가함 … 대시보드를 다시 시작하세요", 이미 있으면 "이미 들어 있음"), 접속 주소 `http://<대시보드 주소>/esl/`. Caddy를 쓰는 설치는 `deploy\caddy\esl.caddy`(§2.6.2) |
 
 - 설정은 `.runtime\config\esl_platform.yaml`에서 직접 고친다(§4). 다시 실행하거나 업데이트해도 덮어쓰지 않는다. 고친 뒤 `Stop-ScheduledTask`/`Start-ScheduledTask ESL-Worker`(백엔드도).
+- Caddy가 없는 대시보드 구성(대시보드 `start.ps1`의 Vite 서버만 쓰는 경우)이 기본이다: 대시보드 Vite가 `/esl`을 백엔드로 넘기고 백엔드가 프런트를 서빙한다(§2.6.1). 같은 주소라 대시보드 로그인이 공유된다.
 
 ### 2.1 준비물
 
@@ -92,7 +96,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 | OS | Windows Server(대시보드와 같은 PC), 일반 PowerShell(관리자 권한 불필요. `-RunMode Background` 등록만 관리자 권한이 필요할 수 있음) |
 | 실행 환경 | **대시보드와 동일**: Python **3.12.13**, PostgreSQL **18**(같은 인스턴스), Node **22.23.2**(git 폴더 설치에서 프런트 빌드 때만) |
 | PostgreSQL | `postgres` 관리자 비밀번호를 알고 있음(`pg_bin`에 `psql.exe`) |
-| Caddy | 대시보드가 쓰는 Caddy(Caddyfile 수정 권한) — physicsai와 같은 Caddy에 스니펫 하나 추가 |
+| 대시보드 `.env` | 대시보드 폴더 `.env` 쓰기(git 폴더 설치가 연결 키 2줄을 추가)·대시보드 재시작 권한. Caddy를 쓰는 설치만 Caddyfile 수정 권한(§2.6.2) |
 | 실행 계정 | ESL 루트 쓰기·입력 루트 읽기 권한. 기본은 현재 사용자 `Interactive` |
 | ESL 루트 | Case 산출물 폴더(예 `E:/shared/ESL_WORK`). **SPDM master 밖**, 경로에 공백·`& | < > ^ % ! "` 금지 |
 | 입력 루트 | 사용자가 HyperView TCL로 만든 rad·결과 CSV 폴더가 있는 공유(읽기 전용) |
@@ -132,8 +136,7 @@ zip을 풀고 `deploy\deploy.example.json`을 같은 폴더에 `deploy.json`으�
 | `config_path` | 설정 파일(작업 인자 `--config` — `<install_root>\config\esl_platform.yaml`이면 생략됨) | `D:\esl\config\esl_platform.yaml` |
 | `service_user` | 작업 실행 계정 | `CORP\svc_esl` |
 | `run_mode` | `Interactive`(로그온 세션, 기본) / `Background`(로그온 무관, 세션 0 Service) | `Interactive` |
-| `caddy_frontend_root` | 프런트 배치 위치(Caddy `root`, 환경변수 `ESL_FRONTEND_ROOT`) | `D:\esl\frontend` |
-| `backend_serves_frontend` | `true`면 백엔드가 `/esl/`에서 프런트도 서빙(Caddy 없이 대시보드 Vite 프록시 구성, §2.6.2). 기본 `false` | `false` |
+| `caddy_frontend_root` | 프런트 배치 위치(Caddy `root`·환경변수 `ESL_FRONTEND_ROOT`. Vite 프록시로 쓰면 설정 `server.frontend_root`에 같은 값) | `D:\esl\frontend` |
 | `esl_root` | ESL 루트(설정이 없을 때 새 설정에 넣음, 폴더 생성) | `E:/shared/ESL_WORK` |
 | `input_roots` / `spdm_roots` | 입력 루트 목록 / SPDM 루트 목록(겹침 검사) | `["E:/shared/ESL_INPUT"]` / `[]` |
 
@@ -156,8 +159,9 @@ zip을 풀고 `deploy\deploy.example.json`을 같은 폴더에 `deploy.json`으�
 | ⑧ | `alembic upgrade head`(실행기 `migrate`) — head `0004` |
 | ⑨ | 작업 스케줄러 `ESL-Backend`·`ESL-Worker`(§2.5) |
 | ⑩ | 두 작업 시작 → health 60초까지 → 환경 점검 표(§10) |
-| ⑪ | Caddy 스니펫·환경변수 안내(§2.6) |
+| ⑪ | 연결 안내: 묶음은 **Caddy 기준**(스니펫·환경변수, §2.6.2). Caddy 없이 대시보드 Vite 프록시로 쓰려면 설정 `server.frontend_root`를 `caddy_frontend_root`로 두고(백엔드 재시작) 대시보드 `.env`에 두 줄(§2.6.1) — 묶음 설치는 대시보드 `.env`를 바꾸지 않는다 |
 
+- 이전 묶음 `deploy.json`에 `"backend_serves_frontend": true`(작업 인자 `--frontend` 방식)가 있으면 설정 `server.frontend_root`(키가 없을 때만)로 이어받는다. 작업 인자에는 더 이상 `--frontend`가 없다.
 - **재설치 시 앱 역할 비밀번호**: 역할이 이미 있으면 비밀번호를 바꾸지 않는다. 기존 런타임 파일로 접속되면 묻지 않고, 아니면 **기존 역할과 같은 비밀번호**를 입력한다.
 - `install.bat`·`update.bat`·`start-demo.bat`·`stop-demo.bat`은 `PSModulePath`를 비우고 Windows PowerShell 5.1을 부른다(pwsh 7 창에서 실행해도 5.1 기본 모듈).
 
@@ -171,7 +175,7 @@ zip을 풀고 `deploy\deploy.example.json`을 같은 폴더에 `deploy.json`으�
 | 실패 시 재시작 | 1분 간격, 999회 | |
 | 여러 인스턴스 | `IgnoreNew` | |
 | 권한 수준 | `Limited`(관리자 권한 없이 등록·중지·시작) | |
-| 인자 | 실행기 경로·`--runtime`·(필요할 때만)`--config`·`--frontend` — 파일 경로만 | 비밀값 없음 |
+| 인자 | 실행기 경로·`--runtime`·(필요할 때만)`--config` — 파일 경로만. 프런트 정적 서빙은 인자가 아니라 설정 `server.frontend_root` | 비밀값 없음 |
 
 - 수동 조작: `Start-ScheduledTask ESL-Worker`, `Stop-ScheduledTask ESL-Worker`(백엔드도). 워커를 멈추면 실행 중 작업은 약 1분(lease) 뒤 `INTERRUPTED`.
 - ESL은 외부 GUI 프로그램을 실행하지 않으므로 `Background`(세션 0)에서도 기능 차이가 없다(physicsai와 달리 세션 0 제약 없음). 매핑 드라이브를 입력·ESL 루트로 쓰면 세션별 매핑 문제는 같다(§13).
@@ -179,9 +183,31 @@ zip을 풀고 `deploy\deploy.example.json`을 같은 폴더에 `deploy.json`으�
 
 ### 2.6 접속 연결
 
-#### 2.6.1 Caddy(기본)
+#### 2.6.1 대시보드 Vite 프록시 + 백엔드 정적 서빙(기본)
 
-`deploy\caddy\esl.caddy`를 **대시보드 Caddyfile 사이트 블록 안, catch-all `handle` 앞**(physicsai 스니펫 옆)에 넣는다.
+운영 대시보드(`start.ps1`)는 Caddy 없이 Vite 서버가 화면을 주고, `/esl` 아래 요청 전체를 ESL 백엔드로 **경로 그대로** 넘긴다. 백엔드는 `/esl/api/*`를 API로, 그 밖의 `/esl/…`를 프런트 빌드(`server.frontend_root`)로 응답한다.
+
+1. `esl_platform.yaml`의 `server.frontend_root`를 프런트 배치 폴더로 둔다. git 폴더 설치(§2.0)는 `setup.ps1`·`update-repo.ps1`이 `<git>\.runtime\frontend`로 넣는다(키가 없을 때만 — 이미 있는 값·`null`은 유지). 바꾸면 백엔드 재시작.
+2. 대시보드 `<dashboard_root>\.env`에 두 줄을 넣고 대시보드를 다시 시작한다(포트는 `server.port`와 같게):
+
+   ```dotenv
+   VITE_ESL_TARGET=http://127.0.0.1:8110
+   SIMDASH_ESL_ENABLED=true
+   ```
+
+   git 폴더 설치는 `setup.ps1`·`update-repo.ps1`이 **없을 때만 끝에 추가**한다(다른 줄·인코딩·줄 끝 보존, 바꾸기 전 `.runtime\_backup\<UTC>\dashboard.env`로 복사). 이미 있으면 "이미 들어 있음", 값이 다르면(예: 포트) 그대로 두고 경고한다 — 직접 고친다. 추가했으면 안내대로 **대시보드를 다시 시작**해야 반영된다. `VITE_ESL_TARGET`은 대시보드 Vite가 `/esl`을 이 주소로 프록시하게, `SIMDASH_ESL_ENABLED=true`는 대시보드 사이드바에 ESL 버튼을 보이게 한다(대시보드 쪽 지원 버전 필요).
+3. 접속: `http://<대시보드 주소>/esl/`(대시보드에 로그인한 상태로). 이 PC 확인용 health: `http://127.0.0.1:8110/esl/api/health`.
+   예: 대시보드가 `WINDOWS_WEB_PORT=8080`이면 ESL `http://<서버>:8080/esl/`, 대시보드 `http://<서버>:8080/home/`(`WINDOWS_WEB_BASE_PATH`, 기본 `/home/`).
+   화면의 로그인·"대시보드로" 링크는 `auth.dashboard_public_login_url`(같은 origin 경로) — `setup.ps1`·`update-repo.ps1`이 대시보드 `.env`의 `WINDOWS_WEB_BASE_PATH`로 맞춘다(값이 `/`이거나 없을 때만, 직접 넣은 값은 유지).
+
+- 서빙 규칙: `/esl` → 308 `/esl/`(쿼리 유지). 빌드 폴더 안의 파일은 그대로, 없는 경로는 `index.html`(화면 내부 경로 새로고침 대응). `index.html`은 `Cache-Control: no-cache`, 해시 이름 자산(`assets/`)은 1년 캐시. `..`·드라이브 경로·빌드 폴더 밖을 가리키는 링크는 404. `/esl/api/…`는 정적 처리로 가지 않는다(없는 API = JSON 404). 운영에서는 `/`를 가로채지 않는다(대시보드 몫).
+- 정적 파일은 인증 없이 준다(화면이 `/esl/api/me`로 로그인 여부를 판단). API 인증은 그대로다.
+- 빌드 폴더나 `index.html`이 없어도 백엔드는 기동한다. 환경 점검(§10)의 `server.frontend_root` 행이 WARN으로 알리고, 화면 요청은 404 "프런트 빌드가 없습니다". 설정하지 않으면(`null`) 행은 SKIP(외부 서빙).
+- ESL 백엔드가 인증을 확인하는 대시보드 내부 주소 `auth.dashboard_internal_url`의 기본값 `http://127.0.0.1:8000`은 대시보드 `start.ps1`의 백엔드 기본 포트(`-BackendPort 8000`)와 같다. 대시보드를 다른 포트로 띄우면 이 값도 바꾼다.
+
+#### 2.6.2 Caddy(대안)
+
+대시보드 앞에 Caddy를 두는 설치(폐쇄망 묶음 설치의 기준)는 `deploy\caddy\esl.caddy` 내용을 **대시보드 Caddyfile 사이트 블록 안, catch-all `handle` 앞**(physicsai 스니펫 옆)에 넣는다. 이때 `server.frontend_root`는 `null`로 두어도 된다(프런트는 Caddy가 서빙).
 
 ```caddyfile
 redir /esl /esl/ 308
@@ -198,16 +224,9 @@ handle /esl/* {
 }
 ```
 
-- Caddy 실행 환경에 `ESL_PORT`(= `server.port`), `ESL_FRONTEND_ROOT`(= `caddy_frontend_root`, git 폴더 설치는 `<git>\.runtime\frontend`)를 두거나 값을 직접 적고 Caddy 설정을 다시 읽는다.
-- 대시보드 `.env`에 `SIMDASH_ESL_ENABLED=true`(대시보드 메뉴 — 대시보드 쪽 지원 후).
-- 확인: `http://<대시보드 주소>/esl/` → 대시보드 로그인 상태면 이름·프로젝트가 보인다. 이 PC에서 health: `http://127.0.0.1:8110/esl/api/health`.
-
-#### 2.6.2 대시보드 Vite 프록시(대안 — Caddy 없는 대시보드)
-
-physicsai 기본 구성처럼 대시보드 Vite가 `/esl` 전체를 백엔드로 넘기는 구성. ESL 백엔드는 실행기 `--frontend`로 `/esl/` 아래에서 프런트를 직접 서빙한다(`index.html` no-cache, `assets/` 1년 캐시, 없는 경로는 `index.html`, `/esl/api/…` 404는 JSON 그대로, `..`·드라이브·링크 밖 경로 거부).
-
-1. `deploy.json`에 `"backend_serves_frontend": true` → `setup.ps1`(또는 `update-repo.ps1`)을 다시 실행(작업 인자에 `--frontend <caddy_frontend_root>` 추가).
-2. 대시보드 `.env`: `VITE_ESL_TARGET=http://127.0.0.1:8110`, `SIMDASH_ESL_ENABLED=true` — **대시보드 쪽 프록시 지원이 필요**(README 요청 사항).
+- `{$…}`는 Caddy가 **설정을 읽을 때** 자기 프로세스 환경변수로 바꾼다. Caddy 실행 환경에 `ESL_PORT`(= `server.port`), `ESL_FRONTEND_ROOT`(= `caddy_frontend_root`, git 폴더 설치는 `<git>\.runtime\frontend`)를 두거나 값을 직접 적고 Caddy 설정을 다시 읽는다.
+- 대시보드 사이드바 버튼은 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`.
+- 확인: `http://<대시보드 주소>/esl/` → 대시보드 로그인 상태면 이름·프로젝트가 보인다(E0-5). 이 PC에서 health: `http://127.0.0.1:8110/esl/api/health`.
 
 ### 2.7 반입 자원(없음)과 솔버 의존성
 
@@ -254,7 +273,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 | ② | 작업 2개 중지 |
 | ③ | venv 의존성 갱신(`requirements.lock`). venv가 3.12로 실행되지 않으면 `_backup`으로 옮기고 새로 |
 | ④ | 코드 스냅샷 `.runtime\app`(이전 것은 `_backup\<UTC>\app`) |
-| ⑤ | 설정 보충(기존 값 유지, 새로 생긴 관리 키만 — 예: P2 이전 설정에 `library` 블록) |
+| ⑤ | 설정 보충(기존 값 유지, 새로 생긴 관리 키만 — 예: P2 이전 설정에 `library` 블록, `server.frontend_root`가 없으면 `.runtime\frontend`). 대시보드 `.env` `VITE_ESL_TARGET`·`SIMDASH_ESL_ENABLED`가 없으면 추가(백업 후 — "대시보드를 다시 시작해야 /esl/ 연결이 반영됩니다") |
 | ⑥ | 프런트: 소스가 바뀌었을 때만 Node 22로 빌드 → `.runtime\frontend` |
 | ⑥' | 작업 정의가 지금 설치와 다르면 다시 등록(Interactive만, Background는 안내) |
 | ⑦ | `alembic upgrade head` |
@@ -287,7 +306,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 .\uninstall-tasks.ps1     # 작업 스케줄러 등록 해제만(파일·DB·런타임 파일은 그대로)
 ```
 
-완전 제거(백업 후): ① Caddyfile에서 ESL 스니펫 삭제 → Caddy 다시 읽기, 대시보드 `.env`의 `SIMDASH_ESL_ENABLED` 삭제 ② 런타임 폴더의 `secrets\database_url` 삭제 ③ DB `esl`·역할 `esl_app` 삭제(`pg_dump` 후) ④ 런타임 폴더 정리 ⑤ **ESL 루트의 Case·라이브러리·분석 폴더는 사용자 산출물** — 플랫폼은 지우지 않는다.
+완전 제거(백업 후): ① 대시보드 `.env`에서 `VITE_ESL_TARGET`·`SIMDASH_ESL_ENABLED` 삭제 → 대시보드 재시작(Caddy를 쓰면 Caddyfile에서 ESL 스니펫 삭제 → Caddy 다시 읽기) ② 런타임 폴더의 `secrets\database_url` 삭제 ③ DB `esl`·역할 `esl_app` 삭제(`pg_dump` 후) ④ 런타임 폴더 정리 ⑤ **ESL 루트의 Case·라이브러리·분석 폴더는 사용자 산출물** — 플랫폼은 지우지 않는다.
 
 ### 3.3 백업·복원
 
@@ -328,7 +347,8 @@ $env:PGPASSWORD = $null
 | 키 | 설명 | 운영 기본 |
 |---|---|---|
 | `profile` | `prod`(dev_static 인증 금지) | `prod` |
-| `server.host` / `port` / `base_path` | 루프백 바인딩 / 포트(Caddy `ESL_PORT`) / `/esl`(바꾸지 않음) | `127.0.0.1` / `8110` / `/esl` |
+| `server.host` / `port` / `base_path` | 루프백 바인딩 / 포트(대시보드 `.env` `VITE_ESL_TARGET` 또는 Caddy `ESL_PORT`와 일치) / `/esl`(바꾸지 않음) | `127.0.0.1` / `8110` / `/esl` |
+| `server.frontend_root` | 백엔드가 `/esl/` 아래에 직접 서빙할 프런트 빌드 폴더(절대경로, §2.6.1). `null` = 서빙 안 함(Caddy 등 외부 서빙). 바꾸면 백엔드 재시작 | git 폴더 설치 `<git>/.runtime/frontend`, 묶음·예시 `null` |
 | `database.url_env` | DB URL 환경변수 **이름**(실행기가 런타임 파일 값을 이 이름으로 넣음) | `ESL_DATABASE_URL` |
 | `auth.dashboard_internal_url` | 대시보드 백엔드 내부 주소 | `http://127.0.0.1:8000` |
 | `auth.dashboard_public_login_url` | 로그인·"대시보드로" 링크(같은 origin 경로) — 설치가 `WINDOWS_WEB_BASE_PATH`로 맞춤 | `/home/` |
@@ -366,6 +386,7 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py check --runtime D:\esl 
 | `python` | 3.12 → OK, 아니면 WARN(기준: 대시보드와 같은 3.12.13) |
 | `config.valid` | 스키마·의미(루트 겹침·경로 문자)·코어·라이브러리 설정 검증. 오류 → FAIL(키: 메시지) |
 | `config.auth` / `config.library` | dev_static이면 WARN(prod면 FAIL) / library 블록 없음 → WARN |
+| `server.frontend_root` | 프런트 정적 서빙(§2.6.1): 폴더와 `index.html`이 있으면 OK, 없으면 WARN(백엔드는 기동, 화면 404), `null`이면 SKIP(Caddy 등 외부 서빙) |
 | `storage.esl_root.write` / `.free` | 임시 파일 쓰기·삭제 / 여유 공간 < `--min-free-gb`(기본 20) → WARN |
 | `storage.input_roots` / `storage.spdm_roots` | 각 폴더 존재·목록 읽기(입력 루트 없음 → FAIL, 비어 있음 → WARN) |
 | `worker.state_dir` | 쓰기 가능(없으면 WARN — 워커가 만듦) |
@@ -480,6 +501,6 @@ $env:ESL_INSTALL_SERVICE_PASSWORD = '…'      # Background 모드일 때
 | `setup.ps1`·`update-repo.ps1`·`install.ps1`·`update.ps1`·`collect-offline.ps1`·시연 `.ps1` 실제 Windows 실행 | **미검증**(Linux pwsh 7.4 파싱·PS 5.1 금지 문법 정적 검사·순수 함수 시험만) | E2E E0-1~E0-8 |
 | 작업 스케줄러 등록·Interactive/Background·재부팅 자동 기동·icacls ACL | 미검증 | E0-3·E0-4 |
 | pypardiso + MKL Windows 휠 실제 로드(`mkl_rt.2.dll`) | 미검증(Linux에서 같은 lock 버전 + pardiso로 플랫폼 시험 159건 통과) | 환경 점검 `solver.pypardiso` |
-| Caddy 스니펫·대시보드 `SIMDASH_ESL_ENABLED`(대시보드 쪽 지원) | 대시보드 변경 필요(이 저장소 밖) | E0-5 |
+| 대시보드 Vite 프록시 `VITE_ESL_TARGET`·사이드바 `SIMDASH_ESL_ENABLED`(대시보드 쪽 지원 버전) / Caddy 스니펫(대안) | 실기 미검증 | E0-5 |
 | 워커 자원 제한: `worker.limiter`·`max_logical_cores`·`max_memory_gb`·`vm_headroom`·`priority` | **적용됨(실기 미검증)** — POSIX는 Linux 자식 프로세스 실제 적용 시험, Windows Job Object는 가짜 kernel32 인자 시험 + 64비트 구조체 배치(basic 64 B·extended 144 B·JobMemoryLimit 오프셋 120·CPU 8 B) 단언만. 할당 실패 시 작업 step이 `LIMITER_FAILED`, 한도 초과는 `SOLVER_OUT_OF_MEMORY` — `python -m esl_platform.check`의 `worker.limiter` 행 확인 | §4.3, E2E E0 |
 | 판정 기준(`validation`·`compare`)·ISTA 6 낙하 높이 | 임시값·TODO | 코어 `esl.yaml`, `ista6.yaml` |

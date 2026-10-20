@@ -7,9 +7,11 @@
 schema_version: 1
 profile: prod                         # 운영. dev_static 인증 금지
 server:
-  host: 127.0.0.1                     # 루프백 전용(외부 접속은 대시보드 Caddy /esl/ 경유)
-  port: 8110                          # physicsai(8100)·시연(8190·8191)과 겹치지 않게. Caddy ESL_PORT 와 같게
+  host: 127.0.0.1                     # 루프백 전용(외부 접속은 대시보드 주소 /esl/ 경유 — Vite 프록시 또는 Caddy)
+  port: 8110                          # physicsai(8100)·시연(8190·8191)과 겹치지 않게. 대시보드 .env VITE_ESL_TARGET(또는 Caddy ESL_PORT)과 같게
   base_path: /esl                     # API = /esl/api, 프런트 = /esl/ (프런트 빌드 base 와 같아야 함 — 바꾸지 않는다)
+  frontend_root: null                 # 백엔드가 /esl/ 아래에 직접 서빙할 프런트 빌드 폴더(절대경로, 예 D:/esl-platform/.runtime/frontend).
+                                      # git 폴더 설치(setup.ps1)는 <git>/.runtime/frontend 로 채운다(키가 없을 때만). null = 서빙 안 함(Caddy 등 외부 서빙)
 database:
   url_env: ESL_DATABASE_URL           # 값이 아니라 환경변수 이름. 실행기(esl_service.py)가 <런타임>\secrets\database_url 을 이 이름으로 넣는다
   pool_size: 5

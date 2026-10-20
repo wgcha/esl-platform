@@ -75,17 +75,16 @@ $filled = Merge-DashboardDefaults -Config $cfg -Defaults $d
     assert "S3cretPw" not in r.stdout + r.stderr and "dash_user" not in r.stdout + r.stderr
 
 
-def test_task_arguments_and_frontend(tmp_path):
+def test_task_arguments_without_frontend(tmp_path):
+    """작업 인자에는 --frontend 가 없다(프런트 정적 서빙은 설정 server.frontend_root 가 유일한 출처)."""
     body = _dot("install-common.ps1") + """
 $rt = '/srv/esl/rt'
 $o = [ordered]@{
   def = Get-EslTaskArguments -Command backend -RuntimeDir $rt -ConfigPath '/srv/esl/rt/config/esl_platform.yaml'
-  custom = Get-EslTaskArguments -Command worker -RuntimeDir ($rt + '/') -ConfigPath '/etc/esl/x.yaml' -Frontend '/srv/fe'
-  fe = Get-EslTaskArguments -Command backend -RuntimeDir $rt -Frontend '/srv/fe/'
+  custom = Get-EslTaskArguments -Command worker -RuntimeDir ($rt + '/') -ConfigPath '/etc/esl/x.yaml'
   specs = @(Get-EslTaskSpecs -RuntimeDir $rt | ForEach-Object { $_.Name })
-  feOn = Get-EslTaskFrontend ([pscustomobject]@{ backend_serves_frontend = $true; caddy_frontend_root = '/srv/fe' })
-  feOff = Get-EslTaskFrontend ([pscustomobject]@{ backend_serves_frontend = $false; caddy_frontend_root = '/srv/fe' })
-  feMissing = Get-EslTaskFrontend ([pscustomobject]@{ caddy_frontend_root = '/srv/fe' })
+  specArgs = @(Get-EslTaskSpecs -RuntimeDir $rt | ForEach-Object { $_.Args })
+  oldFn = [bool](Get-Command Get-EslTaskFrontend -ErrorAction SilentlyContinue)
   access = Get-EslAccessUrl -Dash ([pscustomobject]@{ EnvFile = 'x'; WebPort = 8080 })
   access80 = Get-EslAccessUrl -Dash ([pscustomobject]@{ EnvFile = 'x'; WebPort = $null })
   accessNone = Get-EslAccessUrl -Dash $null
@@ -96,12 +95,60 @@ $o = [ordered]@{
     o = _json_out(run_pwsh(body, tmp_path))
     assert o["def"] == '"/srv/esl/rt/app/esl_service.py" backend --runtime "/srv/esl/rt"'      # 기본 설정이면 --config 생략
     assert o["custom"] == '"/srv/esl/rt/app/esl_service.py" worker --runtime "/srv/esl/rt" --config "/etc/esl/x.yaml"'
-    assert o["fe"].endswith('--runtime "/srv/esl/rt" --frontend "/srv/fe"')                   # worker 에는 --frontend 없음
     assert o["specs"] == ["ESL-Backend", "ESL-Worker"]
-    assert o["feOn"] == "/srv/fe" and o["feOff"] == "" and o["feMissing"] == ""
+    assert not any("--frontend" in a for a in o["specArgs"]) and o["oldFn"] is False
     assert o["access"].endswith(":8080/esl/") and o["access80"].endswith("/esl/") and ":80/" not in o["access80"]
     assert o["accessNone"] == "http://<대시보드 주소>/esl/"
     assert o["under"] == [True, False, True]
+
+
+def _guide(tmp_path: Path, env: str | None, extra: str = "") -> str:
+    dash = tmp_path / "dash"
+    dash.mkdir(exist_ok=True)
+    if env is not None:
+        (dash / ".env").write_text(env, encoding="utf-8")
+    body = _dot("install-common.ps1") + f"""
+Write-EslConnectGuide -Port 8123 -BasePath '/esl' -DashboardRoot '{dash}' -FrontendRoot 'D:\\esl\\.runtime\\frontend' -SnippetDir '/x/caddy' {extra}
+"""
+    r = run_pwsh(body, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
+
+
+def test_connect_guide_vite_proxy_default(tmp_path):
+    """연결 안내(physicsai Write-PhysicsAIConnectGuide 와 같은 문구): Vite 프록시 + 백엔드 정적 서빙이 기본, Caddy 는 대안."""
+    out = _guide(tmp_path, "X=1\n")
+    assert "VITE_ESL_TARGET=http://127.0.0.1:8123 , SIMDASH_ESL_ENABLED=true 를 넣고 대시보드를 다시 시작하세요" in out
+    assert "백엔드가 프런트 D:\\esl\\.runtime\\frontend 를 /esl/ 아래에 서빙 — 설정 server.frontend_root" in out
+    assert "접속: http://<대시보드 주소>/esl/" in out and "health: http://127.0.0.1:8123/esl/api/health" in out
+    assert "Caddy를 쓰는 설치: /x/caddy/esl.caddy" in out
+    out = _guide(tmp_path, 'SIMDASH_ESL_ENABLED=true\nVITE_ESL_TARGET="http://127.0.0.1:8123"\n')
+    assert "SIMDASH_ESL_ENABLED=true — 이미 들어 있음" in out
+    out = _guide(tmp_path, "SIMDASH_ESL_ENABLED=true\nVITE_ESL_TARGET=http://127.0.0.1:8100\n")   # 포트가 다르면 다시 안내
+    assert "를 넣고 대시보드를 다시 시작하세요" in out
+    out = _guide(tmp_path, "SIMDASH_ESL_ENABLED=true\nVITE_ESL_TARGET=http://127.0.0.1:8123\n",
+                 "-EnvResult ([pscustomobject]@{ added = @('VITE_ESL_TARGET'); backup = '/rt/_backup/T/dashboard.env' })")
+    assert "— 추가함(VITE_ESL_TARGET, 이전 .env 사본: /rt/_backup/T/dashboard.env). 대시보드를 다시 시작하세요" in out
+
+
+def test_connect_guide_bundle_caddy_with_vite_option(tmp_path):
+    out = _guide(tmp_path, None, "-Bundle")
+    assert "(묶음 설치 — Caddy 기준)" in out and "/x/caddy/esl.caddy" in out and "ESL_PORT=8123" in out
+    assert "Caddy 없이 대시보드 Vite 프록시로 쓰려면: 설정 server.frontend_root: D:/esl/.runtime/frontend" in out
+    assert "VITE_ESL_TARGET=http://127.0.0.1:8123 , SIMDASH_ESL_ENABLED=true 를 넣고 대시보드를 다시 시작하세요" in out
+
+
+def test_dashboard_env_plan_cell(tmp_path):
+    body = _dot("install-common.ps1") + """
+$p = [pscustomobject]@{ path = 'D:/dash/.env'; exists = $true; add = @('VITE_ESL_TARGET=x')
+  rows = @([pscustomobject]@{ key = 'VITE_ESL_TARGET'; action = '추가' }, [pscustomobject]@{ key = 'SIMDASH_ESL_ENABLED'; action = '이미 있음' }) }
+$o = [ordered]@{ a = (Format-EslDashboardEnvPlan $p); none = (Format-EslDashboardEnvPlan $null)
+  missing = (Format-EslDashboardEnvPlan ([pscustomobject]@{ path = 'D:/dash/.env'; exists = $false })) }
+'JSON=' + ($o | ConvertTo-Json -Compress)
+"""
+    o = _json_out(run_pwsh(body, tmp_path))
+    assert o["a"] == "VITE_ESL_TARGET 추가, SIMDASH_ESL_ENABLED 이미 있음 — 바꾸기 전 _backup에 사본, 대시보드 재시작 필요 (D:/dash/.env)"
+    assert o["none"].startswith("(대시보드 없음") and o["missing"].startswith("D:/dash/.env 없음")
 
 
 def test_db_url_roundtrip(tmp_path):

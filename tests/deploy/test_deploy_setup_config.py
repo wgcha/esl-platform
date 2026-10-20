@@ -1,4 +1,5 @@
-"""deploy/setup_config.py 순수 로직: 설정 생성·보충(사용자 값 보존), deploy.json 해석·병합, 대시보드 .env(웹 경로) 자동 채움, 경로 검사."""
+"""deploy/setup_config.py 순수 로직: 설정 생성·보충(사용자 값 보존), deploy.json 해석·병합, 대시보드 .env(웹 경로) 자동 채움,
+server.frontend_root 채움, 대시보드 .env Vite 프록시 키(VITE_ESL_TARGET·SIMDASH_ESL_ENABLED) 추가·이미 있음·보존·백업, 경로 검사."""
 
 from __future__ import annotations
 
@@ -207,3 +208,118 @@ def test_cli_plan_out_file(tmp_path):
     d = json.loads(out.read_text(encoding="utf-8"))
     assert "config_text" not in d and d["config_source"] == "example"
     assert not Path(d["config_path"]).exists()                           # plan 은 파일을 바꾸지 않음
+
+
+# ---------------------------------------------------------------- 대시보드 Vite 프록시 + 백엔드 정적 서빙(기본 연결)
+def test_frontend_root_filled_for_repo_install(tmp_path):
+    """git 폴더 설치: server.frontend_root = <런타임>/frontend(deploy.json caddy_frontend_root). 키가 없을 때만 — 바꾼 값·null 은 유지."""
+    inp = _inputs(tmp_path)
+    r = _run("write", inp)
+    cfg = Path(r["config_path"])
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["server"]["frontend_root"] == sc.fwd(str(tmp_path / "rt" / "frontend"))
+    assert r["write"]["validation"]["ok"] is True
+    # 사용자 값 유지(null = Caddy 등 외부 서빙, 다른 경로)
+    for user in ("null", '"D:/other/frontend"'):
+        t = cfg.read_text(encoding="utf-8")
+        t = "\n".join(("  frontend_root: " + user) if ln.startswith("  frontend_root:") else ln for ln in t.split("\n"))
+        cfg.write_text(t, encoding="utf-8")
+        r2 = _run("write", inp)
+        assert "server.frontend_root" not in r2["config_changed_keys"]
+        assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["server"]["frontend_root"] == yaml.safe_load(user)
+    # 이전 설정(키 없음) → 보충
+    t = "\n".join(ln for ln in cfg.read_text(encoding="utf-8").split("\n") if not ln.startswith("  frontend_root:"))
+    cfg.write_text(t, encoding="utf-8")
+    r3 = _run("write", inp)
+    assert "server.frontend_root" in r3["config_changed_keys"]
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["server"]["frontend_root"] == sc.fwd(str(tmp_path / "rt" / "frontend"))
+    row = next(x for x in r3["config_rows"] if x["key"] == "server.frontend_root")
+    assert row["action"] == "보충"
+
+
+def test_frontend_root_from_deploy_json(tmp_path):
+    inp = _inputs(tmp_path, caddy_frontend_root=str(tmp_path / "fe"))
+    r = _run("plan", inp)
+    assert yaml.safe_load(r["config_text"])["server"]["frontend_root"] == sc.fwd(str(tmp_path / "fe"))
+
+
+def test_bundle_mode_keeps_frontend_root_null_and_env_untouched(tmp_path):
+    """묶음 설치는 Caddy 기준: server.frontend_root 는 예시 값(null), 대시보드 .env 는 건드리지 않는다."""
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    (dash / ".env").write_text("X=1\n", encoding="utf-8")
+    inp = _inputs(tmp_path, dashboard_root=str(dash))
+    inp["mode"] = "bundle"
+    r = _run("write", inp)
+    assert yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))["server"]["frontend_root"] is None
+    assert r["dashboard_env"] is None and (dash / ".env").read_text(encoding="utf-8") == "X=1\n"
+
+
+def test_dashboard_env_keys_added_with_backup(tmp_path):
+    """대시보드 .env: VITE_ESL_TARGET·SIMDASH_ESL_ENABLED 를 끝에 추가(BOM·CRLF·다른 줄 보존), 바꾸기 전 _backup 복사."""
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    orig = "\ufeffDATABASE_URL=postgresql://u:Zq9pwXY@127.0.0.1:5434/db\r\nWINDOWS_WEB_BASE_PATH=/home/\r\nVITE_PHYSICSAI_TARGET=http://127.0.0.1:8100"
+    (dash / ".env").write_bytes(orig.encode("utf-8"))
+    inp = _inputs(tmp_path, dashboard_root=str(dash))
+    p = _run("plan", inp)
+    assert [(x["key"], x["action"]) for x in p["dashboard_env"]["rows"]] == [("VITE_ESL_TARGET", "추가"), ("SIMDASH_ESL_ENABLED", "추가")]
+    assert (dash / ".env").read_bytes() == orig.encode("utf-8")              # plan 은 바꾸지 않음
+    r = _run("write", inp)
+    raw = (dash / ".env").read_bytes()
+    assert raw == (orig + "\r\nVITE_ESL_TARGET=http://127.0.0.1:8110\r\nSIMDASH_ESL_ENABLED=true\r\n").encode("utf-8")
+    bk = tmp_path / "rt" / "_backup" / "T1" / "dashboard.env"
+    assert bk.read_bytes() == orig.encode("utf-8") and str(bk) in r["write"]["backups"]
+    assert r["write"]["dashboard_env"] == {"added": ["VITE_ESL_TARGET", "SIMDASH_ESL_ENABLED"], "backup": str(bk)}
+    assert "Zq9pwXY" not in json.dumps(r, ensure_ascii=False)
+    # 다시 실행: 이미 있음 → 쓰지 않고 백업도 없음
+    inp["stamp"] = "T2"
+    r2 = _run("write", inp)
+    assert [x["action"] for x in r2["dashboard_env"]["rows"]] == ["이미 있음", "이미 있음"]
+    assert (dash / ".env").read_bytes() == raw and r2["write"]["dashboard_env"]["added"] == []
+    assert not (tmp_path / "rt" / "_backup" / "T2" / "dashboard.env").exists()
+
+
+def test_dashboard_env_existing_values_preserved(tmp_path):
+    """이미 있는 키는 값이 달라도 바꾸지 않는다(경고). 따옴표·끝 '/'·yes 등은 같은 값으로 본다. 포트는 설정 server.port."""
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    (dash / ".env").write_text('VITE_ESL_TARGET="http://127.0.0.1:8110/"\nSIMDASH_ESL_ENABLED=yes\n', encoding="utf-8")
+    inp = _inputs(tmp_path, dashboard_root=str(dash))
+    r = _run("write", inp)
+    assert [x["action"] for x in r["dashboard_env"]["rows"]] == ["이미 있음", "이미 있음"] and r["warnings"] == []
+    cfg = Path(r["config_path"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace("port: 8110", "port: 8120"), encoding="utf-8")
+    (dash / ".env").write_text("SIMDASH_ESL_ENABLED=false\nVITE_ESL_TARGET=http://127.0.0.1:8110\n", encoding="utf-8")
+    before = (dash / ".env").read_bytes()
+    r2 = _run("write", inp)
+    rows = {x["key"]: x for x in r2["dashboard_env"]["rows"]}
+    assert rows["VITE_ESL_TARGET"]["action"] == "유지(다른 값)" and rows["VITE_ESL_TARGET"]["want"] == "http://127.0.0.1:8120"
+    assert rows["SIMDASH_ESL_ENABLED"]["action"] == "유지(다른 값)"
+    assert (dash / ".env").read_bytes() == before
+    assert sum("그대로 둡니다" in w for w in r2["warnings"]) == 2
+
+
+def test_dashboard_env_partial_and_missing(tmp_path):
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    inp = _inputs(tmp_path, dashboard_root=str(dash))
+    r = _run("write", inp)                                                  # .env 없음 → 만들지 않고 안내
+    assert not (dash / ".env").exists() and r["dashboard_env"]["exists"] is False
+    assert any("대시보드 .env가 없습니다" in w for w in r["warnings"])
+    (dash / ".env").write_bytes(b"SIMDASH_ESL_ENABLED=true")              # 줄바꿈 없는 한 줄 → Windows 줄 끝(CRLF)
+    r = _run("write", inp)
+    assert (dash / ".env").read_bytes() == b"SIMDASH_ESL_ENABLED=true\r\nVITE_ESL_TARGET=http://127.0.0.1:8110\r\n"
+    assert r["write"]["dashboard_env"]["added"] == ["VITE_ESL_TARGET"]
+    (dash / ".env").write_bytes(b"A=1\n")                                   # LF 파일은 LF 로
+    _run("write", inp)
+    assert (dash / ".env").read_bytes() == b"A=1\nVITE_ESL_TARGET=http://127.0.0.1:8110\nSIMDASH_ESL_ENABLED=true\n"
+    (tmp_path / "x").mkdir()
+    assert _run("plan", _inputs(tmp_path / "x"))["dashboard_env"] is None   # dashboard_root 없음
+
+
+def test_bundle_legacy_backend_serves_frontend_migrates_to_config(tmp_path):
+    """이전 묶음 deploy.json "backend_serves_frontend": true(작업 인자 --frontend 방식) → server.frontend_root 로 이어받음."""
+    inp = _inputs(tmp_path, backend_serves_frontend=True, caddy_frontend_root=str(tmp_path / "fe"))
+    inp["mode"] = "bundle"
+    r = _run("write", inp)
+    assert yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))["server"]["frontend_root"] == sc.fwd(str(tmp_path / "fe"))

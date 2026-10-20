@@ -37,6 +37,8 @@ class ServerCfg(_M):
     host: str
     port: int = Field(ge=1, le=65535)
     base_path: str = Field(pattern=r"^/[A-Za-z0-9_\-/]*[A-Za-z0-9_\-]$")
+    # 백엔드가 {base_path}/ 아래에 직접 서빙할 프런트 빌드 폴더(대시보드 Vite 프록시 구성 — 기본). None·빈 값 = 서빙 안 함(Caddy 등 외부 서빙)
+    frontend_root: str | None = None
 
 
 class DatabaseCfg(_M):
@@ -251,6 +253,9 @@ def _library(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str, 
 
 def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str, Any] | None]:
     issues: list[Issue] = []
+    # 폴더·index.html이 없는 것은 오류가 아니다(기동 후 배치될 수 있음) — 환경 점검 server.frontend_root가 WARN으로 알린다
+    if s.server.frontend_root and not is_abs_path(s.server.frontend_root):
+        issues.append(Issue("server.frontend_root", "절대경로여야 합니다(빈 값 = 서빙 안 함)"))
     st = s.storage
     for key, p in [("storage.esl_root", st.esl_root)] + [
         (f"storage.input_roots[{i}]", r) for i, r in enumerate(st.input_roots)

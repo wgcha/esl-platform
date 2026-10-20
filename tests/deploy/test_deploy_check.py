@@ -126,3 +126,28 @@ def test_runtime_secret_and_cli(tmp_path, empty_db_url):
 def test_python_version_rule(monkeypatch, ver, status):
     monkeypatch.setattr(check.sys, "version_info", type("V", (), {"major": ver[0], "minor": ver[1], "micro": ver[2]})())
     assert check.check_python().status == status
+
+
+def test_frontend_root_row(tmp_path, fake_frontend):
+    """server.frontend_root(백엔드 정적 서빙): null = SKIP(Caddy 등 외부 서빙), 폴더·index.html 없음 = WARN, 있으면 OK."""
+    cfg = _cfg(tmp_path)
+
+    def row(value):
+        d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+        d["server"]["frontend_root"] = value
+        cfg.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+        items = check.run_checks(str(cfg), use_db=False)
+        assert _st(items)["config.valid"] == "OK", items
+        return next(i for i in items if i.key == "server.frontend_root")
+
+    assert row(None).status == "SKIP"
+    r = row(str(tmp_path / "nofe"))
+    assert r.status == "WARN" and "폴더가 없습니다" in r.detail
+    (tmp_path / "empty_fe").mkdir()
+    r = row(str(tmp_path / "empty_fe"))
+    assert r.status == "WARN" and "index.html" in r.detail
+    r = row(str(fake_frontend))
+    assert r.status == "OK" and "/esl/" in r.detail and str(fake_frontend) in r.detail
+    out: list[str] = []
+    check.main(["--config", str(cfg), "--no-db"], out=out.append)
+    assert "server.frontend_root" in "\n".join(out)
