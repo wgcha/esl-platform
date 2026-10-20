@@ -8,17 +8,22 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import logging
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from .config import AuthCfg
 from .errors import DomainError
+
+logger = logging.getLogger("esl_platform.auth")
 
 ROLES = ("general", "power", "admin")
 CACHE_MAX = 1000
@@ -45,6 +50,28 @@ def auth_required() -> DomainError:
     return DomainError("AUTHENTICATION_REQUIRED", "대시보드에서 로그인하세요", status=401)
 
 
+def is_loopback_url(url: str) -> bool:
+    """URL 호스트가 루프백(127.0.0.0/8·::1·localhost)인지."""
+    host = (urlsplit(url).hostname or "").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _dashboard_detail(r: "httpx.Response") -> tuple[str, str]:
+    """대시보드 오류 응답 {"detail":{"code","message"}}에서 (code, message). 형식이 다르면 빈 값."""
+    try:
+        d = r.json().get("detail")
+    except Exception:  # noqa: BLE001 — 진단용, 형식이 달라도 원래 오류를 낸다
+        return "", ""
+    if isinstance(d, dict):
+        return str(d.get("code") or "")[:80], str(d.get("message") or "")[:200]
+    return "", str(d or "")[:200]
+
+
 def _unreachable(msg: str = "대시보드에 연결할 수 없습니다") -> DomainError:
     return DomainError("DASHBOARD_UNREACHABLE", msg, status=503)
 
@@ -52,8 +79,11 @@ def _unreachable(msg: str = "대시보드에 연결할 수 없습니다") -> Dom
 class DashboardClient:
     def __init__(self, cfg: AuthCfg, transport: httpx.BaseTransport | None = None) -> None:
         self.cfg = cfg
+        # 루프백 대시보드는 HTTP(S)_PROXY·ALL_PROXY를 무시한다 — 회사 PC에서 127.0.0.1 호출이 프록시로 나가
+        # 프록시가 403을 돌려주던 문제(#11, physicsai GitHub #1과 같은 처리). 루프백이 아니면 환경 프록시 존중.
         self._client = httpx.Client(base_url=cfg.dashboard_internal_url.rstrip("/"), timeout=cfg.timeout_s,
-                                    transport=transport, follow_redirects=False)
+                                    transport=transport, follow_redirects=False,
+                                    trust_env=not is_loopback_url(cfg.dashboard_internal_url))
 
     def close(self) -> None:
         self._client.close()
@@ -75,7 +105,11 @@ class DashboardClient:
         if r.status_code == 401:
             raise auth_required()
         if r.status_code == 403:
-            raise DomainError("ACCOUNT_NOT_ACTIVE", "대시보드 계정이 활성 상태가 아닙니다", status=403)
+            # 대시보드가 거부한 이유(AUTH_ACCOUNT_SUSPENDED 등)를 그대로 보여 준다(#11 진단).
+            code, msg = _dashboard_detail(r)
+            logger.warning("대시보드 /auth/me 403 (%s %s, %s)", code, msg, self.cfg.dashboard_internal_url)
+            reason = f" — 대시보드 응답: {code} {msg}".rstrip() if code or msg else ""
+            raise DomainError("ACCOUNT_NOT_ACTIVE", f"대시보드 계정이 활성 상태가 아닙니다{reason}", status=403)
         if r.status_code == 503:
             raise DomainError("DASHBOARD_AUTH_UNAVAILABLE", "대시보드 인증 설정이 완료되지 않았습니다", status=503)
         if r.status_code != 200:

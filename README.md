@@ -140,6 +140,8 @@ rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.
 
 ## 6. 서버 배포 (Windows Server — 대시보드·physicsai-platform과 같은 PC)
 
+**처음 설치는 [docs/manual/install-quickstart.md](docs/manual/install-quickstart.md)(단계별 가이드), 이후 업데이트는 `deploy\update-repo.ps1`.**
+
 ESL 플랫폼(백엔드 API·워커·PostgreSQL DB·웹 화면 `/esl/`)을 대시보드(simulation_workbench)·physicsai-platform과 **같은 서버·같은 실행 환경**
 (Python 3.12.13, PostgreSQL 18 같은 인스턴스에 별도 DB `esl`·역할 `esl_app`, Node 22.23.2, 대시보드 주소의 하위 경로 `/esl/`, Windows 작업 스케줄러)에 설치한다.
 physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용: [관리자 매뉴얼](docs/manual/admin.md), 현장 확인: [E2E 체크리스트](docs/e2e-checklist.md).
