@@ -4,6 +4,8 @@
 - CASE_REPORT(LIGHT): 코어 ``report`` 단계 → ``<case>/07_report/report.html``. VALIDATE 성공 시 자동 큐(``report.auto``).
 - LIB_ANALYZE(SLOT): 라이브러리 종합분석 → 덱(대상 있을 때) → 보고서 → DB 요약. Case 가 없다(case_id NULL,
   analysis_id 필수). 산출물 ``<esl_root>/_analysis/<analysis_id>/``.
+- LIB_COMPARE(LIGHT, §12.2): 설계 버전 비교 → DB 요약. Case·분석이 없다(comparison_id 필수).
+  산출물 ``<esl_root>/_compare/<comparison_id>/``(compare.json, report.html).
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ class StepDef:
 @dataclass(frozen=True)
 class JobTypeDef:
     job_type: str
-    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석
+    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교
     lane: str  # SLOT | LIGHT
     steps: tuple[StepDef, ...]
 
@@ -36,8 +38,11 @@ JOB_TYPES: dict[str, JobTypeDef] = {
     "LIB_ANALYZE": JobTypeDef("LIB_ANALYZE", 8, "SLOT", (
         StepDef("ANALYZE", "lib_analyze"), StepDef("OPTDECK", "lib_optdeck"), StepDef("REPORT", "lib_report"),
         StepDef("LIB_REGISTER", None))),
+    "LIB_COMPARE": JobTypeDef("LIB_COMPARE", 9, "LIGHT", (
+        StepDef("COMPARE", "lib_compare"), StepDef("COMPARE_REGISTER", None))),
 }
 CASE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT")
-LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report")
+LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report", "lib_compare")
+LIB_JOB_TYPES = ("LIB_ANALYZE", "LIB_COMPARE")
 
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")

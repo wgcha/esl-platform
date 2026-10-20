@@ -3,6 +3,8 @@
 - stdout·stderr(파일 기술자 1·2 포함)를 step 로그 파일로 돌리고 코어 `echo`도 같은 파일에 쓴다.
 - 결과는 `result_path`에 JSON `{ok, code?, message?}`로 남긴다(부모가 읽음). 종료코드 0 = 성공, 1 = 실패.
 - 취소는 부모가 이 프로세스를 terminate/kill 한다(코어는 외부 프로그램을 띄우지 않으므로 손자 프로세스 없음).
+- 자원 제한(esl_worker.limiter): 코어 import 전에 부모의 시작 신호를 기다리고(Windows 는 그 전에 Job Object 에 들어감)
+  POSIX 는 nice·RLIMIT_AS·CPU 선호도를 스스로 건다. 적용 결과는 로그 `[esl-worker] 자원 제한 …` 줄. 실패 → `LIMITER_FAILED`.
 - 고아 방지: 부모(워커)가 비정상 종료하면(kill·크래시) 감시 스레드가 `PARENT_CHECK_S` 안에 이 프로세스를
   끝낸다(`os._exit(PARENT_LOST_EXIT)`). 판정 = multiprocessing 부모 sentinel 닫힘(Windows·POSIX 공통) 또는
   POSIX 에서 getppid() 가 spec.parent_pid 와 달라짐(재부모화).
@@ -31,15 +33,6 @@ def _redirect(log_path: str):
     sys.stdout = fh
     sys.stderr = fh
     return fh
-
-
-def _lower_priority(priority: str) -> None:
-    if priority == "normal" or not hasattr(os, "nice"):
-        return
-    try:
-        os.nice(5 if priority == "below_normal" else 15)
-    except OSError:
-        pass
 
 
 def _write_result(path: str, d: dict[str, Any]) -> None:
@@ -97,7 +90,6 @@ def _resolve(target: str):
 
 def child_entry(spec: dict[str, Any]) -> None:
     fh = _redirect(spec["log_path"])
-    _lower_priority(spec.get("priority", "normal"))
 
     def echo(msg: str) -> None:
         fh.write(str(msg) + "\n")
@@ -109,6 +101,15 @@ def child_entry(spec: dict[str, Any]) -> None:
     echo(f"[esl-worker] pid {os.getpid()} stage={spec.get('stage')} 시작")
     code = 0
     try:
+        from esl_worker import limiter
+
+        try:  # 부모 시작 신호(Windows Job 할당 뒤) 대기 + 자식 쪽 제한(POSIX nice·RLIMIT_AS·CPU 선호도) — 코어 import 전
+            limiter.child_setup(spec, echo)
+        except limiter.LimiterError as exc:
+            echo(f"[esl-worker] 실패 {exc.code}: {exc}")
+            _write_result(spec["result_path"], {"ok": False, "code": exc.code, "message": str(exc)[:450]})
+            fh.flush()
+            os._exit(1)
         from esl_worker.core_adapter import CoreError
 
         try:

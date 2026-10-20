@@ -8,7 +8,7 @@
   ④ 프런트 배치(묶음의 빌드본 → caddy_frontend_root) ⑤ 설정 파일(setup_config.py: 없으면 config\esl_platform.prod.example.yaml로 만들고
   deploy.json의 esl_root·input_roots·spdm_roots를 넣음, 있으면 보존·빠진 키만 보충, esl.yaml·library.yaml·ista6.yaml 없을 때만 복사, ESL 루트 폴더 생성)
   ⑥ DB 역할·DB(없을 때만 생성) ⑦ DB 접속 정보 파일 <install_root>\secrets\database_url(현재 사용자·SYSTEM만 읽기 — 머신 환경변수 쓰지 않음)
-  ⑧ alembic upgrade head(0001~0003) ⑨ 작업 스케줄러 등록(ESL-Backend, ESL-Worker — 실행기 app\esl_service.py backend|worker --runtime <install_root>)
+  ⑧ alembic upgrade head(0001~0004) ⑨ 작업 스케줄러 등록(ESL-Backend, ESL-Worker — 실행기 app\esl_service.py backend|worker --runtime <install_root>)
   ⑩ 시작·health·환경 점검 표 ⑪ Caddy 스니펫 안내.
   경로 문자열은 deploy.json(예: deploy.example.json 복사)과 매개변수에만 있다. 비밀번호는 Read-Host -AsSecureString으로
   받아 PGPASSWORD 프로세스 환경변수로만 전달하고 로그·설정 파일·명령 인자에 남기지 않는다.

@@ -1,6 +1,6 @@
 import { request, API_PREFIX } from "./client";
 import type {
-  AnalysisCreate, AnalysisFileOut, AnalysisOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
+  AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
@@ -61,4 +61,9 @@ export const api = {
   analysisFiles: (id: string) => request<AnalysisFileOut[]>("GET", `/library/analyses/${id}/files`),
   analysisReportUrl: (id: string) => `${API_PREFIX}/library/analyses/${id}/report`,
   analysisDownloadUrl: (id: string, rel: string) => `${API_PREFIX}/library/analyses/${id}/download` + `?rel=${encodeURIComponent(rel)}`,
+  // ---- 설계 버전 비교(§12.2)
+  comparisons: (projectId: string) => request<ComparisonOut[]>("GET", "/library/comparisons", { query: { project_id: projectId } }),
+  createComparison: (body: ComparisonCreate) => request<ComparisonOut>("POST", "/library/comparisons", { body }),
+  comparison: (id: string) => request<ComparisonOut>("GET", `/library/comparisons/${id}`),
+  comparisonReportUrl: (id: string) => `${API_PREFIX}/library/comparisons/${id}/report`,
 };

@@ -27,7 +27,7 @@ storage:
   input_roots: []                     # rad·결과 CSV 폴더를 고를 수 있는 루트(읽기 전용). 비어 있으면 Case 를 만들 수 없다
   spdm_roots: []                      # SPDM master 루트(겹침 검사용 — esl_root 가 이 안에 있으면 거부)
 worker:
-  limiter: auto                       # auto | none | posix | windows_job (현재 워커는 이 값을 쓰지 않음 — 관리자 매뉴얼 §15)
+  limiter: auto                       # auto | none | posix | windows_job (Windows는 Job Object로 메모리·CPU·우선순위 제한)
   max_logical_cores: 16
   max_memory_gb: 32                   # 22만 요소 직접법 솔버 기준(현재 워커는 제한하지 않음 — §15). 서버 메모리에 맞게
   priority: below_normal              # normal | below_normal | idle (POSIX nice 만 — Windows 에서는 아직 적용 안 됨, §15)

@@ -1180,3 +1180,21 @@ details.card.adv > .card-body {
 .link.error-text {
   color: var(--bad);
 }
+
+/* 설계 버전 비교(§12.2): 판정 배지 줄 */
+.verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+.verdict-row .badge {
+  font-size: 0.95rem;
+  padding: 0.2rem 0.7rem;
+}
+a.btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}

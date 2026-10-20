@@ -113,9 +113,9 @@ JS = """
  var q=document.getElementById('f-text'),d=document.getElementById('f-drop'),v=document.getElementById('f-verdict'),
      c=document.getElementById('f-cluster'),cnt=document.getElementById('f-count');
  function apply(){var rows=document.querySelectorAll('#scenes tbody tr');var n=0;
-  rows.forEach(function(r){var ok=(!q.value||r.textContent.toLowerCase().indexOf(q.value.toLowerCase())>=0)&&
-   (!d.value||r.getAttribute('data-drop')===d.value)&&(!v.value||r.getAttribute('data-verdict')===v.value)&&
-   (!c.value||r.getAttribute('data-cluster')===c.value);r.style.display=ok?'':'none';if(ok)n++;});
+  rows.forEach(function(r){var ok=(!q||!q.value||r.textContent.toLowerCase().indexOf(q.value.toLowerCase())>=0)&&
+   (!d||!d.value||r.getAttribute('data-drop')===d.value)&&(!v||!v.value||r.getAttribute('data-verdict')===v.value)&&
+   (!c||!c.value||r.getAttribute('data-cluster')===c.value);r.style.display=ok?'':'none';if(ok)n++;});
   if(cnt)cnt.textContent=n+' / '+rows.length;}
  [q,d,v,c].forEach(function(el){if(el)el.addEventListener('input',apply);});apply();
 })();
@@ -367,6 +367,47 @@ def _scene_label(c) -> str:
             f" S{c.get('scene') if c.get('scene') is not None else '?'}")
 
 
+DECK_MODE_KO = {"all": "모든 씬", "representative": "대표", "representative+worst": "대표+최악"}
+
+
+def _deck_tile(r) -> str:
+    d = r.get("deck")
+    if not d:
+        return str(len(r["load_cases"]))
+    return f"{d['n_subcases']}" + (" (축소)" if d.get("reduced") else "")
+
+
+def _deck_section(r) -> str:
+    """덱 하중 구성(§12.1): 요청·적용 모드, subcase 수, 축소 여부, 제외된 씬과 사유."""
+    d = r.get("deck")
+    if not d:
+        return ""
+    cases = r["cases"]
+    out = ["<div class='card'><h3>덱 하중 구성</h3><table>"
+           f"<tr><th>설정</th><td>{_e(DECK_MODE_KO.get(d['requested'], d['requested']))} (<code>{_e(d['requested'])}</code>)"
+           f"</td></tr><tr><th>적용</th><td>{_e(DECK_MODE_KO.get(d['mode'], d['mode']))} (<code>{_e(d['mode'])}</code>)"
+           + (f" — <b class='fail'>자동 축소</b>: 씬 {d['n_cases']}개 &gt; max_cases {d['max_cases']}" if d.get("reduced")
+              else "") + "</td></tr>"
+           f"<tr><th>subcase 수</th><td>{d['n_subcases']} / 씬 {d['n_cases']}개 (minmax 컴플라이언스, 같은 K 라 subcase "
+           "수는 해석 비용에 거의 영향 없음 — 분해 1회·다중 RHS)</td></tr>"
+           f"<tr><th>제외된 씬</th><td>{len(d.get('excluded') or [])}개</td></tr></table>"]
+    sub = d.get("cases") or []
+    if sub and d["mode"] != "all":
+        out.append("<h3>덱 subcase</h3><table><thead><tr><th>라벨</th><th>역할</th><th>씬</th><th>항목</th></tr></thead><tbody>"
+                   + "".join(f"<tr><td>{_e(lc['label'])}</td><td>{'대표(medoid)' if lc['role'] == 'medoid' else '최악'}"
+                             f"</td><td>{_e(_scene_label(cases[lc['case_index']]))}</td><td><code>{_e(lc['entry_id'])}"
+                             "</code></td></tr>" for lc in sub) + "</tbody></table>")
+    ex = d.get("excluded") or []
+    if ex:
+        out.append("<h3>제외된 씬과 사유</h3><div class='tablewrap'><table><thead><tr><th>#</th><th>씬</th><th>항목</th>"
+                   "<th>사유</th></tr></thead><tbody>"
+                   + "".join(f"<tr><td class='num'>{x['case_index']}</td><td>{_e(x.get('scene'))}</td><td><code>"
+                             f"{_e(x['entry_id'])}</code></td><td class='small'>{_e(x['reason'])}</td></tr>" for x in ex)
+                   + "</tbody></table></div>")
+    out.append("</div>")
+    return "".join(out)
+
+
 def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_summary: dict | None = None,
           info: dict | None = None) -> str:
     """arrays 가 없으면 out_html 옆 mapped_loads.npz (analysis.save 산출물)를 읽는다."""
@@ -388,7 +429,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     env_max = r["envelope"]["max"]
     tiles = [("항목(씬)", r["n_cases"]), ("SVD 모드 r", f"{r['svd']['n_modes']} (≥{r['svd']['threshold']:.2f})"),
              ("대표 케이스", len([lc for lc in r["load_cases"] if lc["role"] == "medoid"])),
-             ("하중 케이스(덱)", len(r["load_cases"])), ("셀 포락 최대 |F|", _fmt(env_max)),
+             ("덱 subcase", _deck_tile(r)), ("셀 포락 최대 |F|", _fmt(env_max)),
              ("PASS 비율", _pct(np.mean([c.get("verdict") == "PASS" for c in cases])) if cases else "—")]
     if r.get("mapping"):
         tiles.append(("매핑 보존 오차 최대", _fmt(r["mapping"]["conservation_rel_max"], 2)))
@@ -432,6 +473,9 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
             "Σ|F|", "배율", "클러스터", "역할"]
     rows = []
     roles = {lc["case_index"]: lc["label"] for lc in r["load_cases"]}
+    if r.get("deck") and r["deck"]["mode"] == "all":
+        roles = {k: (v + " · 덱" if v else "덱") for k, v in
+                 {c["index"]: roles.get(c["index"], "") for c in cases}.items()}
     for c in cases:
         role = roles.get(c["index"], "")
         rows.append(
@@ -527,6 +571,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     S.append("</div>")
     # ---- 최적화 설정
     S.append("<h2>6. 비드 최적화 설정</h2>")
+    S.append(_deck_section(r))
     if opt_summary:
         b = opt_summary.get("bead") or {}
         S.append("<div class='grid2'><div class='card'><table>"

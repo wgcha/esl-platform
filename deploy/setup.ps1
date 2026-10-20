@@ -15,7 +15,7 @@
   ⑥ 기존 설치가 있으면 대기열 확인 후 작업 중지 → 패키지 갱신 → 코드 스냅샷(.runtime\app, 이전 것은 _backup) → 설정 작성 → 프런트 배치
      (소스가 바뀌었을 때만 Node 22로 빌드 — 대시보드 고정 Node 우선)
   ⑦ DB(대시보드와 같은 PostgreSQL 18에 esl DB·esl_app 역할 — 없을 때만, 기존 연결이 되면 비밀번호를 다시 묻지 않음)
-     → DB 접속 정보 파일 .runtime\secrets\database_url(현재 사용자·SYSTEM만 읽기) → alembic upgrade head(0001~0003)
+     → DB 접속 정보 파일 .runtime\secrets\database_url(현재 사용자·SYSTEM만 읽기) → alembic upgrade head(0001~0004)
      → 작업 스케줄러 ESL-Backend·ESL-Worker(현재 사용자 Interactive·Limited, 실행기 esl_service.py --runtime) → 시작·health → 환경 점검 표
   ⑧ 접속 연결 안내: 대시보드 Caddyfile에 deploy\caddy\esl.caddy, 대시보드 .env SIMDASH_ESL_ENABLED=true
   업데이트: powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\update-repo.ps1 (git pull 포함)

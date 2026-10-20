@@ -223,8 +223,9 @@ export interface InspectResultsResult {
 }
 
 // ---------------------------------------------------------------- 작업
-/** P2(계약 esl_p2_library.md §11): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석) */
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE";
+/** P2(계약 esl_p2_library.md §11·§12): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석),
+ *  LIB_COMPARE(LIGHT, 설계 버전 비교) */
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -253,6 +254,8 @@ export interface JobOut {
   case_id: string | null;
   /** LIB_ANALYZE 의 analysis_runs.id */
   analysis_id?: string | null;
+  /** LIB_COMPARE 의 comparisons.id */
+  comparison_id?: string | null;
   project_id: string;
   job_type: JobType;
   stage: number;
@@ -768,6 +771,8 @@ export interface EntryQuery {
 // ---------------------------------------------------------------- 종합분석 (analysis_runs)
 export type Normalization = "none" | "mass" | "inch2";
 export type Objective = "minmax" | "weighted";
+/** §12.1 최적화 하중(덱 subcase) 구성: 모든 씬(기본) | 대표 | 대표+최악 */
+export type OptdeckCases = "all" | "representative" | "representative+worst";
 
 /** 비우면 전체. entry_ids 를 주면 다른 필터 무시 */
 export interface AnalysisFilters {
@@ -790,6 +795,8 @@ export interface AnalysisOptions {
   /** 정규화 대상 값(대상 항목 메타가 없을 때) */
   target_mass?: number | null;
   target_inch?: number | null;
+  /** 없으면 서버 설정 optdeck.cases(기본 all) */
+  optdeck_cases?: OptdeckCases | null;
 }
 
 export interface AnalysisCreate {
@@ -858,6 +865,20 @@ export interface AnalysisResult {
     card_format: string;
     reference_compliance: unknown;
   } | null;
+  /** §12.1 덱 하중 구성(이전 분석에는 없음) */
+  deck?: DeckSummary | null;
+}
+
+/** 덱 하중 구성: 설정·적용 모드, subcase 수, max_cases 초과 자동 축소 여부, 제외 씬(사유) */
+export interface DeckSummary {
+  requested: OptdeckCases;
+  mode: OptdeckCases;
+  reduced: boolean;
+  max_cases: number;
+  n_cases: number;
+  n_subcases: number;
+  n_excluded: number;
+  excluded: { entry_id: string; scene: string | null; reason: string }[];
 }
 
 export interface AnalysisOut {
@@ -893,4 +914,118 @@ export interface AnalysisFileOut {
   size: number;
   path: string;
   downloadable: boolean;
+}
+
+// ---------------------------------------------------------------- 설계 버전 비교 (comparisons, §12.2)
+export interface ComparisonFilters {
+  inch?: number[] | null;
+  drop_type?: string[] | null;
+  drop_class?: string[] | null;
+  orient?: string[] | null;
+  scenario?: string[] | null;
+  verdict?: string[] | null;
+}
+
+export interface ComparisonOptions {
+  cos_min?: number | null;
+  n_representative?: number | null;
+}
+
+/** POST /library/comparisons — 기준 버전이 없으면 비교 버전 직전(서버 자연 정렬) */
+export interface ComparisonCreate {
+  project_id: string;
+  model: string;
+  new_version: string;
+  base_version?: string | null;
+  title?: string | null;
+  filters?: ComparisonFilters;
+  options?: ComparisonOptions;
+}
+
+export type ComparisonVerdict = "CONVERGED" | "ITERATE";
+
+export interface ComparisonQuality {
+  verdict: string | null;
+  hotspot1_rel_err: number | null;
+  field_p90: number | null;
+}
+
+/** comparisons.result.scenes[] (워커 _compare_summary) */
+export interface ComparisonScene {
+  label: string;
+  base_entry: string;
+  new_entry: string;
+  cos: number;
+  force_ratio: number | null;
+  hotspot_shift: number | null;
+  eps_ratio: number | null;
+  quality_base: ComparisonQuality;
+  quality_new: ComparisonQuality;
+  changed: boolean;
+  reasons: string[];
+}
+
+interface Range3 {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+}
+
+export interface ComparisonResult {
+  convergence: {
+    verdict: ComparisonVerdict;
+    label: string;
+    converged: boolean;
+    criteria: { cos_min: number; rep_same: boolean };
+    reasons: string[];
+    changed_scenes: { label: string; base_entry: string; new_entry: string; cos: number; reasons: string[] }[];
+  };
+  aggregate: {
+    n_paired: number;
+    cos_min: number;
+    cos_mean: number;
+    argmin_cos: string;
+    force_ratio: Range3;
+    eps_ratio: Range3;
+    hotspot_shift: Range3;
+    n_below_cos: number;
+    n_verdict_changed: number;
+    n_changed: number;
+  };
+  criteria: { cos_min: number; rep_same: boolean };
+  n_base: number;
+  n_new: number;
+  n_paired: number;
+  representatives: { k: number; rep_same: boolean; partition_same: boolean; partition_agreement: number; matching: unknown[] };
+  scenes: ComparisonScene[];
+  unpaired: { base_only: { label: string; entry_id: string }[]; new_only: { label: string; entry_id: string }[] } | null;
+  warnings: string[];
+}
+
+export interface ComparisonOut {
+  id: string;
+  project_id: string;
+  title?: string | null;
+  model: string;
+  base_version: string;
+  new_version: string;
+  filters: ComparisonFilters;
+  options: ComparisonOptions;
+  base_entry_ids: string[];
+  new_entry_ids: string[];
+  n_paired: number;
+  /** 연동 작업(LIB_COMPARE) 상태, 작업이 없으면 NONE */
+  status: JobState | "NONE";
+  verdict?: ComparisonVerdict | null;
+  job_id?: string | null;
+  job?: JobOut | null;
+  result?: ComparisonResult | null;
+  result_rel?: string | null;
+  report_rel?: string | null;
+  dir_rel: string;
+  folder_path: string;
+  created_by: string;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
 }

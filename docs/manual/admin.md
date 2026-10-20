@@ -1,7 +1,7 @@
 # ESL 플랫폼 관리자 매뉴얼(서버 설치·운영)
 
 - 대상: ESL 서버(백엔드·워커)를 설치·운영하는 서버 관리자, 전역 관리자(대시보드 `is_global_admin`)
-- 기준: 브랜치 `claude/dreamy-newton-xvutyl`(2026-10-19), 패키지 버전 `0.1.0`, DB migration head `0003`(0001 → 0002 → 0003)
+- 기준: 브랜치 `claude/dreamy-newton-xvutyl`(2026-10-19), 패키지 버전 `0.1.0`, DB migration head `0004`(0001 → 0002 → 0003 → 0004)
 - 근거 문서: 계약 [esl_platform_p1b.md](../contracts/esl_platform_p1b.md)(플랫폼), [esl_p2_library.md](../contracts/esl_p2_library.md)(라이브러리·분석·보고서), [esl.md](../contracts/esl.md)(원형), [E2E 체크리스트](../e2e-checklist.md).
 - 같은 서버의 **physicsai-platform 관리자 매뉴얼과 같은 절차·같은 절 번호**를 쓴다(해당 없는 §5~§9·§11은 생략). 운영자는 두 플랫폼을 같은 순서로 설치·업데이트한다.
 
@@ -80,7 +80,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 | ④ | 설정 계획(`deploy\setup_config.py`): `deploy.json`·`esl_platform.yaml`을 **새로 만들거나, 있으면 보존하고 빠진 키만 보충**(사용자가 고친 값은 덮어쓰지 않음, 비어 있는 storage 경로만 채움). 새 설정 = `config\esl_platform.prod.example.yaml`(`profile: prod`, `server.port: 8110`) + `storage.esl_root`(폴더 생성)·`input_roots`·`spdm_roots` + `auth.dashboard_public_login_url`(대시보드 `.env` `WINDOWS_WEB_BASE_PATH`, 기본 `/home/`). 같은 폴더에 `esl.yaml`(코어 판정 기준)·`library.yaml`·`ista6.yaml`을 없을 때만 예시에서 복사. 경로 검사: 절대경로, 공백·`& | < > ^ % ! "` 없음, ESL 루트가 입력·SPDM 루트와 겹치지 않음 |
 | ⑤ | 확인 표(위치·Python·PostgreSQL·ESL 루트·입력 루트·설정 처리·작업 실행) → `Y/N` |
 | ⑥ | 이미 설치돼 있으면 대기열 확인(실행 중 작업이 있으면 중단, `-Force`) → 기존 작업 정의를 `_backup\<UTC>\tasks\*.xml`로 → 작업 중지 → 의존성 갱신 → 코드 스냅샷(이전 `app`은 `_backup`) → 설정 작성(바뀌는 기존 파일은 먼저 `_backup` 복사) → 프런트 배치(이전 것은 `_backup`) |
-| ⑦ | DB 역할·DB(없을 때만) → `.runtime\secrets\database_url` → `alembic upgrade head`(실행기 `migrate` — 0001~0003) → 작업 스케줄러 `ESL-Backend`·`ESL-Worker`(§2.5) → 시작·health(`http://127.0.0.1:8110/esl/api/health`) → **환경 점검 표**(§10) |
+| ⑦ | DB 역할·DB(없을 때만) → `.runtime\secrets\database_url` → `alembic upgrade head`(실행기 `migrate` — 0001~0004) → 작업 스케줄러 `ESL-Backend`·`ESL-Worker`(§2.5) → 시작·health(`http://127.0.0.1:8110/esl/api/health`) → **환경 점검 표**(§10) |
 | ⑧ | 접속 연결 안내(§2.6): Caddy 스니펫·환경변수, 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`(대시보드 지원 필요), 접속 주소 |
 
 - 설정은 `.runtime\config\esl_platform.yaml`에서 직접 고친다(§4). 다시 실행하거나 업데이트해도 덮어쓰지 않는다. 고친 뒤 `Stop-ScheduledTask`/`Start-ScheduledTask ESL-Worker`(백엔드도).
@@ -153,7 +153,7 @@ zip을 풀고 `deploy\deploy.example.json`을 같은 폴더에 `deploy.json`으�
 | ⑤ | 설정(`setup_config.py`, 묶음 모드 — `deploy.json`은 바꾸지 않음): 없으면 운영 예시로 만들고 `esl_root`·`input_roots`·`spdm_roots`·로그인 링크를 넣음, 있으면 보존·빠진 키만 보충. 검증 결과 출력 |
 | ⑥ | DB 역할·DB가 **없을 때만** 생성. 비밀번호 2개를 화면 입력(`Read-Host -AsSecureString`)으로 받아 `PGPASSWORD` 프로세스 환경으로만 전달. 역할 생성 SQL은 표준 입력으로, 그 세션의 문장 로그를 끈 뒤 실행 |
 | ⑦ | DB 접속 정보 파일 `<install_root>\secrets\database_url`(값은 출력하지 않음, 현재 사용자·SYSTEM(+실행 계정 읽기)만) |
-| ⑧ | `alembic upgrade head`(실행기 `migrate`) — head `0003` |
+| ⑧ | `alembic upgrade head`(실행기 `migrate`) — head `0004` |
 | ⑨ | 작업 스케줄러 `ESL-Backend`·`ESL-Worker`(§2.5) |
 | ⑩ | 두 작업 시작 → health 60초까지 → 환경 점검 표(§10) |
 | ⑪ | Caddy 스니펫·환경변수 안내(§2.6) |
@@ -336,7 +336,7 @@ $env:PGPASSWORD = $null
 | `storage.input_roots` | rad·결과 폴더 선택 허용 루트(읽기 전용). 비면 Case 생성 불가 | 설치 시 입력 |
 | `storage.spdm_roots` | 겹침 검사용 SPDM 루트 | `[]` |
 | `worker.heartbeat_interval_s` / `lease_ttl_s` | 하트비트 / 리스(취소·중단 감지) | `10` / `60` |
-| `worker.max_logical_cores` / `max_memory_gb` / `priority` / `limiter` | 자원 제한(§15 — 현재 Windows에서 미적용) | `16` / `32` / `below_normal` / `auto` |
+| `worker.max_logical_cores` / `max_memory_gb` / `priority` / `limiter` | 자원 제한(Windows: Job Object — 메모리·CPU 비율·우선순위·워커 종료 시 자식 종료 / POSIX: nice·RLIMIT_AS·affinity). `limiter`: auto|windows_job|posix|none | `16` / `32` / `below_normal` / `auto` |
 | `ui.max_preview_points` | ⑤ 겹쳐보기·2D 산점 최대 점 수 | `20000` |
 | `core.config_path` | 코어 설정(`esl.yaml` — t*·솔버·판정 기준 `validation`·`compare`) | `esl.yaml` |
 | `report.auto` | VALIDATE 성공 시 Case 보고서 자동 | `true` |
@@ -371,7 +371,7 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py check --runtime D:\esl 
 | `solver.cholmod` | Windows: SKIP(scikit-sparse 휠 없음 — 제외) |
 | `solver.pyamg` / `solver.psutil` | 반복법 전처리 / 메모리 추정 — 없으면 WARN |
 | `db.connection` / `db.server_version` | 접속(대상 host:port/db만 표시, 비밀번호 비노출) / 18 아니면 WARN |
-| `db.migration_head` | `alembic_version` = head(`0003`) — 아니면 FAIL(`esl_service.py migrate`) |
+| `db.migration_head` | `alembic_version` = head(`0004`) — 아니면 FAIL(`esl_service.py migrate`) |
 | `worker.heartbeat` | 최근 하트비트 ≤ 3×주기 → OK, 아니면 WARN(워커 오프라인) |
 
 - 종료코드 0 = FAIL 없음, 1 = FAIL 있음. 화면에서는 `GET /esl/api/status`(설정 오류·워커 온라인·솔버 백엔드)로도 본다.
@@ -476,5 +476,5 @@ $env:ESL_INSTALL_SERVICE_PASSWORD = '…'      # Background 모드일 때
 | 작업 스케줄러 등록·Interactive/Background·재부팅 자동 기동·icacls ACL | 미검증 | E0-3·E0-4 |
 | pypardiso + MKL Windows 휠 실제 로드(`mkl_rt.2.dll`) | 미검증(Linux에서 같은 lock 버전 + pardiso로 플랫폼 시험 159건 통과) | 환경 점검 `solver.pypardiso` |
 | Caddy 스니펫·대시보드 `SIMDASH_ESL_ENABLED`(대시보드 쪽 지원) | 대시보드 변경 필요(이 저장소 밖) | E0-5 |
-| 워커 자원 제한: `worker.limiter`·`max_logical_cores`·`max_memory_gb`·`priority` | **코드 미적용** — 워커는 POSIX `nice`만, Windows에서는 우선순위·코어·메모리 제한이 없다(같은 PC의 대시보드·physicsai와 경합 가능). 필요하면 워커에 Job Object 구현 요청 | §4.3 |
+| 워커 자원 제한: `worker.limiter`·`max_logical_cores`·`max_memory_gb`·`priority` | 적용됨(Windows Job Object). 할당 실패 시 작업 step이 `LIMITER_FAILED`로 실패 — `python -m esl_platform.check`의 `worker.limiter` 행 확인 | §4.3 |
 | 판정 기준(`validation`·`compare`)·ISTA 6 낙하 높이 | 임시값·TODO | 코어 `esl.yaml`, `ista6.yaml` |

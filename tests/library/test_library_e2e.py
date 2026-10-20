@@ -160,9 +160,10 @@ def test_mapping_conservation_and_outputs(lib, analyzed):
     res, arr, d = analyzed["res"], analyzed["arr"], analyzed["dir"]
     assert res["cases"][0]["self"] is True
     tgt = store.load_entry(lib["root"], lib["ids"][0], raw=True)
-    # mapped_loads.npz = 대표·최악 케이스만 (첫 축 = load_cases 수)
-    assert arr["mapped_F"].shape == (len(res["load_cases"]), tgt.raw["node_id"].size, 3)
-    assert arr["load_case_index"].tolist() == [lc["case_index"] for lc in res["load_cases"]]
+    # mapped_loads.npz = 덱에 들어간 케이스 전부(§12.1 기본 all → 모든 씬)
+    assert res["deck"]["mode"] == "all" and res["deck"]["n_subcases"] == 6
+    assert arr["mapped_F"].shape == (6, tgt.raw["node_id"].size, 3)
+    assert arr["load_case_index"].tolist() == list(range(6))
     for lc, f in zip(res["load_cases"], analysis.load_case_forces(res, arr)):
         if res["cases"][lc["case_index"]]["self"]:
             assert np.allclose(f, tgt.raw["f"])
@@ -195,7 +196,8 @@ def test_optdeck_and_report(lib, analyzed, tmp_path):
         assert os.path.isfile(os.path.join(opt, n)), n
     summ = json.load(open(os.path.join(opt, "optdeck.json"), encoding="utf-8"))
     fem = open(os.path.join(opt, "esl_bead.fem"), encoding="ascii").read()
-    assert fem.count("\nSUBCASE ") == 2 and "DESOBJ(MINMAX)" in fem and "\nDTPG," in fem
+    assert fem.count("\nSUBCASE ") == 6 and "DESOBJ(MINMAX)" in fem and "\nDTPG," in fem
+    assert summ["deck_cases"]["mode"] == "all" and summ["deck_cases"]["n_subcases"] == 6
     refs = [s["ref"] for s in summ["subcases"]]
     assert all(r > 0 for r in refs)
     pos = [float(ln.split(",")[4]) for ln in fem.splitlines() if ln.startswith("DOBJREF")]
@@ -215,7 +217,7 @@ def test_optdeck_and_report(lib, analyzed, tmp_path):
             p = ln.split(",")
             if p[0] == "FORCE" and int(p[1]) == s["load_sid"]:
                 F[np.searchsorted(nid, int(p[2]))] = [float(x) for x in p[5:8]]
-        ref = analysis.load_case_forces(res, arr)[k]
+        ref = analysis.deck_case_forces(res, arr)[k]
         assert np.abs(F - ref).max() <= 1e-8 * np.abs(ref).max()
         u, R = sm.solve(F, spc)
         assert np.abs(R).sum() / np.linalg.norm(F, axis=1).sum() < 1e-6

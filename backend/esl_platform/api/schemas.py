@@ -177,6 +177,7 @@ class JobOut(_Out):
     id: str
     case_id: str | None = None
     analysis_id: str | None = None
+    comparison_id: str | None = None
     project_id: str
     job_type: str
     stage: int
@@ -507,6 +508,8 @@ class AnalysisOptions(_Req):
     svd_energy: float | None = Field(default=None, gt=0, le=1)
     target_mass: float | None = Field(default=None, gt=0)
     target_inch: float | None = Field(default=None, gt=0)
+    # §12.1 최적화 하중(덱 subcase) 구성: 없으면 설정 optdeck.cases(기본 all = 모든 씬)
+    optdeck_cases: Literal["all", "representative", "representative+worst"] | None = None
 
 
 class AnalysisCreate(_Req):
@@ -533,6 +536,57 @@ class AnalysisOut(_Out):
     result_rel: str | None = None
     report_rel: str | None = None
     optdeck_rel: str | None = None
+    dir_rel: str
+    folder_path: str
+    created_by: str
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ComparisonFilters(_Req):
+    inch: list[int] | None = None
+    drop_type: list[str] | None = None
+    drop_class: list[str] | None = None
+    orient: list[str] | None = None
+    scenario: list[str] | None = None
+    verdict: list[str] | None = None
+
+
+class ComparisonOptions(_Req):
+    cos_min: float | None = Field(default=None, gt=0, le=1)
+    n_representative: int | None = Field(default=None, ge=1, le=50)
+
+
+class ComparisonCreate(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=200)
+    new_version: str = Field(min_length=1, max_length=64)
+    base_version: str | None = Field(default=None, min_length=1, max_length=64)   # 없으면 비교 버전 직전
+    title: str | None = Field(default=None, max_length=200)
+    filters: ComparisonFilters = Field(default_factory=ComparisonFilters)
+    options: ComparisonOptions = Field(default_factory=ComparisonOptions)
+
+
+class ComparisonOut(_Out):
+    id: str
+    project_id: str
+    title: str | None = None
+    model: str
+    base_version: str
+    new_version: str
+    filters: dict[str, Any]
+    options: dict[str, Any]
+    base_entry_ids: list[str]
+    new_entry_ids: list[str]
+    n_paired: int
+    status: str
+    verdict: Literal["CONVERGED", "ITERATE"] | None = None
+    job_id: str | None = None
+    job: JobOut | None = None
+    result: dict[str, Any] | None = None
+    result_rel: str | None = None
+    report_rel: str | None = None
     dir_rel: str
     folder_path: str
     created_by: str

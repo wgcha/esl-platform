@@ -336,7 +336,7 @@ function Write-EslRuntimeSecret {
 }
 
 function Invoke-EslMigration {
-    <# alembic upgrade head(0001~0003) — 실행기 migrate가 런타임 DB 파일을 읽는다(이 PowerShell 환경에는 DB URL을 두지 않음). #>
+    <# alembic upgrade head(0001~0004) — 실행기 migrate가 런타임 DB 파일을 읽는다(이 PowerShell 환경에는 DB URL을 두지 않음). #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$RuntimeDir, [string]$ConfigPath = '')
     $a = @((Get-EslLauncher $RuntimeDir), 'migrate', '--runtime', $RuntimeDir)
     if ($ConfigPath) { $a += @('--config', $ConfigPath) }

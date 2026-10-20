@@ -33,8 +33,9 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from . import esl_snapshot, register
+from . import esl_snapshot, limiter, register
 from .child import child_entry
+from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
 log = logging.getLogger("esl_worker.executor")
 _SPAWN = multiprocessing.get_context("spawn")
@@ -100,6 +101,11 @@ class Executor:
                 case = cases_repo.get_case(conn, job["case_id"]) if job.get("case_id") else None
             if job["job_type"] == "LIB_ANALYZE":
                 self._prepare_analysis()
+            elif job["job_type"] in lib_jobs.PREPARE:          # LIB_COMPARE 등(디스패치는 lib_jobs)
+                try:
+                    self.cdir, self.lib = lib_jobs.PREPARE[job["job_type"]](self.settings, job)
+                except lib_jobs.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
             else:
                 self.case = case
                 self.cdir = os.path.join(self.settings.storage.esl_root, case["folder_name"])
@@ -300,11 +306,13 @@ class Executor:
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
                 "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
                 "parent_pid": os.getpid()}
+        gate = limiter.prepare(self.worker, spec)
         self.proc = _SPAWN.Process(target=child_entry, args=(spec,), name=f"esl-core-{stage}")
         self.proc.start()
+        applied = limiter.after_start(self.worker, self.proc, gate)  # 자원 제한(Windows Job) → 자식 시작 신호
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"],
-                                  outputs={"pid": self.proc.pid, "core_stage": stage})
+                                  outputs={"pid": self.proc.pid, "core_stage": stage, "limiter": applied})
         w = self.settings.worker
         last_renew = last_cancel = time.monotonic()
         poll = min(0.2, w.cancel_check_interval_s, w.heartbeat_interval_s)

@@ -132,6 +132,7 @@ def safe_case_file(case_root: str, rel: str) -> str:
 # ---------------------------------------------------------------- P2: esl_root 아래 플랫폼 폴더(_library, _analysis)
 LIBRARY_DIR = "_library"      # 라이브러리 항목 <esl_root>/_library/entries/<id>/ (Case 폴더명은 _ 로 시작 불가 → 충돌 없음)
 ANALYSIS_DIR = "_analysis"    # 종합분석 <esl_root>/_analysis/<id>/ (계약 §3)
+COMPARE_DIR = "_compare"      # 설계 버전 비교 <esl_root>/_compare/<id>/ (계약 §12.2)
 _SEG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 

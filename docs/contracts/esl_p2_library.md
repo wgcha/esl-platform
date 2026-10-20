@@ -120,3 +120,11 @@
 - 산출: `<esl_root>/_compare/<id>/`(compare.json, report.html — 씬별 표, 셀 포락 차이 히트맵, 수렴 판정). 작업 `LIB_COMPARE`(LIGHT).
 - API: `POST /library/comparisons` `{project_id, model, base_version, new_version, filters?}`, `GET /library/comparisons[/{id}[/report]]`. 오류 `NO_PAIRED_SCENES`.
 - UI: 라이브러리 목록에 "버전 비교" 진입(주 버튼은 기존 유지, 보조), 비교 상세 화면(판정 배지·씬 표·보고서 보기).
+
+### 12.3 구현 반영 (2026-10-20)
+- 설정: `optdeck.cases`·`optdeck.max_cases`·`convergence.{cos_min, rep_same}` 는 없으면 기본값(all·60·0.9·true)으로 채운다(설치본 library.yaml 은 업데이트 때 덮어쓰지 않으므로). 그 밖의 키는 여전히 필수.
+- 분석 결과 `deck`: `{requested, mode, reduced, max_cases, n_cases, n_subcases, cases[{label, case_index, entry_id, role}], excluded[{case_index, entry_id, scene, reason}]}`. all 의 subcase 라벨 `S###`(씬 순서), 대표/최악은 `REP#`/`WORST#`. `mapped_loads.npz` = 덱 케이스 전부 + 보고서 대표·최악(합집합, 덱 순서 먼저). 덱 작성은 `analysis.optdeck_load_cases`. 분석 옵션 `optdeck_cases`(API·CLI `--optdeck-cases`), 상한은 설정만.
+- 비교 특징 = 각 항목 정규화 격자 셀 합력·합모멘트(§8 과 같은 특징, 같은 nx×ny 필요 — GRID_MISMATCH). 합력비 = Σ|f_i| 신/구, ε_max = t* eps_max(없으면 hotspot1 eps_rad), hotspot 이동 = hotspot1 (ξ,η) 거리. 대표 동일 = 짝 씬만 버전별 같은 k(설정 analysis.n_representative, 옵션으로 변경) k-medoids(거리 √(2−2cos)) → 멤버 겹침 최대 매칭(헝가리안) → 모든 쌍의 medoid 씬이 같음.
+- 같은 버전에 같은 씬 키가 여럿이면 최근 등록 항목. 기준 버전 기본 = 비교 버전 직전(자연 정렬 v2 < v10). API: `new_version` 필수, `base_version`·`filters`(inch·drop_type·drop_class·orient·scenario·verdict)·`options`(cos_min·n_representative)·`title` 선택. 오류: `VERSION_NOT_FOUND`(422), `NO_PAIRED_SCENES`(422, 생성 시점 DB 메타 기준), `GRID_MISMATCH`, 같은 버전 `INVALID_PARAMS`.
+- DB 0004: `comparisons`(verdict CONVERGED|ITERATE, result 요약), `jobs.comparison_id`(작업 대상 = Case | 분석 | 비교 중 하나), stage 9 = 버전 비교. 보고서 CSP·경로 보호는 분석 보고서와 같음.
+- 합성 시험 메시(가로 24~30 요소)는 격자 24×14 와 해상도가 비슷해 셀 합이 계단져 같은 패턴도 cos ≈ 0.85 — 실제 모델(수십만 요소)에는 해당 없음. E2E 는 cos_min 0.8 옵션으로 시험.

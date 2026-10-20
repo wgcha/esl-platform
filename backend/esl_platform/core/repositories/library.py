@@ -1,4 +1,4 @@
-"""라이브러리 항목·종합분석 저장소(계약 esl_p2_library.md §11). 호출자가 트랜잭션을 연다."""
+"""라이브러리 항목·종합분석·설계 버전 비교 저장소(계약 esl_p2_library.md §11·§12). 호출자가 트랜잭션을 연다."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.engine import Connection
 
-from ..db.tables import analysis_runs, library_entries
+from ..db.tables import analysis_runs, comparisons, library_entries
 from . import row_dict
 from .cases import VersionConflict
 
@@ -94,3 +94,31 @@ def list_analyses(conn: Connection, project_id: str | None = None, limit: int = 
 def update_analysis(conn: Connection, aid: str, **values: Any) -> dict[str, Any]:
     conn.execute(update(analysis_runs).where(analysis_runs.c.id == aid).values(updated_at=func.now(), **values))
     return get_analysis(conn, aid)
+
+
+# ---------------------------------------------------------------- comparisons (§12.2)
+def insert_comparison(conn: Connection, **values: Any) -> dict[str, Any]:
+    conn.execute(insert(comparisons).values(**values))
+    return get_comparison(conn, values["id"])
+
+
+def get_comparison(conn: Connection, cid: str, *, for_update: bool = False) -> dict[str, Any] | None:
+    q = select(comparisons).where(comparisons.c.id == cid)
+    if for_update:
+        q = q.with_for_update()
+    return row_dict(conn.execute(q).first())
+
+
+def list_comparisons(conn: Connection, project_id: str | None = None, model: str | None = None,
+                     limit: int = 200) -> list[dict[str, Any]]:
+    q = select(comparisons)
+    if project_id:
+        q = q.where(comparisons.c.project_id == project_id)
+    if model:
+        q = q.where(func.lower(comparisons.c.model) == model.lower())
+    return [row_dict(r) for r in conn.execute(q.order_by(comparisons.c.created_at.desc()).limit(limit)).all()]
+
+
+def update_comparison(conn: Connection, cid: str, **values: Any) -> dict[str, Any]:
+    conn.execute(update(comparisons).where(comparisons.c.id == cid).values(updated_at=func.now(), **values))
+    return get_comparison(conn, cid)

@@ -76,6 +76,11 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
     from alembic.config import Config
 
     with engine.begin() as c:
+        c.execute(text("DROP INDEX ux_jobs_comparison_active"))            # 0004 이전 상태로
+        c.execute(text("ALTER TABLE jobs DROP CONSTRAINT ck_jobs_subject"))
+        c.execute(text("ALTER TABLE jobs DROP COLUMN comparison_id"))
+        c.execute(text("DROP TABLE comparisons"))
+        c.execute(text("ALTER TABLE jobs ADD CONSTRAINT ck_jobs_subject CHECK (job_type IS NOT NULL)"))
         c.execute(text("DROP INDEX ux_jobs_analysis_active"))
         c.execute(text("ALTER TABLE jobs DROP CONSTRAINT ck_jobs_subject"))
         c.execute(text("ALTER TABLE jobs DROP COLUMN analysis_id"))
@@ -98,10 +103,13 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
         nullable = c.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='jobs' "
                                   "AND column_name='case_id'")).scalar_one()
         ver = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert {"library_entries", "analysis_runs"} <= tabs and ver == "0003" and nullable == "YES"
-    assert {"ux_library_entries_run_active", "ux_jobs_analysis_active"} <= idx
-    assert "LIB_ANALYZE" in cons["ck_jobs_job_type"] and "REPORT" in cons["ck_artifacts_kind"]
-    assert "ck_jobs_subject" in cons and "fk_jobs_analysis_id_analysis_runs" in cons
+    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0004" and nullable == "YES"
+    assert {"ux_library_entries_run_active", "ux_jobs_analysis_active", "ux_jobs_comparison_active",
+            "ix_comparisons_project"} <= idx
+    assert "LIB_ANALYZE" in cons["ck_jobs_job_type"] and "LIB_COMPARE" in cons["ck_jobs_job_type"]
+    assert "REPORT" in cons["ck_artifacts_kind"] and "9" in cons["ck_jobs_stage"]
+    assert "comparison_id" in cons["ck_jobs_subject"] and "fk_jobs_analysis_id_analysis_runs" in cons
+    assert "fk_jobs_comparison_id_comparisons" in cons and "ck_comparisons_versions" in cons
 
 
 # ---------------------------------------------------------------- Case 보고서: CSP·첨부·경로 보호
@@ -324,10 +332,13 @@ def test_analysis_errors_and_files(client, engine, case, esl_root):
     assert r.status_code == 422 and _code(r) == "INVALID_PARAMS"
     r = client.post(url, json={"project_id": "p-1", "options": {"objective": "x"}}, headers=W)
     assert r.status_code == 422
+    r = client.post(url, json={"project_id": "p-1", "options": {"optdeck_cases": "some"}}, headers=W)
+    assert r.status_code == 422 and _code(r) == "INVALID_PARAMS"
     # 생성 성공: 대상 e2(질량 있음) + 필터 Face → LIB_ANALYZE 작업 QUEUED(SLOT)
     r = client.post(url, json={"project_id": "p-1", "title": "면 낙하", "target_entry_id": e2,
                                "filters": {"drop_class": ["Face"]},
-                               "options": {"normalization": "mass", "n_representative": 3, "objective": "weighted"}},
+                               "options": {"normalization": "mass", "n_representative": 3, "objective": "weighted",
+                                           "optdeck_cases": "representative+worst"}},
                     headers=W)
     assert r.status_code == 201, r.text
     a = r.json()
@@ -336,7 +347,9 @@ def test_analysis_errors_and_files(client, engine, case, esl_root):
     assert a["job"]["analysis_id"] == a["id"] and "settings" not in a["job"]["params"]
     assert [s["step_key"] for s in a["job"]["steps"]] == ["ANALYZE", "OPTDECK", "REPORT", "LIB_REGISTER"]
     assert a["folder_path"] == os.path.join(str(esl_root), "_analysis", a["id"])
-    assert a["options"] == {"normalization": "mass", "n_representative": 3, "objective": "weighted"}
+    assert a["options"] == {"normalization": "mass", "n_representative": 3, "objective": "weighted",
+                            "optdeck_cases": "representative+worst"}
+    assert a["job"]["params"]["options"]["optdeck_cases"] == "representative+worst"
     g = client.get(f"{url}/{a['id']}", headers=H("tok-general"))
     assert g.status_code == 200 and g.json()["id"] == a["id"]
     assert [x["id"] for x in client.get(url, params={"project_id": "p-1"}, headers=R).json()] == [a["id"]]
@@ -385,3 +398,99 @@ def test_case_report_job_create(client, case):
     assert r.status_code == 409 and _code(r) == "PREREQUISITE_MISSING"
     r = client.post(f"{API}/cases/{case['id']}/jobs", json={"job_type": "LIB_ANALYZE", "params": {}}, headers=W)
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------- 설계 버전 비교(§12.2)
+def test_comparison_create_errors_report(client, engine, case, esl_root):
+    import datetime as _dt
+
+    t0 = _dt.datetime(2026, 10, 1, tzinfo=_dt.timezone.utc)
+
+    def ent(version, scene_no=1, grid=(24, 14), name="55QX10A", k=0):
+        run = seed_run(engine, case["id"])["run_id"]
+        return seed_entry(engine, case["id"], run, esl_root=str(esl_root), version=version, scene_no=scene_no,
+                          grid=grid, name=name, registered_at=t0 + _dt.timedelta(minutes=k))
+
+    b1 = ent("v001", 1, k=1)
+    b2 = ent("v001", 2, k=2)
+    n1 = ent("v002", 1, k=3)
+    n1b = ent("v002", 1, k=4)          # 같은 씬 키 재등록 → 최근 것 사용
+    ent("v003", 7, k=5)               # 짝 없는 버전
+    ent("v004", 1, grid=(12, 8), k=6)  # 격자 다름
+    ent("v010", 1, name="65QX10A", k=7)
+    url = f"{API}/library/comparisons"
+    body = {"project_id": "p-1", "model": "55QX10A", "new_version": "v002"}
+    r = client.post(url, json=body, headers=H("tok-general", True))
+    assert r.status_code == 403 and _code(r) == "FORBIDDEN"
+    r = client.post(url, json=dict(body, new_version="v009"), headers=W)
+    assert r.status_code == 422 and _code(r) == "VERSION_NOT_FOUND"
+    assert r.json()["detail"]["versions"] == ["v001", "v002", "v003", "v004"]
+    r = client.post(url, json=dict(body, new_version="v001"), headers=W)          # 이전 버전 없음
+    assert r.status_code == 422 and _code(r) == "NO_PAIRED_SCENES"
+    r = client.post(url, json=dict(body, new_version="v003"), headers=W)          # 기본 기준 = v002, 씬 키 다름
+    assert r.status_code == 422 and _code(r) == "NO_PAIRED_SCENES"
+    assert r.json()["detail"]["base_version"] == "v002"
+    r = client.post(url, json=dict(body, new_version="v004", base_version="v002"), headers=W)
+    assert r.status_code == 422 and _code(r) == "GRID_MISMATCH"
+    r = client.post(url, json=dict(body, base_version="v002"), headers=W)
+    assert r.status_code == 422 and _code(r) == "INVALID_PARAMS"
+    r = client.post(url, json=dict(body, options={"cos_min": 1.5}), headers=W)
+    assert r.status_code == 422 and _code(r) == "INVALID_PARAMS"
+    r = client.post(url, json=dict(body, filters={"drop_type": ["Edge"]}), headers=W)
+    assert r.status_code == 422 and _code(r) == "VERSION_NOT_FOUND"
+    # 생성: 기본 기준 = 직전 버전(v001), LIB_COMPARE(LIGHT, stage 9) 큐
+    r = client.post(url, json=dict(body, title="비드 1차", options={"cos_min": 0.95}), headers=W)
+    assert r.status_code == 201, r.text
+    c = r.json()
+    assert (c["base_version"], c["new_version"], c["n_paired"], c["status"], c["verdict"]) == \
+        ("v001", "v002", 1, "QUEUED", None)
+    assert sorted(c["base_entry_ids"]) == sorted([b1, b2]) and c["new_entry_ids"] == [n1b]
+    job = c["job"]
+    assert (job["job_type"], job["lane"], job["stage"], job["case_id"], job["analysis_id"], job["comparison_id"]) == \
+        ("LIB_COMPARE", "LIGHT", 9, None, None, c["id"])
+    assert [s["step_key"] for s in job["steps"]] == ["COMPARE", "COMPARE_REGISTER"] and "settings" not in job["params"]
+    assert [x["id"] for x in job["params"]["new"]] == [n1b] and job["params"]["options"] == {"cos_min": 0.95}
+    assert c["folder_path"] == os.path.join(str(esl_root), "_compare", c["id"])
+    assert n1 not in c["new_entry_ids"]
+    g = client.get(f"{url}/{c['id']}", headers=H("tok-general"))
+    assert g.status_code == 200 and g.json()["id"] == c["id"]
+    assert [x["id"] for x in client.get(url, params={"project_id": "p-1", "model": "55qx10a"}, headers=R).json()] \
+        == [c["id"]]
+    assert client.get(url, params={"project_id": "p-2"}, headers=R).json() == []
+    r = client.get(f"{url}/{uuid.uuid4()}", headers=R)
+    assert r.status_code == 404 and _code(r) == "COMPARISON_NOT_FOUND"
+    # 보고서: 없음 404 → 파일(CSP·첨부) → 심링크 탈출 거부
+    r = client.get(f"{url}/{c['id']}/report", headers=R)
+    assert r.status_code == 404 and _code(r) == "REPORT_NOT_FOUND"
+    os.makedirs(c["folder_path"], exist_ok=True)
+    rp = os.path.join(c["folder_path"], "report.html")
+    with open(rp, "w", encoding="utf-8") as fh:
+        fh.write("<!doctype html><p>비교</p>")
+    r = client.get(f"{url}/{c['id']}/report", headers=H("tok-general"))
+    assert r.status_code == 200 and r.headers["content-security-policy"] == CSP and "비교" in r.text
+    r = client.get(f"{url}/{c['id']}/report", params={"download": 1}, headers=R)
+    assert r.headers["content-disposition"].startswith("attachment;")
+    outside = os.path.join(os.path.dirname(str(esl_root)), "outside.html")
+    with open(outside, "w", encoding="utf-8") as fh:
+        fh.write("secret")
+    os.remove(rp)
+    os.symlink(outside, rp)
+    r = client.get(f"{url}/{c['id']}/report", headers=R)
+    assert r.status_code == 422 and _code(r) == "PATH_UNSAFE" and "secret" not in r.text
+    # 진행 중 재시도 불가 → 취소 후 재시도(비교의 job_id 갱신)
+    jid = job["id"]
+    assert client.post(f"{API}/jobs/{jid}/retry", headers=W).status_code == 409
+    assert client.post(f"{API}/jobs/{jid}/cancel", headers=W).json()["state"] == "CANCELED"
+    nr = client.post(f"{API}/jobs/{jid}/retry", headers=W)
+    assert nr.status_code == 201 and nr.json()["comparison_id"] == c["id"]
+    assert client.get(f"{url}/{c['id']}", headers=R).json()["job_id"] == nr.json()["id"]
+    # DB: LIB_COMPARE 는 comparison_id 필수, 같은 비교 비종료 작업 1개
+    base = dict(project_id="p-1", stage=9, lane="LIGHT", state="QUEUED", queue_seq=1, params={}, created_by="u",
+                created_by_name="u")
+    for bad in (dict(job_type="LIB_COMPARE", case_id=None, analysis_id=None, comparison_id=None),
+                dict(job_type="LIB_COMPARE", case_id=case["id"], comparison_id=c["id"]),
+                dict(job_type="CASE_EXTRACT", case_id=case["id"], comparison_id=c["id"]),
+                dict(job_type="LIB_COMPARE", case_id=None, comparison_id=c["id"])):     # 비종료 중복
+        with pytest.raises(IntegrityError):
+            with engine.begin() as cn:
+                cn.execute(insert(jobs).values(id=str(uuid.uuid4()), **base, **bad))

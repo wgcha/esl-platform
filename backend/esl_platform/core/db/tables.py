@@ -1,4 +1,4 @@
-"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11). SQLAlchemy Core, PostgreSQL 전용.
+"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12). SQLAlchemy Core, PostgreSQL 전용.
 
 공통: ID = UUID4 VARCHAR(36), 시간 TIMESTAMPTZ(DB 시계), 파일 본문·대용량 배열 저장 금지(경로·sha256·요약만),
 갱신 행은 `version BIGINT` 낙관적 잠금.
@@ -38,13 +38,18 @@ ID = String(36)
 TS = TIMESTAMP(timezone=True)
 
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
-JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE")
+JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE")
 ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "REPORT", "RUN", "LOG")
 # 0003: 제약 SQL(마이그레이션과 공유)
 CK_JOBS_JOB_TYPE = "job_type IN (" + ",".join(f"'{t}'" for t in JOB_TYPES) + ")"
-CK_JOBS_STAGE = "stage BETWEEN 1 AND 8"
-CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL)"
-                   " OR (job_type <> 'LIB_ANALYZE' AND case_id IS NOT NULL AND analysis_id IS NULL)")
+CK_JOBS_STAGE = "stage BETWEEN 1 AND 9"     # 0004: 9 = 설계 버전 비교
+# 0004: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE)
+CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL"
+                   " AND comparison_id IS NULL)"
+                   " OR (job_type = 'LIB_COMPARE' AND case_id IS NULL AND analysis_id IS NULL"
+                   " AND comparison_id IS NOT NULL)"
+                   " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE') AND case_id IS NOT NULL"
+                   " AND analysis_id IS NULL AND comparison_id IS NULL)")
 CK_ARTIFACTS_KIND = "kind IN (" + ",".join(f"'{k}'" for k in ARTIFACT_KINDS) + ")"
 
 job_queue_seq = Sequence("job_queue_seq", metadata=metadata)
@@ -95,6 +100,7 @@ jobs = Table(
     Column("id", ID, primary_key=True),
     Column("case_id", ID, ForeignKey("cases.id"), nullable=True),     # 0003: LIB_ANALYZE 는 NULL
     Column("analysis_id", ID, ForeignKey("analysis_runs.id"), nullable=True),  # 0003: LIB_ANALYZE 대상 분석
+    Column("comparison_id", ID, ForeignKey("comparisons.id"), nullable=True),  # 0004: LIB_COMPARE 대상 비교
     Column("project_id", String, nullable=False),
     Column("job_type", String, nullable=False),
     Column("stage", SmallInteger, nullable=False),
@@ -156,6 +162,10 @@ Index("ux_jobs_case_running", jobs.c.case_id, unique=True, postgresql_where=text
 # 0003: 같은 분석의 비종료 작업은 1개
 Index("ux_jobs_analysis_active", jobs.c.analysis_id, unique=True,
       postgresql_where=text("analysis_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+# 0004: 같은 비교의 비종료 작업은 1개
+Index("ux_jobs_comparison_active", jobs.c.comparison_id, unique=True,
+      postgresql_where=text("comparison_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED',"
+                            "'INTERRUPTED')"))
 
 job_steps = Table(
     "job_steps",
@@ -323,6 +333,41 @@ analysis_runs = Table(
 )
 Index("ix_analysis_runs_project", analysis_runs.c.project_id, analysis_runs.c.created_at.desc())
 
+# ---------------------------------------------------------------- 0004: 설계 버전 비교(계약 esl_p2_library.md §12.2)
+comparisons = Table(
+    "comparisons",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("project_id", String, nullable=False),
+    Column("title", String(200), nullable=True),
+    Column("model", String(200), nullable=False),          # 제품명(library_entries.model.name)
+    Column("base_version", String(64), nullable=False),
+    Column("new_version", String(64), nullable=False),
+    Column("filters", JSONB, nullable=False),
+    Column("options", JSONB, nullable=False),
+    Column("base_entry_ids", JSONB, nullable=False),        # 생성 시점에 확정한 기준 버전 항목
+    Column("new_entry_ids", JSONB, nullable=False),         # 생성 시점에 확정한 비교 버전 항목
+    Column("n_paired", Integer, nullable=False),            # 생성 시점 씬 키 짝 수(≥1)
+    Column("job_id", ID, nullable=True),                    # 최신 LIB_COMPARE 작업(상태 = 작업 상태)
+    Column("verdict", String, nullable=True),               # CONVERGED | ITERATE (작업 완료 후)
+    Column("result", JSONB, nullable=True),                 # 요약: 판정·집계·씬 표
+    Column("result_rel", String, nullable=True),            # esl_root 기준 compare.json
+    Column("report_rel", String, nullable=True),
+    Column("dir_rel", String, nullable=False),              # _compare/<id>
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("base_version <> new_version", name="ck_comparisons_versions"),
+    CheckConstraint("jsonb_typeof(base_entry_ids) = 'array' AND jsonb_array_length(base_entry_ids) >= 1"
+                    " AND jsonb_typeof(new_entry_ids) = 'array' AND jsonb_array_length(new_entry_ids) >= 1",
+                    name="ck_comparisons_entry_ids"),
+    CheckConstraint("n_paired >= 1", name="ck_comparisons_n_paired"),
+    CheckConstraint("verdict IS NULL OR verdict IN ('CONVERGED','ITERATE')", name="ck_comparisons_verdict"),
+    CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_comparisons_dir_rel"),
+)
+Index("ix_comparisons_project", comparisons.c.project_id, comparisons.c.created_at.desc())
+
 notifications = Table(
     "notifications",
     metadata,
@@ -379,5 +424,6 @@ worker_heartbeats = Table(
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
+    "comparisons",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

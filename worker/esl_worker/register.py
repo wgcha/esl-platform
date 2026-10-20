@@ -279,11 +279,23 @@ def _analysis_summary(res: dict[str, Any], opt: dict[str, Any] | None) -> dict[s
                                           "scale_factor", "svd_coef")} for c in cases],
         "warnings": list(res.get("warnings") or []),
         "optdeck": None,
+        "deck": _deck_summary(res),
     }
     if opt:
         out["optdeck"] = {k: opt.get(k) for k in ("deck", "files", "objective", "n_subcases", "n_design_elems",
                                                   "n_nondesign_elems", "card_format", "reference_compliance")}
     return out
+
+
+def _deck_summary(res: dict[str, Any]) -> dict[str, Any] | None:
+    """덱 하중 구성(§12.1): 설정·적용 모드, subcase 수, 자동 축소 여부, 제외 씬(사유)."""
+    d = res.get("deck")
+    if not d:
+        return None
+    return {"requested": d.get("requested"), "mode": d.get("mode"), "reduced": bool(d.get("reduced")),
+            "max_cases": d.get("max_cases"), "n_cases": d.get("n_cases"), "n_subcases": d.get("n_subcases"),
+            "n_excluded": len(d.get("excluded") or []),
+            "excluded": [{k: x.get(k) for k in ("entry_id", "scene", "reason")} for x in (d.get("excluded") or [])]}
 
 
 def register_lib_analyze(conn: Connection, job: dict[str, Any], case: Any, adir: str) -> dict[str, Any]:
@@ -315,6 +327,45 @@ def register_lib_analyze(conn: Connection, job: dict[str, Any], case: Any, adir:
             "load_cases": [lc["entry_id"] for lc in summary["load_cases"]], "optdeck": opt is not None}
 
 
+# ---------------------------------------------------------------- 설계 버전 비교(P2 §12.2)
+def _compare_summary(res: dict[str, Any]) -> dict[str, Any]:
+    reps = res.get("representatives") or {}
+    return {
+        "convergence": res.get("convergence"), "aggregate": res.get("aggregate"), "criteria": res.get("criteria"),
+        "n_base": res.get("n_base"), "n_new": res.get("n_new"), "n_paired": res.get("n_paired"),
+        "representatives": {k: reps.get(k) for k in ("k", "rep_same", "partition_same", "partition_agreement",
+                                                      "matching")},
+        "scenes": [{k: s.get(k) for k in ("label", "base_entry", "new_entry", "cos", "force_ratio", "hotspot_shift",
+                                          "eps_ratio", "quality_base", "quality_new", "changed", "reasons")}
+                   for s in res.get("scenes") or []],
+        "unpaired": res.get("unpaired"), "warnings": list(res.get("warnings") or []),
+    }
+
+
+def register_lib_compare(conn: Connection, job: dict[str, Any], case: Any, cdir: str) -> dict[str, Any]:
+    from esl_platform.core.repositories import library as lib_repo
+
+    c = lib_repo.get_comparison(conn, job["comparison_id"], for_update=True)
+    if c is None:
+        raise RegisterError("COMPARISON_NOT_FOUND", "비교 행이 없습니다")
+    try:
+        res = co.read_json(os.path.join(cdir, "compare.json"))
+    except (OSError, ValueError) as exc:
+        raise RegisterError("TOOL_OUTPUT_MISSING", f"compare.json 을 읽을 수 없습니다: {exc}") from None
+    if res.get("comparison_id") not in (None, c["id"]):
+        raise RegisterError("OUTPUT_INVALID", f"compare.json 이 이 비교의 것이 아닙니다({res.get('comparison_id')})")
+    verdict = (res.get("convergence") or {}).get("verdict")
+    if verdict not in ("CONVERGED", "ITERATE"):
+        raise RegisterError("OUTPUT_INVALID", f"compare.json 판정이 없습니다({verdict})")
+    base = c["dir_rel"]
+    summary = _jsonable(_compare_summary(res))
+    lib_repo.update_comparison(
+        conn, c["id"], verdict=verdict, result=summary, result_rel=f"{base}/compare.json",
+        report_rel=f"{base}/report.html" if os.path.isfile(os.path.join(cdir, "report.html")) else None)
+    return {"comparison_id": c["id"], "verdict": verdict, "n_paired": res.get("n_paired"),
+            "cos_min": (res.get("aggregate") or {}).get("cos_min")}
+
+
 def _jsonable(o: Any) -> Any:
     import json
 
@@ -322,4 +373,5 @@ def _jsonable(o: Any) -> Any:
 
 
 REGISTER = {"CASE_EXTRACT": register_extract, "ESL_SOLVE": register_esl, "VALIDATE": register_validation,
-            "EXPORT": register_export, "CASE_REPORT": register_case_report, "LIB_ANALYZE": register_lib_analyze}
+            "EXPORT": register_export, "CASE_REPORT": register_case_report, "LIB_ANALYZE": register_lib_analyze,
+            "LIB_COMPARE": register_lib_compare}

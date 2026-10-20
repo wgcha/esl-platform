@@ -17,6 +17,7 @@ from esl_platform.core.config import LoadedConfig, Settings
 from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.repositories import workers as workers_repo
 
+from . import limiter as limiter_mod
 from .executor import Executor
 
 log = logging.getLogger("esl_worker")
@@ -33,6 +34,8 @@ class Worker:
         self.claims_paused = not config.ok
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        # 자원 제한기(worker.limiter): Windows 는 여기서 워커 수명 Job Object 를 만든다(실패 → 코어 step LIMITER_FAILED)
+        self.proc_limiter = limiter_mod.create(self.settings.worker)
 
     @property
     def settings(self) -> Settings:
@@ -41,13 +44,15 @@ class Worker:
 
     @property
     def limiter(self) -> str:
-        return "nice" if hasattr(os, "nice") and self.settings.worker.priority != "normal" else "none"
+        """/status worker.limiter·환경 점검 heartbeat 에 보이는 한 줄(모드: 적용 내용 또는 사용 불가 이유)."""
+        return limiter_mod.describe(self.proc_limiter)
 
     def heartbeat_once(self) -> None:
         with self.engine.begin() as conn:
             workers_repo.heartbeat(conn, worker_id=self.worker_id, host=socket.gethostname(), pid=os.getpid(),
                                    app_version=__version__, limiter=self.limiter,
-                                   info={"claims_paused": self.claims_paused})
+                                   info={"claims_paused": self.claims_paused,
+                                         "limits": self.proc_limiter.summary()})
 
     def reap_once(self) -> list[str]:
         with self.engine.begin() as conn:
@@ -100,3 +105,4 @@ class Worker:
         for t in self._threads:
             t.join(timeout)
         self._threads.clear()
+        self.proc_limiter.close()  # Windows: Job 핸들 닫기(KILL_ON_JOB_CLOSE — 남은 코어 자식 종료)

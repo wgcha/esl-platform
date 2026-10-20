@@ -2,7 +2,7 @@
 
 관리 화면의 환경 점검이 없으므로(`GET /status`는 설정·워커·솔버 요약만) 설치·업데이트·설정 변경 뒤 이 표로 확인한다.
 항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), esl_root 쓰기·여유 공간, input_roots·spdm_roots 읽기,
-worker.state_dir 쓰기, DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
+worker.state_dir 쓰기, 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
 - DB URL: 환경변수(설정 `database.url_env`, 기본 ESL_DATABASE_URL) → 없으면 `--runtime`의 `secrets/database_url`.
@@ -186,6 +186,27 @@ def check_solver(core_cfg: dict | None, platform: str) -> list[Item]:
     return out
 
 
+def check_limiter(worker_cfg, platform: str, *, kernel32=None, cpu_count: int | None = None) -> Item:
+    """워커 자원 제한기(worker.limiter): 이 OS 에서 쓸 모드를 해석하고, windows_job 이면 Job Object 를 실제로 만들어
+    한도(우선순위·메모리·CPU 상한)를 설정해 본 뒤 닫는다(프로세스는 실행하지 않음). none = WARN(제한 없음)."""
+    from esl_worker import limiter
+
+    os_name = "nt" if platform.startswith("win") else "posix"
+    lim = limiter.create(worker_cfg, os_name=os_name, kernel32=kernel32, cpu_count=cpu_count)
+    try:
+        s = lim.summary()
+    finally:
+        lim.close()
+    line = f"{worker_cfg.limiter} → {s['mode']}: {s['text']}"
+    if s.get("error"):
+        return Item("worker.limiter", FAIL, line + " — 코어 step 이 LIMITER_FAILED 로 실패합니다")
+    if s["mode"] == "null":
+        return Item("worker.limiter", WARN, line + " — 대시보드·physicsai 와 CPU·메모리 경합 가능")
+    if s["mode"] == "posix" and not hasattr(os, "sched_setaffinity"):
+        return Item("worker.limiter", WARN, line + " — 이 OS 는 CPU 선호도 미지원")
+    return Item("worker.limiter", OK, line)
+
+
 def check_db(url: str, heartbeat_interval_s: float | None) -> list[Item]:
     from sqlalchemy import create_engine, text
 
@@ -298,6 +319,7 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         items.append(check_dir_write("worker.state_dir", sd))
     else:
         items.append(Item("worker.state_dir", WARN, f"폴더 없음(워커가 만듦): {sd}"))
+    items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)
 

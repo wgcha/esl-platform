@@ -1,5 +1,5 @@
 // 라이브러리 화면 공통: 표기·필터·포락 미니맵.
-import type { AnalysisFilters, EntryOut } from "../../api/types";
+import type { AnalysisFilters, EntryOut, OptdeckCases } from "../../api/types";
 import { Badge } from "../../components/ui";
 import { VIRIDIS, f3, gradient, lerp } from "../../lib/colormap";
 
@@ -9,6 +9,59 @@ export const NORM_LABEL: Record<string, string> = { none: "없음", mass: "질�
 export const OBJ_LABEL: Record<string, string> = { minmax: "최악 최소화 (minmax)", weighted: "가중 합 (weighted)" };
 
 export const libPath = (projectId: string) => `/p/${projectId}/library`;
+
+/** §12.1 최적화 하중(덱 subcase) 구성 */
+export const DECK_LABEL: Record<OptdeckCases, string> = { all: "모든 씬", representative: "대표", "representative+worst": "대표+최악" };
+
+// ---------------------------------------------------------------- 설계 버전(§12.2)
+const vkey = (v: string) => v.split(/(\d+)/).filter((p) => p !== "").map((p) => (/^\d+$/.test(p) ? [0, Number(p), ""] : [1, 0, p.toLowerCase()]) as [number, number, string]);
+
+/** 서버(esl.library.compare.sort_versions)와 같은 자연 정렬: v2 < v10 */
+export function sortVersions(vs: (string | null | undefined)[]): string[] {
+  const u = [...new Set(vs.filter((v): v is string => !!v && !!v.trim()))];
+  return u.sort((a, b) => {
+    const x = vkey(a);
+    const y = vkey(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++)
+      for (let k = 0; k < 3; k++) if (x[i][k] !== y[i][k]) return x[i][k] < y[i][k] ? -1 : 1;
+    return x.length - y.length;
+  });
+}
+
+export function prevVersion(vs: string[], v: string): string | null {
+  const s = sortVersions([...vs, v]);
+  const i = s.indexOf(v);
+  return i > 0 ? s[i - 1] : null;
+}
+
+/** 짝 씬 키(서버 comparisons.scene_key 와 같은 필드·대소문자 무시) */
+export function sceneKey(e: EntryOut) {
+  const s = e.scene;
+  return [s.scenario, s.seq, s.drop_type, s.round, s.scene_no, s.orient, s.suffix].map((x) => (x == null ? "" : String(x).trim().toLowerCase())).join("|");
+}
+
+/** 기준·비교 버전 항목 → 짝(같은 씬 키, 같은 키가 여럿이면 최근 등록) */
+export function pairEntries(entries: EntryOut[], model: string, base: string, next: string) {
+  const pick = (v: string) => {
+    const m = new Map<string, EntryOut>();
+    entries
+      .filter((e) => e.status === "ACTIVE" && e.model.name === model && e.model.version === v)
+      .sort((a, b) => a.registered_at.localeCompare(b.registered_at))
+      .forEach((e) => m.set(sceneKey(e), e));
+    return m;
+  };
+  const b = pick(base);
+  const n = pick(next);
+  const pairs = [...b.keys()].filter((k) => n.has(k)).map((k) => ({ key: k, base: b.get(k)!, next: n.get(k)! }));
+  return { pairs, baseOnly: [...b.keys()].filter((k) => !n.has(k)).length, newOnly: [...n.keys()].filter((k) => !b.has(k)).length };
+}
+
+/** 제품별 활성 버전(2개 이상인 제품만 비교 가능) */
+export function modelVersions(entries: EntryOut[]) {
+  const m = new Map<string, string[]>();
+  for (const e of entries) if (e.status === "ACTIVE" && e.model.name && e.model.version) m.set(e.model.name, [...(m.get(e.model.name) ?? []), e.model.version]);
+  return [...m.entries()].map(([model, vs]) => ({ model, versions: sortVersions(vs) })).sort((a, b) => a.model.localeCompare(b.model));
+}
 
 export function VerdictBadge({ v }: { v: string | null | undefined }) {
   if (!v) return <span className="muted">–</span>;

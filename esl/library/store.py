@@ -6,6 +6,7 @@
   <root>/library/entries/<entry_id>/      entry.json, summary.npz, raw.npz (등록 후 수정 불가)
   <root>/_analysis/<analysis_id>/         analysis.json, mapped_loads.npz, envelope.csv, representatives.csv,
                                           opt/(덱), report.html  — 덮어쓰기 전 _backup/<ts>/ 로 이동
+  <root>/_compare/<compare_id>/           compare.json, report.html (설계 버전 비교, §12.2)
 
 색인 이벤트::
 
@@ -21,7 +22,7 @@ from esl.errors import EslError
 from esl.library import _util as U
 from esl.library import entry as en
 
-LIB, INDEX, ENTRIES, ANALYSIS = "library", "index.jsonl", "entries", "_analysis"
+LIB, INDEX, ENTRIES, ANALYSIS, COMPARE = "library", "index.jsonl", "entries", "_analysis", "_compare"
 FILTER_KEYS = ("entry_id", "product", "model", "inch", "version", "project", "scenario", "drop_type", "drop_class",
                "orient", "scene", "verdict", "status", "mesh_sha256", "variant", "round")
 
@@ -36,6 +37,10 @@ def entry_dir(root: str, entry_id: str) -> str:
 
 def analysis_dir(root: str, analysis_id: str) -> str:
     return os.path.join(root, ANALYSIS, analysis_id)
+
+
+def compare_dir(root: str, compare_id: str) -> str:
+    return os.path.join(root, COMPARE, compare_id)
 
 
 def brief(meta: dict) -> dict:

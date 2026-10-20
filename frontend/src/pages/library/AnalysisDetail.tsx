@@ -7,14 +7,14 @@ import { ApiError, downloadFile } from "../../api/client";
 import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
-import { Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
+import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { openReport } from "../../components/ReportLink";
 import { CopyPath, TOO_LARGE_TEXT } from "../../stages/Stage6";
 import { usePolling } from "../../lib/usePolling";
 import { bytes, dt } from "../../lib/format";
 import { f3 } from "../../lib/colormap";
-import { EnvelopeMap, NORM_LABEL, OBJ_LABEL, VerdictBadge, dropText, entryLabel, filtersText, libPath, parseEnvelopeCsv } from "./common";
+import { DECK_LABEL, EnvelopeMap, NORM_LABEL, OBJ_LABEL, VerdictBadge, dropText, entryLabel, filtersText, libPath, parseEnvelopeCsv } from "./common";
 
 const ACTIVE: string[] = ["QUEUED", "RUNNING"];
 const KIND_LABEL: Record<string, string> = { optdeck: "최적화 덱", report: "보고서", analysis: "분석 자료", log: "로그", other: "기타" };
@@ -167,6 +167,27 @@ export function AnalysisDetail() {
               <Stat label="대표 케이스" value={nRep} sub={r.load_cases.length > nRep ? `최악 케이스 ${r.load_cases.length - nRep}개 포함` : undefined} />
               <Stat label="SVD 모드" value={r.svd.n_modes} sub={r.svd.cum_energy_at_r != null ? `누적 에너지 ${Math.round(r.svd.cum_energy_at_r * 100)}%` : undefined} />
               <Stat label="최대 셀 합력" value={r.envelope ? `${f3(r.envelope.max)} N` : "–"} sub={r.envelope ? `셀 (${r.envelope.argmax_cell.join(", ")})` : undefined} />
+              {r.deck && (
+                <Stat
+                  label="최적화 하중 (subcase)"
+                  value={
+                    <span data-testid="deck-subcases">
+                      {r.deck.n_subcases}
+                      {r.deck.reduced && (
+                        <>
+                          {" "}
+                          <Badge kind="warn">자동 축소</Badge>
+                        </>
+                      )}
+                    </span>
+                  }
+                  sub={
+                    r.deck.reduced
+                      ? `씬 ${r.deck.n_cases}개 > 상한 ${r.deck.max_cases} → ${DECK_LABEL[r.deck.mode]} · 제외 ${r.deck.n_excluded}개(보고서)`
+                      : `${DECK_LABEL[r.deck.mode]}${r.deck.n_excluded ? ` · 제외 ${r.deck.n_excluded}개` : ""}`
+                  }
+                />
+              )}
               {r.optdeck && <Stat label="최적화 덱" value={r.optdeck.deck} sub={`subcase ${r.optdeck.n_subcases} · 설계 요소 ${r.optdeck.n_design_elems.toLocaleString()}`} />}
             </div>
             {r.warnings.length > 0 && (

@@ -20,9 +20,16 @@
    이므로 '합력 최대'는 절점력 크기 합으로 정의.)
 6. 통계 뷰: 씬 유형(Corner/Edge/Face)·orient·인치·시나리오별 Σ|f| 분포와 셀 포락, 검증 오차 분포, SVD 계수 산점.
 
-저장(§10): 대상 절점 하중은 케이스별로 만들어 누적량만 남기고(전체 K×N×3 을 들지 않음), ``mapped_loads.npz`` 의
-``mapped_F`` 는 대표·최악 케이스만 (L,N,3) — ``load_case_index``(L,)·``load_case_entry_id``(L,) 와 같은 순서.
-``load_case_forces(result, arrays)`` 로 ``result["load_cases"]`` 순서의 하중을 꺼낸다.
+7. 덱 하중 케이스(§12.1, ``deck_cases``): ``all``(기본) = 모든 씬이 subcase, ``representative`` = 대표(medoid),
+   ``representative+worst`` = 대표 + 클러스터별 최악(Σ|f| 최대). ``all`` 에서 K > ``max_cases`` 면
+   ``representative+worst`` 로 자동 축소(경고 + ``result["deck"]["excluded"]`` 제외 씬·사유). 대표 케이스
+   (``load_cases``)는 덱 구성과 무관하게 보고서의 하중 패턴 설명용으로 유지.
+
+저장(§10·§12): 대상 절점 하중은 케이스별로 만들어 누적량만 남기고, ``mapped_loads.npz`` 의 ``mapped_F`` 는
+**덱에 들어간 케이스 전부**(+ 보고서 대표·최악 케이스) (L,N,3) — ``load_case_index``(L,)·``load_case_entry_id``(L,) 와
+같은 순서. ``all``(축소 없음)이면 스트리밍 중에 바로 모으고, 그 밖에는 선택 후 재계산한다.
+``load_case_forces(result, arrays)`` 는 ``result["load_cases"]`` 순서, ``deck_case_forces`` 는 ``result["deck"]["cases"]``
+순서의 하중을 꺼낸다(``deck`` 이 없는 이전 결과는 load_cases = 덱).
 """
 from __future__ import annotations
 
@@ -39,7 +46,9 @@ from esl.library import normalize as nz
 
 DEFAULT_OPTS = {"svd_energy": 0.9, "n_representative": 5, "seed": 0, "n_init": 8, "worst_case": False,
                 "normalization": "none", "moment_scale": "preserve", "equilibrate": True, "distance": "pattern", "svd_feature": "cell",
-                "target_mass": None, "target_inch": None}
+                "target_mass": None, "target_inch": None, "deck_cases": "all", "max_cases": 60}
+DECK_MODES = ("all", "representative", "representative+worst")
+SIZE_WARN_BYTES = 2 * 1024 ** 3      # mapped_F 가 이보다 크면 규모 경고
 GROUP_KEYS = ("drop_class", "orient", "inch", "scenario", "verdict")
 
 
@@ -169,7 +178,32 @@ def _target_case_force(e, target, tx, tfr, factor, mopts):
 
 
 def load_case_forces(result: dict, arrays: dict) -> list:
-    """result["load_cases"] 순서의 대상 절점 하중 (N,3) 목록 (mapped_loads.npz = 대표·최악 케이스만)."""
+    """result["load_cases"] 순서의 대상 절점 하중 (N,3) 목록."""
+    return _stored_forces(result, arrays, result["load_cases"])
+
+
+def deck_cases(result: dict) -> list:
+    """덱 subcase 목록(§12.1). 이전 결과(deck 없음)는 load_cases 그대로."""
+    d = result.get("deck")
+    return list(d["cases"]) if d and d.get("cases") is not None else list(result["load_cases"])
+
+
+def deck_case_forces(result: dict, arrays: dict) -> list:
+    """deck_cases(result) 순서의 대상 절점 하중 (N,3) 목록."""
+    return _stored_forces(result, arrays, deck_cases(result))
+
+
+def optdeck_load_cases(result: dict, arrays: dict) -> list:
+    """optdeck.write 입력: [{label, entry_id, f, weight}] (label = 덱 라벨_유형orient)."""
+    out = []
+    for lc, f in zip(deck_cases(result), deck_case_forces(result, arrays)):
+        c = result["cases"][lc["case_index"]]
+        out.append({"label": f"{lc['label']}_{c.get('drop_class') or ''}{c.get('orient') or ''}",
+                    "entry_id": lc["entry_id"], "f": f, "weight": 1.0})
+    return out
+
+
+def _stored_forces(result: dict, arrays: dict, lcs: list) -> list:
     F = np.asarray(arrays["mapped_F"])
     if "load_case_index" in arrays:
         pos = {int(k): i for i, k in enumerate(np.asarray(arrays["load_case_index"]).tolist())}
@@ -178,7 +212,7 @@ def load_case_forces(result: dict, arrays: dict) -> list:
     else:
         raise EslError("INPUT_INVALID", "mapped_loads.npz 에 load_case_index 가 없음(분석 다시 실행)")
     out = []
-    for lc in result["load_cases"]:
+    for lc in lcs:
         k = int(lc["case_index"])
         if k not in pos:
             raise EslError("INPUT_INVALID", f"mapped_loads.npz 에 하중 케이스 {lc.get('label')}(case {k}) 가 없음")
@@ -216,8 +250,21 @@ def run(entries, target=None, opts: dict | None = None):
                                                           "target": tmeta}))
     factors = np.asarray(factors)
 
+    if o["deck_cases"] not in DECK_MODES:
+        raise EslError("INPUT_INVALID", f"deck_cases: {'|'.join(DECK_MODES)} (값 {o['deck_cases']!r})")
+    max_cases = int(o["max_cases"])
+    if max_cases < 1:
+        raise EslError("INPUT_INVALID", f"max_cases ≥ 1 (값 {max_cases})")
+    deck_mode = o["deck_cases"]
+    reduced = deck_mode == "all" and K > max_cases
+    if reduced:
+        deck_mode = "representative+worst"
+        warns.append(f"씬 {K}개 > optdeck.max_cases {max_cases} — 덱 하중을 대표+최악으로 자동 축소"
+                     "(보고서 '제외된 씬' 표)")
+
     arrays: dict = {}
     case_info = []
+    Fall = None
     if target is not None:
         if target.raw is None:
             raise EslError("INPUT_INVALID", "대상 항목의 원본(raw) 메시가 필요")
@@ -237,9 +284,13 @@ def run(entries, target=None, opts: dict | None = None):
         node_env_case = np.zeros(N, dtype=np.int64)
         sum_abs = np.zeros(K)
         cnt = None
+        if deck_mode == "all":                      # 모든 씬이 덱 → 스트리밍 중에 모은다(재계산 없음)
+            Fall = np.zeros((K, N, 3))
         for k, e in enumerate(entries):
             fk, info = _target_case_force(e, target, tx, tfr, factors[k], mopts)
             case_info.append(info)
+            if Fall is not None:
+                Fall[k] = fk
             Gk, cnt = _cell_sums_local(tx, fk[None], tfr, nx, ny)
             G[k] = Gk[0]
             if Mc is not None:
@@ -330,15 +381,26 @@ def run(entries, target=None, opts: dict | None = None):
                 load_cases.append({"label": f"WORST{c['id'] + 1}", "case_index": c["worst"],
                                    "entry_id": c["worst_entry"], "role": "worst", "cluster": c["id"]})
 
+    # ---- 덱 하중 케이스(§12.1)
+    deck = _deck_plan(o["deck_cases"], deck_mode, reduced, max_cases, clusters, briefs, K)
     if target is not None:
-        # 저장 하중: 대표·최악 케이스만 (load_case_index 순서, 중복 제거). 케이스별로 다시 만든다(결정적).
-        sel = list(dict.fromkeys(int(lc["case_index"]) for lc in load_cases))
+        # 저장 하중: 덱 케이스 전부 + 보고서 대표·최악 (덱 순서 먼저, 중복 제거).
+        sel = list(dict.fromkeys([int(lc["case_index"]) for lc in deck["cases"]]
+                                 + [int(lc["case_index"]) for lc in load_cases]))
         arrays["load_case_index"] = np.asarray(sel, dtype=np.int64)
         arrays["load_case_entry_id"] = np.array([briefs[k]["entry_id"] for k in sel])
-        arrays["mapped_F"] = np.stack([_target_case_force(entries[k], target, tx, tfr, factors[k], mopts)[0]
-                                       for k in sel])
+        if Fall is not None:
+            arrays["mapped_F"] = Fall[sel] if sel != list(range(K)) else Fall
+        else:
+            arrays["mapped_F"] = np.stack([_target_case_force(entries[k], target, tx, tfr, factors[k], mopts)[0]
+                                           for k in sel])
+        nbytes = int(arrays["mapped_F"].nbytes)
+        deck["mapped_bytes"] = nbytes
+        if nbytes > SIZE_WARN_BYTES:
+            warns.append(f"mapped_loads 하중 {len(sel)}개 × 노드 {N} = {nbytes / 1024 ** 3:.1f} GB (메모리·디스크 확인)")
 
     cases = []
+    deck_lab = {int(lc["case_index"]): lc["label"] for lc in deck["cases"]}
     for k, b in enumerate(briefs):
         ci = case_info[k]
         cases.append({"index": k, **b, "scale_factor": float(factors[k]), "sum_abs_f": float(sum_abs[k]),
@@ -352,7 +414,8 @@ def run(entries, target=None, opts: dict | None = None):
                        "equilibrium_after": ci.get("equilibrium_after"),
                        "equilibrate_correction_rel": ci.get("equilibrate_correction_rel"),
                        "moment_factor": ci.get("moment_factor")},
-                      "svd_coef": scores[k, :min(3, S.size)].tolist()})
+                      "svd_coef": scores[k, :min(3, S.size)].tolist(),
+                      "deck_label": deck_lab.get(k)})
 
     # ---- 통계 뷰
     stats = {"groups": {}, "group_env": {}, "verification": [], "svd_scatter": []}
@@ -396,13 +459,54 @@ def run(entries, target=None, opts: dict | None = None):
         "svd": {"singular_values": S.tolist(), "energy": energy.tolist(), "cum_energy": cum.tolist(),
                 "n_modes": r, "threshold": float(o["svd_energy"]), "feature": (o["svd_feature"] if target is not None else "cell(entry grid)"),
                 "rows": "unit" if o["distance"] == "pattern" else "raw"},
-        "clusters": clusters, "kmedoids_cost": cost, "load_cases": load_cases,
+        "clusters": clusters, "kmedoids_cost": cost, "load_cases": load_cases, "deck": deck,
         "envelope": {"max": float(env_mag.max()), "argmax_cell": [int(v) for v in np.unravel_index(np.argmax(env_mag),
                                                                                                    env_mag.shape)]},
         "mapping": mapping_summary, "stats": stats, "warnings": warns,
     }
     arrays["case_entry_id"] = np.array([b["entry_id"] for b in briefs])
     return U.jsonable(result), arrays
+
+
+def _scene_text(b) -> str:
+    return (f"{b.get('product') or '?'} {b.get('drop_class') or b.get('drop_type') or '?'}{b.get('orient') or ''}"
+            f" S{b.get('scene') if b.get('scene') is not None else '?'}")
+
+
+def _deck_plan(requested, mode, reduced, max_cases, clusters, briefs, K) -> dict:
+    """덱 subcase 목록 + 제외 씬(사유). clusters 는 정렬·번호가 확정된 것."""
+    cases, role_of = [], {}
+    if mode == "all":
+        for k in range(K):
+            cases.append({"label": f"S{k + 1:03d}", "case_index": k, "entry_id": briefs[k]["entry_id"],
+                          "role": "scene"})
+    else:
+        for c in clusters:
+            cases.append({"label": f"REP{c['id'] + 1}", "case_index": c["medoid"], "entry_id": c["medoid_entry"],
+                          "role": "medoid", "cluster": c["id"]})
+        if mode == "representative+worst":
+            for c in clusters:
+                if c["worst"] != c["medoid"]:
+                    cases.append({"label": f"WORST{c['id'] + 1}", "case_index": c["worst"],
+                                  "entry_id": c["worst_entry"], "role": "worst", "cluster": c["id"]})
+    inc = {lc["case_index"] for lc in cases}
+    for c in clusters:
+        for m in c["members"]:
+            role_of[m] = c
+    excluded = []
+    for k in range(K):
+        if k in inc:
+            continue
+        c = role_of.get(k)
+        rep = f"REP{c['id'] + 1}({briefs[c['medoid']]['entry_id']})" if c else "—"
+        why = (f"씬 {K}개 > max_cases {max_cases} 자동 축소" if reduced else f"설정 cases={requested}")
+        excluded.append({"case_index": k, "entry_id": briefs[k]["entry_id"], "scene": _scene_text(briefs[k]),
+                         "cluster": c["id"] if c else None,
+                         "reason": f"{why} — 클러스터 C{c['id'] + 1 if c else '?'} 대표 {rep} 로 대표됨"
+                                   + ("" if mode == "representative" or not c or c["worst"] == c["medoid"]
+                                      else f", 최악 WORST{c['id'] + 1}")})
+    return {"requested": requested, "mode": mode, "reduced": bool(reduced), "max_cases": int(max_cases),
+            "n_cases": int(K), "n_subcases": len(cases), "cases": cases, "excluded": excluded}
 
 
 def save(result: dict, arrays: dict, out_dir: str, writer: U.Writer) -> list[str]:

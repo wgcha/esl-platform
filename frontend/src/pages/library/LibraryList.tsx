@@ -1,4 +1,5 @@
-// 라이브러리 목록(계약 §11 UI): 항목 표 + 필터 + 메타 수정(인라인 최소) + 폐기. 주 버튼 = "종합분석 만들기".
+// 라이브러리 목록(계약 §11·§12 UI): 항목 표 + 필터 + 메타 수정(인라인 최소) + 폐기. 주 버튼 = "종합분석 만들기",
+// 보조 진입 "버전 비교"(설계 버전 비교 만들기) + 비교 목록.
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
@@ -9,7 +10,8 @@ import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt, pv } from "../../lib/format";
-import { DROP_LABEL, DROP_TYPES, NORM_LABEL, VerdictBadge, entryLabel, sceneText, uniq } from "./common";
+import { DROP_LABEL, DROP_TYPES, NORM_LABEL, VerdictBadge, entryLabel, modelVersions, sceneText, uniq } from "./common";
+import { ComparisonVerdictBadge } from "./ComparisonDetail";
 
 interface Filters {
   model: string;
@@ -134,6 +136,7 @@ export function LibraryList() {
     [projectId, f.model, f.drop_type, f.orient, f.verdict, status],
   );
   const analyses = usePolling(() => api.analyses(projectId), 10000, [projectId]);
+  const comparisons = usePolling(() => api.comparisons(projectId), 10000, [projectId]);
   const entries = all.data ?? [];
   const set = (k: keyof Filters, v: string | boolean) => setF((o) => ({ ...o, [k]: v }));
   const filtered = Object.entries(f).some(([k, v]) => (k === "retired" ? false : !!v));
@@ -145,6 +148,13 @@ export function LibraryList() {
         <h1 className="page-title">라이브러리</h1>
         <span className="muted small">검증한 ESL 하중을 모델·낙하 씬별로 모아 종합분석에 씁니다</span>
         <span className="spacer" />
+        <Link
+          className="btn"
+          to={`/p/${projectId}/library/comparisons/new`}
+          title={all.data && !modelVersions(entries).some((m) => m.versions.length > 1) ? "버전이 2개 이상인 제품이 아직 없습니다" : "비드 반영 설계의 검증 낙하를 이전 버전과 비교(수렴 판정)"}
+        >
+          버전 비교
+        </Link>
         <PrimaryButton
           label="종합분석 만들기"
           onClick={() => nav(`/p/${projectId}/library/analyses/new`)}
@@ -311,6 +321,45 @@ export function LibraryList() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+      <Card title="버전 비교">
+        {!comparisons.data ? (
+          <Empty>{comparisons.error ?? "불러오는 중…"}</Empty>
+        ) : comparisons.data.length === 0 ? (
+          <Empty>아직 버전 비교가 없습니다 — 비드 반영 설계의 검증 낙하를 등록한 뒤 '버전 비교'</Empty>
+        ) : (
+          <table className="table compact" aria-label="버전 비교 목록">
+            <thead>
+              <tr>
+                <th className="num">만든 시각</th>
+                <th>제품 · 버전</th>
+                <th className="num">짝 씬</th>
+                <th>판정</th>
+                <th>상태</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {comparisons.data.map((c) => (
+                <tr key={c.id}>
+                  <td className="num">{dt(c.created_at)}</td>
+                  <td>
+                    {c.title && <div>{c.title}</div>}
+                    <span className={c.title ? "small muted" : undefined}>
+                      {c.model} · {c.base_version} → {c.new_version}
+                    </span>
+                  </td>
+                  <td className="num">{c.n_paired}</td>
+                  <td>{c.verdict ? <ComparisonVerdictBadge v={c.verdict} /> : <span className="muted">–</span>}</td>
+                  <td>{c.status === "NONE" ? <span className="muted">–</span> : <JobStatusBadge state={c.status} />}</td>
+                  <td>
+                    <Link to={`/p/${projectId}/library/comparisons/${c.id}`}>열기</Link>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

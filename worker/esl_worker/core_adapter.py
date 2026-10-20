@@ -282,6 +282,15 @@ def build_library_entry(case_dir: str, run_id: str, out_root: str, entry_id: str
     return U.jsonable(e.meta)
 
 
+def sort_versions(versions) -> list[str]:
+    """설계 버전 자연 정렬(v2 < v10) — esl.library.compare 규칙."""
+    return list(_attr("esl.library.compare", "sort_versions")(versions))
+
+
+def previous_version(versions, new: str) -> str | None:
+    return _attr("esl.library.compare", "previous_version")(versions, new)
+
+
 def _overlay(entry, ov: dict | None) -> None:
     """DB 메타(사용자 수정 가능)를 항목 meta 에 덮어쓴다: 분석·보고서가 DB 값을 쓰도록."""
     if not ov:
@@ -319,14 +328,16 @@ def _load_entry(d: str, ov: dict | None, raw: bool):
 
 
 def run_library_stage(spec: dict, echo: Callable[[str], None]) -> dict:
-    """LIB_ANALYZE 의 코어 단계 1개(자식 프로세스에서 호출). spec["stage"]: lib_analyze | lib_optdeck | lib_report.
+    """LIB_ANALYZE·LIB_COMPARE 의 코어 단계 1개(자식 프로세스). spec["stage"]: lib_analyze | lib_optdeck |
+    lib_report | lib_compare.
 
     spec["lib"] = {cfg, lib_root, entries:[{id, dir, overlay}], target:{id, dir, overlay}|None, options, filters,
     analysis_id, title}. 산출물은 spec["out"](= <esl_root>/_analysis/<id>/) 아래만(Writer: 라이브러리 폴더와 겹치면 거부,
     기존 파일은 _backup/<ts>/ 로 이동).
     """
     stage = spec["stage"]
-    fn = {"lib_analyze": _lib_analyze, "lib_optdeck": _lib_optdeck, "lib_report": _lib_report}.get(stage)
+    fn = {"lib_analyze": _lib_analyze, "lib_optdeck": _lib_optdeck, "lib_report": _lib_report,
+          "lib_compare": _lib_compare}.get(stage)
     if fn is None:
         raise CoreError("INPUT_INVALID", f"알 수 없는 라이브러리 단계: {stage}")
     return _wrap(fn, spec, echo)
@@ -353,12 +364,16 @@ def _lib_analyze(spec: dict, echo) -> dict:
             e = _load_entry(it["dir"], it.get("overlay"), raw=True)
         entries.append(e)
     opts = dict(cfg["analysis"])
+    oc = cfg.get("optdeck") or {}
+    opts["deck_cases"] = (L.get("options") or {}).get("optdeck_cases") or oc.get("cases") or "all"
+    opts["max_cases"] = oc.get("max_cases") or 60
     for k in ("normalization", "n_representative", "svd_energy", "worst_case", "target_mass", "target_inch"):
         v = (L.get("options") or {}).get(k)
         if v is not None:
             opts[k] = v
     echo(f"[lib_analyze] 항목 {len(entries)}개, 대상 {tgt['id'] if tgt else '없음'}, 옵션 "
-         + ", ".join(f"{k}={opts[k]}" for k in ("normalization", "n_representative", "svd_energy", "worst_case")))
+         + ", ".join(f"{k}={opts[k]}" for k in ("normalization", "n_representative", "svd_energy", "worst_case",
+                                                 "deck_cases", "max_cases")))
     res, arrays = _wrap(an.run, entries, target, opts)
     res["analysis_id"] = L["analysis_id"]
     res["filters"] = L.get("filters") or {}
@@ -367,9 +382,11 @@ def _lib_analyze(spec: dict, echo) -> dict:
     w = _writer(spec)
     w.makedirs(out)
     files = _wrap(an.save, res, arrays, out, w)
+    dk = res.get("deck") or {}
     echo(f"[lib_analyze] SVD r={res['svd']['n_modes']}, 대표 "
-         + ", ".join(f"{lc['label']}={lc['entry_id']}" for lc in res["load_cases"]) + f" → {os.path.basename(out)} "
-         f"({', '.join(files)})")
+         + ", ".join(f"{lc['label']}={lc['entry_id']}" for lc in res["load_cases"])
+         + f", 덱 {dk.get('mode')} subcase {dk.get('n_subcases')}" + (" (자동 축소)" if dk.get("reduced") else "")
+         + f" → {os.path.basename(out)} ({', '.join(files)})")
     for x in res.get("warnings") or []:
         echo(f"  경고: {x}")
     return {"files": files}
@@ -405,13 +422,10 @@ def _lib_optdeck(spec: dict, echo) -> dict:
         raise CoreError("ID_MISMATCH", "mapped_loads.npz node_id 가 대상 메시와 다름")
     sup = [(s["node_id"], s["dof"]) for s in tgt.meta["esl"]["supports"]]
     an = _mod("esl.library.analysis")
-    cases = res["cases"]
-    lcs = []
-    for lc, f in zip(res["load_cases"], _wrap(an.load_case_forces, res, arrays)):
-        c = cases[lc["case_index"]]
-        lcs.append({"label": f"{lc['label']}_{c.get('drop_class') or ''}{c.get('orient') or ''}",
-                    "entry_id": lc["entry_id"], "f": f, "weight": 1.0})
+    lcs = _wrap(an.optdeck_load_cases, res, arrays)
     oc = dict(cfg["optdeck"])
+    oc.pop("cases", None)
+    oc.pop("max_cases", None)
     obj = (L.get("options") or {}).get("objective")
     if obj:
         oc["objective"] = obj
@@ -430,6 +444,7 @@ def _lib_optdeck(spec: dict, echo) -> dict:
     summ = _wrap(od.write, mesh, lcs, sup, oc, od_dir, w)
     summ["reference_compliance"] = mode
     summ["analysis_id"] = L["analysis_id"]
+    summ["deck_cases"] = lcli._deck_brief(res)
     U.write_json(w.fresh_file(os.path.join(od_dir, "optdeck.json"), out), summ)
     echo(f"[lib_optdeck] opt/{summ['deck']} subcase {summ['n_subcases']}, 설계 요소 {summ['n_design_elems']} / "
          f"비설계 {summ['n_nondesign_elems']}, 목적 {summ['objective']}")
@@ -454,3 +469,38 @@ def _lib_report(spec: dict, echo) -> dict:
     _wrap(ra.write, res, html, arrays, opt, info)
     echo(f"[lib_report] report.html ({os.path.getsize(html) / 1024:.0f} KB)")
     return {"files": ["report.html"]}
+
+
+def _lib_compare(spec: dict, echo) -> dict:
+    """설계 버전 비교(§12.2): spec["lib"] = {cfg, lib_root, comparison_id, model, base_version, new_version,
+    base:[{id, dir, overlay}], new:[...], options, filters, title}. 산출 <esl_root>/_compare/<id>/compare.json·report.html."""
+    import os
+
+    cmp = _mod("esl.library.compare")
+    L = spec["lib"]
+    cfg = _lib_cfg(L["cfg"])
+    out = spec["out"]
+    base = [_load_entry(it["dir"], it.get("overlay"), raw=False) for it in L.get("base") or []]
+    new = [_load_entry(it["dir"], it.get("overlay"), raw=False) for it in L.get("new") or []]
+    crit = dict(cfg.get("convergence") or {})
+    o = L.get("options") or {}
+    if o.get("cos_min") is not None:
+        crit["cos_min"] = o["cos_min"]
+    an_cfg = cfg.get("analysis") or {}
+    copts = {"n_representative": o.get("n_representative") or an_cfg.get("n_representative"),
+             "seed": an_cfg.get("seed"), "n_init": an_cfg.get("n_init")}
+    echo(f"[lib_compare] {L.get('model')} {L.get('base_version')}({len(base)}) → {L.get('new_version')}({len(new)}), "
+         f"기준 {crit}")
+    res = _wrap(cmp.compare, base, new, crit, copts)
+    res.update(comparison_id=L["comparison_id"], model=L.get("model"), base_version=L.get("base_version"),
+               new_version=L.get("new_version"), filters=L.get("filters") or {}, library_root=L["lib_root"])
+    w = _writer(spec)
+    w.makedirs(out)
+    info = {"title": L["title"]} if L.get("title") else None
+    files = _wrap(cmp.save, res, out, w, info)
+    cv = res["convergence"]
+    echo(f"[lib_compare] 짝 {res['n_paired']}개, cos 최소 {res['aggregate']['cos_min']:.4f}, 대표 동일 "
+         f"{res['representatives']['rep_same']} → {cv['label']} ({os.path.basename(out)}: {', '.join(files)})")
+    for x in res.get("warnings") or []:
+        echo(f"  경고: {x}")
+    return {"files": files}

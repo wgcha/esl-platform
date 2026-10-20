@@ -42,7 +42,8 @@ def seed_run(engine, case_id: str, *, project_id: str = "p-1", verdict: str | No
 def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None, project_id: str = "p-1",
                registered_by: str = "u-power", name: str = "55QX10A", inch: int = 55, drop_type: str = "Corner",
                orient: str = "146", verdict: str = "PASS", grid: tuple[int, int] = (24, 14),
-               product_mass: float | None = None, status: str = "ACTIVE") -> str:
+               product_mass: float | None = None, status: str = "ACTIVE", version: str | None = None,
+               scene_no: int = 1, registered_at: _dt.datetime | None = None) -> str:
     eid = str(uuid.uuid4())
     dir_rel = f"_library/entries/{eid}"
     if esl_root:
@@ -53,13 +54,14 @@ def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None
     with engine.begin() as c:
         c.execute(insert(library_entries).values(
             id=eid, project_id=project_id, case_id=case_id, esl_run_id=run_id, status=status,
-            model={"name": name, "inch": inch, "product_mass": product_mass},
+            model={"name": name, "inch": inch, "product_mass": product_mass, "version": version},
             scene={"drop_type": drop_type, "drop_class": drop_type, "orient": orient, "scenario": "FREE",
-                   "scene_no": 1, "warnings": []},
+                   "scene_no": scene_no, "warnings": []},
             quality={"verdict": verdict, "fail_reasons": []}, summary={"grid": {"nx": grid[0], "ny": grid[1]}},
             dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz", sha256="0" * 64,
             registered_by=registered_by, registered_by_name=registered_by,
-            retired_at=None if status == "ACTIVE" else _dt.datetime(2026, 10, 19, tzinfo=_dt.timezone.utc)))
+            retired_at=None if status == "ACTIVE" else _dt.datetime(2026, 10, 19, tzinfo=_dt.timezone.utc),
+            **({"registered_at": registered_at} if registered_at else {})))
     return eid
 
 

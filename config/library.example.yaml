@@ -42,4 +42,10 @@ optdeck:
   card_format: free                  # free(콤마, '+,' 연속) | fixed(최적화 카드만 8칸 고정형식)
   deck_name: esl_bead
   nt: 4                              # optistruct -nt
+  cases: all                         # 덱 subcase 구성(§12): all(필터에 걸린 모든 씬, 기본) | representative | representative+worst
+  max_cases: 60                      # all 에서 씬 수가 이를 넘으면 representative+worst 로 자동 축소(경고 + 보고서 제외 표)
   solver: {drill_factor: 1.0e-4, backend: auto}   # reference_compliance: solve 일 때
+
+convergence:                         # 설계 버전 비교(ESLSO 수렴 판정, §12.2) — 임시값
+  cos_min: 0.9                       # 짝 씬 하중 패턴 유사도 cos 최소가 이 값 이상
+  rep_same: true                     # 같은 k 재군집 후 대표 케이스(medoid)가 같아야 수렴

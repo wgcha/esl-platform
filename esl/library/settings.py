@@ -131,10 +131,31 @@ SCHEMA = {
         "beadfrac_max": _opt(_num(0.0, 1.0, lo_open=True)), "id_offset": _int(1), "num_format": _fmt,
         "force_zero_tol_rel": _num(0.0, 1.0), "card_format": _enum("free", "fixed"), "deck_name": _str,
         "nt": _int(1),
+        "cases": _enum("all", "representative", "representative+worst"), "max_cases": _int(1),
         "solver": {"drill_factor": _num(0.0, 1.0, lo_open=True),
                    "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative")},
     },
+    "convergence": {"cos_min": _num(0.0, 1.0, lo_open=True), "rep_same": _bool},
 }
+
+# §12 에서 추가된 키: 이전 설정 파일(설치본 library.yaml 은 업데이트 때 덮어쓰지 않음)과 호환되도록 없으면 기본값으로 채운다.
+# (그 밖의 키는 여전히 모두 필수.)
+DEFAULTS = {("optdeck", "cases"): "all", ("optdeck", "max_cases"): 60,
+            ("convergence",): {"cos_min": 0.9, "rep_same": True}}
+
+
+def fill_defaults(cfg):
+    if not isinstance(cfg, dict):
+        return cfg
+    for path, v in DEFAULTS.items():
+        node = cfg
+        for k in path[:-1]:
+            node = node.get(k) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if isinstance(node, dict) and path[-1] not in node:
+            node[path[-1]] = dict(v) if isinstance(v, dict) else v
+    return cfg
 
 
 def _walk(schema, node, prefix):
@@ -153,6 +174,7 @@ def _walk(schema, node, prefix):
 
 
 def validate(cfg: dict) -> dict:
+    fill_defaults(cfg)
     _walk(SCHEMA, cfg, "")
     return cfg
 

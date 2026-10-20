@@ -1,7 +1,8 @@
 // P2 목 데이터: 전 요소 비교(겹쳐보기·단면선)·라이브러리 항목·종합분석. 결정적(난수 없음).
 // 판 요소 격자 100×50(12 mm) 위 합성 변형률 장. 요약(분위수·히스토그램)은 코어 summarize 와 같은 규칙으로 계산한다.
 import type {
-  AnalysisCase, AnalysisFileOut, AnalysisLoadCase, AnalysisOut, AnalysisResult, EntryOut, FieldLayer, FieldOut, FieldPoint, FieldRow,
+  AnalysisCase, AnalysisFileOut, AnalysisLoadCase, AnalysisOut, AnalysisResult, ComparisonResult, DeckSummary, EntryOut,
+  OptdeckCases, FieldLayer, FieldOut, FieldPoint, FieldRow,
   FieldSummary, SectionAxis, SectionOut,
 } from "../api/types";
 import { PLANE, TSTAR_METRICS } from "./data";
@@ -213,7 +214,7 @@ const SCENES: [string, number, string, string, string, string, string, "PASS" | 
 ];
 
 export function makeEntries(projectId: string): EntryOut[] {
-  return SCENES.map(([model, inch, scenario, seq, drop, sc, orient, verdict, mx, p90, mass], k) => {
+  const base: EntryOut[] = SCENES.map(([model, inch, scenario, seq, drop, sc, orient, verdict, mx, p90, mass], k) => {
     const raw = `F:/Hyper_work/VD_25y/${model}/${model}_v072_260511/${scenario}/${seq}_${drop}_Drop_Scene${sc}_${drop}${orient}_comp.h3d`;
     const at = new Date(Date.UTC(2026, 9, 10 + k, 2, 30)).toISOString();
     const reason = verdict === "FAIL" ? "최대변형률 오차 13.6% — 누적 소성 시나리오로 확인 후 확정" : null;
@@ -254,6 +255,86 @@ export function makeEntries(projectId: string): EntryOut[] {
       version: 1,
     };
   });
+  // 설계 버전 비교(§12.2): 75QN80H 비드 반영 설계 v073 의 검증 낙하 — v072 와 같은 씬 3개
+  const next = base.slice(0, 3).map((e, k): EntryOut => {
+    const at = new Date(Date.UTC(2026, 9, 19, 4, 10 + k)).toISOString();
+    const mx = [5.1, 4.4, 2.6][k];
+    return {
+      ...e,
+      id: `le-${9 + k}`,
+      case_id: `c-v073-${k + 1}`,
+      case_title: `${e.case_title} (v073)`,
+      esl_run_id: `run-v073-${k + 1}`,
+      validation_id: `val-v073-${k + 1}`,
+      model: { ...e.model, version: "v073", date: "2026-10-17" },
+      scene: { ...e.scene, raw: (e.scene.raw ?? "").replace(/v072_260511/g, "v073_261017") },
+      quality: { ...e.quality, field_max_err_pct: mx, hotspot1_rel_err: mx / 100 },
+      dir_rel: `_library/le-${9 + k}`,
+      summary_rel: `_library/le-${9 + k}/summary.npz`,
+      registered_at: at,
+      updated_at: at,
+    };
+  });
+  return [...base, ...next];
+}
+
+/** comparisons.result (워커 _compare_summary 형식). cos 목록 = 짝 씬 순서 */
+export function makeComparisonResult(pairs: { base: EntryOut; next: EntryOut }[], cosMin = 0.9): ComparisonResult {
+  const COS = [0.987, 0.962, 0.842, 0.975, 0.991];
+  const scenes = pairs.map((p, i) => {
+    const cos = COS[i % COS.length];
+    const s = p.next.scene;
+    const reasons = cos < cosMin ? [`하중 패턴 변화 cos ${cos.toFixed(3)} < ${cosMin}`] : [];
+    return {
+      label: `${s.scenario ?? "?"} #${s.seq ?? "?"} ${s.drop_type ?? "?"}${s.orient ?? ""} S${s.scene_no ?? "?"}`,
+      base_entry: p.base.id,
+      new_entry: p.next.id,
+      cos,
+      force_ratio: +(0.93 + 0.03 * i).toFixed(3),
+      hotspot_shift: +(0.012 + 0.05 * (1 - cos)).toFixed(3),
+      eps_ratio: +(0.86 + 0.04 * i).toFixed(3),
+      quality_base: { verdict: p.base.quality.verdict ?? null, hotspot1_rel_err: p.base.quality.hotspot1_rel_err ?? null, field_p90: p.base.quality.field_p90_err_pct ?? null },
+      quality_new: { verdict: p.next.quality.verdict ?? null, hotspot1_rel_err: p.next.quality.hotspot1_rel_err ?? null, field_p90: p.next.quality.field_p90_err_pct ?? null },
+      changed: reasons.length > 0,
+      reasons,
+    };
+  });
+  const cs = scenes.map((x) => x.cos);
+  const cmin = Math.min(...cs);
+  const changed = scenes.filter((x) => x.changed);
+  const reasons = cmin < cosMin ? [`씬 cos 최소 ${cmin.toFixed(3)} < 기준 ${cosMin} (${changed.length}개 씬)`] : [];
+  const verdict = reasons.length ? "ITERATE" : "CONVERGED";
+  const rng = (v: number[]) => ({ min: Math.min(...v), max: Math.max(...v), mean: v.reduce((a, b) => a + b, 0) / v.length });
+  return {
+    convergence: {
+      verdict,
+      label: verdict === "CONVERGED" ? "수렴(반복 불필요)" : "추가 반복 권장",
+      converged: verdict === "CONVERGED",
+      criteria: { cos_min: cosMin, rep_same: true },
+      reasons,
+      changed_scenes: changed.map((x) => ({ label: x.label, base_entry: x.base_entry, new_entry: x.new_entry, cos: x.cos, reasons: x.reasons })),
+    },
+    aggregate: {
+      n_paired: scenes.length,
+      cos_min: cmin,
+      cos_mean: cs.reduce((a, b) => a + b, 0) / cs.length,
+      argmin_cos: scenes[cs.indexOf(cmin)].label,
+      force_ratio: rng(scenes.map((x) => x.force_ratio)),
+      eps_ratio: rng(scenes.map((x) => x.eps_ratio)),
+      hotspot_shift: rng(scenes.map((x) => x.hotspot_shift)),
+      n_below_cos: changed.length,
+      n_verdict_changed: 0,
+      n_changed: changed.length,
+    },
+    criteria: { cos_min: cosMin, rep_same: true },
+    n_base: pairs.length,
+    n_new: pairs.length,
+    n_paired: pairs.length,
+    representatives: { k: Math.min(2, pairs.length), rep_same: true, partition_same: true, partition_agreement: 1, matching: [] },
+    scenes,
+    unpaired: { base_only: [], new_only: [] },
+    warnings: [],
+  };
 }
 
 // ---------------------------------------------------------------- 종합분석
@@ -269,7 +350,7 @@ function envMag(i: number, j: number) {
 }
 
 /** analysis_runs.result (워커 _analysis_summary 형식) */
-export function makeAnalysisResult(entries: EntryOut[], target: EntryOut | null, nRep: number, worst: boolean, objective: string): AnalysisResult {
+export function makeAnalysisResult(entries: EntryOut[], target: EntryOut | null, nRep: number, worst: boolean, objective: string, deckCases: OptdeckCases = "all", maxCases = 60): AnalysisResult {
   const K = entries.length;
   const k = Math.max(1, Math.min(nRep, K));
   const labels = entries.map((_, i) => i % k);
@@ -299,6 +380,24 @@ export function makeAnalysisResult(entries: EntryOut[], target: EntryOut | null,
     for (const c of clusters)
       if (c.worst_entry !== c.medoid_entry)
         load_cases.push({ label: `WORST${c.id + 1}`, role: "worst", cluster: c.id, entry_id: c.worst_entry, case_index: cases.find((x) => x.entry_id === c.worst_entry)!.index });
+  const reduced = deckCases === "all" && K > maxCases;
+  const mode: OptdeckCases = reduced ? "representative+worst" : deckCases;
+  const deckIdx =
+    mode === "all"
+      ? cases.map((c) => c.index)
+      : [...new Set([...clusters.map((c) => c.id), ...(mode === "representative+worst" ? clusters.map((c) => cases.find((x) => x.entry_id === c.worst_entry)!.index) : [])])];
+  const deck: DeckSummary = {
+    requested: deckCases,
+    mode,
+    reduced,
+    max_cases: maxCases,
+    n_cases: K,
+    n_subcases: deckIdx.length,
+    n_excluded: K - deckIdx.length,
+    excluded: cases
+      .filter((c) => !deckIdx.includes(c.index))
+      .map((c) => ({ entry_id: c.entry_id, scene: `${c.product} ${c.drop_class}${c.orient ?? ""} S${c.scene}`, reason: `${reduced ? `씬 ${K}개 > max_cases ${maxCases} 자동 축소` : `설정 cases=${deckCases}`} — 클러스터 C${c.cluster + 1} 대표 REP${c.cluster + 1} 로 대표됨` })),
+  };
   let max = 0;
   let arg = [0, 0];
   for (let i = 0; i < GRID.nx; i++)
@@ -320,8 +419,9 @@ export function makeAnalysisResult(entries: EntryOut[], target: EntryOut | null,
     cases,
     warnings: K < nRep ? [`항목 ${K}개 < n_representative ${nRep} — 대표 ${K}개`] : [],
     optdeck: target
-      ? { deck: "esl_bead.fem", files: ["esl_bead.fem", "loads_REP.inc", "run_optistruct.bat", "README.txt"], objective, n_subcases: load_cases.length, n_design_elems: 182_340, n_nondesign_elems: 41_075, card_format: "free", reference_compliance: null }
+      ? { deck: "esl_bead.fem", files: ["esl_bead.fem", "loads_REP.inc", "run_optistruct.bat", "README.txt"], objective, n_subcases: deck.n_subcases, n_design_elems: 182_340, n_nondesign_elems: 41_075, card_format: "free", reference_compliance: null }
       : null,
+    deck,
   };
 }
 

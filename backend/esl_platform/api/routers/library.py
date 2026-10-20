@@ -1,4 +1,4 @@
-"""라이브러리 항목·종합분석(계약 esl_p2_library.md §11)."""
+"""라이브러리 항목·종합분석·설계 버전 비교(계약 esl_p2_library.md §11·§12)."""
 
 from __future__ import annotations
 
@@ -15,11 +15,14 @@ from ..schemas import (
     AnalysisCreate,
     AnalysisFileOut,
     AnalysisOut,
+    ComparisonCreate,
+    ComparisonOut,
     EntryCreate,
     EntryOut,
     EntryPatch,
     EntryRetire,
 )
+from ..services import comparisons as cmp_svc
 from ..services import library as svc
 
 router = APIRouter(tags=["library"])
@@ -90,3 +93,27 @@ def analysis_download(aid: str, request: Request, rel: str = Query(min_length=1,
                       principal: Principal = Depends(get_principal)) -> FileResponse:
     path = svc.analysis_file(get_ctx(request), aid, rel)
     return FileResponse(path, filename=os.path.basename(path), media_type="application/octet-stream")
+
+
+# ---------------------------------------------------------------- 설계 버전 비교(§12.2)
+@router.post("/library/comparisons", response_model=ComparisonOut, status_code=201)
+def create_comparison(body: ComparisonCreate, request: Request,
+                      principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return cmp_svc.create_comparison(get_ctx(request), principal, body)
+
+
+@router.get("/library/comparisons", response_model=list[ComparisonOut])
+def list_comparisons(request: Request, project_id: str | None = None, model: str | None = None,
+                     principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
+    return cmp_svc.list_comparisons(get_ctx(request), project_id, model)
+
+
+@router.get("/library/comparisons/{cid}", response_model=ComparisonOut)
+def get_comparison(cid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return cmp_svc.get_comparison(get_ctx(request), cid)
+
+
+@router.get("/library/comparisons/{cid}/report", response_class=HTMLResponse)
+def comparison_report(cid: str, request: Request, download: bool = False,
+                      principal: Principal = Depends(get_principal)) -> Response:
+    return html_report(cmp_svc.comparison_report(get_ctx(request), cid), f"comparison_{cid}_report.html", download)

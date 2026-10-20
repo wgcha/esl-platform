@@ -10,13 +10,14 @@ const TYPE_LABEL: Record<string, string> = {
   EXPORT: "내보내기",
   CASE_REPORT: "보고서",
   LIB_ANALYZE: "종합분석",
+  LIB_COMPARE: "버전 비교",
 };
 
 function JobRow({ j }: { j: JobOut }) {
   return (
     <li className={`qrow ${j.state.toLowerCase()}`}>
       <span className="qtitle">{TYPE_LABEL[j.job_type] ?? j.job_type}</span>
-      <span className="qmeta ellipsis" title={j.case_id ?? j.analysis_id ?? undefined}>
+      <span className="qmeta ellipsis" title={j.case_id ?? j.analysis_id ?? j.comparison_id ?? undefined}>
         {j.created_by_name}
         {j.queue_position ? ` #${j.queue_position}` : ""}
       </span>

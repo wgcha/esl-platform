@@ -100,14 +100,16 @@ def test_run_with_target_self_and_worst(entries):
         assert res["cases"][lc["case_index"]]["sum_abs_f"] == max(sums)
     lab = {c["entry_id"]: c["cluster"] for c in res["cases"]}
     assert lab["a1"] == lab["a2"] == lab["a3"] != lab["b1"] == lab["b2"]
-    n_lc = len(res["load_cases"])
-    assert arr["outline"].shape[1:] == (2, 2) and arr["mapped_F"].shape == (n_lc, tgt.raw["x0"].shape[0], 3)
+    # 덱 기본 all(§12.1): mapped_F = 모든 씬(덱 순서 = 씬 순서)
+    assert res["deck"]["mode"] == "all" and not res["deck"]["reduced"] and res["deck"]["n_subcases"] == 5
+    assert arr["outline"].shape[1:] == (2, 2) and arr["mapped_F"].shape == (5, tgt.raw["x0"].shape[0], 3)
+    assert arr["load_case_index"].tolist() == [0, 1, 2, 3, 4]
 
 
 def test_saved_loads_only_representative_and_worst(entries):
-    """mapped_loads 는 대표+최악 케이스만 (첫 축 = 대표+최악 수); 포락·Σ|f| 는 전 케이스 스트리밍 결과와 일치."""
+    """cases=representative+worst: mapped_loads 는 대표+최악 케이스만; 포락·Σ|f| 는 전 케이스 스트리밍 결과와 일치."""
     tgt = entries[0]
-    opts = {"n_representative": 1, "worst_case": True}
+    opts = {"n_representative": 1, "worst_case": True, "deck_cases": "representative+worst"}
     res, arr = an.run(entries, tgt, opts)
     roles = [lc["role"] for lc in res["load_cases"]]
     assert roles == ["medoid", "worst"]
@@ -127,6 +129,47 @@ def test_saved_loads_only_representative_and_worst(entries):
     bad = {k: v for k, v in arr.items() if k != "load_case_index"}
     with pytest.raises(EslError):
         an.load_case_forces(res, bad)
+    assert [x["label"] for x in res["deck"]["cases"]] == ["REP1", "WORST1"]
+    assert len(res["deck"]["excluded"]) == 3 and not res["deck"]["reduced"]
+
+
+def test_deck_all_default_and_max_cases_reduction(entries, tmp_path):
+    """§12.1: 기본 all = 모든 씬 subcase(mapped_F 전부, 스트리밍 결과와 같음), max_cases 초과면 대표+최악 자동 축소
+    + 경고 + 제외 표, representative 는 medoid 만."""
+    tgt = entries[0]
+    res, arr = an.run(entries, tgt, {"n_representative": 2})
+    d = res["deck"]
+    assert (d["requested"], d["mode"], d["reduced"], d["n_subcases"], d["excluded"]) == ("all", "all", False, 5, [])
+    assert [x["label"] for x in d["cases"]] == ["S001", "S002", "S003", "S004", "S005"]
+    full = an.deck_case_forces(res, arr)
+    lcs = an.optdeck_load_cases(res, arr)
+    assert len(full) == len(lcs) == 5 and lcs[0]["label"] == "S001_Corner3"
+    assert np.allclose(full[0], tgt.raw["f"])
+    for lc, f in zip(res["load_cases"], an.load_case_forces(res, arr)):       # 대표 = 덱 안의 같은 하중
+        assert np.allclose(f, full[lc["case_index"]])
+    assert all(c["deck_label"] == f"S{c['index'] + 1:03d}" for c in res["cases"])
+
+    red, rarr = an.run(entries, tgt, {"n_representative": 2, "max_cases": 3})
+    d = red["deck"]
+    assert d["requested"] == "all" and d["mode"] == "representative+worst" and d["reduced"] is True
+    assert any("max_cases 3" in w for w in red["warnings"])
+    inc = {x["case_index"] for x in d["cases"]}
+    assert d["n_subcases"] == len(inc) < 5 and len(d["excluded"]) == 5 - len(inc)
+    assert all("자동 축소" in x["reason"] and x["case_index"] not in inc for x in d["excluded"])
+    roles = sorted({x["role"] for x in d["cases"]})
+    assert roles in (["medoid"], ["medoid", "worst"])
+    assert rarr["mapped_F"].shape[0] == len(set(inc) | {lc["case_index"] for lc in red["load_cases"]})
+    for lc, f in zip(d["cases"], an.deck_case_forces(red, rarr)):
+        assert np.allclose(f, full[lc["case_index"]])
+    out = str(tmp_path / "r.html")
+    ra.write(red, out, rarr, None, {"analysis_id": "A1"})
+    doc = open(out, encoding="utf-8").read()
+    assert "제외된 씬과 사유" in doc and "자동 축소" in doc and "대표+최악" in doc
+
+    rep, _ = an.run(entries, tgt, {"n_representative": 2, "deck_cases": "representative", "worst_case": True})
+    assert [x["role"] for x in rep["deck"]["cases"]] == ["medoid", "medoid"] and not rep["deck"]["reduced"]
+    with pytest.raises(EslError):
+        an.run(entries, tgt, {"deck_cases": "everything"})
 
 def test_run_errors(entries):
     with pytest.raises(EslError):

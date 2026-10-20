@@ -9,6 +9,8 @@ import { renderApp } from "../test/render";
 import { NO_PERMISSION } from "../app/AppContext";
 import { cellColor, isGrey } from "../components/FieldOverlay";
 import { DEFAULT_FORM, validateForm } from "../pages/library/AnalysisNew";
+import { resolveForm } from "../pages/library/ComparisonNew";
+import { pairEntries, prevVersion, sortVersions } from "../pages/library/common";
 import { makeEntries } from "../mock/p2data";
 
 const primaries = (container: HTMLElement) => container.querySelectorAll("button[data-primary]");
@@ -165,7 +167,7 @@ describe("라이브러리 목록", () => {
 
   it("표·필터(모델·판정·폐기 포함), 주 버튼 1개", async () => {
     const { container } = renderApp("/p/p-body/library");
-    await waitFor(() => expect(rowsOf()).toHaveLength(7)); // ACTIVE 7개
+    await waitFor(() => expect(rowsOf()).toHaveLength(10)); // ACTIVE 10개(75QN80H v073 3개 포함)
     expect(primaries(container)).toHaveLength(1);
     expect(primaries(container)[0].textContent).toBe("종합분석 만들기");
     fireEvent.change(screen.getByRole("combobox", { name: "모델" }), { target: { value: "65QN80H" } });
@@ -175,16 +177,16 @@ describe("라이브러리 목록", () => {
     expect(within(rowsOf()[0]).getByText("FAIL")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "필터 지우기" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /폐기 포함/ }));
-    await waitFor(() => expect(rowsOf()).toHaveLength(8));
+    await waitFor(() => expect(rowsOf()).toHaveLength(11));
     expect(screen.getByText("폐기")).toBeTruthy();
     // 씬 유형 필터
     fireEvent.change(screen.getByRole("combobox", { name: "씬 유형" }), { target: { value: "Corner" } });
-    await waitFor(() => expect(rowsOf()).toHaveLength(3));
+    await waitFor(() => expect(rowsOf()).toHaveLength(4));
   });
 
   it("메타 수정(제품 질량) 저장·폐기", async () => {
     const { server } = renderApp("/p/p-body/library");
-    await waitFor(() => expect(rowsOf()).toHaveLength(7));
+    await waitFor(() => expect(rowsOf()).toHaveLength(10));
     const row85 = rowsOf().find((r) => r.textContent!.includes("85QN80H") && r.textContent!.includes("Scene 2 "))!;
     fireEvent.click(within(row85).getByRole("button", { name: "수정" }));
     const edit = screen.getByTestId("edit-row");
@@ -201,12 +203,12 @@ describe("라이브러리 목록", () => {
     fireEvent.click(within(screen.getByTestId("edit-row")).getByRole("button", { name: "폐기…" }));
     fireEvent.click(within(screen.getByTestId("edit-row")).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.entries.find((e) => e.id === "le-6")!.status).toBe("RETIRED"));
-    await waitFor(() => expect(rowsOf()).toHaveLength(6));
+    await waitFor(() => expect(rowsOf()).toHaveLength(9));
   });
 
   it("조회 사용자: 종합분석 만들기·수정 비활성", async () => {
     const { container } = renderApp("/p/p-body/library", "general");
-    await waitFor(() => expect(rowsOf()).toHaveLength(7));
+    await waitFor(() => expect(rowsOf()).toHaveLength(10));
     await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true));
     expect((within(rowsOf()[0]).getByRole("button", { name: "수정" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -237,7 +239,12 @@ describe("종합분석 만들기", () => {
     const run = primaries(container)[0] as HTMLButtonElement;
     expect(run.textContent).toBe("분석 실행");
     await waitFor(() => expect(run.disabled).toBe(false));
-    expect(screen.getByText("포함 항목 6개")).toBeTruthy(); // ACTIVE 7 중 PASS 6
+    expect(screen.getByText("포함 항목 9개")).toBeTruthy(); // ACTIVE 10 중 PASS 9
+    // 최적화 하중: 라디오 3개, 기본 '모든 씬'
+    const deck = screen.getByRole("radiogroup", { name: "최적화 하중" });
+    const radios = within(deck).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.value)).toEqual(["all", "representative", "representative+worst"]);
+    expect(radios[0].checked).toBe(true);
     expect((container.querySelector("details.adv") as HTMLDetailsElement).open).toBe(false);
     // 대표 수 0 → 비활성
     const n = screen.getByRole("spinbutton", { name: "대표 케이스 수" });
@@ -250,13 +257,13 @@ describe("종합분석 만들기", () => {
     expect(run.disabled).toBe(true);
     expect(run.parentElement!.getAttribute("title")).toMatch(/제품 질량/);
     fireEvent.change(screen.getByRole("combobox", { name: "필터 모델" }), { target: { value: "75QN80H" } });
-    expect(screen.getByText("포함 항목 3개")).toBeTruthy();
+    expect(screen.getByText("포함 항목 6개")).toBeTruthy();
     expect(run.parentElement!.getAttribute("title")).toMatch(/대상 제품 질량이 필요/);
     fireEvent.change(screen.getByRole("combobox", { name: "설계 대상 모델" }), { target: { value: "le-1" } });
     expect(run.disabled).toBe(false);
     // 씬 유형 체크 해제 → 필터
     fireEvent.click(screen.getByRole("checkbox", { name: "면" }));
-    expect(screen.getByText("포함 항목 2개")).toBeTruthy();
+    expect(screen.getByText("포함 항목 4개")).toBeTruthy();
     fireEvent.change(screen.getByRole("textbox", { name: "제목" }), { target: { value: "75형 강건 비드" } });
     fireEvent.click(run);
     expect(await screen.findByRole("heading", { level: 1, name: "종합분석" })).toBeTruthy();
@@ -264,8 +271,8 @@ describe("종합분석 만들기", () => {
     expect(a.target_entry_id).toBe("le-1");
     expect(a.title).toBe("75형 강건 비드");
     expect(a.filters).toEqual({ model: ["75QN80H"], drop_type: ["Corner", "Edge"], verdict: ["PASS"] });
-    expect(a.options).toEqual({ normalization: "mass", n_representative: 3, objective: "minmax", svd_energy: 0.9, worst_case: false });
-    expect(a.entry_ids).toEqual(["le-1", "le-2"]);
+    expect(a.options).toEqual({ normalization: "mass", n_representative: 3, objective: "minmax", svd_energy: 0.9, worst_case: false, optdeck_cases: "all" });
+    expect(a.entry_ids).toEqual(["le-1", "le-2", "le-9", "le-10"]);
     // 진행 표시, 보고서 버튼은 끝나야 활성
     expect(await screen.findByTestId("job-progress")).toBeTruthy();
     expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true);
@@ -292,5 +299,112 @@ describe("종합분석 상세", () => {
     expect(links.length).toBe(7);
     expect(links[0].getAttribute("href")).toBe("/esl/api/library/analyses/an-1/download?rel=report.html");
     expect(within(files).getByTestId("too-large").textContent).toContain("esl_bead.fem");
+  });
+});
+
+describe("최적화 하중(§12.1)", () => {
+  it("분석 생성: '대표' 선택 → options.optdeck_cases", async () => {
+    const { container, server } = renderApp("/p/p-body/library/analyses/new");
+    const run = (await waitFor(() => primaries(container)[0])) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(false));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "최적화 하중" })).getByRole("radio", { name: "대표" }));
+    fireEvent.click(run);
+    expect(await screen.findByRole("heading", { level: 1, name: "종합분석" })).toBeTruthy();
+    expect(server.analyses[server.analyses.length - 1].options.optdeck_cases).toBe("representative");
+  });
+
+  it("분석 상세: subcase 수(모든 씬, 축소 없음)", async () => {
+    const { server } = renderApp("/p/p-body/library/analyses/an-1");
+    const r = server.analyses[0].result!;
+    expect(r.deck!.mode).toBe("all");
+    expect((await screen.findByTestId("deck-subcases")).textContent).toBe(String(r.n_cases));
+    expect(screen.queryByText("자동 축소")).toBeNull();
+  });
+
+  it("분석 상세: max_cases 초과 자동 축소면 배지 + 제외 수", async () => {
+    const server = new MockServer();
+    const r = server.analyses[0].result!;
+    r.deck = { ...r.deck!, requested: "all", mode: "representative+worst", reduced: true, max_cases: 60, n_cases: 75, n_subcases: 8, n_excluded: 67 };
+    globalThis.fetch = createMockFetch(server);
+    render(
+      <MemoryRouter initialEntries={["/p/p-body/library/analyses/an-1"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const st = await screen.findByTestId("deck-subcases");
+    expect(st.textContent).toBe("8 자동 축소");
+    expect(screen.getByText(/씬 75개 > 상한 60 → 대표\+최악 · 제외 67개/)).toBeTruthy();
+  });
+});
+
+describe("설계 버전 비교(§12.2)", () => {
+  it("버전 자연 정렬·직전 버전·짝 씬(순수 함수)", () => {
+    expect(sortVersions(["v10", "v2", "v001", null])).toEqual(["v001", "v2", "v10"]);
+    expect(prevVersion(["v072", "v073"], "v073")).toBe("v072");
+    expect(prevVersion(["v072"], "v072")).toBeNull();
+    const es = makeEntries("p-body");
+    const p = pairEntries(es, "75QN80H", "v072", "v073");
+    expect(p.pairs.map((x) => [x.base.id, x.next.id])).toEqual([["le-1", "le-9"], ["le-2", "le-10"], ["le-3", "le-11"]]);
+    const r = resolveForm({ model: "", base: "", next: "" }, es);
+    expect([r.model, r.base, r.next, r.pairs.length, r.reason]).toEqual(["75QN80H", "v072", "v073", 3, null]);
+    expect(resolveForm({ model: "", base: "", next: "" }, es.filter((e) => e.model.version !== "v073")).reason).toMatch(/버전이 2개 이상인 제품이 없습니다/);
+    expect(resolveForm({ model: "", base: "", next: "" }, null).reason).toBe("불러오는 중…");
+  });
+
+  it("라이브러리 목록: 보조 진입 '버전 비교'(주 버튼은 그대로 1개) + 비교 목록", async () => {
+    const { container } = renderApp("/p/p-body/library");
+    const tbl = await screen.findByRole("table", { name: "버전 비교 목록" });
+    expect(within(tbl).getByText("추가 반복 권장")).toBeTruthy();
+    expect(within(tbl).getByText(/75QN80H · v072 → v073/)).toBeTruthy();
+    expect(primaries(container)).toHaveLength(1);
+    expect(primaries(container)[0].textContent).toBe("종합분석 만들기");
+    const link = screen.getByRole("link", { name: "버전 비교" });
+    expect(link.getAttribute("href")).toBe("/p/p-body/library/comparisons/new");
+    expect(link.hasAttribute("data-primary")).toBe(false);
+    fireEvent.click(link);
+    expect(await screen.findByRole("heading", { level: 1, name: "새 버전 비교" })).toBeTruthy();
+  });
+
+  it("비교 생성: 기본 최신·직전 버전, 주 버튼 '비교 실행' 1개 → 상세(진행 → 판정)", async () => {
+    const { container, server } = renderApp("/p/p-body/library/comparisons/new");
+    expect(await screen.findByRole("heading", { level: 1, name: "새 버전 비교" })).toBeTruthy();
+    const run = primaries(container)[0] as HTMLButtonElement;
+    expect(primaries(container)).toHaveLength(1);
+    expect(run.textContent).toBe("비교 실행");
+    await waitFor(() => expect(run.disabled).toBe(false));
+    expect((screen.getByRole("combobox", { name: "비교 버전" }) as HTMLSelectElement).value).toBe("v073");
+    expect((screen.getByRole("combobox", { name: "기준 버전" }) as HTMLSelectElement).value).toBe("v072");
+    expect(within(screen.getByRole("table", { name: "짝 씬" })).getAllByRole("row").slice(1)).toHaveLength(3);
+    fireEvent.click(run);
+    expect(await screen.findByRole("heading", { level: 1, name: "버전 비교" })).toBeTruthy();
+    const c = server.comparisons[server.comparisons.length - 1];
+    expect([c.model, c.base_version, c.new_version, c.n_paired]).toEqual(["75QN80H", "v072", "v073", 3]);
+    expect(server.jobs.find((j) => j.id === c.job_id)!.lane).toBe("LIGHT");
+    expect(await screen.findByTestId("job-progress")).toBeTruthy();
+    expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true);
+    server.drain();
+    expect(await screen.findByTestId("verdict", {}, { timeout: 6000 })).toBeTruthy();
+    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false));
+  }, 12000);
+
+  it("비교 상세: 판정 배지·사유·씬 표(바뀐 씬 강조), 주 버튼 '보고서 보기' 1개", async () => {
+    const { container } = renderApp("/p/p-body/library/comparisons/cmp-1");
+    const v = await screen.findByTestId("verdict");
+    expect(within(v).getByText("추가 반복 권장")).toBeTruthy();
+    expect(screen.getByText(/씬 cos 최소 0.842 < 기준 0.9/)).toBeTruthy();
+    const rows = within(screen.getByRole("table", { name: "씬별 비교" })).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(rows.filter((r) => r.className === "hl")).toHaveLength(1);
+    expect(primaries(container)).toHaveLength(1);
+    expect(primaries(container)[0].textContent).toBe("보고서 보기");
+    expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("조회 사용자: 비교 실행 비활성", async () => {
+    const { container } = renderApp("/p/p-body/library/comparisons/new", "general");
+    await screen.findByRole("table", { name: "짝 씬" });
+    const run = primaries(container)[0] as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(run.parentElement!.getAttribute("title")).toBe(NO_PERMISSION);
   });
 });

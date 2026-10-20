@@ -203,6 +203,8 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             raise conflict(code, "실패·중단·취소된 작업만 재시도할 수 있습니다")
         if job["job_type"] == "LIB_ANALYZE":
             return _retry_analysis(conn, principal, job)
+        if job["job_type"] == "LIB_COMPARE":
+            return _retry_comparison(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -247,6 +249,25 @@ def _retry_analysis(conn, principal: Principal, job: dict[str, Any]) -> dict[str
     return job_out(conn, new, with_steps=True)
 
 
+def _retry_comparison(conn, principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
+    """LIB_COMPARE 재시도: 같은 params(생성 시점 항목·메타 스냅샷)로 처음부터(산출물 덮어쓰기는 _backup)."""
+    from ...core.repositories import library as lib_repo
+
+    c = lib_repo.get_comparison(conn, job["comparison_id"], for_update=True)
+    if c is None:
+        raise DomainError("COMPARISON_NOT_FOUND", "비교를 찾을 수 없습니다", status=404)
+    try:
+        with conn.begin_nested():
+            new = jobs_repo.insert_job(conn, case_id=None, comparison_id=c["id"], project_id=job["project_id"],
+                                       job_type="LIB_COMPARE", params=dict(job["params"]),
+                                       created_by=principal.user_id, created_by_name=principal.display_name,
+                                       retry_of_job_id=job["id"])
+    except IntegrityError:
+        raise conflict("COMPARISON_JOB_BUSY", "이 비교의 작업이 대기 중이거나 실행 중입니다") from None
+    lib_repo.update_comparison(conn, c["id"], job_id=new["id"], verdict=None)
+    return job_out(conn, new, with_steps=True)
+
+
 # ---------------------------------------------------------------- 로그
 def _masker(ctx: AppContext):
     pats = [re.compile(p) for p in ctx.settings.logging.mask_patterns]
@@ -266,6 +287,10 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int) -> dict
             from ...core.repositories import library as lib_repo
 
             base = analysis_dir(ctx, lib_repo.get_analysis(conn, job["analysis_id"]))
+        elif job.get("comparison_id"):
+            from ...core.repositories import library as lib_repo
+
+            base = analysis_dir(ctx, lib_repo.get_comparison(conn, job["comparison_id"]))
         else:
             base = case_dir(ctx, load_case(conn, job["case_id"]))
         steps = jobs_repo.get_steps(conn, job_id)

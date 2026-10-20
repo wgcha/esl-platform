@@ -1,15 +1,15 @@
-// 종합분석 만들기(계약 §3·§4·§11): 설계 대상 · 필터 · 옵션 최소(정규화·대표 수·목적), 나머지는 '고급'(접힘).
+// 종합분석 만들기(계약 §3·§4·§11·§12.1): 설계 대상 · 필터 · 옵션 최소(정규화·대표 수·목적·최적화 하중), 나머지는 '고급'(접힘).
 // 주 버튼 = "분석 실행"(POST /library/analyses → LIB_ANALYZE 작업) → 상세 화면.
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
-import type { AnalysisFilters, AnalysisOptions, EntryOut, Normalization, Objective } from "../../api/types";
+import type { AnalysisFilters, AnalysisOptions, EntryOut, Normalization, Objective, OptdeckCases } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
-import { DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, VerdictBadge, entryLabel, libPath, matchEntries, sceneText, uniq } from "./common";
+import { DECK_LABEL, DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, VerdictBadge, entryLabel, libPath, matchEntries, sceneText, uniq } from "./common";
 
 const NORM_HINT: Record<Normalization, string> = {
   none: "절대값 그대로",
@@ -32,7 +32,16 @@ export interface AnalysisForm {
   /** 정규화 대상 값(설계 대상 항목에 메타가 없을 때) */
   targetMass: string;
   targetInch: string;
+  /** 최적화 하중(덱 subcase): 모든 씬(기본) · 대표 · 대표+최악 */
+  deckCases: OptdeckCases;
 }
+
+const DECK_HINT: Record<OptdeckCases, string> = {
+  all: "필터에 걸린 모든 씬을 각각 subcase 로(minmax) — 씬이 서버 상한(기본 60)을 넘으면 대표+최악으로 자동 축소",
+  representative: "군집 대표 씬만 subcase 로",
+  "representative+worst": "군집 대표 + 군집별 최악(합력 최대) 씬",
+};
+export const MAX_CASES_DEFAULT = 60;
 
 export const DEFAULT_FORM: AnalysisForm = {
   title: "",
@@ -48,6 +57,7 @@ export const DEFAULT_FORM: AnalysisForm = {
   scenario: "",
   targetMass: "",
   targetInch: "",
+  deckCases: "all",
 };
 
 /** 폼 → filters(키마다 목록, 빈 키는 보내지 않음 = 전체) */
@@ -135,6 +145,7 @@ export function AnalysisNew() {
       objective: f.objective,
       svd_energy: Number(f.svdEnergy),
       worst_case: f.worstCase,
+      optdeck_cases: f.deckCases,
     };
     if (posNum(f.targetMass) !== null) options.target_mass = posNum(f.targetMass);
     if (posNum(f.targetInch) !== null) options.target_inch = posNum(f.targetInch);
@@ -235,6 +246,26 @@ export function AnalysisNew() {
           <Field label="최적화 목적" hint={f.target ? undefined : "설계 대상이 있을 때만 덱을 만듭니다"}>
             <Seg label="최적화 목적" value={f.objective} onChange={(v) => set("objective", v)} options={(["minmax", "weighted"] as Objective[]).map((v) => ({ v, label: OBJ_LABEL[v] }))} />
           </Field>
+          <Field
+            label="최적화 하중"
+            hint={
+              f.deckCases === "all" && matched.length > MAX_CASES_DEFAULT ? (
+                <span className="warn-text">씬 {matched.length}개 — 상한(기본 {MAX_CASES_DEFAULT})을 넘어 대표+최악으로 자동 축소됩니다(보고서에 제외 씬 표)</span>
+              ) : (
+                DECK_HINT[f.deckCases]
+              )
+            }
+          >
+            <div className="checks" role="radiogroup" aria-label="최적화 하중">
+              {(["all", "representative", "representative+worst"] as OptdeckCases[]).map((v) => (
+                <label key={v} className="check">
+                  <input type="radio" name="deck-cases" value={v} checked={f.deckCases === v} onChange={() => set("deckCases", v)} />
+                  {DECK_LABEL[v]}
+                  {v === "all" ? " (기본)" : ""}
+                </label>
+              ))}
+            </div>
+          </Field>
         </Card>
       </div>
       <details className="card adv">
@@ -276,6 +307,7 @@ export function AnalysisNew() {
               <thead>
                 <tr>
                   <th>모델</th>
+                  <th>버전</th>
                   <th className="num">인치</th>
                   <th>씬</th>
                   <th>orient</th>
@@ -287,6 +319,7 @@ export function AnalysisNew() {
                 {matched.map((e) => (
                   <tr key={e.id} className={e.id === f.target ? "hl" : undefined}>
                     <td>{e.model.name}</td>
+                    <td className="mono">{e.model.version ?? "–"}</td>
                     <td className="num">{e.model.inch ?? "–"}</td>
                     <td>{sceneText(e)}</td>
                     <td className="mono">{e.scene.orient ?? "–"}</td>

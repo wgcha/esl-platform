@@ -1,7 +1,7 @@
 // 목 서버: fetch 래퍼 수준. 백엔드 실제 응답 모양(openapi_p1b.json + 자유 형식 응답은 서비스 코드)을 흉내 낸다.
 // tick()마다 작업이 한 걸음 진행된다.
 import type {
-  AnalysisCreate, AnalysisFilters, AnalysisOut, EntryOut, FieldLayer, SectionAxis,
+  AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
   ValidationOut,
 } from "../api/types";
@@ -10,7 +10,8 @@ import {
   makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
   type MockUserKey,
 } from "./data";
-import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
+import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
+import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
 
 interface MockResponse {
   status: number;
@@ -24,10 +25,11 @@ const STEPS: Record<JobType, string[]> = {
   EXPORT: ["EXPORT", "EXPORT_REGISTER"],
   CASE_REPORT: ["REPORT", "REPORT_REGISTER"],
   LIB_ANALYZE: ["LIB_ANALYZE", "OPTDECK", "REPORT", "LIB_REGISTER"],
+  LIB_COMPARE: ["COMPARE", "COMPARE_REGISTER"],
 };
-/** 라이브러리 작업(LIB_ANALYZE)·보고서는 Case 단계가 아님(0) */
-const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0 };
-const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT"];
+/** 라이브러리 작업(LIB_ANALYZE·LIB_COMPARE)·보고서는 Case 단계가 아님(0) */
+const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0 };
+const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
 
@@ -54,6 +56,7 @@ export class MockServer {
   configErrors: ConfigIssue[] = [];
   entries: EntryOut[] = [];
   analyses: AnalysisOut[] = [];
+  comparisons: ComparisonOut[] = [];
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -113,6 +116,55 @@ export class MockServer {
     an.created_at = an.updated_at = "2026-10-18T05:00:00Z";
     this.finishAnalysis(an);
     this.analyses.push(an);
+    // 설계 버전 비교 1개(완료): 75QN80H v072 → v073
+    const cmp = this.makeComparison("cmp-1", { project_id: "p-body", model: "75QN80H", base_version: "v072", new_version: "v073", title: "비드 1차 반영 검증" });
+    cmp.created_at = cmp.updated_at = "2026-10-19T05:00:00Z";
+    this.finishComparison(cmp);
+    this.comparisons.push(cmp);
+  }
+
+  private makeComparison(id: string, body: ComparisonCreate & { base_version: string }): ComparisonOut {
+    const { pairs } = pairEntries(this.entries, body.model, body.base_version, body.new_version);
+    return {
+      id,
+      project_id: body.project_id,
+      title: body.title ?? null,
+      model: body.model,
+      base_version: body.base_version,
+      new_version: body.new_version,
+      filters: body.filters ?? {},
+      options: body.options ?? {},
+      base_entry_ids: pairs.map((p) => p.base.id),
+      new_entry_ids: pairs.map((p) => p.next.id),
+      n_paired: pairs.length,
+      status: "QUEUED",
+      verdict: null,
+      job_id: null,
+      job: null,
+      result: null,
+      result_rel: null,
+      report_rel: null,
+      dir_rel: `_compare/${id}`,
+      folder_path: `E:\\ESL_ROOT\\_compare\\${id}`,
+      created_by: this.me.user_id,
+      created_by_name: this.me.display_name,
+      created_at: this.now(),
+      updated_at: this.now(),
+    };
+  }
+
+  private finishComparison(c: ComparisonOut) {
+    const { pairs } = pairEntries(this.entries, c.model, c.base_version, c.new_version);
+    c.status = "SUCCEEDED";
+    c.result = makeComparisonResult(pairs, c.options.cos_min ?? 0.9);
+    c.verdict = c.result.convergence.verdict;
+    c.result_rel = `${c.dir_rel}/compare.json`;
+    c.report_rel = `${c.dir_rel}/report.html`;
+  }
+
+  private comparisonOut(c: ComparisonOut): ComparisonOut {
+    const j = c.job_id ? this.jobs.find((x) => x.id === c.job_id) : undefined;
+    return { ...c, status: j ? j.state : c.status, job: j ?? null };
   }
 
   private makeAnalysis(id: string, body: AnalysisCreate, hit: EntryOut[]): AnalysisOut {
@@ -146,7 +198,7 @@ export class MockServer {
     const hit = this.entries.filter((e) => a.entry_ids.includes(e.id));
     const target = this.entries.find((e) => e.id === a.target_entry_id) ?? null;
     a.status = "SUCCEEDED";
-    a.result = makeAnalysisResult(hit, target, a.options.n_representative ?? 5, !!a.options.worst_case, a.options.objective ?? "minmax");
+    a.result = makeAnalysisResult(hit, target, a.options.n_representative ?? 5, !!a.options.worst_case, a.options.objective ?? "minmax", a.options.optdeck_cases ?? "all");
     a.result_rel = `${a.dir_rel}/analysis.json`;
     a.report_rel = `${a.dir_rel}/report.html`;
     a.optdeck_rel = target ? `${a.dir_rel}/opt` : null;
@@ -405,8 +457,11 @@ export class MockServer {
         }
         const nj = this.newJob({ id: j.case_id, project_id: j.project_id }, j.job_type, j.params);
         nj.analysis_id = j.analysis_id ?? null;
+        nj.comparison_id = j.comparison_id ?? null;
         const a = this.analyses.find((x) => x.job_id === j.id);
         if (a) a.job_id = nj.id;
+        const cp = this.comparisons.find((x) => x.job_id === j.id);
+        if (cp) cp.job_id = nj.id;
         nj.retry_of_job_id = j.id;
         return { status: 201, body: nj };
       }
@@ -593,6 +648,36 @@ export class MockServer {
       if (!file.downloadable)
         return err(413, "ARTIFACT_TOO_LARGE", "파일이 커서 다운로드할 수 없습니다. 경로를 복사해 여세요", { rel, path: file.path, size: file.size, limit: MAX_ARTIFACT_BYTES });
       return { status: 200, body: rel === "envelope.csv" ? envelopeCsv() : "mock file\n" };
+    }
+    if (path === "/library/comparisons" && method === "GET") {
+      const pid = query.get("project_id");
+      return { status: 200, body: this.comparisons.filter((c) => !pid || c.project_id === pid).map((c) => this.comparisonOut(c)).reverse() };
+    }
+    if (path === "/library/comparisons" && method === "POST") {
+      const body = b as unknown as ComparisonCreate;
+      if (!this.canRun(body.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
+      const mine = this.entries.filter((e) => e.project_id === body.project_id);
+      const versions = modelVersions(mine).find((m) => m.model === body.model)?.versions ?? [];
+      if (!versions.includes(body.new_version)) return err(422, "VERSION_NOT_FOUND", `모델 ${body.model} 에 비교 버전 ${body.new_version} 의 활성 항목이 없습니다`, { versions });
+      const base = body.base_version ?? prevVersion(versions, body.new_version);
+      if (!base) return err(422, "NO_PAIRED_SCENES", `비교 버전 ${body.new_version} 이전 버전이 없습니다`, { versions });
+      if (base === body.new_version) return err(422, "INVALID_PARAMS", "기준 버전과 비교 버전이 같습니다");
+      if (!pairEntries(mine, body.model, base, body.new_version).pairs.length)
+        return err(422, "NO_PAIRED_SCENES", "기준·비교 버전에 같은 씬 키의 항목이 없습니다", { base_version: base, new_version: body.new_version });
+      const c = this.makeComparison(this.id("cmp"), { ...body, base_version: base });
+      const j = this.newJob({ id: null, project_id: body.project_id }, "LIB_COMPARE", { comparison_id: c.id, model: c.model, base_version: base, new_version: c.new_version });
+      j.comparison_id = c.id;
+      c.job_id = j.id;
+      this.comparisons.push(c);
+      return { status: 201, body: this.comparisonOut(c) };
+    }
+    if ((r = path.match(/^\/library\/comparisons\/([^/]+)(\/report)?$/)) && method === "GET") {
+      const c = this.comparisons.find((x) => x.id === r![1]);
+      if (!c) return err(404, "COMPARISON_NOT_FOUND", "비교를 찾을 수 없습니다");
+      const out = this.comparisonOut(c);
+      if (!r[2]) return { status: 200, body: out };
+      if (out.status !== "SUCCEEDED") return err(404, "REPORT_NOT_FOUND", "보고서가 아직 없습니다(비교 작업 완료 후 생성)");
+      return { status: 200, body: reportHtml(`버전 비교 ${c.model} ${c.base_version} → ${c.new_version}`) };
     }
     return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
   }
@@ -798,6 +883,11 @@ export class MockServer {
     if (j.job_type === "LIB_ANALYZE") {
       const a = this.analyses.find((x) => x.job_id === j.id);
       if (a) this.finishAnalysis(a);
+      return;
+    }
+    if (j.job_type === "LIB_COMPARE") {
+      const c = this.comparisons.find((x) => x.job_id === j.id);
+      if (c) this.finishComparison(c);
       return;
     }
     const c = j.case_id ? this.findCase(j.case_id) : undefined;

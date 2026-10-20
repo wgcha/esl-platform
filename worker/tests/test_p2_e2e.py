@@ -151,15 +151,18 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     reps = {lc["entry_id"] for lc in res["load_cases"]}
     pat = {e["id"]: SPECS[k][4] for k, e in enumerate(entries)}
     assert {pat[x] for x in reps} == {"A", "B"}                   # 두 하중 패턴이 각각 대표됨
-    assert res["optdeck"]["n_subcases"] == 2 and res["optdeck"]["objective"] == "minmax"
+    # §12.1 덱 기본 = 모든 씬(3개) subcase, 축소 없음
+    assert res["optdeck"]["n_subcases"] == 3 and res["optdeck"]["objective"] == "minmax"
+    assert res["deck"]["mode"] == "all" and res["deck"]["n_subcases"] == 3 and res["deck"]["reduced"] is False
+    assert res["deck"]["excluded"] == []
     assert res["mapping"]["n_self"] >= 1 and res["mapping"]["conservation_rel_max"] < 1e-6
     assert a["report_rel"] == f"_analysis/{a['id']}/report.html" and a["optdeck_rel"] == f"_analysis/{a['id']}/opt"
     adir = a["folder_path"]
     for n in ("analysis.json", "mapped_loads.npz", "envelope.csv", "representatives.csv", "report.html"):
         assert os.path.isfile(os.path.join(adir, n)), n
-    with np.load(os.path.join(adir, "mapped_loads.npz"), allow_pickle=False) as z:   # 대표·최악 케이스만 저장
-        assert z["mapped_F"].shape[0] == len(res["load_cases"]) == z["load_case_index"].size
-        assert z["load_case_entry_id"].tolist() == [lc["entry_id"] for lc in res["load_cases"]]
+    with np.load(os.path.join(adir, "mapped_loads.npz"), allow_pickle=False) as z:   # 덱 케이스 전부 저장
+        assert z["mapped_F"].shape[0] == 3 == z["load_case_index"].size
+        assert sorted(z["load_case_entry_id"].tolist()) == sorted(e["id"] for e in entries)
     dn = client.get(f"{API}/library/analyses/{a['id']}/download", params={"rel": "mapped_loads.npz"}, headers=R)
     assert dn.status_code == 200 and dn.content[:2] == b"PK"
     rp = client.get(f"{API}/library/analyses/{a['id']}/report", headers=H("tok-general"))
@@ -179,6 +182,58 @@ def test_p2_e2e_register_analyze_report_deck(client, worker_factory, inputs_root
     assert dl.content == deck and b"DTPG" in deck
     lg = client.get(f"{API}/jobs/{a['job']['id']}/log", params={"step": 1}, headers=R).json()
     assert lg["eof"] and any("[lib_analyze]" in ln for ln in lg["lines"])
+
+    # 덱 하중 = 대표만(옵션 optdeck_cases) → subcase 2, 제외 1(사유)
+    r = client.post(f"{API}/library/analyses", json={"project_id": "p-1", "target_entry_id": e0["id"],
+                                                     "options": {"n_representative": 2,
+                                                                 "optdeck_cases": "representative"}}, headers=W)
+    assert r.status_code == 201, r.text
+    _run(client, worker, r.json()["job"]["id"])
+    dk = client.get(f"{API}/library/analyses/{r.json()['id']}", headers=R).json()["result"]
+    assert dk["deck"]["mode"] == "representative" and dk["deck"]["n_subcases"] == 2 == dk["optdeck"]["n_subcases"]
+    assert dk["deck"]["n_excluded"] == 1 and "cases=representative" in dk["deck"]["excluded"][0]["reason"]
+
+    # 설계 버전 비교(§12.2): 메타 수정으로 버전·씬 키 맞춤 — 2번(패턴 A, 메시 다름) = v002, 1번(패턴 B) = v003
+    def patch(e, model, scene):
+        cur = client.get(f"{API}/library/entries/{e['id']}", headers=R).json()
+        r = client.patch(f"{API}/library/entries/{e['id']}", json={"version": cur["version"], "model": model,
+                                                                  "scene": scene}, headers=W)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    key = {k: e0["scene"][k] for k in ("scenario", "seq", "drop_type", "round", "scene_no", "orient", "suffix")}
+    patch(entries[2], {"version": "v002"}, key)
+    patch(entries[1], {"name": "50QX10A", "version": "v003"}, key)
+    # 합성 메시(가로 24~30 요소)는 정규화 격자(24×14)와 해상도가 비슷해 셀 합이 계단(aliasing)진다 → 같은 패턴도
+    # cos ≈ 0.85. 실제 모델(수십만 요소)과 달라 기준을 0.8 로 낮춘다(옵션 cos_min).
+    r = client.post(f"{API}/library/comparisons", json={"project_id": "p-1", "model": "50QX10A",
+                                                        "new_version": "v002",
+                                                        "options": {"n_representative": 1, "cos_min": 0.8}},
+                    headers=W)
+    assert r.status_code == 201, r.text
+    cm = r.json()
+    assert cm["base_version"] == "v001" and cm["n_paired"] == 1 and cm["job"]["lane"] == "LIGHT"
+    _run(client, worker, cm["job"]["id"], lane="LIGHT")
+    cm = client.get(f"{API}/library/comparisons/{cm['id']}", headers=R).json()
+    assert cm["status"] == "SUCCEEDED" and cm["verdict"] == "CONVERGED", cm["result"]["convergence"]
+    cr = cm["result"]
+    assert cr["convergence"]["label"] == "수렴(반복 불필요)" and cr["aggregate"]["cos_min"] > 0.8
+    assert cr["scenes"][0]["base_entry"] == e0["id"] and cr["scenes"][0]["new_entry"] == entries[2]["id"]
+    assert cm["report_rel"] == f"_compare/{cm['id']}/report.html" and cm["result_rel"].endswith("compare.json")
+    rp = client.get(f"{API}/library/comparisons/{cm['id']}/report", headers=H("tok-general"))
+    assert rp.status_code == 200 and rp.headers["content-security-policy"] == CSP and "수렴" in rp.text
+    assert not re.search(r"(src|href)=\"https?://", rp.text)
+    lg = client.get(f"{API}/jobs/{cm['job']['id']}/log", params={"step": 1}, headers=R).json()
+    assert lg["eof"] and any("[lib_compare]" in ln for ln in lg["lines"])
+    r = client.post(f"{API}/library/comparisons", json={"project_id": "p-1", "model": "50QX10A",
+                                                        "new_version": "v003", "options": {"cos_min": 0.8}}, headers=W)
+    assert r.status_code == 201 and r.json()["base_version"] == "v002"
+    _run(client, worker, r.json()["job"]["id"], lane="LIGHT")
+    c3 = client.get(f"{API}/library/comparisons/{r.json()['id']}", headers=R).json()
+    assert c3["verdict"] == "ITERATE" and c3["result"]["convergence"]["label"] == "추가 반복 권장"
+    assert c3["result"]["scenes"][0]["changed"] and c3["result"]["aggregate"]["cos_min"] < 0.5
+    assert [x["id"] for x in client.get(f"{API}/library/comparisons", params={"project_id": "p-1"},
+                                        headers=R).json()] == [c3["id"], cm["id"]]
 
     # 대상 없는 분석(정규화 격자 통계): OPTDECK step SKIPPED, 덱 없음
     r = client.post(f"{API}/library/analyses", json={"project_id": "p-1", "options": {"n_representative": 2}},
