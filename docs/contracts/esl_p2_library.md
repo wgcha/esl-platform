@@ -128,3 +128,9 @@
 - 같은 버전에 같은 씬 키가 여럿이면 최근 등록 항목. 기준 버전 기본 = 비교 버전 직전(자연 정렬 v2 < v10). API: `new_version` 필수, `base_version`·`filters`(inch·drop_type·drop_class·orient·scenario·verdict)·`options`(cos_min·n_representative)·`title` 선택. 오류: `VERSION_NOT_FOUND`(422), `NO_PAIRED_SCENES`(422, 생성 시점 DB 메타 기준), `GRID_MISMATCH`, 같은 버전 `INVALID_PARAMS`.
 - DB 0004: `comparisons`(verdict CONVERGED|ITERATE, result 요약), `jobs.comparison_id`(작업 대상 = Case | 분석 | 비교 중 하나), stage 9 = 버전 비교. 보고서 CSP·경로 보호는 분석 보고서와 같음.
 - 합성 시험 메시(가로 24~30 요소)는 격자 24×14 와 해상도가 비슷해 셀 합이 계단져 같은 패턴도 cos ≈ 0.85 — 실제 모델(수십만 요소)에는 해당 없음. E2E 는 cos_min 0.8 옵션으로 시험.
+
+### 12.4 검증 반영 (2026-10-20, Verifier HEAD 7906d23)
+- `convergence.cos_min` 기본 **0.95**(실모델 셀당 노드 ≥64 기준, 같은 패턴 ≥0.99 여유). 셀당 노드 중앙값 `convergence.min_nodes_per_cell`(기본 64) 미만이면 경고 + 보고서 표시(16 미만이면 "판정 신뢰 낮음"). 옵션 `convergence.coarsen: false|half`(기본 false, 12×7 이하 격자에서는 무시).
+- `rep_same` 완화: 버전별 medoid를 헝가리안 매칭한 뒤, 짝 medoid 간 cos ≥ cos_min이면 같은 대표로 본다(medoid ID 동일 요구 폐기).
+- 버전 자연 정렬 동률(v100·v0100)은 원문 사전순으로 결정적 처리.
+- 자동 축소 후 subcase 수는 max_cases를 넘지 않는다(대표 수 자동 조정 + 경고).
