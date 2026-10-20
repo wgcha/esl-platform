@@ -64,8 +64,11 @@ commands:                             # argv 템플릿(esl.md §4.4): argv[0] = 
 client_token:                         # PC 연결(계약 esl_p3_ux.md §9.1): 연결 코드 → PC 토큰 esl_ct_…(서버엔 해시만)
   ttl_days: 30                        # 토큰 유효 기간
   code_ttl_min: 15                    # 연결 코드 유효 시간(1회용)
-  max_failures: 5                     # 코드 교환 실패 허용 횟수 → 넘으면 잠금
-  lock_min: 15                        # 잠금 시간(분)
+  lock_per_source: 5                  # 코드 교환 실패 잠금: 출발지(PC 주소)를 구분할 수 있으면 출발지별 허용 횟수
+  lock_global: 30                     # 출발지를 구분할 수 없으면(신뢰하지 않는 루프백 프록시 뒤) 서버 전체 허용 횟수
+  lock_minutes: 15                    # 실패를 세는 창·잠금 시간(분)
+  trusted_proxies: []                 # X-Forwarded-For 를 믿을 프록시 주소·CIDR(예 ["127.0.0.1", "::1"] — 대시보드 프록시가
+                                      # XFF 를 붙이는 경우만). 비우면 루프백 peer 요청은 서버 전체 기준으로 센다
 logging: {level: INFO, mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']}
 core:                                 # 코어 설정: config_path(이 파일 기준 상대경로 가능) 또는 settings(코어 설정 그대로)
   config_path: esl.example.yaml

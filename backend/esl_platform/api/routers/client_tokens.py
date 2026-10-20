@@ -25,9 +25,11 @@ def create_code(body: ClientCodeCreate, request: Request, principal: Principal =
 
 @router.post("/client-tokens/exchange", response_model=ClientExchangeOut)
 def exchange(body: ClientExchange, request: Request) -> dict[str, Any]:
-    """PC 도구: 코드 → 토큰 esl_ct_…(응답에서 한 번만 보임). 실패 5회면 잠금(429). 세션·CSRF 헤더 불필요."""
-    src = svc.request_source(request.client.host if request.client else None, request.headers.get("x-forwarded-for"))
-    return svc.exchange(get_ctx(request), src, body.code, body.device_name)
+    """PC 도구: 코드 → 토큰 esl_ct_…(응답에서 한 번만 보임). 실패 잠금(출발지별 5회 또는 구분 불가 시 서버 전체 30회 / 15분, 429). 세션·CSRF 헤더 불필요."""
+    ctx = get_ctx(request)
+    src = svc.request_source(request.client.host if request.client else None, request.headers.get("x-forwarded-for"),
+                             ctx.settings.client_token.trusted_proxies)
+    return svc.exchange(ctx, src, body.code, body.device_name)
 
 
 @router.get("/client-tokens", response_model=list[ClientTokenOut])

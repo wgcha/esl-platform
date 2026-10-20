@@ -1,14 +1,14 @@
 // P3-UX API(계약 esl_p3_ux.md §1~§3·§6·§8). check:api 가 endpoints.ts 와 함께 이 파일의 경로도 openapi 와 대조한다.
 import { API_PREFIX, ApiError, buildUrl, request } from "./client";
 import type {
-  ApiErrorDetail, BrowseOut, CaseCreateP3, CaseOut, ChangelogEntry, UploadChunkOut, UploadCompleteOut, UploadCreate, UploadFileIn, UploadOut, VersionOut,
+  ApiErrorDetail, BrowseOut, CaseCreate, CaseOut, ChangelogEntry, ClientCodeOut, ClientTokenOut, UploadChunkOut, UploadCompleteOut, UploadCreate, UploadFileIn, UploadOut, VersionOut,
 } from "./types";
 
 export const BUNDLE_PARTS_DEFAULT = "export,report,summary";
 
 export const p3 = {
   /** §6: h3d_path 또는 results_dir 중 하나 */
-  createCase: (body: CaseCreateP3) => request<CaseOut>("POST", "/cases", { body }),
+  createCase: (body: CaseCreate) => request<CaseOut>("POST", "/cases", { body }),
   createUpload: (body: UploadCreate) => request<UploadOut>("POST", "/uploads", { body }),
   upload: (id: string) => request<UploadOut>("GET", `/uploads/${id}`),
   /** 누락 include 추가 등록 */
@@ -17,6 +17,11 @@ export const p3 = {
   cancelUpload: (id: string) => request<UploadOut>("DELETE", `/uploads/${id}`),
   browse: (root?: number, path?: string, offset?: number) => request<BrowseOut>("GET", "/fs/browse", { query: { root, path, offset } }),
   version: () => request<VersionOut>("GET", "/version"),
+  /** §9.1 PC 연결 코드(6자리·15분·1회용, 현재 프로젝트) — power 이상 */
+  createClientCode: (projectId: string) => request<ClientCodeOut>("POST", "/client-tokens/codes", { body: { project_id: projectId } }),
+  /** 내 연결된 PC(토큰) 목록 */
+  clientTokens: (projectId?: string) => request<ClientTokenOut[]>("GET", "/client-tokens", { query: { project_id: projectId } }),
+  revokeClientToken: (id: string) => request<ClientTokenOut>("DELETE", `/client-tokens/${id}`),
   changelog: () => request<ChangelogEntry[]>("GET", "/changelog"),
   caseBundleUrl: (caseId: string, parts = BUNDLE_PARTS_DEFAULT) => `${API_PREFIX}/cases/${caseId}/bundle` + `?parts=${encodeURIComponent(parts)}`,
   analysisBundleUrl: (id: string, parts = "report,deck,csv") => `${API_PREFIX}/library/analyses/${id}/bundle` + `?parts=${encodeURIComponent(parts)}`,

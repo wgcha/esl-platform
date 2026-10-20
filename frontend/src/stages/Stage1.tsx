@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/endpoints";
+import { errorText } from "../api/client";
+import type { InspectH3dResult } from "../api/types";
+import { bytes } from "../lib/format";
 import { Card, Empty, Field, Stat } from "../components/ui";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -8,13 +11,21 @@ import { blockReason, submitJob, useAction } from "./common";
 export function Stage1({ c, reload, allowed }: StageProps) {
   const rad = usePathInspect("RAD", c.rad_path);
   const res = usePathInspect("RESULTS", c.results_dir);
+  // §6: h3d 입력 Case — 서버가 h3d 에서 추출(첫 step H3D_EXTRACT). 결과 폴더는 추출 전엔 없으므로 h3d 를 확인한다
+  const isH3d = c.input_kind === "H3D" && !!c.h3d_path;
+  const [h3d, setH3d] = useState<{ r: InspectH3dResult | null; error: string | null } | null>(null);
   const [partTitle, setPartTitle] = useState(c.part_title);
   const act = useAction(reload);
   const s = c.extract_summary;
 
   useEffect(() => {
     void rad.inspect(c.rad_path);
-    void res.inspect(c.results_dir);
+    if (isH3d)
+      api.inspectH3d(c.h3d_path!).then(
+        (r) => setH3d({ r, error: null }),
+        (e) => setH3d({ r: null, error: errorText(e) }),
+      );
+    else void res.inspect(c.results_dir);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c.id]);
 
@@ -22,9 +33,13 @@ export function Stage1({ c, reload, allowed }: StageProps) {
     ? "파트 title을 입력하세요"
     : rad.result && !rad.result.ok
       ? "rad 경로에 문제가 있습니다"
-      : res.result && !(res.result.ok && res.result.done?.ok)
-        ? "결과 폴더(done.json)에 문제가 있습니다"
-        : null;
+      : isH3d
+        ? h3d && !h3d.r?.ok
+          ? "h3d 파일에 문제가 있습니다"
+          : null
+        : res.result && !(res.result.ok && res.result.done?.ok)
+          ? "결과 폴더(done.json)에 문제가 있습니다"
+          : null;
 
   const run = () =>
     act.run(async () => {
@@ -47,10 +62,34 @@ export function Stage1({ c, reload, allowed }: StageProps) {
               <span className="mono readonly-path">{c.rad_path}</span>
             </Field>
             {rad.result ? <RadInspectView r={rad.result} partTitle={partTitle} /> : <div className="small muted">{rad.error ?? "확인 중…"}</div>}
-            <Field label="결과 폴더">
+            {isH3d && (
+              <>
+                <Field label="h3d 파일" hint="서버에서 HyperView로 추출합니다(h3d는 읽기만)">
+                  <span className="mono readonly-path">{c.h3d_path}</span>
+                </Field>
+                {h3d?.r ? (
+                  <div className={h3d.r.ok ? "inspect ok small" : "inspect bad small"} aria-label="h3d 확인 결과">
+                    {h3d.r.ok ? `h3d 확인됨 · ${bytes(h3d.r.size)}` : h3d.r.problems.join(", ")}
+                  </div>
+                ) : (
+                  <div className="small muted">{h3d?.error ?? "확인 중…"}</div>
+                )}
+              </>
+            )}
+            <Field label={isH3d ? "추출 결과 폴더(서버가 만듦)" : "결과 폴더"}>
               <span className="mono readonly-path">{c.results_dir}</span>
             </Field>
-            {res.result ? <ResultsInspectView r={res.result} /> : <div className="small muted">{res.error ?? "확인 중…"}</div>}
+            {isH3d ? (
+              <div className="small muted" data-testid="h3d-stage-note">
+                {c.extract_summary
+                  ? "서버 추출을 마쳤습니다. 다시 실행하면 이전 추출 결과는 _backup 으로 옮기고 새로 추출합니다."
+                  : '"추출 실행"을 누르면 서버에서 추출 중(HyperView) → 정리 → t* 후보 순서로 진행합니다. 진행·로그는 위 작업 줄에 보입니다.'}
+              </div>
+            ) : res.result ? (
+              <ResultsInspectView r={res.result} />
+            ) : (
+              <div className="small muted">{res.error ?? "확인 중…"}</div>
+            )}
             <Field label="파트 title">
               <input value={partTitle} disabled={!allowed} onChange={(e) => setPartTitle(e.target.value)} />
             </Field>

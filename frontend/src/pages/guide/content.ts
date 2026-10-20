@@ -3,7 +3,7 @@
 /** 바로가기 대상. 프로젝트·Case 가 필요한 곳은 화면이 최근 연 Case 로 채운다 */
 export type GuideTarget =
   | { kind: "cases" }
-  | { kind: "new" }
+  | { kind: "new"; tab?: "pc" }
   | { kind: "stage"; n: number }
   | { kind: "library" }
   | { kind: "analysisNew" }
@@ -61,7 +61,7 @@ export const GUIDE: GuideGroup[] = [
           "확인 결과에 include가 빠졌다고 나오면 '추가로 올리기'로 그 파일만 더 올립니다.",
           "Case 이름·대상 파트(기본 chassis_rear)를 확인하고 'Case 만들기'.",
         ],
-        tip: "h3d가 매우 크면(수십 GB) PC에서 ESL_extract.bat으로 추출해 결과 폴더(수백 MB)만 올리는 것이 빠릅니다 — 아래 'PC에서 h3d 추출(대안)'. 참고: 30 GB는 1 Gbps에서 약 5분, 100 Mbps에서 약 45분.",
+        tip: "h3d가 매우 크면(수십 GB) PC에서 ESL_extract.bat으로 추출해 결과 폴더(수백 MB)만 올리는 것이 빠릅니다 — 아래 'PC에서 추출해 올리기(PC 연결)'. 참고: 30 GB는 1 Gbps에서 약 5분, 100 Mbps에서 약 45분.",
         target: { kind: "new" },
         label: "새 Case 열기",
       },
@@ -81,15 +81,17 @@ export const GUIDE: GuideGroup[] = [
       },
       {
         id: "pc-extract",
-        title: "PC에서 h3d 추출(대안)",
-        what: "h3d가 아주 크거나 망이 느릴 때. 내 PC의 HyperView로 필요한 값만 뽑아 수백 MB 결과 폴더로 만듭니다.",
+        title: "PC에서 추출해 올리기(PC 연결)",
+        what: "h3d가 아주 크거나 망이 느릴 때. 내 PC의 HyperView로 필요한 값만 뽑아(수백 MB) rad·include와 함께 서버로 자동으로 올립니다. 끝나면 새 Case 화면이 채워진 채로 열립니다.",
         steps: [
-          "저장소 클론 폴더의 update.bat 을 더블클릭해 PC 도구(ESL_extract.bat)를 설치·갱신합니다(서버용 deploy\\update.bat 과 다른 파일).",
-          "h3d 파일을 ESL_extract.bat 위로 끌어다 놓습니다 → <작업 폴더>\\<h3d 이름>\\csv\\ 에 결과 폴더(done.json·CSV)가 생깁니다.",
-          "새 Case → '내 PC에서 올리기' → '추출 결과가 이미 있으면'을 펼쳐 그 폴더를 고르고 rad·include와 함께 올립니다.",
+          "처음 한 번: 저장소 클론 폴더 맨 위의 update.bat 을 더블클릭해 PC 도구(ESL_extract.bat)를 설치·갱신합니다(서버용 deploy\\update.bat 과 다른 파일).",
+          "새 Case → 'PC에서 추출해 올리기' 탭 → 'PC 연결 코드 만들기'(실행(power) 이상). 6자리 코드가 15분 동안 보입니다(1회용, 지금 프로젝트에만 올릴 수 있음).",
+          "h3d와 rad 파일을 함께 ESL_extract.bat 위로 끌어다 놓습니다(h3d만 놓으면 rad 고르는 창). 처음 한 번은 서버 주소(화면에 표시)와 연결 코드를 묻습니다.",
+          "PC에서 추출(<작업 폴더>\\<h3d 이름>\\csv) → include 수집 → 업로드(끊기면 다시 실행해 이어 올리기)가 끝나면 브라우저가 새 Case를 채운 채로 엽니다 → 'Case 만들기'.",
         ],
-        tip: "다른 파트를 뽑으려면 명령창에서 ESL_extract.bat <h3d> <파트 이름|ID>.",
-        target: { kind: "new" },
+        check: ["콘솔에 include 누락 경고가 없는지", "'연결된 PC' 목록에 내 PC가 '사용 중'으로 보이는지"],
+        tip: "업로드만 다시 하려면 ESL_upload.bat <결과 폴더>. 연결은 30일 유지되고, PC를 더 쓰지 않으면 '연결된 PC'에서 폐기하세요(그 PC는 다음에 코드를 다시 묻습니다).",
+        target: { kind: "new", tab: "pc" },
         label: "새 Case 열기",
       },
     ],
@@ -102,7 +104,11 @@ export const GUIDE: GuideGroup[] = [
         id: "s1",
         title: "① 입력·추출",
         what: "h3d에서 대상 파트의 메시·변위·변형률 이력을 읽어 Case 폴더(01_extract)에 정리합니다. h3d는 읽기만 합니다.",
-        steps: ["Case를 열면 ① 입력. rad·h3d 경로와 파트 확인 표를 봅니다.", "'추출 실행' → 오른쪽 대기열에서 진행을 봅니다(h3d 추출은 수 분~수십 분)."],
+        steps: [
+          "Case를 열면 ① 입력. rad·h3d 경로와 파트 확인 표를 봅니다.",
+          "'추출 실행' → h3d로 만든 Case는 먼저 '서버에서 추출 중(HyperView)' 단계가 진행·로그와 함께 보이고(수 분~수십 분), 이어서 정리·t* 후보 계산을 합니다.",
+          "오른쪽 '계산 대기열'에 동시 실행 수(예 1/2)가 보입니다 — 다른 Case 계산과 동시에 돌 수 있습니다(같은 Case는 차례대로).",
+        ],
         check: ["파트 요소 수가 예상과 같은지(예 chassis_rear 약 22만)", "프레임 수·후보 프레임이 채워졌는지", "경고(include 누락, 파트 없음)가 없는지"],
         target: { kind: "stage", n: 1 },
         label: "① 입력 열기",
@@ -226,6 +232,10 @@ export const FAQ: Faq[] = [
     a: "정상입니다. CHOLMOD(scikit-sparse)는 Windows용 설치 파일이 없어 건너뛰고, Windows 서버는 PARDISO(MKL) 솔버를 씁니다. 솔버 이름은 오른쪽 '워커' 패널에 보입니다.",
   },
   { q: "단계에 '이전 단계가 바뀌었습니다'가 떠요", a: "앞 단계(t*·지지점 등)를 바꿔 지금 결과가 옛 입력 기준입니다. 그 단계의 주 버튼으로 다시 실행하세요." },
+  {
+    q: "PC 도구가 '연결 코드가 맞지 않거나 만료' / '잠겼습니다'라고 해요",
+    a: "코드는 15분 동안 한 번만 쓸 수 있습니다. 새 Case → 'PC에서 추출해 올리기'에서 새 코드를 만들어 입력하세요. 잘못된 코드를 여러 번 넣으면 15분 동안 잠깁니다(PC별 5회, 서버가 PC를 구분할 수 없는 설치면 서버 전체 30회).",
+  },
   { q: "보고서 버튼이 비활성이에요", a: "Case 보고서는 ⑤ 검증이 끝나면 자동으로 만들어집니다. 검증을 먼저 실행하세요." },
   { q: "새 버전이 나왔는지 어떻게 알아요?", a: "상단 바 버전(v0.4.0) 옆에 점이 보이면 마지막으로 본 뒤 업데이트가 있었다는 뜻입니다. 누르면 업데이트 내역이 열립니다." },
 ];

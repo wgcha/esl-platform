@@ -166,8 +166,43 @@ class ClientTokenCfg(_M):
 
     ttl_days: float = Field(default=30, gt=0, le=366)           # 토큰 유효 기간
     code_ttl_min: float = Field(default=15, gt=0, le=1440)      # 연결 코드 유효 시간
-    max_failures: int = Field(default=5, ge=1, le=100)          # 교환 실패 허용 횟수(초과 → 잠금)
-    lock_min: float = Field(default=15, gt=0, le=1440)          # 잠금 시간
+    # 교환 실패 잠금(계약 §10): 출발지 구분 가능(peer 가 루프백 아님, 또는 trusted_proxies 의 프록시가 붙인
+    # X-Forwarded-For)이면 출발지별 lock_per_source 회, 구분 불가면 서버 전체 lock_global 회 — 창·잠금 lock_minutes 분.
+    lock_per_source: int = Field(default=5, ge=1, le=100)
+    lock_global: int = Field(default=30, ge=1, le=10000)
+    lock_minutes: float = Field(default=15, gt=0, le=1440)
+    # X-Forwarded-For 를 믿을 프록시(peer 주소·CIDR, 또는 주소가 아닌 peer 이름 그대로). 비면 XFF 무시.
+    trusted_proxies: list[str] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_keys(cls, v: Any) -> Any:
+        """이전 키(max_failures·lock_min) → lock_per_source·lock_minutes(새 키가 있으면 새 키 우선)."""
+        if isinstance(v, dict):
+            v = dict(v)
+            for old, new in (("max_failures", "lock_per_source"), ("lock_min", "lock_minutes")):
+                if old in v:
+                    val = v.pop(old)
+                    v.setdefault(new, val)
+        return v
+
+    @model_validator(mode="after")
+    def _check_proxies(self) -> "ClientTokenCfg":
+        for p in self.trusted_proxies:
+            if not p or len(p) > 100:
+                raise ValueError("client_token.trusted_proxies: 빈 값·100자 초과 불가")
+            if any(c in p for c in "/.:") and not _is_net(p):
+                raise ValueError(f"client_token.trusted_proxies: 주소·CIDR 형식이 아닙니다: {p}")
+        return self
+
+
+def _is_net(p: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_network(p, strict=False)
+        return True
+    except ValueError:
+        return False
 
 
 class UiCfg(_M):

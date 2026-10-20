@@ -24,7 +24,9 @@ def settings_dict(tmp_path):
     d["storage"]["upload_root"] = str(tmp_path / "esl-input")
     d["upload"] = {"chunk_mb": 1, "max_file_bytes": 3_000_000, "max_upload_bytes": 5_000_000, "min_free_gb": 0}
     d["altair"] = {"hw_exe_path": str(write_fake_hw(tmp_path))}
-    d["client_token"] = {"max_failures": 3, "lock_min": 15}
+    # 시험 클라이언트 peer 이름 "testclient" 를 신뢰 프록시로 → X-Forwarded-For 로 출발지 구분(출발지별 3회),
+    # XFF 가 없으면 구분 불가 → 서버 전체(5회)
+    d["client_token"] = {"lock_per_source": 3, "lock_global": 5, "lock_minutes": 15, "trusted_proxies": ["testclient"]}
     return d
 
 
@@ -117,21 +119,26 @@ def test_general_cannot_create_code_and_project_check(client):
 
 
 def test_code_expiry_lock_and_revoke(client, engine):
+    A = {"X-Forwarded-For": "10.9.9.9"}
     c = _new_code(client)
     with engine.begin() as conn:
         conn.execute(text("UPDATE client_codes SET created_at = now() - interval '20 minutes', "
                           "expires_at = now() - interval '5 minutes'"))
-    assert _code(_exchange(client, c["code"])) == "CLIENT_CODE_INVALID"        # 만료(실패 1)
-    assert _code(_exchange(client, "12")) == "CLIENT_CODE_INVALID"             # 형식 오류(실패 2)
-    r = _exchange(client, "000000" if c["code"] != "000000" else "111111")       # 실패 3 → 잠금
+    r = _exchange(client, c["code"], **A)
+    assert _code(r) == "CLIENT_CODE_INVALID" and r.json()["detail"].get("remaining") == 2   # 만료(실패 1)
+    assert _code(_exchange(client, "12", **A)) == "CLIENT_CODE_INVALID"                     # 형식 오류(실패 2)
+    r = _exchange(client, "000000" if c["code"] != "000000" else "111111", **A)              # 실패 3 → 잠금
     assert r.status_code == 429 and _code(r) == "CLIENT_CODE_LOCKED"
     good = _new_code(client)
-    r = _exchange(client, good["code"])
+    r = _exchange(client, good["code"], **A)
     assert r.status_code == 429                                                  # 잠긴 동안 맞는 코드도 거부
-    # 다른 출발지(프록시 뒤 X-Forwarded-For)는 별개
-    r = _exchange(client, good["code"], **{"X-Forwarded-For": "10.1.2.3"})
+    # 다른 출발지(신뢰 프록시가 붙인 X-Forwarded-For)는 별개 — 오른쪽(프록시가 붙인 값)을 쓴다(왼쪽은 위조 가능)
+    r = _exchange(client, good["code"], **{"X-Forwarded-For": "10.9.9.9, 10.1.2.3"})
     assert r.status_code == 200, r.text
     tok = r.json()
+    with engine.connect() as conn:
+        srcs = {r[0] for r in conn.execute(text("SELECT source FROM client_code_failures"))}
+    assert srcs == {"10.9.9.9"}                                                  # 구분 가능 → 전체 키 안 씀
     lst = client.get(f"{API}/client-tokens", headers=R).json()
     assert [t["id"] for t in lst] == [tok["token_id"]] and lst[0]["state"] == "ACTIVE"
     assert lst[0]["device_name"] == "PC-1" and "token" not in lst[0]
@@ -148,6 +155,49 @@ def test_code_expiry_lock_and_revoke(client, engine):
                           "expires_at = now() - interval '1 day' WHERE id = :i"), {"i": tok2["token_id"]})
     assert client.get(f"{API}/version", headers=_bearer(tok2["token"])).status_code == 401
     assert {t["state"] for t in client.get(f"{API}/client-tokens", headers=R).json()} == {"REVOKED", "EXPIRED"}
+
+
+def test_lock_global_when_source_unknown(client, app_ctx, engine):
+    """계약 §10: 출발지를 구분할 수 없으면(신뢰하지 않는 루프백 프록시 뒤 — XFF 는 위조 가능해 무시) 서버 전체 키로 센다."""
+    object.__setattr__(app_ctx.settings.client_token, "trusted_proxies", [])
+    for i in range(4):                                                         # 실패 1..4: XFF 를 바꿔도 같은 키
+        r = _exchange(client, "000000", **{"X-Forwarded-For": f"10.0.0.{i}"})
+        assert r.status_code == 401 and r.json()["detail"]["remaining"] == 4 - i, r.text
+    r = _exchange(client, "000000")                                             # 실패 5 → 서버 전체 잠금
+    assert r.status_code == 429 and "서버 전체" in r.json()["detail"]["message"]
+    good = _new_code(client)
+    assert _exchange(client, good["code"], **{"X-Forwarded-For": "10.7.7.7"}).status_code == 429
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT source, failures FROM client_code_failures")).all()
+    assert rows == [("*global*", 5)]
+    # 신뢰 프록시를 다시 켜면 출발지별(전체 잠금과 별개)
+    object.__setattr__(app_ctx.settings.client_token, "trusted_proxies", ["testclient"])
+    assert _exchange(client, good["code"], **{"X-Forwarded-For": "10.7.7.7"}).status_code == 200
+
+
+def test_request_source_rules():
+    from esl_platform.api.services.client_tokens import request_source as rs
+
+    trusted = ["127.0.0.1", "::1", "10.20.0.0/16"]
+    assert rs("192.168.1.5", "1.2.3.4", []) == "192.168.1.5"                   # 비루프백 peer = 출발지(XFF 무시)
+    assert rs("192.168.1.5", "1.2.3.4", trusted) == "192.168.1.5"
+    assert rs("127.0.0.1", "1.2.3.4", []) is None                              # 신뢰 안 하는 루프백 → 구분 불가
+    assert rs("127.0.0.1", None, trusted) is None                              # 신뢰 프록시인데 XFF 없음
+    assert rs("127.0.0.1", "6.6.6.6, 192.168.1.5", trusted) == "192.168.1.5"     # 프록시가 붙인 오른쪽 값
+    assert rs("127.0.0.1", "192.168.1.5, 10.20.3.4", trusted) == "192.168.1.5"   # 신뢰 프록시 홉은 건너뜀
+    assert rs("::1", "10.20.0.9, 127.0.0.1", trusted) is None                  # 모두 신뢰 프록시
+    assert rs(None, "1.2.3.4", trusted) is None
+
+
+def test_client_token_config_keys():
+    from esl_platform.core.config import ClientTokenCfg
+
+    d = ClientTokenCfg()
+    assert (d.lock_per_source, d.lock_global, d.lock_minutes, d.trusted_proxies) == (5, 30, 15, [])
+    old = ClientTokenCfg.model_validate({"max_failures": 4, "lock_min": 10})          # 이전 키 호환
+    assert (old.lock_per_source, old.lock_minutes) == (4, 10)
+    with pytest.raises(Exception):
+        ClientTokenCfg.model_validate({"trusted_proxies": ["10.0.0.0/33"]})
 
 
 # ---------------------------------------------------------------- §6: h3d 입력 Case

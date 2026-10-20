@@ -1,5 +1,5 @@
 // 목 서버 P3-UX(계약 esl_p3_ux.md §1~§3): 업로드 세션·서버 폴더 찾아보기·결과 zip·버전·업데이트 내역.
-import type { BrowseEntry, BrowseRoot, UploadFileOut, UploadOut, UploadState } from "../api/types";
+import type { BrowseEntry, BrowseRoot, ClientCodeOut, ClientTokenOut, UploadFileOut, UploadOut, UploadState } from "../api/types";
 import { parseChangelog } from "../lib/changelog";
 import CHANGELOG_MD from "../../../CHANGELOG.md?raw";
 import VERSION_TXT from "../../../VERSION?raw";
@@ -87,7 +87,69 @@ export class P3Mock {
   /** 다음 n 번 청크를 CHUNK_SHA256_MISMATCH(422)로 거부(재전송 시험) */
   badShaPuts = 0;
 
-  constructor(private ctx: { canRun: (pid: string) => boolean; username: () => string; casePath: (id: string) => string | null }) {}
+  /** §9.1 PC 연결: 발급한 코드(1회용)·토큰 */
+  codes: (ClientCodeOut & { user_id: string; used: boolean })[] = [];
+  tokens: ClientTokenOut[] = [];
+  /** 지금 시각(코드 만료 계산). 시험에서 바꿀 수 있음 */
+  clock: () => number = () => Date.now();
+
+  constructor(
+    private ctx: {
+      canRun: (pid: string) => boolean;
+      username: () => string;
+      userId: () => string;
+      projectName: (pid: string) => string | null;
+      casePath: (id: string) => string | null;
+    },
+  ) {}
+
+  /** 시연·시험용: 연결된 PC 하나 추가(PC 도구가 코드를 교환한 것과 같음) */
+  addToken(projectId: string, device: string, state: ClientTokenOut["state"] = "ACTIVE"): ClientTokenOut {
+    this.seq += 1;
+    const t: ClientTokenOut = {
+      id: `ct-${this.seq}`,
+      token_prefix: `esl_ct_${String(this.seq).padStart(5, "x")}`,
+      project_id: projectId,
+      project_name: this.ctx.projectName(projectId),
+      device_name: device,
+      user_id: this.ctx.userId(),
+      username: this.ctx.username(),
+      created_at: "2026-10-18T03:10:00Z",
+      expires_at: state === "EXPIRED" ? "2026-10-01T03:10:00Z" : "2026-11-17T03:10:00Z",
+      last_used_at: state === "ACTIVE" ? "2026-10-20T01:12:00Z" : null,
+      revoked_at: state === "REVOKED" ? "2026-10-19T08:00:00Z" : null,
+      state,
+    };
+    this.tokens.unshift(t);
+    return t;
+  }
+
+  private clientTokens(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
+    let r: RegExpMatchArray | null;
+    if (method === "POST" && path === "/client-tokens/codes") {
+      const pid = String(b.project_id ?? "");
+      if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한(power 이상)이 없습니다.");
+      const code = String(100000 + ((this.codes.length * 271_829 + 482_113) % 900_000)).slice(0, 6);
+      const out: ClientCodeOut = { code, project_id: pid, expires_at: new Date(this.clock() + 15 * 60_000).toISOString() };
+      this.codes.push({ ...out, user_id: this.ctx.userId(), used: false });
+      return { status: 201, body: out };
+    }
+    if (method === "GET" && path === "/client-tokens") {
+      const pid = query.get("project_id");
+      const mine = this.tokens.filter((t) => t.user_id === this.ctx.userId() && (!pid || t.project_id === pid));
+      return { status: 200, body: mine.map((t) => ({ ...t })) };
+    }
+    if (method === "DELETE" && (r = path.match(/^\/client-tokens\/([^/]+)$/))) {
+      const t = this.tokens.find((x) => x.id === r![1]);
+      if (!t || t.user_id !== this.ctx.userId()) return err(404, "CLIENT_TOKEN_NOT_FOUND", "연결된 PC 토큰을 찾을 수 없습니다");
+      if (!t.revoked_at) {
+        t.revoked_at = new Date(this.clock()).toISOString();
+        t.state = "REVOKED";
+      }
+      return { status: 200, body: { ...t } };
+    }
+    return null;
+  }
 
   shouldHang(method: string, path: string) {
     return method === "PUT" && /^\/uploads\//.test(path) && this.hangAfter !== null && this.putCount >= this.hangAfter;
@@ -98,6 +160,10 @@ export class P3Mock {
     if (method === "GET" && path === "/version") return { status: 200, body: MOCK_VERSION };
     if (method === "GET" && path === "/changelog") return { status: 200, body: MOCK_CHANGELOG };
     if (method === "GET" && path === "/fs/browse") return this.browse(query);
+    if (path.startsWith("/client-tokens")) {
+      const ct = this.clientTokens(method, path, query, b);
+      if (ct) return ct;
+    }
     if ((r = path.match(/^\/cases\/([^/]+)\/bundle$/)) && method === "GET") {
       const p = this.ctx.casePath(r[1]);
       if (!p) return err(404, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.");

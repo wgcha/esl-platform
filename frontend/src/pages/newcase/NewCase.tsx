@@ -1,4 +1,5 @@
-// 새 Case 화면(계약 esl_p3_ux.md §1·§6): 탭 2개 "내 PC에서 올리기"(기본) / "서버 폴더에서 고르기".
+// 새 Case 화면(계약 esl_p3_ux.md §1·§6·§9): 탭 3개 "내 PC에서 올리기"(기본) / "서버 폴더에서 고르기" / "PC에서 추출해 올리기"
+// (PC 연결 코드·연결된 PC — PC 도구가 올리면 ?upload= 로 "내 PC에서 올리기"가 채워져 열린다).
 // 입력 = rad(+include) 필수 + h3d(기본, 서버가 추출) 또는 추출 결과 폴더(대안). 고른 뒤 Case 이름·파트 → 주 버튼 "Case 만들기"(화면당 1개).
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -9,12 +10,15 @@ import { Shell } from "../../shell/Shell";
 import { Card, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { UploadPanel } from "./UploadPanel";
 import { ServerPanel } from "./ServerPanel";
+import { PcPanel } from "./PcPanel";
 import type { InputSelection } from "./types";
 
 export const DEFAULT_PART = "chassis_rear";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-type Tab = "upload" | "server";
-export const TAB_LABEL: Record<Tab, string> = { upload: "내 PC에서 올리기", server: "서버 폴더에서 고르기" };
+type Tab = "upload" | "server" | "pc";
+const TABS: Tab[] = ["upload", "server", "pc"];
+export const TAB_LABEL: Record<Tab, string> = { upload: "내 PC에서 올리기", server: "서버 폴더에서 고르기", pc: "PC에서 추출해 올리기" };
+export const PC_TAB_REASON = "PC 도구(ESL_extract.bat)가 추출·올리기를 마치면 이 화면이 채워진 채로 열립니다";
 
 export function NewCase() {
   const { projectId = "" } = useParams();
@@ -24,13 +28,15 @@ export function NewCase() {
   const initialUpload = qs.get("upload");
   const project = projects.find((p) => p.id === projectId);
   const allowed = canRun(me, projectId);
-  const [tab, setTabRaw] = useState<Tab>("upload");
-  const [serverSeen, setServerSeen] = useState(false);
+  // ?tab=pc|server 로 바로 열기(가이드 바로가기)
+  const qTab = qs.get("tab");
+  const [tab, setTabRaw] = useState<Tab>(!initialUpload && (qTab === "pc" || qTab === "server") ? qTab : "upload");
+  const [serverSeen, setServerSeen] = useState(tab === "server");
   const setTab = (t: Tab) => {
     setTabRaw(t);
     if (t === "server") setServerSeen(true);
   };
-  const [sel, setSel] = useState<Record<Tab, InputSelection | null>>({ upload: null, server: null });
+  const [sel, setSel] = useState<Record<Tab, InputSelection | null>>({ upload: null, server: null, pc: null });
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [part, setPart] = useState(DEFAULT_PART);
@@ -49,7 +55,9 @@ export function NewCase() {
     : !cur
       ? tab === "upload"
         ? "rad와 h3d(또는 결과 폴더)를 올리고 확인을 마치세요"
-        : "rad 파일과 h3d(또는 결과 폴더)를 고르세요"
+        : tab === "pc"
+          ? PC_TAB_REASON
+          : "rad 파일과 h3d(또는 결과 폴더)를 고르세요"
       : !NAME_RE.test(name)
         ? "Case 이름을 입력하세요(영문·숫자·_·-)"
         : !part.trim()
@@ -91,7 +99,7 @@ export function NewCase() {
         <PrimaryButton label="Case 만들기" onClick={create} disabledReason={reason} busy={busy} />
       </div>
       <div className="tabs" role="tablist" aria-label="입력 방법">
-        {(["upload", "server"] as Tab[]).map((t) => (
+        {TABS.map((t) => (
           <button key={t} type="button" role="tab" id={`tab-${t}`} aria-selected={tab === t} aria-controls={`panel-${t}`} className={tab === t ? "tab on" : "tab"} onClick={() => setTab(t)}>
             {TAB_LABEL[t]}
             {sel[t] && <span className="dot ok" aria-label="선택 완료" />}
@@ -105,6 +113,9 @@ export function NewCase() {
       </section>
       <section className="card" role="tabpanel" id="panel-server" aria-labelledby="tab-server" hidden={tab !== "server"}>
         <div className="card-body">{serverSeen ? <ServerPanel partTitle={part} onChange={onChange("server")} /> : null}</div>
+      </section>
+      <section className="card" role="tabpanel" id="panel-pc" aria-labelledby="tab-pc" hidden={tab !== "pc"}>
+        <div className="card-body">{tab === "pc" ? <PcPanel projectId={projectId} projectName={project?.name} allowed={allowed} reason={NO_PERMISSION} /> : null}</div>
       </section>
       <Card title="Case 정보">
         <div className="form-grid">

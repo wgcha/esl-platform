@@ -3,8 +3,10 @@
 - 코드: 6자리 숫자, `client_token.code_ttl_min`(기본 15분) 유효, 1회용, 발급한 사용자·현재 프로젝트·역할(power 이상)에 묶임.
   DB 에는 sha256 만 저장.
 - 교환: 코드 → 토큰 `esl_ct_<random>`(원문은 교환 응답에 한 번만, DB 는 sha256), 기본 30일(`client_token.ttl_days`).
-  실패(없음·만료·사용됨·형식 오류)는 출발지별로 센다 — `max_failures`(기본 5)회 실패하면 `lock_min`(기본 15분) 동안
-  같은 출발지의 교환을 거부(429 `CLIENT_CODE_LOCKED`). 출발지 = 요청 peer 주소(루프백 프록시 뒤면 X-Forwarded-For 마지막 값).
+  실패(없음·만료·사용됨·형식 오류) 잠금(계약 §10): 출발지를 구분할 수 있으면(peer 가 루프백이 아님, 또는 peer 가
+  `client_token.trusted_proxies` 이고 그 프록시가 붙인 X-Forwarded-For 가 있음) 출발지별 `lock_per_source`(기본 5)회,
+  구분할 수 없으면(신뢰하지 않는 루프백 프록시 뒤 등) 서버 전체 키 하나로 `lock_global`(기본 30)회 — 넘으면
+  `lock_minutes`(기본 15분) 동안 그 키의 교환을 거부(429 `CLIENT_CODE_LOCKED`). 전체 키는 구분 불가 요청만 센다.
 - 토큰 인증: 해시 조회 → 만료·폐기면 401 `CLIENT_TOKEN_INVALID`(PC 도구는 코드를 다시 묻는다). 주체 = 토큰 사용자,
   역할 = 발급 시점 역할(그 프로젝트만). 범위 = 그 프로젝트의 `/uploads*` 와 `GET /version`(그 밖 403 `CLIENT_TOKEN_SCOPE`).
 - 목록·폐기: 내 토큰(전역 관리자는 폐기만 남의 것도). 폐기는 삭제 없이 revoked_at.
@@ -74,23 +76,60 @@ def create_code(ctx: AppContext, principal: Principal, projects: list[dict[str, 
     return {"code": code, "project_id": project_id, "expires_at": exp}
 
 
-def request_source(peer: str | None, xff: str | None) -> str:
-    """잠금 키: peer 주소. peer 가 루프백(대시보드 프록시 뒤)이고 X-Forwarded-For 가 있으면 그 마지막 값(프록시가 붙인 값)."""
-    peer = (peer or "unknown")[:100]
+GLOBAL_SOURCE = "*global*"   # 출발지 구분 불가 요청의 공용 잠금 키(IP 와 겹치지 않음)
+
+
+def _trusted(peer: str, proxies: list[str]) -> bool:
     try:
-        loop = ipaddress.ip_address(peer).is_loopback
+        ip = ipaddress.ip_address(peer)
     except ValueError:
-        loop = peer in ("localhost", "testclient")
-    if loop and xff:
-        last = xff.split(",")[-1].strip()
-        if last:
-            return last[:100]
+        return peer in proxies
+    for p in proxies:
+        try:
+            if ip in ipaddress.ip_network(p, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _loopback(peer: str) -> bool:
+    try:
+        return ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        return peer in ("", "unknown", "localhost", "testclient")
+
+
+def request_source(peer: str | None, xff: str | None, trusted_proxies: list[str] | tuple[str, ...] = ()) -> str | None:
+    """잠금 키가 될 출발지. 구분할 수 없으면 None(→ 서버 전체 키).
+
+    - peer 가 신뢰 프록시면 X-Forwarded-For 를 오른쪽부터 읽어 신뢰 프록시가 아닌 첫 값(= 프록시가 붙인 클라이언트 주소).
+      XFF 가 없거나 모두 신뢰 프록시면 None.
+    - peer 가 신뢰하지 않는 루프백(또는 알 수 없음)이면 None — XFF 는 위조할 수 있으므로 쓰지 않는다.
+    - 그 밖(비루프백 peer) = peer.
+    """
+    proxies = list(trusted_proxies or ())
+    peer = (peer or "unknown").strip()[:100]
+    if proxies and _trusted(peer, proxies):
+        for hop in reversed([h.strip() for h in (xff or "").split(",")]):
+            if not hop:
+                continue
+            if _trusted(hop, proxies):
+                continue
+            return hop[:100]
+        return None
+    if _loopback(peer):
+        return None
     return peer
 
 
+def _limit(source: str, cfg) -> int:
+    return int(cfg.lock_global if source == GLOBAL_SOURCE else cfg.lock_per_source)
+
+
 def _failure(conn, source: str, cfg) -> tuple[int, bool]:
-    """실패 1회 기록 → (누적, 잠김 여부). 창(lock_min)이 지난 기록은 새로 센다."""
-    window = literal(timedelta(minutes=float(cfg.lock_min)))
+    """실패 1회 기록 → (누적, 잠김 여부). 창(lock_minutes)이 지난 기록은 새로 센다."""
+    window = literal(timedelta(minutes=float(cfg.lock_minutes)))
     stmt = pg_insert(client_code_failures).values(source=source, failures=1, window_started_at=func.now())
     stmt = stmt.on_conflict_do_update(index_elements=["source"], set_={
         "failures": case((client_code_failures.c.window_started_at < func.now() - window, 1),
@@ -101,10 +140,10 @@ def _failure(conn, source: str, cfg) -> tuple[int, bool]:
     conn.execute(stmt)
     n = int(conn.execute(select(client_code_failures.c.failures)
                          .where(client_code_failures.c.source == source)).scalar_one())
-    locked = n >= int(cfg.max_failures)
+    locked = n >= _limit(source, cfg)
     if locked:
         conn.execute(update(client_code_failures).where(client_code_failures.c.source == source)
-                     .values(locked_until=_ttl(cfg.lock_min)))
+                     .values(locked_until=_ttl(cfg.lock_minutes)))
     return n, locked
 
 
@@ -113,15 +152,21 @@ def _locked(conn, source: str) -> bool:
         client_code_failures.c.source == source, client_code_failures.c.locked_until > func.now()))).first() is not None
 
 
-def exchange(ctx: AppContext, source: str, code: str, device_name: str) -> dict[str, Any]:
+def _locked_error(source: str, cfg) -> DomainError:
+    who = "이 서버 전체에서" if source == GLOBAL_SOURCE else "이 PC(주소)에서"
+    return DomainError("CLIENT_CODE_LOCKED", f"연결 코드를 {who} {_limit(source, cfg)}회 잘못 입력해 {cfg.lock_minutes:g}분 "
+                       "동안 잠겼습니다. 잠시 뒤 ESL 화면에서 새 코드를 만들어 다시 시도하세요", status=429)
+
+
+def exchange(ctx: AppContext, source: str | None, code: str, device_name: str) -> dict[str, Any]:
     cfg = ctx.settings.client_token
+    source = source or GLOBAL_SOURCE
     norm = re.sub(r"[\s\-]", "", code or "")
     err: DomainError | None = None
     with ctx.engine.begin() as conn:
         conn.execute(select(func.pg_advisory_xact_lock(func.hashtext("esl-client-src:" + source))))
         if _locked(conn, source):
-            raise DomainError("CLIENT_CODE_LOCKED", f"연결 코드를 {cfg.max_failures}회 잘못 입력해 {cfg.lock_min:g}분 동안 "
-                              "잠겼습니다. 잠시 뒤 ESL 화면에서 새 코드를 만들어 다시 시도하세요", status=429)
+            raise _locked_error(source, cfg)
         row = None
         if _CODE_RE.match(norm):
             row = conn.execute(select(client_codes).where(and_(
@@ -129,10 +174,9 @@ def exchange(ctx: AppContext, source: str, code: str, device_name: str) -> dict[
                 client_codes.c.expires_at > func.now())).with_for_update()).mappings().first()
         if row is None:
             n, locked = _failure(conn, source, cfg)
-            left = max(0, int(cfg.max_failures) - n)
+            left = max(0, _limit(source, cfg) - n)
             if locked:
-                err = DomainError("CLIENT_CODE_LOCKED", f"연결 코드를 {cfg.max_failures}회 잘못 입력해 {cfg.lock_min:g}분 동안 "
-                                  "잠겼습니다", status=429)
+                err = _locked_error(source, cfg)
             else:
                 err = DomainError("CLIENT_CODE_INVALID", "연결 코드가 맞지 않거나 만료되었습니다(이미 쓴 코드는 다시 쓸 수 "
                                   f"없음). 남은 시도 {left}회", status=401, remaining=left)
@@ -146,8 +190,9 @@ def exchange(ctx: AppContext, source: str, code: str, device_name: str) -> dict[
                 expires_at=func.now() + literal(timedelta(days=float(cfg.ttl_days)))))
             conn.execute(update(client_codes).where(client_codes.c.id == row["id"])
                          .values(used_at=func.now(), token_id=tid))
-            conn.execute(update(client_code_failures).where(client_code_failures.c.source == source)
-                         .values(failures=0, locked_until=None, window_started_at=func.now()))
+            if source != GLOBAL_SOURCE:   # 전체 키는 성공으로 지우지 않는다(남의 실패 기록)
+                conn.execute(update(client_code_failures).where(client_code_failures.c.source == source)
+                             .values(failures=0, locked_until=None, window_started_at=func.now()))
             exp = conn.execute(select(client_tokens.c.expires_at).where(client_tokens.c.id == tid)).scalar_one()
     if err is not None:
         raise err   # 실패 기록은 위 트랜잭션에서 이미 커밋

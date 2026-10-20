@@ -14,6 +14,9 @@ import { putChunk } from "../api/p3";
 import { Uploader, planChunks, sha256Available, signature, type PickedFile, type UploadProgress } from "../lib/uploader";
 import { cmpVersion, isNewVersion, parseChangelog } from "../lib/changelog";
 import { GUIDE, FAQ } from "../pages/guide/content";
+import { PC_CODE_BUTTON, remainText, serverUrl } from "../pages/newcase/PcPanel";
+import { PC_TAB_REASON } from "../pages/newcase/NewCase";
+import { H3D_RUNNING } from "../components/JobProgress";
 import { BUNDLE_LABEL, BUNDLE_TOO_LARGE } from "../components/BundleButton";
 import { rememberCase } from "../lib/recent";
 
@@ -167,11 +170,11 @@ describe("분할 업로드(Uploader)", () => {
 });
 
 describe("새 Case 화면", () => {
-  it("탭 2개(기본 = 내 PC에서 올리기), 주 버튼 1개 'Case 만들기'(입력 전 비활성)", async () => {
+  it("탭 3개(기본 = 내 PC에서 올리기), 주 버튼 1개 'Case 만들기'(입력 전 비활성)", async () => {
     const { container } = renderApp(NEW);
     expect(await screen.findByRole("heading", { name: "새 Case" })).toBeTruthy();
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["내 PC에서 올리기", "서버 폴더에서 고르기"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["내 PC에서 올리기", "서버 폴더에서 고르기", "PC에서 추출해 올리기"]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     await waitFor(() => expect(primaries(container).length).toBe(1));
     const btn = primaries(container)[0] as HTMLButtonElement;
@@ -293,6 +296,125 @@ describe("새 Case 화면", () => {
     expect(await screen.findByText(/rad·h3d 확인됨/)).toBeTruthy();
     expect((screen.getByLabelText(/^Case 이름/) as HTMLInputElement).value).toBe("model");
     await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false));
+  });
+});
+
+describe("PC에서 추출해 올리기(§9.1)", () => {
+  it("탭: 설치 안내(update.bat·ESL_extract.bat) → 코드 만들기 → 6자리·카운트다운, 주 버튼은 PC 도구 안내로 비활성", async () => {
+    const { container, server } = renderApp(NEW);
+    await screen.findByRole("heading", { name: "새 Case" });
+    fireEvent.click(screen.getByRole("tab", { name: "PC에서 추출해 올리기" }));
+    const panel = await screen.findByTestId("pc-panel");
+    expect(panel.textContent).toContain("update.bat");
+    expect(panel.textContent).toContain("ESL_extract.bat");
+    expect(panel.textContent).toMatch(/h3d와 rad/);
+    expect(screen.getByTestId("pc-server-url").textContent).toBe(serverUrl());
+    expect(await within(panel).findByText("아직 연결된 PC가 없습니다")).toBeTruthy();
+    const btn = primaries(container)[0] as HTMLButtonElement;
+    expect(primaries(container).length).toBe(1);
+    expect(btn.disabled).toBe(true);
+    await waitFor(() => expect(btn.parentElement!.getAttribute("title")).toBe(PC_TAB_REASON));
+    fireEvent.click(within(panel).getByRole("button", { name: PC_CODE_BUTTON }));
+    const code = await screen.findByTestId("pc-code");
+    const digits = within(code).getByLabelText("연결 코드").textContent!.replace(/\s/g, "");
+    expect(digits).toMatch(/^\d{6}$/);
+    expect(server.p3.codes[0].code).toBe(digits);
+    expect(server.p3.codes[0].project_id).toBe("p-body");
+    expect(screen.getByTestId("pc-code-left").textContent).toMatch(/남은 시간 1[45]:\d\d/);
+    expect(within(panel).getByRole("button", { name: "새 코드 만들기" })).toBeTruthy();
+  });
+
+  it("만료된 코드는 '만료됨' 표시", async () => {
+    const { server } = renderApp(`${NEW}?tab=pc`);
+    server.p3.clock = () => Date.now() - 16 * 60_000;     // 16분 전에 만든 코드 = 이미 만료
+    fireEvent.click(await screen.findByRole("button", { name: PC_CODE_BUTTON }));
+    expect((await screen.findByTestId("pc-code-left")).textContent).toContain("만료됨");
+  });
+
+  it("연결된 PC 목록(장치명·상태·만료) → 폐기", async () => {
+    const server = new MockServer({ user: "power" });
+    server.p3.addToken("p-body", "OLD-PC", "EXPIRED");
+    const t = server.p3.addToken("p-body", "KIM-PC");
+    server.p3.addToken("p-other", "다른 프로젝트 PC");
+    globalThis.fetch = createMockFetch(server);
+    render(
+      <MemoryRouter initialEntries={[`${NEW}?tab=pc`]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const table = await screen.findByRole("table", { name: "연결된 PC" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringMatching(/KIM-PC.*사용 중/), expect.stringMatching(/OLD-PC.*만료/)]);
+    expect(within(rows[1]).queryByRole("button")).toBeNull();          // 만료 토큰은 폐기 버튼 없음
+    fireEvent.click(within(rows[0]).getByRole("button", { name: "KIM-PC 폐기" }));
+    await waitFor(() => expect(within(table).getAllByText("폐기됨").length).toBe(1));
+    expect(server.p3.tokens.find((x) => x.id === t.id)!.state).toBe("REVOKED");
+  });
+
+  it("조회 사용자: 코드 만들기 비활성(권한 사유)", async () => {
+    renderApp(`${NEW}?tab=pc`, "general");
+    const b = (await screen.findByRole("button", { name: PC_CODE_BUTTON })) as HTMLButtonElement;
+    await waitFor(() => expect(screen.getByTestId("user").textContent).toContain("조회"));
+    expect(b.disabled).toBe(true);
+    expect(b.getAttribute("title")).toMatch(/실행 권한/);
+  });
+
+  it("남은 시간 표기", () => {
+    expect(remainText(15 * 60_000)).toBe("15:00");
+    expect(remainText(61_500)).toBe("1:02");
+    expect(remainText(-5)).toBe("0:00");
+    expect(serverUrl("http://dash.local")).toBe("http://dash.local/esl");
+  });
+});
+
+describe("서버 h3d 추출(§6)·동시 실행", () => {
+  it("h3d 로 만든 Case: input_kind H3D, 결과 폴더 = _h3d/<폴더>/raw, ① 추출 step 첫째 H3D_EXTRACT", () => {
+    const server = new MockServer({ user: "power" });
+    const id = server.demoH3dExtract();
+    const c = server.findCase(id)!;
+    expect(c.input_kind).toBe("H3D");
+    expect(c.results_dir).toMatch(/\\_h3d\\QN80H_rear40\\raw$/);
+    const j = server.jobs.find((x) => x.case_id === id)!;
+    expect(j.steps!.map((s) => s.step_key)).toEqual(["H3D_EXTRACT", "EXTRACT", "TSTAR_SCAN", "EXTRACT_REGISTER"]);
+    expect(j.steps![0].kind).toBe("LOCAL");
+    // 결과 폴더 입력 Case 는 H3D_EXTRACT 없음
+    expect(server.jobs.find((x) => x.case_id === "c-new")!.steps![0].step_key).toBe("EXTRACT");
+  });
+
+  it("① 화면: '서버에서 추출 중(HyperView)' 단계·로그, h3d 확인, 대기열 동시 실행 2/2", async () => {
+    const server = new MockServer({ user: "power" });
+    const id = server.demoH3dExtract();
+    globalThis.fetch = createMockFetch(server);
+    render(
+      <MemoryRouter initialEntries={[`/p/p-body/c/${id}/stage/1`]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const phase = await screen.findByTestId("h3d-extract-phase");
+    expect(phase.textContent).toContain(H3D_RUNNING);
+    const steps = screen.getByRole("list", { name: "추출 단계" });
+    expect(within(steps).getAllByRole("listitem").map((li) => li.className)).toEqual(["running", "pending", "pending", "pending"]);
+    expect(within(steps).getAllByRole("listitem")[0].textContent).toContain(H3D_RUNNING);
+    await waitFor(() => expect(screen.getByLabelText("작업 로그").textContent).toMatch(/\[hw\] esl_h3d_extract\.tcl pass 1\/3/));
+    expect(await screen.findByLabelText("h3d 확인 결과")).toBeTruthy();
+    expect(screen.getByTestId("h3d-stage-note")).toBeTruthy();
+    expect(screen.getByText("추출 결과 폴더(서버가 만듦)")).toBeTruthy();
+    expect((await screen.findByTestId("queue-slots")).textContent).toBe("동시 실행 2/2");
+    const q = screen.getByRole("region", { name: "계산 대기열" });
+    expect(within(q).getAllByText("추출").length).toBe(2);
+  });
+
+  it("목 대기열: slots 개까지 동시 실행, 같은 Case 는 직렬", () => {
+    const server = new MockServer({ user: "power" });
+    const id = server.demoH3dExtract();
+    server.handle("POST", `/cases/c-demo/jobs`, new URLSearchParams(), { job_type: "CASE_EXTRACT", params: {} });
+    server.tick();
+    const q = server.handle("GET", "/queue", new URLSearchParams(), null).body as { running_all: { case_id: string }[]; slots: number; queued: unknown[] };
+    expect(q.slots).toBe(2);
+    expect(q.running_all.map((j) => j.case_id).sort()).toEqual(["c-new", id].sort());
+    expect(q.queued.length).toBe(1);
+    server.drain();
+    expect(server.findCase(id)!.extract_summary).toBeTruthy();
   });
 });
 

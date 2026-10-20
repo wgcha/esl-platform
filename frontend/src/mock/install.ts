@@ -28,6 +28,12 @@ export function installMockFetch() {
   } catch {
     /* 저장소 없음 */
   }
+  // §6·§9 시연: ?demoH3d=1 서버 추출 진행 중인 h3d Case(c-<n>), ?demoPc=1 연결된 PC 2대
+  if (params.get("demoH3d") === "1") server.demoH3dExtract();
+  if (params.get("demoPc") === "1") {
+    server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
+    server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");
+  }
   window.fetch = createMockFetch(server, window.fetch.bind(window));
   if (params.get("freeze") !== "1") setInterval(() => server.tick(), 2000);
   (window as unknown as { __eslMock: MockServer }).__eslMock = server;

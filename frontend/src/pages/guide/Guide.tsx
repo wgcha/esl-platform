@@ -23,7 +23,7 @@ function useResolve() {
     }
     if (!pid) return { to: null, note: "프로젝트를 먼저 고르세요" };
     if (t.kind === "cases") return { to: `/p/${pid}` };
-    if (t.kind === "new") return { to: `/p/${pid}/cases/new` };
+    if (t.kind === "new") return { to: `/p/${pid}/cases/new${t.tab ? `?tab=${t.tab}` : ""}` };
     if (t.kind === "library") return { to: `/p/${pid}/library` };
     if (t.kind === "analysisNew") return { to: `/p/${pid}/library/analyses/new` };
     return { to: `/p/${pid}/library/comparisons/new` };

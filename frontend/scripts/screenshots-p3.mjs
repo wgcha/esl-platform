@@ -1,4 +1,5 @@
-// P3-UX mock 스크린샷(새 Case 올리기 진행 중·서버 폴더·업데이트 내역·사용 가이드). 사용: npm run build:mock && npm run screenshots:p3 [-- <출력폴더>]
+// P3-UX mock 스크린샷(새 Case 올리기 진행 중·서버 폴더·업데이트 내역·사용 가이드·PC 연결 탭·① 서버 h3d 추출).
+// 사용: npm run build:mock && npm run screenshots:p3 [-- <출력폴더>]   (SHOTS=a.png,b.png 이면 그 파일만 저장)
 // Playwright는 설치하지 않고 환경의 것을 쓴다(PLAYWRIGHT_BROWSERS_PATH, 전역 playwright 모듈).
 import { createRequire } from "node:module";
 import { spawn, execSync } from "node:child_process";
@@ -54,7 +55,9 @@ try {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const base = `http://127.0.0.1:${port}/esl`;
+  const only = (process.env.SHOTS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   const shot = async (name, full = true) => {
+    if (only.length && !only.includes(name)) return;
     const file = path.join(out, name);
     await page.screenshot({ path: file, fullPage: full });
     console.log(file);
@@ -112,6 +115,24 @@ try {
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
   await shot("stage6_bundle.png", false);
+
+  // 6) 새 Case — PC에서 추출해 올리기: 연결 코드 표시 + 연결된 PC 목록
+  await page.goto(`${base}/p/p-body/cases/new?tab=pc&freeze=1&mockUser=power&demoPc=1&seenVersion=0.4.0`);
+  await page.click('role=button[name="PC 연결 코드 만들기"]');
+  await page.waitForSelector('[data-testid="pc-code"]');
+  await page.waitForSelector('table[aria-label="연결된 PC"]');
+  await page.waitForTimeout(1200);
+  await shot("newcase_pc_connect.png");
+
+  // 7) h3d 로 만든 Case ① — 서버에서 추출 중(HyperView) 단계·로그, 대기열 동시 실행 2/2
+  await page.goto(`${base}/p/p-body?freeze=1&mockUser=power&demoH3d=1&seenVersion=0.4.0`);
+  const h3dId = await page.evaluate(() => window.__eslMock.cases.find((c) => c.input_kind === "H3D").id);
+  await page.goto(`${base}/p/p-body/c/${h3dId}/stage/1?freeze=1&mockUser=power&demoH3d=1&seenVersion=0.4.0`);
+  await page.waitForSelector('[data-testid="h3d-extract-phase"]');
+  await page.waitForSelector('[data-testid="queue-slots"]');
+  await page.waitForFunction(() => /\[hw\]/.test(document.querySelector('[aria-label="작업 로그"]')?.textContent ?? ""));
+  await page.waitForTimeout(500);
+  await shot("stage1_h3d_extract.png");
   await browser.close();
 } finally {
   server.kill();

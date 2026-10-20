@@ -136,8 +136,11 @@ export interface CaseOut {
   title: string;
   status: string; // ACTIVE | ARCHIVED
   rad_path: string;
+  /** h3d 입력이면 서버 추출 출력 폴더(<esl_root>/_h3d/<폴더>/raw — 추출 전엔 없음) */
   results_dir: string;
   h3d_path: string | null;
+  /** §6·§10: 입력 종류 — H3D = 서버가 h3d 에서 추출(① 첫 step H3D_EXTRACT), RESULTS = 추출 결과 폴더 */
+  input_kind: CaseInputKind;
   input_fingerprint: Record<string, unknown>;
   part_title: string;
   part_id: number | null;
@@ -159,12 +162,16 @@ export interface CaseOut {
 }
 export type Case = CaseOut;
 
+export type CaseInputKind = "RESULTS" | "H3D";
+
+/** §6: rad 필수 + h3d_path(서버 추출) 또는 results_dir(추출 결과 폴더) 중 하나 */
 export interface CaseCreate {
   project_id: string;
   folder_name: string;
   title: string;
   rad_path: string;
-  results_dir: string;
+  h3d_path?: string | null;
+  results_dir?: string | null;
   part_title?: string | null;
 }
 
@@ -176,7 +183,7 @@ export interface CasePatch {
 
 // ---------------------------------------------------------------- 경로 확인 (POST /paths/inspect, 자유 형식)
 export interface InspectReq {
-  purpose: "RAD" | "RESULTS";
+  purpose: "RAD" | "RESULTS" | "H3D";
   path: string;
 }
 
@@ -302,7 +309,12 @@ export interface QueueLane {
 }
 
 export interface QueueOut {
+  /** 하위 호환: SLOT 레인 실행 중 첫 작업 */
   running: JobOut | null;
+  /** §6: SLOT 레인 실행 중 전부(동시 실행 최대 slots 개) */
+  running_all: JobOut[];
+  /** worker.slots — SLOT 레인 동시 실행 수 */
+  slots: number;
   queued: JobOut[];
   light: QueueLane;
 }
@@ -1129,15 +1141,61 @@ export interface UploadOut {
 export interface UploadFilesAdd {
   files: UploadFileIn[];
 }
-/** §6 새 Case 입력: rad 필수 + h3d(서버 추출, 기본) 또는 추출 결과 폴더 중 하나. openapi 의 CaseCreate 반영 전 별도 타입 */
-export interface CaseCreateP3 {
+/** 하위 호환 별칭 */
+export type CaseCreateP3 = CaseCreate;
+
+/** POST /paths/inspect purpose H3D(자유 형식): 크기·헤더 검사 */
+export interface InspectH3dResult {
+  normalized_path: string;
+  ok: boolean;
+  problems: string[];
+  size: number;
+  mtime: number;
+}
+
+// ---------------------------------------------------------------- PC 연결 코드·토큰(§9.1, /client-tokens*)
+export interface ClientCodeCreate {
   project_id: string;
-  folder_name: string;
-  title: string;
-  rad_path: string;
-  h3d_path?: string | null;
-  results_dir?: string | null;
-  part_title?: string | null;
+}
+export interface ClientCodeOut {
+  code: string;
+  project_id: string;
+  expires_at: string;
+}
+export interface ClientExchange {
+  code: string;
+  device_name: string;
+}
+export interface ClientUser {
+  user_id: string;
+  username: string;
+  display_name: string;
+}
+export interface ClientProject {
+  id: string;
+  name?: string | null;
+}
+export interface ClientExchangeOut {
+  token: string;
+  token_id: string;
+  user: ClientUser;
+  project: ClientProject;
+  expires_at: string;
+}
+export type ClientTokenState = "ACTIVE" | "EXPIRED" | "REVOKED";
+export interface ClientTokenOut {
+  id: string;
+  token_prefix: string;
+  project_id: string;
+  project_name?: string | null;
+  device_name: string;
+  user_id: string;
+  username: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  state: ClientTokenState;
 }
 /** 서버 폴더 찾아보기(§1.2, §6). hint "h3d" = 서버 추출 입력 */
 export type BrowseHint = "rad" | "results" | "h3d";

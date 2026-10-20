@@ -5626,7 +5626,7 @@
     },
     "/esl/api/client-tokens/exchange": {
       "post": {
-        "description": "PC 도구: 코드 → 토큰 esl_ct_…(응답에서 한 번만 보임). 실패 5회면 잠금(429). 세션·CSRF 헤더 불필요.",
+        "description": "PC 도구: 코드 → 토큰 esl_ct_…(응답에서 한 번만 보임). 실패 잠금(출발지별 5회 또는 구분 불가 시 서버 전체 30회 / 15분, 429). 세션·CSRF 헤더 불필요.",
         "operationId": "exchange_esl_api_client_tokens_exchange_post",
         "requestBody": {
           "content": {
