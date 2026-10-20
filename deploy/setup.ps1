@@ -231,7 +231,7 @@ if ($detail.Count) {
 }
 foreach ($w in @($plan.warnings)) { if ($w) { Write-Warning $w } }
 if (-not $NonInteractive) {
-    $ans = "$(Read-Host '이대로 설치할까요? (Y/N)')".Trim()
+    do { $ans = "$(Read-Host '이대로 설치할까요? (Y/N)')".Trim() } while ($ans -eq '')   # 빈 입력(붙여넣기 줄바꿈 등)은 다시 묻는다
     if ($ans -notmatch '^(?i:y|yes|예|ㅛ)$') { Write-Step '취소했습니다(설정 파일·DB·작업 스케줄러는 바꾸지 않았습니다)'; return }
 }
 

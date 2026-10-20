@@ -272,3 +272,9 @@ def test_docs_exist():
     e2e = (ROOT / "docs" / "e2e-checklist.md").read_text(encoding="utf-8")
     for s in ("①", "②", "③", "④", "⑤", "⑥", "라이브러리", "보고서"):
         assert s in e2e, s
+
+
+def test_alembic_ini_ascii():
+    # Windows alembic 은 ini 를 로캘 코덱(cp949)으로 읽는다 — 비ASCII 가 있으면 migrate 가 UnicodeDecodeError(#7)
+    raw = (ROOT / "alembic.ini").read_bytes()
+    assert raw.isascii(), "alembic.ini 는 ASCII 전용"
