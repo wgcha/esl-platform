@@ -9,7 +9,7 @@
 
 | # | 확인 | 결과 | 메모 |
 |---|---|---|---|
-| E0-1 | (git 폴더) 일반 PowerShell에서 `deploy\setup.ps1 -DashboardRoot <대시보드>` 실행: Python 선택 줄이 대시보드 `cpython-3.12.13`, 확인 표(ESL 루트·입력 루트·PostgreSQL host:port — 대시보드 DB 사용자·비밀번호 출력 없음), 비밀번호 2개 입력, `.runtime\` 구성(venv·app·frontend·config 4개 파일·secrets·logs·state·`.gitignore`), DB `esl`·역할 `esl_app` 생성, migration head `0003`, 작업 `ESL-Backend`·`ESL-Worker` 등록(실행 시간 제한 없음·999회 재시작), health OK, 환경 점검 표 FAIL 0 | | |
+| E0-1 | (git 폴더) 일반 PowerShell에서 `deploy\setup.ps1 -DashboardRoot <대시보드>` 실행: Python 선택 줄이 대시보드 `cpython-3.12.13`, 확인 표(ESL 루트·입력 루트·PostgreSQL host:port — 대시보드 DB 사용자·비밀번호 출력 없음), 비밀번호 2개 입력, `.runtime\` 구성(venv·app·frontend·config 4개 파일·secrets·logs·state·`.gitignore`), DB `esl`·역할 `esl_app` 생성, migration head `0004`, 작업 `ESL-Backend`·`ESL-Worker` 등록(실행 시간 제한 없음·999회 재시작), health OK, 환경 점검 표 FAIL 0 | | |
 | E0-2 | 환경 점검 표에서 `solver.backend` = `auto → pardiso`, `solver.pypardiso` OK(MKL 버전), `solver.cholmod` SKIP(Windows 제외), `storage.esl_root.write` OK, `worker.heartbeat` OK. `.runtime\secrets` 폴더 권한이 현재 사용자·SYSTEM만인지(`icacls .runtime\secrets`) | | |
 | E0-3 | 재부팅(Interactive면 그 계정 로그온) 후 두 작업이 자동 시작되고 `http://127.0.0.1:8110/esl/api/health` 응답. `-RunMode Background`로 다시 설치해 로그온 없이 기동되는지(관리자 권한 필요 여부 메모) | | |
 | E0-4 | `deploy\setup.ps1` 재실행: 비밀번호를 다시 묻지 않음(기존 연결 재사용), 설정 파일 사용자 수정값 유지, `_backup\<UTC>`에 이전 app·tasks XML | | |
