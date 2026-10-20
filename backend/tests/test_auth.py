@@ -19,6 +19,8 @@ def test_v_auth_1_introspection(client, fake_dashboard):
     for tok, st, code in cases:
         r = client.get(f"{API}/me", headers=H(tok))
         assert (r.status_code, r.json()["detail"]["code"]) == (st, code), tok
+    r = client.get(f"{API}/me", headers=H("tok-suspended"))
+    assert "AUTH_ACCOUNT_SUSPENDED" in r.json()["detail"]["message"]  # 대시보드 거부 사유 전달(#11)
     r = client.get(f"{API}/me")
     assert r.status_code == 401
     for mode, code in (("503", "DASHBOARD_AUTH_UNAVAILABLE"), ("timeout", "DASHBOARD_UNREACHABLE"),
@@ -96,3 +98,25 @@ def test_v_auth_4_csrf_and_order(client, mini_inputs):
     client.post(f"{API}/cases/{cid}/jobs", json={"job_type": "CASE_EXTRACT", "params": {}}, headers=H("tok-power", True))
     r = client.post(f"{API}/cases/{cid}/archive", headers=H("tok-power", True))
     assert r.status_code == 409 and r.json()["detail"]["code"] == "CASE_HAS_ACTIVE_JOB"
+
+
+def test_loopback_dashboard_ignores_env_proxy(monkeypatch):
+    # 회사 PC의 HTTP(S)_PROXY 가 127.0.0.1 대시보드 호출을 가로채 403 이 나던 문제(#11)
+    from esl_platform.core.auth import DashboardClient, is_loopback_url
+
+    assert is_loopback_url("http://127.0.0.1:8000") and is_loopback_url("http://localhost:8000")
+    assert is_loopback_url("http://[::1]:8000") and not is_loopback_url("http://dash.corp:8000")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:8080")
+
+    class Cfg:
+        dashboard_internal_url = "http://127.0.0.1:8000"
+        timeout_s = 1
+
+    c = DashboardClient(Cfg())
+    assert c._client._trust_env is False
+    c.close()
+    Cfg.dashboard_internal_url = "http://dash.corp:8000"
+    c = DashboardClient(Cfg())
+    assert c._client._trust_env is True
+    c.close()
