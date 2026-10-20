@@ -1,5 +1,6 @@
 """V-SEC-1·V-CFG-2 (정적): 제품 코드에 shell=True·os.system·subprocess·pickle·allow_pickle=True·하드코딩 실행파일 0건.
-V-SEC-2: 업로드(multipart/UploadFile) 라우트 0개."""
+V-SEC-2(P3-UX 갱신, 계약 esl_p3_ux.md §1.1): multipart/UploadFile 0개, 업로드는 허용된 /uploads 경로만
+(요청 본문을 원시 스트림으로 읽는 곳은 청크 PUT 하나)."""
 
 from __future__ import annotations
 
@@ -41,6 +42,14 @@ def test_no_forbidden_patterns():
     assert hits == []
 
 
+ALLOWED_UPLOAD_ROUTES = {
+    ("POST", "/uploads"), ("GET", "/uploads"), ("GET", "/uploads/{upload_id}"),
+    ("POST", "/uploads/{upload_id}/files"), ("PUT", "/uploads/{upload_id}/files/{index}"),
+    ("POST", "/uploads/{upload_id}/complete"), ("DELETE", "/uploads/{upload_id}"),
+}
+RAW_BODY_ROUTES = {("PUT", "/uploads/{upload_id}/files/{index}")}
+
+
 def test_no_multipart_routes(client):
     spec = client.get(f"{API}/openapi.json").json()
     assert "multipart/form-data" not in str(spec)
@@ -50,6 +59,29 @@ def test_no_multipart_routes(client):
         if isinstance(r, APIRoute):
             for f in r.dependant.body_params:
                 assert "UploadFile" not in repr(f), r.path
+
+
+def test_only_allowed_upload_routes(client):
+    """업로드 관련 라우트는 허용 목록과 정확히 같고, octet-stream 본문은 청크 PUT 하나뿐."""
+    spec = client.get(f"{API}/openapi.json").json()
+    upload_like, raw = set(), set()
+    for path, ops in spec["paths"].items():
+        p = path.removeprefix(API)
+        for method, op in ops.items():
+            key = (method.upper(), p)
+            if "upload" in p.lower():
+                upload_like.add(key)
+            content = ((op.get("requestBody") or {}).get("content") or {})
+            if any(ct != "application/json" for ct in content):
+                raw.add(key)
+    assert upload_like == ALLOWED_UPLOAD_ROUTES
+    assert raw == RAW_BODY_ROUTES
+
+
+def test_raw_body_read_only_in_upload_router():
+    rx = re.compile(r"request\.(stream|body|form)\s*\(")
+    hits = [str(p.relative_to(REPO)) for p in _files() if rx.search(p.read_text(encoding="utf-8"))]
+    assert hits == ["backend/esl_platform/api/routers/uploads.py"]
 
 
 def test_core_called_only_via_adapter():

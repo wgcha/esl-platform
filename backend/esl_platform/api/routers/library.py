@@ -6,11 +6,12 @@ import os
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
 from ...core.auth import Principal
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
+from .results import ZIP_RESPONSE, zip_response
 from ..schemas import (
     AnalysisCreate,
     AnalysisFileOut,
@@ -22,6 +23,7 @@ from ..schemas import (
     EntryPatch,
     EntryRetire,
 )
+from ..services import bundle as bundle_svc
 from ..services import comparisons as cmp_svc
 from ..services import library as svc
 
@@ -93,6 +95,13 @@ def analysis_download(aid: str, request: Request, rel: str = Query(min_length=1,
                       principal: Principal = Depends(get_principal)) -> FileResponse:
     path = svc.analysis_file(get_ctx(request), aid, rel)
     return FileResponse(path, filename=os.path.basename(path), media_type="application/octet-stream")
+
+
+@router.get("/library/analyses/{aid}/bundle", response_class=StreamingResponse, responses=ZIP_RESPONSE)
+def analysis_bundle(aid: str, request: Request, parts: str | None = Query(default=None, max_length=100),
+                    principal: Principal = Depends(get_principal)) -> StreamingResponse:
+    """분석 결과 받기(zip): parts = report,deck,csv(기본) [,raw = npz 포함]. 상한 초과 시 413."""
+    return zip_response(bundle_svc.analysis_bundle(get_ctx(request), aid, parts))
 
 
 # ---------------------------------------------------------------- 설계 버전 비교(§12.2)

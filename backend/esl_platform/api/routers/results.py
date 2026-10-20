@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
 from ...core.auth import Principal
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
 from ..schemas import ArtifactOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut
+from ..services import bundle as bundle_svc
 from ..services import results as svc
 
 router = APIRouter(tags=["results"])
@@ -71,3 +72,20 @@ def case_report(case_id: str, request: Request, download: bool = False,
                 principal: Principal = Depends(get_principal)) -> Response:
     path, name = svc.case_report(get_ctx(request), case_id)
     return html_report(path, name, download)
+
+
+ZIP_RESPONSE = {200: {"content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+                      "description": "zip(스트리밍)"}}
+
+
+def zip_response(b: dict[str, Any]) -> StreamingResponse:
+    return StreamingResponse(bundle_svc.stream_zip(b["files"], b["prefix"]), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{b["filename"]}"',
+                                      "X-Bundle-Files": str(len(b["files"])), "X-Bundle-Bytes": str(b["size"])})
+
+
+@router.get("/cases/{case_id}/bundle", response_class=StreamingResponse, responses=ZIP_RESPONSE)
+def case_bundle(case_id: str, request: Request, parts: str | None = Query(default=None, max_length=100),
+                principal: Principal = Depends(get_principal)) -> StreamingResponse:
+    """결과 받기(zip): parts = export,report,summary(기본) [,raw = npz 포함]. 상한 ui.max_bundle_bytes 초과 시 413."""
+    return zip_response(bundle_svc.case_bundle(get_ctx(request), case_id, parts))

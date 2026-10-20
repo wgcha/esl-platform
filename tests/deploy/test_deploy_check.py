@@ -14,7 +14,7 @@ import yaml
 from conftest import ROOT
 from esl_platform import check
 
-ALEMBIC_HEAD = "0004"
+ALEMBIC_HEAD = "0005"
 
 
 def _cfg(tmp_path: Path, **storage) -> Path:
@@ -54,6 +54,23 @@ def test_all_ok_with_migrated_db(tmp_path, empty_db_url):
     assert "@127.0.0.1" in db and empty_db_url.split("@")[0].split("//")[1] not in db.replace("postgres@", "")
     assert not list((tmp_path / "esl_root").iterdir())        # 쓰기 시험 파일은 지운다
     assert check.migration_head() == ALEMBIC_HEAD
+
+
+def test_upload_root_rows(tmp_path):
+    """P3-UX: storage.upload_root 쓰기·여유 공간 행(없으면 WARN), 입력 루트 읽기에 자동 포함."""
+    (tmp_path / "esl-input").mkdir()
+    cfg = _cfg(tmp_path, upload_root=str(tmp_path / "esl-input"))
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    d["upload"]["min_free_gb"] = 0
+    cfg.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+    items = check.run_checks(str(cfg), environ={}, min_free_gb=0)
+    st = _st(items)
+    assert st["config.valid"] == "OK" and st["storage.upload_root.write"] == "OK"
+    assert st["storage.upload_root.free"] == "OK" and st["storage.input_roots"] == "OK"
+    assert str(tmp_path / "esl-input") in next(i for i in items if i.key == "storage.input_roots").detail
+    assert not list((tmp_path / "esl-input").iterdir())
+    st = _st(check.run_checks(str(_cfg(tmp_path)), environ={}, min_free_gb=0))
+    assert st["storage.upload_root"] == "WARN"
 
 
 def test_failures_reported(tmp_path, empty_db_url):

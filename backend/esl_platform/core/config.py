@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 ENV_CONFIG = "ESL_PLATFORM_CONFIG"
 ENV_PROFILE = "ESL_PROFILE"
@@ -75,6 +75,42 @@ class StorageCfg(_M):
     esl_root: str
     input_roots: list[str]
     spdm_roots: list[str]
+    # P3-UX: 브라우저 업로드 저장 위치(절대경로, SPDM 밖, esl_root 와 겹침 금지). 있으면 input_roots 에 자동 포함.
+    # None = 업로드 끔(업로드 API 503 UPLOAD_DISABLED)
+    upload_root: str | None = None
+    # 서버 폴더 찾아보기(/fs/browse) 루트에 spdm_roots 를 읽기 전용으로 포함(쓰기는 여전히 금지). 기본 끔(계약 §6)
+    browse_spdm: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _include_upload_root(cls, d: Any) -> Any:
+        """upload_root 를 input_roots 에 자동 포함(이미 그 안이면 그대로)."""
+        if isinstance(d, dict) and isinstance(d.get("upload_root"), str) and d["upload_root"] \
+                and isinstance(d.get("input_roots"), list):
+            up = d["upload_root"]
+            if not any(isinstance(r, str) and r and is_within(up, r) for r in d["input_roots"]):
+                d = {**d, "input_roots": [*d["input_roots"], up]}
+        return d
+
+
+UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"]
+
+
+class UploadCfg(_M):
+    """브라우저 분할 업로드(계약 esl_p3_ux.md §1.1). 값은 설정 파일에서만."""
+
+    chunk_mb: int = Field(default=16, ge=1, le=256)                   # 청크 크기(MB)
+    max_file_bytes: int = Field(default=64 * 1024 ** 3, ge=1)          # 파일당(h3d 30 GB 수용)
+    max_upload_bytes: int = Field(default=100 * 1024 ** 3, ge=1)       # 업로드당
+    min_free_gb: float = Field(default=20, ge=0)                       # 업로드 후에도 남길 upload_root 드라이브 여유
+    max_files: int = Field(default=5000, ge=1, le=100000)
+    max_concurrent_per_user: int = Field(default=2, ge=1, le=20)
+    stale_hours: float = Field(default=72, gt=0)
+    allowed_ext: list[str] = Field(default_factory=lambda: list(UPLOAD_EXT_DEFAULT))
+
+    @property
+    def chunk_bytes(self) -> int:
+        return self.chunk_mb * 1024 * 1024
 
 
 class WorkerCfg(_M):
@@ -98,6 +134,8 @@ class UiCfg(_M):
     max_preview_points: int = Field(ge=10)
     poll_job_ms: int = Field(ge=100)
     poll_queue_ms: int = Field(ge=100)
+    max_bundle_bytes: int = Field(default=5 * 1024 ** 3, ge=1)       # 결과 받기(zip) 상한, 초과 시 413
+    browse_page_max: int = Field(default=1000, ge=10, le=10000)       # /fs/browse 한 번에 돌려주는 항목 수 상한
 
 
 class LoggingCfg(_M):
@@ -140,6 +178,7 @@ class Settings(_M):
     logging: LoggingCfg
     core: CoreCfg
     report: ReportCfg = ReportCfg()
+    upload: UploadCfg = UploadCfg()
     library: LibraryCfg | None = None   # 없으면 라이브러리 쓰기 API 503(LIBRARY_CONFIG_MISSING)
 
     @property
@@ -263,7 +302,17 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
         iss = _path_issue(key, p)
         if iss:
             issues.append(iss)
+    if st.upload_root is not None:
+        iss = _path_issue("storage.upload_root", st.upload_root)
+        if iss:
+            issues.append(iss)
     if not issues:
+        if st.upload_root is not None:
+            if overlaps(st.upload_root, st.esl_root):
+                issues.append(Issue("storage.upload_root", "esl_root 와 겹칩니다"))
+            for r in st.spdm_roots:
+                if overlaps(st.upload_root, r):
+                    issues.append(Issue("storage.upload_root", f"SPDM 루트({r})와 겹칩니다"))
         for i, r in enumerate(st.input_roots):
             if overlaps(r, st.esl_root):
                 issues.append(Issue(f"storage.input_roots[{i}]", "esl_root 와 겹칩니다"))
@@ -275,6 +324,11 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
             issues.append(Issue("auth.mode", "dev_static 은 profile=dev 에서만 허용됩니다"))
         if s.auth.dev_static_principal is None:
             issues.append(Issue("auth.dev_static_principal", "dev_static 에 필요합니다"))
+    for i, ext in enumerate(s.upload.allowed_ext):
+        if not re.fullmatch(r"\.[a-z0-9]{1,10}", ext):
+            issues.append(Issue(f"upload.allowed_ext[{i}]", "'.확장자'(소문자·숫자) 형식이어야 합니다"))
+    if s.upload.max_file_bytes > s.upload.max_upload_bytes:
+        issues.append(Issue("upload.max_file_bytes", "max_upload_bytes 보다 클 수 없습니다"))
     w = s.worker
     if w.lease_ttl_s <= w.heartbeat_interval_s:
         issues.append(Issue("worker.lease_ttl_s", "heartbeat_interval_s 보다 커야 합니다"))

@@ -368,6 +368,32 @@ comparisons = Table(
 )
 Index("ix_comparisons_project", comparisons.c.project_id, comparisons.c.created_at.desc())
 
+# P3-UX 브라우저 분할 업로드 세션(계약 esl_p3_ux.md §1.1). 파일 본문은 디스크(<upload_root>/...)에만, 여기는 목록·상태.
+UPLOAD_STATES = ("OPEN", "COMPLETED", "CANCELED", "STALE")
+uploads = Table(
+    "uploads",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("project_id", String, nullable=False),
+    Column("user_id", String, nullable=False),
+    Column("username", String, nullable=False),
+    Column("name", String(200), nullable=False),            # 사용자가 준 이름(정규화 전)
+    Column("dir_path", String, nullable=False),             # <upload_root>/<user>/<UTC>_<name> 절대경로
+    Column("state", String, nullable=False, server_default="OPEN"),
+    Column("files", JSONB, nullable=False),                 # [{rel,size,sha256_expected,sha256,done}]
+    Column("total_bytes", BigInteger, nullable=False),
+    Column("result", JSONB, nullable=True),                 # 마지막 complete 검사 결과
+    Column("backup_path", String, nullable=True),           # 취소·stale 시 옮긴 위치(<upload_root>/_backup/...)
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    Column("completed_at", TS, nullable=True),
+    CheckConstraint("state IN ('OPEN','COMPLETED','CANCELED','STALE')", name="ck_uploads_state"),
+    CheckConstraint("jsonb_typeof(files) = 'array'", name="ck_uploads_files"),
+    CheckConstraint("total_bytes >= 0", name="ck_uploads_total"),
+)
+Index("ix_uploads_user_state", uploads.c.user_id, uploads.c.state)
+Index("ix_uploads_state_updated", uploads.c.state, uploads.c.updated_at)
+
 notifications = Table(
     "notifications",
     metadata,
@@ -424,6 +450,6 @@ worker_heartbeats = Table(
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
-    "comparisons",
+    "comparisons", "uploads", "UPLOAD_STATES",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

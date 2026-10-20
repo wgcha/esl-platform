@@ -287,3 +287,21 @@ def test_alembic_ini_ascii():
     # Windows alembic 은 ini 를 로캘 코덱(cp949)으로 읽는다 — 비ASCII 가 있으면 migrate 가 UnicodeDecodeError(#7)
     raw = (ROOT / "alembic.ini").read_bytes()
     assert raw.isascii(), "alembic.ini 는 ASCII 전용"
+
+
+def test_app_snapshot_carries_version_files():
+    """P3-UX §3: 코드 스냅샷(<런타임>/app)에 VERSION·CHANGELOG.md, 배포 시 BUILD.json{version, commit, built_at} 기록."""
+    common = (ROOT / "deploy" / "install-common.ps1").read_text(encoding="utf-8-sig")
+    items = re.search(r"\$EslAppItems = @\(([^)]*)\)", common).group(1)
+    assert "'VERSION'" in items and "'CHANGELOG.md'" in items
+    assert "Write-EslBuildInfo -Source $Source -Dest $Dest" in common
+    for k in ("version = $ver", "commit = (Get-EslGitCommit", "built_at ="):
+        assert k in common, k
+    assert "Write-EslBuildInfo" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
+
+
+def test_setup_scripts_upload_root():
+    """P3-UX: setup.ps1 -UploadRoot(기본 <ESL 루트 부모>\\esl-input) → deploy.json upload_root → setup_config 가 설정·폴더 반영."""
+    setup = (ROOT / "deploy" / "setup.ps1").read_text(encoding="utf-8-sig")
+    assert "[string]$UploadRoot" in setup and "'esl-input'" in setup and "upload_root = $uploadRootV" in setup
+    assert "upload_root" in (ROOT / "deploy" / "update-repo.ps1").read_text(encoding="utf-8-sig")

@@ -20,6 +20,8 @@ storage:
   esl_root: "E:/shared/ESL_WORK"      # Case 산출물 루트(쓰기). input_roots·spdm_roots 와 겹침 금지
   input_roots: []                     # rad·결과 CSV 폴더 선택 허용 루트(읽기 전용). 비어 있으면 입력 불가
   spdm_roots: []                      # 겹침 검사용
+  upload_root: null                   # 브라우저 업로드 저장 위치(절대경로, SPDM 밖, esl_root 와 겹침 금지 — input_roots 에 자동 포함). null = 업로드 끔
+  browse_spdm: false                  # 서버 폴더 찾아보기에 spdm_roots 를 읽기 전용으로 보이기(기본 끔)
 worker:
   limiter: auto                       # auto | none | posix | windows_job
   max_logical_cores: 16
@@ -38,6 +40,17 @@ ui:
   max_preview_points: 20000           # 2D 산점·겹쳐보기(/validations/{id}/field) 최대 점 수(초과 시 다운샘플)
   poll_job_ms: 2000
   poll_queue_ms: 5000
+  max_bundle_bytes: 5368709120        # 결과 받기(zip) 상한 5 GB — 넘으면 413 + 폴더 경로 안내
+  browse_page_max: 1000               # 서버 폴더 찾아보기 한 번에 보이는 항목 수(넘으면 페이지)
+upload:                               # 브라우저 분할 업로드(계약 esl_p3_ux.md §1.1)
+  chunk_mb: 16                        # 청크 크기(MB) — 청크별 sha256(X-Chunk-Sha256)·이어 올리기 단위
+  max_file_bytes: 68719476736         # 파일당 64 GB(h3d 30 GB 수용)
+  max_upload_bytes: 107374182400      # 업로드당 100 GB
+  min_free_gb: 20                     # 업로드 후에도 upload_root 드라이브에 남길 여유(부족하면 507)
+  max_files: 5000
+  max_concurrent_per_user: 2
+  stale_hours: 72                     # 미완료 업로드를 _backup 으로 옮기는 시간(삭제 없음)
+  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d]
 logging: {level: INFO, mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']}
 core:                                 # 코어 설정: config_path(이 파일 기준 상대경로 가능) 또는 settings(코어 설정 그대로)
   config_path: esl.example.yaml

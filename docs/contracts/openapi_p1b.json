@@ -549,6 +549,192 @@
         "title": "ArtifactOut",
         "type": "object"
       },
+      "BrowseEntry": {
+        "properties": {
+          "hint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rad",
+                  "results",
+                  "h3d"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "mtime": {
+            "title": "Mtime",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "type": {
+            "enum": [
+              "dir",
+              "file"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "mtime"
+        ],
+        "title": "BrowseEntry",
+        "type": "object"
+      },
+      "BrowseOut": {
+        "properties": {
+          "abs_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abs Path"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/BrowseEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "const": "results",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "root": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/BrowseRoot"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "roots",
+          "path",
+          "entries",
+          "total",
+          "offset",
+          "limit",
+          "truncated"
+        ],
+        "title": "BrowseOut",
+        "type": "object"
+      },
+      "BrowseRoot": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "input",
+              "upload",
+              "spdm"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "writable": {
+            "title": "Writable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "label",
+          "path",
+          "kind",
+          "writable"
+        ],
+        "title": "BrowseRoot",
+        "type": "object"
+      },
       "CaseCreate": {
         "additionalProperties": false,
         "properties": {
@@ -817,6 +1003,41 @@
           "version"
         ],
         "title": "CasePatch",
+        "type": "object"
+      },
+      "ChangelogEntry": {
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "sections": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Sections",
+            "type": "object"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "sections"
+        ],
+        "title": "ChangelogEntry",
         "type": "object"
       },
       "ColorRange": {
@@ -3393,6 +3614,443 @@
         "title": "TstarPut",
         "type": "object"
       },
+      "UploadCheckOut": {
+        "properties": {
+          "h3d_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H3D Path"
+          },
+          "missing_includes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Includes",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "parts": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "problems": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "rad_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rad Path"
+          },
+          "results_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results Dir"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "UploadCheckOut",
+        "type": "object"
+      },
+      "UploadChunkOut": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "received": {
+            "title": "Received",
+            "type": "integer"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "required": [
+          "index",
+          "received",
+          "done"
+        ],
+        "title": "UploadChunkOut",
+        "type": "object"
+      },
+      "UploadCompleteOut": {
+        "properties": {
+          "h3d_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H3D Path"
+          },
+          "missing_includes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Includes",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "parts": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "problems": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "rad_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rad Path"
+          },
+          "results_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results Dir"
+          },
+          "state": {
+            "enum": [
+              "OPEN",
+              "COMPLETED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "upload_id",
+          "state"
+        ],
+        "title": "UploadCompleteOut",
+        "type": "object"
+      },
+      "UploadCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFileIn"
+            },
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "files"
+        ],
+        "title": "UploadCreate",
+        "type": "object"
+      },
+      "UploadFileIn": {
+        "additionalProperties": false,
+        "properties": {
+          "rel": {
+            "description": "rad/… | results/… | h3d/… ('/' 구분 상대경로)",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Rel",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rel",
+          "size"
+        ],
+        "title": "UploadFileIn",
+        "type": "object"
+      },
+      "UploadFileOut": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "received": {
+            "title": "Received",
+            "type": "integer"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "sha256_expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256 Expected"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "rel",
+          "size",
+          "received",
+          "done"
+        ],
+        "title": "UploadFileOut",
+        "type": "object"
+      },
+      "UploadFilesAdd": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFileIn"
+            },
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "UploadFilesAdd",
+        "type": "object"
+      },
+      "UploadOut": {
+        "properties": {
+          "backup_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup Path"
+          },
+          "chunk_size": {
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dir_path": {
+            "title": "Dir Path",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFileOut"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "received_bytes": {
+            "title": "Received Bytes",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadCheckOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "OPEN",
+              "COMPLETED",
+              "CANCELED",
+              "STALE"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "project_id",
+          "name",
+          "state",
+          "dir_path",
+          "chunk_size",
+          "total_bytes",
+          "received_bytes",
+          "files",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UploadOut",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3546,6 +4204,41 @@
           "stale"
         ],
         "title": "ValidationOut",
+        "type": "object"
+      },
+      "VersionOut": {
+        "properties": {
+          "built_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Built At"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "VersionOut",
         "type": "object"
       },
       "WorkerStatus": {
@@ -3914,6 +4607,67 @@
           }
         },
         "summary": "List Artifacts",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/cases/{case_id}/bundle": {
+      "get": {
+        "description": "결과 받기(zip): parts = export,report,summary(기본) [,raw = npz 포함]. 상한 ui.max_bundle_bytes 초과 시 413.",
+        "operationId": "case_bundle_esl_api_cases__case_id__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parts",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parts"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Case Bundle",
         "tags": [
           "results"
         ]
@@ -4469,6 +5223,31 @@
         ]
       }
     },
+    "/esl/api/changelog": {
+      "get": {
+        "operationId": "changelog_esl_api_changelog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChangelogEntry"
+                  },
+                  "title": "Response Changelog Esl Api Changelog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Changelog",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/esl/api/esl-runs/{run_id}": {
       "get": {
         "operationId": "get_run_esl_api_esl_runs__run_id__get",
@@ -4562,6 +5341,96 @@
         "summary": "Forces",
         "tags": [
           "results"
+        ]
+      }
+    },
+    "/esl/api/fs/browse": {
+      "get": {
+        "description": "서버 폴더 찾아보기(읽기 전용): root 없으면 루트 목록만. path 는 루트 기준 상대경로.",
+        "operationId": "fs_browse_esl_api_fs_browse_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "root",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Root"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 1024,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fs Browse",
+        "tags": [
+          "system"
         ]
       }
     },
@@ -4911,6 +5780,67 @@
           }
         },
         "summary": "Get Analysis",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/esl/api/library/analyses/{aid}/bundle": {
+      "get": {
+        "description": "분석 결과 받기(zip): parts = report,deck,csv(기본) [,raw = npz 포함]. 상한 초과 시 413.",
+        "operationId": "analysis_bundle_esl_api_library_analyses__aid__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "aid",
+            "required": true,
+            "schema": {
+              "title": "Aid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parts",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parts"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analysis Bundle",
         "tags": [
           "library"
         ]
@@ -5768,6 +6698,376 @@
         ]
       }
     },
+    "/esl/api/uploads": {
+      "get": {
+        "description": "내 업로드(최근 50개) — 새로 고친 뒤 이어 올리기용.",
+        "operationId": "list_uploads_esl_api_uploads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "OPEN",
+                    "COMPLETED",
+                    "CANCELED",
+                    "STALE"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UploadOut"
+                  },
+                  "title": "Response List Uploads Esl Api Uploads Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Uploads",
+        "tags": [
+          "uploads"
+        ]
+      },
+      "post": {
+        "description": "업로드 세션 생성(용량·확장자·이름 사전 검사, 폴더 <upload_root>/<사용자>/<UTC>_<이름>/ 생성).",
+        "operationId": "create_upload_esl_api_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/esl/api/uploads/{upload_id}": {
+      "delete": {
+        "description": "미완료 세션 취소 — 받은 파일은 <upload_root>/_backup 으로 이동(삭제 없음).",
+        "operationId": "cancel_esl_api_uploads__upload_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "uploads"
+        ]
+      },
+      "get": {
+        "description": "파일별 received(서버가 받은 크기 — 이어 올리기 offset)·done·sha256.",
+        "operationId": "get_upload_esl_api_uploads__upload_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/esl/api/uploads/{upload_id}/complete": {
+      "post": {
+        "description": "서버 검사: rad 파싱(파트 목록·include 해석), h3d 헤더 또는 결과 폴더(done.json·필수 CSV). 통과 시 COMPLETED.",
+        "operationId": "complete_esl_api_uploads__upload_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCompleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/esl/api/uploads/{upload_id}/files": {
+      "post": {
+        "description": "미완료 세션에 파일 추가(complete 가 알려 준 누락 include 등). 새 파일 index 는 기존 뒤에 붙는다.",
+        "operationId": "add_files_esl_api_uploads__upload_id__files_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadFilesAdd"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Files",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/esl/api/uploads/{upload_id}/files/{index}": {
+      "put": {
+        "description": "청크(application/octet-stream, ≤ chunk_size). offset 은 서버가 받은 크기와 같아야 한다(409 + received).\n헤더 X-Chunk-Sha256(청크 sha256)이 있으면 검증(다르면 422, 쓰지 않음). 파일 전체 sha256 은 서버가 받으며 계산해 기록.",
+        "operationId": "put_chunk_esl_api_uploads__upload_id__files__index__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-chunk-sha256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-fA-F]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Chunk-Sha256"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadChunkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Chunk",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
     "/esl/api/validations/{vid}": {
       "get": {
         "operationId": "get_validation_esl_api_validations__vid__get",
@@ -5951,6 +7251,27 @@
         "summary": "Validation Section",
         "tags": [
           "results"
+        ]
+      }
+    },
+    "/esl/api/version": {
+      "get": {
+        "operationId": "version_esl_api_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Version",
+        "tags": [
+          "system"
         ]
       }
     }

@@ -601,3 +601,111 @@ class AnalysisFileOut(_Out):
     size: int
     path: str
     downloadable: bool
+
+
+# ---------------------------------------------------------------- P3-UX: 업로드·찾아보기·버전(계약 esl_p3_ux.md §1~§3)
+class UploadFileIn(_Req):
+    rel: str = Field(min_length=1, max_length=400, description="rad/… | results/… | h3d/… ('/' 구분 상대경로)")
+    size: int = Field(ge=0)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class UploadCreate(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=200)
+    files: list[UploadFileIn] = Field(min_length=1)
+
+
+class UploadFilesAdd(_Req):
+    files: list[UploadFileIn] = Field(min_length=1)
+
+
+class UploadFileOut(_Out):
+    index: int
+    rel: str
+    size: int
+    received: int
+    done: bool
+    sha256: str | None = None
+    sha256_expected: str | None = None
+
+
+class UploadCheckOut(_Out):
+    ok: bool
+    rad_path: str | None = None
+    results_dir: str | None = None
+    h3d_path: str | None = None
+    parts: list[dict[str, Any]] = []
+    missing_includes: list[str] = []
+    problems: list[str] = []
+
+
+class UploadOut(_Out):
+    upload_id: str
+    project_id: str
+    name: str
+    state: Literal["OPEN", "COMPLETED", "CANCELED", "STALE"]
+    dir_path: str
+    chunk_size: int
+    total_bytes: int
+    received_bytes: int
+    files: list[UploadFileOut]
+    result: UploadCheckOut | None = None
+    backup_path: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class UploadChunkOut(_Out):
+    index: int
+    received: int
+    done: bool
+    sha256: str | None = None
+
+
+class UploadCompleteOut(UploadCheckOut):
+    upload_id: str
+    state: Literal["OPEN", "COMPLETED"]
+
+
+class BrowseRoot(_Out):
+    index: int
+    label: str
+    path: str
+    kind: Literal["input", "upload", "spdm"]
+    writable: bool
+
+
+class BrowseEntry(_Out):
+    name: str
+    type: Literal["dir", "file"]
+    size: int | None = None
+    mtime: float
+    hint: Literal["rad", "results", "h3d"] | None = None
+
+
+class BrowseOut(_Out):
+    roots: list[BrowseRoot]
+    root: int | None = None
+    path: str
+    parent: str | None = None
+    abs_path: str | None = None
+    hint: Literal["results"] | None = None
+    entries: list[BrowseEntry]
+    total: int
+    offset: int
+    limit: int
+    truncated: bool
+
+
+class VersionOut(_Out):
+    version: str
+    commit: str | None = None
+    built_at: str | None = None
+
+
+class ChangelogEntry(_Out):
+    version: str
+    date: str | None = None
+    sections: dict[str, list[str]]

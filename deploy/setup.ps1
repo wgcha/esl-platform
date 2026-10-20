@@ -25,6 +25,8 @@
   대시보드 폴더. 기본: deploy.json 값 → <git 폴더의 부모>\simdashboard(있으면). .env의 POSTGRES_BIN·DATABASE_URL(host·port만)과 .tools의 Python 3.12·Node 22를 쓴다
 .PARAMETER EslRoot
   ESL 루트(Case 산출물, SPDM master 밖, 공백·특수문자 없는 경로). 기본: deploy.json 값 → <git 폴더의 부모>\esl-data
+.PARAMETER UploadRoot
+  브라우저 업로드 저장 위치(SPDM 밖, ESL 루트와 겹치지 않게). 기본: deploy.json 값 → <ESL 루트의 부모>\esl-input. input_roots에 자동 포함되고 폴더를 만든다
 .PARAMETER InputRoots
   rad·결과 CSV 폴더를 고를 수 있는 루트(읽기 전용, 여러 개 가능 — 쉼표로 구분해 입력). 비우면(Enter) 설정 파일에서 나중에 채움
 .PARAMETER SpdmRoots
@@ -49,6 +51,7 @@
 param(
     [string]$DashboardRoot = '',
     [string]$EslRoot = '',
+    [string]$UploadRoot = '',
     [string[]]$InputRoots = @(),
     [string[]]$SpdmRoots = @(),
     [string]$PythonExe = '',
@@ -135,6 +138,7 @@ $derivedDash = Join-Path $parent 'simdashboard'
 if (-not (Test-Path -LiteralPath $derivedDash -PathType Container)) { $derivedDash = '' }
 $dashRoot = Resolve-SetupValue -Key 'dashboard_root' -Given $DashboardRoot -Derived $derivedDash -Prompt '대시보드 폴더'
 $eslRootV = Resolve-SetupValue -Key 'esl_root' -Given $EslRoot -Derived (Join-Path $parent 'esl-data') -Prompt 'ESL 루트(Case 산출물 폴더, SPDM 밖)'
+$uploadRootV = Resolve-SetupValue -Key 'upload_root' -Given $UploadRoot -Derived $(if ($eslRootV) { Join-Path (Split-Path -Parent $eslRootV) 'esl-input' } else { '' }) -Prompt '업로드 위치(브라우저로 올린 rad·h3d·결과 폴더 저장, SPDM 밖)'
 $inputRootsV = Resolve-SetupList -Key 'input_roots' -Given $InputRoots -Prompt '입력 루트(rad·결과 CSV 폴더를 고를 수 있는 폴더, 읽기 전용)'
 $spdmRootsV = Resolve-SetupList -Key 'spdm_roots' -Given $SpdmRoots -Prompt 'SPDM 루트(겹침 검사용, 선택)'
 if ($ServiceUser) { $svcUser = $ServiceUser; $explicit['service_user'] = $svcUser } else { $svcUser = "$(Get-Prev 'service_user')" }
@@ -197,7 +201,7 @@ $defaults = [ordered]@{
     pg_bin = $pgBin; pg_host = $pgHost; pg_port = [int]$pgPort; db_name = $dbName; db_role = $dbRole
     config_path = (Join-Path $rt 'config\esl_platform.yaml'); service_user = $svcUser; run_mode = $runModeV
     caddy_frontend_root = (Join-Path $rt 'frontend')
-    esl_root = $eslRootV; input_roots = [string[]]@($inputRootsV | ForEach-Object { "$_" }); spdm_roots = [string[]]@($spdmRootsV | ForEach-Object { "$_" })
+    esl_root = $eslRootV; upload_root = $uploadRootV; input_roots = [string[]]@($inputRootsV | ForEach-Object { "$_" }); spdm_roots = [string[]]@($spdmRootsV | ForEach-Object { "$_" })
 }
 $inputs = [ordered]@{ mode = 'repo'; source_root = $repo; code_root = $repo; runtime_dir = $rt; stamp = $stamp
     deploy_path = $deployPath; deploy_defaults = $defaults; deploy_explicit = $explicit }
@@ -217,6 +221,7 @@ $rows = @(
     [pscustomobject]@{ 항목 = 'Python'; 값 = "$($basePy.Exe) ($($basePy.Version))" }
     [pscustomobject]@{ 항목 = 'PostgreSQL'; 값 = "$($d.pg_host):$($d.pg_port)  DB $($d.db_name) / 역할 $($d.db_role)  (psql: $($d.pg_bin))" }
     [pscustomobject]@{ 항목 = 'ESL 루트'; 값 = "$($plan.esl_root)$(if ($plan.esl_root -and -not (Test-Path -LiteralPath $plan.esl_root)) { ' (만듦)' })" }
+    [pscustomobject]@{ 항목 = '업로드 위치'; 값 = "$(if ($plan.upload_root) { $plan.upload_root } else { '(없음 — 업로드 끔)' })$(if ($plan.upload_root -and -not (Test-Path -LiteralPath $plan.upload_root)) { ' (만듦)' })  (입력 루트에 자동 포함)" }
     [pscustomobject]@{ 항목 = '입력 루트'; 값 = $(if (@($plan.input_roots).Count) { @($plan.input_roots) -join ', ' } else { '(없음 — 설정 파일에서 나중에 추가)' }) }
     [pscustomobject]@{ 항목 = 'SPDM 루트'; 값 = $(if (@($plan.spdm_roots).Count) { @($plan.spdm_roots) -join ', ' } else { '(없음)' }) }
     [pscustomobject]@{ 항목 = '설정 파일'; 값 = "$($plan.config_path) — $cfgState" }
@@ -291,8 +296,8 @@ Write-Step '  3) 설정은 이 파일에서 고칩니다(입력 루트 storage.i
 Write-Step "     $($d.config_path)"
 Write-Step '     같은 폴더 esl.yaml 의 판정 기준(validation·compare)은 임시값, ista6.yaml 낙하 높이 표는 비어 있음 — 사내 기준으로 채우세요'
 Write-Step '     고친 뒤: Stop-ScheduledTask ESL-Worker; Stop-ScheduledTask ESL-Backend; Start-ScheduledTask ESL-Backend; Start-ScheduledTask ESL-Worker'
-if (-not @($inputRootsV).Count) { Write-Step '     ! 입력 루트가 비어 있습니다 — storage.input_roots 에 rad·결과 CSV 공유 폴더를 넣어야 Case를 만들 수 있습니다' }
+if (-not @($inputRootsV).Count) { Write-Step "     입력 루트가 비어 있습니다 — 새 Case 입력은 브라우저 업로드(업로드 위치 $($d.upload_root))로 넣습니다(공유 폴더를 쓰려면 storage.input_roots 에 추가)" }
 Write-Step "  4) 환경 점검: & '$venvPy' '$(Get-EslLauncher $rt)' check --runtime '$rt'   (로그: $(Join-Path $rt 'logs'))"
-Write-Step "  5) 사용자 PC: 저장소 루트 update.bat → ESL_extract.bat 에 h3d 끌어다 놓기 → CSV 폴더와 _0000.rad(include 포함)를 입력 루트 아래로 → ESL 화면에서 새 Case"
+Write-Step "  5) 새 Case: ESL 화면 '내 PC에서 올리기'로 _0000.rad(include 포함)와 h3d 또는 추출 결과 폴더를 올립니다(업로드 위치 $($d.upload_root))"
 Write-Step "이후 코드 업데이트(인자 없이, 설정 유지):  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"
 Write-Step "단계별 가이드: $(Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\manual\install-quickstart.md')"
