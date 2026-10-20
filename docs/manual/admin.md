@@ -52,6 +52,8 @@ PostgreSQL `esl` ◀── claim/renew/release ── esl_worker ── spawn �
 
 ## 2. 설치
 
+> 처음 설치는 단계별 요약 [install-quickstart.md](install-quickstart.md)를 먼저 본다. 이 절은 상세·예외다.
+
 설치 방식은 둘이다(physicsai와 같음). **대시보드와 같은 PC에 인터넷(사내 프록시 포함)이 되면 §2.0 git 폴더 설치**(권장). §2.2~§2.4 오프라인 묶음은 인터넷이 안 되는 **폐쇄망 서버용**이다. §2.1·§2.5~§2.8은 공통.
 
 ### 2.0 같은 PC·git 폴더 설치(권장)
