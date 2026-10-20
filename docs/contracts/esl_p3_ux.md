@@ -81,3 +81,4 @@
 - 서버 추출 출력 위치: `<esl_root>/_h3d/<Case 폴더>/raw`(계약 §6의 `<case>/01_extract/raw` 대체 — 코어가 출력 폴더 안 입력 폴더를 거부하고 `01_extract`를 통째로 백업하므로). 재추출 전 이전 출력은 `_backup/<UTC>`로.
 - Case 응답에 `input_kind`(h3d|results). `/queue`에 `running_all`·`slots`.
 - PC 연결 코드 실패 잠금: 출발지(peer IP·신뢰 프록시의 X-Forwarded-For)로 구분 가능하면 출발지별 5회/15분, 구분 불가(모두 루프백 프록시)면 서버 전체 기준 30회/15분으로 완화(서비스 거부 방지) — 설정 `client_token.lock_*`.
+- 보안 강화(Verifier 결함 수정): 백엔드 uvicorn `proxy_headers=False`(출발지 = 원래 TCP peer, XFF 는 peer 가 `client_token.trusted_proxies` 일 때만). 업로드 루트 아래는 찾아보기·Case 입력·경로 검사 모두 본인 사용자 폴더만(전역 관리자 전체), `_backup` 은 어느 깊이에서도 거부. complete: 업로드 밖 include 는 존재 여부와 무관하게 `업로드에 포함되지 않은 include: <원문>`(밖 파일은 읽지 않음). 업로드 쓰기: 기존 파일은 일반 파일·링크 수 1·실제 경로 안, 새 파일은 O_EXCL. PC 도구: rad 폴더 밖 절대경로 include 는 목록을 보여 주고 Y 확인 시에만 올림(-NonInteractive 는 제외). API 버전 = VERSION(런타임 BUILD.json).

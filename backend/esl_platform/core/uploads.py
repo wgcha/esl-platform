@@ -13,9 +13,10 @@ import datetime as _dt
 import os
 import re
 import shutil
+import stat
 
 from .config import is_within
-from .errors import unprocessable
+from .errors import forbidden, unprocessable
 
 KINDS = ("rad", "results", "h3d")
 BACKUP_DIR = "_backup"
@@ -84,6 +85,39 @@ def user_segment(username: str, user_id: str) -> str:
         return _NAME_REPLACE.sub("_", user_id)[:64].strip("._") or "user"
 
 
+def upload_area_segments(upload_root: str | None, path: str) -> list[str] | None:
+    """path 가 upload_root 아래면 upload_root 기준 성분 목록(루트 자체면 []), 아니면 None."""
+    if not upload_root:
+        return None
+    rootn = os.path.normpath(upload_root)
+    pn = os.path.normpath(path)
+    if not is_within(pn, rootn):
+        return None
+    rel = os.path.relpath(pn, rootn)
+    return [] if rel == os.curdir else rel.split(os.sep)
+
+
+def check_upload_area(upload_root: str | None, path: str, own_seg: str, is_admin: bool) -> None:
+    """업로드 루트 격리: `_backup` 은 어느 깊이에서도 거부(관리자 포함), 사용자 폴더는 본인 것만(전역 관리자는 전체).
+    실제 경로(realpath)도 같은 규칙으로 본다."""
+    for cand in dict.fromkeys((os.path.normpath(path), os.path.realpath(path))):
+        segs = upload_area_segments(upload_root, cand)
+        if segs is None and upload_root and cand != os.path.normpath(path):
+            segs = upload_area_segments(os.path.realpath(upload_root), cand)
+        if not segs:
+            continue
+        if any(s.casefold() == BACKUP_DIR for s in segs):
+            raise unprocessable("PATH_UNSAFE", "업로드 백업(_backup)은 볼 수도 입력으로 쓸 수도 없습니다")
+        if not is_admin and os.path.normcase(segs[0]) != os.path.normcase(own_seg):
+            raise forbidden("다른 사용자의 업로드 폴더입니다(본인 폴더만)", code="UPLOAD_FOLDER_FORBIDDEN")
+
+
+def check_principal_upload_area(upload_root: str | None, path: str, principal) -> None:
+    """Case 입력·경로 검사: 업로드 루트 아래 경로는 본인 폴더만(전역 관리자 제외), `_backup` 거부."""
+    check_upload_area(upload_root, path, user_segment(principal.username, principal.user_id),
+                      bool(principal.is_global_admin))
+
+
 def utc_stamp(now: _dt.datetime | None = None) -> str:
     return (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y%m%d-%H%M%S")
 
@@ -135,12 +169,44 @@ def target_path(upload_dir: str, segs: list[str], *, create_parents: bool = Fals
         _no_links_below(upload_dir, parent)
     if os.path.islink(p) or os.path.islink(p + PART_SUFFIX):
         raise unprocessable("PATH_UNSAFE", "심볼릭 링크 경로에는 쓰지 않습니다")
+    for q in (p, p + PART_SUFFIX):
+        if os.path.lexists(q):
+            check_existing_file(q, upload_dir)
     return p
 
 
-def append_chunk(part_path: str, data: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(part_path, flags, 0o644)
+def _check_stat(st: os.stat_result) -> None:
+    if not stat.S_ISREG(st.st_mode):
+        raise unprocessable("PATH_UNSAFE", "일반 파일이 아닌 경로에는 쓰지 않습니다")
+    if st.st_nlink != 1:
+        raise unprocessable("PATH_UNSAFE", "하드 링크된 파일에는 쓰지 않습니다")
+
+
+def check_existing_file(path: str, root: str | None = None) -> None:
+    """이미 있는 파일: 심링크 아님·일반 파일·링크 수 1(하드 링크 거부)·realpath 가 root 안."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode):
+        raise unprocessable("PATH_UNSAFE", "심볼릭 링크 경로에는 쓰지 않습니다")
+    _check_stat(st)
+    if root is not None and not is_within(os.path.realpath(path), os.path.realpath(root)):
+        raise unprocessable("PATH_UNSAFE", "실제 경로가 업로드 폴더 밖입니다")
+
+
+def append_chunk(part_path: str, data: bytes, root: str | None = None) -> None:
+    """part_path 에 이어 쓴다. 새 파일은 O_EXCL 로 만들고, 기존 파일은 열린 fd 로 일반 파일·링크 수 1 을 확인
+    (하드 링크로 밖 파일에 쓰기 방지)·root 가 주어지면 realpath 가 그 안인지 확인."""
+    base = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(part_path, base | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        fd = os.open(part_path, base)
+        try:
+            _check_stat(os.fstat(fd))
+            if root is not None and not is_within(os.path.realpath(part_path), os.path.realpath(root)):
+                raise unprocessable("PATH_UNSAFE", "실제 경로가 업로드 폴더 밖입니다")
+        except BaseException:
+            os.close(fd)
+            raise
     try:
         view = memoryview(data)
         while view:

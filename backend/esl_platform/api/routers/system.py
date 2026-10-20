@@ -54,7 +54,7 @@ def fs_browse(request: Request, root: int | None = Query(default=None, ge=0),
               limit: int | None = Query(default=None, ge=1), principal: Principal = Depends(get_principal)
               ) -> dict[str, Any]:
     """서버 폴더 찾아보기(읽기 전용): root 없으면 루트 목록만. path 는 루트 기준 상대경로."""
-    return fsbrowse.browse(get_ctx(request), root, path, offset, limit)
+    return fsbrowse.browse(get_ctx(request), root, path, offset, limit, principal)
 
 
 @router.get("/version", response_model=VersionOut)

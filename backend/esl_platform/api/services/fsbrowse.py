@@ -3,6 +3,8 @@
 - 루트: storage.input_roots(upload_root 자동 포함) + (storage.browse_spdm 이면) spdm_roots — 읽기 전용, 인덱스로 지정.
 - `path` 는 루트 기준 상대경로('/' 구분). `..`·절대경로·제어문자·cmd 메타문자 거부, 성분 심링크 거부, realpath 가 루트 밖이면 거부.
 - 항목: 심링크·숨김·시스템 파일(점·$ 로 시작, desktop.ini 등, Windows 숨김/시스템 속성)·업로드 `_backup`·`.part` 제외.
+- 업로드 루트(storage.upload_root — 다른 루트를 거쳐 들어와도 같음) 아래: 본인 사용자 폴더만 보이고 들어갈 수 있다
+  (전역 관리자는 전체). `_backup` 은 어느 깊이에서도 목록에서 빠지고 직접 경로도 거부.
   hint: `.rad` → rad, `.h3d` → h3d, done.json 이 있는 폴더 → results. 정렬: 폴더 먼저, 이름(대소문자 무시).
 - 항목 수가 많으면 offset·limit(≤ ui.browse_page_max) 페이지네이션, total·truncated 표시.
 """
@@ -16,7 +18,8 @@ from typing import Any
 
 from ...core.config import is_within
 from ...core.errors import not_found, unprocessable
-from ...core.uploads import BACKUP_DIR, PART_SUFFIX
+from ...core.auth import Principal
+from ...core.uploads import PART_SUFFIX, check_upload_area, upload_area_segments, user_segment
 from ..context import AppContext
 
 _META = re.compile(r'[\x00-\x1f\x7f&|<>^%!"*?]')
@@ -59,7 +62,17 @@ def _hidden(name: str, st: os.stat_result) -> bool:
     return bool(getattr(st, "st_file_attributes", 0) & _HIDDEN_ATTR)
 
 
-def browse(ctx: AppContext, root: int | None, path: str, offset: int, limit: int | None) -> dict[str, Any]:
+def _visible_in_upload_area(upload_root: str | None, path: str, own_seg: str, is_admin: bool) -> bool:
+    segs = upload_area_segments(upload_root, path)
+    if not segs:
+        return True
+    if any(x.casefold() == "_backup" for x in segs):
+        return False
+    return is_admin or os.path.normcase(segs[0]) == os.path.normcase(own_seg)
+
+
+def browse(ctx: AppContext, root: int | None, path: str, offset: int, limit: int | None,
+           principal: Principal | None = None) -> dict[str, Any]:
     rs = roots(ctx)
     page_max = ctx.settings.ui.browse_page_max
     lim = min(limit or page_max, page_max)
@@ -83,7 +96,10 @@ def browse(ctx: AppContext, root: int | None, path: str, offset: int, limit: int
         raise unprocessable("PATH_UNSAFE", "실제 경로가 루트 밖입니다")
     if not os.path.isdir(cur):
         raise not_found("PATH_NOT_FOUND", "폴더가 없습니다")
-    is_upload = r["kind"] == "upload"
+    up_root = ctx.settings.storage.upload_root
+    own_seg = user_segment(principal.username, principal.user_id) if principal else ""
+    is_admin = bool(principal and principal.is_global_admin)
+    check_upload_area(up_root, cur, own_seg, is_admin)
     items: list[tuple[bool, str, os.stat_result]] = []
     try:
         with os.scandir(cur) as it:
@@ -99,7 +115,7 @@ def browse(ctx: AppContext, root: int | None, path: str, offset: int, limit: int
                 is_dir = stat.S_ISDIR(st.st_mode)
                 if not is_dir and not stat.S_ISREG(st.st_mode):
                     continue
-                if is_upload and not segs and is_dir and e.name == BACKUP_DIR:
+                if not _visible_in_upload_area(up_root, os.path.join(cur, e.name), own_seg, is_admin):
                     continue
                 if not is_dir and e.name.endswith(PART_SUFFIX):
                     continue

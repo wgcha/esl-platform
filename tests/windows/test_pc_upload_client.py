@@ -148,6 +148,44 @@ Write-Output ("files2=" + (@($p2.Files | ForEach-Object {{ $_.Rel }}) -join ',')
     assert kv(r)["files2"] == "rad/x_0000.rad"
 
 
+def test_outside_include_needs_explicit_yes(tmp_path):
+    """rad 폴더 밖 절대경로 include(PC 의 다른 폴더 파일)는 목록을 보여 주고 Y 확인이 있어야만 올린다.
+    -NonInteractive 실행은 묻지 않고 제외, 상위 경로(..) include 는 문제로 남고 올리지 않는다."""
+    res, rad = make_case(tmp_path, big=10)
+    secret = tmp_path / "private" / "secret.inc"
+    secret.parent.mkdir()
+    secret.write_text("/SECRET\n")
+    (tmp_path / "up.inc").write_text("/UP\n")
+    rad.write_text(f"/INCLUDE inc/b.inc\n/INCLUDE \"{secret}\"\n/INCLUDE ../up.inc\n/END\n", encoding="utf-8")
+    body = f"""
+$p0 = Get-EslUploadPlan '{res}' '{rad}'
+"base=" + ((@($p0.Files | ForEach-Object {{ $_.Rel }}) | Where-Object {{ $_ -like 'rad/*' }}) -join ',')
+"outside=" + (@($p0.Outside | ForEach-Object {{ $_.Spec }}) -join ',')
+foreach ($p in $p0.Problems) {{ Write-Output "PROB|$p" }}
+foreach ($w in $p0.Warnings) {{ Write-Output "WARN|$w" }}
+$p1 = Confirm-EslOutsideIncludes $p0
+"final=" + ((@($p1.Files | ForEach-Object {{ $_.Rel }}) | Where-Object {{ $_ -like 'rad/*' }}) -join ',')
+"""
+    interactive = "function Test-EslNonInteractive { return $false }\n"
+    # 1) -NonInteractive(실제 명령줄) -> 묻지 않고 제외
+    r = run_ps(tmp_path, body)
+    out = kv(r)
+    assert out.get("base") == "rad/drop_0000.rad,rad/inc/b.inc", (r.stdout, r.stderr)
+    assert out["outside"] == str(secret) and out["final"] == out["base"] and "ASK" not in r.stdout
+    assert str(secret) in r.stdout and "비대화형" in r.stdout                       # 목록은 보여 줌
+    assert any("../up.inc" in ln and "rad 폴더 밖 상대경로" in ln for ln in r.stdout.splitlines() if ln.startswith("PROB|"))
+    assert any("올리지 않습니다" in ln and str(secret) in ln for ln in r.stdout.splitlines() if ln.startswith("WARN|"))
+    # 2) 대화형 + Enter(기본 N) / n -> 제외
+    for ans in ([], ["n"]):
+        r = run_ps(tmp_path, interactive + body, inputs=ans)
+        out = kv(r)
+        assert "ASK" in r.stdout and out.get("final") == "rad/drop_0000.rad,rad/inc/b.inc", (ans, r.stdout, r.stderr)
+    # 3) 대화형 + Y -> rad/<파일 이름> 으로 포함(상위 경로 include 는 여전히 제외)
+    r = run_ps(tmp_path, interactive + body, inputs=["Y"])
+    assert kv(r).get("final") == "rad/drop_0000.rad,rad/inc/b.inc,rad/secret.inc", (r.stdout, r.stderr)
+    assert "up.inc" not in kv(r)["final"]
+
+
 def test_loopback_proxy_and_url(tmp_path):
     r = run_ps(tmp_path, """
 "lb=" + ((@('http://127.0.0.1:8080/esl', 'http://localhost/esl', 'http://[::1]:9/esl', 'http://10.1.2.3/esl', 'http://dash.corp.local/esl') | ForEach-Object { Test-EslLoopback $_ }) -join ',')
@@ -335,7 +373,11 @@ def test_esl_run_upload_mode_end_to_end(tmp_path, server):
     """esl_run.ps1 -Mode upload(ESL_upload.bat) 를 그대로 실행: 저장된 토큰(대역 DPAPI = 이 OS 의 SecureString) 사용."""
     state, url = server
     res, rad = make_case(tmp_path, big=200_000)
-    rad.write_text("/INCLUDE inc/b.inc\n/INCLUDE \"C:\\models\\mat.inc\"\n/END\n")   # 누락 없음 -> 묻지 않음
+    priv = tmp_path / "private" / "secret.inc"
+    priv.parent.mkdir()
+    priv.write_text("/SECRET\n")
+    rad.write_text("/INCLUDE inc/b.inc\n/INCLUDE \"C:\\models\\mat.inc\"\n"     # 누락 없음 -> 묻지 않음
+                   f"/INCLUDE \"{priv}\"\n/END\n")                                   # rad 폴더 밖 -> 비대화형은 제외
     app = tmp_path / "appdata" / "esl"
     app.mkdir(parents=True)
     (app / "esl_deploy.json").write_text(json.dumps({"hw_exe": "", "work_root": str(tmp_path / "work"),
@@ -356,6 +398,7 @@ def test_esl_run_upload_mode_end_to_end(tmp_path, server):
     assert state.uploads[uid]["name"] == "drop" and state.uploads[uid]["project_id"] == "p9"
     assert f"/p/p9/cases/new?upload={uid}" in r.stdout
     _check_server_files(state, uid, res, rad)
+    assert "rad/secret.inc" not in [f["rel"] for f in state.uploads[uid]["files"]] and "비대화형" in r.stdout
     # 결과 폴더가 아니면 거부
     r2 = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", RUN, "-Mode", "upload", str(rad.parent), str(rad)],
                         capture_output=True, text=True, timeout=120, env=env)

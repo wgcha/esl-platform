@@ -21,6 +21,7 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.cases import VersionConflict
 from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED
+from ...core.uploads import check_principal_upload_area
 from ..context import AppContext
 from . import system
 from .common import (
@@ -128,6 +129,7 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
     require_config_ok(ctx)
     s = ctx.settings
     rad = check_input_path(s, body.rad_path, "RAD")
+    check_principal_upload_area(s.storage.upload_root, rad, principal)
     h3d = None
     if body.h3d_path is not None:
         # P3-UX §6: 서버 h3d 추출 — results_dir = <esl_root>/_h3d/<폴더>/raw(작업 H3D_EXTRACT 가 채움)
@@ -137,12 +139,14 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
             raise DomainError("H3D_EXTRACT_UNAVAILABLE", "서버 h3d 추출이 설정되지 않았습니다(altair.hw_exe_path) — "
                               "PC에서 추출한 결과 폴더로 Case 를 만드세요", status=503)
         h3d = check_input_path(s, body.h3d_path, "H3D")
+        check_principal_upload_area(s.storage.upload_root, h3d, principal)
         probs = check_h3d(h3d)
         if probs:
             raise unprocessable("INPUT_INVALID", "h3d 파일이 올바르지 않습니다: " + "; ".join(probs), problems=probs)
         results = h3d_raw_dir(s, body.folder_name)
     else:
         results = check_input_path(s, body.results_dir, "RESULTS")
+        check_principal_upload_area(s.storage.upload_root, results, principal)
     part_title = body.part_title or (ctx.config.core or {}).get("case", {}).get("part_title")
     if not part_title:
         raise unprocessable("INVALID_PARAMS", "part_title 이 필요합니다")
@@ -156,6 +160,8 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
     if os.path.lexists(cdir):
         raise conflict("FOLDER_EXISTS", "산출물 폴더가 이미 있습니다")
     info, done, includes = _check_part(ctx, rad, None if h3d else results, part_title)
+    for inc in includes:
+        check_principal_upload_area(s.storage.upload_root, inc, principal)
     fp = fingerprint_h3d(rad, h3d, includes) if h3d else fingerprint(rad, results, includes)
     target = info["target_part"]
     os.makedirs(s.storage.esl_root, exist_ok=True)

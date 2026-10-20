@@ -1,6 +1,6 @@
 """FastAPI 앱(계약 esl.md §5). 모든 라우트는 `{server.base_path}/api` 접두(기본 `/esl/api`).
 
-실행: `uvicorn esl_platform.api.main:app --host 127.0.0.1 --port 8110` (env ESL_PLATFORM_CONFIG, ESL_DATABASE_URL).
+실행: `uvicorn esl_platform.api.main:app --host 127.0.0.1 --port 8110 --no-proxy-headers`(XFF 해석은 앱이 trusted_proxies 로만) (env ESL_PLATFORM_CONFIG, ESL_DATABASE_URL).
 """
 
 from __future__ import annotations

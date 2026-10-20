@@ -141,7 +141,7 @@ function Publish-Results($Ctx, [string]$OutDir, [string]$Rad, [string]$Name, [st
     Say "    rad: $Rad"
     try {
         if (-not (Test-ExtractOk $OutDir)) { throw "추출 결과가 ok 가 아닙니다(done.json): $OutDir" }
-        $plan = Get-EslUploadPlan $OutDir $Rad
+        $plan = Confirm-EslOutsideIncludes (Get-EslUploadPlan $OutDir $Rad)   # rad 폴더 밖 include 는 Y 확인 시만
         if (-not (Confirm-EslPlan $plan)) { Say '    올리기를 취소했습니다.' 'Yellow'; return $false }
         $res = Invoke-EslPcUpload $Ctx $plan $Name (Get-EslUploadKey $Anchor)
         return [bool]$res.Ok

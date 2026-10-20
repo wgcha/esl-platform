@@ -27,6 +27,12 @@ function Read-EslInput([string]$Prompt) { return (Read-Host $Prompt) }
 
 function Test-EslWindows { return ($env:OS -eq 'Windows_NT') }
 
+# pwsh/powershell -NonInteractive 로 실행 중이면 $true(묻지 않고 안전한 기본값을 쓴다)
+function Test-EslNonInteractive {
+    foreach ($a in @([Environment]::GetCommandLineArgs())) { if ([string]$a -match '^-noni') { return $true } }
+    return $false
+}
+
 # 문자열 -> DPAPI(CurrentUser) 암호문. Windows 가 아니면 거부(다른 OS 의 ConvertFrom-SecureString 은 암호화하지 않음).
 function Protect-EslSecret([string]$Plain) {
     if (-not (Test-EslWindows)) { throw 'DPAPI 는 Windows 에서만 쓸 수 있습니다(토큰을 평문으로 저장하지 않음).' }
@@ -469,8 +475,11 @@ function New-EslPlanFile([string]$Rel, [string]$Path) {
 
 # 결과 폴더(done.json) + rad + include -> rel 규칙(results/<폴더>/..., rad/...) 목록과 경고·문제
 #   include: rad 폴더 아래 = rad/<상대경로>, 절대경로 include = rad/<파일 이름>(서버가 파일 이름으로 rad 폴더에서 찾음)
-function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth = 8) {
+#   rad 폴더 밖 절대경로 include(PC 의 다른 폴더 파일)는 Outside 로만 알리고 -AllowOutside(사용자가 Y 로 확인)일 때만 올린다.
+#   rad 폴더 밖 상대경로(..\)는 서버에서 찾을 수 없어 문제로 둔다(올리지 않음).
+function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth = 8, [switch]$AllowOutside) {
     $files = New-Object System.Collections.ArrayList
+    $outside = New-Object System.Collections.ArrayList
     $warn = New-Object System.Collections.ArrayList
     $prob = New-Object System.Collections.ArrayList
     $missing = New-Object System.Collections.ArrayList
@@ -515,7 +524,15 @@ function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth
             }
             if ($inc.Absolute) {
                 $rel = 'rad/' + (Split-Path -Leaf $inc.Path)
-                if (-not $inc.ByName) { [void]$warn.Add("절대경로 include 는 rad 폴더로 올립니다(서버가 파일 이름으로 찾음): $($inc.Spec) -> $rel") }
+                if (-not (Test-EslPathUnder $inc.Path $radDir)) {
+                    [void]$outside.Add([pscustomobject]@{ Spec = $inc.Spec; Path = $inc.Path; Source = $inc.Source; Rel = $rel })
+                    if (-not $AllowOutside) {
+                        [void]$warn.Add("rad 폴더 밖 include 는 올리지 않습니다(확인하지 않음): $($inc.Spec)")
+                        continue
+                    }
+                    [void]$warn.Add("rad 폴더 밖 include 를 확인 후 rad 폴더로 올립니다: $($inc.Spec) -> $rel")
+                }
+                elseif (-not $inc.ByName) { [void]$warn.Add("절대경로 include 는 rad 폴더로 올립니다(서버가 파일 이름으로 찾음): $($inc.Spec) -> $rel") }
             }
             elseif (Test-EslPathUnder $inc.Path $radDir) { $rel = 'rad/' + (Get-EslRelativeRel $inc.Path $radDir) }
             else {
@@ -528,7 +545,25 @@ function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth
     $total = [int64]0
     foreach ($f in $files) { $total += $f.Size }
     return [pscustomobject]@{ Files = $files.ToArray(); Warnings = $warn.ToArray(); Problems = $prob.ToArray(); Missing = $missing.ToArray()
-        RadDir = $(if ($RadPath) { Split-Path -Parent ([IO.Path]::GetFullPath($RadPath)) } else { '' }); TotalBytes = $total }
+        RadDir = $(if ($RadPath) { Split-Path -Parent ([IO.Path]::GetFullPath($RadPath)) } else { '' }); TotalBytes = $total
+        Outside = $outside.ToArray(); OutsideAllowed = [bool]$AllowOutside; ResultsDir = $ResultsDir; RadPath = $RadPath; MaxDepth = $MaxDepth }
+}
+
+# rad 폴더 밖 include 목록을 보여 주고 명시 확인(Y)을 받으면 그 파일까지 넣은 계획을 돌려준다.
+# 확인하지 않거나(기본 N) -NonInteractive 실행이면 제외한 계획 그대로.
+function Confirm-EslOutsideIncludes($Plan) {
+    $out = @($Plan.Outside)
+    if ($out.Count -eq 0 -or $Plan.OutsideAllowed) { return $Plan }
+    Say ("  rad 폴더 밖 include {0}개 - PC 의 다른 폴더 파일입니다. 확인 없이는 올리지 않습니다:" -f $out.Count) 'Yellow'
+    foreach ($o in $out) { Say ("    - {0}  ({1})  <- {2}" -f $o.Spec, $o.Path, $o.Source) 'Yellow' }
+    if (Test-EslNonInteractive) { Say '  비대화형 실행: rad 폴더 밖 include 는 올리지 않습니다.' 'Yellow'; return $Plan }
+    $a = ''
+    try { $a = Read-EslInput '  위 파일들도 서버로 올릴까요? (y/N)' } catch { $a = '' }
+    if ($a -and $a.Trim() -match '^(y|yes|예|ㅇ)$') {
+        return (Get-EslUploadPlan $Plan.ResultsDir $Plan.RadPath $Plan.MaxDepth -AllowOutside)
+    }
+    Say '  rad 폴더 밖 include 는 올리지 않습니다.' 'Yellow'
+    return $Plan
 }
 
 # ---- 이어 올리기 상태(uploads.json) -----------------------------------------------------------
@@ -738,7 +773,8 @@ function Add-EslPlanFiles($Plan, $Files) {
     $total = [int64]0
     foreach ($f in $all) { $total += $f.Size }
     return [pscustomobject]@{ Files = $all; Warnings = $Plan.Warnings; Problems = $Plan.Problems; Missing = $Plan.Missing
-        RadDir = $Plan.RadDir; TotalBytes = $total }
+        RadDir = $Plan.RadDir; TotalBytes = $total; Outside = $Plan.Outside; OutsideAllowed = $Plan.OutsideAllowed
+        ResultsDir = $Plan.ResultsDir; RadPath = $Plan.RadPath; MaxDepth = $Plan.MaxDepth }
 }
 
 function Get-EslCaseUrl([string]$ServerUrl, [string]$ProjectId, [string]$UploadId) {

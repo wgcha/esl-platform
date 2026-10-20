@@ -186,6 +186,15 @@ def scan_includes(rad: str, max_depth: int, include_path_map: dict | None = None
     return list(_wrap(fn, rad, **kw))
 
 
+def scan_include_refs(rad: str, max_depth: int, include_path_map: dict | None = None, follow=None) -> list[dict]:
+    """include 참조(원문·경로·찾음 여부). follow(path) 가 참인 파일 안으로만 더 들어간다."""
+    fn = _attr("esl.rad", "scan_include_refs")
+    kw: dict[str, Any] = {"max_depth": max_depth, "follow": follow}
+    if include_path_map:
+        kw["include_path_map"] = include_path_map
+    return list(_wrap(fn, rad, **kw))
+
+
 def pca_corners(x0) -> dict:
     return _wrap(_attr("esl.mech.supports", "pca_corners"), x0)
 

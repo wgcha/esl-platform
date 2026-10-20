@@ -173,7 +173,7 @@ def _prepare_files(up_dir: str, new: list[dict[str, Any]]) -> None:
         if os.path.lexists(p):
             raise conflict("UPLOAD_FILE_EXISTS", f"이미 있는 파일입니다(덮어쓰지 않음): {f['rel']}", rel=f["rel"])
         if f["size"] == 0:
-            U.append_chunk(p + U.PART_SUFFIX, b"")
+            U.append_chunk(p + U.PART_SUFFIX, b"", up_dir)
             sha = sha256_file(p + U.PART_SUFFIX)
             if f["sha256_expected"] and f["sha256_expected"] != sha:
                 raise unprocessable("SHA256_MISMATCH", f"sha256 이 다릅니다: {f['rel']}", rel=f["rel"])
@@ -285,7 +285,7 @@ def put_chunk(ctx: AppContext, principal: Principal, upload_id: str, index: int,
         key = (upload_id, index)
         h = _hash_state(key, part, received)
         if data:
-            U.append_chunk(part, data)      # 사전할당·fsync 없이 append(재시작 시 received = .part 크기)
+            U.append_chunk(part, data, up["dir_path"])      # 사전할당·fsync 없이 append(재시작 시 received = .part 크기)
             h.update(data)
         received += len(data)
         _hash_put(key, h, received)
@@ -337,21 +337,32 @@ def inspect_upload(ctx: AppContext, up: dict[str, Any]) -> dict[str, Any]:
         cc = core.get("case") or {}
         depth = int(cc.get("rad_include_max_depth") or 8)
         pmap = cc.get("include_path_map") or None
+        real_d = os.path.realpath(d)
+
+        def inside(p: str) -> bool:      # 업로드 폴더 안(경로·실제 경로 모두) — 밖 파일은 읽지도 따라가지도 않는다
+            return _rel_of(d, p) is not None and is_within(os.path.realpath(p), real_d)
+
         try:
-            incs = core_adapter.scan_includes(rad_path, depth, pmap)
+            refs = core_adapter.scan_include_refs(rad_path, depth, pmap, follow=inside)
         except core_adapter.CoreError as exc:
-            incs = []
+            refs = []
             problems.append(f"{exc.code}: {exc.message}")
-        roots = ctx.settings.storage.input_roots
-        for inc in incs:
-            rel = _rel_of(d, inc)
-            if not os.path.isfile(inc):
-                missing.append(rel or inc)
-                if rel is None:
-                    problems.append(f"include 가 업로드 폴더 밖을 가리킵니다(올릴 수 없음): {inc}")
-            elif rel is None and not any(is_within(os.path.realpath(inc), os.path.realpath(r)) for r in roots):
-                problems.append(f"include 가 허용된 입력 루트 밖입니다: {inc}")
-        if not missing:
+        outside = False
+        for ref in refs:
+            p = ref["path"]
+            if ref["found"] and inside(p):
+                continue
+            if not ref["found"] and p and inside(p):
+                rel = _rel_of(d, p)
+                if rel not in missing:
+                    missing.append(rel)
+                continue
+            # 업로드 밖(절대·상위 경로 등): 존재 여부와 무관하게 같은 메시지(서버 파일 존재 확인 통로 차단)
+            outside = True
+            msg = f"업로드에 포함되지 않은 include: {ref['spec']}"
+            if msg not in problems:
+                problems.append(msg)
+        if not missing and not outside:
             try:
                 parts = core_adapter.list_parts(rad_path, depth, pmap)
             except core_adapter.CoreError as exc:

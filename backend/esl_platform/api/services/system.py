@@ -155,6 +155,9 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
 
 def inspect(ctx: AppContext, principal: Principal, purpose: str, raw: str) -> dict[str, Any]:
     p = check_input_path(ctx.settings, raw, purpose)
+    from ...core.uploads import check_principal_upload_area
+
+    check_principal_upload_area(ctx.settings.storage.upload_root, p, principal)
     if purpose == "RAD":
         return inspect_rad(ctx, p)
     if purpose == "H3D":

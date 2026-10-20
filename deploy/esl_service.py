@@ -170,6 +170,13 @@ def _log_level(cfg: str) -> str:
 
 
 # ---------------------------------------------------------------- 명령
+def uvicorn_options(srv: dict) -> dict:
+    """uvicorn.run 인자. proxy_headers=False: uvicorn 이 X-Forwarded-For 로 request.client 를 바꾸지 않게(기본은 루프백 peer 의
+    XFF 를 그대로 믿어 연결 코드 잠금을 우회할 수 있다). 출발지 해석은 앱이 설정 client_token.trusted_proxies 로만 한다."""
+    return {"host": str(srv["host"]), "port": int(srv["port"]), "log_config": None, "access_log": False,
+            "proxy_headers": False}
+
+
 def cmd_backend(args: argparse.Namespace, cfg: str) -> int:
     import uvicorn
     from esl_platform.api import main as api_main
@@ -193,7 +200,7 @@ def cmd_backend(args: argparse.Namespace, cfg: str) -> int:
         mount_frontend(app, base, os.path.abspath(args.frontend), root_redirect=base + "/")
     logging.getLogger("esl_service").info("백엔드 시작: http://%s:%s%s/api (설정 %s)", srv["host"], srv["port"],
                                          srv["base_path"], cfg)
-    uvicorn.run(app, host=str(srv["host"]), port=int(srv["port"]), log_config=None, access_log=False)
+    uvicorn.run(app, **uvicorn_options(srv))
     return 0
 
 
