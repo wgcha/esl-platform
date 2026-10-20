@@ -57,3 +57,22 @@
 - 상한 기본: 파일당 64 GB, 업로드당 100 GB(설정). 업로드 시작 시 upload_root 여유 공간 검사(필요량 + `upload.min_free_gb` 20) → 부족 507 `INSUFFICIENT_STORAGE`.
 - 무결성: 청크별 sha256(`X-Chunk-Sha256`) + 서버 스트리밍 전체 sha256 기록. 브라우저 전체 해시 계산 없음. File.slice 스트리밍, 동시 2청크, 이어 올리기(서버 received 기준, 탭 재시작 후에도).
 - 참고 시간: 30 GB ≈ 1 Gbps 약 5분, 100 Mbps 약 45분. 매우 큰 h3d는 PC에서 `ESL_extract.bat`으로 추출한 결과 폴더(수백 MB)만 올리는 대안을 가이드에 안내.
+
+## 9. PC 추출 + 자동 올리기(대용량 대안을 편하게) — 2026-10-20
+목적: 사용자는 PC에서 h3d·rad를 `ESL_extract.bat`에 끌어다 놓기만 하면, PC HyperView로 추출 → 결과 폴더(수백 MB)와 rad·include를 서버로 자동 업로드 → 브라우저에서 새 Case 화면이 업로드가 채워진 채로 열린다.
+
+### 9.1 PC 연결(한 번만)
+- ESL 화면 새 Case → 탭 "PC에서 추출해 올리기" → "PC 연결 코드 만들기"(power 이상): 6자리 코드, 15분 유효, **현재 프로젝트에 묶임**. 화면에 도구 설치 안내(저장소 루트 `update.bat`)와 코드 표시.
+- `POST /client-tokens/codes` {project_id} → {code, expires_at}; `POST /client-tokens/exchange` {code, device_name} → {token, user, project, expires_at}(코드 1회용, 실패 5회 잠금). 토큰 `esl_ct_<random>` 서버엔 해시만 저장, 기본 30일(설정), 범위 = 해당 프로젝트 업로드 API(`/uploads*`)와 `/version`만. `GET /client-tokens`(내 토큰 목록), `DELETE /client-tokens/{id}`(폐기). 화면 "연결된 PC" 목록·폐기.
+- 업로드 API는 세션 쿠키 또는 `Authorization: Bearer esl_ct_...`를 받는다(쿠키 없는 PC 도구용 — CSRF 헤더는 Bearer일 때 면제). 업로드 소유자 = 토큰 사용자.
+
+### 9.2 PC 도구(`scripts/windows`, 루트 `update.bat`이 배포)
+- `ESL_extract.bat`에 h3d와 rad를 함께 끌어다 놓기(또는 h3d만 → rad 파일 선택 창). 처음 실행 시 서버 주소(`esl_deploy.json` `server_url`, 예 `http://<대시보드 주소>/esl`)와 연결 코드를 묻고 토큰을 DPAPI로 암호화해 `%LOCALAPPDATA%\esl\client_token.bin`에 저장(평문 저장 금지). 토큰 만료·폐기 시 코드를 다시 묻는다.
+- 순서: ① PC HyperView 추출(기존 3패스, 출력 `%USERPROFILE%\esl_work\<h3d 이름>\csv`) ② rad의 `/INCLUDE`·`#include`를 따라 include 파일 목록 수집(누락 시 경고, 계속 여부 질문) ③ 업로드(결과 폴더 + rad + include, 청크·이어 올리기·청크 sha256, 진행률 콘솔 표시) ④ complete → 브라우저로 `…/esl/p/<project>/cases/new?upload=<upload_id>` 열기(파트·이름 자동 채움, 사용자는 "Case 만들기"만).
+- 업로드만 다시: `ESL_upload.bat <결과 폴더>`(추출 생략). 실패·중단 시 다시 실행하면 이어 올린다.
+- h3d 원본 폴더에는 쓰지 않는다(기존 보호 규칙). 프록시: 서버 주소가 사내 주소이면 시스템 프록시 설정을 따른다(루프백 아님).
+
+### 9.3 시험
+- 코드 발급·교환·만료·1회용·잠금·폐기·범위(다른 API 403)·다른 프로젝트 업로드 거부·토큰 해시 저장.
+- PC 도구: include 수집(상대·절대·Windows 매핑 실패 경고), 업로드 클라이언트(청크·이어 올리기·sha256 — pwsh로 Linux에서 실서버 대상 실행), 브라우저 열기 URL. ps1 PS 5.1 호환·CRLF·BOM.
+- UI: PC 연결 탭(코드·연결된 PC·폐기), `?upload=` 진입 시 채워진 새 Case.
