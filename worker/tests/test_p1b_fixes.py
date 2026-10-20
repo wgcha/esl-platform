@@ -204,7 +204,7 @@ def test_migration_0002_on_pre_0002_db(engine, db_url):
         cons = {r[0] for r in c.execute(text("SELECT conname FROM pg_constraint"))}
         ver = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
     assert {"ux_jobs_case_running", "ux_cases_folder_lower"} <= idx and "ck_cases_folder_reserved" in cons
-    assert ver == "0005"  # head
+    assert ver == "0006"  # head
 
 
 # ---------------------------------------------------------------- 2. EXPORT targets

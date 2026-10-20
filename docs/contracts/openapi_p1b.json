@@ -743,6 +743,19 @@
             "title": "Folder Name",
             "type": "string"
           },
+          "h3d_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H3D Path"
+          },
           "part_title": {
             "anyOf": [
               {
@@ -769,10 +782,17 @@
             "type": "string"
           },
           "results_dir": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Results Dir",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results Dir"
           },
           "title": {
             "maxLength": 200,
@@ -785,8 +805,7 @@
           "project_id",
           "folder_name",
           "title",
-          "rad_path",
-          "results_dir"
+          "rad_path"
         ],
         "title": "CaseCreate",
         "type": "object"
@@ -871,6 +890,15 @@
             "additionalProperties": true,
             "title": "Input Fingerprint",
             "type": "object"
+          },
+          "input_kind": {
+            "default": "RESULTS",
+            "enum": [
+              "RESULTS",
+              "H3D"
+            ],
+            "title": "Input Kind",
+            "type": "string"
           },
           "part_id": {
             "anyOf": [
@@ -1038,6 +1066,243 @@
           "sections"
         ],
         "title": "ChangelogEntry",
+        "type": "object"
+      },
+      "ClientCodeCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "ClientCodeCreate",
+        "type": "object"
+      },
+      "ClientCodeOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "project_id",
+          "expires_at"
+        ],
+        "title": "ClientCodeOut",
+        "type": "object"
+      },
+      "ClientExchange": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "device_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Device Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "device_name"
+        ],
+        "title": "ClientExchange",
+        "type": "object"
+      },
+      "ClientExchangeOut": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ClientProject"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "title": "Token Id",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/ClientUser"
+          }
+        },
+        "required": [
+          "token",
+          "token_id",
+          "user",
+          "project",
+          "expires_at"
+        ],
+        "title": "ClientExchangeOut",
+        "type": "object"
+      },
+      "ClientProject": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ClientProject",
+        "type": "object"
+      },
+      "ClientTokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_name": {
+            "title": "Device Name",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "state": {
+            "enum": [
+              "ACTIVE",
+              "EXPIRED",
+              "REVOKED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "token_prefix",
+          "project_id",
+          "device_name",
+          "user_id",
+          "username",
+          "created_at",
+          "expires_at",
+          "state"
+        ],
+        "title": "ClientTokenOut",
+        "type": "object"
+      },
+      "ClientUser": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display_name"
+        ],
+        "title": "ClientUser",
         "type": "object"
       },
       "ColorRange": {
@@ -2742,7 +3007,8 @@
           "purpose": {
             "enum": [
               "RAD",
-              "RESULTS"
+              "RESULTS",
+              "H3D"
             ],
             "title": "Purpose",
             "type": "string"
@@ -3178,6 +3444,19 @@
                 "type": "null"
               }
             ]
+          },
+          "running_all": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "title": "Running All",
+            "type": "array"
+          },
+          "slots": {
+            "default": 1,
+            "title": "Slots",
+            "type": "integer"
           }
         },
         "required": [
@@ -5245,6 +5524,188 @@
         "summary": "Changelog",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/esl/api/client-tokens": {
+      "get": {
+        "description": "내 연결된 PC(토큰) 목록(최근 100개, 상태 ACTIVE·EXPIRED·REVOKED).",
+        "operationId": "list_tokens_esl_api_client_tokens_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientTokenOut"
+                  },
+                  "title": "Response List Tokens Esl Api Client Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tokens",
+        "tags": [
+          "client-tokens"
+        ]
+      }
+    },
+    "/esl/api/client-tokens/codes": {
+      "post": {
+        "description": "PC 연결 코드(6자리, 15분, 1회용) — 현재 프로젝트에 묶임. power 이상.",
+        "operationId": "create_code_esl_api_client_tokens_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientCodeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientCodeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Code",
+        "tags": [
+          "client-tokens"
+        ]
+      }
+    },
+    "/esl/api/client-tokens/exchange": {
+      "post": {
+        "description": "PC 도구: 코드 → 토큰 esl_ct_…(응답에서 한 번만 보임). 실패 5회면 잠금(429). 세션·CSRF 헤더 불필요.",
+        "operationId": "exchange_esl_api_client_tokens_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientExchangeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange",
+        "tags": [
+          "client-tokens"
+        ]
+      }
+    },
+    "/esl/api/client-tokens/{token_id}": {
+      "delete": {
+        "description": "연결된 PC 토큰 폐기(이후 그 토큰 요청은 401). 내 것(전역 관리자는 모두).",
+        "operationId": "revoke_esl_api_client_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientTokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke",
+        "tags": [
+          "client-tokens"
         ]
       }
     },

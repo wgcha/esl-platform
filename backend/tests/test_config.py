@@ -15,7 +15,10 @@ def test_example_config_loads():
     assert lc.ok, lc.errors()
     assert lc.settings.api_prefix == "/esl/api"
     assert lc.core["case"]["part_title"] == "chassis rear"
-    assert "altair" not in redacted_settings(lc.settings) and "commands" not in redacted_settings(lc.settings)
+    red = redacted_settings(lc.settings)        # P3-UX §6: 서버 h3d 추출 설정(기본값)
+    assert red["altair"]["max_concurrent_hw"] == 2 and red["altair"]["hw_exe_path"].endswith("/hw.exe")
+    assert red["commands"]["h3d_extract"][0] == "{hw}" and red["worker"]["slots"] == 2
+    assert red["client_token"]["ttl_days"] == 30
 
 
 def test_profile_env_override():
@@ -37,7 +40,18 @@ def _bad(tmp_path, mutate):
 
 @pytest.mark.parametrize("mut,key", [
     (lambda d: d["server"].pop("port"), "server.port"),
-    (lambda d: d.__setitem__("altair", {}), "altair"),
+    (lambda d: d.__setitem__("altair", {"unknown": 1}), "altair.unknown"),
+    (lambda d: d.__setitem__("altair", {"hw_exe_path": "relative/hw.exe"}), "altair.hw_exe_path"),
+    (lambda d: d.__setitem__("altair", {"hw_exe_path": "C:/a&b/hw.exe"}), "altair.hw_exe_path"),
+    (lambda d: d.__setitem__("altair", {"max_concurrent_hw": 0}), "altair.max_concurrent_hw"),
+    (lambda d: d.__setitem__("commands", {"h3d_extract": ["cmd.exe", "{h3d}", "{out_dir}"]}), "commands.h3d_extract[0]"),
+    (lambda d: d.__setitem__("commands", {"h3d_extract": ["{hw}", "{h3d}", "{out_dir}", "{evil}"]}),
+     "commands.h3d_extract[3]"),
+    (lambda d: d.__setitem__("commands", {"h3d_extract": ["{hw}", "{h3d}", "{out_dir}", "a&b"]}),
+     "commands.h3d_extract[3]"),
+    (lambda d: d.__setitem__("commands", {"h3d_extract": ["{hw}", "{h3d}"]}), "commands.h3d_extract"),
+    (lambda d: d["worker"].__setitem__("slots", 17), "worker.slots"),
+    (lambda d: d.__setitem__("client_token", {"ttl_days": 0}), "client_token.ttl_days"),
     (lambda d: d["worker"].__setitem__("timeout_s", 5), "worker.timeout_s"),
     (lambda d: d["storage"].__setitem__("input_roots", [d["storage"]["esl_root"] + "/sub"]), "storage.input_roots[0]"),
     (lambda d: d["storage"].__setitem__("esl_root", "relative/path"), "storage.esl_root"),

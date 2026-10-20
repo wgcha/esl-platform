@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 FOLDER_RE = r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$"
 WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
@@ -31,7 +31,7 @@ class _Out(BaseModel):
 
 # ---------------------------------------------------------------- 요청
 class InspectReq(_Req):
-    purpose: Literal["RAD", "RESULTS"]
+    purpose: Literal["RAD", "RESULTS", "H3D"]
     path: str = Field(min_length=1, max_length=1024)
 
 
@@ -40,8 +40,16 @@ class CaseCreate(_Req):
     folder_name: str = Field(pattern=FOLDER_RE)
     title: str = Field(min_length=1, max_length=200)
     rad_path: str = Field(min_length=1, max_length=1024)
-    results_dir: str = Field(min_length=1, max_length=1024)
+    # P3-UX §6: 결과 폴더(PC 추출) 또는 h3d(서버 추출) 중 정확히 하나
+    results_dir: str | None = Field(default=None, min_length=1, max_length=1024)
+    h3d_path: str | None = Field(default=None, min_length=1, max_length=1024)
     part_title: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def _one_input(self) -> "CaseCreate":
+        if (self.results_dir is None) == (self.h3d_path is None):
+            raise ValueError("results_dir 와 h3d_path 중 정확히 하나가 필요합니다")
+        return self
 
     @field_validator("title")
     @classmethod
@@ -65,6 +73,13 @@ class CasePatch(_Req):
 class JobCreate(_Req):
     job_type: Literal["CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT"]
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class CaseExtractParams(_Req):
+    """CASE_EXTRACT(P3-UX §6): h3d 입력일 때 추출 옵션(없으면 코어 설정 extract.hot_k·tstar.top_n_times)."""
+
+    hot_k: int | None = Field(default=None, ge=1, le=100000)
+    top_n: int | None = Field(default=None, ge=1, le=100)
 
 
 class CaseReportParams(_Req):
@@ -142,6 +157,7 @@ class CaseOut(_Out):
     rad_path: str
     results_dir: str
     h3d_path: str | None = None
+    input_kind: Literal["RESULTS", "H3D"] = "RESULTS"
     input_fingerprint: dict[str, Any]
     part_title: str
     part_id: int | None = None
@@ -212,6 +228,8 @@ class QueueLane(_Out):
 
 class QueueOut(_Out):
     running: JobOut | None = None
+    running_all: list[JobOut] = []          # P3-UX §6: SLOT 레인 동시 실행(worker.slots) — 시작 순
+    slots: int = 1
     queued: list[JobOut]
     light: QueueLane
 
@@ -709,3 +727,53 @@ class ChangelogEntry(_Out):
     version: str
     date: str | None = None
     sections: dict[str, list[str]]
+
+
+# ---------------------------------------------------------------- P3-UX §9.1: PC 연결 코드·토큰
+class ClientCodeCreate(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+
+
+class ClientCodeOut(_Out):
+    code: str
+    project_id: str
+    expires_at: datetime
+
+
+class ClientExchange(_Req):
+    code: str = Field(min_length=1, max_length=32)
+    device_name: str = Field(min_length=1, max_length=100)
+
+
+class ClientUser(_Out):
+    user_id: str
+    username: str
+    display_name: str
+
+
+class ClientProject(_Out):
+    id: str
+    name: str | None = None
+
+
+class ClientExchangeOut(_Out):
+    token: str
+    token_id: str
+    user: ClientUser
+    project: ClientProject
+    expires_at: datetime
+
+
+class ClientTokenOut(_Out):
+    id: str
+    token_prefix: str
+    project_id: str
+    project_name: str | None = None
+    device_name: str
+    user_id: str
+    username: str
+    created_at: datetime
+    expires_at: datetime
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    state: Literal["ACTIVE", "EXPIRED", "REVOKED"]

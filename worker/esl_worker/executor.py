@@ -14,6 +14,10 @@
 - P2(계약 esl_p2_library.md §11): LIB_ANALYZE 는 Case 가 없고 작업 폴더 = `<esl_root>/_analysis/<id>/`(로그도 그 아래),
   입력 지문 확인 대신 항목 폴더 존재 확인, 대상이 없으면 OPTDECK step 은 SKIPPED. VALIDATE 등록이 끝나면
   설정 `report.auto` 일 때 CASE_REPORT(LIGHT)를 같은 트랜잭션에서 큐에 넣는다(이미 대기 중이면 경고만).
+- P3-UX §6: CASE_EXTRACT 첫 step H3D_EXTRACT(LOCAL, h3d 입력 Case 만)는 hw 를 직접 실행한다(esl_worker.h3d) —
+  `altair.max_concurrent_hw` DB 세마포어를 잡을 때까지 대기(lease 갱신·취소 확인 계속), 작업별 제한기(limiter.for_job)로
+  자원 제한, 취소·lease 상실 시 hw 프로세스 트리 종료. 실패 코드 `H3D_EXTRACT_FAILED`.
+- 작업별 자원 제한기: SLOT 레인이 worker.slots 개 동시 실행되므로 작업마다 limiter.for_job(슬롯 번호)로 만든다.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from . import esl_snapshot, limiter, register
+from . import esl_snapshot, h3d, limiter, register
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -62,8 +66,10 @@ class Executor:
         self.token = job["lease_token"]
         self.slot = job["lane"] == "SLOT"
         self.proc = None
+        self.hw_proc = None
         self.case: dict[str, Any] | None = None
         self.lib: dict[str, Any] | None = None
+        self.lim = limiter.for_job(worker, job.get("slot_id"))   # 작업별 자원 제한(worker.slots 로 나눔)
 
     # ---------------------------------------------------------------- 도우미
     def _tx(self):
@@ -83,6 +89,10 @@ class Executor:
             jobs_repo.release(conn, self.job["id"], self.token, state, failure_code=code, failure_message=message)
 
     def _kill_child(self) -> None:
+        hp = self.hw_proc
+        if hp is not None:
+            self.hw_proc = None
+            h3d.kill_tree(hp, self.settings.worker.terminate_grace_s, self.lim)
         p = self.proc
         if p is None or not p.is_alive():
             return
@@ -144,6 +154,8 @@ class Executor:
             return FAILED
         finally:
             self._kill_child()
+            if self.lim is not limiter.of(self.worker):
+                self.lim.close()   # Windows: 작업 Job 핸들 닫기(KILL_ON_JOB_CLOSE)
 
     # ---------------------------------------------------------------- LIB_ANALYZE 준비
     def _prepare_analysis(self) -> None:
@@ -223,7 +235,12 @@ class Executor:
         log_path = os.path.join(self.cdir, log_rel)
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         try:
-            if st["core_stage"] and self.case is None:
+            if st["step_key"] == "H3D_EXTRACT":
+                outputs = self._run_h3d(st, log_path)
+                with self._tx() as conn:
+                    jobs_repo.patch_result(conn, self.job["id"], self.token, {"h3d_extract": outputs.get("done")})
+                    self._register_artifacts(conn, [log_rel])
+            elif st["core_stage"] and self.case is None:
                 self._run_core(st, log_path)
                 outputs = {"core_stage": st["core_stage"]}
                 with self._tx() as conn:
@@ -306,7 +323,7 @@ class Executor:
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
                 "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
                 "parent_pid": os.getpid()}
-        gate = limiter.prepare(self.worker, spec)
+        gate = limiter.prepare(self.worker, spec, self.lim)
         self.proc = _SPAWN.Process(target=child_entry, args=(spec,), name=f"esl-core-{stage}")
         self.proc.start()
         applied = limiter.after_start(self.worker, self.proc, gate)  # 자원 제한(Windows Job) → 자식 시작 신호
@@ -343,6 +360,119 @@ class Executor:
         if res and not res.get("ok"):
             raise _StepFailed(res.get("code") or "INTERNAL_ERROR", res.get("message") or "코어 실패", code)
         raise _StepFailed("CORE_PROCESS_DIED", f"코어 프로세스가 비정상 종료했습니다(exit {code})", code)
+
+
+    # ---------------------------------------------------------------- H3D_EXTRACT(LOCAL, P3-UX §6)
+    def _wait_tick(self, state: dict[str, float]) -> None:
+        """대기·실행 중 주기 작업: lease 갱신(heartbeat_interval_s), 취소 확인(cancel_check_interval_s)."""
+        w = self.settings.worker
+        now = time.monotonic()
+        if now - state["renew"] >= w.heartbeat_interval_s:
+            self._renew()
+            state["renew"] = now
+        if now - state["cancel"] >= w.cancel_check_interval_s:
+            state["cancel"] = now
+            if self._cancel_requested():
+                raise _Canceled()
+
+    def _run_h3d(self, st: dict[str, Any], log_path: str) -> dict[str, Any]:
+        from esl_platform.core.config import default_extract_tcl
+        from esl_platform.core.paths import h3d_work_dir
+
+        p = (self.job["params"] or {}).get("h3d") or {}
+        s = self.settings
+        no = st["step_no"]
+
+        def echo(msg: str) -> None:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+
+        if not p.get("h3d_path") or not p.get("out_dir"):
+            raise _StepFailed("PREREQUISITE_MISSING", "h3d 추출 params 가 없습니다(h3d 입력 Case 가 아님)")
+        tcl = default_extract_tcl()
+        if not os.path.isfile(tcl):
+            raise _StepFailed("TOOL_OUTPUT_MISSING", f"추출 TCL 이 코드 스냅샷에 없습니다: {tcl}")
+        hw = s.altair.hw_exe_path
+        if not hw:
+            raise _StepFailed(h3d.FAILURE, "hw 실행 파일 경로(altair.hw_exe_path)가 설정되지 않았습니다")
+        if not os.path.isfile(hw):
+            raise _StepFailed(h3d.FAILURE, f"hw 실행 파일이 없습니다(altair.hw_exe_path): {hw}")
+        try:
+            work = h3d_work_dir(s, self.case["folder_name"])
+        except DomainError as exc:
+            raise _StepFailed(exc.code, exc.message) from None
+        out_dir = p["out_dir"]
+        if os.path.normcase(os.path.normpath(out_dir)) != os.path.normcase(os.path.join(work, "raw")):
+            raise _StepFailed("PATH_UNSAFE", "h3d 추출 출력 폴더가 Case 의 서버 추출 폴더가 아닙니다")
+        os.makedirs(out_dir, exist_ok=True)
+        prev = h3d.backup_previous(out_dir)
+        if prev:
+            echo(f"[esl-worker] 이전 추출 산출물을 옮김: {prev}")
+        request = os.path.join(work, "request.txt")
+        h3d.write_request(request, part=p["part"], hot_k=p["hot_k"], top_n=p["top_n"])
+        try:
+            argv = h3d.build_argv(list(s.commands.h3d_extract), h3d.values_for(
+                hw=hw, tcl=tcl, h3d=p["h3d_path"], request=request, out_dir=out_dir, part=p["part"],
+                hot_k=p["hot_k"], top_n=p["top_n"]))
+        except h3d.H3dError as exc:
+            raise _StepFailed(exc.code, exc.message) from None
+
+        # hw 동시 실행 한도(DB 세마포어) — 잡을 때까지 대기
+        tick = {"renew": time.monotonic(), "cancel": time.monotonic()}
+        limit = s.altair.max_concurrent_hw
+        waited = False
+        while True:
+            with self._tx() as conn:
+                if jobs_repo.acquire_hw(conn, self.job["id"], self.token, no, limit):
+                    break
+            if not waited:
+                echo(f"[esl-worker] hw 동시 실행 한도 {limit}개(altair.max_concurrent_hw) — 다른 추출이 끝나기를 기다립니다")
+                waited = True
+            time.sleep(min(0.5, s.worker.claim_interval_s))
+            self._wait_tick(tick)
+        if waited:
+            echo("[esl-worker] hw 실행 권한을 얻었습니다")
+        with self._tx() as conn:
+            jobs_repo.step_update(conn, self.job["id"], self.token, no, command=argv)
+        echo(f"[esl-worker] H3D_EXTRACT: {p['h3d_path']} → {out_dir} (part={p['part']}, hot_k={p['hot_k']}, "
+             f"top_n={p['top_n']})")
+        echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False))
+        env = dict(os.environ)
+        env.update({"ESL_INPUT": h3d.fwd(p["h3d_path"]), "ESL_OUTPUT": h3d.fwd(out_dir), "ESL_PART": str(p["part"]),
+                    "ESL_CONFIG": h3d.fwd(request)})
+        t0 = time.time()
+        with open(log_path, "ab") as log_fh:
+            try:
+                self.hw_proc = h3d.start(argv, cwd=work, log_fh=log_fh, env=env,
+                                         preexec=limiter.posix_preexec(self.lim), priority=s.worker.priority)
+            except h3d.H3dError as exc:
+                raise _StepFailed(exc.code, exc.message) from None
+            try:
+                applied = limiter.attach_popen(self.lim, self.hw_proc)
+            except limiter.LimiterError as exc:
+                h3d.kill_tree(self.hw_proc, s.worker.terminate_grace_s, self.lim)
+                self.hw_proc = None
+                raise _StepFailed(limiter.FAILURE_CODE, str(exc)) from None
+            pid = self.hw_proc.pid
+            echo(f"[esl-worker] hw pid {pid} 시작, 자원 제한 {applied}")
+            with self._tx() as conn:
+                jobs_repo.step_update(conn, self.job["id"], self.token, no,
+                                      outputs={"hw_acquired": True, "pid": pid, "limiter": applied})
+            while self.hw_proc.poll() is None:
+                time.sleep(0.1)
+                self._wait_tick(tick)
+            code = self.hw_proc.returncode
+            # 그룹에 남은 자식(hw 가 띄운 프로세스)도 정리
+            h3d.kill_tree(self.hw_proc, s.worker.terminate_grace_s, self.lim)
+            self.hw_proc = None
+        self._renew()
+        ok, msg, lines, done = h3d.evaluate(code, out_dir)
+        for ln in lines:
+            echo(ln)
+        echo(f"[esl-worker] hw 종료코드 {code} ({time.time() - t0:.1f}s) — {'성공' if ok else '실패: ' + msg}")
+        if not ok:
+            raise _StepFailed(h3d.FAILURE, msg, code)
+        return {"done": h3d.done_summary(done), "exit_code": code, "hw_acquired": False}
 
 
 def _now(conn):

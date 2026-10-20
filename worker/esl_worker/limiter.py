@@ -16,6 +16,10 @@
 - 시작 신호(gate): 부모는 자식 spawn 직후 제한을 건 다음 Pipe 로 시작 신호(+적용 결과)를 보낸다. 자식은 신호를 받기 전에는
   코어를 import·실행하지 않는다(Windows 에서 Job 할당 전 계산 구간이 없도록 — CREATE_SUSPENDED → resume 대신).
 - 적용 결과: step 로그 `[esl-worker] 자원 제한 …` 줄, 코어 step outputs.limiter(실행 중), 워커 heartbeat limiter(/status).
+- 작업별 분배(P3-UX §6): SLOT 레인이 `worker.slots` 개 동시 실행되므로 작업마다 `for_job`으로 제한기를 따로 만든다 —
+  메모리 = `worker.per_job_memory_gb`(있으면) 또는 max_memory_gb / slots, 코어 = max_logical_cores // slots(≥1,
+  POSIX 는 슬롯 번호만큼 CPU 선호도를 비켜 잡음). Windows 는 작업마다 Job Object 1개(작업 끝에 닫음 — KILL_ON_JOB_CLOSE 로
+  남은 자식·hw 프로세스 트리까지 종료). 서버 h3d 추출 hw(외부 프로그램)도 같은 제한기로 묶는다(`attach_popen`).
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class Limits:
     max_memory_gb: float | None = None
     max_logical_cores: int | None = None
     vm_headroom: float = DEFAULT_VM_HEADROOM     # POSIX RLIMIT_AS 에만 곱함(Windows Job 은 커밋 기준 → 1.0)
+    cpu_offset: int = 0                          # POSIX CPU 선호도 시작 위치(작업 슬롯별로 비켜 잡기)
 
     @classmethod
     def from_cfg(cls, worker_cfg: Any) -> Limits:
@@ -136,6 +141,36 @@ def create(worker_cfg: Any, *, os_name: str | None = None, kernel32: Any = None,
         return UnavailableLimiter(mode, limits, f"{type(exc).__name__}: {exc}")
 
 
+def job_limits(worker_cfg: Any, slot_id: int | None = None) -> Limits:
+    """작업 1개 한도(P3-UX §6): 메모리 = per_job_memory_gb 또는 max_memory_gb / slots, 코어 = max_logical_cores // slots."""
+    base = Limits.from_cfg(worker_cfg)
+    slots = max(1, int(getattr(worker_cfg, "slots", 1) or 1))
+    per = getattr(worker_cfg, "per_job_memory_gb", None)
+    mem = float(per) if per else float(base.max_memory_gb or 0) / slots
+    cores = max(1, int(base.max_logical_cores or 1) // slots)
+    offset = ((max(1, int(slot_id or 1)) - 1) % slots) * cores if slots > 1 else 0
+    return Limits(priority=base.priority, max_memory_gb=mem, max_logical_cores=cores, vm_headroom=base.vm_headroom,
+                  cpu_offset=offset)
+
+
+def for_job(worker: Any, slot_id: int | None = None):
+    """작업 1개용 제한기. 워커 제한기가 사용 불가·null 이면 그대로, posix 는 작업 한도로, windows_job 은 새 Job Object.
+    호출자는 작업이 끝나면 (워커 제한기와 다르면) close() 한다."""
+    base = of(worker)
+    wc = getattr(getattr(worker, "settings", None), "worker", None)
+    if wc is None or isinstance(base, UnavailableLimiter) or base.mode == "null":
+        return base
+    lim = job_limits(wc, slot_id)
+    if base.mode == "posix":
+        return PosixLimiter(lim)
+    try:
+        from .limiter_windows import WindowsJobLimiter
+
+        return WindowsJobLimiter(lim, kernel32=getattr(base, "k", None), cpu_count=getattr(base, "total_cores", None))
+    except Exception as exc:  # noqa: BLE001 - Job 생성 실패 → 이 작업의 코어·hw step 이 LIMITER_FAILED
+        return UnavailableLimiter(base.mode, lim, str(exc) if isinstance(exc, LimiterError) else f"{type(exc).__name__}: {exc}")
+
+
 def of(worker: Any):
     """워커의 제한기(없으면 설정으로 만들어 붙인다)."""
     lim = getattr(worker, "proc_limiter", None)
@@ -157,20 +192,21 @@ def plan(lim: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 부모: 자식 시작 전후 hook
-def prepare(worker: Any, spec: dict[str, Any]):
-    """spawn 전: spec 에 적용 계획과 시작 신호 Pipe(읽기 끝)를 넣는다. 반환값은 after_start 에 그대로 넘긴다."""
+def prepare(worker: Any, spec: dict[str, Any], lim: Any = None):
+    """spawn 전: spec 에 적용 계획과 시작 신호 Pipe(읽기 끝)를 넣는다. 반환값은 after_start 에 그대로 넘긴다.
+    lim = 작업별 제한기(for_job), 없으면 워커 제한기."""
     r, w = multiprocessing.Pipe(duplex=False)
-    spec["limits"] = plan(of(worker))
+    spec["limits"] = plan(lim if lim is not None else of(worker))
     spec["limit_gate"] = r
-    return r, w
+    return r, w, lim
 
 
 def after_start(worker: Any, proc: Any, gate) -> str:
     """spawn 직후: 제한(Windows Job 할당)을 걸고 자식에 시작 신호를 보낸다. 예외를 내지 않는다 — 실패는 자식에 알려
     자식이 결과 {ok: false, code: LIMITER_FAILED}를 남기고 코어 없이 끝난다. 반환 = step outputs.limiter 한 줄."""
-    r, w = gate
+    r, w = gate[0], gate[1]
     r.close()
-    lim = of(worker)
+    lim = gate[2] if len(gate) > 2 and gate[2] is not None else of(worker)
     try:
         try:
             applied = lim.attach(proc)
@@ -268,7 +304,8 @@ def apply_posix(p: dict[str, Any]) -> dict[str, Any]:
     if cores:
         if hasattr(os, "sched_setaffinity"):
             cur = sorted(os.sched_getaffinity(0))
-            keep = cur[: int(cores)]
+            off = int(p.get("cpu_offset") or 0)
+            keep = cur[off: off + int(cores)] if off + int(cores) <= len(cur) else cur[: int(cores)]
             if len(keep) < len(cur):
                 try:
                     os.sched_setaffinity(0, keep)
@@ -280,3 +317,28 @@ def apply_posix(p: dict[str, Any]) -> dict[str, Any]:
             parts.append("CPU 선호도 미지원(이 OS)")
     out["text"] = ", ".join(parts) or "적용할 제한 없음"
     return out
+
+
+# ---------------------------------------------------------------- 외부 프로그램(hw) — P3-UX §6
+def posix_preexec(lim: Any):
+    """Popen preexec_fn: 자식(hw)에 nice·RLIMIT_AS·CPU 선호도. null·windows 는 None."""
+    if getattr(lim, "mode", None) != "posix":
+        return None
+    p = plan(lim)
+
+    def pre() -> None:
+        apply_posix(p)
+
+    return pre
+
+
+def attach_popen(lim: Any, proc: Any) -> str:
+    """시작한 외부 프로세스(Popen)에 제한을 건다(Windows: Job Object 할당). 반환 = 적용 한 줄.
+    실패 → LimiterError(호출자가 프로세스 트리를 끝내고 LIMITER_FAILED)."""
+    if isinstance(lim, UnavailableLimiter):
+        raise LimiterError(f"자원 제한({lim.mode})을 적용할 수 없어 hw 를 실행하지 않습니다: {lim.error}")
+    if getattr(lim, "mode", None) == "windows_job":
+        applied = lim.attach_handle(int(getattr(proc, "_handle", 0) or 0))
+        return f"{applied['mode']}: {applied['text']}"
+    s = lim.summary()
+    return f"{s['mode']}: {s['text']}"

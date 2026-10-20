@@ -37,3 +37,4 @@
 - (P2 §12, 2026-10-20) 수렴 기준 cos_min 0.95, 셀당 노드 64 미만 경고, rep_same은 medoid cos 매칭으로 완화(근거: Verifier cos 민감도 측정 — 실모델 셀당 노드 약 200~650).
 - (P3-UX, 2026-10-20) P0 '업로드 엔드포인트 없음'을 대체: 새 Case 입력은 브라우저 분할 업로드(storage.upload_root, 이어 올리기, multipart 미사용) 또는 서버 폴더 찾아보기. 결과는 zip 받기. 버전은 VERSION+CHANGELOG.md, 상단 표기·업데이트 내역·사용 가이드 화면(근거: 사용자 요청 — 경로 복사 붙여넣기 제거).
 - (P3-UX, 2026-10-20) 서버에 HyperView 있음 → h3d는 서버 워커가 추출(H3D_EXTRACT, argv 템플릿). 사용자 PC 경로는 서버에서 안 보이므로 입력은 업로드(esl-input)만. Case 입력 = rad + (h3d | 추출 결과). worker.slots 기본 2, GPU 제약만. HPC 제출은 P4(근거: 사용자 확인).
+- (P3-UX, 2026-10-20) 서버 추출 출력은 <esl_root>/_h3d/<Case>/raw(코어 출력 보호 규칙 때문). PC 연결 코드 잠금은 출발지 구분 가능 시 5회, 불가 시 서버 전체 30회/15분.

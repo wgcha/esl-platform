@@ -1,7 +1,8 @@
 # ESL 플랫폼(P1b·P2) 설정 예시 (계약 docs/contracts/esl_platform_p1b.md·esl_p2_library.md §11, 원형 esl.md §2).
 # 실제 사용: config/esl_platform.yaml(git 제외)로 복사하거나 env ESL_PLATFORM_CONFIG 로 경로 지정.
 # env ESL_PROFILE 이 profile 보다 우선. 모든 키 필수, 알 수 없는 키는 CONFIG_INVALID(쓰기 API 503).
-# 서버에서 외부 프로그램을 실행하지 않으므로 altair·commands·resources 키는 없다.
+# 외부 프로그램 실행은 서버 h3d 추출(워커 LOCAL step H3D_EXTRACT, 계약 esl_p3_ux.md §6)뿐 — altair·commands 키.
+# 추출 TCL 은 설정이 아니라 코드 스냅샷 안 resources/tcl/esl_h3d_extract.tcl.
 schema_version: 1
 profile: dev                          # dev | prod
 server: {host: 127.0.0.1, port: 8110, base_path: /esl}   # API = {base_path}/api, 프런트 = {base_path}/
@@ -26,6 +27,8 @@ worker:
   limiter: auto                       # auto | none | posix | windows_job
   max_logical_cores: 16
   max_memory_gb: 32
+  slots: 2                            # SLOT 레인 동시 작업 수(같은 Case 는 직렬). 작업별 메모리·코어 = 위 값 / slots
+  per_job_memory_gb: null             # 작업 1개 메모리 한도(GB). 값이 있으면 max_memory_gb / slots 대신 이 값
   vm_headroom: 1.5                    # POSIX RLIMIT_AS = max_memory_gb × 이 값(가상 주소 여유). Windows Job(커밋 기준)은 1.0
   priority: below_normal              # normal | below_normal | idle
   heartbeat_interval_s: 10
@@ -51,6 +54,18 @@ upload:                               # 브라우저 분할 업로드(계약 esl
   max_concurrent_per_user: 2
   stale_hours: 72                     # 미완료 업로드를 _backup 으로 옮기는 시간(삭제 없음)
   allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d]
+altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §6) — 워커가 hw 를 직접 실행(shell 없이, argv 템플릿)
+  version_label: "2026.1"
+  hw_exe_path: "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"   # 공백 허용(실행 파일만). 환경 점검이 존재 확인
+  max_concurrent_hw: 2                # 동시 hw 수(HyperWorks 라이선스 한도에 맞춰 조정) — DB 세마포어, 넘으면 대기
+commands:                             # argv 템플릿(esl.md §4.4): argv[0] = {hw} 만. 허용 placeholder: hw, extract_tcl(_fwd), h3d(_fwd),
+                                      # request(_fwd), out_dir(_fwd), part, hot_k, top_n. 치환값에 & | < > ^ % ! " 가 있으면 실행 전 거부
+  h3d_extract: ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}", "-part", "{part}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}", "-hot_k", "{hot_k}", "-top_n", "{top_n}"]
+client_token:                         # PC 연결(계약 esl_p3_ux.md §9.1): 연결 코드 → PC 토큰 esl_ct_…(서버엔 해시만)
+  ttl_days: 30                        # 토큰 유효 기간
+  code_ttl_min: 15                    # 연결 코드 유효 시간(1회용)
+  max_failures: 5                     # 코드 교환 실패 허용 횟수 → 넘으면 잠금
+  lock_min: 15                        # 잠금 시간(분)
 logging: {level: INFO, mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']}
 core:                                 # 코어 설정: config_path(이 파일 기준 상대경로 가능) 또는 settings(코어 설정 그대로)
   config_path: esl.example.yaml

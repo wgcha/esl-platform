@@ -50,6 +50,11 @@ CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_i
                    " AND comparison_id IS NOT NULL)"
                    " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE') AND case_id IS NOT NULL"
                    " AND analysis_id IS NULL AND comparison_id IS NULL)")
+# 0006: Case 입력 종류, step 종류(LOCAL = 워커가 외부 프로그램 실행), worker_slot 행 수(worker.slots 상한)
+CK_CASES_INPUT_KIND = "input_kind IN ('RESULTS','H3D') AND (input_kind = 'RESULTS' OR h3d_path IS NOT NULL)"
+CK_JOB_STEPS_KIND = "kind IN ('INTERNAL','LOCAL')"
+WORKER_SLOT_ROWS = 16
+CK_WORKER_SLOT_RANGE = f"id BETWEEN 1 AND {WORKER_SLOT_ROWS}"
 CK_ARTIFACTS_KIND = "kind IN (" + ",".join(f"'{k}'" for k in ARTIFACT_KINDS) + ")"
 
 job_queue_seq = Sequence("job_queue_seq", metadata=metadata)
@@ -65,6 +70,8 @@ cases = Table(
     Column("rad_path", String, nullable=False),
     Column("results_dir", String, nullable=False),
     Column("h3d_path", String, nullable=True),
+    # 0006(P3-UX §6): RESULTS = 추출 결과 폴더 입력, H3D = 서버 h3d 추출(CASE_EXTRACT 첫 step H3D_EXTRACT)
+    Column("input_kind", String, nullable=False, server_default="RESULTS"),
     Column("input_fingerprint", JSONB, nullable=False),
     Column("part_title", String(200), nullable=False),
     Column("part_id", BigInteger, nullable=True),
@@ -78,6 +85,7 @@ cases = Table(
     Column("updated_at", TS, nullable=False, server_default=func.now()),
     Column("version", BigInteger, nullable=False, server_default="1"),
     CheckConstraint("status IN ('ACTIVE','ARCHIVED')", name="ck_cases_status"),
+    CheckConstraint(CK_CASES_INPUT_KIND, name="ck_cases_input_kind"),
     CheckConstraint("folder_name ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'", name="ck_cases_folder_name"),
     CheckConstraint("lower(split_part(folder_name, '.', 1)) !~ '^(con|prn|aux|nul|com[1-9]|lpt[1-9])$'"
                     " AND folder_name !~ '[. ]$'", name="ck_cases_folder_reserved"),
@@ -185,8 +193,9 @@ job_steps = Table(
     Column("outputs", JSONB, nullable=True),
     Column("failure_code", String, nullable=True),
     Column("failure_message", String(500), nullable=True),
+    Column("command", JSONB, nullable=True),        # 0006: LOCAL step 실행 직전 argv(전역 관리자만 — API 응답에 없음)
     UniqueConstraint("job_id", "step_no", name="uq_job_steps_job_step"),
-    CheckConstraint("kind IN ('INTERNAL')", name="ck_job_steps_kind"),
+    CheckConstraint(CK_JOB_STEPS_KIND, name="ck_job_steps_kind"),
     CheckConstraint("state IN ('PENDING','RUNNING','SUCCEEDED','FAILED','SKIPPED','CANCELED')",
                     name="ck_job_steps_state"),
     CheckConstraint("state <> 'FAILED' OR failure_code IS NOT NULL", name="ck_job_steps_failure_code"),
@@ -424,7 +433,7 @@ worker_slot = Table(
     Column("lease_generation", BigInteger, nullable=False, server_default="0"),
     Column("lease_acquired_at", TS, nullable=True),
     Column("lease_expires_at", TS, nullable=True),
-    CheckConstraint("id = 1", name="ck_worker_slot_single"),
+    CheckConstraint(CK_WORKER_SLOT_RANGE, name="ck_worker_slot_range"),   # 0006: 행 1..16(worker.slots 만큼 사용)
     CheckConstraint(
         "(lease_owner_id IS NULL AND lease_token IS NULL AND lease_acquired_at IS NULL AND lease_expires_at IS NULL)"
         " OR (lease_owner_id IS NOT NULL AND lease_token IS NOT NULL AND lease_acquired_at IS NOT NULL"
@@ -432,6 +441,60 @@ worker_slot = Table(
         name="ck_worker_slot_lease_identity",
     ),
     CheckConstraint("(holder_job_id IS NULL) = (lease_token IS NULL)", name="ck_worker_slot_holder"),
+)
+
+# ---------------------------------------------------------------- 0006: PC 연결 코드·토큰(계약 esl_p3_ux.md §9.1)
+# 코드·토큰 원문은 저장하지 않는다(sha256 만). 토큰 범위 = project_id 의 /uploads* 와 /version.
+client_codes = Table(
+    "client_codes",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("code_hash", String(64), nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("project_name", String, nullable=True),
+    Column("user_id", String, nullable=False),
+    Column("username", String, nullable=False),
+    Column("display_name", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("expires_at", TS, nullable=False),
+    Column("used_at", TS, nullable=True),
+    Column("token_id", ID, nullable=True),
+    CheckConstraint("role IN ('power','admin')", name="ck_client_codes_role"),
+    CheckConstraint("expires_at > created_at", name="ck_client_codes_expires"),
+)
+Index("ix_client_codes_hash", client_codes.c.code_hash)
+
+client_tokens = Table(
+    "client_tokens",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("token_hash", String(64), nullable=False, unique=True),
+    Column("token_prefix", String(16), nullable=False),        # 표시용 앞부분(esl_ct_xxxx)
+    Column("project_id", String, nullable=False),
+    Column("project_name", String, nullable=True),
+    Column("user_id", String, nullable=False),
+    Column("username", String, nullable=False),
+    Column("display_name", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("device_name", String(100), nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("expires_at", TS, nullable=False),
+    Column("last_used_at", TS, nullable=True),
+    Column("revoked_at", TS, nullable=True),
+    Column("revoked_by", String, nullable=True),
+    CheckConstraint("role IN ('power','admin')", name="ck_client_tokens_role"),
+    CheckConstraint("expires_at > created_at", name="ck_client_tokens_expires"),
+)
+Index("ix_client_tokens_user", client_tokens.c.user_id, client_tokens.c.created_at.desc())
+
+client_code_failures = Table(
+    "client_code_failures",
+    metadata,
+    Column("source", String(100), primary_key=True),           # 요청 출발지(IP)
+    Column("failures", Integer, nullable=False, server_default="0"),
+    Column("window_started_at", TS, nullable=False, server_default=func.now()),
+    Column("locked_until", TS, nullable=True),
 )
 
 worker_heartbeats = Table(
@@ -450,6 +513,6 @@ worker_heartbeats = Table(
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
-    "comparisons", "uploads", "UPLOAD_STATES",
+    "comparisons", "uploads", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

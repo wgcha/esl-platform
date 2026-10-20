@@ -32,14 +32,26 @@ def _files():
             yield from (p for p in base.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+# P3-UX §6: 외부 프로그램 실행은 서버 h3d 추출 모듈 하나만(argv 템플릿·shell=False — esl.md §4.4)
+ALLOWED = {"worker/esl_worker/h3d.py": {"subprocess"}}
+
+
 def test_no_forbidden_patterns():
     hits = []
     for p in _files():
         text = p.read_text(encoding="utf-8")
+        rel = p.relative_to(REPO).as_posix()
         for name, rx in FORBIDDEN.items():
-            if rx.search(text):
-                hits.append(f"{p.relative_to(REPO)}: {name}")
+            if rx.search(text) and name not in ALLOWED.get(rel, set()):
+                hits.append(f"{rel}: {name}")
     assert hits == []
+
+
+def test_h3d_runs_without_shell():
+    """h3d 추출 모듈: Popen 은 shell=False 리터럴로만, os.system·shell=True 없음."""
+    text = (REPO / "worker" / "esl_worker" / "h3d.py").read_text(encoding="utf-8")
+    calls = re.findall(r"subprocess\.(Popen|run)\(([^)]*)", text)
+    assert calls and all("shell=False" in args for _, args in calls)
 
 
 ALLOWED_UPLOAD_ROUTES = {

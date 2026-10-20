@@ -85,7 +85,7 @@ try {
     }
     Invoke-Step 'copy frontend\dist, app(esl·backend\esl_platform·worker\esl_worker·migrations·alembic.ini·pyproject.toml·esl_service.py), config, deploy' {
         Copy-Item -Recurse -Force 'frontend\dist\*' 'dist\bundle\frontend\'
-        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations') {
+        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl') {
             $dst = Join-Path 'dist\bundle\app' $it
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
             Copy-Item -Recurse -Force $it $dst

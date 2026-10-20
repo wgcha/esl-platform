@@ -110,6 +110,41 @@ def test_old_config_without_library_gets_block(tmp_path):
     assert r2["write"]["validation"]["ok"] is True
 
 
+def test_old_config_gets_p3_keys(tmp_path):
+    """P3-UX §6·§9.1: altair·worker.slots·client_token 이 없는 이전 설정 → 예시 값 보충, 사용자 값은 유지."""
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    text = cfg.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    out, skip = [], False
+    for ln in lines:
+        if ln.startswith(("altair:", "commands:", "client_token:")):
+            skip = True
+            continue
+        if skip and (ln.startswith((" ", "#")) or not ln.strip()):
+            continue
+        skip = False
+        if ln.strip().startswith("slots:"):
+            continue
+        out.append(ln.replace("max_concurrent_hw", "x"))
+    cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+    d0 = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert "altair" not in d0 and "slots" not in d0["worker"]
+    r2 = _run("write", inp)
+    for k in ("altair.hw_exe_path", "altair.max_concurrent_hw", "worker.slots", "client_token.ttl_days"):
+        assert k in r2["config_changed_keys"], k
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert d["altair"]["hw_exe_path"] == "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"
+    assert d["altair"]["max_concurrent_hw"] == 2 and d["worker"]["slots"] == 2 and d["client_token"]["ttl_days"] == 30
+    assert r2["write"]["validation"]["ok"] is True
+    # 사용자가 바꾼 값은 유지
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace("slots: 2", "slots: 3"), encoding="utf-8")
+    r3 = _run("write", inp)
+    assert "worker.slots" not in r3["config_changed_keys"]
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["worker"]["slots"] == 3
+
+
 def test_flow_style_config_not_rewritten(tmp_path):
     """흐름 표기(예시 dev 설정 복사본)는 줄 편집으로 안전하게 고칠 수 없으면 바꾸지 않고 안내."""
     inp = _inputs(tmp_path)

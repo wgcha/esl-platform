@@ -15,8 +15,8 @@ from esl_worker import core_adapter
 from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, not_found, unprocessable
-from ...core.inputs import fingerprint
-from ...core.paths import check_input_path
+from ...core.inputs import fingerprint, fingerprint_h3d
+from ...core.paths import check_input_path, h3d_raw_dir
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.cases import VersionConflict
@@ -100,14 +100,14 @@ def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- 생성
-def _check_part(ctx: AppContext, rad: str, results: str, part_title: str) -> tuple[dict, dict | None, list[str]]:
+def _check_part(ctx: AppContext, rad: str, results: str | None, part_title: str) -> tuple[dict, dict | None, list[str]]:
     info = system.inspect_rad(ctx, rad, part_title)
     for p in info["problems"]:
         if p.startswith("PART_NOT_FOUND"):
             raise unprocessable("PART_NOT_FOUND", f"대상 파트 '{part_title}' 가 rad 에 없습니다")
         if p.startswith("PART_AMBIGUOUS"):
             raise unprocessable("PART_AMBIGUOUS", f"대상 파트 '{part_title}' 가 rad 에 여러 개입니다")
-    done, _ = system.read_done(results)
+    done = system.read_done(results)[0] if results else None
     target = info["target_part"]
     if target and done and done.get("part_id") is not None:
         try:
@@ -128,7 +128,21 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
     require_config_ok(ctx)
     s = ctx.settings
     rad = check_input_path(s, body.rad_path, "RAD")
-    results = check_input_path(s, body.results_dir, "RESULTS")
+    h3d = None
+    if body.h3d_path is not None:
+        # P3-UX §6: 서버 h3d 추출 — results_dir = <esl_root>/_h3d/<폴더>/raw(작업 H3D_EXTRACT 가 채움)
+        from .uploads import check_h3d
+
+        if not s.altair.hw_exe_path:
+            raise DomainError("H3D_EXTRACT_UNAVAILABLE", "서버 h3d 추출이 설정되지 않았습니다(altair.hw_exe_path) — "
+                              "PC에서 추출한 결과 폴더로 Case 를 만드세요", status=503)
+        h3d = check_input_path(s, body.h3d_path, "H3D")
+        probs = check_h3d(h3d)
+        if probs:
+            raise unprocessable("INPUT_INVALID", "h3d 파일이 올바르지 않습니다: " + "; ".join(probs), problems=probs)
+        results = h3d_raw_dir(s, body.folder_name)
+    else:
+        results = check_input_path(s, body.results_dir, "RESULTS")
     part_title = body.part_title or (ctx.config.core or {}).get("case", {}).get("part_title")
     if not part_title:
         raise unprocessable("INVALID_PARAMS", "part_title 이 필요합니다")
@@ -141,8 +155,8 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
             raise conflict("FOLDER_EXISTS", "같은 폴더 이름의 Case 가 있습니다")
     if os.path.lexists(cdir):
         raise conflict("FOLDER_EXISTS", "산출물 폴더가 이미 있습니다")
-    info, done, includes = _check_part(ctx, rad, results, part_title)
-    fp = fingerprint(rad, results, includes)
+    info, done, includes = _check_part(ctx, rad, None if h3d else results, part_title)
+    fp = fingerprint_h3d(rad, h3d, includes) if h3d else fingerprint(rad, results, includes)
     target = info["target_part"]
     os.makedirs(s.storage.esl_root, exist_ok=True)
     try:
@@ -153,13 +167,15 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
         with ctx.engine.begin() as conn:
             case = cases_repo.insert_case(
                 conn, project_id=body.project_id, folder_name=body.folder_name, title=body.title, status="ACTIVE",
-                rad_path=rad, results_dir=results, h3d_path=(done or {}).get("h3d"), input_fingerprint=fp,
+                rad_path=rad, results_dir=results, h3d_path=h3d or (done or {}).get("h3d"),
+                input_kind="H3D" if h3d else "RESULTS", input_fingerprint=fp,
                 part_title=part_title, part_id=int(target["id"]) if target else None,
                 created_by=principal.user_id, created_by_name=principal.display_name,
             )
         with open(os.path.join(cdir, "case.json"), "w", encoding="utf-8") as fh:
             json.dump({"id": case["id"], "project_id": case["project_id"], "title": case["title"],
                        "rad_path": rad, "results_dir": results, "h3d_path": case["h3d_path"],
+                       "input_kind": case["input_kind"],
                        "created_at": case["created_at"].isoformat()}, fh, ensure_ascii=False, indent=2)
     except IntegrityError as exc:
         shutil.rmtree(cdir, ignore_errors=True)

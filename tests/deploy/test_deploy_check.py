@@ -14,7 +14,7 @@ import yaml
 from conftest import ROOT
 from esl_platform import check
 
-ALEMBIC_HEAD = "0005"
+ALEMBIC_HEAD = "0006"
 
 
 def _cfg(tmp_path: Path, **storage) -> Path:
@@ -54,6 +54,31 @@ def test_all_ok_with_migrated_db(tmp_path, empty_db_url):
     assert "@127.0.0.1" in db and empty_db_url.split("@")[0].split("//")[1] not in db.replace("postgres@", "")
     assert not list((tmp_path / "esl_root").iterdir())        # 쓰기 시험 파일은 지운다
     assert check.migration_head() == ALEMBIC_HEAD
+
+
+def test_h3d_extract_and_slots_rows(tmp_path, monkeypatch):
+    """P3-UX §6: hw 실행 파일·추출 TCL 존재, worker.slots(작업별 메모리·코어)."""
+    cfg = _cfg(tmp_path)
+    items = check.run_checks(str(cfg), use_db=False, platform="linux")
+    st = {i.key: i for i in items}
+    assert st["altair.extract_tcl"].status == "OK" and st["altair.extract_tcl"].detail.endswith("esl_h3d_extract.tcl")
+    assert st["altair.hw_exe_path"].status == "WARN" and "파일이 없습니다" in st["altair.hw_exe_path"].detail
+    assert st["worker.slots"].status == "OK" and "64 GB" in st["worker.slots"].detail
+    win = {i.key: i for i in check.run_checks(str(cfg), use_db=False, platform="win32")}
+    assert win["altair.hw_exe_path"].status == "FAIL"
+    hw = tmp_path / "Altair" / "hw.exe"
+    hw.parent.mkdir()
+    hw.write_bytes(b"")
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    d["altair"]["hw_exe_path"] = str(hw)
+    cfg.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+    ok = {i.key: i for i in check.run_checks(str(cfg), use_db=False, platform="win32")}
+    assert ok["altair.hw_exe_path"].status == "OK"
+    from esl_platform.core import config as cfgmod
+
+    monkeypatch.setattr(cfgmod, "default_extract_tcl", lambda: str(tmp_path / "none.tcl"))
+    miss = {i.key: i for i in check.run_checks(str(cfg), use_db=False, platform="linux")}
+    assert miss["altair.extract_tcl"].status == "FAIL"
 
 
 def test_upload_root_rows(tmp_path):

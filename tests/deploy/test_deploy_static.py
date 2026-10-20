@@ -238,8 +238,11 @@ def test_prod_example_config():
     assert d["server"] == {"host": "127.0.0.1", "port": 8110, "base_path": "/esl", "frontend_root": None}   # setup.ps1 이 채움
     assert d["core"] == {"config_path": "esl.yaml"} and d["library"] == {"config_path": "library.yaml"}
     assert d["database"]["url_env"] == "ESL_DATABASE_URL"
-    for k in ("altair", "resources", "commands"):
-        assert k not in d
+    assert "resources" not in d                                     # 추출 TCL 은 코드 스냅샷(resources/tcl) — 설정 아님
+    # P3-UX §6: 서버 h3d 추출(hw 2026.1 기본 경로·동시 hw 수), 동시 실행(slots), §9.1 PC 토큰
+    assert d["altair"]["hw_exe_path"] == "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"
+    assert d["altair"]["max_concurrent_hw"] == 2 and d["commands"]["h3d_extract"][0] == "{hw}"
+    assert d["worker"]["slots"] == 2 and "per_job_memory_gb" in d["worker"] and d["client_token"]["ttl_days"] == 30
 
 
 def test_client_update_bat_untouched_and_separate():
@@ -294,6 +297,8 @@ def test_app_snapshot_carries_version_files():
     common = (ROOT / "deploy" / "install-common.ps1").read_text(encoding="utf-8-sig")
     items = re.search(r"\$EslAppItems = @\(([^)]*)\)", common).group(1)
     assert "'VERSION'" in items and "'CHANGELOG.md'" in items
+    assert "'resources/tcl'" in items        # P3-UX §6: 서버 h3d 추출 TCL 을 코드 스냅샷에
+    assert "'resources\\tcl'" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
     assert "Write-EslBuildInfo -Source $Source -Dest $Dest" in common
     for k in ("version = $ver", "commit = (Get-EslGitCommit", "built_at ="):
         assert k in common, k

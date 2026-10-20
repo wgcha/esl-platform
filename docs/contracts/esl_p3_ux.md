@@ -76,3 +76,8 @@
 - 코드 발급·교환·만료·1회용·잠금·폐기·범위(다른 API 403)·다른 프로젝트 업로드 거부·토큰 해시 저장.
 - PC 도구: include 수집(상대·절대·Windows 매핑 실패 경고), 업로드 클라이언트(청크·이어 올리기·sha256 — pwsh로 Linux에서 실서버 대상 실행), 브라우저 열기 URL. ps1 PS 5.1 호환·CRLF·BOM.
 - UI: PC 연결 탭(코드·연결된 PC·폐기), `?upload=` 진입 시 채워진 새 Case.
+
+## 10. 구현 반영 (2026-10-20)
+- 서버 추출 출력 위치: `<esl_root>/_h3d/<Case 폴더>/raw`(계약 §6의 `<case>/01_extract/raw` 대체 — 코어가 출력 폴더 안 입력 폴더를 거부하고 `01_extract`를 통째로 백업하므로). 재추출 전 이전 출력은 `_backup/<UTC>`로.
+- Case 응답에 `input_kind`(h3d|results). `/queue`에 `running_all`·`slots`.
+- PC 연결 코드 실패 잠금: 출발지(peer IP·신뢰 프록시의 X-Forwarded-For)로 구분 가능하면 출발지별 5회/15분, 구분 불가(모두 루프백 프록시)면 서버 전체 기준 30회/15분으로 완화(서비스 거부 방지) — 설정 `client_token.lock_*`.

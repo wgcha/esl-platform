@@ -34,7 +34,7 @@ def test_v_ls_1_lease_expiry(client, engine, mini_inputs):
     assert j["state"] == "INTERRUPTED" and j["failure_code"] == "WORKER_LOST"
     assert [s["state"] for s in j["steps"]] == ["SKIPPED"] * 3
     with engine.connect() as c:
-        slot = c.execute(select(worker_slot)).one()
+        slot = c.execute(select(worker_slot).where(worker_slot.c.id == 1)).one()
         assert slot.holder_job_id is None and slot.lease_token is None
         ev = [r.event for r in c.execute(select(notifications).where(notifications.c.job_id == job["id"]))]
     assert "JOB_INTERRUPTED" in ev

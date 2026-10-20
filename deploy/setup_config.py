@@ -18,7 +18,9 @@
   없을 때만 예시에서 복사한다(설정이 가리키는 상대 경로일 때만).
 - 경로 검사: 절대경로, 공백·& | < > ^ % ! " 없음, esl_root 가 input_roots·spdm_roots 와 겹치지 않음(SPDM 밖), input_roots 존재.
   문제가 있으면 경고하고 그 폴더는 만들지 않는다(최종 판정은 플랫폼 설정 검증).
-- Altair·resources·commands 는 없다(서버에서 외부 프로그램을 실행하지 않음). 솔버 의존성(pypardiso·MKL)은 requirements.lock.
+- P3-UX §6·§9.1: 서버 h3d 추출(altair.hw_exe_path·max_concurrent_hw), 동시 실행(worker.slots), PC 연결 토큰(client_token.ttl_days)
+  키가 기존 설정에 없으면 예시 값으로 보충한다(있으면 유지). 추출 TCL 은 코드 스냅샷(resources/tcl)이라 설정 없음.
+  솔버 의존성(pypardiso·MKL)은 requirements.lock.
 - 대시보드 .env(git 폴더 설치만): VITE_ESL_TARGET=http://127.0.0.1:<server.port>·SIMDASH_ESL_ENABLED=true 를 **없을 때만 끝에 추가**한다
   (이미 있으면 "이미 있음", 다른 값이면 그대로 두고 경고 — 기존 값·다른 줄·인코딩(BOM)·줄 끝은 보존). 바꾸기 전에 <런타임>/_backup/<UTC>/dashboard.env
   로 복사한다. 추가했으면 대시보드를 다시 시작해야 반영된다. .env 가 없으면 만들지 않고 안내만 한다.
@@ -50,6 +52,9 @@ DEPLOY_KEY_ORDER = ("install_mode", "repo_root", "install_root", "dashboard_root
                     "db_name", "db_role", "config_path", "service_user", "run_mode", "caddy_frontend_root",
                     "esl_root", "upload_root", "input_roots", "spdm_roots")
 LIST_KEYS = ("input_roots", "spdm_roots")
+# 기존 설정에 없으면 예시(prod) 값으로 보충하는 키(P3-UX §6 서버 h3d 추출·동시 실행, §9.1 PC 연결 토큰)
+SUPPLEMENT_KEYS = (("altair", "hw_exe_path"), ("altair", "max_concurrent_hw"), ("worker", "slots"),
+                   ("client_token", "ttl_days"))
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -487,6 +492,16 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         text = set_yaml_value(text, ("library", "config_path"), "library.yaml", "setup이 보충 — P2 라이브러리")
         upgraded[("library", "config_path")] = "library.yaml"
         rows.append({"key": "library.config_path", "value": "library.yaml", "action": "보충(새 설정 절)"})
+    # P3-UX §6·§9.1: 서버 h3d 추출·동시 실행·PC 토큰 키 — 기존 설정에 없을 때만 예시 값으로 보충(사용자 값 유지)
+    if not new_file:
+        for path in SUPPLEMENT_KEYS:
+            has_k, _ = _get(base, path)
+            ok_ex, want_v = _get(example, path)
+            if has_k or not ok_ex or want_v is None:
+                continue
+            text = set_yaml_value(text, path, want_v, "setup이 보충 — P3-UX")
+            upgraded[path] = want_v
+            rows.append({"key": ".".join(path), "value": want_v, "action": "보충(새 설정 키)"})
     # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
     login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
     if login_warn:

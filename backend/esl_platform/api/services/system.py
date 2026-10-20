@@ -47,10 +47,13 @@ def queue(ctx: AppContext) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         out: dict[str, Any] = {}
         for lane in ("SLOT", "LIGHT"):
-            running, queued = jobs_repo.queue_lane(conn, lane)
-            out[lane] = {"running": job_out(conn, running) if running else None,
+            running, queued = jobs_repo.queue_lane_all(conn, lane)
+            out[lane] = {"running": job_out(conn, running[0]) if running else None,
+                         "running_all": [job_out(conn, j) for j in running],
                          "queued": [job_out(conn, j) for j in queued]}
-    return {"running": out["SLOT"]["running"], "queued": out["SLOT"]["queued"], "light": out["LIGHT"]}
+    light = {"running": out["LIGHT"]["running"], "queued": out["LIGHT"]["queued"]}
+    return {"running": out["SLOT"]["running"], "running_all": out["SLOT"]["running_all"],
+            "slots": ctx.settings.worker.slots, "queued": out["SLOT"]["queued"], "light": light}
 
 
 # ---------------------------------------------------------------- 경로 확인
@@ -154,4 +157,11 @@ def inspect(ctx: AppContext, principal: Principal, purpose: str, raw: str) -> di
     p = check_input_path(ctx.settings, raw, purpose)
     if purpose == "RAD":
         return inspect_rad(ctx, p)
+    if purpose == "H3D":
+        from .uploads import check_h3d
+
+        probs = check_h3d(p)
+        st = os.stat(p)
+        return {"normalized_path": p, "ok": not probs, "problems": probs, "size": int(st.st_size),
+                "mtime": float(st.st_mtime)}
     return inspect_results(p)

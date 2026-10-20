@@ -2,6 +2,8 @@
 
 - `fingerprint(rad, results_dir, includes)`: `{rad:{size,mtime,sha256}, includes:[{path,size,mtime}],
   results:{done_json_sha256, files:{name:{size,mtime}}}}`
+- `fingerprint_h3d(rad, h3d, includes)`: 서버 h3d 추출 Case(P3-UX §6) — results 대신 `h3d:{path,size,mtime}`
+  (결과 CSV 는 작업이 만드는 산출물이라 지문에 넣지 않음)
 - `changed_inputs(fp)`: size·mtime 이 달라진(또는 사라진) 경로 목록 → 작업 시작 시 `INPUT_CHANGED`.
 - `inputs_hash(...)`: ESL 실행의 입력(추출 작업·part_title·t*·지지점 세트) 해시 → 다르면 stale.
 """
@@ -49,6 +51,15 @@ def fingerprint(rad: str, results_dir: str, includes: list[str]) -> dict[str, An
     }
 
 
+def fingerprint_h3d(rad: str, h3d: str, includes: list[str]) -> dict[str, Any]:
+    return {
+        "rad": {"path": rad, **_stat(rad), "sha256": sha256_file(rad)},
+        "includes": [{"path": p, **_stat(p)} for p in includes if os.path.isfile(p)],
+        "h3d": {"path": h3d, **_stat(h3d)},
+        "results": None,
+    }
+
+
 def changed_inputs(fp: dict[str, Any]) -> list[str]:
     out: list[str] = []
 
@@ -66,6 +77,9 @@ def changed_inputs(fp: dict[str, Any]) -> list[str]:
         chk(rad["path"], rad)
     for inc in fp.get("includes") or []:
         chk(inc["path"], inc)
+    h3d = fp.get("h3d") or {}
+    if h3d.get("path"):
+        chk(h3d["path"], h3d)
     res = fp.get("results") or {}
     base = res.get("path")
     if base:

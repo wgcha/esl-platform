@@ -54,6 +54,8 @@ def _owned(conn, principal: Principal, upload_id: str, *, for_update: bool = Fal
     up = _row(conn, upload_id, for_update=for_update)
     if up["user_id"] != principal.user_id and not principal.is_global_admin:
         raise not_found("UPLOAD_NOT_FOUND", "업로드를 찾을 수 없습니다")
+    if principal.token_project_id is not None and up["project_id"] != principal.token_project_id:
+        raise not_found("UPLOAD_NOT_FOUND", "업로드를 찾을 수 없습니다")   # PC 토큰: 묶인 프로젝트의 업로드만
     return up
 
 
@@ -240,6 +242,8 @@ def get_upload(ctx: AppContext, principal: Principal, upload_id: str) -> dict[st
 
 def list_uploads(ctx: AppContext, principal: Principal, state: str | None) -> list[dict[str, Any]]:
     q = select(uploads).where(uploads.c.user_id == principal.user_id).order_by(uploads.c.created_at.desc()).limit(50)
+    if principal.token_project_id is not None:
+        q = q.where(uploads.c.project_id == principal.token_project_id)
     if state:
         q = q.where(uploads.c.state == state)
     with ctx.engine.connect() as conn:

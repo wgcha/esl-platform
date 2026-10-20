@@ -36,6 +36,9 @@ class Principal:
     display_name: str
     is_global_admin: bool
     roles: dict[str, str] = field(default_factory=dict)
+    # P3-UX §9.1: PC 연결 토큰(esl_ct_)으로 인증한 경우 — 범위 = token_project_id 의 /uploads* 와 /version
+    client_token_id: str | None = None
+    token_project_id: str | None = None
 
     def role(self, project_id: str) -> str | None:
         if self.is_global_admin:
