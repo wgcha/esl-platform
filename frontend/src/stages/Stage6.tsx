@@ -7,6 +7,9 @@ import { usePolling } from "../lib/usePolling";
 import { bytes } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, useAction } from "./common";
+import { CopyPath, TOO_LARGE_TEXT } from "../components/CopyPath";
+import { BundleButton } from "../components/BundleButton";
+import { p3 } from "../api/p3";
 
 const TARGETS: { key: ExportTarget; label: string }[] = [
   { key: "radioss_inc", label: "Radioss inc (/CLOAD·/BCS)" },
@@ -14,38 +17,7 @@ const TARGETS: { key: ExportTarget; label: string }[] = [
   { key: "csv", label: "CSV" },
 ];
 
-export const TOO_LARGE_TEXT = "파일이 커서 다운로드 대신 경로를 복사하세요";
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 경로 표시 + 복사 버튼(PhysicsAI CodeLine·CopyButton 과 같은 모양) */
-export function CopyPath({ path, testId }: { path: string; testId?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="codeline">
-      <code data-testid={testId}>{path}</code>
-      <button
-        type="button"
-        className="btn small ghost"
-        onClick={async () => {
-          if (await copyText(path)) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }
-        }}
-      >
-        {copied ? "복사됨" : "경로 복사"}
-      </button>
-    </div>
-  );
-}
+export { CopyPath, TOO_LARGE_TEXT } from "../components/CopyPath";
 
 /** 다운로드: 413 ARTIFACT_TOO_LARGE(또는 downloadable=false)면 안내 + 경로 복사 */
 function DownloadCell({ a }: { a: ArtifactOut }) {
@@ -155,9 +127,9 @@ export function Stage6({ c, reload, allowed }: StageProps) {
             ))}
           </div>
         </Card>
-        <Card title="결과 폴더">
+        <Card title="결과 폴더" right={<BundleButton url={p3.caseBundleUrl(c.id)} filename={`${c.folder_name}_result.zip`} fallbackPath={folder} />}>
           <CopyPath path={folder} testId="folder-path" />
-          <div className="small muted">내보낸 파일은 이 폴더의 06_export 아래에 있습니다.</div>
+          <div className="small muted">내보낸 파일은 이 폴더의 06_export 아래에 있습니다. 내 PC로 한 번에 받으려면 '결과 받기(zip)'.</div>
         </Card>
       </div>
       <Card title="내보낸 파일 (06_export)">

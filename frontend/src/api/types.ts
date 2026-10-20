@@ -1066,3 +1066,120 @@ export interface ComparisonOut {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------- P3-UX (계약 esl_p3_ux.md §1~§3)
+/** POST /uploads 파일 항목. rel = "rad/<상대경로>" 또는 "results/<상대경로>" */
+export interface UploadFileIn {
+  rel: string;
+  size: number;
+  sha256?: string | null;
+}
+export interface UploadCreate {
+  project_id: string;
+  name: string;
+  files: UploadFileIn[];
+}
+export interface UploadChunkOut {
+  index: number;
+  received: number;
+  done: boolean;
+  sha256?: string | null;
+}
+export interface UploadFileOut {
+  index: number;
+  rel: string;
+  size: number;
+  received: number;
+  done: boolean;
+  sha256?: string | null;
+  sha256_expected?: string | null;
+}
+/** complete 검사 결과(UploadOut.result 에도 저장) */
+export interface UploadCheckOut {
+  ok: boolean;
+  rad_path?: string | null;
+  h3d_path?: string | null;
+  results_dir?: string | null;
+  parts?: RadPart[];
+  missing_includes?: string[];
+  problems?: string[];
+}
+export interface UploadCompleteOut extends UploadCheckOut {
+  upload_id: string;
+  state: "OPEN" | "COMPLETED";
+}
+export type UploadState = "OPEN" | "COMPLETED" | "CANCELED" | "STALE";
+/** POST /uploads·GET /uploads/{id}·POST …/files·DELETE 응답 */
+export interface UploadOut {
+  upload_id: string;
+  project_id: string;
+  name: string;
+  state: UploadState;
+  dir_path: string;
+  chunk_size: number;
+  total_bytes: number;
+  received_bytes: number;
+  files: UploadFileOut[];
+  result?: UploadCheckOut | null;
+  backup_path?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+export interface UploadFilesAdd {
+  files: UploadFileIn[];
+}
+/** §6 새 Case 입력: rad 필수 + h3d(서버 추출, 기본) 또는 추출 결과 폴더 중 하나. openapi 의 CaseCreate 반영 전 별도 타입 */
+export interface CaseCreateP3 {
+  project_id: string;
+  folder_name: string;
+  title: string;
+  rad_path: string;
+  h3d_path?: string | null;
+  results_dir?: string | null;
+  part_title?: string | null;
+}
+/** 서버 폴더 찾아보기(§1.2, §6). hint "h3d" = 서버 추출 입력 */
+export type BrowseHint = "rad" | "results" | "h3d";
+export interface BrowseRoot {
+  index: number;
+  label: string;
+  path: string;
+  kind: "input" | "upload" | "spdm";
+  writable: boolean;
+}
+export interface BrowseEntry {
+  name: string;
+  type: "dir" | "file";
+  size?: number | null;
+  mtime: number;
+  hint?: BrowseHint | null;
+}
+export interface BrowseOut {
+  roots: BrowseRoot[];
+  root?: number | null;
+  /** 루트 기준 상대경로 */
+  path: string;
+  abs_path?: string | null;
+  parent?: string | null;
+  /** 지금 폴더 자체의 힌트(결과 폴더면 "results") */
+  hint?: "results" | null;
+  entries: BrowseEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+}
+/** GET /version */
+export interface VersionOut {
+  version: string;
+  commit: string | null;
+  built_at: string | null;
+}
+export type ChangelogSection = "추가" | "변경" | "수정";
+/** GET /changelog 원소 */
+export interface ChangelogEntry {
+  version: string;
+  date?: string | null;
+  sections: Partial<Record<ChangelogSection, string[]>>;
+}

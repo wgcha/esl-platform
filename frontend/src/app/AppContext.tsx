@@ -1,23 +1,29 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
-import type { Me, Project, Role } from "../api/types";
+import { p3 } from "../api/p3";
+import type { Me, Project, Role, VersionOut } from "../api/types";
 
 interface AppState {
   me: Me | null;
   projects: Project[];
   error: string | null;
+  /** GET /version(실패해도 앱은 동작) */
+  version: VersionOut | null;
 }
 
-const Ctx = createContext<AppState>({ me: null, projects: [], error: null });
+const Ctx = createContext<AppState>({ me: null, projects: [], error: null, version: null });
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>({ me: null, projects: [], error: null });
+  const [state, setState] = useState<AppState>({ me: null, projects: [], error: null, version: null });
   useEffect(() => {
     let alive = true;
     Promise.all([api.me(), api.projects()])
-      .then(([me, projects]) => alive && setState({ me, projects, error: null }))
+      .then(([me, projects]) => alive && setState((s) => ({ ...s, me, projects, error: null })))
       .catch((e) => alive && setState((s) => ({ ...s, error: errorText(e) })));
+    p3.version()
+      .then((version) => alive && setState((s) => ({ ...s, version })))
+      .catch(() => undefined);
     return () => {
       alive = false;
     };

@@ -15,6 +15,19 @@ export function installMockFetch() {
     /* 저장소 없음 */
   }
   const server = new MockServer({ user: user ?? "power" });
+  // 업로드 시연: ?chunkMB=1 청크 크기, ?uploadHang=N N개 청크 뒤 멈춤(진행 중 화면), ?seenVersion=0.3.0 마지막 본 버전
+  const chunk = Number(params.get("chunkMB"));
+  if (chunk > 0) server.p3.chunkSize = chunk * 1024 * 1024;
+  const delay = Number(params.get("uploadDelayMs"));
+  if (delay > 0) server.p3.putDelayMs = delay;
+  const hang = params.get("uploadHang");
+  if (hang !== null) server.p3.hangAfter = Number(hang);
+  const seen = params.get("seenVersion");
+  try {
+    if (seen) localStorage.setItem("esl.lastSeenVersion", seen);
+  } catch {
+    /* 저장소 없음 */
+  }
   window.fetch = createMockFetch(server, window.fetch.bind(window));
   if (params.get("freeze") !== "1") setInterval(() => server.tick(), 2000);
   (window as unknown as { __eslMock: MockServer }).__eslMock = server;

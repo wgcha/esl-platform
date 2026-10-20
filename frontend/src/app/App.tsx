@@ -8,6 +8,9 @@ import { AnalysisNew } from "../pages/library/AnalysisNew";
 import { AnalysisDetail } from "../pages/library/AnalysisDetail";
 import { ComparisonNew } from "../pages/library/ComparisonNew";
 import { ComparisonDetail } from "../pages/library/ComparisonDetail";
+import { NewCase } from "../pages/newcase/NewCase";
+import { Updates } from "../pages/Updates";
+import { Guide } from "../pages/guide/Guide";
 
 export function App() {
   return (
@@ -15,6 +18,9 @@ export function App() {
       <Routes>
         <Route path="/" element={<ProjectList />} />
         <Route path="/p/:projectId" element={<CaseList />} />
+        <Route path="/p/:projectId/cases/new" element={<NewCase />} />
+        <Route path="/updates" element={<Updates />} />
+        <Route path="/guide" element={<Guide />} />
         <Route path="/p/:projectId/c/:caseId/stage/:n" element={<CasePage />} />
         <Route path="/p/:projectId/c/:caseId" element={<Navigate to="stage/1" replace />} />
         <Route path="/p/:projectId/library" element={<LibraryList />} />

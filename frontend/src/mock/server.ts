@@ -12,6 +12,7 @@ import {
 } from "./data";
 import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
+import { P3Mock } from "./p3mock";
 
 interface MockResponse {
   status: number;
@@ -57,6 +58,12 @@ export class MockServer {
   entries: EntryOut[] = [];
   analyses: AnalysisOut[] = [];
   comparisons: ComparisonOut[] = [];
+  /** P3-UX: 업로드·서버 폴더·결과 zip·버전 */
+  p3 = new P3Mock({
+    canRun: (pid) => this.canRun(pid),
+    username: () => this.me.username,
+    casePath: (id) => this.findCase(id)?.folder_path ?? null,
+  });
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -231,7 +238,7 @@ export class MockServer {
       .map(([, kind, name, size], k) => makeArtifact(`${jobId}-a${k}`, c, `06_export/${name}`, size, kind, jobId));
   }
 
-  private canRun(projectId: string) {
+  canRun(projectId: string) {
     const me = this.me;
     if (me.is_global_admin) return true;
     const r = me.roles[projectId];
@@ -309,12 +316,14 @@ export class MockServer {
     }
   }
 
-  handle(method: string, rawPath: string, query: URLSearchParams, body: unknown): MockResponse {
+  handle(method: string, rawPath: string, query: URLSearchParams, body: unknown, bodySize = 0): MockResponse {
     const path = rawPath.replace(/^\/esl\/api/, "");
     const b = (body ?? {}) as Record<string, unknown>;
     const m = (re: RegExp) => path.match(re);
     let r: RegExpMatchArray | null;
     this.queuePositions();
+    const p3r = this.p3.handle(method, path, query, b, bodySize);
+    if (p3r) return p3r;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
@@ -350,7 +359,7 @@ export class MockServer {
     if (method === "POST" && path === "/paths/inspect") {
       const p = String(b.path ?? "").trim();
       if (!p) return err(422, "PATH_NOT_FOUND", "경로를 입력하세요.");
-      if (!/^[A-Za-z]:\\ESL_INPUT\\|^\/data\/esl_input\//i.test(p))
+      if (!/^[A-Za-z]:\\ESL_INPUT\\|^[A-Za-z]:\\VD_SIMULATION_WEB\\esl-input\\|^\/data\/esl_input\/|^\\\\spdm\\/i.test(p))
         return err(422, "PATH_OUTSIDE_ROOT", "허용된 입력 폴더(input_roots) 밖의 경로입니다.");
       if (b.purpose === "RAD") {
         const parts = [
@@ -411,7 +420,9 @@ export class MockServer {
       if (this.cases.some((c) => c.folder_name === folder)) return err(409, "FOLDER_EXISTS", "같은 폴더 이름이 이미 있습니다.");
       const c = baseCase(this.id("c"), String(b.project_id), String(b.title || folder), folder);
       c.rad_path = String(b.rad_path);
-      c.results_dir = String(b.results_dir);
+      if (!b.h3d_path && !b.results_dir) return err(422, "INPUT_MISSING", "h3d 또는 추출 결과 폴더가 필요합니다.");
+      c.results_dir = b.results_dir ? String(b.results_dir) : (null as unknown as string);
+      c.h3d_path = b.h3d_path ? String(b.h3d_path) : null;
       c.part_title = String(b.part_title || "chassis_rear");
       c.part_id = 10;
       this.cases.push(c);
@@ -935,8 +946,13 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       if (h.get("X-ESL-Request") !== "1")
         return new Response(JSON.stringify({ detail: { code: "CSRF_HEADER_REQUIRED", message: "요청 헤더가 없습니다." } }), { status: 403 });
     }
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    const r = server.handle(method, url.pathname, url.searchParams, body);
+    if (server.p3.shouldHang(method, url.pathname.replace(/^\/esl\/api/, ""))) await new Promise(() => undefined);
+    if (method === "PUT" && server.p3.putDelayMs) await new Promise((r) => setTimeout(r, server.p3.putDelayMs));
+    if (method === "PUT") server.p3.chunkShas.push(new Headers(init?.headers).get("X-Chunk-Sha256"));
+    const raw = init?.body;
+    const isBin = typeof Blob !== "undefined" && raw instanceof Blob;
+    const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;
+    const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw as Blob).size : 0);
     if (typeof r.body === "string")
       return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/octet-stream" } });
     return new Response(r.body === undefined ? null : JSON.stringify(r.body), {

@@ -7,7 +7,7 @@
 //     인라인 properties)의 키·필수·null·타입을 재귀로(TS 가 다른 이름의 interface·인라인 객체여도 키 대조).
 //     unknown·any 와 여러 타입 anyOf 는 대조하지 않음.
 // 사용: npm run check:api [-- <openapi.json> <types.ts>]
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -224,9 +224,13 @@ for (const [name, schema] of Object.entries(schemas)) {
 }
 
 // 경로: types.ts 와 별개로 endpoints.ts 가 쓰는 경로가 openapi 에 있는지
-const epPath = path.resolve(path.dirname(typesPath), "endpoints.ts");
+// P3: p3.ts(있으면)도 같은 규칙으로 대조
+const epFiles = ["endpoints.ts", "p3.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
+for (const epPath of epFiles) {
 try {
+  if (epPath.endsWith("p3.ts") && !existsSync(epPath)) continue;
   const ep = readFileSync(epPath, "utf8");
+  const epName = path.basename(epPath);
   const prefix = "/esl/api";
   const known = Object.keys(spec.paths ?? {}).map((p) => new RegExp("^" + p.replace(/\{[^}]+\}/g, "[^/]+") + "$"));
   const used = [...ep.matchAll(/request<[^>]*>\(\s*"(GET|POST|PUT|PATCH|DELETE)",\s*[`"]([^`"]+)[`"]/g)].map((m) => [m[1], m[2]]);
@@ -234,15 +238,16 @@ try {
   for (const [method, p] of [...used, ...dl]) {
     const concrete = prefix + p.replace(/\$\{[^}]+\}/g, "x");
     const hit = Object.entries(spec.paths).find(([sp]) => known[Object.keys(spec.paths).indexOf(sp)].test(concrete));
-    if (!hit) errors.push(`endpoints.ts ${method} ${p}: openapi 에 없는 경로`);
-    else if (!hit[1][method.toLowerCase()]) errors.push(`endpoints.ts ${method} ${p}: openapi 에 없는 메서드`);
+    if (!hit) errors.push(`${epName} ${method} ${p}: openapi 에 없는 경로`);
+    else if (!hit[1][method.toLowerCase()]) errors.push(`${epName} ${method} ${p}: openapi 에 없는 메서드`);
   }
 } catch (e) {
-  errors.push(`endpoints.ts 를 읽을 수 없음: ${e.message}`);
+  errors.push(`${path.basename(epPath)} 를 읽을 수 없음: ${e.message}`);
+}
 }
 
 if (errors.length) {
   console.error(`check:api 실패 (${errors.length}건)\n` + errors.map((e) => "  - " + e).join("\n"));
   process.exit(1);
 }
-console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts 경로 모두 openapi 에 있음`);
+console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts 경로 모두 openapi 에 있음`);
