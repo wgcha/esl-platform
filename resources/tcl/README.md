@@ -14,11 +14,11 @@
 1. 저장소 클론 폴더의 `update.bat` 더블클릭 → git 최신화(fast-forward만) 후 이 폴더의 TCL과 실행기를
    `%LOCALAPPDATA%\esl\app\versions\<git 해시>\`에 복사하고 활성 버전 파일 `...\app\current_version.txt`만 교체한다
    (폴더 rename 없음 — `current`를 탐색기로 열어 둔 채·실행 중에도 업데이트 가능, 최근 5개 + 활성 버전 유지).
-   `...\app\current\`에는 런처(`ESL_probe.bat`, `ESL_extract.bat`, `esl_launch.ps1`)만 있고, 실행할 때마다
+   `...\app\current\`에는 런처(`ESL_probe.bat`, `ESL_extract.bat`, `ESL_upload.bat`, `esl_launch.ps1`)만 있고, 실행할 때마다
    `current_version.txt`가 가리키는 `versions` 폴더의 TCL을 쓴다. 예전 구조(`current`에 TCL이 직접 있음)는 첫 업데이트 때
    배포 산출물만 파일 단위로 정리한다(사용자 파일은 그대로).
 2. 설정 파일 `%LOCALAPPDATA%\esl\esl_deploy.json`(처음 실행 시 생성): `hw_exe`, `work_root`(출력 루트 — 공유 SPDM 폴더 금지),
-   `protected_roots`, `default_part`를 확인하고 `update.bat`을 다시 실행해 점검표가 모두 OK인지 본다.
+   `protected_roots`, `default_part`, `server_url`(ESL 서버 주소, §1.3)을 확인하고 `update.bat`을 다시 실행해 점검표가 모두 OK인지 본다.
 3. `...\app\current\ESL_probe.bat` / `ESL_extract.bat` 위로 h3d를 끌어다 놓는다. 출력은
    `<work_root>\<h3d 이름>\probe` / `csv`, 다른 파트는 `ESL_extract.bat <h3d> <part>`. 끝나면 `probe.json`/`done.json`의
    `ok`·`failed_step`·`error`를 요약하고 출력 폴더를 연다. 콘솔 로그는 `*_console.log`.
@@ -49,6 +49,32 @@ rem    선택: -hot_k 200 (이력 요소 수) -top_n 5 (지표별 후보 프레�
 - 경로의 `\`는 스크립트 안에서 `/`로 바꾼다. 공백 있는 경로는 `"..."`로 감싼다.
 - 인자가 hw에 전달되지 않는 설치본이면 환경변수 `ESL_INPUT`, `ESL_OUTPUT`, `ESL_PART`, `ESL_CONFIG`로 대신 줄 수 있다.
 - 끝나면 `exit 0`(실패 시 `exit 1`)을 호출한다.
+
+### 1.3 PC에서 추출해 ESL 서버로 올리기 (`ESL_extract.bat` 자동 올리기 · `ESL_upload.bat`)
+
+계약: `docs/contracts/esl_p3_ux.md` §9. 대용량 h3d(수~수십 GB)를 서버로 올리는 대신, PC에서 추출한 결과 폴더(수백 MB)와
+rad·include만 올린다. 브라우저 대신 PC 도구가 업로드 API(§1.1·§8)를 직접 부른다.
+
+1. **처음 한 번 — PC 연결**: ESL 화면 새 Case → "PC에서 추출해 올리기" → "PC 연결 코드 만들기"(6자리, 15분, 현재 프로젝트에 묶임).
+   도구를 처음 실행하면 서버 주소(설정 `server_url`, 예 `http://<대시보드 주소>/esl` — 비어 있으면 묻고 `esl_deploy.json`에 저장)와
+   연결 코드를 묻는다. 받은 토큰은 DPAPI(현재 Windows 사용자 범위)로 암호화해 `%LOCALAPPDATA%\esl\client_token.bin`에 둔다
+   (평문 저장 없음, 다른 사용자·다른 PC에서는 풀 수 없음). 토큰이 만료·폐기되면(서버 401) 코드를 다시 묻는다.
+2. **h3d와 rad(`_0000.rad`)를 함께 `ESL_extract.bat` 위로 끌어다 놓는다**(h3d만 놓으면 rad 파일 선택 창, 취소 = 추출만):
+   ① PC HyperView 추출(§1.1과 같음, 출력 `<work_root>\<h3d 이름>\csv`, h3d 폴더에는 쓰지 않음)
+   ② rad의 `/INCLUDE`·`#include`를 재귀로 따라 include 수집(rad 폴더 기준 상대경로·절대경로, 서버와 같은 규칙).
+      못 찾은 include(예: 이 PC에 없는 드라이브의 절대경로)·rad 폴더 밖 상대경로는 경고하고 계속할지 묻는다.
+      rad 폴더 아래 include는 `rad/<상대경로>`, 절대경로 include는 `rad/<파일 이름>`으로 올린다(서버가 파일 이름으로 찾음).
+   ③ 올리기: 결과 폴더(`results/csv/...`, `.log` 등 허용 확장자 밖은 제외) + rad + include. 서버 청크 크기(기본 16 MB)로
+      FileStream에서 읽어 보내고(파일 전체를 메모리에 올리지 않음) 청크마다 sha256(`X-Chunk-Sha256`)을 붙인다.
+      네트워크 오류·5xx는 지수 백오프로 5회 재시도, 409(`UPLOAD_OFFSET_MISMATCH`)면 서버가 받은 크기부터 이어 보낸다.
+      콘솔에 진행률·속도·남은 시간을 표시한다.
+   ④ 서버 검사(complete) → 서버가 누락 include를 알려 주면 이 PC에서 찾아 추가로 올리고 다시 검사 →
+      브라우저로 `<server_url>/p/<프로젝트>/cases/new?upload=<id>`를 연다("Case 만들기"만 누르면 됨).
+3. **중단·실패 후**: 같은 파일로 다시 실행하면 서버 세션을 이어 간다(`%LOCALAPPDATA%\esl\uploads.json`: h3d 경로·크기·수정 시각 →
+   upload_id). 추출 없이 올리기만: csv 폴더와 rad를 `ESL_upload.bat` 위로 끌어다 놓기(`ESL_upload.bat <결과 폴더> [<rad>]`).
+   결과 파일이 바뀌었으면(다시 추출) 이전 미완료 세션은 취소하고(서버 `_backup`으로 이동, 삭제 없음) 새로 올린다.
+4. **네트워크**: 사내 서버 주소는 Windows 시스템 프록시 설정을 따르고(현재 사용자 자격 증명), 루프백(`localhost`, `127.*`)은
+   프록시를 쓰지 않는다. 요청 제한 시간 15분(청크 하나 기준).
 
 ## 2. 고급 옵션: request.txt (`key<TAB>value`, `#` 줄은 주석, 선택)
 

@@ -136,8 +136,11 @@ export interface CaseOut {
   title: string;
   status: string; // ACTIVE | ARCHIVED
   rad_path: string;
+  /** h3d 입력이면 서버 추출 출력 폴더(<esl_root>/_h3d/<폴더>/raw — 추출 전엔 없음) */
   results_dir: string;
   h3d_path: string | null;
+  /** §6·§10: 입력 종류 — H3D = 서버가 h3d 에서 추출(① 첫 step H3D_EXTRACT), RESULTS = 추출 결과 폴더 */
+  input_kind: CaseInputKind;
   input_fingerprint: Record<string, unknown>;
   part_title: string;
   part_id: number | null;
@@ -159,12 +162,16 @@ export interface CaseOut {
 }
 export type Case = CaseOut;
 
+export type CaseInputKind = "RESULTS" | "H3D";
+
+/** §6: rad 필수 + h3d_path(서버 추출) 또는 results_dir(추출 결과 폴더) 중 하나 */
 export interface CaseCreate {
   project_id: string;
   folder_name: string;
   title: string;
   rad_path: string;
-  results_dir: string;
+  h3d_path?: string | null;
+  results_dir?: string | null;
   part_title?: string | null;
 }
 
@@ -176,7 +183,7 @@ export interface CasePatch {
 
 // ---------------------------------------------------------------- 경로 확인 (POST /paths/inspect, 자유 형식)
 export interface InspectReq {
-  purpose: "RAD" | "RESULTS";
+  purpose: "RAD" | "RESULTS" | "H3D";
   path: string;
 }
 
@@ -302,7 +309,12 @@ export interface QueueLane {
 }
 
 export interface QueueOut {
+  /** 하위 호환: SLOT 레인 실행 중 첫 작업 */
   running: JobOut | null;
+  /** §6: SLOT 레인 실행 중 전부(동시 실행 최대 slots 개) */
+  running_all: JobOut[];
+  /** worker.slots — SLOT 레인 동시 실행 수 */
+  slots: number;
   queued: JobOut[];
   light: QueueLane;
 }
@@ -1065,4 +1077,167 @@ export interface ComparisonOut {
   created_by_name: string;
   created_at: string;
   updated_at: string;
+}
+
+// ---------------------------------------------------------------- P3-UX (계약 esl_p3_ux.md §1~§3)
+/** POST /uploads 파일 항목. rel = "rad/<상대경로>" 또는 "results/<상대경로>" */
+export interface UploadFileIn {
+  rel: string;
+  size: number;
+  sha256?: string | null;
+}
+export interface UploadCreate {
+  project_id: string;
+  name: string;
+  files: UploadFileIn[];
+}
+export interface UploadChunkOut {
+  index: number;
+  received: number;
+  done: boolean;
+  sha256?: string | null;
+}
+export interface UploadFileOut {
+  index: number;
+  rel: string;
+  size: number;
+  received: number;
+  done: boolean;
+  sha256?: string | null;
+  sha256_expected?: string | null;
+}
+/** complete 검사 결과(UploadOut.result 에도 저장) */
+export interface UploadCheckOut {
+  ok: boolean;
+  rad_path?: string | null;
+  h3d_path?: string | null;
+  results_dir?: string | null;
+  parts?: RadPart[];
+  missing_includes?: string[];
+  problems?: string[];
+}
+export interface UploadCompleteOut extends UploadCheckOut {
+  upload_id: string;
+  state: "OPEN" | "COMPLETED";
+}
+export type UploadState = "OPEN" | "COMPLETED" | "CANCELED" | "STALE";
+/** POST /uploads·GET /uploads/{id}·POST …/files·DELETE 응답 */
+export interface UploadOut {
+  upload_id: string;
+  project_id: string;
+  name: string;
+  state: UploadState;
+  dir_path: string;
+  chunk_size: number;
+  total_bytes: number;
+  received_bytes: number;
+  files: UploadFileOut[];
+  result?: UploadCheckOut | null;
+  backup_path?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+export interface UploadFilesAdd {
+  files: UploadFileIn[];
+}
+/** 하위 호환 별칭 */
+export type CaseCreateP3 = CaseCreate;
+
+/** POST /paths/inspect purpose H3D(자유 형식): 크기·헤더 검사 */
+export interface InspectH3dResult {
+  normalized_path: string;
+  ok: boolean;
+  problems: string[];
+  size: number;
+  mtime: number;
+}
+
+// ---------------------------------------------------------------- PC 연결 코드·토큰(§9.1, /client-tokens*)
+export interface ClientCodeCreate {
+  project_id: string;
+}
+export interface ClientCodeOut {
+  code: string;
+  project_id: string;
+  expires_at: string;
+}
+export interface ClientExchange {
+  code: string;
+  device_name: string;
+}
+export interface ClientUser {
+  user_id: string;
+  username: string;
+  display_name: string;
+}
+export interface ClientProject {
+  id: string;
+  name?: string | null;
+}
+export interface ClientExchangeOut {
+  token: string;
+  token_id: string;
+  user: ClientUser;
+  project: ClientProject;
+  expires_at: string;
+}
+export type ClientTokenState = "ACTIVE" | "EXPIRED" | "REVOKED";
+export interface ClientTokenOut {
+  id: string;
+  token_prefix: string;
+  project_id: string;
+  project_name?: string | null;
+  device_name: string;
+  user_id: string;
+  username: string;
+  created_at: string;
+  expires_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  state: ClientTokenState;
+}
+/** 서버 폴더 찾아보기(§1.2, §6). hint "h3d" = 서버 추출 입력 */
+export type BrowseHint = "rad" | "results" | "h3d";
+export interface BrowseRoot {
+  index: number;
+  label: string;
+  path: string;
+  kind: "input" | "upload" | "spdm";
+  writable: boolean;
+}
+export interface BrowseEntry {
+  name: string;
+  type: "dir" | "file";
+  size?: number | null;
+  mtime: number;
+  hint?: BrowseHint | null;
+}
+export interface BrowseOut {
+  roots: BrowseRoot[];
+  root?: number | null;
+  /** 루트 기준 상대경로 */
+  path: string;
+  abs_path?: string | null;
+  parent?: string | null;
+  /** 지금 폴더 자체의 힌트(결과 폴더면 "results") */
+  hint?: "results" | null;
+  entries: BrowseEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+}
+/** GET /version */
+export interface VersionOut {
+  version: string;
+  commit: string | null;
+  built_at: string | null;
+}
+export type ChangelogSection = "추가" | "변경" | "수정";
+/** GET /changelog 원소 */
+export interface ChangelogEntry {
+  version: string;
+  date?: string | null;
+  sections: Partial<Record<ChangelogSection, string[]>>;
 }

@@ -23,6 +23,7 @@ const FALLBACK: Record<number, string> = {
   413: "파일이 커서 다운로드 대신 경로를 복사하세요.",
   422: "입력값을 확인하세요.",
   503: "서버를 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
+  507: "서버 저장 공간이 부족합니다 — 관리자에게 알리거나, PC에서 추출한 결과 폴더(수백 MB)만 올리세요.",
 };
 
 type Query = Record<string, string | number | boolean | null | undefined>;
@@ -80,6 +81,9 @@ export const CODE_TEXT: Record<string, string> = {
   MAPPING_DEGENERATE: "대상 메시로 하중을 옮길 수 없는 항목이 있습니다(매핑 퇴화) — 필터에서 빼고 다시 실행하세요.",
   GRID_MISMATCH: "항목들의 정규화 격자가 달라 대상 없이 묶을 수 없습니다 — 설계 대상을 고르세요.",
   NORMALIZATION_META_MISSING: "질량 정규화에 필요한 제품 질량이 없는 항목이 있습니다 — 라이브러리에서 입력하세요.",
+  BUNDLE_EMPTY: "받을 결과가 아직 없습니다 — ⑥ 내보내기나 ⑤ 검증(보고서)을 먼저 실행하세요.",
+  INSUFFICIENT_STORAGE: "서버 저장 공간이 부족합니다 — 관리자에게 알리거나, PC에서 추출한 결과 폴더(수백 MB)만 올리세요.",
+  CHUNK_SHA256_MISMATCH: "전송 중 손상된 청크가 있습니다 — '이어 올리기'로 다시 보내세요.",
   VERSION_CONFLICT: "다른 사용자가 먼저 수정했습니다 — 새로 고친 뒤 다시 시도하세요.",
 };
 

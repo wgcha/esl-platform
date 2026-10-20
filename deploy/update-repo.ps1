@@ -181,6 +181,9 @@ try {
     if ($dash -and $dash.WebBasePath) { $inputs['dashboard_web_base_path'] = "$($dash.WebBasePath)" }
     $result = Invoke-EslSetupConfig -VenvPy $venvPy -Action write -RuntimeDir $rt -Inputs $inputs
     Write-EslConfigValidation -Result $result | Out-Null
+    if ($result.upload_root) {
+        Write-Step "업로드 위치(storage.upload_root, 입력 루트에 자동 포함): $($result.upload_root)$(if (@($result.write.created) -contains $result.upload_root) { ' — 새로 만듦' })"
+    }
     $envAdded = @($result.write.dashboard_env.added | Where-Object { $_ })
     if ($envAdded.Count) {
         Write-Step "대시보드 .env에 $($envAdded -join ', ') 추가(이전 사본: $($result.write.dashboard_env.backup)) — 대시보드를 다시 시작해야 /esl/ 연결이 반영됩니다"

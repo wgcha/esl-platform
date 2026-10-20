@@ -1,4 +1,8 @@
-"""워커 런타임: heartbeat·리퍼·SLOT/LIGHT 레인 루프. 시험은 `run_once(lane)`를 직접 호출한다."""
+"""워커 런타임: heartbeat·리퍼·SLOT/LIGHT 레인 루프. 시험은 `run_once(lane)`를 직접 호출한다.
+
+P3-UX §6: SLOT 레인 루프는 `worker.slots` 개(각자 claim → 실행, DB worker_slot 행 1..slots 로 동시 수 보장, 같은 Case 는
+claim 조건·부분 unique 로 직렬), LIGHT 레인은 별도 1개.
+"""
 
 from __future__ import annotations
 
@@ -52,7 +56,10 @@ class Worker:
             workers_repo.heartbeat(conn, worker_id=self.worker_id, host=socket.gethostname(), pid=os.getpid(),
                                    app_version=__version__, limiter=self.limiter,
                                    info={"claims_paused": self.claims_paused,
-                                         "limits": self.proc_limiter.summary()})
+                                         "limits": self.proc_limiter.summary(),
+                                         "slots": self.settings.worker.slots,
+                                         "per_job": limiter_mod.job_limits(self.settings.worker).__dict__,
+                                         "max_concurrent_hw": self.settings.altair.max_concurrent_hw})
 
     def reap_once(self) -> list[str]:
         with self.engine.begin() as conn:
@@ -65,7 +72,7 @@ class Worker:
         try:
             with self.engine.begin() as conn:
                 if lane == "SLOT":
-                    return jobs_repo.claim_slot(conn, self.worker_id, ttl)
+                    return jobs_repo.claim_slot(conn, self.worker_id, ttl, self.settings.worker.slots)
                 return jobs_repo.claim_light(conn, self.worker_id, ttl)
         except (jobs_repo.ClaimRace, IntegrityError):
             # IntegrityError = 같은 Case 의 다른 작업이 동시에 RUNNING 이 됨(ux_jobs_case_running) → 다음 주기에
@@ -93,8 +100,9 @@ class Worker:
 
     def start(self) -> None:
         w = self.settings.worker
-        specs = [(self.heartbeat_once, w.heartbeat_interval_s), (lambda: self.run_once("SLOT"), w.claim_interval_s),
-                 (lambda: self.run_once("LIGHT"), w.claim_interval_s)]
+        specs = [(self.heartbeat_once, w.heartbeat_interval_s)]
+        specs += [(lambda: self.run_once("SLOT"), w.claim_interval_s) for _ in range(int(w.slots))]
+        specs += [(lambda: self.run_once("LIGHT"), w.claim_interval_s)]
         for fn, iv in specs:
             t = threading.Thread(target=self._loop, args=(fn, iv), daemon=True)
             t.start()

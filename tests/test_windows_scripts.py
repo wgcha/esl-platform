@@ -19,8 +19,9 @@ UPDATE_PS1 = os.path.join(WIN, "update.ps1")
 RUN_PS1 = os.path.join(WIN, "esl_run.ps1")
 LIB_PS1 = os.path.join(WIN, "esl_deploy_lib.ps1")
 LAUNCH_PS1 = os.path.join(WIN, "esl_launch.ps1")
+UPLOAD_PS1 = os.path.join(WIN, "esl_upload_lib.ps1")
 EXAMPLE = os.path.join(ROOT, "config", "esl_deploy.example.json")
-PS1_FILES = [UPDATE_PS1, RUN_PS1, LIB_PS1, LAUNCH_PS1]
+PS1_FILES = [UPDATE_PS1, RUN_PS1, LIB_PS1, LAUNCH_PS1, UPLOAD_PS1]
 
 
 def _read(p: str) -> str:
@@ -243,12 +244,13 @@ def test_test_path_under_semantics():
 
 def test_example_config_keys():
     cfg = json.load(open(EXAMPLE, encoding="utf-8"))
-    assert set(cfg) == {"hw_exe", "work_root", "deploy_dir", "branch", "default_part", "protected_roots"}
+    assert set(cfg) == {"hw_exe", "work_root", "deploy_dir", "branch", "default_part", "protected_roots", "server_url"}
     assert cfg["hw_exe"].lower().endswith("hw.exe") and "2026.1" in cfg["hw_exe"]
     assert cfg["work_root"].startswith("%USERPROFILE%")
     assert cfg["deploy_dir"].startswith("%LOCALAPPDATA%")
     assert cfg["branch"] == "" and cfg["default_part"] == "chassis_rear"
     assert cfg["protected_roots"] == []
+    assert cfg["server_url"] == ""            # 처음 올릴 때 묻고 저장(예 http://<대시보드 주소>/esl)
 
 
 def test_config_defaults_come_from_example_only():
@@ -416,6 +418,7 @@ def _publish_harness(tmp_path):
     sd = tmp_path / "scripts"
     sd.mkdir()
     (sd / "esl_launch.ps1").write_bytes(open(LAUNCH_PS1, "rb").read())
+    (sd / "esl_upload_lib.ps1").write_bytes(open(UPLOAD_PS1, "rb").read())
     (sd / "esl_run.ps1").write_text(       # 실행기 대역: 자기 폴더·인자를 출력하고 7 로 종료
         "param([string]$Mode,[Parameter(ValueFromRemainingArguments=$true)][string[]]$Items=@())\n"
         "Write-Output \"RUN $PSScriptRoot $Mode $($Items -join '|')\"\nexit 7\n")
@@ -452,8 +455,12 @@ def test_publish_migrates_legacy_layout_with_pwsh(tmp_path):
     assert r.returncode == 0 and "RESULT 1111111" in r.stdout + r.stderr, (r.stdout, r.stderr)
     assert (dep / "current_version.txt").read_text().strip() == "1111111"
     v = dep / "versions" / "1111111"
-    assert sorted(os.listdir(v)) == ["README.md", "VERSION.txt", "esl_h3d_extract.tcl", "esl_h3d_probe.tcl", "esl_run.ps1"]
-    assert sorted(os.listdir(cur)) == ["ESL_extract.bat", "ESL_probe.bat", "big.h3d", "esl_launch.ps1", "sub"]
+    assert sorted(os.listdir(v)) == ["README.md", "VERSION.txt", "esl_h3d_extract.tcl", "esl_h3d_probe.tcl", "esl_run.ps1",
+                                     "esl_upload_lib.ps1"]
+    assert sorted(os.listdir(cur)) == ["ESL_extract.bat", "ESL_probe.bat", "ESL_upload.bat", "big.h3d", "esl_launch.ps1", "sub"]
+    up_bat = (cur / "ESL_upload.bat").read_bytes()
+    up_bat.decode("ascii")
+    assert b"-Mode upload %*" in up_bat and up_bat.count(b"\n") == up_bat.count(b"\r\n")
     assert (cur / "big.h3d").read_text() == "old" and (cur / "sub" / "keep.h3d").read_text() == "u"
     assert not (dep / "abc1234").exists() and not (dep / "current.old.20260101_000000").exists()
     assert (dep / "def5678" / "user.h3d").exists()
@@ -513,3 +520,53 @@ def test_publish_keeps_legacy_files_when_launcher_locked_with_pwsh(tmp_path):
     assert "CHECK 런처 ESL_extract.bat WARN" in r.stdout
     assert (cur / "esl_run.ps1").exists() and (cur / "esl_h3d_probe.tcl").exists()   # 예전 런처용으로 남김
     assert (dep / "current_version.txt").read_text().strip() == "3333333"
+
+
+# ---- PC 추출 + 자동 올리기(계약 esl_p3_ux.md §9.2) -----------------------------------------------------
+
+def test_upload_lib_static_rules():
+    """HttpClient(대용량 스트림·타임아웃·시스템 프록시·루프백 제외), FileStream 청크, 청크 sha256, 409 이어 올리기,
+    지수 백오프 5회, DPAPI 토큰, uploads.json, 브라우저 URL. 실제 동작은 tests/windows/test_pc_upload_client.py."""
+    text = _read(UPLOAD_PS1)
+    code = "\n".join(_code_lines(UPLOAD_PS1))
+    for bad in ("Invoke-WebRequest", "Invoke-RestMethod", "ReadAllBytes", "WebClient"):
+        assert bad not in code, bad
+    assert "System.Net.Http.HttpClient" in code and "$client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)" in code
+    assert "[Net.WebRequest]::GetSystemWebProxy()" in code and "$handler.UseProxy = $false" in code
+    assert "Test-EslLoopback $ServerUrl" in code
+    send = _function_body(text, "Send-EslFile")
+    assert "New-Object IO.FileStream(" in send and "$fs.Seek($offset" in send
+    assert "New-Object byte[]" in send and "Get-EslSha256Hex $buf $n" in send and "-ChunkSha $sha" in send
+    assert "'UPLOAD_OFFSET_MISMATCH'" in send and "$r.Json.detail.received" in send
+    assert "'CHUNK_SHA256_MISMATCH'" in send and "'UPLOAD_FILE_DONE'" in send
+    http = _function_body(text, "Invoke-EslHttp")
+    assert "X-Chunk-Sha256" in http and "'Bearer ' + $Ctx.Token" in http and "application/octet-stream" in http
+    assert "[Math]::Pow(2, $attempt)" in http and "$status -eq 401" in http
+    assert "$EslRetries = 5" in text
+    prot = _function_body(text, "Protect-EslSecret")
+    assert "ConvertFrom-SecureString" in prot and "Test-EslWindows" in prot and "throw" in prot
+    assert "'client_token.bin'" in text and "'uploads.json'" in text
+    assert "'/client-tokens/exchange'" in text and "device_name" in text
+    assert "'{0}/p/{1}/cases/new?upload={2}'" in text
+    assert "System.Windows.Forms.OpenFileDialog" in text
+    # 토큰을 평문으로 쓰지 않음: client_token.bin 에 쓰는 곳은 Protect-EslSecret 결과뿐
+    writes = [ln.strip() for ln in code.splitlines() if "Write-EslTextFile $Ctx.TokenPath" in ln]
+    assert writes == ["Write-EslTextFile $Ctx.TokenPath (Protect-EslSecret $plain)"]
+
+
+def test_runner_upload_modes():
+    run = _read(RUN_PS1)
+    assert "[ValidateSet('probe', 'extract', 'upload')]" in run
+    assert ". (Join-Path $PSScriptRoot 'esl_upload_lib.ps1')" in run
+    assert "Select-EslRadFile" in run and "Connect-EslClient $ctx" in run
+    assert "Get-EslUploadKey $Anchor" in run and "Publish-Results $ctx $outDir $rad $stem $h3d" in run
+    # 추출(hw) 다음에 올리기
+    loop = run[run.index("foreach ($h3d in $h3ds)"):]
+    assert loop.index("Start-Process -FilePath $hwExe") < loop.index("Publish-Results $ctx $outDir")
+    assert "[ValidateSet('probe', 'extract', 'upload')]" in _read(LAUNCH_PS1)
+    lib = _read(LIB_PS1)
+    assert "$LauncherNames = @('ESL_probe.bat', 'ESL_extract.bat', 'ESL_upload.bat', 'esl_launch.ps1')" in lib
+    pub = _function_body(_read(UPDATE_PS1), "Publish-Deployment")
+    assert "[Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'upload'))" in pub
+    assert "$runner, $uploadLib))" in pub
+    assert "'esl_upload_lib.ps1')) {" in _function_body(_read(UPDATE_PS1), "Test-Environment")

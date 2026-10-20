@@ -1,8 +1,11 @@
-﻿# esl_run.ps1 -- ESL_probe.bat / ESL_extract.bat 가 (current\esl_launch.ps1 을 거쳐) 부르는 실행기
-#   update.ps1 이 deploy_dir\versions\<버전>\ 에 TCL 과 함께 배포한다. TCL 은 이 파일과 같은 폴더의 것을 쓴다.
+﻿# esl_run.ps1 -- ESL_probe.bat / ESL_extract.bat / ESL_upload.bat 가 (current\esl_launch.ps1 을 거쳐) 부르는 실행기
+#   update.ps1 이 deploy_dir\versions\<버전>\ 에 TCL·esl_upload_lib.ps1 과 함께 배포한다. 같은 폴더의 것을 쓴다.
 #
 #   ESL_probe.bat   <h3d> [<h3d> ...] [<part>]
-#   ESL_extract.bat <h3d> [<h3d> ...] [<part>]      (part 기본값 = 설정 default_part)
+#   ESL_extract.bat <h3d> [<h3d> ...] [<rad>] [<part>]   (part 기본값 = 설정 default_part)
+#       추출 뒤 결과 폴더 + rad + include 를 ESL 서버로 올리고 새 Case 화면을 연다(계약 esl_p3_ux.md §9.2).
+#       rad 를 같이 끌어다 놓지 않으면 파일 선택 창이 뜬다(취소 = 추출만).
+#   ESL_upload.bat  <결과 폴더> [<rad>]                  추출 없이 올리기만(중단된 업로드 이어 올리기)
 #
 # 출력 폴더 = <work_root>\<h3d 파일명(확장자 제외)>\probe | csv
 # h3d 가 있는 폴더(공유 SPDM 등)와 protected_roots 아래에는 절대 쓰지 않는다(출력 폴더가 그 아래면 거부).
@@ -10,13 +13,16 @@
 # 설정: %LOCALAPPDATA%\esl\esl_deploy.json (update.bat 이 만든다). 실행할 때마다 다시 읽는다.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('probe', 'extract')][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet('probe', 'extract', 'upload')][string]$Mode,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Items = @()
 )
 
 $ErrorActionPreference = 'Stop'
 $ConfigPath = Join-Path $env:LOCALAPPDATA 'esl\esl_deploy.json'
 $BadChars = '[%!&]'
+
+# 서버 올리기(HttpClient·토큰·include 수집·이어 올리기)
+. (Join-Path $PSScriptRoot 'esl_upload_lib.ps1')
 
 function Say([string]$Message, [string]$Color = 'Gray') { Write-Host $Message -ForegroundColor $Color }
 
@@ -121,6 +127,39 @@ function Show-Result([string]$JsonPath, [string]$Kind) {
     return $ok
 }
 
+# done.json 이 있고 ok 인지
+function Test-ExtractOk([string]$OutDir) {
+    $p = Join-Path $OutDir 'done.json'
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $false }
+    try { return ((Get-Content -Raw -Encoding UTF8 -LiteralPath $p | ConvertFrom-Json).ok -eq $true) } catch { return $false }
+}
+
+# 결과 폴더 + rad(+include) -> 서버. 실패해도 예외 대신 $false (다른 h3d 는 계속)
+function Publish-Results($Ctx, [string]$OutDir, [string]$Rad, [string]$Name, [string]$Anchor) {
+    Say ''
+    Say "==> [upload] $OutDir" 'Cyan'
+    Say "    rad: $Rad"
+    try {
+        if (-not (Test-ExtractOk $OutDir)) { throw "추출 결과가 ok 가 아닙니다(done.json): $OutDir" }
+        $plan = Confirm-EslOutsideIncludes (Get-EslUploadPlan $OutDir $Rad)   # rad 폴더 밖 include 는 Y 확인 시만
+        if (-not (Confirm-EslPlan $plan)) { Say '    올리기를 취소했습니다.' 'Yellow'; return $false }
+        $res = Invoke-EslPcUpload $Ctx $plan $Name (Get-EslUploadKey $Anchor)
+        return [bool]$res.Ok
+    }
+    catch {
+        Write-Host ''
+        Say ("    [오류] " + $_.Exception.Message) 'Red'
+        Say "    다시 실행하면 이어 올립니다(추출 없이: ESL_upload.bat `"$OutDir`" `"$Rad`")" 'Yellow'
+        return $false
+    }
+}
+
+function Get-RadArg([string]$V) {
+    if ($V -match $BadChars) { throw "경로에 %, !, & 문자가 있으면 지원하지 않습니다: $V" }
+    if (-not (Test-Path -LiteralPath $V -PathType Leaf)) { throw "rad 파일이 없습니다: $V" }
+    return [IO.Path]::GetFullPath($V)
+}
+
 $exitCode = 0
 try {
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
@@ -132,6 +171,44 @@ try {
     $defaultPart = [string]$cfg.default_part
     $protected = @(@($cfg.protected_roots) | Where-Object { $_ } | ForEach-Object { Expand-ConfigPath ([string]$_) })
     $deployDir = Expand-ConfigPath ([string]$cfg.deploy_dir)
+
+    # ---- 올리기만: ESL_upload.bat <결과 폴더> [<rad>] ----
+    if ($Mode -eq 'upload') {
+        $resDir = ''; $rad = ''
+        $raw = @($Items | Where-Object { $_ -ne $null -and $_.Trim() -ne '' })
+        if ($raw.Count -eq 0) {
+            $line = Read-EslInput '결과 폴더(ESL_extract.bat 이 만든 csv 폴더) 경로'
+            if ($line) { $raw = @($line) }
+        }
+        foreach ($a in $raw) {
+            $v = $a.Trim().Trim('"').Trim()
+            if (-not $v) { continue }
+            if ($v -match $BadChars) { throw "경로에 %, !, & 문자가 있으면 지원하지 않습니다: $v" }
+            if (Test-Path -LiteralPath $v -PathType Container) {
+                if ($resDir) { throw "결과 폴더는 하나만 지정할 수 있습니다: $resDir, $v" }
+                $resDir = [IO.Path]::GetFullPath($v).TrimEnd('\')
+            }
+            elseif ([IO.Path]::GetExtension($v) -ieq '.rad') {
+                if ($rad) { throw "rad 는 하나만 지정할 수 있습니다(Starter _0000.rad): $rad, $v" }
+                $rad = Get-RadArg $v
+            }
+            else { throw "결과 폴더나 rad 파일이 아닙니다: $v" }
+        }
+        if (-not $resDir) { throw '결과 폴더가 지정되지 않았습니다. ESL_extract.bat 이 만든 csv 폴더를 ESL_upload.bat 위로 끌어다 놓으세요.' }
+        $done = Join-Path $resDir 'done.json'
+        if (-not (Test-Path -LiteralPath $done -PathType Leaf)) { throw "결과 폴더에 done.json 이 없습니다: $resDir" }
+        if (-not $rad) {
+            $rad = Select-EslRadFile '' "rad 파일 선택 - $(Split-Path -Leaf $resDir)"
+            if (-not $rad) { throw 'rad 파일이 없어 올리지 않습니다.' }
+            $rad = Get-RadArg $rad
+        }
+        $name = Split-Path -Leaf $resDir
+        if ($name -ieq 'csv') { $name = Split-Path -Leaf (Split-Path -Parent $resDir) }
+        $ctx = New-EslContext (Get-EslServerUrl $ConfigPath $cfg)
+        if (-not (Publish-Results $ctx $resDir $rad $name $done)) { $exitCode = 1 }
+        exit $exitCode
+    }
+
     if (-not $hwExe -or -not (Test-Path -LiteralPath $hwExe -PathType Leaf)) {
         throw "hw.exe 를 찾을 수 없습니다: '$hwExe'  -> 설정 hw_exe 를 고치세요: $ConfigPath"
     }
@@ -150,14 +227,20 @@ try {
         }
     }
 
-    # 인자 분류: 있는 파일 = h3d, 그 외(.h3d 로 끝나지 않는 것 1개) = 파트
+    # 인자 분류: 있는 파일 = h3d (extract 는 .rad 도), 그 외(.h3d 로 끝나지 않는 것 1개) = 파트
     $h3ds = @()
     $part = ''
+    $radArg = ''
     foreach ($a in $raw) {
         $v = $a.Trim().Trim('"').Trim()
         if (-not $v) { continue }
         if ($v -match $BadChars) {
             throw "경로/인자에 %, !, & 문자가 있으면 지원하지 않습니다(배치 파일이 값을 바꿀 수 있음): $v  -> 파일/폴더 이름을 바꾸세요."
+        }
+        if ($Mode -eq 'extract' -and [IO.Path]::GetExtension($v) -ieq '.rad' -and (Test-Path -LiteralPath $v -PathType Leaf)) {
+            if ($radArg) { throw "rad 는 하나만 끌어다 놓으세요(Starter _0000.rad): $radArg, $v" }
+            $radArg = [IO.Path]::GetFullPath($v)
+            continue
         }
         if (Test-Path -LiteralPath $v -PathType Leaf) {
             if ([IO.Path]::GetExtension($v) -ne '.h3d') { throw "h3d 파일만 받습니다: $v" }
@@ -174,6 +257,27 @@ try {
     if ($h3ds.Count -eq 0) { throw 'h3d 파일이 지정되지 않았습니다. h3d 파일을 이 bat 파일 위로 끌어다 놓으세요.' }
     if ($Mode -eq 'extract' -and -not $part) { $part = $defaultPart }
 
+    # extract: h3d 마다 rad(끌어다 놓은 것 또는 선택 창, 취소 = 추출만) + 서버 연결(처음엔 주소·연결 코드 질문)
+    $radFor = @{}
+    $ctx = $null
+    if ($Mode -eq 'extract') {
+        foreach ($h in $h3ds) {
+            if ($radArg) { $radFor[$h] = $radArg; continue }
+            $sel = Select-EslRadFile (Split-Path -Parent $h) ("rad 파일 선택 - " + (Split-Path -Leaf $h) + " (취소 = 추출만)")
+            if ($sel) { $radFor[$h] = (Get-RadArg $sel) } else { Say "    $(Split-Path -Leaf $h): rad 를 고르지 않아 추출만 합니다." 'Yellow' }
+        }
+        if ($radFor.Count -gt 0) {
+            try {
+                $ctx = New-EslContext (Get-EslServerUrl $ConfigPath $cfg)
+                [void](Connect-EslClient $ctx)
+            }
+            catch {
+                Say ("    [경고] 서버 연결 준비 실패 - 추출만 합니다(나중에 ESL_upload.bat): " + $_.Exception.Message) 'Yellow'
+                $ctx = $null
+            }
+        }
+    }
+
     $sub = if ($Mode -eq 'probe') { 'probe' } else { 'csv' }
     $jsonName = if ($Mode -eq 'probe') { 'probe.json' } else { 'done.json' }
     $okCount = 0
@@ -181,6 +285,7 @@ try {
         $stem = [IO.Path]::GetFileNameWithoutExtension($h3d)
         $h3dDir = Split-Path -Parent $h3d
         $outDir = Join-Path (Join-Path $workRoot $stem) $sub
+        $rad = $(if ($ctx -and $radFor.ContainsKey($h3d)) { $radFor[$h3d] } else { '' })
         Say ''
         Say "==> [$Mode] $h3d" 'Cyan'
         Say "    출력: $outDir"
@@ -190,18 +295,29 @@ try {
             Assert-OutputAllowed $outDir $h3dDir $protected
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             Assert-OutputAllowed $outDir $h3dDir $protected   # 만든 뒤 링크 경로로 다시 확인
-            $hwArgs = @('-clientconfig', 'hwpost.dat', '-b', '-tcl', (Quote-Arg $tcl), '-input', (Quote-Arg $h3d), '-output', (Quote-Arg $outDir))
-            if ($part) { $hwArgs += @('-part', (Quote-Arg $part)) }
-            # 인자가 hw 에 전달되지 않는 설치본 대비(TCL 이 환경변수도 읽음)
-            $env:ESL_INPUT = $h3d; $env:ESL_OUTPUT = $outDir; $env:ESL_PART = $part; $env:ESL_CONFIG = ''
-            $log = Join-Path $outDir ($Mode + '_console.log')
-            $errLog = Join-Path $outDir ($Mode + '_stderr_console.log')
-            Say "    실행 중... (콘솔 로그: $log)"
-            $proc = Start-Process -FilePath $hwExe -ArgumentList ($hwArgs -join ' ') -WorkingDirectory $outDir `
-                -RedirectStandardOutput $log -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
-            Say ("    hw 종료 코드: {0}" -f $proc.ExitCode)
-            if (Show-Result (Join-Path $outDir $jsonName) $Mode) { $okCount++ } else { $exitCode = 1 }
-            Start-Process -FilePath 'explorer.exe' -ArgumentList (Quote-Arg $outDir)
+            $skip = $false
+            if ($rad -and (Test-ExtractOk $outDir) -and (Read-EslUploadState $ctx.StatePath).ContainsKey((Get-EslUploadKey $h3d))) {
+                $ans = Read-EslInput '    이 h3d 의 올리기가 진행 중입니다. 기존 추출 결과로 올리기만 이어 갈까요? (Y/n)'
+                $skip = -not ($ans -and $ans.Trim() -match '^(n|no|아니오|ㄴ)$')
+            }
+            if ($skip) { Say '    추출 생략(기존 결과 사용)' 'DarkGray'; $okCount++ }
+            else {
+                $hwArgs = @('-clientconfig', 'hwpost.dat', '-b', '-tcl', (Quote-Arg $tcl), '-input', (Quote-Arg $h3d), '-output', (Quote-Arg $outDir))
+                if ($part) { $hwArgs += @('-part', (Quote-Arg $part)) }
+                # 인자가 hw 에 전달되지 않는 설치본 대비(TCL 이 환경변수도 읽음)
+                $env:ESL_INPUT = $h3d; $env:ESL_OUTPUT = $outDir; $env:ESL_PART = $part; $env:ESL_CONFIG = ''
+                $log = Join-Path $outDir ($Mode + '_console.log')
+                $errLog = Join-Path $outDir ($Mode + '_stderr_console.log')
+                Say "    실행 중... (콘솔 로그: $log)"
+                $proc = Start-Process -FilePath $hwExe -ArgumentList ($hwArgs -join ' ') -WorkingDirectory $outDir `
+                    -RedirectStandardOutput $log -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
+                Say ("    hw 종료 코드: {0}" -f $proc.ExitCode)
+                if (Show-Result (Join-Path $outDir $jsonName) $Mode) { $okCount++ } else { $exitCode = 1; $rad = '' }
+                if (-not $rad) { Start-Process -FilePath 'explorer.exe' -ArgumentList (Quote-Arg $outDir) }
+            }
+            if ($rad) {
+                if (-not (Publish-Results $ctx $outDir $rad $stem $h3d)) { $exitCode = 1 }
+            }
         }
         catch {
             Say ("    [오류] " + $_.Exception.Message) 'Red'

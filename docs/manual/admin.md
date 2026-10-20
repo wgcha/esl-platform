@@ -228,6 +228,7 @@ handle /esl/* {
 
 - `{$…}`는 Caddy가 **설정을 읽을 때** 자기 프로세스 환경변수로 바꾼다. Caddy 실행 환경에 `ESL_PORT`(= `server.port`), `ESL_FRONTEND_ROOT`(= `caddy_frontend_root`, git 폴더 설치는 `<git>\.runtime\frontend`)를 두거나 값을 직접 적고 Caddy 설정을 다시 읽는다.
 - 대시보드 사이드바 버튼은 대시보드 `.env` `SIMDASH_ESL_ENABLED=true`.
+- PC 연결 코드 잠금(`client_token.*`): ESL은 Caddy 뒤에서 모든 요청이 `127.0.0.1`에서 오므로 기본(`trusted_proxies: []`)으로는 출발지를 구분하지 않고 **서버 전체 30회/15분**(`lock_global`·`lock_minutes`)으로 센다. Caddy가 붙이는 `X-Forwarded-For`를 믿으려면 `client_token.trusted_proxies: ["127.0.0.1", "::1"]` — 그러면 **PC 주소별 5회/15분**(`lock_per_source`).
 - 확인: `http://<대시보드 주소>/esl/` → 대시보드 로그인 상태면 이름·프로젝트가 보인다(E0-5). 이 PC에서 health: `http://127.0.0.1:8110/esl/api/health`.
 
 ### 2.7 반입 자원(없음)과 솔버 의존성

@@ -239,6 +239,42 @@ def _resolve_include(orig: str, root_dir: str, src: str, path_map: dict | None):
     return None, False, cands, win_abs, mapped
 
 
+def _read_include_specs(path: str) -> list[str] | None:
+    """파일의 ``/INCLUDE``·``#include`` 원문 목록(본문 해석 없음). 읽을 수 없으면 None."""
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return None
+    specs: list[str] = []
+    with fh:
+        pending = False
+        for raw in fh:
+            line = _decode(raw)
+            if pending:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                pending = False
+                specs.append(_include_spec(line))
+                continue
+            if line.startswith("#"):
+                if line[:8].lower() == "#include":
+                    specs.append(_include_spec(line[8:]))
+                continue
+            if line.startswith("/"):
+                head = line.split()[0] if line.split() else line
+                pieces = [x for x in head.split("/") if x]
+                kw = pieces[0].upper() if pieces else ""
+                if kw == "END":
+                    break
+                if kw == "INCLUDE":
+                    rest = line.strip()[len("/INCLUDE"):].strip()
+                    if rest:
+                        specs.append(_include_spec(rest))
+                    else:
+                        pending = True
+    return specs
+
+
 def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8) -> list[str]:
     """본문을 해석하지 않고 ``/INCLUDE``·``#include`` 줄만 따라가 include 파일 경로 목록을 돌려준다.
 
@@ -246,63 +282,49 @@ def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_
     오류를 던지지 않는다: 읽을 수 없는 파일은 건너뛰고, 찾지 못한 include 는 후보 경로를 그대로
     넣어(그 폴더도 보호) 돌려준다. 순환·깊이 초과는 더 따라가지 않는다.
     """
+    out: list[str] = []
+    for ref in scan_include_refs(rad_path, include_path_map, max_depth):
+        for p in ([ref["path"]] if ref["found"] else ref["candidates"]):
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def scan_include_refs(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8,
+                      follow=None) -> list[dict]:
+    """include 참조 목록: ``{spec(원문), path(찾은 경로 | 첫 후보), candidates, found, src}`` (중첩 순서대로, 경로는 정규화).
+
+    ``follow(path) -> bool`` 이 주어지면 그 값이 참인 파일 안으로만 더 들어간다(예: 업로드 폴더 밖 파일은 읽지 않음).
+    오류를 던지지 않는다(읽을 수 없는 파일은 건너뜀). 순환·깊이 초과는 더 따라가지 않는다.
+    """
     root = os.path.abspath(os.fspath(rad_path))
     root_dir = os.path.dirname(root)
-    out: list[str] = []
+    out: list[dict] = []
     seen: set[str] = set()
 
-    def add(p: str) -> None:
-        p = os.path.normpath(os.path.abspath(p))
-        if p not in out:
-            out.append(p)
+    def norm(p: str) -> str:
+        return os.path.normpath(os.path.abspath(p))
 
     def walk(path: str, depth: int) -> None:
         key = os.path.normcase(os.path.realpath(path))
         if key in seen:
             return
         seen.add(key)
-        try:
-            fh = open(path, "rb")
-        except OSError:
+        specs = _read_include_specs(path)
+        if specs is None:
             return
-        specs: list[str] = []
-        with fh:
-            pending = False
-            for raw in fh:
-                line = _decode(raw)
-                if pending:
-                    if not line.strip() or line.startswith("#"):
-                        continue
-                    pending = False
-                    specs.append(_include_spec(line))
-                    continue
-                if line.startswith("#"):
-                    if line[:8].lower() == "#include":
-                        specs.append(_include_spec(line[8:]))
-                    continue
-                if line.startswith("/"):
-                    head = line.split()[0] if line.split() else line
-                    pieces = [x for x in head.split("/") if x]
-                    kw = pieces[0].upper() if pieces else ""
-                    if kw == "END":
-                        break
-                    if kw == "INCLUDE":
-                        rest = line.strip()[len("/INCLUDE"):].strip()
-                        if rest:
-                            specs.append(_include_spec(rest))
-                        else:
-                            pending = True
         for orig in specs:
             if not orig:
                 continue
             found, _, cands, _, _ = _resolve_include(orig, root_dir, path, include_path_map)
+            cn = list(dict.fromkeys(norm(c) for c in cands))
             if found is None:
-                for c in cands:
-                    add(c)
+                out.append({"spec": orig, "path": cn[0] if cn else "", "candidates": cn, "found": False, "src": path})
                 continue
-            add(found)
-            if depth + 1 <= max_depth:
-                walk(os.path.normpath(found), depth + 1)
+            fp = norm(found)
+            out.append({"spec": orig, "path": fp, "candidates": cn, "found": True, "src": path})
+            if depth + 1 <= max_depth and (follow is None or follow(fp)):
+                walk(fp, depth + 1)
 
     walk(root, 0)
     return out

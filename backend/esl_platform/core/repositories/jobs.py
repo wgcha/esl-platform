@@ -1,5 +1,9 @@
 """작업·step 저장소: 생성(E1), claim(E2, SLOT CAS·LIGHT 1개·Case 당 RUNNING 1개), 취소(E3/E7), 종료(E5~E7), 리퍼(E8).
 
+P3-UX §6: SLOT 레인은 worker_slot 행 1..slots 중 빈 행 하나를 CAS 로 잡는다(동시 slots 개, 같은 Case 는 여전히 1개).
+hw 동시 실행 세마포어(`acquire_hw`)는 DB 기반: RUNNING 작업의 RUNNING H3D_EXTRACT step 중 outputs.hw_acquired 인 것의 수.
+step 이 끝나거나 작업이 중단(리퍼)되면 자동으로 풀린다.
+
 호출자가 트랜잭션을 연다(`with engine.begin() as conn`). lease_token 은 이 계층 밖(API 응답)으로 나가지 않는다.
 """
 
@@ -15,7 +19,7 @@ from sqlalchemy.engine import Connection
 
 from ..db.tables import job_queue_seq, job_steps, jobs, notifications, worker_slot
 from ..errors import LeaseLost
-from ..job_types import JOB_TYPES
+from ..job_types import JOB_TYPES, steps_for
 from ..state_machine import (
     CANCELED,
     FAILED,
@@ -74,9 +78,15 @@ def has_active_jobs(conn: Connection, case_id: str) -> bool:
 
 
 def queue_lane(conn: Connection, lane: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    running = row_dict(conn.execute(
-        select(jobs).where(and_(jobs.c.lane == lane, jobs.c.state == RUNNING)).order_by(jobs.c.started_at).limit(1)
-    ).first())
+    running, queued = queue_lane_all(conn, lane)
+    return (running[0] if running else None), queued
+
+
+def queue_lane_all(conn: Connection, lane: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(실행 중 전부 — 시작 순, 대기 — 순번 순)."""
+    running = [row_dict(r) for r in conn.execute(
+        select(jobs).where(and_(jobs.c.lane == lane, jobs.c.state == RUNNING)).order_by(jobs.c.started_at)
+    ).all()]
     queued = [row_dict(r) for r in conn.execute(
         select(jobs).where(and_(jobs.c.lane == lane, jobs.c.state == QUEUED)).order_by(jobs.c.queue_seq)
     ).all()]
@@ -97,8 +107,10 @@ def insert_job(
     resume_from_step: int | None = None,
     analysis_id: str | None = None,
     comparison_id: str | None = None,
+    h3d: bool = False,
 ) -> dict[str, Any]:
-    """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409."""
+    """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409.
+    h3d = Case 입력이 h3d(CASE_EXTRACT 에 H3D_EXTRACT step 포함)."""
     check_transition(None, QUEUED)
     jt = JOB_TYPES[job_type]
     job_id = str(uuid.uuid4())
@@ -111,10 +123,10 @@ def insert_job(
         created_by=created_by, created_by_name=created_by_name, retry_of_job_id=retry_of_job_id,
         resume_from_step=resume_from_step,
     ))
-    for no, sd in enumerate(jt.steps, start=1):
+    for no, sd in enumerate(steps_for(job_type, h3d=h3d), start=1):
         state = "SKIPPED" if resume_from_step and no < resume_from_step else "PENDING"
         conn.execute(insert(job_steps).values(
-            id=str(uuid.uuid4()), job_id=job_id, step_no=no, step_key=sd.key, kind="INTERNAL",
+            id=str(uuid.uuid4()), job_id=job_id, step_no=no, step_key=sd.key, kind=sd.kind,
             core_stage=sd.core_stage, state=state,
         ))
     return get_job(conn, job_id)
@@ -145,18 +157,32 @@ def _case_idle():
                                                                     other.c.state == RUNNING)))
 
 
-def claim_slot(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any] | None:
-    """SLOT 레인 claim: worker_slot 단일 행 CAS(lease_generation) + 작업 QUEUED→RUNNING."""
-    slot = conn.execute(select(worker_slot).where(worker_slot.c.id == 1).with_for_update()).one()
-    if slot.lease_token is not None:
-        alive = conn.execute(select(literal(1)).where(literal(slot.lease_expires_at) > func.now())).first()
-        if alive:
-            return None
-        if slot.holder_job_id:
-            holder = get_job(conn, slot.holder_job_id, for_update=True)
-            if holder and holder["state"] == RUNNING and holder["lease_token"] == slot.lease_token:
-                interrupt(conn, holder)
-        conn.execute(update(worker_slot).where(worker_slot.c.id == 1).values(holder_job_id=None, **_NO_LEASE))
+SLOT_LOCK_KEY = 4241
+HW_LOCK_KEY = 4243
+
+
+def claim_slot(conn: Connection, worker_id: str, ttl_s: float, slots: int = 1) -> dict[str, Any] | None:
+    """SLOT 레인 claim: worker_slot 행 1..slots 중 빈(또는 lease 만료) 행 하나를 CAS(lease_generation) +
+    작업 QUEUED→RUNNING. 반환 작업 dict 에 slot_id(잡은 행 번호, 1부터 — 자원 분배용)를 넣는다."""
+    conn.execute(select(func.pg_advisory_xact_lock(SLOT_LOCK_KEY)))
+    rows = conn.execute(select(worker_slot).where(worker_slot.c.id <= int(slots)).order_by(worker_slot.c.id)
+                        .with_for_update()).all()
+    slot = None
+    for row in rows:
+        if row.lease_token is not None:
+            alive = conn.execute(select(literal(1)).where(literal(row.lease_expires_at) > func.now())).first()
+            if alive:
+                continue
+            if row.holder_job_id:
+                holder = get_job(conn, row.holder_job_id, for_update=True)
+                if holder and holder["state"] == RUNNING and holder["lease_token"] == row.lease_token:
+                    interrupt(conn, holder)
+            conn.execute(update(worker_slot).where(worker_slot.c.id == row.id).values(holder_job_id=None, **_NO_LEASE))
+            row = conn.execute(select(worker_slot).where(worker_slot.c.id == row.id)).one()
+        slot = row
+        break
+    if slot is None:
+        return None
     target = conn.execute(
         select(jobs.c.id, jobs.c.version, jobs.c.started_at)
         .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "SLOT", jobs.c.cancel_requested_at.is_(None),
@@ -172,7 +198,8 @@ def claim_slot(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any]
               lease_expires_at=_ttl(ttl_s))
     r1 = conn.execute(
         update(worker_slot)
-        .where(and_(worker_slot.c.id == 1, worker_slot.c.lease_generation == slot.lease_generation))
+        .where(and_(worker_slot.c.id == slot.id, worker_slot.c.lease_generation == slot.lease_generation,
+                    worker_slot.c.lease_token.is_(None)))
         .values(holder_job_id=target.id, **lv)
     )
     r2 = conn.execute(
@@ -184,7 +211,40 @@ def claim_slot(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any]
         raise ClaimRace()
     job = get_job(conn, target.id)
     notify(conn, job, "JOB_STARTED")
+    job["slot_id"] = int(slot.id)
     return job
+
+
+def running_slot_count(conn: Connection) -> int:
+    return int(conn.execute(select(func.count()).select_from(worker_slot)
+                            .where(worker_slot.c.lease_token.isnot(None))).scalar_one())
+
+
+# ---------------------------------------------------------------- hw 세마포어(P3-UX §6, altair.max_concurrent_hw)
+def _hw_held():
+    return and_(job_steps.c.step_key == "H3D_EXTRACT", job_steps.c.state == RUNNING,
+                job_steps.c.outputs["hw_acquired"].astext == "true", jobs.c.state == RUNNING,
+                jobs.c.lease_expires_at > func.now())
+
+
+def hw_in_use(conn: Connection) -> int:
+    return int(conn.execute(select(func.count()).select_from(job_steps.join(jobs, jobs.c.id == job_steps.c.job_id))
+                            .where(_hw_held())).scalar_one())
+
+
+def acquire_hw(conn: Connection, job_id: str, token: str, step_no: int, limit: int) -> bool:
+    """hw 실행 권한 1개를 잡는다(DB 기반 세마포어). 이미 잡았으면 True. 잡은 표시 = step outputs.hw_acquired."""
+    assert_lease(conn, job_id, token)
+    conn.execute(select(func.pg_advisory_xact_lock(HW_LOCK_KEY)))
+    st = conn.execute(select(job_steps.c.outputs).where(and_(job_steps.c.job_id == job_id,
+                                                             job_steps.c.step_no == step_no))).scalar()
+    if (st or {}).get("hw_acquired"):
+        return True
+    if hw_in_use(conn) >= int(limit):
+        return False
+    conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
+                 .values(outputs={**(st or {}), "hw_acquired": True}))
+    return True
 
 
 def claim_light(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any] | None:
@@ -229,7 +289,7 @@ def renew(conn: Connection, job_id: str, token: str, ttl_s: float, *, slot: bool
         return False
     if slot:
         r2 = conn.execute(
-            update(worker_slot).where(and_(worker_slot.c.id == 1, worker_slot.c.lease_token == token,
+            update(worker_slot).where(and_(worker_slot.c.lease_token == token,
                                            worker_slot.c.lease_expires_at > func.now()))
             .values(lease_expires_at=_ttl(ttl_s))
         )
@@ -292,7 +352,7 @@ def release(conn: Connection, job_id: str, token: str, next_state: str, *, failu
         conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.state == "RUNNING"))
                      .values(state="CANCELED", finished_at=func.now()))
     if job["holds_slot"]:
-        conn.execute(update(worker_slot).where(and_(worker_slot.c.id == 1, worker_slot.c.lease_token == token))
+        conn.execute(update(worker_slot).where(worker_slot.c.lease_token == token)
                      .values(holder_job_id=None, **_NO_LEASE))
     out = get_job(conn, job_id)
     notify(conn, out, _END_EVENT[next_state])
@@ -315,7 +375,7 @@ def interrupt(conn: Connection, job: dict[str, Any]) -> bool:
                          finished_at=func.now()))
     conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job["id"], job_steps.c.state == "PENDING"))
                  .values(state="SKIPPED"))
-    conn.execute(update(worker_slot).where(and_(worker_slot.c.id == 1, worker_slot.c.holder_job_id == job["id"]))
+    conn.execute(update(worker_slot).where(worker_slot.c.holder_job_id == job["id"])
                  .values(holder_job_id=None, **_NO_LEASE))
     notify(conn, get_job(conn, job["id"]), "JOB_INTERRUPTED")
     return True
@@ -327,7 +387,7 @@ def reap_expired(conn: Connection) -> list[str]:
         .with_for_update(skip_locked=True)
     ).all()
     out = [r.id for r in rows if interrupt(conn, row_dict(r))]
-    conn.execute(update(worker_slot).where(and_(worker_slot.c.id == 1, worker_slot.c.lease_expires_at < func.now()))
+    conn.execute(update(worker_slot).where(worker_slot.c.lease_expires_at < func.now())
                  .values(holder_job_id=None, **_NO_LEASE))
     return out
 

@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "screenshots": "node scripts/screenshots.mjs",
-    "check:api": "node scripts/check-api.mjs"
+    "check:api": "node scripts/check-api.mjs",
+    "screenshots:p3": "node scripts/screenshots-p3.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

@@ -1,4 +1,8 @@
-"""FastAPI 의존성: 인증(401) → CSRF 헤더(403 `CSRF_HEADER_REQUIRED`) → 문맥."""
+"""FastAPI 의존성: 인증(401) → CSRF 헤더(403 `CSRF_HEADER_REQUIRED`) → 문맥.
+
+P3-UX §9.1: `Authorization: Bearer esl_ct_...`(PC 연결 토큰)은 대시보드 세션 대신 토큰 표(해시)로 인증한다 — 범위 밖 경로는
+403 `CLIENT_TOKEN_SCOPE`, CSRF 헤더 면제(브라우저가 자동으로 붙이지 않는 헤더라 CSRF 대상이 아님).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from .context import AppContext
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 CSRF_HEADER = "X-ESL-Request"
+CLIENT_TOKEN_PREFIX = "esl_ct_"
 
 
 def get_ctx(request: Request) -> AppContext:
@@ -36,8 +41,24 @@ def extract_token(request: Request, cookie_name: str) -> str | None:
     return None
 
 
+def client_bearer(request: Request) -> str | None:
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    value = value.strip()
+    if scheme.lower() == "bearer" and value.startswith(CLIENT_TOKEN_PREFIX):
+        return value
+    return None
+
+
 def get_principal(request: Request) -> Principal:
     ctx = get_ctx(request)
+    ct = client_bearer(request)
+    if ct is not None:
+        from .services import client_tokens
+
+        principal = client_tokens.authenticate(ctx, ct)
+        client_tokens.check_scope(ctx, request.method, request.url.path)
+        request.state.principal = principal
+        return principal
     token = extract_token(request, ctx.settings.auth.cookie_name)
     principal = ctx.auth.authenticate(token, request_id(request))
     if request.method not in SAFE_METHODS and request.headers.get(CSRF_HEADER) != "1":

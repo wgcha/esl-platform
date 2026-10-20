@@ -120,6 +120,24 @@ def _get(url: str) -> tuple[int, dict[str, str], str]:
         return e.code, dict(e.headers), e.read().decode("utf-8")
 
 
+def _post(url: str, body: dict, headers: dict[str, str]) -> tuple[int, str]:
+    import urllib.error
+
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json", **headers})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=10) as r:
+            return r.status, r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8")
+
+
+def test_uvicorn_options_no_proxy_headers():
+    o = svc.uvicorn_options({"host": "127.0.0.1", "port": 8110, "base_path": "/esl"})
+    assert o["proxy_headers"] is False and "forwarded_allow_ips" not in o and o["port"] == 8110
+
+
 def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url, fake_frontend):
     """작업 스케줄러와 같은 인자(--runtime, --frontend 없음)로: migrate → backend(로그 파일·health·설정 server.frontend_root 정적 서빙)
     → worker(heartbeat) → check 표."""
@@ -144,6 +162,10 @@ def test_migrate_backend_worker_check_with_runtime(tmp_path, empty_db_url, fake_
         st_, h, body = _get(f"http://127.0.0.1:{port}/esl/api/nope")
         assert st_ == 404 and json.loads(body)["detail"]["code"] == "NOT_FOUND"
         assert _get(f"http://127.0.0.1:{port}/")[0] == 404                   # 운영은 '/'를 가로채지 않음(대시보드 몫)
+        # 연결 코드 잠금: 루프백 peer + X-Forwarded-For 회전(trusted_proxies 비어 있음) → 서버 전체 30회 키(XFF 위조 무시)
+        st = [_post(f"http://127.0.0.1:{port}/esl/api/client-tokens/exchange", {"code": "000000", "device_name": "pc"},
+                    {"X-Forwarded-For": f"10.0.0.{i}"})[0] for i in range(31)]
+        assert st[:29] == [401] * 29 and st[29:] == [429, 429], st
         wk = subprocess.Popen([PY, str(LAUNCHER), "worker", "--runtime", str(rt)], cwd=rt, env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         procs.append(wk)

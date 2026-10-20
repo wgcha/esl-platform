@@ -1,8 +1,10 @@
 """ESL 플랫폼 환경 점검 CLI: `python -m esl_platform.check [--runtime <런타임>] [--config <설정>] [--json]`.
 
 관리 화면의 환경 점검이 없으므로(`GET /status`는 설정·워커·솔버 요약만) 설치·업데이트·설정 변경 뒤 이 표로 확인한다.
-항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), 프런트 정적 서빙(server.frontend_root — 폴더·index.html, null 이면 SKIP), esl_root 쓰기·여유 공간, input_roots·spdm_roots 읽기,
-worker.state_dir 쓰기, 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
+항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), 프런트 정적 서빙(server.frontend_root — 폴더·index.html, null 이면 SKIP), esl_root 쓰기·여유 공간,
+upload_root(브라우저 업로드) 쓰기·여유 공간, input_roots·spdm_roots 읽기,
+worker.state_dir 쓰기, worker.slots(작업별 메모리·코어), 서버 h3d 추출(altair.hw_exe_path 존재·추출 TCL 존재, P3-UX §6),
+워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
 - DB URL: 환경변수(설정 `database.url_env`, 기본 ESL_DATABASE_URL) → 없으면 `--runtime`의 `secrets/database_url`.
@@ -10,7 +12,7 @@ scikit-sparse(Windows 제외)·pyamg·psutil.
 - `--runtime <폴더>`: 설치 런타임(deploy/setup.ps1·install.ps1). 설정 기본값 `<런타임>/config/esl_platform.yaml`,
   상대 `worker.state_dir`는 `<런타임>` 기준(작업 스케줄러 작업 폴더와 같음).
 - 종료코드: 0 = FAIL 없음(WARN 허용), 1 = FAIL 있음, 2 = 사용법 오류.
-- 코어(`esl`)는 `esl_worker.core_adapter` 를 통해서만 부른다(플랫폼 규칙). 외부 프로그램을 실행하지 않는다.
+- 코어(`esl`)는 `esl_worker.core_adapter` 를 통해서만 부른다(플랫폼 규칙). 외부 프로그램을 실행하지 않는다(hw 는 존재만 확인).
 """
 
 from __future__ import annotations
@@ -207,6 +209,33 @@ def check_limiter(worker_cfg, platform: str, *, kernel32=None, cpu_count: int | 
     return Item("worker.limiter", OK, line)
 
 
+def check_slots(worker_cfg) -> Item:
+    from esl_platform.core.config import per_job_limits
+
+    mem, cores = per_job_limits(worker_cfg)
+    src = "per_job_memory_gb" if worker_cfg.per_job_memory_gb else f"max_memory_gb {worker_cfg.max_memory_gb:g} / slots"
+    return Item("worker.slots", OK, f"SLOT 동시 {worker_cfg.slots}개 — 작업별 메모리 {mem:g} GB({src}), 코어 {cores}")
+
+
+def check_h3d_extract(s, platform: str) -> list[Item]:
+    """서버 h3d 추출(P3-UX §6): hw 실행 파일·추출 TCL(코드 스냅샷 resources/tcl) 존재, 동시 hw 수. 실행은 하지 않는다."""
+    from esl_platform.core.config import default_extract_tcl
+
+    win = platform.startswith("win")
+    hw = s.altair.hw_exe_path
+    if not hw:
+        it = Item("altair.hw_exe_path", FAIL if win else WARN, "설정 없음 — 서버 h3d 추출 불가(h3d 로 Case 를 만들 수 없음)")
+    elif os.path.isfile(hw):
+        it = Item("altair.hw_exe_path", OK, f"{hw} (동시 hw {s.altair.max_concurrent_hw}개)")
+    else:
+        it = Item("altair.hw_exe_path", FAIL if win else WARN,
+                  f"파일이 없습니다: {hw} — 서버 h3d 추출 작업이 H3D_EXTRACT_FAILED 로 실패합니다(HyperWorks 설치 경로 확인)")
+    tcl = default_extract_tcl()
+    t = Item("altair.extract_tcl", OK, tcl) if os.path.isfile(tcl) else Item(
+        "altair.extract_tcl", FAIL, f"추출 TCL 이 코드 스냅샷에 없습니다: {tcl} (배포가 resources/tcl 을 복사해야 함)")
+    return [it, t]
+
+
 def check_db(url: str, heartbeat_interval_s: float | None) -> list[Item]:
     from sqlalchemy import create_engine, text
 
@@ -314,6 +343,13 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         items.append(check_free("storage.esl_root.free", st.esl_root, min_free_gb))
     items.append(check_read_roots("storage.input_roots", list(st.input_roots), empty_status=WARN,
                                   empty_msg="비어 있음 — rad·결과 폴더를 고를 수 없음(Case 생성 불가)", missing_status=FAIL))
+    if st.upload_root:
+        items.append(check_dir_write("storage.upload_root.write", st.upload_root))
+        if os.path.isdir(st.upload_root):
+            items.append(check_free("storage.upload_root.free", st.upload_root,
+                                    max(min_free_gb, s.upload.min_free_gb)))
+    else:
+        items.append(Item("storage.upload_root", WARN, "없음 — 브라우저 업로드를 쓸 수 없음(설정 storage.upload_root)"))
     items.append(check_read_roots("storage.spdm_roots", list(st.spdm_roots), empty_status=OK,
                                   empty_msg="없음(겹침 검사만 하는 목록)", missing_status=WARN))
     sd = s.worker.state_dir
@@ -323,6 +359,8 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         items.append(check_dir_write("worker.state_dir", sd))
     else:
         items.append(Item("worker.state_dir", WARN, f"폴더 없음(워커가 만듦): {sd}"))
+    items.append(check_slots(s.worker))
+    items += check_h3d_extract(s, plat)
     items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)

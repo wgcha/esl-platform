@@ -32,7 +32,10 @@ export function RightPanel() {
   const status = usePolling(api.status, 5000);
   const q = queue.data;
   const s = status.data;
-  const slot = q ? [...(q.running ? [q.running] : []), ...q.queued] : [];
+  // §6: SLOT 레인 동시 실행(최대 slots 개) — running_all, 이전 서버 응답이면 running 하나
+  const runningAll = q ? (q.running_all?.length ? q.running_all : q.running ? [q.running] : []) : [];
+  const slots = q?.slots ?? 1;
+  const slot = q ? [...runningAll, ...q.queued] : [];
   const light = q ? [...(q.light.running ? [q.light.running] : []), ...q.light.queued] : [];
   return (
     <aside className="rightpanel" aria-label="대기열·워커">
@@ -56,6 +59,11 @@ export function RightPanel() {
       <section className="panel" aria-label="계산 대기열">
         <header className="panel-head">
           <h2>계산 대기열</h2>
+          {q && (
+            <span className="slots-meta" data-testid="queue-slots" title="동시에 실행하는 계산 수(설정 worker.slots)">
+              동시 실행 {runningAll.length}/{slots}
+            </span>
+          )}
         </header>
         {q ? (
           slot.length ? (

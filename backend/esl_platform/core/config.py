@@ -7,7 +7,10 @@
 - `redacted_settings(settings)`: 응답·로그용 사본(DB URL은 env 이름만 있으므로 비밀 없음).
 
 코드에는 키 이름과 검사 규칙만 있고 운영 값(경로·포트·기준값)은 설정 파일에만 있다.
-`altair`·`commands`·`resources` 키는 없다(서버에서 외부 프로그램을 실행하지 않음).
+P3-UX §6: 서버 h3d 추출(워커 LOCAL step H3D_EXTRACT)만 외부 프로그램을 실행한다 — `altair.hw_exe_path`,
+`commands.h3d_extract`(argv 템플릿, esl.md §4.4: argv[0] = `{hw}`, 허용 placeholder 만, shell=False).
+TCL 은 설정이 아니라 코드 스냅샷 안 `resources/tcl/esl_h3d_extract.tcl`(`default_extract_tcl()`).
+P3-UX §9.1: PC 연결 코드·토큰 `client_token.*`.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 ENV_CONFIG = "ESL_PLATFORM_CONFIG"
 ENV_PROFILE = "ESL_PROFILE"
@@ -75,12 +78,55 @@ class StorageCfg(_M):
     esl_root: str
     input_roots: list[str]
     spdm_roots: list[str]
+    # P3-UX: 브라우저 업로드 저장 위치(절대경로, SPDM 밖, esl_root 와 겹침 금지). 있으면 input_roots 에 자동 포함.
+    # None = 업로드 끔(업로드 API 503 UPLOAD_DISABLED)
+    upload_root: str | None = None
+    # 서버 폴더 찾아보기(/fs/browse) 루트에 spdm_roots 를 읽기 전용으로 포함(쓰기는 여전히 금지). 기본 끔(계약 §6)
+    browse_spdm: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _include_upload_root(cls, d: Any) -> Any:
+        """upload_root 를 input_roots 에 자동 포함(이미 그 안이면 그대로)."""
+        if isinstance(d, dict) and isinstance(d.get("upload_root"), str) and d["upload_root"] \
+                and isinstance(d.get("input_roots"), list):
+            up = d["upload_root"]
+            if not any(isinstance(r, str) and r and is_within(up, r) for r in d["input_roots"]):
+                d = {**d, "input_roots": [*d["input_roots"], up]}
+        return d
+
+
+UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"]
+
+
+class UploadCfg(_M):
+    """브라우저 분할 업로드(계약 esl_p3_ux.md §1.1). 값은 설정 파일에서만."""
+
+    chunk_mb: int = Field(default=16, ge=1, le=256)                   # 청크 크기(MB)
+    max_file_bytes: int = Field(default=64 * 1024 ** 3, ge=1)          # 파일당(h3d 30 GB 수용)
+    max_upload_bytes: int = Field(default=100 * 1024 ** 3, ge=1)       # 업로드당
+    min_free_gb: float = Field(default=20, ge=0)                       # 업로드 후에도 남길 upload_root 드라이브 여유
+    max_files: int = Field(default=5000, ge=1, le=100000)
+    max_concurrent_per_user: int = Field(default=2, ge=1, le=20)
+    stale_hours: float = Field(default=72, gt=0)
+    allowed_ext: list[str] = Field(default_factory=lambda: list(UPLOAD_EXT_DEFAULT))
+
+    @property
+    def chunk_bytes(self) -> int:
+        return self.chunk_mb * 1024 * 1024
+
+
+MAX_SLOTS = 16   # worker_slot 행 수(0006) — worker.slots 상한
 
 
 class WorkerCfg(_M):
     limiter: Literal["auto", "none", "posix", "windows_job"]
     max_logical_cores: int = Field(ge=1)
     max_memory_gb: float = Field(gt=0)
+    # P3-UX §6: SLOT 레인 동시 작업 수(같은 Case 는 직렬). 작업별 자원 = max_memory_gb·max_logical_cores 를 slots 로 나눔
+    slots: int = Field(default=2, ge=1, le=MAX_SLOTS)
+    # 작업 1개 메모리 한도(GB). 있으면 이 값 우선(없으면 max_memory_gb / slots)
+    per_job_memory_gb: float | None = Field(default=None, gt=0)
     # POSIX RLIMIT_AS(가상 주소 공간) = max_memory_gb × vm_headroom. Windows Job 메모리는 커밋 기준이라 곱하지 않음.
     vm_headroom: float = Field(default=1.5, ge=1.0, le=8.0)
     priority: Literal["normal", "below_normal", "idle"]
@@ -93,11 +139,79 @@ class WorkerCfg(_M):
     state_dir: str
 
 
+H3D_EXTRACT_DEFAULT = ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}",
+                       "-part", "{part}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}",
+                       "-hot_k", "{hot_k}", "-top_n", "{top_n}"]
+# esl.md §4.4 + P3-UX §6: h3d_extract 허용 placeholder(argv[0] 은 {hw} 만)
+H3D_EXTRACT_PLACEHOLDERS = ("hw", "extract_tcl", "extract_tcl_fwd", "h3d", "h3d_fwd", "request", "request_fwd",
+                            "request_json", "request_json_fwd", "out_dir", "out_dir_fwd", "part", "hot_k", "top_n")
+EXE_FORBIDDEN = re.compile(r'[&|<>^%!"\x00-\x1f]')       # argv[0] 실행 파일 경로: 공백만 허용
+
+
+class AltairCfg(_M):
+    """서버 h3d 추출(계약 esl_p3_ux.md §6). hw 는 워커 LOCAL step 에서만 실행."""
+
+    version_label: str | None = None
+    # 실행 파일 경로는 코드에 두지 않는다(esl.md §2) — 예시·설치 설정이 채움(2026.1 기본 경로). None = 서버 h3d 추출 불가
+    hw_exe_path: str | None = None
+    max_concurrent_hw: int = Field(default=2, ge=1, le=MAX_SLOTS)   # 동시 hw 수(라이선스 한도) — DB 세마포어
+
+
+class CommandsCfg(_M):
+    h3d_extract: list[str] = Field(default_factory=lambda: list(H3D_EXTRACT_DEFAULT), min_length=1)
+
+
+class ClientTokenCfg(_M):
+    """PC 연결 코드·토큰(계약 esl_p3_ux.md §9.1)."""
+
+    ttl_days: float = Field(default=30, gt=0, le=366)           # 토큰 유효 기간
+    code_ttl_min: float = Field(default=15, gt=0, le=1440)      # 연결 코드 유효 시간
+    # 교환 실패 잠금(계약 §10): 출발지 구분 가능(peer 가 루프백 아님, 또는 trusted_proxies 의 프록시가 붙인
+    # X-Forwarded-For)이면 출발지별 lock_per_source 회, 구분 불가면 서버 전체 lock_global 회 — 창·잠금 lock_minutes 분.
+    lock_per_source: int = Field(default=5, ge=1, le=100)
+    lock_global: int = Field(default=30, ge=1, le=10000)
+    lock_minutes: float = Field(default=15, gt=0, le=1440)
+    # X-Forwarded-For 를 믿을 프록시(peer 주소·CIDR, 또는 주소가 아닌 peer 이름 그대로). 비면 XFF 무시.
+    trusted_proxies: list[str] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_keys(cls, v: Any) -> Any:
+        """이전 키(max_failures·lock_min) → lock_per_source·lock_minutes(새 키가 있으면 새 키 우선)."""
+        if isinstance(v, dict):
+            v = dict(v)
+            for old, new in (("max_failures", "lock_per_source"), ("lock_min", "lock_minutes")):
+                if old in v:
+                    val = v.pop(old)
+                    v.setdefault(new, val)
+        return v
+
+    @model_validator(mode="after")
+    def _check_proxies(self) -> "ClientTokenCfg":
+        for p in self.trusted_proxies:
+            if not p or len(p) > 100:
+                raise ValueError("client_token.trusted_proxies: 빈 값·100자 초과 불가")
+            if any(c in p for c in "/.:") and not _is_net(p):
+                raise ValueError(f"client_token.trusted_proxies: 주소·CIDR 형식이 아닙니다: {p}")
+        return self
+
+
+def _is_net(p: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_network(p, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
 class UiCfg(_M):
     max_artifact_bytes: int = Field(ge=1)
     max_preview_points: int = Field(ge=10)
     poll_job_ms: int = Field(ge=100)
     poll_queue_ms: int = Field(ge=100)
+    max_bundle_bytes: int = Field(default=5 * 1024 ** 3, ge=1)       # 결과 받기(zip) 상한, 초과 시 413
+    browse_page_max: int = Field(default=1000, ge=10, le=10000)       # /fs/browse 한 번에 돌려주는 항목 수 상한
 
 
 class LoggingCfg(_M):
@@ -140,7 +254,11 @@ class Settings(_M):
     logging: LoggingCfg
     core: CoreCfg
     report: ReportCfg = ReportCfg()
+    upload: UploadCfg = UploadCfg()
     library: LibraryCfg | None = None   # 없으면 라이브러리 쓰기 API 503(LIBRARY_CONFIG_MISSING)
+    altair: AltairCfg = AltairCfg()
+    commands: CommandsCfg = CommandsCfg()
+    client_token: ClientTokenCfg = ClientTokenCfg()
 
     @property
     def api_prefix(self) -> str:
@@ -217,6 +335,58 @@ def _path_issue(key: str, p: str) -> Issue | None:
     return None
 
 
+# ---------------------------------------------------------------- 외부 실행(h3d 추출)
+_PH = re.compile(r"\{([^{}]*)\}")
+
+
+def template_placeholders(tok: str) -> list[str]:
+    return _PH.findall(tok)
+
+
+def _altair_issues(s: Settings) -> list[Issue]:
+    out: list[Issue] = []
+    hw = s.altair.hw_exe_path
+    if hw is None:
+        pass
+    elif not is_abs_path(hw):
+        out.append(Issue("altair.hw_exe_path", "절대경로여야 합니다"))
+    elif EXE_FORBIDDEN.search(hw):
+        out.append(Issue("altair.hw_exe_path", '경로에 제어문자·& | < > ^ % ! " 를 쓸 수 없습니다(공백은 허용)'))
+    tpl = s.commands.h3d_extract
+    if tpl[0] != "{hw}":
+        out.append(Issue("commands.h3d_extract[0]", "argv[0] 은 {hw} 여야 합니다(esl.md §4.4)"))
+    for i, tok in enumerate(tpl):
+        for name in template_placeholders(tok):
+            if name not in H3D_EXTRACT_PLACEHOLDERS or (name == "hw" and i != 0):
+                out.append(Issue(f"commands.h3d_extract[{i}]", f"허용되지 않는 placeholder {{{name}}}"))
+        if "{" in _PH.sub("", tok) or "}" in _PH.sub("", tok):
+            out.append(Issue(f"commands.h3d_extract[{i}]", "중괄호 짝이 맞지 않습니다"))
+        if i and EXE_FORBIDDEN.search(_PH.sub("", tok)):
+            out.append(Issue(f"commands.h3d_extract[{i}]", '제어문자·& | < > ^ % ! " 를 쓸 수 없습니다'))
+    if not any(n in ("out_dir", "out_dir_fwd") for t in tpl for n in template_placeholders(t)):
+        out.append(Issue("commands.h3d_extract", "{out_dir} 또는 {out_dir_fwd} 가 필요합니다"))
+    if not any(n in ("h3d", "h3d_fwd") for t in tpl for n in template_placeholders(t)):
+        out.append(Issue("commands.h3d_extract", "{h3d} 또는 {h3d_fwd} 가 필요합니다"))
+    return out
+
+
+def app_root() -> str:
+    """코드 스냅샷(저장소 루트 또는 <런타임>/app) — backend/esl_platform 의 두 단계 위."""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+
+def default_extract_tcl() -> str:
+    """서버 h3d 추출 TCL: 코드 스냅샷 안 resources/tcl/esl_h3d_extract.tcl(배포가 함께 복사)."""
+    return os.path.join(app_root(), "resources", "tcl", "esl_h3d_extract.tcl")
+
+
+def per_job_limits(w: WorkerCfg) -> tuple[float, int]:
+    """작업 1개 자원(메모리 GB, 논리 코어): per_job_memory_gb 우선, 아니면 max_memory_gb / slots. 코어 = max_logical_cores // slots(≥1)."""
+    mem = float(w.per_job_memory_gb) if w.per_job_memory_gb else float(w.max_memory_gb) / int(w.slots)
+    cores = max(1, int(w.max_logical_cores) // int(w.slots))
+    return mem, cores
+
+
 # ---------------------------------------------------------------- 검증
 def _schema(d: Any) -> tuple[Settings | None, list[Issue]]:
     if not isinstance(d, dict):
@@ -263,7 +433,17 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
         iss = _path_issue(key, p)
         if iss:
             issues.append(iss)
+    if st.upload_root is not None:
+        iss = _path_issue("storage.upload_root", st.upload_root)
+        if iss:
+            issues.append(iss)
     if not issues:
+        if st.upload_root is not None:
+            if overlaps(st.upload_root, st.esl_root):
+                issues.append(Issue("storage.upload_root", "esl_root 와 겹칩니다"))
+            for r in st.spdm_roots:
+                if overlaps(st.upload_root, r):
+                    issues.append(Issue("storage.upload_root", f"SPDM 루트({r})와 겹칩니다"))
         for i, r in enumerate(st.input_roots):
             if overlaps(r, st.esl_root):
                 issues.append(Issue(f"storage.input_roots[{i}]", "esl_root 와 겹칩니다"))
@@ -275,6 +455,12 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
             issues.append(Issue("auth.mode", "dev_static 은 profile=dev 에서만 허용됩니다"))
         if s.auth.dev_static_principal is None:
             issues.append(Issue("auth.dev_static_principal", "dev_static 에 필요합니다"))
+    for i, ext in enumerate(s.upload.allowed_ext):
+        if not re.fullmatch(r"\.[a-z0-9]{1,10}", ext):
+            issues.append(Issue(f"upload.allowed_ext[{i}]", "'.확장자'(소문자·숫자) 형식이어야 합니다"))
+    if s.upload.max_file_bytes > s.upload.max_upload_bytes:
+        issues.append(Issue("upload.max_file_bytes", "max_upload_bytes 보다 클 수 없습니다"))
+    issues += _altair_issues(s)
     w = s.worker
     if w.lease_ttl_s <= w.heartbeat_interval_s:
         issues.append(Issue("worker.lease_ttl_s", "heartbeat_interval_s 보다 커야 합니다"))

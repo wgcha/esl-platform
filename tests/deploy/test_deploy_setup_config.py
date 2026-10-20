@@ -110,6 +110,41 @@ def test_old_config_without_library_gets_block(tmp_path):
     assert r2["write"]["validation"]["ok"] is True
 
 
+def test_old_config_gets_p3_keys(tmp_path):
+    """P3-UX §6·§9.1: altair·worker.slots·client_token 이 없는 이전 설정 → 예시 값 보충, 사용자 값은 유지."""
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    text = cfg.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    out, skip = [], False
+    for ln in lines:
+        if ln.startswith(("altair:", "commands:", "client_token:")):
+            skip = True
+            continue
+        if skip and (ln.startswith((" ", "#")) or not ln.strip()):
+            continue
+        skip = False
+        if ln.strip().startswith("slots:"):
+            continue
+        out.append(ln.replace("max_concurrent_hw", "x"))
+    cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+    d0 = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert "altair" not in d0 and "slots" not in d0["worker"]
+    r2 = _run("write", inp)
+    for k in ("altair.hw_exe_path", "altair.max_concurrent_hw", "worker.slots", "client_token.ttl_days"):
+        assert k in r2["config_changed_keys"], k
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert d["altair"]["hw_exe_path"] == "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"
+    assert d["altair"]["max_concurrent_hw"] == 2 and d["worker"]["slots"] == 2 and d["client_token"]["ttl_days"] == 30
+    assert r2["write"]["validation"]["ok"] is True
+    # 사용자가 바꾼 값은 유지
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace("slots: 2", "slots: 3"), encoding="utf-8")
+    r3 = _run("write", inp)
+    assert "worker.slots" not in r3["config_changed_keys"]
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["worker"]["slots"] == 3
+
+
 def test_flow_style_config_not_rewritten(tmp_path):
     """흐름 표기(예시 dev 설정 복사본)는 줄 편집으로 안전하게 고칠 수 없으면 바꾸지 않고 안내."""
     inp = _inputs(tmp_path)
@@ -323,3 +358,54 @@ def test_bundle_legacy_backend_serves_frontend_migrates_to_config(tmp_path):
     inp["mode"] = "bundle"
     r = _run("write", inp)
     assert yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))["server"]["frontend_root"] == sc.fwd(str(tmp_path / "fe"))
+
+
+# ---------------------------------------------------------------- P3-UX: 업로드 위치(storage.upload_root)
+def test_upload_root_default_created_and_in_input_roots(tmp_path):
+    inp = _inputs(tmp_path)
+    r = _run("write", inp)
+    want = sc.fwd(str(tmp_path / "esl-input"))                     # <esl_root 부모>/esl-input
+    assert r["upload_root"] == want and r["upload_root_ok"] is True
+    d = yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))
+    assert d["storage"]["upload_root"] == want and d["storage"]["browse_spdm"] is False
+    assert (tmp_path / "esl-input").is_dir() and want in r["write"]["created"]
+    dj = json.loads((tmp_path / "rt" / "deploy.json").read_text(encoding="utf-8"))
+    assert dj["upload_root"] == want
+    assert r["write"]["validation"]["ok"] is True
+    from esl_platform.core.config import load_config
+
+    lc = load_config(r["config_path"], environ={})
+    assert any(sc.fwd(x) == want for x in lc.settings.storage.input_roots)       # input_roots 에 자동 포함
+    r2 = _run("write", inp)                                                         # 다시 실행 = 변경 없음
+    assert r2["config_changed"] is False and r2["deploy_changed"] is False
+
+
+def test_upload_root_explicit_and_overlap_rejected(tmp_path):
+    inp = _inputs(tmp_path, upload_root=str(tmp_path / "my_up"))
+    r = _run("plan", inp)
+    assert r["upload_root"] == sc.fwd(str(tmp_path / "my_up"))
+    inp = _inputs(tmp_path, upload_root=str(tmp_path / "esl_root" / "up"))
+    r = _run("write", inp)
+    assert r["upload_root_ok"] is False and any("ESL 루트" in w and "겹칩니다" in w for w in r["warnings"])
+    assert not (tmp_path / "esl_root" / "up").exists()
+    d = yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))
+    assert d["storage"]["upload_root"] is None                       # 겹치는 값은 쓰지 않음(예시 null 유지)
+    w, ok = sc.check_upload_root("E:/SPDM/master/up", "E:/esl-data", ["e:/spdm/MASTER"])
+    assert not ok and any("SPDM" in x for x in w)
+    assert sc.default_upload_root("E:/VD_SIMULATION_WEB/esl-data") == "E:/VD_SIMULATION_WEB/esl-input"
+    assert sc.default_upload_root("") == "" and sc.default_upload_root("rel/x") == ""
+
+
+def test_old_config_without_upload_root_gets_filled(tmp_path):
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    cfg = Path(r1["config_path"])
+    lines = [ln for ln in cfg.read_text(encoding="utf-8").splitlines(keepends=True) if "upload_root:" not in ln]
+    cfg.write_text("".join(lines), encoding="utf-8")
+    dj = tmp_path / "rt" / "deploy.json"
+    d0 = json.loads(dj.read_text(encoding="utf-8"))
+    d0.pop("upload_root")
+    dj.write_text(json.dumps(d0), encoding="utf-8")
+    r2 = _run("write", inp)                                          # 업데이트(update-repo)와 같은 경로
+    assert "storage.upload_root" in r2["config_changed_keys"] and "upload_root" in r2["deploy_added"]
+    assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["storage"]["upload_root"] == sc.fwd(str(tmp_path / "esl-input"))

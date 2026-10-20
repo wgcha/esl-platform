@@ -1198,3 +1198,518 @@ a.btn {
   display: inline-flex;
   align-items: center;
 }
+
+/* ---------------------------------------------------------------- P3-UX: 버전·새 Case·결과 받기·업데이트 내역·가이드 */
+.version-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.version-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+.new-dot {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--bad);
+  border: 2px solid var(--surface);
+}
+.case-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  padding-right: 1.25rem;
+}
+.case-bar > nav:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.case-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.6rem;
+}
+.bundle {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+.bundle-pop {
+  max-width: 34rem;
+}
+.case-menu .bundle-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 15;
+  margin-top: 0.3rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(20, 30, 50, 0.12);
+  min-width: 26rem;
+}
+/* 탭(새 Case 입력 방법) */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 2.4rem;
+  padding: 0 1rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--accent);
+}
+.tab.on {
+  color: var(--accent-strong);
+  border-bottom-color: var(--accent);
+}
+.dropzone {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.dropzone.over {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+.dropzone.has {
+  border-style: solid;
+  border-color: var(--ok);
+  background: var(--surface);
+}
+.dropzone-title {
+  font-weight: 650;
+}
+.upload-panel,
+.server-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+.upload-list,
+.browse-list {
+  max-height: 18rem;
+}
+.upload-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.upload-progress {
+  display: grid;
+  gap: 0.35rem;
+}
+.upload-progress .progress {
+  height: 0.6rem;
+}
+details.alt-input,
+details.adv-input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+details.alt-input > summary,
+details.adv-input > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  color: var(--text-2);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+details.alt-input > .dropzone {
+  margin: 0 0.8rem 0.8rem;
+}
+.adv-body {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0 0.8rem 0.8rem;
+}
+.missing {
+  display: grid;
+  gap: 0.4rem;
+}
+.browse-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.browse-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+.browse-head > .mono {
+  flex: 1;
+  text-align: right;
+}
+.entry-dir,
+.entry-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: inherit;
+}
+.entry-icon {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  flex: none;
+}
+.entry-icon.dir {
+  background: var(--wait);
+  opacity: 0.55;
+}
+.entry-icon.file {
+  visibility: hidden;
+}
+.hint-badge {
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hint-badge.rad {
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.hint-badge.h3d {
+  background: var(--final-weak);
+  color: var(--final);
+}
+.hint-badge.results {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.hint-badge:hover,
+.hint-badge.on {
+  border-color: currentColor;
+}
+.picked {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.picked-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.picked-row .field-label {
+  width: 7.5rem;
+  flex: none;
+}
+.picked-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 업데이트 내역 */
+.release-list {
+  display: grid;
+  gap: var(--gap);
+  max-width: 60rem;
+}
+.release {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem 1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+.release.current {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.release-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.release-head h2 {
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+.release-sec {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  align-items: start;
+  gap: 0.5rem;
+}
+.release-sec .badge {
+  justify-self: start;
+  margin-top: 0.15rem;
+}
+.release-sec ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+/* 사용 가이드(대시보드 HelpCenter 형식) */
+.guide {
+  display: grid;
+  gap: 1.25rem;
+}
+.guide-head {
+  display: grid;
+  gap: 0.3rem;
+}
+.guide-head p {
+  margin: 0;
+}
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+.guide-flow {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.guide-flow > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.guide-flow b {
+  color: var(--muted);
+  margin: 0 0.35rem;
+}
+.flow-step {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+.guide-flow p {
+  margin: 0;
+}
+.guide-group {
+  display: grid;
+  gap: 0.6rem;
+}
+.guide-group > h2 {
+  font-size: 1.05rem;
+}
+.guide-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  gap: var(--gap);
+  align-items: stretch;
+}
+.guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  scroll-margin-top: 4rem;
+}
+.guide-card:target {
+  border-color: var(--accent);
+}
+.guide-no {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.guide-card h3 {
+  font-size: 1rem;
+}
+.guide-what {
+  margin: 0;
+  color: var(--text-2);
+}
+.guide-card ol,
+.guide-card ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+.guide-check {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  background: var(--ok-weak);
+}
+.guide-check strong {
+  font-size: 0.8rem;
+  color: var(--ok);
+}
+.guide-tip {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  background: var(--wait-weak);
+  color: var(--wait);
+}
+.guide-go {
+  margin-top: auto;
+  padding-top: 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.faq {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 60rem;
+}
+.guide-aside {
+  color: var(--muted);
+}
+/* 새 Case — PC에서 추출해 올리기(§9.1) */
+.pc-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+.pc-panel p {
+  margin: 0;
+}
+.pc-steps {
+  margin: 0;
+  padding-left: 1.3rem;
+  display: grid;
+  gap: 0.4rem;
+  color: var(--text-2);
+}
+.pc-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+}
+.pc-code {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-weak);
+}
+.pc-code.expired {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.pc-code-digits {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent-strong);
+}
+.pc-code.expired .pc-code-digits {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.pc-sub {
+  margin: 0.4rem 0 0;
+  font-size: 1rem;
+}
+/* ① 서버 h3d 추출 단계(§6) */
+.job-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin: 0.45rem 0;
+  padding: 0;
+  list-style: none;
+}
+.job-steps li {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface);
+}
+.job-steps li.running {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-weak);
+  font-weight: 600;
+}
+.job-steps li.succeeded {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: var(--ok-weak);
+}
+.job-steps li.failed {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: var(--bad-weak);
+}
+.h3d-phase {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+.slots-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 500;
+}

@@ -1,6 +1,6 @@
 """FastAPI 앱(계약 esl.md §5). 모든 라우트는 `{server.base_path}/api` 접두(기본 `/esl/api`).
 
-실행: `uvicorn esl_platform.api.main:app --host 127.0.0.1 --port 8110` (env ESL_PLATFORM_CONFIG, ESL_DATABASE_URL).
+실행: `uvicorn esl_platform.api.main:app --host 127.0.0.1 --port 8110 --no-proxy-headers`(XFF 해석은 앱이 trusted_proxies 로만) (env ESL_PLATFORM_CONFIG, ESL_DATABASE_URL).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from .. import __version__
 from ..core.config import LoadedConfig, load_config
 from ..core.errors import DomainError
 from .context import AppContext, build_context
-from .routers import cases, jobs, library, results, system
+from .routers import cases, client_tokens, jobs, library, results, system, uploads
 
 log = logging.getLogger("esl_platform.api")
 
@@ -69,7 +69,7 @@ def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
         log.exception("처리되지 않은 오류")
         return _error(500, "INTERNAL_ERROR", "서버 내부 오류가 발생했습니다")
 
-    for r in (system, cases, jobs, results, library):
+    for r in (system, cases, jobs, results, library, uploads, client_tokens):
         app.include_router(r.router, prefix=prefix)
     if ctx.settings.server.frontend_root:  # 운영 기본: 대시보드 Vite 프록시가 /esl 전체를 넘긴다(Caddy 없이) — '/'는 가로채지 않음
         from .frontend_static import mount_frontend

@@ -35,3 +35,7 @@
 - (P2, 2026-10-19) ESL은 표준 ESLSO 정의(선형 탄성 K_L·u_N) 유지, 할선 강성 ESL은 도입하지 않음(근거: 사용자 판단 — 소성영역이 국부적).
 - (P2, 2026-10-19) 최적화 덱 기본은 모든 씬 ESL(minmax), 60개 초과 시 대표+최악으로 축소(거부 없음). 설계 버전 비교로 ESLSO 수렴 판정(cos ≥ 0.9 임시값)(근거: 사용자 승인).
 - (P2 §12, 2026-10-20) 수렴 기준 cos_min 0.95, 셀당 노드 64 미만 경고, rep_same은 medoid cos 매칭으로 완화(근거: Verifier cos 민감도 측정 — 실모델 셀당 노드 약 200~650).
+- (P3-UX, 2026-10-20) P0 '업로드 엔드포인트 없음'을 대체: 새 Case 입력은 브라우저 분할 업로드(storage.upload_root, 이어 올리기, multipart 미사용) 또는 서버 폴더 찾아보기. 결과는 zip 받기. 버전은 VERSION+CHANGELOG.md, 상단 표기·업데이트 내역·사용 가이드 화면(근거: 사용자 요청 — 경로 복사 붙여넣기 제거).
+- (P3-UX, 2026-10-20) 서버에 HyperView 있음 → h3d는 서버 워커가 추출(H3D_EXTRACT, argv 템플릿). 사용자 PC 경로는 서버에서 안 보이므로 입력은 업로드(esl-input)만. Case 입력 = rad + (h3d | 추출 결과). worker.slots 기본 2, GPU 제약만. HPC 제출은 P4(근거: 사용자 확인).
+- (P3-UX, 2026-10-20) 서버 추출 출력은 <esl_root>/_h3d/<Case>/raw(코어 출력 보호 규칙 때문). PC 연결 코드 잠금은 출발지 구분 가능 시 5회, 불가 시 서버 전체 30회/15분.
+- 2026-10-20: P3-UX 보안 보강 — uvicorn proxy_headers=False·연결코드 잠금은 실제 peer 기준(XFF는 trusted_proxies만), 업로드 찾아보기 본인 폴더 격리·_backup 차단, rad 밖 include는 PC에서 Y 확인 후만 업로드. 근거: Verifier 결함 6건.

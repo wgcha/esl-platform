@@ -7,7 +7,7 @@
 #                      이 묶음으로는 설치할 수 없다(install.ps1이 wheels에서 패키지를 찾지 못함).
 #   --frontend-dist  : 이미 빌드한 프런트 폴더(index.html)를 그대로 묶는다(npm 빌드 생략).
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL 포함), frontend/(vite build, base /esl/),
-#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, alembic.ini, pyproject.toml, esl_service.py),
+#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
 # 시연 모드(deploy/demo)는 합성 Case를 스스로 만들므로 추가 자원이 없다.
 set -euo pipefail
@@ -67,7 +67,13 @@ run "cp -r esl '$OUTDIR/app/esl'"
 run "cp -r backend/esl_platform '$OUTDIR/app/backend/esl_platform'"
 run "cp -r worker/esl_worker '$OUTDIR/app/worker/esl_worker'"
 run "cp -r migrations '$OUTDIR/app/migrations'"
-run "cp alembic.ini pyproject.toml '$OUTDIR/app/'"
+run "cp alembic.ini pyproject.toml VERSION CHANGELOG.md '$OUTDIR/app/'"
+# 코드 스냅샷 버전 기록(계약 esl_p3_ux.md §3): BUILD.json {version, commit, built_at}
+APP_VER="$(tr -d ' \r\n' < VERSION)"
+APP_COMMIT="$(git rev-parse --short=7 HEAD 2>/dev/null || true)"
+APP_BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ -n "$APP_COMMIT" ]; then APP_COMMIT_JSON="\"$APP_COMMIT\""; else APP_COMMIT_JSON=null; fi
+run "printf '{\"version\": \"%s\", \"commit\": %s, \"built_at\": \"%s\"}\\n' '$APP_VER' '$APP_COMMIT_JSON' '$APP_BUILT' > '$OUTDIR/app/BUILD.json'"
 run "cp deploy/esl_service.py '$OUTDIR/app/esl_service.py'"
 run "cp config/esl_platform.prod.example.yaml config/esl_platform.example.yaml config/esl.example.yaml config/library.example.yaml config/ista6.yaml '$OUTDIR/config/'"
 run "cp -r deploy/. '$OUTDIR/deploy/'"

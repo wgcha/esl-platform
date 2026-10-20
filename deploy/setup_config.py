@@ -18,7 +18,9 @@
   없을 때만 예시에서 복사한다(설정이 가리키는 상대 경로일 때만).
 - 경로 검사: 절대경로, 공백·& | < > ^ % ! " 없음, esl_root 가 input_roots·spdm_roots 와 겹치지 않음(SPDM 밖), input_roots 존재.
   문제가 있으면 경고하고 그 폴더는 만들지 않는다(최종 판정은 플랫폼 설정 검증).
-- Altair·resources·commands 는 없다(서버에서 외부 프로그램을 실행하지 않음). 솔버 의존성(pypardiso·MKL)은 requirements.lock.
+- P3-UX §6·§9.1: 서버 h3d 추출(altair.hw_exe_path·max_concurrent_hw), 동시 실행(worker.slots), PC 연결 토큰(client_token.ttl_days)
+  키가 기존 설정에 없으면 예시 값으로 보충한다(있으면 유지). 추출 TCL 은 코드 스냅샷(resources/tcl)이라 설정 없음.
+  솔버 의존성(pypardiso·MKL)은 requirements.lock.
 - 대시보드 .env(git 폴더 설치만): VITE_ESL_TARGET=http://127.0.0.1:<server.port>·SIMDASH_ESL_ENABLED=true 를 **없을 때만 끝에 추가**한다
   (이미 있으면 "이미 있음", 다른 값이면 그대로 두고 경고 — 기존 값·다른 줄·인코딩(BOM)·줄 끝은 보존). 바꾸기 전에 <런타임>/_backup/<UTC>/dashboard.env
   로 복사한다. 추가했으면 대시보드를 다시 시작해야 반영된다. .env 가 없으면 만들지 않고 안내만 한다.
@@ -48,8 +50,11 @@ COMPANIONS = ((("core", "config_path"), "esl.yaml", "esl.example.yaml"),
 ISTA6 = ("ista6.yaml", "ista6.yaml")   # library.yaml 의 library.ista6 기본값(같은 폴더)
 DEPLOY_KEY_ORDER = ("install_mode", "repo_root", "install_root", "dashboard_root", "python_exe", "pg_bin", "pg_host", "pg_port",
                     "db_name", "db_role", "config_path", "service_user", "run_mode", "caddy_frontend_root",
-                    "esl_root", "input_roots", "spdm_roots")
+                    "esl_root", "upload_root", "input_roots", "spdm_roots")
 LIST_KEYS = ("input_roots", "spdm_roots")
+# 기존 설정에 없으면 예시(prod) 값으로 보충하는 키(P3-UX §6 서버 h3d 추출·동시 실행, §9.1 PC 연결 토큰)
+SUPPLEMENT_KEYS = (("altair", "hw_exe_path"), ("altair", "max_concurrent_hw"), ("worker", "slots"),
+                   ("client_token", "ttl_days"))
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -96,6 +101,36 @@ def _yaml():
     return yaml
 
 
+UPLOAD_DIR_NAME = "esl-input"
+
+
+def default_upload_root(esl_root: str) -> str:
+    """업로드 저장 위치 기본값: <esl_root 부모>/esl-input (계약 esl_p3_ux.md §1.1·§6)."""
+    if not esl_root or not is_abs(esl_root):
+        return ""
+    parent = fwd(esl_root).rstrip("/").rsplit("/", 1)[0]
+    return f"{parent}/{UPLOAD_DIR_NAME}" if parent else ""
+
+
+def check_upload_root(upload_root: str, esl_root: str, spdm_roots: list[str]) -> tuple[list[str], bool]:
+    """업로드 위치 검사 → (경고, 폴더를 만들어도 되는지). 절대경로·문자·esl_root/SPDM 겹침."""
+    if not upload_root:
+        return ["업로드 위치(upload_root)가 비어 있습니다 — 브라우저 업로드를 쓸 수 없습니다(설정 storage.upload_root)"], False
+    warn: list[str] = []
+    ok = True
+    if not is_abs(upload_root) or unsafe(upload_root):
+        warn.append(f"업로드 위치가 절대경로가 아니거나 공백·특수문자가 있습니다: {upload_root}")
+        ok = False
+    if esl_root and overlaps(upload_root, esl_root):
+        warn.append(f"업로드 위치가 ESL 루트({esl_root})와 겹칩니다 — 다른 폴더를 쓰세요")
+        ok = False
+    for r in spdm_roots:
+        if overlaps(upload_root, r):
+            warn.append(f"업로드 위치가 SPDM 루트({r})와 겹칩니다 — SPDM 밖에 두세요")
+            ok = False
+    return warn, ok
+
+
 def check_paths(esl_root: str, input_roots: list[str], spdm_roots: list[str]) -> tuple[list[str], bool]:
     """경로 검사 → (경고 목록, esl_root 를 만들어도 되는지)."""
     warn: list[str] = []
@@ -120,7 +155,8 @@ def check_paths(esl_root: str, input_roots: list[str], spdm_roots: list[str]) ->
         if is_abs(r) and not unsafe(r) and not os.path.isdir(r):
             warn.append(f"입력 루트 폴더가 없습니다(공유 연결·이름 확인): {r}")
     if not input_roots:
-        warn.append("입력 루트(input_roots)가 비어 있습니다 — rad·결과 폴더를 고를 수 없습니다(설정 파일 storage.input_roots에 추가)")
+        warn.append("입력 루트(input_roots)가 비어 있습니다 — 서버 폴더 선택은 업로드 위치(upload_root)만 가능합니다"
+                    "(공유 폴더를 쓰려면 설정 파일 storage.input_roots에 추가)")
     return warn, ok_root
 
 
@@ -377,6 +413,16 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     spdm_roots = as_list(deploy.get("spdm_roots"))
     path_warn, root_ok = check_paths(esl_root, input_roots, spdm_roots)
     warnings += path_warn
+    # 업로드 위치: 명시 > deploy.json > <esl_root 부모>/esl-input. input_roots 에는 플랫폼 설정 로더가 자동 포함
+    upload_root = fwd(str(deploy.get("upload_root") or "")) or default_upload_root(esl_root)
+    if upload_root and deploy.get("upload_root") != upload_root:
+        if "upload_root" not in deploy:
+            added.append("upload_root")
+        deploy["upload_root"] = upload_root
+        deploy, _, _ = merge_deploy(deploy, {}, {})
+        deploy_changed = deploy_write and (existing is None or deploy != existing)
+    up_warn, upload_ok = check_upload_root(upload_root, esl_root, spdm_roots)
+    warnings += up_warn
 
     # ---- esl_platform.yaml ----------------------------------------------------------------------------
     example_path = src / "config" / PROD_EXAMPLE
@@ -406,8 +452,10 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     desired[("storage", "esl_root")] = esl_root
     desired[("storage", "input_roots")] = input_roots
     desired[("storage", "spdm_roots")] = spdm_roots
+    desired[("storage", "upload_root")] = upload_root if upload_ok else ""
     # 비어 있으면 채워도 되는 키(경로 값). 사용자가 넣은 다른 값은 보존
-    fill_empty = {("storage", "esl_root"), ("storage", "input_roots"), ("storage", "spdm_roots")}
+    fill_empty = {("storage", "esl_root"), ("storage", "input_roots"), ("storage", "spdm_roots"),
+                  ("storage", "upload_root")}
 
     text = base_text
     rows, changed = [], []
@@ -444,6 +492,16 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         text = set_yaml_value(text, ("library", "config_path"), "library.yaml", "setup이 보충 — P2 라이브러리")
         upgraded[("library", "config_path")] = "library.yaml"
         rows.append({"key": "library.config_path", "value": "library.yaml", "action": "보충(새 설정 절)"})
+    # P3-UX §6·§9.1: 서버 h3d 추출·동시 실행·PC 토큰 키 — 기존 설정에 없을 때만 예시 값으로 보충(사용자 값 유지)
+    if not new_file:
+        for path in SUPPLEMENT_KEYS:
+            has_k, _ = _get(base, path)
+            ok_ex, want_v = _get(example, path)
+            if has_k or not ok_ex or want_v is None:
+                continue
+            text = set_yaml_value(text, path, want_v, "setup이 보충 — P3-UX")
+            upgraded[path] = want_v
+            rows.append({"key": ".".join(path), "value": want_v, "action": "보충(새 설정 키)"})
     # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
     login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
     if login_warn:
@@ -516,6 +574,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         "deploy_changed": deploy_changed, "config_path": str(config_path), "config_source": source,
         "config_changed": config_changed, "config_rows": rows, "config_changed_keys": changed, "config_text": text,
         "companions": companions, "esl_root": esl_root, "esl_root_ok": root_ok, "input_roots": input_roots,
+        "upload_root": upload_root, "upload_root_ok": upload_ok,
         "spdm_roots": spdm_roots, "warnings": warnings,
     }
 
@@ -570,6 +629,10 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
     if root and pl["esl_root_ok"] and not os.path.isdir(root):
         Path(root).mkdir(parents=True, exist_ok=True)
         out["created"].append(root)
+    up = pl.get("upload_root")
+    if up and pl.get("upload_root_ok") and not os.path.isdir(up):
+        Path(up).mkdir(parents=True, exist_ok=True)
+        out["created"].append(up)
     out["validation"] = validate(str(cfg), inputs.get("code_root"))
     return out
 

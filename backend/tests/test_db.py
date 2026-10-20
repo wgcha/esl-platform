@@ -18,7 +18,10 @@ def test_v_db_1_upgrade_and_no_downgrade(engine, db_url):
     assert {"cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations", "artifacts", "notifications",
             "worker_slot", "worker_heartbeats", "alembic_version"} <= names
     with engine.connect() as c:
-        assert c.execute(text("SELECT count(*) FROM worker_slot")).scalar_one() == 1
+        # 0006: worker_slot 행 1..16(worker.slots 만큼 사용), PC 연결 코드·토큰 표
+        assert c.execute(text("SELECT count(*) FROM worker_slot")).scalar_one() == 16
+        assert c.execute(text("SELECT min(id), max(id) FROM worker_slot")).one() == (1, 16)
+    assert {"client_codes", "client_tokens", "client_code_failures"} <= names
     from alembic import command
     from alembic.config import Config
 
@@ -40,7 +43,10 @@ def _case_row(**kw):
     lambda cid: insert(cases).values(**_case_row(folder_name="../bad")),
     lambda cid: insert(cases).values(**_case_row(status="DELETED")),
     lambda cid: insert(cases).values(**_case_row(tstar={"frame_index": 1, "metric": "m", "source": "x"})),
-    lambda cid: insert(worker_slot).values(id=2),
+    lambda cid: insert(worker_slot).values(id=17),
+    lambda cid: insert(worker_slot).values(id=0),
+    lambda cid: insert(cases).values(**_case_row(input_kind="H3D")),           # H3D 인데 h3d_path 없음
+    lambda cid: insert(cases).values(**_case_row(input_kind="OTHER", h3d_path="/x.h3d")),
     lambda cid: update(worker_slot).values(lease_token="t"),
     lambda cid: insert(support_sets).values(id="s", case_id=cid, node_ids=[1, 2], dofs=["123", "12", "3"],
                                             source="auto", created_by="u"),

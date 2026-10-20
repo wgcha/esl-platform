@@ -294,6 +294,7 @@ export function baseCase(id: string, projectId: string, title: string, folder: s
     rad_path: `D:\\ESL_INPUT\\${folder}\\chassis_rear_0000.rad`,
     results_dir: `D:\\ESL_INPUT\\${folder}\\h3d_csv`,
     h3d_path: null,
+    input_kind: "RESULTS",
     input_fingerprint: {},
     part_title: "chassis_rear",
     part_id: null,

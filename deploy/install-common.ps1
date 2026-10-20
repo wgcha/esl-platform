@@ -17,7 +17,8 @@
 
 $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # <런타임>\app 으로 복사하는 코드(저장소 루트·묶음 app 폴더 기준 상대경로). 실행기는 deploy\esl_service.py → app\esl_service.py
-$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'alembic.ini', 'pyproject.toml')   # '/'는 Windows·pwsh 모두 구분자
+# resources/tcl: 서버 h3d 추출 TCL(esl_h3d_extract.tcl — 워커가 <런타임>\app\resources\tcl 에서 실행, 계약 esl_p3_ux.md §6)
+$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
 function Write-EslStep([string]$Message) {
@@ -146,7 +147,58 @@ function Install-EslApp {
         }
     }
     Copy-Item -LiteralPath $launcher -Destination (Join-Path $Dest 'esl_service.py') -Force
-    Write-EslStep "코드 배치: $Dest (esl·esl_platform·esl_worker·migrations·실행기 esl_service.py)"
+    $build = Write-EslBuildInfo -Source $Source -Dest $Dest
+    Write-EslStep "코드 배치: $Dest (esl·esl_platform·esl_worker·migrations·실행기 esl_service.py, v$($build.version) $($build.commit))"
+}
+
+function Get-EslGitCommit {
+    <# 저장소의 짧은 커밋 해시. git이 있으면 rev-parse, 없으면 .git/HEAD·refs·packed-refs를 직접 읽는다. 저장소가 아니면 $null. #>
+    param([Parameter(Mandatory = $true)][string]$Repo)
+    $gitDir = Join-Path $Repo '.git'
+    if (-not (Test-Path -LiteralPath $gitDir)) { return $null }
+    $git = (Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if ($git) {
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try {
+            $out = & $git -c "safe.directory=$($Repo -replace '\\', '/')" -C $Repo rev-parse --short=7 HEAD 2>$null
+            if ($LASTEXITCODE -eq 0 -and "$out" -match '^[0-9a-f]{7,}$') { return "$out".Trim() }
+        } finally { $ErrorActionPreference = $eap }
+    }
+    if (-not (Test-Path -LiteralPath $gitDir -PathType Container)) { return $null }
+    $head = "$(Get-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Raw -ErrorAction SilentlyContinue)".Trim()
+    $sha = $head
+    if ($head -like 'ref:*') {
+        $ref = $head.Substring(4).Trim()
+        $refFile = Join-Path $gitDir $ref
+        $sha = if (Test-Path -LiteralPath $refFile) { "$(Get-Content -LiteralPath $refFile -Raw)".Trim() } else { '' }
+        if (-not $sha) {
+            $packed = Join-Path $gitDir 'packed-refs'
+            if (Test-Path -LiteralPath $packed) {
+                foreach ($ln in Get-Content -LiteralPath $packed) { $p = "$ln".Split(' '); if ($p.Count -eq 2 -and $p[1] -eq $ref) { $sha = $p[0] } }
+            }
+        }
+    }
+    if ($sha -match '^[0-9a-f]{7,}$') { return $sha.Substring(0, 7) }
+    return $null
+}
+
+function Write-EslBuildInfo {
+    <#
+      코드 스냅샷에 BUILD.json {version, commit, built_at} 기록(계약 esl_p3_ux.md §3 — 상단 바 버전·툴팁).
+      묶음 app 폴더에 이미 BUILD.json 이 있으면(collect-offline) 그대로 복사, 없으면 VERSION·git 짧은 해시·지금(UTC)으로 만든다.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Source, [Parameter(Mandatory = $true)][string]$Dest)
+    $srcBuild = Join-Path $Source 'BUILD.json'
+    $dst = Join-Path $Dest 'BUILD.json'
+    if (Test-Path -LiteralPath $srcBuild) {
+        Copy-Item -LiteralPath $srcBuild -Destination $dst -Force
+        return (Get-Content -LiteralPath $dst -Raw -Encoding UTF8 | ConvertFrom-Json)
+    }
+    $verFile = Join-Path $Source 'VERSION'
+    $ver = if (Test-Path -LiteralPath $verFile) { "$(Get-Content -LiteralPath $verFile -Raw)".Trim() } else { '0.0.0' }
+    $info = [ordered]@{ version = $ver; commit = (Get-EslGitCommit -Repo $Source); built_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    [IO.File]::WriteAllText($dst, ($info | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    return [pscustomobject]$info
 }
 
 function Get-EslLauncher([string]$RuntimeDir) { return (Join-Path (Join-Path $RuntimeDir 'app') 'esl_service.py') }

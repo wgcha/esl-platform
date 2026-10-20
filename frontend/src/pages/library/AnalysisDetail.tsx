@@ -10,6 +10,8 @@ import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { openReport } from "../../components/ReportLink";
+import { BundleButton } from "../../components/BundleButton";
+import { p3 } from "../../api/p3";
 import { CopyPath, TOO_LARGE_TEXT } from "../../stages/Stage6";
 import { usePolling } from "../../lib/usePolling";
 import { bytes, dt } from "../../lib/format";
@@ -142,6 +144,7 @@ export function AnalysisDetail() {
         {a && a.status !== "NONE" && <JobStatusBadge state={a.status as JobState} />}
         {a?.title && <span className="muted">{a.title}</span>}
         <span className="spacer" />
+        {done && <BundleButton url={p3.analysisBundleUrl(analysisId)} filename={`analysis_${analysisId}.zip`} fallbackPath={a?.folder_path} />}
         <PrimaryButton label="보고서 보기" onClick={() => openReport(api.analysisReportUrl(analysisId))} disabledReason={reason} />
       </div>
       <ErrorLine text={an.error} />

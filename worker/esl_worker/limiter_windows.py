@@ -98,6 +98,8 @@ def load_kernel32() -> Any:
     k.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     k.AssignProcessToJobObject.restype = wintypes.BOOL
     k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k.TerminateJobObject.restype = wintypes.BOOL
+    k.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     k.CloseHandle.restype = wintypes.BOOL
     k.CloseHandle.argtypes = [wintypes.HANDLE]
     return k
@@ -170,6 +172,23 @@ class WindowsJobLimiter:
         if not self.k.AssignProcessToJobObject(self.job, handle):
             raise LimiterError(f"코어 프로세스를 Job Object 에 넣지 못했습니다(AssignProcessToJobObject, 오류 {_last_error()})")
         return self.summary()
+
+    def attach_handle(self, handle: int) -> dict[str, Any]:
+        """외부 프로그램(Popen._handle — 서버 h3d 추출 hw)을 Job 에 넣는다(손자도 Job 안 — BREAKAWAY 불허)."""
+        from .limiter import LimiterError
+
+        if not self.job:
+            raise LimiterError("Job Object 가 닫혀 있습니다")
+        if not handle or not self.k.AssignProcessToJobObject(self.job, handle):
+            raise LimiterError(f"hw 프로세스를 Job Object 에 넣지 못했습니다(AssignProcessToJobObject, 오류 {_last_error()})")
+        return self.summary()
+
+    def terminate(self, exit_code: int = 1) -> bool:
+        """Job 안 프로세스 트리 전체 종료(취소 — hw 와 그 자식). 핸들은 유지."""
+        if not self.job:
+            return False
+        fn = getattr(self.k, "TerminateJobObject", None)
+        return bool(fn(self.job, exit_code)) if fn else False
 
     def close(self) -> None:
         """핸들을 닫는다(KILL_ON_JOB_CLOSE — 남은 코어 자식도 종료)."""

@@ -28,13 +28,18 @@ storage:
   esl_root: "E:/shared/ESL_WORK"      # Case 산출물 루트(쓰기, SPDM 밖). 설치 스크립트가 deploy.json esl_root 로 채우고 폴더를 만든다
   input_roots: []                     # rad·결과 CSV 폴더를 고를 수 있는 루트(읽기 전용). 비어 있으면 Case 를 만들 수 없다
   spdm_roots: []                      # SPDM master 루트(겹침 검사용 — esl_root 가 이 안에 있으면 거부)
+  upload_root: null                   # 브라우저 업로드 저장 위치(절대경로, SPDM 밖, esl_root 와 겹침 금지 — input_roots 에 자동 포함).
+                                      # 설치 스크립트가 <esl_root 부모>/esl-input 으로 채우고 폴더를 만든다(-UploadRoot 로 지정). null = 업로드 끔
+  browse_spdm: false                  # 서버 폴더 찾아보기에 spdm_roots 를 읽기 전용으로 보이기(기본 끔)
 worker:
   limiter: auto                       # auto | none | posix | windows_job (Windows는 Job Object로 메모리·CPU·우선순위 제한)
   max_logical_cores: 16
-  max_memory_gb: 128                  # 코어 자식 메모리 한도(Windows: Job 커밋 합계 — SLOT·LIGHT 동시 실행분 포함, 초과 시
+  max_memory_gb: 128                  # 워커 전체 메모리 예산(작업별 한도 = 이 값 / slots 또는 per_job_memory_gb. Windows: 작업마다 Job 커밋, 초과 시
                                       # SOLVER_OUT_OF_MEMORY). 근거: 운영 서버 RAM 512 GB(decisions.md), 30만 요소 직접법 RSS 약
                                       # 13 GB, 100만 요소 추정 45 GB(POSIX 는 × vm_headroom 1.5 ≈ 68 GB 가상)를 수용하고 대시보드·
                                       # physicsai 와 나눠 쓸 여유를 남김. 서버 RAM 이 다르면 그 1/4 정도로
+  slots: 2                            # SLOT 레인 동시 작업 수(추출·ESL·검증 — 같은 Case 는 직렬). 작업별 코어 = max_logical_cores / slots
+  per_job_memory_gb: null             # 작업 1개 메모리 한도(GB). null = max_memory_gb / slots(128 / 2 = 64 GB)
   vm_headroom: 1.5                    # POSIX 전용: RLIMIT_AS(가상 주소 공간) = max_memory_gb × 이 값(VmPeak > RSS 여유).
                                       # Windows Job 메모리는 커밋 기준이라 곱하지 않음(1.0)
   priority: below_normal              # normal | below_normal | idle (Windows: Job 우선순위 클래스, POSIX: nice)
@@ -50,6 +55,32 @@ ui:
   max_preview_points: 20000
   poll_job_ms: 2000
   poll_queue_ms: 5000
+  max_bundle_bytes: 5368709120        # 결과 받기(zip) 상한 5 GB — 넘으면 413 + 폴더 경로 안내
+  browse_page_max: 1000               # 서버 폴더 찾아보기 한 번에 보이는 항목 수(넘으면 페이지)
+upload:                               # 브라우저 분할 업로드(계약 esl_p3_ux.md §1.1)
+  chunk_mb: 16                        # 청크 크기(MB) — 청크별 sha256(X-Chunk-Sha256)·이어 올리기 단위
+  max_file_bytes: 68719476736         # 파일당 64 GB(h3d 30 GB 수용)
+  max_upload_bytes: 107374182400      # 업로드당 100 GB
+  min_free_gb: 20                     # 업로드 후에도 upload_root 드라이브에 남길 여유(부족하면 507)
+  max_files: 5000
+  max_concurrent_per_user: 2
+  stale_hours: 72                     # 미완료 업로드를 _backup 으로 옮기는 시간(삭제 없음)
+  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d]
+altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §6) — 워커가 hw 를 직접 실행(shell 없이, argv 템플릿)
+  version_label: "2026.1"
+  hw_exe_path: "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"   # 공백 허용(실행 파일만). 환경 점검이 존재 확인
+  max_concurrent_hw: 2                # 동시 hw 수(HyperWorks 라이선스 한도에 맞춰 조정) — DB 세마포어, 넘으면 대기
+commands:                             # argv 템플릿(esl.md §4.4): argv[0] = {hw} 만. 허용 placeholder: hw, extract_tcl(_fwd), h3d(_fwd),
+                                      # request(_fwd), out_dir(_fwd), part, hot_k, top_n. 치환값에 & | < > ^ % ! " 가 있으면 실행 전 거부
+  h3d_extract: ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}", "-part", "{part}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}", "-hot_k", "{hot_k}", "-top_n", "{top_n}"]
+client_token:                         # PC 연결(계약 esl_p3_ux.md §9.1): 연결 코드 → PC 토큰 esl_ct_…(서버엔 해시만)
+  ttl_days: 30                        # 토큰 유효 기간
+  code_ttl_min: 15                    # 연결 코드 유효 시간(1회용)
+  lock_per_source: 5                  # 코드 교환 실패 잠금: 출발지(PC 주소)를 구분할 수 있으면 출발지별 허용 횟수
+  lock_global: 30                     # 출발지를 구분할 수 없으면(신뢰하지 않는 루프백 프록시 뒤) 서버 전체 허용 횟수
+  lock_minutes: 15                    # 실패를 세는 창·잠금 시간(분)
+  trusted_proxies: []                 # X-Forwarded-For 를 믿을 프록시 주소·CIDR. deploy/caddy(Caddy 2.5+ 는 받은 XFF 를 버리고
+                                      # 실제 주소를 붙임) 뒤라면 ["127.0.0.1", "::1"]. 비우면 루프백 peer 요청은 서버 전체 기준
 logging:
   level: INFO
   mask_patterns: ['(?i)(password|passwd|token|secret)\s*[=:]\s*\S+']

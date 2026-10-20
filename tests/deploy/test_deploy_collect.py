@@ -57,8 +57,12 @@ def test_bundle_structure_and_runs_from_bundle(tmp_path, fake_frontend):
             "config/library.example.yaml", "config/ista6.yaml", "deploy/install.ps1", "deploy/install.bat", "deploy/update.bat",
             "deploy/install-common.ps1", "deploy/setup_config.py", "deploy/requirements.lock", "deploy/caddy/esl.caddy",
             "deploy/demo/start-demo.bat", "deploy/demo/demo_setup.py", "deploy/demo/demo_synth.py"]
+    need += ["app/VERSION", "app/CHANGELOG.md", "app/BUILD.json"]                  # 버전 표기(계약 esl_p3_ux.md §3)
     for n in need:
         assert n in names, n
+    build = json.loads(zipfile.ZipFile(z).read("app/BUILD.json"))
+    assert build["version"] == (ROOT / "VERSION").read_text(encoding="utf-8").strip() and build["built_at"].endswith("Z")
+    assert build["commit"] is None or len(build["commit"]) == 7
     assert not any("__pycache__" in n or n.endswith(".pyc") for n in names)
     assert not any(".runtime" in n or "secrets" in n or n.startswith("app/tests") or "/tests/" in n for n in names)
     assert (out / "wheels" / "DOWNLOAD-LIST.txt").read_text() == (DEPLOY / "requirements.lock").read_text()

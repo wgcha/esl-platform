@@ -13,13 +13,13 @@ from sqlalchemy.exc import IntegrityError
 from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, forbidden, unprocessable
-from ...core.inputs import case_inputs_hash, changed_inputs, fingerprint
+from ...core.inputs import case_inputs_hash, changed_inputs, fingerprint, fingerprint_h3d
 from ...core.paths import check_includes, check_input_path
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.state_machine import CANCELED, FAILED, INTERRUPTED, TERMINAL
 from ..context import AppContext
-from ..schemas import CaseReportParams, EslSolveParams, ExportParams, RunRefParams
+from ..schemas import CaseExtractParams, CaseReportParams, EslSolveParams, ExportParams, RunRefParams
 from .common import (
     analysis_dir,
     case_dir,
@@ -63,11 +63,17 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
     """사전조건 확인 → jobs.params. 미충족 409 PREREQUISITE_MISSING + missing."""
     cdir = case_dir(ctx, case)
     if job_type == "CASE_EXTRACT":
-        if raw:
-            raise unprocessable("INVALID_PARAMS", "CASE_EXTRACT params 는 {} 입니다")
+        h3d_case = case.get("input_kind") == "H3D"
+        if raw and not h3d_case:
+            raise unprocessable("INVALID_PARAMS", "CASE_EXTRACT params 는 {} 입니다(h3d 입력 Case 만 hot_k·top_n)")
+        opts = _params(CaseExtractParams, raw)
         s = ctx.settings
         rad = check_input_path(s, case["rad_path"], "RAD")
-        res = check_input_path(s, case["results_dir"], "RESULTS")
+        if h3d_case:
+            h3d = check_input_path(s, case["h3d_path"], "H3D")
+            res = None
+        else:
+            res = check_input_path(s, case["results_dir"], "RESULTS")
         from esl_worker import core_adapter
 
         cc = (ctx.config.core or {}).get("case") or {}
@@ -77,8 +83,16 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
         except core_adapter.CoreError:  # 스캔 실패는 이전 목록 유지
             incs = [i["path"] for i in (case["input_fingerprint"].get("includes") or [])]
         check_includes(s, incs)
-        return {"settings": core_settings_for(ctx, case), "input_fingerprint": fingerprint(rad, res, incs),
-                "part_title": case["part_title"]}
+        settings = core_settings_for(ctx, case)
+        if not h3d_case:
+            return {"settings": settings, "input_fingerprint": fingerprint(rad, res, incs),
+                    "part_title": case["part_title"]}
+        hot_k = opts.hot_k or int((settings.get("extract") or {}).get("hot_k") or 200)
+        top_n = opts.top_n or int((settings.get("tstar") or {}).get("top_n_times") or 5)
+        return {"settings": settings, "input_fingerprint": fingerprint_h3d(rad, h3d, incs),
+                "part_title": case["part_title"],
+                "h3d": {"h3d_path": h3d, "out_dir": case["results_dir"], "part": case["part_title"],
+                        "hot_k": int(hot_k), "top_n": int(top_n)}}
 
     missing: list[str] = []
     if job_type == "CASE_REPORT":
@@ -158,7 +172,8 @@ def create_job(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
             with conn.begin_nested():
                 job = jobs_repo.insert_job(conn, case_id=case_id, project_id=case["project_id"],
                                            job_type=body.job_type, params=params, created_by=principal.user_id,
-                                           created_by_name=principal.display_name)
+                                           created_by_name=principal.display_name,
+                                           h3d=case.get("input_kind") == "H3D")
         except IntegrityError:
             raise conflict("CASE_JOB_BUSY", "같은 Case 에서 같은 종류의 작업이 대기 중이거나 실행 중입니다") from None
         if body.job_type == "CASE_EXTRACT":
@@ -214,14 +229,17 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             # 준비(새 지문, 처음 step 부터), 그 밖의 작업은 추출부터 다시 해야 하므로 거부.
             if job["job_type"] != "CASE_EXTRACT":
                 raise conflict("INPUT_CHANGED", "입력 파일이 추출 이후 바뀌었습니다. 추출(①)부터 다시 실행하세요")
-            params = _prepare(ctx, conn, case, "CASE_EXTRACT", {})
+            old = params.get("h3d") or {}
+            params = _prepare(ctx, conn, case, "CASE_EXTRACT",
+                              {k: old[k] for k in ("hot_k", "top_n") if old.get(k)} if old else {})
             start = 1
         try:
             with conn.begin_nested():
                 new = jobs_repo.insert_job(conn, case_id=job["case_id"], project_id=job["project_id"],
                                            job_type=job["job_type"], params=params, created_by=principal.user_id,
                                            created_by_name=principal.display_name, retry_of_job_id=job_id,
-                                           resume_from_step=start if start > 1 else None)
+                                           resume_from_step=start if start > 1 else None,
+                                           h3d=job["job_type"] == "CASE_EXTRACT" and case.get("input_kind") == "H3D")
         except IntegrityError:
             raise conflict("CASE_JOB_BUSY", "같은 Case 에서 같은 종류의 작업이 대기 중이거나 실행 중입니다") from None
         if job["failure_code"] == "INPUT_CHANGED":

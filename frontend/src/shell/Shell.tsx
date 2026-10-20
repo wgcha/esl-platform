@@ -1,8 +1,33 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "../api/types";
 import { Link, useLocation } from "react-router-dom";
 import { ROLE_LABEL, useApp } from "../app/AppContext";
 import { RightPanel } from "./RightPanel";
+import { SEEN_EVENT, isNewVersion, lastSeenVersion } from "../lib/changelog";
+import { dt } from "../lib/format";
+
+export const GUIDE_PATH = "/guide";
+export const UPDATES_PATH = "/updates";
+
+/** 상단 바 버전 표기: v0.4.0(툴팁 commit·배포 시각) + 마지막으로 본 버전보다 새로우면 점 배지 → 업데이트 내역 */
+export function VersionChip() {
+  const { version } = useApp();
+  const [seen, setSeen] = useState(lastSeenVersion);
+  useEffect(() => {
+    const on = () => setSeen(lastSeenVersion());
+    window.addEventListener(SEEN_EVENT, on);
+    return () => window.removeEventListener(SEEN_EVENT, on);
+  }, []);
+  if (!version) return null;
+  const fresh = isNewVersion(version.version, seen);
+  const tip = [`commit ${version.commit ?? "–"}`, `배포 ${version.built_at ? dt(version.built_at) : "–"}`].join(" · ");
+  return (
+    <Link to={UPDATES_PATH} className="version-chip" title={tip} data-testid="version-chip" aria-label={`버전 v${version.version}${fresh ? " (새 버전)" : ""} — 업데이트 내역`}>
+      v{version.version}
+      {fresh && <span className="new-dot" data-testid="version-new" aria-hidden="true" />}
+    </Link>
+  );
+}
 
 export interface Crumb {
   label: string;
@@ -46,6 +71,10 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
         </nav>
       )}
       <div className="topbar-right">
+        <Link className="topbar-link" to={GUIDE_PATH}>
+          사용 가이드
+        </Link>
+        <VersionChip />
         <a className="topbar-link" href="/">
           대시보드로
         </a>

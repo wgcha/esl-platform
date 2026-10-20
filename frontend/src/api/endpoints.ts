@@ -2,7 +2,7 @@ import { request, API_PREFIX } from "./client";
 import type {
   AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
   SectionOut,
-  ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectRadResult, InspectResultsResult, JobOut,
+  ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
   ValidationOut,
 } from "./types";
@@ -15,6 +15,8 @@ export const api = {
   inspectRad: (path: string) => request<InspectRadResult>("POST", "/paths/inspect", { body: { purpose: "RAD", path } }),
   inspectResults: (path: string) =>
     request<InspectResultsResult>("POST", "/paths/inspect", { body: { purpose: "RESULTS", path } }),
+  /** §6: h3d 파일 가벼운 검사(크기·헤더) */
+  inspectH3d: (path: string) => request<InspectH3dResult>("POST", "/paths/inspect", { body: { purpose: "H3D", path } }),
   cases: (projectId: string) => request<CaseOut[]>("GET", "/cases", { query: { project_id: projectId, status: "ACTIVE" } }),
   createCase: (body: CaseCreate) => request<CaseOut>("POST", "/cases", { body }),
   getCase: (id: string) => request<CaseOut>("GET", `/cases/${id}`),

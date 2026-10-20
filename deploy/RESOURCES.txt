@@ -1,7 +1,10 @@
 ESL 서버 반입 자원 안내(physicsai deploy/RESOURCES.txt 대응)
 
-ESL 서버는 외부 프로그램(Altair HyperView·OptiStruct 등)을 실행하지 않는다. 그래서 physicsai의 resources.*·altair.* 같은
-원본 반입 자원·실행 파일 설정이 없다. 서버에 따로 복사할 파일은 없다.
+ESL 서버가 실행하는 외부 프로그램은 HyperView hw(서버 h3d 추출, 계약 esl_p3_ux.md §6) 하나다 — 서버에 HyperWorks 2026.1과
+라이선스가 있어야 한다. 설정 altair.hw_exe_path(기본 C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe),
+altair.max_concurrent_hw(동시 hw 수 — 라이선스 한도), worker.slots·per_job_memory_gb(동시 작업·작업별 메모리).
+추출 TCL(resources/tcl/esl_h3d_extract.tcl)은 코드 스냅샷 <런타임>\app\resources\tcl 로 함께 배치된다(따로 복사할 것 없음).
+서버 추출 CSV는 <esl_root>\_h3d\<Case 폴더>\raw 에 쓴다.
 
   계산 코어(esl)            묶음 app\esl (설치 스크립트가 <런타임>\app\esl로 배치)
   솔버 의존성               묶음 wheels — deploy\requirements.lock 고정: pypardiso(+mkl·intel-openmp·tbb, Windows MKL 휠),

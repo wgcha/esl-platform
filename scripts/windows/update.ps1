@@ -4,9 +4,9 @@
 #     (reset·force 는 쓰지 않는다. fast-forward 가 안 되면 중단)
 #  2) 설정: %LOCALAPPDATA%\esl\esl_deploy.json (없으면 config\esl_deploy.example.json 으로 생성)
 #  3) 배포 (폴더 rename 없음 - 탐색기·명령창·실행 중인 hw 가 폴더를 잡고 있어도 됨):
-#     resources\tcl\*.tcl, README, esl_run.ps1 -> <deploy_dir>\versions\<git 짧은 해시>\ (새 폴더, 같은 내용이면 재사용)
+#     resources\tcl\*.tcl, README, esl_run.ps1, esl_upload_lib.ps1 -> <deploy_dir>\versions\<git 짧은 해시>\ (새 폴더, 같은 내용이면 재사용)
 #     활성 버전 = <deploy_dir>\current_version.txt (임시 파일 작성 후 파일 단위 교체, 3회 재시도)
-#  4) 런처: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat, esl_launch.ps1 (버전 무관, 바뀐 경우만 덮어쓰기)
+#  4) 런처: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat, ESL_upload.bat, esl_launch.ps1 (버전 무관, 바뀐 경우만 덮어쓰기)
 #     예전 구조(current 에 TCL·esl_run.ps1 이 직접 있음)는 그 배포 산출물만 파일 단위로 정리(사용자 파일은 그대로)
 #     오래된 versions 는 최근 5개 + 활성 버전만 남기고 정리(잠겼거나 사용자 파일이 있으면 건너뜀)
 #  5) 점검표: hw.exe, 활성 버전, TCL, 런처, work_root 쓰기, git 상태
@@ -157,10 +157,11 @@ function Publish-Deployment($Cfg, [string]$Version) {
     Stage "배포 (버전 $Version)"
     $tclDir = Join-Path $RepoRoot 'resources\tcl'
     $runner = Join-Path $PSScriptRoot 'esl_run.ps1'
+    $uploadLib = Join-Path $PSScriptRoot 'esl_upload_lib.ps1'
     $launchPs1 = Join-Path $PSScriptRoot 'esl_launch.ps1'
-    foreach ($f in @($runner, $launchPs1)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "실행기 없음: $f" } }
+    foreach ($f in @($runner, $uploadLib, $launchPs1)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "실행기 없음: $f" } }
     $sources = @(@(Get-ChildItem -LiteralPath $tclDir -Filter '*.tcl' -File | ForEach-Object { $_.FullName }) +
-        @((Join-Path $tclDir 'README.md'), $runner))
+        @((Join-Path $tclDir 'README.md'), $runner, $uploadLib))
 
     New-Item -ItemType Directory -Force -Path $script:DeployDir | Out-Null
     if (Test-IsLink $script:DeployDir) { throw "deploy_dir 가 링크입니다. 실제 폴더를 지정하세요: $($script:DeployDir)" }
@@ -197,6 +198,7 @@ function Publish-Deployment($Cfg, [string]$Version) {
     $want = [ordered]@{
         'ESL_probe.bat'   = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'probe'))
         'ESL_extract.bat' = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'extract'))
+        'ESL_upload.bat'  = [Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'upload'))
         'esl_launch.ps1'  = [IO.File]::ReadAllBytes($launchPs1)
     }
     $launchersOk = $true
@@ -254,7 +256,7 @@ function Test-Environment($Cfg, $Deploy, [string]$WorkRoot, [string[]]$Protected
     else { Add-Check 'hw.exe' 'FAIL' "없음: '$hw' -> 설정 hw_exe 수정" }
 
     if ($Deploy.Version) { Add-Check $PointerName 'OK' $Deploy.Version } else { Add-Check $PointerName 'FAIL' '활성 버전을 읽지 못함' }
-    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1')) {
+    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1', 'esl_upload_lib.ps1')) {
         $p = Join-Path $Deploy.Active $n
         if (Test-Path -LiteralPath $p -PathType Leaf) { Add-Check $n 'OK' $p } else { Add-Check $n 'FAIL' "없음: $p" }
     }
@@ -283,6 +285,12 @@ function Test-Environment($Cfg, $Deploy, [string]$WorkRoot, [string[]]$Protected
         }
         catch { Add-Check 'work_root' 'FAIL' "쓰기 불가: $WorkRoot ($($_.Exception.Message))" }
     }
+    # 서버 올리기(ESL_extract 의 자동 올리기·ESL_upload): 비어 있으면 처음 실행 때 묻는다(경고만)
+    $srv = ''
+    if ($Cfg.PSObject.Properties.Name -contains 'server_url') { $srv = [string]$Cfg.server_url }
+    if (-not $srv) { Add-Check 'server_url' 'WARN' '비어 있음 - 처음 올릴 때 묻고 저장(예 http://<대시보드 주소>/esl)' }
+    elseif ($srv -notmatch '^https?://[^/\s]+') { Add-Check 'server_url' 'FAIL' "http(s):// 로 시작해야 함: $srv" }
+    else { Add-Check 'server_url' 'OK' $srv }
 }
 
 function Show-Checks {
@@ -332,7 +340,9 @@ try {
     Say '사용법:' 'Cyan'
     Say "  1) 탐색기에서 이 폴더를 여세요: $currentDir"
     Say '  2) h3d 파일을 ESL_probe.bat 위로 끌어다 놓기 -> probe.json (파트 이름·결과 유형 확인)'
-    Say "  3) h3d 파일을 ESL_extract.bat 위로 끌어다 놓기 -> CSV (파트 기본값 '$($cfg.default_part)', 다른 파트: ESL_extract.bat <h3d> <part>)"
+    Say "  3) h3d 와 rad 를 함께 ESL_extract.bat 위로 끌어다 놓기 -> CSV 추출 -> ESL 서버로 올리기 -> 브라우저에 새 Case 화면"
+    Say "     (파트 기본값 '$($cfg.default_part)', 다른 파트: ESL_extract.bat <h3d> <rad> <part>, rad 를 빼면 선택 창, 취소 = 추출만)"
+    Say '  4) 올리기만 다시(이어 올리기): csv 폴더와 rad 를 ESL_upload.bat 위로 끌어다 놓기'
     Say "  출력: $workRoot\<h3d 이름>\probe | csv      설정: $ConfigPath"
     if ($failed.Count -gt 0) {
         Say ("점검 실패 {0}건 - 위 표의 FAIL 항목을 설정 파일에서 고친 뒤 update.bat 을 다시 실행하세요." -f $failed.Count) 'Red'

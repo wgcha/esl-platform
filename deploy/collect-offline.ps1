@@ -53,6 +53,7 @@ if ($DashboardRoot) {
 $cands = Get-EslPythonCandidates -PythonExe $PythonExe -DashboardPython $(if ($dash) { "$($dash.PythonExe)" } else { '' })
 $base = Select-EslPython -Candidates $cands -Tag $tag
 . (Join-Path $PSScriptRoot 'node-select.ps1')
+. (Join-Path $PSScriptRoot 'install-common.ps1')   # Write-EslBuildInfo(BUILD.json)
 $node = Select-EslNode -DashboardNode $(if ($dash) { "$($dash.NodeExe)" } else { '' }) -RepoRoot $root -Tag $tag
 
 # ---- 빌드용 임시 venv(고른 Python 3.12로 만든다 — 대시보드 런타임에는 설치하지 않음, 끝나면 지움·묶음 미포함) ----------------
@@ -84,12 +85,14 @@ try {
     }
     Invoke-Step 'copy frontend\dist, app(esl·backend\esl_platform·worker\esl_worker·migrations·alembic.ini·pyproject.toml·esl_service.py), config, deploy' {
         Copy-Item -Recurse -Force 'frontend\dist\*' 'dist\bundle\frontend\'
-        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations') {
+        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl') {
             $dst = Join-Path 'dist\bundle\app' $it
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
             Copy-Item -Recurse -Force $it $dst
         }
-        Copy-Item -Force 'alembic.ini', 'pyproject.toml' 'dist\bundle\app\'
+        Copy-Item -Force 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md' 'dist\bundle\app\'
+        # 코드 스냅샷 버전 기록(계약 esl_p3_ux.md §3): BUILD.json {version, commit, built_at}
+        Write-EslBuildInfo -Source $root -Dest (Join-Path $root 'dist\bundle\app') | Out-Null
         Copy-Item -Force 'deploy\esl_service.py' 'dist\bundle\app\esl_service.py'
         Copy-Item -Force 'config\esl_platform.prod.example.yaml', 'config\esl_platform.example.yaml', 'config\esl.example.yaml', 'config\library.example.yaml', 'config\ista6.yaml' 'dist\bundle\config\'
         Copy-Item -Recurse -Force 'deploy\*' 'dist\bundle\deploy\'

@@ -65,7 +65,7 @@ def lexical_check(raw: str, flavor: str | None = None) -> str:
 
 
 def check_input_path(settings: Settings, raw: str, purpose: str) -> str:
-    """검사 통과 시 정규화 경로. purpose: RAD | RESULTS."""
+    """검사 통과 시 정규화 경로. purpose: RAD | RESULTS | H3D(파일, 확장자 .h3d)."""
     p = lexical_check(raw)
     st = settings.storage
     root = next((r for r in st.input_roots if is_within(p, r)), None)
@@ -90,8 +90,13 @@ def check_input_path(settings: Settings, raw: str, purpose: str) -> str:
     elif purpose == "RESULTS":
         if not os.path.isdir(p):
             raise unprocessable("PATH_NOT_FOUND", "결과 폴더가 없습니다")
+    elif purpose == "H3D":
+        if not p.lower().endswith(".h3d"):
+            raise unprocessable("PATH_UNSAFE", "h3d 파일(.h3d)만 고를 수 있습니다")
+        if not os.path.isfile(p):
+            raise unprocessable("PATH_NOT_FOUND", "h3d 파일이 없습니다")
     else:
-        raise unprocessable("INVALID_PARAMS", "purpose 는 RAD | RESULTS")
+        raise unprocessable("INVALID_PARAMS", "purpose 는 RAD | RESULTS | H3D")
     return p
 
 
@@ -133,6 +138,9 @@ def safe_case_file(case_root: str, rel: str) -> str:
 LIBRARY_DIR = "_library"      # 라이브러리 항목 <esl_root>/_library/entries/<id>/ (Case 폴더명은 _ 로 시작 불가 → 충돌 없음)
 ANALYSIS_DIR = "_analysis"    # 종합분석 <esl_root>/_analysis/<id>/ (계약 §3)
 COMPARE_DIR = "_compare"      # 설계 버전 비교 <esl_root>/_compare/<id>/ (계약 §12.2)
+# P3-UX §6 서버 h3d 추출 출력 <esl_root>/_h3d/<Case 폴더>/raw/ — Case 폴더 밖(코어가 출력 폴더 안의 입력 폴더를 거부하므로
+# 계약의 <case>/01_extract/raw 대신 같은 esl_root 아래 형제 폴더. hw 작업 폴더·request.txt 는 <esl_root>/_h3d/<Case 폴더>/)
+H3D_DIR = "_h3d"
 _SEG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
@@ -154,3 +162,13 @@ def esl_subdir(settings: Settings, *parts: str) -> str:
     if any(overlaps(cur, r) for r in settings.storage.input_roots):
         raise _unsafe("입력 루트와 겹치는 경로에는 쓰지 않습니다")
     return cur
+
+
+def h3d_work_dir(settings: Settings, folder_name: str) -> str:
+    """서버 h3d 추출 작업 폴더 <esl_root>/_h3d/<Case 폴더>(hw cwd·request.txt)."""
+    return esl_subdir(settings, H3D_DIR, folder_name)
+
+
+def h3d_raw_dir(settings: Settings, folder_name: str) -> str:
+    """서버 h3d 추출 출력(CSV·done.json) = Case results_dir."""
+    return esl_subdir(settings, H3D_DIR, folder_name, "raw")

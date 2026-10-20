@@ -238,8 +238,11 @@ def test_prod_example_config():
     assert d["server"] == {"host": "127.0.0.1", "port": 8110, "base_path": "/esl", "frontend_root": None}   # setup.ps1 이 채움
     assert d["core"] == {"config_path": "esl.yaml"} and d["library"] == {"config_path": "library.yaml"}
     assert d["database"]["url_env"] == "ESL_DATABASE_URL"
-    for k in ("altair", "resources", "commands"):
-        assert k not in d
+    assert "resources" not in d                                     # 추출 TCL 은 코드 스냅샷(resources/tcl) — 설정 아님
+    # P3-UX §6: 서버 h3d 추출(hw 2026.1 기본 경로·동시 hw 수), 동시 실행(slots), §9.1 PC 토큰
+    assert d["altair"]["hw_exe_path"] == "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"
+    assert d["altair"]["max_concurrent_hw"] == 2 and d["commands"]["h3d_extract"][0] == "{hw}"
+    assert d["worker"]["slots"] == 2 and "per_job_memory_gb" in d["worker"] and d["client_token"]["ttl_days"] == 30
 
 
 def test_client_update_bat_untouched_and_separate():
@@ -287,3 +290,23 @@ def test_alembic_ini_ascii():
     # Windows alembic 은 ini 를 로캘 코덱(cp949)으로 읽는다 — 비ASCII 가 있으면 migrate 가 UnicodeDecodeError(#7)
     raw = (ROOT / "alembic.ini").read_bytes()
     assert raw.isascii(), "alembic.ini 는 ASCII 전용"
+
+
+def test_app_snapshot_carries_version_files():
+    """P3-UX §3: 코드 스냅샷(<런타임>/app)에 VERSION·CHANGELOG.md, 배포 시 BUILD.json{version, commit, built_at} 기록."""
+    common = (ROOT / "deploy" / "install-common.ps1").read_text(encoding="utf-8-sig")
+    items = re.search(r"\$EslAppItems = @\(([^)]*)\)", common).group(1)
+    assert "'VERSION'" in items and "'CHANGELOG.md'" in items
+    assert "'resources/tcl'" in items        # P3-UX §6: 서버 h3d 추출 TCL 을 코드 스냅샷에
+    assert "'resources\\tcl'" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
+    assert "Write-EslBuildInfo -Source $Source -Dest $Dest" in common
+    for k in ("version = $ver", "commit = (Get-EslGitCommit", "built_at ="):
+        assert k in common, k
+    assert "Write-EslBuildInfo" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
+
+
+def test_setup_scripts_upload_root():
+    """P3-UX: setup.ps1 -UploadRoot(기본 <ESL 루트 부모>\\esl-input) → deploy.json upload_root → setup_config 가 설정·폴더 반영."""
+    setup = (ROOT / "deploy" / "setup.ps1").read_text(encoding="utf-8-sig")
+    assert "[string]$UploadRoot" in setup and "'esl-input'" in setup and "upload_root = $uploadRootV" in setup
+    assert "upload_root" in (ROOT / "deploy" / "update-repo.ps1").read_text(encoding="utf-8-sig")

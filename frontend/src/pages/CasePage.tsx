@@ -14,6 +14,9 @@ import { Stage4 } from "../stages/Stage4";
 import { Stage5 } from "../stages/Stage5";
 import { Stage6 } from "../stages/Stage6";
 import type { ComponentType } from "react";
+import { BundleButton } from "../components/BundleButton";
+import { p3 } from "../api/p3";
+import { rememberCase } from "../lib/recent";
 
 const STAGES: ComponentType<StageProps>[] = [Stage1, Stage2, Stage3, Stage4, Stage5, Stage6];
 
@@ -34,6 +37,9 @@ export function CasePage() {
   }, [anyRunning, reload]);
 
   const reloadCase = useCallback(() => reload(), [reload]);
+  useEffect(() => {
+    if (c) rememberCase({ projectId, caseId, title: c.title });
+  }, [projectId, caseId, c?.title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!(stage >= 1 && stage <= 6)) return <Navigate to={`/p/${projectId}/c/${caseId}/stage/1`} replace />;
   const project = projects.find((p) => p.id === projectId);
@@ -47,7 +53,16 @@ export function CasePage() {
         { label: c?.title ?? "Case", to: `${base}/stage/1` },
         { label: `${"①②③④⑤⑥"[stage - 1]} ${STAGE_NAMES[stage - 1]}` },
       ]}
-      stepper={<StageStepper base={base} current={stage} status={c?.stage_status} />}
+      stepper={
+        <div className="case-bar">
+          <StageStepper base={base} current={stage} status={c?.stage_status} />
+          {c && (
+            <nav className="case-menu" aria-label="Case 메뉴">
+              <BundleButton url={p3.caseBundleUrl(c.id)} filename={`${c.folder_name}_result.zip`} fallbackPath={c.folder_path} />
+            </nav>
+          )}
+        </div>
+      }
     >
       <ErrorLine text={cs.error} />
       {c ? <Stage key={`${caseId}-${stage}`} c={c} reload={reloadCase} allowed={canRun(me, projectId)} /> : !cs.error && <Empty>불러오는 중…</Empty>}

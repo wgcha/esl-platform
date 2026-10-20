@@ -103,7 +103,7 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
         nullable = c.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='jobs' "
                                   "AND column_name='case_id'")).scalar_one()
         ver = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0004" and nullable == "YES"
+    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0006" and nullable == "YES"
     assert {"ux_library_entries_run_active", "ux_jobs_analysis_active", "ux_jobs_comparison_active",
             "ix_comparisons_project"} <= idx
     assert "LIB_ANALYZE" in cons["ck_jobs_job_type"] and "LIB_COMPARE" in cons["ck_jobs_job_type"]

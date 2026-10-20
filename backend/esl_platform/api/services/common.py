@@ -94,7 +94,7 @@ def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) 
                                             jobs.c.queue_seq <= job["queue_seq"]))
         ).scalar_one())
     if with_steps:
-        d["steps"] = [{k: v for k, v in s.items() if k not in ("outputs", "log_rel", "id", "job_id")}
+        d["steps"] = [{k: v for k, v in s.items() if k not in ("outputs", "log_rel", "id", "job_id", "command")}
                       for s in jobs_repo.get_steps(conn, job["id"])]
     return d
 

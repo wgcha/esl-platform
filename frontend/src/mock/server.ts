@@ -6,12 +6,13 @@ import type {
   ValidationOut,
 } from "../api/types";
 import {
-  CANDIDATE_FRAMES, CORNER_IDS, EXTRACT_SUMMARY, FRAMES_D, MAX_ARTIFACT_BYTES, N_NODES, PLANE, PROJECTS, USERS, baseCase,
+  CANDIDATE_FRAMES, CORNER_IDS, ESL_ROOT, EXTRACT_SUMMARY, FRAMES_D, MAX_ARTIFACT_BYTES, N_NODES, PLANE, PROJECTS, USERS, baseCase,
   makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
   type MockUserKey,
 } from "./data";
 import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
+import { P3Mock } from "./p3mock";
 
 interface MockResponse {
   status: number;
@@ -57,6 +58,16 @@ export class MockServer {
   entries: EntryOut[] = [];
   analyses: AnalysisOut[] = [];
   comparisons: ComparisonOut[] = [];
+  /** §6: worker.slots — SLOT 레인 동시 실행 수 */
+  slots = 2;
+  /** P3-UX: 업로드·서버 폴더·결과 zip·버전·PC 연결 */
+  p3 = new P3Mock({
+    canRun: (pid) => this.canRun(pid),
+    username: () => this.me.username,
+    userId: () => this.me.user_id,
+    projectName: (pid) => PROJECTS.find((p) => p.id === pid)?.name ?? null,
+    casePath: (id) => this.findCase(id)?.folder_path ?? null,
+  });
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -231,7 +242,7 @@ export class MockServer {
       .map(([, kind, name, size], k) => makeArtifact(`${jobId}-a${k}`, c, `06_export/${name}`, size, kind, jobId));
   }
 
-  private canRun(projectId: string) {
+  canRun(projectId: string) {
     const me = this.me;
     if (me.is_global_admin) return true;
     const r = me.roles[projectId];
@@ -309,12 +320,14 @@ export class MockServer {
     }
   }
 
-  handle(method: string, rawPath: string, query: URLSearchParams, body: unknown): MockResponse {
+  handle(method: string, rawPath: string, query: URLSearchParams, body: unknown, bodySize = 0): MockResponse {
     const path = rawPath.replace(/^\/esl\/api/, "");
     const b = (body ?? {}) as Record<string, unknown>;
     const m = (re: RegExp) => path.match(re);
     let r: RegExpMatchArray | null;
     this.queuePositions();
+    const p3r = this.p3.handle(method, path, query, b, bodySize);
+    if (p3r) return p3r;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
@@ -341,16 +354,24 @@ export class MockServer {
       const sum = (j: JobOut) => ({ ...j, steps: null });
       const lane = (name: "SLOT" | "LIGHT") => {
         const js = live.filter((j) => j.lane === name);
-        const run = js.find((j) => j.state === "RUNNING");
-        return { running: run ? sum(run) : null, queued: js.filter((j) => j.state === "QUEUED").map(sum) };
+        const run = js.filter((j) => j.state === "RUNNING");
+        return { running: run.length ? sum(run[0]) : null, running_all: run.map(sum), queued: js.filter((j) => j.state === "QUEUED").map(sum) };
       };
       const slot = lane("SLOT");
-      return { status: 200, body: { running: slot.running, queued: slot.queued, light: lane("LIGHT") } };
+      const light = lane("LIGHT");
+      return {
+        status: 200,
+        body: { running: slot.running, running_all: slot.running_all, slots: this.slots, queued: slot.queued, light: { running: light.running, queued: light.queued } },
+      };
     }
     if (method === "POST" && path === "/paths/inspect") {
       const p = String(b.path ?? "").trim();
       if (!p) return err(422, "PATH_NOT_FOUND", "경로를 입력하세요.");
-      if (!/^[A-Za-z]:\\ESL_INPUT\\|^\/data\/esl_input\//i.test(p))
+      if (b.purpose === "H3D") {
+        if (!/\.h3d$/i.test(p)) return err(422, "PATH_UNSAFE", "h3d 파일이 아닙니다.");
+        return { status: 200, body: { normalized_path: p, ok: true, problems: [], size: 6_812_331_000, mtime: 1760900000 } };
+      }
+      if (!/^[A-Za-z]:\\ESL_INPUT\\|^[A-Za-z]:\\VD_SIMULATION_WEB\\esl-input\\|^\/data\/esl_input\/|^\\\\spdm\\/i.test(p))
         return err(422, "PATH_OUTSIDE_ROOT", "허용된 입력 폴더(input_roots) 밖의 경로입니다.");
       if (b.purpose === "RAD") {
         const parts = [
@@ -411,7 +432,12 @@ export class MockServer {
       if (this.cases.some((c) => c.folder_name === folder)) return err(409, "FOLDER_EXISTS", "같은 폴더 이름이 이미 있습니다.");
       const c = baseCase(this.id("c"), String(b.project_id), String(b.title || folder), folder);
       c.rad_path = String(b.rad_path);
-      c.results_dir = String(b.results_dir);
+      if (!b.h3d_path && !b.results_dir) return err(422, "INPUT_MISSING", "h3d 또는 추출 결과 폴더가 필요합니다.");
+      if (b.h3d_path && b.results_dir) return err(422, "INPUT_CONFLICT", "h3d 와 추출 결과 폴더 중 하나만 고르세요.");
+      // §10: h3d 입력 → 서버 추출 출력 = <esl_root>/_h3d/<폴더>/raw
+      c.input_kind = b.h3d_path ? "H3D" : "RESULTS";
+      c.results_dir = b.results_dir ? String(b.results_dir) : `${ESL_ROOT}\\_h3d\\${folder}\\raw`;
+      c.h3d_path = b.h3d_path ? String(b.h3d_path) : null;
       c.part_title = String(b.part_title || "chassis_rear");
       c.part_id = 10;
       this.cases.push(c);
@@ -716,10 +742,10 @@ export class MockServer {
       created_at: t,
       updated_at: t,
       version: 1,
-      steps: STEPS[jt].map((k, i) => ({
+      steps: this.stepsOf(c.id, jt).map((k, i) => ({
         step_no: i + 1,
         step_key: k,
-        kind: "INTERNAL",
+        kind: k === "H3D_EXTRACT" ? "LOCAL" : "INTERNAL",
         core_stage: null,
         state: "PENDING",
         progress_pct: 0,
@@ -734,6 +760,12 @@ export class MockServer {
     this.queuePositions();
     this.logs[job.id] = [`[${job.job_type}] 대기열 등록 (#${job.queue_position})`];
     return job;
+  }
+
+  /** §6: h3d 입력 Case 의 CASE_EXTRACT 는 첫 step H3D_EXTRACT(워커가 HyperView 실행) */
+  private stepsOf(caseId: string | null, jt: JobType): string[] {
+    const c = caseId ? this.findCase(caseId) : undefined;
+    return jt === "CASE_EXTRACT" && c?.input_kind === "H3D" ? ["H3D_EXTRACT", ...STEPS[jt]] : STEPS[jt];
   }
 
   private caseSub(c: CaseOut, method: string, sub: string, b: Record<string, unknown>): MockResponse {
@@ -838,18 +870,22 @@ export class MockServer {
   /** 작업 1단계 진행 */
   tick() {
     for (const lane of ["SLOT", "LIGHT"] as const) {
-      const running = this.jobs.find((j) => j.lane === lane && j.state === "RUNNING");
-      if (running) {
-        this.advance(running);
-        continue;
-      }
-      const next = this.jobs.find((j) => j.lane === lane && j.state === "QUEUED");
-      if (next) {
+      // §6: SLOT 레인은 slots 개까지 동시 실행(같은 Case 는 직렬), LIGHT 는 1개
+      const cap = lane === "SLOT" ? Math.max(1, this.slots) : 1;
+      const running = this.jobs.filter((j) => j.lane === lane && j.state === "RUNNING");
+      for (const j of running) this.advance(j);
+      const busyCases = new Set(this.jobs.filter((j) => j.state === "RUNNING" && j.case_id).map((j) => j.case_id));
+      let n = this.jobs.filter((j) => j.lane === lane && j.state === "RUNNING").length;
+      for (const next of this.jobs.filter((j) => j.lane === lane && j.state === "QUEUED")) {
+        if (n >= cap) break;
+        if (next.case_id && busyCases.has(next.case_id)) continue;
         next.state = "RUNNING";
         next.started_at = this.now();
         next.current_step_no = 1;
         next.steps![0].state = "RUNNING";
         this.logs[next.id].push(`작업 시작 — step 1 ${next.steps![0].step_key}`);
+        if (next.case_id) busyCases.add(next.case_id);
+        n += 1;
       }
     }
     this.queuePositions();
@@ -859,8 +895,11 @@ export class MockServer {
     const steps = j.steps!;
     const step = steps.find((s) => s.state === "RUNNING");
     if (!step) return;
-    step.progress_pct = Math.min(100, (step.progress_pct ?? 0) + 50);
-    this.logs[j.id].push(`  ${step.step_key}: ${step.progress_pct}%`);
+    step.progress_pct = Math.min(100, (step.progress_pct ?? 0) + (step.step_key === "H3D_EXTRACT" ? 25 : 50));
+    if (step.step_key === "H3D_EXTRACT") {
+      const pass = Math.min(3, Math.ceil(step.progress_pct / 34));
+      this.logs[j.id].push(`  [hw] esl_h3d_extract.tcl pass ${pass}/3 ${["메시·파트", "변위 프레임", "변형률 이력"][pass - 1]} — ${step.progress_pct}%`);
+    } else this.logs[j.id].push(`  ${step.step_key}: ${step.progress_pct}%`);
     j.progress_pct = Math.round(((steps.filter((s) => s.state === "SUCCEEDED").length + step.progress_pct / 100) / steps.length) * 100);
     if (step.progress_pct < 100) return;
     step.state = "SUCCEEDED";
@@ -916,6 +955,25 @@ export class MockServer {
     if (j.job_type === "CASE_EXTRACT" || j.job_type === "ESL_SOLVE") c.version += 1;
   }
 
+  /** 시연·시험용(§6): h3d 입력 Case 를 만들고 ① 추출을 걸어 서버 추출(H3D_EXTRACT) 진행 중으로 둔다. 다른 Case 계산도 하나
+   *  같이 돌려 대기열에 동시 실행(slots)이 보이게 한다. 반환 = Case id */
+  demoH3dExtract(): string {
+    const r = this.handle("POST", "/cases", new URLSearchParams(), {
+      project_id: "p-body",
+      folder_name: "QN80H_rear40",
+      title: "QN80H 후방 40kph(h3d)",
+      rad_path: "E:\\VD_SIMULATION_WEB\\esl-input\\kim\\20261020-00001_QN80H_rear40\\rad\\QN80H_rear40_0000.rad",
+      h3d_path: "E:\\VD_SIMULATION_WEB\\esl-input\\kim\\20261020-00001_QN80H_rear40\\h3d\\QN80H_rear40.h3d",
+      part_title: "chassis_rear",
+    });
+    const c = r.body as CaseOut;
+    this.handle("POST", `/cases/${c.id}/jobs`, new URLSearchParams(), { job_type: "CASE_EXTRACT", params: {} });
+    this.handle("POST", "/cases/c-new/jobs", new URLSearchParams(), { job_type: "CASE_EXTRACT", params: {} });
+    this.tick();
+    this.tick();
+    return c.id;
+  }
+
   /** 테스트용: 작업 끝까지 진행 */
   drain() {
     for (let k = 0; k < 100 && this.jobs.some((j) => ACTIVE.includes(j.state)); k++) this.tick();
@@ -935,8 +993,13 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       if (h.get("X-ESL-Request") !== "1")
         return new Response(JSON.stringify({ detail: { code: "CSRF_HEADER_REQUIRED", message: "요청 헤더가 없습니다." } }), { status: 403 });
     }
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    const r = server.handle(method, url.pathname, url.searchParams, body);
+    if (server.p3.shouldHang(method, url.pathname.replace(/^\/esl\/api/, ""))) await new Promise(() => undefined);
+    if (method === "PUT" && server.p3.putDelayMs) await new Promise((r) => setTimeout(r, server.p3.putDelayMs));
+    if (method === "PUT") server.p3.chunkShas.push(new Headers(init?.headers).get("X-Chunk-Sha256"));
+    const raw = init?.body;
+    const isBin = typeof Blob !== "undefined" && raw instanceof Blob;
+    const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;
+    const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw as Blob).size : 0);
     if (typeof r.body === "string")
       return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/octet-stream" } });
     return new Response(r.body === undefined ? null : JSON.stringify(r.body), {
