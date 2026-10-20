@@ -52,3 +52,8 @@
 
 ## 7. 범위 밖(나중, P4)
 - PBS/HPC 제출(OptiStruct 비드 덱 실행, 검증 낙하 Radioss) 및 결과 h3d 자동 Case 등록 — physicsai `hpc.*`·대시보드 SCX relay 구현을 참고해 별도 계약.
+
+## 8. 대용량 h3d(최대 30 GB급) — 2026-10-20
+- 상한 기본: 파일당 64 GB, 업로드당 100 GB(설정). 업로드 시작 시 upload_root 여유 공간 검사(필요량 + `upload.min_free_gb` 20) → 부족 507 `INSUFFICIENT_STORAGE`.
+- 무결성: 청크별 sha256(`X-Chunk-Sha256`) + 서버 스트리밍 전체 sha256 기록. 브라우저 전체 해시 계산 없음. File.slice 스트리밍, 동시 2청크, 이어 올리기(서버 received 기준, 탭 재시작 후에도).
+- 참고 시간: 30 GB ≈ 1 Gbps 약 5분, 100 Mbps 약 45분. 매우 큰 h3d는 PC에서 `ESL_extract.bat`으로 추출한 결과 폴더(수백 MB)만 올리는 대안을 가이드에 안내.
