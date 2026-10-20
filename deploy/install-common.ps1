@@ -728,6 +728,8 @@ function Write-EslConnectGuide {
     elseif ($hasOn -and $hasTarget) { $state = ' — 이미 들어 있음' }
     Write-EslStep "  1) $where 에 VITE_ESL_TARGET=$target , SIMDASH_ESL_ENABLED=true$state"
     Write-EslStep "     (대시보드 Vite가 $b 전체를 이 백엔드로 넘기고, 백엔드가 프런트 $FrontendRoot 를 $b/ 아래에 서빙 — 설정 server.frontend_root)"
-    Write-EslStep "  2) 접속: http://<대시보드 주소>$b/ (대시보드에 로그인한 상태로). 이 PC 확인용 health: $target$b/api/health"
+    Write-EslStep "     대시보드는 ESL 연결이 들어간 버전이어야 합니다(사이드바 '등가정적하중' 버튼·$b 프록시 — simdashboard PR #56)."
+    Write-EslStep "     대시보드 백엔드가 8000이 아닌 포트면 설정 auth.dashboard_internal_url 을 그 포트로 바꾸고 ESL 작업을 재시작하세요"
+    Write-EslStep "  2) 접속: 대시보드 로그인 → 사이드바 'AI 예측' 아래 '등가정적하중' (또는 http://<대시보드 주소>$b/). 이 PC 확인용 health: $target$b/api/health"
     Write-EslStep "  Caddy를 쓰는 설치: $snippet (Caddy 환경변수 ESL_PORT=$Port, ESL_FRONTEND_ROOT=$FrontendRoot)"
 }

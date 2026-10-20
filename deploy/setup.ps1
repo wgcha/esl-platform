@@ -287,6 +287,12 @@ Write-Host ''
 Write-Step '설치 완료. 남은 연결 작업:'
 Write-EslConnectGuide -Port $ep.Port -BasePath $ep.BasePath -DashboardRoot "$($d.dashboard_root)" -FrontendRoot "$($d.caddy_frontend_root)" `
     -SnippetDir (Join-Path $PSScriptRoot 'caddy') -EnvResult $envResult
-Write-Step '  3) 설정은 이 파일에서 고칩니다(입력 루트 storage.input_roots, 판정 기준은 같은 폴더 esl.yaml):'
-Write-Step "     $($d.config_path)  (고친 뒤 Stop/Start-ScheduledTask ESL-Worker, ESL-Backend → 환경 점검: & '$venvPy' '$(Get-EslLauncher $rt)' check --runtime '$rt')"
-Write-Step "업데이트(일반 PowerShell, git pull 포함):  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"
+Write-Step '  3) 설정은 이 파일에서 고칩니다(입력 루트 storage.input_roots, 워커 메모리 worker.max_memory_gb):'
+Write-Step "     $($d.config_path)"
+Write-Step '     같은 폴더 esl.yaml 의 판정 기준(validation·compare)은 임시값, ista6.yaml 낙하 높이 표는 비어 있음 — 사내 기준으로 채우세요'
+Write-Step '     고친 뒤: Stop-ScheduledTask ESL-Worker; Stop-ScheduledTask ESL-Backend; Start-ScheduledTask ESL-Backend; Start-ScheduledTask ESL-Worker'
+if (-not @($inputRootsV).Count) { Write-Step '     ! 입력 루트가 비어 있습니다 — storage.input_roots 에 rad·결과 CSV 공유 폴더를 넣어야 Case를 만들 수 있습니다' }
+Write-Step "  4) 환경 점검: & '$venvPy' '$(Get-EslLauncher $rt)' check --runtime '$rt'   (로그: $(Join-Path $rt 'logs'))"
+Write-Step "  5) 사용자 PC: 저장소 루트 update.bat → ESL_extract.bat 에 h3d 끌어다 놓기 → CSV 폴더와 _0000.rad(include 포함)를 입력 루트 아래로 → ESL 화면에서 새 Case"
+Write-Step "이후 코드 업데이트(인자 없이, 설정 유지):  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"
+Write-Step "단계별 가이드: $(Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\manual\install-quickstart.md')"

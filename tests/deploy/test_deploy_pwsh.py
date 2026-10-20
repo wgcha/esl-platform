@@ -120,7 +120,7 @@ def test_connect_guide_vite_proxy_default(tmp_path):
     out = _guide(tmp_path, "X=1\n")
     assert "VITE_ESL_TARGET=http://127.0.0.1:8123 , SIMDASH_ESL_ENABLED=true 를 넣고 대시보드를 다시 시작하세요" in out
     assert "백엔드가 프런트 D:\\esl\\.runtime\\frontend 를 /esl/ 아래에 서빙 — 설정 server.frontend_root" in out
-    assert "접속: http://<대시보드 주소>/esl/" in out and "health: http://127.0.0.1:8123/esl/api/health" in out
+    assert "사이드바 'AI 예측' 아래 '등가정적하중' (또는 http://<대시보드 주소>/esl/)" in out and "simdashboard PR #56" in out and "health: http://127.0.0.1:8123/esl/api/health" in out
     assert "Caddy를 쓰는 설치: /x/caddy/esl.caddy" in out
     out = _guide(tmp_path, 'SIMDASH_ESL_ENABLED=true\nVITE_ESL_TARGET="http://127.0.0.1:8123"\n')
     assert "SIMDASH_ESL_ENABLED=true — 이미 들어 있음" in out
