@@ -82,7 +82,7 @@ function geometry(f: FieldOut, W: number): Geo {
   }
   const dx = amax - amin || 1;
   const dy = bmax - bmin || 1;
-  const H = Math.round(Math.max(240, Math.min(560, ((W - 2 * PAD) * dy) / dx + 2 * PAD)));
+  const H = Math.round(Math.max(240, Math.min(560, typeof window !== "undefined" && window.innerHeight > 0 ? Math.max(300, window.innerHeight * 0.36) : 560, ((W - 2 * PAD) * dy) / dx + 2 * PAD)));
   const s = Math.min((W - 2 * PAD) / dx, (H - 2 * PAD) / dy);
   const ox = (W - s * dx) / 2;
   const oy = (H - s * dy) / 2;

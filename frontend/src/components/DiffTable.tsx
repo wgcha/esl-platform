@@ -20,6 +20,7 @@ export function DiffTable({ diff }: { diff: ReviewDiff[] }) {
   return (
     <details className="card diff-card" open data-testid="diff-table">
       <summary>현재와 다른 점 ({diff.length})</summary>
+      <div className="table-wrap scroll">
       <table className="table compact">
         <thead>
           <tr>
@@ -38,6 +39,7 @@ export function DiffTable({ diff }: { diff: ReviewDiff[] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </details>
   );
 }

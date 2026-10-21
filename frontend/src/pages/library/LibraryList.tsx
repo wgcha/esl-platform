@@ -213,7 +213,7 @@ export function LibraryList() {
         ) : rows.data.length === 0 ? (
           <Empty>{filtered ? "조건에 맞는 항목이 없습니다" : "아직 등록된 항목이 없습니다 — Case ⑤ 검증 결과에서 '라이브러리 등록'"}</Empty>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap scroll">
             <table className="table" aria-label="라이브러리 항목">
               <thead>
                 <tr>
@@ -289,6 +289,7 @@ export function LibraryList() {
         ) : analyses.data.length === 0 ? (
           <Empty>아직 종합분석이 없습니다</Empty>
         ) : (
+          <div className="table-wrap scroll">
           <table className="table compact" aria-label="종합분석 목록">
             <thead>
               <tr>
@@ -323,6 +324,7 @@ export function LibraryList() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
       <Card title="버전 비교">
@@ -331,6 +333,7 @@ export function LibraryList() {
         ) : comparisons.data.length === 0 ? (
           <Empty>아직 버전 비교가 없습니다 — 비드 반영 설계의 검증 낙하를 등록한 뒤 '버전 비교'</Empty>
         ) : (
+          <div className="table-wrap scroll">
           <table className="table compact" aria-label="버전 비교 목록">
             <thead>
               <tr>
@@ -362,6 +365,7 @@ export function LibraryList() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </Shell>

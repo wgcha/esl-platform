@@ -76,6 +76,7 @@ export function RadInspectView({ r, partTitle, onPickPart }: { r: InspectRadResu
         ))}
       </div>
       {pickable && <div className="small muted">표에서 파트를 누르면 채워집니다</div>}
+      <div className="table-wrap scroll">
       <table className="table compact">
         <thead>
           <tr>
@@ -101,6 +102,7 @@ export function RadInspectView({ r, partTitle, onPickPart }: { r: InspectRadResu
           ))}
         </tbody>
       </table>
+      </div>
       {r.includes.length > 0 && (
         <div className="small">
           include:{" "}

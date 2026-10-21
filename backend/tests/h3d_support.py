@@ -30,7 +30,8 @@ delay = float(os.environ.get("FAKE_HW_DELAY", "0") or 0)
 os.makedirs(out, exist_ok=True)
 with open(os.path.join(os.path.dirname(out), "argv_%d.json" % os.getpid()), "w") as fh:
     json.dump({{"argv": sys.argv, "cwd": os.getcwd(), "env_input": os.environ.get("ESL_INPUT")}}, fh)
-print("ESL extract fake hw start", mode, flush=True)
+if mode != "progress":
+    print("ESL extract fake hw start", mode, flush=True)
 if delay:
     time.sleep(delay)
 if mode == "hang":
@@ -38,6 +39,43 @@ if mode == "hang":
     with open(os.environ["FAKE_HW_PIDS"], "w") as fh:
         fh.write("%d %d" % (os.getpid(), child.pid))
     time.sleep(600)
+    sys.exit(0)
+if mode == "progress":
+    # stdout 에는 아무것도 쓰지 않고 progress.log 만 쓴다(hw.exe -b 가 Tcl stdout 을 못 내보내는 상황 흉내)
+    pdelay = float(os.environ.get("FAKE_HW_PLINE_DELAY", "0.3") or 0)
+    late = float(os.environ.get("FAKE_HW_PLOG_LATE", "0") or 0)
+    time.sleep(late)
+    plog = os.path.join(out, "progress.log")
+    lines = os.environ["FAKE_HW_PLINES"].split("|")
+    with open(plog, "ab") as pf:
+        for ln in lines[:-1]:
+            pf.write((ln + "\n").encode("utf-8")); pf.flush(); time.sleep(pdelay)
+        time.sleep(float(os.environ.get("FAKE_HW_TAIL_PAUSE", "0") or 0))
+        pf.write(b"\xff\xfe bad bytes\n"); pf.write((lines[-1] + "\n").encode("utf-8")); pf.flush()
+    src = os.environ["FAKE_HW_SRC"]
+    for name in os.listdir(src):
+        if name != "done.json" and os.path.isfile(os.path.join(src, name)):
+            shutil.copyfile(os.path.join(src, name), os.path.join(out, name))
+    json.dump({{"ok": True, "part_spec": opt("-part"), "hot_k": 1, "top_n": 1, "h3d": opt("-input"), "warnings": []}},
+              open(os.path.join(out, "done.json"), "w"))
+    sys.exit(0)
+if mode == "progress":
+    # stdout 에는 아무것도 쓰지 않고 progress.log 만 쓴다(hw.exe -b 가 Tcl stdout 을 못 내보내는 상황 흉내).
+    # FAKE_HW_PLINES(| 구분), FAKE_HW_PLINE_DELAY 줄 간격, FAKE_HW_PLOG_LATE 파일 늦게 생성, FAKE_HW_TAIL_PAUSE 마지막 줄 전 대기
+    pdelay = float(os.environ.get("FAKE_HW_PLINE_DELAY", "0.3") or 0)
+    time.sleep(float(os.environ.get("FAKE_HW_PLOG_LATE", "0") or 0))
+    lines = os.environ["FAKE_HW_PLINES"].split("|")
+    with open(os.path.join(out, "progress.log"), "ab") as pf:
+        for ln in lines[:-1]:
+            pf.write((ln + "\n").encode("utf-8")); pf.flush(); time.sleep(pdelay)
+        time.sleep(float(os.environ.get("FAKE_HW_TAIL_PAUSE", "0") or 0))
+        pf.write(b"\xff\xfe bad bytes\n"); pf.write((lines[-1] + "\n").encode("utf-8")); pf.flush()
+    src = os.environ["FAKE_HW_SRC"]
+    for name in os.listdir(src):
+        if name != "done.json" and os.path.isfile(os.path.join(src, name)):
+            shutil.copyfile(os.path.join(src, name), os.path.join(out, name))
+    json.dump({{"ok": True, "part_spec": opt("-part"), "hot_k": 1, "top_n": 1, "h3d": opt("-input"), "warnings": []}},
+              open(os.path.join(out, "done.json"), "w"))
     sys.exit(0)
 if mode == "nodone":
     sys.exit(3)

@@ -148,7 +148,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
       {!v ? (
         <Empty>{pastVal ? "불러오는 중…" : runId ? "아직 검증하지 않았습니다" : "④ ESL을 먼저 계산하세요"}</Empty>
       ) : (
-        <>
+        <div className="wide2">
           <Card
             title="판정"
             right={
@@ -193,7 +193,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             )}
           </Card>
           {v.field && !filesGone ? (
-            <>
+            <div className="contents">
               <Card title="겹쳐보기 — 요소 변형률 (PCA 평면)">
                 <FieldOverlay vid={v.id} hotspots={v.hotspots} summary={v.field} />
               </Card>
@@ -206,7 +206,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                 </Card>
               </div>
               <TopTable f={v.field} />
-            </>
+            </div>
           ) : pastVal ? null : (
             <div className="warn-box" role="status">
               전 요소 비교 자료가 없는 예전 검증입니다 — ⑤ 검증을 다시 실행하면 겹쳐보기를 볼 수 있습니다.
@@ -214,6 +214,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           )}
           <div className="grid2">
             <Card title="hotspot ε_eq 오차">
+              <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>
                   <tr>
@@ -237,9 +238,11 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                   })}
                 </tbody>
               </table>
+              </div>
             </Card>
             <Card title="제외 요소">
               {v.excluded.length ? (
+                <div className="table-wrap scroll">
                 <table className="table compact">
                   <thead>
                     <tr>
@@ -256,6 +259,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                     ))}
                   </tbody>
                 </table>
+                </div>
               ) : (
                 <Empty>없음</Empty>
               )}
@@ -263,6 +267,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           </div>
           {vHistory.data && vHistory.data.length > 1 && (
             <Card title="검증 이력">
+              <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>
                   <tr>
@@ -283,9 +288,10 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Card>
           )}
-        </>
+        </div>
       )}
     </>
   );

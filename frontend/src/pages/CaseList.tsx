@@ -41,6 +41,7 @@ export function CaseList() {
       <ErrorLine text={cases.error} />
       {cases.data && cases.data.length === 0 && <Empty>아직 Case가 없습니다</Empty>}
       {cases.data && cases.data.length > 0 && (
+        <div className="table-wrap scroll">
         <table className="table">
           <thead>
             <tr>
@@ -65,6 +66,7 @@ export function CaseList() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </Shell>
   );
