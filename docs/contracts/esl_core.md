@@ -53,6 +53,7 @@ class RadModel:
 - 지원: Radioss 블록 포맷(2017+), `#` 주석, `/INCLUDE "경로"`(rad 기준 상대, 깊이 제한), `/BEGIN`, `/NODE`, `/SHELL/<part_id>`, `/SH3N/<part_id>`, `/PART`, `/PROP/SHELL`(TYPE1), `/MAT/LAW1|ELAST`, `/MAT/LAW2|PLAS_JOHNS`, `/MAT/LAW36|PLAS_TAB`(E·ν만). 그 외 키워드는 건너뛰되 ID는 `max_ids`에 반영.
 - 고정 열 폭: 10자(노드 좌표 등 실수 20자 필드는 Radioss 매뉴얼 규약). 참고 구현: `simdashboard/backend/app/parsers/radioss_deck_parser.py`(복사 금지, 규약만).
 - title 비교: 공백·`_`·`-` 연속을 한 칸으로 보고 대소문자 무시(`exact_ci`) / 그대로(`exact`). 0개 `PART_NOT_FOUND`, 2개+ `PART_AMBIGUOUS`. 대상 파트에 /BRICK 등 비쉘 요소 → `UNSUPPORTED_ELEMENT`. E·ν 미해결 → `MATERIAL_UNRESOLVED`(override `{mat_id:{"E":..,"nu":..}}`로 해소).
+- 읽기 범위(0.5.2): `parse_rad`는 대상 파트의 /SHELL·/SH3N 행, 그 요소가 참조하는 /NODE 좌표, 대상 파트의 /PROP·/MAT만 숫자 해석(다른 블록은 위치·행 수·최대 ID만), `list_parts`는 요소 행 수만 센다(주석·빈 행 규칙 동일, 결과 불변). **동작 변화**: 다른 파트 요소 행·미참조 노드 좌표·다른 /PROP·/MAT 카드의 형식 오류는 더 이상 `RAD_PARSE_ERROR`로 잡지 않고, 대상 파트 쪽 형식 오류는 파트 해석 뒤에 보고한다(오류 코드·메시지 불변).
 
 ### 3.2 TCL 출력 CSV (Windows → 클라우드 입력 폴더 `<results_dir>`)
 
