@@ -45,7 +45,7 @@ def queue(request: Request, principal: Principal = Depends(get_principal)) -> di
 
 @router.post("/paths/inspect")
 def inspect(body: InspectReq, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return system.inspect(get_ctx(request), principal, body.purpose, body.path)
+    return system.inspect(get_ctx(request), principal, body.purpose, body.path, body.part_title)
 
 
 @router.get("/fs/browse", response_model=BrowseOut)

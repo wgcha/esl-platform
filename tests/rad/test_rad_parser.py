@@ -37,6 +37,20 @@ def test_exact_match_mode():
     assert parse_rad(MAIN, "  Main   BOARD", match="exact").part_id == 10
 
 
+def test_part_title_separator_normalization():
+    from esl.rad.parser import _norm_title
+
+    for t in ("chassis rear", "Chassis_Rear", "chassis-rear", " CHASSIS _ - rear ", "chassis__rear"):
+        assert _norm_title(t, "exact_ci") == "chassis rear"
+    # exact 모드는 구분자·대소문자를 그대로 둔다(끝 공백만 제거)
+    assert _norm_title("Chassis_Rear  ", "exact") == "Chassis_Rear"
+    assert _norm_title("Chassis_Rear", "exact") != _norm_title("chassis rear", "exact")
+    # 실제 파싱: 'Main   BOARD' 파트를 _/- 표기로도 찾는다
+    assert parse_rad(MAIN, "main_board").part_id == 10
+    assert parse_rad(MAIN, "MAIN-Board").part_id == 10
+    assert _code(parse_rad, MAIN, "main_board", match="exact") == "PART_NOT_FOUND"
+
+
 def test_part_not_found_and_ambiguous():
     assert _code(parse_rad, MAIN, "nope") == "PART_NOT_FOUND"
     assert _code(parse_rad, M2, "dup title") == "PART_AMBIGUOUS"
@@ -310,3 +324,12 @@ def test_scan_includes_lenient_and_path_map(tmp_path):
     b.write_text("#include a.rad\n")
     assert scan_includes(a) == [os.path.normpath(str(b)), os.path.normpath(str(a))]
     assert scan_includes(tmp_path / "missing.rad") == []
+
+
+def test_real_model_part_title_padded_and_hwcolor():
+    """이슈 #16: 실모델 101_parts.inc 발췌(##HWCOLOR, #part_title 주석, title 100칸 패딩)."""
+    real = os.path.join(FIX, "real_101_parts.rad")
+    assert [(p["id"], p["title"]) for p in list_parts(real)] == [(10, "chassis_rear")]
+    assert parse_rad(real, "chassis_rear").part_id == 10
+    assert parse_rad(real, "chassis rear").part_id == 10
+    assert _code(parse_rad, real, "chassis rear", match="exact") == "PART_NOT_FOUND"

@@ -33,6 +33,7 @@ class _Out(BaseModel):
 class InspectReq(_Req):
     purpose: Literal["RAD", "RESULTS", "H3D"]
     path: str = Field(min_length=1, max_length=1024)
+    part_title: str | None = Field(default=None, max_length=200)  # RAD 전용. 없으면 설정 case.part_title
 
 
 class CaseCreate(_Req):

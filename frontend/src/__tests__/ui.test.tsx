@@ -1,6 +1,8 @@
 // V-UI-1: 6단계 라우트, 단계당 주 버튼 1개, 권한 없는 사용자 비활성, stale 배너 + 단계별 핵심 요소
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../api/endpoints";
+import { RadInspectView } from "../components/PathInspect";
 import { renderApp } from "../test/render";
 import { NO_PERMISSION } from "../app/AppContext";
 import { STALE_TEXT } from "../stages/StageFrame";
@@ -208,4 +210,52 @@ describe("작업 진행", () => {
     expect(await screen.findByText("7,200", {}, { timeout: 6000 })).toBeTruthy();
     expect(screen.queryByText(/아직 추출하지 않았습니다/)).toBeNull();
   }, 10000);
+});
+
+
+describe("RadInspectView 파트 행 클릭", () => {
+  const base = { normalized_path: "x.rad", includes: [], part_title: "chassis rear", target_part: null };
+  const parts = [
+    { id: 10, title: "chassis_rear", n_elems: 5 },
+    { id: 11, title: "Other", n_elems: 3 },
+  ];
+  it("PART_NOT_FOUND 면 행을 눌러 title 을 채운다", () => {
+    const picked: string[] = [];
+    render(<RadInspectView r={{ ...base, ok: false, problems: ["PART_NOT_FOUND: /PART title 'x' 없음"], parts }} partTitle="x" onPickPart={(t) => picked.push(t)} />);
+    expect(screen.getByText("표에서 파트를 누르면 채워집니다")).toBeTruthy();
+    fireEvent.click(screen.getByText("chassis_rear"));
+    expect(picked).toEqual(["chassis_rear"]);
+  });
+  it("문제가 없으면 안내·클릭 없음, 정규화로 일치한 행은 강조", () => {
+    const picked: string[] = [];
+    const { container } = render(<RadInspectView r={{ ...base, ok: true, problems: [], parts }} partTitle="Chassis Rear" onPickPart={(t) => picked.push(t)} />);
+    expect(screen.queryByText("표에서 파트를 누르면 채워집니다")).toBeNull();
+    fireEvent.click(screen.getByText("chassis_rear"));
+    expect(picked).toEqual([]);
+    expect(container.querySelectorAll("tr.hl").length).toBe(1);
+  });
+});
+
+describe("① 추출 실행 버튼: 확인 중에는 비활성", () => {
+  it("rad 확인 응답 전에는 '확인 중' 사유로 비활성, 응답 후 활성", async () => {
+    const real = api.inspectRad;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const spy = vi.spyOn(api, "inspectRad").mockImplementation(async (...a) => {
+      await gate;
+      return real(...a);
+    });
+    try {
+      const { container } = renderApp(url("c-demo", 1));
+      await screen.findByRole("heading", { level: 2, name: "① 입력" });
+      const btn = () => container.querySelector("button[data-primary]") as HTMLButtonElement;
+      expect(screen.getByText("확인 중…")).toBeTruthy();
+      expect(btn().disabled).toBe(true);
+      release();
+      await waitFor(() => expect(screen.getByLabelText("rad 확인 결과")).toBeTruthy());
+      await waitFor(() => expect(btn().disabled).toBe(false));
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

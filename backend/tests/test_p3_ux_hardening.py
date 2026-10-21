@@ -26,7 +26,7 @@ def test_version_from_version_file_and_build_json(client, tmp_path):
     import esl_platform
 
     ver = (REPO / "VERSION").read_text(encoding="utf-8").strip()
-    assert esl_platform.__version__ == ver == "0.5.0"
+    assert esl_platform.__version__ == ver == "0.5.1"
     assert client.get(f"{API}/health").json()["version"] == ver
     assert client.get(f"{API}/openapi.json").json()["info"]["version"] == ver
     oa = json.loads((REPO / "docs" / "contracts" / "openapi_p1b.json").read_text(encoding="utf-8"))

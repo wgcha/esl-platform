@@ -5,7 +5,7 @@ schema_version: 1
 
 case:
   part_title: "chassis rear"         # 대상 /PART title
-  part_title_match: exact_ci         # exact | exact_ci (공백 정규화 후 대소문자 무시)
+  part_title_match: exact_ci         # exact | exact_ci (공백·_·- 정규화 후 대소문자 무시)
   rad_include_max_depth: 8
   material_override: {}              # {mat_id: {E: , nu: }} — 파서 미지원 law 보완
   include_path_map: {}               # {Windows 접두: 로컬 경로} 예 {"D:/proj/cae": "/data/cae"} — #include 절대경로 치환

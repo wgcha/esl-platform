@@ -163,3 +163,64 @@ def test_config_abs_path_flavor(monkeypatch):
     assert not config.is_abs_path("/esl")              # Windows 호스트: 드라이브 없는 루트 상대 거부
     monkeypatch.setattr(config.os, "name", "posix")
     assert config.is_abs_path("/esl")
+
+
+def test_match_parts_separator_normalization():
+    from esl_platform.api.services.system import match_parts
+
+    parts = [{"id": 10, "title": "chassis_rear"}, {"id": 11, "title": "Other"}]
+    for t in ("chassis rear", "Chassis-Rear", " CHASSIS_REAR "):
+        assert [p["id"] for p in match_parts(parts, t, "exact_ci")] == [10]
+    assert match_parts(parts, "chassis rear", "exact") == []
+    # 정규화 후 2개 이상이면 모두 반환(호출 쪽이 PART_AMBIGUOUS 처리)
+    parts.append({"id": 12, "title": "Chassis Rear"})
+    assert [p["id"] for p in match_parts(parts, "chassis-rear", "exact_ci")] == [10, 12]
+
+
+def test_inspect_rad_uses_request_part_title(client, mini_inputs):
+    # 설정 기본 part_title 과 무관하게, 요청의 part_title 로 판정한다(이슈 #16 회귀)
+    base = {"purpose": "RAD", "path": mini_inputs["rad"]}
+    title = client.post(f"{API}/paths/inspect", json=base, headers=W).json()["target_part"]["title"]
+    r = client.post(f"{API}/paths/inspect", json={**base, "part_title": "no such part"}, headers=W).json()
+    assert not r["ok"] and r["part_title"] == "no such part" and any(p.startswith("PART_NOT_FOUND") for p in r["problems"])
+    alt = title.upper().replace(" ", "_")
+    r = client.post(f"{API}/paths/inspect", json={**base, "part_title": alt}, headers=W).json()
+    assert r["ok"] and r["target_part"]["title"] == title and r["part_title"] == alt
+
+
+def test_inspect_real_model_part_title(client, inputs_root):
+    import shutil
+
+    src = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "rad", "fixtures", "real_101_parts.rad")
+    dst = inputs_root / "real_0000.rad"
+    shutil.copy(src, dst)
+    body = {"purpose": "RAD", "path": str(dst)}
+    # Case 값 'chassis_rear' 일치(id 10)
+    r = client.post(f"{API}/paths/inspect", json={**body, "part_title": "chassis_rear"}, headers=W).json()
+    assert r["ok"] and r["target_part"]["id"] == 10 and r["parts"][0]["title"] == "chassis_rear"
+    # 정규화로 'chassis rear' 도 일치, 요청 값이 설정 기본값보다 우선
+    r = client.post(f"{API}/paths/inspect", json={**body, "part_title": "chassis rear"}, headers=W).json()
+    assert r["ok"] and r["target_part"]["id"] == 10
+    r = client.post(f"{API}/paths/inspect", json={**body, "part_title": "bumper"}, headers=W).json()
+    assert not r["ok"] and r["part_title"] == "bumper"
+    # part_title 없이도(설정 기본 'chassis rear') 정규화로 일치
+    assert client.post(f"{API}/paths/inspect", json=body, headers=W).json()["target_part"]["id"] == 10
+
+
+def test_inspect_rad_parts_cache(client, mini_inputs):
+    from esl_platform.api.services import system
+
+    system._PARTS_CACHE.clear()
+    body = {"purpose": "RAD", "path": mini_inputs["rad"]}
+    calls = []
+    real = system.core_adapter.list_parts
+    system.core_adapter.list_parts = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    try:
+        for _ in range(3):
+            assert client.post(f"{API}/paths/inspect", json=body, headers=W).json()["ok"]
+        assert len(calls) == 1
+        os.utime(mini_inputs["rad"], ns=(1, 1))  # 파일이 바뀌면 캐시 무효
+        client.post(f"{API}/paths/inspect", json=body, headers=W)
+        assert len(calls) == 2
+    finally:
+        system.core_adapter.list_parts = real

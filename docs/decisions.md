@@ -40,3 +40,4 @@
 - (P3-UX, 2026-10-20) 서버 추출 출력은 <esl_root>/_h3d/<Case>/raw(코어 출력 보호 규칙 때문). PC 연결 코드 잠금은 출발지 구분 가능 시 5회, 불가 시 서버 전체 30회/15분.
 - 2026-10-20: P3-UX 보안 보강 — uvicorn proxy_headers=False·연결코드 잠금은 실제 peer 기준(XFF는 trusted_proxies만), 업로드 찾아보기 본인 폴더 격리·_backup 차단, rad 밖 include는 PC에서 Y 확인 후만 업로드. 근거: Verifier 결함 6건.
 - (P3-이력, 2026-10-21) 실행 이력 계약 초안(esl_p3_history.md): 이력 단위 = jobs 행(새 테이블 없음), 과거 결과는 DB 기록값으로 읽기 전용, 내보내기·보고서는 이후 실행분부터 history/<job_id>/에 보존, 목록 인덱스 migration 0007(근거: 사용자 요청 — "실행 이력 목록에서 다시 확인").
+- (0.5.1, 2026-10-21) 이슈 #16: exact_ci 는 공백·_·- 연속을 한 칸으로 보고 대소문자 무시(코어 parse_rad·백엔드 match_parts·프런트 동일 규칙), 정규화 후 2개 이상이면 PART_AMBIGUOUS 유지, exact 불변. ① 화면은 PART_NOT_FOUND/AMBIGUOUS 일 때 표 행 클릭으로 title 입력을 채움.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
 import type { InspectH3dResult } from "../api/types";
@@ -19,7 +19,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
   const s = c.extract_summary;
 
   useEffect(() => {
-    void rad.inspect(c.rad_path);
+    void rad.inspect(c.rad_path, c.part_title);
     if (isH3d)
       api.inspectH3d(c.h3d_path!).then(
         (r) => setH3d({ r, error: null }),
@@ -29,17 +29,35 @@ export function Stage1({ c, reload, allowed }: StageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c.id]);
 
+  // 파트 title 을 바꾸면 그 값으로 rad 를 다시 확인(설정 기본값이 아니라 입력값으로 판정)
+  const [titlePending, setTitlePending] = useState(false);
+  const firstTitle = useRef(true);
+  useEffect(() => {
+    if (firstTitle.current) {
+      firstTitle.current = false;
+      return;
+    }
+    setTitlePending(true);
+    const t = setTimeout(() => void rad.inspect(c.rad_path, partTitle).finally(() => setTitlePending(false)), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partTitle]);
+
   const prereq = !partTitle.trim()
     ? "파트 title을 입력하세요"
-    : rad.result && !rad.result.ok
-      ? "rad 경로에 문제가 있습니다"
-      : isH3d
-        ? h3d && !h3d.r?.ok
-          ? "h3d 파일에 문제가 있습니다"
-          : null
-        : res.result && !(res.result.ok && res.result.done?.ok)
-          ? "결과 폴더(done.json)에 문제가 있습니다"
-          : null;
+    : rad.error
+      ? "rad 확인에 실패했습니다"
+      : !rad.result || rad.busy || titlePending || (isH3d ? !h3d : !res.result && !res.error)
+        ? "rad·h3d 확인 중…"
+        : !rad.result.ok
+          ? "rad 경로에 문제가 있습니다"
+          : isH3d
+            ? h3d?.error || !h3d?.r?.ok
+              ? "h3d 파일에 문제가 있습니다"
+              : null
+            : res.error || !(res.result?.ok && res.result.done?.ok)
+              ? "결과 폴더(done.json)에 문제가 있습니다"
+              : null;
 
   const run = () =>
     act.run(async () => {
@@ -61,7 +79,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
             <Field label="rad 경로">
               <span className="mono readonly-path">{c.rad_path}</span>
             </Field>
-            {rad.result ? <RadInspectView r={rad.result} partTitle={partTitle} /> : <div className="small muted">{rad.error ?? "확인 중…"}</div>}
+            {rad.result ? <RadInspectView r={rad.result} partTitle={partTitle} onPickPart={allowed ? setPartTitle : undefined} /> : <div className="small muted">{rad.error ?? "확인 중…"}</div>}
             {isH3d && (
               <>
                 <Field label="h3d 파일" hint="서버에서 HyperView로 추출합니다(h3d는 읽기만)">

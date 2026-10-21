@@ -66,7 +66,7 @@ export function ServerPanel({ partTitle, onChange }: { partTitle: string; onChan
     let next: Sel = { ...sel, rad: { path, r: null, error: null } };
     setSel(next, stem || undefined);
     try {
-      next = { ...next, rad: { path, r: await api.inspectRad(path), error: null } };
+      next = { ...next, rad: { path, r: await api.inspectRad(path, partTitle), error: null } };
     } catch (e) {
       next = { ...next, rad: { path, r: null, error: errorText(e) } };
     }

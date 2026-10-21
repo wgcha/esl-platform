@@ -62,6 +62,7 @@ _LAW = {
 
 _FORTRAN_EXP = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+))([+-]\d+)$")
 _WS = re.compile(r"\s+")
+_TITLE_SEP = re.compile(r"[\s_-]+")
 
 
 _INT_RE = re.compile(r"[+-]?\d+")
@@ -172,7 +173,7 @@ def _cell(line: str, start_cell: int, ncell: int = 1) -> str:
 def _norm_title(t: str, match: str) -> str:
     if match == "exact":
         return t.rstrip()
-    return _WS.sub(" ", t).strip().casefold()
+    return _TITLE_SEP.sub(" ", t).strip().casefold()
 
 
 def _decode(raw: bytes) -> str:

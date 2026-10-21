@@ -71,7 +71,7 @@ commands:                            # argv 템플릿. 허용 placeholder는 §4
   log_error_patterns: ['\*\*\* ERROR', 'Traceback \(most recent call last\):', '^\s*\[ERROR\]']
 case:
   part_title: "chassis rear"         # 기본 대상 파트. Case별로 덮어쓰기 가능
-  part_title_match: exact_ci         # exact | exact_ci (공백 정규화 후 비교)
+  part_title_match: exact_ci         # exact | exact_ci (공백·_·- 정규화 후 대소문자 무시)
   rad_include_max_depth: 8
 extract:
   strain_tensor: total               # h3d 결과 유형 키(TCL에 전달). 소성 없어도 total 사용
