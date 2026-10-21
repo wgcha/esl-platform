@@ -105,7 +105,8 @@ export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; 
         <>
           {cur?.step_key === "H3D_EXTRACT" && (
             <div className="h3d-phase" data-testid="h3d-extract-phase" role="status">
-              {H3D_RUNNING} <span className="muted small">— h3d 크기에 따라 수 분~수십 분. 서버 HyperView가 h3d를 읽기만 합니다</span>
+              {H3D_RUNNING}
+              {cur.progress_pct ? ` ${Math.round(cur.progress_pct)}%` : ""} <span className="muted small">— h3d 크기에 따라 수 분~수십 분. 서버 HyperView가 h3d를 읽기만 합니다</span>
             </div>
           )}
           <ol className="job-steps" aria-label="추출 단계">

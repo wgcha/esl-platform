@@ -476,10 +476,40 @@ class Executor:
             with self._tx() as conn:
                 jobs_repo.step_update(conn, self.job["id"], self.token, no,
                                       outputs={"hw_acquired": True, "pid": pid, "limiter": applied})
+            # hw(GUI 서브시스템)는 Tcl stdout 을 로그로 내보내지 않을 수 있어 TCL 이 출력 폴더에 쓰는 progress.log 를 옮긴다
+            tail = h3d.ProgressTail(out_dir)
+            trk = h3d.ProgressTracker(h3d.expected_load_s(p["h3d_path"]))
+            hb_s = float(getattr(s.worker, "progress_heartbeat_s", h3d.PROGRESS_HEARTBEAT_S))
+            last_poll = last_out = time.monotonic()
+            shown = [0]
+
+            def drain(flush: bool = False) -> bool:
+                new = tail.poll(flush=flush)
+                for ln in new:
+                    echo(ln)
+                    trk.feed(ln)
+                pct = trk.tick()
+                if int(pct) > shown[0]:        # 정수 % 가 바뀔 때만 DB 기록(단조 증가)
+                    shown[0] = int(pct)
+                    with self._tx() as conn:
+                        jobs_repo.step_update(conn, self.job["id"], self.token, no, progress_pct=float(shown[0]))
+                return bool(new)
+
             while self.hw_proc.poll() is None:
                 time.sleep(0.1)
                 self._wait_tick(tick)
+                now = time.monotonic()
+                if now - last_poll >= h3d.PROGRESS_POLL_S:
+                    last_poll = now
+                    if drain():
+                        last_out = now
+                    elif now - last_out >= hb_s:
+                        last_out = now
+                        echo(f"[esl-worker] 추출 진행 중… 경과 {(time.time() - t0) / 60:.1f}분, "
+                             f"출력 폴더 크기 {h3d.dir_size_mb(out_dir):.1f} MB, 진행률 {trk.pct:.0f}%"
+                             + (f", 마지막 단계 {trk.last_step}" if trk.last_step else ""))
             code = self.hw_proc.returncode
+            drain(flush=True)
             # 그룹에 남은 자식(hw 가 띄운 프로세스)도 정리
             h3d.kill_tree(self.hw_proc, s.worker.terminate_grace_s, self.lim)
             self.hw_proc = None
@@ -488,6 +518,8 @@ class Executor:
         for ln in lines:
             echo(ln)
         echo(f"[esl-worker] hw 종료코드 {code} ({time.time() - t0:.1f}s) — {'성공' if ok else '실패: ' + msg}")
+        if ok:
+            echo("[esl-worker] extract done -> pack")
         if not ok:
             raise _StepFailed(h3d.FAILURE, msg, code)
         return {"done": h3d.done_summary(done), "exit_code": code, "hw_acquired": False}

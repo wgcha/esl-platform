@@ -79,11 +79,125 @@ def write_request(path: str, *, part: str, hot_k: int, top_n: int) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
+PROGRESS_LOG = "progress.log"      # TCL(::esl::progress)이 출력 폴더에 append 하는 진행 로그
+PROGRESS_HEARTBEAT_S = 60.0        # 새 줄이 없을 때 하트비트 간격 기본값(worker.progress_heartbeat_s 가 있으면 그것)
+PROGRESS_POLL_S = 1.0              # progress.log 확인 주기
+
+
+class ProgressTail:
+    """<out_dir>/progress.log 의 새 줄만 돌려준다. 파일이 늦게 생겨도 되고, 줄 중간까지만 쓰였으면 완성될 때까지 보류,
+    인코딩이 깨져도 대체문자로 읽는다. flush=True 는 끝에 개행이 없는 마지막 줄도 내보낸다(종료 후)."""
+
+    def __init__(self, out_dir: str) -> None:
+        self.path = os.path.join(out_dir, PROGRESS_LOG)
+        self.pos = 0
+        self.buf = b""
+
+    def poll(self, flush: bool = False) -> list[str]:
+        try:
+            size = os.path.getsize(self.path)
+            if size < self.pos:                       # 잘렸거나 교체됨 → 처음부터
+                self.pos, self.buf = 0, b""
+            with open(self.path, "rb") as fh:
+                fh.seek(self.pos)
+                data = fh.read()
+        except OSError:
+            return []
+        self.pos += len(data)
+        self.buf += data
+        parts = self.buf.split(b"\n")
+        self.buf = parts.pop()
+        if flush and self.buf:
+            parts.append(self.buf)
+            self.buf = b""
+        out = []
+        for raw in parts:
+            ln = raw.decode("utf-8", errors="replace").rstrip("\r")
+            if ln.strip():
+                out.append(ln)
+        return out
+
+
+PROGRESS_LOAD_S_PER_GB = 40.0      # 모델 로드 구간(0→15%) 경과시간 기반 진행률의 예상 시간(h3d GB당 초)
+_TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
+
+
+def expected_load_s(h3d_path: str) -> float:
+    try:
+        gb = os.path.getsize(h3d_path) / (1024 ** 3)
+    except OSError:
+        gb = 1.0
+    return min(1800.0, max(30.0, gb * PROGRESS_LOAD_S_PER_GB))
+
+
+class ProgressTracker:
+    """TCL progress.log 줄 → step 진행률(%, 단조 증가). 줄 자체는 영문 원문 그대로 작업 로그로 옮긴다.
+    가중치: 모델 로드 0→15(로드 중엔 경과시간 기반), A 15→25, B 25→70(프레임), C 70→95(프레임·청크), 마무리 →99."""
+
+    def __init__(self, expected_load_s: float = 60.0, now: float | None = None) -> None:
+        self.pct = 0.0
+        self.expected = max(1.0, expected_load_s)
+        self.t0 = time.monotonic() if now is None else now
+        self.loaded = False
+        self.last_step = ""
+
+    def _set(self, p: float) -> None:
+        self.pct = max(self.pct, min(99.0, p))
+
+    def tick(self, now: float | None = None) -> float:
+        if not self.loaded:
+            el = (time.monotonic() if now is None else now) - self.t0
+            self._set(14.5 * min(el / self.expected, 1.0))
+        return self.pct
+
+    def feed(self, raw: str) -> float:
+        ln = _TS.sub("", raw.strip())
+        m: Any
+        if ln.startswith("step "):
+            self.last_step = ln[5:]
+        elif re.match(r"part \S+.*: \d+ elements", ln) or ln.startswith("pass A start"):
+            self.loaded = True
+            self._set(15)
+        elif (m := re.match(r"pass A \(frame \d+\) elements chunk (\d+)/(\d+)", ln)):
+            self._set(15 + 10 * (int(m.group(1)) - 1) / int(m.group(2)))
+        elif ln.startswith("pass A done"):
+            self._set(25)
+        elif (m := re.match(r"pass B frame (\d+)/(\d+)", ln)):
+            self._set(25 + 45 * (int(m.group(1)) - 1) / int(m.group(2)))
+        elif ln.startswith("candidate frames") or ln.startswith("pass B done"):
+            self._set(70)
+        elif (m := re.match(r"pass C frame \d+(?: \(prev\))? \((\d+)/(\d+)\) (elements|nodes) chunk (\d+)/(\d+)", ln)):
+            k, kt, ci, cn = int(m.group(1)), int(m.group(2)), int(m.group(4)), int(m.group(5))
+            frac = 0.9 * (ci - 1) / cn if m.group(3) == "elements" else 0.9 + 0.1 * (ci - 1) / cn
+            self._set(70 + 25 * (k - 1 + frac) / max(1, kt))
+        elif ln.startswith("pass C done"):
+            self._set(95)
+        elif ln.startswith("extract done"):
+            self._set(98)
+        return self.pct
+
+
+def dir_size_mb(out_dir: str) -> float:
+    """출력 폴더(바로 아래 파일, _backup 제외)의 합계 MB."""
+    total = 0
+    try:
+        with os.scandir(out_dir) as it:
+            for e in it:
+                try:
+                    if e.is_file(follow_symlinks=False):
+                        total += e.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        return 0.0
+    return total / (1024 * 1024)
+
+
 def backup_previous(out_dir: str) -> str | None:
     """이전 실행 산출물(done.json·*.csv)을 <out_dir>/_backup/<UTC>[_N]/ 로 옮긴다(삭제 없음) — hw 가 TCL 실행 전에 죽어도
     이전 done.json 을 이번 결과로 읽지 않게. 옮긴 폴더(없으면 None)."""
     names = [n for n in sorted(os.listdir(out_dir)) if os.path.isfile(os.path.join(out_dir, n))
-             and (n == "done.json" or n.lower().endswith(".csv"))]
+             and (n == "done.json" or n == PROGRESS_LOG or n.lower().endswith(".csv"))]
     if not names:
         return None
     base = os.path.join(out_dir, "_backup", time.strftime("%Y%m%d_%H%M%S", time.gmtime()))
