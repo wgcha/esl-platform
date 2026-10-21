@@ -364,6 +364,8 @@ $env:PGPASSWORD = $null
 | `ui.max_preview_points` | ⑤ 겹쳐보기·2D 산점 최대 점 수 | `20000` |
 | `core.config_path` | 코어 설정(`esl.yaml` — t*·솔버·판정 기준 `validation`·`compare`) | `esl.yaml` |
 | `report.auto` | VALIDATE 성공 시 Case 보고서 자동 | `true` |
+| `history.backup_scan_max` | 실행 이력: 이전 검증 파일을 `_backup` 에서 표식으로 찾을 때 열어 보는 폴더 최대 수(최신 순, 넘으면 "파일 보존 안 됨" 으로 기록된 값만 표시) | `100` |
+| `history.archive_files` | 실행 이력: 내보내기(⑥)·Case 보고서 성공 시 `<Case>\history\<작업 id>\` 에 작업별로 복사해 두어 나중에도 그때 파일을 받을 수 있게 함(Case 폴더 용량이 실행당 내보내기·보고서 크기만큼 늘어남, 정리 정책 없음). 끄면 이후 실행분은 기록된 값만 표시 | `true` |
 | `library.config_path` | 라이브러리·분석·덱 설정(없으면 라이브러리 쓰기 API 503) | `library.yaml` |
 
 - 코어 `esl.yaml`의 `solver.backend: auto` → Windows에서 `pardiso`(pypardiso·MKL). `extract.disp_precision`은 TCL 출력 정밀도(H3D 보통 `float32`).

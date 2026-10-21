@@ -108,9 +108,28 @@ def artifact_file(ctx: AppContext, aid: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------- P2: 전 요소 비교(계약 esl_p2_library.md §7.3·§11)
+def locate_validation_dir(ctx: AppContext, case: dict[str, Any], val: dict[str, Any],
+                          latest_id: str | None) -> tuple[str, bool] | None:
+    """검증 val 의 05_val 산출물 폴더 (절대경로, `_backup` 에서 찾았는지) 또는 None.
+
+    순서: run 스냅샷(runs/<id>/05_val, 표식 = val id) → (val 이 Case 최신 검증이면) Case 05_val → H-4(계약
+    esl_p3_history.md): `_backup/*/runs/<run_id>/05_val` 중 표식이 val id 와 정확히 같은 폴더(최신 순 최대
+    ``history.backup_scan_max`` 개 폴더, 심링크 무시).
+    """
+    cdir = case_dir(ctx, case)
+    vid = val["id"]
+    snap = co.val_snapshot_dir(cdir, val["esl_run_id"])
+    if co.val_marker(snap) == vid:
+        return snap, False
+    if latest_id == vid:
+        return os.path.join(cdir, co.D_VAL), False
+    found = co.find_backup_validation_dir(cdir, val["esl_run_id"], vid, ctx.settings.history.backup_scan_max)
+    return (found, True) if found else None
+
+
 def _compare_field(ctx: AppContext, vid: str) -> dict[str, np.ndarray]:
     """검증 vid 의 05_val/compare_field.npz: run 스냅샷(runs/<id>/05_val, 표식 = vid) 또는 (vid 가 Case 최신 검증이면)
-    Case 05_val. 이후 검증으로 바뀌었으면 409 VALIDATION_FILES_GONE."""
+    Case 05_val, 없으면 `_backup` 표식 탐색(H-4, 읽기 전용). 모두 없으면 409 VALIDATION_FILES_GONE."""
     with ctx.engine.connect() as conn:
         val = cases_repo.get_validation(conn, vid)
         if val is None:
@@ -118,13 +137,14 @@ def _compare_field(ctx: AppContext, vid: str) -> dict[str, np.ndarray]:
         case = load_case(conn, val["case_id"])
         latest = cases_repo.list_validations(conn, case_id=case["id"])
     cdir = case_dir(ctx, case)
-    snap = co.val_snapshot_dir(cdir, val["esl_run_id"])
-    if co.val_marker(snap) == vid:
-        d = snap
-    elif latest and latest[0]["id"] == vid:
-        d = os.path.join(cdir, co.D_VAL)
-    else:
+    loc = locate_validation_dir(ctx, case, val, latest[0]["id"] if latest else None)
+    if loc is None:
         raise conflict("VALIDATION_FILES_GONE", "이 검증의 산출물이 이후 검증으로 바뀌었습니다(같은 ESL 결과로 다시 검증)")
+    d, from_backup = loc
+    if from_backup:
+        raw = os.path.join(d, "compare_field.npz")
+        if os.path.islink(raw) or not co.inside(os.path.realpath(raw), os.path.realpath(cdir)):
+            raise conflict("VALIDATION_FILES_GONE", "이 검증의 산출물이 이후 검증으로 바뀌었습니다(같은 ESL 결과로 다시 검증)")
     path = safe_case_file(cdir, os.path.relpath(os.path.join(d, "compare_field.npz"), cdir))
     if not os.path.isfile(path):
         raise conflict("PREREQUISITE_MISSING", "전 요소 비교 산출물(compare_field.npz)이 없습니다(이전 코어 버전의 검증)",

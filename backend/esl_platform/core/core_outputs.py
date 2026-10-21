@@ -272,3 +272,109 @@ def val_marker(d: str) -> str | None:
             return fh.read().strip() or None
     except OSError:
         return None
+
+
+# ---------------------------------------------------------------- 실행 이력(계약 esl_p3_history.md H-4·H-5)
+HISTORY_DIR = "history"          # <case>/history/<job_id>/{06_export/…, report.html} — EXPORT·CASE_REPORT 성공 때 복사
+BACKUP_DIR = "_backup"
+HISTORY_EXPORT = D_EXPORT
+HISTORY_REPORT = REPORT_HTML
+
+
+def history_job_dir(case_dir: str, job_id: str) -> str:
+    return _p(case_dir, HISTORY_DIR, job_id)
+
+
+def history_files(case_dir: str, job_type: str, job_id: str) -> list[dict[str, Any]] | None:
+    """작업별 보존 파일 [{name, size}] (이름순). EXPORT = history/<id>/06_export 직하 일반 파일, CASE_REPORT = report.html.
+
+    폴더가 없거나 심링크(또는 realpath 가 Case 폴더 밖)이거나 파일이 하나도 없으면 None. 심링크 파일·하위 폴더는 무시.
+    """
+    real_case = os.path.realpath(case_dir)
+    top = history_job_dir(case_dir, job_id)
+    if job_type == "EXPORT":
+        d = _p(top, HISTORY_EXPORT)
+        names = None
+    elif job_type == "CASE_REPORT":
+        d = top
+        names = [HISTORY_REPORT]
+    else:
+        return None
+    for x in (_p(case_dir, HISTORY_DIR), top, d):
+        if os.path.islink(x) or not os.path.isdir(x):
+            return None
+    if not inside(os.path.realpath(d), real_case):
+        return None
+    out = []
+    try:
+        for name in sorted(names if names is not None else os.listdir(d)):
+            p = _p(d, name)
+            if os.path.islink(p) or not os.path.isfile(p) or name.endswith(".tmp"):
+                continue
+            out.append({"name": name, "size": os.path.getsize(p)})
+    except OSError:
+        return None
+    return out or None
+
+
+def history_file_path(case_dir: str, job_type: str, job_id: str, name: str) -> str | None:
+    """목록에 있는 보존 파일의 절대경로(없으면 None). 이름은 목록과 정확히 일치해야 한다."""
+    files = history_files(case_dir, job_type, job_id)
+    if not files or name not in {f["name"] for f in files}:
+        return None
+    top = history_job_dir(case_dir, job_id)
+    p = _p(top, HISTORY_EXPORT, name) if job_type == "EXPORT" else _p(top, name)
+    if os.path.islink(p) or not inside(os.path.realpath(p), os.path.realpath(case_dir)):
+        return None
+    return p
+
+
+def inside(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def read_marker_file(path: str, limit: int = 128) -> str | None:
+    """표식 파일(심링크 거부, 앞 limit 바이트만) 내용. 없거나 읽을 수 없으면 None."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        with open(path, "rb") as fh:
+            return fh.read(limit).decode("utf-8", errors="replace").strip() or None
+    except OSError:
+        return None
+
+
+def find_backup_validation_dir(case_dir: str, run_id: str, validation_id: str, scan_max: int) -> str | None:
+    """이전 검증 파일 찾기(H-4): ``_backup/<ts>/runs/<run_id>/05_val`` 중 표식(platform_validation_id.txt)이
+    ``validation_id`` 와 **정확히 같은** 폴더. 최신 순(폴더 이름 = UTC 시각) 최대 ``scan_max`` 개 폴더만 연다.
+    심링크(``_backup``·``<ts>``·``runs``·``<run_id>``·``05_val``·표식)와 realpath 가 Case 폴더 밖인 경로는 무시한다.
+    ``_backup`` 의 다른 어떤 것도 노출하지 않는다.
+    """
+    base = _p(case_dir, BACKUP_DIR)
+    if os.path.islink(base) or not os.path.isdir(base):
+        return None
+    real_case = os.path.realpath(case_dir)
+    try:
+        names = sorted(os.listdir(base), reverse=True)
+    except OSError:
+        return None
+    scanned = 0
+    for name in names:
+        d = _p(base, name)
+        if os.path.islink(d) or not os.path.isdir(d):
+            continue
+        scanned += 1
+        if scanned > max(1, int(scan_max)):
+            return None
+        chain = [_p(d, RUNS_DIR), _p(d, RUNS_DIR, run_id), _p(d, RUNS_DIR, run_id, VAL_SNAPSHOT)]
+        if any(os.path.islink(x) or not os.path.isdir(x) for x in chain):
+            continue
+        cand = chain[-1]
+        if not inside(os.path.realpath(cand), real_case):
+            continue
+        if read_marker_file(_p(cand, VAL_MARKER)) == validation_id:
+            return cand
+    return None

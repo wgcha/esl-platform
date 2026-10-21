@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import uuid
 from typing import Any
 
@@ -248,6 +249,50 @@ def register_case_report(conn: Connection, job: dict[str, Any], case: dict[str, 
     return {"report_rel": rel, "bytes": os.path.getsize(path), "verdict": s.get("verdict"),
             "validation_id": p.get("validation_id"), "esl_run_id": p.get("esl_run_id"), "auto": bool(p.get("auto")),
             "missing": s.get("missing") or []}
+
+
+# ---------------------------------------------------------------- 실행 이력 보존(계약 esl_p3_history.md H-5)
+def archive_history(cdir: str, job_type: str, job_id: str) -> int:
+    """EXPORT 의 ``06_export`` 또는 CASE_REPORT 의 ``07_report/report.html`` 을 ``<case>/history/<job_id>/`` 로 **복사**한다.
+
+    심링크는 복사하지 않고, ``.tmp`` 에 쓴 뒤 rename(중간 상태를 남기지 않음). 이미 있으면(같은 작업의 재호출) 그대로 둔다.
+    복사한 파일 수를 돌려준다. 실패하면 OSError(호출자가 작업을 성공으로 두고 경고 ``HISTORY_ARCHIVE_FAILED`` 기록).
+    """
+    if job_type not in ("EXPORT", "CASE_REPORT"):
+        return 0
+    real_case = os.path.realpath(cdir)
+    hdir = os.path.join(cdir, co.HISTORY_DIR)
+    dst = os.path.join(hdir, job_id)
+    if os.path.islink(hdir) or not co.inside(os.path.realpath(dst), real_case):
+        raise OSError("history 폴더가 Case 폴더 밖이거나 심볼릭 링크입니다")
+    if os.path.lexists(dst):
+        return 0
+    if job_type == "EXPORT":
+        src = os.path.join(cdir, co.D_EXPORT)
+        if os.path.islink(src) or not os.path.isdir(src):
+            raise FileNotFoundError(src)
+    else:
+        src = os.path.join(cdir, co.D_REPORT, co.REPORT_HTML)
+        if os.path.islink(src) or not os.path.isfile(src):
+            raise FileNotFoundError(src)
+    tmp = dst + ".tmp"
+    if os.path.lexists(tmp):
+        shutil.rmtree(tmp)
+    os.makedirs(tmp)
+    n = 0
+    try:
+        if job_type == "EXPORT":
+            shutil.copytree(src, os.path.join(tmp, co.HISTORY_EXPORT), symlinks=True, copy_function=shutil.copy2,
+                            ignore=lambda d, names: [x for x in names if os.path.islink(os.path.join(d, x))])
+            n = sum(len(fs) for _r, _d, fs in os.walk(os.path.join(tmp, co.HISTORY_EXPORT)))
+        else:
+            shutil.copy2(src, os.path.join(tmp, co.HISTORY_REPORT))
+            n = 1
+        os.replace(tmp, dst)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return n
 
 
 # ---------------------------------------------------------------- 라이브러리 종합분석(P2)
