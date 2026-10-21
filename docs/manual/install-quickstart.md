@@ -22,7 +22,8 @@ mkdir E:\VD_SIMULATION_WEB\esl-input                      # 입력 루트(다른
 
 ## 2. 설치(처음 한 번 — 입력 루트는 이때 한 번만 지정)
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-platform\deploy\setup.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard -InputRoots E:/VD_SIMULATION_WEB/esl-input
+E:\VD_SIMULATION_WEB\esl-platform\deploy\setup.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard -InputRoots E:/VD_SIMULATION_WEB/esl-input
+# 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 powershell -NoProfile -ExecutionPolicy Bypass -File …로 실행
 ```
 1. 확인 표를 본다: Python `cpython-3.12.13`, PostgreSQL host:port(대시보드와 같은 인스턴스), ESL 루트, 입력 루트, **대시보드 `.env` 추가 계획**(`VITE_ESL_TARGET`·`SIMDASH_ESL_ENABLED`).
 2. `Y` 입력 후 Enter(빈 Enter는 다시 묻는다).
@@ -57,7 +58,8 @@ Start-ScheduledTask ESL-Backend; Start-ScheduledTask ESL-Worker
 
 ## 6. 이후 코드 업데이트(인자 없이)
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
+E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
+# 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 powershell -NoProfile -ExecutionPolicy Bypass -File …로 실행
 ```
 git pull → 작업 중지 → 코드·프런트 교체 → migration → health. 입력 루트 등 설정은 저장된 값을 그대로 쓴다. 실행 중 작업이 있으면 멈추고 안내한다.
 

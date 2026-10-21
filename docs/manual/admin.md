@@ -61,8 +61,9 @@ PostgreSQL `esl` ◀── claim/renew/release ── esl_worker ── spawn �
 저장소를 받은 git 폴더에 그대로 설치한다. **일반 Windows PowerShell**(관리자 권한 불필요)에서:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-platform\deploy\setup.ps1        # 설치(다시 실행해도 안전)
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1  # 업데이트(§3.0, git pull 포함)
+E:\VD_SIMULATION_WEB\esl-platform\deploy\setup.ps1        # 설치(다시 실행해도 안전)
+E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1  # 업데이트(§3.0, git pull 포함)
+# 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 powershell -NoProfile -ExecutionPolicy Bypass -File …로 실행
 ```
 
 - **관리자 권한이 필요 없다**: 머신 환경변수를 쓰지 않는다. DB 접속 정보(앱 비밀번호 포함 URL)는 `.runtime\secrets\database_url` 한 파일에 두고 상속을 끊어 **현재 사용자·SYSTEM만** 읽게 한다(`icacls` — 실패하면 경고만). 설정은 `.runtime\config\esl_platform.yaml`.
@@ -70,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 - **코드 스냅샷**: 서비스는 git 폴더가 아니라 `.runtime\app`(esl·backend\esl_platform·worker\esl_worker·migrations·alembic.ini·esl_service.py 복사본)을 실행한다. `git pull`이 실행 중인 코드를 바꾸지 않는다.
 - **런타임 폴더는 git에서 제외**: `.runtime\.gitignore`(`*` 한 줄)를 만든다(저장소 `.gitignore`는 바꾸지 않음).
 - **Node**: ESL 저장소에는 빌드된 화면이 커밋되어 있지 않다 → 처음 설치와 프런트 소스가 바뀐 업데이트에서만 Node 22로 `npm ci`(package-lock.json이 바뀔 때만) → `npm run build`. 소스 해시가 같으면 Node·npm 단계 없음. 대시보드 고정 Node(`<대시보드>\.tools\node-v22.*-win-x64`)를 먼저 쓴다. Node가 없는 서버는 §2.2 묶음을 쓴다.
-- `.bat` 실행이 보안 정책으로 막혀도 위처럼 `.ps1`을 `-File`로 직접 실행하면 된다.
+- `.bat` 실행이 보안 정책으로 막혀도 위처럼 `.ps1`을 직접 실행하면 된다(실행 정책 오류면 `powershell -NoProfile -ExecutionPolicy Bypass -File …`).
 - **묻는 것**(Enter = 괄호 안 기본값): 대시보드 폴더(`<git 부모>\simdashboard`), ESL 루트(`<git 부모>\esl-data` — SPDM 밖), 입력 루트(rad·결과 CSV 폴더를 고를 수 있는 폴더, 쉼표로 여러 개, Enter = 건너뜀), SPDM 루트(선택), 확인 표 뒤 `Y/N`, 비밀번호 2개(PostgreSQL `postgres` 관리자·앱 역할 `esl_app` — 이미 설치돼 있고 접속되면 묻지 않음). `Background` 모드면 실행 계정 비밀번호를 한 번 더 묻는다.
 - 인자로 줄 수도 있다: `-DashboardRoot`, `-EslRoot`, `-InputRoots a,b`, `-SpdmRoots`, `-PythonExe`, `-ServiceUser`(기본 현재 사용자), `-RunMode Interactive|Background`(기본 `Interactive`), `-NonInteractive`(묻지 않음 — 비밀번호는 `-PasswordsFromEnv`), `-NoStart`, `-Force`.
 - **Python**: `-PythonExe` → deploy.json → 대시보드 고정 Python 3.12 → `py -3.12` → PATH 순으로 **실제로 실행해** 3.12인지 확인(망가진 pyenv shim·Store 별칭은 건너뜀). 대시보드 Python에는 아무것도 설치하지 않는다(항상 `.runtime\venv`).
@@ -108,8 +109,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-pla
 
 ```powershell
 # Windows 준비 PC(저장소 폴더에서). 대시보드가 같은 PC에 있으면 -DashboardRoot 권장(대시보드 고정 Python 3.12·Node 22)
-powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\collect-offline.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\collect-offline.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard
+.\deploy\collect-offline.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard -DryRun
+.\deploy\collect-offline.ps1 -DashboardRoot E:\VD_SIMULATION_WEB\simdashboard
+# 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 powershell -NoProfile -ExecutionPolicy Bypass -File …로 실행
 ```
 
 ```bash
@@ -264,7 +266,8 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py migrate --runtime D:\es
 **일반 Windows PowerShell**에서 **한 줄**(인자·질문 없음 — 값은 `.runtime\deploy.json`, `git pull`도 스스로):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
+E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
+# 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 powershell -NoProfile -ExecutionPolicy Bypass -File …로 실행
 ```
 
 끝 줄은 `업데이트 성공 — 접속: …` 또는 `업데이트 실패 — 접속: …`(`http://<서버>:<대시보드 .env WINDOWS_WEB_PORT, 기본 80>/esl/`).
@@ -439,7 +442,7 @@ cd D:\esl                                   # git 폴더 설치는 <git>\.runtim
 
 **Q. 회사 프록시(`HTTP_PROXY`)에서 health 확인이 실패한다.** 설치 스크립트·시연의 127.0.0.1 호출은 프록시를 쓰지 않는다(`loopback-http.ps1`, physicsai와 같은 처리). pip·npm은 기존 프록시 설정을 그대로 쓴다.
 
-**Q. `.bat` 실행이 "액세스가 거부되었습니다".** `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1`(또는 `setup.ps1`, `demo\start-demo.ps1`)처럼 `.ps1`을 직접 실행한다(인자 동일).
+**Q. `.bat` 실행이 "액세스가 거부되었습니다".** `.\deploy\install.ps1`(또는 `setup.ps1`, `demo\start-demo.ps1`)처럼 `.ps1`을 직접 실행한다(인자 동일). 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1`로 실행한다.
 
 **Q. 작업 스케줄러 작업을 바꿀 권한이 없다고 나온다.** 다른 계정이나 관리자 권한으로 등록된 작업이다. 처음 등록한 것과 **같은 사용자 계정**으로 '관리자 권한으로 실행'한 창에서 한 번 실행하면 그 뒤로는 일반 PowerShell로 된다.
 

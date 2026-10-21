@@ -3,7 +3,8 @@
   ESL 서버 같은 PC·git 폴더 설치(권장). 저장소를 받은 폴더에 그대로 설치한다 — 묶음·압축 없음. 다시 실행해도 안전(이미 있으면 확인 후 갱신).
 .DESCRIPTION
   physicsai-platform deploy\setup.ps1과 같은 절차. 일반 Windows PowerShell(관리자 권한 불필요)에서:
-    powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\setup.ps1
+    <git 폴더>\deploy\setup.ps1
+    (실행 정책 오류 — "스크립트를 실행할 수 없습니다" — 가 나면: powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\setup.ps1)
   (저장소 루트의 update.bat은 사용자 PC용 HyperView TCL 배포 — 서버 설치와 무관)
   ① Python 3.12 선택(python-select.ps1: -PythonExe > deploy.json > 대시보드 고정 Python > py -3.12 > PATH, 각 후보를 실제 실행해 확인)
   ② 런타임 폴더 <git>\.runtime\(그 안의 .gitignore로 git 제외): venv, app(코드 스냅샷), frontend(배치), config\esl_platform.yaml(+esl.yaml·library.yaml·ista6.yaml),
@@ -20,7 +21,7 @@
      → DB 접속 정보 파일 .runtime\secrets\database_url(현재 사용자·SYSTEM만 읽기) → alembic upgrade head(0001~0004)
      → 작업 스케줄러 ESL-Backend·ESL-Worker(현재 사용자 Interactive·Limited, 실행기 esl_service.py --runtime) → 시작·health → 환경 점검 표
   ⑧ 접속 연결 안내: 대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED=true(백엔드가 /esl/ 직접 서빙 — 추가했으면 대시보드 재시작), Caddy는 대안(esl.caddy)
-  업데이트: powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\update-repo.ps1 (git pull 포함)
+  업데이트: <git 폴더>\deploy\update-repo.ps1 (git pull 포함)
 .PARAMETER DashboardRoot
   대시보드 폴더. 기본: deploy.json 값 → <git 폴더의 부모>\simdashboard(있으면). .env의 POSTGRES_BIN·DATABASE_URL(host·port만)과 .tools의 Python 3.12·Node 22를 쓴다
 .PARAMETER EslRoot
@@ -299,5 +300,6 @@ Write-Step '     고친 뒤: Stop-ScheduledTask ESL-Worker; Stop-ScheduledTask E
 if (-not @($inputRootsV).Count) { Write-Step "     입력 루트가 비어 있습니다 — 새 Case 입력은 브라우저 업로드(업로드 위치 $($d.upload_root))로 넣습니다(공유 폴더를 쓰려면 storage.input_roots 에 추가)" }
 Write-Step "  4) 환경 점검: & '$venvPy' '$(Get-EslLauncher $rt)' check --runtime '$rt'   (로그: $(Join-Path $rt 'logs'))"
 Write-Step "  5) 새 Case: ESL 화면 '내 PC에서 올리기'로 _0000.rad(include 포함)와 h3d 또는 추출 결과 폴더를 올립니다(업로드 위치 $($d.upload_root))"
-Write-Step "이후 코드 업데이트(인자 없이, 설정 유지):  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"
+Write-Step "이후 코드 업데이트(인자 없이, 설정 유지):  $(Join-Path $PSScriptRoot 'update-repo.ps1')"
+Write-Step "  실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면:  powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'update-repo.ps1')"
 Write-Step "단계별 가이드: $(Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\manual\install-quickstart.md')"
