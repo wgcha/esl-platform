@@ -123,6 +123,7 @@ export function PcPanel({ projectId, projectName, allowed, reason }: { projectId
       ) : tokens.length === 0 ? (
         <Empty>아직 연결된 PC가 없습니다</Empty>
       ) : (
+        <div className="table-wrap scroll">
         <table className="table compact" aria-label="연결된 PC">
           <thead>
             <tr>
@@ -155,6 +156,7 @@ export function PcPanel({ projectId, projectName, allowed, reason }: { projectId
             ))}
           </tbody>
         </table>
+        </div>
       )}
       {tokens !== null && <ErrorLine text={listError} />}
       <p className="small muted">PC를 잃어버렸거나 더 쓰지 않으면 "폐기"하세요 — 그 PC의 도구는 다음 올리기에서 연결 코드를 다시 묻습니다.</p>

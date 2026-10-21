@@ -26,7 +26,7 @@ function ResultChips({ it }: { it: HistoryItem }) {
 export function HistoryTable({ items, projectId, showCase }: { items: HistoryItem[]; projectId: string; showCase: boolean }) {
   const nav = useNavigate();
   return (
-    <div className="table-wrap">
+    <div className="table-wrap scroll">
       <table className="table history-table" aria-label="실행 이력">
         <thead>
           <tr>
