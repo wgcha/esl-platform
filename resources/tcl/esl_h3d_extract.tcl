@@ -47,7 +47,11 @@
 #   strain_system (elemental | analysis | global | none; default elemental).
 #   -hot_k / -top_n arguments override request.txt.
 #
-# Existing outputs (done.json, *.csv) in <dir> are moved to <dir>/_backup/<timestamp>/ first
+# Progress: every ::esl::progress / coarse step start / long call (model load, result load) is
+# also appended, with a timestamp and flushed per line, to <dir>/progress.log (hw.exe in -b mode
+# may not forward Tcl stdout to the worker log; the worker tails progress.log instead).
+#
+# Existing outputs (done.json, progress.log, *.csv) in <dir> are moved to <dir>/_backup/<timestamp>/ first
 # (never deleted). All numbers are written with "format %.17g" (round-trip exact for doubles).
 #
 # NOT VERIFIED against a real HyperView installation (written from the hwi/poI* Tcl API docs).
@@ -516,6 +520,10 @@ namespace eval ::esl {
     variable h3d ""
     variable numfmt "%.17g"
     variable backup_dir ""
+    # progress.log (append, flushed per line); enabled only after the previous one was backed up
+    variable plog_on 0
+    variable plog_fh ""
+    variable plog_t [dict create]
     # result coordinate system for the strain tensor: requested name, applied call, warned flag
     variable sys_req "elemental"
     variable sys_applied ""
@@ -536,7 +544,7 @@ proc ::esl::num {v} {
 proc ::esl::backup_outputs {out} {
     variable backup_dir
     set olds {}
-    foreach f [glob -nocomplain -directory $out -types f -- done.json *.csv] {
+    foreach f [glob -nocomplain -directory $out -types f -- done.json progress.log *.csv] {
         if {[lsearch -exact $olds $f] < 0} { lappend olds $f }
     }
     if {[llength $olds] == 0} { return "" }
@@ -595,12 +603,75 @@ proc ::esl::fail {code msg} {
     return -code error -errorcode [list ESL $code] $msg
 }
 
+# Append one timestamped line to <out>/progress.log and flush (never raises).
+proc ::esl::plog {msg} {
+    variable plog_on
+    variable plog_fh
+    variable outdir
+    if {!$plog_on} { return }
+    catch {
+        if {$plog_fh eq ""} {
+            set plog_fh [open [file join $outdir progress.log] a]
+            fconfigure $plog_fh -translation lf -encoding ascii -buffering line
+        }
+        puts $plog_fh "[clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}] $msg"
+        flush $plog_fh
+    }
+}
+
+proc ::esl::plog_close {} {
+    variable plog_fh
+    catch {close $plog_fh}
+    set plog_fh ""
+}
+
 proc ::esl::progress {msg} {
     catch {
         puts stdout "ESL extract [clock format [clock seconds] -format %H:%M:%S] $msg"
         flush stdout
     }
+    ::esl::plog $msg
 }
+
+# Coarse steps are logged when they start; per-frame / per-chunk / per-field steps are not
+# (those are covered by ::esl::progress). Redefines the common-block proc (same behaviour + log).
+proc ::esl::step {name} {
+    variable cur_step
+    set cur_step $name
+    if {![string match "frame *" $name] && [string first chunk $name] < 0 && [string first / $name] < 0} {
+        ::esl::plog "step $name"
+    }
+}
+
+# Long HyperView calls (model load, result load, draw): "<label> start" / "<label> end <sec>s".
+# Execution traces on ::esl::alt / ::esl::do (Tcl 8.5).
+proc ::esl::plog_trace {cmd args} {
+    variable plog_t
+    catch {
+        set labels [dict create AddModel "model load" SetResult "result load" Draw "draw" \
+            GetResultCtrlHandle "result ctrl handle"]
+        set op [lindex $args end]
+        set name [lindex $cmd 1]
+        if {![dict exists $labels $name]} { return }
+        set label [dict get $labels $name]
+        if {$op eq "enter"} {
+            dict set plog_t $name [clock milliseconds]
+            ::esl::plog "$label start"
+        } else {
+            set sec "?"
+            if {[dict exists $plog_t $name]} {
+                set sec [format %.1f [expr {([clock milliseconds] - [dict get $plog_t $name]) / 1000.0}]]
+            }
+            set bad ""
+            if {[lindex $args 0] != 0} { set bad " (error)" }
+            ::esl::plog "$label done (${sec} s)$bad"
+        }
+    }
+}
+trace add execution ::esl::alt enter ::esl::plog_trace
+trace add execution ::esl::alt leave ::esl::plog_trace
+trace add execution ::esl::do enter ::esl::plog_trace
+trace add execution ::esl::do leave ::esl::plog_trace
 
 # Repeated per-frame/per-chunk messages are counted, not repeated (added to warnings at the end).
 proc ::esl::note {msg {n 1}} {
@@ -989,6 +1060,8 @@ proc ::esl::run {arglist} {
     file mkdir $out
     ::esl::step backup_outputs
     ::esl::backup_outputs $out
+    set ::esl::plog_on 1
+    ::esl::plog "extract start: [file tail $a(input)] -> $out"
     ::esl::step check_input
     if {$a(input) eq ""} { ::esl::fail INPUT_INVALID "missing -input <h3d>" }
     if {![file isfile $h3d]} { ::esl::fail TOOL_OUTPUT_MISSING "h3d not found: $h3d" }
@@ -1019,6 +1092,7 @@ proc ::esl::run {arglist} {
     foreach c [dict get $cfg disp_comps] { lappend dfields [list $dtype $c "" 0] }
 
     # ---- session / model (every call is a named step; see done.json failed_step / api)
+    ::esl::progress "open session and load model/results (can take minutes for a large h3d)"
     set hd [::esl::open_model $h3d]
     set post [dict get $hd C]
     set model [dict get $hd M]
@@ -1084,7 +1158,7 @@ proc ::esl::run {arglist} {
     set eids [::esl::set_ids $eset $qry $eset_id element]
     ::esl::step node_ids
     set nids [::esl::set_ids $nset $qry $nset_id node]
-    ::esl::progress "part $pid: [llength $eids] elements, [llength $nids] nodes, $nsim frames"
+    ::esl::progress "part $pid ($ptitle): [llength $eids] elements, [llength $nids] nodes, $nsim frames"
     set echunks [::esl::make_chunks $model $qry element $eids $csize $eset_id elem]
     set nchunks [::esl::make_chunks $model $qry node $nids $csize $nset_id node]
     set ne_ch [llength $echunks]
@@ -1111,6 +1185,7 @@ proc ::esl::run {arglist} {
 
     # ---- pass A: last frame, all part elements (chunked) -> final.csv, running top hot_k
     set t0 [::esl::ms]
+    ::esl::progress "pass A start (frame $last, $ne_ch element chunks)"
     ::esl::set_sim $res $post $last
     set fa [::esl::open_csv [file join $out final.csv] "elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
     set topvm {}
@@ -1135,9 +1210,11 @@ proc ::esl::run {arglist} {
     if {$nelem == 0} { ::esl::fail H3D_MISSING_RESULT "pass A: no element values at frame $last" }
     if {$miss > 0} { ::esl::warn "pass A: $miss elements without all values skipped" }
     lappend ::esl::passes "\"A\":\{\"frame\":$last,\"rows\":$nelem,\"chunks\":$ne_ch,\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "pass A done ([::esl::secs $t0] s)"
 
     # ---- pass B: every frame, hot set H -> history.csv; first-reach candidate frames D
     set t0 [::esl::ms]
+    ::esl::progress "pass B start ($nsim frames)"
     set hids {}
     foreach p [concat $topvm $topep] { lappend hids [lindex $p 0] }
     set hids [lsort -integer -unique $hids]
@@ -1203,6 +1280,7 @@ proc ::esl::run {arglist} {
         ::esl::warn "no candidate frame from H; D = last frame $last"
     }
     lappend ::esl::passes "\"B\":\{\"frames\":$nsim,\"n_hot\":$nh,\"rows\":$hrows,\"hot_selection\":[::esl::jstr $hmode],\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "pass B done ([::esl::secs $t0] s)"
     ::esl::progress "candidate frames: max_strain [lindex $cand_vm 0], plastic_strain [lindex $cand_ep 0] -> D = $D"
 
     # ---- pass C: candidate frames D, all part elements and nodes (chunked)
@@ -1219,6 +1297,7 @@ proc ::esl::run {arglist} {
     }
     set CF [lsort -integer -unique [concat $D $Pextra]]
     set t0 [::esl::ms]
+    ::esl::progress "pass C start ([llength $CF] frames)"
     set fs [::esl::open_csv [file join $out strain_frames.csv] "frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
     set fds [::esl::open_csv [file join $out disp.csv] "frame_index,node_id,ux,uy,uz"]
     set srows 0
@@ -1254,6 +1333,8 @@ proc ::esl::run {arglist} {
     close $fs
     close $fds
     lappend ::esl::passes "\"C\":\{\"frames\":[::esl::jints $D],\"prev_frames\":[::esl::jints $P],\"strain_frames\":[::esl::jints $CF],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "pass C done ([::esl::secs $t0] s)"
+    ::esl::progress "disp done"
 
     ::esl::step CloseStack
     catch {hwi CloseStack}
@@ -1282,7 +1363,8 @@ proc ::esl::run {arglist} {
         error "done.json could not be written"
     }
     set ::esl::written 1
-    ::esl::progress "done: $nelem elements, $nnode nodes, H $nh, D $D, prev $P"
+    ::esl::progress "extract done: $nelem elements, $nnode nodes, H $nh, D $D, prev $P"
+    ::esl::plog_close
 }
 
 set ::esl::part_spec ""
@@ -1303,6 +1385,8 @@ if {[catch {::esl::run $::argv} ::esl::err ::esl::opts]} {
             puts stderr "ESL: done.json not written: $::esl::werr"
         }
     }
+    ::esl::plog "FAILED at step '$::esl::cur_step': $::esl::code: [::esl::short $::esl::err 200]"
+    ::esl::plog_close
     puts stderr "ESL extract failed at step '$::esl::cur_step': $::esl::code: $::esl::err"
     set ::esl::rc 1
 }
