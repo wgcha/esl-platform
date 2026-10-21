@@ -357,6 +357,9 @@ export function UploadPanel({
                   : null}
             </span>
             <span className="spacer" />
+            {!busy && prog?.phase !== "done" && startReason && (
+              <span className="small warn-text" data-testid="upload-start-reason">{startReason}</span>
+            )}
             {!busy && prog?.phase !== "done" && (
               <span className="primary-wrap" title={startReason ?? undefined}>
                 <button type="button" className="btn" disabled={!!startReason || disabled} onClick={() => void start()}>
