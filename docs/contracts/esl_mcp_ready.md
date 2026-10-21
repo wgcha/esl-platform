@@ -1,24 +1,26 @@
-# 계약: MCP 준비(사내 LLM 조작 사전 작업) — esl-mcp-ready
+# 계약: MCP 준비(LLM 클라이언트 조작 — 플랫폼 준비 + MCP 위임 계층) — esl-mcp-ready
 
-- 상태: **확정**(2026-10-21, Plan; 미결 3건 사용자 확정 → EM-C1). 사용자 요청(2026-10-21): "esl-platform도 MCP를 사용할 수 있게 구상하고, 기능 추가에도 문제없도록 계획."
+- 상태: **확정**(2026-10-21, Plan; 미결 3건 사용자 확정 → EM-C1; 지원 클라이언트 3종·MCP 서버 계층 범위 편입 → EM-C2). 사용자 요청(2026-10-21): "esl-platform도 MCP를 사용할 수 있게 구상하고, 기능 추가에도 문제없도록 계획." / "MCP는 Claude, ChatGPT(Codex), Gemini를 지원해야 한다. physicsai는 고치지 않는다." / "사내에 해당 LLM 허용됨. on-premise로."
 - 기준: main 5632262(v0.5.2), migration HEAD `0007`(history_indexes).
-- 형제 계약: physicsai-platform `docs/contracts/mcp-ready.md`(같은 사용자·같은 서버·같은 대시보드). 원칙·도구 이름·봉투·오류 코드·토큰 규칙은 **그 문서와 같게** 하고, 다른 점은 §17 표에만 둔다.
+- 형제 계약: physicsai-platform `docs/contracts/mcp-ready.md`(같은 사용자·같은 서버·같은 대시보드). 도구 이름·봉투·오류 코드·토큰 규칙은 **그 문서를 출발점**으로 삼되, physicsai는 고치지 않으므로(EM-C2) **esl 값이 이 문서의 기준값**이고 physicsai와의 차이는 §17 표에 기록만 한다.
 - 우선순위: **이 문서 > [esl.md](esl.md) §5(API 공통·권한)·[esl_p3_ux.md](esl_p3_ux.md) §9.1(PC 연결 토큰)** — 이 문서가 바꾸는 것은 §2.1 "기존 규칙 예외" 표에만 있다.
 - ID 규칙: 결정 `EM-n`, 시험 `V-EM-n`, 변경 메모 `EM-Cn`.
 
-## 0. 사용자 결정·설계 원칙(2026-10-20·21, physicsai와 공통)
+## 0. 사용자 결정·설계 원칙(2026-10-20·21; EM-C2로 1·2·5 갱신)
 
-1. 대상 LLM은 **폐쇄망 사내 LLM만**. 외부 LLM·외부 네트워크 호출 없음. MCP 미지원 클라이언트를 위해 **OpenAI 호환 function 정의**를 병행한다.
-2. 이번 범위는 **플랫폼 쪽 준비**(인증·확인 절차·감사·요약·스펙)다. MCP 서버 프로세스 자체는 후속(비범위).
-3. **기능을 나중에 추가해도 MCP 쪽 수정이 최소화**되어야 한다(§15): 도구 정의는 openapi `x-mcp`에서 자동 생성, 작업 생성은 공통 작업 계약으로 일원화, 요약은 레지스트리, 용어집은 코드 자동 추출, 누락은 정적 시험이 잡는다, 깨지는 변경은 새 도구 이름.
-4. 기본값으로는 기존 동작 불변: `mcp.enabled: false`(API 토큰 인증·`/mcp/*`·토큰 화면 전부 꺼짐). PC 연결 토큰(`esl_ct_`) 흐름은 켜고 끔과 무관하게 그대로.
-5. 두 플랫폼을 사내 LLM이 **같은 방식으로** 다루게 한다: 같은 도구 이름(`plan_job`·`run_job`·`job_status`…), 같은 `JobPlan`·`JobStatus`·`Summary` 봉투, 같은 MCP 오류 코드, 같은 토큰 수명·범위 규칙. 다른 것은 접두·대상 id·도메인 엔티티뿐.
+1. 대상 LLM은 **사내 허용된 on-premise LLM(Claude·ChatGPT/Codex·Gemini) + 사내 LLM(OpenAI 호환)**(사용자 결정 2026-10-21 20:53·20:55 — "폐쇄망 사내 LLM만"을 대체). 지원 클라이언트 = **Claude**(Claude Desktop·Claude Code), **OpenAI Codex**(CLI·IDE 확장·ChatGPT 데스크톱 앱의 Codex — 같은 `config.toml` 공유), **Google Gemini**(Gemini CLI). ChatGPT 앱(웹·데스크톱 채팅)의 원격 커넥터는 인증·도달 요구사항 때문에 조건부(§21.4). 사내 LLM 경로(MCP 미지원 클라이언트용 **OpenAI 호환 function JSON**, `GET /mcp/tools?format=openai`)는 유지.
+2. 범위 = **플랫폼 쪽 준비**(인증·확인 절차·감사·요약·스펙) + **얇은 MCP 서버 계층**(§21: 사용자 PC의 로컬 stdio 브리지 + 서버의 Streamable HTTP 엔드포인트, 두 경로 같은 비중). MCP 계층은 **로직 없음·위임만** — 도구 목록은 `GET /mcp/tools`에서 동적으로 읽고 호출은 기존 HTTP API로 넘긴다. 권한·확인·감사·제한은 전부 플랫폼 API가 한다.
+3. **기능을 나중에 추가해도 MCP 쪽 수정이 최소화**되어야 한다(§15): 도구 정의는 openapi `x-mcp`에서 자동 생성, 작업 생성은 공통 작업 계약으로 일원화, 요약은 레지스트리, 용어집은 코드 자동 추출, 누락은 정적 시험이 잡는다, 깨지는 변경은 새 도구 이름. 생성 스키마는 세 클라이언트 **공통 부분집합**(§9.2)으로만 낸다.
+4. 기본값으로는 기존 동작 불변: `mcp.enabled: false`(API 토큰 인증·`/mcp/*`·`/mcp/stream`·토큰 화면 전부 꺼짐). PC 연결 토큰(`esl_ct_`) 흐름은 켜고 끔과 무관하게 그대로.
+5. physicsai는 고치지 않는다(EM-C2). 도구 이름(`plan_job`·`run_job`·`job_status`…)·`JobPlan`/`JobStatus`/`Summary` 봉투·MCP 오류 코드는 physicsai 계약을 출발점으로 삼아 **esl이 기준값**을 가지며, 차이는 §17에 기록한다(같게 맞추라는 요구 없음).
 
 ## 1. 범위
 
 | 범위 | 비범위(후속) |
 |---|---|
-| 사용자별 API 토큰 `esl_at_`(발급·폐기·만료·범위), Bearer 인증 경로 | MCP 서버(stdio/HTTP) 구현·배포, 사내 LLM 연결 |
+| 사용자별 API 토큰 `esl_at_`(발급·폐기·만료·범위), Bearer 인증 경로 | OAuth 2.1 인가 서버(대시보드 로그인 연동) — ChatGPT 앱·Claude 원격 커스텀 커넥터용(§21.4, 별도 계약) |
+| **MCP 서버 계층(EM-18~21, §21)**: 로컬 stdio 브리지(`scripts/windows/esl_mcp_bridge.ps1`·`ESL_mcp.bat`·`ESL_mcp_login.bat`, update.bat 배포) + Streamable HTTP 엔드포인트 `POST /esl/api/mcp/stream`(Bearer), 클라이언트별 설정 예시 3종 | 공개 인터넷 노출·OpenAI Secure MCP Tunnel·Anthropic IP 허용 목록 등 벤더 클라우드 경유 연결 설정(운영·보안 조직 판단) |
+| 세 클라이언트 공통 스키마 부분집합 규칙·도구 이름 규칙(§9.2) + 정적 시험 | physicsai 쪽 브리지·스키마 수정(사용자 결정 — physicsai 불변) |
 | 공통 작업 계약 `/mcp/jobs*`(plan → confirm_token → run → status → summary → cancel) | 기존 생성 API(`POST /cases/{id}/jobs`·`/library/analyses`·`/library/comparisons`) 개조 — 웹 흐름 불변 |
 | 토큰 요청 감사 `api_audit`·조회·보존 | **업로드**(`/uploads*` — 브라우저·PC 도구 전용, 확정 비범위) |
 | 요약 레지스트리 `/mcp/summary/*`(이력·결과·라이브러리 서비스 재사용) | Case **수정·보관**(`PATCH /cases/{id}`·archive — 확정 제외) |
@@ -56,6 +58,7 @@
 | esl.md §5 역할 = 대시보드가 단일 출처 | `api_tokens.principal_snapshot`에 **전 프로젝트 역할 스냅숏** 저장·세션 로그인 때 갱신(§4.3). 선례: `client_tokens.role`(1개 프로젝트) | 토큰 요청에는 세션이 없어 introspection 불가 |
 | esl.md §5 비GET CSRF 헤더 | `esl_at_` 토큰 요청은 면제(`esl_ct_` 선례와 동일) | 쿠키 미사용 → CSRF 대상 아님 |
 | esl.md §5 판정 순서 401 → 404 → 403 → 409 | 토큰 요청은 401 → 403(허용 operation·범위) → 429 → 404 → 403(역할) → 409 | 대상 존재 여부를 범위 밖 토큰에 노출하지 않음 |
+| EM-4 토큰은 `x-mcp.tool` operation만 | `POST /mcp/stream`(`x-mcp: {"transport":"streamable_http"}`)은 read+ 토큰 허용. 그 안의 `tools/call`은 **내부 하위 요청**으로 해당 도구 operation을 다시 거치므로 범위·역할·confirm·감사·제한은 원래 operation 기준 그대로(§21.3) | 전송 계층일 뿐 권한 판정을 새로 두지 않음 |
 
 취소 규칙은 예외가 아니라 **더 좁힘**: 토큰 요청의 `cancel_job`은 그 토큰이 만든 작업만(§5.2). 기존 웹 취소(생성자·전역 관리자)는 불변.
 
@@ -80,6 +83,11 @@
 | EM-15 | MCP 전용 응답·요청 스키마 이름은 `Mcp` 접두. 프런트 `check:api`는 `^Mcp` 스키마를 대조에서 뺀다(프런트가 쓰지 않음). `ApiToken*`·`StatusOut.features`는 프런트 타입에 추가 |
 | EM-16 | **Case 생성 허용(확정, EM-C1)**: "프로젝트 입력 데이터"(§5.4.1 — 그 프로젝트의 완료된 업로드 또는 허용 루트 안 폴더의 rad 1개 + h3d 1개/추출 결과 폴더 1개)로만. 임의 경로 문자열·업로드는 받지 않는다. 후보 조회 `list_case_inputs`(read) + 생성 `create_case`(run, `confirm: never`, 공통 작업 계약 밖의 쓰기 = `MCP_ACTIONS` 등록). 생성은 기존 `cases.create_case` 호출만(경로·파트·중복 검사 그대로 — 파트 불일치 422, 미생성). 감사·호출 제한 적용 |
 | EM-17 | `denied_job_kinds` 기본 `[]`(확정, EM-C1) — 무거운 작업 통제는 confirm_token(EM-6)으로 충분 |
+| EM-18 | **지원 클라이언트 3종 + 사내 LLM**(EM-C2): Claude(Desktop·Code), OpenAI Codex(CLI·IDE·ChatGPT 데스크톱 Codex), Gemini CLI. 근거·클라이언트별 방식 = §21.1 표. 공통 분모 = **로컬 stdio**(세 클라이언트 모두 지원), 사내망 직접 연결 = **Streamable HTTP + Bearer**(Claude Code·Codex·Gemini CLI 지원, Claude Desktop 로컬 설정 파일은 stdio만) |
+| EM-19 | **로컬 stdio 브리지**(M5): Windows PowerShell 5.1 스크립트(PC 도구와 같은 런타임·같은 DPAPI 저장 방식, 파이썬 불필요), 저장소 배포물(update.bat가 런처 생성). 도구 목록은 `GET /mcp/tools?format=mcp`에서 **동적 로드**, 호출은 `x-http`대로 서버 HTTP API에 `esl_at_` Bearer로 위임 — 서버에 도구가 늘어도 브리지 코드 불변. 로직·캐시 판정·권한 판단 없음 |
+| EM-20 | **Streamable HTTP 엔드포인트**(M6, 브리지와 같은 비중의 정식 경로): `POST /esl/api/mcp/stream`(JSON-RPC, 응답 `application/json`만·무상태·세션 id 없음, GET 405), Bearer `esl_at_`. `tools/call`은 앱 내부 ASGI 하위 요청으로 원래 operation에 위임(같은 미들웨어 체인 — 인증·감사·제한·confirm 재사용) |
+| EM-21 | **스키마 공통 부분집합**(§9.2): 생성기가 내는 inputSchema는 세 클라이언트·OpenAI function 공통 부분집합만(최상위 object, `$ref`·`oneOf/anyOf/allOf/not` 금지(펼침), `default`·`$schema`·`additionalProperties` 미출력, `format`은 `date-time`만, enum은 문자열, 단일 `type`), 도구 이름 `^[a-z][a-z0-9_]{0,39}$`. 정적 시험 V-EM-16 |
+| EM-22 | OAuth만 받는 원격 커넥터(ChatGPT 앱 채팅 커넥터, Claude 원격 커스텀 커넥터)는 이번 범위 밖 — 호출 주체가 벤더 클라우드이고 사용자별 Bearer 정적 헤더를 지원하지 않거나(ChatGPT) 공유 자격이 된다(Claude Team/Enterprise). 필요 시 OAuth 인가 서버(대시보드 로그인 연동) 별도 계약(§21.4) |
 
 ## 4. 기계용 인증(API 토큰)
 
@@ -120,7 +128,7 @@ else:                              기존 세션 경로 그대로
 - 세션 introspection 캐시 미스 후 성공(≤ `auth.cache_ttl_s`에 1회/사용자)마다 같은 user_id 미폐기·미만료 토큰 스냅숏 갱신(같은 값이면 `snapshot_at`만). `dev_static` 모드는 갱신 안 함(시험은 직접 주입).
 - 갱신 시 `is_global_admin`이 false가 되면 admin 토큰 자동 폐기(`revoked_by = "system:role_change"`).
 - 계정 정지(대시보드 403 `ACCOUNT_NOT_ACTIVE`)는 스냅숏이 갱신되지 않아 `snapshot_max_age_days`(기본 **30일**, 1~90) 후 막힌다. 즉시 차단은 전역 관리자 폐기.
-- 권한 출처는 **역할 스냅숏 방식으로 확정**(2026-10-21, EM-C1): 대시보드 서비스 introspection(토큰 요청마다 대시보드에 사용자 상태 질의)은 쓰지 않는다. physicsai와 같은 대시보드이므로 같은 방식·같은 기본값(30일)을 쓴다(V-EM-14 공통 항목).
+- 권한 출처는 **역할 스냅숏 방식으로 확정**(2026-10-21, EM-C1): 대시보드 서비스 introspection(토큰 요청마다 대시보드에 사용자 상태 질의)은 쓰지 않는다. 기본값 30일은 **esl 기준값**이다. physicsai 계약(14일)은 고치지 않으므로 차이는 §17에 기록한다(EM-C2).
 
 ### 4.4 API(세션 전용 — 토큰 요청 403 `SESSION_REQUIRED`, `x-mcp.exclude`)
 
@@ -268,7 +276,8 @@ else:                              기존 세션 경로 그대로
 ### 6.1 기록 대상·위치
 
 - **`api_audit`**(새 테이블, 미들웨어가 응답 후 별도 트랜잭션 — 실패 요청도 남음): 토큰 요청의 모든 비GET, 모든 거부(401·403·428·429), `plan_job`·`run_job`·`create_case`(세션 포함), 토큰 발급·폐기. 토큰 GET은 `mcp.audit.record_reads`(false)일 때만.
-- 열: `id, occurred_at, user_id, username, api_token_id, token_prefix, operation_id, tool, method, route(템플릿), target_type, target_id, project_id, case_id, kind, job_id, plan_id, status_code, result_code, duration_ms, request_id, client_ip, params_sha256`.
+- 열: `id, occurred_at, user_id, username, api_token_id, token_prefix, operation_id, tool, method, route(템플릿), target_type, target_id, project_id, case_id, kind, job_id, plan_id, status_code, result_code, duration_ms, request_id, client_ip, params_sha256, mcp_transport, mcp_client`.
+- `mcp_transport` ∈ `stdio_bridge|streamable_http|direct|null`, `mcp_client` = MCP `initialize`의 `clientInfo.name`(≤ 64자, `[A-Za-z0-9 ._-]` 밖 문자는 `_`). 브리지는 헤더 `X-ESL-MCP-Transport: stdio_bridge`·`X-ESL-MCP-Client`로, `/mcp/stream`은 하위 요청에 같은 헤더를 붙여 전달한다. **표시·추적용 선택 정보**이며 허용·차단 판단에 쓰지 않는다(EM-C2, 사내 허용 클라이언트 전제).
 - `client_ip`는 기존 규칙(proxy_headers=False, XFF는 `client_token.trusted_proxies`일 때만 — `client_tokens.request_source` 재사용).
 - **본문 저장 금지**: 요청·응답 본문, 파라미터 값, 쿼리 값, 토큰·confirm_token 원문, 파일 경로를 저장하지 않는다. 본문은 `params_sha256`만. 정적 시험이 insert 인자 목록을 고정.
 - `jobs.api_token_id`가 작업 단위 추적을 맡는다(이력 화면 `HistoryItem`에 `via_token` 추가는 후속 — 이번엔 API 응답 `McpJobStatus.via_token`만).
@@ -302,6 +311,7 @@ else:                              기존 세션 경로 그대로
 | `job` | `history.review` | McpJobStatus + timing·error(failed_step)·result{availability, state, stale_reasons, diff} |
 
 - 크기 `mcp.summary.max_bytes`(8192) 초과 시 표 행 축소 + `truncated:true`. `top_n` 기본 10, 최대 50. 절대경로 금지(표시 이름·id만). 수치 열은 `[단위]` 접미(N·mm·s, 변형률은 무차원 표시 없음). `job_steps.command`는 넣지 않는다.
+- **최소 노출 일반 원칙**(모든 `/mcp/*`·도구 응답, EM-C2): 사람 정보는 표시 이름(`created_by_name`·`display_name`)까지만 — 사용자 이메일·IP·`username`(본인 `whoami`·감사 조회 `list_audit` admin 제외)·토큰 원문/해시는 넣지 않는다. 서버 절대경로·호스트명·설정 파일 내용·환경 변수도 넣지 않는다. 정적 시험 V-EM-8에 문자열 검사로 포함.
 
 ## 8. openapi 보강·`x-mcp`
 
@@ -319,7 +329,30 @@ else:                              기존 세션 경로 그대로
   - `tools.openai.json` — `[{type:"function", function:{name, description, parameters, strict:false}}]`. 경로·쿼리·본문 평탄화(충돌 시 생성 실패), 최상위 oneOf/anyOf 금지, `params`는 `{"type":"object"}` + "describe_job_kind로 스키마 확인".
   - `glossary.json` — §10.
 - 결정적(키 정렬·`ensure_ascii=False`·indent 2·끝 줄바꿈·시각/경로 없음). `--check`는 디스크와 다르면 실패 + **호환 검사**(직전 커밋 `tools.mcp.json` 대비 같은 이름 도구의 인자 제거·이름/타입 변경·새 필수 인자 → 실패, `_v2` + 옛 도구 `deprecated:true` 1 릴리스 유지). kind params도 같은 규칙.
-- 서빙 `GET /mcp/tools?format=mcp|openai`(x-mcp exclude "MCP 서버 부팅용", 세션·토큰 read 허용). 패키지 데이터로 포함(`pyproject.toml` package-data).
+- 서빙 `GET /mcp/tools?format=mcp|openai`(x-mcp exclude "MCP 서버 부팅용", 세션·토큰 read 허용). 패키지 데이터로 포함(`pyproject.toml` package-data). 응답 헤더 `ETag`(= 파일 sha256) — 브리지·`/mcp/stream`이 같은 값을 `serverInfo.version` 보조 정보로 쓴다.
+- **스키마 변환 단계**(EM-21): openapi → (§9.2 공통 부분집합 변환) → `tools.mcp.json`·`tools.openai.json`. 변환 실패(펼칠 수 없는 `oneOf` 등)는 생성 실패 — 라우트 쪽 모델을 고친다. `tools.openai.json`은 `strict:false` 유지(strict 모드의 "모든 필드 required + `additionalProperties:false`" 요구는 선택 인자가 많은 도구와 맞지 않음, 근거 §21.1 표 OpenAI 행).
+
+### 9.2 세 클라이언트 공통 스키마 부분집합·이름 규칙(EM-21, V-EM-16)
+
+근거: Gemini CLI는 MCP inputSchema에서 `$schema`·`additionalProperties`를 지우고 `anyOf` 안 `default`를 지우며, 도구 이름의 허용 밖 문자를 `_`로 바꾸고 63자 넘으면 가운데를 잘라 `mcp_{server}_{tool}` FQN을 만든다(서버 이름에 `_` 금지 권고). OpenAI function 이름 1~64자 `[A-Za-z0-9_-]`, Gemini function declaration은 OpenAPI 스키마 부분집합. 출처 §21.1.
+
+| 규칙 | 내용 | 생성기 동작 |
+|---|---|---|
+| 도구 이름 | `^[a-z][a-z0-9_]{0,39}$`(≤ 40자 — Gemini FQN `mcp_esl_<tool>` ≤ 63자 여유, `_v2` 접미 포함) | 위반 = 생성 실패 |
+| MCP 서버 이름(설정 예시) | `esl`(밑줄·하이픈 없음) | 설정 예시·`-PrintConfig` 고정 |
+| 최상위 | `{"type":"object","properties":{…},"required":[…]}` — 인자 없으면 `properties:{}` | 경로·쿼리·본문 평탄화(기존 §9), 충돌 = 실패 |
+| 조합 키워드 | `$ref`/`$defs`·`oneOf`·`anyOf`·`allOf`·`not`·`if/then` **출력 금지** | `$ref` → 인라인(깊이 ≤ 3, 순환 = 실패). pydantic `Optional[X]`(`anyOf[X, null]`) → `X` + required에서 제외. 그 밖 합집합 → 실패 |
+| `type` | 단일 문자열(`["string","null"]` 금지) | null 허용은 "생략 가능"으로 표현 |
+| `default` | 출력 안 함 | 설명 끝에 `(기본값 X)` 추가, 서버가 기본값 적용 |
+| `$schema`·`additionalProperties`·`title`·`examples`·`x-*` | inputSchema에 출력 안 함(예시는 도구 description 끝 한 줄) | 제거. 여분 인자는 서버가 422 |
+| `format` | `date-time`만 | 그 밖(`uuid`·`path` 등)은 제거하고 설명에 표기 |
+| `enum` | 문자열 값만, ≤ 50개 | 정수·혼합 enum = 실패(라우트 모델을 문자열 enum 또는 `minimum`/`maximum`으로 수정) |
+| 수치 | `integer`/`number` + `minimum`/`maximum`, 단위는 설명 `[mm]` | `exclusive*`·`multipleOf` 제거 |
+| 배열 | `items` 필수(단일 스키마), `minItems`/`maxItems` 허용 | `items` 없으면 실패 |
+| 자유 object | `plan_job`·`run_job`의 `params`만 허용(`{"type":"object","description":"describe_job_kind로 스키마 확인"}`) — 그 밖 금지 | 목록 상수로 고정. Gemini 모델이 빈 속성 object를 거부하면 M5 실기 결과에 따라 `params_json`(문자열, 서버가 파싱) 대체 생성 옵션을 켠다(§19) |
+| 설명 길이 | 도구 description ≤ 1024자, 속성 description ≤ 300자, 한국어 + 핵심 영문 키워드 | 초과 = 실패 |
+| 도구 수 | ≤ 40(현재 18) | 초과 = 실패(클라이언트 도구 선택 품질) |
+| annotations | `readOnlyHint`(risk read), `destructiveHint`(cancel_job), `title` | ChatGPT·Codex 승인 모드가 `readOnlyHint` 없는 도구를 쓰기로 취급 |
 
 ### 9.1 도구 후보(18개 — physicsai와 같은 이름 13개 + esl 고유 5개)
 
@@ -381,7 +414,7 @@ error_hints:
 
 - 정적 시험 V-EM-10: 사람 키 ⊂ 자동 키, 자동 `job_kinds`·`entities`·`stages`·`steps` 전부 사람 `ko` 있음, `error_hints` 키 ⊂ `error_codes`.
 
-## 11. 호출 제한(physicsai와 같은 값)
+## 11. 호출 제한(physicsai 계약 값에서 출발, esl 기준값)
 
 | 설정 | 기본 | 초과 |
 |---|---|---|
@@ -406,6 +439,11 @@ mcp:
   rate_limit: {requests_per_min: 60, plans_per_min: 10, max_active_jobs_per_token: 3, case_creates_per_min: 5}
   audit: {retention_days: 180, record_reads: false}
   summary: {max_bytes: 8192, top_n_default: 10, top_n_max: 50}
+  stream:                        # §21.3 Streamable HTTP(EM-20) — mcp.enabled=true면 기본 켜짐
+    enabled: true
+    allowed_origins: []          # Origin 헤더가 있는 요청은 이 목록만 허용(DNS rebinding 방지, CLI 클라이언트는 Origin 없음)
+    max_body_bytes: 1048576
+    call_timeout_s: 120          # tools/call 하위 요청 상한(작업은 비동기 — run_job은 즉시 반환)
 ```
 
 - `core/config.py`에 `McpCfg`(기본값 = 위) + `Settings.mcp: McpCfg = McpCfg()`. `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml`에 블록 **추가만**(주석), `deploy/setup_config.py` 불변(키 없으면 기본값).
@@ -418,7 +456,7 @@ mcp:
 |---|---|
 | `api_tokens` | `id, user_id, username, display_name, name, scope, token_prefix, token_hash(UNIQUE), principal_snapshot JSONB{is_global_admin, roles}, snapshot_at, created_at, expires_at, last_used_at, last_used_ip, revoked_at, revoked_by`; CHECK scope ∈ (read,run,admin)·expires>created; 인덱스 (user_id, revoked_at), UNIQUE(user_id, name) WHERE revoked_at IS NULL |
 | `mcp_plans` | `id, api_token_id, user_id, kind, kind_version, case_id, project_id, params_sha256, confirm_hash(UNIQUE), summary JSONB(수치만), created_at, expires_at, used_at, used_job_id` |
-| `api_audit` | §6.1 열, 인덱스 (occurred_at), (api_token_id, occurred_at), (user_id, occurred_at) |
+| `api_audit` | §6.1 열(`mcp_transport`·`mcp_client` nullable 포함), 인덱스 (occurred_at), (api_token_id, occurred_at), (user_id, occurred_at) |
 | `jobs.api_token_id` | nullable 추가(FK 없음), 부분 인덱스 (api_token_id) WHERE api_token_id IS NOT NULL AND state 비종료 |
 
 - 기존 관례: 0001이 `tables.metadata`를 create_all하므로 새 테이블은 `tables.py`에 정의 + migration은 `checkfirst`/`IF NOT EXISTS`(멱등). downgrade는 0006·0007처럼 **미지원**(RuntimeError).
@@ -441,24 +479,33 @@ physicsai 계약 §12(검색)에 대응하는 항목은 esl에 없음 — 유사
 | 새 설정 enum(코어) | 없음 | 용어집 enums | – |
 | 깨지는 API·params 변경 | 새 도구 이름 `_v2`·새 kind 이름(또는 `kind_version`+1과 새 이름), 옛 것 deprecated 1 릴리스 | 생성 스펙 | V-EM-9 |
 | 사람 판단 단계를 MCP로 개방 | 별도 계약·사용자 확정 → 제외 목록에서 삭제 + kind 등록 | 위 작업 행과 같음 | V-EM-7 |
+| 새 도구의 요청 모델 | §9.2 부분집합 안에서 작성(Optional·문자열 enum·단위 설명) | 브리지·`/mcp/stream`·OpenAI 함수에 자동 노출 | V-EM-16 |
+| 새 MCP 클라이언트(4번째) | 설정 예시 한 블록(§21.2) — stdio 또는 Streamable HTTP + Bearer를 지원하면 코드 변경 없음 | – | V-EM-17(브리지 왕복)·V-EM-18 |
 
-MCP 서버(후속)는 `GET /mcp/tools`를 읽어 도구를 동적 노출하므로, 위 표만 지키면 서버 코드는 바뀌지 않는다. 두 플랫폼 MCP 서버는 같은 코드에 base URL·토큰만 다르게 쓰는 것을 목표로 한다.
+MCP 계층(§21 — 로컬 stdio 브리지·`/mcp/stream`)은 `GET /mcp/tools`(생성 스펙)를 읽어 도구를 동적 노출하고 `x-http`대로 위임하므로, 위 표만 지키면 브리지·엔드포인트 코드는 바뀌지 않는다(V-EM-17이 "새 도구 추가 시 브리지 수정 0" 확인). 새 도구 스키마가 §9.2를 어기면 생성기가 막는다(V-EM-16). 브리지는 base URL·토큰만 설정하므로 다른 플랫폼에도 쓸 수 있으나, physicsai 연결은 이번 범위가 아니다(physicsai 불변).
 
 ## 16. 단계·파일 소유(병렬 가능하게 — 공유 파일은 한 단계만 소유)
 
 | 단계 | 내용 | 소유 파일 | 선행 |
 |---|---|---|---|
-| M1 | 설정 `McpCfg`·migration 0008·`tables.py` 추가·`core/tokens.py`(client_tokens import 전환)·`esl_at_` 인증 경로·스냅숏 갱신·토큰 API·`api_audit` 미들웨어·호출 제한·`route_policy.py`(동결 목록·허용 표)·워커 `maintenance_once`·`/status` features | Impl-Backend A: `core/{config.py, tokens.py, auth.py(스냅숏 훅), db/tables.py, repositories/{api_tokens,api_audit,mcp_plans}.py}`, `api/{deps.py, main.py, mcp/route_policy.py, mcp/audit_mw.py, mcp/ratelimit.py, routers/api_tokens.py, services/api_tokens.py, services/client_tokens.py(import만), services/system.py(features)}`, `core/repositories/jobs.py`(api_token_id), `migrations/versions/0008_mcp_ready.py`, `worker/esl_worker/runtime.py`, config 예시 2개 | – |
+| M1 | 설정 `McpCfg`(+`stream` 블록)·migration 0008(`api_audit.mcp_transport/mcp_client` 포함)·`route_policy` transport 허용(§2.1)·`tables.py` 추가·`core/tokens.py`(client_tokens import 전환)·`esl_at_` 인증 경로·스냅숏 갱신·토큰 API·`api_audit` 미들웨어·호출 제한·`route_policy.py`(동결 목록·허용 표)·워커 `maintenance_once`·`/status` features | Impl-Backend A: `core/{config.py, tokens.py, auth.py(스냅숏 훅), db/tables.py, repositories/{api_tokens,api_audit,mcp_plans}.py}`, `api/{deps.py, main.py, mcp/route_policy.py, mcp/audit_mw.py, mcp/ratelimit.py, routers/api_tokens.py, services/api_tokens.py, services/client_tokens.py(import만), services/system.py(features)}`, `core/repositories/jobs.py`(api_token_id), `migrations/versions/0008_mcp_ready.py`, `worker/esl_worker/runtime.py`, config 예시 2개 | – |
 | M2 | `JOB_KINDS`·`MCP_JOB_EXCLUDED`·`MCP_ACTIONS`·`/mcp/jobs*`·plan_fn 7종·`/mcp/case-inputs`·`/mcp/cases`(§5.4)·`SUMMARIES`·`/mcp/summary`·`/mcp/system`·`/mcp/audit` | Impl-Backend B: `api/mcp/{job_kinds.py, summaries.py, plan.py, case_inputs.py}`, `api/routers/mcp.py`, `api/schemas_mcp.py`(`Mcp*` 스키마). `services/cases.py`·`uploads.py`·`fsbrowse.py`·`core/paths.py`·`core/uploads.py`는 **import만**(수정 금지 — 필요한 공개 함수가 없으면 Plan에 반환) | M1의 `Principal.api_token_id`·repositories 인터페이스(계약 §4.2·§13로 고정 — 병행 가능, 통합은 M1 후) |
 | M3 | `x-mcp` 표시·설명 보강(기존 3개 + 새 라우트 + 제외 사유 전부), `scripts/gen_tool_specs.py`·generated·`/mcp/tools`·`/mcp/glossary`·`glossary_terms.yaml`, test-all 연결, `openapi_p1b.json` 갱신 | Impl-Backend C: `scripts/gen_tool_specs.py`, `api/mcp/{generated/*, glossary.py, glossary_terms.yaml}`, `api/routers/{system.py, cases.py, library.py, jobs.py, history.py, results.py, uploads.py, client_tokens.py}`(openapi_extra만), `scripts/test-all`, `pyproject.toml`(package-data), `docs/contracts/openapi_p1b.json` | 생성기·용어집은 M1·M2와 병행, 최종 `--check`는 M2 후 |
-| M4 | "내 API 토큰" 화면, `types.ts`(`ApiToken*`·`StatusOut.features`), `check-api.mjs`의 `^Mcp` 제외 + 그 시험, `frontend-dist` | Impl-Frontend: `frontend/src/account/apiTokens/*`, `frontend/src/api/types.ts`, `frontend/scripts/check-api.mjs`·`check-api.test.mjs` | M1 API 모양(§4.4 고정 — 가짜 응답으로 병행) |
+| M4 | "내 API 토큰" 화면(+ 발급 대화에 "MCP 클라이언트 연결 방법" 링크 → 사용 가이드 §21.2 내용), `types.ts`(`ApiToken*`·`StatusOut.features`), `check-api.mjs`의 `^Mcp` 제외 + 그 시험, 사용 가이드 "LLM 클라이언트 연결" 카드, `frontend-dist` | Impl-Frontend: `frontend/src/account/apiTokens/*`, `frontend/src/api/types.ts`, `frontend/scripts/check-api.mjs`·`check-api.test.mjs`, `frontend/src/pages/guide/content.ts` | M1 API 모양(§4.4 고정 — 가짜 응답으로 병행) |
+| M5 | **로컬 stdio 브리지**(§21.2): `esl_mcp_bridge.ps1`(PS 5.1, JSON-RPC stdio, `GET /mcp/tools` 동적 로드, 위임), `ESL_mcp.bat`·`ESL_mcp_login.bat` 런처 생성, `-PrintConfig claude-desktop|claude-code|codex|gemini`, 설정 예시 3종 문서, 브리지 시험(가짜 서버로 initialize·tools/list·tools/call 왕복, 오류 매핑, 세 클라이언트 스키마 검사 = V-EM-16 산출물 재검사) | Impl-PC: `scripts/windows/{esl_mcp_bridge.ps1, esl_mcp_lib.ps1}`, `scripts/windows/update.ps1`(런처 2개 추가만), `esl_upload_lib.ps1`은 **import만**(DPAPI·HTTP 함수 재사용, 수정 필요 시 Plan 반환), `tests/windows/test_mcp_bridge.py`(+ 가짜 서버 픽스처), `docs/manual/mcp-clients.md`(설정 예시 3종·설치), `docs/manual/user.md`·`admin.md`(링크 한 줄씩) | M3 `tools.mcp.json` 모양(§9 고정 — 가짜 스펙으로 병행) |
+| M6 | **Streamable HTTP 엔드포인트**(§21.3): `POST /mcp/stream`(JSON-RPC initialize·ping·tools/list·tools/call, 응답 `application/json`, GET·DELETE 405), Origin 검사, 내부 ASGI 하위 요청 위임, `McpStreamCfg`, `x-mcp transport` 허용 규칙(§2.1) | Impl-Backend D: `api/mcp/stream.py`, `api/routers/mcp_stream.py`, `backend/tests/test_mcp_stream.py`. `McpCfg.stream`(§12)·`route_policy.py` transport 허용·`api_audit.mcp_transport/mcp_client`는 **M1 소유**(M1이 함께 구현) | M1(인증·감사·설정), M3(`/mcp/tools`) |
 
-시험 파일: M1 `backend/tests/test_mcp_tokens.py`·`test_mcp_audit.py`, M2 `test_mcp_jobs.py`·`test_mcp_summary.py`·`test_mcp_cases.py`, M3 `test_mcp_static.py`·`tests`(생성기), M4 vitest. CHANGELOG·VERSION(0.6.0)은 통합 시 한 번.
+시험 파일: M1 `backend/tests/test_mcp_tokens.py`·`test_mcp_audit.py`, M2 `test_mcp_jobs.py`·`test_mcp_summary.py`·`test_mcp_cases.py`, M3 `test_mcp_static.py`·`tests`(생성기, V-EM-16), M4 vitest, M5 `tests/windows/test_mcp_bridge.py`(pwsh로 Linux에서 실행 — 기존 PC 도구 시험 방식), M6 `test_mcp_stream.py`. CHANGELOG·VERSION(0.6.0)은 통합 시 한 번.
 
-## 17. physicsai와 다른 점(나머지는 동일)
+## 17. physicsai와 다른 점(기록용 — physicsai는 고치지 않음, esl 값이 기준값, EM-C2)
 
 | 항목 | physicsai | esl |
 |---|---|---|
+| 역할 스냅숏 최대 나이 | `snapshot_max_age_days` 14 | **30**(EM-C1) |
+| 대상 LLM·클라이언트 | 폐쇄망 사내 LLM(OpenAI 호환 function) | 사내 허용 on-premise Claude·Codex·Gemini + 사내 LLM(EM-18) |
+| MCP 서버 계층 | 비범위(후속) | 범위: 로컬 stdio 브리지(M5) + `/mcp/stream`(M6) |
+| 생성 스키마 | 최상위 oneOf/anyOf 금지 수준 | §9.2 공통 부분집합(이름 ≤ 40자·`$ref` 인라인·`default` 미출력 등) |
+| 감사 열 | `audit_events.detail.api_token_id` | `api_audit.mcp_transport`·`mcp_client` 추가(선택 정보) |
 | 토큰·확인 접두 | `pai_<id8>_<secret>`, `pcf_` | `esl_at_<id8>_<secret>`, `esl_cf_`(기존 `esl_ct_`와 같은 계열) |
 | API 접두·CSRF 헤더 | `/physicsai/api`, `X-PhysicsAI-Request` | `/esl/api`, `X-ESL-Request` |
 | 작업 대상 키 | `study_id` | `case_id`(Case 종류) 또는 `project_id`(라이브러리 종류), kind의 `target`이 결정 |
@@ -483,40 +530,130 @@ MCP 서버(후속)는 `GET /mcp/tools`를 읽어 도구를 동적 노출하므�
 
 | ID | 검사 | 완료 기준 |
 |---|---|---|
-| V-EM-1 | 기본값 불변 | `mcp` 키 없는 설정으로 기존 전체 시험 통과, `esl_at_` Bearer → 401 + 가짜 대시보드 호출 0회, `/mcp/*`(`/mcp/cases`·`/mcp/case-inputs` 포함)·`/me/api-tokens*` 404 `MCP_DISABLED`, 웹 `POST /cases` 응답 불변, 세션·`esl_ct_` 응답·CSRF 동일, `openapi_p1b.json`의 기존 operation 바이트 동일(새 operation·스키마만 추가) |
+| V-EM-1 | 기본값 불변 | `mcp` 키 없는 설정으로 기존 전체 시험 통과, `esl_at_` Bearer → 401 + 가짜 대시보드 호출 0회, `/mcp/*`(`/mcp/cases`·`/mcp/case-inputs`·`/mcp/stream` 포함)·`/me/api-tokens*` 404 `MCP_DISABLED`, 웹 `POST /cases` 응답 불변, 세션·`esl_ct_` 응답·CSRF 동일, `openapi_p1b.json`의 기존 operation 바이트 동일(새 operation·스키마만 추가) |
 | V-EM-2 | 토큰 수명 | 발급 응답만 평문, 목록에 평문·해시 없음, DB 문자열 검색에 평문 없음, 폐기·만료·stale(시계 주입: `snapshot_at`+30일 이내 통과·초과 401 `API_TOKEN_STALE`, 설정 키 없을 때 기본 30)·형식 오류 각 401 코드, 상한 409, 세션 전용 API에 토큰 403 `SESSION_REQUIRED` |
 | V-EM-3 | 범위·허용 목록·토큰 분리 | read 토큰 `run_job` 403 `API_TOKEN_SCOPE`, 비 x-mcp operation 403, `esl_ct_` 토큰으로 `/mcp/*` 403 `CLIENT_TOKEN_SCOPE`, `esl_at_`로 `/uploads` 403, 스냅숏 갱신(웹 로그인 후 power 제거 → run 403), 관리자 해제 시 admin 토큰 자동 폐기, `client_tokens` 기존 시험 전부 통과 |
 | V-EM-4 | confirm | heavy+토큰: 없음 428, 다른 params 409 mismatch, 만료(시계 주입)·재사용 409, 정상 201 + `used_job_id`; light·세션 confirm 없이 201; problems 있으면 token null; 웹 `POST /cases/{id}/jobs` 결과 불변 |
-| V-EM-5 | 감사 | 토큰 비GET·거부·plan·run·발급·폐기 각 1행, 실패 요청 기록, 본문·값·경로·토큰 원문 없음(insert 인자 고정 + DB 문자열 검색), 보존 초과 정리, `list_audit` admin만 |
+| V-EM-5 | 감사 | 토큰 비GET·거부·plan·run·발급·폐기 각 1행, 실패 요청 기록, `X-ESL-MCP-Transport`·`X-ESL-MCP-Client` 헤더가 `mcp_transport`·`mcp_client`에 정규화 저장(허용 밖 값은 null·치환, 값에 따라 응답이 달라지지 않음), 본문·값·경로·토큰 원문 없음(insert 인자 고정 + DB 문자열 검색), 보존 초과 정리, `list_audit` admin만 |
 | V-EM-6 | x-mcp 정적 | 모든 operation이 x-mcp 또는 `LEGACY_UNMARKED`, 동결 목록에 없는 id 없음, 도구 필수 항목 누락 0, 도구 이름 유일 |
 | V-EM-7 | 작업 종류·제외 | JOB_TYPES ⊆ JOB_KINDS ∪ 제외, 모든 기존 비GET ∈ 생성 경로 ∪ `MCP_ACTIONS` 원본 ∪ 제외 operations ∪ 세션 전용(`POST /cases`는 `MCP_ACTIONS`, `PATCH /cases/{id}`·archive·paths/inspect는 제외에 있음), `denied_job_kinds` 기본 `[]`(설정 키 없을 때 7종 모두 plan 가능), 각 kind plan_fn·create_fn·summary_entity·params 설명·단위, plan_fn이 쓰기 0회(트랜잭션 rollback·행 수 불변), create_fn이 기존 서비스 호출(가짜 주입), esl_solve params에 material_override 없음 |
-| V-EM-8 | 요약 | 모든 엔티티 봉투 모양·`max_bytes` 이하(대형 픽스처로 truncated)·절대경로·command 없음, summary_entity ⊆ SUMMARIES, `case` 단계 상태가 `stage_status`와 같음 |
+| V-EM-8 | 요약 | 모든 엔티티 봉투 모양·`max_bytes` 이하(대형 픽스처로 truncated)·절대경로·command 없음, 최소 노출(§7 — 이메일·IP·username·토큰 문자열 없음, 문자열 검사), summary_entity ⊆ SUMMARIES, `case` 단계 상태가 `stage_status`와 같음 |
 | V-EM-9 | 생성기 | 두 번 실행 바이트 동일, `--check` 최신, OpenAI 출력 최상위 oneOf/anyOf 없음·인자 충돌 없음, 호환 검사(필수 인자 추가·제거·타입 변경 실패, 새 이름 통과) |
 | V-EM-10 | 용어집 | 자동 키가 코드와 일치(JOB_TYPES·steps·JOB_KINDS·SUMMARIES·error_codes에 PART_* 포함·코어 enum), 사람 키 ⊂ 자동 키, 필수 `ko` 누락 0, error_hints 키 ⊂ error_codes |
 | V-EM-11 | 호출 제한 | 분당 61번째 429 + Retry-After, plan 11번째 429, 동시 작업 4번째 429, 세션 무제한 |
 | V-EM-12 | 토큰 취소 | 같은 토큰 작업만 `cancel_job` 성공, 같은 사용자의 웹 작업·다른 토큰 작업 403, 기존 `POST /jobs/{id}/cancel` 권한 불변 |
 | V-EM-13 | 화면·프런트 검사 | features.mcp false면 메뉴 숨김, 평문 1회·저장 코드 없음(정적), 폐기 확인, `check:api` 통과(`Mcp*` 제외, `ApiToken*`·`StatusOut` 대조) |
 | V-EM-15 | Case 생성 | (a) 그 프로젝트·본인 COMPLETED+ok 업로드로 `create_case` 201 → 웹 `POST /cases`로 같은 입력을 만든 행과 rad_path·results_dir|h3d_path·input_kind·fingerprint·part_id 동일(기존 서비스 호출 확인), 응답 `part_check` 포함; (b) **다른 프로젝트 업로드** 404 `UPLOAD_NOT_FOUND`, 남의 업로드 404, OPEN/CANCELED/STALE·ok=false 409 `INPUT_NOT_READY`; (c) 폴더: 루트 인덱스 범위 밖·spdm 루트 422, `../` 탈출 422 `PATH_OUTSIDE_ROOT`|`PATH_UNSAFE`, **루트 아래 심링크 성분·심링크 파일 422 `PATH_UNSAFE`**, 업로드 루트 아래 남의 폴더 403 `UPLOAD_FOLDER_FORBIDDEN`, `_backup` 422, 다른 프로젝트 업로드의 dir_path 안 폴더 404; rad 2개 422 `INPUT_AMBIGUOUS`; (d) 파트 불일치 422(`PART_*`, Case·폴더 미생성 — DB 행 수·esl_root 불변); (e) read 토큰 `create_case` 403 `API_TOKEN_SCOPE`, general 역할 403, 토큰으로 원본 `POST /cases` 403 `API_TOKEN_OPERATION_NOT_ALLOWED`; (f) 감사 1행·경로/title/upload_id 값 없음, 분당 6번째 429; (g) 응답·`list_case_inputs`에 절대경로 없음(문자열 검사) |
-| V-EM-14 | 형제 일치 | 공통 도구 13개 이름·`McpJobPlan`/`McpJobStatus`/`McpSummary` 키·MCP 오류 코드가 physicsai 계약 표와 같음(대상 키 차이만 허용 — 시험 상수 표로 고정) |
+| V-EM-14 | esl 기준값 고정(완화, EM-C2) | 공통 도구 13개 이름·`McpJobPlan`/`McpJobStatus`/`McpSummary` 키·MCP 오류 코드·`snapshot_max_age_days` 기본 30을 **esl 상수 표**로 고정(바뀌면 실패). physicsai와 같은지는 검사하지 않는다 — 알려진 차이는 §17 표에 있어야 함(문서 검사: §17에 snapshot 30 vs 14 행 존재) |
+| V-EM-16 | 스키마 공통 부분집합(M3) | 생성된 `tools.mcp.json`·`tools.openai.json` 전 도구: 이름 `^[a-z][a-z0-9_]{0,39}$`·유일, 최상위 `type:object`, 어느 깊이에도 `$ref`·`$defs`·`oneOf`·`anyOf`·`allOf`·`not`·`if`·`default`·`$schema`·`additionalProperties`·`title`·배열 `type` 없음, `format` ⊆ {date-time}, enum 문자열만·≤ 50, 배열 `items` 있음, 자유 object는 `plan_job`/`run_job.params`만, 설명 길이·도구 수 상한. 추가로 **Gemini CLI 정리 규칙을 흉내 낸 함수**(제거·이름 치환)를 적용해도 스키마·이름이 바이트 동일(= 정리할 게 없음). 위반 픽스처(Optional·중첩 모델·int enum·긴 이름)로 변환·실패 동작 확인 |
+| V-EM-17 | 로컬 stdio 브리지(M5) | 가짜 서버(파이썬 http.server, 고정 `tools.mcp.json`)와 pwsh로: `initialize`(protocolVersion 협상 — 지원 버전은 그대로, 모르는 버전은 최신 지원 버전), `notifications/initialized` 무응답, `ping`, `tools/list`가 스펙과 같은 이름·inputSchema(`x-*` 제거), `tools/call` GET(쿼리)·POST(본문)·경로 인자 치환·`Authorization: Bearer esl_at_…`·`X-ESL-MCP-*` 헤더, 4xx/5xx → `isError:true` + `{status, code, message, hint}`(401 `API_TOKEN_*` → "ESL_mcp_login.bat 다시 실행" 안내), 428 `CONFIRM_REQUIRED` 그대로 전달, 서버 미응답 시간 초과 오류, stdout에는 JSON-RPC만(로그는 stderr·파일, 토큰 마스킹), UTF-8(BOM 없음)·한국어 왕복, 가짜 서버에 도구 1개 추가 시 브리지 수정 없이 노출, 토큰 파일 평문 없음(DPAPI — Windows 아니면 `ESL_API_TOKEN` 환경 변수만), ps1 PS 5.1 문법·CRLF·BOM 규칙(기존 `test_windows_scripts.py`) |
+| V-EM-18 | Streamable HTTP(M6) | `mcp.enabled=false`면 404, `esl_at_` 없으면 401(+`WWW-Authenticate: Bearer`), `esl_ct_` 403, `initialize`·`tools/list`·`tools/call` 왕복(응답 `application/json`), GET·DELETE 405, Origin 헤더가 `allowed_origins` 밖이면 403, 본문 상한 413, `tools/call` 결과가 원래 operation 직접 호출과 같은 상태·본문(범위 403·confirm 428/409·429·감사 1행에 `mcp_transport=streamable_http`), read 토큰으로 `run_job` 호출 시 하위 요청이 403 `API_TOKEN_SCOPE` → `isError:true`, JSON-RPC 배치·알 수 없는 method → 표준 오류(-32601), 잘못된 JSON → -32700 |
 
 ## 19. 리스크
 
 | 리스크 | 영향 | 대응 |
 |---|---|---|
 | 토큰 유출 | 소유자 권한으로 작업 생성 | 해시·1회 표시·만료 ≤ 90일·허용 목록·제한·감사·즉시 폐기, `esl_at_` 접두로 비밀 검사 도구 탐지·로그 마스킹 |
-| 사내 LLM 오조작(반복 추출·풀이) | SLOT 점유(slots 2), HyperView 라이선스 사용 | heavy confirm(요청 해시 결합)·동시 작업 3·`CASE_JOB_BUSY`·`denied_job_kinds`·자기 작업 취소·plan에 대기열·예상 시간 |
+| LLM 오조작(반복 추출·풀이) | SLOT 점유(slots 2), HyperView 라이선스 사용 | heavy confirm(요청 해시 결합)·동시 작업 3·`CASE_JOB_BUSY`·`denied_job_kinds`·자기 작업 취소·plan에 대기열·예상 시간 |
 | 사용자 판단 우회 | 잘못된 t*·지지점으로 ESL | 판단 쓰기 전부 제외(EM-7), esl_solve는 저장된 t*·세트만, 없으면 plan problems로 "웹에서 확정" 안내 |
 | PC 토큰 회귀 | PC 도구 업로드 중단 | `client_tokens` 테이블·범위 불변, 공용 모듈은 함수 이동만, 기존 시험 유지(V-EM-3) |
-| 역할 스냅숏 지연 | 권한 회수(계정 정지 포함) 최대 30일 지연 | 스냅숏 방식 확정(EM-C1) — 웹 접속 즉시 갱신·전역 관리자 즉시 폐기·admin 자동 폐기, 필요 시 운영자가 `snapshot_max_age_days`를 줄임(1~90), physicsai와 같은 값 |
+| 역할 스냅숏 지연 | 권한 회수(계정 정지 포함) 최대 30일 지연 | 스냅숏 방식 확정(EM-C1) — 웹 접속 즉시 갱신·전역 관리자 즉시 폐기·admin 자동 폐기, 필요 시 운영자가 `snapshot_max_age_days`를 줄임(1~90) |
 | LLM의 Case 남발·잘못된 입력 선택 | Case·산출물 폴더 증가, 잘못된 파트로 추출 | 입력은 서버에 있는 것만(§5.4.1)·파트 불일치 422 미생성·`case_creates_per_min`·감사, 추출은 별도 heavy confirm, 정리는 웹 보관 |
 | plan 추정 부정확(이력 적음) | 판단 오류 | `estimate_basis:"none"` 명시, 요소 수·frame·대기열 정보 우선 |
 | 요약이 화면과 어긋남 | 다른 숫자 | 이력·결과 서비스 호출만(V-EM-8) |
-| 두 플랫폼 계약 표류 | LLM 혼동 | V-EM-14 상수 표, 공통 항목 변경은 두 계약 동시 변경 메모 |
+| 두 플랫폼 값 차이(physicsai 불변) | 같은 도구 이름인데 기본값·키가 조금 다름 | esl 상수 표(V-EM-14)·§17 차이 기록. LLM에는 플랫폼별 MCP 서버 이름(`esl`)으로 구분되어 노출 |
 | 단일 프로세스 전제 | 다중 프로세스면 제한 약화 | 전환 시 DB 카운터(변경 메모) |
+| 클라이언트 MCP 구현 변경(빠른 릴리스 주기) | 설정 키·전송·스키마 정리 규칙이 바뀌어 연결 실패 | 공통 분모(stdio + Bearer HTTP)만 사용, §9.2 보수적 부분집합, 설정 예시는 `-PrintConfig`가 생성(문서·코드 한 곳), §21.1 표에 확인일 기록 — 릴리스 때 재확인 |
+| Gemini의 빈 속성 object(`params`) 거부 가능성 | `plan_job`·`run_job` 호출 실패 | M5 실기 확인 항목. 실패 시 생성기 옵션 `params_json`(문자열) 대체 — 도구 이름 `_v2` 규칙(EM-14) 적용 |
+| PS 5.1 stdio 인코딩·JSON 깊이 | 한국어 깨짐·중첩 결과 잘림 | 콘솔 입출력 UTF-8(BOM 없음) 강제, `ConvertTo-Json -Depth 32 -Compress`, 결과 본문은 서버 응답 문자열을 그대로 `text`로 전달(재직렬화 최소) — V-EM-17 |
+| 외부 LLM 서비스로 결과 요약 전달 | 사내 허용·on-premise 전제(사용자 결정 2026-10-21 20:55)이므로 차단하지 않음 | 일반 원칙만: 응답 최소 노출(§7)·절대경로 금지·감사에 클라이언트 표시. 배포 형태·허용 범위 판단은 조직 몫 |
+| 벤더 클라우드가 호출하는 원격 커넥터(ChatGPT 앱·Claude 원격 커넥터) | 사내 서버에 직접 닿지 않음, OAuth 필요 | 이번 범위 밖(EM-22), §21.4에 요구사항 기록. 필요하면 OAuth 인가 서버 별도 계약 |
 
 ## 20. 미결(사용자 확인)
 
-(없음 — 2026-10-21 확정, EM-C1)
+(없음 — 2026-10-21 확정, EM-C1·EM-C2). M5 실기 확인 항목(결정 아님): Gemini의 빈 속성 `params` object 수용 여부(§19), 사내 배포본 클라이언트 버전이 §21.1 표와 같은지.
+
+## 21. MCP 서버 계층·지원 클라이언트(EM-18~22, EM-C2)
+
+### 21.1 클라이언트별 현재 MCP 지원 방식(웹 확인 2026-10-21 — 릴리스 때 재확인)
+
+| 클라이언트 | 전송 | 설정 위치·형식 | 인증 헤더 전달 | 호출 주체 | 스키마·이름 제약 | esl 경로 |
+|---|---|---|---|---|---|---|
+| Claude Desktop(로컬 서버) | stdio | `%APPDATA%\Claude\claude_desktop_config.json`(macOS `~/Library/Application Support/Claude/`) `{"mcpServers":{name:{command,args,env}}}` [A] | 로컬 프로세스 → 브리지가 헤더 부착 | 사용자 PC | – | **stdio 브리지** |
+| Claude Code | stdio·**http**(Streamable, `streamable-http` 별칭)·sse(폐기 예정)·ws | `claude mcp add [--transport http] [-H "Authorization: Bearer …"] [-s local\|project\|user] <name> <url\|-- cmd>`; 저장 `~/.claude.json`(local·user) / `.mcp.json`(project), `${VAR}`·`${VAR:-기본}` 전개(url·headers·env) [B] | `--header`/`headers` 정적 Bearer | 사용자 PC | 이름 `[A-Za-z0-9_-]`, 출력 기본 상한 25,000 토큰(`MAX_MCP_OUTPUT_TOKENS`) [B] | stdio 브리지 또는 **`/mcp/stream`** |
+| OpenAI Codex(CLI·IDE 확장·ChatGPT 데스크톱 앱의 Codex — 설정 공유) | stdio·**Streamable HTTP**(SSE 언급 없음) | `~/.codex/config.toml`(신뢰 프로젝트는 `.codex/config.toml`) `[mcp_servers.<name>]` `command,args,env,cwd` / `url,bearer_token_env_var,http_headers,env_http_headers`, `startup_timeout_sec`(10)·`tool_timeout_sec`(60)·`enabled_tools`·`disabled_tools`·`default_tools_approval_mode`; `codex mcp add`·`codex mcp login`(OAuth) [C] | `bearer_token_env_var`(환경 변수 이름) | 사용자 PC | 문서상 별도 제약 없음 — OpenAI function 이름 1~64자 `[A-Za-z0-9_-]`, strict 모드는 모든 필드 required·`additionalProperties:false`(esl은 strict:false) [D] | stdio 브리지 또는 **`/mcp/stream`** |
+| Gemini CLI | stdio(`command`)·SSE(`url`)·**Streamable HTTP(`httpUrl`)** | `~/.gemini/settings.json`(사용자)·`.gemini/settings.json`(프로젝트, `gemini mcp add` 기본) `mcpServers:{name:{command,args,env,cwd \| httpUrl,headers, timeout(ms, 기본 600000), trust, includeTools, excludeTools}}`, `$VAR`·`${VAR}`·`%VAR%`(Windows) 전개 [E] | `headers` 정적 Bearer(환경 변수 전개) | 사용자 PC | inputSchema에서 `$schema`·`additionalProperties` 제거, `anyOf` 안 `default` 제거(재귀), 이름 허용 밖 문자 → `_`, 63자 초과 가운데 생략, FQN `mcp_{server}_{tool}`, 서버 이름에 `_` 금지 권고 [E]; Gemini API function declaration = OpenAPI 스키마 부분집합 [F] | stdio 브리지 또는 **`/mcp/stream`** |
+| ChatGPT 앱 채팅(웹·데스크톱) 원격 커넥터(Developer mode/플러그인) | SSE·streaming HTTP | ChatGPT 설정 UI(Developer mode, Pro·Plus·Business·Enterprise·Edu 웹) [G] | **OAuth·인증 없음·혼합만**(정적 Bearer 설정 없음) [G][H] | **OpenAI 클라우드** — 공개 HTTPS 또는 Secure MCP Tunnel(사내 `tunnel-client`가 `api.openai.com:443`로 아웃바운드만, Platform 관리자 설정; OAuth 인가 서버는 터널로 안 넘어가 공개 도달 필요) [I][J] | `readOnlyHint` 없는 도구는 쓰기로 보고 확인 요청 [G] | **범위 밖**(§21.4) |
+| Claude 원격 커스텀 커넥터(claude.ai·Desktop·Cowork) | 원격 MCP | Claude 설정 UI(Connectors) [K] | OAuth 또는 정적 헤더(Team/Enterprise는 **전원 공유 자격**) [K] | **Anthropic 클라우드** — 공개 인터넷 도달 또는 Anthropic IP 허용 목록 필요 [K] | – | **범위 밖**(§21.4) — Desktop은 로컬 stdio 사용 |
+| 사내 LLM(OpenAI 호환) | MCP 아님 | `GET /mcp/tools?format=openai` function JSON | 호출 측 게이트웨이가 Bearer 부착 | 사내 | §9.2 | 기존 유지 |
+
+인증 분류:
+
+| 분류 | 클라이언트 | esl 인증 |
+|---|---|---|
+| 사용자별 Bearer 정적 토큰 가능 | Claude Desktop(stdio 브리지), Claude Code, Codex(CLI·IDE·데스크톱 Codex), Gemini CLI, 사내 LLM 게이트웨이 | `esl_at_` 그대로 — 이번 범위 |
+| OAuth 필요(또는 공유 자격만) | ChatGPT 앱 채팅 커넥터, Claude 원격 커스텀 커넥터 | OAuth 2.1 인가 서버(대시보드 로그인 연동) 필요 — 별도 계약 |
+
+출처: [A] https://modelcontextprotocol.io/docs/develop/connect-local-servers · [B] https://code.claude.com/docs/en/mcp · [C] https://developers.openai.com/codex/mcp (→ learn.chatgpt.com/docs/extend/mcp) · [D] https://developers.openai.com/api/docs/guides/structured-outputs · [E] https://geminicli.com/docs/tools/mcp-server · [F] https://ai.google.dev/gemini-api/docs/function-calling · [G] https://developers.openai.com/api/docs/guides/developer-mode · [H] https://tspi.at/2026/01/10/chatgptremotemcp.html · [I] https://developers.openai.com/apps-sdk/deploy/connect-chatgpt · [J] https://developers.openai.com/api/docs/guides/secure-mcp-tunnels · [K] https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
+
+### 21.2 로컬 stdio 브리지(M5, EM-19)
+
+- **런타임**: Windows PowerShell 5.1(PC 도구와 같음, 파이썬 불필요). pwsh 7(Linux·macOS)에서도 돌되 DPAPI 대신 환경 변수 `ESL_API_TOKEN`만 받는다(평문 파일 저장 금지 — 기존 PC 도구 규칙).
+- **배포**: 루트 `update.bat`(기존 `scripts/windows/update.ps1`)가 `<deploy_dir>\versions\<hash>\`에 `esl_mcp_bridge.ps1`·`esl_mcp_lib.ps1`을 복사하고, 버전 무관 경로 `<deploy_dir>\current\`에 `esl_mcp.ps1`(활성 버전 브리지를 실행하는 고정 진입점)·`ESL_mcp_login.bat` 생성. 클라이언트 설정은 항상 `current\esl_mcp.ps1`을 가리키므로 업데이트 후 설정 수정 불필요.
+- **토큰**: 사용자가 ESL 웹 "내 API 토큰"에서 발급(범위 read 또는 run) → `ESL_mcp_login.bat` 실행 → 서버 주소(`esl_deploy.json` `server_url` 재사용)·토큰 붙여넣기 → `GET /me`로 확인 → DPAPI(CurrentUser)로 `%LOCALAPPDATA%\esl\api_token.bin` 저장(PC 연결 토큰 `client_token.bin`과 별도 파일). `ESL_mcp_login.bat -PrintConfig claude-desktop|claude-code|codex|gemini`가 절대경로를 채운 설정 조각을 출력(문서 예시와 같은 생성 함수).
+- **동작**(로직 없음): 줄 단위 JSON-RPC 2.0(stdin/stdout, UTF-8 BOM 없음, 로그는 stderr + `%LOCALAPPDATA%\esl\logs\mcp_bridge.log`, `esl_(at|ct|cf)_…` 마스킹).
+  - `initialize` → `protocolVersion`: 클라이언트 값이 지원 목록(`2025-03-26`·`2025-06-18`·`2025-11-25`)에 있으면 그대로, 아니면 최신 지원값. `capabilities:{tools:{listChanged:false}}`, `serverInfo:{name:"esl", version:<서버 VERSION>}`. 이때 `GET /mcp/tools?format=mcp`를 읽어 세션 동안 메모리 보관(실패 시 `tools/list`에서 재시도, 오류 메시지 반환).
+  - `tools/list` → 스펙의 `name, description, inputSchema, annotations(readOnlyHint·destructiveHint·title)`만(`x-*` 제거).
+  - `tools/call` → 스펙 `x-http{method, path}`: 경로 인자 치환(URL 인코딩), GET은 나머지 인자를 쿼리, 그 밖은 JSON 본문. 헤더 `Authorization: Bearer esl_at_…`, `X-ESL-MCP-Transport: stdio_bridge`, `X-ESL-MCP-Client: <clientInfo.name>`. 2xx → `content:[{type:"text", text:<응답 본문 문자열>}]` + `structuredContent`(본문이 JSON 객체일 때). 4xx/5xx → `isError:true`, text = `{status, code, message, hint}`(hint: 401 `API_TOKEN_*` → "ESL_mcp_login.bat 다시 실행", 428 → "plan_job 먼저", 그 밖 `get_glossary` error_hints는 서버가 이미 메시지에 포함). 시간 초과 120초(작업은 비동기라 충분). 재시도 없음(비GET 중복 방지).
+  - `ping` 응답, `notifications/*` 무시, 그 밖 method -32601.
+- **설정 예시**(문서 `docs/manual/mcp-clients.md`에 그대로, `<D>` = deploy_dir):
+
+```jsonc
+// Claude Desktop — %APPDATA%\Claude\claude_desktop_config.json
+{"mcpServers":{"esl":{"command":"powershell.exe",
+  "args":["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File","<D>\\current\\esl_mcp.ps1"]}}}
+```
+
+```bash
+# Claude Code — stdio(브리지) 또는 사내망 직접(Streamable HTTP)
+claude mcp add -s user esl -- powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "<D>\current\esl_mcp.ps1"
+claude mcp add -s user --transport http esl https://<대시보드 주소>/esl/api/mcp/stream --header "Authorization: Bearer ${ESL_API_TOKEN}"
+```
+
+```toml
+# OpenAI Codex — ~/.codex/config.toml (CLI·IDE·데스크톱 Codex 공유) — 둘 중 하나
+[mcp_servers.esl]
+command = "powershell.exe"
+args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "<D>\\current\\esl_mcp.ps1"]
+tool_timeout_sec = 120
+# [mcp_servers.esl]
+# url = "https://<대시보드 주소>/esl/api/mcp/stream"
+# bearer_token_env_var = "ESL_API_TOKEN"
+```
+
+```jsonc
+// Gemini CLI — ~/.gemini/settings.json — 둘 중 하나(서버 이름 esl: 밑줄 없음)
+{"mcpServers":{"esl":{"command":"powershell.exe",
+  "args":["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File","<D>\\current\\esl_mcp.ps1"],"timeout":120000}}}
+// {"mcpServers":{"esl":{"httpUrl":"https://<대시보드 주소>/esl/api/mcp/stream","headers":{"Authorization":"Bearer $ESL_API_TOKEN"},"timeout":120000}}}
+```
+
+- 클라이언트 쪽 자동 승인(`trust: true`·`default_tools_approval_mode = "auto"` 등)은 예시에 넣지 않는다 — heavy 작업은 어차피 confirm_token, 나머지는 클라이언트 기본 확인.
+- Streamable HTTP 직접 연결에서 토큰은 사용자 환경 변수(`ESL_API_TOKEN`)로 두며 설정 파일에 평문을 쓰지 않도록 안내한다(PC 사용자 환경 변수 저장은 사용자 판단 — 브리지 경로는 DPAPI).
+
+### 21.3 Streamable HTTP 엔드포인트(M6, EM-20)
+
+- `POST /esl/api/mcp/stream`: MCP Streamable HTTP의 단일 엔드포인트. 요청 1개 JSON-RPC 메시지(배치 미지원 → -32600), 응답 `Content-Type: application/json`(SSE 스트림 없음 — 서버 발신 알림 없음), 알림만 받으면 `202`. **무상태**: `Mcp-Session-Id` 발급 안 함, `MCP-Protocol-Version` 헤더는 지원 목록이면 수용·없으면 `2025-03-26` 가정·모르는 값 400. GET·DELETE 405.
+- 인증: `Authorization: Bearer esl_at_…`(§4.2 그대로), 없거나 무효 401 + `WWW-Authenticate: Bearer`. `esl_ct_`·세션 쿠키로는 403(이 경로는 기계 전용 — 쿠키 CSRF 우회 방지).
+- `Origin` 헤더가 있으면 `mcp.stream.allowed_origins`에 있어야 함(아니면 403) — 브라우저발 DNS rebinding 방지. 본문 > `max_body_bytes` 413.
+- `tools/list` = 브리지와 같은 변환(같은 생성 스펙). `tools/call` = 앱 내부 ASGI 하위 요청(`httpx.AsyncClient(transport=ASGITransport(app))`, 같은 Authorization·`X-ESL-MCP-Transport: streamable_http`·`X-ESL-MCP-Client`, 하위 요청에 `X-ESL-Internal-Hop: 1` — 하위 요청이 다시 `/mcp/stream`이면 거부). 결과 변환·오류 매핑은 브리지와 같은 규칙(공용 함수 `api/mcp/stream.py:to_call_result`, 브리지는 같은 표를 PS로 구현 — V-EM-17·18이 같은 픽스처로 비교).
+- 배포: 기존 Caddy 경로(`/esl/*`) 그대로라 추가 리버스 프록시 설정 없음. 응답 버퍼링 무관(SSE 미사용).
+
+### 21.4 ChatGPT 앱·Claude 원격 커넥터 결론(EM-22)
+
+- **공개 인터넷 노출은 필수 아님**: ChatGPT는 Secure MCP Tunnel(사내에서 `api.openai.com:443` 아웃바운드만, 인바운드 없음)로 사내 서버에 닿을 수 있다 [J]. Claude 원격 커넥터는 Anthropic IP 허용 목록 방식 [K]. 단 두 경우 모두 **호출 주체는 벤더 클라우드**이므로, "on-premise 허용"이 사내망 안에서 실행되는 배포를 뜻하더라도 이 두 커넥터의 요청은 사내 PC가 아니라 벤더 쪽에서 온다(공식 문서 기준). 이 점은 조직 배포 형태에 따라 달라질 수 있어 사용자/조직이 확인한다.
+- **인증 요구사항**: ChatGPT 앱 커넥터는 OAuth·인증 없음·혼합만 지원하고 정적 Bearer 헤더 설정이 없다 [G][H] → 사용자별 `esl_at_` 그대로는 불가, "인증 없음"은 사용자 식별이 없어 허용 안 함. 필요한 것 = **OAuth 2.1 인가 서버**(대시보드 로그인 연동, PKCE, Dynamic Client Registration 또는 Client ID Metadata Document, 보호 자원 메타데이터) — 터널 사용 시 인가 서버는 공개 도달 필요 [J]. Claude 원격 커넥터의 정적 헤더는 Team/Enterprise에서 전원 공유 자격이 되어 사용자별 권한·감사가 깨지므로 역시 OAuth 필요 [K].
+- 따라서 이번 범위: ChatGPT 계열은 **Codex(CLI·IDE·ChatGPT 데스크톱 Codex)** 로 지원, Claude Desktop은 **로컬 stdio 브리지**로 지원. 앱 채팅 커넥터는 별도 계약(OAuth 인가 서버 + 터널/허용 목록 운영 결정) 후 — `/mcp/stream`은 그대로 재사용 가능하게 Bearer 검증을 인증 모듈 한 곳에 둔다(OAuth 액세스 토큰 검증 추가 지점).
 
 ## 변경 메모(EM-Cn)
 
@@ -524,4 +661,12 @@ MCP 서버(후속)는 `GET /mcp/tools`를 읽어 도구를 동적 노출하므�
   1. Case 생성(옛 Q1 → (b)): "프로젝트 폴더에 입력 데이터가 있다면 케이스 생성에 포함." → `list_case_inputs`(read)·`create_case`(run, confirm never, `MCP_ACTIONS`) 추가, 입력은 서버에 이미 있는 것만(§5.4.1 — 프로젝트 일치·소유 규칙 통과한 COMPLETED 업로드, 또는 허용 루트 폴더의 rad 1 + h3d 1/결과 폴더 1, 기존 경로·심링크·업로드 격리 검사 재사용). 업로드·Case 수정/보관은 계속 제외. 바뀐 절: §1, §2, §3(EM-7·EM-8·EM-16), §5.3, §5.4(신설), §6.1, §9.1(16 → 18개), §10, §11, §12, §15, §16, §17, §18(V-EM-1·7·15), §19.
   2. 토큰 권한 출처(옛 Q2): 역할 스냅숏 방식 확정(대시보드 서비스 introspection 안 씀), `snapshot_max_age_days` 기본 14 → **30**. 바뀐 절: §3 EM-3, §4.3, §12, §18 V-EM-2, §19.
   3. `denied_job_kinds` 기본 `[]` 확정(무거운 작업은 confirm_token). 바뀐 절: §3 EM-17, §5.2, §12, §18 V-EM-7.
-  - physicsai 계약의 snapshot 기본값도 30으로 맞춰야 한다(V-EM-14 공통 항목 — 형제 계약 동시 변경 필요).
+  - ~~physicsai 계약의 snapshot 기본값도 30으로 맞춰야 한다~~ → EM-C2로 철회(physicsai 불변, 차이는 §17 기록).
+- **EM-C2**(2026-10-21, 사용자 결정 20:53 "MCP는 Claude, ChatGPT(Codex), Gemini를 지원해야 한다. 계약에 반영. physicsai는 고치지 않는다." + 정정 20:55 "사내에 해당 LLM 허용됨. on-premise로."):
+  1. §0 원칙 1 "폐쇄망 사내 LLM만" → "사내 허용된 on-premise LLM(Claude·ChatGPT/Codex·Gemini) + 사내 LLM(OpenAI 호환)". 지원 클라이언트·근거 표 §21.1(EM-18).
+  2. 비범위였던 MCP 서버 프로세스를 범위로: 로컬 stdio 브리지(M5, EM-19)와 Streamable HTTP `/mcp/stream`(M6, EM-20)을 **같은 비중의 정식 경로**로, 둘 다 로직 없는 위임 계층. `x-mcp transport` 허용(§2.1).
+  3. 스키마 공통 부분집합·도구 이름 규칙(EM-21, §9.2) + V-EM-16. 브리지 V-EM-17, 엔드포인트 V-EM-18.
+  4. 데이터 반출: 사내 허용·on-premise 전제이므로 차단 설정(`allowed_clients`)·보안 정책 경고 없음. 일반 원칙(최소 노출 §7)과 감사 표시 열(`mcp_transport`·`mcp_client`, 선택 정보)만.
+  5. ChatGPT 앱 채팅 커넥터·Claude 원격 커넥터: 공개 인터넷 불필요(터널·허용 목록)하나 벤더 클라우드 호출·OAuth 필요 → 범위 밖(EM-22, §21.4).
+  6. physicsai 정렬 완화: "같게" → "esl 기준값, 차이는 §17 기록"(헤더·§0-5·§4.3·§15·§17·V-EM-14·§19). EM-C1의 physicsai 동시 변경 메모 철회.
+  - 바뀐 절: 머리말, §0, §1, §2.1, §3(EM-18~22), §4.3, §6.1, §7, §9(변환 단계·§9.2), §12(`mcp.stream`), §13(api_audit 열), §15, §16(M4 보강·M5·M6), §17, §18(V-EM-1·5·8·14·16·17·18), §19, §20, §21(신설). migration 0008 내용만 늘고 번호 불변.
