@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
-import { JOB_TYPE_LABEL, STALE_REASON_LABEL, durText, history, type ReviewOut } from "../../api/history";
+import { JOB_TYPE_LABEL, STALE_REASON_LABEL, durText, history, linkPath, type PastFile, type ReviewOut } from "../../api/history";
 import { canRun, useApp } from "../../app/AppContext";
 import { DiffTable, diffValue } from "../../components/DiffTable";
 import { PAST_FILES_GONE, PastBadge, StaleChip } from "../../components/PastBadge";
@@ -12,8 +12,42 @@ import { bytes, dt } from "../../lib/format";
 import { usePolling } from "../../lib/usePolling";
 import { Shell } from "../../shell/Shell";
 
+/** 한 단계 펼침: {a:{b:1}} -> "a.b"=1 (배열·더 깊은 객체는 값 그대로) */
+function flat(data: Record<string, unknown>): [string, unknown][] {
+  const out: [string, unknown][] = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const sub = Object.entries(v as Record<string, unknown>);
+      if (sub.length) sub.forEach(([k2, v2]) => out.push([`${k}.${k2}`, v2]));
+      else out.push([k, v]);
+    } else out.push([k, v]);
+  }
+  return out;
+}
+
+const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]]));
+
+/** 결과 종류별로 past(기록된 값)에서 화면에 보일 값만 고른다. 실제 응답: 추출 {extract,tstar}, ESL = esl_run_out 전체, 검증 = validation_out + has_field. */
+function pastScalars(kind: string | undefined, past: Record<string, unknown>): Record<string, unknown> {
+  switch (kind) {
+    case "esl_run":
+      return pick(past, ["frame_index", "time", "metric", "status", "kabsch", "forces", "warnings"]);
+    case "validation": {
+      const h = Array.isArray(past.hotspots) ? past.hotspots.length : null;
+      return { ...pick(past, ["verdict", "fail_reasons", "disp_rms_rel", "reaction_rel", "criteria", "has_field"]), ...(h === null ? {} : { hotspots: `${h}개` }) };
+    }
+    case "export": {
+      const { files: _f, ...rest } = past;
+      void _f;
+      return rest;
+    }
+    default:
+      return past;
+  }
+}
+
 function KeyValues({ data }: { data: Record<string, unknown> }) {
-  const rows = Object.entries(data);
+  const rows = flat(data);
   if (!rows.length) return <Empty>없음</Empty>;
   return (
     <table className="table compact kv-table">
@@ -35,18 +69,34 @@ function StepLog({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
   const withLog = rv.logs.filter((l) => l.has_log);
   const [step, setStep] = useState<number | null>(withLog[0]?.step_no ?? null);
   const [lines, setLines] = useState<string[] | null>(null);
+  const [next, setNext] = useState<{ cursor: number; eof: boolean }>({ cursor: 0, eof: true });
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 서버는 한 번에 일정 크기까지만 준다(next_cursor·eof) — 처음 한 덩어리를 읽고, 남았으면 "이어서 보기"로 이어 읽는다.
+  async function read(cursor: number, append: boolean, alive: () => boolean) {
+    if (step === null) return;
+    setBusy(true);
+    try {
+      const r = await history.log(jobId, step, cursor);
+      if (!alive()) return;
+      setLines((old) => (append && old ? [...old, ...r.lines] : r.lines));
+      setNext({ cursor: r.next_cursor, eof: r.eof });
+      setErr(null);
+    } catch (e) {
+      if (alive()) setErr(errorText(e));
+    } finally {
+      if (alive()) setBusy(false);
+    }
+  }
   useEffect(() => {
     if (step === null) return;
-    let alive = true;
+    let ok = true;
     setLines(null);
-    history
-      .log(jobId, step)
-      .then((r) => alive && (setLines(r.lines), setErr(null)))
-      .catch((e) => alive && setErr(errorText(e)));
+    void read(0, false, () => ok);
     return () => {
-      alive = false;
+      ok = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, step]);
   if (!withLog.length) return <Empty>남은 로그가 없습니다</Empty>;
   return (
@@ -65,6 +115,11 @@ function StepLog({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
       <div className="logview">
         <pre aria-label="step 로그">{lines === null ? "불러오는 중…" : lines.join("\n") || " "}</pre>
       </div>
+      {lines !== null && !next.eof && (
+        <button type="button" className="btn small" disabled={busy} onClick={() => void read(next.cursor, true, () => true)}>
+          {busy ? "불러오는 중…" : "이어서 보기"}
+        </button>
+      )}
     </>
   );
 }
@@ -78,9 +133,9 @@ function ResultCard({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
     [jobId, res.availability, res.ref?.kind],
   );
   const past = res.past ?? {};
-  const fileRows = files.data ?? (Array.isArray(past.files) ? (past.files as { name: string; size: number; downloadable: boolean }[]) : []);
-  const { files: _files, ...scalars } = past;
-  void _files;
+  const fileRows: PastFile[] = files.data ?? (Array.isArray(past.files) ? (past.files as PastFile[]) : []);
+  const scalars = pastScalars(res.ref?.kind, past);
+  const libPath = res.ref?.kind === "analysis" || res.ref?.kind === "comparison" ? linkPath(rv.job.project_id, null, res.links) : null;
   return (
     <Card
       title="결과"
@@ -117,7 +172,7 @@ function ResultCard({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
                 {fileRows.map((f) => (
                   <tr key={f.name}>
                     <td className="mono small">{f.name}</td>
-                    <td className="num">{bytes(f.size)}</td>
+                    <td className="num">{f.size === null || f.size === undefined ? "–" : bytes(f.size)}</td>
                     <td>{res.availability === "full" && f.downloadable ? <a href={history.fileUrl(jobId, f.name)}>받기</a> : <span className="muted small">보존 안 됨</span>}</td>
                   </tr>
                 ))}
@@ -129,10 +184,11 @@ function ResultCard({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
               보고서 새 탭으로 열기
             </button>
           )}
-          {res.links?.path && (
-            <Link to={res.links.path} className="small">
-              현재 분석 열기
-            </Link>
+          {libPath && (
+            <div className="small">
+              {res.state === "past" && <span className="muted">이후 다시 실행됨 · </span>}
+              <Link to={libPath}>{res.ref?.kind === "analysis" ? "현재 분석 열기" : "현재 비교 열기"}</Link>
+            </div>
           )}
           <DiffTable diff={res.diff} />
         </>
@@ -146,6 +202,7 @@ export function JobReview() {
   const { me, projects } = useApp();
   const nav = useNavigate();
   const rv = usePolling(() => history.review(jobId), 0, [jobId]);
+  const caseInfo = usePolling(() => (rv.data?.job.case_id ? api.getCase(rv.data.job.case_id) : Promise.resolve(null)), 0, [rv.data?.job.case_id]);
   const [retryMsg, setRetryMsg] = useState<string | null>(null);
   const [retryErr, setRetryErr] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -155,11 +212,10 @@ export function JobReview() {
   const allowed = canRun(me, projectId);
 
   function openPast() {
-    const l = r?.result.links;
-    if (job?.case_id && l?.stage) {
-      const qs = new URLSearchParams(l.query ?? {}).toString();
-      nav(`/p/${projectId}/c/${job.case_id}/stage/${l.stage}${qs ? `?${qs}` : ""}`);
-    } else if (l?.path) nav(l.path);
+    // ④ ?run= · ⑤ ?val= 만 단계 화면의 읽기 전용 모드로 간다. ①·⑥·보고서는 이 화면의 결과 카드가 열람 위치(계약 §5).
+    const kind = r?.result.ref?.kind;
+    const to = kind === "esl_run" || kind === "validation" ? linkPath(projectId, job?.case_id ?? null, r?.result.links) : null;
+    if (to) nav(to);
     else resultRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
   async function retry() {
@@ -195,12 +251,14 @@ export function JobReview() {
       {!r && !rv.error && <Empty>불러오는 중…</Empty>}
       {r && job && (
         <>
-          {(failed || job.failure_code) && (r.error.failure_code || r.error.failure_message) && (
-            <Card title="오류">
-              <div className="error-text" data-testid="job-error">
-                <strong>{r.error.failure_code}</strong>
-                {r.error.failure_message ? ` — ${r.error.failure_message}` : ""}
-              </div>
+          {(r.error.failure_code || r.error.failure_message || r.error.warnings.length > 0) && (
+            <Card title={r.error.failure_code || r.error.failure_message ? "오류" : "경고"}>
+              {(r.error.failure_code || r.error.failure_message) && (
+                <div className="error-text" data-testid="job-error">
+                  <strong>{r.error.failure_code}</strong>
+                  {r.error.failure_message ? ` — ${r.error.failure_message}` : ""}
+                </div>
+              )}
               {r.error.failed_step && (
                 <div className="small muted">
                   실패 step: {r.error.failed_step.step_no}. {r.error.failed_step.step_key}
@@ -209,9 +267,9 @@ export function JobReview() {
               )}
               {r.error.warnings.length > 0 && (
                 <ul className="reasons">
-                  {r.error.warnings.map((w) => (
-                    <li key={w} className="small warn-text">
-                      {w}
+                  {r.error.warnings.map((w, i) => (
+                    <li key={i} className="small warn-text" data-testid="job-warning">
+                      {typeof w === "string" ? w : diffValue(w)}
                     </li>
                   ))}
                 </ul>
@@ -221,7 +279,7 @@ export function JobReview() {
           <Card title="개요">
             <div className="stats">
               <Stat label="상태" value={<JobStatusBadge state={job.state} />} />
-              <Stat label="Case" value={job.case_id ? <Link to={`/p/${projectId}/c/${job.case_id}/stage/${job.stage || 1}`}>{job.case_id}</Link> : "라이브러리"} />
+              <Stat label="Case" value={job.case_id ? <Link to={`/p/${projectId}/c/${job.case_id}/stage/${job.stage || 1}`}>{caseInfo.data?.title ?? job.case_id}</Link> : "라이브러리"} />
               <Stat label="생성" value={dt(job.created_at)} />
               <Stat label="대기" value={durText(r.timing.wait_s)} />
               <Stat label="소요" value={durText(r.timing.duration_s)} />
@@ -242,12 +300,12 @@ export function JobReview() {
                 <summary>입력 파일 지문 ({r.input.input_fingerprint.length})</summary>
                 <table className="table compact">
                   <tbody>
-                    {r.input.input_fingerprint.map((f) => (
-                      <tr key={f.path}>
+                    {r.input.input_fingerprint.map((f, i) => (
+                      <tr key={`${f.kind}-${f.path ?? i}`}>
                         <td>{f.kind}</td>
-                        <td className="mono small">{f.path}</td>
-                        <td className="num">{bytes(f.size)}</td>
-                        <td className="num">{dt(f.mtime)}</td>
+                        <td className="mono small">{f.path ?? "–"}</td>
+                        <td className="num">{f.size === null || f.size === undefined ? "–" : bytes(f.size)}</td>
+                        <td className="num">{f.mtime === null || f.mtime === undefined ? "–" : dt(new Date(f.mtime * 1000).toISOString())}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -266,7 +324,7 @@ export function JobReview() {
                 </tr>
               </thead>
               <tbody>
-                {job.steps.map((s) => {
+                {(job.steps ?? []).map((s) => {
                   const t = r.timing.steps.find((x) => x.step_no === s.step_no);
                   return (
                     <tr key={s.step_no}>

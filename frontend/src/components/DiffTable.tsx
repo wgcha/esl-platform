@@ -9,7 +9,7 @@ export function diffValue(v: unknown): string {
     return Math.abs(v) < 1e-3 || Math.abs(v) >= 1e6 ? v.toExponential(2) : String(Number(v.toPrecision(4)));
   }
   if (typeof v === "boolean") return v ? "예" : "아니오";
-  if (Array.isArray(v)) return v.map(diffValue).join(", ");
+  if (Array.isArray(v)) return v.length ? v.map(diffValue).join(", ") : "–";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }

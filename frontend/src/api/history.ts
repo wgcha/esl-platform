@@ -29,11 +29,11 @@ export interface HistoryItem {
   failure_message: string | null;
   retry_of_job_id: string | null;
   retried_by_job_id: string | null;
-  result_ref: { kind: HistoryResultKind; id: string } | null;
-  result_state: "current" | "past" | null;
+  result_ref?: HistoryRef | null;
+  result_state?: "current" | "past" | null;
   stale: boolean;
   /** 목록 한 줄용: 추출 {n_elems, tstar_frame, tstar_value} · ESL {frame_index, metric} · 검증 {verdict, disp_rms_rel} · 내보내기 {targets, n_files} */
-  summary: Record<string, unknown> | null;
+  summary?: Record<string, unknown> | null;
 }
 
 export interface HistoryPage {
@@ -55,61 +55,136 @@ export interface HistoryQuery {
   limit?: number;
 }
 
-export interface ReviewStep extends StepOut {
-  /** 전역 관리자에게만 */
-  command?: string[];
+export interface ReviewStepOut extends StepOut {
+  /** 전역 관리자에게만 키가 나온다(그 외 응답에는 키 자체가 없음) */
+  command?: string[] | null;
+}
+
+export interface ReviewJobOut extends JobOut {
+  steps?: ReviewStepOut[] | null;
+}
+
+export interface ReviewStepTiming {
+  step_no: number;
+  step_key: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_s: number | null;
 }
 
 export interface ReviewTiming {
   queued_at: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** 시작 전이면 null */
   wait_s: number | null;
   duration_s: number | null;
-  steps: { step_no: number; step_key: string; started_at: string | null; finished_at: string | null; duration_s: number | null }[];
+  steps: ReviewStepTiming[];
 }
 
-export interface ReviewDiff {
+export interface ReviewFingerprint {
+  kind: string;
+  path?: string | null;
+  size?: number | null;
+  /** 에포크 초(실수) */
+  mtime?: number | null;
+}
+
+export interface ReviewInput {
+  params: Record<string, unknown>;
+  /** {criteria:{…}, tstar_metric, material_override} */
+  settings_summary: Record<string, unknown>;
+  input_fingerprint?: ReviewFingerprint[] | null;
+}
+
+export interface ReviewFailedStep {
+  step_no: number;
+  step_key: string;
+  exit_code?: number | null;
+  failure_code?: string | null;
+  failure_message?: string | null;
+}
+
+export interface ReviewError {
+  failure_code?: string | null;
+  failure_message?: string | null;
+  failed_step?: ReviewFailedStep | null;
+  /** 취소·성공 작업은 warnings 만 */
+  warnings: unknown[];
+}
+
+export interface ReviewLog {
+  step_no: number;
+  step_key: string;
+  state: string;
+  has_log: boolean;
+  size: number;
+}
+
+export interface DiffRow {
   key: string;
   label: string;
-  past: unknown;
-  current: unknown;
+  past?: unknown;
+  current?: unknown;
+}
+export type ReviewDiff = DiffRow;
+
+export interface HistoryRef {
+  kind: HistoryResultKind;
+  id: string;
+}
+
+/** 화면 이동용: {stage, query?}. 1/4 run/5 val/6/7/8 analysis/9 comparison — 8·9 는 라이브러리 화면(libraryPath) */
+export interface ReviewLinks {
+  stage?: number;
+  query?: Record<string, string>;
 }
 
 export interface ReviewResult {
-  ref: { kind: HistoryResultKind; id: string } | null;
+  ref?: HistoryRef | null;
   availability: "full" | "summary" | "none";
-  state: "current" | "past" | null;
+  state?: "current" | "past" | null;
   stale_reasons: string[];
-  files_note: string | null;
-  past: Record<string, unknown> | null;
-  diff: ReviewDiff[];
-  /** 화면 이동용 상대 경로: {stage, query:{run|val}} 또는 {path}(라이브러리) */
-  links: { stage?: number; query?: Record<string, string>; path?: string } | null;
+  files_note?: string | null;
+  /** 결과 없음이면 {} */
+  past: Record<string, unknown>;
+  diff: DiffRow[];
+  /** 결과 없음이면 {} */
+  links: ReviewLinks;
 }
 
 export interface ReviewOut {
-  job: Omit<JobOut, "steps"> & { steps: ReviewStep[] };
+  job: ReviewJobOut;
   timing: ReviewTiming;
-  input: {
-    params: Record<string, unknown>;
-    settings_summary?: Record<string, unknown> | null;
-    input_fingerprint?: { kind: string; path: string; size: number; mtime: string }[] | null;
-  };
-  error: {
-    failure_code?: string | null;
-    failure_message?: string | null;
-    failed_step?: { step_no: number; step_key: string; exit_code: number | null; failure_code: string | null; failure_message: string | null } | null;
-    warnings: string[];
-  };
-  logs: { step_no: number; step_key: string; state: string; has_log: boolean; size: number }[];
+  input: ReviewInput;
+  error: ReviewError;
+  logs: ReviewLog[];
   result: ReviewResult;
 }
 
-export interface HistoryFile {
+export interface HistoryFileOut {
   name: string;
   size: number;
   downloadable: boolean;
+}
+export type HistoryFile = HistoryFileOut;
+
+/** 내보내기 결과 past.files 의 한 줄. 보존 파일이 없고 이름만 기록된 경우 size=null·downloadable=false */
+export interface PastFile {
+  name: string;
+  size: number | null;
+  downloadable: boolean;
+}
+
+/** links → 앱 경로. 8(analysis)·9(comparison)는 라이브러리 상세 화면. */
+export function linkPath(projectId: string, caseId: string | null, l: ReviewLinks | null | undefined): string | null {
+  if (!l || !l.stage) return null;
+  const qs = new URLSearchParams(l.query ?? {});
+  if (l.stage === 8 && qs.get("analysis")) return `/p/${projectId}/library/analyses/${qs.get("analysis")}`;
+  if (l.stage === 9 && qs.get("comparison")) return `/p/${projectId}/library/comparisons/${qs.get("comparison")}`;
+  if (!caseId || l.stage > 7) return null;
+  const q = qs.toString();
+  return `/p/${projectId}/c/${caseId}/stage/${l.stage}${q ? `?${q}` : ""}`;
 }
 
 export const history = {

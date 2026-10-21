@@ -35,6 +35,7 @@ type Extra = Partial<HistoryItem> & {
   diff?: ReviewDiff[];
   past?: Record<string, unknown>;
   links?: ReviewResult["links"];
+  warnings?: string[];
 };
 interface Seed {
   item: HistoryItem;
@@ -56,8 +57,8 @@ export class HistoryMock {
     const started = state === "QUEUED" ? null : created + 8_000;
     const finished = state === "QUEUED" || state === "RUNNING" ? null : created + 8_000 + dur * 1000;
     const c = caseId ? CASES[caseId] : null;
-    const { availability: _a, reasons: _r, diff: _d, past: _p, links: _l, files_note: _f, ...rest } = extra;
-    void [_a, _r, _d, _p, _l, _f];
+    const { availability: _a, reasons: _r, diff: _d, past: _p, links: _l, files_note: _f, warnings: _w, ...rest } = extra;
+    void [_a, _r, _d, _p, _l, _f, _w];
     const item: HistoryItem = {
       id,
       job_type: type,
@@ -108,7 +109,7 @@ export class HistoryMock {
       result_state: "current",
       summary: { frame_index: 7, metric: "max_strain" },
       availability: "full",
-      past: { frame_index: 7, metric: "max_strain", status: "READY" },
+      past: { id: "run-1", job_id: "h-esl-1", frame_index: 7, time: 0.0213, metric: "max_strain", status: "READY", kabsch: { rot_deg: 1.84, rms_def: 3.412, max_def: 11.86 }, forces: { n_nodes_loaded: 7146, sum_abs_f: 2.31e6, equilibrium_rel: 2.0e-6 }, warnings: [] },
       links: { stage: 4, query: { run: "run-1" } },
     });
     this.add("h-exp-1", "EXPORT", "c-demo", 33, "SUCCEEDED", kim, {
@@ -149,7 +150,7 @@ export class HistoryMock {
       summary: { frame_index: 5, metric: "max_strain" },
       availability: "full",
       reasons: ["tstar", "support_set"],
-      past: { frame_index: 5, metric: "max_strain", status: "READY" },
+      past: { id: "run-old", job_id: "h-esl-old", frame_index: 5, time: 0.0155, metric: "max_strain", status: "READY", kabsch: { rot_deg: 1.7, rms_def: 3.1, max_def: 10.2 }, forces: { n_nodes_loaded: 7146, sum_abs_f: 1.84e6, equilibrium_rel: 3.1e-4 }, warnings: [] },
       links: { stage: 4, query: { run: "run-old" } },
       diff: [
         { key: "frame_index", label: "t* 프레임", past: 5, current: 7 },
@@ -181,7 +182,7 @@ export class HistoryMock {
       summary: { n_elems: 48210, tstar_frame: 5, tstar_value: 0.1382 },
       availability: "summary",
       reasons: ["extract"],
-      past: { part_title: "chassis_rear", n_elems: 48210, n_frames: 31, "tstar.frame_index": 5, "tstar.metric": "max_strain", "tstar.value": 0.1382 },
+      past: { extract: { part_title: "chassis_rear", n_elems: 48210, n_frames: 31 }, tstar: { frame_index: 5, metric: "max_strain", value: 0.1382, time: 0.0155 } },
       diff: [
         { key: "n_elems", label: "요소 수", past: 48210, current: 48376 },
         { key: "tstar.frame_index", label: "t* 프레임", past: 5, current: 7 },
@@ -194,12 +195,30 @@ export class HistoryMock {
       availability: "full",
       past: { verdict: "PASS", bytes: 482_331 },
     });
+    this.add("h-exp-old", "EXPORT", "c-demo", 160, "SUCCEEDED", kim, {
+      result_ref: { kind: "export", id: "h-exp-old" },
+      result_state: "past",
+      summary: { targets: ["radioss_inc"], n_files: 2 },
+      availability: "summary",
+      past: {
+        targets: ["radioss_inc"],
+        id_range: [900001, 907000],
+        validation_verdict: "PASS",
+        files: [
+          { name: "esl_cload.inc", size: null, downloadable: false },
+          { name: "esl_bcs.inc", size: null, downloadable: false },
+        ],
+        warnings: [],
+      },
+      links: { stage: 6 },
+    });
+    this.add("h-canceled", "ESL_SOLVE", "c-demo", 170, "CANCELED", kim, { warnings: ["사용자가 취소함"] }, 12);
     this.add("h-lib-1", "LIB_ANALYZE", null, 900, "SUCCEEDED", park, {
       result_ref: { kind: "analysis", id: "an-1" },
       result_state: "past",
       availability: "summary",
       past: { n_entries: 12, n_representative: 5 },
-      links: { path: `/p/${PROJECT}/library/analyses/an-1` },
+      links: { stage: 8, query: { analysis: "an-1" } },
     }, 260);
     // 오래된 추출·ESL·검증 반복(더 보기 시험용)
     const types: JobType[] = ["CASE_EXTRACT", "ESL_SOLVE", "VALIDATE"];
@@ -324,9 +343,9 @@ export class HistoryMock {
       state: it.result_state,
       stale_reasons: extra.reasons ?? [],
       files_note: extra.files_note ?? (extra.availability === "summary" ? "파일 보존 안 됨 — 기록된 값만 표시" : null),
-      past: extra.past ?? null,
+      past: extra.past ?? {},
       diff: extra.diff ?? [],
-      links: extra.links ?? null,
+      links: extra.links ?? {},
     };
     return {
       job,
@@ -340,14 +359,14 @@ export class HistoryMock {
       },
       input: {
         params,
-        settings_summary: { "validation.disp_rms_rel_max": 1e-6, "validation.hotspot_strain_rel_err_max": 0.2, "tstar.metric": "max_strain" },
-        input_fingerprint: it.job_type === "CASE_EXTRACT" ? [{ kind: "h3d", path: "h3d/chassis_rear.h3d", size: 812_331_902, mtime: "2026-10-12T05:40:00Z" }] : null,
+        settings_summary: { criteria: { disp_rms_rel_max: 1e-6, hotspot_strain_rel_err_max: 0.2, reaction_rel_max: 1e-5 }, tstar_metric: "max_strain", material_override: {} },
+        input_fingerprint: it.job_type === "CASE_EXTRACT" ? [{ kind: "h3d", path: "h3d/chassis_rear.h3d", size: 812_331_902, mtime: Date.UTC(2026, 9, 12, 5, 40) / 1000 }, { kind: "result", path: null, size: null, mtime: null }] : null,
       },
       error: {
         failure_code: it.failure_code,
         failure_message: it.failure_message,
         failed_step: it.state === "FAILED" ? { step_no: 1, step_key: steps[0].step_key, exit_code: 2, failure_code: it.failure_code, failure_message: it.failure_message } : null,
-        warnings: [],
+        warnings: extra.warnings ?? [],
       },
       logs: steps.map((s) => ({ step_no: s.step_no, step_key: s.step_key, state: s.state, has_log: it.state !== "QUEUED", size: 1840 })),
       result: res,
@@ -361,7 +380,8 @@ export class HistoryMock {
       const pid = query.get("project_id");
       if (!pid) return err(422, "VALIDATION_ERROR", "project_id 가 필요합니다.");
       if (pid !== PROJECT) return { status: 200, body: { items: [], next_cursor: null, has_more: false } };
-      const limit = Math.min(200, Math.max(1, Number(query.get("limit") ?? 50) || 50));
+      const limit = Number(query.get("limit") ?? 50);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) return err(422, "VALIDATION_ERROR", "limit 은 1~200 입니다.");
       let start = 0;
       const cur = query.get("cursor");
       if (cur) {
@@ -387,7 +407,10 @@ export class HistoryMock {
         const step = Number(query.get("step") ?? 1) || 1;
         const key = STEPS[seed.item.job_type][step - 1] ?? "STEP";
         const lines = [`[${key}] 시작`, `[${key}] 입력 확인 완료`, `[${key}] 진행 50%`, seed.item.state === "FAILED" ? `[${key}] 오류: ${seed.item.failure_message}` : `[${key}] 완료`];
-        return { status: 200, body: { step, lines, next_cursor: lines.length, eof: true } };
+        // 실제 서버처럼 한 번에 일부만(여기서는 2줄) 주고 next_cursor·eof 로 잇는다
+        const from = Math.max(0, Number(query.get("cursor") ?? 0) || 0);
+        const part = lines.slice(from, from + 2);
+        return { status: 200, body: { step, lines: part, next_cursor: from + part.length, eof: from + part.length >= lines.length } };
       }
       if (method === "POST" && r[2] === "/retry") {
         if (!this.ctx.canRun(PROJECT)) return err(403, "FORBIDDEN", "권한이 없습니다.");

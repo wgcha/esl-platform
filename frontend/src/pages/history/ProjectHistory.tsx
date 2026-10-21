@@ -46,8 +46,9 @@ export function ProjectHistory() {
     state: state || undefined,
     mine: mine || undefined,
     q: q || undefined,
-    from: from ? `${from}T00:00:00` : undefined,
-    to: to ? `${to}T23:59:59` : undefined,
+    // 서버는 시간대 없는 값을 UTC 로 읽으므로, 사용자의 현지 하루 경계를 UTC ISO 로 바꿔 보낸다
+    from: from ? new Date(`${from}T00:00:00`).toISOString() : undefined,
+    to: to ? new Date(`${to}T23:59:59`).toISOString() : undefined,
   };
   return (
     <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "실행 이력" }]} projectId={projectId}>

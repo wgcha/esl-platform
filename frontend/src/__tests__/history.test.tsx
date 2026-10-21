@@ -76,9 +76,9 @@ describe("프로젝트 '실행 이력' 페이지", () => {
     expect(rows().length).toBe(30);
     // 더 보기(커서)
     fireEvent.click(screen.getByRole("button", { name: "더 보기" }));
-    await waitFor(() => expect(rows().length).toBe(51));
+    await waitFor(() => expect(rows().length).toBe(53));
     expect(screen.queryByRole("button", { name: "더 보기" })).toBeNull();
-    expect(new Set(rows().map((r) => r.querySelector("a")!.getAttribute("href"))).size).toBe(51); // 중복 없음
+    expect(new Set(rows().map((r) => r.querySelector("a")!.getAttribute("href"))).size).toBe(53); // 중복 없음
     // 작업 종류
     fireEvent.change(screen.getByLabelText("작업 종류"), { target: { value: "VALIDATE" } });
     await waitFor(() => expect(rows().every((r) => r.textContent!.includes("검증"))).toBe(true));
@@ -118,7 +118,12 @@ describe("작업 상세", () => {
     expect(retry.hasAttribute("data-primary")).toBe(false);
     fireEvent.click(retry);
     expect(await screen.findByText(/재시도를 요청했습니다/)).toBeTruthy();
+    // 로그는 일부씩 온다(실제 서버의 next_cursor·eof): 이어서 보기로 끝까지
+    await waitFor(() => expect(screen.getByLabelText("step 로그").textContent).toMatch(/입력 확인/));
+    expect(screen.getByLabelText("step 로그").textContent).not.toMatch(/오류: h3d 파트/);
+    fireEvent.click(screen.getByRole("button", { name: "이어서 보기" }));
     await waitFor(() => expect(screen.getByLabelText("step 로그").textContent).toMatch(/오류: h3d 파트/));
+    expect(screen.queryByRole("button", { name: "이어서 보기" })).toBeNull();
     expect(screen.getByText(/결과가 없는 작업/)).toBeTruthy();
   });
 
@@ -156,6 +161,42 @@ describe("작업 상세", () => {
     renderApp("/p/p-body/jobs/h-ext-old");
     expect(await screen.findByTestId("files-gone")).toBeTruthy();
     expect(screen.getByTestId("files-gone").textContent).toBe("파일 보존 안 됨 — 기록된 값만 표시");
+  });
+
+  it("취소 작업: 오류 없이 경고만, wait_s 있어도 결과 없음", async () => {
+    renderApp("/p/p-body/jobs/h-canceled");
+    expect(await screen.findByTestId("job-warning")).toBeTruthy();
+    expect(screen.queryByTestId("job-error")).toBeNull();
+    expect(screen.getByText("경고", { selector: "h3" })).toBeTruthy();
+  });
+
+  it("내보내기 파일이 보존 안 된 작업: 크기 –·받기 없음", async () => {
+    renderApp("/p/p-body/jobs/h-exp-old");
+    expect(await screen.findByTestId("files-gone")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "받기" })).toBeNull();
+    expect(screen.getAllByText("보존 안 됨").length).toBe(2);
+  });
+
+  it("추출 입력 파일 지문: path·size·mtime 이 null 이어도 표시(mtime 은 에포크 초)", async () => {
+    renderApp("/p/p-body/jobs/h-ext-old");
+    fireEvent.click(await screen.findByText(/입력 파일 지문/));
+    expect(screen.getByText("h3d/chassis_rear.h3d")).toBeTruthy();
+    const cells = screen.getByText("h3d/chassis_rear.h3d").closest("tr")!.querySelectorAll("td");
+    expect(cells[3].textContent).toMatch(/^\d+\/\d+ \d\d:\d\d$/);
+    const nullRow = screen.getByText("result").closest("tr")!.querySelectorAll("td");
+    expect([nullRow[1].textContent, nullRow[2].textContent, nullRow[3].textContent]).toEqual(["–", "–", "–"]);
+  });
+
+  it("추출 결과(past={extract,tstar}) 와 ESL run(esl_run_out) 값을 펼쳐 보인다", async () => {
+    renderApp("/p/p-body/jobs/h-ext-old");
+    expect(await screen.findByText("extract.n_elems")).toBeTruthy();
+    expect(screen.getByText("tstar.frame_index")).toBeTruthy();
+  });
+
+  it("라이브러리 작업: links={stage:8,query:{analysis}} → 라이브러리 상세로", async () => {
+    renderApp("/p/p-body/jobs/h-lib-1");
+    const a = await screen.findByRole("link", { name: "현재 분석 열기" });
+    expect(a.getAttribute("href")).toBe("/p/p-body/library/analyses/an-1");
   });
 
   it("없는 작업은 오류 표시", async () => {
@@ -218,6 +259,12 @@ describe("과거 결과 읽기 전용", () => {
     expect(vals.map((v: { id: string }) => v.id)).toEqual(["val-1"]);
     const old = await (await f("/esl/api/validations/val-old2/field?layer=rad")).json();
     expect(old.detail.code).toBe("VALIDATION_FILES_GONE");
+  });
+
+  it("limit 200 초과는 422(목, 실제 서버와 같게)", async () => {
+    const f = createMockFetch(new MockServer({ user: "power" }));
+    expect((await f("/esl/api/history?project_id=p-body&limit=201")).status).toBe(422);
+    expect((await f("/esl/api/history?project_id=p-body&limit=200")).status).toBe(200);
   });
 
   it("커서 위조는 INVALID_CURSOR(목)", async () => {
