@@ -1,4 +1,7 @@
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
+import { history } from "../api/history";
+import { PastFrame } from "../components/PastBadge";
 import type { FieldSummary } from "../api/types";
 import { Badge, Card, Empty, Stat } from "../components/ui";
 import { FieldOverlay } from "../components/FieldOverlay";
@@ -119,15 +122,20 @@ const num = (x: unknown) => (typeof x === "number" ? x : undefined);
 const critText = (x: unknown) => (typeof x === "number" ? String(x) : Array.isArray(x) ? x.join(",") : x == null ? "–" : String(x));
 
 export function Stage5({ c, reload, allowed }: StageProps) {
-  const runId = c.current_esl_run_id;
+  const [sp] = useSearchParams();
+  const pastVal = sp.get("val"); // 과거 실행 읽기 전용(?val=)
+  const runId = pastVal ? null : c.current_esl_run_id;
   const st5 = c.stage_status?.["5"];
   // 검증 완료는 Case version 을 바꾸지 않으므로 ⑤ 상태(job_id·state)가 바뀌면 다시 읽는다
   const run = usePolling(() => (runId ? api.eslRun(runId) : Promise.resolve(null)), 0, [runId, c.version, st5?.state, st5?.job_id]);
-  const vid = run.data?.latest_validation_id ?? null;
+  const vid = pastVal ?? run.data?.latest_validation_id ?? null;
   const val = usePolling(() => (vid ? api.validation(vid) : Promise.resolve(null)), 0, [vid]);
-  const history = usePolling(() => api.validations(c.id), 0, [c.id, vid, c.version, st5?.state]);
+  const vHistory = usePolling(() => (pastVal ? Promise.resolve(null) : api.validations(c.id)), 0, [c.id, vid, c.version, st5?.state]);
   const act = useAction(reload);
   const v = val.data;
+  const pastJobId = pastVal ? v?.job_id ?? null : null;
+  const review = usePolling(() => (pastJobId ? history.review(pastJobId) : Promise.resolve(null)), 0, [pastJobId]);
+  const filesGone = !!pastVal && review.data?.result.availability !== "full";
 
   const prereq = !runId ? "④ ESL을 먼저 계산하세요" : run.data?.stale ? "④ ESL을 다시 계산하세요(입력이 바뀜)" : null;
   const crit = v?.criteria ?? {};
@@ -135,21 +143,10 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const dispMax = num(crit.disp_rms_rel_max);
   const reacMax = num(crit.reaction_rel_max);
 
-  return (
-    <StageFrame
-      title="⑤ 검증"
-      status={c.stage_status?.["5"]}
-      error={act.error ?? run.error ?? val.error}
-      onJobDone={() => void reload()}
-      primary={{
-        label: "검증 실행",
-        onClick: () => act.run(() => submitJob(c, "VALIDATE", { esl_run_id: runId })),
-        disabledReason: blockReason(allowed, c, 5, prereq),
-        busy: act.busy,
-      }}
-    >
+  const content = (
+    <>
       {!v ? (
-        <Empty>{runId ? "아직 검증하지 않았습니다" : "④ ESL을 먼저 계산하세요"}</Empty>
+        <Empty>{pastVal ? "불러오는 중…" : runId ? "아직 검증하지 않았습니다" : "④ ESL을 먼저 계산하세요"}</Empty>
       ) : (
         <>
           <Card
@@ -157,8 +154,8 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             right={
               <span className="inline-actions">
                 {v.verdict === "PASS" ? <Badge kind="ok">PASS</Badge> : <Badge kind="bad">FAIL</Badge>}
-                <ReportLink url={api.caseReportUrl(c.id)} dep={`${v.id}:${c.stage_status?.["5"]?.state}`} />
-                <LibraryRegister projectId={c.project_id} v={v} allowed={allowed} failLabels={FAIL_REASON_LABEL} />
+                {!pastVal && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v.id}:${c.stage_status?.["5"]?.state}`} />}
+                {!pastVal && <LibraryRegister projectId={c.project_id} v={v} allowed={allowed} failLabels={FAIL_REASON_LABEL} />}
               </span>
             }
           >
@@ -195,7 +192,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
               </ul>
             )}
           </Card>
-          {v.field ? (
+          {v.field && !filesGone ? (
             <>
               <Card title="겹쳐보기 — 요소 변형률 (PCA 평면)">
                 <FieldOverlay vid={v.id} hotspots={v.hotspots} summary={v.field} />
@@ -210,7 +207,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
               </div>
               <TopTable f={v.field} />
             </>
-          ) : (
+          ) : pastVal ? null : (
             <div className="warn-box" role="status">
               전 요소 비교 자료가 없는 예전 검증입니다 — ⑤ 검증을 다시 실행하면 겹쳐보기를 볼 수 있습니다.
             </div>
@@ -264,7 +261,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
               )}
             </Card>
           </div>
-          {history.data && history.data.length > 1 && (
+          {vHistory.data && vHistory.data.length > 1 && (
             <Card title="검증 이력">
               <table className="table compact">
                 <thead>
@@ -276,7 +273,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.data.map((h) => (
+                  {vHistory.data.map((h) => (
                     <tr key={h.id} className={h.id === v.id ? "hl" : undefined}>
                       <td className="num">{dt(h.created_at)}</td>
                       <td>{h.verdict}</td>
@@ -290,6 +287,28 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           )}
         </>
       )}
+    </>
+  );
+  if (pastVal)
+    return (
+      <PastFrame title="⑤ 검증" review={review.data} error={val.error ?? review.error} currentHref={`/p/${c.project_id}/c/${c.id}/stage/5`}>
+        {content}
+      </PastFrame>
+    );
+  return (
+    <StageFrame
+      title="⑤ 검증"
+      status={c.stage_status?.["5"]}
+      error={act.error ?? run.error ?? val.error}
+      onJobDone={() => void reload()}
+      primary={{
+        label: "검증 실행",
+        onClick: () => act.run(() => submitJob(c, "VALIDATE", { esl_run_id: runId })),
+        disabledReason: blockReason(allowed, c, 5, prereq),
+        busy: act.busy,
+      }}
+    >
+      {content}
     </StageFrame>
   );
 }

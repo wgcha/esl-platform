@@ -1,4 +1,7 @@
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
+import { history } from "../api/history";
+import { PastFrame } from "../components/PastBadge";
 import { Badge, Card, Empty, Stat } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmtFixed, pct, sci, vec } from "../lib/format";
@@ -7,25 +10,24 @@ import { blockReason, submitJob, useAction } from "./common";
 import { dofText } from "./Stage3";
 
 export function Stage4({ c, reload, allowed }: StageProps) {
-  const runId = c.current_esl_run_id;
+  const [sp] = useSearchParams();
+  const pastRunId = sp.get("run"); // 과거 실행 읽기 전용(?run=)
+  const runId = pastRunId ?? c.current_esl_run_id;
   const run = usePolling(() => (runId ? api.eslRun(runId) : Promise.resolve(null)), 0, [runId, c.version]);
   const forces = usePolling(() => (runId ? api.forces(runId, 50) : Promise.resolve(null)), 0, [runId]);
   const sets = usePolling(() => (c.current_support_set_id ? api.supportSets(c.id) : Promise.resolve([])), 0, [c.current_support_set_id]);
   const support = sets.data?.find((s) => s.id === c.current_support_set_id);
   const act = useAction(reload);
   const r = run.data;
+  const pastJobId = pastRunId ? r?.job_id ?? null : null;
+  const review = usePolling(() => (pastJobId ? history.review(pastJobId) : Promise.resolve(null)), 0, [pastJobId]);
 
   const missing = [!c.tstar && "② t*", !c.current_support_set_id && "③ 지지점"].filter(Boolean);
   const prereq = missing.length ? `${missing.join("·")}을(를) 먼저 확정하세요` : null;
 
-  return (
-    <StageFrame
-      title="④ ESL"
-      status={c.stage_status?.["4"]}
-      error={act.error ?? run.error}
-      onJobDone={() => void reload()}
-      primary={{ label: "ESL 계산", onClick: () => act.run(() => submitJob(c, "ESL_SOLVE")), disabledReason: blockReason(allowed, c, 4, prereq), busy: act.busy }}
-    >
+  const content = (
+    <>
+      {!pastRunId && (
       <Card title="입력 요약">
         <div className="stats">
           <Stat
@@ -43,6 +45,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
           </div>
         )}
       </Card>
+      )}
       {!runId ? (
         <Empty>아직 ESL을 계산하지 않았습니다</Empty>
       ) : !r ? (
@@ -70,6 +73,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               </ul>
             )}
           </Card>
+          {!(pastRunId && review.data?.result.availability !== "full") && (
           <Card title="F_eq 상위 노드">
             {forces.data ? (
               <div className="table-wrap scroll">
@@ -110,8 +114,26 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               <Empty>불러오는 중…</Empty>
             )}
           </Card>
+          )}
         </>
       )}
+    </>
+  );
+  if (pastRunId)
+    return (
+      <PastFrame title="④ ESL" review={review.data} error={run.error ?? review.error} currentHref={`/p/${c.project_id}/c/${c.id}/stage/4`}>
+        {content}
+      </PastFrame>
+    );
+  return (
+    <StageFrame
+      title="④ ESL"
+      status={c.stage_status?.["4"]}
+      error={act.error ?? run.error}
+      onJobDone={() => void reload()}
+      primary={{ label: "ESL 계산", onClick: () => act.run(() => submitJob(c, "ESL_SOLVE")), disabledReason: blockReason(allowed, c, 4, prereq), busy: act.busy }}
+    >
+      {content}
     </StageFrame>
   );
 }

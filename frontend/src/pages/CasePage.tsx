@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import { canRun, useApp } from "../app/AppContext";
 import { Shell } from "../shell/Shell";
@@ -58,6 +58,9 @@ export function CasePage() {
           <StageStepper base={base} current={stage} status={c?.stage_status} />
           {c && (
             <nav className="case-menu" aria-label="Case 메뉴">
+              <Link to={`${base}/history`} className="case-menu-link">
+                실행 이력
+              </Link>
               <BundleButton url={p3.caseBundleUrl(c.id)} filename={`${c.folder_name}_result.zip`} fallbackPath={c.folder_path} />
             </nav>
           )}

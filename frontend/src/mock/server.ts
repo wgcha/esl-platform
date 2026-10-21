@@ -13,6 +13,7 @@ import {
 import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
 import { P3Mock } from "./p3mock";
+import { HistoryMock } from "./historymock";
 
 interface MockResponse {
   status: number;
@@ -68,6 +69,9 @@ export class MockServer {
     projectName: (pid) => PROJECTS.find((p) => p.id === pid)?.name ?? null,
     casePath: (id) => this.findCase(id)?.folder_path ?? null,
   });
+
+  /** P3-이력: 실행 이력 목록·작업 상세·과거 run/검증(읽기 전용 열람용, 현재 Case 목록에는 섞이지 않음) */
+  history = new HistoryMock({ userId: () => this.me.user_id, isAdmin: () => this.me.is_global_admin, canRun: (pid) => this.canRun(pid) });
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -328,6 +332,8 @@ export class MockServer {
     this.queuePositions();
     const p3r = this.p3.handle(method, path, query, b, bodySize);
     if (p3r) return p3r;
+    const hr = this.history.handle(method, path, query);
+    if (hr) return hr;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };

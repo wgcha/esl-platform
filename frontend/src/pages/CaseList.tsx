@@ -29,6 +29,9 @@ export function CaseList() {
       <div className="page-title-row">
         <h1 className="page-title">Case 목록</h1>
         <span className="spacer" />
+        <Link to={`/p/${projectId}/history`} className="page-link">
+          실행 이력
+        </Link>
         <span className="primary-wrap" title={allowed ? undefined : NO_PERMISSION}>
           <button type="button" className="btn primary" disabled={!allowed} onClick={() => nav(`/p/${projectId}/cases/new`)}>
             새 Case

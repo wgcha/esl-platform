@@ -1713,3 +1713,65 @@ details.alt-input > .dropzone {
   color: var(--muted);
   font-weight: 500;
 }
+
+/* P3-이력 */
+.case-menu-link,
+.page-link {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.past-badge {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: var(--final-weak);
+  color: var(--final);
+  font-size: 0.8rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.past-link {
+  font-weight: 600;
+}
+.click-row {
+  cursor: pointer;
+}
+.click-row:hover td {
+  background: var(--accent-weak);
+}
+.stage-mark {
+  color: var(--muted);
+}
+.history-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.8rem 0;
+}
+.inline-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.field.grow {
+  flex: 1 1 14rem;
+}
+.check-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 2rem;
+  white-space: nowrap;
+}
+.kv-table th {
+  width: 14rem;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.diff-card > summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.diff-card .table {
+  margin-top: 0.5rem;
+}
