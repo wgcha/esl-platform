@@ -11,6 +11,9 @@ import { ComparisonDetail } from "../pages/library/ComparisonDetail";
 import { NewCase } from "../pages/newcase/NewCase";
 import { Updates } from "../pages/Updates";
 import { Guide } from "../pages/guide/Guide";
+import { CaseHistory } from "../pages/history/CaseHistory";
+import { ProjectHistory } from "../pages/history/ProjectHistory";
+import { JobReview } from "../pages/history/JobReview";
 
 export function App() {
   return (
@@ -22,6 +25,9 @@ export function App() {
         <Route path="/updates" element={<Updates />} />
         <Route path="/guide" element={<Guide />} />
         <Route path="/p/:projectId/c/:caseId/stage/:n" element={<CasePage />} />
+        <Route path="/p/:projectId/c/:caseId/history" element={<CaseHistory />} />
+        <Route path="/p/:projectId/history" element={<ProjectHistory />} />
+        <Route path="/p/:projectId/jobs/:jobId" element={<JobReview />} />
         <Route path="/p/:projectId/c/:caseId" element={<Navigate to="stage/1" replace />} />
         <Route path="/p/:projectId/library" element={<LibraryList />} />
         <Route path="/p/:projectId/library/analyses/new" element={<AnalysisNew />} />
