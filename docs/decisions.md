@@ -39,3 +39,4 @@
 - (P3-UX, 2026-10-20) 서버에 HyperView 있음 → h3d는 서버 워커가 추출(H3D_EXTRACT, argv 템플릿). 사용자 PC 경로는 서버에서 안 보이므로 입력은 업로드(esl-input)만. Case 입력 = rad + (h3d | 추출 결과). worker.slots 기본 2, GPU 제약만. HPC 제출은 P4(근거: 사용자 확인).
 - (P3-UX, 2026-10-20) 서버 추출 출력은 <esl_root>/_h3d/<Case>/raw(코어 출력 보호 규칙 때문). PC 연결 코드 잠금은 출발지 구분 가능 시 5회, 불가 시 서버 전체 30회/15분.
 - 2026-10-20: P3-UX 보안 보강 — uvicorn proxy_headers=False·연결코드 잠금은 실제 peer 기준(XFF는 trusted_proxies만), 업로드 찾아보기 본인 폴더 격리·_backup 차단, rad 밖 include는 PC에서 Y 확인 후만 업로드. 근거: Verifier 결함 6건.
+- (P3-이력, 2026-10-21) 실행 이력 계약 초안(esl_p3_history.md): 이력 단위 = jobs 행(새 테이블 없음), 과거 결과는 DB 기록값으로 읽기 전용, 내보내기·보고서는 이후 실행분부터 history/<job_id>/에 보존, 목록 인덱스 migration 0007(근거: 사용자 요청 — "실행 이력 목록에서 다시 확인").
