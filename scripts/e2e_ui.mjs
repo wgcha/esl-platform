@@ -147,6 +147,7 @@ core["extract"]["disp_precision"] = "float64"
 d = yaml.safe_load(open(${JSON.stringify(path.join(REPO, "config", "esl_platform.example.yaml"))}, encoding="utf-8"))
 d["profile"] = "dev"
 d["auth"]["mode"] = "dev_static"
+d["library"]["config_path"] = ${JSON.stringify(path.join(REPO, "config", "library.example.yaml"))}
 d["storage"] = {"esl_root": root, "input_roots": [inputs], "spdm_roots": []}
 d["worker"].update({"heartbeat_interval_s": 1, "lease_ttl_s": 10, "claim_interval_s": 0.5, "cancel_check_interval_s": 0.5,
                     "state_dir": os.path.join(tmp, "state")})
@@ -233,23 +234,29 @@ async function scenario(base, inp) {
     }, null, { timeout: 30000 });
   };
 
-  // 프로젝트 → Case 목록 → 새 Case
+  // 프로젝트 → Case 목록 → 새 Case(서버 폴더 탭의 '고급: 경로 직접 입력' — 합성 Case 는 서버 경로로 준다)
   await page.goto(`${base}/esl/`);
   await page.getByRole("link", { name: /개발 프로젝트 dev/ }).click();
   await page.getByRole("heading", { name: "Case 목록" }).waitFor();
   await page.getByRole("button", { name: "새 Case" }).click();
-  const form = page.getByRole("region", { name: "새 Case" });
-  await form.getByLabel("폴더 이름").fill("e2e_case01");
-  await form.getByLabel("제목").fill("합성 판 E2E");
-  const pathInputs = form.locator(".path-field input");
-  await pathInputs.nth(0).fill(inp.rad);
-  await form.locator(".path-field").nth(0).getByRole("button", { name: "확인" }).click();
-  await form.getByText("rad 읽기 가능").waitFor();
-  await pathInputs.nth(1).fill(inp.csv);
-  await form.locator(".path-field").nth(1).getByRole("button", { name: "확인" }).click();
-  await form.getByText("done.json 정상").waitFor();
+  await page.getByRole("heading", { level: 1, name: "새 Case" }).waitFor();
+  await page.getByRole("tab", { name: "서버 폴더에서 고르기" }).click();
+  const panel = page.getByRole("tabpanel", { name: "서버 폴더에서 고르기" });
+  await panel.getByText("고급: 경로 직접 입력").click();
+  const adv = panel.locator(".adv-body");
+  await adv.locator(".path-field input").nth(0).fill(inp.rad);
+  await adv.getByRole("button", { name: "rad로 쓰기" }).click();
+  await adv.locator(".path-field input").nth(2).fill(inp.csv);
+  await adv.getByRole("button", { name: "결과 폴더로 쓰기" }).click();
+  await panel.getByLabel("고른 입력").getByText("done.json 정상").waitFor();
+  await page.getByPlaceholder("QN80H_rear40").fill("e2e_case01");
+  await page.getByLabel("대상 파트").fill("Chassis  REAR");
+  await page.getByText("고급: 표시 제목").click();
+  await page.getByPlaceholder("후방 충돌 40kph").fill("합성 판 E2E");
   await shot("00_new_case");
-  await form.getByRole("button", { name: "Case 만들기" }).click();
+  log("주 버튼 사유", await page.locator(".primary-wrap .sr-only").allTextContents());
+  await expectEnabled();
+  await page.getByRole("button", { name: "Case 만들기" }).click();
 
   // ① 입력 → 추출
   await page.getByRole("heading", { level: 2, name: "① 입력" }).waitFor();
@@ -361,6 +368,116 @@ async function scenario(base, inp) {
   if (big.status !== 413 || big.body.detail.code !== "ARTIFACT_TOO_LARGE" || big.body.detail.path !== big.a.path)
     throw new Error(`413 응답 이상: ${JSON.stringify(big)}`);
   await shot("06_export");
+
+  // ⑦ 실행 이력: ② 에서 t* 를 다른 후보로 바꾸고 ④ ESL 을 한 번 더 돌려 첫 실행을 '과거'(입력 바뀜·diff 있음)로 만든 뒤,
+  // 프로젝트 이력 → 작업 상세 → 그때 결과 열기(④ ?run=)
+  await stageLink(2).click();
+  await page.getByRole("heading", { level: 2, name: "② t*" }).waitFor();
+  const radios2 = page.getByRole("radio", { name: /^프레임 / });
+  await radios2.first().waitFor();
+  if ((await radios2.count()) > 1) {
+    await radios2.nth(1).check();
+    await primary().click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="current-tstar"]')?.textContent?.includes("사용자 선택"), null, { timeout: 15000 });
+  }
+  await stageLink(4).click();
+  await page.getByRole("heading", { level: 2, name: "④ ESL" }).waitFor();
+  const eslBefore = await page.evaluate(async () => {
+    const cid = location.pathname.split("/c/")[1].split("/")[0];
+    return (await (await fetch(`/esl/api/cases/${cid}/esl-runs`)).json()).length;
+  });
+  await expectEnabled();
+  await primary().click();
+  await page.evaluate(
+    async (n) => {
+      const cid = location.pathname.split("/c/")[1].split("/")[0];
+      for (let i = 0; i < 120; i++) {
+        const runs = await (await fetch(`/esl/api/cases/${cid}/esl-runs`)).json();
+        if (runs.length > n) return;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      throw new Error("두 번째 ESL 실행이 끝나지 않음");
+    },
+    eslBefore,
+  );
+  await page.waitForFunction(() => !document.querySelector('[data-testid="job-progress"]'), null, { timeout: 60000 }).catch(() => {});
+
+  // API 계약 확인(실서버): limit 상한·커서 오류·목록/상세 모양
+  const api = await page.evaluate(async () => {
+    const j = async (u) => {
+      const r = await fetch(u);
+      return { status: r.status, body: await r.json() };
+    };
+    const lim = await j("/esl/api/history?project_id=dev&limit=201");
+    const cur = await j("/esl/api/history?project_id=dev&cursor=zzz");
+    const list = await j("/esl/api/history?project_id=dev&limit=200");
+    const esl = list.body.items.filter((x) => x.job_type === "ESL_SOLVE");
+    const reviews = {};
+    for (const it of list.body.items) reviews[it.job_type + ":" + it.id] = (await j(`/esl/api/jobs/${it.id}/review`)).body;
+    return { lim, cur: { status: cur.status, code: cur.body.detail?.code }, items: list.body.items, esl, reviews };
+  });
+  if (api.lim.status !== 422) throw new Error(`limit>200 이 422 가 아님: ${api.lim.status}`);
+  if (api.cur.status !== 422 || api.cur.code !== "INVALID_CURSOR") throw new Error(`커서 오류 응답 이상: ${JSON.stringify(api.cur)}`);
+  const types = new Set(api.items.map((x) => x.job_type));
+  for (const t of ["CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT"]) if (!types.has(t)) throw new Error(`이력에 ${t} 없음`);
+  if (api.esl.length < 2) throw new Error(`ESL 작업이 2건 미만: ${api.esl.length}`);
+  const pastEsl = api.esl.find((x) => x.result_state === "past");
+  const curEsl = api.esl.find((x) => x.result_state === "current");
+  if (!pastEsl || !curEsl) throw new Error(`ESL current/past 구분 없음: ${JSON.stringify(api.esl.map((x) => x.result_state))}`);
+  const pastRv = api.reviews["ESL_SOLVE:" + pastEsl.id].result;
+  if (!pastRv.stale_reasons.includes("tstar") || !pastRv.diff.some((d) => d.key === "frame_index")) throw new Error(`과거 ESL 의 입력 바뀜·diff 이상: ${JSON.stringify(pastRv)}`);
+  fs.writeFileSync(path.join(SHOTS, "history_api_sample.json"), JSON.stringify({ items: api.items.slice(0, 3), reviews: Object.fromEntries(Object.entries(api.reviews).map(([k, v]) => [k, { ...v, job: { ...v.job, params: "…" } }])) }, null, 1));
+  log("이력 API", `${api.items.length}건`, "diff 키", JSON.stringify(api.reviews["ESL_SOLVE:" + pastEsl.id].result.diff.map((d) => d.key)));
+
+  // 프로젝트 이력 페이지
+  await page.goto(`${base}/esl/p/dev`);
+  await page.getByRole("link", { name: "실행 이력" }).click();
+  await page.getByRole("heading", { level: 1, name: "실행 이력" }).waitFor();
+  const hrows = page.getByTestId("history-row");
+  await hrows.first().waitFor();
+  const nH = await hrows.count();
+  if (nH !== api.items.length) throw new Error(`이력 행 수 불일치: 화면 ${nH} / API ${api.items.length}`);
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="history-row"]').length > 0);
+  if ((await primary().count()) !== 0) throw new Error("이력 목록에 주 버튼이 있음");
+  // 작업 종류 필터가 URL 에 유지되는지
+  await page.getByLabel("작업 종류").selectOption("ESL_SOLVE");
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid="history-row"]').length === n, api.esl.length, { timeout: 15000 });
+  if (!page.url().includes("type=ESL_SOLVE")) throw new Error(`필터가 URL 에 없음: ${page.url()}`);
+  await page.getByLabel("작업 종류").selectOption("");
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid="history-row"]').length === n, nH, { timeout: 15000 });
+  await shot("history_live_1_project");
+
+  // 과거 ESL 작업 상세
+  await page.goto(`${base}/esl/p/dev/jobs/${pastEsl.id}`);
+  await page.getByRole("heading", { level: 1, name: /작업 상세/ }).waitFor();
+  await page.getByRole("table", { name: "step 표" }).waitFor();
+  await page.getByTestId("past-badge").waitFor();
+  await page.getByLabel("step 로그").waitFor();
+  await page.waitForFunction(() => (document.querySelector('[aria-label="step 로그"]')?.textContent ?? "").trim().length > 5, null, { timeout: 15000 });
+  if ((await primary().count()) !== 1 || (await primary().textContent())?.trim() !== "그때 결과 열기") throw new Error("작업 상세의 주 버튼이 '그때 결과 열기' 1개가 아님");
+  await shot("history_live_2_job");
+
+  // 그때 결과 열기 → ④ ?run=
+  await primary().click();
+  await page.waitForURL(/\/stage\/4\?run=/, { timeout: 15000 });
+  await page.getByTestId("past-frame").waitFor();
+  await page.getByTestId("past-badge").waitFor();
+  await page.getByText("F_eq 상위 노드").waitFor({ timeout: 30000 });
+  if ((await primary().count()) !== 0) throw new Error("과거 결과(④)에 실행 버튼이 있음");
+  await page.getByRole("link", { name: "현재 결과로" }).waitFor();
+  await shot("history_live_3_past_result");
+
+  // 과거 검증(⑤ ?val=)과 내보내기 파일도 열린다
+  const valItem = api.items.find((x) => x.job_type === "VALIDATE");
+  await page.goto(`${base}/esl/p/dev/jobs/${valItem.id}`);
+  await page.getByRole("heading", { level: 1, name: /작업 상세/ }).waitFor();
+  await expectEnabled();
+  await primary().click();
+  await page.waitForURL(/\/stage\/5\?val=/, { timeout: 15000 });
+  await page.getByTestId("past-badge").waitFor();
+  const expItem = api.items.find((x) => x.job_type === "EXPORT");
+  await page.goto(`${base}/esl/p/dev/jobs/${expItem.id}`);
+  await page.getByRole("table", { name: "내보내기 파일" }).waitFor({ timeout: 30000 });
 
   // 진행 요약(Case 목록)·상태 패널의 솔버
   await page.goto(`${base}/esl/p/dev`);

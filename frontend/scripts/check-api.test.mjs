@@ -10,10 +10,12 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("check:api 강화", () => {
-  const run = (types) => {
+  const run = (types, historyTs) => {
     const dir = mkdtempSync(path.join(tmpdir(), "chkapi-"));
     copyFileSync(path.join(ROOT, "src", "api", "endpoints.ts"), path.join(dir, "endpoints.ts"));
+    copyFileSync(path.join(ROOT, "src", "api", "history.ts"), path.join(dir, "history.ts"));
     writeFileSync(path.join(dir, "types.ts"), types);
+    if (historyTs !== undefined) writeFileSync(path.join(dir, "history.ts"), historyTs);
     const openapi = path.join(ROOT, "..", "docs", "contracts", "openapi_p1b.json");
     return spawnSync(process.execPath, [path.join(ROOT, "scripts", "check-api.mjs"), openapi, path.join(dir, "types.ts")],
       { encoding: "utf8" });
@@ -41,5 +43,28 @@ describe("check:api 강화", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("ToolsStatus.solver_backends_available[]: 타입 불일치");
     expect(r.stderr).toContain("ConfigIssue.extra: 스키마에 없는 키");
+  });
+
+  const hist = readFileSync(path.join(ROOT, "src", "api", "history.ts"), "utf8");
+
+  it("history.ts 의 interface 도 대조(키 누락·null 허용·원시 타입)", () => {
+    const bad = hist
+      .replace("  duration_s: number | null;\n  wait_s: number | null;\n  current_step_no", "  duration_s: number;\n  wait_s: number | null;\n  current_step_no")
+      .replace("  mtime?: number | null;", "  mtime?: string | null;")
+      .replace("  has_more: boolean;\n", "");
+    expect(bad).not.toBe(hist);
+    const r = run(real, bad);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("HistoryItem.duration_s: null 허용 불일치");
+    expect(r.stderr).toContain("ReviewFingerprint.mtime: 타입 불일치");
+    expect(r.stderr).toContain("HistoryPage.has_more: types.ts 에 없음");
+  });
+
+  it("history.ts 호출 경로가 openapi 에 없으면 잡음", () => {
+    const bad = hist.replace('"/history"', '"/histories"');
+    expect(bad).not.toBe(hist);
+    const r = run(real, bad);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("history.ts GET /histories: openapi 에 없는 경로");
   });
 });

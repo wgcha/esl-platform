@@ -271,8 +271,11 @@ class Executor:
                     if self.job["job_type"] == "VALIDATE" and self.settings.report.auto:
                         self._queue_report(conn, res)
                 outputs = {"registered": True}
+                note = self._archive_history()
                 with open(log_path, "a", encoding="utf-8") as fh:
                     fh.write(f"[esl-worker] {key}: DB 등록 완료\n")
+                    if note:
+                        fh.write(f"[esl-worker] {note}\n")
                 with self._tx() as conn:
                     self._register_artifacts(conn, [log_rel])
         except _StepFailed as exc:
@@ -285,6 +288,21 @@ class Executor:
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, no, state="SUCCEEDED", exit_code=0,
                                   progress_pct=100.0, finished_at=_now(conn), outputs=outputs)
+
+    def _archive_history(self) -> str | None:
+        """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).
+        실패해도 작업은 성공 — 경고 HISTORY_ARCHIVE_FAILED 만 남긴다."""
+        if self.job["job_type"] not in ("EXPORT", "CASE_REPORT") or not self.settings.history.archive_files:
+            return None
+        try:
+            n = register.archive_history(self.cdir, self.job["job_type"], self.job["id"])
+            return f"history 보존: {n}개 파일 → history/{self.job['id']}/" if n else None
+        except Exception as exc:  # noqa: BLE001 - 보존 실패가 작업 결과를 바꾸지 않는다
+            msg = f"HISTORY_ARCHIVE_FAILED: 작업별 결과 파일 보존 실패({type(exc).__name__}: {exc})"[:300]
+            log.warning("작업 %s %s", self.job["id"], msg)
+            with self._tx() as conn:
+                jobs_repo.add_warnings(conn, self.job["id"], self.token, [msg])
+            return msg
 
     def _queue_report(self, conn, res: dict[str, Any]) -> None:
         """VALIDATE 성공 → CASE_REPORT(LIGHT) 자동 큐(설정 report.auto). 같은 Case 에 대기 중인 보고서가 있으면 경고만."""

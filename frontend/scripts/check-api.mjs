@@ -18,7 +18,10 @@ const typesPath = process.argv[3] ?? path.resolve(root, "src", "api", "types.ts"
 
 const spec = JSON.parse(readFileSync(openapiPath, "utf8"));
 const schemas = spec.components?.schemas ?? {};
-const src = ts.createSourceFile(typesPath, readFileSync(typesPath, "utf8"), ts.ScriptTarget.Latest, true);
+// P3-이력: history.ts 의 interface 도 같은 규칙으로 대조한다(types.ts 와 한 소스로 이어 붙여 파싱 — import 줄은 무시됨).
+const extraTypeFiles = ["history.ts"].map((f) => path.resolve(path.dirname(typesPath), f)).filter((f) => f !== typesPath && existsSync(f));
+const srcText = [typesPath, ...extraTypeFiles].map((f) => readFileSync(f, "utf8")).join("\n");
+const src = ts.createSourceFile(typesPath, srcText, ts.ScriptTarget.Latest, true);
 
 /** 이름 → {members: Map<key, {optional, nullable, type}>} (interface + extends, type 리터럴) */
 const decls = new Map();
@@ -224,11 +227,11 @@ for (const [name, schema] of Object.entries(schemas)) {
 }
 
 // 경로: types.ts 와 별개로 endpoints.ts 가 쓰는 경로가 openapi 에 있는지
-// P3: p3.ts(있으면)도 같은 규칙으로 대조
-const epFiles = ["endpoints.ts", "p3.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
+// P3: p3.ts·history.ts(있으면)도 같은 규칙으로 대조
+const epFiles = ["endpoints.ts", "p3.ts", "history.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
 for (const epPath of epFiles) {
 try {
-  if (epPath.endsWith("p3.ts") && !existsSync(epPath)) continue;
+  if (/(p3|history)\.ts$/.test(epPath) && !existsSync(epPath)) continue;
   const ep = readFileSync(epPath, "utf8");
   const epName = path.basename(epPath);
   const prefix = "/esl/api";
@@ -250,4 +253,4 @@ if (errors.length) {
   console.error(`check:api 실패 (${errors.length}건)\n` + errors.map((e) => "  - " + e).join("\n"));
   process.exit(1);
 }
-console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts 경로 모두 openapi 에 있음`);
+console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts·history.ts 경로 모두 openapi 에 있음`);

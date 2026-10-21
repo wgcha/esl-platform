@@ -232,6 +232,13 @@ class ReportCfg(_M):
     auto: bool = True
 
 
+class HistoryCfg(_M):
+    """실행 이력(계약 esl_p3_history.md §4): `_backup` 표식 검증 파일 탐색 상한, 내보내기·보고서 작업별 보존."""
+
+    backup_scan_max: int = Field(default=100, ge=1, le=100000)   # 검증 파일 표식 탐색 시 열어 보는 _backup 폴더 최대 수(최신 순)
+    archive_files: bool = True                                    # EXPORT·CASE_REPORT 성공 시 <case>/history/<job_id>/ 에 복사
+
+
 class LibraryCfg(_M):
     """라이브러리 설정(esl.library.settings 스키마): `config_path`(상대경로는 이 설정 파일 기준) 또는 `settings`.
 
@@ -254,6 +261,7 @@ class Settings(_M):
     logging: LoggingCfg
     core: CoreCfg
     report: ReportCfg = ReportCfg()
+    history: HistoryCfg = HistoryCfg()
     upload: UploadCfg = UploadCfg()
     library: LibraryCfg | None = None   # 없으면 라이브러리 쓰기 API 503(LIBRARY_CONFIG_MISSING)
     altair: AltairCfg = AltairCfg()

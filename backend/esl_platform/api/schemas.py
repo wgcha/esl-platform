@@ -777,3 +777,140 @@ class ClientTokenOut(_Out):
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
     state: Literal["ACTIVE", "EXPIRED", "REVOKED"]
+
+
+# ---------------------------------------------------------------- P3-이력(계약 esl_p3_history.md §3)
+class HistoryRef(_Out):
+    kind: Literal["extract", "esl_run", "validation", "export", "report", "analysis", "comparison"]
+    id: str
+
+
+class HistoryItem(_Out):
+    id: str
+    job_type: str
+    stage: int
+    state: str
+    case_id: str | None = None
+    case_title: str | None = None
+    case_folder: str | None = None
+    analysis_id: str | None = None
+    comparison_id: str | None = None
+    subject_title: str | None = None
+    created_by: str
+    created_by_name: str
+    created_at: datetime
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_s: float | None = None
+    wait_s: float | None = None
+    current_step_no: int | None = None
+    progress_pct: float | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+    retry_of_job_id: str | None = None
+    retried_by_job_id: str | None = None
+    result_ref: HistoryRef | None = None
+    result_state: Literal["current", "past"] | None = None
+    stale: bool = False
+    summary: dict[str, Any] | None = None
+
+
+class HistoryPage(_Out):
+    items: list[HistoryItem]
+    next_cursor: str | None = None
+    has_more: bool
+
+
+class ReviewStepOut(StepOut):
+    command: list[str] | None = None        # 전역 관리자에게만 키가 나온다(그 외 응답에는 키 자체가 없음)
+
+
+class ReviewJobOut(JobOut):
+    steps: list[ReviewStepOut] | None = None
+
+
+class ReviewStepTiming(_Out):
+    step_no: int
+    step_key: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_s: float | None = None
+
+
+class ReviewTiming(_Out):
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    wait_s: float | None = None
+    duration_s: float | None = None
+    steps: list[ReviewStepTiming]
+
+
+class ReviewFingerprint(_Out):
+    kind: str
+    path: str | None = None
+    size: int | None = None
+    mtime: float | None = None
+
+
+class ReviewInput(_Out):
+    params: dict[str, Any]
+    settings_summary: dict[str, Any]
+    input_fingerprint: list[ReviewFingerprint] | None = None
+
+
+class ReviewFailedStep(_Out):
+    step_no: int
+    step_key: str
+    exit_code: int | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+
+
+class ReviewError(_Out):
+    failure_code: str | None = None
+    failure_message: str | None = None
+    failed_step: ReviewFailedStep | None = None
+    warnings: list[Any]
+
+
+class ReviewLog(_Out):
+    step_no: int
+    step_key: str
+    state: str
+    has_log: bool
+    size: int
+
+
+class DiffRow(_Out):
+    key: str
+    label: str
+    past: Any = None
+    current: Any = None
+
+
+class ReviewResult(_Out):
+    ref: HistoryRef | None = None
+    availability: Literal["full", "summary", "none"]
+    state: Literal["current", "past"] | None = None
+    stale_reasons: list[str]
+    files_note: str | None = None
+    past: dict[str, Any]
+    diff: list[DiffRow]
+    links: dict[str, Any]
+
+
+class ReviewOut(_Out):
+    job: ReviewJobOut
+    timing: ReviewTiming
+    input: ReviewInput
+    error: ReviewError
+    logs: list[ReviewLog]
+    result: ReviewResult
+
+
+class HistoryFileOut(_Out):
+    name: str
+    size: int
+    downloadable: bool

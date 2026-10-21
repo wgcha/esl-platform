@@ -476,21 +476,21 @@ describe("버전·업데이트 내역", () => {
     expect(isNewVersion("0.4.0", "0.5.0")).toBe(false);
   });
 
-  it("상단 바 v0.4.0(툴팁 commit·배포) + 새 버전 점 → 업데이트 내역에서 사라짐", async () => {
+  it("상단 바 현재 버전(툴팁 commit·배포) + 새 버전 점 → 업데이트 내역에서 사라짐", async () => {
     localStorage.setItem("esl.lastSeenVersion", "0.3.0");
     renderApp("/");
     const chip = await screen.findByTestId("version-chip");
-    expect(chip.textContent).toBe("v0.4.0");
+    expect(chip.textContent).toBe(`v${MOCK_VERSION.version}`);
     expect(chip.getAttribute("title")).toMatch(/commit 4d927c5 · 배포 /);
     expect(screen.getByTestId("version-new")).toBeTruthy();
     fireEvent.click(chip);
     expect(await screen.findByRole("heading", { name: "업데이트 내역" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByTestId("version-new")).toBeNull());
-    expect(localStorage.getItem("esl.lastSeenVersion")).toBe("0.4.0");
+    expect(localStorage.getItem("esl.lastSeenVersion")).toBe(MOCK_VERSION.version);
   });
 
   it("이미 본 버전이면 점 없음", async () => {
-    localStorage.setItem("esl.lastSeenVersion", "0.4.0");
+    localStorage.setItem("esl.lastSeenVersion", MOCK_VERSION.version);
     renderApp("/");
     await screen.findByTestId("version-chip");
     expect(screen.queryByTestId("version-new")).toBeNull();
@@ -498,10 +498,10 @@ describe("버전·업데이트 내역", () => {
 
   it("업데이트 내역: 버전별 카드(지금 버전 표시), 추가·수정 구분", async () => {
     renderApp("/updates");
-    const card = await screen.findByRole("article", { name: "v0.4.0" });
+    const card = await screen.findByRole("article", { name: `v${MOCK_VERSION.version}` });
     expect(within(card).getByText("지금 버전")).toBeTruthy();
     expect(within(card).getByText("추가")).toBeTruthy();
-    expect(within(card).getByText("수정")).toBeTruthy();
+    expect(within(await screen.findByRole("article", { name: "v0.4.0" })).getByText("수정")).toBeTruthy();
     expect(screen.getAllByRole("article").length).toBe(MOCK_CHANGELOG.length);
     expect(screen.getByRole("article", { name: "v0.1.0" })).toBeTruthy();
   });

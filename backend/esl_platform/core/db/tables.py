@@ -174,6 +174,10 @@ Index("ux_jobs_analysis_active", jobs.c.analysis_id, unique=True,
 Index("ux_jobs_comparison_active", jobs.c.comparison_id, unique=True,
       postgresql_where=text("comparison_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED',"
                             "'INTERRUPTED')"))
+# 0007(P3-이력): 프로젝트 범위 실행 이력 목록(keyset created_at DESC, id DESC)·"내 작업만"·재시도 후속 작업 조회
+Index("ix_jobs_project_created", jobs.c.project_id, jobs.c.created_at.desc(), jobs.c.id.desc())
+Index("ix_jobs_project_creator_created", jobs.c.project_id, jobs.c.created_by, jobs.c.created_at.desc())
+Index("ix_jobs_retry_of", jobs.c.retry_of_job_id, postgresql_where=text("retry_of_job_id IS NOT NULL"))
 
 job_steps = Table(
     "job_steps",
@@ -239,6 +243,7 @@ esl_runs = Table(
     CheckConstraint("status IN ('READY','FAILED')", name="ck_esl_runs_status"),
     CheckConstraint("frame_index >= 0", name="ck_esl_runs_frame"),
 )
+Index("ix_esl_runs_job", esl_runs.c.job_id)       # 0007: 작업 → ESL 실행(이력)
 
 validations = Table(
     "validations",
@@ -259,6 +264,7 @@ validations = Table(
     Column("created_at", TS, nullable=False, server_default=func.now()),
     CheckConstraint("verdict IN ('PASS','FAIL')", name="ck_validations_verdict"),
 )
+Index("ix_validations_job", validations.c.job_id)  # 0007: 작업 → 검증(이력)
 
 artifacts = Table(
     "artifacts",
