@@ -3,7 +3,8 @@
   ESL git 폴더 설치(setup.ps1)의 업데이트. 이 스크립트 한 줄(인자·질문 없음, git pull 포함)로 반영한다.
 .DESCRIPTION
   physicsai-platform deploy\update-repo.ps1과 같은 절차. 일반 Windows PowerShell(관리자 권한 불필요)에서, 어느 폴더에서든:
-    powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\update-repo.ps1
+    <git 폴더>\deploy\update-repo.ps1
+    (실행 정책 오류 — "스크립트를 실행할 수 없습니다" — 가 나면: powershell -NoProfile -ExecutionPolicy Bypass -File <git 폴더>\deploy\update-repo.ps1)
   (저장소 루트의 update.bat은 사용자 PC용 HyperView TCL 배포 — 서버 업데이트는 이 스크립트)
   모든 값은 <git>\.runtime\deploy.json(setup.ps1이 만든 것)에서 읽고, 아무것도 묻지 않는다.
   ⓪ git pull --ff-only(자격 증명을 묻지 않음 — GIT_TERMINAL_PROMPT=0·credential.interactive=never). 추적 파일에 로컬 변경이 있으면 안내 후 중단
@@ -120,7 +121,7 @@ function Sync-UpdateRepo {
 
 try {
     if (-not (Test-Path -LiteralPath $deployPath)) {
-        throw "git 폴더 설치 정보가 없습니다: $deployPath — 먼저 설치하세요: powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'setup.ps1')"
+        throw "git 폴더 설치 정보가 없습니다: $deployPath — 먼저 설치하세요: $(Join-Path $PSScriptRoot 'setup.ps1')`n(실행 정책 오류가 나면: powershell -NoProfile -ExecutionPolicy Bypass -File $(Join-Path $PSScriptRoot 'setup.ps1'))"
     }
     $cfg = Get-Content -Raw -Encoding UTF8 -LiteralPath $deployPath | ConvertFrom-Json
     $dash = $null

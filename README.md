@@ -148,8 +148,9 @@ physicsai의 `deploy\`와 같은 절차·옵션·메시지다. 자세한 내용:
 
 | 용도 | 실행(일반 PowerShell, 관리자 권한 불필요) |
 |---|---|
-| 서버 설치 — git 폴더(권장, 인터넷·사내 프록시) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\setup.ps1 -DashboardRoot <대시보드>` |
-| 서버 업데이트 — git 폴더(git pull 포함, 질문 없음) | `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\update-repo.ps1` |
+| 서버 설치 — git 폴더(권장, 인터넷·사내 프록시) | `<git>\deploy\setup.ps1 -DashboardRoot <대시보드>` |
+| 서버 업데이트 — git 폴더(git pull 포함, 질문 없음) | `<git>\deploy\update-repo.ps1` |
+| (공통) 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 | `powershell -NoProfile -ExecutionPolicy Bypass -File …`로 실행(예: `powershell -NoProfile -ExecutionPolicy Bypass -File <git>\deploy\update-repo.ps1`) |
 | 폐쇄망 묶음 만들기(준비 PC) | `deploy\collect-offline.ps1` 또는 `bash deploy/collect-offline.sh` → `dist/esl-offline-<ver>.zip` |
 | 폐쇄망 설치 / 업데이트(묶음의 deploy 폴더, `deploy.json`) | `deploy\install.bat`(= `deploy\install.ps1`) / `deploy\update.bat`(= `deploy\update.ps1`) |
 | 작업 등록 해제 | `deploy\uninstall-tasks.ps1` |
