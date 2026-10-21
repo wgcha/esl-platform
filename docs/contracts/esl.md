@@ -428,6 +428,7 @@ ENDDATA
 | V-CMD-1 | `h3d_extract`·`os_solve` 펼침 결과가 기대 argv와 일치, 메타문자 치환값 거부 | 단위 |
 | V-RAD-1 | fixture rad(include 2단, /PART 3개, 대소문자·공백 다른 title)에서 part_id 해석, `PART_NOT_FOUND`/`PART_AMBIGUOUS` | 단위 |
 | V-RAD-2 | /NODE·/SHELL·/SH3N·/PROP/SHELL·/MAT(LAW1, LAW2, LAW36) 파싱값 일치, 미지원 law → `MATERIAL_UNRESOLVED`, override로 해소 | 단위 |
+| V-RAD-3 | (0.5.2) 대상 파트만 읽는 파서 = 0.5.1 파서 결과 동일(fixture·합성: 노드 앞/뒤, include 중첩, 주석·빈 행, CRLF). 다른 파트 행 형식 오류는 검출하지 않음(esl_core.md §3.1) | 단위 |
 | V-EXT-1 | fake_hw CSV → npz 변환 shape·dtype·키 일치, 로드는 allow_pickle=False, `done.json` 없으면 `TOOL_OUTPUT_MISSING` | 가짜 |
 | V-TS-1 | 합성 eps(F×E, 알려진 최대·국소최대)에서 t*, 후보 rank, hotspot 최소거리 필터 결과 일치 | 단위 |
 | V-BC-1 | 회전·이동된 직사각 판 메시에서 자동 꼭지점 = 실제 4꼭지점, corner_radius 확장 수 | 단위 |
