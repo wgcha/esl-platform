@@ -160,6 +160,7 @@ function ResultCard({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
           )}
           <KeyValues data={scalars} />
           {res.ref?.kind === "export" && fileRows.length > 0 && (
+            <div className="table-wrap scroll">
             <table className="table compact" aria-label="내보내기 파일">
               <thead>
                 <tr>
@@ -178,6 +179,7 @@ function ResultCard({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           {res.ref?.kind === "report" && res.availability === "full" && (
             <button type="button" className="btn small" onClick={() => openReport(history.reportUrl(jobId))}>
@@ -250,7 +252,7 @@ export function JobReview() {
       )}
       {!r && !rv.error && <Empty>불러오는 중…</Empty>}
       {r && job && (
-        <>
+        <div className="wide2">
           {(r.error.failure_code || r.error.failure_message || r.error.warnings.length > 0) && (
             <Card title={r.error.failure_code || r.error.failure_message ? "오류" : "경고"}>
               {(r.error.failure_code || r.error.failure_message) && (
@@ -298,6 +300,7 @@ export function JobReview() {
             {r.input.input_fingerprint && r.input.input_fingerprint.length > 0 && (
               <details>
                 <summary>입력 파일 지문 ({r.input.input_fingerprint.length})</summary>
+                <div className="table-wrap scroll">
                 <table className="table compact">
                   <tbody>
                     {r.input.input_fingerprint.map((f, i) => (
@@ -310,10 +313,12 @@ export function JobReview() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </details>
             )}
           </Card>
           <Card title="step">
+            <div className="table-wrap scroll">
             <table className="table compact" aria-label="step 표">
               <thead>
                 <tr>
@@ -345,6 +350,7 @@ export function JobReview() {
                 })}
               </tbody>
             </table>
+            </div>
           </Card>
           <Card title="로그">
             <StepLog jobId={jobId} rv={r} />
@@ -357,7 +363,7 @@ export function JobReview() {
               입력 바뀜 사유: {r.result.stale_reasons.map((x) => STALE_REASON_LABEL[x] ?? x).join(" · ")}
             </div>
           )}
-        </>
+        </div>
       )}
     </Shell>
   );

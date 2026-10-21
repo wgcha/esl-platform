@@ -136,6 +136,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                   ))}
                 </ul>
               )}
+              <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>
                   <tr>
@@ -156,6 +157,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </>
           ) : (
             <Empty>아직 추출하지 않았습니다. 경로를 확인한 뒤 "추출 실행"을 누르세요</Empty>

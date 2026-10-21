@@ -64,7 +64,7 @@ function FileRow({ aid, f }: { aid: string; f: AnalysisFileOut }) {
 
 function RepTable({ r }: { r: AnalysisResult }) {
   return (
-    <div className="table-wrap">
+    <div className="table-wrap scroll">
       <table className="table compact" aria-label="대표 케이스">
         <thead>
           <tr>
@@ -216,7 +216,7 @@ export function AnalysisDetail() {
           ) : files.data.length === 0 ? (
             <Empty>파일이 없습니다</Empty>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap scroll">
               <table className="table compact" aria-label="분석 파일">
                 <thead>
                   <tr>

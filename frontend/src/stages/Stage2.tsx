@@ -65,6 +65,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
           </Card>
           <div className="grid2">
             <Card title="후보 시점">
+              <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>
                   <tr>
@@ -103,8 +104,10 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   })}
                 </tbody>
               </table>
+              </div>
             </Card>
             <Card title={`hotspot (t* 프레임 ${blk?.tstar?.frame_index ?? "–"}에서 상승 중 = 검증 대상)`}>
+              <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>
                   <tr>
@@ -139,6 +142,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Card>
           </div>
         </>

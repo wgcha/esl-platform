@@ -61,7 +61,7 @@ function DownloadCell({ a }: { a: ArtifactOut }) {
 
 function FileTable({ files }: { files: ArtifactOut[] }) {
   return (
-    <div className="table-wrap">
+    <div className="table-wrap scroll">
       <table className="table compact">
         <thead>
           <tr>
