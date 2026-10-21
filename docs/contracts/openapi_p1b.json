@@ -3380,6 +3380,18 @@
       "InspectReq": {
         "additionalProperties": false,
         "properties": {
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
           "path": {
             "maxLength": 1024,
             "minLength": 1,
@@ -5772,7 +5784,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -459,7 +459,7 @@ describe("버전·업데이트 내역", () => {
   it("VERSION = CHANGELOG 최상단, 파서 섹션", () => {
     expect(MOCK_VERSION.version).toBe(VERSION_TXT.trim());
     expect(MOCK_CHANGELOG[0].version).toBe(MOCK_VERSION.version);
-    expect(MOCK_CHANGELOG[0].sections["추가"]!.length).toBeGreaterThan(0);
+    expect(MOCK_CHANGELOG[0].sections["수정"]!.length).toBeGreaterThan(0);
     const p = parseChangelog("# x\n## [1.2.0] - 2026-01-02\n### 추가\n- a\n- b\n### 기타\n- z\n### 수정\n- c\n## [1.1.0]\n### 변경\n- d\n");
     expect(p).toEqual([
       { version: "1.2.0", date: "2026-01-02", sections: { 추가: ["a", "b"], 수정: ["c"] } },
@@ -500,7 +500,8 @@ describe("버전·업데이트 내역", () => {
     renderApp("/updates");
     const card = await screen.findByRole("article", { name: `v${MOCK_VERSION.version}` });
     expect(within(card).getByText("지금 버전")).toBeTruthy();
-    expect(within(card).getByText("추가")).toBeTruthy();
+    expect(within(card).getByText("수정")).toBeTruthy();
+    expect(within(await screen.findByRole("article", { name: "v0.5.0" })).getByText("추가")).toBeTruthy();
     expect(within(await screen.findByRole("article", { name: "v0.4.0" })).getByText("수정")).toBeTruthy();
     expect(screen.getAllByRole("article").length).toBe(MOCK_CHANGELOG.length);
     expect(screen.getByRole("article", { name: "v0.1.0" })).toBeTruthy();

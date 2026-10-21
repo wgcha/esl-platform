@@ -8,6 +8,7 @@ import { errorText } from "../../api/client";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Card, ErrorLine, Field, PrimaryButton } from "../../components/ui";
+import { normPartTitle } from "../../lib/partTitle";
 import { UploadPanel } from "./UploadPanel";
 import { ServerPanel } from "./ServerPanel";
 import { PcPanel } from "./PcPanel";
@@ -49,7 +50,7 @@ export function NewCase() {
     setSel((old) => ({ ...old, [t]: s }));
     if (suggested && !nameTouched) setName(suggested);
   };
-  const partOk = !cur || cur.parts.length === 0 || cur.parts.some((p) => p.title.toLowerCase() === part.trim().toLowerCase());
+  const partOk = !cur || cur.parts.length === 0 || cur.parts.some((p) => normPartTitle(p.title) === normPartTitle(part));
   const reason = !allowed
     ? NO_PERMISSION
     : !cur

@@ -12,7 +12,8 @@ export const api = {
   projects: () => request<Project[]>("GET", "/projects"),
   status: () => request<StatusOut>("GET", "/status"),
   queue: () => request<QueueOut>("GET", "/queue"),
-  inspectRad: (path: string) => request<InspectRadResult>("POST", "/paths/inspect", { body: { purpose: "RAD", path } }),
+  inspectRad: (path: string, partTitle?: string) =>
+    request<InspectRadResult>("POST", "/paths/inspect", { body: { purpose: "RAD", path, ...(partTitle?.trim() ? { part_title: partTitle.trim() } : {}) } }),
   inspectResults: (path: string) =>
     request<InspectResultsResult>("POST", "/paths/inspect", { body: { purpose: "RESULTS", path } }),
   /** §6: h3d 파일 가벼운 검사(크기·헤더) */

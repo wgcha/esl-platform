@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 import os
 import re
 from typing import Any
@@ -58,10 +60,11 @@ def queue(ctx: AppContext) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- 경로 확인
 _TITLE_WS = re.compile(r"\s+")
+_TITLE_SEP = re.compile(r"[\s_-]+")
 
 
 def norm_title(t: str) -> str:
-    return _TITLE_WS.sub(" ", str(t).strip()).lower()
+    return _TITLE_SEP.sub(" ", str(t)).strip().casefold()
 
 
 def match_parts(parts: list[dict], title: str, mode: str) -> list[dict]:
@@ -118,6 +121,37 @@ def inspect_results(path: str) -> dict[str, Any]:
             "n_frames": n_frames, "files": files}
 
 
+_PARTS_CACHE: "OrderedDict[tuple, list[dict]]" = OrderedDict()
+_PARTS_CACHE_MAX = 16
+_PARTS_LOCK = threading.Lock()
+
+
+def _parts_key(path: str, depth: int, pmap: Any, inc_paths: list[str]) -> tuple | None:
+    """정규화 경로 + 본문·각 include 의 mtime/size. 파일이 하나라도 없거나 바뀌면 키가 달라진다."""
+    try:
+        sig = tuple((p, st.st_mtime_ns, st.st_size) for p in [path, *inc_paths] for st in [os.stat(p)])
+    except OSError:
+        return None
+    return (depth, repr(sorted(pmap.items())) if isinstance(pmap, dict) else repr(pmap), sig)
+
+
+def _cached_list_parts(path: str, depth: int, pmap: Any, inc_paths: list[str]) -> list[dict]:
+    key = _parts_key(path, depth, pmap, inc_paths)
+    if key is not None:
+        with _PARTS_LOCK:
+            hit = _PARTS_CACHE.get(key)
+            if hit is not None:
+                _PARTS_CACHE.move_to_end(key)
+                return [dict(p) for p in hit]
+    parts = core_adapter.list_parts(path, depth, pmap)
+    if key is not None:
+        with _PARTS_LOCK:
+            _PARTS_CACHE[key] = [dict(p) for p in parts]
+            while len(_PARTS_CACHE) > _PARTS_CACHE_MAX:
+                _PARTS_CACHE.popitem(last=False)
+    return parts
+
+
 def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> dict[str, Any]:
     core = ctx.config.core or {}
     cc = core.get("case") or {}
@@ -137,7 +171,7 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
     check_includes(ctx.settings, inc_paths)
     includes = [{"path": p, "ok": os.path.isfile(p)} for p in inc_paths]
     try:
-        parts = core_adapter.list_parts(path, depth, pmap)
+        parts = _cached_list_parts(path, depth, pmap, inc_paths)
     except core_adapter.CoreError as exc:
         problems.append(f"{exc.code}: {exc.message}")
     for inc in includes:
@@ -153,13 +187,13 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
             "includes": includes, "part_title": title, "target_part": target}
 
 
-def inspect(ctx: AppContext, principal: Principal, purpose: str, raw: str) -> dict[str, Any]:
+def inspect(ctx: AppContext, principal: Principal, purpose: str, raw: str, part_title: str | None = None) -> dict[str, Any]:
     p = check_input_path(ctx.settings, raw, purpose)
     from ...core.uploads import check_principal_upload_area
 
     check_principal_upload_area(ctx.settings.storage.upload_root, p, principal)
     if purpose == "RAD":
-        return inspect_rad(ctx, p)
+        return inspect_rad(ctx, p, (part_title or "").strip() or None)
     if purpose == "H3D":
         from .uploads import check_h3d
 

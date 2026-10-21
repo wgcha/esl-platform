@@ -185,6 +185,7 @@ export interface CasePatch {
 export interface InspectReq {
   purpose: "RAD" | "RESULTS" | "H3D";
   path: string;
+  part_title?: string | null;
 }
 
 export interface RadPart {

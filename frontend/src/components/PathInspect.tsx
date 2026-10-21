@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
 import type { InspectRadResult, InspectResultsResult } from "../api/types";
+import { normPartTitle } from "../lib/partTitle";
 import { Badge } from "./ui";
 
 type Purpose = "RAD" | "RESULTS";
@@ -20,11 +21,11 @@ export function usePathInspect<P extends Purpose>(purpose: P, initial = "") {
     setError(null);
   };
 
-  async function inspect(p = path) {
+  async function inspect(p = path, partTitle?: string) {
     setBusy(true);
     setError(null);
     try {
-      const r = (purpose === "RAD" ? await api.inspectRad(p) : await api.inspectResults(p)) as ResultOf<P>;
+      const r = (purpose === "RAD" ? await api.inspectRad(p, partTitle) : await api.inspectResults(p)) as ResultOf<P>;
       setResult(r);
     } catch (e) {
       setResult(null);
@@ -54,8 +55,10 @@ export function usePathInspect<P extends Purpose>(purpose: P, initial = "") {
   return { path, setPath, result, error, busy, inspect, field };
 }
 
-export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitle: string }) {
-  const want = partTitle.trim().toLowerCase();
+export function RadInspectView({ r, partTitle, onPickPart }: { r: InspectRadResult; partTitle: string; onPickPart?: (title: string) => void }) {
+  const want = normPartTitle(partTitle);
+  // 대상 파트를 못 찾았거나 둘 이상일 때만 행을 눌러 title 입력을 채운다
+  const pickable = !!onPickPart && r.problems.some((p) => p.startsWith("PART_NOT_FOUND") || p.startsWith("PART_AMBIGUOUS"));
   return (
     <div className={r.ok ? "inspect ok" : "inspect bad"} aria-label="rad 확인 결과">
       <div>
@@ -72,6 +75,7 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
           </div>
         ))}
       </div>
+      {pickable && <div className="small muted">표에서 파트를 누르면 채워집니다</div>}
       <table className="table compact">
         <thead>
           <tr>
@@ -82,7 +86,14 @@ export function RadInspectView({ r, partTitle }: { r: InspectRadResult; partTitl
         </thead>
         <tbody>
           {r.parts.map((p) => (
-            <tr key={p.id} className={want && p.title.toLowerCase() === want ? "hl" : undefined}>
+            <tr
+              key={p.id}
+              className={[want && normPartTitle(p.title) === want ? "hl" : "", pickable ? "pickable" : ""].filter(Boolean).join(" ") || undefined}
+              onClick={pickable ? () => onPickPart!(p.title) : undefined}
+              onKeyDown={pickable ? (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPickPart!(p.title)) : undefined}
+              tabIndex={pickable ? 0 : undefined}
+              title={pickable ? "누르면 파트 title 입력에 채웁니다" : undefined}
+            >
               <td>{p.id}</td>
               <td>{p.title}</td>
               <td className="num">{p.n_elems?.toLocaleString() ?? "–"}</td>

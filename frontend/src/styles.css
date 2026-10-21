@@ -727,6 +727,12 @@ details.card > .table-wrap {
 .table tr.hl td {
   background: var(--accent-weak);
 }
+.table tr.pickable {
+  cursor: pointer;
+}
+.table tr.pickable:hover td {
+  background: var(--accent-weak);
+}
 .table tr.bad-row td {
   background: var(--bad-weak);
 }

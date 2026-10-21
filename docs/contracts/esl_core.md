@@ -52,7 +52,7 @@ class RadModel:
 ```
 - 지원: Radioss 블록 포맷(2017+), `#` 주석, `/INCLUDE "경로"`(rad 기준 상대, 깊이 제한), `/BEGIN`, `/NODE`, `/SHELL/<part_id>`, `/SH3N/<part_id>`, `/PART`, `/PROP/SHELL`(TYPE1), `/MAT/LAW1|ELAST`, `/MAT/LAW2|PLAS_JOHNS`, `/MAT/LAW36|PLAS_TAB`(E·ν만). 그 외 키워드는 건너뛰되 ID는 `max_ids`에 반영.
 - 고정 열 폭: 10자(노드 좌표 등 실수 20자 필드는 Radioss 매뉴얼 규약). 참고 구현: `simdashboard/backend/app/parsers/radioss_deck_parser.py`(복사 금지, 규약만).
-- title 비교: 공백 정규화 후 대소문자 무시(`exact_ci`) / 그대로(`exact`). 0개 `PART_NOT_FOUND`, 2개+ `PART_AMBIGUOUS`. 대상 파트에 /BRICK 등 비쉘 요소 → `UNSUPPORTED_ELEMENT`. E·ν 미해결 → `MATERIAL_UNRESOLVED`(override `{mat_id:{"E":..,"nu":..}}`로 해소).
+- title 비교: 공백·`_`·`-` 연속을 한 칸으로 보고 대소문자 무시(`exact_ci`) / 그대로(`exact`). 0개 `PART_NOT_FOUND`, 2개+ `PART_AMBIGUOUS`. 대상 파트에 /BRICK 등 비쉘 요소 → `UNSUPPORTED_ELEMENT`. E·ν 미해결 → `MATERIAL_UNRESOLVED`(override `{mat_id:{"E":..,"nu":..}}`로 해소).
 
 ### 3.2 TCL 출력 CSV (Windows → 클라우드 입력 폴더 `<results_dir>`)
 

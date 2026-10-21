@@ -1,0 +1,30 @@
+#---1----|----2----|----3----|----4----|----5----|----6----|----7----|----8----|----9----|---10----|
+/NODE
+         1                 0.0                 0.0                 0.0
+         2                10.0                 0.0                 0.0
+         3                10.0                10.0                 0.0
+         4                 0.0                10.0                 0.0
+##HWCOLOR components 10 59
+/PART/10
+#part_title                                                                                         
+chassis_rear                                                                                        
+#  prop_ID    mat_ID subset_ID               Thick
+         3     51138       123    
+/SHELL/10
+#shell_ID  node_ID1  node_ID2  node_ID3  node_ID4
+         1         1         2         3         4
+/MAT/ELAST/51138
+steel_elast
+#              RHO_I
+            7.85E-09
+#                  E                  nu
+            210000.0                 0.3
+/PROP/SHELL/3
+prop_main
+#   Ishell    Ismstr     Ish3n    Idrill    Ipinch                  P_Thick_Fail
+        24        -1
+#                 Hm                  Hf                  Hr                  Dm                  Dn
+
+#        N                         Thick              Ashear              Ithick     Iplas
+         5                           1.6                                       1         1
+/END
