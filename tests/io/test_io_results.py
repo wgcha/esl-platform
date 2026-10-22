@@ -192,7 +192,10 @@ def test_coordinate_mismatch(tmp_path):
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_ok, u, m.elem_id, eps, vm_hv=vm)
     pack_results(rd, m, tmp_path / "o")
     x_bad = m.x0.copy()
-    x_bad[2, 0] += 2e-6 * bbox
+    x_bad[2, 0] += 2e-6 * bbox          # tol 초과지만 1 노드·작은 이동 → 0.5.3: 경고만
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_bad, u, m.elem_id, eps, vm_hv=vm)
+    assert any(w.startswith("COORD_DEVIATION") for w in pack_results(rd, m, tmp_path / "o")["warnings"])
+    x_bad[2, 0] += 0.02 * bbox          # 최대 편차 > 1%·bbox → 실패
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_bad, u, m.elem_id, eps, vm_hv=vm)
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
 
@@ -213,7 +216,89 @@ def test_coordinate_float32_far_from_origin(tmp_path):
     xb = m.x0.copy()
     xb[1, 1] += 1e-3
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, xb, u, m.elem_id, eps, vm_hv=vm)
+    assert pack_results(rd, m, tmp_path / "o")["coord_deviation"]["n_dev"] == 1     # 경고
+    xb[1, 1] += 0.1
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, xb, u, m.elem_id, eps, vm_hv=vm)
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+
+
+def _big_plate(tmp_path, n=20):
+    """n×n 노드 격자 판(요소 (n-1)²) — 노드 수가 충분해 비율 판정을 시험할 수 있음."""
+    xs, ys = np.meshgrid(np.arange(n, dtype=float) * 10, np.arange(n, dtype=float) * 10)
+    x0 = np.c_[xs.ravel(), ys.ravel(), np.zeros(n * n)]
+    nid = np.arange(1, n * n + 1, dtype=np.int64)
+    ids = nid.reshape(n, n)
+    conn = np.array([[ids[i, j], ids[i, j + 1], ids[i + 1, j + 1], ids[i + 1, j]]
+                     for i in range(n - 1) for j in range(n - 1)])
+    ne = conn.shape[0]
+    p = write_rad(tmp_path / "b_0000.rad", nid, x0, np.arange(1, ne + 1), [4] * ne, conn, 1, "plate", 1, 1.0, 1,
+                  2e5, 0.3)
+    return parse_rad(p, "plate")
+
+
+def _pack_shifted(tmp_path, m, shifts, **kw):
+    t, u, eps, vm, ep = _data(m, F=3)
+    x = m.x0.copy()
+    for i, d in shifts.items():
+        x[i, 0] += d
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    return pack_results(rd, m, tmp_path / "o", **kw), tmp_path / "o"
+
+
+def test_coord_deviation_few_nodes_warns(tmp_path):
+    m = _big_plate(tmp_path)                      # N=400, bbox≈269
+    info, od = _pack_shifted(tmp_path, m, {3: 0.386, 10: 0.1, 11: 0.05})
+    w = [x for x in info["warnings"] if x.startswith("COORD_DEVIATION")]
+    assert len(w) == 1 and "3개" in w[0] and "rad 좌표 사용" in w[0]
+    cd = info["coord_deviation"]
+    assert cd["n_dev"] == 3 and cd["n_nodes"] == 400 and abs(cd["max_dev"] - 0.386) < 1e-9
+    assert [t["node_id"] for t in cd["top"]] == [int(m.node_id[3]), int(m.node_id[10]), int(m.node_id[11])]
+    assert f"{int(m.node_id[3])}(" in w[0]
+    assert json.load(open(od / "frames.json"))["coord_deviation"]["n_dev"] == 3
+
+
+def test_coord_deviation_top10_and_rounding_only_no_warning(tmp_path):
+    m = _big_plate(tmp_path)
+    info, _ = _pack_shifted(tmp_path, m, {i: 0.1 + i * 0.01 for i in range(4)})  # 4 = 1% of 400 → 경계 포함
+    assert info["coord_deviation"]["n_dev"] == 4
+    # float32 반올림만 → 경고·기록 없음
+    t, u, eps, vm, ep = _data(m, F=3)
+    x32 = m.x0.astype(np.float32).astype(np.float64)
+    rd = write_results_csv(tmp_path / "csv2", t, m.node_id, x32, u, m.elem_id, eps, vm_hv=vm)
+    info = pack_results(rd, m, tmp_path / "o2")
+    assert info["coord_deviation"] is None and not any("COORD_DEVIATION" in x for x in info["warnings"])
+
+
+def test_coord_deviation_many_nodes_or_large_shift_fails(tmp_path):
+    m = _big_plate(tmp_path)
+    t, u, eps, vm, ep = _data(m, F=3)
+    # 5개(>1% of 400) 이동 → 실패, 메시지에 비율
+    x = m.x0.copy(); x[:5, 0] += 0.1
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o")
+    assert ei.value.code == "ID_MISMATCH" and "5/400" in ei.value.message and "최대" in ei.value.message
+    # 소수 노드지만 최대 편차 > 1%·bbox → 실패
+    bbox = np.linalg.norm(m.x0.max(0) - m.x0.min(0))
+    x = m.x0.copy(); x[3, 0] += 0.011 * bbox
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+    # ID 뒤섞임(좌표 순서 교환) → 실패
+    x = m.x0[::-1].copy()
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+
+
+def test_coord_deviation_threshold_from_config(tmp_path):
+    m = _big_plate(tmp_path)
+    shifts = {i: 0.1 for i in range(5)}
+    info, _ = _pack_shifted(tmp_path, m, shifts, coord_check={"warn_max_frac": 0.0125, "warn_max_rel": 0.01})
+    assert info["coord_deviation"]["n_dev"] == 5          # 5 ≤ 0.0125·400
+    t, u, eps, vm, ep = _data(m, F=3)
+    x = m.x0.copy(); x[2, 0] += 0.4
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    assert _code(pack_results, rd, m, tmp_path / "o", coord_check={"warn_max_frac": 0.01, "warn_max_rel": 1e-4}) \
+        == "ID_MISMATCH"                                  # 0.4 > 1e-4·bbox
 
 
 @pytest.mark.parametrize("name", ["final.csv", "history.csv", "strain_frames.csv", "disp.csv"])

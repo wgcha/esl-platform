@@ -160,6 +160,10 @@ SCHEMA: dict[str, Any] = {
         "hot_k": _int(1),               # 상한 없음(크면 extract 단계 경고)
         "disp_precision": _enum("float32", "float64"),
     },
+    "coord_check": {                # extract 단계 rad↔h3d 초기 좌표 비교(esl_core.md §3.3)
+        "warn_max_frac": _num(0.0, 1.0),   # tol 초과 노드 비율 ≤ 이 값(최소 1개 허용)이면 경고만
+        "warn_max_rel": _num(0.0),         # 최대 편차 ≤ 이 값·bbox 이면 경고만
+    },
     "tstar": {
         "metric": _enum("max_strain", "plastic_strain"),
         "reach_rtol": _num(0.0, 1.0, hi_open=True),
@@ -225,6 +229,10 @@ SCHEMA: dict[str, Any] = {
 }
 
 
+# 기본값은 여기 한 곳. 이전 버전 esl.yaml 에 coord_check 가 없어도 이 값으로 채운다(그 외 키는 모두 필수).
+COORD_CHECK_DEFAULTS = {"warn_max_frac": 0.01, "warn_max_rel": 0.01}
+
+
 def _walk(schema: dict, node: Any, prefix: str) -> None:
     if not isinstance(node, dict):
         raise _bad(prefix or "<root>", f"사전(mapping)이어야 함 (값 {type(node).__name__})")
@@ -243,6 +251,8 @@ def _walk(schema: dict, node: Any, prefix: str) -> None:
 
 def validate_settings(cfg: Any) -> dict:
     """검증 통과 시 cfg 그대로 반환. 실패 → CONFIG_INVALID(키 경로 포함)."""
+    if isinstance(cfg, dict) and "coord_check" not in cfg:
+        cfg["coord_check"] = dict(COORD_CHECK_DEFAULTS)
     _walk(SCHEMA, cfg, "")
     sup = cfg["support"]
     if sup["candidates"] == "node_ids" and len(set(sup["node_ids"])) < 3:

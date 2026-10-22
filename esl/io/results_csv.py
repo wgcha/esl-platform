@@ -197,10 +197,11 @@ def _read_frame_table(path, frames, ids, key, what, name, optional=None):
     return out, present
 
 
-def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
+def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict:
     """TCL CSV 폴더 → ``final.npz``·``history.npz``·``strain_frames.npz``·``disp.npz``·``frames.json`` (§7.3).
 
-    frame_stride: history 의 프레임 간격(후보 프레임 D 는 항상 포함). 반환 {n_frames(history), n_elems, n_nodes,
+    frame_stride: history 의 프레임 간격(후보 프레임 D 는 항상 포함). coord_check: {warn_max_frac, warn_max_rel}
+    (None = esl.config.COORD_CHECK_DEFAULTS). 반환 {n_frames(history), n_elems, n_nodes,
     n_hot, frames_D, candidate_frames, warnings}.
     """
     results_dir = os.fspath(results_dir)
@@ -208,6 +209,8 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
     if int(frame_stride) < 1:
         raise EslError("CONFIG_INVALID", f"frame_stride 는 1 이상이어야 함: {frame_stride}")
     frame_stride = int(frame_stride)
+    from esl.config import COORD_CHECK_DEFAULTS
+    cc = dict(COORD_CHECK_DEFAULTS if coord_check is None else coord_check)
     done = _read_done(results_dir)
     warnings: list[str] = [str(w) for w in (done.get("warnings") or [])]
 
@@ -277,10 +280,23 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
     xmax = float(np.abs(x0).max()) if N else 0.0
     tol = max(1e-6 * bbox, 2.0 * float(np.finfo(np.float32).eps) * xmax * np.sqrt(3.0), 1e-300)
     dev = np.linalg.norm(xm - x0, axis=1)
-    if np.any(dev > tol):
-        bad = np.argsort(-dev)[:5]
-        raise EslError("ID_MISMATCH", f"model.csv 좌표가 rad 와 다름(허용 {tol:.3g}): 최대 {dev.max():.3g}, "
-                                      f"노드 {node_id[bad].tolist()}")
+    over = dev > tol
+    n_dev = int(over.sum())
+    coord_dev = None
+    if n_dev:
+        max_dev = float(dev.max())
+        order = np.argsort(-dev)[:10]
+        top = [{"node_id": int(node_id[i]), "dev": float(dev[i])} for i in order if over[i]]
+        ok = (n_dev <= max(float(cc["warn_max_frac"]) * N, 1.0) and max_dev <= float(cc["warn_max_rel"]) * bbox)
+        if not ok:
+            raise EslError("ID_MISMATCH", f"model.csv 좌표가 rad 와 다름(허용 {tol:.3g}): 최대 {max_dev:.3g}, "
+                                          f"노드 {n_dev}/{N}개({n_dev / N:.3g}) 초과, 상위 노드 "
+                                          f"{[t['node_id'] for t in top[:5]]}")
+        lst = ", ".join(f"{t['node_id']}({t['dev']:.3g})" for t in top)
+        warnings.append(f"COORD_DEVIATION: rad와 h3d 초기 좌표가 노드 {n_dev}개에서 다름(최대 {max_dev:.3g}, 허용 "
+                        f"{tol:.3g}) — Radioss 초기 관통 보정 등으로 옮겨진 노드일 수 있음. 계산은 rad 좌표 사용. "
+                        f"상위 {len(top)}개 노드(편차): {lst}")
+        coord_dev = {"n_dev": n_dev, "n_nodes": int(N), "max_dev": max_dev, "tol": float(tol), "top": top}
     del xm, dev, seen
 
     # ---------------- final.csv (A)
@@ -379,13 +395,13 @@ def pack_results(results_dir, model, out_dir, frame_stride=1) -> dict:
                                                                        "epsp_layer", "disp_type")},
         "units_label": getattr(model, "units_label", ""),
         "layer": "mid", "value_columns": SCOLS, "eps_components": ["exx", "eyy", "exy"], "exy": "raw (h3d)",
-        "warnings": warnings,
+        "warnings": warnings, "coord_deviation": coord_dev,
     }
     with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
     return {"n_frames": int(hist_fi.size), "n_elems": int(E), "n_nodes": int(N), "n_hot": int(hist_id.size),
             "frames_D": D.tolist(), "prev_frames": P.tolist(), "prev_available": bool(prev_ok.all()),
-            "candidate_frames": cand, "warnings": warnings}
+            "candidate_frames": cand, "warnings": warnings, "coord_deviation": coord_dev}
 
 
 def _scan_frames(path: str) -> np.ndarray:
