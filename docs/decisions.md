@@ -42,3 +42,4 @@
 - (P3-이력, 2026-10-21) 실행 이력 계약 초안(esl_p3_history.md): 이력 단위 = jobs 행(새 테이블 없음), 과거 결과는 DB 기록값으로 읽기 전용, 내보내기·보고서는 이후 실행분부터 history/<job_id>/에 보존, 목록 인덱스 migration 0007(근거: 사용자 요청 — "실행 이력 목록에서 다시 확인").
 - (0.5.1, 2026-10-21) 이슈 #16: exact_ci 는 공백·_·- 연속을 한 칸으로 보고 대소문자 무시(코어 parse_rad·백엔드 match_parts·프런트 동일 규칙), 정규화 후 2개 이상이면 PART_AMBIGUOUS 유지, exact 불변. ① 화면은 PART_NOT_FOUND/AMBIGUOUS 일 때 표 행 클릭으로 title 입력을 채움.
 - (0.5.2, 2026-10-21) rad 파서는 대상 파트만 숫자 해석(2단계: 1차 위치·행 수·최대 ID, 2차 대상 쉘·참조 노드 좌표, /PROP·/MAT는 대상 것만). 업로드·보존 범위는 그대로(낙하 씬 전체 유지). 다른 파트 행 형식 오류는 더 이상 검출 안 함. 합성 100만 요소(대상 20%): list_parts 5.2→0.43 s, parse_rad 5.8→1.85 s, 추가 메모리 182→98 MB. 기존 파서는 tests/rad/legacy_parser.py 에 기준 구현으로 보존(근거: 사용자 결정 — "대상 파트만 읽게").
+- (0.5.3, 2026-10-22) 이슈 #20: rad↔h3d 초기 좌표 검사는 "같은 메시·노드 ID" 확인이 목적이므로 소수 노드(≤max(1%·N,1))·작은 이동(≤1%·bbox)은 ID_MISMATCH 대신 COORD_DEVIATION 경고(설정 coord_check.warn_max_frac/warn_max_rel, 기본값은 esl/config.py 한 곳). 계산 좌표는 rad, 변위는 h3d 그대로.

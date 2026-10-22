@@ -69,10 +69,10 @@ class RadModel:
 - `esl_h3d_probe.tcl`: subcase·프레임 수·결과 유형·성분·layer 이름 목록을 `probe.json`으로 출력(이름 확인용).
 - 이 환경에서 실행 불가 → 정적 검토만, 실제 동작은 사용자 E2E.
 
-### 3.3 `esl.io.pack_results(results_dir, model, out_dir, frame_stride=1) -> dict`
+### 3.3 `esl.io.pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict`
 
 - 쓰기: `out_dir/strain_tensor.npz` {`time(F,)f8`, `frame_index(F,)i4`, `elem_id(E,)i8`, `eps(F,E,2,3)f4`(layer 0=bottom,1=top; 성분 exx,eyy,exy)}, `out_dir/disp.npz` {`time(F,)f8`, `frame_index(F,)i4`, `node_id(N,)i8`, `u(F,N,3)f8`}, `out_dir/frames.json`.
-- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소·노드가 하나라도 없거나 model.csv 좌표가 rad와 `1e-6·bbox` 넘게 다르면 `ID_MISMATCH`. 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,warnings}`.
+- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소·노드가 하나라도 없거나 model.csv 좌표가 rad와 다르면(허용 tol = max(`1e-6·bbox`, 2·eps32·|x|max·√3)) 2단계 판정(0.5.3): tol 초과 노드 수 n_dev ≤ max(`coord_check.warn_max_frac`·N, 1)(기본 0.01) 이고 최대 편차 ≤ `coord_check.warn_max_rel`·bbox(기본 0.01)이면 성공 + 경고 `COORD_DEVIATION`(상위 10개 노드 ID·편차, `frames.json`·extract summary 의 `coord_deviation` 에 기록 — Radioss 초기 관통 보정 등), 그 밖은 `ID_MISMATCH`(메시지에 n_dev/N·최대 편차). 사용 좌표: K_L·형상은 항상 rad 좌표, 변위는 h3d Displacement(model.csv 는 검증용일 뿐 계산에 쓰지 않음). `coord_check` 키가 없는 이전 esl.yaml 은 기본값으로 채운다. 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,warnings}`.
 - 대용량 대비: CSV는 청크 읽기(`numpy`/`csv` 스트리밍), 전체 텍스트를 한 번에 메모리에 올리지 않음.
 
 ## 4. Impl-B 인터페이스 (`esl.mech`)

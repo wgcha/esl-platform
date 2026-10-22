@@ -68,6 +68,8 @@ _DEL = object()
     ("extract.layers", "mid", "extract.layers"),
     ("extract.shear_convention", "gamma", "extract.shear_convention"),
     ("extract.hot_k", 0, "extract.hot_k"),
+    ("coord_check.warn_max_frac", 1.5, "coord_check.warn_max_frac"),
+    ("coord_check.warn_max_rel", -1, "coord_check.warn_max_rel"),
     ("extract.hot_k", 2.5, "extract.hot_k"),
     ("tstar.metric", "vm", "tstar.metric"),
     ("tstar.metric", _DEL, "tstar.metric"),
