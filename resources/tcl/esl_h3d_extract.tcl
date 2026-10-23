@@ -19,7 +19,8 @@
 #
 # Writes into <dir>:
 #   frames.csv         frame_index,time                                 (all frames)
-#   model.csv          node_id,x0,y0,z0                                 (part nodes, frame 0)
+#   model.csv          node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz               (part nodes: x0 = initial coords
+#                      = frame-0 node.coords (cx..) - frame-0 displacement (dx..))
 #   final.csv          elem_id,vm_hv,exx,eyy,ezz,exy,epsp               (A)
 #   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (B)
 #   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
@@ -1169,19 +1170,56 @@ proc ::esl::run {arglist} {
     set ffr [::esl::open_csv [file join $out frames.csv] "frame_index,time"]
     for {set fi 0} {$fi < $nsim} {incr fi} { puts $ffr "$fi,[::esl::num [::esl::sim_time $sims $fi]]" }
     close $ffr
+    # model.csv: initial (undeformed) coordinates x0 = node.coords - frame-0 Displacement.
+    # node.coords is the coordinate of the current frame (deformed when frame 0 has a displacement,
+    # e.g. a drop model whose first stored state is t > 0 or carries an initial rigid motion), so the
+    # frame-0 displacement (disp_type / disp_comps) is read for the same node chunk and subtracted.
+    # Raw coords (cx,cy,cz) and frame-0 displacement (dx,dy,dz) are kept as diagnostic columns.
     ::esl::set_sim $res $post 0
-    ::esl::step "model.csv node.coords"
-    set fmo [::esl::open_csv [file join $out model.csv] "node_id,x0,y0,z0"]
+    set t_f0 [::esl::sim_time $sims 0]
+    ::esl::progress "model.csv: frame 0 (time $t_f0) node.coords - $dtype ($nn_ch node chunks)"
+    set fmo [::esl::open_csv [file join $out model.csv] "node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz"]
     set nnode 0
-    ::esl::each_rec $qry $nset_id "node.id node.coords" rec {
-        if {[llength $rec] >= 4 && [string is integer -strict [lindex $rec 0]] \
-                && [string is double -strict [lindex $rec 1]] && [string is double -strict [lindex $rec 2]] \
-                && [string is double -strict [lindex $rec 3]]} {
-            puts $fmo "[lindex $rec 0],[::esl::num [lindex $rec 1]],[::esl::num [lindex $rec 2]],[::esl::num [lindex $rec 3]]"
-            incr nnode
+    set nod0 0
+    set d0max 0.0
+    set d0ok 1
+    set ci 0
+    foreach ch $nchunks {
+        incr ci
+        set d0 [dict create]
+        if {$d0ok} {
+            if {[catch {::esl::collect $con $qry [lindex $ch 0] node $dfields "model.csv frame 0 chunk $ci"} acc]} {
+                set d0ok 0
+                ::esl::warn "model.csv: frame 0 $dtype not available ([::esl::short $acc 200]); x0 = node.coords of frame 0 (dx,dy,dz = 0)"
+            } else {
+                set d0 $acc
+            }
+            unset -nocomplain acc
         }
+        ::esl::step "model.csv node.coords chunk $ci"
+        ::esl::each_rec $qry [lindex $ch 0] "node.id node.coords" rec {
+            if {[llength $rec] >= 4 && [string is integer -strict [lindex $rec 0]] \
+                    && [string is double -strict [lindex $rec 1]] && [string is double -strict [lindex $rec 2]] \
+                    && [string is double -strict [lindex $rec 3]]} {
+                set id [lindex $rec 0]
+                if {[dict exists $d0 $id] && [llength [dict get $d0 $id]] == 3} {
+                    lassign [dict get $d0 $id] dx dy dz
+                } else {
+                    set dx 0.0; set dy 0.0; set dz 0.0
+                    if {$d0ok} { incr nod0 }
+                }
+                lassign [lrange $rec 1 3] cx cy cz
+                set dm [expr {sqrt($dx*$dx + $dy*$dy + $dz*$dz)}]
+                if {$dm > $d0max} { set d0max $dm }
+                puts $fmo "$id,[::esl::num [expr {$cx - $dx}]],[::esl::num [expr {$cy - $dy}]],[::esl::num [expr {$cz - $dz}]],[::esl::num $cx],[::esl::num $cy],[::esl::num $cz],[::esl::num $dx],[::esl::num $dy],[::esl::num $dz]"
+                incr nnode
+            }
+        }
+        unset d0
     }
     close $fmo
+    if {$nod0 > 0} { ::esl::warn "model.csv: $nod0 nodes without frame 0 $dtype (x0 = node.coords)" }
+    ::esl::progress "model.csv done: $nnode nodes, frame 0 |disp| max [::esl::num $d0max]"
 
     # ---- pass A: last frame, all part elements (chunked) -> final.csv, running top hot_k
     set t0 [::esl::ms]
@@ -1344,7 +1382,9 @@ proc ::esl::run {arglist} {
     set ch_json {}
     dict for {k2 v2} $::esl::chunk_how { lappend ch_json "[::esl::jstr $k2]:[::esl::jstr $v2]" }
     if {[::esl::write_done $out 1 [list part_id $pid part_title [::esl::jstr $ptitle] \
-        part_spec [::esl::jstr $spec] n_frames $nsim n_elems $nelem n_nodes $nnode n_hot $nh \
+        part_spec [::esl::jstr $spec] n_frames $nsim \
+        frame0_time [::esl::num $t_f0] model_coords [::esl::jstr "coords_minus_disp_frame0"] \
+        frame0_disp_max [::esl::num $d0max] frame0_disp_ok [expr {$d0ok ? "true" : "false"}] n_elems $nelem n_nodes $nnode n_hot $nh \
         hot_k $hot_k top_n $top_n reach_rtol [::esl::num $rtol] \
         candidate_frames "\{\"max_strain\":[::esl::jints [lindex $cand_vm 0]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 0]]\}" \
         candidate_elems "\{\"max_strain\":[::esl::jints [lindex $cand_vm 1]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 1]]\}" \

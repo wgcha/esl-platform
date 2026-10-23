@@ -410,3 +410,94 @@ def test_prev_frames_missing_old_tcl_output(tmp_path):
     rd, _ = _write(m, tmp_path / "csv2", F=7, frames_D=[3, 5])
     _drop(rd, "strain_frames.csv", lambda l: l.startswith(f"2,{m.elem_id[0]},"))   # 프레임 2 일부 요소만 남김
     assert _code(pack_results, rd, m, tmp_path / "o2") == "ID_MISMATCH"
+
+
+# ---- 0.5.4: model.csv 초기 좌표 = 프레임 0 node.coords − 프레임 0 변위 (낙하 해석의 강체 이동)
+def _drop_u(m, F=3, v=(0.0, 0.0, -4.5), dt=0.08, seed=7):
+    """프레임 0 에 0 이 아닌 변위: 강체 이동 v·dt + 작은 변형(편차 tol 수준 아님)."""
+    t, u, eps, vm, ep = _data(m, F=F)
+    rng = np.random.default_rng(seed)
+    u = u.copy()
+    u[0] = np.asarray(v) * dt + rng.normal(size=u[0].shape) * 1e-3
+    return t, u, eps, vm
+
+
+def test_frame0_displacement_corrected_passes(tmp_path):
+    m = _big_plate(tmp_path)                       # N=400
+    t, u, eps, vm = _drop_u(m)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm)
+    hdr = open(os.path.join(rd, "model.csv")).readline().strip()
+    assert hdr == "node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz"
+    info = pack_results(rd, m, tmp_path / "o")
+    assert info["coord_deviation"] is None and not any("COORD_DEVIATION" in w for w in info["warnings"])
+    fj = json.load(open(tmp_path / "o" / "frames.json"))
+    assert fj["model_coords"] == "coords_minus_disp_frame0" and fj["frame0_time"] == float(t[0])
+    # 예전 TCL 처럼 변형 좌표(x0+u0)를 x0 로 쓴 구형 model.csv → 전 노드 실패 + 강체 이동 진단
+    rd2 = write_results_csv(tmp_path / "csv2", t, m.node_id, m.x0 + u[0], u, m.elem_id, eps, vm_hv=vm,
+                            legacy_model=True)
+    with pytest.raises(EslError) as ei:
+        pack_results(rd2, m, tmp_path / "o2")
+    msg = ei.value.message
+    assert ei.value.code == "ID_MISMATCH" and "400/400" in msg
+    assert "강체 이동" not in msg                  # 작은 변형 1e-3 > tol → 강체 정합 잔차가 tol 초과
+    assert "평균 편차 [" in msg and "강체 정합 후 잔차 최대" in msg and "frame 0 time" in msg
+    assert "-0.36" in msg                          # 평균 z 편차 ≈ v·dt = −0.36
+
+
+def test_rigid_shift_diagnosed(tmp_path):
+    m = _big_plate(tmp_path)
+    t, u, eps, vm, ep = _data(m, F=3)
+    th = np.radians(0.5)
+    R = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1]])
+    xs = m.x0 @ R.T + np.array([0.0, 0.0, -0.386])
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, xs, u, m.elem_id, eps, vm_hv=vm, legacy_model=True)
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o")
+    msg = ei.value.message
+    assert ei.value.code == "ID_MISMATCH" and "h3d 좌표가 rad에서 강체 이동" in msg and "회전 0.5°" in msg
+    g = RC.coord_diagnostics(xs, m.x0, 1e-6)
+    assert g["rigid"] and g["rigid_residual_max"] < 1e-9 and abs(g["rigid_rotation_deg"] - 0.5) < 1e-9
+    assert abs(g["std_dev"][2]) < 1e-12 and abs(g["mean_dev"][2] + 0.386) < 1e-12
+
+
+def test_legacy_model_csv_still_read(tmp_path):
+    m = _big_plate(tmp_path)
+    t, u, eps, vm = _drop_u(m)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, legacy_model=True)
+    assert open(os.path.join(rd, "model.csv")).readline().strip() == "node_id,x0,y0,z0"
+    info = pack_results(rd, m, tmp_path / "o")
+    assert info["coord_deviation"] is None
+    assert json.load(open(tmp_path / "o" / "frames.json"))["model_coords"] == "legacy"
+    # 구형 + 소수 노드 편차 → 기존 경고 규칙 유지
+    x = m.x0.copy(); x[3, 0] += 0.2
+    rd = write_results_csv(tmp_path / "csv2", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm, legacy_model=True)
+    w = [x for x in pack_results(rd, m, tmp_path / "o2")["warnings"] if x.startswith("COORD_DEVIATION")]
+    assert len(w) == 1 and "1개" in w[0] and "진단:" in w[0]
+
+
+def test_coords_already_initial_falls_back_to_raw(tmp_path):
+    """node.coords 가 이미 변형 전 좌표인 h3d: cx = x0, x0열 = cx − d → 원값 비교로 통과 + 경고."""
+    m = _big_plate(tmp_path)
+    t, u, eps, vm = _drop_u(m)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm)
+    p = os.path.join(rd, "model.csv")
+    g = "{:.17g}".format
+    rows = ["node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz"]
+    for k in range(m.node_id.size):
+        c, d = m.x0[k], u[0, k]
+        rows.append(",".join([str(int(m.node_id[k]))] + [g(v) for v in (*(c - d), *c, *d)]))
+    open(p, "w").write("\n".join(rows) + "\n")
+    info = pack_results(rd, m, tmp_path / "o")
+    assert info["coord_deviation"] is None and any("원값(cx,cy,cz)으로 비교" in w for w in info["warnings"])
+
+
+def test_real_mesh_mismatch_still_fails_after_correction(tmp_path):
+    m = _big_plate(tmp_path)
+    t, u, eps, vm = _drop_u(m)
+    rng = np.random.default_rng(3)
+    x = m.x0 + rng.normal(size=m.x0.shape) * 0.5     # 다른 메시(비강체) — 변위 보정 후에도 전 노드 다름
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o")
+    assert ei.value.code == "ID_MISMATCH" and "강체 이동" not in ei.value.message
+    assert "frame 0 변위 최대" in ei.value.message

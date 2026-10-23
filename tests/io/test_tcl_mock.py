@@ -53,7 +53,7 @@ def _series(seed=3, eng=True):
 
 
 def _setup(tmp_path, eng=True, drop_type=None, extra_req="", mock_extra="", config=True, cli="",
-           part_line="part_id\t7\n", script="esl_h3d_extract.tcl", prelude="", hot_k=2):
+           part_line="part_id\t7\n", script="esl_h3d_extract.tcl", prelude="", hot_k=2, u0=None, no_disp0=False):
     nid = np.arange(1, 13)
     xs, ys = np.meshgrid([0.0, 1, 2, 3], [0.0, 1, 2], indexing="ij")
     x0 = np.c_[xs.ravel(), ys.ravel(), 0.1 * xs.ravel() * ys.ravel()]
@@ -65,7 +65,8 @@ def _setup(tmp_path, eng=True, drop_type=None, extra_req="", mock_extra="", conf
     vm, xy, zz, ep = _series(eng=eng)
     rng = np.random.default_rng(5)
     u = rng.normal(size=(F, 12, 3))
-    u[0] = 0.0
+    u[0] = 0.0 if u0 is None else u0
+    xc = x0 + u[0]                                   # 프레임 0 node.coords(변형 좌표)
     t = np.arange(F) * 1e-3
     vals = []
     for f in range(F):
@@ -77,6 +78,8 @@ def _setup(tmp_path, eng=True, drop_type=None, extra_req="", mock_extra="", conf
             if drop_type != "Plastic Strain":
                 vals.append(f"{_key('Plastic Strain', 'Scalar value', 'Mid', f, eid[e])} {float(ep[f, e])!r}")
         for k in range(12):
+            if no_disp0 and f == 0:
+                continue
             for c, comp in enumerate("XYZ"):
                 vals.append(f"{_key('Displacement', comp, '', f, nid[k])} {float(u[f, k, c])!r}")
     data = [
@@ -84,7 +87,7 @@ def _setup(tmp_path, eng=True, drop_type=None, extra_req="", mock_extra="", conf
         "set ::mock::parts [dict create 7 [dict create elems {10 11 12 13 14 15} nodes {"
         + " ".join(map(str, nid)) + "}] 8 [dict create elems {99} nodes {900}]]",
         "set ::mock::names [dict create 7 chassis_rear 8 {Other Part}]",
-        "set ::mock::coords [dict create " + " ".join(f"{nid[k]} {_tcl_list(x0[k].tolist())}" for k in range(12))
+        "set ::mock::coords [dict create " + " ".join(f"{nid[k]} {_tcl_list(xc[k].tolist())}" for k in range(12))
         + " 900 {9 9 9}]",
         "set ::mock::vals [dict create " + " ".join(vals) + "]",
     ]
@@ -142,7 +145,7 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
     assert done["ok"] is True, done.get("errorInfo")
     assert done["n_frames"] == F and done["n_elems"] == 6 and done["n_nodes"] == 12
     assert sorted(os.listdir(out)) == ["disp.csv", "done.json", "final.csv", "frames.csv", "history.csv",
-                                       "model.csv", "strain_frames.csv"]
+                                       "model.csv", "progress.log", "strain_frames.csv"]
     # H·D 규칙 = Python(esl.mech.tstar)과 동일
     H = tstar.hot_set(ref["vm"][-1], ref["ep"][-1], 2)
     assert done["n_hot"] == H.size and 2 <= H.size <= 4
@@ -546,3 +549,43 @@ def test_tcl_scripts_run_on_tcl85(tmp_path, script):
     assert j["env"]["tcl_version"] == "8.5"
     if "extract" in script:
         assert pack_results(out, m, tmp_path / "npz")["n_frames"] == F
+
+
+def test_extract_model_csv_initial_coords_from_frame0_disp(tmp_path):
+    """프레임 0 node.coords 가 변형 좌표(강체 이동 + 작은 변형): model.csv x0 = coords − 프레임 0 변위 → pack 통과."""
+    rng = np.random.default_rng(11)
+    u0 = np.array([0.0, 0.0, -0.386]) + rng.normal(size=(12, 3)) * 1e-3
+    m, ref, drv, out = _setup(tmp_path, u0=u0, extra_req="chunk\t5\n")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["model_coords"] == "coords_minus_disp_frame0" and done["frame0_time"] == 0.0
+    assert done["frame0_disp_ok"] is True and abs(done["frame0_disp_max"] - np.linalg.norm(u0, axis=1).max()) < 1e-12
+    lines = (out / "model.csv").read_text().splitlines()
+    assert lines[0] == "node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz" and len(lines) == 13
+    a = np.loadtxt(lines[1:], delimiter=",")
+    o = np.argsort(a[:, 0])
+    a = a[o]
+    assert np.allclose(a[:, 1:4], ref["x0"], atol=1e-12) and np.array_equal(a[:, 7:10], u0)
+    assert np.allclose(a[:, 4:7], ref["x0"] + u0, atol=0)
+    assert "model.csv done: 12 nodes" in (out / "progress.log").read_text()
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["coord_deviation"] is None
+
+
+def test_extract_model_csv_without_frame0_disp_warns(tmp_path):
+    m, ref, drv, out = _setup(tmp_path, no_disp0=True)
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["frame0_disp_ok"] is False
+    assert any("frame 0 Displacement not available" in w for w in done["warnings"])
+    assert pack_results(out, m, tmp_path / "npz")["coord_deviation"] is None
+
+
+def test_extract_tcl_model_csv_static():
+    src = open(os.path.join(TCL_DIR, "esl_h3d_extract.tcl"), encoding="ascii").read()
+    assert '"node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz"' in src
+    assert '"node.id node.coords"' in src and 'model.csv frame 0 chunk' in src
+    assert "frame0_time" in src and "coords_minus_disp_frame0" in src
