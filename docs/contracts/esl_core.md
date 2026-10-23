@@ -60,7 +60,7 @@ class RadModel:
 | 파일 | 헤더 | 비고 |
 |---|---|---|
 | `frames.csv` | `frame_index,time` | |
-| `model.csv` | `node_id,x0,y0,z0` | 대상 파트 노드(검증용) |
+| `model.csv` | `node_id,x0,y0,z0[,cx,cy,cz,dx,dy,dz]` | 대상 파트 노드 **초기(변형 전) 좌표**(검증용, §7.2) |
 | `strain.csv` | `frame_index,elem_id,layer,exx,eyy,exy` | layer ∈ `bottom`,`top`(필수), `mid`(선택). **요소 국부계 면내 텐서, exy = 텐서 전단(γ/2)** |
 | `disp.csv` | `frame_index,node_id,ux,uy,uz` | 전역계, u = x(t) − X0 |
 | `done.json` | `{"ok":true,"n_frames","n_elems","n_nodes","h3d","warnings":[]}` | 없으면 `TOOL_OUTPUT_MISSING` |
@@ -72,7 +72,7 @@ class RadModel:
 ### 3.3 `esl.io.pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict`
 
 - 쓰기: `out_dir/strain_tensor.npz` {`time(F,)f8`, `frame_index(F,)i4`, `elem_id(E,)i8`, `eps(F,E,2,3)f4`(layer 0=bottom,1=top; 성분 exx,eyy,exy)}, `out_dir/disp.npz` {`time(F,)f8`, `frame_index(F,)i4`, `node_id(N,)i8`, `u(F,N,3)f8`}, `out_dir/frames.json`.
-- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소·노드가 하나라도 없거나 model.csv 좌표가 rad와 다르면(허용 tol = max(`1e-6·bbox`, 2·eps32·|x|max·√3)) 2단계 판정(0.5.3): tol 초과 노드 수 n_dev ≤ max(`coord_check.warn_max_frac`·N, 1)(기본 0.01) 이고 최대 편차 ≤ `coord_check.warn_max_rel`·bbox(기본 0.01)이면 성공 + 경고 `COORD_DEVIATION`(상위 10개 노드 ID·편차, `frames.json`·extract summary 의 `coord_deviation` 에 기록 — Radioss 초기 관통 보정 등), 그 밖은 `ID_MISMATCH`(메시지에 n_dev/N·최대 편차). 사용 좌표: K_L·형상은 항상 rad 좌표, 변위는 h3d Displacement(model.csv 는 검증용일 뿐 계산에 쓰지 않음). `coord_check` 키가 없는 이전 esl.yaml 은 기본값으로 채운다. 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,warnings}`.
+- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소·노드가 하나라도 없거나 model.csv 좌표가 rad와 다르면(허용 tol = max(`1e-6·bbox`, 2·eps32·|x|max·√3)) 2단계 판정(0.5.3): tol 초과 노드 수 n_dev ≤ max(`coord_check.warn_max_frac`·N, 1)(기본 0.01) 이고 최대 편차 ≤ `coord_check.warn_max_rel`·bbox(기본 0.01)이면 성공 + 경고 `COORD_DEVIATION`(상위 10개 노드 ID·편차, `frames.json`·extract summary 의 `coord_deviation` 에 기록 — Radioss 초기 관통 보정 등), 그 밖은 `ID_MISMATCH`(메시지에 n_dev/N·최대 편차). 비교 좌표(0.5.4): model.csv 의 `x0`(= 프레임 0 node.coords − 프레임 0 변위). 진단 열 `cx,cy,cz` 가 있고 그것이 rad 와 더 잘 맞으면(node.coords 가 이미 초기 좌표) 원값으로 비교 + 경고. 구형 `node_id,x0,y0,z0` 파일도 그대로 읽음. `ID_MISMATCH`·`COORD_DEVIATION` 메시지와 `coord_deviation` 에 진단: 평균 편차 벡터 `mean_dev`, 축별 표준편차 `std_dev`, Kabsch 강체 정합(회전+평행이동) 후 잔차 최대 `rigid_residual_max`·회전각, `frame0_time`, 프레임 0 변위 최대; 정합 잔차 ≤ tol 이면 "h3d 좌표가 rad에서 강체 이동(평균 …)" 문구. 사용 좌표: K_L·형상은 항상 rad 좌표, 변위는 h3d Displacement(model.csv 는 검증용일 뿐 계산에 쓰지 않음). `coord_check` 키가 없는 이전 esl.yaml 은 기본값으로 채운다. 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,warnings}`.
 - 대용량 대비: CSV는 청크 읽기(`numpy`/`csv` 스트리밍), 전체 텍스트를 한 번에 메모리에 올리지 않음.
 
 ## 4. Impl-B 인터페이스 (`esl.mech`)
@@ -134,13 +134,14 @@ class RadModel:
 | 패스 | 대상 | 파일 | 헤더 |
 |---|---|---|---|
 | — | 전 프레임 시간 | `frames.csv` | `frame_index,time` |
-| — | 파트 노드 초기좌표 | `model.csv` | `node_id,x0,y0,z0` |
+| — | 파트 노드 초기좌표(프레임 0) | `model.csv` | `node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz` |
 | A | 마지막 프레임, 파트 전 요소 | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | B | 전 프레임, 집합 H만 | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | C | 후보 프레임 D, 파트 전 노드·전 요소 | `disp.csv`, `strain_frames.csv` | `frame_index,node_id,ux,uy,uz` / `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 - H = (final vm_hv 상위 `hot_k`) ∪ (final epsp 상위 `hot_k`), `hot_k` 기본 200.
 - D = 각 지표(vm_hv, epsp)에 대해 H를 최종값 내림차순으로 훑으며 first-reach 프레임을 서로 다른 것만 `top_n_times`(기본 5)개까지 모은 합집합(≤10). rank 1 = 최종값 1위 요소의 first-reach.
 - TCL 인자: `-part`(필수 또는 request.txt), 선택 `-hot_k`, `-top_n`. 결과 유형·성분·layer 이름 기본값은 위 probe 값. done.json에 `candidate_frames:{max_strain:[...],plastic_strain:[...]}`, `hot_k`, `reach_rtol`, 패스별 행 수·소요시간.
+- model.csv(0.5.4): HyperView `node.coords` 는 현재 프레임의 (변형) 좌표이므로, 프레임 0 에서 노드 청크마다 `node.id node.coords` 와 같은 노드의 Displacement(`disp_type`/`disp_comps`) 를 읽어 `x0 = c − d` 를 기록, `cx..`=원 coords, `dx..`=프레임 0 변위(진단). 프레임 0 변위를 못 읽으면 경고 후 `x0 = c`(d=0). done.json 에 `frame0_time`, `model_coords:"coords_minus_disp_frame0"`, `frame0_disp_max`, `frame0_disp_ok`.
 - 수치 `%.17g`, Tcl 8.5 호환 유지.
 
 ### 7.3 Python 패킹(`pack_results`) — npz
