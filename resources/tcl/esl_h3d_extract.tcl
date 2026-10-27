@@ -21,7 +21,9 @@
 #   frames.csv         frame_index,time                                 (all frames)
 #   model.csv          node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz               (part nodes: x0 = initial coords
 #                      = frame-0 node.coords (cx..) - frame-0 displacement (dx..))
-#   final.csv          elem_id,vm_hv,exx,eyy,ezz,exy,epsp               (A)
+#   elems.csv          elem_id,n1,n2,n3,n4                              (part element connectivity, triangles
+#                      n4 = 0; done.json "elems_ok" false and no file if the query is not available)
+#   final.csv         elem_id,vm_hv,exx,eyy,ezz,exy,epsp               (A)
 #   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (B)
 #   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
 #   disp.csv           frame_index,node_id,ux,uy,uz                     (C)
@@ -1221,6 +1223,73 @@ proc ::esl::run {arglist} {
     if {$nod0 > 0} { ::esl::warn "model.csv: $nod0 nodes without frame 0 $dtype (x0 = node.coords)" }
     ::esl::progress "model.csv done: $nnode nodes, frame 0 |disp| max [::esl::num $d0max]"
 
+    # ---- elems.csv: part element -> node ids (model identity check in pack: same node ids per element).
+    # The query field name is tried in order on the first element chunk (UNVERIFIED names); a record is
+    # {id n1 n2 n3 [n4]} (nested list or comma separated). Not available -> warning, done.json elems_ok:false
+    # and no elems.csv (pack then skips the connectivity check).
+    set t0 [::esl::ms]
+    ::esl::progress "elems.csv: element connectivity ($ne_ch element chunks)"
+    set fel [::esl::open_csv [file join $out elems.csv] "elem_id,n1,n2,n3,n4"]
+    set conn_cands [list "element.id element.connectivity" "element.id element.nodes" "element.id element.node_ids"]
+    set conn_q ""
+    set conn_err {}
+    set nconn 0
+    set nconn_bad 0
+    set elems_ok 1
+    set ci 0
+    foreach ch $echunks {
+        incr ci
+        ::esl::step "elems.csv connectivity chunk $ci"
+        if {$conn_q eq ""} { set tries $conn_cands } else { set tries [list $conn_q] }
+        set got 0
+        foreach q $tries {
+            set rows {}
+            set nbad 0
+            if {[catch {
+                ::esl::each_rec $qry [lindex $ch 0] $q rec {
+                    set r [string map {, " "} [join $rec " "]]
+                    set ok [expr {[llength $r] == 4 || [llength $r] == 5}]
+                    if {$ok} {
+                        foreach v $r { if {![string is integer -strict $v]} { set ok 0; break } }
+                    }
+                    if {$ok} {
+                        if {[llength $r] == 4} { lappend r 0 }
+                        lappend rows [join $r ,]
+                    } else {
+                        incr nbad
+                    }
+                }
+            } e]} {
+                lappend conn_err "$q: [::esl::short $e 120]"
+                continue
+            }
+            if {$conn_q eq "" && [llength $rows] == 0} {
+                lappend conn_err "$q: no usable rows ($nbad unparsed)"
+                continue
+            }
+            set conn_q $q
+            set got 1
+            foreach r $rows { puts $fel $r }
+            incr nconn [llength $rows]
+            incr nconn_bad $nbad
+            break
+        }
+        unset -nocomplain rows
+        if {!$got} { set elems_ok 0; break }
+    }
+    close $fel
+    if {$elems_ok && ($nconn == 0 || $nconn_bad > 0)} {
+        set elems_ok 0
+        lappend conn_err "$nconn rows, $nconn_bad records not {id n1 n2 n3 \[n4\]}"
+    }
+    if {!$elems_ok} {
+        catch {file delete [file join $out elems.csv]}
+        ::esl::warn "elems.csv: element connectivity not available ([::esl::short [join $conn_err {; }] 300]); rad/h3d connectivity check skipped"
+        ::esl::progress "elems.csv skipped: connectivity query failed"
+    } else {
+        ::esl::progress "elems.csv done: $nconn elements (query '$conn_q', [::esl::secs $t0] s)"
+    }
+
     # ---- pass A: last frame, all part elements (chunked) -> final.csv, running top hot_k
     set t0 [::esl::ms]
     ::esl::progress "pass A start (frame $last, $ne_ch element chunks)"
@@ -1384,7 +1453,9 @@ proc ::esl::run {arglist} {
     if {[::esl::write_done $out 1 [list part_id $pid part_title [::esl::jstr $ptitle] \
         part_spec [::esl::jstr $spec] n_frames $nsim \
         frame0_time [::esl::num $t_f0] model_coords [::esl::jstr "coords_minus_disp_frame0"] \
-        frame0_disp_max [::esl::num $d0max] frame0_disp_ok [expr {$d0ok ? "true" : "false"}] n_elems $nelem n_nodes $nnode n_hot $nh \
+        frame0_disp_max [::esl::num $d0max] frame0_disp_ok [expr {$d0ok ? "true" : "false"}] \
+        elems_ok [expr {$elems_ok ? "true" : "false"}] elems_query [::esl::jstr $conn_q] n_conn $nconn \
+        n_elems $nelem n_nodes $nnode n_hot $nh \
         hot_k $hot_k top_n $top_n reach_rtol [::esl::num $rtol] \
         candidate_frames "\{\"max_strain\":[::esl::jints [lindex $cand_vm 0]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 0]]\}" \
         candidate_elems "\{\"max_strain\":[::esl::jints [lindex $cand_vm 1]],\"plastic_strain\":[::esl::jints [lindex $cand_ep 1]]\}" \

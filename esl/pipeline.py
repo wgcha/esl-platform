@@ -479,7 +479,8 @@ def stage_extract(ctx: Context) -> dict:
          "n_hot": info["n_hot"], "frames_D": info["frames_D"], "candidate_frames": info["candidate_frames"],
          "shear": {"convention": sh["convention"], "mode": sh["mode"], "max_rel_mismatch": mm,
                    "median": sh["median"]},
-         "mats": model.mats, "max_ids": model.max_ids, "coord_deviation": info.get("coord_deviation")}
+         "mats": model.mats, "max_ids": model.max_ids, "coord_deviation": info.get("coord_deviation"),
+         "conn_check": info.get("conn_check")}
     ctx.echo(f"[extract] 파트 {model.part_id} '{model.part_title}': 노드 {s['n_nodes']}, 요소 {s['n_elems']} "
              f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 이력 프레임 {s['n_frames']}, H {s['n_hot']}요소, "
              f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}"

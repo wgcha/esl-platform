@@ -17,9 +17,8 @@ extract:
   hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고, 상한 없음·1000 초과 경고)
   disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
 
-coord_check:                         # rad ↔ h3d 초기 좌표 비교(frame 0). 노드 ID·메시 동일성 확인이 목적
-  warn_max_frac: 0.01                # tol 초과 노드 수 ≤ max(이 값·N, 1) 이고
-  warn_max_rel: 0.01                 # 최대 편차 ≤ 이 값·bbox 이면 성공 + COORD_DEVIATION 경고(Radioss 초기 관통 보정 등), 아니면 ID_MISMATCH
+coord_check:                         # rad ↔ h3d 같은 모델 확인 = 노드 ID + 요소 연결(elems.csv). 좌표는 개략 확인만(계산 좌표는 항상 rad)
+  max_rel: 0.005                     # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과(편차는 정보로 기록), 넘으면 ID_MISMATCH
 
 tstar:
   metric: max_strain                 # max_strain (Max_Strain 텐서 ε_eq) | plastic_strain. 두 지표 모두 tstar.json 에 기록

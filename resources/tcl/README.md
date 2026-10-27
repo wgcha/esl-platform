@@ -121,7 +121,8 @@ h3d의 `Max_Strain`·`Plastic Strain`은 **요소별 누적 최대(max-hold)**�
 | 패스 | 대상 | 파일 | 헤더 |
 |---|---|---|---|
 | — | 전 프레임 시간 | `frames.csv` | `frame_index,time` |
-| — | 프레임 0 파트 노드 좌표 | `model.csv` | `node_id,x0,y0,z0` |
+| — | 프레임 0 파트 노드 좌표(x0 = node.coords − 프레임 0 변위, 진단 열 cx..·dx..) | `model.csv` | `node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz` |
+| — | 파트 요소-노드 연결(0.5.5, 같은 모델 확인용; 쿼리 실패 시 없음 + done.json `elems_ok:false`) | `elems.csv` | `elem_id,n1,n2,n3,n4`(삼각형 n4=0) |
 | A | 마지막 프레임, 파트 전 요소(청크) | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | B | 전 프레임, 집합 H(≤ 400 요소, id 선택 집합 1개) | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | C | 후보 프레임 D, 파트 전 요소·전 노드(청크) + 직전 프레임 P, 파트 전 요소 | `strain_frames.csv`, `disp.csv` | 위와 같음 / `frame_index,node_id,ux,uy,uz` |

@@ -128,5 +128,5 @@ def build(out_dir: str, seed: int = 42, hot_k: int = 200, top_n: int = 5) -> dic
                     PART_TITLE, PID, thk, MID, E_MOD, NU, extra_parts=1)
     write_results_csv(dcsv, times, node_id, X0, U, elem_id, eps_h3d, vm_hv=eq_hold,
                       ezz=-(eps_hold[..., 0] + eps_hold[..., 1]), epsp=epsp, hot_k=hot_k, top_n=top_n,
-                      extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1])
+                      extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1], elem_nodes=conn_ids)
     return {"rad": rad, "csv": dcsv, "t_star_frame": T_STAR_FRAME, "part_id": PART_ID}

@@ -33,6 +33,20 @@ def test_example_loads():
     assert config.redacted_settings(cfg) == cfg and config.redacted_settings(cfg) is not cfg
 
 
+def test_coord_check_defaults_and_legacy_keys_ignored(base):
+    """0.5.5: coord_check.max_rel(기본 0.005). 이전 키(warn_max_frac·warn_max_rel)는 경고 없이 무시, 없으면 기본값."""
+    assert config.validate_settings(copy.deepcopy(base))["coord_check"] == {"max_rel": 0.005}
+    b = copy.deepcopy(base)
+    del b["coord_check"]
+    assert config.validate_settings(b)["coord_check"] == config.COORD_CHECK_DEFAULTS == {"max_rel": 0.005}
+    b = copy.deepcopy(base)
+    b["coord_check"] = {"warn_max_frac": 0.01, "warn_max_rel": 0.01}           # 0.5.3~0.5.4 설정 그대로
+    assert config.validate_settings(b)["coord_check"] == {"max_rel": 0.005}
+    b = copy.deepcopy(base)
+    b["coord_check"] = {"warn_max_frac": 0.5, "max_rel": 0.02}
+    assert config.validate_settings(b)["coord_check"] == {"max_rel": 0.02}
+
+
 def test_env_path(monkeypatch):
     monkeypatch.setenv("ESL_CONFIG", CFG)
     assert config.load_config()["schema_version"] == 1
@@ -68,8 +82,9 @@ _DEL = object()
     ("extract.layers", "mid", "extract.layers"),
     ("extract.shear_convention", "gamma", "extract.shear_convention"),
     ("extract.hot_k", 0, "extract.hot_k"),
-    ("coord_check.warn_max_frac", 1.5, "coord_check.warn_max_frac"),
-    ("coord_check.warn_max_rel", -1, "coord_check.warn_max_rel"),
+    ("coord_check.max_rel", -1, "coord_check.max_rel"),
+    ("coord_check.max_rel", "x", "coord_check.max_rel"),
+    ("coord_check.unknown_key", 1, "coord_check.unknown_key"),
     ("extract.hot_k", 2.5, "extract.hot_k"),
     ("tstar.metric", "vm", "tstar.metric"),
     ("tstar.metric", _DEL, "tstar.metric"),

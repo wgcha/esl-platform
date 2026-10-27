@@ -18,6 +18,9 @@ namespace eval ::mock {
     variable setresult_calls {}
     variable no_comp_query 0
     variable names [dict create]
+    # element connectivity (id -> node ids) and the query field name that answers
+    variable econn [dict create]
+    variable conn_field connectivity
 }
 
 proc ::mock::maybe_fail {key} {
@@ -201,6 +204,14 @@ proc ::mock::qry_GetIteratorHandle {h} {
             lappend recs [list $id]
         } elseif {$st(query) eq "node.id node.coords"} {
             lappend recs [list $id [dict get $::mock::coords $id]]
+        } elseif {[string match "element.id element.*" $st(query)]} {
+            # connectivity: only the field named in ::mock::conn_field answers (others: unknown field error)
+            if {$st(query) ne "element.id element.$::mock::conn_field"} { error "mock: unknown query field $st(query)" }
+            if {[dict exists $::mock::econn $id]} {
+                lappend recs [list $id [dict get $::mock::econn $id]]
+            } else {
+                lappend recs [list $id N/A]
+            }
         } else {
             set key [list $st(dtype) $st(comp) $st(layer) $st(sim) $id]
             if {[dict exists $::mock::vals $key]} {

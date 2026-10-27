@@ -126,7 +126,7 @@ def build(root, h3d_path, scale=1.0, nx=24, ny=16, pattern="A", amp=1.0, n_tria_
     rad = write_rad(os.path.join(din, "model_0000.rad"), node_id, X0, elem_id, et, conn_ids, synth_case.PART_ID,
                     synth_case.PART_TITLE, synth_case.PID, thk, synth_case.MID, synth_case.E_MOD, synth_case.NU)
     write_results_csv(dcsv, times, node_id, X0, U, elem_id, eps_hold, vm_hv=eq_hold,
-                      ezz=-(eps_hold[..., 0] + eps_hold[..., 1]), epsp=epsp, h3d=h3d_path)
+                      ezz=-(eps_hold[..., 0] + eps_hold[..., 1]), epsp=epsp, h3d=h3d_path, elem_nodes=conn_ids)
     return {"rad": rad, "csv": dcsv, "X0": X0, "conn": conn, "et": et, "F_app": F, "R": R, "node_id": node_id,
             "sup_ids": [int(node_id[i]) for i, _ in sup], "pattern": pattern, "scale": scale}
 
