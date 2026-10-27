@@ -139,7 +139,7 @@ export class HistoryMock {
       past: { verdict: "FAIL", disp_rms_rel: 3.3e-4, reaction_rel: 2.0e-5, has_field: true },
       links: { stage: 5, query: { val: "val-old" } },
       diff: [
-        { key: "verdict", label: "판정", past: "이전 판정 체계(당시 FAIL)", current: "PASS" },
+        { key: "verdict", label: "판정", past: "LEGACY(FAIL)", current: "PASS" },
         { key: "disp_rms_rel", label: "변위 RMS (상대)", past: 3.3e-4, current: 1.8e-6 },
         { key: "hotspot_max_err", label: "hotspot 1위 오차", past: 0.31, current: 0.124 },
       ],

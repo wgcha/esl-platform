@@ -218,6 +218,85 @@ async function scenario(base, inp) {
     await page.screenshot({ path: f, fullPage: true });
     log("스크린샷", f);
   };
+
+  // 화면 하나를 뷰포트 크기 그대로(2560×1440) 저장한다 — SHOTS_LIVE 폴더(기본 SHOTS/v057_live 가 아니라 인자 폴더)
+  async function liveDispPrimary() {
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    const vshot = async (name) => {
+      const f = path.join(SHOTS, `${name}.png`);
+      await page.screenshot({ path: f });
+      log("스크린샷(2560x1440)", f);
+    };
+    // 판정 카드: 4지표 + 기준
+    const judge = page.getByTestId("judge-stats");
+    await judge.waitFor({ timeout: 30000 });
+    const judgeTxt = (await judge.textContent()) ?? "";
+    if (!/변위 RMS/.test(judgeTxt) || !/변위 최대 오차/.test(judgeTxt)) throw new Error(`판정 카드 지표 이상: ${judgeTxt}`);
+    // 변위 컨투어: 캔버스 실제 크기 + 서버 disp-field 응답(points 5열 + U)
+    const canvas = page.getByTestId("disp-canvas");
+    await canvas.waitFor();
+    const cb = await canvas.boundingBox();
+    if (!cb || cb.width < 100 || cb.height < 100) throw new Error(`변위 컨투어 캔버스 크기 이상: ${JSON.stringify(cb)}`);
+    const vid = await page.evaluate(async () => {
+      const cid = location.pathname.split("/c/")[1].split("/")[0];
+      const vs = await (await fetch(`/esl/api/cases/${cid}/validations`)).json();
+      return vs[0].id;
+    });
+    const df = await page.evaluate(async (id) => {
+      const r = await fetch(`/esl/api/validations/${id}/disp-field?layer=err`);
+      const b = await r.json();
+      return { status: r.status, keys: Object.keys(b), p0: b.points?.[0], n: b.points?.length, U: b.U, robust: b.color_range_robust };
+    }, vid);
+    if (df.status !== 200 || df.p0?.length !== 5 || !(df.U > 0) || !df.robust) throw new Error(`disp-field 응답 이상: ${JSON.stringify(df)}`);
+    // 판정 카드 + 컨투어 화면
+    await page.getByTestId("judge-stats").scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await vshot("v057_1_judge_contour");
+
+    // 단면 위치 변경 ① 슬라이더 → 서버 응답의 line 이 바뀌고 선이 이동
+    const lineY = async () => Number(await page.getByTestId("sec-line").first().getAttribute("y1"));
+    const y0 = await lineY();
+    const secResp = page.waitForResponse((r) => r.url().includes("/section") && r.url().includes("at=0.8"), { timeout: 15000 });
+    await page.getByLabel("단면 위치").fill("0.8");
+    const sr = await (await secResp).json();
+    if (!sr.line || sr.line.xi_range?.length !== 2 || sr.line.eta_range?.length !== 2) throw new Error(`section.line 키 이상: ${JSON.stringify(sr.line)}`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="sec-at"]')?.textContent?.includes("0.80"));
+    await page.waitForFunction((y) => Math.abs(Number(document.querySelector('[data-testid="sec-line"]').getAttribute("y1")) - y) > 5, y0, { timeout: 10000 });
+    // ② 지도 클릭: 클릭 위치에 단면선이 놓이는지(xi_range·eta_range 정규화 검증)
+    const box = await page.getByTestId("disp-box").boundingBox();
+    const cx = box.x + box.width / 2, cy = box.y + box.height * 0.3;
+    await page.getByTestId("disp-box").scrollIntoViewIfNeeded();
+    const box2 = await page.getByTestId("disp-box").boundingBox();
+    const cy2 = box2.y + box2.height * 0.3;
+    const secResp2 = page.waitForResponse((r) => r.url().includes("/section") && !r.url().includes("at=0.8"), { timeout: 15000 });
+    await page.mouse.click(cx, cy2);
+    await secResp2;
+    await page.waitForFunction(() => !document.querySelector('[data-testid="sec-at"]')?.textContent?.includes("0.80"));
+    await page.waitForTimeout(500);
+    const lineBox = await page.getByTestId("sec-line").first().boundingBox();
+    if (Math.abs(lineBox.y + lineBox.height / 2 - cy2) > 3) throw new Error(`지도 클릭 위치와 단면선 불일치: 클릭 ${cy2} / 선 ${lineBox.y + lineBox.height / 2}`);
+    log("단면 위치 변경 OK", await page.getByTestId("sec-at").textContent());
+    // 상위 노드 표: 마지막 열이 잘리지 않아야 함
+    const clipped = await page.evaluate(() => {
+      const w = document.querySelector('[data-testid="disp-top"]');
+      return { sw: w.scrollWidth, cw: w.clientWidth };
+    });
+    if (clipped.sw > clipped.cw + 1) throw new Error(`상위 노드 표 가로 잘림: ${JSON.stringify(clipped)}`);
+    await page.getByTestId("section-card").scrollIntoViewIfNeeded();
+    await vshot("v057_2_section");
+
+    // 레전드 범위 편집: 변위 컨투어 레전드 최대값을 줄이면 수동(manual) + ▲(범위 밖) 표시
+    const lg = page.getByTestId("disp-color-legend");
+    const lgMax0 = Number(await lg.getAttribute("data-range-max"));
+    await page.getByTestId("disp-box").scrollIntoViewIfNeeded();
+    await lg.getByLabel("범위 최대").fill(String(lgMax0 / 4));
+    await page.waitForFunction((v) => Math.abs(Number(document.querySelector('[data-testid="disp-color-legend"]').getAttribute("data-range-max")) - v) < v * 1e-3 && document.querySelector('[data-testid="disp-color-legend"]').getAttribute("data-manual") === "true", lgMax0 / 4, { timeout: 10000 });
+    await lg.getByTestId("lg-above").waitFor({ timeout: 10000 });
+    await vshot("v057_3_legend_edit");
+    await lg.getByRole("button", { name: "자동" }).click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="disp-color-legend"]').getAttribute("data-manual") === "false");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
   const primary = () => page.locator("button[data-primary]");
   const stageLink = (n) => page.getByRole("navigation", { name: "단계" }).getByRole("link").nth(n - 1);
   const waitDone = async (n, ms = 180000) => {
@@ -326,6 +405,9 @@ async function scenario(base, inp) {
   log("검증 판정", verdict);
   await shot("05_validate");
   if (verdict !== "PASS") throw new Error(`검증 판정이 PASS 가 아님: ${verdict}`);
+
+  // ⑤ v0.5.7 실서버 확인(2560×1440): 판정 카드 · 변위 컨투어 · 단면 위치 변경(슬라이더·지도 클릭) · 레전드 범위 편집
+  await liveDispPrimary();
 
   // ⑥ 내보내기 + 다운로드(작은 파일) + 413(큰 파일: 경로 복사)
   await stageLink(6).click();

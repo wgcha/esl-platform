@@ -124,7 +124,7 @@ export function DispOverlay({ vid, disp, sec }: { vid: string; disp: DispSummary
   function onClick(e: React.MouseEvent<HTMLDivElement>) {
     if (!sec || !geo) return;
     const r = e.currentTarget.getBoundingClientRect();
-    sec.onPick(pickAt(geo, sec.axis, e.clientX - r.left, e.clientY - r.top));
+    sec.onPick(pickAt(geo, sec.axis, e.clientX - r.left, e.clientY - r.top, sec.line));
   }
 
   return (

@@ -299,7 +299,7 @@ export function makeSection(vid: string, axis: SectionAxis, at = 0.5, hasVal = t
     dw: hasVal ? dw : [],
     stats,
     has_val: hasVal,
-    line: alongX ? { a0: A_MIN, b0: fixed, a1: A_MAX, b1: fixed, band_abs: band } : { a0: fixed, b0: B_MIN, a1: fixed, b1: B_MAX, band_abs: band },
+    line: alongX ? { a0: A_MIN, b0: fixed, a1: A_MAX, b1: fixed, band_abs: band, xi_range: [A_MIN, A_MAX], eta_range: [B_MIN, B_MAX] } : { a0: fixed, b0: B_MIN, a1: fixed, b1: B_MAX, band_abs: band, xi_range: [A_MIN, A_MAX], eta_range: [B_MIN, B_MAX] },
     units: "mm",
     suggest,
   };

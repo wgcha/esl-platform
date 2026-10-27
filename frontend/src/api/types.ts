@@ -748,9 +748,9 @@ export interface SectionOut {
   /** 전체 재해석 해가 있는가(compare_disp.npz). false 면 ESL·Δw 선을 숨긴다 */
   has_val: boolean;
   /** 지도에 그릴 단면 중심선(PCA 평면 실좌표)과 띠 반폭 */
-  line: SectionLine;
+  line: SectionLine | null;
   /** 길이 단위 표시 문자열(설정 units.length) */
-  units: string;
+  units: string | null;
   suggest: SectionSuggest[];
 }
 
@@ -772,6 +772,9 @@ export interface SectionLine {
   a1: number;
   b1: number;
   band_abs: number;
+  /** 대상 파트 요소 중심의 정규화 xi 범위 [min,max] — 지도 클릭 정규화 기준 */
+  xi_range: number[];
+  eta_range: number[];
 }
 
 export type SectionSuggestKey = "max_disp_err" | "hotspot1";

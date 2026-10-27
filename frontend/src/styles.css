@@ -1954,3 +1954,17 @@ tr.ref-row td {
 [data-testid="disp-top"] th {
   white-space: nowrap;
 }
+/* 상위 노드 표: 좁은 칸(2560 폭의 2열 배치)에서도 마지막 열(지지)까지 보이도록 셀 여백을 줄이고 마지막 열은 내용 폭만 */
+[data-testid="disp-top"] .table {
+  width: 100%;
+  font-size: 0.82rem;
+}
+[data-testid="disp-top"] .table.compact td,
+[data-testid="disp-top"] .table th {
+  padding-left: 0.3rem;
+  padding-right: 0.3rem;
+}
+[data-testid="disp-top"] th:last-child,
+[data-testid="disp-top"] td:last-child {
+  width: 1%;
+}

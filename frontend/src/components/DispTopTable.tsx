@@ -15,8 +15,8 @@ export function DispTopTable({ top }: { top: DispTopRow[] }) {
             <th>노드</th>
             <th className="num">e/U</th>
             <th className="num">e (mm)</th>
-            <th className="num">‖d_rel‖ (mm)</th>
-            <th className="num">위치 (a, b)</th>
+            <th className="num">‖d_rel‖</th>
+            <th className="num">(a, b)</th>
             <th />
           </tr>
         </thead>
