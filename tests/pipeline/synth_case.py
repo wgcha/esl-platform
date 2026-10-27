@@ -136,7 +136,7 @@ def build(root: str, hot_k: int = 200, top_n: int = 5) -> dict:
                     PART_TITLE, PID, thk, MID, E_MOD, NU, extra_parts=1)
     write_results_csv(dcsv, times, node_id, X0, U, elem_id, eps_h3d, vm_hv=vm_hv,
                       ezz=-(eps_hold[..., 0] + eps_hold[..., 1]), epsp=epsp, hot_k=hot_k, top_n=top_n,
-                      extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1])
+                      extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1], elem_nodes=conn_ids)
     return {"rad": rad, "csv": dcsv, "node_id": node_id, "elem_id": elem_id, "X0": X0, "F_app": F,
             "R": R, "F2": F2, "R2": R2, "u_d": u_d, "d": d, "eps_d": eps_d, "eps_2": eps_2, "eq_hold": eq_hold,
             "eq_inst": eq_inst, "epsp": epsp, "sup": sup, "sup_ids": [int(node_id[i]) for i in sup_idx],

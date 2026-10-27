@@ -90,6 +90,8 @@ def _setup(tmp_path, eng=True, drop_type=None, extra_req="", mock_extra="", conf
         "set ::mock::coords [dict create " + " ".join(f"{nid[k]} {_tcl_list(xc[k].tolist())}" for k in range(12))
         + " 900 {9 9 9}]",
         "set ::mock::vals [dict create " + " ".join(vals) + "]",
+        "set ::mock::econn [dict create " + " ".join(f"{eid[e]} {_tcl_list(conn[e].tolist())}" for e in range(6))
+        + " 99 {900 900 900}]",
     ]
     if drop_type:
         data.append(f"dict unset ::mock::dtinfo {{{drop_type}}}")
@@ -144,8 +146,9 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
     done = json.loads((out / "done.json").read_text())
     assert done["ok"] is True, done.get("errorInfo")
     assert done["n_frames"] == F and done["n_elems"] == 6 and done["n_nodes"] == 12
-    assert sorted(os.listdir(out)) == ["disp.csv", "done.json", "final.csv", "frames.csv", "history.csv",
+    assert sorted(os.listdir(out)) == ["disp.csv", "done.json", "elems.csv", "final.csv", "frames.csv", "history.csv",
                                        "model.csv", "progress.log", "strain_frames.csv"]
+    assert done["elems_ok"] is True and done["elems_query"] == "element.id element.connectivity" and done["n_conn"] == 6
     # H·D 규칙 = Python(esl.mech.tstar)과 동일
     H = tstar.hot_set(ref["vm"][-1], ref["ep"][-1], 2)
     assert done["n_hot"] == H.size and 2 <= H.size <= 4
@@ -171,6 +174,7 @@ def test_extract_tcl_with_mock_roundtrip(tmp_path):
     # pack → npz 가 Python 생성기 경로와 비트 단위로 같음
     res = pack_results(out, m, tmp_path / "npz")
     assert res["frames_D"] == D and res["n_hot"] == H.size
+    assert res["conn_check"]["checked"] and not any("CONN_CHECK" in w for w in res["warnings"])
     twin = _python_twin(tmp_path, m, ref)
     assert twin["candidate_frames"] == done["candidate_frames"]
     _same_npz(tmp_path / "npz", tmp_path / "py_npz")
@@ -589,3 +593,46 @@ def test_extract_tcl_model_csv_static():
     assert '"node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz"' in src
     assert '"node.id node.coords"' in src and 'model.csv frame 0 chunk' in src
     assert "frame0_time" in src and "coords_minus_disp_frame0" in src
+
+
+def test_extract_tcl_elems_csv_connectivity(tmp_path):
+    """elems.csv: 요소-노드 연결(쿼리 이름 후보 순서 시도, 청크), 삼각형 n4=0, progress.log 마커."""
+    m, ref, drv, out = _setup(tmp_path, extra_req="chunk\t4\n",
+                              mock_extra="set ::mock::conn_field nodes\n"
+                                         "dict set ::mock::econn 15 {3 6 9}\n"
+                                         "dict set ::mock::econn 12 {8,5,4,7}")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["elems_ok"] is True and done["elems_query"] == "element.id element.nodes" and done["n_conn"] == 6
+    lines = (out / "elems.csv").read_text().splitlines()
+    assert lines[0] == "elem_id,n1,n2,n3,n4" and len(lines) == 7
+    rows = {int(l.split(",")[0]): l for l in lines[1:]}
+    assert rows[15] == "15,3,6,9,0" and rows[12] == "12,8,5,4,7"     # 쉼표 형식·회전(같은 요소)
+    plog = (out / "progress.log").read_text()
+    assert "elems.csv: element connectivity" in plog and "elems.csv done: 6 elements" in plog
+    # 요소 15 를 삼각형으로 바꿨으므로 rad(쿼드)와 연결이 다름 → pack ID_MISMATCH
+    with pytest.raises(EslError) as ei:
+        pack_results(out, m, tmp_path / "npz")
+    assert ei.value.code == "ID_MISMATCH" and "요소 1/6개" in ei.value.message and "15: rad" in ei.value.message
+
+
+def test_extract_tcl_elems_unavailable_warns(tmp_path):
+    m, ref, drv, out = _setup(tmp_path, mock_extra="set ::mock::conn_field no_such_field")
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["elems_ok"] is False and done["elems_query"] == "" and not (out / "elems.csv").exists()
+    w = [x for x in done["warnings"] if x.startswith("elems.csv: element connectivity not available")]
+    assert len(w) == 1 and "element.connectivity" in w[0] and "element.node_ids" in w[0]
+    assert "elems.csv skipped" in (out / "progress.log").read_text()
+    info = pack_results(out, m, tmp_path / "npz")
+    assert any(x.startswith("CONN_CHECK_SKIPPED") and "elems_ok=false" in x for x in info["warnings"])
+
+
+def test_extract_tcl_elems_csv_static():
+    src = open(os.path.join(TCL_DIR, "esl_h3d_extract.tcl"), encoding="ascii").read()
+    assert '"elem_id,n1,n2,n3,n4"' in src and '"element.id element.connectivity"' in src
+    assert "elems_ok" in src and "elems.csv done:" in src and "elems.csv skipped" in src

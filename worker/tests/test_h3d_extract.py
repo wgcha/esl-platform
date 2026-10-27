@@ -94,6 +94,9 @@ def test_h3d_extract_e2e(client, synth_inputs, worker_factory, esl_root, monkeyp
     # 이후 기존 pack → tstar 결과(합성 Case)
     c = client.get(f"{API}/cases/{case['id']}", headers=R).json()
     assert c["extract_summary"]["part_id"] == synth_case.PART_ID
+    # 0.5.5: 가짜 hw 도 elems.csv(요소 연결)를 내고 pack 이 노드 ID + 요소 연결로 같은 모델임을 확인
+    assert (Path(raw) / "elems.csv").is_file()
+    assert not any("CONN_CHECK_SKIPPED" in w for w in c["extract_summary"]["warnings"]), c["extract_summary"]["warnings"]
     assert c["stage_status"]["1"]["state"] == "done" and c["stage_status"]["2"]["state"] == "done"
     t = client.get(f"{API}/cases/{case['id']}/tstar", headers=R).json()
     assert t["selected"]["frame_index"] == synth_case.T_STAR_FRAME

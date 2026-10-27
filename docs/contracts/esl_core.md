@@ -72,7 +72,13 @@ class RadModel:
 ### 3.3 `esl.io.pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict`
 
 - 쓰기: `out_dir/strain_tensor.npz` {`time(F,)f8`, `frame_index(F,)i4`, `elem_id(E,)i8`, `eps(F,E,2,3)f4`(layer 0=bottom,1=top; 성분 exx,eyy,exy)}, `out_dir/disp.npz` {`time(F,)f8`, `frame_index(F,)i4`, `node_id(N,)i8`, `u(F,N,3)f8`}, `out_dir/frames.json`.
-- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소·노드가 하나라도 없거나 model.csv 좌표가 rad와 다르면(허용 tol = max(`1e-6·bbox`, 2·eps32·|x|max·√3)) 2단계 판정(0.5.3): tol 초과 노드 수 n_dev ≤ max(`coord_check.warn_max_frac`·N, 1)(기본 0.01) 이고 최대 편차 ≤ `coord_check.warn_max_rel`·bbox(기본 0.01)이면 성공 + 경고 `COORD_DEVIATION`(상위 10개 노드 ID·편차, `frames.json`·extract summary 의 `coord_deviation` 에 기록 — Radioss 초기 관통 보정 등), 그 밖은 `ID_MISMATCH`(메시지에 n_dev/N·최대 편차). 비교 좌표(0.5.4): model.csv 의 `x0`(= 프레임 0 node.coords − 프레임 0 변위). 진단 열 `cx,cy,cz` 가 있고 그것이 rad 와 더 잘 맞으면(node.coords 가 이미 초기 좌표) 원값으로 비교 + 경고. 구형 `node_id,x0,y0,z0` 파일도 그대로 읽음. `ID_MISMATCH`·`COORD_DEVIATION` 메시지와 `coord_deviation` 에 진단: 평균 편차 벡터 `mean_dev`, 축별 표준편차 `std_dev`, Kabsch 강체 정합(회전+평행이동) 후 잔차 최대 `rigid_residual_max`·회전각, `frame0_time`, 프레임 0 변위 최대; 정합 잔차 ≤ tol 이면 "h3d 좌표가 rad에서 강체 이동(평균 …)" 문구. 사용 좌표: K_L·형상은 항상 rad 좌표, 변위는 h3d Displacement(model.csv 는 검증용일 뿐 계산에 쓰지 않음). `coord_check` 키가 없는 이전 esl.yaml 은 기본값으로 채운다. 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,warnings}`.
+- CSV에 다른 파트 행이 있어도 무시. 대상 파트 요소가 final.csv 등에 하나라도 없으면 `ID_MISMATCH`.
+- **모델 동일성(0.5.5, 3.3을 대체)** — rad 와 h3d 가 같은 모델인지는 **노드 ID + 요소 연결**로 판정하고, 좌표는 개략 확인만 한다.
+  1. 노드 ID 집합: 대상 파트 노드가 model.csv 에 모두 있어야 함 — 없으면 `ID_MISMATCH`(누락 노드 상위 10개).
+  2. 요소 연결: `elems.csv`(`elem_id,n1,n2,n3,n4`)가 있으면 대상 파트 요소마다 노드 ID 목록이 rad 와 같아야 함. 순환 회전·방향 반전은 같은 것, 삼각형은 n4=0·빈칸·중복 노드(n4=n3 등) 표현 차이를 허용(고유 노드 집합 비교). 불일치(또는 elems.csv 에 행 없음) 요소가 1개 이상이면 `ID_MISMATCH`(상위 10개 요소의 rad/h3d 노드 목록). `elems.csv` 가 없거나 done.json `elems_ok:false`(이전 추출물 포함)이면 검사 생략 + 정보 경고 `CONN_CHECK_SKIPPED`.
+  3. 좌표(개략): model.csv `x0`(= 프레임 0 node.coords − 프레임 0 변위; 진단 열 `cx,cy,cz` 가 rad 와 더 잘 맞으면 원값 + 경고, 구형 `node_id,x0,y0,z0` 도 읽음)를 rad 좌표에 Kabsch 강체 정합(회전+평행이동)한 뒤 잔차 최대 ≤ `coord_check.max_rel`(기본 0.005)·bbox 이면 통과 — 강체 이동·회전 크기, 노드 수와 무관. 반올림 수준(tol = max(`1e-6·bbox`, 2·eps32·|x|max·√3))을 넘는 편차가 있으면 요약을 정보로 `frames.json`·extract summary 의 `coord_deviation` 에 기록(경고 아님): `n_dev`, `n_nodes`, `max_dev`, `top`(상위 10개 노드), `max_rel`, `bbox`, `threshold`, `mean_dev`, `std_dev`, `rigid_residual_max`, `rigid_rotation_deg`, `rigid`, `frame0_time`, `frame0_disp_max`, `coord_source`. 잔차가 허용을 넘으면 `ID_MISMATCH`(잔차 상위 노드 + 진단).
+  4. 계산 좌표: K_L·형상은 항상 rad 좌표, 변위는 h3d Displacement 그대로(model.csv 는 확인용일 뿐 계산에 쓰지 않음). 좌표 출처 선택 설정은 두지 않음.
+- 설정 `coord_check: {max_rel}` — 키가 없으면 기본값(esl/config.py 한 곳). 0.5.3~0.5.4 의 `warn_max_frac`·`warn_max_rel` 은 있어도 경고 없이 무시(`COORD_DEVIATION` 경고 규칙은 폐지). 결과 유형 누락 `H3D_MISSING_RESULT`. 반환: `{n_frames,n_elems,n_nodes,n_hot,frames_D,candidate_frames,warnings,coord_deviation,conn_check}` (`conn_check = {checked, reason, n_elems, n_mismatch}`, frames.json 에도 기록).
 - 대용량 대비: CSV는 청크 읽기(`numpy`/`csv` 스트리밍), 전체 텍스트를 한 번에 메모리에 올리지 않음.
 
 ## 4. Impl-B 인터페이스 (`esl.mech`)
@@ -138,10 +144,12 @@ class RadModel:
 | A | 마지막 프레임, 파트 전 요소 | `final.csv` | `elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | B | 전 프레임, 집합 H만 | `history.csv` | `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
 | C | 후보 프레임 D, 파트 전 노드·전 요소 | `disp.csv`, `strain_frames.csv` | `frame_index,node_id,ux,uy,uz` / `frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp` |
+| (모델) | 프레임 0 노드 좌표, 요소 연결 | `model.csv`, `elems.csv`(0.5.5) | `node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz` / `elem_id,n1,n2,n3,n4` |
 - H = (final vm_hv 상위 `hot_k`) ∪ (final epsp 상위 `hot_k`), `hot_k` 기본 200.
 - D = 각 지표(vm_hv, epsp)에 대해 H를 최종값 내림차순으로 훑으며 first-reach 프레임을 서로 다른 것만 `top_n_times`(기본 5)개까지 모은 합집합(≤10). rank 1 = 최종값 1위 요소의 first-reach.
 - TCL 인자: `-part`(필수 또는 request.txt), 선택 `-hot_k`, `-top_n`. 결과 유형·성분·layer 이름 기본값은 위 probe 값. done.json에 `candidate_frames:{max_strain:[...],plastic_strain:[...]}`, `hot_k`, `reach_rtol`, 패스별 행 수·소요시간.
 - model.csv(0.5.4): HyperView `node.coords` 는 현재 프레임의 (변형) 좌표이므로, 프레임 0 에서 노드 청크마다 `node.id node.coords` 와 같은 노드의 Displacement(`disp_type`/`disp_comps`) 를 읽어 `x0 = c − d` 를 기록, `cx..`=원 coords, `dx..`=프레임 0 변위(진단). 프레임 0 변위를 못 읽으면 경고 후 `x0 = c`(d=0). done.json 에 `frame0_time`, `model_coords:"coords_minus_disp_frame0"`, `frame0_disp_max`, `frame0_disp_ok`.
+- elems.csv(0.5.5): 대상 파트 요소 청크마다 연결 쿼리 `element.id element.connectivity` → `element.id element.nodes` → `element.id element.node_ids` 순으로 시도(첫 청크에서 되는 이름을 이후 청크에 사용, 레코드 = `{id n1 n2 n3 [n4]}` 중첩 리스트 또는 쉼표 구분). `elem_id,n1,n2,n3,n4`(삼각형 n4=0). 쿼리가 안 되거나 형식이 다른 레코드가 있으면 경고 + elems.csv 삭제 + done.json `elems_ok:false`; 성공 시 `elems_ok:true`, `elems_query`, `n_conn`. progress.log 마커 `elems.csv: element connectivity …` / `elems.csv done: N elements` / `elems.csv skipped`.
 - 수치 `%.17g`, Tcl 8.5 호환 유지.
 
 ### 7.3 Python 패킹(`pack_results`) — npz

@@ -184,18 +184,20 @@ def test_bad_values_and_d_not_in_frames(tmp_path):
 
 
 def test_coordinate_mismatch(tmp_path):
+    """0.5.5: 좌표는 강체 정합 후 잔차 ≤ max_rel(0.005)·bbox 개략 확인만 — 작은 편차는 경고 없이 정보 기록."""
     m = _model(tmp_path)
     t, u, eps, vm, ep = _data(m)
     bbox = np.linalg.norm(m.x0.max(0) - m.x0.min(0))
     x_ok = m.x0.copy()
     x_ok[2, 0] += 0.5e-6 * bbox
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_ok, u, m.elem_id, eps, vm_hv=vm)
-    pack_results(rd, m, tmp_path / "o")
+    assert pack_results(rd, m, tmp_path / "o")["coord_deviation"] is None
     x_bad = m.x0.copy()
-    x_bad[2, 0] += 2e-6 * bbox          # tol 초과지만 1 노드·작은 이동 → 0.5.3: 경고만
+    x_bad[2, 0] += 2e-6 * bbox          # 반올림 수준 초과지만 작음 → 통과 + 정보 기록(경고 아님)
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_bad, u, m.elem_id, eps, vm_hv=vm)
-    assert any(w.startswith("COORD_DEVIATION") for w in pack_results(rd, m, tmp_path / "o")["warnings"])
-    x_bad[2, 0] += 0.02 * bbox          # 최대 편차 > 1%·bbox → 실패
+    info = pack_results(rd, m, tmp_path / "o")
+    assert info["coord_deviation"]["n_dev"] == 1 and not any("COORD" in w for w in info["warnings"])
+    x_bad[2, 0] += 0.02 * bbox          # 한 노드가 2%·bbox → 정합 후 잔차 > 0.5%·bbox → 실패
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x_bad, u, m.elem_id, eps, vm_hv=vm)
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
 
@@ -236,69 +238,185 @@ def _big_plate(tmp_path, n=20):
     return parse_rad(p, "plate")
 
 
-def _pack_shifted(tmp_path, m, shifts, **kw):
+def _pack_shifted(tmp_path, m, shifts, conn=True, **kw):
     t, u, eps, vm, ep = _data(m, F=3)
     x = m.x0.copy()
     for i, d in shifts.items():
         x[i, 0] += d
-    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm,
+                           elem_nodes=_conn_ids(m) if conn else None)
     return pack_results(rd, m, tmp_path / "o", **kw), tmp_path / "o"
 
 
-def test_coord_deviation_few_nodes_warns(tmp_path):
+def _conn_ids(m):
+    return np.where(m.conn >= 0, m.node_id[np.maximum(m.conn, 0)], 0)
+
+
+def test_coord_small_deviation_few_nodes_passes_as_info(tmp_path):
     m = _big_plate(tmp_path)                      # N=400, bbox≈269
     info, od = _pack_shifted(tmp_path, m, {3: 0.386, 10: 0.1, 11: 0.05})
-    w = [x for x in info["warnings"] if x.startswith("COORD_DEVIATION")]
-    assert len(w) == 1 and "3개" in w[0] and "rad 좌표 사용" in w[0]
+    assert not any("COORD" in w or "CONN_CHECK" in w for w in info["warnings"]), info["warnings"]
     cd = info["coord_deviation"]
     assert cd["n_dev"] == 3 and cd["n_nodes"] == 400 and abs(cd["max_dev"] - 0.386) < 1e-9
     assert [t["node_id"] for t in cd["top"]] == [int(m.node_id[3]), int(m.node_id[10]), int(m.node_id[11])]
-    assert f"{int(m.node_id[3])}(" in w[0]
-    assert json.load(open(od / "frames.json"))["coord_deviation"]["n_dev"] == 3
+    assert cd["max_rel"] == 0.005 and abs(cd["threshold"] - 0.005 * cd["bbox"]) < 1e-12
+    fj = json.load(open(od / "frames.json"))
+    assert fj["coord_deviation"]["n_dev"] == 3 and fj["conn_check"] == {"checked": True, "reason": None,
+                                                                        "n_elems": 361, "n_mismatch": 0}
 
 
-def test_coord_deviation_top10_and_rounding_only_no_warning(tmp_path):
-    m = _big_plate(tmp_path)
-    info, _ = _pack_shifted(tmp_path, m, {i: 0.1 + i * 0.01 for i in range(4)})  # 4 = 1% of 400 → 경계 포함
-    assert info["coord_deviation"]["n_dev"] == 4
-    # float32 반올림만 → 경고·기록 없음
-    t, u, eps, vm, ep = _data(m, F=3)
-    x32 = m.x0.astype(np.float32).astype(np.float64)
-    rd = write_results_csv(tmp_path / "csv2", t, m.node_id, x32, u, m.elem_id, eps, vm_hv=vm)
-    info = pack_results(rd, m, tmp_path / "o2")
-    assert info["coord_deviation"] is None and not any("COORD_DEVIATION" in x for x in info["warnings"])
-
-
-def test_coord_deviation_many_nodes_or_large_shift_fails(tmp_path):
+def test_coord_all_nodes_0p4_deviation_passes(tmp_path):
+    """실서버 사례(압축 h3d 등): 전 노드가 rad 와 최대 ~0.4 다름(bbox 대비 작음) → 통과, 편차는 정보로 기록."""
     m = _big_plate(tmp_path)
     t, u, eps, vm, ep = _data(m, F=3)
-    # 5개(>1% of 400) 이동 → 실패, 메시지에 비율
-    x = m.x0.copy(); x[:5, 0] += 0.1
-    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
+    rng = np.random.default_rng(4)
+    d = rng.uniform(-1, 1, size=m.x0.shape)
+    d *= 0.386 / np.linalg.norm(d, axis=1).max()
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0 + d, u, m.elem_id, eps, vm_hv=vm,
+                           elem_nodes=_conn_ids(m))
+    info = pack_results(rd, m, tmp_path / "o")
+    cd = info["coord_deviation"]
+    assert cd["n_dev"] == 400 and abs(cd["max_dev"] - 0.386) < 1e-9 and cd["rigid_residual_max"] < cd["threshold"]
+    assert not any("COORD" in w for w in info["warnings"]) and info["conn_check"]["checked"]
+    # 계산 좌표는 rad: disp.npz 변위는 h3d 그대로
+    assert np.array_equal(_load(tmp_path / "o" / "disp.npz")["u"].shape, (len(info["frames_D"]), 400, 3))
+
+
+def test_coord_large_rigid_motion_passes(tmp_path):
+    """강체 이동·회전이 커도(bbox 의 수십 %) 정합 후 잔차가 작으면 통과."""
+    m = _big_plate(tmp_path)
+    t, u, eps, vm, ep = _data(m, F=3)
+    th = np.radians(30.0)
+    R = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1]])
+    xs = m.x0 @ R.T + np.array([150.0, -80.0, 40.0])
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, xs, u, m.elem_id, eps, vm_hv=vm, elem_nodes=_conn_ids(m))
+    info = pack_results(rd, m, tmp_path / "o")
+    cd = info["coord_deviation"]
+    assert cd["rigid"] and cd["rigid_residual_max"] < 1e-9 and abs(cd["rigid_rotation_deg"] - 30.0) < 1e-9
+    assert cd["max_dev"] > 100
+
+
+def test_coord_different_shape_fails(tmp_path):
+    m = _big_plate(tmp_path)
+    t, u, eps, vm, ep = _data(m, F=3)
+    bbox = np.linalg.norm(m.x0.max(0) - m.x0.min(0))
+    x = m.x0.copy()
+    x[:, 2] += 0.1 * bbox * (x[:, 0] / x[:, 0].max()) ** 2        # 휜 판(비강체) → 정합 후 잔차 > 0.5%·bbox
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm, elem_nodes=_conn_ids(m))
     with pytest.raises(EslError) as ei:
         pack_results(rd, m, tmp_path / "o")
-    assert ei.value.code == "ID_MISMATCH" and "5/400" in ei.value.message and "최대" in ei.value.message
-    # 소수 노드지만 최대 편차 > 1%·bbox → 실패
-    bbox = np.linalg.norm(m.x0.max(0) - m.x0.min(0))
+    msg = ei.value.message
+    assert ei.value.code == "ID_MISMATCH" and "강체 정합 후 잔차 최대" in msg and "max_rel 0.005" in msg
+    assert "잔차 상위 노드" in msg and "평균 편차 [" in msg
+    # 한 노드만 크게(1.1%·bbox) → 실패
     x = m.x0.copy(); x[3, 0] += 0.011 * bbox
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
-    # ID 뒤섞임(좌표 순서 교환) → 실패
-    x = m.x0[::-1].copy()
+    # 노드 ID 뒤섞임(좌표 순서 무작위 교환) → 실패. (역순은 대칭 격자의 180° 회전 = 강체라 좌표로는 통과)
+    x = m.x0[np.random.default_rng(1).permutation(m.node_id.size)]
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
     assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
 
 
-def test_coord_deviation_threshold_from_config(tmp_path):
+def test_coord_node_missing_fails(tmp_path):
     m = _big_plate(tmp_path)
-    shifts = {i: 0.1 for i in range(5)}
-    info, _ = _pack_shifted(tmp_path, m, shifts, coord_check={"warn_max_frac": 0.0125, "warn_max_rel": 0.01})
-    assert info["coord_deviation"]["n_dev"] == 5          # 5 ≤ 0.0125·400
+    t, u, eps, vm, ep = _data(m, F=3)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, elem_nodes=_conn_ids(m))
+    _drop(rd, "model.csv", lambda l: l.split(",")[0] == str(m.node_id[7]))
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o")
+    assert ei.value.code == "ID_MISMATCH" and "노드 1개가 없음" in ei.value.message
+
+
+def test_coord_threshold_from_config_and_legacy_keys_ignored(tmp_path):
+    m = _big_plate(tmp_path)
+    info, _ = _pack_shifted(tmp_path, m, {2: 0.4}, coord_check={"warn_max_frac": 0.0, "warn_max_rel": 0.0})
+    assert info["coord_deviation"]["n_dev"] == 1 and info["coord_deviation"]["max_rel"] == 0.005   # 이전 키 무시
     t, u, eps, vm, ep = _data(m, F=3)
     x = m.x0.copy(); x[2, 0] += 0.4
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
-    assert _code(pack_results, rd, m, tmp_path / "o", coord_check={"warn_max_frac": 0.01, "warn_max_rel": 1e-4}) \
-        == "ID_MISMATCH"                                  # 0.4 > 1e-4·bbox
+    assert _code(pack_results, rd, m, tmp_path / "o", coord_check={"max_rel": 1e-4}) == "ID_MISMATCH"  # 0.4 > 1e-4·bbox
+
+
+# ---- 0.5.5: 요소 연결(elems.csv) 동일성
+def test_canon_conn_rotation_reflection_triangles():
+    q = np.array([[1, 2, 3, 4], [3, 4, 1, 2], [4, 3, 2, 1], [2, 1, 4, 3], [1, 3, 2, 4]])
+    c = RC.canon_conn(q)
+    assert all(np.array_equal(c[i], c[0]) for i in range(4)) and not np.array_equal(c[4], c[0])
+    t = np.array([[5, 6, 7, 0], [7, 5, 6, 0], [6, 5, 7, -1], [5, 6, 7, 7], [5, 5, 6, 7], [7, 6, 5, 5]])
+    ct = RC.canon_conn(t)
+    assert all(np.array_equal(ct[i], [5, 6, 7, 0]) for i in range(len(t)))
+    assert not np.array_equal(RC.canon_conn([[5, 6, 8, 0]])[0], ct[0])
+
+
+def test_conn_check_match_rotated_reversed(tmp_path):
+    m = _big_plate(tmp_path, n=6)
+    t, u, eps, vm, ep = _data(m, F=3)
+    ids = _conn_ids(m).copy()
+    ids[0] = np.roll(ids[0], 1)
+    ids[1] = ids[1][::-1]
+    ids[2] = np.roll(ids[2][::-1], 2)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, elem_nodes=ids)
+    info = pack_results(rd, m, tmp_path / "o")
+    assert info["conn_check"] == {"checked": True, "reason": None, "n_elems": 25, "n_mismatch": 0}
+    assert not any("CONN_CHECK" in w for w in info["warnings"])
+    assert json.load(open(os.path.join(rd, "done.json")))["elems_ok"] is True
+    # 행 순서 무관 + n4 빈칸(삼각형 표현) 허용
+    p = os.path.join(rd, "elems.csv")
+    lines = open(p).read().splitlines()
+    open(p, "w").write("\n".join([lines[0]] + lines[1:][::-1]) + "\n")
+    assert pack_results(rd, m, tmp_path / "o2")["conn_check"]["checked"]
+
+
+def test_conn_check_one_element_node_changed_fails(tmp_path):
+    m = _big_plate(tmp_path, n=6)
+    t, u, eps, vm, ep = _data(m, F=3)
+    ids = _conn_ids(m).copy()
+    ids[4, 2] = ids[10, 2]                         # 요소 1개의 노드 1개가 다름(좌표는 그대로 → 좌표만으론 못 잡음)
+    rd = write_results_csv(tmp_path / "csv", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, elem_nodes=ids)
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o")
+    msg = ei.value.message
+    assert ei.value.code == "ID_MISMATCH" and "요소 1/25개" in msg and f"{int(m.elem_id[4])}: rad " in msg
+    # 대상 파트 요소 행이 elems.csv 에 없음 → 실패(h3d 없음)
+    rd = write_results_csv(tmp_path / "csv2", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm,
+                           elem_nodes=_conn_ids(m))
+    _drop(rd, "elems.csv", lambda l: l.split(",")[0] == str(m.elem_id[3]))
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o2")
+    assert ei.value.code == "ID_MISMATCH" and "h3d 없음" in ei.value.message
+
+
+def test_conn_check_triangles(tmp_path):
+    nid = np.array([1, 2, 3, 4, 5], dtype=np.int64)
+    x0 = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [20, 5, 0]], float)
+    conn = np.array([[1, 2, 3, 4], [2, 5, 3, 0]])
+    p = write_rad(tmp_path / "t_0000.rad", nid, x0, np.array([1, 2]), [4, 3], conn, 1, "tri", 1, 1.0, 1, 2e5, 0.3)
+    m = parse_rad(p, "tri")
+    t, u, eps, vm, ep = _data(m, F=3)
+    for k, h3d in enumerate(([[4, 1, 2, 3], [3, 2, 5, 5]], [[1, 2, 3, 4], [5, 3, 2, 0]])):   # 중복 노드·n4=0 표현
+        rd = write_results_csv(tmp_path / f"c{k}", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, elem_nodes=h3d)
+        assert pack_results(rd, m, tmp_path / f"o{k}")["conn_check"]["checked"]
+    rd = write_results_csv(tmp_path / "bad", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm,
+                           elem_nodes=[[1, 2, 3, 4], [2, 5, 4, 0]])
+    assert _code(pack_results, rd, m, tmp_path / "ob") == "ID_MISMATCH"
+
+
+def test_conn_check_skipped_without_elems_csv(tmp_path):
+    m = _big_plate(tmp_path, n=6)
+    info, od = _pack_shifted(tmp_path, m, {}, conn=False)
+    w = [x for x in info["warnings"] if x.startswith("CONN_CHECK_SKIPPED")]
+    assert len(w) == 1 and "elems.csv 없음" in w[0]
+    assert info["conn_check"]["checked"] is False and json.load(open(od / "frames.json"))["conn_check"]["checked"] is False
+    # elems.csv 가 있어도 done.json elems_ok=false 면 생략
+    t, u, eps, vm, ep = _data(m, F=3)
+    bad = _conn_ids(m).copy(); bad[0, 0] = bad[5, 2]
+    rd = write_results_csv(tmp_path / "csv2", t, m.node_id, m.x0, u, m.elem_id, eps, vm_hv=vm, elem_nodes=bad)
+    dj = json.load(open(os.path.join(rd, "done.json")))
+    dj["elems_ok"] = False
+    json.dump(dj, open(os.path.join(rd, "done.json"), "w"))
+    info = pack_results(rd, m, tmp_path / "o2")
+    assert any(x.startswith("CONN_CHECK_SKIPPED") and "elems_ok=false" in x for x in info["warnings"])
 
 
 @pytest.mark.parametrize("name", ["final.csv", "history.csv", "strain_frames.csv", "disp.csv"])
@@ -432,29 +550,24 @@ def test_frame0_displacement_corrected_passes(tmp_path):
     assert info["coord_deviation"] is None and not any("COORD_DEVIATION" in w for w in info["warnings"])
     fj = json.load(open(tmp_path / "o" / "frames.json"))
     assert fj["model_coords"] == "coords_minus_disp_frame0" and fj["frame0_time"] == float(t[0])
-    # 예전 TCL 처럼 변형 좌표(x0+u0)를 x0 로 쓴 구형 model.csv → 전 노드 실패 + 강체 이동 진단
+    # 예전 TCL 처럼 변형 좌표(x0+u0)를 x0 로 쓴 구형 model.csv → 0.5.5: 강체 이동 + 작은 변형이라 통과(정보 기록)
     rd2 = write_results_csv(tmp_path / "csv2", t, m.node_id, m.x0 + u[0], u, m.elem_id, eps, vm_hv=vm,
                             legacy_model=True)
-    with pytest.raises(EslError) as ei:
-        pack_results(rd2, m, tmp_path / "o2")
-    msg = ei.value.message
-    assert ei.value.code == "ID_MISMATCH" and "400/400" in msg
-    assert "강체 이동" not in msg                  # 작은 변형 1e-3 > tol → 강체 정합 잔차가 tol 초과
-    assert "평균 편차 [" in msg and "강체 정합 후 잔차 최대" in msg and "frame 0 time" in msg
-    assert "-0.36" in msg                          # 평균 z 편차 ≈ v·dt = −0.36
+    info = pack_results(rd2, m, tmp_path / "o2")
+    cd = info["coord_deviation"]
+    assert cd["n_dev"] == 400 and abs(cd["mean_dev"][2] + 0.36) < 1e-3 and cd["rigid_residual_max"] < 0.01
+    assert cd["coord_source"].startswith("x0 (구형") and not any("COORD" in w for w in info["warnings"])
 
 
-def test_rigid_shift_diagnosed(tmp_path):
+def test_rigid_shift_passes_with_diagnostics(tmp_path):
     m = _big_plate(tmp_path)
     t, u, eps, vm, ep = _data(m, F=3)
     th = np.radians(0.5)
     R = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1]])
     xs = m.x0 @ R.T + np.array([0.0, 0.0, -0.386])
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, xs, u, m.elem_id, eps, vm_hv=vm, legacy_model=True)
-    with pytest.raises(EslError) as ei:
-        pack_results(rd, m, tmp_path / "o")
-    msg = ei.value.message
-    assert ei.value.code == "ID_MISMATCH" and "h3d 좌표가 rad에서 강체 이동" in msg and "회전 0.5°" in msg
+    cd = pack_results(rd, m, tmp_path / "o")["coord_deviation"]
+    assert cd["rigid"] and abs(cd["rigid_rotation_deg"] - 0.5) < 1e-6
     g = RC.coord_diagnostics(xs, m.x0, 1e-6)
     assert g["rigid"] and g["rigid_residual_max"] < 1e-9 and abs(g["rigid_rotation_deg"] - 0.5) < 1e-9
     assert abs(g["std_dev"][2]) < 1e-12 and abs(g["mean_dev"][2] + 0.386) < 1e-12
@@ -468,11 +581,10 @@ def test_legacy_model_csv_still_read(tmp_path):
     info = pack_results(rd, m, tmp_path / "o")
     assert info["coord_deviation"] is None
     assert json.load(open(tmp_path / "o" / "frames.json"))["model_coords"] == "legacy"
-    # 구형 + 소수 노드 편차 → 기존 경고 규칙 유지
     x = m.x0.copy(); x[3, 0] += 0.2
     rd = write_results_csv(tmp_path / "csv2", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm, legacy_model=True)
-    w = [x for x in pack_results(rd, m, tmp_path / "o2")["warnings"] if x.startswith("COORD_DEVIATION")]
-    assert len(w) == 1 and "1개" in w[0] and "진단:" in w[0]
+    info = pack_results(rd, m, tmp_path / "o2")
+    assert info["coord_deviation"]["n_dev"] == 1 and not any("COORD" in w for w in info["warnings"])
 
 
 def test_coords_already_initial_falls_back_to_raw(tmp_path):
@@ -495,9 +607,9 @@ def test_real_mesh_mismatch_still_fails_after_correction(tmp_path):
     m = _big_plate(tmp_path)
     t, u, eps, vm = _drop_u(m)
     rng = np.random.default_rng(3)
-    x = m.x0 + rng.normal(size=m.x0.shape) * 0.5     # 다른 메시(비강체) — 변위 보정 후에도 전 노드 다름
+    x = m.x0 + rng.normal(size=m.x0.shape) * 3.0     # 다른 형상(비강체, bbox 의 ~1%) — 변위 보정 후에도 다름
     rd = write_results_csv(tmp_path / "csv", t, m.node_id, x, u, m.elem_id, eps, vm_hv=vm)
     with pytest.raises(EslError) as ei:
         pack_results(rd, m, tmp_path / "o")
-    assert ei.value.code == "ID_MISMATCH" and "강체 이동" not in ei.value.message
+    assert ei.value.code == "ID_MISMATCH" and "강체 정합 후 잔차 최대" in ei.value.message
     assert "frame 0 변위 최대" in ei.value.message
