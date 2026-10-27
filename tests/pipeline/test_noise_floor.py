@@ -1,6 +1,7 @@
 """변위 정밀도 잡음 바닥(S4 noise, S5 NOISE_FLOOR).
 
-- float32 로 양자화한 변위(verify/pipe32.py 재현) + disp_precision=float32 → 경고 + verdict FAIL(NOISE_FLOOR).
+- float32 로 양자화한 변위(verify/pipe32.py 재현) + disp_precision=float32 → 경고(S4) + 변형률 잡음 지표는 "참고 초과"(판정 아님,
+  0.5.7). 판정에 쓰이는 변위 잡음 δ/U(`disp_noise_rel`)는 기준 이내면 PASS, 기준을 넘기면 FAIL(DISP_NOISE).
 - δ = 0.5·ulp·max|X0+u| (float32 → 2^-24·max|x|), 고정 시드 → 결정적.
 """
 import csv
@@ -57,12 +58,14 @@ def test_float32_e2e_warns_and_fails(f32):
     assert n["hotspot_strain_rel"] > 0.05                    # FAIL 기준 초과
     assert len(n["hotspot_elem_id"]) == 3
     val = _j(out, "05_val", "validation.json")
-    # float32 잡음은 전 요소 비교에도 드러남(작은 변형률 valid 요소의 |오차| P90) → FIELD_P90_ERR 동반 가능
-    assert val["verdict"] == "FAIL" and val["fail_reasons"][0] == "NOISE_FLOOR"
-    assert set(val["fail_reasons"]) <= {"NOISE_FLOOR", "FIELD_P90_ERR", "FIELD_MAX_ERR"}
+    # 0.5.7: 변형률 기반 잡음·전 요소 비교는 참고(판정 아님) → "참고 초과"만 표시, 판정은 변위 4지표
     m = {x["metric"]: x for x in val["metrics"]}
-    assert m["noise_hotspot_strain_rel"]["pass"] is False
-    assert m["noise_hotspot_strain_rel"]["criterion"] == 0.05
+    assert m["noise_hotspot_strain_rel"]["role"] == "reference" and m["noise_hotspot_strain_rel"]["pass"] is None
+    assert m["noise_hotspot_strain_rel"]["exceeded"] is True and m["noise_hotspot_strain_rel"]["criterion"] == 0.05
+    assert val["strain_ref"]["exceeded"] is True and "noise_hotspot_strain_rel" in val["strain_ref"]["exceeded_metrics"]
+    assert val["verdict"] == "PASS" and val["fail_reasons"] == []
+    U = float(np.max(np.linalg.norm(np.load(os.path.join(out, "04_esl", "u_rel.npz"))["u_rel"], axis=1)))
+    assert m["disp_noise_rel"]["value"] == pytest.approx(n["delta"] / U, rel=1e-13) and m["disp_noise_rel"]["pass"] is True
     run = _j(out, "run.json")
     es = run["stages"]["esl"]
     assert es["summary"]["noise"]["force_rel"] == n["force_rel"]
@@ -70,7 +73,17 @@ def test_float32_e2e_warns_and_fails(f32):
     assert run["stages"]["validate"]["summary"]["fail_reasons"] == val["fail_reasons"]
     s = f32["stdout"]
     assert "잡음 바닥(float32" in s and "force_rel=" in s and "hotspot_strain_rel=" in s
-    assert "NOISE_FLOOR" in s and "→ FAIL" in s
+    assert "변위 잡음 δ/U=" in s and "[참고 초과]" in s and "→ PASS" in s
+    # 변위 잡음 기준을 δ/U 아래로 낮추면 FAIL(DISP_NOISE)
+    tight = f32["out"] + "_tight"
+    shutil.copytree(f32["out"], tight)
+    cfg = os.path.join(os.path.dirname(f32["out"]), "tight.yaml")
+    with open(cfg, "w", encoding="utf-8") as fh:
+        fh.write(open(CFG, encoding="utf-8").read().replace("disp_noise_rel_max: 1.0e-3", "disp_noise_rel_max: 1.0e-6"))
+    assert cli.main(["run", "--config", cfg, "--rad", f32["rad"], "--results", f32["csv"], "--out", tight,
+                     "--stage", "validate"]) == 0
+    v2 = _j(tight, "05_val", "validation.json")
+    assert v2["verdict"] == "FAIL" and v2["fail_reasons"] == ["DISP_NOISE"]
     print(f"\nfloat32 E2E: noise.force_rel={n['force_rel']:.3e}, hotspot_strain_rel={n['hotspot_strain_rel']:.3e}, "
           f"field max/p90 = {m['field_max_err_pct']['value']:.3g}/{m['field_p90_err_pct']['value']:.3g} %")
 

@@ -262,7 +262,17 @@ validations = Table(
     Column("field", JSONB, nullable=True),          # 0003: validation.json field 요약(계약 P2 §7.2)
     Column("dir_rel", String, nullable=False),
     Column("created_at", TS, nullable=False, server_default=func.now()),
-    CheckConstraint("verdict IN ('PASS','FAIL')", name="ck_validations_verdict"),
+    # 0008(계약 esl_disp_primary.md §6): 변위 주지표 판정. scheme NULL = 이전 판정 체계(LEGACY, 백필 없음)
+    Column("scheme", String, nullable=True),
+    Column("disp_max_rel", Float, nullable=True),
+    Column("disp_noise_rel", Float, nullable=True),
+    Column("undetermined_reason", String, nullable=True),
+    Column("disp", JSONB, nullable=True),
+    Column("strain_ref", JSONB, nullable=True),
+    CheckConstraint("verdict IN ('PASS','FAIL','UNDETERMINED')", name="ck_validations_verdict"),
+    CheckConstraint("scheme IS NULL OR scheme IN ('disp_primary/1')", name="ck_validations_scheme"),
+    CheckConstraint("verdict <> 'UNDETERMINED' OR (scheme IS NOT NULL AND undetermined_reason IS NOT NULL)",
+                    name="ck_validations_undetermined"),
 )
 Index("ix_validations_job", validations.c.job_id)  # 0007: 작업 → 검증(이력)
 

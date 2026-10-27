@@ -222,6 +222,24 @@ def field_section(fixed_norm, along, n0, w_rel, w_val, at: float, band: float) -
     return _wrap(_attr("esl.report.field", "section"), fixed_norm, along, n0, w_rel, w_val, float(at), float(band))
 
 
+def field_robust_range(values, kind: str) -> dict:
+    """견고한 컬러 범위 {min, max, basis, raw}(계약 esl_disp_primary.md §14). kind = sym | zero | minmax."""
+    return _wrap(_attr("esl.report.field", "robust_range"), values, kind)
+
+
+def field_section_stats(s, w_rel, w_val, U) -> dict:
+    """{dw, stats} — 단면 Δw 와 통계(§15.2). w_val=None 이면 dw 빈 배열."""
+    return _wrap(_attr("esl.report.field", "section_stats"), s, w_rel, w_val, U)
+
+
+def field_section_line(plane, xi_range, eta_range, axis: str, at: float, band: float) -> dict:
+    return _wrap(_attr("esl.report.field", "section_line"), plane, xi_range, eta_range, axis, float(at), float(band))
+
+
+def field_normalized_point(ab, xi_range, eta_range) -> tuple[float, float]:
+    return _wrap(_attr("esl.report.field", "normalized_point"), ab, xi_range, eta_range)
+
+
 def field_err_range(err_pct) -> float | None:
     """오차 % 대칭 색 범위 R(= 보고서 히스토그램 범위, P99 |오차| 의 nice ceil, 최소 1%)."""
     h = _wrap(_attr("esl.report.field", "histogram"), err_pct, 20)

@@ -30,7 +30,7 @@ from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
 from ...core.state_machine import RUNNING, SUCCEEDED
 from ..context import AppContext
-from .common import analysis_dir, case_dir, esl_run_out, job_out, load_job, validation_out
+from .common import analysis_dir, case_dir, esl_run_out, job_out, load_job, validation_out, validation_status
 from .results import locate_validation_dir
 
 STATES = ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
@@ -223,7 +223,8 @@ class Batch:
             res.state = "current" if (case.get("current_esl_run_id") == val["esl_run_id"]
                                       and self.latest_val.get(val["esl_run_id"]) == val["id"]) else "past"
             reasons = self.run_reasons(case, run)
-            res.summary = {"verdict": val["verdict"], "disp_rms_rel": val["disp_rms_rel"]}
+            res.summary = {"status": validation_status(val), "verdict": val["verdict"],
+                           "disp_rms_rel": val["disp_rms_rel"], "disp_max_rel": val.get("disp_max_rel")}
         elif jt in ("EXPORT", "CASE_REPORT"):
             run = self.runs.get(row["p_run_id"]) if isinstance(row.get("p_run_id"), str) else None
             res.run = run
@@ -284,12 +285,20 @@ def list_history(ctx: AppContext, principal: Principal, *, project_id: str, case
     return {"items": items, "next_cursor": nxt, "has_more": has_more}
 
 
+def _status_text(val: dict[str, Any]) -> str:
+    """비교 행 "판정" 값 = status(계약 esl_disp_primary.md §7). 이전 판정 체계는 당시 verdict 를 덧붙여 구분한다."""
+    st = validation_status(val)
+    return f"{st}({val['verdict']})" if st == "LEGACY" else st
+
+
 # ---------------------------------------------------------------- GET /jobs/{id}/review
 def _settings_summary(params: dict[str, Any]) -> dict[str, Any]:
     st = params.get("settings") or {}
     val, cmp_ = st.get("validation") or {}, st.get("compare") or {}
     return {
         "criteria": {"disp_rms_rel_max": val.get("disp_rms_rel_max"),
+                     "disp_max_rel_max": val.get("disp_max_rel_max"),
+                     "disp_noise_rel_max": val.get("disp_noise_rel_max"),
                      "hotspot_strain_rel_err_max": val.get("hotspot_strain_rel_err_max"),
                      "reaction_rel_max": val.get("reaction_rel_max"),
                      "max_err_pct_max": cmp_.get("max_err_pct_max"), "p90_err_max": cmp_.get("p90_err_max")},
@@ -484,7 +493,7 @@ def _result_block(ctx: AppContext, conn: Connection, job: dict[str, Any], row: d
             vs = cases_repo.list_validations(conn, esl_run_id=case["current_esl_run_id"])
             cv = vs[0] if vs else None
         diff = _diff([
-            ("verdict", "판정", val["verdict"], cv["verdict"] if cv else None),
+            ("verdict", "판정", _status_text(val), _status_text(cv) if cv else None),
             ("disp_rms_rel", "변위 RMS 상대오차", val["disp_rms_rel"], cv["disp_rms_rel"] if cv else None),
             ("reaction_rel", "반력 상대오차", val["reaction_rel"], cv["reaction_rel"] if cv else None),
             ("hotspot_max_err", "hotspot 최대 오차", _hotspot_max(val["hotspots"]),

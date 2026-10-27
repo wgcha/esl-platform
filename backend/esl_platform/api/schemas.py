@@ -309,13 +309,21 @@ class ValidationOut(_Out):
     reaction_rel: float | None = None
     hotspots: list[dict[str, Any]]
     excluded: list[dict[str, Any]]
-    verdict: str
+    verdict: Literal["PASS", "FAIL", "UNDETERMINED"]
     fail_reasons: list[str]
     criteria: dict[str, Any]
     field: dict[str, Any] | None = None
     dir_rel: str
     created_at: datetime
     stale: bool
+    # 0.5.7(계약 esl_disp_primary.md §7): 변위 주지표 판정. scheme null = 이전 판정 체계(status LEGACY)
+    scheme: str | None = None
+    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] = "LEGACY"
+    disp_max_rel: float | None = None
+    disp_noise_rel: float | None = None
+    undetermined_reason: str | None = None
+    disp: dict[str, Any] | None = None
+    strain_ref: dict[str, Any] | None = None
 
 
 class ArtifactOut(_Out):
@@ -371,8 +379,18 @@ class ColorRange(_Out):
     max: float | None = None
 
 
+class ColorRangeRobust(_Out):
+    """견고한 자동 범위(계약 esl_disp_primary.md §14.2): P99 를 유효숫자 2자리로 올림. raw = 올림 전 분위값."""
+
+    min: float | None = None
+    max: float | None = None
+    basis: str = "p99"
+    raw: float | None = None
+
+
 class FieldOut(_Out):
-    """points 행 = [elem_id, a, b, value(null = 값 없음), reason(OK|HOLD|LOW|EXCLUDED|NO_PREV)]."""
+    """points 행 = [elem_id, a, b, value(null = 값 없음), reason(OK|HOLD|LOW|EXCLUDED|NO_PREV), flags].
+    flags = 비트(1 = 기준 초과 요소, 2 = 소성 영역 epsp>0), 예전 검증 산출물은 0."""
 
     validation_id: str
     layer: Literal["rad", "esl", "err"]
@@ -382,7 +400,55 @@ class FieldOut(_Out):
     cell: list[float] | None = None
     plane: FieldPlane
     color_range: ColorRange
+    color_range_robust: ColorRangeRobust | None = None
     points: list[list[int | float | str | None]]
+
+
+class DispFieldOut(_Out):
+    """변위 전 노드 분석 2D 점(계약 esl_disp_primary.md §7). points 행 = [node_id, a, b, value, is_support].
+    layer: err = e/U, rel = ‖d_rel‖, val = ‖d_val‖. 다운샘플 셀 대표 = e 최대 노드."""
+
+    validation_id: str
+    layer: Literal["err", "rel", "val"]
+    n_total: int
+    n_returned: int
+    decimated: bool
+    cell: list[float] | None = None
+    plane: FieldPlane
+    color_range: ColorRange
+    color_range_robust: ColorRangeRobust | None = None
+    U: float
+    points: list[list[int | float | None]]
+
+
+class SectionStats(_Out):
+    dw_max_abs: float | None = None
+    s_at_dw_max: float | None = None
+    dw_rms: float | None = None
+    U: float | None = None
+    dw_max_rel: float | None = None
+    dw_rms_rel: float | None = None
+    w_max_abs: float | None = None
+
+
+class SectionLine(_Out):
+    """지도에 그릴 단면 중심선(PCA 평면 실좌표, 대상 파트 범위 양 끝) + 띠 실좌표 반폭 band_abs."""
+
+    a0: float
+    b0: float
+    a1: float
+    b1: float
+    band_abs: float
+    xi_range: list[float]
+    eta_range: list[float]
+
+
+class SectionSuggest(_Out):
+    key: Literal["max_disp_err", "hotspot1"]
+    label: str
+    xi: float
+    eta: float
+    id: int
 
 
 class SectionOut(_Out):
@@ -395,6 +461,13 @@ class SectionOut(_Out):
     w_rad: list[float]
     w_esl: list[float]
     w0: list[float]
+    # 0.5.7(계약 §15.2)
+    dw: list[float] = Field(default_factory=list)
+    stats: SectionStats = Field(default_factory=SectionStats)
+    has_val: bool = False
+    line: SectionLine | None = None
+    units: str | None = None
+    suggest: list[SectionSuggest] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- P2: 라이브러리
@@ -431,6 +504,12 @@ class EntryScene(_Out):
 
 class EntryQuality(_Out):
     verdict: str | None = None
+    status: str | None = None          # PASS|FAIL|UNDETERMINED|LEGACY (0.5.7 이전 등록은 없음 → LEGACY 로 취급)
+    scheme: str | None = None
+    disp_max_rel: float | None = None
+    disp_noise_rel: float | None = None
+    strain_exceed_frac: float | None = None
+    undetermined_reason: str | None = None
     fail_reasons: list[str] = Field(default_factory=list)
     field_max_err_pct: float | None = None
     field_p90_err_pct: float | None = None
@@ -439,6 +518,7 @@ class EntryQuality(_Out):
     reaction_rel: float | None = None
     noise: dict[str, Any] | None = None
     confirmed_fail: dict[str, Any] | None = None
+    confirmed_undetermined: dict[str, Any] | None = None
 
 
 class EntryOut(_Out):

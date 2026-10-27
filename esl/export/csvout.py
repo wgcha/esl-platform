@@ -50,17 +50,23 @@ REACTIONS_HEADER = ("node_id", "dof", "rx", "ry", "rz")
 CANDIDATES_HEADER = ("rank", "frame_index", "time", "eps_max", "elem_id")
 HOTSPOTS_HEADER = ("rank", "elem_id", "eps_eq", "cx", "cy", "cz")
 HISTORY_HEADER = ("time", "eps_max", "eps_hotspot1")
-VALIDATION_HEADER = ("metric", "value", "criterion", "pass")
+VALIDATION_HEADER = ("metric", "value", "criterion", "pass", "role")
 VALIDATION_HOT_HEADER = ("elem_id", "eps_rad", "eps_val", "rel_err")
 
 
 def write_validation_csv(path: str, validation: dict, fmt: CsvFormat) -> str:
-    """``metric,value,criterion,pass`` 행 + 빈 줄 + hotspot 표 ``elem_id,eps_rad,eps_val,rel_err``."""
+    """``metric,value,criterion,pass,role`` — 첫 행 ``verdict``, 이어서 지표 행 + 빈 줄 + hotspot 표.
+
+    role = judge(판정) | reference(참고 — pass 열은 초과 여부 ``exceeded``) | info. 예전(schema 2) validation.json 은 role 빈칸.
+    """
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(fmt.line(VALIDATION_HEADER))
+        v = validation["verdict"]
+        fh.write(fmt.line(("verdict", v, None, v == "PASS", "judge")))
         for m in validation["metrics"]:
-            fh.write(fmt.line((m["metric"], m["value"], m["criterion"], m["pass"])))
-        fh.write(fmt.line(("verdict", validation["verdict"], None, validation["verdict"] == "PASS")))
+            role = m.get("role", "")
+            flag = m.get("exceeded") if role == "reference" else m["pass"]
+            fh.write(fmt.line((m["metric"], m["value"], m["criterion"], flag, role)))
         fh.write("\n")
         fh.write(fmt.line(VALIDATION_HOT_HEADER))
         for h in validation["hotspots"]:

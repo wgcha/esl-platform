@@ -103,7 +103,7 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
         nullable = c.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='jobs' "
                                   "AND column_name='case_id'")).scalar_one()
         ver = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0007" and nullable == "YES"
+    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0008" and nullable == "YES"
     assert {"ux_library_entries_run_active", "ux_jobs_analysis_active", "ux_jobs_comparison_active",
             "ix_comparisons_project"} <= idx
     assert "LIB_ANALYZE" in cons["ck_jobs_job_type"] and "LIB_COMPARE" in cons["ck_jobs_job_type"]
@@ -161,15 +161,17 @@ def test_field_downsample_layers_and_section(client, engine, case):
     both = np.concatenate([arr["eps_rad"], arr["eps_esl"]])
     assert f["color_range"]["min"] == pytest.approx(both.min()) and f["color_range"]["max"] == pytest.approx(both.max())
     ids = {int(e): k for k, e in enumerate(arr["elem_id"])}
-    for eid, a, b, v, reason in f["points"][:50]:
+    for eid, a, b, v, reason, flags in f["points"][:50]:
         k = ids[eid]
+        assert flags == 0                                                 # 0.5.7 이전 산출물(exceed·plastic 없음) → 0
         assert (a, b) == pytest.approx(tuple(arr["centroid2d"][k])) and v == pytest.approx(arr["eps_rad"][k])
         assert reason == {0: "OK", 1: "HOLD", 2: "LOW"}[int(arr["reason"][k])]
     # 다운샘플은 셀마다 valid 우선 → 반환 점 대부분 OK
     assert sum(p[4] == "OK" for p in f["points"]) > 0.8 * len(f["points"])
+    assert f["color_range_robust"]["basis"] == "p99" and f["color_range_robust"]["min"] == pytest.approx(both.min())
     r = client.get(f"{API}/validations/{vid}/field", params={"layer": "err", "max_points": 100}, headers=R).json()
     assert r["n_returned"] <= 100 and r["color_range"]["max"] == -r["color_range"]["min"] > 0
-    for eid, _, _, v, reason in r["points"]:
+    for eid, _, _, v, reason, _flags in r["points"]:
         k = ids[eid]
         if reason == "OK":
             assert v == pytest.approx(100 * arr["rel_err"][k])

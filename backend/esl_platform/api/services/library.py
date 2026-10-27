@@ -2,7 +2,8 @@
 
 - 등록은 동기(API 프로세스): ESL 실행 스냅샷 ``runs/<esl_run_id>/`` 를 코어 ``entry.build`` 로 읽어
   ``<esl_root>/_library/entries/<id>/`` 에 저장(수정 불가) + DB 행. Case 폴더에는 쓰지 않는다.
-- 검증 FAIL 은 ``force_reason`` 필수(422 VALIDATION_NOT_PASS), 같은 run 의 ACTIVE 항목이 있으면 409 ENTRY_EXISTS.
+- 검증 FAIL·UNDETERMINED 는 ``force_reason`` 필수(422 VALIDATION_NOT_PASS, 계약 esl_disp_primary.md §8). LEGACY(이전 판정
+  체계, scheme NULL)는 당시 verdict 의 기존 규칙(PASS 사유 불필요, FAIL 사유 필수). 같은 run 의 ACTIVE 항목이 있으면 409 ENTRY_EXISTS.
 - 분석 생성은 대상 항목을 확정(필터 → id 목록)해 LIB_ANALYZE 작업(SLOT)을 큐에 넣는다. DB 메타(사용자 수정)는
   작업 params 의 overlay 로 스냅샷되어 코어 항목 meta 에 덮어쓰인다.
 """
@@ -38,6 +39,7 @@ from .common import (
     require_config_ok,
     require_execute,
     require_library_config,
+    validation_status,
 )
 
 MODEL_KEYS = ("name", "inch", "version", "date", "product_mass")
@@ -108,14 +110,20 @@ def _row_from_meta(meta: dict[str, Any], val: dict[str, Any], force_reason: str 
              "scene_no": s.get("scene"), "orient": s.get("orient"), "suffix": s.get("suffix"),
              "variant": s.get("variant"), "faces": s.get("faces"), "raw": s.get("source"),
              "path_kind": s.get("path_kind"), "warnings": list(s.get("warnings") or [])}
-    quality = {"verdict": val["verdict"], "fail_reasons": list(val.get("fail_reasons") or []),
+    quality = {"verdict": val["verdict"], "status": validation_status(val), "scheme": val.get("scheme"),
+               "undetermined_reason": val.get("undetermined_reason"),
+               "disp_max_rel": _num(val.get("disp_max_rel")), "disp_noise_rel": _num(val.get("disp_noise_rel")),
+               "strain_exceed_frac": _num((val.get("strain_ref") or {}).get("frac_exceed")),
+               "fail_reasons": list(val.get("fail_reasons") or []),
                "field_max_err_pct": _num(fmax), "field_p90_err_pct": _num(fp90),
                "hotspot1_rel_err": _num(q.get("hotspot1_rel_err")), "disp_rms_rel": _num(q.get("disp_rms_rel")),
-               "reaction_rel": _num(q.get("reaction_rel")), "noise": q.get("noise"), "confirmed_fail": None}
+               "reaction_rel": _num(q.get("reaction_rel")), "noise": q.get("noise"), "confirmed_fail": None,
+               "confirmed_undetermined": None}
     if val["verdict"] != "PASS":
-        quality["confirmed_fail"] = {"reason": force_reason, "by": principal.user_id,
-                                     "by_name": principal.display_name,
-                                     "at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}
+        # FAIL → confirmed_fail, UNDETERMINED → confirmed_undetermined (같은 형식 {reason, by, by_name, at})
+        quality["confirmed_undetermined" if val["verdict"] == "UNDETERMINED" else "confirmed_fail"] = {
+            "reason": force_reason, "by": principal.user_id, "by_name": principal.display_name,
+            "at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}
     sm = meta.get("summary") or {}
     fr = meta.get("frame") or {}
     summary = {"grid": meta.get("grid"), "mesh_sha256": meta.get("mesh_sha256"),

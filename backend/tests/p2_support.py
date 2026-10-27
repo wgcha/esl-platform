@@ -20,7 +20,7 @@ from sqlalchemy import insert
 
 
 def seed_run(engine, case_id: str, *, project_id: str = "p-1", verdict: str | None = "PASS",
-             field: dict | None = None) -> dict[str, Any]:
+             field: dict | None = None, val_extra: dict | None = None) -> dict[str, Any]:
     jid, sid, rid = (str(uuid.uuid4()) for _ in range(3))
     with engine.begin() as c:
         c.execute(insert(jobs).values(id=jid, case_id=case_id, project_id=project_id, job_type="ESL_SOLVE", stage=4,
@@ -35,7 +35,8 @@ def seed_run(engine, case_id: str, *, project_id: str = "p-1", verdict: str | No
         if verdict:
             vid = str(uuid.uuid4())
             c.execute(insert(validations).values(id=vid, esl_run_id=rid, case_id=case_id, job_id=jid, hotspots=[],
-                                                 verdict=verdict, criteria={}, field=field, dir_rel="05_val"))
+                                                 verdict=verdict, criteria={}, field=field, dir_rel="05_val",
+                                                 **(val_extra or {})))
     return {"job_id": jid, "run_id": rid, "validation_id": vid, "support_set_id": sid}
 
 
@@ -43,7 +44,8 @@ def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None
                registered_by: str = "u-power", name: str = "55QX10A", inch: int = 55, drop_type: str = "Corner",
                orient: str = "146", verdict: str = "PASS", grid: tuple[int, int] = (24, 14),
                product_mass: float | None = None, status: str = "ACTIVE", version: str | None = None,
-               scene_no: int = 1, registered_at: _dt.datetime | None = None) -> str:
+               scene_no: int = 1, registered_at: _dt.datetime | None = None,
+               quality_extra: dict | None = None) -> str:
     eid = str(uuid.uuid4())
     dir_rel = f"_library/entries/{eid}"
     if esl_root:
@@ -57,7 +59,7 @@ def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None
             model={"name": name, "inch": inch, "product_mass": product_mass, "version": version},
             scene={"drop_type": drop_type, "drop_class": drop_type, "orient": orient, "scenario": "FREE",
                    "scene_no": scene_no, "warnings": []},
-            quality={"verdict": verdict, "fail_reasons": []}, summary={"grid": {"nx": grid[0], "ny": grid[1]}},
+            quality={"verdict": verdict, "fail_reasons": [], **(quality_extra or {})}, summary={"grid": {"nx": grid[0], "ny": grid[1]}},
             dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz", sha256="0" * 64,
             registered_by=registered_by, registered_by_name=registered_by,
             retired_at=None if status == "ACTIVE" else _dt.datetime(2026, 10, 19, tzinfo=_dt.timezone.utc),

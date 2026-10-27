@@ -1333,6 +1333,51 @@
         "title": "ColorRange",
         "type": "object"
       },
+      "ColorRangeRobust": {
+        "description": "견고한 자동 범위(계약 esl_disp_primary.md §14.2): P99 를 유효숫자 2자리로 올림. raw = 올림 전 분위값.",
+        "properties": {
+          "basis": {
+            "default": "p99",
+            "title": "Basis",
+            "type": "string"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          }
+        },
+        "title": "ColorRangeRobust",
+        "type": "object"
+      },
       "ComparisonCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1763,6 +1808,103 @@
           "label"
         ],
         "title": "DiffRow",
+        "type": "object"
+      },
+      "DispFieldOut": {
+        "description": "변위 전 노드 분석 2D 점(계약 esl_disp_primary.md §7). points 행 = [node_id, a, b, value, is_support].\nlayer: err = e/U, rel = ‖d_rel‖, val = ‖d_val‖. 다운샘플 셀 대표 = e 최대 노드.",
+        "properties": {
+          "U": {
+            "title": "U",
+            "type": "number"
+          },
+          "cell": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell"
+          },
+          "color_range": {
+            "$ref": "#/components/schemas/ColorRange"
+          },
+          "color_range_robust": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ColorRangeRobust"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decimated": {
+            "title": "Decimated",
+            "type": "boolean"
+          },
+          "layer": {
+            "enum": [
+              "err",
+              "rel",
+              "val"
+            ],
+            "title": "Layer",
+            "type": "string"
+          },
+          "n_returned": {
+            "title": "N Returned",
+            "type": "integer"
+          },
+          "n_total": {
+            "title": "N Total",
+            "type": "integer"
+          },
+          "plane": {
+            "$ref": "#/components/schemas/FieldPlane"
+          },
+          "points": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "validation_id": {
+            "title": "Validation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "validation_id",
+          "layer",
+          "n_total",
+          "n_returned",
+          "decimated",
+          "plane",
+          "color_range",
+          "U",
+          "points"
+        ],
+        "title": "DispFieldOut",
         "type": "object"
       },
       "EntryCreate": {
@@ -2286,6 +2428,40 @@
             ],
             "title": "Confirmed Fail"
           },
+          "confirmed_undetermined": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Undetermined"
+          },
+          "disp_max_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disp Max Rel"
+          },
+          "disp_noise_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disp Noise Rel"
+          },
           "disp_rms_rel": {
             "anyOf": [
               {
@@ -2359,6 +2535,50 @@
               }
             ],
             "title": "Reaction Rel"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheme"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "strain_exceed_frac": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strain Exceed Frac"
+          },
+          "undetermined_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undetermined Reason"
           },
           "verdict": {
             "anyOf": [
@@ -2793,7 +3013,7 @@
         "type": "object"
       },
       "FieldOut": {
-        "description": "points 행 = [elem_id, a, b, value(null = 값 없음), reason(OK|HOLD|LOW|EXCLUDED|NO_PREV)].",
+        "description": "points 행 = [elem_id, a, b, value(null = 값 없음), reason(OK|HOLD|LOW|EXCLUDED|NO_PREV), flags].\nflags = 비트(1 = 기준 초과 요소, 2 = 소성 영역 epsp>0), 예전 검증 산출물은 0.",
         "properties": {
           "cell": {
             "anyOf": [
@@ -2811,6 +3031,16 @@
           },
           "color_range": {
             "$ref": "#/components/schemas/ColorRange"
+          },
+          "color_range_robust": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ColorRangeRobust"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decimated": {
             "title": "Decimated",
@@ -4690,6 +4920,56 @@
         "title": "ReviewTiming",
         "type": "object"
       },
+      "SectionLine": {
+        "description": "지도에 그릴 단면 중심선(PCA 평면 실좌표, 대상 파트 범위 양 끝) + 띠 실좌표 반폭 band_abs.",
+        "properties": {
+          "a0": {
+            "title": "A0",
+            "type": "number"
+          },
+          "a1": {
+            "title": "A1",
+            "type": "number"
+          },
+          "b0": {
+            "title": "B0",
+            "type": "number"
+          },
+          "b1": {
+            "title": "B1",
+            "type": "number"
+          },
+          "band_abs": {
+            "title": "Band Abs",
+            "type": "number"
+          },
+          "eta_range": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Eta Range",
+            "type": "array"
+          },
+          "xi_range": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Xi Range",
+            "type": "array"
+          }
+        },
+        "required": [
+          "a0",
+          "b0",
+          "a1",
+          "b1",
+          "band_abs",
+          "xi_range",
+          "eta_range"
+        ],
+        "title": "SectionLine",
+        "type": "object"
+      },
       "SectionOut": {
         "properties": {
           "at": {
@@ -4708,6 +4988,28 @@
             "title": "Band",
             "type": "number"
           },
+          "dw": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Dw",
+            "type": "array"
+          },
+          "has_val": {
+            "default": false,
+            "title": "Has Val",
+            "type": "boolean"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SectionLine"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "n_elems": {
             "title": "N Elems",
             "type": "integer"
@@ -4718,6 +5020,27 @@
             },
             "title": "S",
             "type": "array"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/SectionStats"
+          },
+          "suggest": {
+            "items": {
+              "$ref": "#/components/schemas/SectionSuggest"
+            },
+            "title": "Suggest",
+            "type": "array"
+          },
+          "units": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Units"
           },
           "validation_id": {
             "title": "Validation Id",
@@ -4757,6 +5080,126 @@
           "w0"
         ],
         "title": "SectionOut",
+        "type": "object"
+      },
+      "SectionStats": {
+        "properties": {
+          "U": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "U"
+          },
+          "dw_max_abs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dw Max Abs"
+          },
+          "dw_max_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dw Max Rel"
+          },
+          "dw_rms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dw Rms"
+          },
+          "dw_rms_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dw Rms Rel"
+          },
+          "s_at_dw_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S At Dw Max"
+          },
+          "w_max_abs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "W Max Abs"
+          }
+        },
+        "title": "SectionStats",
+        "type": "object"
+      },
+      "SectionSuggest": {
+        "properties": {
+          "eta": {
+            "title": "Eta",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "key": {
+            "enum": [
+              "max_disp_err",
+              "hotspot1"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "xi": {
+            "title": "Xi",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "xi",
+          "eta",
+          "id"
+        ],
+        "title": "SectionSuggest",
         "type": "object"
       },
       "StageState": {
@@ -5614,6 +6057,40 @@
             "title": "Dir Rel",
             "type": "string"
           },
+          "disp": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disp"
+          },
+          "disp_max_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disp Max Rel"
+          },
+          "disp_noise_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disp Noise Rel"
+          },
           "disp_rms_rel": {
             "anyOf": [
               {
@@ -5683,11 +6160,61 @@
             ],
             "title": "Reaction Rel"
           },
+          "scheme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheme"
+          },
           "stale": {
             "title": "Stale",
             "type": "boolean"
           },
+          "status": {
+            "default": "LEGACY",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNDETERMINED",
+              "LEGACY"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "strain_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strain Ref"
+          },
+          "undetermined_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undetermined Reason"
+          },
           "verdict": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNDETERMINED"
+            ],
             "title": "Verdict",
             "type": "string"
           }
@@ -5784,7 +6311,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.5.5"
+    "version": "0.5.7"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9169,6 +9696,81 @@
         ]
       }
     },
+    "/esl/api/validations/{vid}/disp-field": {
+      "get": {
+        "description": "변위 전 노드 분석 2D 점(err = e/U, rel = ‖d_rel‖, val = ‖d_val‖). 다운샘플 셀 대표 = e 최대 노드.",
+        "operationId": "validation_disp_field_esl_api_validations__vid__disp_field_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vid",
+            "required": true,
+            "schema": {
+              "title": "Vid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "layer",
+            "required": false,
+            "schema": {
+              "default": "err",
+              "enum": [
+                "err",
+                "rel",
+                "val"
+              ],
+              "title": "Layer",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_points",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 10,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Points"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DispFieldOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validation Disp Field",
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/esl/api/validations/{vid}/field": {
       "get": {
         "description": "전 요소 비교 2D 점(요소 중심 PCA 평면 좌표 + 값), 2D 셀 격자 다운샘플(≤ ui.max_preview_points).",
@@ -9246,7 +9848,7 @@
     },
     "/esl/api/validations/{vid}/section": {
       "get": {
-        "description": "단면선: 정규화 좌표 axis = at 고정 띠의 요소를 다른 축 방향으로 bin 평균(면외 변위 Radioss·ESL, 초기 면외 좌표).",
+        "description": "단면선: 정규화 좌표 axis = at 고정 띠의 요소를 다른 축 방향으로 bin 평균(면외 변위 Radioss·ESL, 초기 면외 좌표).\naxis=eta(기본): 판 길이 방향 단면, axis=xi: 판 폭 방향 단면. Δw·통계·지도용 선·추천 단면 포함.",
         "operationId": "validation_section_esl_api_validations__vid__section_get",
         "parameters": [
           {
@@ -9263,7 +9865,7 @@
             "name": "axis",
             "required": false,
             "schema": {
-              "default": "xi",
+              "default": "eta",
               "enum": [
                 "xi",
                 "eta"

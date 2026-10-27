@@ -110,7 +110,13 @@ def esl_run_out(case: dict[str, Any], run: dict[str, Any], conn: Connection | No
     return d
 
 
+def validation_status(val: dict[str, Any]) -> str:
+    """표시 상태(계약 esl_disp_primary.md §3.3): scheme 이 없으면 LEGACY(이전 판정 체계), 아니면 verdict."""
+    return val["verdict"] if val.get("scheme") else "LEGACY"
+
+
 def validation_out(case: dict[str, Any], run: dict[str, Any], val: dict[str, Any]) -> dict[str, Any]:
     d = dict(val)
+    d["status"] = validation_status(val)
     d["stale"] = esl_run_stale(case, run) or case.get("current_esl_run_id") != run["id"]
     return d

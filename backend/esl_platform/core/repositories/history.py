@@ -121,7 +121,8 @@ def validations_by_jobs(conn: Connection, job_ids: list[str]) -> dict[str, dict[
     if not job_ids:
         return {}
     cols = (validations.c.id, validations.c.job_id, validations.c.esl_run_id, validations.c.case_id,
-            validations.c.verdict, validations.c.disp_rms_rel, validations.c.reaction_rel, validations.c.created_at)
+            validations.c.verdict, validations.c.scheme, validations.c.disp_rms_rel, validations.c.disp_max_rel,
+            validations.c.reaction_rel, validations.c.created_at)
     return {r.job_id: row_dict(r) for r in conn.execute(select(*cols).where(validations.c.job_id.in_(job_ids))).all()}
 
 

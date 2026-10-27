@@ -7,6 +7,9 @@
 - ``plane_coords``·``elem_mean``·``section``: PCA 평면 (ξ, η) 실좌표·면외 좌표, 단면선(ξ 또는 η 고정) 자료.
 - ``downsample``: 2D 셀 격자 다운샘플(셀마다 대표 요소 1개 = valid 우선, ε_rad 최대) — 보고서·API 미리보기용.
 
+- 0.5.7(계약 esl_disp_primary.md): ``strain_reference``(초과 요소·소성 영역·P99), ``disp_analysis``(변위 전 노드),
+  ``ceil2``·``robust_range``(레전드 자동 범위 §14), ``section_stats``·``section_line``·``normalized_point``(단면선 §15).
+
 오차 정의: ``rel_err = (ε_esl − ε_rad)/ε_rad`` (부호 있음), 요약의 ``*_pct`` 는 100 배(%), 분위수는 |rel_err|.
 """
 from __future__ import annotations
@@ -29,6 +32,10 @@ REASON_TEXT = {
 SECTION_BINS_MAX = 200
 SEMANTIC_NOTE = ("F_eq 는 u_rel(강체 제거 변위장)을 선형 탄성 모델에서 재현하는 하중이므로, 변형률(운동학량)은 "
                  "요소 정식화·회전 자유도 차이만큼만 어긋나고, 응력은 소성 영역에서 탄성 과대평가된다.")
+# 보고서용 축 명칭(화면 문구는 프런트 소유). axis=xi: ξ 고정 → 판 폭 방향으로 그림, axis=eta: η 고정 → 판 길이 방향
+AXIS_LABEL = {"eta": "판 길이 방향", "xi": "판 폭 방향"}
+SECTION_LABEL = {"eta": "길이 방향 중앙선", "xi": "폭 방향 중앙선"}
+FLAG_EXCEED, FLAG_PLASTIC = 1, 2          # /field points 6번째 열 flags 비트
 
 
 def rising_mask(v, v_prev=None, rtol: float = 1e-6) -> np.ndarray:
@@ -142,7 +149,7 @@ def summarize(elem_id, eps_rad, eps_esl, rel, valid, reason, rising, max_pos, to
     if a.size:
         out["abs_err_pct"] = {"mean": float(a.mean()), "p50": float(np.percentile(a, 50)),
                               "p90": float(np.percentile(a, 90)), "p95": float(np.percentile(a, 95)),
-                              "max": float(a.max())}
+                              "p99": float(np.percentile(a, 99)), "max": float(a.max())}
         out["frac_within"] = {str(t): float(np.mean(a <= t)) for t in (5, 10, 20)}
     else:
         out["abs_err_pct"] = None
@@ -267,3 +274,181 @@ def downsample(xi, eta, eps_rad, valid, max_points: int):
     order = np.lexsort((np.arange(n), -er, ~np.asarray(valid, dtype=bool), cell))
     first = np.unique(cell[order], return_index=True)[1]
     return np.sort(order[first]), (W / nx, H / ny)
+
+
+# ====================================================================== 0.5.7 변형률 참고 (계약 esl_disp_primary.md §3.4)
+def strain_reference(rel, valid, epsp, n_elems: int, max_err_pct_max: float) -> dict:
+    """변형률 참고 집계(판정 아님). 반환 {exceed (E,) bool, plastic (E,) bool|None, ref dict(공통 부분)}.
+
+    - exceed = valid ∧ 100·|rel_err| > max_err_pct_max (NaN → False), 비율 분모 = 전 요소(``frac_exceed``),
+      valid 요소(``frac_exceed_valid``) 병기. p99_err_pct = valid 요소 |오차| % 의 99 분위(없으면 None).
+    - plastic = epsp > 0 (엄격 부등호, NaN → False). epsp 가 None 이면 ``plastic: None``.
+    """
+    rel = np.asarray(rel, dtype=np.float64)
+    valid = np.asarray(valid, dtype=bool)
+    E = int(n_elems)
+    with np.errstate(invalid="ignore"):
+        exceed = valid & (100.0 * np.abs(rel) > float(max_err_pct_max))
+    n_valid = int(valid.sum())
+    n_ex = int(exceed.sum())
+    a = 100.0 * np.abs(rel[valid])
+    a = a[np.isfinite(a)]
+    ref = {"n_elems": E, "n_valid": n_valid, "n_exceed": n_ex,
+           "frac_exceed": (n_ex / E) if E else 0.0, "frac_exceed_valid": (n_ex / n_valid) if n_valid else None,
+           "p99_err_pct": float(np.percentile(a, 99)) if a.size else None,
+           "max_err_pct_max": float(max_err_pct_max)}
+    if epsp is None:
+        ref["plastic"] = None
+        return {"exceed": exceed, "plastic": None, "ref": ref}
+    ep = np.asarray(epsp, dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        plastic = ep > 0
+    n_pl = int(plastic.sum())
+    ref["plastic"] = {"n_plastic": n_pl, "frac_plastic": (n_pl / E) if E else 0.0,
+                      "n_exceed_plastic": int((exceed & plastic).sum())}
+    return {"exceed": exceed, "plastic": plastic, "ref": ref}
+
+
+# ====================================================================== 0.5.7 변위 전 노드 분석 (§3.5)
+def _hist_log10(r, bins: int) -> dict:
+    """log10(r) 균등 bin 히스토그램. r=0 은 ``n_zero`` 로 따로. 범위 [floor(log10 min r>0), ceil(log10 max r)]."""
+    r = np.asarray(r, dtype=np.float64)
+    r = r[np.isfinite(r)]
+    n_zero = int(np.sum(r <= 0))
+    pos = r[r > 0]
+    if pos.size == 0:
+        return {"edges_log10": [], "counts": [], "n": int(r.size), "n_zero": n_zero}
+    lo = float(np.floor(np.log10(pos.min())))
+    hi = float(np.ceil(np.log10(pos.max())))
+    if hi <= lo:
+        hi = lo + 1.0
+    edges = np.linspace(lo, hi, int(bins) + 1)
+    counts, _ = np.histogram(np.log10(pos), bins=edges)
+    return {"edges_log10": edges.tolist(), "counts": counts.astype(int).tolist(), "n": int(r.size), "n_zero": n_zero}
+
+
+def disp_analysis(node_id, x0, d_rel, d_val, U: float, is_support, top_n: int, hist_bins: int) -> dict:
+    """변위 전 노드 분석. e_i = ‖d_val − d_rel‖, r_i = e_i/U. 반환 {summary(validation.json ``disp``), arrays(compare_disp.npz)}.
+
+    x0 노드를 ``plane_coords`` 와 같은 PCA 평면(e1 = 판 길이 방향, e2 = 판 폭 방향)에 투영한 (a, b).
+    """
+    nid = np.asarray(node_id, dtype=np.int64)
+    d_rel = np.asarray(d_rel, dtype=np.float64)
+    d_val = np.asarray(d_val, dtype=np.float64)
+    sup = np.asarray(is_support, dtype=bool)
+    N = int(nid.size)
+    e = np.linalg.norm(d_val - d_rel, axis=1)
+    U = float(U)
+    r = e / U
+    pl = plane_coords(x0, np.asarray(x0, dtype=np.float64))
+    ab = np.stack([pl["xi"], pl["eta"]], axis=1)
+    mag_rel = np.linalg.norm(d_rel, axis=1)
+    order = np.lexsort((nid, -r))
+    top = [{"node_id": int(nid[i]), "r": float(r[i]), "e": float(e[i]), "u_rel_mag": float(mag_rel[i]),
+            "a": float(ab[i, 0]), "b": float(ab[i, 1]), "is_support": bool(sup[i])} for i in order[: int(top_n)]]
+    support = [{"node_id": int(nid[i]), "r": float(r[i]), "e": float(e[i])} for i in np.flatnonzero(sup)]
+    imax = int(order[0]) if N else 0
+    pq = {k: float(np.percentile(r, q)) for k, q in (("p50", 50), ("p90", 90), ("p99", 99))}
+    summary = {"U": U, "n_nodes": N, "n_support": int(sup.sum()),
+               "rms_rel": float(np.sqrt(np.mean(e ** 2)) / U), "max_rel": float(r.max()),
+               "max_node_id": int(nid[imax]), **pq, "max": float(r.max()),
+               "hist": _hist_log10(r, hist_bins), "top": top, "support": support,
+               "plane": {k: pl[k].tolist() for k in ("origin", "e1", "e2", "n", "xi_range", "eta_range")}}
+    arrays = {"node_id": nid, "ab": ab, "d_rel": d_rel, "d_val": d_val, "e": e, "is_support": sup,
+              "U": np.float64(U), "plane_origin": pl["origin"], "plane_e1": pl["e1"], "plane_e2": pl["e2"],
+              "plane_n": pl["n"]}
+    return {"summary": summary, "arrays": arrays}
+
+
+# ====================================================================== 0.5.7 레전드 자동 범위 (§14)
+def ceil2(x):
+    """유효숫자 2자리 올림(263.4 → 270, 0.01234 → 0.013). x ≤ 0 이거나 비유한이면 None."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(x) or x <= 0:
+        return None
+    p = 10.0 ** (np.floor(np.log10(x)) - 1.0)
+    m = np.ceil(x / p * (1.0 - 1e-12))
+    return float(f"{m * p:.12g}")
+
+
+def robust_range(values, kind: str = "sym", pct: float = 99) -> dict:
+    """견고한 컬러 범위 {min, max, basis("p99"), raw(올림 전 분위값)}. 빈 입력·비유한·분위값 ≤ 0 → min/max None.
+
+    - ``sym``: R = ceil2(P(|v|)), {−R, +R}.  - ``zero``: {0, ceil2(P(v))}.  - ``minmax``: {min v, ceil2(P(v))}.
+    """
+    if kind not in ("sym", "zero", "minmax"):
+        raise EslError("INPUT_INVALID", f"robust_range kind: {kind}")
+    v = np.asarray(values, dtype=np.float64).ravel()
+    v = v[np.isfinite(v)]
+    basis = f"p{pct:g}"
+    out = {"min": None, "max": None, "basis": basis, "raw": None}
+    if v.size == 0:
+        return out
+    raw = float(np.percentile(np.abs(v) if kind == "sym" else v, pct))
+    out["raw"] = raw
+    top = ceil2(raw)
+    if top is None:
+        return out
+    if kind == "sym":
+        out.update(min=-top, max=top)
+    elif kind == "zero":
+        out.update(min=0.0, max=top)
+    else:
+        out.update(min=float(v.min()), max=top)
+    return out
+
+
+# ====================================================================== 0.5.7 단면선 확장 (§15)
+def section_stats(s, w_rel, w_val, U) -> dict:
+    """단면 bin 값에서 Δw = w_val − w_rel 와 통계. 반환 {dw (list), stats}.
+
+    stats = {dw_max_abs, s_at_dw_max, dw_rms(bin 기준 √mean(dw²)), U, dw_max_rel, dw_rms_rel, w_max_abs}.
+    w_val 이 None(전체 재해석 해 없음)이면 dw 는 빈 배열, dw 관련 값 null(w_max_abs 만 값). 단면이 비면 전부 null.
+    """
+    keys = ("dw_max_abs", "s_at_dw_max", "dw_rms", "U", "dw_max_rel", "dw_rms_rel", "w_max_abs")
+    s = np.asarray(s, dtype=np.float64)
+    wr = np.asarray(w_rel, dtype=np.float64)
+    if s.size == 0:
+        return {"dw": [], "stats": {k: None for k in keys}}
+    Uf = None if U is None or not np.isfinite(float(U)) or float(U) <= 0 else float(U)
+    if w_val is None:
+        return {"dw": [], "stats": {**{k: None for k in keys}, "w_max_abs": float(np.max(np.abs(wr)))}}
+    wv = np.asarray(w_val, dtype=np.float64)
+    dw = wv - wr
+    k = int(np.argmax(np.abs(dw)))
+    mx, rms = float(abs(dw[k])), float(np.sqrt(np.mean(dw ** 2)))
+    return {"dw": dw.tolist(),
+            "stats": {"dw_max_abs": mx, "s_at_dw_max": float(s[k]), "dw_rms": rms, "U": Uf,
+                      "dw_max_rel": None if Uf is None else mx / Uf, "dw_rms_rel": None if Uf is None else rms / Uf,
+                      "w_max_abs": float(max(np.max(np.abs(wr)), np.max(np.abs(wv))))}}
+
+
+def section_line(plane, xi_range, eta_range, axis: str, at: float, band: float) -> dict:
+    """지도에 그릴 단면 중심선 {a0, b0, a1, b1, band_abs} (PCA 평면 실좌표, 대상 파트 범위 양 끝).
+
+    axis=eta: η = η_lo + at·Lη 고정, ξ 범위 전체(길이 방향 단면). axis=xi: ξ 고정, η 범위 전체(폭 방향 단면).
+    band_abs = 정규화 띠 반폭 × 고정 축 범위(실좌표 반폭). ``plane`` 은 호출 규약 호환용(범위만 사용).
+    """
+    xl, xh = float(xi_range[0]), float(xi_range[1])
+    el, eh = float(eta_range[0]), float(eta_range[1])
+    rng = {"xi_range": [xl, xh], "eta_range": [el, eh]}        # 지도 클릭 → 정규화 좌표 변환용
+    if axis == "eta":
+        b = el + float(at) * (eh - el)
+        return {"a0": xl, "b0": b, "a1": xh, "b1": b, "band_abs": float(band) * (eh - el), **rng}
+    if axis == "xi":
+        a = xl + float(at) * (xh - xl)
+        return {"a0": a, "b0": el, "a1": a, "b1": eh, "band_abs": float(band) * (xh - xl), **rng}
+    raise EslError("INPUT_INVALID", f"section_line axis: {axis}")
+
+
+def normalized_point(ab, xi_range, eta_range) -> tuple[float, float]:
+    """(a, b) 실좌표 → 정규화 (ξ_n, η_n) = (값 − min)/(max − min), [0, 1] 로 자름. 퇴화 범위는 0."""
+    a, b = float(ab[0]), float(ab[1])
+    out = []
+    for v, r in ((a, xi_range), (b, eta_range)):
+        lo, hi = float(r[0]), float(r[1])
+        out.append(float(np.clip((v - lo) / (hi - lo), 0.0, 1.0)) if hi > lo else 0.0)
+    return out[0], out[1]

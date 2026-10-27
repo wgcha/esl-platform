@@ -19,6 +19,7 @@ from esl_platform.core.repositories import cases as cases_repo
 
 from . import esl_snapshot
 
+VERDICT_SCHEMES = ("disp_primary/1",)       # validations.scheme 허용값(migration 0008 ck_validations_scheme)
 SHA_MAX_BYTES = 256 * 1024 * 1024
 KIND_BY_DIR = {co.D_EXTRACT: "EXTRACT", co.D_TSTAR: "TSTAR", co.D_BC: "SUPPORT", co.D_ESL: "ESL",
                co.D_VAL: "VALIDATION", co.D_EXPORT: "EXPORT", co.D_REPORT: "REPORT"}
@@ -198,16 +199,29 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
     excluded = [{"elem_id": e.get("elem_id"), "reason": e.get("reason")}
                 for e in (val.get("hotspots_excluded") or val.get("excluded") or []) if isinstance(e, dict)]
     verdict = val.get("verdict")
-    if verdict not in ("PASS", "FAIL"):
+    if verdict not in ("PASS", "FAIL", "UNDETERMINED"):
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict 오류: {verdict}")
+    # 계약 esl_disp_primary.md §7: verdict_scheme 이 있으면 scheme 에 저장, 없으면(schema 2) NULL = LEGACY
+    scheme = val.get("verdict_scheme") or None
+    if scheme is not None and scheme not in VERDICT_SCHEMES:
+        raise RegisterError("OUTPUT_INVALID", f"validation.json verdict_scheme 오류: {scheme}")
+    reason = val.get("undetermined_reason") or None
+    if verdict == "UNDETERMINED" and (scheme is None or reason is None):
+        raise RegisterError("OUTPUT_INVALID", "UNDETERMINED 판정에는 verdict_scheme·undetermined_reason 이 필요합니다")
     disp = co.metric_value(val, "disp_rms_rel")
     reac = co.metric_value(val, "reaction_rel")
+    disp_max = co.metric_value(val, "disp_max_rel")
+    disp_noise = co.metric_value(val, "disp_noise_rel")
     fld = val.get("field") if isinstance(val.get("field"), dict) else None
+    dsp = val.get("disp") if isinstance(val.get("disp"), dict) else None
+    sref = val.get("strain_ref") if isinstance(val.get("strain_ref"), dict) else None
     v = cases_repo.insert_validation(
         conn, esl_run_id=p["esl_run_id"], case_id=case["id"], job_id=job["id"], disp_rms_rel=disp,
         reaction_rel=reac, hotspots=hots, excluded=excluded, verdict=verdict,
         fail_reasons=list(val.get("fail_reasons") or []), criteria=dict(val.get("criteria") or {}),
         field=_jsonable(fld) if fld is not None else None, dir_rel=co.D_VAL,
+        scheme=scheme, disp_max_rel=disp_max, disp_noise_rel=disp_noise, undetermined_reason=reason,
+        disp=_jsonable(dsp) if dsp is not None else None, strain_ref=_jsonable(sref) if sref is not None else None,
     )
     # 이 실행의 검증 스냅샷 runs/<esl_run_id>/05_val (라이브러리 등록·겹쳐보기 API 가 이후 검증과 무관하게 읽음)
     if os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):
@@ -215,7 +229,9 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
             esl_snapshot.save_validation(cdir, run["id"], v["id"])
         except OSError as exc:
             raise RegisterError("OUTPUT_INVALID", f"검증 산출물 스냅샷 실패: {exc}") from None
-    return {"validation_id": v["id"], "verdict": verdict, "disp_rms_rel": disp, "reaction_rel": reac}
+    return {"validation_id": v["id"], "verdict": verdict, "status": verdict if scheme else "LEGACY",
+            "disp_rms_rel": disp, "disp_max_rel": disp_max, "disp_noise_rel": disp_noise, "reaction_rel": reac,
+            "undetermined_reason": reason}
 
 
 # ---------------------------------------------------------------- ⑥ 내보내기
