@@ -32,7 +32,7 @@ export interface HistoryItem {
   result_ref?: HistoryRef | null;
   result_state?: "current" | "past" | null;
   stale: boolean;
-  /** 목록 한 줄용: 추출 {n_elems, tstar_frame, tstar_value} · ESL {frame_index, metric} · 검증 {verdict, disp_rms_rel} · 내보내기 {targets, n_files} */
+  /** 목록 한 줄용: 추출 {n_elems, tstar_frame, tstar_value} · ESL {frame_index, metric} · 검증 {status, verdict, disp_rms_rel, disp_max_rel} · 내보내기 {targets, n_files} */
   summary?: Record<string, unknown> | null;
 }
 
@@ -244,7 +244,10 @@ export function summaryText(it: HistoryItem): string {
       return `프레임 ${n("frame_index") ?? "–"} · ${String(s.metric ?? "–")}`;
     case "VALIDATE": {
       const d = n("disp_rms_rel");
-      return `${String(s.verdict ?? "–")} · 변위 RMS ${d === null ? "생략" : d.toExponential(1)}`;
+      // v0.5.7: summary {status, verdict, disp_rms_rel, disp_max_rel} — status 가 있으면 판정 불가·이전 판정 체계도 구분해 보인다
+      const st = typeof s.status === "string" ? s.status : null;
+      const label = st === "UNDETERMINED" ? "판정 불가" : st === "LEGACY" ? `이전 판정 체계(당시 ${String(s.verdict ?? "–")})` : String(st ?? s.verdict ?? "–");
+      return `${label} · 변위 RMS ${d === null ? "생략" : d.toExponential(1)}`;
     }
     case "EXPORT":
       return `${Array.isArray(s.targets) ? (s.targets as string[]).join("·") : "–"} · 파일 ${n("n_files") ?? "–"}개`;

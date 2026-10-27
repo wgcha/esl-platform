@@ -2,9 +2,10 @@
 // 읽기 전용 열람용 과거 ESL run·검증(run-old·val-old·val-old2)은 seedInto 로 MockServer 의 runs·validations 에 넣어
 // 기존 /esl-runs·/validations·field·section 핸들러가 그대로 응답하게 한다.
 import type { HistoryItem, ReviewDiff, ReviewOut, ReviewResult } from "../api/history";
-import type { EslRunOut, FieldLayer, JobType, SectionAxis, ValidationOut } from "../api/types";
-import { N_NODES, makeEslRun, makeForces, makeValidation } from "./data";
-import { makeField, makeFieldSummary, makeSection } from "./p2data";
+import type { DispLayer, EslRunOut, FieldLayer, JobType, SectionAxis, ValidationOut } from "../api/types";
+import { N_NODES, makeEslRun, makeForces, makeValidation, variantValidation } from "./data";
+import { enrichValidation, makeField, makeFieldSummary, makeSection } from "./p2data";
+import { makeDispField } from "./dispdata";
 
 interface MockResponse {
   status: number;
@@ -43,7 +44,7 @@ interface Seed {
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
-const err = (status: number, code: string, message: string): MockResponse => ({ status, body: { detail: { code, message } } });
+const err = (status: number, code: string, message: string, extra: Record<string, unknown> = {}): MockResponse => ({ status, body: { detail: { code, message, ...extra } } });
 
 export class HistoryMock {
   private seeds: Seed[] = [];
@@ -99,9 +100,9 @@ export class HistoryMock {
     this.add("h-val-1", "VALIDATE", "c-demo", 12, "SUCCEEDED", kim, {
       result_ref: { kind: "validation", id: "val-1" },
       result_state: "current",
-      summary: { verdict: "PASS", disp_rms_rel: 2.1e-9 },
+      summary: { status: "PASS", verdict: "PASS", disp_rms_rel: 1.8e-6, disp_max_rel: 6.4e-6 },
       availability: "full",
-      past: { verdict: "PASS", disp_rms_rel: 2.1e-9, reaction_rel: 4.4e-8, has_field: true },
+      past: { status: "PASS", verdict: "PASS", scheme: "disp_primary/1", disp_rms_rel: 1.8e-6, disp_max_rel: 6.4e-6, reaction_rel: 4.4e-8, disp_noise_rel: 2.1e-5, has_field: true },
       links: { stage: 5, query: { val: "val-1" } },
     });
     this.add("h-esl-1", "ESL_SOLVE", "c-demo", 20, "SUCCEEDED", kim, {
@@ -132,14 +133,14 @@ export class HistoryMock {
       result_ref: { kind: "validation", id: "val-old" },
       result_state: "past",
       stale: true,
-      summary: { verdict: "FAIL", disp_rms_rel: 3.3e-4 },
+      summary: { status: "LEGACY", verdict: "FAIL", disp_rms_rel: 3.3e-4 },
       availability: "full",
       reasons: ["tstar", "support_set"],
       past: { verdict: "FAIL", disp_rms_rel: 3.3e-4, reaction_rel: 2.0e-5, has_field: true },
       links: { stage: 5, query: { val: "val-old" } },
       diff: [
-        { key: "verdict", label: "판정", past: "FAIL", current: "PASS" },
-        { key: "disp_rms_rel", label: "변위 RMS (상대)", past: 3.3e-4, current: 2.1e-9 },
+        { key: "verdict", label: "판정", past: "이전 판정 체계(당시 FAIL)", current: "PASS" },
+        { key: "disp_rms_rel", label: "변위 RMS (상대)", past: 3.3e-4, current: 1.8e-6 },
         { key: "hotspot_max_err", label: "hotspot 1위 오차", past: 0.31, current: 0.124 },
       ],
     });
@@ -162,12 +163,12 @@ export class HistoryMock {
     this.add("h-val-old2", "VALIDATE", "c-demo", 400, "SUCCEEDED", park, {
       result_ref: { kind: "validation", id: "val-old2" },
       result_state: "past",
-      summary: { verdict: "PASS", disp_rms_rel: 1.2e-8 },
+      summary: { status: "PASS", verdict: "PASS", disp_rms_rel: 1.2e-6, disp_max_rel: 5.0e-6 },
       availability: "summary",
       files_note: "파일 보존 안 됨 — 기록된 값만 표시",
-      past: { verdict: "PASS", disp_rms_rel: 1.2e-8, reaction_rel: 9.0e-8, has_field: false },
+      past: { status: "PASS", verdict: "PASS", scheme: "disp_primary/1", disp_rms_rel: 1.2e-6, disp_max_rel: 5.0e-6, reaction_rel: 9.0e-8, has_field: false },
       links: { stage: 5, query: { val: "val-old2" } },
-      diff: [{ key: "disp_rms_rel", label: "변위 RMS (상대)", past: 1.2e-8, current: 2.1e-9 }],
+      diff: [{ key: "disp_rms_rel", label: "변위 RMS (상대)", past: 1.2e-6, current: 1.8e-6 }],
     });
     this.add("h-ext-fail", "CASE_EXTRACT", "c-stale", 520, "FAILED", park, {
       failure_code: "EXTRACT_FAILED",
@@ -246,8 +247,10 @@ export class HistoryMock {
   private past() {
     const run: EslRunOut = { ...makeEslRun("run-old", "c-demo", "ss-1", 5, 0.05), job_id: "h-esl-old", created_at: "2026-10-20T06:30:00Z", is_current: false, stale: true, latest_validation_id: "val-old" };
     const vals: ValidationOut[] = [
-      { ...makeValidation("val-old", "run-old", "c-demo"), job_id: "h-val-old", verdict: "FAIL", fail_reasons: ["HOTSPOT_STRAIN"], disp_rms_rel: 3.3e-4, reaction_rel: 2.0e-5, created_at: "2026-10-20T06:40:00Z", stale: true, field: makeFieldSummary() },
-      { ...makeValidation("val-old2", "run-old", "c-demo"), job_id: "h-val-old2", disp_rms_rel: 1.2e-8, created_at: "2026-10-20T02:20:00Z", stale: true, field: null },
+      // 0.5.7 이전 검증 = LEGACY(scheme 없음, 당시 FAIL)
+      enrichValidation({ ...variantValidation(makeValidation("val-old", "run-old", "c-demo"), "LEGACY_FAIL"), job_id: "h-val-old", fail_reasons: ["HOTSPOT_STRAIN"], disp_rms_rel: 3.3e-4, reaction_rel: 2.0e-5, created_at: "2026-10-20T06:40:00Z", stale: true, field: makeFieldSummary() }),
+      // 새 체계 PASS, 파일은 보존 안 됨(요약만)
+      enrichValidation({ ...makeValidation("val-old2", "run-old", "c-demo"), job_id: "h-val-old2", disp_rms_rel: 1.2e-6, disp_max_rel: 5.0e-6, created_at: "2026-10-20T02:20:00Z", stale: true, field: null }),
     ];
     return { run, vals };
   }
@@ -258,12 +261,16 @@ export class HistoryMock {
     let r: RegExpMatchArray | null;
     if ((r = path.match(/^\/esl-runs\/run-old(\/forces)?$/)))
       return { status: 200, body: r[1] ? { esl_run_id: run.id, n_nodes: N_NODES, rows: makeForces().slice(0, Number(query.get("top") ?? 50)) } : run };
-    if ((r = path.match(/^\/validations\/(val-old2?)(\/field|\/section)?$/))) {
+    if ((r = path.match(/^\/validations\/(val-old2?)(\/field|\/section|\/disp-field)?$/))) {
       const v = vals.find((x) => x.id === r![1])!;
       if (!r[2]) return { status: 200, body: v };
       if (!v.field) return err(409, "VALIDATION_FILES_GONE", "검증 파일이 보존되어 있지 않습니다.");
       if (r[2] === "/field") return { status: 200, body: makeField(v.id, (query.get("layer") ?? "rad") as FieldLayer, Number(query.get("max_points") ?? 20000) || 20000) };
-      return { status: 200, body: makeSection(v.id, (query.get("axis") ?? "xi") as SectionAxis, Number(query.get("at") ?? 0.5)) };
+      if (r[2] === "/disp-field") {
+        if (!v.disp) return err(409, "PREREQUISITE_MISSING", "변위 비교 자료가 없습니다.", { missing: ["disp_compare"] });
+        return { status: 200, body: makeDispField(v.id, (query.get("layer") ?? "err") as DispLayer) };
+      }
+      return { status: 200, body: makeSection(v.id, (query.get("axis") ?? "eta") as SectionAxis, Number(query.get("at") ?? 0.5), !!v.disp) };
     }
     return null;
   }

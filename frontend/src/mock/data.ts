@@ -22,8 +22,8 @@ export const PROJECTS: Project[] = [
   { id: "p-door", name: "도어 측면 충돌", product_name: "SEDAN-B" },
 ];
 
-const NX = 120;
-const NY = 60;
+export const NX = 120;
+export const NY = 60;
 const LX = 1200;
 const LY = 600;
 
@@ -241,6 +241,10 @@ export const VALIDATION_CRITERIA = {
   disp_rms_rel_max: 0.01,
   hotspot_strain_rel_err_max: 0.1,
   reaction_rel_max: 1e-6,
+  disp_max_rel_max: 0.05,
+  disp_noise_rel_max: 1e-3,
+  disp_top_n: 20,
+  disp_hist_bins: 20,
   hotspot_eval_count: 3,
   noise_strain_rel_max: 0.05,
   noise_force_rel_warn: 0.1,
@@ -260,21 +264,59 @@ export function makeValidation(id: string, runId: string, caseId: string): Valid
     esl_run_id: runId,
     case_id: caseId,
     job_id: "j-val-1",
-    disp_rms_rel: 2.1e-9,
+    // v0.5.7: 변위 4지표가 판정. disp_rms_rel·disp_max_rel 은 mock/dispdata.ts 의 합성 변위장 값으로 서버 응답에서 맞춘다(enrichValidation)
+    disp_rms_rel: 1.8e-6,
+    disp_max_rel: 6.4e-6,
+    disp_noise_rel: 2.1e-5,
     reaction_rel: 4.4e-8,
+    scheme: "disp_primary/1",
+    status: "PASS",
+    undetermined_reason: null,
+    disp: null,
+    strain_ref: null,
     hotspots: [
       { rank: 1, elem_id: hs[0].elem_id, eps_rad: 0.1418, eps_val: 0.1242, rel_err: 0.124 },
       { rank: 2, elem_id: hs[1].elem_id, eps_rad: 0.0981, eps_val: 0.0925, rel_err: 0.057 },
       { rank: 3, elem_id: hs[2].elem_id, eps_rad: 0.0712, eps_val: 0.0697, rel_err: 0.021 },
     ],
     excluded: [{ elem_id: 101250, reason: "t* 프레임에서 상승 중 아님(hold 값 ≠ 순간값)" }],
-    verdict: "FAIL",
-    fail_reasons: ["HOTSPOT_STRAIN", "REACTION", "FIELD_MAX_ERR"],
+    verdict: "PASS",
+    fail_reasons: [],
     criteria: VALIDATION_CRITERIA,
     dir_rel: "05_val",
     created_at: "2026-10-18T03:20:00Z",
     stale: false,
   };
+}
+
+/** 시험·시연용 변형: FAIL(변위 RMS 초과) · UNDETERMINED(전체 재해석 생략/변형 없음) · LEGACY(이전 판정 체계, 당시 verdict 유지) */
+export function variantValidation(v: ValidationOut, kind: "PASS" | "FAIL" | "UNDETERMINED" | "ZERO_DISP" | "LEGACY_FAIL" | "LEGACY_PASS"): ValidationOut {
+  switch (kind) {
+    case "PASS":
+      return v;
+    case "FAIL":
+      return { ...v, verdict: "FAIL", status: "FAIL", disp_rms_rel: 1.4e-2, fail_reasons: ["DISP_RMS"] };
+    case "UNDETERMINED":
+      return { ...v, verdict: "UNDETERMINED", status: "UNDETERMINED", undetermined_reason: "NO_FULL_SOLVE", disp_rms_rel: null, disp_max_rel: null, reaction_rel: null, disp: null, fail_reasons: [], criteria: { ...v.criteria, full_solve: "never" } };
+    case "ZERO_DISP":
+      return { ...v, verdict: "UNDETERMINED", status: "UNDETERMINED", undetermined_reason: "ZERO_DISP", disp_rms_rel: null, disp_max_rel: null, reaction_rel: null, disp_noise_rel: null, disp: null, fail_reasons: [] };
+    case "LEGACY_FAIL":
+    case "LEGACY_PASS": {
+      const fail = kind === "LEGACY_FAIL";
+      return {
+        ...v,
+        scheme: null,
+        status: "LEGACY",
+        verdict: fail ? "FAIL" : "PASS",
+        fail_reasons: fail ? ["HOTSPOT_STRAIN", "FIELD_MAX_ERR"] : [],
+        disp_rms_rel: 2.1e-9,
+        disp_max_rel: null,
+        disp_noise_rel: null,
+        disp: null,
+        strain_ref: null,
+      };
+    }
+  }
 }
 
 export function noneStatus(): Record<string, StageState> {

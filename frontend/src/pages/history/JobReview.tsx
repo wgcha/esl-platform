@@ -34,7 +34,7 @@ function pastScalars(kind: string | undefined, past: Record<string, unknown>): R
       return pick(past, ["frame_index", "time", "metric", "status", "kabsch", "forces", "warnings"]);
     case "validation": {
       const h = Array.isArray(past.hotspots) ? past.hotspots.length : null;
-      return { ...pick(past, ["verdict", "fail_reasons", "disp_rms_rel", "reaction_rel", "criteria", "has_field"]), ...(h === null ? {} : { hotspots: `${h}개` }) };
+      return { ...pick(past, ["status", "verdict", "scheme", "undetermined_reason", "fail_reasons", "disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel", "criteria", "has_field"]), ...(h === null ? {} : { hotspots: `${h}개` }) };
     }
     case "export": {
       const { files: _f, ...rest } = past;

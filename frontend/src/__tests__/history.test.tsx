@@ -222,10 +222,11 @@ describe("과거 결과 읽기 전용", () => {
     expect(screen.getByRole("link", { name: "현재 결과로" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/stage/4");
   });
 
-  it("⑤ ?val= : 읽기 전용, 판정 FAIL, 실행·등록 버튼 없음, 겹쳐보기 있음", async () => {
+  it("⑤ ?val= : 읽기 전용, 이전 판정 체계(당시 FAIL), 실행·등록 버튼 없음, 겹쳐보기 있음", async () => {
     const { container } = renderApp("/p/p-body/c/c-demo/stage/5?val=val-old");
     expect(await screen.findByTestId("past-badge")).toBeTruthy();
-    expect((await screen.findAllByText("FAIL")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("이전 판정 체계")).length).toBeGreaterThan(0);
+    expect(screen.getByText("당시 FAIL")).toBeTruthy();
     expect(primaries(container).length).toBe(0);
     expect(screen.queryByRole("button", { name: "검증 실행" })).toBeNull();
     expect(screen.queryByRole("button", { name: /라이브러리 등록/ })).toBeNull();
