@@ -176,7 +176,7 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
         problems.append(f"{exc.code}: {exc.message}")
     for inc in includes:
         if not inc["ok"]:
-            problems.append(f"include 파일이 없습니다: {inc['path']}")
+            problems.append(f"include 파일이 없습니다: {core_adapter.display_path(inc['path'])}")
     hits = match_parts(parts, title, mode) if title else []
     target = hits[0] if len(hits) == 1 else None
     if parts and title and not hits:

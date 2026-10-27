@@ -135,8 +135,8 @@ python -m esl run --config config/esl.yaml --rad /data/X_0000.rad --results /dat
 - export 대상: `radioss_inc` = `esl_cload.inc`·`esl_bcs.inc`, `fem` = `esl_force.fem`, `csv` = 나머지 csv.
   `validation.json` 의 `esl_ref` 가 현재 `esl_summary.json`(tag 또는 생성 시각)과 다르면 검증 결과를 쓰지 않는다.
 
-생성 ID(/FUNCT, /GRNOD, /CLOAD, /BCS, PSHELL, SID)는 모두 `[id_offset, id_offset+999999]`.
-rad 기존 최대 ID와 겹치면 `ID_RANGE_COLLISION`.
+생성 ID(/FUNCT, /GRNOD, /CLOAD, /BCS, PSHELL, SID)는 `id_offset+1`부터 필요한 만큼(폭 제한 없음, 최대 2^31-1).
+`id_offset` 기본 `auto`(9000000에서 시작, rad 최대 ID와 겹치면 10의 거듭제곱으로 올림). 정수 지정이 겹치면 `ID_RANGE_COLLISION`.
 
 ## 6. 서버 배포 (Windows Server — 대시보드·physicsai-platform과 같은 PC)
 

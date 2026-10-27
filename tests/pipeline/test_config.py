@@ -20,7 +20,7 @@ def base():
 
 def test_example_loads():
     cfg = config.load_config(CFG)
-    assert cfg["export"]["radioss"]["id_offset"] == 9000000
+    assert cfg["export"]["radioss"]["id_offset"] == "auto"
     assert cfg["extract"]["disp_precision"] == "float32"          # H3D 기본 저장 정밀도
     assert cfg["validation"]["noise_samples"] == 3 and cfg["case"]["include_path_map"] == {}
     assert cfg["extract"]["layers"] == ["mid"] and cfg["extract"]["shear_convention"] == "auto"
@@ -99,6 +99,8 @@ _DEL = object()
     ("tstar.exclude_elem_ids", ["a"], "tstar.exclude_elem_ids"),
     ("export.radioss.func_mode", "step", "export.radioss.func_mode"),
     ("export.radioss.id_offset", "9000000", "export.radioss.id_offset"),
+    ("export.radioss.id_offset", "AUTO", "export.radioss.id_offset"),
+    ("export.radioss.id_offset", 2147483647, "export.radioss.id_offset"),
     ("export.num_format", "{:d}", "export.num_format"),
     ("export.num_format", "{:.30E}", "export.num_format"),
     ("export.csv.delimiter", ".", "export.csv.delimiter"),

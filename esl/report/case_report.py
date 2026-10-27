@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 import esl
+from esl.display import display_path
 from esl.report import field as F
 from esl.report import html as H
 
@@ -96,10 +97,10 @@ def _sec_inputs(c: _Case) -> str:
         ("두께 범위", "—" if not th else f"{H.fmt(th[0])} ~ {H.fmt(th[1])}"),
         ("재료", mats or "—"),
         ("단위", units.get("label") or meta.get("units_label") or "—"),
-        ("rad", H.Raw(f"<code>{H.esc(rad.get('path', '—'))}</code>")),
+        ("rad", H.Raw(f"<code>{H.esc(display_path(rad.get('path', '—')))}</code>")),
         ("rad sha256", H.Raw(f"<code>{H.esc(rad.get('sha256', '—'))}</code>")),
-        ("결과 CSV 폴더", H.Raw(f"<code>{H.esc(inp.get('results_dir', '—'))}</code>")),
-        ("h3d", fr.get("h3d") or "—"),
+        ("결과 CSV 폴더", H.Raw(f"<code>{H.esc(display_path(inp.get('results_dir', '—')))}</code>")),
+        ("h3d", display_path(fr.get("h3d")) or "—"),
         ("프레임(이력) / 후보 D", f"{fr.get('n_frames', '—')} / {fr.get('frames_D', '—')}"),
         ("직전 프레임(비교용)", f"{fr.get('prev_frame_index', '—')}"),
         ("전단 규약", ((fr.get("shear") or {}).get("convention")) or "—"),
