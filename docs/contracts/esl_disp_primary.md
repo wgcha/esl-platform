@@ -218,6 +218,7 @@
 - DP-8 migration 0008을 이 계약이 사용, MCP는 0009.
 - DP-9 단면 축 = 판 길이 방향(e1)/판 폭 방향(e2), "변형 확대 배율", 변위 카드로 이동(D7).
 - DP-10 컨투어 레전드 범위 편집 + 견고한 자동 범위(`color_range_robust`, P99) — §14(사용자 요구 2026-10-28 08:05).
+- DP-11 단면선 개선: 지도 위 단면 위치 표시·이동, 자동 단면 추천, Δw 차이 곡선·단면 통계, 배율 표기·실제 크기 보기 — §15(사용자 확정 2026-10-28 08:08). 3D 단면 표시는 비범위(후속).
 
 ## 13. 리스크
 
@@ -279,3 +280,50 @@
 ### 14.6 파일 소유
 - Impl-Backend: `esl/report/field.py`(`robust_range`, `ceil2`), `api/services/results.py`(`field`·`disp_field` 응답), `api/schemas.py`(`FieldOut`·`DispFieldOut`), `worker/esl_worker/core_adapter.py`(래퍼), 해당 시험.
 - Impl-Frontend: `components/ColorLegend.tsx`(신규), `components/FieldOverlay.tsx`(`errRangeOf`·`rangeOf` → robust 기본 + 수동 범위), `components/DispOverlay.tsx`, `api/types.ts`, 해당 시험.
+
+## 15. DP-11 단면선 개선 (2026-10-28 08:08 확정)
+
+비범위: 3D 단면 표시(후속).
+
+### 15.1 현황
+- `GET /validations/{id}/section?axis=xi|eta&at=0.5`는 이미 `at`(0~1 정규화 위치)을 받고, 띠 반폭은 저장된 `compare_field.npz sec_band`(= `compare.section_band`와 요소 크기로 정한 값)를 쓴다. 단면은 요청 때 `centroid2d`·`w_rel`·`w_val`로 다시 계산하므로 **임의 위치 단면은 서버 추가 계산 없이 가능**하다. 화면은 0.5만 쓰고, 단면 위치를 지도에 보여 주지 않는다.
+- 축 의미(§9 유지): `axis=xi` = ξ(판 길이 방향 정규화 좌표) 고정 → **판 폭 방향**으로 그리는 "폭 방향 단면"; `axis=eta` = η 고정 → **판 길이 방향**으로 그리는 "길이 방향 단면"(기본).
+
+### 15.2 API (`GET /validations/{id}/section`, Impl-Backend)
+- 쿼리: `axis=xi|eta`(기본 **eta**로 변경), `at`(0~1, 기본 0.5, 기존 이름 유지 — 별칭 없음). 띠 반폭은 저장값(`sec_band`) 그대로(쿼리로 바꾸지 않음).
+- 기존 키(`validation_id, axis, at, band, n_elems, s, w_rad, w_esl, w0`) 유지 + 추가:
+
+| 키 | 내용 |
+|---|---|
+| `dw` | bin별 `w_esl − w_rad`(실제 길이 단위, `w_rad`와 같은 길이) |
+| `stats` | `{dw_max_abs, s_at_dw_max, dw_rms, U, dw_max_rel, dw_rms_rel, w_max_abs}` — dw_rms = √mean(dw²)(bin 기준), `*_rel` = ÷U(§3.1 U = max‖u_rel‖, `compare_disp.npz U`), `w_max_abs` = max(\|w_rad\|, \|w_esl\|)(배율 표기용 실제 최대 면외 변위). 단면이 비면 전부 null |
+| `has_val` | 전체 재해석 해가 있는가(`compare_disp.npz` 존재). false(UNDETERMINED·LEGACY 등)면 `dw`는 빈 배열, `stats`의 dw 관련 값 null(w_max_abs만 값), 화면은 ESL·Δw 선을 숨김 |
+| `line` | 지도에 그릴 단면 중심선 `{a0, b0, a1, b1}`(PCA 평면 실좌표, 대상 파트 범위 양 끝) 와 띠 `{band_abs}`(실좌표 반폭) |
+| `units` | 길이 단위 표시 문자열(설정 `units.length`) |
+| `suggest` | 자동 단면 추천 목록 `[{key, label, xi, eta, id}]` — `key = "max_disp_err"`: 변위 오차 e 최대 노드(`compare_disp.npz`, 없으면 항목 없음), `xi·eta` = 그 노드 (a,b)의 정규화 좌표, `id` = node_id; `key = "hotspot1"`: 변형률 hotspot 1위 요소(validation `hotspots[0]`, 없으면 제외 목록 1위도 없으면 항목 없음)의 요소 중심 정규화 좌표, `id` = elem_id. 정규화 = `(값 − range_min)/(range_max − range_min)`, `xi_range`·`eta_range` 기준, [0,1] 자름 |
+
+- 계산 위치: `esl.report.field.section_stats(s, w_rel, w_val, U)`, `section_line(plane, xi_range, eta_range, axis, at, band)`, `normalized_point(ab, xi_range, eta_range)` (순수 함수, Impl-Backend). 서비스는 `compare_field.npz`(+있으면 `compare_disp.npz`)만 읽음, 추가 해석 없음.
+- 오류: `at` 범위 밖 422(기존), npz 키 없음 409 `PREREQUISITE_MISSING`(기존).
+
+### 15.3 화면 (Impl-Frontend, 변위 카드 안 단면 카드)
+- **단면 카드 머리 한 줄**(필수 UI만): 축 선택(seg 2개: "길이 방향 단면"(기본)·"폭 방향 단면") · 추천 선택(select: "직접 지정"(기본) / "최대 변위 오차 노드 지나는 단면" / "변형률 hotspot 1위 지나는 단면", `suggest`에 없는 항목은 비활성) · 위치 슬라이더(0~1, step 0.01) + 값 표시 · "실제 크기(×1)" 토글. 새 버튼은 이 토글 하나.
+- 추천을 고르면 그 점의 고정 축 좌표로 `at` 설정(길이 방향 단면이면 `at = eta`, 폭 방향이면 `at = xi`). 이후 슬라이더·지도로 바꾸면 추천은 "직접 지정"으로 돌아감.
+- **지도 표시**: 변위 컨투어(DispOverlay)와 변형률 겹쳐보기(FieldOverlay) 위에 `line`을 선(+ 반투명 띠 `band_abs`)으로 그림. 지도 클릭 = 현재 축의 고정 좌표를 클릭 위치의 정규화 좌표로 설정(두 지도 공통 상태, Stage5에서 공유). 추천 점은 작은 마커(+ 툴팁 노드/요소 ID).
+- 위치 변경 → 단면 그래프 갱신: 요청 디바운스 200 ms, `(vid, axis, at 소수 2자리)` 결과 캐시. 응답 대기 중에는 직전 그래프 유지.
+- **그래프**: 기존 선(초기 w0, Radioss w0+k·w_rad, ESL w0+k·w_esl) + **차이 곡선 Δw = dw**(배율 없이 실제 단위, 오른쪽 보조 축, 점선). 그래프 아래 한 줄 수치: "Δw 최대 X mm (U 대비 Y) · RMS X mm (U 대비 Y) · 요소 n개". `has_val=false`면 ESL·Δw 선과 수치 숨김, Radioss·초기만.
+- **배율 표기**: 슬라이더 라벨 "변형 확대 배율 ×k (실제 최대 면외 변위 X mm)"(X = `stats.w_max_abs`, 단위 = `units`), 툴팁 한 줄 "배율은 화면 표시용이며 값·판정에 영향 없음". "실제 크기(×1)" 켜면 k = 1로 고정하고 배율 슬라이더 비활성, 끄면 직전 k 복귀.
+- 높이: 그래프(보조 축 포함) ≤ 340px(§9), 머리 한 줄은 좁은 폭에서만 줄바꿈 허용, 지도 높이 규칙 불변.
+
+### 15.4 시험
+| ID | 기준 | 방법 |
+|---|---|---|
+| V-DP-21 | `section_stats`: 합성 w_rel·w_val에서 dw·dw_max_abs·s_at_dw_max·dw_rms·*_rel·w_max_abs 일치, 빈 단면 → null | 단위 |
+| V-DP-22 | `section_line`·`normalized_point`: 회전된 판에서 선 끝점이 파트 범위 양 끝, 정규화 좌표 왕복 일치·[0,1] 자름 | 단위 |
+| V-DP-23 | API `/section`: 기본 axis=eta, `at` 0.2/0.8 결과 차이, 응답 키(dw, stats, has_val, line, units, suggest), compare_disp 없으면 has_val=false·max_disp_err 추천 없음, hotspot1 추천 좌표 = 요소 중심 정규화값 | API |
+| V-DP-24 | 화면: 슬라이더·지도 클릭·추천 선택이 `at`을 바꾸고 단면 요청(디바운스) → 그래프 갱신, 축 전환 시 추천 좌표 축 맞게 적용, suggest 없는 항목 비활성 | 프런트 |
+| V-DP-25 | 두 지도에 단면선·띠 표시, 위치 변경 시 선 이동 | 프런트 |
+| V-DP-26 | Δw 보조 축 곡선·수치 줄 표시, has_val=false면 숨김; 배율 라벨 "×k (실제 최대 면외 변위 X mm)"·툴팁, "실제 크기(×1)" 토글 시 k=1·슬라이더 비활성·해제 시 복귀 | 프런트 |
+
+### 15.5 파일 소유
+- Impl-Backend: `esl/report/field.py`(`section_stats`, `section_line`, `normalized_point`), `api/services/results.py`(`section`), `api/schemas.py`(`SectionOut` 확장, `SectionStats`·`SectionLine`·`SectionSuggest`), `api/routers/results.py`(axis 기본 eta), `worker/esl_worker/core_adapter.py`(래퍼), 해당 시험.
+- Impl-Frontend: `components/SectionChart.tsx`(머리 한 줄·Δw 보조 축·배율 표기·×1), `components/DispOverlay.tsx`·`components/FieldOverlay.tsx`(단면선·띠·클릭·추천 마커), `stages/Stage5.tsx`(단면 위치 공유 상태), `api/types.ts`·`api/endpoints.ts`, 해당 시험.
