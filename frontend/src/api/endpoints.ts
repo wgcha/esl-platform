@@ -1,6 +1,6 @@
 import { request, API_PREFIX } from "./client";
 import type {
-  AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
+  AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, DispFieldOut, DispLayer, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
@@ -52,7 +52,11 @@ export const api = {
   // ---- P2 (계약 esl_p2_library.md §11)
   field: (vid: string, layer: FieldLayer, maxPoints?: number) =>
     request<FieldOut>("GET", `/validations/${vid}/field`, { query: { layer, max_points: maxPoints } }),
-  section: (vid: string, axis: SectionAxis, at = 0.5) => request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at } }),
+  /** v0.5.7(esl_disp_primary §7): 변위 전 노드 컨투어. full_solve 미수행·LEGACY 는 409 PREREQUISITE_MISSING(missing: disp_compare) */
+  dispField: (vid: string, layer: DispLayer, maxPoints?: number) =>
+    request<DispFieldOut>("GET", `/validations/${vid}/disp-field`, { query: { layer, max_points: maxPoints } }),
+  /** axis 기본 eta(길이 방향 단면), at = 고정 좌표의 0~1 정규화 위치 */
+  section: (vid: string, axis: SectionAxis = "eta", at = 0.5) => request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at } }),
   caseReportUrl: (caseId: string) => `${API_PREFIX}/cases/${caseId}/report`,
   libraryEntries: (q: EntryQuery) => request<EntryOut[]>("GET", "/library/entries", { query: { ...q } }),
   createEntry: (body: EntryCreate) => request<EntryOut>("POST", "/library/entries", { body }),

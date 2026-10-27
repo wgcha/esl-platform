@@ -12,6 +12,23 @@ import { DEFAULT_FORM, validateForm } from "../pages/library/AnalysisNew";
 import { resolveForm } from "../pages/library/ComparisonNew";
 import { pairEntries, prevVersion, sortVersions } from "../pages/library/common";
 import { makeEntries } from "../mock/p2data";
+import { variantValidation } from "../mock/data";
+
+/** 첫 검증(val-1)을 변형(FAIL·UNDETERMINED 등)으로 바꾼 목 서버 */
+export function serverWith(kind: Parameters<typeof variantValidation>[1], user: "power" | "general" = "power") {
+  const server = new MockServer({ user });
+  server.validations[0] = variantValidation(server.validations[0], kind);
+  return server;
+}
+export function renderServer(server: MockServer, path: string) {
+  globalThis.fetch = createMockFetch(server);
+  const view = render(
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
+  );
+  return { server, ...view };
+}
 
 const primaries = (container: HTMLElement) => container.querySelectorAll("button[data-primary]");
 const STAGE5 = "/p/p-body/c/c-demo/stage/5";
@@ -41,9 +58,9 @@ describe("⑤ 검증 화면 P2", () => {
     const { container } = renderApp(STAGE5);
     const sc = await screen.findByTestId("strain-compare");
     expect(within(sc).getByText("최대 ε (Radioss)")).toBeTruthy();
-    expect(within(sc).getByText("기준 ≤ 10%")).toBeTruthy();
-    expect(within(sc).getByText("기준 ≤ 20%")).toBeTruthy();
-    expect(screen.getByText(/FIELD_MAX_ERR — 최대변형률 요소의 ESL 오차가 기준 초과/)).toBeTruthy();
+    expect(within(sc).getByText("참고 기준 ≤ 10%")).toBeTruthy();
+    expect(within(sc).getByText("참고 기준 ≤ 20%")).toBeTruthy();
+    expect(screen.queryByText(/FIELD_MAX_ERR/)).toBeNull(); // 변형률은 판정이 아니다
     expect(screen.getByRole("table", { name: "오차 분위수" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "오차 히스토그램" })).toBeTruthy();
     const rep = screen.getByRole("link", { name: "보고서 보기" });
@@ -88,29 +105,30 @@ describe("⑤ 검증 화면 P2", () => {
     expect(screen.getByTestId("max-marker")).toBeTruthy();
   });
 
-  it("단면선: ξ/η 전환, 초기·Radioss·ESL 선, 배율 슬라이더", async () => {
+  it("단면선(변위 카드 안): 길이/폭 방향 전환, 초기·Radioss·ESL 선, 배율 슬라이더", async () => {
     renderApp(STAGE5);
-    const seg = await screen.findByRole("group", { name: "단면" });
+    const seg = await screen.findByRole("group", { name: "단면 방향" });
     await screen.findByTestId("sec-rad");
     expect(screen.getByTestId("sec-init")).toBeTruthy();
     expect(screen.getByTestId("sec-esl")).toBeTruthy();
-    const k = screen.getByRole("slider", { name: "변형 배율" }) as HTMLInputElement;
+    const k = screen.getByRole("slider", { name: "변형 확대 배율" }) as HTMLInputElement;
     const d0 = screen.getByTestId("sec-rad").getAttribute("d");
     fireEvent.change(k, { target: { value: "2" } });
     expect(screen.getByTestId("sec-k").textContent).toBe("×100");
     expect(screen.getByTestId("sec-rad").getAttribute("d")).not.toBe(d0);
-    fireEvent.click(within(seg).getByRole("button", { name: "η = 0.5" }));
-    expect(within(seg).getByRole("button", { name: "η = 0.5" }).getAttribute("aria-pressed")).toBe("true");
-    await waitFor(() => expect(screen.getByRole("img", { name: "단면선" }).textContent).toContain("ξ (PCA 평면, mm)"));
+    expect(screen.getByTestId("sec-xlabel").textContent).toBe("판 길이 방향 (mm)");
+    fireEvent.click(within(seg).getByRole("button", { name: "폭 방향 단면" }));
+    await waitFor(() => expect(screen.getByTestId("sec-xlabel").textContent).toBe("판 폭 방향 (mm)"));
   });
 
   it("라이브러리 등록: FAIL 이면 사유 대화상자 → 확정 등록 → '등록됨'", async () => {
-    const { server } = renderApp(STAGE5);
+    const server = serverWith("FAIL");
+    renderServer(server, STAGE5);
     fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
     const dlg = screen.getByRole("dialog");
     const ok = within(dlg).getByRole("button", { name: "확정 등록" }) as HTMLButtonElement;
     expect(ok.disabled).toBe(true);
-    expect(within(dlg).getByText(/FIELD_MAX_ERR/)).toBeTruthy();
+    expect(within(dlg).getByText(/DISP_RMS/)).toBeTruthy();
     fireEvent.change(within(dlg).getByRole("textbox", { name: /확정 사유/ }), { target: { value: "누적 소성 — 오차 확인" } });
     expect(ok.disabled).toBe(false);
     fireEvent.click(ok);
@@ -119,6 +137,14 @@ describe("⑤ 검증 화면 P2", () => {
     const e = server.entries.find((x) => x.esl_run_id === "run-1")!;
     expect(e.force_reason).toBe("누적 소성 — 오차 확인");
     expect(e.quality.verdict).toBe("FAIL");
+    expect(e.quality.status).toBe("FAIL");
+  });
+
+  it("라이브러리 등록: PASS 는 사유 없이 바로 등록", async () => {
+    const { server } = renderApp(STAGE5);
+    fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
+    expect(await screen.findByText("라이브러리 등록됨")).toBeTruthy();
+    expect(server.entries.find((x) => x.esl_run_id === "run-1")!.quality.status).toBe("PASS");
   });
 
   it("보고서가 없으면(GET /cases/{id}/report 404) '보고서 보기' 비활성 + 사유", async () => {
@@ -139,7 +165,7 @@ describe("⑤ 검증 화면 P2", () => {
   });
 
   it("라이브러리 등록: 대화상자 취소, 조회 사용자 비활성", async () => {
-    const { unmount } = renderApp(STAGE5);
+    const { unmount } = renderServer(serverWith("FAIL"), STAGE5);
     fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("dialog")).toBeNull();

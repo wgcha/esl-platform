@@ -10,7 +10,7 @@ import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt, pv } from "../../lib/format";
-import { DROP_LABEL, DROP_TYPES, NORM_LABEL, VerdictBadge, entryLabel, modelVersions, sceneText, uniq } from "./common";
+import { DROP_LABEL, DROP_TYPES, NORM_LABEL, EntryVerdict, entryLabel, modelVersions, sceneText, uniq } from "./common";
 import { ComparisonVerdictBadge } from "./ComparisonDetail";
 
 interface Filters {
@@ -73,7 +73,7 @@ function EditRow({ e, onDone }: { e: EntryOut; onDone: (changed: boolean) => voi
         <input aria-label="orient" className="mono" value={orient} aria-invalid={orientBad} title="ISTA 면 번호 1~6, 1~3자리" onChange={(x) => setOrient(x.target.value.trim())} />
       </td>
       <td>
-        <VerdictBadge v={e.quality.verdict} />
+        <EntryVerdict e={e} />
       </td>
       <td className="num">{pv(e.quality.field_max_err_pct)}</td>
       <td className="num">
@@ -193,8 +193,10 @@ export function LibraryList() {
           <Field label="판정">
             <select aria-label="판정" value={f.verdict} onChange={(e) => set("verdict", e.target.value)}>
               <option value="">전체</option>
-              <option>PASS</option>
-              <option>FAIL</option>
+              <option value="PASS">PASS</option>
+              <option value="FAIL">FAIL</option>
+              <option value="UNDETERMINED">판정 불가</option>
+              <option value="LEGACY">이전 판정 체계</option>
             </select>
           </Field>
           <label className="check small">
@@ -258,7 +260,7 @@ export function LibraryList() {
                       </td>
                       <td className="mono">{e.scene.orient ?? "–"}</td>
                       <td title={forceReason(e) ? `확정 사유: ${forceReason(e)}` : undefined}>
-                        <VerdictBadge v={e.quality.verdict} />
+                        <EntryVerdict e={e} />
                         {forceReason(e) && <span className="muted small"> 확정</span>}
                       </td>
                       <td className="num" title={`P90 ${pv(e.quality.field_p90_err_pct)}`}>

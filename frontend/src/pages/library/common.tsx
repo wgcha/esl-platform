@@ -1,6 +1,7 @@
 // 라이브러리 화면 공통: 표기·필터·포락 미니맵.
 import type { AnalysisFilters, EntryOut, OptdeckCases } from "../../api/types";
 import { Badge } from "../../components/ui";
+import { entryStatus } from "../../components/VerdictStatus";
 import { VIRIDIS, f3, gradient, lerp } from "../../lib/colormap";
 
 export const DROP_TYPES = ["Corner", "Edge", "Face"] as const;
@@ -63,9 +64,25 @@ export function modelVersions(entries: EntryOut[]) {
   return [...m.entries()].map(([model, vs]) => ({ model, versions: sortVersions(vs) })).sort((a, b) => a.model.localeCompare(b.model));
 }
 
-export function VerdictBadge({ v }: { v: string | null | undefined }) {
+/** 판정 배지. v = PASS|FAIL|UNDETERMINED|LEGACY (라이브러리 항목은 entryStatus(e.quality)), legacyVerdict = LEGACY 의 당시 verdict */
+export function VerdictBadge({ v, legacyVerdict }: { v: string | null | undefined; legacyVerdict?: string | null }) {
   if (!v) return <span className="muted">–</span>;
-  return v === "PASS" ? <Badge kind="ok">PASS</Badge> : <Badge kind="bad">FAIL</Badge>;
+  if (v === "PASS") return <Badge kind="ok">PASS</Badge>;
+  if (v === "UNDETERMINED") return <span className="badge neutral">판정 불가</span>;
+  if (v === "LEGACY")
+    return (
+      <span className="inline-actions" data-testid="legacy-badge">
+        <span className="badge neutral">이전 판정 체계</span>
+        {legacyVerdict && <span className="small muted">당시 {legacyVerdict}</span>}
+      </span>
+    );
+  return <Badge kind="bad">FAIL</Badge>;
+}
+
+/** 항목의 판정 배지(상태 + LEGACY 면 당시 verdict) */
+export function EntryVerdict({ e }: { e: EntryOut }) {
+  const s = entryStatus(e.quality);
+  return <VerdictBadge v={s} legacyVerdict={s === "LEGACY" ? e.quality.verdict : null} />;
 }
 
 export const dropText = (d: string | null | undefined) => (d ? DROP_LABEL[d] ?? d : "?");
@@ -93,7 +110,7 @@ export function matchEntries(entries: EntryOut[], f: AnalysisFilters) {
           inList(f.drop_type, e.scene.drop_type) &&
           inList(f.orient, e.scene.orient) &&
           inList(f.scenario, e.scene.scenario) &&
-          inList(f.verdict, e.quality.verdict)),
+          inList(f.verdict, entryStatus(e.quality))),
   );
 }
 
@@ -102,7 +119,7 @@ export function filtersText(f: AnalysisFilters) {
   const out = [
     f.model?.length ? `모델 ${f.model.join("·")}` : "모든 모델",
     f.drop_type?.length ? f.drop_type.map(dropText).join("·") : "모든 씬 유형",
-    f.verdict?.length ? `${f.verdict.join("·")}만` : "PASS·FAIL",
+    f.verdict?.length ? `${f.verdict.join("·")}만` : "모든 판정",
   ];
   if (f.scenario?.length) out.push(f.scenario.join("·"));
   return out.join(" · ");
