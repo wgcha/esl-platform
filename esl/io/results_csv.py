@@ -3,7 +3,8 @@
 TCL 3패스 출력::
 
   frames.csv         frame_index,time                                   전 프레임
-  model.csv          node_id,x0,y0,z0                                   첫 프레임 노드 좌표
+  model.csv          node_id,x0,y0,z0[,cx,cy,cz,dx,dy,dz]              초기 좌표 x0 = 프레임 0 node.coords(c)
+                                                                        − 프레임 0 변위(d) (구형: x0,y0,z0 만)
   final.csv          elem_id,vm_hv,exx,eyy,ezz,exy,epsp                 (A) 마지막 프레임, 파트 전 요소
   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp     (B) 전 프레임, 집합 H
   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp     (C) 후보 프레임 D + 직전 프레임
@@ -40,8 +41,8 @@ RESULT_FILES = ("frames.csv", "model.csv", "final.csv", "history.csv", "strain_f
                 "done.json")
 
 
-def _open_csv(path: str, required: list[str], missing_code: str = "TOOL_OUTPUT_MISSING"):
-    """(파일 핸들(헤더 다음 줄), 필요한 열 위치)."""
+def _open_csv(path: str, required: list[str], missing_code: str = "TOOL_OUTPUT_MISSING", optional=None):
+    """(파일 핸들(헤더 다음 줄), 필요한 열 위치). optional 열 이름 목록을 주면 셋째 값 = 그중 헤더에 모두 있으면 True."""
     if not os.path.isfile(path):
         raise EslError(missing_code, f"TCL 출력 파일이 없음: {path}")
     fh = open(path, "r", encoding="utf-8-sig", newline="")
@@ -53,6 +54,10 @@ def _open_csv(path: str, required: list[str], missing_code: str = "TOOL_OUTPUT_M
     if miss:
         fh.close()
         raise EslError("TOOL_OUTPUT_MISSING", f"CSV 헤더에 열 {miss} 가 없음: {path}")
+    if optional is not None:
+        if all(c in header for c in optional):
+            return fh, [header.index(c) for c in list(required) + list(optional)], True
+        return fh, [header.index(c) for c in required], False
     return fh, [header.index(c) for c in required]
 
 
@@ -197,6 +202,39 @@ def _read_frame_table(path, frames, ids, key, what, name, optional=None):
     return out, present
 
 
+def coord_diagnostics(xm, x0, tol) -> dict:
+    """h3d 좌표 xm ↔ rad 좌표 x0 (N,3) 편차 진단: 평균 편차 벡터(강체 평행이동), 축별 표준편차,
+    Kabsch 강체 정합(회전+평행이동) 후 잔차 최대값·회전각. rigid = 정합 후 잔차 ≤ tol(편차가 강체 운동뿐)."""
+    xm = np.asarray(xm, dtype=np.float64)
+    x0 = np.asarray(x0, dtype=np.float64)
+    d = xm - x0
+    mean = d.mean(axis=0)
+    std = d.std(axis=0)
+    c0, cm = x0.mean(axis=0), xm.mean(axis=0)
+    A, B = x0 - c0, xm - cm
+    U, _, Vt = np.linalg.svd(A.T @ B)
+    s = np.sign(np.linalg.det(U @ Vt)) or 1.0
+    R = (U @ np.diag([1.0, 1.0, s]) @ Vt).T                    # B ≈ A R^T
+    res = np.linalg.norm(A @ R.T - B, axis=1)
+    ang = float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
+    rmax = float(res.max()) if res.size else 0.0
+    return {"mean_dev": mean.tolist(), "std_dev": std.tolist(), "rigid_residual_max": rmax,
+            "rigid_rotation_deg": ang, "rigid": bool(rmax <= tol)}
+
+
+def _coord_diag_text(g: dict) -> str:
+    v = lambda a: "[" + ", ".join(f"{x:.4g}" for x in a) + "]"
+    t = (f"진단: 평균 편차 {v(g['mean_dev'])}, 표준편차 {v(g['std_dev'])}, 강체 정합 후 잔차 최대 "
+         f"{g['rigid_residual_max']:.3g}(회전 {g['rigid_rotation_deg']:.3g}°), frame 0 time {g['frame0_time']:.6g}")
+    if g.get("frame0_disp_max") is not None:
+        t += f", frame 0 변위 최대 {g['frame0_disp_max']:.3g}"
+    t += f", 비교 좌표 {g['coord_source']}"
+    if g["rigid"]:
+        t = (f"h3d 좌표가 rad에서 강체 이동(평균 {v(g['mean_dev'])}, 회전 {g['rigid_rotation_deg']:.3g}°) — "
+             f"h3d 프레임 0 이 초기 상태가 아니거나 모델 좌표계가 다름; " + t)
+    return t
+
+
 def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict:
     """TCL CSV 폴더 → ``final.npz``·``history.npz``·``strain_frames.npz``·``disp.npz``·``frames.json`` (§7.3).
 
@@ -261,16 +299,22 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
     hist_fi = np.array(sorted(hsel), dtype=np.int64)
     hist_t = np.array([t_of[int(f)] for f in hist_fi], dtype=np.float64)
 
-    # ---------------- model.csv (좌표 검증)
+    # ---------------- model.csv (좌표 검증: h3d 초기 좌표 ↔ rad 좌표, 계산은 rad 좌표)
     path = os.path.join(results_dir, "model.csv")
-    fh, cols = _open_csv(path, ["node_id", "x0", "y0", "z0"])
+    fh, cols, has_raw = _open_csv(path, ["node_id", "x0", "y0", "z0"], optional=["cx", "cy", "cz", "dx", "dy", "dz"])
     xm = np.full((N, 3), np.nan)
+    xr = np.full((N, 3), np.nan) if has_raw else None
+    d0max = 0.0
     seen = np.zeros(N, dtype=bool)
     with fh:
         for a in _chunks(fh, cols, path):
             p = _lookup(node_id, _id(a[:, 0]))
             k = p >= 0
-            xm[p[k]] = a[k, 1:]
+            xm[p[k]] = a[k, 1:4]
+            if has_raw:
+                xr[p[k]] = a[k, 4:7]
+                if k.any():
+                    d0max = max(d0max, float(np.linalg.norm(a[k, 7:10], axis=1).max()))
             seen[p[k]] = True
     if not np.all(seen):
         raise EslError("ID_MISMATCH", f"model.csv 에 대상 파트 노드 {int((~seen).sum())}개가 없음: "
@@ -279,7 +323,18 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
     # TCL·h3d 좌표는 float32 일 수 있음 → 원점에서 먼 소형 파트는 절대 반올림 오차가 bbox 기준을 넘는다.
     xmax = float(np.abs(x0).max()) if N else 0.0
     tol = max(1e-6 * bbox, 2.0 * float(np.finfo(np.float32).eps) * xmax * np.sqrt(3.0), 1e-300)
+    t0 = done.get("frame0_time")
+    t0 = float(t0) if isinstance(t0, (int, float)) else float(all_t[0])
+    coord_source = "x0" if has_raw else "x0 (구형 model.csv: 변위 보정 열 없음)"
     dev = np.linalg.norm(xm - x0, axis=1)
+    if has_raw and d0max > 0.0:
+        dev_raw = np.linalg.norm(xr - x0, axis=1)
+        if int((dev > tol).sum()) > int((dev_raw > tol).sum()) and float(dev_raw.max()) < float(dev.max()):
+            # node.coords 가 이미 변형 전 좌표였던 경우(변위를 빼면 오히려 어긋남) → 원 좌표로 비교
+            warnings.append(f"model.csv: 프레임 0 변위(최대 {d0max:.3g})를 뺀 좌표보다 node.coords 원값이 rad 와 더 "
+                            f"잘 맞음 → 원값(cx,cy,cz)으로 비교")
+            xm, dev, coord_source = xr, dev_raw, "cx (node.coords 원값)"
+        del dev_raw
     over = dev > tol
     n_dev = int(over.sum())
     coord_dev = None
@@ -287,17 +342,21 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
         max_dev = float(dev.max())
         order = np.argsort(-dev)[:10]
         top = [{"node_id": int(node_id[i]), "dev": float(dev[i])} for i in order if over[i]]
+        diag = coord_diagnostics(xm, x0, tol)
+        diag.update({"frame0_time": t0, "frame0_disp_max": float(d0max) if has_raw else None,
+                     "coord_source": coord_source})
+        dtxt = _coord_diag_text(diag)
         ok = (n_dev <= max(float(cc["warn_max_frac"]) * N, 1.0) and max_dev <= float(cc["warn_max_rel"]) * bbox)
         if not ok:
             raise EslError("ID_MISMATCH", f"model.csv 좌표가 rad 와 다름(허용 {tol:.3g}): 최대 {max_dev:.3g}, "
                                           f"노드 {n_dev}/{N}개({n_dev / N:.3g}) 초과, 상위 노드 "
-                                          f"{[t['node_id'] for t in top[:5]]}")
+                                          f"{[t['node_id'] for t in top[:5]]}; {dtxt}")
         lst = ", ".join(f"{t['node_id']}({t['dev']:.3g})" for t in top)
         warnings.append(f"COORD_DEVIATION: rad와 h3d 초기 좌표가 노드 {n_dev}개에서 다름(최대 {max_dev:.3g}, 허용 "
                         f"{tol:.3g}) — Radioss 초기 관통 보정 등으로 옮겨진 노드일 수 있음. 계산은 rad 좌표 사용. "
-                        f"상위 {len(top)}개 노드(편차): {lst}")
-        coord_dev = {"n_dev": n_dev, "n_nodes": int(N), "max_dev": max_dev, "tol": float(tol), "top": top}
-    del xm, dev, seen
+                        f"상위 {len(top)}개 노드(편차): {lst}; {dtxt}")
+        coord_dev = {"n_dev": n_dev, "n_nodes": int(N), "max_dev": max_dev, "tol": float(tol), "top": top, **diag}
+    del xm, xr, dev, seen
 
     # ---------------- final.csv (A)
     path = os.path.join(results_dir, "final.csv")
@@ -395,6 +454,7 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
                                                                        "epsp_layer", "disp_type")},
         "units_label": getattr(model, "units_label", ""),
         "layer": "mid", "value_columns": SCOLS, "eps_components": ["exx", "eyy", "exy"], "exy": "raw (h3d)",
+        "frame0_time": t0, "model_coords": done.get("model_coords", "legacy"),
         "warnings": warnings, "coord_deviation": coord_dev,
     }
     with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as fh:
@@ -485,7 +545,8 @@ def max_hold(eq_inst, *arrays):
 
 def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None, ezz=None, epsp=None,
                       frame_index=None, h3d="synthetic.h3d", write_done=True, extra_nodes=None, extra_elems=None,
-                      hot_k=200, top_n=5, reach_rtol=1e-6, frames_D=None, write_prev=True) -> str:
+                      hot_k=200, top_n=5, reach_rtol=1e-6, frames_D=None, write_prev=True,
+                      legacy_model=False) -> str:
     """TCL 3패스 출력(§7.2) 생성기. 시험·E2E 용 — H·D 는 TCL 과 같은 규칙(esl.mech.tstar)으로 정한다.
 
     - ``eps``: (F,E,3) h3d 에 저장된 [exx,eyy,exy] (이미 max-hold 된 Max_Strain 텐서; exy 규약은 호출자 몫).
@@ -494,6 +555,8 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
     - ``extra_nodes``/``extra_elems``: 다른 파트 행 흉내용 추가 ID (값은 0).
     - ``write_prev``: strain_frames.csv 에 직전 프레임 P = {f−1 ≥ 0 : f∈D} 행도 씀(TCL 패스 C 와 같음).
       False 면 예전 TCL 출력(직전 프레임 없음) 흉내.
+    - model.csv: TCL 과 같이 ``x0`` = 프레임 0 node.coords(``cx`` = x0 + u[0]) − 프레임 0 변위(``dx`` = u[0]).
+      ``legacy_model=True`` 면 예전 형식(node_id,x0,y0,z0 만).
     """
     from esl.mech import strain, tstar
 
@@ -544,11 +607,19 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
         for k in range(F):
             fh.write(f"{int(fi[k])},{g(t[k])}\n")
     with open(os.path.join(d, "model.csv"), "w", encoding="utf-8", newline="") as fh:
-        fh.write("node_id,x0,y0,z0\n")
-        for k in range(node_id.size):
-            fh.write(f"{int(node_id[k])},{row(x0[k])}\n")
-        for n in xn:
-            fh.write(f"{n},0,0,0\n")
+        if legacy_model:
+            fh.write("node_id,x0,y0,z0\n")
+            for k in range(node_id.size):
+                fh.write(f"{int(node_id[k])},{row(x0[k])}\n")
+            for n in xn:
+                fh.write(f"{n},0,0,0\n")
+        else:
+            fh.write("node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz\n")
+            c0 = x0 + u[0]
+            for k in range(node_id.size):
+                fh.write(f"{int(node_id[k])},{row(c0[k] - u[0, k])},{row(c0[k])},{row(u[0, k])}\n")
+            for n in xn:
+                fh.write(f"{n},0,0,0,0,0,0,0,0,0\n")
     zero6 = ",".join(["0"] * 6)
     with open(os.path.join(d, "final.csv"), "w", encoding="utf-8", newline="") as fh:
         fh.write("elem_id," + ",".join(SCOLS) + "\n")
@@ -582,7 +653,8 @@ def write_results_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None
             "candidate_frames": cand, "candidate_elems": cel, "frames_D": Dset, "h3d": h3d,
             **({"prev_frames": Pset, "strain_frames": CF} if write_prev else {}),
             "strain_type": "Max_Strain", "strain_layer": "Mid", "epsp_type": "Plastic Strain", "epsp_layer": "Mid",
-            "disp_type": "Displacement", "warnings": []}
+            "disp_type": "Displacement", "frame0_time": float(t[0]),
+            **({} if legacy_model else {"model_coords": "coords_minus_disp_frame0"}), "warnings": []}
         with open(os.path.join(d, "done.json"), "w", encoding="utf-8") as fh:
             json.dump(done, fh)
     return d
