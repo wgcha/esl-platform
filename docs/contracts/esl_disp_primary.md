@@ -217,6 +217,7 @@
 - DP-7 초과 요소 = valid ∧ |오차| > `compare.max_err_pct_max`, 비율 분모 = 전 요소(보조로 valid 분모 병기).
 - DP-8 migration 0008을 이 계약이 사용, MCP는 0009.
 - DP-9 단면 축 = 판 길이 방향(e1)/판 폭 방향(e2), "변형 확대 배율", 변위 카드로 이동(D7).
+- DP-10 컨투어 레전드 범위 편집 + 견고한 자동 범위(`color_range_robust`, P99) — §14(사용자 요구 2026-10-28 08:05).
 
 ## 13. 리스크
 
@@ -229,3 +230,52 @@
 | R5 | epsp>0 엄격 기준이 미세 소성까지 넓게 표시 | 표시 전용, 필요 시 후속 설정 키 |
 | R6 | LEGACY·신규 항목이 라이브러리 분석에 섞임 | 필터 LEGACY, 목록 배지 |
 | R7 | 0008 번호를 MCP 계약이 예정 | decisions 메모, MCP 0009 |
+
+## 14. DP-10 컨투어 레전드 범위 편집 (2026-10-28 추가)
+
+사용자 요구: "겹쳐보기에서 '오차'를 누르면 컨투어 레전드가 -500~500이다. 편집 가능하게."
+
+### 14.1 원인 (코드 확인 결과)
+- 화면 `FieldOverlay.errRangeOf`는 서버 `/field?layer=err`의 `color_range`에서 R = max(|min|, |max|)를 받아 ±R로 칠한다.
+- 서버 `services/results.field`의 err `color_range`는 이미 max가 아니라 `core_adapter.field_err_range` = `esl.report.field.histogram`의 `range_pct` = **`_nice_ceil(P99 |오차|)`**(1·2·2.5·5×10^k 계단, 최소 1%)이다.
+- 따라서 ±500%는 (a) valid 요소 중 큰 오차 요소(소성 힌지 주변)가 1%를 넘어 P99 자체가 수백 %이고, (b) 계단 올림으로 더 커진 결과다(예: P99 = 260% → 500%). 예 605개 초과 요소는 전 요소의 0.22%지만 valid 요소(상승 중 ∧ ε ≥ min_rel·max) 대비 비율은 더 크다.
+- 결론: 자동 범위를 조금 고치는 것만으로는 부족하다 → **레전드 범위를 사용자가 편집**하는 것이 주 대책이고, 자동 범위는 계단 올림을 없애 덜 부풀린다.
+
+### 14.2 자동 범위 `color_range_robust` (서버, 기존 `color_range` 유지)
+- 공통 올림: `ceil2(x)` = 유효숫자 2자리 올림(예 263.4 → 270, 0.01234 → 0.013), x ≤ 0 이나 비유한이면 null.
+- `/validations/{id}/field` 응답 추가 키 `color_range_robust: {min, max, basis: "p99", raw}` (`raw` = 올림 전 분위값):
+  - `layer=err`: R = ceil2(P99 |100·rel_err|, valid 요소), `{min: −R, max: +R}`. valid 없으면 null 값.
+  - `layer=rad|esl`: rad·esl 유한값 합집합 기준 `{min: 그 최소, max: ceil2(P99)}` (두 레이어 같은 값 — 공통 범위 유지).
+- `/validations/{id}/disp-field` 응답 추가 키 `color_range_robust`(같은 형식): `layer=err` `{min: 0, max: ceil2(P99 e/U)}`, `layer=rel|val` rel·val 합집합 `{min: 0, max: ceil2(P99 ‖d‖)}`. 기존 `color_range`(min/max)도 함께 준다.
+- 분위는 다운샘플 전 전체 집합으로 계산. `histogram.range_pct`(보고서·오차 분포 차트)는 바꾸지 않는다.
+- 계산 함수: `esl.report.field.robust_range(values, kind: "sym"|"zero"|"minmax", pct=99) -> {min,max,basis,raw}` (Impl-Backend). 분위값 99는 함수 기본 인자이며 판정 기준이 아니므로 설정 키를 두지 않는다.
+
+### 14.3 화면 (Impl-Frontend, 겹쳐보기·변위 컨투어 공통)
+- 공용 컴포넌트 `components/ColorLegend.tsx`: 색 띠 양 끝의 숫자를 **입력 칸**(type=number, 레전드에 붙임)으로 바꾼다. 새 버튼은 **"자동" 하나**(수동 값이 있을 때만 활성).
+  - 대칭 레이어(변형률 오차 %): 입력 1칸 `±R`(R > 0).
+  - 0 기준 레이어(변위 오차 e/U, ‖d_rel‖, ‖d_val‖): 입력 1칸 최대(> 0), 최소 0 고정.
+  - 변형률 rad/esl(공통 범위): 최소·최대 2칸(min < max).
+  - 잘못된 값(비유한·순서 역전·≤0)은 입력 칸 오류 표시 후 직전 유효 범위 유지.
+- 기본 = 자동 = `color_range_robust`(없으면 기존 `color_range`, 예전 서버 대비).
+- 범위 밖 값: 끝색으로 칠함(clamp). 범위 밖 점이 있으면 레전드 해당 끝에 **▲**(최대 초과)·**▼**(최소 미만)와 개수 툴팁("범위 밖 n개").
+- 기억: `localStorage` 키 `esl.legend.v1:<validation_id>:<view>:<layer>`(view = `field`|`disp`, 변형률 rad/esl은 layer `eps` 하나), 값 JSON `{min,max}`. 읽기·쓰기·삭제 모두 try/catch, 실패하면 메모리 상태만으로 동작(오류 표시 없음). "자동"은 키 삭제 + 자동 범위 복귀.
+- 높이·배치는 §9 규칙 그대로(레전드 한 줄, 줄바꿈 시에도 컨투어 높이 규칙 불변).
+
+### 14.4 API 변경 요약 추가
+| 대상 | 변경 |
+|---|---|
+| `FieldOut` | `color_range_robust: {min, max, basis, raw} \| null` 추가 |
+| `DispFieldOut` | 같은 키 추가 |
+
+### 14.5 시험
+| ID | 기준 | 방법 |
+|---|---|---|
+| V-DP-16 | `robust_range`: sym/zero/minmax 결과 = 수식(ceil2·P99), 이상치 1% 미만 섞인 합성 오차에서 R ≪ max, 빈 입력·비유한 → null | 단위 |
+| V-DP-17 | `/field` err·rad·esl, `/disp-field` err·rel·val 응답에 `color_range_robust`, 다운샘플과 무관(전체 집합) | API |
+| V-DP-18 | ColorLegend: 입력 반영(캔버스 범위 변경), 잘못된 값 무시, "자동" → 서버 robust 범위 복귀·키 삭제 | 프런트 |
+| V-DP-19 | 범위 밖 점 있을 때 ▲/▼ 표시와 개수, 없으면 미표시 | 프런트 |
+| V-DP-20 | localStorage 저장·복원(검증 id·view·layer별 분리), `getItem`/`setItem` throw 시에도 입력·자동 동작 | 프런트 |
+
+### 14.6 파일 소유
+- Impl-Backend: `esl/report/field.py`(`robust_range`, `ceil2`), `api/services/results.py`(`field`·`disp_field` 응답), `api/schemas.py`(`FieldOut`·`DispFieldOut`), `worker/esl_worker/core_adapter.py`(래퍼), 해당 시험.
+- Impl-Frontend: `components/ColorLegend.tsx`(신규), `components/FieldOverlay.tsx`(`errRangeOf`·`rangeOf` → robust 기본 + 수동 범위), `components/DispOverlay.tsx`, `api/types.ts`, 해당 시험.
