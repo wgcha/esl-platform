@@ -12,6 +12,10 @@
   ``scene_meta.parse`` 해서 null 필수 필드가 가장 적은 것(동률은 앞 순서)을 쓴다.
 
 저장: ``save(entry, dir)`` → ``entry.json``, ``raw.npz``, ``summary.npz``. 읽기: ``load(dir, raw=True)``.
+
+v0.7.0(esl_opt_run.md §7.3·§7.4): 등록 시 ``meta.topo_sha256``(노드 ID + 요소 연결, 좌표 제외 — S1 모델 키)와
+``meta.deform_mode``(변형 모드 자동 분류 레코드 {auto, metrics, user: None, …, rule_version})를 함께 기록한다.
+분류 기준값은 ``mode_cfg``(설정 ``opt_run.mode``, 없으면 ``esl.opt.DEFAULTS``). 분류 실패는 경고만(None).
 """
 from __future__ import annotations
 
@@ -115,7 +119,7 @@ def _field_summary(val: dict) -> dict | None:
 
 def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = None, rules: dict | None = None,
           nx: int = 24, ny: int = 14, axis_ref: dict | None = None, top_n: int = 50, mass: float | None = None,
-          registered_by: str | None = None) -> LibraryEntry:
+          registered_by: str | None = None, mode_cfg: dict | None = None) -> LibraryEntry:
     case_dir = os.path.abspath(case_dir)
     if not os.path.isdir(case_dir):
         raise EslError("INPUT_INVALID", f"Case 폴더가 없음: {case_dir}")
@@ -223,11 +227,12 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
         src_files[k] = {"path": p, "sha256": U.sha256_file(p), "size": int(st.st_size)}
     magn = np.linalg.norm(raw["f"], axis=1)
     sumabs = float(magn.sum())
+    topo, dmode = opt_meta(raw, fr, mode_cfg, warns)
     meta = {
         "schema": SCHEMA, "entry_id": entry_id, "status": "active", "registered_at": U.utcnow(),
         "registered_by": registered_by,
         "source": {"case_dir": case_dir, "run_id": run_id, "snapshot_dir": base, "files": src_files},
-        "mesh_sha256": mesh_sha, "load_sha256": load_sha,
+        "mesh_sha256": mesh_sha, "load_sha256": load_sha, "topo_sha256": topo, "deform_mode": dmode,
         "model": {"product": scene.get("model"), "inch": scene.get("inch"), "version": scene.get("version"),
                   "date": scene.get("date"), "project": scene.get("project"),
                   "part_id": mmeta.get("part_id"), "part_title": mmeta.get("part_title"),
@@ -251,6 +256,25 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
         "warnings": warns,
     }
     return LibraryEntry(meta=U.jsonable(meta), summary=summary, raw=raw)
+
+
+def opt_meta(raw: dict, fr: dict, mode_cfg: dict | None = None, warns: list | None = None):
+    """(topo_sha256, deform_mode 레코드) — 등록 시·지연 백필 공용."""
+    from esl.opt import DEFAULTS
+    from esl.opt import identity, modes
+    topo = identity.topo_sha256(raw)
+    mc = mode_cfg or DEFAULTS["mode"]
+    try:
+        res = modes.classify_raw(raw, fr, mc)
+        if warns is not None:
+            warns += [f"deform_mode: {w}" for w in res["warnings"]]
+        dm = modes.record(res)
+    except EslError as exc:
+        if warns is not None:
+            warns.append(f"deform_mode: 분류 실패 {exc.message}")
+        dm = {"auto": None, "metrics": {}, "user": None, "user_by": None, "user_at": None,
+              "rule_version": int(mc["rule_version"])}
+    return topo, dm
 
 
 def save(entry: LibraryEntry, d: str, writer: U.Writer | None = None) -> str:
