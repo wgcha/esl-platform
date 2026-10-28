@@ -4,7 +4,7 @@
 #     (reset·force 는 쓰지 않는다. fast-forward 가 안 되면 중단)
 #  2) 설정: %LOCALAPPDATA%\esl\esl_deploy.json (없으면 config\esl_deploy.example.json 으로 생성)
 #  3) 배포 (폴더 rename 없음 - 탐색기·명령창·실행 중인 hw 가 폴더를 잡고 있어도 됨):
-#     resources\tcl\*.tcl, README, esl_run.ps1, esl_upload_lib.ps1 -> <deploy_dir>\versions\<git 짧은 해시>\ (새 폴더, 같은 내용이면 재사용)
+#     resources\tcl\*.tcl, README, esl_run.ps1, esl_upload_lib.ps1, esl_slim_lib.ps1 -> <deploy_dir>\versions\<git 짧은 해시>\ (새 폴더, 같은 내용이면 재사용)
 #     활성 버전 = <deploy_dir>\current_version.txt (임시 파일 작성 후 파일 단위 교체, 3회 재시도)
 #  4) 런처: <deploy_dir>\current\ESL_probe.bat, ESL_extract.bat, ESL_upload.bat, esl_launch.ps1 (버전 무관, 바뀐 경우만 덮어쓰기)
 #     예전 구조(current 에 TCL·esl_run.ps1 이 직접 있음)는 그 배포 산출물만 파일 단위로 정리(사용자 파일은 그대로)
@@ -140,11 +140,21 @@ function Get-DeployConfig {
     else { Say "    설정: $ConfigPath" }
     try { $cfg = Get-Content -Raw -Encoding UTF8 -LiteralPath $ConfigPath | ConvertFrom-Json }
     catch { throw "설정 파일 JSON 오류: $ConfigPath ($($_.Exception.Message))" }
+    $added = 0
     foreach ($p in $example.PSObject.Properties) {
         if (-not ($cfg.PSObject.Properties.Name -contains $p.Name)) {
             Say "    설정에 '$($p.Name)' 없음 -> 예시 기본값 사용" 'Yellow'
             $cfg | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value
+            $added++
         }
+    }
+    # 없는 키만 기본값으로 채워 파일에도 적는다(기존 값은 그대로, 압축 모드 설정 등 새 키 확인용)
+    if ($added -gt 0) {
+        try {
+            [IO.File]::WriteAllText($ConfigPath, (($cfg | ConvertTo-Json -Depth 6) + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+            Say "    설정 파일에 새 키 $added 개를 기본값으로 추가했습니다: $ConfigPath" 'Green'
+        }
+        catch { Say "    설정 파일에 새 키를 쓰지 못했습니다(기본값으로 계속): $($_.Exception.Message)" 'Yellow' }
     }
     return $cfg
 }
@@ -158,10 +168,11 @@ function Publish-Deployment($Cfg, [string]$Version) {
     $tclDir = Join-Path $RepoRoot 'resources\tcl'
     $runner = Join-Path $PSScriptRoot 'esl_run.ps1'
     $uploadLib = Join-Path $PSScriptRoot 'esl_upload_lib.ps1'
+    $slimLib = Join-Path $PSScriptRoot 'esl_slim_lib.ps1'
     $launchPs1 = Join-Path $PSScriptRoot 'esl_launch.ps1'
-    foreach ($f in @($runner, $uploadLib, $launchPs1)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "실행기 없음: $f" } }
+    foreach ($f in @($runner, $uploadLib, $slimLib, $launchPs1)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "실행기 없음: $f" } }
     $sources = @(@(Get-ChildItem -LiteralPath $tclDir -Filter '*.tcl' -File | ForEach-Object { $_.FullName }) +
-        @((Join-Path $tclDir 'README.md'), $runner, $uploadLib))
+        @((Join-Path $tclDir 'README.md'), $runner, $uploadLib, $slimLib))
 
     New-Item -ItemType Directory -Force -Path $script:DeployDir | Out-Null
     if (Test-IsLink $script:DeployDir) { throw "deploy_dir 가 링크입니다. 실제 폴더를 지정하세요: $($script:DeployDir)" }
@@ -181,7 +192,10 @@ function Publish-Deployment($Cfg, [string]$Version) {
     else {
         New-Item -ItemType Directory -Force -Path $slot.Path | Out-Null
         foreach ($s in $sources) { Copy-Item -LiteralPath $s -Destination $slot.Path -Force; Say "    복사: $(Split-Path -Leaf $s)" }
-        [IO.File]::WriteAllText((Join-Path $slot.Path 'VERSION.txt'), ("version={0}`r`nrepo={1}`r`ndeployed={2}`r`n" -f $slot.Name, $RepoRoot, (Get-Date).ToString('s')), (New-Object Text.UTF8Encoding($false)))
+        $toolVer = ''
+        $verFile = Join-Path $RepoRoot 'VERSION'
+        if (Test-Path -LiteralPath $verFile -PathType Leaf) { try { $toolVer = ([IO.File]::ReadAllText($verFile)).Trim() } catch { $toolVer = '' } }
+        [IO.File]::WriteAllText((Join-Path $slot.Path 'VERSION.txt'), ("version={0}`r`ntool_version={1}`r`nrepo={2}`r`ndeployed={3}`r`n" -f $slot.Name, $toolVer, $RepoRoot, (Get-Date).ToString('s')), (New-Object Text.UTF8Encoding($false)))
         Say "    versions\$($slot.Name) 작성" 'Green'
     }
     (Get-Item -LiteralPath $slot.Path).LastWriteTime = Get-Date   # 정리 때 최근 버전으로 남게
@@ -254,9 +268,13 @@ function Test-Environment($Cfg, $Deploy, [string]$WorkRoot, [string[]]$Protected
     $hw = Expand-ConfigPath ([string]$Cfg.hw_exe)
     if ($hw -and (Test-Path -LiteralPath $hw -PathType Leaf)) { Add-Check 'hw.exe' 'OK' $hw }
     else { Add-Check 'hw.exe' 'FAIL' "없음: '$hw' -> 설정 hw_exe 수정" }
+    # 압축 모드(hvtrans)가 없어도 원본 업로드·PC 추출은 된다 -> WARN
+    $hvt = Expand-ConfigPath ([string]$Cfg.hvtrans_exe)
+    if ($hvt -and (Test-Path -LiteralPath $hvt -PathType Leaf)) { Add-Check 'hvtrans.exe' 'OK' $hvt }
+    else { Add-Check 'hvtrans.exe' 'WARN' "없음: '$hvt' -> 압축 모드 불가(원본 업로드는 가능). 설정 hvtrans_exe 수정" }
 
     if ($Deploy.Version) { Add-Check $PointerName 'OK' $Deploy.Version } else { Add-Check $PointerName 'FAIL' '활성 버전을 읽지 못함' }
-    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1', 'esl_upload_lib.ps1')) {
+    foreach ($n in @('esl_h3d_probe.tcl', 'esl_h3d_extract.tcl', 'esl_run.ps1', 'esl_upload_lib.ps1', 'esl_slim_lib.ps1')) {
         $p = Join-Path $Deploy.Active $n
         if (Test-Path -LiteralPath $p -PathType Leaf) { Add-Check $n 'OK' $p } else { Add-Check $n 'FAIL' "없음: $p" }
     }
