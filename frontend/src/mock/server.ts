@@ -1,5 +1,6 @@
 // 목 서버: fetch 래퍼 수준. 백엔드 실제 응답 모양(openapi_p1b.json + 자유 형식 응답은 서비스 코드)을 흉내 낸다.
 // tick()마다 작업이 한 걸음 진행된다.
+import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
@@ -46,6 +47,8 @@ type Run = EslRunOut & { inputs: string };
 
 export class MockServer {
   user: MockUserKey;
+  /** v0.5.8 3D 하중 보기: 오류 시연(413/503/404) */
+  view3dMode: "ok" | "too_large" | "busy" | "disabled" = "ok";
   cases: CaseOut[] = [];
   jobs: JobOut[] = [];
   logs: Record<string, string[]> = {};
@@ -499,6 +502,15 @@ export class MockServer {
         nj.retry_of_job_id = j.id;
         return { status: 201, body: nj };
       }
+    }
+    if ((r = m(/^\/esl-runs\/([^/]+)\/view3d$/)) && method === "GET") {
+      const run = this.runs.find((x) => x.id === r![1]);
+      if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
+      if (this.view3dMode === "too_large")
+        return err(413, "VIEW3D_TOO_LARGE", "부품이 너무 커서 3D 보기를 만들 수 없습니다(노드 2,000,000 초과).", { limits: { max_nodes: 2000000 } });
+      if (this.view3dMode === "busy") return err(503, "VIEW3D_BUSY", "3D 자료를 만드는 중입니다. 잠시 후 다시 시도하세요.");
+      if (this.view3dMode === "disabled") return err(404, "VIEW3D_DISABLED", "3D 보기가 꺼져 있습니다.");
+      return { status: 200, body: mockView3d().manifest(run.id) };
     }
     if ((r = m(/^\/esl-runs\/([^/]+)(\/forces)?$/)) && method === "GET") {
       const run = this.runs.find((x) => x.id === r![1]);
@@ -1025,6 +1037,12 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     if (server.p3.shouldHang(method, url.pathname.replace(/^\/esl\/api/, ""))) await new Promise(() => undefined);
     if (method === "PUT" && server.p3.putDelayMs) await new Promise((r) => setTimeout(r, server.p3.putDelayMs));
     if (method === "PUT") server.p3.chunkShas.push(new Headers(init?.headers).get("X-Chunk-Sha256"));
+    const bin = /^\/esl\/api\/esl-runs\/[^/]+\/view3d\/(part\.glb|values\.bin)$/.exec(url.pathname);
+    if (bin && method === "GET") {
+      if (server.view3dMode !== "ok") return new Response(JSON.stringify({ detail: { code: "VIEW3D_STALE", message: "3D 자료가 바뀌었습니다. 다시 불러오세요." } }), { status: 409 });
+      const v = mockView3d();
+      return new Response(bin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+    }
     const raw = init?.body;
     const isBin = typeof Blob !== "undefined" && raw instanceof Blob;
     const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;

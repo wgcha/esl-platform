@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "../api/types";
 import { Link, useLocation } from "react-router-dom";
 import { ROLE_LABEL, useApp } from "../app/AppContext";
-import { RightPanel } from "./RightPanel";
+import { StatusChips, StatusDrawer, useRunStatus } from "./RunStatus";
 import { SEEN_EVENT, isNewVersion, lastSeenVersion } from "../lib/changelog";
 import { dt } from "../lib/format";
 
@@ -71,6 +71,7 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
         </nav>
       )}
       <div className="topbar-right">
+        <StatusChips />
         <Link className="topbar-link" to={GUIDE_PATH}>
           사용 가이드
         </Link>
@@ -93,11 +94,12 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
   );
 }
 
-/** 상단 바 + (스텝퍼) + 작업영역 + 우측 패널 */
+/** 상단 바(상태 칩 2개) + (스텝퍼) + 작업영역 + 오른쪽 비모달 서랍(열면 본문을 밀어낸다) */
 export function Shell({ crumbs, projectId, stepper, children }: { crumbs: Crumb[]; projectId?: string; stepper?: ReactNode; children: ReactNode }) {
   const { error } = useApp();
+  const { open } = useRunStatus();
   return (
-    <div className="page">
+    <div className={open ? "page drawer-open" : "page"}>
       <TopBar crumbs={crumbs} projectId={projectId} />
       {stepper}
       {error && (
@@ -109,8 +111,8 @@ export function Shell({ crumbs, projectId, stepper, children }: { crumbs: Crumb[
         <main className="workarea" aria-label="작업영역">
           {children}
         </main>
-        <RightPanel />
       </div>
+      <StatusDrawer />
     </div>
   );
 }

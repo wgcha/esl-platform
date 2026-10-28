@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppProvider } from "./AppContext";
+import { RunStatusProvider } from "../shell/RunStatus";
 import { ProjectList } from "../pages/ProjectList";
 import { CaseList } from "../pages/CaseList";
 import { CasePage } from "../pages/CasePage";
@@ -18,6 +19,7 @@ import { JobReview } from "../pages/history/JobReview";
 export function App() {
   return (
     <AppProvider>
+      <RunStatusProvider>
       <Routes>
         <Route path="/" element={<ProjectList />} />
         <Route path="/p/:projectId" element={<CaseList />} />
@@ -36,6 +38,7 @@ export function App() {
         <Route path="/p/:projectId/library/comparisons/:comparisonId" element={<ComparisonDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </RunStatusProvider>
     </AppProvider>
   );
 }

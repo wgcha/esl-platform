@@ -2,6 +2,13 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.5.8] - 2026-10-28
+### 추가
+- ④ ESL 3D 하중 보기(서버 자료): 부품 표면 3D 모델(`part.glb`, 대형 부품은 저해상도 `part_lod.glb` 추가), 노드 값(`values.bin`: 면압·면외 하중·|F|·상대 변위), 상위 노드 100행과 공간 군집 합력(2~5개, 합력·하중 중심·합모멘트·상쇄율)을 담은 manifest. 표면 색 값은 **면압 |Fn|/A [MPa]**(노드 대표 면적 A = 인접 요소 면적/절점 수의 합), 노드힘 |Fn| N은 툴팁용으로 함께 제공
+- API: `GET /esl-runs/{id}/view3d`(manifest, 첫 요청 때 `runs/<id>/view3d/` 에 생성·캐시, 입력이 바뀌면 이전 폴더를 `_backup` 으로 옮기고 재생성), `…/view3d/part.glb`·`part_lod.glb`·`values.bin`(ETag·304). 오류 `VIEW3D_TOO_LARGE`(413)·`VIEW3D_BUSY`(503)·`VIEW3D_STALE`(409)·`VIEW3D_LOD_NONE`(404)·`VIEW3D_DISABLED`(404)
+- 설정 `view3d.*`(기본값으로 동작, 섹션 없어도 됨): `enabled`·`max_nodes`·`max_glb_bytes`·`lod_min_nodes`·`lod_target_vertices`·`top_max`·`cluster_k_max`·`kmeans_max_iter`·`build_wait_s`
+- DB migration 없음(파생 캐시 파일만)
+
 ## [0.5.7] - 2026-10-28
 ### 변경
 - ⑤ 검증의 판정 기준을 변위로 바꿈: 변위 RMS·변위 최대 오차·반력·변위 잡음 바닥 4개가 모두 기준 이내면 PASS. 변형률 지표(hotspot·최대변형률·P90·잡음 hotspot)는 판정에서 빠지고 "참고"로만 표시됩니다(소성 힌지처럼 선형 변형률로 맞출 수 없는 부위 때문에 FAIL 나던 문제 해결)

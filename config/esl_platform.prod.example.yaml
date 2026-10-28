@@ -88,5 +88,15 @@ core:                                 # 코어 설정: config_path(이 파일 �
   config_path: esl.yaml               # = config/esl.example.yaml 복사본 — 판정 기준(validation·compare)은 사내 확인 후 교체
 report:
   auto: true                          # VALIDATE 성공 시 Case 보고서(CASE_REPORT) 자동 → <case>\07_report\report.html
+view3d:                               # ④ ESL 3D 하중 보기 파생 캐시(계약 esl_3d_load.md §10) — 섹션이 없어도 아래 기본값
+  enabled: true
+  max_nodes: 2000000                  # 초과 시 413 VIEW3D_TOO_LARGE(캐시 안 함)
+  max_glb_bytes: 67108864             # 64 MiB — part.glb+part_lod.glb, values.bin 각각
+  lod_min_nodes: 500000               # 초과 시 part_lod.glb 추가
+  lod_target_vertices: 100000
+  top_max: 100                        # manifest 상위 행 수(= 화살표 최대)
+  cluster_k_max: 5
+  kmeans_max_iter: 50
+  build_wait_s: 60                    # 생성 대기 초과 시 503 VIEW3D_BUSY
 library:                              # 라이브러리·종합분석·덱(esl.library.settings): config_path 또는 settings
   config_path: library.yaml           # library.yaml 의 library.ista6 = ista6.yaml(같은 폴더). 블록을 지우면 라이브러리 쓰기 API 503

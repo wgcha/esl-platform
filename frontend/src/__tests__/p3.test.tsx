@@ -399,6 +399,9 @@ describe("서버 h3d 추출(§6)·동시 실행", () => {
     expect(await screen.findByLabelText("h3d 확인 결과")).toBeTruthy();
     expect(screen.getByTestId("h3d-stage-note")).toBeTruthy();
     expect(screen.getByText("추출 결과 폴더(서버가 만듦)")).toBeTruthy();
+    // v0.5.8: 우측 패널 폐지 — 칩 문구로 동시 실행 확인, 서랍을 열어 대기열 행 확인
+    await waitFor(() => expect(screen.getByTestId("chip-queue").textContent).toContain("계산 2/2"));
+    fireEvent.click(screen.getByTestId("chip-queue"));
     expect((await screen.findByTestId("queue-slots")).textContent).toBe("동시 실행 2/2");
     const q = screen.getByRole("region", { name: "계산 대기열" });
     expect(within(q).getAllByText("추출").length).toBe(2);
@@ -500,7 +503,7 @@ describe("버전·업데이트 내역", () => {
     renderApp("/updates");
     const card = await screen.findByRole("article", { name: `v${MOCK_VERSION.version}` });
     expect(within(card).getByText("지금 버전")).toBeTruthy();
-    expect(within(card).getByText("변경")).toBeTruthy();
+    expect(within(card).getByText("추가")).toBeTruthy();
     expect(within(await screen.findByRole("article", { name: "v0.5.0" })).getByText("추가")).toBeTruthy();
     expect(within(await screen.findByRole("article", { name: "v0.4.0" })).getByText("수정")).toBeTruthy();
     expect(screen.getAllByRole("article").length).toBe(MOCK_CHANGELOG.length);

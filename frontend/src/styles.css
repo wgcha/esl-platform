@@ -22,7 +22,9 @@
   --final-weak: #f1ebfa;
   --radius: 8px;
   --gap: 1rem;
-  --panel-w: clamp(360px, 22vw, 560px);
+  /* 실행 상태 서랍 폭(우측 고정 패널 폐지, v0.5.8) */
+  --drawer-w: clamp(320px, 18vw, 420px);
+  --topbar-h: 3.2rem;
   /* 화면 높이 기준 최대 높이: 길어지는 표·로그·목록은 이 값까지만 늘고 안에서 스크롤 */
   --tbl-max: clamp(10rem, 30vh, 24rem);
   --log-max: clamp(7rem, 26vh, 16rem);
@@ -432,7 +434,7 @@ select:disabled {
 /* 본문 그리드 */
 .workgrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--gap);
   padding: var(--gap) 1.25rem 2rem;
   align-items: start;
@@ -446,15 +448,6 @@ select:disabled {
 }
 .workarea > .error-text {
   margin: 0;
-}
-.rightpanel {
-  position: sticky;
-  top: 4.2rem;
-  display: grid;
-  gap: var(--gap);
-  max-height: calc(100vh - 5.2rem);
-  overflow-y: auto;
-  min-width: 0;
 }
 .page-title {
   font-size: 1.35rem;
@@ -496,8 +489,7 @@ select:disabled {
   background: var(--wait-weak);
   color: var(--wait);
 }
-.workarea .warn-box,
-.rightpanel .warn-box {
+.workarea .warn-box {
   margin: 0;
 }
 
@@ -1967,4 +1959,154 @@ tr.ref-row td {
 [data-testid="disp-top"] th:last-child,
 [data-testid="disp-top"] td:last-child {
   width: 1%;
+}
+
+/* ---------------------------------------------------------------- v0.5.8 상태 칩 + 오른쪽 서랍 (계약 esl_3d_load.md §9) */
+.status-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 1.9rem;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.status-chip:hover {
+  border-color: var(--accent);
+}
+.status-chip[aria-expanded="true"] {
+  background: var(--accent-weak);
+  border-color: var(--accent);
+}
+.status-chip.running .dot.run {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.status-chip.mine {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+.status-chip.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: var(--bad-weak);
+}
+.status-drawer {
+  position: fixed;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  width: var(--drawer-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: -4px 0 12px rgba(20, 30, 50, 0.06);
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.drawer-head h2 {
+  flex: 1;
+  font-size: 1rem;
+}
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--gap);
+  align-content: start;
+  padding: var(--gap) 0.9rem;
+}
+/* 서랍이 열리면 본문을 밀어낸다(가리지 않음) */
+.page.drawer-open .workgrid {
+  padding-right: calc(var(--drawer-w) + 1.25rem);
+}
+
+/* ---------------------------------------------------------------- v0.5.8 ④ 3D 하중 보기 (계약 §5·§6) */
+.v3d {
+  display: grid;
+  gap: 0.6rem;
+}
+.v3d-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+.v3d-stage {
+  position: relative;
+  min-width: 0;
+}
+.v3d-host {
+  position: relative;
+  height: clamp(320px, 48vh, 700px);
+  background: #dfe3e8;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.v3d-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.v3d-msg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 1rem;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.v3d-info {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.5rem;
+  max-width: calc(100% - 1.2rem);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--line);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v3d-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem 1.25rem;
+}
+.table tbody tr[data-key] {
+  cursor: pointer;
+}
+.table tbody tr[aria-selected="true"] {
+  background: #fff1e3;
+  box-shadow: inset 3px 0 0 #ff7f0e;
 }

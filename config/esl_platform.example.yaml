@@ -74,5 +74,15 @@ core:                                 # 코어 설정: config_path(이 파일 �
   config_path: esl.example.yaml
 report:
   auto: true                          # VALIDATE 성공 시 Case 보고서(CASE_REPORT, LIGHT) 자동 큐 → <case>/07_report/report.html
+view3d:                               # ④ ESL 3D 하중 보기 파생 캐시(계약 esl_3d_load.md §10) — 섹션이 없어도 아래 기본값
+  enabled: true
+  max_nodes: 2000000                  # 초과 시 413 VIEW3D_TOO_LARGE(캐시 안 함)
+  max_glb_bytes: 67108864             # 64 MiB — part.glb+part_lod.glb, values.bin 각각
+  lod_min_nodes: 500000               # 초과 시 part_lod.glb 추가
+  lod_target_vertices: 100000
+  top_max: 100                        # manifest 상위 행 수(= 화살표 최대)
+  cluster_k_max: 5
+  kmeans_max_iter: 50
+  build_wait_s: 60                    # 생성 대기 초과 시 503 VIEW3D_BUSY
 library:                              # 라이브러리·종합분석·덱 설정(esl.library.settings 스키마): config_path 또는 settings
   config_path: library.example.yaml   # 항목 <esl_root>/_library/entries/<id>/, 분석 <esl_root>/_analysis/<id>/

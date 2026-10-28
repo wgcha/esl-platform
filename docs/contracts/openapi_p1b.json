@@ -6271,6 +6271,577 @@
         "title": "VersionOut",
         "type": "object"
       },
+      "View3dBBox": {
+        "properties": {
+          "diag": {
+            "title": "Diag",
+            "type": "number"
+          },
+          "max": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Max",
+            "type": "array"
+          },
+          "min": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Min",
+            "type": "array"
+          }
+        },
+        "required": [
+          "min",
+          "max",
+          "diag"
+        ],
+        "title": "View3dBBox",
+        "type": "object"
+      },
+      "View3dClusterRow": {
+        "properties": {
+          "cancel": {
+            "title": "Cancel",
+            "type": "number"
+          },
+          "center": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Center",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "M",
+            "type": "array"
+          },
+          "m_mag": {
+            "title": "M Mag",
+            "type": "number"
+          },
+          "min_node_id": {
+            "title": "Min Node Id",
+            "type": "integer"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "r": {
+            "items": {
+              "type": "number"
+            },
+            "title": "R",
+            "type": "array"
+          },
+          "r_mag": {
+            "title": "R Mag",
+            "type": "number"
+          },
+          "sum_abs": {
+            "title": "Sum Abs",
+            "type": "number"
+          },
+          "u_center": {
+            "items": {
+              "type": "number"
+            },
+            "title": "U Center",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "n_nodes",
+          "center",
+          "u_center",
+          "r",
+          "r_mag",
+          "sum_abs",
+          "cancel",
+          "m",
+          "m_mag",
+          "min_node_id"
+        ],
+        "title": "View3dClusterRow",
+        "type": "object"
+      },
+      "View3dClusterSet": {
+        "properties": {
+          "k_actual": {
+            "title": "K Actual",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/View3dClusterRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "k_actual",
+          "rows"
+        ],
+        "title": "View3dClusterSet",
+        "type": "object"
+      },
+      "View3dFile": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bytes"
+        ],
+        "title": "View3dFile",
+        "type": "object"
+      },
+      "View3dLod": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "n_vertices": {
+            "title": "N Vertices",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bytes",
+          "n_vertices"
+        ],
+        "title": "View3dLod",
+        "type": "object"
+      },
+      "View3dOut": {
+        "description": "④ 3D 하중 보기 manifest(계약 esl_3d_load.md §3.6·§4). 파일 URL 은 API 루트 기준 경로.",
+        "properties": {
+          "bbox": {
+            "$ref": "#/components/schemas/View3dBBox"
+          },
+          "builder_version": {
+            "title": "Builder Version",
+            "type": "integer"
+          },
+          "clusters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/View3dClusterSet"
+            },
+            "title": "Clusters",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "esl_run_id": {
+            "title": "Esl Run Id",
+            "type": "string"
+          },
+          "force_unit": {
+            "title": "Force Unit",
+            "type": "string"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/View3dFile"
+          },
+          "geometry_url": {
+            "title": "Geometry Url",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "lod": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/View3dLod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lod_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lod Url"
+          },
+          "moment_center": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Moment Center",
+            "type": "array"
+          },
+          "n_elems": {
+            "title": "N Elems",
+            "type": "integer"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "n_tris": {
+            "title": "N Tris",
+            "type": "integer"
+          },
+          "plate_normal": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Plate Normal",
+            "type": "array"
+          },
+          "pressure_unit": {
+            "title": "Pressure Unit",
+            "type": "string"
+          },
+          "ranges": {
+            "$ref": "#/components/schemas/View3dRanges"
+          },
+          "schema": {
+            "title": "Schema",
+            "type": "string"
+          },
+          "sum_f": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Sum F",
+            "type": "array"
+          },
+          "sum_m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Sum M",
+            "type": "array"
+          },
+          "supports": {
+            "items": {
+              "$ref": "#/components/schemas/View3dSupport"
+            },
+            "title": "Supports",
+            "type": "array"
+          },
+          "top": {
+            "items": {
+              "$ref": "#/components/schemas/View3dTopRow"
+            },
+            "title": "Top",
+            "type": "array"
+          },
+          "units": {
+            "title": "Units",
+            "type": "string"
+          },
+          "up": {
+            "title": "Up",
+            "type": "string"
+          },
+          "values": {
+            "$ref": "#/components/schemas/View3dValues"
+          },
+          "values_url": {
+            "title": "Values Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "builder_version",
+          "key",
+          "esl_run_id",
+          "n_nodes",
+          "n_elems",
+          "n_tris",
+          "units",
+          "force_unit",
+          "pressure_unit",
+          "up",
+          "bbox",
+          "plate_normal",
+          "geometry",
+          "values",
+          "ranges",
+          "sum_f",
+          "sum_m",
+          "moment_center",
+          "supports",
+          "top",
+          "clusters",
+          "created_at",
+          "geometry_url",
+          "values_url"
+        ],
+        "title": "View3dOut",
+        "type": "object"
+      },
+      "View3dRange": {
+        "properties": {
+          "max": {
+            "title": "Max",
+            "type": "number"
+          },
+          "p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P99"
+          }
+        },
+        "required": [
+          "max"
+        ],
+        "title": "View3dRange",
+        "type": "object"
+      },
+      "View3dRanges": {
+        "properties": {
+          "fmag_max": {
+            "title": "Fmag Max",
+            "type": "number"
+          },
+          "fn_abs": {
+            "$ref": "#/components/schemas/View3dRange"
+          },
+          "pa": {
+            "$ref": "#/components/schemas/View3dRange"
+          },
+          "u_max": {
+            "title": "U Max",
+            "type": "number"
+          }
+        },
+        "required": [
+          "pa",
+          "fn_abs",
+          "fmag_max",
+          "u_max"
+        ],
+        "title": "View3dRanges",
+        "type": "object"
+      },
+      "View3dSupport": {
+        "properties": {
+          "dof": {
+            "title": "Dof",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "integer"
+          },
+          "vertex": {
+            "title": "Vertex",
+            "type": "integer"
+          },
+          "x0": {
+            "items": {
+              "type": "number"
+            },
+            "title": "X0",
+            "type": "array"
+          }
+        },
+        "required": [
+          "node_id",
+          "vertex",
+          "dof",
+          "x0"
+        ],
+        "title": "View3dSupport",
+        "type": "object"
+      },
+      "View3dTopRow": {
+        "properties": {
+          "fn": {
+            "title": "Fn",
+            "type": "number"
+          },
+          "fx": {
+            "title": "Fx",
+            "type": "number"
+          },
+          "fy": {
+            "title": "Fy",
+            "type": "number"
+          },
+          "fz": {
+            "title": "Fz",
+            "type": "number"
+          },
+          "is_support": {
+            "title": "Is Support",
+            "type": "boolean"
+          },
+          "mag": {
+            "title": "Mag",
+            "type": "number"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "integer"
+          },
+          "pa": {
+            "title": "Pa",
+            "type": "number"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "vertex": {
+            "title": "Vertex",
+            "type": "integer"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rank",
+          "node_id",
+          "vertex",
+          "x",
+          "y",
+          "z",
+          "fx",
+          "fy",
+          "fz",
+          "mag",
+          "fn",
+          "pa",
+          "is_support"
+        ],
+        "title": "View3dTopRow",
+        "type": "object"
+      },
+      "View3dValues": {
+        "properties": {
+          "arrays": {
+            "items": {
+              "$ref": "#/components/schemas/View3dValuesArray"
+            },
+            "title": "Arrays",
+            "type": "array"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bytes",
+          "arrays"
+        ],
+        "title": "View3dValues",
+        "type": "object"
+      },
+      "View3dValuesArray": {
+        "properties": {
+          "comps": {
+            "title": "Comps",
+            "type": "integer"
+          },
+          "dtype": {
+            "enum": [
+              "int16",
+              "uint16"
+            ],
+            "title": "Dtype",
+            "type": "string"
+          },
+          "key": {
+            "enum": [
+              "pa",
+              "fn",
+              "fmag",
+              "u"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Scale"
+          }
+        },
+        "required": [
+          "key",
+          "dtype",
+          "comps",
+          "offset",
+          "scale"
+        ],
+        "title": "View3dValuesArray",
+        "type": "object"
+      },
       "WorkerStatus": {
         "properties": {
           "last_seen_at": {
@@ -6311,7 +6882,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.5.7"
+    "version": "0.5.8"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7551,6 +8122,262 @@
           }
         },
         "summary": "Forces",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/esl-runs/{run_id}/view3d": {
+      "get": {
+        "description": "3D 하중 보기 manifest(상위 100행·군집 K=2..5·범위·지지점·파일 URL). 첫 요청이 파생 캐시를 만든다(runs/<id>/view3d).",
+        "operationId": "view3d_manifest_esl_api_esl_runs__run_id__view3d_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/View3dOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "변경 없음"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View3D Manifest",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/esl-runs/{run_id}/view3d/part.glb": {
+      "get": {
+        "description": "부품 표면 GLB(mm, Z-up, 정점 = 노드 순서). `key`(선택) = manifest.key, 다르면 409 VIEW3D_STALE.",
+        "operationId": "view3d_part_esl_api_esl_runs__run_id__view3d_part_glb_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "model/gltf-binary": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "바이너리(ETag = manifest key, If-None-Match 일치 시 304)"
+          },
+          "304": {
+            "description": "변경 없음"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View3D Part",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/esl-runs/{run_id}/view3d/part_lod.glb": {
+      "get": {
+        "description": "저해상도(LOD) 표면 GLB(N > view3d.lod_min_nodes 일 때만, 없으면 404 VIEW3D_LOD_NONE). `_SRC` = 원 정점 번호.",
+        "operationId": "view3d_part_lod_esl_api_esl_runs__run_id__view3d_part_lod_glb_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "model/gltf-binary": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "바이너리(ETag = manifest key, If-None-Match 일치 시 304)"
+          },
+          "304": {
+            "description": "변경 없음"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View3D Part Lod",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/esl-runs/{run_id}/view3d/values.bin": {
+      "get": {
+        "description": "노드 값 바이너리(면압 p·Fn·|F|·u_rel 양자화, 배치는 manifest.values.arrays).",
+        "operationId": "view3d_values_esl_api_esl_runs__run_id__view3d_values_bin_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "model/gltf-binary": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "바이너리(ETag = manifest key, If-None-Match 일치 시 304)"
+          },
+          "304": {
+            "description": "변경 없음"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View3D Values",
         "tags": [
           "results"
         ]
