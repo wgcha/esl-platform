@@ -576,6 +576,68 @@ describe("이슈 #29 진행 중인 업로드(사용자당 한도)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "이어 올리기" }));
     expect(await screen.findByText(/rad·h3d 확인됨/)).toBeTruthy();
   });
+
+  it("v0.6.0 정합: UPLOAD_LIMIT detail.open_uploads(서버 키 id·received_bytes·total_bytes·problems_count)를 errorOpen 으로", async () => {
+    const server = setup(8);
+    server.p3.seedUpload("p-body", "old1", [{ rel: "rad/x_0000.rad", size: 10, received: 10 }]);
+    server.p3.seedUpload("p-body", "old2", [{ rel: "rad/y_0000.rad", size: 16, received: 8 }], { problems: ["include 누락"] });
+    let last: Parameters<NonNullable<ConstructorParameters<typeof Uploader>[3]>>[0] | null = null;
+    const up = new Uploader("p-body", "new", picks(), (p) => (last = p), noSleep);
+    expect(await up.run()).toBe(false);
+    expect(last!.errorCode).toBe("UPLOAD_LIMIT");
+    const byName = Object.fromEntries(last!.errorOpen.map((o) => [o.name, o]));
+    expect(Object.keys(byName).sort()).toEqual(["old1", "old2"]);
+    expect(byName.old1).toMatchObject({ id: "up-1", received_bytes: 10, total_bytes: 10, problems_count: 0 });
+    expect(byName.old2).toMatchObject({ id: "up-2", received_bytes: 8, total_bytes: 16, problems_count: 1 });
+    expect(typeof byName.old1.created_at).toBe("string");
+  });
+
+  it("v0.6.0 정합: 새 세션 청크 크기 = 서버 응답 chunk_size(하드코딩 64 MB 아님)", async () => {
+    const server = setup(8);
+    const sizes: number[] = [];
+    const up = new Uploader("p-body", "c8", picks(), undefined, {
+      ...noSleep,
+      deps: {
+        sleep: async () => undefined,
+        putChunk: async (...a: Parameters<typeof putChunk>) => {
+          const d = a[3];
+          sizes.push(d instanceof ArrayBuffer ? d.byteLength : d.size);
+          return putChunk(...a);
+        },
+      },
+    });
+    expect(await up.run()).toBe(true);
+    expect(server.p3.uploads.get(up.uploadId!)!.chunk).toBe(8);
+    expect(Math.max(...sizes)).toBe(8);
+  });
+
+  it("v0.6.0 정합: ?upload= 화면 문구는 업로드 client.name 으로 구분(esl-pc = 'PC에서 올림', 브라우저 = '브라우저에서 올림')", async () => {
+    const server = setup(8);
+    const web = new Uploader("p-body", "web", picks(), undefined, noSleep);
+    expect(await web.run()).toBe(true);
+    expect(server.p3.uploads.get(web.uploadId!)!.client?.name).toBe("esl-web");
+    const r1 = render(
+      <MemoryRouter initialEntries={[`${NEW}?upload=${web.uploadId}`]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const p1 = await screen.findByTestId("pc-upload");
+    await waitFor(() => expect(p1.textContent).toContain("브라우저에서 올림"));
+    expect(p1.textContent).not.toContain("PC에서 올림");
+    r1.unmount();
+
+    const pc = new Uploader("p-body", "pc", picks(), undefined, noSleep);
+    expect(await pc.run()).toBe(true);
+    server.p3.uploads.get(pc.uploadId!)!.client = { name: "esl-pc", version: "0.6.0" };
+    render(
+      <MemoryRouter initialEntries={[`${NEW}?upload=${pc.uploadId}`]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const p2 = await screen.findByTestId("pc-upload");
+    await waitFor(() => expect(p2.textContent).toContain("PC에서 올림"));
+    expect(p2.textContent).toContain("PC 도구");
+  });
 });
 
 describe("업로드 유지(페이지 이동·상단 진행 표시·beforeunload)", () => {

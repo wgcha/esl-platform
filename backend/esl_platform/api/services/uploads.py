@@ -152,6 +152,15 @@ def session_chunk(up: dict[str, Any], cfg) -> int:
     return cfg.chunk_bytes
 
 
+def _session_client(up: dict[str, Any]) -> dict[str, str] | None:
+    """세션을 만든 클라이언트 {name, version} — DB migration 없이 files[] 항목의 client 키에 둔다(만들 때 모든 항목, 추가 파일은 이어받음)."""
+    for f in up["files"]:
+        c = f.get("client")
+        if isinstance(c, dict) and c.get("name"):
+            return {"name": str(c["name"]), "version": str(c.get("version") or "")}
+    return None
+
+
 def upload_out(up: dict[str, Any], cfg) -> dict[str, Any]:
     """cfg = UploadCfg. 파일별 received(연속 앞부분)·received_total·chunks·n_chunks·removed·meta."""
     files = []
@@ -190,6 +199,7 @@ def upload_out(up: dict[str, Any], cfg) -> dict[str, Any]:
             "max_parallel": cfg.parallel, "total_bytes": sum(f["size"] for f in live),
             "received_bytes": sum(f["received_total"] for f in live),
             "problems_count": len(res.get("problems") or []) + len(res.get("missing_includes") or []),
+            "client": _session_client(up),
             "files": files, "result": up.get("result"),
             "backup_path": up.get("backup_path"), "created_at": up["created_at"], "updated_at": up["updated_at"],
             "completed_at": up.get("completed_at")}
@@ -391,6 +401,8 @@ def create_upload(ctx: AppContext, principal: Principal, body) -> dict[str, Any]
     cfg = ctx.settings.upload
     if getattr(body, "client", None) is not None:
         log.info("upload client %s %s (user %s)", body.client.name, body.client.version, principal.username)
+        for f in files:
+            f["client"] = {"name": body.client.name, "version": body.client.version}
     with ctx.engine.begin() as conn:
         # 사용자당 동시(OPEN) 업로드 수 — 사용자 행 잠금 대신 같은 트랜잭션에서 세고 바로 넣는다(advisory lock 으로 직렬화)
         conn.execute(select(func.pg_advisory_xact_lock(func.hashtext("esl-upload:" + principal.user_id))))
@@ -426,6 +438,10 @@ def add_files(ctx: AppContext, principal: Principal, upload_id: str, body) -> di
         _require_open(up)
         session = (session_proto(up), session_chunk(up, cfg)) if up["files"] else None
         new = _norm_files(ctx, body.files, up["files"], session)
+        client = _session_client(up)
+        if client is not None:
+            for f in new:
+                f["client"] = client
         _check_free(ctx, ctx.settings.storage.upload_root, sum(f["size"] for f in new))
         _prepare_files(up["dir_path"], new)
         files = list(up["files"]) + new

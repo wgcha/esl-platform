@@ -42,6 +42,8 @@ interface Upl {
   /** 이 업로드로 만든 Case 가 있음(빼기 409 UPLOAD_IN_USE) */
   inUse: boolean;
   created_at: string;
+  /** POST /uploads client(esl-web·esl-pc) — 없으면 null */
+  client: { name: string; version: string } | null;
 }
 
 export function badRel(rel: string): string | null {
@@ -224,7 +226,10 @@ export class P3Mock {
       if (open.length >= this.maxOpen)
         return err(429, "UPLOAD_LIMIT", `진행 중인 업로드가 ${open.length}개입니다(사용자당 최대 ${this.maxOpen}개) — 끝내거나 취소한 뒤 다시 시도하세요`, {
           limit: this.maxOpen,
-          open: open.map((u) => ({ upload_id: u.id, name: u.name })),
+          open_uploads: open.map((u) => {
+            const o = this.out(u);
+            return { id: u.id, name: u.name, created_at: u.created_at, received_bytes: o.received_bytes, total_bytes: o.total_bytes, problems_count: o.problems_count ?? 0 };
+          }),
         });
       const need = files.reduce((a, f) => a + f.size, 0);
       if (this.storageLeft !== null && need > this.storageLeft)
@@ -243,6 +248,7 @@ export class P3Mock {
         result: null,
         inUse: false,
         created_at: new Date(this.clock()).toISOString(),
+        client: (b.client as { name: string; version: string } | null | undefined) ?? null,
         files: files.map((f, index) => this.mfile(index, f)),
       };
       this.uploads.set(id, u);
@@ -417,7 +423,7 @@ export class P3Mock {
   }
 
   /** 시험·시연: 열린 업로드 하나를 바로 만든다(받은 양 지정, 청크 단위로 내림) */
-  seedUpload(projectId: string, name: string, files: { rel: string; size: number; received?: number }[], opts: { problems?: string[]; ageMin?: number } = {}): string {
+  seedUpload(projectId: string, name: string, files: { rel: string; size: number; received?: number }[], opts: { problems?: string[]; ageMin?: number; client?: string } = {}): string {
     this.seq += 1;
     const id = `up-${this.seq}`;
     const C = this.chunkSize;
@@ -432,6 +438,7 @@ export class P3Mock {
       result: opts.problems ? { ok: false, problems: opts.problems } : null,
       inUse: false,
       created_at: new Date(this.clock() - (opts.ageMin ?? 90) * 60_000).toISOString(),
+      client: opts.client ? { name: opts.client, version: "0.6.0" } : null,
       files: files.map((f, i) => {
         const m = this.mfile(i, f);
         const rec = f.received ?? 0;
@@ -458,6 +465,8 @@ export class P3Mock {
       total_bytes: live.reduce((a, f) => a + f.size, 0),
       received_bytes: live.reduce((a, f) => a + (v2 ? f.received_total! : f.received), 0),
       ...(v2 ? { protocol: 2 as const, max_parallel: this.maxParallel } : {}),
+      problems_count: (u.result?.problems?.length ?? 0) + (u.result?.missing_includes?.length ?? 0),
+      client: u.client,
       files: u.files.map((f) => {
         const { got, ...rest } = f;
         if (!v2) return { index: rest.index, rel: rest.rel, size: rest.size, received: rest.received, done: rest.done, sha256: rest.sha256 };

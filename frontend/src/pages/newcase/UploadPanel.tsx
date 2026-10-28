@@ -11,7 +11,7 @@ import { Badge, ErrorLine } from "../../components/ui";
 import { bytes, dt } from "../../lib/format";
 import { slimLine, slimTip } from "../../lib/slim";
 import { uploadStore, type Picked } from "../../lib/uploadStore";
-import { ASSUMED_BPS, Uploader, etaText, type PickedFile, type UploadProgress } from "../../lib/uploader";
+import { ASSUMED_BPS, Uploader, etaText, type OpenUploadBrief, type PickedFile, type UploadProgress } from "../../lib/uploader";
 import type { InputSelection } from "./types";
 
 export const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"];
@@ -282,21 +282,21 @@ export function UploadPanel({
           // 아직 다 받지 못한 업로드: 받은 양을 보여 주고, 같은 파일을 다시 고르면 이어 올린다고 안내
           if (!alive) return;
           clearResult();
-          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
+          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
           onChange(null);
           return;
         }
         const r = normCheck(u.state === "COMPLETED" && u.result ? { ...u.result, upload_id: u.upload_id, state: "COMPLETED" } : await p3.completeUpload(initialUploadId));
         if (!alive) return;
         const meta = r.h3d_meta ?? live.find((f) => f.meta)?.meta ?? null;
-        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, meta });
+        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), meta });
         setResult(r);
         const src = r.h3d_path ? ({ kind: "h3d", path: r.h3d_path } as const) : r.results_dir ? ({ kind: "results", path: r.results_dir } as const) : null;
         const ok = r.ok && !!r.rad_path && !!src;
         const rad = r.rad_path?.split(/[\\/]/).pop();
         onChange(ok ? { rad_path: r.rad_path!, source: src!, parts: r.parts, ok: true } : null, nameFromRad(rad ?? u.name));
       } catch (e) {
-        if (alive) setError(`PC에서 올린 업로드를 열 수 없습니다: ${errorText(e)}`);
+        if (alive) setError(`업로드를 열 수 없습니다: ${errorText(e)}`);
       }
     })();
     return () => {
@@ -524,7 +524,7 @@ export function UploadPanel({
       <div className="upload-panel" data-testid="pc-upload">
         <div className={pcUpload.partial ? "inspect bad" : "inspect ok"}>
           <div>
-            {pcUpload.partial ? <Badge kind="warn">다 받지 못함</Badge> : <Badge kind="info">PC에서 올림</Badge>} <b>{pcUpload.name}</b>{" "}
+            {pcUpload.partial ? <Badge kind="warn">다 받지 못함</Badge> : <Badge kind="info">{pcUpload.fromPc ? "PC에서 올림" : "브라우저에서 올림"}</Badge>} <b>{pcUpload.name}</b>{" "}
             {pcUpload.meta && (
               <span title={slimTip(pcUpload.meta)} data-testid="pc-upload-mode">
                 <Badge kind={pcUpload.meta.kind === "h3d_slim" ? "ok" : "info"}>{pcUpload.meta.kind === "h3d_slim" ? "압축 모드" : "원본"}</Badge>{" "}
@@ -535,7 +535,9 @@ export function UploadPanel({
               {pcUpload.n}개 · {bytes(pcUpload.bytes)} —{" "}
               {pcUpload.partial
                 ? "일부만 받은 업로드입니다. 같은 파일을 '내 PC에서 올리기'에서 다시 고르면 이어 올립니다(PC 도구면 같은 명령을 다시 실행)."
-                : "ESL_extract.bat 이 추출해 올린 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."}
+                : pcUpload.fromPc
+                  ? "PC 도구(ESL_extract.bat·ESL_upload.bat)가 올린 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."
+                  : "브라우저에서 올린 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."}
             </span>
           </div>
           {pcUpload.partial && (
@@ -704,10 +706,17 @@ export function UploadPanel({
 interface PcUpload {
   id: string;
   name: string;
+  /** 업로드를 시작한 클라이언트가 PC 도구(client.name = esl-pc)인지 — 아니면 브라우저 */
+  fromPc: boolean;
   n: number;
   bytes: number;
   meta?: H3dMeta | null;
   partial?: { rel: string; size: number; got: number }[];
+}
+
+/** UploadOut.client.name 이 esl-pc 면 PC 도구가 올린 업로드(없으면 브라우저·구 세션으로 본다) */
+export function isPcClient(u: Pick<UploadOut, "client">): boolean {
+  return u.client?.name === "esl-pc";
 }
 
 /** 이슈 #29: 사용자당 열린(OPEN) 업로드 한도(UPLOAD_LIMIT)에 걸리는 업로드 세션 목록 — 작업 대기열과 별개 */
@@ -721,7 +730,7 @@ function OpenUploads({
 }: {
   refreshKey: number;
   forceOpen: boolean;
-  fallback: { upload_id: string; name: string }[];
+  fallback: OpenUploadBrief[];
   activeId: string | null;
   onResume: (id: string) => void;
   onCancelled: (id: string) => void;
@@ -762,11 +771,11 @@ function OpenUploads({
     }
   }
 
-  const rows: { id: string; name: string; u?: UploadOut }[] = (list ?? []).length
+  const rows: { id: string; name: string; u?: UploadOut; brief?: OpenUploadBrief }[] = (list ?? []).length
     ? (list ?? []).map((u) => ({ id: u.upload_id, name: u.name, u }))
     : list === null
       ? []
-      : fallback.map((f) => ({ id: f.upload_id, name: f.name }));
+      : fallback.map((f) => ({ id: f.id, name: f.name, brief: f }));
   if (!rows.length && !err) return null;
   return (
     <details className="open-uploads" data-testid="open-uploads" open={open || forceOpen} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
@@ -787,7 +796,7 @@ function OpenUploads({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ id, name, u }) => {
+            {rows.map(({ id, name, u, brief }) => {
               const live = u?.files.filter((f) => !f.removed) ?? [];
               const problems = u?.result && u.result.ok === false ? [...(u.result.problems ?? []), ...(u.result.missing_includes?.length ? [`include 누락 ${u.result.missing_includes.length}개`] : [])] : [];
               const full = !!u && u.total_bytes > 0 && u.received_bytes >= u.total_bytes;
@@ -798,10 +807,12 @@ function OpenUploads({
                     {id === activeId && <span className="muted small"> (지금 화면)</span>}
                   </td>
                   <td className="num">{u ? live.length : "–"}</td>
-                  <td className="num">{u ? `${bytes(u.received_bytes)} / ${bytes(u.total_bytes)}` : "–"}</td>
-                  <td className="small">{u ? dt(u.created_at) : "–"}</td>
+                  <td className="num">{u ? `${bytes(u.received_bytes)} / ${bytes(u.total_bytes)}` : brief ? `${bytes(brief.received_bytes)} / ${bytes(brief.total_bytes)}` : "–"}</td>
+                  <td className="small">{u ? dt(u.created_at) : brief?.created_at ? dt(brief.created_at) : "–"}</td>
                   <td className="small">
-                    {!u ? null : problems.length ? (
+                    {!u ? (
+                      brief && brief.problems_count > 0 ? <Badge kind="warn">검사 문제 {brief.problems_count}건</Badge> : null
+                    ) : problems.length ? (
                       <>
                         <Badge kind="warn">검사 문제</Badge> {problems.join(" · ")}
                       </>

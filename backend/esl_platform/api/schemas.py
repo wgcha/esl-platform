@@ -892,6 +892,12 @@ class UploadCheckOut(_Out):
     problems: list[str] = []
 
 
+class UploadClientOut(_Out):
+    """업로드를 시작한 클라이언트(POST /uploads client) — esl-pc = PC 도구, esl-web = 브라우저. 없으면 null(구 세션·미지정)."""
+    name: str
+    version: str
+
+
 class UploadOut(_Out):
     upload_id: str
     project_id: str
@@ -904,6 +910,7 @@ class UploadOut(_Out):
     total_bytes: int
     received_bytes: int
     problems_count: int = 0
+    client: UploadClientOut | None = None
     files: list[UploadFileOut]
     result: UploadCheckOut | None = None
     backup_path: str | None = None

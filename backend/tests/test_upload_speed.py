@@ -872,8 +872,27 @@ def test_default_limit_and_stale_unchanged():
 def test_openapi_has_new_fields(client):
     spec = client.get(f"{API}/openapi.json").json()
     out = spec["components"]["schemas"]["UploadOut"]["properties"]
-    assert {"protocol", "chunk_size", "max_parallel", "problems_count"} <= set(out)
+    assert {"protocol", "chunk_size", "max_parallel", "problems_count", "client"} <= set(out)
     fo = spec["components"]["schemas"]["UploadFileOut"]["properties"]
     assert {"received_total", "chunks", "n_chunks", "removed", "meta"} <= set(fo)
     assert "input_h3d_meta" in spec["components"]["schemas"]["CaseOut"]["properties"]
     assert "delete" in spec["paths"][f"{API}/uploads/{{upload_id}}/files/{{index}}"]
+
+
+# ---------------------------------------------------------------- v0.6.0 정합: 업로드를 시작한 클라이언트(PC 도구/브라우저 구분)
+def test_upload_out_reports_client_and_inherits_on_add(client):
+    body = {"project_id": "p-1", "name": "pc", "files": spec({"rad/m_0000.rad": mini_rad_text()}),
+            "client": {"name": "esl-pc", "version": "0.6.0"}}
+    r = client.post(f"{API}/uploads", json=body, headers=W)
+    assert r.status_code == 201, r.text
+    up = r.json()
+    assert up["client"] == {"name": "esl-pc", "version": "0.6.0"}
+    r = client.post(f"{API}/uploads/{up['upload_id']}/files", json={"files": spec({"h3d/a.h3d": BIG[:CS]})}, headers=W)
+    assert r.status_code == 200, r.text
+    assert r.json()["client"]["name"] == "esl-pc"
+    assert all("client" not in f for f in r.json()["files"])          # 파일 항목에는 노출하지 않음
+    listed = client.get(f"{API}/uploads", params={"state": "OPEN"}, headers=R).json()
+    assert [u["client"]["name"] for u in listed if u["upload_id"] == up["upload_id"]] == ["esl-pc"]
+    # client 없이 만든 세션(구 클라이언트) → null
+    plain = mk(client, {"rad/m_0000.rad": mini_rad_text()}, name="web")
+    assert plain["client"] is None

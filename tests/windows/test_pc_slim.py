@@ -476,6 +476,19 @@ def _publish(tmp_path, state, url, mode, env=None, inputs=("123456",), interacti
     return r, src, rad, log, work
 
 
+def _server_schema_check(post: dict) -> None:
+    """정합(v0.6.0): PC 도구가 보낸 POST /uploads 본문을 실제 서버 스키마(UploadCreate, extra=forbid)와
+    서버 메타 검사(_check_meta: .h3d 전용·16 KB·slim_bytes = size·h3d_slim 의 part_id)로 검사 — UPLOAD_META_INVALID 가 나지 않아야 한다."""
+    from esl_platform.api.schemas import UploadCreate
+    from esl_platform.api.services.uploads import _check_meta
+    body = UploadCreate.model_validate({"project_id": "p1", **{k: v for k, v in post.items() if k != "project_id"}})
+    assert body.client is not None and body.client.name == "esl-pc" and body.client.version
+    for f in body.files:
+        meta = _check_meta(f, f.rel)
+        if f.rel.lower().endswith(".h3d"):
+            assert meta is not None and meta["kind"] in ("h3d_slim", "h3d_original")
+
+
 def test_publish_slim_uploads_h3d_rad_include_with_meta(tmp_path, server2):
     state, url = server2
     r, src, rad, log, work = _publish(tmp_path, state, url, "slim")
@@ -492,6 +505,7 @@ def test_publish_slim_uploads_h3d_rad_include_with_meta(tmp_path, server2):
     # 서버가 메타 검사(계약 §4.6)를 통과했고 complete 결과로 h3d_meta 가 돌아옴
     assert state.uploads[uid]["result"]["h3d_meta"]["kind"] == "h3d_slim"
     assert state.posts[0]["client"]["name"] == "esl-pc"
+    _server_schema_check(state.posts[0])
     assert _list(src.parent) == ["drop_0000.rad", "drop_0001.h3d"]
     # 서버에 보낸 양 = 슬림 + rad (원본 h3d 가 아님)
     assert state.put_bodies < src.stat().st_size
@@ -505,6 +519,7 @@ def test_publish_original_mode(tmp_path, server2):
     files = {f["rel"]: f for f in state.uploads[uid]["files"]}
     assert bytes(files["h3d/drop_0001.h3d"]["data"]) == src.read_bytes()
     assert files["h3d/drop_0001.h3d"]["meta"] == {"kind": "h3d_original"}
+    _server_schema_check(state.posts[0])
     assert not log.exists() and not work.exists()                      # hvtrans 실행·작업 폴더 없음
 
 

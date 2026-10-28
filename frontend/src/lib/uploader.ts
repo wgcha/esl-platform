@@ -8,7 +8,18 @@ import { ApiError, errorText } from "../api/client";
 import { p3, putChunk } from "../api/p3";
 import type { UploadCompleteOut, UploadFileIn, UploadFileOut, UploadOut } from "../api/types";
 
+/** 서버 응답 chunk_size 가 없을 때만 쓰는 기본값(서버 설정 upload.chunk_mb 기본 64) */
 export const DEFAULT_CHUNK = 64 * 1024 ** 2;
+
+/** 409/429 UPLOAD_LIMIT detail.open_uploads 항목(서버 services/uploads._open_uploads_detail 과 같은 키) */
+export interface OpenUploadBrief {
+  id: string;
+  name: string;
+  created_at: string;
+  received_bytes: number;
+  total_bytes: number;
+  problems_count: number;
+}
 /** 브라우저 동시 전송 상한(서버 max_parallel 과 작은 쪽) */
 export const BROWSER_MAX_PARALLEL = 4;
 /** 업로드 전 예상 시간 계산용 사내망 가정 속도(병렬 기준, 실측 전) */
@@ -40,7 +51,7 @@ export interface UploadProgress {
   error: string | null;
   /** 오류 코드(예 UPLOAD_LIMIT)와, 서버가 함께 준 열린 업로드 목록(이슈 #29) */
   errorCode: string | null;
-  errorOpen: { upload_id: string; name: string }[];
+  errorOpen: OpenUploadBrief[];
   uploadId: string | null;
   /** 이 브라우저에 남아 있던 세션을 서버가 받은 데부터 이어 올리는 중 */
   resumed: boolean;
@@ -403,7 +414,7 @@ export class Uploader {
       return true;
     } catch (e) {
       this.stopTicker();
-      const open = e instanceof ApiError && Array.isArray(e.detail.open) ? (e.detail.open as { upload_id: string; name: string }[]) : [];
+      const open = e instanceof ApiError && Array.isArray(e.detail.open_uploads) ? (e.detail.open_uploads as OpenUploadBrief[]) : [];
       this.emit({ phase: "error", error: errorText(e), errorCode: e instanceof ApiError ? e.code : null, errorOpen: open });
       return false;
     }
