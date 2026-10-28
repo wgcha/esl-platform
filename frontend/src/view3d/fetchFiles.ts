@@ -2,17 +2,21 @@
 import { API_PREFIX, ApiError } from "../api/client";
 import type { ApiErrorDetail, View3dOut } from "../api/types";
 
-/** manifest 의 상대 URL(또는 파일 이름)을 요청 주소로. "/" 로 시작하면 그대로, 아니면 /esl-runs/{id}/view3d/ 아래 */
-export function resolveFileUrl(runId: string, urlOrName: string): string {
-  if (/^https?:\/\//.test(urlOrName) || urlOrName.startsWith("/")) return urlOrName;
-  return `${API_PREFIX}/esl-runs/${runId}/view3d/${urlOrName.replace(/^\.?\//, "")}`;
+/** manifest 의 파일 URL(API 루트 기준 경로 `/esl-runs/{id}/view3d/part.glb`, 접두 /esl/api 없음)을 요청 주소로.
+ *  api 클라이언트와 같이 API_PREFIX 를 붙이고 `?key=<manifest.key>` 를 단다(409 VIEW3D_STALE 감지). 파일 이름만 오면 view3d 아래로 본다. */
+export function resolveFileUrl(runId: string, urlOrName: string, key?: string): string {
+  let url: string;
+  if (/^https?:\/\//.test(urlOrName)) url = urlOrName;
+  else if (urlOrName.startsWith("/")) url = urlOrName.startsWith(`${API_PREFIX}/`) ? urlOrName : API_PREFIX + urlOrName;
+  else url = `${API_PREFIX}/esl-runs/${runId}/view3d/${urlOrName.replace(/^\.?\//, "")}`;
+  return key && !url.includes("?") ? `${url}?key=${encodeURIComponent(key)}` : url;
 }
 
 export function fileUrls(m: View3dOut): { geometry: string; lod: string | null; values: string } {
   return {
-    geometry: resolveFileUrl(m.esl_run_id, m.geometry_url ?? m.geometry.name),
-    lod: m.lod ? resolveFileUrl(m.esl_run_id, m.lod_url ?? m.lod.name) : null,
-    values: resolveFileUrl(m.esl_run_id, m.values_url ?? m.values.name),
+    geometry: resolveFileUrl(m.esl_run_id, m.geometry_url || m.geometry.name, m.key),
+    lod: m.lod ? resolveFileUrl(m.esl_run_id, m.lod_url || m.lod.name, m.key) : null,
+    values: resolveFileUrl(m.esl_run_id, m.values_url || m.values.name, m.key),
   };
 }
 

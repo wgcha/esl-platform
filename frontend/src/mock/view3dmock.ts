@@ -200,17 +200,17 @@ function packValues(n: number, fn: Float64Array, fmag: Float64Array, pa: Float64
   const buf = new ArrayBuffer(sizes.reduce((a, b) => a + b, 0));
   const dv = new DataView(buf);
   for (let i = 0; i < n; i++) {
-    dv.setInt16(offs[0] + i * 2, sFn ? Math.round(fn[i] / sFn) : 0, true);
-    dv.setUint16(offs[1] + i * 2, sMag ? Math.round(fmag[i] / sMag) : 0, true);
-    dv.setUint16(offs[2] + i * 2, sPa ? Math.round(pa[i] / sPa) : 0, true);
+    dv.setUint16(offs[0] + i * 2, sPa ? Math.round(pa[i] / sPa) : 0, true);
+    dv.setInt16(offs[1] + i * 2, sFn ? Math.round(fn[i] / sFn) : 0, true);
+    dv.setUint16(offs[2] + i * 2, sMag ? Math.round(fmag[i] / sMag) : 0, true);
     for (let c = 0; c < 3; c++) dv.setInt16(offs[3] + i * 6 + c * 2, sU[c] ? Math.round(u[i * 3 + c] / sU[c]) : 0, true);
   }
   return {
     buf,
     arrays: [
-      { key: "fn", dtype: "int16", comps: 1, offset: offs[0], scale: sFn },
-      { key: "fmag", dtype: "uint16", comps: 1, offset: offs[1], scale: sMag },
-      { key: "pa", dtype: "uint16", comps: 1, offset: offs[2], scale: sPa },
+      { key: "pa", dtype: "uint16", comps: 1, offset: offs[0], scale: sPa },
+      { key: "fn", dtype: "int16", comps: 1, offset: offs[1], scale: sFn },
+      { key: "fmag", dtype: "uint16", comps: 1, offset: offs[2], scale: sMag },
       { key: "u", dtype: "int16", comps: 3, offset: offs[3], scale: sU },
     ],
   };
@@ -357,6 +357,7 @@ export function mockView3d(): MockView3d {
     fz: f[i * 3 + 2],
     mag: fmag[i],
     fn: fn[i],
+    pa: pa[i],
     is_support: supportSet.has(i),
   }));
   const sum_f = [0, 0, 0];
@@ -372,7 +373,7 @@ export function mockView3d(): MockView3d {
   const clusters: View3dOut["clusters"] = {};
   for (const K of [2, 3, 4, 5]) clusters[String(K)] = weightedClusters(m.x, f, u, m.nodeIds, K);
   const umax = Math.max(...Array.from({ length: n }, (_, i) => Math.hypot(u[i * 3], u[i * 3 + 1], u[i * 3 + 2])));
-  cache = {
+  const built: MockView3d = {
     glb,
     values: packed.buf,
     manifest: (runId) => ({
@@ -384,6 +385,8 @@ export function mockView3d(): MockView3d {
       n_elems: m.quads.length,
       n_tris: m.indices.length / 3,
       units: "mm",
+      force_unit: "N",
+      pressure_unit: "MPa",
       up: "Z",
       bbox: { min: mn, max: mx, diag },
       plate_normal: [0, 0, 1],
@@ -397,11 +400,12 @@ export function mockView3d(): MockView3d {
       supports: supVerts.map((v, k) => ({ node_id: m.nodeIds[v], vertex: v, dof: supDof[k], x0: [m.x[v * 3], m.x[v * 3 + 1], m.x[v * 3 + 2]] })),
       top,
       clusters,
-      geometry_url: "part.glb",
+      geometry_url: `/esl-runs/${runId}/view3d/part.glb`,
       lod_url: null,
-      values_url: "values.bin",
+      values_url: `/esl-runs/${runId}/view3d/values.bin`,
       created_at: "2026-10-28T03:00:00Z",
     }),
   };
-  return cache;
+  cache = built;
+  return built;
 }

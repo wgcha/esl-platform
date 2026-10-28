@@ -333,13 +333,16 @@ describe("manifest·mock 정합(백엔드와 맞춰볼 형태)", () => {
   it("파일 URL 해석: 상대 이름 / 절대 경로 / 기본값", () => {
     expect(resolveFileUrl("r1", "part.glb")).toBe("/esl/api/esl-runs/r1/view3d/part.glb");
     expect(resolveFileUrl("r1", "./values.bin")).toBe("/esl/api/esl-runs/r1/view3d/values.bin");
+    // 백엔드 실제 형식: API 루트 기준 경로(접두 /esl/api 없음) → 접두를 붙이고 ?key= 를 단다
+    expect(resolveFileUrl("r1", "/esl-runs/r1/view3d/part.glb", "k1")).toBe("/esl/api/esl-runs/r1/view3d/part.glb?key=k1");
     expect(resolveFileUrl("r1", "/esl/api/x/part.glb")).toBe("/esl/api/x/part.glb");
     const m = man();
-    expect(fileUrls({ ...m, geometry_url: undefined, values_url: undefined })).toEqual({
-      geometry: "/esl/api/esl-runs/esl-run-1/view3d/part.glb",
+    expect(fileUrls(m)).toEqual({
+      geometry: `/esl/api/esl-runs/esl-run-1/view3d/part.glb?key=${m.key}`,
       lod: null,
-      values: "/esl/api/esl-runs/esl-run-1/view3d/values.bin",
+      values: `/esl/api/esl-runs/esl-run-1/view3d/values.bin?key=${m.key}`,
     });
+    expect(fileUrls({ ...m, geometry_url: "", values_url: "" }).geometry).toBe(`/esl/api/esl-runs/esl-run-1/view3d/part.glb?key=${m.key}`);
   });
 });
 

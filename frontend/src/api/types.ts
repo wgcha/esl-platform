@@ -1417,13 +1417,15 @@ export interface View3dTopRow {
   fz: number;
   mag: number;
   fn: number;
+  /** 면압 |Fn|/A (MPa) */
+  pa: number;
   is_support: boolean;
 }
 export interface View3dClusterRow {
   label: string;
   n_nodes: number;
   center: number[];
-  u_center?: number[];
+  u_center: number[];
   r: number[];
   r_mag: number;
   sum_abs: number;
@@ -1444,8 +1446,39 @@ export interface View3dSupport {
 }
 export interface View3dRange {
   max: number;
-  p99: number;
+  p99?: number | null;
 }
+export interface View3dBBox {
+  min: number[];
+  max: number[];
+  diag: number;
+}
+export interface View3dFile {
+  name: string;
+  bytes: number;
+}
+export interface View3dLod {
+  name: string;
+  bytes: number;
+  n_vertices: number;
+}
+export interface View3dValues {
+  name: string;
+  bytes: number;
+  arrays: View3dValuesArray[];
+}
+export interface View3dRanges {
+  /** 면압 MPa (표면 색 기본 범위) */
+  pa: View3dRange;
+  fn_abs: View3dRange;
+  fmag_max: number;
+  u_max: number;
+}
+export interface View3dClusterSet {
+  k_actual: number;
+  rows: View3dClusterRow[];
+}
+/** GET /esl-runs/{id}/view3d — 파일 URL 은 API 루트 기준 경로(접두 /esl/api 없음) */
 export interface View3dOut {
   schema: string;
   builder_version: number;
@@ -1454,22 +1487,24 @@ export interface View3dOut {
   n_nodes: number;
   n_elems: number;
   n_tris: number;
-  units: "mm";
-  up: "Z";
-  bbox: { min: number[]; max: number[]; diag: number };
+  units: string;
+  force_unit: string;
+  pressure_unit: string;
+  up: string;
+  bbox: View3dBBox;
   plate_normal: number[];
-  geometry: { name: string; bytes: number };
-  lod: { name: string; bytes: number; n_vertices: number } | null;
-  values: { name: string; bytes: number; arrays: View3dValuesArray[] };
-  ranges: { fn_abs: View3dRange; fmag_max: number; u_max: number; /** 면압 MPa(있으면 표면 색 기본 범위) */ pa?: View3dRange };
+  geometry: View3dFile;
+  lod?: View3dLod | null;
+  values: View3dValues;
+  ranges: View3dRanges;
   sum_f: number[];
   sum_m: number[];
   moment_center: number[];
   supports: View3dSupport[];
   top: View3dTopRow[];
-  clusters: Record<string, View3dCluster>;
-  geometry_url?: string;
+  clusters: Record<string, View3dClusterSet>;
+  created_at: string;
+  geometry_url: string;
   lod_url?: string | null;
-  values_url?: string;
-  created_at?: string;
+  values_url: string;
 }

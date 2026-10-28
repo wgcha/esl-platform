@@ -11,7 +11,7 @@ import type { LoadView } from "./useLoadView";
 const f1 = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : "–");
 
 function fallbackRows(f: ForcesOut): View3dTopRow[] {
-  return f.rows.map((r, i) => ({ ...r, rank: i + 1, vertex: -1, fn: NaN }));
+  return f.rows.map((r, i) => ({ ...r, rank: i + 1, vertex: -1, fn: NaN, pa: NaN }));
 }
 
 export function LoadTable({ view }: { view: LoadView }) {

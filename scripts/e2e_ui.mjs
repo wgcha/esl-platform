@@ -202,7 +202,8 @@ async function cleanup() {
 async function scenario(base, inp) {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(SHOTS, { recursive: true });
-  const browser = await chromium.launch();
+  // WebGL(④ 3D 하중 보기): 헤드리스에서는 소프트웨어 렌더(swiftshader)
+  const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--enable-webgl"] });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
   const page = await ctx.newPage();
@@ -212,6 +213,12 @@ async function scenario(base, inp) {
   const nonGet = [];
   page.on("request", (r) => {
     if (r.url().includes("/esl/api/") && r.method() !== "GET") nonGet.push([r.method(), r.headers()["x-esl-request"]]);
+  });
+  // view3d 파일 요청 기록(manifest·part.glb·values.bin) — 실제 API 로 로드되는지 확인용
+  const view3dReqs = [];
+  page.on("response", (r) => {
+    const m = /\/esl\/api\/esl-runs\/([^/]+)\/view3d(?:\/([^?]+))?(?:\?(.*))?$/.exec(r.url());
+    if (m) view3dReqs.push({ run: m[1], file: m[2] ?? "manifest", query: m[3] ?? "", status: r.status() });
   });
   const shot = async (name) => {
     const f = path.join(SHOTS, `${name}.png`);
@@ -295,6 +302,114 @@ async function scenario(base, inp) {
     await vshot("v057_3_legend_edit");
     await lg.getByRole("button", { name: "자동" }).click();
     await page.waitForFunction(() => document.querySelector('[data-testid="disp-color-legend"]').getAttribute("data-manual") === "false");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+
+  // v0.5.8 ④ 3D 하중 보기 실서버 확인(2560×1440): 실제 view3d API 로 로드 · 화살표 100→10→합력 5 · 표↔3D 선택 · 변형 토글 · 서랍 유지
+  async function liveStage4_3d() {
+    const SHOTS3D = process.env.ESL_E2E_3D_SHOTS || path.join(SHOTS, "v058_live");
+    fs.mkdirSync(SHOTS3D, { recursive: true });
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.evaluate(() => localStorage.setItem("esl.statusDrawer", "closed"));
+    await page.reload();
+    await page.getByRole("heading", { level: 2, name: "④ ESL" }).waitFor();
+    const host = page.getByTestId("v3d-host");
+    await page.waitForSelector('[data-testid="v3d-host"][data-phase="ready"]', { timeout: 60000 });
+    // 1) 실제 API: manifest 200 + part.glb/values.bin 이 ?key= 와 함께 200
+    const gl = view3dReqs.filter((r) => r.file === "part.glb" && r.status === 200);
+    const vb = view3dReqs.filter((r) => r.file === "values.bin" && r.status === 200);
+    const mf = view3dReqs.filter((r) => r.file === "manifest" && r.status === 200);
+    if (!mf.length || !gl.length || !vb.length) throw new Error(`view3d 요청 이상: ${JSON.stringify(view3dReqs)}`);
+    if (!/^key=\w+/.test(gl[0].query) || !/^key=\w+/.test(vb[0].query)) throw new Error(`?key= 없음: ${JSON.stringify(gl[0])}`);
+    if (view3dReqs.some((r) => r.status >= 400)) throw new Error(`view3d 오류 응답: ${JSON.stringify(view3dReqs.filter((r) => r.status >= 400))}`);
+    const man = await page.evaluate(async () => {
+      const cid = location.pathname.split("/c/")[1].split("/")[0];
+      const runs = await (await fetch(`/esl/api/cases/${cid}/esl-runs`)).json();
+      const r = await fetch(`/esl/api/esl-runs/${runs[0].id}/view3d`);
+      return { status: r.status, etag: r.headers.get("etag"), m: await r.json() };
+    });
+    if (man.status !== 200 || !man.m.geometry_url.startsWith("/esl-runs/") || !man.m.top?.length) throw new Error(`manifest 이상: ${JSON.stringify(man).slice(0, 400)}`);
+    log("view3d manifest", JSON.stringify({ n_nodes: man.m.n_nodes, top: man.m.top.length, lod: !!man.m.lod, key: man.m.key, etag: man.etag, clusters: Object.keys(man.m.clusters) }));
+    const cb = await host.boundingBox();
+    if (!cb || cb.width < 400 || cb.height < 300) throw new Error(`3D 캔버스 크기 이상: ${JSON.stringify(cb)}`);
+    const stageTxt = () => page.getByTestId("v3d-stage").textContent();
+    const rowCount = () => page.locator('[data-testid="load-table"] tbody tr').count();
+    const slider = page.getByLabel("화살표 단계");
+    // 2) 화살표 단계: 100 → 10 → 합력 5
+    await slider.focus();
+    await page.keyboard.press("Home");
+    const nTop = Math.min(100, man.m.top.length);
+    await page.waitForFunction(() => document.querySelector('[data-testid="v3d-stage"]')?.textContent === "100 노드");
+    if ((await rowCount()) !== nTop) throw new Error(`100 노드 표 행 수 ${await rowCount()} ≠ ${nTop}`);
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: path.join(SHOTS3D, "01_stage4_3d_arrows100.png") });
+    log("스크린샷(2560x1440)", "01_stage4_3d_arrows100");
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => document.querySelector('[data-testid="v3d-stage"]')?.textContent === "10 노드");
+    if ((await rowCount()) !== 10) throw new Error(`10 노드 표 행 수 ${await rowCount()}`);
+    // 3) 표 행 클릭 → 선택(aria-selected) + 정보 줄에 그 노드
+    const row3 = page.locator('[data-testid="load-table"] tbody tr').nth(2);
+    const nodeId = (await row3.locator("td").nth(1).textContent())?.trim();
+    await row3.click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="load-table"] tbody tr[aria-selected="true"]'));
+    const info = (await page.getByTestId("v3d-info").textContent()) ?? "";
+    if (!info.includes(`노드 ${nodeId}`) || !/면압/.test(info)) throw new Error(`표 선택 → 3D 정보 이상: ${info}`);
+    // 3D → 표: 캔버스를 격자로 눌러 화살표를 고르면 표의 해당 행이 선택(aria-selected)으로 바뀐다
+    await row3.click(); // 선택 해제
+    await page.waitForFunction(() => !document.querySelector('[data-testid="load-table"] tbody tr[aria-selected="true"]'));
+    const box = await page.getByTestId("v3d-host").boundingBox();
+    let picked = null;
+    outer: for (let gy = 0.15; gy <= 0.9; gy += 0.05)
+      for (let gx = 0.1; gx <= 0.95; gx += 0.025) {
+        await page.mouse.click(box.x + box.width * gx, box.y + box.height * gy);
+        const sel = await page.locator('[data-testid="load-table"] tbody tr[aria-selected="true"]').count();
+        if (sel) {
+          picked = await page.locator('[data-testid="load-table"] tbody tr[aria-selected="true"] td').nth(1).textContent();
+          break outer;
+        }
+      }
+    if (!picked) throw new Error("3D 에서 화살표를 눌러도 표 행이 선택되지 않음");
+    const info2 = (await page.getByTestId("v3d-info").textContent()) ?? "";
+    if (!info2.includes(`노드 ${picked.trim()}`)) throw new Error(`3D 선택 → 정보 줄 불일치: ${picked} / ${info2}`);
+    log("3D→표 선택", picked.trim());
+    // 4) 합력 5
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(() => document.querySelector('[data-testid="v3d-stage"]')?.textContent === "군집 5");
+    await page.waitForFunction(() => document.querySelector('[data-testid="load-table"]')?.getAttribute("data-mode") === "cluster");
+    const nCl = await rowCount();
+    if (nCl < 2 || nCl > 5) throw new Error(`군집 5 표 행 수 ${nCl}`);
+    const sumTxt = (await page.getByTestId("load-sum-line").textContent()) ?? "";
+    log("군집 5", nCl, "행", sumTxt.trim().slice(0, 100));
+    // 5) 변형 형상 토글
+    const defBtn = page.getByRole("button", { name: "변형 형상" });
+    if (await defBtn.isDisabled()) throw new Error("변형 형상 버튼이 비활성(u_rel 없음?)");
+    await defBtn.click();
+    if ((await defBtn.getAttribute("aria-pressed")) !== "true") throw new Error("변형 토글이 켜지지 않음");
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: path.join(SHOTS3D, "02_stage4_cluster5_deform.png") });
+    log("스크린샷(2560x1440)", "02_stage4_cluster5_deform");
+    await defBtn.click();
+    if ((await defBtn.getAttribute("aria-pressed")) !== "false") throw new Error("변형 토글이 꺼지지 않음");
+    // 6) 서랍: 열기 → 새로고침 후에도 열림 → 닫기 → 새로고침 후에도 닫힘
+    const drawer = page.locator('[role="complementary"][aria-label="실행 상태"]');
+    await page.getByTestId("chip-queue").click();
+    await drawer.waitFor();
+    await drawer.getByText("계산 대기열").first().waitFor();
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: path.join(SHOTS3D, "03_drawer_open.png") });
+    log("스크린샷(2560x1440)", "03_drawer_open");
+    await page.reload();
+    await drawer.waitFor({ timeout: 15000 });
+    await page.waitForSelector('[data-testid="v3d-host"][data-phase="ready"]', { timeout: 60000 });
+    await drawer.getByRole("button", { name: "실행 상태 닫기" }).click();
+    await drawer.waitFor({ state: "detached" });
+    await page.reload();
+    await page.waitForSelector('[data-testid="v3d-host"][data-phase="ready"]', { timeout: 60000 });
+    if (await drawer.count()) throw new Error("새로고침 후 서랍이 다시 열림");
+    // 재요청은 ETag 로 304(또는 200) — 오류 없음
+    if (view3dReqs.some((r) => r.status >= 400)) throw new Error(`view3d 오류 응답: ${JSON.stringify(view3dReqs.filter((r) => r.status >= 400))}`);
+    log("view3d 요청", view3dReqs.length, "건 OK");
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
   const primary = () => page.locator("button[data-primary]");
@@ -392,6 +507,12 @@ async function scenario(base, inp) {
   await page.getByText("강체 회전각").waitFor({ timeout: 30000 });
   await page.getByText("F_eq 상위 노드").waitFor();
   await shot("04_esl");
+  await liveStage4_3d();
+  if (process.env.ESL_E2E_STOP === "3d") {
+    if (errors.length) throw new Error("브라우저 오류:\n" + errors.join("\n"));
+    await browser.close();
+    return { verdict: "(3D 만 확인)", nRows: 0, nLarge: 0, nonGet: nonGet.length };
+  }
 
   // ⑤ 검증
   await stageLink(5).click();

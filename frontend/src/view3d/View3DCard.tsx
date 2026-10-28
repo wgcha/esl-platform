@@ -118,7 +118,7 @@ export function View3DCard({ view }: { view: LoadView }) {
   const unit = field?.unit ?? "MPa";
   const auto = useMemo(() => {
     const r = unit === "MPa" ? manifest?.ranges.pa : manifest?.ranges.fn_abs;
-    const top = r && r.p99 > 0 ? r.p99 : r?.max && r.max > 0 ? r.max : 1;
+    const top = r && r.p99 != null && r.p99 > 0 ? r.p99 : r && r.max > 0 ? r.max : 1;
     return { min: 0, max: top };
   }, [manifest, unit]);
   const legend = useLegendRange(view.runId, "load", unit === "MPa" ? "pa" : "fn", "zero", auto);
