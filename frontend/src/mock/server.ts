@@ -1,7 +1,7 @@
 // 목 서버: fetch 래퍼 수준. 백엔드 실제 응답 모양(openapi_p1b.json + 자유 형식 응답은 서비스 코드)을 흉내 낸다.
 // tick()마다 작업이 한 걸음 진행된다.
 import type {
-  AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, EntryOut, FieldLayer, SectionAxis,
+  AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
   ValidationOut,
 } from "../api/types";
@@ -10,7 +10,9 @@ import {
   makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
   type MockUserKey,
 } from "./data";
-import { envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
+import { makeStrainRef, enrichValidation, envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
+import { makeDispField } from "./dispdata";
+import { entryStatus, statusOf } from "../components/VerdictStatus";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
 import { P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
@@ -305,7 +307,7 @@ export class MockServer {
   private validationOut(v: ValidationOut): ValidationOut {
     const run = this.runs.find((x) => x.id === v.esl_run_id)!;
     const c = this.findCase(run.case_id)!;
-    return { ...v, stale: run.inputs !== this.inputsKey(c) || c.current_esl_run_id !== run.id, field: makeFieldSummary() };
+    return enrichValidation({ ...v, stale: run.inputs !== this.inputsKey(c) || c.current_esl_run_id !== run.id, field: makeFieldSummary() });
   }
 
   /** 테스트·스크린샷용: 특정 Case 상태를 직접 바꾼다 */
@@ -504,16 +506,27 @@ export class MockServer {
       if (r[2]) return { status: 200, body: { esl_run_id: run.id, n_nodes: N_NODES, rows: makeForces().slice(0, Number(query.get("top") ?? 50)) } };
       return { status: 200, body: this.runOut(run) };
     }
-    if ((r = m(/^\/validations\/([^/]+)\/(field|section)$/)) && method === "GET") {
-      if (!this.validations.some((x) => x.id === r![1])) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
+    if ((r = m(/^\/validations\/([^/]+)\/(field|section|disp-field)$/)) && method === "GET") {
+      const vv = this.validations.find((x) => x.id === r![1]);
+      if (!vv) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
+      // 전체 재해석 해(compare_disp.npz)가 있는가: 새 체계이고 UNDETERMINED 가 아닐 때
+      const hasVal = !!vv.scheme && vv.status !== "UNDETERMINED";
       if (r[2] === "field") {
         const layer = (query.get("layer") ?? "rad") as FieldLayer;
         if (!["rad", "esl", "err"].includes(layer)) return err(422, "INVALID_PARAMS", "layer: rad|esl|err");
         return { status: 200, body: makeField(r[1], layer, Number(query.get("max_points") ?? 20000) || 20000) };
       }
-      const axis = (query.get("axis") ?? "xi") as SectionAxis;
+      if (r[2] === "disp-field") {
+        const layer = (query.get("layer") ?? "err") as DispLayer;
+        if (!["err", "rel", "val"].includes(layer)) return err(422, "INVALID_PARAMS", "layer: err|rel|val");
+        if (!hasVal) return err(409, "PREREQUISITE_MISSING", "변위 비교 자료가 없습니다.", { missing: ["disp_compare"] });
+        return { status: 200, body: makeDispField(r[1], layer, Number(query.get("max_points") ?? 20000) || 20000) };
+      }
+      const axis = (query.get("axis") ?? "eta") as SectionAxis;
       if (!["xi", "eta"].includes(axis)) return err(422, "INVALID_PARAMS", "axis: xi|eta");
-      return { status: 200, body: makeSection(r[1], axis, Number(query.get("at") ?? 0.5)) };
+      const at = Number(query.get("at") ?? 0.5);
+      if (!(at >= 0 && at <= 1)) return err(422, "INVALID_PARAMS", "at: 0~1");
+      return { status: 200, body: makeSection(r[1], axis, at, hasVal) };
     }
     if (path.startsWith("/library/")) return this.library(method, path, query, b);
     if ((r = m(/^\/validations\/([^/]+)$/)) && method === "GET") {
@@ -549,7 +562,7 @@ export class MockServer {
           (!f("drop_type") || e.scene.drop_type === f("drop_type")) &&
           (!f("orient") || e.scene.orient === f("orient")) &&
           (!f("scenario") || e.scene.scenario === f("scenario")) &&
-          (!f("verdict") || e.quality.verdict === f("verdict")) &&
+          (!f("verdict") || entryStatus(e.quality) === f("verdict")) &&
           (!f("status") || e.status === f("status")),
       );
       return { status: 200, body: out };
@@ -564,8 +577,11 @@ export class MockServer {
       if (this.entries.some((e) => e.esl_run_id === run.id && e.status === "ACTIVE"))
         return err(409, "ENTRY_EXISTS", "이 ESL 결과는 이미 라이브러리에 등록되어 있습니다");
       const reason = typeof b.force_reason === "string" ? b.force_reason.trim() : "";
-      if (v.verdict !== "PASS" && !reason) return err(422, "VALIDATION_NOT_PASS", "검증 FAIL 은 사유(force_reason)와 함께만 등록할 수 있습니다");
+      const vs = statusOf(v);
+      const needReason = vs === "FAIL" || vs === "UNDETERMINED" || (vs === "LEGACY" && v.verdict !== "PASS");
+      if (needReason && !reason) return err(422, "VALIDATION_NOT_PASS", "검증 FAIL·판정 불가는 사유(force_reason)와 함께만 등록할 수 있습니다", { verdict: v.verdict });
       const fs = makeFieldSummary();
+      const fs0 = makeStrainRef();
       const t = this.now();
       const base = makeEntries(c.project_id)[0];
       const id = this.id("le");
@@ -580,11 +596,18 @@ export class MockServer {
         summary_rel: `_library/${id}/summary.npz`,
         quality: {
           verdict: v.verdict,
+          status: v.scheme ? vs : null,
+          scheme: v.scheme,
+          disp_max_rel: v.disp_max_rel,
+          disp_noise_rel: v.disp_noise_rel,
+          undetermined_reason: v.undetermined_reason,
+          strain_exceed_frac: v.scheme ? fs0.frac_exceed : null,
           fail_reasons: v.fail_reasons,
           field_max_err_pct: fs.max?.abs_err_pct ?? null,
           field_p90_err_pct: fs.abs_err_pct?.p90 ?? null,
           noise: { hotspot_strain_rel: 0.0011 },
-          confirmed_fail: reason ? { reason, by: this.me.user_id, by_name: this.me.display_name, at: t } : null,
+          confirmed_fail: reason && v.verdict === "FAIL" ? { reason, by: this.me.user_id, by_name: this.me.display_name, at: t } : null,
+          confirmed_undetermined: reason && v.verdict === "UNDETERMINED" ? { reason, by: this.me.user_id, by_name: this.me.display_name, at: t } : null,
         },
         registered_by: this.me.user_id,
         registered_by_name: this.me.display_name,

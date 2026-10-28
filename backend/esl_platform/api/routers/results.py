@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from ...core.auth import Principal
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
-from ..schemas import ArtifactOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut
+from ..schemas import ArtifactOut, DispFieldOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut
 from ..services import bundle as bundle_svc
 from ..services import results as svc
 
@@ -59,11 +59,20 @@ def validation_field(vid: str, request: Request, layer: Literal["rad", "esl", "e
     return svc.field(get_ctx(request), vid, layer, max_points)
 
 
+@router.get("/validations/{vid}/disp-field", response_model=DispFieldOut)
+def validation_disp_field(vid: str, request: Request, layer: Literal["err", "rel", "val"] = "err",
+                          max_points: int | None = Query(default=None, ge=10),
+                          principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """변위 전 노드 분석 2D 점(err = e/U, rel = ‖d_rel‖, val = ‖d_val‖). 다운샘플 셀 대표 = e 최대 노드."""
+    return svc.disp_field(get_ctx(request), vid, layer, max_points)
+
+
 @router.get("/validations/{vid}/section", response_model=SectionOut)
-def validation_section(vid: str, request: Request, axis: Literal["xi", "eta"] = "xi",
+def validation_section(vid: str, request: Request, axis: Literal["xi", "eta"] = "eta",
                        at: float = Query(default=0.5, ge=0.0, le=1.0),
                        principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    """단면선: 정규화 좌표 axis = at 고정 띠의 요소를 다른 축 방향으로 bin 평균(면외 변위 Radioss·ESL, 초기 면외 좌표)."""
+    """단면선: 정규화 좌표 axis = at 고정 띠의 요소를 다른 축 방향으로 bin 평균(면외 변위 Radioss·ESL, 초기 면외 좌표).
+    axis=eta(기본): 판 길이 방향 단면, axis=xi: 판 폭 방향 단면. Δw·통계·지도용 선·추천 단면 포함."""
     return svc.section(get_ctx(request), vid, axis, at)
 
 

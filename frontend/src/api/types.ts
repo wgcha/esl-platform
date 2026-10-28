@@ -494,7 +494,20 @@ export interface ValidationOut {
   reaction_rel: number | null;
   hotspots: ValidationHotspot[];
   excluded: { elem_id: number; reason: string }[];
-  verdict: "PASS" | "FAIL";
+  /** v0.5.7(esl_disp_primary §3.3): UNDETERMINED = 판정 불가(전체 재해석 생략·변형 없음) */
+  verdict: "PASS" | "FAIL" | "UNDETERMINED";
+  /** 판정 체계: 새 검증 "disp_primary/1", 0.5.7 이전 검증은 null(= LEGACY) */
+  scheme: string | null;
+  /** 표시 상태. scheme 이 null 이면 LEGACY, 아니면 verdict */
+  status: ValidationStatus;
+  disp_max_rel: number | null;
+  disp_noise_rel: number | null;
+  /** NO_FULL_SOLVE | ZERO_DISP (UNDETERMINED 일 때만) */
+  undetermined_reason: string | null;
+  /** 변위 전 노드 분석 요약(§3.5). full_solve 미수행·LEGACY 는 null */
+  disp: DispSummary | null;
+  /** 변형률 참고 집계(§3.4). LEGACY 는 null */
+  strain_ref: StrainRef | null;
   fail_reasons: string[];
   /** 코어 validation.json criteria (disp_rms_rel_max, hotspot_strain_rel_err_max, reaction_rel_max, …) */
   criteria: Record<string, unknown>;
@@ -505,6 +518,66 @@ export interface ValidationOut {
   field?: FieldSummary | null;
 }
 export type Validation = ValidationOut;
+export type ValidationStatus = "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY";
+
+// ---------------------------------------------------------------- 변위 주지표 판정 (계약 esl_disp_primary.md §3.4·§3.5·§4·§7)
+export interface DispHist {
+  /** log10(r) bin 경계(균등) */
+  edges_log10: number[];
+  counts: number[];
+  n: number;
+  /** r = 0 노드 수(따로 센다) */
+  n_zero: number;
+}
+
+export interface DispTopRow {
+  node_id: number;
+  /** e/U */
+  r: number;
+  e: number;
+  /** ‖d_rel‖ */
+  u_rel_mag: number;
+  a: number;
+  b: number;
+  is_support: boolean;
+}
+
+export interface DispSummary {
+  U: number;
+  n_nodes: number;
+  n_support: number;
+  rms_rel: number;
+  max_rel: number;
+  max_node_id: number;
+  /** r = e/U 분위 */
+  p50?: number;
+  p90?: number;
+  p99?: number;
+  max?: number;
+  hist: DispHist;
+  top: DispTopRow[];
+  support: { node_id: number; r: number; e?: number }[];
+  plane?: FieldPlane;
+}
+
+export interface StrainPlastic {
+  n_plastic: number;
+  frac_plastic: number;
+  n_exceed_plastic: number;
+}
+
+/** 변형률 참고 집계. 소성 영역은 epsp 가 없으면 plastic = null */
+export interface StrainRef {
+  exceeded: boolean;
+  n_exceed: number;
+  frac_exceed: number;
+  frac_exceed_valid?: number | null;
+  p99_err_pct: number | null;
+  plastic?: StrainPlastic | null;
+  n_plastic?: number | null;
+  frac_plastic?: number | null;
+  n_exceed_plastic?: number | null;
+}
 
 export interface ArtifactOut {
   id: string;
@@ -600,8 +673,9 @@ export interface FieldSummary {
 
 // ---------------------------------------------------------------- 겹쳐보기 자료 (GET /validations/{id}/field, /section)
 export type FieldLayer = "rad" | "esl" | "err";
-/** [elem_id, a, b, value, reason] — (a, b) = PCA 평면 실좌표(ξ, η). value: err 레이어는 valid 아니면 null */
-export type FieldPoint = [number, number, number, number | null, string];
+/** [elem_id, a, b, value, reason, flags?] — (a, b) = PCA 평면 실좌표(ξ, η). value: err 레이어는 valid 아니면 null.
+ *  flags(v0.5.7, 비트): 1 = 기준 초과 요소, 2 = 소성 영역(epsp>0). 예전 서버는 열이 없다. */
+export type FieldPoint = [number, number, number, number | null, string, number?];
 
 export interface FieldPlane {
   origin: number[];
@@ -615,6 +689,14 @@ export interface ColorRange {
   max?: number | null;
 }
 
+/** 견고한 자동 색 범위(§14.2): raw = 올림 전 분위값 */
+export interface ColorRangeRobust {
+  min: number | null;
+  max: number | null;
+  basis: string;
+  raw: number | null;
+}
+
 export interface FieldOut {
   validation_id: string;
   layer: FieldLayer;
@@ -625,7 +707,27 @@ export interface FieldOut {
   cell?: number[] | null;
   plane: FieldPlane;
   color_range: ColorRange;
+  color_range_robust?: ColorRangeRobust | null;
   points: FieldPoint[];
+}
+
+/** 변위 컨투어 레이어: err = e/U, rel = ‖d_rel‖(Radioss), val = ‖d_val‖(ESL) */
+export type DispLayer = "err" | "rel" | "val";
+/** [node_id, a, b, value, is_support] */
+export type DispPoint = [number, number, number, number, boolean | number];
+
+export interface DispFieldOut {
+  validation_id: string;
+  layer: DispLayer;
+  n_total: number;
+  n_returned: number;
+  decimated: boolean;
+  cell?: number[] | null;
+  plane: FieldPlane;
+  color_range: ColorRange;
+  color_range_robust?: ColorRangeRobust | null;
+  U: number;
+  points: DispPoint[];
 }
 
 export type SectionAxis = "xi" | "eta";
@@ -640,6 +742,49 @@ export interface SectionOut {
   w_rad: number[];
   w_esl: number[];
   w0: number[];
+  /** w_esl − w_rad (실제 길이 단위, 배율 없음). has_val=false 면 빈 배열 */
+  dw: number[];
+  stats: SectionStats;
+  /** 전체 재해석 해가 있는가(compare_disp.npz). false 면 ESL·Δw 선을 숨긴다 */
+  has_val: boolean;
+  /** 지도에 그릴 단면 중심선(PCA 평면 실좌표)과 띠 반폭 */
+  line: SectionLine | null;
+  /** 길이 단위 표시 문자열(설정 units.length) */
+  units: string | null;
+  suggest: SectionSuggest[];
+}
+
+/** 단면이 비면 전부 null */
+export interface SectionStats {
+  dw_max_abs: number | null;
+  s_at_dw_max: number | null;
+  dw_rms: number | null;
+  U: number | null;
+  dw_max_rel: number | null;
+  dw_rms_rel: number | null;
+  /** max(|w_rad|, |w_esl|) — 배율 표기용 실제 최대 면외 변위 */
+  w_max_abs: number | null;
+}
+
+export interface SectionLine {
+  a0: number;
+  b0: number;
+  a1: number;
+  b1: number;
+  band_abs: number;
+  /** 대상 파트 요소 중심의 정규화 xi 범위 [min,max] — 지도 클릭 정규화 기준 */
+  xi_range: number[];
+  eta_range: number[];
+}
+
+export type SectionSuggestKey = "max_disp_err" | "hotspot1";
+/** xi·eta = 0~1 정규화 좌표, id = node_id(max_disp_err) 또는 elem_id(hotspot1) */
+export interface SectionSuggest {
+  key: SectionSuggestKey;
+  label: string;
+  xi: number;
+  eta: number;
+  id: number;
 }
 
 // ---------------------------------------------------------------- 라이브러리 (library_entries)
@@ -698,6 +843,14 @@ export interface EntryQuality {
   reaction_rel?: number | null;
   noise?: Record<string, unknown> | null;
   confirmed_fail?: ConfirmedFail | null;
+  /** v0.5.7: scheme 없음 = LEGACY(이전 판정 체계) */
+  status?: ValidationStatus | null;
+  scheme?: string | null;
+  disp_max_rel?: number | null;
+  disp_noise_rel?: number | null;
+  strain_exceed_frac?: number | null;
+  undetermined_reason?: string | null;
+  confirmed_undetermined?: ConfirmedFail | null;
 }
 
 export interface EntryOut {

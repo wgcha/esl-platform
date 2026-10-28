@@ -160,8 +160,9 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
 
     # ---- 품질(검증)
     ref = summ.get("tag") or summ.get("created_at")
-    quality = {"verdict": None, "fail_reasons": [], "hotspot1_rel_err": None, "disp_rms_rel": None,
-               "reaction_rel": None, "noise": summ.get("noise"), "field": None, "hotspots": [], "esl_ref": ref}
+    quality = {"verdict": None, "status": None, "scheme": None, "undetermined_reason": None, "fail_reasons": [],
+               "hotspot1_rel_err": None, "disp_rms_rel": None, "disp_max_rel": None, "disp_noise_rel": None,
+               "strain_exceed_frac": None, "reaction_rel": None, "noise": summ.get("noise"), "field": None, "hotspots": [], "esl_ref": ref}
     val = U.read_json(files["validation.json"]) if "validation.json" in files else None
     if val is None:
         warns.append("검증 결과(05_val/validation.json) 없음")
@@ -172,7 +173,13 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
     warns += [f"frame: {w}" for w in fr["warnings"]]
     if val is not None:
         mets = {m["metric"]: m.get("value") for m in val.get("metrics", [])}
-        quality.update(verdict=val.get("verdict"), fail_reasons=list(val.get("fail_reasons") or []),
+        scheme = val.get("verdict_scheme")           # 0.5.7 이전(schema 2) 검증은 scheme 없음 = LEGACY
+        sref = val.get("strain_ref") if isinstance(val.get("strain_ref"), dict) else {}
+        quality.update(verdict=val.get("verdict"), scheme=scheme, status=val.get("verdict") if scheme else "LEGACY",
+                       undetermined_reason=val.get("undetermined_reason"),
+                       strain_exceed_frac=sref.get("frac_exceed"),
+                       disp_max_rel=mets.get("disp_max_rel"), disp_noise_rel=mets.get("disp_noise_rel"),
+                       fail_reasons=list(val.get("fail_reasons") or []),
                        hotspot1_rel_err=mets.get("hotspot1_strain_rel_err"), disp_rms_rel=mets.get("disp_rms_rel"),
                        reaction_rel=mets.get("reaction_rel"), field=_field_summary(val))
         hs = []

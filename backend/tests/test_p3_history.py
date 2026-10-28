@@ -401,7 +401,8 @@ def test_h4_all_current(client, world):
     # 요약 한 줄
     assert items[ids["e1"]]["summary"] == {"n_elems": 100, "tstar_frame": 5, "tstar_value": 0.01}
     assert items[ids["esl"]["job_id"]]["summary"] == {"frame_index": 5, "metric": "max_strain"}
-    assert items[ids["val"]["job_id"]]["summary"] == {"verdict": "PASS", "disp_rms_rel": 0.002}
+    assert items[ids["val"]["job_id"]]["summary"] == {"status": "LEGACY", "verdict": "PASS", "disp_rms_rel": 0.002,
+                                                       "disp_max_rel": None}
     assert items[ids["ex"]]["summary"] == {"targets": ["radioss_inc"], "n_files": 2}
     assert items[ids["rep"]]["summary"] is None
 
@@ -564,7 +565,7 @@ def test_h5_diff_esl_validation_export(client, world):
                           hotspots=[{"elem_id": 1, "rel_err": 0.3}], criteria={"disp_rms_rel_max": 0.02})
     d = diff_of(client, ids["val"]["job_id"])
     assert set(d) == {"verdict", "disp_rms_rel", "hotspot_max_err", "criteria"}
-    assert d["verdict"]["past"] == "PASS" and d["verdict"]["current"] == "FAIL"
+    assert d["verdict"]["past"] == "LEGACY(PASS)" and d["verdict"]["current"] == "LEGACY(FAIL)"   # 시드 검증은 scheme NULL = 이전 판정 체계
     assert d["hotspot_max_err"]["past"] == 0.04 and d["hotspot_max_err"]["current"] == 0.3
     assert d["criteria"]["current"] == {"disp_rms_rel_max": 0.02}
     assert diff_of(client, val2["job_id"]) == {}
@@ -984,7 +985,7 @@ def test_h10_migration_0007_up_down_idempotent(engine, db_url):
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM information_schema.columns WHERE table_name='jobs'")
                          ).scalar_one() == cols
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0007"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008"
 
 
 def test_h10_tables_match_alembic_metadata(engine):

@@ -201,6 +201,10 @@ SCHEMA: dict[str, Any] = {
         "noise_samples": _int(1, 100),
         "noise_force_rel_warn": _num(0.0, lo_open=True),
         "noise_strain_rel_max": _num(0.0, lo_open=True),
+        "disp_max_rel_max": _num(0.0, lo_open=True),      # 0.5.7 신규(판정)
+        "disp_noise_rel_max": _num(0.0, lo_open=True),    # 0.5.7 신규(판정)
+        "disp_top_n": _int(1, 1000),                      # 0.5.7 신규
+        "disp_hist_bins": _int(2, 200),                   # 0.5.7 신규
     },
     "compare": {                                # 전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2)
         "min_rel": _num(0.0, 1.0),
@@ -239,6 +243,8 @@ SCHEMA: dict[str, Any] = {
 
 # 기본값은 여기 한 곳. 이전 버전 esl.yaml 에 coord_check(또는 max_rel)가 없어도 이 값으로 채운다(그 외 키는 모두 필수).
 COORD_CHECK_DEFAULTS = {"max_rel": 0.005}
+# 0.5.7 신규 validation 키(계약 esl_disp_primary.md §5): 이전 설정 파일에 없으면 이 값으로 채운다. 기준 숫자의 단일 출처.
+VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "disp_top_n": 20, "disp_hist_bins": 20}
 # 0.5.3~0.5.4 의 coord_check 키(0.5.5 에서 폐지): 업데이트 호환을 위해 있어도 경고 없이 무시
 COORD_CHECK_LEGACY_KEYS = ("warn_max_frac", "warn_max_rel")
 
@@ -270,6 +276,10 @@ def validate_settings(cfg: Any) -> dict:
                 cc.pop(k, None)
             for k, v in COORD_CHECK_DEFAULTS.items():
                 cc.setdefault(k, v)
+        vc = cfg.get("validation")
+        if isinstance(vc, dict):
+            for k, v in VALIDATION_DEFAULTS.items():
+                vc.setdefault(k, v)
     _walk(SCHEMA, cfg, "")
     sup = cfg["support"]
     if sup["candidates"] == "node_ids" and len(set(sup["node_ids"])) < 3:

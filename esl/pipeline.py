@@ -8,7 +8,7 @@
   기록(run.json·model_meta.json)의 합집합으로 정한다. 모든 쓰기(백업 이동 포함) 직전에 대상 realpath 가 출력 루트
   realpath 안이고 보호 대상 밖인지 다시 확인한다.
 - S4 는 변위 저장 정밀도(``extract.disp_precision``)의 잡음 바닥을 추정해 ``esl_summary.json`` 의
-  ``noise`` 에 기록한다(검증 기준 초과 시 S5 verdict FAIL, 사유 ``NOISE_FLOOR``).
+  ``noise`` 에 기록한다(0.5.7: 변형률 기반 잡음 지표는 참고, 판정은 변위 잡음 ``disp_noise_rel`` = δ/U).
 - 단계 산출물 폴더에 기존 파일이 있으면 ``_backup/<UTC timestamp>/<폴더>`` 로 **이동**한 뒤 새로 쓴다
   (삭제하지 않음). ``run.json`` 도 덮어쓰기 전에 같은 곳으로 이동.
 - 판정 기준·허용오차·오프셋·파트 title 은 설정(``esl.config``)에서만 읽는다.
@@ -20,8 +20,9 @@
   02_tstar/    tstar.json, history.csv, hotspots.csv, candidates.csv
   03_bc/       support.json
   04_esl/      u_rel.npz, u_rel.csv, f_eq.npz, f_eq.csv, esl_summary.json
-  05_val/      validation.json(+ field: 전 요소 재현 정확도 요약), validation.csv, compare.csv,
-               compare_field.npz (계약 esl_p2_library.md §7.2)
+  05_val/      validation.json(schema esl/validation/3, 판정 = 변위 4지표; + field: 전 요소 재현 정확도 요약,
+               strain_ref, disp), validation.csv, compare.csv, compare_field.npz (계약 esl_p2_library.md §7.2),
+               compare_disp.npz (full_solve 수행 시, 계약 esl_disp_primary.md §4)
   06_export/   esl_cload.inc, esl_bcs.inc, esl_force.fem, f_eq.csv, u_rel.csv, reactions_321.csv,
                tstar_candidates.csv, hotspots.csv, validation.csv
   07_report/   report.html (자체 완결 Case 보고서, §5·§7.3)
@@ -809,7 +810,7 @@ def stage_esl(ctx: Context) -> dict:
     if noise["hotspot_strain_rel"] > vcfg["noise_strain_rel_max"]:
         ctx.warnings.append(f"변위 정밀도({noise['disp_precision']}) 잡음 바닥: hotspot ε_eq 상대 변화 "
                             f"{noise['hotspot_strain_rel']:.3e} > {vcfg['noise_strain_rel_max']:g} "
-                            f"→ 검증 FAIL(NOISE_FLOOR)")
+                            f"(참고 기준 초과)")
 
     dbc = ctx.fresh_dir(D_BC)
     _write_json(ctx.f(dbc, "support.json"), sup_rec)
@@ -892,9 +893,33 @@ def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
     return {**rec, "run": True, "reason": "auto: 직접법, 메모리 충분" if avail is not None else "auto: 가용 메모리 모름"}
 
 
-_FAIL_REASON = {"disp_rms_rel": "DISP_RMS", "hotspot1_strain_rel_err": "HOTSPOT_STRAIN",
-                "reaction_rel": "REACTION", "noise_hotspot_strain_rel": "NOISE_FLOOR",
-                "field_max_err_pct": "FIELD_MAX_ERR", "field_p90_err_pct": "FIELD_P90_ERR"}
+VERDICT_SCHEME = "disp_primary/1"      # 계약 esl_disp_primary.md: 판정 = 변위 4지표, 변형률은 참고
+VALIDATION_SCHEMA = "esl/validation/3"
+_FAIL_REASON = {"disp_rms_rel": "DISP_RMS", "disp_max_rel": "DISP_MAX", "reaction_rel": "REACTION",
+                "disp_noise_rel": "DISP_NOISE"}
+
+
+def _disp_noise_delta(ctx: Context, noise: dict | None, model: StoredModel, frame_index: int):
+    """변위 잡음 δ (계약 §3.2). S4 ``noise.delta`` 를 그대로 쓰고, 없으면(예전 S4) 같은 식을 model.x0 + t* 프레임
+    변위로 다시 계산한다(추가 해석 없음). 반환 (δ 또는 None, "esl_summary"|"recomputed"|"unavailable")."""
+    if noise and noise.get("delta") is not None:
+        return float(noise["delta"]), "esl_summary"
+    u_tot = None
+    try:
+        dz = _load_npz(ctx.p(D_EXTRACT, "disp.npz"))
+        hit = np.flatnonzero(dz["frame_index"] == int(frame_index))
+        if hit.size == 1:
+            u_tot = np.asarray(dz["u"][int(hit[0])], dtype=np.float64)
+    except (OSError, KeyError, ValueError, EslError):
+        u_tot = None
+    if u_tot is None:
+        try:
+            u_tot = np.asarray(_load_npz(ctx.p(D_ESL, "u_rel.npz"))["u_total"], dtype=np.float64)
+        except (OSError, KeyError, ValueError, EslError):
+            return None, "unavailable"
+    prec = ctx.cfg["extract"]["disp_precision"]
+    xmax = float(np.max(np.abs(np.asarray(model.x0) + u_tot))) if u_tot.size else 0.0
+    return 0.5 * float(np.finfo(_PRECISION[prec]).eps) * xmax, "recomputed"
 
 
 def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, eps_esl, d_rel, d_val):
@@ -912,6 +937,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
     with np.load(ctx.p(D_EXTRACT, "strain_frames.npz"), allow_pickle=False) as z:
         files = set(z.files)
         fd = int(np.flatnonzero(z["frame_index"].astype(np.int64) == int(frame_index))[0])
+        epsp = np.asarray(z["epsp"][fd], dtype=np.float64) if "epsp" in files else None     # 소성 영역(참고)
         if "prev_eps" in files:
             pfi = int(z["prev_frame_index"][fd])
             pok = bool(z["prev_available"][fd]) if "prev_available" in files else True
@@ -943,6 +969,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
     ex = _exclude_mask(ctx, model.elem_id)
     valid, reason, max_rad, imax = _field.classify(eps_rad, rising, ccfg["min_rel"], exclude=ex, known=known)
     rel = _field.rel_error(eps_esl, eps_rad)
+    sref = _field.strain_reference(rel, valid, epsp, E, ccfg["max_err_pct_max"])
 
     # 기하: PCA 평면 실좌표(ξ, η), 면외 n, 단면선
     C3 = model.centroids()
@@ -976,6 +1003,8 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         elem_id=model.elem_id.astype(np.int64), centroid2d=c2, centroid3d=C3,
         eps_rad=np.asarray(eps_rad, np.float64), eps_esl=np.asarray(eps_esl, np.float64), rel_err=rel,
         valid=valid, rising=rising, reason=reason.astype(np.int8), elem_size=size,
+        epsp=np.full(E, np.nan) if epsp is None else epsp,
+        plastic=np.zeros(E, bool) if sref["plastic"] is None else sref["plastic"], exceed=sref["exceed"],
         n0=pl["n0"], w_rel=w_rel, w_val=w_val,
         plane_origin=pl["origin"], plane_e1=pl["e1"], plane_e2=pl["e2"], plane_n=n,
         xi_range=pl["xi_range"], eta_range=pl["eta_range"],
@@ -983,10 +1012,13 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         **{f"sec_xi_{k}": sec_xi[k] for k in ("s", "n0", "w_rel", "w_val")},
         **{f"sec_eta_{k}": sec_eta[k] for k in ("s", "n0", "w_rel", "w_val")},
         sec_band=np.array([bx, by]))
+    summ["strain_ref_base"] = sref["ref"]
     return arrays, summ
 
 
 def stage_validate(ctx: Context) -> dict:
+    """S5 검증 (계약 esl_disp_primary.md). 판정 = 변위 4지표(disp_rms_rel·disp_max_rel·reaction_rel·disp_noise_rel),
+    변형률 지표는 참고(role=reference, 초과 여부만). 전체 재해석을 못 하면 UNDETERMINED(변형률로 대신 판정하지 않음)."""
     _require(ctx.out, [f"{D_EXTRACT}/strain_frames.npz", f"{D_EXTRACT}/history.npz", f"{D_BC}/support.json",
                        f"{D_ESL}/u_rel.npz", f"{D_ESL}/f_eq.npz", f"{D_ESL}/esl_summary.json"])
     model = load_model(ctx.out)
@@ -999,38 +1031,49 @@ def stage_validate(ctx: Context) -> dict:
         raise EslError("ID_MISMATCH", "04_esl 산출물의 node_id 가 model.npz 와 다름")
     u_rel, F = ur["u_rel"], fz["f"]
     spc = [(int(i), s["dof"]) for i, s in zip(_ids_to_idx(nid, [s["node_id"] for s in sup], "support.json"), sup)]
+    frame_index = int(summ["frame"]["frame_index"])
+    umax = float(np.max(np.linalg.norm(u_rel, axis=1))) if u_rel.size else 0.0      # 정규화 U = max|u_rel|
 
     sm = _shell(ctx, model)
     fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
-    if fs["run"]:
+    solved = bool(fs["run"]) and umax > 0
+    disp_an = None
+    disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
+    Rr = None
+    if solved:
         # 반복법이면 전체계는 rtol = min(설정, 1e-12) (직접법이면 영향 없음)
         sm.iter_opts["rtol"] = min(float(ctx.cfg["solver"]["iter_rtol"]), S5_ITER_RTOL_MAX)
         u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
-        # 미소 강체 제거 후 비교(양쪽 모두 같은 사영 → 선형 왕복의 수치 일관성)
+        # 미소 강체 제거 후 비교(양쪽 독립 → 선형 왕복의 수치 일관성). 노드 집합 = 전 노드(3-2-1 포함)
         d_val, _, _ = kabsch.remove_linear_rigid(X0, u_val[:, :3])
         d_rel, a_rel, w_rel = kabsch.remove_linear_rigid(X0, u_rel)
         delta = d_val - d_rel
-        umax = float(np.max(np.linalg.norm(u_rel, axis=1)))
         dn = np.linalg.norm(delta, axis=1)
-        disp_rms_rel = float(np.sqrt(np.mean(dn ** 2)) / umax) if umax > 0 else float("inf")
-        disp_max_rel = float(dn.max() / umax) if umax > 0 else float("inf")
+        disp_rms_rel = float(np.sqrt(np.mean(dn ** 2)) / umax)
+        disp_max_rel = float(dn.max() / umax)
         sum_abs = float(np.linalg.norm(F, axis=1).sum())
         reac_abs_rel = float(np.linalg.norm(Rr, axis=1).sum() / sum_abs) if sum_abs > 0 else 0.0
         reac_sum_rel = float(np.linalg.norm(Rr.sum(axis=0)) / sum_abs) if sum_abs > 0 else 0.0
-        lin_rigid_rel = float(np.max(np.linalg.norm(u_rel - d_rel, axis=1)) / umax) if umax > 0 else 0.0
+        lin_rigid_rel = float(np.max(np.linalg.norm(u_rel - d_rel, axis=1)) / umax)
         eps_sol = sm.strains(u_val)
+        is_sup = np.zeros(nid.size, dtype=bool)
+        is_sup[[i for i, _ in spc]] = True
+        dcfg = ctx.cfg["validation"]
+        disp_an = _field.disp_analysis(nid, X0, d_rel, d_val, umax, is_sup, dcfg["disp_top_n"], dcfg["disp_hist_bins"])
     else:
-        # 전체 solve 생략: S4 의 u_rel + 응축 회전(rotations_for)으로 막 변형률 → hotspot 비교만
-        ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — hotspot 변형률만 비교, disp_rms_rel·반력 skipped")
+        # 판정 불가(UNDETERMINED): 변형률은 참고용으로만 — u_rel + 응축 회전(rotations_for) 막 변형률
+        if not fs["run"]:
+            ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — 판정 불가(UNDETERMINED, NO_FULL_SOLVE). "
+                                "변형률 참고 지표만 계산")
+        else:
+            ctx.warnings.append("u_rel 이 전부 0 (변형 없음) — 판정 불가(UNDETERMINED, ZERO_DISP)")
         u_val = _solver_call(ctx, _with_rot, sm, u_rel)
         d_rel = d_val = u_rel
-        Rr = None
-        disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
         eps_sol = sm.strains(u_val)
 
-    # hotspot ε_eq: Radioss(t* 프레임, Mid) vs 검증 해 막 변형률(extract.layers)
+    # hotspot ε_eq: Radioss(t* 프레임, Mid) vs 검증 해 막 변형률(extract.layers) — 참고
     layers = ctx.cfg["extract"]["layers"]
-    hs, eps_rad = _eval_hotspots(ctx, model, int(summ["frame"]["frame_index"]))
+    hs, eps_rad = _eval_hotspots(ctx, model, frame_index)
     eps_val = _solver_eq(eps_sol, layers)
     vcfg = ctx.cfg["validation"]
     hots, excluded = [], []
@@ -1048,95 +1091,127 @@ def stage_validate(ctx: Context) -> dict:
         ctx.warnings.append(f"hotspot {len(excluded)}개 비교 제외(상승 중 아님): "
                             f"{[x['elem_id'] for x in excluded][:10]}")
     h1 = hots[0]["rel_err"] if hots else float("inf")
-    if not hots:
-        ctx.warnings.append("비교 가능한(상승 중인) hotspot 이 없음 → hotspot 변형률 기준 FAIL")
 
-    # 전 요소 재현 정확도(§P2 7.2)
+    # 전 요소 재현 정확도(참고)
     ccfg = ctx.cfg["compare"]
-    farr, fsum = _field_compare(ctx, model, int(summ["frame"]["frame_index"]), eps_rad, eps_val, d_rel, d_val)
+    farr, fsum = _field_compare(ctx, model, frame_index, eps_rad, eps_val, d_rel, d_val)
     f_max = fsum["max"]["abs_err_pct"] if fsum["max"] else float("inf")
     f_p90 = fsum["abs_err_pct"]["p90"] if fsum["abs_err_pct"] else float("inf")
-    if fsum["max"] is None:
-        ctx.warnings.append("전 요소 비교: t* 에서 상승 중인(비교 가능한) 요소가 없음 → FIELD 기준 FAIL")
     fsum["criteria"] = {"max_err_pct_max": ccfg["max_err_pct_max"], "p90_err_max": ccfg["p90_err_max"]}
+    sref = fsum.pop("strain_ref_base")
 
     noise = summ.get("noise")
     if noise is None:
         ctx.warnings.append("esl_summary.json 에 잡음 바닥(noise) 없음 — esl 단계를 다시 실행 권장")
     n_strain = float(noise["hotspot_strain_rel"]) if noise else None
     n_force = float(noise["force_rel"]) if noise else None
-    crit = {"disp_rms_rel_max": vcfg["disp_rms_rel_max"],
+
+    # 변위 잡음 바닥 δ/U (추가 해석 없음)
+    delta_noise, noise_source = _disp_noise_delta(ctx, noise, model, frame_index)
+    disp_noise_rel = (delta_noise / umax) if (delta_noise is not None and umax > 0) else None
+
+    crit = {"disp_rms_rel_max": vcfg["disp_rms_rel_max"], "disp_max_rel_max": vcfg["disp_max_rel_max"],
+            "reaction_rel_max": vcfg["reaction_rel_max"], "disp_noise_rel_max": vcfg["disp_noise_rel_max"],
             "hotspot_strain_rel_err_max": vcfg["hotspot_strain_rel_err_max"],
-            "reaction_rel_max": vcfg["reaction_rel_max"], "hotspot_eval_count": vcfg["hotspot_eval_count"],
+            "hotspot_eval_count": vcfg["hotspot_eval_count"],
             "noise_strain_rel_max": vcfg["noise_strain_rel_max"],
             "noise_force_rel_warn": vcfg["noise_force_rel_warn"],
-            "disp_precision": noise["disp_precision"] if noise else None, "layers": list(layers),
-            "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"],
+            "disp_precision": noise["disp_precision"] if noise else ctx.cfg["extract"]["disp_precision"],
+            "layers": list(layers), "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"],
             "field_max_err_pct_max": ccfg["max_err_pct_max"], "field_p90_err_max": ccfg["p90_err_max"],
             "field_min_rel": ccfg["min_rel"]}
 
     def judged(name, v, c):
         if v is None:
-            return {"metric": name, "value": None, "criterion": c, "pass": None, "status": "skipped"}
-        return {"metric": name, "value": v, "criterion": c, "pass": bool(v <= c)}
+            return {"metric": name, "value": None, "criterion": c, "pass": None, "status": "skipped", "role": "judge"}
+        return {"metric": name, "value": v, "criterion": c, "pass": bool(v <= c), "role": "judge"}
+
+    def ref(name, v, c):
+        return {"metric": name, "value": v, "criterion": c, "pass": None, "role": "reference",
+                "exceeded": bool(v is not None and not v <= c)}
+
+    def info(name, v):
+        return {"metric": name, "value": v, "criterion": None, "pass": None, "role": "info"}
 
     metrics = [
         judged("disp_rms_rel", disp_rms_rel, crit["disp_rms_rel_max"]),
-        {"metric": "hotspot1_strain_rel_err", "value": h1, "criterion": crit["hotspot_strain_rel_err_max"],
-         "pass": bool(h1 <= crit["hotspot_strain_rel_err_max"])},
+        judged("disp_max_rel", disp_max_rel, crit["disp_max_rel_max"]),
         judged("reaction_rel", reac_abs_rel, crit["reaction_rel_max"]),
-        {"metric": "disp_max_rel", "value": disp_max_rel, "criterion": None, "pass": None},
-        {"metric": "reaction_sum_rel", "value": reac_sum_rel, "criterion": None, "pass": None},
-        {"metric": "u_rel_linear_rigid_rel", "value": lin_rigid_rel, "criterion": None, "pass": None},
-        {"metric": "noise_hotspot_strain_rel", "value": n_strain, "criterion": crit["noise_strain_rel_max"],
-         "pass": None if n_strain is None else bool(n_strain <= crit["noise_strain_rel_max"])},
-        {"metric": "noise_force_rel", "value": n_force, "criterion": None, "pass": None},
-        {"metric": "field_max_err_pct", "value": f_max, "criterion": ccfg["max_err_pct_max"],
-         "pass": bool(f_max <= ccfg["max_err_pct_max"])},
-        {"metric": "field_p90_err_pct", "value": f_p90, "criterion": ccfg["p90_err_max"],
-         "pass": bool(f_p90 <= ccfg["p90_err_max"])},
+        judged("disp_noise_rel", disp_noise_rel, crit["disp_noise_rel_max"]),
+        ref("hotspot1_strain_rel_err", h1, crit["hotspot_strain_rel_err_max"]),
+        ref("field_max_err_pct", f_max, ccfg["max_err_pct_max"]),
+        ref("field_p90_err_pct", f_p90, ccfg["p90_err_max"]),
+        ref("noise_hotspot_strain_rel", n_strain, crit["noise_strain_rel_max"]),
+        info("reaction_sum_rel", reac_sum_rel),
+        info("u_rel_linear_rigid_rel", lin_rigid_rel),
+        info("noise_force_rel", n_force),
     ]
-    verdict = "PASS" if all(m["pass"] for m in metrics if m["pass"] is not None) else "FAIL"
-    fail_reasons = [_FAIL_REASON[m["metric"]] for m in metrics if m["pass"] is False]
+    sref["exceeded"] = any(m["exceeded"] for m in metrics if m["role"] == "reference")
+    sref["exceeded_metrics"] = [m["metric"] for m in metrics if m["role"] == "reference" and m["exceeded"]]
+
+    undetermined_reason = None
+    if not fs["run"]:
+        undetermined_reason = "NO_FULL_SOLVE"
+    elif umax <= 0:
+        undetermined_reason = "ZERO_DISP"
+    if undetermined_reason:
+        verdict, fail_reasons = "UNDETERMINED", []
+    else:
+        judge = [m for m in metrics if m["role"] == "judge"]
+        verdict = "PASS" if all(m["pass"] is True for m in judge) else "FAIL"
+        fail_reasons = [_FAIL_REASON[m["metric"]] for m in judge if m["pass"] is not True]
     reactions = [] if Rr is None else [{"node_id": int(nid[i]), "dof": d, "r": Rr[i].tolist()} for i, d in spc]
-    val = {"schema": "esl/validation/2", "frame": summ["frame"], "verdict": verdict, "esl_ref": esl_ref(summ),
-           "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "metrics": metrics,
-           "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded, "reactions": reactions,
-           "reaction_sum": None if Rr is None else Rr.sum(axis=0), "field": fsum, "created_at": _utcnow()}
+    val = {"schema": VALIDATION_SCHEMA, "frame": summ["frame"], "verdict": verdict, "verdict_scheme": VERDICT_SCHEME,
+           "undetermined_reason": undetermined_reason, "esl_ref": esl_ref(summ),
+           "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "noise_source": noise_source,
+           "metrics": metrics, "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded,
+           "reactions": reactions, "reaction_sum": None if Rr is None else Rr.sum(axis=0),
+           "disp": None if disp_an is None else disp_an["summary"], "strain_ref": sref, "field": fsum,
+           "created_at": _utcnow()}
 
     d = ctx.fresh_dir(D_VAL)
     _write_json(ctx.f(d, "validation.json"), val)
     np.savez_compressed(ctx.f(d, "compare_field.npz"), **farr)
+    if disp_an is not None:
+        np.savez_compressed(ctx.f(d, "compare_disp.npz"), **disp_an["arrays"])
     fmt = ctx.csvfmt()
     csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
-    if fs["run"]:
+    if solved:
         csvout.write_csv(ctx.f(d, "compare.csv"),
                          ("node_id", "ux_rel", "uy_rel", "uz_rel", "ux_val", "uy_val", "uz_val", "d_mag"),
                          ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
-    if verdict != "PASS":
+    if verdict == "FAIL":
         ctx.warnings.append("검증 FAIL: " + ", ".join(f"{m['metric']}({_FAIL_REASON[m['metric']]})"
-                                                     for m in metrics if m["pass"] is False))
+                                                     for m in metrics if m["role"] == "judge" and m["pass"] is False))
     fmt_v = lambda v: "skipped" if v is None else f"{v:.2e}"
-    ctx.echo(f"[validate] disp_rms_rel={fmt_v(disp_rms_rel)} (≤{crit['disp_rms_rel_max']:g}), "
-             f"hotspot1 rel_err={h1:.2e} (≤{crit['hotspot_strain_rel_err_max']:g}, 막 ε_eq, 비교 {len(hots)}·"
-             f"제외 {len(excluded)}), "
+    ctx.echo(f"[validate] 변위 RMS={fmt_v(disp_rms_rel)} (≤{crit['disp_rms_rel_max']:g}), "
+             f"변위 최대={fmt_v(disp_max_rel)} (≤{crit['disp_max_rel_max']:g}), "
              f"반력 Σ|R|/Σ|F|={fmt_v(reac_abs_rel)} (≤{crit['reaction_rel_max']:g}), "
-             + (f"잡음 hotspot_strain_rel={n_strain:.2e} (≤{crit['noise_strain_rel_max']:g})"
-                if n_strain is not None else "잡음 N/A")
-             + f" → {verdict}" + (f" {fail_reasons}" if fail_reasons else ""))
+             f"변위 잡음 δ/U={fmt_v(disp_noise_rel)} (≤{crit['disp_noise_rel_max']:g}, {noise_source}) → {verdict}"
+             + (f" {fail_reasons}" if fail_reasons else "")
+             + (f" ({undetermined_reason})" if undetermined_reason else ""))
     fa = fsum["abs_err_pct"]
-    ctx.echo(f"[validate] 전 요소 비교: 최대변형률 요소 오차 {f_max:.3g}% (≤{ccfg['max_err_pct_max']:g}), "
-             f"|오차| P90 {f_p90:.3g}% (≤{ccfg['p90_err_max']:g}), valid {fsum['n_valid']}/{fsum['n_elems']} "
-             f"(상승 {fsum['n_rising']}, hold {fsum['n_hold']}, low {fsum['n_low']})"
-             + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else ""))
+    ctx.echo(f"[validate] 변형률 참고: hotspot1 rel_err={h1:.2e} (참고 ≤{crit['hotspot_strain_rel_err_max']:g}, "
+             f"비교 {len(hots)}·제외 {len(excluded)}), 최대변형률 요소 오차 {f_max:.3g}% (≤{ccfg['max_err_pct_max']:g}), "
+             f"|오차| P90 {f_p90:.3g}% (≤{ccfg['p90_err_max']:g}), 기준 초과 요소 {sref['n_exceed']}/{sref['n_elems']} "
+             f"({100 * sref['frac_exceed']:.3g}%)"
+             + ("" if sref["plastic"] is None else f", 소성 영역 {sref['plastic']['n_plastic']}")
+             + f", valid {fsum['n_valid']}/{fsum['n_elems']} (상승 {fsum['n_rising']}, hold {fsum['n_hold']}, "
+             f"low {fsum['n_low']})" + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else "")
+             + (" [참고 초과]" if sref["exceeded"] else ""))
     field_short = {"max_err_pct": f_max, "p90_err_pct": f_p90, "n_valid": fsum["n_valid"],
                    "n_rising": fsum["n_rising"], "n_elems": fsum["n_elems"], "prev_source": fsum["prev_source"]}
-    return {"verdict": verdict, "fail_reasons": fail_reasons, "field": field_short,
+    strain_short = {k: sref[k] for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct", "exceeded")}
+    strain_short["n_plastic"] = None if sref["plastic"] is None else sref["plastic"]["n_plastic"]
+    return {"verdict": verdict, "fail_reasons": fail_reasons, "undetermined_reason": undetermined_reason,
+            "field": field_short, "strain_ref": strain_short, "noise_source": noise_source,
             "noise_hotspot_strain_rel": n_strain,
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
+            "disp_noise_rel": disp_noise_rel,
             "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
             "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm)}
+
 
 # ====================================================================== export
 def esl_ref(summ: dict) -> str | None:

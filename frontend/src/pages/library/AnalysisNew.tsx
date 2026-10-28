@@ -9,7 +9,7 @@ import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
-import { DECK_LABEL, DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, VerdictBadge, entryLabel, libPath, matchEntries, sceneText, uniq } from "./common";
+import { DECK_LABEL, DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, EntryVerdict, entryLabel, libPath, matchEntries, sceneText, uniq } from "./common";
 
 const NORM_HINT: Record<Normalization, string> = {
   none: "절대값 그대로",
@@ -324,7 +324,7 @@ export function AnalysisNew() {
                     <td>{sceneText(e)}</td>
                     <td className="mono">{e.scene.orient ?? "–"}</td>
                     <td>
-                      <VerdictBadge v={e.quality.verdict} />
+                      <EntryVerdict e={e} />
                     </td>
                     <td className="num">{e.model.product_mass != null ? `${e.model.product_mass} kg` : <span className={f.normalization === "mass" ? "error-text" : "muted"}>없음</span>}</td>
                   </tr>

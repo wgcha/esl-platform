@@ -324,7 +324,8 @@ def test_unit_id_ignored_warning(case, tmp_path, capsys):
 
 
 def test_validate_without_full_solve(case, tmp_path, capsys):
-    """validation.full_solve: never → hotspot 변형률(u_rel + 응축 회전)만 비교, disp·반력 skipped, 판정은 hotspot."""
+    """validation.full_solve: never → 판정 불가(UNDETERMINED, NO_FULL_SOLVE): 변위·반력 skipped, 변형률은 참고로만 계산
+    (계약 esl_disp_primary.md D4 — 변형률로 대신 PASS 하지 않음)."""
     out = _copy_out(case, tmp_path)
     cfg = tmp_path / "nofull.yaml"
     cfg.write_text(open(case["cfg"], encoding="utf-8").read().replace("full_solve: auto", "full_solve: never"),
@@ -333,19 +334,17 @@ def test_validate_without_full_solve(case, tmp_path, capsys):
             "--stage", "validate"]
     assert cli.main(args) == 0
     o = capsys.readouterr().out
-    assert "disp_rms_rel=skipped" in o and "PASS" in o
+    assert "변위 RMS=skipped" in o and "UNDETERMINED" in o and "NO_FULL_SOLVE" in o
     val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
     m = {x["metric"]: x for x in val["metrics"]}
-    assert val["verdict"] == "PASS" and val["full_solve"]["run"] is False
+    assert val["verdict"] == "UNDETERMINED" and val["full_solve"]["run"] is False
+    assert val["undetermined_reason"] == "NO_FULL_SOLVE" and val["fail_reasons"] == []
     assert m["disp_rms_rel"]["status"] == "skipped" and m["disp_rms_rel"]["pass"] is None
     assert m["reaction_rel"]["status"] == "skipped" and val["reactions"] == []
     assert m["hotspot1_strain_rel_err"]["value"] < 1e-6 and len(val["hotspots"]) == 3
     assert not os.path.exists(os.path.join(out, "05_val", "compare.csv"))
-    # 전 요소 비교는 full_solve=never 에서도 동작(u_rel + 응축 회전 → ESL 막 변형률)
-    assert m["field_max_err_pct"]["value"] < 1e-4 and m["field_p90_err_pct"]["pass"] is True
-    z = np.load(os.path.join(out, "05_val", "compare_field.npz"), allow_pickle=False)
-    assert np.array_equal(z["w_val"], z["w_rel"]) and int(z["valid"].sum()) == val["field"]["n_valid"] > 0
-    assert cli.main(args[:-1] + ["export"]) == 0                       # 내보내기는 그대로 동작
+    # 전 요소 비교는 full_solve=never 에서도 동작(u_rel + 응축 회전 → ESL 막 변형률), 참고 지표로만
+    assert m["field_max_err_pct"]["value"] < 1e-4 and m["field_p90_err_pct"]["exceeded"] is False
 
 
 def test_full_solve_auto_memory_decision(monkeypatch):
@@ -472,9 +471,10 @@ def _set_cfg(src, dst, *pairs):
     return str(dst)
 
 
-def test_field_distorted_radioss_strain_fails(case, tmp_path, capsys):
+def test_field_distorted_radioss_strain_is_reference_only(case, tmp_path, capsys):
     """의도적 왜곡: 합성 Radioss ε(strain_frames 의 t*·직전 프레임 텐서)를 10% 키움 →
-    rel_err = 1/1.1 − 1 = −9.09% 가 전 valid 요소에 균일 → 기준 5% 로 FAIL(FIELD_MAX_ERR, FIELD_P90_ERR)."""
+    rel_err = 1/1.1 − 1 = −9.09% 가 전 valid 요소에 균일 → 기준 5% 초과는 "참고 초과"일 뿐 판정은 변위 기준이라 PASS
+    (0.5.7, 계약 esl_disp_primary.md D1·D2)."""
     out = _copy_out(case, tmp_path)
     p = os.path.join(out, "01_extract", "strain_frames.npz")
     z = dict(np.load(p, allow_pickle=False))
@@ -486,26 +486,33 @@ def test_field_distorted_radioss_strain_fails(case, tmp_path, capsys):
                    ("p90_err_max: 20.0", "p90_err_max: 5.0"))
     args = ["run", "--config", cfg, "--rad", case["rad"], "--results", case["csv"], "--out", out, "--stage", "validate"]
     assert cli.main(args) == 0
-    assert "FAIL" in capsys.readouterr().out
+    o = capsys.readouterr().out
+    assert "→ PASS" in o and "[참고 초과]" in o
     val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
     fs = val["field"]
     m = {x["metric"]: x for x in val["metrics"]}
     assert fs["max"]["err_pct"] == pytest.approx(expect, abs=1e-3)            # ≈ −9.09 %
-    assert m["field_max_err_pct"]["value"] == pytest.approx(-expect, abs=1e-3) and m["field_max_err_pct"]["pass"] is False
+    assert m["field_max_err_pct"]["value"] == pytest.approx(-expect, abs=1e-3)
+    assert m["field_max_err_pct"]["pass"] is None and m["field_max_err_pct"]["exceeded"] is True
     assert fs["abs_err_pct"]["p90"] == pytest.approx(-expect, abs=1e-3) and fs["frac_within"]["5"] == 0.0
-    assert val["verdict"] == "FAIL" and {"FIELD_MAX_ERR", "FIELD_P90_ERR"} <= set(val["fail_reasons"])
-    # 기본 기준(10%·20%)이면 9.09% 는 통과 — hotspot 기준(10%)도 통과
+    assert val["verdict"] == "PASS" and val["fail_reasons"] == [] and val["strain_ref"]["exceeded"] is True
+    assert val["strain_ref"]["n_exceed"] == val["strain_ref"]["n_valid"] > 0          # 균일 −9.09% > 5% 인 valid 전부
+    # 기본 기준(10%·20%)이면 9.09% 는 초과 아님 — hotspot 기준(10%)도 마찬가지
     assert cli.main(args[:2] + [case["cfg"]] + args[3:]) == 0
     val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
     assert val["verdict"] == "PASS" and val["field"]["max"]["abs_err_pct"] == pytest.approx(-expect, abs=1e-3)
-    # 15% 키우면 기본 기준으로도 FIELD_MAX_ERR
+    assert val["strain_ref"]["exceeded"] is False and val["strain_ref"]["n_exceed"] == 0
+    # 15% 키우면 기본 기준으로도 최대변형률 오차 "참고 초과"(판정은 그대로 PASS)
     z2 = dict(z)
     for k in ("eps", "prev_eps", "vm_hv", "prev_vm_hv"):
         z2[k] = (z[k] / np.float32(1.1) * np.float32(1.15)).astype(np.float32)
     np.savez_compressed(p, **z2)
     assert cli.main(args[:2] + [case["cfg"]] + args[3:]) == 0
     val = json.load(open(os.path.join(out, "05_val", "validation.json"), encoding="utf-8"))
-    assert "FIELD_MAX_ERR" in val["fail_reasons"] and "FIELD_P90_ERR" not in val["fail_reasons"]
+    m = {x["metric"]: x for x in val["metrics"]}
+    assert m["field_max_err_pct"]["exceeded"] is True and m["field_p90_err_pct"]["exceeded"] is False
+    assert val["verdict"] == "PASS" and val["fail_reasons"] == [] and set(val["strain_ref"]["exceeded_metrics"]) == {
+        "hotspot1_strain_rel_err", "field_max_err_pct"}
 
 
 def test_field_old_extract_without_prev_uses_history(case, tmp_path):

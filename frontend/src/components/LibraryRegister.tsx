@@ -1,4 +1,5 @@
-// ⑤ 결과 카드 안 보조 버튼 "라이브러리 등록"(계약 §11). PASS 는 바로 등록, FAIL 은 확정 사유 입력 대화상자.
+// ⑤ 결과 카드 안 보조 버튼 "라이브러리 등록"(계약 §11, esl_disp_primary.md §8).
+// PASS 는 바로 등록, FAIL·판정 불가(UNDETERMINED)는 확정 사유 입력 대화상자(사유 필수), 이전 판정 체계(LEGACY)는 당시 verdict 규칙.
 // 이미 등록된(ACTIVE) ESL 결과면 버튼 대신 '등록됨' 표시.
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -8,6 +9,7 @@ import type { ValidationOut } from "../api/types";
 import { NO_PERMISSION } from "../app/AppContext";
 import { usePolling } from "../lib/usePolling";
 import { Badge } from "./ui";
+import { statusOf, undeterminedText } from "./VerdictStatus";
 
 export function LibraryRegister({ projectId, v, allowed, failLabels }: { projectId: string; v: ValidationOut; allowed: boolean; failLabels: Record<string, string> }) {
   const entries = usePolling(() => api.libraryEntries({ project_id: projectId, status: "ACTIVE" }), 0, [projectId, v.esl_run_id]);
@@ -28,6 +30,9 @@ export function LibraryRegister({ projectId, v, allowed, failLabels }: { project
       </span>
     );
 
+  const status = statusOf(v);
+  // 사유 없이 등록 가능: PASS, 또는 당시 PASS 였던 LEGACY
+  const needsReason = status === "FAIL" || status === "UNDETERMINED" || (status === "LEGACY" && v.verdict !== "PASS");
   const blocked = !allowed ? NO_PERMISSION : v.stale ? "이전 입력의 검증입니다 — ⑤ 검증을 다시 실행한 뒤 등록하세요" : null;
 
   async function submit(force_reason?: string) {
@@ -46,12 +51,12 @@ export function LibraryRegister({ projectId, v, allowed, failLabels }: { project
 
   return (
     <>
-      <span className="primary-wrap" title={blocked ?? (v.verdict === "PASS" ? "검증 PASS 결과를 라이브러리에 등록" : "검증 FAIL — 사유를 적고 확정 등록")}>
+      <span className="primary-wrap" title={blocked ?? (!needsReason ? "검증 PASS 결과를 라이브러리에 등록" : status === "UNDETERMINED" ? "판정 불가 — 사유를 적고 확정 등록" : "검증 FAIL — 사유를 적고 확정 등록")}>
         <button
           type="button"
           className="btn small"
           disabled={!!blocked || busy}
-          onClick={() => (v.verdict === "PASS" ? void submit() : (setError(null), setOpen(true)))}
+          onClick={() => (!needsReason ? void submit() : (setError(null), setOpen(true)))}
         >
           라이브러리 등록
         </button>
@@ -63,7 +68,8 @@ export function LibraryRegister({ projectId, v, allowed, failLabels }: { project
       )}
       {open && (
         <ReasonDialog
-          reasons={v.fail_reasons.map((f) => (failLabels[f] ? `${f} — ${failLabels[f]}` : f))}
+          status={status}
+          reasons={status === "UNDETERMINED" ? [undeterminedText(v)] : v.fail_reasons.map((f) => (failLabels[f] ? `${f} — ${failLabels[f]}` : f))}
           value={reason}
           onChange={setReason}
           busy={busy}
@@ -77,6 +83,7 @@ export function LibraryRegister({ projectId, v, allowed, failLabels }: { project
 }
 
 function ReasonDialog({
+  status,
   reasons,
   value,
   onChange,
@@ -85,6 +92,7 @@ function ReasonDialog({
   onCancel,
   onSubmit,
 }: {
+  status: string;
   reasons: string[];
   value: string;
   onChange: (s: string) => void;
@@ -105,8 +113,12 @@ function ReasonDialog({
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reg-title">
-        <h3 id="reg-title">검증 FAIL 결과를 라이브러리에 등록</h3>
-        <div className="small">이 결과는 판정 기준을 넘었습니다. 그래도 하중 근거로 쓸 이유를 적어 확정하세요(기록에 남습니다).</div>
+        <h3 id="reg-title">{status === "UNDETERMINED" ? "판정 불가 결과를 라이브러리에 등록" : "검증 FAIL 결과를 라이브러리에 등록"}</h3>
+        <div className="small">
+          {status === "UNDETERMINED"
+            ? "이 결과는 변위 비교가 없어 판정하지 못했습니다. 그래도 하중 근거로 쓸 이유를 적어 확정하세요(기록에 남습니다)."
+            : "이 결과는 판정 기준을 넘었습니다. 그래도 하중 근거로 쓸 이유를 적어 확정하세요(기록에 남습니다)."}
+        </div>
         <ul className="reasons small">
           {reasons.map((r) => (
             <li key={r} className="error-text">
@@ -116,7 +128,7 @@ function ReasonDialog({
         </ul>
         <label className="field">
           <span className="field-label">확정 사유 (필수)</span>
-          <textarea ref={area} rows={3} value={value} onChange={(e) => (setTouched(true), onChange(e.target.value))} aria-invalid={empty && touched} placeholder="예: 누적 소성 시나리오 — 최대변형률 오차는 소성 영역 탄성 근사 한계로 확인" />
+          <textarea ref={area} rows={3} value={value} onChange={(e) => (setTouched(true), onChange(e.target.value))} aria-invalid={empty && touched} placeholder={status === "UNDETERMINED" ? "예: 메모리 한도로 전체 재해석 생략 — ③ 반력 평형과 변형률 참고 지표로 확인" : "예: 누적 소성 시나리오 — 변위 오차는 허용 범위 내로 확인"} />
         </label>
         {error && (
           <div className="error-text small" role="alert">

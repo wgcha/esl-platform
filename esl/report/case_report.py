@@ -177,7 +177,8 @@ _METRIC_TEXT = {
     "disp_rms_rel": "변위 왕복 RMS(u_val − u_rel)/max|u_rel|",
     "hotspot1_strain_rel_err": "hotspot 1위 |ε_val − ε_rad|/ε_rad",
     "reaction_rel": "3-2-1 반력 Σ|R|/Σ|F|",
-    "disp_max_rel": "변위 왕복 최대 상대오차",
+    "disp_max_rel": "변위 왕복 max|u_val − u_rel|/max|u_rel| (전 노드)",
+    "disp_noise_rel": "변위 저장 정밀도 잡음 δ/max|u_rel| (추가 해석 없음)",
     "reaction_sum_rel": "|ΣR|/Σ|F|",
     "u_rel_linear_rigid_rel": "u_rel 의 잔여 미소 강체 성분",
     "noise_hotspot_strain_rel": "변위 정밀도 잡음 → hotspot ε 상대 변화",
@@ -187,25 +188,101 @@ _METRIC_TEXT = {
 }
 
 
+STATUS_TEXT = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "판정 불가", "LEGACY": "이전 판정 체계"}
+UNDET_TEXT = {"NO_FULL_SOLVE": "전체 재해석 생략 — 변위 비교가 없어 판정하지 않음",
+              "ZERO_DISP": "u_rel 이 전부 0(변형 없음) — 상대 지표를 정의할 수 없어 판정하지 않음"}
+
+
+def status_of(v: dict | None) -> str | None:
+    """표시 상태: scheme(verdict_scheme)이 없으면 LEGACY, 아니면 verdict (PASS|FAIL|UNDETERMINED)."""
+    if not v:
+        return None
+    return v.get("verdict") if v.get("verdict_scheme") else "LEGACY"
+
+
+def status_badge(v: dict | None) -> str:
+    st = status_of(v)
+    if st in ("PASS", "FAIL"):
+        return H.badge(st)
+    if st is None:
+        return H.badge(None)
+    extra = f' <span class="small muted">당시 {H.esc(v.get("verdict"))}</span>' if st == "LEGACY" else ""
+    return f'<span class="badge na">{H.esc(STATUS_TEXT[st])}</span>{extra}'
+
+
+def _sec_disp(v: dict) -> str:
+    """변위 전 노드 분석(full_solve 수행 시): 로그 히스토그램 표 + 상위 노드 표."""
+    dp = v.get("disp")
+    if not dp:
+        return ""
+    h = dp.get("hist") or {}
+    e = h.get("edges_log10") or []
+    cnt = h.get("counts") or []
+    rows = [(f"1e{e[i]:g} ~ 1e{e[i + 1]:g}", cnt[i]) for i in range(len(cnt))]
+    if h.get("n_zero"):
+        rows.insert(0, ("= 0", h["n_zero"]))
+    top = [(i + 1, t["node_id"], t["r"], t["e"], t["u_rel_mag"], "지지" if t.get("is_support") else "")
+           for i, t in enumerate(dp.get("top") or [])]
+    cards = H.cards([("U = max|u_rel|", H.fmt(dp.get("U"))),
+                     ("RMS(e)/U", H.fmt(dp.get("rms_rel"))),
+                     ("max(e)/U", H.fmt(dp.get("max_rel")) + f'<div class="small muted">node {H.esc(dp.get("max_node_id"))}</div>'),
+                     ("P50 / P90 / P99 (e/U)", f'{H.fmt(dp.get("p50"), 3)} / {H.fmt(dp.get("p90"), 3)} / {H.fmt(dp.get("p99"), 3)}'),
+                     ("노드 / 지지", f'{H.fmt(dp.get("n_nodes"))} / {H.fmt(dp.get("n_support"))}')])
+    return ("<h3>변위 비교 (전 노드)</h3>"
+            '<p class="small muted">e = ‖d_val − d_rel‖(양쪽 독립 미소 강체 제거 후), r = e/U. S4 와 S5 가 같은 K 를 쓰므로 '
+            "이 값은 물리 차이가 아니라 계산·경계조건·저장 정밀도의 수치 일관성이다.</p>"
+            + cards + "<h4>r = e/U 분포 (log10 bin)</h4>" + H.table(["r 범위", "노드 수"], rows, num=(1,))
+            + "<h4>상위 노드</h4>" + H.table(["#", "node", "r = e/U", "e", "‖d_rel‖", ""], top, num=(0, 1, 2, 3, 4)))
+
+
 def _sec_validation(c: _Case) -> str:
     v = c.val
     if not v:
         return _none()
-    rows = [(m["metric"], _METRIC_TEXT.get(m["metric"], ""), m.get("value"), m.get("criterion"),
-             H.pass_cell(m.get("pass")) if m.get("status") != "skipped" else '<span class="na">생략</span>')
-            for m in v.get("metrics") or []]
+    st = status_of(v)
+    legacy = st == "LEGACY"
+    mets = v.get("metrics") or []
+
+    def row(m):
+        return (m["metric"], _METRIC_TEXT.get(m["metric"], ""), m.get("value"), m.get("criterion"),
+                H.pass_cell(m.get("pass")) if m.get("status") != "skipped" else '<span class="na">생략</span>')
+
+    judge = [m for m in mets if (m.get("role") == "judge")] if not legacy else mets
     fs = v.get("full_solve") or {}
     hs = [(h["rank"], h["elem_id"], h.get("eps_rad"), h.get("eps_val"),
            None if h.get("rel_err") is None else 100.0 * float(h["rel_err"])) for h in v.get("hotspots") or []]
     ex = [(h["rank"], h["elem_id"], h.get("reason", "")) for h in v.get("hotspots_excluded") or []]
-    out = [f'<p>판정: {H.badge(v.get("verdict"))} '
+    out = [f'<p>판정: {status_badge(v)} '
            + (f'<span class="muted">사유 {H.esc(", ".join(v.get("fail_reasons") or []))}</span>'
-              if v.get("fail_reasons") else "") + "</p>",
-           f'<p class="small muted">S5 전체 재해석: {"수행" if fs.get("run") else "생략"} ({H.esc(fs.get("reason", ""))})'
-           + ("" if fs.get("run") else " — ESL 변위 = u_rel(정의상), 변형률은 u_rel + 응축 회전") + "</p>",
-           H.table(["지표", "의미", "값", "기준", "판정"], rows, num=(2, 3), raw=(4,)),
-           "<h3>hotspot (t* 에서 상승 중인 H 요소)</h3>",
-           H.table(["rank", "elem", "ε_rad", "ε_val", "오차 %"], hs, num=(0, 1, 2, 3, 4)) if hs else _none("비교한 hotspot 없음")]
+              if v.get("fail_reasons") else "") + "</p>"]
+    if st == "UNDETERMINED":
+        out.append(f'<p class="small">{H.esc(UNDET_TEXT.get(v.get("undetermined_reason"), v.get("undetermined_reason") or ""))}'
+                   f' (full_solve={H.esc((v.get("criteria") or {}).get("full_solve", fs.get("mode")))}: '
+                   f'{H.esc(fs.get("reason", ""))})</p>')
+    else:
+        out.append(f'<p class="small muted">S5 전체 재해석: {"수행" if fs.get("run") else "생략"} ({H.esc(fs.get("reason", ""))})</p>')
+    if not legacy:
+        out.append('<p class="small muted">판정 = 변위 4지표(전 노드, 3-2-1 지지 노드 포함). 변형률은 아래 "참고" 표 — 판정에 쓰지 않는다.</p>')
+    out.append(H.table(["지표", "의미", "값", "기준", "판정"], [row(m) for m in judge], num=(2, 3), raw=(4,)))
+    if not legacy:
+        refs = [m for m in mets if m.get("role") == "reference"]
+        sr = v.get("strain_ref") or {}
+        pl = sr.get("plastic")
+        out.append("<h3>변형률 (참고 — 판정 아님)</h3>")
+        out.append(H.table(["지표", "의미", "값", "참고 기준", "참고 초과"],
+                           [(m["metric"], _METRIC_TEXT.get(m["metric"], ""), m.get("value"), m.get("criterion"),
+                             '<span class="badge na">참고 초과</span>' if m.get("exceeded") else '<span class="na">—</span>')
+                            for m in refs], num=(2, 3), raw=(4,)))
+        out.append(H.cards([
+            ("기준 초과 요소", f'{H.fmt(sr.get("n_exceed"))} / {H.fmt(sr.get("n_elems"))}'
+                          f'<div class="small muted">{H.pct(None if sr.get("frac_exceed") is None else 100 * sr["frac_exceed"])}'
+                          f' (valid 대비 {H.pct(None if sr.get("frac_exceed_valid") is None else 100 * sr["frac_exceed_valid"])})</div>'),
+            ("|오차| P99", H.pct(sr.get("p99_err_pct"))),
+            ("소성 영역 (epsp>0)", "—" if pl is None else f'{H.fmt(pl.get("n_plastic"))} ({H.pct(100 * pl["frac_plastic"])})'
+                                 f'<div class="small muted">초과 ∩ 소성 {H.fmt(pl.get("n_exceed_plastic"))}</div>')]))
+    out.append(_sec_disp(v))
+    out.append("<h3>hotspot (t* 에서 상승 중인 H 요소)</h3>"
+               + (H.table(["rank", "elem", "ε_rad", "ε_val", "오차 %"], hs, num=(0, 1, 2, 3, 4)) if hs else _none("비교한 hotspot 없음")))
     if ex:
         out.append("<h3>비교 제외 hotspot</h3>" + H.table(["rank", "elem", "사유"], ex, num=(0, 1)))
     return "".join(out)
@@ -223,10 +300,10 @@ def _field_summary(c: _Case) -> str:
     card = H.cards([
         ("max ε_rad (t* 상승 요소)", H.fmt(mx.get("eps_rad")) + f'<div class="small muted">elem {H.esc(mx.get("elem_id", "—"))}</div>'),
         ("같은 요소 ε_esl", H.fmt(mx.get("eps_esl"))),
-        ("최대변형률 오차", H.pct(mx.get("err_pct")) + f'<div class="small muted">기준 ≤ {H.fmt(cr.get("max_err_pct_max"))}%</div>'),
+        ("최대변형률 오차", H.pct(mx.get("err_pct")) + f'<div class="small muted">참고 기준 ≤ {H.fmt(cr.get("max_err_pct_max"))}%</div>'),
         ("ESL 전체 최대 ε", H.fmt(mx.get("eps_esl_max")) + f'<div class="small muted">elem {H.esc(mx.get("eps_esl_max_elem_id", "—"))}, '
                                                          f'최대끼리 {H.pct(mx.get("peak_err_pct"))}</div>'),
-        ("|오차| P90", H.pct(ae.get("p90")) + f'<div class="small muted">기준 ≤ {H.fmt(cr.get("p90_err_max"))}%</div>'),
+        ("|오차| P90", H.pct(ae.get("p90")) + f'<div class="small muted">참고 기준 ≤ {H.fmt(cr.get("p90_err_max"))}%</div>'),
         ("valid / 전체", f'{H.fmt(fs.get("n_valid"))} / {H.fmt(fs.get("n_elems"))}'),
     ])
     q = H.table(["평균", "P50", "P90", "P95", "최대", "≤5%", "≤10%", "≤20%"],
@@ -494,7 +571,7 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
         ("supports", "3. 3-2-1 지지점", _sec_supports(c)),
         ("feq", "4. 등가하중 F_eq", _sec_feq(c, top_forces)),
         ("validation", "5. 검증 요약", _sec_validation(c)),
-        ("field", "6. ESL 재현 정확도 — 전 요소 비교", _field_summary(c)),
+        ("field", "6. ESL 재현 정확도 — 전 요소 비교 (참고 — 판정 아님)", _field_summary(c)),
         ("overlay", "7. 겹쳐보기 — Radioss ε / ESL ε / 오차 %", _sec_overlay(c, mapd)),
         ("section", "8. 변형 단면선 겹치기", _sec_section(c)),
         ("top", "9. 상위 요소 표", _sec_top(c)),
@@ -504,7 +581,7 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
     toc = '<nav class="toc">' + "".join(f'<a href="#{i}">{H.esc(n)}</a>' for i, n, _ in parts) + "</nav>"
     head = (f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">'
             f'<div><h1>{H.esc(t)}</h1><p class="muted small">생성 {H.esc(now)} · esl {H.esc(esl.__version__)}'
-            f' · 판정 {H.badge(v.get("verdict"))}'
+            f' · 판정 {status_badge(v)}'
             + (f' · tag {H.esc((c.summ or {}).get("tag"))}' if (c.summ or {}).get("tag") else "")
             + '</p></div><button type="button" class="tg" id="theme-btn">테마: 자동</button></div>')
     if c.missing:
@@ -516,7 +593,8 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
     info = {"sections": [i for i, _, _ in parts], "missing": sorted(set(c.missing)),
             "n_points": None if mapd is None else mapd["n_shown"],
             "n_elems": None if mapd is None else mapd["n_total"],
-            "downsampled": None if mapd is None else mapd["cell"] is not None, "verdict": v.get("verdict")}
+            "downsampled": None if mapd is None else mapd["cell"] is not None, "verdict": v.get("verdict"),
+            "status": status_of(v)}
     return doc, info
 
 

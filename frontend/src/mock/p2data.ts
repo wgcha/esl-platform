@@ -1,11 +1,13 @@
 // P2 목 데이터: 전 요소 비교(겹쳐보기·단면선)·라이브러리 항목·종합분석. 결정적(난수 없음).
 // 판 요소 격자 100×50(12 mm) 위 합성 변형률 장. 요약(분위수·히스토그램)은 코어 summarize 와 같은 규칙으로 계산한다.
 import type {
+  ColorRangeRobust, SectionSuggest, SectionStats, StrainRef, ValidationOut,
   AnalysisCase, AnalysisFileOut, AnalysisLoadCase, AnalysisOut, AnalysisResult, ComparisonResult, DeckSummary, EntryOut,
   OptdeckCases, FieldLayer, FieldOut, FieldPoint, FieldRow,
   FieldSummary, SectionAxis, SectionOut,
 } from "../api/types";
 import { PLANE, TSTAR_METRICS } from "./data";
+import { DISP_MAX, DISP_RMS, MAX_ERR_NODE, U_MM, ceil2, makeDispSummary } from "./dispdata";
 
 const NXE = 100;
 const NYE = 50;
@@ -30,6 +32,8 @@ interface Elem {
   esl: number;
   rel: number;
   reason: string;
+  /** 기준 초과(valid ∧ |오차| > max_err_pct_max) = 1, 소성 영역(epsp>0) = 2 */
+  flags: number;
 }
 
 /** 전역 좌표 → PCA 평면 (a, b) */
@@ -69,12 +73,14 @@ function build(): Elem[] {
       const top = id === hot[0].id;
       const r0 = top ? 0.1418 : rad;
       const e0 = top ? -0.124 : rel;
-      out.push({ id, a, b, rad: r0, esl: r0 * (1 + e0), rel: e0, reason: hold ? "HOLD" : "OK" });
+      const plastic = g(281, -84, 150, 110) > 0.3 && !hold ? 2 : 0;
+      out.push({ id, a, b, rad: r0, esl: r0 * (1 + e0), rel: e0, reason: hold ? "HOLD" : "OK", flags: plastic });
     }
   const max = Math.max(...out.filter((e) => e.reason === "OK").map((e) => e.rad));
   for (const e of out) if (e.reason === "OK" && e.rad < MIN_REL * max) e.reason = "LOW";
   // 경계 열 일부 = 예전 TCL 출력(직전 프레임 없음)
   for (const e of out) if (e.b > LY / 2 - 12 && e.a > 0 && e.a < 120) e.reason = "NO_PREV";
+  for (const e of out) if (e.reason === "OK" && Math.abs(100 * e.rel) > FIELD_CRITERIA.max_err_pct_max) e.flags |= 1;
   return out;
 }
 
@@ -163,7 +169,7 @@ export function makeField(vid: string, layer: FieldLayer, maxPoints = 20000): Fi
   const s = makeFieldSummary();
   const points: FieldPoint[] = pick.map((e) => {
     const v = layer === "rad" ? e.rad : layer === "esl" ? e.esl : e.reason === "OK" ? 100 * e.rel : null;
-    return [e.id, +e.a.toFixed(2), +e.b.toFixed(2), v === null ? null : r4(v), e.reason];
+    return [e.id, +e.a.toFixed(2), +e.b.toFixed(2), v === null ? null : r4(v), e.reason, e.flags];
   });
   const all = ELEMS.flatMap((e) => [e.rad, e.esl]);
   const R = niceCeil(s.abs_err_pct ? pctile(ELEMS.filter((e) => e.reason === "OK").map((e) => Math.abs(100 * e.rel)).sort((x, y) => x - y), 0.99) : 1);
@@ -176,28 +182,127 @@ export function makeField(vid: string, layer: FieldLayer, maxPoints = 20000): Fi
     cell: stride > 1 ? [(LX / NXE) * Math.sqrt(stride), (LY / NYE) * Math.sqrt(stride)] : null,
     plane: { origin: PLANE.origin, e1: PLANE.e1, e2: PLANE.e2 },
     color_range: layer === "err" ? { min: -R, max: R } : { min: r4(Math.min(...all)), max: r4(Math.max(...all)) },
+    color_range_robust: fieldRobust(layer),
     points,
   };
 }
 
-/** GET /validations/{id}/section: ξ(또는 η) = at 고정 단면의 면외 좌표·변위(mm) */
-export function makeSection(vid: string, axis: SectionAxis, at = 0.5): SectionOut {
-  const n = axis === "xi" ? NYE : NXE;
-  const L = axis === "xi" ? LY : LX;
+/** 견고한 자동 범위(§14.2): err = ±ceil2(P99 |오차|), rad·esl = [최소, ceil2(P99)] (두 레이어 합집합) */
+function fieldRobust(layer: FieldLayer): ColorRangeRobust {
+  if (layer === "err") {
+    const abs = ELEMS.filter((e) => e.reason === "OK").map((e) => Math.abs(100 * e.rel)).sort((x, y) => x - y);
+    const raw = pctile(abs, 0.99);
+    const R = ceil2(raw);
+    return { min: R === null ? null : -R, max: R, basis: "p99", raw };
+  }
+  const vals = ELEMS.flatMap((e) => [e.rad, e.esl]).sort((x, y) => x - y);
+  const raw = pctile(vals, 0.99);
+  return { min: vals[0], max: ceil2(raw), basis: "p99", raw };
+}
+
+/** 변형률 참고 집계(§3.4) — 초과 요소·소성 영역 */
+export function makeStrainRef(): StrainRef {
+  const n = ELEMS.length;
+  const valid = ELEMS.filter((e) => e.reason === "OK");
+  const exceed = ELEMS.filter((e) => e.flags & 1);
+  const plastic = ELEMS.filter((e) => e.flags & 2);
+  const abs = valid.map((e) => Math.abs(100 * e.rel)).sort((x, y) => x - y);
+  const fs = makeFieldSummary();
+  return {
+    exceeded: exceed.length > 0 || (fs.max?.abs_err_pct ?? 0) > FIELD_CRITERIA.max_err_pct_max || (fs.abs_err_pct?.p90 ?? 0) > FIELD_CRITERIA.p90_err_max,
+    n_exceed: exceed.length,
+    frac_exceed: exceed.length / n,
+    frac_exceed_valid: exceed.length / valid.length,
+    p99_err_pct: r4(pctile(abs, 0.99)),
+    plastic: { n_plastic: plastic.length, frac_plastic: plastic.length / n, n_exceed_plastic: exceed.filter((e) => e.flags & 2).length },
+  };
+}
+
+/** 서버 validationOut 와 같은 규칙: 새 체계(scheme)면 변위 요약·변형률 참고가 없을 때 목 값으로 채운다. 변위 지표는 합성 변위장 값과 일치시킨다 */
+export function enrichValidation(v: ValidationOut): ValidationOut {
+  if (!v.scheme) return { ...v, disp: null, strain_ref: null };
+  const full = v.status !== "UNDETERMINED";
+  const out: ValidationOut = { ...v, strain_ref: v.strain_ref ?? makeStrainRef() };
+  if (full && v.disp === null) {
+    out.disp = makeDispSummary();
+    if (v.status === "PASS") {
+      out.disp_rms_rel = DISP_RMS;
+      out.disp_max_rel = DISP_MAX;
+    }
+  }
+  return out;
+}
+
+/** 요소 중심 범위(서버 xi_range·eta_range 에 해당) */
+const A_MIN = -LX / 2 + LX / NXE / 2;
+const A_MAX = LX / 2 - LX / NXE / 2;
+const B_MIN = -LY / 2 + LY / NYE / 2;
+const B_MAX = LY / 2 - LY / NYE / 2;
+const BAND_ABS = LY / NYE; // 띠 반폭 = 요소 한 칸
+const norm01 = (v: number, lo: number, hi: number) => Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+
+/** 판 위 (a, b)의 초기 면외 좌표·Radioss·ESL 면외 변위(mm) — 단면 위치에 따라 달라진다 */
+function wAt(a: number, b: number) {
+  const w0 = 6 * Math.cos((Math.PI * a) / LX) * Math.cos((Math.PI * b) / LY) - 4;
+  const g = (ca: number, cb: number, sa: number, sb: number) => Math.exp(-(((a - ca) / sa) ** 2) - ((b - cb) / sb) ** 2);
+  const wr = -3.4 * g(281, -84, 260, 190) + 0.4 * Math.sin(a / 90) * Math.cos(b / 120);
+  // ESL − Radioss = 수치 일관성 수준(U 의 1e-6 정도)
+  const dw = U_MM * 1.6e-6 * (0.3 + Math.sin(a / 53 + b / 71));
+  return { w0, wr, we: wr + dw };
+}
+
+/** GET /validations/{id}/section: axis=eta → η(폭 방향) 고정, 판 길이 방향으로 그림 / axis=xi → ξ(길이 방향) 고정, 판 폭 방향으로 그림.
+ *  at = 고정 좌표의 0~1 정규화 위치. hasVal=false(UNDETERMINED·LEGACY)면 ESL·Δw 없음 */
+export function makeSection(vid: string, axis: SectionAxis, at = 0.5, hasVal = true): SectionOut {
+  const alongX = axis === "eta";
+  const n = alongX ? NXE : NYE;
+  const fixed = alongX ? B_MIN + at * (B_MAX - B_MIN) : A_MIN + at * (A_MAX - A_MIN);
   const s: number[] = [];
   const w0: number[] = [];
   const wr: number[] = [];
   const we: number[] = [];
+  const dw: number[] = [];
   for (let k = 0; k < n; k++) {
-    const x = -L / 2 + (k + 0.5) * (L / n);
+    const x = alongX ? A_MIN + (k * (A_MAX - A_MIN)) / (n - 1) : B_MIN + (k * (B_MAX - B_MIN)) / (n - 1);
+    const w = alongX ? wAt(x, fixed) : wAt(fixed, x);
     s.push(+x.toFixed(2));
-    w0.push(+(6 * Math.cos((Math.PI * x) / L) - 4).toFixed(4));
-    const c = axis === "xi" ? -84 : 281;
-    const bump = -3.4 * Math.exp(-(((x - c) / (L * 0.22)) ** 2));
-    wr.push(+(bump + 0.4 * Math.sin(x / 90)).toFixed(5));
-    we.push(+(bump * 0.93 + 0.36 * Math.sin(x / 90) + 0.05).toFixed(5));
+    w0.push(+w.w0.toFixed(4));
+    wr.push(+w.wr.toFixed(6));
+    we.push(+w.we.toFixed(8));
+    dw.push(w.we - w.wr);
   }
-  return { validation_id: vid, axis, at, band: 0.02, n_elems: n * 2, s, w0, w_rad: wr, w_esl: we };
+  const band = BAND_ABS;
+  const rows = Math.max(1, Math.round((2 * band) / (alongX ? LY / NYE : LX / NXE)) + 1);
+  const dwMax = Math.max(...dw.map((v) => Math.abs(v)));
+  const kmax = dw.findIndex((v) => Math.abs(v) === dwMax);
+  const wMaxAbs = Math.max(...wr.map(Math.abs), ...(hasVal ? we.map(Math.abs) : []));
+  const rms = Math.sqrt(dw.reduce((a, v) => a + v * v, 0) / dw.length);
+  const stats: SectionStats = hasVal
+    ? { dw_max_abs: dwMax, s_at_dw_max: s[kmax], dw_rms: rms, U: U_MM, dw_max_rel: dwMax / U_MM, dw_rms_rel: rms / U_MM, w_max_abs: wMaxAbs }
+    : { dw_max_abs: null, s_at_dw_max: null, dw_rms: null, U: null, dw_max_rel: null, dw_rms_rel: null, w_max_abs: wMaxAbs };
+  const hs = TSTAR_METRICS.max_strain.hotspots[0];
+  const hsAB = project(hs.centroid!);
+  const suggest: SectionSuggest[] = [];
+  if (hasVal)
+    suggest.push({ key: "max_disp_err", label: "최대 변위 오차 노드 지나는 단면", xi: norm01(MAX_ERR_NODE.a, A_MIN, A_MAX), eta: norm01(MAX_ERR_NODE.b, B_MIN, B_MAX), id: MAX_ERR_NODE.id });
+  suggest.push({ key: "hotspot1", label: "변형률 hotspot 1위 지나는 단면", xi: norm01(hsAB[0], A_MIN, A_MAX), eta: norm01(hsAB[1], B_MIN, B_MAX), id: hs.elem_id });
+  return {
+    validation_id: vid,
+    axis,
+    at,
+    band: 0.02,
+    n_elems: n * rows,
+    s,
+    w0,
+    w_rad: wr,
+    w_esl: hasVal ? we : [],
+    dw: hasVal ? dw : [],
+    stats,
+    has_val: hasVal,
+    line: alongX ? { a0: A_MIN, b0: fixed, a1: A_MAX, b1: fixed, band_abs: band, xi_range: [A_MIN, A_MAX], eta_range: [B_MIN, B_MAX] } : { a0: fixed, b0: B_MIN, a1: fixed, b1: B_MAX, band_abs: band, xi_range: [A_MIN, A_MAX], eta_range: [B_MIN, B_MAX] },
+    units: "mm",
+    suggest,
+  };
 }
 
 // ---------------------------------------------------------------- 라이브러리 항목
@@ -217,7 +322,7 @@ export function makeEntries(projectId: string): EntryOut[] {
   const base: EntryOut[] = SCENES.map(([model, inch, scenario, seq, drop, sc, orient, verdict, mx, p90, mass], k) => {
     const raw = `F:/Hyper_work/VD_25y/${model}/${model}_v072_260511/${scenario}/${seq}_${drop}_Drop_Scene${sc}_${drop}${orient}_comp.h3d`;
     const at = new Date(Date.UTC(2026, 9, 10 + k, 2, 30)).toISOString();
-    const reason = verdict === "FAIL" ? "최대변형률 오차 13.6% — 누적 소성 시나리오로 확인 후 확정" : null;
+    const reason = verdict === "FAIL" ? "변위 RMS 1.4e-2 — 누적 소성 시나리오로 확인 후 확정" : null;
     return {
       id: `le-${k + 1}`,
       project_id: projectId,
@@ -233,7 +338,14 @@ export function makeEntries(projectId: string): EntryOut[] {
       scene: { project: "VD_25y", scenario, seq: Number(seq), drop_type: drop, drop_class: drop, round: null, scene_no: Number(sc), orient, suffix: null, variant: "comp", raw, warnings: [] },
       quality: {
         verdict,
-        fail_reasons: verdict === "FAIL" ? ["FIELD_MAX_ERR"] : [],
+        status: verdict,
+        scheme: "disp_primary/1",
+        fail_reasons: verdict === "FAIL" ? ["DISP_RMS"] : [],
+        disp_rms_rel: verdict === "FAIL" ? 1.4e-2 : 1.8e-6,
+        disp_max_rel: verdict === "FAIL" ? 4.1e-2 : 6.4e-6,
+        disp_noise_rel: 2.1e-5,
+        strain_exceed_frac: (mx ?? 0) / 1000,
+        undetermined_reason: null,
         field_max_err_pct: mx,
         field_p90_err_pct: p90,
         hotspot1_rel_err: mx === null ? null : mx / 100,

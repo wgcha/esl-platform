@@ -136,10 +136,10 @@ describe("단계별 핵심 요소", () => {
     expect(await screen.findByText("3542")).toBeTruthy();
   });
 
-  it("⑤ FAIL 배지·사유·제외 요소", async () => {
+  it("⑤ PASS 배지(변형률 참고 초과여도 PASS)·제외 요소", async () => {
     renderApp(url("c-demo", 5));
-    expect(await screen.findByText("FAIL")).toBeTruthy();
-    expect(screen.getByText(/HOTSPOT_STRAIN — hotspot 1위 ε_eq 오차/)).toBeTruthy();
+    expect(await screen.findByText("PASS")).toBeTruthy();
+    expect(screen.queryByText(/HOTSPOT_STRAIN|FIELD_MAX_ERR/)).toBeNull();
     expect(screen.getByText(/상승 중 아님/)).toBeTruthy();
   });
 
@@ -174,7 +174,7 @@ describe("단계별 핵심 요소", () => {
 describe("작업 진행", () => {
   it("⑤ 검증 실행 → 완료(Case version 불변) 후 새 검증 결과·이력 표시", async () => {
     const { container, server } = renderApp(url("c-demo", 5));
-    await screen.findByText("FAIL");
+    await screen.findByText("PASS");
     const v0 = server.findCase("c-demo")!.version;
     const btn = primaries(container)[0] as HTMLButtonElement;
     await waitFor(() => expect(btn.disabled).toBe(false));

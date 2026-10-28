@@ -52,6 +52,13 @@ def list_entries(conn: Connection, *, project_id: str | None = None, status: str
         if not vals:
             continue
         col, k = ENTRY_FILTERS[key]
+        if key == "verdict":
+            # 계약 esl_disp_primary.md §7: LEGACY = quality.scheme 없음, 그 외 = quality.status(없으면 quality.verdict)
+            qc = library_entries.c.quality
+            st = func.upper(func.coalesce(qc["status"].astext, qc["verdict"].astext))
+            conds.append(or_(*[(qc["scheme"].astext.is_(None) if str(v).upper() == "LEGACY" else st == str(v).upper())
+                               for v in vals]))
+            continue
         expr = func.lower(library_entries.c[col][k].astext)
         conds.append(or_(*[expr == str(v).lower() for v in vals]))
     if conds:

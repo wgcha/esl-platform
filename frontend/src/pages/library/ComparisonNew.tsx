@@ -9,7 +9,7 @@ import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
-import { VerdictBadge, libPath, modelVersions, pairEntries, prevVersion, sceneText } from "./common";
+import { EntryVerdict, libPath, modelVersions, pairEntries, prevVersion, sceneText } from "./common";
 
 export interface ComparisonForm {
   model: string;
@@ -124,10 +124,10 @@ export function ComparisonNew() {
                     <td>{sceneText(p.next)}</td>
                     <td className="mono">{p.next.scene.orient ?? "–"}</td>
                     <td>
-                      <VerdictBadge v={p.base.quality.verdict} />
+                      <EntryVerdict e={p.base} />
                     </td>
                     <td>
-                      <VerdictBadge v={p.next.quality.verdict} />
+                      <EntryVerdict e={p.next} />
                     </td>
                   </tr>
                 ))}
