@@ -360,10 +360,10 @@ def _advance_hash(key: tuple[str, int], part: str, target: int, *, block: bool) 
     return True
 
 
-def _prepare_files(up_dir: str, new: list[dict[str, Any]]) -> None:
+def _prepare_files(root: str, up_dir: str, new: list[dict[str, Any]]) -> None:
     """빈 파일(size 0)은 바로 만들고 검증, 나머지는 대상 경로가 비어 있는지(덮어쓰기 없음)·안전한지 확인."""
     for f in new:
-        p = U.target_path(up_dir, _segs(f), create_parents=True)
+        p = U.target_path(up_dir, _segs(f), create_parents=True, upload_root=root)
         if os.path.lexists(p):
             raise conflict("UPLOAD_FILE_EXISTS", f"이미 있는 파일입니다(덮어쓰지 않음): {f['rel']}", rel=f["rel"])
         if f["size"] == 0:
@@ -415,7 +415,7 @@ def create_upload(ctx: AppContext, principal: Principal, body) -> dict[str, Any]
                               open_uploads=_open_uploads_detail(conn, ctx, principal.user_id))
         up_dir = U.make_upload_dir(root, user_seg, name_seg, U.utc_stamp())
         try:
-            _prepare_files(up_dir, files)
+            _prepare_files(root, up_dir, files)
             uid = str(uuid.uuid4())
             conn.execute(insert(uploads).values(
                 id=uid, project_id=body.project_id, user_id=principal.user_id, username=principal.username,
@@ -443,7 +443,7 @@ def add_files(ctx: AppContext, principal: Principal, upload_id: str, body) -> di
             for f in new:
                 f["client"] = client
         _check_free(ctx, ctx.settings.storage.upload_root, sum(f["size"] for f in new))
-        _prepare_files(up["dir_path"], new)
+        _prepare_files(_upload_root(ctx), up["dir_path"], new)
         files = list(up["files"]) + new
         conn.execute(update(uploads).where(uploads.c.id == upload_id).values(
             files=files, total_bytes=sum(f["size"] for f in files if not f.get("removed")),
@@ -595,7 +595,7 @@ class ChunkSink:
         self.fd: int | None = None
         cfg = ctx.settings.upload
         self.buf_size = cfg.write_buffer_bytes
-        p = U.target_path(pl.dir_path, pl.rel.split("/"), create_parents=True)
+        p = U.target_path(pl.dir_path, pl.rel.split("/"), create_parents=True, upload_root=_upload_root(ctx))
         if os.path.lexists(p):
             raise conflict("UPLOAD_FILE_EXISTS", f"이미 있는 파일입니다(덮어쓰지 않음): {pl.rel}", rel=pl.rel)
         self.part = p + U.PART_SUFFIX
@@ -678,7 +678,7 @@ def _finalize_file(ctx: AppContext, upload_id: str, index: int) -> tuple[bool, s
         size, c = int(f["size"]), int(f["chunk"])
         if _r_missing(f.get("got") or [], _n_chunks(size, c)):
             return False, None
-        p = U.target_path(up["dir_path"], _segs(f), create_parents=True)
+        p = U.target_path(up["dir_path"], _segs(f), create_parents=True, upload_root=root)
         part = p + U.PART_SUFFIX
         user_seg = U.user_segment(up["username"], up["user_id"])
         try:
@@ -757,7 +757,7 @@ def put_chunk_v1(ctx: AppContext, principal: Principal, upload_id: str, index: i
             raise conflict("UPLOAD_FILE_REMOVED", f"목록에서 뺀 파일입니다: {f['rel']}", rel=f["rel"])
         if f.get("done"):
             raise conflict("UPLOAD_FILE_DONE", f"이미 다 받은 파일입니다: {f['rel']}", received=int(f["size"]))
-        p = U.target_path(up["dir_path"], _segs(f), create_parents=True)
+        p = U.target_path(up["dir_path"], _segs(f), create_parents=True, upload_root=root)
         part = p + U.PART_SUFFIX
         received = os.path.getsize(part) if os.path.isfile(part) else 0
         if offset != received:
@@ -817,6 +817,18 @@ def _case_uses_upload(conn, up: dict[str, Any]) -> bool:
 
 
 def remove_file(ctx: AppContext, principal: Principal, upload_id: str, index: int) -> dict[str, Any]:
+    """_REMOVING 표시는 DB 커밋(트랜잭션 종료) 뒤에 푼다 — 그 사이 같은 파일 PUT 이 removed 아닌 상태를 보지 않게."""
+    removing: list[tuple[str, int]] = []
+    try:
+        return _remove_file(ctx, principal, upload_id, index, removing)
+    finally:
+        with _GUARD:
+            for k in removing:
+                _REMOVING.discard(k)
+
+
+def _remove_file(ctx: AppContext, principal: Principal, upload_id: str, index: int,
+                 removing: list[tuple[str, int]]) -> dict[str, Any]:
     require_config_ok(ctx)
     root = _upload_root(ctx)
     cfg = ctx.settings.upload
@@ -839,28 +851,25 @@ def remove_file(ctx: AppContext, principal: Principal, upload_id: str, index: in
                 raise conflict("UPLOAD_FILE_BUSY", f"이 파일의 청크를 받는 중입니다 — 멈춘 뒤 다시 시도하세요: {f['rel']}",
                                rel=f["rel"])
             _REMOVING.add(key)
+        removing.append(key)
+        lk = _flock(key)
+        if not lk.acquire(blocking=False):
+            raise conflict("UPLOAD_FILE_BUSY", f"이 파일을 마무리하는 중입니다: {f['rel']}", rel=f["rel"])
         try:
-            lk = _flock(key)
-            if not lk.acquire(blocking=False):
-                raise conflict("UPLOAD_FILE_BUSY", f"이 파일을 마무리하는 중입니다: {f['rel']}", rel=f["rel"])
-            try:
-                p = U.target_path(up["dir_path"], _segs(f), create_parents=False)
-                user_seg = U.user_segment(up["username"], up["user_id"])
-                base = f"{os.path.basename(up['dir_path'])}__{'_'.join(_segs(f))}.removed"
-                for src, nm in ((p, base), (p + U.PART_SUFFIX, base + ".part")):
-                    U.move_to_backup(root, user_seg, src, nm)
-                _hash_put(key, None, None)
-                f.update(removed=True, done=False, got=[], sha256=None)
-                vals: dict[str, Any] = {"files": files, "updated_at": func.now(), "result": None,
-                                        "total_bytes": sum(x["size"] for x in files if not x.get("removed"))}
-                if up["state"] == COMPLETED:
-                    vals.update(state=OPEN, completed_at=None)
-                conn.execute(update(uploads).where(uploads.c.id == upload_id).values(**vals))
-            finally:
-                lk.release()
+            p = U.target_path(up["dir_path"], _segs(f), create_parents=False, upload_root=root)
+            user_seg = U.user_segment(up["username"], up["user_id"])
+            base = f"{os.path.basename(up['dir_path'])}__{'_'.join(_segs(f))}.removed"
+            for src, nm in ((p, base), (p + U.PART_SUFFIX, base + ".part")):
+                U.move_to_backup(root, user_seg, src, nm)
+            _hash_put(key, None, None)
+            f.update(removed=True, done=False, got=[], sha256=None)
+            vals: dict[str, Any] = {"files": files, "updated_at": func.now(), "result": None,
+                                    "total_bytes": sum(x["size"] for x in files if not x.get("removed"))}
+            if up["state"] == COMPLETED:
+                vals.update(state=OPEN, completed_at=None)
+            conn.execute(update(uploads).where(uploads.c.id == upload_id).values(**vals))
         finally:
-            with _GUARD:
-                _REMOVING.discard(key)
+            lk.release()
         up = _row(conn, upload_id)
     return upload_out(up, cfg)
 
@@ -1029,13 +1038,21 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
 
 
 # ---------------------------------------------------------------- 취소·stale(삭제 없이 _backup 으로)
-def _retire(ctx: AppContext, conn, up: dict[str, Any], state: str) -> dict[str, Any]:
+def _retire(ctx: AppContext, conn, up: dict[str, Any], state: str, *, strict: bool = True) -> dict[str, Any]:
+    """업로드 폴더를 _backup 으로 옮기고 state 표시. 폴더(또는 사용자 폴더)가 링크로 바뀌었으면 옮기지 않는다:
+    strict(취소)면 PATH_UNSAFE, 아니면(stale 정리) 경고만 남기고 상태만 바꾼다."""
     root = _upload_root(ctx)
     user_seg = U.user_segment(up["username"], up["user_id"])
     moved = None
     d = up["dir_path"]
-    if os.path.lexists(d) and is_within(d, root) and not os.path.islink(d):
-        moved = U.move_to_backup(root, user_seg, d)
+    if os.path.lexists(d):
+        try:
+            U.check_upload_dir(root, d)
+            moved = U.move_to_backup(root, user_seg, d)
+        except DomainError as exc:
+            if strict:
+                raise
+            log.warning("upload %s retire: 폴더를 옮기지 않음(%s)", up["id"], exc.code)
     with _HASH_LOCK:
         for k in [k for k in _HASHES if k[0] == up["id"]]:
             _HASHES.pop(k, None)
@@ -1052,6 +1069,10 @@ def cancel(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str, A
         if up["state"] == COMPLETED:
             raise conflict("UPLOAD_COMPLETED", "완료된 업로드는 취소할 수 없습니다(Case 입력으로 쓰일 수 있음)")
         _require_open(up)
+        with _GUARD:
+            busy = bool(_INFLIGHT.get(upload_id)) or any(k[0] == upload_id for k in _REMOVING)
+        if busy:
+            raise conflict("UPLOAD_FILE_BUSY", "청크를 받는 중입니다 — 멈춘 뒤(진행 중 청크가 끝난 뒤) 다시 취소하세요")
         up = _retire(ctx, conn, up, CANCELED)
     return upload_out(up, ctx.settings.upload)
 
@@ -1073,7 +1094,7 @@ def cleanup_stale(ctx: AppContext, now: _dt.datetime | None = None) -> list[str]
             up = _row(conn, uid, for_update=True)
             if up["state"] != OPEN or up["updated_at"] >= cutoff:
                 continue
-            _retire(ctx, conn, up, STALE)
+            _retire(ctx, conn, up, STALE, strict=False)
             out.append(uid)
     return out
 

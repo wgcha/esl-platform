@@ -16,8 +16,8 @@ SLIM = os.path.join(WIN, "esl_slim_lib.ps1")
 RUN = os.path.join(WIN, "esl_run.ps1")
 RAD_FIX = os.path.join(ROOT, "tests", "rad", "fixtures")
 
-PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
-    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+# pwsh 찾기: 환경변수 ESL_PWSH → PATH 의 pwsh. 없으면 None(해당 시험 skip)
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh")
 
 _spec = importlib.util.spec_from_file_location("esl_fake_upload_server", os.path.join(HERE, "esl_fake_upload_server.py"))
 fake = importlib.util.module_from_spec(_spec)

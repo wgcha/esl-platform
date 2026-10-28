@@ -20,8 +20,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 LIB = os.path.join(ROOT, "scripts", "windows", "esl_upload_lib.ps1")
 RUN = os.path.join(ROOT, "scripts", "windows", "esl_run.ps1")
 
-PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
-    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+# pwsh 찾기: 환경변수 ESL_PWSH → PATH 의 pwsh. 없으면 None(skip)
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh")
 pytestmark = pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
 
 _spec = importlib.util.spec_from_file_location("esl_fake_upload_server", os.path.join(HERE, "esl_fake_upload_server.py"))

@@ -317,8 +317,8 @@ def test_update_keeps_foreign_files_in_deploy_dir():
 
 # ---- pwsh 로 실제 실행 (Linux 임시 폴더) -----------------------------------------------------------
 
-PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
-    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+# pwsh 찾기: 환경변수 ESL_PWSH → PATH 의 pwsh. 없으면 None(해당 시험 skip)
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh")
 needs_pwsh = pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
 
 

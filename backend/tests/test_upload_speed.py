@@ -534,6 +534,32 @@ def test_v_us_9_security(client, upload_root, tmp_path):
     os.unlink(d / "h3d")
     (d / "h3d_orig").rename(d / "h3d")
     assert all_files(out) == {"secret.txt"}
+    # 업로드 폴더 자체를 바깥 링크로 바꿔치기 → PUT·빼기·취소 모두 PATH_UNSAFE, 바깥에 쓰지·옮기지 않음
+    d.rename(d.parent / (d.name + "_o"))
+    os.symlink(out, d)
+    r = put2(client, uid, 0, 0, parts[0])
+    assert r.status_code == 422 and code(r) == "PATH_UNSAFE"
+    r = client.delete(f"{API}/uploads/{uid}/files/0", headers=W)
+    assert r.status_code == 422 and code(r) == "PATH_UNSAFE"
+    r = client.delete(f"{API}/uploads/{uid}", headers=W)
+    assert r.status_code == 422 and code(r) == "PATH_UNSAFE"
+    assert all_files(out) == {"secret.txt"}
+    os.unlink(d)
+    (d.parent / (d.name + "_o")).rename(d)
+    # 사용자 폴더(<upload_root>/<user>)를 바깥 링크로 바꿔치기(안에 같은 이름 폴더를 만들어 두어도) → PATH_UNSAFE
+    user_dir = d.parent
+    fake_user = tmp_path / "outside_user"
+    (fake_user / d.name / "h3d").mkdir(parents=True)
+    user_dir.rename(user_dir.parent / (user_dir.name + "_o"))
+    os.symlink(fake_user, user_dir)
+    r = put2(client, uid, 0, 0, parts[0])
+    assert r.status_code == 422 and code(r) == "PATH_UNSAFE"
+    assert all_files(fake_user) == set() and all_files(out) == {"secret.txt"}
+    r = client.delete(f"{API}/uploads/{uid}", headers=W)
+    assert r.status_code == 422 and code(r) == "PATH_UNSAFE"
+    os.unlink(user_dir)
+    (user_dir.parent / (user_dir.name + "_o")).rename(user_dir)
+    assert put2(client, uid, 0, 0, parts[0]).status_code == 200          # 되돌리면 정상
     # 다른 사용자 404, 토큰
     assert put2(client, uid, 0, 0, parts[0], token="tok-power2").status_code == 404
     assert client.delete(f"{API}/uploads/{uid}/files/0", headers=H("tok-power2", True)).status_code == 404
@@ -547,6 +573,44 @@ def test_v_us_9_security(client, upload_root, tmp_path):
     r = put2(client, up2["upload_id"], 0, 0, parts[0])
     assert r.status_code == 409 and code(r) == "UPLOAD_FILE_EXISTS"
     svc.reset_state()
+
+
+def test_cancel_while_chunk_in_flight_is_busy(client):
+    from esl_platform.api.services import uploads as svc
+
+    data = os.urandom(2 * CS)
+    up = mk(client, {"h3d/a.h3d": data})
+    uid = up["upload_id"]
+    with svc._GUARD:
+        svc._INFLIGHT[uid] = {(0, 1)}                 # 청크 전송 중
+    try:
+        r = client.delete(f"{API}/uploads/{uid}", headers=W)
+        assert r.status_code == 409 and code(r) == "UPLOAD_FILE_BUSY"
+        assert get(client, uid)["state"] == "OPEN" and hdir(up).is_dir()
+    finally:
+        svc.reset_state()
+    r = client.delete(f"{API}/uploads/{uid}", headers=W)
+    assert r.status_code == 200 and r.json()["state"] == "CANCELED"
+
+
+def test_remove_file_releases_removing_mark_after_commit(client, monkeypatch):
+    """_REMOVING 표시는 트랜잭션 커밋 뒤에 풀린다(커밋 전에 풀리면 그 틈의 PUT 이 removed 아닌 행을 본다)."""
+    from esl_platform.api.services import uploads as svc
+
+    up = mk(client, {"rad/m_0000.rad": mini_rad_text(), "h3d/a.h3d": BIG[:CS]})
+    uid = up["upload_id"]
+    seen: list[bool] = []
+    orig = svc._row
+
+    def spy(conn, upload_id, **kw):
+        seen.append((uid, 1) in svc._REMOVING)       # 커밋 직전 마지막 _row 호출 시점에도 표시가 있어야 함
+        return orig(conn, upload_id, **kw)
+
+    monkeypatch.setattr(svc, "_row", spy)
+    r = client.delete(f"{API}/uploads/{uid}/files/1", headers=W)
+    assert r.status_code == 200 and r.json()["files"][1]["removed"] is True
+    assert seen and seen[-1] is True
+    assert (uid, 1) not in svc._REMOVING
 
 
 def test_pc_token_scope_covers_delete_file_and_csrf_exempt(client):
@@ -896,3 +960,28 @@ def test_upload_out_reports_client_and_inherits_on_add(client):
     # client 없이 만든 세션(구 클라이언트) → null
     plain = mk(client, {"rad/m_0000.rad": mini_rad_text()}, name="web")
     assert plain["client"] is None
+
+
+def test_windows_junction_reparse_point_counts_as_link(tmp_path, monkeypatch):
+    """Windows junction(st_file_attributes 의 FILE_ATTRIBUTE_REPARSE_POINT)도 링크로 보고 거부한다."""
+    import types
+
+    from esl_platform.core import uploads as core_u
+    from esl_platform.core.errors import DomainError
+
+    root = tmp_path / "root"
+    (root / "u" / "s" / "h3d").mkdir(parents=True)
+    junction = str(root / "u")
+    real_lstat = os.lstat
+
+    def fake_lstat(p, *a, **kw):
+        st = real_lstat(p, *a, **kw)
+        if os.path.normpath(str(p)) == os.path.normpath(junction):
+            return types.SimpleNamespace(st_mode=st.st_mode, st_file_attributes=0x400)
+        return st
+
+    monkeypatch.setattr(core_u.os, "lstat", fake_lstat)
+    assert core_u.is_link_like(junction) and not core_u.is_link_like(str(root / "u" / "s"))
+    with pytest.raises(DomainError) as e:
+        core_u.target_path(str(root / "u" / "s"), ["h3d", "a.h3d"], upload_root=str(root))
+    assert e.value.code == "PATH_UNSAFE"
