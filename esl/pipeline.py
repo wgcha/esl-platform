@@ -45,7 +45,7 @@ import numpy as np
 import esl
 from esl import config as _config
 from esl.errors import EslError
-from esl.export import all_ids, dof_flags, force_mask, plan_ids
+from esl.export import AUTO_BASE, all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
 from esl.io import RESULT_FILES, decide_shear, pack_results, tensor_eps
 from esl.io.results_csv import METRICS
@@ -1185,18 +1185,22 @@ def stage_export(ctx: Context) -> dict:
     lo = hi = None
     if want_ids:      # ID 범위 계획·충돌 검사는 inc·fem 을 쓸 때만(csv 는 ID 를 만들지 않음)
         groups, _ = optistruct.pshell_groups(model.elem_pid, model.thickness)
-        plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup), len(groups),
-                        int(mask.any(axis=1).sum()), int(mask.sum()))
+        with_inc = "radioss_inc" in targets      # .fem 만이면 /GRNOD·/BCS·/CLOAD ID 는 필요 없음
+        plan = plan_ids(rcfg["id_offset"], model.max_ids, len(sup) if with_inc else 0, len(groups),
+                        int(mask.any(axis=1).sum()) if with_inc else 0, int(mask.sum()) if with_inc else 0)
         lo, hi = plan["range"]
         ids = all_ids(plan)
-        assert all(lo <= v <= hi for v in ids)
+        assert all(lo <= v <= hi for v in ids) and len(set(ids)) == len(ids)
+        if plan["id_offset_auto"] and plan["id_offset"] != AUTO_BASE:
+            ctx.warnings.append(f"export.radioss.id_offset=auto: rad 기존 ID 와 겹치지 않도록 생성 ID 를 "
+                                f"{plan['id_offset'] + 1} 부터 배정")
 
     fr = summ["frame"]
     units = ctx.cfg["units"]
     hdr = [f"ESL export (esl {esl.__version__})  generated {_utcnow()}",
            f"part {model.part_id} '{model.part_title}'  frame {fr['frame_index']}  t* = {fr['time']!r} ({fr['source']})",
            f"units: {units['label']} (force {units['force']}, length {units['length']}); rad /BEGIN: '{model.units_label}'",
-           f"generated ID range [{lo}, {hi}], used up to {plan['max_used'] if plan else None}",
+           f"generated ID range [{lo}, {hi}] ({plan['n_ids'] if plan else 0} IDs, id_offset {plan['id_offset'] if plan else None})",
            f"validation: {val['verdict'] if val else 'N/A'}"]
     d = ctx.fresh_dir(D_EXPORT)
     nf = ecfg["num_format"]
@@ -1238,7 +1242,7 @@ def stage_export(ctx: Context) -> dict:
     ctx.echo(f"[export] 대상 {list(targets)}, 파일 {len(files)}개"
              + (f", /CLOAD {out['n_cload']} (노드 {out['n_cload_nodes']}), /BCS {out['n_bcs']}" if "n_cload" in out else "")
              + (f", FORCE {out['n_force']}, PSHELL {out['n_pshell']}" if "n_force" in out else "")
-             + (f", ID [{lo}..{plan['max_used']}] ⊂ [{lo}, {hi}]" if plan else ""))
+             + (f", ID [{lo}..{hi}] ({plan['n_ids']}개)" if plan else ""))
     out.update(files=files, id_range=[lo, hi] if plan else None, id_max_used=plan["max_used"] if plan else None,
                id_plan=None if plan is None else {k: (v if not isinstance(v, list) or len(v) <= 6 else [v[0], v[-1]])
                                                   for k, v in plan.items()},

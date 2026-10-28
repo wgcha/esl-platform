@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .. import __version__
 from ..core.config import LoadedConfig, load_config
 from ..core.errors import DomainError
+from .display_json import DisplayJSONResponse
 from .context import AppContext, build_context
 from .routers import cases, client_tokens, history, jobs, library, results, system, uploads
 
@@ -37,19 +38,19 @@ def check_startup(config: LoadedConfig, bind_host: str | None = None) -> None:
 
 
 def _error(status: int, code: str, message: str, **extra) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message, **extra}})
+    return DisplayJSONResponse(status_code=status, content={"detail": {"code": code, "message": message, **extra}})
 
 
 def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
     check_startup(ctx.config, bind_host)
     prefix = ctx.settings.api_prefix
     app = FastAPI(title="ESL Platform API", version=__version__, openapi_url=f"{prefix}/openapi.json",
-                  docs_url=f"{prefix}/docs", redoc_url=None)
+                  docs_url=f"{prefix}/docs", redoc_url=None, default_response_class=DisplayJSONResponse)
     app.state.ctx = ctx
 
     @app.exception_handler(DomainError)
     async def _domain(_req: Request, exc: DomainError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status, content={"detail": exc.detail()})
+        return DisplayJSONResponse(status_code=exc.status, content={"detail": exc.detail()})
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_req: Request, exc: RequestValidationError) -> JSONResponse:
