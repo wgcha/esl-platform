@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import errno
 import os
 import re
 import shutil
@@ -214,6 +215,53 @@ def append_chunk(part_path: str, data: bytes, root: str | None = None) -> None:
             view = view[n:]
     finally:
         os.close(fd)
+
+
+# ---------------------------------------------------------------- 프로토콜 2: 위치 지정 쓰기(계약 esl_upload_speed.md §5.3)
+def open_part_for_write(part_path: str, size: int, root: str | None = None, *, preallocate: bool = True) -> int:
+    """`.part` 를 위치 지정 쓰기용으로 연다(O_APPEND 아님). 새 파일은 O_EXCL 로 만들고 ftruncate 로 사전 할당,
+    기존 파일은 열린 fd 로 일반 파일·링크 수 1·realpath 확인(append_chunk 와 같은 검사). 요청마다 새 fd."""
+    base = os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    created = False
+    try:
+        fd = os.open(part_path, base | os.O_CREAT | os.O_EXCL, 0o644)
+        created = True
+    except FileExistsError:
+        fd = os.open(part_path, base)
+    try:
+        _check_stat(os.fstat(fd))
+        if root is not None and not is_within(os.path.realpath(part_path), os.path.realpath(root)):
+            raise unprocessable("PATH_UNSAFE", "실제 경로가 업로드 폴더 밖입니다")
+        if created and preallocate and size > 0:
+            os.ftruncate(fd, size)
+    except BaseException:
+        os.close(fd)
+        if created:
+            try:
+                os.unlink(part_path)
+            except OSError:
+                pass
+        raise
+    return fd
+
+
+def write_chunk_at(fd: int, pos: int, data) -> None:
+    """fd 의 pos 위치에 data 를 쓴다. POSIX 는 os.pwrite, 없으면(Windows) 요청별 fd 에서 lseek + write 반복."""
+    view = memoryview(data)
+    if hasattr(os, "pwrite"):
+        while view:
+            n = os.pwrite(fd, view, pos)
+            view = view[n:]
+            pos += n
+        return
+    os.lseek(fd, pos, os.SEEK_SET)
+    while view:
+        n = os.write(fd, view)
+        view = view[n:]
+
+
+def is_enospc(exc: BaseException) -> bool:
+    return isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", -1))
 
 
 def backup_dest(upload_root: str, user_seg: str, name: str) -> str:

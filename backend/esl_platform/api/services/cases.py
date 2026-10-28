@@ -160,6 +160,13 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
     if os.path.lexists(cdir):
         raise conflict("FOLDER_EXISTS", "산출물 폴더가 이미 있습니다")
     info, done, includes = _check_part(ctx, rad, None if h3d else results, part_title)
+    h3d_meta = None
+    if h3d:
+        from .uploads import check_slim_part, h3d_meta_for
+
+        with ctx.engine.connect() as conn:
+            h3d_meta = h3d_meta_for(conn, h3d)
+        check_slim_part(h3d_meta, int(info["target_part"]["id"]) if info["target_part"] else None)
     for inc in includes:
         check_principal_upload_area(s.storage.upload_root, inc, principal)
     fp = fingerprint_h3d(rad, h3d, includes) if h3d else fingerprint(rad, results, includes)
@@ -182,6 +189,7 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
             json.dump({"id": case["id"], "project_id": case["project_id"], "title": case["title"],
                        "rad_path": rad, "results_dir": results, "h3d_path": case["h3d_path"],
                        "input_kind": case["input_kind"],
+                       "h3d_mode": ((h3d_meta or {}).get("kind") or "").removeprefix("h3d_") or None if h3d else None,
                        "created_at": case["created_at"].isoformat()}, fh, ensure_ascii=False, indent=2)
     except IntegrityError as exc:
         shutil.rmtree(cdir, ignore_errors=True)
@@ -195,8 +203,12 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
 
 
 def list_cases(ctx: AppContext, project_id: str | None, status: str | None) -> list[dict[str, Any]]:
+    from .uploads import h3d_metas_for
+
     with ctx.engine.connect() as conn:
-        return [case_out(ctx, c) for c in cases_repo.list_cases(conn, project_id, status)]
+        rows = cases_repo.list_cases(conn, project_id, status)
+        metas = h3d_metas_for(conn, [c["h3d_path"] for c in rows if c.get("input_kind") == "H3D"])
+        return [case_out(ctx, c, None, metas) for c in rows]
 
 
 def get_case(ctx: AppContext, case_id: str) -> dict[str, Any]:
@@ -216,6 +228,13 @@ def patch_case(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
             vals["title"] = body.title.strip()
         if body.part_title is not None and body.part_title != case["part_title"]:
             vals["part_title"] = body.part_title
+            if case.get("input_kind") == "H3D" and case.get("h3d_path"):      # 압축 모드 h3d 는 대상 파트가 고정
+                from .uploads import check_slim_part, h3d_meta_for
+
+                meta = h3d_meta_for(conn, case["h3d_path"])
+                if meta and meta.get("kind") == "h3d_slim":
+                    tgt = system.inspect_rad(ctx, case["rad_path"], body.part_title)["target_part"]
+                    check_slim_part(meta, int(tgt["id"]) if tgt else None)
         try:
             case = cases_repo.update_case(conn, case_id, body.version, **vals)
         except VersionConflict:

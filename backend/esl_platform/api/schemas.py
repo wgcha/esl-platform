@@ -159,6 +159,7 @@ class CaseOut(_Out):
     results_dir: str
     h3d_path: str | None = None
     input_kind: Literal["RESULTS", "H3D"] = "RESULTS"
+    input_h3d_meta: dict[str, Any] | None = None
     input_fingerprint: dict[str, Any]
     part_title: str
     part_id: int | None = None
@@ -818,16 +819,47 @@ class AnalysisFileOut(_Out):
 
 
 # ---------------------------------------------------------------- P3-UX: 업로드·찾아보기·버전(계약 esl_p3_ux.md §1~§3)
+class UploadResultKind(_Req):
+    type: str = Field(min_length=1, max_length=64)
+    layer: str | None = Field(default=None, max_length=32)
+
+
+class UploadMeta(_Req):
+    """h3d 업로드 메타(계약 esl_upload_speed.md §4.6) — `.h3d` 파일에만, JSON ≤ 16 KB. 서버는 표시·검사용으로만 신뢰."""
+    kind: Literal["h3d_slim", "h3d_original"]
+    v: int = Field(default=1, ge=1, le=1)
+    source_name: str | None = Field(default=None, max_length=255)
+    source_bytes: int | None = Field(default=None, ge=0)
+    source_mtime: str | None = Field(default=None, max_length=40)
+    slim_bytes: int | None = Field(default=None, ge=0)
+    hvtrans_sec: float | None = Field(default=None, ge=0)
+    hvtrans_version: str | None = Field(default=None, max_length=64)
+    cfg: str | None = Field(default=None, max_length=8192)
+    cfg_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+    part_id: int | None = Field(default=None, ge=0)
+    part_title: str | None = Field(default=None, max_length=200)
+    results: list[UploadResultKind] | None = Field(default=None, max_length=8)
+    frames: Literal["all"] | None = None
+    tool_version: str | None = Field(default=None, max_length=32)
+
+
+class UploadClient(_Req):
+    name: str = Field(max_length=32)
+    version: str = Field(max_length=32)
+
+
 class UploadFileIn(_Req):
     rel: str = Field(min_length=1, max_length=400, description="rad/… | results/… | h3d/… ('/' 구분 상대경로)")
     size: int = Field(ge=0)
     sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+    meta: UploadMeta | None = None
 
 
 class UploadCreate(_Req):
     project_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=200)
     files: list[UploadFileIn] = Field(min_length=1)
+    client: UploadClient | None = None
 
 
 class UploadFilesAdd(_Req):
@@ -838,7 +870,12 @@ class UploadFileOut(_Out):
     index: int
     rel: str
     size: int
-    received: int
+    received: int = Field(description="앞에서부터 연속으로 받은 바이트(구 클라이언트 이어 올리기 offset)")
+    received_total: int = 0
+    chunks: list[list[int]] = Field(default=[], description="받은 청크 번호 범위 [[a,b),…]")
+    n_chunks: int = 0
+    removed: bool = False
+    meta: dict[str, Any] | None = None
     done: bool
     sha256: str | None = None
     sha256_expected: str | None = None
@@ -849,6 +886,7 @@ class UploadCheckOut(_Out):
     rad_path: str | None = None
     results_dir: str | None = None
     h3d_path: str | None = None
+    h3d_meta: dict[str, Any] | None = None
     parts: list[dict[str, Any]] = []
     missing_includes: list[str] = []
     problems: list[str] = []
@@ -860,9 +898,12 @@ class UploadOut(_Out):
     name: str
     state: Literal["OPEN", "COMPLETED", "CANCELED", "STALE"]
     dir_path: str
+    protocol: Literal[1, 2] = 2
     chunk_size: int
+    max_parallel: int = 1
     total_bytes: int
     received_bytes: int
+    problems_count: int = 0
     files: list[UploadFileOut]
     result: UploadCheckOut | None = None
     backup_path: str | None = None
@@ -874,6 +915,9 @@ class UploadOut(_Out):
 class UploadChunkOut(_Out):
     index: int
     received: int
+    received_total: int | None = None
+    chunk: int | None = None
+    duplicate: bool = False
     done: bool
     sha256: str | None = None
 
@@ -917,6 +961,7 @@ class VersionOut(_Out):
     version: str
     commit: str | None = None
     built_at: str | None = None
+    ui: dict[str, Any] = {}
 
 
 class ChangelogEntry(_Out):

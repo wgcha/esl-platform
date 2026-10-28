@@ -514,7 +514,7 @@ class Executor:
             h3d.kill_tree(self.hw_proc, s.worker.terminate_grace_s, self.lim)
             self.hw_proc = None
         self._renew()
-        ok, msg, lines, done = h3d.evaluate(code, out_dir)
+        ok, msg, lines, done = h3d.evaluate(code, out_dir, slim=bool(p.get("slim")))
         for ln in lines:
             echo(ln)
         echo(f"[esl-worker] hw 종료코드 {code} ({time.time() - t0:.1f}s) — {'성공' if ok else '실패: ' + msg}")

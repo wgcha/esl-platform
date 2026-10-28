@@ -102,7 +102,10 @@ UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h
 class UploadCfg(_M):
     """브라우저 분할 업로드(계약 esl_p3_ux.md §1.1). 값은 설정 파일에서만."""
 
-    chunk_mb: int = Field(default=16, ge=1, le=256)                   # 청크 크기(MB)
+    chunk_mb: int = Field(default=64, ge=1, le=256)                   # 새 세션 청크 크기 C(MB, 세션에 고정). 계약 범위 8..256 — 시험용으로 1 까지 허용
+    parallel: int = Field(default=4, ge=1, le=8)                      # 업로드당 동시 청크(초과 429) — 응답 max_parallel
+    write_buffer_kb: int = Field(default=1024, ge=64, le=8192)        # 스트리밍 쓰기 단위
+    preallocate: bool = True                                          # .part 사전 할당(ftruncate)
     max_file_bytes: int = Field(default=64 * 1024 ** 3, ge=1)          # 파일당(h3d 30 GB 수용)
     max_upload_bytes: int = Field(default=100 * 1024 ** 3, ge=1)       # 업로드당
     min_free_gb: float = Field(default=20, ge=0)                       # 업로드 후에도 남길 upload_root 드라이브 여유
@@ -114,6 +117,10 @@ class UploadCfg(_M):
     @property
     def chunk_bytes(self) -> int:
         return self.chunk_mb * 1024 * 1024
+
+    @property
+    def write_buffer_bytes(self) -> int:
+        return self.write_buffer_kb * 1024
 
 
 MAX_SLOTS = 16   # worker_slot 행 수(0006) — worker.slots 상한
@@ -212,6 +219,7 @@ class UiCfg(_M):
     poll_queue_ms: int = Field(ge=100)
     max_bundle_bytes: int = Field(default=5 * 1024 ** 3, ge=1)       # 결과 받기(zip) 상한, 초과 시 413
     browse_page_max: int = Field(default=1000, ge=10, le=10000)       # /fs/browse 한 번에 돌려주는 항목 수 상한
+    upload_slim_hint_gb: float = Field(default=5, ge=0)               # 브라우저 업로드 h3d 가 이 크기(GB)를 넘으면 압축 모드 안내(0 = 끔)
 
 
 class LoggingCfg(_M):

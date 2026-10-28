@@ -891,6 +891,18 @@
             "title": "Input Fingerprint",
             "type": "object"
           },
+          "input_h3d_meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input H3D Meta"
+          },
           "input_kind": {
             "default": "RESULTS",
             "enum": [
@@ -5562,6 +5574,18 @@
       },
       "UploadCheckOut": {
         "properties": {
+          "h3d_meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H3D Meta"
+          },
           "h3d_path": {
             "anyOf": [
               {
@@ -5633,8 +5657,24 @@
       },
       "UploadChunkOut": {
         "properties": {
+          "chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk"
+          },
           "done": {
             "title": "Done",
+            "type": "boolean"
+          },
+          "duplicate": {
+            "default": false,
+            "title": "Duplicate",
             "type": "boolean"
           },
           "index": {
@@ -5644,6 +5684,17 @@
           "received": {
             "title": "Received",
             "type": "integer"
+          },
+          "received_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Total"
           },
           "sha256": {
             "anyOf": [
@@ -5665,8 +5716,41 @@
         "title": "UploadChunkOut",
         "type": "object"
       },
+      "UploadClient": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 32,
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 32,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "UploadClient",
+        "type": "object"
+      },
       "UploadCompleteOut": {
         "properties": {
+          "h3d_meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H3D Meta"
+          },
           "h3d_path": {
             "anyOf": [
               {
@@ -5753,6 +5837,16 @@
       "UploadCreate": {
         "additionalProperties": false,
         "properties": {
+          "client": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadClient"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "files": {
             "items": {
               "$ref": "#/components/schemas/UploadFileIn"
@@ -5785,6 +5879,16 @@
       "UploadFileIn": {
         "additionalProperties": false,
         "properties": {
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UploadMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rel": {
             "description": "rad/… | results/… | h3d/… ('/' 구분 상대경로)",
             "maxLength": 400,
@@ -5819,6 +5923,18 @@
       },
       "UploadFileOut": {
         "properties": {
+          "chunks": {
+            "default": [],
+            "description": "받은 청크 번호 범위 [[a,b),…]",
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
           "done": {
             "title": "Done",
             "type": "boolean"
@@ -5827,13 +5943,41 @@
             "title": "Index",
             "type": "integer"
           },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "n_chunks": {
+            "default": 0,
+            "title": "N Chunks",
+            "type": "integer"
+          },
           "received": {
+            "description": "앞에서부터 연속으로 받은 바이트(구 클라이언트 이어 올리기 offset)",
             "title": "Received",
+            "type": "integer"
+          },
+          "received_total": {
+            "default": 0,
+            "title": "Received Total",
             "type": "integer"
           },
           "rel": {
             "title": "Rel",
             "type": "string"
+          },
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
           },
           "sha256": {
             "anyOf": [
@@ -5890,6 +6034,191 @@
         "title": "UploadFilesAdd",
         "type": "object"
       },
+      "UploadMeta": {
+        "additionalProperties": false,
+        "description": "h3d 업로드 메타(계약 esl_upload_speed.md §4.6) — `.h3d` 파일에만, JSON ≤ 16 KB. 서버는 표시·검사용으로만 신뢰.",
+        "properties": {
+          "cfg": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cfg"
+          },
+          "cfg_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cfg Sha256"
+          },
+          "frames": {
+            "anyOf": [
+              {
+                "const": "all",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frames"
+          },
+          "hvtrans_sec": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hvtrans Sec"
+          },
+          "hvtrans_version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hvtrans Version"
+          },
+          "kind": {
+            "enum": [
+              "h3d_slim",
+              "h3d_original"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "part_id": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Id"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "results": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UploadResultKind"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results"
+          },
+          "slim_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slim Bytes"
+          },
+          "source_bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Bytes"
+          },
+          "source_mtime": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Mtime"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "tool_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Version"
+          },
+          "v": {
+            "default": 1,
+            "maximum": 1.0,
+            "minimum": 1.0,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "UploadMeta",
+        "type": "object"
+      },
       "UploadOut": {
         "properties": {
           "backup_path": {
@@ -5935,13 +6264,32 @@
             "title": "Files",
             "type": "array"
           },
+          "max_parallel": {
+            "default": 1,
+            "title": "Max Parallel",
+            "type": "integer"
+          },
           "name": {
             "title": "Name",
             "type": "string"
           },
+          "problems_count": {
+            "default": 0,
+            "title": "Problems Count",
+            "type": "integer"
+          },
           "project_id": {
             "title": "Project Id",
             "type": "string"
+          },
+          "protocol": {
+            "default": 2,
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Protocol",
+            "type": "integer"
           },
           "received_bytes": {
             "title": "Received Bytes",
@@ -5995,6 +6343,34 @@
           "updated_at"
         ],
         "title": "UploadOut",
+        "type": "object"
+      },
+      "UploadResultKind": {
+        "additionalProperties": false,
+        "properties": {
+          "layer": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer"
+          },
+          "type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "UploadResultKind",
         "type": "object"
       },
       "ValidationError": {
@@ -6259,6 +6635,12 @@
               }
             ],
             "title": "Commit"
+          },
+          "ui": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Ui",
+            "type": "object"
           },
           "version": {
             "title": "Version",
@@ -6882,7 +7264,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.5.9"
+    "version": "0.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10392,8 +10774,58 @@
       }
     },
     "/esl/api/uploads/{upload_id}/files/{index}": {
+      "delete": {
+        "description": "파일 하나 빼기 — 항목은 removed 로 표시(index 유지)하고 받은 부분은 _backup 으로 이동(삭제 없음). 완료된 업로드는\n이 업로드로 만든 Case 가 없을 때만(409 UPLOAD_IN_USE), 빼면 OPEN 으로 돌아가 다시 complete 해야 한다.",
+        "operationId": "remove_file_esl_api_uploads__upload_id__files__index__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "title": "Upload Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "title": "Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove File",
+        "tags": [
+          "uploads"
+        ]
+      },
       "put": {
-        "description": "청크(application/octet-stream, ≤ chunk_size). offset 은 서버가 받은 크기와 같아야 한다(409 + received).\n헤더 X-Chunk-Sha256(청크 sha256)이 있으면 검증(다르면 422, 쓰지 않음). 파일 전체 sha256 은 서버가 받으며 계산해 기록.",
+        "description": "청크(application/octet-stream). 프로토콜 2: offset = k·chunk_size 인 정렬 청크 하나를 정확히(Content-Length 필수 —\n없으면 411, 길이 불일치 422), 순서 무관·동시(upload.parallel, 초과 429 + Retry-After), 이미 받은 청크는 200 duplicate.\n본문은 스트리밍으로 `.part` 의 위치에 직접 쓴다. 프로토콜 1(업그레이드 전 세션)은 offset = 받은 크기(409 + received).\n헤더 X-Chunk-Sha256(청크 sha256)이 있으면 검증(다르면 422, 표시하지 않음). 파일 전체 sha256 은 서버가 계산해 기록.",
         "operationId": "put_chunk_esl_api_uploads__upload_id__files__index__put",
         "parameters": [
           {
@@ -10744,6 +11176,7 @@
     },
     "/esl/api/version": {
       "get": {
+        "description": "버전 + 화면이 읽는 공개 설정 값(`ui.upload_slim_hint_gb` — 0 = 안내 끔).",
         "operationId": "version_esl_api_version_get",
         "responses": {
           "200": {

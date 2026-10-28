@@ -65,8 +65,19 @@ def require_active_case(case: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------- 직렬화
-def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = None) -> dict[str, Any]:
+def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = None,
+             h3d_metas: dict[str, Any] | None = None) -> dict[str, Any]:
+    """h3d_metas = {h3d_path: meta} (목록은 한 번에 조회해 넘김). None 이면 H3D 입력 Case 만 여기서 조회."""
     d = dict(case)
+    d["input_h3d_meta"] = None
+    if case.get("input_kind") == "H3D" and case.get("h3d_path"):
+        if h3d_metas is not None:
+            d["input_h3d_meta"] = h3d_metas.get(case["h3d_path"])
+        else:
+            from .uploads import h3d_meta_for
+
+            with ctx.engine.connect() as conn:
+                d["input_h3d_meta"] = h3d_meta_for(conn, case["h3d_path"])
     d["case_dir"] = case_dir(ctx, case)
     d["folder_path"] = d["case_dir"]
     if stage_status is not None:
