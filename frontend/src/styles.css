@@ -1922,21 +1922,27 @@ tr.ref-row td {
   border-color: var(--accent);
   color: var(--accent-strong);
 }
-.ovl svg .ln-dw {
-  fill: none;
-  stroke: var(--bad);
-  stroke-width: 1.5;
-  stroke-dasharray: 2 3;
+.sec-axes {
+  gap: 0.3rem 1.2rem;
 }
-.lg.ln-dw {
-  width: 1.1rem;
-  height: 0;
-  border-top: 2px dotted var(--bad);
-  vertical-align: middle;
+.lg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
-.chart-tick.dw,
-.chart-label.dw {
-  fill: var(--bad);
+.lg-item:hover {
+  border-color: var(--line-strong);
+}
+.lg-item.off {
+  opacity: 0.4;
+  text-decoration: line-through;
 }
 .sec-stats {
   color: var(--text-2);

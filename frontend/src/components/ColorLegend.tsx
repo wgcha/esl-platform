@@ -100,7 +100,7 @@ export function countOut(values: Iterable<number | null>, r: Range): { above: nu
 
 const toText = (x: number) => (Number.isFinite(x) ? f3(x) : "");
 
-function NumInput({ label, value, onCommit, testId }: { label: string; value: number; onCommit: (v: number) => boolean; testId?: string }) {
+export function NumInput({ label, value, onCommit, testId }: { label: string; value: number; onCommit: (v: number) => boolean; testId?: string }) {
   const [text, setText] = useState(toText(value));
   const [bad, setBad] = useState(false);
   useEffect(() => {

@@ -324,6 +324,12 @@
 | V-DP-25 | 두 지도에 단면선·띠 표시, 위치 변경 시 선 이동 | 프런트 |
 | V-DP-26 | Δw 보조 축 곡선·수치 줄 표시, has_val=false면 숨김; 배율 라벨 "×k (실제 최대 면외 변위 X mm)"·툴팁, "실제 크기(×1)" 토글 시 k=1·슬라이더 비활성·해제 시 복귀 | 프런트 |
 
+### 15.6 변경 메모 v0.5.9 (2026-10-28, 사용자 요청) — §15.3 그래프 항목 대체
+- **Δw 곡선·오른쪽 보조 축 제거**(절대값이 작아 왼쪽 축과 스케일 차이로 차이가 커 보임). 서버 `dw` 필드·API는 그대로(화면은 사용 안 함). 수치 한 줄 "Δw 최대 … · RMS … · 요소 n개"는 그래프 아래에 유지. V-DP-26의 Δw 곡선·보조 축 기준은 폐지.
+- **축 편집**: 그래프 위 한 줄에 Y(면외)·X(단면 위치) 각각 최소·최대 입력 + "자동"(ColorLegend 입력 스타일 재사용). 최소 < 최대 아니면 직전 범위 유지. 범위 밖 데이터는 클리핑. 수동 범위는 `localStorage esl.secaxis.v1:<validation_id>:<axis>` 에 `{x,y}` JSON 으로 기억(모두 try/catch, 실패 시 메모리 동작, 둘 다 자동이면 키 삭제).
+- **범례 선택**: 범례 항목(초기 형상·Radioss·ESL) 클릭으로 표시/숨김 토글, 최소 1개는 표시(마지막 하나는 숨겨지지 않음), 숨긴 항목은 흐리게. 자동 범위(Y)는 보이는 계열 기준으로 재계산, 수동 범위는 그대로.
+- 시험: V-DP-27(축 입력·자동 복귀·클리핑·저장 복원·저장소 오류), V-DP-28(범례 토글·최소 1개·범위 재계산) — 프런트.
+
 ### 15.5 파일 소유
 - Impl-Backend: `esl/report/field.py`(`section_stats`, `section_line`, `normalized_point`), `api/services/results.py`(`section`), `api/schemas.py`(`SectionOut` 확장, `SectionStats`·`SectionLine`·`SectionSuggest`), `api/routers/results.py`(axis 기본 eta), `worker/esl_worker/core_adapter.py`(래퍼), 해당 시험.
 - Impl-Frontend: `components/SectionChart.tsx`(머리 한 줄·Δw 보조 축·배율 표기·×1), `components/DispOverlay.tsx`·`components/FieldOverlay.tsx`(단면선·띠·클릭·추천 마커), `stages/Stage5.tsx`(단면 위치 공유 상태), `api/types.ts`·`api/endpoints.ts`, 해당 시험.

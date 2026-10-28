@@ -6882,7 +6882,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.5.8"
+    "version": "0.5.9"
   },
   "openapi": "3.1.0",
   "paths": {
