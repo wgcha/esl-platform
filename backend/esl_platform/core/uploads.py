@@ -4,12 +4,15 @@
 - 파일 `rel`: `/` 구분 상대경로, 첫 성분은 rad | results | h3d. 절대경로·드라이브·`\\`·`..`·`.`·빈 성분·제어문자·
   `< > : " | ? * & ^ % !`·끝 점/공백·Windows 예약 장치명(확장자 붙어도) 거부. 확장자는 설정 허용 목록.
 - 쓰기 대상은 업로드 폴더 아래만: 성분 중 심링크 거부, realpath 가 업로드 폴더 밖이면 거부(PATH_UNSAFE).
+  쓰기·이동 전에 업로드 루트 → 사용자 폴더 → 업로드 폴더 경로도 검사한다(check_upload_dir: 성분 심링크·Windows
+  junction/reparse point 거부, realpath(업로드 폴더) ⊂ realpath(업로드 루트)/<사용자>).
 - 취소·stale·sha256 불일치 파일은 지우지 않고 `<upload_root>/_backup/<사용자>/...` 로 옮긴다.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import errno
 import os
 import re
 import shutil
@@ -122,8 +125,41 @@ def utc_stamp(now: _dt.datetime | None = None) -> str:
     return (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y%m%d-%H%M%S")
 
 
+_REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def is_link_like(path: str) -> bool:
+    """심링크 또는 Windows junction·reparse point(없는 경로는 False)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    if getattr(st, "st_file_attributes", 0) & _REPARSE:
+        return True
+    isj = getattr(os.path, "isjunction", None)
+    return bool(isj and isj(path))
+
+
+def check_upload_dir(upload_root: str, upload_dir: str) -> None:
+    """업로드 폴더 자체의 안전성: upload_dir = <upload_root>/<사용자>/<폴더…>, 루트·사용자 폴더·업로드 폴더 성분이
+    링크·junction 이 아니고 realpath(upload_dir) 가 realpath(upload_root)/<사용자> 안. 아니면 PATH_UNSAFE."""
+    rootn = os.path.normpath(upload_root)
+    if is_link_like(rootn):
+        raise unprocessable("PATH_UNSAFE", "업로드 루트가 링크입니다")
+    segs = upload_area_segments(rootn, upload_dir)
+    if not segs or len(segs) < 2 or any(x.casefold() == BACKUP_DIR for x in segs):
+        raise unprocessable("PATH_UNSAFE", "업로드 폴더가 업로드 루트의 사용자 폴더 아래가 아닙니다")
+    _no_links_below(rootn, upload_dir)
+    user_real = os.path.join(os.path.realpath(rootn), segs[0])
+    real = os.path.realpath(upload_dir)
+    if not is_within(real, user_real) or os.path.normcase(real) == os.path.normcase(user_real):
+        raise unprocessable("PATH_UNSAFE", "업로드 폴더의 실제 경로가 사용자 업로드 폴더 밖입니다")
+
+
 def _no_links_below(root: str, path: str) -> None:
-    """root 아래 path 까지 이미 있는 성분 중 심링크가 있으면 거부, realpath 가 root 밖이면 거부."""
+    """root 아래 path 까지 이미 있는 성분 중 심링크·junction 이 있으면 거부, realpath 가 root 밖이면 거부."""
     rootn = os.path.normpath(root)
     rel = os.path.relpath(os.path.normpath(path), rootn)
     if rel == os.curdir:
@@ -133,7 +169,7 @@ def _no_links_below(root: str, path: str) -> None:
     cur = rootn
     for comp in rel.split(os.sep):
         cur = os.path.join(cur, comp)
-        if os.path.islink(cur):
+        if is_link_like(cur):
             raise unprocessable("PATH_UNSAFE", "심볼릭 링크 경로에는 쓰지 않습니다")
     if not is_within(os.path.realpath(path), os.path.realpath(rootn)):
         raise unprocessable("PATH_UNSAFE", "실제 경로가 업로드 폴더 밖입니다")
@@ -142,7 +178,7 @@ def _no_links_below(root: str, path: str) -> None:
 def make_upload_dir(upload_root: str, user_seg: str, name_seg: str, stamp: str) -> str:
     """새 업로드 폴더를 만든다(이미 있으면 _2, _3 … — 덮어쓰기 없음)."""
     os.makedirs(upload_root, exist_ok=True)
-    if os.path.islink(upload_root):
+    if is_link_like(upload_root):
         raise unprocessable("PATH_UNSAFE", "업로드 루트가 심볼릭 링크입니다")
     udir = os.path.join(upload_root, user_seg)
     _no_links_below(upload_root, udir)
@@ -159,15 +195,20 @@ def make_upload_dir(upload_root: str, user_seg: str, name_seg: str, stamp: str) 
     raise unprocessable("UPLOAD_DIR_EXISTS", "업로드 폴더를 만들 수 없습니다(같은 이름이 너무 많음)")
 
 
-def target_path(upload_dir: str, segs: list[str], *, create_parents: bool = False) -> str:
-    """업로드 폴더 안 파일 경로(성분 심링크·realpath 탈출 거부). create_parents 면 상위 폴더를 만든 뒤 다시 검사."""
+def target_path(upload_dir: str, segs: list[str], *, create_parents: bool = False, upload_root: str | None = None) -> str:
+    """업로드 폴더 안 파일 경로(성분 심링크·realpath 탈출 거부). create_parents 면 상위 폴더를 만든 뒤 다시 검사.
+    upload_root 가 주어지면 업로드 폴더 자체(루트→사용자→업로드 폴더)도 검사(check_upload_dir) — 폴더를 만들기 전·후."""
     p = os.path.join(upload_dir, *segs)
     parent = os.path.dirname(p)
+    if upload_root is not None:
+        check_upload_dir(upload_root, upload_dir)
     _no_links_below(upload_dir, parent)
     if create_parents:
         os.makedirs(parent, exist_ok=True)
+        if upload_root is not None:
+            check_upload_dir(upload_root, upload_dir)
         _no_links_below(upload_dir, parent)
-    if os.path.islink(p) or os.path.islink(p + PART_SUFFIX):
+    if is_link_like(p) or is_link_like(p + PART_SUFFIX):
         raise unprocessable("PATH_UNSAFE", "심볼릭 링크 경로에는 쓰지 않습니다")
     for q in (p, p + PART_SUFFIX):
         if os.path.lexists(q):
@@ -216,9 +257,60 @@ def append_chunk(part_path: str, data: bytes, root: str | None = None) -> None:
         os.close(fd)
 
 
+# ---------------------------------------------------------------- 프로토콜 2: 위치 지정 쓰기(계약 esl_upload_speed.md §5.3)
+def open_part_for_write(part_path: str, size: int, root: str | None = None, *, preallocate: bool = True) -> int:
+    """`.part` 를 위치 지정 쓰기용으로 연다(O_APPEND 아님). 새 파일은 O_EXCL 로 만들고 ftruncate 로 사전 할당,
+    기존 파일은 열린 fd 로 일반 파일·링크 수 1·realpath 확인(append_chunk 와 같은 검사). 요청마다 새 fd."""
+    base = os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    created = False
+    try:
+        fd = os.open(part_path, base | os.O_CREAT | os.O_EXCL, 0o644)
+        created = True
+    except FileExistsError:
+        fd = os.open(part_path, base)
+    try:
+        _check_stat(os.fstat(fd))
+        if root is not None and not is_within(os.path.realpath(part_path), os.path.realpath(root)):
+            raise unprocessable("PATH_UNSAFE", "실제 경로가 업로드 폴더 밖입니다")
+        if created and preallocate and size > 0:
+            os.ftruncate(fd, size)
+    except BaseException:
+        os.close(fd)
+        if created:
+            try:
+                os.unlink(part_path)
+            except OSError:
+                pass
+        raise
+    return fd
+
+
+def write_chunk_at(fd: int, pos: int, data) -> None:
+    """fd 의 pos 위치에 data 를 쓴다. POSIX 는 os.pwrite, 없으면(Windows) 요청별 fd 에서 lseek + write 반복."""
+    view = memoryview(data)
+    if hasattr(os, "pwrite"):
+        while view:
+            n = os.pwrite(fd, view, pos)
+            view = view[n:]
+            pos += n
+        return
+    os.lseek(fd, pos, os.SEEK_SET)
+    while view:
+        n = os.write(fd, view)
+        view = view[n:]
+
+
+def is_enospc(exc: BaseException) -> bool:
+    return isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", -1))
+
+
 def backup_dest(upload_root: str, user_seg: str, name: str) -> str:
     base = os.path.join(upload_root, BACKUP_DIR, user_seg)
+    if is_link_like(upload_root):
+        raise unprocessable("PATH_UNSAFE", "업로드 루트가 링크입니다")
+    _no_links_below(upload_root, base)
     os.makedirs(base, exist_ok=True)
+    _no_links_below(upload_root, base)
     for i in range(1, 1000):
         d = os.path.join(base, name + ("" if i == 1 else f"_{i}"))
         if not os.path.lexists(d):
@@ -230,6 +322,12 @@ def move_to_backup(upload_root: str, user_seg: str, src: str, name: str | None =
     """src(파일·폴더)를 <upload_root>/_backup/<사용자>/<이름> 으로 옮긴다(삭제 없음). 없으면 None."""
     if not os.path.lexists(src):
         return None
+    # 옮길 대상: 루트 아래·경로 성분(대상 자신 포함)이 링크·junction 아님·실제 경로가 루트 안(바깥 내용을 옮기지 않음)
+    if is_link_like(upload_root):
+        raise unprocessable("PATH_UNSAFE", "업로드 루트가 링크입니다")
+    if upload_area_segments(upload_root, src) in (None, []):
+        raise unprocessable("PATH_UNSAFE", "업로드 루트 밖 경로는 옮기지 않습니다")
+    _no_links_below(upload_root, src)
     dest = backup_dest(upload_root, user_seg, name or os.path.basename(src))
     shutil.move(src, dest)
     return dest

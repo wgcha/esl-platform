@@ -20,8 +20,9 @@ RUN_PS1 = os.path.join(WIN, "esl_run.ps1")
 LIB_PS1 = os.path.join(WIN, "esl_deploy_lib.ps1")
 LAUNCH_PS1 = os.path.join(WIN, "esl_launch.ps1")
 UPLOAD_PS1 = os.path.join(WIN, "esl_upload_lib.ps1")
+SLIM_PS1 = os.path.join(WIN, "esl_slim_lib.ps1")
 EXAMPLE = os.path.join(ROOT, "config", "esl_deploy.example.json")
-PS1_FILES = [UPDATE_PS1, RUN_PS1, LIB_PS1, LAUNCH_PS1, UPLOAD_PS1]
+PS1_FILES = [UPDATE_PS1, RUN_PS1, LIB_PS1, LAUNCH_PS1, UPLOAD_PS1, SLIM_PS1]
 
 
 def _read(p: str) -> str:
@@ -236,7 +237,7 @@ def test_test_path_under_semantics():
     assert under(r"f:\hyper_work\x\cumulative", r"F:\Hyper_work\X\CUMULATIVE\\")
     assert not under(r"F:\Hyper_work\X\CUMULATIVE2", r"F:\Hyper_work\X\CUMULATIVE")
     text = _read(RUN_PS1)
-    assert "TrimEnd('\\') + '\\'" in _function_body(text, "Test-PathUnder")
+    assert "TrimEnd('\\', '/') + $sep" in _function_body(text, "Test-PathUnder")
     assert "OrdinalIgnoreCase" in _function_body(text, "Test-PathUnder")
 
 
@@ -244,13 +245,22 @@ def test_test_path_under_semantics():
 
 def test_example_config_keys():
     cfg = json.load(open(EXAMPLE, encoding="utf-8"))
-    assert set(cfg) == {"hw_exe", "work_root", "deploy_dir", "branch", "default_part", "protected_roots", "server_url"}
+    assert set(cfg) == {"hw_exe", "work_root", "deploy_dir", "branch", "default_part", "protected_roots", "server_url",
+                        "hvtrans_exe", "upload_mode_default", "slim_prompt_sec", "slim_results", "slim_subcase",
+                        "slim_verify", "slim_timeout_min", "slim_min_free_gb", "upload_parallel"}
     assert cfg["hw_exe"].lower().endswith("hw.exe") and "2026.1" in cfg["hw_exe"]
     assert cfg["work_root"].startswith("%USERPROFILE%")
     assert cfg["deploy_dir"].startswith("%LOCALAPPDATA%")
     assert cfg["branch"] == "" and cfg["default_part"] == "chassis_rear"
     assert cfg["protected_roots"] == []
     assert cfg["server_url"] == ""            # 처음 올릴 때 묻고 저장(예 http://<대시보드 주소>/esl)
+    # 압축 모드·병렬 업로드 기본값(계약 esl_upload_speed.md §7)
+    assert cfg["hvtrans_exe"].lower().endswith("hvtrans.exe") and "2026.1" in cfg["hvtrans_exe"]
+    assert cfg["upload_mode_default"] == "slim" and cfg["slim_prompt_sec"] == 10 and cfg["slim_subcase"] == "all"
+    assert cfg["slim_verify"] is True and cfg["slim_timeout_min"] == 120 and cfg["slim_min_free_gb"] == 20
+    assert cfg["upload_parallel"] == 4
+    assert cfg["slim_results"] == [{"type": "Displacement"}, {"type": "Max_Strain", "layer": "Mid"},
+                                   {"type": "Plastic Strain", "layer": "Mid"}]
 
 
 def test_config_defaults_come_from_example_only():
@@ -307,8 +317,8 @@ def test_update_keeps_foreign_files_in_deploy_dir():
 
 # ---- pwsh 로 실제 실행 (Linux 임시 폴더) -----------------------------------------------------------
 
-PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
-    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+# pwsh 찾기: 환경변수 ESL_PWSH → PATH 의 pwsh. 없으면 None(해당 시험 skip)
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh")
 needs_pwsh = pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
 
 
@@ -419,6 +429,7 @@ def _publish_harness(tmp_path):
     sd.mkdir()
     (sd / "esl_launch.ps1").write_bytes(open(LAUNCH_PS1, "rb").read())
     (sd / "esl_upload_lib.ps1").write_bytes(open(UPLOAD_PS1, "rb").read())
+    (sd / "esl_slim_lib.ps1").write_bytes(open(SLIM_PS1, "rb").read())
     (sd / "esl_run.ps1").write_text(       # 실행기 대역: 자기 폴더·인자를 출력하고 7 로 종료
         "param([string]$Mode,[Parameter(ValueFromRemainingArguments=$true)][string[]]$Items=@())\n"
         "Write-Output \"RUN $PSScriptRoot $Mode $($Items -join '|')\"\nexit 7\n")
@@ -426,6 +437,7 @@ def _publish_harness(tmp_path):
     (repo / "resources" / "tcl").mkdir(parents=True)
     for n in ("esl_h3d_probe.tcl", "esl_h3d_extract.tcl", "README.md"):
         (repo / "resources" / "tcl" / n).write_text(n)
+    (repo / "VERSION").write_text("0.6.0\n")
     h = sd / "h.ps1"
     h.write_text(f". '{LIB_PS1}'\n$ErrorActionPreference = 'Stop'\n"
                  "function Say($m, $c) { Write-Host \"SAY $m\" }\nfunction Stage($m) { }\nfunction Write-Log($m) { }\n"
@@ -456,7 +468,8 @@ def test_publish_migrates_legacy_layout_with_pwsh(tmp_path):
     assert (dep / "current_version.txt").read_text().strip() == "1111111"
     v = dep / "versions" / "1111111"
     assert sorted(os.listdir(v)) == ["README.md", "VERSION.txt", "esl_h3d_extract.tcl", "esl_h3d_probe.tcl", "esl_run.ps1",
-                                     "esl_upload_lib.ps1"]
+                                     "esl_slim_lib.ps1", "esl_upload_lib.ps1"]
+    assert "tool_version=0.6.0" in (v / "VERSION.txt").read_text()       # 업로드 메타 tool_version 의 출처(저장소 VERSION)
     assert sorted(os.listdir(cur)) == ["ESL_extract.bat", "ESL_probe.bat", "ESL_upload.bat", "big.h3d", "esl_launch.ps1", "sub"]
     up_bat = (cur / "ESL_upload.bat").read_bytes()
     up_bat.decode("ascii")
@@ -568,5 +581,49 @@ def test_runner_upload_modes():
     assert "$LauncherNames = @('ESL_probe.bat', 'ESL_extract.bat', 'ESL_upload.bat', 'esl_launch.ps1')" in lib
     pub = _function_body(_read(UPDATE_PS1), "Publish-Deployment")
     assert "[Text.Encoding]::ASCII.GetBytes((Get-LauncherBat 'upload'))" in pub
-    assert "$runner, $uploadLib))" in pub
-    assert "'esl_upload_lib.ps1')) {" in _function_body(_read(UPDATE_PS1), "Test-Environment")
+    assert "$runner, $uploadLib, $slimLib))" in pub
+    assert "'esl_slim_lib.ps1')) {" in _function_body(_read(UPDATE_PS1), "Test-Environment")
+    assert ". (Join-Path $PSScriptRoot 'esl_slim_lib.ps1')" in run
+
+
+def test_slim_default_results_equal_tcl_defaults():
+    """V-US-22: PC 기본 slim_results = 서버 TCL 기본(disp_type·strain_type/layer·epsp_type/layer)."""
+    tcl = _read(os.path.join(ROOT, "resources", "tcl", "esl_h3d_extract.tcl"))
+    tcl = tcl[tcl.index("proc ::esl::read_config"):]
+    d = {k: re.search(k + r' "([^"]+)"', tcl).group(1)
+         for k in ("strain_type", "strain_layer", "epsp_type", "epsp_layer", "disp_type")}
+    slim = _read(SLIM_PS1)
+    m = re.search(r"\$EslSlimResultsDefault = '(\[.*?\])'", slim)
+    assert m, "EslSlimResultsDefault 없음"
+    got = json.loads(m.group(1))
+    assert got == [{"type": d["disp_type"]},
+                   {"type": d["strain_type"], "layer": d["strain_layer"]},
+                   {"type": d["epsp_type"], "layer": d["epsp_layer"]}]
+    ex = json.loads(_read(os.path.join(ROOT, "config", "esl_deploy.example.json")))
+    assert ex["slim_results"] == got
+
+
+def test_ps51_forbidden_constructs():
+    """PowerShell 5.1 에 없는 구문 금지(ForEach-Object -Parallel, ::new(, -AsByteStream, 클래스, ThreadJob, ?[ ?. 등)."""
+    pats = [r"ForEach-Object\s+-Parallel", r"::new\(", r"-AsByteStream", r"Start-ThreadJob", r"\bclass\s+\w+\s*\{",
+            r"\?\[", r"\?\.", r"-SkipHttpErrorCheck", r"-Encoding\s+utf8NoBOM", r"\$IsWindows\b", r"\$PSStyle"]
+    for p in PS1_FILES:
+        for ln in _code_lines(p):
+            code = re.sub(r"'[^']*'|\"[^\"]*\"", "''", ln)
+            for pat in pats:
+                assert not re.search(pat, code), f"{os.path.basename(p)}: {pat}: {ln}"
+
+
+def test_parallel_engine_structure():
+    """병렬 전송 엔진 구조: 단일 runspace(HttpClient.SendAsync + WaitAny), 버퍼 재사용, 연결 수 상향, 구 서버는 순차."""
+    text = _read(UPLOAD_PS1)
+    code = "\n".join(_code_lines(UPLOAD_PS1))
+    for bad in ("Start-Job", "Start-ThreadJob", "RunspacePool", "Invoke-Parallel"):
+        assert bad not in code, bad
+    assert "SendAsync(" in code and "[Threading.Tasks.Task]::WaitAny(" in code
+    assert "DefaultConnectionLimit" in code
+    body = _function_body(text, "Send-EslFilesParallel")
+    assert "New-Object byte[]" in body
+    assert "CHUNK_IN_FLIGHT" in text and "429" in text and "Headers.RetryAfter" in text
+    send = _function_body(text, "Send-EslPending")
+    assert "Send-EslFilesParallel" in send and "Send-EslFile" in send

@@ -7,6 +7,7 @@ import { API_PREFIX, errorText } from "../../api/client";
 import type { ClientCodeOut, ClientTokenOut, ClientTokenState } from "../../api/types";
 import { Badge, Empty, ErrorLine } from "../../components/ui";
 import { dt } from "../../lib/format";
+import { readSlim, writeSlim } from "../../lib/slim";
 
 const STATE_LABEL: Record<ClientTokenState, string> = { ACTIVE: "사용 중", EXPIRED: "만료", REVOKED: "폐기됨" };
 const STATE_KIND: Record<ClientTokenState, "ok" | "warn" | "bad"> = { ACTIVE: "ok", EXPIRED: "warn", REVOKED: "bad" };
@@ -30,6 +31,12 @@ export function PcPanel({ projectId, projectName, allowed, reason }: { projectId
   const [error, setError] = useState<string | null>(null);
   const [tokens, setTokens] = useState<ClientTokenOut[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  // 압축 모드: 이 브라우저의 안내 기본값(기본 ON, localStorage esl.slim.v1). PC 도구에는 전달되지 않는다(US-3)
+  const [slim, setSlimState] = useState(readSlim);
+  const setSlim = (on: boolean) => {
+    setSlimState(on);
+    writeSlim(on);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -80,9 +87,30 @@ export function PcPanel({ projectId, projectName, allowed, reason }: { projectId
   return (
     <div className="pc-panel" data-testid="pc-panel">
       <p className="small muted">
-        h3d가 아주 크거나 망이 느릴 때. 내 PC의 HyperView로 필요한 값만 뽑아(수백 MB) rad·include와 함께 서버로 자동으로 올립니다. 올리기가 끝나면 이 새 Case 화면이 채워진 채로
+        h3d가 아주 크거나 망이 느릴 때. 내 PC에서 필요한 부분만 남겨 rad·include와 함께 서버로 자동으로 올립니다(기본: 압축 모드). 올리기가 끝나면 이 새 Case 화면이 채워진 채로
         열리고 "Case 만들기"만 누르면 됩니다.
       </p>
+      <div className="slim-box" data-testid="slim-box">
+        <label className="slim-check" title="이 브라우저의 안내 기본값입니다. PC 도구는 실행할 때 묻습니다.">
+          <input type="checkbox" data-testid="slim-check" checked={slim} onChange={(e) => setSlim(e.target.checked)} /> <b>압축 모드(권장)</b>
+        </label>
+        <div className="small muted" data-testid="slim-help">
+          <div>대상 파트와 변위·최대 변형률(Mid)·소성 변형률(Mid)의 전 프레임만 남긴 h3d를 PC에서 만들어 올립니다(보통 원본의 수 %). 원본 h3d는 PC에 그대로 남습니다.</div>
+          <div>다른 파트나 다른 결과로 다시 해석할 계획이면 해제하세요 — 그때는 원본 h3d가 필요합니다.</div>
+        </div>
+        <div className="small" data-testid="slim-usage">
+          {slim ? (
+            <>
+              <code>ESL_extract.bat</code>에 h3d와 rad를 끌어다 놓으세요(실행 창에서 <b>Enter</b> = 압축).
+            </>
+          ) : (
+            <>
+              실행 창에서 <b>O</b>를 누르면 원본을 올립니다(스크립트: <code>ESL_extract.bat /original …</code>).
+            </>
+          )}{" "}
+          <span className="muted">기존 PC 추출(HyperView로 CSV만 올리기)은 실행 창에서 <b>P</b>(<code>/pcextract</code>)로 그대로 쓸 수 있습니다. 이 체크는 서버·PC 도구에 전달되지 않고, PC 도구는 실행할 때 묻습니다.</span>
+        </div>
+      </div>
       <ol className="pc-steps">
         <li>
           <b>PC 도구 설치(처음 한 번)</b> — 저장소 클론 폴더 맨 위의 <code>update.bat</code>을 더블클릭하면 PC 도구(<code>ESL_extract.bat</code>)가 설치·갱신됩니다

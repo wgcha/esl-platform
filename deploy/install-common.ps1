@@ -548,8 +548,9 @@ function Update-EslTaskRegistration {
 }
 
 function Stop-EslTasks {
-    <# 두 작업 중지(없으면 건너뜀). 다른 계정·관리자 권한으로 만든 작업이라 거부되면 안내와 함께 중단. #>
-    foreach ($t in $EslTaskNames) {
+    <# 두 작업 중지(없으면 건너뜀). 다른 계정·관리자 권한으로 만든 작업이라 거부되면 안내와 함께 중단. -Names 로 일부만(esl-service.ps1 -Only). #>
+    param([string[]]$Names = $EslTaskNames)
+    foreach ($t in $Names) {
         if (-not (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue)) { continue }
         try { Stop-ScheduledTask -TaskName $t -ErrorAction Stop }
         catch {
@@ -572,11 +573,12 @@ function Wait-EslHealth {
 
 function Start-EslTasksAndWait {
     <# 두 작업 시작 → health 확인. 실패하면 원인 확인 위치와 함께 중단. health 주소를 돌려준다. #>
-    param([Parameter(Mandatory = $true)][string]$HealthUrl, [string]$LogDir = '')
-    foreach ($t in $EslTaskNames) {
+    param([Parameter(Mandatory = $true)][string]$HealthUrl, [string]$LogDir = '', [string[]]$Names = $EslTaskNames)
+    foreach ($t in $Names) {
         try { Start-ScheduledTask -TaskName $t -ErrorAction Stop }
         catch { if (Test-EslAccessDenied $_) { throw (Get-EslTaskAdminMessage) }; throw }
     }
+    if ($Names -notcontains 'ESL-Backend') { return '' }      # 워커만 시작: health 주소는 백엔드 것이라 확인하지 않음
     if (-not (Wait-EslHealth -HealthUrl $HealthUrl)) {
         $where = if ($LogDir) { " 로그: $LogDir\backend.log" } else { '' }
         throw "health 확인 실패: $HealthUrl — 작업 스케줄러 기록과 설정을 확인하세요.$where"

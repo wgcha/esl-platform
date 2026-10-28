@@ -21,8 +21,8 @@ sys.dont_write_bytecode = True   # deploy/ 아래 __pycache__ 를 만들지 않�
 
 from esl_test_support import pg_server, with_db  # noqa: F401  (fixture 재노출)
 
-PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh") or (
-    "/tmp/claude-0/pwsh/pwsh" if os.path.isfile("/tmp/claude-0/pwsh/pwsh") else None)
+# pwsh 찾기: 환경변수 ESL_PWSH → PATH 의 pwsh. 없으면 None(해당 시험 skip)
+PWSH = os.environ.get("ESL_PWSH") or shutil.which("pwsh")
 needs_pwsh = pytest.mark.skipif(PWSH is None, reason="pwsh 없음")
 
 

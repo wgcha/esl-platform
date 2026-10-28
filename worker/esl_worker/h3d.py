@@ -221,8 +221,19 @@ def read_done(out_dir: str) -> dict[str, Any] | None:
     return d if isinstance(d, dict) else None
 
 
-def evaluate(exit_code: int | None, out_dir: str) -> tuple[bool, str, list[str], dict[str, Any] | None]:
-    """(성공, 실패 메시지, 로그에 덧붙일 줄, done)."""
+SLIM_HINT = " — 압축 모드 h3d입니다(대상 파트·필요한 결과만 있음). 원본으로 다시 올리세요"
+
+
+def evaluate(exit_code: int | None, out_dir: str, *, slim: bool = False) -> tuple[bool, str, list[str], dict[str, Any] | None]:
+    """(성공, 실패 메시지, 로그에 덧붙일 줄, done). slim = 입력이 PC 압축 모드 h3d 면 실패 메시지에 원본 재업로드 힌트."""
+    ok, msg, lines, done = _evaluate(exit_code, out_dir)
+    if slim and not ok:
+        msg += SLIM_HINT
+        lines = [*lines, "[esl-worker] hint:" + SLIM_HINT]
+    return ok, msg, lines, done
+
+
+def _evaluate(exit_code: int | None, out_dir: str) -> tuple[bool, str, list[str], dict[str, Any] | None]:
     done = read_done(out_dir)
     lines: list[str] = []
     if done is not None and not done.get("ok"):

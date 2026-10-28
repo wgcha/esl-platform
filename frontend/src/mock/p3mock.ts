@@ -1,5 +1,5 @@
 // 목 서버 P3-UX(계약 esl_p3_ux.md §1~§3): 업로드 세션·서버 폴더 찾아보기·결과 zip·버전·업데이트 내역.
-import type { BrowseEntry, BrowseRoot, ClientCodeOut, ClientTokenOut, UploadFileOut, UploadOut, UploadState } from "../api/types";
+import type { BrowseEntry, BrowseRoot, ClientCodeOut, ClientTokenOut, H3dMeta, UploadCheckOut, UploadFileOut, UploadOut, UploadState } from "../api/types";
 import { parseChangelog } from "../lib/changelog";
 import CHANGELOG_MD from "../../../CHANGELOG.md?raw";
 import VERSION_TXT from "../../../VERSION?raw";
@@ -13,7 +13,7 @@ const err = (status: number, code: string, message: string, extra: Record<string
   body: { detail: { code, message, ...extra } },
 });
 
-export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z" };
+export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5 } };
 export const MOCK_CHANGELOG = parseChangelog(CHANGELOG_MD);
 
 const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"];
@@ -22,13 +22,28 @@ export const MOCK_UPLOAD_ROOT = "E:\\VD_SIMULATION_WEB\\esl-input";
 /** 목 rad 가 참조하는 include */
 export const MOCK_INCLUDES = ["inc_mat.inc", "inc_mesh.inc"];
 
+interface MFile extends UploadFileOut {
+  /** 받은 청크 번호(프로토콜 2) */
+  got: Set<number>;
+  removed: boolean;
+  meta: H3dMeta | null;
+}
 interface Upl {
   id: string;
   project_id: string;
   name: string;
   dir: string;
-  files: UploadFileOut[];
+  files: MFile[];
   state: UploadState;
+  /** 프로토콜 2 세션(만들 때의 서버 protocol) */
+  proto: 1 | 2;
+  chunk: number;
+  result: UploadCheckOut | null;
+  /** 이 업로드로 만든 Case 가 있음(빼기 409 UPLOAD_IN_USE) */
+  inUse: boolean;
+  created_at: string;
+  /** POST /uploads client(esl-web·esl-pc) — 없으면 null */
+  client: { name: string; version: string } | null;
 }
 
 export function badRel(rel: string): string | null {
@@ -69,7 +84,20 @@ function hintOf(name: string, node: Tree | number): BrowseEntry["hint"] {
 export class P3Mock {
   uploads = new Map<string, Upl>();
   seq = 0;
-  chunkSize = 16 * 1024 ** 2;
+  chunkSize = 64 * 1024 ** 2;
+  /** 서버 업로드 프로토콜: 2 = 병렬(기본), 1 = 구 서버(protocol 필드 없음·순차 전용) */
+  protocol: 1 | 2 = 2;
+  maxParallel = 4;
+  /** 사용자당 열린(OPEN) 업로드 한도 */
+  maxOpen = 2;
+  /** 다음 n 번 청크 PUT 을 429(Retry-After 1초)로 */
+  tooManyPuts = 0;
+  /** 이 index 파일을 빼려 하면 409 UPLOAD_FILE_BUSY (시험) */
+  busyFiles = new Set<number>();
+  /** PUT 순서 기록 "index:k" */
+  putLog: string[] = [];
+  /** 빼기 DELETE 기록 "upload:index" */
+  removedLog: string[] = [];
   /** 다음 n 번 청크 PUT 을 503 으로 실패(재시도 시험) */
   failPuts = 0;
   /** 이 수만큼 청크를 받은 뒤 PUT 응답을 멈춤(스크린샷 "진행 중") */
@@ -177,25 +205,52 @@ export class P3Mock {
       return { status: 200, body: "PK mock zip\n" };
     }
 
+    if (method === "GET" && path === "/uploads") {
+      const st = query.get("state");
+      const mine = [...this.uploads.values()].filter((u) => !st || u.state === st).reverse();
+      return { status: 200, body: mine.map((u) => this.out(u)) };
+    }
     if (method === "POST" && path === "/uploads") {
       const pid = String(b.project_id ?? "");
       if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
       const name = String(b.name ?? "");
       if (!name.trim()) return err(422, "INVALID_NAME", "이름을 입력하세요.");
-      const files = (b.files as { rel: string; size: number }[]) ?? [];
+      const files = (b.files as { rel: string; size: number; meta?: H3dMeta | null }[]) ?? [];
       if (!files.length) return err(422, "NO_FILES", "올릴 파일이 없습니다.");
       for (const f of files) {
         const bad = badRel(f.rel);
         if (bad) return err(422, "UPLOAD_NAME_INVALID", `${f.rel}: ${bad}`);
         if (f.size > 64 * 1024 ** 3) return err(413, "UPLOAD_TOO_LARGE", `${f.rel}: 파일당 최대 64 GB`);
       }
+      const open = [...this.uploads.values()].filter((u) => u.state === "OPEN");
+      if (open.length >= this.maxOpen)
+        return err(429, "UPLOAD_LIMIT", `진행 중인 업로드가 ${open.length}개입니다(사용자당 최대 ${this.maxOpen}개) — 끝내거나 취소한 뒤 다시 시도하세요`, {
+          limit: this.maxOpen,
+          open_uploads: open.map((u) => {
+            const o = this.out(u);
+            return { id: u.id, name: u.name, created_at: u.created_at, received_bytes: o.received_bytes, total_bytes: o.total_bytes, problems_count: o.problems_count ?? 0 };
+          }),
+        });
       const need = files.reduce((a, f) => a + f.size, 0);
       if (this.storageLeft !== null && need > this.storageLeft)
         return err(507, "INSUFFICIENT_STORAGE", "업로드 폴더 여유 공간이 부족합니다.", { need });
       this.seq += 1;
       const id = `up-${this.seq}`;
       const dir = `${MOCK_UPLOAD_ROOT}\\${this.ctx.username()}\\20261020-${String(100000 + this.seq).slice(1)}_${name.replace(/[^A-Za-z0-9_-]+/g, "_")}`;
-      const u: Upl = { id, project_id: pid, name, dir, state: "OPEN", files: files.map((f, index) => ({ index, rel: f.rel, size: f.size, received: 0, done: f.size === 0 })) };
+      const u: Upl = {
+        id,
+        project_id: pid,
+        name,
+        dir,
+        state: "OPEN",
+        proto: this.protocol,
+        chunk: this.protocol === 2 ? this.chunkSize : Math.min(this.chunkSize, 16 * 1024 ** 2),
+        result: null,
+        inUse: false,
+        created_at: new Date(this.clock()).toISOString(),
+        client: (b.client as { name: string; version: string } | null | undefined) ?? null,
+        files: files.map((f, index) => this.mfile(index, f)),
+      };
       this.uploads.set(id, u);
       return { status: 201, body: this.out(u) };
     }
@@ -203,11 +258,30 @@ export class P3Mock {
       const u = this.uploads.get(r[1]);
       if (!u) return err(404, "UPLOAD_NOT_FOUND", "업로드 세션을 찾을 수 없습니다.");
       if (method === "GET" && !r[2]) return { status: 200, body: this.out(u) };
-      if (u.state !== "OPEN") return err(409, "UPLOAD_NOT_OPEN", "이미 끝났거나 취소된 업로드입니다.");
+      // 프로토콜 2: 파일 빼기(COMPLETED 도 가능 — Case 가 쓰지 않으면 OPEN 으로 돌아감)
+      if (method === "DELETE" && r[3] !== undefined) {
+        if (u.proto !== 2) return err(405, "METHOD_NOT_ALLOWED", "이 서버는 파일을 하나씩 뺄 수 없습니다.");
+        const f = u.files[Number(r[3])];
+        if (!f) return err(404, "UPLOAD_FILE_NOT_FOUND", "업로드 파일 번호가 없습니다.");
+        if (u.state === "CANCELED" || u.state === "STALE") return err(409, "UPLOAD_CLOSED", "이미 닫힌 업로드입니다.");
+        if (f.removed) return { status: 200, body: this.out(u) };
+        if (this.busyFiles.has(f.index)) return err(409, "UPLOAD_FILE_BUSY", "그 파일의 청크를 쓰는 중입니다.");
+        if (u.state === "COMPLETED") {
+          if (u.inUse) return err(409, "UPLOAD_IN_USE", "이 업로드로 만든 Case가 있어 뺄 수 없습니다.");
+          u.state = "OPEN";
+          u.result = null;
+        }
+        f.removed = true;
+        this.removedLog.push(`${u.id}:${f.index}`);
+        return { status: 200, body: this.out(u) };
+      }
       if (method === "DELETE" && !r[2]) {
+        if (u.state === "COMPLETED") return err(409, "UPLOAD_COMPLETED", "이미 확인을 마친 업로드는 취소할 수 없습니다.");
+        if (u.state !== "OPEN") return err(409, "UPLOAD_NOT_OPEN", "이미 끝났거나 취소된 업로드입니다.");
         u.state = "CANCELED";
         return { status: 200, body: this.out(u) };
       }
+      if (u.state !== "OPEN") return err(409, "UPLOAD_NOT_OPEN", "이미 끝났거나 취소된 업로드입니다.");
       if (method === "PUT" && r[3] !== undefined) {
         const f = u.files[Number(r[3])];
         if (!f) return err(404, "UPLOAD_FILE_NOT_FOUND", "업로드 파일 번호가 없습니다.");
@@ -215,11 +289,38 @@ export class P3Mock {
           this.failPuts -= 1;
           return err(503, "TEMPORARY", "일시 오류");
         }
+        if (this.tooManyPuts > 0) {
+          this.tooManyPuts -= 1;
+          return err(429, "UPLOAD_PARALLEL_LIMIT", "동시 전송 한도를 넘었습니다.", { retry_after: 1 });
+        }
+        if (f.removed) return err(409, "UPLOAD_FILE_REMOVED", "목록에서 뺀 파일입니다.");
         if (f.done) return err(409, "UPLOAD_FILE_DONE", "이미 다 받은 파일입니다.", { received: f.size });
-        // 백엔드와 같이 offset 순서 엄격 검증(받은 크기와 같아야 함)
         const off = Number(query.get("offset"));
+        if (u.proto === 2) {
+          const C = u.chunk;
+          const n = Math.ceil(f.size / C);
+          const k = off / C;
+          if (off % C !== 0 || k >= n) return err(409, "UPLOAD_OFFSET_MISMATCH", "offset 이 청크 경계가 아닙니다.", { received: f.received });
+          const want = Math.min(C, f.size - off);
+          if (bodySize !== want) return err(422, "CHUNK_LENGTH_MISMATCH", "청크 길이가 맞지 않습니다.", { expected: want });
+          if (this.badShaPuts > 0) {
+            this.badShaPuts -= 1;
+            return err(422, "CHUNK_SHA256_MISMATCH", "청크 sha256 이 다릅니다(쓰지 않음).", { received: f.received });
+          }
+          if (f.got.has(k)) return { status: 200, body: { index: f.index, received: f.received, received_total: f.received_total, chunk: k, duplicate: true, done: f.done, sha256: null } };
+          if (this.storageLeft !== null) {
+            if (bodySize > this.storageLeft) return err(507, "INSUFFICIENT_STORAGE", "서버 저장 공간이 부족합니다.");
+            this.storageLeft -= bodySize;
+          }
+          this.putCount += 1;
+          this.putLog.push(`${f.index}:${k}`);
+          f.got.add(k);
+          this.sync(f, C);
+          return { status: 200, body: { index: f.index, received: f.received, received_total: f.received_total, chunk: k, duplicate: false, done: f.done, sha256: f.sha256 ?? null } };
+        }
+        // 프로토콜 1: 백엔드와 같이 offset 순서 엄격 검증(받은 크기와 같아야 함)
         if (off !== f.received) return err(409, "UPLOAD_OFFSET_MISMATCH", "offset 이 받은 크기와 다릅니다.", { received: f.received });
-        if (bodySize > this.chunkSize) return err(413, "CHUNK_TOO_LARGE", "청크가 chunk_size 보다 큽니다.", { limit: this.chunkSize });
+        if (bodySize > u.chunk) return err(413, "CHUNK_TOO_LARGE", "청크가 chunk_size 보다 큽니다.", { limit: u.chunk });
         if (off + bodySize > f.size) return err(422, "CHUNK_OVERFLOW", "선언한 파일 크기를 넘는 청크입니다.", { received: f.received });
         if (this.badShaPuts > 0) {
           this.badShaPuts -= 1;
@@ -231,75 +332,156 @@ export class P3Mock {
         }
         this.putCount += 1;
         f.received += bodySize;
+        f.received_total = f.received;
         f.done = f.received >= f.size;
         if (f.done) f.sha256 = "0".repeat(64);
         return { status: 200, body: { index: f.index, received: f.received, done: f.done, sha256: f.sha256 ?? null } };
       }
       if (method === "POST" && r[2] === "/files") {
-        const files = (b.files as { rel: string; size: number }[]) ?? [];
+        const files = (b.files as { rel: string; size: number; meta?: H3dMeta | null }[]) ?? [];
         for (const f of files) {
           const bad = badRel(f.rel);
           if (bad) return err(422, "UPLOAD_NAME_INVALID", `${f.rel}: ${bad}`);
-          if (u.files.some((x) => x.rel === f.rel)) return err(409, "UPLOAD_FILE_EXISTS", `이미 있는 파일입니다: ${f.rel}`);
+          // 제거된 항목의 rel 은 중복 검사에서 제외(같은 이름으로 다시 추가 가능)
+          if (u.files.some((x) => x.rel === f.rel && !x.removed)) return err(409, "UPLOAD_FILE_EXISTS", `이미 있는 파일입니다: ${f.rel}`);
         }
-        for (const f of files) u.files.push({ index: u.files.length, rel: f.rel, size: f.size, received: 0, done: f.size === 0 });
+        for (const f of files) u.files.push(this.mfile(u.files.length, f));
         return { status: 200, body: this.out(u) };
       }
       if (method === "POST" && r[2] === "/complete") {
-        if (u.files.some((f) => !f.done)) return err(409, "UPLOAD_INCOMPLETE", "아직 다 받지 못한 파일이 있습니다.");
-        const rad = u.files.find((f) => /^rad\/.*\.rad$/i.test(f.rel));
-        const names = new Set(u.files.map((f) => f.rel.split("/").pop()!.toLowerCase()));
+        const live = u.files.filter((f) => !f.removed);
+        const pending = live.filter((f) => !f.done);
+        if (pending.length)
+          return err(409, "UPLOAD_INCOMPLETE", "아직 다 받지 못한 파일이 있습니다.", {
+            pending: pending.map((f) => ({ index: f.index, rel: f.rel, missing: [[Math.floor(f.received / u.chunk), Math.ceil(f.size / u.chunk)]] })),
+          });
+        const rad = live.find((f) => /^rad\/.*\.rad$/i.test(f.rel));
+        const names = new Set(live.map((f) => f.rel.split("/").pop()!.toLowerCase()));
         const missing = rad ? MOCK_INCLUDES.filter((i) => !names.has(i)).map((i) => `rad/${i}`) : [];
         const problems: string[] = [];
         if (!rad) problems.push("rad 파일(_0000.rad)이 없습니다");
-        const h3d = u.files.find((f) => /^h3d\/.*\.h3d$/i.test(f.rel));
-        const hasResults = u.files.some((f) => /^results\/(.*\/)?done\.json$/i.test(f.rel));
+        const h3d = live.find((f) => /^h3d\/.*\.h3d$/i.test(f.rel));
+        const hasResults = live.some((f) => /^results\/(.*\/)?done\.json$/i.test(f.rel));
         if (!h3d && !hasResults) problems.push("h3d 파일 또는 추출 결과 폴더(done.json)가 필요합니다");
         const ok = !missing.length && !problems.length;
-        if (ok) u.state = "COMPLETED";
-        const resDir = u.files.find((f) => /done\.json$/i.test(f.rel))?.rel.replace(/\/?done\.json$/i, "") ?? "results";
+        const resDir = live.find((f) => /done\.json$/i.test(f.rel))?.rel.replace(/\/?done\.json$/i, "") ?? "results";
         const win = (rel: string) => `${u.dir}\\${rel.replace(/\//g, "\\")}`;
-        return {
-          status: 200,
-          body: {
-            ok,
-            upload_id: u.id,
-            state: u.state,
-            rad_path: rad ? win(rad.rel) : null,
-            h3d_path: h3d ? win(h3d.rel) : null,
-            results_dir: hasResults ? win(resDir) : null,
-            parts: rad
-              ? [
-                  { id: 10, title: "chassis_rear", n_elems: 223415 },
-                  { id: 11, title: "bumper_beam", n_elems: 18220 },
-                  { id: 12, title: "crash_box_L", n_elems: 6402 },
-                ]
-              : [],
-            missing_includes: missing,
-            problems,
-          },
+        const res: UploadCheckOut = {
+          ok,
+          rad_path: rad ? win(rad.rel) : null,
+          h3d_path: h3d ? win(h3d.rel) : null,
+          results_dir: hasResults ? win(resDir) : null,
+          h3d_meta: h3d?.meta ?? null,
+          parts: rad
+            ? [
+                { id: 10, title: "chassis_rear", n_elems: 223415 },
+                { id: 11, title: "bumper_beam", n_elems: 18220 },
+                { id: 12, title: "crash_box_L", n_elems: 6402 },
+              ]
+            : [],
+          missing_includes: missing,
+          problems,
         };
+        if (ok) {
+          u.state = "COMPLETED";
+          u.result = res;
+        } else {
+          u.result = res;
+        }
+        return { status: 200, body: { ...res, upload_id: u.id, state: u.state } };
       }
     }
     return null;
   }
 
+  private mfile(index: number, f: { rel: string; size: number; meta?: H3dMeta | null }): MFile {
+    return { index, rel: f.rel, size: f.size, received: 0, received_total: 0, done: f.size === 0, got: new Set(), removed: false, meta: f.meta ?? null };
+  }
+
+  /** 받은 청크 집합 → 연속 앞부분·합계·완료 */
+  private sync(f: MFile, C: number) {
+    const n = Math.ceil(f.size / C);
+    let lead = 0;
+    while (f.got.has(lead)) lead += 1;
+    f.received = Math.min(f.size, lead * C);
+    f.received_total = [...f.got].reduce((a, k) => a + Math.min(C, f.size - k * C), 0);
+    f.done = f.got.size >= n;
+    if (f.done) f.sha256 = "0".repeat(64);
+  }
+
+  /** Case 입력 h3d 경로 → 그 업로드의 h3d 메타(§6.5 input_h3d_meta) */
+  metaForPath(h3dPath: string | null): H3dMeta | null {
+    if (!h3dPath) return null;
+    for (const u of this.uploads.values()) if (u.state === "COMPLETED" && u.result?.h3d_path === h3dPath) return u.result.h3d_meta ?? null;
+    return null;
+  }
+
+  /** Case 가 이 업로드를 입력으로 쓰기 시작 → 파일 빼기 409 UPLOAD_IN_USE */
+  markInUse(h3dPath: string | null) {
+    if (!h3dPath) return;
+    for (const u of this.uploads.values()) if (u.state === "COMPLETED" && u.result?.h3d_path === h3dPath) u.inUse = true;
+  }
+
+  /** 시험·시연: 열린 업로드 하나를 바로 만든다(받은 양 지정, 청크 단위로 내림) */
+  seedUpload(projectId: string, name: string, files: { rel: string; size: number; received?: number }[], opts: { problems?: string[]; ageMin?: number; client?: string } = {}): string {
+    this.seq += 1;
+    const id = `up-${this.seq}`;
+    const C = this.chunkSize;
+    const u: Upl = {
+      id,
+      project_id: projectId,
+      name,
+      dir: `${MOCK_UPLOAD_ROOT}\\${this.ctx.username()}\\20261020-${String(100000 + this.seq).slice(1)}_${name}`,
+      state: "OPEN",
+      proto: this.protocol,
+      chunk: C,
+      result: opts.problems ? { ok: false, problems: opts.problems } : null,
+      inUse: false,
+      created_at: new Date(this.clock() - (opts.ageMin ?? 90) * 60_000).toISOString(),
+      client: opts.client ? { name: opts.client, version: "0.6.0" } : null,
+      files: files.map((f, i) => {
+        const m = this.mfile(i, f);
+        const rec = f.received ?? 0;
+        const n = Math.ceil(f.size / C);
+        for (let k = 0; k < n; k++) if (rec >= f.size || (k + 1) * C <= rec) m.got.add(k);
+        this.sync(m, C);
+        return m;
+      }),
+    };
+    this.uploads.set(id, u);
+    return id;
+  }
+
   private out(u: Upl): UploadOut {
-    const total = u.files.reduce((a, f) => a + f.size, 0);
+    const live = u.files.filter((f) => !f.removed);
+    const v2 = u.proto === 2;
     return {
       upload_id: u.id,
       project_id: u.project_id,
       name: u.name,
       state: u.state,
       dir_path: u.dir,
-      chunk_size: this.chunkSize,
-      total_bytes: total,
-      received_bytes: u.files.reduce((a, f) => a + f.received, 0),
-      files: u.files.map((f) => ({ ...f })),
-      result: null,
+      chunk_size: u.chunk,
+      total_bytes: live.reduce((a, f) => a + f.size, 0),
+      received_bytes: live.reduce((a, f) => a + (v2 ? f.received_total! : f.received), 0),
+      ...(v2 ? { protocol: 2 as const, max_parallel: this.maxParallel } : {}),
+      problems_count: (u.result?.problems?.length ?? 0) + (u.result?.missing_includes?.length ?? 0),
+      client: u.client,
+      files: u.files.map((f) => {
+        const { got, ...rest } = f;
+        if (!v2) return { index: rest.index, rel: rest.rel, size: rest.size, received: rest.received, done: rest.done, sha256: rest.sha256 };
+        const chunks: [number, number][] = [];
+        for (const k of [...got].sort((a, b) => a - b)) {
+          const last = chunks[chunks.length - 1];
+          if (last && last[1] === k) last[1] = k + 1;
+          else chunks.push([k, k + 1]);
+        }
+        return { ...rest, chunks, n_chunks: Math.ceil(f.size / u.chunk) };
+      }),
+      result: u.result,
       backup_path: null,
-      created_at: "2026-10-20T02:00:00Z",
-      updated_at: "2026-10-20T02:00:00Z",
+      created_at: u.created_at,
+      updated_at: u.created_at,
       completed_at: null,
     };
   }

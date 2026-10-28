@@ -58,6 +58,7 @@ ALLOWED_UPLOAD_ROUTES = {
     ("POST", "/uploads"), ("GET", "/uploads"), ("GET", "/uploads/{upload_id}"),
     ("POST", "/uploads/{upload_id}/files"), ("PUT", "/uploads/{upload_id}/files/{index}"),
     ("POST", "/uploads/{upload_id}/complete"), ("DELETE", "/uploads/{upload_id}"),
+    ("DELETE", "/uploads/{upload_id}/files/{index}"),
 }
 RAW_BODY_ROUTES = {("PUT", "/uploads/{upload_id}/files/{index}")}
 
