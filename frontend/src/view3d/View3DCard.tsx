@@ -5,7 +5,7 @@ import { errorText } from "../api/client";
 import { Card } from "../components/ui";
 import { ColorLegend, countOut, useLegendRange } from "../components/ColorLegend";
 import { f3 } from "../lib/colormap";
-import { N_STAGES, buildArrowSpecs, stageText } from "./arrows";
+import { N_STAGES, buildArrowSpecs, resolveArrowStyle, stageText } from "./arrows";
 import { BLUES_GRADIENT } from "./colors";
 import { EXP_MAX, EXP_MIN, EXP_STEP, defaultScaleExp, scaleFromExp, scaleLabel } from "./deform";
 import { fetchBinary, fileUrls } from "./fetchFiles";
@@ -83,7 +83,7 @@ export function View3DCard({ view }: { view: LoadView }) {
         canvas.className = "v3d-canvas";
         host.current.appendChild(canvas);
         try {
-          scene = mod.createScene(canvas, { background: BACKGROUND, diag: manifest.bbox.diag, bbox: manifest.bbox });
+          scene = mod.createScene(canvas, { background: BACKGROUND, diag: manifest.bbox.diag, bbox: manifest.bbox, arrowStyle: resolveArrowStyle(window.location.search, __MOCK__) });
         } catch {
           throw new Error(NO_3D_TEXT);
         }

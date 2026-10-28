@@ -6,6 +6,21 @@ export const ARROW_COLOR = "#d62728";
 export const ARROW_SELECTED = "#ff7f0e";
 export const CLUSTER_COLOR = "#a50f15";
 
+/**
+ * 화살표 스타일 시안(검토용, 확정 전). 기본 "current" = 원기둥+원뿔(부피). 시안은 mock 모드의 `?arrow=s1|s2|s3` 에서만 선택된다.
+ * 확정 후 기본 변경: ARROW_STYLE_DEFAULT 값만 바꾸고(필요하면 mock 제한 `allowProto` 제거) 나머지 스타일 분기는 정리한다.
+ *  s1 = 픽셀 고정 두께 선 + 2D 셰브론 머리(화면 크기 고정), s2 = 두꺼운 선(끝으로 진해짐) + 시작점 작은 점, s3 = 픽셀 고정 두께 선 + 1/4 크기 원뿔 머리
+ */
+export type ArrowStyle = "current" | "s1" | "s2" | "s3";
+export const ARROW_STYLE_DEFAULT: ArrowStyle = "current";
+/** 선 두께(px): 노드 화살표 / 군집 합력(같은 스타일, 더 굵게) */
+export const LINE_PX = { node: 3, cluster: 5 } as const;
+export function resolveArrowStyle(search: string, allowProto: boolean): ArrowStyle {
+  if (!allowProto) return ARROW_STYLE_DEFAULT;
+  const v = new URLSearchParams(search).get("arrow");
+  return v === "s1" || v === "s2" || v === "s3" || v === "current" ? v : ARROW_STYLE_DEFAULT;
+}
+
 /** 사용자 결정 2026-10-28: 100·50·20·10 노드 → 합력 5·4·3·2 (노드 모드 최소 10 = 임계) */
 export const NODE_STAGES = [100, 50, 20, 10] as const;
 export const CLUSTER_STAGES = [5, 4, 3, 2] as const;
