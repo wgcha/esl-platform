@@ -2,7 +2,7 @@
 import { API_PREFIX, request } from "./client";
 import type { JobOut, JobState, JobType, LogOut, StepOut } from "./types";
 
-export type HistoryResultKind = "extract" | "esl_run" | "validation" | "export" | "report" | "analysis" | "comparison";
+export type HistoryResultKind = "extract" | "esl_run" | "validation" | "export" | "report" | "analysis" | "comparison" | "opt_run";
 
 export interface HistoryItem {
   id: string;
@@ -14,6 +14,8 @@ export interface HistoryItem {
   case_folder: string | null;
   analysis_id: string | null;
   comparison_id: string | null;
+  /** v0.7.0 OPT_RUN 의 opt_runs.id(없는 서버면 키 없음) */
+  opt_run_id?: string | null;
   subject_title: string | null;
   created_by: string;
   created_by_name: string;
@@ -134,7 +136,7 @@ export interface HistoryRef {
   id: string;
 }
 
-/** 화면 이동용: {stage, query?}. 1/4 run/5 val/6/7/8 analysis/9 comparison — 8·9 는 라이브러리 화면(libraryPath) */
+/** 화면 이동용: {stage, query?}. 1/4 run/5 val/6/7/8 analysis/9 comparison/10 opt_run — 8·9 는 라이브러리 화면, 10 은 최적화 상세 */
 export interface ReviewLinks {
   stage?: number;
   query?: Record<string, string>;
@@ -182,6 +184,7 @@ export function linkPath(projectId: string, caseId: string | null, l: ReviewLink
   const qs = new URLSearchParams(l.query ?? {});
   if (l.stage === 8 && qs.get("analysis")) return `/p/${projectId}/library/analyses/${qs.get("analysis")}`;
   if (l.stage === 9 && qs.get("comparison")) return `/p/${projectId}/library/comparisons/${qs.get("comparison")}`;
+  if (l.stage === 10 && qs.get("opt_run")) return `/p/${projectId}/opt/${qs.get("opt_run")}`;
   if (!caseId || l.stage > 7) return null;
   const q = qs.toString();
   return `/p/${projectId}/c/${caseId}/stage/${l.stage}${q ? `?${q}` : ""}`;
@@ -205,6 +208,7 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   CASE_REPORT: "보고서",
   LIB_ANALYZE: "종합분석",
   LIB_COMPARE: "버전 비교",
+  OPT_RUN: "비드 최적화",
 };
 
 /** 상태 필터: 전체 / 성공 / 실패·중단 */
@@ -251,6 +255,9 @@ export function summaryText(it: HistoryItem): string {
     }
     case "EXPORT":
       return `${Array.isArray(s.targets) ? (s.targets as string[]).join("·") : "–"} · 파일 ${n("n_files") ?? "–"}개`;
+    case "OPT_RUN":
+      // v0.7.0: summary {scenario, load_strategy, n_cases, converged}
+      return `${String(s.scenario ?? "–")} · 전략 ${String(s.load_strategy ?? "–")} · 케이스 ${n("n_cases") ?? "–"}${s.converged === false ? " · 미수렴" : ""}`;
     default:
       return "";
   }

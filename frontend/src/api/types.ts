@@ -235,7 +235,7 @@ export interface InspectResultsResult {
 // ---------------------------------------------------------------- 작업
 /** P2(계약 esl_p2_library.md §11·§12): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석),
  *  LIB_COMPARE(LIGHT, 설계 버전 비교) */
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE";
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -266,6 +266,8 @@ export interface JobOut {
   analysis_id?: string | null;
   /** LIB_COMPARE 의 comparisons.id */
   comparison_id?: string | null;
+  /** v0.7.0 OPT_RUN 의 opt_runs.id (esl_opt_run.md §6.1) */
+  opt_run_id?: string | null;
   project_id: string;
   job_type: JobType;
   stage: number;
@@ -882,8 +884,30 @@ export interface EntryOut {
   force_reason?: string | null;
   warnings: string[];
   version: number;
+  /** v0.7.0(esl_opt_run.md §5.1): 크기·모델 동일성 키·변형 모드(지연 백필이라 없을 수 있음) */
+  size?: EntrySize | null;
+  topo_sha256?: string | null;
+  deform_mode?: DeformModeOut | null;
 }
 export type LibraryEntry = EntryOut;
+
+/** 변형 모드(§7.4): 덴팅·뒤틀림·굽힘 */
+export type DeformMode = "dent" | "twist" | "bend";
+export interface EntrySize {
+  inch: number | null;
+  /** 정규화 frame 치수(mm) */
+  L_xi: number | null;
+  L_eta: number | null;
+}
+export interface DeformModeOut {
+  /** 자동 분류(분류 불가면 null) */
+  auto: DeformMode | null;
+  /** 사용자 수정(없으면 null) */
+  user: DeformMode | null;
+  /** user ?? auto */
+  effective: DeformMode | null;
+  metrics?: { bend?: number; twist?: number; resid?: number; kappa?: number } | null;
+}
 
 export interface EntryCreate {
   esl_run_id: string;
@@ -918,6 +942,8 @@ export interface EntryPatch {
   model?: EntryModelPatch | null;
   scene?: EntryScenePatch | null;
   note?: string | null;
+  /** v0.7.0: 변형 모드 사용자 수정. null = 자동으로 되돌림, 키 없음 = 변경 없음 */
+  deform_mode?: DeformMode | null;
 }
 
 export interface EntryRetire {
@@ -934,6 +960,8 @@ export interface EntryQuery {
   scenario?: string;
   verdict?: string;
   status?: EntryStatus;
+  /** v0.7.0: 변형 모드(effective) 필터 */
+  mode?: string;
 }
 
 // ---------------------------------------------------------------- 종합분석 (analysis_runs)
@@ -1571,4 +1599,294 @@ export interface View3dOut {
   geometry_url: string;
   lod_url?: string | null;
   values_url: string;
+}
+
+// ---------------------------------------------------------------- v0.7.0 비드 최적화 서버 실행 (esl_opt_run.md §5.2)
+export type OptScenario = "S1" | "S2";
+export type LoadStrategy = "A" | "B" | "C";
+export type ObjectiveNorm = "abs" | "rel";
+/** 사각형 기준 모서리: a0b0 좌하 · a1b0 우하 · a0b1 좌상 · a1b1 우상 (ξ 오른쪽, η 위) */
+export type RectCorner = "a0b0" | "a1b0" | "a0b1" | "a1b1";
+
+export interface OptMethodSource {
+  title: string;
+  authors?: string | null;
+  url?: string | null;
+  note?: string | null;
+}
+/** resources/opt_method_sources.json (§9.1) — 문구·링크 원본 1곳 */
+export interface OptMethodSources {
+  version: string;
+  summary_ko: string[];
+  strategies: Record<LoadStrategy, string>;
+  objective_norms: Record<ObjectiveNorm, string>;
+  sources: OptMethodSource[];
+}
+
+export interface OptBead {
+  /** 경사(°) */
+  angle: number;
+  /** 최소 폭(mm) */
+  min_width: number;
+  /** 높이(mm) */
+  height: number;
+}
+
+export interface OptSettingsOut {
+  enabled: boolean;
+  solver_ready: boolean;
+  solver_reason: string | null;
+  size: { tol_rel: number; plate_tol_rel: number; require_inch: boolean };
+  bead_defaults: OptBead;
+  keepout_auto: { hole_radius_mm: number; edge_band_mm: number };
+  loads: { default_objective_norm: ObjectiveNorm; default_strategy: LoadStrategy; mac_merge: number; max_cases: number; default_k: number };
+  method_sources: OptMethodSources;
+  max_rects: number;
+  max_entries: number;
+  template_max_elems: number;
+  template_ext: string[];
+}
+
+export interface OptPid {
+  pid: number;
+  title: string;
+  n_elems: number;
+  thickness: number | null;
+  E?: number | null;
+  nu?: number | null;
+}
+export interface OptSupport {
+  node_id: number;
+  dof: string;
+}
+
+export interface MeshCheckOut {
+  ok: boolean;
+  sha256: string;
+  format: "rad" | "fem";
+  file_name: string;
+  parts: string[];
+  part_title: string | null;
+  mesh: { n_nodes: number; n_elems: number; n_quad: number; n_tria: number; unsupported: Record<string, number> };
+  pids: OptPid[];
+  frame: { L_xi: number; L_eta: number; z_range: number; warnings: string[] };
+  quality: { errors: string[]; warnings: string[]; metrics: Record<string, unknown> };
+  supports_auto: OptSupport[];
+}
+export interface TemplateCheckIn {
+  project_id: string;
+  upload_id: string;
+  part_title?: string | null;
+}
+export interface TemplateIn {
+  project_id: string;
+  upload_id: string;
+  sha256: string;
+  part_title?: string | null;
+  title: string;
+  inch?: number | null;
+  description?: string | null;
+}
+export type TemplateStatus = "ACTIVE" | "ARCHIVED";
+export interface TemplateOut {
+  id: string;
+  title: string;
+  inch: number | null;
+  description: string | null;
+  format: "rad" | "fem";
+  file_name: string;
+  part_title: string | null;
+  sha256: string;
+  n_nodes: number;
+  n_elems: number;
+  L_xi: number;
+  L_eta: number;
+  z_range: number;
+  pids: OptPid[];
+  quality_warnings: string[];
+  status: TemplateStatus;
+  n_runs: number;
+  created_by_name: string;
+  created_at: string;
+  can_delete: boolean;
+}
+export interface TemplateDeleteOut {
+  deleted: boolean;
+  archived: boolean;
+}
+
+export interface S1CheckIn {
+  project_id: string;
+  entry_ids: string[];
+}
+export interface S1CheckBase {
+  entry_id: string;
+  case_id: string;
+  case_title: string | null;
+  part_title: string | null;
+  rad_file_name: string | null;
+  n_nodes: number;
+  n_elems: number;
+  topo_sha256: string;
+  pids: OptPid[];
+  supports: OptSupport[];
+}
+export interface S1CheckOut {
+  base: S1CheckBase;
+  /** reason: NODE_IDS · CONNECTIVITY · COORDS · NO_TOPO(모델 정보 없음) */
+  entries: { entry_id: string; same_model: boolean; reason: string | null }[];
+}
+
+export type XY = [number, number];
+export interface PlanViewOut {
+  /** mm */
+  frame: { a_range: XY; b_range: XY };
+  outline: XY[];
+  holes: XY[][];
+  elems: { n_total: number; decimated: boolean; points: [number, number, number][] };
+  /** 자동 영역 근사 외곽. kinds(선택, polygons 와 같은 길이)로 구멍/가장자리 구분 — 같은 kind 끼리 evenodd 로 칠함 */
+  auto_keepout: { hole_radius_mm: number; edge_band_mm: number; polygons: XY[][]; kinds?: ("hole" | "edge")[] | null };
+}
+
+export interface KeepoutRect {
+  name: string;
+  corner: RectCorner;
+  x_mm: number;
+  y_mm: number;
+  w_mm: number;
+  h_mm: number;
+}
+export interface KeepoutAuto {
+  hole: boolean;
+  edge: boolean;
+}
+export interface KeepoutSetIn {
+  template_id?: string | null;
+  topo_sha256?: string | null;
+  /** 갱신 시 필수 */
+  version?: number | null;
+  rects: KeepoutRect[];
+  auto: KeepoutAuto;
+}
+export interface KeepoutSetOut {
+  id: string;
+  key: { template_id?: string | null; topo_sha256?: string | null };
+  version: number;
+  rects: KeepoutRect[];
+  auto: KeepoutAuto;
+  frame: { a_range: XY; b_range: XY };
+  updated_by_name: string;
+  updated_at: string;
+}
+
+export interface OptDesignIn {
+  nondesign_pids?: number[];
+  bead?: OptBead;
+  keepout: { rects: KeepoutRect[]; auto: KeepoutAuto };
+}
+export interface OptRunOptions {
+  /** S2 만 */
+  supports?: OptSupport[];
+  objective_norm?: ObjectiveNorm;
+  load_strategy?: LoadStrategy;
+  /** C 만, 1..max_cases */
+  k?: number;
+}
+export interface OptRunIn {
+  project_id: string;
+  scenario: OptScenario;
+  title?: string | null;
+  entry_ids: string[];
+  analysis_id?: string | null;
+  template_id?: string | null;
+  design: OptDesignIn;
+  options: OptRunOptions;
+}
+
+export type LoadRowStatus = "included" | "merged" | "cluster_rep" | "clustered" | "mode_rep" | "not_selected";
+export interface LoadSelectionRow {
+  entry_id: string;
+  scene: string;
+  mode: DeformMode | null;
+  C0: number;
+  /** 덱 DOBJREF POS 값: abs = C_ref, rel = C0 */
+  pos: number | null;
+  umax: number;
+  status: LoadRowStatus;
+  merged_into: string | null;
+  mac_to_target: number | null;
+  /** 병합 대상과 반대 방향이면 -1 */
+  sign: 1 | -1 | null;
+  cluster: number | null;
+  /** 선정된 케이스 라벨 L01… */
+  label: string | null;
+}
+export interface LoadSelection {
+  strategy: LoadStrategy;
+  objective_norm: ObjectiveNorm;
+  C_ref: number | null;
+  k: number | null;
+  mac_merge: number | null;
+  max_cases: number;
+  n_selected_esl: number;
+  n_cases: number;
+  rows: LoadSelectionRow[];
+  clusters: { id: number; rep_entry_id: string; members: string[]; min_mac: number }[];
+  excluded_modes: DeformMode[];
+  sources_ref: string;
+}
+export interface OptSubcase {
+  label: string;
+  entry_id: string;
+  C0_self: number;
+  C0_os: number | null;
+  C_final: number | null;
+  ratio: number | null;
+}
+export interface OptResult {
+  load_selection: LoadSelection;
+  objective_norm: ObjectiveNorm;
+  C_ref: number | null;
+  converged: boolean;
+  iterations: number;
+  desmax: number;
+  objective: { initial: number | null; final: number | null; history: number[] };
+  subcases: OptSubcase[];
+  keepout: { n_elems_auto_hole: number; n_elems_auto_edge: number; n_elems_rects: number; n_design_elems: number };
+  bead: { height_max: number; area_frac: number };
+  normals_flipped?: number | null;
+  normals_opposite?: number | null;
+  solve: { seconds: number | null; license_waits: number; reused: boolean };
+  warnings: string[];
+}
+export interface OptRunOut {
+  id: string;
+  project_id: string;
+  scenario: OptScenario;
+  title: string | null;
+  entry_ids: string[];
+  analysis_id: string | null;
+  /** S1: s1-check base 와 같은 모양 */
+  base?: S1CheckBase | null;
+  /** S2: 템플릿 요약 */
+  template?: Pick<TemplateOut, "id" | "title" | "inch" | "L_xi" | "L_eta" | "status"> | null;
+  size: { inch: number | null; L_xi: number | null; L_eta: number | null } | null;
+  design: OptDesignIn;
+  load_strategy: LoadStrategy;
+  k: number | null;
+  objective_norm: ObjectiveNorm;
+  job: JobOut | null;
+  state: JobState;
+  created_by_name: string;
+  created_at: string;
+  /** 완료 전에도 OPT_LOAD 뒤면 load_selection 만 채워진 부분 결과일 수 있음(§5.2 "OPT_LOAD 가 끝난 뒤부터 채움") */
+  result: OptResult | null;
+  report_ready: boolean;
+}
+export interface OptFileOut {
+  rel: string;
+  kind: string;
+  size: number;
+  downloadable: boolean;
+  path?: string | null;
 }
