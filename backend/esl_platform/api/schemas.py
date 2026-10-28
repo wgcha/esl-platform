@@ -1416,6 +1416,7 @@ class PlanViewAuto(_Out):
     hole_radius_mm: float
     edge_band_mm: float
     polygons: list[list[list[float]]]
+    kinds: list[Literal["hole", "edge"]] = Field(default_factory=list)   # polygons 와 같은 길이(구멍/가장자리)
     counts: dict[str, int] = Field(default_factory=dict)
 
 

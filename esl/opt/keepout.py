@@ -271,12 +271,17 @@ def plan_view(mesh: dict, frame: dict, kcfg: dict, max_points: int, keepout: dic
     idx = np.arange(0, ne, step)
     pid = np.asarray(mesh["elem_pid"], dtype=np.int64)
     pts = [[round(float(ab[i, 0]), 2), round(float(ab[i, 1]), 2), int(pid[i])] for i in idx]
+    # 자동 영역을 종류별(구멍/가장자리)로 따로 그린 루프 + 같은 길이의 kinds — 화면은 같은 kind 끼리 evenodd 로 칠함
+    reason = res["reason"]
+    hole_rings = region_rings(mesh, reason == REASON_HOLE, frame)
+    edge_rings = region_rings(mesh, reason == REASON_EDGE, frame)
     return {"frame": {"a_range": [float(v) for v in frame["a_range"]], "b_range": [float(v) for v in frame["b_range"]]},
             "outline": _ring_ab(frame, X, loops["outer"]) if loops["outer"] is not None else [],
             "holes": [_ring_ab(frame, X, r) for r in loops["holes"]],
             "elems": {"n_total": int(ne), "decimated": step > 1, "points": pts},
             "auto_keepout": {"hole_radius_mm": float(kcfg["hole_radius_mm"]),
                              "edge_band_mm": float(kcfg["edge_band_mm"]),
-                             "polygons": region_rings(mesh, res["mask"], frame),
+                             "polygons": hole_rings + edge_rings,
+                             "kinds": ["hole"] * len(hole_rings) + ["edge"] * len(edge_rings),
                              "counts": res["counts"]},
             "warnings": res["warnings"]}

@@ -22,9 +22,25 @@ export const opt = {
   run: (id: string) => request<OptRunOut>("GET", `/opt/runs/${id}`),
   runFiles: (id: string) => request<OptFileOut[]>("GET", `/opt/runs/${id}/files`),
   downloadUrl: (id: string, rel: string) => `${API_PREFIX}/opt/runs/${id}/download` + `?rel=${encodeURIComponent(rel)}`,
-  bundleUrl: (id: string, parts = "post,report,load") => `${API_PREFIX}/opt/runs/${id}/bundle` + `?parts=${encodeURIComponent(parts)}`,
+  /** 결과 zip. parts(서버 OPT_PARTS) = report·result(opt.json·post·load)·deck(기본 셋) [+solve = OptiStruct 원본, raw = npz·대상] */
+  bundleUrl: (id: string, parts = "report,result,deck") => `${API_PREFIX}/opt/runs/${id}/bundle` + `?parts=${encodeURIComponent(parts)}`,
   reportUrl: (id: string) => `${API_PREFIX}/opt/runs/${id}/report`,
   beadMapUrl: (id: string) => `${API_PREFIX}/opt/runs/${id}/bead-map.png`,
+};
+
+/** /opt/settings 1회 조회 캐시(라이브러리 목록 행 선택의 크기 허용 등 — 실패하면 다음 호출에서 다시) */
+let settingsOnce: Promise<OptSettingsOut> | null = null;
+export function optSettingsCached(): Promise<OptSettingsOut> {
+  if (!settingsOnce)
+    settingsOnce = opt.settings().catch((e) => {
+      settingsOnce = null;
+      throw e;
+    });
+  return settingsOnce;
+}
+/** 시험용: 캐시 비우기 */
+export const resetOptSettingsCache = () => {
+  settingsOnce = null;
 };
 
 // ---------------------------------------------------------------- 표기
@@ -43,11 +59,13 @@ export const ROW_STATUS_LABEL: Record<LoadRowStatus, string> = {
 };
 /** 선정되어 덱 subcase 가 되는 상태 */
 export const SELECTED_STATUS: LoadRowStatus[] = ["included", "cluster_rep", "mode_rep"];
+/** 다른 모델 사유: s1-check(서버 topo_sha256 비교) = TOPOLOGY·MODEL_INFO_MISSING, OPT_PREP 전체 규칙 = NODE_IDS·CONNECTIVITY·COORDS */
 export const MISMATCH_REASON: Record<string, string> = {
+  TOPOLOGY: "노드 ID·요소 연결 다름",
+  MODEL_INFO_MISSING: "모델 정보 없음",
   NODE_IDS: "노드 ID 다름",
   CONNECTIVITY: "요소 연결 다름",
   COORDS: "좌표 다름",
-  NO_TOPO: "모델 정보 없음",
 };
 
 /** 지수 표기 3자리: 1.23e4 */

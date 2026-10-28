@@ -131,6 +131,12 @@ def test_plan_view_same_function_as_worker(holed):
     used = np.unique(m["conn"][worker["mask"]][m["conn"][worker["mask"]] >= 0])
     pts = {(round(a, 3), round(b, 3)) for a, b in ab[used]}
     assert all((p[0], p[1]) in pts for r in rings for p in r)
+    # v0.7.0 통합: 종류(구멍/가장자리) — polygons 와 같은 길이, 구멍 링이 먼저
+    kinds = pv["auto_keepout"]["kinds"]
+    assert len(kinds) == len(rings) and set(kinds) == {"hole", "edge"}
+    assert kinds == sorted(kinds, key=lambda k: k != "hole")
+    only_edge = ko.plan_view(m, fr, KC, max_points=100, keepout={"auto": {"hole": False, "edge": True}})
+    assert set(only_edge["auto_keepout"]["kinds"]) == {"edge"}
 
 
 def test_frame_shift_warning(holed):

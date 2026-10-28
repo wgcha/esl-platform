@@ -14,7 +14,7 @@ import { usePolling } from "../../lib/usePolling";
 import { dt, pv } from "../../lib/format";
 import { DROP_LABEL, DROP_TYPES, NORM_LABEL, EntryVerdict, entryLabel, modelVersions, sceneText, uniq } from "./common";
 import { ComparisonVerdictBadge } from "./ComparisonDetail";
-import { MODES, MODE_LABEL, optPath, sameSize, sizeOf, sizeText } from "../../api/opt";
+import { MODES, MODE_LABEL, optPath, optSettingsCached, sameSize, sizeOf, sizeText } from "../../api/opt";
 import { ModeSelect, entryKey, modeText } from "../../components/ModeSelect";
 import { OptList } from "../opt/OptList";
 import { Templates } from "../opt/Templates";
@@ -27,8 +27,6 @@ const TABS: { id: LibTab; label: string }[] = [
   { id: "opt", label: "최적화 실행" },
   { id: "templates", label: "템플릿" },
 ];
-/** ESL 간 크기 허용(서버 opt_run.size.tol_rel 기본) — 목록 체크용. 실행 화면은 /opt/settings 값 */
-export const LIST_SIZE_TOL = 0.02;
 
 interface Filters {
   model: string;
@@ -133,11 +131,15 @@ function EditRow({ e, onDone }: { e: EntryOut; onDone: (changed: boolean) => voi
   );
 }
 
-/** 행 선택 규칙: 첫 선택 = 기준, 같은 크기(인치 + 치수 ±2 %)만 더 고를 수 있다. 반환 = 비활성 사유 또는 null */
-export function pickBlock(e: EntryOut, base: EntryOut | undefined): string | null {
+/** 행 선택 규칙: 첫 선택 = 기준, 같은 크기(인치 + 치수 ± tol — 서버 /opt/settings size.tol_rel)만 더 고를 수 있다.
+ * tol = null(설정 불러오는 중)이면 기준 외 행은 잠시 비활성. 반환 = 비활성 사유 또는 null */
+export function pickBlock(e: EntryOut, base: EntryOut | undefined, tol: number | null): string | null {
   if (e.status !== "ACTIVE") return "폐기된 항목";
   if (!e.size?.L_xi && e.model.inch == null) return "크기 정보 없음";
-  if (base && base.id !== e.id && !sameSize(sizeOf(e), sizeOf(base), LIST_SIZE_TOL)) return `크기 다름(기준 ${sizeText(sizeOf(base))})`;
+  if (base && base.id !== e.id) {
+    if (tol == null) return "크기 허용값 불러오는 중…";
+    if (!sameSize(sizeOf(e), sizeOf(base), tol)) return `크기 다름(기준 ${sizeText(sizeOf(base))})`;
+  }
   return null;
 }
 
@@ -156,6 +158,8 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
 }) {
   const nav = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
+  const optSt = usePolling(() => optSettingsCached(), 0, []);
+  const sizeTol = optSt.data?.size.tol_rel ?? null;
   const byId = new Map(entries.map((e) => [e.id, e]));
   const base = picked.length ? byId.get(picked[0]) : undefined;
   const same = base ? picked.filter((id) => byId.get(id)?.topo_sha256 && byId.get(id)?.topo_sha256 === base.topo_sha256).length : 0;
@@ -271,7 +275,7 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
                     />
                   );
                 const on = picked.includes(e.id);
-                const block = on ? null : pickBlock(e, base);
+                const block = on ? null : pickBlock(e, base, sizeTol);
                 const sameModel = !!base && !!e.topo_sha256 && e.topo_sha256 === base.topo_sha256;
                 return (
                   <tr key={e.id} className={[e.status === "RETIRED" ? "retired" : "", on ? "sel" : "", block && base ? "dim-row" : ""].filter(Boolean).join(" ") || undefined} aria-selected={on}>

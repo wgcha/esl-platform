@@ -63,6 +63,7 @@ export function makeOptSettings(): OptSettingsOut {
     max_entries: 200,
     template_max_elems: 500000,
     template_ext: [".rad", ".inc", ".fem"],
+    max_preview_points: 20000,
   };
 }
 
@@ -119,6 +120,7 @@ export function makePlanView(L: number, H: number, holeR = 15, edge = 10): PlanV
     ...centers.map(([x, y]) => circle(x, y, 4 + holeR)),
   ];
   return {
+    key: { template_id: null, topo_sha256: null },
     frame: { a_range: [0, L], b_range: [0, H] },
     outline,
     holes,
@@ -275,7 +277,7 @@ interface Run {
   analysis_id: string | null;
   template_id: string | null;
   base: S1CheckBase | null;
-  design: OptRunIn["design"];
+  design: OptRunOut["design"];
   load_strategy: LoadStrategy;
   k: number | null;
   objective_norm: ObjectiveNorm;
@@ -297,7 +299,7 @@ const SUPPORTS = [
 
 export class OptMock {
   settings = makeOptSettings();
-  templates: (TemplateOut & { created_by: string })[] = [];
+  templates: TemplateOut[] = [];
   keepouts = new Map<string, KeepoutSetOut>();
   runs: Run[] = [];
   seq = 0;
@@ -310,7 +312,7 @@ export class OptMock {
   }
 
   seed() {
-    const t = (id: string, title: string, inch: number | null, L: number, H: number, format: "rad" | "fem", by: string, byName: string, status: "ACTIVE" | "ARCHIVED", n_runs: number): TemplateOut & { created_by: string } => ({
+    const t = (id: string, title: string, inch: number | null, L: number, H: number, format: "rad" | "fem", by: string, byName: string, status: "ACTIVE" | "ARCHIVED", n_runs: number): TemplateOut => ({
       id,
       title,
       inch,
@@ -323,9 +325,9 @@ export class OptMock {
       n_elems: 47600,
       L_xi: L,
       L_eta: H,
-      z_range: 0.4,
+      z_range: [-0.2, 0.2],
       pids: [{ pid: 1, title: "plate_t0.8", n_elems: 47600, thickness: 0.8, E: 210000, nu: 0.3 }],
-      quality_warnings: format === "fem" ? ["셀당 노드 중앙값 58 < 64 (매핑 해상도)"] : [],
+      quality_warnings: format === "fem" ? [{ code: "CELL_NODES", message: "셀당 노드 중앙값 58 < 64 (매핑 해상도)" }] : [],
       status,
       n_runs,
       created_by_name: byName,
@@ -386,7 +388,9 @@ export class OptMock {
   private makeRun(b: OptRunIn): Run {
     const es = this.ctx.entries();
     const first = es.find((e) => e.id === b.entry_ids[0]);
-    const strategy = b.options.load_strategy ?? this.settings.loads.default_strategy;
+    const options = b.options ?? {};
+    const design = b.design ?? {};
+    const strategy = options.load_strategy ?? this.settings.loads.default_strategy;
     return {
       id: this.id("opt"),
       project_id: b.project_id,
@@ -396,10 +400,17 @@ export class OptMock {
       analysis_id: b.analysis_id ?? null,
       template_id: b.scenario === "S2" ? b.template_id ?? null : null,
       base: b.scenario === "S1" && first ? this.s1Base(first) : null,
-      design: { nondesign_pids: b.design.nondesign_pids ?? [], bead: b.design.bead ?? this.settings.bead_defaults, keepout: b.design.keepout },
+      design: {
+        nondesign_pids: design.nondesign_pids ?? [],
+        bead: design.bead ?? this.settings.bead_defaults,
+        keepout: {
+          rects: (design.keepout?.rects ?? []).map((x, i) => ({ ...x, name: x.name ?? `영역${i + 1}`, corner: x.corner as KeepoutRect["corner"] })),
+          auto: { hole: design.keepout?.auto?.hole ?? true, edge: design.keepout?.auto?.edge ?? true },
+        },
+      },
       load_strategy: strategy,
-      k: strategy === "C" ? b.options.k ?? this.settings.loads.default_k : null,
-      objective_norm: b.options.objective_norm ?? this.settings.loads.default_objective_norm,
+      k: strategy === "C" ? options.k ?? this.settings.loads.default_k : null,
+      objective_norm: options.objective_norm ?? this.settings.loads.default_objective_norm,
       created_by_name: this.ctx.me().display_name,
       created_at: this.ctx.now(),
     };
@@ -431,25 +442,31 @@ export class OptMock {
       entry_ids: r.entry_ids,
       analysis_id: r.analysis_id,
       base: r.base,
-      template: tpl ? { id: tpl.id, title: tpl.title, inch: tpl.inch, L_xi: tpl.L_xi, L_eta: tpl.L_eta, status: tpl.status } : null,
-      size: first?.size ? { inch: first.size.inch, L_xi: first.size.L_xi, L_eta: first.size.L_eta } : null,
+      template_id: r.template_id,
+      template: tpl ? { id: tpl.id, title: tpl.title, inch: tpl.inch, L_xi: tpl.L_xi, L_eta: tpl.L_eta, status: tpl.status, format: tpl.format, file_name: tpl.file_name, n_nodes: tpl.n_nodes, n_elems: tpl.n_elems } : null,
+      size: r.scenario === "S2" && first?.size ? { entries: [first.size], warnings: [] } : null,
       design: r.design,
+      options: { objective_norm: r.objective_norm, load_strategy: r.load_strategy, k: r.k, supports: null },
+      job_id: j?.id ?? null,
       load_strategy: r.load_strategy,
       k: r.k,
       objective_norm: r.objective_norm,
       job: j,
       state,
+      created_by: "u-mock",
       created_by_name: r.created_by_name,
       created_at: r.created_at,
-      result: sel ? (done ? makeOptResult(sel, r.design.bead ?? { height: 10 }, r.design.keepout.rects.length, r.scenario) : ({ load_selection: sel } as OptResult)) : null,
+      updated_at: r.created_at,
+      result: sel ? (done ? { ...makeOptResult(sel, r.design.bead, r.design.keepout.rects.length, r.scenario), files: optFiles(r.id, r.scenario).map((f) => ({ rel: f.rel, size: f.size })), job_id: j?.id } : { stage: "load", load_selection: sel }) : null,
       report_ready: done,
+      dir_rel: `_opt/${r.id}`,
+      folder_path: `E:\\ESL_ROOT\\_opt\\${r.id}`,
     };
   }
 
-  private templateOut(t: TemplateOut & { created_by: string }): TemplateOut {
+  private templateOut(t: TemplateOut): TemplateOut {
     const me = this.ctx.me();
-    const { created_by, ...rest } = t;
-    return { ...rest, can_delete: me.is_global_admin || created_by === me.user_id };
+    return { ...t, can_delete: me.is_global_admin || t.created_by === me.user_id };
   }
 
   private anyPower() {
@@ -474,16 +491,17 @@ export class OptMock {
       this.ctx.markUploadCompleted(String(b.upload_id));
       const format = /\.fem$/i.test(main) ? "fem" : "rad";
       const out: MeshCheckOut = {
+        upload_id: String(b.upload_id),
         ok: true,
         sha256: `sha-${b.upload_id}`.padEnd(64, "b"),
         format,
         file_name: main.split("/").pop()!,
-        parts: format === "rad" ? ["plate"] : [],
+        parts: format === "rad" ? [{ id: 1, title: "plate", n_elems: 47600 }] : [],
         part_title: format === "rad" ? "plate" : null,
         mesh: { n_nodes: 48210, n_elems: 47600, n_quad: 46900, n_tria: 700, unsupported: {} },
         pids: [{ pid: 1, title: "plate_t0.8", n_elems: 47600, thickness: 0.8, E: 210000, nu: 0.3 }],
-        frame: { L_xi: 1660, L_eta: 950, z_range: 0.4, warnings: [] },
-        quality: { errors: [], warnings: ["셀당 노드 중앙값 58 < 64 (매핑 해상도)"], metrics: {} },
+        frame: { L_xi: 1660, L_eta: 950, z_range: [-0.2, 0.2], warnings: [] },
+        quality: { errors: [], warnings: [{ code: "CELL_NODES", message: "셀당 노드 중앙값 58 < 64 (매핑 해상도)" }], metrics: {} },
         supports_auto: SUPPORTS,
       };
       return ok(out);
@@ -497,11 +515,11 @@ export class OptMock {
       const main = u.files.find((f) => /\.(fem|rad)$/i.test(f)) ?? "plate.fem";
       const me = this.ctx.me();
       const inch = typeof b.inch === "number" ? b.inch : null;
-      const t: TemplateOut & { created_by: string } = {
+      const t: TemplateOut = {
         id: this.id("tpl"),
         title,
         inch,
-        description: typeof b.description === "string" ? b.description : null,
+        description: typeof b.description === "string" ? b.description : "",
         format: /\.fem$/i.test(main) ? "fem" : "rad",
         file_name: main.split("/").pop()!,
         part_title: (b.part_title as string | null) ?? null,
@@ -510,9 +528,9 @@ export class OptMock {
         n_elems: 47600,
         L_xi: 1660,
         L_eta: 950,
-        z_range: 0.4,
+        z_range: [-0.2, 0.2],
         pids: [{ pid: 1, title: "plate_t0.8", n_elems: 47600, thickness: 0.8, E: 210000, nu: 0.3 }],
-        quality_warnings: ["셀당 노드 중앙값 58 < 64 (매핑 해상도)"],
+        quality_warnings: [{ code: "CELL_NODES", message: "셀당 노드 중앙값 58 < 64 (매핑 해상도)" }],
         status: "ACTIVE",
         n_runs: 0,
         created_by_name: me.display_name,
@@ -554,7 +572,7 @@ export class OptMock {
         base: this.s1Base(base),
         entries: hit.map((e) => {
           const same = !!base.topo_sha256 && e!.topo_sha256 === base.topo_sha256;
-          return { entry_id: e!.id, same_model: same, reason: same ? null : !e!.topo_sha256 || !base.topo_sha256 ? "NO_TOPO" : e!.model.name === base.model.name ? "COORDS" : "NODE_IDS" };
+          return { entry_id: e!.id, same_model: same, reason: same ? null : !e!.topo_sha256 || !base.topo_sha256 ? "MODEL_INFO_MISSING" : "TOPOLOGY" };
         }),
       };
       return ok(out);
@@ -568,11 +586,11 @@ export class OptMock {
       if (tid) {
         const t = this.templates.find((x) => x.id === tid);
         if (!t) return err(404, "TEMPLATE_NOT_FOUND", "템플릿을 찾을 수 없습니다.");
-        return ok(makePlanView(t.L_xi, t.L_eta, s.hole_radius_mm, s.edge_band_mm));
+        return ok({ ...makePlanView(t.L_xi, t.L_eta, s.hole_radius_mm, s.edge_band_mm), key: { template_id: t.id, topo_sha256: null } });
       }
       const e = es.find((x) => x.id === eid);
       if (!e) return err(404, "ENTRY_NOT_FOUND", "라이브러리 항목을 찾을 수 없습니다.");
-      return ok(makePlanView(e.size?.L_xi ?? 1662, e.size?.L_eta ?? 948, s.hole_radius_mm, s.edge_band_mm));
+      return ok({ ...makePlanView(e.size?.L_xi ?? 1662, e.size?.L_eta ?? 948, s.hole_radius_mm, s.edge_band_mm), key: { template_id: null, topo_sha256: e.topo_sha256 ?? null } });
     }
 
     // ---- 금지 영역 세트
@@ -602,7 +620,7 @@ export class OptMock {
           key: tid ? { template_id: tid } : { topo_sha256: topo },
           version: (cur?.version ?? 0) + 1,
           rects,
-          auto: (b.auto as KeepoutAuto) ?? { hole: true, edge: true },
+          auto: { hole: (b.auto as KeepoutAuto | undefined)?.hole ?? true, edge: (b.auto as KeepoutAuto | undefined)?.edge ?? true },
           frame: { a_range: [0, L], b_range: [0, H] },
           updated_by_name: this.ctx.me().display_name,
           updated_at: this.ctx.now(),
@@ -626,7 +644,7 @@ export class OptMock {
       if (o.load_strategy === "C" && o.k != null && !(Number.isInteger(o.k) && o.k >= 1 && o.k <= this.settings.loads.max_cases))
         return err(422, "INVALID_PARAMS", `k 는 1..${this.settings.loads.max_cases} 정수입니다.`);
       if (o.load_strategy === "B" && !hit.some((e) => e!.deform_mode?.effective)) return err(422, "NO_MODE_CANDIDATES", "모드가 분류된 ESL 이 없습니다.");
-      const bad = rectsInvalid(body.design?.keepout?.rects ?? [], this.settings.max_rects);
+      const bad = rectsInvalid((body.design?.keepout?.rects ?? []) as KeepoutRect[], this.settings.max_rects);
       if (bad) return err(422, "KEEPOUT_INVALID", bad);
       if (body.scenario === "S1") {
         const base = hit[0]!;
@@ -656,7 +674,7 @@ export class OptMock {
       if (out.state !== "SUCCEEDED") return err(404, "NOT_READY", "결과가 아직 없습니다.");
       if (r[2] === "/files") return ok(optFiles(run.id, run.scenario));
       if (r[2] === "/report") return ok(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>비드 최적화 보고서</title></head><body><h1>비드 최적화 — ${run.title ?? run.id}</h1></body></html>`);
-      if (r[2] === "/bead-map.png") return ok(beadMapSvg(out.result!));
+      if (r[2] === "/bead-map.png") return ok(beadMapSvg(out.result as OptResult));
       return ok("mock file\n");
     }
     return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
@@ -710,15 +728,16 @@ export function rectsInvalid(rects: KeepoutRect[], max: number): string | null {
 }
 
 function optFiles(id: string, scenario: "S1" | "S2"): OptFileOut[] {
-  const f = (rel: string, kind: string, size: number): OptFileOut => ({ rel, kind, size, downloadable: size < 200e6, path: `E:\\ESL_ROOT\\_opt\\${id}\\${rel.replace(/\//g, "\\")}` });
+  void id;
+  const f = (rel: string, kind: OptFileOut["kind"], size: number): OptFileOut => ({ rel, kind, size, downloadable: size < 200e6 });
   return [
     f("report.html", "report", 412_331),
-    f("post/bead_map.png", "post", 88_120),
-    f("post/bead_mesh.rad", "post", scenario === "S1" ? 61_204_118 : 4_120_331),
-    f("post/bead_mesh.fem", "post", scenario === "S1" ? 58_331_204 : 3_901_112),
-    f("post/bead_nodes.csv", "post", 14_220_118),
-    f("post/history.csv", "post", 2_118),
-    f("load/selection.json", "load", 6_331),
+    f("post/bead_map.png", "result", 88_120),
+    f("post/bead_mesh.rad", "result", scenario === "S1" ? 61_204_118 : 4_120_331),
+    f("post/bead_mesh.fem", "result", scenario === "S1" ? 58_331_204 : 3_901_112),
+    f("post/bead_nodes.csv", "result", 14_220_118),
+    f("post/history.csv", "result", 2_118),
+    f("load/selection.json", "selection", 6_331),
     f("deck/esl_bead.fem", "deck", 71_204_331),
     f("solve/esl_bead_des.h3d", "solve", 412_331_204),
   ];

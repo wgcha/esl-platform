@@ -133,6 +133,9 @@ opt_run:                              # v0.7.0 비드 최적화 서버 실행(�
     converged_patterns: ['OPTIMIZATION HAS CONVERGED']
     license_patterns: ['(?i)license.*(not available|checkout failed|insufficient|exceeded)', '(?i)ALM_\w+_ERROR']
     license_retry: {max: 3, wait_s: 300}                           # 라이선스 부족: 3회 × 300 초 자동 재시도 후 실패
+    # iteration_pattern·objective_pattern·compliance_pattern·memory_patterns: 기본값은 서버 내장(backend core/config.py).
+    # 실기 .out 형식이 다르면 여기서 정규식으로 덮어쓴다 — docs/manual/opt_run_check.md V-OR-R1 ②
+    # OptiStruct 메모리 {mem_mb} = worker.per_job_memory_gb(없으면 max_memory_gb) × 1024 — os_solve 에 "-len", "{mem_mb}" 를 넣을 때만 쓰임
     env: {}                           # 허용 키 ALTAIR_LICENSE_PATH·ALTAIR_HOME·OMP_*
   post: {png_px: [1600, 900], bead_area_thr_rel: 0.1, report_map_cells: [96, 54]}
   check: {bead_width_elem_factor: 2.0, min_nodes_per_cell: 64, max_aspect: 10.0, max_warp_deg: 15.0}

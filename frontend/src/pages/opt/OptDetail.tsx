@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { ApiError, downloadFile, errorText } from "../../api/client";
 import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, sci } from "../../api/opt";
-import type { JobOut, OptResult, OptRunOut } from "../../api/types";
+import { STEP_LABEL } from "../../api/history";
+import { isFullResult, type JobOut, type OptResult, type OptRunOut } from "../../api/types";
 import { canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
@@ -19,17 +20,11 @@ import { dt } from "../../lib/format";
 import { libPath } from "../library/common";
 
 const ACTIVE = ["QUEUED", "RUNNING"];
-export const OPT_STEP_LABEL: Record<string, string> = {
-  OPT_PREP: "대상",
-  OPT_LOAD: "하중·선정",
-  OPT_DECK: "덱",
-  OS_SOLVE: "OptiStruct",
-  OPT_POST: "후처리",
-  OPT_REGISTER: "등록",
-};
+/** 단계 라벨(대기열·이력과 같은 표 — api/history.ts STEP_LABEL) */
+export const OPT_STEP_LABEL: Record<string, string> = STEP_LABEL;
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
 
-function Steps({ job }: { job: JobOut | null }) {
+function Steps({ job }: { job: JobOut | null | undefined }) {
   const steps = job?.steps ?? [];
   if (!steps.length) return null;
   return (
@@ -130,14 +125,20 @@ function DownloadLink({ id, rel, label }: { id: string; rel: string; label: stri
   );
 }
 
+/** 비드 반영 메시(서버 result.files 에 있는 것만 버튼) */
+const MESH_FILES = [
+  { rel: "post/bead_mesh.rad", label: ".rad" },
+  { rel: "post/bead_mesh.fem", label: ".fem" },
+];
+
 function Result({ r, run }: { r: OptResult; run: OptRunOut }) {
   const objLabel = r.objective_norm === "abs" ? "max C/C_ref" : "max C/C⁰";
   return (
     <Card title="결과">
       <div className="stats">
         <Stat label={`목적(${NORM_NAME[r.objective_norm]}) ${objLabel}`} value={`${r.objective.initial?.toFixed(2) ?? "–"} → ${r.objective.final?.toFixed(2) ?? "–"}`} sub={r.objective_norm === "abs" ? `C_ref ${sci(r.C_ref)}` : undefined} tone="ok" />
-        <Stat label="반복" value={`${r.iterations}/${r.desmax}`} sub={r.converged ? "수렴" : "미수렴(DESMAX 도달)"} tone={r.converged ? undefined : "bad"} />
-        <Stat label="비드 면적" value={`${Math.round(r.bead.area_frac * 100)}%`} sub={`최대 높이 ${r.bead.height_max} mm`} />
+        <Stat label="반복" value={`${r.iterations ?? "–"}/${r.desmax}`} sub={r.converged ? "수렴" : "미수렴(DESMAX 도달)"} tone={r.converged ? undefined : "bad"} />
+        <Stat label="비드 면적" value={r.bead.area_frac != null ? `${Math.round(r.bead.area_frac * 100)}%` : "–"} sub={`최대 높이 ${r.bead.height_max != null ? r.bead.height_max.toFixed(2) : "–"} mm`} />
         <Stat label="설계 요소" value={r.keepout.n_design_elems.toLocaleString()} sub={`금지: 구멍 ${r.keepout.n_elems_auto_hole.toLocaleString()} · 가장자리 ${r.keepout.n_elems_auto_edge.toLocaleString()} · 사각형 ${r.keepout.n_elems_rects.toLocaleString()}`} />
         <Stat label="해석 시간" value={r.solve.seconds != null ? `${Math.round(r.solve.seconds / 60)}분` : "–"} sub={`라이선스 대기 ${r.solve.license_waits}회${r.solve.reused ? " · 재사용" : ""}`} />
       </div>
@@ -183,8 +184,9 @@ function Result({ r, run }: { r: OptResult; run: OptRunOut }) {
       </div>
       <div className="inline-actions">
         <span className="small muted">받기</span>
-        <DownloadLink id={run.id} rel="post/bead_mesh.rad" label=".rad" />
-        <DownloadLink id={run.id} rel="post/bead_mesh.fem" label=".fem" />
+        {MESH_FILES.filter((m) => !r.files || r.files.some((f) => f.rel === m.rel)).map((m) => (
+          <DownloadLink key={m.rel} id={run.id} rel={m.rel} label={m.label} />
+        ))}
         <BundleButton url={opt.bundleUrl(run.id)} filename={`opt_${run.id}.zip`} />
       </div>
       <div className="small muted">다음: 비드 반영 메시({run.scenario === "S1" ? "대상 파트 교체" : "템플릿 형상"})로 낙하 해석 → 새 Case → 라이브러리 등록 → 버전 비교</div>
@@ -202,6 +204,7 @@ export function OptDetail() {
   const settings = usePolling(() => opt.settings(), 0, []);
   const r = run.data;
   const done = r?.state === "SUCCEEDED";
+  const full = isFullResult(r?.result) ? r?.result ?? null : null;
   useEffect(() => {
     if (r && !ACTIVE.includes(r.state)) setPoll(0);
   }, [r]);
@@ -216,7 +219,7 @@ export function OptDetail() {
         <h1 className="page-title">비드 최적화</h1>
         {r && <Badge kind="info">{`${r.scenario} ${SCENARIO_LABEL[r.scenario]}`}</Badge>}
         {r?.title && <span className="muted">{r.title}</span>}
-        {r && <JobStatusBadge state={r.state} />}
+        {r && r.state !== "NONE" && <JobStatusBadge state={r.state} />}
         {os?.state === "RUNNING" && <span className="small muted">OptiStruct {Math.round(os.progress_pct ?? 0)}%</span>}
         <span className="spacer" />
         <PrimaryButton label="보고서 보기" onClick={() => openReport(opt.reportUrl(optId))} disabledReason={reason} />
@@ -226,9 +229,9 @@ export function OptDetail() {
         <Card title="진행">
           <Steps job={r.job} />
           {r.job && !done && <JobProgress jobId={r.job.id} allowed={allowed} onDone={() => void run.reload()} />}
-          {done && r.result && (
+          {done && full && (
             <div className="small muted">
-              목적({NORM_NAME[r.objective_norm]}) {r.result.objective.initial?.toFixed(2)} → {r.result.objective.final?.toFixed(2)} · 라이선스 대기 {r.result.solve.license_waits}회
+              목적({NORM_NAME[r.objective_norm]}) {full.objective.initial?.toFixed(2)} → {full.objective.final?.toFixed(2)} · 라이선스 대기 {full.solve.license_waits}회
             </div>
           )}
         </Card>
@@ -265,7 +268,7 @@ export function OptDetail() {
           )}
         </Card>
       )}
-      {done && r?.result && <Result r={r.result} run={r} />}
+      {done && r && full && <Result r={full} run={r} />}
     </Shell>
   );
 }

@@ -117,7 +117,10 @@ def template_preview(ctx: AppContext, t: dict[str, Any]) -> dict[str, Any]:
     p = os.path.join(template_folder(ctx, t), "preview.json")
     try:
         with open(p, encoding="utf-8") as fh:
-            return json.load(fh)
+            pv = json.load(fh)
+        if "kinds" in (pv.get("auto_keepout") or {}):
+            return pv
+        # kinds(구멍/가장자리) 없는 구 캐시 → 다시 만든다
     except (OSError, ValueError):
         pass
     o = _cfg(ctx)

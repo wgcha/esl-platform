@@ -94,7 +94,7 @@
 ### 3.2 S2 템플릿 최적화
 1. (최초 1회) 템플릿 탭 → [템플릿 등록] → `.rad`(+include)/`.fem` 끌어다 놓기 → 청크 업로드 → 자동 검사 → 제목·인치(선택)·설명 → [등록].
 2. ESL 선택(같은 크기) → 새 최적화 화면 템플릿 탭: ① 템플릿 선택(크기 맞는 것만 활성) → PID 표·자동 3-2-1·품질 경고. ② 비드 금지 영역(S1 과 같은 카드, 세트는 이 템플릿에 저장·불러오기). ③ ESL 카드(크기 그룹·모드). ④ 비드 치수 → [최적화 실행].
-3. 대안 진입: 종합분석 상세 "이 분석의 씬으로 비드 최적화"(크기 혼합이면 최다 그룹만 + 경고).
+3. ~~대안 진입: 종합분석 상세 "이 분석의 씬으로 비드 최적화"~~ — v0.7.0 통합에서 제거(사용자 원칙: 필수 아닌 UI 는 제안만). 진입은 라이브러리 행 선택 1곳.
 
 ### 3.3 공통 진행·결과
 - 상세 `/esl/p/:pid/opt/:id`: step 진행(6), **하중 선정 표**(전략·목표 기준·상태·씬·C⁰·최대 상대 변위·모드), OptiStruct 반복 n/DESMAX·목적값(abs: max C_k/C_ref, rel: max C_k/C_k⁰), 라이선스 대기, 로그, 취소. 완료 후 비드 맵, 수렴 그래프, 하중별 C^0 → C_final(비율), 다운로드, [보고서 보기].
@@ -157,10 +157,12 @@ TemplateOut    { id, title, inch|null, description, format, file_name, part_titl
                  L_xi, L_eta, z_range, pids, quality_warnings[], status, n_runs, created_by_name, created_at, can_delete }
 S1CheckOut     { base:{entry_id, case_id, case_title, part_title, rad_file_name, n_nodes, n_elems, topo_sha256,
                  pids[], supports[]}, entries:[{entry_id, same_model, reason|null}] }
+                 # reason(topo_sha256 1차 판정, 통합 확정): TOPOLOGY | MODEL_INFO_MISSING. NODE_IDS·CONNECTIVITY·COORDS 는 OPT_PREP 전체 규칙
 
 PlanViewOut    { frame:{a_range, b_range} (mm), outline:[[a,b],…], holes:[[[a,b],…],…],
                  elems:{n_total, decimated, points:[[a,b,pid]]} (≤ ui.max_preview_points, 표시용),
-                 auto_keepout:{hole_radius_mm, edge_band_mm, polygons:[[[a,b],…]]} (자동 영역 근사 외곽) }
+                 auto_keepout:{hole_radius_mm, edge_band_mm, polygons:[[[a,b],…]], kinds:["hole"|"edge"] (polygons 와 같은 길이 — 통합 추가),
+                               counts{}} (자동 영역 근사 외곽, 종류별 evenodd), key{template_id|topo_sha256}, warnings[] }
                  # S1 은 기준 ESL 항목 raw(같은 모델), S2 는 template.npz 로 만든 파생 캐시(preview.json)
 
 Rect           { name(≤40), corner:"a0b0"|"a1b0"|"a0b1"|"a1b1", x_mm ≥0, y_mm ≥0, w_mm >0, h_mm >0 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
-import { JOB_TYPE_LABEL, STALE_REASON_LABEL, durText, history, linkPath, type PastFile, type ReviewOut } from "../../api/history";
+import { JOB_TYPE_LABEL, STALE_REASON_LABEL, STEP_LABEL, durText, history, linkPath, type PastFile, type ReviewOut } from "../../api/history";
 import { canRun, useApp } from "../../app/AppContext";
 import { DiffTable, diffValue } from "../../components/DiffTable";
 import { PAST_FILES_GONE, PastBadge, StaleChip } from "../../components/PastBadge";
@@ -106,7 +106,7 @@ function StepLog({ jobId, rv }: { jobId: string; rv: ReviewOut }) {
         <select value={step ?? ""} onChange={(e) => setStep(Number(e.target.value))} aria-label="로그 step">
           {withLog.map((l) => (
             <option key={l.step_no} value={l.step_no}>
-              {l.step_no}. {l.step_key} ({bytes(l.size)})
+              {l.step_no}. {l.step_key}{STEP_LABEL[l.step_key] ? ` ${STEP_LABEL[l.step_key]}` : ""} ({bytes(l.size)})
             </option>
           ))}
         </select>
@@ -263,7 +263,7 @@ export function JobReview() {
               )}
               {r.error.failed_step && (
                 <div className="small muted">
-                  실패 step: {r.error.failed_step.step_no}. {r.error.failed_step.step_key}
+                  실패 step: {r.error.failed_step.step_no}. {r.error.failed_step.step_key}{STEP_LABEL[r.error.failed_step.step_key] ? ` ${STEP_LABEL[r.error.failed_step.step_key]}` : ""}
                   {r.error.failed_step.exit_code !== null ? ` (exit ${r.error.failed_step.exit_code})` : ""}
                 </div>
               )}
@@ -335,7 +335,7 @@ export function JobReview() {
                     <tr key={s.step_no}>
                       <td className="num">{s.step_no}</td>
                       <td>
-                        {s.step_key}
+                        {s.step_key}{STEP_LABEL[s.step_key] ? <span className="muted"> {STEP_LABEL[s.step_key]}</span> : null}
                         {s.command && (
                           <details>
                             <summary className="small muted">command</summary>

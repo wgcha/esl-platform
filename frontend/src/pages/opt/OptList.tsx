@@ -4,6 +4,7 @@ import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, optPath } from "../../ap
 import { Card, Empty, JobStatusBadge } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt } from "../../lib/format";
+import { isFullResult } from "../../api/types";
 
 export function OptList({ projectId }: { projectId: string }) {
   const runs = usePolling(() => opt.runs({ project_id: projectId }), 10000, [projectId]);
@@ -30,7 +31,7 @@ export function OptList({ projectId }: { projectId: string }) {
             </thead>
             <tbody>
               {runs.data.map((r) => {
-                const res = r.state === "SUCCEEDED" ? r.result : null;
+                const res = r.state === "SUCCEEDED" && isFullResult(r.result) ? r.result : null;
                 return (
                   <tr key={r.id}>
                     <td className="num">{dt(r.created_at)}</td>
@@ -46,9 +47,9 @@ export function OptList({ projectId }: { projectId: string }) {
                       {STRATEGY_NAME[r.load_strategy]}
                       {r.k != null ? ` (k ${r.k})` : ""} · {NORM_NAME[r.objective_norm]}
                     </td>
-                    <td className="small">{res ? `목적 ${res.objective.initial?.toFixed(2)}→${res.objective.final?.toFixed(2)} · 비드 ${Math.round(res.bead.area_frac * 100)}%${res.converged ? "" : " · 미수렴"}` : "–"}</td>
+                    <td className="small">{res ? `목적 ${res.objective.initial?.toFixed(2)}→${res.objective.final?.toFixed(2)} · 비드 ${Math.round((res.bead.area_frac ?? 0) * 100)}%${res.converged ? "" : " · 미수렴"}` : "–"}</td>
                     <td>
-                      <JobStatusBadge state={r.state} />
+                      {r.state !== "NONE" && <JobStatusBadge state={r.state} />}
                     </td>
                     <td>
                       <Link to={optPath(projectId, r.id)}>열기</Link>

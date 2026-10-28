@@ -14,7 +14,7 @@ export interface Frame {
 }
 export interface KeepoutValue {
   rects: KeepoutRect[];
-  auto: KeepoutAuto;
+  auto: Required<KeepoutAuto>;
 }
 
 export const CORNER_LABEL: Record<RectCorner, string> = { a0b0: "좌하", a1b0: "우하", a0b1: "좌상", a1b1: "우상" };
@@ -85,7 +85,9 @@ export function KeepoutPlan({ plan, value, onChange, selected, onSelect, readOnl
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ i: number; sx: number; sy: number; start: [number, number] } | null>(null);
   const poly = (pts: XY[]) => `M${pts.map(([a, b]) => `${X(a).toFixed(1)},${Y(b).toFixed(1)}`).join("L")}Z`;
-  const kinds = plan.auto_keepout.kinds;
+  // 서버 kinds(구멍/가장자리, polygons 와 같은 길이). 없거나 길이가 다르면 구분 없이 한 경로로 칠함
+  const k0 = plan.auto_keepout.kinds;
+  const kinds = k0 && k0.length === plan.auto_keepout.polygons.length && k0.length > 0 ? k0 : null;
   const autoPath = (k: "hole" | "edge") => plan.auto_keepout.polygons.filter((_, i) => (kinds ? kinds[i] === k : k === "edge")).map(poly).join(" ");
   const showAll = !kinds && (value.auto.hole || value.auto.edge);
 

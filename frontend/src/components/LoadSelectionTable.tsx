@@ -52,10 +52,10 @@ export function LoadSelectionTable({ sel }: { sel: LoadSelection }) {
                 <td>
                   {on ? <Badge kind="ok">{ROW_STATUS_LABEL[r.status]}</Badge> : <span className="badge neutral">{ROW_STATUS_LABEL[r.status]}</span>} {r.label && <b className="mono">{r.label}</b>}
                 </td>
-                <td>{r.scene}</td>
+                <td>{r.scene ?? r.entry_id}</td>
                 <td className="num mono">{sci(r.C0)}</td>
                 {sel.objective_norm === "rel" && <td className="num mono">{on ? sci(r.pos) : "–"}</td>}
-                <td className="num">{r.umax.toFixed(1)} mm</td>
+                <td className="num">{r.umax != null ? `${r.umax.toFixed(1)} mm` : "–"}</td>
                 <td>{r.mode ? MODE_LABEL[r.mode] : <span className="muted">분류 불가</span>}</td>
                 <td className="small">{note(r, byId)}</td>
               </tr>

@@ -4,9 +4,33 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { sameSize, templateMismatch } from "../api/opt";
+import { MISMATCH_REASON, opt, resetOptSettingsCache, sameSize, templateMismatch } from "../api/opt";
+import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel } from "../api/history";
+import { isFullResult } from "../api/types";
 import { makeSelection } from "../mock/optdata";
 import { MockServer } from "../mock/server";
+
+describe("v0.7.0 통합 정합(서버 기준)", () => {
+  it("대기열·이력 라벨: OPT_RUN = 비드 최적화, 단계 키 → 한글(steps 없으면 순서로)", () => {
+    expect(JOB_TYPE_LABEL.OPT_RUN).toBe("비드 최적화");
+    expect(currentStepKey({ job_type: "OPT_RUN", current_step_no: 4, steps: null })).toBe("OS_SOLVE");
+    expect(stepLabel(currentStepKey({ job_type: "OPT_RUN", current_step_no: 1 }))).toBe("대상 준비");
+    expect(currentStepKey({ job_type: "OPT_RUN", current_step_no: null })).toBeNull();
+    expect(stepLabel("UNKNOWN_STEP")).toBe("UNKNOWN_STEP");
+    // 이력 상세 링크: 서버 links {stage:10, query:{opt}} → 최적화 상세
+    expect(linkPath("p1", null, { stage: 10, query: { opt: "o-1" } })).toBe("/p/p1/opt/o-1");
+  });
+
+  it("서버 값: s1-check 사유(TOPOLOGY·MODEL_INFO_MISSING), zip parts = report,result,deck, 부분 결과 구분", () => {
+    expect(MISMATCH_REASON.TOPOLOGY).toBeTruthy();
+    expect(MISMATCH_REASON.MODEL_INFO_MISSING).toBe("모델 정보 없음");
+    expect(MISMATCH_REASON.NO_TOPO).toBeUndefined();
+    expect(opt.bundleUrl("r1")).toMatch(/\/opt\/runs\/r1\/bundle\?parts=report%2Cresult%2Cdeck$/);
+    const sel = makeSelection([], "A", null, "abs");
+    expect(isFullResult({ stage: "load", load_selection: sel })).toBe(false);
+    expect(isFullResult(null)).toBe(false);
+  });
+});
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
@@ -50,6 +74,19 @@ describe("라이브러리 목록 — 행 선택·모드 열·탭(§10.1)", () =>
     fireEvent.click(screen.getByRole("button", { name: "선택한 ESL로 비드 최적화 (4)" }));
     expect(await screen.findByRole("heading", { level: 1, name: "새 비드 최적화" })).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("tab", { name: "템플릿(S2)" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("크기 허용 = /opt/settings size.tol_rel(하드코딩 없음): 허용을 줄이면 같은 75형도 치수 차로 비활성", async () => {
+    resetOptSettingsCache();
+    renderApp("/p/p-body/library", "power", (s: MockServer) => {
+      s.opt.settings.size.tol_rel = 0.0005;
+    });
+    await waitFor(() => expect(rowsOf()).toHaveLength(10));
+    fireEvent.click(box("75QN80H v072 146 선택"));
+    // 목 치수는 항목 순서별 ±0.15 % — 허용 0.05 % 면 75형끼리도 일부는 '크기 다름'
+    await waitFor(() => expect(box("75QN80H v073 146 선택").disabled).toBe(true));
+    expect(box("75QN80H v073 146 선택").title).toMatch(/크기 다름/);
+    resetOptSettingsCache();
   });
 
   it("모드 드롭다운: 자동 = 회색, 바꾸면 PATCH 저장 → 굵게, '자동으로' 되돌림 · 모드 필터", async () => {
@@ -251,7 +288,7 @@ describe("최적화 상세(§10.4)", () => {
     expect(rows[0].textContent).toMatch(/포함 L01.*75QN80H v072 · 17 Corner 146.*굽힘/);
     expect(rows[2].textContent).toMatch(/병합됨.*→ L02 \(MAC 0\.96, 반대 방향\)/);
     const steps = screen.getByRole("list", { name: "최적화 단계" });
-    expect(within(steps).getAllByRole("listitem").map((l) => l.textContent)).toEqual(["✓ 대상", "✓ 하중·선정", "✓ 덱", "✓ OptiStruct", "✓ 후처리", "✓ 등록"]);
+    expect(within(steps).getAllByRole("listitem").map((l) => l.textContent)).toEqual(["✓ 대상 준비", "✓ 하중·선정", "✓ 덱 생성", "✓ OptiStruct", "✓ 후처리", "✓ 등록"]);
     expect(within(screen.getByRole("table", { name: "케이스별 컴플라이언스" })).getAllByRole("row")).toHaveLength(3);
     expect(screen.getByRole("img", { name: "수렴 그래프" })).toBeTruthy();
     expect(screen.getByRole("link", { name: ".rad" }).getAttribute("href")).toBe("/esl/api/opt/runs/opt-1/download?rel=post%2Fbead_mesh.rad");

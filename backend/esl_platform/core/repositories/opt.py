@@ -126,5 +126,5 @@ def runs_by_ids(conn: Connection, ids: list[str]) -> dict[str, dict[str, Any]]:
     if not ids:
         return {}
     cols = (opt_runs.c.id, opt_runs.c.title, opt_runs.c.job_id, opt_runs.c.scenario, opt_runs.c.dir_rel,
-            opt_runs.c.report_rel)
+            opt_runs.c.report_rel, opt_runs.c.load_strategy, opt_runs.c.result)
     return {r.id: row_dict(r) for r in conn.execute(select(*cols).where(opt_runs.c.id.in_(ids))).all()}

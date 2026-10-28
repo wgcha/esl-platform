@@ -1,9 +1,9 @@
 // V-OR-18(금지 영역): 사각형 4 기준 모서리 좌표 변환, 평면도 드래그 ↔ 숫자 동기화, 방향키 이동, 세트 불러오기/저장·충돌 메시지.
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { changeCorner, dragRect, placeRect, rectBox, rectProblem, type Frame } from "../components/KeepoutPlan";
-import type { KeepoutRect, RectCorner } from "../api/types";
+import { KeepoutPlan, changeCorner, dragRect, placeRect, rectBox, rectProblem, type Frame } from "../components/KeepoutPlan";
+import type { KeepoutRect, PlanViewOut, RectCorner } from "../api/types";
 
 const F: Frame = { a_range: [0, 1000], b_range: [0, 600] };
 const R = (corner: RectCorner): KeepoutRect => ({ name: "PCB", corner, x_mm: 120, y_mm: 80, w_mm: 300, h_mm: 200 });
@@ -42,6 +42,32 @@ describe("사각형 좌표(§5.2 Rect, §7.5)", () => {
     expect(rectProblem({ ...r, x_mm: -1 }, F)).toMatch(/X·Y/);
     expect(rectProblem({ ...r, x_mm: 2000 }, F)).toMatch(/경계 밖/);
     expect(rectProblem({ ...r, name: " " }, F)).toMatch(/이름/);
+  });
+});
+
+describe("평면도 자동 영역 kinds(서버 PlanViewAuto.kinds)", () => {
+  const plan = (kinds: ("hole" | "edge")[] | undefined): PlanViewOut => ({
+    key: { template_id: "t", topo_sha256: null },
+    frame: { a_range: [0, 100], b_range: [0, 60] },
+    outline: [[0, 0], [100, 0], [100, 60], [0, 60]],
+    holes: [],
+    elems: { n_total: 0, decimated: false, points: [] },
+    auto_keepout: { hole_radius_mm: 15, edge_band_mm: 10, polygons: [[[0, 0], [100, 0], [100, 60]], [[40, 20], [50, 20], [50, 30]]], kinds },
+  });
+  const draw = (kinds: ("hole" | "edge")[] | undefined) =>
+    render(<KeepoutPlan plan={plan(kinds)} value={{ rects: [], auto: { hole: true, edge: true } }} onChange={() => {}} selected={null} onSelect={() => {}} />);
+
+  it("kinds 가 polygons 와 같은 길이면 구멍·가장자리 따로, 비었거나(구 캐시) 길이가 다르면 한 경로", () => {
+    draw(["edge", "hole"]);
+    expect(screen.getByTestId("ko-auto-hole")).toBeTruthy();
+    expect(screen.getByTestId("ko-auto-edge").getAttribute("d")!.match(/M/g)).toHaveLength(1);
+    cleanup();
+    draw([]);
+    expect(screen.queryByTestId("ko-auto-hole")).toBeNull();
+    expect(screen.getByTestId("ko-auto-edge").getAttribute("d")!.match(/M/g)).toHaveLength(2);
+    cleanup();
+    draw(["edge"]);
+    expect(screen.queryByTestId("ko-auto-hole")).toBeNull();
   });
 });
 

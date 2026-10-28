@@ -184,7 +184,7 @@ export function linkPath(projectId: string, caseId: string | null, l: ReviewLink
   const qs = new URLSearchParams(l.query ?? {});
   if (l.stage === 8 && qs.get("analysis")) return `/p/${projectId}/library/analyses/${qs.get("analysis")}`;
   if (l.stage === 9 && qs.get("comparison")) return `/p/${projectId}/library/comparisons/${qs.get("comparison")}`;
-  if (l.stage === 10 && qs.get("opt_run")) return `/p/${projectId}/opt/${qs.get("opt_run")}`;
+  if (l.stage === 10 && (qs.get("opt") ?? qs.get("opt_run"))) return `/p/${projectId}/opt/${qs.get("opt") ?? qs.get("opt_run")}`;
   if (!caseId || l.stage > 7) return null;
   const q = qs.toString();
   return `/p/${projectId}/c/${caseId}/stage/${l.stage}${q ? `?${q}` : ""}`;
@@ -210,6 +210,26 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   LIB_COMPARE: "버전 비교",
   OPT_RUN: "비드 최적화",
 };
+
+/** 단계(step_key) 한글 라벨 — v0.7.0 OPT_RUN 6단계(계약 esl_opt_run.md §6.1). 없는 키는 키 그대로 */
+export const STEP_LABEL: Record<string, string> = {
+  OPT_PREP: "대상 준비",
+  OPT_LOAD: "하중·선정",
+  OPT_DECK: "덱 생성",
+  OS_SOLVE: "OptiStruct",
+  OPT_POST: "후처리",
+  OPT_REGISTER: "등록",
+};
+/** 작업 종류별 단계 순서(대기열 응답에는 steps 가 없어 current_step_no → 키). 서버 core/job_types.py 와 같은 순서 */
+export const JOB_STEP_KEYS: Partial<Record<JobType, string[]>> = {
+  OPT_RUN: ["OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER"],
+};
+export const stepLabel = (key: string | null | undefined) => (key ? STEP_LABEL[key] ?? key : "");
+/** 실행 중 작업의 현재 단계 키(steps 가 있으면 그것, 없으면 JOB_STEP_KEYS 순서) */
+export function currentStepKey(j: { job_type: JobType; current_step_no: number | null; steps?: { step_no: number; step_key: string }[] | null }): string | null {
+  if (j.current_step_no == null) return null;
+  return j.steps?.find((s) => s.step_no === j.current_step_no)?.step_key ?? JOB_STEP_KEYS[j.job_type]?.[j.current_step_no - 1] ?? null;
+}
 
 /** 상태 필터: 전체 / 성공 / 실패·중단 */
 export const STATE_FILTERS = [

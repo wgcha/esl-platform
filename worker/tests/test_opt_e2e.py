@@ -298,6 +298,10 @@ def test_s1_e2e(client, engine, worker_factory, esl_root, inputs_root, tools):
     assert "JOB_SUCCEEDED" in ev
     hist = client.get(f"{API}/history", params={"project_id": "p-1", "job_type": "OPT_RUN"}, headers=R)
     assert hist.status_code == 200 and jid in hist.text, hist.text
+    item = next(x for x in hist.json()["items"] if x["id"] == jid)
+    # 통합: 이력 요약 = 시나리오·전략·케이스 수·수렴(프런트 summaryText 키), 링크 = 최적화 상세
+    assert item["summary"]["scenario"] == "S1" and item["summary"]["load_strategy"] == "A"
+    assert item["summary"]["n_cases"] >= 1 and item["summary"]["converged"] in (True, False)
     # V-OR-14: 입력 폴더·라이브러리 항목 불변
     assert tree(inputs_root) == before_inputs
     assert tree(esl_root / "_library") == before_lib

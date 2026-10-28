@@ -193,7 +193,10 @@ class Batch:
             res.ref = {"kind": "opt_run", "id": row["opt_run_id"]}
             res.state = "current" if sub is not None and sub.get("job_id") == row["id"] else "past"
             if sub is not None:
-                res.summary = {"scenario": sub.get("scenario")}
+                rr = sub.get("result") or {}
+                ls = rr.get("load_selection") or {}
+                res.summary = {"scenario": sub.get("scenario"), "load_strategy": sub.get("load_strategy"),
+                               "n_cases": ls.get("n_cases"), "converged": rr.get("converged")}
             return res
         if case is None:
             return res

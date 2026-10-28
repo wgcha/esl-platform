@@ -73,10 +73,10 @@ function TargetS1({ s1, error, nondesign, onToggle }: { s1: S1CheckOut | null; e
       <div className="stats">
         <Stat label="기준 Case" value={b.case_title ?? b.case_id} sub={b.rad_file_name ?? undefined} />
         <Stat label="대상 파트" value={b.part_title ?? "–"} />
-        <Stat label="노드 · 요소" value={`${b.n_nodes.toLocaleString()} · ${b.n_elems.toLocaleString()}`} />
-        <Stat label="3-2-1 지지" value={<span className="mono small">{supportsText(b.supports)}</span>} sub="기준 ESL 과 같음(표시만)" />
+        <Stat label="노드 · 요소" value={`${b.n_nodes?.toLocaleString() ?? "?"} · ${b.n_elems?.toLocaleString() ?? "?"}`} />
+        <Stat label="3-2-1 지지" value={<span className="mono small">{supportsText(b.supports ?? [])}</span>} sub="기준 ESL 과 같음(표시만)" />
       </div>
-      <PidTable pids={b.pids} nondesign={nondesign} onToggle={onToggle} />
+      <PidTable pids={b.pids ?? []} nondesign={nondesign} onToggle={onToggle} />
     </div>
   );
 }
@@ -126,10 +126,10 @@ function TargetS2({ templates, tid, setTid, sizes, plateTol, nondesign, onToggle
             <Stat label="3-2-1 지지" value="자동" sub="서버가 템플릿에서 고름" />
           </div>
         )}
-        {t?.quality_warnings.length ? (
+        {t?.quality_warnings?.length ? (
           <ul className="reasons small warn-text">
-            {t.quality_warnings.map((w) => (
-              <li key={w}>{w}</li>
+            {t.quality_warnings.map((w, i) => (
+              <li key={i}>{w.message}</li>
             ))}
           </ul>
         ) : null}
@@ -226,7 +226,7 @@ export function OptNew() {
 
   const keepoutSrc =
     scenario === "S1"
-      ? s1.data && { plan: { entry_id: s1.data.base.entry_id }, set: { topo: s1.data.base.topo_sha256 }, saveLabel: "이 모델에 저장" }
+      ? s1.data && { plan: { entry_id: s1.data.base.entry_id }, set: { topo: s1.data.base.topo_sha256 ?? undefined }, saveLabel: "이 모델에 저장" }
       : tpl && { plan: { template_id: tpl.id }, set: { template_id: tpl.id }, saveLabel: "이 템플릿에 저장" };
 
   function reason(): string | null {
@@ -292,11 +292,6 @@ export function OptNew() {
         <PrimaryButton label="최적화 실행" onClick={run} disabledReason={reason()} busy={busy} />
       </div>
       {st && !st.solver_ready && <div className="warn-box" role="alert">서버 OptiStruct 경로가 설정되지 않았습니다(관리자 문의){st.solver_reason ? ` — ${st.solver_reason}` : ""}</div>}
-      {analysisId && (
-        <div className={`small ${sp.get("mixed") ? "warn-text" : "muted"}`} role={sp.get("mixed") ? "status" : undefined}>
-          종합분석의 씬으로 시작{sp.get("mixed") ? ` — 크기가 섞여 가장 많은 크기 묶음만 넣었습니다(빠진 ESL ${sp.get("mixed")}개)` : ""}
-        </div>
-      )}
       <ErrorLine text={error ?? settings.error ?? all.error} />
       <Card title={`① 대상 — ${scenario === "S2" ? "템플릿" : "기존 rad 형상"}`}>
         {scenario === "S2" ? (

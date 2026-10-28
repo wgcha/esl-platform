@@ -148,17 +148,19 @@ function RegisterPanel({ projectId, ext, onDone }: { projectId: string; ext: str
       )}
       {check && (
         <div className="small" data-testid="template-check">
-          {check.format} · {check.file_name} · 노드 {check.mesh.n_nodes.toLocaleString()} · 요소 {check.mesh.n_elems.toLocaleString()} · {Math.round(check.frame.L_xi)}×{Math.round(check.frame.L_eta)} mm · 검사 오류 {check.quality.errors.length} 경고 {check.quality.warnings.length}
+          {check.format ?? "?"} · {check.file_name}
+          {check.part_title ? ` · 파트 ${check.part_title}` : ""} · 노드 {check.mesh.n_nodes.toLocaleString()} · 요소 {check.mesh.n_elems.toLocaleString()} ·{" "}
+          {check.frame.L_xi != null && check.frame.L_eta != null ? `${Math.round(check.frame.L_xi)}×${Math.round(check.frame.L_eta)} mm` : "크기 ?"} · 검사 오류 {check.quality.errors.length} 경고 {check.quality.warnings.length}
           {[...check.quality.errors, ...check.quality.warnings].length > 0 && (
             <ul className="reasons">
-              {check.quality.errors.map((w) => (
-                <li key={w} className="error-text">
-                  {w}
+              {check.quality.errors.map((w, i) => (
+                <li key={`e${i}`} className="error-text">
+                  {w.message}
                 </li>
               ))}
-              {check.quality.warnings.map((w) => (
-                <li key={w} className="warn-text">
-                  {w}
+              {check.quality.warnings.map((w, i) => (
+                <li key={`w${i}`} className="warn-text">
+                  {w.message}
                 </li>
               ))}
             </ul>
@@ -246,7 +248,12 @@ export function Templates({ projectId }: { projectId: string }) {
                 <tr key={t.id} className={t.status === "ARCHIVED" ? "retired" : undefined}>
                   <td>
                     {t.title} {t.status === "ARCHIVED" && <Badge kind="warn">보관됨</Badge>}
-                    {t.quality_warnings.length > 0 && <span className="small warn-text" title={t.quality_warnings.join("\n")}> 경고 {t.quality_warnings.length}</span>}
+                    {!!t.quality_warnings?.length && (
+                      <span className="small warn-text" title={t.quality_warnings.map((w) => w.message).join("\n")}>
+                        {" "}
+                        경고 {t.quality_warnings.length}
+                      </span>
+                    )}
                   </td>
                   <td>{t.format}</td>
                   <td className="num">{t.inch ?? "–"}</td>
