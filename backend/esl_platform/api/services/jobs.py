@@ -223,6 +223,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             return _retry_analysis(conn, principal, job)
         if job["job_type"] == "LIB_COMPARE":
             return _retry_comparison(conn, principal, job)
+        if job["job_type"] == "OPT_RUN":
+            from .opt import retry_run
+
+            return retry_run(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -312,6 +316,10 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int) -> dict
             from ...core.repositories import library as lib_repo
 
             base = analysis_dir(ctx, lib_repo.get_comparison(conn, job["comparison_id"]))
+        elif job.get("opt_run_id"):
+            from ...core.repositories import opt as opt_repo
+
+            base = analysis_dir(ctx, opt_repo.get_run(conn, job["opt_run_id"]))
         else:
             base = case_dir(ctx, load_case(conn, job["case_id"]))
         steps = jobs_repo.get_steps(conn, job_id)

@@ -970,6 +970,7 @@ def test_h10_migration_0007_up_down_idempotent(engine, db_url):
     with engine.begin() as c:
         c.execute(text("INSERT INTO cases (id, project_id, folder_name, title, rad_path, results_dir, input_fingerprint,"
                        " part_title, created_by, created_by_name) VALUES ('c1','p','f1','t','/r','/s','{}','x','u','u')"))
+    command.stamp(cfg, "0008")                                 # 0010 은 downgrade 미지원 — 표시만 0008 로
     command.downgrade(cfg, "0006")
     assert _indexdefs(engine) == {}
     with engine.connect() as c:
@@ -979,13 +980,14 @@ def test_h10_migration_0007_up_down_idempotent(engine, db_url):
     command.upgrade(cfg, "head")
     assert _indexdefs(engine) == created_by_create_all          # 마이그레이션이 만든 정의 = tables.py(create_all) 정의
     command.upgrade(cfg, "head")                                # 재실행 멱등
+    command.stamp(cfg, "0008")
     command.downgrade(cfg, "0006")
     command.upgrade(cfg, "head")
     assert _indexdefs(engine) == created_by_create_all
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM information_schema.columns WHERE table_name='jobs'")
                          ).scalar_one() == cols
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010"
 
 
 def test_h10_tables_match_alembic_metadata(engine):

@@ -3,6 +3,8 @@
 P3-UX §6: SLOT 레인은 worker_slot 행 1..slots 중 빈 행 하나를 CAS 로 잡는다(동시 slots 개, 같은 Case 는 여전히 1개).
 hw 동시 실행 세마포어(`acquire_hw`)는 DB 기반: RUNNING 작업의 RUNNING H3D_EXTRACT step 중 outputs.hw_acquired 인 것의 수.
 step 이 끝나거나 작업이 중단(리퍼)되면 자동으로 풀린다.
+v0.7.0(esl_opt_run.md §8.1): OptiStruct 세마포어(`acquire_os`, altair.max_concurrent_os)도 같은 방식 — RUNNING OS_SOLVE step 의
+outputs.os_acquired. 라이선스 대기 중에는 `release_os` 로 반납한다.
 
 호출자가 트랜잭션을 연다(`with engine.begin() as conn`). lease_token 은 이 계층 밖(API 응답)으로 나가지 않는다.
 """
@@ -107,6 +109,7 @@ def insert_job(
     resume_from_step: int | None = None,
     analysis_id: str | None = None,
     comparison_id: str | None = None,
+    opt_run_id: str | None = None,
     h3d: bool = False,
 ) -> dict[str, Any]:
     """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409.
@@ -116,7 +119,8 @@ def insert_job(
     job_id = str(uuid.uuid4())
     seq = conn.execute(select(job_queue_seq.next_value())).scalar_one()
     conn.execute(insert(jobs).values(
-        id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, project_id=project_id,
+        id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, opt_run_id=opt_run_id,
+        project_id=project_id,
         job_type=job_type,
         stage=jt.stage, lane=jt.lane,
         state=QUEUED, holds_slot=False, queue_seq=seq, queued_at=func.now(), params=params,
@@ -159,6 +163,7 @@ def _case_idle():
 
 SLOT_LOCK_KEY = 4241
 HW_LOCK_KEY = 4243
+OS_LOCK_KEY = 4244
 
 
 def claim_slot(conn: Connection, worker_id: str, ttl_s: float, slots: int = 1) -> dict[str, Any] | None:
@@ -245,6 +250,45 @@ def acquire_hw(conn: Connection, job_id: str, token: str, step_no: int, limit: i
     conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
                  .values(outputs={**(st or {}), "hw_acquired": True}))
     return True
+
+
+# ---------------------------------------------------------------- OptiStruct 세마포어(esl_opt_run.md §8.1, altair.max_concurrent_os)
+def _os_held():
+    return and_(job_steps.c.step_key == "OS_SOLVE", job_steps.c.state == RUNNING,
+                job_steps.c.outputs["os_acquired"].astext == "true", jobs.c.state == RUNNING,
+                jobs.c.lease_expires_at > func.now())
+
+
+def os_in_use(conn: Connection) -> int:
+    return int(conn.execute(select(func.count()).select_from(job_steps.join(jobs, jobs.c.id == job_steps.c.job_id))
+                            .where(_os_held())).scalar_one())
+
+
+def acquire_os(conn: Connection, job_id: str, token: str, step_no: int, limit: int) -> bool:
+    """OptiStruct 실행 권한 1개를 잡는다(DB 기반 세마포어). 이미 잡았으면 True. 잡은 표시 = step outputs.os_acquired.
+    step 이 끝나거나(RUNNING 아님) 작업 lease 가 만료되면 자동으로 풀린다."""
+    assert_lease(conn, job_id, token)
+    conn.execute(select(func.pg_advisory_xact_lock(OS_LOCK_KEY)))
+    st = conn.execute(select(job_steps.c.outputs).where(and_(job_steps.c.job_id == job_id,
+                                                             job_steps.c.step_no == step_no))).scalar()
+    if (st or {}).get("os_acquired"):
+        return True
+    if os_in_use(conn) >= int(limit):
+        return False
+    conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
+                 .values(outputs={**(st or {}), "os_acquired": True}))
+    return True
+
+
+def release_os(conn: Connection, job_id: str, token: str, step_no: int) -> None:
+    """라이선스 대기 등으로 세마포어를 반납(outputs.os_acquired = false). 다시 실행할 때 acquire_os."""
+    assert_lease(conn, job_id, token)
+    conn.execute(select(func.pg_advisory_xact_lock(OS_LOCK_KEY)))
+    st = conn.execute(select(job_steps.c.outputs).where(and_(job_steps.c.job_id == job_id,
+                                                             job_steps.c.step_no == step_no))).scalar()
+    if (st or {}).get("os_acquired"):
+        conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
+                     .values(outputs={**(st or {}), "os_acquired": False}))
 
 
 def claim_light(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any] | None:

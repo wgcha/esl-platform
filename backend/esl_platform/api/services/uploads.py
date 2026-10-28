@@ -10,6 +10,8 @@
 files[i].got([[a,b),…] 청크 번호 범위)로 기록하고 행 잠금은 표시할 때만 짧게 잡는다. 파일 전체 sha256 은 "연속으로 받은
 앞부분"을 따라가는 해시 추적기가 계산한다. 프로토콜 1(업그레이드 전 OPEN 세션: proto 키 없음)은 기존 append 경로를 유지한다.
 프로세스 메모리 상태(진행 중 청크·해시)는 백엔드 1 프로세스 전제(기존 _HASHES 와 같음).
+v0.7.0(esl_opt_run.md §7.2): S2 템플릿 업로드(`rad/` 아래 .fem 또는 .rad+include)는 complete 대신 POST /opt/templates/check 가
+`template_source`(읽기만)·`save_template_check`(result.purpose = template, COMPLETED)로 연결한다.
 """
 
 from __future__ import annotations
@@ -1035,6 +1037,104 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
         conn.execute(update(uploads).where(uploads.c.id == upload_id).values(**vals))
         state = COMPLETED if res["ok"] else OPEN
     return {"upload_id": upload_id, "state": state, **res}
+
+
+# ---------------------------------------------------------------- v0.7.0 S2 템플릿 업로드 연결(계약 esl_opt_run.md §5.1·§7.2)
+TEMPLATE_PURPOSE = "template"
+TEMPLATE_MESH_EXT = (".fem", ".rad")
+
+
+def template_source(ctx: AppContext, principal: Principal, upload_id: str,
+                    project_id: str | None = None) -> tuple[dict[str, Any], str]:
+    """템플릿 메시 업로드의 메시 파일 경로(읽기만). 본인 업로드(아니면 404 UPLOAD_NOT_FOUND)·그 프로젝트 power,
+    파일을 모두 받았어야 함(아니면 409 UPLOAD_NOT_READY). 업로드 폴더 자체(루트→사용자→폴더) 링크·junction 검사 후
+    `.fem` 하나 또는 `.rad` 하나(`*_0000.rad` 우선)를 고른다 — 없으면 422 MESH_FORMAT_UNSUPPORTED, 여러 개면 MESH_INVALID."""
+    require_config_ok(ctx)
+    root = _upload_root(ctx)
+    with ctx.engine.connect() as conn:
+        up0 = _owned(conn, principal, upload_id)
+    if project_id is not None and up0["project_id"] != project_id:
+        raise not_found("UPLOAD_NOT_FOUND", "업로드를 찾을 수 없습니다")
+    require_execute(principal, up0["project_id"])
+    if up0["state"] == OPEN:
+        _finalize_ready_files(ctx, up0)          # 다 모였는데 마무리 전인 파일(멱등)
+    with ctx.engine.connect() as conn:
+        up = _owned(conn, principal, upload_id)
+    if up["state"] not in (OPEN, COMPLETED):
+        raise conflict("UPLOAD_NOT_READY", f"끝난 업로드입니다({up['state']}) — 다시 올리세요", state=up["state"])
+    live = [f for f in up["files"] if not f.get("removed")]
+    pending = []
+    for f in live:
+        p = os.path.join(up["dir_path"], *_segs(f))
+        try:
+            ok = bool(f.get("done")) and os.path.getsize(p) == int(f["size"])
+        except OSError:
+            ok = False
+        if not ok:
+            pending.append(f["rel"])
+    if not live or pending:
+        raise conflict("UPLOAD_NOT_READY", f"아직 다 받지 못한 파일이 {len(pending)}개 있습니다" if pending else
+                       "업로드에 파일이 없습니다", pending=pending[:100])
+    U.check_upload_dir(root, up["dir_path"])
+    rels = [f["rel"] for f in live]
+    fems = [r for r in rels if r.lower().endswith(".fem")]
+    rads = [r for r in rels if r.lower().endswith(".rad")]
+    main0 = [r for r in rads if r.lower().endswith("_0000.rad")]
+    if fems and rads:
+        raise unprocessable("MESH_INVALID", "템플릿은 .fem 또는 .rad 중 하나만 올리세요", files=fems + rads)
+    pick = fems or main0 or rads
+    if not pick:
+        raise unprocessable("MESH_FORMAT_UNSUPPORTED", "템플릿 메시 파일(.fem 또는 .rad)이 없습니다", files=rels[:20])
+    if len(pick) > 1:
+        raise unprocessable("MESH_INVALID", f"메시 파일이 여러 개입니다({', '.join(pick[:5])}) — 하나만 올리세요",
+                            files=pick)
+    path = U.target_path(up["dir_path"], pick[0].split("/"), upload_root=root)
+    return up, path
+
+
+def template_include_problems(ctx: AppContext, up: dict[str, Any], rad_path: str) -> tuple[list[str], list[str]]:
+    """rad 템플릿 include: 업로드 폴더 밖(존재 여부 무관 같은 메시지)·누락 목록. 밖 파일은 읽지도 따라가지도 않는다."""
+    d = up["dir_path"]
+    real_d = os.path.realpath(d)
+    core = ctx.config.core or {}
+    cc = core.get("case") or {}
+
+    def inside(p: str) -> bool:
+        return _rel_of(d, p) is not None and is_within(os.path.realpath(p), real_d)
+
+    problems: list[str] = []
+    missing: list[str] = []
+    try:
+        refs = core_adapter.scan_include_refs(rad_path, int(cc.get("rad_include_max_depth") or 8), None, follow=inside)
+    except core_adapter.CoreError as exc:
+        return [f"{exc.code}: {exc.message}"], []
+    for ref in refs:
+        p = ref["path"]
+        if ref["found"] and inside(p):
+            continue
+        if not ref["found"] and p and inside(p):
+            rel = _rel_of(d, p)
+            if rel not in missing:
+                missing.append(rel)
+            continue
+        msg = f"업로드에 포함되지 않은 include: {ref['spec']}"
+        if msg not in problems:
+            problems.append(msg)
+    return problems, missing
+
+
+def save_template_check(ctx: AppContext, upload_id: str, check: dict[str, Any], rel: str) -> None:
+    """템플릿 검사 결과를 uploads.result(purpose = template)에 저장. 통과하면 업로드 COMPLETED(업로드 폴더에는 쓰지 않음)."""
+    with ctx.engine.begin() as conn:
+        up = _row(conn, upload_id, for_update=True)
+        vals: dict[str, Any] = {"result": {"purpose": TEMPLATE_PURPOSE, "ok": bool(check.get("ok")), "rel": rel,
+                                           "sha256": check.get("sha256"), "check": check,
+                                           "problems": [e.get("message", "") for e in
+                                                        (check.get("quality") or {}).get("errors") or []]},
+                                "updated_at": func.now()}
+        if check.get("ok") and up["state"] == OPEN:
+            vals.update(state=COMPLETED, completed_at=func.now())
+        conn.execute(update(uploads).where(uploads.c.id == upload_id).values(**vals))
 
 
 # ---------------------------------------------------------------- 취소·stale(삭제 없이 _backup 으로)

@@ -549,6 +549,30 @@
         "title": "ArtifactOut",
         "type": "object"
       },
+      "BeadIn": {
+        "additionalProperties": false,
+        "properties": {
+          "angle": {
+            "title": "Angle",
+            "type": "number"
+          },
+          "height": {
+            "title": "Height",
+            "type": "number"
+          },
+          "min_width": {
+            "title": "Min Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "angle",
+          "min_width",
+          "height"
+        ],
+        "title": "BeadIn",
+        "type": "object"
+      },
       "BrowseEntry": {
         "properties": {
           "hint": {
@@ -1798,6 +1822,98 @@
         "title": "ConfigStatus",
         "type": "object"
       },
+      "DeformModeOut": {
+        "properties": {
+          "auto": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dent",
+                  "twist",
+                  "bend"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto"
+          },
+          "effective": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dent",
+                  "twist",
+                  "bend"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "title": "Metrics",
+            "type": "object"
+          },
+          "rule_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Version"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dent",
+                  "twist",
+                  "bend"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          },
+          "user_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User At"
+          },
+          "user_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User By"
+          }
+        },
+        "title": "DeformModeOut",
+        "type": "object"
+      },
       "DiffRow": {
         "properties": {
           "current": {
@@ -2195,6 +2311,16 @@
             ],
             "title": "Case Title"
           },
+          "deform_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeformModeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dir_rel": {
             "title": "Dir Rel",
             "type": "string"
@@ -2293,6 +2419,16 @@
             "title": "Sha256",
             "type": "string"
           },
+          "size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntrySize"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "enum": [
               "ACTIVE",
@@ -2316,6 +2452,17 @@
           "summary_rel": {
             "title": "Summary Rel",
             "type": "string"
+          },
+          "topo_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topo Sha256"
           },
           "tstar": {
             "anyOf": [
@@ -2382,6 +2529,22 @@
       "EntryPatch": {
         "additionalProperties": false,
         "properties": {
+          "deform_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "dent",
+                  "twist",
+                  "bend"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deform Mode"
+          },
           "model": {
             "anyOf": [
               {
@@ -2891,6 +3054,45 @@
           }
         },
         "title": "EntryScenePatch",
+        "type": "object"
+      },
+      "EntrySize": {
+        "properties": {
+          "L_eta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L Eta"
+          },
+          "L_xi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "L Xi"
+          },
+          "inch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inch"
+          }
+        },
+        "title": "EntrySize",
         "type": "object"
       },
       "EslRunOut": {
@@ -3418,6 +3620,17 @@
             "title": "Job Type",
             "type": "string"
           },
+          "opt_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Run Id"
+          },
           "progress_pct": {
             "anyOf": [
               {
@@ -3606,7 +3819,8 @@
               "export",
               "report",
               "analysis",
-              "comparison"
+              "comparison",
+              "opt_run"
             ],
             "title": "Kind",
             "type": "string"
@@ -3792,6 +4006,17 @@
             "title": "Lane",
             "type": "string"
           },
+          "opt_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Run Id"
+          },
           "params": {
             "additionalProperties": true,
             "title": "Params",
@@ -3937,6 +4162,212 @@
         "title": "JobOut",
         "type": "object"
       },
+      "KeepoutAuto": {
+        "additionalProperties": false,
+        "properties": {
+          "edge": {
+            "default": true,
+            "title": "Edge",
+            "type": "boolean"
+          },
+          "hole": {
+            "default": true,
+            "title": "Hole",
+            "type": "boolean"
+          }
+        },
+        "title": "KeepoutAuto",
+        "type": "object"
+      },
+      "KeepoutIn": {
+        "additionalProperties": false,
+        "properties": {
+          "auto": {
+            "$ref": "#/components/schemas/KeepoutAuto"
+          },
+          "rects": {
+            "items": {
+              "$ref": "#/components/schemas/RectIn"
+            },
+            "maxItems": 1000,
+            "title": "Rects",
+            "type": "array"
+          }
+        },
+        "title": "KeepoutIn",
+        "type": "object"
+      },
+      "KeepoutRectOut": {
+        "properties": {
+          "corner": {
+            "enum": [
+              "a0b0",
+              "a1b0",
+              "a0b1",
+              "a1b1"
+            ],
+            "title": "Corner",
+            "type": "string"
+          },
+          "h_mm": {
+            "title": "H Mm",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "w_mm": {
+            "title": "W Mm",
+            "type": "number"
+          },
+          "x_mm": {
+            "title": "X Mm",
+            "type": "number"
+          },
+          "y_mm": {
+            "title": "Y Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "corner",
+          "x_mm",
+          "y_mm",
+          "w_mm",
+          "h_mm"
+        ],
+        "title": "KeepoutRectOut",
+        "type": "object"
+      },
+      "KeepoutSetIn": {
+        "additionalProperties": false,
+        "properties": {
+          "auto": {
+            "$ref": "#/components/schemas/KeepoutAuto"
+          },
+          "rects": {
+            "items": {
+              "$ref": "#/components/schemas/RectIn"
+            },
+            "maxItems": 1000,
+            "title": "Rects",
+            "type": "array"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "topo_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topo Sha256"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "KeepoutSetIn",
+        "type": "object"
+      },
+      "KeepoutSetOut": {
+        "properties": {
+          "auto": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Auto",
+            "type": "object"
+          },
+          "frame": {
+            "additionalProperties": true,
+            "title": "Frame",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Key",
+            "type": "object"
+          },
+          "rects": {
+            "items": {
+              "$ref": "#/components/schemas/KeepoutRectOut"
+            },
+            "title": "Rects",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_name": {
+            "title": "Updated By Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "version",
+          "rects",
+          "auto",
+          "frame",
+          "updated_by_name",
+          "updated_at"
+        ],
+        "title": "KeepoutSetOut",
+        "type": "object"
+      },
       "LogOut": {
         "properties": {
           "eof": {
@@ -4002,6 +4433,943 @@
           "roles"
         ],
         "title": "Me",
+        "type": "object"
+      },
+      "MeshCheckOut": {
+        "properties": {
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rad",
+                  "fem"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "frame": {
+            "additionalProperties": true,
+            "title": "Frame",
+            "type": "object"
+          },
+          "mesh": {
+            "additionalProperties": true,
+            "title": "Mesh",
+            "type": "object"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "parts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "pids": {
+            "items": {
+              "$ref": "#/components/schemas/MeshPid"
+            },
+            "title": "Pids",
+            "type": "array"
+          },
+          "quality": {
+            "additionalProperties": true,
+            "title": "Quality",
+            "type": "object"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "supports_auto": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Supports Auto",
+            "type": "array"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "ok",
+          "sha256",
+          "file_name",
+          "mesh",
+          "frame",
+          "quality"
+        ],
+        "title": "MeshCheckOut",
+        "type": "object"
+      },
+      "MeshPid": {
+        "properties": {
+          "E": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E"
+          },
+          "n_elems": {
+            "title": "N Elems",
+            "type": "integer"
+          },
+          "nu": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nu"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "thickness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thickness"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "pid",
+          "n_elems"
+        ],
+        "title": "MeshPid",
+        "type": "object"
+      },
+      "OptBeadSettings": {
+        "properties": {
+          "angle": {
+            "title": "Angle",
+            "type": "number"
+          },
+          "height": {
+            "title": "Height",
+            "type": "number"
+          },
+          "min_width": {
+            "title": "Min Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "angle",
+          "min_width",
+          "height"
+        ],
+        "title": "OptBeadSettings",
+        "type": "object"
+      },
+      "OptDesignIn": {
+        "additionalProperties": false,
+        "properties": {
+          "bead": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BeadIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "keepout": {
+            "$ref": "#/components/schemas/KeepoutIn"
+          },
+          "nondesign_pids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 10000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nondesign Pids"
+          }
+        },
+        "title": "OptDesignIn",
+        "type": "object"
+      },
+      "OptFileOut": {
+        "properties": {
+          "downloadable": {
+            "title": "Downloadable",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "report",
+              "result",
+              "selection",
+              "deck",
+              "solve",
+              "target",
+              "log",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rel",
+          "kind",
+          "size",
+          "downloadable"
+        ],
+        "title": "OptFileOut",
+        "type": "object"
+      },
+      "OptKeepoutAutoSettings": {
+        "properties": {
+          "edge_band_mm": {
+            "title": "Edge Band Mm",
+            "type": "number"
+          },
+          "hole_radius_mm": {
+            "title": "Hole Radius Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "hole_radius_mm",
+          "edge_band_mm"
+        ],
+        "title": "OptKeepoutAutoSettings",
+        "type": "object"
+      },
+      "OptLoadsSettings": {
+        "properties": {
+          "default_k": {
+            "title": "Default K",
+            "type": "integer"
+          },
+          "default_objective_norm": {
+            "enum": [
+              "abs",
+              "rel"
+            ],
+            "title": "Default Objective Norm",
+            "type": "string"
+          },
+          "default_strategy": {
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ],
+            "title": "Default Strategy",
+            "type": "string"
+          },
+          "mac_merge": {
+            "title": "Mac Merge",
+            "type": "number"
+          },
+          "max_cases": {
+            "title": "Max Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "default_objective_norm",
+          "default_strategy",
+          "mac_merge",
+          "max_cases",
+          "default_k"
+        ],
+        "title": "OptLoadsSettings",
+        "type": "object"
+      },
+      "OptOptionsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K"
+          },
+          "load_strategy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Strategy"
+          },
+          "objective_norm": {
+            "anyOf": [
+              {
+                "enum": [
+                  "abs",
+                  "rel"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective Norm"
+          },
+          "supports": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SupportIn"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports"
+          }
+        },
+        "title": "OptOptionsIn",
+        "type": "object"
+      },
+      "OptRunIn": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Id"
+          },
+          "design": {
+            "$ref": "#/components/schemas/OptDesignIn"
+          },
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "options": {
+            "$ref": "#/components/schemas/OptOptionsIn"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "scenario": {
+            "enum": [
+              "S1",
+              "S2"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "project_id",
+          "scenario",
+          "entry_ids"
+        ],
+        "title": "OptRunIn",
+        "type": "object"
+      },
+      "OptRunOut": {
+        "properties": {
+          "analysis_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Id"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "title": "Created By Name",
+            "type": "string"
+          },
+          "design": {
+            "additionalProperties": true,
+            "title": "Design",
+            "type": "object"
+          },
+          "dir_rel": {
+            "title": "Dir Rel",
+            "type": "string"
+          },
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "folder_path": {
+            "title": "Folder Path",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K"
+          },
+          "load_strategy": {
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ],
+            "title": "Load Strategy",
+            "type": "string"
+          },
+          "objective_norm": {
+            "enum": [
+              "abs",
+              "rel"
+            ],
+            "title": "Objective Norm",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "report_ready": {
+            "title": "Report Ready",
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "scenario": {
+            "enum": [
+              "S1",
+              "S2"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "scenario",
+          "entry_ids",
+          "design",
+          "options",
+          "load_strategy",
+          "objective_norm",
+          "state",
+          "report_ready",
+          "dir_rel",
+          "folder_path",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OptRunOut",
+        "type": "object"
+      },
+      "OptSettingsOut": {
+        "properties": {
+          "bead_defaults": {
+            "$ref": "#/components/schemas/OptBeadSettings"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "keepout_auto": {
+            "$ref": "#/components/schemas/OptKeepoutAutoSettings"
+          },
+          "loads": {
+            "$ref": "#/components/schemas/OptLoadsSettings"
+          },
+          "max_entries": {
+            "title": "Max Entries",
+            "type": "integer"
+          },
+          "max_preview_points": {
+            "title": "Max Preview Points",
+            "type": "integer"
+          },
+          "max_rects": {
+            "title": "Max Rects",
+            "type": "integer"
+          },
+          "method_sources": {
+            "additionalProperties": true,
+            "title": "Method Sources",
+            "type": "object"
+          },
+          "size": {
+            "$ref": "#/components/schemas/OptSizeSettings"
+          },
+          "solver_ready": {
+            "title": "Solver Ready",
+            "type": "boolean"
+          },
+          "solver_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solver Reason"
+          },
+          "template_ext": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Template Ext",
+            "type": "array"
+          },
+          "template_max_elems": {
+            "title": "Template Max Elems",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "solver_ready",
+          "size",
+          "bead_defaults",
+          "keepout_auto",
+          "loads",
+          "method_sources",
+          "max_rects",
+          "max_entries",
+          "template_max_elems",
+          "template_ext",
+          "max_preview_points"
+        ],
+        "title": "OptSettingsOut",
+        "type": "object"
+      },
+      "OptSizeSettings": {
+        "properties": {
+          "plate_tol_rel": {
+            "title": "Plate Tol Rel",
+            "type": "number"
+          },
+          "require_inch": {
+            "title": "Require Inch",
+            "type": "boolean"
+          },
+          "tol_rel": {
+            "title": "Tol Rel",
+            "type": "number"
+          }
+        },
+        "required": [
+          "tol_rel",
+          "plate_tol_rel",
+          "require_inch"
+        ],
+        "title": "OptSizeSettings",
+        "type": "object"
+      },
+      "PlanViewAuto": {
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "edge_band_mm": {
+            "title": "Edge Band Mm",
+            "type": "number"
+          },
+          "hole_radius_mm": {
+            "title": "Hole Radius Mm",
+            "type": "number"
+          },
+          "polygons": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Polygons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hole_radius_mm",
+          "edge_band_mm",
+          "polygons"
+        ],
+        "title": "PlanViewAuto",
+        "type": "object"
+      },
+      "PlanViewElems": {
+        "properties": {
+          "decimated": {
+            "title": "Decimated",
+            "type": "boolean"
+          },
+          "n_total": {
+            "title": "N Total",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "n_total",
+          "decimated",
+          "points"
+        ],
+        "title": "PlanViewElems",
+        "type": "object"
+      },
+      "PlanViewFrame": {
+        "properties": {
+          "a_range": {
+            "items": {
+              "type": "number"
+            },
+            "title": "A Range",
+            "type": "array"
+          },
+          "b_range": {
+            "items": {
+              "type": "number"
+            },
+            "title": "B Range",
+            "type": "array"
+          }
+        },
+        "required": [
+          "a_range",
+          "b_range"
+        ],
+        "title": "PlanViewFrame",
+        "type": "object"
+      },
+      "PlanViewOut": {
+        "properties": {
+          "auto_keepout": {
+            "$ref": "#/components/schemas/PlanViewAuto"
+          },
+          "elems": {
+            "$ref": "#/components/schemas/PlanViewElems"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/PlanViewFrame"
+          },
+          "holes": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Holes",
+            "type": "array"
+          },
+          "key": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Key",
+            "type": "object"
+          },
+          "outline": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Outline",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "frame",
+          "outline",
+          "holes",
+          "elems",
+          "auto_keepout"
+        ],
+        "title": "PlanViewOut",
         "type": "object"
       },
       "Project": {
@@ -4100,6 +5468,54 @@
           "light"
         ],
         "title": "QueueOut",
+        "type": "object"
+      },
+      "RectIn": {
+        "additionalProperties": false,
+        "properties": {
+          "corner": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Corner",
+            "type": "string"
+          },
+          "h_mm": {
+            "title": "H Mm",
+            "type": "number"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "w_mm": {
+            "title": "W Mm",
+            "type": "number"
+          },
+          "x_mm": {
+            "title": "X Mm",
+            "type": "number"
+          },
+          "y_mm": {
+            "title": "Y Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "corner",
+          "x_mm",
+          "y_mm",
+          "w_mm",
+          "h_mm"
+        ],
+        "title": "RectIn",
         "type": "object"
       },
       "ReviewError": {
@@ -4387,6 +5803,17 @@
           "lane": {
             "title": "Lane",
             "type": "string"
+          },
+          "opt_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Run Id"
           },
           "params": {
             "additionalProperties": true,
@@ -4932,6 +6359,180 @@
         "title": "ReviewTiming",
         "type": "object"
       },
+      "S1Base": {
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "case_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Title"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "n_elems": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Elems"
+          },
+          "n_nodes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Nodes"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "pids": {
+            "items": {
+              "$ref": "#/components/schemas/MeshPid"
+            },
+            "title": "Pids",
+            "type": "array"
+          },
+          "rad_file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rad File Name"
+          },
+          "supports": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Supports",
+            "type": "array"
+          },
+          "topo_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topo Sha256"
+          }
+        },
+        "required": [
+          "entry_id",
+          "case_id"
+        ],
+        "title": "S1Base",
+        "type": "object"
+      },
+      "S1CheckIn": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "entry_ids"
+        ],
+        "title": "S1CheckIn",
+        "type": "object"
+      },
+      "S1CheckOut": {
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/S1Base"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/S1EntryRow"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base",
+          "entries"
+        ],
+        "title": "S1CheckOut",
+        "type": "object"
+      },
+      "S1EntryRow": {
+        "properties": {
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "same_model": {
+            "title": "Same Model",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id",
+          "same_model"
+        ],
+        "title": "S1EntryRow",
+        "type": "object"
+      },
       "SectionLine": {
         "description": "지도에 그릴 단면 중심선(PCA 평면 실좌표, 대상 파트 범위 양 끝) + 띠 실좌표 반폭 band_abs.",
         "properties": {
@@ -5401,6 +7002,26 @@
         "title": "SupportCreate",
         "type": "object"
       },
+      "SupportIn": {
+        "additionalProperties": false,
+        "properties": {
+          "dof": {
+            "pattern": "^[1-6]{1,6}$",
+            "title": "Dof",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "node_id",
+          "dof"
+        ],
+        "title": "SupportIn",
+        "type": "object"
+      },
       "SupportSetOut": {
         "properties": {
           "case_id": {
@@ -5521,6 +7142,297 @@
         "additionalProperties": false,
         "properties": {},
         "title": "SupportSuggestReq",
+        "type": "object"
+      },
+      "TemplateCheckIn": {
+        "additionalProperties": false,
+        "properties": {
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "upload_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "upload_id"
+        ],
+        "title": "TemplateCheckIn",
+        "type": "object"
+      },
+      "TemplateDeleteOut": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted",
+          "archived"
+        ],
+        "title": "TemplateDeleteOut",
+        "type": "object"
+      },
+      "TemplateIn": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "inch": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inch"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "upload_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "upload_id",
+          "sha256",
+          "title"
+        ],
+        "title": "TemplateIn",
+        "type": "object"
+      },
+      "TemplateOut": {
+        "properties": {
+          "L_eta": {
+            "title": "L Eta",
+            "type": "number"
+          },
+          "L_xi": {
+            "title": "L Xi",
+            "type": "number"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "can_delete": {
+            "title": "Can Delete",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "title": "Created By Name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "rad",
+              "fem"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inch"
+          },
+          "n_elems": {
+            "title": "N Elems",
+            "type": "integer"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "n_runs": {
+            "title": "N Runs",
+            "type": "integer"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "pids": {
+            "items": {
+              "$ref": "#/components/schemas/MeshPid"
+            },
+            "title": "Pids",
+            "type": "array"
+          },
+          "quality_warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Quality Warnings",
+            "type": "array"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ACTIVE",
+              "ARCHIVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "supports_auto": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Supports Auto",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "z_range": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Z Range",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "format",
+          "file_name",
+          "sha256",
+          "n_nodes",
+          "n_elems",
+          "L_xi",
+          "L_eta",
+          "z_range",
+          "pids",
+          "status",
+          "n_runs",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "can_delete"
+        ],
+        "title": "TemplateOut",
         "type": "object"
       },
       "ToolsStatus": {
@@ -10167,6 +12079,28 @@
               ],
               "title": "Status"
             }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "dent",
+                    "twist",
+                    "bend",
+                    "none"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
           }
         ],
         "responses": {
@@ -10409,6 +12343,878 @@
         "summary": "Me",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/esl/api/opt/keepouts": {
+      "get": {
+        "description": "세트가 없으면 404 KEEPOUT_NOT_FOUND(화면은 빈 세트로 시작).",
+        "operationId": "keepout_get_esl_api_opt_keepouts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "template_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Template Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeepoutSetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Keepout Get",
+        "tags": [
+          "opt"
+        ]
+      },
+      "put": {
+        "operationId": "keepout_put_esl_api_opt_keepouts_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeepoutSetIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeepoutSetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Keepout Put",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/plan-view": {
+      "get": {
+        "operationId": "plan_view_esl_api_opt_plan_view_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "template_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Template Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entry_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanViewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan View",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs": {
+      "get": {
+        "operationId": "run_list_esl_api_opt_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scenario",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "S1",
+                    "S2"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OptRunOut"
+                  },
+                  "title": "Response Run List Esl Api Opt Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run List",
+        "tags": [
+          "opt"
+        ]
+      },
+      "post": {
+        "operationId": "run_create_esl_api_opt_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OptRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Create",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}": {
+      "get": {
+        "operationId": "run_get_esl_api_opt_runs__rid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Get",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}/bead-map.png": {
+      "get": {
+        "operationId": "run_bead_map_esl_api_opt_runs__rid__bead_map_png_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {}
+            },
+            "description": "비드 맵 PNG"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Bead Map",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}/bundle": {
+      "get": {
+        "description": "결과 받기(zip): parts = report,result,deck(기본) [,solve = OptiStruct 원본, raw = npz·대상]. 상한 초과 시 413.",
+        "operationId": "run_bundle_esl_api_opt_runs__rid__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parts",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parts"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Bundle",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}/download": {
+      "get": {
+        "operationId": "run_download_esl_api_opt_runs__rid__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rel",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Rel",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Download",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}/files": {
+      "get": {
+        "operationId": "run_files_esl_api_opt_runs__rid__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OptFileOut"
+                  },
+                  "title": "Response Run Files Esl Api Opt Runs  Rid  Files Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Files",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/runs/{rid}/report": {
+      "get": {
+        "operationId": "run_report_esl_api_opt_runs__rid__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rid",
+            "required": true,
+            "schema": {
+              "title": "Rid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Report",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/s1-check": {
+      "post": {
+        "operationId": "s1_check_esl_api_opt_s1_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/S1CheckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/S1CheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "S1 Check",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/settings": {
+      "get": {
+        "description": "화면 기본값: 비드 치수·자동 금지 영역·하중 선정 전략·목표 기준, 방법·출처(resources/opt_method_sources.json).",
+        "operationId": "opt_settings_esl_api_opt_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptSettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Opt Settings",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/templates": {
+      "get": {
+        "operationId": "template_list_esl_api_opt_templates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ACTIVE",
+                    "ARCHIVED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateOut"
+                  },
+                  "title": "Response Template List Esl Api Opt Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template List",
+        "tags": [
+          "opt"
+        ]
+      },
+      "post": {
+        "operationId": "template_register_esl_api_opt_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template Register",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/templates/check": {
+      "post": {
+        "operationId": "template_check_esl_api_opt_templates_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateCheckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeshCheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template Check",
+        "tags": [
+          "opt"
+        ]
+      }
+    },
+    "/esl/api/opt/templates/{tid}": {
+      "delete": {
+        "description": "등록자·전역 관리자만. 실행이 참조 중이면 보관(ARCHIVED), 아니면 행 삭제 + 폴더 _templates/_backup 이동.",
+        "operationId": "template_delete_esl_api_opt_templates__tid__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template Delete",
+        "tags": [
+          "opt"
+        ]
+      },
+      "get": {
+        "operationId": "template_get_esl_api_opt_templates__tid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "title": "Tid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Template Get",
+        "tags": [
+          "opt"
         ]
       }
     },

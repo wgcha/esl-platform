@@ -12,11 +12,12 @@ from sqlalchemy import and_, column, func, literal, or_, select, true, tuple_, v
 from sqlalchemy.engine import Connection
 from sqlalchemy.types import String
 
-from ..db.tables import analysis_runs, cases, comparisons, esl_runs, jobs, support_sets, validations
+from ..db.tables import analysis_runs, cases, comparisons, esl_runs, jobs, opt_runs, support_sets, validations
 from . import row_dict
 
 LIST_COLUMNS = (
-    jobs.c.id, jobs.c.case_id, jobs.c.analysis_id, jobs.c.comparison_id, jobs.c.project_id, jobs.c.job_type,
+    jobs.c.id, jobs.c.case_id, jobs.c.analysis_id, jobs.c.comparison_id, jobs.c.opt_run_id, jobs.c.project_id,
+    jobs.c.job_type,
     jobs.c.stage, jobs.c.state, jobs.c.queued_at, jobs.c.started_at, jobs.c.finished_at, jobs.c.current_step_no,
     jobs.c.progress_pct, jobs.c.failure_code, jobs.c.failure_message, jobs.c.retry_of_job_id, jobs.c.created_by,
     jobs.c.created_by_name, jobs.c.created_at,
@@ -63,6 +64,8 @@ def list_page(conn: Connection, project_id: str, *, case_id: str | None, job_typ
                 analysis_runs.c.project_id == project_id, analysis_runs.c.title.ilike(pat, escape="\\")))),
             jobs.c.comparison_id.in_(select(comparisons.c.id).where(and_(
                 comparisons.c.project_id == project_id, comparisons.c.title.ilike(pat, escape="\\")))),
+            jobs.c.opt_run_id.in_(select(opt_runs.c.id).where(and_(
+                opt_runs.c.project_id == project_id, opt_runs.c.title.ilike(pat, escape="\\")))),
         ]
         if len(q) >= 8 and all(ch in "0123456789abcdefABCDEF-" for ch in q):
             conds.append(jobs.c.id.like(escape_like(q.lower()) + "%", escape="\\"))

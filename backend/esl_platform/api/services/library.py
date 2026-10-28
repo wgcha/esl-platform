@@ -6,6 +6,10 @@
   체계, scheme NULL)는 당시 verdict 의 기존 규칙(PASS 사유 불필요, FAIL 사유 필수). 같은 run 의 ACTIVE 항목이 있으면 409 ENTRY_EXISTS.
 - 분석 생성은 대상 항목을 확정(필터 → id 목록)해 LIB_ANALYZE 작업(SLOT)을 큐에 넣는다. DB 메타(사용자 수정)는
   작업 params 의 overlay 로 스냅샷되어 코어 항목 meta 에 덮어쓰인다.
+- v0.7.0(esl_opt_run.md §5.1·§7.3·§7.4): 항목 응답에 ``size{inch, L_xi, L_eta}``·``topo_sha256``·``deform_mode{auto, user,
+  effective, metrics}``. 등록 시 코어 meta 값을 그대로 저장하고, 기존 항목은 첫 조회 때 항목 폴더(entry.json → 없으면
+  raw.npz)로 지연 백필(``backfill_opt_meta``, 버전 증가 없음). 기준값 변경(``opt_run.mode.rule_version``)이면 auto 만 다시
+  계산하고 user 는 유지. ``PATCH deform_mode``(null = 자동으로 되돌림)는 메타 수정과 같은 권한·version 잠금.
 """
 
 from __future__ import annotations
@@ -18,12 +22,13 @@ import uuid
 from typing import Any
 
 from esl_worker import core_adapter
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...core import core_outputs as co
 from ...core.auth import Principal
-from ...core.db.tables import esl_runs
+from ...core.config import opt_settings
+from ...core.db.tables import esl_runs, library_entries
 from ...core.errors import DomainError, conflict, forbidden, not_found, unprocessable
 from ...core.paths import ANALYSIS_DIR, LIBRARY_DIR, esl_subdir, safe_case_file
 from ...core.repositories import cases as cases_repo
@@ -65,11 +70,106 @@ def _stash(lib_root: str, d: str) -> None:
     shutil.move(d, dst)
 
 
+# ---------------------------------------------------------------- v0.7.0 지연 백필(topo_sha256 · deform_mode)
+_BACKFILL_FAILED: set[str] = set()      # 항목 폴더·raw 가 없어 계산하지 못한 항목(프로세스 안에서 재시도 안 함)
+
+
+def entry_folder(ctx: AppContext, e: dict[str, Any]) -> str:
+    """<esl_root>/_library/entries/<id>(링크·탈출 검사)."""
+    return esl_subdir(ctx.settings, *e["dir_rel"].split("/"))
+
+
+def mode_cfg(ctx: AppContext) -> dict[str, Any]:
+    return opt_settings(ctx.settings)["mode"]
+
+
+def _merge_user(new: dict[str, Any], old: dict[str, Any] | None) -> dict[str, Any]:
+    """auto 만 새로, 사용자 수정(user·user_by·user_at)은 유지(esl.opt.modes.refresh 와 같은 규칙)."""
+    if old and old.get("user") is not None:
+        new = {**new, "user": old["user"], "user_by": old.get("user_by"), "user_at": old.get("user_at")}
+    return new
+
+
+def compute_opt_meta(ctx: AppContext, e: dict[str, Any], *, need_topo: bool,
+                     need_mode: bool) -> tuple[str | None, dict[str, Any] | None]:
+    """항목 폴더에서 (topo_sha256, deform_mode 레코드). entry.json 에 같은 rule_version 값이 있으면 그대로(raw 를 읽지 않음),
+    없으면 raw.npz 로 esl.library.entry.opt_meta. 실패하면 EslError/OSError/ValueError/KeyError 를 그대로 올린다."""
+    from ...core.opt_core import library_entry as lib_entry
+    from ...core.opt_core import modes
+
+    mc = mode_cfg(ctx)
+    d = entry_folder(ctx, e)
+    import json
+
+    with open(os.path.join(d, "entry.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    topo = meta.get("topo_sha256") if need_topo else None
+    dm = meta.get("deform_mode") if need_mode else None
+    if need_mode and dm is not None and modes.needs_refresh(dm, mc):
+        dm = None
+    if (need_topo and not topo) or (need_mode and dm is None):
+        ent = lib_entry.load(d, raw=True)
+        t2, dm2 = lib_entry.opt_meta(ent.raw, ent.meta["frame"], mc)
+        topo = topo or t2
+        dm = dm if dm is not None else dm2
+    return topo, dm
+
+
+def backfill_opt_meta(ctx: AppContext, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """topo_sha256 이 없거나 deform_mode 가 없거나 rule_version 이 다른 항목을 채워 DB 에 저장(version 증가 없음).
+    실패 → topo null(S1 불가 "모델 정보 없음"), 같은 프로세스에서 다시 시도하지 않음."""
+    from ...core.opt_core import EslError
+    from ...core.opt_core import modes
+
+    mc = mode_cfg(ctx)
+    out = []
+    for e in rows:
+        need_topo = not e.get("topo_sha256")
+        need_mode = modes.needs_refresh(e.get("deform_mode"), mc)
+        if not (need_topo or need_mode) or e["id"] in _BACKFILL_FAILED:
+            out.append(e)
+            continue
+        try:
+            topo, dm = compute_opt_meta(ctx, e, need_topo=need_topo, need_mode=need_mode)
+        except (EslError, OSError, ValueError, KeyError, TypeError, DomainError):
+            _BACKFILL_FAILED.add(e["id"])
+            out.append(e)
+            continue
+        vals: dict[str, Any] = {}
+        if need_topo and topo:
+            vals["topo_sha256"] = topo
+        if need_mode and dm is not None:
+            vals["deform_mode"] = _merge_user(dm, e.get("deform_mode"))
+        if vals:
+            with ctx.engine.begin() as c2:
+                c2.execute(update(library_entries).where(library_entries.c.id == e["id"]).values(**vals))
+            e = {**e, **vals}
+        out.append(e)
+    return out
+
+
+def deform_mode_out(dm: dict[str, Any] | None) -> dict[str, Any] | None:
+    from ...core.opt_core import modes
+
+    if not dm:
+        return None
+    return {"auto": dm.get("auto"), "user": dm.get("user"), "effective": modes.effective(dm),
+            "metrics": dm.get("metrics") or {}, "user_by": dm.get("user_by"), "user_at": dm.get("user_at"),
+            "rule_version": dm.get("rule_version")}
+
+
+def entry_size(e: dict[str, Any]) -> dict[str, Any]:
+    fr = ((e.get("summary") or {}).get("frame") or {})
+    return {"inch": (e.get("model") or {}).get("inch"), "L_xi": _num(fr.get("L_xi")), "L_eta": _num(fr.get("L_eta"))}
+
+
 # ---------------------------------------------------------------- 직렬화
 def entry_out(conn, e: dict[str, Any]) -> dict[str, Any]:
     d = dict(e)
     case = cases_repo.get_case(conn, e["case_id"])
     d["case_title"] = case["title"] if case else None
+    d["size"] = entry_size(e)
+    d["deform_mode"] = deform_mode_out(e.get("deform_mode"))
     return d
 
 
@@ -132,7 +232,8 @@ def _row_from_meta(meta: dict[str, Any], val: dict[str, Any], force_reason: str 
                "max_f": _num(sm.get("max_f")), "n_cells_loaded": sm.get("n_cells_loaded"),
                "frame": {"L_xi": _num(fr.get("L_xi")), "L_eta": _num(fr.get("L_eta"))}}
     return {"model": model, "scene": scene, "quality": quality, "tstar": meta.get("tstar"), "summary": summary,
-            "warnings": [str(w) for w in meta.get("warnings") or []], "files": meta.get("files") or {}}
+            "warnings": [str(w) for w in meta.get("warnings") or []], "files": meta.get("files") or {},
+            "topo_sha256": meta.get("topo_sha256"), "deform_mode": meta.get("deform_mode")}
 
 
 # ---------------------------------------------------------------- 등록
@@ -218,15 +319,28 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
         return entry_out(conn, e)
 
 
-def list_entries(ctx: AppContext, project_id: str | None, status: str | None, **filters) -> list[dict[str, Any]]:
+def list_entries(ctx: AppContext, project_id: str | None, status: str | None, mode: str | None = None,
+                 **filters) -> list[dict[str, Any]]:
+    """mode = dent|twist|bend|none(분류 불가·미분류) — effective 모드(사용자 수정 우선)로 거른다(백필 뒤)."""
+    from ...core.opt_core import modes
+
+    if mode is not None and mode not in (*modes.MODES, "none"):
+        raise unprocessable("INVALID_PARAMS", "mode 는 dent | twist | bend | none")
     with ctx.engine.connect() as conn:
-        return [entry_out(conn, e) for e in lib_repo.list_entries(conn, project_id=project_id, status=status,
-                                                                  **filters)]
+        rows = lib_repo.list_entries(conn, project_id=project_id, status=status, **filters)
+    rows = backfill_opt_meta(ctx, rows)
+    if mode is not None:
+        rows = [e for e in rows if (modes.effective(e.get("deform_mode")) or "none") == mode]
+    with ctx.engine.connect() as conn:
+        return [entry_out(conn, e) for e in rows]
 
 
 def get_entry(ctx: AppContext, eid: str) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
-        return entry_out(conn, _load_entry(conn, eid))
+        e = _load_entry(conn, eid)
+    e = backfill_opt_meta(ctx, [e])[0]
+    with ctx.engine.connect() as conn:
+        return entry_out(conn, e)
 
 
 def retire_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[str, Any]:
@@ -272,11 +386,40 @@ def patch_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[s
             vals["scene"] = s
         if "note" in body.model_fields_set:
             vals["note"] = body.note
+        if "deform_mode" in body.model_fields_set:
+            vals.update(_patch_deform_mode(ctx, principal, e, body.deform_mode))
         try:
             e = lib_repo.update_entry(conn, eid, body.version, **vals)
         except VersionConflict:
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요") from None
         return entry_out(conn, e)
+
+
+def _patch_deform_mode(ctx: AppContext, principal: Principal, e: dict[str, Any], user: str | None) -> dict[str, Any]:
+    """변형 모드 사용자 수정(null = 자동으로 되돌림). 레코드가 없거나 기준값이 바뀌었으면 먼저 계산(실패하면 auto null)."""
+    from ...core.opt_core import EslError
+    from ...core.opt_core import modes
+
+    mc = mode_cfg(ctx)
+    out: dict[str, Any] = {}
+    dm = e.get("deform_mode")
+    if modes.needs_refresh(dm, mc):
+        try:
+            topo, new = compute_opt_meta(ctx, e, need_topo=not e.get("topo_sha256"), need_mode=True)
+            if topo and not e.get("topo_sha256"):
+                out["topo_sha256"] = topo
+            dm = _merge_user(new, dm) if new is not None else dm
+        except (EslError, OSError, ValueError, KeyError, TypeError, DomainError):
+            pass
+    if not dm:
+        dm = {"auto": None, "metrics": {}, "user": None, "user_by": None, "user_at": None,
+              "rule_version": int(mc["rule_version"])}
+    try:
+        out["deform_mode"] = modes.set_user(dm, user, principal.display_name,
+                                            _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"))
+    except EslError as exc:
+        raise unprocessable("INVALID_PARAMS", exc.message) from None
+    return out
 
 
 # ---------------------------------------------------------------- 종합분석

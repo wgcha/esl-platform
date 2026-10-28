@@ -40,9 +40,11 @@ def list_entries(request: Request, project_id: str | None = None, model: str | N
                  inch: str | None = None, drop_type: str | None = None, drop_class: str | None = None,
                  orient: str | None = None, scenario: str | None = None, verdict: str | None = None,
                  status: Literal["ACTIVE", "RETIRED"] | None = None,
+                 mode: Literal["dent", "twist", "bend", "none"] | None = None,
                  principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
-    return svc.list_entries(get_ctx(request), project_id, status, model=model, inch=inch, drop_type=drop_type,
-                            drop_class=drop_class, orient=orient, scenario=scenario, verdict=verdict)
+    return svc.list_entries(get_ctx(request), project_id, status, mode=mode, model=model, inch=inch,
+                            drop_type=drop_type, drop_class=drop_class, orient=orient, scenario=scenario,
+                            verdict=verdict)
 
 
 @router.get("/library/entries/{eid}", response_model=EntryOut)
