@@ -6,30 +6,17 @@ export const ARROW_COLOR = "#d62728";
 export const ARROW_SELECTED = "#ff7f0e";
 export const CLUSTER_COLOR = "#a50f15";
 
-/**
- * 화살표 스타일 시안(검토용, 확정 전). 기본 "current" = 원기둥+원뿔(부피). 시안은 mock 모드의 `?arrow=s1|s2|s3` 에서만 선택된다.
- * 확정 후 기본 변경: ARROW_STYLE_DEFAULT 값만 바꾸고(필요하면 mock 제한 `allowProto` 제거) 나머지 스타일 분기는 정리한다.
- *  s1 = 픽셀 고정 두께 선 + 2D 셰브론 머리(화면 크기 고정), s2 = 두꺼운 선(끝으로 진해짐) + 시작점 작은 점, s3 = 픽셀 고정 두께 선 + 1/4 크기 원뿔 머리
- */
-export type ArrowStyle = "current" | "s1" | "s2" | "s3" | "s3a" | "s3b";
-export const ARROW_STYLE_DEFAULT: ArrowStyle = "current";
-/** 선 두께(px): 노드 화살표 / 군집 합력(같은 스타일, 더 굵게) */
-export const LINE_PX = { node: 3, cluster: 5 } as const;
-/** s3 계열 변형: 선 두께(px) + 원뿔 반지름·높이 배율(S3 대비, 화면 제한 시에는 반지름/높이 = aspect 고정) + 화면 크기 제한(px). s3a = 가늘고 뾰족, s3b = 중간 */
-export const S3_VARIANTS = {
-  s3: { px: { node: 3, cluster: 5 }, r: 1, h: 1, aspect: 0, clamp: false },
-  s3a: { px: { node: 2, cluster: 3.5 }, r: 0.6, h: 1.4, aspect: 0.3, clamp: true },
-  s3b: { px: { node: 2.5, cluster: 4 }, r: 0.7, h: 1.6, aspect: 0.33, clamp: true },
-} as const;
-/** 원뿔 머리 화면 길이 제한(px): 점처럼 작아지거나 너무 커지지 않게 */
+/** 화살표 렌더 상수(계약 §6.2, L3-C2 = 시안 S3a 확정): 픽셀 고정 두께 선 + 가는 원뿔 머리 */
+/** 선 두께(px): 노드 화살표 / 군집 합력 / 3-2-1 지지 축 선분 */
+export const LINE_PX = { node: 2, cluster: 3.5 } as const;
+export const SUPPORT_LINE_PX = 2;
+/** 원뿔 머리: 높이 = (기본 머리 길이 min(0.25·길이, 0.04·diag)) × CONE_LEN_SCALE 을 화면 CONE_PX 로 제한, 군집은 CONE_CLUSTER_SCALE 배, 반지름 = 높이 × CONE_ASPECT */
+export const CONE_LEN_SCALE = 0.35;
 export const CONE_PX = { min: 9, max: 26 } as const;
-/** 시안 스타일에서 군집 화살표 최소 길이 비율(현재 기본은 MIN_LEN_FRAC 유지) */
-export const PROTO_CLUSTER_MIN_FRAC = 0.3;
-export function resolveArrowStyle(search: string, allowProto: boolean): ArrowStyle {
-  if (!allowProto) return ARROW_STYLE_DEFAULT;
-  const v = new URLSearchParams(search).get("arrow");
-  return v === "s1" || v === "s2" || v === "s3" || v === "s3a" || v === "s3b" || v === "current" ? v : ARROW_STYLE_DEFAULT;
-}
+export const CONE_CLUSTER_SCALE = 1.8;
+export const CONE_ASPECT = 0.3;
+/** 군집 화살표 최소 길이 비율(노드는 MIN_LEN_FRAC) */
+export const CLUSTER_MIN_FRAC = 0.3;
 
 /** 사용자 결정 2026-10-28: 100·50·20·10 노드 → 합력 5·4·3·2 (노드 모드 최소 10 = 임계) */
 export const NODE_STAGES = [100, 50, 20, 10] as const;
@@ -89,10 +76,7 @@ export interface ArrowSpec {
   tail: V3;
   dir: V3;
   length: number;
-  shaftLen: number;
   headLen: number;
-  shaftRadius: number;
-  headRadius: number;
   color: string;
   mag: number;
   vertex: number | null;
@@ -104,13 +88,12 @@ export const unit = (v: ArrayLike<number>): V3 | null => {
   return m > 0 ? [v[0] / m, v[1] / m, v[2] / m] : null;
 };
 
-/** 화살표 치수: L_max = 0.10 diag, 머리 = 0.25 길이(최대 0.04 diag), 축 반지름 0.008 diag, 군집은 굵기 2배 */
-export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: ArrayLike<number>, mag: number, fref: number, diag: number, vertex: number | null, label?: string, minFrac: number = MIN_LEN_FRAC): ArrowSpec | null {
+/** 화살표 사양: L_max = 0.10 diag, 기본 머리 길이 = 0.25 길이(최대 0.04 diag). 선 두께·원뿔 반경은 scene 이 px 기준으로 정함 */
+export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: ArrayLike<number>, mag: number, fref: number, diag: number, vertex: number | null, label?: string): ArrowSpec | null {
   const dir = unit(f);
   if (!dir) return null;
-  const length = arrowLength(mag, fref, 0.1 * diag, minFrac);
+  const length = arrowLength(mag, fref, 0.1 * diag, kind === "cluster" ? CLUSTER_MIN_FRAC : MIN_LEN_FRAC);
   const headLen = Math.min(0.25 * length, 0.04 * diag);
-  const thick = kind === "cluster" ? 2 : 1;
   return {
     key,
     kind,
@@ -118,9 +101,6 @@ export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: Ar
     dir,
     length,
     headLen,
-    shaftLen: length - headLen,
-    shaftRadius: 0.008 * diag * thick,
-    headRadius: 0.018 * diag * thick,
     color: kind === "cluster" ? CLUSTER_COLOR : ARROW_COLOR,
     mag,
     vertex,
@@ -133,7 +113,7 @@ export function clusterOf(m: Pick<View3dOut, "clusters">, k: number): View3dClus
 }
 
 /** 화살표 사양. u = 복원된 u_rel(길이 3n) 또는 null, kscale = 변형 배율(변형 형상 꺼짐이면 0) */
-export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">, mode: ArrowMode, u: ArrayLike<number> | null, kscale: number, clusterMinFrac: number = MIN_LEN_FRAC): ArrowSpec[] {
+export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">, mode: ArrowMode, u: ArrayLike<number> | null, kscale: number): ArrowSpec[] {
   const diag = m.bbox.diag;
   const out: ArrowSpec[] = [];
   if (mode.kind === "nodes") {
@@ -152,7 +132,7 @@ export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">,
   for (const r of c.rows) {
     const du = r.u_center && kscale ? r.u_center : [0, 0, 0];
     const kk = r.u_center && kscale ? kscale : 0;
-    const a = buildArrow(r.label, "cluster", [r.center[0] + kk * du[0], r.center[1] + kk * du[1], r.center[2] + kk * du[2]], r.r, r.r_mag, fref, diag, null, `${r.label} ${fmtN(r.r_mag)} N`, clusterMinFrac);
+    const a = buildArrow(r.label, "cluster", [r.center[0] + kk * du[0], r.center[1] + kk * du[1], r.center[2] + kk * du[2]], r.r, r.r_mag, fref, diag, null, `${r.label} ${fmtN(r.r_mag)} N`);
     if (a) out.push(a);
   }
   return out;

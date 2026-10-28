@@ -1,7 +1,7 @@
 // V-L3-10 · V-L3-6(프런트) · V-L3-5(프런트) · V-L3-13 · V-L3-14: 3D 하중 보기 순수 함수 시험(jsdom, three 없이).
 import { describe, expect, it } from "vitest";
 import {
-  ARROW_COLOR, CLUSTER_COLOR, CLUSTER_STAGES, MIN_LEN_FRAC, NODE_STAGES, N_STAGES, arrowLength, buildArrowSpecs, nearestEnabledStage, nodeCount, stageEnabled, stageIndex, stageMode, stageText,
+  ARROW_COLOR, CLUSTER_COLOR, CLUSTER_MIN_FRAC, CLUSTER_STAGES, CONE_ASPECT, LINE_PX, MIN_LEN_FRAC, NODE_STAGES, N_STAGES, arrowLength, buildArrowSpecs, nearestEnabledStage, nodeCount, stageEnabled, stageIndex, stageMode, stageText,
 } from "../view3d/arrows";
 import { BLUES9, LUT_LINEAR, LUT_SRGB, NAN_LINEAR, bluesSrgb, fillVertexColors, luminance, normalize, srgbToLinear } from "../view3d/colors";
 import { applyDeform, defaultScale, defaultScaleExp, pointAt, scaleFromExp, scaleLabel } from "../view3d/deform";
@@ -62,14 +62,15 @@ describe("V-L3-10 화살표 길이·사양", () => {
       expect(Math.hypot(...a.dir)).toBeCloseTo(1, 9);
       expect(a.length).toBeGreaterThanOrEqual(0.1 * diag * MIN_LEN_FRAC - 1e-9);
       expect(a.headLen).toBeLessThanOrEqual(0.04 * diag + 1e-9);
-      expect(a.shaftLen + a.headLen).toBeCloseTo(a.length, 9);
     }
     expect(buildArrowSpecs(m, { kind: "nodes", n: 10 }, null, 0).length).toBe(10);
     const c = buildArrowSpecs(m, { kind: "cluster", k: 3 }, null, 0);
     expect(c.length).toBe(3);
     expect(c[0].color).toBe(CLUSTER_COLOR);
     expect(c[0].label).toMatch(/^C1 [\d.]+ N$/);
-    expect(c[0].shaftRadius).toBeCloseTo(2 * a100[0].shaftRadius, 12);
+    for (const a of c) expect(a.length).toBeGreaterThanOrEqual(0.1 * diag * CLUSTER_MIN_FRAC - 1e-9); // 군집 최소 길이 0.3
+    expect(LINE_PX).toEqual({ node: 2, cluster: 3.5 });
+    expect(CONE_ASPECT).toBeLessThan(0.5); // 가늘고 뾰족
     expect(c[0].length).toBeCloseTo(0.1 * diag, 9);
   });
 

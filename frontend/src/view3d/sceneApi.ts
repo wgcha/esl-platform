@@ -1,6 +1,6 @@
 // 장면 인터페이스(three 에 의존하지 않음). View3DCard 는 이 인터페이스만 알고, 구현(scene.ts)은 동적 import 로 별도 청크에서 적재한다.
 // 시험에서는 이 인터페이스를 흉내 내는 mock 을 끼운다.
-import type { ArrowSpec, ArrowStyle } from "./arrows";
+import type { ArrowSpec } from "./arrows";
 import type { V3 } from "./pick";
 import type { SupportSpec } from "./supports";
 
@@ -23,8 +23,6 @@ export interface SceneOptions {
   /** bbox 대각선(mm) — 화살표·기호 크기 기준 */
   diag: number;
   bbox: { min: number[]; max: number[] };
-  /** 화살표 스타일(기본 "current"; 시안은 mock 에서만) */
-  arrowStyle?: ArrowStyle;
 }
 
 export interface SceneApi {

@@ -231,13 +231,3 @@ describe("V-L3-11 대체 경로", () => {
     expect(titles.indexOf("3D 하중 보기")).toBeLessThan(titles.indexOf("F_eq 상위 노드"));
   });
 });
-
-import { ARROW_STYLE_DEFAULT, resolveArrowStyle } from "../view3d/arrows";
-describe("화살표 스타일 시안 선택", () => {
-  it("기본은 current, 시안은 mock 에서만", () => {
-    expect(ARROW_STYLE_DEFAULT).toBe("current");
-    expect(resolveArrowStyle("?arrow=s2", true)).toBe("s2");
-    expect(resolveArrowStyle("?arrow=s2", false)).toBe("current");
-    expect(resolveArrowStyle("?arrow=zz", true)).toBe("current");
-  });
-});
