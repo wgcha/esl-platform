@@ -1,6 +1,6 @@
 # 계약: 비드 최적화 서버 실행 (OPT_RUN, v0.7.0)
 
-- 상태: **확정** (2026-10-28, 사용자 1차 확정 Q1~Q5 + 2차 확정(비드 금지 영역·비드 치수 기본값) + 3차 확정(하중 선정 전략 A/B/C 선택 — 기본 A 전부 넣기 + |MAC| 병합·군집, 모드는 표시·전략 B 용, 방법·출처 표시), §17). 미결 없음. 구현 코드 없음.
+- 상태: **확정** (2026-10-28, 사용자 1차 확정 Q1~Q5 + 2차 확정(비드 금지 영역·비드 치수 기본값) + 3차 확정(하중 선정 전략 A/B/C 선택 — 기본 A 전부 넣기 + |MAC| 병합·군집, 모드는 표시·전략 B 용, 방법·출처 표시, 목표 기준 절대(기본)/상대), §17). 미결 없음. 구현 코드 없음.
 - 버전: **v0.7.0** (v0.6.0은 `esl_upload_speed.md`가 사용).
 - 대체 범위: `esl_p2_library.md` §4 "실행은 사용자 측(Windows/HPC)… 결과 회수·후처리는 P3", `esl_p3_ux.md` §7 "OptiStruct 비드 덱 실행은 P4" 중 **서버 워커 실행** 부분. HPC/PBS 제출은 여전히 범위 밖. 충돌 시 이 문서 우선. 종합분석(LIB_ANALYZE)의 덱 생성·하중 구성(§12.1 all/대표/최악)은 **그대로 유지**(PC 실행용) — OPT_RUN 의 하중 구성은 이 문서 §7.4.
 - ID 규칙: 결정 `OR-D-n`, 요구 `OR-n`, 시험 `V-OR-n`, 리스크 `R-OR-n`.
@@ -16,7 +16,7 @@
   9. 저장소의 DTPG 덱 생성 코드(`esl/library/optdeck.py`)를 서버 실행으로 연결.
   10. UI 필수 버튼만, 2560×1440 기준(1920×1080 잘림 없음). 환경별 경로·솔버 경로는 설정 파일, 하드코딩 금지. **입력 폴더 쓰기 금지**.
   11. **비드 금지 영역** = 자동 제외(마운트 구멍 주변 반경, 가장자리 띠 폭 — 설정 mm) + 사용자 사각형 여러 개(가로·세로 mm, 기준 모서리 = ξη 평면 경계 4코너 중 하나, 그 모서리에서 X·Y 거리 mm). 2D 평면도 미리보기·드래그 이동 시 숫자 동기화. 사각형 세트는 S2 템플릿 또는 S1 모델(`topo_sha256`)에 저장해 다음 실행에서 불러오기. 덱에서 해당 요소는 비설계(DTPG 제외).
-  12. **다중 ESL 목표**(3차 확정) = 실행 화면에서 하중 선정 전략 라디오 1그룹으로 선택, 기본 **A(추천 배지)**. 모든 전략에서 ESL 1개 = 하중 케이스 1개(각 ESL 은 이미 t* **단일 시점** — 시간 구간 전체를 넣지 않음), 목표는 초기 컴플라이언스 정규화 min-max 동일. **A 전부 넣기**(KIT 비드 최적화 연구 방식): 선택 ESL 전부, 변위 형상 유사도 |MAC|(부호 무관 — F→−F 는 컴플라이언스가 같으므로 반대 방향 토션 자동 병합) ≥ `opt_run.loads.mac_merge`(0.95) 쌍은 초기 컴플라이언스 큰 쪽만, 남은 수 > `opt_run.loads.max_cases`(20)이면 |MAC| 거리 결정적 계층 군집(average linkage) 군집별 최악 1개. **B 모드별 최악**: 변형 모드(덴팅·뒤틀림·굽힘)별 초기 컴플라이언스 최악 1개, 최대 3개. **C 군집 대표 k개**: |MAC| 군집 k개(숫자 입력, 기본 5, 1..max_cases) 군집별 최악 1개. 전략값은 `opt_runs` 에 저장, 선정 표·보고서에 표시.
+  12. **다중 ESL 목표**(3차 확정) = 실행 화면에서 하중 선정 전략 라디오 1그룹으로 선택, 기본 **A(추천 배지)**. 모든 전략에서 ESL 1개 = 하중 케이스 1개(각 ESL 은 이미 t* **단일 시점** — 시간 구간 전체를 넣지 않음), 목표는 min-max 컴플라이언스, 기준은 '목표 기준' 선택(§2 OR-D-15: 절대 기본·상대 옵션, 사용자 가중 없음). **A 전부 넣기**(KIT 비드 최적화 연구 방식): 선택 ESL 전부, 변위 형상 유사도 |MAC|(부호 무관 — F→−F 는 컴플라이언스가 같으므로 반대 방향 토션 자동 병합) ≥ `opt_run.loads.mac_merge`(0.95) 쌍은 초기 컴플라이언스 큰 쪽만, 남은 수 > `opt_run.loads.max_cases`(20)이면 |MAC| 거리 결정적 계층 군집(average linkage) 군집별 최악 1개. **B 모드별 최악**: 변형 모드(덴팅·뒤틀림·굽힘)별 초기 컴플라이언스 최악 1개, 최대 3개. **C 군집 대표 k개**: |MAC| 군집 k개(숫자 입력, 기본 5, 1..max_cases) 군집별 최악 1개. 전략값은 `opt_runs` 에 저장, 선정 표·보고서에 표시.
   13. **비드 치수** = 실행 화면 숫자 3칸, 기본 경사 45°, 폭 60 mm, 높이 10 mm(설정 키).
   14. (가정 확정) S1 법선 = 원 연결 유지·반대 법선은 경고만, 템플릿 인치 = 선택 입력.
   15. **변형 모드**(덴팅·뒤틀림·굽힘, w(ξ,η) 저차 다항식 적합 자동 분류 + 사용자 수정·저장)는 표시·보고서·라이브러리 분류/검색에 쓰고, 하중 선정에는 **전략 B 를 고른 경우에만** 쓴다.
@@ -49,7 +49,7 @@
 | S1 기존 rad 형상, S2 템플릿 최적화 | HPC/PBS 제출, 원격 실행 |
 | 템플릿 등록·목록·상세·삭제(보관) — `.rad`·`.fem` 쉘 | CAD/STEP 템플릿(§16) |
 | 비드 금지 영역: 자동(구멍 반경·가장자리 띠) + 사용자 사각형, 세트 저장·불러오기, 2D 평면도 | 임의 다각형·원형 금지 영역, 3D 위 직접 그리기 |
-| 하중 선정 전략 A(전부 + |MAC| 병합 + 상한 군집, 기본·추천)/B(모드별 최악 ≤3)/C(군집 대표 k), 초기 컴플라이언스 정규화 min-max. 변형 모드 분류·수정·저장 | 시간 구간 전체 ESL(ESLSO 전 시점), 가중합 목적 |
+| 하중 선정 전략 A(전부 + |MAC| 병합 + 상한 군집, 기본·추천)/B(모드별 최악 ≤3)/C(군집 대표 k), min-max 목표(절대 기준 기본 / 상대 기준 옵션). 변형 모드 분류·수정·저장 | 시간 구간 전체 ESL(ESLSO 전 시점), 가중합·사용자 가중 목적 |
 | OPT_RUN(SLOT): 준비 → 하중·선정 → 덱 → OptiStruct → 후처리 → 등록 | 비드 반영 모델의 검증 낙하 자동 실행, 형상·두께 최적화 |
 | 결과: 비드 높이, 2D 맵 PNG, 수렴 이력, 비드 반영 메시(rad/fem), 보고서, 원본 h3d/out | 라이브러리 항목 등록(확정 7), 3D 비드 보기 |
 | migration 0010, 시험, 가이드·CHANGELOG | 메타 편집(모델·인치·태그) — §16 |
@@ -72,7 +72,7 @@
 | OR-D-12 | 금지 영역 세트 저장 = 테이블 `opt_keepouts`, 키 S2 `template_id` / S1 `topo_sha256`(전역, 모델당 1세트, 낙관적 잠금 `version`). 실행은 생성 시점 세트를 `opt_runs.design.keepout` 에 **스냅샷** | 확정 11, 이후 세트 수정이 과거 실행에 영향 없음 |
 | OR-D-13 | **변형 모드 분류** = ESL 자신의 메시에서 w = u_rel·n 을 정규화 좌표 [−1,1]² 의 2차 르장드르 기저 최소자승 적합 → 굽힘·뒤틀림 에너지 비율, 잔차 국부 집중도 ≥ 기준이면 덴팅. **용도 = 표시·보고서·라이브러리 분류/검색 + 하중 선정 전략 B**(3차 확정). 결과는 `library_entries.deform_mode`(auto + user), 사용자 수정 우선 | 확정 12 |
 | OR-D-14 | **하중 선정**(3차 확정) = 전략 `load_strategy` A|B|C(기본 A), 공통: ESL 1개 = 하중 케이스 1개(t* 단일 시점), 대상 초기 형상(비드 없음) 자체 쉘 솔버로 후보마다 u_k·C_k = F_k·u_k(3-2-1, 분해 1회·다중 RHS), 표시용 umax = max‖u_k‖. A = |MAC| ≥ `mac_merge` 탐욕 병합 → `max_cases` 초과 시 average linkage 군집 대표, B = 모드별 C 최대(≤3), C = average linkage 군집 k개 대표(병합 없음). 상세 §7.4 | 사용자 지시(A = KIT 비드 최적화 연구 방식, 추천). 부호 무관 MAC 로 반대 방향 하중 중복 제거, 결정적 |
-| OR-D-15 | **목적** = minmax 고정: `DESOBJ(MINMAX)` + subcase별 `DOBJREF POS = C_k^0`(초기 컴플라이언스) → 정규화 컴플라이언스 C_k/C_k^0 의 최대를 최소화. OptiStruct 가 다시 계산한 초기 반복 C 와 자체 솔버 C^0 차이를 결과에 기록 | 확정 12. 기존 `reference_compliance: solve` 경로(POS=ref) 재사용 |
+| OR-D-15 | **목적 = minmax, 목표 기준 `objective_norm`**(실행 화면 선택 2개, 3차 확정): **`abs`(기본·추천)** = minimize max_i C_i, 스케일만 공통 기준값 C_ref = max_i C_i⁰ 로 나눔 → 덱 `DESOBJ(MINMAX)` + 모든 subcase `DOBJREF POS = C_ref`(같은 상수 — 하중 크기 비중 유지). **`rel`** = minimize max_i C_i/C_i⁰ → subcase별 `DOBJREF POS = C_i⁰`. C⁰ = 자체 쉘 솔버 초기 형상 컴플라이언스. 사용자 가중 방식 없음. OptiStruct 반복 0 의 C 와 자체 솔버 C⁰ 차이는 결과에 기록 | ESL F_eq = K_L·u_rel 은 물리 절대 하중이므로 큰 하중이 더 중요해야 함(abs). rel 은 하중 크기와 무관하게 모든 케이스를 같은 비율로 개선하고 싶을 때. 기존 POS=ref 경로 재사용 |
 | OR-D-16 | 비드 치수 기본 = 경사 45°·폭 60 mm·높이 10 mm(`opt_run.bead_defaults`), 화면 숫자 3칸. `library.yaml optdeck.bead`(LIB_ANALYZE 기본)는 불변 | 확정 13 |
 | OR-D-17 | OptiStruct = 워커 LOCAL step, `commands.os_check`·`os_solve`(argv[0] `{optistruct}`), shell=False, 메타문자 거부, 세마포어 `altair.max_concurrent_os`. `-check` 후 본 실행 | `esl.md` §4.4 |
 | OR-D-18 | 라이선스 부족 = 3회 × 300 초 자동 재시도 후 `OS_LICENSE_UNAVAILABLE` | 확정 8 |
@@ -97,7 +97,7 @@
 3. 대안 진입: 종합분석 상세 "이 분석의 씬으로 비드 최적화"(크기 혼합이면 최다 그룹만 + 경고).
 
 ### 3.3 공통 진행·결과
-- 상세 `/esl/p/:pid/opt/:id`: step 진행(6), **선정 하중 표**(모드·씬·초기 컴플라이언스 C^0·최대 상대 변위·후보 수, 제외 모드 표시), OptiStruct 반복 n/DESMAX·정규화 목적값 max(C_k/C_k^0), 라이선스 대기, 로그, 취소. 완료 후 비드 맵, 수렴 그래프, 하중별 C^0 → C_final(비율), 다운로드, [보고서 보기].
+- 상세 `/esl/p/:pid/opt/:id`: step 진행(6), **하중 선정 표**(전략·목표 기준·상태·씬·C⁰·최대 상대 변위·모드), OptiStruct 반복 n/DESMAX·목적값(abs: max C_k/C_ref, rel: max C_k/C_k⁰), 라이선스 대기, 로그, 취소. 완료 후 비드 맵, 수렴 그래프, 하중별 C^0 → C_final(비율), 다운로드, [보고서 보기].
 - 안내: 비드 반영 메시로 낙하 해석 → 새 Case → 라이브러리 등록 → 버전 비교.
 
 ## 4. 데이터 흐름
@@ -145,7 +145,7 @@ S2: library_entries(같은 크기) + opt_templates               ├─ POST /op
 
 ```text
 OptSettingsOut { enabled, solver_ready, solver_reason|null, size:{tol_rel, plate_tol_rel, require_inch},
-                 bead_defaults:{angle:45, min_width:60, height:10}, keepout_auto:{hole_radius_mm, edge_band_mm}, loads:{default_strategy, mac_merge, max_cases, default_k}, method_sources,
+                 bead_defaults:{angle:45, min_width:60, height:10}, keepout_auto:{hole_radius_mm, edge_band_mm}, loads:{default_objective_norm, default_strategy, mac_merge, max_cases, default_k}, method_sources,
                  max_rects, max_entries, template_max_elems, template_ext:[".rad",".inc",".fem"] }
 
 MeshCheckOut   { ok, sha256, format:"rad"|"fem", file_name, parts[], part_title|null,
@@ -174,17 +174,17 @@ KeepoutSetOut  { id, key:{template_id|topo_sha256}, version, rects, auto, frame:
 OptRunIn       { project_id, scenario:"S1"|"S2", title?, entry_ids (1..max_entries), analysis_id?, template_id?(S2),
                  design:{nondesign_pids?:[int], bead?:{angle, min_width, height},
                          keepout:{rects:[Rect], auto:{hole, edge}}},   # 화면 현재값(저장 여부 무관) — 실행에 스냅샷
-                 options:{supports?:[{node_id,dof}] (S2만), load_strategy?: "A"|"B"|"C" (기본 A), k?: int (C 만, 1..max_cases, 기본 5)} }
-OptRunOut      { id, project_id, scenario, title, entry_ids, analysis_id, base|template, size, design, load_strategy, k|null, job|null, state,
+                 options:{supports?:[{node_id,dof}] (S2만), objective_norm?: "abs"|"rel" (기본 abs), load_strategy?: "A"|"B"|"C" (기본 A), k?: int (C 만, 1..max_cases, 기본 5)} }
+OptRunOut      { id, project_id, scenario, title, entry_ids, analysis_id, base|template, size, design, load_strategy, k|null, objective_norm, job|null, state,
                  created_by_name, created_at, result: OptResult|null, report_ready }
 OptResult      { load_selection: LoadSelection,
-                 converged, iterations, desmax, objective:{initial, final, history[]}  # max_k C_k/C_k^0
+                 objective_norm:"abs"|"rel", C_ref (abs), converged, iterations, desmax, objective:{initial, final, history[]}  # abs: max_k C_k/C_ref, rel: max_k C_k/C_k^0
                  subcases:[{label, entry_id, C0_self, C0_os, C_final, ratio}],
                  keepout:{n_elems_auto_hole, n_elems_auto_edge, n_elems_rects, n_design_elems},
                  bead:{height_max, area_frac}, normals_flipped|normals_opposite,
                  solve:{seconds, license_waits, reused}, warnings[] }
-LoadSelection  { strategy:"A"|"B"|"C", k|null, mac_merge (A), max_cases, n_selected_esl, n_cases,
-                 rows:[{entry_id, scene, mode (effective), C0, umax,
+LoadSelection  { strategy:"A"|"B"|"C", objective_norm, C_ref, k|null, mac_merge (A), max_cases, n_selected_esl, n_cases,
+                 rows:[{entry_id, scene, mode (effective), C0, pos (덱 DOBJREF POS 값: abs = C_ref, rel = C0), umax,
                         status:"included"|"merged"|"cluster_rep"|"clustered"|"mode_rep"|"not_selected",
                         merged_into|null, mac_to_target|null, sign: 1|-1|null (병합 대상과 반대 방향이면 -1), cluster|null, label|null}],
                  clusters:[{id, rep_entry_id, members:[entry_id], min_mac}] (A 상한 초과·C 만, 아니면 []),
@@ -286,7 +286,7 @@ LoadSelection  { strategy:"A"|"B"|"C", k|null, mac_merge (A), max_cases, n_selec
   **B 모드별 최악**: effective 모드별 C 최대 1개 `mode_rep`(≤3), 나머지 `not_selected`, 후보 0 모드는 `excluded_modes`. 세 모드 모두 0 → `NO_MODE_CANDIDATES`. 병합·군집 없음(표에 mac 은 표시하지 않음).
   **C 군집 대표 k개**: 병합 없이 전 후보를 군집 min(k, 후보 수) 개 → 군집별 C 최대 `cluster_rep`, 나머지 `clustered`. k 범위 1..`max_cases`(벗어나면 422 `INVALID_PARAMS`).
 - 화면·보고서는 전략 이름 + 후보 전체 행(상태·병합 대상·부호·mac·군집·C⁰·umax·모드)을 보여준다.
-- 목적: OR-D-15. 덱 `DOBJREF POS = C_k^0`(자체 솔버) → OptiStruct 반복 0 의 정규화 값이 1 근처여야 함. |C_os^0/C_self^0 − 1| > `opt_run.loads.c0_tol`(0.05) 이면 경고(요소 정식화 차이) — 판정은 OptiStruct 값 기준으로 결과 표시.
+- 목적: OR-D-15. abs: `DOBJREF POS = C_ref = max_i C_i⁰`(선정 케이스 중 최대, 모든 subcase 같은 값) → 반복 0 목적 = 1 근처. rel: `DOBJREF POS = C_i⁰` → 반복 0 각 정규화 값 1 근처. |C_os^0/C_self^0 − 1| > `opt_run.loads.c0_tol`(0.05) 이면 경고(요소 정식화 차이) — 결과 표시는 OptiStruct 값 기준. 덱 헤더 주석에 `objective_norm`·C_ref 기록.
 
 ### 7.5 비드 금지 영역 (OR-11)
 - 좌표계: 대상 frame 의 (a, b) mm(a = ξ 방향, b = η 방향), 경계 `a_range`·`b_range`. 요소 판정점 = 요소 중심 투영.
@@ -324,17 +324,18 @@ LoadSelection  { strategy:"A"|"B"|"C", k|null, mac_merge (A), max_cases, n_selec
 | `post/bead_nodes.csv` | node_id, x0, y0, z0, h, dx, dy, dz |
 | `post/bead_map.png` | (a,b) mm 평면도, 요소 평균 h(0→높이, 순차 색), 비설계·금지 영역 회색 빗금(사각형 외곽선 주황), 3-2-1 기호, 범례. `png_px`(1600×900), 순수 Python + zlib |
 | `target/keepout.png` | 실행 전 금지 영역 평면도(같은 렌더러) |
-| `post/history.csv` | iteration, max 정규화 목적, 케이스별 C_k/C_k^0 |
+| `post/history.csv` | iteration, 목적값(abs: max C_k/C_ref, rel: max C_k/C_k⁰), 케이스별 C_k·C_k/C_k^0 |
 | `post/bead_mesh.rad` / `.fem` | x0 + shape, 원 ID·PID·두께·재료 유지(S1 은 제품 모델 대상 파트 교체용) |
-| `report.html` | 시나리오·입력 ESL·하중 선정 전략과 선정 표(상태·병합 대상·군집·C⁰·umax·모드)·대상·동일성/크기·품질·금지 영역 평면도·덱 설정·수렴(SVG)·비드 맵(SVG)·케이스별 C^0→C_final·**방법·출처 절**(§9.1)·한계 |
+| `report.html` | 시나리오·입력 ESL·하중 선정 전략·목표 기준(C_ref)과 선정 표(상태·병합 대상·군집·C⁰·umax·모드)·대상·동일성/크기·품질·금지 영역 평면도·덱 설정·수렴(SVG)·비드 맵(SVG)·케이스별 C^0→C_final·**방법·출처 절**(§9.1)·한계 |
 | `opt.json` | OptResult 원본 |
 
 - 다운로드 목록: 위 + `load/selection.json` + `deck/*` + `solve/<deck>.out·.h3d·_des.h3d·.hist·.stat`. `solve/` 원본 불변. 라이브러리 반영 없음.
 
 ### 9.1 방법·출처 자료 (OR-16)
-- 원본 1곳: `resources/opt_method_sources.json` `{version, summary_ko:[2~3줄], strategies:{A,B,C: 한 줄}, sources:[{title, authors?, url?, note?}]}`. 백엔드는 `GET /opt/settings` 의 `method_sources` 로 내려주고, 보고서(`report_opt.py`)가 같은 파일로 "방법·출처" 절(실행 전략 강조)을 만든다. 프런트는 API 값을 렌더링(가이드 `content.ts` 처럼 표시 구성만 프런트 — 문구·링크는 이 파일). 링크 `target="_blank" rel="noopener noreferrer"`, 보고서는 HTML 이스케이프.
+- 원본 1곳: `resources/opt_method_sources.json` `{version, summary_ko:[2~3줄], strategies:{A,B,C: 한 줄}, objective_norms:{abs, rel: 한 줄}, sources:[{title, authors?, url?, note?}]}`. 백엔드는 `GET /opt/settings` 의 `method_sources` 로 내려주고, 보고서(`report_opt.py`)가 같은 파일로 "방법·출처" 절(실행 전략 강조)을 만든다. 프런트는 API 값을 렌더링(가이드 `content.ts` 처럼 표시 구성만 프런트 — 문구·링크는 이 파일). 링크 `target="_blank" rel="noopener noreferrer"`, 보고서는 HTML 이스케이프.
 - 초기 내용:
-  - 요약: "각 ESL(t* 한 시점)을 하중 케이스 1개로 씁니다." / "초기 형상에서 계산한 컴플라이언스로 하중을 고르고, 초기 대비 정규화 컴플라이언스의 최댓값을 최소화(min-max)합니다." / "형상 유사도 |MAC| 는 부호와 무관해 반대 방향 하중을 같은 하중으로 봅니다."
+  - 요약: "각 ESL(t* 한 시점)을 하중 케이스 1개로 씁니다." / "초기 형상에서 계산한 컴플라이언스로 하중을 고르고, 가장 큰 컴플라이언스를 최소화(min-max)합니다." / "형상 유사도 |MAC| 는 부호와 무관해 반대 방향 하중을 같은 하중으로 봅니다."
+  - 목표 기준: abs = "절대 기준(추천): 가장 큰 컴플라이언스를 줄임, 공통 상수로만 나눠 큰 하중의 비중 유지" / rel = "상대 기준: 각 하중을 자기 초기값 대비 같은 비율로 개선".
   - 전략: A = "KIT 식: 선택 ESL 전부, 형상이 거의 같은 하중(|MAC| ≥ 0.95)만 병합, 20개 초과 시 군집 대표" / B = "모드 대표: 덴팅·뒤틀림·굽힘별 최악 1개(최대 3개)" / C = "군집 대표: 형상 유사도로 k개 묶음, 묶음별 최악 1개".
   - 출처: ① Altair OptiStruct — Equivalent Static Load Method(ESLM) https://help.altair.com/2024/hwsolvers/os/topics/solvers/os/opt_composite_equiv_static_load_method_c.htm ② Park, G.J., Kang, B.S. 계열 "Structural optimization using equivalent static loads at all time intervals"(서지만) ③ KIT 비드/토포그래피 최적화 문헌 https://publikationen.bibliothek.kit.edu/1000137417/126578473
 - 자료 version 을 LoadSelection.sources_ref 에 기록.
@@ -377,10 +378,11 @@ LoadSelection  { strategy:"A"|"B"|"C", k|null, mac_merge (A), max_cases, n_selec
 │ ● A 전부 넣기 [추천]  선택 ESL 모두, 거의 같은 형상(|MAC| ≥ 0.95)만 병합, 20개 초과 시 군집 대표   │
 │ ○ B 모드별 최악       덴팅·뒤틀림·굽힘별 초기 컴플라이언스 최악 1개(최대 3개, 현재 2개)          │
 │ ○ C 군집 대표 k개     k [5] (1~20)                                                             │
-│ 목표는 모두 초기 대비 정규화 컴플라이언스 min-max                                               │
+│ 목표 기준: ● 절대 [추천] 가장 큰 컴플라이언스 최소화(공통 상수 C_ref 로만 나눔)   ○ 상대 (C/C⁰ 최대 최소화) │
 └────────────────────────────────────────────────────────────────────────────────────────────────┘
 솔버 미설정 시 상단 경고 띠 "서버 OptiStruct 경로가 설정되지 않았습니다(관리자 문의)"
 ```
+- 목표 기준 라디오(④ 카드 아래 줄): 기본 절대(추천 배지), 상대. 전략과 독립.
 - 전략 라디오: 기본 A(추천 배지), C 선택 시에만 k 입력 활성(정수 1..max_cases), B 는 모드별 후보 수 표시(0 이면 "(제외)"), 세 모드 모두 0 이면 B 비활성. ⓘ 은 ④ 제목과 상세 하중 선정 표에 같은 팝오버.
 - 평면도: SVG, 대상 외곽·구멍·자동 영역(회색 빗금)·사각형(주황, 선택 시 핸들 없이 이동만), 드래그 → 가장 가까운 기준 모서리 유지한 채 X·Y 갱신(1 mm 반올림), 숫자 입력 → 즉시 이동. 1920 폭에서는 평면도 위·표 아래로 접힘.
 - "이 모델에 저장" = `PUT /opt/keepouts`(S1 topo / S2 template). 저장하지 않고 실행해도 실행 스냅샷에는 현재 값이 들어감.
@@ -388,14 +390,14 @@ LoadSelection  { strategy:"A"|"B"|"C", k|null, mac_merge (A), max_cases, n_selec
 ### 10.4 최적화 상세 `/opt/:id`
 ```
 비드 최적화 · S1 · 75형 강건 비드 1차   상태 실행 중 (반복 12/30)              [보고서 보기](주, 완료 후)
-┌진행: ✓대상 ✓하중·선정 ✓덱 ●OptiStruct ○후처리 ○등록 · max(C/C⁰) 1.00→0.71 · 라이선스 대기 0 [로그][취소]┐
-┌하중 선정 ⓘ  전략 A 전부 넣기 · ESL 12 → 케이스 7 (병합 5, 군집 없음)                              ┐
+┌진행: ✓대상 ✓하중·선정 ✓덱 ●OptiStruct ○후처리 ○등록 · 목적(절대) max C/C_ref 1.00→0.71 · 라이선스 대기 0 [로그][취소]┐
+┌하중 선정 ⓘ  전략 A 전부 넣기 · 목표 절대(C_ref 1.23e4) · ESL 12 → 케이스 7 (병합 5, 군집 없음)                              ┐
 │상태        씬                    C⁰       umax    모드    비고                                         │
 │포함 L01    17 Corner 146 2nd     1.23e4   4.1 mm  굽힘                                                 │
 │병합됨      21 Corner 146 2nd     1.19e4   4.0 mm  굽힘    → L01 (MAC 0.98)                             │
 │병합됨      05 Edge 12            8.70e3   3.2 mm  뒤틀림  → L02 (MAC 0.97, 반대 방향)                  │
 │(B: 모드 대표/미선정, C·A 상한 초과: 군집 대표/군집 멤버)                                               │
-└ⓘ 팝오버: 방식 요약 3줄 + 전략별 한 줄(A·B·C, 실행 전략 굵게) + 출처 3개(새 탭) — /opt/settings.method_sources┘
+└ⓘ 팝오버: 방식 요약 3줄 + 전략별 한 줄(A·B·C) + 목표 기준 한 줄(절대·상대, 실행값 굵게) + 출처 3개(새 탭) — /opt/settings.method_sources┘
 ┌결과: [bead_map.png] 수렴 그래프 · 케이스별 C⁰→C (비율) · 비드 면적 34 % · 받기 [.rad] [.fem] [zip]┐
 ```
 - 실패 시 오류 코드·메시지 + [다시 시도](power 이상).
@@ -417,7 +419,7 @@ opt_run:                                # 섹션 없으면 enabled: false
   template: {max_elems: 500000, flat_tol_rel: 0.02, max_tria_frac: 0.2}
   bead_defaults: {angle: 45.0, min_width: 60.0, height: 10.0}      # 화면 기본값(deg, mm, mm)
   keepout: {hole_radius_mm: 15.0, edge_band_mm: 10.0, hole_min_perimeter_mm: 5.0, max_rects: 20}
-  loads: {default_strategy: A, mac_merge: 0.95, max_cases: 20, default_k: 5, linkage: average, c0_tol: 0.05}   # 하중 선정(§7.4)
+  loads: {default_strategy: A, mac_merge: 0.95, max_cases: 20, default_k: 5, default_objective_norm: abs, linkage: average, c0_tol: 0.05}   # 하중 선정(§7.4)
   mode:                                 # 변형 모드 분류(§7.4) — 값 변경 시 rule_version 올림
     rule_version: 1
     dent_resid_min: 0.5
@@ -447,7 +449,7 @@ upload:
 - 번호·체인: OR-D-22. 멱등, downgrade 미지원.
 - **`opt_templates`**(전역): `id`, `title`(200), `description`(2000), `inch` NULL, `format`(rad|fem), `file_name`, `part_title`, `sha256`, `n_nodes`, `n_elems`, `L_xi`, `L_eta`, `z_range`, `pids` JSONB, `quality` JSONB, `dir_rel`(`_templates/<id>`), `status`(ACTIVE|ARCHIVED), `origin_project_id`, `created_by(_name)`, `created_at`, `archived_by`, `archived_at`(CHECK 짝), `updated_at`. Index `(status, created_at desc)`.
 - **`opt_keepouts`**: `id`, `template_id` FK NULL, `topo_sha256` char(64) NULL, CHECK 정확히 하나, unique(`template_id`) WHERE NOT NULL, unique(`topo_sha256`) WHERE NOT NULL, `rects` JSONB(배열), `auto` JSONB, `frame` JSONB(a_range·b_range), `version` bigint ≥1, `updated_by(_name)`, `updated_at`. 템플릿 행 삭제 시 함께 삭제(ARCHIVED 는 유지).
-- **`opt_runs`**: `id`, `project_id`, `scenario`(S1|S2), `title`, `entry_ids` JSONB(≥1), `analysis_id` FK NULL, `base` JSONB NULL(S1), `template_id` FK NULL, `size` JSONB NULL, `design` JSONB(bead·nondesign_pids·keepout 스냅샷), `options` JSONB, `load_strategy` char(1) NOT NULL DEFAULT 'A' CHECK IN ('A','B','C'), `k` smallint NULL(CHECK `load_strategy <> 'C' OR k >= 1`), `job_id`, `result` JSONB, `report_rel`, `dir_rel`(`_opt/<id>`), `created_by(_name)`, `created_at`, `updated_at`. CHECK 시나리오별 base/template_id. Index `(project_id, created_at desc)`, `(template_id)`.
+- **`opt_runs`**: `id`, `project_id`, `scenario`(S1|S2), `title`, `entry_ids` JSONB(≥1), `analysis_id` FK NULL, `base` JSONB NULL(S1), `template_id` FK NULL, `size` JSONB NULL, `design` JSONB(bead·nondesign_pids·keepout 스냅샷), `options` JSONB, `load_strategy` char(1) NOT NULL DEFAULT 'A' CHECK IN ('A','B','C'), `objective_norm` varchar(3) NOT NULL DEFAULT 'abs' CHECK IN ('abs','rel'), `k` smallint NULL(CHECK `load_strategy <> 'C' OR k >= 1`), `job_id`, `result` JSONB, `report_rel`, `dir_rel`(`_opt/<id>`), `created_by(_name)`, `created_at`, `updated_at`. CHECK 시나리오별 base/template_id. Index `(project_id, created_at desc)`, `(template_id)`.
 - `library_entries`: `topo_sha256` char(64) NULL + Index, `deform_mode` JSONB NULL(§7.4, 지연 백필).
 - `jobs.opt_run_id` FK NULL + Index. 제약 교체: `ck_jobs_job_type`(+OPT_RUN), `ck_jobs_stage` 1~10, `ck_jobs_subject`(OPT_RUN 분기, 기존 분기에 `opt_run_id IS NULL`).
 - `ARTIFACT_KINDS` += `opt_result`, `opt_solve`. `uploads` 변경 없음.
@@ -475,7 +477,7 @@ upload:
 | V-OR-7 | 금지 영역 세트 API: 템플릿/topo 키 저장·불러오기, version 충돌 409, frame 차이 경고, 실행 스냅샷이 이후 세트 수정에 영향 없음, 템플릿 삭제 시 세트 삭제·보관 시 유지 | `backend/tests/test_opt_keepouts.py` |
 | V-OR-8 | 메시 검사 rad·fem(비지원 요소·두께·상한·연결·평탄도·법선·비드 폭/요소 크기·셀당 노드·3-2-1), fem 필드 형식·INCLUDE 거부 | `tests/opt/test_mesh_check.py`, `test_femread.py` |
 | V-OR-9 | 템플릿 API: 등록 복사·공개 목록·삭제 권한·사용 중 ARCHIVED·미사용 삭제 + `_backup`·보관 템플릿 새 실행 거부·retry 허용·`PLATE_CHANGED` | `backend/tests/test_opt_templates.py` |
-| V-OR-10 | 덱: `server` 없으면 기존 골든 불변, OPT_RUN 덱 골든(subcase L01…(C 내림차순), DOBJREF POS = C^0, 금지 영역 요소 비설계 PSHELL·DTPG 목록 제외, DOPTPRM·OUTPUT, 비드 45°·60·10) | `tests/library/test_optdeck*.py`, `tests/opt/test_deck.py` |
+| V-OR-10 | 덱: `server` 없으면 기존 골든 불변, OPT_RUN 덱 골든(subcase L01…(C 내림차순), 목표 기준별 DOBJREF POS(abs = 모든 subcase C_ref = max C⁰ 같은 값, rel = subcase별 C_i⁰), 헤더 objective_norm·C_ref, 금지 영역 요소 비설계 PSHELL·DTPG 목록 제외, DOPTPRM·OUTPUT, 비드 45°·60·10) | `tests/library/test_optdeck*.py`, `tests/opt/test_deck.py` |
 | V-OR-11 | OS_SOLVE 가짜 솔버(정상·check 실패·라이선스 2회 후 성공·소진·종료코드 1·타임아웃·취소), argv 검사, 세마포어(PG) | `worker/tests/test_opt_solve.py` |
 | V-OR-12 | 재시도 재사용(OS_SOLVE SKIPPED), 덱 sha 다르면 재실행, S1 `INPUT_CHANGED` 경고, 재시도는 실행 스냅샷 사용 | `worker/tests/test_opt_e2e.py` |
 | V-OR-13 | 후처리: 가짜 shape.csv → bead.npz·csv·PNG(결정적 바이트)·bead_mesh.rad 재파싱(좌표·ID)·.fem, `c0_tol` 경고 | `tests/opt/test_post.py` |
@@ -483,9 +485,10 @@ upload:
 | V-OR-15 | API 공통 권한·`SOLVER_NOT_CONFIGURED`·다운로드 탈출·bundle 상한·CSP·`plan-view` 크기 상한 | `backend/tests/test_opt_api.py` |
 | V-OR-16 | migration 0010(빈·0008 DB, 멱등, tables.py 일치, 기존 행 제약, 0009 존재/부재 두 체인) | `backend/tests/test_migrations.py` |
 | V-OR-17 | E2E(가짜 솔버·hw): S1(같은 모델 ESL 3개, 모드 2종, 사각형 1개) / S2(템플릿 등록 → 세트 저장 → 실행) → 선정·덱·결과·이력·알림 | `worker/tests/test_opt_e2e.py` |
-| V-OR-18 | UI: 행 선택·크기 비활성·ⓜ·모드 드롭다운 저장, S1/S2 탭, 다른 모델 빼기, 평면도 드래그 ↔ 숫자 동기화(4 기준 모서리), 세트 불러오기/저장·충돌 메시지, 비드 3칸 기본값 45·60·10, 전략 라디오(기본 A·추천 배지·C 만 k 활성·B 비활성 조건), 하중 선정 표(상태별·병합 대상·반대 방향 표기·전략 표시)·ⓘ 팝오버(요약·전략별 줄·출처 링크 새 탭·키보드 닫기), 주 버튼 비활성 사유, 상세 선정 하중 표, 2560×1440·1920×1080 잘림 없음(Playwright) | `frontend/__tests__/opt.test.tsx`, `keepout.test.tsx`, mock |
+| V-OR-18 | UI: 행 선택·크기 비활성·ⓜ·모드 드롭다운 저장, S1/S2 탭, 다른 모델 빼기, 평면도 드래그 ↔ 숫자 동기화(4 기준 모서리), 세트 불러오기/저장·충돌 메시지, 비드 3칸 기본값 45·60·10, 목표 기준 라디오(기본 절대·추천 배지), 전략 라디오(기본 A·추천 배지·C 만 k 활성·B 비활성 조건), 하중 선정 표(상태별·병합 대상·반대 방향 표기·전략 표시)·ⓘ 팝오버(요약·전략별 줄·출처 링크 새 탭·키보드 닫기), 주 버튼 비활성 사유, 상세 선정 하중 표, 2560×1440·1920×1080 잘림 없음(Playwright) | `frontend/__tests__/opt.test.tsx`, `keepout.test.tsx`, mock |
 | V-OR-19 | 환경 점검 ↔ `/opt/settings.solver_ready` | `backend/tests/test_check.py` |
 | V-OR-20 | 방법·출처·전략 저장: `opt_method_sources.json` 스키마, `/opt/settings.method_sources` = 파일, 보고서 "방법·출처" 절 = 같은 문구·링크(이스케이프)·실행 전략 표시, `opt_runs.load_strategy`·`k` 저장·응답·retry 시 유지, 잘못된 전략·k 422 | `tests/opt/test_report.py`, `backend/tests/test_opt_api.py` |
+| V-OR-21 | 목표 기준: 기본 abs 저장·응답, rel 선택 저장·retry 유지, 잘못된 값 422, C_ref = 선정 케이스 C⁰ 최대(병합·군집 후 기준), 합성 2하중(크기 10배 차) 덱에서 abs 는 POS 동일·rel 은 각자, 보고서·선정 표·팝오버 표시 | `tests/opt/test_deck.py`, `backend/tests/test_opt_api.py`, `frontend/__tests__/opt.test.tsx` |
 | V-OR-R1 | **실기**: S2 작은 평판·ESL 3개(모드 3종), S1 실제 chassis rear(22만 요소)·사각형 금지 영역 → `-check`·수렴·Shape Change·비드 맵 = HyperView, 금지 영역에 비드 없음, C_os^0 ≈ C_self^0. DTPG·DOBJREF·OUTPUT 확신도 해소 | `docs/manual/opt_run_check.md` |
 | V-OR-R2 | 실기: 실제 모델 ESL 모드 자동 분류를 사용자가 확인(오분류율 기록 → 기준값 조정), 라이선스 부족 메시지 패턴 | 수동 |
 
@@ -523,9 +526,10 @@ upload:
 | 2차 비드 치수 | 화면 3칸, 기본 45°·60 mm·10 mm | OR-D-16 |
 | 2차 §18 Q1 S1 법선 | **가정 확정**: 원 연결 유지, 반대 법선 경고만 | OR-D-10 |
 | 2차 §18 Q2 템플릿 인치 | **가정 확정**: 선택 입력 | §7.1 |
-| 3차 하중 선정 | ESL 1개 = 케이스 1개(t* 단일 시점). 전략 라디오 A 전부 넣기(기본·추천: |MAC| 부호 무관 ≥ 0.95 병합, 20 초과 시 average linkage 군집 대표) / B 모드별 최악 ≤3 / C 군집 대표 k(기본 5). 목표 정규화 min-max 동일, `opt_runs.load_strategy`·`k` 저장 | OR-D-14, §7.4, §10.3 |
+| 3차 하중 선정 | ESL 1개 = 케이스 1개(t* 단일 시점). 전략 라디오 A 전부 넣기(기본·추천: |MAC| 부호 무관 ≥ 0.95 병합, 20 초과 시 average linkage 군집 대표) / B 모드별 최악 ≤3 / C 군집 대표 k(기본 5). 목표 min-max(기준은 '3차 목표 기준'), `opt_runs.load_strategy`·`k` 저장 | OR-D-14, §7.4, §10.3 |
 | 3차 모드 용도 | 표시·보고서·라이브러리 분류/검색 + 전략 B, 저장·수정 유지 | OR-D-13 |
 | 3차 방법·출처 | 선정 표 옆 ⓘ 팝오버(요약·전략별 한 줄·출처) + 보고서 "방법·출처" 절, 자료 파일 1곳 | §9.1, §10.4 |
+| 3차 목표 기준 | 절대(기본·추천): min max C_i, 공통 C_ref = max C_i⁰ 로만 나눔(DOBJREF POS = C_ref 전부) / 상대 옵션: max C_i/C_i⁰(POS = C_i⁰). `opt_runs.objective_norm` 저장, 사용자 가중 없음 | OR-D-15, §7.4, §10.3 |
 | 메타 편집 | 보류(§16 한 줄) | §16 |
 
 ## 18. 미결 질문

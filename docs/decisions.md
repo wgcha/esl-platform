@@ -68,3 +68,4 @@
 - (0.7.0, 2026-10-28) 하중 선정 전략은 실행 화면 라디오 1그룹으로 선택: A 전부 넣기(기본·추천 배지) / B 모드별 최악(최대 3) / C 군집 대표 k개(기본 5, 1..max_cases). 목표는 셋 다 정규화 min-max, opt_runs.load_strategy·k 저장, 선정 표·보고서에 전략 표시(근거: 사용자 3차 확정 추가).
 - (0.7.0, 2026-10-28) 변형 모드 분류는 표시·보고서·라이브러리 분류/검색과 전략 B 에만 사용, deform_mode 저장·수정 유지(근거: 사용자 3차 확정).
 - (0.7.0, 2026-10-28) 하중 선정 표 옆 출처 ⓘ 팝오버(방식 요약·전략별 한 줄·출처: Altair OptiStruct ESLM 문서, Park·Kang 계열 ESL 전 시점 최적화, KIT 비드/토포그래피 문헌)와 보고서 "방법·출처" 절. 문구·링크 원본은 resources/opt_method_sources.json 1곳, /opt/settings.method_sources 로 프런트에 전달(근거: 사용자 3차 확정).
+- (0.7.0, 2026-10-28) 최적화 목표 기준: 기본 절대(abs, 추천) = minimize max_i C_i, 공통 기준값 C_ref = max_i C_i⁰ 로만 나눔(덱 DOBJREF POS = C_ref 전 subcase 동일 — ESL F_eq=K_L·u_rel 은 물리 절대 하중이라 하중 크기 비중 유지), 옵션 상대(rel) = max_i C_i/C_i⁰(POS = C_i⁰). 실행 화면 라디오 2개, opt_runs.objective_norm 저장, 선정 표·보고서·ⓘ 팝오버에 표시, 사용자 가중 방식 없음(근거: 사용자 3차 확정 추가).
