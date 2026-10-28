@@ -296,7 +296,7 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
         try:
             meta = core_adapter.build_library_entry(cdir, run["id"], lib_root, eid, lib_cfg,
                                                     scene_path=case.get("h3d_path") or case["results_dir"],
-                                                    registered_by=principal.display_name)
+                                                    registered_by=principal.display_name, mode_cfg=mode_cfg(ctx))
         except core_adapter.CoreError as exc:
             _stash(lib_root, edir)
             raise _core_error(exc) from None

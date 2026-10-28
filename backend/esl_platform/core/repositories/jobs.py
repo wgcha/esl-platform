@@ -226,8 +226,11 @@ def running_slot_count(conn: Connection) -> int:
 
 
 # ---------------------------------------------------------------- hw 세마포어(P3-UX §6, altair.max_concurrent_hw)
+HW_STEP_KEYS = ("H3D_EXTRACT", "OPT_POST")      # v0.7.0: 비드 후처리(OPT_POST hw TCL)도 hw 세마포어 공유(esl_opt_run.md §9)
+
+
 def _hw_held():
-    return and_(job_steps.c.step_key == "H3D_EXTRACT", job_steps.c.state == RUNNING,
+    return and_(job_steps.c.step_key.in_(HW_STEP_KEYS), job_steps.c.state == RUNNING,
                 job_steps.c.outputs["hw_acquired"].astext == "true", jobs.c.state == RUNNING,
                 jobs.c.lease_expires_at > func.now())
 

@@ -1,7 +1,7 @@
 """서버 h3d 추출(계약 esl_p3_ux.md §6, 명령 규칙 esl.md §4.4) — CASE_EXTRACT 첫 step H3D_EXTRACT(LOCAL).
 
 - argv 는 설정 `commands.h3d_extract` 템플릿에서만 만든다. argv[0] = `{hw}` → `altair.hw_exe_path`(설정 검증이 보장),
-  `subprocess` shell=False. 치환값에 제어문자·cmd 메타문자 `& | < > ^ % ! "`(hw 가 .bat/.cmd 면 `; , = ( )` 추가)가 있으면
+  shell=False(localproc). 치환값에 제어문자·cmd 메타문자 `& | < > ^ % ! "`(hw 가 .bat/.cmd 면 `; , = ( )` 추가)가 있으면
   실행 전 거부(`INPUT_INVALID`). `*_fwd` = `/` 구분 경로(TCL 용).
 - TCL = 코드 스냅샷 안 `resources/tcl/esl_h3d_extract.tcl`(설정 아님). 출력 = Case results_dir(`<esl_root>/_h3d/<폴더>/raw`),
   hw 작업 폴더·request.txt = `<esl_root>/_h3d/<폴더>/`. h3d 는 읽기만.
@@ -17,28 +17,21 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
-import subprocess
 import time
 from typing import Any
 
+from . import localproc
+from .localproc import (  # noqa: F401 - 기존 import 경로 유지
+    BAT_META,
+    BATCH_EXT,
+    META,
+    PLACEHOLDER,
+    fwd,
+)
+
 FAILURE = "H3D_EXTRACT_FAILED"
-META = re.compile(r'[&|<>^%!"\x00-\x1f\x7f]')
-BAT_META = re.compile(r"[;,=()]")
-PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 REQUIRED_OUTPUTS = ("done.json", "frames.csv", "model.csv")
-BATCH_EXT = frozenset({"bat", "cmd"})      # 배치 파일이면 cmd 가 다시 해석하는 문자도 거부
-
-
-class H3dError(Exception):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
-
-def fwd(p: str) -> str:
-    return str(p).replace("\\", "/")
+H3dError = localproc.ProcError       # 공통화(localproc) — 기존 except h3d.H3dError 그대로
 
 
 def values_for(*, hw: str, tcl: str, h3d: str, request: str, out_dir: str, part: str, hot_k: int,
@@ -51,25 +44,7 @@ def values_for(*, hw: str, tcl: str, h3d: str, request: str, out_dir: str, part:
 
 def build_argv(template: list[str], values: dict[str, str]) -> list[str]:
     """템플릿 → argv. argv[0] 은 {hw} 만(설정 검증과 이중), 치환값 메타문자 거부(INPUT_INVALID)."""
-    if not template or template[0] != "{hw}":
-        raise H3dError("CONFIG_INVALID", "commands.h3d_extract argv[0] 은 {hw} 여야 합니다")
-    is_bat = os.path.splitext(values.get("hw", ""))[1].lower().lstrip(".") in BATCH_EXT
-    out: list[str] = []
-    for i, tok in enumerate(template):
-        def sub(m: re.Match) -> str:
-            name = m.group(1)
-            if name not in values:
-                raise H3dError("CONFIG_INVALID", f"commands.h3d_extract 의 알 수 없는 placeholder {{{name}}}")
-            v = values[name]
-            if i == 0:
-                bad = META.search(v)
-            else:
-                bad = META.search(v) or (is_bat and BAT_META.search(v))
-            if bad:
-                raise H3dError("INPUT_INVALID", f"{{{name}}} 값에 쓸 수 없는 문자({bad.group(0)!r})가 있습니다: {v}")
-            return v
-        out.append(PLACEHOLDER.sub(sub, tok))
-    return out
+    return localproc.build_argv(template, values, exe="hw", what="commands.h3d_extract")
 
 
 def write_request(path: str, *, part: str, hot_k: int, top_n: int) -> None:
@@ -84,38 +59,11 @@ PROGRESS_HEARTBEAT_S = 60.0        # 새 줄이 없을 때 하트비트 간격 �
 PROGRESS_POLL_S = 1.0              # progress.log 확인 주기
 
 
-class ProgressTail:
-    """<out_dir>/progress.log 의 새 줄만 돌려준다. 파일이 늦게 생겨도 되고, 줄 중간까지만 쓰였으면 완성될 때까지 보류,
-    인코딩이 깨져도 대체문자로 읽는다. flush=True 는 끝에 개행이 없는 마지막 줄도 내보낸다(종료 후)."""
+class ProgressTail(localproc.FileTail):
+    """<out_dir>/progress.log 의 새 줄만 돌려준다(localproc.FileTail)."""
 
     def __init__(self, out_dir: str) -> None:
-        self.path = os.path.join(out_dir, PROGRESS_LOG)
-        self.pos = 0
-        self.buf = b""
-
-    def poll(self, flush: bool = False) -> list[str]:
-        try:
-            size = os.path.getsize(self.path)
-            if size < self.pos:                       # 잘렸거나 교체됨 → 처음부터
-                self.pos, self.buf = 0, b""
-            with open(self.path, "rb") as fh:
-                fh.seek(self.pos)
-                data = fh.read()
-        except OSError:
-            return []
-        self.pos += len(data)
-        self.buf += data
-        parts = self.buf.split(b"\n")
-        self.buf = parts.pop()
-        if flush and self.buf:
-            parts.append(self.buf)
-            self.buf = b""
-        out = []
-        for raw in parts:
-            ln = raw.decode("utf-8", errors="replace").rstrip("\r")
-            if ln.strip():
-                out.append(ln)
-        return out
+        super().__init__(os.path.join(out_dir, PROGRESS_LOG))
 
 
 PROGRESS_LOAD_S_PER_GB = 40.0      # 모델 로드 구간(0→15%) 경과시간 기반 진행률의 예상 시간(h3d GB당 초)
@@ -272,62 +220,12 @@ def done_summary(done: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-# ---------------------------------------------------------------- 프로세스
+# ---------------------------------------------------------------- 프로세스(localproc 공통)
 def start(argv: list[str], *, cwd: str, log_fh, env: dict[str, str] | None = None, preexec=None,
-          priority: str = "normal") -> subprocess.Popen:
-    """hw 시작(shell=False). 시작 실패(파일 없음·권한·자원 제한 preexec 실패) → H3dError."""
-    try:
-        if os.name == "nt":  # pragma: no cover - Windows 전용
-            prio = {"idle": 0x00000040, "below_normal": 0x00004000}.get(priority, 0)
-            flags = 0x00000200 | prio | 0x08000000      # CREATE_NEW_PROCESS_GROUP | 우선순위 | CREATE_NO_WINDOW
-            return subprocess.Popen(argv, shell=False, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log_fh,
-                                    stderr=subprocess.STDOUT, env=env, creationflags=flags)
-        return subprocess.Popen(argv, shell=False, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log_fh,
-                                stderr=subprocess.STDOUT, env=env, start_new_session=True, preexec_fn=preexec)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise H3dError(FAILURE, f"hw 를 시작할 수 없습니다: {type(exc).__name__}: {exc}") from None
+          priority: str = "normal"):
+    """hw 시작(shell=False). 시작 실패 → H3dError(H3D_EXTRACT_FAILED)."""
+    return localproc.start(argv, cwd=cwd, log_fh=log_fh, env=env, preexec=preexec, priority=priority,
+                           fail_code=FAILURE, what="hw")
 
 
-def kill_tree(proc: subprocess.Popen, grace_s: float, lim: Any = None) -> None:
-    """hw 와 그 자식 전부 종료. 이미 끝났으면 아무것도 하지 않는다(POSIX 는 그룹에 남은 자식도 정리)."""
-    if os.name == "nt":  # pragma: no cover - Windows 전용
-        term = getattr(lim, "terminate", None)
-        if term is not None:
-            try:
-                term(1)
-            except Exception:  # noqa: BLE001 - 보조 수단으로 이어감
-                pass
-        if proc.poll() is None:
-            cmd = ["taskkill", "/PID", str(proc.pid), "/T", "/F"]
-            subprocess.run(cmd, shell=False, capture_output=True)
-        try:
-            proc.wait(grace_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        return
-    try:
-        pgid = os.getpgid(proc.pid)
-    except (ProcessLookupError, PermissionError):
-        pgid = proc.pid
-    for sig, wait in ((signal.SIGTERM, grace_s), (signal.SIGKILL, 5.0)):
-        try:
-            os.killpg(pgid, sig)
-        except (ProcessLookupError, PermissionError):
-            break
-        end = time.monotonic() + wait
-        while time.monotonic() < end:
-            if proc.poll() is not None and not _group_alive(pgid):
-                return
-            time.sleep(0.05)
-    try:
-        proc.wait(5)
-    except subprocess.TimeoutExpired:
-        pass
-
-
-def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    return True
+kill_tree = localproc.kill_tree
