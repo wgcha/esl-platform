@@ -20,8 +20,9 @@ const STEPS: Record<JobType, string[]> = {
   CASE_REPORT: ["REPORT", "REPORT_REGISTER"],
   LIB_ANALYZE: ["LIB_ANALYZE", "OPTDECK", "REPORT", "LIB_REGISTER"],
   LIB_COMPARE: ["COMPARE", "COMPARE_REGISTER"],
+  OPT_RUN: ["OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER"],
 };
-const STAGE: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0 };
+const STAGE: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10 };
 const CASES: Record<string, { title: string; folder: string }> = {
   "c-demo": { title: "후방 충돌 40kph", folder: "rear40" },
   "c-stale": { title: "후방 충돌 56kph", folder: "rear56" },

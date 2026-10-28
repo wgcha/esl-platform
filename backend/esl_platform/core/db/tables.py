@@ -1,4 +1,5 @@
-"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12). SQLAlchemy Core, PostgreSQL 전용.
+"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12 + esl_opt_run.md §12).
+SQLAlchemy Core, PostgreSQL 전용.
 
 공통: ID = UUID4 VARCHAR(36), 시간 TIMESTAMPTZ(DB 시계), 파일 본문·대용량 배열 저장 금지(경로·sha256·요약만),
 갱신 행은 `version BIGINT` 낙관적 잠금.
@@ -38,18 +39,21 @@ ID = String(36)
 TS = TIMESTAMP(timezone=True)
 
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
-JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE")
-ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "REPORT", "RUN", "LOG")
+JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE", "OPT_RUN")
+ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "REPORT", "RUN", "LOG",
+                  "OPT_RESULT", "OPT_SOLVE")     # 0010: 비드 최적화 결과·OptiStruct 원본
 # 0003: 제약 SQL(마이그레이션과 공유)
 CK_JOBS_JOB_TYPE = "job_type IN (" + ",".join(f"'{t}'" for t in JOB_TYPES) + ")"
-CK_JOBS_STAGE = "stage BETWEEN 1 AND 9"     # 0004: 9 = 설계 버전 비교
-# 0004: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE)
+CK_JOBS_STAGE = "stage BETWEEN 1 AND 10"    # 0004: 9 = 설계 버전 비교, 0010: 10 = 비드 최적화
+# 0004·0010: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE) | 최적화 실행(OPT_RUN)
 CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL"
-                   " AND comparison_id IS NULL)"
+                   " AND comparison_id IS NULL AND opt_run_id IS NULL)"
                    " OR (job_type = 'LIB_COMPARE' AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NOT NULL)"
-                   " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE') AND case_id IS NOT NULL"
-                   " AND analysis_id IS NULL AND comparison_id IS NULL)")
+                   " AND comparison_id IS NOT NULL AND opt_run_id IS NULL)"
+                   " OR (job_type = 'OPT_RUN' AND case_id IS NULL AND analysis_id IS NULL"
+                   " AND comparison_id IS NULL AND opt_run_id IS NOT NULL)"
+                   " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE','OPT_RUN') AND case_id IS NOT NULL"
+                   " AND analysis_id IS NULL AND comparison_id IS NULL AND opt_run_id IS NULL)")
 # 0006: Case 입력 종류, step 종류(LOCAL = 워커가 외부 프로그램 실행), worker_slot 행 수(worker.slots 상한)
 CK_CASES_INPUT_KIND = "input_kind IN ('RESULTS','H3D') AND (input_kind = 'RESULTS' OR h3d_path IS NOT NULL)"
 CK_JOB_STEPS_KIND = "kind IN ('INTERNAL','LOCAL')"
@@ -109,6 +113,7 @@ jobs = Table(
     Column("case_id", ID, ForeignKey("cases.id"), nullable=True),     # 0003: LIB_ANALYZE 는 NULL
     Column("analysis_id", ID, ForeignKey("analysis_runs.id"), nullable=True),  # 0003: LIB_ANALYZE 대상 분석
     Column("comparison_id", ID, ForeignKey("comparisons.id"), nullable=True),  # 0004: LIB_COMPARE 대상 비교
+    Column("opt_run_id", ID, ForeignKey("opt_runs.id"), nullable=True),        # 0010: OPT_RUN 대상 최적화 실행
     Column("project_id", String, nullable=False),
     Column("job_type", String, nullable=False),
     Column("stage", SmallInteger, nullable=False),
@@ -178,6 +183,10 @@ Index("ux_jobs_comparison_active", jobs.c.comparison_id, unique=True,
 Index("ix_jobs_project_created", jobs.c.project_id, jobs.c.created_at.desc(), jobs.c.id.desc())
 Index("ix_jobs_project_creator_created", jobs.c.project_id, jobs.c.created_by, jobs.c.created_at.desc())
 Index("ix_jobs_retry_of", jobs.c.retry_of_job_id, postgresql_where=text("retry_of_job_id IS NOT NULL"))
+# 0010: 최적화 실행 → 작업, 같은 실행의 비종료 작업은 1개
+Index("ix_jobs_opt_run", jobs.c.opt_run_id, postgresql_where=text("opt_run_id IS NOT NULL"))
+Index("ux_jobs_opt_run_active", jobs.c.opt_run_id, unique=True,
+      postgresql_where=text("opt_run_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
 
 job_steps = Table(
     "job_steps",
@@ -323,6 +332,9 @@ library_entries = Table(
     Column("retire_reason", String(2000), nullable=True),
     Column("updated_at", TS, nullable=False, server_default=func.now()),
     Column("version", BigInteger, nullable=False, server_default="1"),
+    # 0010(esl_opt_run.md §7.3·§7.4): S1 모델 키(노드 ID + 요소 연결, 좌표 제외)·변형 모드 레코드 — 기존 행은 첫 조회 때 지연 백필
+    Column("topo_sha256", String(64), nullable=True),
+    Column("deform_mode", JSONB, nullable=True),
     CheckConstraint("status IN ('ACTIVE','RETIRED')", name="ck_library_entries_status"),
     CheckConstraint("(status = 'RETIRED') = (retired_at IS NOT NULL)", name="ck_library_entries_retired"),
     CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_library_entries_dir_rel"),
@@ -331,6 +343,7 @@ library_entries = Table(
 Index("ux_library_entries_run_active", library_entries.c.esl_run_id, unique=True,
       postgresql_where=text("status = 'ACTIVE'"))
 Index("ix_library_entries_project", library_entries.c.project_id, library_entries.c.status)
+Index("ix_library_entries_topo", library_entries.c.topo_sha256)
 
 analysis_runs = Table(
     "analysis_runs",
@@ -392,6 +405,103 @@ comparisons = Table(
     CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_comparisons_dir_rel"),
 )
 Index("ix_comparisons_project", comparisons.c.project_id, comparisons.c.created_at.desc())
+
+# ---------------------------------------------------------------- 0010: 비드 최적화(계약 esl_opt_run.md §12)
+OPT_SCENARIOS = ("S1", "S2")
+opt_templates = Table(
+    "opt_templates",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("title", String(200), nullable=False),
+    Column("description", String(2000), nullable=False, server_default=""),
+    Column("inch", Integer, nullable=True),
+    Column("format", String(8), nullable=False),            # rad | fem
+    Column("file_name", String(255), nullable=False),
+    Column("part_title", String(200), nullable=True),
+    Column("sha256", String(64), nullable=False),
+    Column("n_nodes", Integer, nullable=False),
+    Column("n_elems", Integer, nullable=False),
+    Column("L_xi", Float, nullable=False),
+    Column("L_eta", Float, nullable=False),
+    Column("z_range", JSONB, nullable=False),
+    Column("pids", JSONB, nullable=False),
+    Column("quality", JSONB, nullable=False),
+    Column("dir_rel", String, nullable=False),              # _templates/<id>
+    Column("status", String, nullable=False, server_default="ACTIVE"),
+    Column("origin_project_id", String, nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("archived_by", String, nullable=True),
+    Column("archived_at", TS, nullable=True),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("status IN ('ACTIVE','ARCHIVED')", name="ck_opt_templates_status"),
+    CheckConstraint("format IN ('rad','fem')", name="ck_opt_templates_format"),
+    CheckConstraint("(status = 'ARCHIVED') = (archived_at IS NOT NULL) AND (archived_at IS NULL) = (archived_by IS NULL)",
+                    name="ck_opt_templates_archived"),
+    CheckConstraint("length(btrim(title)) > 0", name="ck_opt_templates_title"),
+    CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_opt_templates_dir_rel"),
+)
+Index("ix_opt_templates_status", opt_templates.c.status, opt_templates.c.created_at.desc())
+
+opt_keepouts = Table(
+    "opt_keepouts",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("template_id", ID, ForeignKey("opt_templates.id", ondelete="CASCADE"), nullable=True),
+    Column("topo_sha256", String(64), nullable=True),
+    Column("rects", JSONB, nullable=False),
+    Column("auto", JSONB, nullable=False),
+    Column("frame", JSONB, nullable=False),                 # 저장 시점 대상 frame {a_range, b_range}
+    Column("version", BigInteger, nullable=False, server_default="1"),
+    Column("updated_by", String, nullable=False),
+    Column("updated_by_name", String, nullable=False),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("(template_id IS NULL) <> (topo_sha256 IS NULL)", name="ck_opt_keepouts_key"),
+    CheckConstraint("jsonb_typeof(rects) = 'array'", name="ck_opt_keepouts_rects"),
+    CheckConstraint("version >= 1", name="ck_opt_keepouts_version"),
+)
+Index("ux_opt_keepouts_template", opt_keepouts.c.template_id, unique=True,
+      postgresql_where=text("template_id IS NOT NULL"))
+Index("ux_opt_keepouts_topo", opt_keepouts.c.topo_sha256, unique=True, postgresql_where=text("topo_sha256 IS NOT NULL"))
+
+opt_runs = Table(
+    "opt_runs",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("project_id", String, nullable=False),
+    Column("scenario", String(2), nullable=False),
+    Column("title", String(200), nullable=True),
+    Column("entry_ids", JSONB, nullable=False),
+    Column("analysis_id", ID, ForeignKey("analysis_runs.id"), nullable=True),
+    Column("base", JSONB, nullable=True),                   # S1: 기준 ESL·Case·대상 파트
+    Column("template_id", ID, ForeignKey("opt_templates.id"), nullable=True),   # S2
+    Column("size", JSONB, nullable=True),
+    Column("design", JSONB, nullable=False),                # bead·nondesign_pids·keepout 스냅샷
+    Column("options", JSONB, nullable=False),
+    Column("load_strategy", String(1), nullable=False, server_default="A"),
+    Column("objective_norm", String(3), nullable=False, server_default="abs"),
+    Column("k", SmallInteger, nullable=True),
+    Column("job_id", ID, nullable=True),                    # 최신 OPT_RUN 작업(순환 FK 없음)
+    Column("result", JSONB, nullable=True),
+    Column("report_rel", String, nullable=True),
+    Column("dir_rel", String, nullable=False),              # _opt/<id>
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("scenario IN ('S1','S2')", name="ck_opt_runs_scenario"),
+    CheckConstraint("(scenario = 'S1' AND base IS NOT NULL AND template_id IS NULL)"
+                    " OR (scenario = 'S2' AND template_id IS NOT NULL AND base IS NULL)", name="ck_opt_runs_subject"),
+    CheckConstraint("jsonb_typeof(entry_ids) = 'array' AND jsonb_array_length(entry_ids) >= 1",
+                    name="ck_opt_runs_entry_ids"),
+    CheckConstraint("load_strategy IN ('A','B','C')", name="ck_opt_runs_load_strategy"),
+    CheckConstraint("objective_norm IN ('abs','rel')", name="ck_opt_runs_objective_norm"),
+    CheckConstraint("load_strategy <> 'C' OR (k IS NOT NULL AND k >= 1)", name="ck_opt_runs_k"),
+    CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_opt_runs_dir_rel"),
+)
+Index("ix_opt_runs_project", opt_runs.c.project_id, opt_runs.c.created_at.desc())
+Index("ix_opt_runs_template", opt_runs.c.template_id)
 
 # P3-UX 브라우저 분할 업로드 세션(계약 esl_p3_ux.md §1.1). 파일 본문은 디스크(<upload_root>/...)에만, 여기는 목록·상태.
 UPLOAD_STATES = ("OPEN", "COMPLETED", "CANCELED", "STALE")
@@ -529,6 +639,6 @@ worker_heartbeats = Table(
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
-    "comparisons", "uploads", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
+    "comparisons", "uploads", "opt_templates", "opt_keepouts", "opt_runs", "OPT_SCENARIOS", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

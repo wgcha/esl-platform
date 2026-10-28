@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 R = H("tok-power")
+HEAD = "0010"      # migration head(0010 비드 최적화, downgrade 미지원)
 
 NEW_COLS = ("scheme", "disp_max_rel", "disp_noise_rel", "undetermined_reason", "disp", "strain_ref")
 NEW_CKS = ("ck_validations_scheme", "ck_validations_undetermined")
@@ -72,7 +73,7 @@ def test_dp9_upgrade_from_0007_keeps_existing_rows_as_legacy(engine, db_url):
     _to_0007_state(engine)
     assert _ver(engine) == "0007" and not (set(NEW_COLS) & _cols(engine))
     command.upgrade(_cfg(db_url), "head")
-    assert _ver(engine) == "0008" and set(NEW_COLS) <= _cols(engine)
+    assert _ver(engine) == HEAD and set(NEW_COLS) <= _cols(engine)
     cons = _cons(engine)
     assert "UNDETERMINED" in cons["ck_validations_verdict"] and "disp_primary/1" in cons["ck_validations_scheme"]
     assert "undetermined_reason" in cons["ck_validations_undetermined"]
@@ -94,7 +95,7 @@ def test_dp9_idempotent_on_create_all_db(engine, db_url):
         c.execute(text("UPDATE alembic_version SET version_num = '0007'"))
     command.upgrade(_cfg(db_url), "head")
     command.upgrade(_cfg(db_url), "head")
-    assert _ver(engine) == "0008" and (_cols(engine), _cons(engine)) == before
+    assert _ver(engine) == HEAD and (_cols(engine), _cons(engine)) == before
 
 
 def test_dp9_check_constraints_reject_inconsistent_rows(engine):
@@ -121,6 +122,7 @@ def test_dp9_downgrade_blocked_by_undetermined_rows_then_ok(engine, db_url):
     seed_run(engine, "c1", verdict="PASS", val_extra={"scheme": "disp_primary/1", "disp_max_rel": 0.01})
     u = seed_run(engine, "c1", verdict="UNDETERMINED",
                  val_extra={"scheme": "disp_primary/1", "undetermined_reason": "ZERO_DISP"})
+    command.stamp(_cfg(db_url), "0008")        # 0010(비드 최적화)은 downgrade 미지원 — 0008 시점으로 표시만 옮겨 0008 downgrade 시험
     with pytest.raises(Exception) as ei:
         command.downgrade(_cfg(db_url), "0007")
     assert "UNDETERMINED" in str(ei.value)
@@ -139,7 +141,7 @@ def test_dp9_downgrade_blocked_by_undetermined_rows_then_ok(engine, db_url):
         with engine.begin() as c:
             c.execute(text("UPDATE validations SET verdict = 'UNDETERMINED'"))
     command.upgrade(_cfg(db_url), "head")
-    assert _ver(engine) == "0008"
+    assert _ver(engine) == HEAD
 
 
 def test_dp9_tables_py_matches_migrated_schema(engine):

@@ -36,10 +36,9 @@ def _redirect(log_path: str):
 
 
 def _write_result(path: str, d: dict[str, Any]) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, ensure_ascii=False)
-    os.replace(tmp, path)
+    from esl_platform.core.atomic import write_text_atomic
+
+    write_text_atomic(path, json.dumps(d, ensure_ascii=False))
 
 
 def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
@@ -48,6 +47,9 @@ def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
 
     if str(spec.get("stage") or "").startswith("lib_"):
         core_adapter.run_library_stage(spec, echo)
+        return {"error": None}
+    if str(spec.get("stage") or "").startswith("opt_"):        # v0.7.0 비드 최적화(OPT_PREP·LOAD·DECK·POST)
+        core_adapter.run_opt_stage(spec, echo)
         return {"error": None}
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],

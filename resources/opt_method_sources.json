@@ -1,0 +1,36 @@
+{
+ "version": "2026-10-28.1",
+ "summary_ko": [
+  "각 ESL(t* 한 시점)을 하중 케이스 1개로 씁니다.",
+  "초기 형상에서 계산한 컴플라이언스로 하중을 고르고, 가장 큰 컴플라이언스를 최소화(min-max)합니다.",
+  "형상 유사도 |MAC| 는 부호와 무관해 반대 방향 하중을 같은 하중으로 봅니다."
+ ],
+ "objective_norms": {
+  "abs": "절대 기준(추천): 가장 큰 컴플라이언스를 줄임, 공통 상수로만 나눠 큰 하중의 비중 유지",
+  "rel": "상대 기준: 각 하중을 자기 초기값 대비 같은 비율로 개선"
+ },
+ "strategies": {
+  "A": "KIT 식: 선택 ESL 전부, 형상이 거의 같은 하중(|MAC| ≥ 0.95)만 병합, 20개 초과 시 군집 대표",
+  "B": "모드 대표: 덴팅·뒤틀림·굽힘별 최악 1개(최대 3개)",
+  "C": "군집 대표: 형상 유사도로 k개 묶음, 묶음별 최악 1개"
+ },
+ "sources": [
+  {
+   "title": "Altair OptiStruct — Equivalent Static Load Method (ESLM)",
+   "authors": "Altair Engineering",
+   "url": "https://help.altair.com/2024/hwsolvers/os/topics/solvers/os/opt_composite_equiv_static_load_method_c.htm",
+   "note": "ESL 기반 최적화 방식 설명"
+  },
+  {
+   "title": "Structural optimization using equivalent static loads at all time intervals",
+   "authors": "Park, G.J., Kang, B.S. 계열",
+   "note": "ESL 전 시점 최적화(서지만)"
+  },
+  {
+   "title": "KIT 비드/토포그래피 최적화 문헌",
+   "authors": "Karlsruhe Institute of Technology",
+   "url": "https://publikationen.bibliothek.kit.edu/1000137417/126578473",
+   "note": "다중 하중 비드 최적화, 하중 전부 사용 + 유사 하중 병합"
+  }
+ ]
+}

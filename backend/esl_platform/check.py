@@ -4,6 +4,8 @@
 항목: Python 버전, 설정 검증(스키마·의미·코어·라이브러리), 프런트 정적 서빙(server.frontend_root — 폴더·index.html, null 이면 SKIP), esl_root 쓰기·여유 공간,
 upload_root(브라우저 업로드) 쓰기·여유 공간, input_roots·spdm_roots 읽기,
 worker.state_dir 쓰기, worker.slots(작업별 메모리·코어), 서버 h3d 추출(altair.hw_exe_path 존재·추출 TCL 존재, P3-UX §6),
+비드 최적화(v0.7.0 esl_opt_run.md §11: altair.optistruct_path·esl_bead_post.tcl·_templates·_opt 쓰기 — GET /opt/settings.solver_ready 와
+같은 함수 opt_solver_status),
 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
@@ -236,6 +238,43 @@ def check_h3d_extract(s, platform: str) -> list[Item]:
     return [it, t]
 
 
+def check_opt_run(s, platform: str) -> list[Item]:
+    """비드 최적화(v0.7.0): opt_run 섹션·optistruct 실행 파일·후처리 TCL·_templates/_opt 쓰기. 실행은 하지 않는다.
+    solver_ready 판정은 GET /opt/settings 와 같은 opt_solver_status(V-OR-19)."""
+    from esl_platform.core.config import default_bead_post_tcl, opt_solver_status
+    from esl_platform.core.paths import OPT_DIR, TEMPLATE_DIR
+
+    if s.opt_run is None or not s.opt_run.enabled:
+        return [Item("opt_run", SKIP, "opt_run 꺼짐(설정 opt_run.enabled) — 서버 비드 최적화 안 씀")]
+    win = platform.startswith("win")
+    out: list[Item] = []
+    ready, reason = opt_solver_status(s)
+    p = s.altair.optistruct_path
+    if not p:
+        out.append(Item("altair.optistruct_path", FAIL if win else WARN, "설정 없음 — 서버 비드 최적화 불가(503 SOLVER_NOT_CONFIGURED)"))
+    elif os.path.isfile(p):
+        out.append(Item("altair.optistruct_path", OK, f"{p} (동시 OptiStruct {s.altair.max_concurrent_os}개)"))
+    else:
+        out.append(Item("altair.optistruct_path", FAIL if win else WARN,
+                        f"파일이 없습니다: {p} — 최적화 실행이 503 SOLVER_NOT_CONFIGURED(설치 경로 확인)"))
+    tcl = default_bead_post_tcl()
+    out.append(Item("opt_run.bead_post_tcl", OK, tcl) if os.path.isfile(tcl) else Item(
+        "opt_run.bead_post_tcl", FAIL, f"비드 후처리 TCL 이 코드 스냅샷에 없습니다: {tcl}"))
+    root = s.storage.esl_root
+    for key, sub in (("storage.templates.write", TEMPLATE_DIR), ("storage.opt.write", OPT_DIR)):
+        d = os.path.join(root, sub)
+        if os.path.isdir(d):
+            out.append(check_dir_write(key, d))
+        elif os.path.isdir(root):
+            it = check_dir_write(key, root)
+            out.append(Item(key, it.status, f"{it.detail} (폴더 {sub} 는 처음 쓸 때 만듦)" if it.status == OK else it.detail))
+        else:
+            out.append(Item(key, FAIL, f"esl_root 가 없습니다: {root}"))
+    out.append(Item("opt_run.solver_ready", OK if ready else (FAIL if win else WARN),
+                    "서버 비드 최적화 실행 가능" if ready else (reason or "준비 안 됨")))
+    return out
+
+
 def check_db(url: str, heartbeat_interval_s: float | None) -> list[Item]:
     from sqlalchemy import create_engine, text
 
@@ -361,6 +400,7 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         items.append(Item("worker.state_dir", WARN, f"폴더 없음(워커가 만듦): {sd}"))
     items.append(check_slots(s.worker))
     items += check_h3d_extract(s, plat)
+    items += check_opt_run(s, plat)
     items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)

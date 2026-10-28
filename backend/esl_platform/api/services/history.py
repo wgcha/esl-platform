@@ -28,6 +28,7 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import history as repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
+from ...core.repositories import opt as opt_repo
 from ...core.state_machine import RUNNING, SUCCEEDED
 from ..context import AppContext
 from .common import analysis_dir, case_dir, esl_run_out, job_out, load_job, validation_out, validation_status
@@ -35,7 +36,7 @@ from .results import locate_validation_dir
 
 STATES = ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
 KIND_BY_TYPE = {"CASE_EXTRACT": "extract", "ESL_SOLVE": "esl_run", "VALIDATE": "validation", "EXPORT": "export",
-                "CASE_REPORT": "report", "LIB_ANALYZE": "analysis", "LIB_COMPARE": "comparison"}
+                "CASE_REPORT": "report", "LIB_ANALYZE": "analysis", "LIB_COMPARE": "comparison", "OPT_RUN": "opt_run"}
 REASON_ORDER = ("extract", "part_title", "tstar", "support_set", "input_files")
 FILES_NOTE = "파일 보존 안 됨 — 기록된 값만 표시"
 DIFF_MAX = 12
@@ -123,6 +124,7 @@ class Batch:
         self.analyses = repo.analyses_by_ids(conn, sorted({r["analysis_id"] for r in rows if r["analysis_id"]}))
         self.comparisons = repo.comparisons_by_ids(conn, sorted({r["comparison_id"] for r in rows
                                                                   if r["comparison_id"]}))
+        self.opt_runs = opt_repo.runs_by_ids(conn, sorted({r["opt_run_id"] for r in rows if r.get("opt_run_id")}))
         self.retried_by = repo.retried_by(conn, [r["id"] for r in rows])
         esl_jobs = [r["id"] for r in ok if r["job_type"] == "ESL_SOLVE"]
         self.vals_by_job = repo.validations_by_jobs(conn, [r["id"] for r in ok if r["job_type"] == "VALIDATE"])
@@ -186,6 +188,16 @@ class Batch:
             res.ref = {"kind": kind, "id": key}
             res.state = "current" if sub is not None and sub.get("job_id") == row["id"] else "past"
             return res
+        if jt == "OPT_RUN":
+            sub = self.opt_runs.get(row["opt_run_id"])
+            res.ref = {"kind": "opt_run", "id": row["opt_run_id"]}
+            res.state = "current" if sub is not None and sub.get("job_id") == row["id"] else "past"
+            if sub is not None:
+                rr = sub.get("result") or {}
+                ls = rr.get("load_selection") or {}
+                res.summary = {"scenario": sub.get("scenario"), "load_strategy": sub.get("load_strategy"),
+                               "n_cases": ls.get("n_cases"), "converged": rr.get("converged")}
+            return res
         if case is None:
             return res
         es = case.get("extract_summary") or {}
@@ -240,7 +252,8 @@ class Batch:
 def _item(row: dict[str, Any], b: Batch, res: Resolved) -> dict[str, Any]:
     case = b.cases.get(row["case_id"]) if row["case_id"] else None
     sub = b.analyses.get(row["analysis_id"]) if row["analysis_id"] else (
-        b.comparisons.get(row["comparison_id"]) if row["comparison_id"] else None)
+        b.comparisons.get(row["comparison_id"]) if row["comparison_id"] else (
+            b.opt_runs.get(row["opt_run_id"]) if row.get("opt_run_id") else None))
     now = row["db_now"]
     started, finished = row["started_at"], row["finished_at"]
     duration = _secs(started, finished) if finished is not None else (
@@ -249,7 +262,7 @@ def _item(row: dict[str, Any], b: Batch, res: Resolved) -> dict[str, Any]:
         "id": row["id"], "job_type": row["job_type"], "stage": row["stage"], "state": row["state"],
         "case_id": row["case_id"], "case_title": case["title"] if case else None,
         "case_folder": case["folder_name"] if case else None,
-        "analysis_id": row["analysis_id"], "comparison_id": row["comparison_id"],
+        "analysis_id": row["analysis_id"], "comparison_id": row["comparison_id"], "opt_run_id": row.get("opt_run_id"),
         "subject_title": case["title"] if case else (sub.get("title") if sub else None),
         "created_by": row["created_by"], "created_by_name": row["created_by_name"], "created_at": row["created_at"],
         "queued_at": row["queued_at"], "started_at": started, "finished_at": finished,
@@ -337,6 +350,9 @@ def _subject_dir(ctx: AppContext, conn: Connection, job: dict[str, Any]) -> str 
         return analysis_dir(ctx, lib_repo.get_analysis(conn, job["analysis_id"]))
     if job.get("comparison_id"):
         return analysis_dir(ctx, lib_repo.get_comparison(conn, job["comparison_id"]))
+    if job.get("opt_run_id"):
+        r = opt_repo.get_run(conn, job["opt_run_id"])
+        return analysis_dir(ctx, r) if r else None
     case = cases_repo.get_case(conn, job["case_id"]) if job.get("case_id") else None
     return case_dir(ctx, case) if case else None
 
@@ -525,10 +541,12 @@ def _result_block(ctx: AppContext, conn: Connection, job: dict[str, Any], row: d
         past = {"verdict": reg.get("verdict"), "bytes": reg.get("bytes")}
         full = bool(co.history_files(case_dir(ctx, case), "CASE_REPORT", job["id"]))
         links = {"stage": 7}
-    else:  # LIB_ANALYZE · LIB_COMPARE: 과거 값 재현 비범위 — 요약만 + 현재 분석·비교 열기
+    else:  # LIB_ANALYZE · LIB_COMPARE · OPT_RUN: 과거 값 재현 비범위 — 요약만 + 현재 분석·비교·최적화 열기
         past = dict(reg)
         if jt == "LIB_ANALYZE":
             links = {"stage": 8, "query": {"analysis": job["analysis_id"]}}
+        elif jt == "OPT_RUN":
+            links = {"stage": 10, "query": {"opt": job["opt_run_id"]}}
         else:
             links = {"stage": 9, "query": {"comparison": job["comparison_id"]}}
     avail = "full" if full else "summary"

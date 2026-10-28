@@ -18,6 +18,9 @@
   `altair.max_concurrent_hw` DB 세마포어를 잡을 때까지 대기(lease 갱신·취소 확인 계속), 작업별 제한기(limiter.for_job)로
   자원 제한, 취소·lease 상실 시 hw 프로세스 트리 종료. 실패 코드 `H3D_EXTRACT_FAILED`.
 - 작업별 자원 제한기: SLOT 레인이 worker.slots 개 동시 실행되므로 작업마다 limiter.for_job(슬롯 번호)로 만든다.
+- v0.7.0 OPT_RUN(계약 esl_opt_run.md): 대상 = jobs.opt_run_id, 작업 폴더 `<esl_root>/_opt/<id>/`. 준비·step 실행은
+  opt_jobs(OS_SOLVE = os_solve, 외부 실행 공통 = localproc). OS_SOLVE 재사용이면 step SKIPPED. 코어 자식은 진행률 파일
+  (`<log>.progress`, 정수 %)을 쓸 수 있고 부모가 step progress_pct(OPT_RUN 은 작업 진행률 가중)로 옮긴다.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from . import esl_snapshot, h3d, limiter, register
+from . import esl_snapshot, h3d, limiter, opt_jobs, register
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -111,6 +114,11 @@ class Executor:
                 case = cases_repo.get_case(conn, job["case_id"]) if job.get("case_id") else None
             if job["job_type"] == "LIB_ANALYZE":
                 self._prepare_analysis()
+            elif job["job_type"] == "OPT_RUN":                 # v0.7.0 비드 최적화(대상 = opt_run_id, esl_opt_run.md)
+                try:
+                    self.cdir, self.lib = opt_jobs.prepare(self)
+                except opt_jobs.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
             elif job["job_type"] in lib_jobs.PREPARE:          # LIB_COMPARE 등(디스패치는 lib_jobs)
                 try:
                     self.cdir, self.lib = lib_jobs.PREPARE[job["job_type"]](self.settings, job)
@@ -234,8 +242,13 @@ class Executor:
                                   started_at=_now(conn), progress_pct=0.0)
         log_path = os.path.join(self.cdir, log_rel)
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        final = "SUCCEEDED"
         try:
-            if st["step_key"] == "H3D_EXTRACT":
+            if self.job["job_type"] == "OPT_RUN":
+                outputs = opt_jobs.run_step(self, st, log_path)
+                if outputs.pop("_skipped", False):
+                    final = "SKIPPED"          # OS_SOLVE 재사용(OR-D-19)
+            elif st["step_key"] == "H3D_EXTRACT":
                 outputs = self._run_h3d(st, log_path)
                 with self._tx() as conn:
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {"h3d_extract": outputs.get("done")})
@@ -286,8 +299,11 @@ class Executor:
                 self._register_artifacts(conn, [log_rel, "run.json"])
             raise
         with self._tx() as conn:
-            jobs_repo.step_update(conn, self.job["id"], self.token, no, state="SUCCEEDED", exit_code=0,
+            jobs_repo.step_update(conn, self.job["id"], self.token, no, state=final,
+                                  exit_code=0 if final == "SUCCEEDED" else None,
                                   progress_pct=100.0, finished_at=_now(conn), outputs=outputs)
+            if self.job["job_type"] == "OPT_RUN":
+                opt_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
 
     def _archive_history(self) -> str | None:
         """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).
@@ -332,15 +348,17 @@ class Executor:
         frame = p.get("frame_index") if stage in ("esl",) else None
         support = p.get("support_node_ids") if stage in ("esl",) else None
         result_path = log_path[:-4] + ".result.json"
-        if os.path.exists(result_path):
-            os.remove(result_path)
+        progress_path = log_path[:-4] + ".progress"
+        for pth in (result_path, progress_path):
+            if os.path.exists(pth):
+                os.remove(pth)
         spec = {"cfg": p.get("settings") or {}, "rad": case["rad_path"] if case else None,
                 "results": case["results_dir"] if case else None, "lib": self.lib,
                 "out": self.cdir, "stage": stage, "frame": frame, "support_nodes": support,
                 "log_path": log_path, "result_path": result_path, "priority": self.settings.worker.priority,
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
                 "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
-                "parent_pid": os.getpid()}
+                "parent_pid": os.getpid(), "progress_path": progress_path}
         gate = limiter.prepare(self.worker, spec, self.lim)
         self.proc = _SPAWN.Process(target=child_entry, args=(spec,), name=f"esl-core-{stage}")
         self.proc.start()
@@ -351,10 +369,12 @@ class Executor:
         w = self.settings.worker
         last_renew = last_cancel = time.monotonic()
         poll = min(0.2, w.cancel_check_interval_s, w.heartbeat_interval_s)
+        shown = [-1]
         while True:
             self.proc.join(poll)
             if not self.proc.is_alive():
                 break
+            self._core_progress(st, progress_path, shown)
             now = time.monotonic()
             if now - last_renew >= w.heartbeat_interval_s:
                 self._renew()
@@ -379,6 +399,22 @@ class Executor:
             raise _StepFailed(res.get("code") or "INTERNAL_ERROR", res.get("message") or "코어 실패", code)
         raise _StepFailed("CORE_PROCESS_DIED", f"코어 프로세스가 비정상 종료했습니다(exit {code})", code)
 
+
+    def _core_progress(self, st: dict[str, Any], path: str, shown: list[int]) -> None:
+        """코어 자식이 쓰는 진행률 파일(정수 %, 선택) → step progress_pct(단조 증가). OPT_RUN 은 작업 진행률(가중)도."""
+        try:
+            with open(path, encoding="ascii") as fh:
+                pct = int(float(fh.read().strip() or -1))
+        except (OSError, ValueError):
+            return
+        if pct <= shown[0]:
+            return
+        shown[0] = pct
+        if self.job["job_type"] == "OPT_RUN":
+            opt_jobs.set_progress(self, st, float(pct))
+        else:
+            with self._tx() as conn:
+                jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"], progress_pct=float(pct))
 
     # ---------------------------------------------------------------- H3D_EXTRACT(LOCAL, P3-UX §6)
     def _wait_tick(self, state: dict[str, float]) -> None:

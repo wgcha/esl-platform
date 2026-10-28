@@ -196,6 +196,7 @@ class JobOut(_Out):
     case_id: str | None = None
     analysis_id: str | None = None
     comparison_id: str | None = None
+    opt_run_id: str | None = None
     project_id: str
     job_type: str
     stage: int
@@ -637,6 +638,22 @@ class EntryQuality(_Out):
     confirmed_undetermined: dict[str, Any] | None = None
 
 
+class EntrySize(_Out):
+    inch: int | None = None
+    L_xi: float | None = None
+    L_eta: float | None = None
+
+
+class DeformModeOut(_Out):
+    auto: Literal["dent", "twist", "bend"] | None = None
+    user: Literal["dent", "twist", "bend"] | None = None
+    effective: Literal["dent", "twist", "bend"] | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    user_by: str | None = None
+    user_at: str | None = None
+    rule_version: int | None = None
+
+
 class EntryOut(_Out):
     id: str
     project_id: str
@@ -664,6 +681,10 @@ class EntryOut(_Out):
     retire_reason: str | None = None
     updated_at: datetime
     version: int
+    # v0.7.0(esl_opt_run.md §5.1): 크기·S1 모델 키·변형 모드(지연 백필)
+    size: EntrySize | None = None
+    topo_sha256: str | None = None
+    deform_mode: DeformModeOut | None = None
 
 
 class EntryCreate(_Req):
@@ -702,6 +723,8 @@ class EntryPatch(_Req):
     model: EntryModelPatch | None = None
     scene: EntryScenePatch | None = None
     note: str | None = Field(default=None, max_length=2000)
+    # v0.7.0: 변형 모드 사용자 수정(null = 자동으로 되돌림). 키가 없으면 변경 없음
+    deform_mode: Literal["dent", "twist", "bend"] | None = None
 
 
 class AnalysisFilters(_Req):
@@ -1029,7 +1052,7 @@ class ClientTokenOut(_Out):
 
 # ---------------------------------------------------------------- P3-이력(계약 esl_p3_history.md §3)
 class HistoryRef(_Out):
-    kind: Literal["extract", "esl_run", "validation", "export", "report", "analysis", "comparison"]
+    kind: Literal["extract", "esl_run", "validation", "export", "report", "analysis", "comparison", "opt_run"]
     id: str
 
 
@@ -1043,6 +1066,7 @@ class HistoryItem(_Out):
     case_folder: str | None = None
     analysis_id: str | None = None
     comparison_id: str | None = None
+    opt_run_id: str | None = None
     subject_title: str | None = None
     created_by: str
     created_by_name: str
@@ -1160,5 +1184,304 @@ class ReviewOut(_Out):
 
 class HistoryFileOut(_Out):
     name: str
+    size: int
+    downloadable: bool
+
+
+# ---------------------------------------------------------------- v0.7.0 비드 최적화(계약 esl_opt_run.md §5)
+# 사각형·비드 치수 값 범위는 서비스가 검사한다(KEEPOUT_INVALID·INVALID_PARAMS — 계약 §5.3 오류 코드를 쓰기 위해 스키마는 느슨하게).
+class RectIn(_Req):
+    name: str | None = Field(default=None, max_length=200)
+    corner: str = Field(min_length=1, max_length=8)        # a0b0 | a1b0 | a0b1 | a1b1
+    x_mm: float
+    y_mm: float
+    w_mm: float
+    h_mm: float
+
+
+class KeepoutAuto(_Req):
+    hole: bool = True
+    edge: bool = True
+
+
+class KeepoutIn(_Req):
+    rects: list[RectIn] = Field(default_factory=list, max_length=1000)
+    auto: KeepoutAuto = Field(default_factory=KeepoutAuto)
+
+
+class KeepoutSetIn(KeepoutIn):
+    template_id: str | None = Field(default=None, max_length=64)
+    topo_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    version: int | None = Field(default=None, ge=1)         # 갱신 시 필수(낙관적 잠금)
+
+    @model_validator(mode="after")
+    def _key(self) -> "KeepoutSetIn":
+        if (self.template_id is None) == (self.topo_sha256 is None):
+            raise ValueError("template_id 와 topo_sha256 중 정확히 하나가 필요합니다")
+        return self
+
+
+class TemplateCheckIn(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    upload_id: str = Field(min_length=1, max_length=64)
+    part_title: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class TemplateIn(TemplateCheckIn):
+    sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    title: str = Field(min_length=1, max_length=200)
+    inch: int | None = Field(default=None, ge=1, le=1000)
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("제목이 비었습니다")
+        return v.strip()
+
+
+class S1CheckIn(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    entry_ids: list[str] = Field(min_length=1, max_length=10000)
+
+
+class BeadIn(_Req):
+    angle: float
+    min_width: float
+    height: float
+
+
+class OptDesignIn(_Req):
+    nondesign_pids: list[int] | None = Field(default=None, max_length=10000)
+    bead: BeadIn | None = None
+    keepout: KeepoutIn = Field(default_factory=KeepoutIn)
+
+
+class SupportIn(_Req):
+    node_id: int
+    dof: str = Field(pattern=r"^[1-6]{1,6}$")
+
+
+class OptOptionsIn(_Req):
+    supports: list[SupportIn] | None = Field(default=None, min_length=3, max_length=3)    # S2 만
+    objective_norm: Literal["abs", "rel"] | None = None
+    load_strategy: Literal["A", "B", "C"] | None = None
+    k: int | None = None                                                                 # C 만, 1..max_cases
+
+
+class OptRunIn(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    scenario: Literal["S1", "S2"]
+    title: str | None = Field(default=None, max_length=200)
+    entry_ids: list[str] = Field(min_length=1, max_length=10000)
+    analysis_id: str | None = Field(default=None, max_length=64)
+    template_id: str | None = Field(default=None, max_length=64)
+    design: OptDesignIn = Field(default_factory=OptDesignIn)
+    options: OptOptionsIn = Field(default_factory=OptOptionsIn)
+
+
+class OptSizeSettings(_Out):
+    tol_rel: float
+    plate_tol_rel: float
+    require_inch: bool
+
+
+class OptBeadSettings(_Out):
+    angle: float
+    min_width: float
+    height: float
+
+
+class OptKeepoutAutoSettings(_Out):
+    hole_radius_mm: float
+    edge_band_mm: float
+
+
+class OptLoadsSettings(_Out):
+    default_objective_norm: Literal["abs", "rel"]
+    default_strategy: Literal["A", "B", "C"]
+    mac_merge: float
+    max_cases: int
+    default_k: int
+
+
+class OptSettingsOut(_Out):
+    enabled: bool
+    solver_ready: bool
+    solver_reason: str | None = None
+    size: OptSizeSettings
+    bead_defaults: OptBeadSettings
+    keepout_auto: OptKeepoutAutoSettings
+    loads: OptLoadsSettings
+    method_sources: dict[str, Any]
+    max_rects: int
+    max_entries: int
+    template_max_elems: int
+    template_ext: list[str]
+    max_preview_points: int
+
+
+class MeshPid(_Out):
+    pid: int
+    title: str | None = None
+    n_elems: int
+    thickness: float | None = None
+    E: float | None = None
+    nu: float | None = None
+
+
+class MeshCheckOut(_Out):
+    upload_id: str
+    ok: bool
+    sha256: str
+    format: Literal["rad", "fem"] | None = None
+    file_name: str
+    parts: list[dict[str, Any]] = Field(default_factory=list)
+    part_title: str | None = None
+    mesh: dict[str, Any]
+    pids: list[MeshPid] = Field(default_factory=list)
+    frame: dict[str, Any]
+    quality: dict[str, Any]
+    supports_auto: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TemplateOut(_Out):
+    id: str
+    title: str
+    inch: int | None = None
+    description: str
+    format: Literal["rad", "fem"]
+    file_name: str
+    part_title: str | None = None
+    sha256: str
+    n_nodes: int
+    n_elems: int
+    L_xi: float
+    L_eta: float
+    z_range: list[float]
+    pids: list[MeshPid]
+    quality_warnings: list[dict[str, Any]] = Field(default_factory=list)
+    supports_auto: list[dict[str, Any]] = Field(default_factory=list)
+    status: Literal["ACTIVE", "ARCHIVED"]
+    n_runs: int
+    created_by: str
+    created_by_name: str
+    created_at: datetime
+    archived_at: datetime | None = None
+    can_delete: bool
+
+
+class TemplateDeleteOut(_Out):
+    deleted: bool
+    archived: bool
+
+
+class S1Base(_Out):
+    entry_id: str
+    case_id: str
+    case_title: str | None = None
+    part_title: str | None = None
+    rad_file_name: str | None = None
+    n_nodes: int | None = None
+    n_elems: int | None = None
+    topo_sha256: str | None = None
+    pids: list[MeshPid] = Field(default_factory=list)
+    supports: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class S1EntryRow(_Out):
+    entry_id: str
+    same_model: bool
+    reason: str | None = None
+
+
+class S1CheckOut(_Out):
+    base: S1Base
+    entries: list[S1EntryRow]
+
+
+class PlanViewFrame(_Out):
+    a_range: list[float]
+    b_range: list[float]
+
+
+class PlanViewElems(_Out):
+    n_total: int
+    decimated: bool
+    points: list[list[float]]
+
+
+class PlanViewAuto(_Out):
+    hole_radius_mm: float
+    edge_band_mm: float
+    polygons: list[list[list[float]]]
+    kinds: list[Literal["hole", "edge"]] = Field(default_factory=list)   # polygons 와 같은 길이(구멍/가장자리)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class PlanViewOut(_Out):
+    key: dict[str, str | None]
+    frame: PlanViewFrame
+    outline: list[list[float]]
+    holes: list[list[list[float]]]
+    elems: PlanViewElems
+    auto_keepout: PlanViewAuto
+    warnings: list[str] = Field(default_factory=list)
+
+
+class KeepoutRectOut(_Out):
+    name: str
+    corner: Literal["a0b0", "a1b0", "a0b1", "a1b1"]
+    x_mm: float
+    y_mm: float
+    w_mm: float
+    h_mm: float
+
+
+class KeepoutSetOut(_Out):
+    id: str
+    key: dict[str, str | None]
+    version: int
+    rects: list[KeepoutRectOut]
+    auto: dict[str, bool]
+    frame: dict[str, Any]
+    updated_by_name: str
+    updated_at: datetime
+    warnings: list[str] = Field(default_factory=list)
+
+
+class OptRunOut(_Out):
+    id: str
+    project_id: str
+    scenario: Literal["S1", "S2"]
+    title: str | None = None
+    entry_ids: list[str]
+    analysis_id: str | None = None
+    base: dict[str, Any] | None = None
+    template_id: str | None = None
+    template: dict[str, Any] | None = None
+    size: dict[str, Any] | None = None
+    design: dict[str, Any]
+    options: dict[str, Any]
+    load_strategy: Literal["A", "B", "C"]
+    k: int | None = None
+    objective_norm: Literal["abs", "rel"]
+    job_id: str | None = None
+    job: JobOut | None = None
+    state: str
+    result: dict[str, Any] | None = None
+    report_ready: bool
+    dir_rel: str
+    folder_path: str
+    created_by: str
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class OptFileOut(_Out):
+    rel: str
+    kind: Literal["report", "result", "selection", "deck", "solve", "target", "log", "other"]
     size: int
     downloadable: bool

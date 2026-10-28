@@ -813,6 +813,54 @@ class ShellModel:
         return u.reshape(self.n_nodes, 6), R
 
     # ------------------------------------------------------------------
+    # 분해 재사용 (esl_opt_run.md OR-D-14: 후보 하중마다 같은 K_ff — 분해 1회·다중 RHS)
+    @_oom_guard("정적 해 분해(K_ff)")
+    def factorize(self, spc) -> "FactorizedSolve":
+        """spc=[(node_idx, "123" 부분집합)] 로 K_ff 를 한 번 분해한 해법 객체. ``.solve(F)`` = ``solve(F, spc)`` 와 같은 결과."""
+        cons = set()
+        for node, dofs in spc:
+            node = int(node)
+            if not (0 <= node < self.n_nodes):
+                raise EslError("INPUT_INVALID", f"spc 노드 인덱스 {node} 범위 밖")
+            ds = str(dofs)
+            if not ds or any(ch not in "123" for ch in ds):
+                raise EslError("INPUT_INVALID", f"spc dof '{ds}' (병진 1·2·3만)")
+            for ch in ds:
+                cons.add((node, int(ch) - 1))
+        cons = sorted(cons)
+        self._check_coverage()
+        self._check_restraint(cons)
+        K = self.K()
+        ndof = 6 * self.n_nodes
+        fixed = np.array([6 * p + d for p, d in cons], dtype=np.int64)
+        free = np.setdiff1d(np.arange(ndof), fixed)
+
+        def iter_setup():
+            M = _principal_submatrix(self._block_jacobi(0, 6, fixed).tocsr(), free)
+            X = self.x0 - self.x0.mean(axis=0)
+            B = np.zeros((self.n_nodes, 6, 6))
+            for i in range(3):
+                w = np.zeros(3)
+                w[i] = 1.0
+                B[:, i, i] = 1.0
+                B[:, :3, 3 + i] = np.cross(w, X)
+                B[:, 3 + i, 3 + i] = 1.0
+            return {"blocks": M, "near_null": B.reshape(-1, 6)[free]}
+
+        Kff = _principal_submatrix(K, free)
+        lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
+                        iter_opts=self.iter_opts, iter_setup=iter_setup)
+        del Kff
+        self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
+        return FactorizedSolve(self, K, lu, cons, free)
+
+    def solve_many(self, Fs, spc):
+        """하중 목록(반복자) → (u (N,6), R (N,3)) 를 차례로 낸다(분해 1회). 메모리에는 하중 1개씩만."""
+        h = self.factorize(spc)
+        for F in Fs:
+            yield h.solve(F)
+
+    # ------------------------------------------------------------------
     @_oom_guard("변형률 회복")
     def strains(self, u) -> np.ndarray:
         """u (N,6) → eps (E,2,3): 요소 중심, layer 0=bottom(z=−t/2), 1=top(+t/2), 국부 텐서 (exx,eyy,exy)."""
@@ -841,3 +889,51 @@ class ShellModel:
         c[q] = self.x0[self.conn[q]].mean(axis=1)
         c[~q] = self.x0[self.conn[~q, :3]].mean(axis=1)
         return c
+
+
+class FactorizedSolve:
+    """``ShellModel.factorize`` 결과: 같은 K_ff 분해로 여러 하중을 푼다(반복 개선 1회·잔차 검사는 ``solve`` 와 같음)."""
+
+    def __init__(self, model: "ShellModel", K, lu, cons, free):
+        self.model = model
+        self.K = K
+        self.lu = lu
+        self.cons = cons
+        self.free = free
+        self.n_solves = 0
+
+    @_oom_guard("정적 해(K_ff, 분해 재사용)")
+    def solve(self, F):
+        m = self.model
+        F = np.asarray(F, dtype=np.float64)
+        if F.shape != (m.n_nodes, 3):
+            raise EslError("INPUT_INVALID", "F 는 (N,3)")
+        ndof = 6 * m.n_nodes
+        f = np.zeros(ndof)
+        f[(np.arange(m.n_nodes)[:, None] * 6 + np.arange(3)).ravel()] = F.ravel()
+        rhs = f[self.free]
+        u = np.zeros(ndof)
+        K, free, lu = self.K, self.free, self.lu
+
+        def resid(uf):
+            u[free] = uf
+            return (K @ u - f)[free]
+
+        uf = lu.solve(rhs)
+        if not isinstance(lu, _CG):
+            uf = uf - lu.solve(resid(uf))
+        res = resid(uf)
+        nr = np.linalg.norm(rhs)
+        rr = float(np.linalg.norm(res) / nr) if nr > 0 else 0.0
+        _record_iter(lu, m.stats["K_ff"])
+        tol = 1e-8 if not isinstance(lu, _CG) else max(1e-8, 100 * lu.rtol)
+        if not np.all(np.isfinite(uf)) or rr > tol:
+            raise EslError("SOLVER_SINGULAR", f"해 잔차 과대 ‖Ku−F‖/‖F‖={rr:.2e}")
+        m.stats["solve_resid_rel"] = rr
+        u[free] = uf
+        reac = (K @ u - f).reshape(m.n_nodes, 6)[:, :3]
+        R = np.zeros((m.n_nodes, 3))
+        for p, d in self.cons:
+            R[p, d] = reac[p, d]
+        self.n_solves += 1
+        return u.reshape(m.n_nodes, 6), R

@@ -6,6 +6,8 @@
   analysis_id 필수). 산출물 ``<esl_root>/_analysis/<analysis_id>/``.
 - LIB_COMPARE(LIGHT, §12.2): 설계 버전 비교 → DB 요약. Case·분석이 없다(comparison_id 필수).
   산출물 ``<esl_root>/_compare/<comparison_id>/``(compare.json, report.html).
+- OPT_RUN(SLOT, stage 10, 계약 esl_opt_run.md §6.1): 비드 최적화 서버 실행. 대상 = jobs.opt_run_id(case·분석·비교 NULL).
+  산출물 ``<esl_root>/_opt/<opt_run_id>/``. OS_SOLVE(LOCAL, OptiStruct)·OPT_POST(LOCAL+코어, hw TCL 후처리) 는 워커가 실행.
 - P3-UX §6: CASE_EXTRACT 첫 step ``H3D_EXTRACT``(LOCAL — 워커가 hw 실행)는 Case 입력이 h3d(input_kind H3D)일 때만 만든다
   (결과 폴더 입력이면 생략 → 기존 step 번호 그대로).
 """
@@ -26,7 +28,7 @@ class StepDef:
 @dataclass(frozen=True)
 class JobTypeDef:
     job_type: str
-    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교
+    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화
     lane: str  # SLOT | LIGHT
     steps: tuple[StepDef, ...]
 
@@ -44,10 +46,18 @@ JOB_TYPES: dict[str, JobTypeDef] = {
         StepDef("LIB_REGISTER", None))),
     "LIB_COMPARE": JobTypeDef("LIB_COMPARE", 9, "LIGHT", (
         StepDef("COMPARE", "lib_compare"), StepDef("COMPARE_REGISTER", None))),
+    "OPT_RUN": JobTypeDef("OPT_RUN", 10, "SLOT", (
+        StepDef("OPT_PREP", "opt_prep"), StepDef("OPT_LOAD", "opt_load"), StepDef("OPT_DECK", "opt_deck"),
+        StepDef("OS_SOLVE", None, kind="LOCAL"), StepDef("OPT_POST", "opt_post", kind="LOCAL"),
+        StepDef("OPT_REGISTER", None))),
 }
 CASE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT")
 LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report", "lib_compare")
 LIB_JOB_TYPES = ("LIB_ANALYZE", "LIB_COMPARE")
+OPT_JOB_TYPES = ("OPT_RUN",)
+OPT_STAGES = ("opt_prep", "opt_load", "opt_deck", "opt_post")
+# 계약 §6.3: 작업 progress 가중(step 순서 OPT_PREP·OPT_LOAD·OPT_DECK·OS_SOLVE·OPT_POST·OPT_REGISTER, 합 100)
+OPT_STEP_WEIGHTS = {"OPT_PREP": 1, "OPT_LOAD": 4, "OPT_DECK": 1, "OS_SOLVE": 82, "OPT_POST": 10, "OPT_REGISTER": 2}
 
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 

@@ -17,6 +17,7 @@ import { entryStatus, statusOf } from "../components/VerdictStatus";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
 import { P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
+import { OptMock, enrichEntries } from "./optdata";
 
 interface MockResponse {
   status: number;
@@ -31,9 +32,10 @@ const STEPS: Record<JobType, string[]> = {
   CASE_REPORT: ["REPORT", "REPORT_REGISTER"],
   LIB_ANALYZE: ["LIB_ANALYZE", "OPTDECK", "REPORT", "LIB_REGISTER"],
   LIB_COMPARE: ["COMPARE", "COMPARE_REGISTER"],
+  OPT_RUN: ["OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER"],
 };
 /** 라이브러리 작업(LIB_ANALYZE·LIB_COMPARE)·보고서는 Case 단계가 아님(0) */
-const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0 };
+const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10 };
 const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
@@ -77,6 +79,26 @@ export class MockServer {
 
   /** P3-이력: 실행 이력 목록·작업 상세·과거 run/검증(읽기 전용 열람용, 현재 Case 목록에는 섞이지 않음) */
   history = new HistoryMock({ userId: () => this.me.user_id, isAdmin: () => this.me.is_global_admin, canRun: (pid) => this.canRun(pid) });
+
+  /** v0.7.0 비드 최적화(esl_opt_run.md §5) */
+  opt = new OptMock({
+    entries: () => this.entries,
+    me: () => this.me,
+    canRun: (pid) => this.canRun(pid),
+    newJob: (pid, params) => this.newJob({ id: null, project_id: pid }, "OPT_RUN", params),
+    jobs: () => this.jobs,
+    now: () => this.now(),
+    upload: (id) => {
+      const u = this.p3.uploads.get(id);
+      if (!u) return null;
+      const live = u.files.filter((f) => !f.removed);
+      return { project_id: u.project_id, state: u.state, files: live.map((f) => f.rel), ready: u.state === "COMPLETED" || live.every((f) => f.done) };
+    },
+    markUploadCompleted: (id) => {
+      const u = this.p3.uploads.get(id);
+      if (u) u.state = "COMPLETED";
+    },
+  });
 
   constructor(opts: { user?: MockUserKey } = {}) {
     this.user = opts.user ?? "power";
@@ -131,6 +153,7 @@ export class MockServer {
 
     // 라이브러리: 항목 8개(1개 폐기) + 완료된 종합분석 1개
     this.entries = makeEntries("p-body");
+    enrichEntries(this.entries);
     const pass = this.entries.filter((e) => e.status === "ACTIVE" && e.quality.verdict === "PASS");
     const an = this.makeAnalysis("an-1", { project_id: "p-body", title: "QN80H 꼭지점·모서리 강건 비드", target_entry_id: "le-1", filters: { verdict: ["PASS"] }, options: { normalization: "inch2", n_representative: 4, objective: "minmax" } }, pass);
     an.created_at = an.updated_at = "2026-10-18T05:00:00Z";
@@ -141,6 +164,7 @@ export class MockServer {
     cmp.created_at = cmp.updated_at = "2026-10-19T05:00:00Z";
     this.finishComparison(cmp);
     this.comparisons.push(cmp);
+    this.opt.seed();
   }
 
   private makeComparison(id: string, body: ComparisonCreate & { base_version: string }): ComparisonOut {
@@ -339,6 +363,8 @@ export class MockServer {
     if (p3r) return p3r;
     const hr = this.history.handle(method, path, query);
     if (hr) return hr;
+    const or = this.opt.handle(method, path, query, b);
+    if (or) return or;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
@@ -577,7 +603,8 @@ export class MockServer {
           (!f("orient") || e.scene.orient === f("orient")) &&
           (!f("scenario") || e.scene.scenario === f("scenario")) &&
           (!f("verdict") || entryStatus(e.quality) === f("verdict")) &&
-          (!f("status") || e.status === f("status")),
+          (!f("status") || e.status === f("status")) &&
+          (!f("mode") || e.deform_mode?.effective === f("mode")),
       );
       return { status: 200, body: out };
     }
@@ -656,6 +683,13 @@ export class MockServer {
           e.model = { ...e.model, product_mass: v as number | null };
         }
         if (b.scene) e.scene = { ...e.scene, ...(b.scene as Record<string, string | null>) };
+        if ("deform_mode" in b) {
+          const dm = b.deform_mode;
+          if (dm !== null && !["dent", "twist", "bend"].includes(String(dm))) return err(422, "INVALID_PARAMS", "deform_mode 는 dent|twist|bend|null 입니다");
+          const cur = e.deform_mode ?? { auto: null, user: null, effective: null };
+          const user = (dm ?? null) as "dent" | "twist" | "bend" | null;
+          e.deform_mode = { ...cur, user, effective: user ?? cur.auto };
+        }
         e.version += 1;
         e.updated_at = this.now();
         return { status: 200, body: e };
@@ -1053,8 +1087,11 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     const isBin = (typeof Blob !== "undefined" && raw instanceof Blob) || isBuf;
     const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;
     const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw instanceof Blob ? raw.size : (raw as ArrayBuffer).byteLength) : 0);
-    if (typeof r.body === "string")
-      return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/octet-stream" } });
+    if (typeof r.body === "string") {
+      // v0.7.0: 목 비드 맵은 SVG(실제 서버는 PNG)
+      const type = /\/bead-map\.png$/.test(url.pathname) ? "image/svg+xml" : "application/octet-stream";
+      return new Response(r.body, { status: r.status, headers: { "Content-Type": type } });
+    }
     return new Response(r.body === undefined ? null : JSON.stringify(r.body), {
       status: r.status,
       headers: { "Content-Type": "application/json" },

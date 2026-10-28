@@ -379,6 +379,8 @@ describe("설계 버전 비교(§12.2)", () => {
 
   it("라이브러리 목록: 보조 진입 '버전 비교'(주 버튼은 그대로 1개) + 비교 목록", async () => {
     const { container } = renderApp("/p/p-body/library");
+    // v0.7.0: 라이브러리 탭(항목 | 종합분석 | 버전 비교 | 최적화 실행 | 템플릿)
+    fireEvent.click(await screen.findByRole("tab", { name: "버전 비교" }));
     const tbl = await screen.findByRole("table", { name: "버전 비교 목록" });
     expect(within(tbl).getByText("추가 반복 권장")).toBeTruthy();
     expect(within(tbl).getByText(/75QN80H · v072 → v073/)).toBeTruthy();

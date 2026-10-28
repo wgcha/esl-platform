@@ -19,6 +19,7 @@ import { f3 } from "../../lib/colormap";
 import { DECK_LABEL, EnvelopeMap, NORM_LABEL, OBJ_LABEL, VerdictBadge, dropText, entryLabel, filtersText, libPath, parseEnvelopeCsv } from "./common";
 
 const ACTIVE: string[] = ["QUEUED", "RUNNING"];
+
 const KIND_LABEL: Record<string, string> = { optdeck: "최적화 덱", report: "보고서", analysis: "분석 자료", log: "로그", other: "기타" };
 
 function FileRow({ aid, f }: { aid: string; f: AnalysisFileOut }) {

@@ -24,6 +24,16 @@ branch_labels = None
 depends_on = None
 
 
+# 0004 시점의 작업 대상 제약(고정). 0010 이 opt_run_id 를 넣어 다시 정의한다(tables.CK_JOBS_SUBJECT 는 그 열을
+# 참조하므로 0004 에서 쓰면 0003 이하 DB 업그레이드가 실패한다).
+CK_JOBS_SUBJECT_0004 = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL"
+                        " AND comparison_id IS NULL)"
+                        " OR (job_type = 'LIB_COMPARE' AND case_id IS NULL AND analysis_id IS NULL"
+                        " AND comparison_id IS NOT NULL)"
+                        " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE') AND case_id IS NOT NULL"
+                        " AND analysis_id IS NULL AND comparison_id IS NULL)")
+
+
 def _recheck(bind, table: str, name: str, sql: str) -> None:
     bind.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}"))
     bind.execute(text(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({sql})"))
@@ -42,7 +52,7 @@ def upgrade() -> None:
         "END IF; END $$"))
     _recheck(bind, "jobs", "ck_jobs_job_type", tables.CK_JOBS_JOB_TYPE)
     _recheck(bind, "jobs", "ck_jobs_stage", tables.CK_JOBS_STAGE)
-    _recheck(bind, "jobs", "ck_jobs_subject", tables.CK_JOBS_SUBJECT)
+    _recheck(bind, "jobs", "ck_jobs_subject", CK_JOBS_SUBJECT_0004)
     bind.execute(text(
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_jobs_comparison_active ON jobs (comparison_id) WHERE comparison_id IS NOT"
         " NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))

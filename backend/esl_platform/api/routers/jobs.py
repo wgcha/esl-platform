@@ -16,7 +16,7 @@ router = APIRouter(tags=["jobs"])
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.get_job(get_ctx(request), job_id)
+    return svc.get_job(get_ctx(request), job_id, principal)
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)
@@ -32,4 +32,4 @@ def retry(job_id: str, request: Request, principal: Principal = Depends(get_prin
 @router.get("/jobs/{job_id}/log", response_model=LogOut)
 def log(job_id: str, request: Request, step: int | None = Query(default=None, ge=1),
         cursor: int = Query(default=0, ge=0), principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.job_log(get_ctx(request), job_id, step, cursor)
+    return svc.job_log(get_ctx(request), job_id, step, cursor, principal)

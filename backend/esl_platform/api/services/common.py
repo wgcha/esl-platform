@@ -85,6 +85,12 @@ def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = 
     return d
 
 
+def require_job_view(principal: Principal, job: dict[str, Any]) -> None:
+    """OPT_RUN 작업(opt_runs 에 묶인 작업)은 그 프로젝트 조회 권한이 있어야 조회(최적화 실행 조회와 같은 규칙)."""
+    if job.get("opt_run_id") and principal.role(job["project_id"]) is None:
+        raise forbidden("이 프로젝트의 조회 권한이 없습니다")
+
+
 def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) -> dict[str, Any]:
     d = {k: v for k, v in job.items() if k not in LEASE_COLUMNS and k not in ("queue_seq", "holds_slot",
                                                                                  "env_snapshot")}
@@ -93,6 +99,9 @@ def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) 
     d.pop("cancel_requested_by", None)
     params = dict(job.get("params") or {})
     params.pop("settings", None)  # 코어 설정 스냅샷은 크고 내부용
+    if isinstance(params.get("base"), dict) and "rad_path" in params["base"]:
+        # OPT_RUN S1: 서버 절대경로는 응답에 넣지 않는다(파일명 rad_file_name 만)
+        params["base"] = {k: v for k, v in params["base"].items() if k != "rad_path"}
     d["params"] = params
     d["queue_position"] = None
     if job["state"] == QUEUED and job.get("queue_seq") is not None:

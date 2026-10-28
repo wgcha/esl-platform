@@ -69,14 +69,19 @@ upload:                               # 브라우저 분할 업로드(계약 esl
   max_files: 5000
   max_concurrent_per_user: 2
   stale_hours: 72                     # 미완료 업로드를 _backup 으로 옮기는 시간(삭제 없음)
-  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d]
+  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d, .fem]   # .fem = 비드 최적화 S2 템플릿
 altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §6) — 워커가 hw 를 직접 실행(shell 없이, argv 템플릿)
   version_label: "2026.1"
   hw_exe_path: "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"   # 공백 허용(실행 파일만). 환경 점검이 존재 확인
   max_concurrent_hw: 2                # 동시 hw 수(HyperWorks 라이선스 한도에 맞춰 조정) — DB 세마포어, 넘으면 대기
+  optistruct_path: "C:/Program Files/Altair/2026.1/hwsolvers/scripts/optistruct.bat"   # 비드 최적화(v0.7.0). 없거나 파일이 없으면 503
+  max_concurrent_os: 1                # 동시 OptiStruct 수(라이선스 한도) — DB 세마포어
 commands:                             # argv 템플릿(esl.md §4.4): argv[0] = {hw} 만. 허용 placeholder: hw, extract_tcl(_fwd), h3d(_fwd),
                                       # request(_fwd), out_dir(_fwd), part, hot_k, top_n. 치환값에 & | < > ^ % ! " 가 있으면 실행 전 거부
   h3d_extract: ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}", "-part", "{part}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}", "-hot_k", "{hot_k}", "-top_n", "{top_n}"]
+  os_check: ["{optistruct}", "{fem}", "-check", "-tmpdir", "{scratch}"]     # 비드 최적화 덱 검사. argv[0] = {optistruct} 만
+  os_solve: ["{optistruct}", "{fem}", "-nt", "{nt}", "-tmpdir", "{scratch}"]  # 허용 placeholder: optistruct, fem(_fwd), nt, work_dir, scratch, mem_mb
+  bead_post: ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{post_tcl_fwd}", "-input", "{h3d_fwd}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}"]
 client_token:                         # PC 연결(계약 esl_p3_ux.md §9.1): 연결 코드 → PC 토큰 esl_ct_…(서버엔 해시만)
   ttl_days: 30                        # 토큰 유효 기간
   code_ttl_min: 15                    # 연결 코드 유효 시간(1회용)
@@ -104,3 +109,35 @@ view3d:                               # ④ ESL 3D 하중 보기 파생 캐시(�
   build_wait_s: 60                    # 생성 대기 초과 시 503 VIEW3D_BUSY
 library:                              # 라이브러리·종합분석·덱(esl.library.settings): config_path 또는 settings
   config_path: library.yaml           # library.yaml 의 library.ista6 = ista6.yaml(같은 폴더). 블록을 지우면 라이브러리 쓰기 API 503
+opt_run:                              # v0.7.0 비드 최적화 서버 실행(계약 esl_opt_run.md §11). 섹션이 없으면 enabled: false
+  enabled: true                       # 실행에는 altair.optistruct_path(OptiStruct)·hw_exe_path(후처리 HyperView)가 필요(없으면 503)
+  max_entries: 200                    # 한 실행에 넣을 수 있는 ESL 최대 수
+  size: {tol_rel: 0.02, plate_tol_rel: 0.05, require_inch: true}    # S2: ESL 간 ±2 %, 템플릿 ±5 %, 같은 인치
+  template: {max_elems: 500000, flat_tol_rel: 0.02, max_tria_frac: 0.2}
+  bead_defaults: {angle: 45.0, min_width: 60.0, height: 10.0}      # 화면 기본값(deg, mm, mm)
+  keepout: {hole_radius_mm: 15.0, edge_band_mm: 10.0, hole_min_perimeter_mm: 5.0, max_rects: 20, frame_warn_mm: 1.0, rect_name_max: 40}
+  loads: {default_strategy: A, mac_merge: 0.95, max_cases: 20, default_k: 5, default_objective_norm: abs, linkage: average, c0_tol: 0.05}
+  mode:                               # 변형 모드 분류(§7.4) — 값 변경 시 rule_version 올림(auto 만 다시 계산, 사용자 수정 유지)
+    rule_version: 1
+    dent_resid_min: 0.5
+    dent_conc_min: 0.6
+    dent_area_frac: 0.05
+    min_energy_rel: 1.0e-6
+  solver: {drill_factor: 1.0e-4, backend: auto}                    # 초기 컴플라이언스 자체 솔버
+  solve:
+    nt: 4
+    desmax: 30
+    timeout_h: 12
+    log_tail_lines: 2000
+    error_patterns: ['(?m)^\s*\*\*\* ERROR']
+    converged_patterns: ['OPTIMIZATION HAS CONVERGED']
+    license_patterns: ['(?i)license.*(not available|checkout failed|insufficient|exceeded)', '(?i)ALM_\w+_ERROR']
+    license_retry: {max: 3, wait_s: 300}                           # 라이선스 부족: 3회 × 300 초 자동 재시도 후 실패
+    # iteration_pattern·objective_pattern·compliance_pattern·memory_patterns: 기본값은 서버 내장(backend core/config.py).
+    # 실기 .out 형식이 다르면 여기서 정규식으로 덮어쓴다 — docs/manual/opt_run_check.md V-OR-R1 ②
+    # OptiStruct 메모리 {mem_mb} = worker.per_job_memory_gb(없으면 max_memory_gb) × 1024 — os_solve 에 "-len", "{mem_mb}" 를 넣을 때만 쓰임
+    env: {}                           # 허용 키 ALTAIR_LICENSE_PATH·ALTAIR_HOME·OMP_*
+  post: {png_px: [1600, 900], bead_area_thr_rel: 0.1, report_map_cells: [96, 54]}
+  check: {bead_width_elem_factor: 2.0, min_nodes_per_cell: 64, max_aspect: 10.0, max_warp_deg: 15.0}
+  grid: {nx: 24, ny: 14}
+  ui: {max_preview_points: 20000}     # 평면도(plan-view) 요소 점 최대 수

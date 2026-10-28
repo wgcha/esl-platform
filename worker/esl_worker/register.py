@@ -434,6 +434,61 @@ def _jsonable(o: Any) -> Any:
     return json.loads(json.dumps(o, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x)))
 
 
+# ---------------------------------------------------------------- 비드 최적화(v0.7.0, esl_opt_run.md §6.2 OR-6)
+OPT_RESULT_FILES = ("opt.json", "report.html", "post/bead.npz", "post/bead_nodes.csv", "post/bead_map.png",
+                    "post/history.csv", "post/bead_mesh.rad", "post/bead_mesh.fem", "load/selection.json",
+                    "target/keepout.png")
+
+
+def opt_files(rdir: str) -> list[dict[str, Any]]:
+    """결과 파일 목록(실행 폴더 기준 '/' 상대경로, _backup·solve/tmp 제외): 주요 결과 + deck/* + solve 원본(.out·h3d·hist·stat)."""
+    out = []
+    rels = list(OPT_RESULT_FILES)
+    for sub, keep in (("deck", None), ("solve", (".out", ".h3d", ".hist", ".stat", ".json"))):
+        d = os.path.join(rdir, sub)
+        if os.path.isdir(d):
+            for n in sorted(os.listdir(d)):
+                p = os.path.join(d, n)
+                if os.path.isfile(p) and not os.path.islink(p) and (keep is None or n.endswith(keep)):
+                    rels.append(f"{sub}/{n}")
+    for rel in rels:
+        p = os.path.join(rdir, *rel.split("/"))
+        if os.path.isfile(p) and not os.path.islink(p):
+            out.append({"rel": rel, "size": os.path.getsize(p)})
+    return out
+
+
+def register_opt_run(conn: Connection, job: dict[str, Any], case: Any, rdir: str) -> dict[str, Any]:
+    """OPT_REGISTER: opt.json(OptResult) + 결과 파일 목록 → opt_runs.result, report_rel. artifacts 는 쓰지 않는다
+    (artifacts.case_id NOT NULL — 결과는 <esl_root>/_opt/<id>/ 파일, 백엔드 /opt/runs/{id}/files·download·bundle·report·
+    bead-map.png 가 같은 위치를 읽는다). 라이브러리 반영 없음(확정 7)."""
+    from esl_platform.core.repositories import opt as opt_repo
+
+    r = opt_repo.get_run(conn, job["opt_run_id"], for_update=True)
+    if r is None:
+        raise RegisterError("OPT_RUN_NOT_FOUND", "최적화 실행 행이 없습니다")
+    try:
+        res = co.read_json(os.path.join(rdir, "opt.json"))
+    except (OSError, ValueError) as exc:
+        raise RegisterError("TOOL_OUTPUT_MISSING", f"opt.json 을 읽을 수 없습니다: {exc}") from None
+    if not isinstance(res, dict) or not isinstance(res.get("load_selection"), dict):
+        raise RegisterError("OUTPUT_INVALID", "opt.json 에 하중 선정 결과가 없습니다")
+    files = opt_files(rdir)
+    res = {**res, "files": files, "job_id": job["id"]}
+    has_report = os.path.isfile(os.path.join(rdir, "report.html"))
+    opt_repo.update_run(conn, r["id"], result=_jsonable(res), report_rel="report.html" if has_report else None)
+    # 작업 경고에는 후처리에서 새로 생긴 것만(미수렴·c0_tol·메시 쓰기) — 생성·OPT_PREP·OPT_LOAD 경고는 이미 올라감
+    seen = set((job.get("params") or {}).get("warnings") or [])
+    seen |= set((res.get("load_selection") or {}).get("warnings") or [])
+    try:
+        seen |= set(co.read_json(os.path.join(rdir, "target", "prep.json")).get("warnings") or [])
+    except (OSError, ValueError):
+        pass
+    new = [str(w) for w in res.get("warnings") or [] if w not in seen]
+    return {"opt_run_id": r["id"], "n_files": len(files), "converged": res.get("converged"),
+            "iterations": res.get("iterations"), "report": has_report, "warnings": new}
+
+
 REGISTER = {"CASE_EXTRACT": register_extract, "ESL_SOLVE": register_esl, "VALIDATE": register_validation,
             "EXPORT": register_export, "CASE_REPORT": register_case_report, "LIB_ANALYZE": register_lib_analyze,
-            "LIB_COMPARE": register_lib_compare}
+            "LIB_COMPARE": register_lib_compare, "OPT_RUN": register_opt_run}

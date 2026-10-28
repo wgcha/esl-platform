@@ -341,7 +341,7 @@ describe("V-DP-24~26 단면선 개선", () => {
     unmount();
     renderApp(STAGE5); // 새로 열어도 복원
     await screen.findByTestId("sec-esl");
-    expect(inp("sec-ax-y-max").value).toBe("1");
+    await waitFor(() => expect(inp("sec-ax-y-max").value).toBe("1"));
     // 폭 방향 단면은 별도 키 → 자동
     fireEvent.click(screen.getByRole("button", { name: "폭 방향 단면" }));
     await waitFor(() => expect(screen.getByTestId("sec-xlabel").textContent).toBe("판 폭 방향 (mm)"));

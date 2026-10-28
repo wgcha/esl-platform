@@ -141,7 +141,11 @@ COMPARE_DIR = "_compare"      # 설계 버전 비교 <esl_root>/_compare/<id>/ (
 # P3-UX §6 서버 h3d 추출 출력 <esl_root>/_h3d/<Case 폴더>/raw/ — Case 폴더 밖(코어가 출력 폴더 안의 입력 폴더를 거부하므로
 # 계약의 <case>/01_extract/raw 대신 같은 esl_root 아래 형제 폴더. hw 작업 폴더·request.txt 는 <esl_root>/_h3d/<Case 폴더>/)
 H3D_DIR = "_h3d"
-_SEG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
+# v0.7.0 비드 최적화(esl_opt_run.md §4): 실행 <esl_root>/_opt/<id>/, 템플릿 <esl_root>/_templates/<id>/{input/, template.npz,
+# template.json, preview.json}. 쓰기는 이 두 폴더 아래만(업로드·Case 입력 폴더는 읽기만).
+OPT_DIR = "_opt"
+TEMPLATE_DIR = "_templates"
+_SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
 def esl_subdir(settings: Settings, *parts: str) -> str:
@@ -162,6 +166,16 @@ def esl_subdir(settings: Settings, *parts: str) -> str:
     if any(overlaps(cur, r) for r in settings.storage.input_roots):
         raise _unsafe("입력 루트와 겹치는 경로에는 쓰지 않습니다")
     return cur
+
+
+def opt_run_dir(settings: Settings, run_id: str) -> str:
+    """최적화 실행 폴더 <esl_root>/_opt/<id>(링크·탈출 검사)."""
+    return esl_subdir(settings, OPT_DIR, run_id)
+
+
+def template_dir(settings: Settings, template_id: str) -> str:
+    """템플릿 폴더 <esl_root>/_templates/<id>(링크·탈출 검사)."""
+    return esl_subdir(settings, TEMPLATE_DIR, template_id)
 
 
 def h3d_work_dir(settings: Settings, folder_name: str) -> str:

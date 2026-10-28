@@ -5,7 +5,7 @@ export type GuideTarget =
   | { kind: "cases" }
   | { kind: "new"; tab?: "pc" }
   | { kind: "stage"; n: number }
-  | { kind: "library" }
+  | { kind: "library"; tab?: "opt" | "templates" }
   | { kind: "analysisNew" }
   | { kind: "comparisonNew" }
   | { kind: "updates" }
@@ -204,6 +204,28 @@ export const GUIDE: GuideGroup[] = [
         steps: ["라이브러리 → '버전 비교' → 모델·기준 버전·새 버전 선택 후 실행.", "판정 배지와 씬별 표, 보고서로 개선·악화를 확인합니다."],
         target: { kind: "comparisonNew" },
         label: "버전 비교 만들기",
+      },
+      {
+        id: "opt-run",
+        title: "비드 최적화(서버 실행)",
+        what: "라이브러리에서 고른 ESL로 서버가 OptiStruct 비드 최적화를 직접 돌립니다. 기존 형상(S1)은 같은 모델 ESL만, 템플릿(S2)은 같은 크기 ESL만.",
+        steps: [
+          "라이브러리 항목에서 ESL을 체크(첫 행 = 기준, 같은 크기만) → '선택한 ESL로 비드 최적화 (n)'.",
+          "① 대상·설계 PID → ② 비드 금지 영역(자동 구멍·가장자리 + 사각형, 평면도에서 드래그) → ③ ESL·모드 → ④ 하중 선정 전략·목표 기준 → ⑤ 비드 치수 → '최적화 실행'.",
+          "상세에서 하중 선정 표(ⓘ 방법·출처)·수렴·비드 맵을 보고 비드 반영 메시(.rad/.fem)를 받습니다.",
+        ],
+        check: ["하중 선정 표에서 병합·군집된 하중이 의도와 맞는지", "금지 영역(회색 빗금·주황 사각형)에 비드가 생기지 않았는지"],
+        tip: "기본값(A 전부 넣기 · 절대 기준 · 45°·60·10 mm)으로 먼저 돌려 보세요. 결과는 라이브러리가 아니라 '최적화 실행' 탭에 남습니다.",
+        target: { kind: "library", tab: "opt" },
+        label: "최적화 실행 목록",
+      },
+      {
+        id: "opt-template",
+        title: "템플릿 등록(S2)",
+        what: "크기가 같은 여러 모델의 ESL을 한 평판 메시에 모아 최적화할 때 쓰는 쉘 메시(.rad + include 또는 .fem)입니다. 모든 사용자에게 공개됩니다.",
+        steps: ["라이브러리 → '템플릿' 탭 → '템플릿 등록' → 파일 끌어다 놓기 → 자동 검사 → 제목·인치(선택)·설명 → '등록'.", "삭제는 등록자·관리자만, 이전 실행이 참조 중이면 목록에서만 숨깁니다(보관)."],
+        target: { kind: "library", tab: "templates" },
+        label: "템플릿 열기",
       },
     ],
   },

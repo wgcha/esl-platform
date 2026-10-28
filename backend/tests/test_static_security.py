@@ -32,8 +32,9 @@ def _files():
             yield from (p for p in base.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-# P3-UX §6: 외부 프로그램 실행은 서버 h3d 추출 모듈 하나만(argv 템플릿·shell=False — esl.md §4.4)
-ALLOWED = {"worker/esl_worker/h3d.py": {"subprocess"}}
+# P3-UX §6 · v0.7.0: 외부 프로그램 실행은 공통 모듈 localproc 하나만(h3d 추출·OptiStruct·비드 후처리 — argv 템플릿·
+# shell=False, esl.md §4.4)
+ALLOWED = {"worker/esl_worker/localproc.py": {"subprocess"}}
 
 
 def test_no_forbidden_patterns():
@@ -48,8 +49,8 @@ def test_no_forbidden_patterns():
 
 
 def test_h3d_runs_without_shell():
-    """h3d 추출 모듈: Popen 은 shell=False 리터럴로만, os.system·shell=True 없음."""
-    text = (REPO / "worker" / "esl_worker" / "h3d.py").read_text(encoding="utf-8")
+    """외부 실행 공통 모듈(localproc): Popen 은 shell=False 리터럴로만, os.system·shell=True 없음."""
+    text = (REPO / "worker" / "esl_worker" / "localproc.py").read_text(encoding="utf-8")
     calls = re.findall(r"subprocess\.(Popen|run)\(([^)]*)", text)
     assert calls and all("shell=False" in args for _, args in calls)
 
@@ -98,8 +99,10 @@ def test_raw_body_read_only_in_upload_router():
 
 
 def test_core_called_only_via_adapter():
-    """플랫폼은 코어를 core_adapter 한 곳에서만 import 한다."""
+    """플랫폼은 코어를 어댑터에서만 import 한다: 워커 core_adapter, 백엔드 비드 최적화 opt_core(v0.7.0 — esl.opt 의
+    가벼운 함수만, 계약 esl_opt_run.md §15 경계)."""
     rx = re.compile(r"^\s*(from\s+esl(\.\w+)*\s+import|import\s+esl(\.\w+)*)\b", re.M)
+    adapters = {"worker/esl_worker/core_adapter.py", "backend/esl_platform/core/opt_core.py"}
     bad = [str(p.relative_to(REPO)) for p in _files() if rx.search(p.read_text(encoding="utf-8"))
-           and p.name != "core_adapter.py"]
+           and p.relative_to(REPO).as_posix() not in adapters]
     assert bad == []

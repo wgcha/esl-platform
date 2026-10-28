@@ -11,6 +11,9 @@ P3-UX §6: 서버 h3d 추출(워커 LOCAL step H3D_EXTRACT)만 외부 프로그�
 `commands.h3d_extract`(argv 템플릿, esl.md §4.4: argv[0] = `{hw}`, 허용 placeholder 만, shell=False).
 TCL 은 설정이 아니라 코드 스냅샷 안 `resources/tcl/esl_h3d_extract.tcl`(`default_extract_tcl()`).
 P3-UX §9.1: PC 연결 코드·토큰 `client_token.*`.
+v0.7.0(esl_opt_run.md §11): 비드 최적화 `opt_run.*`(OptRunCfg — 기본값 = `esl.opt.DEFAULTS`, 섹션 없으면 enabled false),
+OptiStruct `altair.optistruct_path`·`altair.max_concurrent_os`, argv 템플릿 `commands.os_check`·`os_solve`(argv[0] =
+`{optistruct}`)·`bead_post`(argv[0] = `{hw}`). 후처리 TCL 은 코드 스냅샷 안 `resources/tcl/esl_bead_post.tcl`.
 """
 
 from __future__ import annotations
@@ -96,7 +99,7 @@ class StorageCfg(_M):
         return d
 
 
-UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"]
+UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem"]   # .fem: S2 템플릿(v0.7.0)
 
 
 class UploadCfg(_M):
@@ -153,6 +156,14 @@ H3D_EXTRACT_DEFAULT = ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{ex
 H3D_EXTRACT_PLACEHOLDERS = ("hw", "extract_tcl", "extract_tcl_fwd", "h3d", "h3d_fwd", "request", "request_fwd",
                             "request_json", "request_json_fwd", "out_dir", "out_dir_fwd", "part", "hot_k", "top_n")
 EXE_FORBIDDEN = re.compile(r'[&|<>^%!"\x00-\x1f]')       # argv[0] 실행 파일 경로: 공백만 허용
+# esl_opt_run.md §8.1·§9·§11: OptiStruct(-check·본 실행)·비드 후처리(hw) argv 템플릿
+OS_CHECK_DEFAULT = ["{optistruct}", "{fem}", "-check", "-tmpdir", "{scratch}"]
+OS_SOLVE_DEFAULT = ["{optistruct}", "{fem}", "-nt", "{nt}", "-tmpdir", "{scratch}"]
+BEAD_POST_DEFAULT = ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{post_tcl_fwd}", "-input", "{h3d_fwd}",
+                     "-output", "{out_dir_fwd}", "-config", "{request_fwd}"]
+OS_PLACEHOLDERS = ("optistruct", "fem", "fem_fwd", "nt", "work_dir", "scratch", "mem_mb")
+BEAD_POST_PLACEHOLDERS = ("hw", "post_tcl", "post_tcl_fwd", "h3d", "h3d_fwd", "out_dir", "out_dir_fwd", "request",
+                          "request_fwd")
 
 
 class AltairCfg(_M):
@@ -162,10 +173,142 @@ class AltairCfg(_M):
     # 실행 파일 경로는 코드에 두지 않는다(esl.md §2) — 예시·설치 설정이 채움(2026.1 기본 경로). None = 서버 h3d 추출 불가
     hw_exe_path: str | None = None
     max_concurrent_hw: int = Field(default=2, ge=1, le=MAX_SLOTS)   # 동시 hw 수(라이선스 한도) — DB 세마포어
+    # v0.7.0 비드 최적화(esl_opt_run.md §8): OptiStruct 실행 파일(optistruct.bat). None = 서버 최적화 불가(503)
+    optistruct_path: str | None = None
+    max_concurrent_os: int = Field(default=1, ge=1, le=MAX_SLOTS)   # 동시 OptiStruct 수 — DB 세마포어(acquire_os)
 
 
 class CommandsCfg(_M):
     h3d_extract: list[str] = Field(default_factory=lambda: list(H3D_EXTRACT_DEFAULT), min_length=1)
+    os_check: list[str] = Field(default_factory=lambda: list(OS_CHECK_DEFAULT), min_length=1)
+    os_solve: list[str] = Field(default_factory=lambda: list(OS_SOLVE_DEFAULT), min_length=1)
+    bead_post: list[str] = Field(default_factory=lambda: list(BEAD_POST_DEFAULT), min_length=1)
+
+
+# ---------------------------------------------------------------- v0.7.0 비드 최적화(esl_opt_run.md §11)
+# 기본값은 esl.opt.DEFAULTS 와 같다(시험 test_opt_config 가 확인). 값 변경은 설정 파일에서.
+class OptSizeCfg(_M):
+    tol_rel: float = Field(default=0.02, gt=0, le=1)
+    plate_tol_rel: float = Field(default=0.05, gt=0, le=1)
+    require_inch: bool = True
+
+
+class OptTemplateCfg(_M):
+    max_elems: int = Field(default=500000, ge=1)
+    flat_tol_rel: float = Field(default=0.02, gt=0)
+    max_tria_frac: float = Field(default=0.2, ge=0, le=1)
+
+
+class OptBeadCfg(_M):
+    angle: float = Field(default=45.0, gt=0, lt=90)          # deg
+    min_width: float = Field(default=60.0, gt=0)            # mm
+    height: float = Field(default=10.0, gt=0)               # mm
+
+
+class OptKeepoutCfg(_M):
+    hole_radius_mm: float = Field(default=15.0, ge=0)
+    edge_band_mm: float = Field(default=10.0, ge=0)
+    hole_min_perimeter_mm: float = Field(default=5.0, ge=0)
+    max_rects: int = Field(default=20, ge=0, le=1000)
+    frame_warn_mm: float = Field(default=1.0, ge=0)
+    rect_name_max: int = Field(default=40, ge=1, le=200)
+
+
+class OptLoadsCfg(_M):
+    default_strategy: Literal["A", "B", "C"] = "A"
+    mac_merge: float = Field(default=0.95, gt=0, le=1)
+    max_cases: int = Field(default=20, ge=1, le=1000)
+    default_k: int = Field(default=5, ge=1)
+    default_objective_norm: Literal["abs", "rel"] = "abs"
+    linkage: Literal["average", "complete", "single", "weighted"] = "average"
+    c0_tol: float = Field(default=0.05, ge=0)
+
+    @model_validator(mode="after")
+    def _k(self) -> "OptLoadsCfg":
+        if self.default_k > self.max_cases:
+            raise ValueError("opt_run.loads.default_k 는 max_cases 이하여야 합니다")
+        return self
+
+
+class OptModeCfg(_M):
+    rule_version: int = Field(default=1, ge=1)
+    dent_resid_min: float = Field(default=0.5, ge=0, le=1)
+    dent_conc_min: float = Field(default=0.6, ge=0, le=1)
+    dent_area_frac: float = Field(default=0.05, gt=0, le=1)
+    min_energy_rel: float = Field(default=1.0e-6, ge=0)
+
+
+class OptSolverCfg(_M):
+    drill_factor: float = Field(default=1.0e-4, gt=0)
+    backend: str = "auto"
+
+
+class OptLicenseRetryCfg(_M):
+    max: int = Field(default=3, ge=0, le=100)
+    wait_s: float = Field(default=300, ge=0)
+
+
+OPT_SOLVE_ENV_KEYS = ("ALTAIR_LICENSE_PATH", "ALTAIR_HOME")      # + OMP_* (계약 §8.1)
+
+
+class OptSolveCfg(_M):
+    nt: int = Field(default=4, ge=1, le=1024)
+    desmax: int = Field(default=30, ge=1, le=10000)
+    timeout_h: float = Field(default=12, gt=0)
+    log_tail_lines: int = Field(default=2000, ge=1)
+    error_patterns: list[str] = Field(default_factory=lambda: [r"(?m)^\s*\*\*\* ERROR"])
+    converged_patterns: list[str] = Field(default_factory=lambda: ["OPTIMIZATION HAS CONVERGED"])
+    license_patterns: list[str] = Field(default_factory=lambda: [
+        r"(?i)license.*(not available|checkout failed|insufficient|exceeded)", r"(?i)ALM_\w+_ERROR"])
+    license_retry: OptLicenseRetryCfg = OptLicenseRetryCfg()
+    env: dict[str, str] = Field(default_factory=dict)
+    iteration_pattern: str = r"(?m)^\s*ITERATION\s+(\d+)"
+    objective_pattern: str = r"(?im)^\s*Objective\s+Function\b[^=\n]*=\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)"
+    compliance_pattern: str = (r"(?m)^\s*\|\s*\d+\s*\|[^|\n]*\|\s*COMPL\w*\s*\|[^|\n]*\|[^|\n]*\|\s*(\d+)\s*\|"
+                               r"\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)")
+    memory_patterns: list[str] = Field(default_factory=lambda: [r"(?i)(insufficient|not enough)\s+memory",
+                                                                r"(?i)memory allocation failed"])
+
+
+class OptPostCfg(_M):
+    png_px: list[int] = Field(default_factory=lambda: [1600, 900], min_length=2, max_length=2)
+    bead_area_thr_rel: float = Field(default=0.1, ge=0, le=1)
+    report_map_cells: list[int] = Field(default_factory=lambda: [96, 54], min_length=2, max_length=2)
+
+
+class OptCheckCfg(_M):
+    bead_width_elem_factor: float = Field(default=2.0, ge=0)
+    min_nodes_per_cell: float = Field(default=64, ge=0)
+    max_aspect: float = Field(default=10.0, gt=0)
+    max_warp_deg: float = Field(default=15.0, gt=0)
+
+
+class OptGridCfg(_M):
+    nx: int = Field(default=24, ge=1, le=1000)
+    ny: int = Field(default=14, ge=1, le=1000)
+
+
+class OptUiCfg(_M):
+    max_preview_points: int = Field(default=20000, ge=10)
+
+
+class OptRunCfg(_M):
+    """비드 최적화(esl_opt_run.md §11). 섹션이 없으면 enabled false(POST /opt/runs 503 OPT_RUN_DISABLED)."""
+
+    enabled: bool = False
+    max_entries: int = Field(default=200, ge=1, le=10000)
+    size: OptSizeCfg = OptSizeCfg()
+    template: OptTemplateCfg = OptTemplateCfg()
+    bead_defaults: OptBeadCfg = OptBeadCfg()
+    keepout: OptKeepoutCfg = OptKeepoutCfg()
+    loads: OptLoadsCfg = OptLoadsCfg()
+    mode: OptModeCfg = OptModeCfg()
+    solver: OptSolverCfg = OptSolverCfg()
+    solve: OptSolveCfg = OptSolveCfg()
+    post: OptPostCfg = OptPostCfg()
+    check: OptCheckCfg = OptCheckCfg()
+    grid: OptGridCfg = OptGridCfg()
+    ui: OptUiCfg = OptUiCfg()
 
 
 class ClientTokenCfg(_M):
@@ -290,6 +433,7 @@ class Settings(_M):
     altair: AltairCfg = AltairCfg()
     commands: CommandsCfg = CommandsCfg()
     client_token: ClientTokenCfg = ClientTokenCfg()
+    opt_run: OptRunCfg | None = None    # v0.7.0 비드 최적화. 없으면 enabled false
 
     @property
     def api_prefix(self) -> str:
@@ -374,31 +518,111 @@ def template_placeholders(tok: str) -> list[str]:
     return _PH.findall(tok)
 
 
-def _altair_issues(s: Settings) -> list[Issue]:
+def _exe_issue(key: str, p: str | None) -> Issue | None:
+    if p is None:
+        return None
+    if not is_abs_path(p):
+        return Issue(key, "절대경로여야 합니다")
+    if EXE_FORBIDDEN.search(p):
+        return Issue(key, '경로에 제어문자·& | < > ^ % ! " 를 쓸 수 없습니다(공백은 허용)')
+    return None
+
+
+def _argv_issues(key: str, tpl: list[str], exe: str, allowed: tuple[str, ...],
+                 need: tuple[tuple[str, ...], ...]) -> list[Issue]:
+    """argv 템플릿 공통 검사(esl.md §4.4): argv[0] = {exe}, 허용 placeholder 만, 중괄호 짝, 메타문자 거부, 필수 placeholder."""
     out: list[Issue] = []
-    hw = s.altair.hw_exe_path
-    if hw is None:
-        pass
-    elif not is_abs_path(hw):
-        out.append(Issue("altair.hw_exe_path", "절대경로여야 합니다"))
-    elif EXE_FORBIDDEN.search(hw):
-        out.append(Issue("altair.hw_exe_path", '경로에 제어문자·& | < > ^ % ! " 를 쓸 수 없습니다(공백은 허용)'))
-    tpl = s.commands.h3d_extract
-    if tpl[0] != "{hw}":
-        out.append(Issue("commands.h3d_extract[0]", "argv[0] 은 {hw} 여야 합니다(esl.md §4.4)"))
+    if tpl[0] != "{" + exe + "}":
+        out.append(Issue(f"{key}[0]", f"argv[0] 은 {{{exe}}} 여야 합니다(esl.md §4.4)"))
     for i, tok in enumerate(tpl):
         for name in template_placeholders(tok):
-            if name not in H3D_EXTRACT_PLACEHOLDERS or (name == "hw" and i != 0):
-                out.append(Issue(f"commands.h3d_extract[{i}]", f"허용되지 않는 placeholder {{{name}}}"))
+            if name not in allowed or (name == exe and i != 0):
+                out.append(Issue(f"{key}[{i}]", f"허용되지 않는 placeholder {{{name}}}"))
         if "{" in _PH.sub("", tok) or "}" in _PH.sub("", tok):
-            out.append(Issue(f"commands.h3d_extract[{i}]", "중괄호 짝이 맞지 않습니다"))
+            out.append(Issue(f"{key}[{i}]", "중괄호 짝이 맞지 않습니다"))
         if i and EXE_FORBIDDEN.search(_PH.sub("", tok)):
-            out.append(Issue(f"commands.h3d_extract[{i}]", '제어문자·& | < > ^ % ! " 를 쓸 수 없습니다'))
-    if not any(n in ("out_dir", "out_dir_fwd") for t in tpl for n in template_placeholders(t)):
-        out.append(Issue("commands.h3d_extract", "{out_dir} 또는 {out_dir_fwd} 가 필요합니다"))
-    if not any(n in ("h3d", "h3d_fwd") for t in tpl for n in template_placeholders(t)):
-        out.append(Issue("commands.h3d_extract", "{h3d} 또는 {h3d_fwd} 가 필요합니다"))
+            out.append(Issue(f"{key}[{i}]", '제어문자·& | < > ^ % ! " 를 쓸 수 없습니다'))
+    for group in need:
+        if not any(n in group for t in tpl for n in template_placeholders(t)):
+            out.append(Issue(key, " 또는 ".join("{" + g + "}" for g in group) + " 가 필요합니다"))
     return out
+
+
+def _altair_issues(s: Settings) -> list[Issue]:
+    out: list[Issue] = []
+    for key, p in (("altair.hw_exe_path", s.altair.hw_exe_path), ("altair.optistruct_path", s.altair.optistruct_path)):
+        iss = _exe_issue(key, p)
+        if iss:
+            out.append(iss)
+    out += _argv_issues("commands.h3d_extract", s.commands.h3d_extract, "hw", H3D_EXTRACT_PLACEHOLDERS,
+                        (("out_dir", "out_dir_fwd"), ("h3d", "h3d_fwd")))
+    out += _argv_issues("commands.os_check", s.commands.os_check, "optistruct", OS_PLACEHOLDERS, (("fem", "fem_fwd"),))
+    out += _argv_issues("commands.os_solve", s.commands.os_solve, "optistruct", OS_PLACEHOLDERS, (("fem", "fem_fwd"),))
+    out += _argv_issues("commands.bead_post", s.commands.bead_post, "hw", BEAD_POST_PLACEHOLDERS,
+                        (("out_dir", "out_dir_fwd"), ("h3d", "h3d_fwd")))
+    return out
+
+
+def _opt_issues(s: Settings) -> list[Issue]:
+    """opt_run 의미 검사: 정규식 컴파일, solve.env 허용 키(ALTAIR_LICENSE_PATH·ALTAIR_HOME·OMP_*)."""
+    o = s.opt_run
+    if o is None:
+        return []
+    out: list[Issue] = []
+    sv = o.solve
+    pats = [(f"opt_run.solve.{k}[{i}]", p) for k in ("error_patterns", "converged_patterns", "license_patterns",
+                                                       "memory_patterns") for i, p in enumerate(getattr(sv, k))]
+    pats += [(f"opt_run.solve.{k}", getattr(sv, k)) for k in ("iteration_pattern", "objective_pattern",
+                                                              "compliance_pattern")]
+    for key, pat in pats:
+        try:
+            re.compile(pat)
+        except re.error as exc:
+            out.append(Issue(key, f"정규식 오류: {exc}"))
+    for k, v in sv.env.items():
+        if not (k in OPT_SOLVE_ENV_KEYS or re.fullmatch(r"OMP_[A-Z0-9_]+", k)):
+            out.append(Issue(f"opt_run.solve.env.{k}", "허용 키는 ALTAIR_LICENSE_PATH·ALTAIR_HOME·OMP_* 입니다"))
+        elif re.search(r"[\x00-\x1f]", v):
+            out.append(Issue(f"opt_run.solve.env.{k}", "제어문자를 쓸 수 없습니다"))
+    if any(int(x) < 16 for x in o.post.png_px) or any(int(x) < 1 for x in o.post.report_map_cells):
+        out.append(Issue("opt_run.post", "png_px ≥ 16, report_map_cells ≥ 1"))
+    return out
+
+
+def opt_settings(s: Settings | None) -> dict[str, Any]:
+    """코어 esl.opt 가 받는 opt_run 설정 dict(esl.opt.settings 와 같은 키, 섹션 없으면 DEFAULTS·enabled false)."""
+    from .opt_core import settings as _opt_settings
+
+    if s is None or s.opt_run is None:
+        return _opt_settings(None)
+    return _opt_settings({"opt_run": s.opt_run.model_dump()})
+
+
+def default_bead_post_tcl() -> str:
+    """비드 후처리 TCL: 코드 스냅샷 안 resources/tcl/esl_bead_post.tcl."""
+    return os.path.join(app_root(), "resources", "tcl", "esl_bead_post.tcl")
+
+
+def opt_solver_status(s: Settings | None) -> tuple[bool, str | None]:
+    """서버 비드 최적화 실행 가능 여부(환경 점검 check.py 와 GET /opt/settings.solver_ready 가 같은 함수, V-OR-19).
+
+    반환 (ready, reason). 조건: opt_run.enabled, altair.optistruct_path 설정·파일 존재, 후처리 hw(altair.hw_exe_path)
+    설정, esl_bead_post.tcl 존재.
+    """
+    if s is None:
+        return False, "설정 검증 실패"
+    if s.opt_run is None or not s.opt_run.enabled:
+        return False, "비드 최적화가 꺼져 있습니다(설정 opt_run.enabled)"
+    p = s.altair.optistruct_path
+    if not p:
+        return False, "서버 OptiStruct 경로가 설정되지 않았습니다(altair.optistruct_path — 관리자 문의)"
+    if not os.path.isfile(p):
+        return False, f"OptiStruct 실행 파일이 없습니다: {p} (altair.optistruct_path 확인)"
+    if not s.altair.hw_exe_path:
+        return False, "비드 후처리용 HyperView 경로가 설정되지 않았습니다(altair.hw_exe_path)"
+    if not os.path.isfile(default_bead_post_tcl()):
+        return False, f"비드 후처리 TCL 이 코드 스냅샷에 없습니다: {default_bead_post_tcl()}"
+    return True, None
 
 
 def app_root() -> str:
@@ -492,6 +716,7 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
     if s.upload.max_file_bytes > s.upload.max_upload_bytes:
         issues.append(Issue("upload.max_file_bytes", "max_upload_bytes 보다 클 수 없습니다"))
     issues += _altair_issues(s)
+    issues += _opt_issues(s)
     w = s.worker
     if w.lease_ttl_s <= w.heartbeat_interval_s:
         issues.append(Issue("worker.lease_ttl_s", "heartbeat_interval_s 보다 커야 합니다"))
