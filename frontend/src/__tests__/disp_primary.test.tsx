@@ -90,6 +90,7 @@ describe("V-DP-13 ⑤ 화면 구성", () => {
     await screen.findByTestId("sec-rad");
     expect(screen.queryByTestId("sec-esl")).toBeNull();
     expect(screen.queryByTestId("sec-dw")).toBeNull();
+    expect(screen.queryByTestId("sec-lg-esl")).toBeNull();
     expect(screen.queryByTestId("sec-stats")).toBeNull();
     expect((screen.getByRole("option", { name: /최대 변위 오차 노드/ }) as HTMLOptionElement).disabled).toBe(true);
     expect((screen.getByRole("option", { name: /hotspot 1위/ }) as HTMLOptionElement).disabled).toBe(false);
@@ -273,10 +274,11 @@ describe("V-DP-24~26 단면선 개선", () => {
     expect(screen.getAllByTestId("sec-suggest-marker").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("V-DP-26: Δw 보조 축 곡선·수치 줄, 배율 라벨·툴팁, '실제 크기(×1)' 토글", async () => {
+  it("V-DP-26: Δw 곡선·보조 축 없음(v0.5.9)·수치 줄, 배율 라벨·툴팁, '실제 크기(×1)' 토글", async () => {
     renderApp(STAGE5);
-    await screen.findByTestId("sec-dw");
-    expect(screen.getByTestId("sec-dw-axis")).toBeTruthy();
+    await screen.findByTestId("sec-esl");
+    expect(screen.queryByTestId("sec-dw")).toBeNull();
+    expect(screen.queryByTestId("sec-dw-axis")).toBeNull();
     expect(screen.getByTestId("sec-stats").textContent).toMatch(/Δw 최대 .* mm \(U 대비 .*\) · RMS .* mm \(U 대비 .*\) · 요소 \d+개/);
     const label = screen.getByTestId("sec-scale-label");
     expect(label.closest("label")!.getAttribute("title")).toBe("배율은 화면 표시용이며 값·판정에 영향 없음");
@@ -291,5 +293,115 @@ describe("V-DP-24~26 단면선 개선", () => {
     fireEvent.click(toggle);
     expect(screen.getByTestId("sec-k").textContent).toBe(k0);
     expect(slider.disabled).toBe(false);
+  });
+
+  // ---- v0.5.9 단면 그래프: 축 편집 · 범례 선택 (계약 §15.6)
+  const inp = (id: string) => screen.getByTestId(id) as HTMLInputElement;
+  const edit = (id: string, v: string) => fireEvent.change(inp(id), { target: { value: v } });
+
+  it("V-DP-27: 축 입력이 그래프에 반영되고 '자동'으로 복귀, 잘못된 값은 직전 범위 유지, 범위 밖은 클리핑", async () => {
+    window.localStorage.clear();
+    renderApp(STAGE5);
+    await screen.findByTestId("sec-esl");
+    const ymin0 = inp("sec-ax-y-min").value;
+    const ymax0 = inp("sec-ax-y-max").value;
+    const yAuto = screen.getByRole("button", { name: "Y축 자동" }) as HTMLButtonElement;
+    expect(yAuto.disabled).toBe(true);
+    const tick0 = [...document.querySelectorAll("svg[aria-label='단면선'] .chart-tick")].map((t) => t.textContent).join("|");
+    edit("sec-ax-y-min", "-2");
+    expect(inp("sec-ax-y-min").value).toBe("-2");
+    expect(screen.getByTestId("sec-ax-y").getAttribute("data-manual")).toBe("true");
+    expect([...document.querySelectorAll("svg[aria-label='단면선'] .chart-tick")].map((t) => t.textContent).join("|")).not.toBe(tick0);
+    expect(document.querySelector("svg[aria-label='단면선'] clipPath rect")).toBeTruthy(); // 범위 밖 데이터는 clipPath 로 자름
+    expect(document.querySelector("svg[aria-label='단면선'] g[clip-path]")).toBeTruthy();
+    // 최소 ≥ 최대 는 거부(직전 유효 범위 유지)
+    edit("sec-ax-y-min", "1000");
+    expect(inp("sec-ax-y-min").getAttribute("aria-invalid")).toBe("true");
+    // X 축도 같은 방식
+    edit("sec-ax-x-max", "0.5");
+    expect(screen.getByTestId("sec-ax-x").getAttribute("data-manual")).toBe("true");
+    // 자동 복귀
+    fireEvent.click(yAuto);
+    expect(inp("sec-ax-y-min").value).toBe(ymin0);
+    expect(inp("sec-ax-y-max").value).toBe(ymax0);
+    expect(yAuto.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "X축 자동" }));
+    expect(screen.getByTestId("sec-ax-x").getAttribute("data-manual")).toBe("false");
+  });
+
+  it("V-DP-27b: 축 범위는 (검증 id·축 방향)별 localStorage 에 기억되고, 저장소 오류에도 동작", async () => {
+    window.localStorage.clear();
+    const { unmount } = renderApp(STAGE5);
+    await screen.findByTestId("sec-esl");
+    edit("sec-ax-y-max", "1");
+    const keys = Object.keys(window.localStorage).filter((x) => x.startsWith("esl.secaxis.v1:"));
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/:eta$/);
+    expect(JSON.parse(window.localStorage.getItem(keys[0])!).y.max).toBe(1);
+    unmount();
+    renderApp(STAGE5); // 새로 열어도 복원
+    await screen.findByTestId("sec-esl");
+    expect(inp("sec-ax-y-max").value).toBe("1");
+    // 폭 방향 단면은 별도 키 → 자동
+    fireEvent.click(screen.getByRole("button", { name: "폭 방향 단면" }));
+    await waitFor(() => expect(screen.getByTestId("sec-xlabel").textContent).toBe("판 폭 방향 (mm)"));
+    await waitFor(() => expect(screen.getByTestId("sec-ax-y").getAttribute("data-manual")).toBe("false"));
+    // 자동 복귀 시 키 삭제
+    fireEvent.click(screen.getByRole("button", { name: "길이 방향 단면" }));
+    await waitFor(() => expect(inp("sec-ax-y-max").value).toBe("1"));
+    fireEvent.click(screen.getByRole("button", { name: "Y축 자동" }));
+    expect(window.localStorage.getItem(keys[0])).toBeNull();
+  });
+
+  it("V-DP-27c: localStorage 읽기·쓰기가 모두 던져도 화면은 메모리 상태로 동작", async () => {
+    const getSpy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const setSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      renderApp(STAGE5);
+      await screen.findByTestId("sec-esl");
+      edit("sec-ax-y-max", "1");
+      expect(screen.getByTestId("sec-ax-y").getAttribute("data-manual")).toBe("true");
+      expect(inp("sec-ax-y-max").value).toBe("1");
+    } finally {
+      getSpy.mockRestore();
+      setSpy.mockRestore();
+    }
+  });
+
+  it("V-DP-28: 범례 클릭으로 계열 숨김·표시, 최소 1개 유지, 숨긴 항목 흐리게, 자동 범위는 보이는 계열 기준으로 재계산", async () => {
+    window.localStorage.clear();
+    renderApp(STAGE5);
+    await screen.findByTestId("sec-esl");
+    const lg = (k: string) => screen.getByTestId(`sec-lg-${k}`);
+    const range = () => `${inp("sec-ax-y-min").value}~${inp("sec-ax-y-max").value}`;
+    const r0 = range();
+    fireEvent.click(lg("rad"));
+    expect(screen.queryByTestId("sec-rad")).toBeNull();
+    expect(lg("rad").getAttribute("aria-pressed")).toBe("false");
+    expect(lg("rad").className).toMatch(/off/);
+    expect(screen.getByTestId("sec-esl")).toBeTruthy();
+    fireEvent.click(lg("esl"));
+    expect(screen.queryByTestId("sec-esl")).toBeNull();
+    expect(screen.getByTestId("sec-init")).toBeTruthy();
+    const rInit = range();
+    expect(rInit).not.toBe(r0); // 초기 형상만 → 범위 재계산
+    // 마지막 하나는 숨길 수 없음
+    fireEvent.click(lg("init"));
+    expect(screen.getByTestId("sec-init")).toBeTruthy();
+    expect(lg("init").getAttribute("aria-pressed")).toBe("true");
+    // 다시 표시
+    fireEvent.click(lg("rad"));
+    fireEvent.click(lg("esl"));
+    expect(screen.getByTestId("sec-rad")).toBeTruthy();
+    expect(screen.getByTestId("sec-esl")).toBeTruthy();
+    expect(range()).toBe(r0);
+    // 수동 범위는 계열 토글로 바뀌지 않음
+    edit("sec-ax-y-max", "1");
+    fireEvent.click(lg("rad"));
+    expect(inp("sec-ax-y-max").value).toBe("1");
   });
 });
