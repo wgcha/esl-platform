@@ -10,12 +10,16 @@
 # Windows 전용 부분(DPAPI, 파일 선택 창, 브라우저 열기)은 아래 함수 몇 개에만 있다 - 시험은 이 함수들을 바꿔 끼워
 # Linux pwsh 에서 나머지를 실제로 실행한다(tests/windows/test_pc_upload_client.py). PowerShell 5.1 호환 문법만 쓴다.
 
-$EslAllowedExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl')
+# 결과 폴더(csv)에서 올리는 확장자. .h3d 는 rel 'h3d/...' 로만 올린다(압축 모드·원본 모드, 계약 esl_upload_speed.md).
+$EslResultExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl')
+$EslAllowedExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl', '.h3d')
 $EslSegmentBad = '[\x00-\x1f\x7f<>:"|?*\\&^%!]'
 $EslReserved = '^(con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$)$'
 $EslRetries = 5
 $EslRetryBaseMs = 1000
 $EslHttpTimeoutSec = 900
+$EslDefaultParallel = 4
+$EslMaxParallel = 8
 
 function Say([string]$Message, [string]$Color = 'Gray') { Write-Host $Message -ForegroundColor $Color }
 
@@ -132,10 +136,22 @@ function Test-EslLoopback([string]$Url) {
     return ($h -ieq 'localhost' -or $h -like '127.*' -or $h -eq '::1')
 }
 
-function New-EslHttpClient([string]$ServerUrl, [int]$TimeoutSec = $EslHttpTimeoutSec) {
+# 병렬 전송(프로토콜 2): .NET Framework 는 호스트당 동시 연결 기본 2 -> HttpClient 를 만들기 전에 parallel*2+2 이상으로 올린다.
+function Set-EslConnectionLimit([int]$Parallel) {
+    $want = [Math]::Max(2, $Parallel * 2 + 2)
+    try {
+        if ([Net.ServicePointManager]::DefaultConnectionLimit -lt $want) { [Net.ServicePointManager]::DefaultConnectionLimit = $want }
+    }
+    catch { }
+    return [Net.ServicePointManager]::DefaultConnectionLimit
+}
+
+function New-EslHttpClient([string]$ServerUrl, [int]$TimeoutSec = $EslHttpTimeoutSec, [int]$Parallel = 4) {
     try { Add-Type -AssemblyName System.Net.Http } catch { }
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+    [void](Set-EslConnectionLimit $Parallel)
     $handler = New-Object System.Net.Http.HttpClientHandler
+    try { if ($handler.MaxConnectionsPerServer -lt ($Parallel * 2 + 2)) { $handler.MaxConnectionsPerServer = ($Parallel * 2 + 2) } } catch { }
     if (Test-EslLoopback $ServerUrl) {
         $handler.UseProxy = $false
     }
@@ -153,13 +169,15 @@ function New-EslHttpClient([string]$ServerUrl, [int]$TimeoutSec = $EslHttpTimeou
     return $client
 }
 
-function New-EslContext([string]$ServerUrl, $Client) {
-    if (-not $Client) { $Client = New-EslHttpClient $ServerUrl }
+function New-EslContext([string]$ServerUrl, $Client, [int]$Parallel = 4) {
+    $Parallel = [Math]::Min([Math]::Max($Parallel, 1), $EslMaxParallel)
+    if (-not $Client) { $Client = New-EslHttpClient $ServerUrl $EslHttpTimeoutSec $Parallel }
     return [pscustomobject]@{
         ServerUrl = $ServerUrl; ApiBase = ($ServerUrl + '/api'); Client = $Client
         Token = ''; ProjectId = ''; User = ''; TokenPath = (Join-Path (Get-EslHome) 'client_token.bin')
         StatePath = (Join-Path (Get-EslHome) 'uploads.json')
         Retries = $EslRetries; RetryBaseMs = $EslRetryBaseMs
+        Parallel = $Parallel; ToolVersion = ''
     }
 }
 
@@ -458,7 +476,9 @@ function Test-EslRelSegment([string]$Seg) {
 function Test-EslRel([string]$Rel) {
     if ($Rel.Length -gt 400) { return $false }
     foreach ($s in $Rel.Split('/')) { if (-not (Test-EslRelSegment $s)) { return $false } }
-    return ($EslAllowedExt -contains [IO.Path]::GetExtension($Rel).ToLowerInvariant())
+    $ext = [IO.Path]::GetExtension($Rel).ToLowerInvariant()
+    if ($ext -eq '.h3d') { return ($Rel.StartsWith('h3d/') -and $Rel.IndexOf('/', 4) -lt 0) }
+    return ($EslAllowedExt -contains $ext)
 }
 
 function Get-EslRelativeRel([string]$Path, [string]$BaseDir) {
@@ -468,9 +488,9 @@ function Get-EslRelativeRel([string]$Path, [string]$BaseDir) {
     return $p.Substring($b.Length).Replace('\', '/')
 }
 
-function New-EslPlanFile([string]$Rel, [string]$Path) {
+function New-EslPlanFile([string]$Rel, [string]$Path, $Meta = $null) {
     $fi = New-Object IO.FileInfo($Path)
-    return [pscustomobject]@{ Rel = $Rel; Path = $fi.FullName; Size = [int64]$fi.Length; Mtime = $fi.LastWriteTimeUtc.Ticks }
+    return [pscustomobject]@{ Rel = $Rel; Path = $fi.FullName; Size = [int64]$fi.Length; Mtime = $fi.LastWriteTimeUtc.Ticks; Meta = $Meta }
 }
 
 # 결과 폴더(done.json) + rad + include -> rel 규칙(results/<폴더>/..., rad/...) 목록과 경고·문제
@@ -505,7 +525,7 @@ function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth
         $skipped = 0
         foreach ($f in @(Get-ChildItem -LiteralPath $rd -Recurse -File -Force | Sort-Object FullName)) {
             $ext = $f.Extension.ToLowerInvariant()
-            if ($EslAllowedExt -notcontains $ext) { $skipped++; continue }
+            if ($EslResultExt -notcontains $ext) { $skipped++; continue }
             & $add ("results/$leaf/" + (Get-EslRelativeRel $f.FullName $rd)) $f.FullName
         }
         if ($skipped) { [void]$warn.Add("결과 폴더에서 올리지 않는 파일 $skipped 개(.log 등 허용 확장자 밖)") }
@@ -611,7 +631,7 @@ function New-EslProgress([int64]$Total, [int64]$Already) {
     return [pscustomobject]@{ Total = $Total; Done = $Already; Sent = [int64]0; Watch = [Diagnostics.Stopwatch]::StartNew(); LastMs = [int64]-1000 }
 }
 
-function Show-EslProgress($P, [string]$Name, [switch]$Final) {
+function Show-EslProgress($P, [string]$Name, [switch]$Final, [int]$Streams = 0) {
     $ms = $P.Watch.ElapsedMilliseconds
     if (-not $Final -and ($ms - $P.LastMs) -lt 500) { return }
     $P.LastMs = $ms
@@ -623,7 +643,8 @@ function Show-EslProgress($P, [string]$Name, [switch]$Final) {
         $left = [TimeSpan]::FromSeconds([Math]::Ceiling(($P.Total - $P.Done) / $rate))
         $eta = $(if ($left.TotalHours -ge 1) { '{0}:{1:mm\:ss}' -f [int][Math]::Floor($left.TotalHours), $left } else { $left.ToString('mm\:ss') })
     }
-    $line = ("  [{0,5:N1}%] {1} / {2}  {3}/s  남은 시간 {4}  {5}" -f $pct, (Format-EslBytes $P.Done), (Format-EslBytes $P.Total), (Format-EslBytes $rate), $eta, $Name)
+    $par = $(if ($Streams -gt 0) { " ×$Streams" } else { '' })
+    $line = ("  [{0,5:N1}%] {1} / {2}  {3}/s{4}  남은 시간 {5}  {6}" -f $pct, (Format-EslBytes $P.Done), (Format-EslBytes $P.Total), (Format-EslBytes $rate), $par, $eta, $Name)
     if ($line.Length -gt 118) { $line = $line.Substring(0, 118) }
     Write-Host ("`r" + $line.PadRight(118)) -NoNewline
     if ($Final) { Write-Host '' }
@@ -697,6 +718,334 @@ function Send-EslFile($Ctx, [string]$UploadId, $File, $Local, [int64]$Received, 
     finally { $fs.Dispose() }
 }
 
+# ---- 병렬 전송(업로드 프로토콜 2, 계약 esl_upload_speed.md §5.2·§5.5) ------------------------------------
+# 단일 runspace: HttpClient.SendAsync Task 를 최대 N 개 띄우고 [Task]::WaitAny 로 완료를 처리한다.
+# 메인 루프는 그 사이 다음 청크를 FileStream 에서 읽어 sha256 을 계산해 두고(버퍼 N+1 개 재사용), 슬롯이 비면 보낸다.
+# 청크는 번호 순서로 내보낸다(서버 NTFS 사전 할당 구멍 최소화). 받은 범위는 서버 files[].chunks 가 기준이다.
+
+function Test-EslFileRemoved($F) {
+    return ($F.PSObject.Properties.Name -contains 'removed' -and [bool]$F.removed)
+}
+
+function Get-EslFileReceived($F) {
+    if ($F.PSObject.Properties.Name -contains 'received_total' -and $null -ne $F.received_total) { return [int64]$F.received_total }
+    return [int64]$F.received
+}
+
+# 응답에 protocol 2 이상이 있어야 병렬 전송(구 서버·업그레이드 전 세션 = 순차)
+function Test-EslProtocol2($Up) {
+    return ($Up.PSObject.Properties.Name -contains 'protocol' -and $null -ne $Up.protocol -and [int]$Up.protocol -ge 2)
+}
+
+function Get-EslChunkCount([int64]$Size, [int64]$Chunk) {
+    if ($Size -le 0 -or $Chunk -le 0) { return 0 }
+    return [int][Math]::Ceiling([double]$Size / [double]$Chunk)
+}
+
+function Get-EslChunkLen([int64]$Size, [int64]$Chunk, [int]$K) {
+    return [int][Math]::Min($Chunk, $Size - [int64]$K * $Chunk)
+}
+
+# 서버 chunks [[a,b),...] -> 청크 번호별 받음 여부
+function ConvertTo-EslGotMap($Ranges, [int]$N) {
+    $map = New-Object bool[] ([Math]::Max($N, 0))
+    $list = @($Ranges)
+    if ($list.Count -eq 2 -and $null -ne $list[0] -and -not ($list[0] -is [Array])) { $list = @(, $list) }   # [a,b] 하나가 펼쳐진 경우
+    foreach ($r in $list) {
+        $pair = @($r)
+        if ($pair.Count -lt 2) { continue }
+        $b = [Math]::Min([int]$pair[1], $N)
+        for ($i = [Math]::Max([int]$pair[0], 0); $i -lt $b; $i++) { $map[$i] = $true }
+    }
+    return , $map
+}
+
+function New-EslChunkRequest($Ctx, [string]$UploadId, $Item, [byte[]]$Buf, [string]$Sha) {
+    $url = $Ctx.ApiBase + ("/uploads/{0}/files/{1}?offset={2}" -f $UploadId, $Item.Index, $Item.Offset)
+    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Put, $url)
+    [void]$req.Headers.TryAddWithoutValidation('X-ESL-Request', '1')
+    [void]$req.Headers.TryAddWithoutValidation('Accept', 'application/json')
+    if ($Ctx.Token) { [void]$req.Headers.TryAddWithoutValidation('Authorization', 'Bearer ' + $Ctx.Token) }
+    $content = New-Object System.Net.Http.ByteArrayContent($Buf, 0, $Item.Len)
+    $content.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue('application/octet-stream')
+    $req.Content = $content
+    if ($Sha) { [void]$req.Headers.TryAddWithoutValidation('X-Chunk-Sha256', $Sha) }
+    return $req
+}
+
+function Update-EslParallelProgress($S, [switch]$Final) {
+    $bytes = [int64]$S.ConstDone
+    foreach ($f in $S.Files.Values) { $bytes += [int64]$f.Bytes }
+    $S.Progress.Done = $bytes
+    Show-EslProgress $S.Progress $S.Label -Final:$Final -Streams $S.Inflight.Count
+}
+
+function Set-EslChunkGot($S, $Fst, [int]$K) {
+    if (-not $Fst.Map[$K]) {
+        $Fst.Map[$K] = $true
+        $Fst.Bytes += [int64](Get-EslChunkLen $Fst.Size $S.Chunk $K)
+    }
+}
+
+function Remove-EslQueued($S, $Fst) {
+    for ($i = $S.Queue.Count - 1; $i -ge 0; $i--) {
+        if ($S.Queue[$i].Index -eq $Fst.Index) {
+            $S.Active.Remove(('{0}:{1}' -f $S.Queue[$i].Index, $S.Queue[$i].K))
+            $S.Queue.RemoveAt($i)
+        }
+    }
+}
+
+function Set-EslFileFinished($S, $Fst) {
+    for ($k = 0; $k -lt $Fst.N; $k++) { $Fst.Map[$k] = $true }
+    $Fst.Bytes = $Fst.Size
+    $Fst.Done = $true
+    Remove-EslQueued $S $Fst
+    if ($S.Handles.ContainsKey($Fst.Index)) { $S.Handles[$Fst.Index].Dispose(); $S.Handles.Remove($Fst.Index) }
+}
+
+function Add-EslMissingChunks($S, $Fst) {
+    for ($k = 0; $k -lt $Fst.N; $k++) {
+        $key = '{0}:{1}' -f $Fst.Index, $k
+        if ($Fst.Map[$k] -or $S.Active.ContainsKey($key)) { continue }
+        $item = [pscustomobject]@{ Index = $Fst.Index; K = $k; Offset = [int64]$k * $S.Chunk; Len = (Get-EslChunkLen $Fst.Size $S.Chunk $k)
+            Attempts = 0; Floods = 0; NotBefore = [int64]0 }
+        $S.Active[$key] = $true
+        [void]$S.Queue.Add($item)
+    }
+}
+
+# 서버 상태(GET /uploads/{id})로 받은 범위를 다시 맞춘다. RestartIndex 파일은 빠진 청크를 처음부터 다시 큐에 넣는다.
+function Sync-EslFromServer($S, [int]$RestartIndex = -1) {
+    $up = Get-EslUpload $S.Ctx $S.UploadId
+    if ($null -eq $up) { throw "업로드 세션을 서버에서 찾을 수 없습니다: $($S.UploadId)" }
+    foreach ($f in @($up.files)) {
+        $fst = $S.Files[[int]$f.index]
+        if ($null -eq $fst) { continue }
+        if (Test-EslFileRemoved $f) { $fst.Dead = $true; Remove-EslQueued $S $fst; continue }
+        if ($f.done) { Set-EslFileFinished $S $fst; continue }
+        $chunks = $null
+        if ($f.PSObject.Properties.Name -contains 'chunks') { $chunks = $f.chunks }
+        $fst.Map = ConvertTo-EslGotMap $chunks $fst.N
+        $b = [int64]0
+        for ($k = 0; $k -lt $fst.N; $k++) { if ($fst.Map[$k]) { $b += [int64](Get-EslChunkLen $fst.Size $S.Chunk $k) } }
+        $fst.Bytes = $b
+        if ($fst.Index -eq $RestartIndex) { Remove-EslQueued $S $fst; Add-EslMissingChunks $S $fst }
+    }
+    for ($i = $S.Queue.Count - 1; $i -ge 0; $i--) {
+        $it = $S.Queue[$i]
+        $fst = $S.Files[$it.Index]
+        if ($fst.Dead -or $fst.Done -or $fst.Map[$it.K]) {
+            $S.Active.Remove(('{0}:{1}' -f $it.Index, $it.K))
+            $S.Queue.RemoveAt($i)
+        }
+    }
+}
+
+function Add-EslChunkRetry($S, $Item, $Fst, [string]$Why, [bool]$CountAttempt, [double]$MinDelaySec = 0) {
+    if ($CountAttempt) {
+        $Item.Attempts++
+        if ($Item.Attempts -gt $S.Ctx.Retries) {
+            throw ("청크 올리기 실패 ({0} #{1}) - {2} ({3}회 재시도 후). 다시 실행하면 이어 올립니다." -f $Fst.Rel, $Item.K, $Why, $S.Ctx.Retries)
+        }
+        $delay = [int]($S.Ctx.RetryBaseMs * [Math]::Pow(2, $Item.Attempts - 1))
+    }
+    else {
+        $Item.Floods++
+        if ($Item.Floods -gt 60) { throw ("청크 올리기 실패 ({0} #{1}) - {2} (서버가 계속 받지 않음). 다시 실행하면 이어 올립니다." -f $Fst.Rel, $Item.K, $Why) }
+        $delay = 0
+    }
+    $delay = [int][Math]::Max($delay, $MinDelaySec * 1000)
+    $Item.NotBefore = $S.Clock.ElapsedMilliseconds + $delay
+    $tail = ''
+    if ($CountAttempt) { $tail = " $($Item.Attempts)/$($S.Ctx.Retries)" }
+    Write-Host ''
+    Say ("  {0} - {1:N1}초 뒤 다시 시도 ({2} #{3}{4})" -f $Why, ($delay / 1000.0), $Fst.Rel, $Item.K, $tail) 'Yellow'
+    $S.Queue.Insert(0, $Item)
+}
+
+# 끝난 요청 하나 처리: 성공 -> 받음 표시, 재시도·재동기화·치명 오류
+function Complete-EslSlot($S, $Slot) {
+    $item = $Slot.Item
+    $fst = $S.Files[$item.Index]
+    $key = '{0}:{1}' -f $item.Index, $item.K
+    $status = 0; $text = ''; $netErr = ''; $retryAfter = 0.0
+    try {
+        $task = $Slot.Task
+        if ($task.IsFaulted) {
+            $ex = $task.Exception
+            while ($ex.InnerException) { $ex = $ex.InnerException }
+            $netErr = $ex.Message
+        }
+        elseif ($task.IsCanceled) { $netErr = '시간 초과 또는 취소' }
+        else {
+            $resp = $task.Result
+            try {
+                $status = [int]$resp.StatusCode
+                $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                $ra = $resp.Headers.RetryAfter
+                if ($ra -and $ra.Delta) { $retryAfter = $ra.Delta.TotalSeconds }
+            }
+            finally { $resp.Dispose() }
+        }
+    }
+    finally {
+        $Slot.Req.Dispose()
+        [void]$S.Free.Add($Slot.Buf)
+        [void]$S.Inflight.Remove($Slot)
+    }
+    if ($fst.Dead -or $fst.Done) { $S.Active.Remove($key); return }
+    $obj = $null
+    if ($text) { try { $obj = $text | ConvertFrom-Json } catch { $obj = $null } }
+    $r = [pscustomobject]@{ Status = $status; Json = $obj; Text = $text }
+    $info = Get-EslErrorInfo $r
+    if ($status -eq 200) {
+        $S.Active.Remove($key)
+        $dup = ($null -ne $obj -and $obj.PSObject.Properties.Name -contains 'duplicate' -and [bool]$obj.duplicate)
+        Set-EslChunkGot $S $fst $item.K
+        if (-not $dup) { $S.Progress.Sent += [int64]$item.Len }
+        if ($null -ne $obj -and $obj.PSObject.Properties.Name -contains 'done' -and $obj.done) { Set-EslFileFinished $S $fst }
+        return
+    }
+    if ($status -eq 401) {
+        $S.Ctx.Client.CancelPendingRequests()
+        throw (New-EslAuthError ("서버가 PC 연결을 거부했습니다(토큰 만료·폐기): " + $info.Message))
+    }
+    if ($status -eq 0) { Add-EslChunkRetry $S $item $fst ("네트워크 오류: " + $netErr) $true; return }
+    if ($status -eq 429) {
+        $wait = [Math]::Max($retryAfter, 0.2)
+        Add-EslChunkRetry $S $item $fst '서버가 동시 전송 수를 제한함(429)' $false $wait
+        return
+    }
+    if ($status -eq 500 -or $status -eq 502 -or $status -eq 503 -or $status -eq 504) {
+        Add-EslChunkRetry $S $item $fst ("서버 응답 $status") $true
+        return
+    }
+    if ($status -eq 409 -and $info.Code -eq 'UPLOAD_FILE_DONE') {
+        $S.Active.Remove($key)
+        Set-EslFileFinished $S $fst
+        return
+    }
+    if ($status -eq 409 -and ($info.Code -eq 'UPLOAD_OFFSET_MISMATCH' -or $info.Code -eq 'CHUNK_IN_FLIGHT')) {
+        # 서버가 가진 범위로 다시 맞춘다(이미 받았으면 큐에서 빠지고, 아니면 잠시 뒤 다시)
+        Sync-EslFromServer $S
+        if ($fst.Done -or $fst.Dead -or $fst.Map[$item.K]) { $S.Active.Remove($key); return }
+        Add-EslChunkRetry $S $item $fst ("서버와 받은 범위를 맞춤 ($($info.Code))") $false 0.3
+        return
+    }
+    if ($status -eq 422 -and $info.Code -eq 'CHUNK_SHA256_MISMATCH') {
+        Add-EslChunkRetry $S $item $fst '청크 sha256 불일치(전송 중 손상)' $true
+        return
+    }
+    if ($status -eq 422 -and $info.Code -eq 'SHA256_MISMATCH' -and -not $fst.Restarted) {
+        $fst.Restarted = $true
+        $S.Active.Remove($key)
+        Write-Host ''
+        Say "  파일 sha256 불일치 - 처음부터 다시 올립니다: $($fst.Rel)" 'Yellow'
+        Sync-EslFromServer $S $fst.Index
+        return
+    }
+    $S.Ctx.Client.CancelPendingRequests()
+    throw (Format-EslError $r "청크 올리기($($fst.Rel) #$($item.K))")
+}
+
+function Read-EslChunkBuffer($S, $Fst, $Item, [byte[]]$Buf) {
+    if (-not $S.Handles.ContainsKey($Fst.Index)) {
+        $S.Handles[$Fst.Index] = New-Object IO.FileStream($Fst.Local.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite, 1048576)
+    }
+    $fs = $S.Handles[$Fst.Index]
+    [void]$fs.Seek($Item.Offset, [IO.SeekOrigin]::Begin)
+    $n = 0
+    while ($n -lt $Item.Len) {
+        $k = $fs.Read($Buf, $n, $Item.Len - $n)
+        if ($k -le 0) { break }
+        $n += $k
+    }
+    if ($n -ne $Item.Len) { throw "파일을 끝까지 읽지 못했습니다: $($Fst.Local.Path)" }
+    return (Get-EslSha256Hex $Buf $n)
+}
+
+function Send-EslFilesParallel($Ctx, $Up, $Plan, $Progress, [int]$Streams) {
+    $local = @{}
+    foreach ($f in $Plan.Files) { $local[$f.Rel.ToLowerInvariant()] = $f }
+    $chunk = [int64]$Up.chunk_size
+    $S = [pscustomobject]@{
+        Ctx = $Ctx; UploadId = [string]$Up.upload_id; Chunk = $chunk; Streams = $Streams; Progress = $Progress
+        Clock = [Diagnostics.Stopwatch]::StartNew(); Files = @{}; Queue = (New-Object System.Collections.Generic.List[object])
+        Inflight = (New-Object System.Collections.ArrayList); Free = (New-Object System.Collections.ArrayList)
+        Active = @{}; Handles = @{}; ConstDone = [int64]0; Label = ''; Allocated = 0
+    }
+    $maxLen = [int64]1
+    foreach ($f in @($Up.files)) {
+        if (Test-EslFileRemoved $f) { continue }
+        if ($f.done) { $S.ConstDone += [int64]$f.size; continue }
+        $l = $local[([string]$f.rel).ToLowerInvariant()]
+        if (-not $l) { throw "서버 업로드의 파일이 이 PC 목록에 없습니다: $($f.rel)" }
+        $fi = New-Object IO.FileInfo($l.Path)
+        if (-not $fi.Exists) { throw "올릴 파일이 없어졌습니다: $($l.Path)" }
+        if ($fi.Length -ne [int64]$f.size) { throw "파일 크기가 바뀌었습니다(올리는 중 수정됨?): $($l.Path) ($($fi.Length) <> $($f.size)) - 다시 실행하세요." }
+        $n = Get-EslChunkCount ([int64]$f.size) $chunk
+        $chunks = $null
+        if ($f.PSObject.Properties.Name -contains 'chunks') { $chunks = $f.chunks }
+        $fst = [pscustomobject]@{ Index = [int]$f.index; Rel = [string]$f.rel; Size = [int64]$f.size; Local = $l; N = $n
+            Map = (ConvertTo-EslGotMap $chunks $n); Bytes = [int64]0; Restarted = $false; Done = $false; Dead = $false }
+        for ($k = 0; $k -lt $n; $k++) { if ($fst.Map[$k]) { $fst.Bytes += [int64](Get-EslChunkLen $fst.Size $chunk $k) } }
+        $S.Files[$fst.Index] = $fst
+        $maxLen = [Math]::Max($maxLen, [Math]::Min($chunk, $fst.Size))
+        Add-EslMissingChunks $S $fst
+    }
+    $bufSize = [int][Math]::Min($maxLen, [int64]([int]::MaxValue - 64))
+    $ready = $null
+    try {
+        while ($S.Queue.Count -gt 0 -or $S.Inflight.Count -gt 0 -or $null -ne $ready) {
+            $now = $S.Clock.ElapsedMilliseconds
+            # 준비해 둔 청크가 있고 슬롯이 비면 보낸다
+            if ($null -ne $ready -and $S.Inflight.Count -lt $Streams) {
+                $req = New-EslChunkRequest $Ctx $S.UploadId $ready.Item $ready.Buf $ready.Sha
+                $task = $Ctx.Client.SendAsync($req)
+                [void]$S.Inflight.Add([pscustomobject]@{ Task = $task; Req = $req; Buf = $ready.Buf; Item = $ready.Item })
+                $S.Label = $S.Files[$ready.Item.Index].Rel
+                $ready = $null
+                continue
+            }
+            # 다음 청크를 미리 읽고 sha256 계산(이 동안 이미 보낸 요청은 계속 전송됨)
+            if ($null -eq $ready -and $S.Queue.Count -gt 0) {
+                $pick = -1
+                for ($i = 0; $i -lt $S.Queue.Count; $i++) { if ($S.Queue[$i].NotBefore -le $now) { $pick = $i; break } }
+                if ($pick -ge 0) {
+                    $item = $S.Queue[$pick]
+                    $S.Queue.RemoveAt($pick)
+                    $fst = $S.Files[$item.Index]
+                    if ($S.Free.Count -gt 0) { $buf = $S.Free[$S.Free.Count - 1]; $S.Free.RemoveAt($S.Free.Count - 1) }
+                    else { $buf = New-Object byte[] $bufSize; $S.Allocated++ }
+                    $sha = Read-EslChunkBuffer $S $fst $item $buf
+                    $ready = [pscustomobject]@{ Item = $item; Buf = $buf; Sha = $sha }
+                    if ($S.Inflight.Count -lt $Streams) { continue }
+                }
+            }
+            # 대기: 진행 중 요청이 있으면 하나라도 끝날 때까지(최대 0.5초), 없고 재시도 대기뿐이면 잠깐 잔다
+            if ($S.Inflight.Count -gt 0) {
+                $tasks = New-Object 'System.Collections.Generic.List[System.Threading.Tasks.Task]'
+                foreach ($sl in $S.Inflight) { $tasks.Add($sl.Task) }
+                [void][Threading.Tasks.Task]::WaitAny($tasks.ToArray(), 500)
+                foreach ($sl in @($S.Inflight)) { if ($sl.Task.IsCompleted) { Complete-EslSlot $S $sl } }
+            }
+            elseif ($S.Queue.Count -gt 0 -and $null -eq $ready) {
+                $soon = [int64]::MaxValue
+                foreach ($q in $S.Queue) { if ($q.NotBefore -lt $soon) { $soon = $q.NotBefore } }
+                $ms = [int][Math]::Min([Math]::Max($soon - $S.Clock.ElapsedMilliseconds, 5), 500)
+                Start-Sleep -Milliseconds $ms
+            }
+            Update-EslParallelProgress $S
+        }
+        Update-EslParallelProgress $S
+    }
+    finally {
+        try { $Ctx.Client.CancelPendingRequests() } catch { }
+        foreach ($h in @($S.Handles.Values)) { try { $h.Dispose() } catch { } }
+    }
+}
+
 function Get-EslUpload($Ctx, [string]$UploadId) {
     $r = Invoke-EslHttp $Ctx 'GET' "/uploads/$UploadId"
     if ($r.Status -eq 200) { return $r.Json }
@@ -710,6 +1059,7 @@ function Compare-EslSession($Up, $Plan) {
     foreach ($f in $Plan.Files) { $local[$f.Rel.ToLowerInvariant()] = $f }
     $srv = @{}
     foreach ($f in @($Up.files)) {
+        if (Test-EslFileRemoved $f) { continue }        # 목록에서 뺀 파일(removed)은 비교 대상이 아님
         $k = ([string]$f.rel).ToLowerInvariant()
         if (-not $local.ContainsKey($k) -or $local[$k].Size -ne [int64]$f.size) { return [pscustomobject]@{ Ok = $false; Extra = @() } }
         $srv[$k] = $true
@@ -719,7 +1069,11 @@ function Compare-EslSession($Up, $Plan) {
 }
 
 function ConvertTo-EslFileSpecs($Files) {
-    return @($Files | ForEach-Object { [ordered]@{ rel = $_.Rel; size = $_.Size } })
+    return @($Files | ForEach-Object {
+            $spec = [ordered]@{ rel = $_.Rel; size = $_.Size }
+            if ($_.PSObject.Properties.Name -contains 'Meta' -and $null -ne $_.Meta) { $spec['meta'] = $_.Meta }
+            $spec
+        })
 }
 
 function Add-EslUploadFiles($Ctx, [string]$UploadId, $Files) {
@@ -732,19 +1086,30 @@ function Add-EslUploadFiles($Ctx, [string]$UploadId, $Files) {
 function Send-EslPending($Ctx, $Up, $Plan) {
     $local = @{}
     foreach ($f in $Plan.Files) { $local[$f.Rel.ToLowerInvariant()] = $f }
-    $files = @($Up.files)
+    $files = @($Up.files | Where-Object { -not (Test-EslFileRemoved $_) })
     $total = [int64]0; $done = [int64]0
-    foreach ($f in $files) { $total += [int64]$f.size; $done += [int64]$f.received }
+    foreach ($f in $files) { $total += [int64]$f.size; $done += (Get-EslFileReceived $f) }
     $todo = @($files | Where-Object { -not $_.done })
     if ($todo.Count -eq 0) { return }
-    Say ("  올리기: 파일 {0}개 중 {1}개 남음, {2} / {3}" -f $files.Count, $todo.Count, (Format-EslBytes $done), (Format-EslBytes $total))
-    $p = New-EslProgress $total $done
-    foreach ($f in $todo) {
-        $l = $local[([string]$f.rel).ToLowerInvariant()]
-        if (-not $l) { throw "서버 업로드의 파일이 이 PC 목록에 없습니다: $($f.rel)" }
-        Send-EslFile $Ctx $Up.upload_id $f $l ([int64]$f.received) ([int]$Up.chunk_size) $p
+    $streams = 1
+    $par = Test-EslProtocol2 $Up
+    if ($par) {
+        $maxp = $EslMaxParallel
+        if ($Up.PSObject.Properties.Name -contains 'max_parallel' -and $null -ne $Up.max_parallel) { $maxp = [int]$Up.max_parallel }
+        $streams = [Math]::Max(1, [Math]::Min([Math]::Min($Ctx.Parallel, $maxp), $EslMaxParallel))
     }
-    Show-EslProgress $p '완료' -Final
+    Say ("  올리기: 파일 {0}개 중 {1}개 남음, {2} / {3}{4}" -f $files.Count, $todo.Count, (Format-EslBytes $done), (Format-EslBytes $total),
+        $(if ($par) { "  (병렬 ×$streams, 청크 $(Format-EslBytes ([double]$Up.chunk_size)))" } else { '  (순차)' }))
+    $p = New-EslProgress $total $done
+    if ($par) { Send-EslFilesParallel $Ctx $Up $Plan $p $streams }
+    else {
+        foreach ($f in $todo) {
+            $l = $local[([string]$f.rel).ToLowerInvariant()]
+            if (-not $l) { throw "서버 업로드의 파일이 이 PC 목록에 없습니다: $($f.rel)" }
+            Send-EslFile $Ctx $Up.upload_id $f $l ([int64]$f.received) ([int]$Up.chunk_size) $p
+        }
+    }
+    Show-EslProgress $p '완료' -Final -Streams $(if ($par) { $streams } else { 0 })
     $sec = [Math]::Max($p.Watch.Elapsed.TotalSeconds, 0.001)
     Say ("  보낸 양 {0}, {1:N0}초, 평균 {2}/s" -f (Format-EslBytes $p.Sent), $sec, (Format-EslBytes ($p.Sent / $sec))) 'DarkGray'
 }
@@ -817,7 +1182,8 @@ function Invoke-EslUpload($Ctx, $Plan, [string]$Name, [string]$Key) {
         }
     }
     if (-not $up) {
-        $body = @{ project_id = $Ctx.ProjectId; name = $Name; files = @(ConvertTo-EslFileSpecs $Plan.Files) }
+        $body = @{ project_id = $Ctx.ProjectId; name = $Name; files = @(ConvertTo-EslFileSpecs $Plan.Files)
+            client = @{ name = 'esl-pc'; version = $(if ($Ctx.ToolVersion) { [string]$Ctx.ToolVersion } else { 'unknown' }) } }
         $r = Invoke-EslHttp $Ctx 'POST' '/uploads' $body
         if ($r.Status -ne 201 -and $r.Status -ne 200) { throw (Format-EslError $r '업로드 시작') }
         $up = $r.Json

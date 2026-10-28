@@ -5,5 +5,18 @@
   "branch": "",
   "default_part": "chassis_rear",
   "protected_roots": [],
-  "server_url": ""
+  "server_url": "",
+  "hvtrans_exe": "C:/Program Files/Altair/2026.1/hwdesktop/io/result_readers/bin/win64/hvtrans.exe",
+  "upload_mode_default": "slim",
+  "slim_prompt_sec": 10,
+  "slim_results": [
+    { "type": "Displacement" },
+    { "type": "Max_Strain", "layer": "Mid" },
+    { "type": "Plastic Strain", "layer": "Mid" }
+  ],
+  "slim_subcase": "all",
+  "slim_verify": true,
+  "slim_timeout_min": 120,
+  "slim_min_free_gb": 20,
+  "upload_parallel": 4
 }

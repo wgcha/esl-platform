@@ -1,7 +1,7 @@
 ﻿# esl_deploy_lib.ps1 -- update.ps1 이 dot-source 하는 배포 함수 모음
 #
 # 배포 구조 (deploy_dir 기본 %LOCALAPPDATA%\esl\app):
-#   versions\<git 해시>\     TCL, esl_run.ps1, esl_upload_lib.ps1, README.md, VERSION.txt  (버전마다 새 폴더, 기존 폴더는 고치지 않음)
+#   versions\<git 해시>\     TCL, esl_run.ps1, esl_upload_lib.ps1, esl_slim_lib.ps1, README.md, VERSION.txt  (버전마다 새 폴더, 기존 폴더는 고치지 않음)
 #   current_version.txt      활성 버전 이름 한 줄 (임시 파일을 쓴 뒤 파일 단위 교체, 실패 시 재시도)
 #   current\                 사용자가 여는 고정 폴더: 얇은 런처 ESL_probe.bat, ESL_extract.bat, ESL_upload.bat, esl_launch.ps1 만
 # 폴더 rename 을 하지 않으므로 탐색기·명령창·실행 중인 hw 가 current 나 versions 폴더를 잡고 있어도 업데이트된다.
@@ -174,12 +174,12 @@ function Get-LauncherBat([string]$Mode) {
         $what = 'Drag and drop h3d file(s) onto this file. Output: <work_root>\<h3d name>\probe'
     }
     elseif ($Mode -eq 'upload') {
-        $usage = 'ESL_upload.bat <results folder> [<rad>]   (upload only, no extraction; resumes an interrupted upload)'
-        $what = 'Drag and drop the csv folder made by ESL_extract.bat (and the rad file) onto this file. Server: setting server_url'
+        $usage = 'ESL_upload.bat <results folder> [<rad>]  or  <h3d> <rad> [<part>] [/original|/slim]   (upload only, no extraction; resumes an interrupted upload)'
+        $what = 'Drag and drop the csv folder made by ESL_extract.bat (or an h3d) and the rad file onto this file. Server: setting server_url'
     }
     else {
-        $usage = 'ESL_extract.bat <h3d> [<h3d> ...] [<rad>] [<part>]   (part default: setting default_part)'
-        $what = 'Drag and drop h3d (+ rad) file(s) onto this file. Output: <work_root>\<h3d name>\csv, then upload to server_url'
+        $usage = 'ESL_extract.bat <h3d> [<h3d> ...] [<rad>] [<part>] [/original|/slim|/pcextract]   (part default: setting default_part)'
+        $what = 'Drag and drop h3d (+ rad) file(s) onto this file. Default = slim h3d via hvtrans (asks for 10 s: Enter=slim / O=original / P=PC extract), upload to server_url. Output: <work_root>\<h3d name>\slim or \csv'
     }
     $lines = @(
         '@echo off',
