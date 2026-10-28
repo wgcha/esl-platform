@@ -13,6 +13,7 @@ from ..deps import get_ctx, get_principal
 from ..html_report import html_report
 from ..schemas import HistoryFileOut, HistoryPage, ReviewOut
 from ..services import history as svc
+from ..services import jobs as jobs_svc
 
 router = APIRouter(tags=["history"])
 
@@ -35,17 +36,20 @@ def history(request: Request, project_id: str = Query(min_length=1, max_length=2
 @router.get("/jobs/{job_id}/review", response_model=ReviewOut, response_model_exclude_unset=True)
 def review(job_id: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """작업 다시 확인: 입력값·오류·소요 시간·로그 목록·그때 결과(기록된 값). step.command 는 전역 관리자에게만."""
+    jobs_svc.check_job_view(get_ctx(request), principal, job_id)
     return svc.review(get_ctx(request), principal, job_id)
 
 
 @router.get("/jobs/{job_id}/files", response_model=list[HistoryFileOut])
 def job_files(job_id: str, request: Request, principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
+    jobs_svc.check_job_view(get_ctx(request), principal, job_id)
     return svc.job_files(get_ctx(request), job_id)
 
 
 @router.get("/jobs/{job_id}/files/{name}/download", response_class=FileResponse)
 def job_file_download(job_id: str, name: str, request: Request,
                       principal: Principal = Depends(get_principal)) -> FileResponse:
+    jobs_svc.check_job_view(get_ctx(request), principal, job_id)
     path, fname = svc.job_file(get_ctx(request), job_id, name)
     return FileResponse(path, filename=fname, media_type="application/octet-stream")
 
@@ -53,5 +57,6 @@ def job_file_download(job_id: str, name: str, request: Request,
 @router.get("/jobs/{job_id}/report", response_class=HTMLResponse)
 def job_report(job_id: str, request: Request, download: bool = False,
                principal: Principal = Depends(get_principal)) -> Response:
+    jobs_svc.check_job_view(get_ctx(request), principal, job_id)
     path, fname = svc.job_report(get_ctx(request), job_id)
     return html_report(path, fname, download)

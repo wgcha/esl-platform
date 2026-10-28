@@ -38,7 +38,7 @@ router = APIRouter(tags=["opt"])
 @router.get("/opt/settings", response_model=OptSettingsOut)
 def opt_settings(request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """화면 기본값: 비드 치수·자동 금지 영역·하중 선정 전략·목표 기준, 방법·출처(resources/opt_method_sources.json)."""
-    return svc.settings_out(get_ctx(request))
+    return svc.settings_out(get_ctx(request), principal)
 
 
 # ---------------------------------------------------------------- 템플릿(S2)

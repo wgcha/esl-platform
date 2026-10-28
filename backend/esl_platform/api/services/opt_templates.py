@@ -131,10 +131,9 @@ def template_preview(ctx: AppContext, t: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_json(path: str, obj: Any) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, ensure_ascii=False)
-    os.replace(tmp, path)
+    from ...core.atomic import write_text_atomic
+
+    write_text_atomic(path, json.dumps(obj, ensure_ascii=False))     # 임시 파일 O_EXCL(심링크 따라가지 않음)
 
 
 # ---------------------------------------------------------------- 검사

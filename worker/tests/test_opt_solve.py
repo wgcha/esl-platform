@@ -217,3 +217,21 @@ def test_os_semaphore_serializes(client, engine, worker_factory, esl_root, input
     logs = [(run_dir(esl_root, r["id"]) / "logs" / r["job_id"] / "step_04_OS_SOLVE.log").read_text() for r in (ra, rb)]
     assert any("동시 실행 한도 1개" in t for t in logs)
     assert os_in_use(engine) == 0
+
+
+def test_solve_env_whitelist_only(monkeypatch):
+    """통합(Verifier, 계약 §8.1): env_passthrough 가 비어도 환경 전체를 넘기지 않음 — 기본 OS 키 + solve.env 만."""
+    from types import SimpleNamespace
+
+    from esl_worker.os_solve import solve_env
+
+    monkeypatch.setenv("ESL_SECRET_TOKEN", "x")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("MY_KEY", "1")
+    s = SimpleNamespace(worker=SimpleNamespace(env_passthrough=[]),
+                        opt_run=SimpleNamespace(solve=SimpleNamespace(env={"ALTAIR_LICENSE_PATH": "6200@lic"})))
+    env = solve_env(s)
+    assert "ESL_SECRET_TOKEN" not in env and "MY_KEY" not in env
+    assert env["PATH"] == "/usr/bin" and env["ALTAIR_LICENSE_PATH"] == "6200@lic"
+    s.worker.env_passthrough = ["MY_KEY"]
+    assert solve_env(s)["MY_KEY"] == "1"

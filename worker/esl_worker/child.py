@@ -36,10 +36,9 @@ def _redirect(log_path: str):
 
 
 def _write_result(path: str, d: dict[str, Any]) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, ensure_ascii=False)
-    os.replace(tmp, path)
+    from esl_platform.core.atomic import write_text_atomic
+
+    write_text_atomic(path, json.dumps(d, ensure_ascii=False))
 
 
 def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:

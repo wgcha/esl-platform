@@ -58,13 +58,10 @@ def deck_sha256(deck_dir: str, deck: str) -> str:
 
 
 def solve_env(settings) -> dict[str, str]:
+    """계약 §8.1: 기본 OS 키(BASE_ENV_KEYS) + worker.env_passthrough + opt_run.solve.env 만(환경 전체를 넘기지 않음)."""
     pt = list(settings.worker.env_passthrough or [])
     extra = dict((settings.opt_run.solve.env if settings.opt_run else {}) or {})
-    if pt:
-        return localproc.child_env(list(BASE_ENV_KEYS) + pt, extra)
-    env = dict(os.environ)
-    env.update({str(k): str(v) for k, v in extra.items()})
-    return env
+    return localproc.child_env(list(BASE_ENV_KEYS) + pt, extra)
 
 
 def reusable(solve_dir: str, sha: str, stem: str) -> dict[str, Any] | None:
@@ -297,10 +294,9 @@ def run(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     def write_rec() -> None:
         rec["seconds"] = round(time.time() - t0, 3)
         rec["license_waits"] = r.out["license_waits"]
-        tmp = os.path.join(solve_dir, "solve.json.tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(rec, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, os.path.join(solve_dir, "solve.json"))
+        from esl_platform.core.atomic import write_text_atomic
+
+        write_text_atomic(os.path.join(solve_dir, "solve.json"), json.dumps(rec, ensure_ascii=False, indent=1))
 
     osout = core_adapter.opt_osout()   # 코어 .out 해석(가벼운 순수 함수) — 판정 기준을 코어와 하나로
 

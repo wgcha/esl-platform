@@ -28,6 +28,7 @@ from esl_platform.core.job_types import OPT_STEP_WEIGHTS
 from esl_platform.core.paths import (
     LIBRARY_DIR,
     TEMPLATE_DIR,
+    check_includes,
     check_input_path,
     esl_subdir,
     opt_run_dir,
@@ -84,6 +85,24 @@ def prepare(ex) -> tuple[str, dict[str, Any]]:
             except DomainError as exc:
                 raise PrepareFailed("PREREQUISITE_MISSING", f"기준 Case 입력 rad 경로를 쓸 수 없습니다({exc.code}: "
                                     f"{exc.message}) — Case 입력을 다시 올리거나 템플릿 최적화를 쓰세요") from None
+            # include 도 매번 다시 검사(CASE_EXTRACT 사전조건과 같음): input_roots 밖 include 는 읽기 전에 거부
+            from . import core_adapter
+
+            cc = (((p.get("settings") or {}).get("core") or {}).get("case")) or {}
+            roots = [os.path.realpath(r) for r in s.storage.input_roots]
+
+            def inside(fp: str) -> bool:      # 밖 파일은 열지 않는다(중첩 include 를 찾으려 읽지도 않음)
+                rp = os.path.realpath(fp)
+                return any(rp == r or rp.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+            try:
+                refs = core_adapter.scan_include_refs(base["rad_path"], int(cc.get("rad_include_max_depth") or 8),
+                                                      cc.get("include_path_map") or None, follow=inside)
+                incs = [r["path"] for r in refs if r.get("path")]
+            except core_adapter.CoreError as exc:
+                raise PrepareFailed("INPUT_INVALID", f"기준 Case 입력 rad 의 include 를 확인할 수 없습니다({exc.code}: "
+                                    f"{exc.message})") from None
+            check_includes(s, incs)        # 밖이면 DomainError PATH_OUTSIDE_ROOT → 아래에서 PrepareFailed
         else:
             if tpl is None:
                 raise PrepareFailed("INPUT_INVALID", "S2 템플릿 정보(template)가 없습니다")

@@ -103,6 +103,10 @@ def iter_cards(text: str):
         if ln.strip().upper().startswith("BEGIN BULK") or ln.strip().upper().startswith("BEGIN,BULK"):
             start = i + 1
             break
+    # 계약 §7.2: INCLUDE 는 위치와 무관하게 거부(BEGIN BULK 앞 제어·케이스 구역 포함)
+    for i, ln in enumerate(lines[:start]):
+        if ln.strip().upper().startswith("INCLUDE"):
+            raise _err(f"줄 {i + 1}: INCLUDE 는 지원하지 않음(템플릿 .fem 은 파일 1개)")
     cur = None
     for i in range(start, len(lines)):
         ln = lines[i]

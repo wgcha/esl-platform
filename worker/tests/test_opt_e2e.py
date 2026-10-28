@@ -356,6 +356,35 @@ def test_retry_reuse_and_input_changed(client, engine, worker_factory, esl_root,
     assert os_in_use(engine) == 0
 
 
+# ---------------------------------------------------------------- 통합: S1 include 재검사(input_roots 밖 거부, 밖 파일 미읽음)
+def test_s1_include_outside_roots_rejected(client, engine, worker_factory, esl_root, inputs_root, tools, tmp_path,
+                                           monkeypatch):
+    from esl.rad import parser as rp
+
+    s1 = make_s1(engine, esl_root, inputs_root)
+    run = create_run(client, s1["entry_ids"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    evil = outside / "evil.inc"
+    evil.write_text("#include nested_should_not_be_seen.inc\n")
+    lines = s1["rad"].read_text().splitlines(keepends=True)   # 실행 생성 뒤 Case rad 에 밖 include 가 생김(/END 앞)
+    s1["rad"].write_text("".join(lines[:1] + [f"#include {evil}\n"] + lines[1:]))
+    read: list[str] = []
+    orig = rp._read_include_specs
+
+    def spy(path):
+        read.append(os.path.realpath(path))
+        return orig(path)
+
+    monkeypatch.setattr(rp, "_read_include_specs", spy)
+    j = run_job(client, worker_factory(), run["job_id"], "FAILED")
+    assert j["failure_code"] == "PATH_OUTSIDE_ROOT", (j["failure_code"], j["failure_message"])
+    assert str(evil.resolve()) not in read                # 밖 파일은 열지 않음
+    assert os.path.realpath(s1["rad"]) in read
+    assert not (run_dir(esl_root, run["id"]) / "target" / "target.npz").exists()
+    assert calls(tools, "optistruct") == []
+
+
 # ---------------------------------------------------------------- V-OR-17 S2 + V-OR-14(업로드)
 def test_s2_e2e_template_keepout_set(client, engine, worker_factory, esl_root, inputs_root, tools, tmp_path,
                                      settings_dict):

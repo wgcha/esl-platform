@@ -191,8 +191,8 @@ export function OptNew() {
 
   const sizes = sel.map(sizeOf);
   const base = sizes[0];
-  const tol = st?.size.tol_rel ?? 0.02;
-  const sizeBad = sel.filter((e, i) => i > 0 && !sameSize(sizeOf(e), base, tol)).map((e) => e.id);
+  // 크기 허용은 서버 /opt/settings 값만(로드 전에는 크기 판정 보류 — 표에 "확인 중")
+  const sizeBad = st ? sel.filter((e, i) => i > 0 && !sameSize(sizeOf(e), base, st.size.tol_rel)).map((e) => e.id) : [];
   const tpls = templates.data ?? null;
   const tpl = tpls?.find((t) => t.id === tid);
   // 템플릿 기본 = 크기 맞는 첫 템플릿
@@ -295,7 +295,11 @@ export function OptNew() {
       <ErrorLine text={error ?? settings.error ?? all.error} />
       <Card title={`① 대상 — ${scenario === "S2" ? "템플릿" : "기존 rad 형상"}`}>
         {scenario === "S2" ? (
-          <TargetS2 templates={tpls} tid={tid} setTid={setTid} sizes={sizes} plateTol={st?.size.plate_tol_rel ?? 0.05} nondesign={nondesign} onToggle={toggle} projectId={projectId} />
+          st ? (
+            <TargetS2 templates={tpls} tid={tid} setTid={setTid} sizes={sizes} plateTol={st.size.plate_tol_rel} nondesign={nondesign} onToggle={toggle} projectId={projectId} />
+          ) : (
+            <Empty>설정 불러오는 중…</Empty>
+          )
         ) : (
           <TargetS1 s1={s1.data} error={s1.error} nondesign={nondesign} onToggle={toggle} />
         )}
@@ -357,6 +361,8 @@ export function OptNew() {
                                   다른 모델 ✗
                                 </span>
                               )
+                            ) : !st ? (
+                              <span className="muted small">확인 중</span>
                             ) : bad ? (
                               <span className="error-text">크기 다름 ✗</span>
                             ) : (

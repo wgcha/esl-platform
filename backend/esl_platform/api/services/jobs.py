@@ -31,6 +31,7 @@ from .common import (
     require_active_case,
     require_config_ok,
     require_execute,
+    require_job_view,
 )
 
 LOG_MAX_LINES = 1000
@@ -184,9 +185,18 @@ def create_job(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
         return job_out(conn, job, with_steps=True)
 
 
-def get_job(ctx: AppContext, job_id: str) -> dict[str, Any]:
+def get_job(ctx: AppContext, job_id: str, principal: Principal | None = None) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
-        return job_out(conn, load_job(conn, job_id), with_steps=True)
+        job = load_job(conn, job_id)
+        if principal is not None:
+            require_job_view(principal, job)
+        return job_out(conn, job, with_steps=True)
+
+
+def check_job_view(ctx: AppContext, principal: Principal, job_id: str) -> None:
+    """작업 하위 경로(로그·이력 파일·보고서) 조회 전 권한 확인(OPT_RUN = 프로젝트 조회 권한)."""
+    with ctx.engine.connect() as conn:
+        require_job_view(principal, load_job(conn, job_id))
 
 
 def list_case_jobs(ctx: AppContext, case_id: str) -> list[dict[str, Any]]:
@@ -305,9 +315,12 @@ def _masker(ctx: AppContext):
     return mask
 
 
-def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int) -> dict[str, Any]:
+def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
+            principal: Principal | None = None) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         job = load_job(conn, job_id)
+        if principal is not None:
+            require_job_view(principal, job)
         if job.get("analysis_id"):
             from ...core.repositories import library as lib_repo
 

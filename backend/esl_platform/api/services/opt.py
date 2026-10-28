@@ -51,13 +51,22 @@ def _esl_error(exc) -> DomainError:
     return unprocessable(exc.code, exc.message)
 
 
+def public_reason(reason: str | None, principal: Principal | None) -> str | None:
+    """솔버 미준비 사유: 서버 경로(': <경로>' 뒤)는 전역 관리자에게만, 일반 사용자는 문구만."""
+    if reason is None or (principal is not None and principal.is_global_admin):
+        return reason
+    head = reason.split(": ", 1)[0]
+    return head if head == reason else f"{head} — 관리자 문의"
+
+
 # ---------------------------------------------------------------- GET /opt/settings
-def settings_out(ctx: AppContext) -> dict[str, Any]:
+def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
     from ...core.opt_core import EslError
     from ...core.opt_core import load_method_sources
 
     o = cfg(ctx)
     ready, reason = opt_solver_status(ctx.settings)
+    reason = public_reason(reason, principal)
     try:
         ms = load_method_sources()
     except EslError as exc:
@@ -322,7 +331,8 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         raise DomainError("OPT_RUN_DISABLED", "비드 최적화가 꺼져 있습니다(설정 opt_run.enabled)", status=503)
     ready, reason = opt_solver_status(ctx.settings)
     if not ready:
-        raise DomainError("SOLVER_NOT_CONFIGURED", reason or "서버 OptiStruct 가 설정되지 않았습니다", status=503)
+        raise DomainError("SOLVER_NOT_CONFIGURED", public_reason(reason, principal) or "서버 OptiStruct 가 설정되지 않았습니다",
+                          status=503)
     lib_cfg = require_library_config(ctx)
     opts = _options(o, body)
     bead = _bead(o, body)

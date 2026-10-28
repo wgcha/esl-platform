@@ -304,7 +304,7 @@ LoadSelection  { strategy:"A"|"B"|"C", objective_norm, C_ref, k|null, mac_merge 
 ### 8.1 실행 규칙 (OR-12)
 - `solve/` fresh_dir 후 `deck/` 의 `esl_bead.fem`·`esl_loads.inc` 복사, 스크래치 `solve/tmp/`.
 - argv: `commands.os_check` → 성공 시 `commands.os_solve`. argv[0] = `{optistruct}`, placeholder `optistruct, fem, fem_fwd, nt, work_dir, scratch, mem_mb`. 공통 `localproc.py`(h3d.py 와 같은 검사·트리 종료·작업 제한기).
-- `cwd = solve/`, env = `worker.env_passthrough` + `opt_run.solve.env`(허용 키 `ALTAIR_LICENSE_PATH`·`ALTAIR_HOME`·`OMP_*`). argv 를 `job_steps.command`에 저장.
+- `cwd = solve/`, env = 기본 OS 키(PATH·SystemRoot·TEMP·TMP·HOME 등, `os_solve.BASE_ENV_KEYS`) + `worker.env_passthrough` + `opt_run.solve.env` 만(passthrough 가 비어도 환경 전체를 넘기지 않음)(허용 키 `ALTAIR_LICENSE_PATH`·`ALTAIR_HOME`·`OMP_*`). argv 를 `job_steps.command`에 저장.
 - 세마포어 `acquire_os`(advisory lock 신규 키, outputs `os_acquired`, `max_concurrent_os` 기본 1).
 - 성공: 종료코드 0 + `error_patterns` 불일치 + `<deck>.out`·`<deck>_des.h3d` 존재. 수렴 = `converged_patterns`, 반복 = 마지막 `ITERATION n`.
 - `solve/solve.json` `{deck_sha256, argv, exit_code, seconds, iterations, converged, license_waits, ok}`. `solve/tmp/` 는 다음 fresh_dir 때 `_backup`(삭제 없음).
@@ -459,8 +459,8 @@ upload:
 ## 13. 보안 · 권한
 
 - 조회: ACTIVE 로그인 + 프로젝트 조회 권한(opt_runs). 템플릿·템플릿 금지 영역 세트는 ACTIVE 로그인 누구나 조회.
-- 쓰기 = power 이상: 실행·retry·cancel, 템플릿 check/등록, 금지 영역 세트 저장(S2 = 아무 프로젝트 power, S1 = 그 모델 ESL 이 있는 프로젝트의 power), 모드 수정(항목 프로젝트 power). 템플릿 삭제 = 등록자·전역 관리자. 판정 순서 401→404→403→409.
-- S1: 선택 ESL·기준 Case 모두 요청 프로젝트 소속(아니면 404). Case 입력 경로는 기존 `check_includes`·input_roots 검사 통과분만 읽음. `plan-view?entry_id=` 는 항목 프로젝트 조회 권한.
+- 쓰기 = power 이상: 실행·retry·cancel(본인 작업 — 다른 사용자의 작업 취소·재시도는 전역 관리자만, `esl.md` §5·구현 `_can_touch`와 같음), 템플릿 check/등록, 금지 영역 세트 저장(S2 = 아무 프로젝트 power, S1 = 그 모델 ESL 이 있는 프로젝트의 power), 모드 수정(항목 프로젝트 power). 템플릿 삭제 = 등록자·전역 관리자. 판정 순서 401→404→403→409.
+- S1·S2: 선택 ESL 은 모두 요청 프로젝트의 활성 항목이어야 함(다른 프로젝트·없음·폐기 = 422 `ENTRY_NOT_FOUND`, `entry_ids` 동봉 — 통합 확정), 기준 Case 도 요청 프로젝트 소속(아니면 409 `PREREQUISITE_MISSING`). OPT_RUN 작업 조회(`/jobs/{id}`·로그·이력 상세)는 그 프로젝트 조회 권한, 응답 params 에 서버 절대경로(`base.rad_path`) 없음. Case 입력 경로는 기존 `check_includes`·input_roots 검사 통과분만 읽음. `plan-view?entry_id=` 는 항목 프로젝트 조회 권한.
 - 입력 보호: 업로드·Case 입력 폴더 **읽기만**. 쓰기는 `_opt/<id>/`·`_templates/<id>/` 만.
 - 업로드: 본인 것만, 본인 폴더 격리·`_backup`·심링크 거부, 템플릿 업로드 밖 include 거부.
 - 외부 실행: LOCAL step, argv 템플릿·허용 argv[0]·메타문자 거부·shell=False. 덱 이름·경로는 서버 생성값만(제목·사각형 이름은 덱에 쓰지 않음, 보고서는 HTML 이스케이프).

@@ -86,8 +86,13 @@ def test_solver_not_configured_503(tmp_path, engine, fake_dashboard, clock):
     with TestClient(app, base_url="http://127.0.0.1") as c:
         s = c.get(f"{API}/opt/settings", headers=R).json()
         assert s["solver_ready"] is False and "파일이 없습니다" in s["solver_reason"]
+        # 서버 경로는 전역 관리자에게만(통합 Verifier 7)
+        assert "optistruct.bat" not in s["solver_reason"] and "관리자 문의" in s["solver_reason"]
+        sa = c.get(f"{API}/opt/settings", headers=H("tok-admin")).json()
+        assert "optistruct.bat" in sa["solver_reason"]
         r = c.post(f"{API}/opt/runs", json=run_body([eid]), headers=W)
         assert r.status_code == 503 and r.json()["detail"]["code"] == "SOLVER_NOT_CONFIGURED"
+        assert "optistruct.bat" not in r.json()["detail"]["message"]
 
 
 def test_permissions(client, world):
@@ -452,7 +457,7 @@ def test_check_matches_solver_ready(tmp_path, client, settings_dict):
     assert client.get(f"{API}/opt/settings", headers=R).json()["solver_ready"] is True
     Path(d["altair"]["optistruct_path"]).unlink()                       # 같은 판정: 둘 다 준비 안 됨
     items = {i.key: i for i in check.run_checks(str(p), use_db=False, platform="win32")}
-    s = client.get(f"{API}/opt/settings", headers=R).json()
+    s = client.get(f"{API}/opt/settings", headers=H("tok-admin")).json()       # 관리자 = 경로 포함 원문
     assert items["opt_run.solver_ready"].status == "FAIL" and s["solver_ready"] is False
     assert items["opt_run.solver_ready"].detail == s["solver_reason"]
     assert items["altair.optistruct_path"].status == "FAIL"
@@ -472,6 +477,25 @@ def test_history_lists_opt_run(client, world):
     assert [x["id"] for x in q] == [o["job"]["id"]]
     rv = client.get(f"{API}/jobs/{o['job']['id']}/review", headers=R)
     assert rv.status_code == 200 and rv.json()["job"]["opt_run_id"] == o["id"]
+
+
+def test_opt_job_routes_require_project_view_and_hide_server_paths(client, world):
+    """통합(Verifier): OPT_RUN 작업 조회·로그·이력 상세는 프로젝트 조회 권한, 응답 params 에 서버 절대경로 없음."""
+    o = client.post(f"{API}/opt/runs", json=run_body([world["a"]]), headers=W).json()
+    jid = o["job"]["id"]
+    assert "rad_path" not in (o["job"]["params"].get("base") or {})
+    NON = H("tok-nonmember")
+    for path in (f"/jobs/{jid}", f"/jobs/{jid}/log", f"/jobs/{jid}/review", f"/jobs/{jid}/files",
+                 f"/jobs/{jid}/report"):
+        r = client.get(f"{API}{path}", headers=NON)
+        assert r.status_code == 403, (path, r.status_code, r.text)
+    r = client.get(f"{API}/jobs/{jid}", headers=R)
+    assert r.status_code == 200
+    base = r.json()["params"]["base"]
+    assert "rad_path" not in base and base["rad_file_name"].endswith(".rad")
+    rv = client.get(f"{API}/jobs/{jid}/review", headers=R).json()
+    assert "rad_path" not in json.dumps(rv["input"]["params"])
+    assert client.get(f"{API}/jobs/{jid}/log", headers=R).status_code == 200
 
 
 def test_acquire_os_semaphore(client, world, engine):

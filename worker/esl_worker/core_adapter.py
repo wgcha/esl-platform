@@ -609,10 +609,9 @@ def _progress(spec: dict):
         if not path or p <= last[0]:
             return
         last[0] = p
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="ascii") as fh:
-            fh.write(str(p))
-        os.replace(tmp, path)
+        from esl_platform.core.atomic import write_text_atomic
+
+        write_text_atomic(path, str(p), "ascii")
     return put
 
 

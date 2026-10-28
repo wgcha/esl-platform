@@ -173,3 +173,20 @@ def test_upload_stale_after_register_does_not_matter(client, engine, esl_root, i
     eid = seed_opt_entry(engine, esl_root, "c1")
     r = client.post(f"{API}/opt/runs", json=run_body([eid], "S2", template_id=t["id"]), headers=W)
     assert r.status_code == 201, r.text
+
+
+def test_template_json_write_does_not_follow_tmp_symlink(tmp_path):
+    """통합(Verifier): preview.json 등 원자적 쓰기가 고정 이름 '<파일>.tmp' 심링크를 따라가 밖 파일을 덮지 않음."""
+    import os
+
+    from esl_platform.api.services.opt_templates import _write_json
+
+    d = tmp_path / "tpl"
+    d.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep")
+    os.symlink(outside, d / "preview.json.tmp")
+    _write_json(str(d / "preview.json"), {"a": 1})
+    assert outside.read_text() == "keep"
+    assert json.loads((d / "preview.json").read_text()) == {"a": 1}
+    assert not [p for p in d.iterdir() if p.name.startswith(".preview.json.")]      # 임시 파일 남지 않음

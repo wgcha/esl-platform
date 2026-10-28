@@ -85,6 +85,15 @@ def test_rejects(tmp_path, bad, msg):
     assert ei.value.code == "MESH_INVALID" and msg in ei.value.message
 
 
+def test_rejects_include_before_bulk(tmp_path):
+    """통합(Verifier, 계약 §7.2): BEGIN BULK 앞(제어·케이스 구역) INCLUDE 도 거부."""
+    assert "BEGIN BULK" in FREE
+    txt = "SUBCASE 1\n  INCLUDE 'loads.inc'\n" + FREE
+    with pytest.raises(EslError) as ei:
+        fr.read_fem(_w(tmp_path, "h.fem", txt))
+    assert ei.value.code == "MESH_INVALID" and "INCLUDE" in ei.value.message and "줄 2" in ei.value.message
+
+
 def test_missing_prop_mat(tmp_path):
     with pytest.raises(EslError) as ei:
         fr.read_fem(_w(tmp_path, "x.fem", FREE.replace("PSHELL,7,3,1.5,3\n", "")))
