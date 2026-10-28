@@ -4,7 +4,7 @@ import type {
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
-  ValidationOut,
+  ValidationOut, View3dOut,
 } from "./types";
 
 export const api = {
@@ -42,6 +42,8 @@ export const api = {
   eslRuns: (caseId: string) => request<EslRunOut[]>("GET", `/cases/${caseId}/esl-runs`),
   eslRun: (id: string) => request<EslRunOut>("GET", `/esl-runs/${id}`),
   forces: (id: string, top = 50) => request<ForcesOut>("GET", `/esl-runs/${id}/forces`, { query: { top } }),
+  /** v0.5.8: 3D 하중 보기 manifest(상위 100행·군집·지지·범위). 파일은 view3dFile 로 받는다 */
+  view3d: (id: string) => request<View3dOut>("GET", `/esl-runs/${id}/view3d`),
   validations: (caseId: string) => request<ValidationOut[]>("GET", `/cases/${caseId}/validations`),
   validation: (id: string) => request<ValidationOut>("GET", `/validations/${id}`),
   artifacts: (caseId: string) => request<ArtifactOut[]>("GET", `/cases/${caseId}/artifacts`),

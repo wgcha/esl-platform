@@ -1395,3 +1395,81 @@ export interface ChangelogEntry {
   date?: string | null;
   sections: Partial<Record<ChangelogSection, string[]>>;
 }
+
+// ---------------------------------------------------------------- v0.5.8 3D 하중 보기 (계약 esl_3d_load.md §3.6·§4)
+export interface View3dValuesArray {
+  /** fn(int16, N, 부호) · fmag(uint16, N) · u(int16×3, mm) · pa(uint16, 면압 |Fn|/A MPa — 사용자 결정 2026-10-28) */
+  key: "fn" | "fmag" | "u" | "pa";
+  dtype: "int16" | "uint16";
+  comps: number;
+  offset: number;
+  scale: number | number[];
+}
+export interface View3dTopRow {
+  rank: number;
+  node_id: number;
+  vertex: number;
+  x: number;
+  y: number;
+  z: number;
+  fx: number;
+  fy: number;
+  fz: number;
+  mag: number;
+  fn: number;
+  is_support: boolean;
+}
+export interface View3dClusterRow {
+  label: string;
+  n_nodes: number;
+  center: number[];
+  u_center?: number[];
+  r: number[];
+  r_mag: number;
+  sum_abs: number;
+  cancel: number;
+  m: number[];
+  m_mag: number;
+  min_node_id: number;
+}
+export interface View3dCluster {
+  k_actual: number;
+  rows: View3dClusterRow[];
+}
+export interface View3dSupport {
+  node_id: number;
+  vertex: number;
+  dof: string;
+  x0: number[];
+}
+export interface View3dRange {
+  max: number;
+  p99: number;
+}
+export interface View3dOut {
+  schema: string;
+  builder_version: number;
+  key: string;
+  esl_run_id: string;
+  n_nodes: number;
+  n_elems: number;
+  n_tris: number;
+  units: "mm";
+  up: "Z";
+  bbox: { min: number[]; max: number[]; diag: number };
+  plate_normal: number[];
+  geometry: { name: string; bytes: number };
+  lod: { name: string; bytes: number; n_vertices: number } | null;
+  values: { name: string; bytes: number; arrays: View3dValuesArray[] };
+  ranges: { fn_abs: View3dRange; fmag_max: number; u_max: number; /** 면압 MPa(있으면 표면 색 기본 범위) */ pa?: View3dRange };
+  sum_f: number[];
+  sum_m: number[];
+  moment_center: number[];
+  supports: View3dSupport[];
+  top: View3dTopRow[];
+  clusters: Record<string, View3dCluster>;
+  geometry_url?: string;
+  lod_url?: string | null;
+  values_url?: string;
+  created_at?: string;
+}

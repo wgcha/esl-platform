@@ -3,6 +3,9 @@ import { api } from "../api/endpoints";
 import { history } from "../api/history";
 import { PastFrame } from "../components/PastBadge";
 import { Badge, Card, Empty, Stat } from "../components/ui";
+import { LoadTable } from "../view3d/LoadTable";
+import { View3DCard } from "../view3d/View3DCard";
+import { useLoadView } from "../view3d/useLoadView";
 import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmtFixed, pct, sci, vec } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -14,13 +17,16 @@ export function Stage4({ c, reload, allowed }: StageProps) {
   const pastRunId = sp.get("run"); // 과거 실행 읽기 전용(?run=)
   const runId = pastRunId ?? c.current_esl_run_id;
   const run = usePolling(() => (runId ? api.eslRun(runId) : Promise.resolve(null)), 0, [runId, c.version]);
-  const forces = usePolling(() => (runId ? api.forces(runId, 50) : Promise.resolve(null)), 0, [runId]);
   const sets = usePolling(() => (c.current_support_set_id ? api.supportSets(c.id) : Promise.resolve([])), 0, [c.current_support_set_id]);
   const support = sets.data?.find((s) => s.id === c.current_support_set_id);
   const act = useAction(reload);
   const r = run.data;
   const pastJobId = pastRunId ? r?.job_id ?? null : null;
   const review = usePolling(() => (pastJobId ? history.review(pastJobId) : Promise.resolve(null)), 0, [pastJobId]);
+
+  // 3D 하중 보기 + 상위 표(과거 실행은 availability = full 일 때만)
+  const showLoad = !!r && !(pastRunId && review.data?.result.availability !== "full");
+  const view = useLoadView(runId ?? null, showLoad);
 
   const missing = [!c.tstar && "② t*", !c.current_support_set_id && "③ 지지점"].filter(Boolean);
   const prereq = missing.length ? `${missing.join("·")}을(를) 먼저 확정하세요` : null;
@@ -73,47 +79,11 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               </ul>
             )}
           </Card>
-          {!(pastRunId && review.data?.result.availability !== "full") && (
-          <Card title="F_eq 상위 노드">
-            {forces.data ? (
-              <div className="table-wrap scroll">
-                <table className="table compact">
-                  <thead>
-                    <tr>
-                      <th>노드</th>
-                      <th className="num">x</th>
-                      <th className="num">y</th>
-                      <th className="num">z</th>
-                      <th className="num">Fx</th>
-                      <th className="num">Fy</th>
-                      <th className="num">Fz</th>
-                      <th className="num">|F|</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {forces.data.rows.map((f) => (
-                      <tr key={f.node_id}>
-                        <td>{f.node_id}</td>
-                        <td className="num">{f.x.toFixed(1)}</td>
-                        <td className="num">{f.y.toFixed(1)}</td>
-                        <td className="num">{f.z.toFixed(1)}</td>
-                        <td className="num">{f.fx.toFixed(1)}</td>
-                        <td className="num">{f.fy.toFixed(1)}</td>
-                        <td className="num">{f.fz.toFixed(1)}</td>
-                        <td className="num">
-                          <strong>{f.mag.toFixed(1)}</strong>
-                        </td>
-                        <td>{f.is_support && <Badge kind="info">지지점</Badge>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <Empty>불러오는 중…</Empty>
-            )}
-          </Card>
+          {showLoad && view && (
+            <>
+              <View3DCard view={view} />
+              <LoadTable view={view} />
+            </>
           )}
         </>
       )}

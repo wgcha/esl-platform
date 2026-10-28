@@ -10,7 +10,7 @@ import { f3 } from "../lib/colormap";
 
 export type LegendKind = "sym" | "zero" | "minmax";
 export type Range = { min: number; max: number };
-export type LegendView = "field" | "disp";
+export type LegendView = "field" | "disp" | "load";
 
 export const legendKey = (vid: string, view: LegendView, layer: string) => `esl.legend.v1:${vid}:${view}:${layer}`;
 
