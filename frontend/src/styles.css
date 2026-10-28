@@ -2209,3 +2209,240 @@ details.open-uploads .actions {
 .upload-chip-text {
   position: relative;
 }
+
+/* ---------------------------------------------------------------- v0.7.0 비드 최적화(esl_opt_run.md §10) */
+.table tr.sel td {
+  background: var(--accent-weak);
+}
+.table tr.dim-row td {
+  color: var(--muted);
+}
+.table td.chk,
+.table th.chk {
+  width: 3.2rem;
+  text-align: center;
+}
+.mm-mark {
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+.pick-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  background: var(--accent-weak);
+}
+.mode-select select.mode-auto {
+  color: var(--muted);
+  font-weight: 400;
+}
+.mode-select select.mode-user {
+  color: var(--text);
+  font-weight: 700;
+}
+.opt-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.target-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.bead-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: flex-end;
+}
+.bead-form input[type="number"] {
+  width: 6rem;
+}
+/* 금지 영역: 2560 은 평면도 | 표, 그보다 좁으면 평면도 위 · 표 아래 */
+.ko-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(32rem, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 2200px) {
+  .ko-grid,
+  .opt-grid,
+  .target-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ko-plan {
+  min-width: 0;
+}
+.keepout-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 46vh;
+  user-select: none;
+}
+.ko-outline {
+  fill: var(--surface-2);
+  stroke: var(--text-2);
+  stroke-width: 2;
+}
+.ko-points .p1 {
+  fill: #c9ced8;
+}
+.ko-points .p2 {
+  fill: #8e97a6;
+}
+.ko-hatch-bg {
+  fill: #eef0f3;
+}
+.ko-hatch-line {
+  stroke: #9aa1ab;
+}
+.ko-auto {
+  fill: url(#ko-hatch);
+  fill-opacity: 0.9;
+  stroke: #9aa1ab;
+  stroke-width: 1;
+}
+.ko-hole {
+  fill: var(--surface);
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+}
+.ko-rect rect {
+  fill: #f08c00;
+  fill-opacity: 0.22;
+  stroke: #d9480f;
+  stroke-width: 3;
+  cursor: move;
+}
+.ko-rect.on rect {
+  fill-opacity: 0.36;
+  stroke-width: 6;
+}
+.ko-rect:focus {
+  outline: none;
+}
+.ko-rect:focus-visible rect {
+  stroke: var(--accent);
+}
+.ko-rect text {
+  fill: #a33a0b;
+  font-weight: 650;
+  pointer-events: none;
+}
+.ko-axis text {
+  fill: var(--muted);
+}
+.ko-side {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.ko-table input[type="number"] {
+  width: 5rem;
+}
+.ko-table input.ko-name {
+  width: 8rem;
+}
+.ko-save {
+  align-items: center;
+}
+.strategy {
+  display: grid;
+  gap: 0.6rem;
+}
+.radio-rows {
+  display: grid;
+  gap: 0.35rem;
+}
+.radio-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.radio-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+.radio-row .inline-field input {
+  width: 4.5rem;
+}
+.method-info {
+  position: relative;
+}
+.info-btn {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.method-pop {
+  position: absolute;
+  right: 0;
+  top: 1.8rem;
+  z-index: 30;
+  width: min(40rem, 90vw);
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(20, 30, 50, 0.16);
+  font-size: 0.88rem;
+}
+.method-pop:focus {
+  outline: none;
+}
+.method-sec p {
+  margin: 0 0 0.2rem;
+}
+.method-sec ul,
+.method-sec ol {
+  margin: 0.2rem 0 0;
+  padding-left: 1.2rem;
+}
+.method-sec li.on {
+  font-weight: 700;
+}
+.method-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.opt-result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.bead-map {
+  display: block;
+  width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.tpl-register {
+  display: grid;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}

@@ -15,6 +15,8 @@ import { Guide } from "../pages/guide/Guide";
 import { CaseHistory } from "../pages/history/CaseHistory";
 import { ProjectHistory } from "../pages/history/ProjectHistory";
 import { JobReview } from "../pages/history/JobReview";
+import { OptNew } from "../pages/opt/OptNew";
+import { OptDetail } from "../pages/opt/OptDetail";
 
 export function App() {
   return (
@@ -36,6 +38,9 @@ export function App() {
         <Route path="/p/:projectId/library/analyses/:analysisId" element={<AnalysisDetail />} />
         <Route path="/p/:projectId/library/comparisons/new" element={<ComparisonNew />} />
         <Route path="/p/:projectId/library/comparisons/:comparisonId" element={<ComparisonDetail />} />
+        <Route path="/p/:projectId/opt" element={<Navigate to="../library?tab=opt" relative="path" replace />} />
+        <Route path="/p/:projectId/opt/new" element={<OptNew />} />
+        <Route path="/p/:projectId/opt/:optId" element={<OptDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </RunStatusProvider>

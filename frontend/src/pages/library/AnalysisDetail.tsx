@@ -1,10 +1,11 @@
 // 종합분석 상세(계약 §11 UI): 진행 상태 · 요약(대표 케이스 표, 포락 미니맵) · 보고서 보기(주 버튼) · 덱 파일 다운로드.
 // 요약 = AnalysisOut.result(워커 _analysis_summary). 포락 격자는 result 에 없어 envelope.csv(다운로드 API)를 읽는다.
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile } from "../../api/client";
-import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
+import type { AnalysisFileOut, AnalysisResult, EntryOut, JobState } from "../../api/types";
+import { optPath, sameSize, sizeOf } from "../../api/opt";
 import { useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
@@ -19,6 +20,18 @@ import { f3 } from "../../lib/colormap";
 import { DECK_LABEL, EnvelopeMap, NORM_LABEL, OBJ_LABEL, VerdictBadge, dropText, entryLabel, filtersText, libPath, parseEnvelopeCsv } from "./common";
 
 const ACTIVE: string[] = ["QUEUED", "RUNNING"];
+
+/** v0.7.0(esl_opt_run.md §3.2 대안 진입): 분석 항목을 같은 크기 묶음으로 나눠 가장 큰 묶음(동률이면 먼저 나온 것) + 빠진 수 */
+export function largestSizeGroup(es: EntryOut[], tol = 0.02): { ids: string[]; excluded: number } {
+  const groups: EntryOut[][] = [];
+  for (const e of es) {
+    const g = groups.find((x) => sameSize(sizeOf(e), sizeOf(x[0]), tol));
+    if (g) g.push(e);
+    else groups.push([e]);
+  }
+  const best = groups.reduce<EntryOut[]>((a, g) => (g.length > a.length ? g : a), []);
+  return { ids: best.map((e) => e.id), excluded: es.length - best.length };
+}
 const KIND_LABEL: Record<string, string> = { optdeck: "최적화 덱", report: "보고서", analysis: "분석 자료", log: "로그", other: "기타" };
 
 function FileRow({ aid, f }: { aid: string; f: AnalysisFileOut }) {
@@ -109,6 +122,7 @@ function RepTable({ r }: { r: AnalysisResult }) {
 export function AnalysisDetail() {
   const { projectId = "", analysisId = "" } = useParams();
   const { projects } = useApp();
+  const nav = useNavigate();
   const project = projects.find((p) => p.id === projectId);
   const an = usePolling(() => api.analysis(analysisId), 0, [analysisId]);
   const a = an.data;
@@ -145,6 +159,19 @@ export function AnalysisDetail() {
         {a?.title && <span className="muted">{a.title}</span>}
         <span className="spacer" />
         {done && <BundleButton url={p3.analysisBundleUrl(analysisId)} filename={`analysis_${analysisId}.zip`} fallbackPath={a?.folder_path} />}
+        {done && a && entries.data && (
+          <button
+            type="button"
+            className="btn small"
+            title="이 분석의 씬(같은 크기 묶음)을 템플릿 비드 최적화(S2)로 — 서버에서 OptiStruct 실행"
+            onClick={() => {
+              const g = largestSizeGroup(entries.data!.filter((e) => a.entry_ids.includes(e.id) && e.status === "ACTIVE"));
+              nav(`${optPath(projectId)}?entries=${g.ids.join(",")}&tab=S2&analysis=${analysisId}${g.excluded ? `&mixed=${g.excluded}` : ""}`);
+            }}
+          >
+            이 분석의 씬으로 비드 최적화
+          </button>
+        )}
         <PrimaryButton label="보고서 보기" onClick={() => openReport(api.analysisReportUrl(analysisId))} disabledReason={reason} />
       </div>
       <ErrorLine text={an.error} />
