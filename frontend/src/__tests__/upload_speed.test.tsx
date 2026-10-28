@@ -1,7 +1,7 @@
 // v0.6.0 업로드 속도(계약 esl_upload_speed.md): V-US-8 구 서버 순차, V-US-12 브라우저 병렬 업로더, V-US-26 화면(압축 모드·큰 h3d 안내·배지),
 // V-US-30/31 목록 선택·선택 지우기, 이슈 #29 진행 중인 업로드 목록.
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../app/App";
 import { ApiError } from "../api/client";
@@ -9,6 +9,7 @@ import { putChunk } from "../api/p3";
 import { MockServer, createMockFetch } from "../mock/server";
 import { renderApp } from "../test/render";
 import { DEFAULT_CHUNK, Uploader, movingRate, type PickedFile } from "../lib/uploader";
+import { DONE_SHOW_MS, uploadStore } from "../lib/uploadStore";
 import { SLIM_KEY, secText, slimLine } from "../lib/slim";
 import { LIMIT_NOTE } from "../pages/newcase/UploadPanel";
 
@@ -35,7 +36,10 @@ const picks = (): PickedFile[] => [
   { file: file("drop.h3d", 80), rel: "h3d/drop.h3d" },
 ];
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  uploadStore._reset();
+});
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
@@ -571,5 +575,119 @@ describe("이슈 #29 진행 중인 업로드(사용자당 한도)", () => {
     await waitFor(() => expect(server.p3.uploads.get("up-1")!.state).toBe("CANCELED"));
     fireEvent.click(await screen.findByRole("button", { name: "이어 올리기" }));
     expect(await screen.findByText(/rad·h3d 확인됨/)).toBeTruthy();
+  });
+});
+
+describe("업로드 유지(페이지 이동·상단 진행 표시·beforeunload)", () => {
+  let loc = "";
+  const Probe = () => {
+    const l = useLocation();
+    loc = l.pathname + l.search;
+    return null;
+  };
+  const renderAt = (server: MockServer, path: string) => {
+    globalThis.fetch = createMockFetch(server);
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <Probe />
+        <App />
+      </MemoryRouter>,
+    );
+  };
+  const pickAll = async () => {
+    await screen.findByRole("heading", { name: "새 Case" });
+    fireEvent.change(screen.getByLabelText("① rad · include 파일 파일"), { target: { files: [file("model_0000.rad", 20), file("inc_mat.inc", 5), file("inc_mesh.inc", 9)] } });
+    fireEvent.change(screen.getByLabelText("② h3d 결과 파일 파일"), { target: { files: [file("drop.h3d", 80)] } });
+    await screen.findByRole("table", { name: "올릴 파일" });
+  };
+
+  it("세션이 생기면 URL 이 ?upload=<id> 로 바뀌고(replace), 다른 페이지에 갔다 와도 같은 업로드가 계속된다", async () => {
+    const server = new MockServer({ user: "power" });
+    server.p3.chunkSize = 8;
+    server.p3.putDelayMs = 25;
+    renderAt(server, NEW);
+    await pickAll();
+    fireEvent.click(screen.getByRole("button", { name: "올리기" }));
+    await waitFor(() => expect(loc).toBe(`${NEW}?upload=up-1`));
+    const chip = await screen.findByTestId("upload-chip");
+    expect(chip.textContent).toMatch(/^업로드 \d+%$/);
+    // 라이브러리로 이동 — 전송은 계속
+    fireEvent.click(screen.getByRole("link", { name: "라이브러리" }));
+    await waitFor(() => expect(loc).toMatch(/library/));
+    expect(screen.queryByRole("table", { name: "올릴 파일" })).toBeNull();
+    const before = server.p3.putCount;
+    await waitFor(() => expect(server.p3.putCount).toBeGreaterThan(before));
+    // 상단 표시 클릭 → 그 업로드 화면으로 복귀(같은 세션·목록·진행률)
+    fireEvent.click(screen.getByTestId("upload-chip"));
+    await waitFor(() => expect(loc).toBe(`${NEW}?upload=up-1`));
+    const t = await screen.findByRole("table", { name: "올릴 파일" });
+    expect(within(t).getByText("h3d/drop.h3d")).toBeTruthy();
+    expect(await screen.findByText(/rad·h3d 확인됨/, undefined, { timeout: 4000 })).toBeTruthy();
+    expect(server.p3.uploads.size).toBe(1);
+    expect(server.p3.putCount).toBe(16);
+    // 끝나면 '업로드 완료 — 열기'
+    expect(screen.getByTestId("upload-chip").textContent).toBe("업로드 완료 — 열기");
+    expect(uploadStore.chip(Date.now() + DONE_SHOW_MS + 100)).toBeNull();
+  });
+
+  it("화면이 사라져도 저장소가 Uploader 를 쥐고, ?upload=<id> 로 다시 열면 같은 세션에 붙는다(진행률 표시)", async () => {
+    const server = new MockServer({ user: "power" });
+    server.p3.chunkSize = 8;
+    server.p3.hangAfter = 3;
+    const view = renderAt(server, NEW);
+    await pickAll();
+    fireEvent.click(screen.getByRole("button", { name: "올리기" }));
+    await waitFor(() => expect(loc).toBe(`${NEW}?upload=up-1`));
+    await waitFor(() => expect(server.p3.putCount).toBe(3));
+    view.unmount();
+    expect(uploadStore.active().length).toBe(1);
+    renderAt(server, `${NEW}?upload=up-1`);
+    const t = await screen.findByRole("table", { name: "올릴 파일" });
+    expect(within(t).getAllByRole("row").length).toBe(5);
+    expect(screen.getByRole("progressbar")).toBeTruthy();
+    expect(screen.getByText(/올리는 중/)).toBeTruthy();
+    expect(server.p3.uploads.size).toBe(1);
+  });
+
+  it("상단 표시: 여러 건이면 '업로드 2건 · N%', 클릭하면 그 업로드 화면", async () => {
+    const server = new MockServer({ user: "power" });
+    server.p3.chunkSize = 8;
+    server.p3.hangAfter = 4;
+    globalThis.fetch = createMockFetch(server);
+    const mk = (n: string) => [
+      { file: file(`${n}_0000.rad`, 20), rel: `rad/${n}_0000.rad` },
+      { file: file("drop.h3d", 80), rel: "h3d/drop.h3d" },
+    ];
+    const a = uploadStore.create("p-body", "a", mk("a"), noSleep);
+    const b = uploadStore.create("p-body", "b", mk("b"), noSleep);
+    void uploadStore.start(a.key);
+    void uploadStore.start(b.key);
+    renderAt(server, "/p/p-body");
+    await waitFor(() => expect(screen.getByTestId("upload-chip").textContent).toMatch(/^업로드 2건 · \d+%$/));
+    fireEvent.click(screen.getByTestId("upload-chip"));
+    await waitFor(() => expect(loc).toMatch(/cases\/new\?upload=up-/));
+  });
+
+  it("beforeunload 경고는 활성 전송 중에만 등록되고 멈추면 해제된다", async () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const rem = vi.spyOn(window, "removeEventListener");
+    const server = new MockServer({ user: "power" });
+    server.p3.chunkSize = 8;
+    server.p3.hangAfter = 2;
+    globalThis.fetch = createMockFetch(server);
+    const calls = (spy: typeof add) => spy.mock.calls.filter((c) => c[0] === "beforeunload").length;
+    expect(calls(add)).toBe(0);
+    const s = uploadStore.create("p-body", "u", picks(), noSleep);
+    void uploadStore.start(s.key);
+    await waitFor(() => expect(calls(add)).toBe(1));
+    const handler = add.mock.calls.find((c) => c[0] === "beforeunload")![1] as (e: BeforeUnloadEvent) => void;
+    const ev = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    handler(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    await waitFor(() => expect(server.p3.putCount).toBe(2));
+    expect(calls(add)).toBe(1); // 갱신이 여러 번이어도 한 번만 등록
+    s.uploader.stop();
+    await waitFor(() => expect(calls(rem)).toBe(1));
+    expect(uploadStore.active().length).toBe(0);
   });
 });

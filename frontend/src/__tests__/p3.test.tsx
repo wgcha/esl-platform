@@ -12,6 +12,7 @@ import { MOCK_CHANGELOG, MOCK_VERSION } from "../mock/p3mock";
 import { ApiError } from "../api/client";
 import { putChunk } from "../api/p3";
 import { Uploader, planChunks, sha256Available, signature, type PickedFile, type UploadProgress } from "../lib/uploader";
+import { uploadStore } from "../lib/uploadStore";
 import { cmpVersion, isNewVersion, parseChangelog } from "../lib/changelog";
 import { GUIDE, FAQ } from "../pages/guide/content";
 import { PC_CODE_BUTTON, remainText, serverUrl } from "../pages/newcase/PcPanel";
@@ -38,7 +39,10 @@ const picks = (): PickedFile[] => [
   { file: file("drop.h3d", 30), rel: "h3d/drop.h3d" },
 ];
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  uploadStore._reset();
+});
 afterEach(() => localStorage.clear());
 
 describe("분할 업로드(Uploader)", () => {

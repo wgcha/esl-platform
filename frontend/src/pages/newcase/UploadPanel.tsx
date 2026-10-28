@@ -10,6 +10,7 @@ import { p3 } from "../../api/p3";
 import { Badge, ErrorLine } from "../../components/ui";
 import { bytes, dt } from "../../lib/format";
 import { slimLine, slimTip } from "../../lib/slim";
+import { uploadStore, type Picked } from "../../lib/uploadStore";
 import { ASSUMED_BPS, Uploader, etaText, type PickedFile, type UploadProgress } from "../../lib/uploader";
 import type { InputSelection } from "./types";
 
@@ -152,7 +153,6 @@ function clearErrorText(e: unknown): string {
   return errorText(e);
 }
 
-type Picked = { file: File; rel: string; /** 서버 업로드 항목 번호(세션이 생긴 뒤) */ idx?: number };
 
 export function UploadPanel({
   projectId,
@@ -163,6 +163,7 @@ export function UploadPanel({
   initialUploadId,
   onOpenPcTab,
   onOpenUpload,
+  onSessionId,
 }: {
   projectId: string;
   name: string;
@@ -175,11 +176,21 @@ export function UploadPanel({
   onOpenPcTab?: () => void;
   /** '진행 중인 업로드'의 '이어서 열기' — ?upload=<id> 로 연다 */
   onOpenUpload?: (id: string) => void;
+  /** 업로드 세션이 만들어지면(POST /uploads 성공) 그 id — 호출 측이 URL 을 ?upload=<id> 로 바꾼다 */
+  onSessionId?: (id: string) => void;
 }) {
-  const [files, setFiles] = useState<Picked[]>([]);
+  // 앱 수준 업로드 저장소: 다른 페이지로 갔다 와도(?upload=<id>) 같은 Uploader·목록·진행률에 다시 붙는다
+  const adoptRef = useRef(initialUploadId ? uploadStore.findById(initialUploadId) : undefined);
+  const adopt = adoptRef.current;
+  const keyRef = useRef<string | null>(adopt?.key ?? null);
+  const lastResult = useRef<UploadCompleteOut | null>(null);
+  const lastErr = useRef<string | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const [files, setFiles] = useState<Picked[]>(adopt?.files ?? []);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [skipped, setSkipped] = useState<string[]>([]);
-  const [prog, setProg] = useState<UploadProgress | null>(null);
+  const [prog, setProg] = useState<UploadProgress | null>(adopt?.prog ?? null);
   const [result, setResult] = useState<Checked | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [altOpen, setAltOpen] = useState(false);
@@ -187,7 +198,7 @@ export function UploadPanel({
   const [note, setNote] = useState<string | null>(null);
   const [hintGb, setHintGb] = useState(SLIM_HINT_GB_DEFAULT);
   const [listKey, setListKey] = useState(0);
-  const up = useRef<Uploader | null>(null);
+  const up = useRef<Uploader | null>(adopt?.uploader ?? null);
   const [pcUpload, setPcUpload] = useState<PcUpload | null>(null);
   const allRef = useRef<HTMLInputElement>(null);
 
@@ -202,8 +213,66 @@ export function UploadPanel({
     };
   }, []);
 
+  /** 확인 결과를 화면·Case 입력 선택에 반영 */
+  function applyResult(raw: UploadCompleteOut) {
+    const r = normCheck(raw);
+    setResult(r);
+    const src = r.h3d_path ? ({ kind: "h3d", path: r.h3d_path } as const) : r.results_dir ? ({ kind: "results", path: r.results_dir } as const) : null;
+    const ok = r.ok && !!r.rad_path && !!src && r.missing_includes.length === 0;
+    onChangeRef.current(ok ? { rad_path: r.rad_path!, source: src!, parts: r.parts, ok: true } : null);
+  }
+  function clearResult() {
+    setResult(null);
+    lastResult.current = null;
+    if (keyRef.current) uploadStore.patch(keyRef.current, { result: null });
+  }
+
+  // 저장소 구독: 전송 진행·확인 결과·오류를 화면에 반영(화면이 없는 동안 끝난 결과도 다시 붙을 때 반영)
+  const syncRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    const sync = () => {
+      const s = uploadStore.get(keyRef.current);
+      if (!s) return;
+      setProg(s.prog);
+      if (s.result && s.result !== lastResult.current) {
+        lastResult.current = s.result;
+        applyResult(s.result);
+      }
+      if (s.error && s.error !== lastErr.current) {
+        lastErr.current = s.error;
+        setError(s.error);
+      }
+    };
+    syncRef.current = sync;
+    sync();
+    return uploadStore.subscribe(sync);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (keyRef.current) uploadStore.patch(keyRef.current, { files });
+  }, [files]);
+  const sessionId = prog?.uploadId ?? null;
+  useEffect(() => {
+    if (sessionId && sessionId !== initialUploadId && keyRef.current) onSessionId?.(sessionId);
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!initialUploadId) return;
+    const mine = uploadStore.findById(initialUploadId);
+    if (mine) {
+      // 이 브라우저가 올리는(또는 올렸던) 업로드: 저장소 세션에 붙는다(다른 업로드 화면에서 상단 표시로 넘어온 경우 포함)
+      if (mine.key !== keyRef.current) {
+        keyRef.current = mine.key;
+        up.current = mine.uploader;
+        lastResult.current = null;
+        lastErr.current = null;
+        setFiles(mine.files);
+        setSelected(new Set());
+        setPcUpload(null);
+        setResult(null);
+        syncRef.current();
+      }
+      return;
+    }
     let alive = true;
     (async () => {
       try {
@@ -212,7 +281,7 @@ export function UploadPanel({
         if (u.state === "OPEN" && live.some((f) => !f.done)) {
           // 아직 다 받지 못한 업로드: 받은 양을 보여 주고, 같은 파일을 다시 고르면 이어 올린다고 안내
           if (!alive) return;
-          setResult(null);
+          clearResult();
           setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
           onChange(null);
           return;
@@ -239,12 +308,16 @@ export function UploadPanel({
   const busy = prog?.phase === "hashing" || prog?.phase === "uploading" || prog?.phase === "completing";
 
   function resetLocal() {
+    uploadStore.drop(keyRef.current);
+    keyRef.current = null;
+    lastResult.current = null;
+    lastErr.current = null;
     up.current = null;
     setFiles([]);
     setSelected(new Set());
     setSkipped([]);
     setProg(null);
-    setResult(null);
+    clearResult();
     setError(null);
     setNote(null);
     onChange(null);
@@ -278,7 +351,7 @@ export function UploadPanel({
     setSelected(new Set());
     onChange(null, rad ? nameFromRad(rad.file.name) : undefined);
     setSkipped((s) => [...s, ...bad]);
-    setResult(null);
+    clearResult();
   }
 
   /** 세션이 있을 때 고른 파일은 목록에 더하고 서버에 등록(addUploadFiles) — 올리기는 '이어 올리기'로 */
@@ -295,7 +368,7 @@ export function UploadPanel({
     try {
       const start = await up.current!.register(fresh.map((f) => ({ file: f.file, rel: f.rel })));
       setFiles((old) => [...old, ...fresh.map((f, j) => ({ ...f, idx: start + j }))]);
-      setResult(null);
+      clearResult();
       setError(null);
       onChange(null);
       setNote(null);
@@ -305,26 +378,32 @@ export function UploadPanel({
   }
 
   async function complete() {
-    try {
-      const r = normCheck(await up.current!.complete());
-      setResult(r);
-      const src = r.h3d_path ? ({ kind: "h3d", path: r.h3d_path } as const) : r.results_dir ? ({ kind: "results", path: r.results_dir } as const) : null;
-      const ok = r.ok && !!r.rad_path && !!src && r.missing_includes.length === 0;
-      onChange(ok ? { rad_path: r.rad_path!, source: src!, parts: r.parts, ok: true } : null);
-    } catch (e) {
-      setError(errorText(e));
+    const key = keyRef.current;
+    if (!key) return;
+    const r = await uploadStore.complete(key);
+    if (r && r !== lastResult.current) {
+      lastResult.current = r;
+      applyResult(r);
+    }
+    const err = uploadStore.get(key)?.error;
+    if (err) {
+      lastErr.current = err;
+      setError(err);
     }
   }
 
   async function start() {
     setError(null);
     setNote(null);
+    lastErr.current = null;
     if (!up.current) {
-      up.current = new Uploader(projectId, name, files.map((f) => ({ file: f.file, rel: f.rel })), setProg, uploaderOpts);
-      setFiles((old) => old.map((f, i) => ({ ...f, idx: i })));
+      const sess = uploadStore.create(projectId, name, files, uploaderOpts);
+      keyRef.current = sess.key;
+      up.current = sess.uploader;
+      setFiles(sess.files);
     }
-    if (await up.current.run()) await complete();
-    else if (up.current?.progress.errorCode === "UPLOAD_LIMIT") setListKey((k) => k + 1);
+    const ok = await uploadStore.start(keyRef.current!);
+    if (!ok && up.current?.progress.errorCode === "UPLOAD_LIMIT") setListKey((k) => k + 1);
   }
 
   async function addMissing(list: FileList | null) {
@@ -336,12 +415,13 @@ export function UploadPanel({
       const safe = hit && !hit.startsWith("/") && !/^[A-Za-z]:/.test(hit) && !hit.split("/").includes("..");
       return { file, rel: safe ? (hit.startsWith("rad/") ? hit : `rad/${hit}`) : `rad/${file.name}` };
     });
-    setResult(null);
+    clearResult();
     setError(null);
     try {
       const startIdx = await up.current.register(more);
       setFiles((f) => [...f, ...more.map((m, j) => ({ ...m, idx: startIdx + j }))]);
-      if (await up.current.run()) await complete();
+      lastErr.current = null;
+      await uploadStore.start(keyRef.current!);
     } catch (e) {
       setError(errorText(e));
     }
@@ -380,7 +460,7 @@ export function UploadPanel({
       if (all) return resetLocal();
       setFiles(files.filter((f) => !gone.has(f.rel)));
       setSelected(new Set());
-      setResult(null);
+      clearResult();
       onChange(null);
       return;
     }
@@ -394,7 +474,7 @@ export function UploadPanel({
       await up.current.remove(selFiles.map((f) => f.idx!));
       setFiles((old) => old.filter((f) => !gone.has(f.rel)));
       setSelected(new Set());
-      setResult(null);
+      clearResult();
       onChange(null);
       if (wasDone) {
         setNote("파일을 지워 서버에서 다시 확인하는 중…");
