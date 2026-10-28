@@ -6,12 +6,14 @@ from typing import Any
 
 
 class DomainError(Exception):
-    def __init__(self, code: str, message: str, *, status: int = 400, **extra: Any) -> None:
+    def __init__(self, code: str, message: str, *, status: int = 400, headers: dict[str, str] | None = None,
+                 **extra: Any) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.status = status
         self.extra = extra
+        self.headers = headers
 
     def detail(self) -> dict[str, Any]:
         return {"code": self.code, "message": self.message, **self.extra}

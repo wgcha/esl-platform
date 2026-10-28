@@ -1,6 +1,6 @@
 # 계약: 대용량 h3d 업로드 속도 — B 압축 모드(hvtrans 슬림 h3d) + A 전송 병렬화 + 업로드 목록 선택 지우기 (v0.6.0)
 
-- 상태: **확정** (2026-10-28, 사용자 결정 2026-10-28: "결과 h3d가 20~50 GB. B+A 진행", 20:00 추가 요구: 업로드 목록 행별 선택·선택 지우기). 구현 코드 없음. 이 문서가 구현·검증의 원본이다.
+- 상태: **확정** (2026-10-28, 미결 Q1~Q3 확정 §13, 사용자 결정 2026-10-28: "결과 h3d가 20~50 GB. B+A 진행", 20:00 추가 요구: 업로드 목록 행별 선택·선택 지우기). 구현 코드 없음. 이 문서가 구현·검증의 원본이다.
 - 버전 제안: **v0.6.0** (업로드 프로토콜 2 + PC 도구 기본 동작 변경 = 사용자에게 보이는 큰 변경).
 - DB migration: **없음** (업로드 상태는 기존 `uploads.files` JSONB 안의 새 키로, Case 표시는 `uploads.result` 조회로. §6.5). MCP 예정 0009 영향 없음.
 - 대체 범위: `esl_p3_ux.md` §1.1 "PUT … 순서 검증"·"청크 기본 16 MB", §8 "동시 2청크·서버 received 기준", §9.2 "ESL_extract = PC HyperView 추출 후 결과 폴더 업로드(기본)" → 이 문서 §4~§7로 대체. 충돌 시 이 문서 우선. 보안 규칙(§1.1·§10)은 그대로 유지·확장.
@@ -362,8 +362,19 @@ EndSubcase
 | P0-7 | 대시보드 Vite 프록시 경유 병렬 PUT(4×64 MB) 처리량·타임아웃·본문 크기 제한 | R6 |
 | P0-8 | 운영 서버(Windows, NTFS) 사전 할당 + lseek/write 동시 쓰기 처리량, VDL 0 채우기 영향 | R5 |
 
-## 13. 미결 (사용자 확인 필요)
+## 13. 미결 → 확정 (사용자 결정 2026-10-28) · 변경 메모
 
-- Q1: 웹 체크 상태를 PC 도구에 실제로 전달할 필요가 있는가(필요하면 v0.6.x에서 `client_tokens.prefs` migration + 토큰 범위에 설정 읽기 1개 추가). 현재 결정 US-3 = 전달 안 함.
-- Q2: `ESL_extract.bat`의 기본을 PC 추출 → 압축 업로드로 바꾸는 것(US-2)은 기존 사용자 습관을 바꾼다 — PC 추출(`P`)을 몇 버전 뒤 없앨지, 계속 둘지.
-- Q3: 압축 모드 기본 ON 배포 조건 = V-US-25 동일성 통과(R3). 통과 전 v0.6.0을 내면 PC 기본값 `original`로 내도 되는가.
+- Q1 확정: **웹 체크 상태는 PC 도구에 전달하지 않는다**(migration 없음, `client_tokens.prefs`·토큰 범위 확장 없음). US-3 그대로. 웹 체크박스는 이 브라우저의 안내 기본값.
+- Q2 확정: **기존 PC 추출(CSV 결과 폴더 업로드)은 선택지로 계속 유지**한다(`P`/`/pcextract`, 폐기 일정 없음).
+- Q3 확정: **PC 도구 기본값은 압축(ON)** (`upload_mode_default: slim`). V-US-25 동일성은 실기 확인(P0)으로 남기되 기본값은 압축.
+- 변경 메모(백엔드 구현 반영, 2026-10-28):
+  - 요청 `UploadMeta`는 `kind`만 필수, `h3d_slim`이면 `part_id` 필수(없으면 422 `UPLOAD_META_INVALID`). 메타는 JSON(UTF-8) ≤ 16 KB·정의 밖 키 거부·`.h3d`에만·`slim_bytes`=size. `POST /uploads`의 `client{name,version}`은 로그만.
+  - `complete` 누락 응답 `pending`은 객체 목록 `{index, rel, missing:[[a,b),…]}` — `missing`은 **청크 번호** 범위(프로토콜 1 파일은 `[[받은 청크 수, n_chunks)]`). 디스크 크기가 선언과 다른 완료 파일도 전체 누락으로 보고.
+  - `UploadFileOut`: `received`(연속 앞부분 바이트)·`received_total`·`chunks`([[a,b),…] 청크 번호)·`n_chunks`·`removed`·`meta`. `UploadOut`: `protocol`(1 = 업그레이드 전 세션)·`chunk_size`·`max_parallel`·`problems_count`(complete 검사 문제 + 누락 include 수). `UploadChunkOut`: `{index, received, received_total, chunk, duplicate, done, sha256}`.
+  - PUT(프로토콜 2) 순서: Content-Type(415) → 소유·OPEN·index(404)·removed(409 `UPLOAD_FILE_REMOVED`)·done(409 `UPLOAD_FILE_DONE`)·정렬/범위(409 `UPLOAD_OFFSET_MISMATCH` + `received`·`chunk_size`)·Content-Length 없음(411 `LENGTH_REQUIRED`)·>C(413 `CHUNK_TOO_LARGE`)·≠기대 길이(422 `CHUNK_LENGTH_MISMATCH`) → 이미 받은 청크면 본문 버리고 200 `duplicate:true` → 같은 청크 쓰는 중 409 `CHUNK_IN_FLIGHT`·동시 수 ≥ `upload.parallel`이면 429 `UPLOAD_PARALLEL_LIMIT`+`Retry-After: 1`. 본문이 기대 길이보다 길면 스트리밍 중 413, 짧거나 끊기면 표시 없음(`CHUNK_LENGTH_MISMATCH`/연결 끊김). 청크 sha 불일치 422 `CHUNK_SHA256_MISMATCH`. 마지막 청크 요청이 마무리(`SHA256_MISMATCH` 422·`UPLOAD_SIZE_MISMATCH` 422·`UPLOAD_FILE_EXISTS` 409·디스크 부족 507).
+  - `upload.chunk_mb` 허용 범위는 계약의 8..256 대신 **1..256**(시험용 작은 청크). 기본 64.
+  - `ui.upload_slim_hint_gb`는 `GET /version` 응답의 `ui: {upload_slim_hint_gb}`로 전달.
+  - 파일 빼기는 항목에 `removed:true, done:false, got:[]`; 이동 위치 `_backup/<사용자>/<업로드 폴더>__<rel>.removed`(+`.part`). `UPLOAD_IN_USE` 판정 = rad·결과·h3d 경로가 이 업로드 폴더 안인 Case 존재.
+  - Case: `input_h3d_meta`(H3D 입력만, `uploads.result.h3d_path` 대조), `case.json`의 `h3d_mode: slim|original|null`, `SLIM_PART_MISMATCH`는 Case 생성과 `PATCH part_title`(H3D·슬림 메타)에서 검사. 추출 작업 params `h3d.slim`이 true면 워커 실패 메시지에 원본 재업로드 힌트.
+  - 이슈 #29: `UPLOAD_LIMIT`(429)의 detail에 `open_uploads:[{id,name,created_at,received_bytes,total_bytes,problems_count}]`, 메시지 "진행 중인 업로드 세션이 N개입니다(사용자당 최대 M개, 계산 대기열과 별개) — 새 Case 화면의 '진행 중인 업로드'에서 이어서 하거나 취소하세요". 한도(`max_concurrent_per_user` 2)·`stale_hours` 72 유지.
+  - 알려진 한계: 진행 중 청크·해시 상태는 프로세스 메모리(백엔드 1 프로세스 전제). 구 클라이언트가 요청 중복을 보내 `CHUNK_IN_FLIGHT`(409, `received` 없음)를 받을 수 있음(타임아웃 재시도 직후에만 — 구 PC 도구는 GET으로 상태를 다시 맞춤).

@@ -68,7 +68,7 @@ def test_h3d_extract_e2e(client, synth_inputs, worker_factory, esl_root, monkeyp
     assert [s["step_key"] for s in job["steps"]] == ["H3D_EXTRACT", "EXTRACT", "TSTAR_SCAN", "EXTRACT_REGISTER"]
     assert job["steps"][0]["kind"] == "LOCAL" and "command" not in job["steps"][0]
     assert job["params"]["h3d"] == {"h3d_path": case["h3d_path"], "out_dir": raw, "part": "chassis rear",
-                                    "hot_k": 150, "top_n": 4}
+                                    "hot_k": 150, "top_n": 4, "slim": False}
     st = worker_factory().run_once("SLOT")
     j = _get(client, job["id"])
     assert st == "SUCCEEDED" and j["state"] == "SUCCEEDED", j

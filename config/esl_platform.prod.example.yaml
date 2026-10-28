@@ -57,8 +57,12 @@ ui:
   poll_queue_ms: 5000
   max_bundle_bytes: 5368709120        # 결과 받기(zip) 상한 5 GB — 넘으면 413 + 폴더 경로 안내
   browse_page_max: 1000               # 서버 폴더 찾아보기 한 번에 보이는 항목 수(넘으면 페이지)
+  upload_slim_hint_gb: 5              # 브라우저 업로드 h3d 가 이 크기(GB)를 넘으면 압축 모드(PC 도구) 안내 한 줄. 0 = 안내 끔
 upload:                               # 브라우저 분할 업로드(계약 esl_p3_ux.md §1.1)
-  chunk_mb: 16                        # 청크 크기(MB) — 청크별 sha256(X-Chunk-Sha256)·이어 올리기 단위
+  chunk_mb: 64                        # 새 세션의 청크 크기 C(MB, 세션에 고정) — 정렬 청크·청크별 sha256(X-Chunk-Sha256)·이어 올리기 단위
+  parallel: 4                         # 업로드당 동시 청크 수(1..8, 초과 429) — 응답 max_parallel, 클라이언트는 min(자기 설정, 이 값)
+  write_buffer_kb: 1024               # 청크 본문 스트리밍 쓰기 단위(요청당 메모리 ≈ 이 값의 2배)
+  preallocate: true                   # .part 사전 할당(ftruncate). NTFS 에서 뒤 청크 쓰기가 느리면 false
   max_file_bytes: 68719476736         # 파일당 64 GB(h3d 30 GB 수용)
   max_upload_bytes: 107374182400      # 업로드당 100 GB
   min_free_gb: 20                     # 업로드 후에도 upload_root 드라이브에 남길 여유(부족하면 507)

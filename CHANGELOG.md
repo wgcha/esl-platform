@@ -2,6 +2,21 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.6.0] - 2026-10-28
+### 변경
+- 대용량 h3d 업로드가 빨라집니다(업로드 프로토콜 2): 청크가 16 MB → 64 MB 로 커지고 한 파일의 청크를 동시에 최대 4개까지 순서와 상관없이 보냅니다. 서버는 받는 대로 디스크의 제 자리에 바로 쓰며(청크 전체를 메모리에 모으지 않음) 파일 전체 sha256 은 앞에서부터 따라가며 계산합니다. 이미 받은 청크를 다시 받으면 쓰지 않고 `duplicate` 로 응답합니다
+- 올리기를 끝내기(complete) 전에 서버가 누락을 검사합니다: 덜 받은 파일이 있으면 어느 청크 범위가 비었는지 알려 줍니다(`UPLOAD_INCOMPLETE`)
+- 업로드 목록 응답이 파일별로 받은 청크 범위(`chunks`)·연속 받은 바이트(`received`)·합계(`received_total`)를 줍니다. 이어 올리기는 받은 청크 범위 기준입니다
+- 진행 중인 업로드 세션 한도(사용자당 2개)에 걸리면 어떤 세션이 열려 있는지(이름·진행량·문제 수)를 함께 알려 주고, complete 검사에 실패해 남은 세션도 목록에서 문제 수와 함께 보입니다
+- 업그레이드 전에 만든 진행 중 업로드와 현재 PC 도구·브라우저의 순차 올리기는 그대로 동작합니다
+### 추가
+- 업로드에 파일별 정보(`meta`)를 붙일 수 있습니다: PC 도구가 만든 압축 모드 h3d(대상 파트·결과만 남긴 h3d)의 원본 크기·hvtrans 시간·남긴 결과 등. complete 결과(`h3d_meta`)와 Case(`input_h3d_meta`)에서 볼 수 있습니다
+- 압축 모드 h3d 로 만든 Case 에 다른 파트를 지정하면 `SLIM_PART_MISMATCH` 로 막고 "다른 파트는 원본 h3d로 올리세요"라고 안내합니다. 서버 추출이 압축 모드 h3d 에서 실패하면 원본으로 다시 올리라는 힌트가 붙습니다
+- 업로드에서 파일 하나 빼기 `DELETE /uploads/{id}/files/{index}`: 받은 부분은 `_backup` 으로 옮기고(삭제 없음) 목록에는 `removed` 로 남습니다. 완료된 업로드도 그 업로드로 만든 Case 가 없으면 뺄 수 있고 다시 올리는 상태로 돌아갑니다
+- 설정 `upload.parallel`(기본 4)·`upload.write_buffer_kb`(1024)·`upload.preallocate`(true), `ui.upload_slim_hint_gb`(기본 5, `GET /version` 의 `ui` 로 전달), `upload.chunk_mb` 기본 16 → 64
+- 새 오류 코드: `LENGTH_REQUIRED`(411)·`CHUNK_LENGTH_MISMATCH`(422)·`CHUNK_IN_FLIGHT`(409)·`UPLOAD_PARALLEL_LIMIT`(429, `Retry-After`)·`UPLOAD_FILE_REMOVED`·`UPLOAD_FILE_BUSY`·`UPLOAD_IN_USE`(409)·`UPLOAD_SIZE_MISMATCH`(422)·`UPLOAD_META_INVALID`(422)·`SLIM_PART_MISMATCH`(422)
+- DB migration 없음
+
 ## [0.5.9] - 2026-10-28
 ### 변경
 - ⑤ 단면 그래프: 스케일이 달라 오히려 차이가 크게 보이던 Δw 곡선과 오른쪽 보조 축을 뺐습니다(Δw 최대·RMS 수치 줄은 그대로)

@@ -26,7 +26,7 @@ def test_version_from_version_file_and_build_json(client, tmp_path):
     import esl_platform
 
     ver = (REPO / "VERSION").read_text(encoding="utf-8").strip()
-    assert esl_platform.__version__ == ver == "0.5.9"
+    assert esl_platform.__version__ == ver == "0.6.0"
     assert client.get(f"{API}/health").json()["version"] == ver
     assert client.get(f"{API}/openapi.json").json()["info"]["version"] == ver
     oa = json.loads((REPO / "docs" / "contracts" / "openapi_p1b.json").read_text(encoding="utf-8"))
@@ -92,13 +92,13 @@ def test_hardlink_part_and_target_rejected(client, tmp_path):
     up = create(client, {"rad/sub/x.rad": b"abcdef"}, name="hl").json()
     d = Path(up["dir_path"])
     os.link(victim, d / "rad" / "sub" / "x.rad.part")
-    r = put(client, up["upload_id"], 0, 3, b"PWN")
+    r = put(client, up["upload_id"], 0, 0, b"PWNPWN")
     assert r.status_code == 422 and _code(r) == "PATH_UNSAFE", r.text
     assert victim.read_bytes() == b"abc"
     os.unlink(d / "rad" / "sub" / "x.rad.part")
     # 최종 이름 자리에 하드 링크 → 거부(밖 파일 그대로)
     os.link(victim, d / "rad" / "sub" / "x.rad")
-    r = put(client, up["upload_id"], 0, 0, b"abc")
+    r = put(client, up["upload_id"], 0, 0, b"abcdef")
     assert r.status_code in (409, 422), r.text
     assert victim.read_bytes() == b"abc"
 

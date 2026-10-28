@@ -142,11 +142,12 @@ def test_chunk_order_resume_and_chunk_sha(client):
     uid = up["upload_id"]
     h3d = files["h3d/run.h3d"]
     cs = up["chunk_size"]
-    assert put(client, uid, 1, 0, h3d[:cs]).json() == {"index": 1, "received": cs, "done": False, "sha256": None}
-    r = put(client, uid, 1, 0, h3d[:cs])                       # 같은 offset 다시 → 순서 오류, received 안내
+    j = put(client, uid, 1, 0, h3d[:cs]).json()
+    assert (j["index"], j["received"], j["received_total"], j["done"], j["duplicate"]) == (1, cs, cs, False, False)
+    r = put(client, uid, 1, 0, h3d[:cs])                       # 같은 청크 다시 → 200 duplicate(프로토콜 2, 쓰지 않음)
+    assert r.status_code == 200 and r.json()["duplicate"] is True and r.json()["received"] == cs
+    r = put(client, uid, 1, cs + 10, h3d[cs + 10:cs + 20])     # 정렬 안 된 offset 거부
     assert r.status_code == 409 and _code(r) == "UPLOAD_OFFSET_MISMATCH" and r.json()["detail"]["received"] == cs
-    r = put(client, uid, 1, cs + 10, h3d[cs + 10:cs + 20])     # 건너뛰기 거부
-    assert _code(r) == "UPLOAD_OFFSET_MISMATCH"
     # 청크 sha256 불일치 → 쓰지 않음
     r = put(client, uid, 1, cs, h3d[cs:2 * cs], chunk_sha=False, **{"X-Chunk-Sha256": "0" * 64})
     assert r.status_code == 422 and _code(r) == "CHUNK_SHA256_MISMATCH"
@@ -167,7 +168,7 @@ def test_chunk_order_resume_and_chunk_sha(client):
     r = put(client, up2["upload_id"], 0, 0, b"x" * (cs + 1))
     assert r.status_code == 413 and _code(r) == "CHUNK_TOO_LARGE"
     r = put(client, up2["upload_id"], 0, 0, b"x" * 11)
-    assert _code(r) == "CHUNK_OVERFLOW"
+    assert r.status_code == 422 and _code(r) == "CHUNK_LENGTH_MISMATCH"
     r = client.put(f"{API}/uploads/{up2['upload_id']}/files/0", params={"offset": 0}, content=b"x",
                    headers={**W, "Content-Type": "text/plain"})
     assert r.status_code == 415
@@ -231,7 +232,7 @@ def test_symlink_inside_upload_dir_never_writes_outside(client, tmp_path):
                     json={"files": [{"rel": "results/done.json", "size": 2}]})
     assert r.status_code == 422 and _code(r) == "PATH_UNSAFE"
     os.symlink(out / "secret.txt", d / "rad" / "m_0000.rad.part")     # .part 자리에 바깥 파일 링크
-    r = put(client, up["upload_id"], 0, 0, files["rad/m_0000.rad"][:10])
+    r = put(client, up["upload_id"], 0, 0, files["rad/m_0000.rad"])
     assert r.status_code == 422 and _code(r) == "PATH_UNSAFE"
     assert (out / "secret.txt").read_text() == "outside" and all_files(out) == {"secret.txt"}
 
@@ -307,13 +308,15 @@ def test_complete_requires_rad_and_h3d_or_results(client):
 def test_cancel_and_stale_move_to_backup(client, app_ctx, upload_root):
     from esl_platform.api.services import uploads as svc
 
-    files = {"rad/m_0000.rad": mini_rad_text()}
+    files = {"rad/m_0000.rad": mini_rad_text(), "h3d/a.h3d": b"HYPER3D" + os.urandom(1_500_000)}
     up = create(client, files).json()
-    put(client, up["upload_id"], 0, 0, files["rad/m_0000.rad"][:100])
+    cs = up["chunk_size"]
+    assert put(client, up["upload_id"], 1, 0, files["h3d/a.h3d"][:cs]).status_code == 200
     r = client.delete(f"{API}/uploads/{up['upload_id']}", headers=W)
     assert r.status_code == 200 and r.json()["state"] == "CANCELED"
     bk = Path(r.json()["backup_path"])
-    assert not Path(up["dir_path"]).exists() and (bk / "rad" / "m_0000.rad.part").stat().st_size == 100
+    assert not Path(up["dir_path"]).exists()
+    assert (bk / "h3d" / "a.h3d.part").read_bytes()[:cs] == files["h3d/a.h3d"][:cs]     # 사전 할당된 .part 가 그대로 이동
     assert bk.parent == upload_root / "_backup" / "power"
     assert _code(client.delete(f"{API}/uploads/{up['upload_id']}", headers=W)) == "UPLOAD_CLOSED"
     # stale
@@ -347,7 +350,7 @@ def test_config_upload_root_rules(tmp_path):
     d["storage"]["upload_root"] = str(tmp_path / "esl-input")
     lc = load_config_dict(d, environ={})
     assert lc.ok and str(tmp_path / "esl-input") in lc.settings.storage.input_roots
-    assert lc.settings.storage.browse_spdm is False and lc.settings.upload.chunk_bytes == 16 * 1024 * 1024
+    assert lc.settings.storage.browse_spdm is False and lc.settings.upload.chunk_bytes == 64 * 1024 * 1024
     assert lc.settings.upload.max_file_bytes == 64 * 1024 ** 3 and ".h3d" in lc.settings.upload.allowed_ext
     d2 = make_settings_dict(tmp_path)
     d2["storage"]["upload_root"] = str(tmp_path / "esl_root" / "up")

@@ -87,12 +87,15 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
         if not h3d_case:
             return {"settings": settings, "input_fingerprint": fingerprint(rad, res, incs),
                     "part_title": case["part_title"]}
+        from .uploads import h3d_meta_for
+
+        slim = (h3d_meta_for(conn, h3d) or {}).get("kind") == "h3d_slim"
         hot_k = opts.hot_k or int((settings.get("extract") or {}).get("hot_k") or 200)
         top_n = opts.top_n or int((settings.get("tstar") or {}).get("top_n_times") or 5)
         return {"settings": settings, "input_fingerprint": fingerprint_h3d(rad, h3d, incs),
                 "part_title": case["part_title"],
                 "h3d": {"h3d_path": h3d, "out_dir": case["results_dir"], "part": case["part_title"],
-                        "hot_k": int(hot_k), "top_n": int(top_n)}}
+                        "hot_k": int(hot_k), "top_n": int(top_n), "slim": bool(slim)}}
 
     missing: list[str] = []
     if job_type == "CASE_REPORT":
