@@ -449,6 +449,8 @@ export class MockServer {
       c.input_kind = b.h3d_path ? "H3D" : "RESULTS";
       c.results_dir = b.results_dir ? String(b.results_dir) : `${ESL_ROOT}\\_h3d\\${folder}\\raw`;
       c.h3d_path = b.h3d_path ? String(b.h3d_path) : null;
+      c.input_h3d_meta = c.h3d_path ? this.p3.metaForPath(c.h3d_path) : null;
+      this.p3.markInUse(c.h3d_path);
       c.part_title = String(b.part_title || "chassis_rear");
       c.part_id = 10;
       this.cases.push(c);
@@ -1034,7 +1036,10 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       if (h.get("X-ESL-Request") !== "1")
         return new Response(JSON.stringify({ detail: { code: "CSRF_HEADER_REQUIRED", message: "요청 헤더가 없습니다." } }), { status: 403 });
     }
-    if (server.p3.shouldHang(method, url.pathname.replace(/^\/esl\/api/, ""))) await new Promise(() => undefined);
+    if (server.p3.shouldHang(method, url.pathname.replace(/^\/esl\/api/, ""))) {
+      // 응답이 오지 않는 PUT. AbortController 로 멈추면 실제 fetch 처럼 AbortError
+      await new Promise((_, rej) => init?.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))));
+    }
     if (method === "PUT" && server.p3.putDelayMs) await new Promise((r) => setTimeout(r, server.p3.putDelayMs));
     if (method === "PUT") server.p3.chunkShas.push(new Headers(init?.headers).get("X-Chunk-Sha256"));
     const bin = /^\/esl\/api\/esl-runs\/[^/]+\/view3d\/(part\.glb|values\.bin)$/.exec(url.pathname);
@@ -1044,9 +1049,10 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       return new Response(bin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
     const raw = init?.body;
-    const isBin = typeof Blob !== "undefined" && raw instanceof Blob;
+    const isBuf = raw instanceof ArrayBuffer || ArrayBuffer.isView(raw as ArrayBufferView);
+    const isBin = (typeof Blob !== "undefined" && raw instanceof Blob) || isBuf;
     const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;
-    const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw as Blob).size : 0);
+    const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw instanceof Blob ? raw.size : (raw as ArrayBuffer).byteLength) : 0);
     if (typeof r.body === "string")
       return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/octet-stream" } });
     return new Response(r.body === undefined ? null : JSON.stringify(r.body), {

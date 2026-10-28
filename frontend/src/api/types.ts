@@ -157,6 +157,8 @@ export interface CaseOut {
   created_at: string;
   updated_at: string;
   version: number;
+  /** v0.6.0 §6.5: 입력 h3d 의 업로드 메타(압축 모드 배지). 없으면 null */
+  input_h3d_meta?: H3dMeta | null;
   /** GET /cases/{id}·쓰기 응답에만 */
   stage_status?: Record<string, StageState> | null;
 }
@@ -1239,15 +1241,43 @@ export interface UploadFileIn {
   rel: string;
   size: number;
   sha256?: string | null;
+  /** v0.6.0 §4.6: .h3d 에만. PC 도구가 보내는 압축 모드 메타(브라우저는 보내지 않음) */
+  meta?: H3dMeta | null;
+}
+/** v0.6.0 계약 esl_upload_speed.md §4.6 h3d 업로드 메타 */
+export interface H3dMeta {
+  kind: "h3d_slim" | "h3d_original";
+  v: number;
+  source_name?: string;
+  source_bytes?: number;
+  source_mtime?: string;
+  /** 슬림 크기(= 파일 size) */
+  slim_bytes?: number;
+  hvtrans_sec?: number;
+  hvtrans_version?: string | null;
+  cfg?: string;
+  cfg_sha256?: string;
+  part_id?: number;
+  part_title?: string;
+  results?: { type: string; layer?: string | null }[];
+  frames?: "all";
+  tool_version?: string;
 }
 export interface UploadCreate {
   project_id: string;
   name: string;
   files: UploadFileIn[];
+  /** v0.6.0 로그용 */
+  client?: { name: string; version: string };
 }
 export interface UploadChunkOut {
   index: number;
+  /** 연속 앞부분 바이트 */
   received: number;
+  /** v0.6.0 프로토콜 2: 받은 청크 바이트 합 */
+  received_total?: number;
+  chunk?: number;
+  duplicate?: boolean;
   done: boolean;
   sha256?: string | null;
 }
@@ -1255,10 +1285,17 @@ export interface UploadFileOut {
   index: number;
   rel: string;
   size: number;
+  /** 연속 앞부분 바이트(프로토콜 1 의미 유지) */
   received: number;
   done: boolean;
   sha256?: string | null;
   sha256_expected?: string | null;
+  /** v0.6.0 프로토콜 2 — 받은 바이트 합, 받은 청크 번호 범위 [a,b), 청크 수, 제거 여부, 메타 */
+  received_total?: number;
+  chunks?: [number, number][];
+  n_chunks?: number;
+  removed?: boolean;
+  meta?: H3dMeta | null;
 }
 /** complete 검사 결과(UploadOut.result 에도 저장) */
 export interface UploadCheckOut {
@@ -1269,6 +1306,8 @@ export interface UploadCheckOut {
   parts?: RadPart[];
   missing_includes?: string[];
   problems?: string[];
+  /** v0.6.0: h3d 파일의 업로드 메타(없으면 null) */
+  h3d_meta?: H3dMeta | null;
 }
 export interface UploadCompleteOut extends UploadCheckOut {
   upload_id: string;
@@ -1285,6 +1324,9 @@ export interface UploadOut {
   chunk_size: number;
   total_bytes: number;
   received_bytes: number;
+  /** v0.6.0: 2 = 병렬·위치 지정 쓰기. 없거나 1 = 순차(구 서버·업그레이드 전 세션) */
+  protocol?: 1 | 2;
+  max_parallel?: number;
   files: UploadFileOut[];
   result?: UploadCheckOut | null;
   backup_path?: string | null;
@@ -1387,6 +1429,8 @@ export interface VersionOut {
   version: string;
   commit: string | null;
   built_at: string | null;
+  /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
+  ui?: { upload_slim_hint_gb?: number } | null;
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */

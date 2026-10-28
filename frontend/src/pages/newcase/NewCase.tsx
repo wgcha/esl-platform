@@ -25,7 +25,7 @@ export function NewCase() {
   const { projectId = "" } = useParams();
   const { me, projects } = useApp();
   const nav = useNavigate();
-  const [qs] = useSearchParams();
+  const [qs, setQs] = useSearchParams();
   const initialUpload = qs.get("upload");
   const project = projects.find((p) => p.id === projectId);
   const allowed = canRun(me, projectId);
@@ -109,7 +109,7 @@ export function NewCase() {
       </div>
       <section className="card" role="tabpanel" id="panel-upload" aria-labelledby="tab-upload" hidden={tab !== "upload"}>
         <div className="card-body">
-          <UploadPanel initialUploadId={initialUpload} projectId={projectId} name={NAME_RE.test(name) ? name : "case"} disabled={!allowed} onChange={onChange("upload")} />
+          <UploadPanel initialUploadId={initialUpload} onOpenPcTab={() => setTab("pc")} onOpenUpload={(id) => setQs({ upload: id })} projectId={projectId} name={NAME_RE.test(name) ? name : "case"} disabled={!allowed} onChange={onChange("upload")} />
         </div>
       </section>
       <section className="card" role="tabpanel" id="panel-server" aria-labelledby="tab-server" hidden={tab !== "server"}>
