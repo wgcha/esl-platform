@@ -251,6 +251,16 @@ def field_err_range(err_pct) -> float | None:
     return h.get("range_pct")
 
 
+# ====================================================================== 0.5.8: ④ 3D 하중 보기(계약 esl_3d_load.md §3)
+def view3d_build(out_dir: str, **kw) -> dict:
+    """``esl.view3d.build_view`` — out_dir 에 part.glb·(part_lod.glb)·values.bin·manifest.json 을 쓰고 manifest 를 돌려준다."""
+    return _wrap(_attr("esl.view3d", "build_view"), out_dir, **kw)
+
+
+def view3d_builder_version() -> int:
+    return int(_attr("esl.view3d", "BUILDER_VERSION"))
+
+
 # ====================================================================== P2: 라이브러리(§1~§5, §11)
 def _lib_cfg(cfg: dict) -> dict:
     """JSON 왕복(작업 params) 뒤의 라이브러리 설정 정리: ISTA 6 면 번호 키를 정수로."""

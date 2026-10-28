@@ -8,11 +8,14 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
 from ...core.auth import Principal
+from ...core.errors import DomainError
+from ..display_json import DisplayJSONResponse
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
-from ..schemas import ArtifactOut, DispFieldOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut
+from ..schemas import ArtifactOut, DispFieldOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut, View3dOut
 from ..services import bundle as bundle_svc
 from ..services import results as svc
+from ..services import view3d as view3d_svc
 
 router = APIRouter(tags=["results"])
 
@@ -26,6 +29,77 @@ def get_run(run_id: str, request: Request, principal: Principal = Depends(get_pr
 def forces(run_id: str, request: Request, top: int = Query(default=50, ge=1, le=1000),
            principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     return svc.forces(get_ctx(request), run_id, top)
+
+
+# ---------------------------------------------------------------- ④ 3D 하중 보기(계약 esl_3d_load.md §4)
+VIEW3D_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+VIEW3D_FILE_RESPONSES = {
+    200: {"content": {"model/gltf-binary": {"schema": {"type": "string", "format": "binary"}},
+                      "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+          "description": "바이너리(ETag = manifest key, If-None-Match 일치 시 304)"},
+    304: {"description": "변경 없음"}}
+
+
+def _etag_headers(key: str) -> dict[str, str]:
+    return {"ETag": f'"{key}"', "Cache-Control": VIEW3D_CACHE_CONTROL}
+
+
+def _not_modified(request: Request, key: str) -> bool:
+    """If-None-Match 에 key 가 있거나 `*` 이면 True (약한 검증자 W/ 허용)."""
+    inm = request.headers.get("if-none-match")
+    if not inm:
+        return False
+    tags = [t.strip().removeprefix("W/").strip('"') for t in inm.split(",")]
+    return "*" in tags or key in tags
+
+
+def _busy_response(exc: DomainError) -> Response:
+    return DisplayJSONResponse(status_code=exc.status, content={"detail": exc.detail()}, headers={"Retry-After": "5"})
+
+
+@router.get("/esl-runs/{run_id}/view3d", response_model=View3dOut, responses={304: {"description": "변경 없음"}})
+def view3d_manifest(run_id: str, request: Request, response: Response,
+                    principal: Principal = Depends(get_principal)) -> Any:
+    """3D 하중 보기 manifest(상위 100행·군집 K=2..5·범위·지지점·파일 URL). 첫 요청이 파생 캐시를 만든다(runs/<id>/view3d)."""
+    try:
+        m, key = view3d_svc.manifest(get_ctx(request), run_id)
+    except DomainError as exc:
+        if exc.code == "VIEW3D_BUSY":
+            return _busy_response(exc)
+        raise
+    if _not_modified(request, key):
+        return Response(status_code=304, headers=_etag_headers(key))
+    response.headers.update(_etag_headers(key))
+    return m
+
+
+def _view3d_file(request: Request, run_id: str, name: str, key: str | None) -> Response:
+    path, media, k = view3d_svc.file(get_ctx(request), run_id, name, key)
+    headers = _etag_headers(k)
+    if _not_modified(request, k):
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type=media, headers=headers)
+
+
+@router.get("/esl-runs/{run_id}/view3d/part.glb", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
+def view3d_part(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
+                principal: Principal = Depends(get_principal)) -> Response:
+    """부품 표면 GLB(mm, Z-up, 정점 = 노드 순서). `key`(선택) = manifest.key, 다르면 409 VIEW3D_STALE."""
+    return _view3d_file(request, run_id, "part.glb", key)
+
+
+@router.get("/esl-runs/{run_id}/view3d/part_lod.glb", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
+def view3d_part_lod(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
+                    principal: Principal = Depends(get_principal)) -> Response:
+    """저해상도(LOD) 표면 GLB(N > view3d.lod_min_nodes 일 때만, 없으면 404 VIEW3D_LOD_NONE). `_SRC` = 원 정점 번호."""
+    return _view3d_file(request, run_id, "part_lod.glb", key)
+
+
+@router.get("/esl-runs/{run_id}/view3d/values.bin", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
+def view3d_values(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
+                  principal: Principal = Depends(get_principal)) -> Response:
+    """노드 값 바이너리(면압 p·Fn·|F|·u_rel 양자화, 배치는 manifest.values.arrays)."""
+    return _view3d_file(request, run_id, "values.bin", key)
 
 
 @router.get("/validations/{vid}", response_model=ValidationOut)

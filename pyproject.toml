@@ -18,3 +18,4 @@ fast = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["perf: 성능 측정(기준 초과는 경고 + 측정값 기록, 큰 초과만 실패)"]

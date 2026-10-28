@@ -300,6 +300,121 @@ class ForcesOut(_Out):
     rows: list[ForceRow]
 
 
+class View3dTopRow(_Out):
+    rank: int
+    node_id: int
+    vertex: int
+    x: float
+    y: float
+    z: float
+    fx: float
+    fy: float
+    fz: float
+    mag: float
+    fn: float                         # 면외 하중 Fn = F·n_i (N, 부호 있음 — 툴팁·표)
+    pa: float                          # 면압 |Fn|/A_i (MPa) — 표면 색 값
+    is_support: bool
+
+
+class View3dClusterRow(_Out):
+    label: str
+    n_nodes: int
+    center: list[float]
+    u_center: list[float]
+    r: list[float]
+    r_mag: float
+    sum_abs: float
+    cancel: float
+    m: list[float]
+    m_mag: float
+    min_node_id: int
+
+
+class View3dClusterSet(_Out):
+    k_actual: int
+    rows: list[View3dClusterRow]
+
+
+class View3dFile(_Out):
+    name: str
+    bytes: int
+
+
+class View3dLod(View3dFile):
+    n_vertices: int
+
+
+class View3dValuesArray(_Out):
+    key: Literal["pa", "fn", "fmag", "u"]
+    dtype: Literal["int16", "uint16"]
+    comps: int
+    offset: int
+    scale: float | list[float]
+
+
+class View3dValues(View3dFile):
+    arrays: list[View3dValuesArray]
+
+
+class View3dBBox(_Out):
+    min: list[float]
+    max: list[float]
+    diag: float
+
+
+class View3dRange(_Out):
+    max: float
+    p99: float | None = None
+
+
+class View3dRanges(_Out):
+    pa: View3dRange
+    fn_abs: View3dRange
+    fmag_max: float
+    u_max: float
+
+
+class View3dSupport(_Out):
+    node_id: int
+    vertex: int
+    dof: str
+    x0: list[float]
+
+
+class View3dOut(_Out):
+    """④ 3D 하중 보기 manifest(계약 esl_3d_load.md §3.6·§4). 파일 URL 은 API 루트 기준 경로."""
+
+    schema_: str = Field(alias="schema")
+    builder_version: int
+    key: str
+    esl_run_id: str
+    n_nodes: int
+    n_elems: int
+    n_tris: int
+    units: str
+    force_unit: str
+    pressure_unit: str
+    up: str
+    bbox: View3dBBox
+    plate_normal: list[float]
+    geometry: View3dFile
+    lod: View3dLod | None = None
+    values: View3dValues
+    ranges: View3dRanges
+    sum_f: list[float]
+    sum_m: list[float]
+    moment_center: list[float]
+    supports: list[View3dSupport]
+    top: list[View3dTopRow]
+    clusters: dict[str, View3dClusterSet]
+    created_at: str
+    geometry_url: str
+    lod_url: str | None = None
+    values_url: str
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
 class ValidationOut(_Out):
     id: str
     esl_run_id: str

@@ -3,12 +3,13 @@
 - 상태: **확정** (2026-10-28, 사용자 결정 2026-10-28). 구현 코드 없음. 이 문서가 구현·검증의 원본이다.
 - 대체 범위: `esl.md` §9 레이아웃 "본문 + 우측 패널(대기열·워커 상태)" → 상단 바 상태 칩 + 오른쪽 서랍(§9), `esl.md` §9 ④ 행·`esl_platform_p1b.md` ④ 행에 3D 하중 보기 추가(§8). 충돌 시 이 문서 우선.
 - 버전: **v0.5.8**. DB migration **없음**(파생 캐시 파일만, §3.4). MCP 예정 migration 번호(0009)는 영향 없음.
+- **변경 메모 L3-C1 (2026-10-28, 사용자 미결 확정 Q1~Q3)**: (Q1) 표면 색 값 = **면압 p = |Fn|/A [MPa]**(노드 대표 면적 A_i = 인접 요소 면적 ÷ 요소 절점 수의 합, §3.5). 노드힘 Fn [N]은 툴팁·표용으로 함께 제공. 반영: §0-2·§3.4(LOD 대표 = 면압 최대)·§3.5(values.bin 배열 pa 추가)·§3.6(manifest 상위 행 `pa`·`ranges.pa`·`pressure_unit`)·§6.1(색·레전드)·§12·§14·§15 R1·§16. (Q2) 화살표 단계 100·50·20·10 → 군집 합력 5·4·3·2, 노드 모드 최소 10(임계) — §5·L3-10 그대로 확정. (Q3) 서랍 상태 = 브라우저별 localStorage — §9·L3-15 그대로 확정(서버 저장 안 함).
 - 참고(읽기 전용): 형제 플랫폼 physicsai `release/v0.2.12`(51152cd) — 3D 뷰어(`frontend/src/stages/stage4/geomview/**`, 계약 geometry-view·contour3d-field: npm three 번들·CDN 금지, GLB mm·Z-up, 정점 색, 대형 메시 LOD, onDemand 렌더, jsdom 시험은 순수 함수 분리)와 레이아웃 A(`shell/RunStatus.tsx`·`panels/{DrawerSection,QueuePanel,WorkerResourcePanel}.tsx`: 상단 바 칩 2개 → 서랍, 폴링 1곳). 코드는 복사하지 않고 설계만 따른다(저장소 분리).
 
 ## 0. 사용자 결정 (2026-10-28)
 
 1. ④ ESL: "F_eq 상위 노드" 표를 한 칸 아래로 내리고 그 자리에 **3D 부품 뷰**(부품 표면 + 하중 벡터 + 3-2-1 고정 표시).
-2. 색: 면외(법선) 하중 성분은 **푸른색 계열 표면 색**, 상위 노드 하중 화살표는 **붉은색**.
+2. 색: 면외(법선) 하중은 **푸른색 계열 표면 색**(값 = **면압 |Fn|/A [MPa]**, L3-C1), 상위 노드 하중 화살표는 **붉은색**.
 3. 화살표 기본 **100개**(상위 |F|), 사용자가 줄일 수 있음. 임계 아래로 줄이면 **공간 군집 합력 화살표 최대 5개** 모드(군집 하중 중심, |F| 가중), 합모멘트는 수치로.
 4. 변형 형상 토글(u_rel × 배율, ⑤ 단면과 같은 표기 "변형 확대 배율 ×k (실제 최대 X mm)", 실제 크기 토글).
 5. 범위 = ④만(⑤·① 재사용은 후속).
@@ -34,7 +35,7 @@
 
 | 범위 | 비범위 |
 |---|---|
-| ④ 3D 하중 보기(표면 \|Fn\| 색, 상위 N 화살표, 군집 합력 ≤5, 3-2-1 기호, 변형 형상) | ⑤ 검증·① 입력 3D 재사용(후속), 3D 단면, 변형률 3D 컨투어 |
+| ④ 3D 하중 보기(표면 면압 색, 상위 N 화살표, 군집 합력 ≤5, 3-2-1 기호, 변형 형상) | ⑤ 검증·① 입력 3D 재사용(후속), 3D 단면, 변형률 3D 컨투어 |
 | 서버 파생 캐시(GLB·노드 값 바이너리·manifest) + API 4개 | 코어 파이프라인 S4 산출물 변경, 새 job_type, DB 변경 |
 | 표↔3D 선택 연동, 표 행 수 = 화살표 수 | meshopt 압축·gzip 사전 압축(후속, §3.3) |
 | 상단 바 상태 칩 2개 + 오른쪽 서랍(모든 Shell 화면), 폴링 1곳 | 워커 자원(CPU·RAM·GPU) 수치 — ESL `/status`에 없음, 후속 |
@@ -63,24 +64,27 @@
 - GLB 작성기: numpy + struct 직접 구현(`esl/view3d.py`), 새 의존 없음.
 
 ### 3.4 LOD (L3-4)
-- N > `view3d.lod_min_nodes`(500,000)이면 `part_lod.glb` 추가. 방법 = **대표 원 노드 격자 군집**(physicsai C3F-8과 같은 방식): bbox를 정육면체 셀로 나눠 정점 ≈ `lod_target_vertices`(100,000)가 되도록 셀 크기 이분 탐색 → 셀마다 대표 = 셀 안 \|Fn\| 최대 원 노드(같으면 작은 정점 번호, 피크 보존) → 삼각형 정점을 대표로 치환, 퇴화 삼각형·중복 삼각형 제거. 속성 POSITION(양자화 동일)·`_SRC`(UNSIGNED_INT, 원 정점 번호). 값은 `_SRC`로 values.bin에서 그대로 모은다(보간·평균 없음).
+- N > `view3d.lod_min_nodes`(500,000)이면 `part_lod.glb` 추가. 방법 = **대표 원 노드 격자 군집**(physicsai C3F-8과 같은 방식): bbox를 정육면체 셀로 나눠 정점 ≈ `lod_target_vertices`(100,000)가 되도록 셀 크기 이분 탐색 → 셀마다 대표 = 셀 안 **면압 p 최대** 원 노드(같으면 작은 정점 번호, 피크 보존) → 삼각형 정점을 대표로 치환, 퇴화 삼각형·중복 삼각형 제거. 속성 POSITION(양자화 동일)·`_SRC`(UNSIGNED_INT, 원 정점 번호). 값은 `_SRC`로 values.bin에서 그대로 모은다(보간·평균 없음).
 - 뷰어: 첫 표시와 조작(회전·확대·이동·배율 슬라이더) 중 LOD, 조작이 끝나고 250 ms 뒤 전체 해상도. 화살표·지지 기호는 항상 정확 좌표.
 
-### 3.5 노드 값 바이너리 `values.bin` (L3-5)
-- 머리 없음, little-endian, 정점 순서(§3.3). 배열은 순서대로 4바이트 정렬(패딩 0). 오프셋·배율은 manifest `values`에.
+### 3.5 노드 값 바이너리 `values.bin` (L3-5, L3-C1)
+- 머리 없음, little-endian, 정점 순서(§3.3). 배열은 순서대로(**pa, fn, fmag, u**) 4바이트 정렬(패딩 0). 오프셋·배율은 manifest `values.arrays`에(`key`·`dtype`·`comps`·`offset`·`scale`). 복원 = q·s (성분별).
 
-| 배열 | dtype | 복원 | 배율 s | 오차 상한 |
+| 배열 key | dtype | 의미 | 배율 s | 오차 상한 |
 |---|---|---|---|---|
-| `fn` (면외 하중, 부호 있음) | int16 | q·s | max\|Fn\|/32767 | s/2 |
-| `fmag` (\|F\|) | uint16 | q·s | max\|F\|/65535 | s/2 |
-| `u` (u_rel, 정점별 x,y,z 교차) | int16×3 | q·s_c | 성분별 max\|u_c\|/32767 | s_c/2 |
+| `pa` | uint16 | **면압 p = \|Fn\|/A [MPa]** (표면 색 값, 크기만) | max p/65535 | s/2 |
+| `fn` | int16 | 면외 하중 Fn [N] (부호 있음, 툴팁·표) | max\|Fn\|/32767 | s/2 |
+| `fmag` | uint16 | \|F\| [N] | max\|F\|/65535 | s/2 |
+| `u` | int16×3 (정점별 x,y,z 교차) | u_rel [mm] | 성분별 max\|u_c\|/32767 | s_c/2 |
 
-- 배율 0(전부 0)이면 q 전부 0, s = 0. 30만 노드 ≈ 3 MB.
-- **법선·Fn 정의**: 요소 법선 n_e = 단위 (사각형: (x_c−x_a)×(x_d−x_b), 삼각형: (x_b−x_a)×(x_c−x_a)), **방향 통일**: 판 기준 법선 n_p(X0 PCA 최소 분산 축, 부호는 성분 최대 절대값이 +)와 n_e·n_p < 0이면 뒤집음. 노드 법선 n_i = 정규화(Σ_{e∋i} A_e·n_e), ‖·‖ < 1e-12면 n_p. **Fn_i = F_i·n_i**. 표면 색은 \|Fn\|만 쓰므로 방향 통일은 툴팁 부호에만 영향.
+- 배율 0(전부 0)이면 q 전부 0, s = 0. 30만 노드 ≈ 3.6 MB(p·fn·fmag 각 2 B + u 6 B = 12 B/노드).
+- **법선·Fn·면압 정의**: 요소 법선 n_e = 단위 (사각형: (x_c−x_a)×(x_d−x_b), 삼각형: (x_b−x_a)×(x_c−x_a)), **방향 통일**: 판 기준 법선 n_p(X0 PCA 최소 분산 축, 부호는 성분 최대 절대값이 +)와 n_e·n_p < 0이면 뒤집음. 노드 법선 n_i = 정규화(Σ_{e∋i} A_e·n_e), ‖·‖ < 1e-12면 n_p. **Fn_i = F_i·n_i** [N].
+- **노드 대표 면적 A_i = Σ_{e∋i} A_e / n_e** (A_e = |외적|/2 요소 면적, n_e = 요소 절점 수: 사각형 4, 삼각형 3 — 요소 면적을 절점에 균등 분배). 요소에 안 쓰이는 고립 노드 A_i = 0.
+- **면압 p_i = |Fn_i| / A_i** [force/length² = MPa(N·mm)], A_i = 0이면 p_i = 0. 메시 크기에 의존하지 않는 값(조밀한 곳이 작아 보이는 문제 해소, 구 R1). 표면 색은 p만 쓰므로(크기, 부호 없음) 방향 통일은 Fn 부호(툴팁)에만 영향.
 
 ### 3.6 manifest·상위 N·군집 (L3-6, 서버 계산)
 - **서버가 계산**해 `manifest.json`에 넣는다(상위 행 ≤ `view3d.top_max` 100, 군집 K = 2..`cluster_k_max` 5 전부). 근거: 정확한 float 값(표·툴팁이 양자화에 의존 안 함), 결정성을 Python 단위 시험 한 곳에서 보장, 클라이언트가 전 노드 F 벡터(12 B/노드)를 받을 필요 없음, 화살표 개수 변경은 manifest 잘라 쓰기라 왕복 없음. 기각: 클라이언트 k-means(JS·numpy 결과 일치 시험 이중화, 100만 노드 주 스레드 부담).
-- **상위 N**: 전 노드(지지점 포함) 정렬 = `/forces`와 동일 `lexsort((node_id, −|F|))`. 행 `{rank, node_id, vertex, x, y, z, fx, fy, fz, mag, fn, is_support}`.
+- **상위 N**: 전 노드(지지점 포함) 정렬 = `/forces`와 동일 `lexsort((node_id, −|F|))`. 행 `{rank, node_id, vertex, x, y, z, fx, fy, fz, mag, fn(N, 부호 있음), pa(면압 MPa), is_support}`.
 - **군집 (L3-7, 결정적 가중 k-means)**:
   - 대상 = \|F_i\| > 0 노드 전부(지지점 포함), 좌표 = X0(mm, 유클리드), 가중 w_i = \|F_i\|.
   - 초기화(난수 없음, 가중 최원점): c₁ = argmax w(같으면 작은 node_id), c_j = argmax_i w_i·min_l‖x_i − c_l‖²(같으면 작은 node_id).
@@ -93,23 +97,24 @@ manifest 형태:
 
 ```json
 {"schema":"esl/view3d/1","builder_version":1,"key":"ab12cd34ef567890","esl_run_id":"…",
- "n_nodes":223415,"n_elems":223415,"n_tris":440120,"units":"mm","up":"Z",
+ "n_nodes":223415,"n_elems":223415,"n_tris":440120,"units":"mm","force_unit":"N","pressure_unit":"MPa","up":"Z",
  "bbox":{"min":[…],"max":[…],"diag":1234.5},"plate_normal":[0,0,1],
  "geometry":{"name":"part.glb","bytes":11234567},
  "lod":null | {"name":"part_lod.glb","bytes":1500000,"n_vertices":99876},
  "values":{"name":"values.bin","bytes":2234150,
-   "arrays":[{"key":"fn","dtype":"int16","comps":1,"offset":0,"scale":0.0123},
-             {"key":"fmag","dtype":"uint16","comps":1,"offset":446832,"scale":0.0061},
-             {"key":"u","dtype":"int16","comps":3,"offset":893664,"scale":[1e-4,2e-4,3e-4]}]},
- "ranges":{"fn_abs":{"max":402.1,"p99":88.3},"fmag_max":410.0,"u_max":2.81},
+   "arrays":[{"key":"pa","dtype":"uint16","comps":1,"offset":0,"scale":0.00031},
+             {"key":"fn","dtype":"int16","comps":1,"offset":446832,"scale":0.0123},
+             {"key":"fmag","dtype":"uint16","comps":1,"offset":893664,"scale":0.0061},
+             {"key":"u","dtype":"int16","comps":3,"offset":1340496,"scale":[1e-4,2e-4,3e-4]}]},
+ "ranges":{"pa":{"max":20.4,"p99":4.6},"fn_abs":{"max":402.1,"p99":88.3},"fmag_max":410.0,"u_max":2.81},
  "sum_f":[…],"sum_m":[…],"moment_center":[…],
  "supports":[{"node_id":101,"vertex":5,"dof":"123","x0":[…]},{"node_id":202,"vertex":9,"dof":"13","x0":[…]},{"node_id":303,"vertex":77,"dof":"3","x0":[…]}],
- "top":[{"rank":1,"node_id":…,"vertex":…,"x":…,"y":…,"z":…,"fx":…,"fy":…,"fz":…,"mag":…,"fn":…,"is_support":false}],
+ "top":[{"rank":1,"node_id":…,"vertex":…,"x":…,"y":…,"z":…,"fx":…,"fy":…,"fz":…,"mag":…,"fn":…,"pa":…,"is_support":false}],
  "clusters":{"2":{"k_actual":2,"rows":[{"label":"C1","n_nodes":…,"center":[…],"u_center":[…],"r":[…],"r_mag":…,"sum_abs":…,"cancel":0.93,"m":[…],"m_mag":…,"min_node_id":…}]},"3":{…},"4":{…},"5":{…}},
  "created_at":"…"}
 ```
 
-- `ranges.fn_abs.p99` = \|F\|>0 노드의 \|Fn\| 99 분위(⑤ DP-10 `robust_range(…,"zero")`와 같은 함수), u_max = max‖u_rel‖.
+- `ranges.pa.p99` = \|F\|>0 노드의 면압 p 99 분위(⑤ DP-10 `robust_range(…,"zero")`와 같은 함수, 유효숫자 2자리 올림; 해당 노드가 없으면 null) — **표면 색 기본 범위 [0, p.p99]**. `ranges.fn_abs.p99`는 \|Fn\|(N) 같은 정의(툴팁 참고용). u_max = max‖u_rel‖. `units`=길이, `force_unit`·`pressure_unit` = 코어 설정 `units.force`·`units.stress`(기본 N·MPa; 면압 단위는 힘/길이² 일관 단위 가정).
 
 ### 3.7 크기 상한 (L3-8)
 - N > `view3d.max_nodes`(2,000,000) 또는 part.glb + part_lod.glb > `view3d.max_glb_bytes`(64 MiB) → 413 `VIEW3D_TOO_LARGE`(`limits`·실제값 포함), 이 결과는 캐시하지 않음(설정을 올리면 바로 다시 시도). values.bin 상한 = `max_glb_bytes`(같은 키). `ui.max_artifact_bytes`(20 MiB)는 view3d 파일에 적용하지 않는다(physicsai F5 숨은 실패 회피).
@@ -118,14 +123,14 @@ manifest 형태:
 
 | 메서드·경로 | 응답 | 비고 |
 |---|---|---|
-| `GET /esl-runs/{run_id}/view3d` | 200 `View3dOut`(= manifest §3.6, 파일 이름 대신 `geometry_url`·`lod_url`·`values_url` 상대 URL 추가) | 없으면 생성(§3.1). ETag/304 |
+| `GET /esl-runs/{run_id}/view3d` | 200 `View3dOut`(= manifest §3.6 + `geometry_url`·`lod_url`(없으면 null)·`values_url`) | 없으면 생성(§3.1). ETag/304. URL은 API 루트 기준 경로(`/esl-runs/{id}/view3d/part.glb` 등, `api.forces`와 같은 형태) |
 | `GET /esl-runs/{run_id}/view3d/part.glb` | `model/gltf-binary` | FileResponse, ETag, Range 불필요 |
 | `GET /esl-runs/{run_id}/view3d/part_lod.glb` | `model/gltf-binary` | lod 없으면 404 `VIEW3D_LOD_NONE` |
-| `GET /esl-runs/{run_id}/view3d/values.bin` | `application/octet-stream` | |
+| `GET /esl-runs/{run_id}/view3d/values.bin` | `application/octet-stream` | 세 파일 모두 선택 쿼리 `?key=<manifest.key>` — 현재 입력의 key와 다르면 409 `VIEW3D_STALE` |
 
 - 권한: 기존 결과 조회와 같음(`get_principal`, 프로젝트 viewer 이상). 파일 이름은 위 3개 고정 경로만(경로 매개변수 없음 → 경로 순회 불가).
 - 파일 엔드포인트는 manifest가 유효할 때만 제공. 캐시가 없거나 key가 다르면 409 `VIEW3D_STALE`(manifest를 먼저 받으라는 뜻, 프런트는 manifest 재요청 1회).
-- 오류: run FAILED 409 `ESL_RUN_FAILED`, 산출물 없음 409 `PREREQUISITE_MISSING`(missing=["esl"]), 다른 실행으로 바뀜 409 `ESL_RUN_NOT_CURRENT`(forces와 같은 판정), 413 `VIEW3D_TOO_LARGE`, 503 `VIEW3D_BUSY`, 설정 `view3d.enabled=false` → 404 `VIEW3D_DISABLED`. 문구 한국어.
+- 생성 중 대기 초과 503 `VIEW3D_BUSY`는 `Retry-After: 5` 헤더 포함. 오류: run FAILED 409 `ESL_RUN_FAILED`, 산출물 없음 409 `PREREQUISITE_MISSING`(missing=["esl"]), 다른 실행으로 바뀜 409 `ESL_RUN_NOT_CURRENT`(forces와 같은 판정), 413 `VIEW3D_TOO_LARGE`, 503 `VIEW3D_BUSY`, 설정 `view3d.enabled=false` → 404 `VIEW3D_DISABLED`. 문구 한국어.
 - `/esl-runs/{id}/forces`는 그대로 유지(호환·폴백). `docs/contracts/openapi_p1b.json` 재생성, 프런트 `check:api` 통과. esl_mcp_ready 구현 시 manifest는 도구 후보, 바이너리 3개는 제외 사유 "브라우저 3D 전용 바이너리".
 
 ## 5. 화면 배치 (Impl-Frontend, 기준 2560×1440)
@@ -139,7 +144,7 @@ manifest 형태:
 │ ┌ 3D 하중 보기 ─────────────────────────────────────────────────────────────────────┐ │
 │ │ 화살표 [100 노드 ━━●━━━━━━ 군집 2]  [변형 형상]  변형 확대 배율 ×k (실제 최대 X mm) [━●━] [실제 크기(×1)]  [맞춤] │
 │ │ ┌ 캔버스 clamp(320px, 52vh, 760px) ───────────────────────────────┐ ┌레전드┐     │ │
-│ │ │  부품 표면(|Fn| 푸른색) · 붉은 화살표 · 초록 3-2-1 기호           │ │|Fn| N│     │ │
+│ │ │  부품 표면(면압 푸른색) · 붉은 화살표 · 초록 3-2-1 기호           │ │면압 │     │ │
 │ │ │                                    선택 노드 정보(좌하단 한 줄)   │ │ 편집 │     │ │
 │ │ └───────────────────────────────────────────────────────────────────┘ └──────┘     │ │
 │ │ 화살표 최대 = F_ref N · 길이 ∝ |F| (최소 길이 제한)  ·  군집 모드: ΣF ≈ 0 (자기평형) │ │
@@ -156,10 +161,10 @@ manifest 형태:
 
 ## 6. 색·크기 규칙
 
-### 6.1 표면 색 (L3-11)
-- 값 = **\|Fn\|**(N, 노드 값, 정점 색 보간). **단일 색조 푸른색 순차 표**: ColorBrewer Blues 9단계(#f7fbff → #08306b) 선형 보간 256칸, 0 = 가장 옅음, 범위 위 = 가장 진함, NaN = 회색. three 정점 색은 선형 공간 표 사용(physicsai colormap 주석과 같은 이유).
+### 6.1 표면 색 (L3-11, L3-C1)
+- 값 = **면압 p = |Fn|/A [MPa]**(노드 값, 정점 색 보간; 정의 §3.5). **단일 색조 푸른색 순차 표**: ColorBrewer Blues 9단계(#f7fbff → #08306b) 선형 보간 256칸, 0 = 가장 옅음, 범위 위 = 가장 진함, NaN = 회색. three 정점 색은 선형 공간 표 사용(physicsai colormap 주석과 같은 이유).
 - **부호 처리**: 색은 크기만(법선 방향 규약이 국소적으로 불안정 — 판 굽힘부·플랜지). 부호는 툴팁·표 `Fn` 열에 수치로(+ = 판 기준 법선 n_p 쪽, §3.5). 방향은 화살표가 보여 준다.
-- 범위 기본 [0, `ranges.fn_abs.p99`], `ColorLegend` 범위 편집·"자동"(⑤ DP-10과 같은 동작). 레전드 제목 "|Fn| 면외 하중 (N)".
+- 범위 기본 [0, `ranges.pa.p99`], `ColorLegend` 범위 편집·"자동"(⑤ DP-10과 같은 동작). 레전드 제목 "면압 |Fn|/A (MPa)". 툴팁: 면압 p, 노드힘 |Fn|·Fn(N), |F|(N).
 - 배경 중립 회색(라이트 #dfe3e8, 다크 #23272e)으로 옅은 파랑 면이 묻히지 않게. 재질 MeshLambert, 양면(DoubleSide), 조명 반구광 + 카메라 방향광.
 
 ### 6.2 화살표 (L3-12)
@@ -181,7 +186,7 @@ manifest 형태:
 
 ## 7. 표 ↔ 3D 선택 연동 (L3-14)
 
-- 노드 모드 표 열: 순위 · 노드 · x · y · z · Fx · Fy · Fz · \|F\| · Fn · (지지점 배지). 군집 모드 표("군집 합력"): 군집 · 노드 수 · 중심 x·y·z · Rx · Ry · Rz · \|R\| · Σ\|F\| · 상쇄율 · \|M_c\| (N·mm). 표 아래 한 줄: "ΣF = … · ΣM = … (자기평형, 군집 합력의 합 = ΣF)".
+- 노드 모드 표 열: 순위 · 노드 · x · y · z · Fx · Fy · Fz · \|F\| · Fn · 면압 p · (지지점 배지). 군집 모드 표("군집 합력"): 군집 · 노드 수 · 중심 x·y·z · Rx · Ry · Rz · \|R\| · Σ\|F\| · 상쇄율 · \|M_c\| (N·mm). 표 아래 한 줄: "ΣF = … · ΣM = … (자기평형, 군집 합력의 합 = ΣF)".
 - 행 클릭 → 해당 화살표 강조 + 노드 표식 + 좌하단 정보 줄(카메라는 안 움직임). 행 더블클릭 → 그 점으로 카메라 중심 이동.
 - 3D 클릭: 화살표 레이캐스트 우선 → 그 행 선택(`aria-selected`) + 표 안에서 `scrollIntoView({block:"nearest"})`. 표면 클릭 → 가장 가까운 정점: 정보 줄 "노드 {id} · |F| {fmaĝ} N · Fn {fn̂} N"(양자화 복원값, 유효숫자는 양자화 간격까지), 그 노드가 표에 있으면 행 선택.
 - 지지점 기호 클릭 → 정보 줄 "지지 {node} · dof {dofText}".
@@ -242,13 +247,13 @@ view3d:
 
 | ID | 기준 | 방법 |
 |---|---|---|
-| V-L3-1 | 법선·Fn: XY 평판 + 임의 F → Fn = F_z(1e-12), 요소 일부 연결 순서 반전해도 같은 n_i, 고립 노드 n_p 대체 | 단위(`tests/test_view3d.py`) |
+| V-L3-1 | 법선·Fn·면압: XY 평판 + 임의 F → Fn = F_z(1e-12), 요소 일부 연결 순서 반전해도 같은 n_i·A_i, 고립 노드 n_p 대체·A=0·p=0, p = \|Fn\|/A (A = Σ요소 면적/절점 수, 사각형 안쪽 노드 h²) | 단위(`tests/test_view3d.py`) |
 | V-L3-2 | 상위 행: 순서·값이 `/forces?top=100` rows와 동일(동률 node_id), vertex·fn·is_support 정확 | 단위 + API |
 | V-L3-3 | 군집 결정성: 같은 입력 2회 바이트 동일 manifest, 노드 순서 섞은 입력 → 같은 군집(node_id 기준), 분리된 두 덩어리 합성 → K=2가 덩어리별, 빈 군집 재심기, 하중 노드 < K → k_actual 감소 | 단위 |
 | V-L3-4 | 군집 불변식: Σ_k R_k = ΣF, Σ_k[(c_k−c₀)×R_k + M_k] = ΣM(rel 1e-9), η_k ∈ [0,1], c_k = \|F\| 가중 중심 | 단위 |
 | V-L3-5 | GLB: glTF 2.0 헤더·청크 정렬, accessor min/max, `extensionsRequired=[KHR_mesh_quantization]`, 삼각형 수 = 2·n_quad + n_tria, `_NODE_ID` 왕복, 위치 오차 ≤ 상한, asset.extras units/up | 단위 + 프런트 `GLTFLoader.parseAsync` 고정 fixture(`tests/fixtures/view3d/small/*`, 생성 스크립트 `scripts/gen_view3d_fixture.py`, < 100 KB) |
-| V-L3-6 | values.bin: 오프셋 4바이트 정렬, 복원 오차 ≤ s/2(성분별), 전부 0 → s=0, 프런트 `values.ts` 복원이 Python 복원과 같음(같은 fixture) | 단위 + 프런트 |
-| V-L3-7 | LOD: N ≤ lod_min_nodes면 없음(lod null, 404 VIEW3D_LOD_NONE), 설정 낮추면 생성, `_SRC` 범위 유효, 정점 ≤ 1.2·target, 셀 대표 = \|Fn\| 최대, 결정적 | 단위 + API |
+| V-L3-6 | values.bin(pa·fn·fmag·u): 오프셋 4바이트 정렬, 복원 오차 ≤ s/2(성분별), 전부 0 → s=0, 프런트 `values.ts` 복원이 Python 복원과 같음(같은 fixture) | 단위 + 프런트 |
+| V-L3-7 | LOD: N ≤ lod_min_nodes면 없음(lod null, 404 VIEW3D_LOD_NONE), 설정 낮추면 생성, `_SRC` 범위 유효, 정점 ≤ 1.2·target, 셀 대표 = 면압 최대, 결정적 | 단위 + API |
 | V-L3-8 | 캐시: 두 번째 요청 생성 0회(빌더 호출 계수), 입력 mtime 변경·builder_version·설정 변경 → 재생성 + 이전 폴더 `_backup` 이동(삭제 없음), ETag/304, 동시 2요청 → 생성 1회·둘 다 200, 대기 초과 503 | API(PG) |
 | V-L3-9 | 오류: FAILED 409, 산출물 없음 409 PREREQUISITE_MISSING, 다른 실행 409 ESL_RUN_NOT_CURRENT, max_nodes 낮추면 413 VIEW3D_TOO_LARGE(캐시 안 됨), 노드 불일치 500, enabled=false 404, 키 다른 파일 요청 409 VIEW3D_STALE, 과거 실행 스냅샷으로 200, 인증 없음 401 | API |
 | V-L3-10 | 프런트 순수 함수: 단계 [100,50,20,10,C5..C2] ↔ 모드·개수, 길이 = L_max·\|F\|/F_ref(최소 0.15), Blues 표 끝값·밝기 단조 감소, dof→기호(3/2/1)·라벨 = dofText, 기본 k·표기 문자열 "변형 확대 배율 ×k (실제 최대 X mm)", 최근접 정점 | vitest |
@@ -275,26 +280,27 @@ view3d:
 - L3-1 3D 자료는 API 지연 생성 파생 캐시 `runs/<run>/view3d/`(코어·DB·job_type 변경 없음, 과거 실행 지원).
 - L3-2 캐시 키 = builder_version + 설정 + 입력 4파일 (size, mtime_ns), 무효화 시 `_backup` 이동, ETag.
 - L3-3 표면 = GLB(mm, Z-up, 노드 순서 정점, `KHR_mesh_quantization` int16 위치, `_NODE_ID`, uint32 인덱스, 법선 없음), meshopt·Draco 없음.
-- L3-4 LOD = N > 50만일 때 대표 원 노드 격자 군집(\|Fn\| 최대 대표, `_SRC`), 조작 중 LOD·250 ms 뒤 전체.
-- L3-5 노드 값 = `values.bin` fn int16·fmag uint16·u int16×3, 오차 ≤ s/2. Fn = F·n_i(면적 가중 노드 법선, PCA 판 법선으로 방향 통일).
+- L3-4 LOD = N > 50만일 때 대표 원 노드 격자 군집(면압 최대 대표, `_SRC`), 조작 중 LOD·250 ms 뒤 전체.
+- L3-5 노드 값 = `values.bin` p uint16(면압)·fn int16·fmag uint16·u int16×3, 오차 ≤ s/2. Fn = F·n_i(면적 가중 노드 법선, PCA 판 법선으로 방향 통일), p = \|Fn\|/A_i.
 - L3-6 상위 N·군집은 서버 계산(manifest, 정확 float), 화살표 개수 변경은 클라이언트 잘라 쓰기.
 - L3-7 군집 = \|F\| 가중 k-means(X0 mm, 가중 최원점 초기화·난수 없음, Lloyd ≤50), K = 2..5, R_k·c_k·M_k(c_k 기준)·η_k, 자기평형 불변식.
 - L3-8 상한 max_nodes 200만·max_glb_bytes 64 MiB, 초과 413(캐시 안 함).
 - L3-9 ④ 카드 순서 입력 요약 → 결과 → 3D → 상위 표.
 - L3-10 화살표 단계 100·50·20·10 노드 → 군집 5·4·3·2(K=1 없음: ΣF≈0).
-- L3-11 표면 색 = \|Fn\| 단일 색조 Blues, 부호는 수치로만, 범위 [0, P99] + 편집.
+- L3-11 표면 색 = 면압 p = \|Fn\|/A [MPa] 단일 색조 Blues, 부호는 수치로만, 범위 [0, P99] + 편집.
 - L3-12 화살표 붉은색(#d62728, 군집 #a50f15), 선형 길이 L_max = 0.1·diag, 최소 0.15·L_max, 꼬리 = 작용점.
 - L3-13 지지 기호 초록, ▲123 / ◭2성분 / △1성분 + 구속 축 선분 + dofText 라벨.
 - L3-14 표 행 수 = 화살표 수, 행↔화살표·정점 양방향 선택.
 - L3-15 우측 패널 폐지 → 상단 바 칩 2개 + 비모달 밀어내기 서랍(localStorage 기억, 기본 닫힘), 폴링 1곳.
 - L3-16 three@0.186.1 npm 1개, 동적 import 청크, onDemand 렌더, 순수 함수 분리 시험.
 - L3-17 v0.5.8, DB migration 없음.
+- L3-C1 (2026-10-28, Q1~Q3 확정) 표면 색 값 = 면압 |Fn|/A [MPa](A_i = 인접 요소 면적/절점 수 합), 노드힘 Fn N은 툴팁용 병행 제공 · 화살표 단계 100·50·20·10 → 군집 5·4·3·2(임계 10) · 서랍 상태 = 브라우저별 localStorage.
 
 ## 15. 리스크
 
 | ID | 내용 | 대응 |
 |---|---|---|
-| R1 | 노드 Fn은 메시 크기에 의존(조밀한 곳이 작아 보임) — 면압 해석과 다름 | 레전드 제목 "노드 값"·Q1, 필요 시 면압 환산 후속 |
+| R1 | (해소, L3-C1) 노드 Fn은 메시 크기에 의존 → 표면 색을 면압 \|Fn\|/A로 확정 | 면압 사용, Fn(N)은 툴팁. 남는 한계: A_i는 요소 면적 균등 분배(절점 기여면적 근사), 저면적 노드(퇴화 요소)에서 p가 커질 수 있음 → 범위 P99 + 편집 |
 | R2 | 변위 저장 정밀도 잡음이 F_eq를 흔들면 표면 색이 잡음 지도처럼 보임 | 기본 범위 P99, 결과 카드 잡음 지표 그대로, 범위 편집 |
 | R3 | 자기평형이라 군집 합력이 작게 나와 "하중 없음"으로 오해 | 상쇄율 η·\|M_c\| 표, "ΣF ≈ 0 (자기평형)" 문구, K=1 미제공 |
 | R4 | 굽은 부품에서 하중 중심 c_k가 부품 밖 | 화살표 꼬리에 작은 구 표식, 표에 좌표 |
@@ -303,8 +309,9 @@ view3d:
 | R7 | 서랍 밀어내기 시 3D 캔버스 크기 변경 | ResizeObserver 재렌더 1회, 시험 |
 | R8 | three 청크(약 600 KB) 첫 진입 지연 | ④ 3D 카드에서만 적재, 이후 재사용 |
 
-## 16. 미결 (≤3, 구현 차단 없음 — 기본값으로 진행)
+## 16. 미결 → 확정 (L3-C1, 2026-10-28)
 
-- Q1 표면 색 양: 기본 **\|Fn\| (N, 노드 값)**. 메시 크기 영향 없는 면압 환산 \|Fn\|/A_i(MPa, A_i = 인접 요소 면적/절점 수 합)를 기본으로 바꿀지.
-- Q2 화살표 단계 `[100, 50, 20, 10] → 군집 [5, 4, 3, 2]`·노드 모드 최소 10(임계) 확인.
-- Q3 서랍 상태 기억 범위: 브라우저별 localStorage(기본) vs 사용자 계정 단위(서버 저장, API 추가 필요).
+- Q1 표면 색 양: **면압 |Fn|/A [MPa]**로 확정(§3.5·§6.1). 노드힘 |Fn| N은 툴팁용.
+- Q2 화살표 단계 `[100, 50, 20, 10] → 군집 [5, 4, 3, 2]`, 노드 모드 최소 10(임계): 확정.
+- Q3 서랍 상태 기억: 브라우저별 localStorage: 확정(서버 저장·API 없음).
+- 남은 미결 없음.

@@ -239,6 +239,20 @@ class HistoryCfg(_M):
     archive_files: bool = True                                    # EXPORT·CASE_REPORT 성공 시 <case>/history/<job_id>/ 에 복사
 
 
+class View3dCfg(_M):
+    """④ ESL 3D 하중 보기 파생 캐시(계약 esl_3d_load.md §10). 섹션이 없어도 이 기본값으로 동작."""
+
+    enabled: bool = True
+    max_nodes: int = Field(default=2_000_000, ge=1)                  # 초과 시 413 VIEW3D_TOO_LARGE(캐시 안 함)
+    max_glb_bytes: int = Field(default=64 * 1024 ** 2, ge=1)         # part.glb+part_lod.glb, values.bin 각각
+    lod_min_nodes: int = Field(default=500_000, ge=0)                # 초과 시 part_lod.glb 추가
+    lod_target_vertices: int = Field(default=100_000, ge=100)
+    top_max: int = Field(default=100, ge=1, le=1000)                 # manifest 상위 행 수(= 화살표 최대)
+    cluster_k_max: int = Field(default=5, ge=2, le=8)
+    kmeans_max_iter: int = Field(default=50, ge=1, le=1000)
+    build_wait_s: float = Field(default=60.0, ge=0.0)                # 생성 세마포어 대기, 초과 시 503 VIEW3D_BUSY
+
+
 class LibraryCfg(_M):
     """라이브러리 설정(esl.library.settings 스키마): `config_path`(상대경로는 이 설정 파일 기준) 또는 `settings`.
 
@@ -262,6 +276,7 @@ class Settings(_M):
     core: CoreCfg
     report: ReportCfg = ReportCfg()
     history: HistoryCfg = HistoryCfg()
+    view3d: View3dCfg = View3dCfg()
     upload: UploadCfg = UploadCfg()
     library: LibraryCfg | None = None   # 없으면 라이브러리 쓰기 API 503(LIBRARY_CONFIG_MISSING)
     altair: AltairCfg = AltairCfg()
