@@ -18,7 +18,7 @@ EXPECTED = [
     "RESOURCES.txt", "caddy/esl.caddy", "collect-offline.ps1", "collect-offline.sh", "dashboard-env.ps1", "deploy.example.json",
     "esl_service.py", "install-common.ps1", "install.bat", "install.ps1", "loopback-http.ps1", "node-select.ps1",
     "python-select.ps1", "requirements.lock", "setup.ps1", "setup_config.py", "uninstall-tasks.ps1", "update-repo.ps1",
-    "update.bat", "update.ps1",
+    "update.bat", "update.ps1", "esl-service.ps1", "esl-start.bat", "esl-stop.bat", "esl-restart.bat",
     "demo/start-demo.bat", "demo/start-demo.ps1", "demo/stop-demo.bat", "demo/stop-demo.ps1", "demo/demo-python.ps1",
     "demo/demo_setup.py", "demo/demo_common.py", "demo/demo_db.py", "demo/demo_init.py", "demo/demo_procs.py",
     "demo/demo_seed.py", "demo/demo_synth.py",
@@ -66,8 +66,11 @@ def test_ps1_bom_crlf():
 
 
 def test_bat_ascii_crlf_and_delegate():
-    assert {p.name for p in BAT} == {"install.bat", "update.bat", "start-demo.bat", "stop-demo.bat"}
+    assert {p.name for p in BAT} == {"install.bat", "update.bat", "start-demo.bat", "stop-demo.bat", "esl-start.bat",
+                                     "esl-stop.bat", "esl-restart.bat"}
     for p in BAT:
+        if p.name.startswith("esl-"):       # 서버 운영 bat 는 esl-service.ps1 -Action (별도 시험)
+            continue
         raw = p.read_bytes()
         raw.decode("ascii")
         assert raw.count(b"\n") == raw.count(b"\r\n"), p
@@ -310,3 +313,25 @@ def test_setup_scripts_upload_root():
     setup = (ROOT / "deploy" / "setup.ps1").read_text(encoding="utf-8-sig")
     assert "[string]$UploadRoot" in setup and "'esl-input'" in setup and "upload_root = $uploadRootV" in setup
     assert "upload_root" in (ROOT / "deploy" / "update-repo.ps1").read_text(encoding="utf-8-sig")
+
+
+def test_esl_service_scripts_static():
+    """esl-start/stop/restart.bat → esl-service.ps1 -Action: 존재·인자·작업 이름/포트 하드코딩 없음·install-common 재사용."""
+    ps = DEPLOY / "esl-service.ps1"
+    txt = _text(ps)
+    assert "ValidateSet('start', 'stop', 'restart')" in txt and "ValidateSet('backend', 'worker')" in txt
+    assert "[switch]$Force" in txt and "install-common.ps1" in txt
+    for fn in ("Get-EslEndpoint", "Stop-EslTasks", "Start-EslTasksAndWait", "Get-EslActiveJobCount"):
+        assert fn in txt, fn
+    code = "\n".join(ln for _, ln in _code_lines(ps))
+    for hard in ("ESL-Backend", "ESL-Worker", "8110", "127.0.0.1", "/api/health"):
+        assert hard not in code.replace("'/api/health$'", ""), f"하드코딩: {hard}"
+    for a in ("start", "stop", "restart"):
+        raw = (DEPLOY / f"esl-{a}.bat").read_bytes()
+        raw.decode("ascii")
+        assert raw.count(b"\n") == raw.count(b"\r\n")
+        t = raw.decode("ascii")
+        assert re.search(r'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0esl-service\.ps1" -Action ' + a + r" %\*", t), a
+        assert "set PSModulePath=" in t and t.rstrip().endswith("pause")
+    cm = _text(DEPLOY / "install-common.ps1")
+    assert "[string[]]$Names = $EslTaskNames" in cm      # -Only 가 쓰는 부분 집합 인자

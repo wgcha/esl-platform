@@ -253,6 +253,12 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py migrate --runtime D:\es
 
 - downgrade는 지원하지 않는다. 되돌리려면 DB 백업에서 복원한다(§3.3).
 
+### 2.8.1 서버 시작·멈춤·재시작(v0.6.0)
+
+`deploy\esl-start.bat`·`esl-stop.bat`·`esl-restart.bat`을 더블클릭(관리자 권한 불필요). 작업 스케줄러 작업 ESL-Backend·ESL-Worker를 다루고 health 주소·로그 위치는 `.runtime\deploy.json`과 설정에서 읽는다.
+시작·재시작은 health 확인까지 기다려 성공/실패와 로그 위치(`.runtime\logs`)를 한글로 보여 주고 창은 `pause`로 남는다. 중지·재시작은 대기·실행 중 계산 작업이 있으면 경고 후 Y/N을 묻는다(`-Force`면 묻지 않음).
+한쪽만: `deploy\esl-restart.bat -Only worker`(또는 `backend`). 직접 호출: `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\esl-service.ps1 -Action start|stop|restart [-Only backend|worker] [-Force]`.
+
 ### 2.9 개발 실행(참고)
 
 `scripts/test-all`(Linux, PostgreSQL 임시 클러스터) — 코어·플랫폼·워커·배포(`tests/deploy`)·프런트. 백엔드 직접 실행: `ESL_PLATFORM_CONFIG=config/esl_platform.yaml ESL_DATABASE_URL=… python deploy/esl_service.py backend`(런타임 없이 환경변수 사용).

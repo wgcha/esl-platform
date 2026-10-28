@@ -15,6 +15,7 @@
 - 업로드에서 파일 하나 빼기 `DELETE /uploads/{id}/files/{index}`: 받은 부분은 `_backup` 으로 옮기고(삭제 없음) 목록에는 `removed` 로 남습니다. 완료된 업로드도 그 업로드로 만든 Case 가 없으면 뺄 수 있고 다시 올리는 상태로 돌아갑니다
 - 설정 `upload.parallel`(기본 4)·`upload.write_buffer_kb`(1024)·`upload.preallocate`(true), `ui.upload_slim_hint_gb`(기본 5, `GET /version` 의 `ui` 로 전달), `upload.chunk_mb` 기본 16 → 64
 - 새 오류 코드: `LENGTH_REQUIRED`(411)·`CHUNK_LENGTH_MISMATCH`(422)·`CHUNK_IN_FLIGHT`(409)·`UPLOAD_PARALLEL_LIMIT`(429, `Retry-After`)·`UPLOAD_FILE_REMOVED`·`UPLOAD_FILE_BUSY`·`UPLOAD_IN_USE`(409)·`UPLOAD_SIZE_MISMATCH`(422)·`UPLOAD_META_INVALID`(422)·`SLIM_PART_MISMATCH`(422)
+- 서버 운영 스크립트 `deploy\esl-start.bat`·`esl-stop.bat`·`esl-restart.bat`(더블클릭, health 확인까지 대기, 실행 중 작업 경고 후 Y/N, `-Only backend|worker`)
 - DB migration 없음
 
 ## [0.5.9] - 2026-10-28
