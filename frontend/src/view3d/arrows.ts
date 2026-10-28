@@ -6,6 +6,18 @@ export const ARROW_COLOR = "#d62728";
 export const ARROW_SELECTED = "#ff7f0e";
 export const CLUSTER_COLOR = "#a50f15";
 
+/** 화살표 렌더 상수(계약 §6.2, L3-C2 = 시안 S3a 확정): 픽셀 고정 두께 선 + 가는 원뿔 머리 */
+/** 선 두께(px): 노드 화살표 / 군집 합력 / 3-2-1 지지 축 선분 */
+export const LINE_PX = { node: 2, cluster: 3.5 } as const;
+export const SUPPORT_LINE_PX = 2;
+/** 원뿔 머리: 높이 = (기본 머리 길이 min(0.25·길이, 0.04·diag)) × CONE_LEN_SCALE 을 화면 CONE_PX 로 제한, 군집은 CONE_CLUSTER_SCALE 배, 반지름 = 높이 × CONE_ASPECT */
+export const CONE_LEN_SCALE = 0.35;
+export const CONE_PX = { min: 9, max: 26 } as const;
+export const CONE_CLUSTER_SCALE = 1.8;
+export const CONE_ASPECT = 0.3;
+/** 군집 화살표 최소 길이 비율(노드는 MIN_LEN_FRAC) */
+export const CLUSTER_MIN_FRAC = 0.3;
+
 /** 사용자 결정 2026-10-28: 100·50·20·10 노드 → 합력 5·4·3·2 (노드 모드 최소 10 = 임계) */
 export const NODE_STAGES = [100, 50, 20, 10] as const;
 export const CLUSTER_STAGES = [5, 4, 3, 2] as const;
@@ -52,9 +64,9 @@ export function nodeCount(src: StageSource, n: number): number {
 
 /** 길이 = L_max·|F|/F_ref, 최소 0.15·L_max (작은 화살표도 보이게) */
 export const MIN_LEN_FRAC = 0.15;
-export function arrowLength(mag: number, fref: number, lmax: number): number {
+export function arrowLength(mag: number, fref: number, lmax: number, minFrac: number = MIN_LEN_FRAC): number {
   const frac = fref > 0 ? mag / fref : 0;
-  return lmax * Math.max(MIN_LEN_FRAC, Math.min(1, frac));
+  return lmax * Math.max(minFrac, Math.min(1, frac));
 }
 
 export interface ArrowSpec {
@@ -64,10 +76,7 @@ export interface ArrowSpec {
   tail: V3;
   dir: V3;
   length: number;
-  shaftLen: number;
   headLen: number;
-  shaftRadius: number;
-  headRadius: number;
   color: string;
   mag: number;
   vertex: number | null;
@@ -79,13 +88,12 @@ export const unit = (v: ArrayLike<number>): V3 | null => {
   return m > 0 ? [v[0] / m, v[1] / m, v[2] / m] : null;
 };
 
-/** 화살표 치수: L_max = 0.10 diag, 머리 = 0.25 길이(최대 0.04 diag), 축 반지름 0.008 diag, 군집은 굵기 2배 */
+/** 화살표 사양: L_max = 0.10 diag, 기본 머리 길이 = 0.25 길이(최대 0.04 diag). 선 두께·원뿔 반경은 scene 이 px 기준으로 정함 */
 export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: ArrayLike<number>, mag: number, fref: number, diag: number, vertex: number | null, label?: string): ArrowSpec | null {
   const dir = unit(f);
   if (!dir) return null;
-  const length = arrowLength(mag, fref, 0.1 * diag);
+  const length = arrowLength(mag, fref, 0.1 * diag, kind === "cluster" ? CLUSTER_MIN_FRAC : MIN_LEN_FRAC);
   const headLen = Math.min(0.25 * length, 0.04 * diag);
-  const thick = kind === "cluster" ? 2 : 1;
   return {
     key,
     kind,
@@ -93,9 +101,6 @@ export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: Ar
     dir,
     length,
     headLen,
-    shaftLen: length - headLen,
-    shaftRadius: 0.008 * diag * thick,
-    headRadius: 0.018 * diag * thick,
     color: kind === "cluster" ? CLUSTER_COLOR : ARROW_COLOR,
     mag,
     vertex,

@@ -1,12 +1,15 @@
 // three 장면(계약 §6·§8). 이 파일만 three 를 import 한다 → 동적 import 로 별도 청크. 시험에서는 mock.
 // 좌표 mm·Z-up. onDemand 렌더: 카메라·상태 변경 때만 requestAnimationFrame 1회. 언마운트 시 geometry·material·texture·renderer dispose.
 import {
-  AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
-  LineBasicMaterial, LineSegments, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
+  AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
+  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { ARROW_COLOR, ARROW_SELECTED, type ArrowSpec } from "./arrows";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import { ARROW_COLOR, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
 import { fillVertexColors } from "./colors";
 import { pickSegment, type V3 } from "./pick";
@@ -15,7 +18,6 @@ import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
 
 const FOV = 40;
 const LOD_RESTORE_MS = 250;
-const SELECT_THICK = 1.6;
 
 interface Layer {
   geo: GeoData;
@@ -97,6 +99,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       raf = 0;
       if (disposed) return;
       renders++;
+      updateLineArrows();
       renderer.render(scene, camera);
     });
   };
@@ -183,13 +186,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     return u && kscale ? [a[i] + kscale * u[i], a[i + 1] + kscale * u[i + 1], a[i + 2] + kscale * u[i + 2]] : [a[i], a[i + 1], a[i + 2]];
   };
 
-  // ---- 화살표
-  const shaftGeo = new CylinderGeometry(1, 1, 1, 12);
-  shaftGeo.translate(0, 0.5, 0);
+  // ---- 화살표(계약 §6.2, L3-C2): 픽셀 고정 두께 선(LineSegments2) + 화면 크기 제한이 있는 가는 원뿔 머리
   const headGeo = new ConeGeometry(1, 1, 16);
   headGeo.translate(0, 0.5, 0);
   const arrowMat = new MeshLambertMaterial({ color: 0xffffff });
-  let arrowShaft: InstancedMesh | null = null;
   let arrowHead: InstancedMesh | null = null;
   let arrows: ArrowSpec[] = [];
   let selArrow: number | null = null;
@@ -200,41 +200,89 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   const tmpP = new Vector3();
   const tmpS = new Vector3();
   const tmpC = new Color();
+  interface LineGroup {
+    obj: LineSegments2;
+    idx: number[];
+  }
+  const lineGroups: LineGroup[] = [];
+  /** 1 px 의 월드 길이(점까지 거리 t) */
+  const pxWorldAt = (t: number) => (2 * t * Math.tan((FOV * Math.PI) / 360)) / Math.max(1, canvas.clientHeight);
 
-  const clearArrows = () => {
-    for (const m of [arrowShaft, arrowHead]) {
-      if (!m) continue;
-      scene.remove(m);
-      m.dispose();
+  const fillLineGroup = (g: LineGroup) => {
+    const pos: number[] = [];
+    const col: number[] = [];
+    for (const i of g.idx) {
+      const a = arrows[i];
+      const c = tmpC.set(i === selArrow ? ARROW_SELECTED : a.color || ARROW_COLOR);
+      // 선은 끝점까지(원뿔이 덮음)
+      pos.push(a.tail[0], a.tail[1], a.tail[2], a.tail[0] + a.dir[0] * a.length, a.tail[1] + a.dir[1] * a.length, a.tail[2] + a.dir[2] * a.length);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
-    arrowShaft = arrowHead = null;
+    g.obj.geometry.setPositions(pos);
+    g.obj.geometry.setColors(col);
+  };
+  /** 원뿔 머리: 높이 = 기준 머리 길이 × CONE_LEN_SCALE 을 화면 CONE_PX 범위로 제한, 반지름 = 높이 × CONE_ASPECT */
+  const writeHeads = () => {
+    if (!arrowHead) return;
+    arrows.forEach((a, i) => {
+      const dist = camera.position.distanceTo(tmpP.set(a.tail[0], a.tail[1], a.tail[2]));
+      const w = pxWorldAt(dist);
+      const kk = a.kind === "cluster" ? CONE_CLUSTER_SCALE : 1;
+      const hl = Math.max(CONE_PX.min * kk * w, Math.min(CONE_PX.max * kk * w, a.headLen * CONE_LEN_SCALE * kk));
+      const hr = hl * CONE_ASPECT;
+      tmpQ.setFromUnitVectors(Y, tmpP.set(a.dir[0], a.dir[1], a.dir[2]));
+      tmpP.set(a.tail[0] + a.dir[0] * (a.length - hl), a.tail[1] + a.dir[1] * (a.length - hl), a.tail[2] + a.dir[2] * (a.length - hl));
+      tmpM.compose(tmpP, tmpQ, tmpS.set(hr, hl, hr));
+      arrowHead!.setMatrixAt(i, tmpM);
+      arrowHead!.setColorAt(i, tmpC.set(i === selArrow ? ARROW_SELECTED : a.color || ARROW_COLOR));
+    });
+    arrowHead.instanceMatrix.needsUpdate = true;
+    if (arrowHead.instanceColor) arrowHead.instanceColor.needsUpdate = true;
+  };
+  /** 렌더 직전: 선 해상도(px 두께 기준) 갱신, 머리 크기는 카메라 거리에 맞춰 재계산 */
+  const updateLineArrows = () => {
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    supMat.resolution.set(w, h);
+    for (const g of lineGroups) g.obj.material.resolution.set(w, h);
+    writeHeads();
+  };
+  const buildArrows = () => {
+    for (const kind of ["node", "cluster"] as const) {
+      const idx = arrows.map((a, i) => (a.kind === kind ? i : -1)).filter((i) => i >= 0);
+      if (!idx.length) continue;
+      const mat = new LineMaterial({ linewidth: LINE_PX[kind], vertexColors: true, worldUnits: false });
+      const obj = new LineSegments2(new LineSegmentsGeometry(), mat);
+      obj.frustumCulled = false;
+      obj.renderOrder = 5;
+      const g: LineGroup = { obj, idx };
+      fillLineGroup(g);
+      scene.add(obj);
+      lineGroups.push(g);
+    }
+    arrowHead = new InstancedMesh(headGeo, arrowMat, arrows.length);
+    arrowHead.frustumCulled = false;
+    scene.add(arrowHead);
+    updateLineArrows();
+  };
+  const clearArrows = () => {
+    if (arrowHead) {
+      scene.remove(arrowHead);
+      arrowHead.dispose();
+      arrowHead = null;
+    }
+    for (const g of lineGroups) {
+      scene.remove(g.obj);
+      g.obj.geometry.dispose();
+      g.obj.material.dispose();
+    }
+    lineGroups.length = 0;
     for (const s of arrowLabels) {
       scene.remove(s);
       s.material.map?.dispose();
       s.material.dispose();
     }
     arrowLabels.length = 0;
-  };
-  const writeArrows = () => {
-    if (!arrowShaft || !arrowHead) return;
-    arrows.forEach((a, i) => {
-      const sel = i === selArrow;
-      const th = sel ? SELECT_THICK : 1;
-      tmpQ.setFromUnitVectors(Y, tmpP.set(a.dir[0], a.dir[1], a.dir[2]));
-      tmpP.set(a.tail[0], a.tail[1], a.tail[2]);
-      tmpM.compose(tmpP, tmpQ, tmpS.set(a.shaftRadius * th, a.shaftLen, a.shaftRadius * th));
-      arrowShaft!.setMatrixAt(i, tmpM);
-      tmpP.set(a.tail[0] + a.dir[0] * a.shaftLen, a.tail[1] + a.dir[1] * a.shaftLen, a.tail[2] + a.dir[2] * a.shaftLen);
-      tmpM.compose(tmpP, tmpQ, tmpS.set(a.headRadius * th, a.headLen, a.headRadius * th));
-      arrowHead!.setMatrixAt(i, tmpM);
-      tmpC.set(sel ? ARROW_SELECTED : a.color || ARROW_COLOR);
-      arrowShaft!.setColorAt(i, tmpC);
-      arrowHead!.setColorAt(i, tmpC);
-    });
-    for (const m of [arrowShaft, arrowHead]) {
-      m.instanceMatrix.needsUpdate = true;
-      if (m.instanceColor) m.instanceColor.needsUpdate = true;
-    }
   };
 
   // ---- 선택 표식·군집 꼬리 구
@@ -244,12 +292,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   selMarker.renderOrder = 9;
   selMarker.scale.setScalar(opts.diag * 0.011);
   scene.add(selMarker);
-  const tailMat = new MeshBasicMaterial({ color: 0xa50f15 });
-  let tails: InstancedMesh | null = null;
 
   // ---- 3-2-1 지지 기호
-  const supMat = new LineBasicMaterial({ color: SUPPORT_COLOR, depthTest: false, transparent: true });
-  let supLines: LineSegments | null = null;
+  const supMat = new LineMaterial({ color: SUPPORT_COLOR, linewidth: SUPPORT_LINE_PX, depthTest: false, transparent: true, worldUnits: false });
+  let supLines: LineSegments2 | null = null;
   const supSprites: Sprite[] = [];
   let supports: SupportSpec[] = [];
   const clearSupports = () => {
@@ -409,28 +455,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       clearArrows();
       arrows = list;
       selArrow = selected;
-      if (tails) {
-        scene.remove(tails);
-        tails.dispose();
-        tails = null;
-      }
       if (list.length) {
-        arrowShaft = new InstancedMesh(shaftGeo, arrowMat, list.length);
-        arrowHead = new InstancedMesh(headGeo, arrowMat, list.length);
-        arrowShaft.frustumCulled = arrowHead.frustumCulled = false;
-        scene.add(arrowShaft, arrowHead);
-        writeArrows();
-        const cl = list.filter((a) => a.kind === "cluster");
-        if (cl.length) {
-          tails = new InstancedMesh(sphereGeo, tailMat, cl.length);
-          tails.frustumCulled = false;
-          cl.forEach((a, i) => {
-            tmpM.compose(tmpP.set(a.tail[0], a.tail[1], a.tail[2]), tmpQ.identity(), tmpS.setScalar(opts.diag * 0.009));
-            tails!.setMatrixAt(i, tmpM);
-          });
-          tails.instanceMatrix.needsUpdate = true;
-          scene.add(tails);
-        }
+        buildArrows();
         list.forEach((a) => {
           if (!a.label) return;
           const sp = textSprite(a.label, null, { color: "#7f0b16", bg: "rgba(255,255,255,0.82)", px: 20 });
@@ -456,9 +482,9 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
         supSprites.push(sp);
       }
       if (pts.length) {
-        const g = new BufferGeometry();
-        g.setAttribute("position", new BufferAttribute(new Float32Array(pts), 3));
-        supLines = new LineSegments(g, supMat);
+        const g = new LineSegmentsGeometry();
+        g.setPositions(pts);
+        supLines = new LineSegments2(g, supMat);
         supLines.frustumCulled = false;
         supLines.renderOrder = 8;
         scene.add(supLines);
@@ -468,7 +494,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     },
     select(arrowIndex, vertex) {
       selArrow = arrowIndex;
-      writeArrows();
+      for (const g of lineGroups) fillLineGroup(g);
+      writeHeads();
       const p = vertex === null ? null : vertexPos(vertex);
       if (p) selMarker.position.set(p[0], p[1], p[2]);
       selMarker.visible = !!p;
@@ -496,11 +523,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       controls.dispose();
       clearArrows();
       clearSupports();
-      if (tails) tails.dispose();
       disposeLayer(layers.full);
       disposeLayer(layers.lod);
-      for (const g of [shaftGeo, headGeo, sphereGeo]) g.dispose();
-      for (const m of [surfMat, arrowMat, tailMat, supMat, selMarker.material as MeshBasicMaterial]) m.dispose();
+      for (const g of [headGeo, sphereGeo]) g.dispose();
+      for (const m of [surfMat, arrowMat, supMat, selMarker.material as MeshBasicMaterial]) m.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
     },
