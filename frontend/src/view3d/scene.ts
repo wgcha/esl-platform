@@ -9,7 +9,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
-import { ARROW_COLOR, ARROW_SELECTED, LINE_PX, type ArrowSpec } from "./arrows";
+import { ARROW_COLOR, ARROW_SELECTED, CONE_PX, LINE_PX, S3_VARIANTS, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
 import { fillVertexColors } from "./colors";
 import { pickSegment, type V3 } from "./pick";
@@ -207,6 +207,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
 
   // ---- 선 계열 화살표 시안(s1·s2·s3): 픽셀 고정 두께 Line2 계열. 기본 "current"는 위의 원기둥+원뿔.
   const arrowStyle = opts.arrowStyle ?? "current";
+  const isS3 = arrowStyle === "s3" || arrowStyle === "s3a" || arrowStyle === "s3b";
+  const s3v = isS3 ? S3_VARIANTS[arrowStyle as "s3" | "s3a" | "s3b"] : null;
   interface LineGroup {
     obj: LineSegments2;
     kind: "node" | "cluster";
@@ -241,8 +243,9 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
         c0.copy(base).lerp(cWhite, 0.7); // 시작: 옅게
         c1.copy(base).lerp(cBlack, 0.3); // 끝: 진하게
         push(a.tail, tip, c0, c1);
-      } else if (arrowStyle === "s3") {
-        const end: V3 = [a.tail[0] + a.dir[0] * a.shaftLen, a.tail[1] + a.dir[1] * a.shaftLen, a.tail[2] + a.dir[2] * a.shaftLen];
+      } else if (isS3) {
+        const sl = s3v?.clamp ? a.length : a.shaftLen; // 가는 변형은 선을 끝까지(원뿔이 덮음)
+        const end: V3 = [a.tail[0] + a.dir[0] * sl, a.tail[1] + a.dir[1] * sl, a.tail[2] + a.dir[2] * sl];
         push(a.tail, end, base, base);
       } else {
         push(a.tail, tip, base, base);
@@ -270,12 +273,13 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       g.obj.material.resolution.set(w, h);
       if (arrowStyle === "s1") fillLineGroup(g);
     }
+    if (s3v?.clamp) writeLineExtras();
   };
   const buildLineArrows = () => {
     for (const kind of ["node", "cluster"] as const) {
       const idx = arrows.map((a, i) => (a.kind === kind ? i : -1)).filter((i) => i >= 0);
       if (!idx.length) continue;
-      const mat = new LineMaterial({ linewidth: LINE_PX[kind], vertexColors: true, worldUnits: false });
+      const mat = new LineMaterial({ linewidth: s3v ? s3v.px[kind] : LINE_PX[kind], vertexColors: true, worldUnits: false });
       const obj = new LineSegments2(new LineSegmentsGeometry(), mat);
       obj.frustumCulled = false;
       obj.renderOrder = 5;
@@ -284,7 +288,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       scene.add(obj);
       lineGroups.push(g);
     }
-    if (arrowStyle === "s3") {
+    if (isS3) {
       // 아주 작은 원뿔 머리: 현재 대비 1/4 크기
       arrowHead = new InstancedMesh(headGeo, arrowMat, arrows.length);
       arrowHead.frustumCulled = false;
@@ -302,10 +306,22 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     arrows.forEach((a, i) => {
       const sel = i === selArrow;
       arrowColor(a, sel);
-      if (arrowStyle === "s3" && arrowHead) {
+      if (isS3 && arrowHead && s3v) {
         tmpQ.setFromUnitVectors(Y, tmpP.set(a.dir[0], a.dir[1], a.dir[2]));
         tmpP.set(a.tail[0] + a.dir[0] * a.shaftLen, a.tail[1] + a.dir[1] * a.shaftLen, a.tail[2] + a.dir[2] * a.shaftLen);
-        tmpM.compose(tmpP, tmpQ, tmpS.set(a.headRadius / 4, a.headLen / 4, a.headRadius / 4));
+        let hl = (a.headLen / 4) * s3v.h;
+        let hr = (a.headRadius / 4) * s3v.r;
+        if (s3v.clamp) {
+          // 화면 크기 제한: 꼬리 지점 거리에서 머리 길이를 CONE_PX 범위로(반지름은 같은 비율)
+          const dist = camera.position.distanceTo(tmpP.set(a.tail[0], a.tail[1], a.tail[2]));
+          const w = pxWorldAt(dist);
+          const kk = a.kind === "cluster" ? 1.8 : 1; // 군집은 선이 굵어 머리도 크게
+          const c = Math.max(CONE_PX.min * kk * w, Math.min(CONE_PX.max * kk * w, hl * kk));
+          hl = c;
+          hr = c * s3v.aspect; // 반지름/높이 고정 → 크기가 바뀌어도 뾰족함 유지
+          tmpP.set(a.tail[0] + a.dir[0] * (a.length - hl), a.tail[1] + a.dir[1] * (a.length - hl), a.tail[2] + a.dir[2] * (a.length - hl));
+        }
+        tmpM.compose(tmpP, tmpQ, tmpS.set(hr, hl, hr));
         arrowHead.setMatrixAt(i, tmpM);
         arrowHead.setColorAt(i, tmpC);
       }

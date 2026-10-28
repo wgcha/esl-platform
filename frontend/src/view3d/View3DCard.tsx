@@ -5,7 +5,7 @@ import { errorText } from "../api/client";
 import { Card } from "../components/ui";
 import { ColorLegend, countOut, useLegendRange } from "../components/ColorLegend";
 import { f3 } from "../lib/colormap";
-import { N_STAGES, buildArrowSpecs, resolveArrowStyle, stageText } from "./arrows";
+import { N_STAGES, buildArrowSpecs, PROTO_CLUSTER_MIN_FRAC, resolveArrowStyle, stageText } from "./arrows";
 import { BLUES_GRADIENT } from "./colors";
 import { EXP_MAX, EXP_MIN, EXP_STEP, defaultScaleExp, scaleFromExp, scaleLabel } from "./deform";
 import { fetchBinary, fileUrls } from "./fetchFiles";
@@ -135,7 +135,7 @@ export function View3DCard({ view }: { view: LoadView }) {
 
   // ---- 화살표·지지 기호
   const uForArrows = data?.vals.u ?? null;
-  const arrows = useMemo(() => (manifest ? buildArrowSpecs(manifest, mode, uForArrows, deformOn ? k : 0) : []), [manifest, mode, uForArrows, deformOn, k]);
+  const arrows = useMemo(() => (manifest ? buildArrowSpecs(manifest, mode, uForArrows, deformOn ? k : 0, resolveArrowStyle(window.location.search, __MOCK__) === "current" ? undefined : PROTO_CLUSTER_MIN_FRAC) : []), [manifest, mode, uForArrows, deformOn, k]);
   arrowKeysRef.current = arrows.map((a) => a.key);
   const supports = useMemo(() => (manifest ? buildSupportSpecs(manifest.supports, uForArrows, deformOn ? k : 0, manifest.bbox.diag) : []), [manifest, uForArrows, deformOn, k]);
   useEffect(() => {

@@ -37,7 +37,7 @@ let browser;
 try {
   await waitUp();
   browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--enable-webgl"] });
-  for (const style of ["current", "s1", "s2", "s3"]) {
+  for (const style of (process.env.STYLES ?? "current,s1,s2,s3").split(",")) {
     for (const dpr of [1, 2]) {
       const ctx = await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: dpr });
       const page = await ctx.newPage();

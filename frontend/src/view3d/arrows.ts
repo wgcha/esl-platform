@@ -11,14 +11,24 @@ export const CLUSTER_COLOR = "#a50f15";
  * 확정 후 기본 변경: ARROW_STYLE_DEFAULT 값만 바꾸고(필요하면 mock 제한 `allowProto` 제거) 나머지 스타일 분기는 정리한다.
  *  s1 = 픽셀 고정 두께 선 + 2D 셰브론 머리(화면 크기 고정), s2 = 두꺼운 선(끝으로 진해짐) + 시작점 작은 점, s3 = 픽셀 고정 두께 선 + 1/4 크기 원뿔 머리
  */
-export type ArrowStyle = "current" | "s1" | "s2" | "s3";
+export type ArrowStyle = "current" | "s1" | "s2" | "s3" | "s3a" | "s3b";
 export const ARROW_STYLE_DEFAULT: ArrowStyle = "current";
 /** 선 두께(px): 노드 화살표 / 군집 합력(같은 스타일, 더 굵게) */
 export const LINE_PX = { node: 3, cluster: 5 } as const;
+/** s3 계열 변형: 선 두께(px) + 원뿔 반지름·높이 배율(S3 대비, 화면 제한 시에는 반지름/높이 = aspect 고정) + 화면 크기 제한(px). s3a = 가늘고 뾰족, s3b = 중간 */
+export const S3_VARIANTS = {
+  s3: { px: { node: 3, cluster: 5 }, r: 1, h: 1, aspect: 0, clamp: false },
+  s3a: { px: { node: 2, cluster: 3.5 }, r: 0.6, h: 1.4, aspect: 0.3, clamp: true },
+  s3b: { px: { node: 2.5, cluster: 4 }, r: 0.7, h: 1.6, aspect: 0.33, clamp: true },
+} as const;
+/** 원뿔 머리 화면 길이 제한(px): 점처럼 작아지거나 너무 커지지 않게 */
+export const CONE_PX = { min: 9, max: 26 } as const;
+/** 시안 스타일에서 군집 화살표 최소 길이 비율(현재 기본은 MIN_LEN_FRAC 유지) */
+export const PROTO_CLUSTER_MIN_FRAC = 0.3;
 export function resolveArrowStyle(search: string, allowProto: boolean): ArrowStyle {
   if (!allowProto) return ARROW_STYLE_DEFAULT;
   const v = new URLSearchParams(search).get("arrow");
-  return v === "s1" || v === "s2" || v === "s3" || v === "current" ? v : ARROW_STYLE_DEFAULT;
+  return v === "s1" || v === "s2" || v === "s3" || v === "s3a" || v === "s3b" || v === "current" ? v : ARROW_STYLE_DEFAULT;
 }
 
 /** 사용자 결정 2026-10-28: 100·50·20·10 노드 → 합력 5·4·3·2 (노드 모드 최소 10 = 임계) */
@@ -67,9 +77,9 @@ export function nodeCount(src: StageSource, n: number): number {
 
 /** 길이 = L_max·|F|/F_ref, 최소 0.15·L_max (작은 화살표도 보이게) */
 export const MIN_LEN_FRAC = 0.15;
-export function arrowLength(mag: number, fref: number, lmax: number): number {
+export function arrowLength(mag: number, fref: number, lmax: number, minFrac: number = MIN_LEN_FRAC): number {
   const frac = fref > 0 ? mag / fref : 0;
-  return lmax * Math.max(MIN_LEN_FRAC, Math.min(1, frac));
+  return lmax * Math.max(minFrac, Math.min(1, frac));
 }
 
 export interface ArrowSpec {
@@ -95,10 +105,10 @@ export const unit = (v: ArrayLike<number>): V3 | null => {
 };
 
 /** 화살표 치수: L_max = 0.10 diag, 머리 = 0.25 길이(최대 0.04 diag), 축 반지름 0.008 diag, 군집은 굵기 2배 */
-export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: ArrayLike<number>, mag: number, fref: number, diag: number, vertex: number | null, label?: string): ArrowSpec | null {
+export function buildArrow(key: string, kind: ArrowSpec["kind"], tail: V3, f: ArrayLike<number>, mag: number, fref: number, diag: number, vertex: number | null, label?: string, minFrac: number = MIN_LEN_FRAC): ArrowSpec | null {
   const dir = unit(f);
   if (!dir) return null;
-  const length = arrowLength(mag, fref, 0.1 * diag);
+  const length = arrowLength(mag, fref, 0.1 * diag, minFrac);
   const headLen = Math.min(0.25 * length, 0.04 * diag);
   const thick = kind === "cluster" ? 2 : 1;
   return {
@@ -123,7 +133,7 @@ export function clusterOf(m: Pick<View3dOut, "clusters">, k: number): View3dClus
 }
 
 /** 화살표 사양. u = 복원된 u_rel(길이 3n) 또는 null, kscale = 변형 배율(변형 형상 꺼짐이면 0) */
-export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">, mode: ArrowMode, u: ArrayLike<number> | null, kscale: number): ArrowSpec[] {
+export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">, mode: ArrowMode, u: ArrayLike<number> | null, kscale: number, clusterMinFrac: number = MIN_LEN_FRAC): ArrowSpec[] {
   const diag = m.bbox.diag;
   const out: ArrowSpec[] = [];
   if (mode.kind === "nodes") {
@@ -142,7 +152,7 @@ export function buildArrowSpecs(m: Pick<View3dOut, "top" | "clusters" | "bbox">,
   for (const r of c.rows) {
     const du = r.u_center && kscale ? r.u_center : [0, 0, 0];
     const kk = r.u_center && kscale ? kscale : 0;
-    const a = buildArrow(r.label, "cluster", [r.center[0] + kk * du[0], r.center[1] + kk * du[1], r.center[2] + kk * du[2]], r.r, r.r_mag, fref, diag, null, `${r.label} ${fmtN(r.r_mag)} N`);
+    const a = buildArrow(r.label, "cluster", [r.center[0] + kk * du[0], r.center[1] + kk * du[1], r.center[2] + kk * du[2]], r.r, r.r_mag, fref, diag, null, `${r.label} ${fmtN(r.r_mag)} N`, clusterMinFrac);
     if (a) out.push(a);
   }
   return out;
