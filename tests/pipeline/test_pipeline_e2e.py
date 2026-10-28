@@ -182,7 +182,7 @@ def test_e2e_all(case):
             ids.append(int(line.split(",")[1]))
         if line.startswith(("FORCE,", "SPC1,")):
             ids.append(int(line.split(",")[1]))
-    assert ids and all(off <= v <= off + 999999 for v in ids)
+    assert ids and all(off < v <= off + len(ids) + 100 for v in ids)
     for fn in ("esl_cload.inc", "esl_bcs.inc", "esl_force.fem"):         # inc·fem 전체 ASCII
         assert all(b < 128 for b in open(os.path.join(exp, fn), "rb").read()), fn
     # 비영 성분 수 = /CLOAD 수
@@ -291,7 +291,7 @@ def test_esl_config_env(case, tmp_path, monkeypatch):
 def test_export_id_range_collision(case, tmp_path, capsys):
     out = _copy_out(case, tmp_path)
     cfg = tmp_path / "small_offset.yaml"
-    cfg.write_text(open(CFG, encoding="utf-8").read().replace("id_offset: 9000000", "id_offset: 50"),
+    cfg.write_text(open(CFG, encoding="utf-8").read().replace("id_offset: auto", "id_offset: 50"),
                    encoding="utf-8")
     args = ["run", "--config", str(cfg), "--rad", case["rad"], "--results", case["csv"], "--out", out,
             "--stage", "export"]

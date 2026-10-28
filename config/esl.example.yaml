@@ -68,7 +68,7 @@ report:                              # Case HTML 보고서 <case>/07_report/repo
   top_forces: 20                     # F_eq 상위 표 행 수
 
 export:
-  radioss: {id_offset: 9000000, ramp_time: 1.0e-3, func_mode: ramp}   # ramp | constant
+  radioss: {id_offset: auto, ramp_time: 1.0e-3, func_mode: ramp}   # id_offset: auto(기본; 9000000 부터, rad ID 와 겹치면 10의 거듭제곱으로 올림) | 정수. func_mode: ramp | constant
   force_zero_tol_rel: 1.0e-9         # |F 성분|/max|F| 이하 성분은 /CLOAD·FORCE 생략
   num_format: "{:.9E}"               # .fem·inc 실수 서식 (20자 이하)
   csv: {delimiter: ",", float_format: "{:.9E}"}

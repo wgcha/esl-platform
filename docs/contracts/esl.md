@@ -106,7 +106,7 @@ validation:                          # 임시 값. 사내 확인 후 교체
   hotspot_strain_rel_err_max: 0.10   # |ε_os-ε_rad|/ε_rad (t* hotspot 1위)
   hotspot_eval_count: 3              # 오차 표에 보일 hotspot 수
 export:
-  radioss: {id_offset: 9000000, ramp_time: 1.0e-3, func_mode: ramp}   # ramp | constant
+  radioss: {id_offset: auto, ramp_time: 1.0e-3, func_mode: ramp}   # ramp | constant
   force_zero_tol_rel: 1.0e-9         # |F|/max|F| 이하 성분은 /CLOAD 생략
   csv: {delimiter: ",", float_format: "{:.9E}"}
 units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표시용. 변환 없음
@@ -389,7 +389,8 @@ ENDDATA
 | `validation.csv` | `metric,value,criterion,pass` + hotspot 행 `elem_id,eps_rad,eps_os,rel_err` |
 | `summary.pptx`(P2) | 표지·입력·t* 이력·BC·F_eq 상위·검증 표 6장 |
 
-- ID 규칙: 모든 생성 ID ∈ `[id_offset, id_offset+999999]`. 범위가 rad의 기존 ID와 겹치면 EXPORT 실패 `ID_RANGE_COLLISION`(RAD_PARSE에서 수집한 최대 ID 비교).
+- ID 규칙(0.5.6): 생성 ID는 `id_offset+1`부터 **필요한 개수만큼** 연속 배정(고정 폭 999999 없음). `export.radioss.id_offset` = 정수 | `auto`(기본). `auto`는 9000000에서 시작하고 rad의 최대 ID(func·grnod·load·bcs·prop, RAD_PARSE 수집)가 그 이상이면 최대 ID보다 큰 가장 작은 10의 거듭제곱으로 올린다. 정수 지정 범위 `[off+1, off+필요수]`가 rad 최대 ID와 겹치거나 마지막 ID가 2^31-1(I10 안)을 넘으면 EXPORT 실패 `ID_RANGE_COLLISION`(메시지에 필요한 범위·충돌 최대 ID). `id_range`=실제 사용 `[off+1, 마지막]`. 하중 노드당 `/GRNOD` 1개를 그 노드의 성분 `/CLOAD`들이 공유, 0 성분(`force_zero_tol_rel`)은 생략. `.fem`만 내보내면 SID·PSHELL만 배정.
+- 경로 표기(0.5.6): API 응답의 경로(Case 폴더·결과/추출 폴더·내보내기 파일 `path`·이력·오류 detail)는 응답 경계에서 `esl.display.display_path`로 통일 — Windows(또는 `ESL_DISPLAY_PATH_STYLE=windows`)면 `\` 구분·드라이브 유지, 저장값·비교는 불변.
 - CSV: UTF-8(BOM 없음), 헤더 1줄, `export.csv` 서식.
 
 ---

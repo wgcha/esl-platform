@@ -38,6 +38,15 @@ def _int(lo: int | None = None, hi: int | None = None) -> Callable[[str, Any], N
     return chk
 
 
+def _int_or_auto(lo: int, hi: int):
+    base = _int(lo, hi)
+
+    def chk(key, v):
+        if v != "auto":
+            base(key, v)
+    return chk
+
+
 def _num(lo: float | None = None, hi: float | None = None, lo_open=False, hi_open=False):
     def chk(key, v):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
@@ -211,7 +220,7 @@ SCHEMA: dict[str, Any] = {
     },
     "export": {
         "radioss": {
-            "id_offset": _int(1, 9_999_999_999 - 999_999),   # 생성 ID 가 I10 에 들어가야 함
+            "id_offset": _int_or_auto(1, 2_147_483_647 - 1),   # 정수 또는 "auto"; 생성 ID 는 off+1 부터 필요한 만큼, ≤ 2^31-1
             "ramp_time": _num(0.0, lo_open=True),
             "func_mode": _enum("ramp", "constant"),
         },

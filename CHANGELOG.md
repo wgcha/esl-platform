@@ -14,6 +14,11 @@
 - 라이브러리: 판정 불가 결과는 사유를 적어 등록할 수 있음, 목록 필터에 판정 불가·이전 판정 체계 추가
 - DB migration 0008, validation.json schema `esl/validation/3`, 설정 키 `validation.disp_max_rel_max`·`disp_noise_rel_max`·`disp_top_n`·`disp_hist_bins`
 
+## [0.5.6] - 2026-10-28
+### 수정
+- 화면·응답의 경로 표기가 `E:/.../esl-data\Case`처럼 / 와 \ 가 섞이던 문제: Windows 서버에서는 Case 폴더·결과·추출 폴더·내보내기 파일·이력·보고서 경로를 모두 역슬래시로 통일해 표시
+- 큰 파트 내보내기가 `ID_RANGE_COLLISION — 생성 ID … 범위 폭 999999 를 넘음`으로 실패하던 문제: 생성 ID 범위 폭 제한을 없애고 필요한 개수만큼 배정(rad 기존 ID와 겹치면 오류, 설정 `export.radioss.id_offset: auto`가 기본이며 겹치면 자동으로 10의 거듭제곱 위로 올림)
+
 ## [0.5.5] - 2026-10-27
 ### 수정
 - rad와 h3d가 같은 모델인지 노드·요소 연결로 확인하고 좌표는 대략만 비교 — 압축 h3d 등 좌표 미세 차이로 정리가 실패하던 문제 해결

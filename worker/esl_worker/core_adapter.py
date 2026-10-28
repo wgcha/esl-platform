@@ -195,6 +195,11 @@ def scan_include_refs(rad: str, max_depth: int, include_path_map: dict | None = 
     return list(_wrap(fn, rad, **kw))
 
 
+def display_path(p):
+    """사용자에게 보이는 경로 표기 통일(이슈 #24, esl.display.display_path)."""
+    return _attr("esl.display", "display_path")(p)
+
+
 def pca_corners(x0) -> dict:
     return _wrap(_attr("esl.mech.supports", "pca_corners"), x0)
 

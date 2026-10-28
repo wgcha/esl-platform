@@ -52,7 +52,7 @@ def test_plan_ids_sequential(small):
     assert plan["cload_grnod"] == list(range(OFF + 12, OFF + 16))
     assert plan["cload"] == list(range(OFF + 16, OFF + 23))
     ids = all_ids(plan)
-    assert len(set(ids)) == len(ids) and all(OFF <= v <= OFF + 999999 for v in ids)
+    assert len(set(ids)) == len(ids) and all(OFF < v <= OFF + 22 for v in ids) and plan['range'] == [OFF + 1, OFF + 22]
 
 
 def test_id_range_collision():
@@ -60,11 +60,43 @@ def test_id_range_collision():
         with pytest.raises(EslError) as ei:
             plan_ids(OFF, {**MAX_IDS, key: OFF + 5}, 3, 1, 1, 1)
         assert ei.value.code == "ID_RANGE_COLLISION"
+        assert f"[{OFF + 1}, {OFF + 3 + 6 + 1 + 2}]" in ei.value.message and str(OFF + 5) in ei.value.message
     # 생성하지 않는 종류(노드·요소)는 무관
     plan_ids(OFF, {**MAX_IDS, "node": 5 * OFF, "elem": 5 * OFF}, 3, 1, 1, 1)
-    with pytest.raises(EslError) as ei:                 # 범위 폭 초과
-        plan_ids(OFF, MAX_IDS, 3, 1, 400_000, 600_000)
-    assert ei.value.code == "ID_RANGE_COLLISION"
+
+
+def test_plan_ids_no_fixed_width_issue24():
+    """이슈 #24: 하중 노드 277608, 성분 832823, 지지 3, PSHELL 1 → 1,110,441 ID 가 폭 제한 없이 배정."""
+    plan = plan_ids(OFF, MAX_IDS, 3, 1, 277_608, 832_823)
+    assert plan["n_ids"] == 1_110_441 and plan["range"] == [OFF + 1, OFF + 1_110_441]
+    ids = all_ids(plan)
+    assert len(ids) == len(set(ids)) == 1_110_441 and min(ids) == OFF + 1 and max(ids) == OFF + 1_110_441
+    assert plan["cload_grnod"][0] == OFF + 11 and plan["cload"][-1] == OFF + 1_110_441
+
+
+def test_plan_ids_auto():
+    p = plan_ids("auto", MAX_IDS, 3, 1, 1, 1)
+    assert p["id_offset"] == 9_000_000 and p["id_offset_auto"] and p["func"] == 9_000_001
+    # 모델 ID 가 기본 시작점 이상 → 최대 ID 위 10의 거듭제곱으로
+    p = plan_ids("auto", {**MAX_IDS, "grnod": 9_500_000}, 3, 1, 1, 1)
+    assert p["id_offset"] == 10_000_000 and p["func"] == 10_000_001
+    p = plan_ids("auto", {**MAX_IDS, "load": 12_345_678}, 3, 1, 1, 1)
+    assert p["id_offset"] == 100_000_000
+    # node·elem 이 커도 생성 종류가 아니므로 무관
+    assert plan_ids("auto", {**MAX_IDS, "node": 99_999_999}, 3, 1, 1, 1)["id_offset"] == 9_000_000
+    with pytest.raises(EslError) as ei:               # 올린 시작점이 상한을 넘기면 오류
+        plan_ids("auto", {**MAX_IDS, "bcs": 1_500_000_000}, 3, 1, 600_000_000, 900_000_000)
+    assert ei.value.code == "ID_RANGE_COLLISION" and "2147483647" in ei.value.message
+
+
+def test_plan_ids_limit():
+    with pytest.raises(EslError) as ei:
+        plan_ids(2_147_000_000, MAX_IDS, 3, 1, 400_000, 600_000)
+    assert ei.value.code == "ID_RANGE_COLLISION" and "상한" in ei.value.message
+    need = 3 + 6 + 1 + 1 + 1
+    assert plan_ids(2_147_483_647 - need, MAX_IDS, 3, 1, 1, 1)["max_used"] == 2_147_483_647     # 딱 맞게
+    with pytest.raises(EslError):
+        plan_ids(2_147_483_647 - need + 1, MAX_IDS, 3, 1, 1, 1)
 
 
 def test_dof_flags():
