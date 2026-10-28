@@ -9,6 +9,7 @@ import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Card, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { normPartTitle } from "../../lib/partTitle";
+import { uploadStore } from "../../lib/uploadStore";
 import { UploadPanel } from "./UploadPanel";
 import { ServerPanel } from "./ServerPanel";
 import { PcPanel } from "./PcPanel";
@@ -25,7 +26,7 @@ export function NewCase() {
   const { projectId = "" } = useParams();
   const { me, projects } = useApp();
   const nav = useNavigate();
-  const [qs] = useSearchParams();
+  const [qs, setQs] = useSearchParams();
   const initialUpload = qs.get("upload");
   const project = projects.find((p) => p.id === projectId);
   const allowed = canRun(me, projectId);
@@ -81,6 +82,7 @@ export function NewCase() {
         results_dir: cur.source.kind === "results" ? cur.source.path : null,
         part_title: part.trim(),
       });
+      uploadStore.dropByRad(cur.rad_path);
       nav(`/p/${projectId}/c/${c.id}/stage/1`);
     } catch (e) {
       setError(errorText(e));
@@ -109,7 +111,7 @@ export function NewCase() {
       </div>
       <section className="card" role="tabpanel" id="panel-upload" aria-labelledby="tab-upload" hidden={tab !== "upload"}>
         <div className="card-body">
-          <UploadPanel initialUploadId={initialUpload} projectId={projectId} name={NAME_RE.test(name) ? name : "case"} disabled={!allowed} onChange={onChange("upload")} />
+          <UploadPanel initialUploadId={initialUpload} onSessionId={(id) => setQs({ upload: id }, { replace: true })} onOpenPcTab={() => setTab("pc")} onOpenUpload={(id) => setQs({ upload: id })} projectId={projectId} name={NAME_RE.test(name) ? name : "case"} disabled={!allowed} onChange={onChange("upload")} />
         </div>
       </section>
       <section className="card" role="tabpanel" id="panel-server" aria-labelledby="tab-server" hidden={tab !== "server"}>

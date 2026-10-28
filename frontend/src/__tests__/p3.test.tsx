@@ -12,6 +12,7 @@ import { MOCK_CHANGELOG, MOCK_VERSION } from "../mock/p3mock";
 import { ApiError } from "../api/client";
 import { putChunk } from "../api/p3";
 import { Uploader, planChunks, sha256Available, signature, type PickedFile, type UploadProgress } from "../lib/uploader";
+import { uploadStore } from "../lib/uploadStore";
 import { cmpVersion, isNewVersion, parseChangelog } from "../lib/changelog";
 import { GUIDE, FAQ } from "../pages/guide/content";
 import { PC_CODE_BUTTON, remainText, serverUrl } from "../pages/newcase/PcPanel";
@@ -38,7 +39,10 @@ const picks = (): PickedFile[] => [
   { file: file("drop.h3d", 30), rel: "h3d/drop.h3d" },
 ];
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  uploadStore._reset();
+});
 afterEach(() => localStorage.clear());
 
 describe("분할 업로드(Uploader)", () => {
@@ -520,7 +524,7 @@ describe("사용 가이드", () => {
     expect(screen.getAllByRole("article").length).toBe(GUIDE.flatMap((g) => g.cards).length);
     for (const f of FAQ) expect(screen.getByText(f.q)).toBeTruthy();
     expect(screen.getAllByText("판단 기준").length).toBeGreaterThanOrEqual(5);
-    expect(screen.getByText(/수십 GB.*ESL_extract\.bat/)).toBeTruthy();
+    expect(screen.getByText(/5 GB를 넘으면 화면이 PC 도구의 압축 모드를 권합니다/)).toBeTruthy();
   });
 
   it("바로가기: 새 Case → /p/<프로젝트>/cases/new, 단계 카드 → 최근 연 Case 의 단계", async () => {

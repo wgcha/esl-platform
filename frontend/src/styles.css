@@ -2116,3 +2116,96 @@ tr.ref-row td {
   background: #fff1e3;
   box-shadow: inset 3px 0 0 #ff7f0e;
 }
+
+/* v0.6.0 업로드 속도(계약 esl_upload_speed.md §6) — 목록 선택·압축 모드·진행 중인 업로드 */
+.upload-list th.chk,
+.upload-list td.chk {
+  width: 2rem;
+  text-align: center;
+}
+.upload-list tr.sel {
+  background: var(--surface-2);
+}
+.big-h3d-hint {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.linkbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.slim-box {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.6rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.slim-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.slim-badge {
+  display: grid;
+  gap: 0.25rem;
+}
+.slim-cfg pre {
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+}
+details.open-uploads {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.8rem;
+}
+details.open-uploads > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+details.open-uploads .actions {
+  white-space: nowrap;
+}
+
+/* 상단 바 업로드 진행 표시(UploadChip) */
+.upload-chip {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.upload-chip.done {
+  background: var(--accent);
+  color: #fff;
+}
+.upload-chip-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(29, 91, 191, 0.22);
+  transition: width 0.4s;
+}
+.upload-chip-text {
+  position: relative;
+}

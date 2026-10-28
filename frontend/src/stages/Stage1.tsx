@@ -3,7 +3,8 @@ import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
 import type { InspectH3dResult } from "../api/types";
 import { bytes } from "../lib/format";
-import { Card, Empty, Field, Stat } from "../components/ui";
+import { Badge, Card, Empty, Field, Stat } from "../components/ui";
+import { slimLine, slimResults, slimTip } from "../lib/slim";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, submitJob, useAction } from "./common";
@@ -91,6 +92,18 @@ export function Stage1({ c, reload, allowed }: StageProps) {
                   </div>
                 ) : (
                   <div className="small muted">{h3d?.error ?? "확인 중…"}</div>
+                )}
+                {c.input_h3d_meta?.kind === "h3d_slim" && (
+                  <div className="small slim-badge" data-testid="slim-badge" title={slimTip(c.input_h3d_meta)}>
+                    <Badge kind="ok">압축 모드</Badge> <span className="muted">{slimLine(c.input_h3d_meta)}</span>
+                    {slimResults(c.input_h3d_meta) && <span className="muted"> · 남긴 결과 {slimResults(c.input_h3d_meta)}(전 프레임)</span>}
+                    {c.input_h3d_meta.cfg && (
+                      <details className="slim-cfg">
+                        <summary>cfg 보기</summary>
+                        <pre className="mono">{c.input_h3d_meta.cfg}</pre>
+                      </details>
+                    )}
+                  </div>
                 )}
               </>
             )}

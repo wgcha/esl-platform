@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Role } from "../api/types";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { DONE_SHOW_MS, uploadPath, uploadStore } from "../lib/uploadStore";
 import { ROLE_LABEL, useApp } from "../app/AppContext";
 import { StatusChips, StatusDrawer, useRunStatus } from "./RunStatus";
 import { SEEN_EVENT, isNewVersion, lastSeenVersion } from "../lib/changelog";
@@ -8,6 +9,28 @@ import { dt } from "../lib/format";
 
 export const GUIDE_PATH = "/guide";
 export const UPDATES_PATH = "/updates";
+
+/** 상단 바 업로드 진행 표시: 전송 중이면 '업로드 37%'(여러 개면 '업로드 2건 · 45%'), 끝나면 '업로드 완료 — 열기'를 잠깐. 클릭 = 그 업로드(?upload=) 화면 */
+export function UploadChip() {
+  useSyncExternalStore(uploadStore.subscribe, uploadStore.getVersion);
+  const nav = useNavigate();
+  const [, tick] = useState(0);
+  const c = uploadStore.chip();
+  useEffect(() => {
+    if (c?.kind !== "done") return;
+    const left = Math.max(50, DONE_SHOW_MS - (Date.now() - (c.session.finishedAt ?? 0)));
+    const t = setTimeout(() => tick((n) => n + 1), left + 20);
+    return () => clearTimeout(t);
+  }, [c?.kind, c?.session.finishedAt]);
+  if (!c) return null;
+  const text = c.kind === "done" ? "업로드 완료 — 열기" : c.n > 1 ? `업로드 ${c.n}건 · ${c.pct}%` : `업로드 ${c.pct}%`;
+  return (
+    <button type="button" className={`upload-chip ${c.kind}`} data-testid="upload-chip" title="업로드 화면 열기" onClick={() => nav(uploadPath(c.session))}>
+      {c.kind === "active" && <span className="upload-chip-bar" style={{ width: `${c.pct}%` }} aria-hidden="true" />}
+      <span className="upload-chip-text">{text}</span>
+    </button>
+  );
+}
 
 /** 상단 바 버전 표기: v0.4.0(툴팁 commit·배포 시각) + 마지막으로 본 버전보다 새로우면 점 배지 → 업데이트 내역 */
 export function VersionChip() {
@@ -71,6 +94,7 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
         </nav>
       )}
       <div className="topbar-right">
+        <UploadChip />
         <StatusChips />
         <Link className="topbar-link" to={GUIDE_PATH}>
           사용 가이드
