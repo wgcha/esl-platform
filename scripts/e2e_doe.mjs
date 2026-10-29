@@ -258,6 +258,16 @@ function auditResult(r, scenario) {
   has(r.baseline, ["id", "score", "umax", "epsmax"], "result.baseline");
   if (!r.ranking.length) fail("result.ranking 비었음", r);
   for (const x of r.ranking) has(x, ["rank", "id", "values", "score", "improvement", "worst_entry_id", "umax", "epsmax", "umax_all", "epsmax_all", "warnings_n"], "ranking[]");
+  // v0.10.0 §11.4 ESL별 개선 지표
+  has(r, ["ratio_tol", "per_esl_inline", "esl"], "result(§11.4)");
+  if (!r.esl.length || !r.per_esl_inline) fail("esl·per_esl_inline", { esl: r.esl, inline: r.per_esl_inline });
+  for (const x of r.ranking) {
+    has(x, ["worst_ratio", "min_improvement", "all_improved", "n_improved", "n_worsened", "geo_mean_improvement", "pareto", "per_esl"], "ranking[](§11.4)");
+    if (x.per_esl.length !== r.esl.length) fail("per_esl 길이", { n: x.per_esl.length, esl: r.esl.length });
+    for (const p of x.per_esl) has(p, ["entry_id", "label", "C", "ratio", "umax", "epsmax"], "per_esl[]");
+    if (Math.abs(x.min_improvement - (1 - Math.max(...x.per_esl.map((p) => p.ratio)))) > 1e-9) fail("min_improvement = 1 − max ratio", x);
+  }
+  if (!r.ranking.some((x) => x.pareto)) fail("Pareto 안 0개", r.ranking.map((x) => x.id));
   if (!r.excluded.length) fail("result.excluded 비었음(미리보기 스킵 안이 있어야 함)", r);
   for (const x of r.excluded) has(x, ["id", "status", "code", "values"], "excluded[]");
   if (scenario === "step" && typeof r.noise_floor !== "number") fail("③ noise_floor 없음", r.noise_floor);
@@ -421,6 +431,17 @@ async function runScenarios(base, inp) {
     const res = (await api(`/doe/studies/${sid}/results`)).body;
     auditResult(res, scenario);
     await page.locator('table[aria-label="순위표"]').waitFor({ timeout: 60000 });
+    // §11.4 화면: 지표 열·ESL별 개선율 표(행 = 상위 안, 열 = ESL) + 별도 조회 API
+    const rhead = await page.locator('table[aria-label="순위표"] thead th').allTextContents();
+    for (const h of ["전 씬 개선", "최소 개선율", "개선/악화", "기하평균", "Pareto"]) if (!rhead.some((t) => t.includes(h))) fail(`순위표 열 ${h} 없음`, rhead);
+    const pe = page.locator('table[aria-label="ESL별 개선율"]');
+    await pe.waitFor({ timeout: 30000 });
+    const peCols = await pe.locator("thead th").count();
+    if (peCols !== res.esl.length + 1) fail("ESL별 개선율 열 수", { peCols, esl: res.esl.length });
+    const pea = (await api(`/doe/studies/${sid}/results/per-esl?design=${res.ranking[0].id}`)).body;
+    if (!pea?.designs?.[0]?.per_esl?.length) fail("GET results/per-esl", pea);
+    const srt = (await api(`/doe/studies/${sid}/results?sort=worst_ratio`)).body;
+    for (let i = 1; i < srt.ranking.length; i++) if (srt.ranking[i].worst_ratio < srt.ranking[i - 1].worst_ratio - 1e-12) fail("sort=worst_ratio 순서", srt.ranking.map((x) => x.worst_ratio));
     await page.getByTestId("sens-r2").waitFor({ timeout: 30000 }).catch(() => undefined);
     // 3D 비교: manifest 경로(/doe/studies/{id}/view3d/{did}/manifest.json) + geometry·values 200
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="v3d-host"][data-phase="ready"]').length >= 2, null, { timeout: 90000 });

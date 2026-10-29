@@ -1723,7 +1723,24 @@ class DoeResultOut(_Out):
     view3d: list[str]
     best: dict[str, Any] | None = None
     noise_floor: float | None = None
+    # v0.10.0 §11.4 ESL별 개선 지표(행: worst_ratio·min_improvement·all_improved·n_improved·n_worsened·
+    # geo_mean_improvement·pareto, per_esl_inline 이면 per_esl[{entry_id,label,C,ratio,umax,epsmax}])
+    ratio_tol: float | None = None
+    per_esl_inline: bool = False
+    esl: list[dict[str, Any]] = Field(default_factory=list)
+    sort: str = "score"
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoePerEslDesign(_Out):
+    id: str
+    per_esl: list[dict[str, Any]]
+
+
+class DoePerEslOut(_Out):
+    esl: list[dict[str, Any]]
+    ratio_tol: float | None = None
+    designs: list[DoePerEslDesign]
 
 
 class DoeFileOut(_Out):

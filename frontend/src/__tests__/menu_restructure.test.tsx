@@ -397,3 +397,28 @@ describe("통합 정합(v0.10.0)", () => {
     expect(errorText(e2)).not.toContain("자동 선택 실패");
   });
 });
+
+
+describe("라이브러리 내보내기 기본 숨김(ui.library_export_enabled)", () => {
+  it("false 면 선택 줄 [내보내기] 없음·강성 평가 스터디가 주 버튼, true 면 [내보내기](주)", async () => {
+    const { MOCK_VERSION } = await import("../mock/p3mock");
+    const ui = MOCK_VERSION.ui as { library_export_enabled?: boolean };
+    ui.library_export_enabled = false;
+    try {
+      const { unmount } = renderApp("/p/p-body/library", "power");
+      const boxes = await screen.findAllByRole("checkbox", { name: / 선택$/ });
+      fireEvent.click(boxes.find((b) => !(b as HTMLInputElement).disabled && b.getAttribute("aria-label") !== "보이는 항목 모두 선택")!);
+      const bar = await screen.findByTestId("pick-bar");
+      await waitFor(() => expect(within(bar).getByRole("button", { name: /강성 평가 스터디/ }).getAttribute("data-primary")).toBe("true"));
+      expect(within(bar).queryByRole("button", { name: /내보내기/ })).toBeNull();
+      unmount();
+    } finally {
+      ui.library_export_enabled = true;
+    }
+    renderApp("/p/p-body/library", "power");
+    const boxes = await screen.findAllByRole("checkbox", { name: / 선택$/ });
+    fireEvent.click(boxes.find((b) => !(b as HTMLInputElement).disabled && b.getAttribute("aria-label") !== "보이는 항목 모두 선택")!);
+    const bar = await screen.findByTestId("pick-bar");
+    expect(await within(bar).findByRole("button", { name: /내보내기 \(1\)/ })).toBeTruthy();
+  });
+});

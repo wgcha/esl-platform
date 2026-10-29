@@ -32,7 +32,8 @@ _FUNCS = {"build_template": ("esl.opt.target", "build_template"),
           "doe_settings": ("esl.doe", "settings"), "doe_commands": ("esl.doe", "commands"),
           "doe_defaults": ("esl.doe", "DEFAULTS"), "doe_default_commands": ("esl.doe", "DEFAULT_COMMANDS"),
           "doe_load_messages": ("esl.doe", "load_messages"), "doe_message": ("esl.doe", "message"),
-          "doe_load_method_sources": ("esl.doe", "load_method_sources")}
+          "doe_load_method_sources": ("esl.doe", "load_method_sources"),
+          "doe_sort_rows": ("esl.doe.rank", "sort_rows")}             # v0.10.0 §11.4 순위표 정렬 키
 
 
 def __getattr__(name: str) -> Any:

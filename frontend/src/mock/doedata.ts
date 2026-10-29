@@ -317,7 +317,15 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
     epsmax_all: +(base.epsmax * r.score ** 0.7 * 1.06).toFixed(5),
     noise: noise_floor != null ? Math.abs(1 - r.score) < noise_floor : false,
     warnings_n: Number(r.id.slice(1)) % 7 === 2 ? 1 : 0,
+    ...perEslMock(r.id, r.score, entryIds, noise_floor),
   }));
+  // Pareto(§11.4): 다른 안·베이스라인(전부 1)에 모든 ESL 에서 지배당하지 않음
+  const vec = (r: DoeRankRow) => (r.per_esl ?? []).map((p) => p.ratio);
+  for (const r of ranking) {
+    const a = vec(r);
+    const others = [...ranking.filter((o) => o !== r).map(vec), a.map(() => 1)];
+    r.pareto = !others.some((o) => o.length === a.length && o.every((v, i) => v <= a[i]) && o.some((v, i) => v < a[i]));
+  }
   // 민감도: OK 안(베이스라인 포함) — 변수 [lo,hi] → [0,1]
   const names = spec.params.map((x) => x.name);
   const all = [{ values: Object.fromEntries(names.map((n) => [n, PARAMS.find((q) => q.name === n)?.nominal ?? 0])), score: 1 }, ...okRows];
@@ -377,7 +385,36 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
     view3d: ["d000", ...ranking.slice(0, 3).map((r) => r.id)],
     best: best ? { id: best, files: bestFiles } : null,
     noise_floor,
+    ratio_tol: Math.max(1e-6, noise_floor ?? 0),
+    per_esl_inline: true,
+    esl: entryIds.map((e) => ({ entry_id: e, label: e.slice(0, 8) })),
+    sort: "score",
     warnings,
+  };
+}
+
+/** 안·ESL 별 비율 r = C_안 / C_베이스라인(결정적 — 안 id·ESL 해시로 score 주변에 흩뿌림, 일부 씬은 악화) */
+export function perEslMock(id: string, score: number, entryIds: string[], noise: number | null) {
+  const tol = Math.max(1e-6, noise ?? 0);
+  const per = entryIds.map((e, i) => {
+    const h = parseInt(fnv(`${id}:${e}`).slice(0, 4), 16) / 0xffff;
+    const ratio = +(score * (0.8 + 0.45 * h) + (i === 0 ? 0 : 0.02)).toFixed(4);
+    const C = +(4.82e5 * (0.7 + 0.1 * i) * ratio).toFixed(1);
+    return { entry_id: e, label: e.slice(0, 8), C, ratio, umax: +(3.9 * ratio ** 0.9).toFixed(3), epsmax: +(0.0026 * ratio ** 0.7).toFixed(5) };
+  });
+  const r = per.map((p) => p.ratio);
+  const worst = Math.max(...r);
+  const gm = Math.exp(r.reduce((s, v) => s + Math.log(v), 0) / r.length);
+  return {
+    worst_ratio: worst,
+    min_improvement: +(1 - worst).toFixed(4),
+    all_improved: worst < 1 - tol,
+    n_improved: r.filter((v) => v < 1 - tol).length,
+    n_worsened: r.filter((v) => v > 1 + tol).length,
+    n_unchanged: r.filter((v) => Math.abs(1 - v) <= tol).length,
+    geo_mean_improvement: +(1 - gm).toFixed(4),
+    pareto: false,
+    per_esl: per,
   };
 }
 
@@ -836,6 +873,12 @@ export class DoeMock {
       if (method === "GET" && sub === "/results") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
         return ok(rec.result);
+      }
+      if (method === "GET" && sub === "/results/per-esl") {
+        if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
+        const want = (query.get("design") ?? "").split(",").filter(Boolean);
+        const rows = rec.result.ranking.filter((x) => !want.length || want.includes(x.id));
+        return ok({ esl: rec.result.esl ?? [], ratio_tol: rec.result.ratio_tol ?? null, designs: rows.map((x) => ({ id: x.id, per_esl: x.per_esl ?? [] })) });
       }
       if (method === "GET" && sub === "/files") {
         const files: DoeFileOut[] = [{ rel: "report.html", size: 512_331, downloadable: true }, { rel: "post/ranking.csv", size: 8_204, downloadable: true }, ...(rec.result?.best?.files ?? [])];

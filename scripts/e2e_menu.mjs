@@ -165,6 +165,7 @@ d["storage"] = {"esl_root": root, "input_roots": [inputs], "spdm_roots": []}
 d["worker"].update({"heartbeat_interval_s": 1, "lease_ttl_s": 10, "claim_interval_s": 0.5, "cancel_check_interval_s": 0.5,
                     "state_dir": os.path.join(tmp, "state")})
 d["ui"]["poll_job_ms"] = 1000
+d["ui"]["library_export_enabled"] = True      # 라이브러리 내보내기(기본 숨김) — 이 E2E 는 켠 서버에서만 내보내기 단계를 돈다
 d["core"] = {"settings": core}
 p = os.path.join(tmp, "esl_platform.yaml")
 yaml.safe_dump(d, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)

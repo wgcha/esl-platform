@@ -934,7 +934,13 @@ def _file_entry(base: str, rel: str, lim: int) -> dict[str, Any] | None:
     return {"rel": rel, "size": size, "downloadable": size <= lim}
 
 
-def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+RESULT_SORT_KEYS = ("score", "worst_ratio", "geo_mean_improvement", "n_worsened", "pareto")
+
+
+def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score") -> dict[str, Any]:
+    """DoeResultOut. sort = 순위표 정렬 키(기본 score — rank 필드는 score 순위 그대로, 계약 §11.4)."""
+    if sort not in RESULT_SORT_KEYS:
+        raise unprocessable("INVALID_PARAMS", f"sort 는 {list(RESULT_SORT_KEYS)} 중 하나", sort=sort)
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
     if _derived_phase(s, job) != "DONE":
@@ -957,6 +963,10 @@ def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
         if row.get("noise") is None:
             row.pop("noise", None)
         ranking.append(row)
+    if sort != "score" and all("worst_ratio" in x for x in ranking):
+        from ...core import opt_core
+
+        ranking = opt_core.doe_sort_rows(ranking, sort)
     best = r.get("best")
     if isinstance(best, dict) and best.get("id"):
         files = []
@@ -982,8 +992,29 @@ def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
            "excluded": excluded, "sensitivity": r.get("sensitivity"),
            "boundary_warnings_n": int(r.get("boundary_warnings_n") or 0),
            "view3d": [str(v) for v in r.get("view3d") or [] if v], "best": best, "noise_floor": r.get("noise_floor"),
-           "warnings": warns}
+           "ratio_tol": r.get("ratio_tol"), "per_esl_inline": bool(r.get("per_esl_inline")),
+           "esl": [e for e in r.get("esl") or [] if isinstance(e, dict)], "sort": sort, "warnings": warns}
     return _jsonable(out)
+
+
+def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str | None) -> dict[str, Any]:
+    """§11.4 ESL별 지표(post/per_esl.json): design = 쉼표로 구분한 안 id(없으면 전부, 최대 max_designs)."""
+    c = cfg(ctx)
+    s, job = _viewable(ctx, principal, sid)
+    if _derived_phase(s, job) != "DONE":
+        raise conflict("RESULT_NOT_READY", "DOE 실행 결과가 아직 없습니다")
+    d = _read_json(os.path.join(study_dir(ctx, s), "post", "per_esl.json"), _max_mb(c))
+    if not isinstance(d, dict):
+        raise conflict("RESULT_NOT_READY", "ESL별 지표(post/per_esl.json)가 없습니다 — v0.10.0 이전 실행은 복제해 다시 실행")
+    allv = d.get("designs") or {}
+    ids = [x for x in (design or "").split(",") if x] if design else sorted(allv)
+    if len(ids) > int(c["max_designs"]):
+        raise unprocessable("INVALID_PARAMS", f"design 은 최대 {c['max_designs']}개")
+    miss = [i for i in ids if i not in allv]
+    if miss:
+        raise DomainError("DESIGN_NOT_FOUND", f"순위 안에 없는 안입니다: {miss[:5]}", status=404, designs=miss)
+    return _jsonable({"esl": d.get("esl") or [], "ratio_tol": d.get("ratio_tol"),
+                      "designs": [{"id": i, "per_esl": allv[i]} for i in ids]})
 
 
 # ---------------------------------------------------------------- 파일·보고서·받기
@@ -1125,5 +1156,5 @@ def view3d_file(ctx: AppContext, principal: Principal, sid: str, did: str, name:
 
 
 __all__ = ["settings_out", "check_inputs", "create_study", "list_studies", "get_study", "params_out", "plan_view",
-           "matrix", "preview", "run", "clone", "results", "list_files", "study_file", "report", "bundle", "thumb",
+           "matrix", "preview", "run", "clone", "results", "results_per_esl", "list_files", "study_file", "report", "bundle", "thumb",
            "view3d_manifest", "view3d_file", "bead_png", "retry_job", "status", "reset_status_cache"]

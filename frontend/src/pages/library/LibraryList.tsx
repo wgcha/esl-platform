@@ -37,9 +37,13 @@ export const LIB_TABS: { id: LibTab; label: string }[] = [
 /** 한 번에 내보낼 수 있는 ESL 수는 서버 설정 library_export.max_entries(GET /version ui.library_export_max_entries)로 받는다.
  *  받기 전·못 받으면 화면 검사는 하지 않고 서버 422 TOO_MANY_ENTRIES 가 최종 판정 */
 export async function exportMaxEntries(): Promise<number | null> {
+  return (await exportUi()).max;
+}
+/** 서버 공개 설정(GET /version ui): 라이브러리 [내보내기] 노출(ui.library_export_enabled, 기본 false = 숨김)·최대 개수 */
+export async function exportUi(): Promise<{ enabled: boolean; max: number | null }> {
   const v = await p3.version();
   const n = v.ui?.library_export_max_entries;
-  return typeof n === "number" && n > 0 ? n : null;
+  return { enabled: v.ui?.library_export_enabled === true, max: typeof n === "number" && n > 0 ? n : null };
 }
 export const PROMOTED_TEXT = "현재 기준 PASS — 정상 항목으로 전환";
 
@@ -180,12 +184,14 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
   const rv = useRevalidate(reload);
   const optSt = usePolling(() => optSettingsCached(), 0, []);
   const sizeTol = optSt.data?.size.tol_rel ?? null;
-  const maxSt = usePolling(() => exportMaxEntries(), 0, []);
+  const maxSt = usePolling(() => exportUi(), 0, []);
+  // v0.10.0(사용자 확정): 내보내기는 관리자 설정 ui.library_export_enabled 가 true 일 때만 보인다(기본 숨김)
+  const exportOn = maxSt.data?.enabled === true;
   const byId = new Map(entries.map((e) => [e.id, e]));
   const sel = picked.map((id) => byId.get(id)).filter((e): e is EntryOut => !!e);
   const base = sel[0];
   const same = base ? sel.filter((e) => e.topo_sha256 && e.topo_sha256 === base.topo_sha256).length : 0;
-  const blk = actionBlocks(sel, sizeTol, maxSt.data ?? null);
+  const blk = actionBlocks(sel, sizeTol, maxSt.data?.max ?? null);
   const perm = allowed ? null : NO_PERMISSION;
   const toggle = (id: string) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
   const visibleActive = (rows ?? []).filter((e) => !pickBlock(e)).map((e) => e.id);
@@ -264,13 +270,16 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
             선택 {sel.length}개{blk.nBad ? ` · LEGACY ${blk.nBad}` : ""} · 기준 {sizeText(sizeOf(base))} · 같은 모델 {same}/{sel.length}
           </span>
           <span className="pick-actions">
-            <span className="primary-wrap" title={perm ?? blk.export ?? undefined}>
-              <button type="button" className="btn primary" data-primary="true" disabled={!!(perm ?? blk.export)} onClick={() => setExporting(true)}>
-                내보내기 ({sel.length})
-              </button>
-            </span>
+            {exportOn && (
+              <span className="primary-wrap" title={perm ?? blk.export ?? undefined}>
+                <button type="button" className="btn primary" data-primary="true" disabled={!!(perm ?? blk.export)} onClick={() => setExporting(true)}>
+                  내보내기 ({sel.length})
+                </button>
+              </span>
+            )}
             <span className="primary-wrap" title={perm ?? blk.study ?? undefined}>
-              <button type="button" className="btn" disabled={!!(perm ?? blk.study)} onClick={() => nav(`${doePath(projectId)}?entries=${q}`)}>
+              {/* 내보내기가 숨겨지면(기본) 강성 평가 스터디가 선택 줄의 주 버튼 */}
+              <button type="button" className={exportOn ? "btn" : "btn primary"} data-primary={exportOn ? undefined : "true"} disabled={!!(perm ?? blk.study)} onClick={() => nav(`${doePath(projectId)}?entries=${q}`)}>
                 강성 평가 스터디 ({sel.length})
               </button>
             </span>
@@ -411,7 +420,7 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
           }}
         />
       )}
-      {exporting && <ExportDialog projectId={projectId} entries={sel} onClose={() => setExporting(false)} />}
+      {exporting && exportOn && <ExportDialog projectId={projectId} entries={sel} onClose={() => setExporting(false)} />}
     </Card>
   );
 }

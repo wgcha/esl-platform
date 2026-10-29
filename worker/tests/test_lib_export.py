@@ -29,7 +29,7 @@ SPECS = [("50QX10A", 1.0, 12, 8, "A", "Corner146"), ("50QX10A", 1.0, 12, 8, "B",
 
 @pytest.fixture()
 def settings_dict(tmp_path):
-    return make_settings_dict(tmp_path, library_export={"wait_s": 1})
+    return make_settings_dict(tmp_path, library_export={"wait_s": 1}, ui={"library_export_enabled": True})
 
 
 def _run(client, worker, job_id, lane="SLOT", want="SUCCEEDED"):

@@ -416,6 +416,7 @@ $env:PGPASSWORD = $null
 | `history.backup_scan_max` | 실행 이력: 이전 검증 파일을 `_backup` 에서 표식으로 찾을 때 열어 보는 폴더 최대 수(최신 순, 넘으면 "파일 보존 안 됨" 으로 기록된 값만 표시) | `100` |
 | `history.archive_files` | 실행 이력: 내보내기(⑥)·Case 보고서 성공 시 `<Case>\history\<작업 id>\` 에 작업별로 복사해 두어 나중에도 그때 파일을 받을 수 있게 함(Case 폴더 용량이 실행당 내보내기·보고서 크기만큼 늘어남, 정리 정책 없음). 끄면 이후 실행분은 기록된 값만 표시 | `true` |
 | `library.config_path` | 라이브러리·분석·덱 설정(없으면 라이브러리 쓰기 API 503) | `library.yaml` |
+| `ui.library_export_enabled` | v0.10.0 라이브러리 [내보내기](여러 ESL zip) 화면 노출. `false`(기본) = 화면 숨김, `/library/exports` API 는 전역 관리자만(그 외 403 `EXPORT_DISABLED`). 비드 최적화·강성 평가가 플랫폼 안에서 돌아 수작업 외부 계산용으로 켤 때만 | `false` |
 | `library_export.max_entries` | v0.10.0 라이브러리 내보내기 한 번에 고를 수 있는 ESL 수(넘으면 422 `TOO_MANY_ENTRIES`). 화면은 `GET /version` 의 `ui.library_export_max_entries` 로 같은 값을 받아 [내보내기] 비활성 사유에 씀 | `50` |
 | `library_export.max_bundle_bytes` | 내보내기 zip 상한(넘으면 413 `BUNDLE_TOO_LARGE` + `_exports\<묶음>` 경로 안내). `null` = `ui.max_bundle_bytes` | `null` |
 | `library_export.wait_s` | 같은 모델 ESL 이 서로 다른 Case 작업에 나뉘었을 때 앞 항목 ID 결과를 기다리는 최대 초(넘으면 항목 실패 `EXPORT_ORDER_TIMEOUT`) | `600` |

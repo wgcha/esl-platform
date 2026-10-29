@@ -63,6 +63,7 @@ def version(request: Request, principal: Principal = Depends(get_principal)) -> 
     라이브러리 내보내기 한 번 최대 ESL 수 = 설정 library_export.max_entries, 서버 422 TOO_MANY_ENTRIES 와 같은 값)."""
     st = get_ctx(request).settings
     return {**version_svc.build_info(), "ui": {"upload_slim_hint_gb": st.ui.upload_slim_hint_gb,
+                                               "library_export_enabled": bool(st.ui.library_export_enabled),
                                                "library_export_max_entries": int(st.library_export.max_entries)}}
 
 

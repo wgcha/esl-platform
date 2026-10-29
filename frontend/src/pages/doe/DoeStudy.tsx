@@ -20,6 +20,7 @@ import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoePa
 import { DoeThumbGrid, previewSummary } from "../../components/DoeThumbGrid";
 import { BoundaryLegend, BoundaryPlan } from "../../components/BoundaryPlan";
 import { DoeRanking } from "../../components/DoeRanking";
+import { DoePerEslTable } from "../../components/DoePerEslTable";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
 import { BundleButton } from "../../components/BundleButton";
@@ -630,6 +631,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 </ul>
               )}
               <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} />
+              <div className="sub-title">ESL별 개선율</div>
+              <DoePerEslTable studyId={id} result={result.data} entries={entries} pick={pick} />
               <div className="doe-result-grid">
                 <div>
                   <div className="sub-title">민감도</div>

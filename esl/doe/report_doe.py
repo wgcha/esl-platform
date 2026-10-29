@@ -41,6 +41,38 @@ def _pct(v) -> str:
     return "—" if v is None else f"{v * 100:+.1f} %"
 
 
+METRIC_DEFS = [
+    ("전 씬 개선", "모든 ESL 에서 베이스라인 대비 컴플라이언스가 줄었는가(최악 비율 < 1 − 허용치)"),
+    ("최소 개선율", "1 − max_i(C_안,i / C_베이스라인,i) — 가장 덜 개선된(또는 가장 악화된) 씬의 개선율"),
+    ("개선/악화 씬", "비율 < 1 − 허용치 = 개선, > 1 + 허용치 = 악화, 그 사이 = 변화 없음"),
+    ("기하평균 개선율", "1 − (Π_i C_안,i / C_베이스라인,i)^(1/n)"),
+    ("Pareto", "베이스라인·다른 안 어느 것에도 모든 ESL 에서 지배당하지 않음(지배 = 모든 ESL 비율 ≤, 하나 이상 <)"),
+]
+
+
+def _ratio_cell(r) -> str:
+    """ESL별 개선율 % 셀(개선 초록·악화 빨강, 세기 = |1 − r| 최대 50 %)."""
+    if r is None:
+        return "–"
+    imp = 1.0 - float(r)
+    a = min(abs(imp) / 0.5, 1.0) * 0.55 + 0.08
+    col = f"rgba(22,163,74,{a:.2f})" if imp > 0 else f"rgba(220,38,38,{a:.2f})" if imp < 0 else "transparent"
+    return f"<span style='display:inline-block;min-width:4.5em;padding:0 4px;background:{col}'>{H.esc(_pct(imp))}</span>"
+
+
+def per_esl_html(rk: list, esl: list, top_n: int) -> str:
+    """ESL별 개선율 히트맵(행 = 상위 안, 열 = ESL)."""
+    if not rk or not esl or not rk[0].get("per_esl"):
+        return ""
+    hdr = ["안"] + [e.get("label") or e["entry_id"][:8] for e in esl]
+    trs = []
+    for x in rk[:top_n]:
+        rr = {p["entry_id"]: p.get("ratio") for p in x.get("per_esl") or []}
+        trs.append([x["id"]] + [_ratio_cell(rr.get(e["entry_id"])) for e in esl])
+    return ("<h3>ESL별 개선율(베이스라인 같은 ESL 대비)</h3>"
+            + H.table(hdr, trs, num=tuple(range(1, len(hdr))), raw=tuple(range(1, len(hdr)))))
+
+
 def sensitivity_svg(sens: dict | None, w: int = 620) -> str:
     if not sens or sens.get("null"):
         return f"<p class='muted'>{H.esc(_msg((sens or {}).get('reason') or 'SENSITIVITY_TOO_FEW'))}</p>"
@@ -175,13 +207,21 @@ def render(ctx: dict) -> str:
     top_n = int(ctx.get("ranking_rows") or 20)
     names = [p["name"] for p in spec.get("params") or []]
     if rk:
-        hdr = ["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax"] + names + ["경고"]
+        hdr = (["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
+                "기하평균 개선율", "Pareto"] + names + ["경고"])
         trs = []
         for x in rk[:top_n]:
             imp = H.esc(_pct(x["improvement"])) + (" <span class='muted'>(잡음 이내)</span>" if x.get("noise") else "")
-            trs.append([x["rank"], x["id"], x["score"], imp, x.get("worst_entry_id") or "", x["umax"], x["epsmax"]]
+            allv = x.get("all_improved")
+            trs.append([x["rank"], x["id"], x["score"], imp, x.get("worst_entry_id") or "", x["umax"], x["epsmax"],
+                        "–" if allv is None else ("✓" if allv else "✗"), _pct(x.get("min_improvement")),
+                        f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
+                        "●" if x.get("pareto") else ""]
                        + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)])
-        inner = H.table(hdr, trs, num=(0, 2, 5, 6) + tuple(range(7, 7 + len(names))), raw=(3,))
+        inner = H.table(hdr, trs, num=(0, 2, 5, 6, 8, 10) + tuple(range(12, 12 + len(names))), raw=(3,))
+        inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
+        inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)
+                  + f" (허용치 {H.esc(_f(res.get('ratio_tol')))})</p>")
         inner += (f"<p class='small muted'>C_ref(베이스라인 최악) {H.esc(_f(res.get('C_ref')))} · 베이스라인 umax "
                   f"{H.esc(_f((res.get('baseline') or {}).get('umax')))} · 전체는 ranking.csv</p>")
         if res.get("noise_floor") is not None:

@@ -30,7 +30,7 @@ export interface GuideGroup {
   cards: GuideCard[];
 }
 
-export const GUIDE_FLOW = ["rad + h3d 올리기", "① 추출", "② t*·지지점", "③ ESL", "④ 검증 → 등록", "ESL 라이브러리(내보내기·강성 평가·비드 최적화·종합분석)"];
+export const GUIDE_FLOW = ["rad + h3d 올리기", "① 추출", "② t*·지지점", "③ ESL", "④ 검증 → 등록", "ESL 라이브러리(강성 평가·비드 최적화·종합분석)"];
 
 export const GUIDE: GuideGroup[] = [
   {
@@ -44,7 +44,7 @@ export const GUIDE: GuideGroup[] = [
         steps: [
           "상단 [ESL 생성]의 Case 목록에서 엽니다. ①~④ 단계의 결과가 Case 폴더 하나(01_extract … 05_val, 보고서)에 차례로 쌓입니다.",
           "앞 단계를 바꾸면 뒤 단계에 '이전 단계가 바뀌었습니다' 표시가 뜹니다 — 그 단계부터 다시 실행하세요.",
-          "같은 제품의 여러 씬은 Case를 여러 개 만들고, 검증 PASS 결과를 [ESL 라이브러리]에 등록해 함께 씁니다(내보내기도 라이브러리에서).",
+          "같은 제품의 여러 씬은 Case를 여러 개 만들고, 검증 PASS 결과를 [ESL 라이브러리]에 등록해 함께 씁니다(강성 평가 스터디·비드 최적화·종합분석은 라이브러리에서).",
         ],
         target: { kind: "cases" },
         label: "Case 목록 열기",
@@ -154,7 +154,7 @@ export const GUIDE: GuideGroup[] = [
           "FAIL·판정 불가는 등록할 수 없습니다. 원인 조사는 Case 상단 '결과 받기(zip)'로 파일을 받아 봅니다.",
         ],
         check: ["변위 RMS·최대 오차(상대)가 기준 이하인지", "반력(상대)·잡음 바닥이 기준 이하인지", "겹쳐보기에서 고변형 위치·모양이 같은지"],
-        tip: "FAIL이면 ② t* 후보를 바꿔 다시 계산해 봅니다. 내보내기(inc·fem·csv)는 등록한 뒤 ESL 라이브러리에서 합니다.",
+        tip: "FAIL이면 ② t* 후보를 바꿔 다시 계산해 봅니다. 해석 입력 파일(inc·fem·csv)이 필요하면 Case 상단 [결과 받기(zip)]을 씁니다.",
         target: { kind: "stage", n: 4 },
         label: "④ 검증 열기",
       },
@@ -179,8 +179,8 @@ export const GUIDE: GuideGroup[] = [
       },
       {
         id: "lib-export",
-        title: "내보내기(여러 ESL 한 번에)",
-        what: "고른 ESL들의 F_eq와 3-2-1 구속을 해석 입력 파일로 써서 zip 하나로 받습니다: Radioss inc(/CLOAD·/BCS), OptiStruct fem, CSV.",
+        title: "내보내기(여러 ESL 한 번에 — 관리자 설정 시)",
+        what: "관리자가 켠 서버(설정 ui.library_export_enabled)에서만 보입니다. 고른 ESL들의 F_eq와 3-2-1 구속을 해석 입력 파일로 써서 zip 하나로 받습니다: Radioss inc(/CLOAD·/BCS), OptiStruct fem, CSV.",
         steps: [
           "ESL 목록에서 체크 → '내보내기 (n)' → 형식과 Radioss·fem ID 시작(자동 = rad 최대 ID 위, 또는 지정)을 고르고 '내보내기 시작'.",
           "같은 창에서 항목별 진행을 보고, 끝나면 'zip 받기'. 같은 모델 ESL은 ID가 겹치지 않게 이어서 배정됩니다.",

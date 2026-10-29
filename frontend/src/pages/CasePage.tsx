@@ -20,7 +20,7 @@ import { CumulativeBadge } from "../components/Cumulative";
 /** 화면 단계 ①입력 ②t*·지지점 ③ESL ④검증 (v0.10.0, esl_menu_restructure.md §4.3) — 파일 이름은 옛 번호 그대로 */
 const STEPS: ComponentType<StageProps>[] = [Stage1, Stage2, Stage4, Stage5];
 
-export const MOVED_EXPORT_TEXT = "내보내기는 ESL 라이브러리로 옮겨졌습니다 — 등록 후 라이브러리에서 내보내세요";
+export const MOVED_EXPORT_TEXT = "⑥ 내보내기 단계는 없어졌습니다 — Case 결과는 상단 [결과 받기(zip)], 비드 최적화·강성 평가는 등록 후 ESL 라이브러리에서";
 
 export function CasePage() {
   const { projectId = "", caseId = "", n = "1" } = useParams();

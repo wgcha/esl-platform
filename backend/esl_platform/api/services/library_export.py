@@ -49,6 +49,13 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
+def require_export_enabled(ctx: AppContext, principal: Principal) -> None:
+    """설정 ui.library_export_enabled = false(기본)면 전역 관리자만(그 외 403 EXPORT_DISABLED). 근거: 비드 최적화·강성 평가 스터디가
+    플랫폼 안에서 수행되어 수작업 외부 계산용 내보내기 수요가 사라짐(사용자 확정 2026-10-29) — 코드·API 는 유지."""
+    if not ctx.settings.ui.library_export_enabled and not principal.is_global_admin:
+        raise forbidden("라이브러리 내보내기가 꺼져 있습니다(관리자 설정 ui.library_export_enabled)", code="EXPORT_DISABLED")
+
+
 def _require_view(principal: Principal, project_id: str) -> None:
     if principal.role(project_id) is None and not principal.is_global_admin:
         raise forbidden("이 프로젝트의 조회 권한이 없습니다")
@@ -111,6 +118,7 @@ def plan_offsets(rows: list[dict[str, Any]], labels: list[str], start, policy: s
 
 
 def create_batch(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
+    require_export_enabled(ctx, principal)
     from .library import backfill_opt_meta, eligibility, entry_folder
 
     require_execute(principal, body.project_id)
@@ -300,6 +308,7 @@ def batch_out(ctx: AppContext, conn, doc: dict[str, Any], bdir: str) -> dict[str
 
 
 def get_batch(ctx: AppContext, principal: Principal, batch_id: str) -> dict[str, Any]:
+    require_export_enabled(ctx, principal)
     doc, bdir = _read_batch(ctx, batch_id)
     _require_view(principal, doc["project_id"])
     with ctx.engine.connect() as conn:
@@ -307,6 +316,7 @@ def get_batch(ctx: AppContext, principal: Principal, batch_id: str) -> dict[str,
 
 
 def list_batches(ctx: AppContext, principal: Principal, project_id: str, limit: int) -> list[dict[str, Any]]:
+    require_export_enabled(ctx, principal)
     _require_view(principal, project_id)
     limit = max(1, min(int(limit), 100))
     scan = min(5000, limit * int(ctx.settings.library_export.max_entries))
@@ -361,6 +371,7 @@ POLICY_KO = {"per_model_sequential": "같은 모델(같은 메시 위상) ESL �
 
 
 def bundle(ctx: AppContext, principal: Principal, batch_id: str) -> dict[str, Any]:
+    require_export_enabled(ctx, principal)
     doc, bdir = _read_batch(ctx, batch_id)
     _require_view(principal, doc["project_id"])
     with ctx.engine.connect() as conn:

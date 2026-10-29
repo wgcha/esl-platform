@@ -2784,6 +2784,48 @@ details.open-uploads .actions {
 .doe-rank .badge + .badge {
   margin-left: 0.25rem;
 }
+/* v0.10.0 §11.4 ESL별 개선 지표: 정렬 열 머리 · ⓘ 정의 · ESL별 개선율 히트맵(가로 스크롤은 표 안에서만) */
+.th-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+th[aria-sort="ascending"] .th-sort::after {
+  content: " ▲";
+}
+.th-sort:hover,
+.th-sort:focus-visible {
+  text-decoration: underline;
+}
+.doe-metric-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.25rem;
+}
+.doe-metric-help summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.doe-metric-help ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+  max-width: 72ch;
+}
+.doe-per-esl-wrap {
+  --tbl-max: clamp(10rem, 32vh, 26rem);
+  max-width: 100%;
+  overflow-x: auto;
+}
+.doe-per-esl-wrap td.heat {
+  min-width: 5.5rem;
+  white-space: nowrap;
+}
 .doe-base-row td {
   background: var(--accent-weak);
 }

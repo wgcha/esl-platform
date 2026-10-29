@@ -1620,7 +1620,7 @@ export interface VersionOut {
   commit: string | null;
   built_at: string | null;
   /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
-  ui?: { upload_slim_hint_gb?: number; library_export_max_entries?: number };
+  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number };
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */
@@ -2372,6 +2372,36 @@ export interface DoeRankRow {
   epsmax_all: number;
   noise?: boolean;
   warnings_n: number;
+  /** v0.10.0 §11.4 ESL별 개선 지표(r_i = C_안,i / C_베이스라인,i). v0.10.0 이전 결과엔 없음 */
+  worst_ratio?: number | null;
+  min_improvement?: number | null;
+  all_improved?: boolean | null;
+  n_improved?: number;
+  n_worsened?: number;
+  n_unchanged?: number;
+  geo_mean_improvement?: number | null;
+  pareto?: boolean;
+  /** 결과의 per_esl_inline 이 true 일 때만(아니면 GET …/results/per-esl) */
+  per_esl?: DoePerEsl[];
+}
+/** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
+export interface DoePerEsl {
+  entry_id: string;
+  label?: string | null;
+  C: number;
+  ratio: number;
+  umax: number;
+  epsmax: number;
+}
+export interface DoePerEslDesign {
+  id: string;
+  per_esl: DoePerEsl[];
+}
+/** GET /doe/studies/{id}/results/per-esl?design=… */
+export interface DoePerEslOut {
+  esl: { entry_id: string; label?: string | null }[];
+  ratio_tol?: number | null;
+  designs: DoePerEslDesign[];
 }
 /** (보강) 순위 밖 안(스킵·실패) — 순위표 아래 상태 배지 */
 export interface DoeExcluded {
@@ -2405,5 +2435,13 @@ export interface DoeResultOut {
   best: { id: string; files: DoeFileOut[] } | null;
   /** (보강) ③ 잡음 바닥(|개선율|) — §7.2 */
   noise_floor?: number | null;
+  /** v0.10.0 §11.4: '변화 없음' 허용치(③ 은 max(설정, noise_floor)) */
+  ratio_tol?: number | null;
+  /** 순위 행에 per_esl 이 들어 있는가(안 수 × ESL 수 ≤ 설정 상한) */
+  per_esl_inline?: boolean;
+  /** ESL 열 순서·라벨 */
+  esl?: { entry_id: string; label?: string | null }[];
+  /** 서버 정렬 키(기본 score) */
+  sort?: string;
   warnings: DoeWarning[];
 }

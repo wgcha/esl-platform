@@ -10,6 +10,9 @@ import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel, summaryText, type 
 import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix, makePlan } from "../mock/doedata";
 import { render } from "@testing-library/react";
 import { BoundaryLegend } from "../components/BoundaryPlan";
+import { sortRanking } from "../api/doe";
+import { heatStyle } from "../components/DoePerEslTable";
+import type { DoeRankRow } from "../api/types";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
@@ -346,5 +349,69 @@ describe("상세 — 결과(§11·§12.2)", () => {
     expect(opts.length).toBe(3);
     fireEvent.click(within(t).getByTestId(`rank-${opts[1]}`));
     await waitFor(() => expect(sel.value).toBe(opts[1]));
+  });
+});
+
+
+describe("ESL별 개선 지표(v0.10.0 §11.4)", () => {
+  const row = (id: string, score: number, extra: Partial<DoeRankRow>): DoeRankRow => ({
+    rank: 0, id, values: {}, score, improvement: 1 - score, worst_entry_id: "E1", umax: 1, epsmax: 0.001, umax_all: 1,
+    epsmax_all: 0.001, warnings_n: 0, ...extra,
+  });
+
+  it("sortRanking: 최소 개선율·기하평균·악화 수·Pareto, 지표 없는 행은 뒤로, 동률 = score → id", () => {
+    // 문제 이동: d001 score 최상(0.5)이지만 다른 씬 악화(min_improvement −0.2), d002 는 전 씬 소폭 개선
+    const rows = [
+      row("d001", 0.5, { min_improvement: -0.2, geo_mean_improvement: 0.23, n_worsened: 1, pareto: true }),
+      row("d002", 0.9, { min_improvement: 0.05, geo_mean_improvement: 0.07, n_worsened: 0, pareto: true }),
+      row("d003", 0.95, { min_improvement: 0.025, geo_mean_improvement: 0.04, n_worsened: 0, pareto: false }),
+      row("d004", 0.7, {}),
+    ];
+    expect(sortRanking(rows, "score").map((r) => r.id)).toEqual(["d001", "d004", "d002", "d003"]);
+    expect(sortRanking(rows, "min_improvement").map((r) => r.id)).toEqual(["d002", "d003", "d001", "d004"]);
+    expect(sortRanking(rows, "geo_mean_improvement").map((r) => r.id)).toEqual(["d001", "d002", "d003", "d004"]);
+    expect(sortRanking(rows, "n_worsened").map((r) => r.id)).toEqual(["d002", "d003", "d001", "d004"]);
+    expect(sortRanking(rows, "pareto").map((r) => r.id)).toEqual(["d001", "d002", "d004", "d003"]);
+    expect(heatStyle(0.2).background).toMatch(/^rgba\(22, 163, 74/);
+    expect(heatStyle(-0.2).background).toMatch(/^rgba\(220, 38, 38/);
+    expect(heatStyle(null)).toEqual({});
+  });
+
+  it("doe-1: 순위표 지표 열·열 머리 정렬·ⓘ 정의, ESL별 개선율 표(행 = 상위 안, 열 = ESL, 히트맵)", async () => {
+    renderApp("/p/p-body/doe/doe-1");
+    const t = await screen.findByRole("table", { name: "순위표" });
+    const head = within(t).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(head.slice(7, 12)).toEqual(["전 씬 개선", "최소 개선율", "개선/악화", "기하평균", "Pareto"]);
+    const ids = () => within(t).getAllByTestId(/^rank-d/).map((r) => r.getAttribute("data-testid")!.slice(5));
+    const before = ids();
+    expect(t.textContent).toMatch(/[✓✗]/);
+    expect(t.textContent).toMatch(/●/);                                       // Pareto 안이 하나 이상
+    expect(t.textContent).toMatch(/\d+ \/ \d+/);                             // 개선/악화 씬 수
+    fireEvent.click(within(t).getByRole("button", { name: "최소 개선율 기준 정렬" }));
+    await waitFor(() => expect(within(t).getByRole("button", { name: "최소 개선율 기준 정렬" }).closest("th")!.getAttribute("aria-sort")).toBe("ascending"));
+    const after = ids();
+    expect([...after].sort()).toEqual([...before].sort());
+    const minImp = after.map((id) => Number(within(within(t).getByTestId(`rank-${id}`)).getAllByRole("cell")[8].textContent!.replace(/[^\d.+−-]/g, "").replace("−", "-")));
+    for (let i = 1; i < minImp.length; i++) expect(minImp[i]).toBeLessThanOrEqual(minImp[i - 1] + 1e-9);
+    fireEvent.click(within(t).getByRole("button", { name: "score 기준 정렬" }));
+    await waitFor(() => {
+      const t2 = screen.getByRole("table", { name: "순위표" });
+      const rk = within(t2).getAllByTestId(/^rank-d/).map((r) => Number(within(r).getAllByRole("cell")[0].textContent));
+      expect(rk).toEqual([...rk].sort((x, y) => x - y));                          // score 정렬 = 순위 번호 순
+    });
+    // ⓘ 정의
+    expect(screen.getByTestId("metric-defs").textContent).toMatch(/최소 개선율: 1 − max/);
+    expect(screen.getByTestId("metric-defs").textContent).toMatch(/Pareto/);
+    // ESL별 개선율 표
+    const pe = screen.getByRole("table", { name: "ESL별 개선율" });
+    const cols = within(pe).getAllByRole("columnheader");
+    expect(cols[0].textContent).toBe("안");
+    expect(cols.length).toBeGreaterThan(1);
+    const body = within(pe).getAllByRole("row").slice(1);
+    expect(body.length).toBe(Math.min(10, before.length));
+    const cell = within(body[0]).getAllByRole("cell")[1] as HTMLElement;
+    expect(cell.textContent).toMatch(/[+−]\d+\.\d %/);
+    expect(cell.getAttribute("style") ?? "").toMatch(/background/);
+    expect(screen.getByTestId("per-esl-wrap").className).toMatch(/table-wrap/);
   });
 });

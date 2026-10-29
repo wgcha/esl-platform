@@ -26,7 +26,7 @@ R = H("tok-power")
 
 @pytest.fixture()
 def settings_dict(tmp_path):
-    return make_settings_dict(tmp_path, library_export={"max_entries": 4})
+    return make_settings_dict(tmp_path, library_export={"max_entries": 4}, ui={"library_export_enabled": True})
 
 
 @pytest.fixture()

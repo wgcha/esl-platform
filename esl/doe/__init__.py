@@ -68,6 +68,8 @@ DEFAULTS: dict = {
     "solve": {"reaction_warn": 0.01},
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},
     "view3d": {"top_k": 3},
+    # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
+    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000},
     "settings_cache_s": 300,
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,

@@ -2,7 +2,7 @@
 import { API_PREFIX, request } from "./client";
 import type {
   DoeCheckIn, DoeCheckOut, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
-  DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
+  DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -76,9 +76,40 @@ export function normalizeFiles(raw: unknown): DoeFileOut[] {
   return raw.map((f) => (typeof f === "string" ? { rel: f } : isObj(f) && typeof f.rel === "string" ? (f as unknown as DoeFileOut) : null)).filter((f): f is DoeFileOut => !!f);
 }
 
+/** §11.4 ESL별 개선 지표 정의(ⓘ 팝오버·보고서와 같은 문구) */
+export const METRIC_DEFS: { key: string; label: string; text: string }[] = [
+  { key: "all_improved", label: "전 씬 개선", text: "모든 ESL 에서 베이스라인보다 컴플라이언스가 줄었는가(최악 비율 < 1 − 허용치)" },
+  { key: "min_improvement", label: "최소 개선율", text: "1 − max(C_안 / C_베이스라인) — 가장 덜 개선된(또는 가장 악화된) 씬의 개선율" },
+  { key: "n_worsened", label: "개선/악화 씬", text: "비율 < 1 − 허용치 = 개선, > 1 + 허용치 = 악화, 그 사이 = 변화 없음" },
+  { key: "geo_mean_improvement", label: "기하평균 개선율", text: "1 − (Π C_안 / C_베이스라인)^(1/n) — 씬 전체의 평균적 개선" },
+  { key: "pareto", label: "Pareto", text: "베이스라인·다른 안 어느 것에도 모든 ESL 에서 지배당하지 않는 안(●)" },
+];
+
+export type RankSortKey = "score" | "min_improvement" | "geo_mean_improvement" | "n_worsened" | "pareto";
+
+/** 순위표 열 머리 정렬(동률 = score → 안 id). 지표가 없는 행(이전 결과)은 뒤로 */
+export function sortRanking(rows: DoeRankRow[], key: RankSortKey): DoeRankRow[] {
+  const v = (r: DoeRankRow): number => {
+    switch (key) {
+      case "score":
+        return r.score;
+      case "min_improvement":
+        return r.min_improvement == null ? Infinity : -r.min_improvement;
+      case "geo_mean_improvement":
+        return r.geo_mean_improvement == null ? Infinity : -r.geo_mean_improvement;
+      case "n_worsened":
+        return r.n_worsened ?? Infinity;
+      case "pareto":
+        return r.pareto ? 0 : 1;
+    }
+  };
+  return [...rows].sort((a, b) => v(a) - v(b) || a.score - b.score || a.id.localeCompare(b.id));
+}
+
 export function normalizeResult(raw: DoeResultOut): DoeResultOut {
   return {
     ...raw,
+    esl: Array.isArray(raw.esl) ? raw.esl : [],
     ranking: Array.isArray(raw.ranking) ? raw.ranking : [],
     excluded: Array.isArray(raw.excluded) ? raw.excluded : [],
     view3d: Array.isArray(raw.view3d) ? raw.view3d : [],
@@ -126,6 +157,9 @@ export const doe = {
   run: (id: string, version: number, matrix_sha256: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version, matrix_sha256 } }),
   clone: (id: string, title?: string | null) => request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: title ? { title } : {} }),
   results: (id: string) => request<DoeResultOut>("GET", `/doe/studies/${id}/results`).then(normalizeResult),
+  /** §11.4 ESL별 지표(순위 행에 per_esl 이 없을 때) */
+  perEsl: (id: string, designs: string[]) =>
+    request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(",") } }),
   files: (id: string) => request<DoeFileOut[]>("GET", `/doe/studies/${id}/files`),
   beadPngUrl: (id: string, bead: string) => `${API_PREFIX}/doe/studies/${id}/beads/${encodeURIComponent(bead)}.png`,
   thumbUrl: (id: string, did: string) => `${API_PREFIX}/doe/studies/${id}/preview/thumb/${encodeURIComponent(did)}`,

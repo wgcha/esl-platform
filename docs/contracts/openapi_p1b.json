@@ -2357,6 +2357,64 @@
         "title": "DoeParamsOut",
         "type": "object"
       },
+      "DoePerEslDesign": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "per_esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Per Esl",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "per_esl"
+        ],
+        "title": "DoePerEslDesign",
+        "type": "object"
+      },
+      "DoePerEslOut": {
+        "properties": {
+          "designs": {
+            "items": {
+              "$ref": "#/components/schemas/DoePerEslDesign"
+            },
+            "title": "Designs",
+            "type": "array"
+          },
+          "esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Esl",
+            "type": "array"
+          },
+          "ratio_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Tol"
+          }
+        },
+        "required": [
+          "esl",
+          "designs"
+        ],
+        "title": "DoePerEslOut",
+        "type": "object"
+      },
       "DoePlanOut": {
         "properties": {
           "a_points": {
@@ -2500,6 +2558,14 @@
             "title": "Boundary Warnings N",
             "type": "integer"
           },
+          "esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Esl",
+            "type": "array"
+          },
           "excluded": {
             "items": {
               "additionalProperties": true,
@@ -2537,6 +2603,11 @@
             ],
             "title": "Noise Floor"
           },
+          "per_esl_inline": {
+            "default": false,
+            "title": "Per Esl Inline",
+            "type": "boolean"
+          },
           "ranking": {
             "items": {
               "additionalProperties": true,
@@ -2544,6 +2615,17 @@
             },
             "title": "Ranking",
             "type": "array"
+          },
+          "ratio_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Tol"
           },
           "sensitivity": {
             "anyOf": [
@@ -2556,6 +2638,11 @@
               }
             ],
             "title": "Sensitivity"
+          },
+          "sort": {
+            "default": "score",
+            "title": "Sort",
+            "type": "string"
           },
           "view3d": {
             "items": {
@@ -12688,6 +12775,7 @@
     },
     "/esl/api/doe/studies/{sid}/results": {
       "get": {
+        "description": "순위·민감도·ESL별 개선 지표. sort = score(기본)|worst_ratio|geo_mean_improvement|n_worsened|pareto.",
         "operationId": "doe_results_esl_api_doe_studies__sid__results_get",
         "parameters": [
           {
@@ -12696,6 +12784,17 @@
             "required": true,
             "schema": {
               "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "score",
+              "maxLength": 40,
+              "title": "Sort",
               "type": "string"
             }
           }
@@ -12723,6 +12822,66 @@
           }
         },
         "summary": "Doe Results",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/results/per-esl": {
+      "get": {
+        "description": "ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max).",
+        "operationId": "doe_results_per_esl_esl_api_doe_studies__sid__results_per_esl_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "design",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 8000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Design"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoePerEslOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Results Per Esl",
         "tags": [
           "doe"
         ]

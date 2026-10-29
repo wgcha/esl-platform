@@ -340,6 +340,26 @@ DoeResultOut  { C_ref, baseline:{id:"d000", score:1, umax, epsmax}, n_ok, n_skip
 - `report.html`(자체 완결 HTML, `esl/doe/report_doe.py`): 시나리오·입력(STEP·메시·ESL 목록·출처 Case)·paicad 버전·gmsh 버전(③)·변수 표·DOE 방식·seed·행렬 sha·미리보기 스킵 표·순위표(상위 20 + 전체 CSV 링크)·민감도 막대(SVG)·경계 경고 표 + 평면도(SVG)·최적 안 값·**방법·출처 절**(원본 `resources/doe_method_sources.json`: ESL 선형 정의 K_L·u, Park·Kang ESL 계열, Altair ESLM 문서, LHS(McKay 1979)·Halton·SRC/Spearman, paicad 형상 엔진 계약 shell-morph.md) + **한계 절**(선형 강성 비교 — 낙하 응답 재현 아님, ESL 은 원 형상에서 정의돼 형상 변화 후 하중 재분배 미반영, ③ 메시 잡음, feasible 추정, 탄소성 미지원).
 - 표시 문구·출처 원본은 자료 파일 1곳(v0.7.0 §9.1 방식), `/doe/settings.method_sources`.
 
+### 11.4 ESL별 개선 지표 (v0.10.0, 사용자 확정 2026-10-29)
+근거: score(최악 ESL 절대 컴플라이언스 max)만으로는 한 씬의 문제가 다른 씬으로 옮겨가는 상황(한 ESL 크게 개선·다른 ESL 악화)을 못 본다. 순위(rank·score 정의)는 그대로 두고 지표를 더한다(`esl.doe.rank`, 결정적).
+
+| 키 | 정의 |
+|---|---|
+| `per_esl[i].ratio` | r_{d,i} = C_{d,i} / C_{d000,i}(베이스라인 같은 ESL 대비). 베이스라인 C ≤ 0 인 ESL 은 빼고 경고 `BASELINE_ESL_ZERO` |
+| `worst_ratio` | max_i r_{d,i} — 가장 덜 개선된(또는 가장 악화된) 씬 |
+| `min_improvement` | 1 − worst_ratio |
+| `all_improved` | worst_ratio < 1 − tol |
+| `n_improved`·`n_worsened`·`n_unchanged` | r < 1 − tol · r > 1 + tol · 그 사이(변화 없음) 개수 |
+| `geo_mean_improvement` | 1 − (Π_i r_{d,i})^(1/n) |
+| `pareto` | 베이스라인(전부 1)·다른 OK 안 어느 것에도 지배당하지 않음(지배 = 모든 i 에서 r ≤, 하나 이상 <) |
+
+- tol = 설정 `bead_doe.rank.ratio_tol`(기본 1e-6), ③ 은 max(ratio_tol, noise_floor). 응답 `ratio_tol`.
+- `per_esl` = [{entry_id, label, C, ratio, umax, epsmax}] (ESL 열 순서 = 응답 `esl`). 안 수 × ESL 수 ≤ `bead_doe.rank.per_esl_inline_max`(2000)일 때만 순위 행에(`per_esl_inline: true`), 전부는 `post/per_esl.json` → **`GET /doe/studies/{id}/results/per-esl?design=d001,d002`**(없으면 전부, 최대 max_designs, 없는 안 404 `DESIGN_NOT_FOUND`).
+- `GET /doe/studies/{id}/results?sort=score|worst_ratio|geo_mean_improvement|n_worsened|pareto`(기본 score, 그 외 422 `INVALID_PARAMS`). `rank` 필드는 언제나 score 순위.
+- `post/ranking.csv` 에 worst_ratio·min_improvement·all_improved·n_improved·n_worsened·geo_mean_improvement·pareto·ratio_<entry> 열. 보고서 순위표에 같은 열 + 'ESL별 개선율' 히트맵(상위 20) + 지표 정의 줄.
+- 화면: 순위표 열 [전 씬 개선 ✓/✗] [최소 개선율] [개선/악화 씬 수] [기하평균 개선율] [Pareto ●], 열 머리 클릭 정렬(기본 score), ⓘ 지표 정의. 'ESL별 개선율' 표(행 = 순위 상위 10 + 선택 안, 열 = ESL, 셀 = 개선율 %, 개선 초록·악화 빨강, 가로 스크롤은 표 안에서만).
+- v0.10.0 이전 실행 결과에는 지표가 없다(열 '–', 표 대신 "복제해 다시 실행" 안내).
+
 ## 12. 화면 (2560×1440 기준, 1920×1080 잘림·가로 스크롤 없음, 화면당 주 버튼 1개)
 
 ### 12.1 라이브러리 (변경)

@@ -161,4 +161,5 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
   view3d: {top_k: 3}
+  rank: {ratio_tol: 1.0e-6, per_esl_inline_max: 2000}   # v0.10.0 ESL별 개선 지표('변화 없음' 허용치 — ③ 은 noise_floor 반영, 순위 행 per_esl 상한)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)

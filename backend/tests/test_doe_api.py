@@ -638,3 +638,49 @@ def test_prep_retry_gate_ineligible(client, world, engine):
     _to_legacy(engine, world["a"])
     r = client.post(f"{API}/jobs/{s['job']['id']}/retry", headers=W)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "ENTRY_NOT_ELIGIBLE", r.text
+
+
+
+def test_results_per_esl_metrics_sort_and_endpoint(client, world, engine, esl_root):
+    """v0.10.0 §11.4: 순위 행의 ESL별 개선 지표·정렬 키(sort)·per-esl 별도 조회, 이전 결과(지표 없음)는 그대로."""
+    s = _ready(client, world, engine, esl_root)
+    sid = s["id"]
+    p = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": s["version"], "spec": SPEC}).json()
+    m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": 1, "spec": SPEC}).json()
+    simulate_preview(engine, esl_root, sid, p["job"]["id"], m)
+    g = api(client, "GET", f"/doe/studies/{sid}").json()
+    rr = api(client, "POST", f"/doe/studies/{sid}/run",
+             json={"version": g["version"], "matrix_sha256": g["doe"]["matrix_sha256"]}).json()
+    simulate_run(engine, esl_root, sid, rr["job"]["id"], m)
+    assert api(client, "GET", f"/doe/studies/{sid}/results", params={"sort": "worst_ratio"}).status_code == 200
+    base = study_dir(esl_root, sid)
+    res = json.loads((base / "post" / "result.json").read_text(encoding="utf-8"))
+    row = res["ranking"][0]
+    per_a = [{"entry_id": world["a"], "label": "A", "C": 50.0, "ratio": 0.5, "umax": 1.0, "epsmax": 0.001},
+             {"entry_id": world["b"], "label": "B", "C": 120.0, "ratio": 1.2, "umax": 2.0, "epsmax": 0.002}]
+    row.update(worst_ratio=1.2, min_improvement=-0.2, all_improved=False, n_improved=1, n_worsened=1, n_unchanged=0,
+               geo_mean_improvement=1 - (0.6 ** 0.5), pareto=True, per_esl=per_a)
+    row2 = {**row, "id": "d099", "score": 0.9, "rank": 2, "worst_ratio": 0.95, "min_improvement": 0.05,
+            "all_improved": True, "n_improved": 2, "n_worsened": 0, "geo_mean_improvement": 0.06, "per_esl": []}
+    res["ranking"] = [row, row2]
+    res.update(ratio_tol=1e-6, per_esl_inline=True, esl=[{"entry_id": world["a"], "label": "A"},
+                                                          {"entry_id": world["b"], "label": "B"}])
+    (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
+    (base / "post" / "per_esl.json").write_text(json.dumps({"esl": res["esl"], "ratio_tol": 1e-6,
+                                                            "designs": {row["id"]: per_a, "d099": []}}), encoding="utf-8")
+    r = api(client, "GET", f"/doe/studies/{sid}/results").json()
+    assert r["sort"] == "score" and [x["id"] for x in r["ranking"]] == [row["id"], "d099"]
+    x = r["ranking"][0]
+    assert x["all_improved"] is False and x["n_worsened"] == 1 and x["pareto"] is True and x["per_esl"][1]["ratio"] == 1.2
+    assert r["per_esl_inline"] is True and r["ratio_tol"] == 1e-6 and [e["label"] for e in r["esl"]] == ["A", "B"]
+    r = api(client, "GET", f"/doe/studies/{sid}/results", params={"sort": "worst_ratio"}).json()
+    assert [x["id"] for x in r["ranking"]] == ["d099", row["id"]] and r["ranking"][0]["rank"] == 2   # rank = score 순위
+    bad = api(client, "GET", f"/doe/studies/{sid}/results", params={"sort": "nope"})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "INVALID_PARAMS"
+    pe = api(client, "GET", f"/doe/studies/{sid}/results/per-esl", params={"design": row["id"]}, token="tok-general")
+    assert pe.status_code == 200 and pe.json()["designs"] == [{"id": row["id"], "per_esl": per_a}]
+    assert [d["id"] for d in api(client, "GET", f"/doe/studies/{sid}/results/per-esl").json()["designs"]] == sorted(
+        [row["id"], "d099"])
+    nf = api(client, "GET", f"/doe/studies/{sid}/results/per-esl", params={"design": "zz"})
+    assert nf.status_code == 404 and nf.json()["detail"]["code"] == "DESIGN_NOT_FOUND"
+    assert api(client, "GET", f"/doe/studies/{sid}/results/per-esl", "tok-nonmember").status_code == 403
