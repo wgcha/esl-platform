@@ -1,6 +1,6 @@
 # 계약: v0.10.0 메뉴 재구성 — [ESL 생성] · [ESL 라이브러리]
 
-- 상태: **초안** (2026-10-29, 사용자 확정 1~3 반영, 미결 Q1~Q3). 구현 코드 없음. 이 문서가 구현·검증의 원본이다.
+- 상태: **확정** (2026-10-29, 사용자 확정 1~3 + 미결 Q1 A·Q2 B·Q3 B 확정 — §15). 구현 코드 없음. 이 문서가 구현·검증의 원본이다.
 - 버전: v0.10.0 (기준 main v0.9.0 `a48d691`).
 - 대체 범위: `esl_p3_ux.md` §2(⑥ 결과 받기 위치)·§4(가이드 ①~⑥), `esl_disp_primary.md` §8(라이브러리 등록 규칙 — FAIL·UNDETERMINED 사유 등록 폐지), `esl_opt_run.md` §10.1·`esl_bead_doe.md` §12.1(라이브러리 탭·선택 줄), `esl_p3_history.md` §5(단계 링크 번호). 충돌 시 이 문서 우선.
 - ID 규칙: 결정 `MR-D-n`, 시험 `V-MR-n`, 리스크 `R-MR-n`.
@@ -99,7 +99,7 @@
    - 자동 BLOCKED: 지지 세트 없음, `tstar.support_auto = {status:"BLOCKED", mode, problems:[{code, message, value, limit}], rule_version}`.
 4. 응답 200 `CaseOut`(step_status 포함). 잠금 중 다른 사용자가 먼저 지지 세트를 만들었으면 그것을 유지(KEPT).
 - 추출 재등록(`register_extract`)은 지금처럼 t*를 auto로 다시 쓰고(→ `support_auto` 사라짐) 지지 세트는 노드가 모두 남을 때만 유지 — 변경 없음.
-- `POST …/support-sets/suggest`·`POST …/support-sets`·`GET …/support-sets`는 API 호환으로 유지(화면 미사용). `suggest`도 같은 `auto_support` 결과를 돌려준다(`status`·`problems` 키 추가).
+- `POST …/support-sets/suggest`·`GET …/support-sets`는 API 호환으로 유지. `POST …/support-sets`(수동 지정, Q2 B의 '고급' 칸이 사용)는 저장 전 §5.2 검사 중 `SUPPORT_DEGENERATE`·`SUPPORT_COLLINEAR`·`SUPPORT_TOO_CLOSE`·`SUPPORT_ILL_CONDITIONED`를 **같은 기준으로** 적용(후보 확장 없음, 준 3노드만) → 실패 시 422 `SUPPORT_CHECK_FAILED {problems}`(기존 `NODE_NOT_IN_PART`·중복 노드 422 유지), 성공 시 `tstar.support_auto = {status:"MANUAL", checks, rule_version}`. `suggest`도 같은 `auto_support` 결과를 돌려준다(`status`·`problems` 키 추가).
 
 ### 5.2 품질 검사 규칙 (코어 `esl/mech/supports.py auto_321`, 순수 함수)
 입력 X0(N×3), PCA 평면(기존 `pca_corners` 축·부호), 면내 범위 L_a = max a − min a, L_b = max b − min b, D = √(L_a² + L_b²).
@@ -127,7 +127,8 @@
 - 기존 max-hold·후보·hotspot 카드 아래 카드 **"지지점 (3-2-1, 자동)"** (편집 UI 없음):
   - 지지 세트 있음: 표 3행 `역할(1번 3방향 / 2번 2방향 / 3번 1방향) · 노드 ID · dof`, 출처 배지 `자동` 또는 `사용자 지정(이전 버전에서 편집)`, `checks` 있으면 한 줄 "면적비 0.82 · 최소 거리 0.61 · 조건비 0.12"(작은 글씨).
   - 아직 없음: "t* 확정 시 자동으로 정합니다".
-  - BLOCKED: warn-box "지지점을 자동으로 정하지 못했습니다" + `problems` 목록(메시지) + 안내 한 줄 "모델(대상 파트) 형상을 확인하거나 관리자에게 기준(support.auto_check) 조정을 요청하세요". (Q2 결과에 따라 '고급' 칸 추가 가능)
+  - BLOCKED: warn-box "지지점을 자동으로 정하지 못했습니다" + `problems` 목록(메시지) + 안내 한 줄 "모델(대상 파트) 형상을 확인하거나 관리자에게 기준(support.auto_check) 조정을 요청하세요". 
+  - **BLOCKED일 때만** 카드 아래 접힌 `<details>` **'고급 — 지지 노드 직접 지정'**(기본 접힘, 권한 없으면 숨김): 노드 ID 3칸(1번 3방향·2번 2방향·3번 1방향) + 보조 버튼 [지정 저장] → 기존 `POST /cases/{id}/support-sets`. 저장 성공 → 지지 세트(source user) 설정, `tstar.support_auto = {status:"MANUAL", checks}`, ② done. 평소(OK·KEPT)에는 이 칸이 없다(편집 UI 없음 원칙 유지).
 - ③ ESL 차단 사유: 지지 세트 없음 + BLOCKED → "② 지지점 자동 선택 실패 — ②에서 사유 확인", 없음 + 미확정 → "② t* 확정이 필요합니다".
 
 ### 5.4 `step_status` (CaseOut 새 키, `services/cases.py`)
@@ -160,7 +161,7 @@
 { "project_id": "…", "entry_ids": ["…", "…"], "targets": ["radioss_inc", "fem", "csv"],
   "options": { "id_offset": "auto", "id_policy": "per_model_sequential" } }
 ```
-- `entry_ids` 1..`library_export.max_entries`(50), 중복 금지, 이 프로젝트 ACTIVE 항목만. `targets` ≥1, 값 = 기존 `EXPORT_TARGETS`. `options.id_offset` = `"auto"`(기본 = 설정 `export.radioss.id_offset`) 또는 정수 ≥ 0. `options.id_policy` = `per_model_sequential`(기본, Q3 권장) | `independent`.
+- `entry_ids` 1..`library_export.max_entries`(50), 중복 금지, 이 프로젝트 ACTIVE 항목만. `targets` ≥1, 값 = 기존 `EXPORT_TARGETS`. `options.id_offset` = `"auto"`(기본 = 설정 `export.radioss.id_offset`) 또는 정수 ≥ 0. `options.id_policy` = `per_model_sequential`(기본, Q3 확정 B) | `independent`(API 전용 — 창에는 선택지 없음).
 - 처리: batch_id(uuid) → `_exports/<batch_id>/batch.json` 작성(project_id, created_by, entry_ids, labels, targets, options, job_ids) → 항목을 `case_id`로 묶어 Case마다 EXPORT 작업 1개 삽입(한 트랜잭션, 하나라도 `ux_jobs_case_type_active` 충돌이면 전체 롤백 + 409).
 - 응답 **202** `ExportBatchOut`(아래).
 
@@ -206,8 +207,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 ```
 - 항목별 `id_offset`:
   - `independent`: 전부 `options.id_offset`(정수 또는 `"auto"`).
-  - `per_model_sequential`(Q3=B): 같은 `topo_sha256` 항목을 선택 순서로 줄 세워 첫 항목만 `options.id_offset`, 나머지는 `"after:<앞 entry_id>"`. 사용량(`id_max_used`)은 실행해야 알 수 있으므로 워커가 앞 항목 결과 `_exports/<batch>/<label>/export.json id_max_used`를 읽어 그 다음 정수를 시작으로 쓴다. 같은 Case 작업 안이면 순서대로 처리, 앞 항목이 다른 Case 작업에 있으면 그 결과가 생길 때까지 이 항목은 `PENDING`으로 대기(lease 갱신·취소 확인 계속, 최대 `library_export.wait_s` 600 s → 항목 실패 `EXPORT_ORDER_TIMEOUT`). 앞 항목이 실패하면 이 항목도 실패 `EXPORT_ORDER_PREV_FAILED`.
-  - Q3=A면 이 순서 규칙·`wait_s`·두 오류 코드는 모두 빠진다.
+  - `per_model_sequential`(기본, Q3 확정 B): 같은 `topo_sha256` 항목을 선택 순서로 줄 세워 첫 항목만 `options.id_offset`, 나머지는 `"after:<앞 entry_id>"`. 사용량(`id_max_used`)은 실행해야 알 수 있으므로 워커가 앞 항목 결과 `_exports/<batch>/<label>/export.json id_max_used`를 읽어 그 다음 정수를 시작으로 쓴다. 같은 Case 작업 안이면 순서대로 처리, 앞 항목이 다른 Case 작업에 있으면 그 결과가 생길 때까지 이 항목은 `PENDING`으로 대기(lease 갱신·취소 확인 계속, 최대 `library_export.wait_s` 600 s → 항목 실패 `EXPORT_ORDER_TIMEOUT`). 앞 항목이 실패하면 이 항목도 실패 `EXPORT_ORDER_PREV_FAILED`.
 - 워커(`executor.py`):
   - 작업 폴더 = `_exports/<batch_id>/`, 로그 = `_exports/<batch_id>/logs/<job_id>/step_NN_<key>.log`(LIB_ANALYZE와 같은 방식). **Case 폴더에 쓰지 않음.**
   - 건너뜀: 입력 지문 재확인(INPUT_CHANGED), VALIDATE·EXPORT 현재 run 사전 재확인, `history/<job_id>/` 보존(H-5), artifacts 등록, `stage_status`.
@@ -216,7 +216,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 
 ### 6.3 [내보내기] 창 (라이브러리)
 - 열기: ESL 목록에서 1개 이상 선택 → [내보내기](주). 모달 1개.
-- 내용(필수만): 선택 수·LEGACY 수 줄("LEGACY 2개 포함 — 하중은 같고 판정 체계만 이전입니다"), **형식** 체크 3개(Radioss inc (/CLOAD·/BCS) · OptiStruct fem · CSV, 기본 전부), **Radioss·fem ID 시작** 라디오(자동(rad 최대 ID 위) / 지정 [숫자]), (Q3=B면) 한 줄 설명 "같은 모델 ESL은 ID가 겹치지 않게 이어서 배정". 버튼 [내보내기 시작](주)·[닫기].
+- 내용(필수만): 선택 수·LEGACY 수 줄("LEGACY 2개 포함 — 하중은 같고 판정 체계만 이전입니다"), **형식** 체크 3개(Radioss inc (/CLOAD·/BCS) · OptiStruct fem · CSV, 기본 전부), **Radioss·fem ID 시작** 라디오(자동(rad 최대 ID 위) / 지정 [숫자]), 한 줄 설명 "같은 모델 ESL은 ID가 겹치지 않게 이어서 배정". 버튼 [내보내기 시작](주)·[닫기].
 - 실행 후 같은 창에서 진행(항목별 상태 칩·작업 진행률, 2초 폴링), 끝나면 **[zip 받기]**(주) + 실패 항목 사유 표. 창을 닫아도 작업은 계속, 창 하단 "최근 내보내기" 접힘 목록(`GET /library/exports`)에서 다시 받기.
 - 상단 바 상태 칩·서랍에 작업이 보이고, 이력에는 "내보내기(라이브러리)" 라벨 + 요약 `{n_items, targets}`.
 
@@ -242,7 +242,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 - 그 외 오류(ENTRY_EXISTS·VALIDATION_NOT_LATEST·PREREQUISITE_MISSING)는 그대로.
 
 ### 7.3 재검증 API — `POST /library/entries/{eid}/revalidate` (power 이상)
-- 대상: ACTIVE 항목 중 `quality.scheme` 없음(LEGACY) — Q1=A면 FAIL·UNDETERMINED 항목도.
+- 대상: ACTIVE 항목 중 부적격 전부 — `quality.scheme` 없음(LEGACY) + 사유와 함께 등록된 FAIL·UNDETERMINED(Q1 확정 A, 화면 배지는 `LEGACY` 옆에 당시 상태 `FAIL`/`판정 불가`).
 - 검사(순서): 항목 없음 404 `ENTRY_NOT_FOUND` · 폐기 409 `ENTRY_RETIRED` · 이미 적격(PASS·scheme) 409 `ENTRY_NOT_LEGACY` · Case 보관 409 `CASE_ARCHIVED` · run 스냅샷 없음 409 `REVALIDATE_NOT_POSSIBLE{reason:"RUN_SNAPSHOT_MISSING"}` · 추출 바뀜: `inputs_hash(extract_job_id = 현재 extract_summary.job_id, part_title = 현재, tstar = {run.frame_index, run.metric}, support_set_id = run.support_set_id) != run.inputs_hash` 또는 `extract_stale(case)` → 409 `REVALIDATE_NOT_POSSIBLE{reason:"EXTRACT_CHANGED"}`(안내: "Case를 다시 계산해 새로 등록하세요") · 같은 Case 비종료 VALIDATE 409 `CASE_JOB_BUSY`.
 - 생성: VALIDATE 작업 `params = {esl_run_id, origin:"library_revalidate", entry_id, settings(현재 판정 기준)}` → 201 `JobOut`.
 - 워커: 사전 재확인에서 "현재 run" 조건 대신 위 추출 동일 조건 재검사(실패 `PREREQUISITE_MISSING`), `ensure_on_disk`로 스냅샷 되돌림(기존 경고 문구), 코어 validate 그대로. CASE_REPORT 자동 큐는 하지 않음(현재 run 보고서가 아니므로).
@@ -263,7 +263,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 ## 8. ESL 라이브러리 화면
 
 - 탭(`LibTab`): `items` ESL 목록 | `study` 강성 평가 스터디(기존 DoeList) | `opt` 비드 최적화(기존 OptList, 탭 이름 '최적화 실행' → '비드 최적화') | `analyses` 종합분석·버전 비교(분석 표 + `#comparisons` 비교 표, 비교 표 머리에 보조 [버전 비교 만들기]) | `templates` 템플릿.
-- ESL 목록: 기존 필터(모델·씬 유형·orient·모드·판정·폐기 포함), 판정 필터 값 PASS / LEGACY / (Q1=A·B일 때) FAIL·판정 불가. 머리 체크 = 보이는 ACTIVE 행 전체 선택. 열: 선택 · 모델 · 인치/크기 · 씬 · 모드 · 판정(PASS·LEGACY 배지) · 등록자·시각 · 동작([수정] [재검증] [폐기]).
+- ESL 목록: 기존 필터(모델·씬 유형·orient·모드·판정·폐기 포함), 판정 필터 값 PASS / LEGACY / FAIL·판정 불가(Q1 A — 셋 다 부적격, 재검증 대상). 머리 체크 = 보이는 ACTIVE 행 전체 선택. 열: 선택 · 모델 · 인치/크기 · 씬 · 모드 · 판정(PASS·LEGACY 배지) · 등록자·시각 · 동작([수정] [재검증] [폐기]).
 - 선택 줄(선택 ≥ 1일 때 고정 표시): `선택 n개 · LEGACY k · 기준 크기 …` + **[내보내기 (n)](주)** [강성 평가 스터디 (n)] [비드 최적화 (n)] [종합분석 (n)] [선택 해제]. 종합분석은 `/library/analyses/new?entries=…`(AnalysisNew가 entries 쿼리로 entry_ids 채움).
 - 탭이 템플릿일 때만 그 탭 주 버튼(템플릿 등록) — 기존 규칙. 페이지 머리의 '종합분석 만들기' 주 버튼은 폐지(선택 줄로 대체).
 
@@ -338,7 +338,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 | `support.auto_check.rule_version` | 〃 | 1 | 기록용 |
 | `library_export.max_entries` | 플랫폼 `backend/esl_platform/core/config.py` | 50 | §6.1 |
 | `library_export.max_bundle_bytes` | 〃 | `ui.max_bundle_bytes` | §6.1 |
-| `library_export.wait_s` | 〃 | 600 | §6.2 순서 대기(Q3=B) |
+| `library_export.wait_s` | 〃 | 600 | §6.2 같은 모델 순서 대기 |
 - `support.auto_check`는 선택 절: 없으면 기본값, **코어 검증 cfg에 주입하지 않음**(설정 sha256·보고서 불변 — 0.8.0 `cumulative`와 같은 방식). 숫자 리터럴은 기본값 한 곳(V-CFG-2).
 - `deploy/setup_config.py`는 새 키를 보충하지 않는다(기본값 동작).
 
@@ -352,7 +352,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 | ID | 기준 | 방법 |
 |---|---|---|
 | V-MR-1 | `auto_321`: 직사각 판 → pca4 OK(area_ratio≈1), 가늘고 긴 판·L자 판에서 COLLINEAR/TOO_CLOSE 감지, 확장(pca8)으로 통과하는 형상은 OK·mode pca8, 공선 노드 → DEGENERATE, 결정적(같은 입력 같은 결과), 기존 `pick_321`·`pca_corners` 결과 불변 | 단위 |
-| V-MR-2 | `PUT /tstar`: 지지 없음 → 자동 세트 생성(source auto)·`support_auto.OK`; 지지 있음(user) → 유지·KEPT; BLOCKED → 200·지지 없음·problems; 같은 t* 재확정 허용; version 충돌 409 | API(PG) |
+| V-MR-2 | `PUT /tstar`: 지지 없음 → 자동 세트 생성(source auto)·`support_auto.OK`; 지지 있음(user) → 유지·KEPT; BLOCKED → 200·지지 없음·problems; 같은 t* 재확정 허용; version 충돌 409; 수동 `POST /support-sets` 검사 실패 422 SUPPORT_CHECK_FAILED·성공 MANUAL | API(PG) |
 | V-MR-3 | `step_status`: input/tstar/esl/validate 각 상태(running·stale·done·failed+reason·none+reason), 기존 `stage_status` 값 불변(라이브러리 EXPORT가 `"6"`에 영향 없음) | API |
 | V-MR-4 | ESL_SOLVE: BLOCKED Case → 409 missing support_set + support_blocked | API |
 | V-MR-5 | 하위 호환: v0.9.0 DB 덤프(수동 지지 세트·t* auto만·⑥ 완료 Case)에서 화면·API 동작 §5.5 표대로, 지지 세트 덮어쓰기 0 | PG |
@@ -369,7 +369,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 | V-MR-16 | `EntryOut.eligible·ineligible_reason·revalidate_block·revalidate_job`, 목록 쿼리 수 상수(N+1 없음) | API |
 | V-MR-17 | 라우트: 옛 `/stage/1..6`(query 유지)·`?tab=doe|comparisons`·`/doe`·`/opt` 리다이렉트, 이력 링크 stepOfStage 매핑 | 프런트 |
 | V-MR-18 | 상단 메뉴 2개·활성 규칙·경로 막대, 스텝퍼 4단계, Stage3·Stage6 없음, 케이스 헤더 [결과 받기(zip)] 유지 | 프런트 |
-| V-MR-19 | ②: 주 버튼 활성 조건(지지 없음이면 같은 t*라도 활성), 지지 카드 3상태(자동·사용자 지정·BLOCKED problems), 편집 입력칸 없음 | 프런트 |
+| V-MR-19 | ②: 주 버튼 활성 조건(지지 없음이면 같은 t*라도 활성), 지지 카드 3상태(자동·사용자 지정·BLOCKED problems), OK·KEPT일 때 편집 입력칸 없음, BLOCKED일 때만 '고급' 접힘 칸 → 저장·422 problems 표시 | 프런트 |
 | V-MR-20 | ④: 주 버튼 상황별(검증 실행 / 라이브러리에 등록), FAIL·판정 불가·LEGACY 등록 비활성 사유, 사유 대화상자 없음 | 프런트 |
 | V-MR-21 | 라이브러리: 탭 5개 이름, 선택 자유(폐기만 불가), 동작별 비활성 사유(LEGACY·크기), [종합분석]→`analyses/new?entries=` | 프런트 |
 | V-MR-22 | 내보내기 창: 형식·ID 옵션 → 요청 본문, 진행 폴링, [zip 받기], 실패 사유 표, 최근 내보내기 | 프런트 |
@@ -385,38 +385,34 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 
 | 단위 | 소유 파일 |
 |---|---|
-| **MR1 코어** | `esl/mech/supports.py`(`auto_321`, 검사 함수), `esl/export/from_entry.py`(신규), `esl/export/__init__.py`(필요 시 헬퍼 이동만, 동작 불변), `esl/config.py`(`SUPPORT_CHECK_DEFAULTS`), `config/esl.example.yaml`(주석 절), `esl/doe/report_doe.py`(문구), `resources/doe_messages.json`(문구), `tests/mech/test_support_auto.py`·`tests/export/test_from_entry.py`(골든) |
+| **MR1 코어** | `esl/mech/supports.py`(`auto_321`, 수동 3노드용 `check_321(X0, idx, cfg)` — 같은 검사), `esl/export/from_entry.py`(신규), `esl/export/__init__.py`(필요 시 헬퍼 이동만, 동작 불변), `esl/config.py`(`SUPPORT_CHECK_DEFAULTS`), `config/esl.example.yaml`(주석 절), `esl/doe/report_doe.py`(문구), `resources/doe_messages.json`(문구), `tests/mech/test_support_auto.py`·`tests/export/test_from_entry.py`(골든) |
 | **MR2 백엔드** | `backend/esl_platform/api/services/cases.py`(put_tstar·step_status·suggest), `api/services/jobs.py`(EXPORT library·VALIDATE revalidate params, ESL_SOLVE support_blocked), `api/services/library.py`(등록 규칙·revalidate·eligible·게이트·overlay quality), `api/services/library_export.py`(신규: 묶음 생성·조회·목록·bundle), `api/routers/library.py`(라우트 4개), `api/services/opt.py`·`api/services/doe.py`(게이트 + 문구), `api/services/history.py`(라벨·EXPORT 라이브러리 요약·links), `api/services/bundle.py`(export_files 헬퍼), `api/schemas.py`(StageStatus.reason, CaseOut.step_status, ExportBatch*, EntryOut 키, Revalidate), `core/config.py`(`library_export`), `core/paths.py`(`EXPORTS_DIR = "_exports"`), `worker/esl_worker/core_adapter.py`(`auto_support`, `export_items` 래퍼), `docs/contracts/openapi_p1b.json`(재생성), `backend/tests/test_menu_restructure*.py` |
 | **MR3 워커** | `worker/esl_worker/executor.py`(library 모드 폴더·로그·검사 건너뜀, revalidate 사전 재확인, 자동 보고서 제외), `worker/esl_worker/child.py`(EXPORT library 자식 진입점), `worker/esl_worker/register.py`(EXP_REGISTER library, VAL_REGISTER 전환), `worker/esl_worker/lib_jobs.py`(필요 시 폴더 헬퍼 공유), `worker/tests/test_lib_export.py`·`test_revalidate.py` |
-| **MR4 프런트** | `frontend/src/app/App.tsx`(라우트·리다이렉트 컴포넌트), `shell/Shell.tsx`(메뉴 2개), `shell/StageStepper.tsx`(4단계·step_status), `pages/CasePage.tsx`, `stages/Stage2.tsx`(지지 카드), `stages/Stage4.tsx`·`Stage5.tsx`(제목·번호·주 버튼·등록), `stages/common.ts`(blockReason step_status), `stages/Stage3.tsx`·`Stage6.tsx`(삭제), `components/LibraryRegister.tsx`, `components/SupportSummary.tsx`(신규), `components/ExportDialog.tsx`(신규), `pages/library/LibraryList.tsx`(탭·선택 줄·재검증), `pages/library/AnalysisNew.tsx`(`?entries=`), `pages/doe/*`·`components/Doe*`·`view3d/View3DCard.tsx`(문구), `pages/opt/OptList.tsx`(문구), `pages/history/JobReview.tsx`, `api/history.ts`(stepOfStage·라벨), `api/library.ts`(신규: exports·revalidate 호출·타입 — `types.ts`엔 CaseOut·EntryOut 키만 추가), `api/types.ts`, `pages/guide/content.ts`·`Guide.tsx`, `mock/**`, `__tests__/menu_restructure.test.tsx`, `styles.css`, `scripts/check_api*`(대조 목록에 library.ts) |
+| **MR4 프런트** | `frontend/src/app/App.tsx`(라우트·리다이렉트 컴포넌트), `shell/Shell.tsx`(메뉴 2개), `shell/StageStepper.tsx`(4단계·step_status), `pages/CasePage.tsx`, `stages/Stage2.tsx`(지지 카드 + BLOCKED 때만 '고급' 접힘 칸), `stages/Stage4.tsx`·`Stage5.tsx`(제목·번호·주 버튼·등록), `stages/common.ts`(blockReason step_status), `stages/Stage3.tsx`·`Stage6.tsx`(삭제), `components/LibraryRegister.tsx`, `components/SupportSummary.tsx`(신규), `components/ExportDialog.tsx`(신규), `pages/library/LibraryList.tsx`(탭·선택 줄·재검증), `pages/library/AnalysisNew.tsx`(`?entries=`), `pages/doe/*`·`components/Doe*`·`view3d/View3DCard.tsx`(문구), `pages/opt/OptList.tsx`(문구), `pages/history/JobReview.tsx`, `api/history.ts`(stepOfStage·라벨), `api/library.ts`(신규: exports·revalidate 호출·타입 — `types.ts`엔 CaseOut·EntryOut 키만 추가), `api/types.ts`, `pages/guide/content.ts`·`Guide.tsx`, `mock/**`, `__tests__/menu_restructure.test.tsx`, `styles.css`, `scripts/check_api*`(대조 목록에 library.ts) |
 | **MR5 문서·배포** | `docs/manual/user.md`(메뉴·단계·내보내기·재검증), `docs/manual/admin.md`(설정 8개), `docs/manual/bead_doe_check.md`(문구), `CHANGELOG.md`·`VERSION`(0.10.0), `docs/e2e-checklist.md`, `scripts/e2e_menu.mjs`, `deploy` 수집 목록(새 파일 `esl/export/from_entry.py` 포함 확인) |
 
 ## 14. 리스크
 
 | ID | 내용 | 대응 |
 |---|---|---|
-| R-MR-1 | 지지 자동 선택이 BLOCKED이면 편집 UI가 없어 사용자가 막힘(비대칭·L자·구멍 많은 파트) | pca8 확장 탐색, 사유·기준값 표시, 관리자 설정 완화 후 같은 t* 재확정으로 재시도, Q2 |
+| R-MR-1 | 지지 자동 선택이 BLOCKED이면 편집 UI가 없어 사용자가 막힘(비대칭·L자·구멍 많은 파트) | pca8 확장 탐색, 사유·기준값 표시, BLOCKED일 때만 '고급 — 지지 노드 직접 지정'(Q2 B, 같은 품질 검사) |
 | R-MR-2 | 다중 내보내기가 Case 단위 작업 제약을 물려받음 — 같은 Case에 다른 묶음이 진행 중이면 409, 같은 Case 작업과 직렬 | LIGHT 레인·짧은 작업, 409에 case_ids 표시, 창에 "잠시 후 다시" 안내 |
 | R-MR-3 | 라이브러리 CSV가 ⑥ CSV와 다름(u_total 비움, tstar 후보·hotspot 없음) | README·경고 1줄, Case [결과 받기(zip)] 안내 |
 | R-MR-4 | `_exports/` 누적 용량(정리 없음) | 묶음당 수십 MB, admin 문서에 위치 안내, 정리 정책은 후속 |
 | R-MR-5 | 재검증 불가(추출 바뀜·스냅샷 없음·보관) LEGACY는 영구히 게이트에 막힘 | revalidate_block 사유 표시, "Case 다시 계산 → 새 등록 → 옛 항목 폐기" 안내 |
 | R-MR-6 | 재검증 PASS 후 DB quality와 entry.json quality 불일치 | 판정 원본 = DB로 명시, overlay에 quality 추가, entry.json은 하중 원본으로만 사용 |
 | R-MR-7 | 재검증이 비현재 run을 Case 폴더 04_esl로 되돌림 — 이후 화면·보고서가 디스크를 직접 읽으면 혼동 | 기존 ensure_on_disk 경로(검증·내보내기)만 사용, CASE_REPORT 자동 큐 제외, V-MR-13 |
-| R-MR-8 | Q3=B 같은 모델 항목이 서로 다른 Case 작업에 있으면 작업 간 대기(lease 점유) | wait_s 상한·EXPORT_ORDER_TIMEOUT, 같은 모델은 대개 같은 Case 묶음 |
+| R-MR-8 | 같은 모델 항목이 서로 다른 Case 작업에 있으면 작업 간 대기(lease 점유) | wait_s 상한·EXPORT_ORDER_TIMEOUT, 같은 모델은 대개 같은 Case 묶음 |
 | R-MR-9 | 옛 `/stage/n` 외부 링크(메신저·문서)의 번호 의미 변화 | 경로 이름을 `/step`으로 바꿔 충돌 없음 + 리다이렉트 |
 
-## 15. 미결 (결과를 바꾸는 것만)
+## 15. 확정 (2026-10-29, 사용자 확정 — 이전 미결 Q1~Q3)
 
-- **Q1 이미 사유와 함께 등록된 FAIL·판정 불가 항목(scheme 있음)을 어떻게 다룰까?**
-  - A. LEGACY와 똑같이 — 유지 + 배지(FAIL/판정 불가) + 강성 평가·비드 최적화·종합분석 선택 불가 + [재검증] 가능 **(권장: 새 규칙 'PASS만 사용'과 일관, 데이터 보존)**
-  - B. 등록 당시 규칙을 존중해 그대로 사용 가능(배지만)
-  - C. 일괄 폐기(retire, 사유 "v0.10.0 등록 규칙 변경")
-- **Q2 자동 지지점이 품질 검사에 걸려 ②에서 멈췄을 때 탈출구를 둘까?**
-  - A. 두지 않음 — 사유 표시 + 관리자 기준 조정 후 재확정(확정 1 문구 그대로)
-  - B. BLOCKED일 때만 ② 카드에 접힌 '고급 — 지지 노드 직접 지정'(노드 ID 3칸, 기존 `POST /support-sets` 재사용, 같은 품질 검사 통과 필요) **(권장: 형상 때문에 막힌 Case가 관리자 없이 진행 가능, 평소엔 안 보임)**
-- **Q3 여러 ESL을 내보낼 때 Radioss·fem 생성 ID를 어떻게 배정할까?**
-  - A. ESL마다 독립(모두 같은 시작 ID — 기존 ⑥과 같음, 한 모델에 두 ESL inc를 함께 넣으면 ID 충돌)
-  - B. 같은 모델(topo_sha256) ESL끼리는 겹치지 않게 이어서, 다른 모델은 독립 **(권장: 같은 모델 다중 하중 케이스 덱을 바로 조립 가능, 다른 모델엔 영향 없음)**
+| 질문 | 확정 | 반영 |
+|---|---|---|
+| Q1 이미 사유와 함께 등록된 FAIL·판정 불가 항목(scheme 있음) | **A** — LEGACY와 동일: 유지 + 배지, 강성 평가·비드 최적화·종합분석 선택 불가(`eligible=false`, 422 `ENTRY_NOT_ELIGIBLE`), [재검증] 가능 | §7.3 대상, §7.4 전환, §7.5 게이트, §8 필터 |
+| Q2 자동 지지 BLOCKED 탈출구 | **B** — BLOCKED일 때만 ②에 접힌 '고급 — 지지 노드 직접 지정'(노드 ID 3칸, 기존 `POST /support-sets` 재사용, 같은 품질 검사 → 422 `SUPPORT_CHECK_FAILED`) | §5.1, §5.3, V-MR-2·V-MR-19 |
+| Q3 다중 내보내기 ID 배정 | **B** — 같은 모델(topo_sha256) ESL끼리 겹치지 않게 연속, 다른 모델은 독립(`id_policy` 기본 `per_model_sequential`) | §6.1, §6.2, §6.3, V-MR-10 |
 
 ## 16. 변경 메모
 - (작성 2026-10-29) 초안.
+- (2026-10-29) 사용자 확정 Q1 A·Q2 B·Q3 B → 상태 확정. §5.1 수동 지정 품질 검사, §5.3 고급 칸, §7.3 대상, §8 필터, §6 ID 정책 반영.
