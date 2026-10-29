@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
+import { p3 } from "../../api/p3";
 import { errorText } from "../../api/client";
 import { library, type RevalidateResult } from "../../api/library";
 import type { EntryOut, EntryStatus, JobState, Me } from "../../api/types";
@@ -33,8 +34,13 @@ export const LIB_TABS: { id: LibTab; label: string }[] = [
   { id: "analyses", label: "종합분석·버전 비교" },
   { id: "templates", label: "템플릿" },
 ];
-/** 한 번에 내보낼 수 있는 ESL 수(서버 library_export.max_entries 기본값 — 최종 판정은 서버 422 TOO_MANY_ENTRIES) */
-export const EXPORT_MAX_ENTRIES = 50;
+/** 한 번에 내보낼 수 있는 ESL 수는 서버 설정 library_export.max_entries(GET /version ui.library_export_max_entries)로 받는다.
+ *  받기 전·못 받으면 화면 검사는 하지 않고 서버 422 TOO_MANY_ENTRIES 가 최종 판정 */
+export async function exportMaxEntries(): Promise<number | null> {
+  const v = await p3.version();
+  const n = v.ui?.library_export_max_entries;
+  return typeof n === "number" && n > 0 ? n : null;
+}
 export const PROMOTED_TEXT = "현재 기준 PASS — 정상 항목으로 전환";
 
 /** 판정 필터: PASS / LEGACY / FAIL·판정 불가(Q1 A — 셋 다 부적격, 재검증 대상) */
@@ -56,8 +62,8 @@ export function pickBlock(e: EntryOut): string | null {
   return e.status !== "ACTIVE" ? "폐기된 항목" : null;
 }
 
-/** 선택 → 동작별 비활성 사유(권한 제외). tol = 크기 허용값(null = 불러오는 중) */
-export function actionBlocks(sel: EntryOut[], tol: number | null) {
+/** 선택 → 동작별 비활성 사유(권한 제외). tol = 크기 허용값(null = 불러오는 중), maxExport = 서버 내보내기 상한(null = 모름 → 서버 판정) */
+export function actionBlocks(sel: EntryOut[], tol: number | null, maxExport: number | null = null) {
   const nBad = sel.filter((e) => !isEligible(e)).length;
   const base = sel[0];
   let size: string | null = null;
@@ -72,7 +78,7 @@ export function actionBlocks(sel: EntryOut[], tol: number | null) {
   const legacy = nBad ? legacyBlockText(nBad) : null;
   return {
     nBad,
-    export: sel.length > EXPORT_MAX_ENTRIES ? `최대 ${EXPORT_MAX_ENTRIES}개까지 내보낼 수 있습니다` : null,
+    export: maxExport != null && sel.length > maxExport ? `최대 ${maxExport}개까지 내보낼 수 있습니다` : null,
     study: legacy ?? size,
     opt: legacy ?? size,
     analysis: legacy,
@@ -138,7 +144,7 @@ function RevalidateCell({ e, allowed, rv }: { e: EntryOut; allowed: boolean; rv:
   const j = rv.jobs[e.id] ?? e.revalidate_job ?? null;
   const running = !!j && !TERMINAL.includes(j.state);
   if (running) return <span className={`st-chip ${j!.state === "RUNNING" ? "run" : "wait"}`} data-testid="reval-chip">{j!.state === "RUNNING" ? "재검증 중" : "재검증 대기"}</span>;
-  const why = !allowed ? NO_PERMISSION : e.revalidate_block?.reason ?? null;
+  const why = !allowed ? NO_PERMISSION : e.revalidate_block ? e.revalidate_block.message || e.revalidate_block.reason : null;
   return (
     <span className="primary-wrap" title={why ?? "현재 판정 기준으로 검증을 다시 실행 — PASS면 정상 항목으로 전환"}>
       <button type="button" className="btn small" disabled={!!why} onClick={() => void rv.start(e.id)}>
@@ -174,11 +180,12 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
   const rv = useRevalidate(reload);
   const optSt = usePolling(() => optSettingsCached(), 0, []);
   const sizeTol = optSt.data?.size.tol_rel ?? null;
+  const maxSt = usePolling(() => exportMaxEntries(), 0, []);
   const byId = new Map(entries.map((e) => [e.id, e]));
   const sel = picked.map((id) => byId.get(id)).filter((e): e is EntryOut => !!e);
   const base = sel[0];
   const same = base ? sel.filter((e) => e.topo_sha256 && e.topo_sha256 === base.topo_sha256).length : 0;
-  const blk = actionBlocks(sel, sizeTol);
+  const blk = actionBlocks(sel, sizeTol, maxSt.data ?? null);
   const perm = allowed ? null : NO_PERMISSION;
   const toggle = (id: string) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
   const visibleActive = (rows ?? []).filter((e) => !pickBlock(e)).map((e) => e.id);

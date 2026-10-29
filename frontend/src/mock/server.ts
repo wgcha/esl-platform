@@ -6,7 +6,7 @@ import type {
   ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, StepStatus, SupportAuto, SupportProblem,
   SupportSetOut, ValidationOut,
 } from "../api/types";
-import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportOptions } from "../api/library";
+import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
 import {
   CANDIDATE_FRAMES, CORNER_IDS, ESL_ROOT, EXTRACT_SUMMARY, FRAMES_D, MAX_ARTIFACT_BYTES, N_NODES, PLANE, PROJECTS, USERS, baseCase,
   makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
@@ -1236,7 +1236,9 @@ export class MockServer {
           .slice(0, lim)
           .map((x) => {
             const o = this.batchOut(x.batch.batch_id)!;
-            return { batch_id: o.batch_id, created_at: o.created_at, created_by_name: o.created_by_name, state: o.state, targets: o.targets, n_items: o.items.length };
+            // 서버 ExportBatchSummary 모양 그대로
+            const row: ExportBatchSummary = { batch_id: o.batch_id, project_id: o.project_id, created_by: o.created_by, created_by_name: o.created_by_name, created_at: o.created_at, state: o.state, targets: o.targets, n_items: o.items.length, job_ids: x.jobIds };
+            return row;
           }),
       };
     }
@@ -1305,7 +1307,7 @@ export class MockServer {
     if (!this.canRun(e.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
     if (e.status === "RETIRED") return err(409, "ENTRY_RETIRED", "이미 폐기된 항목입니다");
     if (this.entryOut(e).eligible) return err(409, "ENTRY_NOT_LEGACY", "이미 현재 기준 PASS 항목입니다");
-    if (e.revalidate_block) return err(409, "REVALIDATE_NOT_POSSIBLE", e.revalidate_block.reason, { reason: e.revalidate_block.code });
+    if (e.revalidate_block) return err(409, e.revalidate_block.code, e.revalidate_block.message, { reason: e.revalidate_block.reason });
     if (this.jobs.some((j) => j.case_id === e.case_id && j.job_type === "VALIDATE" && ACTIVE.includes(j.state))) return err(409, "CASE_JOB_BUSY", "같은 Case 에서 검증이 진행 중입니다");
     const j = this.newJob({ id: e.case_id, project_id: e.project_id }, "VALIDATE", { esl_run_id: e.esl_run_id, origin: "library_revalidate", entry_id: e.id });
     return { status: 201, body: j };

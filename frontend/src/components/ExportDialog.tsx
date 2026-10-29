@@ -26,7 +26,7 @@ const BATCH_STATE_LABEL: Record<ExportBatchState, string> = {
   CANCELED: "취소",
 };
 
-const shortTargets = (ts: ExportTarget[]) => EXPORT_TARGETS.filter((t) => ts.includes(t.key)).map((t) => t.short).join("·");
+const shortTargets = (ts: ExportTarget[] | undefined) => EXPORT_TARGETS.filter((t) => (ts ?? []).includes(t.key)).map((t) => t.short).join("·");
 
 function ItemState({ it, pct }: { it: ExportBatchItem; pct: number | null }) {
   if (it.state === "DONE") return <span className="st-chip ok">완료</span>;
@@ -58,7 +58,7 @@ function RecentExports({ projectId, current }: { projectId: string; current: str
             .map((r) => (
               <li key={r.batch_id}>
                 <span className="small">
-                  {dt(r.created_at)} · ESL {r.n_items}개 · {shortTargets(r.targets)} · {BATCH_STATE_LABEL[r.state]}
+                  {r.created_at ? dt(r.created_at) : "–"} · ESL {r.n_items}개 · {shortTargets(r.targets)} · {BATCH_STATE_LABEL[r.state]}
                 </span>
                 {(r.state === "SUCCEEDED" || r.state === "PARTIAL") && (
                   <BundleButton url={library.exportBundleUrl(r.batch_id)} filename={exportZipName(r)} label={ZIP_LABEL} title="이 내보내기의 zip 을 다시 받습니다" />
@@ -186,7 +186,7 @@ export function ExportDialog({ projectId, entries, onClose }: { projectId: strin
                       <td>
                         <ItemState it={it} pct={pctOf(it)} />
                       </td>
-                      <td className="small">{it.files.length ? shortTargets(batch.targets) : ""}</td>
+                      <td className="small">{it.files?.length ? shortTargets(batch.targets) : ""}</td>
                       <td className="small num">{it.id_range ? `ID ${it.id_range[0]}–${it.id_range[1]}` : ""}</td>
                     </tr>
                   ))}

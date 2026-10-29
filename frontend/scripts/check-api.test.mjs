@@ -12,8 +12,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 describe("check:api 강화", () => {
   const run = (types, historyTs) => {
     const dir = mkdtempSync(path.join(tmpdir(), "chkapi-"));
-    copyFileSync(path.join(ROOT, "src", "api", "endpoints.ts"), path.join(dir, "endpoints.ts"));
-    copyFileSync(path.join(ROOT, "src", "api", "history.ts"), path.join(dir, "history.ts"));
+    // check-api.mjs 가 types.ts 옆에서 읽는 파일 전부(경로 대조 + history·doe·library 의 interface 대조)
+    for (const f of ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts", "library.ts"])
+      copyFileSync(path.join(ROOT, "src", "api", f), path.join(dir, f));
     writeFileSync(path.join(dir, "types.ts"), types);
     if (historyTs !== undefined) writeFileSync(path.join(dir, "history.ts"), historyTs);
     const openapi = path.join(ROOT, "..", "docs", "contracts", "openapi_p1b.json");
@@ -22,11 +23,8 @@ describe("check:api 강화", () => {
   };
   const real = readFileSync(path.join(ROOT, "src", "api", "types.ts"), "utf8");
 
-  // v0.10.0(esl_menu_restructure.md MR4): 프런트가 계약 키(CaseOut.step_status·EntryOut.eligible …)를 먼저 넣었다.
-  // 백엔드(MR2)가 openapi_p1b.json 을 재생성해 병합되기 전에는 대조가 실패하는 것이 정상 — 그때까지 건너뛴다(병합 후 자동으로 다시 돈다).
-  const openapiNow = JSON.parse(readFileSync(path.join(ROOT, "..", "docs", "contracts", "openapi_p1b.json"), "utf8"));
-  const backendMerged = !!openapiNow.components?.schemas?.CaseOut?.properties?.step_status;
-  it.skipIf(!backendMerged)("현재 types.ts 는 통과", () => {
+  // v0.10.0: 백엔드(MR2 openapi)·프런트(MR4 types.ts·library.ts) 병합 후 — 조건부 건너뜀 제거, 항상 대조
+  it("현재 types.ts 는 통과", () => {
     const r = run(real);
     expect(r.status, r.stderr).toBe(0);
   });

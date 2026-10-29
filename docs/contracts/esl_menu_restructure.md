@@ -45,7 +45,7 @@
 - **MR-D-1 DB 변경 없음(migration 없음).** 새 상태는 기존 JSONB에만 키 추가: `cases.tstar.support_auto`(§5.2), `jobs.params.origin·batch_id·items`(§6·§7), `library_entries.quality.revalidated`(§7.4). CHECK·컬럼·인덱스·job_type·stage 불변.
 - **MR-D-2 백엔드 단계 번호 불변, 화면만 재번호.** `jobs.stage`(1..11)·`CaseOut.stage_status["1".."6"]`(기존 의미)는 하위 호환으로 유지(deprecated). 새 키 `CaseOut.step_status{input, tstar, esl, validate}`를 추가하고 화면은 이것만 쓴다(§5.4).
 - **MR-D-3 지지 자동 선택 위치 = `PUT /cases/{id}/tstar` 서비스(동기 API, 작업 아님).** 기존에도 지지점은 작업이 아닌 동기 API였고 계산은 model.npz 좌표만 쓰는 PCA·SVD(30만 노드 < 1 s)라 새 job/step을 만들지 않는다. 현재 지지 세트가 **없을 때만** 자동 선택·저장, 있으면(자동·이전 수동 편집 모두) 그대로 둔다 — 지지점은 t*와 무관(초기 좌표만 사용).
-- **MR-D-4 품질 검사 실패 = t*는 저장, 지지 세트 없음, ② 상태 failed + 사유.** 오류 응답(422) 대신 200 + `tstar.support_auto.status = "BLOCKED"`로 돌려 ②에서 멈춘 이유를 화면이 그대로 보여 준다. ESL_SOLVE는 409 `PREREQUISITE_MISSING missing:["support_set"]` + `support_blocked`.
+- **MR-D-4 품질 검사 실패 = t*는 저장, 지지 세트 없음, ② 상태 failed + 사유.** 오류 응답(422) 대신 200 + `tstar.support_auto.status = "BLOCKED"`로 돌려 ②에서 멈춘 이유를 화면이 그대로 보여 준다. ESL_SOLVE는 409 `PREREQUISITE_MISSING missing:["support_set"]` + `support_blocked: true` + `problems`(화면은 support_blocked 면 "② 지지점 자동 선택 실패" 문구).
 - **MR-D-5 다중 내보내기 = 기존 EXPORT 작업(job_type·step·LIGHT 레인)을 `params.origin = "library"` 모드로 재사용.** `CK_JOBS_SUBJECT`가 EXPORT에 case_id를 요구하고 `ux_jobs_case_type_active`가 Case당 비종료 EXPORT 1개만 허용하므로 **묶음(batch) 1개 = 서로 다른 Case마다 EXPORT 작업 1개**(같은 Case의 ESL 여러 개는 한 작업의 `items`). 새 job_type(LIB_EXPORT)은 migration이 필요해 택하지 않음.
 - **MR-D-6 다중 내보내기의 원본 = 라이브러리 항목 폴더(`raw.npz`·`entry.json`)**, Case 폴더에는 쓰지 않는다(라이브러리 원칙 유지 — Case가 재추출·보관돼도 등록 당시 하중 그대로). 출력·로그 = `<esl_root>/_exports/<batch_id>/`. 코어 작성기(`esl/export/radioss.py`·`optistruct.py`·`csvout.py`, `plan_ids`)를 그대로 쓰고 입력 어댑터만 새로 둔다(§6.4).
 - **MR-D-7 Case 단위 EXPORT API(`POST /cases/{id}/jobs` EXPORT)는 유지(CLI·스크립트 호환), 화면 진입점만 없앤다.** `stage_status["6"]`은 origin이 없는(Case) EXPORT만 본다.
@@ -161,7 +161,7 @@
 { "project_id": "…", "entry_ids": ["…", "…"], "targets": ["radioss_inc", "fem", "csv"],
   "options": { "id_offset": "auto", "id_policy": "per_model_sequential" } }
 ```
-- `entry_ids` 1..`library_export.max_entries`(50), 중복 금지, 이 프로젝트 ACTIVE 항목만. `targets` ≥1, 값 = 기존 `EXPORT_TARGETS`. `options.id_offset` = `"auto"`(기본 = 설정 `export.radioss.id_offset`) 또는 정수 ≥ 0. `options.id_policy` = `per_model_sequential`(기본, Q3 확정 B) | `independent`(API 전용 — 창에는 선택지 없음).
+- `entry_ids` 1..`library_export.max_entries`(50 — 화면은 상수 대신 `GET /version` 의 `ui.library_export_max_entries`로 받아 선택 줄 [내보내기] 비활성 사유에 쓰고, 최종 판정은 422 `TOO_MANY_ENTRIES`), 중복 금지, 이 프로젝트 ACTIVE 항목만. `targets` ≥1, 값 = 기존 `EXPORT_TARGETS`. `options.id_offset` = `"auto"`(기본 = 설정 `export.radioss.id_offset`) 또는 정수 ≥ 0. `options.id_policy` = `per_model_sequential`(기본, Q3 확정 B) | `independent`(API 전용 — 창에는 선택지 없음).
 - 처리: batch_id(uuid) → `_exports/<batch_id>/batch.json` 작성(project_id, created_by, entry_ids, labels, targets, options, job_ids) → 항목을 `case_id`로 묶어 Case마다 EXPORT 작업 1개 삽입(한 트랜잭션, 하나라도 `ux_jobs_case_type_active` 충돌이면 전체 롤백 + 409).
 - 응답 **202** `ExportBatchOut`(아래).
 
@@ -183,6 +183,7 @@ manifest.json          # batch 요약 + 항목별 {entry_id, label, case_id, esl
 README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 표시
 <NN>_<label>/esl_cload.inc  esl_bcs.inc  esl_force.fem  f_eq.csv  u_rel.csv  supports_321.csv  [reactions_321.csv  validation.csv]
 ```
+- `GET /library/exports` 행 = `ExportBatchSummary {batch_id, project_id, created_by, created_by_name, created_at, state, targets, n_items, job_ids}`(프런트 `library.ts`가 이 모양 그대로). `ExportBatchItem.id_range` = `[시작, 끝]`(양 끝 포함, Radioss·fem 대상 없으면 null).
 - `<label>` = 모델_씬(entryLabel 규칙, 파일명 안전 문자만, ≤ 60자) + `_<entry_id 앞 8자>`, `<NN>` = 선택 순서 2자리.
 - 상한 `library_export.max_bundle_bytes`(기본 = `ui.max_bundle_bytes`).
 
@@ -207,7 +208,7 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 ```
 - 항목별 `id_offset`:
   - `independent`: 전부 `options.id_offset`(정수 또는 `"auto"`).
-  - `per_model_sequential`(기본, Q3 확정 B): 같은 `topo_sha256` 항목을 선택 순서로 줄 세워 첫 항목만 `options.id_offset`, 나머지는 `"after:<앞 entry_id>"`. 사용량(`id_max_used`)은 실행해야 알 수 있으므로 워커가 앞 항목 결과 `_exports/<batch>/<label>/export.json id_max_used`를 읽어 그 다음 정수를 시작으로 쓴다. 같은 Case 작업 안이면 순서대로 처리, 앞 항목이 다른 Case 작업에 있으면 그 결과가 생길 때까지 이 항목은 `PENDING`으로 대기(lease 갱신·취소 확인 계속, 최대 `library_export.wait_s` 600 s → 항목 실패 `EXPORT_ORDER_TIMEOUT`). 앞 항목이 실패하면 이 항목도 실패 `EXPORT_ORDER_PREV_FAILED`.
+  - `per_model_sequential`(기본, Q3 확정 B): 같은 `topo_sha256` 항목을 **(Case 작업 순서 → 선택 순서)**로 줄 세워 첫 항목만 `options.id_offset`, 나머지는 `"after:<앞 entry_id>"`. Case 작업 순서 = 각 Case 의 첫 선택 순(작업도 이 순서로 큐에 삽입), 같은 Case 안은 선택 순서 그대로. **근거(통합 시 구현 기준으로 갱신)**: EXPORT 는 LIGHT 레인 FIFO 라, 순수 선택 순서(예: A1·B1·A2·B2 — A·B 는 Case)로 이으면 A 작업이 B1 결과를, B 작업이 A2 결과를 서로 기다리는 교차 대기가 생기고 LIGHT 레인이 1개면 뒤 작업이 시작도 못 해 `EXPORT_ORDER_TIMEOUT`(600 s)으로 끝난다. Case 작업 순서를 먼저 두면 앞 항목은 항상 같은 작업의 앞쪽이거나 먼저 큐에 든 작업에 있어 대기가 한 방향(뒤 작업 → 앞 작업)뿐이고 교착이 없다. 선택 순서는 zip 폴더 번호 `<NN>`과 manifest 순서에만 쓰이고, 실제 ID 범위는 manifest `id_range`·창의 항목별 `ID 시작–끝`으로 확인한다. 사용량(`id_max_used`)은 실행해야 알 수 있으므로 워커가 앞 항목 결과 `_exports/<batch>/<label>/export.json id_max_used`를 읽어 그 다음 정수를 시작으로 쓴다. 같은 Case 작업 안이면 순서대로 처리, 앞 항목이 다른 Case 작업에 있으면 그 결과가 생길 때까지 이 항목은 `PENDING`으로 대기(lease 갱신·취소 확인 계속, 최대 `library_export.wait_s` 600 s → 항목 실패 `EXPORT_ORDER_TIMEOUT`). 앞 항목이 실패하면 이 항목도 실패 `EXPORT_ORDER_PREV_FAILED`.
 - 워커(`executor.py`):
   - 작업 폴더 = `_exports/<batch_id>/`, 로그 = `_exports/<batch_id>/logs/<job_id>/step_NN_<key>.log`(LIB_ANALYZE와 같은 방식). **Case 폴더에 쓰지 않음.**
   - 건너뜀: 입력 지문 재확인(INPUT_CHANGED), VALIDATE·EXPORT 현재 run 사전 재확인, `history/<job_id>/` 보존(H-5), artifacts 등록, `stage_status`.
@@ -251,10 +252,11 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 - 새 검증 행 등록(기존) 후 `origin == "library_revalidate"`이면 항목 행 잠금:
   - 항목이 아직 ACTIVE ∧ `esl_run_id` 같음 ∧ 새 status PASS → `validation_id` = 새 검증, `quality`의 판정 키(`verdict, status, scheme, undetermined_reason, disp_rms_rel, disp_max_rel, disp_noise_rel, reaction_rel, strain_exceed_frac, fail_reasons, field_*`)를 새 검증으로 갱신 + `quality.revalidated = {from_validation_id, from_status, job_id, at, by, by_name}`, `force_reason`·`confirmed_*` = null, version+1. → 결과 `revalidate.outcome = "PROMOTED"`.
   - FAIL·UNDETERMINED → 항목 불변, `outcome = "KEPT_LEGACY"` + status.
+  - 결과 키(`jobs.result.revalidate`, 세 경우 공통): `{outcome: PROMOTED|KEPT_LEGACY|ENTRY_CHANGED, status: 새 검증 PASS|FAIL|UNDETERMINED|LEGACY, fail_reasons: [새 검증 FAIL 사유 코드 — 예 "DISP_MAX"], verdict, entry_id, validation_id}`. 화면 KEPT_LEGACY 안내 "현재 기준 FAIL(DISP_MAX) …"의 괄호 = `fail_reasons`(통합 시 추가 — 프런트가 쓰는 키를 서버가 제공).
   - 항목이 그사이 폐기·변경 → 불변, `outcome = "ENTRY_CHANGED"`(경고).
 - 항목 폴더(`entry.json`·`raw.npz`)는 **바꾸지 않는다**(하중 불변, 수정 불가 규칙 유지). 판정의 원본 = DB `quality`; 종합분석 overlay(작업 params)에 `quality.status·scheme`를 추가해 보고서도 DB 값을 쓴다.
 - 화면(행): LEGACY 행에 배지 `LEGACY` + 보조 버튼 [재검증] → 행 상태 칩(대기·실행 중) → 끝나면 목록 다시 읽기. PROMOTED: 배지 사라짐 + 토스트 "현재 기준 PASS — 정상 항목으로 전환". KEPT_LEGACY: 행 아래 한 줄 "현재 기준 FAIL(DISP_MAX) — LEGACY로 유지하거나 [폐기]하세요"(기존 retire). REVALIDATE_NOT_POSSIBLE: 버튼 비활성 + 사유 툴팁(목록 응답 `revalidate_block`으로 미리 계산 — 아래).
-- `EntryOut` 추가 키: `eligible: bool`, `ineligible_reason: "LEGACY"|"FAIL"|"UNDETERMINED"|null`, `revalidate_block: {code, reason}|null`(목록 조회 시 Case·run 행 일괄 조회로 계산, N+1 금지), `revalidate_job: {job_id, state}|null`(비종료 VALIDATE origin library_revalidate).
+- `EntryOut` 추가 키: `eligible: bool`, `ineligible_reason: "LEGACY"|"FAIL"|"UNDETERMINED"|null`, `revalidate_block: {code, reason, message}|null`(code = 오류 코드 `CASE_ARCHIVED`·`REVALIDATE_NOT_POSSIBLE`·`CASE_JOB_BUSY`, reason = 세부 `RUN_SNAPSHOT_MISSING`·`EXTRACT_CHANGED`(없으면 code), message = 한글 안내 — 화면 툴팁은 message; 목록 조회 시 Case·run 행 일괄 조회로 계산, N+1 금지), `revalidate_job: {job_id, state}|null`(비종료 VALIDATE origin library_revalidate).
 
 ### 7.5 게이트 (MR-D-10)
 - `POST /opt/runs`·`POST /doe/studies`(entry_ids)·`POST /library/analyses`(filters.entry_ids, target_entry_id): 부적격 → 422 `ENTRY_NOT_ELIGIBLE {entry_ids, reasons}`. 필터만 준 분석은 부적격 제외 후 응답 `excluded_ineligible: n`(0이면 생략), 남은 항목 0이면 기존 422 `NO_MATCHING_ENTRIES`.
@@ -415,4 +417,5 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 
 ## 16. 변경 메모
 - (작성 2026-10-29) 초안.
-- (2026-10-29) 사용자 확정 Q1 A·Q2 B·Q3 B → 상태 확정. §5.1 수동 지정 품질 검사, §5.3 고급 칸, §7.3 대상, §8 필터, §6 ID 정책 반영.
+- (2026-10-29) 사용자 확정 Q1 A·Q2 B·Q3 B → 상태 확정.
+- (2026-10-29, 통합 v0.10.0) 구현 정합 반영: §6.2 같은 모델 연속 배정 순서 = Case 작업 순서 → 선택 순서(근거: LIGHT 레인 교차 대기·시간 초과 회피), §7.4 `jobs.result.revalidate.fail_reasons` 추가, `revalidate_block.message`, §6.1 목록 행 모양·`ui.library_export_max_entries`. §5.1 수동 지정 품질 검사, §5.3 고급 칸, §7.3 대상, §8 필터, §6 ID 정책 반영.

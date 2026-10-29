@@ -23,55 +23,73 @@ export type ExportItemState = "PENDING" | "DONE" | "FAILED";
 
 export interface ExportBatchJob {
   job_id: string;
-  case_id: string;
+  case_id?: string | null;
   state: JobState;
-  progress_pct: number | null;
-  failure_code: string | null;
-  failure_message: string | null;
+  progress_pct?: number | null;
+  failure_code?: string | null;
+  failure_message?: string | null;
+}
+
+export interface ExportBatchFile {
+  rel: string;
+  size: number;
+}
+
+export interface ExportBundleInfo {
+  ready: boolean;
+  bytes?: number | null;
 }
 
 export interface ExportBatchItem {
   entry_id: string;
   label: string;
-  case_id: string;
-  legacy: boolean;
+  case_id?: string | null;
+  legacy?: boolean;
   state: ExportItemState;
-  files: { rel: string; size: number }[];
-  /** [시작, 끝] ID(Radioss·fem). 아직 없으면 null */
-  id_range: [number, number] | null;
-  warnings: string[];
-  error: { code: string; message: string } | null;
+  files?: ExportBatchFile[];
+  /** [시작, 끝] ID(Radioss·fem, 양 끝 포함). 아직 없거나 Radioss·fem 대상이 없으면 null */
+  id_range?: [number, number] | null;
+  warnings?: string[];
+  error?: { code: string; message: string } | null;
 }
 
 export interface ExportBatchOut {
   batch_id: string;
   project_id: string;
   created_by: string;
-  created_by_name: string;
-  created_at: string;
+  created_by_name?: string | null;
+  created_at?: string | null;
   targets: ExportTarget[];
   options: ExportOptions;
   state: ExportBatchState;
   jobs: ExportBatchJob[];
   items: ExportBatchItem[];
-  bundle: { ready: boolean; bytes: number | null };
+  bundle: ExportBundleInfo;
 }
 
-/** GET /library/exports 목록 한 줄(최근 묶음 요약) */
+/** GET /library/exports 목록 한 줄(최근 묶음 요약 — 서버 ExportBatchSummary 그대로) */
 export interface ExportBatchSummary {
   batch_id: string;
-  created_at: string;
-  created_by_name: string;
+  project_id: string;
+  created_by: string;
+  created_by_name?: string | null;
+  created_at?: string | null;
   state: ExportBatchState;
-  targets: ExportTarget[];
+  targets?: ExportTarget[];
   n_items: number;
+  job_ids?: string[];
 }
 
-/** 재검증 작업 결과(jobs.result.revalidate, §7.4) */
+/** 재검증 작업 결과(jobs.result.revalidate, §7.4 — 워커 register.revalidate_transition) */
 export interface RevalidateResult {
   outcome: "PROMOTED" | "KEPT_LEGACY" | "ENTRY_CHANGED";
+  /** 새 검증 판정 상태(PASS·FAIL·UNDETERMINED·LEGACY) */
   status?: string | null;
+  /** 새 검증의 FAIL 사유 코드(예 DISP_MAX). PASS 면 빈 배열 */
   fail_reasons?: string[] | null;
+  entry_id?: string | null;
+  validation_id?: string | null;
+  verdict?: string | null;
 }
 
 export const EXPORT_TERMINAL: ExportBatchState[] = ["SUCCEEDED", "PARTIAL", "FAILED", "CANCELED"];
@@ -85,8 +103,8 @@ export const library = {
 };
 
 /** zip 파일 이름(서버 Content-Disposition 이 우선, 이것은 저장 대화상자 기본값) */
-export function exportZipName(b: { created_at: string; items: unknown[] } | { created_at: string; n_items: number }) {
-  const d = new Date(b.created_at);
+export function exportZipName(b: { created_at?: string | null; items: unknown[] } | { created_at?: string | null; n_items: number }) {
+  const d = b.created_at ? new Date(b.created_at) : new Date();
   const p = (n: number) => String(n).padStart(2, "0");
   const n = "items" in b ? b.items.length : b.n_items;
   return `esl_export_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}_${n}.zip`;

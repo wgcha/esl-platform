@@ -96,7 +96,7 @@ def test_config_defaults():
 
 def test_version_exposes_slim_hint(client):
     r = client.get(f"{API}/version", headers=R).json()
-    assert r["ui"] == {"upload_slim_hint_gb": 5}
+    assert r["ui"] == {"upload_slim_hint_gb": 5, "library_export_max_entries": 50}
 
 
 # ---------------------------------------------------------------- V-US-1 순서 뒤섞임

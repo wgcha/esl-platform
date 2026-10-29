@@ -59,9 +59,11 @@ def fs_browse(request: Request, root: int | None = Query(default=None, ge=0),
 
 @router.get("/version", response_model=VersionOut)
 def version(request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    """버전 + 화면이 읽는 공개 설정 값(`ui.upload_slim_hint_gb` — 0 = 안내 끔)."""
-    ui = get_ctx(request).settings.ui
-    return {**version_svc.build_info(), "ui": {"upload_slim_hint_gb": ui.upload_slim_hint_gb}}
+    """버전 + 화면이 읽는 공개 설정 값(`ui.upload_slim_hint_gb` — 0 = 안내 끔, v0.10.0 `ui.library_export_max_entries` =
+    라이브러리 내보내기 한 번 최대 ESL 수 = 설정 library_export.max_entries, 서버 422 TOO_MANY_ENTRIES 와 같은 값)."""
+    st = get_ctx(request).settings
+    return {**version_svc.build_info(), "ui": {"upload_slim_hint_gb": st.ui.upload_slim_hint_gb,
+                                               "library_export_max_entries": int(st.library_export.max_entries)}}
 
 
 @router.get("/changelog", response_model=list[ChangelogEntry])

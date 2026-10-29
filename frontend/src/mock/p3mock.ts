@@ -13,7 +13,7 @@ const err = (status: number, code: string, message: string, extra: Record<string
   body: { detail: { code, message, ...extra } },
 });
 
-export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5 } };
+export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5, library_export_max_entries: 50 } };
 export const MOCK_CHANGELOG = parseChangelog(CHANGELOG_MD);
 
 /** v0.7.0: 템플릿 .fem 추가(esl_opt_run.md §11 upload.allowed_ext), v0.9.0: 비드 DOE STEP(.step·.stp, esl_bead_doe.md §14) */

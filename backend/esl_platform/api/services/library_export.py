@@ -354,7 +354,8 @@ ID 배정
   하중 자체는 등록 당시 그대로이며 판정 체계만 다릅니다 — 라이브러리에서 [재검증] 후 사용을 권장합니다.
   u_rel.csv 의 *_total 열은 라이브러리 항목에 없어 비어 있습니다(Case 결과 zip 참고).
 """
-POLICY_KO = {"per_model_sequential": "같은 모델(같은 메시 위상) ESL 은 생성 ID 가 겹치지 않도록 선택 순서대로 이어서 배정했습니다. "
+POLICY_KO = {"per_model_sequential": "같은 모델(같은 메시 위상) ESL 은 생성 ID 가 겹치지 않도록 이어서 배정했습니다 "
+                                     "(순서 = Case 작업 순서(각 Case 의 첫 선택 순) → 그 안의 선택 순서, manifest.json id_range 참고). "
                                      "다른 모델은 각자 시작 ID 부터 배정합니다.",
              "independent": "모든 ESL 을 같은 시작 ID 부터 배정했습니다(서로 다른 덱에서 따로 쓸 때)."}
 

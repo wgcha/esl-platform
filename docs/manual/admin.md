@@ -416,8 +416,13 @@ $env:PGPASSWORD = $null
 | `history.backup_scan_max` | 실행 이력: 이전 검증 파일을 `_backup` 에서 표식으로 찾을 때 열어 보는 폴더 최대 수(최신 순, 넘으면 "파일 보존 안 됨" 으로 기록된 값만 표시) | `100` |
 | `history.archive_files` | 실행 이력: 내보내기(⑥)·Case 보고서 성공 시 `<Case>\history\<작업 id>\` 에 작업별로 복사해 두어 나중에도 그때 파일을 받을 수 있게 함(Case 폴더 용량이 실행당 내보내기·보고서 크기만큼 늘어남, 정리 정책 없음). 끄면 이후 실행분은 기록된 값만 표시 | `true` |
 | `library.config_path` | 라이브러리·분석·덱 설정(없으면 라이브러리 쓰기 API 503) | `library.yaml` |
+| `library_export.max_entries` | v0.10.0 라이브러리 내보내기 한 번에 고를 수 있는 ESL 수(넘으면 422 `TOO_MANY_ENTRIES`). 화면은 `GET /version` 의 `ui.library_export_max_entries` 로 같은 값을 받아 [내보내기] 비활성 사유에 씀 | `50` |
+| `library_export.max_bundle_bytes` | 내보내기 zip 상한(넘으면 413 `BUNDLE_TOO_LARGE` + `_exports\<묶음>` 경로 안내). `null` = `ui.max_bundle_bytes` | `null` |
+| `library_export.wait_s` | 같은 모델 ESL 이 서로 다른 Case 작업에 나뉘었을 때 앞 항목 ID 결과를 기다리는 최대 초(넘으면 항목 실패 `EXPORT_ORDER_TIMEOUT`) | `600` |
 
 - 코어 `esl.yaml`의 `solver.backend: auto` → Windows에서 `pardiso`(pypardiso·MKL). `extract.disp_precision`은 TCL 출력 정밀도(H3D 보통 `float32`).
+- 코어 `esl.yaml` 선택 절 `support.auto_check`(v0.10.0 ② 3-2-1 자동 선택 품질 검사, 없으면 기본값): `min_area_ratio` 0.10(세 점 공선) · `min_dist_rel` 0.15(두 점 근접, 대각선 대비) · `min_cond_ratio` 1e-3(구속 조건비) · `expand_candidates` true(PCA 4꼭지점 실패 시 8후보 탐색) · `rule_version` 1. **임시값** — 실제 파트에서 자동 선택이 자주 막히면(사용자 화면 "지지점을 자동으로 정하지 못했습니다") 값을 조정. 판정 cfg 에 주입하지 않아 설정 해시·보고서 불변.
+- 라이브러리 내보내기 출력은 `<esl_root>\_exports\<묶음 id>\`(batch.json·ESL 별 폴더·logs·manifest·README)에 쌓이고 정리 정책이 없다(묶음당 수십 MB) — 용량이 차면 오래된 묶음 폴더를 지운다(지우면 그 묶음 zip 다시 받기 불가).
 - 판정 기준(`validation.*`, `compare.*`)과 ISTA 6 낙하 높이 표는 **임시값·TODO** — 사내 확인 후 교체(§15).
 - 라이브러리 설정(`library.yaml`)의 설계 버전 비교 수렴 기준 `convergence`: `cos_min`(기본 0.95), `rep_same`(기본 true — 짝 대표(medoid)의 cos ≥ `cos_min` 이면 같은 대표, medoid 씬이 달라도 됨), `min_nodes_per_cell`(기본 64 — 셀당 노드 중앙값이 이보다 작으면 경고, 16 미만이면 "판정 신뢰 낮음" 배지), `coarsen`(false|half — 2×2 셀 묶음으로 cos 계산, 12×7 이하 격자에서는 무시). 설치본 `library.yaml`은 업데이트 때 덮어쓰지 않으므로 빠진 키는 이 기본값으로 채운다(이전 기본 0.9 를 적어 둔 파일은 그 값이 유지됨).
 - 오류 코드 `SOLVER_OUT_OF_MEMORY`: 쉘 솔버(조립·분해·해)나 코어 처리 중 메모리 부족(MemoryError, PARDISO error -2, CHOLMOD out-of-memory). 비양정치·구속 부족(`SOLVER_SINGULAR`)과 구분된다 — 13장 FAQ.

@@ -97,7 +97,8 @@ def test_revalidate_flow(client, synth_inputs, worker_factory, esl_root, engine,
     r = client.post(url, headers=W)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "REVALIDATE_NOT_POSSIBLE"
     assert r.json()["detail"]["reason"] == "EXTRACT_CHANGED"
-    assert _entry(client, eid)["revalidate_block"]["reason"] == "EXTRACT_CHANGED"
+    blk = _entry(client, eid)["revalidate_block"]
+    assert blk["reason"] == "EXTRACT_CHANGED" and blk["code"] == "REVALIDATE_NOT_POSSIBLE" and "다시 계산" in blk["message"]
     c = client.get(f"{API}/cases/{cid}", headers=R).json()
     client.patch(f"{API}/cases/{cid}", json={"version": c["version"], "part_title": case["part_title"]}, headers=W)
 
@@ -121,6 +122,9 @@ def test_revalidate_flow(client, synth_inputs, worker_factory, esl_root, engine,
     jr = _run(client, worker, j["id"])
     assert jr["result"]["revalidate"]["outcome"] == "KEPT_LEGACY"
     assert jr["result"]["revalidate"]["status"] in ("FAIL", "UNDETERMINED")
+    # 화면 KEPT_LEGACY 안내 괄호(§7.4 fail_reasons — 계약 키): FAIL 이면 사유 코드가 1개 이상
+    fr = jr["result"]["revalidate"]["fail_reasons"]
+    assert isinstance(fr, list) and (jr["result"]["revalidate"]["status"] != "FAIL" or len(fr) >= 1)
     assert "report_job_id" not in jr["result"]                                     # 자동 보고서 없음
     assert any("스냅샷에서 되돌림" in str(w) for w in jr["warnings"])               # 비현재 run → runs/<id>/ 되돌림
     e = _entry(client, eid)
@@ -132,6 +136,7 @@ def test_revalidate_flow(client, synth_inputs, worker_factory, esl_root, engine,
     jr = _run(client, worker, j["id"])
     rv = jr["result"]["revalidate"]
     assert rv["outcome"] == "PROMOTED" and rv["status"] == "PASS"
+    assert rv["fail_reasons"] == []
     e = _entry(client, eid)
     q = e["quality"]
     assert e["eligible"] is True and e["ineligible_reason"] is None and e["version"] == ver + 1

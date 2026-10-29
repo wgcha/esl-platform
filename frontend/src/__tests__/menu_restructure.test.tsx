@@ -205,7 +205,10 @@ describe("V-MR-21 ESL 목록 선택 줄", () => {
     const s = actionBlocks([e("a", 75, 1660), e("c", 65, 1440)], 0.02);
     expect(s.study).toMatch(/크기 다름\(기준 75형/);
     expect(s.analysis).toBeNull();
-    expect(actionBlocks(Array.from({ length: 51 }, (_, k) => e(`x${k}`, 75, 1660)), 0.02).export).toMatch(/최대 50개/);
+    expect(actionBlocks(Array.from({ length: 51 }, (_, k) => e(`x${k}`, 75, 1660)), 0.02, 50).export).toMatch(/최대 50개/);
+    // 상한은 서버 설정(ui.library_export_max_entries) — 모르면 화면 검사 없음(서버 422 TOO_MANY_ENTRIES)
+    expect(actionBlocks(Array.from({ length: 51 }, (_, k) => e(`x${k}`, 75, 1660)), 0.02, null).export).toBeNull();
+    expect(actionBlocks(Array.from({ length: 4 }, (_, k) => e(`x${k}`, 75, 1660)), 0.02, 3).export).toMatch(/최대 3개/);
   });
 
   it("머리 체크 = 보이는 활성 행 전체, LEGACY 포함 선택 → 요약 'LEGACY 1' + 강성·최적화·종합분석 비활성, 내보내기 가능, 선택 해제", async () => {
@@ -368,7 +371,7 @@ describe("V-MR-23 LEGACY 재검증", () => {
   it("재검증 불가(revalidate_block) → 버튼 비활성 + 사유 툴팁, 조회 사용자 비활성", async () => {
     const reason = "추출이 바뀌었습니다 — Case를 다시 계산해 새로 등록하세요";
     const { unmount } = renderApp("/p/p-body/library", "power", (s) => {
-      s.entries.find((e) => e.id === "le-7")!.revalidate_block = { code: "EXTRACT_CHANGED", reason };
+      s.entries.find((e) => e.id === "le-7")!.revalidate_block = { code: "REVALIDATE_NOT_POSSIBLE", reason: "EXTRACT_CHANGED", message: reason };
     });
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
     const b = within(box("85QN80H v072 245 선택").closest("tr")!).getByRole("button", { name: "재검증" }) as HTMLButtonElement;
@@ -381,5 +384,16 @@ describe("V-MR-23 LEGACY 재검증", () => {
     const g = within(box("85QN80H v072 245 선택").closest("tr")!).getByRole("button", { name: "재검증" }) as HTMLButtonElement;
     expect(g.disabled).toBe(true);
     expect(g.parentElement!.title).toBe(NO_PERMISSION);
+  });
+});
+
+describe("통합 정합(v0.10.0)", () => {
+  it("ESL_SOLVE 409 detail.support_blocked → '② 지지점 자동 선택 실패' 문구", async () => {
+    const { ApiError, errorText } = await import("../api/client");
+    const e = new ApiError(409, { code: "PREREQUISITE_MISSING", message: "x", missing: ["support_set"], support_blocked: true, problems: [] });
+    expect(errorText(e)).toContain("② 지지점 자동 선택 실패");
+    const e2 = new ApiError(409, { code: "PREREQUISITE_MISSING", message: "x", missing: ["support_set"] });
+    expect(errorText(e2)).toContain("② 지지점");
+    expect(errorText(e2)).not.toContain("자동 선택 실패");
   });
 });

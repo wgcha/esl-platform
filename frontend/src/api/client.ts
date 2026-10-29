@@ -108,7 +108,9 @@ const MISSING_TEXT: Record<string, string> = {
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     const base = CODE_TEXT[e.code] ?? e.message;
-    const miss = Array.isArray(e.detail.missing) ? e.detail.missing : [];
+    // v0.10.0 MR-D-4: ESL_SOLVE 409 PREREQUISITE_MISSING 에 support_blocked=true 면 '② 지지점' 대신 자동 선택 실패 문구
+    const miss0: string[] = Array.isArray(e.detail.missing) ? (e.detail.missing as string[]) : [];
+    const miss = e.detail.support_blocked === true ? miss0.map((m) => (m === "support_set" ? "support_blocked" : m)) : miss0;
     return miss.length ? `${base} (필요: ${miss.map((m) => MISSING_TEXT[m] ?? m).join(", ")})` : base;
   }
   return e instanceof Error ? e.message : String(e);

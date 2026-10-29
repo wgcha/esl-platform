@@ -489,12 +489,15 @@ export interface SupportSuggestOut {
   node_ids: number[];
   dofs: string[];
   coords: number[][];
-  plane: Plane;
+  plane?: Plane | null;
   /** PCA 4꼭지점 노드 ID */
   corners: number[];
-  /** v0.10.0 §5.1: 같은 auto_support 결과 */
-  status?: "OK" | "BLOCKED" | null;
-  problems?: SupportProblem[] | null;
+  /** v0.10.0 §5.1: 같은 auto_support 결과(status 기본 OK, BLOCKED 면 node_ids 비고 problems) */
+  status?: "OK" | "BLOCKED";
+  mode?: "pca4" | "pca8" | null;
+  checks?: SupportChecks | null;
+  problems?: SupportProblem[];
+  rule_version?: number | null;
 }
 export type SupportSuggest = SupportSuggestOut;
 
@@ -969,6 +972,12 @@ export interface EntryRevalidated {
 
 /** v0.10.0 §7.4: 부적격 사유(LEGACY·사유와 함께 등록된 FAIL·판정 불가) */
 export type IneligibleReason = "LEGACY" | "FAIL" | "UNDETERMINED";
+/** §7.3 재검증 불가 사유: code = 오류 코드(CASE_ARCHIVED·REVALIDATE_NOT_POSSIBLE·CASE_JOB_BUSY), reason = 세부(RUN_SNAPSHOT_MISSING·EXTRACT_CHANGED, 없으면 code), message = 한글 안내(툴팁) */
+export interface RevalidateBlock {
+  code: string;
+  reason: string;
+  message: string;
+}
 
 export interface EntryOut {
   id: string;
@@ -1005,7 +1014,7 @@ export interface EntryOut {
   eligible?: boolean;
   ineligible_reason?: IneligibleReason | null;
   /** 재검증 불가 사유(미리 계산) — 있으면 [재검증] 비활성 + 툴팁 */
-  revalidate_block?: { code: string; reason: string } | null;
+  revalidate_block?: RevalidateBlock | null;
   /** 진행 중인 재검증 작업(VALIDATE origin library_revalidate) */
   revalidate_job?: { job_id: string; state: JobState } | null;
 }
@@ -1214,6 +1223,8 @@ export interface AnalysisOut {
   job_id?: string | null;
   job?: JobOut | null;
   result?: AnalysisResult | null;
+  /** v0.10.0 §7.5: 필터 기반 분석에서 부적격이라 뺀 항목 수(0이면 생략) */
+  excluded_ineligible?: number | null;
   dir_rel: string;
   folder_path: string;
   result_rel?: string | null;
@@ -1609,7 +1620,7 @@ export interface VersionOut {
   commit: string | null;
   built_at: string | null;
   /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
-  ui?: { upload_slim_hint_gb?: number };
+  ui?: { upload_slim_hint_gb?: number; library_export_max_entries?: number };
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */
