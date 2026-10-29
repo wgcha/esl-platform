@@ -127,6 +127,46 @@ export interface ExtractSummary {
   disp_frames: number[];
   metrics: Metric[];
   warnings: string[];
+  /** v0.8.0 누적 낙하 씬(rad 가 이전 런 상태 파일 .str/.sta 를 include)일 때만 — 계약 esl_cumulative_input.md §8·§13 */
+  cumulative?: CumulativeSummary;
+}
+
+export type CumulativeMode = "cumulative" | "incremental" | "trivial";
+export interface CumulativeDiagnosis {
+  mode: CumulativeMode;
+  detected: CumulativeMode | "ambiguous";
+  r0: number | null;
+  mono: number | null;
+  n_S: number;
+  forced: boolean;
+}
+export interface CumulativeThickness {
+  source: "state" | "rad";
+  k_l_source?: "state" | "prop" | "rad";
+  n_elems: number;
+  n_state: number;
+  t0: number | number[] | null;
+  ratio: { min: number; p01: number; mean: number; p99: number; max: number } | null;
+  n_changed: number | null;
+  max_thinning_pct: number | null;
+  elem_max_thinning: number | null;
+}
+export interface CumulativeSummary {
+  enabled: boolean;
+  files: { name: string; kinds: ("geometry" | "initial")[]; runname: string | null; size: number | null }[];
+  epsp_mode: CumulativeMode;
+  eq_mode: CumulativeMode;
+  /** 이전 소성 요소값 집계(mid_mean·mid_max·max·mean) */
+  agg: string;
+  n_prev_elems: number;
+  prev_max: number;
+  prev_p99?: number;
+  coord_source: "state" | "rad" | "state+rad";
+  n_nodes_state: number;
+  n_nodes_rad?: number;
+  thickness: CumulativeThickness;
+  diagnosis?: { epsp: CumulativeDiagnosis; eq: CumulativeDiagnosis };
+  warning_codes: string[];
 }
 
 export interface CaseOut {
@@ -330,7 +370,11 @@ export interface TstarPoint {
   frame_index: number;
   time: number;
   elem_id: number;
+  /** 누적 씬이면 누적값(이전 + 이번) */
   value: number;
+  /** v0.8.0 누적 씬만: 이번 낙하 증분·이전 값 */
+  value_inc?: number;
+  value_prev?: number;
 }
 
 export interface TstarCandidate extends TstarPoint {
@@ -346,15 +390,19 @@ export interface Hotspot {
   centroid: [number, number, number] | null;
   /** t* 에서 상승 중(검증 대상). null = 정보 없음 */
   rising: boolean | null;
+  value_inc?: number;
+  value_prev?: number;
 }
 
 export interface TstarMetricBlock {
   tstar: TstarPoint | null;
   candidates: TstarCandidate[];
-  /** max-hold 곡선 m(f) = max_{e∈H} v[f,e] */
-  history: { time: number[]; value: number[] };
+  /** max-hold 곡선 m(f) = max_{e∈H} v[f,e] (누적 씬이면 누적, value_inc = 이번 낙하 증분) */
+  history: { time: number[]; value: number[]; value_inc?: number[] };
   hotspots: Hotspot[];
   error?: string;
+  /** v0.8.0 누적 씬: 이전 손상만(이번 증가 없음) 제외 수 */
+  cumulative?: { mode: CumulativeMode; n_excluded_no_increment: number };
 }
 
 export interface TstarView {
@@ -365,6 +413,8 @@ export interface TstarView {
   hotspots: Hotspot[];
   /** 변위가 추출된 후보 프레임 D */
   frames_D: number[];
+  /** v0.8.0 누적 씬만 */
+  cumulative?: { enabled: boolean; epsp_mode: CumulativeMode; eq_mode: CumulativeMode; agg: string; n_prev_elems: number; min_increment: number };
 }
 
 export interface TstarPut {
@@ -581,6 +631,12 @@ export interface StrainRef {
   n_plastic?: number | null;
   frac_plastic?: number | null;
   n_exceed_plastic?: number | null;
+  /** v0.8.0 누적 씬: 비교 기준 = 이번 낙하 증분, 소성 요소 수 누적/이번 */
+  basis?: "increment";
+  n_plastic_cum?: number;
+  n_plastic_inc?: number;
+  cum_max?: number;
+  inc_max?: number;
 }
 
 export interface ArtifactOut {
@@ -1355,6 +1411,14 @@ export interface UploadCheckOut {
   problems?: string[];
   /** v0.6.0: h3d 파일의 업로드 메타(없으면 null) */
   h3d_meta?: H3dMeta | null;
+  /** v0.8.0: rad include 중 이전 런 상태 파일(.sta/.str) */
+  state_includes?: Record<string, unknown>[];
+}
+export interface StateInclude {
+  rel: string | null;
+  spec: string;
+  kinds: ("geometry" | "initial")[];
+  found: boolean;
 }
 export interface UploadCompleteOut extends UploadCheckOut {
   upload_id: string;
@@ -1784,6 +1848,8 @@ export interface S1EntryRow {
 export interface S1CheckOut {
   base: S1Base;
   entries: S1EntryRow[];
+  /** v0.8.0 정보 경고 {code, message} (S1_BASE_CUMULATIVE) */
+  warnings?: Record<string, unknown>[];
 }
 
 export type XY = [number, number];

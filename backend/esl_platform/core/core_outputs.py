@@ -116,9 +116,19 @@ def _int(v: Any) -> int | None:
         return None
 
 
+_CUM_KEYS = ("value_inc", "value_prev")      # v0.8.0 누적 씬(누적 = value, 이전·이번 증분) — 있을 때만 전달
+
+
+def _cum(d: dict, out: dict[str, Any]) -> dict[str, Any]:
+    for k in _CUM_KEYS:
+        if d.get(k) is not None:
+            out[k] = _num(d, k)
+    return out
+
+
 def _pt(d: dict) -> dict[str, Any]:
-    return {"frame_index": _int(d.get("frame_index")), "time": _num(d, "time"),
-            "elem_id": _int(d.get("elem_id")), "value": _num(d, "value", "eps_eq", "eps_max", "max")}
+    return _cum(d, {"frame_index": _int(d.get("frame_index")), "time": _num(d, "time"),
+                    "elem_id": _int(d.get("elem_id")), "value": _num(d, "value", "eps_eq", "eps_max", "max")})
 
 
 def _history(h: Any) -> dict[str, list[float]]:
@@ -127,7 +137,10 @@ def _history(h: Any) -> dict[str, list[float]]:
     t = h.get("time") or []
     for k in ("value", "m", "eps_max", "max"):
         if h.get(k) is not None:
-            return {"time": [float(x) for x in t], "value": [float(x) for x in h[k]]}
+            out = {"time": [float(x) for x in t], "value": [float(x) for x in h[k]]}
+            if h.get("m_inc") is not None:          # 누적 씬: 이번 낙하 증분 곡선
+                out["value_inc"] = [float(x) for x in h["m_inc"]]
+            return out
     return {"time": [float(x) for x in t], "value": []}
 
 
@@ -166,6 +179,8 @@ def _metric_block(m: dict) -> dict[str, Any]:
         out["hotspots"] = _hotspots(m.get("hotspots"))
     if m.get("error"):
         out["error"] = str(m["error"])
+    if isinstance(m.get("cumulative"), dict):
+        out["cumulative"] = m["cumulative"]
     return out
 
 
@@ -175,9 +190,9 @@ def _hotspots(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(h, dict):
             continue
         rising = h.get("rising")
-        out.append({"rank": _int(h.get("rank")) or i + 1, "elem_id": _int(h.get("elem_id")),
-                    "value": _num(h, "value", "eps_eq", "eps_rad"), "centroid": h.get("centroid"),
-                    "rising": None if rising is None else bool(rising)})
+        out.append(_cum(h, {"rank": _int(h.get("rank")) or i + 1, "elem_id": _int(h.get("elem_id")),
+                            "value": _num(h, "value", "eps_eq", "eps_rad"), "centroid": h.get("centroid"),
+                            "rising": None if rising is None else bool(rising)}))
     return out
 
 
@@ -207,7 +222,10 @@ def tstar_info(case_dir: str) -> dict[str, Any]:
     for blk in metrics.values():
         blk.setdefault("hotspots", hots)
     frames_d = [_int(x.get("frame_index")) for x in (tj.get("frames_D") or []) if isinstance(x, dict)]
-    return {"metrics": metrics, "hotspots": hots, "default_metric": default, "frames_D": frames_d}
+    out = {"metrics": metrics, "hotspots": hots, "default_metric": default, "frames_D": frames_d}
+    if isinstance(tj.get("cumulative"), dict):
+        out["cumulative"] = tj["cumulative"]
+    return out
 
 
 # ---------------------------------------------------------------- 지지점·ESL·검증

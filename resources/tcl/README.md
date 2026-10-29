@@ -112,6 +112,9 @@ chunk	50000
 | `chunk` | `50000` | 요소·노드 질의 청크 크기(id 범위 선택 집합을 청크마다 한 번 만들어 재사용, 행은 바로 파일로) |
 | `strain_system` | `elemental` | 텐서 결과 좌표계 `elemental`/`analysis`/`global`/`none`. **미검증**: `SetResolvedIn` → `SetResultSystem` → `SetSystemType` → `SetSystem` 순으로 시도, 모두 실패하면 기본계 + `warnings` 1회. 성공한 호출은 `done.json` `strain_system_call` |
 | `elem_selection` / `node_selection` | (빈 값) | 파트 선택 문자열 직접 지정(예: `component 12`). 비우면 `component N` → `comp N` → `part N` → `all`(다른 파트 행은 Python이 버림) |
+| `prev_file` | (빈 값) | **누적 낙하 씬**(v0.8.0, 계약 `esl_cumulative_input.md` §6.5): 서버 워커가 만든 `elem_id,prev_epsp,prev_eq` CSV(대상 파트 이전 런 소성). 있으면 패스 A 에서 "+prev" 순위(`vm+prev_eq`, `ep+prev_epsp`, 최종 raw > `cum_min_incr` 인 요소만) 상위 hot_k 를 H 에 더하고, 그 순위의 first-reach 후보도 D 에 더한다(H ≤ 4·hot_k, D ≤ 4·top_n). 없으면 기존과 같음 |
+| `frame0_pass` | `0` | `1` 이면 **F0 패스**: frame 0 파트 전 요소 `frame0.csv`(`elem_id,vm_hv,epsp`) — Python 이 h3d 가 이미 누적값인지 판정 |
+| `cum_min_incr` | `1e-5` | "+prev" 순위에 넣을 최종 raw 최소값(이번 낙하 증분이 없는 요소 제외) |
 
 ## 3. 3패스 추출과 출력 (`-output` 폴더)
 
@@ -152,6 +155,9 @@ h3d의 `Max_Strain`·`Plastic Strain`은 **요소별 누적 최대(max-hold)**�
   (직전 프레임 P 포함 시 최대 약 2배 ≈ 660 MB),
   `disp.csv` ≈ 80 B/행 × 220만 행 ≈ 180 MB, `final.csv` ≈ 30 MB, `history.csv` ≈ 400 × 126 행 ≈ 8 MB → 합계 약 0.55 GB(전량 추출 시 수 GB).
 - 클라우드 쪽: `esl.io.pack_results(<폴더>, model, out_dir)` → `final.npz`, `history.npz`, `strain_frames.npz`(+ `prev_*`), `disp.npz`(§7.3).
+- 누적 씬(`prev_file`·`frame0_pass` 키가 있을 때만): `done.json` 에 `cumulative:{prev_file_sha256, prev_n, frame0, frame0_rows, rank_sets:["raw","raw+prev"], min_incr}`,
+  `candidate_frames_prev`·`candidate_elems_prev`(기존 `candidate_frames` 는 raw 순위 그대로 — Python 재계산 대조용), `passes.F0`, progress.log `frame0.csv: …`·`frame0.csv done: N elements`.
+  `prev_file_sha256` 은 tcllib `sha256` 이 있을 때만(없으면 null). 키가 없으면 출력은 v0.7.2 와 바이트 단위로 같다.
 
 ## 4. probe.json
 

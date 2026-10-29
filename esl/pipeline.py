@@ -510,8 +510,11 @@ def _extract_cumulative(ctx: Context, d: str, model, info: dict, factor: float) 
     short = {"enabled": True, "files": [{"name": os.path.basename(f["path"]), "kinds": f["kinds"],
                                          "runname": f.get("runname"), "size": f.get("size")} for f in files],
              "epsp_mode": dg_ep["mode"], "eq_mode": dg_eq["mode"], "agg": agg, "n_prev_elems": int(pos.size),
-             "prev_max": epsp_init["max"], "coord_source": st["coord"]["source"],
-             "n_nodes_state": st["coord"]["n_nodes_state"], "thickness": st["thickness"],
+             "prev_max": epsp_init["max"], "prev_p99": epsp_init["p99"], "coord_source": st["coord"]["source"],
+             "n_nodes_state": st["coord"]["n_nodes_state"], "n_nodes_rad": st["coord"]["n_nodes_rad"],
+             "thickness": st["thickness"],
+             "diagnosis": {k: {x: dg.get(x) for x in ("mode", "detected", "r0", "mono", "n_S", "forced")}
+                           for k, dg in (("epsp", dg_ep), ("eq", dg_eq))},
              "warning_codes": summ["warning_codes"]}
     return {"short": short, "frames": {k: short[k] for k in ("enabled", "epsp_mode", "eq_mode", "agg",
                                                                "n_prev_elems")}, "frame0_source": f0src,
