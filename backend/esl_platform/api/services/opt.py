@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
+import re
 import uuid
 from typing import Any
 
@@ -38,6 +40,9 @@ from .opt_keepouts import validate_keepout
 from .opt_templates import TEMPLATE_EXT, load_template, template_arrays, template_meta, template_preview
 
 
+log = logging.getLogger("esl_platform.api")
+
+
 def cfg(ctx: AppContext) -> dict[str, Any]:
     return opt_settings(ctx.settings)
 
@@ -52,11 +57,11 @@ def _esl_error(exc) -> DomainError:
 
 
 def public_reason(reason: str | None, principal: Principal | None) -> str | None:
-    """솔버 미준비 사유: 서버 경로(': <경로>' 뒤)는 전역 관리자에게만, 일반 사용자는 문구만."""
+    """솔버 미준비 사유: 서버 경로(': <경로>' 뒤)·설정 키('(…)')는 전역 관리자에게만, 일반 사용자는 문구 + '관리자 문의'."""
     if reason is None or (principal is not None and principal.is_global_admin):
         return reason
-    head = reason.split(": ", 1)[0]
-    return head if head == reason else f"{head} — 관리자 문의"
+    head = re.split(r": |\(", reason, maxsplit=1)[0].rstrip()
+    return f"{head} — 관리자 문의"
 
 
 # ---------------------------------------------------------------- GET /opt/settings
@@ -70,7 +75,9 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
     try:
         ms = load_method_sources()
     except EslError as exc:
-        ms = {"error": exc.message}
+        # 코드 스냅샷에 resources/opt_method_sources.json 이 없음(v0.7.1 이전 배포) 등 — 화면은 설명 없이 동작(프런트가 error 표시)
+        log.warning("방법·출처 자료를 읽지 못함(GET /opt/settings method_sources.error): %s", exc.message)
+        ms = {"error": exc.message if principal is not None and principal.is_global_admin else "방법·출처 자료를 읽지 못했습니다(관리자 문의)"}
     lo = o["loads"]
     return {"enabled": bool(o["enabled"]), "solver_ready": ready, "solver_reason": reason,
             "size": {k: o["size"][k] for k in ("tol_rel", "plate_tol_rel", "require_inch")},
@@ -109,10 +116,13 @@ def _size_row(e: dict[str, Any]) -> dict[str, Any]:
 def _entry_meta(ctx: AppContext, e: dict[str, Any]) -> dict[str, Any]:
     try:
         with open(os.path.join(entry_folder(ctx, e), "entry.json"), encoding="utf-8") as fh:
-            return json.load(fh)
+            meta = json.load(fh)
     except (OSError, ValueError):
+        meta = None
+    if not isinstance(meta, dict):
         raise conflict("PREREQUISITE_MISSING", f"라이브러리 항목 파일(entry.json)을 읽을 수 없습니다: {e['id']}",
-                       missing=["entry_files"]) from None
+                       missing=["entry_files"])
+    return meta
 
 
 def _entry_mesh(ctx: AppContext, e: dict[str, Any]):
@@ -123,7 +133,7 @@ def _entry_mesh(ctx: AppContext, e: dict[str, Any]):
     try:
         ent = lib_entry.load(entry_folder(ctx, e), raw=True)
         return ent.mesh(), ent.meta, ent.raw
-    except (EslError, OSError, ValueError, KeyError):
+    except (EslError, OSError, ValueError, KeyError, TypeError, AttributeError):
         raise conflict("PREREQUISITE_MISSING", f"라이브러리 항목 원본(raw.npz)을 읽을 수 없습니다: {e['id']}",
                        missing=["entry_files"]) from None
 

@@ -302,6 +302,9 @@ def test_app_snapshot_carries_version_files():
     assert "'VERSION'" in items and "'CHANGELOG.md'" in items
     assert "'resources/tcl'" in items        # P3-UX §6: 서버 h3d 추출 TCL 을 코드 스냅샷에
     assert "'resources\\tcl'" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
+    # v0.7.2: 비드 최적화 방법·출처(GET /opt/settings) — 빠지면 새 비드 최적화 화면 설명 없음(v0.7.0 운영 빈 화면 원인)
+    assert "'resources/opt_method_sources.json'" in items
+    assert "'resources\\opt_method_sources.json'" in (ROOT / "deploy" / "collect-offline.ps1").read_text(encoding="utf-8-sig")
     assert "Write-EslBuildInfo -Source $Source -Dest $Dest" in common
     for k in ("version = $ver", "commit = (Get-EslGitCommit", "built_at ="):
         assert k in common, k

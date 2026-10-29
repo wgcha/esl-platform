@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { AppProvider } from "./AppContext";
 import { RunStatusProvider } from "../shell/RunStatus";
 import { ProjectList } from "../pages/ProjectList";
@@ -19,9 +20,13 @@ import { OptNew } from "../pages/opt/OptNew";
 import { OptDetail } from "../pages/opt/OptDetail";
 
 export function App() {
+  const loc = useLocation();
+  // 화면 오류 경계: 바깥(공통 컨텍스트 포함) + 페이지 단위(경로가 바뀌면 자동 해제)
   return (
+    <ErrorBoundary>
     <AppProvider>
       <RunStatusProvider>
+      <ErrorBoundary resetKey={loc.pathname + loc.search}>
       <Routes>
         <Route path="/" element={<ProjectList />} />
         <Route path="/p/:projectId" element={<CaseList />} />
@@ -43,7 +48,9 @@ export function App() {
         <Route path="/p/:projectId/opt/:optId" element={<OptDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ErrorBoundary>
       </RunStatusProvider>
     </AppProvider>
+    </ErrorBoundary>
   );
 }

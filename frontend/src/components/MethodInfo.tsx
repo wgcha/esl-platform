@@ -2,12 +2,15 @@
 // 문구·링크는 GET /opt/settings 의 method_sources(원본 resources/opt_method_sources.json) — 프런트는 표시 구성만.
 import { useEffect, useRef, useState } from "react";
 import type { LoadStrategy, ObjectiveNorm, OptMethodSources } from "../api/types";
+import { methodSourcesOk } from "../api/opt";
 
 const STRATS: LoadStrategy[] = ["A", "B", "C"];
 const NORMS: ObjectiveNorm[] = ["abs", "rel"];
 
-export function MethodInfo({ src, strategy, norm }: { src: OptMethodSources | null | undefined; strategy?: LoadStrategy | null; norm?: ObjectiveNorm | null }) {
+export function MethodInfo({ src: raw, strategy, norm }: { src: OptMethodSources | null | undefined; strategy?: LoadStrategy | null; norm?: ObjectiveNorm | null }) {
   const [open, setOpen] = useState(false);
+  // 자료를 못 읽은 서버({error}) = 버튼 비활성 + 사유 툴팁
+  const src = methodSourcesOk(raw) ? raw : null;
   const btn = useRef<HTMLButtonElement>(null);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -25,7 +28,7 @@ export function MethodInfo({ src, strategy, norm }: { src: OptMethodSources | nu
   };
   return (
     <span className="method-info">
-      <button ref={btn} type="button" className="info-btn" aria-label="방법·출처" aria-expanded={open} aria-haspopup="dialog" disabled={!src} onClick={() => setOpen((o) => !o)}>
+      <button ref={btn} type="button" className="info-btn" aria-label="방법·출처" aria-expanded={open} aria-haspopup="dialog" disabled={!src} title={!src && raw?.error ? raw.error : undefined} onClick={() => setOpen((o) => !o)}>
         ⓘ
       </button>
       {open && src && (

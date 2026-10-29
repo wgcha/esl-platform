@@ -7,7 +7,7 @@
 #                      이 묶음으로는 설치할 수 없다(install.ps1이 wheels에서 패키지를 찾지 못함).
 #   --frontend-dist  : 이미 빌드한 프런트 폴더(index.html)를 그대로 묶는다(npm 빌드 생략).
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL 포함), frontend/(vite build, base /esl/),
-#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
+#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
 # 시연 모드(deploy/demo)는 합성 Case를 스스로 만들므로 추가 자원이 없다.
 set -euo pipefail
@@ -67,6 +67,8 @@ run "cp -r esl '$OUTDIR/app/esl'"
 run "cp -r backend/esl_platform '$OUTDIR/app/backend/esl_platform'"
 run "cp -r worker/esl_worker '$OUTDIR/app/worker/esl_worker'"
 run "cp -r migrations '$OUTDIR/app/migrations'"
+run "mkdir -p '$OUTDIR/app/resources'"
+run "cp -r resources/tcl resources/opt_method_sources.json '$OUTDIR/app/resources/'"
 run "cp alembic.ini pyproject.toml VERSION CHANGELOG.md '$OUTDIR/app/'"
 # 코드 스냅샷 버전 기록(계약 esl_p3_ux.md §3): BUILD.json {version, commit, built_at}
 APP_VER="$(tr -d ' \r\n' < VERSION)"

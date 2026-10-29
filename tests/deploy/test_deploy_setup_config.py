@@ -145,6 +145,38 @@ def test_old_config_gets_p3_keys(tmp_path):
     assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["worker"]["slots"] == 3
 
 
+def test_old_config_without_opt_run_hint_only(tmp_path):
+    """v0.7.2: v0.6.0 설정(opt_run 섹션·altair.optistruct_path 없음) → 비활성 그대로(파일 자동 수정 없음) + 안내 경고 1줄."""
+    inp = _inputs(tmp_path)
+    r1 = _run("write", inp)
+    assert sc.OPT_RUN_HINT not in r1["warnings"]                      # 새 설치(예시 = enabled + 경로) → 안내 없음
+    cfg = Path(r1["config_path"])
+    out, skip = [], False
+    for ln in cfg.read_text(encoding="utf-8").splitlines():
+        if ln.startswith("opt_run:"):
+            skip = True
+            continue
+        if skip and (ln.startswith((" ", "#")) or not ln.strip()):
+            continue
+        skip = False
+        if ln.strip().startswith("optistruct_path:"):
+            continue
+        out.append(ln)
+    cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+    before = cfg.read_text(encoding="utf-8")
+    d0 = yaml.safe_load(before)
+    assert "opt_run" not in d0 and "optistruct_path" not in d0["altair"]
+    r2 = _run("write", inp)
+    assert [w for w in r2["warnings"] if "opt_run" in w] == [sc.OPT_RUN_HINT]
+    assert "opt_run.enabled" in sc.OPT_RUN_HINT and "altair.optistruct_path" in sc.OPT_RUN_HINT
+    assert not [k for k in r2["config_changed_keys"] if k.startswith("opt_run") or "optistruct" in k]
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert "opt_run" not in d and "optistruct_path" not in d["altair"]
+    assert r2["write"]["validation"]["ok"] is True
+    assert sc.opt_run_hint({"opt_run": {"enabled": False}, "altair": {"optistruct_path": "C:/x.bat"}}) == sc.OPT_RUN_HINT
+    assert sc.opt_run_hint({"opt_run": {"enabled": True}, "altair": {"optistruct_path": "C:/x.bat"}}) is None
+
+
 def test_flow_style_config_not_rewritten(tmp_path):
     """흐름 표기(예시 dev 설정 복사본)는 줄 편집으로 안전하게 고칠 수 없으면 바꾸지 않고 안내."""
     inp = _inputs(tmp_path)

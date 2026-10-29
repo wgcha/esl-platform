@@ -1,12 +1,84 @@
 // v0.7.0 비드 최적화 서버 실행 API(계약 esl_opt_run.md §5). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, request } from "./client";
 import type {
-  DeformMode, EntryOut, KeepoutSetIn, KeepoutSetOut, LoadRowStatus, LoadStrategy, MeshCheckOut, ObjectiveNorm, OptFileOut, OptRunIn, OptRunOut, OptScenario,
+  DeformMode, EntryOut, KeepoutSetIn, KeepoutSetOut, LoadRowStatus, LoadStrategy, MeshCheckOut, ObjectiveNorm, OptFileOut, OptMethodSources, OptRunIn, OptRunOut, OptScenario,
   OptSettingsOut, PlanViewOut, S1CheckIn, S1CheckOut, TemplateCheckIn, TemplateDeleteOut, TemplateIn, TemplateOut, TemplateStatus,
 } from "./types";
 
+// ---------------------------------------------------------------- v0.7.2 응답 보정(빈 화면 방지)
+const DEFAULT_SETTINGS: Omit<OptSettingsOut, "method_sources"> = {
+  enabled: false,
+  solver_ready: false,
+  solver_reason: null,
+  size: { tol_rel: 0.02, plate_tol_rel: 0.05, require_inch: true },
+  bead_defaults: { angle: 45, min_width: 60, height: 10 },
+  keepout_auto: { hole_radius_mm: 15, edge_band_mm: 10 },
+  loads: { default_objective_norm: "abs", default_strategy: "A", mac_merge: 0.95, max_cases: 20, default_k: 5 },
+  max_rects: 20,
+  max_entries: 200,
+  template_max_elems: 500000,
+  template_ext: [".rad", ".inc", ".fem"],
+  max_preview_points: 20000,
+};
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+/** 방법·출처 자료가 온전한지(서버가 자료 파일을 못 읽으면 {error} 만 온다) */
+export const methodSourcesOk = (m: OptMethodSources | null | undefined): m is OptMethodSources =>
+  !!m && !m.error && Array.isArray(m.summary_ko) && isObj(m.strategies) && isObj(m.objective_norms) && Array.isArray(m.sources);
+
+/** 방법·출처: 빠진 칸은 빈 문구(error 유지) — 화면은 설명 없이 동작 */
+export function normalizeMethodSources(raw: unknown): OptMethodSources {
+  const m = isObj(raw) ? raw : {};
+  const st = isObj(m.strategies) ? m.strategies : {};
+  const on = isObj(m.objective_norms) ? m.objective_norms : {};
+  const out: OptMethodSources = {
+    version: str(m.version),
+    summary_ko: Array.isArray(m.summary_ko) ? m.summary_ko.filter((x): x is string => typeof x === "string") : [],
+    strategies: { A: str(st.A), B: str(st.B), C: str(st.C) },
+    objective_norms: { abs: str(on.abs), rel: str(on.rel) },
+    sources: Array.isArray(m.sources) ? (m.sources.filter((x) => isObj(x) && typeof x.title === "string") as unknown as OptMethodSources["sources"]) : [],
+  };
+  const err = typeof m.error === "string" ? m.error : !isObj(raw) || !isObj(m.strategies) ? "방법·출처 자료가 없습니다" : null;
+  if (err) out.error = err;
+  return out;
+}
+
+/** GET /opt/settings 응답 보정: 빠졌거나 null 인 칸은 기본값(꺼짐 쪽) — 이전 서버·부분 응답에도 화면이 깨지지 않게 */
+export function normalizeOptSettings(raw: unknown): OptSettingsOut {
+  const r = isObj(raw) ? raw : {};
+  const sub = <K extends "size" | "bead_defaults" | "keepout_auto" | "loads">(k: K): OptSettingsOut[K] => {
+    const v = isObj(r[k]) ? (r[k] as Record<string, unknown>) : {};
+    const d = DEFAULT_SETTINGS[k] as unknown as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(d).map((x) => [x, v[x] ?? d[x]])) as unknown as OptSettingsOut[K];
+  };
+  const num = (k: "max_rects" | "max_entries" | "template_max_elems" | "max_preview_points") => (typeof r[k] === "number" ? (r[k] as number) : DEFAULT_SETTINGS[k]);
+  return {
+    enabled: r.enabled === true,
+    solver_ready: r.solver_ready === true,
+    solver_reason: typeof r.solver_reason === "string" ? r.solver_reason : null,
+    size: sub("size"),
+    bead_defaults: sub("bead_defaults"),
+    keepout_auto: sub("keepout_auto"),
+    loads: sub("loads"),
+    method_sources: normalizeMethodSources(r.method_sources),
+    max_rects: num("max_rects"),
+    max_entries: num("max_entries"),
+    template_max_elems: num("template_max_elems"),
+    template_ext: Array.isArray(r.template_ext) ? (r.template_ext as string[]) : DEFAULT_SETTINGS.template_ext,
+    max_preview_points: num("max_preview_points"),
+  };
+}
+
+/** 실행 불가 사유 한 줄(꺼짐·솔버 미준비). 경로는 서버가 관리자에게만 solver_reason 에 넣는다. null = 실행 가능 */
+export function optBlockedReason(st: OptSettingsOut): string | null {
+  if (!st.enabled) return st.solver_reason ?? "비드 최적화가 서버에서 꺼져 있습니다 — 관리자 문의";
+  if (!st.solver_ready) return st.solver_reason ?? "서버 OptiStruct 경로가 설정되지 않았습니다 — 관리자 문의";
+  return null;
+}
+
 export const opt = {
-  settings: () => request<OptSettingsOut>("GET", "/opt/settings"),
+  settings: () => request<unknown>("GET", "/opt/settings").then(normalizeOptSettings),
   checkTemplate: (body: TemplateCheckIn) => request<MeshCheckOut>("POST", "/opt/templates/check", { body }),
   createTemplate: (body: TemplateIn) => request<TemplateOut>("POST", "/opt/templates", { body }),
   templates: (q: { status?: TemplateStatus; q?: string } = {}) => request<TemplateOut[]>("GET", "/opt/templates", { query: { ...q } }),
@@ -79,7 +151,7 @@ export interface SizeOf {
   L_xi: number | null;
   L_eta: number | null;
 }
-export const sizeOf = (e: EntryOut): SizeOf => ({ inch: e.size?.inch ?? e.model.inch ?? null, L_xi: e.size?.L_xi ?? null, L_eta: e.size?.L_eta ?? null });
+export const sizeOf = (e: EntryOut): SizeOf => ({ inch: e.size?.inch ?? e.model?.inch ?? null, L_xi: e.size?.L_xi ?? null, L_eta: e.size?.L_eta ?? null });
 
 const relDiff = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-12);
 
