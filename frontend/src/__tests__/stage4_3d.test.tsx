@@ -1,8 +1,9 @@
 // V-L3-11: ④ 화면(scene mock) — 카드 순서, 표 행 수 = 화살표 수, 군집 단계 표, 표 ↔ 3D 선택 양방향, 변형 형상 컨트롤, WebGL 없음·413 폴백, ?run= 읽기 전용.
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ArrowSpec } from "../view3d/arrows";
-import type { PickEvent, SceneApi } from "../view3d/sceneApi";
+import { PROJ_KEY, readProjection, writeProjection } from "../view3d/projection";
+import type { PickEvent, SceneApi, SceneOptions } from "../view3d/sceneApi";
 
 const h = vi.hoisted(() => ({ webgl: true, scenes: [] as unknown[], loadFails: false }));
 
@@ -11,14 +12,21 @@ vi.mock("../view3d/loadThree", () => ({
   loadScene: async () => {
     if (h.loadFails) throw new Error("chunk");
     return {
-      createScene: () => {
+      createScene: (_c: unknown, opts: unknown) => {
         const calls: Record<string, unknown[][]> = {};
         let pick: ((e: PickEvent) => void) | null = null;
         const rec = (name: string) => (...a: unknown[]) => {
           (calls[name] ??= []).push(a);
         };
+        let proj = (opts as { projection?: string }).projection ?? "ortho";
         const api = {
           calls,
+          opts,
+          setProjection: (p: string) => {
+            rec("setProjection")(p);
+            proj = p;
+          },
+          projection: () => proj,
           emit: (e: PickEvent) => pick?.(e),
           setGeometry: rec("setGeometry"),
           setColors: rec("setColors"),
@@ -41,7 +49,7 @@ vi.mock("../view3d/loadThree", () => ({
 
 import { renderApp } from "../test/render";
 
-type FakeScene = SceneApi & { calls: Record<string, unknown[][]>; emit: (e: PickEvent) => void };
+type FakeScene = SceneApi & { calls: Record<string, unknown[][]>; emit: (e: PickEvent) => void; opts: SceneOptions };
 const scene = () => h.scenes[h.scenes.length - 1] as FakeScene;
 const last = (name: string) => {
   const c = scene().calls[name] ?? [];
@@ -59,6 +67,7 @@ beforeEach(() => {
   h.webgl = true;
   h.loadFails = false;
   h.scenes.length = 0;
+  localStorage.removeItem(PROJ_KEY);
 });
 
 describe("V-L3-11 ④ 3D 하중 보기", () => {
@@ -229,5 +238,60 @@ describe("V-L3-11 대체 경로", () => {
     });
     expect(titles.indexOf("3D 하중 보기")).toBeGreaterThanOrEqual(0);
     expect(titles.indexOf("3D 하중 보기")).toBeLessThan(titles.indexOf("F_eq 상위 노드"));
+  });
+});
+
+describe("v0.7.1 투영 토글(원근/직교)", () => {
+  const box = () => screen.getByTestId("v3d-persp") as HTMLInputElement;
+
+  it("기본값 = 직교: 체크 해제, createScene({projection: 'ortho'})", async () => {
+    renderApp(url("c-demo", 4));
+    await ready();
+    expect(box().checked).toBe(false);
+    expect(scene().opts.projection).toBe("ortho");
+    expect(scene().projection()).toBe("ortho");
+    expect(screen.getByText("원근")).toBeTruthy();
+  });
+
+  it("체크 → setProjection('persp') + 저장, 해제 → 'ortho' + 저장", async () => {
+    renderApp(url("c-demo", 4));
+    await ready();
+    fireEvent.click(box());
+    await waitFor(() => expect(last("setProjection")).toEqual(["persp"]));
+    expect(box().checked).toBe(true);
+    expect(localStorage.getItem(PROJ_KEY)).toBe("persp");
+    fireEvent.click(box());
+    await waitFor(() => expect(last("setProjection")).toEqual(["ortho"]));
+    expect(localStorage.getItem(PROJ_KEY)).toBe("ortho");
+  });
+
+  it("다시 열면 저장한 투영으로 복원", async () => {
+    localStorage.setItem(PROJ_KEY, "persp");
+    renderApp(url("c-demo", 4));
+    await ready();
+    expect(box().checked).toBe(true);
+    expect(scene().opts.projection).toBe("persp");
+  });
+
+  it("저장소 오류·잘못된 값 → 기본값 직교로 동작", async () => {
+    localStorage.setItem(PROJ_KEY, "fisheye");
+    renderApp(url("c-demo", 4));
+    await ready();
+    expect(box().checked).toBe(false);
+    cleanup();
+    h.scenes.length = 0;
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    const spySet = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    try {
+      expect(readProjection()).toBe("ortho");
+      expect(() => writeProjection("persp")).not.toThrow();
+    } finally {
+      spy.mockRestore();
+      spySet.mockRestore();
+    }
   });
 });

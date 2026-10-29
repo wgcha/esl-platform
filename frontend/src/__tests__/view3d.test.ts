@@ -350,7 +350,7 @@ describe("manifest·mock 정합(백엔드와 맞춰볼 형태)", () => {
 describe("V-L3-13 번들 규칙", () => {
   // Vite 가 원문 문자열로 읽는다(Node 타입 없이)
   const raw = (g: Record<string, unknown>) => Object.entries(g).map(([k, v]) => [k, v as string] as const);
-  const sources = raw(import.meta.glob("../**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true })).filter(([k]) => !k.includes("__tests__"));
+  const sources = raw(import.meta.glob("../**/*.{ts,tsx}", { query: "?raw", import: "default", eager: true })).filter(([k]) => !k.includes("__tests__") && !/\.test\.tsx?$/.test(k)); // 시험 파일은 번들 대상 아님
   const text = (g: Record<string, unknown>) => raw(g)[0][1];
 
   it("package.json: three 정확 버전 0.186.1", () => {

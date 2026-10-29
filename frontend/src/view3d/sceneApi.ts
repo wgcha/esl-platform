@@ -2,6 +2,7 @@
 // 시험에서는 이 인터페이스를 흉내 내는 mock 을 끼운다.
 import type { ArrowSpec } from "./arrows";
 import type { V3 } from "./pick";
+import type { Projection } from "./projection";
 import type { SupportSpec } from "./supports";
 
 export interface GeoData {
@@ -23,6 +24,8 @@ export interface SceneOptions {
   /** bbox 대각선(mm) — 화살표·기호 크기 기준 */
   diag: number;
   bbox: { min: number[]; max: number[] };
+  /** 처음 투영(없으면 DEFAULT_PROJECTION = 직교) */
+  projection?: Projection;
 }
 
 export interface SceneApi {
@@ -40,6 +43,9 @@ export interface SceneApi {
   focus(point: V3): void;
   /** bbox 맞춤(등각 +X+Y+Z, up = +Z) */
   fit(): void;
+  /** 투영 전환(원근/직교) — 위치·타깃·방향 보존, 전환 전후 타깃 거리의 보이는 높이 같음 */
+  setProjection(p: Projection): void;
+  projection(): Projection;
   onPick(cb: (e: PickEvent) => void): void;
   stats(): { renders: number };
   dispose(): void;
