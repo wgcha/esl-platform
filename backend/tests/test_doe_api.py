@@ -609,3 +609,32 @@ def test_create_rejects_ineligible_entries(client, world, engine):
     d = r.json()["detail"]
     assert r.status_code == 422 and d["code"] == "ENTRY_NOT_ELIGIBLE" and d["reasons"] == {world["b"]: "FAIL"}
 
+
+
+def _to_legacy(engine, eid):
+    with engine.begin() as c:
+        c.execute(text("UPDATE library_entries SET quality = (quality - 'scheme') || CAST(:q AS jsonb) WHERE id=:i"),
+                  {"i": eid, "q": '{"status": "LEGACY"}'})
+
+
+def test_clone_retry_preview_gate_ineligible(client, world, engine, esl_root):
+    """통합 검증 지적 1c: 복제·다음 단계 작업도 MR-D-10 게이트(대상 ESL 이 LEGACY 가 되면 422 ENTRY_NOT_ELIGIBLE)."""
+    s = _ready(client, world, engine, esl_root)
+    _to_legacy(engine, world["b"])
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
+    d = r.json()["detail"]
+    assert r.status_code == 422 and d["code"] == "ENTRY_NOT_ELIGIBLE" and d["entry_ids"] == [world["b"]], r.text
+    assert d["reasons"] == {world["b"]: "LEGACY"}
+    g = api(client, "GET", f"/doe/studies/{s['id']}").json()
+    r = api(client, "POST", f"/doe/studies/{s['id']}/preview", json={"version": g["version"], "spec": SPEC})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "ENTRY_NOT_ELIGIBLE", r.text
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM bead_does")).scalar_one() == 1      # 복제 행 없음
+
+
+def test_prep_retry_gate_ineligible(client, world, engine):
+    s = _create(client, world)
+    finish_job(engine, s["job"]["id"], "FAILED", "PAICAD_INPUT")
+    _to_legacy(engine, world["a"])
+    r = client.post(f"{API}/jobs/{s['job']['id']}/retry", headers=W)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "ENTRY_NOT_ELIGIBLE", r.text

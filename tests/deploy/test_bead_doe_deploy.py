@@ -217,7 +217,7 @@ def test_install_common_bead_doe_function():
     assert "(Get-EslLockPackages -LockFile $LockFile).Core" in pk and "'-r'" not in pk   # 기본 의존성만(OCP·gmsh 실패가 기존 설치를 막지 않음)
     f = _fn(t, "Install-EslBeadDoe")
     assert "} catch {" in f and "return [pscustomobject]$res" in f
-    assert "Write-Warning \"비드 DOE 비활성(다른 기능은 그대로)" in f
+    assert "Write-Warning \"강성 평가 스터디 비활성(다른 기능은 그대로)" in f
     for k in ("'verify'", "'check'" if "'check'" in f else "check --lock", "'--no-index', '--no-deps', '--force-reinstall'",
               ".BeadDoe", "'paicad.exe'", "--find-links"):
         assert k in f, k
@@ -268,7 +268,7 @@ def test_collect_dry_run_prints_paicad_step(tmp_path, fake_frontend):
     assert len(line) == 1 and "--repo '/x/physicsai'" in line[0] and not out.exists()
     r = subprocess.run(["bash", str(DEPLOY / "collect-offline.sh"), "--dry-run", "--no-paicad", "--out", str(out), "--frontend-dist",
                         str(fake_frontend)], capture_output=True, text=True, timeout=60, env={**os.environ, "PYTHON": sys.executable})
-    assert "paicad_wheel.py collect" not in r.stdout and "비드 DOE 는 비활성" in r.stdout
+    assert "paicad_wheel.py collect" not in r.stdout and "강성 평가 스터디 는 비활성" in r.stdout
 
 
 # ------------------------------------------------------------------ setup_config 자동 감지
@@ -343,7 +343,7 @@ def test_doe_autodetect_adds_exe_and_enabled(tmp_path, doe_code):
     assert d["bead_doe"] == {"enabled": True, "paicad": {"exe": exe}}
     assert r["doe_autodetect"]["added"] == {"bead_doe.enabled": True, "bead_doe.paicad.exe": exe}
     line = r["write"]["doe_autodetect"]["line"]
-    assert line.startswith("비드 DOE 자동 설정: bead_doe.enabled = true, bead_doe.paicad.exe = ") and "(백업 " in line
+    assert line.startswith("강성 평가 스터디 자동 설정: bead_doe.enabled = true, bead_doe.paicad.exe = ") and "(백업 " in line
     bk = r["write"]["doe_autodetect"]["backup"]
     assert Path(bk).read_text(encoding="utf-8") == before
     assert sc.DOE_AUTODETECT_NOTE in cfg.read_text(encoding="utf-8")
@@ -437,7 +437,7 @@ def test_build_from_github_matches_lock(tmp_path):
 
 def test_manuals_paicad_sections():
     admin = (ROOT / "docs" / "manual" / "admin.md").read_text(encoding="utf-8")
-    assert "#### 2.7.1 비드 DOE 형상 엔진 paicad·OCP·gmsh(v0.9.0)" in admin
+    assert "#### 2.7.1 강성 평가 스터디 형상 엔진 paicad·OCP·gmsh(v0.9.0, 이전 이름: 비드 DOE)" in admin
     for s in ("paicad.exe' version --json", "import gmsh", "paicad_wheels", "physicsai_root", "-NoPaicad", "PAICAD_OCP_MISSING"):
         assert s in admin, s
     chk = (ROOT / "docs" / "manual" / "bead_doe_check.md").read_text(encoding="utf-8")

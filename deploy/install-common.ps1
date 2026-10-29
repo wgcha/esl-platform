@@ -152,7 +152,7 @@ function Install-EslBeadDoe {
         if ($pkgs.Count) {
             $a = @('install')
             if ($Wheels) { $a += @('--no-index', '--find-links', $Wheels) }
-            Invoke-EslPip -Py $VenvPy -PipArgs ($a + $pkgs) -What '비드 DOE 의존성(cadquery-ocp·gmsh) 설치'
+            Invoke-EslPip -Py $VenvPy -PipArgs ($a + $pkgs) -What '강성 평가 스터디 의존성(cadquery-ocp·gmsh) 설치'
         }
         $lock = Get-Content -Raw -Encoding UTF8 -LiteralPath $PaicadLock | ConvertFrom-Json
         $whl = $null
@@ -186,11 +186,11 @@ function Install-EslBeadDoe {
     } catch {
         $res.Reason = $_.Exception.Message
     }
-    foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "비드 DOE: $w" } }
+    foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "강성 평가 스터디: $w" } }
     if ($res.Ok) {
-        Write-EslStep "비드 DOE 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
+        Write-EslStep "강성 평가 스터디 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
     } else {
-        Write-Warning "비드 DOE 비활성(다른 기능은 그대로): $($res.Reason)"
+        Write-Warning "강성 평가 스터디 비활성(다른 기능은 그대로): $($res.Reason)"
     }
     return [pscustomobject]$res
 }

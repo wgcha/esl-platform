@@ -35,7 +35,7 @@ from ...core.repositories import opt as opt_repo
 from ..context import AppContext
 from . import bundle as bundle_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder, entry_size, require_eligible
+from .library import backfill_opt_meta, entry_folder, entry_size, require_eligible, require_eligible_ids
 from .opt_keepouts import validate_keepout
 from .opt_templates import TEMPLATE_EXT, load_template, template_arrays, template_meta, template_preview
 
@@ -452,6 +452,7 @@ def retry_run(conn, principal: Principal, job: dict[str, Any]) -> dict[str, Any]
     r = opt_repo.get_run(conn, job["opt_run_id"], for_update=True)
     if r is None:
         raise not_found("OPT_RUN_NOT_FOUND", "최적화 실행을 찾을 수 없습니다")
+    require_eligible_ids(conn, r.get("entry_ids"))       # MR-D-10: 재시도도 적격 항목만(통합 검증 지적 1c)
     try:
         with conn.begin_nested():
             new = jobs_repo.insert_job(conn, case_id=None, opt_run_id=r["id"], project_id=job["project_id"],

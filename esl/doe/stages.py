@@ -128,7 +128,7 @@ def run_stage(spec: dict, echo=print) -> dict:
     fn = {"bd_input": bd_input, "bd_mesh0": bd_mesh0, "bd_loads": bd_loads, "bd_matrix": bd_matrix,
           "bd_eval": bd_eval, "bd_post": bd_post}.get(spec.get("stage"))
     if fn is None:
-        raise EslError("INPUT_INVALID", f"알 수 없는 비드 DOE 단계: {spec.get('stage')}")
+        raise EslError("INPUT_INVALID", f"알 수 없는 강성 평가 스터디 단계: {spec.get('stage')}")
     return fn(spec, echo)
 
 

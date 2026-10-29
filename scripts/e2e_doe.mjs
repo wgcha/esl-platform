@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v0.9.0 비드 DOE 실서버 E2E(계약 esl_bead_doe.md §3·§10·§12, V-BD-15·17): 임시 PostgreSQL + uvicorn(backend) + 워커
+// v0.9.0 비드 DOE(v0.10.0 이름: 강성 평가 스터디) 실서버 E2E(계약 esl_bead_doe.md §3·§10·§12, V-BD-15·17): 임시 PostgreSQL + uvicorn(backend) + 워커
 // (가짜 paicad tests/fake_paicad.py, gmsh 실제) + 빌드된 프런트(/esl/ 하위 경로, e2e_ui.mjs 와 같은 프록시 구조)를 띄우고
 // Playwright(Chromium, 2560×1440)로
 //   ③ 다른 모델(STEP만): 라이브러리 체크 → [선택한 ESL로 비드 DOE] → 시나리오 ③ → STEP 업로드 → 입력 준비 → 변수(D1·D2
@@ -331,13 +331,13 @@ async function runScenarios(base, inp) {
 
   async function newStudyFlow(scenario, stepFile) {
     if (scenario === "step") {
-      // 라이브러리에서 3개 체크 → [선택한 ESL로 비드 DOE (3)]
+      // 라이브러리 ESL 목록에서 3개 체크 → 선택 줄 [강성 평가 스터디 (3)](v0.10.0)
       await page.goto(`${base}/esl/p/${PID}/library`);
-      const boxes = page.locator('input[type="checkbox"][aria-label$=" 선택"]');
+      const boxes = page.getByRole("table", { name: "라이브러리 항목" }).locator('tbody input[type="checkbox"]');
       await boxes.first().waitFor({ timeout: 30000 });
       const n = await boxes.count();
       for (let i = 0; i < n; i++) await boxes.nth(i).check();
-      await page.getByRole("button", { name: `선택한 ESL로 비드 DOE (${n})` }).click();
+      await page.getByTestId("pick-bar").getByRole("button", { name: `강성 평가 스터디 (${n})` }).click();
       await page.waitForURL(/\/doe\/new\?entries=/);
       await page.getByText("③ 다른 모델(STEP만)").click();
     } else {
@@ -409,13 +409,13 @@ async function runScenarios(base, inp) {
     const shots = [];
     // 실행 가능(같은 matrix_sha256 미리보기 성공) 상태에서 화면 저장
     await page.waitForFunction(() => {
-      const b = [...document.querySelectorAll("button")].find((x) => x.textContent?.trim() === "DOE 실행");
+      const b = [...document.querySelectorAll("button")].find((x) => x.textContent?.trim() === "강성 평가 실행");
       return b && !b.disabled;
     }, null, { timeout: 30000 });
     if (await page.getByTestId("preview-stale").count()) fail("미리보기 직후 stale 표시");
     await page.evaluate(() => window.scrollTo(0, 0));
     if (scenario === "step") shots.push(await shot("e2e_1_step_params_preview"));
-    await page.getByRole("button", { name: "DOE 실행" }).click();
+    await page.getByRole("button", { name: "강성 평가 실행" }).click();
     const s2 = await waitPhase(sid, ["DONE"], 600000);
     auditStudy(s2, true);
     const res = (await api(`/doe/studies/${sid}/results`)).body;
@@ -482,12 +482,12 @@ async function runScenarios(base, inp) {
   const hist = (await api(`/history?project_id=${PID}&limit=50`)).body;
   const doeItems = (hist.items ?? []).filter((it) => String(it.job_type).startsWith("DOE_"));
   if (doeItems.length < 6) fail("이력 DOE 작업 수", doeItems.map((x) => x.job_type));
-  await page.waitForFunction(() => /비드 DOE 실행/.test([...document.querySelectorAll("table td")].map((t) => t.textContent).join(" ")), null, { timeout: 30000 });
+  await page.waitForFunction(() => /강성 평가 실행/.test([...document.querySelectorAll("table td")].map((t) => t.textContent).join(" ")), null, { timeout: 30000 });
   const txt = await page.evaluate(() => [...document.querySelectorAll("table td")].map((t) => t.textContent).join(" | "));
-  for (const lb of ["비드 DOE 준비", "비드 DOE 미리보기", "비드 DOE 실행", "③ 다른 모델(STEP만) · 완료", "① 같은 모델 · 완료"]) if (!txt.includes(lb)) fail(`이력 표 ${lb} 없음`, txt.slice(0, 1500));
+  for (const lb of ["강성 평가 준비", "강성 평가 미리보기", "강성 평가 실행", "③ 다른 모델(STEP만) · 완료", "① 같은 모델 · 완료"]) if (!txt.includes(lb)) fail(`이력 표 ${lb} 없음`, txt.slice(0, 1500));
   const runItem = doeItems.find((x) => x.job_type === "DOE_RUN");
   await page.goto(`${base}/esl/p/${PID}/jobs/${runItem.job_id ?? runItem.id}`);
-  await page.getByRole("heading", { name: /작업 상세 — 비드 DOE 실행/ }).waitFor({ timeout: 30000 });
+  await page.getByRole("heading", { name: /작업 상세 — 강성 평가 실행/ }).waitFor({ timeout: 30000 });
   const rtxt = (await page.locator("body").textContent()) ?? "";
   for (const lb of ["BD_BASELINE", "베이스라인", "안별 해석", "순위·보고서"]) if (!rtxt.includes(lb)) fail(`작업 상세 단계 라벨 ${lb} 없음`);
 

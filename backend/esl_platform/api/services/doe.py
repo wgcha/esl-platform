@@ -56,7 +56,7 @@ from ..context import AppContext
 from . import bundle as bundle_svc
 from . import uploads as up_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder, require_eligible
+from .library import backfill_opt_meta, entry_folder, require_eligible, require_eligible_ids
 from .opt import _entry_mesh, _s1_base, _same_model_rows, _size_row, entries_in_order
 
 log = logging.getLogger("esl_platform.api")
@@ -519,6 +519,8 @@ def _insert_study_job(ctx: AppContext, principal: Principal, *, sid: str, projec
 
 def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, params: dict[str, Any], *,
                 warns: list | None = None, retry_of: str | None = None, resume: int | None = None) -> dict[str, Any]:
+    # MR-D-10: 스터디의 모든 작업(준비·미리보기·실행·재시도)은 대상 ESL 이 지금도 적격일 때만(통합 검증 지적 1c)
+    require_eligible_ids(conn, s.get("entry_ids"))
     try:
         with conn.begin_nested():
             job = jobs_repo.insert_job(conn, case_id=None, bead_doe_id=s["id"], project_id=s["project_id"],
@@ -837,6 +839,7 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
     with ctx.engine.connect() as conn:
         s = load_study(conn, sid)
         require_execute(principal, s["project_id"])
+        require_eligible_ids(conn, s["entry_ids"])          # MR-D-10: 복제도 적격 항목만(422 ENTRY_NOT_ELIGIBLE)
         prep_job = doe_repo.latest_job(conn, sid, job_type="DOE_PREP")
         # §15 업로드는 본인 것만: 복제는 원 연구의 STEP·B 메시 업로드(서버 경로)를 그대로 다시 쓰므로 업로드 소유자만(검증 지적)
         from ...core.db.tables import uploads as uploads_t

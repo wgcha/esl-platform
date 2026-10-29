@@ -237,11 +237,11 @@ handle /esl/* {
 
 서버에 따로 복사할 원본 자원이 없다(`deploy\RESOURCES.txt`). 입력(rad + 결과 CSV)은 사용자 PC에서 HyperView TCL로 만들고(루트 `update.bat` — 사용자 PC용), 서버는 `storage.input_roots` 아래에서 읽기만 한다. 솔버 가속(pypardiso·MKL, pyamg, psutil)은 `requirements.lock`에 포함되어 설치되며 환경 점검 `solver.*`로 확인한다.
 
-#### 2.7.1 비드 DOE 형상 엔진 paicad·OCP·gmsh(v0.9.0) — 설치·확인
+#### 2.7.1 강성 평가 스터디 형상 엔진 paicad·OCP·gmsh(v0.9.0, 이전 이름: 비드 DOE) — 설치·확인
 
-비드 DOE(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
-설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 비드 DOE 만 비활성**이다
-(콘솔 경고 `비드 DOE 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
+강성 평가 스터디(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
+설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 강성 평가 스터디 만 비활성**이다
+(콘솔 경고 `강성 평가 스터디 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
 관리자 권한은 필요 없다(설치 venv 안에만 설치).
 
 | 무엇 | 고정 위치 | 설치 |
@@ -251,14 +251,14 @@ handle /esl/* {
 
 - **오프라인 묶음(§2.2)**: `collect-offline.ps1` 이 lock 커밋의 `packages/paicad` 를 GitHub 에서 그 커밋만 받아(또는 `-PhysicsaiRepo <로컬 physicsai 저장소>`, 읽기만)
   빌드·정규화하고 버전·sha256 을 lock 과 대조해 `wheels\paicad-0.14.0-py3-none-any.whl` 로 넣는다. **불일치면 묶음을 만들지 않고 중단**한다.
-  이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 비드 DOE 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
+  이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 강성 평가 스터디 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
   `install.ps1`·`update.ps1` 은 묶음의 `wheels` 에서 설치한다(추가 매개변수 없음).
 - **git 폴더 설치(§2.0·§3.0)**: paicad 는 PyPI 에 없으므로 `<git>\.runtime\deploy.json` 에 둘 중 하나를 적는다(없으면 이미 설치된 paicad 확인만, 없으면 DOE 비활성).
   - `"paicad_wheels": "E:/.../wheels"` — 위 묶음의 `wheels` 폴더처럼 `paicad-0.14.0-py3-none-any.whl` 이 있는 폴더(대조 후 설치)
   - `"physicsai_root": "E:/.../physicsai-platform"` — lock 커밋이 들어 있는 physicsai 저장소(읽기만 — 커밋이 없으면 그 저장소에서 `git fetch` 후 다시 실행).
     `<런타임>\paicad-wheel` 에 빌드한다(사내 pip 설정으로 setuptools 를 받음)
 - 설정: 설치 venv 에 `paicad.exe` 가 **실제 있을 때만** `setup_config.py` 가 `bead_doe.paicad.exe`(비었을 때만)·`bead_doe.enabled: true`(키가 없을 때만 —
-  명시 `false` 는 그대로, 경고 1줄)를 넣는다. 바꾸기 전 `_backup\<UTC>\esl_platform.yaml`, 콘솔 1줄 `비드 DOE 자동 설정: …`. `commands.paicad_*` 는 코드 기본값
+  명시 `false` 는 그대로, 경고 1줄)를 넣는다. 바꾸기 전 `_backup\<UTC>\esl_platform.yaml`, 콘솔 1줄 `강성 평가 스터디 자동 설정: …`. `commands.paicad_*` 는 코드 기본값
   (argv[0] `{paicad}` = `bead_doe.paicad.exe`)이라 쓰지 않는다. `upload.allowed_ext` 를 직접 적은 설정에는 `.step`·`.stp` 를 한 번 보충한다(상태 `state\ext_supplement.json` 키 `0.9.0`).
 - **확인 명령**(설치 후, 일반 PowerShell):
 

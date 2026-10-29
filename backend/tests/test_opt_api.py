@@ -542,3 +542,21 @@ def test_run_rejects_ineligible_entries(client, world, engine):
     assert _entry(client, world["a"])["eligible"] is True
     r = client.post(f"{API}/opt/runs", json=run_body([world["a"]]), headers=W)
     assert r.status_code == 201, r.text
+
+
+def _to_legacy(engine, eid):
+    with engine.begin() as c:
+        c.execute(text("UPDATE library_entries SET quality = (quality - 'scheme') || CAST(:q AS jsonb) WHERE id=:i"),
+                  {"i": eid, "q": '{"status": "LEGACY"}'})
+
+
+def test_retry_gate_ineligible(client, world, engine):
+    """통합 검증 지적 1c: 재시도가 생성 때 게이트를 우회하지 않음(대상 ESL 이 LEGACY → 422 ENTRY_NOT_ELIGIBLE)."""
+    r = client.post(f"{API}/opt/runs", json=run_body([world["a"], world["b"]]), headers=W)
+    assert r.status_code == 201, r.text
+    o = r.json()
+    _fail_job(engine, o["job"]["id"])
+    _to_legacy(engine, world["b"])
+    rt = client.post(f"{API}/jobs/{o['job']['id']}/retry", headers=W)
+    assert rt.status_code == 422 and rt.json()["detail"]["code"] == "ENTRY_NOT_ELIGIBLE", rt.text
+    assert rt.json()["detail"]["entry_ids"] == [world["b"]]

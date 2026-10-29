@@ -13,13 +13,20 @@ CSV(라이브러리): ``f_eq.csv``(같은 헤더), ``u_rel.csv``(같은 헤더, 
 ``<out_root>/<after_label>/export.json`` 의 ``id_next`` 를 시작 오프셋으로 쓴다(다른 작업의 항목이면 생길 때까지
 ``wait_s`` 대기 → ``EXPORT_ORDER_TIMEOUT``, 앞 항목 실패 → ``EXPORT_ORDER_PREV_FAILED``). 결과는 항목 폴더
 ``export.json``(성공·실패 모두, 임시 파일 → rename).
+
+쓰기 안전(통합 검증 지적 4b): 항목 결과는 ``<out_root>/.<label>.part-<uuid>/`` 에 먼저 쓰고(새 이름 mkdir — 기존 링크를
+따라가지 않음) 끝나면 ``<out_root>/<label>`` 로 rename(기존 폴더는 ``_backup/<ts>/`` 로). 쓰기·rename 전마다
+``out_root`` 부터 대상까지 경로 성분이 심링크·junction·reparse point 가 아니고 realpath 가 ``out_root`` 안인지 확인
+(아니면 ``PATH_UNSAFE`` — 그 항목만 실패, Case 폴더 등 바깥에 쓰지 않음).
 """
 from __future__ import annotations
 
 import datetime as _dt
 import json
 import os
+import stat
 import time
+import uuid
 from types import SimpleNamespace
 
 import numpy as np
@@ -217,14 +224,64 @@ def _wait_prev(path: str, wait_s: float, poll_s: float) -> dict:
         time.sleep(poll_s)
 
 
-def _fresh_dir(d: str, out_root: str) -> None:
-    """d 에 이전 내용이 있으면 <out_root>/_backup/<ts>/<이름> 로 옮긴 뒤 빈 폴더(삭제 없음)."""
-    if os.path.isdir(d) and os.listdir(d):
+_REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def _is_link_like(path: str) -> bool:
+    """심링크 또는 Windows junction·reparse point(없는 경로는 False) — 플랫폼 core.uploads.is_link_like 와 같은 판정."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE:
+        return True
+    isj = getattr(os.path, "isjunction", None)
+    return bool(isj and isj(path))
+
+
+def _within(path: str, root: str) -> bool:
+    a, b = os.path.normcase(os.path.realpath(path)), os.path.normcase(os.path.realpath(root))
+    return a == b or a.startswith(b.rstrip(os.sep) + os.sep)
+
+
+def _check_safe(out_root: str, path: str) -> None:
+    """out_root 와 out_root 아래 path 까지 이미 있는 성분이 링크·junction 이 아니고 realpath(path) ⊂ realpath(out_root)."""
+    rootn = os.path.normpath(out_root)
+    if _is_link_like(rootn):
+        raise EslError("PATH_UNSAFE", "내보내기 묶음 폴더가 링크입니다")
+    rel = os.path.relpath(os.path.normpath(path), rootn)
+    if rel == os.curdir or rel.startswith(os.pardir) or os.path.isabs(rel):
+        raise EslError("PATH_UNSAFE", f"내보내기 묶음 폴더 밖 경로입니다: {rel}")
+    cur = rootn
+    for comp in rel.split(os.sep):
+        cur = os.path.join(cur, comp)
+        if _is_link_like(cur):
+            raise EslError("PATH_UNSAFE", f"링크 경로에는 쓰지 않습니다: {os.path.relpath(cur, rootn)}")
+    if not _within(path, rootn):
+        raise EslError("PATH_UNSAFE", "실제 경로가 내보내기 묶음 폴더 밖입니다")
+
+
+def _new_stage(out_root: str, label: str) -> str:
+    """새 이름의 빈 작업 폴더(mkdir 은 기존 경로·링크를 따라가지 않고 실패)."""
+    st = os.path.join(out_root, f".{label}.part-{uuid.uuid4().hex[:12]}")
+    _check_safe(out_root, st)
+    os.mkdir(st)
+    _check_safe(out_root, st)
+    return st
+
+
+def _publish(stage: str, d: str, out_root: str) -> None:
+    """작업 폴더 → <out_root>/<label>. 기존 d(이전 실행)는 <out_root>/_backup/<ts>/<이름> 로(삭제 없음)."""
+    _check_safe(out_root, d)
+    if os.path.lexists(d):
         ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
-        dst = os.path.join(out_root, "_backup", ts, os.path.basename(d))
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        os.replace(d, dst)
-    os.makedirs(d, exist_ok=True)
+        bdir = os.path.join(out_root, "_backup", ts)
+        _check_safe(out_root, bdir)
+        os.makedirs(bdir, exist_ok=True)
+        _check_safe(out_root, bdir)
+        os.replace(d, os.path.join(bdir, os.path.basename(d)))
+    _check_safe(out_root, d)
+    os.replace(stage, d)
 
 
 def run_items(items: list[dict], out_root: str, targets, cfg: dict, *, wait_s: float = 600.0, poll_s: float = 0.5,
@@ -235,6 +292,7 @@ def run_items(items: list[dict], out_root: str, targets, cfg: dict, *, wait_s: f
     out: list[dict] = []
     for k, it in enumerate(items):
         d = os.path.join(out_root, it["label"])
+        stage = None
         rec = {"entry_id": it["entry_id"], "label": it["label"], "ok": False, "files": [], "id_range": None,
                "id_max_used": None, "id_next": None, "warnings": [], "error": None}
         try:
@@ -251,8 +309,8 @@ def run_items(items: list[dict], out_root: str, targets, cfg: dict, *, wait_s: f
                 off = prev.get("id_next")
                 if off is None:
                     off = "auto"
-            _fresh_dir(d, out_root)
-            res = export_entry(it["dir"], d, targets, cfg, off, validation_id=it.get("validation_id"), echo=echo)
+            stage = _new_stage(out_root, it["label"])
+            res = export_entry(it["dir"], stage, targets, cfg, off, validation_id=it.get("validation_id"), echo=echo)
             rec.update(ok=True, **{k2: res[k2] for k2 in ("files", "id_range", "id_max_used", "id_next", "warnings",
                                                           "id_offset_used", "id_plan", "validation_used")})
         except EslError as exc:
@@ -262,12 +320,18 @@ def run_items(items: list[dict], out_root: str, targets, cfg: dict, *, wait_s: f
         if rec["error"] and echo:
             echo(f"[export] {it['label']}: 실패 {rec['error']['code']}: {rec['error']['message']}")
         try:
-            os.makedirs(d, exist_ok=True)
-            _write_json_atomic(os.path.join(d, EXPORT_JSON), {**rec, "entry_id": it["entry_id"],
-                                                             "targets": list(targets), "at": _utcnow()})
-        except OSError as exc:
+            if stage is None:
+                stage = _new_stage(out_root, it["label"])
+            _check_safe(out_root, os.path.join(stage, EXPORT_JSON))
+            _write_json_atomic(os.path.join(stage, EXPORT_JSON), {**rec, "entry_id": it["entry_id"],
+                                                                 "targets": list(targets), "at": _utcnow()})
+            _publish(stage, d, out_root)
+        except (OSError, EslError) as exc:
             if echo:
-                echo(f"[export] {it['label']}: export.json 쓰기 실패 {exc}")
+                echo(f"[export] {it['label']}: 결과 쓰기 실패 {exc}")
+            if rec["error"] is None:
+                rec.update(ok=False, error={"code": getattr(exc, "code", "EXPORT_FAILED"),
+                                            "message": str(getattr(exc, "message", exc))[:400]})
         out.append(rec)
         if progress:
             progress(100.0 * (k + 1) / max(1, len(items)))

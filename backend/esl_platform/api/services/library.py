@@ -199,6 +199,14 @@ def require_eligible(rows: list[dict[str, Any]]) -> None:
                             reasons={i: r for i, r in bad})
 
 
+def require_eligible_ids(conn, ids) -> None:
+    """MR-D-10 게이트를 저장된 대상(스터디·최적화 실행·분석의 entry_ids)에 다시 적용 — 복제·재시도·다음 단계 작업이
+    생성 때의 게이트를 우회하지 않게(통합 검증 지적 1c). v0.10.0 이전에 부적격 항목으로 만든 대상도 여기서 막힌다."""
+    ids = [i for i in dict.fromkeys(ids or []) if i]
+    if ids:
+        require_eligible(lib_repo.list_entries(conn, ids=ids))
+
+
 BLOCK_MESSAGES = {
     "CASE_ARCHIVED": "Case 가 보관되어 재검증할 수 없습니다",
     "RUN_SNAPSHOT_MISSING": "ESL 결과 스냅샷이 없어 재검증할 수 없습니다 — Case를 다시 계산해 새로 등록하세요",

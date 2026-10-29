@@ -250,6 +250,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
         params = dict(job["params"])
+        if job["job_type"] == "EXPORT" and params.get("origin") == "library":
+            # 라이브러리 내보내기: 실패는 대개 EXP_REGISTER(항목 전부 실패 = EXPORT_ALL_FAILED)에서 드러나므로 실패 step 부터
+            # 이어 하면 같은 실패 결과만 다시 등록한다 → EXPORT 단계부터 다시(항목 폴더는 _backup 후 새로, 통합 검증 지적 4f)
+            start = 1
         if job["failure_code"] == "INPUT_CHANGED":
             # 입력이 바뀌어 실패한 작업: 예전 지문으로 재시도하면 또 실패 → CASE_EXTRACT 는 현재 입력으로 다시
             # 준비(새 지문, 처음 step 부터), 그 밖의 작업은 추출부터 다시 해야 하므로 거부.
@@ -280,6 +284,9 @@ def _retry_analysis(conn, principal: Principal, job: dict[str, Any]) -> dict[str
     an = lib_repo.get_analysis(conn, job["analysis_id"], for_update=True)
     if an is None:
         raise DomainError("ANALYSIS_NOT_FOUND", "분석을 찾을 수 없습니다", status=404)
+    from .library import require_eligible_ids
+
+    require_eligible_ids(conn, [*(an.get("entry_ids") or []), an.get("target_entry_id")])   # MR-D-10(지적 1c)
     start = jobs_repo.first_failed_step(conn, job["id"])
     try:
         with conn.begin_nested():

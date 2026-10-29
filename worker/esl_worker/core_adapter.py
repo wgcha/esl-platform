@@ -1013,7 +1013,7 @@ def run_doe_stage(spec: dict, echo: Callable[[str], None]) -> dict:
     import json
 
     if spec.get("stage") not in DOE_STAGES:
-        raise CoreError("INPUT_INVALID", f"알 수 없는 비드 DOE 단계: {spec.get('stage')}")
+        raise CoreError("INPUT_INVALID", f"알 수 없는 강성 평가 스터디 단계: {spec.get('stage')}")
     run_stage = _attr("esl.doe.stages", "run_stage")
     res = _wrap(run_stage, doe_stage_spec(spec), echo)
     U = _mod("esl.library._util")

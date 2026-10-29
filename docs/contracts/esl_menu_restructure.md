@@ -419,3 +419,4 @@ README.txt             # 한글: 폴더 구조, ID 배정 방식, LEGACY 항목 
 - (작성 2026-10-29) 초안.
 - (2026-10-29) 사용자 확정 Q1 A·Q2 B·Q3 B → 상태 확정.
 - (2026-10-29, 통합 v0.10.0) 구현 정합 반영: §6.2 같은 모델 연속 배정 순서 = Case 작업 순서 → 선택 순서(근거: LIGHT 레인 교차 대기·시간 초과 회피), §7.4 `jobs.result.revalidate.fail_reasons` 추가, `revalidate_block.message`, §6.1 목록 행 모양·`ui.library_export_max_entries`. §5.1 수동 지정 품질 검사, §5.3 고급 칸, §7.3 대상, §8 필터, §6 ID 정책 반영.
+- (2026-10-29, 검증 지적) §7.5 게이트는 생성뿐 아니라 복제·재시도·스터디 다음 단계 작업에도 적용(저장된 entry_ids 재검사, 422 ENTRY_NOT_ELIGIBLE). §6.2 워커 쓰기 = <batch>/.<label>.part-<uuid>/ → rename 공개, 경로 링크·realpath 검사(PATH_UNSAFE). origin=library EXPORT 재시도 = EXPORT 단계부터.

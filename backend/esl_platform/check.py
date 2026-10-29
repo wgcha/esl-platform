@@ -293,7 +293,7 @@ def check_bead_doe(s, platform: str) -> list[Item]:
     from esl_platform.core.paths import DOE_DIR
 
     if s.bead_doe is None or not s.bead_doe.enabled:
-        return [Item("bead_doe", SKIP, "bead_doe 꺼짐(설정 bead_doe.enabled) — 비드 DOE 안 씀")]
+        return [Item("bead_doe", SKIP, "bead_doe 꺼짐(설정 bead_doe.enabled) — 강성 평가 스터디 안 씀")]
     win = platform.startswith("win")
     out: list[Item] = []
     ok, reason = paicad_exe_status(s)
@@ -301,7 +301,7 @@ def check_bead_doe(s, platform: str) -> list[Item]:
     if ok:
         out.append(Item(PAICAD_EXE_KEY, OK, f"{p} (버전·OCP 는 워커 점검 기록 — bead_doe.paicad)"))
     elif reason == "PAICAD_NOT_CONFIGURED":
-        out.append(Item(PAICAD_EXE_KEY, FAIL if win else WARN, "설정 없음 — 비드 DOE 비활성(PAICAD_NOT_CONFIGURED)"))
+        out.append(Item(PAICAD_EXE_KEY, FAIL if win else WARN, "설정 없음 — 강성 평가 스터디 비활성(PAICAD_NOT_CONFIGURED)"))
     else:
         out.append(Item(PAICAD_EXE_KEY, FAIL if win else WARN, f"파일이 없습니다: {p} (PAICAD_NOT_FOUND)"))
     spec = importlib.util.find_spec("gmsh")

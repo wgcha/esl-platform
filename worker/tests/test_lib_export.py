@@ -174,3 +174,20 @@ def test_library_export_worker(client, worker_factory, inputs_root, esl_root, en
     lst = client.get(f"{API}/library/exports", params={"project_id": "p-1"}, headers=R).json()
     assert [b["batch_id"] for b in lst] == [p3["batch_id"], p2["batch_id"], bid]
     assert [_tree(d) for d in cdirs] == before
+
+
+    # 통합 검증 지적 4f: 실패한 라이브러리 내보내기 재시도는 EXPORT 단계부터 — 앞 작업(취소) 재시도 → 뒤 작업 재시도 성공
+    r1 = client.post(f"{API}/jobs/{p3['jobs'][0]['job_id']}/retry", headers=W)
+    assert r1.status_code == 201, r1.text
+    assert r1.json()["resume_from_step"] is None
+    _run(client, worker, r1.json()["id"], lane="LIGHT")
+    r2 = client.post(f"{API}/jobs/{p3['jobs'][1]['job_id']}/retry", headers=W)
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["resume_from_step"] is None                       # 실패 step(EXP_REGISTER) 이 아니라 처음부터
+    _run(client, worker, r2.json()["id"], lane="LIGHT")
+    g = client.get(f"{API}/library/exports/{p3['batch_id']}", headers=R).json()
+    assert g["state"] == "SUCCEEDED" and [it["state"] for it in g["items"]] == ["DONE", "DONE"], g
+    ra, rb = (it["id_range"] for it in g["items"])
+    assert rb[0] == ra[1] + 1                                          # 같은 모델 연속(재시도 후에도)
+    assert os.path.isdir(os.path.join(str(esl_root), "_exports", p3["batch_id"], "_backup"))   # 실패 결과는 보존
+    assert [_tree(d) for d in cdirs] == before

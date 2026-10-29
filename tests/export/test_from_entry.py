@@ -99,3 +99,26 @@ def test_run_items_sequential_ids_and_failures(built, tmp_path):
     # 같은 라벨 재실행 → 이전 내용은 _backup 으로(삭제 없음)
     from_entry.run_items(items[:1], out, ["fem"], built["cfg"])
     assert os.path.isdir(os.path.join(out, "_backup"))
+
+
+def test_run_items_refuses_symlinked_label_dir(built, tmp_path):
+    """통합 검증 지적 4b: <batch>/<label> 이 바깥(예 Case 폴더)을 가리키는 링크로 바뀌어 있으면 따라가 쓰지 않는다 — 그 항목만
+    PATH_UNSAFE, 바깥 폴더 불변. 묶음 폴더 자체가 링크여도 거부."""
+    out = tmp_path / "batch"
+    out.mkdir()
+    case_dir = tmp_path / "case" / "06_export"
+    case_dir.mkdir(parents=True)
+    (case_dir / "keep.txt").write_text("case", encoding="utf-8")
+    os.symlink(case_dir, out / "01_a", target_is_directory=True)
+    items = [{"entry_id": "a", "dir": built["edir"], "label": "01_a", "id_offset": "auto"},
+             {"entry_id": "b", "dir": built["edir"], "label": "02_b", "id_offset": "auto"}]
+    res = from_entry.run_items(items, str(out), ["radioss_inc", "fem"], built["cfg"])
+    assert not res[0]["ok"] and res[0]["error"]["code"] == "PATH_UNSAFE"
+    assert res[1]["ok"] and os.path.isfile(out / "02_b" / "esl_force.fem") and not (out / "02_b").is_symlink()
+    assert sorted(os.listdir(case_dir)) == ["keep.txt"]                    # 바깥(Case) 폴더에 쓰기 없음
+    # 작업 폴더에 쓰고 rename -> 최종 폴더에는 완성본만, 남은 .part 폴더는 실패 항목 것뿐
+    assert all(n.startswith(".01_a.part-") for n in os.listdir(out) if ".part-" in n)
+    link_root = tmp_path / "batch_link"
+    os.symlink(out, link_root, target_is_directory=True)
+    r = from_entry.run_items(items[1:], str(link_root), ["fem"], built["cfg"])
+    assert r[0]["error"]["code"] == "PATH_UNSAFE"

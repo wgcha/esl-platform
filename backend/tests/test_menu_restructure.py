@@ -343,3 +343,23 @@ def test_revalidate_api_errors(client, engine, esl_root, two_cases):
     s = seed_run(engine, c0["id"], verdict="FAIL", val_extra={"scheme": "disp_primary/1"})
     r = client.post(f"{API}/library/entries", json={"esl_run_id": s["run_id"], "force_reason": "확정"}, headers=W)
     assert r.status_code == 422 and _code(r) == "VALIDATION_NOT_PASS"
+
+
+def _to_legacy(engine, eid):
+    with engine.begin() as c:
+        c.execute(text("UPDATE library_entries SET quality = (quality - 'scheme') || CAST(:q AS jsonb) WHERE id=:i"),
+                  {"i": eid, "q": '{"status": "LEGACY"}'})
+
+
+def test_analysis_retry_gate_ineligible(client, engine, esl_root, two_cases):
+    """통합 검증 지적 1c: 종합분석 재시도(LIB_ANALYZE)도 게이트 — 대상 항목이 부적격이면 422 ENTRY_NOT_ELIGIBLE."""
+    c0, _ = two_cases
+    ok1 = _entry(engine, esl_root, c0["id"], scene_no=1)
+    ok2 = _entry(engine, esl_root, c0["id"], scene_no=2)
+    r = client.post(f"{API}/library/analyses", json={"project_id": "p-1", "filters": {"entry_ids": [ok1, ok2]}}, headers=W)
+    assert r.status_code == 201, r.text
+    jid = r.json()["job_id"]
+    _finish(engine, jid, "FAILED", "X")
+    _to_legacy(engine, ok2)
+    r = client.post(f"{API}/jobs/{jid}/retry", headers=W)
+    assert r.status_code == 422 and _code(r) == "ENTRY_NOT_ELIGIBLE" and r.json()["detail"]["entry_ids"] == [ok2], r.text

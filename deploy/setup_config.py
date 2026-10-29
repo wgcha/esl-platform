@@ -79,10 +79,10 @@ EXT_SUPPLEMENT = (".sta", ".str")            # 누적 낙하 씬 상태 파일(�
 EXT_SUPPLEMENT_STATE = ("state", "ext_supplement.json")
 # 버전별 1회 보충: (상태 파일 키, 확장자, 코드 스키마에 있어야 하는 설정 절 | None, 표의 설명)
 EXT_SUPPLEMENTS = ((EXT_SUPPLEMENT_VERSION, EXT_SUPPLEMENT, None, ".sta·.str — 누적 낙하 씬"),
-                   ("0.9.0", (".step", ".stp"), "bead_doe", ".step·.stp — 비드 DOE 시트 STEP"))
+                   ("0.9.0", (".step", ".stp"), "bead_doe", ".step·.stp — 강성 평가 스터디 시트 STEP"))
 DOE_AUTODETECT_NOTE = "setup이 보충 — v0.9.0 paicad 자동 감지"
 PAICAD_REL = ("venv", "Scripts", "paicad.exe")     # 설치 venv 의 console script(paicad.lock console_script)
-DOE_HINT = ("비드 DOE 비활성 — 형상 엔진 paicad 가 설치되지 않음(<런타임>\\venv\\Scripts\\paicad.exe 없음). "
+DOE_HINT = ("강성 평가 스터디 비활성 — 형상 엔진 paicad 가 설치되지 않음(<런타임>\\venv\\Scripts\\paicad.exe 없음). "
             "설치 스크립트의 'paicad' 경고를 확인하세요(관리자 매뉴얼 paicad 절)")
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
@@ -716,7 +716,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
                 doe["added"]["bead_doe.enabled"] = True
                 rows.append({"key": "bead_doe.enabled", "value": True, "action": "보충(paicad 자동 감지)"})
             elif bd.get("enabled") is False:
-                warnings.append(f"비드 DOE 는 설정 bead_doe.enabled: false 로 꺼져 있어 그대로 둡니다(paicad: {cand}) "
+                warnings.append(f"강성 평가 스터디 는 설정 bead_doe.enabled: false 로 꺼져 있어 그대로 둡니다(paicad: {cand}) "
                                 "— 쓰려면 true 로 직접 바꾸세요")
             text = set_yaml_nested(text, ("bead_doe", "paicad", "exe"), cand, DOE_AUTODETECT_NOTE)
             upgraded[("bead_doe", "paicad", "exe")] = cand
@@ -870,7 +870,7 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
     out["doe_autodetect"] = {"added": da, "backup": cfg_backup, "line": None}
     if da:
         kv = ", ".join(f"{k} = {literal(v)}" for k, v in da.items())
-        out["doe_autodetect"]["line"] = (f"비드 DOE 자동 설정: {kv} 추가" + (f" (백업 {cfg_backup})" if cfg_backup else ""))
+        out["doe_autodetect"]["line"] = (f"강성 평가 스터디 자동 설정: {kv} 추가" + (f" (백업 {cfg_backup})" if cfg_backup else ""))
     for c in pl["companions"]:
         if c["copy"] and not os.path.exists(c["path"]):
             Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)
