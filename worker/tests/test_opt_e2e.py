@@ -372,9 +372,9 @@ def test_s1_include_outside_roots_rejected(client, engine, worker_factory, esl_r
     read: list[str] = []
     orig = rp._read_include_specs
 
-    def spy(path):
+    def spy(path, *a, **kw):
         read.append(os.path.realpath(path))
-        return orig(path)
+        return orig(path, *a, **kw)
 
     monkeypatch.setattr(rp, "_read_include_specs", spy)
     j = run_job(client, worker_factory(), run["job_id"], "FAILED")
