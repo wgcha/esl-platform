@@ -6,13 +6,13 @@ import { api } from "../../api/endpoints";
 import { ApiError, downloadFile } from "../../api/client";
 import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { openReport } from "../../components/ReportLink";
 import { BundleButton } from "../../components/BundleButton";
 import { p3 } from "../../api/p3";
-import { CopyPath, TOO_LARGE_TEXT } from "../../stages/Stage6";
+import { CopyPath, TOO_LARGE_TEXT } from "../../components/CopyPath";
 import { usePolling } from "../../lib/usePolling";
 import { bytes, dt } from "../../lib/format";
 import { f3 } from "../../lib/colormap";
@@ -135,7 +135,7 @@ export function AnalysisDetail() {
     <Shell
       crumbs={[
         { label: project?.name ?? projectId, to: `/p/${projectId}` },
-        { label: "라이브러리", to: libPath(projectId) },
+        { label: MENU_LIBRARY, to: libPath(projectId) },
         { label: a?.title || "종합분석" },
       ]}
       projectId={projectId}

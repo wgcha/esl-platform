@@ -1,7 +1,7 @@
 // npm run dev:mock / build:mock 전용: window.fetch를 목 서버로 바꾸고 2초마다 작업을 진행시킨다.
 // ?mockUser=admin|power|general 로 사용자 전환(localStorage에 기억), ?freeze=1 이면 진행 멈춤.
 import { MockServer, createMockFetch } from "./server";
-import type { MockUserKey } from "./data";
+import { variantValidation, type MockUserKey } from "./data";
 
 const KEY = "esl.mockUser";
 
@@ -30,6 +30,13 @@ export function installMockFetch() {
   }
   // §6·§9 시연: ?demoH3d=1 서버 추출 진행 중인 h3d Case(c-<n>), ?demoPc=1 연결된 PC 2대
   if (params.get("demoH3d") === "1") server.demoH3dExtract();
+  // v0.10.0 시연: ?demoSupportBlocked=<caseId> 자동 지지 BLOCKED, ?demoExportFail=<entryId,…> 내보내기 항목 실패
+  const sb = params.get("demoSupportBlocked");
+  if (sb) server.demoSupportBlocked(sb);
+  for (const id of (params.get("demoExportFail") ?? "").split(",").filter(Boolean)) server.failExportEntries.add(id);
+  // ?demoValidation=FAIL|UNDETERMINED|LEGACY_FAIL: 첫 검증(c-demo)을 바꿔 ④ 등록 거부 사유 시연
+  const dv = params.get("demoValidation") as Parameters<typeof variantValidation>[1] | null;
+  if (dv) server.validations[0] = variantValidation(server.validations[0], dv);
   if (params.get("demoPc") === "1") {
     server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
     server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");

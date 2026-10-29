@@ -4,11 +4,11 @@ import { useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import type { ComparisonResolution, ComparisonResult, ComparisonVerdict, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { openReport } from "../../components/ReportLink";
-import { CopyPath } from "../../stages/Stage6";
+import { CopyPath } from "../../components/CopyPath";
 import { usePolling } from "../../lib/usePolling";
 import { dt, pv } from "../../lib/format";
 import { VerdictBadge, libPath } from "./common";
@@ -89,7 +89,7 @@ export function ComparisonDetail() {
     <Shell
       crumbs={[
         { label: project?.name ?? projectId, to: `/p/${projectId}` },
-        { label: "라이브러리", to: libPath(projectId) },
+        { label: MENU_LIBRARY, to: libPath(projectId) },
         { label: c?.title || "버전 비교" },
       ]}
       projectId={projectId}

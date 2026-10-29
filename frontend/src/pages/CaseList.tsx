@@ -2,19 +2,23 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import type { Case } from "../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../app/AppContext";
-import { Shell } from "../shell/Shell";
-import { STAGE_NAMES } from "../shell/StageStepper";
+import { MENU_CREATE, Shell } from "../shell/Shell";
+import { N_STEPS, STEP_NAMES, stepState } from "../shell/StageStepper";
 import { Empty, ErrorLine } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
 import { dt } from "../lib/format";
 
+/** 진행 한 줄: 화면 4단계(step_status) 기준 */
 function progressOf(c: Case) {
-  const st = c.stage_status ?? {};
   let last = 0;
-  for (let n = 1; n <= 6; n++) if (st[String(n)]?.state === "done" || st[String(n)]?.state === "stale") last = n;
-  const running = Object.entries(st).find(([, s]) => s.state === "running");
-  if (running) return `${STAGE_NAMES[Number(running[0]) - 1]} 실행 중`;
-  return last ? `${STAGE_NAMES[last - 1]}까지 완료` : "시작 전";
+  let running = 0;
+  for (let n = 1; n <= N_STEPS; n++) {
+    const s = stepState(c, n)?.state;
+    if (s === "done" || s === "stale") last = n;
+    if (s === "running" && !running) running = n;
+  }
+  if (running) return `${STEP_NAMES[running - 1]} 실행 중`;
+  return last ? `${STEP_NAMES[last - 1]}까지 완료` : "시작 전";
 }
 
 export function CaseList() {
@@ -25,9 +29,10 @@ export function CaseList() {
   const nav = useNavigate();
   const allowed = canRun(me, projectId);
   return (
-    <Shell crumbs={[{ label: project?.name ?? projectId }]} projectId={projectId}>
+    <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_CREATE }]} projectId={projectId}>
       <div className="page-title-row">
-        <h1 className="page-title">Case 목록</h1>
+        <h1 className="page-title">{MENU_CREATE}</h1>
+        <span className="muted small">Case 목록 — Case 마다 ①입력 ②t*·지지점 ③ESL ④검증 후 라이브러리에 등록</span>
         <span className="spacer" />
         <Link to={`/p/${projectId}/history`} className="page-link">
           실행 이력
@@ -56,7 +61,7 @@ export function CaseList() {
             {cases.data.map((c) => (
               <tr key={c.id}>
                 <td>
-                  <Link to={`/p/${projectId}/c/${c.id}/stage/1`}>{c.title}</Link>
+                  <Link to={`/p/${projectId}/c/${c.id}/step/1`}>{c.title}</Link>
                 </td>
                 <td className="mono">{c.folder_name}</td>
                 <td>{progressOf(c)}</td>

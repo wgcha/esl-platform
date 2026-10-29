@@ -7,7 +7,7 @@ import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, sci } from "../../api/op
 import { STEP_LABEL } from "../../api/history";
 import { isFullResult, type JobOut, type OptFileOut, type OptResult, type OptRunOut } from "../../api/types";
 import { canRun, useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { LoadSelectionTable, selectionSummary } from "../../components/LoadSelectionTable";
@@ -243,7 +243,7 @@ export function OptDetail() {
   const ko = r?.design.keepout;
 
   return (
-    <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "라이브러리", to: `${libPath(projectId)}?tab=opt` }, { label: r?.title || "비드 최적화" }]} projectId={projectId}>
+    <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_LIBRARY, to: `${libPath(projectId)}?tab=opt` }, { label: r?.title || "비드 최적화" }]} projectId={projectId}>
       <div className="page-title-row">
         <h1 className="page-title">비드 최적화</h1>
         {r && <Badge kind="info">{`${r.scenario} ${SCENARIO_LABEL[r.scenario]}`}</Badge>}

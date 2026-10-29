@@ -86,6 +86,42 @@ export type StageNo = 1 | 2 | 3 | 4 | 5 | 6;
 export interface StageState {
   state: StageStateName;
   job_id?: string | null;
+  /** v0.10.0(esl_menu_restructure.md §5.4): 상태 사유(예: SUPPORT_AUTO_BLOCKED·TSTAR_NOT_CONFIRMED) */
+  reason?: StageReason | null;
+}
+export interface StageReason {
+  code: string;
+  message: string;
+}
+/** v0.10.0 §5.4: 화면 4단계 상태(①입력 ②t*·지지점 ③ESL ④검증). stage_status("1".."6")는 하위 호환(deprecated) */
+export interface StepStatus {
+  input: StageState;
+  tstar: StageState;
+  esl: StageState;
+  validate: StageState;
+}
+export type StepKey = keyof StepStatus;
+
+/** v0.10.0 §5.2: 자동 3-2-1 지지 품질 검사 */
+export interface SupportChecks {
+  area_ratio: number | null;
+  min_dist_rel: number | null;
+  cond_ratio: number | null;
+}
+export interface SupportProblem {
+  code: string;
+  message: string;
+  value?: number | null;
+  limit?: number | null;
+}
+/** cases.tstar.support_auto(§5.1): OK = 자동 저장, BLOCKED = 검사 실패(지지 없음), KEPT = 기존 지지 유지, MANUAL = 고급 칸 수동 지정 */
+export interface SupportAuto {
+  status: "OK" | "BLOCKED" | "KEPT" | "MANUAL";
+  mode?: "pca4" | "pca8" | null;
+  source?: "auto" | "user" | null;
+  checks?: SupportChecks | null;
+  problems?: SupportProblem[] | null;
+  rule_version?: number | null;
 }
 export type StageStatus = StageState;
 
@@ -99,6 +135,8 @@ export interface TStar {
   elem_id: number;
   value: number;
   source: "auto" | "user";
+  /** v0.10.0 §5.1: t* 확정 때 함께 한 자동 3-2-1 결과(추출 재등록 시 사라짐) */
+  support_auto?: SupportAuto | null;
 }
 
 export interface MaterialSummary {
@@ -199,8 +237,10 @@ export interface CaseOut {
   version: number;
   /** v0.6.0 §6.5: 입력 h3d 의 업로드 메타(압축 모드 배지). 없으면 null */
   input_h3d_meta?: H3dMeta | null;
-  /** GET /cases/{id}·쓰기 응답에만 */
+  /** GET /cases/{id}·쓰기 응답에만 (v0.10.0: deprecated — 화면은 step_status 만 쓴다) */
   stage_status?: Record<string, StageState> | null;
+  /** v0.10.0 §5.4: 화면 4단계 상태 */
+  step_status?: StepStatus | null;
 }
 export type Case = CaseOut;
 
@@ -452,6 +492,9 @@ export interface SupportSuggestOut {
   plane: Plane;
   /** PCA 4꼭지점 노드 ID */
   corners: number[];
+  /** v0.10.0 §5.1: 같은 auto_support 결과 */
+  status?: "OK" | "BLOCKED" | null;
+  problems?: SupportProblem[] | null;
 }
 export type SupportSuggest = SupportSuggestOut;
 
@@ -911,7 +954,21 @@ export interface EntryQuality {
   strain_exceed_frac?: number | null;
   undetermined_reason?: string | null;
   confirmed_undetermined?: ConfirmedFail | null;
+  /** v0.10.0 §7.4: 재검증으로 정상 전환된 기록 */
+  revalidated?: EntryRevalidated | null;
 }
+
+export interface EntryRevalidated {
+  from_validation_id: string | null;
+  from_status: string | null;
+  job_id: string;
+  at: string;
+  by: string;
+  by_name: string;
+}
+
+/** v0.10.0 §7.4: 부적격 사유(LEGACY·사유와 함께 등록된 FAIL·판정 불가) */
+export type IneligibleReason = "LEGACY" | "FAIL" | "UNDETERMINED";
 
 export interface EntryOut {
   id: string;
@@ -944,6 +1001,13 @@ export interface EntryOut {
   size?: EntrySize | null;
   topo_sha256?: string | null;
   deform_mode?: DeformModeOut | null;
+  /** v0.10.0 §7.4: 강성 평가 스터디·비드 최적화·종합분석에 쓸 수 있는가(quality.status PASS ∧ scheme) */
+  eligible?: boolean;
+  ineligible_reason?: IneligibleReason | null;
+  /** 재검증 불가 사유(미리 계산) — 있으면 [재검증] 비활성 + 툴팁 */
+  revalidate_block?: { code: string; reason: string } | null;
+  /** 진행 중인 재검증 작업(VALIDATE origin library_revalidate) */
+  revalidate_job?: { job_id: string; state: JobState } | null;
 }
 export type LibraryEntry = EntryOut;
 

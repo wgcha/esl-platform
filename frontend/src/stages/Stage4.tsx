@@ -9,8 +9,9 @@ import { useLoadView } from "../view3d/useLoadView";
 import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmtFixed, pct, sci, vec } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
-import { blockReason, submitJob, useAction } from "./common";
-import { dofText } from "./Stage3";
+import { blockReason, eslPrereq, submitJob, useAction } from "./common";
+import { dofText } from "../lib/format";
+import { stepPath, stepState } from "../shell/StageStepper";
 
 export function Stage4({ c, reload, allowed }: StageProps) {
   const [sp] = useSearchParams();
@@ -28,8 +29,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
   const showLoad = !!r && !(pastRunId && review.data?.result.availability !== "full");
   const view = useLoadView(runId ?? null, showLoad);
 
-  const missing = [!c.tstar && "② t*", !c.current_support_set_id && "③ 지지점"].filter(Boolean);
-  const prereq = missing.length ? `${missing.join("·")}을(를) 먼저 확정하세요` : null;
+  const prereq = eslPrereq(c);
 
   const content = (
     <>
@@ -96,17 +96,17 @@ export function Stage4({ c, reload, allowed }: StageProps) {
   );
   if (pastRunId)
     return (
-      <PastFrame title="④ ESL" review={review.data} error={run.error ?? review.error} currentHref={`/p/${c.project_id}/c/${c.id}/stage/4`}>
+      <PastFrame title="③ ESL" review={review.data} error={run.error ?? review.error} currentHref={stepPath(c.project_id, c.id, 3)}>
         {content}
       </PastFrame>
     );
   return (
     <StageFrame
-      title="④ ESL"
-      status={c.stage_status?.["4"]}
+      title="③ ESL"
+      status={stepState(c, 3)}
       error={act.error ?? run.error}
       onJobDone={() => void reload()}
-      primary={{ label: "ESL 계산", onClick: () => act.run(() => submitJob(c, "ESL_SOLVE")), disabledReason: blockReason(allowed, c, 4, prereq), busy: act.busy }}
+      primary={{ label: "ESL 계산", onClick: () => act.run(() => submitJob(c, "ESL_SOLVE")), disabledReason: blockReason(allowed, c, 3, prereq), busy: act.busy }}
     >
       {content}
     </StageFrame>

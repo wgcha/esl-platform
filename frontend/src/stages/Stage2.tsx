@@ -8,6 +8,8 @@ import { METRIC_LABEL, fmt } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, useAction } from "./common";
 import { cumText, hasCum } from "../components/Cumulative";
+import { SupportSummary } from "../components/SupportSummary";
+import { stepState } from "../shell/StageStepper";
 
 const METRICS: Metric[] = ["max_strain", "plastic_strain"];
 
@@ -30,14 +32,16 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   }, [metric, tv.data, c.tstar?.metric, c.tstar?.frame_index]);
 
   const unchanged = !!c.tstar && c.tstar.metric === metric && c.tstar.frame_index === frame;
-  const prereq = !ready ? "① 추출을 먼저 실행하세요" : frame === null ? "후보 시점을 고르세요" : unchanged ? "현재 확정된 t*와 같습니다" : null;
+  // §5.3: 지지 세트가 없으면 같은 t*라도 다시 확정 가능(자동 3-2-1 재시도)
+  const hasSupport = !!c.current_support_set_id;
+  const prereq = !ready ? "① 추출을 먼저 실행하세요" : frame === null ? "후보 시점을 고르세요" : unchanged && hasSupport ? "현재 확정된 t*와 같습니다" : null;
 
   const confirm = () => act.run(() => api.putTstar(c.id, { version: c.version, metric, frame_index: frame! }));
 
   return (
     <StageFrame
-      title="② t*"
-      status={c.stage_status?.["2"]}
+      title="② t*·지지점"
+      status={stepState(c, 2)}
       error={act.error ?? tv.error}
       primary={{ label: "t* 확정", onClick: confirm, disabledReason: blockReason(allowed, c, 2, prereq), busy: act.busy }}
     >
@@ -46,7 +50,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
       ) : !tv.data ? (
         <Empty>불러오는 중…</Empty>
       ) : (
-        <>
+        <div className="step2-grid">
           <Card
             title="max-hold 곡선"
             right={
@@ -83,7 +87,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
               <Empty>이 지표의 결과가 없습니다</Empty>
             )}
           </Card>
-          <div className="grid2">
+          <div className="contents step2-pair">
             <Card title="후보 시점">
               <div className="table-wrap scroll">
               <table className="table compact">
@@ -173,7 +177,10 @@ export function Stage2({ c, reload, allowed }: StageProps) {
               </div>
             </Card>
           </div>
-        </>
+          <div className="step2-support">
+            <SupportSummary c={c} allowed={allowed} reload={reload} />
+          </div>
+        </div>
       )}
     </StageFrame>
   );

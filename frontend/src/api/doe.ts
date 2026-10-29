@@ -89,7 +89,7 @@ export function normalizeResult(raw: DoeResultOut): DoeResultOut {
 
 // ---------------------------------------------------------------- 비활성 사유(§6.5)
 export const DISABLED_REASON: Record<string, string> = {
-  DOE_DISABLED: "비드 DOE 가 서버에서 꺼져 있습니다(관리자 문의)",
+  DOE_DISABLED: "강성 평가 스터디가 서버에서 꺼져 있습니다(관리자 문의)",
   PAICAD_NOT_CONFIGURED: "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)",
   PAICAD_NOT_FOUND: "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)",
   PAICAD_VERSION_LOW: "형상 엔진(paicad) 버전이 낮습니다(관리자 문의)",

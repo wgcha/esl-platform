@@ -83,7 +83,7 @@ export function NewCase() {
         part_title: part.trim(),
       });
       uploadStore.dropByRad(cur.rad_path);
-      nav(`/p/${projectId}/c/${c.id}/stage/1`);
+      nav(`/p/${projectId}/c/${c.id}/step/1`);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);

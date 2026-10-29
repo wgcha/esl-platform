@@ -80,7 +80,7 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
   });
 
   it("대기열·이력 라벨: DOE 3종·단계 키, 이력 링크 stage 11 → 연구", () => {
-    expect(JOB_TYPE_LABEL.DOE_RUN).toBe("비드 DOE 실행");
+    expect(JOB_TYPE_LABEL.DOE_RUN).toBe("강성 평가 실행"); // v0.10.0 이름 변경(사용자 문구만)
     expect(stepLabel(currentStepKey({ job_type: "DOE_RUN", current_step_no: 2, steps: null }))).toBe("안별 해석");
     expect(stepLabel(currentStepKey({ job_type: "DOE_PREVIEW", current_step_no: 2 }))).toBe("썸네일");
     expect(linkPath("p1", null, { stage: 11, query: { doe: "doe-1" } })).toBe("/p/p1/doe/doe-1");
@@ -101,20 +101,22 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
 });
 
 describe("라이브러리 진입(§12.1)", () => {
-  it("선택 막대에 [선택한 ESL로 비드 DOE (n)] — 주 버튼은 그대로 1개, 누르면 새 비드 DOE(① 자동)", async () => {
+  it("선택 줄에 [강성 평가 스터디 (n)] — 주 버튼은 [내보내기] 1개, 누르면 새 강성 평가 스터디(① 자동)", async () => {
     const { container } = renderApp("/p/p-body/library");
     fireEvent.click(await screen.findByRole("checkbox", { name: "75QN80H v072 146 선택" }));
     fireEvent.click(box("75QN80H v072 14 선택"));
     expect(primaries(container)).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "선택한 ESL로 비드 DOE (2)" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "새 비드 DOE" })).toBeTruthy();
+    expect(primaries(container)[0].textContent).toBe("내보내기 (2)");
+    fireEvent.click(screen.getByRole("button", { name: "강성 평가 스터디 (2)" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "새 강성 평가 스터디" })).toBeTruthy();
     await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
     expect(screen.getByTestId("doe-auto").textContent).toMatch(/자동 판별: ① 같은 모델/);
   });
 
-  it("탭 [비드 DOE] 목록: 시나리오·DOE·미리보기·상태", async () => {
+  it("탭 [강성 평가 스터디] 목록(옛 ?tab=doe 리다이렉트): 시나리오·DOE·미리보기·상태", async () => {
     renderApp("/p/p-body/library?tab=doe");
-    const t = await screen.findByRole("table", { name: "비드 DOE 목록" });
+    const t = await screen.findByRole("table", { name: "강성 평가 스터디 목록" });
+    expect(screen.getByRole("tab", { name: "강성 평가 스터디" }).getAttribute("aria-selected")).toBe("true");
     await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(3));
     expect(t.textContent).toMatch(/75형 Ch\/R 비드 1차/);
     expect(t.textContent).toMatch(/② 다른 모델\(메시 있음\)/);
@@ -143,7 +145,7 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.change(screen.getByRole("textbox", { name: "제목" }), { target: { value: "75형 Ch/R 2차" } });
     fireEvent.click(primaries(container)[0]);
-    expect(await screen.findByRole("heading", { level: 1, name: "비드 DOE" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "강성 평가 스터디" })).toBeTruthy();
     expect(await screen.findByText("75형 Ch/R 2차")).toBeTruthy();
     const rec = server.doe.recs[server.doe.recs.length - 1];
     expect(rec.out).toMatchObject({ scenario: "same", entry_ids: ["le-1", "le-2", "le-3"], phase: "PREP" });
@@ -221,7 +223,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
     expect(tbl.textContent).toMatch(/체결부 가까움/);
     noSolver();
     // 주 버튼 = DOE 실행(같은 sha 미리보기 성공)
-    await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["DOE 실행"]));
+    await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["강성 평가 실행"]));
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     // 미리보기 격자: 공칭 + 24안, 스킵 배지
     const grid = screen.getByRole("list", { name: "미리보기 썸네일" });
@@ -276,7 +278,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
 
   it("DOE 실행 → 실행 중(보고서 비활성) → 완료 → 순위표", async () => {
     const { container, server } = renderApp("/p/p-body/doe/doe-2");
-    await waitFor(() => expect(primaries(container)[0].textContent).toBe("DOE 실행"));
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("강성 평가 실행"));
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.click(primaries(container)[0]);
     await waitFor(() => expect(primaries(container)[0].textContent).toBe("보고서 보기"));

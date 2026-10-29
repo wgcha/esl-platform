@@ -13,6 +13,7 @@ import { resolveForm } from "../pages/library/ComparisonNew";
 import { pairEntries, prevVersion, sortVersions } from "../pages/library/common";
 import { makeEntries } from "../mock/p2data";
 import { variantValidation } from "../mock/data";
+import { REG_NOT_PASS } from "../components/LibraryRegister";
 
 /** 첫 검증(val-1)을 변형(FAIL·UNDETERMINED 등)으로 바꾼 목 서버 */
 export function serverWith(kind: Parameters<typeof variantValidation>[1], user: "power" | "general" = "power") {
@@ -31,7 +32,7 @@ export function renderServer(server: MockServer, path: string) {
 }
 
 const primaries = (container: HTMLElement) => container.querySelectorAll("button[data-primary]");
-const STAGE5 = "/p/p-body/c/c-demo/stage/5";
+const STAGE5 = "/p/p-body/c/c-demo/step/4"; // v0.10.0: ④ 검증
 
 describe("⑤ 겹쳐보기 색·회색 규칙", () => {
   const rng = { min: 0, max: 0.2 };
@@ -67,7 +68,8 @@ describe("⑤ 검증 화면 P2", () => {
     expect(rep.getAttribute("href")).toBe("/esl/api/cases/c-demo/report");
     expect(rep.getAttribute("target")).toBe("_blank");
     await waitFor(() => expect(primaries(container).length).toBe(1));
-    expect(primaries(container)[0].textContent).toBe("검증 실행");
+    // v0.10.0 §7.1: 최신 검증 PASS·미등록 → 주 버튼 '라이브러리에 등록'
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("라이브러리에 등록"));
   });
 
   it("겹쳐보기: 레이어 전환·불투명도 슬라이더·회색 수·hotspot 표식", async () => {
@@ -121,30 +123,23 @@ describe("⑤ 검증 화면 P2", () => {
     await waitFor(() => expect(screen.getByTestId("sec-xlabel").textContent).toBe("판 폭 방향 (mm)"));
   });
 
-  it("라이브러리 등록: FAIL 이면 사유 대화상자 → 확정 등록 → '등록됨'", async () => {
+  it("라이브러리 등록(v0.10.0): FAIL 이면 등록 버튼 비활성 + 사유, 대화상자 없음, 주 버튼 '검증 실행'", async () => {
     const server = serverWith("FAIL");
-    renderServer(server, STAGE5);
-    fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
-    const dlg = screen.getByRole("dialog");
-    const ok = within(dlg).getByRole("button", { name: "확정 등록" }) as HTMLButtonElement;
-    expect(ok.disabled).toBe(true);
-    expect(within(dlg).getByText(/DISP_RMS/)).toBeTruthy();
-    fireEvent.change(within(dlg).getByRole("textbox", { name: /확정 사유/ }), { target: { value: "누적 소성 — 오차 확인" } });
-    expect(ok.disabled).toBe(false);
-    fireEvent.click(ok);
-    expect(await screen.findByText("라이브러리 등록됨")).toBeTruthy();
+    const { container } = renderServer(server, STAGE5);
+    const blk = await screen.findByTestId("reg-block");
+    expect(blk.textContent).toContain(REG_NOT_PASS);
+    expect((within(blk).getByRole("button", { name: "라이브러리에 등록" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("dialog")).toBeNull();
-    const e = server.entries.find((x) => x.esl_run_id === "run-1")!;
-    expect(e.force_reason).toBe("누적 소성 — 오차 확인");
-    expect(e.quality.verdict).toBe("FAIL");
-    expect(e.quality.status).toBe("FAIL");
+    expect(primaries(container)[0].textContent).toBe("검증 실행");
   });
 
-  it("라이브러리 등록: PASS 는 사유 없이 바로 등록", async () => {
-    const { server } = renderApp(STAGE5);
-    fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
+  it("라이브러리 등록: PASS 는 주 버튼으로 바로 등록 → '등록됨', 주 버튼은 '검증 실행'으로", async () => {
+    const { server, container } = renderApp(STAGE5);
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("라이브러리에 등록"));
+    fireEvent.click(primaries(container)[0]);
     expect(await screen.findByText("라이브러리 등록됨")).toBeTruthy();
     expect(server.entries.find((x) => x.esl_run_id === "run-1")!.quality.status).toBe("PASS");
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("검증 실행"));
   });
 
   it("보고서가 없으면(GET /cases/{id}/report 404) '보고서 보기' 비활성 + 사유", async () => {
@@ -164,42 +159,42 @@ describe("⑤ 검증 화면 P2", () => {
     expect(screen.queryByRole("link", { name: "보고서 보기" })).toBeNull();
   });
 
-  it("라이브러리 등록: 대화상자 취소, 조회 사용자 비활성", async () => {
-    const { unmount } = renderServer(serverWith("FAIL"), STAGE5);
-    fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "취소" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    unmount();
-    renderApp(STAGE5, "general");
-    const b = (await screen.findByRole("button", { name: "라이브러리 등록" })) as HTMLButtonElement;
+  it("라이브러리 등록: 조회 사용자는 주 버튼 비활성 + 권한 사유", async () => {
+    const { container } = renderApp(STAGE5, "general");
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("라이브러리에 등록"));
+    const b = primaries(container)[0] as HTMLButtonElement;
     expect(b.disabled).toBe(true);
     expect(b.parentElement!.getAttribute("title")).toBe(NO_PERMISSION);
   });
 });
 
-describe("전역 메뉴 '라이브러리'", () => {
-  it("Case 화면 상단 바에 1개, 누르면 라이브러리 목록", async () => {
+describe("전역 메뉴 [ESL 생성] [ESL 라이브러리]", () => {
+  it("Case 화면 상단 바에 2개(생성 활성), 라이브러리를 누르면 라이브러리 목록(라이브러리 활성)", async () => {
     renderApp(STAGE5);
     const menu = await screen.findByRole("navigation", { name: "전역 메뉴" });
-    expect(within(menu).getAllByRole("link")).toHaveLength(1);
-    fireEvent.click(within(menu).getByRole("link", { name: "라이브러리" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "라이브러리" })).toBeTruthy();
-    expect(within(screen.getByRole("navigation", { name: "전역 메뉴" })).getByRole("link", { name: "라이브러리" }).getAttribute("aria-current")).toBe("page");
+    expect(within(menu).getAllByRole("link").map((l) => l.textContent)).toEqual(["ESL 생성", "ESL 라이브러리"]);
+    expect(within(menu).getByRole("link", { name: "ESL 생성" }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(within(menu).getByRole("link", { name: "ESL 라이브러리" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "ESL 라이브러리" })).toBeTruthy();
+    expect(within(screen.getByRole("navigation", { name: "전역 메뉴" })).getByRole("link", { name: "ESL 라이브러리" }).getAttribute("aria-current")).toBe("page");
   });
 });
 
 describe("라이브러리 목록", () => {
   const rowsOf = () => within(screen.getByRole("table", { name: "라이브러리 항목" })).getAllByRole("row").slice(1);
 
-  it("표·필터(모델·판정·폐기 포함), 주 버튼 1개", async () => {
+  it("표·필터(모델·판정 PASS/LEGACY/FAIL·판정 불가·폐기 포함), 선택 전 주 버튼 없음", async () => {
     const { container } = renderApp("/p/p-body/library");
     await waitFor(() => expect(rowsOf()).toHaveLength(10)); // ACTIVE 10개(75QN80H v073 3개 포함)
-    expect(primaries(container)).toHaveLength(1);
-    expect(primaries(container)[0].textContent).toBe("종합분석 만들기");
+    expect(primaries(container)).toHaveLength(0); // 페이지 머리 '종합분석 만들기' 폐지 — 선택 줄의 [내보내기]가 주 버튼
+    fireEvent.change(screen.getByRole("combobox", { name: "판정" }), { target: { value: "LEGACY" } });
+    await waitFor(() => expect(rowsOf()).toHaveLength(1)); // le-7(이전 판정 체계)
+    fireEvent.change(screen.getByRole("combobox", { name: "판정" }), { target: { value: "" } });
     fireEvent.change(screen.getByRole("combobox", { name: "모델" }), { target: { value: "65QN80H" } });
     await waitFor(() => expect(rowsOf()).toHaveLength(2));
-    fireEvent.change(screen.getByRole("combobox", { name: "판정" }), { target: { value: "FAIL" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "판정" }), { target: { value: "FAIL_UND" } });
     await waitFor(() => expect(rowsOf()).toHaveLength(1));
+    expect(within(rowsOf()[0]).getByText("LEGACY")).toBeTruthy(); // 사유와 함께 등록된 FAIL = LEGACY + 당시 FAIL(Q1 A)
     expect(within(rowsOf()[0]).getByText("FAIL")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "필터 지우기" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /폐기 포함/ }));
@@ -222,9 +217,9 @@ describe("라이브러리 목록", () => {
     fireEvent.change(mass, { target: { value: "52.4" } });
     fireEvent.click(within(edit).getByRole("button", { name: "저장" }));
     await waitFor(() => expect(server.entries.find((e) => e.id === "le-6")!.model.product_mass).toBe(52.4));
-    expect(await screen.findByText("52.4 kg")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // 폐기
-    const row = rowsOf().find((r) => r.textContent!.includes("52.4 kg"))!;
+    const row = rowsOf().find((r) => r.textContent!.includes("85QN80H") && r.textContent!.includes("Scene 2 "))!;
     fireEvent.click(within(row).getByRole("button", { name: "수정" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "폐기…" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "폐기" }));
@@ -232,10 +227,15 @@ describe("라이브러리 목록", () => {
     await waitFor(() => expect(rowsOf()).toHaveLength(9));
   });
 
-  it("조회 사용자: 종합분석 만들기·수정 비활성", async () => {
+  it("조회 사용자: 선택은 되지만 동작(내보내기 등)·수정 비활성", async () => {
     const { container } = renderApp("/p/p-body/library", "general");
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
-    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("user").textContent).toContain("조회"));
+    fireEvent.click(within(rowsOf()[0]).getByRole("checkbox"));
+    const exp = primaries(container)[0] as HTMLButtonElement;
+    expect(exp.textContent).toBe("내보내기 (1)");
+    expect(exp.disabled).toBe(true);
+    expect(exp.parentElement!.getAttribute("title")).toBe(NO_PERMISSION);
     expect((within(rowsOf()[0]).getByRole("button", { name: "수정" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -265,7 +265,7 @@ describe("종합분석 만들기", () => {
     const run = primaries(container)[0] as HTMLButtonElement;
     expect(run.textContent).toBe("분석 실행");
     await waitFor(() => expect(run.disabled).toBe(false));
-    expect(screen.getByText("포함 항목 9개")).toBeTruthy(); // ACTIVE 10 중 PASS 9
+    expect(screen.getByText("포함 항목 8개")).toBeTruthy(); // ACTIVE 10 중 적격(PASS·현재 기준) 8 — le-5 FAIL·le-7 LEGACY 제외
     // 최적화 하중: 라디오 3개, 기본 '모든 씬'
     const deck = screen.getByRole("radiogroup", { name: "최적화 하중" });
     const radios = within(deck).getAllByRole("radio") as HTMLInputElement[];
@@ -377,16 +377,16 @@ describe("설계 버전 비교(§12.2)", () => {
     expect(resolveForm({ model: "", base: "", next: "" }, null).reason).toBe("불러오는 중…");
   });
 
-  it("라이브러리 목록: 보조 진입 '버전 비교'(주 버튼은 그대로 1개) + 비교 목록", async () => {
+  it("라이브러리 '종합분석·버전 비교' 탭: 비교 표 머리 보조 [버전 비교 만들기] + 비교 목록(주 버튼 없음)", async () => {
     const { container } = renderApp("/p/p-body/library");
-    // v0.7.0: 라이브러리 탭(항목 | 종합분석 | 버전 비교 | 최적화 실행 | 템플릿)
-    fireEvent.click(await screen.findByRole("tab", { name: "버전 비교" }));
+    // v0.10.0: 탭(ESL 목록 | 강성 평가 스터디 | 비드 최적화 | 종합분석·버전 비교 | 템플릿)
+    fireEvent.click(await screen.findByRole("tab", { name: "종합분석·버전 비교" }));
     const tbl = await screen.findByRole("table", { name: "버전 비교 목록" });
     expect(within(tbl).getByText("추가 반복 권장")).toBeTruthy();
     expect(within(tbl).getByText(/75QN80H · v072 → v073/)).toBeTruthy();
-    expect(primaries(container)).toHaveLength(1);
-    expect(primaries(container)[0].textContent).toBe("종합분석 만들기");
-    const link = screen.getByRole("link", { name: "버전 비교" });
+    expect(screen.getByRole("table", { name: "종합분석 목록" })).toBeTruthy();
+    expect(primaries(container)).toHaveLength(0);
+    const link = screen.getByRole("link", { name: "버전 비교 만들기" });
     expect(link.getAttribute("href")).toBe("/p/p-body/library/comparisons/new");
     expect(link.hasAttribute("data-primary")).toBe(false);
     fireEvent.click(link);

@@ -3,9 +3,10 @@
 import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
-  ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, SupportSetOut,
-  ValidationOut,
+  ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, StepStatus, SupportAuto, SupportProblem,
+  SupportSetOut, ValidationOut,
 } from "../api/types";
+import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportOptions } from "../api/library";
 import {
   CANDIDATE_FRAMES, CORNER_IDS, ESL_ROOT, EXTRACT_SUMMARY, FRAMES_D, MAX_ARTIFACT_BYTES, N_NODES, PLANE, PROJECTS, USERS, baseCase,
   makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
@@ -44,6 +45,16 @@ const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
 
+/** §5.2 자동 3-2-1 품질 지표(목) */
+const AUTO_CHECKS = { area_ratio: 0.82, min_dist_rel: 0.61, cond_ratio: 0.12 };
+const BLOCKED_PROBLEMS: SupportProblem[] = [
+  { code: "SUPPORT_COLLINEAR", message: "지지 3점이 거의 한 줄입니다(면적비 0.04 < 0.10)", value: 0.04, limit: 0.1 },
+  { code: "SUPPORT_ILL_CONDITIONED", message: "지지 구속이 약합니다(조건비 4e-4 < 1e-3)", value: 4e-4, limit: 1e-3 },
+  { code: "SUPPORT_NO_VALID_CANDIDATE", message: "후보 8개 조합 중 통과 없음" },
+];
+/** 목 수동 지정 검사: 노드 ID 범위가 이보다 좁으면 SUPPORT_TOO_CLOSE */
+const MANUAL_MIN_SPREAD = 100;
+
 const err = (status: number, code: string, message: string, extra: Record<string, unknown> = {}): MockResponse => ({
   status,
   body: { detail: { code, message, ...extra } },
@@ -72,6 +83,12 @@ export class MockServer {
   comparisons: ComparisonOut[] = [];
   /** §6: worker.slots — SLOT 레인 동시 실행 수 */
   slots = 2;
+  /** v0.10.0(esl_menu_restructure.md §5): 자동 3-2-1 이 품질 검사에 걸리는 Case(시연·시험용) */
+  supportBlocked = new Set<string>();
+  /** v0.10.0 §6: 라이브러리 다중 내보내기 묶음 */
+  exportBatches: { batch: ExportBatchOut; jobIds: string[] }[] = [];
+  /** 한 번에 내보낼 수 있는 ESL 수(서버 library_export.max_entries) */
+  exportMax = 50;
   /** P3-UX: 업로드·서버 폴더·결과 zip·버전·PC 연결 */
   p3 = new P3Mock({
     canRun: (pid) => this.canRun(pid),
@@ -150,6 +167,7 @@ export class MockServer {
     const ss = makeSupportSet("ss-1", a.id);
     this.supportSets.push(ss);
     a.current_support_set_id = ss.id;
+    a.tstar = { ...a.tstar!, support_auto: { status: "OK", mode: "pca4", checks: AUTO_CHECKS, rule_version: 1 } };
     const run: Run = { ...makeEslRun("run-1", a.id, ss.id, a.tstar!.frame_index, a.tstar!.time), inputs: this.inputsKey(a) };
     this.runs.push(run);
     a.current_esl_run_id = run.id;
@@ -178,6 +196,9 @@ export class MockServer {
     // 라이브러리: 항목 8개(1개 폐기) + 완료된 종합분석 1개
     this.entries = makeEntries("p-body");
     enrichEntries(this.entries);
+    // v0.10.0 §7: 이전 판정 체계(scheme 없음)로 등록된 LEGACY 항목 1개(le-7) — 재검증 시연(PASS 로 전환)
+    const legacy = this.entries.find((e) => e.id === "le-7");
+    if (legacy) legacy.quality = { ...legacy.quality, scheme: null, status: null };
     const pass = this.entries.filter((e) => e.status === "ACTIVE" && e.quality.verdict === "PASS");
     const an = this.makeAnalysis("an-1", { project_id: "p-body", title: "QN80H 꼭지점·모서리 강건 비드", target_entry_id: "le-1", filters: { verdict: ["PASS"] }, options: { normalization: "inch2", n_representative: 4, objective: "minmax" } }, pass);
     an.created_at = an.updated_at = "2026-10-18T05:00:00Z";
@@ -307,12 +328,28 @@ export class MockServer {
     return r === "power" || r === "admin";
   }
 
+  /** Case 단계 작업(라이브러리 내보내기·재검증 origin 은 제외 — §3 MR-D-7) */
+  private caseJob = (j: JobOut, caseId: string, stage: number) => j.case_id === caseId && j.stage === stage && !j.params?.origin;
+
   private activeJob(caseId: string, stage: number) {
-    return this.jobs.find((j) => j.case_id === caseId && j.stage === stage && ACTIVE.includes(j.state));
+    return this.jobs.find((j) => this.caseJob(j, caseId, stage) && ACTIVE.includes(j.state));
   }
 
   private lastJob(caseId: string, stage: number) {
-    return [...this.jobs].reverse().find((j) => j.case_id === caseId && j.stage === stage);
+    return [...this.jobs].reverse().find((j) => this.caseJob(j, caseId, stage));
+  }
+
+  /** §5.4 화면 4단계 상태 */
+  stepStatus(c: CaseOut): StepStatus {
+    const ss = this.stageStatus(c);
+    let tstar: StageState;
+    if (ss["1"].state === "running") tstar = { state: "running", job_id: ss["1"].job_id };
+    else if (!c.tstar) tstar = { state: "none", job_id: null };
+    else if (c.current_support_set_id) tstar = { state: "done", job_id: null };
+    else if (c.tstar.support_auto?.status === "BLOCKED")
+      tstar = { state: "failed", job_id: null, reason: { code: "SUPPORT_AUTO_BLOCKED", message: "지지점 자동 선택 실패 — 사유 확인" } };
+    else tstar = { state: "none", job_id: null, reason: { code: "TSTAR_NOT_CONFIRMED", message: "t* 확정이 필요합니다" } };
+    return { input: ss["1"], tstar, esl: ss["4"], validate: ss["5"] };
   }
 
   private currentRun(c: CaseOut) {
@@ -347,7 +384,40 @@ export class MockServer {
   private caseOut(c: CaseOut): CaseOut {
     const run = this.currentRun(c);
     if (run) run.stale = run.inputs !== this.inputsKey(c);
-    return { ...c, stage_status: this.stageStatus(c) };
+    return { ...c, stage_status: this.stageStatus(c), step_status: this.stepStatus(c) };
+  }
+
+  /** §5.2 자동 3-2-1(목): supportBlocked 면 BLOCKED + problems, 아니면 PCA 꼭지점 3개 */
+  private autoSupport(c: CaseOut): SupportAuto & { node_ids?: number[] } {
+    if (this.supportBlocked.has(c.id))
+      return { status: "BLOCKED", mode: "pca8", rule_version: 1, problems: BLOCKED_PROBLEMS, checks: { area_ratio: 0.04, min_dist_rel: 0.31, cond_ratio: 4e-4 } };
+    return { status: "OK", mode: "pca4", checks: AUTO_CHECKS, rule_version: 1, node_ids: [CORNER_IDS[0], CORNER_IDS[1], CORNER_IDS[3]] };
+  }
+
+  /** 시연·시험용: Case 를 '추출 완료 + t* 있음 + 자동 지지 BLOCKED(지지 세트 없음)' 상태로 */
+  demoSupportBlocked(caseId: string) {
+    const c = this.findCase(caseId);
+    if (!c) return;
+    this.supportBlocked.add(caseId);
+    if (!c.extract_summary) this.finishExtract(c);
+    c.current_support_set_id = null;
+    const sa = this.autoSupport(c);
+    delete sa.node_ids;
+    c.tstar = { ...c.tstar!, support_auto: sa };
+  }
+
+  /** §7.4 EntryOut 추가 키(목: Case·run 행 없이 quality 로 계산) */
+  private entryOut(e: EntryOut): EntryOut {
+    const st = entryStatus(e.quality);
+    const eligible = st === "PASS";
+    const rj = [...this.jobs].reverse().find((j) => j.params?.origin === "library_revalidate" && j.params?.entry_id === e.id && ACTIVE.includes(j.state));
+    return {
+      ...e,
+      eligible,
+      ineligible_reason: eligible ? null : !e.quality.scheme ? "LEGACY" : st === "UNDETERMINED" ? "UNDETERMINED" : "FAIL",
+      revalidate_block: e.revalidate_block ?? null,
+      revalidate_job: rj ? { job_id: rj.id, state: rj.state } : null,
+    };
   }
 
   private runOut(run: Run): EslRunOut {
@@ -486,7 +556,7 @@ export class MockServer {
     }
     if (method === "GET" && path === "/cases") {
       const pid = query.get("project_id");
-      return { status: 200, body: this.cases.filter((c) => !pid || c.project_id === pid).map((c) => ({ ...this.caseOut(c), stage_status: this.stageStatus(c) })) };
+      return { status: 200, body: this.cases.filter((c) => !pid || c.project_id === pid).map((c) => this.caseOut(c)) };
     }
     if (method === "POST" && path === "/cases") {
       if (!this.canRun(String(b.project_id))) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
@@ -633,7 +703,7 @@ export class MockServer {
           (!f("status") || e.status === f("status")) &&
           (!f("mode") || e.deform_mode?.effective === f("mode")),
       );
-      return { status: 200, body: out };
+      return { status: 200, body: out.map((e) => this.entryOut(e)) };
     }
     if (path === "/library/entries" && method === "POST") {
       const run = this.runs.find((x) => x.id === b.esl_run_id);
@@ -644,10 +714,11 @@ export class MockServer {
       if (!v) return err(409, "PREREQUISITE_MISSING", "검증 결과가 필요합니다", { missing: ["validation"] });
       if (this.entries.some((e) => e.esl_run_id === run.id && e.status === "ACTIVE"))
         return err(409, "ENTRY_EXISTS", "이 ESL 결과는 이미 라이브러리에 등록되어 있습니다");
-      const reason = typeof b.force_reason === "string" ? b.force_reason.trim() : "";
+      // v0.10.0 §7.2: 현재 기준 PASS 만(force_reason 은 무시)
+      const reason = "";
       const vs = statusOf(v);
-      const needReason = vs === "FAIL" || vs === "UNDETERMINED" || (vs === "LEGACY" && v.verdict !== "PASS");
-      if (needReason && !reason) return err(422, "VALIDATION_NOT_PASS", "검증 FAIL·판정 불가는 사유(force_reason)와 함께만 등록할 수 있습니다", { verdict: v.verdict });
+      if (vs === "LEGACY") return err(422, "VALIDATION_LEGACY", "이전 판정 체계 결과는 등록할 수 없습니다 — ④에서 다시 검증하세요");
+      if (vs !== "PASS") return err(422, "VALIDATION_NOT_PASS", "변위 기준 PASS만 등록할 수 있습니다", { verdict: v.verdict });
       const fs = makeFieldSummary();
       const fs0 = makeStrainRef();
       const t = this.now();
@@ -685,12 +756,14 @@ export class MockServer {
         force_reason: reason || null,
       };
       this.entries.unshift(e);
-      return { status: 201, body: e };
+      return { status: 201, body: this.entryOut(e) };
     }
+    if ((r = path.match(/^\/library\/entries\/([^/]+)\/revalidate$/)) && method === "POST") return this.revalidate(r[1]);
+    if (path.startsWith("/library/exports")) return this.libraryExports(method, path, query, b);
     if ((r = path.match(/^\/library\/entries\/([^/]+)(\/retire)?$/))) {
       const e = this.entries.find((x) => x.id === r![1]);
       if (!e) return err(404, "ENTRY_NOT_FOUND", "라이브러리 항목을 찾을 수 없습니다.");
-      if (method === "GET" && !r[2]) return { status: 200, body: e };
+      if (method === "GET" && !r[2]) return { status: 200, body: this.entryOut(e) };
       if (!this.canRun(e.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
       // 메타 수정·폐기 = 등록자 또는 관리자(서버 can_edit_meta·retire_entry 와 같음). 변형 모드만 바꿀 때는 power 이면 됨
       const owner = e.registered_by === this.me.user_id || this.me.is_global_admin || this.me.roles[e.project_id] === "admin";
@@ -756,6 +829,10 @@ export class MockServer {
               inList(f.scenario, e.scene.scenario) &&
               inList(f.verdict, e.quality.verdict)),
       );
+      // v0.10.0 §7.5 게이트: 지정 항목에 부적격이 있으면 422, 필터 분석은 부적격을 뺀다
+      const bad = hit.filter((e) => !this.entryOut(e).eligible);
+      if (f.entry_ids?.length && bad.length) return err(422, "ENTRY_NOT_ELIGIBLE", "LEGACY·FAIL·판정 불가 항목은 쓸 수 없습니다", { entry_ids: bad.map((e) => e.id), reasons: bad.map((e) => this.entryOut(e).ineligible_reason) });
+      if (!f.entry_ids?.length) hit.splice(0, hit.length, ...hit.filter((e) => !bad.includes(e)));
       if (!hit.length) return err(422, "NO_MATCHING_ENTRIES", "필터에 맞는 활성 라이브러리 항목이 없습니다");
       const o = body.options ?? {};
       if (o.n_representative != null && (!Number.isInteger(o.n_representative) || o.n_representative < 1))
@@ -912,6 +989,20 @@ export class MockServer {
           candidates: blk.candidates.filter((x) => x.in_D !== false).map((x) => x.frame_index),
         });
       c.tstar = { metric, frame_index: cand.frame_index, time: cand.time, elem_id: cand.elem_id, value: cand.value, source: "user" };
+      // §5.1: 지지 세트가 없을 때만 자동 3-2-1, 있으면 유지(KEPT)
+      const cur = this.supportSets.find((x) => x.id === c.current_support_set_id);
+      if (cur) c.tstar.support_auto = { status: "KEPT", source: cur.source };
+      else {
+        const sa = this.autoSupport(c);
+        const ids = sa.node_ids;
+        delete sa.node_ids;
+        c.tstar.support_auto = sa;
+        if (sa.status === "OK" && ids) {
+          const ss: SupportSetOut = { id: this.id("ss"), case_id: c.id, node_ids: ids, dofs: ["123", "23", "3"], source: "auto", plane: PLANE, created_by: this.me.user_id, created_at: this.now(), is_current: true };
+          this.supportSets.push(ss);
+          c.current_support_set_id = ss.id;
+        }
+      }
       c.version += 1;
       return { status: 200, body: this.caseOut(c) };
     }
@@ -924,7 +1015,8 @@ export class MockServer {
     }
     if (sub === "support-sets/suggest" && method === "POST") {
       const ids = [CORNER_IDS[0], CORNER_IDS[1], CORNER_IDS[3]];
-      return { status: 200, body: { node_ids: ids, dofs: ["123", "23", "3"], coords: ids.map(toXYZ), plane: PLANE, corners: CORNER_IDS } };
+      const sa = this.autoSupport(c);
+      return { status: 200, body: { node_ids: ids, dofs: ["123", "23", "3"], coords: ids.map(toXYZ), plane: PLANE, corners: CORNER_IDS, status: sa.status, problems: sa.problems ?? [] } };
     }
     if (sub === "support-sets" && method === "GET")
       return {
@@ -937,6 +1029,11 @@ export class MockServer {
       if (ids.length !== 3) return err(422, "INVALID_PARAMS", "node_ids 는 3개입니다");
       if (bad.length) return err(422, "NODE_NOT_IN_PART", `대상 파트에 없는 노드: ${bad}`, { node_ids: bad });
       if (new Set(ids).size < 3) return err(422, "INVALID_PARAMS", "세 노드가 서로 달라야 합니다.");
+      // §5.1 수동 지정도 같은 품질 검사(목: 노드 ID 범위가 좁으면 '너무 가까움')
+      if (Math.max(...ids) - Math.min(...ids) < MANUAL_MIN_SPREAD)
+        return err(422, "SUPPORT_CHECK_FAILED", "지정한 지지 노드가 품질 검사를 통과하지 못했습니다", {
+          problems: [{ code: "SUPPORT_TOO_CLOSE", message: "지지 두 점이 너무 가깝습니다(거리 0.02·대각선 < 0.15)", value: 0.02, limit: 0.15 }],
+        });
       const auto = [CORNER_IDS[0], CORNER_IDS[1], CORNER_IDS[3]];
       const ss: SupportSetOut = {
         id: this.id("ss"),
@@ -951,6 +1048,7 @@ export class MockServer {
       };
       this.supportSets.push(ss);
       c.current_support_set_id = ss.id;
+      if (c.tstar) c.tstar = { ...c.tstar, support_auto: { status: "MANUAL", checks: { area_ratio: 0.55, min_dist_rel: 0.42, cond_ratio: 0.08 }, rule_version: 1 } };
       c.version += 1;
       return { status: 201, body: ss };
     }
@@ -971,6 +1069,9 @@ export class MockServer {
         if (!c.extract_summary) missing.push("extract");
         if (!c.tstar) missing.push("tstar");
         if (!c.current_support_set_id) missing.push("support_set");
+        // §5.3 MR-D-4: 자동 지지 BLOCKED 면 support_blocked 를 함께
+        if (!c.current_support_set_id && c.tstar?.support_auto?.status === "BLOCKED")
+          return err(409, "PREREQUISITE_MISSING", "앞 단계가 필요합니다", { missing, support_blocked: true });
       }
       if (jt === "VALIDATE" || jt === "EXPORT") {
         const run = this.currentRun(c);
@@ -1045,6 +1146,8 @@ export class MockServer {
       if (c) this.finishComparison(c);
       return;
     }
+    if (j.job_type === "EXPORT" && j.params?.origin === "library") return this.finishLibraryExport(j);
+    if (j.job_type === "VALIDATE" && j.params?.origin === "library_revalidate") return this.finishRevalidate(j);
     const c = j.case_id ? this.findCase(j.case_id) : undefined;
     if (!c) return;
     if (j.job_type === "CASE_EXTRACT") this.finishExtract(c);
@@ -1069,6 +1172,162 @@ export class MockServer {
     }
     // 백엔드: 추출·ESL 등록만 cases 를 갱신(version+1). 검증·내보내기는 Case 를 바꾸지 않는다.
     if (j.job_type === "CASE_EXTRACT" || j.job_type === "ESL_SOLVE") c.version += 1;
+  }
+
+  // ---------------------------------------------------------------- v0.10.0 라이브러리 다중 내보내기(§6)·재검증(§7.3)
+  private libraryExports(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse {
+    let r: RegExpMatchArray | null;
+    if (path === "/library/exports" && method === "POST") {
+      const pid = String(b.project_id ?? "");
+      if (!this.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
+      const ids = Array.isArray(b.entry_ids) ? (b.entry_ids as string[]) : [];
+      const targets = Array.isArray(b.targets) ? (b.targets as ExportTarget[]) : [];
+      const opts = (b.options ?? { id_offset: "auto" }) as ExportOptions;
+      if (!ids.length || new Set(ids).size !== ids.length || !targets.length || targets.some((t) => !["radioss_inc", "fem", "csv"].includes(t)))
+        return err(422, "INVALID_PARAMS", "요청 값이 올바르지 않습니다");
+      if (opts.id_offset !== "auto" && !(Number.isInteger(opts.id_offset) && (opts.id_offset as number) >= 0)) return err(422, "INVALID_PARAMS", "id_offset 은 auto 또는 0 이상 정수입니다");
+      if (ids.length > this.exportMax) return err(422, "TOO_MANY_ENTRIES", `최대 ${this.exportMax}개`, { max: this.exportMax });
+      const es = ids.map((id) => this.entries.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
+      const missing = ids.filter((_, k) => !es[k]);
+      if (missing.length) return err(422, "ENTRY_NOT_FOUND", "라이브러리 항목을 찾을 수 없습니다", { entry_ids: missing });
+      const caseIds = [...new Set(es.map((e) => e!.case_id))];
+      const busy = caseIds.filter((cid) => this.jobs.some((j) => j.case_id === cid && j.job_type === "EXPORT" && ACTIVE.includes(j.state)));
+      if (busy.length) return err(409, "CASE_JOB_BUSY", "같은 Case 에 진행 중인 내보내기가 있습니다", { case_ids: busy });
+      const batchId = this.id("bx");
+      const items: ExportBatchItem[] = es.map((e, k) => ({
+        entry_id: e!.id,
+        label: `${String(k + 1).padStart(2, "0")}_${(e!.model.name ?? "model").replace(/[^A-Za-z0-9_-]/g, "")}_${e!.scene.drop_type ?? ""}${e!.scene.orient ?? ""}_${e!.id.slice(0, 8)}`,
+        case_id: e!.case_id,
+        legacy: !this.entryOut(e!).eligible,
+        state: "PENDING",
+        files: [],
+        id_range: null,
+        warnings: [],
+        error: null,
+      }));
+      const jobIds = caseIds.map((cid) => {
+        const its = items.filter((it) => it.case_id === cid);
+        const j = this.newJob({ id: cid, project_id: pid }, "EXPORT", { origin: "library", batch_id: batchId, targets, options: opts, items: its.map((it) => ({ entry_id: it.entry_id, label: it.label })) });
+        return j.id;
+      });
+      const batch: ExportBatchOut = {
+        batch_id: batchId,
+        project_id: pid,
+        created_by: this.me.user_id,
+        created_by_name: this.me.display_name,
+        created_at: this.now(),
+        targets,
+        options: { id_policy: "per_model_sequential", ...opts },
+        state: "QUEUED",
+        jobs: [],
+        items,
+        bundle: { ready: false, bytes: null },
+      };
+      this.exportBatches.unshift({ batch, jobIds });
+      return { status: 202, body: this.batchOut(batch.batch_id)! };
+    }
+    if (path === "/library/exports" && method === "GET") {
+      const pid = query.get("project_id");
+      const lim = Math.min(100, Number(query.get("limit") ?? 20) || 20);
+      return {
+        status: 200,
+        body: this.exportBatches
+          .filter((x) => !pid || x.batch.project_id === pid)
+          .slice(0, lim)
+          .map((x) => {
+            const o = this.batchOut(x.batch.batch_id)!;
+            return { batch_id: o.batch_id, created_at: o.created_at, created_by_name: o.created_by_name, state: o.state, targets: o.targets, n_items: o.items.length };
+          }),
+      };
+    }
+    if ((r = path.match(/^\/library\/exports\/([^/]+)(\/bundle)?$/)) && method === "GET") {
+      const o = this.batchOut(r[1]);
+      if (!o) return err(404, "EXPORT_NOT_FOUND", "내보내기를 찾을 수 없습니다");
+      if (!r[2]) return { status: 200, body: o };
+      if (o.state === "QUEUED" || o.state === "RUNNING") return err(409, "EXPORT_NOT_READY", "내보내기가 아직 진행 중입니다");
+      if (!o.items.some((it) => it.state === "DONE")) return err(409, "EXPORT_FAILED", "성공한 항목이 없습니다");
+      return { status: 200, body: "mock zip\n" };
+    }
+    return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
+  }
+
+  /** 묶음 상태 = 작업 상태에서 계산(§6.1) */
+  private batchOut(batchId: string): ExportBatchOut | null {
+    const rec = this.exportBatches.find((x) => x.batch.batch_id === batchId);
+    if (!rec) return null;
+    const js = rec.jobIds.map((id) => this.jobs.find((j) => j.id === id)!).filter(Boolean);
+    const b = rec.batch;
+    const done = b.items.filter((it) => it.state === "DONE").length;
+    const allEnd = js.every((j) => TERMINAL.includes(j.state));
+    let state: ExportBatchState = js.some((j) => j.state === "RUNNING") ? "RUNNING" : js.every((j) => j.state === "QUEUED") ? "QUEUED" : "RUNNING";
+    if (allEnd) state = js.some((j) => j.state === "CANCELED") ? "CANCELED" : done === b.items.length ? "SUCCEEDED" : done > 0 ? "PARTIAL" : "FAILED";
+    return {
+      ...b,
+      state,
+      jobs: js.map((j) => ({ job_id: j.id, case_id: j.case_id!, state: j.state, progress_pct: j.progress_pct, failure_code: j.failure_code, failure_message: j.failure_message })),
+      bundle: { ready: allEnd && done > 0, bytes: allEnd && done > 0 ? 1_204_331 * done : null },
+    };
+  }
+
+  /** EXPORT(library) 완료: 항목 DONE + 파일·ID 범위(같은 모델은 이어서 — per_model_sequential). failExportEntries 에 든 항목은 실패 */
+  failExportEntries = new Set<string>();
+  private finishLibraryExport(j: JobOut) {
+    const rec = this.exportBatches.find((x) => x.jobIds.includes(j.id));
+    if (!rec) return;
+    const names: Record<ExportTarget, string[]> = { radioss_inc: ["esl_cload.inc", "esl_bcs.inc"], fem: ["esl_force.fem"], csv: ["f_eq.csv", "u_rel.csv", "supports_321.csv"] };
+    const nextId: Record<string, number> = {};
+    for (const it of rec.batch.items) {
+      if (it.case_id !== j.case_id) continue;
+      if (this.failExportEntries.has(it.entry_id)) {
+        it.state = "FAILED";
+        it.error = { code: "ENTRY_FILES_MISSING", message: "항목 파일(raw.npz)이 없습니다" };
+        continue;
+      }
+      const e = this.entries.find((x) => x.id === it.entry_id);
+      const topo = e?.topo_sha256 ?? it.entry_id;
+      const off = rec.batch.options.id_offset === "auto" ? 9_000_000 : (rec.batch.options.id_offset as number);
+      // 같은 모델(topo)은 앞 항목 끝 ID 다음부터(다른 Case 작업의 결과 포함)
+      const prev = rec.batch.items.filter((x) => x.state === "DONE" && x.id_range && this.entries.find((y) => y.id === x.entry_id)?.topo_sha256 === topo);
+      const start = nextId[topo] ?? prev.reduce((m, x) => Math.max(m, x.id_range![1] + 1), off);
+      const end = start + 1233;
+      nextId[topo] = end + 1;
+      it.state = "DONE";
+      it.id_range = [start, end];
+      it.files = rec.batch.targets.flatMap((t) => names[t]).map((n, k) => ({ rel: `${it.label}/${n}`, size: 1000 * (k + 3) }));
+      if (rec.batch.targets.includes("csv")) it.warnings = ["u_total 은 Case 결과 zip 참고"];
+    }
+  }
+
+  /** §7.3 POST /library/entries/{id}/revalidate */
+  private revalidate(eid: string): MockResponse {
+    const e = this.entries.find((x) => x.id === eid);
+    if (!e) return err(404, "ENTRY_NOT_FOUND", "라이브러리 항목을 찾을 수 없습니다.");
+    if (!this.canRun(e.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
+    if (e.status === "RETIRED") return err(409, "ENTRY_RETIRED", "이미 폐기된 항목입니다");
+    if (this.entryOut(e).eligible) return err(409, "ENTRY_NOT_LEGACY", "이미 현재 기준 PASS 항목입니다");
+    if (e.revalidate_block) return err(409, "REVALIDATE_NOT_POSSIBLE", e.revalidate_block.reason, { reason: e.revalidate_block.code });
+    if (this.jobs.some((j) => j.case_id === e.case_id && j.job_type === "VALIDATE" && ACTIVE.includes(j.state))) return err(409, "CASE_JOB_BUSY", "같은 Case 에서 검증이 진행 중입니다");
+    const j = this.newJob({ id: e.case_id, project_id: e.project_id }, "VALIDATE", { esl_run_id: e.esl_run_id, origin: "library_revalidate", entry_id: e.id });
+    return { status: 201, body: j };
+  }
+
+  /** 재검증 완료(§7.4): 당시 FAIL 이던 항목은 다시 FAIL(KEPT_LEGACY), 그 외는 PASS 로 전환(PROMOTED) */
+  private finishRevalidate(j: JobOut) {
+    const e = this.entries.find((x) => x.id === j.params.entry_id);
+    if (!e || e.status !== "ACTIVE") {
+      j.result = { revalidate: { outcome: "ENTRY_CHANGED" } };
+      return;
+    }
+    if (e.quality.verdict === "FAIL") {
+      j.result = { revalidate: { outcome: "KEPT_LEGACY", status: "FAIL", fail_reasons: e.quality.fail_reasons ?? [] } };
+      return;
+    }
+    const from = { from_validation_id: e.validation_id ?? null, from_status: entryStatus(e.quality), job_id: j.id, at: this.now(), by: this.me.user_id, by_name: this.me.display_name };
+    e.quality = { ...e.quality, verdict: "PASS", status: "PASS", scheme: "disp_primary/1", fail_reasons: [], undetermined_reason: null, confirmed_fail: null, confirmed_undetermined: null, revalidated: from };
+    e.validation_id = this.id("val");
+    e.force_reason = null;
+    e.version += 1;
+    j.result = { revalidate: { outcome: "PROMOTED", status: "PASS" } };
   }
 
   /** 시연·시험용(§6): h3d 입력 Case 를 만들고 ① 추출을 걸어 서버 추출(H3D_EXTRACT) 진행 중으로 둔다. 다른 Case 계산도 하나

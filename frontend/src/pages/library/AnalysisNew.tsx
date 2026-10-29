@@ -1,15 +1,15 @@
 // 종합분석 만들기(계약 §3·§4·§11·§12.1): 설계 대상 · 필터 · 옵션 최소(정규화·대표 수·목적·최적화 하중), 나머지는 '고급'(접힘).
 // 주 버튼 = "분석 실행"(POST /library/analyses → LIB_ANALYZE 작업) → 상세 화면.
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
 import type { AnalysisFilters, AnalysisOptions, EntryOut, Normalization, Objective, OptdeckCases } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
-import { DECK_LABEL, DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, EntryVerdict, entryLabel, libPath, matchEntries, sceneText, uniq } from "./common";
+import { DECK_LABEL, DROP_LABEL, DROP_TYPES, NORM_LABEL, OBJ_LABEL, EntryVerdict, entryLabel, isEligible, legacyBlockText, libPath, matchEntries, sceneText, uniq } from "./common";
 
 const NORM_HINT: Record<Normalization, string> = {
   none: "절대값 그대로",
@@ -34,6 +34,8 @@ export interface AnalysisForm {
   targetInch: string;
   /** 최적화 하중(덱 subcase): 모든 씬(기본) · 대표 · 대표+최악 */
   deckCases: OptdeckCases;
+  /** v0.10.0: 라이브러리에서 선택한 ESL(?entries=) — 있으면 필터 대신 filters.entry_ids */
+  entryIds: string[];
 }
 
 const DECK_HINT: Record<OptdeckCases, string> = {
@@ -58,10 +60,12 @@ export const DEFAULT_FORM: AnalysisForm = {
   targetMass: "",
   targetInch: "",
   deckCases: "all",
+  entryIds: [],
 };
 
 /** 폼 → filters(키마다 목록, 빈 키는 보내지 않음 = 전체) */
 export function toFilters(f: AnalysisForm): AnalysisFilters {
+  if (f.entryIds.length) return { entry_ids: [...f.entryIds] };
   const out: AnalysisFilters = {};
   if (f.model) out.model = [f.model];
   if (f.drops.length) out.drop_type = [...f.drops];
@@ -84,7 +88,10 @@ export function validateForm(f: AnalysisForm, entries: EntryOut[] | null) {
   const ti = posNum(f.targetInch);
   if (tm !== null && !(tm > 0)) fieldErr.targetMass = "양수(kg)";
   if (ti !== null && !(ti > 0)) fieldErr.targetInch = "양수";
-  const matched = entries ? matchEntries(entries, toFilters(f)) : [];
+  // v0.10.0 §7.5: 필터 분석은 부적격(LEGACY·FAIL·판정 불가)을 서버가 빼고, 지정(entry_ids)은 부적격이 있으면 422
+  const hit = entries ? matchEntries(entries, toFilters(f)) : [];
+  const matched = f.entryIds.length ? hit : hit.filter(isEligible);
+  const nBad = f.entryIds.length ? hit.filter((x) => !isEligible(x)).length : 0;
   const target = entries?.find((x) => x.id === f.target);
   if (f.normalization === "mass" || f.normalization === "inch2") {
     const mass = f.normalization === "mass";
@@ -97,7 +104,9 @@ export function validateForm(f: AnalysisForm, entries: EntryOut[] | null) {
     ? "불러오는 중…"
     : matched.length === 0
       ? "필터에 맞는 항목이 없습니다"
-      : fieldErr.nRep
+      : nBad
+        ? legacyBlockText(nBad)
+        : fieldErr.nRep
         ? `대표 케이스 수: ${fieldErr.nRep}`
         : fieldErr.svdEnergy
           ? `SVD 누적 에너지: ${fieldErr.svdEnergy}`
@@ -128,7 +137,8 @@ export function AnalysisNew() {
   const project = projects.find((p) => p.id === projectId);
   const allowed = canRun(me, projectId);
   const entries = usePolling(() => api.libraryEntries({ project_id: projectId, status: "ACTIVE" }), 0, [projectId]);
-  const [f, setF] = useState<AnalysisForm>(DEFAULT_FORM);
+  const [sp] = useSearchParams();
+  const [f, setF] = useState<AnalysisForm>(() => ({ ...DEFAULT_FORM, entryIds: (sp.get("entries") ?? "").split(",").filter(Boolean) }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof AnalysisForm>(k: K, v: AnalysisForm[K]) => setF((o) => ({ ...o, [k]: v }));
@@ -166,7 +176,7 @@ export function AnalysisNew() {
 
   return (
     <Shell
-      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "라이브러리", to: libPath(projectId) }, { label: "새 종합분석" }]}
+      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_LIBRARY, to: libPath(projectId) }, { label: "새 종합분석" }]}
       projectId={projectId}
     >
       <div className="page-title-row">
@@ -190,6 +200,15 @@ export function AnalysisNew() {
               ))}
             </select>
           </Field>
+          {f.entryIds.length > 0 ? (
+            <div className="inline-actions" data-testid="picked-entries">
+              <span className="small">라이브러리에서 선택한 ESL {f.entryIds.length}개</span>
+              <button type="button" className="btn small ghost" onClick={() => set("entryIds", [])}>
+                필터로 고르기
+              </button>
+            </div>
+          ) : (
+          <>
           <div className="form-grid">
             <Field label="모델">
               <select aria-label="필터 모델" value={f.model} onChange={(e) => set("model", e.target.value)}>
@@ -202,7 +221,7 @@ export function AnalysisNew() {
             <Field label="판정">
               <select aria-label="필터 판정" value={f.verdict} onChange={(e) => set("verdict", e.target.value as AnalysisForm["verdict"])}>
                 <option value="PASS">PASS만</option>
-                <option value="">전체(확정 FAIL 포함)</option>
+                <option value="">전체(부적격 항목은 제외)</option>
               </select>
             </Field>
           </div>
@@ -224,6 +243,8 @@ export function AnalysisNew() {
               ))}
             </div>
           </Field>
+          </>
+          )}
         </Card>
         <Card title="옵션">
           <Field label="정규화 (인치 간 하중 크기)" hint={fieldErr.normalization ? <span className="error-text">{fieldErr.normalization}</span> : NORM_HINT[f.normalization]}>

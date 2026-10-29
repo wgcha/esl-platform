@@ -7,7 +7,7 @@ import { errorText } from "../../api/client";
 import { MISMATCH_REASON, MODES, MODE_LABEL, SCENARIO_LABEL, opt, optBlockedReason, optPath, sameSize, sizeOf, sizeText, templateMismatch } from "../../api/opt";
 import type { DeformMode, EntryOut, OptPid, OptScenario, OptSettingsOut, S1CheckOut, TemplateOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton, Stat } from "../../components/ui";
 import { KeepoutEditor, type KeepoutValue } from "../../components/KeepoutPlan";
 import { LoadStrategy, kProblem, type StrategyValue } from "../../components/LoadStrategy";
@@ -236,7 +236,7 @@ export function OptNew() {
     if (!allowed) return NO_PERMISSION;
     if (!st || !all.data || !strategy || !bead) return "불러오는 중…";
     if (blocked) return blocked;
-    if (!ids.length) return "ESL 을 고르세요 — 라이브러리 항목에서 체크한 뒤 '선택한 ESL로 비드 최적화'";
+    if (!ids.length) return "ESL 을 고르세요 — ESL 라이브러리 › ESL 목록에서 체크한 뒤 '비드 최적화'";
     if (sel.length !== ids.length) return "라이브러리에 없는 항목이 있습니다";
     if (ids.length > st.max_entries) return `ESL 은 최대 ${st.max_entries}개입니다`;
     if (scenario === "S1") {
@@ -280,7 +280,7 @@ export function OptNew() {
   }
 
   return (
-    <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "라이브러리", to: libPath(projectId) }, { label: "새 비드 최적화" }]} projectId={projectId}>
+    <Shell crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_LIBRARY, to: libPath(projectId) }, { label: "새 비드 최적화" }]} projectId={projectId}>
       <div className="page-title-row">
         <h1 className="page-title">새 비드 최적화</h1>
         <div className="tabs" role="tablist" aria-label="시나리오">
@@ -427,7 +427,7 @@ export function OptNew() {
         ) : (
           <Empty>불러오는 중…</Empty>
         )}
-        <div className="small muted">비드 방향 = 요소 법선(+n) 쪽, 높이 0~최대. 결과는 라이브러리에 넣지 않고 '최적화 실행' 목록에 남습니다.</div>
+        <div className="small muted">비드 방향 = 요소 법선(+n) 쪽, 높이 0~최대. 결과는 라이브러리 항목으로 넣지 않고 '비드 최적화' 목록에 남습니다.</div>
       </Card>
     </Shell>
   );

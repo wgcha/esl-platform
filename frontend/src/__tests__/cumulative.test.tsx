@@ -108,7 +108,7 @@ describe("V-CI-F1 누적 씬 화면", () => {
 
   it("비누적 ② 화면 불변(누적 열·범례·배지 없음)", async () => {
     renderApp(url(2));
-    await screen.findByRole("heading", { level: 2, name: "② t*" });
+    await screen.findByRole("heading", { level: 2, name: "② t*·지지점" });
     await waitFor(() => expect(screen.getAllByRole("columnheader", { name: "값" }).length).toBe(2));
     expect(screen.queryByText("이번(증분)")).toBeNull();
     expect(screen.queryByTestId("cum-legend")).toBeNull();

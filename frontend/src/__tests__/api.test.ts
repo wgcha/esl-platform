@@ -90,7 +90,7 @@ describe("mock 응답 형식", () => {
     setup();
     const e = await api.createJob("c-new", "ESL_SOLVE").catch((x) => x);
     expect(e.code).toBe("PREREQUISITE_MISSING");
-    expect(errorText(e)).toMatch(/필요: ① 추출, ② t\*, ③ 지지점/);
+    expect(errorText(e)).toMatch(/필요: ① 추출, ② t\*, ② 지지점/);
   });
 
   it("비GET 요청에 X-ESL-Request: 1, GET 에는 없음", async () => {

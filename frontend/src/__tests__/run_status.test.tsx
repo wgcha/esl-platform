@@ -87,7 +87,7 @@ describe("V-L3-12 상태 칩·서랍", () => {
   it("화면 이동(링크)해도 폴링 호출 수가 늘지 않는다(Provider 는 앱 루트에 1회)", async () => {
     renderApp("/p/p-body");
     const counts = countCalls();
-    await screen.findByRole("heading", { name: "Case 목록" });
+    await screen.findByRole("heading", { name: "ESL 생성" });
     fireEvent.click(await screen.findByRole("link", { name: "사용 가이드" }));
     await screen.findByTestId("chip-queue");
     expect(counts.queue).toBeLessThanOrEqual(1);
