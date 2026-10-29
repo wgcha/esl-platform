@@ -7,6 +7,7 @@ import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmt } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, useAction } from "./common";
+import { cumText, hasCum } from "../components/Cumulative";
 
 const METRICS: Metric[] = ["max_strain", "plastic_strain"];
 
@@ -18,6 +19,8 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   const act = useAction(reload);
   const blk = tv.data?.metrics[metric];
   const hotspots = blk?.hotspots ?? tv.data?.hotspots ?? [];
+  // v0.8.0 누적 씬: 값 = 누적(이전 + 이번), 표에 이전·이번(증분) 열
+  const cum = !!tv.data?.cumulative && hasCum(blk?.tstar);
 
   // 지표를 바꾸면 그 지표의 현재 t*(또는 자동값)를 기본 선택
   useEffect(() => {
@@ -61,7 +64,24 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                 현재 t*: {METRIC_LABEL[c.tstar.metric]} · 프레임 {c.tstar.frame_index} · {c.tstar.time.toFixed(3)} s · 요소 {c.tstar.elem_id} · {c.tstar.source === "auto" ? "자동" : "사용자 선택"}
               </div>
             )}
-            {blk ? <MaxHoldChart time={blk.history.time} value={blk.history.value} candidates={blk.candidates} selectedFrame={frame} label={METRIC_LABEL[metric]} /> : <Empty>이 지표의 결과가 없습니다</Empty>}
+            {cum && blk?.tstar && (
+              <div className="small" data-testid="cum-tstar">
+                자동 t* 값: {cumText(blk.tstar)}
+                {blk.cumulative && <span className="muted"> · 이전 손상만(이번 증가 없음) {blk.cumulative.n_excluded_no_increment.toLocaleString()}개 제외</span>}
+              </div>
+            )}
+            {blk ? (
+              <MaxHoldChart
+                time={blk.history.time}
+                value={blk.history.value}
+                valueInc={cum ? blk.history.value_inc : undefined}
+                candidates={blk.candidates}
+                selectedFrame={frame}
+                label={METRIC_LABEL[metric]}
+              />
+            ) : (
+              <Empty>이 지표의 결과가 없습니다</Empty>
+            )}
           </Card>
           <div className="grid2">
             <Card title="후보 시점">
@@ -74,7 +94,9 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                     <th className="num">프레임</th>
                     <th className="num">시간 (s)</th>
                     <th>요소</th>
-                    <th className="num">값</th>
+                    <th className="num">{cum ? "누적" : "값"}</th>
+                    {cum && <th className="num">이전</th>}
+                    {cum && <th className="num">이번(증분)</th>}
                     <th>변위(D)</th>
                   </tr>
                 </thead>
@@ -98,6 +120,8 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                         <td className="num">{k.time.toFixed(3)}</td>
                         <td>{k.elem_id}</td>
                         <td className="num">{fmt(k.value, 4)}</td>
+                        {cum && <td className="num">{fmt(k.value_prev, 4)}</td>}
+                        {cum && <td className="num">{fmt(k.value_inc, 4)}</td>}
                         <td>{k.in_D === false ? <span className="error-text" title="변위가 추출되지 않은 프레임 — t*로 고를 수 없음">없음</span> : "있음"}</td>
                       </tr>
                     );
@@ -113,7 +137,9 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   <tr>
                     <th>순위</th>
                     <th>요소</th>
-                    <th className="num">값</th>
+                    <th className="num">{cum ? "누적" : "값"}</th>
+                    {cum && <th className="num">이전</th>}
+                    {cum && <th className="num">이번(증분)</th>}
                     <th>중심 좌표</th>
                     <th>상승 중</th>
                   </tr>
@@ -124,6 +150,8 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                       <td>{h.rank}</td>
                       <td>{h.elem_id}</td>
                       <td className="num">{fmt(h.value, 4)}</td>
+                      {cum && <td className="num">{fmt(h.value_prev, 4)}</td>}
+                      {cum && <td className="num">{fmt(h.value_inc, 4)}</td>}
                       <td className="mono small">{h.centroid ? h.centroid.map((v) => v.toFixed(1)).join(", ") : "–"}</td>
                       <td>
                         {h.rising === null ? (

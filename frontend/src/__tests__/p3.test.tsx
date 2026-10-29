@@ -507,7 +507,7 @@ describe("버전·업데이트 내역", () => {
     renderApp("/updates");
     const card = await screen.findByRole("article", { name: `v${MOCK_VERSION.version}` });
     expect(within(card).getByText("지금 버전")).toBeTruthy();
-    expect(within(card).getByText("추가")).toBeTruthy();
+    expect(within(card).queryByText("추가") ?? within(card).queryByText("수정")).toBeTruthy(); // 지금 버전 구분은 릴리스마다 다름
     expect(within(await screen.findByRole("article", { name: "v0.5.0" })).getByText("추가")).toBeTruthy();
     expect(within(await screen.findByRole("article", { name: "v0.4.0" })).getByText("수정")).toBeTruthy();
     expect(screen.getAllByRole("article").length).toBe(MOCK_CHANGELOG.length);

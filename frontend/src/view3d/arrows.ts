@@ -15,6 +15,8 @@ export const CONE_LEN_SCALE = 0.35;
 export const CONE_PX = { min: 9, max: 26 } as const;
 export const CONE_CLUSTER_SCALE = 1.8;
 export const CONE_ASPECT = 0.3;
+/** 화살표 클릭 허용(화면 px, 선분까지 거리): 원근·직교 공통. 원뿔 머리가 더 넓으면 머리 반지름 + 2 px */
+export const ARROW_PICK_PX = 12;
 /** 군집 화살표 최소 길이 비율(노드는 MIN_LEN_FRAC) */
 export const CLUSTER_MIN_FRAC = 0.3;
 

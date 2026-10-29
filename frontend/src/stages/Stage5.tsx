@@ -65,13 +65,22 @@ function StrainCompare({ f, v }: { f: FieldSummary; v: ValidationOut }) {
       <Stat label="최대변형률 오차" value={spv(mx?.err_pct)} sub={cr ? `참고 기준 ≤ ${cr.max_err_pct_max}%` : undefined} />
       <Stat label="|오차| P90" value={pv(p90)} sub={cr ? `참고 기준 ≤ ${cr.p90_err_max}%` : undefined} />
       <Stat label="hotspot 1위 오차" value={v.hotspots.length ? pct(v.hotspots[0].rel_err) : "–"} sub={hsMax !== undefined ? `참고 기준 ≤ ${pct(hsMax)}` : undefined} />
-      {sr && (
+      {sr && sr.basis === "increment" ? (
         <Stat
           label="소성 영역 요소"
-          value={pl ? pl.n_plastic.toLocaleString() : "–"}
-          sub={pl ? `${(pl.frac_plastic * 100).toFixed(2)}% · 기준 초과와 겹침 ${pl.n_exceed_plastic.toLocaleString()}` : "epsp 없음"}
-          hint="t* 프레임에서 epsp > 0 인 요소"
+          value={`누적 ${(sr.n_plastic_cum ?? 0).toLocaleString()} / 이번 ${(sr.n_plastic_inc ?? 0).toLocaleString()}`}
+          sub={`최대 누적 ${fmt(sr.cum_max, 4)} · 이번 ${fmt(sr.inc_max, 4)}`}
+          hint="누적 씬: t* 프레임 소성 변형률 누적(이전 + 이번) > 0 / 이번 낙하 증분 > 0 인 요소"
         />
+      ) : (
+        sr && (
+          <Stat
+            label="소성 영역 요소"
+            value={pl ? pl.n_plastic.toLocaleString() : "–"}
+            sub={pl ? `${(pl.frac_plastic * 100).toFixed(2)}% · 기준 초과와 겹침 ${pl.n_exceed_plastic.toLocaleString()}` : "epsp 없음"}
+            hint="t* 프레임에서 epsp > 0 인 요소"
+          />
+        )
       )}
       <Stat label="비교 요소" value={`${f.n_valid.toLocaleString()} / ${f.n_elems.toLocaleString()}`} sub={`상승 중 ${f.n_rising.toLocaleString()}`} />
     </div>
@@ -269,7 +278,10 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             )}
           </Card>
 
-          <Card title="변형률 (참고 — 판정 아님)" right={v.strain_ref?.exceeded ? <Badge kind="warn">참고 초과</Badge> : undefined}>
+          <Card
+            title={v.strain_ref?.basis === "increment" ? "변형률 (참고 — 판정 아님) (이번 낙하 증분 기준)" : "변형률 (참고 — 판정 아님)"}
+            right={v.strain_ref?.exceeded ? <Badge kind="warn">참고 초과</Badge> : undefined}
+          >
             {v.field && <StrainCompare f={v.field} v={v} />}
             {v.field && !filesGone ? (
               <div className="subblock">

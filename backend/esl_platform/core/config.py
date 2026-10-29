@@ -99,7 +99,8 @@ class StorageCfg(_M):
         return d
 
 
-UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem"]   # .fem: S2 템플릿(v0.7.0)
+UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem",   # .fem: S2 템플릿(v0.7.0)
+                      ".sta", ".str"]          # 누적 낙하 씬 이전 런 상태 파일(v0.8.0)
 
 
 class UploadCfg(_M):
@@ -116,6 +117,7 @@ class UploadCfg(_M):
     max_concurrent_per_user: int = Field(default=2, ge=1, le=20)
     stale_hours: float = Field(default=72, gt=0)
     allowed_ext: list[str] = Field(default_factory=lambda: list(UPLOAD_EXT_DEFAULT))
+    state_scan_kb: int = Field(default=4096, ge=4, le=1024 * 1024)   # complete 상태 파일(.sta/.str) 종류 판정에 읽는 앞부분(KB, 줄 길이 상한 겸)
 
     @property
     def chunk_bytes(self) -> int:
@@ -268,6 +270,14 @@ class OptSolveCfg(_M):
                                r"\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)")
     memory_patterns: list[str] = Field(default_factory=lambda: [r"(?i)(insufficient|not enough)\s+memory",
                                                                 r"(?i)memory allocation failed"])
+    # ERROR 블록 상세(failure_message·solve/os_errors.txt): 오류 다음 상세 줄 수, 앞 문맥(See next message …) 줄 수
+    error_detail_lines: int = Field(default=4, ge=0, le=100)
+    error_context_lines: int = Field(default=8, ge=0, le=100)
+    error_context_pattern: str = r"(?i)See next message about line\s+(\d+)"
+    error_card_pattern: str = (r"(?i)\(this is\s+(?:continuation line\s+(\d+)\s+of\s+)?([A-Z][A-Z0-9_]*)\s*,\s*"
+                               r"([^\s)]+)\s+bulk data\)")
+    error_code_pattern: str = r"ERROR\s*#\s*(\d+)"
+    error_message_max: int = Field(default=480, ge=80, le=500)     # 작업 failure_message 열 500자
 
 
 class OptPostCfg(_M):
@@ -573,7 +583,8 @@ def _opt_issues(s: Settings) -> list[Issue]:
     pats = [(f"opt_run.solve.{k}[{i}]", p) for k in ("error_patterns", "converged_patterns", "license_patterns",
                                                        "memory_patterns") for i, p in enumerate(getattr(sv, k))]
     pats += [(f"opt_run.solve.{k}", getattr(sv, k)) for k in ("iteration_pattern", "objective_pattern",
-                                                              "compliance_pattern")]
+                                                              "compliance_pattern", "error_context_pattern",
+                                                              "error_card_pattern", "error_code_pattern")]
     for key, pat in pats:
         try:
             re.compile(pat)

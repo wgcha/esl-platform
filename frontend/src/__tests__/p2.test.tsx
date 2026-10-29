@@ -215,7 +215,7 @@ describe("라이브러리 목록", () => {
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
     const row85 = rowsOf().find((r) => r.textContent!.includes("85QN80H") && r.textContent!.includes("Scene 2 "))!;
     fireEvent.click(within(row85).getByRole("button", { name: "수정" }));
-    const edit = screen.getByTestId("edit-row");
+    const edit = screen.getByRole("dialog");
     const mass = within(edit).getByRole("spinbutton", { name: "제품 질량 (kg)" });
     fireEvent.change(mass, { target: { value: "-3" } });
     expect((within(edit).getByRole("button", { name: "저장" }) as HTMLButtonElement).disabled).toBe(true);
@@ -226,8 +226,8 @@ describe("라이브러리 목록", () => {
     // 폐기
     const row = rowsOf().find((r) => r.textContent!.includes("52.4 kg"))!;
     fireEvent.click(within(row).getByRole("button", { name: "수정" }));
-    fireEvent.click(within(screen.getByTestId("edit-row")).getByRole("button", { name: "폐기…" }));
-    fireEvent.click(within(screen.getByTestId("edit-row")).getByRole("button", { name: "폐기" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "폐기…" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "폐기" }));
     await waitFor(() => expect(server.entries.find((e) => e.id === "le-6")!.status).toBe("RETIRED"));
     await waitFor(() => expect(rowsOf()).toHaveLength(9));
   });

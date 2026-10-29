@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 
 from esl.errors import EslError
+from esl.rad import state as _st
 
 CELL = 10
 
@@ -95,6 +96,27 @@ def _split_header(pieces: list[str]) -> tuple[str, str | None, int | None, int |
     return kw, sub, hid, unit
 
 
+def _head_pieces(line: str) -> list[str]:
+    """블록 헤더 행 → 조각 목록(계약 esl_cumulative_input.md §3.2, CI-D-3).
+
+    ``#`` 이후는 버리고, 첫 토큰이 ``/`` 로 끝나면 뒤따르는 정수 토큰을 이어 붙인다
+    (``/SHELL/         2`` → ``/SHELL/2``, ``.str`` 상태 파일의 오른쪽 정렬 ID). 그 외는 첫 토큰만.
+    """
+    toks = line.split("#", 1)[0].split()
+    if not toks:
+        return []
+    head = toks[0]
+    if head.endswith("/"):
+        ints = []
+        for t in toks[1:]:
+            if not _INT_RE.fullmatch(t):
+                break
+            ints.append(t)
+        if ints:
+            head = head + "/".join(ints)
+    return [p for p in head.split("/") if p]
+
+
 _WIN_ABS = re.compile(r"^(?:[A-Za-z]:/|//)")
 
 
@@ -133,6 +155,32 @@ def _map_path(name: str, path_map: dict | None) -> str | None:
 
 def _err(msg: str) -> EslError:
     return EslError("RAD_PARSE_ERROR", msg)
+
+
+# 한 줄 바이트 상한(설정 case.rad_max_line_kb, 없으면 이 값). 줄바꿈 없는 거대 파일을 통째로 메모리에 올리지 않게
+# readline(상한 + 2) 로 읽고(CRLF 여유), 상한을 넘는 줄이면 rad = RAD_PARSE_ERROR, 상태 파일 = STATE_PARSE_ERROR.
+DEFAULT_MAX_LINE_BYTES = 1024 * 1024
+
+
+def max_line_bytes_of(case_cfg: dict | None) -> int:
+    """설정 case 절의 rad_max_line_kb(선택) → 바이트. 없으면 DEFAULT_MAX_LINE_BYTES."""
+    kb = (case_cfg or {}).get("rad_max_line_kb") if isinstance(case_cfg, dict) else None
+    return int(kb) * 1024 if kb else DEFAULT_MAX_LINE_BYTES
+
+
+def bounded_readline(fh, path: str, max_line: int | None = None, state: bool = False):
+    """``fh.readline`` 대신 쓰는 함수: 한 줄이 max_line 바이트를 넘으면(줄바꿈 없이 상한 + 2 를 채움) EslError."""
+    lim = int(max_line or DEFAULT_MAX_LINE_BYTES) + 2
+    rl = fh.readline
+
+    def readline() -> bytes:
+        raw = rl(lim)
+        if len(raw) == lim and raw[-1:] != b"\n":
+            code = "STATE_PARSE_ERROR" if state else "RAD_PARSE_ERROR"
+            raise EslError(code, f"한 줄이 {lim - 2} 바이트를 넘음({path}, 바이트 위치 {fh.tell() - lim}) — 줄바꿈 없는 "
+                                 f"파일이거나 Radioss 입력 형식이 아님(설정 case.rad_max_line_kb)")
+        return raw
+    return readline
 
 
 def _f(text: str) -> float | None:
@@ -207,6 +255,7 @@ class RadModel:
     max_ids: dict = field(default_factory=dict)
     includes: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    state: dict | None = None          # 누적 씬(상태 파일 include) 정보 — 없으면 None (esl_cumulative_input.md)
 
 
 def _include_spec(line: str) -> str:
@@ -242,8 +291,9 @@ def _resolve_include(orig: str, root_dir: str, src: str, path_map: dict | None):
     return None, False, cands, win_abs, mapped
 
 
-def _read_include_specs(path: str) -> list[str] | None:
-    """파일의 ``/INCLUDE``·``#include`` 원문 목록(본문 해석 없음). 읽을 수 없으면 None."""
+def _read_include_specs(path: str, max_line: int | None = None) -> list[str] | None:
+    """파일의 ``/INCLUDE``·``#include`` 원문 목록(본문 해석 없음). 읽을 수 없거나 한 줄이 상한을 넘으면 None
+    (스캐너는 오류를 던지지 않음 — 이 파일 안 include 는 더 따라가지 않고, 본 해석 parse_rad 가 오류를 낸다)."""
     try:
         fh = open(path, "rb")
     except OSError:
@@ -251,34 +301,46 @@ def _read_include_specs(path: str) -> list[str] | None:
     specs: list[str] = []
     with fh:
         pending = False
-        for raw in fh:
-            line = _decode(raw)
-            if pending:
-                if not line.strip() or line.startswith("#"):
+        readline = bounded_readline(fh, path, max_line)
+        try:
+            for raw in _iter_lines(readline):
+                line = _decode(raw)
+                if pending:
+                    if not line.strip() or line.startswith("#"):
+                        continue
+                    pending = False
+                    specs.append(_include_spec(line))
                     continue
-                pending = False
-                specs.append(_include_spec(line))
-                continue
-            if line.startswith("#"):
-                if line[:8].lower() == "#include":
-                    specs.append(_include_spec(line[8:]))
-                continue
-            if line.startswith("/"):
-                head = line.split()[0] if line.split() else line
-                pieces = [x for x in head.split("/") if x]
-                kw = pieces[0].upper() if pieces else ""
-                if kw == "END":
-                    break
-                if kw == "INCLUDE":
-                    rest = line.strip()[len("/INCLUDE"):].strip()
-                    if rest:
-                        specs.append(_include_spec(rest))
-                    else:
-                        pending = True
+                if line.startswith("#"):
+                    if line[:8].lower() == "#include":
+                        specs.append(_include_spec(line[8:]))
+                    continue
+                if line.startswith("/"):
+                    pieces = _head_pieces(line)
+                    kw = pieces[0].upper() if pieces else ""
+                    if kw == "END":
+                        break
+                    if kw == "INCLUDE":
+                        rest = line.strip()[len("/INCLUDE"):].strip()
+                        if rest:
+                            specs.append(_include_spec(rest))
+                        else:
+                            pending = True
+        except EslError:
+            return None
     return specs
 
 
-def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8) -> list[str]:
+def _iter_lines(readline):
+    while True:
+        raw = readline()
+        if not raw:
+            return
+        yield raw
+
+
+def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8,
+                  max_line_bytes: int | None = None) -> list[str]:
     """본문을 해석하지 않고 ``/INCLUDE``·``#include`` 줄만 따라가 include 파일 경로 목록을 돌려준다.
 
     출력 폴더 보호(입력 폴더 쓰기 금지)용 가벼운 스캐너. 경로 해석 규칙은 parse_rad 와 같다.
@@ -286,7 +348,7 @@ def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_
     넣어(그 폴더도 보호) 돌려준다. 순환·깊이 초과는 더 따라가지 않는다.
     """
     out: list[str] = []
-    for ref in scan_include_refs(rad_path, include_path_map, max_depth):
+    for ref in scan_include_refs(rad_path, include_path_map, max_depth, max_line_bytes=max_line_bytes):
         for p in ([ref["path"]] if ref["found"] else ref["candidates"]):
             if p not in out:
                 out.append(p)
@@ -294,7 +356,7 @@ def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_
 
 
 def scan_include_refs(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8,
-                      follow=None) -> list[dict]:
+                      follow=None, max_line_bytes: int | None = None) -> list[dict]:
     """include 참조 목록: ``{spec(원문), path(찾은 경로 | 첫 후보), candidates, found, src}`` (중첩 순서대로, 경로는 정규화).
 
     ``follow(path) -> bool`` 이 주어지면 그 값이 참인 파일 안으로만 더 들어간다(예: 업로드 폴더 밖 파일은 읽지 않음).
@@ -313,7 +375,7 @@ def scan_include_refs(rad_path, include_path_map: dict[str, str] | None = None, 
         if key in seen:
             return
         seen.add(key)
-        specs = _read_include_specs(path)
+        specs = _read_include_specs(path, max_line_bytes)
         if specs is None:
             return
         for orig in specs:
@@ -342,6 +404,7 @@ class _Card:
     line: int
     rows: list = field(default_factory=list)
     unit: int | None = None
+    state: dict | None = None       # 상태 파일에서 읽은 카드면 그 파일 정보
 
 
 @dataclass
@@ -354,6 +417,8 @@ class _Seg:
     off: int        # 헤더 다음 행의 바이트 위치
     line0: int      # 헤더 다음 행의 행 번호(1-기준)
     nlines: int     # 블록이 차지하는 물리 행 수(주석·빈 행 포함, 끝 헤더 제외)
+    state: bool = False     # 상태 파일(.str/.sta) 블록 — 좌표·요소 우선 규칙(§4)
+    sub: str | None = None
 
 
 _B_HASH = b"#"
@@ -382,11 +447,18 @@ class _Deck:
     /PROP·/MAT 는 원문 행만 보관하고 대상 파트 것만 해석(``prop``·``mat``).
     """
 
-    def __init__(self, max_depth: int, path_map: dict | None = None):
+    def __init__(self, max_depth: int, path_map: dict | None = None, max_line: int | None = None):
         self.max_depth = max_depth
+        self.max_line = int(max_line or DEFAULT_MAX_LINE_BYTES)
         self.path_map = dict(path_map) if path_map else None
         self.node_segs: list[_Seg] = []
         self.shell_segs: list[_Seg] = []
+        self.inishe_segs: list[_Seg] = []
+        self.state_files: list[dict] = []
+        self.main_begin: list[str] | None = None
+        self.sh_state = array("b")
+        self.node_state = np.zeros(0, bool)
+        self.node_dup = self.node_sdup = 0
         self.shell_count: dict[int, int] = {}
         # 대상 파트 쉘: id, part, n1..n4 (6개씩), 두께, 타입 (load_shells 후)
         self.sh_int = array("q")
@@ -403,7 +475,7 @@ class _Deck:
         self.root_dir = ""
 
     # ------------------------------------------------------------ 1차 스캔
-    def scan(self, path: str, depth: int = 0) -> None:
+    def scan(self, path: str, depth: int = 0, state: dict | None = None) -> None:
         if depth == 0:
             self.root_dir = os.path.dirname(os.path.abspath(path))
         if not os.path.isfile(path):
@@ -413,7 +485,7 @@ class _Deck:
         lineno = 0
         back: bytes | None = None
         with open(path, "rb") as fh:
-            readline = fh.readline
+            readline = bounded_readline(fh, path, self.max_line, state is not None)
             while True:
                 if back is not None:
                     raw, back = back, None
@@ -441,8 +513,7 @@ class _Deck:
                     if cur is not None:
                         self._finish(cur)
                         cur = None
-                    head = line.split()[0] if line.split() else line
-                    pieces = [p for p in head.split("/") if p]
+                    pieces = _head_pieces(line)
                     kw = pieces[0].upper() if pieces else ""
                     if kw == "END":
                         return
@@ -454,21 +525,38 @@ class _Deck:
                             pending_include = True
                         continue
                     cur = self._new_card(pieces, path, lineno)
+                    cur.state = state
                     if cur.kw in ("PART", "PROP", "MAT", "BEGIN"):
                         continue
                     # 데이터 블록·기타 키워드: 다음 헤더(또는 #include)까지 빠르게 소비
-                    seg = _Seg(cur.kw, cur.hid, cur.unit, path, fh.tell(), lineno + 1, 0)
+                    seg = _Seg(cur.kw, cur.hid, cur.unit, path, fh.tell(), lineno + 1, 0,
+                               state=state is not None, sub=cur.sub)
                     if cur.kw in _SHELL_KW or cur.kw in _OTHER_ELEM_KW:
-                        back, seg.nlines, cnt = self._consume_elems(fh)
+                        back, seg.nlines, cnt = self._consume_elems(readline)
                         if cur.kw in _SHELL_KW:
                             self.shell_segs.append(seg)
                             self.shell_count[cur.hid] = self.shell_count.get(cur.hid, 0) + cnt
+                            if state is not None:
+                                state["kinds_set"].add("geometry")
                         elif cnt:
                             self.other_elem_parts[cur.hid] = self.other_elem_parts.get(cur.hid, 0) + cnt
                     else:
-                        back, seg.nlines = self._consume(fh)
+                        back, seg.nlines = self._consume(readline)
                         if cur.kw == "NODE":
                             self.node_segs.append(seg)
+                            if state is not None:
+                                state["kinds_set"].add("geometry")
+                        elif cur.kw == "INISHE":
+                            self.inishe_segs.append(seg)
+                            if state is not None:
+                                state["kinds_set"].add("initial")
+                                sub = cur.sub or ""
+                                if sub not in state["inishe_subs"]:
+                                    state["inishe_subs"].append(sub)
+                        elif state is not None and cur.kw.startswith("INI"):
+                            name = f"/{cur.kw}/{cur.sub}" if cur.sub else f"/{cur.kw}"
+                            if name not in state["other_blocks"]:
+                                state["other_blocks"].append(name)
                     lineno += seg.nlines
                     cur = None
                     continue
@@ -481,21 +569,21 @@ class _Deck:
             raise _err(f"/INCLUDE 다음에 경로가 없음: {path}")
 
     @staticmethod
-    def _consume(fh) -> tuple[bytes | None, int]:
-        """블록 본문을 해석 없이 건너뜀. 반환 (끝낸 행(헤더·#include) | None, 소비한 행 수)."""
+    def _consume(readline) -> tuple[bytes | None, int]:
+        """블록 본문을 해석 없이 건너뜀. 반환 (끝낸 행(헤더·#include) | None, 소비한 행 수). readline = bounded_readline."""
         n = 0
-        for raw in fh:
+        for raw in iter(readline, b""):
             c = raw[:1]
             if c == _B_SLASH or (c == _B_HASH and raw[:8].lower() == _B_INCLUDE):
                 return raw, n
             n += 1
         return None, n
 
-    def _consume_elems(self, fh) -> tuple[bytes | None, int, int]:
-        """요소 블록: 숫자 해석 없이 요소 행 수(빈·주석 행 제외)와 최대 요소 ID 만 갱신."""
+    def _consume_elems(self, readline) -> tuple[bytes | None, int, int]:
+        """요소 블록: 숫자 해석 없이 요소 행 수(빈·주석 행 제외)와 최대 요소 ID 만 갱신. readline = bounded_readline."""
         n = cnt = 0
         mx = self.max_ids["elem"]
-        for raw in fh:
+        for raw in iter(readline, b""):
             c = raw[:1]
             if c == _B_HASH:
                 if raw[:8].lower() == _B_INCLUDE:
@@ -549,8 +637,10 @@ class _Deck:
                     continue
                 fh = files.get(seg.file) or files.setdefault(seg.file, open(seg.file, "rb"))
                 c = _Card(seg.kw, None, seg.hid, seg.file, seg.line0 - 1, unit=seg.unit)
+                n0 = len(self.sh_type)
                 for lineno, raw in self._seg_iter(fh, seg):
                     self._shell_row(c, self._line(raw), lineno)
+                self.sh_state.extend([1 if seg.state else 0] * (len(self.sh_type) - n0))
         finally:
             for fh in files.values():
                 fh.close()
@@ -584,13 +674,17 @@ class _Deck:
     def load_nodes(self, node_id: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """참조 노드(오름차순 고유 ``node_id``)만 좌표 해석 → (xyz (n,3), unit (n,), found (n,) bool).
 
-        중복 ID 는 마지막 정의 우선. 모든 /NODE 행의 ID 는 읽어 ``max_ids['node']`` 를 갱신한다.
+        중복 ID 는 마지막 정의 우선 — 단 상태 파일(.str) 정의는 rad 정의보다 항상 우선(파일 순서 무관, 계약
+        esl_cumulative_input.md §4). 상태 정의 여부는 ``self.node_state``(n,) bool, rad↔상태 중복 수는
+        ``self.node_dup``(상태끼리 ``node_sdup``). 모든 /NODE 행의 ID 는 읽어 ``max_ids['node']`` 를 갱신한다.
         """
         n = int(node_id.size)
         want = dict(zip(node_id.tolist(), range(n)))
         X, Y, Z = [0.0] * n, [0.0] * n, [0.0] * n
         U = [0] * n
         seen = bytearray(n)
+        src = bytearray(n)              # 1 = 상태 파일 정의
+        dup = sdup = 0
         mx = self.max_ids["node"]
         files: dict[str, Any] = {}
         get = want.get
@@ -598,6 +692,7 @@ class _Deck:
             for seg in self.node_segs:
                 fh = files.get(seg.file) or files.setdefault(seg.file, open(seg.file, "rb"))
                 unit = int(seg.unit or 0)
+                st = seg.state
                 fh.seek(seg.off)
                 readline = fh.readline
                 for i in range(seg.nlines):        # _seg_iter 를 펼친 형태(노드 행이 가장 많음)
@@ -624,6 +719,13 @@ class _Deck:
                     k = get(nid)
                     if k is None:
                         continue
+                    if seen[k] and (st or src[k]):
+                        if src[k] and st:
+                            sdup += 1               # 상태 파일끼리: include 순서상 마지막 우선
+                        else:
+                            dup += 1                # rad ↔ 상태 파일
+                            if not st:
+                                continue            # 이미 상태 정의 → rad 정의 버림
                     line = self._line(raw)
                     try:
                         try:
@@ -638,10 +740,15 @@ class _Deck:
                     Z[k] = z
                     U[k] = unit
                     seen[k] = 1
+                    if st:
+                        src[k] = 1
         finally:
             for fh in files.values():
                 fh.close()
         self.max_ids["node"] = mx
+        self.node_state = np.frombuffer(bytes(src), dtype=np.uint8).astype(bool)
+        self.node_dup = dup
+        self.node_sdup = sdup
         xyz = np.empty((n, 3), dtype=np.float64)
         xyz[:, 0], xyz[:, 1], xyz[:, 2] = X, Y, Z
         return xyz, np.array(U, dtype=np.int64), np.frombuffer(bytes(seen), dtype=np.uint8).astype(bool)
@@ -659,19 +766,31 @@ class _Deck:
                 self.warnings.append(
                     f"인클루드 경로 {orig!r} 를 찾지 못해 파일명으로 대체: {os.path.normpath(found)} "
                     f"({src}:{lineno}) — include_path_map 확인 권장")
-            self._enter(found, depth)
+            self._enter(found, depth, orig)
             return
         hint = ""
         if win_abs or mapped is not None:
             hint = (" — Windows 절대 경로면 include_path_map={'<드라이브>:/원래/접두': '/리눅스/경로'} 로 매핑하거나 "
                     "include 파일을 rad 폴더에 두십시오"
                     + (f" (매핑 결과 {mapped!r} 도 없음)" if mapped is not None else ""))
+        if _st.has_state_ext(orig):
+            raise EslError("STATE_INCLUDE_MISSING",
+                           f"누적 해석 상태 파일 include 를 찾을 수 없음 ({src}:{lineno}): {orig} — 이전 낙하 해석 "
+                           f"폴더의 .sta/.str 을 함께 두십시오 (후보: {[os.path.normpath(c) for c in cands]}){hint}")
         raise _err(f"인클루드 파일을 찾을 수 없음 ({src}:{lineno}): {orig}{hint}")
 
-    def _enter(self, c: str, depth: int) -> None:
+    def _enter(self, c: str, depth: int, spec: str = "") -> None:
         full = os.path.normpath(c)
         self.includes.append(full)
-        self.scan(full, depth + 1)
+        st = None
+        by_ext = _st.has_state_ext(full)
+        by_head = _st.read_state_header(full, self.max_line)
+        if by_ext or by_head:
+            st = {"path": full, "spec": spec, "by_header": bool(by_head), "by_ext": bool(by_ext),
+                  "kinds_set": set(), "inishe_subs": [], "other_blocks": [], "begin": None,
+                  "size": os.path.getsize(full) if os.path.isfile(full) else None}
+            self.state_files.append(st)
+        self.scan(full, depth + 1, st)
 
     def _new_card(self, pieces: list[str], path: str, lineno: int) -> _Card:
         kw, sub, hid, unit = _split_header(pieces)
@@ -705,7 +824,12 @@ class _Deck:
                 self.props[c.hid] = c          # 해석은 대상 파트 것만(prop())
             elif c.kw == "MAT" and c.hid is not None:
                 self.mats[c.hid] = c           # 해석은 대상 파트 것만(mat())
+            elif c.kw == "BEGIN" and c.state is not None:
+                if c.state.get("begin") is None:
+                    c.state["begin"] = list(c.rows)     # 상태 파일 /BEGIN 은 units_label 을 바꾸지 않음(§3.5)
             elif c.kw == "BEGIN" and not self.units_label:
+                if self.main_begin is None:
+                    self.main_begin = list(c.rows)
                 if len(c.rows) >= 3:
                     r = c.rows[2]
                     units = [r[k * 20:(k + 1) * 20].strip() for k in range(3)]
@@ -771,12 +895,21 @@ def _valid_E_nu(E: Any, nu: Any) -> bool:
 
 
 def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_override=None,
-              include_path_map: dict[str, str] | None = None) -> RadModel:
-    """Radioss starter 를 읽어 대상 쉘 파트의 RadModel 을 만든다."""
+              include_path_map: dict[str, str] | None = None, thickness_source: str = "state",
+              read_initial: bool = True, max_line_bytes: int | None = None,
+              state_max_npt: int = _st.DEFAULT_MAX_NPT, state_max_npg: int = _st.DEFAULT_MAX_NPG) -> RadModel:
+    """Radioss starter 를 읽어 대상 쉘 파트의 RadModel 을 만든다.
+
+    누적 씬(include 그래프에 상태 파일 .str/.sta — esl_cumulative_input.md §2): 대상 노드·쉘은 상태 파일 정의
+    우선(§4), K_L 두께 = 상태 THK(``thickness_source='prop'`` 이면 원두께, §5), ``read_initial`` 이면
+    /INISHE/EPSP_F 를 대상 요소만 해석해 ``RadModel.state['epsp']`` 에 둔다. 상태 파일이 없으면 state=None.
+    """
+    if thickness_source not in ("state", "prop"):
+        raise EslError("CONFIG_INVALID", f"cumulative.thickness_source: {thickness_source}")
     if match not in ("exact_ci", "exact"):
         raise EslError("CONFIG_INVALID", f"알 수 없는 title 비교 방식: {match}")
     path = os.fspath(path)
-    deck = _Deck(max_include_depth, include_path_map)
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
     deck.scan(path)
 
     # ---------------- 파트 해석
@@ -802,17 +935,46 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
     sh = sh[sel]
     thk_card = np.frombuffer(deck.sh_thk, dtype=np.float64)[sel]
     etype = np.frombuffer(deck.sh_type, dtype=np.int8)[sel]
+    sh_state = np.frombuffer(deck.sh_state, dtype=np.int8)[sel].astype(bool)
     order = np.argsort(sh[:, 0], kind="stable")
-    sh, thk_card, etype = sh[order], thk_card[order], etype[order]
+    sh, thk_card, etype, sh_state = sh[order], thk_card[order], etype[order], sh_state[order]
+    rad_thk = np.where(sh_state, np.nan, thk_card)         # rad 본문 요소 카드 두께(원두께 대체용)
     elem_id = sh[:, 0].copy()
+    n_elem_dup = n_elem_sdup = 0
     if elem_id.size > 1 and np.any(np.diff(elem_id) == 0):
-        raise _err(f"대상 파트에 중복 요소 ID 가 있음: {elem_id[:-1][np.diff(elem_id) == 0][:5].tolist()}")
+        dmask = np.diff(elem_id) == 0
+        if not sh_state.any():
+            raise _err(f"대상 파트에 중복 요소 ID 가 있음: {elem_id[:-1][dmask][:5].tolist()}")
+        # 상태 파일 정의 우선(§4): 같은 ID 묶음에서 상태 행(마지막) 하나만 남김. rad 끼리만 중복이면 기존 오류
+        keep = np.ones(elem_id.size, dtype=bool)
+        starts = np.flatnonzero(np.r_[True, ~dmask])
+        ends = np.r_[starts[1:], elem_id.size]
+        multi = np.flatnonzero(ends - starts > 1)
+        bad = []
+        for gi in multi.tolist():
+            a, b = int(starts[gi]), int(ends[gi])
+            st_rows = [i for i in range(a, b) if sh_state[i]]
+            rd_rows = [i for i in range(a, b) if not sh_state[i]]
+            if not st_rows:
+                bad.append(int(elem_id[a]))
+                continue
+            keep[a:b] = False
+            keep[st_rows[-1]] = True
+            if rd_rows:
+                n_elem_dup += 1
+                rad_thk[st_rows[-1]] = thk_card[rd_rows[-1]]
+            n_elem_sdup += len(st_rows) - 1
+        if bad:
+            raise _err(f"대상 파트에 중복 요소 ID 가 있음: {bad[:5]}")
+        sh, thk_card, etype, sh_state, rad_thk = sh[keep], thk_card[keep], etype[keep], sh_state[keep], rad_thk[keep]
+        elem_id = sh[:, 0].copy()
     conn_ids = sh[:, 2:6].copy()
 
     # ---------------- 노드: 대상 요소가 참조하는 것만 좌표 해석(2차, 중복 ID 는 마지막 정의 우선)
     used = conn_ids[conn_ids > 0]
     node_id = np.unique(used)
     x0, node_unit, found = deck.load_nodes(node_id)
+    node_state = deck.node_state
     missing = ~found
     if np.any(missing):
         raise _err(f"요소가 참조하는 노드가 /NODE 에 없음: {node_id[missing][:10].tolist()}")
@@ -825,6 +987,11 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
     prop_id = part["prop_id"]
     prop = deck.prop(prop_id) if prop_id is not None else None
     thickness = thk_card.copy()
+    prop_thk = None
+    if prop is not None and prop["type"] in ("SHELL", "TYPE1") and prop["thick"] is not None and prop["thick"] > 0:
+        prop_thk = float(prop["thick"])
+    if deck.state_files and thickness_source == "prop" and prop_thk is not None:
+        thickness[sh_state] = prop_thk                  # 교차검증용: 상태 요소도 원두께로 K_L
     need = ~(thickness > 0)
     if np.any(need):
         if prop is None:
@@ -875,6 +1042,12 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
             _uw("/NODE", u)
 
     ne = elem_id.size
+    st_info = None
+    if deck.state_files:
+        st_info = _state_summary(deck, elem_id, node_id, node_state, sh_state, thickness, thk_card, rad_thk,
+                                 prop_thk, thickness_source, n_elem_dup, n_elem_sdup, read_initial,
+                                 (state_max_npt, state_max_npg))
+        unit_warn += st_info["warnings"]
     return RadModel(
         node_id=node_id.astype(np.int64),
         x0=x0.astype(np.float64),
@@ -892,12 +1065,106 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
         max_ids=dict(deck.max_ids),
         includes=list(deck.includes),
         warnings=list(deck.warnings) + unit_warn,
+        state=st_info,
     )
 
 
-def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None) -> list[dict]:
+def _top(ids, n=10) -> list[int]:
+    return [int(x) for x in np.asarray(ids)[:n].tolist()]
+
+
+def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thickness, thk_card, rad_thk, prop_thk,
+                   thickness_source, n_elem_dup, n_elem_sdup, read_initial,
+                   npt_npg_max: tuple[int, int] = (_st.DEFAULT_MAX_NPT, _st.DEFAULT_MAX_NPG)) -> dict:
+    """누적 씬 상태 정보(계약 esl_cumulative_input.md §2~§5). 배열 키(node_from_state 등)는 state.npz 용."""
+    warns: list[str] = []
+    geo = any("geometry" in f["kinds_set"] for f in deck.state_files)
+    files = []
+    main_b = _st.begin_values(deck.main_begin) if deck.main_begin else None
+    begin_cmp = []
+    for f in deck.state_files:
+        b = _st.begin_values(f["begin"]) if f["begin"] else None
+        rec = {"path": f["path"], "spec": f["spec"], "kinds": sorted(f["kinds_set"]),
+               "has_begin": f["begin"] is not None, "runname": b["runname"] if b else None,
+               "size": f["size"], "by_header": f["by_header"], "inishe_subs": list(f["inishe_subs"]),
+               "other_blocks": list(f["other_blocks"])}
+        files.append(rec)
+        if b is not None:
+            c = _st.compare_begin(main_b, b)
+            begin_cmp.append({"path": f["path"], "compared": c["compared"], "same": c["same"],
+                              "units_in": b.get("units_in"), "units_work": b.get("units_work")})
+            if c["compared"] and c["same"] is False:
+                warns.append(f"STATE_UNIT_MISMATCH: 상태 파일 {os.path.basename(f['path'])} /BEGIN 단위 배율 "
+                             f"{b.get('units_in')} / {b.get('units_work')} ≠ rad {main_b.get('units_in')} / "
+                             f"{main_b.get('units_work')}")
+    n_ns = int(np.sum(node_state))
+    n_es = int(np.sum(sh_state))
+    if deck.node_dup or n_elem_dup or deck.node_sdup or n_elem_sdup:
+        warns.append(f"STATE_DUP_DEFINITION: 상태 파일과 rad 에 같은 ID 중복 정의 — 노드 {deck.node_dup}·요소 "
+                     f"{n_elem_dup}개(상태 파일 정의 사용), 상태 파일끼리 노드 {deck.node_sdup}·요소 {n_elem_sdup}개"
+                     f"(include 순서상 마지막 사용)")
+    if geo and (n_ns < node_id.size or n_es < elem_id.size):
+        warns.append(f"STATE_PARTIAL: 형상 상태 파일에 대상 파트 노드 {node_id.size - n_ns}/{node_id.size}·요소 "
+                     f"{elem_id.size - n_es}/{elem_id.size}개 없음(rad 정의 사용) — 노드 "
+                     f"{_top(node_id[~node_state])}, 요소 {_top(elem_id[~sh_state])}")
+    # 원두께 t0: /PROP/SHELL Thick → rad 본문 요소 카드 두께
+    t0 = np.full(elem_id.size, np.nan)
+    if prop_thk is not None:
+        t0[:] = prop_thk
+    else:
+        ok = np.isfinite(rad_thk) & (rad_thk > 0)
+        t0[ok] = rad_thk[ok]
+    thk_state = np.where(sh_state & (thk_card > 0), thk_card, np.nan)
+    th = _st.thickness_stats(elem_id, np.where(sh_state & (thk_card > 0), thk_card, np.nan), t0,
+                             sh_state & (thk_card > 0), "state" if n_es else "rad")
+    th["k_l_source"] = thickness_source if n_es else "rad"
+    epsp = None
+    inishe_subs = sorted({x for f in deck.state_files for x in f["inishe_subs"]})
+    if read_initial:
+        segs = [(sg.file, sg.off, sg.line0, sg.nlines) for sg in deck.inishe_segs
+                if sg.state and (sg.sub or "").upper() == "EPSP_F"]
+        if segs:
+            epsp = _st.read_epsp_f(segs, elem_id, *npt_npg_max)
+            miss = ~epsp.has
+            if miss.any():
+                warns.append(f"STATE_PARTIAL: 초기 상태(/INISHE/EPSP_F)에 대상 요소 {int(miss.sum())}/{elem_id.size}개 "
+                             f"없음(이전 소성 0) — {_top(elem_id[miss])}")
+            if epsp.n_dup:
+                warns.append(f"STATE_DUP_DEFINITION: /INISHE/EPSP_F 같은 SHELLID {epsp.n_dup}개 중복(마지막 사용) — "
+                             f"{epsp.dup_ids}")
+            if epsp.nonfinite or epsp.width_suspect:
+                warns.append(f"STATE_NUMBER_SUSPECT: /INISHE/EPSP_F 숫자 의심 — 비유한값(NaN·Inf) {epsp.nonfinite}개, "
+                             f"칸 폭 이상(20자 칸 경계에 공백 없음·붙은 실수) {epsp.width_suspect}개. 값은 기존 규칙대로 "
+                             f"사용했으니 상태 파일 출력 형식을 확인하십시오")
+    if "STRA_F" in inishe_subs:
+        warns.append("STATE_INFO: 이전 총변형률 카드(/INISHE/STRA_F)가 있으나 사용하지 않음(Q1: 이전 소성 = 잔류)")
+    thk_mis = None
+    if epsp is not None:
+        both = epsp.has & sh_state & (thk_card > 0)
+        thk_mis = int(np.sum(np.abs(epsp.thk[both] - thk_card[both]) > 1e-4 * np.abs(thk_card[both])))
+    src = "state" if n_ns == node_id.size else ("rad" if n_ns == 0 else "state+rad")
+    return {
+        "files": files, "begin": {"main": main_b, "files": begin_cmp},
+        "coord": {"source": src, "n_nodes_state": n_ns, "n_nodes_rad": int(node_id.size - n_ns),
+                  "n_dup": int(deck.node_dup), "n_dup_state": int(deck.node_sdup)},
+        "elems": {"n_state": n_es, "n_rad": int(elem_id.size - n_es), "n_dup": int(n_elem_dup),
+                  "n_dup_state": int(n_elem_sdup)},
+        "thickness": th, "thk_sta_mismatch": thk_mis, "inishe_subs": inishe_subs,
+        "parse": {"fallback_rows": int(epsp.fallback_rows) if epsp else 0,
+                  "resync_lines": int(epsp.resync_lines) if epsp else 0,
+                  "n_records": int(epsp.n_records) if epsp else 0,
+                  **({"nonfinite": int(epsp.nonfinite), "width_suspect": int(epsp.width_suspect)}
+                     if epsp is not None and (epsp.nonfinite or epsp.width_suspect) else {})},
+        "warnings": warns, "epsp": epsp,
+        "node_from_state": np.asarray(node_state, bool), "elem_from_state": np.asarray(sh_state, bool),
+        "thk_state": thk_state, "t0": t0,
+    }
+
+
+def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None,
+               max_line_bytes: int | None = None) -> list[dict]:
     """모든 /PART 의 {id, title, n_elems} (플랫폼 /paths/inspect 용 보조)."""
-    deck = _Deck(max_include_depth, include_path_map)
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
     deck.scan(os.fspath(path))          # 요소 블록은 행 수만 셈(숫자 해석 없음)
     return [{"id": pid, "title": p["title"],
              "n_elems": deck.shell_count.get(pid, 0) + deck.other_elem_parts.get(pid, 0)}

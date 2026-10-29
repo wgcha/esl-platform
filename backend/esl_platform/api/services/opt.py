@@ -196,6 +196,7 @@ def _s1_base(ctx: AppContext, conn, project_id: str, e: dict[str, Any], *, with_
         meta = _entry_meta(ctx, e)
         base["supports"] = list(((meta.get("esl") or {}).get("supports")) or [])
     base["frame"] = meta.get("frame")
+    base["_cumulative"] = bool((case.get("extract_summary") or {}).get("cumulative"))
     return base
 
 
@@ -209,7 +210,11 @@ def s1_check(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         base = _s1_base(ctx, conn, body.project_id, rows[0], with_mesh=True)
     base.pop("frame", None)
     base.pop("rad_path", None)
-    return {"base": base, "entries": _same_model_rows(rows)}
+    warns = []
+    if base.pop("_cumulative", False):       # 계약 esl_cumulative_input.md §10 — 실행은 허용(정보)
+        warns.append({"code": "S1_BASE_CUMULATIVE",
+                      "message": "기준 Case 가 누적 낙하 씬입니다 — 최적화 형상 = 이전 런 변형 좌표(.str)·변형 두께"})
+    return {"base": base, "entries": _same_model_rows(rows), "warnings": warns}
 
 
 # ---------------------------------------------------------------- GET /opt/plan-view
@@ -368,6 +373,7 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
                                     "(다른 모델은 빼거나 템플릿 최적화 사용)", entries=bad)
             base = _s1_base(ctx, conn, body.project_id, rows[0], with_mesh=False)
             frame = base.pop("frame")
+            base.pop("_cumulative", None)
             keepout_key = {"topo_sha256": base["topo_sha256"]}
         else:
             if not body.template_id:

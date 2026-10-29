@@ -2,6 +2,29 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.8.0] - 2026-10-29
+### 추가
+- **누적 낙하 씬 입력**: rad 가 이전 낙하 해석의 상태 파일(`.str` 변형 형상·두께, `.sta` 초기 소성 변형률)을 `#include` 하면 그대로 읽습니다. 계산 형상·두께(K_L) = 이전 런 변형 상태, 모델 동일성 확인도 그 좌표로
+- 누적 씬 t*: 순위 = 누적 변형률(이전 + 이번), 시점 = 이번 낙하 증분이 최종값에 처음 도달한 프레임. 이번 낙하에서 늘지 않은 요소(이전 손상만)는 후보에서 빼고 개수만 표시
+- h3d 소성 변형률이 이미 누적값인지 frame 0 값으로 자동 판정(불확실하면 이전 값을 더함 — 보수적). 설정 `cumulative.*` 로 강제·원두께 교차검증 가능
+- 화면: Case 상단 '누적 씬' 배지, ① '누적 입력' 카드(상태 파일·좌표 출처·두께 변화 t/t₀·이전 소성·h3d 판정), ② `누적 (이전 + 이번)` 값과 표 열·증분 곡선 토글, ⑤ 변형률 참고 비교 '(이번 낙하 증분 기준)', 보고서 '누적 낙하 입력' 절
+- 업로드 허용 확장자에 `.sta`·`.str`(기존 서버 설정이 목록을 적어 두었으면 업데이트 때 1회 보충). 상태 파일 include 가 빠지면 '이전 런 상태' 표시와 `STATE_INCLUDE_MISSING`
+- 업데이트·설치 시 `altair.hw_exe_path` 와 같은 Altair 설치에 `hwsolvers/scripts/optistruct.bat` 이 실제 있으면 `altair.optistruct_path`·`opt_run.enabled: true` 를 자동으로 추가(기존 값·`enabled: false` 는 그대로, 수정 전 설정 백업, 콘솔 1줄)
+- OptiStruct 오류 상세: 실패 메시지에 오류 번호·상세 줄·카드(예 `DTPG,9000006 연속 줄 1`)·덱 줄 번호·인용 덱 줄을 넣고(.out 끝 요약의 같은 오류는 한 번만), 전체 블록은 `solve/os_errors.txt`·작업 로그에 남깁니다. 설정 `opt_run.solve.error_detail_lines`(4)·`error_context_lines`(8)·`error_context_pattern`·`error_card_pattern`·`error_code_pattern`·`error_message_max`(480)
+- 비드 최적화 상세가 실패면 **실패 확인 파일** 카드: 덱(.fem·.inc)·`.out`·`os_errors.txt`·`solve.json` 받기 + 덱·OptiStruct zip
+- 라이브러리 설정 `optdeck.dtpg.*`(bead_flag·bead_fields·draw·pid_cont_col): OptiStruct 버전별 DTPG 비드 줄 칸 차이를 설정으로 맞춤(없으면 공식 형식 기본값)
+- 실기 체크리스트 `docs/manual/opt_run_check.md` §2.5 '-check 실패 시 확인'(파일 위치·보내 줄 줄 범위)
+### 수정
+- 상태 파일처럼 ID 를 10자 칸에 오른쪽 정렬한 블록 헤더(`/SHELL/         2`)를 읽지 못하던 문제
+- 설정 파일 자동 보충 시 CRLF 줄 끝·BOM 이 사라지던 문제(이제 그대로 유지)
+- **라이브러리 항목 [수정]에서 모델명·인치를 고칠 수 없던 문제**: 수정 대화상자에서 모델(모델명·인치·버전·날짜·제품 질량)·씬(프로젝트·시나리오·순번·낙하 유형·라운드·씬 번호·orient·접미사·변형)·메모를 고쳐 저장하면 목록·필터·종합분석·비드 최적화 크기 판정에 바로 반영됩니다. 수정·폐기는 등록자 또는 관리자만(다른 사용자는 [수정] 비활성 + 사유), 다른 사람이 먼저 고쳤으면 오류 문구와 [최신 값 불러오기]
+- **비드 최적화 `-check` 실패(OS_DECK_INVALID, ERROR # 1485)**: DTPG 비드 줄을 OptiStruct Reference Guide 형식(`+, MW, ANG, BF, HGT, NORM, , , SKIP` — `BEAD` 라벨 없음)으로 씁니다. 이전 덱의 `+,BEAD,60.,45.,10.,YES,BC` 는 OptiStruct 2026.1 이 "Field 0 contains unrecognized/unexpected label" 로 거부했습니다(이슈 #35). PID 가 7개 이상이면 연속 줄은 3번째 칸부터 씁니다
+- 비드 최적화 덱의 min-max 목적 카드를 OptiStruct Reference Guide 형식으로 정정: `DESOBJ(MINMAX) = ID` → `MINMAX = ID`(DESOBJ 의 type 은 MIN/MAX/MINP/MAXP), `DOBJREF` 칸 순서 `DOID, RID, SID, NEGREF, POSREF`(이전 덱은 SID 칸을 비우고 기준 컴플라이언스를 NEGREF 칸에, subcase 번호를 POSREF 칸에 썼음)
+- ④ 3D 하중 보기에서 화살표를 눌러도 선택되지 않던 문제(v0.7.1 직교 기본 이후 — 짧게 보이는 화살표를 거의 못 누름): 화살표 선택을 화면 기준 12 px(머리가 더 크면 머리 반지름 + 2 px)로 넓혀 원근·직교·확대 상태 모두 같게 동작
+- 줄바꿈 없는 거대 파일(예 200 MB 한 줄)을 업로드·include 하면 그 줄을 통째로 메모리에 올리던 문제: 업로드 상태 파일 판정은 앞 `upload.state_scan_kb`(4096 KB)까지만, rad·include·상태 파일 해석은 한 줄 `case.rad_max_line_kb`(선택, 기본 1024 KB)를 넘으면 `RAD_PARSE_ERROR`/`STATE_PARSE_ERROR`
+- 상태 파일 `/INISHE/EPSP_F` 헤더 NPT 가 매우 크면(예 40000) 내부 오류가 나던 문제: NPT ≤ `cumulative.max_npt`(100)·NPG ≤ `cumulative.max_npg`(64) 를 넘으면 `STATE_PARSE_ERROR`
+- 상태 파일 숫자에 NaN·Inf 나 칸 폭 이상(20자 칸 경계에 공백 없음·붙은 실수)이 있으면 경고 `STATE_NUMBER_SUSPECT`(개수, 값 사용 규칙은 그대로)
+
 ## [0.7.2] - 2026-10-29
 ### 수정
 - **새 비드 최적화 화면이 비던 문제**: v0.6.0 에서 업데이트한 서버는 코드 스냅샷에 방법·출처 자료(`resources/opt_method_sources.json`)가 빠져, 라이브러리에서 '선택한 ESL로 비드 최적화'를 누르면 화면이 비었습니다. 배포가 이 파일을 함께 복사하고, 자료가 없어도 화면은 정상(ⓘ 만 비활성)입니다

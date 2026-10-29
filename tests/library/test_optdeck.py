@@ -108,16 +108,17 @@ def test_deck_structure_free(tmp_path):
     assert len(dtpg) == 1
     f = dtpg[0]
     assert f[0] == str(ids["dtpg"]) and f[1] == "PSHELL"
-    k = f.index("BEAD")
+    k = 2 + len(s["design_pids"])            # PID ≤ 6 → 첫 줄, 다음 = 비드 줄(MW ANG BF HGT NORM - - SKIP)
     pids = [int(x) for x in f[2:k] if x]
     assert pids == s["design_pids"] and not set(pids) & set(s["nondesign_pids"])
-    assert f[k + 1:k + 6] == ["10.", "60.", "3.", "YES", "BC"]
+    assert f[k:k + 8] == ["10.", "60.", "YES", "3.", "NORM", "", "", "BC"] and "BEAD" not in f
     assert f[f.index("BOUNDS") + 1:] == ["0.", "1."]
     dob = [f for n, f in cards if n == "DOBJREF"]
-    assert [(int(x[0]), int(x[1]), x[2], float(x[3]), int(x[4])) for x in dob] == \
-        [(ids["dobjref"], ids["dresp_comp"], "", 2.5, 1), (ids["dobjref"], ids["dresp_comp"], "", 1.0, 2)]
-    assert f"DESOBJ(MINMAX) = {ids['dobjref']}" in fem
-    assert fem.index("DESOBJ") < fem.index("SUBCASE 1") < fem.index("BEGIN BULK")
+    # DOBJREF: DOID RID SID NEGREF(비움) POSREF (Reference Guide dobjref_bulk_r)
+    assert [(int(x[0]), int(x[1]), int(x[2]), x[3], float(x[4])) for x in dob] == \
+        [(ids["dobjref"], ids["dresp_comp"], 1, "", 2.5), (ids["dobjref"], ids["dresp_comp"], 2, "", 1.0)]
+    assert f"\nMINMAX = {ids['dobjref']}\n" in fem and "DESOBJ" not in fem
+    assert fem.index("MINMAX =") < fem.index("SUBCASE 1") < fem.index("BEGIN BULK")
     # 비설계 요소(노드 112 반경 10.5 안 노드 사용)는 비설계 PSHELL
     pmap = {p["pid"]: p for p in s["pshell_map"]}
     for n, f in cards:

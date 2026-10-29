@@ -82,6 +82,11 @@ export function Stage4({ c, reload, allowed }: StageProps) {
           {showLoad && view && (
             <>
               <View3DCard view={view} />
+              {c.extract_summary?.cumulative && (
+                <div className="small muted" data-testid="v3d-state-note">
+                  형상: 이전 런 변형 상태
+                </div>
+              )}
               <LoadTable view={view} />
             </>
           )}

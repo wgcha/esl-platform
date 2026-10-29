@@ -33,7 +33,7 @@ optdeck:
   nondesign_radius: 0.0              # 위 노드에서 이 반경 안 노드를 쓰는 요소 = 비설계 (모델 길이 단위)
   bead: {min_width: 10.0, height: 3.0, angle: 60.0, buffzone: true, skip: BC, bounds: [0.0, 1.0]}
                                      # 비드 최소폭·높이(모델 길이 단위)·각도(deg). skip: BC|NONE (전 노드 하중이라 LOAD/BOTH 불가)
-  objective: minmax                  # minmax (DESOBJ(MINMAX)+DOBJREF) | weighted (WCOMP + subcase WEIGHT)
+  objective: minmax                  # minmax (MINMAX+DOBJREF) | weighted (WCOMP + subcase WEIGHT)
   reference_compliance: none         # none(POS=1.0) | solve(자체 쉘 솔버로 subcase 기준 컴플라이언스 → POS, 상대 minmax)
   beadfrac_max: null                 # null = 사용 안 함. 값이면 BEADFRAC ≤ 값 제약(확신도 중하)
   id_offset: 9000000                 # 생성 ID(PSHELL·MAT1·SID·DTPG·DRESP) = id_offset+1 부터
@@ -41,6 +41,11 @@ optdeck:
   force_zero_tol_rel: 1.0e-9
   card_format: free                  # free(콤마, '+,' 연속) | fixed(최적화 카드만 8칸 고정형식)
   deck_name: esl_bead
+  dtpg:                              # DTPG 비드 줄(OptiStruct Reference Guide DTPG 형식표). 버전별 차이는 여기서 흡수
+    bead_flag: ""                    # 비드 줄 2번째 칸 앞 라벨. 공식 형식 = 없음("") — "BEAD" 를 넣으면 2026.1 이 ERROR 1485
+    bead_fields: [MW, ANG, BF, HGT, DRAW, "-", "-", SKIP]   # 2..9번째 칸 배치. DRAW = 아래 draw, "-" = 빈 칸
+    draw: NORM                       # 비드 방향: NORM(요소 법선) | ""(빈 칸 = 기본 NORM)
+    pid_cont_col: 3                  # PID 7번째부터 연속 줄의 시작 칸(공식 = 3, 2번째 칸 비움)
   nt: 4                              # optistruct -nt
   cases: all                         # 덱 subcase 구성(§12): all(필터에 걸린 모든 씬, 기본) | representative | representative+worst
   max_cases: 60                      # all 에서 씬 수가 이를 넘으면 representative+worst 로 자동 축소(경고 + 보고서 제외 표)

@@ -111,6 +111,67 @@ def _sec_inputs(c: _Case) -> str:
     return H.kv_table(pairs)
 
 
+_MODE_KO = {"cumulative": "누적값", "incremental": "증분(이번 낙하분)", "trivial": "이전 소성 거의 없음"}
+
+
+def _state_summary(c: _Case) -> dict | None:
+    """누적 씬이면 01_extract/state_summary.json (없으면 None — 비누적 보고서는 바뀌지 않음, missing 에도 안 넣음)."""
+    p = c._p(D_EXTRACT, "state_summary.json")
+    return _read_json(p) if os.path.isfile(p) else None
+
+
+def _sec_cumulative(c: _Case, ss: dict) -> str:
+    """누적 낙하 입력(계약 esl_cumulative_input.md §8): 상태 파일·좌표·두께·이전 소성·h3d 판정·t* 3값."""
+    files = H.table(["파일", "종류", "크기(MB)", "runname"],
+                    [(os.path.basename(f.get("path", "")), ", ".join(f.get("kinds") or []) or "—",
+                      None if f.get("size") is None else f["size"] / 1e6, f.get("runname") or "—")
+                     for f in ss.get("files") or []], num=(2,))
+    co, el, th = ss.get("coord") or {}, ss.get("elems") or {}, ss.get("thickness") or {}
+    ei, dg = ss.get("epsp_init") or {}, ss.get("diagnosis") or {}
+    r = th.get("ratio") or {}
+
+    def dtext(d):
+        if not d:
+            return "—"
+        t = _MODE_KO.get(d.get("mode"), d.get("mode"))
+        if d.get("ambiguous"):
+            t += " (판정 불확실 → 증분으로 보고 합)"
+        if d.get("forced"):
+            t += " (설정 강제)"
+        if d.get("r0") is not None:
+            t += f" · r0 {H.fmt(d['r0'])} · 일치 비율 {H.fmt(d.get('mono'))} · |S| {d.get('n_S')}"
+        return t
+    pairs = [
+        ("좌표 출처", f"상태 파일 {co.get('n_nodes_state', '—')} / rad {co.get('n_nodes_rad', '—')} 노드 "
+                  f"(중복 {co.get('n_dup', 0)}) — K_L·형상 = 이전 런 변형 좌표"),
+        ("요소 출처", f"상태 파일 {el.get('n_state', '—')} / rad {el.get('n_rad', '—')} (중복 {el.get('n_dup', 0)})"),
+        ("두께 t/t₀", "—" if not r else f"최소 {H.fmt(r.get('min'))} · 평균 {H.fmt(r.get('mean'))} · 최대 "
+                                       f"{H.fmt(r.get('max'))} (t₀ {H.fmt(th.get('t0'))}, K_L 두께 = "
+                                       f"{th.get('k_l_source', '—')})"),
+        ("두께 변화 >1 % 요소", f"{th.get('n_changed', '—')} · 최대 감육 {H.fmt(th.get('max_thinning_pct'))} % "
+                            f"@ elem {th.get('elem_max_thinning', '—')}"),
+        ("이전 소성 변형률", f"최대 {H.fmt(ei.get('max'))} · P99 {H.fmt(ei.get('p99'))} · 양수 요소 "
+                       f"{ei.get('n_pos', '—')} (집계 {ss.get('agg', '—')}, 원값 최대 {H.fmt(ei.get('prev_max'))})"),
+        ("h3d 소성(Plastic Strain)", dtext(dg.get("epsp"))),
+        ("h3d 총변형률(Max_Strain)", dtext(dg.get("eq"))),
+        ("경고", ", ".join(ss.get("warning_codes") or []) or "없음"),
+    ]
+    rows = []
+    for m, rec in ((c.tstar or {}).get("metrics") or {}).items():
+        ts = (rec or {}).get("tstar") or {}
+        if "value_inc" not in ts:
+            continue
+        rows.append((METRIC_LABEL.get(m, m), ts.get("frame_index"), ts.get("elem_id"), ts.get("value"),
+                     ts.get("value_prev"), ts.get("value_inc"),
+                     ((rec.get("cumulative") or {}).get("n_excluded_no_increment"))))
+    ttab = H.table(["지표", "t* frame", "elem", "누적", "이전", "이번(증분)", "이전 손상만 제외"], rows,
+                   num=(1, 2, 3, 4, 5, 6)) if rows else _none("t* 자료 없음")
+    note = ('<p class="small muted">t* 순위 = 누적(이전 + 이번), 시점 = 이번 낙하 증분이 최종값에 처음 도달한 프레임. '
+            '총변형률의 이전 값은 이전 소성 변형률로 근사(가정 확정 Q1 — 탄성 회복·방향 무시). ⑤ 변형률 참고 비교는 '
+            '이번 낙하 증분 기준.</p>')
+    return files + H.kv_table(pairs) + ttab + note
+
+
 def _sec_tstar(c: _Case) -> str:
     tj = c.tstar
     if not tj:
@@ -565,8 +626,10 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
     secd = _section_data(c)
     now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     t = title or f"ESL Case 보고서 — {meta.get('part_title', os.path.basename(os.path.abspath(case_dir)))}"
+    ss = _state_summary(c)
     parts = [
         ("inputs", "1. 입력 요약", _sec_inputs(c)),
+        *([("cumulative", "1-1. 누적 낙하 입력", _sec_cumulative(c, ss))] if ss else []),
         ("tstar", "2. t* — max-hold 곡선(두 지표)", _sec_tstar(c)),
         ("supports", "3. 3-2-1 지지점", _sec_supports(c)),
         ("feq", "4. 등가하중 F_eq", _sec_feq(c, top_forces)),

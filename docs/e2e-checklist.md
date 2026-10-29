@@ -49,7 +49,7 @@
 | E3-2 | FAIL Case는 사유 입력 시에만 등록(power 이상), 같은 ESL 실행 중복 등록 `ENTRY_EXISTS`, retire 후 재등록 | | |
 | E3-3 | 실제 씬 여러 개(가능하면 인치 2종 이상) 등록 → 필터(모델·씬·verdict) 동작 | | |
 | E3-4 | 종합분석 생성(대상 모델·필터·정규화 모드·대표 수·목적 minmax) → LIB_ANALYZE 진행 → 요약(대표 씬·포락·통계)·보고서·덱 다운로드(`_analysis\<id>\opt\`) | | |
-| E3-5 | 덱 `esl_bead*.fem`을 사용자 측에서 `optistruct -check`로 문법 확인(DTPG·DESOBJ minmax, OptiStruct 2026.1) — 결과 메모 | | |
+| E3-5 | 덱 `esl_bead*.fem`을 사용자 측에서 `optistruct -check`로 문법 확인(DTPG·MINMAX/DOBJREF, OptiStruct 2026.1) — 결과 메모 | | |
 | E3-6 | ISTA 6 면 번호·낙하 높이 표(`ista6.yaml` TODO)와 TV 포장 면 2/4·5/6 방향 가정 확인 → 설정 갱신 요청 | | |
 
 ## E4. 운영

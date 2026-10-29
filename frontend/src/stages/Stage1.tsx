@@ -8,6 +8,7 @@ import { slimLine, slimResults, slimTip } from "../lib/slim";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, submitJob, useAction } from "./common";
+import { CumulativeCard } from "../components/Cumulative";
 
 export function Stage1({ c, reload, allowed }: StageProps) {
   const rad = usePathInspect("RAD", c.rad_path);
@@ -177,6 +178,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
           )}
         </Card>
       </div>
+      {s?.cumulative && <CumulativeCard s={s.cumulative} />}
     </StageFrame>
   );
 }

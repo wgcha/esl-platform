@@ -714,7 +714,8 @@ proc ::esl::read_config {path extra} {
         epsp_type "Plastic Strain" epsp_comp "Scalar value" epsp_layer "Mid" \
         disp_type "Displacement" disp_comps "X Y Z" \
         hot_k 200 top_n 5 reach_rtol 1e-6 chunk 50000 \
-        elem_selection "" node_selection "" strain_system "elemental"]
+        elem_selection "" node_selection "" strain_system "elemental" \
+        prev_file "" frame0_pass 0 cum_min_incr 1e-5]
     set cfg [::esl::read_request $path $defaults]
     dict for {k v} $extra { dict set cfg $k $v }
     set p [dict get $cfg part_id]
@@ -729,7 +730,68 @@ proc ::esl::read_config {path extra} {
     if {![string is double -strict $r] || $r < 0 || $r >= 1} { ::esl::fail INPUT_INVALID "reach_rtol must be in \[0, 1): $r" }
     if {[llength [dict get $cfg strain_comps]] != 4} { ::esl::fail INPUT_INVALID "strain_comps needs 4 names (xx yy zz xy)" }
     if {[llength [dict get $cfg disp_comps]] != 3} { ::esl::fail INPUT_INVALID "disp_comps needs 3 names" }
+    set f0 [dict get $cfg frame0_pass]
+    if {$f0 ne "0" && $f0 ne "1"} { ::esl::fail INPUT_INVALID "frame0_pass must be 0 or 1: $f0" }
+    set mi [dict get $cfg cum_min_incr]
+    if {![string is double -strict $mi] || $mi < 0} { ::esl::fail INPUT_INVALID "cum_min_incr must be >= 0: $mi" }
     return $cfg
+}
+
+# Cumulative scene (optional request key prev_file): CSV elem_id,prev_epsp,prev_eq written by the worker
+# (previous run plastic strain of the target part). Fills ::esl::prev_ep / ::esl::prev_eq dicts.
+proc ::esl::read_prev {path} {
+    if {![file isfile $path]} { ::esl::fail INPUT_INVALID "prev_file not found: $path" }
+    set fh [open $path r]
+    fconfigure $fh -encoding ascii
+    set n 0
+    set first 1
+    while {[gets $fh line] >= 0} {
+        set line [string trim $line]
+        if {$line eq "" || [string index $line 0] eq "#"} { continue }
+        if {$first} {
+            set first 0
+            if {![string is integer -strict [lindex [split $line ,] 0]]} { continue }
+        }
+        set r [split $line ,]
+        if {[llength $r] < 3} { close $fh; ::esl::fail INPUT_INVALID "prev_file line needs 3 values: $line" }
+        lassign $r id ep eq
+        if {![string is integer -strict $id] || ![string is double -strict $ep] || ![string is double -strict $eq]} {
+            close $fh
+            ::esl::fail INPUT_INVALID "prev_file bad line: $line"
+        }
+        dict set ::esl::prev_ep $id $ep
+        dict set ::esl::prev_eq $id $eq
+        incr n
+    }
+    close $fh
+    return $n
+}
+
+proc ::esl::prev_of {d id} {
+    if {[dict exists $d $id]} { return [dict get $d $id] }
+    return 0.0
+}
+
+# "+prev" D rule (cumulative scenes): elements ranked by final raw + prev (only raw final > min_incr),
+# first-reach on the raw series. Returns {frames elems}.
+proc ::esl::cand_frames_prev {hist ids rtol top_n prevd min_incr} {
+    set pairs {}
+    foreach id $ids {
+        set v [lindex [dict get $hist $id] end]
+        if {$v > $min_incr} { lappend pairs [list $id [expr {$v + [::esl::prev_of $prevd $id]}]] }
+    }
+    set pairs [::esl::topk $pairs [llength $pairs]]
+    set fr {}
+    set el {}
+    foreach p $pairs {
+        if {[llength $fr] >= $top_n} { break }
+        set f [::esl::first_reach [dict get $hist [lindex $p 0]] $rtol]
+        if {[lsearch -exact $fr $f] < 0} {
+            lappend fr $f
+            lappend el [lindex $p 0]
+        }
+    }
+    return [list $fr $el]
 }
 
 # Contour fields of an element row: vm_hv exx eyy ezz exy [epsp]; each {type component layer tensor}.
@@ -833,6 +895,14 @@ proc ::esl::emit {fh prefix acc nreal pad {topvar ""}} {
             if {$nreal >= 6} {
                 set v5 [lindex $vs 5]
                 if {$v5 > 0} { dict lappend top ep [list $id $v5] }
+            }
+            if {$::esl::has_prev} {
+                if {$v0 > $::esl::min_incr} {
+                    dict lappend top vmp [list $id [expr {$v0 + [::esl::prev_of $::esl::prev_eq $id]}]]
+                }
+                if {$nreal >= 6 && $v5 > $::esl::min_incr} {
+                    dict lappend top epp [list $id [expr {$v5 + [::esl::prev_of $::esl::prev_ep $id]}]]
+                }
             }
         }
     }
@@ -1087,6 +1157,24 @@ proc ::esl::run {arglist} {
         ::esl::warn "hot_k $hot_k is large: history.csv grows to n_frames x |H| rows (|H| <= 2*hot_k)"
     }
     set csize [dict get $cfg chunk]
+    # cumulative scene (optional keys; absent -> unchanged behaviour)
+    set ::esl::has_prev 0
+    set ::esl::prev_ep [dict create]
+    set ::esl::prev_eq [dict create]
+    set ::esl::min_incr [dict get $cfg cum_min_incr]
+    set prev_path [::esl::fwd [dict get $cfg prev_file]]
+    set prev_n 0
+    set prev_sha ""
+    if {$prev_path ne ""} {
+        ::esl::step read_prev
+        set prev_n [::esl::read_prev $prev_path]
+        set ::esl::has_prev 1
+        if {![catch {package require sha256} ]} {
+            catch {set prev_sha [::sha2::sha256 -hex -filename $prev_path]}
+        }
+        ::esl::progress "prev_file: $prev_n elements ([file tail $prev_path])"
+    }
+    set f0pass [dict get $cfg frame0_pass]
     set efields [::esl::elem_fields $cfg]
     set nreal [llength $efields]
     set epad [expr {6 - $nreal}]
@@ -1297,6 +1385,8 @@ proc ::esl::run {arglist} {
     set fa [::esl::open_csv [file join $out final.csv] "elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
     set topvm {}
     set topep {}
+    set topvmp {}
+    set topepp {}
     set nelem 0
     set miss 0
     set ci 0
@@ -1305,12 +1395,16 @@ proc ::esl::run {arglist} {
         incr ci
         ::esl::progress "pass A (frame $last) elements chunk $ci/$ne_ch ($cnt)"
         set acc [::esl::collect $con $qry $sid element $efields "pass A frame $last chunk $ci"]
-        set top [dict create vm {} ep {}]
+        set top [dict create vm {} ep {} vmp {} epp {}]
         lassign [::esl::emit $fa "" $acc $nreal $epad top] n m
         incr nelem $n
         incr miss $m
         set topvm [::esl::topk [concat $topvm [dict get $top vm]] $hot_k]
         set topep [::esl::topk [concat $topep [dict get $top ep]] $hot_k]
+        if {$::esl::has_prev} {
+            set topvmp [::esl::topk [concat $topvmp [dict get $top vmp]] $hot_k]
+            set topepp [::esl::topk [concat $topepp [dict get $top epp]] $hot_k]
+        }
         unset acc top
     }
     close $fa
@@ -1323,7 +1417,7 @@ proc ::esl::run {arglist} {
     set t0 [::esl::ms]
     ::esl::progress "pass B start ($nsim frames)"
     set hids {}
-    foreach p [concat $topvm $topep] { lappend hids [lindex $p 0] }
+    foreach p [concat $topvm $topep $topvmp $topepp] { lappend hids [lindex $p 0] }
     set hids [lsort -integer -unique $hids]
     set nh [llength $hids]
     set keep [dict create]
@@ -1381,7 +1475,14 @@ proc ::esl::run {arglist} {
         set cand_vm [::esl::cand_frames $hvm $hids $rtol $top_n]
         set cand_ep [::esl::cand_frames $hep $hids $rtol $top_n]
     }
-    set D [lsort -integer -unique [concat [lindex $cand_vm 0] [lindex $cand_ep 0]]]
+    set cand_vmp {{} {}}
+    set cand_epp {{} {}}
+    if {$nh > 0 && $::esl::has_prev} {
+        set cand_vmp [::esl::cand_frames_prev $hvm $hids $rtol $top_n $::esl::prev_eq $::esl::min_incr]
+        set cand_epp [::esl::cand_frames_prev $hep $hids $rtol $top_n $::esl::prev_ep $::esl::min_incr]
+        ::esl::progress "candidate frames (raw+prev): max_strain [lindex $cand_vmp 0], plastic_strain [lindex $cand_epp 0]"
+    }
+    set D [lsort -integer -unique [concat [lindex $cand_vm 0] [lindex $cand_ep 0] [lindex $cand_vmp 0] [lindex $cand_epp 0]]]
     if {[llength $D] == 0} {
         set D [list $last]
         ::esl::warn "no candidate frame from H; D = last frame $last"
@@ -1443,6 +1544,36 @@ proc ::esl::run {arglist} {
     ::esl::progress "pass C done ([::esl::secs $t0] s)"
     ::esl::progress "disp done"
 
+    # ---- F0 pass (cumulative scenes, request frame0_pass 1): frame 0, all part elements -> frame0.csv
+    set f0rows 0
+    if {$f0pass eq "1"} {
+        set t0 [::esl::ms]
+        ::esl::progress "frame0.csv: frame 0 ($ne_ch element chunks)"
+        ::esl::set_sim $res $post 0
+        set f0fields [list [lindex $efields 0]]
+        if {$nreal >= 6} { lappend f0fields [lindex $efields 5] }
+        set ff0 [::esl::open_csv [file join $out frame0.csv] "elem_id,vm_hv,epsp"]
+        set ci 0
+        foreach ch $echunks {
+            incr ci
+            ::esl::progress "frame0.csv elements chunk $ci/$ne_ch"
+            set acc [::esl::collect $con $qry [lindex $ch 0] element $f0fields "frame0 chunk $ci"]
+            lassign [::esl::emit $ff0 "" $acc [llength $f0fields] [expr {2 - [llength $f0fields]}]] n m
+            incr f0rows $n
+            unset acc
+        }
+        close $ff0
+        lappend ::esl::passes "\"F0\":\{\"rows\":$f0rows,\"seconds\":[::esl::secs $t0]\}"
+        ::esl::progress "frame0.csv done: $f0rows elements"
+    }
+    set cum_extra {}
+    if {$::esl::has_prev || $f0pass eq "1"} {
+        set rsets [expr {$::esl::has_prev ? "\[\"raw\",\"raw+prev\"\]" : "\[\"raw\"\]"}]
+        set cum_extra [list cumulative "\{\"prev_file_sha256\":[expr {$prev_sha eq "" ? "null" : [::esl::jstr $prev_sha]}],\"prev_n\":$prev_n,\"frame0\":[expr {$f0pass eq "1" ? "true" : "false"}],\"frame0_rows\":$f0rows,\"rank_sets\":$rsets,\"min_incr\":[::esl::num $::esl::min_incr]\}" \
+            candidate_frames_prev "\{\"max_strain\":[::esl::jints [lindex $cand_vmp 0]],\"plastic_strain\":[::esl::jints [lindex $cand_epp 0]]\}" \
+            candidate_elems_prev "\{\"max_strain\":[::esl::jints [lindex $cand_vmp 1]],\"plastic_strain\":[::esl::jints [lindex $cand_epp 1]]\}"]
+    }
+
     ::esl::step CloseStack
     catch {hwi CloseStack}
     ::esl::step write_done
@@ -1470,7 +1601,7 @@ proc ::esl::run {arglist} {
         disp_value_format [::esl::jstr $::esl::numfmt] value_format [::esl::jstr $::esl::numfmt] \
         strain_system [::esl::jstr $::esl::sys_req] \
         strain_system_call [::esl::jstr $::esl::sys_applied] \
-        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]]]] eq ""} {
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$cum_extra]] eq ""} {
         error "done.json could not be written"
     }
     set ::esl::written 1

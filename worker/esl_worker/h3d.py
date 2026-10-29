@@ -47,9 +47,16 @@ def build_argv(template: list[str], values: dict[str, str]) -> list[str]:
     return localproc.build_argv(template, values, exe="hw", what="commands.h3d_extract")
 
 
-def write_request(path: str, *, part: str, hot_k: int, top_n: int) -> None:
-    """request.txt(key<TAB>value, TCL 고급 옵션). -part·-hot_k·-top_n 인자가 우선이지만 인자 전달이 안 되는 설치본 대비."""
+def write_request(path: str, *, part: str, hot_k: int, top_n: int, extra: dict[str, str] | None = None) -> None:
+    """request.txt(key<TAB>value, TCL 고급 옵션). -part·-hot_k·-top_n 인자가 우선이지만 인자 전달이 안 되는 설치본 대비.
+
+    extra: 누적 씬 키(prev_file·frame0_pass·cum_min_incr — 계약 esl_cumulative_input.md §6.5). 없으면 기존과 같은 내용.
+    """
     lines = ["# ESL 서버 h3d 추출 요청(워커가 작성)", f"part_title\t{part}", f"hot_k\t{int(hot_k)}", f"top_n\t{int(top_n)}"]
+    for k, v in (extra or {}).items():
+        if "\t" in str(v) or "\n" in str(v) or "\r" in str(v):
+            raise H3dError("INPUT_INVALID", f"request.txt 값에 탭·줄바꿈: {k}")
+        lines.append(f"{k}\t{v}")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
 
@@ -157,6 +164,31 @@ def backup_previous(out_dir: str) -> str | None:
     for n in names:
         os.replace(os.path.join(out_dir, n), os.path.join(dst, n))
     return dst
+
+
+PREV_CSV = "prev.csv"
+
+
+def backup_prev_csv(work: str) -> str | None:
+    """<work>/prev.csv(이전 추출의 누적 씬 이전 소성 CSV)를 <work>/_backup/<UTC>[_N]/ 로 옮긴다(삭제 없음)."""
+    src = os.path.join(work, PREV_CSV)
+    if not os.path.isfile(src):
+        return None
+    base = os.path.join(work, "_backup", time.strftime("%Y%m%d_%H%M%S", time.gmtime()))
+    dst, k = base, 1
+    while os.path.exists(os.path.join(dst, PREV_CSV)):
+        dst = f"{base}_{k}"
+        k += 1
+    os.makedirs(dst, exist_ok=True)
+    os.replace(src, os.path.join(dst, PREV_CSV))
+    return dst
+
+
+def cumulative_request(cum: dict[str, Any] | None, prev_path: str) -> dict[str, str]:
+    """누적 씬이면 request 키 3개, 아니면 빈 dict(request.txt 불변)."""
+    if not cum:
+        return {}
+    return {"prev_file": fwd(prev_path), "frame0_pass": "1", "cum_min_incr": repr(float(cum["min_increment"]))}
 
 
 def read_done(out_dir: str) -> dict[str, Any] | None:

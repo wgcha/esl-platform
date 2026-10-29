@@ -14,7 +14,8 @@ import { uploadStore, type Picked } from "../../lib/uploadStore";
 import { ASSUMED_BPS, Uploader, etaText, type OpenUploadBrief, type PickedFile, type UploadProgress } from "../../lib/uploader";
 import type { InputSelection } from "./types";
 
-export const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d"];
+export const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".sta", ".str"];   // .sta·.str = 누적 낙하 씬 상태 파일(v0.8.0)
+const isStateRel = (rel: string) => /\.(sta|str)$/i.test(rel);
 type Kind = "rad" | "h3d" | "results";
 const extOf = (n: string) => n.slice(n.lastIndexOf(".")).toLowerCase();
 export const allowedName = (n: string) => n.lastIndexOf(".") > 0 && ALLOWED_EXT.includes(extOf(n));
@@ -861,6 +862,16 @@ function ResultView({ result, onAdd }: { result: Checked | null; onAdd?: () => v
       {result.missing_includes.length > 0 && (
         <div className="missing" data-testid="missing-includes">
           <div className="small error-text">rad 가 참조하는 include {result.missing_includes.length}개가 없습니다: {result.missing_includes.join(", ")}</div>
+          {result.missing_includes.some(isStateRel) && (
+            <div className="small" data-testid="state-missing">
+              {result.missing_includes.filter(isStateRel).map((m) => (
+                <span key={m} className="state-miss">
+                  <Badge kind="info">이전 런 상태</Badge> <span className="mono">{m}</span>{" "}
+                </span>
+              ))}
+              <span className="muted">이전 낙하 해석 폴더의 .sta/.str 를 함께 올리세요.</span>
+            </div>
+          )}
           {onAdd ? (
             <div className="actions">
               <button type="button" className="btn small" onClick={onAdd}>

@@ -228,3 +228,79 @@ def scan_reach(time, v, centroids, top_n, top_k, min_dist, rtol, time_window=(No
     hots = rising_hotspots(vv, t0["frame_pos"], C, top_k, min_dist, rtol, exclude_mask=ex, first=t0["elem_pos"])
     m = np.where(ex[None, :], -np.inf, vv).max(axis=1)
     return {"tstar": dict(t0), "candidates": cands, "hotspots": hots, "history": {"time": time.copy(), "m": m}}
+
+
+# ====================================================================== 누적 씬 (esl_cumulative_input.md §6.4, CI-D-9)
+def scan_reach_cum(time, cum, inc, centroids, top_n, top_k, min_dist, rtol, time_window=(None, None),
+                   exclude_mask=None, min_increment: float = 1e-5):
+    """누적 씬 t*: 순위 = 누적 최종값(cum), first-reach = 증분 계열(inc) — 상수 prev 가 작은 증분을 가리지 않게.
+
+    이번 증분 최종값 ≤ min_increment 인 요소(이전 손상만)는 후보·hotspot 에서 제외(Q2 가정 확정 A), 수는
+    ``n_excluded_no_increment``. hotspot '상승 중' 판정도 inc 계열, 정렬 값은 cum. 반환 위치는 전체 프레임·H 기준,
+    값은 value(=cum)·value_inc·value_prev.
+    """
+    time = np.asarray(time, dtype=np.float64)
+    cum = np.asarray(cum, dtype=np.float64)
+    inc = np.asarray(inc, dtype=np.float64)
+    C = np.asarray(centroids, dtype=np.float64)
+    if cum.shape != inc.shape or cum.ndim != 2 or cum.shape[0] != time.size or C.shape != (cum.shape[1], 3):
+        raise EslError("INPUT_INVALID", "time (F,), cum·inc (F,H), centroids (H,3)")
+    F, H = cum.shape
+    if F == 0 or H == 0:
+        raise EslError("INPUT_INVALID", "프레임 또는 이력 요소(H)가 없음")
+    ex = np.zeros(H, bool) if exclude_mask is None else np.asarray(exclude_mask, dtype=bool)
+    tmin, tmax = (time_window or (None, None))
+    win = np.ones(F, bool)
+    if tmin is not None:
+        win &= time >= float(tmin)
+    if tmax is not None:
+        win &= time <= float(tmax)
+    fpos = np.flatnonzero(win)
+    if fpos.size == 0:
+        raise EslError("INPUT_INVALID", "time_window 안에 프레임이 없음")
+    cv = np.where(np.isfinite(cum), cum, -np.inf)
+    iv = np.where(np.isfinite(inc), inc, -np.inf)
+    cw, iw = cv[fpos], iv[fpos]
+    has_inc = iw[-1] > float(min_increment)
+    n_excl = int(np.sum(~has_inc & ~ex & (cw[-1] > 0)))
+    ok = ~ex & has_inc
+    fr = first_reach(iw, rtol)
+    fin = cw[-1]
+    out: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for e in _desc_order(fin):
+        if len(out) >= int(top_n):
+            break
+        if not (fin[e] > 0) or not ok[e]:
+            continue
+        f = int(fr[e])
+        if f not in seen:
+            seen.add(f)
+            out.append((f, int(e)))
+    if not out:
+        raise EslError("INPUT_INVALID", "이번 낙하 증분이 있는(> min_increment) 요소가 없음(time_window·exclude 적용 후)")
+    last = int(fpos[-1])
+    cands = [{"rank": r + 1, "frame_pos": int(fpos[f]), "time": float(time[fpos[f]]), "elem_pos": e,
+              "value": float(cv[last, e]), "value_inc": float(iv[last, e]),
+              "value_prev": float(cv[last, e] - iv[last, e])} for r, (f, e) in enumerate(out)]
+    t0 = cands[0]
+    f = t0["frame_pos"]
+    rising = iv[f] > (iv[f - 1] * (1.0 + float(rtol))) if f > 0 else iv[f] > 0
+    hok = rising & np.isfinite(cv[f]) & ok
+    order = [int(e) for e in _desc_order(cv[f]) if hok[e]]
+    order = [t0["elem_pos"]] + [e for e in order if e != t0["elem_pos"]]
+    hot: list[int] = []
+    md2 = float(min_dist) ** 2
+    for k in order:
+        if len(hot) >= int(top_k):
+            break
+        if hot and np.any(np.sum((C[hot] - C[k]) ** 2, axis=1) < md2):
+            continue
+        hot.append(k)
+    hots = [{"rank": r + 1, "elem_pos": k, "value": float(cv[f, k]), "value_inc": float(iv[f, k]),
+             "value_prev": float(cv[f, k] - iv[f, k]), "rising": bool(rising[k]), "centroid": C[k].tolist()}
+            for r, k in enumerate(hot)]
+    m = np.where(ex[None, :], -np.inf, cv).max(axis=1)
+    mi = np.where(ex[None, :], -np.inf, iv).max(axis=1)
+    return {"tstar": dict(t0), "candidates": cands, "hotspots": hots, "n_excluded_no_increment": n_excl,
+            "history": {"time": time.copy(), "m": m, "m_inc": mi}}

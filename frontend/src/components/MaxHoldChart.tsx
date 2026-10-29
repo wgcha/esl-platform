@@ -1,6 +1,7 @@
 // max-hold 곡선(SVG 직접). x = 시간 s, y = 지표 값. 후보 점과 t* 세로선 표시.
 // 픽셀 폭으로 그린다(PhysicsAI Chart 와 같은 글자 크기·여백·클래스).
 import { useLayoutEffect, useRef, useState } from "react";
+// v0.8.0: valueInc(누적 씬 이번 낙하 증분)를 주면 범례 버튼으로 증분 곡선을 켜고 끈다(기본 누적만).
 import type { TstarCandidate } from "../api/types";
 
 const M = { l: 58, r: 14, t: 18, b: 40 };
@@ -43,17 +44,21 @@ export function ticks(min: number, max: number, n = 5) {
 export function MaxHoldChart({
   time,
   value,
+  valueInc,
   candidates,
   selectedFrame,
   label,
 }: {
   time: number[];
   value: number[];
+  valueInc?: number[];
   candidates: TstarCandidate[];
   selectedFrame: number | null;
   label: string;
 }) {
   const { ref, width: W } = useWidth<HTMLDivElement>();
+  const [showInc, setShowInc] = useState(false);
+  const inc = valueInc && valueInc.length === time.length ? valueInc : null;
   const H = Math.round(Math.max(280, Math.min(W * 0.32, 480)));
   if (!time.length) return <div className="empty">곡선 데이터가 없습니다</div>;
   const x0 = time[0];
@@ -62,6 +67,7 @@ export function MaxHoldChart({
   const sx = (t: number) => M.l + ((t - x0) / (x1 - x0 || 1)) * (W - M.l - M.r);
   const sy = (v: number) => H - M.b - (v / y1) * (H - M.t - M.b);
   const d = time.map((t, i) => `${i ? "L" : "M"}${sx(t).toFixed(1)},${sy(value[i]).toFixed(1)}`).join("");
+  const dInc = inc && showInc ? time.map((t, i) => `${i ? "L" : "M"}${sx(t).toFixed(1)},${sy(Math.max(0, inc[i])).toFixed(1)}`).join("") : null;
   const sel = candidates.find((c) => c.frame_index === selectedFrame);
   const selT = sel ? sel.time : selectedFrame !== null && time[selectedFrame] !== undefined ? time[selectedFrame] : null;
   return (
@@ -89,6 +95,7 @@ export function MaxHoldChart({
           {label} (max-hold)
         </text>
         <path d={d} className="chart-line" />
+        {dInc && <path d={dInc} className="chart-line inc" data-testid="inc-line" />}
         {candidates.map((c) => (
           <circle key={c.frame_index} cx={sx(c.time)} cy={sy(c.value)} r={c.frame_index === selectedFrame ? 4.5 : 3.5} className={c.frame_index === selectedFrame ? "chart-pt current" : "chart-pt"}>
             <title>{`후보 ${c.rank}: 프레임 ${c.frame_index}, t=${c.time}s, ${c.value}`}</title>
@@ -103,6 +110,14 @@ export function MaxHoldChart({
           </g>
         )}
       </svg>
+      {inc && (
+        <div className="legend small" data-testid="cum-legend">
+          <span><span className="lg line" /> 누적(이전 + 이번)</span>
+          <button type="button" className={showInc ? "lg-btn on" : "lg-btn"} aria-pressed={showInc} onClick={() => setShowInc((v) => !v)}>
+            <span className="lg line inc" /> 이번(증분)
+          </button>
+        </div>
+      )}
     </div>
   );
 }

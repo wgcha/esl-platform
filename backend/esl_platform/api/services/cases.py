@@ -272,8 +272,11 @@ def get_tstar(ctx: AppContext, case_id: str) -> dict[str, Any]:
     info = _tstar_info(ctx, case)
     sel = case.get("tstar") or {}
     blk = info["metrics"].get(sel.get("metric") or info["default_metric"]) or {}
-    return {"selected": case.get("tstar"), "default_metric": info["default_metric"], "metrics": info["metrics"],
-            "hotspots": blk.get("hotspots", info["hotspots"]), "frames_D": info.get("frames_D") or []}
+    out = {"selected": case.get("tstar"), "default_metric": info["default_metric"], "metrics": info["metrics"],
+           "hotspots": blk.get("hotspots", info["hotspots"]), "frames_D": info.get("frames_D") or []}
+    if info.get("cumulative"):
+        out["cumulative"] = info["cumulative"]
+    return out
 
 
 def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:

@@ -17,6 +17,7 @@ import type { ComponentType } from "react";
 import { BundleButton } from "../components/BundleButton";
 import { p3 } from "../api/p3";
 import { rememberCase } from "../lib/recent";
+import { CumulativeBadge } from "../components/Cumulative";
 
 const STAGES: ComponentType<StageProps>[] = [Stage1, Stage2, Stage3, Stage4, Stage5, Stage6];
 
@@ -58,6 +59,7 @@ export function CasePage() {
           <StageStepper base={base} current={stage} status={c?.stage_status} />
           {c && (
             <nav className="case-menu" aria-label="Case 메뉴">
+              <CumulativeBadge s={c.extract_summary?.cumulative} />
               <Link to={`${base}/history`} className="case-menu-link">
                 실행 이력
               </Link>

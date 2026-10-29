@@ -186,6 +186,32 @@ def scan_includes(rad: str, max_depth: int, include_path_map: dict | None = None
     return list(_wrap(fn, rad, **kw))
 
 
+def cumulative_prev(rad: str, part_title: str, out_csv: str, core_settings: dict | None = None) -> dict | None:
+    """누적 씬(rad include 에 상태 파일 .sta/.str) 판정 → 대상 파트 이전 소성 CSV(prev.csv) 작성(계약
+    esl_cumulative_input.md §15 Worker). 상태 파일이 없거나 cumulative.enabled=off 면 None(아무것도 쓰지 않음).
+    반환 {n, state_files, min_increment, agg}. 코어 오류는 CoreError."""
+    cfg = core_settings or {}
+    cc = cfg.get("case") or {}
+    cus = _attr("esl.config", "cumulative_settings")(cfg)
+    if cus.get("enabled") in ("off", False):
+        return None
+    refs = scan_include_refs(rad, int(cc.get("rad_include_max_depth") or 8), cc.get("include_path_map") or None)
+    is_state = _attr("esl.rad.state", "is_state_file")
+    if not any(r.get("found") and is_state(r["path"]) for r in refs):
+        return None
+    parse = _attr("esl.rad", "parse_rad")
+    model = _wrap(parse, rad, part_title, match=cc.get("part_title_match") or "exact_ci",
+                  max_include_depth=int(cc.get("rad_include_max_depth") or 8),
+                  material_override=cc.get("material_override") or None,
+                  include_path_map=cc.get("include_path_map") or None,
+                  thickness_source=cus["thickness_source"])
+    if getattr(model, "state", None) is None:
+        return None
+    n = _wrap(_attr("esl.cumulative", "write_prev_csv"), model, out_csv, cus["epsp_agg"])
+    return {"n": int(n), "state_files": [f["path"] for f in model.state["files"]],
+            "min_increment": float(cus["min_increment"]), "agg": cus["epsp_agg"]}
+
+
 def scan_include_refs(rad: str, max_depth: int, include_path_map: dict | None = None, follow=None) -> list[dict]:
     """include 참조(원문·경로·찾음 여부). follow(path) 가 참인 파일 안으로만 더 들어간다."""
     fn = _attr("esl.rad", "scan_include_refs")

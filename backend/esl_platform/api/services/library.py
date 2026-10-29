@@ -360,10 +360,28 @@ def retire_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[
         return entry_out(conn, e)
 
 
+def can_edit_meta(principal: Principal, e: dict[str, Any]) -> bool:
+    """메타(모델·씬·메모) 수정 = 등록자 또는 관리자(프로젝트 admin·전역 관리자) — retire 와 같은 규칙(v0.8.0)."""
+    return e["registered_by"] == principal.user_id or principal.role(e["project_id"]) == "admin"
+
+
+def _clean(v: Any) -> Any:
+    """문자열 메타: 앞뒤 공백 제거, 빈 문자열 = 값 없음(null)."""
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
 def patch_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[str, Any]:
+    """메타 수정. 권한: power 이상(변형 모드만 바꿀 때) + 모델·씬·메모는 등록자 또는 관리자. 항목 폴더(entry.json)는
+    등록 때 그대로 두고(수정 불가) DB 메타만 바꾼다 — 종합분석은 작업 params overlay, 비드 최적화 크기는 DB model.inch."""
     with ctx.engine.begin() as conn:
         e = _load_entry(conn, eid, for_update=True)
         require_execute(principal, e["project_id"])
+        meta = body.model is not None or body.scene is not None or "note" in body.model_fields_set
+        if meta and not can_edit_meta(principal, e):
+            raise forbidden("등록자 또는 관리자만 모델·씬·메모를 수정할 수 있습니다")
         lib_cfg = require_library_config(ctx)
         if e["status"] != "ACTIVE":
             raise conflict("ENTRY_RETIRED", "retired 항목은 수정할 수 없습니다")
@@ -371,12 +389,12 @@ def patch_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[s
         if body.model is not None:
             m = dict(e["model"])
             for k in body.model.model_fields_set:
-                m[k] = getattr(body.model, k)
+                m[k] = _clean(getattr(body.model, k))
             vals["model"] = m
         if body.scene is not None:
             s = dict(e["scene"])
             for k in body.scene.model_fields_set:
-                s[k] = getattr(body.scene, k)
+                s[k] = _clean(getattr(body.scene, k))
             if body.scene.model_fields_set & {"orient", "drop_type"}:
                 try:
                     ori, warns = core_adapter.interpret_orient(s.get("orient"), s.get("drop_type"), lib_cfg)
@@ -389,7 +407,7 @@ def patch_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[s
             s["edited"] = True
             vals["scene"] = s
         if "note" in body.model_fields_set:
-            vals["note"] = body.note
+            vals["note"] = _clean(body.note)
         if "deform_mode" in body.model_fields_set:
             vals.update(_patch_deform_mode(ctx, principal, e, body.deform_mode))
         try:

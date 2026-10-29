@@ -196,11 +196,11 @@ def test_optdeck_and_report(lib, analyzed, tmp_path):
         assert os.path.isfile(os.path.join(opt, n)), n
     summ = json.load(open(os.path.join(opt, "optdeck.json"), encoding="utf-8"))
     fem = open(os.path.join(opt, "esl_bead.fem"), encoding="ascii").read()
-    assert fem.count("\nSUBCASE ") == 6 and "DESOBJ(MINMAX)" in fem and "\nDTPG," in fem
+    assert fem.count("\nSUBCASE ") == 6 and "\nMINMAX = " in fem and "\nDTPG," in fem
     assert summ["deck_cases"]["mode"] == "all" and summ["deck_cases"]["n_subcases"] == 6
     refs = [s["ref"] for s in summ["subcases"]]
     assert all(r > 0 for r in refs)
-    pos = [float(ln.split(",")[4]) for ln in fem.splitlines() if ln.startswith("DOBJREF")]
+    pos = [float(ln.split(",")[5]) for ln in fem.splitlines() if ln.startswith("DOBJREF")]
     assert np.allclose(pos, refs, rtol=1e-6)
     # FORCE = 매핑 하중, 3-2-1 반력 ≈ 0 (자기평형)
     tgt = store.load_entry(root, lib["ids"][0], raw=True)

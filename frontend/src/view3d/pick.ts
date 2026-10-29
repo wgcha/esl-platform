@@ -58,3 +58,50 @@ export function pickSegment(o: V3, d: V3, segs: { a: V3; b: V3 }[], tol: number 
   }
   return best;
 }
+
+/** 화면 좌표(px, 오른쪽 x·아래 y) */
+export type P2 = [number, number];
+
+/** 점 c 와 화면 선분 [a, b] 사이 최소 거리(px) */
+export function pointSegmentDistance2(c: P2, a: P2, b: P2): number {
+  const vx = b[0] - a[0];
+  const vy = b[1] - a[1];
+  const L = vx * vx + vy * vy;
+  let q = L > 1e-12 ? ((c[0] - a[0]) * vx + (c[1] - a[1]) * vy) / L : 0;
+  q = Math.max(0, Math.min(1, q));
+  return Math.hypot(c[0] - (a[0] + vx * q), c[1] - (a[1] + vy * q));
+}
+
+/** 화면에 투영한 화살표 선분: depth = NDC z(작을수록 카메라 쪽), tol = 이 화살표의 허용 거리(px) */
+export interface ScreenSeg {
+  a: P2;
+  b: P2;
+  depth: number;
+  tol: number;
+}
+
+/**
+ * 화면 공간 화살표 선택(v0.8.0): 클릭점에서 투영 선분까지 px 거리 ≤ tol 인 것 중 가장 가까운(같으면 카메라 쪽) 번호, 없으면 -1.
+ * 원근·직교·줌과 무관하게 같은 px 허용으로 동작한다(투영은 호출 측 camera.project). null = 화면 밖(근/원 평면 밖)
+ */
+export function pickSegmentScreen(c: P2, segs: (ScreenSeg | null)[]): number {
+  let best = -1;
+  let bd = Infinity;
+  let bz = Infinity;
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (!s) continue;
+    const dd = pointSegmentDistance2(c, s.a, s.b);
+    if (dd <= s.tol && (dd < bd - 1e-9 || (Math.abs(dd - bd) <= 1e-9 && s.depth < bz))) {
+      best = i;
+      bd = dd;
+      bz = s.depth;
+    }
+  }
+  return best;
+}
+
+/** NDC(x, y ∈ [-1, 1], y 위) → 캔버스 px(x 오른쪽, y 아래) */
+export function ndcToPx(x: number, y: number, width: number, height: number): P2 {
+  return [((x + 1) / 2) * width, ((1 - y) / 2) * height];
+}

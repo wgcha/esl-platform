@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { ApiError, downloadFile, errorText } from "../../api/client";
 import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, sci } from "../../api/opt";
 import { STEP_LABEL } from "../../api/history";
-import { isFullResult, type JobOut, type OptResult, type OptRunOut } from "../../api/types";
+import { isFullResult, type JobOut, type OptFileOut, type OptResult, type OptRunOut } from "../../api/types";
 import { canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
@@ -194,6 +194,35 @@ function Result({ r, run }: { r: OptResult; run: OptRunOut }) {
   );
 }
 
+/** 실패 화면에서 바로 받을 파일(덱·하중·.out·오류 상세·solve.json) — OptiStruct -check 실패 확인용(v0.8.0) */
+export function failureFiles(files: OptFileOut[]): OptFileOut[] {
+  const want = (rel: string) =>
+    (rel.startsWith("deck/") && /\.(fem|inc)$/i.test(rel)) ||
+    (rel.startsWith("solve/") && !rel.slice(6).includes("/") && /(\.out|os_errors\.txt|solve\.json)$/i.test(rel));
+  return files.filter((f) => want(f.rel));
+}
+
+function FailureFiles({ id }: { id: string }) {
+  const files = usePolling(() => opt.runFiles(id), 0, [id]);
+  const list = failureFiles(files.data ?? []);
+  return (
+    <Card title="실패 확인 파일">
+      <ErrorLine text={files.error} />
+      {list.length ? (
+        <div className="inline-actions">
+          {list.map((f) =>
+            f.downloadable ? <DownloadLink key={f.rel} id={id} rel={f.rel} label={f.rel} /> : <span key={f.rel} className="small muted">{f.rel}(커서 zip 으로)</span>,
+          )}
+          <BundleButton url={opt.bundleUrl(id, "deck,solve")} filename={`opt_${id}_deck_solve.zip`} />
+        </div>
+      ) : (
+        <Empty>{files.data ? "덱·.out 파일이 아직 없습니다" : "불러오는 중…"}</Empty>
+      )}
+      <div className="small muted">-check 실패면 os_errors.txt(오류 줄·덱 줄 번호·카드)와 .out 을 관리자에게 보내 주세요 — docs/manual/opt_run_check.md</div>
+    </Card>
+  );
+}
+
 export function OptDetail() {
   const { projectId = "", optId = "" } = useParams();
   const { me, projects } = useApp();
@@ -268,6 +297,7 @@ export function OptDetail() {
           )}
         </Card>
       )}
+      {r?.state === "FAILED" && <FailureFiles id={r.id} />}
       {done && r && full && <Result r={full} run={r} />}
     </Shell>
   );

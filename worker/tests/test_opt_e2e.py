@@ -372,9 +372,9 @@ def test_s1_include_outside_roots_rejected(client, engine, worker_factory, esl_r
     read: list[str] = []
     orig = rp._read_include_specs
 
-    def spy(path):
+    def spy(path, *a, **kw):
         read.append(os.path.realpath(path))
-        return orig(path)
+        return orig(path, *a, **kw)
 
     monkeypatch.setattr(rp, "_read_include_specs", spy)
     j = run_job(client, worker_factory(), run["job_id"], "FAILED")
@@ -419,7 +419,7 @@ def test_s2_e2e_template_keepout_set(client, engine, worker_factory, esl_root, i
     tj = json.loads((rd / "target" / "target.json").read_text())
     assert tj["scenario"] == "S2" and tj["source"]["template_id"] == tpl["id"]
     deck = (rd / "deck" / "esl_bead.fem").read_text()
-    pos = sorted({ln.split(",")[4] for ln in deck.splitlines() if ln.startswith("DOBJREF,")})
+    pos = sorted({ln.split(",")[5] for ln in deck.splitlines() if ln.startswith("DOBJREF,")})
     assert len(pos) == 2                                         # rel: subcase 별 POS = 각자 C⁰
     # 업로드 폴더 없이 retry 도 성공(재사용): 실패 작업을 만들기 위해 결과 등록 직전 hw 실패
     set_control(tools, hw_mode="fail")

@@ -11,8 +11,11 @@ OptiStruct 흉내: argv = [exe, <deck>.fem, (-check), ...]. cwd 에 ``<deck>.out
 선정 C⁰(자체 솔버 값과 같게 — c0_tol 경고 없음), 반복마다 줄어든다. DESMAX 는 덱 ``DOPTPRM,DESMAX,n``.
 
 control 키
+- -check 는 항상 DTPG 비드 줄을 공식 형식(MW ANG BF HGT NORM/XD YD ZD SKIP, 플래그 없음)으로 검사해 틀리면 실제
+  OptiStruct 2026.1 처럼 "See next message about line N … continuation line k of DTPG,ID … ERROR # 1485 … Field 0
+  contains unrecognized/unexpected label." 을 본문·끝 요약에 두 번 쓰고 **종료코드 0** (이슈 #35 실기 .out 형식).
 - mode: ok(기본, ``iterations`` 회 후 수렴) | nonconv(DESMAX 까지, 수렴 표식 없음) | check_fail(-check 에서 *** ERROR,
-  종료코드 1) | fail(본 실행 *** ERROR, 종료코드 3) | exit1(오류 패턴 없이 종료코드 1) | hang(손자 프로세스와 함께 오래
+  종료코드 1) | check_1485(덱과 상관없이 위 1485 출력, 종료코드 0) | fail(본 실행 *** ERROR, 종료코드 3) | exit1(오류 패턴 없이 종료코드 1) | hang(손자 프로세스와 함께 오래
   잔다, pid 를 ``fake_os_pids`` 에 기록) | nodes(본 실행이 _des.h3d 를 남기지 않음) | memory(메모리 부족 메시지·종료코드 2)
 - license: 처음 n 번 호출(``license_on``: solve | check | both, 기본 solve)은 라이선스 오류 + 종료코드 1
   (카운터 = ``fake_os_license_count``)
@@ -75,6 +78,65 @@ def _read_deck(fem: str) -> dict:
     return {"nodes": nodes, "n_sub": n_sub, "desmax": desmax}
 
 
+_SKIP = ("NONE", "BC", "SPC", "LOAD", "BOTH")
+
+
+def _num(x: str) -> bool:
+    try:
+        float(x.upper().replace("D", "E"))
+        return True
+    except ValueError:
+        return False
+
+
+def _dtpg_issue(fem: str):
+    """DTPG 연속 줄 검사(자유형식) → (줄 번호, 카드 id, 연속 번호, 줄, 필드 번호) | None. 고정형식 줄도 8칸으로 나눠 본다."""
+    lines = open(fem, encoding="ascii", errors="replace").read().splitlines()
+    cur, k = None, 0
+    for no, ln in enumerate(lines, start=1):
+        if ln.startswith("$") or not ln.strip():
+            continue
+        f = ln.split(",") if "," in ln else [ln[i:i + 8].strip() for i in range(0, len(ln), 8)]
+        name = f[0].strip().upper()
+        if name and name != "+":
+            cur = f[1].strip() if name == "DTPG" else None
+            k = 0
+            continue
+        if cur is None:
+            continue
+        k += 1
+        d = [x.strip().upper() for x in f[1:]] + [""] * 9
+        if d[0] in ("BOUNDS", "PATRN", "PATRN2", "MAXW", "AUTOBEAD", "MAIN", "SECOND", "COORD"):
+            continue
+        if d[0] == "" and all(x == "" or x.isdigit() for x in d[1:8]):    # PID 연속(3번째 칸부터)
+            continue
+        bad = None
+        if not _num(d[0]):
+            bad = 0
+        elif not _num(d[1]):
+            bad = 1
+        elif d[2] not in ("YES", "NO", ""):
+            bad = 2
+        elif not _num(d[3]):
+            bad = 3
+        elif d[4] not in ("NORM", "") and not _num(d[4]):
+            bad = 4
+        elif d[7] not in _SKIP + ("",):
+            bad = 7
+        if bad is not None:
+            return no, cur, k, ln, bad
+    return None
+
+
+def _out_1485(fem: str, no: int, cid: str, k: int, ln: str, field: int) -> str:
+    msg = (f" *** See next message about line {no} from file:\n     {fem}\n"
+           f"  (this is continuation line {k} of DTPG,{cid} bulk data)\n  \"{ln}\"\n  \n"
+           f" *** ERROR # 1485 *** in the input data:\n Field {field} contains unrecognized/unexpected label.\n")
+    return (" NOTE # 9199\n MSGLMT=STRICT is active\n  \n" + msg + "\n" + "*" * 72 + "\n\n *** PROGRAM STOPPED: FATAL "
+            "ERROR(s) ENCOUNTERED.\n\n" + "*" * 72 + "\n  \n A fatal error has been detected during input processing:\n"
+            "  \n" + "\n".join(" " + x for x in msg.splitlines()) + "\n  \n" + "*" * 72 + "\n")
+
+
 def _c0s(n_sub: int) -> list[float]:
     try:
         with open(os.path.join(os.getcwd(), "..", "load", "selection.json"), encoding="utf-8") as fh:
@@ -108,6 +170,13 @@ def optistruct(ctl: dict) -> int:
             with open(out_path, "w") as fh:
                 fh.write(head + " *** ERROR # 1000 *** fake deck error on card DTPG\n")
             return 1
+        issue = _dtpg_issue(fem)
+        if mode == "check_1485":
+            issue = (446378, "9000006", 1, "+,BEAD,60.,45.,10.,YES,BC", 0)
+        if issue is not None:
+            with open(out_path, "w") as fh:
+                fh.write(head + _out_1485(fem, *issue))
+            return 0   # 실기: -check 는 덱 오류에도 종료코드 0
         with open(out_path, "w") as fh:
             fh.write(head + " CHECK RUN COMPLETED (fake)\n")
         return 0

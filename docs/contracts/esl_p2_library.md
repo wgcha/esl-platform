@@ -96,7 +96,7 @@
 ### API
 - `GET /validations/{id}/field?layer=rad|esl|err&max_points=` → `{n_total, n_returned, decimated, plane:{origin,e1,e2}, color_range:{min,max}, points:[[elem_id, a, b, value, reason]]}`; `GET /validations/{id}/section?axis=xi|eta&at=0.5` → `{s[], w_rad[], w_esl[], w0[]}`; validation 응답에 `field` 요약.
 - `GET /cases/{id}/report` → HTML(`Content-Type: text/html`, CSP `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:`), `?download=1`이면 첨부.
-- `POST /library/entries` `{esl_run_id, validation_id?, note?, force_reason?}`(FAIL은 force_reason 필수, power 이상) → 201; `POST /library/entries/{id}/retire`; `PATCH /library/entries/{id}` `{version, model.product_mass?, scene.*}`(메타 수정만); `GET /library/entries?project_id=&model=&drop_type=&orient=&verdict=&status=`.
+- `POST /library/entries` `{esl_run_id, validation_id?, note?, force_reason?}`(FAIL은 force_reason 필수, power 이상) → 201; `POST /library/entries/{id}/retire`; `PATCH /library/entries/{id}` `{version, model.{name,inch,version,date,product_mass}?, scene.*, note?}`(메타 수정만, v0.8.0: 모델·씬·메모는 등록자 또는 관리자 — 아니면 403, entry.json 은 그대로); `GET /library/entries?project_id=&model=&drop_type=&orient=&verdict=&status=`.
 - `POST /library/analyses` `{project_id, target_entry_id?, filters, options}` → 201 + LIB_ANALYZE 작업; `GET /library/analyses`, `GET /library/analyses/{id}`(요약: 대표·포락·통계), `GET /library/analyses/{id}/report`(HTML, 위 CSP), `GET /library/analyses/{id}/files`(optdeck 등 다운로드 목록).
 - 오류 코드 추가: ENTRY_EXISTS, VALIDATION_NOT_PASS, MAPPING_DEGENERATE, GRID_MISMATCH, NORMALIZATION_META_MISSING.
 ### UI

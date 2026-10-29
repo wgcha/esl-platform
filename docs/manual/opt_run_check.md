@@ -59,6 +59,34 @@
 | 7 | 비드 반영 메시 | `post/bead_mesh.rad` 를 HyperMesh/Radioss 로 열어 원 노드·요소 ID·PID 유지, 대상 파트 교체로 낙하 해석이 시작되는지 | |
 | 8 | 입력 보호 | 실행 전후 Case 입력 폴더·업로드 폴더 파일 변경 없음(수정 시각·크기) | |
 
+## 2.5 `-check` 실패 시 확인 (v0.8.0)
+
+증상: 작업이 `OS_DECK_INVALID — OptiStruct -check 실패(종료코드 0): ERROR # … ` 로 끝남. OptiStruct 2026.1 은 덱 오류에도
+`-check` 종료코드가 **0** 이므로 판정은 `.out` 의 `*** ERROR` 줄(`opt_run.solve.error_patterns`)로 한다(그대로 유지).
+
+| 무엇 | 위치(서버 `esl-data/_opt/<실행 id>/`) · 화면 |
+|---|---|
+| 한 줄 요약 | 작업 실패 메시지: `ERROR # 1485 in the input data: Field 0 … — DTPG,9000006 연속 줄 1, 덱 줄 446378: "<덱 줄>"` |
+| 오류 상세 전체 | `solve/os_errors.txt` (오류마다 "See next message about line N" 문맥 + ERROR 줄 + 다음 상세 줄) · 작업 로그 step 4 |
+| 덱 | `deck/esl_bead.fem`·`deck/esl_loads.inc`(실행 복사본 `solve/esl_bead.fem`) |
+| .out | `solve/esl_bead.out` (-check 가 통과해 본 실행이 시작되면 `esl_bead.out.check` 로 이름을 바꿔 보존) |
+| 받기 | 상세 화면 **실패 확인 파일** 카드: 위 파일 각각 + `덱·OptiStruct zip`(`bundle?parts=deck,solve`) |
+
+**보내 줄 줄 범위**(관리자·개발 요청 시):
+1. `solve/os_errors.txt` 전체(보통 10줄 안).
+2. `solve/esl_bead.out` 의 첫 `*** See next message` 줄 **5줄 위**부터 `*** PROGRAM STOPPED` 줄까지(버전 머리말
+   `Altair OptiStruct(TM) <버전>` 줄도 함께).
+3. 덱에서 오류가 가리킨 줄 번호 N 의 카드 전체: 카드 첫 줄(예 `DTPG,…`)부터 다음 카드 앞까지 — 보통 N−3 ~ N+3 줄.
+
+조정 키(코드 수정 없이):
+- 상세 줄 수 `opt_run.solve.error_detail_lines`(기본 4)·문맥 줄 수 `error_context_lines`(8)·`error_context_pattern`·
+  `error_card_pattern`·`error_code_pattern`(.out 문구가 버전마다 다르면 정규식으로 덮어씀)·메시지 길이 `error_message_max`(480).
+- DTPG 비드 줄 칸 배치 `optdeck.dtpg.*`(library.yaml): 기본 = Reference Guide 형식표
+  `+, MW, ANG, BF, HGT, NORM, , , SKIP`(플래그 없음, PID 연속 줄은 3번째 칸부터). v0.7.x 의 `+,BEAD,MW,ANG,HGT,BF,SKIP` 은
+  2026.1 이 `ERROR # 1485 Field 0 … unrecognized label` 로 거부(이슈 #35). 다른 버전에서 칸이 다르면 `bead_fields`·`bead_flag`·
+  `pid_cont_col` 로 맞춘다.
+- 카드 오류가 계속되면 `optdeck.card_format: fixed`(8칸 고정형식)로 다시 실행해 비교.
+
 ## 3. Windows 실행 환경 메모
 
 - `optistruct.bat` 은 **배치 파일**이라 내부에서 `cmd.exe` → solver exe 를 띄운다. 워커는 shell 없이(argv) 실행하고, 취소·시간 초과 때 작업별 Job Object 종료 + `taskkill /T /F` 로 트리 전체를 끈다(R1 #14 로 확인).

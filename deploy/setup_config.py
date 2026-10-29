@@ -24,8 +24,14 @@
 - 대시보드 .env(git 폴더 설치만): VITE_ESL_TARGET=http://127.0.0.1:<server.port>·SIMDASH_ESL_ENABLED=true 를 **없을 때만 끝에 추가**한다
   (이미 있으면 "이미 있음", 다른 값이면 그대로 두고 경고 — 기존 값·다른 줄·인코딩(BOM)·줄 끝은 보존). 바꾸기 전에 <런타임>/_backup/<UTC>/dashboard.env
   로 복사한다. 추가했으면 대시보드를 다시 시작해야 반영된다. .env 가 없으면 만들지 않고 안내만 한다.
-- v0.7.2: 최종 설정에 opt_run 섹션이 없거나(v0.6.0 이전 설정) enabled 가 아니거나 altair.optistruct_path 가 비었으면 비드 최적화는
-  비활성 그대로 두고 경고 1줄(OPT_RUN_HINT)만 낸다 — opt_run·optistruct_path 는 자동으로 넣지 않는다(서버마다 경로·라이선스가 다름).
+- v0.8.0(0.7.2 규칙 완화, 계약 esl_cumulative_input.md §12): 기존 설정에서 altair.hw_exe_path 파일이 있으면 그 상위 폴더를 최대
+  6단계 올라가며 같은 Altair 설치의 hwsolvers/scripts/optistruct.bat 을 찾아 **실제 있을 때만** altair.optistruct_path(키가 없거나
+  null·빈 값일 때만)와 opt_run.enabled: true(opt_run 섹션이 없거나 enabled 키가 없을 때만 — 명시 enabled: false 는 불변)를 추가한다.
+  기존 값은 파일이 없어도 바꾸지 않는다. 바뀌면 기존 규칙대로 <런타임>/_backup/<UTC>/esl_platform.yaml 로 복사 후 쓰고 콘솔 1줄
+  (write 결과 opt_autodetect.line). 그래도 비활성이면 경고 1줄(OPT_RUN_HINT, 후보 없으면 자동 감지 결과 덧붙임). 라이선스는 보지 않는다.
+- v0.8.0 §9.1: 기존 설정이 upload.allowed_ext 를 명시했고 .sta·.str 이 없으면 이 두 확장자만 1회 덧붙인다(다른 항목·순서 불변).
+  설치 상태 파일 <런타임>/state/ext_supplement.json 에 {"0.8.0": [".sta", ".str"]} 를 기록하고, 기록이 있으면 다시 넣지 않는다
+  (사용자가 뺀 경우와 구분할 수 없으므로).
 - 비밀번호·DB URL 은 다루지 않는다.
 """
 
@@ -58,6 +64,13 @@ LIST_KEYS = ("input_roots", "spdm_roots")
 SUPPLEMENT_KEYS = (("altair", "hw_exe_path"), ("altair", "max_concurrent_hw"), ("worker", "slots"),
                    ("client_token", "ttl_days"))
 OPT_RUN_HINT = "비드 최적화를 쓰려면 opt_run.enabled·altair.optistruct_path 설정(지금은 비활성 — 설정 파일은 자동으로 바꾸지 않음)"
+OPT_AUTODETECT_NOTE = "setup이 보충 — v0.8.0 OptiStruct 자동 감지"
+OPT_AUTODETECT_NONE = " (자동 감지: hw 경로 기준 hwsolvers/scripts/optistruct.bat 없음)"
+OPT_AUTODETECT_LEVELS = 6
+OPTISTRUCT_REL = ("hwsolvers", "scripts", "optistruct.bat")
+EXT_SUPPLEMENT_VERSION = "0.8.0"
+EXT_SUPPLEMENT = (".sta", ".str")            # 누적 낙하 씬 상태 파일(계약 esl_cumulative_input.md §9.1)
+EXT_SUPPLEMENT_STATE = ("state", "ext_supplement.json")
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -257,8 +270,38 @@ def _get(data: Any, path: tuple[str, ...]) -> tuple[bool, Any]:
 
 def _set(data: dict, path: tuple[str, ...], value: Any) -> None:
     for k in path[:-1]:
-        data = data.setdefault(k, {})
+        if data.get(k) is None:
+            data[k] = {}
+        data = data[k]
     data[path[-1]] = value
+
+
+def find_optistruct(hw_exe: str, levels: int = OPT_AUTODETECT_LEVELS) -> str | None:
+    """hw 실행 파일의 상위 폴더(1..levels 단계)에서 처음 존재하는 <조상>/hwsolvers/scripts/optistruct.bat (fwd) — 같은 설치만.
+
+    예 C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe → C:/Program Files/Altair/2026.1/hwsolvers/scripts/
+    optistruct.bat, 구형 <root>/hw/bin/win64/hw.exe → <root>/hwsolvers/…. 드라이브 루트에서 멈춘다."""
+    if not hw_exe or not os.path.isfile(hw_exe):
+        return None
+    d = os.path.dirname(os.path.abspath(hw_exe))
+    for _ in range(int(levels)):
+        c = os.path.join(d, *OPTISTRUCT_REL)
+        if os.path.isfile(c):
+            return fwd(c)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+def read_ext_supplement(runtime: Path) -> dict[str, Any]:
+    p = runtime.joinpath(*EXT_SUPPLEMENT_STATE)
+    try:
+        v = json.loads(p.read_text(encoding="utf-8-sig")) if p.is_file() else {}
+    except (OSError, ValueError):
+        v = {}
+    return v if isinstance(v, dict) else {}
 
 
 # 대시보드 웹 경로: 운영 대시보드는 Vite가 WINDOWS_WEB_BASE_PATH(기본 /home/)에서 열린다(physicsai phase3 D3-38과 같은 규칙).
@@ -444,8 +487,13 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     example_text = example_path.read_text(encoding="utf-8")
     example = yaml.safe_load(example_text) or {}
     config_path = Path(deploy.get("config_path") or (runtime / "config" / CONFIG_NAME))
+    config_bom = False
     if config_path.is_file():
-        source, base_text = "existing", config_path.read_text(encoding="utf-8-sig")
+        # 줄 끝(CRLF/LF)·BOM 보존(v0.8.0): 줄 끝 변환 없이 읽고, BOM 이 있었으면 쓸 때 다시 붙인다
+        raw = config_path.read_bytes()
+        config_bom = raw.startswith(b"\xef\xbb\xbf")
+        with open(config_path, encoding="utf-8-sig", newline="") as fh:
+            source, base_text = "existing", fh.read()
     else:
         source, base_text = "example", example_text
     try:
@@ -517,6 +565,51 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
             text = set_yaml_value(text, path, want_v, "setup이 보충 — P3-UX")
             upgraded[path] = want_v
             rows.append({"key": ".".join(path), "value": want_v, "action": "보충(새 설정 키)"})
+    # v0.8.0 §12: OptiStruct 경로 자동 감지 — hw 실행 파일과 같은 설치에 optistruct.bat 이 실제 있을 때만 추가(기존 값 불변)
+    opt_auto: dict[str, Any] = {"added": {}, "candidate": None, "hw_exists": False, "kept_disabled": False}
+    if not new_file:
+        cur = yaml.safe_load(text) or {}
+        _, hw = _get(cur, ("altair", "hw_exe_path"))
+        if isinstance(hw, str) and hw.strip() and os.path.isfile(hw):
+            opt_auto["hw_exists"] = True
+            cand = find_optistruct(hw)
+            opt_auto["candidate"] = cand
+            has_os, cur_os = _get(cur, ("altair", "optistruct_path"))
+            valid = None
+            if cand and (not has_os or cur_os in (None, "")):
+                text = set_yaml_value(text, ("altair", "optistruct_path"), cand, OPT_AUTODETECT_NOTE)
+                upgraded[("altair", "optistruct_path")] = cand
+                opt_auto["added"]["altair.optistruct_path"] = cand
+                rows.append({"key": "altair.optistruct_path", "value": cand, "action": "보충(OptiStruct 자동 감지)"})
+                valid = cand
+            elif isinstance(cur_os, str) and cur_os and os.path.isfile(cur_os):
+                valid = cur_os
+            if valid:
+                has_or, orun = _get(cur, ("opt_run",))
+                if not has_or or orun is None or (isinstance(orun, dict) and "enabled" not in orun):
+                    text = set_yaml_value(text, ("opt_run", "enabled"), True, OPT_AUTODETECT_NOTE)
+                    upgraded[("opt_run", "enabled")] = True
+                    opt_auto["added"]["opt_run.enabled"] = True
+                    rows.append({"key": "opt_run.enabled", "value": True, "action": "보충(OptiStruct 자동 감지)"})
+                elif isinstance(orun, dict) and orun.get("enabled") is False:
+                    opt_auto["kept_disabled"] = True
+                    warnings.append(f"비드 최적화는 설정 opt_run.enabled: false 로 꺼져 있어 그대로 둡니다(OptiStruct: {valid}) "
+                                    "— 쓰려면 true 로 직접 바꾸세요")
+    # v0.8.0 §9.1: upload.allowed_ext 를 명시한 기존 설정에 .sta·.str 1회 보충(기록이 있으면 다시 넣지 않음)
+    ext_sup: dict[str, Any] = {"added": [], "record": False}
+    if not new_file:
+        rec = read_ext_supplement(runtime)
+        has_ae, ae = _get(base, ("upload", "allowed_ext"))
+        if EXT_SUPPLEMENT_VERSION not in rec and has_ae and isinstance(ae, list):
+            low = [str(x).lower() for x in ae]
+            add = [e for e in EXT_SUPPLEMENT if e not in low]
+            ext_sup["record"] = True
+            if add:
+                new_ae = list(ae) + add
+                text = set_yaml_value(text, ("upload", "allowed_ext"), new_ae)
+                upgraded[("upload", "allowed_ext")] = new_ae
+                ext_sup["added"] = add
+                rows.append({"key": "upload.allowed_ext", "value": new_ae, "action": "보충(.sta·.str — 누적 낙하 씬)"})
     # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
     login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
     if login_warn:
@@ -553,6 +646,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"설정 파일을 자동으로 보충하지 못했습니다(형식이 예상과 다름 — 흐름 표기 등) — 다음 키를 직접 고치세요: "
                         f"{', '.join(changed + ['.'.join(p) for p in upgraded])}")
         text, changed, upgraded = base_text, [], {}
+        opt_auto["added"], ext_sup["added"], ext_sup["record"] = {}, [], False
     changed += [".".join(p) for p in upgraded]
     config_changed = new_file or bool(changed)
 
@@ -560,7 +654,10 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     final = yaml.safe_load(text) or {}
     hint = opt_run_hint(final)
     if hint:
-        warnings.append(hint)
+        if opt_auto["hw_exists"] and not opt_auto["candidate"] and not opt_auto["kept_disabled"]:
+            hint += OPT_AUTODETECT_NONE
+        if not opt_auto["kept_disabled"]:
+            warnings.append(hint)
     cfg_dir = config_path.parent
     companions: list[dict[str, Any]] = []
     for path, default_name, example_name in COMPANIONS:
@@ -591,9 +688,12 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         "deploy_write": deploy_write, "deploy_added": added if existing is not None else [], "deploy_overridden": overridden,
         "deploy_changed": deploy_changed, "config_path": str(config_path), "config_source": source,
         "config_changed": config_changed, "config_rows": rows, "config_changed_keys": changed, "config_text": text,
+        "config_bom": config_bom,
         "companions": companions, "esl_root": esl_root, "esl_root_ok": root_ok, "input_roots": input_roots,
         "upload_root": upload_root, "upload_root_ok": upload_ok,
         "spdm_roots": spdm_roots, "warnings": warnings,
+        "opt_autodetect": {"added": opt_auto["added"], "candidate": opt_auto["candidate"]},
+        "ext_supplement": ext_sup,
     }
 
 
@@ -622,13 +722,32 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
         deploy_path.write_text(json.dumps(pl["deploy"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         out["written"].append(str(deploy_path))
     cfg = Path(pl["config_path"])
+    cfg_backup = None
     if pl["config_changed"]:
         cfg.parent.mkdir(parents=True, exist_ok=True)
         if cfg.is_file():
-            out["backups"].append(_backup(cfg, runtime, stamp))
-        with open(cfg, "w", encoding="utf-8", newline="") as f:
+            cfg_backup = _backup(cfg, runtime, stamp)
+            out["backups"].append(cfg_backup)
+        with open(cfg, "w", encoding="utf-8-sig" if pl.get("config_bom") else "utf-8", newline="") as f:
             f.write(pl["config_text"])
         out["written"].append(str(cfg))
+    oa = (pl.get("opt_autodetect") or {}).get("added") or {}
+    out["opt_autodetect"] = {"added": oa, "backup": cfg_backup, "line": None}
+    if oa:
+        kv = ", ".join(f"{k} = {literal(v)}" for k, v in oa.items())
+        out["opt_autodetect"]["line"] = (f"비드 최적화 자동 설정: {kv} 추가"
+                                         + (f" (백업 {cfg_backup})" if cfg_backup else ""))
+    es = pl.get("ext_supplement") or {}
+    out["ext_supplement"] = {"added": list(es.get("added") or []), "line": None}
+    if es.get("record"):
+        sp = runtime.joinpath(*EXT_SUPPLEMENT_STATE)
+        rec = read_ext_supplement(runtime)
+        rec[EXT_SUPPLEMENT_VERSION] = list(EXT_SUPPLEMENT)
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        sp.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
+        if es.get("added"):
+            out["ext_supplement"]["line"] = (f"업로드 허용 확장자 보충: upload.allowed_ext 에 {' '.join(es['added'])} 추가"
+                                             + (f" (백업 {cfg_backup})" if cfg_backup else ""))
     for c in pl["companions"]:
         if c["copy"] and not os.path.exists(c["path"]):
             Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)
@@ -679,6 +798,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "write":
         pl["write"] = write(inputs, pl)
     pl.pop("config_text", None)
+    pl.pop("config_bom", None)
     data = json.dumps(pl, ensure_ascii=False)
     if args.out:
         Path(args.out).write_text(data, encoding="utf-8")  # PowerShell 5.1은 -Encoding UTF8로 읽는다

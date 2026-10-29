@@ -9,10 +9,10 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
-import { ARROW_COLOR, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
+import { ARROW_COLOR, ARROW_PICK_PX, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
 import { fillVertexColors } from "./colors";
-import { pickSegment, type V3 } from "./pick";
+import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
 import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
@@ -225,6 +225,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   const arrowMat = new MeshLambertMaterial({ color: 0xffffff });
   let arrowHead: InstancedMesh | null = null;
   let arrows: ArrowSpec[] = [];
+  /** 원뿔 머리 반지름(화면 px) — 화살표 클릭 허용 계산용(writeHeads 가 갱신) */
+  const headRpx: number[] = [];
   let selArrow: number | null = null;
   const arrowLabels: Sprite[] = [];
   const Y = new Vector3(0, 1, 0);
@@ -263,6 +265,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       const kk = a.kind === "cluster" ? CONE_CLUSTER_SCALE : 1;
       const hl = Math.max(CONE_PX.min * kk * w, Math.min(CONE_PX.max * kk * w, a.headLen * CONE_LEN_SCALE * kk));
       const hr = hl * CONE_ASPECT;
+      headRpx[i] = hr / Math.max(w, 1e-12);
       tmpQ.setFromUnitVectors(Y, tmpP.set(a.dir[0], a.dir[1], a.dir[2]));
       tmpP.set(a.tail[0] + a.dir[0] * (a.length - hl), a.tail[1] + a.dir[1] * (a.length - hl), a.tail[2] + a.dir[2] * (a.length - hl));
       tmpM.compose(tmpP, tmpQ, tmpS.set(hr, hl, hr));
@@ -400,6 +403,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   // ---- 선택(클릭)
   let pickCb: ((e: PickEvent) => void) | null = null;
   const raycaster = new Raycaster();
+  const tmpPick = new Vector3();
   let down: { x: number; y: number; t: number } | null = null;
   const ndc = (ev: MouseEvent) => {
     const r = canvas.getBoundingClientRect();
@@ -410,10 +414,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     raycaster.setFromCamera(p, camera);
     // 직교: setFromCamera 의 원점은 카메라 평면(z_view = 0). near 가 음수면(카메라가 모델 안쪽) 그만큼 뒤로 물려 앞쪽 모델도 맞힌다
     if (camera === ortho && ortho.near < 0) raycaster.ray.origin.addScaledVector(raycaster.ray.direction, ortho.near);
-    const o: V3 = [raycaster.ray.origin.x, raycaster.ray.origin.y, raycaster.ray.origin.z];
-    const d: V3 = [raycaster.ray.direction.x, raycaster.ray.direction.y, raycaster.ray.direction.z];
     const pxW = pxWorldAt; // 거리 t 에서 1 px 의 월드 길이(직교는 거리 무관)
-    // 1) 지지 기호 2) 화살표 3) 표면 — 화살표는 선분 + 머리 포함, 허용 6 px
+    // 1) 지지 기호 2) 화살표 3) 표면 — 화살표는 화면 공간(투영 선분까지 px 거리, 머리 포함) 허용 ARROW_PICK_PX
     const supIdx = supports.findIndex((s) => {
       const v = new Vector3(s.position[0], s.position[1], s.position[2]).sub(raycaster.ray.origin);
       const t = v.dot(raycaster.ray.direction);
@@ -421,8 +423,22 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       const off = v.addScaledVector(raycaster.ray.direction, -t).length();
       return off <= pxW(t) * 14;
     });
-    const segs = arrows.map((a) => ({ a: a.tail, b: [a.tail[0] + a.dir[0] * a.length, a.tail[1] + a.dir[1] * a.length, a.tail[2] + a.dir[2] * a.length] as V3 }));
-    const ai = pickSegment(o, d, segs, (t) => Math.max(pxW(t) * 6, 0));
+    // v0.8.0: 예전 광선-선분 월드 거리 허용(6 px)은 2 px 선에 너무 좁아, 직교 기본(v0.7.1)에서 짧게 보이는 화살표를
+    // 거의 못 눌렀다(원근은 가까운 화살표가 커 보여 가려졌음). 화면 공간 거리로 원근·직교·줌 모두 같은 px 허용.
+    const r = canvas.getBoundingClientRect();
+    const W = Math.max(1, r.width);
+    const H = Math.max(1, r.height);
+    const toPx = (q: V3) => {
+      tmpPick.set(q[0], q[1], q[2]).project(camera);
+      return { p: ndcToPx(tmpPick.x, tmpPick.y, W, H), z: tmpPick.z };
+    };
+    const ssegs = arrows.map((a, i): ScreenSeg | null => {
+      const A = toPx(a.tail);
+      const B = toPx([a.tail[0] + a.dir[0] * a.length, a.tail[1] + a.dir[1] * a.length, a.tail[2] + a.dir[2] * a.length]);
+      if (Math.abs(A.z) > 1 || Math.abs(B.z) > 1) return null; // 근/원 평면 밖(원근 카메라 뒤 포함)
+      return { a: A.p, b: B.p, depth: Math.min(A.z, B.z), tol: Math.max(ARROW_PICK_PX, (headRpx[i] ?? 0) + 2) };
+    });
+    const ai = pickSegmentScreen([ev.clientX - r.left, ev.clientY - r.top], ssegs);
     if (ai >= 0) return { type: "arrow", index: ai };
     if (supIdx >= 0) return { type: "support", index: supIdx };
     const l = currentLayer();
