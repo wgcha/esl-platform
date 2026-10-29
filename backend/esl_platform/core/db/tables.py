@@ -1,4 +1,5 @@
-"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12 + esl_opt_run.md §12).
+"""DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12 + esl_opt_run.md §12
++ esl_bead_doe.md §13).
 SQLAlchemy Core, PostgreSQL 전용.
 
 공통: ID = UUID4 VARCHAR(36), 시간 TIMESTAMPTZ(DB 시계), 파일 본문·대용량 배열 저장 금지(경로·sha256·요약만),
@@ -39,21 +40,29 @@ ID = String(36)
 TS = TIMESTAMP(timezone=True)
 
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
-JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE", "OPT_RUN")
+JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE", "OPT_RUN",
+             "DOE_PREP", "DOE_PREVIEW", "DOE_RUN")          # 0011: 비드 DOE 3종
+DOE_JOB_TYPES = ("DOE_PREP", "DOE_PREVIEW", "DOE_RUN")
 ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "REPORT", "RUN", "LOG",
-                  "OPT_RESULT", "OPT_SOLVE")     # 0010: 비드 최적화 결과·OptiStruct 원본
+                  "OPT_RESULT", "OPT_SOLVE",     # 0010: 비드 최적화 결과·OptiStruct 원본
+                  "DOE_RESULT")                  # 0011: 비드 DOE 결과
 # 0003: 제약 SQL(마이그레이션과 공유)
 CK_JOBS_JOB_TYPE = "job_type IN (" + ",".join(f"'{t}'" for t in JOB_TYPES) + ")"
-CK_JOBS_STAGE = "stage BETWEEN 1 AND 10"    # 0004: 9 = 설계 버전 비교, 0010: 10 = 비드 최적화
-# 0004·0010: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE) | 최적화 실행(OPT_RUN)
+CK_JOBS_STAGE = "stage BETWEEN 1 AND 11"    # 0004: 9 = 설계 버전 비교, 0010: 10 = 비드 최적화, 0011: 11 = 비드 DOE
+# 0004·0010·0011: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE) | 최적화 실행(OPT_RUN)
+# | 비드 DOE 연구(DOE_PREP·DOE_PREVIEW·DOE_RUN)
+_DOE_IN = "('DOE_PREP','DOE_PREVIEW','DOE_RUN')"
 CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL"
-                   " AND comparison_id IS NULL AND opt_run_id IS NULL)"
+                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL)"
                    " OR (job_type = 'LIB_COMPARE' AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NOT NULL AND opt_run_id IS NULL)"
+                   " AND comparison_id IS NOT NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL)"
                    " OR (job_type = 'OPT_RUN' AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NULL AND opt_run_id IS NOT NULL)"
-                   " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE','OPT_RUN') AND case_id IS NOT NULL"
-                   " AND analysis_id IS NULL AND comparison_id IS NULL AND opt_run_id IS NULL)")
+                   " AND comparison_id IS NULL AND opt_run_id IS NOT NULL AND bead_doe_id IS NULL)"
+                   f" OR (job_type IN {_DOE_IN} AND case_id IS NULL AND analysis_id IS NULL"
+                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NOT NULL)"
+                   f" OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE','OPT_RUN','DOE_PREP','DOE_PREVIEW','DOE_RUN')"
+                   " AND case_id IS NOT NULL AND analysis_id IS NULL AND comparison_id IS NULL AND opt_run_id IS NULL"
+                   " AND bead_doe_id IS NULL)")
 # 0006: Case 입력 종류, step 종류(LOCAL = 워커가 외부 프로그램 실행), worker_slot 행 수(worker.slots 상한)
 CK_CASES_INPUT_KIND = "input_kind IN ('RESULTS','H3D') AND (input_kind = 'RESULTS' OR h3d_path IS NOT NULL)"
 CK_JOB_STEPS_KIND = "kind IN ('INTERNAL','LOCAL')"
@@ -114,6 +123,7 @@ jobs = Table(
     Column("analysis_id", ID, ForeignKey("analysis_runs.id"), nullable=True),  # 0003: LIB_ANALYZE 대상 분석
     Column("comparison_id", ID, ForeignKey("comparisons.id"), nullable=True),  # 0004: LIB_COMPARE 대상 비교
     Column("opt_run_id", ID, ForeignKey("opt_runs.id"), nullable=True),        # 0010: OPT_RUN 대상 최적화 실행
+    Column("bead_doe_id", ID, ForeignKey("bead_does.id"), nullable=True),      # 0011: DOE_* 대상 비드 DOE 연구
     Column("project_id", String, nullable=False),
     Column("job_type", String, nullable=False),
     Column("stage", SmallInteger, nullable=False),
@@ -187,6 +197,10 @@ Index("ix_jobs_retry_of", jobs.c.retry_of_job_id, postgresql_where=text("retry_o
 Index("ix_jobs_opt_run", jobs.c.opt_run_id, postgresql_where=text("opt_run_id IS NOT NULL"))
 Index("ux_jobs_opt_run_active", jobs.c.opt_run_id, unique=True,
       postgresql_where=text("opt_run_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+# 0011: 비드 DOE 연구당 비종료 작업 1개(PREP·PREVIEW·RUN 통틀어)
+Index("ix_jobs_bead_doe", jobs.c.bead_doe_id, postgresql_where=text("bead_doe_id IS NOT NULL"))
+Index("ux_jobs_bead_doe_active", jobs.c.bead_doe_id, unique=True,
+      postgresql_where=text("bead_doe_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
 
 job_steps = Table(
     "job_steps",
@@ -503,6 +517,43 @@ opt_runs = Table(
 Index("ix_opt_runs_project", opt_runs.c.project_id, opt_runs.c.created_at.desc())
 Index("ix_opt_runs_template", opt_runs.c.template_id)
 
+# ---------------------------------------------------------------- 0011: 비드 DOE(계약 esl_bead_doe.md §13)
+DOE_SCENARIOS = ("same", "mesh", "step")
+DOE_PHASES = ("PREP", "READY", "PREVIEW", "PREVIEW_READY", "RUN", "DONE", "FAILED")
+bead_does = Table(
+    "bead_does",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("project_id", String, nullable=False),
+    Column("scenario", String(4), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("entry_ids", JSONB, nullable=False),
+    Column("base", JSONB, nullable=True),                   # ① 기준 entry·case·part(서버 경로 없음 — 경로는 작업 params 에만)
+    Column("inputs", JSONB, nullable=False),                # step·mesh(upload_id·sha256·file_name), part_title, inch, props, mesh_size_mm
+    Column("phase", String(16), nullable=False, server_default="PREP"),
+    Column("version", BigInteger, nullable=False, server_default="1"),    # 낙관적 잠금
+    Column("prep", JSONB, nullable=True),                   # 준비 요약(n_beads, n_params, paicad_version, warnings, boundary)
+    Column("doe", JSONB, nullable=True),                    # rev, spec, matrix_sha256, n_designs, preview 요약
+    Column("run", JSONB, nullable=True),                    # solver, parallel
+    Column("result", JSONB, nullable=True),                 # DoeResultOut 요약(ranking ≤ max_designs 행)
+    Column("report_rel", String, nullable=True),
+    Column("dir_rel", String, nullable=False),              # _doe/<id>
+    Column("paicad_version", String(32), nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("scenario IN ('same','mesh','step')", name="ck_bead_does_scenario"),
+    CheckConstraint("phase IN ('PREP','READY','PREVIEW','PREVIEW_READY','RUN','DONE','FAILED')",
+                    name="ck_bead_does_phase"),
+    CheckConstraint("scenario <> 'same' OR base IS NOT NULL", name="ck_bead_does_base"),
+    CheckConstraint("jsonb_typeof(entry_ids) = 'array' AND jsonb_array_length(entry_ids) >= 1",
+                    name="ck_bead_does_entry_ids"),
+    CheckConstraint("version >= 1", name="ck_bead_does_version"),
+    CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_bead_does_dir_rel"),
+)
+Index("ix_bead_does_project", bead_does.c.project_id, bead_does.c.created_at.desc())
+
 # P3-UX 브라우저 분할 업로드 세션(계약 esl_p3_ux.md §1.1). 파일 본문은 디스크(<upload_root>/...)에만, 여기는 목록·상태.
 UPLOAD_STATES = ("OPEN", "COMPLETED", "CANCELED", "STALE")
 uploads = Table(
@@ -639,6 +690,7 @@ worker_heartbeats = Table(
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
-    "comparisons", "uploads", "opt_templates", "opt_keepouts", "opt_runs", "OPT_SCENARIOS", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
+    "comparisons", "uploads", "opt_templates", "opt_keepouts", "opt_runs", "bead_does", "OPT_SCENARIOS", "DOE_SCENARIOS",
+    "DOE_PHASES", "DOE_JOB_TYPES", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

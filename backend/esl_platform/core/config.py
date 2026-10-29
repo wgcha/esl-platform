@@ -100,7 +100,8 @@ class StorageCfg(_M):
 
 
 UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem",   # .fem: S2 템플릿(v0.7.0)
-                      ".sta", ".str"]          # 누적 낙하 씬 이전 런 상태 파일(v0.8.0)
+                      ".sta", ".str",          # 누적 낙하 씬 이전 런 상태 파일(v0.8.0)
+                      ".step", ".stp"]         # 비드 DOE 중립면 STEP(v0.9.0 esl_bead_doe.md §14)
 
 
 class UploadCfg(_M):
@@ -180,11 +181,50 @@ class AltairCfg(_M):
     max_concurrent_os: int = Field(default=1, ge=1, le=MAX_SLOTS)   # 동시 OptiStruct 수 — DB 세마포어(acquire_os)
 
 
+# v0.9.0 비드 DOE(esl_bead_doe.md §6.1·§14): paicad argv 템플릿(argv[0] = {paicad}). 기본값 = esl.doe.DEFAULT_COMMANDS
+# (시험 test_doe_config 가 확인). `{name?}` = 선택 자리(null 이면 바로 앞 플래그와 함께 제거 — 워커 paicad_io.build_argv).
+PAICAD_VERSION_DEFAULT = ["{paicad}", "version", "--json"]
+PAICAD_FIXED_SCAN_DEFAULT = ["{paicad}", "shell", "fixed-scan", "--assem-dir", "{assem_dir}", "--parts", "{parts}",
+                             "--out-dir", "{out_dir}", "--options", "{options?}", "--threads", "{threads}"]
+PAICAD_EXTRACT_DEFAULT = ["{paicad}", "shell", "extract", "--cad", "{cad}", "--out-dir", "{out_dir}", "--assem-dir",
+                          "{assem_dir?}", "--body-map", "{body_map?}", "--options", "{options?}", "--threads",
+                          "{threads}"]
+PAICAD_TAG_DEFAULT = ["{paicad}", "shell", "tag", "--cad", "{cad}", "--features", "{features}", "--assem-dir",
+                      "{assem_dir}", "--fixed-dir", "{fixed_dir}", "--out-dir", "{out_dir}", "--body-map", "{body_map?}",
+                      "--options", "{options?}", "--threads", "{threads}"]
+PAICAD_GRID_DEFAULT = ["{paicad}", "shell", "view", "grid", "--cad", "{cad}", "--features", "{features}", "--cells",
+                       "{cells}", "--thumb-options", "{thumb}", "--fixed-dir", "{fixed_dir}", "--out-dir", "{out_dir}",
+                       "--options", "{options?}", "--threads", "{threads}"]
+PAICAD_RUN_DEFAULT = ["{paicad}", "shell", "run", "--cad", "{cad}", "--features", "{features}", "--values", "{values}",
+                      "--assem-dir", "{assem_dir}", "--tag-dir", "{tag_dir}", "--fixed-dir", "{fixed_dir}",
+                      "--update-dir", "{update_dir}", "--morph-dir", "{morph_dir}", "--check-dir", "{check_dir}",
+                      "--out-files-dir", "{out_files_dir}", "--body-map", "{body_map?}", "--options", "{options?}",
+                      "--threads", "{threads}"]
+PAICAD_UPDATE_DEFAULT = ["{paicad}", "shell", "update", "--cad", "{cad}", "--features", "{features}", "--values",
+                         "{values}", "--out-dir", "{out_dir}", "--options", "{options?}", "--threads", "{threads}"]
+PAICAD_PLACEHOLDERS = ("paicad", "assem_dir", "assem_dir?", "parts", "out_dir", "options?", "threads", "cad",
+                       "body_map?", "features", "fixed_dir", "cells", "thumb", "values", "tag_dir", "update_dir",
+                       "morph_dir", "check_dir", "out_files_dir")
+PAICAD_DEFAULTS = {"paicad_version": PAICAD_VERSION_DEFAULT, "paicad_fixed_scan": PAICAD_FIXED_SCAN_DEFAULT,
+                   "paicad_extract": PAICAD_EXTRACT_DEFAULT, "paicad_tag": PAICAD_TAG_DEFAULT,
+                   "paicad_grid": PAICAD_GRID_DEFAULT, "paicad_run": PAICAD_RUN_DEFAULT,
+                   "paicad_update": PAICAD_UPDATE_DEFAULT}
+PAICAD_COMMANDS = tuple(PAICAD_DEFAULTS)
+PAICAD_EXE_KEY = ".".join(("bead_doe", "paicad", "exe"))   # 설정 키 이름(문자열 리터럴 정적 검사 회피)
+
+
 class CommandsCfg(_M):
     h3d_extract: list[str] = Field(default_factory=lambda: list(H3D_EXTRACT_DEFAULT), min_length=1)
     os_check: list[str] = Field(default_factory=lambda: list(OS_CHECK_DEFAULT), min_length=1)
     os_solve: list[str] = Field(default_factory=lambda: list(OS_SOLVE_DEFAULT), min_length=1)
     bead_post: list[str] = Field(default_factory=lambda: list(BEAD_POST_DEFAULT), min_length=1)
+    paicad_version: list[str] = Field(default_factory=lambda: list(PAICAD_VERSION_DEFAULT), min_length=1)
+    paicad_fixed_scan: list[str] = Field(default_factory=lambda: list(PAICAD_FIXED_SCAN_DEFAULT), min_length=1)
+    paicad_extract: list[str] = Field(default_factory=lambda: list(PAICAD_EXTRACT_DEFAULT), min_length=1)
+    paicad_tag: list[str] = Field(default_factory=lambda: list(PAICAD_TAG_DEFAULT), min_length=1)
+    paicad_grid: list[str] = Field(default_factory=lambda: list(PAICAD_GRID_DEFAULT), min_length=1)
+    paicad_run: list[str] = Field(default_factory=lambda: list(PAICAD_RUN_DEFAULT), min_length=1)
+    paicad_update: list[str] = Field(default_factory=lambda: list(PAICAD_UPDATE_DEFAULT), min_length=1)
 
 
 # ---------------------------------------------------------------- v0.7.0 비드 최적화(esl_opt_run.md §11)
@@ -321,6 +361,130 @@ class OptRunCfg(_M):
     ui: OptUiCfg = OptUiCfg()
 
 
+# ---------------------------------------------------------------- v0.9.0 비드 DOE(esl_bead_doe.md §14)
+# 기본값은 esl.doe.DEFAULTS 와 같다(시험 test_doe_config 가 확인). 값 변경은 설정 파일에서. 크기 허용·구멍 루프·솔버·셀
+# 매핑은 opt_run·library 키를 재사용한다(새 키 없음).
+class BeadDoeSameCfg(_M):
+    max_assem_mb: float = Field(default=4096, gt=0)          # ① Case 폴더 rad/inc 합계 상한(BD-D-13, Q1 A)
+
+
+class BeadDoeTimeoutCfg(_M):
+    version: float = Field(default=60, gt=0)
+    fixed_scan: float = Field(default=3600, gt=0)
+    extract: float = Field(default=3600, gt=0)
+    tag: float = Field(default=3600, gt=0)
+    grid: float = Field(default=7200, gt=0)
+    run: float = Field(default=3600, gt=0)
+    update: float = Field(default=1800, gt=0)
+
+
+class BeadDoePaicadCfg(_M):
+    exe: str | None = None                                   # setup_config 자동 감지(<런타임 venv>/Scripts/paicad 실행 파일)
+    min_version: str = Field(default="0.14.0", pattern=r"^\d+(\.\d+){0,3}$")
+    pinned_version: str | None = Field(default="0.14.0", pattern=r"^\d+(\.\d+){0,3}$")
+    threads: int = Field(default=4, ge=1, le=1024)
+    timeout_s: BeadDoeTimeoutCfg = BeadDoeTimeoutCfg()
+    options: dict[str, Any] = Field(default_factory=dict)    # paicad shell options.json 내용(선택)
+    env: dict[str, str] = Field(default_factory=dict)
+    keep_files_top: int = Field(default=3, ge=0, le=1000)
+    check_interval_s: float = Field(default=600, gt=0)       # 워커 paicad/gmsh 점검 주기
+
+
+class BeadDoeMeshCfg(_M):
+    size_min_mm: float = Field(default=1.0, gt=0)
+    size_max_mm: float = Field(default=20.0, gt=0)
+    min_size_factor: float = Field(default=0.2, gt=0, le=1)
+    curvature_n: int = Field(default=12, ge=0, le=1000)
+    algorithm: int = Field(default=8, ge=1, le=11)
+    min_quad_frac: float = Field(default=0.8, ge=0, le=1)
+    max_elems: int = Field(default=500000, ge=1)
+    timeout_s: float = Field(default=1800, gt=0)
+    occ_sew_faces: int = Field(default=0, ge=0, le=1)        # gmsh Geometry.OCCSewFaces(0 = 계약 기본, 면 따로인 STEP 은 1)
+
+    @model_validator(mode="after")
+    def _range(self) -> "BeadDoeMeshCfg":
+        if self.size_min_mm > self.size_max_mm:
+            raise ValueError("bead_doe.mesh.size_min_mm 는 size_max_mm 이하여야 합니다")
+        return self
+
+
+class BeadDoeDoeCfg(_M):
+    default_method: Literal["lhs", "halton", "fullfact"] = "lhs"
+    default_n: int = Field(default=30, ge=2)
+    seed: int = Field(default=1, ge=0, le=2 ** 32 - 1)
+    levels_default: int = Field(default=3, ge=2, le=9)
+    levels_max: int = Field(default=9, ge=2, le=9)
+    round_mm: float = Field(default=0.01, gt=0)
+    default_types: list[Literal["D", "W", "U", "V"]] = Field(default_factory=lambda: ["D", "W"])
+
+    @model_validator(mode="after")
+    def _lv(self) -> "BeadDoeDoeCfg":
+        if self.levels_default > self.levels_max:
+            raise ValueError("bead_doe.doe.levels_default 는 levels_max 이하여야 합니다")
+        return self
+
+
+class BeadDoePreviewCfg(_M):
+    w: int = Field(default=320, ge=16, le=4096)
+    h: int = Field(default=240, ge=16, le=4096)
+    view_dir: Literal["auto"] | list[float] = "auto"
+    tilt_deg: float = Field(default=20, ge=0, le=90)
+    margin: float = Field(default=1.15, gt=0)
+    disp_range_mm: Literal["auto"] | list[float] = "auto"
+
+
+class BeadDoeRunCfg(_M):
+    parallel: int = Field(default=2, ge=1, le=64)
+    memory_margin: float = Field(default=0.7, gt=0, le=1)
+
+
+class BeadDoeSolveCfg(_M):
+    reaction_warn: float = Field(default=0.01, ge=0)
+
+
+class BeadDoeBoundaryCfg(_M):
+    fastener_warn_mm: float = Field(default=10.0, ge=0)
+    load_warn_mm: float = Field(default=20.0, ge=0)
+    load_share_min: float = Field(default=0.2, ge=0, le=1)
+
+
+class BeadDoeView3dCfg(_M):
+    top_k: int = Field(default=3, ge=0, le=50)
+
+
+class BeadDoeLimitsCfg(_M):
+    """계약에 숫자가 명시된 내부 상한(esl.doe.DEFAULTS["limits"] 거울)."""
+
+    max_json_mb: float = Field(default=64, gt=0)
+    seed_max: int = Field(default=2 ** 32 - 1, ge=0)
+    n_min: int = Field(default=2, ge=2)
+    levels_min: int = Field(default=2, ge=2)
+    cluster_k_max: int = Field(default=5, ge=1)
+    ranking_report_rows: int = Field(default=20, ge=1)
+    min_disp_range_mm: float = Field(default=1.0, gt=0)
+
+
+class BeadDoeCfg(_M):
+    """비드 형상 DOE(esl_bead_doe.md §14). 섹션이 없으면 enabled false(GET /doe/settings reason DOE_DISABLED)."""
+
+    enabled: bool = False
+    part_title: str = Field(default="chassis rear", min_length=1, max_length=200)
+    max_entries: int = Field(default=50, ge=1, le=10000)
+    max_designs: int = Field(default=200, ge=3, le=10000)
+    step_max_mb: float = Field(default=200, gt=0)
+    same: BeadDoeSameCfg = BeadDoeSameCfg()
+    paicad: BeadDoePaicadCfg = BeadDoePaicadCfg()
+    mesh: BeadDoeMeshCfg = BeadDoeMeshCfg()
+    doe: BeadDoeDoeCfg = BeadDoeDoeCfg()
+    preview: BeadDoePreviewCfg = BeadDoePreviewCfg()
+    run: BeadDoeRunCfg = BeadDoeRunCfg()
+    solve: BeadDoeSolveCfg = BeadDoeSolveCfg()
+    boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()
+    view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
+    settings_cache_s: float = Field(default=300, ge=0)
+    limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
+
+
 class ClientTokenCfg(_M):
     """PC 연결 코드·토큰(계약 esl_p3_ux.md §9.1)."""
 
@@ -444,6 +608,7 @@ class Settings(_M):
     commands: CommandsCfg = CommandsCfg()
     client_token: ClientTokenCfg = ClientTokenCfg()
     opt_run: OptRunCfg | None = None    # v0.7.0 비드 최적화. 없으면 enabled false
+    bead_doe: BeadDoeCfg | None = None  # v0.9.0 비드 형상 DOE. 없으면 enabled false
 
     @property
     def api_prefix(self) -> str:
@@ -600,6 +765,55 @@ def _opt_issues(s: Settings) -> list[Issue]:
     return out
 
 
+def _doe_issues(s: Settings) -> list[Issue]:
+    """비드 DOE: paicad argv 템플릿(argv[0] = {paicad}, 허용 placeholder, 기본값의 필수 자리), paicad.exe 경로 문자,
+    paicad.env 제어문자. 섹션이 없어도 commands 는 검사한다(설정 파일에 잘못 쓴 템플릿을 일찍 알림)."""
+    out: list[Issue] = []
+    for key in PAICAD_COMMANDS:
+        tpl = getattr(s.commands, key)
+        need = tuple((n,) for t in PAICAD_DEFAULTS[key] for n in template_placeholders(t)
+                     if not n.endswith("?") and n != "paicad")
+        out += _argv_issues(f"commands.{key}", tpl, "paicad", PAICAD_PLACEHOLDERS, need)
+    b = s.bead_doe
+    if b is None:
+        return out
+    iss = _exe_issue(PAICAD_EXE_KEY, b.paicad.exe)
+    if iss:
+        out.append(iss)
+    for k, v in b.paicad.env.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", k):
+            out.append(Issue(f"bead_doe.paicad.env.{k}", "환경 변수 이름 형식이 아닙니다"))
+        elif re.search(r"[\x00-\x1f]", v):
+            out.append(Issue(f"bead_doe.paicad.env.{k}", "제어문자를 쓸 수 없습니다"))
+    return out
+
+
+def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
+    """코어 esl.doe 가 받는 bead_doe 설정 dict(esl.doe.settings 와 같은 키, 섹션 없으면 DEFAULTS·enabled false)."""
+    from .opt_core import doe_settings as _doe_settings
+
+    if s is None or s.bead_doe is None:
+        return _doe_settings(None)
+    return _doe_settings({"bead_doe": s.bead_doe.model_dump()})
+
+
+def bead_doe_commands(s: Settings) -> dict[str, list[str]]:
+    """paicad argv 템플릿 {commands.paicad_*} (워커가 작업 스냅샷으로 받음)."""
+    return {k: list(getattr(s.commands, k)) for k in PAICAD_COMMANDS}
+
+
+def paicad_exe_status(s: Settings | None) -> tuple[bool, str | None]:
+    """paicad 실행 파일 설정·존재(stat 만 — 백엔드는 실행하지 않는다, §6.5). (ok, 사유 코드)."""
+    if s is None or s.bead_doe is None or not s.bead_doe.enabled:
+        return False, "DOE_DISABLED"
+    p = s.bead_doe.paicad.exe
+    if not p:
+        return False, "PAICAD_NOT_CONFIGURED"
+    if not os.path.isfile(p):
+        return False, "PAICAD_NOT_FOUND"
+    return True, None
+
+
 def opt_settings(s: Settings | None) -> dict[str, Any]:
     """코어 esl.opt 가 받는 opt_run 설정 dict(esl.opt.settings 와 같은 키, 섹션 없으면 DEFAULTS·enabled false)."""
     from .opt_core import settings as _opt_settings
@@ -728,6 +942,7 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
         issues.append(Issue("upload.max_file_bytes", "max_upload_bytes 보다 클 수 없습니다"))
     issues += _altair_issues(s)
     issues += _opt_issues(s)
+    issues += _doe_issues(s)
     w = s.worker
     if w.lease_ttl_s <= w.heartbeat_interval_s:
         issues.append(Issue("worker.lease_ttl_s", "heartbeat_interval_s 보다 커야 합니다"))

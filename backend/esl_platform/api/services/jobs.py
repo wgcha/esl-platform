@@ -194,7 +194,7 @@ def get_job(ctx: AppContext, job_id: str, principal: Principal | None = None) ->
 
 
 def check_job_view(ctx: AppContext, principal: Principal, job_id: str) -> None:
-    """작업 하위 경로(로그·이력 파일·보고서) 조회 전 권한 확인(OPT_RUN = 프로젝트 조회 권한)."""
+    """작업 하위 경로(로그·이력 파일·보고서) 조회 전 권한 확인(OPT_RUN·DOE_* = 프로젝트 조회 권한)."""
     with ctx.engine.connect() as conn:
         require_job_view(principal, load_job(conn, job_id))
 
@@ -237,6 +237,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             from .opt import retry_run
 
             return retry_run(conn, principal, job)
+        if job.get("bead_doe_id"):
+            from .doe import retry_job as retry_doe
+
+            return retry_doe(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -333,6 +337,10 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
             from ...core.repositories import opt as opt_repo
 
             base = analysis_dir(ctx, opt_repo.get_run(conn, job["opt_run_id"]))
+        elif job.get("bead_doe_id"):
+            from ...core.repositories import doe as doe_repo
+
+            base = analysis_dir(ctx, doe_repo.get_study(conn, job["bead_doe_id"]))
         else:
             base = case_dir(ctx, load_case(conn, job["case_id"]))
         steps = jobs_repo.get_steps(conn, job_id)

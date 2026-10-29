@@ -1489,3 +1489,151 @@ class OptFileOut(_Out):
     kind: Literal["report", "result", "selection", "deck", "solve", "target", "log", "other"]
     size: int
     downloadable: bool
+
+
+# ---------------------------------------------------------------- v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §10.2)
+# 이름 = 프런트 types.ts 인터페이스 이름(check:api 대조). 중첩 인라인 객체는 dict(프런트 인라인 타입과 키 대조 생략).
+DoeScenarioLit = Literal["same", "mesh", "step"]
+DoePhaseLit = Literal["PREP", "READY", "PREVIEW", "PREVIEW_READY", "RUN", "DONE", "FAILED"]
+
+
+class DoeProps(_Req):
+    t: float = Field(gt=0)
+    E: float = Field(gt=0)
+    nu: float = Field(ge=0, lt=0.5)
+
+
+class DoeCheckIn(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    scenario: DoeScenarioLit
+    entry_ids: list[str] = Field(min_length=1, max_length=10000)
+    step_upload_id: str = Field(min_length=1, max_length=64)
+    mesh_upload_id: str | None = Field(default=None, min_length=1, max_length=64)    # ② 만
+    part_title: str | None = Field(default=None, min_length=1, max_length=200)     # ② 만(기본 bead_doe.part_title)
+    inch: int | None = Field(default=None, ge=1, le=1000)
+
+
+class DoeStudyIn(DoeCheckIn):
+    title: str | None = Field(default=None, max_length=200)
+    props: DoeProps | None = None                                                  # ③ 만(기본 = A Ch/R, Q2 A)
+    mesh_size_mm: float | None = Field(default=None, gt=0)                         # ③ 만(bead_doe.mesh.size_*_mm)
+
+
+class DoeSpecParam(_Req):
+    name: str = Field(min_length=1, max_length=200)
+    lo: float
+    hi: float
+
+
+class DoeSpec(_Req):
+    method: Literal["lhs", "halton", "fullfact"]
+    n: int | None = None
+    levels: int | None = None
+    seed: int | None = None
+    params: list[DoeSpecParam] = Field(max_length=1000)
+
+
+class DoeMatrixIn(_Req):
+    version: int = Field(ge=1)
+    spec: DoeSpec
+
+
+class DoeRunIn(_Req):
+    version: int = Field(ge=1)
+    matrix_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    solver: str = Field(default="linear", max_length=32)      # linear 만(다른 값 422 SOLVER_UNSUPPORTED, UI 칸 없음)
+
+
+class DoeSettingsOut(_Out):
+    enabled: bool
+    reason: str | None = None
+    paicad: dict[str, Any]
+    gmsh: dict[str, Any]
+    scenarios: dict[str, bool]
+    max_entries: int
+    max_designs: int
+    doe: dict[str, Any]
+    mesh: dict[str, Any]
+    boundary: dict[str, Any]
+    step_max_mb: float
+    part_title: str | None = None
+    method_sources: dict[str, Any]
+
+
+class DoeCheckOut(_Out):
+    ok: bool
+    step: dict[str, Any]
+    base: dict[str, Any] | None = None
+    mesh: MeshCheckOut | None = None
+    entries: list[dict[str, Any]]
+    size: dict[str, Any] | None = None
+    props_default: dict[str, Any] | None = None
+    mesh_size_default_mm: float | None = None
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoeStudyOut(_Out):
+    id: str
+    project_id: str
+    scenario: DoeScenarioLit
+    title: str
+    entry_ids: list[str]
+    inputs: dict[str, Any]
+    phase: DoePhaseLit
+    version: int
+    prep: dict[str, Any] | None = None
+    doe: dict[str, Any] | None = None
+    job: JobOut | None = None
+    result_ready: bool
+    created_by_name: str
+    created_at: datetime
+
+
+class DoeParamsOut(_Out):
+    beads: list[dict[str, Any]]
+    params: list[dict[str, Any]]
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoePlanOut(_Out):
+    frame: PlanViewFrame
+    outline: list[list[float]]
+    holes: list[list[list[float]]]
+    elems: PlanViewElems
+    beads: list[dict[str, Any]] = Field(default_factory=list)
+    fixed: list[dict[str, Any]] = Field(default_factory=list)
+    a_points: list[dict[str, Any]] = Field(default_factory=list)
+    load_points: list[dict[str, Any]] = Field(default_factory=list)
+    links: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DoeMatrixOut(_Out):
+    spec: dict[str, Any]
+    matrix_sha256: str
+    designs: list[dict[str, Any]]
+    n_designs: int
+    dropped_duplicates: int
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoeResultOut(_Out):
+    C_ref: float
+    baseline: dict[str, Any]
+    n_ok: int
+    n_skipped: dict[str, int]
+    n_failed: dict[str, int]
+    ranking: list[dict[str, Any]]
+    excluded: list[dict[str, Any]] = Field(default_factory=list)
+    sensitivity: dict[str, Any] | None = None
+    boundary_warnings_n: int
+    view3d: list[str]
+    best: dict[str, Any] | None = None
+    noise_floor: float | None = None
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoeFileOut(_Out):
+    rel: str
+    size: int = 0
+    downloadable: bool = True

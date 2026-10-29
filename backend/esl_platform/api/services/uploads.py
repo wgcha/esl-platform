@@ -12,6 +12,8 @@ files[i].got([[a,b),…] 청크 번호 범위)로 기록하고 행 잠금은 표
 프로세스 메모리 상태(진행 중 청크·해시)는 백엔드 1 프로세스 전제(기존 _HASHES 와 같음).
 v0.7.0(esl_opt_run.md §7.2): S2 템플릿 업로드(`rad/` 아래 .fem 또는 .rad+include)는 complete 대신 POST /opt/templates/check 가
 `template_source`(읽기만)·`save_template_check`(result.purpose = template, COMPLETED)로 연결한다.
+v0.9.0(esl_bead_doe.md §10): 비드 DOE STEP(`rad/<파일>.step|.stp`, purpose 없이 업로드)·② B 메시는 POST /doe/check-inputs 가
+`doe_source`·`step_check`(머리·크기)·`save_doe_check`(result.purpose = doe_step|doe_mesh, COMPLETED)로 연결한다.
 """
 
 from __future__ import annotations
@@ -1103,11 +1105,11 @@ TEMPLATE_PURPOSE = "template"
 TEMPLATE_MESH_EXT = (".fem", ".rad")
 
 
-def template_source(ctx: AppContext, principal: Principal, upload_id: str,
-                    project_id: str | None = None) -> tuple[dict[str, Any], str]:
-    """템플릿 메시 업로드의 메시 파일 경로(읽기만). 본인 업로드(아니면 404 UPLOAD_NOT_FOUND)·그 프로젝트 power,
-    파일을 모두 받았어야 함(아니면 409 UPLOAD_NOT_READY). 업로드 폴더 자체(루트→사용자→폴더) 링크·junction 검사 후
-    `.fem` 하나 또는 `.rad` 하나(`*_0000.rad` 우선)를 고른다 — 없으면 422 MESH_FORMAT_UNSUPPORTED, 여러 개면 MESH_INVALID."""
+def _ready_upload(ctx: AppContext, principal: Principal, upload_id: str,
+                  project_id: str | None = None) -> tuple[dict[str, Any], str, list[str]]:
+    """플랫폼 기능(템플릿·비드 DOE)이 읽을 업로드: 본인 업로드(아니면 404 UPLOAD_NOT_FOUND)·그 프로젝트 power,
+    파일을 모두 받았어야 함(아니면 409 UPLOAD_NOT_READY), 업로드 폴더 자체(루트→사용자→폴더) 링크·junction 검사.
+    반환 (업로드 행, 업로드 루트, 살아 있는 파일 rel 목록). 업로드 폴더에는 쓰지 않는다."""
     require_config_ok(ctx)
     root = _upload_root(ctx)
     with ctx.engine.connect() as conn:
@@ -1135,7 +1137,15 @@ def template_source(ctx: AppContext, principal: Principal, upload_id: str,
         raise conflict("UPLOAD_NOT_READY", f"아직 다 받지 못한 파일이 {len(pending)}개 있습니다" if pending else
                        "업로드에 파일이 없습니다", pending=pending[:100])
     U.check_upload_dir(root, up["dir_path"])
-    rels = [f["rel"] for f in live]
+    return up, root, [f["rel"] for f in live]
+
+
+def template_source(ctx: AppContext, principal: Principal, upload_id: str,
+                    project_id: str | None = None) -> tuple[dict[str, Any], str]:
+    """템플릿 메시 업로드의 메시 파일 경로(읽기만). 본인 업로드(아니면 404 UPLOAD_NOT_FOUND)·그 프로젝트 power,
+    파일을 모두 받았어야 함(아니면 409 UPLOAD_NOT_READY). 업로드 폴더 자체(루트→사용자→폴더) 링크·junction 검사 후
+    `.fem` 하나 또는 `.rad` 하나(`*_0000.rad` 우선)를 고른다 — 없으면 422 MESH_FORMAT_UNSUPPORTED, 여러 개면 MESH_INVALID."""
+    up, root, rels = _ready_upload(ctx, principal, upload_id, project_id)
     fems = [r for r in rels if r.lower().endswith(".fem")]
     rads = [r for r in rels if r.lower().endswith(".rad")]
     main0 = [r for r in rads if r.lower().endswith("_0000.rad")]
@@ -1149,6 +1159,80 @@ def template_source(ctx: AppContext, principal: Principal, upload_id: str,
                             files=pick)
     path = U.target_path(up["dir_path"], pick[0].split("/"), upload_root=root)
     return up, path
+
+
+# ---------------------------------------------------------------- v0.9.0 비드 DOE 업로드 연결(계약 esl_bead_doe.md §10·§13)
+DOE_STEP_EXT = (".step", ".stp")
+DOE_STEP_PURPOSE = "doe_step"
+DOE_MESH_PURPOSE = "doe_mesh"
+STEP_MAGIC = b"ISO-10303-21;"
+
+
+def doe_source(ctx: AppContext, principal: Principal, upload_id: str, project_id: str,
+               kind: str) -> tuple[dict[str, Any], str, str]:
+    """비드 DOE 입력 업로드(읽기만) → (업로드 행, 업로드 루트, 주 파일 절대경로). purpose 없이 올린 업로드(rel `rad/<파일>`)를
+    여기서 판정한다(complete 를 거치지 않아도 됨).
+
+    - kind ``step``: `.step`·`.stp` 정확히 1개(아니면 422 STEP_INVALID).
+    - kind ``mesh``: ② B 메시 — `.rad` 하나(`*_0000.rad` 우선, + include) 또는 `.rad` 가 없으면 `.inc` 하나
+      (아니면 422 MESH_INVALID·MESH_FORMAT_UNSUPPORTED). `.fem` 은 받지 않는다(paicad 조립 = rad/inc)."""
+    up, root, rels = _ready_upload(ctx, principal, upload_id, project_id)
+    if kind == "step":
+        pick = [r for r in rels if r.lower().endswith(DOE_STEP_EXT)]
+        if len(pick) != 1:
+            raise unprocessable("STEP_INVALID", "중립면 STEP(.step·.stp) 파일을 정확히 1개 올리세요"
+                                + (f"(지금 {len(pick)}개)" if pick else ""), files=pick[:20] or rels[:20])
+    elif kind == "mesh":
+        rads = [r for r in rels if r.lower().endswith(".rad")]
+        incs = [r for r in rels if r.lower().endswith(".inc")]
+        main0 = [r for r in rads if r.lower().endswith("_0000.rad")]
+        pick = main0 or rads or incs
+        if not pick:
+            raise unprocessable("MESH_FORMAT_UNSUPPORTED", "B 메시 파일(.rad + include 또는 .inc)이 없습니다", files=rels[:20])
+        if len(pick) > 1:
+            raise unprocessable("MESH_INVALID", f"주 메시 파일이 여러 개입니다({', '.join(pick[:5])}) — 하나만 올리세요",
+                                files=pick[:20])
+    else:  # pragma: no cover - 호출자 결함
+        raise ValueError(kind)
+    return up, root, U.target_path(up["dir_path"], pick[0].split("/"), upload_root=root)
+
+
+def step_check(path: str, max_mb: float) -> dict[str, Any]:
+    """STEP 머리(`ISO-10303-21;`)·크기 검사(파일 앞부분만 읽음). 실패 422 STEP_INVALID. 반환 {file_name, size_mb}."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise unprocessable("STEP_INVALID", "STEP 파일을 읽을 수 없습니다")
+    size = os.path.getsize(path)
+    mb = size / (1024 * 1024)
+    if mb > float(max_mb):
+        raise unprocessable("STEP_INVALID", f"STEP 파일이 큽니다({mb:.1f} MB > {float(max_mb):g} MB, bead_doe.step_max_mb)",
+                            size_mb=round(mb, 3), limit_mb=float(max_mb))
+    with open(path, "rb") as fh:
+        head = fh.read(256)
+    if not head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(STEP_MAGIC):
+        raise unprocessable("STEP_INVALID", "STEP(ISO-10303-21) 파일이 아닙니다(머리 'ISO-10303-21;' 없음)")
+    return {"file_name": os.path.basename(path), "size_mb": round(mb, 3)}
+
+
+def upload_file_sha(up: dict[str, Any], path: str) -> str:
+    """업로드 기록의 sha256(받을 때 계산) — 없으면 파일에서 계산."""
+    rel = os.path.relpath(path, up["dir_path"]).replace(os.sep, "/")
+    for f in up["files"]:
+        if f.get("rel") == rel and not f.get("removed") and f.get("sha256"):
+            return str(f["sha256"]).lower()
+    return sha256_file(path)
+
+
+def save_doe_check(ctx: AppContext, upload_id: str, purpose: str, rel: str, sha256: str, ok: bool,
+                   extra: dict[str, Any] | None = None) -> None:
+    """비드 DOE 입력 검사 결과를 uploads.result(purpose = doe_step|doe_mesh)에 저장, 통과하면 COMPLETED(stale 정리 대상에서
+    빠짐 — 워커 BD_INPUT 이 sha256 확인 후 _doe/<id>/input 으로 복사). 업로드 폴더에는 쓰지 않는다."""
+    with ctx.engine.begin() as conn:
+        up = _row(conn, upload_id, for_update=True)
+        vals: dict[str, Any] = {"result": {"purpose": purpose, "ok": bool(ok), "rel": rel, "sha256": sha256,
+                                           **(extra or {})}, "updated_at": func.now()}
+        if ok and up["state"] == OPEN:
+            vals.update(state=COMPLETED, completed_at=func.now())
+        conn.execute(update(uploads).where(uploads.c.id == upload_id).values(**vals))
 
 
 def template_include_problems(ctx: AppContext, up: dict[str, Any], rad_path: str) -> tuple[list[str], list[str]]:

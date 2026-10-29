@@ -145,6 +145,9 @@ H3D_DIR = "_h3d"
 # template.json, preview.json}. 쓰기는 이 두 폴더 아래만(업로드·Case 입력 폴더는 읽기만).
 OPT_DIR = "_opt"
 TEMPLATE_DIR = "_templates"
+# v0.9.0 비드 DOE(esl_bead_doe.md §4): 연구 <esl_root>/_doe/<id>/{input/, prep/, doe/<rev>/, run/, post/, best/, report.html}.
+# 쓰기는 이 폴더 아래만(Case 입력·업로드 폴더는 읽기만).
+DOE_DIR = "_doe"
 _SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
@@ -171,6 +174,11 @@ def esl_subdir(settings: Settings, *parts: str) -> str:
 def opt_run_dir(settings: Settings, run_id: str) -> str:
     """최적화 실행 폴더 <esl_root>/_opt/<id>(링크·탈출 검사)."""
     return esl_subdir(settings, OPT_DIR, run_id)
+
+
+def doe_dir(settings: Settings, study_id: str) -> str:
+    """비드 DOE 연구 폴더 <esl_root>/_doe/<id>(링크·탈출 검사)."""
+    return esl_subdir(settings, DOE_DIR, study_id)
 
 
 def template_dir(settings: Settings, template_id: str) -> str:
