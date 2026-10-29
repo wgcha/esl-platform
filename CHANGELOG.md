@@ -21,6 +21,9 @@
 - **비드 최적화 `-check` 실패(OS_DECK_INVALID, ERROR # 1485)**: DTPG 비드 줄을 OptiStruct Reference Guide 형식(`+, MW, ANG, BF, HGT, NORM, , , SKIP` — `BEAD` 라벨 없음)으로 씁니다. 이전 덱의 `+,BEAD,60.,45.,10.,YES,BC` 는 OptiStruct 2026.1 이 "Field 0 contains unrecognized/unexpected label" 로 거부했습니다(이슈 #35). PID 가 7개 이상이면 연속 줄은 3번째 칸부터 씁니다
 - 비드 최적화 덱의 min-max 목적 카드를 OptiStruct Reference Guide 형식으로 정정: `DESOBJ(MINMAX) = ID` → `MINMAX = ID`(DESOBJ 의 type 은 MIN/MAX/MINP/MAXP), `DOBJREF` 칸 순서 `DOID, RID, SID, NEGREF, POSREF`(이전 덱은 SID 칸을 비우고 기준 컴플라이언스를 NEGREF 칸에, subcase 번호를 POSREF 칸에 썼음)
 - ④ 3D 하중 보기에서 화살표를 눌러도 선택되지 않던 문제(v0.7.1 직교 기본 이후 — 짧게 보이는 화살표를 거의 못 누름): 화살표 선택을 화면 기준 12 px(머리가 더 크면 머리 반지름 + 2 px)로 넓혀 원근·직교·확대 상태 모두 같게 동작
+- 줄바꿈 없는 거대 파일(예 200 MB 한 줄)을 업로드·include 하면 그 줄을 통째로 메모리에 올리던 문제: 업로드 상태 파일 판정은 앞 `upload.state_scan_kb`(4096 KB)까지만, rad·include·상태 파일 해석은 한 줄 `case.rad_max_line_kb`(선택, 기본 1024 KB)를 넘으면 `RAD_PARSE_ERROR`/`STATE_PARSE_ERROR`
+- 상태 파일 `/INISHE/EPSP_F` 헤더 NPT 가 매우 크면(예 40000) 내부 오류가 나던 문제: NPT ≤ `cumulative.max_npt`(100)·NPG ≤ `cumulative.max_npg`(64) 를 넘으면 `STATE_PARSE_ERROR`
+- 상태 파일 숫자에 NaN·Inf 나 칸 폭 이상(20자 칸 경계에 공백 없음·붙은 실수)이 있으면 경고 `STATE_NUMBER_SUSPECT`(개수, 값 사용 규칙은 그대로)
 
 ## [0.7.2] - 2026-10-29
 ### 수정

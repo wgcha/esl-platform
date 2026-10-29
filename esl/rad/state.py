@@ -32,14 +32,27 @@ def has_state_ext(path: str) -> bool:
     return os.path.splitext(str(path).replace("\\", "/").rstrip("/"))[1].lower() in STATE_EXT
 
 
-def read_state_header(path: str) -> bool:
-    """첫 비어 있지 않은 행이 #RADIOSS STATE FILE 로 시작하면 True(읽기 실패 False)."""
+# /INISHE/EPSP_F 헤더 NPT·NPG 상한(설정 cumulative.max_npt·max_npg) — 쉘 적분점은 수십 개 이하
+DEFAULT_MAX_NPT = 100
+DEFAULT_MAX_NPG = 64
+# 헤더 판정은 앞 몇 줄만 — 줄바꿈 없는 거대 파일도 한 줄을 이 바이트 이상 읽지 않음
+HEADER_LINE_BYTES = 4096
+
+
+def read_state_header(path: str, max_line: int | None = None) -> bool:
+    """첫 비어 있지 않은 행이 #RADIOSS STATE FILE 로 시작하면 True(읽기 실패·너무 긴 줄 False).
+
+    ``readline(상한)`` 으로 읽어 줄바꿈 없는 거대 줄을 통째로 올리지 않는다(헤더는 짧은 행).
+    """
+    lim = min(int(max_line or HEADER_LINE_BYTES), HEADER_LINE_BYTES) + 2
     try:
         with open(path, "rb") as fh:
             for _ in range(200):
-                raw = fh.readline()
+                raw = fh.readline(lim)
                 if not raw:
                     return False
+                if len(raw) == lim and raw[-1:] != b"\n":
+                    return False                    # 헤더 후보가 아닌 긴 줄(줄바꿈 없음 포함)
                 s = raw.lstrip(b"\xef\xbb\xbf").strip()
                 if s:
                     return s[:len(STATE_HEADER)].decode("latin-1").lower() == STATE_HEADER
@@ -119,12 +132,15 @@ class EpspInit:
     dup_ids: list = field(default_factory=list)
     resync_lines: int = 0
     fallback_rows: int = 0
+    nonfinite: int = 0          # 대상 값 중 NaN·Inf 개수(값 사용 규칙은 그대로 — 경고 STATE_NUMBER_SUSPECT)
+    width_suspect: int = 0      # 칸 폭 이상(인접 20자 칸 경계에 공백 없음·붙은 실수 분리) 개수
 
 
-def _flush(buf: list, recs: list, out_agg: dict, path_of) -> None:
-    """recs = [(pos, P, G, nvals_offset, file, line)] · buf = 값 필드 문자열(20자 고정폭으로 맞춤) 조각."""
+def _flush(buf: list, recs: list, out_agg: dict, path_of) -> int:
+    """recs = [(pos, P, G, nvals_offset, file, line)] · buf = 값 필드 문자열(20자 고정폭으로 맞춤) 조각.
+    반환 = 비유한값(NaN·Inf) 개수."""
     if not recs:
-        return
+        return 0
     data = b"".join(buf)
     n = len(data) // 20
     try:
@@ -138,6 +154,7 @@ def _flush(buf: list, recs: list, out_agg: dict, path_of) -> None:
                 # 어느 레코드인지 찾기
                 rec = next(r for r in reversed(recs) if r[3] <= i)
                 raise state_err(f"/INISHE/EPSP_F 값 해석 실패 ({rec[4]}:{rec[5]}): {exc}") from None
+    nonfinite = int(n - np.count_nonzero(np.isfinite(vals)))
     pos = np.array([r[0] for r in recs], dtype=np.int64)
     P = np.array([r[1] for r in recs], dtype=np.int64)
     G = np.array([r[2] for r in recs], dtype=np.int64)
@@ -157,9 +174,10 @@ def _flush(buf: list, recs: list, out_agg: dict, path_of) -> None:
         out_agg["mean"][ps] = v.reshape(v.shape[0], -1).mean(axis=1)
     buf.clear()
     recs.clear()
+    return nonfinite
 
 
-def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
+def read_epsp_f(segs, elem_id_sorted, max_npt: int = DEFAULT_MAX_NPT, max_npg: int = DEFAULT_MAX_NPG) -> EpspInit:
     """``segs`` = [(file, off, line0, nlines)] (/INISHE/EPSP_F 블록 본문 위치), elem_id_sorted (E,) 오름차순.
 
     대상 요소 레코드는 값 개수·형식을 엄격히 확인(STATE_PARSE_ERROR 파일:행), 대상 밖은 행만 건너뛴다.
@@ -170,14 +188,15 @@ def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
     want = dict(zip(eid.tolist(), range(E)))
     get = want.get
     has = np.zeros(E, dtype=bool)
-    npt = np.zeros(E, dtype=np.int16)
-    npg = np.zeros(E, dtype=np.int16)
+    npt = np.zeros(E, dtype=np.int32)
+    npg = np.zeros(E, dtype=np.int32)
     thk = np.zeros(E, dtype=np.float64)
     agg = {k: np.zeros(E, dtype=np.float64) for k in AGGS}
     buf: list[bytes] = []
     recs: list = []
     nvals = 0
     n_rec = n_dup = resync = fallback = 0
+    nonfin = wsus = 0
     dup_ids: list[int] = []
     files: dict = {}
     try:
@@ -208,9 +227,10 @@ def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
                     continue
                 sid, p_raw, g, t = h
                 k = get(sid)
-                if g < 1 or p_raw < 0:
+                if g < 1 or p_raw < 0 or p_raw > max_npt or g > max_npg:
                     if k is not None:
-                        raise state_err(f"/INISHE/EPSP_F 헤더 NPT={p_raw}·NPG={g} 이상 ({path}:{lineno})")
+                        raise state_err(f"/INISHE/EPSP_F 헤더 NPT={p_raw}·NPG={g} 이상 — 허용 0 ≤ NPT ≤ {max_npt}, "
+                                        f"1 ≤ NPG ≤ {max_npg} (설정 cumulative.max_npt·max_npg) ({path}:{lineno})")
                     resync += 1
                     continue
                 p = max(1, p_raw)
@@ -252,6 +272,9 @@ def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
                         raise state_err(f"/INISHE/EPSP_F 요소 {sid} 값 {kv}개 중 {got}개 뒤에 다음 헤더 "
                                         f"({path}:{lineno})")
                     L = len(ln)
+                    for j in range(20, L, 20):         # 칸 경계 양쪽이 모두 공백 아님 = 숫자가 칸을 넘음(폭 이상)
+                        if ln[j - 1] != 32 and ln[j] != 32:
+                            wsus += 1
                     if L % 20 == 0 and len(ln.split()) <= L // 20:
                         nf = L // 20                    # 표준 고정폭(오른쪽 정렬) — 묶음 해석은 _flush
                         fixed = ln
@@ -262,6 +285,7 @@ def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
                         except ValueError:
                             try:
                                 vv = split_reals(ln.decode("latin-1"))     # 공백 구분·붙은 실수
+                                wsus += max(0, len(vv) - len(ln.split()))  # 붙은 실수를 나눈 개수
                             except ValueError:
                                 vv = []
                             if not vv:
@@ -288,14 +312,15 @@ def read_epsp_f(segs, elem_id_sorted) -> EpspInit:
                 recs.append((k, p, g, nvals, path, l0))
                 nvals += kv
                 if len(recs) >= FLUSH_RECORDS:
-                    _flush(buf, recs, agg, None)
+                    nonfin += _flush(buf, recs, agg, None)
                     nvals = 0
-        _flush(buf, recs, agg, None)
+        nonfin += _flush(buf, recs, agg, None)
     finally:
         for fh in files.values():
             fh.close()
     return EpspInit(elem_id=eid, has=has, npt=npt, npg=npg, thk=thk, agg=agg, n_records=n_rec, n_dup=n_dup,
-                    dup_ids=dup_ids, resync_lines=resync, fallback_rows=fallback)
+                    dup_ids=dup_ids, resync_lines=resync, fallback_rows=fallback, nonfinite=nonfin,
+                    width_suspect=wsus)
 
 
 def begin_values(rows: list[str]) -> dict:

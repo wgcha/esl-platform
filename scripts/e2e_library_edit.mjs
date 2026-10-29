@@ -260,20 +260,28 @@ async function asUser(browser, base, token, viewport = { width: 1600, height: 10
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => m.type() === "error" && !/Failed to load resource/.test(m.text()) && errors.push(m.text()));
   const reqs = [];
-  page.on("response", async (r) => {
+  // 응답이 온 순서대로 본문 파싱 전에 기록(예전엔 await r.json() 뒤 push 라 두 PATCH 의 순서가 뒤바뀔 수 있었음).
+  // 본문은 rec.done 이 끝나면 채워짐 — 검사는 last() 로 기다린 뒤 읽는다.
+  page.on("response", (r) => {
     if (r.url().includes("/esl/api/library/entries/") && r.request().method() === "PATCH") {
-      let body = null;
-      try {
-        body = await r.json();
-      } catch {
-        /* 무시 */
-      }
-      reqs.push({ status: r.status(), sent: JSON.parse(r.request().postData() || "null"), body, xreq: r.request().headers()["x-esl-request"] });
+      const rec = { status: r.status(), sent: JSON.parse(r.request().postData() || "null"), body: null, xreq: r.request().headers()["x-esl-request"] };
+      reqs.push(rec);
+      rec.done = r.json().then(
+        (b) => {
+          rec.body = b;
+        },
+        () => {},
+      );
     }
   });
+  const last = async () => {
+    const rec = reqs.at(-1);
+    if (rec) await rec.done;
+    return rec;
+  };
   await page.goto(`${base}/esl/p/p-1/library`);
   await page.getByRole("table", { name: "라이브러리 항목" }).waitFor({ timeout: 20000 });
-  return { ctx, page, errors, reqs };
+  return { ctx, page, errors, reqs, last };
 }
 
 const rowOf = (page, text) => page.getByRole("table", { name: "라이브러리 항목" }).locator("tbody tr").filter({ hasText: text });
@@ -359,7 +367,7 @@ async function scenario(browser, base, seed) {
   log("스크린샷(2560x1440)", shot);
   await dlg.getByRole("button", { name: "저장" }).click();
   await dlg.waitFor({ state: "detached" });
-  const rq = u.reqs.at(-1);
+  const rq = await u.last();
   check(rq && rq.status === 200 && rq.xreq === "1", `PATCH 200(X-ESL-Request) — 보낸 값 ${JSON.stringify(rq?.sent)}`);
   check(rq.sent.model.name === "55QX10B" && rq.sent.model.inch === 56 && rq.sent.scene.drop_type === "Edge" && rq.sent.note === "E2E 수정 메모", "요청 본문 = 바꾼 필드");
   check(rq.body.model.name === "55QX10B" && rq.body.size.inch === 56 && rq.body.scene.drop_class === "Edge" && rq.body.scene.scene_no === 3, "응답 = 저장 값(size.inch 56, drop_class Edge)");
@@ -393,13 +401,13 @@ async function scenario(browser, base, seed) {
   await dlg.getByLabel("메모", { exact: true }).fill("늦은 수정");
   await dlg.getByRole("button", { name: "저장" }).click();
   await dlg.getByRole("alert").filter({ hasText: "다른 사용자가 먼저 수정" }).waitFor();
-  check(u.reqs.at(-1).status === 409, "이전 version 저장 → 409 + 오류 문구");
+  check((await u.last()).status === 409, "이전 version 저장 → 409 + 오류 문구");
   await dlg.getByRole("button", { name: "최신 값 불러오기" }).click();
   await page.waitForFunction(() => (document.querySelector('[role="dialog"] textarea[aria-label="메모"]') || {}).value === "먼저 수정");
   await dlg.getByLabel("메모", { exact: true }).fill("다시 수정");
   await dlg.getByRole("button", { name: "저장" }).click();
   await dlg.waitFor({ state: "detached" });
-  check(u.reqs.at(-1).status === 200, "최신 값 불러온 뒤 저장 200");
+  check((await u.last()).status === 200, "최신 값 불러온 뒤 저장 200");
   // 남의 항목(C): 등록자 아님 → 수정 비활성 + 사유
   const btnC = rowOf(page, "65QX10A").getByRole("button", { name: "수정" });
   check(await btnC.isDisabled(), "등록자(power) 아닌 C: 수정 비활성");
@@ -415,7 +423,8 @@ async function scenario(browser, base, seed) {
   await dlgO.getByLabel("인치", { exact: true }).fill("75");
   await dlgO.getByRole("button", { name: "저장" }).click();
   await dlgO.waitFor({ state: "detached" });
-  check(o.reqs.at(-1).status === 200 && o.reqs.at(-1).body.size.inch === 75, "다른 사용자: 자기 항목 C 인치 저장");
+  const lo = await o.last();
+  check(lo.status === 200 && lo.body.size.inch === 75, "다른 사용자: 자기 항목 C 인치 저장");
   const forb = await o.page.evaluate(async (id) => {
     const e = await (await fetch(`/esl/api/library/entries/${id}`)).json();
     return (await fetch(`/esl/api/library/entries/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "X-ESL-Request": "1" }, body: JSON.stringify({ version: e.version, note: "남의 것" }) })).status;
@@ -430,7 +439,8 @@ async function scenario(browser, base, seed) {
   await dlgA.getByLabel("모델 버전", { exact: true }).fill("v3");
   await dlgA.getByRole("button", { name: "저장" }).click();
   await dlgA.waitFor({ state: "detached" });
-  check(ad.reqs.at(-1).status === 200 && ad.reqs.at(-1).body.model.version === "v3", "관리자: 남의 항목 수정 200");
+  const la = await ad.last();
+  check(la.status === 200 && la.body.model.version === "v3", "관리자: 남의 항목 수정 200");
   await ad.ctx.close();
 
   // 4) 조회 사용자: 비활성 + 권한 사유

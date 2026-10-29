@@ -157,6 +157,32 @@ def _err(msg: str) -> EslError:
     return EslError("RAD_PARSE_ERROR", msg)
 
 
+# 한 줄 바이트 상한(설정 case.rad_max_line_kb, 없으면 이 값). 줄바꿈 없는 거대 파일을 통째로 메모리에 올리지 않게
+# readline(상한 + 2) 로 읽고(CRLF 여유), 상한을 넘는 줄이면 rad = RAD_PARSE_ERROR, 상태 파일 = STATE_PARSE_ERROR.
+DEFAULT_MAX_LINE_BYTES = 1024 * 1024
+
+
+def max_line_bytes_of(case_cfg: dict | None) -> int:
+    """설정 case 절의 rad_max_line_kb(선택) → 바이트. 없으면 DEFAULT_MAX_LINE_BYTES."""
+    kb = (case_cfg or {}).get("rad_max_line_kb") if isinstance(case_cfg, dict) else None
+    return int(kb) * 1024 if kb else DEFAULT_MAX_LINE_BYTES
+
+
+def bounded_readline(fh, path: str, max_line: int | None = None, state: bool = False):
+    """``fh.readline`` 대신 쓰는 함수: 한 줄이 max_line 바이트를 넘으면(줄바꿈 없이 상한 + 2 를 채움) EslError."""
+    lim = int(max_line or DEFAULT_MAX_LINE_BYTES) + 2
+    rl = fh.readline
+
+    def readline() -> bytes:
+        raw = rl(lim)
+        if len(raw) == lim and raw[-1:] != b"\n":
+            code = "STATE_PARSE_ERROR" if state else "RAD_PARSE_ERROR"
+            raise EslError(code, f"한 줄이 {lim - 2} 바이트를 넘음({path}, 바이트 위치 {fh.tell() - lim}) — 줄바꿈 없는 "
+                                 f"파일이거나 Radioss 입력 형식이 아님(설정 case.rad_max_line_kb)")
+        return raw
+    return readline
+
+
 def _f(text: str) -> float | None:
     """F20 등 실수 필드. 빈 칸 → None. Fortran D 지수·'1.0-5' 형식 허용."""
     s = text.strip()
@@ -265,8 +291,9 @@ def _resolve_include(orig: str, root_dir: str, src: str, path_map: dict | None):
     return None, False, cands, win_abs, mapped
 
 
-def _read_include_specs(path: str) -> list[str] | None:
-    """파일의 ``/INCLUDE``·``#include`` 원문 목록(본문 해석 없음). 읽을 수 없으면 None."""
+def _read_include_specs(path: str, max_line: int | None = None) -> list[str] | None:
+    """파일의 ``/INCLUDE``·``#include`` 원문 목록(본문 해석 없음). 읽을 수 없거나 한 줄이 상한을 넘으면 None
+    (스캐너는 오류를 던지지 않음 — 이 파일 안 include 는 더 따라가지 않고, 본 해석 parse_rad 가 오류를 낸다)."""
     try:
         fh = open(path, "rb")
     except OSError:
@@ -274,33 +301,46 @@ def _read_include_specs(path: str) -> list[str] | None:
     specs: list[str] = []
     with fh:
         pending = False
-        for raw in fh:
-            line = _decode(raw)
-            if pending:
-                if not line.strip() or line.startswith("#"):
+        readline = bounded_readline(fh, path, max_line)
+        try:
+            for raw in _iter_lines(readline):
+                line = _decode(raw)
+                if pending:
+                    if not line.strip() or line.startswith("#"):
+                        continue
+                    pending = False
+                    specs.append(_include_spec(line))
                     continue
-                pending = False
-                specs.append(_include_spec(line))
-                continue
-            if line.startswith("#"):
-                if line[:8].lower() == "#include":
-                    specs.append(_include_spec(line[8:]))
-                continue
-            if line.startswith("/"):
-                pieces = _head_pieces(line)
-                kw = pieces[0].upper() if pieces else ""
-                if kw == "END":
-                    break
-                if kw == "INCLUDE":
-                    rest = line.strip()[len("/INCLUDE"):].strip()
-                    if rest:
-                        specs.append(_include_spec(rest))
-                    else:
-                        pending = True
+                if line.startswith("#"):
+                    if line[:8].lower() == "#include":
+                        specs.append(_include_spec(line[8:]))
+                    continue
+                if line.startswith("/"):
+                    pieces = _head_pieces(line)
+                    kw = pieces[0].upper() if pieces else ""
+                    if kw == "END":
+                        break
+                    if kw == "INCLUDE":
+                        rest = line.strip()[len("/INCLUDE"):].strip()
+                        if rest:
+                            specs.append(_include_spec(rest))
+                        else:
+                            pending = True
+        except EslError:
+            return None
     return specs
 
 
-def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8) -> list[str]:
+def _iter_lines(readline):
+    while True:
+        raw = readline()
+        if not raw:
+            return
+        yield raw
+
+
+def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8,
+                  max_line_bytes: int | None = None) -> list[str]:
     """본문을 해석하지 않고 ``/INCLUDE``·``#include`` 줄만 따라가 include 파일 경로 목록을 돌려준다.
 
     출력 폴더 보호(입력 폴더 쓰기 금지)용 가벼운 스캐너. 경로 해석 규칙은 parse_rad 와 같다.
@@ -308,7 +348,7 @@ def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_
     넣어(그 폴더도 보호) 돌려준다. 순환·깊이 초과는 더 따라가지 않는다.
     """
     out: list[str] = []
-    for ref in scan_include_refs(rad_path, include_path_map, max_depth):
+    for ref in scan_include_refs(rad_path, include_path_map, max_depth, max_line_bytes=max_line_bytes):
         for p in ([ref["path"]] if ref["found"] else ref["candidates"]):
             if p not in out:
                 out.append(p)
@@ -316,7 +356,7 @@ def scan_includes(rad_path, include_path_map: dict[str, str] | None = None, max_
 
 
 def scan_include_refs(rad_path, include_path_map: dict[str, str] | None = None, max_depth: int = 8,
-                      follow=None) -> list[dict]:
+                      follow=None, max_line_bytes: int | None = None) -> list[dict]:
     """include 참조 목록: ``{spec(원문), path(찾은 경로 | 첫 후보), candidates, found, src}`` (중첩 순서대로, 경로는 정규화).
 
     ``follow(path) -> bool`` 이 주어지면 그 값이 참인 파일 안으로만 더 들어간다(예: 업로드 폴더 밖 파일은 읽지 않음).
@@ -335,7 +375,7 @@ def scan_include_refs(rad_path, include_path_map: dict[str, str] | None = None, 
         if key in seen:
             return
         seen.add(key)
-        specs = _read_include_specs(path)
+        specs = _read_include_specs(path, max_line_bytes)
         if specs is None:
             return
         for orig in specs:
@@ -407,8 +447,9 @@ class _Deck:
     /PROP·/MAT 는 원문 행만 보관하고 대상 파트 것만 해석(``prop``·``mat``).
     """
 
-    def __init__(self, max_depth: int, path_map: dict | None = None):
+    def __init__(self, max_depth: int, path_map: dict | None = None, max_line: int | None = None):
         self.max_depth = max_depth
+        self.max_line = int(max_line or DEFAULT_MAX_LINE_BYTES)
         self.path_map = dict(path_map) if path_map else None
         self.node_segs: list[_Seg] = []
         self.shell_segs: list[_Seg] = []
@@ -444,7 +485,7 @@ class _Deck:
         lineno = 0
         back: bytes | None = None
         with open(path, "rb") as fh:
-            readline = fh.readline
+            readline = bounded_readline(fh, path, self.max_line, state is not None)
             while True:
                 if back is not None:
                     raw, back = back, None
@@ -491,7 +532,7 @@ class _Deck:
                     seg = _Seg(cur.kw, cur.hid, cur.unit, path, fh.tell(), lineno + 1, 0,
                                state=state is not None, sub=cur.sub)
                     if cur.kw in _SHELL_KW or cur.kw in _OTHER_ELEM_KW:
-                        back, seg.nlines, cnt = self._consume_elems(fh)
+                        back, seg.nlines, cnt = self._consume_elems(readline)
                         if cur.kw in _SHELL_KW:
                             self.shell_segs.append(seg)
                             self.shell_count[cur.hid] = self.shell_count.get(cur.hid, 0) + cnt
@@ -500,7 +541,7 @@ class _Deck:
                         elif cnt:
                             self.other_elem_parts[cur.hid] = self.other_elem_parts.get(cur.hid, 0) + cnt
                     else:
-                        back, seg.nlines = self._consume(fh)
+                        back, seg.nlines = self._consume(readline)
                         if cur.kw == "NODE":
                             self.node_segs.append(seg)
                             if state is not None:
@@ -528,21 +569,21 @@ class _Deck:
             raise _err(f"/INCLUDE 다음에 경로가 없음: {path}")
 
     @staticmethod
-    def _consume(fh) -> tuple[bytes | None, int]:
-        """블록 본문을 해석 없이 건너뜀. 반환 (끝낸 행(헤더·#include) | None, 소비한 행 수)."""
+    def _consume(readline) -> tuple[bytes | None, int]:
+        """블록 본문을 해석 없이 건너뜀. 반환 (끝낸 행(헤더·#include) | None, 소비한 행 수). readline = bounded_readline."""
         n = 0
-        for raw in fh:
+        for raw in iter(readline, b""):
             c = raw[:1]
             if c == _B_SLASH or (c == _B_HASH and raw[:8].lower() == _B_INCLUDE):
                 return raw, n
             n += 1
         return None, n
 
-    def _consume_elems(self, fh) -> tuple[bytes | None, int, int]:
-        """요소 블록: 숫자 해석 없이 요소 행 수(빈·주석 행 제외)와 최대 요소 ID 만 갱신."""
+    def _consume_elems(self, readline) -> tuple[bytes | None, int, int]:
+        """요소 블록: 숫자 해석 없이 요소 행 수(빈·주석 행 제외)와 최대 요소 ID 만 갱신. readline = bounded_readline."""
         n = cnt = 0
         mx = self.max_ids["elem"]
-        for raw in fh:
+        for raw in iter(readline, b""):
             c = raw[:1]
             if c == _B_HASH:
                 if raw[:8].lower() == _B_INCLUDE:
@@ -743,7 +784,7 @@ class _Deck:
         self.includes.append(full)
         st = None
         by_ext = _st.has_state_ext(full)
-        by_head = _st.read_state_header(full)
+        by_head = _st.read_state_header(full, self.max_line)
         if by_ext or by_head:
             st = {"path": full, "spec": spec, "by_header": bool(by_head), "by_ext": bool(by_ext),
                   "kinds_set": set(), "inishe_subs": [], "other_blocks": [], "begin": None,
@@ -855,7 +896,8 @@ def _valid_E_nu(E: Any, nu: Any) -> bool:
 
 def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_override=None,
               include_path_map: dict[str, str] | None = None, thickness_source: str = "state",
-              read_initial: bool = True) -> RadModel:
+              read_initial: bool = True, max_line_bytes: int | None = None,
+              state_max_npt: int = _st.DEFAULT_MAX_NPT, state_max_npg: int = _st.DEFAULT_MAX_NPG) -> RadModel:
     """Radioss starter 를 읽어 대상 쉘 파트의 RadModel 을 만든다.
 
     누적 씬(include 그래프에 상태 파일 .str/.sta — esl_cumulative_input.md §2): 대상 노드·쉘은 상태 파일 정의
@@ -867,7 +909,7 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
     if match not in ("exact_ci", "exact"):
         raise EslError("CONFIG_INVALID", f"알 수 없는 title 비교 방식: {match}")
     path = os.fspath(path)
-    deck = _Deck(max_include_depth, include_path_map)
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
     deck.scan(path)
 
     # ---------------- 파트 해석
@@ -1003,7 +1045,8 @@ def parse_rad(path, part_title, match="exact_ci", max_include_depth=8, material_
     st_info = None
     if deck.state_files:
         st_info = _state_summary(deck, elem_id, node_id, node_state, sh_state, thickness, thk_card, rad_thk,
-                                 prop_thk, thickness_source, n_elem_dup, n_elem_sdup, read_initial)
+                                 prop_thk, thickness_source, n_elem_dup, n_elem_sdup, read_initial,
+                                 (state_max_npt, state_max_npg))
         unit_warn += st_info["warnings"]
     return RadModel(
         node_id=node_id.astype(np.int64),
@@ -1031,7 +1074,8 @@ def _top(ids, n=10) -> list[int]:
 
 
 def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thickness, thk_card, rad_thk, prop_thk,
-                   thickness_source, n_elem_dup, n_elem_sdup, read_initial) -> dict:
+                   thickness_source, n_elem_dup, n_elem_sdup, read_initial,
+                   npt_npg_max: tuple[int, int] = (_st.DEFAULT_MAX_NPT, _st.DEFAULT_MAX_NPG)) -> dict:
     """누적 씬 상태 정보(계약 esl_cumulative_input.md §2~§5). 배열 키(node_from_state 등)는 state.npz 용."""
     warns: list[str] = []
     geo = any("geometry" in f["kinds_set"] for f in deck.state_files)
@@ -1080,7 +1124,7 @@ def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thicknes
         segs = [(sg.file, sg.off, sg.line0, sg.nlines) for sg in deck.inishe_segs
                 if sg.state and (sg.sub or "").upper() == "EPSP_F"]
         if segs:
-            epsp = _st.read_epsp_f(segs, elem_id)
+            epsp = _st.read_epsp_f(segs, elem_id, *npt_npg_max)
             miss = ~epsp.has
             if miss.any():
                 warns.append(f"STATE_PARTIAL: 초기 상태(/INISHE/EPSP_F)에 대상 요소 {int(miss.sum())}/{elem_id.size}개 "
@@ -1088,6 +1132,10 @@ def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thicknes
             if epsp.n_dup:
                 warns.append(f"STATE_DUP_DEFINITION: /INISHE/EPSP_F 같은 SHELLID {epsp.n_dup}개 중복(마지막 사용) — "
                              f"{epsp.dup_ids}")
+            if epsp.nonfinite or epsp.width_suspect:
+                warns.append(f"STATE_NUMBER_SUSPECT: /INISHE/EPSP_F 숫자 의심 — 비유한값(NaN·Inf) {epsp.nonfinite}개, "
+                             f"칸 폭 이상(20자 칸 경계에 공백 없음·붙은 실수) {epsp.width_suspect}개. 값은 기존 규칙대로 "
+                             f"사용했으니 상태 파일 출력 형식을 확인하십시오")
     if "STRA_F" in inishe_subs:
         warns.append("STATE_INFO: 이전 총변형률 카드(/INISHE/STRA_F)가 있으나 사용하지 않음(Q1: 이전 소성 = 잔류)")
     thk_mis = None
@@ -1104,16 +1152,19 @@ def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thicknes
         "thickness": th, "thk_sta_mismatch": thk_mis, "inishe_subs": inishe_subs,
         "parse": {"fallback_rows": int(epsp.fallback_rows) if epsp else 0,
                   "resync_lines": int(epsp.resync_lines) if epsp else 0,
-                  "n_records": int(epsp.n_records) if epsp else 0},
+                  "n_records": int(epsp.n_records) if epsp else 0,
+                  **({"nonfinite": int(epsp.nonfinite), "width_suspect": int(epsp.width_suspect)}
+                     if epsp is not None and (epsp.nonfinite or epsp.width_suspect) else {})},
         "warnings": warns, "epsp": epsp,
         "node_from_state": np.asarray(node_state, bool), "elem_from_state": np.asarray(sh_state, bool),
         "thk_state": thk_state, "t0": t0,
     }
 
 
-def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None) -> list[dict]:
+def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None,
+               max_line_bytes: int | None = None) -> list[dict]:
     """모든 /PART 의 {id, title, n_elems} (플랫폼 /paths/inspect 용 보조)."""
-    deck = _Deck(max_include_depth, include_path_map)
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
     deck.scan(os.fspath(path))          # 요소 블록은 행 수만 셈(숫자 해석 없음)
     return [{"id": pid, "title": p["title"],
              "n_elems": deck.shell_count.get(pid, 0) + deck.other_elem_parts.get(pid, 0)}

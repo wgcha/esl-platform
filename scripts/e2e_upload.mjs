@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const APP_VERSION = fs.readFileSync(path.join(REPO, "VERSION"), "utf8").trim();   // 하드코딩 대신 VERSION 파일
 const DIST = path.join(REPO, "frontend", "dist");
 const PY = process.env.PYTHON || "python3";
 const SHOTS = path.resolve(process.argv[2] || path.join(REPO, "work", "upload_live"));
@@ -270,7 +271,7 @@ async function scenario(base, inp) {
   // ---------------- 1) 1 GB 병렬 업로드 → complete
   await page.goto(`${base}/esl/`);
   const ver = await api("/version");
-  check(ver.status === 200 && ver.body.version === "0.6.0" && ver.body.ui?.upload_slim_hint_gb === 5, `version 이상: ${JSON.stringify(ver)}`);
+  check(ver.status === 200 && ver.body.version === APP_VERSION && ver.body.ui?.upload_slim_hint_gb === 5, `version 이상: ${JSON.stringify(ver)}`);
   await pick([inp.rad], [inp.big]);
   puts.delayMs = 0;
   const tUp = Date.now();

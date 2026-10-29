@@ -117,6 +117,7 @@ class UploadCfg(_M):
     max_concurrent_per_user: int = Field(default=2, ge=1, le=20)
     stale_hours: float = Field(default=72, gt=0)
     allowed_ext: list[str] = Field(default_factory=lambda: list(UPLOAD_EXT_DEFAULT))
+    state_scan_kb: int = Field(default=4096, ge=4, le=1024 * 1024)   # complete 상태 파일(.sta/.str) 종류 판정에 읽는 앞부분(KB, 줄 길이 상한 겸)
 
     @property
     def chunk_bytes(self) -> int:

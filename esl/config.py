@@ -159,6 +159,7 @@ SCHEMA: dict[str, Any] = {
         "part_title": _str(),
         "part_title_match": _enum("exact", "exact_ci"),
         "rad_include_max_depth": _int(0, 64),
+        "rad_max_line_kb": _int(1, 1024 * 1024),     # 선택(OPTIONAL_KEYS): rad·include·상태 파일 한 줄 바이트 상한(KB)
         "material_override": _material_override,
         "include_path_map": _path_map,
     },
@@ -221,6 +222,8 @@ SCHEMA: dict[str, Any] = {
         "h3d_epsp_mode": _enum("auto", "cumulative", "incremental"),
         "h3d_eq_mode": _enum("auto", "cumulative", "incremental"),
         "min_increment": _num(0.0),
+        "max_npt": _int(1, 10000),                   # 선택: /INISHE/EPSP_F 헤더 NPT 상한(초과 → STATE_PARSE_ERROR)
+        "max_npg": _int(1, 10000),                   # 선택: NPG 상한
         "detect": {
             "prev_floor": _num(0.0),
             "min_elems": _int(1),
@@ -264,11 +267,16 @@ CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
                        "detect": {"prev_floor": 1.0e-6, "min_elems": 10, "rel_tol": 0.05, "mono_frac": 0.99}}
 OPTIONAL_SECTIONS = frozenset({"cumulative"})
+# 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
+OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg"})
+# cumulative.max_npt·max_npg 기본(cumulative_settings 결과에만 채움)
+STATE_LIMIT_DEFAULTS = {"max_npt": 100, "max_npg": 64}
 
 
 def cumulative_settings(cfg: dict) -> dict:
     """cumulative 설정(없거나 일부만 있으면 CUMULATIVE_DEFAULTS 로 채운 사본)."""
     out = copy.deepcopy(CUMULATIVE_DEFAULTS)
+    out.update(STATE_LIMIT_DEFAULTS)
     cu = cfg.get("cumulative") if isinstance(cfg, dict) else None
     if isinstance(cu, dict):
         for k, v in cu.items():
@@ -292,8 +300,8 @@ def _walk(schema: dict, node: Any, prefix: str) -> None:
     for k, rule in schema.items():
         key = f"{prefix}{k}"
         if k not in node:
-            if not prefix and k in OPTIONAL_SECTIONS:
-                continue            # 없으면 기본값(cumulative_settings) — 설정 스냅샷·해시를 바꾸지 않음
+            if (not prefix and k in OPTIONAL_SECTIONS) or key in OPTIONAL_KEYS:
+                continue            # 없으면 기본값(cumulative_settings·읽는 곳 상수) — 설정 스냅샷·해시를 바꾸지 않음
             raise _bad(key, "필수 키 누락")
         if isinstance(rule, dict):
             _walk(rule, node[k], key + ".")

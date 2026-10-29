@@ -55,6 +55,7 @@ from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel
 from esl.rad import parse_rad, scan_includes
+from esl.rad.parser import max_line_bytes_of
 from esl.report import field as _field
 
 STAGES = ("extract", "tstar", "esl", "validate", "export", "report")
@@ -551,7 +552,9 @@ def stage_extract(ctx: Context) -> dict:
                       max_include_depth=c["rad_include_max_depth"],
                       material_override=c["material_override"] or None,
                       include_path_map=c["include_path_map"] or None,
-                      thickness_source=cu["thickness_source"], read_initial=cu["enabled"] != "off")
+                      thickness_source=cu["thickness_source"], read_initial=cu["enabled"] != "off",
+                      max_line_bytes=max_line_bytes_of(c),
+                      state_max_npt=int(cu["max_npt"]), state_max_npg=int(cu["max_npg"]))
     cum_on = model.state is not None and cu["enabled"] != "off"
     ctx.protect(list(model.includes))          # include 폴더도 보호 → 겹치면 쓰기 전에 INPUT_INVALID
     d = ctx.fresh_dir(D_EXTRACT)

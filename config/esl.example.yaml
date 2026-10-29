@@ -9,6 +9,7 @@ case:
   rad_include_max_depth: 8
   material_override: {}              # {mat_id: {E: , nu: }} — 파서 미지원 law 보완
   include_path_map: {}               # {Windows 접두: 로컬 경로} 예 {"D:/proj/cae": "/data/cae"} — #include 절대경로 치환
+  # rad_max_line_kb: 1024            # (선택) rad·include·상태 파일 한 줄 상한(KB). 넘으면 RAD_PARSE_ERROR/STATE_PARSE_ERROR
 
 extract:
   frame_stride: 1                    # history 프레임 간격(1=전부, 후보 프레임 D 는 항상 포함)
@@ -71,6 +72,7 @@ cumulative:                          # 누적 낙하 씬(rad 가 이전 런 상�
   h3d_eq_mode: auto                  # h3d Max_Strain ε_eq 도 같은 규칙
   min_increment: 1.0e-5              # 이번 낙하 증분이 이 이하인 요소(이전 손상만)는 t* 후보·hotspot 제외
   detect: {prev_floor: 1.0e-6, min_elems: 10, rel_tol: 0.05, mono_frac: 0.99}
+  # max_npt: 100                    # (선택) /INISHE/EPSP_F 헤더 NPT 상한 · max_npg: 64 NPG 상한 — 넘으면 STATE_PARSE_ERROR
 
 report:                              # Case HTML 보고서 <case>/07_report/report.html (자체 완결, 외부 의존 없음)
   max_points: 20000                  # 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플)

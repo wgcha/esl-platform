@@ -892,18 +892,28 @@ def _state_ext(name: str) -> bool:
     return os.path.splitext(str(name).replace("\\", "/").rstrip("/"))[1].lower() in STATE_EXT
 
 
-def _state_probe(path: str, header_only: bool = False) -> tuple[bool, list[str]]:
-    """(상태 파일 헤더 여부, 종류[geometry|initial]) — 앞 STATE_KIND_SCAN_BYTES 만 읽음(header_only 면 첫 행만)."""
+def _state_probe(path: str, header_only: bool = False, scan_bytes: int = STATE_KIND_SCAN_BYTES) -> tuple[bool, list[str]]:
+    """(상태 파일 헤더 여부, 종류[geometry|initial]) — 앞 scan_bytes 만 읽음(header_only 면 첫 행만).
+
+    줄 단위 반복(``for raw in fh``)은 줄바꿈 없는 거대 줄을 통째로 메모리에 올리므로(200 MB 한 줄 → RSS +400 MB),
+    ``readline(남은 예산)`` 으로 읽고 예산을 넘는 줄(줄바꿈 없이 예산을 채움)이면 거기서 멈춘다 — 첫 행이 그렇다면
+    상태 파일 헤더가 아니다(너무 긴 줄).
+    """
     head, kinds = False, set()
+    budget = max(1, int(scan_bytes))
     try:
         with open(path, "rb") as fh:
             first = True
             n = 0
-            for raw in fh:
+            while n < budget:
+                raw = fh.readline(budget - n)
+                if not raw:
+                    break
                 n += len(raw)
+                too_long = not raw.endswith(b"\n") and n >= budget
                 s = raw.strip()
                 if first and s:
-                    head = s.lower().startswith(STATE_HEADER)
+                    head = (not too_long) and s.lower().startswith(STATE_HEADER)
                     first = False
                     if header_only:
                         break
@@ -912,7 +922,7 @@ def _state_probe(path: str, header_only: bool = False) -> tuple[bool, list[str]]
                     kinds.add("geometry")
                 elif u.startswith(b"/INISHE"):
                     kinds.add("initial")
-                if n >= STATE_KIND_SCAN_BYTES or len(kinds) == 2:
+                if too_long or len(kinds) == 2:
                     break
     except OSError:
         pass
@@ -958,9 +968,10 @@ def inspect_upload(ctx: AppContext, up: dict[str, Any]) -> dict[str, Any]:
             p = ref["path"]
             if ref["found"] and inside(p):
                 by_ext = _state_ext(p) or _state_ext(ref["spec"])
-                head, kinds = _state_probe(p, header_only=not by_ext)
+                scan = int(ctx.settings.upload.state_scan_kb) * 1024
+                head, kinds = _state_probe(p, header_only=not by_ext, scan_bytes=scan)
                 if head and not by_ext:
-                    head, kinds = _state_probe(p)
+                    head, kinds = _state_probe(p, scan_bytes=scan)
                 if head or by_ext:
                     state_incs.append({"rel": _rel_of(d, p), "spec": ref["spec"], "kinds": kinds, "found": True})
                 continue
