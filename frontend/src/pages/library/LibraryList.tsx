@@ -1,12 +1,11 @@
-// 라이브러리 목록(계약 §11·§12 UI): 항목 표 + 필터 + 메타 수정(인라인 최소) + 폐기. 주 버튼 = "종합분석 만들기",
+// 라이브러리 목록(계약 §11·§12 UI): 항목 표 + 필터 + 메타 수정(대화상자 EntryEdit — 등록자·관리자) + 폐기. 주 버튼 = "종합분석 만들기",
 // 보조 진입 "버전 비교"(설계 버전 비교 만들기) + 비교 목록.
 // v0.7.0(esl_opt_run.md §10.1): 탭 [항목 | 종합분석 | 버전 비교 | 최적화 실행 | 템플릿], 항목 행 선택(같은 크기만, 첫 행 = 기준)·크기·ⓜ(같은 모델)·
 // 모드 열(드롭다운 저장) → [선택한 ESL로 비드 최적화 (n)]. 템플릿 탭은 자기 주 버튼(템플릿 등록)을 갖고, 그때 '종합분석 만들기'는 숨김.
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
-import { errorText } from "../../api/client";
-import type { DropType, EntryOut, EntryStatus } from "../../api/types";
+import type { EntryOut, EntryStatus, Me } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, PrimaryButton } from "../../components/ui";
@@ -16,6 +15,7 @@ import { DROP_LABEL, DROP_TYPES, NORM_LABEL, EntryVerdict, entryLabel, modelVers
 import { ComparisonVerdictBadge } from "./ComparisonDetail";
 import { MODES, MODE_LABEL, optPath, optSettingsCached, sameSize, sizeOf, sizeText } from "../../api/opt";
 import { ModeSelect, entryKey, modeText } from "../../components/ModeSelect";
+import { EntryEditDialog, editBlock } from "./EntryEdit";
 import { OptList } from "../opt/OptList";
 import { Templates } from "../opt/Templates";
 
@@ -40,97 +40,6 @@ interface Filters {
 const EMPTY: Filters = { model: "", mode: "", drop_type: "", orient: "", verdict: "", retired: false };
 const forceReason = (e: EntryOut) => e.force_reason ?? e.quality.confirmed_fail?.reason ?? null;
 
-function EditRow({ e, onDone }: { e: EntryOut; onDone: (changed: boolean) => void }) {
-  const [mass, setMass] = useState(e.model.product_mass != null ? String(e.model.product_mass) : "");
-  const [drop, setDrop] = useState(e.scene.drop_type ?? "");
-  const [orient, setOrient] = useState(e.scene.orient ?? "");
-  const [confirmRetire, setConfirmRetire] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const massNum = mass.trim() === "" ? null : Number(mass);
-  const massBad = massNum !== null && !(Number.isFinite(massNum) && massNum > 0);
-  const orientBad = orient !== "" && !/^[1-6]{1,3}$/.test(orient);
-
-  async function run(fn: () => Promise<unknown>) {
-    setBusy(true);
-    setError(null);
-    try {
-      await fn();
-      onDone(true);
-    } catch (x) {
-      setError(errorText(x));
-      setBusy(false);
-    }
-  }
-  const save = () =>
-    run(() =>
-      api.patchEntry(e.id, {
-        version: e.version,
-        model: { product_mass: massNum },
-        scene: { drop_type: (drop || null) as DropType | null, orient: orient || null },
-      }),
-    );
-
-  return (
-    <tr className="hl" data-testid="edit-row">
-      <td />
-      <td>{e.model.name}</td>
-      <td className="num">{e.model.inch ?? "–"}</td>
-      <td className="num small">{sizeText({ ...sizeOf(e), inch: null })}</td>
-      <td>
-        <select aria-label="씬 유형" value={drop} onChange={(x) => setDrop(x.target.value)}>
-          <option value="">?</option>
-          {DROP_TYPES.map((d) => (
-            <option key={d} value={d}>
-              {DROP_LABEL[d]}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td>
-        <input aria-label="orient" className="mono" value={orient} aria-invalid={orientBad} title="ISTA 면 번호 1~6, 1~3자리" onChange={(x) => setOrient(x.target.value.trim())} />
-      </td>
-      <td className="small">{modeText(e)}</td>
-      <td>
-        <EntryVerdict e={e} />
-      </td>
-      <td className="num">{pv(e.quality.field_max_err_pct)}</td>
-      <td className="num">
-        <input type="number" aria-label="제품 질량 (kg)" min={0} step="0.1" value={mass} aria-invalid={massBad} placeholder="kg" onChange={(x) => setMass(x.target.value)} />
-      </td>
-      <td className="num">{dt(e.registered_at)}</td>
-      <td>
-        <div className="actions">
-          {confirmRetire ? (
-            <>
-              <span className="small error-text">폐기할까요?</span>
-              <button type="button" className="btn small danger" disabled={busy} onClick={() => run(() => api.retireEntry(e.id))}>
-                폐기
-              </button>
-              <button type="button" className="btn small ghost" onClick={() => setConfirmRetire(false)}>
-                아니오
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" className="btn small" disabled={busy || massBad || orientBad} onClick={save}>
-                저장
-              </button>
-              <button type="button" className="btn small ghost" onClick={() => onDone(false)}>
-                취소
-              </button>
-              <button type="button" className="link small error-text" onClick={() => setConfirmRetire(true)} title="분석에서 빼고 보관(정정 = 새로 등록 + 이전 것 폐기)">
-                폐기…
-              </button>
-            </>
-          )}
-        </div>
-        {error && <div className="small error-text">{error}</div>}
-      </td>
-    </tr>
-  );
-}
-
 /** 행 선택 규칙: 첫 선택 = 기준, 같은 크기(인치 + 치수 ± tol — 서버 /opt/settings size.tol_rel)만 더 고를 수 있다.
  * tol = null(설정 불러오는 중)이면 기준 외 행은 잠시 비활성. 반환 = 비활성 사유 또는 null */
 export function pickBlock(e: EntryOut, base: EntryOut | undefined, tol: number | null): string | null {
@@ -143,8 +52,9 @@ export function pickBlock(e: EntryOut, base: EntryOut | undefined, tol: number |
   return null;
 }
 
-function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, reload, picked, setPicked }: {
+function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, setF, reload, picked, setPicked }: {
   projectId: string;
+  me: Me | null;
   allowed: boolean;
   rows: ReturnType<typeof usePolling<EntryOut[]>>;
   entries: EntryOut[];
@@ -152,7 +62,7 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
   set: (k: keyof Filters, v: string | boolean) => void;
   filtered: boolean;
   setF: (fn: (o: Filters) => Filters) => void;
-  reload: () => void;
+  reload: () => Promise<unknown>;
   picked: string[];
   setPicked: (ids: string[]) => void;
 }) {
@@ -164,6 +74,13 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
   const base = picked.length ? byId.get(picked[0]) : undefined;
   const same = base ? picked.filter((id) => byId.get(id)?.topo_sha256 && byId.get(id)?.topo_sha256 === base.topo_sha256).length : 0;
   const toggle = (id: string) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+  const editE = editing ? rows.data?.find((e) => e.id === editing) ?? byId.get(editing) : undefined;
+  /** 저장·폐기 후: 목록 다시 읽기. 인치가 바뀌었거나 폐기된 항목은 크기 판정이 달라지므로 선택에서 뺀다(기준이면 선택 전체 해제) */
+  const afterSave = (out: EntryOut | null, before: EntryOut) => {
+    setEditing(null);
+    void reload();
+    if (picked.includes(before.id) && (!out || out.model.inch !== before.model.inch)) setPicked(picked[0] === before.id ? [] : picked.filter((x) => x !== before.id));
+  };
   return (
     <Card title="항목">
       <div className="filters" role="search" aria-label="항목 필터">
@@ -263,17 +180,6 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
             </thead>
             <tbody>
               {rows.data.map((e) => {
-                if (editing === e.id)
-                  return (
-                    <EditRow
-                      key={e.id}
-                      e={e}
-                      onDone={(changed) => {
-                        setEditing(null);
-                        if (changed) reload();
-                      }}
-                    />
-                  );
                 const on = picked.includes(e.id);
                 const block = on ? null : pickBlock(e, base, sizeTol);
                 const sameModel = !!base && !!e.topo_sha256 && e.topo_sha256 === base.topo_sha256;
@@ -317,8 +223,8 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
                     <td className="num">{dt(e.registered_at)}</td>
                     <td>
                       {e.status === "ACTIVE" && (
-                        <span className="primary-wrap" title={allowed ? "제품 질량·씬 메타 수정, 폐기" : NO_PERMISSION}>
-                          <button type="button" className="btn small ghost" disabled={!allowed || editing !== null} onClick={() => setEditing(e.id)}>
+                        <span className="primary-wrap" title={editBlock(me, e) ?? "모델·씬·메모 수정, 폐기"}>
+                          <button type="button" className="btn small ghost" disabled={!!editBlock(me, e) || editing !== null} onClick={() => setEditing(e.id)}>
                             수정
                           </button>
                         </span>
@@ -330,6 +236,22 @@ function ItemsTab({ projectId, allowed, rows, entries, f, set, filtered, setF, r
             </tbody>
           </table>
         </div>
+      )}
+      {editE && (
+        <EntryEditDialog
+          key={editE.id}
+          e={editE}
+          onClose={() => setEditing(null)}
+          onSaved={afterSave}
+          reload={async () => {
+            void reload();
+            try {
+              return await api.libraryEntry(editE.id);
+            } catch {
+              return null;
+            }
+          }}
+        />
       )}
     </Card>
   );
@@ -406,6 +328,7 @@ export function LibraryList() {
       {tab === "items" && (
         <ItemsTab
           projectId={projectId}
+          me={me}
           allowed={allowed}
           rows={rows}
           entries={entries}
@@ -413,7 +336,7 @@ export function LibraryList() {
           set={set}
           filtered={filtered}
           setF={setF}
-          reload={() => void Promise.all([rows.reload(), all.reload()])}
+          reload={() => Promise.all([rows.reload(), all.reload()])}
           picked={picked}
           setPicked={setPicked}
         />

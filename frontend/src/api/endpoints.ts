@@ -61,6 +61,7 @@ export const api = {
   section: (vid: string, axis: SectionAxis = "eta", at = 0.5) => request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at } }),
   caseReportUrl: (caseId: string) => `${API_PREFIX}/cases/${caseId}/report`,
   libraryEntries: (q: EntryQuery) => request<EntryOut[]>("GET", "/library/entries", { query: { ...q } }),
+  libraryEntry: (id: string) => request<EntryOut>("GET", `/library/entries/${id}`),
   createEntry: (body: EntryCreate) => request<EntryOut>("POST", "/library/entries", { body }),
   patchEntry: (id: string, body: EntryPatch) => request<EntryOut>("PATCH", `/library/entries/${id}`, { body }),
   retireEntry: (id: string, reason?: string) => request<EntryOut>("POST", `/library/entries/${id}/retire`, { body: { reason: reason ?? null } }),
