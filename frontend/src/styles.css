@@ -1192,6 +1192,30 @@ details.card > .table-wrap {
 .modal-actions {
   justify-content: flex-end;
 }
+/* 라이브러리 항목 수정(v0.8.0) */
+.modal.wide {
+  width: min(52rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+.modal fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.modal legend {
+  padding: 0;
+  margin-bottom: 0.35rem;
+}
+.form-grid.tight {
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.55rem 0.75rem;
+  align-items: start;
+}
+.form-grid.tight .field {
+  align-content: start;
+}
 
 /* 라이브러리 */
 .filters {

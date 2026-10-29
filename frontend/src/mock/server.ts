@@ -665,6 +665,10 @@ export class MockServer {
       if (!e) return err(404, "ENTRY_NOT_FOUND", "라이브러리 항목을 찾을 수 없습니다.");
       if (method === "GET" && !r[2]) return { status: 200, body: e };
       if (!this.canRun(e.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
+      // 메타 수정·폐기 = 등록자 또는 관리자(서버 can_edit_meta·retire_entry 와 같음). 변형 모드만 바꿀 때는 power 이면 됨
+      const owner = e.registered_by === this.me.user_id || this.me.is_global_admin || this.me.roles[e.project_id] === "admin";
+      const metaPatch = method === "PATCH" && ("model" in b || "scene" in b || "note" in b);
+      if (((method === "POST" && r[2]) || metaPatch) && !owner) return err(403, "FORBIDDEN", "등록자 또는 관리자만 수정할 수 있습니다");
       if (method === "POST" && r[2]) {
         if (e.status === "RETIRED") return err(409, "ENTRY_RETIRED", "이미 폐기된 항목입니다");
         e.status = "RETIRED";
@@ -676,13 +680,21 @@ export class MockServer {
       }
       if (method === "PATCH" && !r[2]) {
         if (b.version !== e.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요");
+        if (e.status === "RETIRED") return err(409, "ENTRY_RETIRED", "retired 항목은 수정할 수 없습니다");
         const mm = (b.model ?? {}) as Record<string, unknown>;
         if ("product_mass" in mm) {
           const v = mm.product_mass;
           if (v !== null && !(typeof v === "number" && v > 0)) return err(422, "INVALID_PARAMS", "product_mass 는 양수(kg)입니다");
-          e.model = { ...e.model, product_mass: v as number | null };
         }
-        if (b.scene) e.scene = { ...e.scene, ...(b.scene as Record<string, string | null>) };
+        if ("inch" in mm && mm.inch !== null && !(Number.isInteger(mm.inch) && (mm.inch as number) >= 1)) return err(422, "INVALID_PARAMS", "inch 는 1 이상 정수입니다");
+        e.model = { ...e.model, ...(mm as Partial<EntryOut["model"]>) };
+        if ("inch" in mm && e.size) e.size = { ...e.size, inch: (mm.inch as number | null) ?? null };
+        if (b.scene) {
+          const sc = b.scene as Record<string, string | null>;
+          e.scene = { ...e.scene, ...sc };
+          if ("orient" in sc || "drop_type" in sc) e.scene.drop_class = e.scene.orient ? (["Face", "Edge", "Corner"][e.scene.orient.length - 1] ?? null) : e.scene.drop_type ?? null;
+        }
+        if ("note" in b) e.note = (b.note as string | null) ?? null;
         if ("deform_mode" in b) {
           const dm = b.deform_mode;
           if (dm !== null && !["dent", "twist", "bend"].includes(String(dm))) return err(422, "INVALID_PARAMS", "deform_mode 는 dent|twist|bend|null 입니다");

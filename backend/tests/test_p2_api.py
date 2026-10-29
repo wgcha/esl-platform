@@ -312,6 +312,69 @@ def test_list_patch_retire(client, engine, case):
     assert r.status_code == 404 and _code(r) == "ENTRY_NOT_FOUND"
 
 
+# ---------------------------------------------------------------- v0.8.0 메타 수정: 필드별 저장·권한·409·반영·entry.json 불변
+def test_patch_entry_meta_fields_permissions(client, engine, case, esl_root):
+    import hashlib
+
+    runs = [seed_run(engine, case["id"]) for _ in range(2)]
+    e1 = seed_entry(engine, case["id"], runs[0]["run_id"], esl_root=str(esl_root), name="55QX10A", inch=55)
+    e2 = seed_entry(engine, case["id"], runs[1]["run_id"], esl_root=str(esl_root), name="65QX10A", inch=65,
+                    registered_by="u-power2")
+    ej = os.path.join(str(esl_root), "_library", "entries", e1, "entry.json")
+    sha0 = hashlib.sha256(open(ej, "rb").read()).hexdigest()
+    url = f"{API}/library/entries/{e1}"
+    v = client.get(url, headers=R).json()["version"]
+    # 필드별 저장(모델 5 + 씬 9 + 메모): 응답·GET 이 같은 값, 공백 제거·빈 문자열 = null
+    model = {"name": " 55QX10B ", "inch": 56, "version": "v2", "date": "2026-10-29", "product_mass": 18.5}
+    scene = {"project": "PKG", "scenario": "STACK", "seq": 4, "drop_type": "Edge", "round": "R2", "scene_no": 3,
+             "orient": "12", "suffix": "b", "variant": ""}
+    for grp, fields in (("model", model), ("scene", scene)):
+        for k, val in fields.items():
+            r = client.patch(url, json={"version": v, grp: {k: val}}, headers=W)
+            assert r.status_code == 200, (k, r.text)
+            want = (val.strip() or None) if isinstance(val, str) else val
+            assert r.json()[grp][k] == want, k
+            v = r.json()["version"]
+    r = client.patch(url, json={"version": v, "note": "  메모  "}, headers=W)
+    assert r.status_code == 200 and r.json()["note"] == "메모"
+    v = r.json()["version"]
+    g = client.get(url, headers=R).json()
+    assert g["model"]["name"] == "55QX10B" and g["model"]["inch"] == 56 and g["size"]["inch"] == 56
+    assert g["scene"]["drop_class"] == "Edge" and g["scene"]["faces"] == [1, 2] and g["scene"]["variant"] is None
+    assert g["version"] == v
+    # 목록·필터 반영(모델·인치·씬 유형·시나리오)
+    q = lambda **p: [e["id"] for e in client.get(f"{API}/library/entries", params=p, headers=R).json()]
+    assert q(model="55QX10B") == [e1] and q(inch="56") == [e1] and q(model="55QX10A") == []
+    assert q(drop_type="Edge") == [e1] and q(scenario="STACK") == [e1]
+    # entry.json 은 등록 때 그대로(사용자 메타는 DB 에만)
+    assert hashlib.sha256(open(ej, "rb").read()).hexdigest() == sha0
+    # 409: 이전 version
+    r = client.patch(url, json={"version": v - 1, "model": {"inch": 57}}, headers=W)
+    assert r.status_code == 409 and _code(r) == "VERSION_CONFLICT"
+    assert client.get(url, headers=R).json()["model"]["inch"] == 56
+    # 권한: 다른 power 는 남의 항목 메타 403(변형 모드만은 power 면 됨), 관리자는 가능, 조회 403
+    W2 = H("tok-power2", True)
+    r = client.patch(url, json={"version": v, "model": {"name": "X"}}, headers=W2)
+    assert r.status_code == 403 and "등록자" in r.json()["detail"]["message"]
+    assert client.patch(url, json={"version": v, "note": "x"}, headers=W2).status_code == 403
+    assert client.patch(url, json={"version": v, "scene": {"orient": "1"}}, headers=W2).status_code == 403
+    assert client.patch(url, json={"version": v, "note": "x"}, headers=H("tok-general", True)).status_code == 403
+    r = client.patch(f"{API}/library/entries/{e2}", json={"version": 1, "model": {"inch": 75}}, headers=W2)
+    assert r.status_code == 200 and r.json()["size"]["inch"] == 75                       # 자기 항목
+    r = client.patch(url, json={"version": v, "model": {"version": "v3"}}, headers=H("tok-admin", True))
+    assert r.status_code == 200 and r.json()["model"]["version"] == "v3"                # 전역 관리자
+    v = r.json()["version"]
+    # 잘못된 값 422(인치 0·orient 형식·질량 0·알 수 없는 키)
+    for bad in ({"model": {"inch": 0}}, {"scene": {"orient": "7"}}, {"model": {"product_mass": 0}},
+                {"model": {"part_mass": 1}}, {"scene": {"drop_type": "Top"}}):
+        assert client.patch(url, json={"version": v, **bad}, headers=W).status_code == 422, bad
+    # 종합분석 대상 필터가 새 메타로 확정
+    r = client.post(f"{API}/library/analyses", json={"project_id": "p-1", "filters": {"model": ["55QX10B"],
+                                                                                      "inch": [56]}}, headers=W)
+    assert r.status_code == 201, r.text
+    assert r.json()["entry_ids"] == [e1]
+
+
 # ---------------------------------------------------------------- 분석 생성 오류·조회·파일 보호
 def test_analysis_errors_and_files(client, engine, case, esl_root):
     runs = [seed_run(engine, case["id"]) for _ in range(3)]
