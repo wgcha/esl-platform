@@ -232,13 +232,100 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
             esl_snapshot.save_validation(cdir, run["id"], v["id"])
         except OSError as exc:
             raise RegisterError("OUTPUT_INVALID", f"검증 산출물 스냅샷 실패: {exc}") from None
-    return {"validation_id": v["id"], "verdict": verdict, "status": verdict if scheme else "LEGACY",
-            "disp_rms_rel": disp, "disp_max_rel": disp_max, "disp_noise_rel": disp_noise, "reaction_rel": reac,
-            "undetermined_reason": reason}
+    out = {"validation_id": v["id"], "verdict": verdict, "status": verdict if scheme else "LEGACY",
+           "disp_rms_rel": disp, "disp_max_rel": disp_max, "disp_noise_rel": disp_noise, "reaction_rel": reac,
+           "undetermined_reason": reason}
+    if p.get("origin") == "library_revalidate":
+        out["revalidate"] = revalidate_transition(conn, job, v)
+    return out
+
+
+# ---------------------------------------------------------------- v0.10.0 재검증 전환(esl_menu_restructure.md §7.4)
+QUALITY_FROM_VALIDATION = ("verdict", "status", "scheme", "undetermined_reason", "disp_rms_rel", "disp_max_rel",
+                           "disp_noise_rel", "reaction_rel", "strain_exceed_frac", "fail_reasons", "field_max_err_pct",
+                           "field_p90_err_pct")
+
+
+def _quality_from(v: dict[str, Any]) -> dict[str, Any]:
+    fld = v.get("field") if isinstance(v.get("field"), dict) else {}
+    fmax = (fld.get("max") or {}).get("abs_err_pct") if isinstance(fld.get("max"), dict) else None
+    fp90 = (fld.get("abs_err_pct") or {}).get("p90") if isinstance(fld.get("abs_err_pct"), dict) else None
+    sref = v.get("strain_ref") if isinstance(v.get("strain_ref"), dict) else {}
+    return {"verdict": v["verdict"], "status": v["verdict"] if v.get("scheme") else "LEGACY", "scheme": v.get("scheme"),
+            "undetermined_reason": v.get("undetermined_reason"), "disp_rms_rel": _f(v.get("disp_rms_rel")),
+            "disp_max_rel": _f(v.get("disp_max_rel")), "disp_noise_rel": _f(v.get("disp_noise_rel")),
+            "reaction_rel": _f(v.get("reaction_rel")), "strain_exceed_frac": _f(sref.get("frac_exceed")),
+            "fail_reasons": list(v.get("fail_reasons") or []), "field_max_err_pct": _f(fmax),
+            "field_p90_err_pct": _f(fp90)}
+
+
+def revalidate_transition(conn: Connection, job: dict[str, Any], v: dict[str, Any]) -> dict[str, Any]:
+    """새 검증 등록과 같은 트랜잭션: 항목이 아직 ACTIVE ∧ 같은 esl_run ∧ 새 판정 PASS(scheme 있음) → quality 판정 키·
+    validation_id 갱신 + quality.revalidated, force_reason·confirmed_* = null, version+1(PROMOTED). FAIL·판정 불가 → 불변
+    (KEPT_LEGACY). 항목이 그사이 폐기·변경 → 불변(ENTRY_CHANGED). 항목 폴더(entry.json·raw.npz)는 바꾸지 않는다."""
+    import datetime as _dt
+
+    from esl_platform.core.repositories import library as lib_repo
+
+    p = job["params"] or {}
+    eid = p.get("entry_id")
+    status = v["verdict"] if v.get("scheme") else "LEGACY"
+    base = {"entry_id": eid, "validation_id": v["id"], "status": status, "verdict": v["verdict"],
+            "fail_reasons": list(v.get("fail_reasons") or [])}
+    e = lib_repo.get_entry(conn, eid, for_update=True) if eid else None
+    if e is None or e["status"] != "ACTIVE" or e["esl_run_id"] != p.get("esl_run_id"):
+        return {**base, "outcome": "ENTRY_CHANGED"}
+    if status != "PASS":
+        return {**base, "outcome": "KEPT_LEGACY"}
+    q = dict(e.get("quality") or {})
+    old = q.get("status") or ("LEGACY" if not q.get("scheme") else q.get("verdict"))
+    q.update(_quality_from(v))
+    q["confirmed_fail"] = q["confirmed_undetermined"] = None
+    q["revalidated"] = {"from_validation_id": e.get("validation_id"), "from_status": old, "job_id": job["id"],
+                        "at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+                        "by": job.get("created_by"), "by_name": job.get("created_by_name")}
+    lib_repo.update_entry(conn, eid, None, validation_id=v["id"], quality=_jsonable(q), force_reason=None)
+    return {**base, "outcome": "PROMOTED"}
 
 
 # ---------------------------------------------------------------- ⑥ 내보내기
+def register_lib_export(conn: Connection, job: dict[str, Any], cdir: str) -> dict[str, Any]:
+    """v0.10.0 라이브러리 내보내기(§6.2 EXP_REGISTER): 항목 폴더 export.json → registered{batch_id, items}. 항목 전부 실패면
+    작업 FAILED EXPORT_ALL_FAILED(첫 오류), 일부 실패는 SUCCEEDED + 경고. Case 행·artifacts 는 건드리지 않는다."""
+    p = job["params"] or {}
+    real = os.path.realpath(cdir)
+    items, warns = [], []
+    for it in p.get("items") or []:
+        lab = str(it.get("label") or "")
+        path = os.path.join(cdir, lab, "export.json")
+        rec = None
+        if lab and "/" not in lab and "\\" not in lab and not os.path.islink(path) and co.inside(os.path.realpath(path), real):
+            try:
+                rec = co.read_json(path)
+            except (OSError, ValueError):
+                rec = None
+        if not isinstance(rec, dict):
+            rec = {"ok": False, "error": {"code": "TOOL_OUTPUT_MISSING", "message": f"{lab}/export.json 이 없습니다"}}
+        ok = bool(rec.get("ok"))
+        items.append({"entry_id": it.get("entry_id"), "label": lab, "state": "DONE" if ok else "FAILED",
+                      "files": list(rec.get("files") or []) if ok else [], "id_range": rec.get("id_range"),
+                      "id_max_used": rec.get("id_max_used"), "warnings": [str(w) for w in rec.get("warnings") or []],
+                      "error": None if ok else rec.get("error")})
+    bad = [x for x in items if x["state"] != "DONE"]
+    if items and len(bad) == len(items):
+        e0 = bad[0]["error"] or {}
+        raise RegisterError("EXPORT_ALL_FAILED", f"내보낼 항목이 모두 실패했습니다 — {bad[0]['label']}: "
+                            f"{e0.get('code')}: {e0.get('message')}"[:450])
+    for x in bad:
+        e0 = x["error"] or {}
+        warns.append(f"내보내기 항목 실패 {x['label']}: {e0.get('code')}: {e0.get('message')}"[:300])
+    return {"origin": "library", "batch_id": p.get("batch_id"), "targets": p.get("targets"), "n_items": len(items),
+            "n_done": len(items) - len(bad), "items": items, "warnings_job": warns}
+
+
 def register_export(conn: Connection, job: dict[str, Any], case: dict[str, Any], cdir: str) -> dict[str, Any]:
+    if (job.get("params") or {}).get("origin") == "library":
+        return register_lib_export(conn, job, cdir)
     rec = co.stage_record(cdir, "export")
     s = rec.get("summary") or {}
     run = cases_repo.get_esl_run(conn, (job["params"] or {}).get("esl_run_id"))

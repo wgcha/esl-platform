@@ -339,29 +339,15 @@ def _lib_case(client, worker, inputs_root, k, esl_root):
 
 @pytest.mark.parametrize("fs", ["never"], indirect=True)
 def test_dp12_library_undetermined_requires_reason(client, worker_factory, inputs_root, esl_root):
+    # v0.10.0(esl_menu_restructure.md §7.2 MR-D-8): 판정 불가는 사유가 있어도 등록 불가(422 VALIDATION_NOT_PASS)
     worker = worker_factory()
     cid, rid, vid = _lib_case(client, worker, inputs_root, 0, esl_root)
     assert client.get(f"{API}/validations/{vid}", headers=R).json()["status"] == "UNDETERMINED"
-    r = client.post(f"{API}/library/entries", json={"esl_run_id": rid}, headers=W)
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "VALIDATION_NOT_PASS"
-    assert r.json()["detail"]["verdict"] == "UNDETERMINED"
-    r = client.post(f"{API}/library/entries", json={"esl_run_id": rid, "force_reason": "  "}, headers=W)
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "VALIDATION_NOT_PASS"
-    r = client.post(f"{API}/library/entries", json={"esl_run_id": rid, "force_reason": "전체 재해석 생략, 변형률 참고만 확인"},
-                    headers=W)
-    assert r.status_code == 201, r.text
-    e = r.json()
-    q = e["quality"]
-    assert q["verdict"] == q["status"] == "UNDETERMINED" and q["scheme"] == "disp_primary/1"
-    assert q["undetermined_reason"] == "NO_FULL_SOLVE" and q["fail_reasons"] == []
-    assert q["confirmed_undetermined"]["reason"].startswith("전체 재해석") and q["confirmed_undetermined"]["by"] == "u-power"
-    assert q["confirmed_undetermined"]["at"] and q["confirmed_fail"] is None
-    assert q["strain_exceed_frac"] is not None and q["disp_max_rel"] is None
-    assert e["validation_id"] == vid
-    # 필터
-    ids = lambda v: {x["id"] for x in client.get(f"{API}/library/entries", params={"project_id": "p-1", "verdict": v},  # noqa: E731
-                                                  headers=R).json()}
-    assert ids("UNDETERMINED") == {e["id"]} and ids("LEGACY") == set() and ids("PASS") == set()
+    for extra in ({}, {"force_reason": "  "}, {"force_reason": "전체 재해석 생략, 변형률 참고만 확인"}):
+        r = client.post(f"{API}/library/entries", json={"esl_run_id": rid, **extra}, headers=W)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "VALIDATION_NOT_PASS", r.text
+        assert r.json()["detail"]["verdict"] == "UNDETERMINED"
+    assert client.get(f"{API}/library/entries", params={"project_id": "p-1"}, headers=R).json() == []
 
 
 def test_dp12_library_pass_and_legacy(client, worker_factory, inputs_root, esl_root, engine):
@@ -387,26 +373,14 @@ def test_dp12_library_pass_and_legacy(client, worker_factory, inputs_root, esl_r
     with engine.begin() as c:
         c.execute(text("UPDATE validations SET scheme = NULL WHERE id = :i"), {"i": vid2})
     assert client.get(f"{API}/validations/{vid2}", headers=R).json()["status"] == "LEGACY"
-    r2 = client.post(f"{API}/library/entries", json={"esl_run_id": rid2}, headers=W)
-    assert r2.status_code == 201, r2.text
-    q2 = r2.json()["quality"]
-    assert q2["verdict"] == "PASS" and q2["scheme"] is None and q2["status"] == "LEGACY" and q2["confirmed_fail"] is None
-    ids = lambda v: {x["id"] for x in client.get(f"{API}/library/entries", params={"project_id": "p-1", "verdict": v},  # noqa: E731
-                                                  headers=R).json()}
-    assert ids("LEGACY") == {r2.json()["id"]} and ids("PASS") == {r.json()["id"]} and ids("UNDETERMINED") == set()
-    # LEGACY FAIL(당시 FAIL)은 기존 규칙대로 사유 필수
+    # v0.10.0 MR-D-8: LEGACY 검증으로 새 등록 불가(422 VALIDATION_LEGACY) — 당시 verdict 와 무관, 사유가 있어도
+    for extra in ({}, {"force_reason": "당시 확인"}):
+        r2 = client.post(f"{API}/library/entries", json={"esl_run_id": rid2, **extra}, headers=W)
+        assert r2.status_code == 422 and r2.json()["detail"]["code"] == "VALIDATION_LEGACY", r2.text
     with engine.begin() as c:
         c.execute(text("UPDATE validations SET verdict = 'FAIL' WHERE id = :i"), {"i": vid2})
-    r3 = client.post(f"{API}/library/entries/{r2.json()['id']}/retire", json={"reason": "재등록"}, headers=W)
-    assert r3.status_code == 200, r3.text
-    for p in (os.path.join(cdir, "05_val", "validation.json"), _snap(esl_root, "lib1", rid2, "validation.json")):
-        d = json.load(open(p, encoding="utf-8"))
-        d["verdict"], d["fail_reasons"] = "FAIL", ["DISP_RMS"]
-        with open(p, "w", encoding="utf-8") as fh:
-            json.dump(d, fh)
-    r4 = client.post(f"{API}/library/entries", json={"esl_run_id": rid2}, headers=W)
-    assert r4.status_code == 422 and r4.json()["detail"]["code"] == "VALIDATION_NOT_PASS"
-    r5 = client.post(f"{API}/library/entries", json={"esl_run_id": rid2, "force_reason": "당시 FAIL 확인"}, headers=W)
-    assert r5.status_code == 201, r5.text
-    q5 = r5.json()["quality"]
-    assert q5["verdict"] == "FAIL" and q5["status"] == "LEGACY" and q5["confirmed_fail"]["reason"] == "당시 FAIL 확인"
+    r4 = client.post(f"{API}/library/entries", json={"esl_run_id": rid2, "force_reason": "당시 FAIL 확인"}, headers=W)
+    assert r4.status_code == 422 and r4.json()["detail"]["code"] == "VALIDATION_LEGACY"
+    ids = lambda v: {x["id"] for x in client.get(f"{API}/library/entries", params={"project_id": "p-1", "verdict": v},  # noqa: E731
+                                                  headers=R).json()}
+    assert ids("LEGACY") == set() and ids("PASS") == {r.json()["id"]} and ids("UNDETERMINED") == set()
