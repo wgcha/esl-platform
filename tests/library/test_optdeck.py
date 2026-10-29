@@ -108,10 +108,10 @@ def test_deck_structure_free(tmp_path):
     assert len(dtpg) == 1
     f = dtpg[0]
     assert f[0] == str(ids["dtpg"]) and f[1] == "PSHELL"
-    k = f.index("BEAD")
+    k = 2 + len(s["design_pids"])            # PID ≤ 6 → 첫 줄, 다음 = 비드 줄(MW ANG BF HGT NORM - - SKIP)
     pids = [int(x) for x in f[2:k] if x]
     assert pids == s["design_pids"] and not set(pids) & set(s["nondesign_pids"])
-    assert f[k + 1:k + 6] == ["10.", "60.", "3.", "YES", "BC"]
+    assert f[k:k + 8] == ["10.", "60.", "YES", "3.", "NORM", "", "", "BC"] and "BEAD" not in f
     assert f[f.index("BOUNDS") + 1:] == ["0.", "1."]
     dob = [f for n, f in cards if n == "DOBJREF"]
     assert [(int(x[0]), int(x[1]), x[2], float(x[3]), int(x[4])) for x in dob] == \

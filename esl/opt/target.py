@@ -250,7 +250,7 @@ def deck_design(target: Target, *, design: np.ndarray, bead: dict, run_id, desma
                     "subcases: " + ", ".join(f"{r['label']}={r['entry_id']}" for r in
                                              sorted((r for r in selection["rows"] if r.get("label")),
                                                     key=lambda r: r["label"]))]}
-    for k in ("id_offset", "card_format", "num_format", "force_zero_tol_rel", "nt"):
+    for k in ("id_offset", "card_format", "num_format", "force_zero_tol_rel", "nt", "dtpg"):
         if oc.get(k) is not None:
             d[k] = oc[k]
     return d

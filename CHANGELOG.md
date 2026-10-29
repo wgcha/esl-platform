@@ -2,6 +2,15 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.8.0] - 2026-10-29
+### 수정
+- **비드 최적화 `-check` 실패(OS_DECK_INVALID, ERROR # 1485)**: DTPG 비드 줄을 OptiStruct Reference Guide 형식(`+, MW, ANG, BF, HGT, NORM, , , SKIP` — `BEAD` 라벨 없음)으로 씁니다. 이전 덱의 `+,BEAD,60.,45.,10.,YES,BC` 는 OptiStruct 2026.1 이 "Field 0 contains unrecognized/unexpected label" 로 거부했습니다(이슈 #35). PID 가 7개 이상이면 연속 줄은 3번째 칸부터 씁니다
+### 추가
+- OptiStruct 오류 상세: 실패 메시지에 오류 번호·상세 줄·카드(예 `DTPG,9000006 연속 줄 1`)·덱 줄 번호·인용 덱 줄을 넣고(.out 끝 요약의 같은 오류는 한 번만), 전체 블록은 `solve/os_errors.txt`·작업 로그에 남깁니다. 설정 `opt_run.solve.error_detail_lines`(4)·`error_context_lines`(8)·`error_context_pattern`·`error_card_pattern`·`error_code_pattern`·`error_message_max`(480)
+- 비드 최적화 상세가 실패면 **실패 확인 파일** 카드: 덱(.fem·.inc)·`.out`·`os_errors.txt`·`solve.json` 받기 + 덱·OptiStruct zip
+- 라이브러리 설정 `optdeck.dtpg.*`(bead_flag·bead_fields·draw·pid_cont_col): OptiStruct 버전별 DTPG 비드 줄 칸 차이를 설정으로 맞춤(없으면 공식 형식 기본값)
+- 실기 체크리스트 `docs/manual/opt_run_check.md` §2.5 '-check 실패 시 확인'(파일 위치·보내 줄 줄 범위)
+
 ## [0.7.2] - 2026-10-29
 ### 수정
 - **새 비드 최적화 화면이 비던 문제**: v0.6.0 에서 업데이트한 서버는 코드 스냅샷에 방법·출처 자료(`resources/opt_method_sources.json`)가 빠져, 라이브러리에서 '선택한 ESL로 비드 최적화'를 누르면 화면이 비었습니다. 배포가 이 파일을 함께 복사하고, 자료가 없어도 화면은 정상(ⓘ 만 비활성)입니다

@@ -9,6 +9,7 @@ import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel } from "../api/hist
 import { isFullResult } from "../api/types";
 import { makeSelection } from "../mock/optdata";
 import { MockServer } from "../mock/server";
+import { failureFiles } from "../pages/opt/OptDetail";
 
 describe("v0.7.0 통합 정합(서버 기준)", () => {
   it("대기열·이력 라벨: OPT_RUN = 비드 최적화, 단계 키 → 한글(steps 없으면 순서로)", () => {
@@ -300,6 +301,14 @@ describe("최적화 상세(§10.4)", () => {
     await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(btn);
     expect(screen.getByRole("dialog", { name: "방법·출처" }).querySelectorAll("[data-current]")).toHaveLength(2);
+  });
+
+  it("실패 확인 파일: 덱 .fem·.inc, solve/ .out·os_errors.txt·solve.json 만(tmp·h3d 제외)", () => {
+    const f = (rel: string) => ({ rel, kind: rel.split("/")[0] as "deck", size: 1, downloadable: true });
+    const rels = ["deck/esl_bead.fem", "deck/esl_loads.inc", "deck/README.txt", "solve/esl_bead.out", "solve/os_errors.txt",
+      "solve/solve.json", "solve/esl_bead_des.h3d", "solve/tmp/x.out", "report.html"];
+    expect(failureFiles(rels.map(f)).map((x) => x.rel)).toEqual(["deck/esl_bead.fem", "deck/esl_loads.inc", "solve/esl_bead.out",
+      "solve/os_errors.txt", "solve/solve.json"]);
   });
 
   it("목표 기준·전략별 선정(목 선정기): abs 는 POS 모두 C_ref, rel 은 각자 C⁰ / B 모드 대표 / C k 군집", () => {

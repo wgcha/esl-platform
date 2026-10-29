@@ -32,6 +32,7 @@ from esl_platform.core.repositories import jobs as jobs_repo
 
 from . import localproc
 
+ERRORS_TXT = "os_errors.txt"   # ERROR 블록 전체(문맥·상세 줄) — 실패 화면에서 받기
 CHECK_SHARE = 5.0          # 진행률: -check 5 % + 반복 n/DESMAX × 95 %
 BASE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "USERPROFILE", "HOME",
                  "PATHEXT", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "LANG", "LC_ALL")
@@ -328,12 +329,24 @@ def run(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
                 continue
             if verdict is not None:
                 p = osout.parse_out(text, cfg)
-                detail = "; ".join(p["errors"][:3]) or ("출력 파일(.out/_des.h3d) 없음" if not have else "")
+                blocks = p.get("error_blocks") or []
+                detail = ("; ".join(osout.error_summary(b) for b in blocks[:3]) or "; ".join(p["errors"][:3])
+                          or ("출력 파일(.out/_des.h3d) 없음" if not have else ""))
+                if blocks:
+                    full = osout.error_text(blocks)
+                    from esl_platform.core.atomic import write_text_atomic
+
+                    write_text_atomic(os.path.join(solve_dir, ERRORS_TXT), full)
+                    rec["errors"] = blocks
+                    r.echo(f"[esl-worker] OptiStruct 오류 {len(blocks)}건(상세 solve/{ERRORS_TXT}, .out solve/{stem}.out):")
+                    for x in full.splitlines():
+                        r.echo(f"  {x}")
                 write_rec()
+                lim = int(cfg.get("error_message_max") or 480)
                 if check and verdict != "SOLVER_OUT_OF_MEMORY":
-                    raise SolveFailed("OS_DECK_INVALID", f"OptiStruct -check 실패(종료코드 {code}): {detail}"[:450], code)
+                    raise SolveFailed("OS_DECK_INVALID", f"OptiStruct -check 실패(종료코드 {code}): {detail}"[:lim], code)
                 msg = {"SOLVER_OUT_OF_MEMORY": "OptiStruct 메모리 부족"}.get(verdict, "OptiStruct 실패")
-                raise SolveFailed(verdict, f"{msg}(종료코드 {code}): {detail}"[:450], code)
+                raise SolveFailed(verdict, f"{msg}(종료코드 {code}): {detail}"[:lim], code)
             if check:
                 r.echo("[esl-worker] -check 통과")
                 r.progress(CHECK_SHARE)
