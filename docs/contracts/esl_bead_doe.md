@@ -1,6 +1,6 @@
 # 계약: ESL 기반 Ch/R 비드 형상 DOE (BEAD_DOE, v0.9.0)
 
-- 상태: **초안** (2026-10-29, 사용자 확정 사항 반영, 미결 Q1~Q3 §19). 구현 코드 없음.
+- 상태: **확정** (2026-10-29, 사용자 확정 사항 + Q1~Q3 확정 §19). 미결 없음. 구현 코드 없음.
 - 버전: **v0.9.0** (main 2341f4e = v0.8.0 기준).
 - 근거 이슈: GitHub #37 "bead doe" — VoC "낙하해석 시간 때문에 Ch/R 비드 보완 소요 시간이 크고, 현재 강성해석은 낙하 하중 미반영이라 낙하 신뢰성과 갭". 대응 = ESL 기반 Ch/R 비드 형상 변화의 강성 개선 확인. 산출 = 낙하 하중을 고려해 강성이 좋아진 Ch/R 형상.
 - 관계: v0.7.0 `esl_opt_run.md`(OPT_RUN, OptiStruct 비드 토포그래피)와 **별개 기능**. 하중 적용(S1 직접·S2 셀 매핑)·크기 규칙·3-2-1 자동 선택·목표 기준 정의·작업 실행 구조·`_opt` 쓰기 규칙을 **그대로 재사용**하고, 형상 엔진은 physicsai-platform 의 `paicad` 를 외부 명령으로 쓴다. 충돌 시 이 문서가 BEAD_DOE 범위에서 우선.
@@ -67,7 +67,7 @@ paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 | BD-D-10 | **① 형상 경로** = paicad `shell run`(update→morph→check, 고정 노드 = 조립의 tie·RBE2 등) → `out_files/<rel>` 에서 대상 파트 노드 좌표만 읽어 x_d(ID·연결·PID 불변). **②** 같음(조립 = B 메시 사본). **③** = `shell update`(고정 없음) → `sample.brep` 를 gmsh 로 메시(§7). 베이스라인 ①② = 원 메시 그대로(모핑 없음), ③ = 공칭 STEP 을 같은 gmsh 설정으로 | 확정 2 |
 | BD-D-11 | **③ 고정 노드 없음**: `shell view grid --fixed-dir ""`(paicad 0.14.0 `_fixed("")` = 없음 — V-BD-16 실검), `shell update` 는 `--fixed-dir` 생략 | 확정 2 "모핑 고정 노드 불필요" |
 | BD-D-12 | **② B 메시**: 업로드한 rad/inc 를 `_doe/<id>/input/mesh/` 로 복사(sha256, include 는 업로드 폴더 안만 — v0.7.0 템플릿 규칙), paicad `--assem-dir` = 이 사본. B 에 tie·RBE2 가 있으면 고정, 없으면 고정 0(정보 `B_NO_FASTENERS`) | 입력 폴더 읽기만 + paicad 가 폴더 전체를 읽음 |
-| BD-D-13 | **① 조립 폴더** = 기준 ESL Case 입력 폴더를 **제자리**(읽기만) `--assem-dir` 로. 시작 전 폴더 아래 `*.rad`·`*.inc` 합계 > `bead_doe.same.max_assem_mb`(설정, 기본 4096) 이면 422 `ASSEM_TOO_LARGE`(안내: ② 로 Ch/R 주변만 올리기). **미결 Q1** | 확정 2(Case rad Ch/R = 기준), 대형 씬 비용(R-BD-1) |
+| BD-D-13 | **① 조립 폴더** = 기준 ESL Case 입력 폴더를 **제자리**(읽기만) `--assem-dir` 로. 시작 전 폴더 아래 `*.rad`·`*.inc` 합계 > `bead_doe.same.max_assem_mb`(설정, 기본 4096) 이면 422 `ASSEM_TOO_LARGE`(안내: ② 로 Ch/R 주변만 올리기). 상한은 설정 키(**Q1 A 확정**) | 확정 2(Case rad Ch/R = 기준), 대형 씬 비용(R-BD-1) |
 | BD-D-14 | **경계 매핑 경고**(②③, §8): A 체결점 = A Case 에 paicad `shell fixed-scan`(Ch/R 파트) 클러스터 중심 + A ESL 3-2-1 노드, A 하중 집중 = `view3d.clusters`(|F| 가중 k-means, 합력 비율 ≥ `load_share_min`). (ξ,η) 정규화로 B 평면 (a,b) mm 에 옮겨 B 체결 후보(B fixed-scan 클러스터 ∪ B 구멍 중심)까지 거리 비교. 차단 없음 | 확정 5 |
 | BD-D-15 | **병렬**: `DOE_RUN` 은 슬롯 1개를 쥐고 안 단위 하위 프로세스를 최대 `run.parallel`(2)개 동시 실행. 시작 시 `estimate_direct_bytes × parallel ≤ available_memory × run.memory_margin`(0.7) 이 되도록 자동 축소(로그). paicad `--threads` = `paicad.threads` | 22만 요소 분해 수 GB, 서버 512 GB |
 | BD-D-16 | **재시도·이어하기**: 안 폴더 `run/designs/<id>/done.json{input_sha256, status}` — input_sha256 = (values, 기준 메시 sha, 하중 sha, 설정 해시, paicad 버전) 같으면 SKIPPED(재사용). 스킵 상태(충돌·고정)는 결정적이라 재시도 안 함, `FAILED_*` 만 다시 | 수 시간 반복 방지(v0.7.0 OR-D-19 와 같은 취지) |
@@ -95,7 +95,7 @@ paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 3. 이후 ①과 같음.
 
 ### 3.3 ③ 다른 모델 STEP 만
-1. 시나리오 ③ → B STEP, 인치(선택), 쉘 물성(두께 t·E·ν — 기본값 §7.3, **미결 Q2**), 평균 요소 크기(기본 = A 메시 요소 크기 중앙값, 칸 1개) → [입력 준비].
+1. 시나리오 ③ → B STEP, 인치(선택), 쉘 물성(두께 t·E·ν — 기본값 §7.3, **Q2 A 확정**), 평균 요소 크기(기본 = A 메시 요소 크기 중앙값, 칸 1개) → [입력 준비].
 2. 준비에서 베이스라인 gmsh 메시(품질 요약 표시) + 비드 표 + 경계 평면도.
 3. 이후 같음(안마다 메싱 시간 포함 — 진행률에 표시).
 
@@ -207,7 +207,7 @@ POST /doe/studies/{id}/run → DOE_RUN
 ### 7.2 메시 잡음 상쇄
 - 베이스라인 = 공칭 STEP 을 **같은 h·같은 옵션**으로 메시 → 비교 기준. 결과 표·보고서에 "③ 은 안마다 새 메시 — 동일 형상 반복 메시 차이(잡음 바닥)"를 V-BD-6 측정값으로 표시(`noise_floor`: 공칭 STEP 을 BREP 왕복(`shell update` 공칭값) 후 다시 메시한 score 차). |개선율| < noise_floor 인 안은 순위표에 "잡음 이내" 표시.
 
-### 7.3 ③ 쉘 물성 기본값 (미결 Q2)
+### 7.3 ③ 쉘 물성 기본값 (Q2 A 확정)
 - 기본 = A(선택 ESL 기준 항목) Ch/R 의 면적 가중 두께 중앙값·주 PID 의 E·ν(`entry.json` raw thickness·E·nu), 화면 숫자 3칸(t mm·E MPa·ν)으로 수정.
 
 ## 8. 셀 매핑·지지 재사용, 경계 매핑 경고 (BD-8·9)
@@ -466,41 +466,34 @@ upload:
 
 - 순서: D1(matrix·rank·boundary·mesh_gmsh 먼저) → (D2 ∥ D3, D3 은 D2 job_types·tables·config 선행) → D4(mock 병행) → D5 → 통합 E2E → SM1 레인 → 실기(③ → ② → ①).
 - 경계: 백엔드는 코어 `esl.doe.matrix`·`paicad_io`(준비 결과 읽기)·`esl.opt.size`·`identity`·`mesh_check` 만 import(수 초 이내). gmsh·쉘 솔버·대형 rad·paicad 실행은 워커에서만. paicad 소스는 import 하지 않는다(외부 명령으로만).
-- physicsai 측 요청(수정은 그쪽 계약 절차): `shell view grid --fixed-dir` 선택 인자화(지금은 빈 문자열 의존 — BD-D-11), `shell run` 의 노드 좌표 npz 출력(대형 rad 사본 회피 — R-BD-2). v0.9.0 은 둘 다 없이 동작.
+- physicsai 쪽 개선 후보 2건(`shell view grid --fixed-dir` 선택 인자화 — BD-D-11, `shell run` 노드 좌표 npz 출력 — R-BD-2)은 **사용자 판단 사항**이며, v0.9.0 은 요청 없이 동작한다.
 
 ## 18. 후속 (v0.9.0 범위 밖)
 - **탄소성 정적**(OptiStruct NLSTAT + MATS1, Radioss 재료 `/MAT/LAW36` → MATS1 변환): API `solver` 값 추가로 연다. **근거 기록**: ESL 은 F_eq = K_L·u_drop(선형 강성 × 낙하 변위)으로 정의되므로, 이를 탄소성 정적에 그대로 넣으면 낙하 응답(변위·소성)을 재현하지 못하는 왜곡이 생긴다 — 같은 하중에서 소성 연화로 변위가 과대해짐. 따라서 탄소성은 **상대 비교·잔류 변형 확인 용도**로만 쓰고, 선형 순위 상위 k 개만 재평가하는 **2단계**(1단계 선형 DOE → 2단계 상위 k 탄소성)로 설계한다.
 - 비드 개수·종류 변경(비드 추가·삭제, 위상 변경 — paicad 위상 보존 모핑 밖), 리브·두께 파라미터.
 - 대리모델·순차 탐색(DOE → 다음 안 제안), 다목적(무게·제조성).
 - 최적 안의 검증 낙하 자동 실행·라이브러리 등록, 연구 간 비교.
-- ① 대형 씬 축소 조립(Ch/R + 체결 상대만 자동 추출) — Q1 결과에 따라.
+- ① 대형 씬 축소 조립(Ch/R + 체결 상대만 자동 추출) — v0.9.0 은 Q1 A(상한 초과 시 거부·② 안내).
 
-## 19. 미결 질문 (결과를 바꾸는 것만)
+## 19. 확정 사항 (2026-10-29, 사용자)
 
-**Q1. ① 같은 모델의 조립 폴더(대형 낙하 씬) 처리** — paicad 는 `--assem-dir` 아래 `*.rad`·`*.inc` 를 전부 읽고, 안마다 노드가 바뀐 파일을 통째로 사본으로 씁니다(Ch/R 노드가 수 GB 메인 rad 안에 있으면 안마다 수 GB 쓰기).
-- A) Case 입력 폴더를 제자리로 그대로 사용 + 합계 상한(`same.max_assem_mb` 4096) 초과 시 거부·② 안내 **(권장: 지금 계약안 — 구현이 단순하고 결과가 원 모델과 정확히 같음. 실기 V-BD-R1 에서 시간·디스크 측정 후 상한 조정)**
-- B) ① 에서도 사용자가 Ch/R + 체결 상대 부품만 담은 축소 rad/inc 를 따로 올림(② 와 같은 입력, 하중은 직접 적용) — 빠르지만 사용자 준비 작업이 생김
-- C) 플랫폼이 Case starter 에서 Ch/R 과 체결 카드만 자동 추출해 축소 조립 생성 — 가장 편하지만 tie·RBE2·GRNOD 참조 추적 구현이 크고 누락 위험
-
-**Q2. ③ STEP 만일 때 쉘 물성(두께·E·ν)** — 컴플라이언스 절댓값과 ESL 셀 매핑 결과(F 는 그대로, u 는 t³ 에 반비례)에 직접 영향.
-- A) A(ESL 원 모델) Ch/R 의 면적 가중 두께 중앙값·주 PID E·ν 를 기본값으로 채우고 화면 3칸에서 수정 **(권장: 같은 계열 제품 비교라 대부분 같은 판재, 입력 1회로 끝)**
-- B) 사용자 필수 입력(기본값 없음)
-- C) STEP 이름·속성에서 읽기(표준 없음 — 비권장)
-
-**Q3. 미리보기 필수 여부** — 계약안은 같은 DOE 행렬의 썸네일 미리보기가 끝나야 [DOE 실행]이 켜집니다(실패 안을 미리 거름, 22만 요소에서도 셀당 수 초 + 안 수).
-- A) 필수 **(권장: 확정 4 "실행 전 썸네일 미리보기"와 일치, 실행 중 스킵이 줄어 시간 예측이 정확)**
-- B) 선택(미리보기 없이 실행 가능 — 실행 중 update 실패 안을 그때 스킵)
+| 항목 | 확정 | 반영 |
+|---|---|---|
+| Q1 ① 조립 폴더(대형 낙하 씬) | **A**: 기준 ESL Case 입력 폴더를 제자리로 그대로 사용(읽기만). rad/inc 합계 > `bead_doe.same.max_assem_mb`(기본 4096, 설정 키)면 422 `ASSEM_TOO_LARGE` + ② 로 안내 | BD-D-13, §10.3, §14, R-BD-1 |
+| Q2 ③ 쉘 물성 | **A**: A 모델 Ch/R 면적 가중 두께 중앙값·주 PID E·ν 를 기본값으로 채우고 화면 3칸(t·E·ν)에서 수정 | §3.3, §7.3, `DoeCheckOut.props_default` |
+| Q3 미리보기 | **A**: 같은 `matrix_sha256` 미리보기가 성공해야 [DOE 실행] 활성(서버 409 `PREVIEW_STALE`) | BD-D-9, §10.1, R-BD-5 |
+| physicsai 쪽 개선 후보 2건 | 노드 좌표 npz 출력·`--fixed-dir` 선택 인자 = **사용자 판단 사항**, v0.9.0 은 요청 없이 동작 | §17, R-BD-2·7 |
 
 ## 20. 리스크
 
 | ID | 리스크 | 대응 |
 |---|---|---|
-| R-BD-1 | ① 대형 낙하 씬에서 paicad fixed-scan·tag·run 시간·메모리(paicad 실측은 SM1·쿠션 수준) | 상한 설정(BD-D-13)·Q1, V-BD-R1 실측, 타임아웃 설정 |
-| R-BD-2 | 안마다 바뀐 rad 파일 사본(수 GB) 디스크·I/O | 상위 k 외 삭제(BD-D-17), physicsai 에 노드 npz 출력 요청, max_designs |
+| R-BD-1 | ① 대형 낙하 씬에서 paicad fixed-scan·tag·run 시간·메모리(paicad 실측은 SM1·쿠션 수준) | 상한 설정 키(BD-D-13, Q1 A)·② 안내, V-BD-R1 실측 후 상한 조정, 타임아웃 설정 |
+| R-BD-2 | 안마다 바뀐 rad 파일 사본(수 GB) 디스크·I/O | 상위 k 외 삭제(BD-D-17), max_designs (physicsai 노드 npz 출력은 사용자 판단 사항 — v0.9.0 은 요청 없이 동작) |
 | R-BD-3 | ESL 은 원 형상 K_L 로 정의 — 비드 변경 후 같은 하중을 쓰면 하중 재분배 미반영(선형 상대 비교 한계) | 보고서 한계 절, 개선 확인은 검증 낙하 1회 권장 안내 |
 | R-BD-4 | ③ 안별 재메시 잡음이 작은 개선을 가림 | 베이스라인 같은 메시 규칙·잡음 바닥 측정·"잡음 이내" 표시(§7.2) |
-| R-BD-5 | feasible 은 추정 — 범위 안에서도 morph/check 실패 | 미리보기 필수(Q3), 안별 스킵·실패 기록 |
+| R-BD-5 | feasible 은 추정 — 범위 안에서도 morph/check 실패 | 미리보기 필수(Q3 A), 안별 스킵·실패 기록 |
 | R-BD-6 | paicad 버전 변화로 보고 JSON 키 변경 | 버전 고정 lock·min_version, `paicad_io` 키 검사·스키마 시험(V-BD-3·16) |
-| R-BD-7 | `--fixed-dir ""` 의존(③) | SM1 실검(V-BD-16), physicsai 에 선택 인자화 요청, 실패 시 대체 = 베이스라인 rad 로 fixed-scan(빈 고정) |
+| R-BD-7 | `--fixed-dir ""` 의존(③) | SM1 실검(V-BD-16), 실패 시 대체 = 베이스라인 rad 로 fixed-scan(빈 고정) (physicsai 선택 인자화는 사용자 판단 사항 — v0.9.0 은 요청 없이 동작) |
 | R-BD-8 | 오프라인 묶음에 OCP·gmsh(수백 MB) 추가, gmsh 라이선스(GPL + 예외) | 사내 설치 용도·THIRD_PARTY 표기, 묶음 크기 기록 |
 | R-BD-9 | 모핑 후 ESL 모멘트 평형 약간 깨짐 → 3-2-1 반력 | 반력 잔차 경고(BD-D-5) |
