@@ -431,6 +431,9 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
             warnings.append(f"model.csv: 프레임 0 변위(최대 {d0max:.3g})를 뺀 좌표보다 node.coords 원값이 rad 와 더 "
                             f"잘 맞음 → 원값(cx,cy,cz)으로 비교")
             xm, res, coord_source = xr, res_raw, "cx (node.coords 원값)"
+    _st = getattr(model, "state", None)
+    if isinstance(_st, dict) and (_st.get("coord") or {}).get("n_nodes_state"):
+        coord_source = f"{coord_source} ↔ rad:state"      # 누적 씬: 비교 기준 = 상태 파일(.str) 변형 좌표
     dev = np.linalg.norm(xm - x0, axis=1)
     coord_dev = None
     if N and (float(dev.max()) > tol or float(res.max()) > tol):
@@ -527,8 +530,26 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
     if not all(np.array_equal(hv[k][-1], fin6[k][hp]) for k in hv):
         warnings.append("history.csv 마지막 프레임 값이 final.csv 와 다름")
 
+    # ---------------- frame0.csv (누적 씬 F0 패스, 선택 — esl_cumulative_input.md §6.5): 대상 파트 전 요소 frame 0
+    f0 = None
+    p0 = os.path.join(results_dir, "frame0.csv")
+    if os.path.isfile(p0):
+        fh, cols = _open_csv(p0, ["elem_id", "vm_hv", "epsp"])
+        f0 = {"vm_hv": np.full(E, np.nan), "epsp": np.full(E, np.nan)}
+        with fh:
+            for a in _chunks(fh, cols, p0):
+                p = _lookup(elem_id, _id(a[:, 0]))
+                k = p >= 0
+                f0["vm_hv"][p[k]] = a[k, 1]
+                f0["epsp"][p[k]] = a[k, 2]
+        nmiss = int(np.sum(~np.isfinite(f0["epsp"])))
+        if nmiss:
+            warnings.append(f"frame0.csv 에 대상 파트 요소 {nmiss}개가 없음(누적 판정에서 제외)")
+
     # ---------------- 쓰기
     os.makedirs(out_dir, exist_ok=True)
+    if f0 is not None:
+        savez_stream(os.path.join(out_dir, "frame0.npz"), elem_id=elem_id, **f0)
     savez_stream(os.path.join(out_dir, "final.npz"), elem_id=elem_id, **fin6)
     savez_stream(os.path.join(out_dir, "history.npz"), time=hist_t, frame_index=hist_fi.astype(np.int32),
                  elem_id=hist_id, **hv)
@@ -553,12 +574,16 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
         "frame0_time": t0, "model_coords": done.get("model_coords", "legacy"),
         "warnings": warnings, "coord_deviation": coord_dev, "conn_check": conn_check,
     }
+    if isinstance(done.get("cumulative"), dict):          # 누적 씬 TCL 출력만(비누적은 키 없음)
+        meta["tcl_cumulative"] = {**done["cumulative"],
+                                  "candidate_frames_prev": done.get("candidate_frames_prev"),
+                                  "candidate_elems_prev": done.get("candidate_elems_prev")}
     with open(os.path.join(out_dir, "frames.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
     return {"n_frames": int(hist_fi.size), "n_elems": int(E), "n_nodes": int(N), "n_hot": int(hist_id.size),
             "frames_D": D.tolist(), "prev_frames": P.tolist(), "prev_available": bool(prev_ok.all()),
             "candidate_frames": cand, "warnings": warnings, "coord_deviation": coord_dev,
-            "conn_check": conn_check}
+            "conn_check": conn_check, "frame0": f0 is not None}
 
 
 def _scan_frames(path: str) -> np.ndarray:

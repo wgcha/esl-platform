@@ -214,6 +214,20 @@ SCHEMA: dict[str, Any] = {
         "hist_bins": _int(2, 200),
         "section_band": _num(0.0, 0.5, lo_open=True),
     },
+    "cumulative": {                             # 누적 낙하 씬(계약 esl_cumulative_input.md §11)
+        "enabled": _enum("auto", "off"),
+        "thickness_source": _enum("state", "prop"),
+        "epsp_agg": _enum("auto", "mid_mean", "mid_max", "max", "mean"),
+        "h3d_epsp_mode": _enum("auto", "cumulative", "incremental"),
+        "h3d_eq_mode": _enum("auto", "cumulative", "incremental"),
+        "min_increment": _num(0.0),
+        "detect": {
+            "prev_floor": _num(0.0),
+            "min_elems": _int(1),
+            "rel_tol": _num(0.0, 1.0, lo_open=True, hi_open=True),
+            "mono_frac": _num(0.0, 1.0),
+        },
+    },
     "report": {                                 # Case HTML 보고서(§5·§7.3)
         "max_points": _int(100, 1_000_000),
         "top_forces": _int(1, 1000),
@@ -245,6 +259,26 @@ SCHEMA: dict[str, Any] = {
 COORD_CHECK_DEFAULTS = {"max_rel": 0.005}
 # 0.5.7 신규 validation 키(계약 esl_disp_primary.md §5): 이전 설정 파일에 없으면 이 값으로 채운다. 기준 숫자의 단일 출처.
 VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "disp_top_n": 20, "disp_hist_bins": 20}
+# 0.8.0 누적 씬 키(계약 esl_cumulative_input.md §11): 이전 설정 파일에 없으면 이 값으로 채운다(기본값 단일 출처).
+CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
+                       "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
+                       "detect": {"prev_floor": 1.0e-6, "min_elems": 10, "rel_tol": 0.05, "mono_frac": 0.99}}
+OPTIONAL_SECTIONS = frozenset({"cumulative"})
+
+
+def cumulative_settings(cfg: dict) -> dict:
+    """cumulative 설정(없거나 일부만 있으면 CUMULATIVE_DEFAULTS 로 채운 사본)."""
+    out = copy.deepcopy(CUMULATIVE_DEFAULTS)
+    cu = cfg.get("cumulative") if isinstance(cfg, dict) else None
+    if isinstance(cu, dict):
+        for k, v in cu.items():
+            if k == "detect" and isinstance(v, dict):
+                out["detect"].update(v)
+            else:
+                out[k] = v
+    return out
+
+
 # 0.5.3~0.5.4 의 coord_check 키(0.5.5 에서 폐지): 업데이트 호환을 위해 있어도 경고 없이 무시
 COORD_CHECK_LEGACY_KEYS = ("warn_max_frac", "warn_max_rel")
 
@@ -258,6 +292,8 @@ def _walk(schema: dict, node: Any, prefix: str) -> None:
     for k, rule in schema.items():
         key = f"{prefix}{k}"
         if k not in node:
+            if not prefix and k in OPTIONAL_SECTIONS:
+                continue            # 없으면 기본값(cumulative_settings) — 설정 스냅샷·해시를 바꾸지 않음
             raise _bad(key, "필수 키 누락")
         if isinstance(rule, dict):
             _walk(rule, node[k], key + ".")
@@ -280,6 +316,16 @@ def validate_settings(cfg: Any) -> dict:
         if isinstance(vc, dict):
             for k, v in VALIDATION_DEFAULTS.items():
                 vc.setdefault(k, v)
+        cu = cfg.get("cumulative")
+        if isinstance(cu, dict) and cu.get("enabled") is False:
+            cu["enabled"] = "off"           # YAML 1.1: off → false
+        if isinstance(cu, dict):
+            for k, v in CUMULATIVE_DEFAULTS.items():
+                if k == "detect" and isinstance(cu.get("detect"), dict):
+                    for dk, dv in v.items():
+                        cu["detect"].setdefault(dk, dv)
+                else:
+                    cu.setdefault(k, copy.deepcopy(v))
     _walk(SCHEMA, cfg, "")
     sup = cfg["support"]
     if sup["candidates"] == "node_ids" and len(set(sup["node_ids"])) < 3:

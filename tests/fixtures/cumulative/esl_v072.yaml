@@ -1,0 +1,76 @@
+# ESL 계산 코어 설정 예시 (계약 docs/contracts/esl_core.md §5·§7, 원형 esl.md §2).
+# 실제 사용: 이 파일을 config/esl.yaml 로 복사(git 제외)하거나 env ESL_CONFIG 로 경로 지정.
+# 모든 키 필수(코드에 기본값 없음). 알 수 없는 키는 CONFIG_INVALID.
+schema_version: 1
+
+case:
+  part_title: "chassis rear"         # 대상 /PART title
+  part_title_match: exact_ci         # exact | exact_ci (공백·_·- 정규화 후 대소문자 무시)
+  rad_include_max_depth: 8
+  material_override: {}              # {mat_id: {E: , nu: }} — 파서 미지원 law 보완
+  include_path_map: {}               # {Windows 접두: 로컬 경로} 예 {"D:/proj/cae": "/data/cae"} — #include 절대경로 치환
+
+extract:
+  frame_stride: 1                    # history 프레임 간격(1=전부, 후보 프레임 D 는 항상 포함)
+  layers: [mid]                      # 솔버 ε_eq 층: mid(막 z=0) | bottom | top (여럿이면 최대). h3d 는 Mid 만 있음
+  shear_convention: auto             # auto | tensor | engineering  h3d exy 규약(auto = HyperView vonMises 와 비교)
+  hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고, 상한 없음·1000 초과 경고)
+  disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
+
+coord_check:                         # rad ↔ h3d 같은 모델 확인 = 노드 ID + 요소 연결(elems.csv). 좌표는 개략 확인만(계산 좌표는 항상 rad)
+  max_rel: 0.005                     # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과(편차는 정보로 기록), 넘으면 ID_MISMATCH
+
+tstar:
+  metric: max_strain                 # max_strain (Max_Strain 텐서 ε_eq) | plastic_strain. 두 지표 모두 tstar.json 에 기록
+  reach_rtol: 1.0e-6                 # first-reach: v[f] ≥ v_final·(1−rtol) 인 첫 프레임
+  top_n_times: 5                     # 후보 시점 수(지표별)
+  top_k_hotspots: 10                 # t* 에서 상승 중인 H 요소 중 상위
+  hotspot_min_dist: 20.0             # 모델 길이 단위. hotspot 간 최소 거리
+  time_window: [null, null]          # [t_min, t_max] (null = 전체)
+  exclude_elem_ids: []               # 특이점 제외용 요소 ID
+
+support:
+  candidates: pca4                   # pca4 (PCA 4꼭지점) | node_ids (아래 목록)
+  node_ids: []                       # candidates=node_ids 일 때 3개 이상. CLI --support-nodes 가 우선
+
+solver:
+  backend: auto                      # auto(CHOLMOD → PARDISO → SuperLU, 직접법 메모리 부족 시 반복법) | cholmod | pardiso | superlu | iterative
+  iter_rtol: 1.0e-10                 # 반복법(CG) 상대잔차. S5 전체계 solve 는 min(이 값, 1e-12)
+  iter_maxiter: null                 # 반복법 최대 반복(null = 자동)
+  drill_factor: 1.0e-4               # 드릴링 강성 = drill_factor·E·t·A
+  equilibrium_warn_rel: 1.0e-6       # S4 |ΣF|/Σ|F|, 합모멘트/(Σ|F|·L) 경고 임계
+
+validation:                          # 임시 값. 사내 확인 후 교체 (esl.md Q1). 판정(PASS/FAIL) = 변위 4지표만 (계약 esl_disp_primary.md)
+  disp_rms_rel_max: 0.01             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후)
+  disp_max_rel_max: 0.05             # [판정 DISP_MAX] max|u_val−u_rel|/max|u_rel| (전 노드)
+  reaction_rel_max: 1.0e-6           # [판정 REACTION] Σ|R_321|/Σ|F_eq| (자기평형이면 ≈0)
+  disp_noise_rel_max: 1.0e-3         # [판정 DISP_NOISE] 변위 저장 정밀도 잡음 δ/max|u_rel| (추가 해석 없음)
+  disp_top_n: 20                     # 변위 상위 노드 표 행 수
+  disp_hist_bins: 20                 # 변위 오차 log10 히스토그램 bin 수
+  hotspot_strain_rel_err_max: 0.10   # [참고 기준, 판정 아님] |ε_val−ε_rad|/ε_rad (hotspot 1위)
+  hotspot_eval_count: 3              # 오차 표에 보일 hotspot 수
+  full_solve: auto                   # S5 전체 재해석 solve(F_eq, 3-2-1): auto(직접법 메모리 추정 ≤ 가용 메모리 80% 면 수행) | always | never
+                                     #   생략 시 판정 불가(UNDETERMINED) — 변위 비교·반력이 없어 변형률로 대신 판정하지 않음
+  noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
+  noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
+  noise_strain_rel_max: 0.05         # [참고 기준, 판정 아님] hotspot |Δε_eq|/ε_eq (잡음)
+
+compare:                             # ESL 재현 정확도 전 요소 비교 (계약 esl_p2_library.md §7.2, 판정 기준은 임시값)
+  min_rel: 0.1                       # valid = t* 에서 상승 중 ∧ ε_rad ≥ min_rel·max ε_rad(상승 요소)
+  max_err_pct_max: 10.0              # [참고 기준, 판정 아님] 최대변형률 요소 |ε_esl−ε_rad|/ε_rad (%) 상한. 요소별 "기준 초과" 판정에도 사용
+  p90_err_max: 20.0                  # [참고 기준, 판정 아님] valid 요소 |오차| 90 분위 (%) 상한
+  top_n: 20                          # 상위 N 요소 표
+  hist_bins: 20                      # 오차 히스토그램 bin 수
+  section_band: 0.02                 # 단면선(ξ=0.5, η=0.5) 요소 띠 반폭(정규화 좌표, 요소 크기보다 작으면 요소 크기)
+
+report:                              # Case HTML 보고서 <case>/07_report/report.html (자체 완결, 외부 의존 없음)
+  max_points: 20000                  # 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플)
+  top_forces: 20                     # F_eq 상위 표 행 수
+
+export:
+  radioss: {id_offset: auto, ramp_time: 1.0e-3, func_mode: ramp}   # id_offset: auto(기본; 9000000 부터, rad ID 와 겹치면 10의 거듭제곱으로 올림) | 정수. func_mode: ramp | constant
+  force_zero_tol_rel: 1.0e-9         # |F 성분|/max|F| 이하 성분은 /CLOAD·FORCE 생략
+  num_format: "{:.9E}"               # .fem·inc 실수 서식 (20자 이하)
+  csv: {delimiter: ",", float_format: "{:.9E}"}
+
+units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표시용. 변환 없음

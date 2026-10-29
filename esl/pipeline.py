@@ -16,7 +16,8 @@
 출력 폴더::
 
   01_extract/  model.npz, model_meta.json, final.npz, history.npz, strain_frames.npz, disp.npz, frames.json
-               (§7.3; frames.json 에 전단 규약 판정 shear 추가)
+               (§7.3; frames.json 에 전단 규약 판정 shear 추가). 누적 씬(상태 파일 include)이면 + state.npz,
+               state_summary.json, frame0.npz(F0 패스) — 계약 esl_cumulative_input.md §7
   02_tstar/    tstar.json, history.csv, hotspots.csv, candidates.csv
   03_bc/       support.json
   04_esl/      u_rel.npz, u_rel.csv, f_eq.npz, f_eq.csv, esl_summary.json
@@ -45,6 +46,7 @@ import numpy as np
 
 import esl
 from esl import config as _config
+from esl import cumulative as _cum
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
@@ -420,6 +422,119 @@ def _metric_series(hz: dict, factor: float) -> dict:
             "plastic_strain": np.asarray(hz["epsp"], dtype=np.float64)}
 
 
+# ====================================================================== 누적 씬 (esl_cumulative_input.md §6·§7)
+STATE_SCHEMA = "esl/state/1"
+CUM_EPSP_FLOOR = 1e-6          # 소성 바닥: 비누적 안전망(h3d frame 0 소성 최대 > 이 값 → 경고, §6.2)·증분 소성 요소 수(§6.6)
+_STATE_ARRAYS = ("node_from_state", "elem_from_state", "thk_state", "t0", "epsp")
+
+
+def _warn_codes(ws) -> list[str]:
+    out = []
+    for w in ws:
+        c = str(w).split(":", 1)[0].strip()
+        if c.isupper() and c not in out:
+            out.append(c)
+    return out
+
+
+def _extract_cumulative(ctx: Context, d: str, model, info: dict, factor: float) -> dict:
+    """extract 끝(pack 후) 누적 진단 1회 → state.npz·state_summary.json (§6.1·§6.2·§7). 반환 요약."""
+    st = model.state
+    cu = _config.cumulative_settings(ctx.cfg)
+    det = cu["detect"]
+    eid = np.asarray(model.elem_id, np.int64)
+    E = eid.size
+    ep = st.get("epsp")
+    aggs = {a: (np.asarray(ep.agg[a], np.float64) if ep is not None else np.zeros(E)) for a in _cum.AGGS}
+    fz = _load_npz(os.path.join(d, "final.npz"))
+    fin_ep = np.asarray(fz["epsp"], np.float64)
+    fin_vm = np.asarray(fz["vm_hv"], np.float64)
+    h0_ep = np.full(E, np.nan)
+    h0_vm = np.full(E, np.nan)
+    f0src = None
+    p0 = os.path.join(d, "frame0.npz")
+    if os.path.isfile(p0):
+        z0 = _load_npz(p0)
+        h0_ep, h0_vm = np.asarray(z0["epsp"], np.float64), np.asarray(z0["vm_hv"], np.float64)
+        f0src = "frame0.csv"
+    else:
+        hz = _load_npz(os.path.join(d, "history.npz"))
+        if hz["frame_index"].size and int(hz["frame_index"][0]) == 0:
+            hp = _lookup_pos(eid, hz["elem_id"])
+            ok = hp >= 0
+            h0_ep[hp[ok]] = np.asarray(hz["epsp"][0], np.float64)[ok]
+            h0_vm[hp[ok]] = np.asarray(hz["vm_hv"][0], np.float64)[ok]
+            f0src = "history"
+    agg, dg_ep = _cum.choose(aggs, h0_ep, fin_ep, det, cu["epsp_agg"], cu["h3d_epsp_mode"])
+    prev = aggs[agg]
+    dg_eq = _cum.diagnose(prev, h0_vm, fin_vm, det, cu["h3d_eq_mode"])
+    ws = list(st.get("warnings") or [])
+    for name, dg in (("소성(Plastic Strain)", dg_ep), ("총변형률(Max_Strain ε_eq)", dg_eq)):
+        if dg["ambiguous"] and not dg["forced"]:
+            ws.append(f"CUMULATIVE_AMBIGUOUS: h3d {name} 누적 여부 판정 불확실(r0={dg['r0']:.3g}, 일치 비율 "
+                      f"{dg['mono']:.3g}, |S|={dg['n_S']}) — 증분으로 보고 이전 값을 더함(보수적)")
+    if dg_ep["detected"] == "incremental" or dg_eq["detected"] == "cumulative":
+        ws.append(f"CUMULATIVE_INFO: h3d 판정이 예상(소성 = 누적, 총변형률 = 증분)과 다름 — 소성 "
+                  f"{dg_ep['detected']}, 총변형률 {dg_eq['detected']}")
+    if f0src is None and ep is not None:
+        ws.append("CUMULATIVE_INFO: frame 0 값이 없어(F0 패스·history frame 0 없음) 누적 판정 생략 — trivial/설정값")
+    if info.get("frame0") is False and f0src == "history":
+        ws.append("CUMULATIVE_INFO: frame0.csv 없음(PC 추출 등) — history H 요소의 frame 0 으로 판정")
+    npz = {"elem_id": eid, "has": ep.has if ep is not None else np.zeros(E, bool),
+           "npt": ep.npt if ep is not None else np.zeros(E, np.int16),
+           "npg": ep.npg if ep is not None else np.zeros(E, np.int16),
+           "thk_sta": ep.thk if ep is not None else np.full(E, np.nan),
+           **{f"prev_{a}": aggs[a] for a in _cum.AGGS},
+           "thk_state": np.asarray(st["thk_state"], np.float64), "t0": np.asarray(st["t0"], np.float64),
+           "node_from_state": np.asarray(st["node_from_state"], bool),
+           "elem_from_state": np.asarray(st["elem_from_state"], bool)}
+    np.savez_compressed(ctx.f(d, "state.npz"), **npz)
+    pos = prev[prev > 0]
+    epsp_init = {"n_has": int(npz["has"].sum()), "n_missing": int(E - npz["has"].sum()),
+                 "max": float(prev.max()) if E else 0.0, "p99": float(np.percentile(prev, 99)) if E else 0.0,
+                 "prev_max": float(aggs["max"].max()) if E else 0.0, "n_pos": int(pos.size),
+                 "inishe_subs": st.get("inishe_subs") or []}
+    files = []
+    for f in st["files"]:
+        rec = dict(f)
+        rec["sha256"] = sha256_file(f["path"]) if os.path.isfile(f["path"]) else None
+        files.append(rec)
+    summ = {"schema": STATE_SCHEMA, "files": files, "begin": st["begin"], "coord": {**st["coord"],
+            "rad_coord_source": "rad:state"}, "elems": st["elems"], "thickness": st["thickness"],
+            "thk_sta_mismatch": st.get("thk_sta_mismatch"), "epsp_init": epsp_init,
+            "diagnosis": {"epsp": dg_ep, "eq": dg_eq}, "agg": agg, "frame0_source": f0src,
+            "min_increment": float(cu["min_increment"]), "parse": st.get("parse"),
+            "warnings": ws, "warning_codes": _warn_codes(ws), "created_at": _utcnow()}
+    _write_json(ctx.f(d, "state_summary.json"), summ)
+    ctx.warnings += [w for w in ws if w not in (st.get("warnings") or [])]
+    short = {"enabled": True, "files": [{"name": os.path.basename(f["path"]), "kinds": f["kinds"],
+                                         "runname": f.get("runname"), "size": f.get("size")} for f in files],
+             "epsp_mode": dg_ep["mode"], "eq_mode": dg_eq["mode"], "agg": agg, "n_prev_elems": int(pos.size),
+             "prev_max": epsp_init["max"], "coord_source": st["coord"]["source"],
+             "n_nodes_state": st["coord"]["n_nodes_state"], "thickness": st["thickness"],
+             "warning_codes": summ["warning_codes"]}
+    return {"short": short, "frames": {k: short[k] for k in ("enabled", "epsp_mode", "eq_mode", "agg",
+                                                               "n_prev_elems")}, "frame0_source": f0src,
+            "files": files}
+
+
+def _cum_state(ctx: Context, model) -> dict | None:
+    """tstar·validate 용 누적 정보(01_extract 파일만 읽음 — 단계 재개 규칙). 비누적이면 None."""
+    sp = ctx.p(D_EXTRACT, "state_summary.json")
+    zp = ctx.p(D_EXTRACT, "state.npz")
+    if not (os.path.isfile(sp) and os.path.isfile(zp)):
+        return None
+    ss = _read_json(sp)
+    z = _load_npz(zp)
+    if not np.array_equal(z["elem_id"], model.elem_id):
+        raise EslError("ID_MISMATCH", "state.npz elem_id 가 model.npz 와 다름 — extract 다시 실행")
+    prev = _cum.prev_values(z, ss["agg"])
+    return {"summary": ss, "prev": prev, "prev_eq": prev, "agg": ss["agg"],
+            "modes": {"plastic_strain": ss["diagnosis"]["epsp"]["mode"],
+                      "max_strain": ss["diagnosis"]["eq"]["mode"]},
+            "min_increment": float(ss.get("min_increment", _config.cumulative_settings(ctx.cfg)["min_increment"]))}
+
+
 # ====================================================================== S1 extract
 def stage_extract(ctx: Context) -> dict:
     c = ctx.cfg["case"]
@@ -428,14 +543,17 @@ def stage_extract(ctx: Context) -> dict:
         raise EslError("INPUT_INVALID", f"rad 파일이 없음: {ctx.rad}")
     if not os.path.isdir(ctx.results):
         raise EslError("INPUT_INVALID", f"결과 CSV 폴더가 없음: {ctx.results}")
+    cu = _config.cumulative_settings(ctx.cfg)
     model = parse_rad(ctx.rad, c["part_title"], match=c["part_title_match"],
                       max_include_depth=c["rad_include_max_depth"],
                       material_override=c["material_override"] or None,
-                      include_path_map=c["include_path_map"] or None)
+                      include_path_map=c["include_path_map"] or None,
+                      thickness_source=cu["thickness_source"], read_initial=cu["enabled"] != "off")
+    cum_on = model.state is not None and cu["enabled"] != "off"
     ctx.protect(list(model.includes))          # include 폴더도 보호 → 겹치면 쓰기 전에 INPUT_INVALID
     d = ctx.fresh_dir(D_EXTRACT)
     for fn in ("model.npz", "model_meta.json", "final.npz", "history.npz", "strain_frames.npz", "disp.npz",
-               "frames.json"):
+               "frames.json") + (("state.npz", "state_summary.json", "frame0.npz") if cum_on else ()):
         ctx.f(d, fn)
     save_model(d, model)
     info = pack_results(ctx.results, model, d, frame_stride=ecfg["frame_stride"],
@@ -454,7 +572,26 @@ def stage_extract(ctx: Context) -> dict:
     fpath = ctx.f(d, "frames.json")
     meta = _read_json(fpath)
     meta["shear"] = sh
+    cs = None
+    if cum_on:
+        cs = _extract_cumulative(ctx, d, model, info, sh["factor"])
+        meta["cumulative"] = cs["frames"]
+        meta["frame0_source"] = cs["frame0_source"]
     _write_json(fpath, meta)
+    if cum_on:
+        mpath = ctx.f(d, "model_meta.json")
+        mmeta = _read_json(mpath)
+        mmeta.update(cumulative=True, state_summary="state_summary.json")
+        _write_json(mpath, mmeta)
+    elif model.state is not None:
+        ctx.warnings.append("cumulative.enabled=off: 상태 파일을 일반 include 로 취급(좌표·두께 규칙만, 변형률 보정 없음)")
+    else:
+        hz0 = _load_npz(os.path.join(d, "history.npz"))
+        if hz0["frame_index"].size and int(hz0["frame_index"][0]) == 0 and hz0["epsp"].size \
+                and float(np.max(hz0["epsp"][0])) > CUM_EPSP_FLOOR:
+            ctx.warnings.append(f"CUMULATIVE_STATE_NOT_INCLUDED: h3d 시작 시점(frame 0)에 소성 변형률이 있음(최대 "
+                                f"{float(np.max(hz0['epsp'][0])):.3g}) — 누적 씬이면 rad 에 이전 런 상태 파일"
+                                f"(.sta/.str) #include 필요")
     if ecfg["hot_k"] > HOT_K_WARN:
         ctx.warnings.append(f"extract.hot_k={ecfg['hot_k']} > {HOT_K_WARN}: history 이력이 n_frames×2·hot_k 행까지 커짐")
     if meta.get("hot_k") not in (None, ecfg["hot_k"]):
@@ -472,6 +609,8 @@ def stage_extract(ctx: Context) -> dict:
         p = os.path.join(ctx.results, name)
         if os.path.isfile(p):
             inputs["results_files"][name] = _fingerprint(p, True)
+    if cs is not None:
+        inputs["state_files"] = [{"path": f["path"], "sha256": f["sha256"], "kinds": f["kinds"]} for f in cs["files"]]
     ctx.record["inputs"] = inputs
     et = np.asarray(model.elem_type)
     s = {"part_id": model.part_id, "part_title": model.part_title, "units_label": model.units_label,
@@ -482,10 +621,17 @@ def stage_extract(ctx: Context) -> dict:
                    "median": sh["median"]},
          "mats": model.mats, "max_ids": model.max_ids, "coord_deviation": info.get("coord_deviation"),
          "conn_check": info.get("conn_check")}
+    if cs is not None:
+        s["cumulative"] = cs["short"]
     ctx.echo(f"[extract] 파트 {model.part_id} '{model.part_title}': 노드 {s['n_nodes']}, 요소 {s['n_elems']} "
              f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 이력 프레임 {s['n_frames']}, H {s['n_hot']}요소, "
              f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}"
              + (f" (vonMises 최대 불일치 {mm:.2e})" if mm is not None else ""))
+    if cs is not None:
+        k = cs["short"]
+        ctx.echo(f"[extract] 누적 씬: 상태 파일 {[f['name'] for f in k['files']]}, 좌표 {k['coord_source']}, "
+                 f"이전 소성 요소 {k['n_prev_elems']} (최대 {k['prev_max']:.4g}, 집계 {k['agg']}), h3d 소성 "
+                 f"{k['epsp_mode']}·총변형률 {k['eq_mode']}")
     return s
 
 
@@ -525,6 +671,7 @@ def stage_tstar(ctx: Context) -> dict:
     tcl_top_n = int(meta.get("top_n") or tcfg["top_n_times"])
     tcl_rtol = float(meta["reach_rtol"]) if meta.get("reach_rtol") is not None else rtol
     full = int(meta.get("frame_stride", 1)) == 1 and int(meta.get("n_frames_h3d", fidx.size)) == fidx.size
+    cst = _cum_state(ctx, model)
 
     out: dict[str, dict] = {}
     for m in METRICS:
@@ -540,8 +687,14 @@ def stage_tstar(ctx: Context) -> dict:
         if match is False:
             ctx.warnings.append(f"[{m}] TCL 후보 프레임 {tcl} ≠ Python 재계산 {py} (history.npz float32 반올림 등)")
         try:
-            r = tstar.scan_reach(hz["time"], series[m], C, tcfg["top_n_times"], tcfg["top_k_hotspots"],
-                                 tcfg["hotspot_min_dist"], rtol, time_window=(tw[0], tw[1]), exclude_mask=ex)
+            if cst is None:
+                r = tstar.scan_reach(hz["time"], series[m], C, tcfg["top_n_times"], tcfg["top_k_hotspots"],
+                                     tcfg["hotspot_min_dist"], rtol, time_window=(tw[0], tw[1]), exclude_mask=ex)
+            else:
+                cum_v, inc_v = _cum.series(series[m], cst["prev"][hp], cst["modes"][m])
+                r = tstar.scan_reach_cum(hz["time"], cum_v, inc_v, C, tcfg["top_n_times"], tcfg["top_k_hotspots"],
+                                         tcfg["hotspot_min_dist"], rtol, time_window=(tw[0], tw[1]),
+                                         exclude_mask=ex, min_increment=cst["min_increment"])
         except EslError as exc:
             if m == metric:
                 raise
@@ -550,12 +703,15 @@ def stage_tstar(ctx: Context) -> dict:
             continue
         cands = [{"rank": c["rank"], "frame_index": int(fidx[c["frame_pos"]]), "time": c["time"],
                   "elem_id": int(hid[c["elem_pos"]]), "value": c["value"], "eps_max": c["value"],
-                  "in_D": int(fidx[c["frame_pos"]]) in tD} for c in r["candidates"]]
+                  "in_D": int(fidx[c["frame_pos"]]) in tD,
+                  **({"value_inc": c["value_inc"], "value_prev": c["value_prev"]} if cst is not None else {})}
+                 for c in r["candidates"]]
         ts = dict(cands[0])
         adjusted = None
         if not ts["in_D"]:
             alt = next((c for c in cands if c["in_D"]), None)
-            msg = (f"[{m}] t* frame {ts['frame_index']} 이 후보 프레임 D {D} 에 없음(변위 없음)"
+            msg = (("CUMULATIVE_FRAME_NOT_EXTRACTED: " if cst is not None else "")
+                   + f"[{m}] t* frame {ts['frame_index']} 이 후보 프레임 D {D} 에 없음(변위 없음)"
                    + (f" → D 안의 후보 frame {alt['frame_index']} 사용" if alt else ""))
             if alt is None and m == metric:
                 raise EslError("FRAME_NOT_CANDIDATE", msg + " — TCL 을 다시 실행(-top_n 증가)하거나 --frame 으로 D 안에서 지정")
@@ -564,10 +720,17 @@ def stage_tstar(ctx: Context) -> dict:
             if alt is not None:
                 ts = dict(alt)
         hots = [{"rank": h["rank"], "elem_id": int(hid[h["elem_pos"]]), "value": h["value"], "eps_eq": h["value"],
-                 "rising": h["rising"], "centroid": h["centroid"]} for h in r["hotspots"]]
-        out[m] = {"tstar": {k: ts[k] for k in ("frame_index", "time", "elem_id", "value")},
+                 "rising": h["rising"], "centroid": h["centroid"],
+                 **({"value_inc": h["value_inc"], "value_prev": h["value_prev"]} if cst is not None else {})}
+                for h in r["hotspots"]]
+        tkeys = ("frame_index", "time", "elem_id", "value") + (("value_inc", "value_prev") if cst is not None else ())
+        out[m] = {"tstar": {k: ts[k] for k in tkeys},
                   "candidates": cands, "hotspots": hots, "adjusted": adjusted, "tcl_check": check,
-                  "history": {"time": r["history"]["time"], "m": r["history"]["m"]}}
+                  "history": {"time": r["history"]["time"], "m": r["history"]["m"],
+                              **({"m_inc": r["history"]["m_inc"]} if cst is not None else {})}}
+        if cst is not None:
+            n_x = int(r["n_excluded_no_increment"])
+            out[m]["cumulative"] = {"mode": cst["modes"][m], "n_excluded_no_increment": n_x}
 
     sel_m = out[metric]
     auto = {**sel_m["tstar"], "eps_eq": sel_m["tstar"]["value"], "metric": metric, "source": "auto"}
@@ -577,9 +740,16 @@ def stage_tstar(ctx: Context) -> dict:
           "metrics": {m: {k: v for k, v in rec.items() if k != "history"} for m, rec in out.items()},
           "auto": auto, "candidates": sel_m["candidates"], "hotspots": sel_m["hotspots"],
           "settings": dict(tcfg), "created_at": _utcnow()}
+    if cst is not None:
+        tj["cumulative"] = {"enabled": True, "epsp_mode": cst["modes"]["plastic_strain"],
+                            "eq_mode": cst["modes"]["max_strain"], "agg": cst["agg"],
+                            "n_prev_elems": int(np.sum(cst["prev"] > 0)), "min_increment": cst["min_increment"],
+                            "basis": {"rank": "cumulative", "first_reach": "increment"}}
     for m, rec in out.items():
         if "history" in rec:
             tj["metrics"][m]["history"] = {"time": rec["history"]["time"], "m": rec["history"]["m"]}
+            if "m_inc" in rec["history"]:
+                tj["metrics"][m]["history"]["m_inc"] = rec["history"]["m_inc"]
     tj["selected"] = auto
     tj["selected"] = _select_frame(tj, ctx.frame)
 
@@ -587,14 +757,30 @@ def stage_tstar(ctx: Context) -> dict:
     _write_json(ctx.f(d, "tstar.json"), tj)
     fmt = ctx.csvfmt()
     hist_cols = [out[m]["history"]["m"] if "history" in out[m] else np.full(fidx.size, np.nan) for m in METRICS]
-    csvout.write_csv(ctx.f(d, "history.csv"), ("frame_index", "time", "m_max_strain", "m_plastic_strain"),
-                     zip(fidx.tolist(), hz["time"], *hist_cols), fmt)
-    csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
-                     ((x["rank"], x["elem_id"], x["value"], *x["centroid"]) for x in sel_m["hotspots"]), fmt)
-    csvout.write_csv(ctx.f(d, "candidates.csv"),
-                     ("metric", "rank", "frame_index", "time", "value", "elem_id", "in_D"),
-                     ((m, x["rank"], x["frame_index"], x["time"], x["value"], x["elem_id"], x["in_D"])
-                      for m in METRICS for x in out[m].get("candidates", [])), fmt)
+    if cst is None:
+        csvout.write_csv(ctx.f(d, "history.csv"), ("frame_index", "time", "m_max_strain", "m_plastic_strain"),
+                         zip(fidx.tolist(), hz["time"], *hist_cols), fmt)
+        csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER,
+                         ((x["rank"], x["elem_id"], x["value"], *x["centroid"]) for x in sel_m["hotspots"]), fmt)
+        csvout.write_csv(ctx.f(d, "candidates.csv"),
+                         ("metric", "rank", "frame_index", "time", "value", "elem_id", "in_D"),
+                         ((m, x["rank"], x["frame_index"], x["time"], x["value"], x["elem_id"], x["in_D"])
+                          for m in METRICS for x in out[m].get("candidates", [])), fmt)
+    else:                                   # 누적 씬: 누적(value)·이전·이번(증분) 열 추가(§7)
+        inc_cols = [out[m]["history"].get("m_inc", np.full(fidx.size, np.nan)) if "history" in out[m]
+                    else np.full(fidx.size, np.nan) for m in METRICS]
+        csvout.write_csv(ctx.f(d, "history.csv"), ("frame_index", "time", "m_max_strain", "m_plastic_strain",
+                                                   "m_inc_max_strain", "m_inc_plastic_strain"),
+                         zip(fidx.tolist(), hz["time"], *hist_cols, *inc_cols), fmt)
+        csvout.write_csv(ctx.f(d, "hotspots.csv"), csvout.HOTSPOTS_HEADER + ("value_inc", "value_prev"),
+                         ((x["rank"], x["elem_id"], x["value"], *x["centroid"], x["value_inc"], x["value_prev"])
+                          for x in sel_m["hotspots"]), fmt)
+        csvout.write_csv(ctx.f(d, "candidates.csv"),
+                         ("metric", "rank", "frame_index", "time", "value", "elem_id", "in_D", "value_inc",
+                          "value_prev"),
+                         ((m, x["rank"], x["frame_index"], x["time"], x["value"], x["elem_id"], x["in_D"],
+                           x["value_inc"], x["value_prev"])
+                          for m in METRICS for x in out[m].get("candidates", [])), fmt)
     sel = tj["selected"]
     other = [m for m in METRICS if m != metric][0]
     o = out[other].get("tstar")
@@ -603,10 +789,18 @@ def stage_tstar(ctx: Context) -> dict:
              f"hotspot {len(sel_m['hotspots'])}개; {other}: "
              + (f"t* frame {o['frame_index']} (값 {o['value']:.4g})" if o else "없음")
              + f"; D {D}")
-    return {"selected": sel, "auto": auto, "metric": metric,
-            "tstar_by_metric": {m: out[m].get("tstar") for m in METRICS},
-            "tcl_check": {m: out[m]["tcl_check"]["match"] for m in METRICS},
-            "n_candidates": len(sel_m["candidates"]), "n_hotspots": len(sel_m["hotspots"])}
+    if cst is not None:
+        ts_ = sel_m["tstar"]
+        ctx.echo(f"[tstar] 누적 기준: 누적 {ts_['value']:.4g} (이전 {ts_['value_prev']:.4g} + 이번 "
+                 f"{ts_['value_inc']:.4g}), 이전 손상만(이번 증가 없음) "
+                 f"{sel_m['cumulative']['n_excluded_no_increment']}개 제외")
+    res = {"selected": sel, "auto": auto, "metric": metric,
+           "tstar_by_metric": {m: out[m].get("tstar") for m in METRICS},
+           "tcl_check": {m: out[m]["tcl_check"]["match"] for m in METRICS},
+           "n_candidates": len(sel_m["candidates"]), "n_hotspots": len(sel_m["hotspots"])}
+    if cst is not None:
+        res["cumulative"] = {m: out[m].get("cumulative") for m in METRICS}
+    return res
 
 
 # ====================================================================== 평가 hotspot·잡음 바닥
@@ -639,8 +833,19 @@ def _eval_hotspots(ctx: Context, model: StoredModel, frame_index: int):
     v = series[tcfg["metric"]]
     eqh = series["max_strain"]
     ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
+    cst = _cum_state(ctx, model)
+    eps_rad = strain.eps_eq(tensor_eps(sz["eps"][int(fd[0])], factor))          # (E,)
+    if cst is not None:
+        # 누적 씬(§6.6, Q3 가정 확정 A): ESL u_rel 은 이번 낙하분 → Radioss 쪽도 증분 계열로 비교
+        cum_v, v = _cum.series(v, cst["prev"][hp], cst["modes"][tcfg["metric"]])
+        _, eqh = _cum.series(eqh, cst["prev_eq"][hp], cst["modes"]["max_strain"])
+        _, eps_rad = _cum.series(eps_rad, cst["prev_eq"], cst["modes"]["max_strain"])
+        no_inc = ~(v[-1] > cst["min_increment"])
+        ex = no_inc if ex is None else (ex | no_inc)
+        fin = cum_v[-1]
+    else:
+        fin = v[-1]
     fr = tstar.first_reach(v, rtol)
-    fin = v[-1]
     first = None
     for e in np.lexsort((np.arange(fin.size), -fin)):
         if fr[e] == f and fin[e] > 0 and (ex is None or not ex[e]):
@@ -649,7 +854,6 @@ def _eval_hotspots(ctx: Context, model: StoredModel, frame_index: int):
     C = model.centroids()
     hs = tstar.rising_hotspots(v, f, C[hp], tcfg["top_k_hotspots"], tcfg["hotspot_min_dist"], rtol,
                                exclude_mask=ex, first=first)
-    eps_rad = strain.eps_eq(tensor_eps(sz["eps"][int(fd[0])], factor))          # (E,)
     n_eval = int(ctx.cfg["validation"]["hotspot_eval_count"])
     out, k = [], 0
     for h in hs:
@@ -945,11 +1149,17 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         else:
             pfi, pok, prev_eps = int(frame_index) - 1, False, None
     known = None
+    cst = _cum_state(ctx, model)
+    if cst is not None and epsp is not None:
+        _, epsp = _cum.series(epsp, cst["prev"], cst["modes"]["plastic_strain"])      # 증분 기준(§6.6)
     if pfi < 0 and pok:
         rising = _field.rising_mask(eps_rad, None, rtol)
         prev_source = "first_frame"
     elif pok:
-        rising = _field.rising_mask(eps_rad, strain.eps_eq(tensor_eps(prev_eps, factor)), rtol)
+        pe = strain.eps_eq(tensor_eps(prev_eps, factor))
+        if cst is not None:
+            _, pe = _cum.series(pe, cst["prev_eq"], cst["modes"]["max_strain"])
+        rising = _field.rising_mask(eps_rad, pe, rtol)
         prev_source = "strain_frames"
     else:
         # 예전 TCL 출력: H 요소만 history 로 판정(f−1 이 history 에 있을 때)
@@ -961,6 +1171,8 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         jp = np.flatnonzero(hfi == pfi)
         if jf.size == 1 and jp.size == 1:
             eqh = strain.eps_eq(tensor_eps(hz["eps"], factor))
+            if cst is not None:
+                _, eqh = _cum.series(eqh, cst["prev_eq"][hp], cst["modes"]["max_strain"])
             rising[hp] = _field.rising_mask(eps_rad[hp], eqh[int(jp[0])], rtol)
             known[hp] = True
         prev_source = "history_H"
@@ -1148,6 +1360,16 @@ def stage_validate(ctx: Context) -> dict:
     ]
     sref["exceeded"] = any(m["exceeded"] for m in metrics if m["role"] == "reference")
     sref["exceeded_metrics"] = [m["metric"] for m in metrics if m["role"] == "reference" and m["exceeded"]]
+    cst = _cum_state(ctx, model)
+    if cst is not None:
+        with np.load(ctx.p(D_EXTRACT, "strain_frames.npz"), allow_pickle=False) as z:
+            fd_ = int(np.flatnonzero(z["frame_index"].astype(np.int64) == int(frame_index))[0])
+            ep_raw = np.asarray(z["epsp"][fd_], np.float64) if "epsp" in z.files else np.zeros(model.elem_id.size)
+        ep_cum, ep_inc = _cum.series(ep_raw, cst["prev"], cst["modes"]["plastic_strain"])
+        sref.update(basis="increment", n_plastic_cum=int(np.sum(ep_cum > 0)),
+                    n_plastic_inc=int(np.sum(ep_inc > CUM_EPSP_FLOOR)),
+                    cum_max=float(np.max(ep_cum)) if ep_cum.size else 0.0,
+                    inc_max=float(np.max(ep_inc)) if ep_inc.size else 0.0)
 
     undetermined_reason = None
     if not fs["run"]:
@@ -1203,6 +1425,8 @@ def stage_validate(ctx: Context) -> dict:
                    "n_rising": fsum["n_rising"], "n_elems": fsum["n_elems"], "prev_source": fsum["prev_source"]}
     strain_short = {k: sref[k] for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct", "exceeded")}
     strain_short["n_plastic"] = None if sref["plastic"] is None else sref["plastic"]["n_plastic"]
+    if "basis" in sref:
+        strain_short.update({k: sref[k] for k in ("basis", "n_plastic_cum", "n_plastic_inc", "cum_max", "inc_max")})
     return {"verdict": verdict, "fail_reasons": fail_reasons, "undetermined_reason": undetermined_reason,
             "field": field_short, "strain_ref": strain_short, "noise_source": noise_source,
             "noise_hotspot_strain_rel": n_strain,

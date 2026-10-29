@@ -63,6 +63,15 @@ compare:                             # ESL 재현 정확도 전 요소 비교 (�
   hist_bins: 20                      # 오차 히스토그램 bin 수
   section_band: 0.02                 # 단면선(ξ=0.5, η=0.5) 요소 띠 반폭(정규화 좌표, 요소 크기보다 작으면 요소 크기)
 
+cumulative:                          # 누적 낙하 씬(rad 가 이전 런 상태 파일 .str/.sta 를 #include) — 계약 esl_cumulative_input.md
+  enabled: auto                      # auto(상태 파일 include 가 있으면 켬) | off(상태 파일을 일반 include 로, 변형률 보정 없음)
+  thickness_source: state            # state(상태 파일 THK = 변형 두께, 기본) | prop(원두께 — 교차검증용)
+  epsp_agg: auto                     # 이전 소성 요소값 집계: auto | mid_mean | mid_max | max | mean
+  h3d_epsp_mode: auto                # h3d Plastic Strain 이 이미 누적값인지: auto(frame0·단조성으로 판정) | cumulative | incremental
+  h3d_eq_mode: auto                  # h3d Max_Strain ε_eq 도 같은 규칙
+  min_increment: 1.0e-5              # 이번 낙하 증분이 이 이하인 요소(이전 손상만)는 t* 후보·hotspot 제외
+  detect: {prev_floor: 1.0e-6, min_elems: 10, rel_tol: 0.05, mono_frac: 0.99}
+
 report:                              # Case HTML 보고서 <case>/07_report/report.html (자체 완결, 외부 의존 없음)
   max_points: 20000                  # 2D 컨투어 점 수 상한(초과 시 2D 셀 격자 다운샘플)
   top_forces: 20                     # F_eq 상위 표 행 수
