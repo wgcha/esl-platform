@@ -139,11 +139,12 @@ def test_other_cards_field_positions(tmp_path):
     (dresp,) = _card_lines(fem, "DRESP1")
     assert _cols(dresp[0], "free")[:4] == ["DRESP1", str(ids["dresp_comp"]), "COMP", "COMP"]   # ID LABEL RTYPE (PTYPE 비움)
     dob = [_cols(c[0], "free") for c in _card_lines(fem, "DOBJREF")]
-    assert [c[:6] for c in dob] == [["DOBJREF", str(ids["dobjref"]), str(ids["dresp_comp"]), "", "2.5", "1"],
-                                    ["DOBJREF", str(ids["dobjref"]), str(ids["dresp_comp"]), "", "1.", "2"]]
+    # DOID RID SID NEGREF(비움) POSREF (Reference Guide dobjref_bulk_r)
+    assert [c[:6] for c in dob] == [["DOBJREF", str(ids["dobjref"]), str(ids["dresp_comp"]), "1", "", "2.5"],
+                                    ["DOBJREF", str(ids["dobjref"]), str(ids["dresp_comp"]), "2", "", "1."]]
     assert _card_lines(fem, "DOPTPRM")[0] == ["DOPTPRM,DESMAX,30"]
     case = fem.split("BEGIN BULK")[0]
-    assert f"DESOBJ(MINMAX) = {ids['dobjref']}" in case and "OUTPUT,H3D,ALL" in case
+    assert f"\nMINMAX = {ids['dobjref']}\n" in case and "DESOBJ" not in case and "OUTPUT,H3D,ALL" in case
     assert [ln.strip() for ln in case.splitlines() if ln.strip().startswith("LABEL")] == \
         ["LABEL REP1_Corner146", "LABEL REP2_Face3"]
     # 모든 줄 ASCII, 자유형식 데이터 칸 ≤ 8(+카드명), 실수 칸에 소수점

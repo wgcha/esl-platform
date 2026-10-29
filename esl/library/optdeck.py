@@ -19,7 +19,9 @@
   unrecognized label) 로 거부(이슈 #35). 비드 줄 칸 배치·플래그·PID 연속 시작 칸은 설정 ``optdeck.dtpg.*``.
   SKIP 은 명시적으로 ``BC``: 이 덱은 **전 노드에 FORCE** 가 있으므로 LOAD/BOTH 를 쓰면 설계 노드가 모두 빠진다.
 - ``DRESP1, RID, COMP, COMP`` (PTYPE 비움 = 모델 전체 컴플라이언스, subcase 별 응답).  [확신도: 상]
-- minmax: case control 최상단 ``DESOBJ(MINMAX) = OID`` + subcase마다 ``DOBJREF, OID, RID, (NEG), POS, LOADSUB``.
+- minmax: case control 최상단 ``MINMAX = DOID`` + subcase마다 ``DOBJREF, DOID, RID, SID, (NEGREF), POSREF``
+  (Reference Guide minmax_maxmin_sub_r·dobjref_bulk_r 2025: DESOBJ 의 type 은 MIN/MAX/MINP/MAXP 뿐이라 v0.8.0 이전
+  ``DESOBJ(MINMAX) = OID``·``DOBJREF, OID, RID, , POS, LOADSUB``(SID 칸 비움 → 5번째 칸 NEGREF 에 양수) 는 공식 형식과 다름).
   POS = 기준 컴플라이언스(주면 상대값 minmax, 없으면 1.0 = 절대 컴플라이언스).  [확신도: 중상]
 - weighted: ``DRESP1, RID, WCOMP, WCOMP`` + ``DESOBJ(MIN) = RID`` + subcase마다 ``WEIGHT = w``.  [확신도: 중]
 - BEADFRAC(선택): ``DRESP1, BID, BEADF, BEADFRAC, DTPG, , , DTPG_ID`` + ``DCONSTR, CID, BID, , UB`` + ``DESGLB = CID``.
@@ -59,7 +61,7 @@ CONFIDENCE = {
     "mesh_force_spc_cards": "상 (GRID/CQUAD4/CTRIA3/PSHELL/MAT1/FORCE/SPC1 = 기존 esl_force.fem 과 같은 형식)",
     "DTPG": "중상 (비드 줄 MW, ANG, BF, HGT, NORM, -, -, SKIP / BOUNDS: LB, UB — 2025·2026 레퍼런스 형식표)",
     "DRESP1_COMP": "상",
-    "DESOBJ_MINMAX_DOBJREF": "중상 (DOBJREF: ID, DRESP, NEG, POS, LOADSUB 순)",
+    "DESOBJ_MINMAX_DOBJREF": "중상 (MINMAX = DOID, DOBJREF: DOID, RID, SID, NEGREF, POSREF 순 — 2025 레퍼런스 형식표)",
     "WCOMP_WEIGHT": "중 (weighted compliance 응답과 subcase WEIGHT 문)",
     "BEADFRAC": "중하 (응답 PTYPE/ATT 위치 확인 필요, 기본 사용 안 함)",
     "free_format_continuation": "중상 ('+,' 연속 줄; 실패 시 card_format: fixed 로 다시 생성)",
@@ -67,7 +69,7 @@ CONFIDENCE = {
 CONFIDENCE_EN = {
     "mesh/FORCE/SPC1 cards": "high",
     "DTPG bead line (MW ANG BF HGT NORM - - SKIP, no flag; BOUNDS LB UB)": "medium-high",
-    "DRESP1 COMP": "high", "DESOBJ(MINMAX) + DOBJREF (ID DRESP NEG POS LOADSUB)": "medium-high",
+    "DRESP1 COMP": "high", "MINMAX + DOBJREF (DOID RID SID NEGREF POSREF)": "medium-high",
     "WCOMP + subcase WEIGHT": "medium", "BEADFRAC response": "medium-low",
     "free-format continuation '+,'": "medium-high (regenerate with card_format: fixed if rejected)",
 }
@@ -316,7 +318,7 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
         L.append("$ confidence: OUTPUT,H3D,ALL = medium-high, DOPTPRM DESMAX = high (V-OR-R1)")
         L.append("OUTPUT,H3D,ALL")
     if d["objective"] == "minmax":
-        L.append(f"DESOBJ(MINMAX) = {obj_id}")
+        L.append(f"MINMAX = {obj_id}")
     else:
         L.append(f"DESOBJ(MIN) = {comp_rid}")
     if bf_cid is not None:
@@ -374,7 +376,7 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
             ref = lc.get("ref")
             ref = 1.0 if ref is None or not float(ref) > 0 else float(ref)
             refs.append(ref)
-            L += card("DOBJREF", [obj_id, comp_rid, "", real(ref, bw), k + 1], fmt)
+            L += card("DOBJREF", [obj_id, comp_rid, k + 1, "", real(ref, bw)], fmt)   # DOID RID SID NEGREF POSREF
     else:
         L += card("DRESP1", [comp_rid, "WCOMP", "WCOMP"], fmt)
     if bf_rid is not None:
@@ -485,7 +487,7 @@ def _readme(d, deck, load_cases, refs, design_pids, nondesign_pids, why, des, sp
         lines.append(f"  서버 실행 opt_run {srv.get('opt_run_id')} {srv.get('scenario')}: DOPTPRM DESMAX={srv['desmax']}, "
                      "OUTPUT,H3D,ALL")
     if d["objective"] == "minmax":
-        lines.append(f"  목적: DESOBJ(MINMAX) = {obj_id} → DOBJREF {obj_id} × {len(load_cases)} (subcase별 DRESP1 "
+        lines.append(f"  목적: MINMAX = {obj_id} → DOBJREF {obj_id} × {len(load_cases)} (subcase별 DRESP1 "
                      f"{comp_rid} COMP / POS). 최대 (컴플라이언스/기준값) 최소화.")
     else:
         lines.append(f"  목적: DESOBJ(MIN) = {comp_rid} (WCOMP, subcase WEIGHT 가중합)")

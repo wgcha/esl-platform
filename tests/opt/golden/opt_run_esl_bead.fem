@@ -7,13 +7,13 @@ $ subcases: L01=Eb, L02=Ea, L03=Ec
 $ confidence (not executed by generator): mesh/FORCE/SPC1 cards = high
 $ confidence (not executed by generator): DTPG bead line (MW ANG BF HGT NORM - - SKIP, no flag; BOUNDS LB UB) = medium-high
 $ confidence (not executed by generator): DRESP1 COMP = high
-$ confidence (not executed by generator): DESOBJ(MINMAX) + DOBJREF (ID DRESP NEG POS LOADSUB) = medium-high
+$ confidence (not executed by generator): MINMAX + DOBJREF (DOID RID SID NEGREF POSREF) = medium-high
 $ confidence (not executed by generator): WCOMP + subcase WEIGHT = medium
 $ confidence (not executed by generator): BEADFRAC response = medium-low
 $ confidence (not executed by generator): free-format continuation '+,' = medium-high (regenerate with card_format: fixed if rejected)
 $ confidence: OUTPUT,H3D,ALL = medium-high, DOPTPRM DESMAX = high (V-OR-R1)
 OUTPUT,H3D,ALL
-DESOBJ(MINMAX) = 9011
+MINMAX = 9011
 DISPLACEMENT(H3D) = ALL
 SPCFORCE(H3D) = ALL
 SUBCASE 1
@@ -109,8 +109,8 @@ DTPG,9009,PSHELL,9006
 +,BOUNDS,0.,1.
 $ ---- responses / objective
 DRESP1,9010,COMP,COMP
-DOBJREF,9011,9010,,30000.,1
-DOBJREF,9011,9010,,30000.,2
-DOBJREF,9011,9010,,30000.,3
+DOBJREF,9011,9010,1,,30000.
+DOBJREF,9011,9010,2,,30000.
+DOBJREF,9011,9010,3,,30000.
 DOPTPRM,DESMAX,30
 ENDDATA

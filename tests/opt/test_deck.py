@@ -94,7 +94,7 @@ def test_opt_run_deck(tmp_path, norm, synthetic):
     Cs = [r["C0"] for r in sel_rows]
     assert Cs == sorted(Cs, reverse=True)
     # DOBJREF POS
-    pos = [_num(ln.split(",")[4]) for ln in fem.splitlines() if ln.startswith("DOBJREF")]
+    pos = [_num(ln.split(",")[5]) for ln in fem.splitlines() if ln.startswith("DOBJREF")]
     if norm == "abs":
         assert len(set(pos)) == 1 and pos[0] == pytest.approx(max(Cs), rel=1e-8) and sel["C_ref"] == max(Cs)
     else:
@@ -102,7 +102,7 @@ def test_opt_run_deck(tmp_path, norm, synthetic):
     assert f"$ objective_norm {norm} C_ref " in fem and "$ load_strategy A" in fem and "$ opt_run 42 S1" in fem
     # 서버 카드
     assert "OUTPUT,H3D,ALL" in fem.split("BEGIN BULK")[0] and "DOPTPRM,DESMAX,30" in fem.split("BEGIN BULK")[1]
-    assert "DESOBJ(MINMAX)" in fem
+    assert "\nMINMAX = " in fem and "DESOBJ(MINMAX)" not in fem
     # 비드 45°·60·10
     # 공식 DTPG 비드 줄: MW ANG BF HGT NORM YD ZD SKIP (플래그 없음) — 이슈 #35 "+,BEAD,60.,45.,10.,YES,BC" 회귀
     lines = fem.splitlines()
