@@ -1,46 +1,45 @@
-// ⑤ 결과 카드 안 보조 버튼 "라이브러리 등록"(계약 §11, esl_disp_primary.md §8).
-// PASS 는 바로 등록, FAIL·판정 불가(UNDETERMINED)는 확정 사유 입력 대화상자(사유 필수), 이전 판정 체계(LEGACY)는 당시 verdict 규칙.
-// 이미 등록된(ACTIVE) ESL 결과면 버튼 대신 '등록됨' 표시.
-import { useEffect, useRef, useState } from "react";
+// ④ 검증의 라이브러리 등록(v0.10.0, esl_menu_restructure.md §7.1·§7.2): 변위 기준 PASS(현재 scheme)만 등록.
+// FAIL·판정 불가·LEGACY 는 등록 불가 + 사유 한 줄(사유 입력 대화상자 없음). 등록 = 바로 POST, 주 버튼은 ④ 화면이 갖는다.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
-import type { ValidationOut } from "../api/types";
+import type { EntryOut, ValidationOut } from "../api/types";
 import { NO_PERMISSION } from "../app/AppContext";
 import { usePolling } from "../lib/usePolling";
 import { Badge } from "./ui";
-import { statusOf, undeterminedText } from "./VerdictStatus";
+import { statusOf } from "./VerdictStatus";
 
-export function LibraryRegister({ projectId, v, allowed, failLabels }: { projectId: string; v: ValidationOut; allowed: boolean; failLabels: Record<string, string> }) {
-  const entries = usePolling(() => api.libraryEntries({ project_id: projectId, status: "ACTIVE" }), 0, [projectId, v.esl_run_id]);
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
+export const REGISTER_LABEL = "라이브러리에 등록";
+export const REG_NOT_PASS = "변위 기준 PASS만 등록할 수 있습니다 — FAIL 사유는 [결과 받기(zip)]로 확인";
+export const REG_LEGACY = "현재 기준으로 다시 검증한 뒤 등록하세요";
+export const REG_STALE = "이전 입력의 검증입니다 — ④ 검증을 다시 실행한 뒤 등록하세요";
+
+/** 등록 불가 사유(권한 제외). null = 등록 가능 */
+export function registerBlock(v: ValidationOut): string | null {
+  if (v.stale) return REG_STALE;
+  const s = statusOf(v);
+  if (s === "LEGACY") return REG_LEGACY;
+  if (s !== "PASS") return REG_NOT_PASS;
+  return null;
+}
+
+/** ④ 화면이 주 버튼을 정하는 데 쓰는 등록 상태: 등록됨(entry)·가능 여부·등록 실행 */
+export function useRegistration(projectId: string, v: ValidationOut | null, allowed: boolean) {
+  const entries = usePolling(() => (v ? api.libraryEntries({ project_id: projectId, status: "ACTIVE" }) : Promise.resolve(null)), 0, [projectId, v?.esl_run_id]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const done = entries.data?.find((e) => e.esl_run_id === v.esl_run_id);
-
-  if (!entries.data) return null;
-  if (done)
-    return (
-      <span className="inline-actions">
-        <Badge kind="info">라이브러리 등록됨</Badge>
-        <Link className="small" to={`/p/${projectId}/library`}>
-          보기
-        </Link>
-      </span>
-    );
-
-  const status = statusOf(v);
-  // 사유 없이 등록 가능: PASS, 또는 당시 PASS 였던 LEGACY
-  const needsReason = status === "FAIL" || status === "UNDETERMINED" || (status === "LEGACY" && v.verdict !== "PASS");
-  const blocked = !allowed ? NO_PERMISSION : v.stale ? "이전 입력의 검증입니다 — ⑤ 검증을 다시 실행한 뒤 등록하세요" : null;
-
-  async function submit(force_reason?: string) {
+  const done: EntryOut | null = (v && entries.data?.find((e) => e.esl_run_id === v.esl_run_id)) || null;
+  const loaded = !!entries.data;
+  const reason = v ? registerBlock(v) : null;
+  /** 주 버튼을 '라이브러리에 등록'으로: 목록을 읽었고, 미등록이고, PASS(현재 기준)이고, 최신 입력 */
+  const canRegister = !!v && loaded && !done && !reason;
+  async function register() {
+    if (!v) return;
     setBusy(true);
     setError(null);
     try {
-      await api.createEntry({ esl_run_id: v.esl_run_id, validation_id: v.id, force_reason: force_reason ?? null });
-      setOpen(false);
+      await api.createEntry({ esl_run_id: v.esl_run_id, validation_id: v.id });
       await entries.reload();
     } catch (e) {
       setError(errorText(e));
@@ -48,104 +47,35 @@ export function LibraryRegister({ projectId, v, allowed, failLabels }: { project
       setBusy(false);
     }
   }
-
-  return (
-    <>
-      <span className="primary-wrap" title={blocked ?? (!needsReason ? "검증 PASS 결과를 라이브러리에 등록" : status === "UNDETERMINED" ? "판정 불가 — 사유를 적고 확정 등록" : "검증 FAIL — 사유를 적고 확정 등록")}>
-        <button
-          type="button"
-          className="btn small"
-          disabled={!!blocked || busy}
-          onClick={() => (!needsReason ? void submit() : (setError(null), setOpen(true)))}
-        >
-          라이브러리 등록
-        </button>
-      </span>
-      {error && !open && (
-        <span className="small error-text" role="alert">
-          {error}
-        </span>
-      )}
-      {open && (
-        <ReasonDialog
-          status={status}
-          reasons={status === "UNDETERMINED" ? [undeterminedText(v)] : v.fail_reasons.map((f) => (failLabels[f] ? `${f} — ${failLabels[f]}` : f))}
-          value={reason}
-          onChange={setReason}
-          busy={busy}
-          error={error}
-          onCancel={() => setOpen(false)}
-          onSubmit={() => void submit(reason.trim())}
-        />
-      )}
-    </>
-  );
+  return { done, loaded, reason, canRegister, register, busy, error, permission: allowed ? null : NO_PERMISSION };
 }
 
-function ReasonDialog({
-  status,
-  reasons,
-  value,
-  onChange,
-  busy,
-  error,
-  onCancel,
-  onSubmit,
-}: {
-  status: string;
-  reasons: string[];
-  value: string;
-  onChange: (s: string) => void;
-  busy: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  const area = useRef<HTMLTextAreaElement>(null);
-  const [touched, setTouched] = useState(false);
-  useEffect(() => {
-    area.current?.focus();
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onCancel();
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, [onCancel]);
-  const empty = !value.trim();
-  return (
-    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onCancel()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reg-title">
-        <h3 id="reg-title">{status === "UNDETERMINED" ? "판정 불가 결과를 라이브러리에 등록" : "검증 FAIL 결과를 라이브러리에 등록"}</h3>
-        <div className="small">
-          {status === "UNDETERMINED"
-            ? "이 결과는 변위 비교가 없어 판정하지 못했습니다. 그래도 하중 근거로 쓸 이유를 적어 확정하세요(기록에 남습니다)."
-            : "이 결과는 판정 기준을 넘었습니다. 그래도 하중 근거로 쓸 이유를 적어 확정하세요(기록에 남습니다)."}
-        </div>
-        <ul className="reasons small">
-          {reasons.map((r) => (
-            <li key={r} className="error-text">
-              {r}
-            </li>
-          ))}
-        </ul>
-        <label className="field">
-          <span className="field-label">확정 사유 (필수)</span>
-          <textarea ref={area} rows={3} value={value} onChange={(e) => (setTouched(true), onChange(e.target.value))} aria-invalid={empty && touched} placeholder={status === "UNDETERMINED" ? "예: 메모리 한도로 전체 재해석 생략 — ③ 반력 평형과 변형률 참고 지표로 확인" : "예: 누적 소성 시나리오 — 변위 오차는 허용 범위 내로 확인"} />
-        </label>
-        {error && (
-          <div className="error-text small" role="alert">
-            {error}
-          </div>
-        )}
-        <div className="actions modal-actions">
-          <button type="button" className="btn ghost" onClick={onCancel}>
-            취소
+export type Registration = ReturnType<typeof useRegistration>;
+
+/** 판정 카드 안 표시: 등록됨 · 보기 / 등록 불가 사유 한 줄 */
+export function LibraryRegister({ projectId, reg }: { projectId: string; reg: Registration }) {
+  if (!reg.loaded) return null;
+  if (reg.done)
+    return (
+      <span className="inline-actions" data-testid="reg-done">
+        <Badge kind="info">라이브러리 등록됨</Badge>
+        <Link className="small" to={`/p/${projectId}/library`}>
+          보기
+        </Link>
+      </span>
+    );
+  if (reg.reason)
+    return (
+      <span className="inline-actions" data-testid="reg-block">
+        <span className="primary-wrap" title={reg.reason}>
+          <button type="button" className="btn small" disabled>
+            {REGISTER_LABEL}
           </button>
-          <span className="primary-wrap" title={empty ? "사유를 입력하세요" : undefined}>
-            <button type="button" className="btn primary" disabled={empty || busy} onClick={onSubmit}>
-              {busy ? "처리 중…" : "확정 등록"}
-            </button>
-          </span>
-        </div>
-      </div>
-    </div>
-  );
+        </span>
+        <span className="small muted" role="note">
+          {reg.reason}
+        </span>
+      </span>
+    );
+  return null;
 }

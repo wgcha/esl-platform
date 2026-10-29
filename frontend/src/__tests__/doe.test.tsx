@@ -10,6 +10,9 @@ import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel, summaryText, type 
 import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix, makePlan } from "../mock/doedata";
 import { render } from "@testing-library/react";
 import { BoundaryLegend } from "../components/BoundaryPlan";
+import { sortRanking } from "../api/doe";
+import { heatStyle } from "../components/DoePerEslTable";
+import type { DoeRankRow } from "../api/types";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
@@ -80,7 +83,7 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
   });
 
   it("대기열·이력 라벨: DOE 3종·단계 키, 이력 링크 stage 11 → 연구", () => {
-    expect(JOB_TYPE_LABEL.DOE_RUN).toBe("비드 DOE 실행");
+    expect(JOB_TYPE_LABEL.DOE_RUN).toBe("강성 평가 실행"); // v0.10.0 이름 변경(사용자 문구만)
     expect(stepLabel(currentStepKey({ job_type: "DOE_RUN", current_step_no: 2, steps: null }))).toBe("안별 해석");
     expect(stepLabel(currentStepKey({ job_type: "DOE_PREVIEW", current_step_no: 2 }))).toBe("썸네일");
     expect(linkPath("p1", null, { stage: 11, query: { doe: "doe-1" } })).toBe("/p/p1/doe/doe-1");
@@ -101,20 +104,22 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
 });
 
 describe("라이브러리 진입(§12.1)", () => {
-  it("선택 막대에 [선택한 ESL로 비드 DOE (n)] — 주 버튼은 그대로 1개, 누르면 새 비드 DOE(① 자동)", async () => {
+  it("선택 줄에 [강성 평가 스터디 (n)] — 주 버튼은 [내보내기] 1개, 누르면 새 강성 평가 스터디(① 자동)", async () => {
     const { container } = renderApp("/p/p-body/library");
     fireEvent.click(await screen.findByRole("checkbox", { name: "75QN80H v072 146 선택" }));
     fireEvent.click(box("75QN80H v072 14 선택"));
     expect(primaries(container)).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "선택한 ESL로 비드 DOE (2)" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "새 비드 DOE" })).toBeTruthy();
+    expect(primaries(container)[0].textContent).toBe("내보내기 (2)");
+    fireEvent.click(screen.getByRole("button", { name: "강성 평가 스터디 (2)" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "새 강성 평가 스터디" })).toBeTruthy();
     await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
     expect(screen.getByTestId("doe-auto").textContent).toMatch(/자동 판별: ① 같은 모델/);
   });
 
-  it("탭 [비드 DOE] 목록: 시나리오·DOE·미리보기·상태", async () => {
+  it("탭 [강성 평가 스터디] 목록(옛 ?tab=doe 리다이렉트): 시나리오·DOE·미리보기·상태", async () => {
     renderApp("/p/p-body/library?tab=doe");
-    const t = await screen.findByRole("table", { name: "비드 DOE 목록" });
+    const t = await screen.findByRole("table", { name: "강성 평가 스터디 목록" });
+    expect(screen.getByRole("tab", { name: "강성 평가 스터디" }).getAttribute("aria-selected")).toBe("true");
     await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(3));
     expect(t.textContent).toMatch(/75형 Ch\/R 비드 1차/);
     expect(t.textContent).toMatch(/② 다른 모델\(메시 있음\)/);
@@ -143,7 +148,7 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.change(screen.getByRole("textbox", { name: "제목" }), { target: { value: "75형 Ch/R 2차" } });
     fireEvent.click(primaries(container)[0]);
-    expect(await screen.findByRole("heading", { level: 1, name: "비드 DOE" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "강성 평가 스터디" })).toBeTruthy();
     expect(await screen.findByText("75형 Ch/R 2차")).toBeTruthy();
     const rec = server.doe.recs[server.doe.recs.length - 1];
     expect(rec.out).toMatchObject({ scenario: "same", entry_ids: ["le-1", "le-2", "le-3"], phase: "PREP" });
@@ -221,7 +226,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
     expect(tbl.textContent).toMatch(/체결부 가까움/);
     noSolver();
     // 주 버튼 = DOE 실행(같은 sha 미리보기 성공)
-    await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["DOE 실행"]));
+    await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["강성 평가 실행"]));
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     // 미리보기 격자: 공칭 + 24안, 스킵 배지
     const grid = screen.getByRole("list", { name: "미리보기 썸네일" });
@@ -276,7 +281,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
 
   it("DOE 실행 → 실행 중(보고서 비활성) → 완료 → 순위표", async () => {
     const { container, server } = renderApp("/p/p-body/doe/doe-2");
-    await waitFor(() => expect(primaries(container)[0].textContent).toBe("DOE 실행"));
+    await waitFor(() => expect(primaries(container)[0].textContent).toBe("강성 평가 실행"));
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.click(primaries(container)[0]);
     await waitFor(() => expect(primaries(container)[0].textContent).toBe("보고서 보기"));
@@ -344,5 +349,69 @@ describe("상세 — 결과(§11·§12.2)", () => {
     expect(opts.length).toBe(3);
     fireEvent.click(within(t).getByTestId(`rank-${opts[1]}`));
     await waitFor(() => expect(sel.value).toBe(opts[1]));
+  });
+});
+
+
+describe("ESL별 개선 지표(v0.10.0 §11.4)", () => {
+  const row = (id: string, score: number, extra: Partial<DoeRankRow>): DoeRankRow => ({
+    rank: 0, id, values: {}, score, improvement: 1 - score, worst_entry_id: "E1", umax: 1, epsmax: 0.001, umax_all: 1,
+    epsmax_all: 0.001, warnings_n: 0, ...extra,
+  });
+
+  it("sortRanking: 최소 개선율·기하평균·악화 수·Pareto, 지표 없는 행은 뒤로, 동률 = score → id", () => {
+    // 문제 이동: d001 score 최상(0.5)이지만 다른 씬 악화(min_improvement −0.2), d002 는 전 씬 소폭 개선
+    const rows = [
+      row("d001", 0.5, { min_improvement: -0.2, geo_mean_improvement: 0.23, n_worsened: 1, pareto: true }),
+      row("d002", 0.9, { min_improvement: 0.05, geo_mean_improvement: 0.07, n_worsened: 0, pareto: true }),
+      row("d003", 0.95, { min_improvement: 0.025, geo_mean_improvement: 0.04, n_worsened: 0, pareto: false }),
+      row("d004", 0.7, {}),
+    ];
+    expect(sortRanking(rows, "score").map((r) => r.id)).toEqual(["d001", "d004", "d002", "d003"]);
+    expect(sortRanking(rows, "min_improvement").map((r) => r.id)).toEqual(["d002", "d003", "d001", "d004"]);
+    expect(sortRanking(rows, "geo_mean_improvement").map((r) => r.id)).toEqual(["d001", "d002", "d003", "d004"]);
+    expect(sortRanking(rows, "n_worsened").map((r) => r.id)).toEqual(["d002", "d003", "d001", "d004"]);
+    expect(sortRanking(rows, "pareto").map((r) => r.id)).toEqual(["d001", "d002", "d004", "d003"]);
+    expect(heatStyle(0.2).background).toMatch(/^rgba\(22, 163, 74/);
+    expect(heatStyle(-0.2).background).toMatch(/^rgba\(220, 38, 38/);
+    expect(heatStyle(null)).toEqual({});
+  });
+
+  it("doe-1: 순위표 지표 열·열 머리 정렬·ⓘ 정의, ESL별 개선율 표(행 = 상위 안, 열 = ESL, 히트맵)", async () => {
+    renderApp("/p/p-body/doe/doe-1");
+    const t = await screen.findByRole("table", { name: "순위표" });
+    const head = within(t).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(head.slice(7, 12)).toEqual(["전 씬 개선", "최소 개선율", "개선/악화", "기하평균", "Pareto"]);
+    const ids = () => within(t).getAllByTestId(/^rank-d/).map((r) => r.getAttribute("data-testid")!.slice(5));
+    const before = ids();
+    expect(t.textContent).toMatch(/[✓✗]/);
+    expect(t.textContent).toMatch(/●/);                                       // Pareto 안이 하나 이상
+    expect(t.textContent).toMatch(/\d+ \/ \d+/);                             // 개선/악화 씬 수
+    fireEvent.click(within(t).getByRole("button", { name: "최소 개선율 기준 정렬" }));
+    await waitFor(() => expect(within(t).getByRole("button", { name: "최소 개선율 기준 정렬" }).closest("th")!.getAttribute("aria-sort")).toBe("ascending"));
+    const after = ids();
+    expect([...after].sort()).toEqual([...before].sort());
+    const minImp = after.map((id) => Number(within(within(t).getByTestId(`rank-${id}`)).getAllByRole("cell")[8].textContent!.replace(/[^\d.+−-]/g, "").replace("−", "-")));
+    for (let i = 1; i < minImp.length; i++) expect(minImp[i]).toBeLessThanOrEqual(minImp[i - 1] + 1e-9);
+    fireEvent.click(within(t).getByRole("button", { name: "score 기준 정렬" }));
+    await waitFor(() => {
+      const t2 = screen.getByRole("table", { name: "순위표" });
+      const rk = within(t2).getAllByTestId(/^rank-d/).map((r) => Number(within(r).getAllByRole("cell")[0].textContent));
+      expect(rk).toEqual([...rk].sort((x, y) => x - y));                          // score 정렬 = 순위 번호 순
+    });
+    // ⓘ 정의
+    expect(screen.getByTestId("metric-defs").textContent).toMatch(/최소 개선율: 1 − max/);
+    expect(screen.getByTestId("metric-defs").textContent).toMatch(/Pareto/);
+    // ESL별 개선율 표
+    const pe = screen.getByRole("table", { name: "ESL별 개선율" });
+    const cols = within(pe).getAllByRole("columnheader");
+    expect(cols[0].textContent).toBe("안");
+    expect(cols.length).toBeGreaterThan(1);
+    const body = within(pe).getAllByRole("row").slice(1);
+    expect(body.length).toBe(Math.min(10, before.length));
+    const cell = within(body[0]).getAllByRole("cell")[1] as HTMLElement;
+    expect(cell.textContent).toMatch(/[+−]\d+\.\d %/);
+    expect(cell.getAttribute("style") ?? "").toMatch(/background/);
+    expect(screen.getByTestId("per-esl-wrap").className).toMatch(/table-wrap/);
   });
 });

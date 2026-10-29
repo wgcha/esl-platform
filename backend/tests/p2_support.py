@@ -45,7 +45,8 @@ def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None
                orient: str = "146", verdict: str = "PASS", grid: tuple[int, int] = (24, 14),
                product_mass: float | None = None, status: str = "ACTIVE", version: str | None = None,
                scene_no: int = 1, registered_at: _dt.datetime | None = None,
-               quality_extra: dict | None = None) -> str:
+               quality_extra: dict | None = None, scheme: str | None = "disp_primary/1") -> str:
+    """scheme(v0.10.0 기본 disp_primary/1 = 현재 기준 적격 항목, status = verdict). scheme=None = LEGACY(이전 판정 체계)."""
     eid = str(uuid.uuid4())
     dir_rel = f"_library/entries/{eid}"
     if esl_root:
@@ -59,7 +60,8 @@ def seed_entry(engine, case_id: str, run_id: str, *, esl_root: str | None = None
             model={"name": name, "inch": inch, "product_mass": product_mass, "version": version},
             scene={"drop_type": drop_type, "drop_class": drop_type, "orient": orient, "scenario": "FREE",
                    "scene_no": scene_no, "warnings": []},
-            quality={"verdict": verdict, "fail_reasons": [], **(quality_extra or {})}, summary={"grid": {"nx": grid[0], "ny": grid[1]}},
+            quality={"verdict": verdict, "fail_reasons": [], **({"status": verdict, "scheme": scheme} if scheme else {}),
+                     **(quality_extra or {})}, summary={"grid": {"nx": grid[0], "ny": grid[1]}},
             dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz", sha256="0" * 64,
             registered_by=registered_by, registered_by_name=registered_by,
             retired_at=None if status == "ACTIVE" else _dt.datetime(2026, 10, 19, tzinfo=_dt.timezone.utc),

@@ -674,7 +674,7 @@ describe("업로드 유지(페이지 이동·상단 진행 표시·beforeunload)
     const chip = await screen.findByTestId("upload-chip");
     expect(chip.textContent).toMatch(/^업로드 \d+%$/);
     // 라이브러리로 이동 — 전송은 계속
-    fireEvent.click(screen.getByRole("link", { name: "라이브러리" }));
+    fireEvent.click(screen.getByRole("link", { name: "ESL 라이브러리" }));
     await waitFor(() => expect(loc).toMatch(/library/));
     expect(screen.queryByRole("table", { name: "올릴 파일" })).toBeNull();
     const before = server.p3.putCount;

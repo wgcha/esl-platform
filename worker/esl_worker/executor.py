@@ -23,6 +23,10 @@
   (`<log>.progress`, 정수 %)을 쓸 수 있고 부모가 step progress_pct(OPT_RUN 은 작업 진행률 가중)로 옮긴다.
 - v0.9.0 DOE_PREP·DOE_PREVIEW·DOE_RUN(계약 esl_bead_doe.md): 대상 = jobs.bead_doe_id, 작업 폴더 `<esl_root>/_doe/<id>/`.
   준비·step 실행은 doe_jobs(paicad = paicad_proc, 코어 = esl.doe.stages), 작업 진행률 = DOE_STEP_WEIGHTS 가중.
+- v0.10.0(esl_menu_restructure.md §6.2·§7.3): EXPORT params.origin = library → 작업 폴더·로그 `<esl_root>/_exports/<batch>/`,
+  Case 폴더 쓰기 없음(입력 지문·현재 run 재확인·history 보존·artifacts·자동 보고서 건너뜀), 자식이 코어
+  esl.export.from_entry.run_items 실행. VALIDATE params.origin = library_revalidate → "현재 run" 대신 "그 run 의 추출이 Case
+  현재 추출과 같음" 재확인 후 스냅샷 되돌림(ensure_on_disk), CASE_REPORT 자동 큐 없음, 등록 시 항목 전환(register).
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import time
 from typing import Any
 
 from esl_platform.core.errors import DomainError, LeaseLost
-from esl_platform.core.inputs import changed_inputs, esl_run_stale
+from esl_platform.core.inputs import changed_inputs, esl_run_stale, extract_stale, inputs_hash
 from esl_platform.core.paths import ANALYSIS_DIR, check_includes, esl_subdir
 from esl_platform.core.repositories import cases as cases_repo
 from esl_platform.core.repositories import jobs as jobs_repo
@@ -128,6 +132,11 @@ class Executor:
                     self.cdir, self.lib = doe_jobs.prepare(self)
                 except doe_jobs.PrepareFailed as exc:
                     raise _StepFailed(exc.code, exc.message) from None
+            elif lib_jobs.is_lib_export(job):                  # v0.10.0 라이브러리 다중 내보내기(Case 폴더 쓰기 없음)
+                try:
+                    self.cdir, self.lib = lib_jobs.prepare_lib_export(self.settings, job)
+                except lib_jobs.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
             elif job["job_type"] in lib_jobs.PREPARE:          # LIB_COMPARE 등(디스패치는 lib_jobs)
                 try:
                     self.cdir, self.lib = lib_jobs.PREPARE[job["job_type"]](self.settings, job)
@@ -219,10 +228,15 @@ class Executor:
         with self._tx() as conn:
             case = cases_repo.get_case(conn, self.job["case_id"])
             run = cases_repo.get_esl_run(conn, p.get("esl_run_id")) if p.get("esl_run_id") else None
-        if (run is None or run["case_id"] != case["id"] or run["status"] != "READY"
+        if is_revalidate(self.job):
+            # §7.3: 대상 = 항목의 run(현재 run 아니어도 됨) — 그 run 의 추출이 Case 현재 추출과 같을 때만
+            if run is None or run["case_id"] != case["id"] or run["status"] != "READY" or not same_extract(case, run):
+                raise _StepFailed("PREREQUISITE_MISSING", "재검증 대상 ESL 결과의 추출이 Case 현재 추출과 다릅니다 — "
+                                  "Case를 다시 계산해 새로 등록하세요")
+        elif (run is None or run["case_id"] != case["id"] or run["status"] != "READY"
                 or case.get("current_esl_run_id") != run["id"]):
             raise _StepFailed("PREREQUISITE_MISSING", stale)
-        if jt == "VALIDATE" and esl_run_stale(case, run):
+        elif jt == "VALIDATE" and esl_run_stale(case, run):
             raise _StepFailed("PREREQUISITE_MISSING", stale)
         try:
             how = esl_snapshot.ensure_on_disk(self.cdir, run)
@@ -293,8 +307,18 @@ class Executor:
                         res = register.REGISTER[self.job["job_type"]](conn, self.job, case, self.cdir)
                     except register.RegisterError as exc:
                         raise _StepFailed(exc.code, exc.message) from None
+                    job_warns = res.pop("warnings_job", None) if isinstance(res, dict) else None
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {"registered": _jsonable(res)})
-                    if self.job["job_type"] == "VALIDATE" and self.settings.report.auto:
+                    if isinstance(res, dict) and res.get("revalidate"):
+                        jobs_repo.patch_result(conn, self.job["id"], self.token,
+                                               {"revalidate": _jsonable(res["revalidate"])})
+                        if res["revalidate"].get("outcome") == "ENTRY_CHANGED":
+                            jobs_repo.add_warnings(conn, self.job["id"], self.token,
+                                                   ["재검증 중 라이브러리 항목이 폐기·변경되어 항목을 전환하지 않았습니다"])
+                    if job_warns:                    # 라이브러리 내보내기 일부 항목 실패 → 작업 경고(§6.2)
+                        jobs_repo.add_warnings(conn, self.job["id"], self.token, [str(w) for w in job_warns])
+                    if (self.job["job_type"] == "VALIDATE" and self.settings.report.auto
+                            and not is_revalidate(self.job)):        # 재검증은 현재 run 보고서가 아님(§7.3)
                         self._queue_report(conn, res)
                 outputs = {"registered": True}
                 note = self._archive_history()
@@ -324,6 +348,8 @@ class Executor:
         """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).
         실패해도 작업은 성공 — 경고 HISTORY_ARCHIVE_FAILED 만 남긴다."""
         if self.job["job_type"] not in ("EXPORT", "CASE_REPORT") or not self.settings.history.archive_files:
+            return None
+        if lib_jobs.is_lib_export(self.job):        # 라이브러리 내보내기는 Case 폴더에 쓰지 않음(묶음 폴더가 보존본)
             return None
         try:
             n = register.archive_history(self.cdir, self.job["job_type"], self.job["id"])
@@ -596,6 +622,19 @@ class Executor:
         if not ok:
             raise _StepFailed(h3d.FAILURE, msg, code)
         return {"done": h3d.done_summary(done), "exit_code": code, "hw_acquired": False}
+
+
+def is_revalidate(job: dict[str, Any]) -> bool:
+    return job.get("job_type") == "VALIDATE" and (job.get("params") or {}).get("origin") == "library_revalidate"
+
+
+def same_extract(case: dict[str, Any], run: dict[str, Any]) -> bool:
+    """§7.3: inputs_hash(현재 추출 job·part_title, run 의 t*·지지 세트) == run.inputs_hash 이고 추출 비stale."""
+    es = case.get("extract_summary") or {}
+    ih = inputs_hash(extract_job_id=es.get("job_id"), part_title=case["part_title"],
+                     tstar={"frame_index": run["frame_index"], "metric": run["metric"]},
+                     support_set_id=run["support_set_id"])
+    return ih == run["inputs_hash"] and not extract_stale(case)
 
 
 def _now(conn):

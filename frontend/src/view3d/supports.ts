@@ -1,6 +1,6 @@
 // 3-2-1 지지점 기호(계약 §6.3): 3성분 ▲(채움), 2성분 ◭(반 채움), 1성분 △(빈) + 구속 축 선분 + dofText 라벨.
 import type { View3dSupport } from "../api/types";
-import { dofText } from "../stages/Stage3";
+import { dofText } from "../lib/format";
 import type { V3 } from "./pick";
 
 export const SUPPORT_COLOR = "#1b9e77";

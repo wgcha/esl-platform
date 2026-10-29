@@ -19,8 +19,8 @@ const typesPath = process.argv[3] ?? path.resolve(root, "src", "api", "types.ts"
 const spec = JSON.parse(readFileSync(openapiPath, "utf8"));
 const schemas = spec.components?.schemas ?? {};
 // P3-이력: history.ts 의 interface 도 같은 규칙으로 대조한다(types.ts 와 한 소스로 이어 붙여 파싱 — import 줄은 무시됨).
-// v0.9.0: doe.ts(비드 DOE)도 — Doe* interface 는 types.ts, doe.ts 의 보조 interface 는 스키마가 없어 키 대조 대상 아님
-const extraTypeFiles = ["history.ts", "doe.ts"].map((f) => path.resolve(path.dirname(typesPath), f)).filter((f) => f !== typesPath && existsSync(f));
+// v0.9.0: doe.ts(비드 DOE)도, v0.10.0: library.ts(라이브러리 내보내기·재검증 — ExportBatch* 등)도 — Doe* interface 는 types.ts, doe.ts 의 보조 interface 는 스키마가 없어 키 대조 대상 아님
+const extraTypeFiles = ["history.ts", "doe.ts", "library.ts"].map((f) => path.resolve(path.dirname(typesPath), f)).filter((f) => f !== typesPath && existsSync(f));
 const srcText = [typesPath, ...extraTypeFiles].map((f) => readFileSync(f, "utf8")).join("\n");
 const src = ts.createSourceFile(typesPath, srcText, ts.ScriptTarget.Latest, true);
 
@@ -229,10 +229,10 @@ for (const [name, schema] of Object.entries(schemas)) {
 
 // 경로: types.ts 와 별개로 endpoints.ts 가 쓰는 경로가 openapi 에 있는지
 // P3: p3.ts·history.ts(있으면)도 같은 규칙으로 대조
-const epFiles = ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
+const epFiles = ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts", "library.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
 for (const epPath of epFiles) {
 try {
-  if (/(p3|history|opt|doe)\.ts$/.test(epPath) && !existsSync(epPath)) continue;
+  if (/(p3|history|opt|doe|library)\.ts$/.test(epPath) && !existsSync(epPath)) continue;
   const ep = readFileSync(epPath, "utf8");
   const epName = path.basename(epPath);
   const prefix = "/esl/api";
@@ -254,4 +254,4 @@ if (errors.length) {
   console.error(`check:api 실패 (${errors.length}건)\n` + errors.map((e) => "  - " + e).join("\n"));
   process.exit(1);
 }
-console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts·history.ts·opt.ts·doe.ts 경로 모두 openapi 에 있음`);
+console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts·history.ts·opt.ts·doe.ts·library.ts 경로 모두 openapi 에 있음`);

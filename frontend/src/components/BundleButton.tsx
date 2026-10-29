@@ -7,7 +7,23 @@ import { CopyPath } from "./CopyPath";
 export const BUNDLE_LABEL = "결과 받기(zip)";
 export const BUNDLE_TOO_LARGE = "결과가 커서 zip 으로 받을 수 없습니다 — 아래 폴더 경로를 복사해 탐색기에서 여세요";
 
-export function BundleButton({ url, filename, fallbackPath, small = true }: { url: string; filename: string; fallbackPath?: string | null; small?: boolean }) {
+export function BundleButton({
+  url,
+  filename,
+  fallbackPath,
+  small = true,
+  label = BUNDLE_LABEL,
+  primary = false,
+  title = "내보내기 파일·보고서·요약(json·csv)을 zip 하나로 내려받습니다. 대용량 원자료(npz)는 빠집니다.",
+}: {
+  url: string;
+  filename: string;
+  fallbackPath?: string | null;
+  small?: boolean;
+  label?: string;
+  primary?: boolean;
+  title?: string;
+}) {
   const [busy, setBusy] = useState(false);
   const [tooLarge, setTooLarge] = useState<{ path: string | null; size?: number; limit?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -15,9 +31,10 @@ export function BundleButton({ url, filename, fallbackPath, small = true }: { ur
     <span className="bundle">
       <button
         type="button"
-        className={small ? "btn small" : "btn"}
+        className={["btn", primary ? "primary" : "", small ? "small" : ""].filter(Boolean).join(" ")}
+        data-primary={primary ? "true" : undefined}
         disabled={busy}
-        title="내보내기 파일·보고서·요약(json·csv)을 zip 하나로 내려받습니다. 대용량 원자료(npz)는 빠집니다."
+        title={title}
         onClick={async () => {
           setBusy(true);
           setError(null);
@@ -33,7 +50,7 @@ export function BundleButton({ url, filename, fallbackPath, small = true }: { ur
           }
         }}
       >
-        {busy ? "만드는 중…" : BUNDLE_LABEL}
+        {busy ? "만드는 중…" : label}
       </button>
       {tooLarge && (
         <div className="bundle-pop too-large" role="status" data-testid="bundle-too-large">

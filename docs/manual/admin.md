@@ -237,11 +237,11 @@ handle /esl/* {
 
 서버에 따로 복사할 원본 자원이 없다(`deploy\RESOURCES.txt`). 입력(rad + 결과 CSV)은 사용자 PC에서 HyperView TCL로 만들고(루트 `update.bat` — 사용자 PC용), 서버는 `storage.input_roots` 아래에서 읽기만 한다. 솔버 가속(pypardiso·MKL, pyamg, psutil)은 `requirements.lock`에 포함되어 설치되며 환경 점검 `solver.*`로 확인한다.
 
-#### 2.7.1 비드 DOE 형상 엔진 paicad·OCP·gmsh(v0.9.0) — 설치·확인
+#### 2.7.1 강성 평가 스터디 형상 엔진 paicad·OCP·gmsh(v0.9.0, 이전 이름: 비드 DOE) — 설치·확인
 
-비드 DOE(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
-설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 비드 DOE 만 비활성**이다
-(콘솔 경고 `비드 DOE 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
+강성 평가 스터디(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
+설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 강성 평가 스터디 만 비활성**이다
+(콘솔 경고 `강성 평가 스터디 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
 관리자 권한은 필요 없다(설치 venv 안에만 설치).
 
 | 무엇 | 고정 위치 | 설치 |
@@ -251,14 +251,14 @@ handle /esl/* {
 
 - **오프라인 묶음(§2.2)**: `collect-offline.ps1` 이 lock 커밋의 `packages/paicad` 를 GitHub 에서 그 커밋만 받아(또는 `-PhysicsaiRepo <로컬 physicsai 저장소>`, 읽기만)
   빌드·정규화하고 버전·sha256 을 lock 과 대조해 `wheels\paicad-0.14.0-py3-none-any.whl` 로 넣는다. **불일치면 묶음을 만들지 않고 중단**한다.
-  이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 비드 DOE 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
+  이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 강성 평가 스터디 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
   `install.ps1`·`update.ps1` 은 묶음의 `wheels` 에서 설치한다(추가 매개변수 없음).
 - **git 폴더 설치(§2.0·§3.0)**: paicad 는 PyPI 에 없으므로 `<git>\.runtime\deploy.json` 에 둘 중 하나를 적는다(없으면 이미 설치된 paicad 확인만, 없으면 DOE 비활성).
   - `"paicad_wheels": "E:/.../wheels"` — 위 묶음의 `wheels` 폴더처럼 `paicad-0.14.0-py3-none-any.whl` 이 있는 폴더(대조 후 설치)
   - `"physicsai_root": "E:/.../physicsai-platform"` — lock 커밋이 들어 있는 physicsai 저장소(읽기만 — 커밋이 없으면 그 저장소에서 `git fetch` 후 다시 실행).
     `<런타임>\paicad-wheel` 에 빌드한다(사내 pip 설정으로 setuptools 를 받음)
 - 설정: 설치 venv 에 `paicad.exe` 가 **실제 있을 때만** `setup_config.py` 가 `bead_doe.paicad.exe`(비었을 때만)·`bead_doe.enabled: true`(키가 없을 때만 —
-  명시 `false` 는 그대로, 경고 1줄)를 넣는다. 바꾸기 전 `_backup\<UTC>\esl_platform.yaml`, 콘솔 1줄 `비드 DOE 자동 설정: …`. `commands.paicad_*` 는 코드 기본값
+  명시 `false` 는 그대로, 경고 1줄)를 넣는다. 바꾸기 전 `_backup\<UTC>\esl_platform.yaml`, 콘솔 1줄 `강성 평가 스터디 자동 설정: …`. `commands.paicad_*` 는 코드 기본값
   (argv[0] `{paicad}` = `bead_doe.paicad.exe`)이라 쓰지 않는다. `upload.allowed_ext` 를 직접 적은 설정에는 `.step`·`.stp` 를 한 번 보충한다(상태 `state\ext_supplement.json` 키 `0.9.0`).
 - **확인 명령**(설치 후, 일반 PowerShell):
 
@@ -416,8 +416,14 @@ $env:PGPASSWORD = $null
 | `history.backup_scan_max` | 실행 이력: 이전 검증 파일을 `_backup` 에서 표식으로 찾을 때 열어 보는 폴더 최대 수(최신 순, 넘으면 "파일 보존 안 됨" 으로 기록된 값만 표시) | `100` |
 | `history.archive_files` | 실행 이력: 내보내기(⑥)·Case 보고서 성공 시 `<Case>\history\<작업 id>\` 에 작업별로 복사해 두어 나중에도 그때 파일을 받을 수 있게 함(Case 폴더 용량이 실행당 내보내기·보고서 크기만큼 늘어남, 정리 정책 없음). 끄면 이후 실행분은 기록된 값만 표시 | `true` |
 | `library.config_path` | 라이브러리·분석·덱 설정(없으면 라이브러리 쓰기 API 503) | `library.yaml` |
+| `ui.library_export_enabled` | v0.10.0 라이브러리 [내보내기](여러 ESL zip) 화면 노출. `false`(기본) = 화면 숨김, `/library/exports` API 는 전역 관리자만(그 외 403 `EXPORT_DISABLED`). 비드 최적화·강성 평가가 플랫폼 안에서 돌아 수작업 외부 계산용으로 켤 때만 | `false` |
+| `library_export.max_entries` | v0.10.0 라이브러리 내보내기 한 번에 고를 수 있는 ESL 수(넘으면 422 `TOO_MANY_ENTRIES`). 화면은 `GET /version` 의 `ui.library_export_max_entries` 로 같은 값을 받아 [내보내기] 비활성 사유에 씀 | `50` |
+| `library_export.max_bundle_bytes` | 내보내기 zip 상한(넘으면 413 `BUNDLE_TOO_LARGE` + `_exports\<묶음>` 경로 안내). `null` = `ui.max_bundle_bytes` | `null` |
+| `library_export.wait_s` | 같은 모델 ESL 이 서로 다른 Case 작업에 나뉘었을 때 앞 항목 ID 결과를 기다리는 최대 초(넘으면 항목 실패 `EXPORT_ORDER_TIMEOUT`) | `600` |
 
 - 코어 `esl.yaml`의 `solver.backend: auto` → Windows에서 `pardiso`(pypardiso·MKL). `extract.disp_precision`은 TCL 출력 정밀도(H3D 보통 `float32`).
+- 코어 `esl.yaml` 선택 절 `support.auto_check`(v0.10.0 ② 3-2-1 자동 선택 품질 검사, 없으면 기본값): `min_area_ratio` 0.10(세 점 공선) · `min_dist_rel` 0.15(두 점 근접, 대각선 대비) · `min_cond_ratio` 1e-3(구속 조건비) · `expand_candidates` true(PCA 4꼭지점 실패 시 8후보 탐색) · `rule_version` 1. **임시값** — 실제 파트에서 자동 선택이 자주 막히면(사용자 화면 "지지점을 자동으로 정하지 못했습니다") 값을 조정. 판정 cfg 에 주입하지 않아 설정 해시·보고서 불변.
+- 라이브러리 내보내기 출력은 `<esl_root>\_exports\<묶음 id>\`(batch.json·ESL 별 폴더·logs·manifest·README)에 쌓이고 정리 정책이 없다(묶음당 수십 MB) — 용량이 차면 오래된 묶음 폴더를 지운다(지우면 그 묶음 zip 다시 받기 불가).
 - 판정 기준(`validation.*`, `compare.*`)과 ISTA 6 낙하 높이 표는 **임시값·TODO** — 사내 확인 후 교체(§15).
 - 라이브러리 설정(`library.yaml`)의 설계 버전 비교 수렴 기준 `convergence`: `cos_min`(기본 0.95), `rep_same`(기본 true — 짝 대표(medoid)의 cos ≥ `cos_min` 이면 같은 대표, medoid 씬이 달라도 됨), `min_nodes_per_cell`(기본 64 — 셀당 노드 중앙값이 이보다 작으면 경고, 16 미만이면 "판정 신뢰 낮음" 배지), `coarsen`(false|half — 2×2 셀 묶음으로 cos 계산, 12×7 이하 격자에서는 무시). 설치본 `library.yaml`은 업데이트 때 덮어쓰지 않으므로 빠진 키는 이 기본값으로 채운다(이전 기본 0.9 를 적어 둔 파일은 그 값이 유지됨).
 - 오류 코드 `SOLVER_OUT_OF_MEMORY`: 쉘 솔버(조립·분해·해)나 코어 처리 중 메모리 부족(MemoryError, PARDISO error -2, CHOLMOD out-of-memory). 비양정치·구속 부족(`SOLVER_SINGULAR`)과 구분된다 — 13장 FAQ.

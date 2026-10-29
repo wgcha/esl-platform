@@ -5,7 +5,10 @@ import { JOB_TYPE_LABEL, durText, history, summaryText, type HistoryItem, type H
 import { dt } from "../lib/format";
 import { Badge, Empty, ErrorLine, JobStatusBadge } from "./ui";
 
-const STAGE_MARK = ["", "①", "②", "③", "④", "⑤", "⑥"];
+import { STEP_MARKS, stepOfStage } from "../shell/StageStepper";
+
+/** 작업 단계 표식: 옛 jobs.stage(1..6) → 화면 단계(①~④) */
+const stageMark = (stage: number) => (stage >= 1 && stage <= 6 ? STEP_MARKS[stepOfStage(stage) - 1] : "");
 
 /** 결과 칩: 현재 / 과거 / 입력 바뀜 */
 function ResultChips({ it }: { it: HistoryItem }) {
@@ -52,7 +55,7 @@ export function HistoryTable({ items, projectId, showCase }: { items: HistoryIte
                 </td>
                 <td>
                   <span className="stage-mark" aria-hidden="true">
-                    {STAGE_MARK[it.stage] || "◆"}
+                    {stageMark(it.stage) || "◆"}
                   </span>{" "}
                   {JOB_TYPE_LABEL[it.job_type]}
                 </td>

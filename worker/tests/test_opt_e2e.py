@@ -157,7 +157,8 @@ def seed_entry(engine, esl_root: Path, case_id: str, mesh: dict, kind: str, amp:
             id=eid, project_id="p-1", case_id=case_id, esl_run_id=run["run_id"], status="ACTIVE",
             model={"name": "55QX10A", "inch": inch, "n_nodes": int(mesh["node_id"].size),
                    "n_elems": int(mesh["elem_id"].size)},
-            scene={"drop_type": "Corner", "scene_no": scene, "warnings": []}, quality={"verdict": "PASS", "fail_reasons": []},
+            scene={"drop_type": "Corner", "scene_no": scene, "warnings": []}, quality={"verdict": "PASS", "status": "PASS", "scheme": "disp_primary/1",
+                                                                                    "fail_reasons": []},
             summary={"grid": {"nx": 24, "ny": 14}, "frame": {"L_xi": fr["L_xi"], "L_eta": fr["L_eta"]}},
             dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz", sha256="0" * 64, registered_by="u-power",
             registered_by_name="파워"))

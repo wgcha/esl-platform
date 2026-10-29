@@ -57,6 +57,12 @@ export interface Crumb {
   to?: string;
 }
 
+/** v0.10.0 최상단 메뉴 2개(esl_menu_restructure.md §4.1) */
+export const MENU_CREATE = "ESL 생성";
+export const MENU_LIBRARY = "ESL 라이브러리";
+/** 라이브러리 메뉴 활성: /p/:pid/library·/opt·/doe 로 시작. 그 외(케이스 목록·새 케이스·케이스·이력·작업)는 ESL 생성 */
+export const isLibraryPath = (pathname: string) => /^\/p\/[^/]+\/(library|opt|doe)(\/|$)/.test(pathname);
+
 /** 앱 첫 경로 조각(PhysicsAI 의 "AI 예측"에 해당) */
 export const ROOT_CRUMB: Crumb = { label: "등가정적하중", to: "/" };
 
@@ -78,7 +84,7 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
   const { me } = useApp();
   const role = projectId && me ? (me.roles[projectId] as Role | undefined) : undefined;
   const loc = useLocation();
-  const libOn = /\/library(\/|$)/.test(loc.pathname);
+  const libOn = isLibraryPath(loc.pathname);
   return (
     <header className="topbar">
       <Link to="/" className="brand" aria-label="ESL 처음으로">
@@ -87,9 +93,12 @@ export function TopBar({ crumbs, projectId }: { crumbs: Crumb[]; projectId?: str
       </Link>
       <PathBar crumbs={[ROOT_CRUMB, ...crumbs]} />
       {projectId && (
-        <nav aria-label="전역 메뉴">
+        <nav className="topbar-menus" aria-label="전역 메뉴">
+          <Link to={`/p/${projectId}`} className={!libOn ? "topbar-menu on" : "topbar-menu"} aria-current={!libOn ? "page" : undefined}>
+            {MENU_CREATE}
+          </Link>
           <Link to={`/p/${projectId}/library`} className={libOn ? "topbar-menu on" : "topbar-menu"} aria-current={libOn ? "page" : undefined}>
-            라이브러리
+            {MENU_LIBRARY}
           </Link>
         </nav>
       )}

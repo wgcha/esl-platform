@@ -375,19 +375,21 @@ async function scenario(browser, base, seed) {
   const rowNew = rowOf(page, "55QX10B");
   await rowNew.first().waitFor();
   const txt = await rowNew.first().innerText();
-  check(/56/.test(txt) && /18\.5 kg/.test(txt) && /STACK/.test(txt), `목록 행 반영: ${txt.replace(/\s+/g, " ")}`);
+  // v0.10.0 ESL 목록 열(모델·인치/크기·씬·모드·판정·등록·동작) — 제품 질량은 열에서 빠짐(API 로 확인)
+  check(/56/.test(txt) && /STACK/.test(txt), `목록 행 반영: ${txt.replace(/\s+/g, " ")}`);
+  const massNow = await page.evaluate(async (id) => (await (await fetch(`/esl/api/library/entries/${id}`)).json()).model.product_mass, A.id);
+  check(massNow === 18.5, `제품 질량 저장(API) ${massNow}`);
   await page.getByRole("combobox", { name: "모델", exact: true }).selectOption("55QX10B");
   await page.waitForFunction(() => document.querySelectorAll('table[aria-label="라이브러리 항목"] tbody tr').length === 1);
   check(true, "모델 필터 55QX10B → 1행");
   await page.getByRole("button", { name: "필터 지우기" }).click();
-  // 크기 판정: B(55) 를 기준으로 고르면 A(56) 은 '크기 다름'
+  // 크기 판정(v0.10.0: 체크는 자유, 강성 평가·비드 최적화 버튼이 '크기 다름' 사유로 비활성): B(55) 기준 + A(56)
   await rowOf(page, "55QX10A").getByRole("checkbox").check();
-  const boxA = rowOf(page, "55QX10B").getByRole("checkbox");
-  await page.waitForFunction(() => {
-    const r = [...document.querySelectorAll('table[aria-label="라이브러리 항목"] tbody tr')].find((t) => t.textContent.includes("55QX10B"));
-    return r && r.querySelector("input[type=checkbox]").disabled;
-  });
-  check(/크기 다름/.test((await boxA.getAttribute("title")) ?? ""), "인치 변경 → 크기 판정(같은 크기 선택) 반영");
+  await rowOf(page, "55QX10B").getByRole("checkbox").check();
+  const why = page.getByTestId("pick-why");
+  await why.waitFor();
+  check(/크기 다름/.test((await why.textContent()) ?? ""), "인치 변경 → 크기 판정(같은 크기) 반영 — 선택 줄 비활성 사유");
+  check(await page.getByTestId("pick-bar").getByRole("button", { name: "비드 최적화 (2)" }).isDisabled(), "크기 다름 → 비드 최적화 비활성");
   await page.getByRole("button", { name: "선택 해제" }).click();
   // 409: 대화상자 연 뒤 다른 곳에서 먼저 수정 → 저장 시 오류 문구 + 최신 값 불러오기
   await rowOf(page, "55QX10A").getByRole("button", { name: "수정" }).click();

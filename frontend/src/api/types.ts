@@ -86,6 +86,42 @@ export type StageNo = 1 | 2 | 3 | 4 | 5 | 6;
 export interface StageState {
   state: StageStateName;
   job_id?: string | null;
+  /** v0.10.0(esl_menu_restructure.md §5.4): 상태 사유(예: SUPPORT_AUTO_BLOCKED·TSTAR_NOT_CONFIRMED) */
+  reason?: StageReason | null;
+}
+export interface StageReason {
+  code: string;
+  message: string;
+}
+/** v0.10.0 §5.4: 화면 4단계 상태(①입력 ②t*·지지점 ③ESL ④검증). stage_status("1".."6")는 하위 호환(deprecated) */
+export interface StepStatus {
+  input: StageState;
+  tstar: StageState;
+  esl: StageState;
+  validate: StageState;
+}
+export type StepKey = keyof StepStatus;
+
+/** v0.10.0 §5.2: 자동 3-2-1 지지 품질 검사 */
+export interface SupportChecks {
+  area_ratio: number | null;
+  min_dist_rel: number | null;
+  cond_ratio: number | null;
+}
+export interface SupportProblem {
+  code: string;
+  message: string;
+  value?: number | null;
+  limit?: number | null;
+}
+/** cases.tstar.support_auto(§5.1): OK = 자동 저장, BLOCKED = 검사 실패(지지 없음), KEPT = 기존 지지 유지, MANUAL = 고급 칸 수동 지정 */
+export interface SupportAuto {
+  status: "OK" | "BLOCKED" | "KEPT" | "MANUAL";
+  mode?: "pca4" | "pca8" | null;
+  source?: "auto" | "user" | null;
+  checks?: SupportChecks | null;
+  problems?: SupportProblem[] | null;
+  rule_version?: number | null;
 }
 export type StageStatus = StageState;
 
@@ -99,6 +135,8 @@ export interface TStar {
   elem_id: number;
   value: number;
   source: "auto" | "user";
+  /** v0.10.0 §5.1: t* 확정 때 함께 한 자동 3-2-1 결과(추출 재등록 시 사라짐) */
+  support_auto?: SupportAuto | null;
 }
 
 export interface MaterialSummary {
@@ -199,8 +237,10 @@ export interface CaseOut {
   version: number;
   /** v0.6.0 §6.5: 입력 h3d 의 업로드 메타(압축 모드 배지). 없으면 null */
   input_h3d_meta?: H3dMeta | null;
-  /** GET /cases/{id}·쓰기 응답에만 */
+  /** GET /cases/{id}·쓰기 응답에만 (v0.10.0: deprecated — 화면은 step_status 만 쓴다) */
   stage_status?: Record<string, StageState> | null;
+  /** v0.10.0 §5.4: 화면 4단계 상태 */
+  step_status?: StepStatus | null;
 }
 export type Case = CaseOut;
 
@@ -449,9 +489,15 @@ export interface SupportSuggestOut {
   node_ids: number[];
   dofs: string[];
   coords: number[][];
-  plane: Plane;
+  plane?: Plane | null;
   /** PCA 4꼭지점 노드 ID */
   corners: number[];
+  /** v0.10.0 §5.1: 같은 auto_support 결과(status 기본 OK, BLOCKED 면 node_ids 비고 problems) */
+  status?: "OK" | "BLOCKED";
+  mode?: "pca4" | "pca8" | null;
+  checks?: SupportChecks | null;
+  problems?: SupportProblem[];
+  rule_version?: number | null;
 }
 export type SupportSuggest = SupportSuggestOut;
 
@@ -911,6 +957,26 @@ export interface EntryQuality {
   strain_exceed_frac?: number | null;
   undetermined_reason?: string | null;
   confirmed_undetermined?: ConfirmedFail | null;
+  /** v0.10.0 §7.4: 재검증으로 정상 전환된 기록 */
+  revalidated?: EntryRevalidated | null;
+}
+
+export interface EntryRevalidated {
+  from_validation_id: string | null;
+  from_status: string | null;
+  job_id: string;
+  at: string;
+  by: string;
+  by_name: string;
+}
+
+/** v0.10.0 §7.4: 부적격 사유(LEGACY·사유와 함께 등록된 FAIL·판정 불가) */
+export type IneligibleReason = "LEGACY" | "FAIL" | "UNDETERMINED";
+/** §7.3 재검증 불가 사유: code = 오류 코드(CASE_ARCHIVED·REVALIDATE_NOT_POSSIBLE·CASE_JOB_BUSY), reason = 세부(RUN_SNAPSHOT_MISSING·EXTRACT_CHANGED, 없으면 code), message = 한글 안내(툴팁) */
+export interface RevalidateBlock {
+  code: string;
+  reason: string;
+  message: string;
 }
 
 export interface EntryOut {
@@ -944,6 +1010,13 @@ export interface EntryOut {
   size?: EntrySize | null;
   topo_sha256?: string | null;
   deform_mode?: DeformModeOut | null;
+  /** v0.10.0 §7.4: 강성 평가 스터디·비드 최적화·종합분석에 쓸 수 있는가(quality.status PASS ∧ scheme) */
+  eligible?: boolean;
+  ineligible_reason?: IneligibleReason | null;
+  /** 재검증 불가 사유(미리 계산) — 있으면 [재검증] 비활성 + 툴팁 */
+  revalidate_block?: RevalidateBlock | null;
+  /** 진행 중인 재검증 작업(VALIDATE origin library_revalidate) */
+  revalidate_job?: { job_id: string; state: JobState } | null;
 }
 export type LibraryEntry = EntryOut;
 
@@ -1150,6 +1223,8 @@ export interface AnalysisOut {
   job_id?: string | null;
   job?: JobOut | null;
   result?: AnalysisResult | null;
+  /** v0.10.0 §7.5: 필터 기반 분석에서 부적격이라 뺀 항목 수(0이면 생략) */
+  excluded_ineligible?: number | null;
   dir_rel: string;
   folder_path: string;
   result_rel?: string | null;
@@ -1545,7 +1620,7 @@ export interface VersionOut {
   commit: string | null;
   built_at: string | null;
   /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
-  ui?: { upload_slim_hint_gb?: number };
+  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number };
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */
@@ -2297,6 +2372,36 @@ export interface DoeRankRow {
   epsmax_all: number;
   noise?: boolean;
   warnings_n: number;
+  /** v0.10.0 §11.4 ESL별 개선 지표(r_i = C_안,i / C_베이스라인,i). v0.10.0 이전 결과엔 없음 */
+  worst_ratio?: number | null;
+  min_improvement?: number | null;
+  all_improved?: boolean | null;
+  n_improved?: number;
+  n_worsened?: number;
+  n_unchanged?: number;
+  geo_mean_improvement?: number | null;
+  pareto?: boolean;
+  /** 결과의 per_esl_inline 이 true 일 때만(아니면 GET …/results/per-esl) */
+  per_esl?: DoePerEsl[];
+}
+/** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
+export interface DoePerEsl {
+  entry_id: string;
+  label?: string | null;
+  C: number;
+  ratio: number;
+  umax: number;
+  epsmax: number;
+}
+export interface DoePerEslDesign {
+  id: string;
+  per_esl: DoePerEsl[];
+}
+/** GET /doe/studies/{id}/results/per-esl?design=… */
+export interface DoePerEslOut {
+  esl: { entry_id: string; label?: string | null }[];
+  ratio_tol?: number | null;
+  designs: DoePerEslDesign[];
 }
 /** (보강) 순위 밖 안(스킵·실패) — 순위표 아래 상태 배지 */
 export interface DoeExcluded {
@@ -2330,5 +2435,13 @@ export interface DoeResultOut {
   best: { id: string; files: DoeFileOut[] } | null;
   /** (보강) ③ 잡음 바닥(|개선율|) — §7.2 */
   noise_floor?: number | null;
+  /** v0.10.0 §11.4: '변화 없음' 허용치(③ 은 max(설정, noise_floor)) */
+  ratio_tol?: number | null;
+  /** 순위 행에 per_esl 이 들어 있는가(안 수 × ESL 수 ≤ 설정 상한) */
+  per_esl_inline?: boolean;
+  /** ESL 열 순서·라벨 */
+  esl?: { entry_id: string; label?: string | null }[];
+  /** 서버 정렬 키(기본 score) */
+  sort?: string;
   warnings: DoeWarning[];
 }

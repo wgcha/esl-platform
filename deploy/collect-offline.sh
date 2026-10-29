@@ -69,7 +69,7 @@ else
 fi
 # 비드 DOE paicad wheel(lock 커밋 빌드·정규화·sha256 대조 — 불일치면 여기서 중단)
 if [ "$NODL" -eq 1 ] || [ "$NOPAICAD" -eq 1 ]; then
-  echo "paicad wheel 생략(--no-download/--no-paicad) — 이 묶음으로 설치하면 비드 DOE 는 비활성"
+  echo "paicad wheel 생략(--no-download/--no-paicad) — 이 묶음으로 설치하면 강성 평가 스터디 는 비활성"
 else
   PAICAD_ARGS=""
   [ -z "$PAICAD_REPO" ] || PAICAD_ARGS="$PAICAD_ARGS --repo '$PAICAD_REPO'"

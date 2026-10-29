@@ -51,8 +51,14 @@ def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
     if str(spec.get("stage") or "").startswith("opt_"):        # v0.7.0 비드 최적화(OPT_PREP·LOAD·DECK·POST)
         core_adapter.run_opt_stage(spec, echo)
         return {"error": None}
-    if str(spec.get("stage") or "").startswith("bd_"):         # v0.9.0 비드 DOE(esl.doe.stages)
+    if str(spec.get("stage") or "").startswith("bd_"):         # v0.9.0 강성 평가 스터디(비드 DOE, esl.doe.stages)
         core_adapter.run_doe_stage(spec, echo)
+        return {"error": None}
+    if spec.get("stage") == "export" and (spec.get("lib") or {}).get("mode") == "library_export":
+        # v0.10.0 라이브러리 다중 내보내기: 원본 = 항목 폴더, 출력 = _exports/<batch>/(항목별 export.json)
+        res = core_adapter.run_lib_export(spec, echo)
+        n_ok = sum(1 for r in res if r.get("ok"))
+        echo(f"[esl-worker] 라이브러리 내보내기: 항목 {len(res)}개 중 성공 {n_ok}개")
         return {"error": None}
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],

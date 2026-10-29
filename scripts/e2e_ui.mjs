@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // 실서버 UI E2E: 임시 PostgreSQL + uvicorn(backend) + 워커 + 빌드된 프런트(/esl/ 하위 경로 정적 서빙, physicsai 의
 // Caddy 패턴 = /esl/api/* → backend 프록시, /esl/* → frontend/dist strip_prefix + index.html fallback)를 띄우고
-// Playwright(Chromium)로 합성 Case 를 ①~⑥ 진행한다. 인증 dev_static. 단계별 스크린샷 저장.
+// Playwright(Chromium)로 합성 Case 를 v0.10.0 4단계(①입력 ②t*·지지점(3-2-1 자동) ③ESL ④검증 → 라이브러리에 등록) 진행하고,
+// [ESL 라이브러리]에서 그 ESL 을 내보내기(zip)한다. Case 단위 EXPORT API(MR-D-7, 화면 진입점 없음)로 413 경로·이력도 확인.
+// 인증 dev_static. 단계별 스크린샷 저장.
 //
 // 사용: node scripts/e2e_ui.mjs [스크린샷 폴더]   (먼저 cd frontend && npm run build)
 // env: PG_BIN(기본 /usr/lib/postgresql/<최신>/bin), PYTHON(기본 python3), PLAYWRIGHT_BROWSERS_PATH(기본 /opt/pw-browsers),
@@ -153,6 +155,7 @@ d["worker"].update({"heartbeat_interval_s": 1, "lease_ttl_s": 10, "claim_interva
                     "state_dir": os.path.join(tmp, "state")})
 d["ui"]["max_artifact_bytes"] = 4096        # 413 경로(다운로드 대신 경로 복사)를 실제로 타도록 작게
 d["ui"]["poll_job_ms"] = 1000
+d["ui"]["library_export_enabled"] = True      # 라이브러리 내보내기(기본 숨김) — 켠 서버에서만 내보내기 단계
 d["core"] = {"settings": core}
 p = os.path.join(tmp, "esl_platform.yaml")
 yaml.safe_dump(d, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
@@ -312,7 +315,7 @@ async function scenario(base, inp) {
     await page.setViewportSize({ width: 2560, height: 1440 });
     await page.evaluate(() => localStorage.setItem("esl.statusDrawer", "closed"));
     await page.reload();
-    await page.getByRole("heading", { level: 2, name: "④ ESL" }).waitFor();
+    await page.getByRole("heading", { level: 2, name: "③ ESL" }).waitFor();
     const host = page.getByTestId("v3d-host");
     await page.waitForSelector('[data-testid="v3d-host"][data-phase="ready"]', { timeout: 60000 });
     // 1) 실제 API: manifest 200 + part.glb/values.bin 이 ?key= 와 함께 200
@@ -431,7 +434,8 @@ async function scenario(base, inp) {
   // 프로젝트 → Case 목록 → 새 Case(서버 폴더 탭의 '고급: 경로 직접 입력' — 합성 Case 는 서버 경로로 준다)
   await page.goto(`${base}/esl/`);
   await page.getByRole("link", { name: /개발 프로젝트 dev/ }).click();
-  await page.getByRole("heading", { name: "Case 목록" }).waitFor();
+  await page.getByRole("heading", { level: 1, name: "ESL 생성" }).waitFor();          // v0.10.0 상단 메뉴 [ESL 생성]
+  for (const m of ["ESL 생성", "ESL 라이브러리"]) await page.locator("header").getByRole("link", { name: m }).first().waitFor();
   await page.getByRole("button", { name: "새 Case" }).click();
   await page.getByRole("heading", { level: 1, name: "새 Case" }).waitFor();
   await page.getByRole("tab", { name: "서버 폴더에서 고르기" }).click();
@@ -462,9 +466,9 @@ async function scenario(base, inp) {
   await page.getByText("후보 프레임(D)").waitFor();
   await shot("01_input_extract");
 
-  // ② t*: 다른 후보로 확정했다가 rank 1(자동 t*)로 되돌림(PUT 2회)
+  // ② t*·지지점: 다른 후보로 확정했다가 rank 1(자동 t*)로 되돌림(PUT 2회) — 첫 확정 때 3-2-1 자동 선택
   await stageLink(2).click();
-  await page.getByRole("heading", { level: 2, name: "② t*" }).waitFor();
+  await page.getByRole("heading", { level: 2, name: "② t*·지지점" }).waitFor();
   await page.getByRole("img", { name: /max-hold 곡선/ }).waitFor();
   const radios = page.getByRole("radio", { name: /^프레임 / });
   await radios.first().waitFor();
@@ -487,23 +491,24 @@ async function scenario(base, inp) {
   }
   await shot("02_tstar");
 
-  // ③ 지지점: 자동 제안값 저장
-  await stageLink(3).click();
-  await page.getByRole("heading", { level: 2, name: "③ 지지점" }).waitFor();
-  const ids = page.getByRole("textbox", { name: /지지 노드/ });
-  await page.waitForFunction(() => [...document.querySelectorAll('input[aria-label^="지지 노드"]')].every((i) => i.value), null, { timeout: 30000 });
-  await expectEnabled();
-  log("지지 노드", await ids.evaluateAll((els) => els.map((e) => e.value)));
-  await primary().click();
-  await page.getByText(/저장됨 · /).waitFor({ timeout: 30000 });
+  // ② 지지점 카드(3-2-1 자동, 편집 UI 없음) — 예전 ③ 지지점 단계 폐지
+  if (nCand <= 1) {
+    await expectEnabled();
+    await primary().click();
+  }
+  await waitDone(2);
+  const sup = page.getByTestId("support-summary");
+  await sup.locator("tbody tr").nth(2).waitFor({ timeout: 30000 });
+  if (await sup.locator("input").count()) throw new Error("지지 카드에 편집 입력칸이 있음");
+  log("지지 노드", await sup.locator("tbody tr td.mono").allTextContents());
   await shot("03_support");
 
-  // ④ ESL
-  await stageLink(4).click();
-  await page.getByRole("heading", { level: 2, name: "④ ESL" }).waitFor();
+  // ③ ESL
+  await stageLink(3).click();
+  await page.getByRole("heading", { level: 2, name: "③ ESL" }).waitFor();
   await expectEnabled();
   await primary().click();
-  await waitDone(4);
+  await waitDone(3);
   await page.getByText("강체 회전각").waitFor({ timeout: 30000 });
   await page.getByText("F_eq 상위 노드").waitFor();
   await shot("04_esl");
@@ -514,12 +519,12 @@ async function scenario(base, inp) {
     return { verdict: "(3D 만 확인)", nRows: 0, nLarge: 0, nonGet: nonGet.length };
   }
 
-  // ⑤ 검증
-  await stageLink(5).click();
-  await page.getByRole("heading", { level: 2, name: "⑤ 검증" }).waitFor();
+  // ④ 검증
+  await stageLink(4).click();
+  await page.getByRole("heading", { level: 2, name: "④ 검증" }).waitFor();
   await expectEnabled();
   await primary().click();
-  await waitDone(5);
+  await waitDone(4);
   const badge = page.locator(".card").filter({ hasText: "판정" }).locator(".badge").first();
   await badge.waitFor({ timeout: 30000 });
   const verdict = (await badge.textContent())?.trim();
@@ -530,52 +535,79 @@ async function scenario(base, inp) {
   // ⑤ v0.5.7 실서버 확인(2560×1440): 판정 카드 · 변위 컨투어 · 단면 위치 변경(슬라이더·지도 클릭) · 레전드 범위 편집
   await liveDispPrimary();
 
-  // ⑥ 내보내기 + 다운로드(작은 파일) + 413(큰 파일: 경로 복사)
-  await stageLink(6).click();
-  await page.getByRole("heading", { level: 2, name: "⑥ 내보내기" }).waitFor();
-  await expectEnabled();
+  // ④ PASS → [라이브러리에 등록](주 버튼) → [ESL 라이브러리] 체크 → [내보내기] 창 → zip 받기
+  await page.waitForFunction(() => document.querySelector("button[data-primary]")?.textContent?.includes("라이브러리에 등록"), null, { timeout: 30000 });
   await primary().click();
-  await waitDone(6);
-  await page.locator("td.mono", { hasText: "06_export/" }).first().waitFor({ timeout: 30000 });
-  const folder = (await page.getByTestId("folder-path").textContent())?.trim();
+  await page.getByTestId("reg-done").waitFor({ timeout: 30000 });
+  const caseUrl = page.url();
+  await page.locator("header").getByRole("link", { name: "ESL 라이브러리" }).first().click();
+  const libTable = page.getByRole("table", { name: "라이브러리 항목" });
+  await libTable.locator("tbody tr").first().waitFor({ timeout: 30000 });
+  await libTable.locator('tbody input[type="checkbox"]').first().check();
+  await page.getByTestId("pick-bar").getByRole("button", { name: "내보내기 (1)" }).click();
+  const expDlg = page.getByRole("dialog");
+  await expDlg.getByRole("button", { name: "내보내기 시작" }).click();
+  await page.waitForFunction(() => {
+    const b = [...document.querySelectorAll('[role="dialog"] button')].find((x) => x.textContent.trim() === "zip 받기");
+    return b && !b.disabled;
+  }, null, { timeout: 120000, polling: 1000 });
+  const [zdl] = await Promise.all([page.waitForEvent("download", { timeout: 30000 }), expDlg.getByRole("button", { name: "zip 받기" }).click()]);
+  log("라이브러리 내보내기 zip", zdl.suggestedFilename());
+  if (!/^esl_export_\d{8}-\d{4}_1\.zip$/.test(zdl.suggestedFilename())) throw new Error(`zip 이름 이상: ${zdl.suggestedFilename()}`);
+  await shot("06_library_export");
+  await expDlg.getByRole("button", { name: "닫기" }).click();
+  // 옛 ⑥ 주소 → ④ + 안내
+  await page.goto(caseUrl.replace(/\/step\/\d.*$/, "/stage/6"));
+  await page.getByTestId("moved-export").waitFor({ timeout: 15000 });
+
+  // Case 단위 EXPORT(API 유지, MR-D-7) → 내보내기 파일 다운로드(작은 파일) + 413(큰 파일: 경로 복사) — 작업 상세 화면에서
+  const expJob = await page.evaluate(async () => {
+    const cid = location.pathname.split("/c/")[1].split("/")[0];
+    const run = (await (await fetch(`/esl/api/cases/${cid}`)).json()).current_esl_run_id;
+    const r = await fetch(`/esl/api/cases/${cid}/jobs`, { method: "POST", headers: { "Content-Type": "application/json", "X-ESL-Request": "1" }, body: JSON.stringify({ job_type: "EXPORT", params: { esl_run_id: run, targets: ["radioss_inc", "fem", "csv"] } }) });
+    const j = await r.json();
+    for (let i = 0; i < 120; i++) {
+      const s = await (await fetch(`/esl/api/jobs/${j.id}`)).json();
+      if (["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"].includes(s.state)) return s;
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    return j;
+  });
+  if (expJob.state !== "SUCCEEDED") throw new Error(`Case EXPORT 실패: ${JSON.stringify(expJob).slice(0, 400)}`);
+  await page.goto(`${base}/esl/p/dev/jobs/${expJob.id}`);
+  await page.getByRole("table", { name: "내보내기 파일" }).waitFor({ timeout: 30000 });
+  // v0.10.0: ⑥ 화면(파일 표·경로 복사)은 폐지 — 작업 상세의 내보내기 파일 표에서 받기, 큰 파일은 서버 413 경로 안내(API)
+  const fileTbl = page.getByRole("table", { name: "내보내기 파일" });
+  await fileTbl.locator("tbody tr").first().waitFor({ timeout: 30000 });
+  const folder = await page.evaluate(async (u) => {
+    const cid = u.split("/c/")[1].split("/")[0];
+    return (await (await fetch(`/esl/api/cases/${cid}`)).json()).folder_path;
+  }, caseUrl);
   if (!folder || !folder.endsWith("e2e_case01")) throw new Error(`결과 폴더 경로 이상: ${folder}`);
-  const rows = page.locator("tbody tr").filter({ has: page.locator("td.mono", { hasText: "06_export/" }) });
-  const nRows = await rows.count();
-  const tooLarge = page.getByTestId("too-large");
-  const nLarge = await tooLarge.count();
-  log(`내보낸 파일 ${nRows}개, 다운로드 한도 초과 ${nLarge}개`);
-  if (nLarge < 1) throw new Error("413(크기 초과) 안내가 없음");
-  // 작은 파일 다운로드
-  const dlLink = page.getByRole("link", { name: "다운로드" }).first();
+  const nRows = await fileTbl.locator("tbody tr").count();
+  const nLarge = 0;
+  log(`Case 내보내기 파일 ${nRows}개`);
+  const dlLink = fileTbl.getByRole("link", { name: "받기" }).first();
   if ((await dlLink.count()) > 0) {
     const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 15000 }), dlLink.click()]);
     log("다운로드", dl.suggestedFilename());
   }
-  // 큰 파일: 경로 복사
-  const first = tooLarge.first();
-  const txt = await first.textContent();
-  if (!txt.includes("파일이 커서 다운로드 대신 경로를 복사하세요")) throw new Error(`413 안내 문구 없음: ${txt}`);
-  await first.getByRole("button", { name: "경로 복사" }).click();
-  await first.getByRole("button", { name: "복사됨" }).waitFor({ timeout: 5000 });
-  const clip = await page.evaluate(() => navigator.clipboard.readText());
-  if (!clip.startsWith(folder)) throw new Error(`복사된 경로 이상: ${clip}`);
-  log("경로 복사", clip);
   // 실제 413 응답도 확인(목록의 downloadable 과 별개로 서버가 413 detail 을 줌)
-  const big = await page.evaluate(async () => {
-    const cid = location.pathname.split("/c/")[1].split("/")[0];
+  const big = await page.evaluate(async (u) => {
+    const cid = u.split("/c/")[1].split("/")[0];
     const arts = await (await fetch(`/esl/api/cases/${cid}/artifacts`)).json();
     const a = arts.find((x) => !x.downloadable);
     const r = await fetch(`/esl/api/artifacts/${a.id}/download`);
     return { status: r.status, body: await r.json(), a };
-  });
+  }, caseUrl);
   if (big.status !== 413 || big.body.detail.code !== "ARTIFACT_TOO_LARGE" || big.body.detail.path !== big.a.path)
     throw new Error(`413 응답 이상: ${JSON.stringify(big)}`);
   await shot("06_export");
 
-  // ⑦ 실행 이력: ② 에서 t* 를 다른 후보로 바꾸고 ④ ESL 을 한 번 더 돌려 첫 실행을 '과거'(입력 바뀜·diff 있음)로 만든 뒤,
-  // 프로젝트 이력 → 작업 상세 → 그때 결과 열기(④ ?run=)
-  await stageLink(2).click();
-  await page.getByRole("heading", { level: 2, name: "② t*" }).waitFor();
+  // ⑦ 실행 이력: ② 에서 t* 를 다른 후보로 바꾸고 ③ ESL 을 한 번 더 돌려 첫 실행을 '과거'(입력 바뀜·diff 있음)로 만든 뒤,
+  // 프로젝트 이력 → 작업 상세 → 그때 결과 열기(③ ?run=)
+  await page.goto(caseUrl.replace(/\/step\/\d.*$/, "/step/2"));
+  await page.getByRole("heading", { level: 2, name: "② t*·지지점" }).waitFor();
   const radios2 = page.getByRole("radio", { name: /^프레임 / });
   await radios2.first().waitFor();
   if ((await radios2.count()) > 1) {
@@ -583,8 +615,8 @@ async function scenario(base, inp) {
     await primary().click();
     await page.waitForFunction(() => document.querySelector('[data-testid="current-tstar"]')?.textContent?.includes("사용자 선택"), null, { timeout: 15000 });
   }
-  await stageLink(4).click();
-  await page.getByRole("heading", { level: 2, name: "④ ESL" }).waitFor();
+  await stageLink(3).click();
+  await page.getByRole("heading", { level: 2, name: "③ ESL" }).waitFor();
   const eslBefore = await page.evaluate(async () => {
     const cid = location.pathname.split("/c/")[1].split("/")[0];
     return (await (await fetch(`/esl/api/cases/${cid}/esl-runs`)).json()).length;
@@ -660,26 +692,26 @@ async function scenario(base, inp) {
   if ((await primary().count()) !== 1 || (await primary().textContent())?.trim() !== "그때 결과 열기") throw new Error("작업 상세의 주 버튼이 '그때 결과 열기' 1개가 아님");
   await shot("history_live_2_job");
 
-  // 그때 결과 열기 → ④ ?run=
+  // 그때 결과 열기 → ③ ?run=(v0.10.0 /step/3)
   await primary().click();
-  await page.waitForURL(/\/stage\/4\?run=/, { timeout: 15000 });
+  await page.waitForURL(/\/step\/3\?run=/, { timeout: 15000 });
   await page.getByTestId("past-frame").waitFor();
   await page.getByTestId("past-badge").waitFor();
   await page.getByText("F_eq 상위 노드").waitFor({ timeout: 30000 });
-  if ((await primary().count()) !== 0) throw new Error("과거 결과(④)에 실행 버튼이 있음");
+  if ((await primary().count()) !== 0) throw new Error("과거 결과(③)에 실행 버튼이 있음");
   await page.getByRole("link", { name: "현재 결과로" }).waitFor();
   await shot("history_live_3_past_result");
 
-  // 과거 검증(⑤ ?val=)과 내보내기 파일도 열린다
+  // 과거 검증(④ ?val=)과 내보내기 파일도 열린다
   const valItem = api.items.find((x) => x.job_type === "VALIDATE");
   await page.goto(`${base}/esl/p/dev/jobs/${valItem.id}`);
   await page.getByRole("heading", { level: 1, name: /작업 상세/ }).waitFor();
   await expectEnabled();
   await primary().click();
-  await page.waitForURL(/\/stage\/5\?val=/, { timeout: 15000 });
+  await page.waitForURL(/\/step\/4\?val=/, { timeout: 15000 });
   await page.getByTestId("past-badge").waitFor();
-  const expItem = api.items.find((x) => x.job_type === "EXPORT");
-  await page.goto(`${base}/esl/p/dev/jobs/${expItem.id}`);
+  if (!api.items.some((x) => x.id === expJob.id)) throw new Error("이력에 Case EXPORT 없음");
+  await page.goto(`${base}/esl/p/dev/jobs/${expJob.id}`);
   await page.getByRole("table", { name: "내보내기 파일" }).waitFor({ timeout: 30000 });
 
   // 진행 요약(Case 목록)·상태 패널의 솔버

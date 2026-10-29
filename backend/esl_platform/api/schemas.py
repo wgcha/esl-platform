@@ -147,6 +147,7 @@ class Project(_Out):
 class StageState(_Out):
     state: Literal["none", "running", "done", "stale", "failed"]
     job_id: str | None = None
+    reason: dict[str, Any] | None = None     # v0.10.0 step_status: {code, message} (예 SUPPORT_AUTO_BLOCKED)
 
 
 class CaseOut(_Out):
@@ -174,7 +175,9 @@ class CaseOut(_Out):
     created_at: datetime
     updated_at: datetime
     version: int
-    stage_status: dict[str, StageState] | None = None
+    stage_status: dict[str, StageState] | None = None   # deprecated(v0.10.0): 옛 1..6 단계 — 화면은 step_status
+    # v0.10.0(esl_menu_restructure.md §5.4): 화면 4단계 {input, tstar, esl, validate}
+    step_status: dict[str, StageState] | None = None
 
 
 class StepOut(_Out):
@@ -260,8 +263,14 @@ class SupportSuggestOut(_Out):
     node_ids: list[int]
     dofs: list[str]
     coords: list[list[float]]
-    plane: dict[str, Any]
+    plane: dict[str, Any] | None = None
     corners: list[int]
+    # v0.10.0(esl_menu_restructure.md §5.1·§5.2): 자동 선택 품질 검사 결과
+    status: Literal["OK", "BLOCKED"] = "OK"
+    mode: str | None = None
+    checks: dict[str, float] | None = None
+    problems: list[dict[str, Any]] = Field(default_factory=list)
+    rule_version: int | None = None
 
 
 class EslRunOut(_Out):
@@ -636,6 +645,7 @@ class EntryQuality(_Out):
     noise: dict[str, Any] | None = None
     confirmed_fail: dict[str, Any] | None = None
     confirmed_undetermined: dict[str, Any] | None = None
+    revalidated: dict[str, Any] | None = None   # v0.10.0 재검증 전환 기록 {from_validation_id, from_status, job_id, at, by, by_name}
 
 
 class EntrySize(_Out):
@@ -685,13 +695,95 @@ class EntryOut(_Out):
     size: EntrySize | None = None
     topo_sha256: str | None = None
     deform_mode: DeformModeOut | None = None
+    # v0.10.0(esl_menu_restructure.md §7.4): 적격(현재 기준 PASS) 여부·재검증 가능 여부·진행 중 재검증 작업
+    eligible: bool = False
+    ineligible_reason: Literal["LEGACY", "FAIL", "UNDETERMINED"] | None = None
+    revalidate_block: dict[str, Any] | None = None
+    revalidate_job: dict[str, Any] | None = None
 
 
 class EntryCreate(_Req):
     esl_run_id: str = Field(min_length=1, max_length=64)
     validation_id: str | None = Field(default=None, max_length=64)
     note: str | None = Field(default=None, max_length=2000)
-    force_reason: str | None = Field(default=None, min_length=1, max_length=2000)
+    force_reason: str | None = Field(default=None, min_length=1, max_length=2000)   # v0.10.0: 무시(구 클라이언트 호환)
+
+
+# ---------------------------------------------------------------- v0.10.0 라이브러리 다중 내보내기(§6.1)
+class ExportOptions(_Req):
+    id_offset: Literal["auto"] | int = "auto"
+    id_policy: Literal["per_model_sequential", "independent"] = "per_model_sequential"
+
+    @field_validator("id_offset")
+    @classmethod
+    def _off(cls, v):
+        if not isinstance(v, str) and (isinstance(v, bool) or v < 0 or v > 2_147_483_646):
+            raise ValueError("id_offset 은 'auto' 또는 0 이상 정수")
+        return v
+
+
+class ExportBatchCreate(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    entry_ids: list[str] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    options: ExportOptions = Field(default_factory=ExportOptions)
+
+
+class ExportBatchJob(_Out):
+    job_id: str
+    case_id: str | None = None
+    state: str
+    progress_pct: float | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+
+
+class ExportBatchFile(_Out):
+    rel: str
+    size: int
+
+
+class ExportBatchItem(_Out):
+    entry_id: str
+    label: str
+    case_id: str | None = None
+    legacy: bool = False
+    state: Literal["PENDING", "DONE", "FAILED"]
+    files: list[ExportBatchFile] = Field(default_factory=list)
+    id_range: list[int] | None = None
+    warnings: list[str] = Field(default_factory=list)
+    error: dict[str, Any] | None = None
+
+
+class ExportBundleInfo(_Out):
+    ready: bool
+    bytes: int | None = None
+
+
+class ExportBatchOut(_Out):
+    batch_id: str
+    project_id: str
+    created_by: str
+    created_by_name: str | None = None
+    created_at: datetime | str | None = None
+    targets: list[str]
+    options: dict[str, Any]
+    state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELED"]
+    jobs: list[ExportBatchJob]
+    items: list[ExportBatchItem]
+    bundle: ExportBundleInfo
+
+
+class ExportBatchSummary(_Out):
+    batch_id: str
+    project_id: str
+    created_by: str
+    created_by_name: str | None = None
+    created_at: datetime | None = None
+    targets: list[str] = Field(default_factory=list)
+    n_items: int
+    state: Literal["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELED"]
+    job_ids: list[str] = Field(default_factory=list)
 
 
 class EntryRetire(_Req):
@@ -780,6 +872,7 @@ class AnalysisOut(_Out):
     created_by_name: str
     created_at: datetime
     updated_at: datetime
+    excluded_ineligible: int | None = None   # v0.10.0: 필터 분석에서 뺀 부적격(LEGACY·FAIL·판정 불가) 항목 수(생성 응답만)
 
 
 class ComparisonFilters(_Req):
@@ -1630,7 +1723,24 @@ class DoeResultOut(_Out):
     view3d: list[str]
     best: dict[str, Any] | None = None
     noise_floor: float | None = None
+    # v0.10.0 §11.4 ESL별 개선 지표(행: worst_ratio·min_improvement·all_improved·n_improved·n_worsened·
+    # geo_mean_improvement·pareto, per_esl_inline 이면 per_esl[{entry_id,label,C,ratio,umax,epsmax}])
+    ratio_tol: float | None = None
+    per_esl_inline: bool = False
+    esl: list[dict[str, Any]] = Field(default_factory=list)
+    sort: str = "score"
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoePerEslDesign(_Out):
+    id: str
+    per_esl: list[dict[str, Any]]
+
+
+class DoePerEslOut(_Out):
+    esl: list[dict[str, Any]]
+    ratio_tol: float | None = None
+    designs: list[DoePerEslDesign]
 
 
 class DoeFileOut(_Out):

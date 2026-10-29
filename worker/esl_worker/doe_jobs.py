@@ -65,7 +65,7 @@ def prepare(ex) -> tuple[str, dict[str, Any]]:
     p = job["params"] or {}
     sid = job.get("bead_doe_id")
     if not sid or p.get("bead_doe_id") not in (None, sid) or not isinstance(p.get("doe"), dict):
-        raise PrepareFailed("INPUT_INVALID", "작업 params 가 이 비드 DOE 연구의 것이 아닙니다")
+        raise PrepareFailed("INPUT_INVALID", "작업 params 가 이 강성 평가 스터디의 것이 아닙니다")
     doe = dict(p["doe"])
     if doe.get("id") not in (None, sid):
         raise PrepareFailed("INPUT_INVALID", "작업 params.doe.id 가 연구 id 와 다릅니다")
@@ -86,7 +86,7 @@ def prepare(ex) -> tuple[str, dict[str, Any]]:
         raise PrepareFailed(exc.code, exc.message) from None
     with ex.engine.connect() as conn:
         if doe_repo.get_study(conn, sid) is None:
-            raise PrepareFailed("DOE_NOT_FOUND", "비드 DOE 연구 행이 없습니다")
+            raise PrepareFailed("DOE_NOT_FOUND", "강성 평가 스터디 행이 없습니다")
     lib = {"doe": doe, "kind": p.get("kind"), "job_id": job["id"], "study_id": sid}
     return cdir, lib
 
@@ -260,7 +260,7 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(f"[esl-worker] {key}: bead_does 등록 완료 (phase {res.get('phase')})\n")
         return {"registered": True}
-    raise _fail("INTERNAL_ERROR", f"알 수 없는 비드 DOE step: {key}")
+    raise _fail("INTERNAL_ERROR", f"알 수 없는 강성 평가 스터디 step: {key}")
 
 
 def _summary(out: dict[str, Any]) -> dict[str, Any]:

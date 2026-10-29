@@ -1,7 +1,9 @@
 // 비드 DOE ⑤ 순위표(esl_bead_doe.md §11·§12.2, BD-D-6): 순위·안·score·개선율·최악 ESL·umax·εmax·변수 값·경고 수,
 // 순위 밖(스킵·실패) 안은 상태 배지로 아래에. 1920 폭에서는 변수 열을 접고 행 펼치기로 값을 본다(가로 스크롤 없음).
+// v0.10.0 §11.4: ESL별 개선 지표 열 [전 씬 개선 ✓/✗][최소 개선율][개선/악화 씬][기하평균 개선율][Pareto ●], 열 머리 클릭 정렬(기본 score),
+// ⓘ 지표 정의. 최악 절대 max(score)만으로는 한 씬의 문제가 다른 씬으로 옮겨가는 상황을 못 보기 때문.
 import { Fragment, useState } from "react";
-import { STATUS_NAME, isSkipped, pctText } from "../api/doe";
+import { METRIC_DEFS, STATUS_NAME, isSkipped, pctText, sortRanking, type RankSortKey } from "../api/doe";
 import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
@@ -26,21 +28,53 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       else n.add(id);
       return n;
     });
-  const cols = 9 + varNames.length;
+  const [sortKey, setSortKey] = useState<RankSortKey>("score");
+  const cols = 14 + varNames.length;
   const b = result.baseline;
   if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>순위가 없습니다</Empty>;
+  const rows = sortRanking(result.ranking, sortKey);
+  const def = (k: string) => METRIC_DEFS.find((d) => d.key === k)?.text;
+  /** 정렬 가능한 열 머리(버튼 — 현재 정렬 열은 aria-sort) */
+  const sortTh = (k: RankSortKey, label: string, title?: string) => (
+    <th className="num" aria-sort={sortKey === k ? "ascending" : "none"} title={title}>
+      <button type="button" className="th-sort" onClick={() => setSortKey(k)} aria-label={`${label} 기준 정렬`}>
+        {label}
+      </button>
+    </th>
+  );
   return (
+    <>
+    <div className="doe-metric-bar small">
+      <span className="muted">정렬: {sortKey === "score" ? "score(최악 ESL 절대값)" : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
+      <details className="doe-metric-help">
+        <summary aria-label="지표 정의">ⓘ 지표 정의</summary>
+        <ul data-testid="metric-defs">
+          <li>score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)</li>
+          {METRIC_DEFS.map((d) => (
+            <li key={d.key}>
+              {d.label}: {d.text}
+            </li>
+          ))}
+          {result.ratio_tol != null && <li>허용치 {result.ratio_tol.toExponential(1)}(③ 은 메시 잡음 바닥 반영)</li>}
+        </ul>
+      </details>
+    </div>
     <div className="table-wrap scroll doe-rank-wrap">
       <table className="table compact doe-rank" aria-label="순위표">
         <thead>
           <tr>
             <th className="num">순위</th>
             <th>안</th>
-            <th className="num" title="max_i C / C_ref(베이스라인 최악) — 작을수록 좋음">score</th>
+            {sortTh("score", "score", "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
             <th className="num" title="최악 ESL 기준(전 ESL 최대는 툴팁)">umax</th>
             <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>
+            <th title={def("all_improved")}>전 씬 개선</th>
+            {sortTh("min_improvement", "최소 개선율", def("min_improvement"))}
+            {sortTh("n_worsened", "개선/악화", def("n_worsened"))}
+            {sortTh("geo_mean_improvement", "기하평균", def("geo_mean_improvement"))}
+            {sortTh("pareto", "Pareto", def("pareto"))}
             {varNames.map((n) => (
               <th key={n} className="num doe-vcol">
                 {shortName(params, n)}
@@ -59,6 +93,11 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <td className="small muted">공칭</td>
             <td className="num mono">{b.umax.toFixed(2)} mm</td>
             <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>
+            <td />
+            <td className="num muted">기준</td>
+            <td />
+            <td />
+            <td />
             {varNames.map((n) => (
               <td key={n} className="num mono doe-vcol">
                 {params.find((p) => p.name === n)?.nominal ?? "–"}
@@ -69,7 +108,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             </td>
             <td className="doe-expand-col" />
           </tr>
-          {result.ranking.map((r) => (
+          {rows.map((r) => (
             <Fragment key={r.id}>
               <tr className={`pickable${selected === r.id ? " hl" : ""}`} onClick={() => onSelect(r.id)} data-testid={`rank-${r.id}`}>
                 <td className="num">{r.rank}</td>
@@ -89,6 +128,25 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 </td>
                 <td className="num mono" title={`전 ESL 최대 ${(r.epsmax_all * 100).toFixed(2)} %`}>
                   {(r.epsmax * 100).toFixed(2)} %
+                </td>
+                <td data-testid={`allimp-${r.id}`}>
+                  {r.all_improved == null ? (
+                    <span className="muted">–</span>
+                  ) : r.all_improved ? (
+                    <span className="badge ok" title="모든 ESL 에서 개선">✓</span>
+                  ) : (
+                    <span className="badge bad" title="악화(또는 변화 없음)된 ESL 이 있음 — ESL별 개선율 표 참고">✗</span>
+                  )}
+                </td>
+                <td className={`num ${(r.min_improvement ?? 0) > 0 ? "ok-text" : r.min_improvement == null ? "" : "error-text"}`}>
+                  {pctText(r.min_improvement, 1)}
+                </td>
+                <td className="num mono" title={r.n_unchanged ? `변화 없음 ${r.n_unchanged}` : undefined}>
+                  {r.n_improved == null ? "–" : `${r.n_improved} / ${r.n_worsened ?? 0}`}
+                </td>
+                <td className="num">{pctText(r.geo_mean_improvement, 1)}</td>
+                <td className="num" data-testid={`pareto-${r.id}`}>
+                  {r.pareto ? <span title="Pareto(다른 안에 모든 ESL 에서 지배당하지 않음)">●</span> : ""}
                 </td>
                 {varNames.map((n) => (
                   <td key={n} className="num mono doe-vcol">
@@ -136,6 +194,11 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               <td />
               <td />
               <td />
+              <td />
+              <td />
+              <td />
+              <td />
+              <td />
               {varNames.map((n) => (
                 <td key={n} className="num mono doe-vcol muted">
                   {x.values[n] ?? "–"}
@@ -152,5 +215,6 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
         </tbody>
       </table>
     </div>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 // V-DP-13·18~20·24~26: ⑤ 변위 주지표 판정 화면(계약 esl_disp_primary.md §9·§14·§15). 목 서버 기반.
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { REG_LEGACY, REG_NOT_PASS } from "../components/LibraryRegister";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../app/App";
@@ -10,7 +11,7 @@ import { legendKey, readLegend, validRange } from "../components/ColorLegend";
 import { statusOf } from "../components/VerdictStatus";
 import { renderApp } from "../test/render";
 
-const STAGE5 = "/p/p-body/c/c-demo/stage/5";
+const STAGE5 = "/p/p-body/c/c-demo/step/4"; // v0.10.0: ④ 검증
 type Kind = Parameters<typeof variantValidation>[1];
 
 function renderWith(kind: Kind | null, path = STAGE5) {
@@ -105,19 +106,20 @@ describe("V-DP-13 ⑤ 화면 구성", () => {
     expect(statusOf({ status: undefined, scheme: null, verdict: "PASS" })).toBe("LEGACY");
   });
 
-  it("LibraryRegister: UNDETERMINED 는 사유 필수(대화상자) → 등록 시 quality.status·confirmed_undetermined", async () => {
-    const { server } = renderWith("UNDETERMINED");
-    fireEvent.click(await screen.findByRole("button", { name: "라이브러리 등록" }));
-    const dlg = screen.getByRole("dialog");
-    expect(within(dlg).getByText("판정 불가 결과를 라이브러리에 등록")).toBeTruthy();
-    const ok = within(dlg).getByRole("button", { name: "확정 등록" }) as HTMLButtonElement;
-    expect(ok.disabled).toBe(true);
-    fireEvent.change(within(dlg).getByRole("textbox", { name: /확정 사유/ }), { target: { value: "메모리 한도 — 반력 평형 확인" } });
-    fireEvent.click(ok);
-    expect(await screen.findByText("라이브러리 등록됨")).toBeTruthy();
-    const e = server.entries.find((x) => x.esl_run_id === "run-1")!;
-    expect(e.quality.status).toBe("UNDETERMINED");
-    expect(e.quality.confirmed_undetermined?.reason).toBe("메모리 한도 — 반력 평형 확인");
+  it("LibraryRegister(v0.10.0): UNDETERMINED·LEGACY 는 등록 불가 + 사유, 서버도 422", async () => {
+    const { server, unmount } = renderWith("UNDETERMINED");
+    expect((await screen.findByTestId("reg-block")).textContent).toContain(REG_NOT_PASS);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const v = server.validations[0];
+    const r = server.handle("POST", "/library/entries", new URLSearchParams(), { esl_run_id: v.esl_run_id, validation_id: v.id, force_reason: "사유" });
+    expect(r.status).toBe(422);
+    expect((r.body as { detail: { code: string } }).detail.code).toBe("VALIDATION_NOT_PASS");
+    unmount();
+    const l = renderWith("LEGACY_FAIL");
+    expect((await screen.findByTestId("reg-block")).textContent).toContain(REG_LEGACY);
+    const lv = l.server.validations[0];
+    const r2 = l.server.handle("POST", "/library/entries", new URLSearchParams(), { esl_run_id: lv.esl_run_id, validation_id: lv.id });
+    expect((r2.body as { detail: { code: string } }).detail.code).toBe("VALIDATION_LEGACY");
   });
 });
 

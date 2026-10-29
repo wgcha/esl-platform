@@ -12,8 +12,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 describe("check:api 강화", () => {
   const run = (types, historyTs) => {
     const dir = mkdtempSync(path.join(tmpdir(), "chkapi-"));
-    copyFileSync(path.join(ROOT, "src", "api", "endpoints.ts"), path.join(dir, "endpoints.ts"));
-    copyFileSync(path.join(ROOT, "src", "api", "history.ts"), path.join(dir, "history.ts"));
+    // check-api.mjs 가 types.ts 옆에서 읽는 파일 전부(경로 대조 + history·doe·library 의 interface 대조)
+    for (const f of ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts", "library.ts"])
+      copyFileSync(path.join(ROOT, "src", "api", f), path.join(dir, f));
     writeFileSync(path.join(dir, "types.ts"), types);
     if (historyTs !== undefined) writeFileSync(path.join(dir, "history.ts"), historyTs);
     const openapi = path.join(ROOT, "..", "docs", "contracts", "openapi_p1b.json");
@@ -22,6 +23,7 @@ describe("check:api 강화", () => {
   };
   const real = readFileSync(path.join(ROOT, "src", "api", "types.ts"), "utf8");
 
+  // v0.10.0: 백엔드(MR2 openapi)·프런트(MR4 types.ts·library.ts) 병합 후 — 조건부 건너뜀 제거, 항상 대조
   it("현재 types.ts 는 통과", () => {
     const r = run(real);
     expect(r.status, r.stderr).toBe(0);

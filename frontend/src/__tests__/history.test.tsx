@@ -219,7 +219,7 @@ describe("과거 결과 읽기 전용", () => {
     expect(screen.queryByRole("button", { name: "ESL 계산" })).toBeNull();
     expect(screen.queryByText("입력 요약")).toBeNull();
     expect(await screen.findByText("F_eq 상위 노드")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "현재 결과로" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/stage/4");
+    expect(screen.getByRole("link", { name: "현재 결과로" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/step/3");
   });
 
   it("⑤ ?val= : 읽기 전용, 이전 판정 체계(당시 FAIL), 실행·등록 버튼 없음, 겹쳐보기 있음", async () => {
@@ -233,7 +233,7 @@ describe("과거 결과 읽기 전용", () => {
     expect(screen.queryByText("검증 이력")).toBeNull();
     expect(await screen.findByText("겹쳐보기 — 요소 변형률 (PCA 평면)")).toBeTruthy();
     expect(screen.getByTestId("diff-table")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "현재 결과로" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/stage/5");
+    expect(screen.getByRole("link", { name: "현재 결과로" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/step/4");
   });
 
   it("⑤ summary 검증: 파일 기반 패널 대신 안내 문구", async () => {

@@ -128,7 +128,7 @@ def run_stage(spec: dict, echo=print) -> dict:
     fn = {"bd_input": bd_input, "bd_mesh0": bd_mesh0, "bd_loads": bd_loads, "bd_matrix": bd_matrix,
           "bd_eval": bd_eval, "bd_post": bd_post}.get(spec.get("stage"))
     if fn is None:
-        raise EslError("INPUT_INVALID", f"알 수 없는 비드 DOE 단계: {spec.get('stage')}")
+        raise EslError("INPUT_INVALID", f"알 수 없는 강성 평가 스터디 단계: {spec.get('stage')}")
     return fn(spec, echo)
 
 
@@ -513,24 +513,33 @@ def _collect(c: Ctx, m: dict) -> tuple[list[dict], dict]:
     return out, pv
 
 
+PER_ESL_COLS = ["worst_ratio", "min_improvement", "all_improved", "n_improved", "n_worsened", "geo_mean_improvement",
+                "pareto"]
+
+
 def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: list[str]) -> str:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["id", "rank", "status"] + names + ["score", "improvement", "worst", "umax", "epsmax"]
-               + [f"C_{e}" for e in entry_ids])
+               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids])
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
         C = {p["entry_id"]: p["C"] for p in r.get("per_esl") or []}
+        extra = [""] * (len(PER_ESL_COLS) + len(entry_ids))
         if r["id"] == BASELINE:
             row = [r["id"], "", r["status"]] + [r["values"].get(n, "") for n in names] + [1.0, 0.0,
                    rank["baseline"]["worst_entry_id"], rank["baseline"]["umax"], rank["baseline"]["epsmax"]]
+            extra = [1.0, 0.0, False, 0, 0, 0.0, ""] + [1.0 if e in C else "" for e in entry_ids]
         elif x is not None:
             row = [r["id"], x["rank"], r["status"]] + [r["values"].get(n, "") for n in names] + [
                 x["score"], x["improvement"], x["worst_entry_id"], x["umax"], x["epsmax"]]
+            ratio = {p["entry_id"]: p["ratio"] for p in x.get("per_esl") or []}
+            extra = [x.get(k, "") if x.get(k) is not None else "" for k in PER_ESL_COLS] + [ratio.get(e, "")
+                                                                                       for e in entry_ids]
         else:
             row = [r["id"], "", r["status"]] + [r["values"].get(n, "") for n in names] + ["", "", "", "", ""]
-        w.writerow(row + [C.get(e, "") for e in entry_ids])
+        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra)
     return buf.getvalue()
 
 
@@ -660,7 +669,11 @@ def bd_post(spec: dict, echo=print) -> dict:
         b = next(r for r in results if r["id"] == BASELINE)
         if nr.get("status") == "OK" and b.get("status") == "OK":
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
-    R = rk.rank(results, noise_floor=noise)
+    R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]))
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    for x in R["ranking"]:
+        for p in x["per_esl"]:
+            p["label"] = labels.get(p["entry_id"], p["entry_id"][:8])
     by = {x["id"]: x for x in R["ranking"]}
     for r in results:
         if r["id"] == BASELINE:
@@ -703,8 +716,16 @@ def bd_post(spec: dict, echo=print) -> dict:
     c.progress(85)
     bfile = c.p("prep", "boundary.json")
     boundary = U.read_json(bfile) if os.path.isfile(bfile) else None
+    inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
+    c.write_json(os.path.join("post", "per_esl.json"),
+                 {"esl": [{"entry_id": e, "label": labels.get(e, e[:8])} for e in R["esl_order"]],
+                  "ratio_tol": R["ratio_tol"], "designs": {x["id"]: x["per_esl"] for x in R["ranking"]}})
     out = {"C_ref": R["C_ref"], "baseline": R["baseline"], "n_ok": R["n_ok"], "n_skipped": R["n_skipped"],
-           "n_failed": R["n_failed"], "ranking": [{kk: v for kk, v in x.items() if kk != "C"} for x in R["ranking"]],
+           "n_failed": R["n_failed"],
+           # ESL별 개선 지표(§11.4): per_esl 은 안 수 × ESL 수 ≤ rank.per_esl_inline_max 일 때만 행에, 전부는 post/per_esl.json
+           "ranking": [{kk: v for kk, v in x.items() if kk != "C" and (kk != "per_esl" or inline)} for x in R["ranking"]],
+           "per_esl_inline": inline, "ratio_tol": R["ratio_tol"],
+           "esl": [{"entry_id": e, "label": labels.get(e, e[:8])} for e in R["esl_order"]],
            "sensitivity": None if sens.get("null") else sens, "sensitivity_reason": sens.get("reason"),
            "boundary_warnings_n": 0 if boundary is None else int(boundary.get("n_warn") or 0),
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
@@ -732,7 +753,7 @@ def bd_post(spec: dict, echo=print) -> dict:
            "plan": U.read_json(pjson) if os.path.isfile(pjson) else None,
            "best": None if not best_ids else {"id": best_ids[0], "values": by[best_ids[0]]["values"],
                                               "files": best_files[best_ids[0]]},
-           "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"]}
+           "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"], "esl": out["esl"]}
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
@@ -741,7 +762,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     echo(f"[bd_post] 성공 {R['n_ok']} · 최적 {best_ids[0] if best_ids else '-'}"
          + (f" score {R['ranking'][0]['score']:.4f}" if R["ranking"] else "") + f" · 정리 {freed} B")
     c.progress(100)
-    return {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "report.html"], "warnings": warns,
+    return {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
+            "warnings": warns,
             "result": out}
 
 

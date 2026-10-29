@@ -29,7 +29,8 @@
 | E1-5 | ④ ESL 계산: 강체 회전각, ΣF·ΣM·평형 오차, 잡음 지표(`noise.force_rel`·`hotspot_strain_rel` — float32 H3D 잡음 바닥 경고 여부), F_eq 상위 표. 솔버 백엔드 pardiso(작업 로그) | | |
 | E1-6 | ⑤ 검증: 변위 RMS·반력·hotspot 오차 표(제외 요소·사유), PASS/FAIL·fail_reasons, `full_solve` 판단(auto: 메모리 추정) | | |
 | E1-7 | ⑤ 겹쳐보기: 레이어 Radioss ε / ESL ε / 오차 % 전환, 불투명도 슬라이더, 공통 색 범위, 비교 불가 요소 회색, hotspot 표시, 최대변형률 비교·분위수·히스토그램, 단면선(ξ/η, 배율 슬라이더) | | |
-| E1-8 | ⑥ 내보내기: 대상 체크(inc·fem·csv) → `06_export`의 `esl_cload.inc`·`esl_bcs.inc`·`esl_force.fem`·csv, 다운로드·경로 복사. inc를 원본 Radioss 모델에 include해 정적 해석이 도는지(사용자 측) | | |
+| E1-8 | (v0.10.0 — ⑥ 폐지) ④ PASS → **라이브러리에 등록** → [ESL 라이브러리] ESL 목록에서 체크 → **내보내기 (n)** → zip 의 `<NN>_<label>/esl_cload.inc`·`esl_bcs.inc`·`esl_force.fem`·csv, `manifest.json` id_range(같은 모델 겹침 없음). inc를 원본 Radioss 모델에 include해 정적 해석이 도는지(사용자 측). 옛 `/stage/6` 주소 → ④ + "내보내기는 ESL 라이브러리로 옮겨졌습니다" | | |
+| E1-9 | (v0.10.0) ② t* 확정 시 지지점 카드(자동·3행·면적비/거리/조건비). 자동 선택이 막히는 파트면 사유 + '고급 — 지지 노드 직접 지정' 저장 → ③ 진행. FAIL Case 는 ④에서 등록 비활성 + 사유. LEGACY 항목 [재검증] → PASS 면 배지 사라짐 | | |
 | E1-9 | 작업 취소: ② 이후 긴 작업(ESL·검증) 실행 중 취소 → 코어 프로세스 종료(작업 관리자에서 python 자식 확인), 상태 CANCELED, 다음 실행 때 부분 산출물 `_backup` | | |
 | E1-10 | 입력 폴더(input_roots)에 아무 파일도 생기지 않음(실행 전후 목록 비교), SPDM 폴더 무변경 | | |
 

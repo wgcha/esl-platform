@@ -66,6 +66,11 @@ def _enum(*vals):
     return chk
 
 
+def _bool(key, v):
+    if not isinstance(v, bool):
+        raise _bad(key, f"true | false 여야 함 (값 {v!r})")
+
+
 def _opt(chk_fn):
     """None 허용 + 그 외는 chk_fn 검사."""
     def chk(key, v):
@@ -185,6 +190,13 @@ SCHEMA: dict[str, Any] = {
     "support": {
         "candidates": _enum("pca4", "node_ids"),
         "node_ids": _int_list,
+        "auto_check": {                         # 선택(OPTIONAL_KEYS): ② 3-2-1 자동 선택 품질 검사(v0.10.0 esl_menu_restructure.md §5.2)
+            "min_area_ratio": _num(0.0, 1.0),
+            "min_dist_rel": _num(0.0, 1.0),
+            "min_cond_ratio": _num(0.0, 1.0),
+            "expand_candidates": _bool,
+            "rule_version": _int(1),
+        },
     },
     "solver": {
         "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative"),
@@ -267,8 +279,13 @@ CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
                        "detect": {"prev_floor": 1.0e-6, "min_elems": 10, "rel_tol": 0.05, "mono_frac": 0.99}}
 OPTIONAL_SECTIONS = frozenset({"cumulative"})
+# v0.10.0 ② 3-2-1 자동 선택 품질 검사(계약 esl_menu_restructure.md §5.2·§10, 기준값 임시). 기본값 단일 출처 —
+# 설정 파일에 support.auto_check 가 없으면 이 값(support_check_settings), cfg 에는 주입하지 않음(설정 sha256·보고서 불변).
+SUPPORT_CHECK_DEFAULTS = {"min_area_ratio": 0.10, "min_dist_rel": 0.15, "min_cond_ratio": 1.0e-3,
+                          "expand_candidates": True, "rule_version": 1}
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
-OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg"})
+OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
+                           *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS)})
 # cumulative.max_npt·max_npg 기본(cumulative_settings 결과에만 채움)
 STATE_LIMIT_DEFAULTS = {"max_npt": 100, "max_npg": 64}
 
@@ -284,6 +301,16 @@ def cumulative_settings(cfg: dict) -> dict:
                 out["detect"].update(v)
             else:
                 out[k] = v
+    return out
+
+
+def support_check_settings(cfg: dict | None) -> dict:
+    """support.auto_check(없거나 일부만 있으면 SUPPORT_CHECK_DEFAULTS 로 채운 사본). cfg 는 바꾸지 않는다."""
+    out = dict(SUPPORT_CHECK_DEFAULTS)
+    sup = cfg.get("support") if isinstance(cfg, dict) else None
+    ac = sup.get("auto_check") if isinstance(sup, dict) else None
+    if isinstance(ac, dict):
+        out.update({k: v for k, v in ac.items() if k in SUPPORT_CHECK_DEFAULTS})
     return out
 
 

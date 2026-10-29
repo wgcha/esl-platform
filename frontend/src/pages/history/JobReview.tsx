@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { stepOfStage, stepPath } from "../../shell/StageStepper";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
@@ -281,7 +282,7 @@ export function JobReview() {
           <Card title="개요">
             <div className="stats">
               <Stat label="상태" value={<JobStatusBadge state={job.state} />} />
-              <Stat label="Case" value={job.case_id ? <Link to={`/p/${projectId}/c/${job.case_id}/stage/${job.stage || 1}`}>{caseInfo.data?.title ?? job.case_id}</Link> : "라이브러리"} />
+              <Stat label="Case" value={job.case_id ? <Link to={stepPath(projectId, job.case_id, job.stage >= 1 && job.stage <= 6 ? stepOfStage(job.stage) : 1)}>{caseInfo.data?.title ?? job.case_id}</Link> : "라이브러리"} />
               <Stat label="생성" value={dt(job.created_at)} />
               <Stat label="대기" value={durText(r.timing.wait_s)} />
               <Stat label="소요" value={durText(r.timing.duration_s)} />

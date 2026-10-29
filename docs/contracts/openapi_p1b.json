@@ -347,6 +347,17 @@
             "title": "Entry Ids",
             "type": "array"
           },
+          "excluded_ineligible": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Ineligible"
+          },
           "filters": {
             "additionalProperties": true,
             "title": "Filters",
@@ -980,6 +991,20 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "step_status": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/StageState"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Status"
           },
           "title": {
             "title": "Title",
@@ -2332,6 +2357,64 @@
         "title": "DoeParamsOut",
         "type": "object"
       },
+      "DoePerEslDesign": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "per_esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Per Esl",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "per_esl"
+        ],
+        "title": "DoePerEslDesign",
+        "type": "object"
+      },
+      "DoePerEslOut": {
+        "properties": {
+          "designs": {
+            "items": {
+              "$ref": "#/components/schemas/DoePerEslDesign"
+            },
+            "title": "Designs",
+            "type": "array"
+          },
+          "esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Esl",
+            "type": "array"
+          },
+          "ratio_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Tol"
+          }
+        },
+        "required": [
+          "esl",
+          "designs"
+        ],
+        "title": "DoePerEslOut",
+        "type": "object"
+      },
       "DoePlanOut": {
         "properties": {
           "a_points": {
@@ -2475,6 +2558,14 @@
             "title": "Boundary Warnings N",
             "type": "integer"
           },
+          "esl": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Esl",
+            "type": "array"
+          },
           "excluded": {
             "items": {
               "additionalProperties": true,
@@ -2512,6 +2603,11 @@
             ],
             "title": "Noise Floor"
           },
+          "per_esl_inline": {
+            "default": false,
+            "title": "Per Esl Inline",
+            "type": "boolean"
+          },
           "ranking": {
             "items": {
               "additionalProperties": true,
@@ -2519,6 +2615,17 @@
             },
             "title": "Ranking",
             "type": "array"
+          },
+          "ratio_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio Tol"
           },
           "sensitivity": {
             "anyOf": [
@@ -2531,6 +2638,11 @@
               }
             ],
             "title": "Sensitivity"
+          },
+          "sort": {
+            "default": "score",
+            "title": "Sort",
+            "type": "string"
           },
           "view3d": {
             "items": {
@@ -3291,6 +3403,11 @@
             "title": "Dir Rel",
             "type": "string"
           },
+          "eligible": {
+            "default": false,
+            "title": "Eligible",
+            "type": "boolean"
+          },
           "esl_run_id": {
             "title": "Esl Run Id",
             "type": "string"
@@ -3309,6 +3426,22 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "ineligible_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LEGACY",
+                  "FAIL",
+                  "UNDETERMINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ineligible Reason"
           },
           "model": {
             "$ref": "#/components/schemas/EntryModel"
@@ -3377,6 +3510,30 @@
               }
             ],
             "title": "Retired By Id"
+          },
+          "revalidate_block": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revalidate Block"
+          },
+          "revalidate_job": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revalidate Job"
           },
           "scene": {
             "$ref": "#/components/schemas/EntryScene"
@@ -3676,6 +3833,18 @@
               }
             ],
             "title": "Reaction Rel"
+          },
+          "revalidated": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revalidated"
           },
           "scheme": {
             "anyOf": [
@@ -4190,6 +4359,430 @@
           "is_current"
         ],
         "title": "EslRunOut",
+        "type": "object"
+      },
+      "ExportBatchCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ExportOptions"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "ExportBatchCreate",
+        "type": "object"
+      },
+      "ExportBatchFile": {
+        "properties": {
+          "rel": {
+            "title": "Rel",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rel",
+          "size"
+        ],
+        "title": "ExportBatchFile",
+        "type": "object"
+      },
+      "ExportBatchItem": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ExportBatchFile"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "id_range": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id Range"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "legacy": {
+            "default": false,
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "PENDING",
+              "DONE",
+              "FAILED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entry_id",
+          "label",
+          "state"
+        ],
+        "title": "ExportBatchItem",
+        "type": "object"
+      },
+      "ExportBatchJob": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "progress_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "state"
+        ],
+        "title": "ExportBatchJob",
+        "type": "object"
+      },
+      "ExportBatchOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/ExportBundleInfo"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExportBatchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ExportBatchJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "project_id",
+          "created_by",
+          "targets",
+          "options",
+          "state",
+          "jobs",
+          "items",
+          "bundle"
+        ],
+        "title": "ExportBatchOut",
+        "type": "object"
+      },
+      "ExportBatchSummary": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Job Ids",
+            "type": "array"
+          },
+          "n_items": {
+            "title": "N Items",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "project_id",
+          "created_by",
+          "n_items",
+          "state"
+        ],
+        "title": "ExportBatchSummary",
+        "type": "object"
+      },
+      "ExportBundleInfo": {
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready"
+        ],
+        "title": "ExportBundleInfo",
+        "type": "object"
+      },
+      "ExportOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "id_offset": {
+            "anyOf": [
+              {
+                "const": "auto",
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "default": "auto",
+            "title": "Id Offset"
+          },
+          "id_policy": {
+            "default": "per_model_sequential",
+            "enum": [
+              "per_model_sequential",
+              "independent"
+            ],
+            "title": "Id Policy",
+            "type": "string"
+          }
+        },
+        "title": "ExportOptions",
         "type": "object"
       },
       "FieldOut": {
@@ -7815,6 +8408,18 @@
             ],
             "title": "Job Id"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "state": {
             "enum": [
               "none",
@@ -8078,6 +8683,20 @@
       },
       "SupportSuggestOut": {
         "properties": {
+          "checks": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checks"
+          },
           "coords": {
             "items": {
               "items": {
@@ -8102,6 +8721,17 @@
             "title": "Dofs",
             "type": "array"
           },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
           "node_ids": {
             "items": {
               "type": "integer"
@@ -8110,16 +8740,50 @@
             "type": "array"
           },
           "plane": {
-            "additionalProperties": true,
-            "title": "Plane",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plane"
+          },
+          "problems": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "rule_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Version"
+          },
+          "status": {
+            "default": "OK",
+            "enum": [
+              "OK",
+              "BLOCKED"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
           "node_ids",
           "dofs",
           "coords",
-          "plane",
           "corners"
         ],
         "title": "SupportSuggestOut",
@@ -10212,7 +10876,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -12111,6 +12775,7 @@
     },
     "/esl/api/doe/studies/{sid}/results": {
       "get": {
+        "description": "순위·민감도·ESL별 개선 지표. sort = score(기본)|worst_ratio|geo_mean_improvement|n_worsened|pareto.",
         "operationId": "doe_results_esl_api_doe_studies__sid__results_get",
         "parameters": [
           {
@@ -12119,6 +12784,17 @@
             "required": true,
             "schema": {
               "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "score",
+              "maxLength": 40,
+              "title": "Sort",
               "type": "string"
             }
           }
@@ -12146,6 +12822,66 @@
           }
         },
         "summary": "Doe Results",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/results/per-esl": {
+      "get": {
+        "description": "ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max).",
+        "operationId": "doe_results_per_esl_esl_api_doe_studies__sid__results_per_esl_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "design",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 8000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Design"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoePerEslOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Results Per Esl",
         "tags": [
           "doe"
         ]
@@ -14284,6 +15020,234 @@
         ]
       }
     },
+    "/esl/api/library/entries/{eid}/revalidate": {
+      "post": {
+        "description": "v0.10.0 §7.3: LEGACY·사유 등록 FAIL·판정 불가 항목을 현재 기준으로 다시 검증(VALIDATE origin library_revalidate).",
+        "operationId": "revalidate_esl_api_library_entries__eid__revalidate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eid",
+            "required": true,
+            "schema": {
+              "title": "Eid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revalidate",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/esl/api/library/exports": {
+      "get": {
+        "operationId": "list_exports_esl_api_library_exports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExportBatchSummary"
+                  },
+                  "title": "Response List Exports Esl Api Library Exports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Exports",
+        "tags": [
+          "library"
+        ]
+      },
+      "post": {
+        "operationId": "create_export_esl_api_library_exports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBatchCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportBatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Export",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/esl/api/library/exports/{batch_id}": {
+      "get": {
+        "operationId": "get_export_esl_api_library_exports__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportBatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Export",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/esl/api/library/exports/{batch_id}/bundle": {
+      "get": {
+        "description": "묶음 zip(manifest.json·README.txt·<NN>_<label>/). 진행 중 409 EXPORT_NOT_READY, 성공 0 409 EXPORT_FAILED, 상한 413.",
+        "operationId": "export_bundle_esl_api_library_exports__batch_id__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Bundle",
+        "tags": [
+          "library"
+        ]
+      }
+    },
     "/esl/api/me": {
       "get": {
         "operationId": "me_esl_api_me_get",
@@ -15970,7 +16934,7 @@
     },
     "/esl/api/version": {
       "get": {
-        "description": "버전 + 화면이 읽는 공개 설정 값(`ui.upload_slim_hint_gb` — 0 = 안내 끔).",
+        "description": "버전 + 화면이 읽는 공개 설정 값(`ui.upload_slim_hint_gb` — 0 = 안내 끔, v0.10.0 `ui.library_export_max_entries` =\n라이브러리 내보내기 한 번 최대 ESL 수 = 설정 library_export.max_entries, 서버 422 TOO_MANY_ENTRIES 와 같은 값).",
         "operationId": "version_esl_api_version_get",
         "responses": {
           "200": {

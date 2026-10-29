@@ -137,7 +137,7 @@ def seed_opt_entry(engine, esl_root: Path, case_id: str, mesh: dict | None = Non
             model={"name": "55QX10A", "inch": inch, "n_nodes": int(mesh["node_id"].size),
                    "n_elems": int(mesh["elem_id"].size)},
             scene={"drop_type": "Corner", "scene_no": scene_no, "warnings": []},
-            quality={"verdict": "PASS", "fail_reasons": []},
+            quality={"verdict": "PASS", "status": "PASS", "scheme": "disp_primary/1", "fail_reasons": []},
             summary={"grid": {"nx": 24, "ny": 14}, "frame": {"L_xi": Lxi, "L_eta": Leta}},
             dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz", sha256="0" * 64, registered_by="u-power",
             registered_by_name="파워",

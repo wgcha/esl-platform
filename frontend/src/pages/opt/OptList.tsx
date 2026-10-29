@@ -1,4 +1,4 @@
-// 최적화 실행 목록(esl_opt_run.md §10.1 "최적화 실행" 탭, OR-D-21): 결과는 라이브러리에 넣지 않고 여기 남는다.
+// 비드 최적화 목록(v0.10.0 탭 이름 — 이전 esl_opt_run.md §10.1 "최적화 실행" 탭, OR-D-21): 결과는 라이브러리에 넣지 않고 여기 남는다.
 import { Link } from "react-router-dom";
 import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, optPath } from "../../api/opt";
 import { Card, Empty, JobStatusBadge } from "../../components/ui";
@@ -9,14 +9,14 @@ import { isFullResult } from "../../api/types";
 export function OptList({ projectId }: { projectId: string }) {
   const runs = usePolling(() => opt.runs({ project_id: projectId }), 10000, [projectId]);
   return (
-    <Card title="최적화 실행">
+    <Card title="비드 최적화">
       {!runs.data ? (
         <Empty>{runs.error ?? "불러오는 중…"}</Empty>
       ) : runs.data.length === 0 ? (
-        <Empty>아직 비드 최적화가 없습니다 — 항목 탭에서 ESL 을 체크하고 '선택한 ESL로 비드 최적화'</Empty>
+        <Empty>아직 비드 최적화가 없습니다 — ESL 목록에서 ESL 을 체크하고 '비드 최적화'</Empty>
       ) : (
         <div className="table-wrap scroll">
-          <table className="table compact" aria-label="최적화 실행 목록">
+          <table className="table compact" aria-label="비드 최적화 목록">
             <thead>
               <tr>
                 <th className="num">만든 시각</th>

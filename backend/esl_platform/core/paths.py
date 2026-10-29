@@ -150,6 +150,9 @@ TEMPLATE_DIR = "_templates"
 # v0.9.0 비드 DOE(esl_bead_doe.md §4): 연구 <esl_root>/_doe/<id>/{input/, prep/, doe/<rev>/, run/, post/, best/, report.html}.
 # 쓰기는 이 폴더 아래만(Case 입력·업로드 폴더는 읽기만).
 DOE_DIR = "_doe"
+# v0.10.0 라이브러리 다중 내보내기(esl_menu_restructure.md §6.2): <esl_root>/_exports/<batch_id>/{batch.json, <NN>_<label>/, logs/}.
+# 원본은 라이브러리 항목 폴더(읽기만), Case 폴더에는 쓰지 않는다.
+EXPORTS_DIR = "_exports"
 _SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 

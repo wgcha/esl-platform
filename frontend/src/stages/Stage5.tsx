@@ -1,4 +1,4 @@
-// ⑤ 검증(v0.5.7, 계약 esl_disp_primary.md §9): 판정 = 변위 4지표. 위→아래:
+// ④ 검증(v0.10.0 재번호 — 옛 ⑤; 주 버튼 = 검증 실행 / 라이브러리에 등록, esl_menu_restructure.md §7.1)(v0.5.7, 계약 esl_disp_primary.md §9): 판정 = 변위 4지표. 위→아래:
 //   판정 카드 → 변위 카드(컨투어·log 히스토그램·상위 노드·단면 차트) → 변형률 카드(참고, 판정 아님) → hotspot·제외 표 → 검증 이력.
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
@@ -14,7 +14,8 @@ import { StatusBadge, statusOf, undeterminedText } from "../components/VerdictSt
 import { SectionChart, useSectionCtl, type SectionCtl } from "../components/SectionChart";
 import { ErrHistogram } from "../components/ErrHistogram";
 import { ReportLink } from "../components/ReportLink";
-import { LibraryRegister } from "../components/LibraryRegister";
+import { LibraryRegister, REGISTER_LABEL, useRegistration } from "../components/LibraryRegister";
+import { stepPath, stepState } from "../shell/StageStepper";
 import { usePolling } from "../lib/usePolling";
 import { dt, fmt, pct, pv, sci, spv } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -191,7 +192,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const [sp] = useSearchParams();
   const pastVal = sp.get("val"); // 과거 실행 읽기 전용(?val=)
   const runId = pastVal ? null : c.current_esl_run_id;
-  const st5 = c.stage_status?.["5"];
+  const st5 = stepState(c, 4);
   // 검증 완료는 Case version 을 바꾸지 않으므로 ⑤ 상태(job_id·state)가 바뀌면 다시 읽는다
   const run = usePolling(() => (runId ? api.eslRun(runId) : Promise.resolve(null)), 0, [runId, c.version, st5?.state, st5?.job_id]);
   const vid = pastVal ?? run.data?.latest_validation_id ?? null;
@@ -206,7 +207,10 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const sectionOn = !!v && !!v.field && !filesGone;
   const ctl = useSectionCtl(v?.id ?? null, sectionOn);
 
-  const prereq = !runId ? "④ ESL을 먼저 계산하세요" : run.data?.stale ? "④ ESL을 다시 계산하세요(입력이 바뀜)" : null;
+  const prereq = !runId ? "③ ESL을 먼저 계산하세요" : run.data?.stale ? "③ ESL을 다시 계산하세요(입력이 바뀜)" : null;
+  // §7.1 주 버튼 1개: 최신 검증 PASS(현재 기준) ∧ 미등록 → '라이브러리에 등록', 그 외 '검증 실행'
+  const reg = useRegistration(c.project_id, pastVal ? null : v ?? null, allowed);
+  const registerMode = !pastVal && reg.canRegister && st5?.state !== "running";
   const crit = v?.criteria ?? {};
   const status = v ? statusOf(v) : null;
   const skipped = !!v && v.undetermined_reason === "NO_FULL_SOLVE";
@@ -215,7 +219,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const content = (
     <>
       {!v ? (
-        <Empty>{pastVal ? "불러오는 중…" : runId ? "아직 검증하지 않았습니다" : "④ ESL을 먼저 계산하세요"}</Empty>
+        <Empty>{pastVal ? "불러오는 중…" : runId ? "아직 검증하지 않았습니다" : "③ ESL을 먼저 계산하세요"}</Empty>
       ) : (
         <div className="wide2">
           <Card
@@ -223,8 +227,8 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             right={
               <span className="inline-actions">
                 <StatusBadge v={v} />
-                {!pastVal && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v.id}:${c.stage_status?.["5"]?.state}`} />}
-                {!pastVal && <LibraryRegister projectId={c.project_id} v={v} allowed={allowed} failLabels={FAIL_REASON_LABEL} />}
+                {!pastVal && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v.id}:${st5?.state}`} />}
+                {!pastVal && <LibraryRegister projectId={c.project_id} reg={reg} />}
               </span>
             }
           >
@@ -290,7 +294,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
               </div>
             ) : pastVal ? null : (
               <div className="warn-box" role="status">
-                전 요소 비교 자료가 없는 예전 검증입니다 — ⑤ 검증을 다시 실행하면 겹쳐보기를 볼 수 있습니다.
+                전 요소 비교 자료가 없는 예전 검증입니다 — ④ 검증을 다시 실행하면 겹쳐보기를 볼 수 있습니다.
               </div>
             )}
             {v.field && !filesGone && (
@@ -388,22 +392,26 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   );
   if (pastVal)
     return (
-      <PastFrame title="⑤ 검증" review={review.data} error={val.error ?? review.error} currentHref={`/p/${c.project_id}/c/${c.id}/stage/5`}>
+      <PastFrame title="④ 검증" review={review.data} error={val.error ?? review.error} currentHref={stepPath(c.project_id, c.id, 4)}>
         {content}
       </PastFrame>
     );
   return (
     <StageFrame
-      title="⑤ 검증"
-      status={c.stage_status?.["5"]}
-      error={act.error ?? run.error ?? val.error}
+      title="④ 검증"
+      status={st5}
+      error={act.error ?? reg.error ?? run.error ?? val.error}
       onJobDone={() => void reload()}
-      primary={{
-        label: "검증 실행",
-        onClick: () => act.run(() => submitJob(c, "VALIDATE", { esl_run_id: runId })),
-        disabledReason: blockReason(allowed, c, 5, prereq),
-        busy: act.busy,
-      }}
+      primary={
+        registerMode
+          ? { label: REGISTER_LABEL, onClick: () => void reg.register(), disabledReason: reg.permission, busy: reg.busy }
+          : {
+              label: "검증 실행",
+              onClick: () => act.run(() => submitJob(c, "VALIDATE", { esl_run_id: runId })),
+              disabledReason: blockReason(allowed, c, 4, prereq),
+              busy: act.busy,
+            }
+      }
     >
       {content}
     </StageFrame>

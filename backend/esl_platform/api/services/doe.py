@@ -56,7 +56,7 @@ from ..context import AppContext
 from . import bundle as bundle_svc
 from . import uploads as up_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder
+from .library import backfill_opt_meta, entry_folder, require_eligible, require_eligible_ids
 from .opt import _entry_mesh, _s1_base, _same_model_rows, _size_row, entries_in_order
 
 log = logging.getLogger("esl_platform.api")
@@ -102,7 +102,7 @@ def study_dir(ctx: AppContext, s: dict[str, Any]) -> str:
 def load_study(conn, sid: str, *, for_update: bool = False) -> dict[str, Any]:
     s = doe_repo.get_study(conn, sid, for_update=for_update)
     if s is None:
-        raise not_found("DOE_NOT_FOUND", "비드 DOE 연구를 찾을 수 없습니다")
+        raise not_found("DOE_NOT_FOUND", "강성 평가 스터디를 찾을 수 없습니다")
     return s
 
 
@@ -169,7 +169,7 @@ def require_enabled(ctx: AppContext, scenario: str | None = None) -> dict[str, A
 
 def _disabled_message(reason: str | None) -> str:
     if reason == "DOE_DISABLED":
-        return "비드 DOE 가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)"
+        return "강성 평가 스터디가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)"
     try:
         from ...core.opt_core import doe_message
 
@@ -189,7 +189,7 @@ def method_sources(principal: Principal | None) -> dict[str, Any]:
     try:
         ms = doe_load_method_sources()
     except EslError as exc:
-        log.warning("비드 DOE 방법·출처 자료를 읽지 못함: %s", exc.message)
+        log.warning("강성 평가 스터디 방법·출처 자료를 읽지 못함: %s", exc.message)
         return {"error": exc.message if principal is not None and principal.is_global_admin
                 else "방법·출처 자료를 읽지 못했습니다(관리자 문의)"}
     m = ms.get("methods") or {}
@@ -519,6 +519,8 @@ def _insert_study_job(ctx: AppContext, principal: Principal, *, sid: str, projec
 
 def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, params: dict[str, Any], *,
                 warns: list | None = None, retry_of: str | None = None, resume: int | None = None) -> dict[str, Any]:
+    # MR-D-10: 스터디의 모든 작업(준비·미리보기·실행·재시도)은 대상 ESL 이 지금도 적격일 때만(통합 검증 지적 1c)
+    require_eligible_ids(conn, s.get("entry_ids"))
     try:
         with conn.begin_nested():
             job = jobs_repo.insert_job(conn, case_id=None, bead_doe_id=s["id"], project_id=s["project_id"],
@@ -526,7 +528,7 @@ def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, pa
                                        created_by_name=principal.display_name, retry_of_job_id=retry_of,
                                        resume_from_step=resume)
     except IntegrityError:
-        raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다") from None
+        raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다") from None
     if warns:
         from sqlalchemy import update
 
@@ -541,6 +543,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     c = cfg(ctx)
     r = check_inputs(ctx, principal, body, _internal=True)
     out, mat = r["out"], r["mat"]
+    require_eligible(mat["rows"])                 # v0.10.0 MR-D-10: 현재 기준 PASS 항목만(422 ENTRY_NOT_ELIGIBLE)
     if body.scenario == "same" and not out["ok"]:
         bad = [e for e in out["entries"] if not e["ok"]]
         raise unprocessable("MODEL_MISMATCH", f"기준 모델과 다른 ESL {len(bad)}개 — '같은 모델' DOE 는 같은 모델만"
@@ -550,7 +553,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     rows = mat["rows"]
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)                    # 경로 안전성(실제 생성은 워커)
-    title = (body.title or "").strip() or f"비드 DOE {out['step']['file_name']}"
+    title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
     part_title = (mat["mesh"] or {}).get("part_title") if body.scenario == "mesh" else (
         (mat["base"] or {}).get("part_title") if body.scenario == "same" else None)
     step_p = mat["step"]
@@ -773,7 +776,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
     with ctx.engine.begin() as conn:
         s, job = _lock(conn, sid, body.version)
         if job is not None and job["state"] not in TERMINAL:
-            raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다")
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         if s.get("run") is not None or s["phase"] in ("RUN", "DONE"):
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         if s.get("prep") is None:
@@ -804,7 +807,7 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
     with ctx.engine.begin() as conn:
         s, job = _lock(conn, sid, body.version)
         if job is not None and job["state"] not in TERMINAL:
-            raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다")
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         if s.get("run") is not None or s["phase"] in ("RUN", "DONE"):
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         doe = s.get("doe") or {}
@@ -836,6 +839,7 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
     with ctx.engine.connect() as conn:
         s = load_study(conn, sid)
         require_execute(principal, s["project_id"])
+        require_eligible_ids(conn, s["entry_ids"])          # MR-D-10: 복제도 적격 항목만(422 ENTRY_NOT_ELIGIBLE)
         prep_job = doe_repo.latest_job(conn, sid, job_type="DOE_PREP")
         # §15 업로드는 본인 것만: 복제는 원 연구의 STEP·B 메시 업로드(서버 경로)를 그대로 다시 쓰므로 업로드 소유자만(검증 지적)
         from ...core.db.tables import uploads as uploads_t
@@ -849,7 +853,7 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
                                  .where(uploads_t.c.id == uid)).scalar()
             if owner != principal.user_id:
                 raise DomainError("UPLOAD_NOT_OWNED", "원 연구의 입력 파일은 올린 사람만 다시 쓸 수 있습니다 — "
-                                  "같은 ESL 을 골라 STEP 을 새로 올려 새 비드 DOE 를 만드세요", status=403, input=k)
+                                  "같은 ESL 을 골라 STEP 을 새로 올려 새 강성 평가 스터디를 만드세요", status=403, input=k)
     require_config_ok(ctx)
     require_enabled(ctx, s["scenario"])
     if prep_job is None or not isinstance((prep_job.get("params") or {}).get("doe"), dict):
@@ -891,7 +895,7 @@ def _require_retry_current(conn, s: dict[str, Any], job: dict[str, Any]) -> None
     elif PHASE_ORDER.get(s["phase"], -1) > PHASE_ORDER[JOB_PHASE[job["job_type"]]]:
         why = "연구가 이 작업 단계를 이미 지났습니다"
     if why:
-        raise conflict("DOE_RETRY_STALE", f"오래된 비드 DOE 작업은 재시도할 수 없습니다 — {why}. 연구 화면에서 현재 단계를 진행하세요",
+        raise conflict("DOE_RETRY_STALE", f"오래된 강성 평가 작업은 재시도할 수 없습니다 — {why}. 연구 화면에서 현재 단계를 진행하세요",
                        phase=s["phase"], latest_job_id=(latest or {}).get("id"))
 
 
@@ -930,7 +934,13 @@ def _file_entry(base: str, rel: str, lim: int) -> dict[str, Any] | None:
     return {"rel": rel, "size": size, "downloadable": size <= lim}
 
 
-def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+RESULT_SORT_KEYS = ("score", "worst_ratio", "geo_mean_improvement", "n_worsened", "pareto")
+
+
+def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score") -> dict[str, Any]:
+    """DoeResultOut. sort = 순위표 정렬 키(기본 score — rank 필드는 score 순위 그대로, 계약 §11.4)."""
+    if sort not in RESULT_SORT_KEYS:
+        raise unprocessable("INVALID_PARAMS", f"sort 는 {list(RESULT_SORT_KEYS)} 중 하나", sort=sort)
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
     if _derived_phase(s, job) != "DONE":
@@ -953,6 +963,10 @@ def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
         if row.get("noise") is None:
             row.pop("noise", None)
         ranking.append(row)
+    if sort != "score" and all("worst_ratio" in x for x in ranking):
+        from ...core import opt_core
+
+        ranking = opt_core.doe_sort_rows(ranking, sort)
     best = r.get("best")
     if isinstance(best, dict) and best.get("id"):
         files = []
@@ -978,8 +992,29 @@ def results(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
            "excluded": excluded, "sensitivity": r.get("sensitivity"),
            "boundary_warnings_n": int(r.get("boundary_warnings_n") or 0),
            "view3d": [str(v) for v in r.get("view3d") or [] if v], "best": best, "noise_floor": r.get("noise_floor"),
-           "warnings": warns}
+           "ratio_tol": r.get("ratio_tol"), "per_esl_inline": bool(r.get("per_esl_inline")),
+           "esl": [e for e in r.get("esl") or [] if isinstance(e, dict)], "sort": sort, "warnings": warns}
     return _jsonable(out)
+
+
+def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str | None) -> dict[str, Any]:
+    """§11.4 ESL별 지표(post/per_esl.json): design = 쉼표로 구분한 안 id(없으면 전부, 최대 max_designs)."""
+    c = cfg(ctx)
+    s, job = _viewable(ctx, principal, sid)
+    if _derived_phase(s, job) != "DONE":
+        raise conflict("RESULT_NOT_READY", "DOE 실행 결과가 아직 없습니다")
+    d = _read_json(os.path.join(study_dir(ctx, s), "post", "per_esl.json"), _max_mb(c))
+    if not isinstance(d, dict):
+        raise conflict("RESULT_NOT_READY", "ESL별 지표(post/per_esl.json)가 없습니다 — v0.10.0 이전 실행은 복제해 다시 실행")
+    allv = d.get("designs") or {}
+    ids = [x for x in (design or "").split(",") if x] if design else sorted(allv)
+    if len(ids) > int(c["max_designs"]):
+        raise unprocessable("INVALID_PARAMS", f"design 은 최대 {c['max_designs']}개")
+    miss = [i for i in ids if i not in allv]
+    if miss:
+        raise DomainError("DESIGN_NOT_FOUND", f"순위 안에 없는 안입니다: {miss[:5]}", status=404, designs=miss)
+    return _jsonable({"esl": d.get("esl") or [], "ratio_tol": d.get("ratio_tol"),
+                      "designs": [{"id": i, "per_esl": allv[i]} for i in ids]})
 
 
 # ---------------------------------------------------------------- 파일·보고서·받기
@@ -1064,7 +1099,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, parts_raw: str | Non
         if take:
             files.append((p, rel))
     if not files:
-        raise not_found("BUNDLE_EMPTY", "받을 비드 DOE 파일이 아직 없습니다")
+        raise not_found("BUNDLE_EMPTY", "받을 강성 평가 스터디 파일이 아직 없습니다")
     size = bundle_svc._check_size(ctx, files, base)
     return {"files": files, "prefix": f"doe_{sid}", "filename": f"doe_{sid}.zip", "size": size}
 
@@ -1121,5 +1156,5 @@ def view3d_file(ctx: AppContext, principal: Principal, sid: str, did: str, name:
 
 
 __all__ = ["settings_out", "check_inputs", "create_study", "list_studies", "get_study", "params_out", "plan_view",
-           "matrix", "preview", "run", "clone", "results", "list_files", "study_file", "report", "bundle", "thumb",
+           "matrix", "preview", "run", "clone", "results", "results_per_esl", "list_files", "study_file", "report", "bundle", "thumb",
            "view3d_manifest", "view3d_file", "bead_png", "retry_job", "status", "reset_status_cache"]

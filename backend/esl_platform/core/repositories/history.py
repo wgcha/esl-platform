@@ -26,6 +26,8 @@ LIST_COLUMNS = (
     jobs.c.params[("settings", "case", "part_title")].label("p_part_title"),   # ESL 실행 당시 part_title
     jobs.c.params["part_title"].label("p_extract_title"),                        # 추출 요청 part_title
     jobs.c.params["esl_run_id"].label("p_run_id"),                               # 내보내기·보고서 대상 ESL 실행
+    jobs.c.params["origin"].astext.label("p_origin"),                            # v0.10.0 library(라이브러리 내보내기)·library_revalidate
+    jobs.c.result[("registered", "n_items")].label("r_n_items"),                 # v0.10.0 라이브러리 내보내기 항목 수
     jobs.c.result[("registered", "extract", "n_elems")].label("r_n_elems"),
     jobs.c.result[("registered", "tstar", "frame_index")].label("r_tstar_frame"),
     jobs.c.result[("registered", "tstar", "value")].label("r_tstar_value"),
@@ -154,8 +156,9 @@ def latest_success_jobs(conn: Connection, pairs: list[tuple[str, str]]) -> dict[
     if not pairs:
         return {}
     pv = values(column("case_id", String), column("job_type", String), name="pairs").data(sorted(set(pairs)))
+    # v0.10.0: 라이브러리 내보내기(params.origin = library)는 Case 의 ⑥ 결과가 아니므로 제외(MR-D-7)
     sub = (select(jobs.c.id).where(and_(jobs.c.case_id == pv.c.case_id, jobs.c.job_type == pv.c.job_type,
-                                        jobs.c.state == "SUCCEEDED"))
+                                        jobs.c.state == "SUCCEEDED", jobs.c.params["origin"].astext.is_(None)))
            .order_by(jobs.c.created_at.desc(), jobs.c.id.desc()).limit(1).lateral("latest"))
     stmt = select(pv.c.case_id, pv.c.job_type, sub.c.id).select_from(pv.join(sub, true()))
     return {(r[0], r[1]): r[2] for r in conn.execute(stmt).all()}

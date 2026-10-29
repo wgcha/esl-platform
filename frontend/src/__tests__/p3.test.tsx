@@ -426,14 +426,14 @@ describe("서버 h3d 추출(§6)·동시 실행", () => {
 });
 
 describe("결과 받기(zip)", () => {
-  it("⑥ 와 Case 상단 메뉴에 '결과 받기(zip)' (주 버튼 아님)", async () => {
-    const { container } = renderApp("/p/p-body/c/c-demo/stage/6");
-    await screen.findByRole("heading", { level: 2, name: "⑥ 내보내기" });
+  it("Case 상단 메뉴에 '결과 받기(zip)' 유지(주 버튼 아님), ⑥ 단계는 없음", async () => {
+    const { container } = renderApp("/p/p-body/c/c-demo/step/4");
+    await screen.findByRole("heading", { level: 2, name: "④ 검증" });
     const btns = await screen.findAllByRole("button", { name: BUNDLE_LABEL });
-    expect(btns.length).toBe(2);
+    expect(btns.length).toBe(1);
     expect(within(screen.getByRole("navigation", { name: "Case 메뉴" })).getByRole("button", { name: BUNDLE_LABEL })).toBeTruthy();
     btns.forEach((b) => expect(b.hasAttribute("data-primary")).toBe(false));
-    expect(primaries(container).length).toBe(1);
+    await waitFor(() => expect(primaries(container).length).toBe(1));
     fireEvent.click(btns[0]);
     await waitFor(() => expect((btns[0] as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByTestId("bundle-too-large")).toBeNull();
@@ -533,9 +533,9 @@ describe("사용 가이드", () => {
     await screen.findByRole("heading", { level: 1, name: /사용 가이드/ });
     const card = (id: string) => document.getElementById(id) as HTMLElement;
     await waitFor(() => expect(within(card("new-case")).getByRole("link", { name: "새 Case 열기" }).getAttribute("href")).toBe("/p/p-body/cases/new"));
-    expect(within(card("s3")).getByRole("link", { name: "③ 지지점 열기" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/stage/3");
-    fireEvent.click(within(card("s5")).getByRole("link", { name: "⑤ 검증 열기" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "⑤ 검증" })).toBeTruthy();
+    expect(within(card("s2")).getByRole("link", { name: "② t*·지지점 열기" }).getAttribute("href")).toBe("/p/p-body/c/c-demo/step/2");
+    fireEvent.click(within(card("s4")).getByRole("link", { name: "④ 검증 열기" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "④ 검증" })).toBeTruthy();
   });
 
   it("docs/manual/user.md 에 가이드 카드·FAQ 가 모두 있음", () => {

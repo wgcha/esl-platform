@@ -1,5 +1,5 @@
 // 라이브러리 화면 공통: 표기·필터·포락 미니맵.
-import type { AnalysisFilters, EntryOut, OptdeckCases } from "../../api/types";
+import type { AnalysisFilters, EntryOut, IneligibleReason, OptdeckCases } from "../../api/types";
 import { Badge } from "../../components/ui";
 import { entryStatus } from "../../components/VerdictStatus";
 import { VIRIDIS, f3, gradient, lerp } from "../../lib/colormap";
@@ -83,6 +83,34 @@ export function VerdictBadge({ v, legacyVerdict }: { v: string | null | undefine
 export function EntryVerdict({ e }: { e: EntryOut }) {
   const s = entryStatus(e.quality);
   return <VerdictBadge v={s} legacyVerdict={s === "LEGACY" ? e.quality.verdict : null} />;
+}
+
+// ---------------------------------------------------------------- v0.10.0 적격(esl_menu_restructure.md §7.4·§7.5)
+/** 서버 eligible 우선, 없으면(예전 서버) quality 로 같은 규칙: status PASS ∧ scheme 있음 */
+export const isEligible = (e: EntryOut) => e.eligible ?? entryStatus(e.quality) === "PASS";
+/** 부적격 사유: LEGACY(scheme 없음) · 사유와 함께 등록된 FAIL · 판정 불가 */
+export function ineligibleOf(e: EntryOut): IneligibleReason | null {
+  if (isEligible(e)) return null;
+  if (e.ineligible_reason) return e.ineligible_reason;
+  const s = entryStatus(e.quality);
+  return s === "FAIL" || s === "UNDETERMINED" ? s : "LEGACY";
+}
+export const legacyBlockText = (n: number) => `LEGACY ${n}개 선택됨 — 재검증 후 사용`;
+const INELIGIBLE_SUB: Record<IneligibleReason, string> = { LEGACY: "", FAIL: "FAIL", UNDETERMINED: "판정 불가" };
+
+/** 라이브러리 판정 배지(v0.10.0): PASS / LEGACY(+ 당시 상태 FAIL·판정 불가 또는 이전 판정 체계의 당시 verdict) */
+export function EligibilityBadge({ e }: { e: EntryOut }) {
+  const r = ineligibleOf(e);
+  if (!r) return <Badge kind="ok">PASS</Badge>;
+  const sub = r === "LEGACY" ? (e.quality.verdict ? `당시 ${e.quality.verdict}` : "") : INELIGIBLE_SUB[r];
+  return (
+    <span className="inline-actions" data-testid="legacy-badge">
+      <span className="badge legacy" title="이전 기준·부적격 — 재검증 후 강성 평가·비드 최적화·종합분석에 쓸 수 있습니다">
+        LEGACY
+      </span>
+      {sub && <span className="small muted">{sub}</span>}
+    </span>
+  );
 }
 
 export const dropText = (d: string | null | undefined) => (d ? DROP_LABEL[d] ?? d : "?");

@@ -14,7 +14,7 @@ import os
 from typing import Any
 
 from esl_platform.core.errors import DomainError
-from esl_platform.core.paths import COMPARE_DIR, LIBRARY_DIR, esl_subdir
+from esl_platform.core.paths import COMPARE_DIR, EXPORTS_DIR, LIBRARY_DIR, esl_subdir
 
 
 class PrepareFailed(Exception):
@@ -49,3 +49,33 @@ def prepare_compare(settings, job: dict[str, Any]) -> tuple[str, dict[str, Any]]
 
 
 PREPARE = {"LIB_COMPARE": prepare_compare}
+
+
+def is_lib_export(job: dict[str, Any]) -> bool:
+    """v0.10.0 라이브러리 다중 내보내기: EXPORT 작업 params.origin = library(esl_menu_restructure.md §6.2)."""
+    return job.get("job_type") == "EXPORT" and (job.get("params") or {}).get("origin") == "library"
+
+
+def prepare_lib_export(settings, job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """작업 폴더 <esl_root>/_exports/<batch_id>/(안전 경로, 로그도 그 아래) + 항목 폴더(dir_rel → 절대경로, 읽기만).
+    Case 폴더는 쓰지 않는다. 항목 폴더가 없으면 그 항목만 실패(코어 run_items 가 ENTRY_FILES_MISSING 기록)."""
+    p = job["params"] or {}
+    try:
+        out = esl_subdir(settings, EXPORTS_DIR, str(p.get("batch_id") or ""))
+        lib_root = esl_subdir(settings, LIBRARY_DIR)
+        os.makedirs(out, exist_ok=True)
+        items = []
+        for it in p.get("items") or []:
+            d = esl_subdir(settings, *str(it["dir_rel"]).split("/"))
+            items.append({k: it[k] for k in ("entry_id", "label", "id_offset", "after_label", "validation_id")
+                          if k in it} | {"dir": d})
+    except DomainError as exc:
+        raise PrepareFailed(exc.code, exc.message) from None
+    except (KeyError, TypeError) as exc:
+        raise PrepareFailed("INVALID_PARAMS", f"라이브러리 내보내기 params 오류: {exc}") from None
+    if not items:
+        raise PrepareFailed("INVALID_PARAMS", "라이브러리 내보내기 항목이 없습니다")
+    lib = {"mode": "library_export", "batch_id": p.get("batch_id"), "lib_root": lib_root, "items": items,
+           "targets": list(p.get("targets") or []), "cfg": p.get("settings") or {},
+           "wait_s": float(settings.library_export.wait_s)}
+    return out, lib

@@ -93,14 +93,14 @@ try {
     }
     # 비드 DOE 형상 엔진 paicad: lock 커밋 빌드·정규화·sha256 대조(불일치면 중단). 빌드 venv 는 paicad_wheel.py 가 임시로 만들고 지운다
     if ($NoPaicad) {
-        Write-Step 'paicad wheel 생략(-NoPaicad) — 이 묶음으로 설치하면 비드 DOE 는 비활성(다른 기능은 그대로)'
+        Write-Step 'paicad wheel 생략(-NoPaicad) — 이 묶음으로 설치하면 강성 평가 스터디 는 비활성(다른 기능은 그대로)'
     } else {
         $pwArgs = @('-I', (Join-Path $PSScriptRoot 'paicad_wheel.py'), 'collect', '--lock', 'deploy/paicad.lock', '--out-dir', 'dist/bundle/wheels')
         if ($PhysicsaiRepo) { $pwArgs += @('--repo', $PhysicsaiRepo) }
         if ($PaicadWheel) { $pwArgs += @('--wheel', $PaicadWheel) }
         Invoke-Step 'paicad wheel(deploy/paicad.lock 커밋 → pip wheel --no-deps → 정규화·sha256 대조) → dist/bundle/wheels' {
             Invoke-Native 'paicad wheel 수집' $py $pwArgs ('git 설치와 GitHub(physicsai-platform) 접근을 확인하거나 -PhysicsaiRepo <저장소>/-PaicadWheel <wheel>을 주세요. ' +
-                'sha256 불일치면 lock 을 바꾸지 말고 관리자 매뉴얼 paicad 절(lock 갱신)을 따르세요. 비드 DOE 없이 묶으려면 -NoPaicad')
+                'sha256 불일치면 lock 을 바꾸지 말고 관리자 매뉴얼 paicad 절(lock 갱신)을 따르세요. 강성 평가 스터디 없이 묶으려면 -NoPaicad')
         }
     }
     Invoke-Step "npm ci && npm run build (frontend, Node $($node.Version))" {

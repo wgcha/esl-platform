@@ -452,6 +452,14 @@ class BeadDoeView3dCfg(_M):
     top_k: int = Field(default=3, ge=0, le=50)
 
 
+class BeadDoeRankCfg(_M):
+    """v0.10.0 ESL별 개선 지표(esl.doe.DEFAULTS["rank"] 거울): ratio_tol = '변화 없음' 허용치(③ 은 max(값, noise_floor)),
+    per_esl_inline_max = 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수, 넘으면 GET …/results/per-esl)."""
+
+    ratio_tol: float = Field(default=1e-6, ge=0, lt=1)
+    per_esl_inline_max: int = Field(default=2000, ge=0)
+
+
 class BeadDoeLimitsCfg(_M):
     """계약에 숫자가 명시된 내부 상한(esl.doe.DEFAULTS["limits"] 거울)."""
 
@@ -481,6 +489,7 @@ class BeadDoeCfg(_M):
     solve: BeadDoeSolveCfg = BeadDoeSolveCfg()
     boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()
     view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
+    rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
 
@@ -537,6 +546,8 @@ class UiCfg(_M):
     max_bundle_bytes: int = Field(default=5 * 1024 ** 3, ge=1)       # 결과 받기(zip) 상한, 초과 시 413
     browse_page_max: int = Field(default=1000, ge=10, le=10000)       # /fs/browse 한 번에 돌려주는 항목 수 상한
     upload_slim_hint_gb: float = Field(default=5, ge=0)               # 브라우저 업로드 h3d 가 이 크기(GB)를 넘으면 압축 모드 안내(0 = 끔)
+    # v0.10.0: 라이브러리 [내보내기](다중 ESL zip) 노출. 기본 false = 화면 숨김, /library/exports API 는 전역 관리자만(그 외 403 EXPORT_DISABLED)
+    library_export_enabled: bool = False
 
 
 class LoggingCfg(_M):
@@ -588,6 +599,14 @@ class LibraryCfg(_M):
     settings: dict[str, Any] | None = None
 
 
+class LibraryExportCfg(_M):
+    """라이브러리 다중 내보내기(v0.10.0 esl_menu_restructure.md §6·§10). 섹션이 없어도 이 기본값으로 동작."""
+
+    max_entries: int = Field(default=50, ge=1, le=1000)              # POST /library/exports 항목 수 상한(422 TOO_MANY_ENTRIES)
+    max_bundle_bytes: int | None = Field(default=None, ge=1)          # zip 상한, null = ui.max_bundle_bytes
+    wait_s: float = Field(default=600.0, ge=0.0)                      # 같은 모델 앞 항목(다른 Case 작업) 결과 대기 상한
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -609,6 +628,7 @@ class Settings(_M):
     client_token: ClientTokenCfg = ClientTokenCfg()
     opt_run: OptRunCfg | None = None    # v0.7.0 비드 최적화. 없으면 enabled false
     bead_doe: BeadDoeCfg | None = None  # v0.9.0 비드 형상 DOE. 없으면 enabled false
+    library_export: LibraryExportCfg = LibraryExportCfg()   # v0.10.0 라이브러리 다중 내보내기
 
     @property
     def api_prefix(self) -> str:

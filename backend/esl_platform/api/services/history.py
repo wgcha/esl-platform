@@ -41,6 +41,7 @@ KIND_BY_TYPE = {"CASE_EXTRACT": "extract", "ESL_SOLVE": "esl_run", "VALIDATE": "
                 "DOE_PREP": "bead_doe", "DOE_PREVIEW": "bead_doe", "DOE_RUN": "bead_doe"}
 REASON_ORDER = ("extract", "part_title", "tstar", "support_set", "input_files")
 FILES_NOTE = "파일 보존 안 됨 — 기록된 값만 표시"
+LIBRARY_EXPORT_LABEL = "내보내기(라이브러리)"       # v0.10.0 EXPORT params.origin = library 이력 라벨
 DIFF_MAX = 12
 FINGERPRINT_MAX = 1000
 
@@ -202,7 +203,7 @@ class Batch:
                                "n_cases": ls.get("n_cases"), "converged": rr.get("converged")}
             return res
         if row.get("bead_doe_id"):
-            # 비드 DOE(v0.9.0): 연구 화면으로 연결(links stage 11) — ref 종류는 이력 계약 목록에 없어 두지 않는다
+            # 강성 평가 스터디(v0.9.0 비드 DOE): 연구 화면으로 연결(links stage 11) — ref 종류는 이력 계약 목록에 없어 두지 않는다
             sub = self.bead_does.get(row["bead_doe_id"])
             res.state = "current" if sub is not None and sub.get("phase") != "FAILED" else "past"
             if sub is not None:
@@ -247,6 +248,12 @@ class Batch:
             reasons = self.run_reasons(case, run)
             res.summary = {"status": validation_status(val), "verdict": val["verdict"],
                            "disp_rms_rel": val["disp_rms_rel"], "disp_max_rel": val.get("disp_max_rel")}
+        elif jt == "EXPORT" and row.get("p_origin") == "library":
+            # v0.10.0 라이브러리 다중 내보내기: 원본 = 라이브러리 항목(등록 당시 하중) — Case 결과와 무관하므로 stale 사유 없음
+            res.ref = {"kind": "export", "id": row["id"]}
+            res.state = "current"
+            res.summary = {"origin": "library", "label": LIBRARY_EXPORT_LABEL, "n_items": row.get("r_n_items"),
+                           "targets": row.get("r_targets")}
         elif jt in ("EXPORT", "CASE_REPORT"):
             run = self.runs.get(row["p_run_id"]) if isinstance(row.get("p_run_id"), str) else None
             res.run = run
@@ -530,6 +537,13 @@ def _result_block(ctx: AppContext, conn: Connection, job: dict[str, Any], row: d
              _hotspot_max(cv["hotspots"]) if cv else None),
             ("criteria", "판정 기준", val["criteria"], cv["criteria"] if cv else None),
         ])
+    elif jt == "EXPORT" and (job.get("params") or {}).get("origin") == "library":
+        # v0.10.0 라이브러리 내보내기: 결과 파일은 <esl_root>/_exports/<batch>/ (묶음 zip 으로 받음), Case 단계 링크 없음
+        past = {"origin": "library", "label": LIBRARY_EXPORT_LABEL, "batch_id": reg.get("batch_id"),
+                "targets": reg.get("targets"), "n_items": reg.get("n_items"),
+                "items": [{k: it.get(k) for k in ("entry_id", "label", "state", "id_range", "error")}
+                          for it in reg.get("items") or []]}
+        links = {"library_export": reg.get("batch_id") or (job.get("params") or {}).get("batch_id")}
     elif jt == "EXPORT":
         hist = co.history_files(case_dir(ctx, case), "EXPORT", job["id"])
         if hist:

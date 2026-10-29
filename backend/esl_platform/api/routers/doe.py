@@ -19,6 +19,7 @@ from ..schemas import (
     DoeMatrixOut,
     DoeParamsOut,
     DoePlanOut,
+    DoePerEslOut,
     DoeResultOut,
     DoeRunIn,
     DoeSettingsOut,
@@ -111,8 +112,17 @@ def doe_clone(sid: str, request: Request, body: dict[str, Any] | None = Body(def
 
 
 @router.get("/doe/studies/{sid}/results", response_model=DoeResultOut)
-def doe_results(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.results(get_ctx(request), principal, sid)
+def doe_results(sid: str, request: Request, sort: str = Query(default="score", max_length=40),
+                principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """순위·민감도·ESL별 개선 지표. sort = score(기본)|worst_ratio|geo_mean_improvement|n_worsened|pareto."""
+    return svc.results(get_ctx(request), principal, sid, sort)
+
+
+@router.get("/doe/studies/{sid}/results/per-esl", response_model=DoePerEslOut)
+def doe_results_per_esl(sid: str, request: Request, design: str | None = Query(default=None, max_length=8000),
+                        principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max)."""
+    return svc.results_per_esl(get_ctx(request), principal, sid, design)
 
 
 @router.get("/doe/studies/{sid}/files", response_model=list[DoeFileOut])

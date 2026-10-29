@@ -1,5 +1,6 @@
 // P3-이력 API(계약 esl_p3_history.md §3). check:api 가 endpoints.ts·p3.ts 와 함께 이 파일의 경로도 openapi 와 대조한다.
 import { API_PREFIX, request } from "./client";
+import { STEP_OF_STAGE } from "../shell/StageStepper";
 import type { JobOut, JobState, JobType, LogOut, StepOut } from "./types";
 import { PHASE_NAME, SCENARIO_NAME, SCENARIO_NO } from "./doe";
 
@@ -189,7 +190,8 @@ export function linkPath(projectId: string, caseId: string | null, l: ReviewLink
   if (l.stage === 11 && (qs.get("doe") ?? qs.get("bead_doe"))) return `/p/${projectId}/doe/${qs.get("doe") ?? qs.get("bead_doe")}`;
   if (!caseId || l.stage > 7) return null;
   const q = qs.toString();
-  return `/p/${projectId}/c/${caseId}/stage/${l.stage}${q ? `?${q}` : ""}`;
+  // v0.10.0(esl_menu_restructure.md §4.2): 서버 links.stage(옛 1..6) → 화면 단계 /step/1..4
+  return `/p/${projectId}/c/${caseId}/step/${STEP_OF_STAGE[l.stage] ?? 1}${q ? `?${q}` : ""}`;
 }
 
 export const history = {
@@ -211,9 +213,9 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   LIB_ANALYZE: "종합분석",
   LIB_COMPARE: "버전 비교",
   OPT_RUN: "비드 최적화",
-  DOE_PREP: "비드 DOE 준비",
-  DOE_PREVIEW: "비드 DOE 미리보기",
-  DOE_RUN: "비드 DOE 실행",
+  DOE_PREP: "강성 평가 준비",
+  DOE_PREVIEW: "강성 평가 미리보기",
+  DOE_RUN: "강성 평가 실행",
 };
 
 /** 단계(step_key) 한글 라벨 — v0.7.0 OPT_RUN 6단계(계약 esl_opt_run.md §6.1). 없는 키는 키 그대로 */
@@ -278,7 +280,7 @@ export const STALE_REASON_LABEL: Record<string, string> = {
 };
 
 /** 목록 한 줄 요약 */
-/** 비드 DOE 이력 요약 표기(연구 화면과 같은 이름 — api/doe.ts) */
+/** 강성 평가 스터디(이전 이름 비드 DOE) 이력 요약 표기(연구 화면과 같은 이름 — api/doe.ts) */
 const DOE_SCENARIO_LABEL: Record<string, string> = Object.fromEntries(Object.entries(SCENARIO_NAME).map(([k, v]) => [k, `${SCENARIO_NO[k as keyof typeof SCENARIO_NO]} ${v}`]));
 const DOE_PHASE_LABEL: Record<string, string> = PHASE_NAME;
 
@@ -299,6 +301,8 @@ export function summaryText(it: HistoryItem): string {
       return `${label} · 변위 RMS ${d === null ? "생략" : d.toExponential(1)}`;
     }
     case "EXPORT":
+      // v0.10.0 §6.3: 라이브러리 다중 내보내기 summary {n_items, targets}
+      if (n("n_items") !== null) return `내보내기(라이브러리) · ESL ${n("n_items")}개 · ${Array.isArray(s.targets) ? (s.targets as string[]).join("·") : "–"}`;
       return `${Array.isArray(s.targets) ? (s.targets as string[]).join("·") : "–"} · 파일 ${n("n_files") ?? "–"}개`;
     case "OPT_RUN":
       // v0.7.0: summary {scenario, load_strategy, n_cases, converged}

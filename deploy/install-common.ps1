@@ -20,6 +20,7 @@ $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # resources/tcl: 서버 h3d 추출 TCL(esl_h3d_extract.tcl — 워커가 <런타임>\app\resources\tcl 에서 실행, 계약 esl_p3_ux.md §6)
 # resources/opt_method_sources.json: 비드 최적화 방법·출처(GET /opt/settings — v0.7.2 전에는 빠져 새 비드 최적화 화면이 비었음)
 # resources/doe_messages.json·doe_method_sources.json: v0.9.0 비드 DOE 사용자 문구·방법 출처(계약 esl_bead_doe.md §6.4, V-BD-18)
+# v0.10.0(계약 esl_menu_restructure.md §13 MR5): 새 런타임 파일 esl/export/from_entry.py(라이브러리 내보내기 코어 어댑터)·backend/esl_platform/api/services/library_export.py 는 'esl'·'backend/esl_platform' 폴더째 복사에 포함(새 resources 없음, tests/deploy/test_menu_deploy.py)
 $EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
@@ -151,7 +152,7 @@ function Install-EslBeadDoe {
         if ($pkgs.Count) {
             $a = @('install')
             if ($Wheels) { $a += @('--no-index', '--find-links', $Wheels) }
-            Invoke-EslPip -Py $VenvPy -PipArgs ($a + $pkgs) -What '비드 DOE 의존성(cadquery-ocp·gmsh) 설치'
+            Invoke-EslPip -Py $VenvPy -PipArgs ($a + $pkgs) -What '강성 평가 스터디 의존성(cadquery-ocp·gmsh) 설치'
         }
         $lock = Get-Content -Raw -Encoding UTF8 -LiteralPath $PaicadLock | ConvertFrom-Json
         $whl = $null
@@ -185,11 +186,11 @@ function Install-EslBeadDoe {
     } catch {
         $res.Reason = $_.Exception.Message
     }
-    foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "비드 DOE: $w" } }
+    foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "강성 평가 스터디: $w" } }
     if ($res.Ok) {
-        Write-EslStep "비드 DOE 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
+        Write-EslStep "강성 평가 스터디 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
     } else {
-        Write-Warning "비드 DOE 비활성(다른 기능은 그대로): $($res.Reason)"
+        Write-Warning "강성 평가 스터디 비활성(다른 기능은 그대로): $($res.Reason)"
     }
     return [pscustomobject]$res
 }

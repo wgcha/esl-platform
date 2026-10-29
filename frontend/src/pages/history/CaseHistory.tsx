@@ -20,7 +20,7 @@ export function CaseHistory() {
       projectId={projectId}
       crumbs={[
         { label: project?.name ?? projectId, to: `/p/${projectId}` },
-        { label: cs.data?.title ?? "Case", to: `${base}/stage/1` },
+        { label: cs.data?.title ?? "Case", to: `${base}/step/1` },
         { label: "실행 이력" },
       ]}
     >

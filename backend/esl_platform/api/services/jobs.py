@@ -126,7 +126,12 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
         if not missing and frame not in co.disp_frames(cdir):
             missing.append("disp_frame")
         if missing:
-            raise conflict("PREREQUISITE_MISSING", "앞 단계가 필요합니다", missing=missing)
+            # v0.10.0 MR-D-4: ② 지지점 자동 선택이 품질 검사에 걸렸으면 support_blocked + 사유
+            auto = (ts or {}).get("support_auto") if isinstance(ts, dict) else None
+            blocked = "support_set" in missing and isinstance(auto, dict) and auto.get("status") == "BLOCKED"
+            extra = {"support_blocked": True, "problems": auto.get("problems") or []} if blocked else {}
+            raise conflict("PREREQUISITE_MISSING", "② 지지점 자동 선택 실패 — ②에서 사유 확인" if blocked
+                           else "앞 단계가 필요합니다", missing=missing, **extra)
         metric = ts.get("metric") or "max_strain"
         if p.frame_index is not None and p.frame_index != ts.get("frame_index"):
             info = co.tstar_info(cdir)
@@ -245,6 +250,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
         params = dict(job["params"])
+        if job["job_type"] == "EXPORT" and params.get("origin") == "library":
+            # 라이브러리 내보내기: 실패는 대개 EXP_REGISTER(항목 전부 실패 = EXPORT_ALL_FAILED)에서 드러나므로 실패 step 부터
+            # 이어 하면 같은 실패 결과만 다시 등록한다 → EXPORT 단계부터 다시(항목 폴더는 _backup 후 새로, 통합 검증 지적 4f)
+            start = 1
         if job["failure_code"] == "INPUT_CHANGED":
             # 입력이 바뀌어 실패한 작업: 예전 지문으로 재시도하면 또 실패 → CASE_EXTRACT 는 현재 입력으로 다시
             # 준비(새 지문, 처음 step 부터), 그 밖의 작업은 추출부터 다시 해야 하므로 거부.
@@ -275,6 +284,9 @@ def _retry_analysis(conn, principal: Principal, job: dict[str, Any]) -> dict[str
     an = lib_repo.get_analysis(conn, job["analysis_id"], for_update=True)
     if an is None:
         raise DomainError("ANALYSIS_NOT_FOUND", "분석을 찾을 수 없습니다", status=404)
+    from .library import require_eligible_ids
+
+    require_eligible_ids(conn, [*(an.get("entry_ids") or []), an.get("target_entry_id")])   # MR-D-10(지적 1c)
     start = jobs_repo.first_failed_step(conn, job["id"])
     try:
         with conn.begin_nested():
@@ -386,6 +398,11 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
             from ...core.repositories import doe as doe_repo
 
             base = analysis_dir(ctx, doe_repo.get_study(conn, job["bead_doe_id"]))
+        elif job["job_type"] == "EXPORT" and (job.get("params") or {}).get("origin") == "library":
+            # v0.10.0 라이브러리 내보내기: 로그 = <esl_root>/_exports/<batch_id>/logs/<job_id>/
+            from ...core.paths import EXPORTS_DIR, esl_subdir
+
+            base = esl_subdir(ctx.settings, EXPORTS_DIR, str(job["params"].get("batch_id")))
         else:
             base = case_dir(ctx, load_case(conn, job["case_id"]))
         steps = jobs_repo.get_steps(conn, job_id)

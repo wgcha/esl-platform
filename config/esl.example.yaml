@@ -33,6 +33,13 @@ tstar:
 support:
   candidates: pca4                   # pca4 (PCA 4꼭지점) | node_ids (아래 목록)
   node_ids: []                       # candidates=node_ids 일 때 3개 이상. CLI --support-nodes 가 우선
+  # (선택, v0.10.0) ② t* 확정 시 3-2-1 자동 선택 품질 검사 기준(없으면 아래 기본값, 기준값 임시). 플랫폼 화면에서만 쓴다.
+  # auto_check:
+  #   min_area_ratio: 0.10             # 삼각형 면적 / (0.5·면내 범위 L_a·L_b) 미만 → SUPPORT_COLLINEAR
+  #   min_dist_rel: 0.15               # 최소 두 점 거리 / 면내 대각선 미만 → SUPPORT_TOO_CLOSE
+  #   min_cond_ratio: 1.0e-3           # 3-2-1 구속행렬 σmin/σmax 미만 → SUPPORT_ILL_CONDITIONED
+  #   expand_candidates: true          # PCA 4꼭지점이 실패하면 a·b 극점까지 8개 후보 조합 재탐색
+  #   rule_version: 1                  # 기록용
 
 solver:
   backend: auto                      # auto(CHOLMOD → PARDISO → SuperLU, 직접법 메모리 부족 시 반복법) | cholmod | pardiso | superlu | iterative

@@ -96,3 +96,46 @@ def test_sensitivity_too_few():
     assert out["null"] and out["reason"] == "SENSITIVITY_TOO_FEW"
     assert rk.spearman([1, 1, 1], [1, 2, 3]) is None
     assert list(rk._rankdata(np.array([3.0, 1.0, 3.0, 2.0]))) == [3.5, 1.0, 3.5, 2.0]
+
+
+
+def test_per_esl_metrics_problem_shift_and_pareto():
+    """v0.10.0 §11.4: 문제 이동 — d001 은 E1 을 크게 개선(0.5)하지만 E2 를 악화(1.2) → score(최악 절대 max)는 좋아 보여도
+    all_improved False·n_worsened 1. d002 는 두 ESL 모두 조금 개선 → all_improved True. Pareto: d003 은 d002 에 모든 ESL
+    에서 지배당함, d004 는 베이스라인(전부 1)에 지배당함."""
+    R = rk.rank([res("d000", Cs=(10.0, 4.0)), res("d001", Cs=(5.0, 4.8)), res("d002", Cs=(9.0, 3.8)),
+                 res("d003", Cs=(9.5, 3.9)), res("d004", Cs=(11.0, 4.4))])
+    by = {x["id"]: x for x in R["ranking"]}
+    a = by["d001"]
+    assert a["score"] == pytest.approx(0.5) and a["rank"] == 1                 # 최악 절대 max 기준으론 1위
+    assert [p["entry_id"] for p in a["per_esl"]] == ["E1", "E2"] and a["per_esl"][1]["ratio"] == pytest.approx(1.2)
+    assert a["worst_ratio"] == pytest.approx(1.2) and a["min_improvement"] == pytest.approx(-0.2)
+    assert a["all_improved"] is False and a["n_improved"] == 1 and a["n_worsened"] == 1
+    assert a["geo_mean_improvement"] == pytest.approx(1 - (0.5 * 1.2) ** 0.5)
+    b = by["d002"]
+    assert b["all_improved"] is True and b["n_improved"] == 2 and b["n_worsened"] == 0
+    assert b["worst_ratio"] == pytest.approx(0.95)
+    assert a["pareto"] is True and b["pareto"] is True                          # 서로 지배하지 않음
+    assert by["d003"]["pareto"] is False and by["d004"]["pareto"] is False
+    assert by["d004"]["n_worsened"] == 2
+    # 정렬 키: worst_ratio 기준이면 d002(0.95) 가 d001(1.2) 보다 앞
+    assert [x["id"] for x in rk.sort_rows(R["ranking"], "worst_ratio")][:2] == ["d002", "d003"]
+    assert [x["id"] for x in rk.sort_rows(R["ranking"], "score")] == [x["id"] for x in R["ranking"]]
+    with pytest.raises(EslError):
+        rk.sort_rows(R["ranking"], "nope")
+    # 결정성: 입력 순서가 달라도 같은 결과
+    R2 = rk.rank([res("d004", Cs=(11.0, 4.4)), res("d002", Cs=(9.0, 3.8)), res("d000", Cs=(10.0, 4.0)),
+                  res("d003", Cs=(9.5, 3.9)), res("d001", Cs=(5.0, 4.8))])
+    assert R2["ranking"] == R["ranking"]
+
+
+def test_per_esl_tolerance_noise_floor():
+    """허용치: |1 − r| ≤ tol 은 변화 없음, ③ 은 max(ratio_tol, noise_floor)."""
+    R = rk.rank([res("d000", Cs=(10.0, 4.0)), res("d001", Cs=(9.0, 4.0 * (1 + 5e-7)))])
+    x = R["ranking"][0]
+    assert R["ratio_tol"] == 1e-6 and x["n_improved"] == 1 and x["n_worsened"] == 0 and x["n_unchanged"] == 1
+    assert x["all_improved"] is False                                           # worst ≈ 1 → 전 씬 개선 아님
+    R = rk.rank([res("d000", Cs=(10.0, 4.0)), res("d001", Cs=(9.0, 4.0 * 1.005))], noise_floor=0.01)
+    x = R["ranking"][0]
+    assert R["ratio_tol"] == 0.01 and x["n_worsened"] == 0 and x["n_unchanged"] == 1
+    assert rk.ratio_tol(None, 1e-6) == 1e-6 and rk.ratio_tol(1e-9, 1e-6) == 1e-6
