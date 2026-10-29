@@ -20,6 +20,7 @@
 - **라이브러리 항목 [수정]에서 모델명·인치를 고칠 수 없던 문제**: 수정 대화상자에서 모델(모델명·인치·버전·날짜·제품 질량)·씬(프로젝트·시나리오·순번·낙하 유형·라운드·씬 번호·orient·접미사·변형)·메모를 고쳐 저장하면 목록·필터·종합분석·비드 최적화 크기 판정에 바로 반영됩니다. 수정·폐기는 등록자 또는 관리자만(다른 사용자는 [수정] 비활성 + 사유), 다른 사람이 먼저 고쳤으면 오류 문구와 [최신 값 불러오기]
 - **비드 최적화 `-check` 실패(OS_DECK_INVALID, ERROR # 1485)**: DTPG 비드 줄을 OptiStruct Reference Guide 형식(`+, MW, ANG, BF, HGT, NORM, , , SKIP` — `BEAD` 라벨 없음)으로 씁니다. 이전 덱의 `+,BEAD,60.,45.,10.,YES,BC` 는 OptiStruct 2026.1 이 "Field 0 contains unrecognized/unexpected label" 로 거부했습니다(이슈 #35). PID 가 7개 이상이면 연속 줄은 3번째 칸부터 씁니다
 - 비드 최적화 덱의 min-max 목적 카드를 OptiStruct Reference Guide 형식으로 정정: `DESOBJ(MINMAX) = ID` → `MINMAX = ID`(DESOBJ 의 type 은 MIN/MAX/MINP/MAXP), `DOBJREF` 칸 순서 `DOID, RID, SID, NEGREF, POSREF`(이전 덱은 SID 칸을 비우고 기준 컴플라이언스를 NEGREF 칸에, subcase 번호를 POSREF 칸에 썼음)
+- ④ 3D 하중 보기에서 화살표를 눌러도 선택되지 않던 문제(v0.7.1 직교 기본 이후 — 짧게 보이는 화살표를 거의 못 누름): 화살표 선택을 화면 기준 12 px(머리가 더 크면 머리 반지름 + 2 px)로 넓혀 원근·직교·확대 상태 모두 같게 동작
 
 ## [0.7.2] - 2026-10-29
 ### 수정
