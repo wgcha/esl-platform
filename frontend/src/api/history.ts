@@ -1,6 +1,7 @@
 // P3-이력 API(계약 esl_p3_history.md §3). check:api 가 endpoints.ts·p3.ts 와 함께 이 파일의 경로도 openapi 와 대조한다.
 import { API_PREFIX, request } from "./client";
 import type { JobOut, JobState, JobType, LogOut, StepOut } from "./types";
+import { PHASE_NAME, SCENARIO_NAME, SCENARIO_NO } from "./doe";
 
 export type HistoryResultKind = "extract" | "esl_run" | "validation" | "export" | "report" | "analysis" | "comparison" | "opt_run";
 
@@ -185,6 +186,7 @@ export function linkPath(projectId: string, caseId: string | null, l: ReviewLink
   if (l.stage === 8 && qs.get("analysis")) return `/p/${projectId}/library/analyses/${qs.get("analysis")}`;
   if (l.stage === 9 && qs.get("comparison")) return `/p/${projectId}/library/comparisons/${qs.get("comparison")}`;
   if (l.stage === 10 && (qs.get("opt") ?? qs.get("opt_run"))) return `/p/${projectId}/opt/${qs.get("opt") ?? qs.get("opt_run")}`;
+  if (l.stage === 11 && (qs.get("doe") ?? qs.get("bead_doe"))) return `/p/${projectId}/doe/${qs.get("doe") ?? qs.get("bead_doe")}`;
   if (!caseId || l.stage > 7) return null;
   const q = qs.toString();
   return `/p/${projectId}/c/${caseId}/stage/${l.stage}${q ? `?${q}` : ""}`;
@@ -209,6 +211,9 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   LIB_ANALYZE: "종합분석",
   LIB_COMPARE: "버전 비교",
   OPT_RUN: "비드 최적화",
+  DOE_PREP: "비드 DOE 준비",
+  DOE_PREVIEW: "비드 DOE 미리보기",
+  DOE_RUN: "비드 DOE 실행",
 };
 
 /** 단계(step_key) 한글 라벨 — v0.7.0 OPT_RUN 6단계(계약 esl_opt_run.md §6.1). 없는 키는 키 그대로 */
@@ -219,10 +224,26 @@ export const STEP_LABEL: Record<string, string> = {
   OS_SOLVE: "OptiStruct",
   OPT_POST: "후처리",
   OPT_REGISTER: "등록",
+  // v0.9.0 비드 DOE(esl_bead_doe.md §9.1)
+  BD_INPUT: "입력 검사",
+  BD_MESH0: "베이스라인 메시",
+  BD_GEOM: "형상 엔진",
+  BD_LOADS: "하중·경계",
+  BD_PREP_REGISTER: "등록",
+  BD_MATRIX: "DOE 행렬",
+  BD_GRID: "썸네일",
+  BD_PREVIEW_REGISTER: "등록",
+  BD_BASELINE: "베이스라인",
+  BD_DESIGNS: "안별 해석",
+  BD_POST: "순위·보고서",
+  BD_REGISTER: "등록",
 };
 /** 작업 종류별 단계 순서(대기열 응답에는 steps 가 없어 current_step_no → 키). 서버 core/job_types.py 와 같은 순서 */
 export const JOB_STEP_KEYS: Partial<Record<JobType, string[]>> = {
   OPT_RUN: ["OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER"],
+  DOE_PREP: ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"],
+  DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
+  DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
 };
 export const stepLabel = (key: string | null | undefined) => (key ? STEP_LABEL[key] ?? key : "");
 /** 실행 중 작업의 현재 단계 키(steps 가 있으면 그것, 없으면 JOB_STEP_KEYS 순서) */
@@ -257,6 +278,10 @@ export const STALE_REASON_LABEL: Record<string, string> = {
 };
 
 /** 목록 한 줄 요약 */
+/** 비드 DOE 이력 요약 표기(연구 화면과 같은 이름 — api/doe.ts) */
+const DOE_SCENARIO_LABEL: Record<string, string> = Object.fromEntries(Object.entries(SCENARIO_NAME).map(([k, v]) => [k, `${SCENARIO_NO[k as keyof typeof SCENARIO_NO]} ${v}`]));
+const DOE_PHASE_LABEL: Record<string, string> = PHASE_NAME;
+
 export function summaryText(it: HistoryItem): string {
   const s = it.summary;
   if (!s) return it.failure_code ?? "";
@@ -278,6 +303,14 @@ export function summaryText(it: HistoryItem): string {
     case "OPT_RUN":
       // v0.7.0: summary {scenario, load_strategy, n_cases, converged}
       return `${String(s.scenario ?? "–")} · 전략 ${String(s.load_strategy ?? "–")} · 케이스 ${n("n_cases") ?? "–"}${s.converged === false ? " · 미수렴" : ""}`;
+    case "DOE_PREP":
+    case "DOE_PREVIEW":
+    case "DOE_RUN": {
+      // v0.9.0: summary {scenario, phase} — 상세 화면(연구)과 같은 시나리오·단계 이름
+      const scn = typeof s.scenario === "string" && s.scenario in DOE_SCENARIO_LABEL ? DOE_SCENARIO_LABEL[s.scenario] : String(s.scenario ?? "–");
+      const ph = typeof s.phase === "string" && s.phase in DOE_PHASE_LABEL ? DOE_PHASE_LABEL[s.phase] : String(s.phase ?? "–");
+      return `${scn} · ${ph}`;
+    }
     default:
       return "";
   }

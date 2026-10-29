@@ -5,7 +5,9 @@
 upload_root(브라우저 업로드) 쓰기·여유 공간, input_roots·spdm_roots 읽기,
 worker.state_dir 쓰기, worker.slots(작업별 메모리·코어), 서버 h3d 추출(altair.hw_exe_path 존재·추출 TCL 존재, P3-UX §6),
 비드 최적화(v0.7.0 esl_opt_run.md §11: altair.optistruct_path·esl_bead_post.tcl·_templates·_opt 쓰기 — GET /opt/settings.solver_ready 와
-같은 함수 opt_solver_status),
+같은 함수 opt_solver_status), 비드 DOE(v0.9.0 esl_bead_doe.md §14: bead_doe.paicad.exe 존재(stat 만 — paicad 를 실행하지
+않음), 워커가 heartbeat 에 기록한 paicad 버전·OCP·gmsh(§6.5), gmsh 모듈 설치 여부(find_spec — import 하지 않음),
+resources/doe_*.json, _doe 쓰기),
 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
@@ -282,7 +284,71 @@ def check_opt_run(s, platform: str) -> list[Item]:
     return out
 
 
-def check_db(url: str, heartbeat_interval_s: float | None) -> list[Item]:
+def check_bead_doe(s, platform: str) -> list[Item]:
+    """비드 DOE(v0.9.0): 설정·paicad 실행 파일(존재만)·gmsh 모듈(find_spec)·자료 파일·_doe 쓰기. paicad 버전·OCP 판정은
+    워커가 기록한 값(check_db 의 bead_doe.paicad)만 읽는다 — 백엔드·점검 CLI 는 외부 명령을 실행하지 않는다(§6.5)."""
+    import importlib.util
+
+    from esl_platform.core.config import PAICAD_EXE_KEY, paicad_exe_status
+    from esl_platform.core.paths import DOE_DIR
+
+    if s.bead_doe is None or not s.bead_doe.enabled:
+        return [Item("bead_doe", SKIP, "bead_doe 꺼짐(설정 bead_doe.enabled) — 비드 DOE 안 씀")]
+    win = platform.startswith("win")
+    out: list[Item] = []
+    ok, reason = paicad_exe_status(s)
+    p = s.bead_doe.paicad.exe
+    if ok:
+        out.append(Item(PAICAD_EXE_KEY, OK, f"{p} (버전·OCP 는 워커 점검 기록 — bead_doe.paicad)"))
+    elif reason == "PAICAD_NOT_CONFIGURED":
+        out.append(Item(PAICAD_EXE_KEY, FAIL if win else WARN, "설정 없음 — 비드 DOE 비활성(PAICAD_NOT_CONFIGURED)"))
+    else:
+        out.append(Item(PAICAD_EXE_KEY, FAIL if win else WARN, f"파일이 없습니다: {p} (PAICAD_NOT_FOUND)"))
+    spec = importlib.util.find_spec("gmsh")
+    out.append(Item("bead_doe.gmsh", OK, "gmsh 모듈 설치됨('다른 모델(STEP만)' 가능)") if spec is not None else Item(
+        "bead_doe.gmsh", WARN, "gmsh 모듈 없음 — 'STEP만' 시나리오·STEP 내보내기 비활성(GMSH_UNAVAILABLE)"))
+    from esl_platform.core.opt_core import EslError, doe_load_messages, doe_load_method_sources
+
+    for key, fn, name in (("bead_doe.messages", doe_load_messages, "doe_messages.json"),
+                          ("bead_doe.method_sources", doe_load_method_sources, "doe_method_sources.json")):
+        try:
+            fn()
+            out.append(Item(key, OK, f"resources/{name}"))
+        except EslError as exc:
+            out.append(Item(key, FAIL, f"{exc.message} — 배포가 resources/{name} 을 복사해야 함"))
+    root = s.storage.esl_root
+    d = os.path.join(root, DOE_DIR)
+    if os.path.isdir(d):
+        out.append(check_dir_write("storage.doe.write", d))
+    elif os.path.isdir(root):
+        it = check_dir_write("storage.doe.write", root)
+        out.append(Item("storage.doe.write", it.status,
+                        f"{it.detail} (폴더 {DOE_DIR} 는 처음 쓸 때 만듦)" if it.status == OK else it.detail))
+    else:
+        out.append(Item("storage.doe.write", FAIL, f"esl_root 가 없습니다: {root}"))
+    return out
+
+
+def _paicad_record(conn) -> Item:
+    """워커가 heartbeat info.paicad 에 기록한 paicad 점검 결과(§6.5)."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    try:
+        rec = doe_repo.paicad_record(conn)
+    except Exception as exc:  # noqa: BLE001
+        return Item("bead_doe.paicad", SKIP, f"조회 실패({exc.__class__.__name__})")
+    if rec is None:
+        return Item("bead_doe.paicad", WARN, "워커 점검 기록 없음(워커가 아직 paicad 를 점검하지 않음 — PAICAD_CHECK_FAILED)")
+    pc = rec["paicad"]
+    gm = rec.get("gmsh") or {}
+    g = f", gmsh {gm.get('version')}" if gm.get("ready") else ", gmsh 없음"
+    if pc.get("ready"):
+        return Item("bead_doe.paicad", WARN if pc.get("warning") else OK,
+                    f"paicad {pc.get('version')} (OCP {pc.get('ocp')}{g})" + (f" — {pc['warning']}" if pc.get("warning") else ""))
+    return Item("bead_doe.paicad", WARN, f"사용 불가 {pc.get('reason') or 'PAICAD_CHECK_FAILED'} (paicad {pc.get('version')}{g})")
+
+
+def check_db(url: str, heartbeat_interval_s: float | None, *, bead_doe: bool = False) -> list[Item]:
     from sqlalchemy import create_engine, text
 
     from esl_platform.core.db.engine import normalize_url
@@ -314,6 +380,8 @@ def check_db(url: str, heartbeat_interval_s: float | None) -> list[Item]:
                 out.append(Item("db.migration_head", OK, f"{cur}" + ("" if head else " (head 확인 불가)")))
             if cur is not None:
                 out.append(_heartbeat(conn, heartbeat_interval_s))
+                if bead_doe:
+                    out.append(_paicad_record(conn))
     except Exception as exc:  # noqa: BLE001 - 접속 실패 메시지에 비밀값이 섞이지 않게 종류만
         out.append(Item("db.connection", FAIL, f"{where} 접속 실패({exc.__class__.__name__}) — 서버·역할·비밀번호 확인"))
     finally:
@@ -408,6 +476,7 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
     items.append(check_slots(s.worker))
     items += check_h3d_extract(s, plat)
     items += check_opt_run(s, plat)
+    items += check_bead_doe(s, plat)
     items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)
@@ -418,7 +487,8 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
             src = f"환경변수 {s.database.url_env}" + (f" 또는 {runtime_secret_path(runtime)}" if runtime else "")
             items.append(Item("db.connection", FAIL, f"DB 접속 정보 없음({src})"))
         else:
-            items += check_db(url, s.worker.heartbeat_interval_s)
+            items += check_db(url, s.worker.heartbeat_interval_s,
+                              bead_doe=bool(s.bead_doe is not None and s.bead_doe.enabled))
     else:
         items.append(Item("db.connection", SKIP, "--no-db"))
     return items

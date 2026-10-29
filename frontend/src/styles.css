@@ -2510,3 +2510,311 @@ details.open-uploads .actions {
   align-items: center;
   flex-wrap: wrap;
 }
+
+/* v0.9.0 비드 형상 DOE(esl_bead_doe.md §12.2) — 2560 은 ②|③ 나란히·썸네일 8열, 2200 이하 위아래·6열, 가로 스크롤 없음 */
+.doe-scn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.9rem;
+  min-width: 0;
+}
+.doe-inputs {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.doe-esl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chip-list .chip {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.chip-list .chip.bad {
+  border-color: var(--bad);
+  background: var(--bad-weak);
+}
+.doe-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 0.6rem;
+}
+.doe-drop {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.dropzone.compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+  padding: 0.55rem 0.8rem;
+}
+.doe-fields input[type="number"] {
+  width: 7rem;
+}
+.doe-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.doe-plan-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem);
+  gap: 0.75rem;
+  align-items: start;
+}
+.doe-result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.doe-compare-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem;
+}
+.doe-compare-grid .v3d-host {
+  height: clamp(260px, 36vh, 560px);
+}
+@media (max-width: 2200px) {
+  .doe-grid,
+  .doe-result-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .doe-vcol {
+    display: none;
+  }
+}
+@media (min-width: 2201px) {
+  .doe-expand-col {
+    display: none;
+  }
+}
+.doe-plan .doe-bead path {
+  fill: #f08c00;
+  fill-opacity: 0.25;
+  stroke: #d9480f;
+  stroke-width: 2;
+}
+.doe-plan .doe-bead text {
+  fill: #a33a0b;
+  font-weight: 700;
+}
+.doe-fixed {
+  fill: var(--accent);
+}
+.doe-load {
+  fill: var(--bad);
+  fill-opacity: 0.28;
+  stroke: var(--bad);
+  stroke-width: 2;
+}
+.doe-apt path {
+  stroke: #e8590c;
+  fill: none;
+}
+.doe-link.warn {
+  stroke: var(--bad);
+}
+.doe-plan-side {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.doe-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.8rem;
+}
+.doe-legend i,
+.doe-sens-legend i {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  vertical-align: middle;
+  border-radius: 2px;
+  font-style: normal;
+  line-height: 0.8rem;
+  text-align: center;
+}
+.doe-legend .lg-bead {
+  background: rgba(240, 140, 0, 0.35);
+  border: 1px solid #d9480f;
+}
+.doe-legend .lg-fixed {
+  background: var(--accent);
+  border-radius: 50%;
+}
+.doe-legend .lg-hole {
+  background: var(--surface);
+  border: 1px solid var(--text-2);
+  border-radius: 50%;
+}
+.doe-legend .lg-apt {
+  color: #e8590c;
+  font-weight: 700;
+}
+.doe-legend .lg-load {
+  background: rgba(184, 56, 44, 0.3);
+  border: 1px solid var(--bad);
+  border-radius: 50%;
+}
+/* 썸네일 격자: 행 높이 = 카드 내용(그림 4:3 + 안 id·배지) — max-height 스크롤 안에서 행이 줄어 그림·배지가 잘리지 않게
+   (grid-auto-rows max-content, 카드는 overflow:clip — scroll 컨테이너가 아니라 최소 높이 0 으로 줄지 않음) */
+.doe-thumbs {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+@media (max-width: 2200px) {
+  .doe-thumbs {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+.doe-thumb {
+  display: flex;
+  flex-direction: column;
+  min-height: min-content;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: clip;
+}
+.doe-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.doe-thumb.skipped {
+  background: var(--surface-2);
+}
+.doe-thumb.skipped img {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.doe-thumb-img {
+  aspect-ratio: 4 / 3;
+  flex: 0 0 auto;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+}
+.doe-thumb-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.doe-thumb-cap {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+.doe-params .doe-num {
+  width: 5.5rem;
+}
+.doe-bead-row td {
+  background: var(--surface-2);
+}
+.doe-bead-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+}
+.doe-bead-png {
+  display: inline-block;
+  width: 2.6rem;
+  height: 1.95rem;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+.doe-spec {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.4rem 1.2rem;
+  padding-top: 0.6rem;
+}
+.doe-spec-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.4rem 1rem;
+}
+.doe-spec-fields input[type="number"] {
+  width: 6rem;
+}
+.doe-rank-wrap {
+  --tbl-max: clamp(14rem, 40vh, 34rem);
+}
+.doe-rank .badge + .badge {
+  margin-left: 0.25rem;
+}
+.doe-base-row td {
+  background: var(--accent-weak);
+}
+.doe-values-row td {
+  background: var(--surface-2);
+}
+.doe-excluded td {
+  color: var(--muted);
+}
+.doe-sens svg {
+  max-height: 46vh;
+}
+.doe-bar-src {
+  fill: var(--accent);
+}
+.doe-bar-rho {
+  fill: #f08c00;
+}
+.doe-sens-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+}
+.doe-sens-legend .lg-src {
+  background: var(--accent);
+}
+.doe-sens-legend .lg-rho {
+  background: #f08c00;
+}
+.doe-compare {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}

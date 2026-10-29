@@ -2035,6 +2035,972 @@
         "title": "DispFieldOut",
         "type": "object"
       },
+      "DoeCheckIn": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "inch": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inch"
+          },
+          "mesh_upload_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Upload Id"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "scenario": {
+            "enum": [
+              "same",
+              "mesh",
+              "step"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
+          "step_upload_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Step Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "scenario",
+          "entry_ids",
+          "step_upload_id"
+        ],
+        "title": "DoeCheckIn",
+        "type": "object"
+      },
+      "DoeCheckOut": {
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "mesh": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeshCheckOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mesh_size_default_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Size Default Mm"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "props_default": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Props Default"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "step": {
+            "additionalProperties": true,
+            "title": "Step",
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "step",
+          "entries"
+        ],
+        "title": "DoeCheckOut",
+        "type": "object"
+      },
+      "DoeFileOut": {
+        "properties": {
+          "downloadable": {
+            "default": true,
+            "title": "Downloadable",
+            "type": "boolean"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "string"
+          },
+          "size": {
+            "default": 0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rel"
+        ],
+        "title": "DoeFileOut",
+        "type": "object"
+      },
+      "DoeMatrixIn": {
+        "additionalProperties": false,
+        "properties": {
+          "spec": {
+            "$ref": "#/components/schemas/DoeSpec"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "spec"
+        ],
+        "title": "DoeMatrixIn",
+        "type": "object"
+      },
+      "DoeMatrixOut": {
+        "properties": {
+          "designs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Designs",
+            "type": "array"
+          },
+          "dropped_duplicates": {
+            "title": "Dropped Duplicates",
+            "type": "integer"
+          },
+          "matrix_sha256": {
+            "title": "Matrix Sha256",
+            "type": "string"
+          },
+          "n_designs": {
+            "title": "N Designs",
+            "type": "integer"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "spec",
+          "matrix_sha256",
+          "designs",
+          "n_designs",
+          "dropped_duplicates"
+        ],
+        "title": "DoeMatrixOut",
+        "type": "object"
+      },
+      "DoeParamsOut": {
+        "properties": {
+          "beads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Beads",
+            "type": "array"
+          },
+          "params": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Params",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "beads",
+          "params"
+        ],
+        "title": "DoeParamsOut",
+        "type": "object"
+      },
+      "DoePlanOut": {
+        "properties": {
+          "a_points": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "A Points",
+            "type": "array"
+          },
+          "beads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Beads",
+            "type": "array"
+          },
+          "elems": {
+            "$ref": "#/components/schemas/PlanViewElems"
+          },
+          "fixed": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Fixed",
+            "type": "array"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/PlanViewFrame"
+          },
+          "holes": {
+            "items": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "title": "Holes",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "load_points": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Load Points",
+            "type": "array"
+          },
+          "outline": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Outline",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "frame",
+          "outline",
+          "holes",
+          "elems"
+        ],
+        "title": "DoePlanOut",
+        "type": "object"
+      },
+      "DoeProps": {
+        "additionalProperties": false,
+        "properties": {
+          "E": {
+            "exclusiveMinimum": 0.0,
+            "title": "E",
+            "type": "number"
+          },
+          "nu": {
+            "exclusiveMaximum": 0.5,
+            "minimum": 0.0,
+            "title": "Nu",
+            "type": "number"
+          },
+          "t": {
+            "exclusiveMinimum": 0.0,
+            "title": "T",
+            "type": "number"
+          }
+        },
+        "required": [
+          "t",
+          "E",
+          "nu"
+        ],
+        "title": "DoeProps",
+        "type": "object"
+      },
+      "DoeResultOut": {
+        "properties": {
+          "C_ref": {
+            "title": "C Ref",
+            "type": "number"
+          },
+          "baseline": {
+            "additionalProperties": true,
+            "title": "Baseline",
+            "type": "object"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best"
+          },
+          "boundary_warnings_n": {
+            "title": "Boundary Warnings N",
+            "type": "integer"
+          },
+          "excluded": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "n_failed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "N Failed",
+            "type": "object"
+          },
+          "n_ok": {
+            "title": "N Ok",
+            "type": "integer"
+          },
+          "n_skipped": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "N Skipped",
+            "type": "object"
+          },
+          "noise_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor"
+          },
+          "ranking": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Ranking",
+            "type": "array"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          },
+          "view3d": {
+            "items": {
+              "type": "string"
+            },
+            "title": "View3D",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "C_ref",
+          "baseline",
+          "n_ok",
+          "n_skipped",
+          "n_failed",
+          "ranking",
+          "boundary_warnings_n",
+          "view3d"
+        ],
+        "title": "DoeResultOut",
+        "type": "object"
+      },
+      "DoeRunIn": {
+        "additionalProperties": false,
+        "properties": {
+          "matrix_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Matrix Sha256",
+            "type": "string"
+          },
+          "solver": {
+            "default": "linear",
+            "maxLength": 32,
+            "title": "Solver",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "matrix_sha256"
+        ],
+        "title": "DoeRunIn",
+        "type": "object"
+      },
+      "DoeSettingsOut": {
+        "properties": {
+          "boundary": {
+            "additionalProperties": true,
+            "title": "Boundary",
+            "type": "object"
+          },
+          "doe": {
+            "additionalProperties": true,
+            "title": "Doe",
+            "type": "object"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "gmsh": {
+            "additionalProperties": true,
+            "title": "Gmsh",
+            "type": "object"
+          },
+          "max_designs": {
+            "title": "Max Designs",
+            "type": "integer"
+          },
+          "max_entries": {
+            "title": "Max Entries",
+            "type": "integer"
+          },
+          "mesh": {
+            "additionalProperties": true,
+            "title": "Mesh",
+            "type": "object"
+          },
+          "method_sources": {
+            "additionalProperties": true,
+            "title": "Method Sources",
+            "type": "object"
+          },
+          "paicad": {
+            "additionalProperties": true,
+            "title": "Paicad",
+            "type": "object"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scenarios": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Scenarios",
+            "type": "object"
+          },
+          "step_max_mb": {
+            "title": "Step Max Mb",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "paicad",
+          "gmsh",
+          "scenarios",
+          "max_entries",
+          "max_designs",
+          "doe",
+          "mesh",
+          "boundary",
+          "step_max_mb",
+          "method_sources"
+        ],
+        "title": "DoeSettingsOut",
+        "type": "object"
+      },
+      "DoeSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "levels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Levels"
+          },
+          "method": {
+            "enum": [
+              "lhs",
+              "halton",
+              "fullfact"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/DoeSpecParam"
+            },
+            "maxItems": 1000,
+            "title": "Params",
+            "type": "array"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "title": "DoeSpec",
+        "type": "object"
+      },
+      "DoeSpecParam": {
+        "additionalProperties": false,
+        "properties": {
+          "hi": {
+            "title": "Hi",
+            "type": "number"
+          },
+          "lo": {
+            "title": "Lo",
+            "type": "number"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "lo",
+          "hi"
+        ],
+        "title": "DoeSpecParam",
+        "type": "object"
+      },
+      "DoeStudyIn": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "inch": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inch"
+          },
+          "mesh_size_mm": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Size Mm"
+          },
+          "mesh_upload_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Upload Id"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "props": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeProps"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "enum": [
+              "same",
+              "mesh",
+              "step"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
+          "step_upload_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Step Upload Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "project_id",
+          "scenario",
+          "entry_ids",
+          "step_upload_id"
+        ],
+        "title": "DoeStudyIn",
+        "type": "object"
+      },
+      "DoeStudyOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_name": {
+            "title": "Created By Name",
+            "type": "string"
+          },
+          "doe": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doe"
+          },
+          "entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entry Ids",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": true,
+            "title": "Inputs",
+            "type": "object"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "enum": [
+              "PREP",
+              "READY",
+              "PREVIEW",
+              "PREVIEW_READY",
+              "RUN",
+              "DONE",
+              "FAILED"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "prep": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prep"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result_ready": {
+            "title": "Result Ready",
+            "type": "boolean"
+          },
+          "scenario": {
+            "enum": [
+              "same",
+              "mesh",
+              "step"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "scenario",
+          "title",
+          "entry_ids",
+          "inputs",
+          "phase",
+          "version",
+          "result_ready",
+          "created_by_name",
+          "created_at"
+        ],
+        "title": "DoeStudyOut",
+        "type": "object"
+      },
       "EntryCreate": {
         "additionalProperties": false,
         "properties": {
@@ -9246,7 +10212,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10392,6 +11358,958 @@
         "summary": "Revoke",
         "tags": [
           "client-tokens"
+        ]
+      }
+    },
+    "/esl/api/doe/check-inputs": {
+      "post": {
+        "description": "입력 검사: STEP 머리·크기, ① 같은 모델(다른 모델 ESL 은 entries[].ok=false)·Case 폴더 크기, ② B 메시·크기 규칙,\n③ 쉘 물성·요소 크기 기본값. 업로드는 읽기만(result.purpose = doe_step|doe_mesh 기록).",
+        "operationId": "doe_check_inputs_esl_api_doe_check_inputs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeCheckIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeCheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Check Inputs",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/settings": {
+      "get": {
+        "description": "화면 기본값·사용 가능 여부(§6.5 — paicad 는 워커 점검 기록만 읽음)·방법·출처(resources/doe_method_sources.json).",
+        "operationId": "doe_settings_esl_api_doe_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeSettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Doe Settings",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies": {
+      "get": {
+        "operationId": "doe_study_list_esl_api_doe_studies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DoeStudyOut"
+                  },
+                  "title": "Response Doe Study List Esl Api Doe Studies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Study List",
+        "tags": [
+          "doe"
+        ]
+      },
+      "post": {
+        "operationId": "doe_study_create_esl_api_doe_studies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeStudyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Study Create",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}": {
+      "get": {
+        "operationId": "doe_study_get_esl_api_doe_studies__sid__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Study Get",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/beads/{bead}.png": {
+      "get": {
+        "operationId": "doe_bead_png_esl_api_doe_studies__sid__beads__bead__png_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bead",
+            "required": true,
+            "schema": {
+              "title": "Bead",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {}
+            },
+            "description": "PNG"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Bead Png",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/bundle": {
+      "get": {
+        "description": "결과 받기(zip): parts = best,report,ranking(기본) [,result·prep, raw = npz·안 폴더]. 상한 초과 시 413.",
+        "operationId": "doe_bundle_esl_api_doe_studies__sid__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parts",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parts"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Bundle",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/clone": {
+      "post": {
+        "description": "같은 입력으로 새 연구 + DOE_PREP(본문 {title?}).",
+        "operationId": "doe_clone_esl_api_doe_studies__sid__clone_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Clone",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/download": {
+      "get": {
+        "operationId": "doe_download_esl_api_doe_studies__sid__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rel",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Rel",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Download",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/files": {
+      "get": {
+        "operationId": "doe_files_esl_api_doe_studies__sid__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DoeFileOut"
+                  },
+                  "title": "Response Doe Files Esl Api Doe Studies  Sid  Files Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Files",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/matrix": {
+      "post": {
+        "description": "DOE 행렬 생성만(저장 안 함). 미리보기·워커와 같은 함수 → 같은 matrix_sha256.",
+        "operationId": "doe_matrix_esl_api_doe_studies__sid__matrix_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeMatrixIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeMatrixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Matrix",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/params": {
+      "get": {
+        "operationId": "doe_params_esl_api_doe_studies__sid__params_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeParamsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Params",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/plan-view": {
+      "get": {
+        "operationId": "doe_plan_view_esl_api_doe_studies__sid__plan_view_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoePlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Plan View",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/preview": {
+      "post": {
+        "operationId": "doe_preview_esl_api_doe_studies__sid__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeMatrixIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Preview",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/preview/thumb/{did}": {
+      "get": {
+        "operationId": "doe_thumb_esl_api_doe_studies__sid__preview_thumb__did__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {}
+            },
+            "description": "PNG"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Thumb",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/report": {
+      "get": {
+        "operationId": "doe_report_esl_api_doe_studies__sid__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Report",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/results": {
+      "get": {
+        "operationId": "doe_results_esl_api_doe_studies__sid__results_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeResultOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Results",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/run": {
+      "post": {
+        "description": "같은 matrix_sha256 의 미리보기가 끝난 뒤에만(409 PREVIEW_STALE). solver = linear 만(422 SOLVER_UNSUPPORTED).",
+        "operationId": "doe_run_esl_api_doe_studies__sid__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Run",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/view3d/{did}/manifest.json": {
+      "get": {
+        "description": "3D 비교 manifest(기존 view3d 형식, 파일 URL = /doe/studies/{id}/view3d/{did}/…). 베이스라인 + 순위 상위 k.",
+        "operationId": "doe_view3d_manifest_esl_api_doe_studies__sid__view3d__did__manifest_json_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/View3dOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe View3D Manifest",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/view3d/{did}/{name}": {
+      "get": {
+        "operationId": "doe_view3d_file_esl_api_doe_studies__sid__view3d__did___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {},
+              "model/gltf-binary": {}
+            },
+            "description": "GLB·values.bin"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe View3D File",
+        "tags": [
+          "doe"
         ]
       }
     },

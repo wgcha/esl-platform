@@ -950,3 +950,114 @@ def _opt_post(spec: dict, echo) -> dict:
         echo(f"  경고: {x}")
     prog(100)
     return {"files": ["opt.json", "report.html"] + [f"post/{f}" for f in bs["files"]] + ["post/history.csv"]}
+
+
+# ====================================================================== v0.9.0 비드 DOE(계약 esl_bead_doe.md §4·§6·§9)
+# 코어 esl.doe 조립. 코어 단계(bd_*)는 자식 프로세스에서 ``esl.doe.stages.run_stage`` 1회 — 반환 dict(경고·요약)는
+# ``<step 로그>.stage.json`` 으로 남겨 부모(doe_jobs)가 읽는다. paicad 판정·argv·보고 JSON 읽기(esl.doe.paicad_io)는
+# 가벼운 순수 함수라 워커 부모 프로세스에서 쓴다(외부 실행은 paicad_proc). 쓰기는 spec["out"](= <esl_root>/_doe/<id>/)
+# 아래만 — 코어 Writer 의 입력 목록(라이브러리 항목·① Case 입력·업로드)에는 쓰지 않는다.
+DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post")
+
+
+def doe_paicad_io():
+    """esl.doe.paicad_io(argv 템플릿·PROGRESS/RESULT·판정·버전·보고 JSON) — 워커가 코어와 같은 판정 기준을 쓰도록."""
+    return _mod("esl.doe.paicad_io")
+
+
+def doe_settings(cfg: dict | None) -> dict:
+    """작업 스냅샷 cfg(bead_doe·opt_run·commands) → 코어 bead_doe 설정(기본값 위에 합침)."""
+    return _attr("esl.doe", "settings")({"bead_doe": (cfg or {}).get("bead_doe") or {}})
+
+
+def doe_stage_spec(spec: dict) -> dict:
+    L = spec.get("lib") or {}
+    doe = dict(L.get("doe") or {})
+    doe.update(L.get("extra") or {})
+    return {"stage": spec["stage"], "out": spec["out"], "progress_path": spec.get("progress_path"), "doe": doe}
+
+
+def stage_out_path(log_path: str) -> str:
+    return log_path[:-4] + ".stage.json" if log_path.endswith(".log") else log_path + ".stage.json"
+
+
+def run_doe_stage(spec: dict, echo: Callable[[str], None]) -> dict:
+    """비드 DOE 코어 단계 1개(자식 프로세스). spec["lib"] = {doe: 작업 params.doe, extra?: {design, paicad, …}}."""
+    import json
+
+    if spec.get("stage") not in DOE_STAGES:
+        raise CoreError("INPUT_INVALID", f"알 수 없는 비드 DOE 단계: {spec.get('stage')}")
+    run_stage = _attr("esl.doe.stages", "run_stage")
+    res = _wrap(run_stage, doe_stage_spec(spec), echo)
+    U = _mod("esl.library._util")
+    from esl_platform.core.atomic import write_text_atomic
+
+    write_text_atomic(stage_out_path(spec["log_path"]), json.dumps(U.jsonable(res or {}), ensure_ascii=False))
+    return res or {}
+
+
+def doe_writer(out: str, doe: dict):
+    """연구 폴더 Writer(입력 목록 = 코어 stages.Ctx 와 같음 — 항목·Case 입력·업로드 폴더 쓰기 거부)."""
+    S = _mod("esl.doe.stages")
+    return _wrap(lambda: S.Ctx({"doe": doe, "out": out}).writer)
+
+
+def doe_fresh_dir(out: str, rel: str, doe: dict) -> str:
+    """<out>/<rel> 를 빈 폴더로(이전 내용 → <out>/_backup/<UTC>/<rel>, 삭제 없음). 절대경로."""
+    import os
+
+    w = doe_writer(out, doe)
+    return _wrap(w.fresh_dir, os.path.join(out, rel), out)
+
+
+def doe_assem_check(d: str, max_mb: float) -> dict:
+    """조립 폴더(제자리) 검사: 링크·정션 거부, rad/inc 합계 상한(ASSEM_TOO_LARGE)."""
+    return _wrap(_attr("esl.doe.scenario", "assem_dir_check"), d, max_mb)
+
+
+def doe_design_sha(doe: dict, out: str, did: str) -> str:
+    """BD-D-16 안 input_sha256(= bd_eval 이 done.json 에 쓰는 값) — 이어하기에서 paicad 를 다시 돌릴지 판단."""
+    import os
+
+    S = _mod("esl.doe.stages")
+    ev = _mod("esl.doe.evaluate")
+    U = _mod("esl.library._util")
+
+    def calc() -> str:
+        c = S.Ctx({"doe": doe, "out": out})
+        bmeta = U.read_json(os.path.join(out, "prep", "base.json"))
+        inp = U.read_json(os.path.join(out, "prep", "input.json"))
+        values = S._design_values(c, did)
+        return ev.input_sha256(values, bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"), S._cfg_hash(c),
+                               doe.get("paicad_version"))
+    return _wrap(calc)
+
+
+def doe_record_design(doe: dict, out: str, did: str, status: str, code: str | None, message: str | None) -> None:
+    """코어 평가 자식이 결과를 남기지 못하고 끝난 안(크래시·메모리) → result.json·done.json(상태 FAILED_* — 재시도 대상)."""
+    import os
+
+    S = _mod("esl.doe.stages")
+    ev = _mod("esl.doe.evaluate")
+    U = _mod("esl.library._util")
+
+    def rec() -> None:
+        c = S.Ctx({"doe": doe, "out": out})
+        dd = S.design_dir(c, did)
+        c.writer.makedirs(dd)
+        doc = ev.result_doc(did, status, S._design_values(c, did), code=code, message=message)
+        U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), doc)
+        ev.write_done(dd, doe_design_sha(doe, out, did), status, c.writer)
+    _wrap(rec)
+
+
+def doe_reusable(design_dir: str, sha: str) -> dict | None:
+    return _wrap(_attr("esl.doe.evaluate", "reusable"), design_dir, sha)
+
+
+def doe_parallel_limit(n_nodes: int, parallel: int, memory_margin: float, backend: str = "auto") -> dict:
+    return _wrap(_attr("esl.doe.evaluate", "parallel_limit"), int(n_nodes), int(parallel), float(memory_margin), backend)
+
+
+def doe_messages() -> dict:
+    return _wrap(_attr("esl.doe", "load_messages"))

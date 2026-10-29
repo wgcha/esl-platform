@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "../api/client";
 import { Card } from "../components/ui";
-import { ColorLegend, countOut, useLegendRange } from "../components/ColorLegend";
+import { ColorLegend, countOut, useLegendRange, type Range } from "../components/ColorLegend";
 import { f3 } from "../lib/colormap";
 import { N_STAGES, buildArrowSpecs, stageText } from "./arrows";
 import { BLUES_GRADIENT } from "./colors";
@@ -29,7 +29,28 @@ interface Loaded {
   vals: DecodedValues;
 }
 
-export function View3DCard({ view }: { view: LoadView }) {
+/** v0.9.0 비드 DOE 비교용 선택 옵션(esl_bead_doe.md §11 — 안 주면 기존 동작 그대로) */
+export interface View3DOptions {
+  /** 카드 제목(기본 "3D 하중 보기") */
+  title?: string;
+  /** 표면 색: load = 면압|Fn|/A(기본) · disp = 변위 |u| (mm) */
+  colorBy?: "load" | "disp";
+  /** 색 범위 고정(카드 여럿을 같은 범위로). 주면 이 값을 쓰고, 범위 입력·'자동'은 onRangeChange 로 알린다(null = 자동) */
+  range?: Range | null;
+  rangeManual?: boolean;
+  onRangeChange?: (r: Range | null) => void;
+}
+
+/** |u| (mm) 정점 값 */
+function dispField(u: Float32Array | null): Float32Array | null {
+  if (!u) return null;
+  const out = new Float32Array(u.length / 3);
+  for (let i = 0; i < out.length; i++) out[i] = Math.hypot(u[i * 3], u[i * 3 + 1], u[i * 3 + 2]);
+  return out;
+}
+
+export function View3DCard({ view, options }: { view: LoadView; options?: View3DOptions }) {
+  const colorBy = options?.colorBy ?? "load";
   const { manifest, error, mode, selection, stage } = view;
   const host = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneApi | null>(null);
@@ -128,15 +149,26 @@ export function View3DCard({ view }: { view: LoadView }) {
     writeProjection(p);
   };
 
-  // ---- 표면 색: 면압 |Fn|/A (MPa), 없으면 |Fn| (N)
-  const field = useMemo(() => (data ? colorField(data.vals) : null), [data]);
-  const unit = field?.unit ?? "MPa";
+  // ---- 표면 색: 면압 |Fn|/A (MPa), 없으면 |Fn| (N). 옵션 disp = |u| (mm)
+  const field = useMemo(() => {
+    if (!data) return null;
+    if (colorBy === "disp") {
+      const v = dispField(data.vals.u);
+      return v ? { values: v, unit: "mm" as const } : null;
+    }
+    return colorField(data.vals);
+  }, [data, colorBy]);
+  const unit = field?.unit ?? (colorBy === "disp" ? "mm" : "MPa");
   const auto = useMemo(() => {
+    if (colorBy === "disp") return { min: 0, max: manifest?.ranges.u_max && manifest.ranges.u_max > 0 ? manifest.ranges.u_max : 1 };
     const r = unit === "MPa" ? manifest?.ranges.pa : manifest?.ranges.fn_abs;
     const top = r && r.p99 != null && r.p99 > 0 ? r.p99 : r && r.max > 0 ? r.max : 1;
     return { min: 0, max: top };
-  }, [manifest, unit]);
-  const legend = useLegendRange(view.runId, "load", unit === "MPa" ? "pa" : "fn", "zero", auto);
+  }, [manifest, unit, colorBy]);
+  const localLegend = useLegendRange(view.runId, "load", unit === "MPa" ? "pa" : unit === "mm" ? "u" : "fn", "zero", auto);
+  const legend = options?.range
+    ? { range: options.range, manual: !!options.rangeManual, apply: (r: Range) => options.onRangeChange?.(r), reset: () => options.onRangeChange?.(null) }
+    : localLegend;
   const outCount = useMemo(() => (field ? countOut(field.values, legend.range) : { above: 0, below: 0 }), [field, legend.range]);
   useEffect(() => {
     if (field && sceneRef.current) sceneRef.current.setColors(field.values, legend.range.min, legend.range.max);
@@ -179,7 +211,7 @@ export function View3DCard({ view }: { view: LoadView }) {
   const failed = !manifest && !!error;
 
   return (
-    <Card title="3D 하중 보기">
+    <Card title={options?.title ?? "3D 하중 보기"}>
       {failed ? (
         <div className="small warn-text" role="alert" data-testid="v3d-error">
           {error} — 3D 보기를 건너뛰고 아래 표만 보입니다.
@@ -254,7 +286,7 @@ export function View3DCard({ view }: { view: LoadView }) {
             {field && (
               <ColorLegend
                 kind="zero"
-                label={unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
+                label={unit === "mm" ? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
                 range={legend.range}
                 manual={legend.manual}
                 gradient={BLUES_GRADIENT}

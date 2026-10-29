@@ -128,6 +128,8 @@ def safe_case_file(case_root: str, rel: str) -> str:
     """Case 폴더 안 상대경로 → 절대경로(realpath 기준 밖·심링크 탈출 거부)."""
     if not rel or os.path.isabs(rel) or any(p == ".." for p in re.split(r"[\\/]+", rel)):
         raise _unsafe("잘못된 산출물 경로")
+    if "\x00" in rel or any(ord(ch) < 32 for ch in rel):   # NUL 등 제어 문자 → realpath ValueError(500) 대신 422
+        raise _unsafe("경로에 제어 문자가 있습니다")
     p = os.path.normpath(os.path.join(case_root, rel))
     if not is_within(os.path.realpath(p), os.path.realpath(case_root)):
         raise _unsafe("산출물 경로가 Case 폴더 밖입니다")
@@ -145,6 +147,9 @@ H3D_DIR = "_h3d"
 # template.json, preview.json}. 쓰기는 이 두 폴더 아래만(업로드·Case 입력 폴더는 읽기만).
 OPT_DIR = "_opt"
 TEMPLATE_DIR = "_templates"
+# v0.9.0 비드 DOE(esl_bead_doe.md §4): 연구 <esl_root>/_doe/<id>/{input/, prep/, doe/<rev>/, run/, post/, best/, report.html}.
+# 쓰기는 이 폴더 아래만(Case 입력·업로드 폴더는 읽기만).
+DOE_DIR = "_doe"
 _SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
@@ -171,6 +176,11 @@ def esl_subdir(settings: Settings, *parts: str) -> str:
 def opt_run_dir(settings: Settings, run_id: str) -> str:
     """최적화 실행 폴더 <esl_root>/_opt/<id>(링크·탈출 검사)."""
     return esl_subdir(settings, OPT_DIR, run_id)
+
+
+def doe_dir(settings: Settings, study_id: str) -> str:
+    """비드 DOE 연구 폴더 <esl_root>/_doe/<id>(링크·탈출 검사)."""
+    return esl_subdir(settings, DOE_DIR, study_id)
 
 
 def template_dir(settings: Settings, template_id: str) -> str:

@@ -8,6 +8,9 @@
   산출물 ``<esl_root>/_compare/<comparison_id>/``(compare.json, report.html).
 - OPT_RUN(SLOT, stage 10, 계약 esl_opt_run.md §6.1): 비드 최적화 서버 실행. 대상 = jobs.opt_run_id(case·분석·비교 NULL).
   산출물 ``<esl_root>/_opt/<opt_run_id>/``. OS_SOLVE(LOCAL, OptiStruct)·OPT_POST(LOCAL+코어, hw TCL 후처리) 는 워커가 실행.
+- DOE_PREP·DOE_PREVIEW·DOE_RUN(SLOT, stage 11, 계약 esl_bead_doe.md §9.1): 비드 형상 DOE 준비·미리보기·실행.
+  대상 = jobs.bead_doe_id(case·분석·비교·최적화 NULL). 산출물 ``<esl_root>/_doe/<bead_doe_id>/``. BD_GEOM·BD_GRID·
+  BD_DESIGNS(LOCAL — paicad 외부 명령) 는 워커가 실행, 나머지 코어 단계는 ``esl.doe.stages.run_stage``.
 - P3-UX §6: CASE_EXTRACT 첫 step ``H3D_EXTRACT``(LOCAL — 워커가 hw 실행)는 Case 입력이 h3d(input_kind H3D)일 때만 만든다
   (결과 폴더 입력이면 생략 → 기존 step 번호 그대로).
 """
@@ -28,7 +31,7 @@ class StepDef:
 @dataclass(frozen=True)
 class JobTypeDef:
     job_type: str
-    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화
+    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화, 11 = 비드 DOE
     lane: str  # SLOT | LIGHT
     steps: tuple[StepDef, ...]
 
@@ -50,6 +53,14 @@ JOB_TYPES: dict[str, JobTypeDef] = {
         StepDef("OPT_PREP", "opt_prep"), StepDef("OPT_LOAD", "opt_load"), StepDef("OPT_DECK", "opt_deck"),
         StepDef("OS_SOLVE", None, kind="LOCAL"), StepDef("OPT_POST", "opt_post", kind="LOCAL"),
         StepDef("OPT_REGISTER", None))),
+    "DOE_PREP": JobTypeDef("DOE_PREP", 11, "SLOT", (
+        StepDef("BD_INPUT", "bd_input"), StepDef("BD_MESH0", "bd_mesh0"), StepDef("BD_GEOM", None, kind="LOCAL"),
+        StepDef("BD_LOADS", "bd_loads"), StepDef("BD_PREP_REGISTER", None))),
+    "DOE_PREVIEW": JobTypeDef("DOE_PREVIEW", 11, "SLOT", (
+        StepDef("BD_MATRIX", "bd_matrix"), StepDef("BD_GRID", None, kind="LOCAL"), StepDef("BD_PREVIEW_REGISTER", None))),
+    "DOE_RUN": JobTypeDef("DOE_RUN", 11, "SLOT", (
+        StepDef("BD_BASELINE", "bd_eval"), StepDef("BD_DESIGNS", None, kind="LOCAL"),
+        StepDef("BD_POST", "bd_post"), StepDef("BD_REGISTER", None))),
 }
 CASE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT")
 LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report", "lib_compare")
@@ -58,6 +69,15 @@ OPT_JOB_TYPES = ("OPT_RUN",)
 OPT_STAGES = ("opt_prep", "opt_load", "opt_deck", "opt_post")
 # 계약 §6.3: 작업 progress 가중(step 순서 OPT_PREP·OPT_LOAD·OPT_DECK·OS_SOLVE·OPT_POST·OPT_REGISTER, 합 100)
 OPT_STEP_WEIGHTS = {"OPT_PREP": 1, "OPT_LOAD": 4, "OPT_DECK": 1, "OS_SOLVE": 82, "OPT_POST": 10, "OPT_REGISTER": 2}
+
+DOE_JOB_TYPES = ("DOE_PREP", "DOE_PREVIEW", "DOE_RUN")
+DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post")   # = esl.doe.stages.STAGES
+# 계약 §9.3: 작업 progress 가중(step 순서, 합 100)
+DOE_STEP_WEIGHTS = {
+    "DOE_PREP": {"BD_INPUT": 10, "BD_MESH0": 5, "BD_GEOM": 60, "BD_LOADS": 20, "BD_PREP_REGISTER": 5},
+    "DOE_PREVIEW": {"BD_MATRIX": 5, "BD_GRID": 90, "BD_PREVIEW_REGISTER": 5},
+    "DOE_RUN": {"BD_BASELINE": 5, "BD_DESIGNS": 85, "BD_POST": 9, "BD_REGISTER": 1},
+}
 
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 

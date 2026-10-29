@@ -19,7 +19,8 @@ $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # <런타임>\app 으로 복사하는 코드(저장소 루트·묶음 app 폴더 기준 상대경로). 실행기는 deploy\esl_service.py → app\esl_service.py
 # resources/tcl: 서버 h3d 추출 TCL(esl_h3d_extract.tcl — 워커가 <런타임>\app\resources\tcl 에서 실행, 계약 esl_p3_ux.md §6)
 # resources/opt_method_sources.json: 비드 최적화 방법·출처(GET /opt/settings — v0.7.2 전에는 빠져 새 비드 최적화 화면이 비었음)
-$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
+# resources/doe_messages.json·doe_method_sources.json: v0.9.0 비드 DOE 사용자 문구·방법 출처(계약 esl_bead_doe.md §6.4, V-BD-18)
+$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
 function Write-EslStep([string]$Message) {
@@ -98,16 +99,99 @@ function Invoke-EslPip {
     throw ("$What 실패(pip 종료코드 $rc).`n다음 행동: 위 pip 출력을 확인하세요.")
 }
 
+$EslLockOptionalMarker = '# ==== bead_doe'   # requirements.lock 에서 이 줄 아래 = 비드 DOE 선택 의존성(OCP·gmsh — 따로 설치, 실패해도 기존 기능 유지)
+
+function Get-EslLockPackages {
+    <# requirements.lock → @{ Core = 기본 고정 목록; BeadDoe = '# ==== bead_doe' 줄 아래 고정 목록 } (주석·빈 줄 제외, 'name==ver' 그대로). #>
+    param([Parameter(Mandatory = $true)][string]$LockFile)
+    $core = New-Object System.Collections.Generic.List[string]
+    $opt = New-Object System.Collections.Generic.List[string]
+    $inOpt = $false
+    foreach ($ln in (Get-Content -Encoding UTF8 -LiteralPath $LockFile)) {
+        $s = "$ln".Trim()
+        if ($s.StartsWith($EslLockOptionalMarker)) { $inOpt = $true; continue }
+        if (-not $s -or $s.StartsWith('#')) { continue }
+        if ($inOpt) { $opt.Add($s) } else { $core.Add($s) }
+    }
+    return @{ Core = [string[]]$core.ToArray(); BeadDoe = [string[]]$opt.ToArray() }
+}
+
 function Install-EslPackages {
     <#
       venv에 외부 의존성(deploy\requirements.lock — 고정 버전, Windows cp312: FastAPI·SQLAlchemy·psycopg·numpy·scipy·pypardiso+MKL·pyamg·psutil)을 설치한다.
       -Wheels(오프라인 묶음): --no-index --find-links <wheels>. 아니면 인덱스(사내 pip 설정). 플랫폼 코드는 pip로 설치하지 않는다(<런타임>\app 복사본).
+      lock 의 bead_doe 절(OCP·gmsh)은 여기서 설치하지 않는다 — Install-EslBeadDoe(실패해도 기존 기능 유지).
     #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$LockFile, [string]$Wheels = '')
-    $a = @('install', '-r', $LockFile)
-    if ($Wheels) { $a = @('install', '--no-index', '--find-links', $Wheels, '-r', $LockFile) }
+    $core = (Get-EslLockPackages -LockFile $LockFile).Core
+    $a = @('install') + $core
+    if ($Wheels) { $a = @('install', '--no-index', '--find-links', $Wheels) + $core }
     Invoke-EslPip -Py $VenvPy -PipArgs $a -What "의존성($LockFile) 설치"
     Invoke-EslNative '설치 확인(import)' $VenvPy @('-c', 'import fastapi, uvicorn, sqlalchemy, psycopg, alembic, httpx, pydantic, yaml, numpy, scipy') '위 오류를 확인하세요(venv 패키지 설치가 끝나지 않음)'
+}
+
+function Install-EslBeadDoe {
+    <#
+      v0.9.0 비드 DOE(계약 esl_bead_doe.md §6.4·BD-D-19·20): ① requirements.lock bead_doe 절(cadquery-ocp·vtk·gmsh 등)
+      ② paicad wheel — <Wheels>(오프라인 묶음) 또는 <PaicadWheels>(deploy.json paicad_wheels 폴더)의 deploy\paicad.lock 이름 wheel,
+         없고 <PhysicsaiRepo>(deploy.json physicsai_root, 읽기만)가 있으면 그 저장소의 lock 커밋으로 <WorkDir>에 빌드 →
+         paicad_wheel.py verify(버전·정규화 sha256) → pip install --no-deps ③ 확인(paicad_wheel.py check: paicad version --json 의
+         paicad ≥ lock·ocp 있음, gmsh import). 관리자 권한·머신 환경변수 없음. 실패해도 throw 하지 않는다 — 기존 기능은 그대로,
+      비드 DOE 만 비활성(워커 점검이 사유 PAICAD_* 를 기록). 결과 [pscustomobject]{Ok, Paicad, Ocp, Gmsh, Exe, Reason, Warnings}.
+    #>
+    param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$LockFile,
+          [Parameter(Mandatory = $true)][string]$PaicadLock, [string]$Wheels = '', [string]$PaicadWheels = '',
+          [string]$PhysicsaiRepo = '', [string]$WorkDir = '')
+    $res = [ordered]@{ Ok = $false; Paicad = $null; Ocp = $null; Gmsh = $null; Exe = $null; Reason = ''; Warnings = @() }
+    $helper = Join-Path $PSScriptRoot 'paicad_wheel.py'
+    $exe = Join-Path (Split-Path -Parent $VenvPy) 'paicad.exe'   # <venv>\Scripts\paicad.exe (console script 'paicad')
+    $res.Exe = $exe
+    try {
+        $pkgs = @((Get-EslLockPackages -LockFile $LockFile).BeadDoe)
+        if ($pkgs.Count) {
+            $a = @('install')
+            if ($Wheels) { $a += @('--no-index', '--find-links', $Wheels) }
+            Invoke-EslPip -Py $VenvPy -PipArgs ($a + $pkgs) -What '비드 DOE 의존성(cadquery-ocp·gmsh) 설치'
+        }
+        $lock = Get-Content -Raw -Encoding UTF8 -LiteralPath $PaicadLock | ConvertFrom-Json
+        $whl = $null
+        foreach ($dir in @($Wheels, $PaicadWheels)) {
+            if ($dir -and (Test-Path -LiteralPath (Join-Path $dir $lock.wheel))) { $whl = Join-Path $dir $lock.wheel; break }
+        }
+        if (-not $whl -and $PhysicsaiRepo) {
+            if (-not $WorkDir) { throw 'physicsai_root 로 paicad 를 빌드할 작업 폴더가 없습니다' }
+            if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
+            Write-EslStep "paicad $($lock.version) wheel 빌드: $PhysicsaiRepo (커밋 $($lock.commit.Substring(0, 12)) — 저장소는 읽기만)"
+            Invoke-EslNative 'paicad wheel 빌드' $VenvPy @($helper, 'collect', '--lock', $PaicadLock, '--out-dir', $WorkDir, '--repo', $PhysicsaiRepo, '--work', (Join-Path $WorkDir 'build')) `
+                'physicsai 저장소에 lock 커밋이 있는지(git fetch), 사내 pip 설정으로 setuptools 를 받을 수 있는지 확인하세요'
+            $whl = Join-Path $WorkDir $lock.wheel
+        }
+        if ($whl) {
+            Invoke-EslNative 'paicad wheel 대조(deploy\paicad.lock — 버전·sha256)' $VenvPy @($helper, 'verify', '--lock', $PaicadLock, '--wheel', $whl) `
+                'wheel 이 lock 과 다릅니다 — collect-offline 으로 다시 만든 묶음을 쓰세요'
+            Invoke-EslPip -Py $VenvPy -PipArgs @('install', '--no-index', '--no-deps', '--force-reinstall', $whl) -What "paicad $($lock.version) 설치"
+        } elseif (Test-Path -LiteralPath $exe) {
+            Write-EslStep 'paicad wheel 위치가 없어 venv 에 이미 설치된 paicad 를 확인만 합니다'
+        } else {
+            throw ("paicad wheel($($lock.wheel))이 없습니다 — 오프라인 묶음은 collect-offline 으로 다시 만들고, git 폴더 설치는 " +
+                'deploy.json 에 paicad_wheels(wheel 폴더) 또는 physicsai_root(physicsai 저장소)를 쓰세요')
+        }
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $raw = @(& $VenvPy $helper check --lock $PaicadLock --exe $exe 2>$null) } finally { $ErrorActionPreference = $eap }
+        $chk = (($raw | Where-Object { "$_".StartsWith('{') }) | Select-Object -Last 1) | ConvertFrom-Json
+        $res.Paicad = $chk.paicad; $res.Ocp = $chk.ocp; $res.Gmsh = $chk.gmsh; $res.Warnings = @($chk.warnings)
+        if (-not $chk.ok) { throw (@($chk.problems) -join '; ') }
+        $res.Ok = $true
+    } catch {
+        $res.Reason = $_.Exception.Message
+    }
+    foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "비드 DOE: $w" } }
+    if ($res.Ok) {
+        Write-EslStep "비드 DOE 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
+    } else {
+        Write-Warning "비드 DOE 비활성(다른 기능은 그대로): $($res.Reason)"
+    }
+    return [pscustomobject]$res
 }
 
 function Test-EslVenvDeps {
@@ -731,6 +815,8 @@ function Write-EslConfigValidation {
     # v0.8.0: OptiStruct 경로 자동 감지·업로드 확장자 보충 결과 1줄씩(setup_config.py write 가 만든 문구)
     if ($Result.write.opt_autodetect -and $Result.write.opt_autodetect.line) { Write-EslStep $Result.write.opt_autodetect.line }
     if ($Result.write.ext_supplement -and $Result.write.ext_supplement.line) { Write-EslStep $Result.write.ext_supplement.line }
+    # v0.9.0: 비드 DOE paicad 경로 자동 감지(bead_doe.paicad.exe) 결과 1줄, 감지 못 했으면 안내 1줄
+    if ($Result.write.doe_autodetect -and $Result.write.doe_autodetect.line) { Write-EslStep $Result.write.doe_autodetect.line } elseif ($Result.doe_autodetect -and $Result.doe_autodetect.hint) { Write-EslStep $Result.doe_autodetect.hint }
     foreach ($w in @($Result.warnings)) { if ($w) { Write-Warning $w } }
     $v = $Result.write.validation
     if ($v.ok -eq $false) {

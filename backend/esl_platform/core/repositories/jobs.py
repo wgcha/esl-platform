@@ -110,6 +110,7 @@ def insert_job(
     analysis_id: str | None = None,
     comparison_id: str | None = None,
     opt_run_id: str | None = None,
+    bead_doe_id: str | None = None,
     h3d: bool = False,
 ) -> dict[str, Any]:
     """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409.
@@ -120,7 +121,7 @@ def insert_job(
     seq = conn.execute(select(job_queue_seq.next_value())).scalar_one()
     conn.execute(insert(jobs).values(
         id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, opt_run_id=opt_run_id,
-        project_id=project_id,
+        bead_doe_id=bead_doe_id, project_id=project_id,
         job_type=job_type,
         stage=jt.stage, lane=jt.lane,
         state=QUEUED, holds_slot=False, queue_seq=seq, queued_at=func.now(), params=params,

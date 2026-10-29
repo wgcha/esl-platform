@@ -21,6 +21,8 @@
 - v0.7.0 OPT_RUN(계약 esl_opt_run.md): 대상 = jobs.opt_run_id, 작업 폴더 `<esl_root>/_opt/<id>/`. 준비·step 실행은
   opt_jobs(OS_SOLVE = os_solve, 외부 실행 공통 = localproc). OS_SOLVE 재사용이면 step SKIPPED. 코어 자식은 진행률 파일
   (`<log>.progress`, 정수 %)을 쓸 수 있고 부모가 step progress_pct(OPT_RUN 은 작업 진행률 가중)로 옮긴다.
+- v0.9.0 DOE_PREP·DOE_PREVIEW·DOE_RUN(계약 esl_bead_doe.md): 대상 = jobs.bead_doe_id, 작업 폴더 `<esl_root>/_doe/<id>/`.
+  준비·step 실행은 doe_jobs(paicad = paicad_proc, 코어 = esl.doe.stages), 작업 진행률 = DOE_STEP_WEIGHTS 가중.
 """
 
 from __future__ import annotations
@@ -40,7 +42,9 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from . import esl_snapshot, h3d, limiter, opt_jobs, register
+from esl_platform.core.job_types import DOE_JOB_TYPES
+
+from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -118,6 +122,11 @@ class Executor:
                 try:
                     self.cdir, self.lib = opt_jobs.prepare(self)
                 except opt_jobs.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
+            elif job["job_type"] in DOE_JOB_TYPES:             # v0.9.0 비드 DOE(대상 = bead_doe_id, esl_bead_doe.md)
+                try:
+                    self.cdir, self.lib = doe_jobs.prepare(self)
+                except doe_jobs.PrepareFailed as exc:
                     raise _StepFailed(exc.code, exc.message) from None
             elif job["job_type"] in lib_jobs.PREPARE:          # LIB_COMPARE 등(디스패치는 lib_jobs)
                 try:
@@ -248,6 +257,10 @@ class Executor:
                 outputs = opt_jobs.run_step(self, st, log_path)
                 if outputs.pop("_skipped", False):
                     final = "SKIPPED"          # OS_SOLVE 재사용(OR-D-19)
+            elif self.job["job_type"] in DOE_JOB_TYPES:
+                outputs = doe_jobs.run_step(self, st, log_path)
+                if outputs.pop("_skipped", False):
+                    final = "SKIPPED"          # BD_MESH0(③ 아님)
             elif st["step_key"] == "H3D_EXTRACT":
                 outputs = self._run_h3d(st, log_path)
                 with self._tx() as conn:
@@ -304,6 +317,8 @@ class Executor:
                                   progress_pct=100.0, finished_at=_now(conn), outputs=outputs)
             if self.job["job_type"] == "OPT_RUN":
                 opt_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
+            elif self.job["job_type"] in DOE_JOB_TYPES:
+                doe_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
 
     def _archive_history(self) -> str | None:
         """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).
@@ -412,6 +427,8 @@ class Executor:
         shown[0] = pct
         if self.job["job_type"] == "OPT_RUN":
             opt_jobs.set_progress(self, st, float(pct))
+        elif self.job["job_type"] in DOE_JOB_TYPES:
+            doe_jobs.set_progress(self, st, float(pct))
         else:
             with self._tx() as conn:
                 jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"], progress_pct=float(pct))

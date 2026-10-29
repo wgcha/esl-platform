@@ -18,6 +18,7 @@ import { modelVersions, pairEntries, prevVersion } from "../pages/library/common
 import { P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
 import { OptMock, enrichEntries } from "./optdata";
+import { DoeMock } from "./doedata";
 
 interface MockResponse {
   status: number;
@@ -33,9 +34,12 @@ const STEPS: Record<JobType, string[]> = {
   LIB_ANALYZE: ["LIB_ANALYZE", "OPTDECK", "REPORT", "LIB_REGISTER"],
   LIB_COMPARE: ["COMPARE", "COMPARE_REGISTER"],
   OPT_RUN: ["OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER"],
+  DOE_PREP: ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"],
+  DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
+  DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
 };
 /** 라이브러리 작업(LIB_ANALYZE·LIB_COMPARE)·보고서는 Case 단계가 아님(0) */
-const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10 };
+const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11 };
 const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
@@ -86,6 +90,26 @@ export class MockServer {
     me: () => this.me,
     canRun: (pid) => this.canRun(pid),
     newJob: (pid, params) => this.newJob({ id: null, project_id: pid }, "OPT_RUN", params),
+    jobs: () => this.jobs,
+    now: () => this.now(),
+    upload: (id) => {
+      const u = this.p3.uploads.get(id);
+      if (!u) return null;
+      const live = u.files.filter((f) => !f.removed);
+      return { project_id: u.project_id, state: u.state, files: live.map((f) => f.rel), ready: u.state === "COMPLETED" || live.every((f) => f.done) };
+    },
+    markUploadCompleted: (id) => {
+      const u = this.p3.uploads.get(id);
+      if (u) u.state = "COMPLETED";
+    },
+  });
+
+  /** v0.9.0 비드 형상 DOE(esl_bead_doe.md §10) */
+  doe = new DoeMock({
+    entries: () => this.entries,
+    me: () => this.me,
+    canRun: (pid) => this.canRun(pid),
+    newJob: (pid, jt, params) => this.newJob({ id: null, project_id: pid }, jt, params),
     jobs: () => this.jobs,
     now: () => this.now(),
     upload: (id) => {
@@ -165,6 +189,7 @@ export class MockServer {
     this.finishComparison(cmp);
     this.comparisons.push(cmp);
     this.opt.seed();
+    this.doe.seed();
   }
 
   private makeComparison(id: string, body: ComparisonCreate & { base_version: string }): ComparisonOut {
@@ -365,6 +390,8 @@ export class MockServer {
     if (hr) return hr;
     const or = this.opt.handle(method, path, query, b);
     if (or) return or;
+    const dr = this.doe.handle(method, path, query, b);
+    if (dr) return dr;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
@@ -1094,6 +1121,12 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       const v = mockView3d();
       return new Response(bin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
+    // v0.9.0 비드 DOE 3D 비교 파일(목: 같은 메시·값)
+    const dbin = /^\/esl\/api\/doe\/studies\/[^/]+\/view3d\/[^/]+\/(part\.glb|values\.bin)$/.exec(url.pathname);
+    if (dbin && method === "GET") {
+      const v = mockView3d();
+      return new Response(dbin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+    }
     const raw = init?.body;
     const isBuf = raw instanceof ArrayBuffer || ArrayBuffer.isView(raw as ArrayBufferView);
     const isBin = (typeof Blob !== "undefined" && raw instanceof Blob) || isBuf;
@@ -1101,7 +1134,8 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw instanceof Blob ? raw.size : (raw as ArrayBuffer).byteLength) : 0);
     if (typeof r.body === "string") {
       // v0.7.0: 목 비드 맵은 SVG(실제 서버는 PNG)
-      const type = /\/bead-map\.png$/.test(url.pathname) ? "image/svg+xml" : "application/octet-stream";
+      // v0.9.0: 목 DOE 썸네일·비드 그림도 SVG(실제 서버는 PNG)
+      const type = /\/bead-map\.png$|\/doe\/studies\/[^/]+\/(preview\/thumb\/|beads\/)/.test(url.pathname) ? "image/svg+xml" : /\/doe\/studies\/[^/]+\/report$/.test(url.pathname) ? "text/html" : "application/octet-stream";
       return new Response(r.body, { status: r.status, headers: { "Content-Type": type } });
     }
     return new Response(r.body === undefined ? null : JSON.stringify(r.body), {

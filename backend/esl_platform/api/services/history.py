@@ -25,6 +25,7 @@ from ...core.inputs import changed_inputs, esl_run_stale, extract_stale, inputs_
 from ...core.job_types import JOB_TYPES
 from ...core.paths import safe_case_file
 from ...core.repositories import cases as cases_repo
+from ...core.repositories import doe as doe_repo
 from ...core.repositories import history as repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
@@ -36,7 +37,8 @@ from .results import locate_validation_dir
 
 STATES = ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
 KIND_BY_TYPE = {"CASE_EXTRACT": "extract", "ESL_SOLVE": "esl_run", "VALIDATE": "validation", "EXPORT": "export",
-                "CASE_REPORT": "report", "LIB_ANALYZE": "analysis", "LIB_COMPARE": "comparison", "OPT_RUN": "opt_run"}
+                "CASE_REPORT": "report", "LIB_ANALYZE": "analysis", "LIB_COMPARE": "comparison", "OPT_RUN": "opt_run",
+                "DOE_PREP": "bead_doe", "DOE_PREVIEW": "bead_doe", "DOE_RUN": "bead_doe"}
 REASON_ORDER = ("extract", "part_title", "tstar", "support_set", "input_files")
 FILES_NOTE = "파일 보존 안 됨 — 기록된 값만 표시"
 DIFF_MAX = 12
@@ -125,6 +127,7 @@ class Batch:
         self.comparisons = repo.comparisons_by_ids(conn, sorted({r["comparison_id"] for r in rows
                                                                   if r["comparison_id"]}))
         self.opt_runs = opt_repo.runs_by_ids(conn, sorted({r["opt_run_id"] for r in rows if r.get("opt_run_id")}))
+        self.bead_does = doe_repo.studies_by_ids(conn, sorted({r["bead_doe_id"] for r in rows if r.get("bead_doe_id")}))
         self.retried_by = repo.retried_by(conn, [r["id"] for r in rows])
         esl_jobs = [r["id"] for r in ok if r["job_type"] == "ESL_SOLVE"]
         self.vals_by_job = repo.validations_by_jobs(conn, [r["id"] for r in ok if r["job_type"] == "VALIDATE"])
@@ -198,6 +201,13 @@ class Batch:
                 res.summary = {"scenario": sub.get("scenario"), "load_strategy": sub.get("load_strategy"),
                                "n_cases": ls.get("n_cases"), "converged": rr.get("converged")}
             return res
+        if row.get("bead_doe_id"):
+            # 비드 DOE(v0.9.0): 연구 화면으로 연결(links stage 11) — ref 종류는 이력 계약 목록에 없어 두지 않는다
+            sub = self.bead_does.get(row["bead_doe_id"])
+            res.state = "current" if sub is not None and sub.get("phase") != "FAILED" else "past"
+            if sub is not None:
+                res.summary = {"scenario": sub.get("scenario"), "phase": sub.get("phase")}
+            return res
         if case is None:
             return res
         es = case.get("extract_summary") or {}
@@ -253,7 +263,8 @@ def _item(row: dict[str, Any], b: Batch, res: Resolved) -> dict[str, Any]:
     case = b.cases.get(row["case_id"]) if row["case_id"] else None
     sub = b.analyses.get(row["analysis_id"]) if row["analysis_id"] else (
         b.comparisons.get(row["comparison_id"]) if row["comparison_id"] else (
-            b.opt_runs.get(row["opt_run_id"]) if row.get("opt_run_id") else None))
+            b.opt_runs.get(row["opt_run_id"]) if row.get("opt_run_id") else (
+                b.bead_does.get(row["bead_doe_id"]) if row.get("bead_doe_id") else None)))
     now = row["db_now"]
     started, finished = row["started_at"], row["finished_at"]
     duration = _secs(started, finished) if finished is not None else (
@@ -352,6 +363,9 @@ def _subject_dir(ctx: AppContext, conn: Connection, job: dict[str, Any]) -> str 
         return analysis_dir(ctx, lib_repo.get_comparison(conn, job["comparison_id"]))
     if job.get("opt_run_id"):
         r = opt_repo.get_run(conn, job["opt_run_id"])
+        return analysis_dir(ctx, r) if r else None
+    if job.get("bead_doe_id"):
+        r = doe_repo.get_study(conn, job["bead_doe_id"])
         return analysis_dir(ctx, r) if r else None
     case = cases_repo.get_case(conn, job["case_id"]) if job.get("case_id") else None
     return case_dir(ctx, case) if case else None
@@ -547,6 +561,8 @@ def _result_block(ctx: AppContext, conn: Connection, job: dict[str, Any], row: d
             links = {"stage": 8, "query": {"analysis": job["analysis_id"]}}
         elif jt == "OPT_RUN":
             links = {"stage": 10, "query": {"opt": job["opt_run_id"]}}
+        elif job.get("bead_doe_id"):
+            links = {"stage": 11, "query": {"doe": job["bead_doe_id"]}}
         else:
             links = {"stage": 9, "query": {"comparison": job["comparison_id"]}}
     avail = "full" if full else "summary"

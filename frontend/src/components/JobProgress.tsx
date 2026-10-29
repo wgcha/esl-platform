@@ -3,6 +3,7 @@ import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
 import type { JobOut, JobState } from "../api/types";
 import { usePolling } from "../lib/usePolling";
+import { STEP_LABEL as SHARED_STEP_LABEL } from "../api/history";
 import { JobStatusBadge } from "./ui";
 
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
@@ -76,7 +77,7 @@ export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; 
       <div className="job-inline-row">
         <JobStatusBadge state={j.state} />
         <span className="muted small">
-          {cur ? `step ${cur.step_no}/${total} ${cur.step_key}` : j.state === "QUEUED" ? `대기 ${j.queue_position ?? "–"}번째` : ""}
+          {cur ? `step ${cur.step_no}/${total} ${cur.step_key}${SHARED_STEP_LABEL[cur.step_key] ? ` ${SHARED_STEP_LABEL[cur.step_key]}` : ""}` : j.state === "QUEUED" ? `대기 ${j.queue_position ?? "–"}번째` : ""}
         </span>
         {j.failure_code && (
           <span className="error-text small">

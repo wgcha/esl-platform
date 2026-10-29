@@ -275,7 +275,7 @@ export interface InspectResultsResult {
 // ---------------------------------------------------------------- 작업
 /** P2(계약 esl_p2_library.md §11·§12): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석),
  *  LIB_COMPARE(LIGHT, 설계 버전 비교) */
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN";
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN" | "DOE_PREP" | "DOE_PREVIEW" | "DOE_RUN";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -2071,4 +2071,264 @@ export interface OptFileOut {
   kind: OptFileKind;
   size: number;
   downloadable: boolean;
+}
+
+// ---------------------------------------------------------------- v0.9.0 비드 형상 DOE (esl_bead_doe.md §10.2)
+// 인터페이스 이름 = 계약 스키마 이름(check:api 대조 — 백엔드 openapi 가 나오면 맞춤). 계약에 없는 보강 칸은 "(보강)" 표시.
+export type DoeScenario = "same" | "mesh" | "step";
+export type DoeMethod = "lhs" | "halton" | "fullfact";
+export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
+export type DoeParamType = "D" | "W" | "U" | "V";
+/** 안 상태(§9.2) */
+export type DoeDesignStatus =
+  | "READY"
+  | "RUNNING"
+  | "OK"
+  | "SKIPPED_COLLISION"
+  | "SKIPPED_FIXED"
+  | "SKIPPED_GEOM"
+  | "FAILED_MORPH"
+  | "FAILED_MESH"
+  | "FAILED_SOLVE"
+  | "CANCELED";
+/** 경고·정보 1건(code 는 §6.3·§8.2·§10.3 코드, message 는 서버 resources/doe_messages.json 문구) */
+export interface DoeWarning {
+  code: string;
+  message?: string | null;
+  name?: string | null;
+  [k: string]: unknown;
+}
+/** 방법·출처(원본 resources/doe_method_sources.json, GET /doe/settings.method_sources) */
+export interface DoeMethodSources {
+  version: string;
+  summary_ko: string[];
+  /** DOE 방식별 한 줄(lhs·halton·fullfact) */
+  methods: Record<string, string>;
+  /** 지표·민감도 설명(score·src·spearman 등, 선택) */
+  metrics?: Record<string, string>;
+  /** 한계(선형 비교·ESL 재분배 미반영 등, 선택) */
+  limits?: string[];
+  sources: OptMethodSource[];
+  error?: string;
+}
+export interface DoeSettingsOut {
+  enabled: boolean;
+  /** 비활성 사유 코드(§6.5) */
+  reason: string | null;
+  paicad: { ready: boolean; version: string | null; pinned: string | null; warning: string | null };
+  gmsh: { ready: boolean; version: string | null };
+  scenarios: Record<DoeScenario, boolean>;
+  max_entries: number;
+  max_designs: number;
+  doe: {
+    methods: DoeMethod[];
+    default_method: DoeMethod;
+    default_n: number;
+    seed: number;
+    levels_default: number;
+    levels_max: number;
+    /** (보강) 기본 포함 변수 종류 — 설정 bead_doe.doe.default_types */
+    default_types?: DoeParamType[];
+  };
+  mesh: { size_auto: boolean; size_min_mm: number; size_max_mm: number };
+  boundary: { fastener_warn_mm: number; load_warn_mm: number; load_share_min: number };
+  step_max_mb: number;
+  /** (보강) ② B 메시 기본 파트 제목 — 설정 bead_doe.part_title */
+  part_title?: string | null;
+  method_sources: DoeMethodSources;
+}
+export interface DoeCheckIn {
+  project_id: string;
+  scenario: DoeScenario;
+  entry_ids: string[];
+  step_upload_id: string;
+  mesh_upload_id?: string | null;
+  part_title?: string | null;
+  inch?: number | null;
+}
+export interface DoeProps {
+  t: number;
+  E: number;
+  nu: number;
+}
+export interface DoeCheckOut {
+  ok: boolean;
+  step: { file_name: string; sha256: string; size_mb: number };
+  base?: { entry_id: string; case_id: string; case_title?: string | null; part_title: string; n_nodes: number; n_elems: number; topo_sha256: string } | null;
+  mesh?: MeshCheckOut | null;
+  entries: { entry_id: string; ok: boolean; reason: string | null }[];
+  size?: { L_xi: number; L_eta: number; inch: number | null; rel_xi: number; rel_eta: number } | null;
+  props_default?: DoeProps | null;
+  mesh_size_default_mm?: number | null;
+  warnings: DoeWarning[];
+}
+export interface DoeStudyIn extends DoeCheckIn {
+  title?: string | null;
+  props?: DoeProps | null;
+  mesh_size_mm?: number | null;
+}
+export interface DoeSpecParam {
+  name: string;
+  lo: number;
+  hi: number;
+}
+export interface DoeSpec {
+  method: DoeMethod;
+  n?: number | null;
+  levels?: number | null;
+  seed?: number | null;
+  params: DoeSpecParam[];
+}
+/** (보강) 미리보기 셀 1개 — 썸네일 격자 상태 배지용. 계약 preview 요약(ok·skipped)만으로는 안별 표시가 안 됨 */
+export interface DoePreviewCell {
+  id: string;
+  values: Record<string, number>;
+  status: DoeDesignStatus;
+  /** paicad 원 코드(스킵·실패) */
+  code?: string | null;
+  /** 썸네일 있음(false = THUMB_UNAVAILABLE 회색) */
+  thumb: boolean;
+}
+export interface DoePreviewOut {
+  rev: number;
+  matrix_sha256: string;
+  ok: number;
+  skipped: { collision: number; fixed: number; geom: number };
+  cells?: DoePreviewCell[];
+}
+export interface DoeStudyOut {
+  id: string;
+  project_id: string;
+  scenario: DoeScenario;
+  title: string;
+  entry_ids: string[];
+  inputs: {
+    step: { file_name: string; sha256: string };
+    mesh?: { file_name: string; sha256: string } | null;
+    part_title: string | null;
+    inch: number | null;
+    props?: DoeProps | null;
+    mesh_size_mm?: number | null;
+  };
+  phase: DoePhase;
+  version: number;
+  prep: { n_beads: number; n_params: number; paicad_version: string | null; warnings: DoeWarning[]; boundary: { n_warn: number; n_info: number } } | null;
+  doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
+  job: JobOut | null;
+  result_ready: boolean;
+  created_by_name: string;
+  created_at: string;
+}
+export interface DoeBead {
+  id: string;
+  k: number;
+  shape: "linear" | "circular" | string;
+  sense: string;
+  center_ab: XY;
+  nominal: { depth: number; width: number; length?: number | null };
+  fixed_overlap: boolean;
+  png: string | null;
+}
+export interface DoeParam {
+  name: string;
+  type: DoeParamType;
+  bead: string;
+  nominal: number;
+  feasible: XY;
+  feasible_source: "estimate" | "sweep";
+  default_range: XY;
+  use_default: boolean;
+  group_members: string[];
+}
+export interface DoeParamsOut {
+  beads: DoeBead[];
+  params: DoeParam[];
+  warnings: DoeWarning[];
+}
+export interface DoePlanLink {
+  from: string;
+  to: string;
+  d_mm: number;
+  warn: boolean;
+  /** (보강) 선 긋기용 좌표(B 평면 mm)·종류 */
+  from_ab?: XY;
+  to_ab?: XY;
+  kind?: "fastener" | "load" | "support";
+}
+export interface DoePlanOut {
+  frame: PlanViewFrame;
+  outline: XY[];
+  holes: XY[][];
+  elems: PlanViewElems;
+  beads: { id: string; ring: XY[] }[];
+  fixed: { label: string; kind: string; a: number; b: number }[];
+  a_points: { label: string; a: number; b: number }[];
+  load_points: { entry_id: string; share: number; a: number; b: number }[];
+  links: DoePlanLink[];
+  warnings?: string[];
+}
+export interface DoeMatrixIn {
+  version: number;
+  spec: DoeSpec;
+}
+export interface DoeMatrixOut {
+  spec: DoeSpec;
+  matrix_sha256: string;
+  designs: { id: string; values: Record<string, number> }[];
+  n_designs: number;
+  dropped_duplicates: number;
+  warnings: DoeWarning[];
+}
+export interface DoeRunIn {
+  version: number;
+  matrix_sha256: string;
+  solver?: "linear";
+}
+export interface DoeRankRow {
+  rank: number;
+  id: string;
+  values: Record<string, number>;
+  score: number;
+  improvement: number;
+  worst_entry_id: string;
+  umax: number;
+  epsmax: number;
+  umax_all: number;
+  epsmax_all: number;
+  noise?: boolean;
+  warnings_n: number;
+}
+/** (보강) 순위 밖 안(스킵·실패) — 순위표 아래 상태 배지 */
+export interface DoeExcluded {
+  id: string;
+  status: DoeDesignStatus;
+  code?: string | null;
+  values: Record<string, number>;
+}
+export interface DoeSensParam {
+  name: string;
+  src: number;
+  spearman: number;
+  main_effects?: { level: number; mean: number }[];
+}
+export interface DoeFileOut {
+  rel: string;
+  size?: number;
+  downloadable?: boolean;
+}
+export interface DoeResultOut {
+  C_ref: number;
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number };
+  n_ok: number;
+  n_skipped: Record<string, number>;
+  n_failed: Record<string, number>;
+  ranking: DoeRankRow[];
+  excluded?: DoeExcluded[];
+  sensitivity: { method: string; r2: number; params: DoeSensParam[] } | null;
+  boundary_warnings_n: number;
+  view3d: string[];
+  best: { id: string; files: DoeFileOut[] } | null;
+  /** (보강) ③ 잡음 바닥(|개선율|) — §7.2 */
+  noise_floor?: number | null;
+  warnings: DoeWarning[];
 }

@@ -69,7 +69,7 @@ upload:                               # 브라우저 분할 업로드(계약 esl
   max_files: 5000
   max_concurrent_per_user: 2
   stale_hours: 72                     # 미완료 업로드를 _backup 으로 옮기는 시간(삭제 없음)
-  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d, .fem, .sta, .str]   # .fem = 비드 최적화 S2 템플릿, .sta·.str = 누적 낙하 씬 상태 파일
+  allowed_ext: [.rad, .inc, .k, .csv, .json, .txt, .tcl, .h3d, .fem, .sta, .str, .step, .stp]   # .fem = 비드 최적화 S2 템플릿, .sta·.str = 누적 낙하 씬 상태 파일, .step·.stp = 비드 DOE STEP
   state_scan_kb: 4096                 # 업로드 complete 때 상태 파일 종류 판정에 읽는 앞부분(KB). 줄바꿈 없는 긴 줄도 이 이상 읽지 않음
 altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §6) — 워커가 hw 를 직접 실행(shell 없이, argv 템플릿)
   version_label: "2026.1"
@@ -83,6 +83,15 @@ commands:                             # argv 템플릿(esl.md §4.4): argv[0] = 
   os_check: ["{optistruct}", "{fem}", "-check", "-tmpdir", "{scratch}"]     # 비드 최적화 덱 검사. argv[0] = {optistruct} 만
   os_solve: ["{optistruct}", "{fem}", "-nt", "{nt}", "-tmpdir", "{scratch}"]  # 허용 placeholder: optistruct, fem(_fwd), nt, work_dir, scratch, mem_mb
   bead_post: ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{post_tcl_fwd}", "-input", "{h3d_fwd}", "-output", "{out_dir_fwd}", "-config", "{request_fwd}"]
+  # v0.9.0 비드 DOE paicad argv 템플릿(esl_bead_doe.md §6.1): argv[0] = {paicad} 만(→ bead_doe.paicad.exe). `{x?}` = 선택 자리
+  # (값이 null 이면 바로 앞 플래그와 함께 빠짐, 빈 문자열은 유지). 워커만 실행(shell 없이), 경로는 _doe/<id>/ 안·검사 통과 입력만
+  paicad_version: ["{paicad}", "version", "--json"]
+  paicad_fixed_scan: ["{paicad}", "shell", "fixed-scan", "--assem-dir", "{assem_dir}", "--parts", "{parts}", "--out-dir", "{out_dir}", "--options", "{options?}", "--threads", "{threads}"]
+  paicad_extract: ["{paicad}", "shell", "extract", "--cad", "{cad}", "--out-dir", "{out_dir}", "--assem-dir", "{assem_dir?}", "--body-map", "{body_map?}", "--options", "{options?}", "--threads", "{threads}"]
+  paicad_tag: ["{paicad}", "shell", "tag", "--cad", "{cad}", "--features", "{features}", "--assem-dir", "{assem_dir}", "--fixed-dir", "{fixed_dir}", "--out-dir", "{out_dir}", "--body-map", "{body_map?}", "--options", "{options?}", "--threads", "{threads}"]
+  paicad_grid: ["{paicad}", "shell", "view", "grid", "--cad", "{cad}", "--features", "{features}", "--cells", "{cells}", "--thumb-options", "{thumb}", "--fixed-dir", "{fixed_dir}", "--out-dir", "{out_dir}", "--options", "{options?}", "--threads", "{threads}"]
+  paicad_run: ["{paicad}", "shell", "run", "--cad", "{cad}", "--features", "{features}", "--values", "{values}", "--assem-dir", "{assem_dir}", "--tag-dir", "{tag_dir}", "--fixed-dir", "{fixed_dir}", "--update-dir", "{update_dir}", "--morph-dir", "{morph_dir}", "--check-dir", "{check_dir}", "--out-files-dir", "{out_files_dir}", "--body-map", "{body_map?}", "--options", "{options?}", "--threads", "{threads}"]
+  paicad_update: ["{paicad}", "shell", "update", "--cad", "{cad}", "--features", "{features}", "--values", "{values}", "--out-dir", "{out_dir}", "--options", "{options?}", "--threads", "{threads}"]
 client_token:                         # PC 연결(계약 esl_p3_ux.md §9.1): 연결 코드 → PC 토큰 esl_ct_…(서버엔 해시만)
   ttl_days: 30                        # 토큰 유효 기간
   code_ttl_min: 15                    # 연결 코드 유효 시간(1회용)
@@ -142,3 +151,28 @@ opt_run:                              # v0.7.0 비드 최적화 서버 실행(�
   check: {bead_width_elem_factor: 2.0, min_nodes_per_cell: 64, max_aspect: 10.0, max_warp_deg: 15.0}
   grid: {nx: 24, ny: 14}
   ui: {max_preview_points: 20000}     # 평면도(plan-view) 요소 점 최대 수
+bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §14). 섹션이 없으면 enabled: false
+  enabled: true                       # 실행에는 paicad(≥ min_version, OCP 포함)가 필요 — 워커가 점검해 기록(없으면 화면 비활성)
+  part_title: "chassis rear"          # ② B 메시 기본 파트 제목(case.part_title 과 같은 규칙)
+  max_entries: 50
+  max_designs: 200                    # 공칭 d000 포함 안 수 상한
+  step_max_mb: 200
+  same: {max_assem_mb: 4096}          # ① 기준 Case 입력 폴더 rad/inc 합계 상한(넘으면 422 ASSEM_TOO_LARGE → ② 안내)
+  paicad:
+    exe: null                         # setup_config 자동 감지(<런타임 venv>/Scripts 의 paicad 실행 파일이 있을 때만)
+    min_version: "0.14.0"
+    pinned_version: "0.14.0"          # deploy/paicad.lock 과 같게(다르면 경고만)
+    threads: 4
+    timeout_s: {version: 60, fixed_scan: 3600, extract: 3600, tag: 3600, grid: 7200, run: 3600, update: 1800}
+    options: {}                       # paicad shell options.json 내용(선택, 비면 --options 생략)
+    env: {}
+    keep_files_top: 3                 # 순위 상위 k + 베이스라인만 paicad 사본(out_files·morph/files) 보존
+    check_interval_s: 600             # 워커 paicad/gmsh 점검 주기
+  mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800, occ_sew_faces: 0}
+  doe: {default_method: lhs, default_n: 30, seed: 1, levels_default: 3, levels_max: 9, round_mm: 0.01, default_types: [D, W]}
+  preview: {w: 320, h: 240, view_dir: auto, tilt_deg: 20, margin: 1.15, disp_range_mm: auto}
+  run: {parallel: 2, memory_margin: 0.7}
+  solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
+  boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
+  view3d: {top_k: 3}
+  settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)

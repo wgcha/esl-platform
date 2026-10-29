@@ -262,6 +262,6 @@ def test_migration_0006_on_pre_0006_db(engine, db_url):
         assert c.execute(text("SELECT count(*) FROM worker_slot")).scalar_one() == 16
         cons = {r[0] for r in c.execute(text("SELECT conname FROM pg_constraint"))}
         tabs = {r[0] for r in c.execute(text("SELECT tablename FROM pg_tables"))}
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0011"
     assert {"ck_worker_slot_range", "ck_cases_input_kind"} <= cons and "ck_worker_slot_single" not in cons
     assert {"client_codes", "client_tokens", "client_code_failures"} <= tabs

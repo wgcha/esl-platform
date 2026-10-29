@@ -86,8 +86,9 @@ def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = 
 
 
 def require_job_view(principal: Principal, job: dict[str, Any]) -> None:
-    """OPT_RUN 작업(opt_runs 에 묶인 작업)은 그 프로젝트 조회 권한이 있어야 조회(최적화 실행 조회와 같은 규칙)."""
-    if job.get("opt_run_id") and principal.role(job["project_id"]) is None:
+    """OPT_RUN 작업(opt_runs 에 묶인 작업)·비드 DOE 작업(bead_does)은 그 프로젝트 조회 권한이 있어야 조회(최적화 실행·
+    DOE 연구 조회와 같은 규칙)."""
+    if (job.get("opt_run_id") or job.get("bead_doe_id")) and principal.role(job["project_id"]) is None:
         raise forbidden("이 프로젝트의 조회 권한이 없습니다")
 
 
@@ -102,6 +103,11 @@ def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) 
     if isinstance(params.get("base"), dict) and "rad_path" in params["base"]:
         # OPT_RUN S1: 서버 절대경로는 응답에 넣지 않는다(파일명 rad_file_name 만)
         params["base"] = {k: v for k, v in params["base"].items() if k != "rad_path"}
+    if job.get("bead_doe_id"):
+        # 비드 DOE(v0.9.0): params.doe 는 워커용 스냅샷(입력·Case·업로드 절대경로, 설정) — 응답에는 요약만
+        doe = params.get("doe") if isinstance(params.get("doe"), dict) else {}
+        params = {"bead_doe_id": params.get("bead_doe_id"), "kind": params.get("kind"), "out_rel": params.get("out_rel"),
+                  "rev": doe.get("rev"), "matrix_sha256": doe.get("matrix_sha256")}
     d["params"] = params
     d["queue_position"] = None
     if job["state"] == QUEUED and job.get("queue_seq") is not None:

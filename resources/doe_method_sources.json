@@ -1,0 +1,55 @@
+{
+ "version": "2026-10-29.1",
+ "summary_ko": [
+  "선택한 ESL(낙하 t* 시점의 등가정적하중) 각각을 하중 케이스로 써서, 비드 형상 안마다 자체 선형 쉘 해석(강성 분해 1회 + 하중 전부)을 합니다.",
+  "순위 지표는 안의 최악 컴플라이언스를 베이스라인(공칭) 최악 컴플라이언스로 나눈 값(score)이며, 작을수록 강성이 좋아진 안입니다(개선율 = 1 − score).",
+  "변수 민감도는 정규화 변수에 대한 선형 회귀의 표준화 회귀계수(SRC)와 Spearman 순위상관으로 봅니다."
+ ],
+ "methods": {
+  "lhs": "라틴 하이퍼큐브(LHS): 변수마다 범위를 n 층으로 나눠 층마다 1점(층 순열·층 안 균일), seed 고정으로 재현",
+  "halton": "Halton 저불일치 수열(scramble, seed 고정)",
+  "fullfact": "풀 팩토리얼: 변수별 등간격 수준의 모든 조합",
+  "score": "score = max_i C(안, ESL i) / max_i C(베이스라인, ESL i), C = F·u (선형), 개선율 = 1 − score",
+  "sensitivity": "SRC = β_j·σ_xj/σ_y(정규화 변수 최소자승), Spearman ρ(동률 평균 순위), 풀 팩토리얼은 수준별 평균(주효과)"
+ },
+ "limits_ko": [
+  "선형 강성 비교입니다 — 낙하 응답(변위·소성)을 재현하지 않습니다. 개선 확인은 최적 안으로 검증 낙하 1회를 권장합니다.",
+  "ESL 은 원 형상의 선형 강성 K_L 로 정의되어, 비드 변경 후 하중 재분배는 반영되지 않습니다.",
+  "'STEP 만' 시나리오는 안마다 새 메시라 메시 잡음이 있습니다(잡음 바닥 이내 안은 표시).",
+  "비드 파라미터의 가능 범위(feasible)는 형상 엔진의 추정치입니다.",
+  "탄소성 해석은 지원하지 않습니다(후속)."
+ ],
+ "sources": [
+  {
+   "title": "Structural optimization using equivalent static loads at all time intervals",
+   "authors": "Park, G.J., Kang, B.S. 계열",
+   "note": "ESL 정의 F_eq = K_L·u(t) — 선형 강성 × 동적 변위(서지만)"
+  },
+  {
+   "title": "Altair OptiStruct — Equivalent Static Load Method (ESLM)",
+   "authors": "Altair Engineering",
+   "url": "https://help.altair.com/2024/hwsolvers/os/topics/solvers/os/opt_composite_equiv_static_load_method_c.htm",
+   "note": "ESL 기반 설계 방식 설명"
+  },
+  {
+   "title": "A comparison of three methods for selecting values of input variables in the analysis of output from a computer code",
+   "authors": "McKay, M.D., Beckman, R.J., Conover, W.J. (1979), Technometrics 21(2)",
+   "note": "라틴 하이퍼큐브 표본(LHS)"
+  },
+  {
+   "title": "On the efficiency of certain quasi-random sequences of points in evaluating multi-dimensional integrals",
+   "authors": "Halton, J.H. (1960), Numerische Mathematik 2",
+   "note": "Halton 수열 (구현: scipy.stats.qmc.Halton, scramble)"
+  },
+  {
+   "title": "Sensitivity Analysis in Practice / Global Sensitivity Analysis: The Primer",
+   "authors": "Saltelli, A. 외",
+   "note": "표준화 회귀계수(SRC)·순위상관 민감도"
+  },
+  {
+   "title": "physicsai-platform paicad 형상 엔진 계약 shell-morph.md (중립면 비드 인식·갱신·모핑)",
+   "authors": "physicsai-platform",
+   "note": "비드 파라미터 <COMP>_BEAD_<D|U|V|W>_<k>, 노드·요소 ID 불변 모핑, feasible 추정"
+  }
+ ]
+}
