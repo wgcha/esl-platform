@@ -575,7 +575,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
             {plan.data && st ? (
               <div className="doe-plan-grid">
                 <BoundaryPlan plan={plan.data} showLinks={showLinks} />
-                <BoundaryLegend plan={plan.data} st={st} showLinks={showLinks} />
+                <BoundaryLegend plan={plan.data} st={st} showLinks={showLinks} nWarn={s?.prep?.boundary.n_warn ?? null} />
               </div>
             ) : (
               <Empty>{plan.error ?? "불러오는 중…"}</Empty>
@@ -605,7 +605,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
             </>
           )}
-          {pv && !fresh && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
+          {pv && matrix && !fresh && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
           {phase !== "PREVIEW" && <DoeThumbGrid preview={pv} params={pd?.params ?? []} thumbUrl={(d) => doe.thumbUrl(id, d)} />}
         </Card>
       )}

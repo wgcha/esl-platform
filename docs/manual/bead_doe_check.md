@@ -1,4 +1,4 @@
-# 비드 형상 DOE — 실기 체크리스트 (v0.9.0, 초안)
+# 비드 형상 DOE — 실기 체크리스트 (v0.9.0)
 
 계약 `docs/contracts/esl_bead_doe.md` §16 V-BD-R1. 클라우드 시험은 가짜 paicad(`tests/fake_paicad.py`)·합성 SM1 으로만 돌았으므로,
 **Windows 운영 서버에서 처음 돌릴 때** 이 순서로 확인한다. 순서: **0 설치 확인 → R-③ STEP 만 → R-② 다른 모델 + B 메시 → R-① 같은 모델(실제 Ch/R 약 22만 요소)**
@@ -19,6 +19,19 @@
 | 0-7 | 오프라인 묶음 | (폐쇄망 묶음일 때) 준비 PC 의 `collect-offline.ps1` 출력에 paicad wheel 대조 `"ok": true` 와 `sha256` 이 `deploy\paicad.lock` 값과 같음. **Windows 준비 PC 에서 처음 만든 sha256 이 lock 과 같은지** 꼭 기록(정규화로 같아야 함 — 다르면 묶음 중단, 보고) | |
 | 0-8 | 비활성 화면 | (선택) `bead_doe.paicad.exe` 를 잠시 없는 경로로 바꾸고 워커 재시작 → 비드 DOE 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)", 관리자 화면 사유 `PAICAD_NOT_FOUND`. 다른 화면(라이브러리·비드 최적화)은 정상. 값 되돌림 | |
 | 0-9 | 워커 점검 | 워커 시작 후 `bead_doe.paicad.check_interval_s`(600 s) 이내 `GET /esl/api/doe/settings` → `enabled: true`, `paicad.ready: true`, `paicad.version: "0.14.0"`, `gmsh.ready: true` | |
+
+## 0b. 클라우드에서 확인하지 못한 항목 (D3 워커·D5 배포 — Windows 실기 필수)
+
+클라우드 시험(Linux, 가짜 paicad, 합성 메시)으로는 아래를 확인할 수 없다. 처음 설치한 Windows 서버에서 0 다음에 확인한다.
+
+| # | 확인 | 방법 / 기대 | 결과 |
+|---|---|---|---|
+| 0b-1 | **OCP DLL 경로·env** | 워커가 paicad 를 부를 때 env 는 최소(OS 기본 키 + `worker.env_passthrough` + `bead_doe.paicad.env` + `PYTHONUTF8=1`)라, venv 밖 PATH 에 기대면 OCP(`OCP.cp312-win_amd64.pyd`)의 DLL 로드가 실패할 수 있다. 미리보기 1회가 `PAICAD_FAILED`·`PAICAD_OCP_MISSING` 없이 끝나는지, 실패면 `_doe/<id>/doe/<rev>/grid/paicad.log` 에 `DLL load failed` 가 있는지. 필요하면 `bead_doe.paicad.env`(예 `{PATH: "<런타임>\venv\Lib\site-packages\OCP;C:\Windows\System32"}`)로 설정만 보충(코드 수정 없음)하고 값을 기록. 관리자 콘솔(설치 단계 `paicad version --json`)과 워커(서비스 계정) 결과가 같은지도 | |
+| 0b-2 | **22만 요소 ① 시간·메모리** | R-① 를 돌리며 단계별 시간(작업 상세: BD_INPUT · BD_GEOM fixed-scan/extract/tag · BD_GRID · BD_DESIGNS 안당 `paicad run`+해석 · BD_POST)과 워커·paicad·코어 자식의 최대 메모리(작업 관리자 '최대 작업 집합'), `run.parallel` 2 의 메모리 자동 축소 로그 유무. 타임아웃(`bead_doe.paicad.timeout_s.*`) 대비 여유가 50 % 미만이면 설정 조정 | |
+| 0b-3 | **공칭(nominal) 셀 렌더** | 미리보기 격자 첫 칸 'd000 공칭' 썸네일이 실제 공칭 형상(비드 위치·깊이)으로 보이는지. `_doe/<id>/doe/<rev>/grid/cells/nominal/thumb.png` 존재·320×240, `grid_manifest.json` 의 `nominal` 셀 상태 OK. 회색('썸네일 없음')이면 grid paicad.log 의 `VIEW_*` 코드 기록 | |
+| 0b-4 | **`--fixed-dir ""` 실동작(③)** | 실제 paicad 0.14.0 에서 ③ 미리보기 `shell view grid --fixed-dir ""` 가 인자 오류(종료 2 → `PAICAD_INTERNAL`) 없이 '고정 없음'으로 끝나는지(V-BD-16·R-BD-7). Windows 인자 전달에서 빈 문자열이 사라지지 않는지도 — 실패하면 작업 로그 argv 와 paicad.log 를 보고(대체안 = 베이스라인 rad 로 fixed-scan, 계약 R-BD-7) | |
+| 0b-5 | **정규화 wheel sha256 Windows 일치** | Windows 준비 PC 에서 `collect-offline.ps1`(또는 `python deploy\paicad_wheel.py collect --lock deploy\paicad.lock --out-dir <폴더>`) 결과 `"ok": true`, sha256 = `deploy\paicad.lock` 값(`a23cc6dc…`). 다르면 `python deploy\paicad_wheel.py digest --wheel <wheel>` 값, setuptools 버전(lock `build_requires` 80.9.0 과 같은지), 저장소 줄 끝 설정(autocrlf)을 기록해 보고(묶음 중단) | |
+| 0b-6 | **PowerShell 5.1 설치** | `install.bat`·`update.bat`(Windows PowerShell 5.1)로 설치할 때 paicad 단계(`Install-EslBeadDoe`)가 자식 stderr 오류 레코드로 중단되지 않고 끝 줄 `비드 DOE 형상 엔진: …` 출력. pwsh 7 창에서 실행해도 같은 결과, 한글 경로(설치 폴더·사용자 이름)에서도 확인 | |
 
 ## R-③ — 다른 모델, STEP 만 (먼저)
 

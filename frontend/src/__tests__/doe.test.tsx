@@ -6,8 +6,10 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
 import { autoScenario, buildSpec, defaultRows, doe, normalizeDoeSettings, normalizeResult, outsideFeasible, rowProblem } from "../api/doe";
-import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel } from "../api/history";
-import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix } from "../mock/doedata";
+import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel, summaryText, type HistoryItem } from "../api/history";
+import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix, makePlan } from "../mock/doedata";
+import { render } from "@testing-library/react";
+import { BoundaryLegend } from "../components/BoundaryPlan";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
@@ -82,6 +84,19 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
     expect(stepLabel(currentStepKey({ job_type: "DOE_RUN", current_step_no: 2, steps: null }))).toBe("안별 해석");
     expect(stepLabel(currentStepKey({ job_type: "DOE_PREVIEW", current_step_no: 2 }))).toBe("썸네일");
     expect(linkPath("p1", null, { stage: 11, query: { doe: "doe-1" } })).toBe("/p/p1/doe/doe-1");
+  });
+
+  it("이력 요약: DOE 3종 = 연구 화면과 같은 시나리오·단계 이름(통합 정합)", () => {
+    const it0 = { job_type: "DOE_PREP", summary: { scenario: "step", phase: "DONE" } } as unknown as HistoryItem;
+    expect(summaryText(it0)).toBe("③ 다른 모델(STEP만) · 완료");
+    expect(summaryText({ ...it0, job_type: "DOE_RUN", summary: { scenario: "same", phase: "RUN" } } as unknown as HistoryItem)).toBe("① 같은 모델 · 실행 중");
+  });
+
+  it("경계 경고 수: B 체결 후보 0 이면 선이 없어도 prep.boundary.n_warn 으로 표시", () => {
+    const plan = { ...makePlan("step", ["e1"]), links: [] };
+    const { getByTestId } = render(<BoundaryLegend plan={plan} st={makeDoeSettings()} showLinks nWarn={14} />);
+    expect(getByTestId("boundary-warn-n").textContent).toBe("14");
+    expect(getByTestId("boundary-no-cand").textContent).toMatch(/모두 경고/);
   });
 });
 

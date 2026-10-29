@@ -201,13 +201,17 @@ def test_u1_allowed_ext_supplement_once(tmp_path):
     inp, cfg = _old_config(tmp_path, str(tmp_path / "nohw.exe"), extra_edit=explicit)
     r = _run("write", inp)
     d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
-    assert d["upload"]["allowed_ext"] == [".rad", ".inc", ".csv", ".h3d", ".sta", ".str"]
+    doe = sc.code_supports("bead_doe", str(ROOT))                # v0.9.0 코드(bead_doe 스키마)면 .step·.stp 도 1회 보충
+    tail = [".step", ".stp"] if doe else []
+    assert d["upload"]["allowed_ext"] == [".rad", ".inc", ".csv", ".h3d", ".sta", ".str", *tail]
     assert "# 사용자 목록" in cfg.read_text(encoding="utf-8")
     rec = json.loads((Path(inp["runtime_dir"]) / "state" / "ext_supplement.json").read_text(encoding="utf-8"))
-    assert rec["0.8.0"] == [".sta", ".str"]                     # v0.9.0 코드면 "0.9.0"(.step·.stp)도 함께 기록
+    assert rec["0.8.0"] == [".sta", ".str"]
+    assert rec.get("0.9.0") == ([".step", ".stp"] if doe else None)
     assert r["write"]["ext_supplement"]["line"].startswith("업로드 허용 확장자 보충:")
     # 사용자가 뺀 뒤 재실행 → 다시 넣지 않음
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace(', ".sta", ".str"]', "]"), encoding="utf-8")
+    text = cfg.read_text(encoding="utf-8")
+    cfg.write_text(re.sub(r', "\.sta", "\.str"', "", text, count=1), encoding="utf-8")
     assert ".sta" not in yaml.safe_load(cfg.read_text(encoding="utf-8"))["upload"]["allowed_ext"]
     r2 = _run("write", inp)
     assert ".sta" not in yaml.safe_load(cfg.read_text(encoding="utf-8"))["upload"]["allowed_ext"]

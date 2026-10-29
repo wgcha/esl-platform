@@ -307,6 +307,33 @@ def test_doe_autodetect_skipped_when_code_lacks_bead_doe(tmp_path):
     assert r["write"]["validation"]["ok"] is True                         # 코드보다 앞선 설정을 쓰지 않음
 
 
+def test_doe_autodetect_real_code_schema(tmp_path):
+    """병합 후(v0.9.0 통합): 실제 코드 스키마(bead_doe 있음)로 — 흉내 없이 — paicad.exe 감지 → enabled·경로 채움,
+    .step·.stp 보충, 쓴 설정이 실제 Settings 검증을 통과하고 bead_doe.paicad.exe 가 그 경로로 읽힘."""
+    if not sc.code_supports("bead_doe", str(ROOT)):
+        pytest.skip("코드에 bead_doe 없음(D2 병합 전)")
+    def explicit(text):
+        return re.sub(r"(?m)^  allowed_ext:.*$", "  allowed_ext: [.rad, .inc, .csv, .h3d, .sta, .str]", text)
+    inp, cfg = _old_cfg(tmp_path, edit=explicit)
+    st = Path(inp["runtime_dir"]) / "state" / "ext_supplement.json"
+    st.parent.mkdir(parents=True, exist_ok=True)
+    st.write_text(json.dumps({"0.8.0": [".sta", ".str"]}), encoding="utf-8")
+    assert "bead_doe" not in yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    exe = _paicad_exe(inp)
+    r = _run("write", inp)
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert d["bead_doe"]["enabled"] is True and d["bead_doe"]["paicad"]["exe"] == exe
+    assert r["doe_autodetect"]["supported"] is True and r["doe_autodetect"]["added"] == {"bead_doe.enabled": True, "bead_doe.paicad.exe": exe}
+    assert d["upload"]["allowed_ext"][-2:] == [".step", ".stp"]
+    assert r["write"]["validation"]["ok"] is True, r["write"]["validation"]
+    from esl_platform.core.config import Settings
+
+    s = Settings.model_validate(d)                                         # 코드 스키마 그대로 읽힘(경로 검사는 설치 위치 기준이라 제외)
+    assert s.bead_doe.enabled is True and s.bead_doe.paicad.exe == exe
+    r2 = _run("write", inp)                                                # 다시 실행 — 바뀌지 않음
+    assert r2["doe_autodetect"]["added"] == {} and yaml.safe_load(cfg.read_text(encoding="utf-8")) == d
+
+
 def test_doe_autodetect_adds_exe_and_enabled(tmp_path, doe_code):
     inp, cfg = _old_cfg(tmp_path)
     exe = _paicad_exe(inp)

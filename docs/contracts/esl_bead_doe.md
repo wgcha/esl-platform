@@ -1,6 +1,6 @@
 # 계약: ESL 기반 Ch/R 비드 형상 DOE (BEAD_DOE, v0.9.0)
 
-- 상태: **확정** (2026-10-29, 사용자 확정 사항 + Q1~Q3 확정 §19). 미결 없음. 구현 코드 없음.
+- 상태: **확정** (2026-10-29, 사용자 확정 사항 + Q1~Q3 확정 §19). 미결 없음. **구현 반영(v0.9.0 통합, §21)** — 구현 중 정한 세부(점검 기록 위치·공칭 썸네일 경로·gmsh 키·격리·wheel 정규화·migration 0010 수정)는 본문에 반영하고 근거를 §21 에 둔다.
 - 버전: **v0.9.0** (main 2341f4e = v0.8.0 기준).
 - 근거 이슈: GitHub #37 "bead doe" — VoC "낙하해석 시간 때문에 Ch/R 비드 보완 소요 시간이 크고, 현재 강성해석은 낙하 하중 미반영이라 낙하 신뢰성과 갭". 대응 = ESL 기반 Ch/R 비드 형상 변화의 강성 개선 확인. 산출 = 낙하 하중을 고려해 강성이 좋아진 Ch/R 형상.
 - 관계: v0.7.0 `esl_opt_run.md`(OPT_RUN, OptiStruct 비드 토포그래피)와 **별개 기능**. 하중 적용(S1 직접·S2 셀 매핑)·크기 규칙·3-2-1 자동 선택·목표 기준 정의·작업 실행 구조·`_opt` 쓰기 규칙을 **그대로 재사용**하고, 형상 엔진은 physicsai-platform 의 `paicad` 를 외부 명령으로 쓴다. 충돌 시 이 문서가 BEAD_DOE 범위에서 우선.
@@ -74,8 +74,8 @@ paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 | BD-D-17 | **결과 파일 정리**: paicad `morph/files/`·`out_files/`(대형 rad 사본일 수 있음)는 노드 좌표를 `design.npz` 로 옮긴 뒤 **순위 상위 `paicad.keep_files_top`(3) + 베이스라인만 남기고 지움**(BD_POST 끝). 워커가 실행 폴더 안에 스스로 만든 중간 파일이라 v0.7.0 `u_cand.npy` 결정과 같은 예외 | 디스크(R-BD-2) |
 | BD-D-18 | **산출물(최적 안 = 순위 1, 상위 k 도)**: ①② = paicad check 사본 include(`out_files/<rel>`, 원 ID·`/NODE` 좌표만 바뀐 파일) + `values.json` + `sample.brep` + `sample.step`(gmsh OCC 내보내기). ③ = 메시 `ch_r.rad`(/NODE·/SHELL·/SH3N·/PART·/PROP/TYPE1·/MAT/LAW1, ID 1부터 — `esl.export` id 규칙) + `ch_r.fem`(GRID·CQUAD4·CTRIA3·PSHELL·MAT1) + `sample.brep`·`sample.step` + `values.json` | 확정 7 |
 | BD-D-19 | **paicad 버전**: 배포 고정 = `deploy/paicad.lock`(version 0.14.0·physicsai 커밋·wheel sha256). 런타임 허용 = `paicad version --json` 의 paicad ≥ `paicad.min_version`(0.14.0) **그리고** `ocp` 가 null 아님. 고정과 다르면 경고(관리자 화면·결과에 기록), 낮거나 OCP 없음 → 기능 비활성(사유 §6.5) | 확정 1 |
-| BD-D-20 | **gmsh** = Python 모듈(`gmsh` wheel)로 **코어 하위 프로세스 안에서** 호출(외부 명령 아님 — 별도 프로세스로 격리·타임아웃). 없으면 ③ 만 비활성(`GMSH_UNAVAILABLE`), STEP 내보내기(BD-D-18)도 gmsh 로 — 없으면 BREP 만 + 경고 | paicad 런타임 의존에 gmsh 없음 |
-| BD-D-21 | migration **0011**(`down_revision "0010"`). MCP 예약 0009 는 구현 시점 HEAD 뒤에 붙인다(`revision "0009"`, `down_revision` = 그때 HEAD — 지금 기준 "0011"). esl_opt_run.md OR-D-22 의 "0009 → down 0010" 을 이 규칙으로 바꿈 | 단일 head 유지 |
+| BD-D-20 | **gmsh** = Python 모듈(`gmsh` wheel)로 **코어 하위 프로세스 안에서** 호출(외부 명령 아님 — 메시마다 `multiprocessing` **spawn** 자식으로 격리·타임아웃, §7.1). 없으면 ③ 만 비활성(`GMSH_UNAVAILABLE`), STEP 내보내기(BD-D-18)도 gmsh 로 — 없으면 BREP 만 + 경고 | paicad 런타임 의존에 gmsh 없음 |
+| BD-D-21 | migration **0011**(`down_revision "0010"`). MCP 예약 0009 는 구현 시점 HEAD 뒤에 붙인다(`revision "0009"`, `down_revision` = 그때 HEAD — 지금 기준 "0011"). esl_opt_run.md OR-D-22 의 "0009 → down 0010" 을 이 규칙으로 바꿈. **0010 수정**: 0010 이 CHECK 를 `tables.CK_JOBS_*`(현재 정의 — 0011 의 `bead_doe_id` 참조)로 다시 걸던 것을 0010 시점 고정 상수(`*_0010`)로 바꿔 0008 DB → 0011 업그레이드가 0010 단계에서 없는 열을 참조하지 않게 함(0004 와 같은 규칙, §21) | 단일 head 유지, 0008 운영 DB 업그레이드 가능 |
 | BD-D-22 | ① 기준 Case 가 누적 씬이면 정보 경고 `BD_BASE_CUMULATIVE`("형상 = rad /NODE 공칭, ESL 은 누적 변형 상태 기준") — 실행 허용 | paicad 는 `.str` 을 읽지 않음, v0.8.0 S1 경고와 같은 취지 |
 
 ## 3. 사용 시나리오 (단계 흐름)
@@ -133,9 +133,9 @@ POST /doe/studies/{id}/run → DOE_RUN
 - 입력 `DoeSpec { method: "lhs"|"halton"|"fullfact", n?: int (lhs·halton, 2..max_designs, 기본 `doe.default_n` 30), levels?: int (fullfact 기본 3, 2..9), seed?: int (0..2^32−1, 기본 `doe.seed` 1), params:[{name, lo, hi}] (포함 변수만, 1개 이상) }`.
 - 검증: name ∈ prep 변수 표(아니면 `DOE_PARAM_UNKNOWN`), lo < hi, D·W 의 lo > 0(`DOE_RANGE_INVALID`), feasible 밖 = 응답 `warnings[{code: RANGE_OUTSIDE_FEASIBLE, name}]`, 풀 팩토리얼 안 수 = levels^k, 결과 안 수 + 1 > `max_designs` → `DOE_TOO_LARGE`.
 - 생성 값 = lo + u·(hi − lo), 포함 안 한 변수는 값 파일에 넣지 않음(= 공칭). 반올림·중복 제거는 BD-D-8.
-- 미리보기 입력: `cells.json{schema_version:1, cells:[{id:"d001", values:{…}}…]}`(d000 제외 — 공칭 썸네일은 grid 의 nominal), `thumb_options.json{schema_version:1, w, h, view_dir, margin, disp_range_mm, colormap:"turbo16", nominal_ghost:true, edges:false}` — view_dir `auto` = frame 법선 n 을 −η 쪽으로 `preview.tilt_deg`(20°) 기울임, disp_range_mm `auto` = [0, max(|hi−nominal|, |lo−nominal|) 의 D 최대, 최소 1 mm].
+- 미리보기 입력: `cells.json{schema_version:1, cells:[{id:"d001", values:{…}}…]}`(d000 제외 — 행렬 그대로). 워커 BD_GRID 는 paicad 에 넘길 `doe/<rev>/grid_cells.json` = cells + **공칭 셀 `{id:"nominal", values:{}}`** 로 만든다(paicad 0.14.0 grid 는 `grid_manifest.nominal = {bbox, view_sha256}` 만 쓰고 공칭 썸네일을 만들지 않음 → 공칭 셀의 `grid/cells/nominal/thumb.png` 가 d000 썸네일). `nominal` 셀은 안이 아니라 셀 상태·미리보기 요약·`preview.cells` 에 넣지 않는다. `thumb_options.json{schema_version:1, w, h, view_dir, margin, disp_range_mm, colormap:"turbo16", nominal_ghost:true, edges:false}` — view_dir `auto` = frame 법선 n 을 −η 쪽으로 `preview.tilt_deg`(20°) 기울임, disp_range_mm `auto` = [0, max(|hi−nominal|, |lo−nominal|) 의 D 최대, 최소 1 mm].
 - 셀 결과 → 안 상태: OK → `READY`, FAIL → BD-D-9 스킵 상태, ERROR(`VIEW_*`) → `READY` + 썸네일 회색 경고(형상 갱신은 성공), ERROR(내부) → `SKIPPED_GEOM`.
-- 썸네일 표시는 `doe/<rev>/grid/cells/<id>/thumb.png`(320×240 PNG ≈ 3 KiB) — `GET …/preview/thumb/{did}`.
+- 썸네일 표시는 `doe/<rev>/grid/cells/<id>/thumb.png`(320×240 PNG ≈ 3 KiB) — `GET …/preview/thumb/{did}`. `did = d000` 은 `grid/cells/nominal/thumb.png`(백엔드 탐색 순서: `grid_manifest.nominal.thumb` → `nominal/thumb.png` → `cells/nominal/thumb.png` → `nominal.png` — 앞 두 개는 paicad 가 공칭 썸네일을 직접 쓰게 될 때 대비).
 
 ## 6. paicad 연동 규약 (BD-4~6)
 
@@ -186,22 +186,22 @@ POST /doe/studies/{id}/run → DOE_RUN
 - 모르는 paicad 코드 = 종료코드 범주(10 → SKIPPED_GEOM, 11 → FAILED_MORPH, 3·12·13 → PAICAD_INPUT, 그 밖 PAICAD_FAILED)로 분류하고 원 코드 병기.
 
 ### 6.4 버전 고정·설치 (BD-D-19)
-- `deploy/paicad.lock`: `{version: "0.14.0", source: "wgcha/physicsai-platform", commit: <40자>, wheel: "paicad-0.14.0-py3-none-any.whl", sha256: <64자>}`. collect-offline 은 그 커밋의 `packages/paicad` 로 `pip wheel --no-deps` → 버전·sha256 대조(불일치 중단) → `wheels/` 에 넣음. `deploy/requirements.lock` 에 `cadquery-ocp==7.8.1.1.post1`(paicad 고정과 같음)·`gmsh==<고정>`(cp312 win_amd64 휠 있는 버전, lock 갱신 시 확인) 추가. install 은 같은 wheels 에서 `--no-index` 설치.
+- `deploy/paicad.lock`: `{version: "0.14.0", source: "wgcha/physicsai-platform", commit: <40자>, wheel: "paicad-0.14.0-py3-none-any.whl", sha256: <64자>, branch, subdir, build_requires: ["setuptools==…"], console_script, runtime_requires}`. collect-offline 은 그 커밋의 `packages/paicad` 를 줄 끝 변환 없이 꺼내 `pip wheel --no-deps` → **정규화**(`deploy/paicad_wheel.py`: 같은 항목·내용을 무압축 ZIP_STORED·시각 1980-01-01·권한 0644·이름 순(.dist-info 끝, RECORD 맨 끝)으로 다시 씀, RECORD 불변) → 버전·**정규화 sha256** 대조(불일치 중단) → `wheels/` 에 넣음. 정규화로 빌드 OS·시각·umask·zlib 판과 무관하게 같은 바이트가 되어 lock 의 sha256 하나로 Windows·Linux 준비 PC 결과를 대조한다(lock 갱신 = `paicad_wheel.py digest`). `deploy/requirements.lock` 에 `cadquery-ocp==7.8.1.1.post1`(paicad 고정과 같음)·`gmsh==<고정>`(cp312 win_amd64 휠 있는 버전, lock 갱신 시 확인) 추가. install 은 같은 wheels 에서 `--no-index` 설치.
 - `setup_config.py`: `bead_doe.paicad.exe` 가 비었고 `<런타임 venv>/Scripts/paicad.exe` 가 **실제 있을 때만** 채움(v0.8.0 OptiStruct 자동 감지와 같은 규칙, 기존 값 불변, `_backup`, 콘솔 1줄). `upload.allowed_ext` 에 `.step`·`.stp` 1회 보충.
 - 배포 코드 목록(`$EslAppItems`·collect-offline)에 `resources/doe_messages.json`·`resources/doe_method_sources.json` 추가(v0.7.2 누락 사고 재발 방지 — V-BD-18).
 
 ### 6.5 없을 때 비활성 사유 (`GET /doe/settings`)
-`enabled:false` 이유 코드: `DOE_DISABLED`(설정 꺼짐), `PAICAD_NOT_CONFIGURED`(exe 없음), `PAICAD_NOT_FOUND`(경로 없음), `PAICAD_VERSION_LOW`(< min), `PAICAD_OCP_MISSING`(version JSON `ocp` null), `PAICAD_CHECK_FAILED`(실행 실패). ③ 만: `GMSH_UNAVAILABLE`. 화면 상단 경고 띠 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)", 서버 경로·상세는 전역 관리자에게만. 점검 결과는 백엔드가 `doe.settings_cache_s`(300) 캐시 — 백엔드는 paicad 를 **실행하지 않고** 워커가 주기 점검해 DB `worker_status.extra.paicad` 에 기록한 값을 읽는다(외부 명령은 워커만).
+`enabled:false` 이유 코드: `DOE_DISABLED`(설정 꺼짐), `PAICAD_NOT_CONFIGURED`(exe 없음), `PAICAD_NOT_FOUND`(경로 없음), `PAICAD_VERSION_LOW`(< min), `PAICAD_OCP_MISSING`(version JSON `ocp` null), `PAICAD_CHECK_FAILED`(실행 실패). ③ 만: `GMSH_UNAVAILABLE`. 화면 상단 경고 띠 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)", 서버 경로·상세는 전역 관리자에게만. 점검 결과는 백엔드가 `bead_doe.settings_cache_s`(300) 캐시 — 백엔드는 paicad 를 **실행하지 않고** 워커가 주기(`bead_doe.paicad.check_interval_s`) 점검해 DB **`worker_heartbeats.info.paicad`**(`{ready, version, ocp, pinned, warning, reason, checked_at}`)·`info.gmsh`(`{ready, version}`)에 heartbeat 와 함께 기록한 값(가장 최근 heartbeat)을 읽는다(외부 명령은 워커만). 기록이 없으면 `PAICAD_CHECK_FAILED`.
 
 ## 7. gmsh 메싱 사양 (③, `esl/doe/mesh_gmsh.py`, BD-7)
 
 ### 7.1 설정·절차
-- 입력 `sample.brep`(안) / 공칭 STEP(베이스라인). 단일 프로세스·단일 스레드: `gmsh.initialize(["-noenv"], readConfigFiles=False)`, `General.Terminal 0`, `General.NumThreads 1`, `Geometry.OCCSewFaces 0`, `occ.importShapes` → `synchronize`.
+- 입력 `sample.brep`(안) / 공칭 STEP(베이스라인). 단일 프로세스·단일 스레드: `gmsh.initialize(["-noenv"], readConfigFiles=False)`, `General.Terminal 0`, `General.NumThreads 1`, `Geometry.OCCSewFaces = bead_doe.mesh.occ_sew_faces`(**기본 0**, 0|1 — 면 공유 정보가 없는 STEP(예 gmsh 가 다시 쓴 STEP)은 1), `occ.importShapes` → `synchronize`.
 - 크기: `Mesh.MeshSizeMax = h`, `Mesh.MeshSizeMin = h × mesh.min_size_factor(0.2)`, `Mesh.MeshSizeFromCurvature = mesh.curvature_n(12)`(필렛·비드 곡면에 원주당 요소 수), `Mesh.MeshSizeExtendFromBoundary 1`. h = 입력값(기본 `auto` = A ESL 메시 요소 모서리 길이 중앙값, 범위 `mesh.size_min_mm`..`size_max_mm` 1..20).
 - quad 위주: `Mesh.Algorithm = mesh.algorithm(8 Frontal-Delaunay for quads)`, `Mesh.RecombineAll 1`, `Mesh.RecombinationAlgorithm 1`(blossom), `Mesh.SubdivisionAlgorithm 0`, `Mesh.ElementOrder 1`, `Mesh.Smoothing 3`. `generate(2)`.
 - 출력: 노드 1..N(gmsh 태그 순 재번호), 요소 CQUAD4/CTRIA3(면적 ≤ 1e-12·중복 노드 요소 제거), 바디 법선 쪽으로 연결 순서 정렬(v0.7.0 `align_normals`), PID 1개, t·E·ν = §7.3. `mesh.npz` + `mesh.json{gmsh_version, options, h, n_nodes, n_elems, quad_frac, quality(esl.opt.mesh_check 지표), seconds}`.
 - 품질: `esl.opt.mesh_check`(요소·연결·종횡비·뒤틀림) 오류 → 안 `FAILED_MESH`, quad_frac < `mesh.min_quad_frac`(0.8) 경고. 요소 수 > `mesh.max_elems`(500 000) → `FAILED_MESH`(베이스라인이면 준비 실패 `MESH_TOO_LARGE`).
-- 타임아웃 `mesh.timeout_s`(1800), 하위 프로세스로 격리(크래시 = `FAILED_MESH`).
+- 타임아웃 `mesh.timeout_s`(1800), 메시마다 `multiprocessing.get_context("spawn")` 자식 프로세스로 격리(fd 1·2 → `mesh.log`, 실패 = `mesh_error.json` + 종료코드 3, 타임아웃·크래시 = `FAILED_MESH`). spawn 이라 부모(코어 자식)의 gmsh 상태·스레드를 물려받지 않고 Windows·Linux 가 같게 동작.
 - STEP 내보내기(BD-D-18): 같은 gmsh 세션에서 `gmsh.write("sample.step")`(OCC 형상, 메시 없음).
 
 ### 7.2 메시 잡음 상쇄
@@ -407,7 +407,7 @@ bead_doe:                                # 섹션 없으면 enabled: false
     env: {}
     keep_files_top: 3
     check_interval_s: 600               # 워커 paicad/gmsh 점검 주기
-  mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800}
+  mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800, occ_sew_faces: 0}
   doe: {default_method: lhs, default_n: 30, seed: 1, levels_default: 3, levels_max: 9, round_mm: 0.01, default_types: [D, W]}
   preview: {w: 320, h: 240, view_dir: auto, tilt_deg: 20, margin: 1.15, disp_range_mm: auto}
   run: {parallel: 2, memory_margin: 0.7}
@@ -459,7 +459,7 @@ upload:
 |---|---|---|---|
 | D1 코어 | Impl-Core | `esl/doe/__init__.py`, `matrix.py`(lhs·halton·fullfact·sha), `paicad_io.py`(paicad 보고 JSON 파싱·변수 표·셀 결과·코드 분류 — 실행 없음), `nodes.py`(모핑 사본 `/NODE` 읽기, readline 상한), `mesh_gmsh.py`(§7), `scenario.py`(①②③ 기준 메시·frame·지지·하중 — `esl.opt.target`·`size`·`identity` 재사용), `boundary.py`(§8.2), `evaluate.py`(안 해석 — `ShellModel.factorize`), `rank.py`(순위·민감도), `report_doe.py`, `export_mesh.py`(③ rad·fem 쓰기), `stages.py`(bd_input·bd_mesh0·bd_loads·bd_matrix·bd_eval·bd_post 진입점); `resources/doe_messages.json`·`doe_method_sources.json`; `tests/doe/*` | V-BD-1, 4~10, 16(코어분) |
 | D2 백엔드 | Impl-Backend | `migrations/versions/0011_bead_doe.py`, `core/db/tables.py`, `core/job_types.py`, `core/config.py`(BeadDoeCfg·commands paicad_*), `core/paths.py`(`DOE_DIR="_doe"`), `core/repositories/doe.py`, `api/routers/doe.py`, `api/services/doe.py`(check-inputs·studies·matrix·preview·run·results·files), `api/schemas.py`, `api/services/uploads.py`(.step 머리·purpose), `api/services/history.py`, `check.py`, `config/*.example.yaml`, `backend/tests/test_doe_*.py`·`test_migrations.py` | V-BD-12, 13 |
-| D3 워커 | Impl-Worker | `worker/esl_worker/paicad_proc.py`(argv·선택 쌍·env·PROGRESS/RESULT·버전 점검·worker_status 기록), `doe_jobs.py`(PREP/PREVIEW/RUN 조립·안 스레드 풀·이어하기·정리), `executor.py`, `core_adapter.py`(bd_* 단계), `register.py`(BD_*_REGISTER), `worker/tests/test_doe_*.py`·`test_paicad_proc.py`, `tests/fake_paicad.py` | V-BD-2, 3, 11, 14, 15 |
+| D3 워커 | Impl-Worker | `worker/esl_worker/paicad_proc.py`(argv·선택 쌍·env·PROGRESS/RESULT·버전 점검·`worker_heartbeats.info.paicad` 기록), `doe_jobs.py`(PREP/PREVIEW/RUN 조립·안 스레드 풀·이어하기·정리), `executor.py`, `core_adapter.py`(bd_* 단계), `register.py`(BD_*_REGISTER), `worker/tests/test_doe_*.py`·`test_paicad_proc.py`, `tests/fake_paicad.py` | V-BD-2, 3, 11, 14, 15 |
 | D4 프런트 | Impl-Frontend | `api/doe.ts`, `api/types.ts`, `pages/doe/DoeStudy.tsx`(새·상세 한 화면), `DoeList.tsx`, `components/DoeInputs.tsx`, `DoeParamTable.tsx`, `DoeThumbGrid.tsx`, `DoeRanking.tsx`, `Sensitivity.tsx`, `BoundaryPlan.tsx`(KeepoutPlan 렌더러 재사용), `view3d/View3DCard.tsx`(색 범위 고정·변위 값 선택 옵션만 추가), `pages/library/LibraryList.tsx`(버튼·탭), `app/App.tsx`, `mock/doedata.ts`, `__tests__/doe.test.tsx`, `pages/guide/*` | V-BD-17 |
 | D5 배포 | Impl-Backend(deploy) | `deploy/paicad.lock`, `deploy/requirements.lock`(+cadquery-ocp·gmsh), `deploy/collect-offline.sh`·`.ps1`(paicad wheel 빌드·대조), `deploy/install*.ps1`, `deploy/setup_config.py`, `deploy/RESOURCES.txt`, `tests/deploy/test_bead_doe_deploy.py` | V-BD-18 |
 | D6 문서 | Plan/Impl | `CHANGELOG.md`·`VERSION` 0.9.0, `docs/decisions.md`, `docs/manual/user.md`, `docs/manual/admin.md`(paicad 설치·버전), `docs/manual/bead_doe_check.md` | V-BD-R1 체크리스트 |
@@ -497,3 +497,18 @@ upload:
 | R-BD-7 | `--fixed-dir ""` 의존(③) | SM1 실검(V-BD-16), 실패 시 대체 = 베이스라인 rad 로 fixed-scan(빈 고정) (physicsai 선택 인자화는 사용자 판단 사항 — v0.9.0 은 요청 없이 동작) |
 | R-BD-8 | 오프라인 묶음에 OCP·gmsh(수백 MB) 추가, gmsh 라이선스(GPL + 예외) | 사내 설치 용도·THIRD_PARTY 표기, 묶음 크기 기록 |
 | R-BD-9 | 모핑 후 ESL 모멘트 평형 약간 깨짐 → 3-2-1 반력 | 반력 잔차 경고(BD-D-5) |
+
+## 21. 구현 반영 (v0.9.0 통합, 2026-10-29)
+
+계약 확정 뒤 구현(D1~D5)에서 정한 세부. 본문은 이 표대로 고쳤다.
+
+| 항목 | 반영 | 근거 |
+|---|---|---|
+| paicad 점검 기록 위치 | §6.5 `worker_status.extra.paicad` → **`worker_heartbeats.info.paicad`**·`info.gmsh` | `worker_status` 테이블은 없음 — 워커 상태는 기존 `worker_heartbeats.info`(JSONB, `claims_paused` 등) 한 곳. 백엔드는 가장 최근 heartbeat 를 읽기만 |
+| 공칭 d000 썸네일 | §5 워커가 grid 셀에 `nominal`(values {}) 추가 → `grid/cells/nominal/thumb.png`, `GET …/preview/thumb/d000` 이 그 경로 | paicad 0.14.0 `shell view grid` 는 `grid_manifest.nominal` 에 bbox·view_sha256 만 쓰고 공칭 그림을 만들지 않음(소스 확인). 셀 id 규칙 `[0-9a-z_]{1,64}` 안 |
+| gmsh 면 봉합 | §7.1·§14 `bead_doe.mesh.occ_sew_faces`(기본 0, 0·1) | 계약 기본(0)은 유지, 면 공유가 없는 STEP(gmsh 가 다시 쓴 STEP 등)은 1 이 필요해 설정 키로(하드코딩 금지) |
+| gmsh 격리 | §7.1 메시마다 `multiprocessing` spawn 자식 | gmsh 는 프로세스 전역 상태·시그널 처리기를 가져 같은 프로세스 반복 호출·타임아웃 강제 종료가 불안정. spawn = Windows 기본과 같은 방식, 크래시·타임아웃을 안 1개 `FAILED_MESH` 로 가둠 |
+| paicad wheel sha256 | §6.4 **정규화 sha256**(`deploy/paicad_wheel.py`) | `pip wheel` 결과 zip 은 빌드 시각·압축 구현·권한에 따라 바이트가 달라 lock sha256 하나로 대조할 수 없음 — 내용은 같고 바이트만 다른 차이를 정규화로 없앰. RECORD(파일별 해시)는 그대로라 설치 검증 영향 없음 |
+| migration 0010 수정 | BD-D-21 — 0010 CHECK 를 0010 시점 고정 상수로 | 0010 이 `tables.CK_JOBS_SUBJECT`(0011 의 `bead_doe_id` 참조)를 쓰면 0008 운영 DB 를 0011 로 올릴 때 0010 단계에서 없는 열을 참조해 실패. 0004 와 같은 '마이그레이션은 그 시점 정의를 고정' 규칙. 새 DB(0001 create_all)·0008·0010 DB 모두 같은 결과(V-BD-13) |
+| 화면 보강 칸 | §10.2 `DoeStudyOut.doe.preview.cells[{id, values, status, code, thumb}]`, `DoeResultOut.excluded[{id, status, code, values}]`·`noise_floor`, `DoePlanOut.links[].from_ab·to_ab·kind`(②③), `DoeSettingsOut.doe.default_types`·`part_title`, `best.files[{rel, size, downloadable}]` | 썸네일 배지·순위 밖 안·선 긋기·기본 변수 종류에 필요(계약 요약 칸만으로는 안별 표시 불가). 백엔드 응답 = 프런트 types.ts(check:api + 실서버 E2E `scripts/e2e_doe.mjs` 대조) |
+

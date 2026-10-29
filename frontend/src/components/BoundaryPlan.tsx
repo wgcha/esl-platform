@@ -84,8 +84,10 @@ export function BoundaryPlan({ plan, showLinks }: { plan: DoePlanOut; showLinks:
 }
 
 /** 평면도 범례 + 경계 경고 접힘 목록(라벨·거리·기준) */
-export function BoundaryLegend({ plan, st, showLinks }: { plan: DoePlanOut; st: DoeSettingsOut; showLinks: boolean }) {
+/** nWarn = 연구 prep.boundary.n_warn(서버 판정 경고 수). B 체결 후보가 0 이면 경고는 있어도 선(links)이 없다(§8.2 "B 후보 0 → 전부 경고") */
+export function BoundaryLegend({ plan, st, showLinks, nWarn }: { plan: DoePlanOut; st: DoeSettingsOut; showLinks: boolean; nWarn?: number | null }) {
   const warns = plan.links.filter((l) => l.warn);
+  const total = Math.max(warns.length, nWarn ?? 0);
   return (
     <div className="doe-plan-side">
       <div className="doe-legend small">
@@ -112,9 +114,9 @@ export function BoundaryLegend({ plan, st, showLinks }: { plan: DoePlanOut; st: 
         )}
       </div>
       {showLinks && (
-        <details className="doe-warn-list" open={warns.length > 0}>
+        <details className="doe-warn-list" open={total > 0}>
           <summary className="small">
-            경계 경고 <b data-testid="boundary-warn-n">{warns.length}</b>
+            경계 경고 <b data-testid="boundary-warn-n">{total}</b>
             <span className="muted"> · 차단 아님</span>
           </summary>
           {warns.length ? (
@@ -140,6 +142,8 @@ export function BoundaryLegend({ plan, st, showLinks }: { plan: DoePlanOut; st: 
                 ))}
               </tbody>
             </table>
+          ) : total > 0 ? (
+            <div className="small warn-text" data-testid="boundary-no-cand">B 체결 후보(구멍·고정 클러스터)가 없어 A 체결점·하중 집중부 {total}개가 모두 경고입니다(잇는 선 없음)</div>
           ) : (
             <div className="small muted">경고 없음</div>
           )}

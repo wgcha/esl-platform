@@ -1,6 +1,7 @@
 // P3-이력 API(계약 esl_p3_history.md §3). check:api 가 endpoints.ts·p3.ts 와 함께 이 파일의 경로도 openapi 와 대조한다.
 import { API_PREFIX, request } from "./client";
 import type { JobOut, JobState, JobType, LogOut, StepOut } from "./types";
+import { PHASE_NAME, SCENARIO_NAME, SCENARIO_NO } from "./doe";
 
 export type HistoryResultKind = "extract" | "esl_run" | "validation" | "export" | "report" | "analysis" | "comparison" | "opt_run";
 
@@ -277,6 +278,10 @@ export const STALE_REASON_LABEL: Record<string, string> = {
 };
 
 /** 목록 한 줄 요약 */
+/** 비드 DOE 이력 요약 표기(연구 화면과 같은 이름 — api/doe.ts) */
+const DOE_SCENARIO_LABEL: Record<string, string> = Object.fromEntries(Object.entries(SCENARIO_NAME).map(([k, v]) => [k, `${SCENARIO_NO[k as keyof typeof SCENARIO_NO]} ${v}`]));
+const DOE_PHASE_LABEL: Record<string, string> = PHASE_NAME;
+
 export function summaryText(it: HistoryItem): string {
   const s = it.summary;
   if (!s) return it.failure_code ?? "";
@@ -298,6 +303,14 @@ export function summaryText(it: HistoryItem): string {
     case "OPT_RUN":
       // v0.7.0: summary {scenario, load_strategy, n_cases, converged}
       return `${String(s.scenario ?? "–")} · 전략 ${String(s.load_strategy ?? "–")} · 케이스 ${n("n_cases") ?? "–"}${s.converged === false ? " · 미수렴" : ""}`;
+    case "DOE_PREP":
+    case "DOE_PREVIEW":
+    case "DOE_RUN": {
+      // v0.9.0: summary {scenario, phase} — 상세 화면(연구)과 같은 시나리오·단계 이름
+      const scn = typeof s.scenario === "string" && s.scenario in DOE_SCENARIO_LABEL ? DOE_SCENARIO_LABEL[s.scenario] : String(s.scenario ?? "–");
+      const ph = typeof s.phase === "string" && s.phase in DOE_PHASE_LABEL ? DOE_PHASE_LABEL[s.phase] : String(s.phase ?? "–");
+      return `${scn} · ${ph}`;
+    }
     default:
       return "";
   }

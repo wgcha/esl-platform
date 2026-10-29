@@ -128,6 +128,11 @@ const relText = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFix
 function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScenario }) {
   return (
     <div className="small" data-testid="doe-check">
+      {scenario === "step" && (
+        <span>
+          STEP {check.step.file_name} · {check.step.size_mb.toFixed(2)} MB <span className="ok-text">✓</span> (크기 검사는 입력 준비에서)
+        </span>
+      )}
       {check.base && scenario === "same" && (
         <span>
           기준 Case {check.base.case_title ?? check.base.case_id} · 파트 {check.base.part_title} · 노드 {check.base.n_nodes.toLocaleString()} · 요소 {check.base.n_elems.toLocaleString()}
