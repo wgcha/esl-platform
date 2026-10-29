@@ -10,10 +10,15 @@
 - 화면: Case 상단 '누적 씬' 배지, ① '누적 입력' 카드(상태 파일·좌표 출처·두께 변화 t/t₀·이전 소성·h3d 판정), ② `누적 (이전 + 이번)` 값과 표 열·증분 곡선 토글, ⑤ 변형률 참고 비교 '(이번 낙하 증분 기준)', 보고서 '누적 낙하 입력' 절
 - 업로드 허용 확장자에 `.sta`·`.str`(기존 서버 설정이 목록을 적어 두었으면 업데이트 때 1회 보충). 상태 파일 include 가 빠지면 '이전 런 상태' 표시와 `STATE_INCLUDE_MISSING`
 - 업데이트·설치 시 `altair.hw_exe_path` 와 같은 Altair 설치에 `hwsolvers/scripts/optistruct.bat` 이 실제 있으면 `altair.optistruct_path`·`opt_run.enabled: true` 를 자동으로 추가(기존 값·`enabled: false` 는 그대로, 수정 전 설정 백업, 콘솔 1줄)
+- OptiStruct 오류 상세: 실패 메시지에 오류 번호·상세 줄·카드(예 `DTPG,9000006 연속 줄 1`)·덱 줄 번호·인용 덱 줄을 넣고(.out 끝 요약의 같은 오류는 한 번만), 전체 블록은 `solve/os_errors.txt`·작업 로그에 남깁니다. 설정 `opt_run.solve.error_detail_lines`(4)·`error_context_lines`(8)·`error_context_pattern`·`error_card_pattern`·`error_code_pattern`·`error_message_max`(480)
+- 비드 최적화 상세가 실패면 **실패 확인 파일** 카드: 덱(.fem·.inc)·`.out`·`os_errors.txt`·`solve.json` 받기 + 덱·OptiStruct zip
+- 라이브러리 설정 `optdeck.dtpg.*`(bead_flag·bead_fields·draw·pid_cont_col): OptiStruct 버전별 DTPG 비드 줄 칸 차이를 설정으로 맞춤(없으면 공식 형식 기본값)
+- 실기 체크리스트 `docs/manual/opt_run_check.md` §2.5 '-check 실패 시 확인'(파일 위치·보내 줄 줄 범위)
 ### 수정
 - 상태 파일처럼 ID 를 10자 칸에 오른쪽 정렬한 블록 헤더(`/SHELL/         2`)를 읽지 못하던 문제
 - 설정 파일 자동 보충 시 CRLF 줄 끝·BOM 이 사라지던 문제(이제 그대로 유지)
 - **라이브러리 항목 [수정]에서 모델명·인치를 고칠 수 없던 문제**: 수정 대화상자에서 모델(모델명·인치·버전·날짜·제품 질량)·씬(프로젝트·시나리오·순번·낙하 유형·라운드·씬 번호·orient·접미사·변형)·메모를 고쳐 저장하면 목록·필터·종합분석·비드 최적화 크기 판정에 바로 반영됩니다. 수정·폐기는 등록자 또는 관리자만(다른 사용자는 [수정] 비활성 + 사유), 다른 사람이 먼저 고쳤으면 오류 문구와 [최신 값 불러오기]
+- **비드 최적화 `-check` 실패(OS_DECK_INVALID, ERROR # 1485)**: DTPG 비드 줄을 OptiStruct Reference Guide 형식(`+, MW, ANG, BF, HGT, NORM, , , SKIP` — `BEAD` 라벨 없음)으로 씁니다. 이전 덱의 `+,BEAD,60.,45.,10.,YES,BC` 는 OptiStruct 2026.1 이 "Field 0 contains unrecognized/unexpected label" 로 거부했습니다(이슈 #35). PID 가 7개 이상이면 연속 줄은 3번째 칸부터 씁니다
 
 ## [0.7.2] - 2026-10-29
 ### 수정

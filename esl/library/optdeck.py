@@ -12,8 +12,11 @@
 카드 형식 (OptiStruct Reference Guide 기준, 이 환경에서 OptiStruct 실행 검증은 불가 → 확신도 표기):
 - 자유형식(콤마) 기본. 데이터 필드 8개를 넘으면 ``+,`` 로 시작하는 연속 줄. ``card_format: fixed`` 면 최적화 카드
   (DTPG·DRESP1·DOBJREF·DCONSTR)를 8칸 고정형식(연속 줄 첫 칸 ``+``)으로 쓴다(메시·하중 카드는 항상 자유형식).
-- ``DTPG, ID, PSHELL, PID1..PID6`` / ``+, PID7..`` / ``+, BEAD, MW, ANG, BH, BUFFZONE, SKIP`` /
-  ``+, BOUNDS, LB, UB``.  NORM 연속 줄 생략 → 비드 방향 = 요소(쉘) 법선(기본값).  [확신도: 중상]
+- DTPG (OptiStruct Reference Guide DTPG, help.altair.com …/os/dtpg_bulk_r.htm, 2025·2026):
+  ``DTPG, ID, PSHELL, PID1..PID6`` / ``+, , PID7..PID13`` (PID 연속 줄은 3번째 칸부터) /
+  ``+, MW, ANG, BF, HGT, NORM, , , SKIP`` (비드 줄: **플래그 없음** — 2번째 칸이 MW) / ``+, BOUNDS, LB, UB``.
+  v0.8.0 이전 덱의 ``+,BEAD,MW,ANG,BH,BUFFZONE,SKIP`` 은 OptiStruct 2026.1 이 ``ERROR # 1485`` (Field 0
+  unrecognized label) 로 거부(이슈 #35). 비드 줄 칸 배치·플래그·PID 연속 시작 칸은 설정 ``optdeck.dtpg.*``.
   SKIP 은 명시적으로 ``BC``: 이 덱은 **전 노드에 FORCE** 가 있으므로 LOAD/BOTH 를 쓰면 설계 노드가 모두 빠진다.
 - ``DRESP1, RID, COMP, COMP`` (PTYPE 비움 = 모델 전체 컴플라이언스, subcase 별 응답).  [확신도: 상]
 - minmax: case control 최상단 ``DESOBJ(MINMAX) = OID`` + subcase마다 ``DOBJREF, OID, RID, (NEG), POS, LOADSUB``.
@@ -44,12 +47,17 @@ DEFAULT_DESIGN = {
     "bead": {"min_width": 10.0, "height": 3.0, "angle": 60.0, "buffzone": True, "skip": "BC", "bounds": [0.0, 1.0]},
     "objective": "minmax", "beadfrac_max": None, "id_offset": 9000000, "num_format": "{:.9E}",
     "force_zero_tol_rel": 1e-9, "card_format": "free", "deck_name": "esl_bead", "nt": 4,
-    "nondesign_elem_ids": None, "server": None,
+    "nondesign_elem_ids": None, "server": None, "dtpg": None,
 }
+# DTPG 비드 줄 칸 배치(2..9번째 칸, 공식 형식 MW ANG BF HGT NORM/XD YD ZD SKIP). 토큰: MW ANG BF HGT DRAW SKIP '-'(빈 칸)
+DTPG_DEFAULT = {"bead_flag": "", "bead_fields": ["MW", "ANG", "BF", "HGT", "DRAW", "-", "-", "SKIP"], "draw": "NORM",
+                "pid_cont_col": 3}
+DTPG_TOKENS = ("MW", "ANG", "BF", "HGT", "DRAW", "SKIP", "-")
+DTPG_REQUIRED = ("MW", "ANG", "BF", "HGT", "SKIP")
 SKIP_VALUES = ("BC", "LOAD", "BOTH", "NONE")
 CONFIDENCE = {
     "mesh_force_spc_cards": "상 (GRID/CQUAD4/CTRIA3/PSHELL/MAT1/FORCE/SPC1 = 기존 esl_force.fem 과 같은 형식)",
-    "DTPG": "중상 (필드 순서 BEAD: MW, ANG, BH, BUFFZONE, SKIP / BOUNDS: LB, UB — 2026.1 레퍼런스로 확인 필요)",
+    "DTPG": "중상 (비드 줄 MW, ANG, BF, HGT, NORM, -, -, SKIP / BOUNDS: LB, UB — 2025·2026 레퍼런스 형식표)",
     "DRESP1_COMP": "상",
     "DESOBJ_MINMAX_DOBJREF": "중상 (DOBJREF: ID, DRESP, NEG, POS, LOADSUB 순)",
     "WCOMP_WEIGHT": "중 (weighted compliance 응답과 subcase WEIGHT 문)",
@@ -57,7 +65,8 @@ CONFIDENCE = {
     "free_format_continuation": "중상 ('+,' 연속 줄; 실패 시 card_format: fixed 로 다시 생성)",
 }
 CONFIDENCE_EN = {
-    "mesh/FORCE/SPC1 cards": "high", "DTPG field order (BEAD MW ANG BH BUFFZONE SKIP; BOUNDS LB UB)": "medium-high",
+    "mesh/FORCE/SPC1 cards": "high",
+    "DTPG bead line (MW ANG BF HGT NORM - - SKIP, no flag; BOUNDS LB UB)": "medium-high",
     "DRESP1 COMP": "high", "DESOBJ(MINMAX) + DOBJREF (ID DRESP NEG POS LOADSUB)": "medium-high",
     "WCOMP + subcase WEIGHT": "medium", "BEADFRAC response": "medium-low",
     "free-format continuation '+,'": "medium-high (regenerate with card_format: fixed if rejected)",
@@ -110,7 +119,7 @@ def _merge(base: dict, over: dict | None) -> dict:
     for k, v in (over or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k].update({kk: vv for kk, vv in v.items() if vv is not None})
-        elif v is not None or k in ("design_pids", "beadfrac_max", "server", "nondesign_elem_ids"):
+        elif v is not None or k in ("design_pids", "beadfrac_max", "server", "nondesign_elem_ids", "dtpg"):
             out[k] = v
     return out
 
@@ -192,6 +201,29 @@ def support_rank(X: np.ndarray, sup_pos: list[int], dofs: list[str]) -> dict:
     return {"rank": rank, "sigma_ratio": ratio, "n_rows": int(A.shape[0])}
 
 
+def dtpg_layout(over: dict | None) -> dict:
+    """DTPG 비드 줄 배치(설정 ``optdeck.dtpg``) 검증 + 기본값."""
+    tp = {**DTPG_DEFAULT, **{k: v for k, v in (over or {}).items() if v is not None}}
+    unknown = set(tp) - set(DTPG_DEFAULT)
+    if unknown:
+        raise EslError("INPUT_INVALID", f"optdeck.dtpg 알 수 없는 키 {sorted(unknown)}")
+    f = [str(x).upper() for x in tp["bead_fields"]]
+    flag = str(tp["bead_flag"] or "").strip().upper()
+    bad = [x for x in f if x not in DTPG_TOKENS]
+    if bad or any(f.count(x) != 1 for x in DTPG_REQUIRED) or f.count("DRAW") > 1 or len(f) + bool(flag) > 8:
+        raise EslError("INPUT_INVALID", f"optdeck.dtpg.bead_fields: {list(DTPG_TOKENS)} 토큰, MW·ANG·BF·HGT·SKIP 각 1번, "
+                                        f"플래그 포함 8칸 이하 (값 {tp['bead_fields']})")
+    if not (flag == "" or flag.isalpha()):
+        raise EslError("INPUT_INVALID", f"optdeck.dtpg.bead_flag: 빈 값 또는 영문 라벨 (값 {tp['bead_flag']!r})")
+    draw = str(tp["draw"] or "").strip().upper()
+    if draw not in ("", "NORM"):
+        raise EslError("INPUT_INVALID", f"optdeck.dtpg.draw: NORM 또는 빈 값 (값 {tp['draw']!r})")
+    col = tp["pid_cont_col"]
+    if isinstance(col, bool) or not isinstance(col, int) or col not in (2, 3):
+        raise EslError("INPUT_INVALID", f"optdeck.dtpg.pid_cont_col: 2|3 (값 {col!r})")
+    return {"bead_flag": flag, "bead_fields": f, "draw": draw, "pid_cont_col": col}
+
+
 def _ascii(s) -> str:
     return str(s).encode("ascii", "backslashreplace").decode("ascii")
 
@@ -209,6 +241,7 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
         raise EslError("INPUT_INVALID", "bead.skip=LOAD/BOTH 는 전 노드 FORCE 덱에서 설계 노드를 모두 제외함 — BC 또는 NONE")
     if not load_cases:
         raise EslError("INPUT_INVALID", "하중 케이스가 없음")
+    dtpg_layout(d.get("dtpg"))
     srv = d.get("server")
     if srv is not None:
         if not isinstance(srv, dict) or int(srv.get("desmax") or 0) < 1:
@@ -316,14 +349,21 @@ def write(target_mesh: dict, load_cases: list[dict], support_321, design: dict |
     L.append("$ ---- SPC1 (3-2-1 statically determinate supports; loads are self-equilibrated)")
     for n, dof in sup:
         L.append(f"SPC1,{spc_sid},{dof},{n}")
-    L.append("$ ---- DTPG: bead (topography) design on design PSHELLs; draw direction = element normal (no NORM)")
+    tp = dtpg_layout(d.get("dtpg"))
+    L.append("$ ---- DTPG: bead (topography) design on design PSHELLs; bead line = "
+             + " ".join(x if x != "DRAW" else (tp["draw"] or "-") for x in
+                        ([tp["bead_flag"]] if tp["bead_flag"] else []) + tp["bead_fields"]))
     L += card("DTPG", [dtpg_id, "PSHELL"] + design_pids[:6], fmt)
     rest = design_pids[6:]
-    for k in range(0, len(rest), 8):
-        L += [ln for ln in card("X", [""] * 8 + rest[k:k + 8], fmt)[1:]]
+    lead = [""] * (int(tp["pid_cont_col"]) - 2)
+    per = 8 - len(lead)
+    for k in range(0, len(rest), per):
+        L += [ln for ln in card("X", [""] * 8 + lead + rest[k:k + per], fmt)[1:]]
     bw = 8 if fmt == "fixed" else None
-    L += card("X", [""] * 8 + ["BEAD", real(b["min_width"], bw), real(b["angle"], bw), real(b["height"], bw),
-                                "YES" if b["buffzone"] else "NO", skip], fmt)[1:]
+    val = {"MW": real(b["min_width"], bw), "ANG": real(b["angle"], bw), "HGT": real(b["height"], bw),
+           "BF": "YES" if b["buffzone"] else "NO", "SKIP": skip, "DRAW": tp["draw"], "-": ""}
+    bead_line = ([tp["bead_flag"]] if tp["bead_flag"] else []) + [val[x] for x in tp["bead_fields"]]
+    L += card("X", [""] * 8 + bead_line, fmt)[1:]
     lb, ub = b["bounds"]
     L += card("X", [""] * 8 + ["BOUNDS", real(lb, bw), real(ub, bw)], fmt)[1:]
     L.append("$ ---- responses / objective")
@@ -432,9 +472,10 @@ def _readme(d, deck, load_cases, refs, design_pids, nondesign_pids, why, des, sp
     lines += [
         f"  3-2-1 지지: {sup}  (하중은 자기평형 → 반력 ≈ 0 이어야 정상. SPCFORCE 로 확인)",
         f"  DTPG {dtpg_id}: 설계 PSHELL {design_pids}",
-        f"    비드 최소폭 MW={b['min_width']}, 각도 ANG={b['angle']} deg, 높이 BH={b['height']}, "
-        f"BUFFZONE={'YES' if b['buffzone'] else 'NO'}, SKIP={str(b['skip']).upper()}, BOUNDS={b['bounds']}",
-        "    방향 = 요소 법선(NORM 줄 없음). 단위는 모델 단위(길이).",
+        f"    비드 최소폭 MW={b['min_width']}, 각도 ANG={b['angle']} deg, 높이 HGT={b['height']}, "
+        f"버퍼 BF={'YES' if b['buffzone'] else 'NO'}, SKIP={str(b['skip']).upper()}, BOUNDS={b['bounds']}",
+        "    비드 줄 칸 = " + " ".join(dtpg_layout(d.get("dtpg"))["bead_fields"])
+        + " (설정 optdeck.dtpg). 방향 = 요소 법선(NORM). 단위는 모델 단위(길이).",
         f"  비설계 PSHELL {nondesign_pids} (요소 {int((~des).sum())}개: PID {why['by_pid']}, "
         f"design_pids 밖 {why['by_design_pids']}, 노드 반경 {why['by_radius']}"
         + (f", 금지 영역 요소 {why['by_elems']}" if "by_elems" in why else "") + ")",

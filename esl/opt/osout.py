@@ -7,6 +7,9 @@
   · 반복 = ``iteration_pattern`` 의 마지막 번호, 반복 블록마다 ``objective_pattern``·``compliance_pattern``(subcase, 값).
 - ``classify(exit_code, text, solve_cfg, have_files)`` → None(성공) | OS_LICENSE_UNAVAILABLE(재시도 대상) |
   SOLVER_OUT_OF_MEMORY | OS_SOLVE_FAILED.
+- ``error_blocks(text, solve_cfg)`` → ERROR 블록(오류 줄 + 다음 상세 줄 ``error_detail_lines`` 줄 + 앞의
+  "See next message about line N from file" 문맥: 덱 줄 번호·파일·카드·연속 줄 번호·인용 덱 줄). 같은 블록(.out 끝
+  요약에 반복)은 한 번만. ``error_summary(blocks)`` → failure_message 용 한 줄씩.
 - ``history(parsed, selection)`` → history.csv 행: iteration, objective(abs: max C_k/C_ref, rel: max C_k/C_k⁰),
   케이스별 C_k·C_k/C_k⁰ (C_k⁰ = 자체 솔버 초기 컴플라이언스).
 """
@@ -45,12 +48,118 @@ def parse_out(text: str, solve_cfg: dict) -> dict:
         for m in re.finditer(p, text):
             ln_end = text.find("\n", m.end())
             errors.append(text[m.start(): ln_end if ln_end >= 0 else len(text)].strip()[:300])
+    eblocks = error_blocks(text, solve_cfg)
     lic = any(re.search(p, text) for p in solve_cfg["license_patterns"])
     mem = any(re.search(p, text) for p in solve_cfg.get("memory_patterns") or [])
     conv = any(re.search(p, text) for p in solve_cfg["converged_patterns"])
     its = [it for it, _ in blocks]
     return {"iterations": len(set(its)), "last_iteration": max(its) if its else None, "converged": conv,
-            "objective": objective, "compliance": compliance, "errors": errors[:20], "license": lic, "memory": mem}
+            "objective": objective, "compliance": compliance, "errors": errors[:20], "error_blocks": eblocks[:20],
+            "license": lic, "memory": mem}
+
+
+ERROR_DEFAULTS = {
+    "error_detail_lines": 4,
+    "error_context_lines": 8,
+    "error_context_pattern": r"(?i)See next message about line\s+(\d+)",
+    "error_card_pattern": (r"(?i)\(this is\s+(?:continuation line\s+(\d+)\s+of\s+)?([A-Z][A-Z0-9_]*)\s*,\s*([^\s)]+)"
+                           r"\s+bulk data\)"),
+    "error_code_pattern": r"ERROR\s*#\s*(\d+)",
+}
+
+
+def _ecfg(solve_cfg: dict, k: str):
+    v = solve_cfg.get(k)
+    return ERROR_DEFAULTS[k] if v is None else v
+
+
+def error_blocks(text: str, solve_cfg: dict) -> list[dict]:
+    """ERROR 줄마다 {error, code, detail[], context[], deck_line_no, deck_file, card, card_id, continuation, quoted}."""
+    lines = (text or "").splitlines()
+    err_res = [re.compile(p) for p in solve_cfg["error_patterns"]]
+    ctx_re = re.compile(_ecfg(solve_cfg, "error_context_pattern"))
+    card_re = re.compile(_ecfg(solve_cfg, "error_card_pattern"))
+    code_re = re.compile(_ecfg(solve_cfg, "error_code_pattern"))
+    n_det = int(_ecfg(solve_cfg, "error_detail_lines"))
+    n_ctx = int(_ecfg(solve_cfg, "error_context_lines"))
+
+    def is_err(ln: str) -> bool:
+        return any(r.search(ln) for r in err_res)
+
+    def is_rule(ln: str) -> bool:
+        t = ln.strip()
+        return len(t) >= 10 and set(t) <= {"*", "-", "="}
+
+    out, seen = [], set()
+    for i, ln in enumerate(lines):
+        if not is_err(ln):
+            continue
+        det = []
+        for j in range(i + 1, min(len(lines), i + 1 + n_det)):
+            t = lines[j].strip()
+            if not t or is_rule(t) or is_err(lines[j]) or ctx_re.search(t):
+                break
+            det.append(t[:300])
+        ctx, c0 = [], None
+        for j in range(i - 1, max(-1, i - 1 - n_ctx), -1):
+            if is_err(lines[j]) or is_rule(lines[j]):
+                break
+            if ctx_re.search(lines[j]):
+                c0 = j
+                break
+        if c0 is not None:
+            ctx = [x.strip()[:300] for x in lines[c0:i] if x.strip()]
+        b = {"error": ln.strip()[:300], "code": None, "detail": det, "context": ctx, "deck_line_no": None,
+             "deck_file": None, "card": None, "card_id": None, "continuation": None, "quoted": None}
+        m = code_re.search(ln)
+        if m:
+            b["code"] = int(m.group(1))
+        if ctx:
+            m = ctx_re.search(ctx[0])
+            b["deck_line_no"] = int(m.group(1)) if m and m.groups() else None
+            for x in ctx[1:]:
+                mc = card_re.search(x)
+                if mc:
+                    b["continuation"] = int(mc.group(1)) if mc.group(1) else None
+                    b["card"], b["card_id"] = mc.group(2).upper(), mc.group(3)
+                elif len(x) >= 2 and x[0] == '"' and x[-1] == '"':
+                    b["quoted"] = x[1:-1]
+                elif b["deck_file"] is None and b["card"] is None and b["quoted"] is None:
+                    b["deck_file"] = x
+        key = (b["error"], tuple(det), tuple(ctx))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(b)
+    return out
+
+
+def error_summary(b: dict) -> str:
+    """failure_message 용 한 줄: 'ERROR # 1485 in the input data: Field 0 ... — DTPG,9000006 연속 줄 1, 덱 줄 446378: "+,BEAD,..."'."""
+    head = b["error"]
+    if b.get("code") is not None:
+        rest = b["error"].split(str(b["code"]), 1)[-1].strip(" *:")
+        head = f"ERROR # {b['code']}" + (f" {rest}" if rest else "")
+    s = head + (": " + " ".join(b["detail"]) if b.get("detail") else "")
+    where = []
+    if b.get("card"):
+        where.append(f"{b['card']},{b['card_id']}" + (f" 연속 줄 {b['continuation']}" if b.get("continuation") else ""))
+    if b.get("deck_line_no") is not None:
+        where.append(f"덱 줄 {b['deck_line_no']}")
+    if where:
+        s += " — " + ", ".join(where)
+    if b.get("quoted"):
+        s += f': "{b["quoted"]}"'
+    return s
+
+
+def error_text(blocks: list[dict]) -> str:
+    """전체 블록(문맥·오류·상세 줄 그대로) — solve/os_errors.txt·작업 로그용."""
+    out = []
+    for k, b in enumerate(blocks, start=1):
+        out.append(f"[{k}] {error_summary(b)}")
+        out += [f"    {x}" for x in b["context"] + [b["error"]] + b["detail"]]
+    return "\n".join(out) + ("\n" if out else "")
 
 
 def classify(exit_code: int, text: str, solve_cfg: dict, have_files: bool = True) -> str | None:
@@ -123,6 +232,7 @@ def require_ok(exit_code: int, text: str, solve_cfg: dict, have_files: bool) -> 
     code = classify(exit_code, text, solve_cfg, have_files)
     if code is not None:
         p = parse_out(text or "", solve_cfg)
-        raise EslError(code, f"OptiStruct 실패(종료코드 {exit_code}): " + ("; ".join(p["errors"][:3]) or
+        raise EslError(code, f"OptiStruct 실패(종료코드 {exit_code}): " + ("; ".join(
+            error_summary(b) for b in p["error_blocks"][:3]) or
                                                                        ("출력 파일 없음" if not have_files else "오류 패턴")))
     return parse_out(text, solve_cfg)

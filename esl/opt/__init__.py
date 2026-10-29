@@ -55,7 +55,13 @@ DEFAULTS: dict = {
               "objective_pattern": r"(?im)^\s*Objective\s+Function\b[^=\n]*=\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)",
               "compliance_pattern": (r"(?m)^\s*\|\s*\d+\s*\|[^|\n]*\|\s*COMPL\w*\s*\|[^|\n]*\|[^|\n]*\|\s*(\d+)\s*\|"
                                      r"\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)"),
-              "memory_patterns": [r"(?i)(insufficient|not enough)\s+memory", r"(?i)memory allocation failed"]},
+              "memory_patterns": [r"(?i)(insufficient|not enough)\s+memory", r"(?i)memory allocation failed"],
+              # ERROR 블록 상세(esl.opt.osout.error_blocks): 오류 줄 다음 상세 줄 수·앞 문맥 줄 수·문맥/카드 패턴
+              "error_detail_lines": 4, "error_context_lines": 8,
+              "error_context_pattern": r"(?i)See next message about line\s+(\d+)",
+              "error_card_pattern": (r"(?i)\(this is\s+(?:continuation line\s+(\d+)\s+of\s+)?([A-Z][A-Z0-9_]*)\s*,\s*"
+                                     r"([^\s)]+)\s+bulk data\)"),
+              "error_code_pattern": r"ERROR\s*#\s*(\d+)", "error_message_max": 480},
     "post": {"png_px": [1600, 900], "bead_area_thr_rel": 0.1, "report_map_cells": [96, 54]},
     # 계약 §7.2 메시 검사 경고 기준(설정 가능)
     "check": {"bead_width_elem_factor": 2.0, "min_nodes_per_cell": 64, "max_aspect": 10.0, "max_warp_deg": 15.0},

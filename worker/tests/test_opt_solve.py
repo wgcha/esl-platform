@@ -86,6 +86,36 @@ def test_check_fail_deck_invalid(client, engine, worker_factory, esl_root, input
     assert os_in_use(engine) == 0 and step_outputs(engine, run["job_id"], 4)["os_acquired"] is False
 
 
+def test_check_1485_detail(client, engine, worker_factory, esl_root, inputs_root, tools):
+    """이슈 #35: -check 종료코드 0 + ERROR # 1485 → OS_DECK_INVALID, 상세(필드·카드·덱 줄·인용) 한 번만 + os_errors.txt."""
+    set_control(tools, mode="check_1485")
+    _s1, run = _s1_run(client, engine, esl_root, inputs_root)
+    j = run_job(client, worker_factory(), run["job_id"], "FAILED")
+    msg = j["failure_message"]
+    assert j["failure_code"] == "OS_DECK_INVALID" and msg.startswith("OptiStruct -check 실패(종료코드 0): ")
+    assert ("ERROR # 1485 in the input data: Field 0 contains unrecognized/unexpected label. — DTPG,9000006 연속 줄 1, 덱 줄 446378: "
+            '"+,BEAD,60.,45.,10.,YES,BC"') in msg and msg.count("1485") == 1 and len(msg) <= 480
+    sd = run_dir(esl_root, run["id"]) / "solve"
+    txt = (sd / "os_errors.txt").read_text()
+    assert "Field 0 contains unrecognized/unexpected label." in txt and "continuation line 1 of DTPG,9000006" in txt
+    sj = json.loads((sd / "solve.json").read_text())
+    assert sj["exit_code"] == 0 and sj["errors"][0]["card"] == "DTPG" and sj["errors"][0]["deck_line_no"] == 446378
+    rels = {f["rel"] for f in client.get(f"{API}/opt/runs/{run['id']}/files", headers=W).json()}
+    assert {"solve/os_errors.txt", "solve/esl_bead.out", "deck/esl_bead.fem"} <= rels
+    log = (run_dir(esl_root, run["id"]) / "logs" / run["job_id"] / "step_04_OS_SOLVE.log").read_text()
+    assert "OptiStruct 오류 1건" in log and '"+,BEAD,60.,45.,10.,YES,BC"' in log
+
+
+def test_generated_deck_passes_dtpg_check(client, engine, worker_factory, esl_root, inputs_root, tools):
+    """가짜 -check 의 DTPG 비드 줄 공식 형식 검사를 실제 생성 덱이 통과(비드 줄 = MW ANG BF HGT NORM - - SKIP)."""
+    _s1, run = _s1_run(client, engine, esl_root, inputs_root)
+    run_job(client, worker_factory(), run["job_id"])
+    fem = (run_dir(esl_root, run["id"]) / "deck" / "esl_bead.fem").read_text()
+    lines = fem.splitlines()
+    k = next(i for i, ln in enumerate(lines) if ln.startswith("DTPG,"))
+    assert lines[k + 1] == "+,60.,45.,YES,10.,NORM,,,BC" and ",BEAD," not in fem
+
+
 def test_license_twice_then_success(client, engine, worker_factory, esl_root, inputs_root, tools):
     set_control(tools, license=2)
     _s1, run = _s1_run(client, engine, esl_root, inputs_root)

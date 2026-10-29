@@ -1,6 +1,7 @@
 """라이브러리 설정 로더 (config/library.example.yaml). 모든 키 필수, 알 수 없는 키는 CONFIG_INVALID."""
 from __future__ import annotations
 
+import copy
 import math
 import os
 import re
@@ -106,6 +107,19 @@ def _fmt(k, v):
         raise _bad(k, f"실수 format (값 {v!r})") from None
 
 
+def _dtpg_flag(k, v):
+    if not isinstance(v, str) or not (v == "" or v.isalpha()):
+        raise _bad(k, f"빈 문자열 또는 영문 라벨 (값 {v!r})")
+
+
+def _dtpg_fields(k, v):
+    from esl.library.optdeck import DTPG_REQUIRED, DTPG_TOKENS
+
+    if (not isinstance(v, list) or any(not isinstance(x, str) or x.upper() not in DTPG_TOKENS for x in v)
+            or len(v) > 8 or any([x.upper() for x in v].count(t) != 1 for t in DTPG_REQUIRED)):
+        raise _bad(k, f"{list(DTPG_TOKENS)} 목록(≤8칸, MW·ANG·BF·HGT·SKIP 각 1번) (값 {v!r})")
+
+
 def _coarsen(k, v):
     if v is not False and v != "half":
         raise _bad(k, f"false | half (값 {v!r})")
@@ -136,6 +150,8 @@ SCHEMA = {
         "beadfrac_max": _opt(_num(0.0, 1.0, lo_open=True)), "id_offset": _int(1), "num_format": _fmt,
         "force_zero_tol_rel": _num(0.0, 1.0), "card_format": _enum("free", "fixed"), "deck_name": _str,
         "nt": _int(1),
+        "dtpg": {"bead_flag": _dtpg_flag, "bead_fields": _dtpg_fields, "draw": _enum("NORM", ""),
+                 "pid_cont_col": _enum(2, 3)},
         "cases": _enum("all", "representative", "representative+worst"), "max_cases": _int(1),
         "solver": {"drill_factor": _num(0.0, 1.0, lo_open=True),
                    "backend": _enum("auto", "cholmod", "pardiso", "superlu", "iterative")},
@@ -147,7 +163,11 @@ SCHEMA = {
 # §12 에서 추가된 키: 이전 설정 파일(설치본 library.yaml 은 업데이트 때 덮어쓰지 않음)과 호환되도록 없으면 기본값으로 채운다.
 # (그 밖의 키는 여전히 모두 필수.)
 # §12.4: convergence 기본 cos_min 0.95, min_nodes_per_cell 64, coarsen false (블록이 있어도 빠진 키는 채움).
+# v0.8.0: optdeck.dtpg(DTPG 비드 줄 칸 배치 — OptiStruct Reference Guide DTPG 형식표, 이슈 #35).
+_DTPG = {"bead_flag": "", "bead_fields": ["MW", "ANG", "BF", "HGT", "DRAW", "-", "-", "SKIP"], "draw": "NORM",
+         "pid_cont_col": 3}
 DEFAULTS = {("optdeck", "cases"): "all", ("optdeck", "max_cases"): 60,
+            ("optdeck", "dtpg"): _DTPG, **{("optdeck", "dtpg", k): v for k, v in _DTPG.items()},
             ("convergence",): {"cos_min": 0.95, "rep_same": True, "min_nodes_per_cell": 64, "coarsen": False},
             ("convergence", "cos_min"): 0.95, ("convergence", "rep_same"): True,
             ("convergence", "min_nodes_per_cell"): 64, ("convergence", "coarsen"): False}
@@ -163,7 +183,7 @@ def fill_defaults(cfg):
             if node is None:
                 break
         if isinstance(node, dict) and path[-1] not in node:
-            node[path[-1]] = dict(v) if isinstance(v, dict) else v
+            node[path[-1]] = copy.deepcopy(v)
     return cfg
 
 

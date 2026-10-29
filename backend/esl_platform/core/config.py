@@ -269,6 +269,14 @@ class OptSolveCfg(_M):
                                r"\s*([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)")
     memory_patterns: list[str] = Field(default_factory=lambda: [r"(?i)(insufficient|not enough)\s+memory",
                                                                 r"(?i)memory allocation failed"])
+    # ERROR 블록 상세(failure_message·solve/os_errors.txt): 오류 다음 상세 줄 수, 앞 문맥(See next message …) 줄 수
+    error_detail_lines: int = Field(default=4, ge=0, le=100)
+    error_context_lines: int = Field(default=8, ge=0, le=100)
+    error_context_pattern: str = r"(?i)See next message about line\s+(\d+)"
+    error_card_pattern: str = (r"(?i)\(this is\s+(?:continuation line\s+(\d+)\s+of\s+)?([A-Z][A-Z0-9_]*)\s*,\s*"
+                               r"([^\s)]+)\s+bulk data\)")
+    error_code_pattern: str = r"ERROR\s*#\s*(\d+)"
+    error_message_max: int = Field(default=480, ge=80, le=500)     # 작업 failure_message 열 500자
 
 
 class OptPostCfg(_M):
@@ -574,7 +582,8 @@ def _opt_issues(s: Settings) -> list[Issue]:
     pats = [(f"opt_run.solve.{k}[{i}]", p) for k in ("error_patterns", "converged_patterns", "license_patterns",
                                                        "memory_patterns") for i, p in enumerate(getattr(sv, k))]
     pats += [(f"opt_run.solve.{k}", getattr(sv, k)) for k in ("iteration_pattern", "objective_pattern",
-                                                              "compliance_pattern")]
+                                                              "compliance_pattern", "error_context_pattern",
+                                                              "error_card_pattern", "error_code_pattern")]
     for key, pat in pats:
         try:
             re.compile(pat)

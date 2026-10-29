@@ -104,8 +104,10 @@ def test_opt_run_deck(tmp_path, norm, synthetic):
     assert "OUTPUT,H3D,ALL" in fem.split("BEGIN BULK")[0] and "DOPTPRM,DESMAX,30" in fem.split("BEGIN BULK")[1]
     assert "DESOBJ(MINMAX)" in fem
     # 비드 45°·60·10
-    bead = [ln for ln in fem.splitlines() if ",BEAD," in ln][0]
-    assert bead.split(",")[2:7] == ["60.", "45.", "10.", "YES", "BC"]
+    # 공식 DTPG 비드 줄: MW ANG BF HGT NORM YD ZD SKIP (플래그 없음) — 이슈 #35 "+,BEAD,60.,45.,10.,YES,BC" 회귀
+    lines = fem.splitlines()
+    k = next(i for i, ln in enumerate(lines) if ln.startswith("DTPG,"))
+    assert lines[k + 1] == "+,60.,45.,YES,10.,NORM,,,BC" and ",BEAD," not in fem
     assert re.search(r"^\+,+BOUNDS,0\.,1\.", fem, re.M)
     # 비설계 = PID 11 ∪ 금지 영역 사각형 → DTPG 목록에서 제외
     pm = {p["pid"]: p for p in s["pshell_map"]}
@@ -116,7 +118,7 @@ def test_opt_run_deck(tmp_path, norm, synthetic):
                    if ln.startswith(("CQUAD4", "CTRIA3"))}
     for e, d in zip(eid.tolist(), des.tolist()):
         assert (elem_pshell[e] in nd_pids) is (not d)
-    dtpg = fem.split("DTPG,")[1].split("BEAD")[0]
+    dtpg = fem.split("DTPG,")[1].split("\n")[0]
     for p in nd_pids:
         assert f",{p}" not in dtpg
     assert kres["counts"]["n_elems_rects"] > 0

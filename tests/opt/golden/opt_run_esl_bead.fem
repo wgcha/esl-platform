@@ -5,7 +5,7 @@ $ objective_norm abs C_ref 30000.0
 $ load_strategy A
 $ subcases: L01=Eb, L02=Ea, L03=Ec
 $ confidence (not executed by generator): mesh/FORCE/SPC1 cards = high
-$ confidence (not executed by generator): DTPG field order (BEAD MW ANG BH BUFFZONE SKIP; BOUNDS LB UB) = medium-high
+$ confidence (not executed by generator): DTPG bead line (MW ANG BF HGT NORM - - SKIP, no flag; BOUNDS LB UB) = medium-high
 $ confidence (not executed by generator): DRESP1 COMP = high
 $ confidence (not executed by generator): DESOBJ(MINMAX) + DOBJREF (ID DRESP NEG POS LOADSUB) = medium-high
 $ confidence (not executed by generator): WCOMP + subcase WEIGHT = medium
@@ -103,9 +103,9 @@ $ ---- SPC1 (3-2-1 statically determinate supports; loads are self-equilibrated)
 SPC1,9001,123,35
 SPC1,9001,12,31
 SPC1,9001,2,5
-$ ---- DTPG: bead (topography) design on design PSHELLs; draw direction = element normal (no NORM)
+$ ---- DTPG: bead (topography) design on design PSHELLs; bead line = MW ANG BF HGT NORM - - SKIP
 DTPG,9009,PSHELL,9006
-+,BEAD,60.,45.,10.,YES,BC
++,60.,45.,YES,10.,NORM,,,BC
 +,BOUNDS,0.,1.
 $ ---- responses / objective
 DRESP1,9010,COMP,COMP

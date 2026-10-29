@@ -1,0 +1,87 @@
+ ************************************************************************
+ **                                                                    **
+ **                                                                    **
+ **                    Altair OptiStruct(TM) 2026.1                    **
+ **                                                                    **
+ **             Advanced Engineering Analysis, Design and              **
+ **        Optimization Software from Altair Engineering, Inc.         **
+ **                                                                    **
+ **   OptiStruct includes an enhanced proprietary version of NASTRAN   **
+ **                                                                    **
+ **                                                                    **
+ **             Windows 10  (Build 9200)  DESKTOP-AG1RKLO              **
+ **         64 CPU:  Intel(R) Xeon(R) Gold 6246R CPU @ 3.40GHz         **
+ **                   429813 MB RAM,  540293 MB swap                   **
+ **                                                                    **
+ ** Build tag: -000  1046004000000000004004                            **
+ **                        Build SHA: b8e888494                        **
+ ************************************************************************
+ **  COPYRIGHT (C) 1996-2026                 Altair Engineering, Inc.  **
+ ** All Rights Reserved.  Copyright notice does not imply publication. **
+ **         Contains trade secrets of Altair Engineering, Inc.         **
+ ** Decompilation or disassembly of this software strictly prohibited. **
+ ************************************************************************
+ 
+  
+ *** OptiStruct defaults set from:
+   install config file: C:/Program Files/Altair/2026.1/hwsolvers/optistruct.cfg.
+  
+  
+ NOTE # 9199
+ MSGLMT=STRICT is active, all messages will be printed unless there is
+ a subsequent MSGLMT definition to limit error or warning messages.
+ You can also suppress some less important warning messages by use of
+  MSGLMT=BRIEF or UNREF (in config file or in the input data).
+  
+ 1 DOPTPRM(s) were set:
+    DESMAX,30
+  
+ ***************************** INFORMATION ******************************
+ * For OptiStruct useful guidelines and tips (Nonlinear analysis
+ * convergence, the model validity check etc...), go to the URL:
+ * https://help.altair.com/hwsolvers/os/topics/solvers/os/debugging.htm
+ ************************************************************************
+  
+ 
+ *** See next message about line 446378 from file:
+     E:/VD_SIMULATION_WEB/esl-data/_opt/309a3232-0c10-4585-bbe8-c71f2ccdf622/solve/esl_bead.fem
+  (this is continuation line 1 of DTPG,9000006 bulk data)
+  "+,BEAD,60.,45.,10.,YES,BC"
+  
+ *** ERROR # 1485 *** in the input data:
+ Field 0 contains unrecognized/unexpected label.
+
+************************************************************************
+
+COMPUTE TIME INFORMATION
+------------------------
+
+ EXECUTION STARTED                         Thu Oct 29 13:17:03 2026    
+ EXECUTION COMPLETED                       Thu Oct 29 13:17:06 2026    
+ ELAPSED TIME                                         00:00:02
+ CPU TIME                                             00:00:02
+
+************************************************************************
+
+  
+ 
+ *** PROGRAM STOPPED: FATAL ERROR(s) ENCOUNTERED.
+ 
+                        ***** END OF REPORT *****
+  
+************************************************************************
+  
+ A fatal error has been detected during input processing:
+  
+  
+  *** See next message about line 446378 from file:
+      E:/VD_SIMULATION_WEB/esl-data/_opt/309a3232-0c10-4585-bbe8-c71f2ccdf622/solve/esl_bead.fem
+   (this is continuation line 1 of DTPG,9000006 bulk data)
+   "+,BEAD,60.,45.,10.,YES,BC"
+  
+  *** ERROR # 1485 *** in the input data:
+  Field 0 contains unrecognized/unexpected label.
+  
+  
+************************************************************************
+
