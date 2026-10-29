@@ -728,6 +728,9 @@ function Write-EslConfigValidation {
     foreach ($b in @($Result.write.backups)) { if ($b) { Write-EslStep "바꾸기 전 사본: $b" } }
     foreach ($w in @($Result.write.written)) { if ($w) { Write-EslStep "작성: $w" } }
     foreach ($w in @($Result.write.created)) { if ($w) { Write-EslStep "폴더 생성: $w" } }
+    # v0.8.0: OptiStruct 경로 자동 감지·업로드 확장자 보충 결과 1줄씩(setup_config.py write 가 만든 문구)
+    if ($Result.write.opt_autodetect -and $Result.write.opt_autodetect.line) { Write-EslStep $Result.write.opt_autodetect.line }
+    if ($Result.write.ext_supplement -and $Result.write.ext_supplement.line) { Write-EslStep $Result.write.ext_supplement.line }
     foreach ($w in @($Result.warnings)) { if ($w) { Write-Warning $w } }
     $v = $Result.write.validation
     if ($v.ok -eq $false) {

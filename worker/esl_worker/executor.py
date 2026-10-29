@@ -463,7 +463,27 @@ class Executor:
         if prev:
             echo(f"[esl-worker] 이전 추출 산출물을 옮김: {prev}")
         request = os.path.join(work, "request.txt")
-        h3d.write_request(request, part=p["part"], hot_k=p["hot_k"], top_n=p["top_n"])
+        # 누적 씬(rad 가 이전 런 상태 파일 include): 대상 파트 이전 소성 CSV → TCL '+prev' 순위·F0 패스
+        prev_csv = os.path.join(work, h3d.PREV_CSV)
+        moved = h3d.backup_prev_csv(work)
+        if moved:
+            echo(f"[esl-worker] 이전 prev.csv 를 옮김: {moved}")
+        cum = None
+        if self.case.get("rad_path"):
+            from . import core_adapter
+            try:
+                cum = core_adapter.cumulative_prev(self.case["rad_path"], p["part"], prev_csv,
+                                                   (self.job["params"] or {}).get("settings") or {})
+            except core_adapter.CoreError as exc:
+                echo(f"[esl-worker] 누적 씬 판정 생략({exc.code}: {exc.message}) — 기존 추출로 진행")
+        if cum:
+            echo(f"[esl-worker] 누적 씬: 상태 파일 {[os.path.basename(x) for x in cum['state_files']]}, "
+                 f"prev.csv {cum['n']}요소 → request prev_file·frame0_pass·cum_min_incr")
+        try:
+            h3d.write_request(request, part=p["part"], hot_k=p["hot_k"], top_n=p["top_n"],
+                              extra=h3d.cumulative_request(cum, prev_csv))
+        except h3d.H3dError as exc:
+            raise _StepFailed(exc.code, exc.message) from None
         try:
             argv = h3d.build_argv(list(s.commands.h3d_extract), h3d.values_for(
                 hw=hw, tcl=tcl, h3d=p["h3d_path"], request=request, out_dir=out_dir, part=p["part"],

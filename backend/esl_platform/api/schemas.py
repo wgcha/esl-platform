@@ -913,6 +913,9 @@ class UploadCheckOut(_Out):
     parts: list[dict[str, Any]] = []
     missing_includes: list[str] = []
     problems: list[str] = []
+    state_includes: list[dict[str, Any]] = Field(
+        default=[], description="v0.8.0 누적 씬: rad include 중 이전 런 상태 파일(.sta/.str 또는 #RADIOSS STATE FILE) "
+                                "{rel, spec, kinds[geometry|initial], found}")
 
 
 class UploadClientOut(_Out):
@@ -1399,6 +1402,7 @@ class S1EntryRow(_Out):
 class S1CheckOut(_Out):
     base: S1Base
     entries: list[S1EntryRow]
+    warnings: list[dict[str, Any]] = Field(default=[], description="정보 경고 {code, message} — v0.8.0 S1_BASE_CUMULATIVE")
 
 
 class PlanViewFrame(_Out):

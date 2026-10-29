@@ -6506,6 +6506,16 @@
             },
             "title": "Entries",
             "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "description": "정보 경고 {code, message} — v0.8.0 S1_BASE_CUMULATIVE",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -7570,6 +7580,16 @@
               }
             ],
             "title": "Results Dir"
+          },
+          "state_includes": {
+            "default": [],
+            "description": "v0.8.0 누적 씬: rad include 중 이전 런 상태 파일(.sta/.str 또는 #RADIOSS STATE FILE) {rel, spec, kinds[geometry|initial], found}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "State Includes",
+            "type": "array"
           }
         },
         "required": [
@@ -7762,6 +7782,16 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "state_includes": {
+            "default": [],
+            "description": "v0.8.0 누적 씬: rad include 중 이전 런 상태 파일(.sta/.str 또는 #RADIOSS STATE FILE) {rel, spec, kinds[geometry|initial], found}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "State Includes",
+            "type": "array"
           },
           "upload_id": {
             "title": "Upload Id",

@@ -99,7 +99,8 @@ class StorageCfg(_M):
         return d
 
 
-UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem"]   # .fem: S2 템플릿(v0.7.0)
+UPLOAD_EXT_DEFAULT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem",   # .fem: S2 템플릿(v0.7.0)
+                      ".sta", ".str"]          # 누적 낙하 씬 이전 런 상태 파일(v0.8.0)
 
 
 class UploadCfg(_M):

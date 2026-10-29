@@ -11,8 +11,8 @@
 # Linux pwsh 에서 나머지를 실제로 실행한다(tests/windows/test_pc_upload_client.py). PowerShell 5.1 호환 문법만 쓴다.
 
 # 결과 폴더(csv)에서 올리는 확장자. .h3d 는 rel 'h3d/...' 로만 올린다(압축 모드·원본 모드, 계약 esl_upload_speed.md).
-$EslResultExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl')
-$EslAllowedExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl', '.h3d')
+$EslResultExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl', '.sta', '.str')
+$EslAllowedExt = @('.rad', '.inc', '.k', '.csv', '.json', '.txt', '.tcl', '.h3d', '.sta', '.str')
 $EslSegmentBad = '[\x00-\x1f\x7f<>:"|?*\\&^%!]'
 $EslReserved = '^(con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$)$'
 $EslRetries = 5
@@ -558,6 +558,11 @@ function Get-EslUploadPlan([string]$ResultsDir, [string]$RadPath, [int]$MaxDepth
             else {
                 [void]$prob.Add("include 가 rad 폴더 밖 상대경로라 서버에서 찾을 수 없습니다: $($inc.Spec) <- $($inc.Source) (include 파일을 rad 폴더 아래로 옮기세요)")
                 continue
+            }
+            $iext = [IO.Path]::GetExtension($inc.Path).ToLowerInvariant()
+            if ($iext -eq '.sta' -or $iext -eq '.str') {
+                $mb = [math]::Round((Get-Item -LiteralPath $inc.Path).Length / 1MB, 1)
+                [void]$warn.Add("누적 해석 상태 파일(이전 낙하): $rel ($mb MB)")
             }
             & $add $rel $inc.Path
         }

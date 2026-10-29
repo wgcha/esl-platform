@@ -883,11 +883,48 @@ def _rel_of(up_dir: str, p: str) -> str | None:
     return None
 
 
+STATE_EXT = (".sta", ".str")              # 누적 씬 이전 런 상태 파일(계약 esl_cumulative_input.md §2·§9.2)
+STATE_HEADER = b"#radioss state file"
+STATE_KIND_SCAN_BYTES = 4 * 1024 * 1024   # 종류(형상·초기 상태) 확인은 파일 앞부분 블록 헤더만 본다(수 GB 대비)
+
+
+def _state_ext(name: str) -> bool:
+    return os.path.splitext(str(name).replace("\\", "/").rstrip("/"))[1].lower() in STATE_EXT
+
+
+def _state_probe(path: str, header_only: bool = False) -> tuple[bool, list[str]]:
+    """(상태 파일 헤더 여부, 종류[geometry|initial]) — 앞 STATE_KIND_SCAN_BYTES 만 읽음(header_only 면 첫 행만)."""
+    head, kinds = False, set()
+    try:
+        with open(path, "rb") as fh:
+            first = True
+            n = 0
+            for raw in fh:
+                n += len(raw)
+                s = raw.strip()
+                if first and s:
+                    head = s.lower().startswith(STATE_HEADER)
+                    first = False
+                    if header_only:
+                        break
+                u = raw[:8].upper()
+                if u.startswith((b"/NODE", b"/SHELL", b"/SH3N")):
+                    kinds.add("geometry")
+                elif u.startswith(b"/INISHE"):
+                    kinds.add("initial")
+                if n >= STATE_KIND_SCAN_BYTES or len(kinds) == 2:
+                    break
+    except OSError:
+        pass
+    return head, sorted(kinds)
+
+
 def inspect_upload(ctx: AppContext, up: dict[str, Any]) -> dict[str, Any]:
     d = up["dir_path"]
     rels = [f["rel"] for f in up["files"] if not f.get("removed")]
     problems: list[str] = []
     missing: list[str] = []
+    state_incs: list[dict[str, Any]] = []
     parts: list[dict] = []
     rad_path = results_dir = None
     # rad: rad/ 아래 .rad — _0000.rad 하나 또는 .rad 하나
@@ -920,11 +957,22 @@ def inspect_upload(ctx: AppContext, up: dict[str, Any]) -> dict[str, Any]:
         for ref in refs:
             p = ref["path"]
             if ref["found"] and inside(p):
+                by_ext = _state_ext(p) or _state_ext(ref["spec"])
+                head, kinds = _state_probe(p, header_only=not by_ext)
+                if head and not by_ext:
+                    head, kinds = _state_probe(p)
+                if head or by_ext:
+                    state_incs.append({"rel": _rel_of(d, p), "spec": ref["spec"], "kinds": kinds, "found": True})
                 continue
             if not ref["found"] and p and inside(p):
                 rel = _rel_of(d, p)
                 if rel not in missing:
                     missing.append(rel)
+                if _state_ext(ref["spec"]):
+                    state_incs.append({"rel": rel, "spec": ref["spec"], "kinds": [], "found": False})
+                    msg = f"STATE_INCLUDE_MISSING: 누적 해석 상태 파일 include 가 업로드에 없습니다: {ref['spec']}"
+                    if msg not in problems:
+                        problems.append(msg)
                 continue
             # 업로드 밖(절대·상위 경로 등): 존재 여부와 무관하게 같은 메시지(서버 파일 존재 확인 통로 차단)
             outside = True
@@ -966,7 +1014,7 @@ def inspect_upload(ctx: AppContext, up: dict[str, Any]) -> dict[str, Any]:
         h3d_meta = next((f.get("meta") for f in up["files"] if not f.get("removed") and f["rel"] == h3ds[0]), None)
     return {"ok": ok, "rad_path": rad_path, "results_dir": results_dir, "h3d_path": h3d_path, "h3d_meta": h3d_meta,
             "parts": parts,
-            "missing_includes": missing, "problems": problems}
+            "missing_includes": missing, "problems": problems, "state_includes": state_incs}
 
 
 H3D_MAGIC = b"HYPER3D"
