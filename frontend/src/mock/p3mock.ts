@@ -16,8 +16,8 @@ const err = (status: number, code: string, message: string, extra: Record<string
 export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5 } };
 export const MOCK_CHANGELOG = parseChangelog(CHANGELOG_MD);
 
-/** v0.7.0: 템플릿 .fem 추가(esl_opt_run.md §11 upload.allowed_ext) */
-const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem"];
+/** v0.7.0: 템플릿 .fem 추가(esl_opt_run.md §11 upload.allowed_ext), v0.9.0: 비드 DOE STEP(.step·.stp, esl_bead_doe.md §14) */
+const ALLOWED_EXT = [".rad", ".inc", ".k", ".csv", ".json", ".txt", ".tcl", ".h3d", ".fem", ".step", ".stp"];
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i;
 export const MOCK_UPLOAD_ROOT = "E:\\VD_SIMULATION_WEB\\esl-input";
 /** 목 rad 가 참조하는 include */

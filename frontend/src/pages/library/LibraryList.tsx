@@ -2,6 +2,7 @@
 // 보조 진입 "버전 비교"(설계 버전 비교 만들기) + 비교 목록.
 // v0.7.0(esl_opt_run.md §10.1): 탭 [항목 | 종합분석 | 버전 비교 | 최적화 실행 | 템플릿], 항목 행 선택(같은 크기만, 첫 행 = 기준)·크기·ⓜ(같은 모델)·
 // 모드 열(드롭다운 저장) → [선택한 ESL로 비드 최적화 (n)]. 템플릿 탭은 자기 주 버튼(템플릿 등록)을 갖고, 그때 '종합분석 만들기'는 숨김.
+// v0.9.0(esl_bead_doe.md §12.1): 선택 줄에 [선택한 ESL로 비드 DOE (n)], 탭 [비드 DOE] 목록.
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
@@ -18,14 +19,17 @@ import { ModeSelect, entryKey, modeText } from "../../components/ModeSelect";
 import { EntryEditDialog, editBlock } from "./EntryEdit";
 import { OptList } from "../opt/OptList";
 import { Templates } from "../opt/Templates";
+import { DoeList } from "../doe/DoeList";
+import { doePath } from "../../api/doe";
 
-export type LibTab = "items" | "analyses" | "comparisons" | "opt" | "templates";
+export type LibTab = "items" | "analyses" | "comparisons" | "opt" | "templates" | "doe";
 const TABS: { id: LibTab; label: string }[] = [
   { id: "items", label: "항목" },
   { id: "analyses", label: "종합분석" },
   { id: "comparisons", label: "버전 비교" },
   { id: "opt", label: "최적화 실행" },
   { id: "templates", label: "템플릿" },
+  { id: "doe", label: "비드 DOE" },
 ];
 
 interface Filters {
@@ -148,6 +152,11 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
           <span className="primary-wrap" title={allowed ? undefined : NO_PERMISSION}>
             <button type="button" className="btn" disabled={!allowed} onClick={() => nav(`${optPath(projectId)}?entries=${picked.join(",")}`)}>
               선택한 ESL로 비드 최적화 ({picked.length})
+            </button>
+          </span>
+          <span className="primary-wrap" title={allowed ? undefined : NO_PERMISSION}>
+            <button type="button" className="btn" disabled={!allowed} onClick={() => nav(`${doePath(projectId)}?entries=${picked.join(",")}`)}>
+              선택한 ESL로 비드 DOE ({picked.length})
             </button>
           </span>
           <button type="button" className="btn small ghost" onClick={() => setPicked([])}>
@@ -432,6 +441,7 @@ export function LibraryList() {
       )}
       {tab === "opt" && <OptList projectId={projectId} />}
       {tab === "templates" && <Templates projectId={projectId} />}
+      {tab === "doe" && <DoeList projectId={projectId} />}
     </Shell>
   );
 }
