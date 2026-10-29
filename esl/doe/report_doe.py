@@ -1,4 +1,4 @@
-"""비드 DOE 보고서 HTML (계약 esl_bead_doe.md §11 report.html).
+"""강성 평가 스터디(이전 이름 비드 DOE) 보고서 HTML (계약 esl_bead_doe.md §11 report.html).
 
 ``render(ctx) -> str`` / ``write(path, ctx) -> str``. 자체 완결 단일 파일(``esl.report.html`` 공통 CSS·inline SVG,
 외부 의존 0). 모든 텍스트 HTML 이스케이프. "방법·출처"·"한계" 절 문구는 ``resources/doe_method_sources.json`` 그대로,
@@ -118,8 +118,9 @@ def render(ctx: dict) -> str:
     pv = ctx.get("preview") or {}
     bd = ctx.get("boundary") or {}
     ms = ctx.get("sources") or {}
-    S = [f"<h1>비드 DOE · {H.esc(SCN_KO.get(st.get('scenario'), st.get('scenario')))} · "
+    S = [f"<h1>강성 평가 스터디 · {H.esc(SCN_KO.get(st.get('scenario'), st.get('scenario')))} · "
          f"{H.esc(st.get('title') or st.get('id'))}</h1>",
+         "<p class='muted small'>(이전 이름: 비드 DOE)</p>",
          f"<p class='muted small'>연구 {H.esc(st.get('id'))} · {H.esc(st.get('created_at'))} · ESL "
          f"{len(st.get('entry_ids') or [])}개</p>"]
     if res.get("ranking"):
@@ -228,7 +229,7 @@ def render(ctx: dict) -> str:
         S.append(H.section("method", "8. 방법·출처", inner))
         S.append(H.section("limits", "9. 한계", "<ul>" + "".join(f"<li>{H.esc(s)}</li>" for s in ms.get("limits_ko") or [])
                            + "</ul>"))
-    title = f"비드 DOE {st.get('title') or st.get('id') or ''}".strip()
+    title = f"강성 평가 스터디 {st.get('title') or st.get('id') or ''}".strip()
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 

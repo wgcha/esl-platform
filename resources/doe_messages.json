@@ -83,7 +83,7 @@
   "MESH_QUAD_FRAC": "4각 요소 비율이 기준보다 낮습니다.",
   "NOISE_FLOOR": "개선율이 메시 잡음 바닥 이내입니다(③ 안별 재메시).",
   "MORPH_NODES_MISSING": "모핑 사본에서 Ch/R 노드 좌표를 찾지 못했습니다.",
-  "DOE_DISABLED": "비드 DOE 기능이 꺼져 있습니다(관리자 문의).",
+  "DOE_DISABLED": "강성 평가 스터디 기능이 꺼져 있습니다(관리자 문의).",
   "PAICAD_NOT_CONFIGURED": "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의).",
   "PAICAD_NOT_FOUND": "형상 엔진(paicad) 실행 파일을 찾지 못했습니다(관리자 문의).",
   "PAICAD_VERSION_LOW": "형상 엔진(paicad) 버전이 낮습니다(관리자 문의).",

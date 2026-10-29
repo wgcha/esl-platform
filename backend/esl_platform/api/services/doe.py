@@ -102,7 +102,7 @@ def study_dir(ctx: AppContext, s: dict[str, Any]) -> str:
 def load_study(conn, sid: str, *, for_update: bool = False) -> dict[str, Any]:
     s = doe_repo.get_study(conn, sid, for_update=for_update)
     if s is None:
-        raise not_found("DOE_NOT_FOUND", "비드 DOE 연구를 찾을 수 없습니다")
+        raise not_found("DOE_NOT_FOUND", "강성 평가 스터디를 찾을 수 없습니다")
     return s
 
 
@@ -169,7 +169,7 @@ def require_enabled(ctx: AppContext, scenario: str | None = None) -> dict[str, A
 
 def _disabled_message(reason: str | None) -> str:
     if reason == "DOE_DISABLED":
-        return "비드 DOE 가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)"
+        return "강성 평가 스터디가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)"
     try:
         from ...core.opt_core import doe_message
 
@@ -189,7 +189,7 @@ def method_sources(principal: Principal | None) -> dict[str, Any]:
     try:
         ms = doe_load_method_sources()
     except EslError as exc:
-        log.warning("비드 DOE 방법·출처 자료를 읽지 못함: %s", exc.message)
+        log.warning("강성 평가 스터디 방법·출처 자료를 읽지 못함: %s", exc.message)
         return {"error": exc.message if principal is not None and principal.is_global_admin
                 else "방법·출처 자료를 읽지 못했습니다(관리자 문의)"}
     m = ms.get("methods") or {}
@@ -526,7 +526,7 @@ def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, pa
                                        created_by_name=principal.display_name, retry_of_job_id=retry_of,
                                        resume_from_step=resume)
     except IntegrityError:
-        raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다") from None
+        raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다") from None
     if warns:
         from sqlalchemy import update
 
@@ -550,7 +550,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     rows = mat["rows"]
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)                    # 경로 안전성(실제 생성은 워커)
-    title = (body.title or "").strip() or f"비드 DOE {out['step']['file_name']}"
+    title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
     part_title = (mat["mesh"] or {}).get("part_title") if body.scenario == "mesh" else (
         (mat["base"] or {}).get("part_title") if body.scenario == "same" else None)
     step_p = mat["step"]
@@ -773,7 +773,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
     with ctx.engine.begin() as conn:
         s, job = _lock(conn, sid, body.version)
         if job is not None and job["state"] not in TERMINAL:
-            raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다")
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         if s.get("run") is not None or s["phase"] in ("RUN", "DONE"):
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         if s.get("prep") is None:
@@ -804,7 +804,7 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
     with ctx.engine.begin() as conn:
         s, job = _lock(conn, sid, body.version)
         if job is not None and job["state"] not in TERMINAL:
-            raise conflict("JOB_ACTIVE", "이 비드 DOE 연구의 작업이 대기 중이거나 실행 중입니다")
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         if s.get("run") is not None or s["phase"] in ("RUN", "DONE"):
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         doe = s.get("doe") or {}
@@ -849,7 +849,7 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
                                  .where(uploads_t.c.id == uid)).scalar()
             if owner != principal.user_id:
                 raise DomainError("UPLOAD_NOT_OWNED", "원 연구의 입력 파일은 올린 사람만 다시 쓸 수 있습니다 — "
-                                  "같은 ESL 을 골라 STEP 을 새로 올려 새 비드 DOE 를 만드세요", status=403, input=k)
+                                  "같은 ESL 을 골라 STEP 을 새로 올려 새 강성 평가 스터디를 만드세요", status=403, input=k)
     require_config_ok(ctx)
     require_enabled(ctx, s["scenario"])
     if prep_job is None or not isinstance((prep_job.get("params") or {}).get("doe"), dict):
@@ -891,7 +891,7 @@ def _require_retry_current(conn, s: dict[str, Any], job: dict[str, Any]) -> None
     elif PHASE_ORDER.get(s["phase"], -1) > PHASE_ORDER[JOB_PHASE[job["job_type"]]]:
         why = "연구가 이 작업 단계를 이미 지났습니다"
     if why:
-        raise conflict("DOE_RETRY_STALE", f"오래된 비드 DOE 작업은 재시도할 수 없습니다 — {why}. 연구 화면에서 현재 단계를 진행하세요",
+        raise conflict("DOE_RETRY_STALE", f"오래된 강성 평가 작업은 재시도할 수 없습니다 — {why}. 연구 화면에서 현재 단계를 진행하세요",
                        phase=s["phase"], latest_job_id=(latest or {}).get("id"))
 
 
@@ -1064,7 +1064,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, parts_raw: str | Non
         if take:
             files.append((p, rel))
     if not files:
-        raise not_found("BUNDLE_EMPTY", "받을 비드 DOE 파일이 아직 없습니다")
+        raise not_found("BUNDLE_EMPTY", "받을 강성 평가 스터디 파일이 아직 없습니다")
     size = bundle_svc._check_size(ctx, files, base)
     return {"files": files, "prefix": f"doe_{sid}", "filename": f"doe_{sid}.zip", "size": size}
 
