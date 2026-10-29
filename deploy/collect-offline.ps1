@@ -6,8 +6,17 @@
   pip download는 고른 Python으로 만든 빌드용 임시 venv(dist\_buildvenv)에서 실행한다 — 대시보드 런타임·시스템 Python에는 아무것도 설치하지 않고,
   임시 venv는 끝나면 지우며 묶음에도 넣지 않는다.
   프런트는 Node 22로 빌드한다(-DashboardRoot의 고정 Node > PATH의 node, deploy\node-select.ps1). ESL 저장소에는 빌드본이 커밋되어 있지 않다.
-  묶음 구성: wheels(win_amd64 cp312 — deploy\requirements.lock, pypardiso·MKL 포함), frontend(빌드본), app(esl·backend\esl_platform·worker\esl_worker·
+  묶음 구성: wheels(win_amd64 cp312 — deploy\requirements.lock, pypardiso·MKL·OCP·gmsh 포함 + paicad wheel), frontend(빌드본), app(esl·backend\esl_platform·worker\esl_worker·
   migrations·alembic.ini·pyproject.toml·esl_service.py), config(예시 설정), deploy.
+  비드 DOE(v0.9.0, 계약 esl_bead_doe.md §6.4): OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받고, 형상 엔진 paicad 는
+  deploy\paicad.lock 의 physicsai 커밋 packages\paicad 를 deploy\paicad_wheel.py 로 빌드(pip wheel --no-deps, setuptools 고정)·정규화해
+  버전·sha256 을 lock 과 대조한 뒤 wheels 에 넣는다(불일치면 중단 — 묶음 안 만듦).
+.PARAMETER PhysicsaiRepo
+  lock 커밋이 있는 로컬 physicsai-platform 저장소(선택, 읽기만). 비우면 GitHub(lock.source)에서 그 커밋만 얕게 받는다(임시 폴더).
+.PARAMETER PaicadWheel
+  이미 빌드된 paicad wheel(선택). 빌드하지 않고 정규화·대조만 해서 넣는다.
+.PARAMETER NoPaicad
+  paicad wheel 을 넣지 않는다(이 묶음으로 설치하면 비드 DOE 비활성 — 다른 기능은 그대로).
 .PARAMETER DryRun
   Python·Node만 확인하고 실행할 명령을 출력한다(빌드·내려받기 없음).
 .PARAMETER PythonExe
@@ -19,7 +28,10 @@
 param(
     [switch]$DryRun,
     [string]$PythonExe = '',
-    [string]$DashboardRoot = ''
+    [string]$DashboardRoot = '',
+    [string]$PhysicsaiRepo = '',
+    [string]$PaicadWheel = '',
+    [switch]$NoPaicad
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -79,13 +91,25 @@ try {
         Invoke-Native 'pip download (requirements.lock)' $py @('-m', 'pip', 'download', '--disable-pip-version-check', '-r', 'deploy/requirements.lock',
             '--only-binary=:all:', '--platform', 'win_amd64', '--python-version', '3.12', '-d', 'dist/bundle/wheels') $pipHint
     }
+    # 비드 DOE 형상 엔진 paicad: lock 커밋 빌드·정규화·sha256 대조(불일치면 중단). 빌드 venv 는 paicad_wheel.py 가 임시로 만들고 지운다
+    if ($NoPaicad) {
+        Write-Step 'paicad wheel 생략(-NoPaicad) — 이 묶음으로 설치하면 비드 DOE 는 비활성(다른 기능은 그대로)'
+    } else {
+        $pwArgs = @('-I', (Join-Path $PSScriptRoot 'paicad_wheel.py'), 'collect', '--lock', 'deploy/paicad.lock', '--out-dir', 'dist/bundle/wheels')
+        if ($PhysicsaiRepo) { $pwArgs += @('--repo', $PhysicsaiRepo) }
+        if ($PaicadWheel) { $pwArgs += @('--wheel', $PaicadWheel) }
+        Invoke-Step 'paicad wheel(deploy/paicad.lock 커밋 → pip wheel --no-deps → 정규화·sha256 대조) → dist/bundle/wheels' {
+            Invoke-Native 'paicad wheel 수집' $py $pwArgs ('git 설치와 GitHub(physicsai-platform) 접근을 확인하거나 -PhysicsaiRepo <저장소>/-PaicadWheel <wheel>을 주세요. ' +
+                'sha256 불일치면 lock 을 바꾸지 말고 관리자 매뉴얼 paicad 절(lock 갱신)을 따르세요. 비드 DOE 없이 묶으려면 -NoPaicad')
+        }
+    }
     Invoke-Step "npm ci && npm run build (frontend, Node $($node.Version))" {
         # npm은 창에서 직접 친 것과 같이 콘솔 그대로(node-select.ps1 Invoke-EslNpm)
         Invoke-EslFrontendBuild -Node $node -RepoRoot $root
     }
     Invoke-Step 'copy frontend\dist, app(esl·backend\esl_platform·worker\esl_worker·migrations·alembic.ini·pyproject.toml·esl_service.py), config, deploy' {
         Copy-Item -Recurse -Force 'frontend\dist\*' 'dist\bundle\frontend\'
-        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl', 'resources\opt_method_sources.json') {
+        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl', 'resources\opt_method_sources.json', 'resources\doe_messages.json', 'resources\doe_method_sources.json') {
             $dst = Join-Path 'dist\bundle\app' $it
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
             Copy-Item -Recurse -Force $it $dst

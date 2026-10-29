@@ -204,7 +204,7 @@ def test_u1_allowed_ext_supplement_once(tmp_path):
     assert d["upload"]["allowed_ext"] == [".rad", ".inc", ".csv", ".h3d", ".sta", ".str"]
     assert "# 사용자 목록" in cfg.read_text(encoding="utf-8")
     rec = json.loads((Path(inp["runtime_dir"]) / "state" / "ext_supplement.json").read_text(encoding="utf-8"))
-    assert rec == {"0.8.0": [".sta", ".str"]}
+    assert rec["0.8.0"] == [".sta", ".str"]                     # v0.9.0 코드면 "0.9.0"(.step·.stp)도 함께 기록
     assert r["write"]["ext_supplement"]["line"].startswith("업로드 허용 확장자 보충:")
     # 사용자가 뺀 뒤 재실행 → 다시 넣지 않음
     cfg.write_text(cfg.read_text(encoding="utf-8").replace(', ".sta", ".str"]', "]"), encoding="utf-8")

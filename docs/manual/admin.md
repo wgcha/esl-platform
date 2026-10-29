@@ -237,6 +237,46 @@ handle /esl/* {
 
 서버에 따로 복사할 원본 자원이 없다(`deploy\RESOURCES.txt`). 입력(rad + 결과 CSV)은 사용자 PC에서 HyperView TCL로 만들고(루트 `update.bat` — 사용자 PC용), 서버는 `storage.input_roots` 아래에서 읽기만 한다. 솔버 가속(pypardiso·MKL, pyamg, psutil)은 `requirements.lock`에 포함되어 설치되며 환경 점검 `solver.*`로 확인한다.
 
+#### 2.7.1 비드 DOE 형상 엔진 paicad·OCP·gmsh(v0.9.0) — 설치·확인
+
+비드 DOE(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
+설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 비드 DOE 만 비활성**이다
+(콘솔 경고 `비드 DOE 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
+관리자 권한은 필요 없다(설치 venv 안에만 설치).
+
+| 무엇 | 고정 위치 | 설치 |
+|---|---|---|
+| paicad 0.14.0 | `deploy\paicad.lock` — physicsai 커밋(브랜치 `release/v0.2.14`)·버전·**정규화 wheel sha256**·빌드 도구 고정(`setuptools==80.9.0`) | wheel 대조(`deploy\paicad_wheel.py verify`) 후 `pip install --no-index --no-deps` → `<런타임>\venv\Scripts\paicad.exe` |
+| cadquery-ocp 7.8.1.1.post1(+vtk·matplotlib 계열), gmsh 4.15.2 | `deploy\requirements.lock` 의 `# ==== bead_doe` 절 | 묶음 wheels(`--no-index`) 또는 사내 pip 인덱스 |
+
+- **오프라인 묶음(§2.2)**: `collect-offline.ps1` 이 lock 커밋의 `packages/paicad` 를 GitHub 에서 그 커밋만 받아(또는 `-PhysicsaiRepo <로컬 physicsai 저장소>`, 읽기만)
+  빌드·정규화하고 버전·sha256 을 lock 과 대조해 `wheels\paicad-0.14.0-py3-none-any.whl` 로 넣는다. **불일치면 묶음을 만들지 않고 중단**한다.
+  이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 비드 DOE 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
+  `install.ps1`·`update.ps1` 은 묶음의 `wheels` 에서 설치한다(추가 매개변수 없음).
+- **git 폴더 설치(§2.0·§3.0)**: paicad 는 PyPI 에 없으므로 `<git>\.runtime\deploy.json` 에 둘 중 하나를 적는다(없으면 이미 설치된 paicad 확인만, 없으면 DOE 비활성).
+  - `"paicad_wheels": "E:/.../wheels"` — 위 묶음의 `wheels` 폴더처럼 `paicad-0.14.0-py3-none-any.whl` 이 있는 폴더(대조 후 설치)
+  - `"physicsai_root": "E:/.../physicsai-platform"` — lock 커밋이 들어 있는 physicsai 저장소(읽기만 — 커밋이 없으면 그 저장소에서 `git fetch` 후 다시 실행).
+    `<런타임>\paicad-wheel` 에 빌드한다(사내 pip 설정으로 setuptools 를 받음)
+- 설정: 설치 venv 에 `paicad.exe` 가 **실제 있을 때만** `setup_config.py` 가 `bead_doe.paicad.exe`(비었을 때만)·`bead_doe.enabled: true`(키가 없을 때만 —
+  명시 `false` 는 그대로, 경고 1줄)를 넣는다. 바꾸기 전 `_backup\<UTC>\esl_platform.yaml`, 콘솔 1줄 `비드 DOE 자동 설정: …`. `commands.paicad_*` 는 코드 기본값
+  (argv[0] `{paicad}` = `bead_doe.paicad.exe`)이라 쓰지 않는다. `upload.allowed_ext` 를 직접 적은 설정에는 `.step`·`.stp` 를 한 번 보충한다(상태 `state\ext_supplement.json` 키 `0.9.0`).
+- **확인 명령**(설치 후, 일반 PowerShell):
+
+```powershell
+& '<런타임>\venv\Scripts\paicad.exe' version --json          # {"paicad": "0.14.0", "ocp": "7.8.1…", "numpy": …} — paicad ≥ 0.14.0, ocp 가 null 이 아니어야 함
+& '<런타임>\venv\Scripts\python.exe' -c "import gmsh; print(gmsh.__version__)"   # 4.15.2 — 실패하면 ③(STEP 만)·STEP 내보내기만 비활성
+& '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe'
+```
+
+  (git 폴더 설치의 `<deploy>` = `<git>\deploy`, 묶음은 묶음을 푼 폴더의 `deploy`.) `check` 결과 JSON 의 `problems` 코드는 화면 비활성 사유와 같다:
+  `PAICAD_NOT_FOUND`(실행 파일 없음) · `PAICAD_VERSION_LOW`(< 0.14.0) · `PAICAD_OCP_MISSING`(OCP 로드 실패 — VC++ 런타임·`cadquery-ocp` 설치 확인) · `PAICAD_CHECK_FAILED`(실행 실패).
+  고정 버전과 다른 paicad(예 0.15.x)는 **경고만**(관리자 화면·결과에 기록). 워커가 `bead_doe.paicad.check_interval_s`(600 s)마다 같은 점검을 해 `GET /doe/settings` 에 반영한다.
+- **lock 갱신**(paicad 새 버전): physicsai 의 새 커밋으로 `deploy\paicad.lock` 의 `version`·`branch`·`commit`·`wheel` 을 바꾸고,
+  `python deploy\paicad_wheel.py collect --lock deploy\paicad.lock --out-dir <임시>` 가 출력하는 `sha256` 을 확인해 lock 에 적은 뒤 다시 실행해 `ok: true` 를 확인한다.
+  `runtime_requires` 의 `cadquery-ocp` 고정이 바뀌면 `requirements.lock` bead_doe 절도 같은 값으로 바꾸고 `scripts/test-all` 을 다시 돌린다.
+  정규화(무압축·고정 시각·권한·순서)는 빌드 OS·시각과 무관하게 같은 바이트를 만들므로 Windows·Linux 준비 PC 결과를 같은 sha256 으로 대조한다.
+- 묶음 크기: OCP·vtk·gmsh 로 수백 MB 늘어난다. gmsh 는 GPL(+링크 예외) — 사내 설치 용도.
+
 ### 2.8 DB 수동 생성(설치 스크립트 없이)
 
 ```sql

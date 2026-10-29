@@ -45,3 +45,21 @@ typing_extensions==4.16.0
 tzdata==2025.2
 umf==1.2.0
 uvicorn==0.53.0
+# ==== bead_doe (v0.9.0 비드 DOE, 선택 — 계약 esl_bead_doe.md §6.4) ====
+# 이 줄 아래는 설치 스크립트가 따로(위 기본 의존성 다음에) 설치한다: 실패해도 기존 기능은 동작하고 비드 DOE만 비활성(관리자 화면 사유).
+# paicad 런타임 의존 cadquery-ocp(+vtk → matplotlib 계열) = paicad pyproject·physicsai deploy/requirements.lock 과 같은 고정.
+# gmsh = ③ STEP 만 시나리오 메싱·STEP 내보내기(코어 하위 프로세스, cp312 win_amd64 휠 = py2.py3-none-win_amd64). paicad 자신은 PyPI에 없어
+# deploy/paicad.lock(physicsai 커밋·정규화 wheel sha256)으로 collect-offline 이 빌드한다.
+cadquery-ocp==7.8.1.1.post1
+contourpy==1.4.0
+cycler==0.12.1
+fonttools==4.67.0
+gmsh==4.15.2
+kiwisolver==1.5.1
+matplotlib==3.11.2
+packaging==26.3
+pillow==13.0.0
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+six==1.17.0
+vtk==9.3.1

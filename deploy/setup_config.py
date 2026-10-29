@@ -32,6 +32,12 @@
 - v0.8.0 §9.1: 기존 설정이 upload.allowed_ext 를 명시했고 .sta·.str 이 없으면 이 두 확장자만 1회 덧붙인다(다른 항목·순서 불변).
   설치 상태 파일 <런타임>/state/ext_supplement.json 에 {"0.8.0": [".sta", ".str"]} 를 기록하고, 기록이 있으면 다시 넣지 않는다
   (사용자가 뺀 경우와 구분할 수 없으므로).
+- v0.9.0 비드 DOE(계약 esl_bead_doe.md §6.4, BD-D-19): 검증할 코드(code_root)의 설정 스키마에 bead_doe 가 있을 때만(코드보다 설정이 앞서
+  검증 오류가 나지 않게) <런타임>/venv/Scripts/paicad.exe 가 **실제 있으면** bead_doe.paicad.exe(키가 없거나 null·빈 값일 때만)와
+  bead_doe.enabled: true(섹션이 없거나 enabled 키가 없을 때만 — 명시 false 는 불변, 경고 1줄)를 추가한다. 기존 값은 파일이 없어도 바꾸지 않는다.
+  바뀌면 같은 백업 규칙·콘솔 1줄(write 결과 doe_autodetect.line), 감지 못 하면 안내 1줄(doe_autodetect.hint — 경고 아님).
+  commands.paicad_* 는 쓰지 않는다(코드 기본 argv, argv[0] {paicad} = bead_doe.paicad.exe). upload.allowed_ext 를 명시한 기존 설정에는
+  .step·.stp 를 1회 보충(상태 파일 키 "0.9.0", 0.8.0 과 같은 규칙).
 - 비밀번호·DB URL 은 다루지 않는다.
 """
 
@@ -71,6 +77,13 @@ OPTISTRUCT_REL = ("hwsolvers", "scripts", "optistruct.bat")
 EXT_SUPPLEMENT_VERSION = "0.8.0"
 EXT_SUPPLEMENT = (".sta", ".str")            # 누적 낙하 씬 상태 파일(계약 esl_cumulative_input.md §9.1)
 EXT_SUPPLEMENT_STATE = ("state", "ext_supplement.json")
+# 버전별 1회 보충: (상태 파일 키, 확장자, 코드 스키마에 있어야 하는 설정 절 | None, 표의 설명)
+EXT_SUPPLEMENTS = ((EXT_SUPPLEMENT_VERSION, EXT_SUPPLEMENT, None, ".sta·.str — 누적 낙하 씬"),
+                   ("0.9.0", (".step", ".stp"), "bead_doe", ".step·.stp — 비드 DOE 시트 STEP"))
+DOE_AUTODETECT_NOTE = "setup이 보충 — v0.9.0 paicad 자동 감지"
+PAICAD_REL = ("venv", "Scripts", "paicad.exe")     # 설치 venv 의 console script(paicad.lock console_script)
+DOE_HINT = ("비드 DOE 비활성 — 형상 엔진 paicad 가 설치되지 않음(<런타임>\\venv\\Scripts\\paicad.exe 없음). "
+            "설치 스크립트의 'paicad' 경고를 확인하세요(관리자 매뉴얼 paicad 절)")
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -245,6 +258,72 @@ def set_yaml_value(text: str, path: tuple[str, ...], value: Any, note: str = "")
             return nl.join(lines)
     lines.insert(start + 1, f"{indent}{key}: {lit}{comment}")
     return nl.join(lines)
+
+
+def set_yaml_nested(text: str, path: tuple[str, str, str], value: Any, note: str = "") -> str:
+    """3단계 path(절 → 하위 블록 → 키) 값을 바꾸거나 넣는다(블록 표기만). 절이 없으면 끝에 새 블록, 하위 블록이 없으면 절 머리 다음에
+    넣는다. 하위가 흐름 표기(`paicad: {...}`)면 바꾸지 않고 그대로 돌려준다(호출자의 결과 검증이 '직접 고치세요'로 안내)."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    section, sub, key = path
+    lit = literal(value)
+    comment = f"  # {note}" if note else ""
+    b = _block(lines, section)
+    if b is None:
+        if lines and lines[-1] == "":
+            lines.pop()
+        lines += [f"{section}:", f"  {sub}:", f"    {key}: {lit}{comment}", ""]
+        return nl.join(lines)
+    start, end, indent = b
+    hdr = re.compile(rf"^{re.escape(indent)}{re.escape(sub)}:[ \t]*(#.*)?$")
+    any_sub = re.compile(rf"^{re.escape(indent)}{re.escape(sub)}:")
+    si = next((i for i in range(start + 1, end) if hdr.match(lines[i])), None)
+    if si is None:
+        if any(any_sub.match(lines[i]) for i in range(start + 1, end)):
+            return text                                   # 흐름 표기·스칼라 — 자동으로 고치지 않음
+        lines[start + 1:start + 1] = [f"{indent}{sub}:", f"{indent}{indent}{key}: {lit}{comment}"]
+        return nl.join(lines)
+    send, sub_indent = end, ""
+    for j in range(si + 1, end):
+        s = lines[j]
+        if not s.strip() or s.lstrip().startswith("#"):
+            continue
+        lead = s[: len(s) - len(s.lstrip())]
+        if len(lead) <= len(indent):
+            send = j
+            break
+        if not sub_indent:
+            sub_indent = lead
+    sub_indent = sub_indent or indent + indent
+    rx = re.compile(rf"^{re.escape(sub_indent)}{re.escape(key)}:")
+    for i in range(si + 1, send):
+        if rx.match(lines[i]):
+            m = _VALUE.match(lines[i])
+            lines[i] = m.group("pre") + lit + (m.group("post") or "") if m else f"{sub_indent}{key}: {lit}"
+            return nl.join(lines)
+    lines.insert(si + 1, f"{sub_indent}{key}: {lit}{comment}")
+    return nl.join(lines)
+
+
+def find_paicad(runtime: Path) -> str | None:
+    """<런타임>/venv/Scripts/paicad.exe 가 실제 있으면 그 경로(fwd), 없으면 None(계약 §6.4 — 있을 때만 채움)."""
+    p = Path(runtime).joinpath(*PAICAD_REL)
+    return fwd(str(p)) if p.is_file() else None
+
+
+def code_supports(section: str, code_root: str | None) -> bool:
+    """검증할 코드(esl_platform.core.config.Settings)의 최상위 설정 절에 section 이 있는지 — 없으면 그 절을 쓰지 않는다
+    (extra=forbid 라 코드보다 앞선 설정은 검증 오류)."""
+    root = Path(code_root) if code_root else HERE.parent
+    for p in (root / "worker", root / "backend", root):
+        if p.is_dir() and str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    try:
+        from esl_platform.core import config as mod
+    except ImportError:  # pragma: no cover - 설치 venv·코드에는 있음
+        return False
+    fields = getattr(getattr(mod, "Settings", None), "model_fields", None) or {}
+    return section in fields
 
 
 def duplicate_top_keys(text: str) -> list[str]:
@@ -596,20 +675,55 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
                     warnings.append(f"비드 최적화는 설정 opt_run.enabled: false 로 꺼져 있어 그대로 둡니다(OptiStruct: {valid}) "
                                     "— 쓰려면 true 로 직접 바꾸세요")
     # v0.8.0 §9.1: upload.allowed_ext 를 명시한 기존 설정에 .sta·.str 1회 보충(기록이 있으면 다시 넣지 않음)
-    ext_sup: dict[str, Any] = {"added": [], "record": False}
+    # v0.9.0: .step·.stp 도 같은 규칙(키 "0.9.0") — 코드 스키마에 bead_doe 가 있을 때만
+    code_root = inputs.get("code_root")
+    ext_sup: dict[str, Any] = {"added": [], "record": False, "records": []}
     if not new_file:
         rec = read_ext_supplement(runtime)
         has_ae, ae = _get(base, ("upload", "allowed_ext"))
-        if EXT_SUPPLEMENT_VERSION not in rec and has_ae and isinstance(ae, list):
-            low = [str(x).lower() for x in ae]
-            add = [e for e in EXT_SUPPLEMENT if e not in low]
-            ext_sup["record"] = True
-            if add:
-                new_ae = list(ae) + add
+        if has_ae and isinstance(ae, list):
+            new_ae, labels = list(ae), []
+            for ver, exts, gate, label in EXT_SUPPLEMENTS:
+                if ver in rec or (gate and not code_supports(gate, code_root)):
+                    continue
+                low = [str(x).lower() for x in new_ae]
+                add = [e for e in exts if e not in low]
+                ext_sup["records"].append(ver)
+                if add:
+                    new_ae += add
+                    ext_sup["added"] += add
+                    labels.append(label)
+            ext_sup["record"] = bool(ext_sup["records"])
+            if ext_sup["added"]:
                 text = set_yaml_value(text, ("upload", "allowed_ext"), new_ae)
                 upgraded[("upload", "allowed_ext")] = new_ae
-                ext_sup["added"] = add
-                rows.append({"key": "upload.allowed_ext", "value": new_ae, "action": "보충(.sta·.str — 누적 낙하 씬)"})
+                rows.append({"key": "upload.allowed_ext", "value": new_ae, "action": f"보충({' / '.join(labels)})"})
+    # v0.9.0 §6.4: 비드 DOE paicad 경로 자동 감지 — <런타임>/venv/Scripts/paicad.exe 가 실제 있을 때만(기존 값 불변)
+    doe: dict[str, Any] = {"added": {}, "candidate": None, "supported": False, "hint": None}
+    if code_supports("bead_doe", code_root):
+        doe["supported"] = True
+        cur = yaml.safe_load(text) or {}
+        cand = find_paicad(runtime)
+        doe["candidate"] = cand
+        has_bd, bd = _get(cur, ("bead_doe",))
+        _, cur_exe = _get(cur, ("bead_doe", "paicad", "exe"))
+        if has_bd and bd is not None and not isinstance(bd, dict):
+            warnings.append("설정 bead_doe 가 매핑이 아니라 paicad 경로를 자동으로 넣지 않았습니다 — 직접 고치세요")
+        elif cand and cur_exe in (None, ""):
+            if not has_bd or bd is None or "enabled" not in bd:
+                text = set_yaml_value(text, ("bead_doe", "enabled"), True, DOE_AUTODETECT_NOTE)
+                upgraded[("bead_doe", "enabled")] = True
+                doe["added"]["bead_doe.enabled"] = True
+                rows.append({"key": "bead_doe.enabled", "value": True, "action": "보충(paicad 자동 감지)"})
+            elif bd.get("enabled") is False:
+                warnings.append(f"비드 DOE 는 설정 bead_doe.enabled: false 로 꺼져 있어 그대로 둡니다(paicad: {cand}) "
+                                "— 쓰려면 true 로 직접 바꾸세요")
+            text = set_yaml_nested(text, ("bead_doe", "paicad", "exe"), cand, DOE_AUTODETECT_NOTE)
+            upgraded[("bead_doe", "paicad", "exe")] = cand
+            doe["added"]["bead_doe.paicad.exe"] = cand
+            rows.append({"key": "bead_doe.paicad.exe", "value": cand, "action": "보충(paicad 자동 감지)"})
+        elif not cand and cur_exe in (None, ""):
+            doe["hint"] = DOE_HINT
     # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
     login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
     if login_warn:
@@ -646,7 +760,8 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"설정 파일을 자동으로 보충하지 못했습니다(형식이 예상과 다름 — 흐름 표기 등) — 다음 키를 직접 고치세요: "
                         f"{', '.join(changed + ['.'.join(p) for p in upgraded])}")
         text, changed, upgraded = base_text, [], {}
-        opt_auto["added"], ext_sup["added"], ext_sup["record"] = {}, [], False
+        opt_auto["added"], ext_sup["added"], ext_sup["record"], ext_sup["records"] = {}, [], False, []
+        doe["added"] = {}
     changed += [".".join(p) for p in upgraded]
     config_changed = new_file or bool(changed)
 
@@ -694,6 +809,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         "spdm_roots": spdm_roots, "warnings": warnings,
         "opt_autodetect": {"added": opt_auto["added"], "candidate": opt_auto["candidate"]},
         "ext_supplement": ext_sup,
+        "doe_autodetect": doe,
     }
 
 
@@ -742,12 +858,19 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
     if es.get("record"):
         sp = runtime.joinpath(*EXT_SUPPLEMENT_STATE)
         rec = read_ext_supplement(runtime)
-        rec[EXT_SUPPLEMENT_VERSION] = list(EXT_SUPPLEMENT)
+        for ver, exts, _gate, _label in EXT_SUPPLEMENTS:
+            if ver in (es.get("records") or [EXT_SUPPLEMENT_VERSION]):
+                rec[ver] = list(exts)
         sp.parent.mkdir(parents=True, exist_ok=True)
         sp.write_text(json.dumps(rec, ensure_ascii=False) + "\n", encoding="utf-8")
         if es.get("added"):
             out["ext_supplement"]["line"] = (f"업로드 허용 확장자 보충: upload.allowed_ext 에 {' '.join(es['added'])} 추가"
                                              + (f" (백업 {cfg_backup})" if cfg_backup else ""))
+    da = (pl.get("doe_autodetect") or {}).get("added") or {}
+    out["doe_autodetect"] = {"added": da, "backup": cfg_backup, "line": None}
+    if da:
+        kv = ", ".join(f"{k} = {literal(v)}" for k, v in da.items())
+        out["doe_autodetect"]["line"] = (f"비드 DOE 자동 설정: {kv} 추가" + (f" (백업 {cfg_backup})" if cfg_backup else ""))
     for c in pl["companions"]:
         if c["copy"] and not os.path.exists(c["path"]):
             Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)

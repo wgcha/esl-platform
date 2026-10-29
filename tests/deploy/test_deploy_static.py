@@ -18,6 +18,7 @@ EXPECTED = [
     "RESOURCES.txt", "caddy/esl.caddy", "collect-offline.ps1", "collect-offline.sh", "dashboard-env.ps1", "deploy.example.json",
     "esl_service.py", "install-common.ps1", "install.bat", "install.ps1", "loopback-http.ps1", "node-select.ps1",
     "python-select.ps1", "requirements.lock", "setup.ps1", "setup_config.py", "uninstall-tasks.ps1", "update-repo.ps1",
+    "paicad.lock", "paicad_wheel.py",
     "update.bat", "update.ps1", "esl-service.ps1", "esl-start.bat", "esl-stop.bat", "esl-restart.bat",
     "demo/start-demo.bat", "demo/start-demo.ps1", "demo/stop-demo.bat", "demo/stop-demo.ps1", "demo/demo-python.ps1",
     "demo/demo_setup.py", "demo/demo_common.py", "demo/demo_db.py", "demo/demo_init.py", "demo/demo_procs.py",
@@ -213,7 +214,7 @@ def _lock(p: Path) -> dict[str, str]:
 
 def test_requirements_lock():
     lock = _lock(DEPLOY / "requirements.lock")
-    assert all(re.fullmatch(r"\d+(\.\d+)*", v) for v in lock.values())
+    assert all(re.fullmatch(r"\d+(\.\d+)*(\.post\d+)?", v) for v in lock.values())   # v0.9.0: cadquery-ocp 7.8.1.1.post1 등
     for need in ("fastapi", "uvicorn", "sqlalchemy", "psycopg", "psycopg-binary", "alembic", "httpx", "pydantic", "pyyaml",
                  "numpy", "scipy", "pypardiso", "mkl", "intel-openmp", "tbb", "pyamg", "psutil", "colorama", "tzdata"):
         assert need in lock, need

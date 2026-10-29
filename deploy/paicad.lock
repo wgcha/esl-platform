@@ -1,0 +1,12 @@
+{
+  "version": "0.14.0",
+  "source": "wgcha/physicsai-platform",
+  "branch": "release/v0.2.14",
+  "commit": "a363a89e8f93d3acfe90a9601318bf4f6cade0a7",
+  "subdir": "packages/paicad",
+  "wheel": "paicad-0.14.0-py3-none-any.whl",
+  "sha256": "a23cc6dcf2e2985ce1061b96150566993ed85fc635f1cbf6d84fd7eae4ebc56b",
+  "build_requires": ["setuptools==80.9.0"],
+  "console_script": "paicad",
+  "runtime_requires": ["cadquery-ocp==7.8.1.1.post1", "numpy>=2,<3", "scipy>=1.13,<2"]
+}
