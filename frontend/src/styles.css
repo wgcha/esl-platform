@@ -2446,3 +2446,12 @@ details.open-uploads .actions {
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--line);
 }
+
+/* v0.7.2 화면 오류 경계(ErrorBoundary) — 빈 화면 대신 한 줄 */
+.screen-error {
+  margin: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}

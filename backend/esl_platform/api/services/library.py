@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+import logging
 import os
 import shutil
 import uuid
@@ -71,6 +72,7 @@ def _stash(lib_root: str, d: str) -> None:
 
 
 # ---------------------------------------------------------------- v0.7.0 지연 백필(topo_sha256 · deform_mode)
+log = logging.getLogger("esl_platform.api")
 _BACKFILL_FAILED: set[str] = set()      # 항목 폴더·raw 가 없어 계산하지 못한 항목(프로세스 안에서 재시도 안 함)
 
 
@@ -117,7 +119,8 @@ def compute_opt_meta(ctx: AppContext, e: dict[str, Any], *, need_topo: bool,
 
 def backfill_opt_meta(ctx: AppContext, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """topo_sha256 이 없거나 deform_mode 가 없거나 rule_version 이 다른 항목을 채워 DB 에 저장(version 증가 없음).
-    실패 → topo null(S1 불가 "모델 정보 없음"), 같은 프로세스에서 다시 시도하지 않음."""
+    실패 → topo null(S1 불가 "모델 정보 없음"), 같은 프로세스에서 다시 시도하지 않음.
+    v0.7.2: 항목 단위 격리 — 어떤 예외(이전 버전 항목 폴더 형식·DB 쓰기 실패 등)도 그 항목만 건너뛰고 경고 로그(목록·s1-check 500 방지)."""
     from ...core.opt_core import EslError
     from ...core.opt_core import modes
 
@@ -131,19 +134,20 @@ def backfill_opt_meta(ctx: AppContext, rows: list[dict[str, Any]]) -> list[dict[
             continue
         try:
             topo, dm = compute_opt_meta(ctx, e, need_topo=need_topo, need_mode=need_mode)
-        except (EslError, OSError, ValueError, KeyError, TypeError, DomainError):
+            vals: dict[str, Any] = {}
+            if need_topo and topo:
+                vals["topo_sha256"] = topo
+            if need_mode and isinstance(dm, dict):
+                vals["deform_mode"] = _merge_user(dm, e.get("deform_mode"))
+            if vals:
+                with ctx.engine.begin() as c2:
+                    c2.execute(update(library_entries).where(library_entries.c.id == e["id"]).values(**vals))
+                e = {**e, **vals}
+        except Exception as exc:  # noqa: BLE001 — 항목 하나의 백필 실패가 목록 전체를 깨지 않게
             _BACKFILL_FAILED.add(e["id"])
-            out.append(e)
-            continue
-        vals: dict[str, Any] = {}
-        if need_topo and topo:
-            vals["topo_sha256"] = topo
-        if need_mode and dm is not None:
-            vals["deform_mode"] = _merge_user(dm, e.get("deform_mode"))
-        if vals:
-            with ctx.engine.begin() as c2:
-                c2.execute(update(library_entries).where(library_entries.c.id == e["id"]).values(**vals))
-            e = {**e, **vals}
+            known = isinstance(exc, (EslError, OSError, ValueError, KeyError, TypeError, DomainError))
+            log.warning("라이브러리 항목 %s 지연 백필(topo_sha256·deform_mode) 실패 — 건너뜀(S1 '모델 정보 없음'): %s: %s",
+                        e["id"], type(exc).__name__, exc, exc_info=not known)
         out.append(e)
     return out
 

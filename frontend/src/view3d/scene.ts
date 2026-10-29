@@ -2,7 +2,7 @@
 // 좌표 mm·Z-up. onDemand 렌더: 카메라·상태 변경 때만 requestAnimationFrame 1회. 언마운트 시 geometry·material·texture·renderer dispose.
 import {
   AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
-  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
+  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -13,10 +13,10 @@ import { ARROW_COLOR, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_
 import { applyDeform } from "./deform";
 import { fillVertexColors } from "./colors";
 import { pickSegment, type V3 } from "./pick";
+import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
 import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
 
-const FOV = 40;
 const LOD_RESTORE_MS = 250;
 
 interface Layer {
@@ -76,9 +76,32 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   const scene = new Scene();
   scene.background = new Color(opts.background);
-  const camera = new PerspectiveCamera(FOV, 1, opts.diag / 1000, opts.diag * 100);
-  camera.up.set(0, 0, 1);
+  // 투영 2종(원근/직교) — 활성 카메라 하나만 장면에 두고 헤드라이트·OrbitControls 를 옮겨 단다
+  const persp = new PerspectiveCamera(FOV, 1, opts.diag / 1000, opts.diag * 100);
+  const ortho = new OrthographicCamera(-1, 1, 1, -1, -opts.diag, opts.diag);
+  persp.up.set(0, 0, 1);
+  ortho.up.set(0, 0, 1);
+  let proj: Projection = opts.projection ?? DEFAULT_PROJECTION;
+  let camera: PerspectiveCamera | OrthographicCamera = proj === "ortho" ? ortho : persp;
+  let aspect = 1;
+  let orthoHalfH = 1;
   const center = new Vector3((opts.bbox.min[0] + opts.bbox.max[0]) / 2, (opts.bbox.min[1] + opts.bbox.max[1]) / 2, (opts.bbox.min[2] + opts.bbox.max[2]) / 2);
+  const v3 = (v: Vector3): V3 => [v.x, v.y, v.z];
+  const tmpDir = new Vector3();
+  /** 직교 보이는 높이(월드) = 2·halfH / zoom */
+  const orthoVisibleH = () => (2 * orthoHalfH) / Math.max(ortho.zoom, 1e-12);
+  /** 직교 frustum: 반높이·화면비 반영 + 근/원은 시선 방향 모델 중심 ± k·대각선(클리핑 없음) */
+  const applyOrtho = () => {
+    ortho.top = orthoHalfH;
+    ortho.bottom = -orthoHalfH;
+    ortho.left = -orthoHalfH * aspect;
+    ortho.right = orthoHalfH * aspect;
+    ortho.updateMatrixWorld();
+    const c = orthoClip(v3(ortho.position), v3(ortho.getWorldDirection(tmpDir)), v3(center), opts.diag);
+    ortho.near = c.near;
+    ortho.far = c.far;
+    ortho.updateProjectionMatrix();
+  };
 
   scene.add(new HemisphereLight(0xffffff, 0x8a8f99, 1.1));
   scene.add(new AmbientLight(0xffffff, 0.35));
@@ -87,6 +110,14 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   scene.add(camera);
 
   const controls = new OrbitControls(camera, canvas);
+  const activate = () => {
+    const other = camera === persp ? ortho : persp;
+    scene.remove(other);
+    scene.add(camera);
+    camera.add(headlight);
+    controls.object = camera;
+    controls.update();
+  };
   controls.enableDamping = false;
   controls.screenSpacePanning = true;
 
@@ -99,6 +130,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       raf = 0;
       if (disposed) return;
       renders++;
+      if (proj === "ortho") applyOrtho(); // 회전 후 근/원 재계산
+      sizeSprites(); // 직교 줌은 화면 크기를 바꾼다
       updateLineArrows();
       renderer.render(scene, camera);
     });
@@ -206,7 +239,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   }
   const lineGroups: LineGroup[] = [];
   /** 1 px 의 월드 길이(점까지 거리 t) */
-  const pxWorldAt = (t: number) => (2 * t * Math.tan((FOV * Math.PI) / 360)) / Math.max(1, canvas.clientHeight);
+  const pxWorldAt = (t: number) => pxWorld(proj, t, canvas.clientHeight, orthoVisibleH());
 
   const fillLineGroup = (g: LineGroup) => {
     const pos: number[] = [];
@@ -315,7 +348,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   // 화면 크기 고정 스프라이트: 높이 px → scale
   const sizeSprites = () => {
     const h = Math.max(1, canvas.clientHeight);
-    const t = 2 * Math.tan((FOV * Math.PI) / 360);
+    // sizeAttenuation=false: 원근은 깊이로 나눠져 2·tan(FOV/2), 직교는 보이는 높이(월드) 그대로
+    const t = proj === "ortho" ? orthoVisibleH() : 2 * Math.tan((FOV * Math.PI) / 360);
     for (const s of [...supSprites, ...arrowLabels]) {
       const frac = (s.userData.px as number) / h;
       s.scale.set(frac * t * (s.userData.aspect as number), frac * t, 1);
@@ -327,8 +361,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     const w = Math.max(1, canvas.clientWidth);
     const h = Math.max(1, canvas.clientHeight);
     renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    aspect = w / h;
+    persp.aspect = aspect;
+    persp.updateProjectionMatrix();
+    applyOrtho();
     sizeSprites();
     invalidate();
   };
@@ -343,6 +379,12 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     camera.up.set(0, 0, 1);
     controls.target.copy(center);
     camera.lookAt(center);
+    if (camera === ortho) {
+      // 원근 맞춤과 같은 크기: 반높이 = dist·tan(FOV/2), 줌 1
+      orthoHalfH = orthoHalfHeightFromPersp(v3(camera.position), v3(center));
+      ortho.zoom = 1;
+      applyOrtho();
+    }
     controls.update();
     invalidate();
   };
@@ -366,19 +408,21 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   const doPick = (ev: MouseEvent): PickEvent => {
     const p = ndc(ev);
     raycaster.setFromCamera(p, camera);
+    // 직교: setFromCamera 의 원점은 카메라 평면(z_view = 0). near 가 음수면(카메라가 모델 안쪽) 그만큼 뒤로 물려 앞쪽 모델도 맞힌다
+    if (camera === ortho && ortho.near < 0) raycaster.ray.origin.addScaledVector(raycaster.ray.direction, ortho.near);
     const o: V3 = [raycaster.ray.origin.x, raycaster.ray.origin.y, raycaster.ray.origin.z];
     const d: V3 = [raycaster.ray.direction.x, raycaster.ray.direction.y, raycaster.ray.direction.z];
-    const pxWorld = (t: number) => (2 * t * Math.tan((FOV * Math.PI) / 360)) / Math.max(1, canvas.clientHeight); // 거리 t 에서 1 px 의 월드 길이
+    const pxW = pxWorldAt; // 거리 t 에서 1 px 의 월드 길이(직교는 거리 무관)
     // 1) 지지 기호 2) 화살표 3) 표면 — 화살표는 선분 + 머리 포함, 허용 6 px
     const supIdx = supports.findIndex((s) => {
       const v = new Vector3(s.position[0], s.position[1], s.position[2]).sub(raycaster.ray.origin);
       const t = v.dot(raycaster.ray.direction);
       if (t <= 0) return false;
       const off = v.addScaledVector(raycaster.ray.direction, -t).length();
-      return off <= pxWorld(t) * 14;
+      return off <= pxW(t) * 14;
     });
     const segs = arrows.map((a) => ({ a: a.tail, b: [a.tail[0] + a.dir[0] * a.length, a.tail[1] + a.dir[1] * a.length, a.tail[2] + a.dir[2] * a.length] as V3 }));
-    const ai = pickSegment(o, d, segs, (t) => Math.max(pxWorld(t) * 6, 0));
+    const ai = pickSegment(o, d, segs, (t) => Math.max(pxW(t) * 6, 0));
     if (ai >= 0) return { type: "arrow", index: ai };
     if (supIdx >= 0) return { type: "support", index: supIdx };
     const l = currentLayer();
@@ -509,6 +553,33 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       invalidate();
     },
     fit,
+    setProjection(p) {
+      if (p === proj) return;
+      const t = controls.target;
+      if (p === "ortho") {
+        // 위치·방향 그대로, 보이는 높이 = 2·d·tan(FOV/2)
+        ortho.position.copy(persp.position);
+        ortho.quaternion.copy(persp.quaternion);
+        ortho.up.copy(persp.up);
+        orthoHalfH = orthoHalfHeightFromPersp(v3(persp.position), v3(t));
+        ortho.zoom = 1;
+        camera = ortho;
+        applyOrtho();
+      } else {
+        // 타깃·방향 그대로, 보이는 높이가 같도록 타깃 거리만 조정(줌 1 이었으면 위치도 그대로)
+        const np = perspPositionFromOrtho(v3(ortho.position), v3(t), orthoHalfH, ortho.zoom);
+        persp.position.set(np[0], np[1], np[2]);
+        persp.quaternion.copy(ortho.quaternion);
+        persp.up.copy(ortho.up);
+        persp.updateProjectionMatrix();
+        camera = persp;
+      }
+      proj = p;
+      activate();
+      sizeSprites();
+      invalidate();
+    },
+    projection: () => proj,
     onPick(cb) {
       pickCb = cb;
     },

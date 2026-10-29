@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
-import { MISMATCH_REASON, MODES, MODE_LABEL, SCENARIO_LABEL, opt, optPath, sameSize, sizeOf, sizeText, templateMismatch } from "../../api/opt";
+import { MISMATCH_REASON, MODES, MODE_LABEL, SCENARIO_LABEL, opt, optBlockedReason, optPath, sameSize, sizeOf, sizeText, templateMismatch } from "../../api/opt";
 import type { DeformMode, EntryOut, OptPid, OptScenario, OptSettingsOut, S1CheckOut, TemplateOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell } from "../../shell/Shell";
@@ -55,7 +55,7 @@ function PidTable({ pids, nondesign, onToggle }: { pids: OptPid[]; nondesign: Se
             </td>
             <td className="num">{p.pid}</td>
             <td>{p.title}</td>
-            <td className="num">{p.n_elems.toLocaleString()}</td>
+            <td className="num">{p.n_elems?.toLocaleString() ?? "–"}</td>
             <td className="num">{p.thickness != null ? `${p.thickness} mm` : "–"}</td>
           </tr>
         ))}
@@ -67,7 +67,7 @@ function PidTable({ pids, nondesign, onToggle }: { pids: OptPid[]; nondesign: Se
 function TargetS1({ s1, error, nondesign, onToggle }: { s1: S1CheckOut | null; error: string | null; nondesign: Set<number>; onToggle: (pid: number) => void }) {
   if (error) return <ErrorLine text={error} />;
   if (!s1) return <Empty>모델 확인 중…</Empty>;
-  const b = s1.base;
+  const b = s1.base ?? ({} as S1CheckOut["base"]);
   return (
     <div className="target-grid">
       <div className="stats">
@@ -176,13 +176,16 @@ export function OptNew() {
 
   const byId = new Map((all.data ?? []).map((e) => [e.id, e]));
   const sel = ids.map((id) => byId.get(id)).filter((e): e is EntryOut => !!e);
-  const s1Rows = new Map((s1.data?.entries ?? []).map((r) => [r.entry_id, r]));
-  const mismatched = s1.data ? s1.data.entries.filter((r) => !r.same_model).map((r) => r.entry_id) : [];
+  const s1Entries = s1.data?.entries ?? [];
+  const s1Rows = new Map(s1Entries.map((r) => [r.entry_id, r]));
+  const mismatched = s1Entries.filter((r) => !r.same_model).map((r) => r.entry_id);
+  const blocked = st ? optBlockedReason(st) : null;
 
   // 기본 탭: 모두 같은 모델이면 기존 형상(S1), 아니면 템플릿(S2)
   useEffect(() => {
     if (scenario || !s1.data) return;
-    setScenario(s1.data.entries.every((r) => r.same_model) ? "S1" : "S2");
+    const rows = s1.data.entries ?? [];
+    setScenario(rows.length && rows.every((r) => r.same_model) ? "S1" : "S2");
   }, [s1.data, scenario]);
   useEffect(() => {
     if (scenario || !s1.error) return;
@@ -203,7 +206,7 @@ export function OptNew() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenario, tpls, st, idsKey, all.data]);
   // 대상이 바뀌면 설계 PID 초기화
-  const targetKey = scenario === "S1" ? `S1:${s1.data?.base.topo_sha256 ?? ""}` : `S2:${tid}`;
+  const targetKey = scenario === "S1" ? `S1:${s1.data?.base?.topo_sha256 ?? ""}` : `S2:${tid}`;
   useEffect(() => setNondesign(new Set()), [targetKey]);
 
   const counts = Object.fromEntries(MODES.map((m) => [m, sel.filter((e) => e.deform_mode?.effective === m).length])) as Record<DeformMode, number>;
@@ -222,18 +225,17 @@ export function OptNew() {
       else n.add(pid);
       return n;
     });
-  const pids = scenario === "S1" ? s1.data?.base.pids ?? [] : tpl?.pids ?? [];
+  const pids = scenario === "S1" ? s1.data?.base?.pids ?? [] : tpl?.pids ?? [];
 
   const keepoutSrc =
     scenario === "S1"
-      ? s1.data && { plan: { entry_id: s1.data.base.entry_id }, set: { topo: s1.data.base.topo_sha256 ?? undefined }, saveLabel: "이 모델에 저장" }
+      ? s1.data?.base?.entry_id && { plan: { entry_id: s1.data.base.entry_id }, set: { topo: s1.data.base.topo_sha256 ?? undefined }, saveLabel: "이 모델에 저장" }
       : tpl && { plan: { template_id: tpl.id }, set: { template_id: tpl.id }, saveLabel: "이 템플릿에 저장" };
 
   function reason(): string | null {
     if (!allowed) return NO_PERMISSION;
     if (!st || !all.data || !strategy || !bead) return "불러오는 중…";
-    if (!st.enabled) return "비드 최적화가 서버에 설정되지 않았습니다(관리자 문의)";
-    if (!st.solver_ready) return "서버 OptiStruct 경로가 설정되지 않았습니다(관리자 문의)";
+    if (blocked) return blocked;
     if (!ids.length) return "ESL 을 고르세요 — 라이브러리 항목에서 체크한 뒤 '선택한 ESL로 비드 최적화'";
     if (sel.length !== ids.length) return "라이브러리에 없는 항목이 있습니다";
     if (ids.length > st.max_entries) return `ESL 은 최대 ${st.max_entries}개입니다`;
@@ -291,7 +293,11 @@ export function OptNew() {
         <span className="spacer" />
         <PrimaryButton label="최적화 실행" onClick={run} disabledReason={reason()} busy={busy} />
       </div>
-      {st && !st.solver_ready && <div className="warn-box" role="alert">서버 OptiStruct 경로가 설정되지 않았습니다(관리자 문의){st.solver_reason ? ` — ${st.solver_reason}` : ""}</div>}
+      {blocked && (
+        <div className="warn-box" role="alert" data-testid="opt-blocked">
+          최적화 실행 불가: {blocked}
+        </div>
+      )}
       <ErrorLine text={error ?? settings.error ?? all.error} />
       <Card title={`① 대상 — ${scenario === "S2" ? "템플릿" : "기존 rad 형상"}`}>
         {scenario === "S2" ? (
@@ -340,11 +346,11 @@ export function OptNew() {
                       return (
                         <tr key={e.id} className={bad ? "bad-row" : undefined}>
                           <td>
-                            {e.model.name} <span className="muted small">{e.model.version}</span>
+                            {e.model?.name ?? e.id} <span className="muted small">{e.model?.version}</span>
                             {i === 0 && <span className="small muted"> · 기준</span>}
                           </td>
                           <td>
-                            {e.scene.seq ?? ""} {sceneText(e)} <span className="mono small">{e.scene.orient}</span>
+                            {e.scene?.seq ?? ""} {e.scene ? sceneText(e) : ""} <span className="mono small">{e.scene?.orient}</span>
                           </td>
                           <td className="small">{sizeText(sizeOf(e))}</td>
                           <td>

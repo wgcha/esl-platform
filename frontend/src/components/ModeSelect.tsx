@@ -7,7 +7,7 @@ import { MODES, MODE_LABEL } from "../api/opt";
 import type { DeformMode, EntryOut } from "../api/types";
 
 /** 화면 이름(모델 버전 orient) — 같은 모델·orient 의 다른 버전도 구분 */
-export const entryKey = (e: EntryOut) => [e.model.name ?? e.id, e.model.version, e.scene.orient].filter(Boolean).join(" ");
+export const entryKey = (e: EntryOut) => [e.model?.name ?? e.id, e.model?.version, e.scene?.orient].filter(Boolean).join(" ");
 
 export function modeText(e: EntryOut): string {
   const m = e.deform_mode?.effective;

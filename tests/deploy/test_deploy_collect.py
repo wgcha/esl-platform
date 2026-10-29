@@ -57,6 +57,7 @@ def test_bundle_structure_and_runs_from_bundle(tmp_path, fake_frontend):
             "config/library.example.yaml", "config/ista6.yaml", "deploy/install.ps1", "deploy/install.bat", "deploy/update.bat",
             "deploy/install-common.ps1", "deploy/setup_config.py", "deploy/requirements.lock", "deploy/caddy/esl.caddy",
             "deploy/demo/start-demo.bat", "deploy/demo/demo_setup.py", "deploy/demo/demo_synth.py"]
+    need += ["app/resources/opt_method_sources.json", "app/resources/tcl/esl_bead_post.tcl"]   # v0.7.2: 비드 최적화 자료
     need += ["app/VERSION", "app/CHANGELOG.md", "app/BUILD.json"]                  # 버전 표기(계약 esl_p3_ux.md §3)
     for n in need:
         assert n in names, n

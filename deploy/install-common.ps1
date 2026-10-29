@@ -18,7 +18,8 @@
 $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # <런타임>\app 으로 복사하는 코드(저장소 루트·묶음 app 폴더 기준 상대경로). 실행기는 deploy\esl_service.py → app\esl_service.py
 # resources/tcl: 서버 h3d 추출 TCL(esl_h3d_extract.tcl — 워커가 <런타임>\app\resources\tcl 에서 실행, 계약 esl_p3_ux.md §6)
-$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
+# resources/opt_method_sources.json: 비드 최적화 방법·출처(GET /opt/settings — v0.7.2 전에는 빠져 새 비드 최적화 화면이 비었음)
+$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
 function Write-EslStep([string]$Message) {

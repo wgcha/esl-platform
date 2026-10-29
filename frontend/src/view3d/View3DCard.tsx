@@ -1,4 +1,5 @@
-// ④ 3D 하중 보기 카드(계약 §5~§8). 컨트롤은 한 줄: 화살표 단계 · 변형 형상 · 배율 · 실제 크기 · 맞춤.
+// ④ 3D 하중 보기 카드(계약 §5~§8). 컨트롤은 한 줄: 화살표 단계 · 변형 형상 · 배율 · 실제 크기 · 원근 · 맞춤.
+// 원근 체크 해제 = 직교(기본). 선택은 브라우저별 localStorage(esl.v3d.projection.v1)에 기억.
 // three 는 loadScene() 동적 import 로만 들어온다. WebGL 이 없거나 청크 적재가 실패하면 안내 문구만 보이고 표는 그대로.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "../api/client";
@@ -12,6 +13,7 @@ import { fetchBinary, fileUrls } from "./fetchFiles";
 import { parseGlb, type ParsedGlb } from "./glb";
 import { infoLine } from "./info";
 import { loadScene } from "./loadThree";
+import { readProjection, writeProjection, type Projection } from "./projection";
 import { selectionFromPick, sceneSelection } from "./selection";
 import type { SceneApi } from "./sceneApi";
 import { buildSupportSpecs } from "./supports";
@@ -37,6 +39,9 @@ export function View3DCard({ view }: { view: LoadView }) {
   const [deformOn, setDeformOn] = useState(false);
   const [real, setReal] = useState(false);
   const [kexp, setKexp] = useState<number | null>(null);
+  const [proj, setProj] = useState<Projection>(readProjection);
+  const projRef = useRef(proj);
+  projRef.current = proj;
   const staleRetried = useRef(false);
   const arrowKeysRef = useRef<string[]>([]);
 
@@ -83,7 +88,7 @@ export function View3DCard({ view }: { view: LoadView }) {
         canvas.className = "v3d-canvas";
         host.current.appendChild(canvas);
         try {
-          scene = mod.createScene(canvas, { background: BACKGROUND, diag: manifest.bbox.diag, bbox: manifest.bbox });
+          scene = mod.createScene(canvas, { background: BACKGROUND, diag: manifest.bbox.diag, bbox: manifest.bbox, projection: projRef.current });
         } catch {
           throw new Error(NO_3D_TEXT);
         }
@@ -112,6 +117,16 @@ export function View3DCard({ view }: { view: LoadView }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mkey, runId]);
+
+  // ---- 투영(원근/직교): 전환 시 같은 시점 유지는 장면이 맡는다
+  useEffect(() => {
+    if (data && sceneRef.current) sceneRef.current.setProjection(proj);
+  }, [data, proj]);
+  const toggleProj = (persp: boolean) => {
+    const p: Projection = persp ? "persp" : "ortho";
+    setProj(p);
+    writeProjection(p);
+  };
 
   // ---- 표면 색: 면압 |Fn|/A (MPa), 없으면 |Fn| (N)
   const field = useMemo(() => (data ? colorField(data.vals) : null), [data]);
@@ -209,6 +224,10 @@ export function View3DCard({ view }: { view: LoadView }) {
             <button type="button" className={`btn small ghost toggle${real ? " on" : ""}`} aria-pressed={real} disabled={!deformOn} onClick={() => setReal((x) => !x)} title="변형 확대 없이 실제 변위 그대로 그립니다">
               실제 크기(×1)
             </button>
+            <label className="check-field" title="체크 = 원근, 해제 = 직교(기본, 치수 왜곡 없음). 같은 시점·같은 크기로 전환">
+              <input type="checkbox" checked={proj === "persp"} onChange={(e) => toggleProj(e.target.checked)} data-testid="v3d-persp" />
+              <span>원근</span>
+            </label>
             <button type="button" className="btn small ghost" onClick={() => sceneRef.current?.fit()} disabled={phase !== "ready"} title="부품 전체가 보이도록 카메라를 맞춥니다">
               맞춤
             </button>

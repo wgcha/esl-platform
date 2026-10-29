@@ -19,9 +19,11 @@ export function kProblem(v: StrategyValue, max: number): string | null {
 }
 
 export function LoadStrategy({ value, onChange, settings, modeCounts }: { value: StrategyValue; onChange: (v: StrategyValue) => void; settings: OptSettingsOut; modeCounts: Record<DeformMode, number> }) {
-  const src = settings.method_sources;
-  const max = settings.loads.max_cases;
-  const nModes = MODES.filter((m) => modeCounts[m] > 0).length;
+  // 방법·출처 자료가 없을 수 있음(서버 {error}) — 설명 문구만 비우고 선택은 그대로(v0.7.2: 여기서 TypeError → 빈 화면이었음)
+  const ms = settings.method_sources;
+  const src = { strategies: { A: ms?.strategies?.A ?? "", B: ms?.strategies?.B ?? "", C: ms?.strategies?.C ?? "" }, objective_norms: { abs: ms?.objective_norms?.abs ?? "", rel: ms?.objective_norms?.rel ?? "" } };
+  const max = settings.loads?.max_cases ?? 20;
+  const nModes = MODES.filter((m) => (modeCounts[m] ?? 0) > 0).length;
   const bOff = nModes === 0;
   const kBad = kProblem(value, max);
   const set = (p: Partial<StrategyValue>) => onChange({ ...value, ...p });

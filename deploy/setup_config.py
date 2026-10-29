@@ -24,6 +24,8 @@
 - 대시보드 .env(git 폴더 설치만): VITE_ESL_TARGET=http://127.0.0.1:<server.port>·SIMDASH_ESL_ENABLED=true 를 **없을 때만 끝에 추가**한다
   (이미 있으면 "이미 있음", 다른 값이면 그대로 두고 경고 — 기존 값·다른 줄·인코딩(BOM)·줄 끝은 보존). 바꾸기 전에 <런타임>/_backup/<UTC>/dashboard.env
   로 복사한다. 추가했으면 대시보드를 다시 시작해야 반영된다. .env 가 없으면 만들지 않고 안내만 한다.
+- v0.7.2: 최종 설정에 opt_run 섹션이 없거나(v0.6.0 이전 설정) enabled 가 아니거나 altair.optistruct_path 가 비었으면 비드 최적화는
+  비활성 그대로 두고 경고 1줄(OPT_RUN_HINT)만 낸다 — opt_run·optistruct_path 는 자동으로 넣지 않는다(서버마다 경로·라이선스가 다름).
 - 비밀번호·DB URL 은 다루지 않는다.
 """
 
@@ -55,6 +57,7 @@ LIST_KEYS = ("input_roots", "spdm_roots")
 # 기존 설정에 없으면 예시(prod) 값으로 보충하는 키(P3-UX §6 서버 h3d 추출·동시 실행, §9.1 PC 연결 토큰)
 SUPPLEMENT_KEYS = (("altair", "hw_exe_path"), ("altair", "max_concurrent_hw"), ("worker", "slots"),
                    ("client_token", "ttl_days"))
+OPT_RUN_HINT = "비드 최적화를 쓰려면 opt_run.enabled·altair.optistruct_path 설정(지금은 비활성 — 설정 파일은 자동으로 바꾸지 않음)"
 _UNSAFE = re.compile(r'[\s\x00-\x1f\x7f&|<>^%!"]')
 _WIN_ABS = re.compile(r"^[A-Za-z]:[/\\]|^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -393,6 +396,18 @@ def merge_deploy(existing: dict[str, Any] | None, defaults: dict[str, Any], expl
 # 계획
 # ---------------------------------------------------------------------------
 
+def opt_run_hint(cfg: Any) -> str | None:
+    """비드 최적화가 설정상 꺼져 있으면(opt_run 섹션 없음·enabled 아님·altair.optistruct_path 없음) 안내 1줄, 켜져 있으면 None."""
+    if not isinstance(cfg, dict):
+        return OPT_RUN_HINT
+    o, alt = cfg.get("opt_run"), cfg.get("altair")
+    if not isinstance(o, dict) or o.get("enabled") is not True:
+        return OPT_RUN_HINT
+    if not isinstance(alt, dict) or not alt.get("optistruct_path"):
+        return OPT_RUN_HINT
+    return None
+
+
 def plan(inputs: dict[str, Any]) -> dict[str, Any]:
     yaml = _yaml()
     src = Path(inputs.get("source_root") or HERE.parent)
@@ -543,6 +558,9 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
 
     # ---- 함께 두는 파일(코어·라이브러리·ISTA6): 설정이 같은 폴더의 상대 이름을 가리킬 때만, 없을 때만 복사 -----------------
     final = yaml.safe_load(text) or {}
+    hint = opt_run_hint(final)
+    if hint:
+        warnings.append(hint)
     cfg_dir = config_path.parent
     companions: list[dict[str, Any]] = []
     for path, default_name, example_name in COMPANIONS:

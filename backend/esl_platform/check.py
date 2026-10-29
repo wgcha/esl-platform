@@ -260,6 +260,13 @@ def check_opt_run(s, platform: str) -> list[Item]:
     tcl = default_bead_post_tcl()
     out.append(Item("opt_run.bead_post_tcl", OK, tcl) if os.path.isfile(tcl) else Item(
         "opt_run.bead_post_tcl", FAIL, f"비드 후처리 TCL 이 코드 스냅샷에 없습니다: {tcl}"))
+    from esl_platform.core.opt_core import EslError, load_method_sources
+
+    try:
+        load_method_sources()
+        out.append(Item("opt_run.method_sources", OK, "방법·출처 자료(resources/opt_method_sources.json)"))
+    except EslError as exc:
+        out.append(Item("opt_run.method_sources", WARN, f"{exc.message} — 화면 ⓘ 설명이 빠짐(배포가 resources/opt_method_sources.json 을 복사해야 함)"))
     root = s.storage.esl_root
     for key, sub in (("storage.templates.write", TEMPLATE_DIR), ("storage.opt.write", OPT_DIR)):
         d = os.path.join(root, sub)
