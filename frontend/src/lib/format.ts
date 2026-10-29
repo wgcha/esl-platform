@@ -41,3 +41,7 @@ export const JOB_STATE_LABEL: Record<string, string> = {
   CANCELED: "취소됨",
   INTERRUPTED: "중단됨",
 };
+
+const DOF_AX: Record<string, string> = { "1": "x", "2": "y", "3": "z" };
+/** 3-2-1 dof 표기: "123" → "123 (x·y·z)" */
+export const dofText = (d: string) => (/^[123]+$/.test(d) ? `${d} (${d.split("").map((k) => DOF_AX[k]).join("·")})` : d);

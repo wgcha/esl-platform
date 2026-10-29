@@ -1,33 +1,35 @@
 import { useCallback, useEffect } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import { canRun, useApp } from "../app/AppContext";
-import { Shell } from "../shell/Shell";
-import { STAGE_NAMES, StageStepper } from "../shell/StageStepper";
+import { MENU_CREATE, Shell } from "../shell/Shell";
+import { N_STEPS, StageStepper, stepLabel } from "../shell/StageStepper";
 import { usePolling } from "../lib/usePolling";
 import { Empty, ErrorLine } from "../components/ui";
 import type { StageProps } from "../stages/StageFrame";
 import { Stage1 } from "../stages/Stage1";
 import { Stage2 } from "../stages/Stage2";
-import { Stage3 } from "../stages/Stage3";
 import { Stage4 } from "../stages/Stage4";
 import { Stage5 } from "../stages/Stage5";
-import { Stage6 } from "../stages/Stage6";
 import type { ComponentType } from "react";
 import { BundleButton } from "../components/BundleButton";
 import { p3 } from "../api/p3";
 import { rememberCase } from "../lib/recent";
 import { CumulativeBadge } from "../components/Cumulative";
 
-const STAGES: ComponentType<StageProps>[] = [Stage1, Stage2, Stage3, Stage4, Stage5, Stage6];
+/** 화면 단계 ①입력 ②t*·지지점 ③ESL ④검증 (v0.10.0, esl_menu_restructure.md §4.3) — 파일 이름은 옛 번호 그대로 */
+const STEPS: ComponentType<StageProps>[] = [Stage1, Stage2, Stage4, Stage5];
+
+export const MOVED_EXPORT_TEXT = "내보내기는 ESL 라이브러리로 옮겨졌습니다 — 등록 후 라이브러리에서 내보내세요";
 
 export function CasePage() {
   const { projectId = "", caseId = "", n = "1" } = useParams();
-  const stage = Number(n);
+  const [sp] = useSearchParams();
+  const step = Number(n);
   const { me, projects } = useApp();
   const cs = usePolling(() => api.getCase(caseId), 0, [caseId]);
   const c = cs.data;
-  const anyRunning = !!c && Object.values(c.stage_status ?? {}).some((s) => s.state === "running");
+  const anyRunning = !!c && Object.values(c.step_status ?? c.stage_status ?? {}).some((s) => s.state === "running");
   const { reload } = cs;
 
   // 실행 중 작업이 있으면 Case 상태를 2초마다 갱신
@@ -42,21 +44,22 @@ export function CasePage() {
     if (c) rememberCase({ projectId, caseId, title: c.title });
   }, [projectId, caseId, c?.title]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!(stage >= 1 && stage <= 6)) return <Navigate to={`/p/${projectId}/c/${caseId}/stage/1`} replace />;
+  if (!(step >= 1 && step <= N_STEPS)) return <Navigate to={`/p/${projectId}/c/${caseId}/step/1`} replace />;
   const project = projects.find((p) => p.id === projectId);
   const base = `/p/${projectId}/c/${caseId}`;
-  const Stage = STAGES[stage - 1];
+  const Step = STEPS[step - 1];
   return (
     <Shell
       projectId={projectId}
       crumbs={[
         { label: project?.name ?? projectId, to: `/p/${projectId}` },
-        { label: c?.title ?? "Case", to: `${base}/stage/1` },
-        { label: `${"①②③④⑤⑥"[stage - 1]} ${STAGE_NAMES[stage - 1]}` },
+        { label: MENU_CREATE, to: `/p/${projectId}` },
+        { label: c?.title ?? "Case", to: `${base}/step/1` },
+        { label: stepLabel(step) },
       ]}
       stepper={
         <div className="case-bar">
-          <StageStepper base={base} current={stage} status={c?.stage_status} />
+          <StageStepper base={base} current={step} c={c} />
           {c && (
             <nav className="case-menu" aria-label="Case 메뉴">
               <CumulativeBadge s={c.extract_summary?.cumulative} />
@@ -69,8 +72,13 @@ export function CasePage() {
         </div>
       }
     >
+      {sp.get("moved") === "export" && (
+        <div className="info-box" role="status" data-testid="moved-export">
+          {MOVED_EXPORT_TEXT} · <Link to={`/p/${projectId}/library`}>ESL 라이브러리 열기</Link>
+        </div>
+      )}
       <ErrorLine text={cs.error} />
-      {c ? <Stage key={`${caseId}-${stage}`} c={c} reload={reloadCase} allowed={canRun(me, projectId)} /> : !cs.error && <Empty>불러오는 중…</Empty>}
+      {c ? <Step key={`${caseId}-${step}`} c={c} reload={reloadCase} allowed={canRun(me, projectId)} /> : !cs.error && <Empty>불러오는 중…</Empty>}
     </Shell>
   );
 }

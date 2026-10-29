@@ -18,7 +18,7 @@ function useResolve() {
       case "none":
         return { to: null };
       case "stage":
-        if (rc) return { to: `/p/${rc.projectId}/c/${rc.caseId}/stage/${t.n}`, note: rc.title };
+        if (rc) return { to: `/p/${rc.projectId}/c/${rc.caseId}/step/${t.n}`, note: rc.title };
         return { to: pid ? `/p/${pid}` : null, note: "Case를 먼저 여세요" };
     }
     if (!pid) return { to: null, note: "프로젝트를 먼저 고르세요" };

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { AppProvider } from "./AppContext";
 import { RunStatusProvider } from "../shell/RunStatus";
@@ -19,6 +19,30 @@ import { JobReview } from "../pages/history/JobReview";
 import { OptNew } from "../pages/opt/OptNew";
 import { OptDetail } from "../pages/opt/OptDetail";
 import { DoeStudy } from "../pages/doe/DoeStudy";
+import { stepOfStage } from "../shell/StageStepper";
+
+/** 옛 북마크 /stage/:n(1..6) → /step/:m (계약 esl_menu_restructure.md §4.2). query(?run·?val) 유지, ⑥은 ?moved=export 안내 */
+export function StageRedirect() {
+  const { projectId = "", caseId = "", n = "1" } = useParams();
+  const loc = useLocation();
+  const old = Number(n);
+  const q = new URLSearchParams(loc.search);
+  if (old === 6) q.set("moved", "export");
+  const qs = q.toString();
+  return <Navigate to={`/p/${projectId}/c/${caseId}/step/${stepOfStage(old)}${qs ? `?${qs}` : ""}`} replace />;
+}
+
+/** 라이브러리 옛 탭 키: ?tab=doe → study, ?tab=comparisons → analyses#comparisons. 그 외는 그대로 */
+function LibraryRoute() {
+  const loc = useLocation();
+  const q = new URLSearchParams(loc.search);
+  const t = q.get("tab");
+  if (t === "doe" || t === "comparisons") {
+    q.set("tab", t === "doe" ? "study" : "analyses");
+    return <Navigate to={{ pathname: loc.pathname, search: `?${q}`, hash: t === "comparisons" ? "#comparisons" : loc.hash }} replace />;
+  }
+  return <LibraryList />;
+}
 
 export function App() {
   const loc = useLocation();
@@ -34,12 +58,13 @@ export function App() {
         <Route path="/p/:projectId/cases/new" element={<NewCase />} />
         <Route path="/updates" element={<Updates />} />
         <Route path="/guide" element={<Guide />} />
-        <Route path="/p/:projectId/c/:caseId/stage/:n" element={<CasePage />} />
+        <Route path="/p/:projectId/c/:caseId/step/:n" element={<CasePage />} />
+        <Route path="/p/:projectId/c/:caseId/stage/:n" element={<StageRedirect />} />
         <Route path="/p/:projectId/c/:caseId/history" element={<CaseHistory />} />
         <Route path="/p/:projectId/history" element={<ProjectHistory />} />
         <Route path="/p/:projectId/jobs/:jobId" element={<JobReview />} />
-        <Route path="/p/:projectId/c/:caseId" element={<Navigate to="stage/1" replace />} />
-        <Route path="/p/:projectId/library" element={<LibraryList />} />
+        <Route path="/p/:projectId/c/:caseId" element={<Navigate to="step/1" replace />} />
+        <Route path="/p/:projectId/library" element={<LibraryRoute />} />
         <Route path="/p/:projectId/library/analyses/new" element={<AnalysisNew />} />
         <Route path="/p/:projectId/library/analyses/:analysisId" element={<AnalysisDetail />} />
         <Route path="/p/:projectId/library/comparisons/new" element={<ComparisonNew />} />
@@ -47,7 +72,7 @@ export function App() {
         <Route path="/p/:projectId/opt" element={<Navigate to="../library?tab=opt" relative="path" replace />} />
         <Route path="/p/:projectId/opt/new" element={<OptNew />} />
         <Route path="/p/:projectId/opt/:optId" element={<OptDetail />} />
-        <Route path="/p/:projectId/doe" element={<Navigate to="../library?tab=doe" relative="path" replace />} />
+        <Route path="/p/:projectId/doe" element={<Navigate to="../library?tab=study" relative="path" replace />} />
         <Route path="/p/:projectId/doe/:doeId" element={<DoeStudy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

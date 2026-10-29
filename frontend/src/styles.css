@@ -2818,3 +2818,158 @@ details.open-uploads .actions {
   gap: 0.4rem;
   min-width: 0;
 }
+
+/* ---- v0.10.0 메뉴 재구성(esl_menu_restructure.md §4·§5.3·§6.3·§8) ---- */
+.topbar-menus {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+.info-box {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.nowrap {
+  white-space: nowrap;
+}
+.badge.legacy {
+  background: var(--wait-weak);
+  color: var(--wait);
+  border: 1px solid color-mix(in srgb, var(--wait) 35%, transparent);
+}
+.st-chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.st-chip.ok {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.st-chip.bad {
+  background: var(--bad-weak);
+  color: var(--bad);
+}
+.st-chip.run {
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.st-chip.wait {
+  background: var(--wait-weak);
+  color: var(--wait);
+}
+/* ② t*·지지점: 기본 = 곡선(전체 폭) → 후보|hotspot → 지지점(전체 폭), 2K 이상 = 2×2(곡선|후보 / hotspot|지지점) */
+.step2-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap);
+  align-items: start;
+  min-width: 0;
+}
+.step2-grid > .card:first-child,
+.step2-support {
+  grid-column: 1 / -1;
+}
+.step2-support {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+@media (min-width: 2201px) {
+  .step2-grid > .card:first-child,
+  .step2-support {
+    grid-column: auto;
+  }
+}
+@media (max-width: 1100px) {
+  .step2-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.support-adv > summary {
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+}
+.support-adv-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+.support-adv-fields input {
+  width: 9rem;
+}
+/* ESL 목록 선택 줄: 요약 | 버튼(1920 이하에서는 줄바꿈) */
+.pick-bar .pick-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pick-bar .pick-why {
+  flex-basis: 100%;
+}
+@media (min-width: 2201px) {
+  .pick-bar .pick-why {
+    flex-basis: auto;
+    margin-left: auto;
+  }
+}
+.lib-table {
+  --tbl-max: calc(100vh - 340px);
+}
+.lib-table .table td {
+  vertical-align: middle;
+}
+/* 내보내기 창(가운데 모달, 폭 min(560px, 92vw)) — 진행 표는 창 안 스크롤 */
+.modal.export-modal {
+  width: min(560px, 92vw);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+.export-modal .checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+}
+.export-modal .id-input {
+  width: 9rem;
+}
+.export-progress {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.export-items {
+  max-height: 40vh;
+  overflow: auto;
+}
+.export-recent > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.export-recent-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.export-recent-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.anchor-section {
+  scroll-margin-top: calc(var(--topbar-h) + 0.5rem);
+}

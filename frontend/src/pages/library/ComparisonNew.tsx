@@ -6,7 +6,7 @@ import { api } from "../../api/endpoints";
 import { errorText } from "../../api/client";
 import type { EntryOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Card, Empty, ErrorLine, Field, PrimaryButton } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { EntryVerdict, libPath, modelVersions, pairEntries, prevVersion, sceneText } from "./common";
@@ -57,7 +57,7 @@ export function ComparisonNew() {
 
   return (
     <Shell
-      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "라이브러리", to: libPath(projectId) }, { label: "새 버전 비교" }]}
+      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_LIBRARY, to: libPath(projectId) }, { label: "새 버전 비교" }]}
       projectId={projectId}
     >
       <div className="page-title-row">

@@ -8,6 +8,7 @@ import { slimLine, slimResults, slimTip } from "../lib/slim";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
 import { blockReason, submitJob, useAction } from "./common";
+import { stepState } from "../shell/StageStepper";
 import { CumulativeCard } from "../components/Cumulative";
 
 export function Stage1({ c, reload, allowed }: StageProps) {
@@ -70,7 +71,7 @@ export function Stage1({ c, reload, allowed }: StageProps) {
   return (
     <StageFrame
       title="① 입력"
-      status={c.stage_status?.["1"]}
+      status={stepState(c, 1)}
       error={act.error}
       onJobDone={() => void reload()}
       primary={{ label: "추출 실행", onClick: run, disabledReason: blockReason(allowed, c, 1, prereq), busy: act.busy }}

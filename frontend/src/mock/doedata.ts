@@ -677,7 +677,7 @@ export class DoeMock {
     if (this.checkError) return this.checkError;
     const pid = String(b.project_id ?? "");
     if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
-    if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "비드 DOE 를 쓸 수 없습니다.");
+    if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
     const scenario = b.scenario as DoeScenario;
     if (!["same", "mesh", "step"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
     const ids = (b.entry_ids as string[]) ?? [];
@@ -736,7 +736,7 @@ export class DoeMock {
           id,
           project_id: String(b.project_id),
           scenario: b.scenario as DoeScenario,
-          title: title || `비드 DOE ${co.step.file_name}`,
+          title: title || `강성 평가 ${co.step.file_name}`,
           entry_ids: b.entry_ids as string[],
           inputs: {
             step: { file_name: co.step.file_name, sha256: co.step.sha256 },
@@ -770,7 +770,7 @@ export class DoeMock {
     }
     if ((r = path.match(/^\/doe\/studies\/([^/]+)(\/.*)?$/))) {
       const rec = this.recs.find((x) => x.out.id === r![1]);
-      if (!rec) return err(404, "DOE_NOT_FOUND", "비드 DOE 연구를 찾을 수 없습니다.");
+      if (!rec) return err(404, "DOE_NOT_FOUND", "강성 평가 스터디를 찾을 수 없습니다.");
       const sub = r[2] ?? "";
       const write = method !== "GET";
       if (write && !this.ctx.canRun(rec.out.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");

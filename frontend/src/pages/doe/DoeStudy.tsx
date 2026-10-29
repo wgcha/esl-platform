@@ -13,7 +13,7 @@ import {
 import { STEP_LABEL } from "../../api/history";
 import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
-import { Shell } from "../../shell/Shell";
+import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/ui";
 import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
@@ -146,7 +146,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     if (blocked) return blocked;
     const sb = scenarioBlocked(st, scenario);
     if (sb) return sb;
-    if (!ids.length) return "ESL 을 고르세요 — 라이브러리 항목에서 체크한 뒤 '선택한 ESL로 비드 DOE'";
+    if (!ids.length) return "ESL 을 고르세요 — ESL 라이브러리 › ESL 목록에서 체크한 뒤 '강성 평가 스터디'";
     if (sel.length !== ids.length) return "라이브러리에 없는 항목이 있습니다";
     if (ids.length > st.max_entries) return `ESL 은 최대 ${st.max_entries}개입니다`;
     if (scenario === "same" && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 다른 모델 시나리오`;
@@ -187,7 +187,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   return (
     <>
       <div className="page-title-row">
-        <h1 className="page-title">새 비드 DOE</h1>
+        <h1 className="page-title">새 강성 평가 스터디</h1>
         <ScenarioRadio value={scenario} onChange={setChosen} auto={auto} st={st} readOnly={false} />
         <span className="spacer" />
         <PrimaryButton label="입력 준비" onClick={prepare} disabledReason={reason()} busy={busy} />
@@ -510,7 +510,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   else if (phase === "RUN" || phase === "DONE" || (phase === "FAILED" && s.doe?.preview)) primary = { label: "보고서 보기", onClick: () => openReport(doe.reportUrl(id)), reason: done && s.result_ready ? null : phase === "RUN" ? "실행이 끝나면 볼 수 있습니다" : "보고서가 없습니다" };
   else if (phase === "FAILED") primary = { label: "입력 준비", onClick: () => undefined, reason: "입력 준비에 실패했습니다 — 아래 진행·로그를 확인하고 복제해 다시" };
   else if (!hasPreview) primary = { label: "미리보기", onClick: preview, reason: previewReason() };
-  else primary = { label: "DOE 실행", onClick: run, reason: runReason() };
+  else primary = { label: "강성 평가 실행", onClick: run, reason: runReason() };
 
   const entries = all.data ?? [];
   const varNames = s?.doe?.spec.params.map((p) => p.name) ?? [];
@@ -522,7 +522,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   return (
     <>
       <div className="page-title-row">
-        <h1 className="page-title">비드 DOE</h1>
+        <h1 className="page-title">강성 평가 스터디</h1>
         {s && <span className="muted">{s.title}</span>}
         {s && <ScenarioRadio value={s.scenario} onChange={() => undefined} auto={null} st={st} readOnly />}
         {s && <Badge kind={phase === "FAILED" ? "bad" : phase === "DONE" ? "ok" : "info"}>{PHASE_NAME[s.phase]}</Badge>}
@@ -658,7 +658,7 @@ export function DoeStudy() {
   const isNew = doeId === "new";
   return (
     <Shell
-      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: "라이브러리", to: `${libPath(projectId)}?tab=doe` }, { label: isNew ? "새 비드 DOE" : "비드 DOE" }]}
+      crumbs={[{ label: project?.name ?? projectId, to: `/p/${projectId}` }, { label: MENU_LIBRARY, to: `${libPath(projectId)}?tab=study` }, { label: isNew ? "새 강성 평가 스터디" : "강성 평가 스터디" }]}
       projectId={projectId}
     >
       {isNew ? <NewStudy projectId={projectId} st={settings.data} stError={settings.error} /> : <StudyDetail key={doeId} projectId={projectId} id={doeId} st={settings.data} stError={settings.error} />}

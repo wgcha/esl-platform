@@ -11,14 +11,14 @@ const KIND: Record<DoePhase, "ok" | "bad" | "warn" | "info"> = { PREP: "info", R
 export function DoeList({ projectId }: { projectId: string }) {
   const list = usePolling(() => doe.studies({ project_id: projectId }), 10000, [projectId]);
   return (
-    <Card title="비드 DOE">
+    <Card title="강성 평가 스터디">
       {!list.data ? (
         <Empty>{list.error ?? "불러오는 중…"}</Empty>
       ) : list.data.length === 0 ? (
-        <Empty>아직 비드 DOE 가 없습니다 — 항목 탭에서 ESL 을 체크하고 '선택한 ESL로 비드 DOE'</Empty>
+        <Empty>아직 강성 평가 스터디가 없습니다 — ESL 목록에서 ESL 을 체크하고 '강성 평가 스터디'</Empty>
       ) : (
         <div className="table-wrap scroll">
-          <table className="table compact" aria-label="비드 DOE 목록">
+          <table className="table compact" aria-label="강성 평가 스터디 목록">
             <thead>
               <tr>
                 <th className="num">만든 시각</th>

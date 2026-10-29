@@ -52,15 +52,12 @@ describe("크기 규칙(화면, V-OR-1)", () => {
 });
 
 describe("라이브러리 목록 — 행 선택·모드 열·탭(§10.1)", () => {
-  it("첫 선택 = 기준, 다른 크기 비활성, ⓜ 같은 모델, 선택 막대 → 새 비드 최적화(S2 기본: 다른 모델 섞임)", async () => {
+  it("v0.10.0 선택 자유(폐기만 불가), 첫 선택 = 기준, 크기가 다르면 [비드 최적화] 비활성 사유, ⓜ 같은 모델 → 새 비드 최적화(S2 기본)", async () => {
     const { container } = renderApp("/p/p-body/library");
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
-    expect(primaries(container).map((b) => b.textContent)).toEqual(["종합분석 만들기"]);
+    expect(primaries(container)).toHaveLength(0);
     fireEvent.click(box("75QN80H v072 146 선택"));
-    expect(box("65QN80H v072 235 선택").disabled).toBe(true);
-    expect(box("65QN80H v072 235 선택").title).toMatch(/크기 다름\(기준 75형/);
-    expect(box("85QN80H v072 1 선택").disabled).toBe(true);
-    expect(box("75QN80H v073 146 선택").disabled).toBe(false);
+    expect(box("65QN80H v072 235 선택").disabled).toBe(false); // 체크는 자유
     // ⓜ: 기준과 같은 모델(topo) 행만
     const row = (label: string) => box(label).closest("tr")!;
     expect(row("75QN80H v072 14 선택").querySelector(".mm-mark")).toBeTruthy();
@@ -68,11 +65,19 @@ describe("라이브러리 목록 — 행 선택·모드 열·탭(§10.1)", () =>
     fireEvent.click(box("75QN80H v072 14 선택"));
     fireEvent.click(box("75QN80H v072 3 선택"));
     expect(screen.getByTestId("pick-bar").textContent).toMatch(/선택 3개 · 기준 75형 1660×947 · 같은 모델 3\/3/);
+    // 다른 크기를 넣으면 비드 최적화·강성 평가 비활성(사유), 내보내기·종합분석은 가능
+    fireEvent.click(box("65QN80H v072 235 선택"));
+    const optBtn = () => screen.getByRole("button", { name: /^비드 최적화 \(/ }) as HTMLButtonElement;
+    await waitFor(() => expect(optBtn().disabled).toBe(true));
+    expect(optBtn().parentElement!.title).toMatch(/크기 다름\(기준 75형/);
+    expect((screen.getByRole("button", { name: "종합분석 (4)" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(box("65QN80H v072 235 선택"));
     fireEvent.click(box("75QN80H v073 146 선택"));
     expect(screen.getByTestId("pick-bar").textContent).toMatch(/같은 모델 3\/4/);
-    // 주 버튼은 그대로 1개(비드 최적화는 보조 버튼)
-    expect(primaries(container)).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "선택한 ESL로 비드 최적화 (4)" }));
+    // 주 버튼은 [내보내기] 1개(비드 최적화는 보조 버튼)
+    expect(primaries(container).map((b) => b.textContent)).toEqual(["내보내기 (4)"]);
+    fireEvent.click(screen.getByRole("button", { name: "비드 최적화 (4)" }));
     expect(await screen.findByRole("heading", { level: 1, name: "새 비드 최적화" })).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("tab", { name: "템플릿(S2)" }).getAttribute("aria-selected")).toBe("true"));
   });
@@ -84,9 +89,11 @@ describe("라이브러리 목록 — 행 선택·모드 열·탭(§10.1)", () =>
     });
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
     fireEvent.click(box("75QN80H v072 146 선택"));
+    fireEvent.click(box("75QN80H v073 146 선택"));
     // 목 치수는 항목 순서별 ±0.15 % — 허용 0.05 % 면 75형끼리도 일부는 '크기 다름'
-    await waitFor(() => expect(box("75QN80H v073 146 선택").disabled).toBe(true));
-    expect(box("75QN80H v073 146 선택").title).toMatch(/크기 다름/);
+    const optBtn = () => screen.getByRole("button", { name: "비드 최적화 (2)" }) as HTMLButtonElement;
+    await waitFor(() => expect(optBtn().disabled).toBe(true));
+    expect(optBtn().parentElement!.title).toMatch(/크기 다름/);
     resetOptSettingsCache();
   });
 
@@ -113,13 +120,13 @@ describe("라이브러리 목록 — 행 선택·모드 열·탭(§10.1)", () =>
     await waitFor(() => expect(rowsOf()).toHaveLength(10));
     expect((screen.getByRole("combobox", { name: "75QN80H v072 146 모드" }) as HTMLSelectElement).disabled).toBe(true);
     fireEvent.click(box("75QN80H v072 146 선택"));
-    expect((screen.getByRole("button", { name: "선택한 ESL로 비드 최적화 (1)" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "비드 최적화 (1)" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("최적화 실행 탭: 목록 → 상세 / 템플릿 탭: 주 버튼 = 템플릿 등록, 삭제 권한·사용 중 보관", async () => {
+  it("비드 최적화 탭: 목록 → 상세 / 템플릿 탭: 주 버튼 = 템플릿 등록, 삭제 권한·사용 중 보관", async () => {
     const { container, server } = renderApp("/p/p-body/library");
-    fireEvent.click(await screen.findByRole("tab", { name: "최적화 실행" }));
-    const tbl = await screen.findByRole("table", { name: "최적화 실행 목록" });
+    fireEvent.click(await screen.findByRole("tab", { name: "비드 최적화" }));
+    const tbl = await screen.findByRole("table", { name: "비드 최적화 목록" });
     expect(within(tbl).getByText("75형 강건 비드 1차")).toBeTruthy();
     expect(within(tbl).getByText(/목적 1\.00→0\.71/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "템플릿" }));
