@@ -27,7 +27,7 @@ function JobRow({ j }: { j: JobOut }) {
 }
 
 /** 단계 라벨을 붙이는 작업(단계 이름이 사용자에게 의미 있는 것) */
-const JOB_STEP_LABELLED = new Set<string>(["OPT_RUN"]);
+const JOB_STEP_LABELLED = new Set<string>(["OPT_RUN", "DOE_PREP", "DOE_PREVIEW", "DOE_RUN"]);
 
 /** 계산 대기열(SLOT 레인 실행·대기). 값은 RunStatusProvider 의 폴링 결과. */
 export function QueuePanel() {

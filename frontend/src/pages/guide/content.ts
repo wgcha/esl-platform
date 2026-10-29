@@ -5,7 +5,7 @@ export type GuideTarget =
   | { kind: "cases" }
   | { kind: "new"; tab?: "pc" }
   | { kind: "stage"; n: number }
-  | { kind: "library"; tab?: "opt" | "templates" }
+  | { kind: "library"; tab?: "opt" | "templates" | "doe" }
   | { kind: "analysisNew" }
   | { kind: "comparisonNew" }
   | { kind: "updates" }
@@ -227,6 +227,20 @@ export const GUIDE: GuideGroup[] = [
         steps: ["라이브러리 → '템플릿' 탭 → '템플릿 등록' → 파일 끌어다 놓기 → 자동 검사 → 제목·인치(선택)·설명 → '등록'.", "삭제는 등록자·관리자만, 이전 실행이 참조 중이면 목록에서만 숨깁니다(보관)."],
         target: { kind: "library", tab: "templates" },
         label: "템플릿 열기",
+      },
+      {
+        id: "bead-doe",
+        title: "비드 형상 DOE",
+        what: "낙하 하중(ESL)을 고려해 Ch/R 비드 깊이·폭·위치를 바꾼 여러 안의 선형 강성을 비교합니다. 형상은 중립면 STEP 에서 형상 엔진이 만듭니다.",
+        steps: [
+          "라이브러리 항목에서 ESL 체크 → '선택한 ESL로 비드 DOE (n)'. 시나리오(① 같은 모델 · ② 다른 모델+B 메시 · ③ STEP만)는 자동 판별됩니다.",
+          "STEP(②는 B 메시도)을 끌어다 놓으면 입력 검사 → '입력 준비'. 비드·변수 표에서 범위·DOE 방식·안 수를 정하고 '미리보기'.",
+          "썸네일에서 충돌·고정 침범(회색)을 확인한 뒤 'DOE 실행' → 순위·민감도·3D 비교·최적 안 받기·보고서.",
+        ],
+        check: ["미리보기 OK 안이 충분한지(스킵이 많으면 범위를 feasible 안으로)", "②③ 평면도 경계 경고(빨강 점선) 위치가 의도와 맞는지"],
+        tip: "기본값(D·W, feasible 범위, LHS 30안)으로 먼저 돌려 보세요. 선형 상대 비교이므로 최적 안은 검증 낙하 1회로 확인합니다.",
+        target: { kind: "library", tab: "doe" },
+        label: "비드 DOE 목록",
       },
     ],
   },

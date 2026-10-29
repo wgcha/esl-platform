@@ -18,6 +18,7 @@ import { ProjectHistory } from "../pages/history/ProjectHistory";
 import { JobReview } from "../pages/history/JobReview";
 import { OptNew } from "../pages/opt/OptNew";
 import { OptDetail } from "../pages/opt/OptDetail";
+import { DoeStudy } from "../pages/doe/DoeStudy";
 
 export function App() {
   const loc = useLocation();
@@ -46,6 +47,8 @@ export function App() {
         <Route path="/p/:projectId/opt" element={<Navigate to="../library?tab=opt" relative="path" replace />} />
         <Route path="/p/:projectId/opt/new" element={<OptNew />} />
         <Route path="/p/:projectId/opt/:optId" element={<OptDetail />} />
+        <Route path="/p/:projectId/doe" element={<Navigate to="../library?tab=doe" relative="path" replace />} />
+        <Route path="/p/:projectId/doe/:doeId" element={<DoeStudy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </ErrorBoundary>
