@@ -531,6 +531,11 @@ def _study(conn: Connection, job: dict[str, Any]) -> dict[str, Any]:
     s = doe_repo.get_study(conn, job["bead_doe_id"], for_update=True)
     if s is None:
         raise RegisterError("DOE_NOT_FOUND", "비드 DOE 연구 행이 없습니다")
+    # phase 역행 금지: 연구가 이 작업 단계를 이미 지났으면(예 끝난 연구에 오래된 미리보기 결과) 등록하지 않는다
+    order = {"PREP": 0, "READY": 1, "PREVIEW": 2, "PREVIEW_READY": 3, "RUN": 4, "DONE": 5}
+    own = {"DOE_PREP": "PREP", "DOE_PREVIEW": "PREVIEW", "DOE_RUN": "RUN"}.get(job.get("job_type"))
+    if own is not None and order.get(s.get("phase"), -1) > order[own]:
+        raise RegisterError("DOE_PHASE_STALE", f"연구 단계({s.get('phase')})가 이 작업({job.get('job_type')})을 이미 지났습니다 — 등록하지 않습니다")
     return s
 
 

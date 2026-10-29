@@ -126,8 +126,17 @@ def outside_paths(rows: list[dict[str, Any]], root: Path) -> list[str]:
 def full_flow(client, engine, worker, esl_root, s, *, expect_ok: int, expect_skip: dict, expect_morph: int):
     sid = s["id"]
     d = sdir(esl_root, sid)
-    j = run_job(client, worker, s["job"]["id"])
+    prep_jid = s["job"]["id"]
+    j = run_job(client, worker, prep_jid)
     assert [x["step_key"] for x in j["steps"]] == ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"]
+    # 작업 로그(paicad argv): 일반 사용자 응답에는 서버 절대경로 없음(‹ESL_ROOT›·‹…›/파일명), 전역 관리자는 원문(§15, 검증 지적)
+    lg = client.get(f"{API}/jobs/{prep_jid}/log", params={"step": 3}, headers=R)
+    assert lg.status_code == 200 and "argv:" in lg.text, lg.text[-1500:]
+    flat = lg.text.replace("\\\\", "/").replace("\\", "/")
+    assert str(esl_root) not in flat and os.path.dirname(str(esl_root)) not in flat, lg.text[-1500:]
+    assert "‹ESL_ROOT›/_doe/" in lg.text and "‹…›/paicad" in lg.text
+    la = client.get(f"{API}/jobs/{prep_jid}/log", params={"step": 3}, headers=H("tok-admin"))
+    assert str(esl_root) in la.text.replace("\\\\", "/").replace("\\", "/")
     assert j["progress_pct"] == 100.0
     g = study(client, sid)
     assert g["phase"] == "READY", g

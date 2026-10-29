@@ -86,6 +86,28 @@ try {
       if (!ok) failed += 1;
       console.log(`${ok ? "OK  " : "FAIL"} ${w}×${h} ${name}: 가로 스크롤 ${r.hScroll ? "있음" : "없음"} · 잘린 카드 ${r.cut} · 표 가로 스크롤 ${r.wraps}`);
       if (!ok || name === "결과") await page.screenshot({ path: path.join(out, `check_${w}_${name.replace(/\s+/g, "_")}.png`), fullPage: true });
+      if (name === "미리보기 완료") {
+        // 썸네일 카드 내부: 그림(4:3)이 카드 안에 다 들어가고, 안 id·스킵 사유 배지가 카드 안에 보여야 함(검증 지적 — 카드 잘림)
+        await page.waitForTimeout(800);
+        const t = await page.evaluate(() =>
+          [...document.querySelectorAll(".doe-thumb")].map((li) => {
+            const lr = li.getBoundingClientRect();
+            const img = li.querySelector(".doe-thumb-img").getBoundingClientRect();
+            const cap = li.querySelector(".doe-thumb-cap");
+            const cr = cap.getBoundingClientRect();
+            const badge = cap.querySelector(".badge");
+            const br = badge?.getBoundingClientRect();
+            const inside = (r) => r.height > 0 && r.top >= lr.top - 0.5 && r.bottom <= lr.bottom + 0.5 && r.right <= lr.right + 0.5;
+            return { id: li.dataset.testid, status: li.dataset.status, imgOk: inside(img) && Math.abs(img.width / img.height - 4 / 3) < 0.05, capOk: inside(cr) && !!cap.textContent?.trim(), badgeOk: !badge || inside(br), skipped: li.classList.contains("skipped") };
+          }),
+        );
+        const bad = t.filter((x) => !x.imgOk || !x.capOk || !x.badgeOk || (x.skipped && !x.badgeOk));
+        const skippedWithBadge = t.filter((x) => x.skipped).length;
+        const okT = t.length > 0 && bad.length === 0;
+        if (!okT) failed += 1;
+        console.log(`${okT ? "OK  " : "FAIL"} ${w}×${h} 썸네일 카드 ${t.length}개: 그림·안 id·배지 보임${bad.length ? ` — 잘림 ${JSON.stringify(bad.slice(0, 3))}` : ""} (스킵 배지 ${skippedWithBadge})`);
+        if (!okT) await page.locator('ul[aria-label="미리보기 썸네일"]').screenshot({ path: path.join(out, `check_${w}_thumbs.png`) });
+      }
     }
   }
   await browser.close();

@@ -727,12 +727,23 @@ def _spec_dict(body) -> dict[str, Any]:
     return out
 
 
+def _study_cfg(conn, s: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """행렬 생성 설정 = 연구 준비(DOE_PREP) 시점 스냅샷 bead_doe(워커 BD_MATRIX 와 같은 값 — 준비 뒤 서버 설정이 바뀌어도
+    MATRIX_MISMATCH 가 나지 않게, 검증 지적). 스냅샷이 없으면 지금 설정."""
+    j = doe_repo.latest_job(conn, s["id"], job_type="DOE_PREP", state="SUCCEEDED")
+    snap = (((j or {}).get("params") or {}).get("doe") or {}).get("cfg") or {}
+    bd = snap.get("bead_doe") if isinstance(snap, dict) else None
+    return bd if isinstance(bd, dict) and bd.get("doe") else current
+
+
 def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]:
     """행렬 생성만(저장 안 함) — 화면 안 수·경고 즉시 표시. 같은 함수를 미리보기·워커 BD_MATRIX 가 쓴다(같은 sha)."""
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
     _require_prep(s, job)
-    return _jsonable(_generate(ctx, s, _spec_dict(body), c))
+    with ctx.engine.connect() as conn:
+        mc = _study_cfg(conn, s, c)
+    return _jsonable(_generate(ctx, s, _spec_dict(body), mc))
 
 
 def _prep_params(conn, s: dict[str, Any]) -> dict[str, Any]:
@@ -767,7 +778,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         if s.get("prep") is None:
             raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
-        m = _generate(ctx, s, spec, c)
+        m = _generate(ctx, s, spec, _study_cfg(conn, s, c))
         base = _prep_params(conn, s)
         rev = int(((s.get("doe") or {}).get("rev")) or 0) + 1
         doe = copy.deepcopy(base["doe"])
@@ -826,6 +837,19 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         s = load_study(conn, sid)
         require_execute(principal, s["project_id"])
         prep_job = doe_repo.latest_job(conn, sid, job_type="DOE_PREP")
+        # §15 업로드는 본인 것만: 복제는 원 연구의 STEP·B 메시 업로드(서버 경로)를 그대로 다시 쓰므로 업로드 소유자만(검증 지적)
+        from ...core.db.tables import uploads as uploads_t
+
+        snap = ((prep_job or {}).get("params") or {}).get("doe") or {}
+        for k in ("step", "mesh"):
+            uid = (snap.get(k) or {}).get("upload_id")
+            if not uid:
+                continue
+            owner = conn.execute(uploads_t.select().with_only_columns(uploads_t.c.user_id)
+                                 .where(uploads_t.c.id == uid)).scalar()
+            if owner != principal.user_id:
+                raise DomainError("UPLOAD_NOT_OWNED", "원 연구의 입력 파일은 올린 사람만 다시 쓸 수 있습니다 — "
+                                  "같은 ESL 을 골라 STEP 을 새로 올려 새 비드 DOE 를 만드세요", status=403, input=k)
     require_config_ok(ctx)
     require_enabled(ctx, s["scenario"])
     if prep_job is None or not isinstance((prep_job.get("params") or {}).get("doe"), dict):
@@ -850,10 +874,32 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
                              inputs=dict(s.get("inputs") or {}), params=params, warns=[])
 
 
+# 연구 진행 순서(phase) — 오래된 작업 재시도·등록이 연구를 되돌리지 않게(검증 지적)
+PHASE_ORDER = {"PREP": 0, "READY": 1, "PREVIEW": 2, "PREVIEW_READY": 3, "RUN": 4, "DONE": 5}
+JOB_PHASE = {"DOE_PREP": "PREP", "DOE_PREVIEW": "PREVIEW", "DOE_RUN": "RUN"}
+
+
+def _require_retry_current(conn, s: dict[str, Any], job: dict[str, Any]) -> None:
+    """재시도 허용 = 그 연구의 **가장 최근 작업**이고(이미 재시도했거나 뒤에 다른 작업이 있으면 거부), 연구가 끝나지 않았고(DONE),
+    연구 단계가 그 작업 단계를 지나지 않았을 때만. 아니면 409 DOE_RETRY_STALE."""
+    latest = doe_repo.latest_job(conn, s["id"])
+    why = None
+    if s["phase"] == "DONE":
+        why = "연구가 이미 끝났습니다"
+    elif latest is None or latest["id"] != job["id"]:
+        why = "이 작업 뒤에 다른 작업(재시도·다음 단계)이 있습니다"
+    elif PHASE_ORDER.get(s["phase"], -1) > PHASE_ORDER[JOB_PHASE[job["job_type"]]]:
+        why = "연구가 이 작업 단계를 이미 지났습니다"
+    if why:
+        raise conflict("DOE_RETRY_STALE", f"오래된 비드 DOE 작업은 재시도할 수 없습니다 — {why}. 연구 화면에서 현재 단계를 진행하세요",
+                       phase=s["phase"], latest_job_id=(latest or {}).get("id"))
+
+
 def retry_job(conn, principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
     """DOE_* 재시도(§9.3): 같은 params(연구 스냅샷)로 실패 step 부터(BD-D-16 이어하기 — 안 done.json 재사용은 워커).
     phase 를 그 작업의 진행 상태로 되돌린다."""
     s = load_study(conn, job["bead_doe_id"], for_update=True)
+    _require_retry_current(conn, s, job)
     start = jobs_repo.first_failed_step(conn, job["id"])
     new = _insert_job(conn, principal, s, job["job_type"], dict(job["params"]), retry_of=job["id"],
                       resume=start if start > 1 else None)

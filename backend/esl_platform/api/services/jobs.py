@@ -308,12 +308,57 @@ def _retry_comparison(conn, principal: Principal, job: dict[str, Any]) -> dict[s
 
 
 # ---------------------------------------------------------------- 로그
-def _masker(ctx: AppContext):
+# 서버 절대경로 가리기(계약 esl_bead_doe.md §15 "응답·로그에 서버 절대경로 없음(일반 사용자)" — 검증 지적: paicad·OptiStruct argv
+# 로그). 알려진 루트는 이름표 + 루트 기준 상대 경로, 그 밖 절대경로는 ‹…›/파일명. 전역 관리자는 원문.
+_WIN_ABS = re.compile(r"(?<![\w])[A-Za-z]:(?:\\\\|\\|/)[^\s\"',;\]\)]*")
+_POSIX_ABS = re.compile(r"(?<![\w.:/~\-›])/(?:[^\s/\"',;\]\)]+/)+[^\s\"',;\]\)]*")
+
+
+def _root_labels(ctx: AppContext) -> list[tuple[str, str]]:
+    st = ctx.settings.storage
+    out: list[tuple[str, str]] = []
+
+    def add(p: str | None, label: str) -> None:
+        if not p:
+            return
+        base = os.path.normpath(str(p)).rstrip("\\/")
+        if len(base) < 2:
+            return
+        for v in {base, base.replace("\\", "/"), base.replace("/", "\\"), base.replace("/", "\\").replace("\\", "\\\\")}:
+            out.append((v, label))
+
+    add(st.esl_root, "‹ESL_ROOT›")
+    add(getattr(st, "upload_root", None), "‹UPLOAD›")
+    for p in st.input_roots or []:
+        add(p, "‹INPUT›")
+    for p in st.spdm_roots or []:
+        add(p, "‹SPDM›")
+    out.sort(key=lambda x: -len(x[0]))          # 긴(안쪽) 루트 먼저
+    return out
+
+
+def mask_server_paths(line: str, roots: list[tuple[str, str]]) -> str:
+    for raw, label in roots:
+        if raw in line:
+            line = line.replace(raw, label)
+    def tail(m: re.Match) -> str:
+        v = m.group(0)
+        name = re.split(r"[\\/]+", v.rstrip("\\/"))[-1] if v.rstrip("\\/") else ""
+        return f"‹…›/{name}" if name else "‹…›"
+    line = _WIN_ABS.sub(tail, line)
+    return _POSIX_ABS.sub(tail, line)
+
+
+def _masker(ctx: AppContext, principal: Principal | None = None):
     pats = [re.compile(p) for p in ctx.settings.logging.mask_patterns]
+    hide_paths = principal is not None and not principal.is_global_admin
+    roots = _root_labels(ctx) if hide_paths else []
 
     def mask(line: str) -> str:
         for p in pats:
             line = p.sub("***", line)
+        if hide_paths:
+            line = mask_server_paths(line, roots)
         return line
 
     return mask
@@ -374,7 +419,7 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
     raw_lines = raw_lines[:LOG_MAX_LINES]
     consumed = min(len(data), sum(len(x) + 1 for x in raw_lines))
     lines = [x.rstrip(b"\r").decode("utf-8", errors="replace") for x in raw_lines]
-    mask = _masker(ctx)
+    mask = _masker(ctx, principal)
     nxt = cursor + consumed
     return {"step": st["step_no"], "lines": [mask(x) for x in lines], "next_cursor": nxt,
             "eof": terminal and nxt >= size}

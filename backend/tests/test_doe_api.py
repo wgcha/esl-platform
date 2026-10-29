@@ -24,6 +24,7 @@ from doe_support import (
     simulate_preview,
     simulate_run,
     study_dir,
+    update_study,
     upload_step,
 )
 from esl_test_support import API, H
@@ -419,6 +420,8 @@ def _check_results(client, sid, best, m, esl_root):
     assert d.status_code == 200 and d.content == b"DBRep"
     for bad in ("../x", "/etc/passwd", f"run/designs/{best}/paicad/paicad.log"):
         assert api(client, "GET", f"/doe/studies/{sid}/download", params={"rel": bad}).status_code in (404, 422), bad
+    r = api(client, "GET", f"/doe/studies/{sid}/download", params={"rel": f"best/{best}/sample\x00.brep"})   # NUL → 422(500 아님)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PATH_UNSAFE", r.text
     rep = api(client, "GET", f"/doe/studies/{sid}/report")
     assert rep.status_code == 200 and "default-src 'none'" in rep.headers["content-security-policy"]
     z = api(client, "GET", f"/doe/studies/{sid}/bundle")
@@ -453,6 +456,9 @@ def test_clone(client, world, engine, esl_root):
     assert api(client, "POST", f"/doe/studies/{s['id']}/clone", json={"x": 1}).status_code == 422
     assert api(client, "POST", f"/doe/studies/{s['id']}/clone", "tok-general", json={}).status_code == 403
     assert api(client, "POST", "/doe/studies/nope/clone", json={}).status_code == 404
+    # 다른 power 사용자: 원 연구의 STEP 업로드(작성자 것)를 다시 쓰는 복제는 403 UPLOAD_NOT_OWNED(§15 업로드는 본인 것만)
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", "tok-power2", json={})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "UPLOAD_NOT_OWNED", r.text
 
 
 # ================================================================ ②·③ 입력 검사
@@ -517,3 +523,78 @@ def test_history_lists_doe_jobs(client, world, engine):
     assert it["job_type"] == "DOE_PREP" and it["stage"] == 11 and it["subject_title"] == s["title"]
     r = client.get(f"{API}/history", params={"project_id": "p-1", "q": s["title"][:6]}, headers=R)
     assert any(x["id"] == s["job"]["id"] for x in r.json()["items"])
+
+
+def test_stale_retry_rejected(client, world, engine, esl_root):
+    """검증 지적: 실패한 미리보기 → 재시도 성공 → 실행 → DONE 뒤 원래 실패 작업을 다시 재시도하면 연구가 되돌아가던 문제 —
+    가장 최근 작업이 아니거나 연구가 끝났으면 409 DOE_RETRY_STALE, phase·결과 불변."""
+    s = _ready(client, world, engine, esl_root)
+    sid = s["id"]
+    p = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": s["version"], "spec": SPEC}).json()
+    old = p["job"]["id"]
+    finish_job(engine, old, "FAILED", "PAICAD_FAILED")
+    r = client.post(f"{API}/jobs/{old}/retry", headers=W)
+    assert r.status_code == 201, r.text
+    new = r.json()["id"]
+    r = client.post(f"{API}/jobs/{old}/retry", headers=W)                      # 이미 재시도한 작업(뒤에 새 작업 있음)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "DOE_RETRY_STALE"
+    m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": 1, "spec": SPEC}).json()
+    simulate_preview(engine, esl_root, sid, new, m)
+    g = api(client, "GET", f"/doe/studies/{sid}").json()
+    rr = api(client, "POST", f"/doe/studies/{sid}/run",
+             json={"version": g["version"], "matrix_sha256": g["doe"]["matrix_sha256"]}).json()
+    simulate_run(engine, esl_root, sid, rr["job"]["id"], m)
+    r = client.post(f"{API}/jobs/{old}/retry", headers=W)                      # 끝난 연구의 오래된 실패 작업
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "DOE_RETRY_STALE", r.text
+    g2 = api(client, "GET", f"/doe/studies/{sid}").json()
+    assert g2["phase"] == "DONE" and g2["result_ready"] is True
+    assert api(client, "GET", f"/doe/studies/{sid}/results").status_code == 200
+
+
+def test_register_rejects_phase_regression(engine, world, client, esl_root):
+    """워커 등록 단계도 phase 역행 금지: DONE 연구에 오래된 DOE_PREVIEW 결과 등록 → RegisterError(DOE_PHASE_STALE)."""
+    from esl_worker.register import RegisterError, _study
+
+    s = _ready(client, world, engine, esl_root)
+    update_study(engine, s["id"], phase="DONE")
+    with engine.begin() as c, pytest.raises(RegisterError) as ei:
+        _study(c, {"bead_doe_id": s["id"], "job_type": "DOE_PREVIEW"})
+    assert ei.value.code == "DOE_PHASE_STALE"
+    with engine.begin() as c, pytest.raises(RegisterError):
+        _study(c, {"bead_doe_id": s["id"], "job_type": "DOE_RUN"})                # DONE 뒤 다시 등록도 거부
+    update_study(engine, s["id"], phase="PREVIEW")
+    with engine.begin() as c:
+        assert _study(c, {"bead_doe_id": s["id"], "job_type": "DOE_PREVIEW"})["phase"] == "PREVIEW"   # 제 단계는 허용
+
+
+def test_matrix_uses_prep_snapshot_cfg(client, world, engine, esl_root):
+    """검증 지적: 준비 뒤 서버 설정이 바뀌어도 /matrix·미리보기는 연구 준비 시점 설정(워커와 같은 값)으로 행렬을 만든다."""
+    s = _create(client, world)
+    simulate_prep(engine, esl_root, s["id"], s["job"]["id"])
+    p = _job(engine, s["job"]["id"])["params"]
+    p["doe"]["cfg"]["bead_doe"]["max_designs"] = 4                       # 준비 시점 설정(스냅샷) ≠ 지금 설정(200)
+    with engine.begin() as c:
+        c.execute(text("UPDATE jobs SET params=CAST(:p AS JSONB) WHERE id=:i"), {"p": json.dumps(p), "i": s["job"]["id"]})
+    r = api(client, "POST", f"/doe/studies/{s['id']}/matrix", json={"version": 1, "spec": SPEC})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "DOE_TOO_LARGE", r.text
+    g = api(client, "GET", f"/doe/studies/{s['id']}").json()
+    r = api(client, "POST", f"/doe/studies/{s['id']}/preview", json={"version": g["version"], "spec": SPEC})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "DOE_TOO_LARGE"
+
+
+def test_log_path_mask_rules():
+    """작업 로그 경로 가리기(§15, 검증 지적): 알려진 루트 → 이름표 + 상대 경로, 그 밖 절대경로 → ‹…›/파일명.
+    paicad argv(JSON, Windows 역슬래시 이중)·OptiStruct argv 같은 규칙, 상대·URL·분수는 그대로."""
+    from esl_platform.api.services.jobs import mask_server_paths
+
+    roots = [("E:\\\\shared\\\\ESL_WORK", "‹ESL_ROOT›"), ("E:\\shared\\ESL_WORK", "‹ESL_ROOT›"),
+             ("E:/shared/ESL_WORK", "‹ESL_ROOT›"), ("/srv/esl", "‹ESL_ROOT›")]
+    line = '[esl-worker] paicad_grid argv: ["C:\\\\ESL\\\\.runtime\\\\venv\\\\Scripts\\\\paicad.exe", "--out-dir", "E:\\\\shared\\\\ESL_WORK\\\\_doe\\\\x\\\\grid"]'
+    out = mask_server_paths(line, roots)
+    assert "C:" not in out and "shared" not in out and "‹…›/paicad.exe" in out and "‹ESL_ROOT›" in out, out
+    os_line = "[esl-worker] OptiStruct argv: ['C:/Altair/2026/hwsolvers/scripts/optistruct.bat', '/srv/esl/_opt/r1/solve/deck.fem', '-nt', '4']"
+    out = mask_server_paths(os_line, roots)
+    assert out == "[esl-worker] OptiStruct argv: ['‹…›/optistruct.bat', '‹ESL_ROOT›/_opt/r1/solve/deck.fem', '-nt', '4']", out
+    keep = "step 1/3 · http://host/esl · rad/a.inc · ratio 3/4"
+    assert mask_server_paths(keep, roots) == keep
+

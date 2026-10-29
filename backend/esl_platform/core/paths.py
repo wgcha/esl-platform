@@ -128,6 +128,8 @@ def safe_case_file(case_root: str, rel: str) -> str:
     """Case 폴더 안 상대경로 → 절대경로(realpath 기준 밖·심링크 탈출 거부)."""
     if not rel or os.path.isabs(rel) or any(p == ".." for p in re.split(r"[\\/]+", rel)):
         raise _unsafe("잘못된 산출물 경로")
+    if "\x00" in rel or any(ord(ch) < 32 for ch in rel):   # NUL 등 제어 문자 → realpath ValueError(500) 대신 422
+        raise _unsafe("경로에 제어 문자가 있습니다")
     p = os.path.normpath(os.path.join(case_root, rel))
     if not is_within(os.path.realpath(p), os.path.realpath(case_root)):
         raise _unsafe("산출물 경로가 Case 폴더 밖입니다")
