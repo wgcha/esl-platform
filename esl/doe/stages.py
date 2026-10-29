@@ -493,7 +493,8 @@ def _preview_states(c: Ctx, ids: list[str]) -> dict:
     if not os.path.isfile(os.path.join(gd, pio.GRID_MANIFEST)):
         return {}
     g = pio.read_grid(gd, ids, c.max_mb)
-    return {r["id"]: r for r in g["cells"]}
+    want = set(ids)          # 워커가 넣는 공칭 셀(nominal — 공칭 썸네일용)은 안이 아님
+    return {r["id"]: r for r in g["cells"] if r["id"] in want}
 
 
 def _collect(c: Ctx, m: dict) -> tuple[list[dict], dict]:

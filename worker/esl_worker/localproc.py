@@ -81,6 +81,18 @@ def start(argv: list[str], *, cwd: str, log_fh, env: dict[str, str] | None = Non
         raise ProcError(fail_code, f"{what} 를 시작할 수 없습니다: {type(exc).__name__}: {exc}") from None
 
 
+def run_capture(argv: list[str], *, cwd: str | None, env: dict[str, str] | None, timeout_s: float,
+                what: str = "외부 프로그램") -> tuple[int, bytes]:
+    """짧은 점검 명령(paicad version --json·gmsh import) 1회 — shell=False, stdin 닫음, stdout 수집(stderr 버림).
+    시작 실패·시간 초과 → ProcError(CHECK_FAILED)."""
+    try:
+        r = subprocess.run(argv, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, cwd=cwd, env=env, timeout=timeout_s)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise ProcError("CHECK_FAILED", f"{what} 점검 실행 실패: {type(exc).__name__}: {exc}") from None
+    return r.returncode, r.stdout
+
+
 def kill_tree(proc: subprocess.Popen, grace_s: float, lim: Any = None) -> None:
     """프로세스와 그 자식 전부 종료. 이미 끝났으면 아무것도 하지 않는다(POSIX 는 그룹에 남은 자식도 정리)."""
     if os.name == "nt":  # pragma: no cover - Windows 전용

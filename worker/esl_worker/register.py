@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import uuid
 from typing import Any
@@ -489,6 +490,127 @@ def register_opt_run(conn: Connection, job: dict[str, Any], case: Any, rdir: str
     new = [str(w) for w in res.get("warnings") or [] if w not in seen]
     return {"opt_run_id": r["id"], "n_files": len(files), "converged": res.get("converged"),
             "iterations": res.get("iterations"), "report": has_report, "warnings": new}
+
+
+# ---------------------------------------------------------------- v0.9.0 비드 DOE(계약 esl_bead_doe.md §4·§13)
+# 등록 step 은 bead_does 만 갱신한다(repositories.doe.update_study — version +1). 작업이 실패·취소되면 이 step 에 오지
+# 않으므로 phase 는 그대로다(백엔드가 최근 작업 상태로 phase 를 파생). artifacts 는 쓰지 않는다(case_id NOT NULL — 결과는
+# <esl_root>/_doe/<id>/ 파일, 백엔드 /doe/studies/{id}/files·results·report 가 같은 위치를 읽음).
+_CODE_RE = re.compile(r"^([A-Z][A-Z0-9_]{2,63})(?::\s*(.*))?$", re.S)
+
+
+def _doe_json(path: str) -> Any:
+    try:
+        if os.path.islink(path) or os.path.getsize(path) > 64 * 1024 * 1024:
+            return None
+        return co.read_json(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _doe_warning(w: Any, messages: dict[str, str]) -> dict[str, Any] | None:
+    """준비 경고 1개 → {code, message}. 문자열 'CODE: 문구'·'CODE'·자유 문구, dict{code, message, bead?} 모두 받음."""
+    if isinstance(w, dict):
+        code = str(w.get("code") or "PREP_WARNING")
+        msg = w.get("message") or messages.get(code) or code
+        if w.get("bead"):
+            msg = f"{w['bead']}: {msg}"
+        return {"code": code, "message": str(msg)[:300]}
+    if w in (None, ""):
+        return None
+    s = str(w)
+    m = _CODE_RE.match(s)
+    if m:
+        return {"code": m.group(1), "message": (m.group(2) or messages.get(m.group(1)) or m.group(1))[:300]}
+    return {"code": "PREP_WARNING", "message": s[:300]}
+
+
+def _study(conn: Connection, job: dict[str, Any]) -> dict[str, Any]:
+    from esl_platform.core.repositories import doe as doe_repo
+
+    s = doe_repo.get_study(conn, job["bead_doe_id"], for_update=True)
+    if s is None:
+        raise RegisterError("DOE_NOT_FOUND", "비드 DOE 연구 행이 없습니다")
+    return s
+
+
+def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
+    """BD_PREP_REGISTER: phase READY, prep = {n_beads, n_params, paicad_version, warnings[{code, message}],
+    boundary{n_warn, n_info}|null}, paicad_version."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    from . import core_adapter
+
+    s = _study(conn, job)
+    inp = _doe_json(os.path.join(ddir, "prep", "input.json"))
+    params = _doe_json(os.path.join(ddir, "prep", "params.json"))
+    if not isinstance(inp, dict) or not isinstance(params, dict):
+        raise RegisterError("TOOL_OUTPUT_MISSING", "준비 결과(prep/input.json·params.json)가 없습니다")
+    pv = _doe_json(os.path.join(ddir, "prep", "paicad.json")) or {}
+    bnd = _doe_json(os.path.join(ddir, "prep", "boundary.json"))
+    try:
+        msgs = core_adapter.doe_messages().get("messages") or {}
+    except core_adapter.CoreError:
+        msgs = {}
+    warns = []
+    for w in list(params.get("warnings") or []) + list(inp.get("warnings") or []) + list(inp.get("info") or []) + (
+            [pv["warning"]] if pv.get("warning") else []):
+        x = _doe_warning(w, msgs)
+        if x is not None and x not in warns:
+            warns.append(x)
+    prep = {"n_beads": len(params.get("beads") or []), "n_params": len(params.get("params") or []),
+            "paicad_version": pv.get("version"), "warnings": warns,
+            "boundary": None if not isinstance(bnd, dict) else {"n_warn": int(bnd.get("n_warn") or 0),
+                                                                "n_info": int(bnd.get("n_info") or 0)}}
+    doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
+    return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
+
+
+def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
+    """BD_PREVIEW_REGISTER: phase PREVIEW_READY, doe.preview = {rev, matrix_sha256, ok, skipped{collision, fixed, geom}}
+    (doe 의 나머지 키 유지). 셀 상태 원본은 doe/<rev>/grid/grid_manifest.json(백엔드가 읽음)."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    from . import core_adapter, doe_jobs
+
+    s = _study(conn, job)
+    d = (job.get("params") or {}).get("doe") or {}
+    rev = int(d["rev"])
+    doe = dict(s.get("doe") or {})
+    if doe.get("rev") is not None and int(doe["rev"]) != rev:
+        raise RegisterError("VERSION_CONFLICT", f"연구 DOE rev {doe.get('rev')} ≠ 작업 rev {rev}")
+    m = _doe_json(os.path.join(ddir, "doe", str(rev), "matrix.json"))
+    if not isinstance(m, dict) or not isinstance(m.get("designs"), list):
+        raise RegisterError("TOOL_OUTPUT_MISSING", "doe/<rev>/matrix.json 이 없습니다")
+    ids = [x["id"] for x in m["designs"] if x["id"] != "d000"]
+    try:
+        g = core_adapter.doe_paicad_io().read_grid(os.path.join(ddir, "doe", str(rev), "grid"), ids)
+    except Exception as exc:  # noqa: BLE001 - EslError(PAICAD_FAILED)
+        raise RegisterError("TOOL_OUTPUT_MISSING", f"미리보기 결과를 읽지 못했습니다: {getattr(exc, 'message', exc)}") from None
+    want = set(ids)
+    cnt = doe_jobs.count_states([r for r in g["cells"] if r["id"] in want])
+    doe["preview"] = {"rev": rev, "matrix_sha256": m.get("matrix_sha256"), "ok": cnt["ok"],
+                      "skipped": {k: cnt[k] for k in ("collision", "fixed", "geom")}}
+    doe_repo.update_study(conn, s["id"], phase="PREVIEW_READY", doe=_jsonable(doe))
+    return {"bead_doe_id": s["id"], "phase": "PREVIEW_READY", **doe["preview"]}
+
+
+def register_doe_run(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
+    """BD_REGISTER: phase DONE, result = post/result.json 요약(best_all 제외 — ranking 은 max_designs 행 이내),
+    report_rel = report.html."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    s = _study(conn, job)
+    res = _doe_json(os.path.join(ddir, "post", "result.json"))
+    if not isinstance(res, dict) or "ranking" not in res:
+        raise RegisterError("TOOL_OUTPUT_MISSING", "post/result.json 이 없습니다")
+    summ = {k: v for k, v in res.items() if k != "best_all"}
+    summ["job_id"] = job["id"]
+    has_report = os.path.isfile(os.path.join(ddir, "report.html"))
+    doe_repo.update_study(conn, s["id"], phase="DONE", result=_jsonable(summ),
+                          report_rel="report.html" if has_report else None)
+    return {"bead_doe_id": s["id"], "phase": "DONE", "n_ok": res.get("n_ok"),
+            "best": (res.get("best") or {}).get("id"), "report": has_report}
 
 
 REGISTER = {"CASE_EXTRACT": register_extract, "ESL_SOLVE": register_esl, "VALIDATE": register_validation,

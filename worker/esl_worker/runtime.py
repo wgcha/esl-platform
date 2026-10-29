@@ -22,6 +22,7 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.repositories import workers as workers_repo
 
 from . import limiter as limiter_mod
+from . import paicad_proc
 from .executor import Executor
 
 log = logging.getLogger("esl_worker")
@@ -40,6 +41,7 @@ class Worker:
         self._threads: list[threading.Thread] = []
         # 자원 제한기(worker.limiter): Windows 는 여기서 워커 수명 Job Object 를 만든다(실패 → 코어 step LIMITER_FAILED)
         self.proc_limiter = limiter_mod.create(self.settings.worker)
+        self.doe_cache = paicad_proc.StatusCache()   # heartbeat info.paicad·gmsh(v0.9.0 비드 DOE)
 
     @property
     def settings(self) -> Settings:
@@ -51,15 +53,26 @@ class Worker:
         """/status worker.limiter·환경 점검 heartbeat 에 보이는 한 줄(모드: 적용 내용 또는 사용 불가 이유)."""
         return limiter_mod.describe(self.proc_limiter)
 
+    def doe_status(self, *, force: bool = False) -> dict[str, Any]:
+        """v0.9.0 비드 DOE(§6.5): paicad version·OCP, gmsh import 점검 → heartbeat info.paicad·info.gmsh.
+        bead_doe.paicad.check_interval_s 마다 다시(캐시). bead_doe 꺼짐 → {}."""
+        try:
+            v = self.doe_cache.get(self.settings, force=force)
+        except Exception:  # noqa: BLE001 - 점검 실패가 heartbeat 를 막지 않음
+            log.exception("paicad·gmsh 점검 오류")
+            return {}
+        return dict(v) if v else {}
+
     def heartbeat_once(self) -> None:
+        info = {"claims_paused": self.claims_paused,
+                "limits": self.proc_limiter.summary(),
+                "slots": self.settings.worker.slots,
+                "per_job": limiter_mod.job_limits(self.settings.worker).__dict__,
+                "max_concurrent_hw": self.settings.altair.max_concurrent_hw}
+        info.update(self.doe_status())
         with self.engine.begin() as conn:
             workers_repo.heartbeat(conn, worker_id=self.worker_id, host=socket.gethostname(), pid=os.getpid(),
-                                   app_version=__version__, limiter=self.limiter,
-                                   info={"claims_paused": self.claims_paused,
-                                         "limits": self.proc_limiter.summary(),
-                                         "slots": self.settings.worker.slots,
-                                         "per_job": limiter_mod.job_limits(self.settings.worker).__dict__,
-                                         "max_concurrent_hw": self.settings.altair.max_concurrent_hw})
+                                   app_version=__version__, limiter=self.limiter, info=info)
 
     def reap_once(self) -> list[str]:
         with self.engine.begin() as conn:

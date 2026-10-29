@@ -51,6 +51,9 @@ def run_core(spec: dict[str, Any], echo) -> dict[str, Any]:
     if str(spec.get("stage") or "").startswith("opt_"):        # v0.7.0 비드 최적화(OPT_PREP·LOAD·DECK·POST)
         core_adapter.run_opt_stage(spec, echo)
         return {"error": None}
+    if str(spec.get("stage") or "").startswith("bd_"):         # v0.9.0 비드 DOE(esl.doe.stages)
+        core_adapter.run_doe_stage(spec, echo)
+        return {"error": None}
 
     rec = core_adapter.run_pipeline(spec["cfg"], spec["rad"], spec["results"], spec["out"], spec["stage"],
                                     frame=spec.get("frame"), support_nodes=spec.get("support_nodes"), echo=echo,
