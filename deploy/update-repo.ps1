@@ -11,7 +11,8 @@
      (바꾼 것 없음). 분리된 HEAD(특정 커밋 고정 — 되돌리기)면 pull 없이 그 커밋으로 반영. 새 커밋을 받았으면 새 update-repo.ps1로 다시 실행(-SkipPull).
      실행 중인 서비스는 <런타임>\app 복사본을 쓰므로 git pull이 실행 중 코드를 바꾸지 않는다.
   ① 대기·실행 중 작업 확인(DB 직접 조회) → 있으면 안내 후 중단(-Force면 진행)
-  ② 작업 2개 중지 ③ venv 의존성 갱신(deploy\requirements.lock) ④ 코드 스냅샷 <런타임>\app(이전 것은 _backup)
+  ② 작업 2개 중지 ③ venv 의존성 갱신(deploy\requirements.lock, 비드 DOE OCP·gmsh·paicad 는 따로 — deploy.json paicad_wheels·physicsai_root,
+     실패해도 업데이트 계속·DOE만 비활성) ④ 코드 스냅샷 <런타임>\app(이전 것은 _backup)
   ⑤ 설정 보충(setup_config.py: 기존 값 유지, 새로 생긴 관리 키만 — 바뀌면 먼저 _backup 복사. server.frontend_root가 없으면 .runtime\frontend,
      대시보드 .env VITE_ESL_TARGET·SIMDASH_ESL_ENABLED는 없을 때만 추가 — 추가했으면 대시보드 재시작 안내)
   ⑥ 프런트: 소스가 바뀌었을 때만 Node 22로 빌드 → <런타임>\frontend(이전 것은 _backup)
@@ -170,6 +171,8 @@ try {
         Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $rt 'venv'))
     }
     Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock')
+    $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock') -PaicadLock (Join-Path $repo 'deploy\paicad.lock') `
+        -PaicadWheels "$($cfg.paicad_wheels)" -PhysicsaiRepo "$($cfg.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel')
 
     # ---- ④ 코드 스냅샷 ---------------------------------------------------------------------------------
     $stage = '코드 배치'

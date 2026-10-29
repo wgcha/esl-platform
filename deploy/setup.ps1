@@ -9,7 +9,8 @@
   ① Python 3.12 선택(python-select.ps1: -PythonExe > deploy.json > 대시보드 고정 Python > py -3.12 > PATH, 각 후보를 실제 실행해 확인)
   ② 런타임 폴더 <git>\.runtime\(그 안의 .gitignore로 git 제외): venv, app(코드 스냅샷), frontend(배치), config\esl_platform.yaml(+esl.yaml·library.yaml·ista6.yaml),
      secrets\database_url, deploy.json, logs, state, _backup
-  ③ venv에 deploy\requirements.lock(고정 버전, pypardiso·MKL 포함 — 사내 pip 설정·프록시 그대로)
+  ③ venv에 deploy\requirements.lock(고정 버전, pypardiso·MKL 포함 — 사내 pip 설정·프록시 그대로). 비드 DOE(v0.9.0)의 OCP·gmsh·paicad 는
+     코드 배치 직전에 따로 설치(paicad wheel = deploy.json paicad_wheels 폴더 또는 physicsai_root 저장소에서 빌드 — 실패해도 설치 계속, DOE만 비활성)
   ④ 설정 계획(setup_config.py): deploy.json·esl_platform.yaml — 이미 있으면 보존하고 빠진 키만 보충. profile prod, server.port 8110,
      server.frontend_root(= .runtime\frontend — 백엔드가 /esl/ 직접 서빙, 키가 없을 때만 — 바꾼 값·null 유지),
      storage.esl_root(폴더 생성, SPDM 밖)·input_roots·spdm_roots, auth.dashboard_public_login_url(대시보드 웹 경로), core·library 설정 파일,
@@ -259,6 +260,9 @@ if ($hasDeps) {
     Write-Step 'venv 의존성 갱신(deploy\requirements.lock)'
     Install-EslPackages -VenvPy $venvPy -LockFile $lock
 }
+# 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 작성보다 먼저(setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채움)
+$doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile $lock -PaicadLock (Join-Path $repo 'deploy\paicad.lock') -PaicadWheels "$($d.paicad_wheels)" `
+    -PhysicsaiRepo "$($d.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel')
 Install-EslApp -Source $repo -Dest (Join-Path $rt 'app') -BackupDir $backupDir
 
 # ---- 설정 작성(바뀌는 기존 파일은 먼저 _backup으로 복사) + ESL 루트 폴더 -----------------------------------------

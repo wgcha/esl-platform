@@ -6,6 +6,7 @@
   (저장소 루트의 update.bat은 사용자 PC용 HyperView TCL 배포 — 서버 업데이트는 이 deploy\update.bat·update.ps1)
   ① 실행 중 작업 확인(묻지 않고 DB 직접 조회) → 있으면 중단(-Force면 경고 후 진행)
   ② 작업 2개 중지 ③ 기존 venv·app·프런트를 <install_root>\_backup\<UTC>로 이동 ④ 새 wheel·app·프런트(묶음의 빌드본) 배치
+     (v0.9.0 비드 DOE: OCP·gmsh·paicad wheel(deploy\paicad.lock 대조)도 — 실패해도 업데이트 계속, DOE만 비활성)
   ④' 작업 정의가 지금 설치와 다르면 다시 등록(Interactive만) — 새 코드 배치가 끝난 뒤에만
   ⑤ 설정 보충(기존 값 유지, 새로 생긴 관리 키만) ⑥ alembic upgrade head ⑦ 시작·health·환경 점검 ⑧ 실패 시 되돌리는 방법 안내(자동 되돌림 없음)
 #>
@@ -64,6 +65,7 @@ try {
     # ---- ④ 새 설치 ---------------------------------------------------------------------------
     Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $root 'venv'))
     Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
+    $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -PaicadLock (Join-Path $PSScriptRoot 'paicad.lock') -Wheels (Join-Path $pkg 'wheels')
     Install-EslApp -Source (Join-Path $pkg 'app') -Dest (Join-Path $root 'app') -BackupDir $backup
     Publish-EslFrontend -Dist (Join-Path $pkg 'frontend') -Dest $frontendRoot -BackupDir $backup
 

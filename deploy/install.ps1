@@ -4,7 +4,9 @@
 .DESCRIPTION
   physicsai-platform deploy\install.ps1과 같은 절차. 일반 PowerShell(관리자 권한 불필요. Background 모드 작업 등록만 관리자 권한이 필요할 수 있음).
   ① Python 3.12 확인(대시보드와 같은 3.12.13 권장, python_exe를 실제로 실행 — python-select.ps1)
-  ② venv 생성·오프라인 wheel 설치(wheels, deploy\requirements.lock — pypardiso·MKL 포함) ③ 코드 배치(<install_root>\app — 묶음의 app 폴더)
+  ② venv 생성·오프라인 wheel 설치(wheels, deploy\requirements.lock — pypardiso·MKL 포함)
+  ②' 비드 DOE(v0.9.0): lock 의 bead_doe 절(cadquery-ocp·gmsh) + paicad wheel(deploy\paicad.lock 대조) — 실패해도 설치 계속(DOE만 비활성)
+  ③ 코드 배치(<install_root>\app — 묶음의 app 폴더)
   ④ 프런트 배치(묶음의 빌드본 → caddy_frontend_root) ⑤ 설정 파일(setup_config.py: 없으면 config\esl_platform.prod.example.yaml로 만들고
   deploy.json의 esl_root·input_roots·spdm_roots를 넣음, 있으면 보존·빠진 키만 보충, esl.yaml·library.yaml·ista6.yaml 없을 때만 복사, ESL 루트 폴더 생성)
   ⑥ DB 역할·DB(없을 때만 생성) ⑦ DB 접속 정보 파일 <install_root>\secrets\database_url(현재 사용자·SYSTEM만 읽기 — 머신 환경변수 쓰지 않음)
@@ -88,6 +90,8 @@ if (-not (Test-Path -LiteralPath $venvPy)) {
     Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $root 'venv')) "설치 폴더 쓰기 권한과 Python($($basePy.Exe))의 venv 모듈을 확인하세요"
 }
 Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
+# ②' 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 파일 단계(⑤)보다 먼저: setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채운다
+$doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -PaicadLock (Join-Path $PSScriptRoot 'paicad.lock') -Wheels (Join-Path $pkg 'wheels')
 
 # ---- ③ 코드 배치 · ④ 프런트 배치(이전 것은 _backup) -------------------------------------------------
 Install-EslApp -Source (Join-Path $pkg 'app') -Dest (Join-Path $root 'app') -BackupDir $backupDir

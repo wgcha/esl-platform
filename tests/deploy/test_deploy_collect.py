@@ -58,6 +58,8 @@ def test_bundle_structure_and_runs_from_bundle(tmp_path, fake_frontend):
             "deploy/install-common.ps1", "deploy/setup_config.py", "deploy/requirements.lock", "deploy/caddy/esl.caddy",
             "deploy/demo/start-demo.bat", "deploy/demo/demo_setup.py", "deploy/demo/demo_synth.py"]
     need += ["app/resources/opt_method_sources.json", "app/resources/tcl/esl_bead_post.tcl"]   # v0.7.2: 비드 최적화 자료
+    need += ["app/resources/doe_messages.json", "app/resources/doe_method_sources.json",   # v0.9.0 비드 DOE(V-BD-18)
+             "deploy/paicad.lock", "deploy/paicad_wheel.py"]
     need += ["app/VERSION", "app/CHANGELOG.md", "app/BUILD.json"]                  # 버전 표기(계약 esl_p3_ux.md §3)
     for n in need:
         assert n in names, n
@@ -108,7 +110,11 @@ def test_windows_wheels_download_exactly_lock(tmp_path, fake_frontend):
             n, v = ln.split("==")
             lock[n.lower().replace("_", "-")] = v
     got = {}
+    paicad = out / "wheels" / json.loads((DEPLOY / "paicad.lock").read_text(encoding="utf-8"))["wheel"]
+    assert paicad.is_file()                                   # v0.9.0: lock 커밋 빌드·sha256 대조를 통과한 paicad wheel
     for w in (out / "wheels").glob("*.whl"):
+        if w == paicad:
+            continue
         n, v = w.name.split("-")[:2]
         got[n.lower().replace("_", "-")] = v
         assert w.name.endswith(("-none-any.whl", "-win_amd64.whl")), w.name

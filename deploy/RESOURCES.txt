@@ -11,6 +11,12 @@ altair.max_concurrent_hw(동시 hw 수 — 라이선스 한도), worker.slots·p
                             pyamg, psutil, numpy·scipy. scikit-sparse(CHOLMOD)는 Windows 휠이 없어 제외(solver.backend auto → pardiso)
   코어 설정                 <런타임>\config\esl.yaml (config/esl.example.yaml 복사 — 판정 기준 validation·compare는 사내 확인 후 교체)
   라이브러리 설정           <런타임>\config\library.yaml + ista6.yaml (config/library.example.yaml, config/ista6.yaml 복사 — 낙하 높이 표는 TODO)
+  비드 DOE 형상 엔진(v0.9.0) 묶음 wheels — paicad-<ver>-py3-none-any.whl(physicsai-platform packages/paicad, deploy\paicad.lock 의
+                            커밋·버전·정규화 sha256 으로 collect-offline 이 빌드·대조) + requirements.lock bead_doe 절(cadquery-ocp·vtk·gmsh).
+                            설치 venv 에 <런타임>\venv\Scripts\paicad.exe 가 생기고 setup_config 가 bead_doe.paicad.exe 를 채운다(있을 때만).
+                            설치 실패해도 다른 기능은 동작(비드 DOE 만 비활성). gmsh 는 GPL(+예외) — 사내 설치 용도, 묶음 크기 수백 MB 증가.
+                            확인: <런타임>\venv\Scripts\paicad.exe version --json (paicad ≥ 0.14.0, ocp 값 있음),
+                                  <런타임>\venv\Scripts\python.exe -c "import gmsh; print(gmsh.__version__)"
 
 입력 데이터(rad + 결과 CSV 폴더)는 사용자 PC에서 HyperView TCL로 만든다(저장소 루트 update.bat — 사용자 PC용, 서버 설치와 무관).
 서버는 그 폴더를 storage.input_roots 아래에서 읽기만 한다. 설치 후 환경 점검:
