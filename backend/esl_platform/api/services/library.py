@@ -2,8 +2,11 @@
 
 - 등록은 동기(API 프로세스): ESL 실행 스냅샷 ``runs/<esl_run_id>/`` 를 코어 ``entry.build`` 로 읽어
   ``<esl_root>/_library/entries/<id>/`` 에 저장(수정 불가) + DB 행. Case 폴더에는 쓰지 않는다.
-- 검증 FAIL·UNDETERMINED 는 ``force_reason`` 필수(422 VALIDATION_NOT_PASS, 계약 esl_disp_primary.md §8). LEGACY(이전 판정
-  체계, scheme NULL)는 당시 verdict 의 기존 규칙(PASS 사유 불필요, FAIL 사유 필수). 같은 run 의 ACTIVE 항목이 있으면 409 ENTRY_EXISTS.
+- v0.10.0(esl_menu_restructure.md §7): 등록 = 현재 기준(scheme 있음) PASS 만. FAIL·UNDETERMINED → 422 VALIDATION_NOT_PASS
+  (사유가 있어도 — force_reason 무시), LEGACY(scheme NULL) → 422 VALIDATION_LEGACY. 같은 run 의 ACTIVE 항목이 있으면 409 ENTRY_EXISTS.
+- 적격 = quality.status PASS ∧ scheme 있음. 부적격(LEGACY·사유와 함께 등록된 FAIL·판정 불가)은 비드 최적화·강성 평가 스터디·
+  종합분석에서 422 ENTRY_NOT_ELIGIBLE(필터 분석은 제외 후 excluded_ineligible). [재검증] = VALIDATE 작업(origin
+  library_revalidate) — PASS 면 워커 VAL_REGISTER 가 같은 트랜잭션에서 quality 를 갱신(항목 폴더 불변).
 - 분석 생성은 대상 항목을 확정(필터 → id 목록)해 LIB_ANALYZE 작업(SLOT)을 큐에 넣는다. DB 메타(사용자 수정)는
   작업 params 의 overlay 로 스냅샷되어 코어 항목 meta 에 덮어쓰인다.
 - v0.7.0(esl_opt_run.md §5.1·§7.3·§7.4): 항목 응답에 ``size{inch, L_xi, L_eta}``·``topo_sha256``·``deform_mode{auto, user,
@@ -29,7 +32,11 @@ from sqlalchemy.exc import IntegrityError
 from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.config import opt_settings
+from ...core.db.tables import cases as cases_t
 from ...core.db.tables import esl_runs, library_entries
+from ...core.db.tables import jobs as jobs_t
+from ...core.inputs import extract_stale, inputs_hash
+from ...core.state_machine import TERMINAL
 from ...core.errors import DomainError, conflict, forbidden, not_found, unprocessable
 from ...core.paths import ANALYSIS_DIR, LIBRARY_DIR, esl_subdir, safe_case_file
 from ...core.repositories import cases as cases_repo
@@ -167,14 +174,107 @@ def entry_size(e: dict[str, Any]) -> dict[str, Any]:
     return {"inch": (e.get("model") or {}).get("inch"), "L_xi": _num(fr.get("L_xi")), "L_eta": _num(fr.get("L_eta"))}
 
 
+# ---------------------------------------------------------------- v0.10.0 적격·재검증(§7.3~§7.5)
+def eligibility(q: dict[str, Any] | None) -> tuple[bool, str | None]:
+    """(eligible, ineligible_reason). 적격 = quality.status(없으면 verdict) PASS ∧ scheme 있음. scheme 없음 = LEGACY,
+    scheme 있는 FAIL·UNDETERMINED(이전 사유 등록, Q1 A) = 그 상태."""
+    q = q or {}
+    if not q.get("scheme"):
+        return False, "LEGACY"
+    st = str(q.get("status") or q.get("verdict") or "").upper()
+    if st == "PASS":
+        return True, None
+    return False, "UNDETERMINED" if st == "UNDETERMINED" else "FAIL"
+
+
+INELIGIBLE_KO = {"LEGACY": "LEGACY(이전 판정 체계)", "FAIL": "FAIL", "UNDETERMINED": "판정 불가"}
+
+
+def require_eligible(rows: list[dict[str, Any]]) -> None:
+    """MR-D-10 게이트: 부적격 항목이 있으면 422 ENTRY_NOT_ELIGIBLE {entry_ids, reasons}."""
+    bad = [(e["id"], eligibility(e.get("quality"))[1]) for e in rows if not eligibility(e.get("quality"))[0]]
+    if bad:
+        raise unprocessable("ENTRY_NOT_ELIGIBLE", f"현재 기준 PASS 가 아닌 ESL {len(bad)}개가 선택되었습니다(LEGACY·FAIL·판정 "
+                            "불가) — [재검증] 후 사용하세요", entry_ids=[i for i, _ in bad],
+                            reasons={i: r for i, r in bad})
+
+
+BLOCK_MESSAGES = {
+    "CASE_ARCHIVED": "Case 가 보관되어 재검증할 수 없습니다",
+    "RUN_SNAPSHOT_MISSING": "ESL 결과 스냅샷이 없어 재검증할 수 없습니다 — Case를 다시 계산해 새로 등록하세요",
+    "EXTRACT_CHANGED": "Case 추출이 바뀌어 재검증할 수 없습니다 — Case를 다시 계산해 새로 등록하세요",
+    "CASE_JOB_BUSY": "같은 Case 의 검증 작업이 대기 중이거나 실행 중입니다",
+}
+
+
+def _block(code: str, reason: str | None = None) -> dict[str, Any]:
+    return {"code": code, "reason": reason or code, "message": BLOCK_MESSAGES[reason or code]}
+
+
+def revalidate_block(ctx: AppContext, case: dict[str, Any] | None, run: dict[str, Any] | None) -> dict[str, Any] | None:
+    """§7.3 재검증 불가 사유(작업 충돌 제외 — 순서: 보관 → 스냅샷 → 추출 변경). None = 가능."""
+    if case is None or case.get("status") == "ARCHIVED":
+        return _block("CASE_ARCHIVED")
+    if run is None or not os.path.isdir(co.run_snapshot_dir(case_dir(ctx, case), run["id"])):
+        return _block("REVALIDATE_NOT_POSSIBLE", "RUN_SNAPSHOT_MISSING")
+    es = case.get("extract_summary") or {}
+    ih = inputs_hash(extract_job_id=es.get("job_id"), part_title=case["part_title"],
+                     tstar={"frame_index": run["frame_index"], "metric": run["metric"]},
+                     support_set_id=run["support_set_id"])
+    if ih != run["inputs_hash"] or extract_stale(case):
+        return _block("REVALIDATE_NOT_POSSIBLE", "EXTRACT_CHANGED")
+    return None
+
+
+def _by_id(conn, table, ids) -> dict[str, dict[str, Any]]:
+    from ...core.repositories import row_dict
+
+    ids = sorted({i for i in ids if i})
+    if not ids:
+        return {}
+    return {r["id"]: r for r in (row_dict(x) for x in conn.execute(select(table).where(table.c.id.in_(ids))).all())}
+
+
 # ---------------------------------------------------------------- 직렬화
-def entry_out(conn, e: dict[str, Any]) -> dict[str, Any]:
-    d = dict(e)
-    case = cases_repo.get_case(conn, e["case_id"])
-    d["case_title"] = case["title"] if case else None
-    d["size"] = entry_size(e)
-    d["deform_mode"] = deform_mode_out(e.get("deform_mode"))
-    return d
+def entries_out(ctx: AppContext | None, conn, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """항목 응답 일괄 계산(Case·run·진행 중 재검증 작업을 각각 한 번에 조회 — 항목 수와 무관한 쿼리 수, V-MR-16)."""
+    from ...core.repositories import row_dict
+
+    cases = _by_id(conn, cases_t, [e["case_id"] for e in rows])
+    inel = [e for e in rows if e.get("status") == "ACTIVE" and not eligibility(e.get("quality"))[0]]
+    runs = _by_id(conn, esl_runs, [e["esl_run_id"] for e in inel])
+    active: dict[str, list[dict[str, Any]]] = {}
+    cids = sorted({e["case_id"] for e in inel})
+    if cids:
+        for j in (row_dict(x) for x in conn.execute(select(jobs_t).where(
+                jobs_t.c.case_id.in_(cids), jobs_t.c.job_type == "VALIDATE",
+                jobs_t.c.state.notin_(list(TERMINAL)))).all()):
+            active.setdefault(j["case_id"], []).append(j)
+    out = []
+    for e in rows:
+        d = dict(e)
+        case = cases.get(e["case_id"])
+        d["case_title"] = case["title"] if case else None
+        d["size"] = entry_size(e)
+        d["deform_mode"] = deform_mode_out(e.get("deform_mode"))
+        ok, why = eligibility(e.get("quality"))
+        d["eligible"], d["ineligible_reason"] = ok, why
+        d["revalidate_block"] = d["revalidate_job"] = None
+        if e.get("status") == "ACTIVE" and not ok:
+            jobs_here = active.get(e["case_id"]) or []
+            mine = next((j for j in jobs_here if (j.get("params") or {}).get("origin") == "library_revalidate"
+                         and (j.get("params") or {}).get("entry_id") == e["id"]), None)
+            if mine is not None:
+                d["revalidate_job"] = {"job_id": mine["id"], "state": mine["state"]}
+            elif ctx is not None:
+                d["revalidate_block"] = revalidate_block(ctx, case, runs.get(e["esl_run_id"])) or (
+                    _block("CASE_JOB_BUSY") if jobs_here else None)
+        out.append(d)
+    return out
+
+
+def entry_out(conn, e: dict[str, Any], ctx: AppContext | None = None) -> dict[str, Any]:
+    return entries_out(ctx, conn, [e])[0]
 
 
 def _load_entry(conn, eid: str, *, for_update: bool = False) -> dict[str, Any]:
@@ -283,9 +383,13 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
         if val is None:
             raise conflict("PREREQUISITE_MISSING", "검증(⑤) 결과가 있는 ESL 결과만 등록할 수 있습니다",
                            missing=["validation"])
-        if val["verdict"] != "PASS" and not (body.force_reason or "").strip():
-            raise unprocessable("VALIDATION_NOT_PASS", f"검증 {val['verdict']} — PASS 가 아닌 결과는 사유(force_reason)와 "
-                                "함께만 등록할 수 있습니다", verdict=val["verdict"])
+        # v0.10.0 MR-D-8: 현재 기준 PASS 만(force_reason 은 무시 — 구 클라이언트 호환)
+        if not val.get("scheme"):
+            raise unprocessable("VALIDATION_LEGACY", "이전 판정 체계 결과는 등록할 수 없습니다 — ④에서 다시 검증하세요",
+                                verdict=val["verdict"])
+        if val["verdict"] != "PASS":
+            raise unprocessable("VALIDATION_NOT_PASS", f"검증 {val['verdict']} — 변위 기준 PASS 만 등록할 수 있습니다 "
+                                "(FAIL 사유는 [결과 받기(zip)]로 확인)", verdict=val["verdict"])
         cdir = case_dir(ctx, case)
         if not os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):
             raise conflict("PREREQUISITE_MISSING", "ESL 실행 스냅샷(runs/<id>/)이 없습니다", missing=["run_snapshot"])
@@ -307,7 +411,7 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
         if (meta.get("quality") or {}).get("verdict") != val["verdict"]:
             _stash(lib_root, edir)
             raise conflict("PREREQUISITE_MISSING", "검증 산출물이 이 ESL 결과의 것이 아닙니다", missing=["validation_files"])
-        row = _row_from_meta(meta, val, body.force_reason, principal)
+        row = _row_from_meta(meta, val, None, principal)
         sha = ((meta.get("files") or {}).get("summary.npz") or {}).get("sha256")
         dir_rel = f"{LIBRARY_DIR}/entries/{eid}"
         try:
@@ -315,12 +419,12 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
                 e = lib_repo.insert_entry(
                     conn, id=eid, project_id=case["project_id"], case_id=case["id"], esl_run_id=run["id"],
                     validation_id=val["id"], status="ACTIVE", dir_rel=dir_rel, summary_rel=f"{dir_rel}/summary.npz",
-                    sha256=sha, note=body.note, force_reason=body.force_reason if val["verdict"] != "PASS" else None,
+                    sha256=sha, note=body.note, force_reason=None,
                     registered_by=principal.user_id, registered_by_name=principal.display_name, **row)
         except IntegrityError:
             _stash(lib_root, edir)
             raise conflict("ENTRY_EXISTS", "이 ESL 결과는 이미 라이브러리에 등록되어 있습니다") from None
-        return entry_out(conn, e)
+        return entry_out(conn, e, ctx)
 
 
 def list_entries(ctx: AppContext, project_id: str | None, status: str | None, mode: str | None = None,
@@ -336,7 +440,7 @@ def list_entries(ctx: AppContext, project_id: str | None, status: str | None, mo
     if mode is not None:
         rows = [e for e in rows if (modes.effective(e.get("deform_mode")) or "none") == mode]
     with ctx.engine.connect() as conn:
-        return [entry_out(conn, e) for e in rows]
+        return entries_out(ctx, conn, rows)
 
 
 def get_entry(ctx: AppContext, eid: str) -> dict[str, Any]:
@@ -344,7 +448,7 @@ def get_entry(ctx: AppContext, eid: str) -> dict[str, Any]:
         e = _load_entry(conn, eid)
     e = backfill_opt_meta(ctx, [e])[0]
     with ctx.engine.connect() as conn:
-        return entry_out(conn, e)
+        return entry_out(conn, e, ctx)
 
 
 def retire_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[str, Any]:
@@ -357,7 +461,7 @@ def retire_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[
             raise conflict("ENTRY_RETIRED", "이미 retired 된 항목입니다")
         e = lib_repo.update_entry(conn, eid, None, status="RETIRED", retired_by_id=principal.user_id,
                                   retired_at=func.now(), retire_reason=(body.reason if body else None))
-        return entry_out(conn, e)
+        return entry_out(conn, e, ctx)
 
 
 def can_edit_meta(principal: Principal, e: dict[str, Any]) -> bool:
@@ -414,7 +518,7 @@ def patch_entry(ctx: AppContext, principal: Principal, eid: str, body) -> dict[s
             e = lib_repo.update_entry(conn, eid, body.version, **vals)
         except VersionConflict:
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요") from None
-        return entry_out(conn, e)
+        return entry_out(conn, e, ctx)
 
 
 def _patch_deform_mode(ctx: AppContext, principal: Principal, e: dict[str, Any], user: str | None) -> dict[str, Any]:
@@ -448,7 +552,9 @@ def _patch_deform_mode(ctx: AppContext, principal: Principal, e: dict[str, Any],
 def _overlay(e: dict[str, Any]) -> dict[str, Any]:
     return {"entry_id": e["id"], "model": {k: (e["model"] or {}).get(k) for k in MODEL_KEYS},
             "scene": {k: (e["scene"] or {}).get(k) for k in SCENE_KEYS},
-            "verdict": (e["quality"] or {}).get("verdict")}
+            "verdict": (e["quality"] or {}).get("verdict"),
+            # v0.10.0 §7.4: 판정 원본 = DB quality(재검증 전환 반영) — 보고서도 이 값을 쓴다
+            "status": (e["quality"] or {}).get("status"), "scheme": (e["quality"] or {}).get("scheme")}
 
 
 def _norm_check(mode: str | None, rows: list[dict], target: dict | None, opts) -> None:
@@ -486,6 +592,7 @@ def create_analysis(ctx: AppContext, principal: Principal, body) -> dict[str, An
     require_execute(principal, body.project_id)
     lib_cfg = require_library_config(ctx)
     f = body.filters
+    excluded = 0
     with ctx.engine.begin() as conn:
         if f.entry_ids:
             rows = lib_repo.list_entries(conn, project_id=body.project_id, status="ACTIVE", ids=f.entry_ids)
@@ -493,19 +600,25 @@ def create_analysis(ctx: AppContext, principal: Principal, body) -> dict[str, An
             miss = [i for i in f.entry_ids if i not in found]
             if miss:
                 raise unprocessable("ENTRY_NOT_FOUND", "이 프로젝트의 활성 항목이 아닙니다", entry_ids=miss)
+            require_eligible(rows)                       # MR-D-10
         else:
             rows = lib_repo.list_entries(conn, project_id=body.project_id, status="ACTIVE", model=f.model,
                                          inch=[str(i) for i in f.inch] if f.inch else None, drop_type=f.drop_type,
                                          drop_class=f.drop_class, orient=f.orient, scenario=f.scenario,
                                          verdict=f.verdict)
+            keep = [e for e in rows if eligibility(e.get("quality"))[0]]
+            excluded = len(rows) - len(keep)             # 필터 분석: 부적격 제외 후 수만 알림
+            rows = keep
         if not rows:
-            raise unprocessable("NO_MATCHING_ENTRIES", "필터에 맞는 활성 라이브러리 항목이 없습니다")
+            raise unprocessable("NO_MATCHING_ENTRIES", "필터에 맞는 활성 라이브러리 항목이 없습니다"
+                                + (f"(부적격 {excluded}개 제외)" if excluded else ""), excluded_ineligible=excluded)
         rows.sort(key=lambda e: (e["registered_at"], e["id"]))
         target = None
         if body.target_entry_id:
             target = lib_repo.get_entry(conn, body.target_entry_id)
             if target is None or target["project_id"] != body.project_id or target["status"] != "ACTIVE":
                 raise unprocessable("TARGET_INVALID", "대상은 이 프로젝트의 활성 라이브러리 항목이어야 합니다")
+            require_eligible([target])
         opts = body.options
         _norm_check(opts.normalization, rows, target, opts)
         if target is None:
@@ -530,7 +643,46 @@ def create_analysis(ctx: AppContext, principal: Principal, body) -> dict[str, An
                                    job_type="LIB_ANALYZE", params=_jsonable(params), created_by=principal.user_id,
                                    created_by_name=principal.display_name)
         a = lib_repo.update_analysis(conn, aid, job_id=job["id"])
-        return analysis_out(ctx, conn, a)
+        out = analysis_out(ctx, conn, a)
+        if excluded:
+            out["excluded_ineligible"] = excluded
+        return out
+
+
+# ---------------------------------------------------------------- v0.10.0 재검증(§7.3)
+def revalidate_entry(ctx: AppContext, principal: Principal, eid: str) -> dict[str, Any]:
+    """LEGACY·사유 등록 FAIL·판정 불가 항목 → 현재 기준 VALIDATE 작업(origin library_revalidate). 201 JobOut."""
+    from .jobs import core_settings_for
+
+    with ctx.engine.begin() as conn:
+        e = _load_entry(conn, eid, for_update=True)
+        require_execute(principal, e["project_id"])
+        require_config_ok(ctx)
+        if e["status"] != "ACTIVE":
+            raise conflict("ENTRY_RETIRED", "폐기된 항목은 재검증할 수 없습니다")
+        if eligibility(e.get("quality"))[0]:
+            raise conflict("ENTRY_NOT_LEGACY", "이미 현재 기준 PASS 인 항목입니다")
+        case = cases_repo.get_case(conn, e["case_id"], for_update=True)
+        run = cases_repo.get_esl_run(conn, e["esl_run_id"])
+        blk = revalidate_block(ctx, case, run)
+        if blk is not None:
+            if blk["code"] == "CASE_ARCHIVED":
+                raise conflict("CASE_ARCHIVED", blk["message"])
+            raise conflict("REVALIDATE_NOT_POSSIBLE", blk["message"], reason=blk["reason"])
+        if run["status"] != "READY":
+            raise conflict("REVALIDATE_NOT_POSSIBLE", BLOCK_MESSAGES["RUN_SNAPSHOT_MISSING"], reason="RUN_SNAPSHOT_MISSING")
+        sup = cases_repo.get_support_set(conn, run["support_set_id"])
+        params = {"esl_run_id": run["id"], "origin": "library_revalidate", "entry_id": e["id"],
+                  "settings": core_settings_for(ctx, case, metric=run["metric"]), "frame_index": run["frame_index"],
+                  "support_node_ids": list(sup["node_ids"]) if sup else None}
+        try:
+            with conn.begin_nested():
+                job = jobs_repo.insert_job(conn, case_id=case["id"], project_id=case["project_id"], job_type="VALIDATE",
+                                           params=params, created_by=principal.user_id,
+                                           created_by_name=principal.display_name)
+        except IntegrityError:
+            raise conflict("CASE_JOB_BUSY", BLOCK_MESSAGES["CASE_JOB_BUSY"], case_ids=[case["id"]]) from None
+        return job_out(conn, job, with_steps=True)
 
 
 def _jsonable(o: Any) -> Any:

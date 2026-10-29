@@ -235,6 +235,29 @@ def pick_321(x0, cand_idx) -> list[tuple[int, str]]:
     return [(int(i), str(d)) for i, d in out]
 
 
+# v0.10.0(esl_menu_restructure.md §5): ② t* 확정 시 3-2-1 자동 선택·수동 3노드 검사(동기 API)
+def support_check_settings(core_cfg: dict | None) -> dict:
+    """코어 설정의 support.auto_check(없으면 기본값) — 코어 cfg 에는 주입하지 않는다."""
+    return _attr("esl.config", "support_check_settings")(core_cfg or {})
+
+
+def auto_support(x0, check_cfg: dict | None) -> dict:
+    return _wrap(_attr("esl.mech.supports", "auto_321"), x0, check_cfg)
+
+
+def check_support(x0, idx, check_cfg: dict | None) -> dict:
+    return _wrap(_attr("esl.mech.supports", "check_321"), x0, list(idx), check_cfg)
+
+
+def run_lib_export(spec: dict, echo: Callable[[str], None]) -> list[dict]:
+    """EXPORT library 모드(자식 프로세스, esl_menu_restructure.md §6.2): spec["lib"] = esl_worker.lib_jobs.prepare_lib_export
+    의 dict → 코어 esl.export.from_entry.run_items(항목별 try, 결과 = 항목 폴더 export.json)."""
+    L = spec["lib"]
+    run_items = _attr("esl.export.from_entry", "run_items")
+    return _wrap(run_items, L["items"], spec["out"], L["targets"], L["cfg"], wait_s=float(L.get("wait_s") or 0.0),
+                 echo=echo, progress=_progress(spec))
+
+
 # ====================================================================== P2: 전 요소 비교(§7) — 동기 API 보조
 def field_reasons() -> dict[int, str]:
     return {int(k): str(v) for k, v in _attr("esl.report.field", "REASONS").items()}
@@ -387,6 +410,10 @@ def _overlay(entry, ov: dict | None) -> None:
     if ov.get("verdict") is not None:
         q = dict(meta.get("quality") or {})
         q["verdict"] = ov["verdict"]
+        # v0.10.0(esl_menu_restructure.md §7.4): 판정 원본 = DB quality(재검증 전환 반영) — status·scheme 도 덮어쓴다
+        for k in ("status", "scheme"):
+            if k in ov:
+                q[k] = ov[k]
         meta["quality"] = q
 
 

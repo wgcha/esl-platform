@@ -35,7 +35,7 @@ from ...core.repositories import opt as opt_repo
 from ..context import AppContext
 from . import bundle as bundle_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder, entry_size
+from .library import backfill_opt_meta, entry_folder, entry_size, require_eligible
 from .opt_keepouts import validate_keepout
 from .opt_templates import TEMPLATE_EXT, load_template, template_arrays, template_meta, template_preview
 
@@ -356,6 +356,7 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     nd_pids = sorted({int(p) for p in (body.design.nondesign_pids or [])})
     with ctx.engine.connect() as conn:
         rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
+        require_eligible(rows)                    # v0.10.0 MR-D-10: 현재 기준 PASS 항목만(422 ENTRY_NOT_ELIGIBLE)
         if body.analysis_id:
             a = lib_repo.get_analysis(conn, body.analysis_id)
             if a is None or a["project_id"] != body.project_id:

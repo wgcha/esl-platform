@@ -136,7 +136,7 @@ def stream_zip(files: list[tuple[str, str]], prefix: str) -> Iterator[bytes]:
     with zipfile.ZipFile(sink, "w", allowZip64=True) as zf:  # type: ignore[arg-type]
         for path, rel in files:
             ext = os.path.splitext(rel)[1].lower()
-            zi = zipfile.ZipInfo.from_file(path, f"{prefix}/{rel}")
+            zi = zipfile.ZipInfo.from_file(path, f"{prefix}/{rel}" if prefix else rel)   # prefix "" = 루트(라이브러리 내보내기)
             zi.compress_type = zipfile.ZIP_STORED if ext in _STORED_EXT else zipfile.ZIP_DEFLATED
             try:
                 src = open(path, "rb")

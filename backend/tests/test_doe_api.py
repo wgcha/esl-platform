@@ -598,3 +598,14 @@ def test_log_path_mask_rules():
     keep = "step 1/3 · http://host/esl · rad/a.inc · ratio 3/4"
     assert mask_server_paths(keep, roots) == keep
 
+
+# ---------------------------------------------------------------- v0.10.0 V-MR-15 게이트(적격 항목만)
+def test_create_rejects_ineligible_entries(client, world, engine):
+    with engine.begin() as c:
+        c.execute(text("UPDATE library_entries SET quality = quality || CAST(:q AS jsonb) WHERE id=:i"),
+                  {"i": world["b"], "q": '{"status": "FAIL", "verdict": "FAIL"}'})
+    uid = upload_step(client)
+    r = client.post(f"{API}/doe/studies", json=body([world["a"], world["b"]], uid), headers=W)
+    d = r.json()["detail"]
+    assert r.status_code == 422 and d["code"] == "ENTRY_NOT_ELIGIBLE" and d["reasons"] == {world["b"]: "FAIL"}
+

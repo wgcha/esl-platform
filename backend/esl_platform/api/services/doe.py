@@ -56,7 +56,7 @@ from ..context import AppContext
 from . import bundle as bundle_svc
 from . import uploads as up_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder
+from .library import backfill_opt_meta, entry_folder, require_eligible
 from .opt import _entry_mesh, _s1_base, _same_model_rows, _size_row, entries_in_order
 
 log = logging.getLogger("esl_platform.api")
@@ -541,6 +541,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     c = cfg(ctx)
     r = check_inputs(ctx, principal, body, _internal=True)
     out, mat = r["out"], r["mat"]
+    require_eligible(mat["rows"])                 # v0.10.0 MR-D-10: 현재 기준 PASS 항목만(422 ENTRY_NOT_ELIGIBLE)
     if body.scenario == "same" and not out["ok"]:
         bad = [e for e in out["entries"] if not e["ok"]]
         raise unprocessable("MODEL_MISMATCH", f"기준 모델과 다른 ESL {len(bad)}개 — '같은 모델' DOE 는 같은 모델만"

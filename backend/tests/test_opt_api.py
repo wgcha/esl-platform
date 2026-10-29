@@ -526,3 +526,19 @@ def test_acquire_os_semaphore(client, world, engine):
     with engine.begin() as c:
         c.execute(text("UPDATE job_steps SET state='SUCCEEDED' WHERE job_id=:i AND step_no=4"), {"i": jobs_[1][0]})
         assert jobs_repo.os_in_use(c) == 1                                              # step 끝 → 자동 해제
+
+
+# ---------------------------------------------------------------- v0.10.0 V-MR-15 게이트(적격 항목만)
+def test_run_rejects_ineligible_entries(client, world, engine):
+    with engine.begin() as c:
+        c.execute(text("UPDATE library_entries SET quality = quality - 'scheme' - 'status' WHERE id=:i"),
+                  {"i": world["b"]})
+    r = client.post(f"{API}/opt/runs", json=run_body([world["a"], world["b"]]), headers=W)
+    d = r.json()["detail"]
+    assert r.status_code == 422 and d["code"] == "ENTRY_NOT_ELIGIBLE"
+    assert d["entry_ids"] == [world["b"]] and d["reasons"] == {world["b"]: "LEGACY"}
+    e = _entry(client, world["b"])
+    assert e["eligible"] is False and e["ineligible_reason"] == "LEGACY"
+    assert _entry(client, world["a"])["eligible"] is True
+    r = client.post(f"{API}/opt/runs", json=run_body([world["a"]]), headers=W)
+    assert r.status_code == 201, r.text

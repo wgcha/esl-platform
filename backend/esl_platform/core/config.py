@@ -588,6 +588,14 @@ class LibraryCfg(_M):
     settings: dict[str, Any] | None = None
 
 
+class LibraryExportCfg(_M):
+    """라이브러리 다중 내보내기(v0.10.0 esl_menu_restructure.md §6·§10). 섹션이 없어도 이 기본값으로 동작."""
+
+    max_entries: int = Field(default=50, ge=1, le=1000)              # POST /library/exports 항목 수 상한(422 TOO_MANY_ENTRIES)
+    max_bundle_bytes: int | None = Field(default=None, ge=1)          # zip 상한, null = ui.max_bundle_bytes
+    wait_s: float = Field(default=600.0, ge=0.0)                      # 같은 모델 앞 항목(다른 Case 작업) 결과 대기 상한
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -609,6 +617,7 @@ class Settings(_M):
     client_token: ClientTokenCfg = ClientTokenCfg()
     opt_run: OptRunCfg | None = None    # v0.7.0 비드 최적화. 없으면 enabled false
     bead_doe: BeadDoeCfg | None = None  # v0.9.0 비드 형상 DOE. 없으면 enabled false
+    library_export: LibraryExportCfg = LibraryExportCfg()   # v0.10.0 라이브러리 다중 내보내기
 
     @property
     def api_prefix(self) -> str:

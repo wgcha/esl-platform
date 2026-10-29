@@ -1,4 +1,9 @@
-"""Case 서비스: 생성·조회·수정·보관, 단계 상태, t*, 미리보기, 지지점 세트(동기 API)."""
+"""Case 서비스: 생성·조회·수정·보관, 단계 상태, t*, 미리보기, 지지점 세트(동기 API).
+
+v0.10.0(esl_menu_restructure.md §5): PUT /tstar 가 지지 세트가 없을 때만 3-2-1 자동 선택(코어 auto_321 + 품질 검사)을
+같은 요청에서 수행해 저장(``tstar.support_auto`` = OK|KEPT|BLOCKED|MANUAL). 수동 지정 POST /support-sets 도 같은 검사
+(실패 422 SUPPORT_CHECK_FAILED). 화면 4단계 상태 ``step_status{input, tstar, esl, validate}``(옛 ``stage_status`` 유지).
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from ...core.paths import check_input_path, h3d_raw_dir
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.cases import VersionConflict
+from ...core.db.tables import jobs as jobs_t
 from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED
 from ...core.uploads import check_principal_upload_area
 from ..context import AppContext
@@ -44,9 +50,21 @@ def _projects(ctx: AppContext, principal: Principal, token: str | None, rid: str
 
 
 # ---------------------------------------------------------------- 단계 상태
+def _latest_case_export(conn, case_id: str) -> dict[str, Any] | None:
+    """Case 단위 EXPORT(params.origin 없음)의 최신 작업 — 라이브러리 내보내기(origin=library)는 ⑥ 상태에 영향 없음(MR-D-7)."""
+    from sqlalchemy import and_, select
+
+    from ...core.repositories import row_dict
+
+    return row_dict(conn.execute(
+        select(jobs_t).where(and_(jobs_t.c.case_id == case_id, jobs_t.c.job_type == "EXPORT",
+                                  jobs_t.c.params["origin"].astext.is_(None)))
+        .order_by(jobs_t.c.created_at.desc()).limit(1)).first())
+
+
 def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    latest = {jt: jobs_repo.latest_job(conn, case["id"], jt) for jt in ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE",
-                                                                         "EXPORT")}
+    latest = {jt: jobs_repo.latest_job(conn, case["id"], jt) for jt in ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE")}
+    latest["EXPORT"] = _latest_case_export(conn, case["id"])
 
     def st(state: str, job: dict | None = None) -> dict[str, Any]:
         return {"state": state, "job_id": job["id"] if job else None}
@@ -98,6 +116,39 @@ def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
     else:
         out["6"] = st("failed" if failed(ep) else "none", ep)
     return out
+
+
+REASON_MESSAGES = {
+    "SUPPORT_AUTO_BLOCKED": "지지점을 자동으로 정하지 못했습니다 — ②에서 사유 확인",
+    "TSTAR_NOT_CONFIRMED": "t* 확정이 필요합니다(확정 시 지지점 자동 선택)",
+}
+
+
+def step_status(case: dict[str, Any], ss: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """화면 4단계(§5.4): input = 옛 1, tstar = t*·지지점, esl = 옛 4, validate = 옛 5."""
+    def r(code: str) -> dict[str, str]:
+        return {"code": code, "message": REASON_MESSAGES[code]}
+
+    t2 = dict(ss["2"])
+    ts = case.get("tstar")
+    if t2["state"] != "running" and ts:
+        auto = (ts.get("support_auto") or {}) if isinstance(ts, dict) else {}
+        if extract_stale(case):
+            t2 = {"state": "stale", "job_id": None}
+        elif case.get("current_support_set_id"):
+            t2 = {"state": "done", "job_id": None}
+        elif auto.get("status") == "BLOCKED":
+            t2 = {"state": "failed", "job_id": None, "reason": r("SUPPORT_AUTO_BLOCKED")}
+        else:
+            t2 = {"state": "none", "job_id": None, "reason": r("TSTAR_NOT_CONFIRMED")}
+    return {"input": dict(ss["1"]), "tstar": t2, "esl": dict(ss["4"]), "validate": dict(ss["5"])}
+
+
+def case_full(ctx: AppContext, conn, case: dict[str, Any]) -> dict[str, Any]:
+    ss = stage_status(conn, case)
+    d = case_out(ctx, case, ss)
+    d["step_status"] = step_status(case, ss)
+    return d
 
 
 # ---------------------------------------------------------------- 생성
@@ -214,7 +265,7 @@ def list_cases(ctx: AppContext, project_id: str | None, status: str | None) -> l
 def get_case(ctx: AppContext, case_id: str) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         case = load_case(conn, case_id)
-        return case_out(ctx, case, stage_status(conn, case))
+        return case_full(ctx, conn, case)
 
 
 def patch_case(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:
@@ -241,7 +292,7 @@ def patch_case(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요") from None
         except IntegrityError:
             raise conflict("CASE_NAME_EXISTS", "같은 제목의 Case 가 있습니다") from None
-        return case_out(ctx, case, stage_status(conn, case))
+        return case_full(ctx, conn, case)
 
 
 def archive_case(ctx: AppContext, principal: Principal, case_id: str) -> dict[str, Any]:
@@ -253,7 +304,7 @@ def archive_case(ctx: AppContext, principal: Principal, case_id: str) -> dict[st
             raise conflict("CASE_HAS_ACTIVE_JOB", "실행 중이거나 대기 중인 작업이 있습니다")
         if case["status"] != "ARCHIVED":
             case = cases_repo.update_case(conn, case_id, None, status="ARCHIVED")
-        return case_out(ctx, case, stage_status(conn, case))
+        return case_full(ctx, conn, case)
 
 
 # ---------------------------------------------------------------- t*
@@ -279,7 +330,23 @@ def get_tstar(ctx: AppContext, case_id: str) -> dict[str, Any]:
     return out
 
 
+def _check_cfg(ctx: AppContext) -> dict[str, Any]:
+    return core_adapter.support_check_settings(ctx.config.core or {})
+
+
+def _auto_support(ctx: AppContext, case: dict[str, Any]) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
+    """모델 로드 + 코어 auto_321(트랜잭션 밖, 30만 노드 < 1 s)."""
+    nid, x0 = _model(ctx, case)
+    return _core_call(core_adapter.auto_support, x0, _check_cfg(ctx)), nid, x0
+
+
 def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:
+    with ctx.engine.connect() as conn:
+        pre = load_case(conn, case_id)
+    require_execute(principal, pre["project_id"])
+    auto = None
+    if not pre.get("current_support_set_id") and pre.get("extract_summary") and pre.get("status") == "ACTIVE":
+        auto = _auto_support(ctx, pre)
     with ctx.engine.begin() as conn:
         case = load_case(conn, case_id, for_update=True)
         require_execute(principal, case["project_id"])
@@ -299,11 +366,32 @@ def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict
                                 candidates=[c["frame_index"] for c in m["candidates"]])
         tstar = {"metric": body.metric, "frame_index": hit["frame_index"], "time": hit["time"],
                  "elem_id": hit["elem_id"], "value": hit["value"], "source": "user"}
+        if case["version"] != body.version:
+            raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요")
+        vals: dict[str, Any] = {}
+        if case.get("current_support_set_id"):
+            # 지지 세트 있음(자동·이전 수동 편집 모두) → 그대로(MR-D-3). 잠금 중 다른 사용자가 먼저 만든 경우도 여기
+            sup = cases_repo.get_support_set(conn, case["current_support_set_id"])
+            tstar["support_auto"] = {"status": "KEPT", "source": (sup or {}).get("source")}
+        else:
+            if auto is None:
+                auto = _auto_support(ctx, case)
+            res, nid, _x0 = auto
+            if res["status"] == "OK":
+                s = cases_repo.insert_support_set(
+                    conn, case_id=case_id, node_ids=[int(nid[i]) for i in res["idx"]], dofs=list(res["dofs"]),
+                    source="auto", plane=res.get("plane"), created_by=principal.user_id)
+                vals["current_support_set_id"] = s["id"]
+                tstar["support_auto"] = {"status": "OK", "mode": res["mode"], "checks": res.get("checks"),
+                                         "rule_version": res.get("rule_version")}
+            else:
+                tstar["support_auto"] = {"status": "BLOCKED", "mode": res["mode"], "problems": res.get("problems") or [],
+                                         "checks": res.get("checks"), "rule_version": res.get("rule_version")}
         try:
-            case = cases_repo.update_case(conn, case_id, body.version, tstar=tstar)
+            case = cases_repo.update_case(conn, case_id, body.version, tstar=tstar, **vals)
         except VersionConflict:
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요") from None
-        return case_out(ctx, case, stage_status(conn, case))
+        return case_full(ctx, conn, case)
 
 
 # ---------------------------------------------------------------- 모델 노드·지지점
@@ -326,22 +414,22 @@ def _core_call(fn, *args):
         raise DomainError(exc.code, exc.message, status=500) from None
 
 
-def _suggest(node_id: np.ndarray, x0: np.ndarray) -> dict[str, Any]:
-    pc = _core_call(core_adapter.pca_corners, x0)
-    corners = [int(i) for i in pc["idx"]]
-    sup = _core_call(core_adapter.pick_321, x0, corners)
-    idx = [i for i, _ in sup]
-    return {"node_ids": [int(node_id[i]) for i in idx], "dofs": [d for _, d in sup],
-            "coords": [x0[i].tolist() for i in idx], "plane": pc["plane"],
-            "corners": [int(node_id[i]) for i in corners]}
+def _suggest_out(res: dict[str, Any], node_id: np.ndarray, x0: np.ndarray) -> dict[str, Any]:
+    idx = [int(i) for i in res.get("idx") or []]
+    return {"node_ids": [int(node_id[i]) for i in idx], "dofs": list(res.get("dofs") or []),
+            "coords": [x0[i].tolist() for i in idx], "plane": res.get("plane"),
+            "corners": [int(node_id[i]) for i in res.get("corners") or []], "status": res["status"],
+            "mode": res.get("mode"), "checks": res.get("checks"), "problems": res.get("problems") or [],
+            "rule_version": res.get("rule_version")}
 
 
 def suggest_support(ctx: AppContext, principal: Principal, case_id: str) -> dict[str, Any]:
+    """§5.1: PUT /tstar 와 같은 auto_321 결과(status·problems 포함). BLOCKED 면 node_ids 는 pca4 삼각형(표시용)."""
     with ctx.engine.connect() as conn:
         case = load_case(conn, case_id)
     require_execute(principal, case["project_id"])
-    nid, x0 = _model(ctx, case)
-    return _suggest(nid, x0)
+    res, nid, x0 = _auto_support(ctx, case)
+    return _suggest_out(res, nid, x0)
 
 
 def support_out(case: dict[str, Any], s: dict[str, Any]) -> dict[str, Any]:
@@ -362,22 +450,30 @@ def create_support(ctx: AppContext, principal: Principal, case_id: str, body) ->
     if bad:
         raise unprocessable("NODE_NOT_IN_PART", f"대상 파트에 없는 노드: {bad}", node_ids=bad)
     idx = [int(p) for p in pos]
-    sup = _core_call(core_adapter.pick_321, x0, idx)
-    dof_by_idx = {i: d for i, d in sup}
-    if set(dof_by_idx) != set(idx):
-        raise unprocessable("SUPPORT_DEGENERATE", "3-2-1 지지점을 정할 수 없습니다")
+    cfg = _check_cfg(ctx)
+    chk = _core_call(core_adapter.check_support, x0, idx, cfg)
+    if chk["status"] != "OK":
+        # §5.1(Q2 B): 수동 지정도 자동 선택과 같은 품질 검사(후보 확장 없음)
+        raise unprocessable("SUPPORT_CHECK_FAILED", "지정한 지지 노드가 품질 검사를 통과하지 못했습니다: "
+                            + "; ".join(p["message"] for p in chk["problems"]), problems=chk["problems"])
+    dof_by_idx = dict(zip(idx, chk["dofs"]))
     try:
-        sug = _suggest(nid, x0)
-        source = "auto" if sorted(sug["node_ids"]) == sorted(body.node_ids) else "user"
-        plane = sug["plane"]
+        sug = _core_call(core_adapter.auto_support, x0, cfg)
+        source = "auto" if sug["status"] == "OK" and sorted(int(nid[i]) for i in sug["idx"]) == sorted(
+            body.node_ids) else "user"
+        plane = sug.get("plane") or chk.get("plane")
     except DomainError:
-        source, plane = "user", None
+        source, plane = "user", chk.get("plane")
     with ctx.engine.begin() as conn:
         case = load_case(conn, case_id, for_update=True)
         s = cases_repo.insert_support_set(conn, case_id=case_id, node_ids=[int(n) for n in body.node_ids],
                                           dofs=[dof_by_idx[i] for i in idx], source=source, plane=plane,
                                           created_by=principal.user_id)
-        case = cases_repo.update_case(conn, case_id, None, current_support_set_id=s["id"])
+        vals: dict[str, Any] = {"current_support_set_id": s["id"]}
+        if isinstance(case.get("tstar"), dict):
+            vals["tstar"] = {**case["tstar"], "support_auto": {"status": "MANUAL", "checks": chk.get("checks"),
+                                                               "rule_version": chk.get("rule_version")}}
+        case = cases_repo.update_case(conn, case_id, None, **vals)
         return support_out(case, s)
 
 

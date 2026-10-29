@@ -194,9 +194,9 @@ def test_dp12_library_verdict_filter_legacy_status_and_fallback(client, engine, 
     und_new = mk(2, verdict="UNDETERMINED", quality_extra={"status": "UNDETERMINED", "scheme": "disp_primary/1",
                                                            "undetermined_reason": "NO_FULL_SOLVE",
                                                            "confirmed_undetermined": {"reason": "r", "by": "u", "at": "t"}})
-    old_pass = mk(3, verdict="PASS")                                          # 0.5.7 이전 등록: status·scheme 없음
-    old_fail = mk(4, verdict="FAIL")
-    legacy_new = mk(5, verdict="PASS", quality_extra={"status": "LEGACY"})    # 0.5.7 이후 이전 판정 체계 검증으로 등록
+    old_pass = mk(3, verdict="PASS", scheme=None)                             # 0.5.7 이전 등록: status·scheme 없음
+    old_fail = mk(4, verdict="FAIL", scheme=None)
+    legacy_new = mk(5, verdict="PASS", quality_extra={"status": "LEGACY"}, scheme=None)   # 0.5.7 이후 이전 판정 체계 검증으로 등록
 
     def ids(v):
         r = client.get(f"{API}/library/entries", params={"project_id": "p-1", "verdict": v}, headers=R)

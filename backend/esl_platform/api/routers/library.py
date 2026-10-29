@@ -22,10 +22,15 @@ from ..schemas import (
     EntryOut,
     EntryPatch,
     EntryRetire,
+    ExportBatchCreate,
+    ExportBatchOut,
+    ExportBatchSummary,
+    JobOut,
 )
 from ..services import bundle as bundle_svc
 from ..services import comparisons as cmp_svc
 from ..services import library as svc
+from ..services import library_export as export_svc
 
 router = APIRouter(tags=["library"])
 
@@ -62,6 +67,37 @@ def patch_entry(eid: str, body: EntryPatch, request: Request,
 def retire(eid: str, request: Request, body: EntryRetire | None = None,
            principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     return svc.retire_entry(get_ctx(request), principal, eid, body)
+
+
+@router.post("/library/entries/{eid}/revalidate", response_model=JobOut, status_code=201)
+def revalidate(eid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.10.0 §7.3: LEGACY·사유 등록 FAIL·판정 불가 항목을 현재 기준으로 다시 검증(VALIDATE origin library_revalidate)."""
+    return svc.revalidate_entry(get_ctx(request), principal, eid)
+
+
+# ---------------------------------------------------------------- v0.10.0 다중 내보내기(§6.1)
+@router.post("/library/exports", response_model=ExportBatchOut, status_code=202)
+def create_export(body: ExportBatchCreate, request: Request,
+                  principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return export_svc.create_batch(get_ctx(request), principal, body)
+
+
+@router.get("/library/exports", response_model=list[ExportBatchSummary])
+def list_exports(request: Request, project_id: str = Query(min_length=1, max_length=64),
+                 limit: int = Query(default=20, ge=1, le=100),
+                 principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
+    return export_svc.list_batches(get_ctx(request), principal, project_id, limit)
+
+
+@router.get("/library/exports/{batch_id}", response_model=ExportBatchOut)
+def get_export(batch_id: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return export_svc.get_batch(get_ctx(request), principal, batch_id)
+
+
+@router.get("/library/exports/{batch_id}/bundle", response_class=StreamingResponse, responses=ZIP_RESPONSE)
+def export_bundle(batch_id: str, request: Request, principal: Principal = Depends(get_principal)) -> StreamingResponse:
+    """묶음 zip(manifest.json·README.txt·<NN>_<label>/). 진행 중 409 EXPORT_NOT_READY, 성공 0 409 EXPORT_FAILED, 상한 413."""
+    return zip_response(export_svc.bundle(get_ctx(request), principal, batch_id))
 
 
 @router.post("/library/analyses", response_model=AnalysisOut, status_code=201)

@@ -229,14 +229,22 @@ def test_register_errors(client, engine, case):
     s0 = seed_run(engine, case["id"], verdict=None)
     r = client.post(f"{API}/library/entries", json=body(s0["run_id"]), headers=W)
     assert r.status_code == 409 and _code(r) == "PREREQUISITE_MISSING" and "validation" in r.json()["detail"]["missing"]
-    # FAIL + 사유 없음 → 422 VALIDATION_NOT_PASS
-    sf = seed_run(engine, case["id"], verdict="FAIL")
-    r = client.post(f"{API}/library/entries", json=body(sf["run_id"]), headers=W)
+    # v0.10.0 V-MR-12: 현재 기준 FAIL·판정 불가 → 422 VALIDATION_NOT_PASS(사유가 있어도), LEGACY → 422 VALIDATION_LEGACY
+    sf = seed_run(engine, case["id"], verdict="FAIL", val_extra={"scheme": "disp_primary/1"})
+    for extra in ({}, {"force_reason": "확정"}):
+        r = client.post(f"{API}/library/entries", json=body(sf["run_id"], **extra), headers=W)
+        assert r.status_code == 422 and _code(r) == "VALIDATION_NOT_PASS" and r.json()["detail"]["verdict"] == "FAIL"
+    su = seed_run(engine, case["id"], verdict="UNDETERMINED",
+                  val_extra={"scheme": "disp_primary/1", "undetermined_reason": "NO_FULL_SOLVE"})
+    r = client.post(f"{API}/library/entries", json=body(su["run_id"], force_reason="확정"), headers=W)
     assert r.status_code == 422 and _code(r) == "VALIDATION_NOT_PASS"
-    r = client.post(f"{API}/library/entries", json=body(sf["run_id"], force_reason="  "), headers=W)
-    assert r.status_code == 422 and _code(r) == "VALIDATION_NOT_PASS"
-    # 사유가 있어도 run 스냅샷이 없으면 409
-    r = client.post(f"{API}/library/entries", json=body(sf["run_id"], force_reason="확정"), headers=W)
+    for v in ("PASS", "FAIL"):
+        sl = seed_run(engine, case["id"], verdict=v)                      # scheme 없음 = LEGACY
+        r = client.post(f"{API}/library/entries", json=body(sl["run_id"], force_reason="확정"), headers=W)
+        assert r.status_code == 422 and _code(r) == "VALIDATION_LEGACY"
+    # PASS 여도 run 스냅샷이 없으면 409
+    sp = seed_run(engine, case["id"], verdict="PASS", val_extra={"scheme": "disp_primary/1"})
+    r = client.post(f"{API}/library/entries", json=body(sp["run_id"]), headers=W)
     assert r.status_code == 409 and r.json()["detail"]["missing"] == ["run_snapshot"]
     # 다른 run 의 검증 id → 422
     r = client.post(f"{API}/library/entries", json=body(s["run_id"], validation_id=sf["validation_id"]), headers=W)
