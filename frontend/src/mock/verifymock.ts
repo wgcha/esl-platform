@@ -394,7 +394,7 @@ export class VerifyMock {
       ],
       hot: { n: 20, mean_ratio: +(pe * 1.07).toFixed(4), max_ratio: +(pe * 1.21).toFixed(4) },
       // v0.12.1 esl_strain_fallback.md §5 V1 시연: 일부 씬은 검증 h3d 에 Max_Strain 이 없어 Strain 텐서로 대체
-      warnings: h === 2 ? ["VD_STRAIN_SOURCE_MISMATCH"] : [],
+      warnings: h === 2 ? ["VD_STRAIN_SOURCE_MISMATCH: 원 낙하 변형률 source max_strain ≠ 검증 낙하 strain_tensor — ε 행 비는 서로 다른 양의 비교(참고)"] : [],
       tstar: { orig_time: 0.0124, verify_time: 0.0125 },
       strain_source: h === 2 ? "strain_tensor" : "max_strain",
       orig_strain_source: "max_strain",

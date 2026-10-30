@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
-import { ApiError, downloadFile } from "../../api/client";
+import { ApiError, downloadFile, warnText } from "../../api/client";
 import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
@@ -197,7 +197,7 @@ export function AnalysisDetail() {
             {r.warnings.length > 0 && (
               <ul className="reasons small warn-text">
                 {r.warnings.map((w) => (
-                  <li key={w}>{w}</li>
+                  <li key={w}>{warnText(w)}</li>
                 ))}
               </ul>
             )}
