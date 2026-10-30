@@ -618,7 +618,9 @@ class HpcScxCfg(_M):
 
     model_config = ConfigDict(extra="ignore", frozen=True)
     relay_url: str = ""                                  # 필수. http://127.0.0.1:<대시보드 백엔드 포트>
-    secret_file: str = ""                                # 필수. 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 권장)
+    secret_file: str = ""                                # 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일). "" = 대시보드 따라가기:
+                                                         # env SIMDASH_SCX_RELAY_SECRET_FILE → dashboard_root 의 .env → <런타임>/secrets/scx_relay_key
+    dashboard_root: str = ""                             # v0.12.0 대시보드 설치 폴더 절대경로(secret_file "" 일 때 .env 에서 비밀 파일 경로만 읽음)
     client_name: str = "esl"                             # ^[a-z0-9_-]{1,32}$ (X-SCX-Relay-Client)
     drive_base: str = "~/esl"                            # B 쓰기 기준("~" | "~/<상대>")
     home_display: str = "/Users/vd.dashboard"            # 표시 전용
@@ -672,21 +674,21 @@ class ScxDriveCfg(_M):
 
 
 class VerifyDropCompareCfg(_M):
-    same_tol: float = 0.02
-    hot_n: int = 20
+    same_tol: float = Field(default=0.02, ge=0.0, le=1.0)    # 비 판단 '비슷' 허용치
+    hot_n: int = Field(default=20, ge=1, le=100000)          # eps_hot 원 낙하 상위 요소 수
 
 
 class VerifyDropCfg(_M):
-    """기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)."""
+    """기능 B — Radioss 검증 낙하(v0.12.0, esl_scx_relay.md §6)."""
 
     enabled: bool = False
-    max_scenes: int = 5
-    default_worst_n: int = 3
-    max_running: int = 2
-    est_hours_per_scene: float = 3
-    poll_s: float = 60
-    max_wait_h: float = 72
-    lost_after_polls: int = 10
+    max_scenes: int = Field(default=5, ge=1, le=100)         # 한 요청의 씬(=제출) 수 상한(Q4)
+    default_worst_n: int = Field(default=3, ge=1, le=100)    # '가장 나쁜 씬 N개' 기본 N
+    max_running: int = Field(default=2, ge=1, le=64)         # 동시에 실행 중인 VERIFY_DROP 수(claim 조건)
+    est_hours_per_scene: float = Field(default=3, ge=0)
+    poll_s: float = Field(default=60, gt=0, le=3600)
+    max_wait_h: float = Field(default=72, gt=0, le=24 * 30)
+    lost_after_polls: int = Field(default=10, ge=1, le=10000)
     engine_globs: list[str] = Field(default_factory=lambda: ["{stem}_0001.rad", "{stem}_000[2-9].rad"])
     result_globs: dict[str, list[str]] = Field(default_factory=lambda: {"h3d": ["*.h3d"],
                                                                         "out": ["*_0000.out", "*_0001.out"]})
@@ -720,7 +722,7 @@ class Settings(_M):
     library_export: LibraryExportCfg = LibraryExportCfg()   # v0.10.0 라이브러리 다중 내보내기
     hpc: HpcCfg | None = None                               # v0.11.0 SCX 릴레이(hpc.scx). 없으면 SCX 기능 비활성
     scx_drive: ScxDriveCfg = ScxDriveCfg()                  # v0.11.0 기능 A
-    verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.11.0 기능 B(키만 — 구현 v0.12.0)
+    verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.12.0 기능 B — Radioss 검증 낙하
 
     @property
     def api_prefix(self) -> str:
@@ -744,6 +746,7 @@ class LoadedConfig:
     sha256: str | None = None
     core: dict[str, Any] | None = None  # 검증된 코어 설정(작업 생성 시 스냅샷)
     library: dict[str, Any] | None = None  # 검증된 라이브러리 설정(+ _ista6), 없으면 None
+    warnings: list[Issue] = field(default_factory=list)  # 기동·검증은 통과하나 알릴 것(예 hpc 밑에 들여쓴 최상위 키)
 
     @property
     def ok(self) -> bool:
@@ -1102,6 +1105,25 @@ def validate_library(s: Settings | None, *, base_dir: str | None = None) -> tupl
     return _library(s, base_dir)
 
 
+def misplaced_top_keys(d: Any) -> list[Issue]:
+    """`hpc`(extra ignore) 밑 또는 `hpc.scx` 밑에 esl 최상위 키(Settings 필드명: scx_drive·verify_drop·bead_doe·opt_run·
+    worker·storage …)를 들여쓴 경우 — pydantic 은 조용히 무시하므로 경고로 알린다. physicsai 공용 키(mode·command 등)는 계속 무시."""
+    out: list[Issue] = []
+    if not isinstance(d, dict) or not isinstance(d.get("hpc"), dict):
+        return out
+    top = set(Settings.model_fields) - {"hpc"}
+    hpc = d["hpc"]
+    for k in hpc:
+        if k in top:
+            out.append(Issue(f"hpc.{k}", f"hpc.{k} 는 최상위 키입니다 — 들여쓰기를 없애세요(지금은 무시됨)"))
+    scx = hpc.get("scx")
+    if isinstance(scx, dict):
+        for k in scx:
+            if k in top and k not in HpcScxCfg.model_fields:
+                out.append(Issue(f"hpc.scx.{k}", f"hpc.scx.{k} 는 최상위 키입니다 — 들여쓰기를 없애세요(지금은 무시됨)"))
+    return out
+
+
 def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None, base_dir: str | None = None,
                      path: str | None = None, sha256: str | None = None) -> LoadedConfig:
     env = os.environ if environ is None else environ
@@ -1111,7 +1133,12 @@ def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None
         d["profile"] = prof
     s, issues, core = validate_settings(d, base_dir=base_dir)
     lib_issues, lib = validate_library(s, base_dir=base_dir)
-    return LoadedConfig(s, issues + lib_issues, path, sha256, core, lib)
+    warns = misplaced_top_keys(d)
+    if s is not None and s.verify_drop.enabled and s.hpc is not None and s.hpc.scx is not None \
+            and str(s.hpc.scx.drive_base or "").strip().rstrip("/") == "~":
+        warns.append(Issue("hpc.scx.drive_base", 'verify_drop.enabled 인데 hpc.scx.drive_base 가 "~"(공유 홈) — 검증 낙하는 전용 폴더가 '
+                                                 '필요합니다: hpc.scx.drive_base 를 "~/<전용 폴더>" 로(VD_DRIVE_BASE_SHARED, 검증 낙하만 비활성)'))
+    return LoadedConfig(s, issues + lib_issues, path, sha256, core, lib, warns)
 
 
 def load_config(path: str | None = None, *, environ: dict[str, str] | None = None) -> LoadedConfig:

@@ -182,7 +182,9 @@ export function SectionChart({ ctl }: { ctl: SectionCtl }) {
     setMan(next);
     if (axKey) writeAxes(axKey, next);
   };
-  const ke = kexp ?? 0;
+  // 첫 자료가 온 렌더부터 기본 배율을 쓴다(효과로 kexp 를 채우기 전 k = 1 로 한 번 그리면 자동 축 범위·입력 칸이
+  // 한 박자 뒤 바뀌어, 그 사이 사용자가 고친 축 입력이 덮어써짐 — 부하 시 vitest V-DP-27·28 간헐 실패 원인)
+  const ke = kexp ?? (d ? defaultScaleExp(d) : 0);
   const k = real ? 1 : 10 ** ke;
   const units = d?.units ?? "mm";
   const hasVal = !!d?.has_val;

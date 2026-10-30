@@ -173,6 +173,21 @@ def _check_part(ctx: AppContext, rad: str, results: str | None, part_title: str)
 
 
 def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: str, body) -> dict[str, Any]:
+    """v0.12.0: PATH_OUTSIDE_ROOT(include 가 입력 루트 밖) 문구·detail 의 서버 절대경로는 일반 사용자에게 가린다(전역 관리자 원문)."""
+    try:
+        return _create_case(ctx, principal, token, rid, body)
+    except DomainError as exc:
+        if exc.code != "PATH_OUTSIDE_ROOT":
+            raise
+        from .pathmask import mask_error
+
+        new = mask_error(ctx, principal, exc)
+        if new is exc:
+            raise
+        raise new from None
+
+
+def _create_case(ctx: AppContext, principal: Principal, token: str | None, rid: str, body) -> dict[str, Any]:
     projects = _projects(ctx, principal, token, rid)
     if body.project_id not in {p["id"] for p in projects}:
         raise not_found("PROJECT_NOT_FOUND", "프로젝트를 찾을 수 없습니다")

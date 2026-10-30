@@ -122,3 +122,12 @@ def test_adapter_lock_constants_match_lock():
     import simdash_adapters
 
     assert simdash_adapters.__version__ == lk["version"]
+
+
+@pytest.mark.parametrize("path", ["secrets/scx_relay_key", "./k", "~/k", "..\\k"])
+def test_secret_file_must_be_absolute(settings_dict, path):
+    """v0.12.0 L1(SR-D-18): hpc.scx.secret_file 상대경로 → 설정 오류(기동은 함, SCX 기능만 비활성)."""
+    s = _settings(settings_dict, secret_file=path)
+    _, code, detail = gateway.get_gateway(s)
+    assert code == "SCX_CONFIG_INVALID" and "secret_file" in detail and "절대경로" in detail
+    assert status.evaluate(s, "p-1")["fetch"]["reason_code"] == "SCX_CONFIG_INVALID"

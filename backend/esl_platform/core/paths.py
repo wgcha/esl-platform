@@ -153,6 +153,7 @@ DOE_DIR = "_doe"
 # v0.10.0 라이브러리 다중 내보내기(esl_menu_restructure.md §6.2): <esl_root>/_exports/<batch_id>/{batch.json, <NN>_<label>/, logs/}.
 # 원본은 라이브러리 항목 폴더(읽기만), Case 폴더에는 쓰지 않는다.
 EXPORTS_DIR = "_exports"
+VERIFY_DIR = "_verify"      # v0.12.0 검증 낙하 <esl_root>/_verify/<id>/ (esl_scx_relay.md §4)
 _SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 
 
@@ -174,6 +175,11 @@ def esl_subdir(settings: Settings, *parts: str) -> str:
     if any(overlaps(cur, r) for r in settings.storage.input_roots):
         raise _unsafe("입력 루트와 겹치는 경로에는 쓰지 않습니다")
     return cur
+
+
+def verify_dir(settings: Settings, drop_id: str) -> str:
+    """검증 낙하 폴더 <esl_root>/_verify/<id>(링크·탈출 검사)."""
+    return esl_subdir(settings, VERIFY_DIR, drop_id)
 
 
 def opt_run_dir(settings: Settings, run_id: str) -> str:

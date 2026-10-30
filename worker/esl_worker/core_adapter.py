@@ -1008,6 +1008,26 @@ def stage_out_path(log_path: str) -> str:
     return log_path[:-4] + ".stage.json" if log_path.endswith(".log") else log_path + ".stage.json"
 
 
+def is_state_include(spec: str, path: str | None) -> bool:
+    """include 가 Radioss 상태 파일(.sta/.str 확장자 또는 #RADIOSS STATE FILE 머리)인지 — 누적 씬 판정(esl_cumulative_input.md §2)."""
+    st = _mod("esl.rad.state")
+    return bool(st.has_state_ext(spec) or (path and st.is_state_file(path)))
+
+
+VERIFY_STAGES = ("vd_patch", "vd_compare")       # = esl.verify.stages.STAGES(esl.pipeline.VERIFY_STAGES)
+
+
+def run_verify_stage(spec: dict, echo: Callable[[str], None]) -> dict:
+    """v0.12.0 검증 낙하 코어 단계 1개(자식 프로세스, 계약 esl_scx_relay.md SR6). spec["vd"] = esl.verify.stages 입력."""
+    if spec.get("stage") not in VERIFY_STAGES:
+        raise CoreError("INPUT_INVALID", f"알 수 없는 검증 낙하 단계: {spec.get('stage')}")
+    run_stage = _attr("esl.verify.stages", "run_stage")
+    vd = dict(spec.get("vd") or {})
+    vd["stage"] = spec["stage"]
+    _wrap(run_stage, vd, echo)
+    return {}
+
+
 def run_doe_stage(spec: dict, echo: Callable[[str], None]) -> dict:
     """비드 DOE 코어 단계 1개(자식 프로세스). spec["lib"] = {doe: 작업 params.doe, extra?: {design, paicad, …}}."""
     import json

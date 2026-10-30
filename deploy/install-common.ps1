@@ -882,8 +882,11 @@ function Write-EslConfigValidation {
     if ($Result.write.ext_supplement -and $Result.write.ext_supplement.line) { Write-EslStep $Result.write.ext_supplement.line }
     # v0.9.0: 비드 DOE paicad 경로 자동 감지(bead_doe.paicad.exe) 결과 1줄, 감지 못 했으면 안내 1줄
     if ($Result.write.doe_autodetect -and $Result.write.doe_autodetect.line) { Write-EslStep $Result.write.doe_autodetect.line } elseif ($Result.doe_autodetect -and $Result.doe_autodetect.hint) { Write-EslStep $Result.doe_autodetect.hint }
+    # v0.12.0: SCX 비밀 파일 대시보드 따라가기 — hpc.scx.dashboard_root 자동 감지 1줄
+    if ($Result.write.scx_autodetect -and $Result.write.scx_autodetect.line) { Write-EslStep $Result.write.scx_autodetect.line }
     foreach ($w in @($Result.warnings)) { if ($w) { Write-Warning $w } }
     $v = $Result.write.validation
+    foreach ($w in @($v.warnings)) { if ($w) { Write-Warning "설정 검증: $w" } }   # v0.12.0: 예 hpc.scx_drive(최상위 키 들여쓰기)
     if ($v.ok -eq $false) {
         foreach ($i in @($v.issues)) { if ($i) { Write-Warning "설정 검증: $i" } }
         Write-Warning "설정 검증 오류가 있습니다 — 백엔드는 뜨지만 쓰기 API는 503, 워커는 설정 오류로 작업을 받지 못합니다. $($Result.config_path) 를 고친 뒤 Stop/Start-ScheduledTask ESL-Worker, ESL-Backend"

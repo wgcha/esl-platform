@@ -21,6 +21,7 @@ import { HistoryMock } from "./historymock";
 import { OptMock, enrichEntries } from "./optdata";
 import { DoeMock } from "./doedata";
 import { ScxMock } from "./scxmock";
+import { VerifyMock } from "./verifymock";
 
 interface MockResponse {
   status: number;
@@ -40,12 +41,14 @@ const STEPS: Record<JobType, string[]> = {
   DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
   DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
   SCX_FETCH: ["SF_RAD", "SF_H3D", "SF_REGISTER"],
+  VERIFY_DROP: ["VD_PREP", "VD_STAGE", "VD_SUBMIT", "VD_WAIT", "VD_FETCH"],
+  VERIFY_POST: ["H3D_EXTRACT", "VD_EXTRACT", "VD_COMPARE", "VD_REGISTER"],
 };
 /** 라이브러리 작업(LIB_ANALYZE·LIB_COMPARE)·보고서는 Case 단계가 아님(0) */
-const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11, SCX_FETCH: 12 };
+const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11, SCX_FETCH: 12, VERIFY_DROP: 13, VERIFY_POST: 13 };
 const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 /** v0.11.0 XFER 레인(HTTP 전송·원격 대기) — 루프 수 worker.xfer_lanes(기본 2) */
-const XFER: JobType[] = ["SCX_FETCH"];
+const XFER: JobType[] = ["SCX_FETCH", "VERIFY_DROP"];
 const XFER_LANES = 2;
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
@@ -133,6 +136,24 @@ export class MockServer {
     newJob: (pid, params) => this.newJob({ id: null, project_id: pid }, "SCX_FETCH", params),
     log: (id, line) => (this.logs[id] ??= []).push(line),
     now: () => this.now(),
+  });
+
+  /** v0.12.0 Radioss 검증 낙하(esl_scx_relay.md §7 — 기능 B) */
+  verify = new VerifyMock({
+    study: (id) => {
+      const r = this.doe.recs.find((x) => x.out.id === id);
+      if (!r) return null;
+      const s = this.doe.handle("GET", `/doe/studies/${id}`, new URLSearchParams(), {})?.body as { phase?: string } | undefined;
+      return { project_id: r.out.project_id, scenario: r.out.scenario, phase: s?.phase ?? r.out.phase, entry_ids: r.out.entry_ids, result: r.result };
+    },
+    entries: () => this.entries,
+    canRun: (pid) => this.canRun(pid),
+    avail: (pid) => this.scx.verifyAvail(pid),
+    newJob: (pid, jt, params) => this.newJob({ id: null, project_id: pid }, jt, params),
+    jobs: () => this.jobs,
+    log: (id, line) => (this.logs[id] ??= []).push(line),
+    now: () => this.now(),
+    userName: () => this.me.display_name,
   });
 
   /** v0.9.0 비드 형상 DOE(esl_bead_doe.md §10) */
@@ -476,6 +497,8 @@ export class MockServer {
     if (or) return or;
     const dr = this.doe.handle(method, path, query, b);
     if (dr) return dr;
+    const vr = this.verify.handle(method, path, query, b);
+    if (vr) return vr;
     const sr = this.scx.handle(method, path, query, b);
     if (sr) return sr;
 
@@ -633,7 +656,15 @@ export class MockServer {
           const code = TERMINAL.includes(j.state) ? "JOB_TERMINAL" : "JOB_NOT_TERMINAL";
           return err(409, code, "실패·중단·취소된 작업만 재시도할 수 있습니다");
         }
+        if (j.params.verify_drop_id) {
+          const blocked = this.verify.retryBlocked(j);
+          if (blocked) return blocked;
+        }
         const nj = this.newJob({ id: j.case_id, project_id: j.project_id }, j.job_type, j.params);
+        if (j.params.verify_drop_id) {
+          nj.params.verify_drop_id = j.params.verify_drop_id;
+          this.verify.onRetry(nj);
+        }
         nj.analysis_id = j.analysis_id ?? null;
         nj.comparison_id = j.comparison_id ?? null;
         const a = this.analyses.find((x) => x.job_id === j.id);
@@ -951,6 +982,7 @@ export class MockServer {
       created_at: t,
       updated_at: t,
       version: 1,
+      ...(typeof params.verify_drop_id === "string" ? { verify_drop_id: params.verify_drop_id } : {}),
       steps: this.stepsOf(c.id, jt).map((k, i) => ({
         step_no: i + 1,
         step_key: k,
@@ -1114,9 +1146,11 @@ export class MockServer {
         if (next.case_id && busyCases.has(next.case_id)) continue;
         next.state = "RUNNING";
         next.started_at = this.now();
-        next.current_step_no = 1;
-        next.steps![0].state = "RUNNING";
-        this.logs[next.id].push(`작업 시작 — step 1 ${next.steps![0].step_key}`);
+        // resume_from_step(재시도·검증 낙하 잡 ID 연결) = 앞 단계가 이미 SUCCEEDED → 첫 PENDING 단계부터
+        const first = next.steps!.find((x) => x.state === "PENDING") ?? next.steps![0];
+        next.current_step_no = first.step_no;
+        first.state = "RUNNING";
+        this.logs[next.id].push(`작업 시작 — step ${first.step_no} ${first.step_key}`);
         if (next.case_id) busyCases.add(next.case_id);
         n += 1;
       }
@@ -1128,8 +1162,8 @@ export class MockServer {
     const steps = j.steps!;
     const step = steps.find((s) => s.state === "RUNNING");
     if (!step) return;
-    if (j.job_type === "SCX_FETCH") {
-      const r = this.scx.advance(j, step);
+    if (j.job_type === "SCX_FETCH" || j.job_type === "VERIFY_DROP" || j.job_type === "VERIFY_POST") {
+      const r = j.job_type === "SCX_FETCH" ? this.scx.advance(j, step) : this.verify.advance(j, step);
       if (r !== "step_done") return;
       step.state = "SUCCEEDED";
       step.exit_code = 0;
@@ -1166,6 +1200,7 @@ export class MockServer {
     j.finished_at = this.now();
     this.logs[j.id].push(`작업 종료: ${state}`);
     if (state !== "SUCCEEDED") return;
+    if (j.job_type === "VERIFY_DROP" || j.job_type === "VERIFY_POST") return this.verify.finished(j);
     if (j.job_type === "LIB_ANALYZE") {
       const a = this.analyses.find((x) => x.job_id === j.id);
       if (a) this.finishAnalysis(a);

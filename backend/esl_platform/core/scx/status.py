@@ -3,7 +3,8 @@
 원인 순서: 설정 꺼짐(SCX_FETCH_DISABLED·VD_DISABLED) → hpc.scx 없음(SCX_NOT_CONFIGURED) → 어댑터 없음(SCX_ADAPTER_MISSING)
 → 설정 오류(SCX_CONFIG_INVALID) → 비밀 문제(SCX_SECRET_INVALID) → 릴레이 연결 실패·거부(SCX_RELAY_UNREACHABLE·UNAUTHORIZED·
 FORBIDDEN·DISABLED) → 대시보드 SCX 모드 아님(SCX_DRIVE_MODE_OFF) → (A) 프로젝트 루트 0개(SCX_NO_ROOTS)
-/ (B) writes_active false·job_api false·appliance 미설정·drive_base 가 relay_base 밖 → (v0.11.0) VD_NOT_AVAILABLE.
+/ (B) writes_active false·job_api false·appliance 미설정·drive_base 가 relay_base 밖. 다 통과하면 사용 가능(v0.12.0 — 이전
+버전의 VD_NOT_AVAILABLE 해제).
 헬스는 게이트웨이별 TTL 캐시(hpc.scx.health_ttl_s), 한 번 호출 시간 한도 3 s(어댑터 HEALTH_TIMEOUT_S).
 """
 
@@ -59,6 +60,12 @@ def allowed_roots(settings, project_id: str | None) -> list[Any]:
 
 def _avail(code: str | None, reason: str | None = None) -> dict[str, Any]:
     return {"enabled": code is None, "reason_code": code, "reason": None if code is None else (reason or messages.text(code))}
+
+
+def drive_base_shared(cfg) -> bool:
+    """hpc.scx.drive_base 가 공용 계정 홈 자체("~", "~/")인가 — 검증 낙하 제출은 계정 전용 폴더("~/<폴더>")만."""
+    v = str(getattr(cfg, "drive_base", "") or "").strip()
+    return v.rstrip("/") == "~"
 
 
 def _base_inside(drive_base: str, relay_base: str) -> bool:
@@ -121,13 +128,15 @@ def evaluate(settings, project_id: str | None, *, need_fetch: bool = True, need_
         out["fetch"] = _avail("SCX_NO_ROOTS")
     else:
         out["fetch"] = _avail(None)
-    # B(v0.11.0 은 판정만 — 구현 v0.12.0)
+    # B(v0.12.0 구현 — 조건을 모두 통과하면 사용 가능)
     cfg = scx_cfg(settings)
     h = out["_health"] or {}
     if verify_off:
         out["verify"] = _avail(verify_off)
     elif common:
         out["verify"] = _avail(*common)
+    elif drive_base_shared(cfg):
+        out["verify"] = _avail("VD_DRIVE_BASE_SHARED")   # v0.12.0: 공유 홈("~") 에 PBS 제출 폴더를 만들지 않음
     elif not relay["writes_active"]:
         out["verify"] = _avail("SCX_WRITES_OFF")
     elif not relay["job_api"]:
@@ -137,7 +146,7 @@ def evaluate(settings, project_id: str | None, *, need_fetch: bool = True, need_
     elif not _base_inside(cfg.drive_base, str(h.get("relay_base") or "")):
         out["verify"] = _avail("SCX_BASE_OUTSIDE_RELAY")
     else:
-        out["verify"] = _avail("VD_NOT_AVAILABLE")
+        out["verify"] = _avail(None)
     return out
 
 
@@ -155,4 +164,14 @@ def require_fetch(settings, project_id: str, *, force: bool = False) -> tuple[An
     return st["_gw"], st["_health"] or {}
 
 
-__all__ = ["evaluate", "public", "require_fetch", "allowed_roots", "health", "reset_cache", "HEALTH_TIMEOUT_S"]
+def require_verify(settings, project_id: str, *, force: bool = False) -> tuple[Any, dict[str, Any]]:
+    """기능 B 를 지금 쓸 수 있으면 (게이트웨이, health), 아니면 503 SCX_UNAVAILABLE{reason_code}."""
+    st = evaluate(settings, project_id, need_fetch=False, force=force)
+    v = st["verify"]
+    if not v["enabled"]:
+        raise DomainError("SCX_UNAVAILABLE", v["reason"] or messages.text(v["reason_code"]), status=503,
+                          reason_code=v["reason_code"])
+    return st["_gw"], st["_health"] or {}
+
+
+__all__ = ["evaluate", "public", "require_fetch", "require_verify", "allowed_roots", "health", "reset_cache", "HEALTH_TIMEOUT_S"]

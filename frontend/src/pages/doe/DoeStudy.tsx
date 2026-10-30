@@ -2,7 +2,7 @@
 // (자동 판별 + 표시), 주 버튼 1개 = 단계별 [입력 준비 | 미리보기 | DOE 실행 | 보고서 보기](비활성 사유 툴팁).
 // 카드: ① 입력 · ② 비드·변수 + DOE 방식 · ③ 평면도(비드 번호·경계 경고) · ④ 미리보기 격자 · ⑤ 결과(순위·민감도·3D 비교·받기).
 // 솔버 선택 칸 없음(선형만, 확정 6). 설정값은 모두 GET /doe/settings.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
@@ -33,6 +33,12 @@ import { reconcile, visibleKeys, type Selection } from "../../view3d/selection";
 import type { V3 } from "../../view3d/pick";
 import { usePolling } from "../../lib/usePolling";
 import { libPath } from "../library/common";
+import { scx } from "../../api/scx";
+import { VD_BUTTON, eligibleDesigns, isActiveDrop, verify, verifyButtonReason } from "../../api/verify";
+import type { VerifyDropOut, VerifyPlanOut } from "../../api/types";
+import { VerifyDropDialog } from "../../components/VerifyDropDialog";
+import { VerifyDropCard } from "../../components/VerifyDropCard";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -343,7 +349,7 @@ function DownloadLink({ id, rel, label }: { id: string; rel: string; label: stri
   );
 }
 
-function Downloads({ study, result }: { study: DoeStudyOut; result: DoeResultOut }) {
+function Downloads({ study, result, extra }: { study: DoeStudyOut; result: DoeResultOut; extra?: ReactNode }) {
   const files = result.best?.files ?? [];
   const mesh = files.filter((f) => /\.(inc|rad|fem)$/i.test(f.rel));
   const geom = files.filter((f) => /\.(brep|step|stp)$/i.test(f.rel));
@@ -359,8 +365,55 @@ function Downloads({ study, result }: { study: DoeStudyOut; result: DoeResultOut
       ))}
       <DownloadLink id={study.id} rel="post/ranking.csv" label="순위 CSV" />
       <BundleButton url={doe.bundleUrl(study.id)} filename={`doe_${study.id}.zip`} />
+      {extra}
     </div>
   );
+}
+
+// ================================================================ v0.12.0 검증 낙하(esl_scx_relay.md §10.2)
+/** [검증 낙하] 버튼·대화상자·카드 상태. 버튼 활성 = ① 같은 모델 · DONE · SCX 검증 사용 가능 · 고른 안이 best/ 가 남은 안(순위 1~keep_files_top) */
+function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: DoeResultOut | null, pick: string | null, allowed: boolean, isAdmin: boolean) {
+  const done = study?.phase === "DONE";
+  const same = study?.scenario === "same";
+  const sid = study?.id ?? "";
+  const status = usePolling(() => (done && same ? scx.status(projectId) : Promise.resolve(null)), 0, [projectId, done, same]);
+  const avail = status.data?.verify ?? null;
+  const best = result?.best?.id ?? null;
+  const [plan, setPlan] = useState<VerifyPlanOut | null>(null);
+  const [planError, setPlanError] = useState<{ code: string; message: string } | null>(null);
+  const [nonce, setNonce] = useState(0);
+  // 안 목록·기본 N·누적 씬 판정: 최적 안 worst 기본으로 계획 1회(저장 안 함)
+  useEffect(() => {
+    setPlan(null);
+    setPlanError(null);
+    if (!done || !same || !avail?.enabled || !best || !allowed) return;
+    let alive = true;
+    verify
+      .plan({ bead_doe_id: sid, design_id: best, mode: "worst" })
+      .then((p) => alive && setPlan(p))
+      .catch((e) => alive && setPlanError(e instanceof ApiError ? { code: e.code, message: e.message } : { code: "ERROR", message: errorText(e) }));
+    return () => {
+      alive = false;
+    };
+  }, [sid, done, same, avail?.enabled, best, allowed, nonce]);
+  const [poll, setPoll] = useState(0);
+  const list = usePolling(() => (done ? verify.list(sid) : Promise.resolve([] as VerifyDropOut[])), poll, [sid, done]);
+  const [drops, setDrops] = useState<VerifyDropOut[]>([]);
+  useEffect(() => {
+    if (!list.data) return;
+    setDrops(list.data);
+    setPoll(list.data.some(isActiveDrop) ? 4000 : 0);
+  }, [list.data]);
+  const designs = eligibleDesigns(result, plan);
+  const reason = verifyButtonReason({
+    allowed, noPermission: NO_PERMISSION, study, result, avail, availError: status.error, designs, pick, planError, isAdmin,
+  });
+  const initialDesign = pick && designs.some((d) => d.id === pick) ? pick : designs[0]?.id ?? best ?? "";
+  const reload = () => {
+    void list.reload();
+    setNonce((n) => n + 1);
+  };
+  return { reason, designs, initialDesign, plan, drops, reload, listError: list.error };
 }
 
 // ================================================================ 상세
@@ -389,6 +442,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState<string | null>(null);
+  const [vdOpen, setVdOpen] = useState(false);
 
   // 변수 행·DOE 설정 기본값: 저장된 spec(있으면) 아니면 서버 기본(use_default D·W, feasible, 설정 doe.*)
   const pd = params.data;
@@ -519,6 +573,15 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const blocked = st ? doeBlockedReason(st) : null;
   const job = s?.job ?? null;
   const jobActive = !!job && (job.state === "QUEUED" || job.state === "RUNNING");
+  const vd = useVerifyDrop(projectId, s, result.data, pick, allowed, !!me?.is_global_admin);
+  const vdButton = (
+    <span className="primary-wrap" title={vd.reason ?? "고른 안을 SCX 에서 Radioss 낙하로 다시 돌려 원 낙하와 비교"}>
+      <button type="button" className="btn small" disabled={!!vd.reason} aria-disabled={!!vd.reason} onClick={() => setVdOpen(true)} data-testid="vd-open">
+        {VD_BUTTON}
+      </button>
+      {vd.reason && <span className="sr-only">{vd.reason}</span>}
+    </span>
+  );
 
   return (
     <>
@@ -643,11 +706,31 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                   <Compare3D studyId={id} result={result.data} pick={pick} setPick={setPick} />
                 </div>
               </div>
-              <Downloads study={s} result={result.data} />
+              <Downloads study={s} result={result.data} extra={vdButton} />
               <div className="small muted">선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에.</div>
             </>
           )}
         </Card>
+      )}
+      {done && (
+        <ErrorBoundary>
+          <ErrorLine text={vd.listError} />
+          <VerifyDropCard drops={vd.drops} entries={entries} allowed={allowed} onChanged={vd.reload} />
+        </ErrorBoundary>
+      )}
+      {vdOpen && s && (
+        <VerifyDropDialog
+          studyId={s.id}
+          designs={vd.designs}
+          initialDesign={vd.initialDesign}
+          initialPlan={vd.plan}
+          entries={entries}
+          onClose={() => setVdOpen(false)}
+          onCreated={() => {
+            setVdOpen(false);
+            vd.reload();
+          }}
+        />
       )}
     </>
   );

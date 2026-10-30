@@ -71,12 +71,16 @@ def test_browse_spdm_root_rejected_case_insensitive(client, fake_relay, settings
     fake_relay.forbidden_prefixes = ["SPDM"]
     lc = load_config_dict({**settings_dict, "scx_drive": {**settings_dict["scx_drive"], "roots": [
         {"key": "bad", "label": "SPDM", "rel": "spdm/proj"}]}}, environ={})
+    # v0.12.0: 읽기 SPDM 판정은 relay 에 위임 — esl resolve 는 통과, relay 가 대소문자 무관 403 PATH_NOT_ALLOWED
+    _, rel = paths.resolve(lc.settings, "p-1", "bad", "", {"forbidden_prefixes": ["SPDM"]})
+    assert rel == "spdm/proj"
+    from esl_platform.core.scx import gateway, status
+
+    gw, _h = status.require_fetch(lc.settings, "p-1")
     with pytest.raises(Exception) as ei:
-        paths.resolve(lc.settings, "p-1", "bad", "", {"forbidden_prefixes": ["SPDM"]})
-    assert getattr(ei.value, "code", "") == "SCX_PATH_NOT_ALLOWED" and "SPDM" in ei.value.message
-    with pytest.raises(Exception) as ei:                             # 절대 표기 접두(home_display)도
-        paths.resolve(lc.settings, "p-1", "bad", "", {"forbidden_prefixes": ["/Users/vd.dashboard/Spdm"]})
-    assert getattr(ei.value, "code", "") == "SCX_PATH_NOT_ALLOWED"
+        gw.list("spdm/proj", 100)
+    assert getattr(ei.value, "relay_code", "") == "PATH_NOT_ALLOWED"
+    gateway.reset()
     with pytest.raises(Exception) as ei:                             # 릴레이 읽기 범위(relay_base) 밖
         paths.resolve(lc.settings, "p-1", "bad", "", {"forbidden_prefixes": [], "relay_base": "share"})
     assert getattr(ei.value, "code", "") == "SCX_PATH_NOT_ALLOWED"

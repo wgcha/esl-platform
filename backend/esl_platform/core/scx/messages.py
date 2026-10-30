@@ -70,6 +70,8 @@ def classify(exc: BaseException) -> ScxFailure:
         code = "SCX_UNAVAILABLE"
     value = relay if code in ("SCX_SUBMIT_FAILED", "SCX_RADIOSS_FAILED") else None
     base = text(code, value)
+    if relay == "PATH_NOT_ALLOWED":                       # v0.12.0: 읽기 SPDM 판정은 relay 에 위임 — 코드는 그대로, 안내 문구만
+        base = text("SCX_PATH_RELAY_DENIED")
     detail = mask_text(raw, 160)
     msg = base if not detail or detail in base else f"{base} — {detail}"
     retry = bool(getattr(exc, "transport", False)) or retry_flag(code)

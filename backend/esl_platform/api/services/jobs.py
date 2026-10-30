@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
+from .pathmask import masks_paths
 from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, forbidden, unprocessable
@@ -170,6 +171,7 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
     return out
 
 
+@masks_paths
 def create_job(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:
     with ctx.engine.begin() as conn:
         case = load_case(conn, case_id, for_update=True)
@@ -223,9 +225,17 @@ def cancel_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, 
         if job["state"] in TERMINAL:
             raise conflict("JOB_TERMINAL", "이미 끝난 작업입니다")
         job = jobs_repo.request_cancel(conn, job_id, principal.user_id)
+        if job.get("verify_drop_id") and job["state"] == CANCELED:
+            # v0.12.0: 대기 중 취소(워커가 실행하지 않음) → 검증 phase CANCELED(실행 중 취소는 워커가 SCX 잡 terminate 뒤 기록)
+            from ...core.repositories import verify as vd_repo
+
+            d = vd_repo.get_drop(conn, job["verify_drop_id"], for_update=True)
+            if d is not None and d["phase"] not in vd_repo.DROP_TERMINAL:
+                vd_repo.update_drop(conn, d["id"], phase="CANCELED")
         return job_out(conn, job, with_steps=True)
 
 
+@masks_paths
 def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, Any]:
     with ctx.engine.begin() as conn:
         job = load_job(conn, job_id, for_update=True)
@@ -250,6 +260,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             from .scx_drive import retry_fetch
 
             return retry_fetch(conn, principal, job)
+        if job.get("verify_drop_id"):                  # v0.12.0 VERIFY_DROP·VERIFY_POST(대상 = 검증 낙하)
+            from .verify_drop import retry_job as retry_verify
+
+            return retry_verify(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -407,6 +421,11 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
             from .uploads import _row as upload_row
 
             base = os.path.join(upload_row(conn, job["upload_id"])["dir_path"], "_scx")
+        elif job.get("verify_drop_id"):
+            # v0.12.0 검증 낙하: 로그 = <esl_root>/_verify/<id>/logs/<job_id>/
+            from ...core.paths import verify_dir
+
+            base = verify_dir(ctx.settings, job["verify_drop_id"])
         elif job["job_type"] == "EXPORT" and (job.get("params") or {}).get("origin") == "library":
             # v0.10.0 라이브러리 내보내기: 로그 = <esl_root>/_exports/<batch_id>/logs/<job_id>/
             from ...core.paths import EXPORTS_DIR, esl_subdir

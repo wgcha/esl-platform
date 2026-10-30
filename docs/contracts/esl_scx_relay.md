@@ -56,14 +56,14 @@
 | SR-D-9 | **새 레인 `XFER`**: HTTP 전송·원격 대기 작업(SCX_FETCH·VERIFY_DROP) 전용, 루프 수 `worker.xfer_lanes`(기본 2, 1~8), 자식 프로세스·자원 제한기 없음(워커 스레드 + 스트리밍), lease 갱신·취소 확인은 청크·폴링마다. 계산(추출·비교)은 SLOT 작업 `VERIFY_POST` 로 분리해 VERIFY_DROP 이 끝날 때 같은 트랜잭션에서 큐 | 수 시간 SCX 대기가 SLOT(2)·LIGHT(1)를 막지 않음, 계산 자원 규칙 유지 |
 | SR-D-10 | **B 대상** = 강성 평가 스터디 `scenario='same'`, phase DONE, `best/<did>/` 가 있는 안(순위 1~`paicad.keep_files_top`, Q2 A) × **낙하 씬 = 실행 시 사용자 선택(Q4)**: (A) **가장 나쁜 씬 N개** — 그 안의 ESL별 개선율 r_{d,i}(v0.10.0 §11.4, 비 = C_{d,i}/C_{d000,i}) **큰 순**(가장 덜 개선·악화 먼저, 동률 = entry_id 순), N 입력 기본 3 / (B) **스터디에서 고른 ESL 전부**. 씬 = ESL 항목의 출처 Case(같은 Case 의 ESL 이 여럿이면 r 최대 1개로 합침). 합계 ≤ `verify_drop.max_scenes`(기본 5, 넘으면 422 `VD_TOO_MANY_SCENES`). **씬마다 `verify_drops` 행 1개·VERIFY_DROP 1개·별도 Radioss 제출**, 한 번 요청한 행들은 `batch_id` 로 묶음. 같은 (스터디, 안, Case) 비종료 검증은 1개(겹치면 그 씬만 건너뛰고 경고 `VD_ALREADY_ACTIVE`) | ①만 원 모델 rad 에 형상 대입 가능(사용자 확정 5), 씬별 최악 확인(Q4) |
 | SR-D-11 | **제출 기록 영속**: 새 표 `scx_submissions`(request_id PK). 순서 = (1) 행 `SUBMITTING` 커밋 → (2) `submit_radioss`(어댑터가 같은 request_id 로만 replay) → (3) `SUBMITTED`(scx_job_id)·`UNKNOWN`·`FAILED`. request_id = `esl-vd-<verify_drop_id>-a<attempt>`. 워커 재시작·재시도 시 `SUBMITTING` 행은 **같은 request_id 로 다시 보냄**(릴레이 replay — 원격 중복 없음), `UNKNOWN` 은 자동 진행 금지 → 작업 FAILED `SCX_SUBMISSION_UNKNOWN` + 화면 [잡 ID 연결]·[포기](`/resolve` → 릴레이 resolve). 포기 후 재시도 = 새 attempt(새 request_id) | RL §1.4·§5.7·§5.10 |
-| SR-D-12 | **B 드라이브 폴더** = `hpc.scx.drive_base`(기본 `"~/esl"`) 아래 `<프로젝트 구간>/VD<no>_<UTC yyyymmddTHHMMSS>`(어댑터 `ensure_new_dir`, `scx_naming.sanitize_project`). 기준은 health `relay_base` 안이어야 함(아니면 `SCX_BASE_OUTSIDE_RELAY`). 항상 새 폴더, esl 은 지우지 않음 | RL §0 "잡 폴더는 항상 새로" |
+| SR-D-12 | **B 드라이브 폴더** = `hpc.scx.drive_base`(기본 `"~/esl"`) 아래 `<프로젝트 구간>/VD<no>_<UTC yyyymmddTHHMMSS>`(어댑터 `ensure_new_dir`, `scx_naming.sanitize_project`). 기준은 health `relay_base` 안이어야 함(아니면 `SCX_BASE_OUTSIDE_RELAY`). **v0.12.0** 공유 홈은 조회(A) 위주, PBS 제출은 계정 전용 폴더 — `drive_base` 가 `"~"`(홈 자체)이고 `verify_drop.enabled` 면 설정 경고 + B 만 비활성 `VD_DRIVE_BASE_SHARED`("검증 낙하는 전용 폴더가 필요합니다: hpc.scx.drive_base 를 \"~/<전용 폴더>\" 로"). 항상 새 폴더, esl 은 지우지 않음 | RL §0 "잡 폴더는 항상 새로" |
 | SR-D-13 | **B 파일 세트 = 원 Case 입력 사본 + 노드 ID 기준 좌표 패치(Q4)**: 원 Case rad(starter) + include 폐포(Case 와 같은 `scan_includes`) + 엔진 rad(`verify_drop.engine_globs`, 없으면 그 씬 제외 + 경고 `VD_ENGINE_MISSING`). 모핑 좌표 = `best/<did>/` 사본에서 대상 파트(Ch/R) 노드 `{node_id: xyz}`(`esl.doe.nodes` 재사용). 세트의 모든 파일에서 `/NODE` 블록의 그 node_id 줄만 좌표 필드를 고쳐 쓴다(Ch/R 노드가 **어느 include 에 있든**, ID·다른 줄·다른 카드 불변, 고정폭 I10+F20×3 — 원 줄이 공백 구분이면 같은 형식, 값 `%20.13E`). 바뀐 파일만 `_verify/<id>/stage/<rel>` 에 쓰고 나머지는 원본을 그대로 올림. 세트에서 못 찾은 Ch/R 노드가 있으면 그 씬 실패 `VD_NODES_MISSING`(개수·상위 10). 각 파일 sha256·크기·source(orig|patched)·패치 줄 수 기록(`verify_drops.files`) | 씬마다 include 구조가 달라도 같은 형상, 노드 ID 불변 모핑(BD-D-10) |
 | SR-D-14 | **배치 제약**: 릴레이는 모든 경로가 starter 부모 폴더 아래여야 함 → include 가 rad 폴더 밖(`../`)·절대경로·`include_path_map` 사용이면 409 `VD_INCLUDE_LAYOUT`(목록 표시). rad 폴더 기준 상대 배치를 그대로 올림(원문 수정 없음) | RL §5.7 검증, 덱 재작성 위험 회피 |
 | SR-D-15 | **누적 씬 제외(Q4)**: include 그래프에 상태 파일(`.str`·`.sta`, `esl_cumulative_input.md` §2 판정)이 있는 Case 는 씬 후보에서 **제외 + 경고** `VD_CUMULATIVE_EXCLUDED`("이전 런 상태를 쓰는 누적 씬은 검증 낙하 대상이 아닙니다 — 연쇄 실행은 후속"). 화면 목록에 회색 + 사유, 남은 씬이 0 이면 409 `VD_NO_SCENES` | 상태 좌표가 모핑을 덮고 연쇄 런이 필요(후속) |
 | SR-D-16 | **비교 = 정보 표시(PASS/FAIL 없음, Q3 A)**: 같은 추출 TCL·설정으로 검증 h3d 를 서버 추출(`H3D_EXTRACT` 재사용) → 코어 `esl.verify.compare` 가 원 Case `01_extract` 와 대조. 대상 파트 요소 ID 집합·연결이 다르면 `VD_TOPOLOGY_MISMATCH`. 지표 §9.3, 판단 = 개선(비 < 1−tol)·악화(> 1+tol)·비슷(`verify_drop.compare.same_tol` 0.02) + ESL 선형 예측 비 r(해당 ESL)과 방향 일치 여부 | "기존 추출·비교로", 선형 예측의 낙하 타당성 확인이 목적 |
 | SR-D-17 | **migration 0012**(down `0011`): jobs `upload_id`·`verify_drop_id`, 표 `verify_drops`·`scx_submissions`, CHECK 교체(job_type +3, stage 1~13, lane +XFER, subject, artifacts kind +VERIFY_RESULT). **0011 수정**: 0011 이 `tables.CK_*`(현재 정의)를 쓰던 것을 0011 시점 고정 상수(`*_0011`)로(BD-D-21 의 0010 수정과 같은 규칙). MCP 예약 0009 는 계속 "구현 시점 HEAD 뒤"(지금 기준 down `0012`) | 단일 head, 0008·0010·0011 운영 DB 업그레이드 |
-| SR-D-18 | **비밀**: `hpc.scx.secret_file` = 절대경로(대시보드 `SIMDASH_SCX_RELAY_SECRET_FILE` 과 같은 파일을 가리켜도 됨 — 같은 PC·같은 서비스 계정일 때 권장, 복사 금지 권장). 값은 프로세스 메모리에만, 로그 필터에 등록해 `***` 로 바꿈(어댑터 `on_secret` 콜백), 응답·작업 로그·failure_message·설정 응답(`redacted_settings`)에 경로만. 환경 점검: 파일 형식(`read_secret_file`)·Windows ACL(Everyone·Users·Authenticated Users 읽기 허용이면 경고 `SCX_SECRET_ACL_WIDE`) | RL §3 비밀 취급 |
-| SR-D-19 | **비활성 판정 1곳**: `GET /scx/status`(헬스 TTL `hpc.scx.health_ttl_s` 30 s 캐시) → 기능별 `enabled`·`reason_code`·`reason`. 원인 순서: 설정 꺼짐 → 어댑터 없음 → 설정 오류 → 비밀 문제 → 릴레이 연결 실패(대시보드 다운) → `RELAY_DISABLED`·`DRIVE_MODE_DISABLED` → (A) 루트 0개 / (B) `writes_active=false`·`job_api=false`·`appliance` 미설정. 화면은 이 값으로 탭·버튼만 비활성 + 사유 | 사용자 확정 6 |
+| SR-D-18 | **비밀**: `hpc.scx.secret_file` = 절대경로(대시보드 `SIMDASH_SCX_RELAY_SECRET_FILE` 과 같은 파일을 가리켜도 됨 — 같은 PC·같은 서비스 계정일 때 권장, 복사 금지 권장). 상대경로는 설정 오류(L1). **v0.12.0** `""` = 대시보드 비밀 파일 따라가기 — 해석 순서 (1) esl 프로세스 env `SIMDASH_SCX_RELAY_SECRET_FILE`(절대경로) → (2) `hpc.scx.dashboard_root`(대시보드 설치 폴더 절대경로, 기본 `""`)의 `<root>/.env` → `<root>/backend/.env` 에서 그 키 줄만(python-dotenv 형식 — `export`·따옴표·주석, 다른 값은 읽지도 로그에도 남기지 않음) → (3) `<esl 런타임>/secrets/scx_relay_key`. 셋 다 없으면 `SCX_SECRET_INVALID` + 안내. 설치 `setup_config.py` 는 `dashboard_root` 가 비면 esl 설치 폴더의 형제 중 `backend/app/services/drive/config.py` 가 있는 폴더를 넣고, 환경 점검 `hpc.scx.secret_file` 은 `출처: env \| 대시보드 .env(<경로>) \| 런타임 기본 \| 설정` 만 표시(값 미출력). 값은 프로세스 메모리에만, 로그 필터에 등록해 `***` 로 바꿈(어댑터 `on_secret` 콜백), 응답·작업 로그·failure_message·설정 응답(`redacted_settings`)에 경로만. 환경 점검: 파일 형식(`read_secret_file`)·Windows ACL(Everyone·Users·Authenticated Users 읽기 허용이면 경고 `SCX_SECRET_ACL_WIDE`) | RL §3 비밀 취급 |
+| SR-D-19 | **비활성 판정 1곳**: `GET /scx/status`(헬스 TTL `hpc.scx.health_ttl_s` 30 s 캐시) → 기능별 `enabled`·`reason_code`·`reason`. 원인 순서: 설정 꺼짐 → 어댑터 없음 → 설정 오류 → 비밀 문제 → 릴레이 연결 실패(대시보드 다운) → `RELAY_DISABLED`·`DRIVE_MODE_DISABLED` → (A) 루트 0개 / (B) `drive_base` 공유 홈(`VD_DRIVE_BASE_SHARED`)·`writes_active=false`·`job_api=false`·`appliance` 미설정·`relay_base` 밖. 화면은 이 값으로 탭·버튼만 비활성 + 사유 | 사용자 확정 6 |
 
 ## 4. 데이터 흐름 · 폴더
 
@@ -85,7 +85,9 @@ B) Radioss 검증 낙하
            VD_WAIT   : status 폴링(verify_drop.poll_s) → Completed | Failed/Aborted
            VD_FETCH  : list(output_rel) → h3d·out 내려받기 → _verify/<id>/result/
            (끝) 같은 트랜잭션에서 VERIFY_POST(SLOT) 큐
- 워커(SLOT) H3D_EXTRACT(LOCAL hw, 기존) → VD_EXTRACT(코어 extract, out=_verify/<id>/work) → VD_COMPARE(코어) → VD_REGISTER
+ 워커(SLOT) H3D_EXTRACT(LOCAL hw, 기존) → VD_EXTRACT(코어 extract, out=_verify/<id>/work — 위상은 원 Case rad, rad↔h3d 좌표 확인
+           허용치 coord_check.max_rel 을 기본 + 2 × 모핑 최대 이동 / 대상 파트 bbox 대각으로 넓힘) → VD_COMPARE(코어 — 검증 쪽 기준
+           좌표 = morph.npz) → VD_REGISTER
    <esl_root>/_verify/<id>/{stage.json, result/, raw/(추출 CSV), work/01_extract/, compare.json, compare.csv, logs/}
    SCX 드라이브: <drive_base>/<프로젝트>/VD<no>_<UTC>/{<starter>.rad, <engine>.rad, <include 상대 배치>…}  (+ SCX 결과 폴더)
 ```
@@ -145,9 +147,10 @@ B) Radioss 검증 낙하
 hpc:
   scx:                                   # 키 이름 = physicsai hpc.scx.* (SR-D-4). 섹션이 없으면 SCX 기능 전부 비활성
     relay_url: ""                        # 필수. http://127.0.0.1:<대시보드 백엔드 포트>
-    secret_file: ""                      # 필수. 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 권장)
+    secret_file: ""                      # 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일). "" = 대시보드 따라가기(SR-D-18)
+    dashboard_root: ""                   # v0.12.0 대시보드 설치 폴더 절대경로(secret_file "" 일 때 .env 의 그 키 줄만 읽음)
     client_name: "esl"                   # esl 추가 키 ^[a-z0-9_-]{1,32}$
-    drive_base: "~/esl"                  # B 쓰기 기준("~" | "~/<상대>"), health.relay_base 안이어야 함
+    drive_base: "~/esl"                  # B 전용 쓰기 폴더("~/<상대>" — "~" 이면 VD_DRIVE_BASE_SHARED), health.relay_base 안이어야 함
     home_display: "/Users/vd.dashboard"  # 표시 전용
     appliance: ""                        # B 필수(비면 B 비활성 사유 SCX_APPLIANCE_MISSING)
     version: "26.1"                      # 작업별 입력 기본값(S20 과 같음)
@@ -183,7 +186,7 @@ verify_drop:                             # 기능 B
   enabled: false
   max_scenes: 5                          # 한 요청의 씬(=제출) 수 상한(Q4)
   default_worst_n: 3                     # '가장 나쁜 씬 N개' 기본 N
-  max_running: 2                         # 동시에 VD_STAGE 이후를 진행하는 VERIFY_DROP 수(초과분은 QUEUED 대기 — claim 조건)
+  max_running: 2                         # 동시 활성 상한(키 이름 max_running — "max_active" 아님): 동시에 VD_STAGE 이후를 진행하는 VERIFY_DROP 수(초과분은 QUEUED 대기 — claim 조건)
   est_hours_per_scene: 3                 # 예상 시간 표시 기본값(같은 프로젝트 완료 검증이 있으면 그 중앙값 사용)
   poll_s: 60
   max_wait_h: 72                         # 넘으면 FAILED VD_WAIT_TIMEOUT(SCX 잡은 종료하지 않음 — [재시도]는 폴링부터)
@@ -208,10 +211,10 @@ worker:
 | `GET /scx/status?project_id=` | – | `ScxStatusOut` | – (항상 200, 사유를 본문에) |
 | `GET /scx/browse?project_id=&root=&path=&offset=&limit=` | – | `ScxBrowseOut` | 403 `FORBIDDEN`(general), 404 `SCX_ROOT_NOT_FOUND`·`SCX_PATH_NOT_FOUND`, 422 `SCX_PATH_NOT_ALLOWED`, 503 `SCX_UNAVAILABLE{reason_code}`, 413 `SCX_LIST_LIMIT` |
 | `POST /scx/fetches` | `ScxFetchIn` | `202 ScxFetchOut` | 위 + 422 `UPLOAD_NAME_INVALID`·`SCX_NOT_RAD`·`SCX_NOT_H3D`·`SCX_FILE_TOO_LARGE`, 507 `INSUFFICIENT_STORAGE`, 429 `UPLOAD_LIMIT`(기존 사용자당 동시 업로드, detail `limit`·`open_uploads`) |
-| `POST /verify-drops` | `VerifyDropIn` | `201 VerifyDropOut`(+ VERIFY_DROP) | 404 `DOE_NOT_FOUND`, 409 `RESULT_NOT_READY`·`VD_NO_SCENES`, 422 `VD_SCENARIO_UNSUPPORTED`(②③)·`VD_DESIGN_NO_FILES`·`VD_TOO_MANY_SCENES`·`VD_ENTRY_NOT_IN_STUDY`·`INVALID_PARAMS`, 503 `SCX_UNAVAILABLE`. 씬별 제외(`VD_CUMULATIVE_EXCLUDED`·`VD_ENGINE_MISSING`·`VD_INCLUDE_LAYOUT`·`VD_ALREADY_ACTIVE`)는 오류가 아니라 응답 `excluded[]` |
+| `POST /verify-drops` | `VerifyDropIn` | `201 VerifyDropOut`(+ VERIFY_DROP) | 404 `DOE_NOT_FOUND`, 409 `RESULT_NOT_READY`·`VD_NO_SCENES`, 422 `VD_SCENARIO_UNSUPPORTED`(②③)·`VD_DESIGN_NO_FILES`·`VD_TOO_MANY_SCENES`·`VD_ENTRY_NOT_IN_STUDY`·`INVALID_PARAMS`, 503 `SCX_UNAVAILABLE`. 씬별 제외(`VD_CUMULATIVE_EXCLUDED`·`VD_ENGINE_MISSING`·`VD_INCLUDE_LAYOUT`·`VD_ALREADY_ACTIVE`·`VD_CASE_NOT_READY` — 원 Case 가 없거나 보관됨·추출 결과 없음, v0.12.0)는 오류가 아니라 응답 `excluded[]` |
 | `POST /verify-drops/plan` | `VerifyDropIn` | `VerifyPlanOut`(저장 안 함 — 대화상자 씬 목록·제출 건수·예상 시간) | 위와 같음 |
 | `GET /verify-drops?bead_doe_id=` · `GET /verify-drops/{id}` | – | `[VerifyDropOut]` / `VerifyDropOut` | 404 `VD_NOT_FOUND` |
-| `POST /verify-drops/{id}/resolve` | `{version, action: "attach"\|"abandon", scx_job_id?}` | `VerifyDropOut` | 409 `VD_NOT_UNKNOWN`·`VERSION_CONFLICT`, 404 `SCX_JOB_NOT_FOUND`, 409 `SCX_JOB_ID_IN_USE` |
+| `POST /verify-drops/{id}/resolve` | `{version, action: "attach"\|"link"\|"abandon", scx_job_id?}` — `link` = `attach` 별칭. attach 는 서버가 `VD_WAIT`(폴링)부터 새 VERIFY_DROP 작업을 자동 큐(화면 [재시도] 불필요), abandon 뒤 [재시도] = 새 attempt | `VerifyDropOut` | 409 `VD_NOT_UNKNOWN`·`VERSION_CONFLICT`, 404 `SCX_JOB_NOT_FOUND`, 409 `SCX_JOB_ID_IN_USE` |
 | `GET /verify-drops/{id}/compare.csv` · `/files/{name}`(out·stage.json) | – | 첨부 | 404, 409 `RESULT_NOT_READY` |
 | 기존 `POST /jobs/{id}/cancel`·`/retry`, 작업 로그 | – | SCX_FETCH·VERIFY_DROP·VERIFY_POST 에 적용 | 재시도 409 `SCX_SUBMISSION_UNKNOWN`(미정리) |
 
@@ -230,11 +233,15 @@ ScxFetchIn  { project_id, name(≤64, safe_name), root, rad_rel, h3d_rel }  // r
 ScxFetchOut { upload_id, job_id }
 VerifyDropIn { bead_doe_id, design_id, mode: "worst"|"all", n?(worst 일 때, 1~max_scenes, 기본 default_worst_n),
                title?(≤200), hpc?: {version?(S20 pattern), ncpu?(1~4096)} }
-VerifyPlanOut { scenes: [{entry_id, case_id, case_title, r_c, r_umax, r_epsmax}], excluded: [{entry_id, case_id, code, reason}],
-                n_submit, est_hours, max_scenes }
+VerifyPlanOut { design_id, mode, scenes: [{entry_id, case_id, case_title, label|null, r_c|null, r_umax|null, r_epsmax|null}],
+                excluded: [{entry_id|null, case_id|null, case_title|null, code, reason}], n_submit, est_hours, max_scenes,
+                default_worst_n, default_n(= default_worst_n), designs: [{id, rank}](best/ 가 남은 안),
+                hpc: {version, ncpu}, hpc_default: {version|null, ncpu|null} }   // v0.12.0 designs·default_n·hpc_default 추가(프런트 대화상자)
 VerifyDropCreateOut { batch_id, drops: [VerifyDropOut], excluded: [...] }   // POST /verify-drops 응답(201)
 VerifyDropOut { id, batch_id, bead_doe_id, design_id, case_id, entry_id, title, phase, version,
-                drive_dir_display|null, scx_job_id|null, scx_status|null, submission: {request_id, state}|null,
+                project_id, case_title|null, job: JobOut|null(최근 VERIFY_DROP·VERIFY_POST),
+                drive_dir_display|null, scx_job_id|null, scx_status|null,
+                submission: {request_id, state, attempt, error_code|null, error_message|null}|null,
                 files_n, files_bytes, predicted: {r_umax, r_epsmax, r_c}|null, result: VerifyCompare|null,
                 job_ids, created_by_name, created_at, updated_at }
 VerifyCompare { rows: [{key, label, orig, verify, ratio, predicted|null, verdict: "better"|"worse"|"same", agree|null}],
@@ -288,7 +295,7 @@ VerifyCompare { rows: [{key, label, orig, verify, ratio, predicted|null, verdict
   | `disp_peak` | 프레임별 기존 강체 제거(전 노드 Kabsch)한 ‖u_rel‖ 최대의 시간 최대 |
   | `eps_tstar`·`disp_tstar` | 원 Case 확정 t* 에 가장 가까운 검증 프레임의 같은 지표 |
 - `predicted` = 스터디 ESL별 개선 지표(v0.10.0 §11.4) 중 그 Case 의 ESL 항목 r(umax·epsmax), `agree` = (ratio−1)·(predicted−1) > 0 또는 둘 다 `same`.
-- 출력 `compare.json`(+ `compare.csv` 같은 행), `verify_drops.result` 요약, artifacts kind `VERIFY_RESULT`.
+- 출력 `compare.json`(+ `compare.csv` 같은 행)은 `<esl_root>/_verify/<id>/` 에, 요약은 `verify_drops.result` 에만. **artifacts kind `VERIFY_RESULT` 는 쓰지 않음**(v0.12.0 구현 — artifacts.rel 이 Case 폴더 기준이라 _verify 결과와 맞지 않음, CHECK 값은 예약으로 남김). `warnings` 는 문자열 배열.
 
 ## 10. 화면 (2560×1440 기준, 1920×1080 잘림 없음, 화면당 주 버튼 1개)
 

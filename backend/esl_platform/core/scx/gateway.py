@@ -6,7 +6,8 @@
   헤더 `X-SCX-Relay-Client: esl`(어댑터 기본 physicsai). 비공개 메서드 의존은 lock 고정 + 시험(V-SR-2)으로 묶는다(R-SR-4).
 - loopback 전용(어댑터 parse_relay_url), `http.client` 직접 연결(프록시 환경변수 무시), 리다이렉트 안 따름(어댑터).
 - 비밀 값: 어댑터 on_secret → mask.register_secret(로그 필터·mask_text). 값은 repr·예외·응답에 없음.
-- 드라이브 쓰기 메서드(upload·mkdirs·submit_radioss)는 v0.12.0 검증 낙하 워커(scx_verify.py) 전용 — v0.11.0 코드는 부르지 않음.
+- 드라이브 쓰기 메서드(upload·ensure_new_dir·submit_radioss·cancel·resolve)는 검증 낙하 워커 모듈(worker/esl_worker/scx_verify.py)
+  에서만 부른다(정적 시험 — 백엔드 [잡 ID 연결]·[포기]도 그 모듈 함수 resolve_submission 경유).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import threading
 from typing import Any
 
 from . import mask
-from .settings import adapter_mapping, config_problems, scx_cfg
+from .settings import adapter_mapping, config_problems, resolve_secret_file, scx_cfg
 
 log = logging.getLogger("esl.scx")
 # = deploy/simdash_adapters.lock(commit·version) — 코드 스냅샷에는 deploy 폴더가 없어 상수로 둔다(시험이 lock 과 대조)
@@ -113,17 +114,35 @@ def get_gateway(settings) -> tuple[Any | None, str | None, str | None]:
     probs = config_problems(settings)
     if probs:
         return None, "SCX_CONFIG_INVALID", "; ".join(probs)[:400]
-    key = _key(settings)
+    sec = resolve_secret_file(cfg)
+    if sec["path"] is None:
+        return None, "SCX_SECRET_INVALID", sec["problem"]
+    key = _key(settings) + "|" + sec["path"]
     with _LOCK:
         if _GW["key"] == key and _GW["gw"] is not None:
             return _GW["gw"], None, None
         from simdash_adapters.hpc import ScxConfig
 
         mask.install_log_filter()
-        gw = _gateway_class()(ScxConfig.from_mapping(adapter_mapping(cfg)), cfg.secret_file, client_name=cfg.client_name,
+        gw = _gateway_class()(ScxConfig.from_mapping(adapter_mapping(cfg)), sec["path"], client_name=cfg.client_name,
                               logger=logging.getLogger("esl.scx.adapter"), on_secret=mask.register_secret)
         _GW.update(key=key, gw=gw)
         return gw, None, None
+
+
+def radioss_request(body: dict[str, Any]) -> Any:
+    """`POST /jobs/radioss` 본문(dict — ScxRadiossRequest.to_json 형식) → 어댑터 ScxRadiossRequest(v0.12.0 기능 B).
+    어댑터 import 는 이 패키지 안에서만(정적 시험)."""
+    from simdash_adapters.hpc import ScxRadiossRequest
+
+    return ScxRadiossRequest.from_json(body)
+
+
+def status_map() -> dict[str, tuple[str, str | None]]:
+    """어댑터 SCX_STATUS_MAP(SCX 원문 상태 → (HpcState, outcome))."""
+    from simdash_adapters.hpc.scx import SCX_STATUS_MAP
+
+    return dict(SCX_STATUS_MAP)
 
 
 def reset() -> None:
@@ -137,4 +156,5 @@ def reset() -> None:
     status.reset_cache()
 
 
-__all__ = ["adapter_status", "get_gateway", "gateway_error", "reset", "ADAPTER_COMMIT", "ADAPTER_VERSION"]
+__all__ = ["adapter_status", "get_gateway", "gateway_error", "radioss_request", "status_map", "reset", "ADAPTER_COMMIT",
+           "ADAPTER_VERSION"]

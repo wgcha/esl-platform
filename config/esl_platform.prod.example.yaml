@@ -181,7 +181,9 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
 hpc:                                  # v0.11.0 대시보드 SCX 릴레이(계약 esl_scx_relay.md §6). 키 이름 = physicsai hpc.scx.*(블록 복사) + client_name
   scx:                                # 섹션이 없으면 SCX 기능 전부 비활성. 값이 틀려도 기동은 하고 SCX 기능만 비활성(환경 점검 hpc.scx)
     relay_url: ""                     # 필수. http://127.0.0.1:<대시보드 백엔드 포트>(loopback·포트만 — 화면·프록시 포트 아님)
-    secret_file: ""                   # 필수. 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 권장 — 복사 금지)
+    secret_file: ""                   # 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 — 복사 금지). "" = 대시보드 따라가기:
+                                      #   env SIMDASH_SCX_RELAY_SECRET_FILE → dashboard_root 의 .env·backend/.env → <런타임>/secrets/scx_relay_key
+    dashboard_root: ""                # v0.12.0 대시보드 설치 폴더 절대경로(secret_file "" 일 때 .env 의 그 키 줄만 읽음 — setup 이 자동 감지)
     client_name: "esl"                # X-SCX-Relay-Client(^[a-z0-9_-]{1,32}$)
     drive_base: "~/esl"               # 검증 낙하(v0.12.0) 쓰기 기준("~" | "~/<상대>") — 대시보드 relay_base 안
     home_display: "/Users/vd.dashboard"   # 표시 전용
@@ -215,7 +217,7 @@ scx_drive:                            # v0.11.0 기능 A — 새 Case 'SCX 드�
   engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
   file_retries: 2                     # 재시도 가능한 오류(전송·SCX_BUSY·해시 불일치) 파일당 재시도
   retry_wait_s: 30
-verify_drop:                          # v0.11.0 기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)
+verify_drop:                          # 기능 B — Radioss 검증 낙하(v0.12.0, 계약 esl_scx_relay.md §6)
   enabled: false
   max_scenes: 5
   default_worst_n: 3

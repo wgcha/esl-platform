@@ -305,6 +305,41 @@ def set_yaml_nested(text: str, path: tuple[str, str, str], value: Any, note: str
     return nl.join(lines)
 
 
+DASHBOARD_MARKER = ("backend", "app", "services", "drive", "config.py")   # 대시보드(simdashboard) 설치 폴더 표지
+SCX_DASH_NOTE = "setup이 보충 — v0.12.0 대시보드 비밀 파일 따라가기(secret_file \"\")"
+
+
+def is_dashboard_dir(p: Path) -> bool:
+    try:
+        return Path(p).joinpath(*DASHBOARD_MARKER).is_file()
+    except OSError:
+        return False
+
+
+def find_dashboard_root(deploy: dict[str, Any], runtime: Path) -> str | None:
+    """대시보드 설치 폴더 후보(v0.12.0): deploy.json dashboard_root(표지가 있으면) → esl 설치 폴더(install_root·repo_root·런타임
+    부모)의 형제 디렉터리 중 backend/app/services/drive/config.py 가 있는 곳(이름 순 첫째). 같은 서버(auth.dashboard_internal_url 이
+    loopback)의 대시보드라고 본다. 없으면 None."""
+    given = str(deploy.get("dashboard_root") or "")
+    if given and is_dashboard_dir(Path(given)):
+        return fwd(given)
+    for key in ("install_root", "repo_root"):
+        v = str(deploy.get(key) or "")
+        if v:
+            base = Path(v)
+            break
+    else:
+        base = Path(runtime).parent
+    try:
+        sibs = sorted((x for x in base.parent.iterdir() if x.is_dir() and x != base), key=lambda x: x.name.casefold())
+    except OSError:
+        return None
+    for x in sibs:
+        if is_dashboard_dir(x):
+            return fwd(str(x))
+    return None
+
+
 def find_paicad(runtime: Path) -> str | None:
     """<런타임>/venv/Scripts/paicad.exe 가 실제 있으면 그 경로(fwd), 없으면 None(계약 §6.4 — 있을 때만 채움)."""
     p = Path(runtime).joinpath(*PAICAD_REL)
@@ -724,6 +759,18 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
             rows.append({"key": "bead_doe.paicad.exe", "value": cand, "action": "보충(paicad 자동 감지)"})
         elif not cand and cur_exe in (None, ""):
             doe["hint"] = DOE_HINT
+    # v0.12.0: hpc.scx.secret_file "" (대시보드 비밀 파일 따라가기)인데 dashboard_root 가 비었으면 대시보드 폴더를 찾아 제안·보충
+    scx_auto: dict[str, Any] = {"added": {}, "candidate": None}
+    cur = yaml.safe_load(text) or {}
+    has_scx, scx = _get(cur, ("hpc", "scx"))
+    if has_scx and isinstance(scx, dict) and not scx.get("secret_file") and not scx.get("dashboard_root"):
+        cand = find_dashboard_root(deploy, runtime)
+        scx_auto["candidate"] = cand
+        if cand:
+            text = set_yaml_nested(text, ("hpc", "scx", "dashboard_root"), cand, SCX_DASH_NOTE)
+            upgraded[("hpc", "scx", "dashboard_root")] = cand
+            scx_auto["added"]["hpc.scx.dashboard_root"] = cand
+            rows.append({"key": "hpc.scx.dashboard_root", "value": cand, "action": "보충(대시보드 폴더 자동 감지)"})
     # 로그인·"대시보드로" 링크: 키가 없거나 이전 기본값 "/"일 때만 대시보드 웹 경로로, 사용자 값은 보존
     login_want, login_warn = dashboard_login_url(inputs, str(deploy.get("dashboard_root") or ""))
     if login_warn:
@@ -762,6 +809,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         text, changed, upgraded = base_text, [], {}
         opt_auto["added"], ext_sup["added"], ext_sup["record"], ext_sup["records"] = {}, [], False, []
         doe["added"] = {}
+        scx_auto["added"] = {}
     changed += [".".join(p) for p in upgraded]
     config_changed = new_file or bool(changed)
 
@@ -810,6 +858,7 @@ def plan(inputs: dict[str, Any]) -> dict[str, Any]:
         "opt_autodetect": {"added": opt_auto["added"], "candidate": opt_auto["candidate"]},
         "ext_supplement": ext_sup,
         "doe_autodetect": doe,
+        "scx_autodetect": scx_auto,
     }
 
 
@@ -871,6 +920,11 @@ def write(inputs: dict[str, Any], pl: dict[str, Any]) -> dict[str, Any]:
     if da:
         kv = ", ".join(f"{k} = {literal(v)}" for k, v in da.items())
         out["doe_autodetect"]["line"] = (f"강성 평가 스터디 자동 설정: {kv} 추가" + (f" (백업 {cfg_backup})" if cfg_backup else ""))
+    sa = (pl.get("scx_autodetect") or {}).get("added") or {}
+    out["scx_autodetect"] = {"added": sa, "backup": cfg_backup, "line": None}
+    if sa:
+        out["scx_autodetect"]["line"] = (f"SCX 비밀 파일 대시보드 따라가기: hpc.scx.dashboard_root = {literal(sa['hpc.scx.dashboard_root'])} 추가"
+                                         + (f" (백업 {cfg_backup})" if cfg_backup else ""))
     for c in pl["companions"]:
         if c["copy"] and not os.path.exists(c["path"]):
             Path(c["path"]).parent.mkdir(parents=True, exist_ok=True)
@@ -907,7 +961,8 @@ def validate(config_path: str, code_root: str | None = None) -> dict[str, Any]:
     except ImportError as exc:  # pragma: no cover - 설치 venv·코드에는 있음
         return {"ok": None, "issues": [f"(검증 생략: {exc})"], "warnings": []}
     lc = load_config(config_path, environ={})
-    return {"ok": lc.ok, "issues": [f"{i.key}: {i.message}" for i in lc.issues], "warnings": []}
+    return {"ok": lc.ok, "issues": [f"{i.key}: {i.message}" for i in lc.issues],
+            "warnings": [f"{i.key}: {i.message}" for i in getattr(lc, "warnings", [])]}
 
 
 def main(argv: list[str] | None = None) -> int:

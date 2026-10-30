@@ -1,6 +1,6 @@
-# SCX 드라이브에서 고르기 — 실기 체크리스트 (v0.11.0 기능 A)
+# SCX 릴레이 — 실기 체크리스트 (v0.11.0 기능 A · v0.12.0 기능 B 검증 낙하 §7)
 
-계약 `docs/contracts/esl_scx_relay.md` §16 V-SR-R1 중 **기능 A** 분(검증 낙하 B 는 v0.12.0). 클라우드 시험은 가짜 릴레이
+계약 `docs/contracts/esl_scx_relay.md` §16 V-SR-R1 — §0~6 **기능 A**, §7 **기능 B 검증 낙하**(v0.12.0). 클라우드 시험은 가짜 릴레이
 (`backend/tests/scx/fake_scx_relay.py`)·작은 합성 모델로만 돌았으므로 **Windows 운영 서버에서 처음 켤 때** 이 순서로 확인한다.
 순서: **0 설치·연결 → 1 상태 화면 → 2 탐색 → 3 가져오기(소용량) → 4 가져오기(대용량 30 GB) → 5 끊김·재시도 → 6 릴레이 다운**.
 결과(통과/실패·시간·메모)는 각 표 오른쪽 칸에 적고, 고친 값은 설정 파일에만 반영한다(코드 수정 없음).
@@ -12,9 +12,9 @@
 |---|---|---|---|
 | 0-1 | 어댑터 | 설치·업데이트 콘솔에 `simdash_adapters 0.1.0 (커밋 a363a89e8f93)` — 환경 점검 `scx.adapter` OK, `scx.adapter.lock` FAIL 없음 | |
 | 0-2 | 대시보드 설정 | 대시보드 `.env`: `SIMDASH_SCX_RELAY_ENABLED=true`, `SIMDASH_DRIVE_GATEWAY=scx`, `SIMDASH_SCX_RELAY_SECRET_FILE=<절대경로>`, `SIMDASH_SCX_RELAY_DRIVE_BASE=<기준>`, `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES=68719476736`(≥ 64 GiB). 대시보드 임시 폴더 드라이브 여유 ≥ 가장 큰 h3d × `worker.xfer_lanes` | |
-| 0-3 | 비밀 파일 | esl `hpc.scx.secret_file` 이 대시보드와 **같은 파일**. `icacls <파일>` 에 Everyone·Users·Authenticated Users 없음 → 환경 점검 `hpc.scx.secret_file` OK(ACL 경고 없음) | |
-| 0-4 | esl 설정 | `hpc.scx.relay_url` = 대시보드 백엔드 loopback 포트, `scx_drive.enabled: true`, `roots` 1개 이상, `worker.xfer_lanes: 2`. 백엔드·워커 재시작 | |
-| 0-5 | 환경 점검 | `esl_service.py check --runtime <런타임>` → `hpc.scx` OK, `scx.relay` OK(`drive_mode scx`), `scx.relay.max_download_bytes` 경고 없음, `worker.xfer_lanes` OK | |
+| 0-3 | 비밀 파일 | esl `hpc.scx.secret_file` 이 대시보드와 **같은 파일**(v0.12.0: `""` 이면 대시보드 따라가기 — env → `hpc.scx.dashboard_root` 의 `.env`·`backend\.env` → `<런타임>\secrets\scx_relay_key`). `icacls <파일>` 에 Everyone·Users·Authenticated Users 없음 → 환경 점검 `hpc.scx.secret_file` OK(ACL 경고 없음), `출처: …` 가 의도한 곳(대시보드 .env 경로 등) | |
+| 0-4 | esl 설정 | `hpc.scx.relay_url` = 대시보드 백엔드 loopback 포트, `scx_drive.enabled: true`, `roots` 1개 이상(항목 키 `{key, label, rel}` — `rel` = 릴레이 홈 기준 상대, `path` 아님), `worker.xfer_lanes: 2`. `scx_drive`·`verify_drop`·`worker` 는 **최상위 키**(hpc 밑에 들여쓰면 무시 — 환경 점검 `config.valid` WARN). 백엔드·워커 재시작 | |
+| 0-5 | 환경 점검 | `esl_service.py check --runtime <런타임>` → `config.valid` OK(들여쓰기 WARN 없음), `scx_drive.enabled` 켜짐 · roots n개, `hpc.scx` OK, `scx.relay` OK(`drive_mode scx`), `scx.relay.max_download_bytes` 경고 없음, `worker.xfer_lanes` OK | |
 
 ## 1. 상태 화면
 
@@ -75,3 +75,24 @@
 | 6-3 | SCX 재로그인 | 대시보드 SCX 세션 만료 → `SCX_AUTH_REQUIRED`(대시보드 관리 화면 재로그인 안내) | |
 | 6-4 | 받는 중 다운 | 내려받기 중 대시보드 중지 → 재시도 뒤 실패 `SCX_RELAY_UNREACHABLE`, 복구 후 [재시도] 성공(5-2 와 같음) | |
 | 6-5 | 복구 | 대시보드 재기동 → 30 s 안에 탭 다시 켜짐(esl 재시작 불필요) | |
+
+## 7. 검증 낙하(v0.12.0 기능 B) — 실 릴레이 · 22만 요소 Ch/R ① 1건
+
+준비: §0 통과 + 관리자 매뉴얼 §2.7.3(대시보드 `SIMDASH_DRIVE_WRITES_ENABLED=true`·잡 API, esl `hpc.scx.drive_base`·`appliance`, `verify_drop.enabled: true`). 대상 = 22만 요소 Ch/R 모델의 ① 같은 모델 강성 평가 스터디(완료), 순위 1 안, **씬 1개**(가장 나쁜 씬 N = 1).
+
+| # | 확인 | 방법 / 기대 | 결과 |
+|---|---|---|---|
+| 7-0 | 전용 폴더 | `hpc.scx.drive_base` = `"~/<전용 폴더>"`(예 `~/esl`). 일부러 `"~"` 로 바꾸면 환경 점검 `config.valid` WARN·버튼 비활성 사유 `VD_DRIVE_BASE_SHARED`(되돌림) | |
+| 7-1 | 상태·버튼 | `GET /esl/api/scx/status?project_id=<id>` → `verify.enabled: true`. 스터디 화면 [검증 낙하] 켜짐(사유 툴팁 없음). 환경 점검 `scx.relay` OK | |
+| 7-2 | 대화상자 | 안 목록 = 순위 1~`paicad.keep_files_top`, N 기본 = `default_worst_n`, 상한 = `max_scenes`, 제외 목록(누적 씬·`VD_CASE_NOT_READY` 등) 사유 표시. N = 1 → 제출 1건 · 예상 시간 | |
+| 7-3 | 드라이브 폴더 | 카드의 드라이브 폴더 = `<drive_base>/<project_id>/VD<n>_<UTC>`(예 `~/esl/body/VD1_20261030T091200`) — SCX 드라이브에서 같은 폴더가 보이고 이름의 시각이 UTC | |
+| 7-4 | include 배치 | 폴더 안이 원 Case rad 폴더 기준 상대 배치 그대로(하위 폴더 include 포함), starter·엔진 rad·include 파일 수 = 카드 '파일 n개'. /NODE 좌표 줄만 바뀌고 다른 줄은 원본과 같음(바뀐 파일만 다름) | |
+| 7-5 | 제출 | SCX 화면에 잡 1개(appliance·Radioss 버전·ncpu = 설정 또는 '고급' 값), 카드 SCX 잡 ID 와 같음. 대시보드 릴레이 감사·대기열에 `requested_by=esl`(`hpc.scx.client_name`) | |
+| 7-6 | NORMAL TERMINATION | 잡 완료 후 회수한 `*_0001.out` 에 `NORMAL TERMINATION`(`verify_drop.out_ok_patterns`) → 카드 진행 '비교'까지. 일부러 ERROR TERMINATION 모델(또는 패턴 변경)이면 실패 사유가 out 판정으로 표시 | |
+| 7-7 | h3d 이름 | 회수한 h3d 파일 이름(`result_globs.h3d` 로 찾은 이름)을 기록 — 여러 개면 starter 이름(stem) 우선 1개, 추출 단계가 그 h3d 를 씀(출력 폴더를 못 찾으면 `SCX_OUTPUT_UNRESOLVED`) | |
+| 7-8 | coord_check | 검증 추출 로그 `coord_check.max_rel <값> — 모핑 허용`(기본 0.005 + 모핑 이동량), rad↔h3d 좌표 확인 통과. 비교 단계 위상 검사 오류 없음 | |
+| 7-9 | 대용량 회수 시간 | h3d·out 회수 시간(대시보드 임시 받기 + 스트리밍)·크기 기록, `verify_drop.max_result_bytes` 안인지, 워커 메모리 최대 | |
+| 7-10 | 비교 결과 | 비교 표 5행(최대 ε_eq·상위 요소 ε_eq·최대 상대 변위·t* 값 2개) — 원 낙하 vs 검증 낙하 비·ESL 선형 예측 비·개선/악화/비슷·방향 일치, PASS/FAIL 없음, [CSV 받기]. SCX 실행 시간·결과 크기 기록 | |
+| 7-11 | 실행 중 취소 | 두 번째 요청(같은 안 다른 씬 또는 새 요청)을 SCX 실행 중(카드 '실행 중')에 [취소] → 확인 창 "SCX 잡도 종료합니다" → 작업 취소됨, SCX 화면에서 그 잡이 종료(terminate 1회). 폴더는 남음 | |
+| 7-12 | 결과 모름 | (가능하면) 제출 직후 대시보드 백엔드 재시작으로 `SCX_SUBMISSION_UNKNOWN` → 카드 '결과 모름' + [잡 ID 연결]·[포기]. 잡이 있으면 ID 연결 → [재시도] 없이 '대기'부터 자동으로 이어짐 | |
+

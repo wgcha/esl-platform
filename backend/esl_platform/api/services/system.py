@@ -12,6 +12,7 @@ from typing import Any
 from esl_worker import core_adapter
 
 from ... import __version__
+from .pathmask import masks_paths
 from ...core.auth import Principal
 from ...core.inputs import results_files
 from ...core.paths import check_includes, check_input_path
@@ -190,6 +191,7 @@ def inspect_rad(ctx: AppContext, path: str, part_title: str | None = None) -> di
             "includes": includes, "part_title": title, "target_part": target}
 
 
+@masks_paths
 def inspect(ctx: AppContext, principal: Principal, purpose: str, raw: str, part_title: str | None = None) -> dict[str, Any]:
     p = check_input_path(ctx.settings, raw, purpose)
     from ...core.uploads import check_principal_upload_area

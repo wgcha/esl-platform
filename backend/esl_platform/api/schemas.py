@@ -201,6 +201,7 @@ class JobOut(_Out):
     comparison_id: str | None = None
     opt_run_id: str | None = None
     upload_id: str | None = Field(default=None, description="v0.11.0 SCX_FETCH 대상 업로드 세션")
+    verify_drop_id: str | None = Field(default=None, description="v0.12.0 VERIFY_DROP·VERIFY_POST 대상 검증 낙하")
     project_id: str
     job_type: str
     stage: int
@@ -1826,3 +1827,132 @@ class ScxFetchIn(_Req):
 class ScxFetchOut(_Out):
     upload_id: str
     job_id: str
+
+
+# ---------------------------------------------------------------- v0.12.0 Radioss 검증 낙하(계약 esl_scx_relay.md §7.1) — 기능 B
+class VerifyHpcIn(_Req):
+    version: str | None = Field(default=None, pattern=r"^[0-9A-Za-z][0-9A-Za-z._\- ]{0,31}$",
+                                description="Radioss 버전(비우면 hpc.scx.version)")
+    ncpu: int | None = Field(default=None, ge=1, le=4096)
+
+
+class VerifyDropIn(_Req):
+    bead_doe_id: str = Field(min_length=1, max_length=64)
+    design_id: str = Field(min_length=1, max_length=64)
+    mode: Literal["worst", "all"] = Field(description="worst = 가장 나쁜 씬 N개(r 큰 순), all = 스터디에서 고른 ESL 전부")
+    n: int | None = Field(default=None, ge=1, le=1000, description="worst 일 때 N(기본 verify_drop.default_worst_n)")
+    title: str | None = Field(default=None, max_length=200)
+    hpc: VerifyHpcIn | None = None
+
+
+class VerifySceneOut(_Out):
+    entry_id: str
+    case_id: str
+    case_title: str
+    label: str | None = None
+    r_c: float | None = None
+    r_umax: float | None = None
+    r_epsmax: float | None = None
+
+
+class VerifyExcludedOut(_Out):
+    entry_id: str | None = None
+    case_id: str | None = None
+    case_title: str | None = None
+    code: str
+    reason: str
+
+
+class VerifyDesignOut(_Out):
+    id: str
+    rank: int
+
+
+class VerifyHpcDefaultOut(_Out):
+    version: str | None = None
+    ncpu: int | None = None
+
+
+class VerifyPlanOut(_Out):
+    design_id: str
+    mode: Literal["worst", "all"]
+    scenes: list[VerifySceneOut]
+    excluded: list[VerifyExcludedOut]
+    n_submit: int
+    est_hours: float = Field(description="씬당 예상 시간(같은 프로젝트 완료 검증 중앙값, 없으면 verify_drop.est_hours_per_scene)")
+    max_scenes: int
+    default_worst_n: int
+    default_n: int = Field(description="= default_worst_n(설정 verify_drop.default_worst_n)")
+    designs: list[VerifyDesignOut] = Field(description="검증 가능한 안(best/ 남은 순위 1~keep_files_top)")
+    hpc: dict[str, Any] = Field(description="Radioss 기본값 {version, ncpu}(설정 hpc.scx)")
+    hpc_default: VerifyHpcDefaultOut
+
+
+class VerifyCompareRow(_Out):
+    key: str
+    label: str
+    orig: float | None = None
+    verify: float | None = None
+    ratio: float | None = None
+    predicted: float | None = None
+    verdict: Literal["better", "worse", "same"]
+    agree: bool | None = None
+
+
+class VerifyCompare(_Out):
+    rows: list[VerifyCompareRow]
+    hot: dict[str, Any]
+    warnings: list[str] = []
+    tstar: dict[str, Any]
+
+
+class VerifySubmissionOut(_Out):
+    request_id: str
+    state: str
+    attempt: int
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class VerifyDropOut(_Out):
+    id: str
+    batch_id: str
+    project_id: str
+    bead_doe_id: str
+    design_id: str
+    case_id: str
+    case_title: str | None = None
+    entry_id: str
+    title: str | None = None
+    phase: str = Field(description="PREP·STAGING·SUBMITTED·RUNNING·FETCHED·POST·DONE·FAILED·CANCELED")
+    version: int
+    drive_dir_display: str | None = None
+    scx_job_id: str | None = None
+    scx_status: str | None = None
+    submission: VerifySubmissionOut | None = None
+    files_n: int = 0
+    files_bytes: int = 0
+    predicted: dict[str, Any] | None = None
+    result: VerifyCompare | None = None
+    job_ids: list[str]
+    job: JobOut | None = Field(default=None, description="최근 작업(VERIFY_DROP 또는 VERIFY_POST)")
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class VerifyDropCreateOut(_Out):
+    batch_id: str
+    drops: list[VerifyDropOut]
+    excluded: list[VerifyExcludedOut]
+
+
+class VerifyResolveIn(_Req):
+    version: int = Field(ge=1)
+    action: Literal["attach", "link", "abandon"] = Field(description="attach(= link) = SCX 잡 ID 연결, abandon = 포기")
+    scx_job_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("action")
+    @classmethod
+    def _norm_action(cls, v: str) -> str:
+        return "attach" if v == "link" else v

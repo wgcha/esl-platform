@@ -19,7 +19,8 @@ const STEP_LABEL: Record<string, string> = {
 
 /** 작업 진행(2초 갱신) + 로그 tail + 취소·재시도. 종료되면 onDone 호출. */
 /** onRetried: 재시도는 새 작업을 만든다 — 호출 측이 새 작업 id 로 바꿔 붙일 때(v0.11.0 SCX 내려받기) */
-export function JobProgress({ jobId, onDone, allowed = true, onRetried }: { jobId: string; onDone?: (j: JobOut) => void; allowed?: boolean; onRetried?: (j: JobOut) => void }) {
+/** confirmCancel: 취소 전에 확인 창 문구(v0.12.0 검증 낙하 — SCX 잡도 종료). noRetry: 재시도 버튼 숨김(사람 확인이 먼저일 때) */
+export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmCancel, noRetry }: { jobId: string; onDone?: (j: JobOut) => void; allowed?: boolean; onRetried?: (j: JobOut) => void; confirmCancel?: string | null; noRetry?: boolean }) {
   const job = usePolling(() => api.getJob(jobId), 2000, [jobId]);
   const [lines, setLines] = useState<string[]>([]);
   const [actError, setActError] = useState<string | null>(null);
@@ -94,11 +95,11 @@ export function JobProgress({ jobId, onDone, allowed = true, onRetried }: { jobI
         )}
         <span className="spacer" />
         {allowed && !terminal && !j.cancel_requested && (
-          <button type="button" className="btn small ghost" onClick={() => act(() => api.cancelJob(j.id))}>
+          <button type="button" className="btn small ghost" onClick={() => (!confirmCancel || window.confirm(confirmCancel)) && act(() => api.cancelJob(j.id))}>
             취소
           </button>
         )}
-        {allowed && RETRYABLE.includes(j.state) && (
+        {allowed && !noRetry && RETRYABLE.includes(j.state) && (
           <button type="button" className="btn small ghost" onClick={() => act(() => api.retryJob(j.id), onRetried)}>
             재시도
           </button>
