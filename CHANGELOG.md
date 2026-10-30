@@ -11,6 +11,8 @@
 - 응력 대체(`Max_Stress`)는 순위·t* 만 응력으로 정하고 변형률 참고 지표(hotspot·전 요소 ε 비교·잡음 바닥 ε)는 생략 + 경고 `STRAIN_FROM_STRESS`. 판정(변위 주지표)은 그대로
 - 어떤 결과를 썼는지(`strain_source`: max_strain | plastic_strain | strain_tensor | max_stress)를 추출 결과·ESL 요약·검증·라이브러리 품질·검증 낙하 비교(양쪽, 다르면 경고 `VD_STRAIN_SOURCE_MISMATCH`)에 기록. 대체일 때 Case 보고서 입력 표에 한 줄. 이전 자료는 max_strain 으로 봄
 - request.txt 에 `strain_type`·`epsp_type` 을 직접 적은 수동 실행은 예전처럼 `Max_Strain` 만 봄(대체 없음)
+- **강성 평가 스터디 체결 스캔이 모델 일부만 보던 문제**: paicad `--assem-dir` 에 기준 starter include 트리 전체(Case 폴더 밖 상위·형제 include 포함, 순환 방지) 사본 `prep/assem_full/`(②③ A Case = `prep/a_assem_full/`)을 넘김. 원본은 읽기만, 링크·허용 루트 밖은 `PATH_OUTSIDE_ROOT`, 엔진 rad 는 `bead_doe.same.engine_rad` 일 때만, 상한 `bead_doe.same.max_assem_mb`
+- 체결 스캔 사본만 paicad 0.14.0 미지원 집합 카드 정규화(`bead_doe.fixed_scan`): `/SURF/PART/EXT|ALL` → `/SURF/PART`, `/SURF·GRNOD/SUBSET` → 파트 목록, `/GRNOD/GENE` → `/GRNOD/NODE`, 솔리드 포함 `/SURF` → `/SURF/SEG`(외곽 면·모든 면). run 모핑 사본 중 재작성 파일은 원본 + 모핑 `/NODE` 로 복원(결과 파일은 예전과 같음). `FIXED_PARSE_FAILED` 안내에 읽은 파일 수·솔리드 면 tie 미지원 표시
 
 ## [0.12.0] - 2026-10-30
 ### 추가
