@@ -587,7 +587,8 @@ def stage_extract(ctx: Context) -> dict:
         ctx.f(d, fn)
     save_model(d, model)
     info = pack_results(ctx.results, model, d, frame_stride=ecfg["frame_stride"],
-                        coord_check=ctx.cfg.get("coord_check"), shear_convention=ecfg["shear_convention"])
+                        coord_check=ctx.cfg.get("coord_check"), shear_convention=ecfg["shear_convention"],
+                        dump=_config.dump_settings(ctx.cfg))
     ctx.warnings += list(getattr(model, "warnings", [])) + list(info.get("warnings", []))
     sfb = info.get("strain_fallback") or {}
     src = info.get("strain_source") or "max_strain"
@@ -649,10 +650,12 @@ def stage_extract(ctx: Context) -> dict:
     inputs = {"rad": _fingerprint(ctx.rad, True),
               "includes": [_fingerprint(p, True) for p in model.includes if os.path.isfile(p)],
               "results_dir": ctx.results, "results_files": {}}
+    dump_mode = sfb.get("mode") == "dump"
     for name in RESULT_FILES + ("strain_raw.csv",):
         p = os.path.join(ctx.results, name)
         if os.path.isfile(p):
-            inputs["results_files"][name] = _fingerprint(p, True)
+            # dump 원자료(수십 GB 가능)는 크기·mtime 만(done.json 은 해시) — esl_strain_fallback.md Med2
+            inputs["results_files"][name] = _fingerprint(p, not (dump_mode and name in ("strain_raw.csv", "disp.csv")))
     if cs is not None:
         inputs["state_files"] = [{"path": f["path"], "sha256": f["sha256"], "kinds": f["kinds"]} for f in cs["files"]]
     ctx.record["inputs"] = inputs
@@ -1198,6 +1201,8 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
             prev_vm = z["prev_vm_hv"][fd] if (pok and pfi >= 0 and "prev_vm_hv" in files) else None
         else:
             pfi, pok, prev_eps, prev_vm = int(frame_index) - 1, False, None, None
+    if ((meta.get("strain_fallback") or {}).get("epsp_available")) is False:
+        epsp = None                         # h3d 에 소성 결과 없음(H3D_NO_EPSP) → 소성 영역 정보 미상(null)
     known = None
     cst = _cum_state(ctx, model)
     if cst is not None and epsp is not None:
@@ -1364,10 +1369,17 @@ def stage_validate(ctx: Context) -> dict:
     f_max = fsum["max"]["abs_err_pct"] if fsum["max"] else float("inf")
     f_p90 = fsum["abs_err_pct"]["p90"] if fsum["abs_err_pct"] else float("inf")
     if src == "max_stress":
+        # 응력 대체: 변형률 참고 지표 전부 생략(None) — hotspot rel_err·전 요소 오차·기준 초과 비율(§4, Verifier Med1)
         f_max = f_p90 = None
         fsum["skipped"] = "STRAIN_FROM_STRESS"
+        fsum.update({"max": None, "abs_err_pct": None, "frac_within": None})
+        for rec in hots + excluded:
+            rec["rel_err"] = None
     fsum["criteria"] = {"max_err_pct_max": ccfg["max_err_pct_max"], "p90_err_max": ccfg["p90_err_max"]}
     sref = fsum.pop("strain_ref_base")
+    if src == "max_stress":
+        sref.update({k: None for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct")})
+        sref["skipped"] = "STRAIN_FROM_STRESS"
 
     noise = summ.get("noise")
     if noise is None:
@@ -1482,8 +1494,8 @@ def stage_validate(ctx: Context) -> dict:
              f"(참고 ≤{crit['hotspot_strain_rel_err_max']:g}, "
              f"비교 {len(hots)}·제외 {len(excluded)}), 최대변형률 요소 오차 {_g(f_max, '.3g')}% "
              f"(≤{ccfg['max_err_pct_max']:g}), "
-             f"|오차| P90 {_g(f_p90, '.3g')}% (≤{ccfg['p90_err_max']:g}), 기준 초과 요소 {sref['n_exceed']}/{sref['n_elems']} "
-             f"({100 * sref['frac_exceed']:.3g}%)"
+             f"|오차| P90 {_g(f_p90, '.3g')}% (≤{ccfg['p90_err_max']:g}), 기준 초과 요소 {_g(sref['n_exceed'], 'd')}/{sref['n_elems']} "
+             f"({_g(None if sref['frac_exceed'] is None else 100 * sref['frac_exceed'], '.3g')}%)"
              + ("" if sref["plastic"] is None else f", 소성 영역 {sref['plastic']['n_plastic']}")
              + f", valid {fsum['n_valid']}/{fsum['n_elems']} (상승 {fsum['n_rising']}, hold {fsum['n_hold']}, "
              f"low {fsum['n_low']})" + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else "")

@@ -89,6 +89,7 @@ def test_h3d_extract_e2e(client, synth_inputs, worker_factory, esl_root, monkeyp
     assert "strain_sources\tmax_strain plastic_strain strain_tensor max_stress" in req
     assert "names_plastic_strain\tPlastic Strain|Plastic_Strain" in req and "layer_exclude\tMax|Min" in req
     assert "strain_type\t" not in req and "epsp_type\t" not in req
+    assert f"dump_max_bytes\t{40 * 1024 ** 3}\n" in req and "dump_free_bytes\t" in req      # dump 사전 추정 상한·여유
     from sqlalchemy import text
 
     with engine.connect() as c:
@@ -328,6 +329,9 @@ def test_strain_request_keys_and_failure_code(tmp_path):
                                         "result_names": {"strain_tensor": ["Strain", "EPS 2"]}}})
     assert r["strain_sources"] == "strain_tensor max_strain" and r["names_strain_tensor"] == "Strain|EPS 2"
     assert r["names_max_strain"] == "Max_Strain" and r["comp_xy"] == "XY" and r["vm_comps"] == "vonMises|von Mises"
+    assert r["dump_max_bytes"] == str(40 * 1024 ** 3)
+    assert h3d.strain_request({"extract": {"dump_max_bytes": 5}})["dump_max_bytes"] == "5"
+    assert h3d.free_bytes(str(tmp_path)) > 0 and h3d.free_bytes(str(tmp_path / "nope")) is None
     req = tmp_path / "request.txt"
     h3d.write_request(str(req), part="p", hot_k=1, top_n=1, extra=r)
     assert "names_strain_tensor\tStrain|EPS 2\n" in req.read_text()

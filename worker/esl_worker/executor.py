@@ -562,6 +562,9 @@ class Executor:
             # 변형률 결과 대체 키(esl_strain_fallback.md §2, 설정 = job params.settings) + 누적 씬 키
             extra = {**h3d.strain_request((self.job["params"] or {}).get("settings") or {}),
                      **h3d.cumulative_request(cum, prev_csv)}
+            free = h3d.free_bytes(out_dir, float(getattr(getattr(s, "upload", None), "min_free_gb", 0.0) or 0.0))
+            if free is not None:
+                extra["dump_free_bytes"] = str(free)        # TCL dump 사전 추정 > 여유 → INSUFFICIENT_STORAGE
             h3d.write_request(request, part=p["part"], hot_k=p["hot_k"], top_n=p["top_n"], extra=extra)
         except h3d.H3dError as exc:
             raise _StepFailed(exc.code, exc.message) from None

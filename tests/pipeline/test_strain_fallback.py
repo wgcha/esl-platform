@@ -21,9 +21,14 @@ CFG = os.path.join(ROOT, "config", "esl.example.yaml")
 CFG64_TEXT = open(CFG, encoding="utf-8").read().replace("disp_precision: float32", "disp_precision: float64")
 
 
-def _run(tmp_path, source):
+def _run(tmp_path, source, patch_done=None):
     root = str(tmp_path)
     c = synth_case.build(root, source=source)
+    if patch_done:
+        p = os.path.join(c["csv"], "done.json")
+        dj = json.load(open(p, encoding="utf-8"))
+        dj.update(patch_done)
+        json.dump(dj, open(p, "w", encoding="utf-8"))
     cfg = os.path.join(root, "esl64.yaml")
     with open(cfg, "w", encoding="utf-8") as fh:
         fh.write(CFG64_TEXT)
@@ -47,7 +52,10 @@ def test_dump_strain_tensor_pipeline(tmp_path):
     assert fr["shear"]["convention"] == "engineering" and fr["shear"]["dump"]["convention"] == "engineering"
     assert any(w.startswith("STRAIN_TMAX_SAMPLED") for w in fr["warnings"])
     run = j("run.json")
-    assert "strain_raw.csv" in run["inputs"]["results_files"]
+    rf = run["inputs"]["results_files"]
+    assert "strain_raw.csv" in rf and "sha256" not in rf["strain_raw.csv"] and "sha256" not in rf["disp.csv"]
+    assert "sha256" in rf["done.json"]                                       # dump 원자료는 크기·mtime 지문만
+    assert os.path.isfile(os.path.join(c["csv"], "strain_raw.csv"))          # 워커 추출 폴더가 아니면 보존
     assert run["stages"]["extract"]["summary"]["strain_source"] == "strain_tensor"
     tj = j("02_tstar", "tstar.json")
     assert tj["selected"]["frame_index"] == synth_case.T_STAR_FRAME
@@ -93,7 +101,21 @@ def test_max_stress_source_skips_strain_reference(tmp_path):
         m = _metric(val, name)
         assert m["value"] is None and m["status"] == "skipped" and m["exceeded"] is False, name
     assert val["field"]["skipped"] == "STRAIN_FROM_STRESS"
+    assert val["field"]["max"] is None and val["field"]["abs_err_pct"] is None and val["field"]["frac_within"] is None
+    assert val["hotspots"] and all(h["rel_err"] is None for h in val["hotspots"])
+    sr = val["strain_ref"]
+    assert sr["frac_exceed"] is None and sr["n_exceed"] is None and sr["p99_err_pct"] is None and sr["exceeded"] is False
     run = j("run.json")
     ws = [w for st in run["stages"].values() for w in (st.get("warnings") or [])]
     assert any(str(w).startswith("STRAIN_FROM_STRESS") for w in ws)
-    assert lib_entry.build(out).meta["quality"]["strain_source"] == "max_stress"
+    q = lib_entry.build(out).meta["quality"]
+    assert q["strain_source"] == "max_stress" and q["hotspot1_rel_err"] is None and q["strain_exceed_frac"] is None
+    assert q["field"] is None and all(h["rel_err"] is None for h in q["hotspots"])
+
+
+def test_no_epsp_plastic_info_unknown(tmp_path):
+    """Low: epsp_available=false(H3D_NO_EPSP) → 소성 영역 정보 미상(null)."""
+    c, out, j = _run(tmp_path, "strain_tensor", patch_done={"epsp_available": False})
+    val = j("05_val", "validation.json")
+    assert val["strain_ref"]["plastic"] is None
+    assert j("01_extract", "frames.json")["strain_fallback"]["epsp_available"] is False

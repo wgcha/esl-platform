@@ -178,3 +178,17 @@ def test_extract_strain_sources_optional_and_validated():
         with pytest.raises(EslError) as ei:
             config.validate_settings(c)
         assert ei.value.code == "CONFIG_INVALID" and f"extract.{key}" in ei.value.message, (key, val)
+
+
+def test_extract_dump_keys_optional():
+    cfg = config.validate_settings(_base_cfg())
+    assert config.dump_settings(cfg) == {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
+    c = _base_cfg()
+    c["extract"].update(dump_keep=True, dump_max_bytes=1000)
+    assert config.dump_settings(config.validate_settings(c)) == {"dump_keep": True, "dump_max_bytes": 1000}
+    for key, val in (("dump_keep", "no"), ("dump_max_bytes", 0)):
+        c = _base_cfg()
+        c["extract"][key] = val
+        with pytest.raises(EslError) as ei:
+            config.validate_settings(c)
+        assert f"extract.{key}" in ei.value.message

@@ -734,7 +734,7 @@ proc ::esl::read_config {path extra} {
         names_max_strain "Max_Strain" names_plastic_strain "Plastic Strain|Plastic_Strain" \
         names_strain_tensor "Strain" names_max_stress "Max_Stress" \
         comp_xx "XX" comp_yy "YY" comp_zz "ZZ" comp_xy "XY" vm_comps "vonMises|von Mises" \
-        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min"]
+        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" dump_max_bytes 0 dump_free_bytes ""]
     set cfg [::esl::read_request $path $defaults]
     # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
     set ::esl::forced 0
@@ -1679,6 +1679,18 @@ proc ::esl::run {arglist} {
 
     # ---- dump mode (strain_tensor: instantaneous values) -> strain_raw.csv + disp.csv, every frame
     if {$smode eq "dump"} {
+        # size estimate before writing (same formula as esl.io.results_csv.dump_estimate_bytes: 120 B per
+        # strain_raw row, 80 B per disp row)
+        set est [expr {wide($nsim) * (wide([llength $eids]) * [llength $slayers] * 120 + wide([llength $nids]) * 80)}]
+        set dmax [dict get $cfg dump_max_bytes]
+        set dfree [dict get $cfg dump_free_bytes]
+        ::esl::progress "dump size estimate: $est bytes (limit $dmax, free [expr {$dfree eq "" ? "?" : $dfree}])"
+        if {[string is wide -strict $dmax] && $dmax > 0 && $est > $dmax} {
+            ::esl::fail STRAIN_DUMP_TOO_LARGE "Strain tensor dump estimate $est bytes > dump_max_bytes $dmax ($nsim frames x [llength $eids] elements x [llength $slayers] layers): add /H3D/ELEM/TENS/STRAIN/TMAX (or /H3D/SHELL/TENS/STRAIN/TMAX) to the deck"
+        }
+        if {[string is wide -strict $dfree] && $est > $dfree} {
+            ::esl::fail INSUFFICIENT_STORAGE "Strain tensor dump estimate $est bytes > free space $dfree bytes in the output folder"
+        }
         ::esl::dump_pass $out $res $post $con $qry $cfg $src $slayers $epsp_ok $echunks $nchunks $dfields $nsim
         ::esl::step CloseStack
         catch {hwi CloseStack}

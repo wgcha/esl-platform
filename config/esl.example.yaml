@@ -28,6 +28,8 @@ extract:
   # vm_comps: [vonMises, von Mises]
   # scalar_comps: [Scalar value, Scalar]
   # tensor_layer_exclude: [Max, Min] # Strain 텐서 층 목록에서 뺄 HyperView 파생 층
+  # dump_keep: false                 # Strain 텐서 원자료(strain_raw.csv·disp.csv)를 변환 후 보존(기본 = 서버 추출 폴더에서 삭제)
+  # dump_max_bytes: 42949672960      # 원자료 크기 상한(사전 추정·실제, 기본 40 GiB) — 넘으면 STRAIN_DUMP_TOO_LARGE
 
 coord_check:                         # rad ↔ h3d 같은 모델 확인 = 노드 ID + 요소 연결(elems.csv). 좌표는 개략 확인만(계산 좌표는 항상 rad)
   max_rel: 0.005                     # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과(편차는 정보로 기록), 넘으면 ID_MISMATCH

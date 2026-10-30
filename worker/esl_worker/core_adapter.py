@@ -191,6 +191,11 @@ def extract_source_settings(core_settings: dict | None = None) -> dict:
     return _wrap(_attr("esl.config", "extract_source_settings"), core_settings or {})
 
 
+def dump_settings(core_settings: dict | None = None) -> dict:
+    """extract.dump_keep·dump_max_bytes(기본값 채움)."""
+    return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})
+
+
 def cumulative_prev(rad: str, part_title: str, out_csv: str, core_settings: dict | None = None) -> dict | None:
     """누적 씬(rad include 에 상태 파일 .sta/.str) 판정 → 대상 파트 이전 소성 CSV(prev.csv) 작성(계약
     esl_cumulative_input.md §15 Worker). 상태 파일이 없거나 cumulative.enabled=off 면 None(아무것도 쓰지 않음).
