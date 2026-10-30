@@ -105,7 +105,7 @@ def test_full_flow_plan_submit_poll_fetch_compare(client, engine, fake_relay, wo
     sid = seed_study(engine, esl_root, [ent], ratios={ent: 0.85}, best_nodes=moved)
     before = {p: (_sha(p), os.stat(p).st_mtime_ns) for p in rad.parent.iterdir() if p.is_file()}
     best = esl_root / "_doe" / sid / "best"
-    best_before = {p: _sha(p) for p in best.rglob("*") if p.is_file()}
+    best_before = {p: (_sha(p), os.stat(p).st_mtime_ns) for p in best.rglob("*") if p.is_file()}     # v0.12.0 L4: mtime 도
     plan = client.post(f"{API}/verify-drops/plan", json={"bead_doe_id": sid, "design_id": "d007", "mode": "worst"},
                        headers=W).json()
     assert plan["designs"] == [{"id": "d007", "rank": 1}] and plan["default_n"] == 2
@@ -137,7 +137,7 @@ def test_full_flow_plan_submit_poll_fetch_compare(client, engine, fake_relay, wo
     assert all(h.get("x-scx-relay-client") == "esl" for h in fake_relay.headers_seen)
     # 원본 불변(Case 입력·DOE best), 결과 회수
     assert {p: (_sha(p), os.stat(p).st_mtime_ns) for p in rad.parent.iterdir() if p.is_file()} == before
-    assert {p: _sha(p) for p in best.rglob("*") if p.is_file()} == best_before
+    assert {p: (_sha(p), os.stat(p).st_mtime_ns) for p in best.rglob("*") if p.is_file()} == best_before
     vdir = esl_root / "_verify" / did
     assert sorted(p.name for p in (vdir / "result").iterdir()) == ["model.h3d", "model_0000.out", "model_0001.out"]
     assert (vdir / "stage.json").is_file() and str(rad.parent) not in (vdir / "stage.json").read_text()
@@ -288,6 +288,8 @@ def test_cancel_during_wait_terminates_once(client, engine, fake_relay, worker_f
      "VD_RADIOSS_ABNORMAL"),
     ({"outputs": {"model.h3d": b"H", "model_0000.out": b"no end\n"}}, "VD_RADIOSS_ABNORMAL"),
     ({"submit_mode": "fail:SCX_ADAPTER_ERROR"}, "SCX_SUBMIT_FAILED"),
+    ({"outputs": {"mo|del.h3d": b"H", "model_0000.out": OK_OUT}}, "PATH_UNSAFE"),          # v0.12.0 L4 결과 파일 이름 검사
+    ({"outputs": {"CON.h3d": b"H", "model_0000.out": OK_OUT}}, "PATH_UNSAFE"),
 ])
 def test_failures(client, engine, fake_relay, worker_factory, esl_root, inputs_root, setup, code):
     cs, sid = mini_world(engine, esl_root, inputs_root)
@@ -333,3 +335,25 @@ def test_max_running_claim(client, engine, fake_relay, worker_factory, esl_root,
     with engine.begin() as c:
         b = jobs_repo.claim_xfer(c, "w2", 30, lanes=4, verify_max_running=2)
     assert b["id"] == d2["job"]["id"] and a["holds_slot"] is False
+
+
+def test_local_path_rechecks_links_before_upload(tmp_path):
+    """v0.12.0 M1: 업로드 직전 local_path 재검사 — VD_PREP 뒤 원본 파일이 링크로 바뀌었거나 rad 폴더 밖을 가리키면 INPUT_CHANGED."""
+    from esl_worker.executor import _StepFailed
+    from esl_worker.scx_verify import _Verify
+
+    d = tmp_path / "in"
+    d.mkdir()
+    (d / "model_0000.rad").write_bytes(b"/END\n")
+    (d / "model_0001.rad").write_bytes(b"/RUN\n")
+    (tmp_path / "evil.rad").write_bytes(b"/RUN\n")
+    v = object.__new__(_Verify)
+    v.case = {"rad_path": str(d / "model_0000.rad")}
+    v.cdir = str(tmp_path / "vd")
+    f = {"rel": "model_0001.rad", "source": "orig", "size": 5}
+    assert v.local_path(f) == str(d / "model_0001.rad")
+    (d / "model_0001.rad").unlink()
+    os.symlink(tmp_path / "evil.rad", d / "model_0001.rad")
+    with pytest.raises(_StepFailed) as ei:
+        v.local_path(f)
+    assert ei.value.code == "INPUT_CHANGED" and "링크" in str(ei.value)

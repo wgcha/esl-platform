@@ -16,6 +16,10 @@
 ### 수정
 - 환경 점검 `scx.relay`: `scx_drive`·`verify_drop` 이 둘 다 꺼져 릴레이를 시험하지 않았을 때 'VD_DISABLED' 경고 대신 **SKIP**("SCX 드라이브·검증 낙하 모두 꺼짐"). 하나라도 켜져 있으면 켜진 쪽의 실제 원인(`SCX_RELAY_UNREACHABLE` 등)을 표시(`*_DISABLED` 아님)
 - `hpc:`(또는 `hpc.scx:`) 밑에 최상위 키(`scx_drive`·`verify_drop`·`worker` 등)를 들여쓰면 조용히 무시되던 것을 설정 검증(설치 콘솔·백엔드 로그)·환경 점검 `config.valid` 에서 경고 "hpc.scx_drive 는 최상위 키입니다 — 들여쓰기를 없애세요"(physicsai 공용 키는 계속 무시)
+- SCX 드라이브 조회: SPDM 루트의 상위 폴더(예 `SharedWithMe` ⊃ `SharedWithMe/SPDM`)를 루트로 둔 목록이 '프로젝트 폴더가 SPDM 루트이거나 그 상위 폴더'로 거부되던 문제 — 읽기(목록·고르기·내려받기)의 SPDM 판정은 대시보드 relay 에 맡김(막히면 "대시보드가 SPDM 폴더 읽기를 막고 있습니다"), 검증 낙하 쓰기 폴더 규칙은 그대로
+- 검증 낙하: 엔진 rad 가 링크이거나 rad 폴더 밖이면 그 씬 제외(업로드 직전 다시 확인), /NODE 줄의 ASCII 아닌 문자는 `VD_PATCH_ENCODING`, 결과 파일 이름 검사
+- 대시보드 `.env` 가 UTF-8 이 아니면(cp949 도 아니면) 상태·환경 점검이 멈추지 않고 `SCX_SECRET_INVALID`(인코딩 오류)로, 루트 `.env` 값이 비면 `backend/.env` 를 계속 봄
+- 경로 검사 오류(`/paths/inspect`·작업 생성·비드 최적화·강성 평가 입력 검사)에서 서버 절대경로를 일반 사용자에게 가림(전역 관리자는 원문)
 - 단면 그래프: 첫 자료가 온 순간 기본 배율로 바로 그림(한 박자 뒤 배율이 바뀌며 방금 고친 축 입력이 덮어써지던 경우)
 - `hpc.scx.secret_file` 상대경로는 설정 오류(절대경로만, SCX 기능만 비활성)
 - SCX 내려받기 도중 연결이 끊기면 '해시 불일치' 대신 **전송 중단**(`SCX_TRANSFER_INTERRUPTED`, 자동 재시도)으로 표시

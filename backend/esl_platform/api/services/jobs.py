@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
+from .pathmask import masks_paths
 from ...core import core_outputs as co
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, forbidden, unprocessable
@@ -170,6 +171,7 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
     return out
 
 
+@masks_paths
 def create_job(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:
     with ctx.engine.begin() as conn:
         case = load_case(conn, case_id, for_update=True)
@@ -233,6 +235,7 @@ def cancel_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, 
         return job_out(conn, job, with_steps=True)
 
 
+@masks_paths
 def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, Any]:
     with ctx.engine.begin() as conn:
         job = load_job(conn, job_id, for_update=True)

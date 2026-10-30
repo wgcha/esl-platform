@@ -240,7 +240,8 @@ def test_include_outside_input_roots_rejected(client, mini_inputs, inputs_root, 
     r = client.post(f"{API}/paths/inspect", json={"purpose": "RAD", "path": rad2}, headers=W)
     assert r.status_code == 422, r.text
     d = r.json()["detail"]
-    assert d["code"] == "PATH_OUTSIDE_ROOT" and d["include"] == str(secret)
+    # v0.12.0 L1: 일반 사용자에게는 서버 절대경로를 가림(파일 이름만 — 전역 관리자는 원문)
+    assert d["code"] == "PATH_OUTSIDE_ROOT" and d["include"].endswith("secret.inc") and str(outside) not in r.text
     assert "SECRET" not in r.text
     body = {"project_id": "p-1", "folder_name": "inc01", "title": "inc", "rad_path": rad2,
             "results_dir": mini_inputs["csv"]}

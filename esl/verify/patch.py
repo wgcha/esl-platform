@@ -142,7 +142,12 @@ def _write(src: str, dst: str, want: dict[int, tuple], max_line: int | None) -> 
                         line = _decode(body)
                         p = _parse(line)
                         if p is not None and p[1] in want and [float(x) for x in p[2]] != [float(x) for x in want[p[1]]]:
-                            out = _rewrite(line, p[0], want[p[1]]).encode("ascii") + eol
+                            try:
+                                out = _rewrite(line, p[0], want[p[1]]).encode("ascii") + eol
+                            except UnicodeEncodeError:
+                                # 임시 파일(<dst>.vdtmp)은 이 작업 폴더 안에 남는다(재시도 때 "wb" 로 덮어씀 — 검증 낙하 코드는 지우지 않음)
+                                raise EslError("VD_PATCH_ENCODING", f"{os.path.basename(src)}: 노드 {p[1]} 줄에 ASCII 가 아닌 문자가 있어 "
+                                               "좌표를 고칠 수 없음(원본 줄을 ASCII 로 정리)") from None
                             n += 1
             fo.write(out)
             h.update(out)

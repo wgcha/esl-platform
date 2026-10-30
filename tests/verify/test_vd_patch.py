@@ -171,3 +171,20 @@ def test_vd_patch_stage_from_morph_copy(tmp_path):
                          "out": str(tmp_path / "s3"), "result_out": str(tmp_path / "p3.json"),
                          "morph_out": str(tmp_path / "m3.npz")}, echo=lambda *_: None)
     assert ei.value.code == "VD_DESIGN_NO_FILES"
+
+
+def test_patch_non_ascii_node_line_is_vd_patch_encoding(tmp_path):
+    """v0.12.0 L2: 고칠 /NODE 줄에 ASCII 가 아닌 문자(줄 끝 한글 메모 등) → EslError VD_PATCH_ENCODING, 임시·출력 파일 없음."""
+    d, files, nid, xs = _model(tmp_path)
+    a = d / "inc" / "a.inc"
+    raw = a.read_bytes().split(b"\r\n")
+    k = next(i for i, ln in enumerate(raw) if ln[:10].strip() == b"7")
+    raw[k] = raw[k] + "  메모".encode("utf-8")
+    a.write_bytes(b"\r\n".join(raw))
+    X = xs.copy()
+    X[6] += 0.5                                                        # 노드 7(그 줄) 좌표 바꿈
+    out = tmp_path / "out"
+    with pytest.raises(EslError) as ei:
+        patch_node_files(files, {int(n): X[i] for i, n in enumerate(nid)}, str(out))
+    assert ei.value.code == "VD_PATCH_ENCODING" and "a.inc" in ei.value.message
+    assert not (out / "inc" / "a.inc").exists()                       # 최종 출력 파일은 만들지 않음

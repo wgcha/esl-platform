@@ -4,6 +4,9 @@ entry_id 순·같은 Case 합침)·all, 상한 422, 누적 씬·엔진 없음·i
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from esl_test_support import API, H
 from verify_support import counts, seed_case, seed_entry_for, seed_study, verify_settings
@@ -149,6 +152,49 @@ def test_layout_extract_and_include_exclusions(client, engine, esl_root, inputs_
     assert ex[st["id"]]["code"] == "VD_CUMULATIVE_EXCLUDED"
     assert ex[nox["id"]]["code"] == "VD_CASE_NOT_READY"
     assert str(inputs_root) not in str(p)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="심볼릭 링크 생성 권한")
+def test_engine_rad_and_include_links_excluded(client, engine, esl_root, inputs_root, tmp_path):
+    """v0.12.0 M1: 엔진 rad 도 include 와 같은 검사 — 링크(심볼릭)이거나 realpath 가 rad 폴더 밖이면 그 씬 제외 VD_INCLUDE_LAYOUT."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "engine.rad").write_bytes(b"/RUN/model/1\n0.01\n/END\n")
+    (outside / "part.inc").write_bytes(b"# outside\n")
+    eng = seed_case(engine, esl_root, inputs_root, "englink", engine_rad=False)
+    os.symlink(outside / "engine.rad", Path(eng["rad"]).parent / "model_0001.rad")
+    inc = seed_case(engine, esl_root, inputs_root, "inclink")
+    p_inc = Path(inc["rad"]).parent / "inc" / "part.inc"
+    p_inc.unlink()
+    os.symlink(outside / "part.inc", p_inc)
+    ok = seed_case(engine, esl_root, inputs_root, "fine")
+    cs = [eng, inc, ok]
+    ents = [seed_entry_for(engine, c["id"]) for c in cs]
+    sid = seed_study(engine, esl_root, ents, ratios={e: 1.0 + i * 0.01 for i, e in enumerate(ents)})
+    p = client.post(f"{API}/verify-drops/plan", json=body(sid, "all"), headers=W).json()
+    assert [s["case_id"] for s in p["scenes"]] == [ok["id"]]
+    ex = {x["case_id"]: x for x in p["excluded"]}
+    assert ex[eng["id"]]["code"] == "VD_INCLUDE_LAYOUT" and "엔진 rad" in ex[eng["id"]]["reason"]
+    assert ex[inc["id"]]["code"] == "VD_INCLUDE_LAYOUT" and "링크" in ex[inc["id"]]["reason"]
+
+
+def test_inside_rad_dir_helper(tmp_path):
+    from esl_platform.api.services.verify_drop import inside_rad_dir
+
+    d = tmp_path / "rad"
+    (d / "sub").mkdir(parents=True)
+    (d / "a.rad").write_bytes(b"x")
+    (tmp_path / "o.rad").write_bytes(b"x")
+    real = os.path.realpath(d)
+    assert inside_rad_dir(str(d / "a.rad"), real) and inside_rad_dir(str(d / "sub"), real)
+    assert not inside_rad_dir(str(tmp_path / "o.rad"), real)
+    assert not inside_rad_dir(str(d / ".." / "o.rad"), real)
+    if os.name != "nt":
+        os.symlink(d / "a.rad", d / "l.rad")                           # 폴더 안을 가리켜도 링크 자체는 거부
+        assert not inside_rad_dir(str(d / "l.rad"), real)
+    (tmp_path / "radx").mkdir()                                       # 접두만 같은 형제 폴더(rad vs radx)
+    (tmp_path / "radx" / "b.rad").write_bytes(b"x")
+    assert not inside_rad_dir(str(tmp_path / "radx" / "b.rad"), real)
 
 
 def test_permissions_and_disabled(client, world, fake_relay, settings_dict):

@@ -367,6 +367,7 @@ worker:
 | `SCX_NOT_CONFIGURED` / `SCX_FETCH_DISABLED` / `SCX_NO_ROOTS` | `hpc.scx` 블록 / `scx_drive.enabled: true` / 이 프로젝트에 허용된 `roots` 추가 |
 | `SCX_RELAY_UNREACHABLE` | 대시보드 백엔드 실행 여부, `relay_url` 포트 |
 | `SCX_RELAY_FORBIDDEN` | `relay_url` 이 프록시·화면 포트를 가리킴 → 백엔드 loopback 포트로 |
+| `SCX_PATH_NOT_ALLOWED` "대시보드가 SPDM 폴더 읽기를 막고 있습니다" | 읽기(조회·내려받기)의 SPDM 판정은 대시보드 relay 가 한다(esl 은 숨기거나 막지 않음 — SPDM 루트의 상위 폴더 `SharedWithMe` 같은 루트도 조회 가능). 그 폴더가 필요하면 대시보드 relay 설정. 검증 낙하 쓰기 폴더(`drive_base`)는 esl 이 SPDM 안·상위를 계속 거부 |
 | `SCX_RELAY_UNAUTHORIZED` / `SCX_SECRET_INVALID` | 두 앱이 같은 비밀 파일을 읽는지, 파일 형식 — 고친 뒤 두 앱 재시작 |
 | `SCX_AUTH_REQUIRED` | 대시보드 관리 화면에서 SCX 재로그인 |
 | `SCX_FILE_TOO_LARGE` | `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES`·`hpc.scx.max_download_bytes`·`upload.max_file_bytes` 상향 |

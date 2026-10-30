@@ -93,3 +93,61 @@ def test_gateway_and_check_follow_dashboard(settings_dict, fake_relay, tmp_path,
     # 상대 dashboard_root 는 설정 문제
     d["hpc"]["scx"]["dashboard_root"] = "dash"
     assert any("dashboard_root" in p for p in S.config_problems(load_config_dict(d, environ={}).settings))
+
+
+def test_dotenv_encoding_and_empty_value(tmp_path):
+    """v0.12.0 M2·L3: .env 는 utf-8-sig 먼저, 실패하면 cp949 재시도 — 둘 다 아니면 예외 대신 문제(SCX_SECRET_INVALID, 인코딩 오류)로.
+    루트 .env 의 값이 비어 있으면 backend/.env 를 계속 본다."""
+    k = S.DASH_SECRET_KEY
+    dash = tmp_path / "dash"
+    (dash / "backend").mkdir(parents=True)
+    # cp949(한글 주석) .env 도 읽음
+    (dash / ".env").write_bytes(f"# 대시보드 설정\n{k}=/cp/key\n".encode("cp949"))
+    assert S.dashboard_env_secret(str(dash)) == ("/cp/key", str(dash / ".env"), None)
+    # UTF-8(BOM)
+    (dash / ".env").write_bytes(b"\xef\xbb\xbf" + f"{k}=/bom/key\n".encode())
+    assert S.dashboard_env_secret(str(dash))[0] == "/bom/key"
+    # 둘 다 아닌 바이트(cp949 로도 못 읽음) → 예외 없이 문제
+    (dash / ".env").write_bytes(b"\xff\xfe\xff" + k.encode() + b"=/x\n")
+    v, f, prob = S.dashboard_env_secret(str(dash))
+    assert v is None and "인코딩 오류(UTF-8 아님)" in prob
+    r = S.resolve_secret_file(_C("", str(dash)), environ={})
+    assert r["path"] is None and "인코딩 오류" in r["problem"]
+    # 인코딩 오류여도 backend/.env 에 값이 있으면 그것
+    (dash / "backend" / ".env").write_text(f"{k}=/be/key\n")
+    assert S.dashboard_env_secret(str(dash))[:2] == ("/be/key", str(dash / "backend" / ".env"))
+    # L3: 루트 .env 빈 값 → backend/.env 계속
+    (dash / ".env").write_text(f"{k}=\n")
+    assert S.dashboard_env_secret(str(dash))[0] == "/be/key"
+    (dash / ".env").write_text(f'{k}=""\n')
+    assert S.dashboard_env_secret(str(dash))[0] == "/be/key"
+
+
+def test_status_and_check_do_not_crash_on_bad_env(settings_dict, fake_relay, tmp_path, monkeypatch):
+    """M2: 인코딩이 깨진 대시보드 .env 여도 /scx/status 판정·환경 점검이 500·중단 없이 SCX_SECRET_INVALID 로."""
+    from esl_platform.core.scx import status
+
+    dash = tmp_path / "dash2"
+    dash.mkdir()
+    (dash / ".env").write_bytes(b"\xff\xfe\xff garbage\n")
+    d = json.loads(json.dumps(settings_dict))
+    d["hpc"]["scx"].update(secret_file="", dashboard_root=str(dash))
+    monkeypatch.delenv(S.DASH_SECRET_KEY, raising=False)
+    monkeypatch.delenv("ESL_PLATFORM_CONFIG", raising=False)
+    s = load_config_dict(d, environ={}).settings
+    gateway.reset()
+    st = status.evaluate(s, "p-1")
+    assert st["fetch"]["reason_code"] == "SCX_SECRET_INVALID"
+    it = {i.key: i for i in check_scx(s, "linux")}["hpc.scx.secret_file"]
+    assert it.status == WARN and "인코딩 오류" in it.detail
+
+
+def test_relay_skip_line_even_when_secret_invalid(settings_dict, fake_relay):
+    """L3: scx_drive·verify_drop 둘 다 꺼짐 + 비밀 무효여도 scx.relay SKIP 줄을 낸다."""
+    d = json.loads(json.dumps(settings_dict))
+    d["hpc"]["scx"]["secret_file"] = "/nonexistent/secret.key"
+    d["scx_drive"]["enabled"] = False
+    d.setdefault("verify_drop", {})["enabled"] = False
+    items = {i.key: i for i in check_scx(load_config_dict(d, environ={}).settings, "linux")}
+    assert items["hpc.scx.secret_file"].status == WARN
+    assert items["scx.relay"].status == "SKIP"

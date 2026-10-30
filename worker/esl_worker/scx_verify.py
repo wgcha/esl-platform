@@ -341,7 +341,13 @@ class _Verify:
         if f["source"] == "patched":
             p = safe_path(self.cdir, "stage", *f["rel"].split("/"))
         else:
-            p = os.path.join(os.path.dirname(os.path.abspath(self.case["rad_path"])), *f["rel"].split("/"))
+            rdir = os.path.dirname(os.path.abspath(self.case["rad_path"]))
+            p = os.path.join(rdir, *f["rel"].split("/"))
+            # 업로드 직전 재검사(v0.12.0 M1): 링크로 바뀌었거나 realpath 가 rad 폴더 밖이면 올리지 않음
+            from esl_platform.api.services.verify_drop import inside_rad_dir
+
+            if not inside_rad_dir(p, os.path.realpath(rdir)):
+                raise _fail("INPUT_CHANGED", f"올릴 파일이 링크이거나 rad 폴더 밖입니다: {f['rel']}")
         if not os.path.isfile(p) or os.path.getsize(p) != int(f["size"]):
             raise _fail("INPUT_CHANGED", f"올릴 파일이 VD_PREP 기록과 다릅니다: {f['rel']}")
         return p
@@ -356,7 +362,7 @@ class _Verify:
                 vd_t.c.project_id == self.d["project_id"], vd_t.c.created_at <= self.d["created_at"]))).scalar_one()
         name = f"VD{int(no)}_{_now().strftime('%Y%m%dT%H%M%S')}"
         got = self.call("드라이브 폴더 이름", lambda: self.gw.ensure_new_dir(parent, name))
-        rel = scx_paths.check_drive_rel(f"{parent}/{got}", self.health)
+        rel = scx_paths.check_drive_rel(f"{parent}/{got}", self.health, write=True)   # 쓰기(B) — SPDM 상위 폴더 규칙 포함
         self.drop(drive_dir_rel=rel, phase="STAGING")
         self.echo(f"[esl-worker] VD_STAGE: 드라이브 폴더 {scx_paths.display(self.s, rel)}")
         return rel
@@ -571,6 +577,15 @@ class _Verify:
         if int(vc.max_result_bytes) < lim:
             lim, key = int(vc.max_result_bytes), "verify_drop.max_result_bytes"
         want = h3ds + outs
+        from esl_platform.core.uploads import check_segment
+
+        for n in want:                                   # v0.12.0 L4: 릴레이가 준 이름을 로컬 파일 이름으로 쓰기 전 검사
+            if "/" in n or "\\" in n:
+                raise _fail("PATH_UNSAFE", f"결과 파일 이름이 올바르지 않습니다: {n[:80]}")
+            try:
+                check_segment(n, "결과 파일")
+            except DomainError as exc:
+                raise _fail("PATH_UNSAFE", exc.message) from None
         sizes = {n: int(files[n].get("size") or 0) for n in want}
         for n in want:
             if sizes[n] > lim:

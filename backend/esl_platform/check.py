@@ -463,11 +463,12 @@ def check_scx(s, platform: str, *, use_relay: bool = True, runtime: str | None =
             out.append(Item("hpc.scx.secret_file", WARN if wide else OK,
                             f"{sec['path']} — 형식 OK, 권한 {note}, {src}" + (" (SCX_SECRET_ACL_WIDE)" if wide else "")))
     out.append(Item("worker.xfer_lanes", OK, f"XFER 레인 {s.worker.xfer_lanes}개(SCX 전송 동시 수)"))
-    if probs or val is None or not use_relay:
-        return out
     if not s.scx_drive.enabled and not s.verify_drop.enabled:
         # evaluate 는 둘 다 꺼져 있으면 릴레이를 시험하지 않는다 — reachable=False 를 '연결 안 됨'으로 보고하지 않는다
+        # (설정·비밀 문제가 있어도 SKIP 줄은 낸다 — L3)
         out.append(Item("scx.relay", SKIP, "SCX 드라이브·검증 낙하 모두 꺼짐(scx_drive.enabled·verify_drop.enabled)"))
+        return out
+    if probs or val is None or not use_relay:
         return out
     st = scx_status.evaluate(s, None, force=True)
     rel = st["relay"]

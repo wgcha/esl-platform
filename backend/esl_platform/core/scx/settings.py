@@ -133,21 +133,45 @@ def _dotenv_value(line: str, key: str) -> str | None:
     return (v[:i] if i >= 0 else v).strip()
 
 
-def dashboard_env_secret(dashboard_root: str) -> tuple[str | None, str | None]:
-    """(값, 읽은 .env 경로). 대시보드처럼 <root>/.env → <root>/backend/.env 순서, SIMDASH_SCX_RELAY_SECRET_FILE 줄만 본다
-    (다른 값은 읽지도 남기지도 않음 — 줄 단위로 키만 비교)."""
-    if not dashboard_root:
+def _env_file_value(p: str) -> tuple[str | None, str | None]:
+    """(.env 한 파일의 그 키 값 | None, 문제 | None). utf-8-sig 먼저, 디코드 실패면 cp949 재시도. 둘 다 실패면 인코딩 문제."""
+    try:
+        with open(p, "rb") as fh:
+            raw = fh.read()
+    except OSError:
         return None, None
+    for enc in ("utf-8-sig", "cp949"):
+        try:
+            text = raw.decode(enc)
+        except (UnicodeDecodeError, ValueError):
+            continue
+        for line in text.splitlines():
+            try:
+                v = _dotenv_value(line, DASH_SECRET_KEY)
+            except ValueError:
+                continue
+            if v is not None:
+                return v, None
+        return None, None
+    return None, f"{p}: .env 인코딩 오류(UTF-8 아님)"
+
+
+def dashboard_env_secret(dashboard_root: str) -> tuple[str | None, str | None, str | None]:
+    """(값, 읽은 .env 경로, 문제). 대시보드처럼 <root>/.env → <root>/backend/.env 순서, SIMDASH_SCX_RELAY_SECRET_FILE 줄만 본다
+    (다른 값은 읽지도 남기지도 않음 — 줄 단위로 키만 비교). 값이 비어 있으면 다음 파일을 계속 본다(L3). 예외는 던지지 않는다
+    (읽기·인코딩 문제는 세 번째 값 — /scx/status·환경 점검이 500·중단되지 않게)."""
+    if not dashboard_root:
+        return None, None, None
+    problem = None
     for p in (os.path.join(dashboard_root, ".env"), os.path.join(dashboard_root, "backend", ".env")):
         try:
-            with open(p, encoding="utf-8-sig") as fh:
-                for line in fh:
-                    v = _dotenv_value(line, DASH_SECRET_KEY)
-                    if v is not None:
-                        return v, p
-        except OSError:
-            continue
-    return None, None
+            v, prob = _env_file_value(p)
+        except Exception as exc:  # noqa: BLE001 - 어떤 이유로든 점검을 멈추지 않음
+            v, prob = None, f"{p}: 읽기 실패({type(exc).__name__})"
+        if v:
+            return v, p, None
+        problem = problem or prob
+    return None, None, problem
 
 
 def runtime_dir(environ: dict[str, str] | None = None) -> str | None:
@@ -175,8 +199,9 @@ def resolve_secret_file(cfg, *, environ: dict[str, str] | None = None, runtime: 
         return {"path": v if ok else None, "source": "env", "env_file": None,
                 "problem": None if ok else f"env {DASH_SECRET_KEY}: 절대경로여야 합니다"}
     root = str(getattr(cfg, "dashboard_root", "") or "")
+    env_problem = None
     if root:
-        v, f = dashboard_env_secret(root)
+        v, f, env_problem = dashboard_env_secret(root)
         if v:
             ok = secret_path_absolute(v)
             return {"path": v if ok else None, "source": "dashboard_env", "env_file": f,
@@ -186,7 +211,8 @@ def resolve_secret_file(cfg, *, environ: dict[str, str] | None = None, runtime: 
         p = os.path.join(rt, "secrets", "scx_relay_key")
         if os.path.isfile(p):
             return {"path": p, "source": "runtime", "env_file": None, "problem": None}
-    return {"path": None, "source": None, "env_file": None, "problem": SECRET_MISSING_HINT}
+    return {"path": None, "source": None, "env_file": None,
+            "problem": f"{env_problem} — {SECRET_MISSING_HINT}" if env_problem else SECRET_MISSING_HINT}
 
 
 def secret_source_text(r: dict[str, Any]) -> str:

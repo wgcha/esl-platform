@@ -177,14 +177,14 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
     try:
         return _create_case(ctx, principal, token, rid, body)
     except DomainError as exc:
-        if exc.code != "PATH_OUTSIDE_ROOT" or principal.is_global_admin:
+        if exc.code != "PATH_OUTSIDE_ROOT":
             raise
-        from .jobs import _root_labels, mask_server_paths
+        from .pathmask import mask_error
 
-        roots = _root_labels(ctx)
-        extra = {k: (mask_server_paths(v, roots) if isinstance(v, str) else v) for k, v in exc.extra.items()}
-        raise DomainError(exc.code, mask_server_paths(exc.message, roots), status=exc.status, headers=exc.headers,
-                          **extra) from None
+        new = mask_error(ctx, principal, exc)
+        if new is exc:
+            raise
+        raise new from None
 
 
 def _create_case(ctx: AppContext, principal: Principal, token: str | None, rid: str, body) -> dict[str, Any]:

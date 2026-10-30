@@ -45,6 +45,7 @@ from typing import Any
 from sqlalchemy import null
 from sqlalchemy.exc import IntegrityError
 
+from .pathmask import masks_paths
 from ...core.auth import Principal
 from ...core.config import bead_doe_commands, bead_doe_settings, opt_settings, paicad_exe_status
 from ...core.errors import DomainError, conflict, forbidden, not_found, unprocessable
@@ -267,6 +268,7 @@ def _mesh_input(ctx: AppContext, principal: Principal, body, c: dict[str, Any], 
     return chk, size, warns, mesh_p
 
 
+@masks_paths
 def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool = False) -> dict[str, Any]:
     """DoeCheckOut. ``_internal`` 이면 (DoeCheckOut, 작업 params 재료) 를 돌려준다(연구 생성이 같은 검사를 쓴다)."""
     from ...core.opt_core import EslError

@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import null
 from sqlalchemy.exc import IntegrityError
 
+from .pathmask import masks_paths
 from ...core.auth import Principal
 from ...core.config import opt_settings, opt_solver_status
 from ...core.errors import DomainError, conflict, forbidden, not_found, unprocessable
@@ -201,6 +202,7 @@ def _s1_base(ctx: AppContext, conn, project_id: str, e: dict[str, Any], *, with_
 
 
 # ---------------------------------------------------------------- POST /opt/s1-check
+@masks_paths
 def s1_check(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     require_view(principal, body.project_id)
     with ctx.engine.connect() as conn:
@@ -334,6 +336,7 @@ def _bead(o: dict[str, Any], body) -> dict[str, float]:
     return b
 
 
+@masks_paths
 def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     from ...core.opt_core import EslError
     from ...core.opt_core import modes

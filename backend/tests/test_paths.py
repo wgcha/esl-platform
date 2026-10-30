@@ -241,3 +241,40 @@ def test_case_include_outside_root_message_masked_for_users(client, mini_inputs,
     assert r.status_code in (404, 422)
     if r.status_code == 422:
         assert str(outside) in r.text
+
+
+def test_inspect_include_outside_root_masked_for_users(client, mini_inputs, tmp_path):
+    """v0.12.0 L1: POST /paths/inspect 의 PATH_OUTSIDE_ROOT message·detail.include 도 일반 사용자에게 서버 절대경로를 가림
+    (전역 관리자는 원문). 작업 생성(jobs)·비드 최적화 기준 Case 검사(opt)·스터디 입력 검사(doe)도 같은 헬퍼(pathmask.masks_paths)."""
+    outside = tmp_path / "outside_inc2"
+    outside.mkdir()
+    (outside / "y.inc").write_text("# y\n")
+    rad = mini_inputs["rad"]
+    txt = open(rad, encoding="utf-8").read().replace("/END", f"#include {outside / 'y.inc'}\n/END")
+    open(rad, "w", encoding="utf-8").write(txt)
+    r = _inspect(client, "RAD", rad)
+    d = r.json()["detail"]
+    assert r.status_code == 422 and d["code"] == "PATH_OUTSIDE_ROOT"
+    assert str(outside) not in r.text and "y.inc" in d["message"] and d["include"].endswith("y.inc")
+    ra = client.post(f"{API}/paths/inspect", json={"purpose": "RAD", "path": rad}, headers=H("tok-admin", True))
+    if ra.status_code == 422:
+        assert str(outside) in ra.text
+
+
+def test_pathmask_helper_masks_only_for_users():
+    from types import SimpleNamespace
+
+    from esl_platform.api.services.pathmask import mask_error
+    from esl_platform.core.errors import DomainError
+
+    st = SimpleNamespace(esl_root="/srv/esl_root", upload_root="/srv/up", input_roots=["/srv/in"], spdm_roots=[])
+    ctx = SimpleNamespace(settings=SimpleNamespace(storage=st))
+    exc = DomainError("PREREQUISITE_MISSING", "기준 Case 입력 rad 를 읽을 수 없습니다(/srv/in/a/m_0000.rad)", status=409,
+                      include="/opt/secret/x.inc", missing=["case_input"])
+    user = SimpleNamespace(is_global_admin=False)
+    m = mask_error(ctx, user, exc)
+    assert "/srv/in" not in m.message and "m_0000.rad" in m.message and "/opt/secret" not in m.extra["include"]
+    assert m.extra["missing"] == ["case_input"] and m.status == 409 and m.code == exc.code
+    assert mask_error(ctx, SimpleNamespace(is_global_admin=True), exc) is exc
+    plain = DomainError("X", "경로 없음")
+    assert mask_error(ctx, user, plain) is plain

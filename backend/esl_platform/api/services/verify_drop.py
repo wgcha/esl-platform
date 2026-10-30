@@ -111,10 +111,10 @@ def input_set(settings, core: dict[str, Any] | None, case: dict[str, Any]) -> di
         if not ref.get("found"):
             bad.append(f"{os.path.basename(sp)}(없음)")
             continue
-        real = os.path.realpath(ref["path"])
-        if not (real == rreal or real.startswith(rreal + os.sep)):
-            bad.append(f"{os.path.basename(sp)}(rad 폴더 밖)")
+        if not inside_rad_dir(ref["path"], rreal):
+            bad.append(f"{os.path.basename(sp)}(rad 폴더 밖·링크)")
             continue
+        real = os.path.realpath(ref["path"])
         key = os.path.normcase(real)
         if key in seen:
             continue
@@ -133,11 +133,27 @@ def input_set(settings, core: dict[str, Any] | None, case: dict[str, Any]) -> di
             names = []
         engines = [n for n in engine_names(stem, names, list(settings.verify_drop.engine_globs))
                    if n.casefold() != os.path.basename(rad).casefold()]
+    # 엔진 rad 도 include 와 같은 검사(v0.12.0 M1): 링크 거부, realpath ⊂ rad 폴더
+    bad_eng = [n for n in engines if not inside_rad_dir(os.path.join(rdir, n), rreal)]
+    if bad_eng:
+        probs.append(("VD_INCLUDE_LAYOUT", messages.text("VD_INCLUDE_LAYOUT") + f": {', '.join(n + '(엔진 rad 링크·rad 폴더 밖)' for n in bad_eng[:10])}"))
+    engines = [n for n in engines if n not in bad_eng]
     if not engines:
         probs.append(("VD_ENGINE_MISSING", messages.text("VD_ENGINE_MISSING")))
     for n in engines:
         files.append((n, os.path.join(rdir, n)))
     return {"rad": rad, "rad_dir": rdir, "files": files, "engines": engines, "problems": probs}
+
+
+def inside_rad_dir(path: str, rad_dir_real: str) -> bool:
+    """올릴 파일 검사(include·엔진 rad 공용): 링크(심볼릭·junction 대상) 아님, realpath 가 rad 폴더(realpath) 안."""
+    try:
+        if os.path.islink(path):
+            return False
+        real = os.path.realpath(path)
+    except OSError:
+        return False
+    return real == rad_dir_real or real.startswith(rad_dir_real.rstrip(os.sep) + os.sep)
 
 
 def extract_ready(settings, case: dict[str, Any]) -> bool:

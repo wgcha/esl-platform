@@ -2,7 +2,7 @@
 
 드라이브 경로 = 공용 계정 홈 기준 상대(`/` 구분, 앞 `/`·`~` 없음 — 어댑터 관례). 탐색·내려받기 범위 = 설정 scx_drive.roots 안만:
 요청 경로(루트 기준 상대)의 구간 검사(빈·`.`·`..`·`\\`·`~`·제어문자 거부) → 루트 rel 과 이음 → 어댑터 `rel_problem`(첫 구간 `.` 금지,
-길이) → health `forbidden_prefixes`(SPDM 마스터 루트, 대소문자·NFC 무시) → health `relay_base` 안. 루트 포함은 접두가 아닌 구간 비교.
+길이) → (쓰기만) health `forbidden_prefixes`(SPDM 마스터 루트, 대소문자·NFC 무시 — 읽기는 relay 가 판정) → health `relay_base` 안. 루트 포함은 접두가 아닌 구간 비교.
 """
 
 from __future__ import annotations
@@ -56,8 +56,11 @@ def sub_segments(path: str | None) -> list[str]:
     return segs
 
 
-def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str = "") -> str:
-    """완성된 드라이브 상대 경로 검사(어댑터 rel_problem + SPDM 금지 + relay_base 안). 통과하면 NFC 정규화 경로."""
+def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str = "", *, write: bool = False) -> str:
+    """완성된 드라이브 상대 경로 검사(어댑터 rel_problem + SPDM 금지 + relay_base 안). 통과하면 NFC 정규화 경로.
+    write=False(기능 A 읽기 — 목록·고르기·내려받기) = esl 은 SPDM 판정을 하지 않음(대시보드 relay 가 판정 — 403 PATH_NOT_ALLOWED
+    는 SCX_PATH_NOT_ALLOWED "대시보드가 SPDM 폴더 읽기를 막고 있습니다"로 안내). write=True(기능 B 업로드·제출 폴더) = 어댑터
+    forbidden_reason 그대로(SPDM 루트 안, 또는 프로젝트 폴더가 SPDM 루트이거나 그 상위 폴더면 거부)."""
     from simdash_adapters.hpc.scx_naming import forbidden_reason, rel_problem
 
     rel = unicodedata.normalize("NFC", rel or "")
@@ -65,7 +68,8 @@ def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str =
     if why:
         raise _bad(why)
     h = health or {}
-    fb = forbidden_reason(rel, list(h.get("forbidden_prefixes") or []), "", str(h.get("home_display") or home_display))
+    hd = str(h.get("home_display") or home_display)
+    fb = forbidden_reason(rel, list(h.get("forbidden_prefixes") or []), "", hd) if write else None
     if fb:
         raise _bad(fb)
     rb = str(h.get("relay_base") or "").strip("/")
