@@ -13,7 +13,7 @@ export const verify = {
   create: (body: VerifyDropIn) => request<VerifyDropCreateOut>("POST", "/verify-drops", { body }),
   list: (beadDoeId: string) => request<VerifyDropOut[]>("GET", "/verify-drops", { query: { bead_doe_id: beadDoeId } }),
   get: (id: string) => request<VerifyDropOut>("GET", `/verify-drops/${id}`),
-  /** SUBMISSION_UNKNOWN 정리: attach(잡 ID 연결) · abandon(포기 — 재시도 = 새 attempt) */
+  /** SUBMISSION_UNKNOWN 정리: attach(잡 ID 연결 — 서버가 VD_WAIT 부터 새 작업을 자동 큐) · abandon(포기 — [재시도] = 새 attempt) */
   resolve: (id: string, body: VerifyResolveIn) => request<VerifyDropOut>("POST", `/verify-drops/${id}/resolve`, { body }),
   csvUrl: (id: string) => `${API_PREFIX}/verify-drops/${id}/compare.csv`,
 };
@@ -23,6 +23,19 @@ export const VD_BUTTON = "검증 낙하";
 export const VD_START = "검증 낙하 시작";
 export const VD_CANCEL_CONFIRM = "SCX 잡도 종료합니다. 취소할까요?";
 export const VD_ABANDON_CONFIRM = "SCX 에 잡이 실제로 있으면 중복 실행될 수 있습니다. 포기할까요?";
+/** 결과 모름 안내 — 연결하면 서버가 그 잡을 이어서 기다리는 작업을 자동으로 큐(재시도 불필요), 포기하면 [재시도] = 새로 제출 */
+export const VD_UNKNOWN_HELP =
+  "SCX 화면에서 잡을 확인하세요. 잡이 있으면 ID 를 연결하면 그 잡을 이어서 기다립니다(자동). 잡이 없으면 포기한 뒤 [재시도]로 새로 제출합니다.";
+
+/** 씬별 제외 코드 → 짧은 문구(사유 본문은 서버 reason) */
+export const VD_EXCLUDE_LABEL: Record<string, string> = {
+  VD_CUMULATIVE_EXCLUDED: "누적 씬",
+  VD_ENGINE_MISSING: "엔진 rad 없음",
+  VD_INCLUDE_LAYOUT: "include 배치 불가",
+  VD_ALREADY_ACTIVE: "진행 중",
+  VD_CASE_NOT_READY: "원 Case 준비 안 됨",
+};
+export const excludeLabel = (code: string) => VD_EXCLUDE_LABEL[code] ?? code;
 
 export const TERMINAL_PHASE: VerifyDropPhase[] = ["DONE", "FAILED", "CANCELED"];
 export const isActiveDrop = (d: Pick<VerifyDropOut, "phase">) => !TERMINAL_PHASE.includes(d.phase);

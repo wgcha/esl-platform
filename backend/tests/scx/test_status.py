@@ -135,6 +135,27 @@ def test_relay_route_missing_disabled_mode_and_verify_order(settings_dict, mini)
     assert st["verify"] == {"enabled": True, "reason_code": None, "reason": None}
 
 
+def test_verify_drive_base_shared_home(settings_dict, mini):
+    """v0.12.0: hpc.scx.drive_base = "~"(공유 홈 자체) + verify_drop.enabled → 설정 경고 + 검증 낙하만 비활성 VD_DRIVE_BASE_SHARED
+    (PBS 제출은 계정 전용 폴더 "~/<폴더>"). 기능 A(조회)는 그대로."""
+    d = _with_scx(settings_dict, relay_url=mini.url, drive_base="~")
+    mini.mode = "ok"
+    mini.health.update(drive_mode="scx", writes_active=True, job_api=True, relay_base="")
+    dv = {**d, "verify_drop": {"enabled": True}}
+    lc = load_config_dict(dv, environ={})
+    assert lc.ok and [w.key for w in lc.warnings] == ["hpc.scx.drive_base"]
+    assert "VD_DRIVE_BASE_SHARED" in lc.warnings[0].message
+    st = status.evaluate(lc.settings, "p-1")
+    assert st["fetch"]["enabled"] is True
+    assert st["verify"]["reason_code"] == "VD_DRIVE_BASE_SHARED"
+    assert st["verify"]["reason"] == '검증 낙하는 전용 폴더가 필요합니다: hpc.scx.drive_base 를 "~/<전용 폴더>" 로'
+    # 검증 낙하가 꺼져 있으면 경고 없음, 전용 폴더면 통과
+    assert load_config_dict(d, environ={}).warnings == []
+    ok = load_config_dict({**_with_scx(settings_dict, relay_url=mini.url, drive_base="~/esl"), "verify_drop": {"enabled": True}},
+                          environ={})
+    assert ok.warnings == [] and status.evaluate(ok.settings, "p-1")["verify"]["enabled"] is True
+
+
 def test_health_ttl_cache(settings_dict, fake_relay):
     s = _settings(_with_scx(settings_dict, health_ttl_s=30))
     for _ in range(3):

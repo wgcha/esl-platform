@@ -46,6 +46,7 @@
     "SCX_WRITES_OFF": {"message": "대시보드 드라이브 쓰기가 꺼져 있습니다(SIMDASH_DRIVE_WRITES_ENABLED) — 검증 낙하만 불가", "retry": false},
     "SCX_JOB_API_OFF": {"message": "대시보드 어댑터에 잡 API 가 없습니다(v0.3.0 이상)", "retry": false},
     "SCX_APPLIANCE_MISSING": {"message": "SCX Radioss appliance(hpc.scx.appliance)가 설정되지 않았습니다(관리자)", "retry": false},
+    "VD_DRIVE_BASE_SHARED": {"message": "검증 낙하는 전용 폴더가 필요합니다: hpc.scx.drive_base 를 \"~/<전용 폴더>\" 로", "retry": false},
     "SCX_BASE_OUTSIDE_RELAY": {"message": "hpc.scx.drive_base 가 대시보드 릴레이 기준 폴더 밖입니다(관리자)", "retry": false},
     "SCX_NO_ROOTS": {"message": "이 프로젝트에 허용된 SCX 드라이브 루트가 없습니다(관리자: 설정 scx_drive.roots)", "retry": false},
     "SCX_AUTH_REQUIRED": {"message": "대시보드 관리 화면에서 SCX 재로그인이 필요합니다", "retry": false},

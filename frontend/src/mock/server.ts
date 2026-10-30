@@ -982,6 +982,7 @@ export class MockServer {
       created_at: t,
       updated_at: t,
       version: 1,
+      ...(typeof params.verify_drop_id === "string" ? { verify_drop_id: params.verify_drop_id } : {}),
       steps: this.stepsOf(c.id, jt).map((k, i) => ({
         step_no: i + 1,
         step_key: k,
@@ -1145,9 +1146,11 @@ export class MockServer {
         if (next.case_id && busyCases.has(next.case_id)) continue;
         next.state = "RUNNING";
         next.started_at = this.now();
-        next.current_step_no = 1;
-        next.steps![0].state = "RUNNING";
-        this.logs[next.id].push(`작업 시작 — step 1 ${next.steps![0].step_key}`);
+        // resume_from_step(재시도·검증 낙하 잡 ID 연결) = 앞 단계가 이미 SUCCEEDED → 첫 PENDING 단계부터
+        const first = next.steps!.find((x) => x.state === "PENDING") ?? next.steps![0];
+        next.current_step_no = first.step_no;
+        first.state = "RUNNING";
+        this.logs[next.id].push(`작업 시작 — step ${first.step_no} ${first.step_key}`);
         if (next.case_id) busyCases.add(next.case_id);
         n += 1;
       }

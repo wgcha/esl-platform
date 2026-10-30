@@ -1,10 +1,10 @@
 // v0.12.0 검증 낙하 카드(esl_scx_relay.md §10.2): 요청 묶음(batch)별 씬 1행 — 진행 칸(업로드·대기·실행·회수·비교)·상태·SCX 잡 ID.
 // 고른 행 아래: 드라이브 폴더(경로 복사) · 진행·로그·취소·재시도(JobProgress 재사용, SCX 잡이 있으면 취소 확인 창) ·
-// 결과 모름(UNKNOWN) = [잡 ID 연결]·[포기] · 완료 = 원 낙하 vs 검증 낙하 비교 표(정보 표시, PASS/FAIL 없음) + [CSV 받기].
+// 결과 모름(UNKNOWN) = [잡 ID 연결](서버가 그 잡을 기다리는 작업을 자동 큐)·[포기](이후 [재시도] = 새로 제출) · 완료 = 원 낙하 vs 검증 낙하 비교 표(정보 표시, PASS/FAIL 없음) + [CSV 받기].
 import { useEffect, useMemo, useState } from "react";
 import { downloadFile, errorText } from "../api/client";
 import {
-  PHASE_LABEL, VD_ABANDON_CONFIRM, VD_CANCEL_CONFIRM, VD_STAGES, VERDICT_LABEL, isActiveDrop, isUnknown, ratioText, reachedStage, stageMarks, valText, verify,
+  PHASE_LABEL, VD_ABANDON_CONFIRM, VD_CANCEL_CONFIRM, VD_STAGES, VD_UNKNOWN_HELP, VERDICT_LABEL, isActiveDrop, isUnknown, ratioText, reachedStage, stageMarks, valText, verify,
 } from "../api/verify";
 import type { EntryOut, VerifyCompare, VerifyDropOut } from "../api/types";
 import { dt } from "../lib/format";
@@ -74,7 +74,7 @@ export function VerifyCompareTable({ c }: { c: VerifyCompare }) {
       {c.warnings.length > 0 && (
         <ul className="reasons small warn-text">
           {c.warnings.map((w, i) => (
-            <li key={i}>{w.message || w.code}</li>
+            <li key={i}>{w}</li>
           ))}
         </ul>
       )}
@@ -102,7 +102,10 @@ function UnknownBox({ d, allowed, onChanged }: { d: VerifyDropOut; allowed: bool
   const why = !allowed ? "실행(power) 권한이 필요합니다" : null;
   return (
     <div className="warn-box vd-unknown" role="alert" data-testid="vd-unknown">
-      <div className="small">제출 결과를 알 수 없습니다(요청 {d.submission?.request_id}). SCX 화면에서 잡을 확인한 뒤 잡이 있으면 ID 를 연결하고, 없으면 포기하세요(포기 후 재시도는 새로 제출).</div>
+      <div className="small">
+        제출 결과를 알 수 없습니다(요청 {d.submission?.request_id}
+        {d.submission?.attempt ? ` · 시도 ${d.submission.attempt}` : ""}). {VD_UNKNOWN_HELP}
+      </div>
       <div className="inline-actions">
         <input className="mono" aria-label="SCX 잡 ID" placeholder="SCX 잡 ID" value={jobId} disabled={!!why || busy} onChange={(e) => setJobId(e.target.value)} />
         <span title={why ?? (!jobId.trim() ? "SCX 잡 ID 를 넣으세요" : undefined)}>
@@ -176,7 +179,7 @@ export function VerifyDropCard({ drops, entries, allowed, onChanged }: { drops: 
     for (const d of drops) m.set(d.batch_id, [...(m.get(d.batch_id) ?? []), d]);
     return [...m.values()];
   }, [drops]);
-  const titleOf = (d: VerifyDropOut) => entries.find((e) => e.id === d.entry_id)?.case_title ?? d.case_id;
+  const titleOf = (d: VerifyDropOut) => d.case_title ?? entries.find((e) => e.id === d.entry_id)?.case_title ?? d.case_id;
   // 기본 선택: 사람 확인이 필요한 행 → 진행 중 → 맨 위
   const fallback = drops.find(isUnknown)?.id ?? drops.find(isActiveDrop)?.id ?? drops[0]?.id ?? null;
   const cur = drops.find((d) => d.id === sel) ?? drops.find((d) => d.id === fallback) ?? null;

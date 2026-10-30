@@ -441,3 +441,26 @@ def test_old_config_without_upload_root_gets_filled(tmp_path):
     r2 = _run("write", inp)                                          # 업데이트(update-repo)와 같은 경로
     assert "storage.upload_root" in r2["config_changed_keys"] and "upload_root" in r2["deploy_added"]
     assert yaml.safe_load(cfg.read_text(encoding="utf-8"))["storage"]["upload_root"] == sc.fwd(str(tmp_path / "esl-input"))
+
+
+def test_scx_dashboard_root_autodetect(tmp_path):
+    """v0.12.0: hpc.scx.secret_file "" + dashboard_root 비어 있음 → esl 설치 폴더의 형제 중 대시보드(backend/app/services/drive/
+    config.py 가 있는 폴더)를 찾아 hpc.scx.dashboard_root 보충(1줄). 없으면 그대로, 설정 검증 통과."""
+    (tmp_path / "a").mkdir()
+    r0 = _run("write", _inputs(tmp_path / "a"))                       # 형제에 대시보드 없음 → 보충 안 함
+    assert r0["scx_autodetect"] == {"added": {}, "candidate": None} and r0["write"]["scx_autodetect"]["line"] is None
+    base = tmp_path / "b"
+    dash = base / "simdashboard"
+    (dash / "backend" / "app" / "services" / "drive").mkdir(parents=True)
+    (dash / "backend" / "app" / "services" / "drive" / "config.py").write_text("# dashboard\n")
+    (base / "other").mkdir()
+    inp = _inputs(base)
+    r = _run("write", inp)
+    want = sc.fwd(str(dash))
+    assert r["scx_autodetect"]["added"] == {"hpc.scx.dashboard_root": want}
+    assert "hpc.scx.dashboard_root" in r["write"]["scx_autodetect"]["line"]
+    d = yaml.safe_load(Path(r["config_path"]).read_text(encoding="utf-8"))
+    assert d["hpc"]["scx"]["dashboard_root"] == want and d["hpc"]["scx"]["secret_file"] == ""
+    assert r["write"]["validation"]["ok"] is True, r["write"]["validation"]
+    # 다시 돌려도 이미 값이 있으면 바꾸지 않음
+    assert _run("write", inp)["scx_autodetect"]["added"] == {}

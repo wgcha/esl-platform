@@ -6,9 +6,17 @@
 ### 추가
 - **Radioss 검증 낙하(서버)**: 강성 평가 스터디 ① 같은 모델·완료 결과에서 모핑 사본이 남은 안(순위 1~`paicad.keep_files_top`)을 골라 원 낙하 씬을 SCX 에서 다시 실행하고 원 낙하와 비교합니다. 씬 선택 = **가장 나쁜 씬 N개**(ESL별 개선 비 r 큰 순, 기본 `verify_drop.default_worst_n`) 또는 **고른 ESL 전부**, 한 번에 `verify_drop.max_scenes` 건까지. 제출 전 대화상자용 계획(`POST /verify-drops/plan` — 씬·제외 사유·제출 건수·예상 시간·고를 수 있는 안·Radioss 기본값)
 - 씬마다 원 Case 입력(rad + include + 엔진 rad) 사본에 **노드 ID 기준으로 /NODE 좌표 줄만** 고쳐(바뀐 줄·바뀐 파일만, 원본 불변) SCX 드라이브 새 폴더 `<drive_base>/<프로젝트>/VD<번호>_<UTC>` 에 올리고 Radioss 제출 → 상태 폴링 → h3d·out 회수 → 서버 추출 → **비교 표**(최대 ε_eq·상위 요소 ε_eq·최대 상대 변위·t* 값, 원 낙하 대비 비, ESL 선형 예측 비, 개선/악화/비슷, 방향 일치) + CSV. PASS/FAIL 판정은 없습니다
-- 제출 결과를 모를 때(대시보드 응답 없음)는 자동으로 다시 내지 않고 멈춤 — **[잡 ID 연결]**(SCX 화면의 잡 ID → 폴링부터 이어감) 또는 **[포기]**(뒤 [재시도]는 새 제출). 작업 취소는 실행 중인 SCX 잡을 한 번 종료 요청
-- 제외(경고): 누적 씬(이전 런 상태 파일 .sta/.str), include 가 rad 폴더 밖·절대경로·`include_path_map`, 엔진 rad 없음, 원 Case 추출 없음, 같은 안·씬 진행 중. ②③ 스터디는 거부
+- 제출 결과를 모를 때(대시보드 응답 없음)는 자동으로 다시 내지 않고 멈춤 — **[잡 ID 연결]**(SCX 화면의 잡 ID → 서버가 폴링부터 새 작업을 자동으로 큐, [재시도] 불필요) 또는 **[포기]**(뒤 [재시도]는 새 제출). 작업 취소는 실행 중인 SCX 잡을 한 번 종료 요청
+- 제외(경고): 누적 씬(이전 런 상태 파일 .sta/.str), include 가 rad 폴더 밖·절대경로·`include_path_map`, 엔진 rad 없음, 원 Case 가 없거나 추출 없음(`VD_CASE_NOT_READY`), 같은 안·씬 진행 중. ②③ 스터디는 거부
+- **검증 낙하 화면**: 스터디 받기 줄 **[검증 낙하]**(① 같은 모델·완료·모핑 사본이 남은 안만 — 아니면 비활성 사유) → 대화상자(안·씬 선택 '가장 나쁜 씬 N개 | 고른 ESL 전부'·씬 표·제외 사유·제출 건수·예상 시간·상한·고급 Radioss 버전/ncpu) → 카드(묶음별 씬 진행 칸 업로드·대기·실행·회수·비교, SCX 잡 ID, 드라이브 폴더 경로 복사, 취소 확인 창, 결과 모름 [잡 ID 연결]·[포기], 완료 비교 표·CSV)
+- 설정 `verify_drop.*`(enabled·max_scenes·default_worst_n·max_running …)·드라이브 폴더 규칙은 관리자 매뉴얼 §2.7.3, 실기 체크리스트 `docs/manual/scx_check.md` §7
+- 환경 점검 `scx_drive.enabled`(켜짐/꺼짐 · roots 개수)
+- `hpc.scx.secret_file: ""` = **대시보드 비밀 파일 따라가기**: env `SIMDASH_SCX_RELAY_SECRET_FILE` → 새 키 `hpc.scx.dashboard_root` 의 `.env`·`backend/.env`(그 키 줄만) → `<런타임>/secrets/scx_relay_key` 순. 설치·업데이트가 대시보드 폴더(esl 설치 폴더의 형제)를 찾아 `dashboard_root` 를 채움, 환경 점검에 출처 표시(값 미출력)
+- 검증 낙하 제출 폴더 분리: `hpc.scx.drive_base: "~"`(공유 홈 자체)이면 검증 낙하만 비활성 `VD_DRIVE_BASE_SHARED` + 설정 경고 — `"~/<전용 폴더>"`(권장 `~/esl`)
 ### 수정
+- 환경 점검 `scx.relay`: `scx_drive`·`verify_drop` 이 둘 다 꺼져 릴레이를 시험하지 않았을 때 'VD_DISABLED' 경고 대신 **SKIP**("SCX 드라이브·검증 낙하 모두 꺼짐"). 하나라도 켜져 있으면 켜진 쪽의 실제 원인(`SCX_RELAY_UNREACHABLE` 등)을 표시(`*_DISABLED` 아님)
+- `hpc:`(또는 `hpc.scx:`) 밑에 최상위 키(`scx_drive`·`verify_drop`·`worker` 등)를 들여쓰면 조용히 무시되던 것을 설정 검증(설치 콘솔·백엔드 로그)·환경 점검 `config.valid` 에서 경고 "hpc.scx_drive 는 최상위 키입니다 — 들여쓰기를 없애세요"(physicsai 공용 키는 계속 무시)
+- 단면 그래프: 첫 자료가 온 순간 기본 배율로 바로 그림(한 박자 뒤 배율이 바뀌며 방금 고친 축 입력이 덮어써지던 경우)
 - `hpc.scx.secret_file` 상대경로는 설정 오류(절대경로만, SCX 기능만 비활성)
 - SCX 내려받기 도중 연결이 끊기면 '해시 불일치' 대신 **전송 중단**(`SCX_TRANSFER_INTERRUPTED`, 자동 재시도)으로 표시
 - 너무 큰 파일 안내가 실제로 막은 설정(`upload.max_file_bytes`·`hpc.scx.max_download_bytes`·대시보드 `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES`)을 가리킴

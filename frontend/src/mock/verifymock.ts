@@ -1,8 +1,8 @@
 // 목 서버 v0.12.0 Radioss 검증 낙하(계약 esl_scx_relay.md §3 SR-D-10·11·15·16, §7·§7.1·§8·§9.2·§9.3 — 기능 B).
-// 백엔드·워커는 병렬 개발 중 — 이 목은 계약 스키마(VerifyDropIn·VerifyPlanOut·VerifyDropOut·VerifyCompare)와 오류 코드만 따른다.
+// 서버(backend esl_platform/api/schemas.py Verify*·openapi_p1b.json)와 같은 응답 형태·오류 코드를 따른다.
 // 작업: VERIFY_DROP(XFER: VD_PREP → VD_STAGE → VD_SUBMIT → VD_WAIT → VD_FETCH) 끝에 VERIFY_POST(SLOT) 큐, 끝나면 비교 결과.
 import type {
-  DoeResultOut, DoeScenario, EntryOut, JobOut, ScxAvail, StepOut, VerifyCompare, VerifyCompareRow, VerifyDropOut, VerifyExcluded, VerifyPlanOut, VerifyPlanScene,
+  DoeResultOut, DoeScenario, EntryOut, JobOut, ScxAvail, StepOut, VerifyCompare, VerifyCompareRow, VerifyDropOut, VerifyExcludedOut, VerifyPlanOut, VerifySceneOut, VerifySubmissionOut,
 } from "../api/types";
 
 interface MockResponse {
@@ -33,9 +33,13 @@ interface Ctx {
   now: () => string;
   userName: () => string;
 }
-type Drop = Omit<VerifyDropOut, "job_ids"> & { project_id: string; attempt: number };
+type Drop = Omit<VerifyDropOut, "job_ids" | "job"> & { attempt: number };
+/** 목 계산용: r_c 가 늘 있음 */
+type Scene = VerifySceneOut & { r_c: number };
+const sub = (request_id: string, state: VerifySubmissionOut["state"], attempt: number, error_code: string | null = null, error_message: string | null = null): VerifySubmissionOut => ({ request_id, state, attempt, error_code, error_message });
 
 const TERMINAL = ["DONE", "FAILED", "CANCELED"];
+const JOB_TERMINAL = ["SUCCEEDED", "FAILED", "INTERRUPTED", "CANCELED"];
 const HPC_VERSION = /^\d{2,4}(\.\d{1,3}){0,2}$/;
 const MB = 1024 ** 2;
 
@@ -49,6 +53,8 @@ export class VerifyMock {
   sameTol = 0.02;
   /** include 그래프에 상태 파일(.sta·.str)이 있는 Case(목) — 누적 씬 제외(SR-D-15) */
   stateCases = new Set<string>(["c-lib-2"]);
+  /** 원 Case 추출 결과가 없는 Case(목) — VD_CASE_NOT_READY 제외 */
+  notReadyCases = new Set<string>();
   /** 다음 VD_SUBMIT 결과를 UNKNOWN 으로(시험·시연) */
   unknownNext = false;
   /** 목 SCX 잡 ID 가 실제로 있는지(resolve attach 404 시험) */
@@ -79,8 +85,8 @@ export class VerifyMock {
       if (last.state === "CANCELED") d.phase = "CANCELED";
       else if (last.state === "FAILED" || last.state === "INTERRUPTED") d.phase = "FAILED";
     }
-    const { project_id: _p, attempt: _a, ...rest } = d;
-    return { ...rest, job_ids: js.map((j) => j.id) };
+    const { attempt: _a, ...rest } = d;
+    return { ...rest, job_ids: js.map((j) => j.id), job: last ?? null };
   }
 
   private activeFor(studyId: string, design: string, caseId: string) {
@@ -110,8 +116,8 @@ export class VerifyMock {
     if (hpc.version != null && hpc.version !== "" && !HPC_VERSION.test(String(hpc.version))) return err(422, "INVALID_PARAMS", "Radioss 버전 형식이 올바르지 않습니다(예 26.1)");
     if (hpc.ncpu != null && !(Number.isInteger(hpc.ncpu) && (hpc.ncpu as number) >= 1 && (hpc.ncpu as number) <= 4096)) return err(422, "INVALID_PARAMS", "ncpu 는 1~4096 정수입니다");
     const es = this.ctx.entries();
-    const excluded: VerifyExcluded[] = [];
-    const byCase = new Map<string, VerifyPlanScene>();
+    const excluded: VerifyExcludedOut[] = [];
+    const byCase = new Map<string, Scene>();
     for (const eid of st.entry_ids) {
       const e = es.find((x) => x.id === eid);
       const p = row.per_esl?.find((x) => x.entry_id === eid);
@@ -120,14 +126,18 @@ export class VerifyMock {
         continue;
       }
       if (this.stateCases.has(e.case_id)) {
-        excluded.push({ entry_id: eid, case_id: e.case_id, code: "VD_CUMULATIVE_EXCLUDED", reason: "이전 런 상태를 쓰는 누적 씬은 검증 낙하 대상이 아닙니다 — 연쇄 실행은 후속" });
+        excluded.push({ entry_id: eid, case_id: e.case_id, case_title: e.case_title ?? null, code: "VD_CUMULATIVE_EXCLUDED", reason: "이전 런 상태를 쓰는 누적 씬은 검증 낙하 대상이 아닙니다 — 연쇄 실행은 후속" });
         continue;
       }
       if (this.activeFor(String(b.bead_doe_id), design, e.case_id)) {
-        excluded.push({ entry_id: eid, case_id: e.case_id, code: "VD_ALREADY_ACTIVE", reason: "같은 안·씬의 검증 낙하가 진행 중입니다" });
+        excluded.push({ entry_id: eid, case_id: e.case_id, case_title: e.case_title ?? null, code: "VD_ALREADY_ACTIVE", reason: "같은 안·씬의 검증 낙하가 진행 중입니다" });
         continue;
       }
-      const sc: VerifyPlanScene = { entry_id: eid, case_id: e.case_id, case_title: e.case_title ?? null, r_c: p.ratio, r_umax: +(p.ratio ** 0.9).toFixed(4), r_epsmax: +(p.ratio ** 0.7).toFixed(4) };
+      if (this.notReadyCases.has(e.case_id)) {
+        excluded.push({ entry_id: eid, case_id: e.case_id, case_title: e.case_title ?? null, code: "VD_CASE_NOT_READY", reason: "원 Case 의 추출 결과(01_extract)가 없어 비교할 수 없습니다 — Case 추출을 먼저 끝내세요" });
+        continue;
+      }
+      const sc: Scene = { entry_id: eid, case_id: e.case_id, case_title: e.case_title ?? e.case_id, label: `${e.case_title ?? e.case_id} · ${eid}`, r_c: p.ratio, r_umax: +(p.ratio ** 0.9).toFixed(4), r_epsmax: +(p.ratio ** 0.7).toFixed(4) };
       const cur = byCase.get(e.case_id);
       if (!cur || sc.r_c > cur.r_c) byCase.set(e.case_id, sc);
     }
@@ -138,7 +148,10 @@ export class VerifyMock {
     if (!scenes.length) return err(409, "VD_NO_SCENES", "검증 낙하할 씬이 없습니다 — 고른 ESL 이 모두 누적 씬이거나 진행 중입니다", { excluded });
     return {
       pid: st.project_id,
-      plan: { scenes, excluded, n_submit: scenes.length, est_hours: this.estHours, max_scenes: this.maxScenes, designs, default_n: this.defaultN, hpc_default: this.hpcDefault },
+      plan: {
+        design_id: design, mode, scenes, excluded, n_submit: scenes.length, est_hours: this.estHours, max_scenes: this.maxScenes,
+        default_worst_n: this.defaultN, default_n: this.defaultN, designs, hpc: { ...this.hpcDefault }, hpc_default: { ...this.hpcDefault },
+      },
     };
   }
 
@@ -163,6 +176,7 @@ export class VerifyMock {
           bead_doe_id: String(b.bead_doe_id),
           design_id: String(b.design_id),
           case_id: sc.case_id,
+          case_title: sc.case_title,
           entry_id: sc.entry_id,
           title: (b.title as string) ?? null,
           phase: "PREP",
@@ -203,17 +217,29 @@ export class VerifyMock {
         if (!this.ctx.canRun(d.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
         if (b.version !== d.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로고침하세요.");
         if (d.submission?.state !== "UNKNOWN") return err(409, "VD_NOT_UNKNOWN", "결과 모름 상태가 아닙니다");
-        if (b.action === "attach") {
+        const action = b.action === "link" ? "attach" : b.action; // 서버: link = attach
+        if (action === "attach") {
           const sj = String(b.scx_job_id ?? "").trim();
           if (!sj || !this.scxJobs.has(sj)) return err(404, "SCX_JOB_NOT_FOUND", "SCX 에 그 잡 ID 가 없습니다");
           if (this.drops.some((x) => x !== d && x.scx_job_id === sj)) return err(409, "SCX_JOB_ID_IN_USE", "다른 검증 낙하에 연결된 잡 ID 입니다");
+          if (this.jobsOf(d.id).some((j) => !JOB_TERMINAL.includes(j.state))) return err(409, "JOB_ACTIVE", "이 검증 낙하의 작업이 대기 중이거나 실행 중입니다");
           d.submission = { ...d.submission, state: "ATTACHED" };
           d.scx_job_id = sj;
           d.scx_status = "Queued";
-        } else if (b.action === "abandon") {
+          d.phase = "SUBMITTED";
+          // 서버와 같이: 연결하면 VD_WAIT(폴링)부터 새 VERIFY_DROP 작업을 자동으로 큐([재시도] 불필요)
+          const last = [...this.jobsOf(d.id)].reverse().find((j) => j.job_type === "VERIFY_DROP");
+          if (last) {
+            const nj = this.ctx.newJob(d.project_id, "VERIFY_DROP", { ...last.params });
+            nj.retry_of_job_id = last.id;
+            nj.resume_from_step = 4;
+            for (const st of nj.steps ?? []) if (st.step_no < 4) Object.assign(st, { state: "SUCCEEDED", progress_pct: 100 });
+          }
+        } else if (action === "abandon") {
           d.submission = { ...d.submission, state: "ABANDONED" };
+          d.scx_status = null;
           d.attempt += 1;
-        } else return err(422, "INVALID_PARAMS", "action 은 attach·abandon 입니다");
+        } else return err(422, "INVALID_PARAMS", "action 은 attach·link·abandon 입니다");
         d.version += 1;
         d.updated_at = this.ctx.now();
         return ok(this.out(d));
@@ -276,14 +302,14 @@ export class VerifyMock {
         }
         if (this.unknownNext) {
           this.unknownNext = false;
-          d.submission = { request_id: rid, state: "UNKNOWN" };
+          d.submission = sub(rid, "UNKNOWN", d.attempt, "SCX_SUBMISSION_UNKNOWN", "제출 응답을 받지 못했습니다");
           d.version += 1;
           return this.fail(j, step, "SCX_SUBMISSION_UNKNOWN", "제출 결과를 알 수 없습니다. SCX 화면에서 잡을 확인한 뒤 [잡 ID 연결] 또는 [포기]를 고르세요");
         }
         this.scxSeq += 1;
         d.scx_job_id = `SCX-26-${this.scxSeq}`;
         this.scxJobs.add(d.scx_job_id);
-        d.submission = { request_id: rid, state: "SUBMITTED" };
+        d.submission = sub(rid, "SUBMITTED", d.attempt);
         d.scx_status = "Queued";
         set("SUBMITTED");
         res = inc(100);
@@ -383,7 +409,7 @@ export class VerifyMock {
       const p = st.result!.ranking.find((r) => r.id === design)?.per_esl?.find((x) => x.entry_id === e?.id);
       if (!e || !p) return null;
       const d: Drop = {
-        id: this.id("vd"), batch_id: batch, project_id: st.project_id, bead_doe_id: studyId, design_id: design, case_id: caseId, entry_id: e.id, title: null, phase: "PREP", version: 1,
+        id: this.id("vd"), batch_id: batch, project_id: st.project_id, bead_doe_id: studyId, design_id: design, case_id: caseId, case_title: e.case_title ?? null, entry_id: e.id, title: null, phase: "PREP", version: 1,
         drive_dir_display: null, scx_job_id: null, scx_status: null, submission: null, files_n: 0, files_bytes: 0,
         predicted: { r_umax: +(p.ratio ** 0.9).toFixed(4), r_epsmax: +(p.ratio ** 0.7).toFixed(4), r_c: p.ratio },
         result: null, created_by_name: this.ctx.userName(), created_at: this.ctx.now(), updated_at: this.ctx.now(), attempt: 1,

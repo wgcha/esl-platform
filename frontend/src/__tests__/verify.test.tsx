@@ -8,7 +8,7 @@ import { MockServer } from "../mock/server";
 import { VD_ABANDON_CONFIRM, VD_CANCEL_CONFIRM, eligibleDesigns, stageMarks, verifyButtonReason } from "../api/verify";
 import { JOB_STEP_KEYS, JOB_TYPE_LABEL } from "../api/history";
 import { GUIDE } from "../pages/guide/content";
-import type { DoeResultOut, VerifyDropOut, VerifyPlanOut } from "../api/types";
+import type { DoeResultOut, VerifyDropCreateOut, VerifyDropOut, VerifyPlanOut } from "../api/types";
 
 vi.setConfig({ testTimeout: 30000 });
 const STUDY = "/p/p-body/doe/doe-1";
@@ -25,13 +25,16 @@ describe("검증 낙하 — 목 서버 계약", () => {
     const p = post(s, "/verify-drops/plan", { bead_doe_id: "doe-1", design_id: best, mode: "worst" });
     expect(p.status).toBe(200);
     const plan = p.body as VerifyPlanOut;
-    expect(Object.keys(plan).sort()).toEqual(["default_n", "designs", "est_hours", "excluded", "hpc_default", "max_scenes", "n_submit", "scenes"]);
+    // 서버 VerifyPlanOut 키(openapi required 전부)
+    expect(Object.keys(plan).sort()).toEqual(["default_n", "default_worst_n", "design_id", "designs", "est_hours", "excluded", "hpc", "hpc_default", "max_scenes", "mode", "n_submit", "scenes"]);
+    expect([plan.design_id, plan.mode, plan.default_worst_n, plan.hpc]).toEqual([best, "worst", 3, { version: "26.1", ncpu: 16 }]);
+    expect(Object.keys(plan.excluded[0]).sort()).toEqual(["case_id", "case_title", "code", "entry_id", "reason"]);
     expect(plan.excluded.map((x) => [x.case_id, x.code])).toEqual([["c-lib-2", "VD_CUMULATIVE_EXCLUDED"]]);
     expect(plan.scenes.length).toBe(plan.n_submit);
-    const r = plan.scenes.map((x) => x.r_c);
+    const r = plan.scenes.map((x) => x.r_c ?? 0);
     expect([...r].sort((a, b) => b - a)).toEqual(r); // 가장 나쁜(큰 r) 먼저
-    expect(Object.keys(plan.scenes[0]).sort()).toEqual(["case_id", "case_title", "entry_id", "r_c", "r_epsmax", "r_umax"]);
-    expect(plan.designs!.map((d) => d.rank)).toEqual([1, 2, 3]);
+    expect(Object.keys(plan.scenes[0]).sort()).toEqual(["case_id", "case_title", "entry_id", "label", "r_c", "r_epsmax", "r_umax"]);
+    expect(plan.designs.map((d) => d.rank)).toEqual([1, 2, 3]);
     const one = post(s, "/verify-drops/plan", { bead_doe_id: "doe-1", design_id: best, mode: "worst", n: 1 }).body as VerifyPlanOut;
     expect(one.n_submit).toBe(1);
     expect(one.scenes[0].case_id).toBe(plan.scenes[0].case_id);
@@ -42,6 +45,12 @@ describe("검증 낙하 — 목 서버 계약", () => {
     expect(post(s, "/verify-drops/plan", { bead_doe_id: "nope", design_id: best, mode: "worst" }).status).toBe(404);
     expect(post(s, "/verify-drops/plan", { bead_doe_id: "doe-2", design_id: best, mode: "worst" }).body).toMatchObject({ detail: { code: "VD_SCENARIO_UNSUPPORTED" } });
     expect(post(s, "/verify-drops/plan", { bead_doe_id: "doe-1", design_id: best, mode: "worst", hpc: { ncpu: 0 } }).body).toMatchObject({ detail: { code: "INVALID_PARAMS" } });
+    // 원 Case 추출 결과 없음 → 씬별 제외 VD_CASE_NOT_READY(오류 아님)
+    s.verify.notReadyCases = new Set(["c-demo"]);
+    const nr = post(s, "/verify-drops/plan", { bead_doe_id: "doe-1", design_id: best, mode: "all" }).body as VerifyPlanOut;
+    expect(nr.excluded.map((x) => x.code).sort()).toEqual(["VD_CASE_NOT_READY", "VD_CUMULATIVE_EXCLUDED"]);
+    expect(nr.scenes.some((x) => x.case_id === "c-demo")).toBe(false);
+    s.verify.notReadyCases = new Set();
     s.verify.stateCases = new Set(["c-demo", "c-lib-2", "c-lib-3"]);
     expect(post(s, "/verify-drops/plan", { bead_doe_id: "doe-1", design_id: best, mode: "worst" })).toMatchObject({ status: 409, body: { detail: { code: "VD_NO_SCENES" } } });
     s.scx.verifyMode = "disabled";
@@ -55,8 +64,9 @@ describe("검증 낙하 — 목 서버 계약", () => {
     const best = bestOf(s);
     const c = post(s, "/verify-drops", { bead_doe_id: "doe-1", design_id: best, mode: "all" });
     expect(c.status).toBe(201);
-    const out = c.body as { batch_id: string; drops: VerifyDropOut[]; excluded: unknown[] };
+    const out = c.body as VerifyDropCreateOut;
     expect(out.drops.length).toBe(2);
+    expect(out.drops[0]).toMatchObject({ project_id: "p-body", case_title: expect.any(String), job: { job_type: "VERIFY_DROP", verify_drop_id: out.drops[0].id } });
     expect(out.drops.every((d) => d.batch_id === out.batch_id && d.phase === "PREP" && d.predicted)).toBe(true);
     const j = s.jobs.find((x) => x.id === out.drops[0].job_ids[0])!;
     expect([j.job_type, j.lane]).toEqual(["VERIFY_DROP", "XFER"]);
@@ -68,7 +78,7 @@ describe("검증 낙하 — 목 서버 계약", () => {
     expect(list.map((d) => d.phase)).toEqual(["DONE", "DONE"]);
     const d = list[0];
     expect(d.scx_job_id).toMatch(/^SCX-/);
-    expect(d.submission!.state).toBe("SUBMITTED");
+    expect(d.submission).toMatchObject({ state: "SUBMITTED", attempt: 1, error_code: null, error_message: null });
     const post2 = s.jobs.find((x) => x.id === d.job_ids[1])!;
     expect([post2.job_type, post2.lane]).toEqual(["VERIFY_POST", "SLOT"]);
     expect(d.result!.rows.map((r) => r.key)).toEqual(["eps_peak", "eps_hot", "disp_peak", "eps_tstar", "disp_tstar"]);
@@ -83,7 +93,7 @@ describe("검증 낙하 — 목 서버 계약", () => {
     const c = post(s, "/verify-drops", { bead_doe_id: "doe-1", design_id: bestOf(s), mode: "worst", n: 1 }).body as { drops: VerifyDropOut[] };
     s.drain();
     let d = get(s, `/verify-drops/${c.drops[0].id}`).body as VerifyDropOut;
-    expect([d.phase, d.submission!.state]).toEqual(["FAILED", "UNKNOWN"]);
+    expect([d.phase, d.submission!.state, d.submission!.error_code]).toEqual(["FAILED", "UNKNOWN", "SCX_SUBMISSION_UNKNOWN"]);
     expect(d.submission!.request_id).toBe(`esl-vd-${d.id}-a1`);
     const j = s.jobs.find((x) => x.id === d.job_ids[0])!;
     expect(j.failure_code).toBe("SCX_SUBMISSION_UNKNOWN");
@@ -98,6 +108,23 @@ describe("검증 낙하 — 목 서버 계약", () => {
     d = get(s, `/verify-drops/${d.id}`).body as VerifyDropOut;
     expect(d.phase).toBe("DONE");
     expect(d.submission!.request_id).toBe(`esl-vd-${d.id}-a2`);
+    expect(d.submission!.attempt).toBe(2);
+  });
+
+  it("결과 모름 → 잡 ID 연결(link = attach): 서버가 VD_WAIT 부터 새 작업 자동 큐 — 재시도 없이 DONE", () => {
+    const s = new MockServer({ user: "power" });
+    s.verify.unknownNext = true;
+    const c = post(s, "/verify-drops", { bead_doe_id: "doe-1", design_id: bestOf(s), mode: "worst", n: 1 }).body as VerifyDropCreateOut;
+    s.drain();
+    let d = get(s, `/verify-drops/${c.drops[0].id}`).body as VerifyDropOut;
+    expect(d.submission!.state).toBe("UNKNOWN");
+    d = post(s, `/verify-drops/${d.id}/resolve`, { version: d.version, action: "link", scx_job_id: "SCX-26-4410" }).body as VerifyDropOut;
+    expect([d.phase, d.submission!.state, d.scx_job_id, d.job_ids.length]).toEqual(["SUBMITTED", "ATTACHED", "SCX-26-4410", 2]);
+    const nj = s.jobs.find((x) => x.id === d.job_ids[1])!;
+    expect([nj.job_type, nj.state, nj.resume_from_step, nj.retry_of_job_id]).toEqual(["VERIFY_DROP", "QUEUED", 4, d.job_ids[0]]);
+    s.drain();
+    d = get(s, `/verify-drops/${d.id}`).body as VerifyDropOut;
+    expect([d.phase, d.scx_job_id]).toEqual(["DONE", "SCX-26-4410"]);
   });
 });
 
@@ -191,8 +218,8 @@ describe("검증 낙하 — 화면", () => {
     expect(within(card).getByTestId("vd-drive-dir").textContent).toMatch(/^\/Users\/vd\.dashboard\/esl\//);
   });
 
-  it("결과 모름 행: 사유 + [잡 ID 연결]·[포기](확인 창), 연결하면 재시도 가능", async () => {
-    renderApp(STUDY, "power", (s) => s.verify.seedDemo("doe-1"));
+  it("결과 모름 행: 사유 + [잡 ID 연결]·[포기](확인 창), 연결하면 서버가 자동 재큐잉(재시도 버튼 없음)", async () => {
+    const { server } = renderApp(STUDY, "power", (s) => s.verify.seedDemo("doe-1"));
     const box = await screen.findByTestId("vd-unknown", {}, LONG);
     expect(box.textContent).toMatch(/제출 결과를 알 수 없습니다/);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -204,9 +231,14 @@ describe("검증 낙하 — 화면", () => {
     fireEvent.change(within(box).getByRole("textbox", { name: "SCX 잡 ID" }), { target: { value: "SCX-26-4410" } });
     fireEvent.click(attach);
     await waitFor(() => expect(screen.queryByTestId("vd-unknown")).toBeNull(), LONG);
-    const detail = screen.getByTestId("vd-detail");
-    expect(await within(detail).findByRole("button", { name: "재시도" }, LONG)).toBeTruthy();
     expect(screen.getByTestId("vd-card").textContent).toMatch(/SCX-26-4410/);
+    // 연결 = 새 VERIFY_DROP 작업이 이미 큐(VD_WAIT 부터) — 화면은 [재시도]를 요구하지 않는다
+    const d = server.verify.drops.find((x) => x.scx_job_id === "SCX-26-4410")!;
+    const js = server.jobs.filter((j) => j.params.verify_drop_id === d.id);
+    expect(js[js.length - 1]).toMatchObject({ job_type: "VERIFY_DROP", state: "QUEUED", resume_from_step: 4 });
+    const detail = screen.getByTestId("vd-detail");
+    await waitFor(() => expect(within(detail).queryByRole("button", { name: "재시도" })).toBeNull(), LONG);
+    expect(detail.textContent).not.toMatch(/재시도/);
   });
 
   it("비활성: 대시보드 드라이브 쓰기 꺼짐 사유(일반 사용자는 짧게)", async () => {

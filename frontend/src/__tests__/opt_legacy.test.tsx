@@ -54,8 +54,9 @@ describe("새 비드 최적화 — 운영 서버 응답(빈 화면 회귀)", () 
     await screen.findByRole("heading", { name: "새 비드 최적화" });
     await waitFor(() => expect(screen.getByTestId("opt-blocked").textContent).toBe("최적화 실행 불가: 비드 최적화가 꺼져 있습니다 — 관리자 문의"));
     expect(screen.queryByTestId("screen-error")).toBeNull();
+    // 버튼 사유는 설정(st)뿐 아니라 ESL 목록(all.data)도 받은 뒤 정해진다 — 경고 줄보다 늦을 수 있어 기다린다(부하 시 '불러오는 중…' 순간)
+    await waitFor(() => expect(runReason()).toBe("비드 최적화가 꺼져 있습니다 — 관리자 문의"));
     expect(runBtn().disabled).toBe(true);
-    expect(runReason()).toBe("비드 최적화가 꺼져 있습니다 — 관리자 문의");
     await screen.findByRole("radiogroup", { name: "하중 선정 전략" });              // ④ 카드(예외 지점) 정상
     const info = screen.getByRole("button", { name: "방법·출처" }) as HTMLButtonElement;
     expect(info.disabled).toBe(true);
@@ -70,7 +71,8 @@ describe("새 비드 최적화 — 운영 서버 응답(빈 화면 회귀)", () 
       s.opt.settings = legacySettings({ enabled: true, solver_reason: "서버 OptiStruct 경로가 설정되지 않았습니다 — 관리자 문의" });
     });
     await waitFor(() => expect(screen.getByTestId("opt-blocked").textContent).toBe("최적화 실행 불가: 서버 OptiStruct 경로가 설정되지 않았습니다 — 관리자 문의"));
-    expect(runReason()).toBe("서버 OptiStruct 경로가 설정되지 않았습니다 — 관리자 문의");
+    await waitFor(() => expect(runReason()).toBe("서버 OptiStruct 경로가 설정되지 않았습니다 — 관리자 문의")); // ESL 목록 도착 전 '불러오는 중…'
+    expect(runBtn().disabled).toBe(true);
   });
 
   it("부분 응답(loads·bead_defaults·method_sources 없음)·s1-check 409·plan-view 500: 화면 유지", async () => {

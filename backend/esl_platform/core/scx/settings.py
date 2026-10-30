@@ -87,6 +87,8 @@ def config_problems(settings) -> list[str]:
     out = [f"hpc.scx: {p}" for p in _adapter_problems(cfg)]
     if cfg.secret_file and not secret_path_absolute(cfg.secret_file):
         out.append("hpc.scx.secret_file: 절대경로여야 합니다(SR-D-18 — 상대경로는 작업 폴더에 따라 다른 파일을 가리킴)")
+    if getattr(cfg, "dashboard_root", "") and not secret_path_absolute(cfg.dashboard_root):
+        out.append("hpc.scx.dashboard_root: 대시보드 설치 폴더 절대경로여야 합니다")
     if not CLIENT_NAME_RE.match(cfg.client_name or ""):
         out.append("hpc.scx.client_name: ^[a-z0-9_-]{1,32}$")
     out += drive_problems(settings)
@@ -102,6 +104,97 @@ def secret_path_absolute(p: str) -> bool:
     if not s or s.startswith("~"):
         return False
     return bool(_WIN_ABS.match(s)) or (os.name != "nt" and s.startswith("/"))
+
+
+# ---------------------------------------------------------------- v0.12.0 비밀 파일 경로 해석(secret_file "" = 대시보드 따라가기)
+DASH_SECRET_KEY = "SIMDASH_SCX_RELAY_SECRET_FILE"
+SECRET_SOURCE_LABEL = {"config": "설정", "env": "env", "dashboard_env": "대시보드 .env", "runtime": "런타임 기본"}
+SECRET_MISSING_HINT = ("hpc.scx.secret_file 이 비어 있고 비밀 파일을 찾지 못했습니다 — env SIMDASH_SCX_RELAY_SECRET_FILE, "
+                       "hpc.scx.dashboard_root(대시보드 .env 의 SIMDASH_SCX_RELAY_SECRET_FILE), <런타임>/secrets/scx_relay_key "
+                       "중 하나를 두거나 secret_file 에 절대경로를 쓰세요")
+
+
+def _dotenv_value(line: str, key: str) -> str | None:
+    """python-dotenv 형식 한 줄에서 key 값만(`export ` 접두, 따옴표, 따옴표 밖 ` #` 주석). 다른 키면 None."""
+    s = line.strip()
+    if not s or s.startswith("#"):
+        return None
+    if s.startswith("export "):
+        s = s[7:].lstrip()
+    k, sep, v = s.partition("=")
+    if not sep or k.strip() != key:
+        return None
+    v = v.strip()
+    if v[:1] in ("'", '"'):
+        q = v[0]
+        end = v.find(q, 1)
+        return v[1:end] if end > 0 else v[1:]
+    i = v.find(" #")
+    return (v[:i] if i >= 0 else v).strip()
+
+
+def dashboard_env_secret(dashboard_root: str) -> tuple[str | None, str | None]:
+    """(값, 읽은 .env 경로). 대시보드처럼 <root>/.env → <root>/backend/.env 순서, SIMDASH_SCX_RELAY_SECRET_FILE 줄만 본다
+    (다른 값은 읽지도 남기지도 않음 — 줄 단위로 키만 비교)."""
+    if not dashboard_root:
+        return None, None
+    for p in (os.path.join(dashboard_root, ".env"), os.path.join(dashboard_root, "backend", ".env")):
+        try:
+            with open(p, encoding="utf-8-sig") as fh:
+                for line in fh:
+                    v = _dotenv_value(line, DASH_SECRET_KEY)
+                    if v is not None:
+                        return v, p
+        except OSError:
+            continue
+    return None, None
+
+
+def runtime_dir(environ: dict[str, str] | None = None) -> str | None:
+    """esl 런타임 폴더 = env ESL_PLATFORM_CONFIG 가 <런타임>/config/esl_platform.yaml 일 때 그 <런타임>."""
+    env = os.environ if environ is None else environ
+    p = env.get("ESL_PLATFORM_CONFIG") or ""
+    if not p:
+        return None
+    d = os.path.dirname(os.path.abspath(p))
+    return os.path.dirname(d) if os.path.basename(d).lower() == "config" else None
+
+
+def resolve_secret_file(cfg, *, environ: dict[str, str] | None = None, runtime: str | None = None) -> dict[str, Any]:
+    """비밀 파일 경로 해석 → {path|None, source(config|env|dashboard_env|runtime|None), env_file|None, problem|None}.
+    명시 절대경로가 우선(상대경로는 config_problems 가 거부). 비어 있으면 (1) esl env SIMDASH_SCX_RELAY_SECRET_FILE →
+    (2) hpc.scx.dashboard_root 의 .env·backend/.env → (3) <런타임>/secrets/scx_relay_key. 값(비밀)은 읽지 않는다 — 경로만."""
+    env = os.environ if environ is None else environ
+    explicit = str(getattr(cfg, "secret_file", "") or "")
+    if explicit:
+        return {"path": explicit if secret_path_absolute(explicit) else None, "source": "config", "env_file": None,
+                "problem": None if secret_path_absolute(explicit) else "hpc.scx.secret_file: 절대경로여야 합니다"}
+    v = (env.get(DASH_SECRET_KEY) or "").strip()
+    if v:
+        ok = secret_path_absolute(v)
+        return {"path": v if ok else None, "source": "env", "env_file": None,
+                "problem": None if ok else f"env {DASH_SECRET_KEY}: 절대경로여야 합니다"}
+    root = str(getattr(cfg, "dashboard_root", "") or "")
+    if root:
+        v, f = dashboard_env_secret(root)
+        if v:
+            ok = secret_path_absolute(v)
+            return {"path": v if ok else None, "source": "dashboard_env", "env_file": f,
+                    "problem": None if ok else f"{f} 의 {DASH_SECRET_KEY}: 절대경로여야 합니다"}
+    rt = runtime or runtime_dir(env)
+    if rt:
+        p = os.path.join(rt, "secrets", "scx_relay_key")
+        if os.path.isfile(p):
+            return {"path": p, "source": "runtime", "env_file": None, "problem": None}
+    return {"path": None, "source": None, "env_file": None, "problem": SECRET_MISSING_HINT}
+
+
+def secret_source_text(r: dict[str, Any]) -> str:
+    """환경 점검 표시: '출처: env | 대시보드 .env(<경로>) | 런타임 기본 | 설정'(값 미출력)."""
+    src = r.get("source")
+    if src == "dashboard_env":
+        return f"출처: 대시보드 .env({r.get('env_file')})"
+    return f"출처: {SECRET_SOURCE_LABEL.get(src, '없음')}"
 
 
 def engine_names(stem: str, names: list[str], globs: list[str]) -> list[str]:

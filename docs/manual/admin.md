@@ -324,7 +324,8 @@ icacls D:\secrets\scx_relay.key /inheritance:r /grant:r "<서비스계정>:R" "A
 hpc:
   scx:
     relay_url: "http://127.0.0.1:8000"     # 대시보드 백엔드 loopback 포트(화면·프록시 포트 아님, 경로 없이)
-    secret_file: "D:\\secrets\\scx_relay.key"   # 대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일
+    secret_file: ""                        # "" = 대시보드 따라가기(아래 표). 명시하면 절대경로(예 "D:\\secrets\\scx_relay.key")
+    dashboard_root: "D:\\simdashboard"      # v0.12.0 대시보드 설치 폴더(setup 이 형제 폴더에서 자동 감지 — secret_file "" 일 때)
     client_name: "esl"
     max_download_bytes: 68719476736        # 64 GiB — 실제 상한 = min(이 값, 대시보드 상한, upload.max_file_bytes)
     transfer_timeout_s: 14400              # 30 GB h3d: 대시보드 임시 받기 + 스트리밍
@@ -333,7 +334,7 @@ hpc:
 scx_drive:
   enabled: true                            # 기본 false
   roots:                                   # 릴레이 기준 상대(첫 구간 '.' 금지). key ^[a-z0-9_-]{1,32}$ 유일
-    - {key: "drop", label: "낙하해석 공유", rel: "share/drop", projects: []}   # projects [] = 모든 프로젝트, 아니면 프로젝트 id 목록
+    - {key: drop, label: "낙하해석", rel: "share/drop"}   # projects 생략 = 모든 프로젝트(아니면 projects: [프로젝트 id…])
   list_max_entries: 5000
   max_files: 2000                          # rad + include + 엔진 rad 합계
   engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
@@ -344,6 +345,16 @@ verify_drop:
 worker:
   xfer_lanes: 2                            # XFER 레인 루프 수(1~8) = 동시 SCX 내려받기 수. SLOT·LIGHT 와 독립
 ```
+
+**비밀 파일 경로 해석(v0.12.0)** — `hpc.scx.secret_file` 에 절대경로를 쓰면 그대로(상대경로는 설정 오류). 비워 두면(`""`) **대시보드 비밀 파일을 따라간다**(대시보드는 릴레이를 켜면 `SIMDASH_SCX_RELAY_SECRET_FILE` 절대경로가 필수이고 `<대시보드>\.env` 또는 `<대시보드>\backend\.env` 에서 읽는다):
+
+| 순서 | 출처 | 비고 |
+|---|---|---|
+| 1 | esl 프로세스 환경변수 `SIMDASH_SCX_RELAY_SECRET_FILE` | 절대경로만 |
+| 2 | `hpc.scx.dashboard_root` 의 `.env` → `backend\.env` | 그 키 줄만 읽음(python-dotenv 형식 — `export`·따옴표·주석). 다른 값은 읽지도 로그에도 남기지 않음 |
+| 3 | `<런타임>\secrets\scx_relay_key` | 설치 기본 위치 |
+
+셋 다 없으면 `SCX_SECRET_INVALID` + 안내. 환경 점검 `hpc.scx.secret_file` 에 `출처: env | 대시보드 .env(<경로>) | 런타임 기본 | 설정` 이 보인다(값은 출력하지 않음). `setup.ps1`·업데이트는 `dashboard_root` 가 비어 있으면 esl 설치 폴더의 형제 폴더 중 `backend\app\services\drive\config.py` 가 있는 대시보드를 찾아 넣는다(콘솔 1줄).
 
 - 받은 파일은 사용자 업로드 폴더(`storage.upload_root`)에 저장되므로 `upload.max_file_bytes`(파일당)·`max_upload_bytes`(업로드당)·`min_free_gb`(여유, 부족하면 507 `INSUFFICIENT_STORAGE{need, free, reserve}`)와 `upload.allowed_ext`(rad·inc·k·sta·str·h3d 포함)가 그대로 적용된다. 사용자당 동시 업로드 한도(`max_concurrent_per_user`)도 SCX 세션을 센다(429 `UPLOAD_LIMIT`).
 - starter 는 `<이름>_0000.rad` 만 고를 수 있다(화면 hint `rad`). 같은 폴더의 엔진 rad(`engine_globs`)와 include(상대·`../`·상태 파일 .sta/.str)는 워커가 rad 를 읽어 자동으로 받는다. 절대경로·루트 밖·드라이브에 없는 include 는 받지 않고 사용자가 SCX 탭의 **[추가로 올리기]**로 같은 세션에 넣는다.
@@ -360,6 +371,54 @@ worker:
 | `SCX_AUTH_REQUIRED` | 대시보드 관리 화면에서 SCX 재로그인 |
 | `SCX_FILE_TOO_LARGE` | `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES`·`hpc.scx.max_download_bytes`·`upload.max_file_bytes` 상향 |
 | `SCX_DASHBOARD_DISK` / `INSUFFICIENT_STORAGE` | 대시보드 임시 공간 / esl `storage.upload_root` 드라이브 여유 |
+
+> **들여쓰기 주의**: `scx_drive`·`verify_drop`·`worker` 는 **최상위 키**다. `hpc:` 밑(또는 `hpc.scx:` 밑)에 들여쓰면 esl 은 physicsai 공용 키처럼 조용히 무시한다 — v0.12.0 부터 설정 검증(설치 콘솔)·환경 점검 `config.valid` 가 WARN "hpc.scx_drive 는 최상위 키입니다 — 들여쓰기를 없애세요". 루트 항목 키는 `rel`(릴레이 홈 기준 상대)이다(`path` 아님).
+
+#### 2.7.3 Radioss 검증 낙하(v0.12.0, 계약 [esl_scx_relay.md](../contracts/esl_scx_relay.md) 기능 B)
+
+강성 평가 스터디(① 같은 모델·완료) 화면의 **[검증 낙하]**는 고른 안의 모핑 좌표를 원 Case 입력 사본에 노드 ID 기준으로 넣어 씬마다 SCX 에서 Radioss 낙하를 다시 돌리고 원 낙하와 비교한다(PASS/FAIL 없음). §2.7.2 의 릴레이 연결이 먼저 되어 있어야 하고, 추가로 **대시보드 드라이브 쓰기**와 **잡 API** 가 필요하다.
+
+**드라이브 폴더 분리**: 공유 홈(릴레이 홈)은 조회(기능 A) 위주, PBS 제출은 계정 **전용 폴더**에 만든다. `hpc.scx.drive_base` 가 `"~"`(홈 자체)이면 `verify_drop.enabled` 일 때 설정 경고 + 검증 낙하만 비활성 `VD_DRIVE_BASE_SHARED`("검증 낙하는 전용 폴더가 필요합니다: hpc.scx.drive_base 를 \"~/<전용 폴더>\" 로"). 권장 `drive_base: "~/esl"`, 조회 루트는 `scx_drive.roots: [{key: drop, label: "낙하해석", rel: "share/drop"}]`.
+
+**① 대시보드 쪽**: `SIMDASH_DRIVE_WRITES_ENABLED=true`(아니면 `SCX_WRITES_OFF`), 대시보드 어댑터 v0.3.0 이상(잡 API — 아니면 `SCX_JOB_API_OFF`). `SIMDASH_SCX_RELAY_DRIVE_BASE`(relay_base) 안에 esl `hpc.scx.drive_base` 가 있어야 함(아니면 `SCX_BASE_OUTSIDE_RELAY`).
+
+**② esl 설정** — `hpc.scx` 의 `drive_base`·`appliance`·`version`·`ncpu` 와 최상위 `verify_drop`:
+
+```yaml
+hpc:
+  scx:
+    # … §2.7.2 의 relay_url·secret_file·client_name …
+    drive_base: "~/esl"                    # 검증 낙하 전용 쓰기 폴더("~/<상대>" — "~" 홈 자체면 VD_DRIVE_BASE_SHARED) — 대시보드 relay_base 안
+    appliance: "<SCX Radioss appliance>"   # 필수(비면 SCX_APPLIANCE_MISSING)
+    version: "26.1"                        # 대화상자 '고급' 기본값(작업별 덮어쓰기 가능)
+    ncpu: 16
+verify_drop:                               # 최상위 키(hpc 밑 아님)
+  enabled: true                            # 기본 false(VD_DISABLED)
+  max_scenes: 5                            # 한 요청의 씬(= SCX 제출) 수 상한 — 넘으면 422 VD_TOO_MANY_SCENES
+  default_worst_n: 3                       # '가장 나쁜 씬 N개' 기본 N(대화상자 초기값)
+  max_running: 2                           # 동시 활성(VD_STAGE 이후 진행) VERIFY_DROP 수 — 넘는 것은 QUEUED 로 대기
+  est_hours_per_scene: 3                   # 예상 시간 표시 기본값(같은 프로젝트 완료 기록이 있으면 그 중앙값)
+  poll_s: 60                               # SCX 잡 상태 폴링 주기
+  max_wait_h: 72                           # 넘으면 VD_WAIT_TIMEOUT(SCX 잡은 종료하지 않음 — [재시도]는 폴링부터)
+  out_ok_patterns: ["NORMAL TERMINATION"]  # Radioss out 정상 종료 판정
+  max_result_bytes: 68719476736            # 회수(h3d·out) 상한 64 GiB
+  compare: {same_tol: 0.02, hot_n: 20}     # '비슷' 허용치 · 상위 요소 수
+```
+
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `verify_drop.enabled` | `false` | 기능 B 켜기. 꺼져 있으면 버튼 비활성 사유 `VD_DISABLED`. 켰는데 `hpc.scx.drive_base: "~"` 면 `VD_DRIVE_BASE_SHARED` |
+| `verify_drop.max_scenes` | 5 | 한 번에 제출할 씬 상한(라이선스·SCX 시간 보호). 대화상자가 이 값을 상한으로 표시 |
+| `verify_drop.default_worst_n` | 3 | '가장 나쁜 씬 N개'의 기본 N(1~`max_scenes`) |
+| `verify_drop.max_running` | 2 | 동시 활성 검증 낙하 수(동시 활성 상한). 같은 (안, 씬)은 비종료 1개만(`VD_ALREADY_ACTIVE` — 제외 목록) |
+
+**③ 드라이브 폴더**: 씬마다 `<drive_base>/<project_id>/VD<n>_<UTC>`(예 `~/esl/body/VD7_20261030T091200`, `<n>` = 그 프로젝트의 검증 낙하 순번, UTC `YYYYMMDDTHHMMSS`). 원 Case 의 rad 폴더 기준 상대 배치를 그대로 올린다(include 가 rad 폴더 밖·절대경로·`include_path_map` 이면 그 씬은 제외 `VD_INCLUDE_LAYOUT`). 화면 카드에 표시 경로(복사 버튼)가 보인다. esl 은 이 폴더를 지우지 않는다(정리는 SCX 쪽에서).
+
+**④ 제외·오류 코드(씬별 제외는 오류가 아니라 대화상자 경고)**: `VD_CUMULATIVE_EXCLUDED`(누적 씬 — .sta/.str 상태 파일), `VD_ENGINE_MISSING`(엔진 rad 없음), `VD_INCLUDE_LAYOUT`, `VD_ALREADY_ACTIVE`(같은 안·씬 진행 중), `VD_CASE_NOT_READY`(원 Case 가 없거나 보관됨·추출 결과 없음 — Case 추출을 먼저). 제출 결과를 모르면(`SCX_SUBMISSION_UNKNOWN`) 자동으로 다시 내지 않는다: 사용자가 SCX 화면에서 잡을 확인해 **[잡 ID 연결]**(서버가 폴링부터 새 작업을 자동으로 큐 — 재시도 불필요) 또는 **[포기]**(뒤 [재시도] = 새 제출).
+
+- 적용: 설정 수정 후 `ESL-Backend`·`ESL-Worker` 재시작. 대시보드 쪽을 고쳤으면 대시보드 백엔드 재시작.
+- 확인: 환경 점검 `scx_drive.enabled`·`scx.relay`(둘 다 꺼져 있으면 SKIP), 관리자 `GET /esl/api/scx/status?project_id=<id>` 의 `verify.enabled: true`.
+- **실기 확인 V-SR-R1(B)**: 실 릴레이·22만 요소 Ch/R ① 최적 안 1건 — [scx_check.md](scx_check.md) §7 표(폴더·include 배치·NORMAL TERMINATION 판정·h3d 이름·coord_check·`requested_by=esl`·대용량 회수 시간·실행 중 취소)를 채워 둔다.
 
 ### 2.8 DB 수동 생성(설치 스크립트 없이)
 
@@ -528,7 +587,7 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py check --runtime D:\esl 
 | 항목(key) | 판정 |
 |---|---|
 | `python` | 3.12 → OK, 아니면 WARN(기준: 대시보드와 같은 3.12.13) |
-| `config.valid` | 스키마·의미(루트 겹침·경로 문자)·코어·라이브러리 설정 검증. 오류 → FAIL(키: 메시지) |
+| `config.valid` | 스키마·의미(루트 겹침·경로 문자)·코어·라이브러리 설정 검증. 오류 → FAIL(키: 메시지). v0.12.0: `hpc`·`hpc.scx` 밑에 들여쓴 최상위 키(`scx_drive`·`verify_drop`·`worker` 등 — 조용히 무시됨) → WARN "hpc.scx_drive 는 최상위 키입니다 — 들여쓰기를 없애세요" |
 | `config.auth` / `config.library` | dev_static이면 WARN(prod면 FAIL) / library 블록 없음 → WARN |
 | `server.frontend_root` | 프런트 정적 서빙(§2.6.1): 폴더와 `index.html`이 있으면 OK, 없으면 WARN(백엔드는 기동, 화면 404), `null`이면 SKIP(Caddy 등 외부 서빙) |
 | `storage.esl_root.write` / `.free` | 임시 파일 쓰기·삭제 / 여유 공간 < `--min-free-gb`(기본 20) → WARN |
@@ -542,8 +601,9 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py check --runtime D:\esl 
 | `db.migration_head` | `alembic_version` = head(`0004`) — 아니면 FAIL(`esl_service.py migrate`) |
 | `worker.heartbeat` | 최근 하트비트 ≤ 3×주기 → OK, 아니면 WARN(워커 오프라인) |
 | `scx.adapter` / `scx.adapter.lock` | v0.11.0 SCX 릴레이 어댑터 import·버전·커밋 / 코드 고정값 = `deploy/simdash_adapters.lock`(다르면 FAIL) |
-| `hpc.scx` / `hpc.scx.secret_file` | 설정 검사(없으면 SKIP — SCX 안 씀) / 비밀 파일 형식·Windows 권한(`SCX_SECRET_ACL_WIDE` WARN), 값은 출력 안 함 |
-| `scx.relay` / `scx.relay.max_download_bytes` | 대시보드 릴레이 health(연결·drive_mode·job_api) — 실패면 사유 코드 WARN / 상한 < 64 GiB 면 WARN |
+| `hpc.scx` / `hpc.scx.secret_file` | 설정 검사(없으면 SKIP — SCX 안 씀) / 비밀 파일 형식·Windows 권한(`SCX_SECRET_ACL_WIDE` WARN)·`출처: env \| 대시보드 .env(<경로>) \| 런타임 기본 \| 설정`, 값은 출력 안 함 |
+| `scx_drive.enabled` | v0.12.0 기능 A 켜짐/꺼짐 · roots 개수(켜졌는데 0개면 WARN `SCX_NO_ROOTS`) |
+| `scx.relay` / `scx.relay.max_download_bytes` | 대시보드 릴레이 health(연결·drive_mode·job_api) — 실패면 켜진 기능 쪽의 실제 원인 코드 WARN(`SCX_RELAY_UNREACHABLE` 등, `*_DISABLED` 아님). `scx_drive`·`verify_drop` 둘 다 꺼짐이면 SKIP(릴레이 시험 안 함) / 상한 < 64 GiB 면 WARN |
 | `worker.xfer_lanes` | XFER 레인 수(동시 SCX 내려받기) |
 
 - 종료코드 0 = FAIL 없음, 1 = FAIL 있음. 화면에서는 `GET /esl/api/status`(설정 오류·워커 온라인·솔버 백엔드)로도 본다.

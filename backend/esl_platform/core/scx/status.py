@@ -62,6 +62,12 @@ def _avail(code: str | None, reason: str | None = None) -> dict[str, Any]:
     return {"enabled": code is None, "reason_code": code, "reason": None if code is None else (reason or messages.text(code))}
 
 
+def drive_base_shared(cfg) -> bool:
+    """hpc.scx.drive_base 가 공용 계정 홈 자체("~", "~/")인가 — 검증 낙하 제출은 계정 전용 폴더("~/<폴더>")만."""
+    v = str(getattr(cfg, "drive_base", "") or "").strip()
+    return v.rstrip("/") == "~"
+
+
 def _base_inside(drive_base: str, relay_base: str) -> bool:
     from simdash_adapters.hpc.scx_naming import drive_base_rel
 
@@ -129,6 +135,8 @@ def evaluate(settings, project_id: str | None, *, need_fetch: bool = True, need_
         out["verify"] = _avail(verify_off)
     elif common:
         out["verify"] = _avail(*common)
+    elif drive_base_shared(cfg):
+        out["verify"] = _avail("VD_DRIVE_BASE_SHARED")   # v0.12.0: 공유 홈("~") 에 PBS 제출 폴더를 만들지 않음
     elif not relay["writes_active"]:
         out["verify"] = _avail("SCX_WRITES_OFF")
     elif not relay["job_api"]:

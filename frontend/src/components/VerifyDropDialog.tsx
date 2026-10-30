@@ -3,7 +3,7 @@
 // 접힌 '고급'(Radioss 버전·ncpu) → 주 버튼 [검증 낙하 시작]. 상한·기본 N·예상 시간은 모두 서버 값.
 import { useEffect, useState } from "react";
 import { ApiError, errorText } from "../api/client";
-import { VD_START, hoursText, ratioText, verify } from "../api/verify";
+import { VD_START, excludeLabel, hoursText, ratioText, verify } from "../api/verify";
 import type { EntryOut, VerifyDesignOut, VerifyDropCreateOut, VerifyDropIn, VerifyMode, VerifyPlanOut } from "../api/types";
 
 const HPC_VERSION = /^\d{2,4}(\.\d{1,3}){0,2}$/;
@@ -22,7 +22,7 @@ export function VerifyDropDialog({
 }) {
   const [design, setDesign] = useState(initialDesign);
   const [mode, setMode] = useState<VerifyMode>("worst");
-  const [nText, setNText] = useState(String(initialPlan?.default_n ?? initialPlan?.n_submit ?? ""));
+  const [nText, setNText] = useState(String(initialPlan?.default_worst_n ?? initialPlan?.default_n ?? initialPlan?.n_submit ?? ""));
   const [version, setVersion] = useState("");
   const [ncpu, setNcpu] = useState("");
   const [plan, setPlan] = useState<VerifyPlanOut | null>(initialPlan);
@@ -89,7 +89,8 @@ export function VerifyDropDialog({
     }
   }
 
-  const caseTitle = (caseId: string, entryId: string) => entries.find((e) => e.id === entryId)?.case_title ?? entries.find((e) => e.case_id === caseId)?.case_title ?? caseId;
+  const caseTitle = (caseId: string | null, entryId: string | null) =>
+    entries.find((e) => e.id === entryId)?.case_title ?? entries.find((e) => e.case_id === caseId)?.case_title ?? caseId ?? entryId ?? "–";
   const excluded = plan?.excluded ?? [];
 
   return (
@@ -165,8 +166,8 @@ export function VerifyDropDialog({
         {excluded.length > 0 && (
           <ul className="reasons small warn-text" aria-label="제외된 씬" data-testid="vd-excluded">
             {excluded.map((x) => (
-              <li key={`${x.case_id}:${x.code}`}>
-                {caseTitle(x.case_id, x.entry_id)} — {x.reason}
+              <li key={`${x.case_id ?? x.entry_id ?? ""}:${x.code}`} data-code={x.code}>
+                {x.case_title ?? caseTitle(x.case_id, x.entry_id)} — {x.reason} <span className="muted">({excludeLabel(x.code)})</span>
               </li>
             ))}
           </ul>

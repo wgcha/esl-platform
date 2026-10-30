@@ -393,7 +393,28 @@ def secret_acl_wide(path: str, platform: str) -> tuple[bool | None, str]:
         return None, f"ACL 확인 실패({type(exc).__name__})"
 
 
-def check_scx(s, platform: str, *, use_relay: bool = True) -> list[Item]:
+def _scx_drive_item(s) -> Item:
+    """scx_drive.enabled 상태 1줄(켜짐/꺼짐·roots 개수)."""
+    n = len(s.scx_drive.roots)
+    if s.scx_drive.enabled:
+        return Item("scx_drive.enabled", OK if n else WARN,
+                    f"켜짐 — roots {n}개" + ("" if n else "(SCX_NO_ROOTS — SCX 드라이브에서 고를 루트 없음)"))
+    return Item("scx_drive.enabled", OK, f"꺼짐 — roots {n}개(SCX 드라이브에서 고르기 안 씀)")
+
+
+def _relay_reason(s, st: dict) -> dict:
+    """릴레이에 닿지 못한 실제 공통 원인 — 켜진 기능 쪽 판정에서 고르고, *_DISABLED(기능 꺼짐) 코드는 쓰지 않는다."""
+    cands = ([st["fetch"]] if s.scx_drive.enabled else []) + ([st["verify"]] if s.verify_drop.enabled else [])
+    for f in cands:
+        code = str(f.get("reason_code") or "")
+        if code and not code.endswith("_DISABLED"):
+            return f
+    from esl_platform.core.scx import messages as scx_messages
+
+    return {"reason_code": "SCX_RELAY_UNREACHABLE", "reason": scx_messages.text("SCX_RELAY_UNREACHABLE")}
+
+
+def check_scx(s, platform: str, *, use_relay: bool = True, runtime: str | None = None) -> list[Item]:
     """SCX 릴레이: 어댑터 import·lock 일치, hpc.scx 검증, 비밀 파일 형식·권한, health(연결·job_api·writes_active·
     relay_base 안의 drive_base·max_download_bytes), XFER 레인 수. 비밀 값은 출력하지 않는다."""
     from esl_platform.core.scx import gateway, settings as scx_settings, status as scx_status
@@ -401,7 +422,7 @@ def check_scx(s, platform: str, *, use_relay: bool = True) -> list[Item]:
     cfg = scx_settings.scx_cfg(s)
     if cfg is None and not s.scx_drive.enabled and not s.verify_drop.enabled:
         return [Item("hpc.scx", SKIP, "hpc.scx 없음 — SCX 드라이브에서 고르기·검증 낙하 안 씀")]
-    out: list[Item] = []
+    out: list[Item] = [_scx_drive_item(s)]
     ad = gateway.adapter_status(refresh=True)
     lock_path = os.path.join(_ROOT, "deploy", "simdash_adapters.lock")
     lock_note = ""
@@ -428,20 +449,30 @@ def check_scx(s, platform: str, *, use_relay: bool = True) -> list[Item]:
                     f"relay {cfg.relay_url}, client {cfg.client_name}, roots {len(s.scx_drive.roots)}개"))
     from simdash_adapters.hpc import read_secret_file
 
-    val, why = read_secret_file(cfg.secret_file)
-    if val is None:
-        out.append(Item("hpc.scx.secret_file", WARN, f"{cfg.secret_file}: {why} (SCX_SECRET_INVALID)"))
+    sec = scx_settings.resolve_secret_file(cfg, runtime=runtime)
+    src = scx_settings.secret_source_text(sec)
+    if sec["path"] is None:
+        val, why = None, sec["problem"]
+        out.append(Item("hpc.scx.secret_file", WARN, f"{why} — {src} (SCX_SECRET_INVALID)"))
     else:
-        wide, note = secret_acl_wide(cfg.secret_file, platform)
-        out.append(Item("hpc.scx.secret_file", WARN if wide else OK,
-                        f"{cfg.secret_file} — 형식 OK, 권한 {note}" + (" (SCX_SECRET_ACL_WIDE)" if wide else "")))
+        val, why = read_secret_file(sec["path"])
+        if val is None:
+            out.append(Item("hpc.scx.secret_file", WARN, f"{sec['path']}: {why} — {src} (SCX_SECRET_INVALID)"))
+        else:
+            wide, note = secret_acl_wide(sec["path"], platform)
+            out.append(Item("hpc.scx.secret_file", WARN if wide else OK,
+                            f"{sec['path']} — 형식 OK, 권한 {note}, {src}" + (" (SCX_SECRET_ACL_WIDE)" if wide else "")))
     out.append(Item("worker.xfer_lanes", OK, f"XFER 레인 {s.worker.xfer_lanes}개(SCX 전송 동시 수)"))
     if probs or val is None or not use_relay:
+        return out
+    if not s.scx_drive.enabled and not s.verify_drop.enabled:
+        # evaluate 는 둘 다 꺼져 있으면 릴레이를 시험하지 않는다 — reachable=False 를 '연결 안 됨'으로 보고하지 않는다
+        out.append(Item("scx.relay", SKIP, "SCX 드라이브·검증 낙하 모두 꺼짐(scx_drive.enabled·verify_drop.enabled)"))
         return out
     st = scx_status.evaluate(s, None, force=True)
     rel = st["relay"]
     if not rel["reachable"]:
-        f = st["fetch"] if st["fetch"]["reason_code"] not in ("SCX_FETCH_DISABLED",) else st["verify"]
+        f = _relay_reason(s, st)
         out.append(Item("scx.relay", WARN, f"{f['reason_code']}: {f['reason']}"))
         return out
     h = st.get("_health") or {}
@@ -564,6 +595,8 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
         return items
     if lc.issues or lc.core is None:
         items.append(Item("config.valid", FAIL, "; ".join(f"{i.key}: {i.message}" for i in lc.issues) or "코어 설정 없음"))
+    elif lc.warnings:
+        items.append(Item("config.valid", WARN, f"{config_path}: " + "; ".join(i.message for i in lc.warnings)))
     else:
         items.append(Item("config.valid", OK, f"{config_path} (profile {s.profile}, {s.server.host}:{s.server.port}{s.api_prefix})"))
     if s.auth.mode == "dev_static":
@@ -605,7 +638,10 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
     items += check_h3d_extract(s, plat)
     items += check_opt_run(s, plat)
     items += check_bead_doe(s, plat)
-    items += check_scx(s, plat)
+    rt = os.path.abspath(runtime) if runtime else None
+    if rt is None and os.path.basename(os.path.dirname(os.path.abspath(config_path))).lower() == "config":
+        rt = os.path.dirname(os.path.dirname(os.path.abspath(config_path)))   # <런타임>/config/esl_platform.yaml
+    items += check_scx(s, plat, runtime=rt)
     items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)

@@ -18,7 +18,7 @@ import threading
 from typing import Any
 
 from . import mask
-from .settings import adapter_mapping, config_problems, scx_cfg
+from .settings import adapter_mapping, config_problems, resolve_secret_file, scx_cfg
 
 log = logging.getLogger("esl.scx")
 # = deploy/simdash_adapters.lock(commit·version) — 코드 스냅샷에는 deploy 폴더가 없어 상수로 둔다(시험이 lock 과 대조)
@@ -114,14 +114,17 @@ def get_gateway(settings) -> tuple[Any | None, str | None, str | None]:
     probs = config_problems(settings)
     if probs:
         return None, "SCX_CONFIG_INVALID", "; ".join(probs)[:400]
-    key = _key(settings)
+    sec = resolve_secret_file(cfg)
+    if sec["path"] is None:
+        return None, "SCX_SECRET_INVALID", sec["problem"]
+    key = _key(settings) + "|" + sec["path"]
     with _LOCK:
         if _GW["key"] == key and _GW["gw"] is not None:
             return _GW["gw"], None, None
         from simdash_adapters.hpc import ScxConfig
 
         mask.install_log_filter()
-        gw = _gateway_class()(ScxConfig.from_mapping(adapter_mapping(cfg)), cfg.secret_file, client_name=cfg.client_name,
+        gw = _gateway_class()(ScxConfig.from_mapping(adapter_mapping(cfg)), sec["path"], client_name=cfg.client_name,
                               logger=logging.getLogger("esl.scx.adapter"), on_secret=mask.register_secret)
         _GW.update(key=key, gw=gw)
         return gw, None, None
