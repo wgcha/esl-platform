@@ -136,3 +136,16 @@ def test_session_locked_while_fetching_and_stale_skip(client, fake_relay, app_ct
 def test_pc_token_cannot_use_scx(client, fake_relay):
     r = client.get(f"{API}/scx/status", params={"project_id": "p-1"}, headers={"Authorization": "Bearer esl_ct_bogus"})
     assert r.status_code in (401, 403)
+
+
+def test_too_large_message_names_the_limiting_setting(client, fake_relay, settings_dict):
+    """v0.12.0 L3: 너무 큰 파일 안내가 실제 원인 설정을 가리킴(upload.max_file_bytes ↔ 대시보드 릴레이 상한)."""
+    model = build_model(fake_relay, h3d=b"H" * 40_000_000)            # > upload.max_file_bytes(30 MB) < 릴레이 20 GiB
+    r = fetch(client, model)
+    assert r.status_code == 422 and _code(r) == "SCX_FILE_TOO_LARGE"
+    det = r.json()["detail"]
+    assert det["setting"] == "upload.max_file_bytes" and "upload.max_file_bytes" in det["message"]
+    assert "SIMDASH" not in det["message"]
+    fake_relay.max_download_bytes = 1000
+    det = fetch(client, model).json()["detail"]
+    assert "SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES" in det["message"] and det["limit"] == 1000

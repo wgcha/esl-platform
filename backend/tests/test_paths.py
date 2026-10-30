@@ -224,3 +224,20 @@ def test_inspect_rad_parts_cache(client, mini_inputs):
         assert len(calls) == 2
     finally:
         system.core_adapter.list_parts = real
+
+
+def test_case_include_outside_root_message_masked_for_users(client, mini_inputs, tmp_path):
+    """v0.12.0: Case 생성 PATH_OUTSIDE_ROOT(include 가 입력 루트 밖) — 일반 사용자에게는 서버 절대경로를 가리고 전역 관리자는 원문."""
+    outside = tmp_path / "outside_inc"
+    outside.mkdir()
+    (outside / "x.inc").write_text("# x\n")
+    rad = mini_inputs["rad"]
+    txt = open(rad, encoding="utf-8").read().replace("/END", f"#include {outside / 'x.inc'}\n/END")
+    open(rad, "w", encoding="utf-8").write(txt)
+    r = create_case(client, mini_inputs, folder="cm1")
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PATH_OUTSIDE_ROOT"
+    assert str(outside) not in r.text and "x.inc" in r.json()["detail"]["message"]
+    r = create_case(client, mini_inputs, folder="cm2", token="tok-admin")
+    assert r.status_code in (404, 422)
+    if r.status_code == 422:
+        assert str(outside) in r.text

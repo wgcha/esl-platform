@@ -13,7 +13,9 @@
   BD_DESIGNS(LOCAL — paicad 외부 명령) 는 워커가 실행, 나머지 코어 단계는 ``esl.doe.stages.run_stage``.
 - SCX_FETCH(XFER, stage 12, 계약 esl_scx_relay.md §8): SCX 드라이브에서 rad(+include·엔진 rad)·h3d 를 기존 업로드 세션
   폴더로 내려받기. 대상 = jobs.upload_id. step 은 전부 워커 프로세스 안(INTERNAL, 코어·외부 명령 없음, HTTP 만).
-  VERIFY_DROP(XFER)·VERIFY_POST(SLOT) — stage 13 — 은 이름·DB 제약만 예약(구현 v0.12.0, JOB_TYPES 에 없음 → 만들 수 없음).
+- v0.12.0 VERIFY_DROP(XFER, stage 13, 계약 esl_scx_relay.md §8·§9.2): 검증 낙하 — 원 Case 입력 사본 패치·SCX 올리기·Radioss
+  제출·대기·결과 회수. 대상 = jobs.verify_drop_id. step 은 워커 프로세스 안(VD_PREP 의 노드 패치만 코어 자식 vd_patch).
+  VERIFY_POST(SLOT, stage 13): H3D_EXTRACT(LOCAL, 기존 hw) → VD_EXTRACT(코어 extract) → VD_COMPARE(코어 vd_compare) → VD_REGISTER.
 - P3-UX §6: CASE_EXTRACT 첫 step ``H3D_EXTRACT``(LOCAL — 워커가 hw 실행)는 Case 입력이 h3d(input_kind H3D)일 때만 만든다
   (결과 폴더 입력이면 생략 → 기존 step 번호 그대로).
 """
@@ -35,7 +37,7 @@ class StepDef:
 class JobTypeDef:
     job_type: str
     stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화, 11 = 비드 DOE,
-    #            12 = SCX 내려받기, 13 = 검증 낙하(예약)
+    #            12 = SCX 내려받기, 13 = 검증 낙하
     lane: str  # SLOT | LIGHT | XFER(v0.11.0 — HTTP 전송·원격 대기, 슬롯 없음)
     steps: tuple[StepDef, ...]
 
@@ -68,6 +70,13 @@ JOB_TYPES: dict[str, JobTypeDef] = {
     # v0.11.0 SCX 드라이브에서 고르기(esl_scx_relay.md §8·§9.1)
     "SCX_FETCH": JobTypeDef("SCX_FETCH", 12, "XFER", (
         StepDef("SF_RAD", None), StepDef("SF_H3D", None), StepDef("SF_REGISTER", None))),
+    # v0.12.0 Radioss 검증 낙하(esl_scx_relay.md §8·§9.2·§9.3)
+    "VERIFY_DROP": JobTypeDef("VERIFY_DROP", 13, "XFER", (
+        StepDef("VD_PREP", None), StepDef("VD_STAGE", None), StepDef("VD_SUBMIT", None), StepDef("VD_WAIT", None),
+        StepDef("VD_FETCH", None))),
+    "VERIFY_POST": JobTypeDef("VERIFY_POST", 13, "SLOT", (
+        StepDef("H3D_EXTRACT", None, kind="LOCAL"), StepDef("VD_EXTRACT", "extract"), StepDef("VD_COMPARE", "vd_compare"),
+        StepDef("VD_REGISTER", None))),
 }
 CASE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT")
 LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report", "lib_compare")
@@ -89,11 +98,13 @@ DOE_STEP_WEIGHTS = {
 # v0.11.0(esl_scx_relay.md §8): SCX_FETCH 진행 가중(바이트 기준, 합 100)
 SCX_JOB_TYPES = ("SCX_FETCH",)
 SCX_STEP_WEIGHTS = {"SF_RAD": 10, "SF_H3D": 85, "SF_REGISTER": 5}
-# 예약(이름·DB CHECK 만 — 구현 v0.12.0): (stage, lane, step 키) — JOB_TYPES 에 넣지 않아 작업을 만들 수 없다
-RESERVED_JOB_TYPES = {
-    "VERIFY_DROP": (13, "XFER", ("VD_PREP", "VD_STAGE", "VD_SUBMIT", "VD_WAIT", "VD_FETCH")),
-    "VERIFY_POST": (13, "SLOT", ("H3D_EXTRACT", "VD_EXTRACT", "VD_COMPARE", "VD_REGISTER")),
+# v0.12.0(esl_scx_relay.md §8): 검증 낙하 진행 가중(합 100)
+VERIFY_JOB_TYPES = ("VERIFY_DROP", "VERIFY_POST")
+VERIFY_STEP_WEIGHTS = {
+    "VERIFY_DROP": {"VD_PREP": 2, "VD_STAGE": 18, "VD_SUBMIT": 1, "VD_WAIT": 59, "VD_FETCH": 20},
+    "VERIFY_POST": {"H3D_EXTRACT": 40, "VD_EXTRACT": 40, "VD_COMPARE": 15, "VD_REGISTER": 5},
 }
+RESERVED_JOB_TYPES: dict[str, tuple] = {}      # v0.11.0 예약분(VERIFY_*)은 v0.12.0 에서 JOB_TYPES 로 옮김
 XFER_LANE = "XFER"
 
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")

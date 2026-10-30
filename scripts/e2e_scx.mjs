@@ -251,9 +251,13 @@ async function scenario(base, inp) {
   check(st.status === 200 && st.body.fetch.enabled === true, `scx/status 이상: ${JSON.stringify(st.body)}`);
   check(st.body.verify.enabled === false && st.body.relay.reachable === true && st.body.roots.map((r) => r.key).join() === "drop", `scx/status 키 이상: ${JSON.stringify(st.body)}`);
   check(Object.keys(st.body).sort().join() === "adapters,fetch,relay,roots,verify", "ScxStatusOut 키 이상");
+  // v0.12.0 L4: 화면이 /scx/status 를 받아 탭 상태를 그린 뒤에 확인(로드 전 aria 값을 읽는 경합 방지)
+  const stLoaded = page.waitForResponse((r) => r.url().includes("/esl/api/scx/status") && r.status() === 200, { timeout: 30000 });
   await page.goto(`${NEW}?tab=scx`);
   await page.getByRole("heading", { name: "새 Case" }).waitFor();
+  await stLoaded;
   const tab = page.getByRole("tab", { name: /SCX 드라이브에서 고르기/ });
+  for (let i = 0; i < 100 && (await tab.getAttribute("aria-selected")) !== "true"; i++) await sleep(100);
   check((await tab.getAttribute("aria-selected")) === "true" && !(await tab.getAttribute("aria-disabled")), "SCX 탭이 켜져 있지 않음");
   // 루트(이 프로젝트에 허용된 drop 1개 — p2only 는 프로젝트 p-2 전용이라 빠짐) → 경로 줄 첫 칸
   await page.getByRole("navigation", { name: "폴더 경로" }).getByRole("button", { name: "낙하해석 공유" }).waitFor();
@@ -319,8 +323,10 @@ async function scenario(base, inp) {
   inp.proc.__stopping = true;
   inp.proc.kill("SIGKILL");
   await sleep(500);
+  const stLoaded2 = page.waitForResponse((r) => r.url().includes("/esl/api/scx/status"), { timeout: 30000 });
   await page.goto(NEW);
   await page.getByRole("heading", { name: "새 Case" }).waitFor();
+  await stLoaded2;
   const tab2 = page.getByRole("tab", { name: /SCX 드라이브에서 고르기/ });
   for (let i = 0; i < 100 && (await tab2.getAttribute("aria-disabled")) !== "true"; i++) await sleep(100);
   check((await tab2.getAttribute("aria-disabled")) === "true", "릴레이 다운인데 SCX 탭이 켜져 있음");

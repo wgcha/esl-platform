@@ -5717,6 +5717,18 @@
             "description": "v0.11.0 SCX_FETCH 대상 업로드 세션",
             "title": "Upload Id"
           },
+          "verify_drop_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.12.0 VERIFY_DROP·VERIFY_POST 대상 검증 낙하",
+            "title": "Verify Drop Id"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
@@ -7587,6 +7599,18 @@
             ],
             "description": "v0.11.0 SCX_FETCH 대상 업로드 세션",
             "title": "Upload Id"
+          },
+          "verify_drop_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.12.0 VERIFY_DROP·VERIFY_POST 대상 검증 낙하",
+            "title": "Verify Drop Id"
           },
           "version": {
             "title": "Version",
@@ -10703,6 +10727,776 @@
         "title": "ValidationOut",
         "type": "object"
       },
+      "VerifyCompare": {
+        "properties": {
+          "hot": {
+            "additionalProperties": true,
+            "title": "Hot",
+            "type": "object"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyCompareRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "tstar": {
+            "additionalProperties": true,
+            "title": "Tstar",
+            "type": "object"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "hot",
+          "tstar"
+        ],
+        "title": "VerifyCompare",
+        "type": "object"
+      },
+      "VerifyCompareRow": {
+        "properties": {
+          "agree": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agree"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "orig": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orig"
+          },
+          "predicted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio"
+          },
+          "verdict": {
+            "enum": [
+              "better",
+              "worse",
+              "same"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          },
+          "verify": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verify"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "verdict"
+        ],
+        "title": "VerifyCompareRow",
+        "type": "object"
+      },
+      "VerifyDesignOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "rank"
+        ],
+        "title": "VerifyDesignOut",
+        "type": "object"
+      },
+      "VerifyDropCreateOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "drops": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyDropOut"
+            },
+            "title": "Drops",
+            "type": "array"
+          },
+          "excluded": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyExcludedOut"
+            },
+            "title": "Excluded",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "drops",
+          "excluded"
+        ],
+        "title": "VerifyDropCreateOut",
+        "type": "object"
+      },
+      "VerifyDropIn": {
+        "additionalProperties": false,
+        "properties": {
+          "bead_doe_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Bead Doe Id",
+            "type": "string"
+          },
+          "design_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Design Id",
+            "type": "string"
+          },
+          "hpc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifyHpcIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "description": "worst = 가장 나쁜 씬 N개(r 큰 순), all = 스터디에서 고른 ESL 전부",
+            "enum": [
+              "worst",
+              "all"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "worst 일 때 N(기본 verify_drop.default_worst_n)",
+            "title": "N"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "bead_doe_id",
+          "design_id",
+          "mode"
+        ],
+        "title": "VerifyDropIn",
+        "type": "object"
+      },
+      "VerifyDropOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "bead_doe_id": {
+            "title": "Bead Doe Id",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "case_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Title"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_name": {
+            "title": "Created By Name",
+            "type": "string"
+          },
+          "design_id": {
+            "title": "Design Id",
+            "type": "string"
+          },
+          "drive_dir_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drive Dir Display"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "files_bytes": {
+            "default": 0,
+            "title": "Files Bytes",
+            "type": "integer"
+          },
+          "files_n": {
+            "default": 0,
+            "title": "Files N",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "최근 작업(VERIFY_DROP 또는 VERIFY_POST)"
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Job Ids",
+            "type": "array"
+          },
+          "phase": {
+            "description": "PREP·STAGING·SUBMITTED·RUNNING·FETCHED·POST·DONE·FAILED·CANCELED",
+            "title": "Phase",
+            "type": "string"
+          },
+          "predicted": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifyCompare"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scx_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scx Job Id"
+          },
+          "scx_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scx Status"
+          },
+          "submission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifySubmissionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "batch_id",
+          "project_id",
+          "bead_doe_id",
+          "design_id",
+          "case_id",
+          "entry_id",
+          "phase",
+          "version",
+          "job_ids",
+          "created_by_name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "VerifyDropOut",
+        "type": "object"
+      },
+      "VerifyExcludedOut": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "case_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Title"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Id"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "reason"
+        ],
+        "title": "VerifyExcludedOut",
+        "type": "object"
+      },
+      "VerifyHpcDefaultOut": {
+        "properties": {
+          "ncpu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ncpu"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "VerifyHpcDefaultOut",
+        "type": "object"
+      },
+      "VerifyHpcIn": {
+        "additionalProperties": false,
+        "properties": {
+          "ncpu": {
+            "anyOf": [
+              {
+                "maximum": 4096.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ncpu"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9A-Za-z][0-9A-Za-z._\\- ]{0,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Radioss 버전(비우면 hpc.scx.version)",
+            "title": "Version"
+          }
+        },
+        "title": "VerifyHpcIn",
+        "type": "object"
+      },
+      "VerifyPlanOut": {
+        "properties": {
+          "default_n": {
+            "description": "= default_worst_n(설정 verify_drop.default_worst_n)",
+            "title": "Default N",
+            "type": "integer"
+          },
+          "default_worst_n": {
+            "title": "Default Worst N",
+            "type": "integer"
+          },
+          "design_id": {
+            "title": "Design Id",
+            "type": "string"
+          },
+          "designs": {
+            "description": "검증 가능한 안(best/ 남은 순위 1~keep_files_top)",
+            "items": {
+              "$ref": "#/components/schemas/VerifyDesignOut"
+            },
+            "title": "Designs",
+            "type": "array"
+          },
+          "est_hours": {
+            "description": "씬당 예상 시간(같은 프로젝트 완료 검증 중앙값, 없으면 verify_drop.est_hours_per_scene)",
+            "title": "Est Hours",
+            "type": "number"
+          },
+          "excluded": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyExcludedOut"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "hpc": {
+            "additionalProperties": true,
+            "description": "Radioss 기본값 {version, ncpu}(설정 hpc.scx)",
+            "title": "Hpc",
+            "type": "object"
+          },
+          "hpc_default": {
+            "$ref": "#/components/schemas/VerifyHpcDefaultOut"
+          },
+          "max_scenes": {
+            "title": "Max Scenes",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "worst",
+              "all"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "n_submit": {
+            "title": "N Submit",
+            "type": "integer"
+          },
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/VerifySceneOut"
+            },
+            "title": "Scenes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "design_id",
+          "mode",
+          "scenes",
+          "excluded",
+          "n_submit",
+          "est_hours",
+          "max_scenes",
+          "default_worst_n",
+          "default_n",
+          "designs",
+          "hpc",
+          "hpc_default"
+        ],
+        "title": "VerifyPlanOut",
+        "type": "object"
+      },
+      "VerifyResolveIn": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "attach(= link) = SCX 잡 ID 연결, abandon = 포기",
+            "enum": [
+              "attach",
+              "link",
+              "abandon"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "scx_job_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scx Job Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "action"
+        ],
+        "title": "VerifyResolveIn",
+        "type": "object"
+      },
+      "VerifySceneOut": {
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "case_title": {
+            "title": "Case Title",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "r_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R C"
+          },
+          "r_epsmax": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R Epsmax"
+          },
+          "r_umax": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R Umax"
+          }
+        },
+        "required": [
+          "entry_id",
+          "case_id",
+          "case_title"
+        ],
+        "title": "VerifySceneOut",
+        "type": "object"
+      },
+      "VerifySubmissionOut": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "state",
+          "attempt"
+        ],
+        "title": "VerifySubmissionOut",
+        "type": "object"
+      },
       "VersionOut": {
         "properties": {
           "built_at": {
@@ -11355,7 +12149,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -17590,6 +18384,311 @@
         "summary": "Validation Section",
         "tags": [
           "results"
+        ]
+      }
+    },
+    "/esl/api/verify-drops": {
+      "get": {
+        "operationId": "verify_list_esl_api_verify_drops_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bead_doe_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Bead Doe Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VerifyDropOut"
+                  },
+                  "title": "Response Verify List Esl Api Verify Drops Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify List",
+        "tags": [
+          "verify"
+        ]
+      },
+      "post": {
+        "description": "씬마다 verify_drops 행 1개 + VERIFY_DROP(XFER) 작업 1개(batch_id 로 묶음). 씬별 제외는 excluded[].",
+        "operationId": "verify_create_esl_api_verify_drops_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyDropIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyDropCreateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Create",
+        "tags": [
+          "verify"
+        ]
+      }
+    },
+    "/esl/api/verify-drops/plan": {
+      "post": {
+        "description": "대화상자 씬 목록·제외 사유·제출 건수·예상 시간(저장 안 함). 생성과 같은 씬 선택.",
+        "operationId": "verify_plan_esl_api_verify_drops_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyDropIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyPlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Plan",
+        "tags": [
+          "verify"
+        ]
+      }
+    },
+    "/esl/api/verify-drops/{did}": {
+      "get": {
+        "operationId": "verify_get_esl_api_verify_drops__did__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyDropOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Get",
+        "tags": [
+          "verify"
+        ]
+      }
+    },
+    "/esl/api/verify-drops/{did}/compare.csv": {
+      "get": {
+        "operationId": "verify_compare_csv_esl_api_verify_drops__did__compare_csv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Compare Csv",
+        "tags": [
+          "verify"
+        ]
+      }
+    },
+    "/esl/api/verify-drops/{did}/files/{name}": {
+      "get": {
+        "description": "stage.json·compare.json·compare.csv·Radioss out(result/*.out).",
+        "operationId": "verify_file_esl_api_verify_drops__did__files__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify File",
+        "tags": [
+          "verify"
+        ]
+      }
+    },
+    "/esl/api/verify-drops/{did}/resolve": {
+      "post": {
+        "description": "제출 결과 모름(UNKNOWN) 정리: attach = SCX 잡 ID 연결(→ 폴링부터 새 작업), abandon = 포기(→ [재시도]는 새 attempt).",
+        "operationId": "verify_resolve_esl_api_verify_drops__did__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyResolveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyDropOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Resolve",
+        "tags": [
+          "verify"
         ]
       }
     },

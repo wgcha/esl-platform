@@ -332,17 +332,25 @@ def claim_light(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any
 XFER_LOCK_KEY = 4245
 
 
-def claim_xfer(conn: Connection, worker_id: str, ttl_s: float, lanes: int = 2) -> dict[str, Any] | None:
+def claim_xfer(conn: Connection, worker_id: str, ttl_s: float, lanes: int = 2,
+               verify_max_running: int | None = None) -> dict[str, Any] | None:
     """XFER 레인 claim(v0.11.0, esl_scx_relay.md SR-D-9): 실행 중 XFER 가 lanes 개 미만일 때 가장 앞 QUEUED XFER 하나.
-    슬롯 행 없음(holds_slot false), SLOT·LIGHT 와 독립. 동시 수는 advisory lock 아래에서 센다."""
+    슬롯 행 없음(holds_slot false), SLOT·LIGHT 와 독립. 동시 수는 advisory lock 아래에서 센다.
+    v0.12.0: 실행 중 VERIFY_DROP 이 verify_max_running(verify_drop.max_running) 개 이상이면 VERIFY_DROP 은 건너뜀(QUEUED 대기)."""
     conn.execute(select(func.pg_advisory_xact_lock(XFER_LOCK_KEY)))
     running = conn.execute(select(func.count()).select_from(jobs)
                            .where(and_(jobs.c.state == RUNNING, jobs.c.lane == "XFER"))).scalar_one()
     if int(running) >= int(lanes):
         return None
+    conds = [jobs.c.state == QUEUED, jobs.c.lane == "XFER", jobs.c.cancel_requested_at.is_(None), _case_idle()]
+    if verify_max_running is not None:
+        vr = conn.execute(select(func.count()).select_from(jobs)
+                          .where(and_(jobs.c.state == RUNNING, jobs.c.job_type == "VERIFY_DROP"))).scalar_one()
+        if int(vr) >= int(verify_max_running):
+            conds.append(jobs.c.job_type != "VERIFY_DROP")
     target = conn.execute(
         select(jobs.c.id, jobs.c.version, jobs.c.lease_generation)
-        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "XFER", jobs.c.cancel_requested_at.is_(None), _case_idle()))
+        .where(and_(*conds))
         .order_by(jobs.c.queue_seq).limit(1).with_for_update(skip_locked=True)
     ).first()
     if target is None:

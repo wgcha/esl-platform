@@ -88,7 +88,8 @@ def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = 
 def require_job_view(principal: Principal, job: dict[str, Any]) -> None:
     """OPT_RUN 작업(opt_runs 에 묶인 작업)·비드 DOE 작업(bead_does)·SCX_FETCH(업로드 세션, v0.11.0)는 그 프로젝트 조회 권한이
     있어야 조회(최적화 실행·DOE 연구 조회와 같은 규칙)."""
-    if (job.get("opt_run_id") or job.get("bead_doe_id") or job.get("upload_id")) and principal.role(job["project_id"]) is None:
+    if (job.get("opt_run_id") or job.get("bead_doe_id") or job.get("upload_id") or job.get("verify_drop_id")) \
+            and principal.role(job["project_id"]) is None:
         raise forbidden("이 프로젝트의 조회 권한이 없습니다")
 
 
@@ -108,6 +109,9 @@ def job_out(conn: Connection, job: dict[str, Any], *, with_steps: bool = False) 
         doe = params.get("doe") if isinstance(params.get("doe"), dict) else {}
         params = {"bead_doe_id": params.get("bead_doe_id"), "kind": params.get("kind"), "out_rel": params.get("out_rel"),
                   "rev": doe.get("rev"), "matrix_sha256": doe.get("matrix_sha256")}
+    if job.get("verify_drop_id"):
+        # v0.12.0 검증 낙하: params 는 워커용(Case rad·DOE 폴더 절대경로, 코어 설정) — 응답에는 대상 id 만
+        params = {k: params.get(k) for k in ("verify_drop_id", "bead_doe_id", "design_id", "case_id") if k in params}
     d["params"] = params
     d["queue_position"] = None
     if job["state"] == QUEUED and job.get("queue_seq") is not None:
