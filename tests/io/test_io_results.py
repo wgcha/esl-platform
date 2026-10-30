@@ -721,7 +721,7 @@ def test_dump_keep_delete_and_size_limit(tmp_path):
     with pytest.raises(EslError) as ei:
         pack_results(rd2, m, tmp_path / "o5", dump={"dump_max_bytes": 100})
     assert ei.value.code == "STRAIN_DUMP_TOO_LARGE" and "TMAX" in ei.value.message
-    assert RC.dump_estimate_bytes(200, 220_000, 2, 230_000) == 200 * (220_000 * 2 * 120 + 230_000 * 80)
+    assert RC.dump_estimate_bytes(200, 220_000, 2, 230_000) == 200 * (220_000 * 2 * 160 + 230_000 * 90)
 
 
 def test_dump_unordered_frames_rejected(tmp_path):

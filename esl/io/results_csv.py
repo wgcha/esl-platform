@@ -44,8 +44,8 @@ STRAIN_SOURCES = ("max_strain", "plastic_strain", "strain_tensor", "max_stress")
 SCALAR_SOURCES = ("plastic_strain", "max_stress")      # 텐서 열이 변형률이 아님 → 지표 = vm_hv 열
 RAW_COLS = ["frame_index", "elem_id", "layer", "vm_hv", "exx", "eyy", "ezz", "exy", "epsp"]   # strain_raw.csv
 SHEAR_SAMPLE_MAX = 2_000_000      # dump 전단 규약 판정 표본 상한(행) — 넘으면 1/2 씩 솎음(중앙값 기준이라 영향 작음)
-DUMP_ROW_BYTES = 120              # strain_raw.csv 한 행 평균 바이트(%.17g 9열) — 사전 추정용(TCL 과 같은 값)
-DUMP_DISP_ROW_BYTES = 80          # dump disp.csv 한 행
+DUMP_ROW_BYTES = 160              # strain_raw.csv 한 행 바이트(%.17g 9열, 실측 최대 157 B) — 사전 추정용(TCL 과 같은 값)
+DUMP_DISP_ROW_BYTES = 90          # dump disp.csv 한 행(실측 최대 85 B)
 DUMP_TOO_LARGE_HINT = (" — Strain 텐서 대체 원자료가 너무 큼: 덱에 /H3D/ELEM/TENS/STRAIN/TMAX(또는 "
                        "/H3D/SHELL/TENS/STRAIN/TMAX) 출력을 넣어 Max_Strain 으로 추출할 것(extract.dump_max_bytes 로 상한 조정)")
 TMAX_SAMPLED = ("STRAIN_TMAX_SAMPLED: Strain 텐서(순간값)를 h3d 출력 프레임에서만 표본해 시간 누적 최대(TMAX)를 재현함 — "

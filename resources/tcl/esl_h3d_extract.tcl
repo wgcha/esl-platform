@@ -1679,9 +1679,9 @@ proc ::esl::run {arglist} {
 
     # ---- dump mode (strain_tensor: instantaneous values) -> strain_raw.csv + disp.csv, every frame
     if {$smode eq "dump"} {
-        # size estimate before writing (same formula as esl.io.results_csv.dump_estimate_bytes: 120 B per
-        # strain_raw row, 80 B per disp row)
-        set est [expr {wide($nsim) * (wide([llength $eids]) * [llength $slayers] * 120 + wide([llength $nids]) * 80)}]
+        # size estimate before writing (same formula as esl.io.results_csv.dump_estimate_bytes: 160 B per
+        # strain_raw row, 90 B per disp row; measured max 157 B / 85 B)
+        set est [expr {wide($nsim) * (wide([llength $eids]) * [llength $slayers] * 160 + wide([llength $nids]) * 90)}]
         set dmax [dict get $cfg dump_max_bytes]
         set dfree [dict get $cfg dump_free_bytes]
         ::esl::progress "dump size estimate: $est bytes (limit $dmax, free [expr {$dfree eq "" ? "?" : $dfree}])"

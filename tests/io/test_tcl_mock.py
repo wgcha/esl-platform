@@ -890,7 +890,7 @@ def test_c3_dump_cumulative_prev_matches_maxhold_rule(tmp_path):
 @pytest.mark.parametrize("req,code", [("dump_max_bytes\t1000\n", "STRAIN_DUMP_TOO_LARGE"),
                                       ("dump_free_bytes\t10\n", "INSUFFICIENT_STORAGE")])
 def test_dump_size_estimate_before_writing(tmp_path, req, code):
-    """Med2: dump 사전 추정(프레임 × 요소 × 층 × 120 B + 프레임 × 노드 × 80 B) > 상한·여유 → 쓰기 전 실패."""
+    """Med2: dump 사전 추정(프레임 × 요소 × 층 × 160 B + 프레임 × 노드 × 90 B) > 상한·여유 → 쓰기 전 실패."""
     t, stored, eq = _inst()
     m, ref, drv, out = _setup(tmp_path, extra_req=req,
                               mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper"]}) + "\n"
@@ -898,4 +898,4 @@ def test_dump_size_estimate_before_writing(tmp_path, req, code):
     assert _run(drv).returncode == 0
     done = _done(out)
     assert done["ok"] is False and done["code"] == code, done.get("error")
-    assert str(F * (6 * 2 * 120 + 12 * 80)) in done["error"] and not (out / "strain_raw.csv").exists()
+    assert str(F * (6 * 2 * 160 + 12 * 90)) in done["error"] and not (out / "strain_raw.csv").exists()
