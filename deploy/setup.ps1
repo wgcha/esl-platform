@@ -264,6 +264,8 @@ if ($hasDeps) {
 # 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 작성보다 먼저(setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채움)
 $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile $lock -PaicadLock (Join-Path $repo 'deploy\paicad.lock') -PaicadWheels "$($d.paicad_wheels)" `
     -PhysicsaiRepo "$($d.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel') -VendoredWheels (Join-Path $repo 'deploy\wheels')
+# v0.11.0 SCX 릴레이 어댑터(simdash_adapters — 저장소 동봉 wheel, lock 대조) — 실패해도 계속(SCX 기능만 비활성)
+$scx = Install-EslScxAdapters -VenvPy $venvPy -ScxLock (Join-Path $repo 'deploy\simdash_adapters.lock') -VendoredWheels (Join-Path $repo 'deploy\wheels')
 Install-EslApp -Source $repo -Dest (Join-Path $rt 'app') -BackupDir $backupDir
 
 # ---- 설정 작성(바뀌는 기존 파일은 먼저 _backup으로 복사) + ESL 루트 폴더 -----------------------------------------

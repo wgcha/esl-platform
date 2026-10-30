@@ -14,7 +14,7 @@ import yaml
 from conftest import ROOT
 from esl_platform import check
 
-ALEMBIC_HEAD = "0011"
+ALEMBIC_HEAD = "0012"
 
 
 def _cfg(tmp_path: Path, **storage) -> Path:

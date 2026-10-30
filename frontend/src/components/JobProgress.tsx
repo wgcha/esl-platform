@@ -18,7 +18,8 @@ const STEP_LABEL: Record<string, string> = {
 };
 
 /** 작업 진행(2초 갱신) + 로그 tail + 취소·재시도. 종료되면 onDone 호출. */
-export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; onDone?: (j: JobOut) => void; allowed?: boolean }) {
+/** onRetried: 재시도는 새 작업을 만든다 — 호출 측이 새 작업 id 로 바꿔 붙일 때(v0.11.0 SCX 내려받기) */
+export function JobProgress({ jobId, onDone, allowed = true, onRetried }: { jobId: string; onDone?: (j: JobOut) => void; allowed?: boolean; onRetried?: (j: JobOut) => void }) {
   const job = usePolling(() => api.getJob(jobId), 2000, [jobId]);
   const [lines, setLines] = useState<string[]>([]);
   const [actError, setActError] = useState<string | null>(null);
@@ -55,10 +56,11 @@ export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [j]);
 
-  async function act(fn: () => Promise<JobOut>) {
+  async function act(fn: () => Promise<JobOut>, then?: (r: JobOut) => void) {
     setActError(null);
     try {
-      await fn();
+      const r = await fn();
+      if (then && r) return then(r);
       await job.reload();
       onDone?.(j!);
     } catch (e) {
@@ -79,6 +81,11 @@ export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; 
         <span className="muted small">
           {cur ? `step ${cur.step_no}/${total} ${cur.step_key}${SHARED_STEP_LABEL[cur.step_key] ? ` ${SHARED_STEP_LABEL[cur.step_key]}` : ""}` : j.state === "QUEUED" ? `대기 ${j.queue_position ?? "–"}번째` : ""}
         </span>
+        {j.progress_label && !terminal && (
+          <span className="small" data-testid="job-progress-label">
+            {j.progress_label}
+          </span>
+        )}
         {j.failure_code && (
           <span className="error-text small">
             {j.failure_code}
@@ -92,7 +99,7 @@ export function JobProgress({ jobId, onDone, allowed = true }: { jobId: string; 
           </button>
         )}
         {allowed && RETRYABLE.includes(j.state) && (
-          <button type="button" className="btn small ghost" onClick={() => act(() => api.retryJob(j.id))}>
+          <button type="button" className="btn small ghost" onClick={() => act(() => api.retryJob(j.id), onRetried)}>
             재시도
           </button>
         )}

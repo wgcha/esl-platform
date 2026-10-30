@@ -48,14 +48,17 @@ def status(ctx: AppContext) -> dict[str, Any]:
 def queue(ctx: AppContext) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         out: dict[str, Any] = {}
-        for lane in ("SLOT", "LIGHT"):
+        for lane in ("SLOT", "LIGHT", "XFER"):
             running, queued = jobs_repo.queue_lane_all(conn, lane)
             out[lane] = {"running": job_out(conn, running[0]) if running else None,
                          "running_all": [job_out(conn, j) for j in running],
                          "queued": [job_out(conn, j) for j in queued]}
     light = {"running": out["LIGHT"]["running"], "queued": out["LIGHT"]["queued"]}
     return {"running": out["SLOT"]["running"], "running_all": out["SLOT"]["running_all"],
-            "slots": ctx.settings.worker.slots, "queued": out["SLOT"]["queued"], "light": light}
+            "slots": ctx.settings.worker.slots, "queued": out["SLOT"]["queued"], "light": light,
+            # v0.11.0 XFER 레인(SCX 전송) — 실행 중 전부·대기
+            "xfer": {"running_all": out["XFER"]["running_all"], "queued": out["XFER"]["queued"],
+                     "lanes": ctx.settings.worker.xfer_lanes}}
 
 
 # ---------------------------------------------------------------- 경로 확인

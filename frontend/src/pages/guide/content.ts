@@ -3,7 +3,7 @@
 /** 바로가기 대상. 프로젝트·Case 가 필요한 곳은 화면이 최근 연 Case 로 채운다 */
 export type GuideTarget =
   | { kind: "cases" }
-  | { kind: "new"; tab?: "pc" }
+  | { kind: "new"; tab?: "pc" | "scx" }
   | { kind: "stage"; n: number }
   | { kind: "library"; tab?: "opt" | "templates" | "study" | "analyses" }
   | { kind: "analysisNew" }
@@ -94,6 +94,22 @@ export const GUIDE: GuideGroup[] = [
         check: ["콘솔에 include 누락 경고가 없는지", "'연결된 PC' 목록에 내 PC가 '사용 중'으로 보이는지"],
         tip: "업로드만 다시 하려면 ESL_upload.bat <결과 폴더>. 연결은 30일 유지되고, PC를 더 쓰지 않으면 '연결된 PC'에서 폐기하세요(그 PC는 다음에 코드를 다시 묻습니다).",
         target: { kind: "new", tab: "pc" },
+        label: "새 Case 열기",
+      },
+      {
+        id: "scx-drive",
+        title: "새 Case — SCX 드라이브에서 고르기",
+        what: "낙하 해석 결과가 SCX 드라이브(대시보드 공용 계정의 공유 폴더)에 있을 때. 브라우저·PC를 거치지 않고 서버가 대시보드를 통해 rad·include·h3d를 내 업로드 폴더로 직접 받습니다. 드라이브에는 쓰지 않습니다(읽기만).",
+        steps: [
+          "새 Case → 'SCX 드라이브에서 고르기' 탭 → 루트(관리자가 정한 공유 폴더)를 고르고 폴더 이름을 눌러 들어갑니다.",
+          "_0000.rad 옆 'rad 선택', h3d 옆 'h3d 선택' 배지를 누릅니다. include·엔진 rad(_0001.rad…)·이전 런 상태 파일(.sta/.str)은 '자동'으로 표시되고, 내려받을 때 rad를 읽어 함께 받습니다.",
+          "'SCX에서 내려받기'(실행(power) 이상) → 파일별 받은 양과 전체 진행률이 보입니다. 큰 h3d는 대시보드가 SCX에서 먼저 다 받은 뒤 보내므로 처음에는 '대시보드가 SCX에서 받는 중'이 한동안 보입니다.",
+          "끊기거나 실패하면 사유를 보고 '재시도' — 이미 받아 sha256 을 확인한 파일은 건너뛰고 끊긴 파일만 처음부터 다시 받습니다(파일 단위 이어받기). '취소'해도 받은 파일은 업로드 세션에 남습니다.",
+          "끝나면 기존 업로드와 같은 확인 결과(파트·누락 include)가 보입니다 → Case 이름·대상 파트를 확인하고 'Case 만들기'. 드라이브 밖 include가 빠졌다면 '추가로 올리기'로 같은 세션에 더합니다.",
+        ],
+        check: ["확인 결과가 'rad·h3d 확인됨'인지", "누락 include 목록이 비어 있는지"],
+        tip: "탭이 흐리게 보이면 대시보드나 SCX 연결을 지금 쓸 수 없는 상태입니다 — 탭에 사유가 보입니다(관리자에게는 연결 상세). h3d가 릴레이 내려받기 상한을 넘으면 시작 전에 경고합니다. 업로드 폴더 여유 공간이 부족하면 필요한 양과 남은 양을 알려 줍니다.",
+        target: { kind: "new", tab: "scx" },
         label: "새 Case 열기",
       },
     ],

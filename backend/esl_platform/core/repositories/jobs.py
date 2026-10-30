@@ -1,4 +1,5 @@
-"""작업·step 저장소: 생성(E1), claim(E2, SLOT CAS·LIGHT 1개·Case 당 RUNNING 1개), 취소(E3/E7), 종료(E5~E7), 리퍼(E8).
+"""작업·step 저장소: 생성(E1), claim(E2, SLOT CAS·LIGHT 1개·XFER worker.xfer_lanes 개·Case 당 RUNNING 1개), 취소(E3/E7),
+종료(E5~E7), 리퍼(E8).
 
 P3-UX §6: SLOT 레인은 worker_slot 행 1..slots 중 빈 행 하나를 CAS 로 잡는다(동시 slots 개, 같은 Case 는 여전히 1개).
 hw 동시 실행 세마포어(`acquire_hw`)는 DB 기반: RUNNING 작업의 RUNNING H3D_EXTRACT step 중 outputs.hw_acquired 인 것의 수.
@@ -111,6 +112,8 @@ def insert_job(
     comparison_id: str | None = None,
     opt_run_id: str | None = None,
     bead_doe_id: str | None = None,
+    upload_id: str | None = None,
+    verify_drop_id: str | None = None,
     h3d: bool = False,
 ) -> dict[str, Any]:
     """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409.
@@ -121,7 +124,7 @@ def insert_job(
     seq = conn.execute(select(job_queue_seq.next_value())).scalar_one()
     conn.execute(insert(jobs).values(
         id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, opt_run_id=opt_run_id,
-        bead_doe_id=bead_doe_id, project_id=project_id,
+        bead_doe_id=bead_doe_id, upload_id=upload_id, verify_drop_id=verify_drop_id, project_id=project_id,
         job_type=job_type,
         stage=jt.stage, lane=jt.lane,
         state=QUEUED, holds_slot=False, queue_seq=seq, queued_at=func.now(), params=params,
@@ -324,6 +327,56 @@ def claim_light(conn: Connection, worker_id: str, ttl_s: float) -> dict[str, Any
     job = get_job(conn, target.id)
     notify(conn, job, "JOB_STARTED")
     return job
+
+
+XFER_LOCK_KEY = 4245
+
+
+def claim_xfer(conn: Connection, worker_id: str, ttl_s: float, lanes: int = 2) -> dict[str, Any] | None:
+    """XFER 레인 claim(v0.11.0, esl_scx_relay.md SR-D-9): 실행 중 XFER 가 lanes 개 미만일 때 가장 앞 QUEUED XFER 하나.
+    슬롯 행 없음(holds_slot false), SLOT·LIGHT 와 독립. 동시 수는 advisory lock 아래에서 센다."""
+    conn.execute(select(func.pg_advisory_xact_lock(XFER_LOCK_KEY)))
+    running = conn.execute(select(func.count()).select_from(jobs)
+                           .where(and_(jobs.c.state == RUNNING, jobs.c.lane == "XFER"))).scalar_one()
+    if int(running) >= int(lanes):
+        return None
+    target = conn.execute(
+        select(jobs.c.id, jobs.c.version, jobs.c.lease_generation)
+        .where(and_(jobs.c.state == QUEUED, jobs.c.lane == "XFER", jobs.c.cancel_requested_at.is_(None), _case_idle()))
+        .order_by(jobs.c.queue_seq).limit(1).with_for_update(skip_locked=True)
+    ).first()
+    if target is None:
+        return None
+    check_transition(QUEUED, RUNNING)
+    token = secrets.token_urlsafe(32)
+    r = conn.execute(
+        update(jobs).where(and_(jobs.c.id == target.id, jobs.c.state == QUEUED, jobs.c.version == target.version))
+        .values(state=RUNNING, holds_slot=False, queue_seq=None, started_at=func.coalesce(jobs.c.started_at,
+                func.now()), updated_at=func.now(), version=jobs.c.version + 1, lease_owner_id=worker_id,
+                lease_token=token, lease_generation=int(target.lease_generation) + 1, lease_acquired_at=func.now(),
+                lease_expires_at=_ttl(ttl_s))
+    )
+    if r.rowcount != 1:
+        raise ClaimRace()
+    job = get_job(conn, target.id)
+    notify(conn, job, "JOB_STARTED")
+    return job
+
+
+def set_progress(conn: Connection, job_id: str, token: str, pct: float | None, label: str | None) -> None:
+    """작업 진행률·라벨(lease 확인). XFER 작업(바이트 기준 진행률·"h3d 12.3 / 30.0 GB")이 쓴다."""
+    assert_lease(conn, job_id, token)
+    vals: dict[str, Any] = {"updated_at": func.now(), "progress_label": (label or None) and str(label)[:200]}
+    if pct is not None:
+        vals["progress_pct"] = max(0.0, min(100.0, float(pct)))
+    conn.execute(update(jobs).where(jobs.c.id == job_id).values(**vals))
+
+
+def active_upload_job(conn: Connection, upload_id: str) -> dict[str, Any] | None:
+    """업로드 세션의 비종료 작업(SCX_FETCH) — 없으면 None."""
+    return row_dict(conn.execute(
+        select(jobs).where(and_(jobs.c.upload_id == upload_id, jobs.c.state.notin_(list(TERMINAL)))).limit(1)
+    ).first())
 
 
 # ---------------------------------------------------------------- lease

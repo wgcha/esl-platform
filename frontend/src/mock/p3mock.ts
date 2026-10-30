@@ -45,6 +45,8 @@ interface Upl {
   created_at: string;
   /** POST /uploads client(esl-web·esl-pc) — 없으면 null */
   client: { name: string; version: string } | null;
+  /** v0.11.0 SCX 세션: 첫 파일이 들어올 때 client.version */
+  scxVersion?: string;
 }
 
 export function badRel(rel: string): string | null {
@@ -451,6 +453,52 @@ export class P3Mock {
     };
     this.uploads.set(id, u);
     return id;
+  }
+
+  // ---------------------------------------------------------------- v0.11.0 SCX 내려받기(esl_scx_relay.md SR-D-6): 워커가 채우는 업로드 세션
+  /** POST /scx/fetches: 빈 OPEN 세션(client scx-relay). 파일은 워커(목: ScxMock)가 받으면서 더한다 */
+  createScxSession(projectId: string, name: string, version: string): string {
+    this.seq += 1;
+    const id = `up-${this.seq}`;
+    this.uploads.set(id, {
+      id,
+      project_id: projectId,
+      name,
+      dir: `${MOCK_UPLOAD_ROOT}\\${this.ctx.username()}\\20261030-${String(100000 + this.seq).slice(1)}_${name}`,
+      state: "OPEN",
+      proto: this.protocol,
+      chunk: this.chunkSize,
+      result: null,
+      inUse: false,
+      created_at: new Date(this.clock()).toISOString(),
+      // 서버와 같게: 세션 client 는 files[].client 에서 온다 — 워커가 첫 파일을 넣기 전에는 null
+      client: null,
+      scxVersion: version,
+      files: [],
+    });
+    return id;
+  }
+  /** 워커가 파일 받기 시작(이미 있으면 그대로) → index */
+  scxFile(id: string, rel: string, size: number): number {
+    const u = this.uploads.get(id)!;
+    const f = u.files.find((x) => x.rel === rel && !x.removed);
+    if (f) return f.index;
+    u.files.push({ ...this.mfile(u.files.length, { rel, size }), source: "scx", drive_rel: rel.replace(/^(rad|h3d)\//, "") });
+    if (!u.client) u.client = { name: "scx-relay", version: u.scxVersion ?? "" };
+    return u.files.length - 1;
+  }
+  /** 받은 바이트 반영(크기에 닿으면 done·sha256) */
+  scxReceived(id: string, index: number, got: number) {
+    const f = this.uploads.get(id)!.files[index];
+    f.received = f.received_total = Math.min(f.size, got);
+    f.done = f.received >= f.size;
+    f.sha256 = f.done ? "a".repeat(64) : null;
+  }
+  scxFiles(id: string): UploadFileOut[] {
+    return this.uploads.get(id)?.files.filter((f) => !f.removed) ?? [];
+  }
+  openCount(): number {
+    return [...this.uploads.values()].filter((u) => u.state === "OPEN").length;
   }
 
   private out(u: Upl): UploadOut {

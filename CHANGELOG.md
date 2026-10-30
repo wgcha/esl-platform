@@ -2,6 +2,21 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.11.0] - 2026-10-30
+### 추가
+- **새 케이스 'SCX 드라이브에서 고르기'**(4번째 탭): 대시보드 SCX 릴레이를 거쳐 SCX 드라이브(관리자가 정한 공유 폴더 `scx_drive.roots` 안)에서 rad 와 h3d 를 고르면 서버가 직접 내려받아 업로드 세션을 만들고 기존 검사(파트·누락 include) 뒤 그대로 **Case 만들기**. include(상대·`../`·하위 폴더·상태 파일 .sta/.str)와 같은 폴더 엔진 rad(`<이름>_0001.rad` …)는 자동으로 함께 받습니다. 드라이브에 쓰지 않습니다
+- 내려받기는 작업으로 진행(진행률 "h3d 12.3 / 30.0 GB", 첫 바이트 전 "대시보드가 SCX에서 받는 중"), [취소]·[재시도] — 재시도는 sha256 이 확인된 파일을 건너뜁니다(파일 단위 이어받기). 받은 파일은 sha256 대조, 끊기거나 해시가 다르면 자동으로 다시 받습니다
+- 받지 못한 include(절대경로·공유 폴더 밖·드라이브에 없음·허용되지 않는 확장자)는 사유와 함께 표시 — 결과 표의 **[추가로 올리기]**로 같은 세션에 추가
+- 파일별 진행률: h3d 를 받는 동안 파일 표에 받은 양/크기·진행 막대(서버 `GET /uploads/{id}` 의 그 파일 `received`). 다 받은 파일은 sha256 확인 표시, 같은 세션을 다시 열면 배지 'SCX에서 받음'
+- starter 는 `<이름>_0000.rad` 만 고를 수 있습니다(같은 폴더 엔진 rad 탐색 기준). 다른 이름을 API 로 직접 주면 엔진 rad 를 찾지 않고 작업 경고로 알림
+- 대시보드가 꺼져 있거나 릴레이가 꺼짐·SCX 재로그인 필요 등이면 이 탭만 비활성 + 사유(다른 탭은 그대로). 관리자에게는 사유 코드·릴레이 상태·어댑터 버전
+- 시작 전 검사 문구: 릴레이 내려받기 상한 초과(422 `SCX_FILE_TOO_LARGE` — 파일·상한 크기), 업로드 폴더 여유 부족(507 — 필요·현재 여유·남겨 둘 여유), 사용자당 동시 업로드 한도(429 `UPLOAD_LIMIT`)
+- 관리자 매뉴얼 §2.7.2 SCX 릴레이 설정(대시보드 `SIMDASH_SCX_RELAY_*`·esl `hpc.scx`·`scx_drive`·`worker.xfer_lanes`·비밀 파일 권한), 실기 체크리스트 `docs/manual/scx_check.md`
+### 변경
+- 작업 레인 XFER 추가(SCX 전송·원격 대기 전용 — 추출·ESL 계산 대기열을 막지 않음, 설정 `worker.xfer_lanes`)
+- 배포: SCX 릴레이 어댑터(physicsai simdash_adapters, 커밋 고정 `deploy\simdash_adapters.lock`) wheel 동봉 — 설치 실패 시 SCX 기능만 비활성. 관리자 설정 `hpc.scx`(physicsai 와 같은 키 + `client_name`)·`scx_drive`·`verify_drop`(검증 낙하 — v0.12.0, v0.11.0 은 켜도 비활성 `VD_NOT_AVAILABLE`), 환경 점검 scx.adapter·hpc.scx·hpc.scx.secret_file·scx.relay·worker.xfer_lanes
+- DB migration `0012_scx_relay`(jobs.upload_id·verify_drop_id, XFER 레인, 검증 낙하용 표 verify_drops·scx_submissions — 표만)
+
 ## [0.10.1] - 2026-10-30
 ### 수정
 - **배포: 형상 엔진 paicad wheel 을 저장소에 동봉**(`deploy\wheels\paicad-0.14.0-py3-none-any.whl`, `deploy\paicad.lock` 의 커밋·정규화 sha256 그대로). git 폴더 설치·`update-repo.ps1`·오프라인 묶음 설치가 **physicsai 저장소·wheel 폴더 없이** paicad 를 설치합니다(설치 전 sha256 대조 — 다르면 강성 평가 스터디 만 비활성 + 사유, 다른 기능은 그대로). `deploy.json` 의 `paicad_wheels`·`physicsai_root` 는 동봉 wheel 이 없을 때만 쓰는 예비 경로

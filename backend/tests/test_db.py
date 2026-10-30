@@ -54,7 +54,7 @@ def _case_row(**kw):
                                     state="RUNNING", holds_slot=False, params={}, created_by="u", created_by_name="u"),
     lambda cid: insert(jobs).values(id="j", case_id=cid, project_id="p", job_type="CASE_EXTRACT", stage=1, lane="SLOT",
                                     state="QUEUED", queue_seq=None, params={}, created_by="u", created_by_name="u"),
-    lambda cid: insert(jobs).values(id="j", case_id=cid, project_id="p", job_type="CASE_EXTRACT", stage=12, lane="SLOT",
+    lambda cid: insert(jobs).values(id="j", case_id=cid, project_id="p", job_type="CASE_EXTRACT", stage=14, lane="SLOT",
                                     state="QUEUED", queue_seq=1, params={}, created_by="u", created_by_name="u"),
     lambda cid: insert(jobs).values(id="j", case_id=cid, project_id="p", job_type="CASE_EXTRACT", stage=1, lane="SLOT",
                                     state="FAILED", params={}, created_by="u", created_by_name="u"),

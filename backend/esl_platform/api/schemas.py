@@ -200,10 +200,11 @@ class JobOut(_Out):
     analysis_id: str | None = None
     comparison_id: str | None = None
     opt_run_id: str | None = None
+    upload_id: str | None = Field(default=None, description="v0.11.0 SCX_FETCH 대상 업로드 세션")
     project_id: str
     job_type: str
     stage: int
-    lane: str
+    lane: str = Field(description="SLOT | LIGHT | XFER(v0.11.0 — HTTP 전송·원격 대기)")
     state: str
     queue_position: int | None = None
     queued_at: datetime | None = None
@@ -211,6 +212,7 @@ class JobOut(_Out):
     finished_at: datetime | None = None
     current_step_no: int | None = None
     progress_pct: float | None = None
+    progress_label: str | None = Field(default=None, description="진행 라벨(예: 'h3d 12.3 / 30.0 GB', '대시보드가 SCX에서 받는 중')")
     params: dict[str, Any]
     result: dict[str, Any] | None = None
     warnings: list[Any]
@@ -238,6 +240,13 @@ class QueueOut(_Out):
     slots: int = 1
     queued: list[JobOut]
     light: QueueLane
+    xfer: "QueueXfer | None" = None         # v0.11.0 XFER 레인(SCX 전송·원격 대기)
+
+
+class QueueXfer(_Out):
+    running_all: list[JobOut] = []
+    queued: list[JobOut] = []
+    lanes: int = 2
 
 
 class LogOut(_Out):
@@ -985,6 +994,8 @@ class UploadFilesAdd(_Req):
 class UploadFileOut(_Out):
     index: int
     rel: str
+    source: Literal["browser", "scx"] = Field(default="browser", description="v0.11.0 scx = SCX 드라이브에서 워커가 받은 파일(PUT 409)")
+    drive_rel: str | None = Field(default=None, description="v0.11.0 source scx: SCX 드라이브 경로(루트 기준)")
     size: int
     received: int = Field(description="앞에서부터 연속으로 받은 바이트(구 클라이언트 이어 올리기 offset)")
     received_total: int = 0
@@ -1009,6 +1020,9 @@ class UploadCheckOut(_Out):
     state_includes: list[dict[str, Any]] = Field(
         default=[], description="v0.8.0 누적 씬: rad include 중 이전 런 상태 파일(.sta/.str 또는 #RADIOSS STATE FILE) "
                                 "{rel, spec, kinds[geometry|initial], found}")
+    scx: dict[str, Any] | None = Field(
+        default=None, description="v0.11.0 SCX 드라이브에서 받은 세션: {root, rad_rel, h3d_rel, missing_specs[{spec, src, reason}]}"
+                                  " (rel 은 루트 기준)")
 
 
 class UploadClientOut(_Out):
@@ -1747,3 +1761,68 @@ class DoeFileOut(_Out):
     rel: str
     size: int = 0
     downloadable: bool = True
+
+
+# ---------------------------------------------------------------- v0.11.0 SCX 릴레이(계약 esl_scx_relay.md §7.1) — 기능 A
+class ScxAvail(_Out):
+    enabled: bool
+    reason_code: str | None = None
+    reason: str | None = None
+
+
+class ScxRootOut(_Out):
+    key: str
+    label: str
+
+
+class ScxRelayOut(_Out):
+    reachable: bool
+    drive_state: str | None = None
+    queue_paused: bool = False
+    writes_active: bool = False
+    job_api: bool = False
+    max_download_bytes: int | None = None
+    checked_at: datetime | None = None
+
+
+class ScxAdaptersOut(_Out):
+    version: str | None = None
+    commit: str | None = None
+
+
+class ScxStatusOut(_Out):
+    fetch: ScxAvail
+    verify: ScxAvail
+    roots: list[ScxRootOut]
+    relay: ScxRelayOut
+    adapters: ScxAdaptersOut
+
+
+class ScxEntryOut(_Out):
+    name: str
+    kind: Literal["dir", "file"]
+    size: int | None = None
+    modified_at: str | None = None
+    hint: Literal["rad", "engine", "h3d", "include", "state"] | None = None
+
+
+class ScxBrowseOut(_Out):
+    root: str
+    path: str = Field(description="루트 기준 상대 경로('' = 루트)")
+    display: str = Field(description="표시 전용 전체 경로(home_display 기준)")
+    entries: list[ScxEntryOut]
+    total: int
+    truncated: bool
+
+
+class ScxFetchIn(_Req):
+    project_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=64)
+    root: str = Field(min_length=1, max_length=32)
+    rad_rel: str = Field(min_length=1, max_length=1024, description="루트 기준 rad(starter) 경로")
+    h3d_rel: str = Field(min_length=1, max_length=1024, description="루트 기준 h3d 경로(필수)")
+
+
+class ScxFetchOut(_Out):
+    upload_id: str
+    job_id: str

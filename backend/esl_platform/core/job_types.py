@@ -11,6 +11,9 @@
 - DOE_PREP·DOE_PREVIEW·DOE_RUN(SLOT, stage 11, 계약 esl_bead_doe.md §9.1): 비드 형상 DOE 준비·미리보기·실행.
   대상 = jobs.bead_doe_id(case·분석·비교·최적화 NULL). 산출물 ``<esl_root>/_doe/<bead_doe_id>/``. BD_GEOM·BD_GRID·
   BD_DESIGNS(LOCAL — paicad 외부 명령) 는 워커가 실행, 나머지 코어 단계는 ``esl.doe.stages.run_stage``.
+- SCX_FETCH(XFER, stage 12, 계약 esl_scx_relay.md §8): SCX 드라이브에서 rad(+include·엔진 rad)·h3d 를 기존 업로드 세션
+  폴더로 내려받기. 대상 = jobs.upload_id. step 은 전부 워커 프로세스 안(INTERNAL, 코어·외부 명령 없음, HTTP 만).
+  VERIFY_DROP(XFER)·VERIFY_POST(SLOT) — stage 13 — 은 이름·DB 제약만 예약(구현 v0.12.0, JOB_TYPES 에 없음 → 만들 수 없음).
 - P3-UX §6: CASE_EXTRACT 첫 step ``H3D_EXTRACT``(LOCAL — 워커가 hw 실행)는 Case 입력이 h3d(input_kind H3D)일 때만 만든다
   (결과 폴더 입력이면 생략 → 기존 step 번호 그대로).
 """
@@ -31,8 +34,9 @@ class StepDef:
 @dataclass(frozen=True)
 class JobTypeDef:
     job_type: str
-    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화, 11 = 비드 DOE
-    lane: str  # SLOT | LIGHT
+    stage: int  # UI 단계 1~6, 7 = Case 보고서, 8 = 라이브러리 분석, 9 = 설계 버전 비교, 10 = 비드 최적화, 11 = 비드 DOE,
+    #            12 = SCX 내려받기, 13 = 검증 낙하(예약)
+    lane: str  # SLOT | LIGHT | XFER(v0.11.0 — HTTP 전송·원격 대기, 슬롯 없음)
     steps: tuple[StepDef, ...]
 
 
@@ -61,6 +65,9 @@ JOB_TYPES: dict[str, JobTypeDef] = {
     "DOE_RUN": JobTypeDef("DOE_RUN", 11, "SLOT", (
         StepDef("BD_BASELINE", "bd_eval"), StepDef("BD_DESIGNS", None, kind="LOCAL"),
         StepDef("BD_POST", "bd_post"), StepDef("BD_REGISTER", None))),
+    # v0.11.0 SCX 드라이브에서 고르기(esl_scx_relay.md §8·§9.1)
+    "SCX_FETCH": JobTypeDef("SCX_FETCH", 12, "XFER", (
+        StepDef("SF_RAD", None), StepDef("SF_H3D", None), StepDef("SF_REGISTER", None))),
 }
 CASE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT")
 LIB_STAGES = ("lib_analyze", "lib_optdeck", "lib_report", "lib_compare")
@@ -78,6 +85,16 @@ DOE_STEP_WEIGHTS = {
     "DOE_PREVIEW": {"BD_MATRIX": 5, "BD_GRID": 90, "BD_PREVIEW_REGISTER": 5},
     "DOE_RUN": {"BD_BASELINE": 5, "BD_DESIGNS": 85, "BD_POST": 9, "BD_REGISTER": 1},
 }
+
+# v0.11.0(esl_scx_relay.md §8): SCX_FETCH 진행 가중(바이트 기준, 합 100)
+SCX_JOB_TYPES = ("SCX_FETCH",)
+SCX_STEP_WEIGHTS = {"SF_RAD": 10, "SF_H3D": 85, "SF_REGISTER": 5}
+# 예약(이름·DB CHECK 만 — 구현 v0.12.0): (stage, lane, step 키) — JOB_TYPES 에 넣지 않아 작업을 만들 수 없다
+RESERVED_JOB_TYPES = {
+    "VERIFY_DROP": (13, "XFER", ("VD_PREP", "VD_STAGE", "VD_SUBMIT", "VD_WAIT", "VD_FETCH")),
+    "VERIFY_POST": (13, "SLOT", ("H3D_EXTRACT", "VD_EXTRACT", "VD_COMPARE", "VD_REGISTER")),
+}
+XFER_LANE = "XFER"
 
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 

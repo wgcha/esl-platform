@@ -77,6 +77,8 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
 
     with engine.begin() as c:
         c.execute(text("ALTER TABLE jobs DROP CONSTRAINT ck_jobs_subject"))   # 0010 이전 상태로(비드 최적화 테이블·열 없음)
+        c.execute(text("ALTER TABLE jobs DROP COLUMN upload_id, DROP COLUMN verify_drop_id"))   # 0012 이전 상태로
+        c.execute(text("DROP TABLE scx_submissions, verify_drops"))
         c.execute(text("ALTER TABLE jobs DROP COLUMN opt_run_id"))
         c.execute(text("DROP TABLE opt_runs, opt_keepouts, opt_templates"))
         c.execute(text("ALTER TABLE library_entries DROP COLUMN topo_sha256, DROP COLUMN deform_mode"))
@@ -108,11 +110,11 @@ def test_migration_0003_on_pre_0003_db(engine, db_url):
         nullable = c.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='jobs' "
                                   "AND column_name='case_id'")).scalar_one()
         ver = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0011" and nullable == "YES"
+    assert {"library_entries", "analysis_runs", "comparisons"} <= tabs and ver == "0012" and nullable == "YES"
     assert {"ux_library_entries_run_active", "ux_jobs_analysis_active", "ux_jobs_comparison_active",
             "ix_comparisons_project"} <= idx
     assert "LIB_ANALYZE" in cons["ck_jobs_job_type"] and "LIB_COMPARE" in cons["ck_jobs_job_type"]
-    assert "REPORT" in cons["ck_artifacts_kind"] and "11" in cons["ck_jobs_stage"]
+    assert "REPORT" in cons["ck_artifacts_kind"] and "13" in cons["ck_jobs_stage"]
     assert "comparison_id" in cons["ck_jobs_subject"] and "fk_jobs_analysis_id_analysis_runs" in cons
     assert "fk_jobs_comparison_id_comparisons" in cons and "ck_comparisons_versions" in cons
 

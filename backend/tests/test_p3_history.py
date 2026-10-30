@@ -987,7 +987,7 @@ def test_h10_migration_0007_up_down_idempotent(engine, db_url):
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM information_schema.columns WHERE table_name='jobs'")
                          ).scalar_one() == cols
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0011"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0012"
 
 
 def test_h10_tables_match_alembic_metadata(engine):

@@ -92,6 +92,8 @@ if (-not (Test-Path -LiteralPath $venvPy)) {
 Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
 # ②' 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 파일 단계(⑤)보다 먼저: setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채운다
 $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -PaicadLock (Join-Path $PSScriptRoot 'paicad.lock') -Wheels (Join-Path $pkg 'wheels')
+# ②'' v0.11.0 SCX 릴레이 어댑터(simdash_adapters, 동봉 wheel → 묶음 wheels) — 실패해도 설치 계속(SCX 기능만 비활성)
+$scx = Install-EslScxAdapters -VenvPy $venvPy -ScxLock (Join-Path $PSScriptRoot 'simdash_adapters.lock') -Wheels (Join-Path $pkg 'wheels')
 
 # ---- ③ 코드 배치 · ④ 프런트 배치(이전 것은 _backup) -------------------------------------------------
 Install-EslApp -Source (Join-Path $pkg 'app') -Dest (Join-Path $root 'app') -BackupDir $backupDir

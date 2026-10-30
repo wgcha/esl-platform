@@ -20,6 +20,7 @@ import { P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
 import { OptMock, enrichEntries } from "./optdata";
 import { DoeMock } from "./doedata";
+import { ScxMock } from "./scxmock";
 
 interface MockResponse {
   status: number;
@@ -38,10 +39,14 @@ const STEPS: Record<JobType, string[]> = {
   DOE_PREP: ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"],
   DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
   DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
+  SCX_FETCH: ["SF_RAD", "SF_H3D", "SF_REGISTER"],
 };
 /** 라이브러리 작업(LIB_ANALYZE·LIB_COMPARE)·보고서는 Case 단계가 아님(0) */
-const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11 };
+const STAGE_OF: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11, SCX_FETCH: 12 };
 const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
+/** v0.11.0 XFER 레인(HTTP 전송·원격 대기) — 루프 수 worker.xfer_lanes(기본 2) */
+const XFER: JobType[] = ["SCX_FETCH"];
+const XFER_LANES = 2;
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
 
@@ -119,6 +124,15 @@ export class MockServer {
       const u = this.p3.uploads.get(id);
       if (u) u.state = "COMPLETED";
     },
+  });
+
+  /** v0.11.0 SCX 드라이브에서 고르기(esl_scx_relay.md §7 — 기능 A) */
+  scx = new ScxMock({
+    p3: this.p3,
+    canRun: (pid) => this.canRun(pid),
+    newJob: (pid, params) => this.newJob({ id: null, project_id: pid }, "SCX_FETCH", params),
+    log: (id, line) => (this.logs[id] ??= []).push(line),
+    now: () => this.now(),
   });
 
   /** v0.9.0 비드 형상 DOE(esl_bead_doe.md §10) */
@@ -442,7 +456,7 @@ export class MockServer {
   }
 
   private queuePositions() {
-    for (const lane of ["SLOT", "LIGHT"] as const) {
+    for (const lane of ["SLOT", "LIGHT", "XFER"] as const) {
       let k = 0;
       for (const j of this.jobs) if (j.lane === lane) j.queue_position = j.state === "QUEUED" ? ++k : null;
     }
@@ -462,6 +476,8 @@ export class MockServer {
     if (or) return or;
     const dr = this.doe.handle(method, path, query, b);
     if (dr) return dr;
+    const sr = this.scx.handle(method, path, query, b);
+    if (sr) return sr;
 
     if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
@@ -914,7 +930,7 @@ export class MockServer {
       project_id: c.project_id,
       job_type: jt,
       stage: STAGE_OF[jt],
-      lane: LIGHT.includes(jt) ? "LIGHT" : "SLOT",
+      lane: XFER.includes(jt) ? "XFER" : LIGHT.includes(jt) ? "LIGHT" : "SLOT",
       state: "QUEUED",
       params,
       result: null,
@@ -1086,9 +1102,9 @@ export class MockServer {
 
   /** 작업 1단계 진행 */
   tick() {
-    for (const lane of ["SLOT", "LIGHT"] as const) {
-      // §6: SLOT 레인은 slots 개까지 동시 실행(같은 Case 는 직렬), LIGHT 는 1개
-      const cap = lane === "SLOT" ? Math.max(1, this.slots) : 1;
+    for (const lane of ["SLOT", "LIGHT", "XFER"] as const) {
+      // §6: SLOT 레인은 slots 개까지 동시 실행(같은 Case 는 직렬), LIGHT 는 1개, XFER 는 xfer_lanes 개(v0.11.0)
+      const cap = lane === "SLOT" ? Math.max(1, this.slots) : lane === "XFER" ? XFER_LANES : 1;
       const running = this.jobs.filter((j) => j.lane === lane && j.state === "RUNNING");
       for (const j of running) this.advance(j);
       const busyCases = new Set(this.jobs.filter((j) => j.state === "RUNNING" && j.case_id).map((j) => j.case_id));
@@ -1112,6 +1128,20 @@ export class MockServer {
     const steps = j.steps!;
     const step = steps.find((s) => s.state === "RUNNING");
     if (!step) return;
+    if (j.job_type === "SCX_FETCH") {
+      const r = this.scx.advance(j, step);
+      if (r !== "step_done") return;
+      step.state = "SUCCEEDED";
+      step.exit_code = 0;
+      const nx = steps.find((s) => s.state === "PENDING");
+      if (nx) {
+        nx.state = "RUNNING";
+        j.current_step_no = nx.step_no;
+        this.logs[j.id].push(`step ${nx.step_no} ${nx.step_key} 시작`);
+        return;
+      }
+      return this.complete(j, "SUCCEEDED");
+    }
     step.progress_pct = Math.min(100, (step.progress_pct ?? 0) + (step.step_key === "H3D_EXTRACT" ? 25 : 50));
     if (step.step_key === "H3D_EXTRACT") {
       const pass = Math.min(3, Math.ceil(step.progress_pct / 34));

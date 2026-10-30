@@ -15,7 +15,7 @@
 #   --physicsai-repo·--paicad-wheel 을 주면 그쪽을 쓴다. 동봉 wheel 이 없고 --no-download 이면 paicad 도 건너뛴다.
 #   OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받는다.
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL·OCP·gmsh 포함 + paicad-<ver>-py3-none-any.whl), frontend/(vite build, base /esl/),
-#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
+#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json·scx_messages.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
 # 시연 모드(deploy/demo)는 합성 Case를 스스로 만들므로 추가 자원이 없다.
 set -euo pipefail
@@ -82,6 +82,13 @@ else
   [ -z "$PAICAD_WHEEL" ] || PAICAD_ARGS="$PAICAD_ARGS --wheel '$PAICAD_WHEEL'"
   run "$PY -I deploy/paicad_wheel.py collect --lock deploy/paicad.lock --out-dir '$OUTDIR/wheels'$PAICAD_ARGS"
 fi
+# v0.11.0 SCX 릴레이 어댑터 simdash_adapters(저장소 동봉 wheel → lock 대조 후 묶음 wheels — 불일치면 중단)
+SCX_VENDORED="deploy/wheels/$(sed -n 's/^ *"wheel": *"\([^"]*\)".*/\1/p' deploy/simdash_adapters.lock | head -1)"
+if [ "$DRY" -eq 1 ] || [ -f "$SCX_VENDORED" ]; then
+  run "$PY -I deploy/paicad_wheel.py collect --lock deploy/simdash_adapters.lock --out-dir '$OUTDIR/wheels' --wheel '$SCX_VENDORED'"
+else
+  echo "simdash_adapters wheel 없음($SCX_VENDORED) — 이 묶음으로 설치하면 SCX 기능은 비활성"
+fi
 # 프런트: --frontend-dist가 있으면 그대로, 아니면 frontend에서 npm ci && npm run build(Node 22)
 if [ -n "$FE_DIST" ]; then
   [ "$DRY" -eq 1 ] || [ -f "$FE_DIST/index.html" ] || { echo "프런트 빌드에 index.html이 없습니다: $FE_DIST" >&2; exit 1; }
@@ -95,7 +102,7 @@ run "cp -r backend/esl_platform '$OUTDIR/app/backend/esl_platform'"
 run "cp -r worker/esl_worker '$OUTDIR/app/worker/esl_worker'"
 run "cp -r migrations '$OUTDIR/app/migrations'"
 run "mkdir -p '$OUTDIR/app/resources'"
-run "cp -r resources/tcl resources/opt_method_sources.json resources/doe_messages.json resources/doe_method_sources.json '$OUTDIR/app/resources/'"
+run "cp -r resources/tcl resources/opt_method_sources.json resources/doe_messages.json resources/doe_method_sources.json resources/scx_messages.json '$OUTDIR/app/resources/'"
 run "cp alembic.ini pyproject.toml VERSION CHANGELOG.md '$OUTDIR/app/'"
 # 코드 스냅샷 버전 기록(계약 esl_p3_ux.md §3): BUILD.json {version, commit, built_at}
 APP_VER="$(tr -d ' \r\n' < VERSION)"

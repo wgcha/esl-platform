@@ -150,6 +150,8 @@ class WorkerCfg(_M):
     terminate_grace_s: float = Field(gt=0)
     env_passthrough: list[str]
     state_dir: str
+    # v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인(HTTP 전송·원격 대기 — SCX_FETCH 등) 루프 수. SLOT·LIGHT 와 독립, 슬롯 없음
+    xfer_lanes: int = Field(default=2, ge=1, le=8)
 
 
 H3D_EXTRACT_DEFAULT = ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}",
@@ -607,6 +609,93 @@ class LibraryExportCfg(_M):
     wait_s: float = Field(default=600.0, ge=0.0)                      # 같은 모델 앞 항목(다른 Case 작업) 결과 대기 상한
 
 
+# ---------------------------------------------------------------- v0.11.0 SCX 릴레이(계약 esl_scx_relay.md §6)
+# 기본값 단일 출처. 값 범위·형식은 어댑터 validate_scx_config + core/scx/settings.py 가 검사하고, 틀려도 기동은 하며 SCX 기능만
+# 비활성(사유 SCX_CONFIG_INVALID — 설정 오류 목록에 넣지 않음). 형(型)이 틀린 값만 여기서 설정 오류.
+class HpcScxCfg(_M):
+    """`hpc.scx.*` — 키 이름 = physicsai hpc.scx.*(SR-D-4, 관리자가 블록 복사) + esl 추가 키 client_name.
+    physicsai 쪽에만 있는 키는 무시한다(extra ignore)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+    relay_url: str = ""                                  # 필수. http://127.0.0.1:<대시보드 백엔드 포트>
+    secret_file: str = ""                                # 필수. 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 권장)
+    client_name: str = "esl"                             # ^[a-z0-9_-]{1,32}$ (X-SCX-Relay-Client)
+    drive_base: str = "~/esl"                            # B 쓰기 기준("~" | "~/<상대>")
+    home_display: str = "/Users/vd.dashboard"            # 표시 전용
+    appliance: str = ""                                  # B 필수(비면 B 비활성 SCX_APPLIANCE_MISSING)
+    version: str = "26.1"
+    ncpu: int = 16
+    memory_gb: int | None = None
+    queue_type: str = "implicit"
+    run_type: str = "both - use starter and engine files"
+    mpi: str = "Pure MPI"
+    single_precision: bool = False
+    poll_interval_s: float | None = None
+    max_download_bytes: int = 64 * 1024 ** 3
+    stage_patterns: list[str] = Field(default_factory=lambda: ["*.rad", "*.inc", "*.k", "*.sta", "*.str"])
+    list_additional_paths: bool = True
+    max_stage_bytes: int = 20 * 1024 ** 3
+    stage_poll_s: float = 5
+    stage_timeout_s: float = 14400
+    submit_replay_attempts: int = 3
+    submit_replay_wait_s: float = 10
+    http_timeout_s: float = 30
+    transfer_timeout_s: float = 14400
+    collect_max_depth: int = 2
+    health_ttl_s: float = 30
+
+
+class HpcCfg(_M):
+    """`hpc` — esl 은 scx 블록만 읽는다(physicsai 의 mode·command 등 다른 키는 무시)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+    scx: HpcScxCfg | None = None                         # 없으면 SCX 기능 전부 비활성(SCX_NOT_CONFIGURED)
+
+
+class ScxDriveRootCfg(_M):
+    key: str                                             # ^[a-z0-9_-]{1,32}$, 유일
+    label: str
+    rel: str                                             # 릴레이 홈 기준 상대(첫 구간 '.' 금지, SPDM 루트 밖)
+    projects: list[str] = Field(default_factory=list)    # [] = 모든 프로젝트
+
+
+class ScxDriveCfg(_M):
+    """기능 A — SCX 드라이브에서 고르기(새 Case 4번째 탭)."""
+
+    enabled: bool = False
+    roots: list[ScxDriveRootCfg] = Field(default_factory=list)   # 0개면 A 비활성(SCX_NO_ROOTS)
+    list_max_entries: int = 5000                         # 릴레이 max_entries(1~50000)
+    max_files: int = 2000                                # rad + include + 엔진 합계
+    engine_globs: list[str] = Field(default_factory=lambda: ["{stem}_0001.rad", "{stem}_000[2-9].rad"])
+    file_retries: int = 2
+    retry_wait_s: float = 30
+
+
+class VerifyDropCompareCfg(_M):
+    same_tol: float = 0.02
+    hot_n: int = 20
+
+
+class VerifyDropCfg(_M):
+    """기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)."""
+
+    enabled: bool = False
+    max_scenes: int = 5
+    default_worst_n: int = 3
+    max_running: int = 2
+    est_hours_per_scene: float = 3
+    poll_s: float = 60
+    max_wait_h: float = 72
+    lost_after_polls: int = 10
+    engine_globs: list[str] = Field(default_factory=lambda: ["{stem}_0001.rad", "{stem}_000[2-9].rad"])
+    result_globs: dict[str, list[str]] = Field(default_factory=lambda: {"h3d": ["*.h3d"],
+                                                                        "out": ["*_0000.out", "*_0001.out"]})
+    out_ok_patterns: list[str] = Field(default_factory=lambda: ["NORMAL TERMINATION"])
+    out_error_patterns: list[str] = Field(default_factory=lambda: [r"(?m)^\s*ERROR TERMINATION", r"(?i)\*\*\s*ERROR"])
+    max_result_bytes: int = 64 * 1024 ** 3
+    compare: VerifyDropCompareCfg = VerifyDropCompareCfg()
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -629,6 +718,9 @@ class Settings(_M):
     opt_run: OptRunCfg | None = None    # v0.7.0 비드 최적화. 없으면 enabled false
     bead_doe: BeadDoeCfg | None = None  # v0.9.0 비드 형상 DOE. 없으면 enabled false
     library_export: LibraryExportCfg = LibraryExportCfg()   # v0.10.0 라이브러리 다중 내보내기
+    hpc: HpcCfg | None = None                               # v0.11.0 SCX 릴레이(hpc.scx). 없으면 SCX 기능 비활성
+    scx_drive: ScxDriveCfg = ScxDriveCfg()                  # v0.11.0 기능 A
+    verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.11.0 기능 B(키만 — 구현 v0.12.0)
 
     @property
     def api_prefix(self) -> str:

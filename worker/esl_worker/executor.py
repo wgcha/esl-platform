@@ -23,6 +23,8 @@
   (`<log>.progress`, 정수 %)을 쓸 수 있고 부모가 step progress_pct(OPT_RUN 은 작업 진행률 가중)로 옮긴다.
 - v0.9.0 DOE_PREP·DOE_PREVIEW·DOE_RUN(계약 esl_bead_doe.md): 대상 = jobs.bead_doe_id, 작업 폴더 `<esl_root>/_doe/<id>/`.
   준비·step 실행은 doe_jobs(paicad = paicad_proc, 코어 = esl.doe.stages), 작업 진행률 = DOE_STEP_WEIGHTS 가중.
+- v0.11.0 SCX_FETCH(XFER, 계약 esl_scx_relay.md §9.1): 대상 = jobs.upload_id, 작업 폴더 = `<업로드 세션>/_scx/`(로그·기록),
+  step 은 scx_fetch(HTTP 전송 — 별도 스레드, 이 스레드는 lease 갱신·취소 확인), 작업 진행률 = SCX_STEP_WEIGHTS 가중.
 - v0.10.0(esl_menu_restructure.md §6.2·§7.3): EXPORT params.origin = library → 작업 폴더·로그 `<esl_root>/_exports/<batch>/`,
   Case 폴더 쓰기 없음(입력 지문·현재 run 재확인·history 보존·artifacts·자동 보고서 건너뜀), 자식이 코어
   esl.export.from_entry.run_items 실행. VALIDATE params.origin = library_revalidate → "현재 run" 대신 "그 run 의 추출이 Case
@@ -46,9 +48,9 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from esl_platform.core.job_types import DOE_JOB_TYPES
+from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES
 
-from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register
+from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register, scx_fetch
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -131,6 +133,11 @@ class Executor:
                 try:
                     self.cdir, self.lib = doe_jobs.prepare(self)
                 except doe_jobs.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
+            elif job["job_type"] in SCX_JOB_TYPES:             # v0.11.0 SCX 드라이브 내려받기(대상 = upload_id, XFER)
+                try:
+                    self.cdir, self.lib = scx_fetch.prepare(self)
+                except scx_fetch.PrepareFailed as exc:
                     raise _StepFailed(exc.code, exc.message) from None
             elif lib_jobs.is_lib_export(job):                  # v0.10.0 라이브러리 다중 내보내기(Case 폴더 쓰기 없음)
                 try:
@@ -275,6 +282,8 @@ class Executor:
                 outputs = doe_jobs.run_step(self, st, log_path)
                 if outputs.pop("_skipped", False):
                     final = "SKIPPED"          # BD_MESH0(③ 아님)
+            elif self.job["job_type"] in SCX_JOB_TYPES:
+                outputs = scx_fetch.run_step(self, st, log_path)
             elif st["step_key"] == "H3D_EXTRACT":
                 outputs = self._run_h3d(st, log_path)
                 with self._tx() as conn:
@@ -343,6 +352,8 @@ class Executor:
                 opt_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
             elif self.job["job_type"] in DOE_JOB_TYPES:
                 doe_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
+            elif self.job["job_type"] in SCX_JOB_TYPES:
+                scx_fetch.mark_job_progress(conn, self, st["step_key"], 100.0)
 
     def _archive_history(self) -> str | None:
         """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).

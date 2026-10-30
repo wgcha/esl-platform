@@ -2,6 +2,8 @@
 
 P3-UX §6: SLOT 레인 루프는 `worker.slots` 개(각자 claim → 실행, DB worker_slot 행 1..slots 로 동시 수 보장, 같은 Case 는
 claim 조건·부분 unique 로 직렬), LIGHT 레인은 별도 1개.
+v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인 루프 `worker.xfer_lanes` 개(HTTP 전송·원격 대기 — SCX_FETCH). 슬롯·자원 제한기 없음,
+SLOT·LIGHT 와 독립 claim. heartbeat info.scx = 어댑터 확인 {ok, version, commit, reason}.
 """
 
 from __future__ import annotations
@@ -63,6 +65,15 @@ class Worker:
             return {}
         return dict(v) if v else {}
 
+    def scx_status(self) -> dict[str, Any]:
+        """heartbeat info.scx(§13): simdash_adapters import·필요 이름 확인 결과."""
+        try:
+            from esl_platform.core.scx.gateway import adapter_status
+
+            return adapter_status()
+        except Exception as exc:  # noqa: BLE001 - 점검 실패가 heartbeat 를 막지 않음
+            return {"ok": False, "version": None, "commit": None, "reason": f"{type(exc).__name__}"}
+
     def heartbeat_once(self) -> None:
         info = {"claims_paused": self.claims_paused,
                 "limits": self.proc_limiter.summary(),
@@ -70,6 +81,8 @@ class Worker:
                 "per_job": limiter_mod.job_limits(self.settings.worker).__dict__,
                 "max_concurrent_hw": self.settings.altair.max_concurrent_hw}
         info.update(self.doe_status())
+        info["xfer_lanes"] = self.settings.worker.xfer_lanes
+        info["scx"] = self.scx_status()
         with self.engine.begin() as conn:
             workers_repo.heartbeat(conn, worker_id=self.worker_id, host=socket.gethostname(), pid=os.getpid(),
                                    app_version=__version__, limiter=self.limiter, info=info)
@@ -86,6 +99,8 @@ class Worker:
             with self.engine.begin() as conn:
                 if lane == "SLOT":
                     return jobs_repo.claim_slot(conn, self.worker_id, ttl, self.settings.worker.slots)
+                if lane == "XFER":
+                    return jobs_repo.claim_xfer(conn, self.worker_id, ttl, self.settings.worker.xfer_lanes)
                 return jobs_repo.claim_light(conn, self.worker_id, ttl)
         except (jobs_repo.ClaimRace, IntegrityError):
             # IntegrityError = 같은 Case 의 다른 작업이 동시에 RUNNING 이 됨(ux_jobs_case_running) → 다음 주기에
@@ -116,6 +131,7 @@ class Worker:
         specs = [(self.heartbeat_once, w.heartbeat_interval_s)]
         specs += [(lambda: self.run_once("SLOT"), w.claim_interval_s) for _ in range(int(w.slots))]
         specs += [(lambda: self.run_once("LIGHT"), w.claim_interval_s)]
+        specs += [(lambda: self.run_once("XFER"), w.claim_interval_s) for _ in range(int(w.xfer_lanes))]
         for fn, iv in specs:
             t = threading.Thread(target=self._loop, args=(fn, iv), daemon=True)
             t.start()

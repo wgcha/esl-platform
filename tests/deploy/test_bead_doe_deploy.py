@@ -264,11 +264,13 @@ def test_collect_dry_run_prints_paicad_step(tmp_path, fake_frontend):
                         "--physicsai-repo", "/x/physicsai"], capture_output=True, text=True, timeout=60,
                        env={**os.environ, "PYTHON": sys.executable})
     assert r.returncode == 0, r.stderr
-    line = [ln for ln in r.stdout.splitlines() if "paicad_wheel.py collect" in ln]
+    line = [ln for ln in r.stdout.splitlines() if "paicad_wheel.py collect --lock deploy/paicad.lock" in ln]
     assert len(line) == 1 and "--repo '/x/physicsai'" in line[0] and not out.exists()
     r = subprocess.run(["bash", str(DEPLOY / "collect-offline.sh"), "--dry-run", "--no-paicad", "--out", str(out), "--frontend-dist",
                         str(fake_frontend)], capture_output=True, text=True, timeout=60, env={**os.environ, "PYTHON": sys.executable})
-    assert "paicad_wheel.py collect" not in r.stdout and "강성 평가 스터디 는 비활성" in r.stdout
+    assert "collect --lock deploy/paicad.lock" not in r.stdout and "강성 평가 스터디 는 비활성" in r.stdout
+    # v0.11.0: simdash_adapters 는 --no-paicad 와 무관하게 동봉 wheel 대조 후 묶음에 넣는다
+    assert "collect --lock deploy/simdash_adapters.lock" in r.stdout
 
 
 # ------------------------------------------------------------------ setup_config 자동 감지

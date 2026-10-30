@@ -38,6 +38,7 @@ worker:
   terminate_grace_s: 5                # 취소 시 코어 프로세스 terminate 후 kill 까지 대기
   env_passthrough: []
   state_dir: "./state"
+  xfer_lanes: 2                       # v0.11.0 XFER 레인(SCX 전송·원격 대기) 루프 수(1~8) — SLOT·LIGHT 와 독립
 ui:
   max_artifact_bytes: 20971520
   max_preview_points: 20000           # 2D 산점·겹쳐보기(/validations/{id}/field) 최대 점 수(초과 시 다운샘플)
@@ -163,3 +164,55 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   view3d: {top_k: 3}
   rank: {ratio_tol: 1.0e-6, per_esl_inline_max: 2000}   # v0.10.0 ESL별 개선 지표('변화 없음' 허용치 — ③ 은 noise_floor 반영, 순위 행 per_esl 상한)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
+hpc:                                  # v0.11.0 대시보드 SCX 릴레이(계약 esl_scx_relay.md §6). 키 이름 = physicsai hpc.scx.*(블록 복사) + client_name
+  scx:                                # 섹션이 없으면 SCX 기능 전부 비활성. 값이 틀려도 기동은 하고 SCX 기능만 비활성(환경 점검 hpc.scx)
+    relay_url: ""                     # 필수. http://127.0.0.1:<대시보드 백엔드 포트>(loopback·포트만 — 화면·프록시 포트 아님)
+    secret_file: ""                   # 필수. 절대경로(대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일 권장 — 복사 금지)
+    client_name: "esl"                # X-SCX-Relay-Client(^[a-z0-9_-]{1,32}$)
+    drive_base: "~/esl"               # 검증 낙하(v0.12.0) 쓰기 기준("~" | "~/<상대>") — 대시보드 relay_base 안
+    home_display: "/Users/vd.dashboard"   # 표시 전용
+    appliance: ""                     # 검증 낙하 필수(비면 그 기능만 비활성 SCX_APPLIANCE_MISSING)
+    version: "26.1"
+    ncpu: 16
+    memory_gb: null
+    queue_type: "implicit"
+    run_type: "both - use starter and engine files"
+    mpi: "Pure MPI"
+    single_precision: false
+    poll_interval_s: null
+    max_download_bytes: 68719476736   # 64 GiB(대시보드 SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES 도 맞춰야 함 — 기본 20 GiB)
+    stage_patterns: ["*.rad", "*.inc", "*.k", "*.sta", "*.str"]
+    list_additional_paths: true
+    max_stage_bytes: 21474836480
+    stage_poll_s: 5
+    stage_timeout_s: 14400
+    submit_replay_attempts: 3
+    submit_replay_wait_s: 10
+    http_timeout_s: 30
+    transfer_timeout_s: 14400         # 30 GB h3d: 대시보드 임시 받기 + 스트리밍
+    collect_max_depth: 2
+    health_ttl_s: 30
+scx_drive:                            # v0.11.0 기능 A — 새 Case 'SCX 드라이브에서 고르기'(내려받기는 워커 XFER 작업, 드라이브 쓰기 없음)
+  enabled: false
+  roots:                              # 릴레이 홈 기준 상대(첫 구간 '.' 금지, SPDM 루트 밖). 0개면 A 비활성(SCX_NO_ROOTS)
+    - {key: "drop", label: "낙하해석 공유", rel: "share/drop", projects: []}   # projects [] = 모든 프로젝트
+  list_max_entries: 5000              # 릴레이 max_entries(1~50000) — 화면 페이지는 ui.browse_page_max
+  max_files: 2000                     # rad + include + 엔진 rad 합계
+  engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
+  file_retries: 2                     # 재시도 가능한 오류(전송·SCX_BUSY·해시 불일치) 파일당 재시도
+  retry_wait_s: 30
+verify_drop:                          # v0.11.0 기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)
+  enabled: false
+  max_scenes: 5
+  default_worst_n: 3
+  max_running: 2
+  est_hours_per_scene: 3
+  poll_s: 60
+  max_wait_h: 72
+  lost_after_polls: 10
+  engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
+  result_globs: {h3d: ["*.h3d"], out: ["*_0000.out", "*_0001.out"]}
+  out_ok_patterns: ["NORMAL TERMINATION"]
+  out_error_patterns: ["(?m)^\\s*ERROR TERMINATION", "(?i)\\*\\*\\s*ERROR"]
+  max_result_bytes: 68719476736
+  compare: {same_tol: 0.02, hot_n: 20}

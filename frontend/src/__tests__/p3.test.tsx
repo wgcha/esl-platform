@@ -174,11 +174,11 @@ describe("분할 업로드(Uploader)", () => {
 });
 
 describe("새 Case 화면", () => {
-  it("탭 3개(기본 = 내 PC에서 올리기), 주 버튼 1개 'Case 만들기'(입력 전 비활성)", async () => {
+  it("탭 4개(기본 = 내 PC에서 올리기), 주 버튼 1개 'Case 만들기'(입력 전 비활성)", async () => {
     const { container } = renderApp(NEW);
     expect(await screen.findByRole("heading", { name: "새 Case" })).toBeTruthy();
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["내 PC에서 올리기", "서버 폴더에서 고르기", "PC에서 추출해 올리기"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["내 PC에서 올리기", "서버 폴더에서 고르기", "PC에서 추출해 올리기", "SCX 드라이브에서 고르기"]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     await waitFor(() => expect(primaries(container).length).toBe(1));
     const btn = primaries(container)[0] as HTMLButtonElement;

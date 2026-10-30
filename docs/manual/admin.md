@@ -294,6 +294,73 @@ handle /esl/* {
   정규화(무압축·고정 시각·권한·순서)는 빌드 OS·시각과 무관하게 같은 바이트를 만들므로 Windows·Linux 준비 PC 결과를 같은 sha256 으로 대조한다.
 - 묶음 크기: OCP·vtk·gmsh 로 수백 MB 늘어난다. gmsh 는 GPL(+링크 예외) — 사내 설치 용도.
 
+#### 2.7.2 SCX 릴레이 — 'SCX 드라이브에서 고르기'(v0.11.0, 계약 [esl_scx_relay.md](../contracts/esl_scx_relay.md))
+
+새 Case 4번째 탭 **SCX 드라이브에서 고르기**는 같은 서버의 **대시보드 SCX 릴레이**(loopback 내부 HTTP `/internal/scx-relay/v1`)를 거쳐 SCX 드라이브의 rad·include·h3d 를 esl 워커가 직접 내려받는다. esl 은 SCX 토큰·어댑터 로그인을 갖지 않고 **드라이브에 쓰지 않는다**(읽기만). 설정이 없거나 틀리면 esl 은 정상 기동하고 이 탭만 비활성 + 사유(다른 탭 그대로).
+
+**① 대시보드 쪽(대시보드 `.env`, 대시보드 관리자가 설정 후 대시보드 백엔드 재시작)**
+
+| 환경변수 | 값 | 비고 |
+|---|---|---|
+| `SIMDASH_SCX_RELAY_ENABLED` | `true` | 꺼져 있으면 사유 `SCX_RELAY_DISABLED` |
+| `SIMDASH_DRIVE_GATEWAY` | `scx` | 아니면 `SCX_DRIVE_MODE_OFF` |
+| `SIMDASH_SCX_RELAY_SECRET_FILE` | 공유 비밀 파일 절대경로(예 `D:\secrets\scx_relay.key`) | esl `hpc.scx.secret_file` 이 **같은 파일**을 가리키게(복사 금지 권장). 값이 다르면 `SCX_RELAY_UNAUTHORIZED` |
+| `SIMDASH_SCX_RELAY_DRIVE_BASE` | 릴레이 읽기 기준 폴더(공용 계정 홈 기준, 예 `share`) | esl `scx_drive.roots[].rel` 은 이 안이어야 함. SPDM 마스터 루트(`SIMDASH_SCX_DRIVE_ROOT`)는 릴레이가 항상 거부 |
+| `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES` | **≥ 64 GiB 권장**(`68719476736`) | 기본 20 GiB 이면 30 GB h3d 는 시작 전 422 `SCX_FILE_TOO_LARGE`. 환경 점검 `scx.relay.max_download_bytes` 가 경고 |
+| (대시보드 임시 공간) | 가장 큰 h3d × 동시 내려받기 수(`worker.xfer_lanes`) 이상 여유 | 릴레이는 SCX → 자기 임시 폴더로 **전부 받은 뒤** esl 로 스트리밍(Range 없음). 부족하면 `SCX_DASHBOARD_DISK` |
+| `SIMDASH_DRIVE_WRITES_ENABLED` | (v0.11.0 은 불필요) | 검증 낙하(v0.12.0)에서만 필요 |
+
+**② 비밀 파일 권한(Windows)**: 대시보드·esl 서비스 계정(같은 계정 권장)과 Administrators 만 읽기. `Everyone`·`Users`·`Authenticated Users` 읽기가 있으면 환경 점검 `hpc.scx.secret_file` 이 `SCX_SECRET_ACL_WIDE` 경고.
+
+```powershell
+icacls D:\secrets\scx_relay.key /inheritance:r /grant:r "<서비스계정>:R" "Administrators:F"
+```
+
+비밀 값은 esl 프로세스 메모리에만 있고 로그·오류·설정 응답에는 경로만 나온다.
+
+**③ esl 설정(`<런타임>\config\esl_platform.yaml`)** — `hpc.scx` 는 physicsai 의 `hpc.scx` 블록을 그대로 복사하고 `client_name` 만 더한다.
+
+```yaml
+hpc:
+  scx:
+    relay_url: "http://127.0.0.1:8000"     # 대시보드 백엔드 loopback 포트(화면·프록시 포트 아님, 경로 없이)
+    secret_file: "D:\\secrets\\scx_relay.key"   # 대시보드 SIMDASH_SCX_RELAY_SECRET_FILE 과 같은 파일
+    client_name: "esl"
+    max_download_bytes: 68719476736        # 64 GiB — 실제 상한 = min(이 값, 대시보드 상한, upload.max_file_bytes)
+    transfer_timeout_s: 14400              # 30 GB h3d: 대시보드 임시 받기 + 스트리밍
+    health_ttl_s: 30
+    # (나머지 키 drive_base·appliance·version·ncpu… 는 검증 낙하 v0.12.0 용 — 예시 파일 값 그대로)
+scx_drive:
+  enabled: true                            # 기본 false
+  roots:                                   # 릴레이 기준 상대(첫 구간 '.' 금지). key ^[a-z0-9_-]{1,32}$ 유일
+    - {key: "drop", label: "낙하해석 공유", rel: "share/drop", projects: []}   # projects [] = 모든 프로젝트, 아니면 프로젝트 id 목록
+  list_max_entries: 5000
+  max_files: 2000                          # rad + include + 엔진 rad 합계
+  engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
+  file_retries: 2                          # 끊김·SCX_BUSY·해시 불일치 시 파일당 자동 재시도
+  retry_wait_s: 30
+verify_drop:
+  enabled: false                           # v0.11.0 은 켜도 화면에 나오지 않음(VD_NOT_AVAILABLE — v0.12.0)
+worker:
+  xfer_lanes: 2                            # XFER 레인 루프 수(1~8) = 동시 SCX 내려받기 수. SLOT·LIGHT 와 독립
+```
+
+- 받은 파일은 사용자 업로드 폴더(`storage.upload_root`)에 저장되므로 `upload.max_file_bytes`(파일당)·`max_upload_bytes`(업로드당)·`min_free_gb`(여유, 부족하면 507 `INSUFFICIENT_STORAGE{need, free, reserve}`)와 `upload.allowed_ext`(rad·inc·k·sta·str·h3d 포함)가 그대로 적용된다. 사용자당 동시 업로드 한도(`max_concurrent_per_user`)도 SCX 세션을 센다(429 `UPLOAD_LIMIT`).
+- starter 는 `<이름>_0000.rad` 만 고를 수 있다(화면 hint `rad`). 같은 폴더의 엔진 rad(`engine_globs`)와 include(상대·`../`·상태 파일 .sta/.str)는 워커가 rad 를 읽어 자동으로 받는다. 절대경로·루트 밖·드라이브에 없는 include 는 받지 않고 사용자가 SCX 탭의 **[추가로 올리기]**로 같은 세션에 넣는다.
+- 적용: 설정을 고친 뒤 `ESL-Backend`·`ESL-Worker` 재시작(§4.2). 대시보드 쪽을 고쳤으면 대시보드 백엔드도 재시작 — esl 은 health 를 `health_ttl_s` 마다 다시 본다(재시작 불필요).
+- 확인: 환경 점검(§10) `scx.adapter`·`hpc.scx`·`hpc.scx.secret_file`·`scx.relay`·`scx.relay.max_download_bytes`·`worker.xfer_lanes`, 그리고 실기 체크리스트 [scx_check.md](scx_check.md).
+- 어댑터(`simdash_adapters`, physicsai 커밋 고정 `deploy\simdash_adapters.lock`)는 저장소 동봉 wheel 로 설치된다. 설치 실패 시 SCX 기능만 비활성(`SCX_ADAPTER_MISSING`) — 설치·업데이트를 다시 실행.
+
+| 화면 사유(코드) | 조치 |
+|---|---|
+| `SCX_NOT_CONFIGURED` / `SCX_FETCH_DISABLED` / `SCX_NO_ROOTS` | `hpc.scx` 블록 / `scx_drive.enabled: true` / 이 프로젝트에 허용된 `roots` 추가 |
+| `SCX_RELAY_UNREACHABLE` | 대시보드 백엔드 실행 여부, `relay_url` 포트 |
+| `SCX_RELAY_FORBIDDEN` | `relay_url` 이 프록시·화면 포트를 가리킴 → 백엔드 loopback 포트로 |
+| `SCX_RELAY_UNAUTHORIZED` / `SCX_SECRET_INVALID` | 두 앱이 같은 비밀 파일을 읽는지, 파일 형식 — 고친 뒤 두 앱 재시작 |
+| `SCX_AUTH_REQUIRED` | 대시보드 관리 화면에서 SCX 재로그인 |
+| `SCX_FILE_TOO_LARGE` | `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES`·`hpc.scx.max_download_bytes`·`upload.max_file_bytes` 상향 |
+| `SCX_DASHBOARD_DISK` / `INSUFFICIENT_STORAGE` | 대시보드 임시 공간 / esl `storage.upload_root` 드라이브 여유 |
+
 ### 2.8 DB 수동 생성(설치 스크립트 없이)
 
 ```sql
@@ -474,6 +541,10 @@ D:\esl\venv\Scripts\python.exe D:\esl\app\esl_service.py check --runtime D:\esl 
 | `db.connection` / `db.server_version` | 접속(대상 host:port/db만 표시, 비밀번호 비노출) / 18 아니면 WARN |
 | `db.migration_head` | `alembic_version` = head(`0004`) — 아니면 FAIL(`esl_service.py migrate`) |
 | `worker.heartbeat` | 최근 하트비트 ≤ 3×주기 → OK, 아니면 WARN(워커 오프라인) |
+| `scx.adapter` / `scx.adapter.lock` | v0.11.0 SCX 릴레이 어댑터 import·버전·커밋 / 코드 고정값 = `deploy/simdash_adapters.lock`(다르면 FAIL) |
+| `hpc.scx` / `hpc.scx.secret_file` | 설정 검사(없으면 SKIP — SCX 안 씀) / 비밀 파일 형식·Windows 권한(`SCX_SECRET_ACL_WIDE` WARN), 값은 출력 안 함 |
+| `scx.relay` / `scx.relay.max_download_bytes` | 대시보드 릴레이 health(연결·drive_mode·job_api) — 실패면 사유 코드 WARN / 상한 < 64 GiB 면 WARN |
+| `worker.xfer_lanes` | XFER 레인 수(동시 SCX 내려받기) |
 
 - 종료코드 0 = FAIL 없음, 1 = FAIL 있음. 화면에서는 `GET /esl/api/status`(설정 오류·워커 온라인·솔버 백엔드)로도 본다.
 

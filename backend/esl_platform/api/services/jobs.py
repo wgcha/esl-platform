@@ -246,6 +246,10 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             from .doe import retry_job as retry_doe
 
             return retry_doe(conn, principal, job)
+        if job.get("upload_id"):                       # v0.11.0 SCX_FETCH(대상 = 업로드 세션)
+            from .scx_drive import retry_fetch
+
+            return retry_fetch(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
         start = jobs_repo.first_failed_step(conn, job_id)
@@ -398,6 +402,11 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
             from ...core.repositories import doe as doe_repo
 
             base = analysis_dir(ctx, doe_repo.get_study(conn, job["bead_doe_id"]))
+        elif job.get("upload_id"):
+            # v0.11.0 SCX_FETCH: 로그 = <업로드 세션 폴더>/_scx/logs/<job_id>/(esl 이 쓰는 곳은 세션 폴더뿐 — SR-D-6)
+            from .uploads import _row as upload_row
+
+            base = os.path.join(upload_row(conn, job["upload_id"])["dir_path"], "_scx")
         elif job["job_type"] == "EXPORT" and (job.get("params") or {}).get("origin") == "library":
             # v0.10.0 라이브러리 내보내기: 로그 = <esl_root>/_exports/<batch_id>/logs/<job_id>/
             from ...core.paths import EXPORTS_DIR, esl_subdir
