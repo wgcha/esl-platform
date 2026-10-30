@@ -3052,3 +3052,77 @@ th[aria-sort="ascending"] .th-sort::after {
 .anchor-section {
   scroll-margin-top: calc(var(--topbar-h) + 0.5rem);
 }
+
+/* v0.12.0 검증 낙하(계약 esl_scx_relay.md §10.2) — 계획 대화상자 · 카드(묶음별 씬 표 + 고른 행 상세) */
+.modal.vd-modal {
+  width: min(640px, 92vw);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+.vd-modal .vd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 1.25rem;
+}
+.vd-modal .checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1rem;
+}
+.vd-modal .vd-n {
+  width: 3.5rem;
+  margin: 0 0.3rem;
+}
+.vd-modal .vd-scenes {
+  max-height: 14rem;
+  overflow: auto;
+}
+.vd-modal .vd-adv summary {
+  cursor: pointer;
+}
+.vd-modal .vd-adv .field input {
+  width: 8rem;
+}
+.vd-batches {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.vd-batch {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.vd-steps {
+  margin: 0;
+  flex-wrap: nowrap;
+}
+.vd-steps li {
+  padding: 0.05rem 0.5rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.vd-pick {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-strong);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.vd-pick[aria-pressed="true"] {
+  font-weight: 600;
+}
+.vd-detail {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+.vd-unknown .inline-actions input {
+  width: 12rem;
+}
