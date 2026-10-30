@@ -3,3 +3,4 @@
 *.ps1 text eol=crlf
 
 tests/fixtures/view3d/** -text
+*.whl binary

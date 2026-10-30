@@ -13,6 +13,8 @@ altair.max_concurrent_hw(동시 hw 수 — 라이선스 한도), worker.slots·p
   라이브러리 설정           <런타임>\config\library.yaml + ista6.yaml (config/library.example.yaml, config/ista6.yaml 복사 — 낙하 높이 표는 TODO)
   비드 DOE 형상 엔진(v0.9.0) 묶음 wheels — paicad-<ver>-py3-none-any.whl(physicsai-platform packages/paicad, deploy\paicad.lock 의
                             커밋·버전·정규화 sha256 으로 collect-offline 이 빌드·대조) + requirements.lock bead_doe 절(cadquery-ocp·vtk·gmsh).
+                            v0.10.1: 같은 wheel 이 저장소에 동봉(deploy\wheels\paicad-<ver>-py3-none-any.whl) — git 폴더 설치·update-repo 와
+                            collect-offline 은 이것을 먼저 쓴다(설치 전 lock sha256 대조, physicsai 저장소·paicad_wheels 폴더 불필요).
                             설치 venv 에 <런타임>\venv\Scripts\paicad.exe 가 생기고 setup_config 가 bead_doe.paicad.exe 를 채운다(있을 때만).
                             설치 실패해도 다른 기능은 동작(비드 DOE 만 비활성). gmsh 는 GPL(+예외) — 사내 설치 용도, 묶음 크기 수백 MB 증가.
                             확인: <런타임>\venv\Scripts\paicad.exe version --json (paicad ≥ 0.14.0, ocp 값 있음),

@@ -8,9 +8,11 @@
       --wheel 이 있으면 빌드하지 않고 그 wheel 을 정규화·대조만 한다(physicsai 묶음의 wheel 재사용 등).
   python paicad_wheel.py verify --lock deploy/paicad.lock --wheel <파일>      대조만(설치 전 — 종료 0 일치, 1 불일치)
   python paicad_wheel.py digest --wheel <파일>                                 정규화 sha256 출력(lock 갱신용)
-  python paicad_wheel.py check --lock deploy/paicad.lock --exe <venv>/Scripts/paicad.exe [--min-version X.Y.Z]
+  python paicad_wheel.py check --lock deploy/paicad.lock [--exe <venv>/Scripts/paicad.exe] [--wheel deploy/wheels/<lock.wheel>]
+                               [--min-version X.Y.Z]
       설치 확인: paicad version --json(paicad ≥ min, ocp 있음 — 사유 코드 PAICAD_*), gmsh import(없으면 경고 GMSH_UNAVAILABLE).
-      설치 venv 의 Python 으로 실행한다(gmsh 는 그 Python 으로 확인).
+      설치 venv 의 Python 으로 실행한다(gmsh 는 그 Python 으로 확인). --wheel(v0.10.1): 저장소 동봉 wheel(deploy/wheels) 등
+      wheel 파일도 lock 과 대조(PAICAD_WHEEL_NOT_FOUND·PAICAD_WHEEL_MISMATCH). --exe·--wheel 중 하나 이상 — --wheel 만이면 파일 대조만.
 
 정규화: wheel(zip)을 같은 항목·같은 내용으로 다시 쓴다 — 무압축(ZIP_STORED, zlib 판 차이 없음), 시각 1980-01-01, 권한 0644,
 이름 순(.dist-info 는 끝, RECORD 는 맨 끝). 빌드 OS·시각·umask 와 무관하게 같은 소스 + 같은 setuptools(lock.build_requires)면
@@ -243,13 +245,38 @@ def _vt(s: Any) -> tuple[int, ...]:
     return tuple(int(x) for x in m.groups()) if m else (-1,)
 
 
-def check(lock: dict[str, Any], exe: str, *, min_version: str | None = None, python: str | None = None,
-          timeout: float = 60.0) -> dict[str, Any]:
+def check_wheel(lock: dict[str, Any], path: str) -> dict[str, Any]:
+    """wheel 파일(저장소 동봉 deploy/wheels 등) ↔ lock 대조. {path, ok, sha256, problems(사유 코드 PAICAD_WHEEL_*)}."""
+    out: dict[str, Any] = {"path": path, "ok": False, "sha256": None, "problems": []}
+    if not path or not os.path.isfile(path):
+        out["problems"].append(f"PAICAD_WHEEL_NOT_FOUND: wheel 파일 없음({path})")
+        return out
+    try:
+        v = verify_bytes(Path(path).read_bytes(), lock)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        out["problems"].append(f"PAICAD_WHEEL_MISMATCH: wheel 을 읽을 수 없음({exc})")
+        return out
+    out["sha256"] = v["sha256"]
+    out["problems"] = [f"PAICAD_WHEEL_MISMATCH: {p}" for p in v["problems"]]
+    out["ok"] = v["ok"]
+    return out
+
+
+def check(lock: dict[str, Any], exe: str | None, *, min_version: str | None = None, python: str | None = None,
+          timeout: float = 60.0, wheel: str | None = None) -> dict[str, Any]:
     """설치 확인(BD-D-19·20): `<exe> version --json` → paicad ≥ min(기본 lock.version) 그리고 ocp 가 null 아님,
     lock.version 과 다르면 경고. gmsh = 이 Python(설치 venv)으로 별도 프로세스에서 import(③ 만 — 없으면 경고).
-    ok 는 paicad 판정만(gmsh 없음은 ③ 만 비활성). shell=False, 인자 고정."""
+    ok 는 paicad 판정만(gmsh 없음은 ③ 만 비활성). shell=False, 인자 고정.
+    wheel(v0.10.1): 주면 그 파일도 lock 과 대조(check_wheel — 결과 res.wheel). exe 가 없고 wheel 만이면 파일 대조만 한다."""
     res: dict[str, Any] = {"ok": False, "paicad": None, "ocp": None, "gmsh": None, "exe": exe, "pinned": lock["version"],
                            "problems": [], "warnings": []}
+    if wheel is not None:
+        w = check_wheel(lock, wheel)
+        res["wheel"] = {k: w[k] for k in ("path", "ok", "sha256")}
+        res["problems"].extend(w["problems"])
+        if not exe:
+            res["ok"] = not res["problems"]
+            return res
     if not exe or not os.path.isfile(exe):
         res["problems"].append(f"PAICAD_NOT_FOUND: paicad 실행 파일 없음({exe})")
     else:
@@ -301,14 +328,17 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--wheel", required=True)
     k = sp.add_parser("check")
     k.add_argument("--lock", required=True)
-    k.add_argument("--exe", required=True)
+    k.add_argument("--exe", default="")
+    k.add_argument("--wheel", default=None)
     k.add_argument("--min-version", default="")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "collect":
             res = collect(a)
         elif a.cmd == "check":
-            res = check(read_lock(a.lock), a.exe, min_version=a.min_version or None)
+            if not a.exe and a.wheel is None:
+                raise ValueError("check 에는 --exe 또는 --wheel 이 필요합니다")
+            res = check(read_lock(a.lock), a.exe or None, min_version=a.min_version or None, wheel=a.wheel)
         elif a.cmd == "verify":
             vv = verify_bytes(Path(a.wheel).read_bytes(), read_lock(a.lock))
             res = {k: vv[k] for k in ("ok", "problems", "sha256", "version", "console_scripts")}
