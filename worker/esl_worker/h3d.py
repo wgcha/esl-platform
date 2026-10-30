@@ -206,7 +206,18 @@ def strain_request(core_settings: dict | None) -> dict[str, str]:
     out["vm_comps"] = "|".join(x["vm_comps"])
     out["scalar_comps"] = "|".join(x["scalar_comps"])
     out["layer_exclude"] = "|".join(x["tensor_layer_exclude"])
+    out["dump_max_bytes"] = str(int(core_adapter.dump_settings(core_settings or {})["dump_max_bytes"]))
     return out
+
+
+def free_bytes(path: str, reserve_gb: float = 0.0) -> int | None:
+    """path 디스크 여유 − 예비(upload.min_free_gb), 모르면 None."""
+    import shutil
+
+    try:
+        return max(0, int(shutil.disk_usage(path).free - reserve_gb * 1024 ** 3))
+    except OSError:
+        return None
 
 
 def cumulative_request(cum: dict[str, Any] | None, prev_path: str) -> dict[str, str]:

@@ -691,3 +691,91 @@ def test_dump_missing_rows_and_bad_layer(tmp_path):
     assert _code(pack_results, rd, m, tmp_path / "o2") == "TOOL_OUTPUT_MISSING"
     # 옛 done.json(키 없음) = max_strain
     assert RC.strain_source_of({}) == "max_strain" and RC.strain_source_of({"strain_fallback": {"source": "x"}}) == "max_strain"
+
+
+def test_dump_keep_delete_and_size_limit(tmp_path):
+    """Med2: 워커 추출 폴더(<작업>/raw + request.txt)면 변환 성공 후 strain_raw.csv·disp.csv 삭제(dump_keep=false),
+    done.json dump_deleted → 다시 패킹하면 안내 오류. dump_keep=true·일반 폴더는 보존. 크기 상한 STRAIN_DUMP_TOO_LARGE."""
+    from esl.io import write_dump_csv
+    m = _model(tmp_path)
+    t, u, inst = _dump_series(m, F=5, L=2)
+    work = tmp_path / "w"
+    rd = write_dump_csv(work / "raw", t, m.node_id, m.x0, u, m.elem_id, inst)
+    (work / "request.txt").write_text("part_title\tplate\n")
+    keep = pack_results(rd, m, tmp_path / "o1", dump={"dump_keep": True})
+    assert "dump_deleted" not in keep and os.path.isfile(os.path.join(rd, "strain_raw.csv"))
+    info = pack_results(rd, m, tmp_path / "o2")
+    assert info["dump_deleted"] == ["strain_raw.csv", "disp.csv"]
+    assert not os.path.exists(os.path.join(rd, "strain_raw.csv")) and not os.path.exists(os.path.join(rd, "disp.csv"))
+    assert json.load(open(os.path.join(rd, "done.json")))["dump_deleted"] == ["strain_raw.csv", "disp.csv"]
+    for fn in ("final.npz", "history.npz", "strain_frames.npz", "disp.npz"):
+        a, b = _load(tmp_path / "o1" / fn), _load(tmp_path / "o2" / fn)
+        assert all(np.array_equal(a[k], b[k]) for k in a), fn
+    with pytest.raises(EslError) as ei:
+        pack_results(rd, m, tmp_path / "o3")
+    assert ei.value.code == "TOOL_OUTPUT_MISSING" and "dump_keep" in ei.value.message
+    # 일반 폴더(request.txt 없음)는 지우지 않음
+    rd2 = write_dump_csv(tmp_path / "plain", t, m.node_id, m.x0, u, m.elem_id, inst)
+    assert "dump_deleted" not in pack_results(rd2, m, tmp_path / "o4")
+    assert os.path.isfile(os.path.join(rd2, "strain_raw.csv"))
+    with pytest.raises(EslError) as ei:
+        pack_results(rd2, m, tmp_path / "o5", dump={"dump_max_bytes": 100})
+    assert ei.value.code == "STRAIN_DUMP_TOO_LARGE" and "TMAX" in ei.value.message
+    assert RC.dump_estimate_bytes(200, 220_000, 2, 230_000) == 200 * (220_000 * 2 * 120 + 230_000 * 80)
+
+
+def test_dump_unordered_frames_rejected(tmp_path):
+    from esl.io import write_dump_csv
+    m = _model(tmp_path)
+    t, u, inst = _dump_series(m, F=3, L=1)
+    rd = write_dump_csv(tmp_path / "d", t, m.node_id, m.x0, u, m.elem_id, inst, layers=("Mid",))
+    p = os.path.join(rd, "strain_raw.csv")
+    lines = open(p).read().splitlines()
+    open(p, "w").write("\n".join([lines[0]] + lines[1:][::-1]) + "\n")
+    assert _code(pack_results, rd, m, tmp_path / "o") == "TOOL_OUTPUT_MISSING"
+
+
+def test_dump_memory_220k_elems_200_frames(tmp_path):
+    """Med2: 22만 요소 × 200 프레임 × 2층(8800만 행) dump 변환 피크 메모리 < 1 GB (tracemalloc). 행은 청크 생성기로
+    직접 공급(파일 파싱 없음 — 변환 로직의 상태 크기만 잰다). (F,E) 밀집 배열이 있으면 이 크기에서 수 GB."""
+    E, F, L = 220_000, 200, 2
+    eid = np.arange(1, E + 1, dtype=np.int64)
+    model = SimpleNamespace(elem_id=eid)
+    t = np.arange(F) * 1e-4
+    with open(tmp_path / "frames.csv", "w") as fh:
+        fh.write("frame_index,time\n" + "".join(f"{f},{float(t[f])!r}\n" for f in range(F)))
+    base = np.linspace(1e-4, 1e-3, E)
+    amp = np.abs(np.sin(np.linspace(0, 1.7 * np.pi, F)))                # 중간 최대, 끝 감소
+    lay = np.repeat(np.arange(L), E).astype(np.float64)
+    ids = np.tile(eid, L).astype(np.float64)
+
+    def source():
+        for f in range(F):
+            a = np.empty((E * L, 9))
+            a[:, 0] = f
+            a[:, 1] = ids
+            a[:, 2] = lay
+            x = np.tile(base, L) * amp[f] * (1.0 + 0.1 * lay)
+            a[:, 4] = x
+            a[:, 5] = -0.3 * x
+            a[:, 6] = -0.7 * x
+            a[:, 7] = 0.2 * x
+            a[:, 3] = 0.0
+            a[:, 8] = 0.0
+            yield a
+
+    done = {"hot_k": 200, "top_n": 2, "reach_rtol": 1e-6, "strain_layers": ["Lower", "Upper"], "warnings": []}
+    tracemalloc.start()
+    try:
+        out = RC.dump_to_maxhold(str(tmp_path), done, model, str(tmp_path / "dst"), "tensor", source=source)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    print(f"dump 변환 피크 메모리 {peak / 2 ** 20:.0f} MiB")
+    assert peak < 1024 ** 3, peak
+    fmax = int(np.argmax(amp))
+    assert out["frames_D"] == [fmax] and out["n_hot"] == 200
+    with open(tmp_path / "dst" / "final.csv") as fh:
+        fh.readline()
+        row = fh.readline().split(",")
+    assert int(row[0]) == 1 and float(row[2]) == pytest.approx(base[0] * amp[fmax] * 1.1, rel=1e-12)

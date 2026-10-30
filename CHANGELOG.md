@@ -6,7 +6,8 @@
 ### 수정
 - **서버 h3d 추출이 `Max_Strain` 없는 덱에서 막히던 문제**(`H3D_MISSING_RESULT: result type 'Max_Strain' not in subcase 1`): 변형률 결과를 순서대로 대체 — `Max_Strain` → `Plastic Strain` → `Strain`(층별 순간 텐서) → `Max_Stress`. 순서·결과/성분 이름 후보는 설정 `extract.strain_sources`·`result_names`·`tensor_comps`·`vm_comps`·`scalar_comps`·`tensor_layer_exclude`(선택, 없으면 기본값)
 - `Strain` 텐서 대체: 추출이 전 프레임 × 층(예 Lower·Upper, Max·Min 제외) 원자료를 내고 코어가 프레임별 등가 변형률 → 층 최대 → 시간 누적 최대로 TMAX 를 재현(출력 프레임 표본이라 ε 과소평가·t* 양자화 가능 — 경고 `STRAIN_TMAX_SAMPLED`, 덱에 `/H3D/SHELL/TENS/STRAIN/TMAX` 권장). ESL 검증 해 ε 도 외피 층(bottom·top) 최대로 비교. 추출 시간·용량은 프레임 수에 비례해 늘어남
-- 소성 변형률 결과가 없으면 실패 대신 0 + 경고 `H3D_NO_EPSP`. 대체 결과가 하나도 없으면 `H3D_NO_STRAIN_SOURCE`("h3d 에 변형률·응력 결과가 없음 — 덱 /H3D 출력 확인")
+- Strain 텐서 원자료는 스트리밍으로 처리(메모리 요소 수에 비례, 22만 요소 × 200 프레임 × 2층 합성에서 피크 약 165 MiB), 변환 후 서버 추출 폴더에서 삭제(`extract.dump_keep: true` 면 보존), 크기 상한 `extract.dump_max_bytes`(기본 40 GiB)·디스크 여유를 추출 전에 추정해 넘으면 `STRAIN_DUMP_TOO_LARGE`·`INSUFFICIENT_STORAGE`. 입력 지문은 원자료 크기·수정 시각만
+- 소성 변형률 결과가 없으면 실패 대신 0 + 경고 `H3D_NO_EPSP`(소성 영역 정보는 미상으로 표시). 대체 결과가 하나도 없으면 `H3D_NO_STRAIN_SOURCE`("h3d 에 변형률·응력 결과가 없음 — 덱 /H3D 출력 확인")
 - 응력 대체(`Max_Stress`)는 순위·t* 만 응력으로 정하고 변형률 참고 지표(hotspot·전 요소 ε 비교·잡음 바닥 ε)는 생략 + 경고 `STRAIN_FROM_STRESS`. 판정(변위 주지표)은 그대로
 - 어떤 결과를 썼는지(`strain_source`: max_strain | plastic_strain | strain_tensor | max_stress)를 추출 결과·ESL 요약·검증·라이브러리 품질·검증 낙하 비교(양쪽, 다르면 경고 `VD_STRAIN_SOURCE_MISMATCH`)에 기록. 대체일 때 Case 보고서 입력 표에 한 줄. 이전 자료는 max_strain 으로 봄
 - request.txt 에 `strain_type`·`epsp_type` 을 직접 적은 수동 실행은 예전처럼 `Max_Strain` 만 봄(대체 없음)

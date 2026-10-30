@@ -216,6 +216,8 @@ SCHEMA: dict[str, Any] = {
         "vm_comps": _name_list,
         "scalar_comps": _name_list,
         "tensor_layer_exclude": _name_list_or_empty,
+        "dump_keep": _bool,                     # 선택: dump 원자료(strain_raw.csv·disp.csv) 변환 후 보존(기본 false = 삭제, 작업 폴더만)
+        "dump_max_bytes": _int(1),              # 선택: dump 원자료 크기 상한(사전 추정·실제), 넘으면 STRAIN_DUMP_TOO_LARGE
     },
     "coord_check": {                # extract 단계 rad↔h3d 좌표 개략 확인(esl_core.md §3.3)
         "max_rel": _num(0.0),              # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과
@@ -339,7 +341,19 @@ EXTRACT_SOURCE_DEFAULTS = {
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
                            *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
-                           *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS)})
+                           *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
+                           "extract.dump_max_bytes"})
+# dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
+DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
+
+
+def dump_settings(cfg: dict | None) -> dict:
+    """extract.dump_keep·dump_max_bytes (없으면 DUMP_DEFAULTS)."""
+    ex = cfg.get("extract") if isinstance(cfg, dict) else None
+    out = dict(DUMP_DEFAULTS)
+    if isinstance(ex, dict):
+        out.update({k: ex[k] for k in DUMP_DEFAULTS if ex.get(k) is not None})
+    return out
 # cumulative.max_npt·max_npg 기본(cumulative_settings 결과에만 채움)
 STATE_LIMIT_DEFAULTS = {"max_npt": 100, "max_npg": 64}
 

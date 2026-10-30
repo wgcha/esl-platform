@@ -196,6 +196,11 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
             hs.append({"rank": h.get("rank"), "elem_id": h.get("elem_id"), "xi": float(loc[0]), "eta": float(loc[1]),
                        "eps_rad": h.get("eps_rad"), "eps_val": h.get("eps_val"), "rel_err": h.get("rel_err")})
         quality["hotspots"] = hs
+        if val.get("strain_source") == "max_stress":
+            # 응력 대체 검증: 변형률 참고 지표는 품질로 전파하지 않음(Verifier Med1)
+            quality.update(hotspot1_rel_err=None, strain_exceed_frac=None, field=None)
+            for h in quality["hotspots"]:
+                h["rel_err"] = None
 
     # ---- 정규화 요약
     gs = nz.grid_summary(raw["x0"], raw["f"], nx, ny, fr, top_n=top_n, node_id=raw["node_id"])
