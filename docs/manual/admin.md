@@ -340,7 +340,7 @@ scx_drive:
   file_retries: 2                          # 끊김·SCX_BUSY·해시 불일치 시 파일당 자동 재시도
   retry_wait_s: 30
 verify_drop:
-  enabled: false                           # v0.11.0 은 켜도 화면에 나오지 않음(VD_NOT_AVAILABLE — v0.12.0)
+  enabled: false                           # v0.12.0 검증 낙하(켜면 /scx/status.verify 판정 — 릴레이 쓰기·잡 API·appliance 필요)
 worker:
   xfer_lanes: 2                            # XFER 레인 루프 수(1~8) = 동시 SCX 내려받기 수. SLOT·LIGHT 와 독립
 ```

@@ -215,7 +215,7 @@ scx_drive:                            # v0.11.0 기능 A — 새 Case 'SCX 드�
   engine_globs: ["{stem}_0001.rad", "{stem}_000[2-9].rad"]
   file_retries: 2                     # 재시도 가능한 오류(전송·SCX_BUSY·해시 불일치) 파일당 재시도
   retry_wait_s: 30
-verify_drop:                          # v0.11.0 기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)
+verify_drop:                          # 기능 B — Radioss 검증 낙하(v0.12.0, 계약 esl_scx_relay.md §6)
   enabled: false
   max_scenes: 5
   default_worst_n: 3

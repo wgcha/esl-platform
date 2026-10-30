@@ -59,6 +59,8 @@ from esl.rad.parser import max_line_bytes_of
 from esl.report import field as _field
 
 STAGES = ("extract", "tstar", "esl", "validate", "export", "report")
+# v0.12.0 검증 낙하(esl_scx_relay.md SR6): Case 파이프라인 밖 단계 — 워커가 esl.verify.stages.run_stage 로 실행
+VERIFY_STAGES = ("vd_patch", "vd_compare")
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT, D_REPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export", "07_report")

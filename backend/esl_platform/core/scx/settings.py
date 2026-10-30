@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 from typing import Any
 
@@ -84,10 +85,23 @@ def config_problems(settings) -> list[str]:
     if cfg is None:
         return []
     out = [f"hpc.scx: {p}" for p in _adapter_problems(cfg)]
+    if cfg.secret_file and not secret_path_absolute(cfg.secret_file):
+        out.append("hpc.scx.secret_file: 절대경로여야 합니다(SR-D-18 — 상대경로는 작업 폴더에 따라 다른 파일을 가리킴)")
     if not CLIENT_NAME_RE.match(cfg.client_name or ""):
         out.append("hpc.scx.client_name: ^[a-z0-9_-]{1,32}$")
     out += drive_problems(settings)
     return out
+
+
+_WIN_ABS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
+
+
+def secret_path_absolute(p: str) -> bool:
+    """v0.12.0 L1: 비밀 파일 경로는 절대경로만(POSIX `/…`, Windows `C:\\…`·`\\\\서버\\공유\\…`). `~`·상대경로 거부."""
+    s = str(p or "")
+    if not s or s.startswith("~"):
+        return False
+    return bool(_WIN_ABS.match(s)) or (os.name != "nt" and s.startswith("/"))
 
 
 def engine_names(stem: str, names: list[str], globs: list[str]) -> list[str]:
@@ -105,4 +119,5 @@ def run_stem(rad_name: str) -> str | None:
 
 
 __all__ = ["scx_cfg", "appliance_set", "adapter_mapping", "config_problems", "drive_problems", "engine_names", "run_stem",
+           "secret_path_absolute",
            "CLIENT_NAME_RE", "ROOT_KEY_RE", "APPLIANCE_PLACEHOLDER"]

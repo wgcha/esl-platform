@@ -25,6 +25,10 @@
   준비·step 실행은 doe_jobs(paicad = paicad_proc, 코어 = esl.doe.stages), 작업 진행률 = DOE_STEP_WEIGHTS 가중.
 - v0.11.0 SCX_FETCH(XFER, 계약 esl_scx_relay.md §9.1): 대상 = jobs.upload_id, 작업 폴더 = `<업로드 세션>/_scx/`(로그·기록),
   step 은 scx_fetch(HTTP 전송 — 별도 스레드, 이 스레드는 lease 갱신·취소 확인), 작업 진행률 = SCX_STEP_WEIGHTS 가중.
+- v0.12.0 VERIFY_DROP(XFER)·VERIFY_POST(SLOT, 계약 esl_scx_relay.md §9.2·§9.3): 대상 = jobs.verify_drop_id, 작업 폴더 =
+  `<esl_root>/_verify/<id>/`. VERIFY_DROP step 은 scx_verify(VD_PREP 의 노드 패치만 코어 자식 vd_patch, 나머지 HTTP — 별도 스레드),
+  VERIFY_POST 는 verify_post(H3D_EXTRACT = 이 실행기의 hw 실행, VD_EXTRACT·VD_COMPARE = 코어 자식). 종료 전이와 같은 트랜잭션에서
+  검증 phase 갱신(scx_verify.on_finish — VERIFY_DROP 성공이면 VERIFY_POST 큐), 실행 중 취소면 SCX 잡 terminate 1회(on_cancel).
 - v0.10.0(esl_menu_restructure.md §6.2·§7.3): EXPORT params.origin = library → 작업 폴더·로그 `<esl_root>/_exports/<batch>/`,
   Case 폴더 쓰기 없음(입력 지문·현재 run 재확인·history 보존·artifacts·자동 보고서 건너뜀), 자식이 코어
   esl.export.from_entry.run_items 실행. VALIDATE params.origin = library_revalidate → "현재 run" 대신 "그 run 의 추출이 Case
@@ -48,9 +52,9 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
-from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES
+from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES, VERIFY_JOB_TYPES
 
-from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register, scx_fetch
+from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -100,6 +104,8 @@ class Executor:
     def _finish(self, state: str, code: str | None = None, message: str | None = None) -> None:
         with self._tx() as conn:
             jobs_repo.release(conn, self.job["id"], self.token, state, failure_code=code, failure_message=message)
+            if self.job["job_type"] in VERIFY_JOB_TYPES:      # v0.12.0: 검증 phase 갱신·VERIFY_POST 큐(같은 트랜잭션)
+                scx_verify.on_finish(self, conn, state, code, message)
 
     def _kill_child(self) -> None:
         hp = self.hw_proc
@@ -139,6 +145,12 @@ class Executor:
                     self.cdir, self.lib = scx_fetch.prepare(self)
                 except scx_fetch.PrepareFailed as exc:
                     raise _StepFailed(exc.code, exc.message) from None
+            elif job["job_type"] in VERIFY_JOB_TYPES:          # v0.12.0 검증 낙하(대상 = verify_drop_id)
+                try:
+                    self.cdir, self.lib = scx_verify.prepare(self)
+                except scx_verify.PrepareFailed as exc:
+                    raise _StepFailed(exc.code, exc.message) from None
+                self.case = self.lib["case"]
             elif lib_jobs.is_lib_export(job):                  # v0.10.0 라이브러리 다중 내보내기(Case 폴더 쓰기 없음)
                 try:
                     self.cdir, self.lib = lib_jobs.prepare_lib_export(self.settings, job)
@@ -166,9 +178,12 @@ class Executor:
                 self._run_step(st)
             self._finish(SUCCEEDED)
             return SUCCEEDED
-        except _Canceled:
+        except _Canceled as exc:
             self._kill_child()
-            self._finish(CANCELED, "CANCELED", "사용자 취소")
+            msg = "사용자 취소"
+            if job["job_type"] == "VERIFY_DROP":
+                msg = scx_verify.on_cancel(self, exc) or msg      # 실행 중 SCX 잡 terminate 1회(이미 끝났으면 생략)
+            self._finish(CANCELED, "CANCELED", msg)
             return CANCELED
         except _StepFailed as exc:
             self._finish(FAILED, exc.code, exc.message)
@@ -256,7 +271,7 @@ class Executor:
                                         else "04_esl 에 실행 태그가 없음(이전 형식) — 현재 산출물로 진행"])
 
     def _register_artifacts(self, conn, rels: list[str]) -> None:
-        if self.case is not None:
+        if self.case is not None and self.job["job_type"] not in VERIFY_JOB_TYPES:   # 검증 산출물은 Case 폴더 밖(_verify)
             register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, rels)
 
     def _run_step(self, st: dict[str, Any]) -> None:
@@ -284,6 +299,10 @@ class Executor:
                     final = "SKIPPED"          # BD_MESH0(③ 아님)
             elif self.job["job_type"] in SCX_JOB_TYPES:
                 outputs = scx_fetch.run_step(self, st, log_path)
+            elif self.job["job_type"] == "VERIFY_DROP":
+                outputs = scx_verify.run_step(self, st, log_path)
+            elif self.job["job_type"] == "VERIFY_POST":
+                outputs = verify_post.run_step(self, st, log_path)
             elif st["step_key"] == "H3D_EXTRACT":
                 outputs = self._run_h3d(st, log_path)
                 with self._tx() as conn:
@@ -354,6 +373,8 @@ class Executor:
                 doe_jobs.mark_job_progress(conn, self, st["step_key"], 100.0)
             elif self.job["job_type"] in SCX_JOB_TYPES:
                 scx_fetch.mark_job_progress(conn, self, st["step_key"], 100.0)
+            elif self.job["job_type"] in VERIFY_JOB_TYPES:
+                scx_verify.mark_job_progress(conn, self, st["step_key"], 100.0)
 
     def _archive_history(self) -> str | None:
         """H-5: EXPORT·CASE_REPORT 등록 성공 직후 결과 파일을 <case>/history/<job_id>/ 에 복사(설정 history.archive_files).
@@ -393,7 +414,8 @@ class Executor:
 
         return STAGE_DIRS.get(stage, stage)
 
-    def _run_core(self, st: dict[str, Any], log_path: str) -> None:
+    def _run_core(self, st: dict[str, Any], log_path: str, spec_over: dict[str, Any] | None = None) -> None:
+        """코어 자식 1회. spec_over = 검증 낙하(VERIFY_*)처럼 Case 폴더가 아닌 입력·출력(키 덮어쓰기)."""
         p = self.job["params"] or {}
         case = self.case
         stage = st["core_stage"]
@@ -411,6 +433,8 @@ class Executor:
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
                 "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
                 "parent_pid": os.getpid(), "progress_path": progress_path}
+        if spec_over:
+            spec.update(spec_over)
         gate = limiter.prepare(self.worker, spec, self.lim)
         self.proc = _SPAWN.Process(target=child_entry, args=(spec,), name=f"esl-core-{stage}")
         self.proc.start()
@@ -506,7 +530,8 @@ class Executor:
         if not os.path.isfile(hw):
             raise _StepFailed(h3d.FAILURE, f"hw 실행 파일이 없습니다(altair.hw_exe_path): {hw}")
         try:
-            work = h3d_work_dir(s, self.case["folder_name"])
+            work = (verify_post.h3d_work(self) if self.job["job_type"] == "VERIFY_POST"
+                    else h3d_work_dir(s, self.case["folder_name"]))
         except DomainError as exc:
             raise _StepFailed(exc.code, exc.message) from None
         out_dir = p["out_dir"]

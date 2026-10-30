@@ -11,7 +11,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NEW = [*sorted((ROOT / "backend/esl_platform/core/scx").glob("*.py")), ROOT / "backend/esl_platform/api/services/scx_drive.py",
-       ROOT / "backend/esl_platform/api/routers/scx.py", ROOT / "worker/esl_worker/scx_fetch.py"]
+       ROOT / "backend/esl_platform/api/routers/scx.py", ROOT / "worker/esl_worker/scx_fetch.py",
+       # v0.12.0 기능 B
+       ROOT / "worker/esl_worker/scx_verify.py", ROOT / "worker/esl_worker/verify_post.py",
+       ROOT / "backend/esl_platform/api/services/verify_drop.py", ROOT / "backend/esl_platform/api/routers/verify.py",
+       *sorted((ROOT / "esl/verify").glob("*.py"))]
 WRITE_METHODS = {"upload", "upload_file", "mkdirs", "submit_radioss", "resolve", "cancel", "ensure_new_dir"}
 ALLOWED_WRITER = ROOT / "worker/esl_worker/scx_verify.py"
 
@@ -70,3 +74,15 @@ def test_adapter_imported_only_in_scx_layer():
 def test_fake_relay_copy_has_source_header():
     head = (ROOT / "backend/tests/scx/fake_scx_relay.py").read_text(encoding="utf-8").splitlines()[:3]
     assert "a363a89e8f93d3acfe90a9601318bf4f6cade0a7" in head[0] and "packages/simdash_adapters/tests/fake_scx_relay.py" in head[1]
+
+
+def test_verify_module_is_the_only_writer_and_writes_exist_there():
+    """v0.12.0: 어댑터 쓰기 호출(ensure_new_dir·upload·submit_radioss·cancel·resolve)은 scx_verify.py 에 실제로 있고(그 모듈만),
+    백엔드 [잡 ID 연결]·[포기]는 그 모듈 함수(resolve_submission)를 거친다."""
+    calls = set()
+    for n in ast.walk(_tree(ALLOWED_WRITER)):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in WRITE_METHODS:
+            calls.add(n.func.attr)
+    assert {"ensure_new_dir", "upload", "submit_radioss", "cancel", "resolve"} <= calls
+    src = (ROOT / "backend/esl_platform/api/services/verify_drop.py").read_text(encoding="utf-8")
+    assert "scx_verify.resolve_submission(" in src

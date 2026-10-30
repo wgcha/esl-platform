@@ -76,6 +76,16 @@ def _gw_error():
     return gateway_error()
 
 
+def interrupted_or(exc: BaseException, got: int, size: int | None) -> BaseException:
+    """v0.12.0 L2: 본문을 다 받기 전에 연결이 끊기면 어댑터는 '크기·해시 불일치'(HASH_MISMATCH)로 알린다 → 받은 바이트가 기대
+    크기보다 작으면 전송 오류(SCX_TRANSFER_INTERRUPTED, 재시도 대상)로 바꾼다. 크기가 다 왔는데 해시가 다르면 그대로."""
+    E = _gw_error()
+    if isinstance(exc, E) and getattr(exc, "relay_code", None) == "HASH_MISMATCH" and size is not None and got < int(size):
+        return E("UNAVAILABLE", f"전송이 중간에 끊겼습니다({got} / {size} B 받음)", relay_code="TRANSFER_INTERRUPTED",
+                 transport=True)
+    return exc
+
+
 # ---------------------------------------------------------------- 진행률(SCX_STEP_WEIGHTS 가중)
 def job_progress(step_key: str, pct: float) -> float:
     done = 0.0
@@ -231,9 +241,17 @@ class _Fetch:
         return r
 
     def limit(self) -> int:
-        from esl_platform.api.services.scx_drive import download_limit
+        return self.limit_info()[0]
 
-        return download_limit(self.s, self.health)
+    def limit_info(self) -> tuple[int, str]:
+        from esl_platform.api.services.scx_drive import download_limit_info
+
+        return download_limit_info(self.s, self.health)
+
+    def too_large(self, what: str) -> str:
+        from esl_platform.api.services.scx_drive import too_large_text
+
+        return too_large_text(*self.limit_info()) + f" ({what})"
 
     def with_retries(self, what: str, fn):
         """재시도 가능한 오류(SR-D-7)는 scx_drive.file_retries 회, 대기 retry_wait_s. 마지막 오류 → step 실패."""
@@ -245,7 +263,7 @@ class _Fetch:
             except _gw_error() as exc:
                 f = messages.classify(exc)
                 if f.code == "SCX_FILE_TOO_LARGE":
-                    raise _fail(f.code, messages.text(f.code, f"{self.limit()} B") + f" — {what}") from None
+                    raise _fail(f.code, self.too_large(what)) from None
                 if not f.retryable or i == tries - 1:
                     raise _fail(f.code, f"{f.message} — {what}") from None
                 self.echo(f"[esl-worker] {what}: {f.code} — {float(sd.retry_wait_s):g}s 뒤 다시({i + 1}/{tries - 1})")
@@ -288,7 +306,7 @@ class _Fetch:
     def download(self, rel: str, part: str, size: int, label: str, *, pct_of: tuple[float, float] = (0.0, 100.0)) -> tuple[int, str]:
         lim = self.limit()
         if size > lim:
-            raise _fail("SCX_FILE_TOO_LARGE", messages.text("SCX_FILE_TOO_LARGE", f"{lim} B") + f": {rel.rsplit('/', 1)[-1]} {size} B")
+            raise _fail("SCX_FILE_TOO_LARGE", self.too_large(f"{rel.rsplit('/', 1)[-1]} {size} B"))
 
         def once() -> tuple[int, str]:
             stt: dict[str, Any] = {"got": 0, "abort": False, "done": False, "res": None, "err": None}
@@ -329,7 +347,7 @@ class _Fetch:
                 stt["abort"] = True               # 취소·lease 상실: 다음 청크에서 끊김(.part 남김 — 재시도 때 덮어씀)
                 raise
             if stt["err"] is not None:
-                raise stt["err"]
+                raise interrupted_or(stt["err"], stt["got"], size)
             return stt["res"]
 
         got, sha = self.with_retries(f"내려받기 {rel.rsplit('/', 1)[-1]}", once)
@@ -467,7 +485,7 @@ class _Fetch:
         lim = self.limit()
         for nm, sz in ((rad, rsz), (h3d, hsz)):
             if sz > lim:
-                raise _fail("SCX_FILE_TOO_LARGE", messages.text("SCX_FILE_TOO_LARGE", f"{lim} B") + f": {nm.rsplit('/', 1)[-1]} {sz} B")
+                raise _fail("SCX_FILE_TOO_LARGE", self.too_large(f"{nm.rsplit('/', 1)[-1]} {sz} B"))
         self.check_free(rsz + hsz)
         self.echo(f"[esl-worker] SCX_FETCH: 루트 {self.p['root']} — rad {paths.root_sub(rad, self.root_rel)} ({_mb(rsz)}), "
                   f"h3d {paths.root_sub(h3d, self.root_rel)} ({_gb(hsz)} GB)")

@@ -103,13 +103,29 @@ def _file_size(gw, rel: str, max_entries: int) -> int:
     raise DomainError("SCX_PATH_NOT_FOUND", f"{messages.text('SCX_PATH_NOT_FOUND')}: {name}", status=404)
 
 
-def download_limit(settings, health: dict[str, Any]) -> int:
-    """다운로드 상한 = min(hpc.scx.max_download_bytes, health max_download_bytes, upload.max_file_bytes)."""
-    lims = [int(scx_cfg(settings).max_download_bytes), int(settings.upload.max_file_bytes)]
+RELAY_LIMIT_KEY = "대시보드 SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES"
+
+
+def download_limit_info(settings, health: dict[str, Any], *, upload: bool = True) -> tuple[int, str]:
+    """(다운로드 상한, 그 상한을 정한 설정 이름). 상한 = min(hpc.scx.max_download_bytes, health max_download_bytes,
+    [기능 A] upload.max_file_bytes) — v0.12.0 L3: 너무 큰 파일 안내가 실제 원인 설정을 가리키게(같으면 앞쪽 = esl 설정)."""
+    lims = [(int(scx_cfg(settings).max_download_bytes), "hpc.scx.max_download_bytes")]
+    if upload:
+        lims.append((int(settings.upload.max_file_bytes), "upload.max_file_bytes"))
     hm = health.get("max_download_bytes")
     if isinstance(hm, int) and hm > 0:
-        lims.append(hm)
-    return min(lims)
+        lims.append((hm, RELAY_LIMIT_KEY))
+    return min(lims, key=lambda x: x[0])
+
+
+def download_limit(settings, health: dict[str, Any]) -> int:
+    """다운로드 상한 = min(hpc.scx.max_download_bytes, health max_download_bytes, upload.max_file_bytes)."""
+    return download_limit_info(settings, health)[0]
+
+
+def too_large_text(limit: int, key: str) -> str:
+    """SCX_FILE_TOO_LARGE 사용자 문구 — 상한 값과 원인 설정(관리자 조치 대상)."""
+    return messages.text("SCX_FILE_TOO_LARGE", f"{limit} B") + f" — 관리자: {key}"
 
 
 def create_fetch(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
@@ -129,11 +145,11 @@ def create_fetch(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         U.check_segment(seg, seg)                        # Windows 예약어·메타문자 이름은 받지 않음(§12)
     mx = int(s.scx_drive.list_max_entries)
     rad_size, h3d_size = _file_size(gw, rad, mx), _file_size(gw, h3d, mx)
-    limit = download_limit(s, health)
+    limit, lkey = download_limit_info(s, health)
     for nm, sz in ((rad, rad_size), (h3d, h3d_size)):
         if sz > limit:
-            raise unprocessable("SCX_FILE_TOO_LARGE", messages.text("SCX_FILE_TOO_LARGE", f"{limit} B") + f": {nm.rsplit('/', 1)[-1]}"
-                                f" {sz} B", limit=limit, size=sz)
+            raise unprocessable("SCX_FILE_TOO_LARGE", too_large_text(limit, lkey) + f" ({nm.rsplit('/', 1)[-1]} {sz} B)",
+                                limit=limit, size=sz, setting=lkey)
     if rad_size + h3d_size > s.upload.max_upload_bytes:
         raise DomainError("UPLOAD_TOO_LARGE", f"업로드 전체 크기가 상한({s.upload.max_upload_bytes} B)을 넘습니다", status=413,
                           limit=s.upload.max_upload_bytes)
@@ -191,4 +207,4 @@ def retry_fetch(conn, principal: Principal, job: dict[str, Any]) -> dict[str, An
     return job_out(conn, new, with_steps=True)
 
 
-__all__ = ["get_status", "browse", "create_fetch", "retry_fetch", "download_limit"]
+__all__ = ["get_status", "browse", "create_fetch", "retry_fetch", "download_limit", "download_limit_info", "too_large_text"]

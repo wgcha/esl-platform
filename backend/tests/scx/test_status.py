@@ -117,7 +117,7 @@ def test_relay_route_missing_disabled_mode_and_verify_order(settings_dict, mini)
     mini.health["drive_mode"] = "local"
     assert status.evaluate(_settings(d), "p-1")["fetch"]["reason_code"] == "SCX_DRIVE_MODE_OFF"
     mini.health["drive_mode"] = "scx"
-    # B 판정 순서(기능 B 는 v0.12.0 — 다 통과해도 VD_NOT_AVAILABLE)
+    # B 판정 순서(v0.12.0 — 다 통과하면 사용 가능, VD_NOT_AVAILABLE 해제)
     dv = {**d, "verify_drop": {"enabled": True}}
     mini.health.update(writes_active=False)
     st = status.evaluate(_settings(dv), "p-1")
@@ -132,7 +132,7 @@ def test_relay_route_missing_disabled_mode_and_verify_order(settings_dict, mini)
     assert status.evaluate(_settings(dv), "p-1")["verify"]["reason_code"] == "SCX_BASE_OUTSIDE_RELAY"
     mini.health["relay_base"] = "esl"
     st = status.evaluate(_settings(dv), "p-1")
-    assert st["verify"]["reason_code"] == "VD_NOT_AVAILABLE" and st["verify"]["enabled"] is False
+    assert st["verify"] == {"enabled": True, "reason_code": None, "reason": None}
 
 
 def test_health_ttl_cache(settings_dict, fake_relay):

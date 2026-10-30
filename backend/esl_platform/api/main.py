@@ -18,7 +18,7 @@ from ..core.config import LoadedConfig, load_config
 from ..core.errors import DomainError
 from .display_json import DisplayJSONResponse
 from .context import AppContext, build_context
-from .routers import cases, client_tokens, doe, history, jobs, library, opt, results, scx, system, uploads
+from .routers import cases, client_tokens, doe, history, jobs, library, opt, results, scx, system, uploads, verify
 
 log = logging.getLogger("esl_platform.api")
 
@@ -70,7 +70,7 @@ def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
         log.exception("처리되지 않은 오류")
         return _error(500, "INTERNAL_ERROR", "서버 내부 오류가 발생했습니다")
 
-    for r in (system, cases, jobs, results, history, library, opt, doe, uploads, client_tokens, scx):
+    for r in (system, cases, jobs, results, history, library, opt, doe, uploads, client_tokens, scx, verify):
         app.include_router(r.router, prefix=prefix)
     if ctx.settings.server.frontend_root:  # 운영 기본: 대시보드 Vite 프록시가 /esl 전체를 넘긴다(Caddy 없이) — '/'는 가로채지 않음
         from .frontend_static import mount_frontend

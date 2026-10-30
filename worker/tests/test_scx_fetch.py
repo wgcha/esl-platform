@@ -409,3 +409,15 @@ def test_include_name_case_insensitive_on_drive(client, fake_relay, worker_facto
     assert up["state"] == "COMPLETED", up["result"]
     f = next(x for x in up["files"] if x["rel"] == "rad/model/sub/B2.INC")
     assert f["source"] == "scx" and f"{ROOT_REL}/A/model/sub/b2.inc" in fake_relay.files_served
+
+
+def test_mid_transfer_drop_is_transfer_error_not_hash_mismatch(client, fake_relay, worker_factory, loaded_config,
+                                                               settings_dict):
+    """v0.12.0 L2: 본문 도중 끊김 → SCX_TRANSFER_INTERRUPTED(재시도 대상), 해시 불일치(SCX_HASH_MISMATCH)와 구분."""
+    model = build_model(fake_relay)
+    r = fetch(client, model).json()
+    fake_relay.drop_download = 100                                     # 계속 끊김 → 재시도 다 쓰고 실패
+    assert worker_factory().run_once("XFER") == "FAILED"
+    j = job(client, r["job_id"])
+    assert j["failure_code"] == "SCX_TRANSFER_INTERRUPTED", j
+    assert "끊겼" in j["failure_message"]

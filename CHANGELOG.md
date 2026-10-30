@@ -2,6 +2,19 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.12.0] - 2026-10-30
+### 추가
+- **Radioss 검증 낙하(서버)**: 강성 평가 스터디 ① 같은 모델·완료 결과에서 모핑 사본이 남은 안(순위 1~`paicad.keep_files_top`)을 골라 원 낙하 씬을 SCX 에서 다시 실행하고 원 낙하와 비교합니다. 씬 선택 = **가장 나쁜 씬 N개**(ESL별 개선 비 r 큰 순, 기본 `verify_drop.default_worst_n`) 또는 **고른 ESL 전부**, 한 번에 `verify_drop.max_scenes` 건까지. 제출 전 대화상자용 계획(`POST /verify-drops/plan` — 씬·제외 사유·제출 건수·예상 시간·고를 수 있는 안·Radioss 기본값)
+- 씬마다 원 Case 입력(rad + include + 엔진 rad) 사본에 **노드 ID 기준으로 /NODE 좌표 줄만** 고쳐(바뀐 줄·바뀐 파일만, 원본 불변) SCX 드라이브 새 폴더 `<drive_base>/<프로젝트>/VD<번호>_<UTC>` 에 올리고 Radioss 제출 → 상태 폴링 → h3d·out 회수 → 서버 추출 → **비교 표**(최대 ε_eq·상위 요소 ε_eq·최대 상대 변위·t* 값, 원 낙하 대비 비, ESL 선형 예측 비, 개선/악화/비슷, 방향 일치) + CSV. PASS/FAIL 판정은 없습니다
+- 제출 결과를 모를 때(대시보드 응답 없음)는 자동으로 다시 내지 않고 멈춤 — **[잡 ID 연결]**(SCX 화면의 잡 ID → 폴링부터 이어감) 또는 **[포기]**(뒤 [재시도]는 새 제출). 작업 취소는 실행 중인 SCX 잡을 한 번 종료 요청
+- 제외(경고): 누적 씬(이전 런 상태 파일 .sta/.str), include 가 rad 폴더 밖·절대경로·`include_path_map`, 엔진 rad 없음, 원 Case 추출 없음, 같은 안·씬 진행 중. ②③ 스터디는 거부
+### 수정
+- `hpc.scx.secret_file` 상대경로는 설정 오류(절대경로만, SCX 기능만 비활성)
+- SCX 내려받기 도중 연결이 끊기면 '해시 불일치' 대신 **전송 중단**(`SCX_TRANSFER_INTERRUPTED`, 자동 재시도)으로 표시
+- 너무 큰 파일 안내가 실제로 막은 설정(`upload.max_file_bytes`·`hpc.scx.max_download_bytes`·대시보드 `SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES`)을 가리킴
+- Case 생성의 'include 가 입력 루트 밖' 오류에서 서버 절대경로를 일반 사용자에게 가림(전역 관리자는 원문)
+- e2e(`scripts/e2e_scx.mjs`)가 SCX 상태를 받은 뒤 탭을 확인
+
 ## [0.11.0] - 2026-10-30
 ### 추가
 - **새 케이스 'SCX 드라이브에서 고르기'**(4번째 탭): 대시보드 SCX 릴레이를 거쳐 SCX 드라이브(관리자가 정한 공유 폴더 `scx_drive.roots` 안)에서 rad 와 h3d 를 고르면 서버가 직접 내려받아 업로드 세션을 만들고 기존 검사(파트·누락 include) 뒤 그대로 **Case 만들기**. include(상대·`../`·하위 폴더·상태 파일 .sta/.str)와 같은 폴더 엔진 rad(`<이름>_0001.rad` …)는 자동으로 함께 받습니다. 드라이브에 쓰지 않습니다

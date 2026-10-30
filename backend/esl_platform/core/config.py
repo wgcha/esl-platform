@@ -672,21 +672,21 @@ class ScxDriveCfg(_M):
 
 
 class VerifyDropCompareCfg(_M):
-    same_tol: float = 0.02
-    hot_n: int = 20
+    same_tol: float = Field(default=0.02, ge=0.0, le=1.0)    # 비 판단 '비슷' 허용치
+    hot_n: int = Field(default=20, ge=1, le=100000)          # eps_hot 원 낙하 상위 요소 수
 
 
 class VerifyDropCfg(_M):
-    """기능 B — Radioss 검증 낙하(키만, 구현 v0.12.0)."""
+    """기능 B — Radioss 검증 낙하(v0.12.0, esl_scx_relay.md §6)."""
 
     enabled: bool = False
-    max_scenes: int = 5
-    default_worst_n: int = 3
-    max_running: int = 2
-    est_hours_per_scene: float = 3
-    poll_s: float = 60
-    max_wait_h: float = 72
-    lost_after_polls: int = 10
+    max_scenes: int = Field(default=5, ge=1, le=100)         # 한 요청의 씬(=제출) 수 상한(Q4)
+    default_worst_n: int = Field(default=3, ge=1, le=100)    # '가장 나쁜 씬 N개' 기본 N
+    max_running: int = Field(default=2, ge=1, le=64)         # 동시에 실행 중인 VERIFY_DROP 수(claim 조건)
+    est_hours_per_scene: float = Field(default=3, ge=0)
+    poll_s: float = Field(default=60, gt=0, le=3600)
+    max_wait_h: float = Field(default=72, gt=0, le=24 * 30)
+    lost_after_polls: int = Field(default=10, ge=1, le=10000)
     engine_globs: list[str] = Field(default_factory=lambda: ["{stem}_0001.rad", "{stem}_000[2-9].rad"])
     result_globs: dict[str, list[str]] = Field(default_factory=lambda: {"h3d": ["*.h3d"],
                                                                         "out": ["*_0000.out", "*_0001.out"]})
@@ -720,7 +720,7 @@ class Settings(_M):
     library_export: LibraryExportCfg = LibraryExportCfg()   # v0.10.0 라이브러리 다중 내보내기
     hpc: HpcCfg | None = None                               # v0.11.0 SCX 릴레이(hpc.scx). 없으면 SCX 기능 비활성
     scx_drive: ScxDriveCfg = ScxDriveCfg()                  # v0.11.0 기능 A
-    verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.11.0 기능 B(키만 — 구현 v0.12.0)
+    verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.12.0 기능 B — Radioss 검증 낙하
 
     @property
     def api_prefix(self) -> str:

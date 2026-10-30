@@ -2,7 +2,8 @@
 
 P3-UX §6: SLOT 레인 루프는 `worker.slots` 개(각자 claim → 실행, DB worker_slot 행 1..slots 로 동시 수 보장, 같은 Case 는
 claim 조건·부분 unique 로 직렬), LIGHT 레인은 별도 1개.
-v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인 루프 `worker.xfer_lanes` 개(HTTP 전송·원격 대기 — SCX_FETCH). 슬롯·자원 제한기 없음,
+v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인 루프 `worker.xfer_lanes` 개(HTTP 전송·원격 대기 — SCX_FETCH·VERIFY_DROP,
+v0.12.0 실행 중 VERIFY_DROP ≤ verify_drop.max_running). 슬롯·자원 제한기 없음,
 SLOT·LIGHT 와 독립 claim. heartbeat info.scx = 어댑터 확인 {ok, version, commit, reason}.
 """
 
@@ -100,7 +101,8 @@ class Worker:
                 if lane == "SLOT":
                     return jobs_repo.claim_slot(conn, self.worker_id, ttl, self.settings.worker.slots)
                 if lane == "XFER":
-                    return jobs_repo.claim_xfer(conn, self.worker_id, ttl, self.settings.worker.xfer_lanes)
+                    return jobs_repo.claim_xfer(conn, self.worker_id, ttl, self.settings.worker.xfer_lanes,
+                                                self.settings.verify_drop.max_running)
                 return jobs_repo.claim_light(conn, self.worker_id, ttl)
         except (jobs_repo.ClaimRace, IntegrityError):
             # IntegrityError = 같은 Case 의 다른 작업이 동시에 RUNNING 이 됨(ux_jobs_case_running) → 다음 주기에

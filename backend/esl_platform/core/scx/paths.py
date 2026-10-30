@@ -126,4 +126,28 @@ def hint(name: str, engine_globs: list[str]) -> str | None:
     return None
 
 
-__all__ = ["find_root", "sub_segments", "check_drive_rel", "resolve", "within", "in_root", "root_sub", "hint"]
+def display(settings, rel: str | None) -> str | None:
+    """드라이브 상대 경로 → 표시 전용 경로(hpc.scx.home_display 기준). 계산에 쓰지 않는다."""
+    from simdash_adapters.hpc.scx_naming import display_path
+
+    from .settings import scx_cfg
+
+    if not rel:
+        return None
+    cfg = scx_cfg(settings)
+    return display_path(getattr(cfg, "home_display", "") if cfg else "", rel)
+
+
+def verify_job_parent(settings, project_folder: str) -> str:
+    """기능 B 잡 폴더의 부모 = <drive_base>/<프로젝트 구간>(SR-D-12, 어댑터 drive_base_rel·sanitize_project)."""
+    from simdash_adapters.hpc.scx_naming import drive_base_rel, sanitize_project
+
+    from .settings import scx_cfg
+
+    base = drive_base_rel(scx_cfg(settings).drive_base)
+    seg = sanitize_project(project_folder)
+    return f"{base}/{seg}" if base else seg
+
+
+__all__ = ["find_root", "sub_segments", "check_drive_rel", "resolve", "within", "in_root", "root_sub", "hint", "display",
+           "verify_job_parent"]
