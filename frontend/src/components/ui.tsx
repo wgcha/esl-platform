@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { JobState } from "../api/types";
-import { JOB_STATE_LABEL } from "../lib/format";
+import type { JobState, StrainSource } from "../api/types";
+import { JOB_STATE_LABEL, strainSourceBadge } from "../lib/format";
 
 /** 단계 주 버튼(단계당 1개). 비활성 사유는 툴팁(title)으로 보인다. */
 export function PrimaryButton({ label, onClick, disabledReason, busy }: { label: string; onClick: () => void; disabledReason?: string | null; busy?: boolean }) {
@@ -52,6 +52,17 @@ export function Stat({ label, value, hint, sub, tone }: { label: string; value: 
 
 export function Badge({ kind, children }: { kind: "ok" | "bad" | "warn" | "info"; children: ReactNode }) {
   return <span className={`badge ${kind}`}>{children}</span>;
+}
+
+/** v0.12.1 변형률 대체 배지(esl_strain_fallback.md §7) — max_strain·없음이면 표시 없음 */
+export function StrainSourceBadge({ source, title }: { source: StrainSource | null | undefined; title?: string }) {
+  const b = strainSourceBadge(source);
+  if (!b) return null;
+  return (
+    <span className={`badge ${b.kind}`} data-testid="strain-source-badge" title={title}>
+      {b.text}
+    </span>
+  );
 }
 
 /** 작업 상태 점(PhysicsAI StateDot 과 같은 색 규칙) */

@@ -334,7 +334,11 @@ export class MockServer {
   }
 
   private finishExtract(c: CaseOut) {
-    c.extract_summary = EXTRACT_SUMMARY;
+    // v0.12.1 esl_strain_fallback.md §8 T3: h3d 입력 Case = 실서버 목록(Max_Strain·Plastic Strain 없음) → Strain 텐서 대체
+    c.extract_summary =
+      c.input_kind === "H3D"
+        ? { ...EXTRACT_SUMMARY, strain_source: "strain_tensor", warnings: [...EXTRACT_SUMMARY.warnings, "H3D_NO_EPSP", "STRAIN_TMAX_SAMPLED: dt_out=1.0e-4 s"] }
+        : EXTRACT_SUMMARY;
     c.part_id = 10;
     c.h3d_path = c.results_dir.replace(/h3d_csv$/, "chassis_rear.h3d");
     const t = this.tstarMetrics.max_strain.tstar!;

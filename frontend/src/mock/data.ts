@@ -373,6 +373,7 @@ export const EXTRACT_SUMMARY: ExtractSummary = {
   disp_frames: FRAMES_D,
   metrics: ["max_strain", "plastic_strain"],
   warnings: [],
+  strain_source: "max_strain",
 };
 
 /** 평면 좌표(a,b) → 전역 xyz */

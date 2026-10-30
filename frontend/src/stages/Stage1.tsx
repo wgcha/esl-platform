@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/endpoints";
-import { errorText } from "../api/client";
+import { errorText, warnText } from "../api/client";
 import type { InspectH3dResult } from "../api/types";
 import { bytes } from "../lib/format";
-import { Badge, Card, Empty, Field, Stat } from "../components/ui";
+import { Badge, Card, Empty, Field, Stat, StrainSourceBadge } from "../components/ui";
 import { slimLine, slimResults, slimTip } from "../lib/slim";
 import { RadInspectView, ResultsInspectView, usePathInspect } from "../components/PathInspect";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -140,13 +140,13 @@ export function Stage1({ c, reload, allowed }: StageProps) {
               </div>
               <div className="small muted">
                 QUAD {s.n_quad?.toLocaleString() ?? "–"} · TRIA {s.n_tria?.toLocaleString() ?? "–"} · 단위 {s.units_label || "–"} · 파트 id {c.part_id ?? "–"}
-                {c.h3d_path ? ` · h3d ${c.h3d_path}` : ""}
+                {c.h3d_path ? ` · h3d ${c.h3d_path}` : ""} <StrainSourceBadge source={s.strain_source} />
               </div>
               {s.warnings.length > 0 && (
                 <ul className="reasons">
                   {s.warnings.map((w) => (
                     <li key={w} className="small warn-text">
-                      {w}
+                      {warnText(w)}
                     </li>
                   ))}
                 </ul>
