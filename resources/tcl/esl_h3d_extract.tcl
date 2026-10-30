@@ -50,6 +50,20 @@
 #   strain_system (elemental | analysis | global | none; default elemental).
 #   -hot_k / -top_n arguments override request.txt.
 #
+# Strain source fallback (contract esl_strain_fallback.md, v0.12.1): unless strain_type or epsp_type is given
+# in request.txt (then: Max_Strain only, as before), the strain result is the FIRST source of
+# strain_sources (default "max_strain plastic_strain strain_tensor max_stress") whose result type,
+# components and layers are all in the subcase. Name candidates ('|' separated): names_<source>,
+# comp_xx comp_yy comp_zz comp_xy, vm_comps, scalar_comps, layer_exclude (strain_tensor layers left out).
+#   max_strain / plastic_strain / max_stress: max-hold, three passes as above (mode "maxhold");
+#     plastic_strain: vm_hv = epsp = Plastic Strain, exx..exy = 0; max_stress: vm_hv = stress vonMises.
+#   strain_tensor (instantaneous Strain, per layer): mode "dump" -- no ranking here; every frame x part
+#     element x layer -> strain_raw.csv frame_index,elem_id,layer,vm_hv,exx,eyy,ezz,exy,epsp (layer = position
+#     in done.json strain_layers) and every frame x part node -> disp.csv. The Python core rebuilds the
+#     max-hold series, H, D, P (final/history/strain_frames are not written).
+#   Plastic strain (epsp column) is read when a plastic_strain name exists, else 0 + warning H3D_NO_EPSP.
+#   No source -> H3D_NO_STRAIN_SOURCE (failed_step check_results, done.json strain_tried).
+#
 # Progress: every ::esl::progress / coarse step start / long call (model load, result load) is
 # also appended, with a timestamp and flushed per line, to <dir>/progress.log (hw.exe in -b mode
 # may not forward Tcl stdout to the worker log; the worker tails progress.log instead).
@@ -715,8 +729,27 @@ proc ::esl::read_config {path extra} {
         disp_type "Displacement" disp_comps "X Y Z" \
         hot_k 200 top_n 5 reach_rtol 1e-6 chunk 50000 \
         elem_selection "" node_selection "" strain_system "elemental" \
-        prev_file "" frame0_pass 0 cum_min_incr 1e-5]
+        prev_file "" frame0_pass 0 cum_min_incr 1e-5 \
+        strain_sources "max_strain plastic_strain strain_tensor max_stress" \
+        names_max_strain "Max_Strain" names_plastic_strain "Plastic Strain|Plastic_Strain" \
+        names_strain_tensor "Strain" names_max_stress "Max_Stress" \
+        comp_xx "XX" comp_yy "YY" comp_zz "ZZ" comp_xy "XY" vm_comps "vonMises|von Mises" \
+        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" dump_max_bytes 0 dump_free_bytes ""]
     set cfg [::esl::read_request $path $defaults]
+    # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
+    set ::esl::forced 0
+    if {$path ne "" && [file isfile $path]} {
+        set raw [::esl::read_request $path [dict create]]
+        if {[dict exists $raw strain_type] || [dict exists $raw epsp_type]} { set ::esl::forced 1 }
+    }
+    set srcs [dict get $cfg strain_sources]
+    if {[llength $srcs] == 0} { ::esl::fail INPUT_INVALID "strain_sources is empty" }
+    foreach s $srcs {
+        if {[lsearch -exact {max_strain plastic_strain strain_tensor max_stress} $s] < 0} {
+            ::esl::fail INPUT_INVALID "strain_sources: unknown source '$s'"
+        }
+        if {[llength [lsearch -all -exact $srcs $s]] > 1} { ::esl::fail INPUT_INVALID "strain_sources: '$s' twice" }
+    }
     dict for {k v} $extra { dict set cfg $k $v }
     set p [dict get $cfg part_id]
     if {$p ne "" && ![string is integer -strict $p]} {
@@ -824,6 +857,213 @@ proc ::esl::check_result {res sc dtypes dt comps layer} {
     }
 }
 
+# ---- strain source selection (esl_strain_fallback.md 3)
+# "a|b|c" -> {a b c} (candidates may contain blanks)
+proc ::esl::cands {s} {
+    set out {}
+    foreach x [split $s |] {
+        set x [string trim $x]
+        if {$x ne ""} { lappend out $x }
+    }
+    return $out
+}
+
+# First candidate in avail: exact match first, then ignoring case, blanks and underscores. "" if none.
+proc ::esl::match_name {avail cands} {
+    foreach c $cands {
+        if {[lsearch -exact $avail $c] >= 0} { return $c }
+    }
+    foreach c $cands {
+        set n [::esl::norm_title $c]
+        foreach a $avail {
+            if {[::esl::norm_title $a] eq $n} { return $a }
+        }
+    }
+    return ""
+}
+
+# Component / layer lists ("?" = the API did not answer: names are taken on trust).
+proc ::esl::comp_list {res sc dt} {
+    if {[catch {$res GetDataComponentList $sc $dt} l] || [llength $l] == 0} { return "?" }
+    return $l
+}
+proc ::esl::layer_list {res sc dt} {
+    if {[catch {$res GetLayerList $sc $dt} l] || [llength $l] == 0} { return "?" }
+    return $l
+}
+proc ::esl::match_comp {have cands} {
+    if {$have eq "?"} { return [lindex $cands 0] }
+    return [::esl::match_name $have $cands]
+}
+proc ::esl::pick_layer {ls pref} {
+    if {$ls eq "?"} { return "" }
+    if {$pref ne "" && [lsearch -exact $ls $pref] >= 0} { return $pref }
+    return [lindex $ls 0]
+}
+
+# Try the sources of cfg strain_sources in order. Returns a dict (source type mode layers vm comps scalar)
+# of the first usable one; every rejected source is appended to ::esl::tried {source type reason}.
+proc ::esl::pick_source {res sc dtypes cfg} {
+    variable tried
+    set tried {}
+    foreach s [dict get $cfg strain_sources] {
+        set dt [::esl::match_name $dtypes [::esl::cands [dict get $cfg names_$s]]]
+        if {$dt eq ""} {
+            lappend tried [list $s "" "result type not in subcase (candidates: [dict get $cfg names_$s])"]
+            continue
+        }
+        set have [::esl::comp_list $res $sc $dt]
+        set ls [::esl::layer_list $res $sc $dt]
+        if {$s eq "plastic_strain"} {
+            set c [::esl::match_comp $have [::esl::cands [dict get $cfg scalar_comps]]]
+            if {$c eq ""} {
+                lappend tried [list $s $dt "no scalar component ([dict get $cfg scalar_comps]) in: $have"]
+                continue
+            }
+            return [dict create source $s type $dt mode maxhold layers [list [::esl::pick_layer $ls [dict get $cfg epsp_layer]]] \
+                vm "" comps {} scalar $c]
+        }
+        set comps {}
+        set miss {}
+        foreach k {xx yy zz xy} {
+            set c [::esl::match_comp $have [::esl::cands [dict get $cfg comp_$k]]]
+            if {$c eq ""} { lappend miss "$k ([dict get $cfg comp_$k])" }
+            lappend comps $c
+        }
+        set vm [::esl::match_comp $have [::esl::cands [dict get $cfg vm_comps]]]
+        if {$vm eq "" && $s ne "strain_tensor"} { lappend miss "vonMises ([dict get $cfg vm_comps])" }
+        if {[llength $miss] > 0} {
+            lappend tried [list $s $dt "components missing: [join $miss {, }] (available: $have)"]
+            continue
+        }
+        if {$s eq "strain_tensor"} {
+            if {$ls eq "?"} {
+                set lay [list ""]
+            } else {
+                set ex [::esl::cands [dict get $cfg layer_exclude]]
+                set lay {}
+                foreach l $ls {
+                    if {[lsearch -exact $ex $l] < 0} { lappend lay $l }
+                }
+                if {[llength $lay] == 0} {
+                    lappend tried [list $s $dt "no tensor layer left after excluding {$ex} (layers: $ls)"]
+                    continue
+                }
+            }
+            return [dict create source $s type $dt mode dump layers $lay vm $vm comps $comps scalar ""]
+        }
+        return [dict create source $s type $dt mode maxhold layers [list [::esl::pick_layer $ls [dict get $cfg strain_layer]]] \
+            vm $vm comps $comps scalar ""]
+    }
+    set why {}
+    foreach t $tried { lappend why "[lindex $t 0]: [lindex $t 2]" }
+    ::esl::fail H3D_NO_STRAIN_SOURCE "no strain source in subcase $sc (tried: [join $why {; }]; available: $dtypes)"
+}
+
+# Plastic strain result for the epsp column: {type comp layer} or {} when the h3d has none.
+proc ::esl::pick_epsp {res sc dtypes cfg} {
+    set dt [::esl::match_name $dtypes [::esl::cands [dict get $cfg names_plastic_strain]]]
+    if {$dt eq ""} { return {} }
+    set c [::esl::match_comp [::esl::comp_list $res $sc $dt] [::esl::cands [dict get $cfg scalar_comps]]]
+    if {$c eq ""} { return {} }
+    return [list $dt $c [::esl::pick_layer [::esl::layer_list $res $sc $dt] [dict get $cfg epsp_layer]]]
+}
+
+proc ::esl::tried_json {} {
+    variable tried
+    set rows {}
+    foreach t $tried {
+        lassign $t s dt why
+        set dj [expr {$dt eq "" ? "null" : [::esl::jstr $dt]}]
+        lappend rows "\{\"source\":[::esl::jstr $s],\"type\":$dj,\"reason\":[::esl::jstr $why]\}"
+    }
+    return "\[[join $rows ,]\]"
+}
+
+# The 6 CSV values (vm_hv exx eyy ezz exy epsp) of an element record vs (field order of elem_fields):
+# ::esl::row_map gives the field position per column, "z" = constant 0.
+proc ::esl::six {vs} {
+    set r {}
+    foreach m $::esl::row_map {
+        if {$m eq "z"} { lappend r 0 } else { lappend r [lindex $vs $m] }
+    }
+    return $r
+}
+
+# Dump pass (strain_tensor source): every frame, all part elements x layers -> strain_raw.csv, all part
+# nodes -> disp.csv. No ranking (the core rebuilds the max-hold series). vm_hv = 0 when the type has no
+# vonMises component, epsp = 0 when there is no plastic strain result.
+proc ::esl::dump_pass {out res post con qry cfg src layers epsp_ok echunks nchunks dfields nsim} {
+    set t0 [::esl::ms]
+    set dt [dict get $src type]
+    lassign [dict get $src comps] cxx cyy czz cxy
+    set vm [dict get $src vm]
+    set ne_ch [llength $echunks]
+    set nn_ch [llength $nchunks]
+    set nl [llength $layers]
+    ::esl::progress "dump start ($nsim frames, $nl layers {$layers}, $ne_ch element chunks, $nn_ch node chunks)"
+    set fr [::esl::open_csv [file join $out strain_raw.csv] "frame_index,elem_id,layer,vm_hv,exx,eyy,ezz,exy,epsp"]
+    set fd [::esl::open_csv [file join $out disp.csv] "frame_index,node_id,ux,uy,uz"]
+    set lf {}
+    foreach L $layers {
+        set f [list [list $dt $cxx $L 1] [list $dt $cyy $L 1] [list $dt $czz $L 1] [list $dt $cxy $L 1]]
+        if {$vm ne ""} { lappend f [list $dt $vm $L 0] }
+        lappend lf $f
+    }
+    set nt [expr {$vm ne "" ? 5 : 4}]
+    set epf [list [list [dict get $cfg epsp_type] [dict get $cfg epsp_comp] [dict get $cfg epsp_layer] 0]]
+    set srows 0
+    set drows 0
+    set miss 0
+    for {set fi 0} {$fi < $nsim} {incr fi} {
+        ::esl::set_sim $res $post $fi
+        set ci 0
+        foreach ch $echunks {
+            incr ci
+            ::esl::progress "dump frame [expr {$fi + 1}]/$nsim elements chunk $ci/$ne_ch"
+            set ep [dict create]
+            if {$epsp_ok} {
+                set ep [::esl::collect $con $qry [lindex $ch 0] element $epf "dump frame $fi chunk $ci"]
+            }
+            set li 0
+            foreach f $lf {
+                set acc [::esl::collect $con $qry [lindex $ch 0] element $f "dump frame $fi chunk $ci layer $li"]
+                dict for {id vs} $acc {
+                    if {[llength $vs] != $nt} { incr miss; continue }
+                    set e 0
+                    if {$epsp_ok} {
+                        if {![dict exists $ep $id]} { incr miss; continue }
+                        set e [lindex [dict get $ep $id] 0]
+                    }
+                    lassign $vs xx yy zz xy v
+                    if {$nt == 4} { set v 0 }
+                    puts $fr "$fi,$id,$li,[::esl::num $v],[::esl::num $xx],[::esl::num $yy],[::esl::num $zz],[::esl::num $xy],[::esl::num $e]"
+                    incr srows
+                }
+                unset acc
+                incr li
+            }
+            unset ep
+        }
+        set ci 0
+        foreach ch $nchunks {
+            incr ci
+            ::esl::progress "dump frame [expr {$fi + 1}]/$nsim nodes chunk $ci/$nn_ch"
+            set acc [::esl::collect $con $qry [lindex $ch 0] node $dfields "dump frame $fi chunk $ci"]
+            lassign [::esl::emit $fd "$fi," $acc 3 0] n m
+            incr drows $n
+            if {$m > 0} { ::esl::note "dump: nodes without all displacement values skipped" $m }
+            unset acc
+        }
+    }
+    close $fr
+    close $fd
+    if {$miss > 0} { ::esl::note "dump: element rows without all values skipped" $miss }
+    if {$srows == 0} { ::esl::fail H3D_MISSING_RESULT "dump: no element values ($dt)" }
+    lappend ::esl::passes "\"DUMP\":\{\"frames\":$nsim,\"layers\":$nl,\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "dump done ([::esl::secs $t0] s, $srows element rows, $drows node rows)"
+}
+
 # Stream one query over a selection set; body runs per record with rec = flat {id v1 v2 ...}.
 proc ::esl::each_rec {qry setid fields recvar body} {
     upvar 1 $recvar rec
@@ -883,24 +1123,30 @@ proc ::esl::emit {fh prefix acc nreal pad {topvar ""}} {
     set n 0
     set miss 0
     set zeros [string repeat ",0" $pad]
+    # element rows (6 columns): values through ::esl::row_map (pads = 0, same text as before)
+    set six [expr {$nreal + $pad == 6}]
     dict for {id vs} $acc {
         if {[llength $vs] != $nreal} { incr miss; continue }
         set o {}
-        foreach v $vs { lappend o [format $::esl::numfmt $v] }
-        puts $fh "$prefix$id,[join $o ,]$zeros"
+        if {$six} {
+            set vs [::esl::six $vs]
+            foreach v $vs { lappend o [format $::esl::numfmt $v] }
+            puts $fh "$prefix$id,[join $o ,]"
+        } else {
+            foreach v $vs { lappend o [format $::esl::numfmt $v] }
+            puts $fh "$prefix$id,[join $o ,]$zeros"
+        }
         incr n
         if {$topvar ne ""} {
             set v0 [lindex $vs 0]
+            set v5 [lindex $vs 5]
             if {$v0 > 0} { dict lappend top vm [list $id $v0] }
-            if {$nreal >= 6} {
-                set v5 [lindex $vs 5]
-                if {$v5 > 0} { dict lappend top ep [list $id $v5] }
-            }
+            if {$v5 > 0} { dict lappend top ep [list $id $v5] }
             if {$::esl::has_prev} {
                 if {$v0 > $::esl::min_incr} {
                     dict lappend top vmp [list $id [expr {$v0 + [::esl::prev_of $::esl::prev_eq $id]}]]
                 }
-                if {$nreal >= 6 && $v5 > $::esl::min_incr} {
+                if {$v5 > $::esl::min_incr} {
                     dict lappend top epp [list $id [expr {$v5 + [::esl::prev_of $::esl::prev_ep $id]}]]
                 }
             }
@@ -1175,10 +1421,6 @@ proc ::esl::run {arglist} {
         ::esl::progress "prev_file: $prev_n elements ([file tail $prev_path])"
     }
     set f0pass [dict get $cfg frame0_pass]
-    set efields [::esl::elem_fields $cfg]
-    set nreal [llength $efields]
-    set epad [expr {6 - $nreal}]
-    if {$epad > 0} { ::esl::warn "epsp_type empty: plastic strain written as 0" }
     set dfields {}
     foreach c [dict get $cfg disp_comps] { lappend dfields [list $dtype $c "" 0] }
 
@@ -1225,11 +1467,62 @@ proc ::esl::run {arglist} {
     set last [expr {$nsim - 1}]
     set dtypes [::esl::do GetDataTypeList {$res GetDataTypeList $sc}]
     ::esl::step check_results
-    ::esl::check_result $res $sc $dtypes [dict get $cfg strain_type] \
-        [concat [list [dict get $cfg vm_comp]] [dict get $cfg strain_comps]] [dict get $cfg strain_layer]
-    if {$nreal == 6} {
-        ::esl::check_result $res $sc $dtypes [dict get $cfg epsp_type] [list [dict get $cfg epsp_comp]] [dict get $cfg epsp_layer]
+    # strain source (esl_strain_fallback.md 1/3): forced (strain_type/epsp_type in request) = Max_Strain only
+    set ::esl::row_map {0 1 2 3 4 5}
+    set ::esl::tried {}
+    set smode maxhold
+    set slayers {}
+    set epsp_ok 1
+    set src [dict create source max_strain type [dict get $cfg strain_type]]
+    if {$::esl::forced} {
+        ::esl::check_result $res $sc $dtypes [dict get $cfg strain_type] \
+            [concat [list [dict get $cfg vm_comp]] [dict get $cfg strain_comps]] [dict get $cfg strain_layer]
+        if {[dict get $cfg epsp_type] ne ""} {
+            ::esl::check_result $res $sc $dtypes [dict get $cfg epsp_type] [list [dict get $cfg epsp_comp]] [dict get $cfg epsp_layer]
+        } else {
+            set epsp_ok 0
+            ::esl::warn "epsp_type empty: plastic strain written as 0"
+        }
+        set slayers [list [dict get $cfg strain_layer]]
+    } else {
+        set src [::esl::pick_source $res $sc $dtypes $cfg]
+        set smode [dict get $src mode]
+        set slayers [dict get $src layers]
+        set ep [::esl::pick_epsp $res $sc $dtypes $cfg]
+        if {[dict get $src source] eq "plastic_strain"} {
+            set ep [list [dict get $src type] [dict get $src scalar] [lindex $slayers 0]]
+        }
+        if {[llength $ep] == 0} {
+            set epsp_ok 0
+            dict set cfg epsp_type ""
+            ::esl::warn "H3D_NO_EPSP: no plastic strain result ([dict get $cfg names_plastic_strain]) in subcase $sc; epsp = 0"
+        } else {
+            dict set cfg epsp_type [lindex $ep 0]
+            dict set cfg epsp_comp [lindex $ep 1]
+            dict set cfg epsp_layer [lindex $ep 2]
+        }
+        dict set cfg strain_type [dict get $src type]
+        if {[dict get $src source] eq "plastic_strain"} {
+            dict set cfg strain_layer [lindex $slayers 0]
+        } else {
+            dict set cfg strain_comps [dict get $src comps]
+            dict set cfg vm_comp [dict get $src vm]
+            dict set cfg strain_layer [lindex $slayers 0]
+        }
+        set tl {}
+        foreach t $::esl::tried { lappend tl "[lindex $t 0] ([lindex $t 2])" }
+        ::esl::progress "strain source: [dict get $src source] ([dict get $src type], $smode, layers {$slayers})[expr {[llength $tl] ? "; skipped: [join $tl {; }]" : ""}]"
     }
+    if {[dict get $src source] eq "plastic_strain"} {
+        # vm_hv = epsp = Plastic Strain, exx..exy = 0 (esl_strain_fallback.md 3)
+        set efields [list [list [dict get $cfg epsp_type] [dict get $cfg epsp_comp] [dict get $cfg epsp_layer] 0]]
+        set ::esl::row_map {0 z z z z 0}
+    } else {
+        set efields [::esl::elem_fields $cfg]
+        if {[llength $efields] < 6} { set ::esl::row_map {0 1 2 3 4 z} }
+    }
+    set nreal [llength $efields]
+    set epad [expr {6 - $nreal}]
     ::esl::check_result $res $sc $dtypes $dtype [dict get $cfg disp_comps] ""
     set con esl_con_$x
     ::esl::do GetContourCtrlHandle {$res GetContourCtrlHandle $con}
@@ -1378,6 +1671,65 @@ proc ::esl::run {arglist} {
         ::esl::progress "elems.csv done: $nconn elements (query '$conn_q', [::esl::secs $t0] s)"
     }
 
+    # ---- strain source members of done.json (esl_strain_fallback.md 3)
+    set ::esl::src_members [list strain_source [::esl::jstr [dict get $src source]] \
+        strain_source_type [::esl::jstr [dict get $cfg strain_type]] strain_layers [::esl::jarr $slayers] \
+        strain_mode [::esl::jstr $smode] strain_tried [::esl::tried_json] \
+        epsp_available [expr {$epsp_ok ? "true" : "false"}]]
+
+    # ---- dump mode (strain_tensor: instantaneous values) -> strain_raw.csv + disp.csv, every frame
+    if {$smode eq "dump"} {
+        # size estimate before writing (same formula as esl.io.results_csv.dump_estimate_bytes: 160 B per
+        # strain_raw row, 90 B per disp row; measured max 157 B / 85 B)
+        set est [expr {wide($nsim) * (wide([llength $eids]) * [llength $slayers] * 160 + wide([llength $nids]) * 90)}]
+        set dmax [dict get $cfg dump_max_bytes]
+        set dfree [dict get $cfg dump_free_bytes]
+        ::esl::progress "dump size estimate: $est bytes (limit $dmax, free [expr {$dfree eq "" ? "?" : $dfree}])"
+        if {[string is wide -strict $dmax] && $dmax > 0 && $est > $dmax} {
+            ::esl::fail STRAIN_DUMP_TOO_LARGE "Strain tensor dump estimate $est bytes > dump_max_bytes $dmax ($nsim frames x [llength $eids] elements x [llength $slayers] layers): add /H3D/ELEM/TENS/STRAIN/TMAX (or /H3D/SHELL/TENS/STRAIN/TMAX) to the deck"
+        }
+        if {[string is wide -strict $dfree] && $est > $dfree} {
+            ::esl::fail INSUFFICIENT_STORAGE "Strain tensor dump estimate $est bytes > free space $dfree bytes in the output folder"
+        }
+        ::esl::dump_pass $out $res $post $con $qry $cfg $src $slayers $epsp_ok $echunks $nchunks $dfields $nsim
+        ::esl::step CloseStack
+        catch {hwi CloseStack}
+        ::esl::step write_done
+        set ::esl::cur_step "done"
+        lappend ::esl::steps_done write_csv
+        set ch_json {}
+        dict for {k2 v2} $::esl::chunk_how { lappend ch_json "[::esl::jstr $k2]:[::esl::jstr $v2]" }
+        set dcum "null"
+        if {$::esl::has_prev || $f0pass eq "1"} {
+            set dcum "\{\"prev_file\":[::esl::jstr $prev_path],\"prev_file_sha256\":[expr {$prev_sha eq "" ? "null" : [::esl::jstr $prev_sha]}],\"prev_n\":$prev_n,\"frame0\":[expr {$f0pass eq "1" ? "true" : "false"}],\"min_incr\":[::esl::num $::esl::min_incr]\}"
+        }
+        if {[::esl::write_done $out 1 [list part_id $pid part_title [::esl::jstr $ptitle] \
+            part_spec [::esl::jstr $spec] n_frames $nsim \
+            frame0_time [::esl::num $t_f0] model_coords [::esl::jstr "coords_minus_disp_frame0"] \
+            frame0_disp_max [::esl::num $d0max] frame0_disp_ok [expr {$d0ok ? "true" : "false"}] \
+            elems_ok [expr {$elems_ok ? "true" : "false"}] elems_query [::esl::jstr $conn_q] n_conn $nconn \
+            n_elems [llength $eids] n_nodes $nnode \
+            hot_k $hot_k top_n $top_n reach_rtol [::esl::num $rtol] \
+            passes "\{[join $::esl::passes ,]\}" chunk $csize chunks "\{[join $ch_json ,]\}" \
+            subcase [::esl::jstr $sc] elem_selection [::esl::jstr [lindex $esel 0]] \
+            node_selection [::esl::jstr [lindex $nsel 0]] \
+            strain_type [::esl::jstr [dict get $cfg strain_type]] strain_layer [::esl::jstr [lindex $slayers 0]] \
+            strain_comps [::esl::jarr [dict get $src comps]] vm_comp [::esl::jstr [dict get $src vm]] \
+            epsp_type [::esl::jstr [dict get $cfg epsp_type]] epsp_layer [::esl::jstr [dict get $cfg epsp_layer]] \
+            disp_type [::esl::jstr $dtype] exy [::esl::jstr "raw (as stored in h3d)"] \
+            disp_value_format [::esl::jstr $::esl::numfmt] value_format [::esl::jstr $::esl::numfmt] \
+            strain_system [::esl::jstr $::esl::sys_req] \
+            strain_system_call [::esl::jstr $::esl::sys_applied] \
+            backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] dump_cumulative $dcum \
+            {*}$::esl::src_members]] eq ""} {
+            error "done.json could not be written"
+        }
+        set ::esl::written 1
+        ::esl::progress "extract done: dump mode ($nsim frames, layers {$slayers}), $nnode nodes"
+        ::esl::plog_close
+        return
+    }
+
     # ---- pass A: last frame, all part elements (chunked) -> final.csv, running top hot_k
     set t0 [::esl::ms]
     ::esl::progress "pass A start (frame $last, $ne_ch element chunks)"
@@ -1455,13 +1807,13 @@ proc ::esl::run {arglist} {
                 if {![dict exists $acc $id] || [llength [dict get $acc $id]] != $nreal} {
                     ::esl::fail H3D_MISSING_RESULT "pass B frame $fi: no values for hot element $id"
                 }
-                set vs [dict get $acc $id]
+                set vs [::esl::six [dict get $acc $id]]
                 set o {}
                 foreach v $vs { lappend o [format $::esl::numfmt $v] }
-                puts $fh "$fi,$id,[join $o ,]$zeros"
+                puts $fh "$fi,$id,[join $o ,]"
                 incr hrows
                 dict lappend hvm $id [lindex $vs 0]
-                dict lappend hep $id [expr {$nreal == 6 ? [lindex $vs 5] : 0}]
+                dict lappend hep $id [lindex $vs 5]
             }
             unset acc
         }
@@ -1550,15 +1902,26 @@ proc ::esl::run {arglist} {
         set t0 [::esl::ms]
         ::esl::progress "frame0.csv: frame 0 ($ne_ch element chunks)"
         ::esl::set_sim $res $post 0
-        set f0fields [list [lindex $efields 0]]
-        if {$nreal >= 6} { lappend f0fields [lindex $efields 5] }
+        # fields of the vm_hv and epsp columns only (row_map positions 0 and 5)
+        set m0 [lindex $::esl::row_map 0]
+        set m5 [lindex $::esl::row_map 5]
+        set f0fields [list [lindex $efields $m0]]
+        if {$m5 ne "z" && $m5 != $m0} { lappend f0fields [lindex $efields $m5] }
         set ff0 [::esl::open_csv [file join $out frame0.csv] "elem_id,vm_hv,epsp"]
         set ci 0
         foreach ch $echunks {
             incr ci
             ::esl::progress "frame0.csv elements chunk $ci/$ne_ch"
             set acc [::esl::collect $con $qry [lindex $ch 0] element $f0fields "frame0 chunk $ci"]
-            lassign [::esl::emit $ff0 "" $acc [llength $f0fields] [expr {2 - [llength $f0fields]}]] n m
+            if {$m5 ne "z" && $m5 == $m0} {
+                # plastic_strain source: epsp column = vm_hv column
+                set acc2 [dict create]
+                dict for {id vs} $acc { dict set acc2 $id [list [lindex $vs 0] [lindex $vs 0]] }
+                set acc $acc2
+                unset acc2
+            }
+            set nf [expr {($m5 ne "z") ? 2 : 1}]
+            lassign [::esl::emit $ff0 "" $acc $nf [expr {2 - $nf}]] n m
             incr f0rows $n
             unset acc
         }
@@ -1601,7 +1964,7 @@ proc ::esl::run {arglist} {
         disp_value_format [::esl::jstr $::esl::numfmt] value_format [::esl::jstr $::esl::numfmt] \
         strain_system [::esl::jstr $::esl::sys_req] \
         strain_system_call [::esl::jstr $::esl::sys_applied] \
-        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$cum_extra]] eq ""} {
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$cum_extra {*}$::esl::src_members]] eq ""} {
         error "done.json could not be written"
     }
     set ::esl::written 1
@@ -1611,6 +1974,10 @@ proc ::esl::run {arglist} {
 
 set ::esl::part_spec ""
 set ::esl::part_id ""
+set ::esl::tried {}
+set ::esl::forced 0
+set ::esl::row_map {0 1 2 3 4 5}
+set ::esl::src_members {}
 set ::esl::written 0
 set ::esl::rc 0
 if {[catch {::esl::run $::argv} ::esl::err ::esl::opts]} {
@@ -1622,7 +1989,7 @@ if {[catch {::esl::run $::argv} ::esl::err ::esl::opts]} {
         set ::esl::pidj [expr {[string is integer -strict $::esl::part_id] ? $::esl::part_id : "null"}]
         if {[catch {::esl::write_done $::esl::outdir 0 [list code [::esl::jstr $::esl::code] \
                 part_spec [::esl::jstr $::esl::part_spec] part_id $::esl::pidj \
-                passes "\{[join $::esl::passes ,]\}"] \
+                passes "\{[join $::esl::passes ,]\}" strain_tried [::esl::tried_json]] \
                 [::esl::diag_members $::esl::err $::esl::opts]} ::esl::werr]} {
             puts stderr "ESL: done.json not written: $::esl::werr"
         }

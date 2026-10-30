@@ -125,7 +125,11 @@ class ProgressTracker:
             k, kt, ci, cn = int(m.group(1)), int(m.group(2)), int(m.group(4)), int(m.group(5))
             frac = 0.9 * (ci - 1) / cn if m.group(3) == "elements" else 0.9 + 0.1 * (ci - 1) / cn
             self._set(70 + 25 * (k - 1 + frac) / max(1, kt))
-        elif ln.startswith("pass C done"):
+        elif (m := re.match(r"dump frame (\d+)/(\d+) (elements|nodes) chunk (\d+)/(\d+)", ln)):
+            k, kt, ci, cn = int(m.group(1)), int(m.group(2)), int(m.group(4)), int(m.group(5))
+            frac = 0.9 * (ci - 1) / cn if m.group(3) == "elements" else 0.9 + 0.1 * (ci - 1) / cn
+            self._set(15 + 80 * (k - 1 + frac) / max(1, kt))
+        elif ln.startswith("pass C done") or ln.startswith("dump done"):
             self._set(95)
         elif ln.startswith("extract done"):
             self._set(98)
@@ -182,6 +186,38 @@ def backup_prev_csv(work: str) -> str | None:
     os.makedirs(dst, exist_ok=True)
     os.replace(src, os.path.join(dst, PREV_CSV))
     return dst
+
+
+def strain_request(core_settings: dict | None) -> dict[str, str]:
+    """h3d 변형률 결과 대체 키(계약 esl_strain_fallback.md §2) — 설정 extract.strain_sources·이름 후보 → request.txt.
+    strain_sources 는 공백 구분, 이름 후보는 '|' 구분(이름에 공백 있음). strain_type·epsp_type 은 쓰지 않는다(쓰면 TCL 이
+    Max_Strain 만 보는 하위 호환 모드)."""
+    from . import core_adapter
+
+    try:
+        x = core_adapter.extract_source_settings(core_settings or {})
+    except core_adapter.CoreError:              # 코어 없는 설치본: TCL 기본값(같은 값)
+        return {}
+    out = {"strain_sources": " ".join(x["strain_sources"])}
+    for k, v in x["result_names"].items():
+        out[f"names_{k}"] = "|".join(v)
+    for k, v in x["tensor_comps"].items():
+        out[f"comp_{k}"] = "|".join(v)
+    out["vm_comps"] = "|".join(x["vm_comps"])
+    out["scalar_comps"] = "|".join(x["scalar_comps"])
+    out["layer_exclude"] = "|".join(x["tensor_layer_exclude"])
+    out["dump_max_bytes"] = str(int(core_adapter.dump_settings(core_settings or {})["dump_max_bytes"]))
+    return out
+
+
+def free_bytes(path: str, reserve_gb: float = 0.0) -> int | None:
+    """path 디스크 여유 − 예비(upload.min_free_gb), 모르면 None."""
+    import shutil
+
+    try:
+        return max(0, int(shutil.disk_usage(path).free - reserve_gb * 1024 ** 3))
+    except OSError:
+        return None
 
 
 def cumulative_request(cum: dict[str, Any] | None, prev_path: str) -> dict[str, str]:
@@ -243,7 +279,8 @@ def done_summary(done: dict[str, Any] | None) -> dict[str, Any]:
     if not done:
         return {}
     keys = ("ok", "code", "failed_step", "part_id", "part_title", "n_frames", "n_elems", "n_nodes", "hot_k", "top_n",
-            "frames_D")
+            "frames_D", "strain_source", "strain_source_type", "strain_mode", "strain_layers", "epsp_available",
+            "strain_tried")
     out = {k: done.get(k) for k in keys if k in done}
     if done.get("error"):
         out["error"] = str(done["error"])[:300]

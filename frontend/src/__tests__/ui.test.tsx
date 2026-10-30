@@ -6,6 +6,11 @@ import { RadInspectView } from "../components/PathInspect";
 import { renderApp } from "../test/render";
 import { NO_PERMISSION } from "../app/AppContext";
 import { STALE_TEXT } from "../stages/StageFrame";
+import { CODE_TEXT, failureHint, warnText } from "../api/client";
+import { StrainSourceBadge } from "../components/ui";
+import { VerifyCompareTable } from "../components/VerifyDropCard";
+import { strainSourceBadge } from "../lib/format";
+import type { VerifyCompare } from "../api/types";
 
 // c-demo ④: 최신 검증 PASS·미등록 → 주 버튼 '라이브러리에 등록'(§7.1)
 const PRIMARY = ["추출 실행", "t* 확정", "ESL 계산", "라이브러리에 등록"];
@@ -233,5 +238,65 @@ describe("① 추출 실행 버튼: 확인 중에는 비활성", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// v0.12.1 esl_strain_fallback.md §7: 변형률 대체 배지(max_strain·없음 = 표시 없음) + 경고·실패 사람말
+describe("변형률 대체 배지(strain_source)", () => {
+  it("라벨·색: max_strain·null 은 배지 없음, max_stress 는 경고색", () => {
+    expect(strainSourceBadge("max_strain")).toBeNull();
+    expect(strainSourceBadge(null)).toBeNull();
+    expect(strainSourceBadge(undefined)).toBeNull();
+    expect(strainSourceBadge("plastic_strain")).toEqual({ text: "대체: 소성 변형률 기준", kind: "info" });
+    expect(strainSourceBadge("strain_tensor")).toEqual({ text: "대체: Strain 텐서 기준", kind: "info" });
+    expect(strainSourceBadge("max_stress")).toEqual({ text: "응력 기준 대체, 판정 신뢰 낮음", kind: "warn" });
+    const { container, rerender } = render(<StrainSourceBadge source="max_strain" />);
+    expect(container.textContent).toBe("");
+    rerender(<StrainSourceBadge source="max_stress" />);
+    expect(screen.getByTestId("strain-source-badge").className).toBe("badge warn");
+  });
+
+  it("경고 코드·추출 실패 사람말(기존 메시지 맵)", () => {
+    for (const k of ["STRAIN_TMAX_SAMPLED", "STRAIN_FROM_STRESS", "H3D_NO_EPSP", "VD_STRAIN_SOURCE_MISMATCH", "H3D_NO_STRAIN_SOURCE"]) expect(CODE_TEXT[k]).toBeTruthy();
+    expect(warnText("H3D_NO_EPSP")).toBe(CODE_TEXT.H3D_NO_EPSP);
+    expect(warnText("STRAIN_TMAX_SAMPLED: dt_out=1e-4")).toBe(`${CODE_TEXT.STRAIN_TMAX_SAMPLED} (dt_out=1e-4)`);
+    expect(warnText("일반 경고 문구")).toBe("일반 경고 문구");
+    expect(failureHint("H3D_EXTRACT_FAILED", "hw 추출 실패: failed_step=check_results, code=H3D_NO_STRAIN_SOURCE, no strain source in subcase 1 (tried: max_strain plastic_strain strain_tensor max_stress; available: Displacement)")).toBe("h3d 에 변형률·응력 결과가 없음 — 덱 /H3D 출력 확인");
+    expect(failureHint("H3D_EXTRACT_FAILED", "hw 추출 실패: failed_step=check_results, code=H3D_MISSING_RESULT, result type 'Max_Strain' not in subcase 1")).toBeNull();
+    expect(warnText("H3D_NO_EPSP: no plastic strain result in subcase 1; epsp = 0")).toBe(`${CODE_TEXT.H3D_NO_EPSP} (no plastic strain result in subcase 1; epsp = 0)`);
+  });
+
+  it("Case ① 추출 결과: max_strain 이면 배지 없음, h3d 대체(strain_tensor)면 배지 + 경고 사람말", async () => {
+    const a = renderApp(url("c-demo", 1));
+    await screen.findByText("후보 프레임(D)");
+    expect(screen.queryByTestId("strain-source-badge")).toBeNull();
+    a.unmount();
+    renderApp(url("c-demo", 1), "power", (s) => {
+      const c = s.cases.find((x) => x.id === "c-demo")!;
+      c.extract_summary = { ...c.extract_summary!, strain_source: "strain_tensor", warnings: ["H3D_NO_EPSP: no plastic strain result in subcase 1; epsp = 0"] };
+    });
+    expect((await screen.findByTestId("strain-source-badge")).textContent).toBe("대체: Strain 텐서 기준");
+    expect(screen.getByText(`${CODE_TEXT.H3D_NO_EPSP} (no plastic strain result in subcase 1; epsp = 0)`)).toBeTruthy();
+  });
+
+  it("라이브러리 항목: 대체 source 항목만 배지(판정 칸)", async () => {
+    renderApp("/p/p-body/library");
+    const table = await screen.findByRole("table", { name: "라이브러리 항목" });
+    await waitFor(() => expect(within(table).getAllByTestId("strain-source-badge").length).toBeGreaterThanOrEqual(3));
+    // max_strain 항목(le-1 등)은 배지 없음 → 배지 수 < 행 수
+    expect(within(table).getAllByTestId("strain-source-badge").length).toBeLessThan(within(table).getAllByRole("row").length - 1);
+    const texts = [...new Set(within(table).getAllByTestId("strain-source-badge").map((b) => b.textContent))];
+    expect(texts.sort()).toEqual(["대체: Strain 텐서 기준", "대체: 소성 변형률 기준", "응력 기준 대체, 판정 신뢰 낮음"].sort());
+  });
+
+  it("검증 낙하 비교 표 머리: 검증 source 배지 + 불일치 경고 사람말, max_strain 이면 없음", () => {
+    const base: VerifyCompare = { rows: [], hot: { n: 20, mean_ratio: 1, max_ratio: 1 }, warnings: [], tstar: { orig_time: 0.01, verify_time: 0.01 } };
+    const { rerender } = render(<VerifyCompareTable c={{ ...base, strain_source: "max_strain" }} />);
+    expect(screen.queryByTestId("strain-source-badge")).toBeNull();
+    rerender(<VerifyCompareTable c={{ ...base, strain_source: "strain_tensor", orig_strain_source: "max_strain", vd_strain_source: "strain_tensor", warnings: ["VD_STRAIN_SOURCE_MISMATCH: 원 낙하 변형률 source max_strain ≠ 검증 낙하 strain_tensor — ε 행 비는 서로 다른 양의 비교(참고)"] }} />);
+    const b = screen.getByTestId("strain-source-badge");
+    expect(b.textContent).toBe("대체: Strain 텐서 기준");
+    expect(b.getAttribute("title")).toBe("원 낙하: Max_Strain · 검증 낙하: 대체: Strain 텐서 기준");
+    expect(screen.getByText(`${CODE_TEXT.VD_STRAIN_SOURCE_MISMATCH} (원 낙하 변형률 source max_strain ≠ 검증 낙하 strain_tensor — ε 행 비는 서로 다른 양의 비교(참고))`)).toBeTruthy();
   });
 });

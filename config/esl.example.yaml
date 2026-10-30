@@ -17,6 +17,19 @@ extract:
   shear_convention: auto             # auto | tensor | engineering  h3d exy 규약(auto = HyperView vonMises 와 비교)
   hot_k: 200                         # TCL 이력 집합 H = 최종 vm 상위 hot_k ∪ epsp 상위 hot_k (done.json 과 다르면 경고, 상한 없음·1000 초과 경고)
   disp_precision: float32            # float32 | float64  변위 결과 저장 정밀도(H3D 는 보통 float32) → S4 잡음 바닥 추정
+  # (선택, v0.12.1) h3d 변형률 결과 대체 — 없으면 아래 값. 순서 = 우선순위, 목록 첫 번째로 결과·성분·층이 모두 있는 것 하나만 씀
+  # strain_sources: [max_strain, plastic_strain, strain_tensor, max_stress]
+  # result_names:                    # h3d 결과 유형 이름 후보(정확 일치 → 대소문자·공백·밑줄 무시 일치)
+  #   max_strain: [Max_Strain]
+  #   plastic_strain: [Plastic Strain, Plastic_Strain]
+  #   strain_tensor: [Strain]        # 순간값 텐서(층별) → 코어가 ε_eq·층 최대·시간 누적 최대로 TMAX 재현(출력 프레임 표본)
+  #   max_stress: [Max_Stress]       # 응력 기준 대체(순위·t* 용, 변형률 참고 지표 생략)
+  # tensor_comps: {xx: [XX], yy: [YY], zz: [ZZ], xy: [XY]}
+  # vm_comps: [vonMises, von Mises]
+  # scalar_comps: [Scalar value, Scalar]
+  # tensor_layer_exclude: [Max, Min] # Strain 텐서 층 목록에서 뺄 HyperView 파생 층
+  # dump_keep: false                 # Strain 텐서 원자료(strain_raw.csv·disp.csv)를 변환 후 보존(기본 = 서버 추출 폴더에서 삭제)
+  # dump_max_bytes: 42949672960      # 원자료 크기 상한(사전 추정·실제, 기본 40 GiB) — 넘으면 STRAIN_DUMP_TOO_LARGE
 
 coord_check:                         # rad ↔ h3d 같은 모델 확인 = 노드 ID + 요소 연결(elems.csv). 좌표는 개략 확인만(계산 좌표는 항상 rad)
   max_rel: 0.005                     # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과(편차는 정보로 기록), 넘으면 ID_MISMATCH

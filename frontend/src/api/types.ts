@@ -126,6 +126,8 @@ export interface SupportAuto {
 export type StageStatus = StageState;
 
 export type Metric = "max_strain" | "plastic_strain";
+/** v0.12.1 h3d 변형률 결과 대체(esl_strain_fallback.md §1·§7): 실제 쓴 변형률 source. 없음(null) = max_strain(옛 자료) */
+export type StrainSource = "max_strain" | "plastic_strain" | "strain_tensor" | "max_stress";
 
 /** cases.tstar */
 export interface TStar {
@@ -167,6 +169,8 @@ export interface ExtractSummary {
   warnings: string[];
   /** v0.8.0 누적 낙하 씬(rad 가 이전 런 상태 파일 .str/.sta 를 include)일 때만 — 계약 esl_cumulative_input.md §8·§13 */
   cumulative?: CumulativeSummary;
+  /** v0.12.1 esl_strain_fallback.md §5·§7 */
+  strain_source?: StrainSource | null;
 }
 
 export type CumulativeMode = "cumulative" | "incremental" | "trivial";
@@ -974,6 +978,8 @@ export interface EntryQuality {
   confirmed_undetermined?: ConfirmedFail | null;
   /** v0.10.0 §7.4: 재검증으로 정상 전환된 기록 */
   revalidated?: EntryRevalidated | null;
+  /** v0.12.1 esl_strain_fallback.md §5·§7 */
+  strain_source?: StrainSource | null;
 }
 
 export interface EntryRevalidated {
@@ -2643,6 +2649,10 @@ export interface VerifyCompare {
   /** 경고 문구(서버 문자열 그대로) */
   warnings: string[];
   tstar: { orig_time: number | null; verify_time: number | null };
+  /** v0.12.1 esl_strain_fallback.md §5·§7: 검증 낙하 source(= vd_strain_source), 원 낙하 source */
+  strain_source?: StrainSource | null;
+  orig_strain_source?: StrainSource | null;
+  vd_strain_source?: StrainSource | null;
 }
 export interface VerifyDropOut {
   id: string;

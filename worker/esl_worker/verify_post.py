@@ -129,7 +129,8 @@ def _register(ex, log_path: str) -> dict[str, Any]:
     warns = list(res.get("warnings") or []) + [str(w) for w in p.get("warnings_fetch") or []]
     warns += [str(w) for w in (job or {}).get("warnings") or [] if str(w).startswith("[검증 추출]")]
     out = {"rows": res["rows"], "hot": res.get("hot") or {}, "warnings": warns[:50], "tstar": res.get("tstar") or {},
-           "same_tol": res.get("same_tol"), "job_id": ex.job["id"]}
+           "same_tol": res.get("same_tol"), "job_id": ex.job["id"],
+           **{k: res.get(k) for k in ("strain_source", "orig_strain_source", "vd_strain_source")}}
     with ex._tx() as conn:
         jobs_repo.assert_lease(conn, ex.job["id"], ex.token)
         vd_repo.update_drop(conn, ex.job["verify_drop_id"], result=json.loads(json.dumps(out)), phase="DONE")

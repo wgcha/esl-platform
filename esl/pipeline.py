@@ -50,7 +50,7 @@ from esl import cumulative as _cum
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
-from esl.io import RESULT_FILES, decide_shear, pack_results, tensor_eps
+from esl.io import RESULT_FILES, SCALAR_SOURCES, decide_shear, pack_results, rad_eq, strain_source_of
 from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel
@@ -419,10 +419,32 @@ def _lookup_pos(sorted_ids, ids) -> np.ndarray:
     return np.where(sorted_ids[pc] == ids, pc, -1)
 
 
-def _metric_series(hz: dict, factor: float) -> dict:
-    """지표 이력 (F,H): max_strain = ε_eq(Max_Strain 텐서, 규약 보정), plastic_strain = epsp."""
-    return {"max_strain": strain.eps_eq(tensor_eps(hz["eps"], factor)),
+def _metric_series(hz: dict, factor: float, source: str = "max_strain") -> dict:
+    """지표 이력 (F,H): max_strain = ε_eq(Max_Strain 텐서, 규약 보정), plastic_strain = epsp.
+    대체 source(esl_strain_fallback.md §4): plastic_strain·max_stress 이면 max_strain 계열 = vm_hv 열(epsp·σ_vM)."""
+    return {"max_strain": rad_eq(hz["eps"], hz["vm_hv"], factor, source),
             "plastic_strain": np.asarray(hz["epsp"], dtype=np.float64)}
+
+
+STRAIN_FROM_STRESS = ("STRAIN_FROM_STRESS: h3d 에 변형률 결과가 없어 응력(Max_Stress σ_vM)으로 순위·t* 를 정함 — 판정 신뢰 낮음, "
+                      "변형률 참고 지표(hotspot·전 요소 ε 비교·잡음 바닥 ε)는 생략")
+
+
+def _source(meta: dict | None) -> str:
+    """01_extract frames.json 의 strain source(옛 자료 = max_strain)."""
+    return strain_source_of(meta)
+
+
+def _esl_layers(ctx: Context, meta: dict | None = None) -> list:
+    """검증 해 ε_eq 층: strain_tensor 의 외피 층(Lower/Upper·Layer n)이면 [bottom, top], 아니면 extract.layers (§4)."""
+    if meta is None:
+        try:
+            meta = _frames_meta(ctx)
+        except (EslError, OSError, ValueError):
+            meta = {}
+    sf = (meta or {}).get("strain_fallback") if isinstance(meta, dict) else None
+    lay = sf.get("esl_layers") if isinstance(sf, dict) else None
+    return list(lay) if lay else list(ctx.cfg["extract"]["layers"])
 
 
 # ====================================================================== 누적 씬 (esl_cumulative_input.md §6·§7)
@@ -565,14 +587,29 @@ def stage_extract(ctx: Context) -> dict:
         ctx.f(d, fn)
     save_model(d, model)
     info = pack_results(ctx.results, model, d, frame_stride=ecfg["frame_stride"],
-                        coord_check=ctx.cfg.get("coord_check"))
+                        coord_check=ctx.cfg.get("coord_check"), shear_convention=ecfg["shear_convention"],
+                        dump=_config.dump_settings(ctx.cfg))
     ctx.warnings += list(getattr(model, "warnings", [])) + list(info.get("warnings", []))
+    sfb = info.get("strain_fallback") or {}
+    src = info.get("strain_source") or "max_strain"
 
     # 전단 규약(§7.1): 최종 프레임 전 요소의 HyperView vonMises 와 비교
     fz = _load_npz(os.path.join(d, "final.npz"))
-    sh = decide_shear(fz["vm_hv"], fz["eps"], ecfg["shear_convention"])
+    if src in SCALAR_SOURCES:
+        # 텐서 열이 0(소성) 또는 응력 → 판정 생략(factor=1, 기록) — esl_strain_fallback.md §4
+        sh = {"mode": ecfg["shear_convention"], "convention": "tensor", "factor": 1.0, "max_rel_mismatch": None,
+              "mismatch": {"tensor": None, "engineering": None}, "median": {"tensor": None, "engineering": None},
+              "n_used": 0, "rel_floor": None, "skipped": f"strain_source={src}"}
+    else:
+        sh = decide_shear(fz["vm_hv"], fz["eps"], ecfg["shear_convention"])
+        if isinstance(sfb.get("shear"), dict):        # dump: 코어가 층별 원자료로 판정한 규약을 그대로(같은 결과)
+            sh["dump"] = sfb["shear"]
+    if src == "max_stress":
+        ctx.warnings.append(STRAIN_FROM_STRESS)
     mm = sh["max_rel_mismatch"]
-    if mm is None:
+    if src in SCALAR_SOURCES:
+        pass
+    elif mm is None:
         ctx.warnings.append("전단 규약 판정 불가(vonMises 가 모두 0) — 텐서 규약으로 가정")
     elif mm > SHEAR_MISMATCH_WARN:
         ctx.warnings.append(f"ε_eq(§4 공식, {sh['convention']}) 와 HyperView vonMises 의 최대 상대 불일치 {mm:.3g} > "
@@ -613,10 +650,12 @@ def stage_extract(ctx: Context) -> dict:
     inputs = {"rad": _fingerprint(ctx.rad, True),
               "includes": [_fingerprint(p, True) for p in model.includes if os.path.isfile(p)],
               "results_dir": ctx.results, "results_files": {}}
-    for name in RESULT_FILES:
+    dump_mode = sfb.get("mode") == "dump"
+    for name in RESULT_FILES + ("strain_raw.csv",):
         p = os.path.join(ctx.results, name)
         if os.path.isfile(p):
-            inputs["results_files"][name] = _fingerprint(p, True)
+            # dump 원자료(수십 GB 가능)는 크기·mtime 만(done.json 은 해시) — esl_strain_fallback.md Med2
+            inputs["results_files"][name] = _fingerprint(p, not (dump_mode and name in ("strain_raw.csv", "disp.csv")))
     if cs is not None:
         inputs["state_files"] = [{"path": f["path"], "sha256": f["sha256"], "kinds": f["kinds"]} for f in cs["files"]]
     ctx.record["inputs"] = inputs
@@ -628,12 +667,14 @@ def stage_extract(ctx: Context) -> dict:
          "shear": {"convention": sh["convention"], "mode": sh["mode"], "max_rel_mismatch": mm,
                    "median": sh["median"]},
          "mats": model.mats, "max_ids": model.max_ids, "coord_deviation": info.get("coord_deviation"),
-         "conn_check": info.get("conn_check")}
+         "conn_check": info.get("conn_check"), "strain_source": src,
+         "strain_fallback": {k: sfb.get(k) for k in ("source", "type", "mode", "layers", "epsp_available", "dt_out",
+                                                     "esl_layers")}}
     if cs is not None:
         s["cumulative"] = cs["short"]
     ctx.echo(f"[extract] 파트 {model.part_id} '{model.part_title}': 노드 {s['n_nodes']}, 요소 {s['n_elems']} "
              f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 이력 프레임 {s['n_frames']}, H {s['n_hot']}요소, "
-             f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}"
+             f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}, 변형률 source {src}"
              + (f" (vonMises 최대 불일치 {mm:.2e})" if mm is not None else ""))
     if cs is not None:
         k = cs["short"]
@@ -670,7 +711,7 @@ def stage_tstar(ctx: Context) -> dict:
     C = model.centroids()[hp]
     ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
     tw = tcfg["time_window"]
-    series = _metric_series(hz, factor)
+    series = _metric_series(hz, factor, _source(meta))
     tclq = {"max_strain": np.asarray(hz["vm_hv"], np.float64), "plastic_strain": series["plastic_strain"]}
     fidx = hz["frame_index"].astype(np.int64)
     hid = hz["elem_id"]
@@ -837,12 +878,13 @@ def _eval_hotspots(ctx: Context, model: StoredModel, frame_index: int):
     f = int(fh[0])
     tcfg = ctx.cfg["tstar"]
     rtol = float(tcfg["reach_rtol"])
-    series = _metric_series(hz, factor)
+    src = _source(meta)
+    series = _metric_series(hz, factor, src)
     v = series[tcfg["metric"]]
     eqh = series["max_strain"]
     ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
     cst = _cum_state(ctx, model)
-    eps_rad = strain.eps_eq(tensor_eps(sz["eps"][int(fd[0])], factor))          # (E,)
+    eps_rad = rad_eq(sz["eps"][int(fd[0])], sz["vm_hv"][int(fd[0])], factor, src)          # (E,)
     if cst is not None:
         # 누적 씬(§6.6, Q3 가정 확정 A): ESL u_rel 은 이번 낙하분 → Radioss 쪽도 증분 계열로 비교
         cum_v, v = _cum.series(v, cst["prev"][hp], cst["modes"][tcfg["metric"]])
@@ -895,7 +937,7 @@ def noise_floor(ctx: Context, sm: ShellModel, X0, u_total, u_rel, F, hot_pos) ->
     prec = ctx.cfg["extract"]["disp_precision"]
     vcfg = ctx.cfg["validation"]
     n_s = int(vcfg["noise_samples"])
-    layers = ctx.cfg["extract"]["layers"]
+    layers = _esl_layers(ctx)
     xmax = float(np.max(np.abs(np.asarray(X0) + np.asarray(u_total)))) if np.size(X0) else 0.0
     delta = 0.5 * float(np.finfo(_PRECISION[prec]).eps) * xmax
     rms = lambda a: float(np.sqrt(np.mean(np.sum(np.asarray(a) ** 2, axis=1)))) if np.size(a) else 0.0
@@ -1042,7 +1084,8 @@ def stage_esl(ctx: Context) -> dict:
                        "n_nodes_nonzero": int(np.sum(mag > 0))},
             "supports": sup_rec["supports"], "support_mode": mode, "noise": noise,
             "drill_factor": ctx.cfg["solver"]["drill_factor"], "backend": ctx.cfg["solver"]["backend"],
-            "solver": solver_stats(sm), "tag": ctx.tag, "created_at": _utcnow()}
+            "solver": solver_stats(sm), "strain_source": _source(_frames_meta(ctx)), "tag": ctx.tag,
+            "created_at": _utcnow()}
     _write_json(ctx.f(d, "esl_summary.json"), summ)
     ctx.echo(f"[esl] frame {sel['frame_index']}: 강체회전 {kinfo['rot_deg']:.2f}°, ΣF=|{np.linalg.norm(sumF):.3e}|, "
              f"Σ|F|={sum_abs:.3e}, 평형 오차 {eq_rel:.2e} (모멘트 {mom_rel:.2e}), "
@@ -1054,7 +1097,7 @@ def stage_esl(ctx: Context) -> dict:
     return {"noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
             "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
-            "solver": solver_stats(sm)}
+            "solver": solver_stats(sm), "strain_source": summ["strain_source"]}
 
 
 # ====================================================================== S5 validate
@@ -1143,6 +1186,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
     """
     meta = _frames_meta(ctx)
     factor = _shear_factor(ctx, meta)
+    src = _source(meta)
     rtol = float(ctx.cfg["tstar"]["reach_rtol"])
     ccfg = ctx.cfg["compare"]
     E = int(model.elem_id.size)
@@ -1154,8 +1198,11 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
             pfi = int(z["prev_frame_index"][fd])
             pok = bool(z["prev_available"][fd]) if "prev_available" in files else True
             prev_eps = z["prev_eps"][fd] if (pok and pfi >= 0) else None
+            prev_vm = z["prev_vm_hv"][fd] if (pok and pfi >= 0 and "prev_vm_hv" in files) else None
         else:
-            pfi, pok, prev_eps = int(frame_index) - 1, False, None
+            pfi, pok, prev_eps, prev_vm = int(frame_index) - 1, False, None, None
+    if ((meta.get("strain_fallback") or {}).get("epsp_available")) is False:
+        epsp = None                         # h3d 에 소성 결과 없음(H3D_NO_EPSP) → 소성 영역 정보 미상(null)
     known = None
     cst = _cum_state(ctx, model)
     if cst is not None and epsp is not None:
@@ -1164,7 +1211,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         rising = _field.rising_mask(eps_rad, None, rtol)
         prev_source = "first_frame"
     elif pok:
-        pe = strain.eps_eq(tensor_eps(prev_eps, factor))
+        pe = rad_eq(prev_eps, prev_vm, factor, src)
         if cst is not None:
             _, pe = _cum.series(pe, cst["prev_eq"], cst["modes"]["max_strain"])
         rising = _field.rising_mask(eps_rad, pe, rtol)
@@ -1178,7 +1225,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
         jf = np.flatnonzero(hfi == int(frame_index))
         jp = np.flatnonzero(hfi == pfi)
         if jf.size == 1 and jp.size == 1:
-            eqh = strain.eps_eq(tensor_eps(hz["eps"], factor))
+            eqh = rad_eq(hz["eps"], hz["vm_hv"], factor, src)
             if cst is not None:
                 _, eqh = _cum.series(eqh, cst["prev_eq"][hp], cst["modes"]["max_strain"])
             rising[hp] = _field.rising_mask(eps_rad[hp], eqh[int(jp[0])], rtol)
@@ -1214,7 +1261,7 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
                             "max_err_pct": "max.abs_err_pct: t* 상승 요소 중 ε_rad 최대 요소의 오차",
                             "valid": "rising ∧ eps_rad ≥ min_rel·max_rad ∧ 제외 아님",
                             "rising": "v[t*] > v[t*−1]·(1+rtol), t*=첫 프레임이면 v>0 (v = Max_Strain ε_eq)",
-                            "eps_esl": f"검증 해 ε_eq({'·'.join(ctx.cfg['extract']['layers'])}, 막 z=0 기본)"},
+                            "eps_esl": f"검증 해 ε_eq({'·'.join(_esl_layers(ctx, meta))}, 막 z=0 기본)"},
                 plane={k: pl[k].tolist() for k in ("origin", "e1", "e2", "n", "xi_range", "eta_range")},
                 sections={"xi": {"at": 0.5, "band": bx, "n_elems": sec_xi["n_elems"]},
                           "eta": {"at": 0.5, "band": by, "n_elems": sec_eta["n_elems"]}},
@@ -1292,7 +1339,9 @@ def stage_validate(ctx: Context) -> dict:
         eps_sol = sm.strains(u_val)
 
     # hotspot ε_eq: Radioss(t* 프레임, Mid) vs 검증 해 막 변형률(extract.layers) — 참고
-    layers = ctx.cfg["extract"]["layers"]
+    fmeta = _frames_meta(ctx)
+    src = _source(fmeta)
+    layers = _esl_layers(ctx, fmeta)
     hs, eps_rad = _eval_hotspots(ctx, model, frame_index)
     eps_val = _solver_eq(eps_sol, layers)
     vcfg = ctx.cfg["validation"]
@@ -1311,19 +1360,35 @@ def stage_validate(ctx: Context) -> dict:
         ctx.warnings.append(f"hotspot {len(excluded)}개 비교 제외(상승 중 아님): "
                             f"{[x['elem_id'] for x in excluded][:10]}")
     h1 = hots[0]["rel_err"] if hots else float("inf")
+    if src == "max_stress":
+        h1 = None                                   # 응력 대체: 변형률 참고 지표 생략(§4)
 
     # 전 요소 재현 정확도(참고)
     ccfg = ctx.cfg["compare"]
     farr, fsum = _field_compare(ctx, model, frame_index, eps_rad, eps_val, d_rel, d_val)
     f_max = fsum["max"]["abs_err_pct"] if fsum["max"] else float("inf")
     f_p90 = fsum["abs_err_pct"]["p90"] if fsum["abs_err_pct"] else float("inf")
+    if src == "max_stress":
+        # 응력 대체: 변형률 참고 지표 전부 생략(None) — hotspot rel_err·전 요소 오차·기준 초과 비율(§4, Verifier Med1)
+        f_max = f_p90 = None
+        fsum["skipped"] = "STRAIN_FROM_STRESS"
+        fsum.update({"max": None, "abs_err_pct": None, "frac_within": None})
+        for rec in hots + excluded:
+            rec["rel_err"] = None
     fsum["criteria"] = {"max_err_pct_max": ccfg["max_err_pct_max"], "p90_err_max": ccfg["p90_err_max"]}
     sref = fsum.pop("strain_ref_base")
+    if src == "max_stress":
+        sref.update({k: None for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct")})
+        sref["skipped"] = "STRAIN_FROM_STRESS"
 
     noise = summ.get("noise")
     if noise is None:
         ctx.warnings.append("esl_summary.json 에 잡음 바닥(noise) 없음 — esl 단계를 다시 실행 권장")
     n_strain = float(noise["hotspot_strain_rel"]) if noise else None
+    if src == "max_stress":
+        n_strain = None
+        if STRAIN_FROM_STRESS not in ctx.warnings:
+            ctx.warnings.append(STRAIN_FROM_STRESS)
     n_force = float(noise["force_rel"]) if noise else None
 
     # 변위 잡음 바닥 δ/U (추가 해석 없음)
@@ -1347,8 +1412,11 @@ def stage_validate(ctx: Context) -> dict:
         return {"metric": name, "value": v, "criterion": c, "pass": bool(v <= c), "role": "judge"}
 
     def ref(name, v, c):
-        return {"metric": name, "value": v, "criterion": c, "pass": None, "role": "reference",
-                "exceeded": bool(v is not None and not v <= c)}
+        r = {"metric": name, "value": v, "criterion": c, "pass": None, "role": "reference",
+             "exceeded": bool(v is not None and not v <= c)}
+        if v is None:
+            r["status"] = "skipped"
+        return r
 
     def info(name, v):
         return {"metric": name, "value": v, "criterion": None, "pass": None, "role": "info"}
@@ -1397,7 +1465,7 @@ def stage_validate(ctx: Context) -> dict:
            "metrics": metrics, "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded,
            "reactions": reactions, "reaction_sum": None if Rr is None else Rr.sum(axis=0),
            "disp": None if disp_an is None else disp_an["summary"], "strain_ref": sref, "field": fsum,
-           "created_at": _utcnow()}
+           "strain_source": src, "created_at": _utcnow()}
 
     d = ctx.fresh_dir(D_VAL)
     _write_json(ctx.f(d, "validation.json"), val)
@@ -1421,10 +1489,13 @@ def stage_validate(ctx: Context) -> dict:
              + (f" {fail_reasons}" if fail_reasons else "")
              + (f" ({undetermined_reason})" if undetermined_reason else ""))
     fa = fsum["abs_err_pct"]
-    ctx.echo(f"[validate] 변형률 참고: hotspot1 rel_err={h1:.2e} (참고 ≤{crit['hotspot_strain_rel_err_max']:g}, "
-             f"비교 {len(hots)}·제외 {len(excluded)}), 최대변형률 요소 오차 {f_max:.3g}% (≤{ccfg['max_err_pct_max']:g}), "
-             f"|오차| P90 {f_p90:.3g}% (≤{ccfg['p90_err_max']:g}), 기준 초과 요소 {sref['n_exceed']}/{sref['n_elems']} "
-             f"({100 * sref['frac_exceed']:.3g}%)"
+    _g = lambda v, f: "skipped" if v is None else format(v, f)
+    ctx.echo(f"[validate] 변형률 참고(source {src}): hotspot1 rel_err={_g(h1, '.2e')} "
+             f"(참고 ≤{crit['hotspot_strain_rel_err_max']:g}, "
+             f"비교 {len(hots)}·제외 {len(excluded)}), 최대변형률 요소 오차 {_g(f_max, '.3g')}% "
+             f"(≤{ccfg['max_err_pct_max']:g}), "
+             f"|오차| P90 {_g(f_p90, '.3g')}% (≤{ccfg['p90_err_max']:g}), 기준 초과 요소 {_g(sref['n_exceed'], 'd')}/{sref['n_elems']} "
+             f"({_g(None if sref['frac_exceed'] is None else 100 * sref['frac_exceed'], '.3g')}%)"
              + ("" if sref["plastic"] is None else f", 소성 영역 {sref['plastic']['n_plastic']}")
              + f", valid {fsum['n_valid']}/{fsum['n_elems']} (상승 {fsum['n_rising']}, hold {fsum['n_hold']}, "
              f"low {fsum['n_low']})" + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else "")
@@ -1442,7 +1513,8 @@ def stage_validate(ctx: Context) -> dict:
             "disp_noise_rel": disp_noise_rel,
             "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
-            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm)}
+            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm),
+            "strain_source": src}
 
 
 # ====================================================================== export

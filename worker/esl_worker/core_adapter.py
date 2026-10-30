@@ -186,6 +186,16 @@ def scan_includes(rad: str, max_depth: int, include_path_map: dict | None = None
     return list(_wrap(fn, rad, **kw))
 
 
+def extract_source_settings(core_settings: dict | None = None) -> dict:
+    """설정 extract 의 h3d 변형률 결과 대체 키(기본값 채운 사본, 계약 esl_strain_fallback.md §2)."""
+    return _wrap(_attr("esl.config", "extract_source_settings"), core_settings or {})
+
+
+def dump_settings(core_settings: dict | None = None) -> dict:
+    """extract.dump_keep·dump_max_bytes(기본값 채움)."""
+    return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})
+
+
 def cumulative_prev(rad: str, part_title: str, out_csv: str, core_settings: dict | None = None) -> dict | None:
     """누적 씬(rad include 에 상태 파일 .sta/.str) 판정 → 대상 파트 이전 소성 CSV(prev.csv) 작성(계약
     esl_cumulative_input.md §15 Worker). 상태 파일이 없거나 cumulative.enabled=off 면 None(아무것도 쓰지 않음).
@@ -1055,6 +1065,29 @@ def doe_fresh_dir(out: str, rel: str, doe: dict) -> str:
 
     w = doe_writer(out, doe)
     return _wrap(w.fresh_dir, os.path.join(out, rel), out)
+
+
+def doe_assem_full(out: str, doe: dict, starter: str, case_dir: str, roots: list[str], rel: str, *, max_mb: float,
+                   max_depth: int, include_path_map: dict | None, engine_rad: bool, fixed_scan: dict | None) -> dict:
+    """v0.12.1 모델 전체(starter include 트리) 사본 <out>/<rel>/ + 스캔 정규화(esl.doe.assem_full). 매니페스트."""
+    import os
+
+    A = _mod("esl.doe.assem_full")
+    w = doe_writer(out, doe)
+    _wrap(A.drop_derived, out, w.guard, (os.path.basename(rel),))     # 파생물 — _backup 에 쌓지 않고 삭제
+    d = _wrap(w.makedirs, os.path.join(out, rel))
+    return _wrap(A.copy_model_full, starter, case_dir, roots, d, max_mb=max_mb, include_path_map=include_path_map,
+                 max_depth=max_depth, engine_rad=engine_rad, fixed_scan=fixed_scan, guard=w.guard)
+
+
+def doe_assem_summary(man: dict) -> dict:
+    return _mod("esl.doe.assem_full").summary(man)
+
+
+def doe_restore_out_files(out: str, doe: dict, out_files_dir: str, rels: list[str], man: dict) -> int:
+    """paicad run 모핑 사본 중 스캔 정규화한 파일 → 원본 + 모핑 /NODE 좌표."""
+    w = doe_writer(out, doe)
+    return _wrap(_mod("esl.doe.assem_full").restore_out_files, out_files_dir, rels, man, guard=w.guard)
 
 
 def doe_assem_check(d: str, max_mb: float) -> dict:

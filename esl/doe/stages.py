@@ -149,6 +149,8 @@ def bd_input(spec: dict, echo=print) -> dict:
     D = c.D
     c.progress(0)
     c.fresh("input")
+    from esl.doe.assem_full import drop_derived
+    drop_derived(c.out, c.writer.guard)          # prep/assem_full·a_assem_full = 재생성 파생물(_backup 제외)
     c.fresh("prep")
     st = D["step"]
     step_rel = os.path.join("input", "step", os.path.basename(st.get("file_name") or st["path"]))

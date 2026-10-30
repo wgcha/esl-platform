@@ -231,7 +231,7 @@ describe("검증 낙하 — 화면", () => {
     fireEvent.change(within(box).getByRole("textbox", { name: "SCX 잡 ID" }), { target: { value: "SCX-26-4410" } });
     fireEvent.click(attach);
     await waitFor(() => expect(screen.queryByTestId("vd-unknown")).toBeNull(), LONG);
-    expect(screen.getByTestId("vd-card").textContent).toMatch(/SCX-26-4410/);
+    await waitFor(() => expect(screen.getByTestId("vd-card").textContent).toMatch(/SCX-26-4410/), LONG);
     // 연결 = 새 VERIFY_DROP 작업이 이미 큐(VD_WAIT 부터) — 화면은 [재시도]를 요구하지 않는다
     const d = server.verify.drops.find((x) => x.scx_job_id === "SCX-26-4410")!;
     const js = server.jobs.filter((j) => j.params.verify_drop_id === d.id);

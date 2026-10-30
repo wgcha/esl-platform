@@ -334,7 +334,11 @@ export class MockServer {
   }
 
   private finishExtract(c: CaseOut) {
-    c.extract_summary = EXTRACT_SUMMARY;
+    // v0.12.1 esl_strain_fallback.md §8 T3: h3d 입력 Case = 실서버 목록(Max_Strain·Plastic Strain 없음) → Strain 텐서 대체
+    c.extract_summary =
+      c.input_kind === "H3D"
+        ? { ...EXTRACT_SUMMARY, strain_source: "strain_tensor", warnings: [...EXTRACT_SUMMARY.warnings, "H3D_NO_EPSP: no plastic strain result in subcase 1; epsp = 0", "STRAIN_TMAX_SAMPLED: Strain 텐서(순간값)를 h3d 출력 프레임에서만 표본해 시간 누적 최대(TMAX)를 재현함 — ε 과소평가 가능, t* 는 출력 프레임으로 양자화(프레임 간격 중앙값 0.0001). 덱에 /H3D/SHELL/TENS/STRAIN/TMAX 출력을 권장"] }
+        : EXTRACT_SUMMARY;
     c.part_id = 10;
     c.h3d_path = c.results_dir.replace(/h3d_csv$/, "chassis_rear.h3d");
     const t = this.tstarMetrics.max_strain.tstar!;

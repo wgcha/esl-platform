@@ -166,7 +166,8 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
     ref = summ.get("tag") or summ.get("created_at")
     quality = {"verdict": None, "status": None, "scheme": None, "undetermined_reason": None, "fail_reasons": [],
                "hotspot1_rel_err": None, "disp_rms_rel": None, "disp_max_rel": None, "disp_noise_rel": None,
-               "strain_exceed_frac": None, "reaction_rel": None, "noise": summ.get("noise"), "field": None, "hotspots": [], "esl_ref": ref}
+               "strain_exceed_frac": None, "reaction_rel": None, "noise": summ.get("noise"), "field": None, "hotspots": [], "esl_ref": ref,
+               "strain_source": None}
     val = U.read_json(files["validation.json"]) if "validation.json" in files else None
     if val is None:
         warns.append("검증 결과(05_val/validation.json) 없음")
@@ -195,6 +196,11 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
             hs.append({"rank": h.get("rank"), "elem_id": h.get("elem_id"), "xi": float(loc[0]), "eta": float(loc[1]),
                        "eps_rad": h.get("eps_rad"), "eps_val": h.get("eps_val"), "rel_err": h.get("rel_err")})
         quality["hotspots"] = hs
+        if val.get("strain_source") == "max_stress":
+            # 응력 대체 검증: 변형률 참고 지표는 품질로 전파하지 않음(Verifier Med1)
+            quality.update(hotspot1_rel_err=None, strain_exceed_frac=None, field=None)
+            for h in quality["hotspots"]:
+                h["rel_err"] = None
 
     # ---- 정규화 요약
     gs = nz.grid_summary(raw["x0"], raw["f"], nx, ny, fr, top_n=top_n, node_id=raw["node_id"])
@@ -202,6 +208,10 @@ def build(case_dir: str, run_id: str | None = None, *, scene_path: str | None = 
 
     # ---- 씬 메타
     fmeta = U.read_json(files["frames.json"]) if "frames.json" in files else {}
+    # 변형률 source(esl_strain_fallback.md §5): esl_summary > frames.json > 옛 자료 max_strain. 등록은 막지 않음(§10.3)
+    from esl.io import STRAIN_SOURCES, strain_source_of
+    ss = summ.get("strain_source")
+    quality["strain_source"] = ss if ss in STRAIN_SOURCES else strain_source_of(fmeta)
     runj = U.read_json(files["run.json"]) if "run.json" in files else {}
     res_dir = ((runj.get("inputs") or {}).get("results_dir")) if isinstance(runj, dict) else None
     cands = [("scene_path", scene_path), ("h3d", fmeta.get("h3d")), ("results_dir", res_dir), ("case_dir", case_dir)]

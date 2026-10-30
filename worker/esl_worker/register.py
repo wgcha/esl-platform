@@ -109,6 +109,8 @@ def register_extract(conn: Connection, job: dict[str, Any], case: dict[str, Any]
         "disp_frames": co.disp_frames(cdir), "metrics": sorted(info["metrics"]),
         "warnings": list(ex.get("warnings") or []) + list(tsr.get("warnings") or []),
     }
+    # 변형률 source(esl_strain_fallback.md §5) — 옛 코어 결과는 키 없음(= max_strain)
+    summary["strain_source"] = s.get("strain_source")
     if s.get("cumulative"):                 # 누적 씬만(비누적 Case 는 키 없음 — esl_cumulative_input.md §13)
         summary["cumulative"] = s["cumulative"]
     vals: dict[str, Any] = {"extract_summary": summary, "tstar": tstar, "current_esl_run_id": None}

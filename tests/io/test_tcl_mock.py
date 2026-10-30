@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from esl.errors import EslError
-from esl.io import max_hold, pack_results, write_results_csv
+from esl.io import max_hold, pack_results, tensor_eps, write_results_csv
 from esl.mech import strain, tstar
 from esl.rad import parse_rad, write_rad
 
@@ -230,8 +230,9 @@ def test_extract_tcl_args_override_request(tmp_path):
 
 
 @pytest.mark.parametrize("drop", ["Plastic Strain", "Max_Strain"])
-def test_extract_tcl_missing_result_type_writes_failure(tmp_path, drop):
-    m, ref, drv, out = _setup(tmp_path, drop_type=drop)
+def test_extract_tcl_missing_result_type_forced_writes_failure(tmp_path, drop):
+    """request 에 strain_type 명시(하위 호환, 대체 없음) → 결과 유형 없으면 H3D_MISSING_RESULT."""
+    m, ref, drv, out = _setup(tmp_path, drop_type=drop, extra_req="strain_type\tMax_Strain\n")
     assert _run(drv).returncode == 0  # ESL_NO_EXIT: 종료코드 대신 done.json 확인
     done = json.loads((out / "done.json").read_text())
     assert done["ok"] is False and done["code"] == "H3D_MISSING_RESULT" and drop in done["error"]
@@ -240,8 +241,27 @@ def test_extract_tcl_missing_result_type_writes_failure(tmp_path, drop):
     assert ei.value.code == "H3D_MISSING_RESULT"
 
 
+def test_extract_tcl_no_plastic_strain_falls_back_to_zero(tmp_path):
+    """Plastic Strain 없음(대체 모드) → 실패 대신 epsp = 0 + H3D_NO_EPSP, source = max_strain."""
+    m, ref, drv, out = _setup(tmp_path, drop_type="Plastic Strain")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_source"] == "max_strain" and done["epsp_available"] is False
+    assert any(w.startswith("H3D_NO_EPSP") for w in done["warnings"])
+    pack_results(out, m, tmp_path / "npz")
+    assert not _load(tmp_path / "npz" / "final.npz")["epsp"].any()
+
+
 def test_extract_tcl_wrong_layer_name(tmp_path):
+    # 대체 모드: strain_layer 가 없으면 층 목록 첫 원소(Mid)
     m, ref, drv, out = _setup(tmp_path, extra_req="strain_layer\tLower\n")
+    assert _run(drv).returncode == 0
+    done = json.loads((out / "done.json").read_text())
+    assert done["ok"] is True and done["strain_layer"] == "Mid" and done["strain_layers"] == ["Mid"]
+    # 하위 호환(strain_type 명시): 층이 없으면 실패
+    (tmp_path / "b").mkdir()
+    m, ref, drv, out = _setup(tmp_path / "b", extra_req="strain_type\tMax_Strain\nstrain_layer\tLower\n")
     assert _run(drv).returncode == 0
     done = json.loads((out / "done.json").read_text())
     assert done["ok"] is False and done["code"] == "H3D_MISSING_RESULT" and "Mid" in done["error"]
@@ -636,3 +656,246 @@ def test_extract_tcl_elems_csv_static():
     src = open(os.path.join(TCL_DIR, "esl_h3d_extract.tcl"), encoding="ascii").read()
     assert '"elem_id,n1,n2,n3,n4"' in src and '"element.id element.connectivity"' in src
     assert "elems_ok" in src and "elems.csv done:" in src and "elems.csv skipped" in src
+
+
+# ---------------- h3d 변형률 결과 대체(v0.12.1, 계약 esl_strain_fallback.md §8 T1~T7·C3)
+REAL_TYPES = ["Displacement", "Acceleration", "Contact Forces", "Velocity", "Max_Stress", "Min_Stress", "Strain",
+              "Stress", "Erosion Status", "Mass Change"]          # 실서버 덱(§0)의 subcase 1 결과 목록
+TENSOR = ["XX", "YY", "ZZ", "XY", "YZ", "ZX", "vonMises"]
+
+
+def _tl(items):
+    return "{" + " ".join(("{" + x + "}") if " " in x else x for x in items) + "}"
+
+
+def _dtinfo(types, layers=None):
+    """types → mock dtinfo 문(성분: Displacement X Y Z Mag, Plastic Strain Scalar value, 그 밖 텐서)."""
+    layers = layers or {}
+    parts = []
+    for t in types:
+        comps = ["X", "Y", "Z", "Mag"] if t == "Displacement" else (["Scalar value"] if t == "Plastic Strain" else TENSOR)
+        lay = layers.get(t, [] if t == "Displacement" else ["Mid"])
+        parts.append(f"{{{t}}} {{comps {_tl(comps)} layers {_tl(lay)}}}")
+    return "set ::mock::dtinfo [dict create " + " ".join(parts) + "]"
+
+
+def _inst(seed=7, eng=False, L=2):
+    """순간 Strain (F,6,L,3) 진동(마지막 프레임 < 최대), 저장값(eng 면 XY = γ)과 텐서 규약 ε_eq."""
+    rng = np.random.default_rng(seed)
+    env = np.sin(np.linspace(0.0, 1.3 * np.pi, F))[:, None, None, None]         # 중간에 최대, 끝은 감소
+    t = np.round(rng.normal(size=(F, 6, L, 3)) * 1e-3 * (0.3 + np.abs(env)), 12)
+    t[0] = 0.0
+    stored = t.copy()
+    if eng:
+        stored[..., 2] *= 2.0
+    return t, stored, strain.eps_eq(t)
+
+
+def _strain_lines(stored, eq, eid, layers=("Lower", "Upper"), dtype="Strain"):
+    out = []
+    for f in range(F):
+        for e in range(stored.shape[1]):
+            for li, L in enumerate(layers):
+                xx, yy, xy = stored[f, e, li]
+                for comp, v in (("XX", xx), ("YY", yy), ("ZZ", -(xx + yy)), ("XY", xy), ("vonMises", eq[f, e, li])):
+                    out.append(f"dict set ::mock::vals {_key(dtype, comp, L, f, eid[e])} {float(v)!r}")
+    return "\n".join(out)
+
+
+def _held(t):
+    """core 와 같은 규칙: 층 최대 ε_eq → 시간 누적 최대, 최대를 만든 (프레임, 층) 의 텐서."""
+    q = strain.eps_eq(t)                                  # (F,E,L)
+    lay = np.argmax(q, axis=2)
+    eq = np.take_along_axis(q, lay[..., None], 2)[..., 0]
+    F_, E_ = eq.shape
+    src = np.zeros((F_, E_), int)
+    best, cur = eq[0].copy(), np.zeros(E_, int)
+    for f in range(1, F_):
+        up = eq[f] > best
+        best, cur = np.where(up, eq[f], best), np.where(up, f, cur)
+        src[f] = cur
+    ee = np.arange(E_)[None, :]
+    return t[src, ee, lay[src, ee]], np.maximum.accumulate(eq, axis=0)
+
+
+def _done(out):
+    return json.loads((out / "done.json").read_text())
+
+
+def test_t1_max_strain_available_is_unchanged(tmp_path):
+    """T1: Max_Strain 있음 → source max_strain, 출력은 Python 생성기(현행 형식)와 비트 동일."""
+    m, ref, drv, out = _setup(tmp_path)
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is True and done["strain_source"] == "max_strain" and done["strain_mode"] == "maxhold"
+    assert done["strain_tried"] == [] and done["epsp_available"] is True and done["strain_layers"] == ["Mid"]
+    assert not (out / "strain_raw.csv").exists()
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["strain_source"] == "max_strain"
+    _python_twin(tmp_path, m, ref)
+    _same_npz(tmp_path / "npz", tmp_path / "py_npz")
+    fj = json.loads((tmp_path / "npz" / "frames.json").read_text())
+    assert fj["strain_fallback"]["source"] == "max_strain" and fj["results"]["strain_source"] == "max_strain"
+
+
+def test_t2_plastic_strain_source(tmp_path):
+    """T2: Plastic Strain, Strain, Max_Stress → plastic_strain(max-hold): vm_hv = epsp = 소성, 텐서 0."""
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(["Displacement", "Plastic Strain", "Strain", "Max_Stress"]))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_source"] == "plastic_strain" and done["strain_source_type"] == "Plastic Strain"
+    assert [t["source"] for t in done["strain_tried"]] == ["max_strain"] and done["strain_tried"][0]["type"] is None
+    H = tstar.hot_set(ref["ep"][-1], ref["ep"][-1], 2)
+    cf = tstar.candidate_frames(ref["ep"][:, H], 1e-6, 3)
+    assert done["candidate_frames"]["max_strain"] == done["candidate_frames"]["plastic_strain"] == [f for f, _ in cf]
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["strain_source"] == "plastic_strain"
+    fz = _load(tmp_path / "npz" / "final.npz")
+    assert np.array_equal(fz["vm_hv"], fz["epsp"]) and not fz["eps"].any()
+    assert np.array_equal(fz["epsp"], ref["ep"][-1].astype(np.float32))
+
+
+def test_t3_real_server_list_uses_strain_tensor_dump(tmp_path):
+    """T3: 실서버 목록(§0) → strain_tensor, dump 모드, H3D_NO_EPSP, layers = Lower Upper(Max·Min 제외) →
+    코어가 max-hold 계열을 만든 결과가 Python dump 생성기 경로와 비트 동일."""
+    t, stored, eq = _inst(eng=True)
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper", "Max", "Min"]})
+                              + "\n" + _strain_lines(stored, eq, [10, 11, 12, 13, 14, 15]))
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_source"] == "strain_tensor" and done["strain_mode"] == "dump"
+    assert done["strain_layers"] == ["Lower", "Upper"] and done["epsp_available"] is False
+    assert any(w.startswith("H3D_NO_EPSP") for w in done["warnings"])
+    assert [x["source"] for x in done["strain_tried"]] == ["max_strain", "plastic_strain"]
+    assert sorted(os.listdir(out)) == ["disp.csv", "done.json", "elems.csv", "frames.csv", "model.csv", "progress.log",
+                                       "strain_raw.csv"]
+    assert "dump frame 8/8" in r.stdout
+    rows = (out / "strain_raw.csv").read_text().splitlines()
+    assert rows[0] == "frame_index,elem_id,layer,vm_hv,exx,eyy,ezz,exy,epsp" and len(rows) == 1 + F * 6 * 2
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["strain_source"] == "strain_tensor"
+    assert any(w.startswith("STRAIN_TMAX_SAMPLED") for w in info["warnings"])
+    sf = info["strain_fallback"]
+    assert sf["esl_layers"] == ["bottom", "top"] and sf["shear"]["convention"] == "engineering"
+    assert sf["dt_out"] == pytest.approx(1e-3)
+    from esl.io import write_dump_csv
+    d = write_dump_csv(tmp_path / "py_dump", ref["t"], ref["nid"], ref["x0"], ref["u"], ref["eid"], stored,
+                       vm_hv=eq, hot_k=2, top_n=3, elem_nodes=None)
+    pack_results(d, m, tmp_path / "py_npz")
+    _same_npz(tmp_path / "npz", tmp_path / "py_npz")
+    held, M = _held(t)
+    fz = _load(tmp_path / "npz" / "final.npz")
+    assert np.allclose(fz["vm_hv"], M[-1], rtol=1e-6) and M[-1].max() > strain.eps_eq(t[-1]).max()
+    assert np.allclose(strain.eps_eq(tensor_eps(fz["eps"], 0.5)), fz["vm_hv"], rtol=1e-5)
+
+
+def test_t4_stress_source(tmp_path):
+    """T4: Max_Stress, Displacement → max_stress(max-hold, vm_hv = σ vonMises), epsp 없음."""
+    rng = np.random.default_rng(3)
+    sig = np.maximum.accumulate(np.abs(rng.normal(size=(F, 6))) * 100.0, axis=0)
+    lines = [f"dict set ::mock::vals {_key('Max_Stress', c, 'Mid', f, e)} {float(sig[f, k] * w)!r}"
+             for f in range(F) for k, e in enumerate([10, 11, 12, 13, 14, 15])
+             for c, w in (("vonMises", 1.0), ("XX", 0.5), ("YY", 0.2), ("ZZ", 0.0), ("XY", 0.1))]
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(["Max_Stress", "Displacement"]) + "\n" + "\n".join(lines))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_source"] == "max_stress" and done["epsp_available"] is False
+    assert len(done["strain_tried"]) == 3
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["strain_source"] == "max_stress"
+    assert np.allclose(_load(tmp_path / "npz" / "final.npz")["vm_hv"], sig[-1])
+
+
+def test_t5_no_strain_source(tmp_path):
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(["Displacement"]))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == "H3D_NO_STRAIN_SOURCE" and done["failed_step"] == "check_results"
+    assert [x["source"] for x in done["strain_tried"]] == ["max_strain", "plastic_strain", "strain_tensor", "max_stress"]
+    assert "available: Displacement" in done["error"]
+    with pytest.raises(EslError) as ei:
+        pack_results(out, m, tmp_path / "npz")
+    assert ei.value.code == "H3D_NO_STRAIN_SOURCE"
+
+
+def test_t6_source_order_from_request(tmp_path):
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(REAL_TYPES), extra_req="strain_sources\tmax_strain\n")
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == "H3D_NO_STRAIN_SOURCE"
+    assert [x["source"] for x in done["strain_tried"]] == ["max_strain"]
+    # 이름 후보 설정화: Strain 이름을 바꾸면 그 이름으로 찾음(대소문자·공백·밑줄 무시)
+    (tmp_path / "b").mkdir()
+    m, ref, drv, out = _setup(tmp_path / "b", extra_req="names_max_strain\tTMAX Strain|max strain\n")
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is True and done["strain_source"] == "max_strain" and done["strain_source_type"] == "Max_Strain"
+    for bad in ("strain_sources\tmax_strain bogus\n", "strain_sources\tmax_strain max_strain\n"):
+        (tmp_path / "c").mkdir(exist_ok=True)
+        m, ref, drv, out = _setup(tmp_path / "c", extra_req=bad)
+        assert _run(drv).returncode == 0
+        assert _done(out)["code"] == "INPUT_INVALID", bad
+
+
+def test_t7_explicit_strain_type_is_backward_compatible(tmp_path):
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(REAL_TYPES), extra_req="strain_type\tMax_Strain\n")
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == "H3D_MISSING_RESULT" and "Max_Strain" in done["error"]
+
+
+def test_c3_dump_cumulative_prev_matches_maxhold_rule(tmp_path):
+    """C3: dump + 누적 prev(+prev 순위·F0) = 같은 값을 max-hold(Max_Strain)로 준 TCL 3패스 결과와 같은 규칙·같은 npz."""
+    t, stored, eq = _inst(seed=11)
+    held, M = _held(t)
+    eid = [10, 11, 12, 13, 14, 15]
+    prev = tmp_path / "prev.csv"
+    prev.write_text("elem_id,prev_epsp,prev_eq\n10,0.0,0.0\n11,0.002,0.002\n12,0,0\n13,0.0001,0.0001\n14,0,0\n15,0,0\n")
+    req = f"prev_file\t{prev}\nframe0_pass\t1\ncum_min_incr\t1e-7\n"
+    mh = []
+    for f in range(F):
+        for k, e in enumerate(eid):
+            xx, yy, xy = held[f, k]
+            for c, v in (("vonMises", M[f, k]), ("XX", xx), ("YY", yy), ("ZZ", -(xx + yy)), ("XY", xy)):
+                mh.append(f"dict set ::mock::vals {_key('Max_Strain', c, 'Mid', f, e)} {float(v)!r}")
+    (tmp_path / "a").mkdir()
+    m, ref, drv_a, out_a = _setup(tmp_path / "a", extra_req=req, mock_extra="\n".join(mh))
+    assert _run(drv_a).returncode == 0
+    (tmp_path / "b").mkdir()
+    m, ref, drv_b, out_b = _setup(tmp_path / "b", extra_req=req + "strain_sources\tstrain_tensor\n",
+                                  mock_extra=_dtinfo(["Displacement", "Plastic Strain", "Strain"],
+                                                     {"Strain": ["Lower", "Upper"]}) + "\n"
+                                  + _strain_lines(stored, eq, eid))
+    assert _run(drv_b).returncode == 0
+    da, db = _done(out_a), _done(out_b)
+    assert da["ok"] is True and db["ok"] is True, (da.get("errorInfo"), db.get("errorInfo"))
+    assert db["strain_mode"] == "dump" and db["dump_cumulative"]["frame0"] is True and db["epsp_available"] is True
+    ia = pack_results(out_a, m, tmp_path / "npz_a")
+    ib = pack_results(out_b, m, tmp_path / "npz_b")
+    assert ia["frames_D"] == ib["frames_D"] and ia["candidate_frames"] == ib["candidate_frames"]
+    fa = json.loads((tmp_path / "npz_a" / "frames.json").read_text())
+    fb = json.loads((tmp_path / "npz_b" / "frames.json").read_text())
+    for k in ("candidate_frames_prev", "candidate_elems_prev", "rank_sets", "prev_n"):
+        assert fa["tcl_cumulative"][k] == fb["tcl_cumulative"][k], k
+    assert fa["candidate_elems"] == fb["candidate_elems"] and fa["n_hot"] == fb["n_hot"]
+    _same_npz(tmp_path / "npz_a", tmp_path / "npz_b")
+    za, zb = _load(tmp_path / "npz_a" / "frame0.npz"), _load(tmp_path / "npz_b" / "frame0.npz")
+    assert all(np.array_equal(za[k], zb[k]) for k in za)
+
+
+@pytest.mark.parametrize("req,code", [("dump_max_bytes\t1000\n", "STRAIN_DUMP_TOO_LARGE"),
+                                      ("dump_free_bytes\t10\n", "INSUFFICIENT_STORAGE")])
+def test_dump_size_estimate_before_writing(tmp_path, req, code):
+    """Med2: dump 사전 추정(프레임 × 요소 × 층 × 160 B + 프레임 × 노드 × 90 B) > 상한·여유 → 쓰기 전 실패."""
+    t, stored, eq = _inst()
+    m, ref, drv, out = _setup(tmp_path, extra_req=req,
+                              mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper"]}) + "\n"
+                              + _strain_lines(stored, eq, [10, 11, 12, 13, 14, 15]))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == code, done.get("error")
+    assert str(F * (6 * 2 * 160 + 12 * 90)) in done["error"] and not (out / "strain_raw.csv").exists()

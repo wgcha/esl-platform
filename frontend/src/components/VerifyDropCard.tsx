@@ -2,13 +2,13 @@
 // 고른 행 아래: 드라이브 폴더(경로 복사) · 진행·로그·취소·재시도(JobProgress 재사용, SCX 잡이 있으면 취소 확인 창) ·
 // 결과 모름(UNKNOWN) = [잡 ID 연결](서버가 그 잡을 기다리는 작업을 자동 큐)·[포기](이후 [재시도] = 새로 제출) · 완료 = 원 낙하 vs 검증 낙하 비교 표(정보 표시, PASS/FAIL 없음) + [CSV 받기].
 import { useEffect, useMemo, useState } from "react";
-import { downloadFile, errorText } from "../api/client";
+import { downloadFile, errorText, warnText } from "../api/client";
 import {
   PHASE_LABEL, VD_ABANDON_CONFIRM, VD_CANCEL_CONFIRM, VD_STAGES, VD_UNKNOWN_HELP, VERDICT_LABEL, isActiveDrop, isUnknown, ratioText, reachedStage, stageMarks, valText, verify,
 } from "../api/verify";
 import type { EntryOut, VerifyCompare, VerifyDropOut } from "../api/types";
-import { dt } from "../lib/format";
-import { Badge, Card } from "./ui";
+import { STRAIN_SOURCE_BADGE, dt } from "../lib/format";
+import { Badge, Card, StrainSourceBadge } from "./ui";
 import { CopyPath } from "./CopyPath";
 import { JobProgress } from "./JobProgress";
 
@@ -35,8 +35,12 @@ function PhaseBadge({ d }: { d: VerifyDropOut }) {
 
 /** 원 낙하 vs 검증 낙하 비교 표 */
 export function VerifyCompareTable({ c }: { c: VerifyCompare }) {
+  // v0.12.1 esl_strain_fallback.md §5·§7: 검증 낙하 source 배지(원 낙하와 다르면 VD_STRAIN_SOURCE_MISMATCH 경고가 함께 옴)
+  const vd = c.vd_strain_source ?? c.strain_source;
+  const srcName = (x: typeof vd) => STRAIN_SOURCE_BADGE[x ?? "max_strain"]?.text ?? "Max_Strain";
   return (
     <>
+      <StrainSourceBadge source={vd} title={`원 낙하: ${srcName(c.orig_strain_source)} · 검증 낙하: ${srcName(vd)}`} />
       <div className="table-wrap">
         <table className="table compact" aria-label="원 낙하 대비 검증 낙하">
           <thead>
@@ -74,7 +78,7 @@ export function VerifyCompareTable({ c }: { c: VerifyCompare }) {
       {c.warnings.length > 0 && (
         <ul className="reasons small warn-text">
           {c.warnings.map((w, i) => (
-            <li key={i}>{w}</li>
+            <li key={i}>{warnText(w)}</li>
           ))}
         </ul>
       )}

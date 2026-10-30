@@ -11,11 +11,12 @@
 """
 from __future__ import annotations
 
+import json
 import os
 
 import numpy as np
 
-from esl.io import max_hold, write_results_csv
+from esl.io import max_hold, write_dump_csv, write_results_csv
 from esl.mech import kabsch, strain, supports
 from esl.mech.shell import ShellModel
 from esl.rad import write_rad
@@ -65,8 +66,11 @@ def plate(nx=40, ny=26, Lx=300.0, Ly=200.0, n_tria_cols=4):
     return P, conn, et, thk
 
 
-def build(root: str, hot_k: int = 200, top_n: int = 5) -> dict:
-    """root/in/model_0000.rad, root/in/csv/*.csv 생성. 기대값 dict 반환."""
+def build(root: str, hot_k: int = 200, top_n: int = 5, source: str = "max_strain") -> dict:
+    """root/in/model_0000.rad, root/in/csv/*.csv 생성. 기대값 dict 반환.
+
+    source(v0.12.1 esl_strain_fallback.md): max_strain(기본, 현행) | plastic_strain | max_stress (max-hold 형식, done.json
+    strain_source 표기) | strain_tensor (dump 모드: 층별 순간 Strain → strain_raw.csv)."""
     X0, conn, et, thk = plate()
     N, Ne = X0.shape[0], conn.shape[0]
     node_id = 1001 + 2 * np.arange(N, dtype=np.int64)
@@ -134,9 +138,34 @@ def build(root: str, hot_k: int = 200, top_n: int = 5) -> dict:
     conn_ids = np.where(conn >= 0, node_id[np.maximum(conn, 0)], -1)
     rad = write_rad(os.path.join(din, "model_0000.rad"), node_id, X0, elem_id, et, conn_ids, PART_ID,
                     PART_TITLE, PID, thk, MID, E_MOD, NU, extra_parts=1)
-    write_results_csv(dcsv, times, node_id, X0, U, elem_id, eps_h3d, vm_hv=vm_hv,
-                      ezz=-(eps_hold[..., 0] + eps_hold[..., 1]), epsp=epsp, hot_k=hot_k, top_n=top_n,
-                      extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1], elem_nodes=conn_ids)
+    if source == "strain_tensor":
+        # v0.12.1 dump 모드(esl_strain_fallback.md §3): 층별(Lower = bottom, Upper = top) 순간 Strain 텐서, 공학 전단
+        eps_l = np.stack([A_T[:, None, None] * eps_b[None, :, k] + B_T[:, None, None] * eps_b2[None, :, k] * sc2
+                          for k in (0, 1)], axis=2)                       # (F,E,2,3)
+        vm_l = strain.eps_eq(eps_l)
+        st = eps_l.copy()
+        st[..., 2] *= 2.0
+        write_dump_csv(dcsv, times, node_id, X0, U, elem_id, st, vm_hv=vm_l, epsp=epsp, hot_k=hot_k, top_n=top_n,
+                       elem_nodes=conn_ids, layers=("Lower", "Upper"))
+    else:
+        if source == "plastic_strain":           # 소성만: vm_hv = epsp, 텐서 0
+            eps_w, vm_w, ezz_w = np.zeros_like(eps_h3d), epsp, np.zeros_like(epsp)
+        elif source == "max_stress":             # 응력만: vm_hv = σ_vM, 텐서 = 응력(값은 E·ε 근사)
+            eps_w, vm_w = eps_hold * E_MOD, vm_hv * E_MOD
+            ezz_w = np.zeros_like(vm_w)
+        else:
+            eps_w, vm_w, ezz_w = eps_h3d, vm_hv, -(eps_hold[..., 0] + eps_hold[..., 1])
+        write_results_csv(dcsv, times, node_id, X0, U, elem_id, eps_w, vm_hv=vm_w, ezz=ezz_w, epsp=epsp, hot_k=hot_k,
+                          top_n=top_n, extra_nodes=[int(node_id.max()) + 1], extra_elems=[int(elem_id.max()) + 1],
+                          elem_nodes=conn_ids)
+        if source != "max_strain":
+            p = os.path.join(dcsv, "done.json")
+            with open(p, encoding="utf-8") as fh:
+                dj = json.load(fh)
+            dj.update(strain_source=source, strain_source_type={"plastic_strain": "Plastic Strain"}.get(source, "Max_Stress"),
+                      strain_mode="maxhold", strain_layers=["Mid"], epsp_available=True)
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump(dj, fh)
     return {"rad": rad, "csv": dcsv, "node_id": node_id, "elem_id": elem_id, "X0": X0, "F_app": F,
             "R": R, "F2": F2, "R2": R2, "u_d": u_d, "d": d, "eps_d": eps_d, "eps_2": eps_2, "eq_hold": eq_hold,
             "eq_inst": eq_inst, "epsp": epsp, "sup": sup, "sup_ids": [int(node_id[i]) for i in sup_idx],

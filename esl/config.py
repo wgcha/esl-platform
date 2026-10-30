@@ -97,6 +97,41 @@ def _layers(key, v):
         raise _bad(key, f"[mid|bottom|top] 중복 없는 비어 있지 않은 목록이어야 함 (값 {v!r})")
 
 
+STRAIN_SOURCES = ("max_strain", "plastic_strain", "strain_tensor", "max_stress")
+
+
+def _strain_sources(key, v):
+    if not isinstance(v, list) or not v or len(set(map(str, v))) != len(v) or any(x not in STRAIN_SOURCES for x in v):
+        raise _bad(key, f"{list(STRAIN_SOURCES)} 중 중복 없는 비어 있지 않은 목록이어야 함 (값 {v!r})")
+
+
+def _name_list(key, v):
+    """이름 후보 목록(비어 있지 않은 문자열, '|'·탭·줄바꿈 없음 — request.txt 구분자)."""
+    if not isinstance(v, list) or not v:
+        raise _bad(key, f"비어 있지 않은 문자열 목록이어야 함 (값 {v!r})")
+    for x in v:
+        if not isinstance(x, str) or not x.strip() or any(c in x for c in "|\t\r\n"):
+            raise _bad(key, f"원소는 '|'·탭·줄바꿈 없는 비어 있지 않은 문자열 (값 {x!r})")
+
+
+def _name_list_or_empty(key, v):
+    if isinstance(v, list) and not v:
+        return
+    _name_list(key, v)
+
+
+def _name_map(keys: tuple[str, ...]):
+    def chk(key, v):
+        if not isinstance(v, dict):
+            raise _bad(key, f"{{{', '.join(keys)}: [이름 후보]}} 사전이어야 함 (값 {v!r})")
+        for k in v:
+            if k not in keys:
+                raise _bad(f"{key}.{k}", "알 수 없는 키")
+        for k, x in v.items():
+            _name_list(f"{key}.{k}", x)
+    return chk
+
+
 def _time_window(key, v):
     if not isinstance(v, list) or len(v) != 2:
         raise _bad(key, f"[t_min, t_max] 2개 목록이어야 함 (null 허용) (값 {v!r})")
@@ -174,6 +209,15 @@ SCHEMA: dict[str, Any] = {
         "shear_convention": _enum("auto", "tensor", "engineering"),
         "hot_k": _int(1),               # 상한 없음(크면 extract 단계 경고)
         "disp_precision": _enum("float32", "float64"),
+        # 선택(OPTIONAL_KEYS, v0.12.1 esl_strain_fallback.md §2): h3d 변형률 결과 대체 순서·이름 후보. 없으면 EXTRACT_SOURCE_DEFAULTS
+        "strain_sources": _strain_sources,
+        "result_names": _name_map(STRAIN_SOURCES),
+        "tensor_comps": _name_map(("xx", "yy", "zz", "xy")),
+        "vm_comps": _name_list,
+        "scalar_comps": _name_list,
+        "tensor_layer_exclude": _name_list_or_empty,
+        "dump_keep": _bool,                     # 선택: dump 원자료(strain_raw.csv·disp.csv) 변환 후 보존(기본 false = 삭제, 작업 폴더만)
+        "dump_max_bytes": _int(1),              # 선택: dump 원자료 크기 상한(사전 추정·실제), 넘으면 STRAIN_DUMP_TOO_LARGE
     },
     "coord_check": {                # extract 단계 rad↔h3d 좌표 개략 확인(esl_core.md §3.3)
         "max_rel": _num(0.0),              # Kabsch 강체 정합 후 잔차 최대 ≤ 이 값·bbox 이면 통과
@@ -283,9 +327,33 @@ OPTIONAL_SECTIONS = frozenset({"cumulative"})
 # 설정 파일에 support.auto_check 가 없으면 이 값(support_check_settings), cfg 에는 주입하지 않음(설정 sha256·보고서 불변).
 SUPPORT_CHECK_DEFAULTS = {"min_area_ratio": 0.10, "min_dist_rel": 0.15, "min_cond_ratio": 1.0e-3,
                           "expand_candidates": True, "rule_version": 1}
+# v0.12.1 h3d 변형률 결과 대체(계약 esl_strain_fallback.md §2) 기본값 단일 출처 — cfg 에는 주입하지 않음(설정 해시 불변).
+# 부분 지정(result_names·tensor_comps 의 일부 키)은 그 키만 바꾼다(extract_source_settings).
+EXTRACT_SOURCE_DEFAULTS = {
+    "strain_sources": list(STRAIN_SOURCES),
+    "result_names": {"max_strain": ["Max_Strain"], "plastic_strain": ["Plastic Strain", "Plastic_Strain"],
+                     "strain_tensor": ["Strain"], "max_stress": ["Max_Stress"]},
+    "tensor_comps": {"xx": ["XX"], "yy": ["YY"], "zz": ["ZZ"], "xy": ["XY"]},
+    "vm_comps": ["vonMises", "von Mises"],
+    "scalar_comps": ["Scalar value", "Scalar"],
+    "tensor_layer_exclude": ["Max", "Min"],
+}
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
-                           *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS)})
+                           *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
+                           *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
+                           "extract.dump_max_bytes"})
+# dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
+DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
+
+
+def dump_settings(cfg: dict | None) -> dict:
+    """extract.dump_keep·dump_max_bytes (없으면 DUMP_DEFAULTS)."""
+    ex = cfg.get("extract") if isinstance(cfg, dict) else None
+    out = dict(DUMP_DEFAULTS)
+    if isinstance(ex, dict):
+        out.update({k: ex[k] for k in DUMP_DEFAULTS if ex.get(k) is not None})
+    return out
 # cumulative.max_npt·max_npg 기본(cumulative_settings 결과에만 채움)
 STATE_LIMIT_DEFAULTS = {"max_npt": 100, "max_npg": 64}
 
@@ -301,6 +369,23 @@ def cumulative_settings(cfg: dict) -> dict:
                 out["detect"].update(v)
             else:
                 out[k] = v
+    return out
+
+
+def extract_source_settings(cfg: dict | None) -> dict:
+    """extract 의 변형률 대체 설정(strain_sources·result_names·tensor_comps·vm_comps·scalar_comps·tensor_layer_exclude).
+    없거나 일부만 있으면 EXTRACT_SOURCE_DEFAULTS 로 채운 사본. cfg 는 바꾸지 않는다(검증은 validate_settings)."""
+    out = copy.deepcopy(EXTRACT_SOURCE_DEFAULTS)
+    ex = cfg.get("extract") if isinstance(cfg, dict) else None
+    if isinstance(ex, dict):
+        for k in EXTRACT_SOURCE_DEFAULTS:
+            v = ex.get(k)
+            if v is None:
+                continue
+            if isinstance(out[k], dict) and isinstance(v, dict):
+                out[k].update({kk: list(vv) for kk, vv in v.items() if kk in out[k]})
+            else:
+                out[k] = copy.deepcopy(v)
     return out
 
 

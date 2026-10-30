@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { stepOfStage, stepPath } from "../../shell/StageStepper";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
-import { errorText } from "../../api/client";
+import { errorText, failureHint, warnText } from "../../api/client";
 import { JOB_TYPE_LABEL, STALE_REASON_LABEL, STEP_LABEL, durText, history, linkPath, type PastFile, type ReviewOut } from "../../api/history";
 import { canRun, useApp } from "../../app/AppContext";
 import { DiffTable, diffValue } from "../../components/DiffTable";
@@ -262,6 +262,11 @@ export function JobReview() {
                   {r.error.failure_message ? ` — ${r.error.failure_message}` : ""}
                 </div>
               )}
+              {failureHint(r.error.failure_code, r.error.failure_message) && (
+                <div className="small error-text" data-testid="failure-hint">
+                  {failureHint(r.error.failure_code, r.error.failure_message)}
+                </div>
+              )}
               {r.error.failed_step && (
                 <div className="small muted">
                   실패 step: {r.error.failed_step.step_no}. {r.error.failed_step.step_key}{STEP_LABEL[r.error.failed_step.step_key] ? ` ${STEP_LABEL[r.error.failed_step.step_key]}` : ""}
@@ -272,7 +277,7 @@ export function JobReview() {
                 <ul className="reasons">
                   {r.error.warnings.map((w, i) => (
                     <li key={i} className="small warn-text" data-testid="job-warning">
-                      {typeof w === "string" ? w : diffValue(w)}
+                      {typeof w === "string" ? warnText(w) : diffValue(w)}
                     </li>
                   ))}
                 </ul>

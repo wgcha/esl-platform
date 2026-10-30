@@ -1,5 +1,6 @@
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
+import { warnText } from "../api/client";
 import { history } from "../api/history";
 import { PastFrame } from "../components/PastBadge";
 import { Badge, Card, Empty, Stat } from "../components/ui";
@@ -73,7 +74,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               <ul className="reasons">
                 {r.warnings.map((w) => (
                   <li key={w} className="small warn-text">
-                    {w}
+                    {warnText(w)}
                   </li>
                 ))}
               </ul>

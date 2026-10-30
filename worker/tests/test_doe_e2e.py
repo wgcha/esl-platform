@@ -197,7 +197,18 @@ def test_same_model_e2e(client, engine, worker, esl_root, inputs_root, exe, sett
     d = out["dir"]
     # paicad 호출: ① 조립 = Case 입력 폴더 제자리, body_map, 출력은 모두 _doe/<id> 안
     fs = calls(exe, "fixed-scan")
-    assert len(fs) == 1 and fs[0]["argv"][fs[0]["argv"].index("--assem-dir") + 1] == str(inputs_root)
+    full = d / "prep" / "assem_full"                    # v0.12.1 모델 전체 사본(starter include 트리)
+    assert len(fs) == 1 and fs[0]["argv"][fs[0]["argv"].index("--assem-dir") + 1] == str(full)
+    man = json.loads((d / "prep" / "assem_full.json").read_text())
+    src_rels = sorted(str(p.relative_to(inputs_root)).replace(os.sep, "/") for p in inputs_root.rglob("*")
+                      if p.suffix.lower() in (".rad", ".inc"))
+    assert sorted(f["rel"] for f in man["files"]) == src_rels and man["n_outside"] == 0
+    for r in calls(exe, "tag") + calls(exe, "run"):
+        assert r["argv"][r["argv"].index("--assem-dir") + 1] == str(full)
+    for did in ("d001", "d002", "d003"):                # 모핑 대상 파일 rel = Case 폴더 기준(기존과 같음)
+        of = d / "run" / "designs" / did / "paicad" / "out_files"
+        if of.is_dir():
+            assert {str(p.relative_to(of)).replace(os.sep, "/") for p in of.rglob("*") if p.is_file()} <= set(src_rels)
     assert fs[0]["argv"][fs[0]["argv"].index("--parts") + 1] == "7"
     ex = calls(exe, "extract")
     assert len(ex) == 2 and "--assem-dir" not in ex[0]["argv"] and "--body-map" in ex[1]["argv"]
@@ -246,7 +257,7 @@ def test_mesh_scenario_e2e(client, engine, worker, esl_root, inputs_root, exe, t
     d = out["dir"]
     fs = calls(exe, "fixed-scan")
     assem = [r["argv"][r["argv"].index("--assem-dir") + 1] for r in fs]
-    assert str(inputs_root) in assem and str(d / "input" / "mesh") in assem      # A Case + B 사본
+    assert str(d / "prep" / "a_assem_full") in assem and str(d / "input" / "mesh") in assem   # A Case 전체 사본 + B 사본
     assert (d / "prep" / "a_fixed" / "shell_scan.json").is_file() and (d / "prep" / "boundary.json").is_file()
     for r in calls(exe, "run"):
         assert r["argv"][r["argv"].index("--assem-dir") + 1] == str(d / "input" / "mesh")
