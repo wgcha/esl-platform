@@ -1,3 +1,4 @@
+import type { StrainSource } from "../api/types";
 export const fmt = (v: number | null | undefined, digits = 3) =>
   v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toPrecision(digits);
 /** toFixed + 부호 있는 0 정규화: 반올림 결과가 0 이면 "-0.0" 대신 "0.0" */
@@ -32,6 +33,14 @@ export function dt(iso: string | null | undefined): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+/** v0.12.1 변형률 대체 배지(esl_strain_fallback.md §1·§7): max_strain·없음 = 배지 없음 */
+export const STRAIN_SOURCE_BADGE: Record<StrainSource, { text: string; kind: "info" | "warn" } | null> = {
+  max_strain: null,
+  plastic_strain: { text: "대체: 소성 변형률 기준", kind: "info" },
+  strain_tensor: { text: "대체: Strain 텐서 기준", kind: "info" },
+  max_stress: { text: "응력 기준 대체, 판정 신뢰 낮음", kind: "warn" },
+};
+export const strainSourceBadge = (s: StrainSource | null | undefined) => (s ? (STRAIN_SOURCE_BADGE[s] ?? null) : null);
 export const METRIC_LABEL = { max_strain: "Max_Strain", plastic_strain: "Plastic" } as const;
 export const JOB_STATE_LABEL: Record<string, string> = {
   QUEUED: "대기",

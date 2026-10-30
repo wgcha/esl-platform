@@ -351,6 +351,8 @@ export function makeEntries(projectId: string): EntryOut[] {
         hotspot1_rel_err: mx === null ? null : mx / 100,
         noise: { hotspot_strain_rel: 0.0011 + 0.0003 * k },
         confirmed_fail: reason ? { reason, by: "u-power", by_name: "김해석", at } : null,
+        // v0.12.1 esl_strain_fallback.md §5·§10.3: 대체 source 로 등록된 항목 시연(배지)
+        strain_source: (["max_strain", "plastic_strain", "strain_tensor", "max_stress"] as const)[k] ?? "max_strain",
       },
       tstar: { metric: "max_strain", frame_index: 70 + k, time: 0.07 + k * 0.001 },
       summary: { grid: { nx: 24, ny: 14 } },

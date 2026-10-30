@@ -12,7 +12,7 @@ import { library, type RevalidateResult } from "../../api/library";
 import type { EntryOut, EntryStatus, JobState, Me } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { MENU_LIBRARY, Shell } from "../../shell/Shell";
-import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge } from "../../components/ui";
+import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, StrainSourceBadge } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt } from "../../lib/format";
 import { DROP_LABEL, DROP_TYPES, NORM_LABEL, EligibilityBadge, entryLabel, ineligibleOf, isEligible, legacyBlockText, modelVersions, sceneText, uniq } from "./common";
@@ -371,6 +371,11 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
                     <td>{e.status === "ACTIVE" ? <ModeSelect e={e} allowed={allowed} onSaved={reload} /> : <span className="small muted">{modeText(e)}</span>}</td>
                     <td title={e.force_reason ? `등록 당시 사유: ${e.force_reason}` : undefined}>
                       <EligibilityBadge e={e} />
+                      {e.quality.strain_source && e.quality.strain_source !== "max_strain" && (
+                        <div>
+                          <StrainSourceBadge source={e.quality.strain_source} />
+                        </div>
+                      )}
                       {out && out.outcome === "KEPT_LEGACY" && (
                         <div className="small warn-text" data-testid="reval-kept">
                           {keptText(out)}{" "}

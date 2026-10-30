@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/endpoints";
-import { errorText } from "../api/client";
+import { errorText, failureHint } from "../api/client";
 import type { JobOut, JobState } from "../api/types";
 import { usePolling } from "../lib/usePolling";
 import { STEP_LABEL as SHARED_STEP_LABEL } from "../api/history";
@@ -105,6 +105,11 @@ export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmC
           </button>
         )}
       </div>
+      {j.failure_code && failureHint(j.failure_code, j.failure_message) && (
+        <div className="small error-text" data-testid="failure-hint">
+          {failureHint(j.failure_code, j.failure_message)}
+        </div>
+      )}
       {actError && (
         <div className="small error-text" role="alert">
           {actError}

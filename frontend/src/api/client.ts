@@ -92,7 +92,28 @@ export const CODE_TEXT: Record<string, string> = {
   INSUFFICIENT_STORAGE: "서버 저장 공간이 부족합니다 — 관리자에게 알리거나, PC에서 추출한 결과 폴더(수백 MB)만 올리세요.",
   CHUNK_SHA256_MISMATCH: "전송 중 손상된 청크가 있습니다 — '이어 올리기'로 다시 보내세요.",
   VERSION_CONFLICT: "다른 사용자가 먼저 수정했습니다 — 새로 고친 뒤 다시 시도하세요.",
+  // v0.12.1 h3d 변형률 결과 대체(esl_strain_fallback.md §3·§4·§5)
+  H3D_NO_STRAIN_SOURCE: "h3d 에 변형률·응력 결과가 없음 — 덱 /H3D 출력 확인",
+  H3D_NO_EPSP: "h3d 에 소성 변형률(Plastic Strain)이 없어 epsp=0 으로 처리했습니다.",
+  STRAIN_TMAX_SAMPLED: "변형률 최대를 h3d 출력 프레임에서 재현 — ε 과소평가·t* 출력 간격 양자화 가능. 덱에 /H3D/SHELL/TENS/STRAIN/TMAX 출력을 권장합니다.",
+  STRAIN_FROM_STRESS: "변형률 결과가 없어 응력(Max_Stress)으로 대체 — 변형률 참고 지표는 생략, 판정은 변위 기준입니다.",
+  VD_STRAIN_SOURCE_MISMATCH: "원 낙하와 검증 낙하의 변형률 기준이 다릅니다 — ε 비는 참고만 하세요.",
 };
+
+/** 경고 문자열(코드 또는 "코드: 상세") → 사람말. 모르는 코드·일반 문구는 그대로 */
+export function warnText(w: string): string {
+  const m = /^([A-Z][A-Z0-9_]+)(?:\s*[:—-]\s*(.*))?$/s.exec(w.trim());
+  if (!m || !CODE_TEXT[m[1]]) return w;
+  return m[2] ? `${CODE_TEXT[m[1]]} (${m[2]})` : CODE_TEXT[m[1]];
+}
+
+/** 작업 실패 코드·메시지에 들어 있는 원인 코드의 사람말 1줄(워커 step 코드 H3D_EXTRACT_FAILED 메시지에 done.json code 가 실림) */
+const FAILURE_HINT_CODES = ["H3D_NO_STRAIN_SOURCE"];
+export function failureHint(code: string | null | undefined, message: string | null | undefined): string | null {
+  const t = `${code ?? ""} ${message ?? ""}`;
+  const k = FAILURE_HINT_CODES.find((c) => t.includes(c));
+  return k ? CODE_TEXT[k] : null;
+}
 
 const MISSING_TEXT: Record<string, string> = {
   extract: "① 추출",
