@@ -2,6 +2,15 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.12.1] - 2026-10-30
+### 수정
+- **서버 h3d 추출이 `Max_Strain` 없는 덱에서 막히던 문제**(`H3D_MISSING_RESULT: result type 'Max_Strain' not in subcase 1`): 변형률 결과를 순서대로 대체 — `Max_Strain` → `Plastic Strain` → `Strain`(층별 순간 텐서) → `Max_Stress`. 순서·결과/성분 이름 후보는 설정 `extract.strain_sources`·`result_names`·`tensor_comps`·`vm_comps`·`scalar_comps`·`tensor_layer_exclude`(선택, 없으면 기본값)
+- `Strain` 텐서 대체: 추출이 전 프레임 × 층(예 Lower·Upper, Max·Min 제외) 원자료를 내고 코어가 프레임별 등가 변형률 → 층 최대 → 시간 누적 최대로 TMAX 를 재현(출력 프레임 표본이라 ε 과소평가·t* 양자화 가능 — 경고 `STRAIN_TMAX_SAMPLED`, 덱에 `/H3D/SHELL/TENS/STRAIN/TMAX` 권장). ESL 검증 해 ε 도 외피 층(bottom·top) 최대로 비교. 추출 시간·용량은 프레임 수에 비례해 늘어남
+- 소성 변형률 결과가 없으면 실패 대신 0 + 경고 `H3D_NO_EPSP`. 대체 결과가 하나도 없으면 `H3D_NO_STRAIN_SOURCE`("h3d 에 변형률·응력 결과가 없음 — 덱 /H3D 출력 확인")
+- 응력 대체(`Max_Stress`)는 순위·t* 만 응력으로 정하고 변형률 참고 지표(hotspot·전 요소 ε 비교·잡음 바닥 ε)는 생략 + 경고 `STRAIN_FROM_STRESS`. 판정(변위 주지표)은 그대로
+- 어떤 결과를 썼는지(`strain_source`: max_strain | plastic_strain | strain_tensor | max_stress)를 추출 결과·ESL 요약·검증·라이브러리 품질·검증 낙하 비교(양쪽, 다르면 경고 `VD_STRAIN_SOURCE_MISMATCH`)에 기록. 대체일 때 Case 보고서 입력 표에 한 줄. 이전 자료는 max_strain 으로 봄
+- request.txt 에 `strain_type`·`epsp_type` 을 직접 적은 수동 실행은 예전처럼 `Max_Strain` 만 봄(대체 없음)
+
 ## [0.12.0] - 2026-10-30
 ### 추가
 - **Radioss 검증 낙하(서버)**: 강성 평가 스터디 ① 같은 모델·완료 결과에서 모핑 사본이 남은 안(순위 1~`paicad.keep_files_top`)을 골라 원 낙하 씬을 SCX 에서 다시 실행하고 원 낙하와 비교합니다. 씬 선택 = **가장 나쁜 씬 N개**(ESL별 개선 비 r 큰 순, 기본 `verify_drop.default_worst_n`) 또는 **고른 ESL 전부**, 한 번에 `verify_drop.max_scenes` 건까지. 제출 전 대화상자용 계획(`POST /verify-drops/plan` — 씬·제외 사유·제출 건수·예상 시간·고를 수 있는 안·Radioss 기본값)

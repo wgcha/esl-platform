@@ -19,6 +19,8 @@ TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?")
 VER = re.compile(r"(?:esl|ESL)[ _-]?v?\d+\.\d+\.\d+|\bv?0\.\d+\.\d+\b")
 TIME_KEYS = {"created_at", "started_at", "finished_at", "updated_at", "elapsed", "elapsed_s", "seconds",
              "esl_version", "version", "timing", "wall_s", "time_s"}
+# v0.12.1(esl_strain_fallback.md §5): 기존 JSON 에 키 추가만 — 골든(v0.7.2) 비교에서는 뺀다(나머지 내용은 그대로 같아야 함)
+ADDED_KEYS = {"strain_source", "strain_fallback"}
 
 
 def _text(s: str, root: str) -> str:
@@ -30,7 +32,7 @@ def _text(s: str, root: str) -> str:
 def _clean(o, root):
     if isinstance(o, dict):
         return {k: _clean(v, root) for k, v in o.items()
-                if k not in TIME_KEYS and not k.endswith(("_seconds", "_s", "_mb", "mtime")) and not k.startswith("mem_")}
+                if k not in TIME_KEYS and k not in ADDED_KEYS and not k.endswith(("_seconds", "_s", "_mb", "mtime")) and not k.startswith("mem_")}
     if isinstance(o, list):
         return [_clean(v, root) for v in o]
     if isinstance(o, str):

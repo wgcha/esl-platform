@@ -122,3 +122,30 @@ def test_vd_compare_stage_uses_morph_coords(tmp_path):
     by = {x["key"]: x for x in res["rows"]}
     assert by["eps_peak"]["ratio"] == pytest.approx(1.0)
     assert by["disp_peak"]["ratio"] != pytest.approx(1.0, abs=1e-6)          # 검증 쪽 기준 좌표가 모핑 좌표로 바뀜
+
+
+def test_v1_strain_source_mismatch_warns(tmp_path):
+    """V1(esl_strain_fallback.md §8): 원 Case = max_strain(옛 frames.json, 키 없음), 검증 = strain_tensor → 비교 완료 +
+    VD_STRAIN_SOURCE_MISMATCH 경고(오류 아님), 양쪽 source 기록. plastic_strain 이면 ε 행은 vm_hv(epsp) 열."""
+    o = write_extract(tmp_path / "o" / "01_extract")
+    v = write_extract(tmp_path / "v" / "01_extract", eps_scale=0.8)
+    fj = json.loads((v / "frames.json").read_text())
+    fj["strain_fallback"] = {"source": "strain_tensor", "mode": "dump", "layers": ["Lower", "Upper"]}
+    (v / "frames.json").write_text(json.dumps(fj))
+    r = compare(str(tmp_path / "o"), str(tmp_path / "v"), tstar_time=0.002, hot_n=3)
+    assert r["orig_strain_source"] == "max_strain" and r["vd_strain_source"] == "strain_tensor"
+    assert r["strain_source"] == "strain_tensor"
+    assert any(w.startswith("VD_STRAIN_SOURCE_MISMATCH") for w in r["warnings"])
+    assert {x["key"]: x for x in r["rows"]}["eps_peak"]["ratio"] == pytest.approx(0.8, rel=1e-9)
+    # 같은 source 면 경고 없음 / plastic_strain: ε = vm_hv 열(텐서가 0 이어도 값 있음)
+    for d in (o, v):
+        fj = json.loads((d / "frames.json").read_text())
+        fj["strain_fallback"] = {"source": "plastic_strain"}
+        (d / "frames.json").write_text(json.dumps(fj))
+        z = dict(np.load(d / "strain_frames.npz"))
+        z["eps"] = np.zeros_like(z["eps"])
+        np.savez(d / "strain_frames.npz", **z)
+    r = compare(str(tmp_path / "o"), str(tmp_path / "v"), tstar_time=0.002, hot_n=3)
+    assert not any("VD_STRAIN_SOURCE_MISMATCH" in w for w in r["warnings"])
+    assert r["orig_strain_source"] == r["vd_strain_source"] == "plastic_strain"
+    assert {x["key"]: x for x in r["rows"]}["eps_peak"]["orig"] == pytest.approx(0.009 * 3)

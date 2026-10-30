@@ -78,6 +78,23 @@ def _none(msg: str = "자료 없음 — 해당 단계를 먼저 실행") -> str:
 
 
 # ====================================================================== 절
+# h3d 변형률 결과 대체 배지 문구(esl_strain_fallback.md §7) — source 1(max_strain)은 표시 없음
+STRAIN_SOURCE_BADGE = {"plastic_strain": "대체: 소성 변형률 기준", "strain_tensor": "대체: Strain 텐서 기준",
+                       "max_stress": "응력 기준 대체, 판정 신뢰 낮음"}
+
+
+def strain_source_text(fr: dict | None) -> str:
+    """frames.json → '<결과 유형> (<source>)' + 대체 배지 문구. 옛 자료 = Max_Strain."""
+    from esl.io import strain_source_of
+    src = strain_source_of(fr)
+    sf = (fr or {}).get("strain_fallback") or {}
+    t = f"{sf.get('type') or 'Max_Strain'} ({src}"
+    if sf.get("mode") == "dump":
+        t += f", 층 {'·'.join(str(x) for x in sf.get('layers') or [])}, 출력 프레임 표본"
+    t += ")"
+    return t + (f" — {STRAIN_SOURCE_BADGE[src]}" if src in STRAIN_SOURCE_BADGE else "")
+
+
 def _sec_inputs(c: _Case) -> str:
     rec = c.record or {}
     inp = rec.get("inputs") or {}
@@ -108,6 +125,9 @@ def _sec_inputs(c: _Case) -> str:
                                        f"{sel.get('metric', '—')} · {sel.get('source', '—')}"),
         ("설정 sha256", H.Raw(f"<code>{H.esc(cfg.get('sha256', '—'))}</code>")),
     ]
+    from esl.io import strain_source_of
+    if strain_source_of(fr) != "max_strain":            # 대체일 때만 표시(source 1 은 표시 없음, §7)
+        pairs.insert(12, ("변형률 결과", strain_source_text(fr)))
     return H.kv_table(pairs)
 
 

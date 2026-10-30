@@ -613,3 +613,81 @@ def test_real_mesh_mismatch_still_fails_after_correction(tmp_path):
         pack_results(rd, m, tmp_path / "o")
     assert ei.value.code == "ID_MISMATCH" and "강체 정합 후 잔차 최대" in ei.value.message
     assert "frame 0 변위 최대" in ei.value.message
+
+
+# ====================================================================== dump 모드(v0.12.1 esl_strain_fallback.md §4 C1·C2)
+def _dump_series(m, F=9, L=3, seed=4):
+    """진동하는 층별 순간 텐서(마지막 프레임 < 최대). 반환 t, u, inst(F,E,L,3) 텐서 규약."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(F) * 1e-3
+    u = rng.normal(size=(F, m.node_id.size, 3)) * 0.01
+    env = np.abs(np.sin(np.linspace(0.0, 2.5 * np.pi, F)))[:, None, None, None]
+    inst = rng.normal(size=(F, m.elem_id.size, L, 3)) * 1e-3 * (0.2 + env)
+    return t, u, inst
+
+
+@pytest.mark.parametrize("eng", [False, True])
+def test_c1_c2_dump_time_max_and_shear(tmp_path, eng):
+    """C1: 시간 누적 최대 M = max_g≤f max_l ε_eq, t* = 최대 첫 도달, eps_eq(텐서열) == M == vm_hv, 층 최대.
+    C2: 공학 전단 저장 → decide_shear factor 0.5, 공식 일치."""
+    from esl.io import write_dump_csv
+    m = _model(tmp_path)
+    t, u, inst = _dump_series(m)
+    st = inst.copy()
+    if eng:
+        st[..., 2] *= 2.0
+    q = strain.eps_eq(inst)                                        # (F,E,L) 순간·층별
+    lay_max = q.max(axis=2)
+    M = np.maximum.accumulate(lay_max, axis=0)
+    assert np.any(lay_max[-1] < M[-1])                             # 마지막 프레임 < 최대(순간값 가정 깨짐)
+    rd = write_dump_csv(tmp_path / "d", t, m.node_id, m.x0, u, m.elem_id, st, vm_hv=q, hot_k=10, top_n=5,
+                        layers=("Layer 1", "Layer 2", "Layer 3"))
+    info = pack_results(rd, m, tmp_path / "o")
+    sf = info["strain_fallback"]
+    assert info["strain_source"] == "strain_tensor" and sf["mode"] == "dump"
+    assert sf["shear"]["factor"] == (0.5 if eng else 1.0) and sf["esl_layers"] == ["bottom", "top"]
+    assert any(w.startswith("STRAIN_TMAX_SAMPLED") for w in info["warnings"])
+    assert any(w.startswith("H3D_NO_EPSP") for w in info["warnings"])
+    h = _load(tmp_path / "o" / "history.npz")
+    fac = 0.5 if eng else 1.0
+    assert h["vm_hv"].shape == (9, 2)
+    assert np.allclose(h["vm_hv"], M, rtol=1e-6)
+    assert np.allclose(strain.eps_eq(RC.tensor_eps(h["eps"], fac)), M, rtol=1e-5)
+    f = _load(tmp_path / "o" / "final.npz")
+    assert np.allclose(f["vm_hv"], M[-1], rtol=1e-6)
+    # t* = first-reach(M), D 의 첫 원소
+    fr = tstar.first_reach(M, 1e-6)
+    order = np.lexsort((np.arange(2), -M[-1]))
+    assert info["candidate_frames"]["max_strain"][0] == int(fr[order[0]])
+    s = _load(tmp_path / "o" / "strain_frames.npz")
+    for i, fi in enumerate(s["frame_index"].tolist()):
+        assert np.allclose(s["vm_hv"][i], M[fi], rtol=1e-6)
+        assert np.allclose(s["prev_vm_hv"][i], M[fi - 1] if fi > 0 else 0, rtol=1e-6)
+    # 같은 데이터를 max-hold 로 직접 준 경우(Python 3패스 생성기)와 D·H 가 같음
+    src_l = q.argmax(axis=2)
+    held_l = np.take_along_axis(st, src_l[..., None, None], 2)[:, :, 0]
+    eqh, eph = max_hold(lay_max, held_l)
+    d2 = write_results_csv(tmp_path / "m", t, m.node_id, m.x0, u, m.elem_id, eph, vm_hv=eqh, hot_k=10, top_n=5)
+    info2 = pack_results(d2, m, tmp_path / "o2")
+    assert info2["frames_D"] == info["frames_D"] and info2["candidate_frames"] == info["candidate_frames"]
+    for fn in ("final.npz", "history.npz", "disp.npz"):
+        a, b = _load(tmp_path / "o" / fn), _load(tmp_path / "o2" / fn)
+        for k in a:
+            assert np.array_equal(a[k], b[k]), (fn, k)
+
+
+def test_dump_missing_rows_and_bad_layer(tmp_path):
+    from esl.io import write_dump_csv
+    m = _model(tmp_path)
+    t, u, inst = _dump_series(m, F=4, L=2)
+    rd = write_dump_csv(tmp_path / "d", t, m.node_id, m.x0, u, m.elem_id, inst)
+    _drop(rd, "strain_raw.csv", lambda l: l.startswith("2,3,"))      # frame 2, 요소 3 의 두 층 모두 없음
+    assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+    rd = write_dump_csv(tmp_path / "d2", t, m.node_id, m.x0, u, m.elem_id, inst)
+    p = os.path.join(rd, "done.json")
+    dj = json.load(open(p))
+    dj["strain_layers"] = ["Lower"]
+    json.dump(dj, open(p, "w"))
+    assert _code(pack_results, rd, m, tmp_path / "o2") == "TOOL_OUTPUT_MISSING"
+    # 옛 done.json(키 없음) = max_strain
+    assert RC.strain_source_of({}) == "max_strain" and RC.strain_source_of({"strain_fallback": {"source": "x"}}) == "max_strain"

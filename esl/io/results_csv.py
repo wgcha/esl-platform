@@ -36,7 +36,33 @@ import numpy as np
 from esl.errors import EslError
 
 CHUNK_ROWS = 200_000
-_DONE_CODES = {"H3D_MISSING_RESULT", "ID_MISMATCH", "TOOL_OUTPUT_MISSING", "INPUT_INVALID"}
+_DONE_CODES = {"H3D_MISSING_RESULT", "ID_MISMATCH", "TOOL_OUTPUT_MISSING", "INPUT_INVALID", "H3D_NO_STRAIN_SOURCE"}
+# h3d 변형률 결과 source(계약 esl_strain_fallback.md §1). 옛 자료(키 없음) = max_strain
+STRAIN_SOURCES = ("max_strain", "plastic_strain", "strain_tensor", "max_stress")
+SCALAR_SOURCES = ("plastic_strain", "max_stress")      # 텐서 열이 변형률이 아님 → 지표 = vm_hv 열
+RAW_COLS = ["frame_index", "elem_id", "layer", "vm_hv", "exx", "eyy", "ezz", "exy", "epsp"]   # strain_raw.csv
+SHEAR_SAMPLE_MAX = 2_000_000      # dump 전단 규약 판정 표본 상한(행) — 넘으면 1/2 씩 솎음(중앙값 기준이라 영향 작음)
+TMAX_SAMPLED = ("STRAIN_TMAX_SAMPLED: Strain 텐서(순간값)를 h3d 출력 프레임에서만 표본해 시간 누적 최대(TMAX)를 재현함 — "
+                "ε 과소평가 가능, t* 는 출력 프레임으로 양자화(프레임 간격 중앙값 {dt:.4g}). 덱에 /H3D/SHELL/TENS/STRAIN/TMAX "
+                "출력을 권장")
+
+
+def strain_source_of(meta: dict | None) -> str:
+    """frames.json(또는 done.json·esl_summary) 의 strain source. 없으면(옛 자료) max_strain."""
+    if not isinstance(meta, dict):
+        return "max_strain"
+    sf = meta.get("strain_fallback")
+    s = sf.get("source") if isinstance(sf, dict) else meta.get("strain_source")
+    return s if s in STRAIN_SOURCES else "max_strain"
+
+
+def rad_eq(eps, vm_hv, factor: float, source: str = "max_strain") -> np.ndarray:
+    """h3d 쪽 지표 ε_rad: 텐서 source(max_strain·strain_tensor) = ε_eq(텐서, 전단 규약 보정),
+    plastic_strain = epsp(vm_hv 열), max_stress = σ_vM(vm_hv 열) (계약 esl_strain_fallback.md §4)."""
+    if source in SCALAR_SOURCES:
+        return np.asarray(vm_hv, dtype=np.float64)
+    from esl.mech import strain
+    return strain.eps_eq(tensor_eps(eps, factor))
 SCOLS = ["vm_hv", "exx", "eyy", "ezz", "exy", "epsp"]          # CSV 값 열 순서
 METRICS = ("max_strain", "plastic_strain")
 RESULT_FILES = ("frames.csv", "model.csv", "elems.csv", "final.csv", "history.csv", "strain_frames.csv", "disp.csv",
@@ -324,26 +350,59 @@ def _check_conn(results_dir: str, done: dict, model, elem_id, node_id, warnings:
     return {"checked": True, "reason": None, "n_elems": E, "n_mismatch": 0}
 
 
-def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) -> dict:
+def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None, shear_convention="auto") -> dict:
     """TCL CSV 폴더 → ``final.npz``·``history.npz``·``strain_frames.npz``·``disp.npz``·``frames.json`` (§7.3).
 
     frame_stride: history 의 프레임 간격(후보 프레임 D 는 항상 포함). coord_check: {max_rel}
     (None = esl.config.COORD_CHECK_DEFAULTS, 알 수 없는 키 무시). 반환 {n_frames(history), n_elems, n_nodes,
-    n_hot, frames_D, candidate_frames, warnings, coord_deviation, conn_check}.
+    n_hot, frames_D, candidate_frames, warnings, coord_deviation, conn_check, strain_source}.
 
     모델 동일성(§3.3): 노드 ID 집합(대상 파트 노드가 h3d 에 모두 있음) + 요소 연결(elems.csv) 이 기준이고,
     좌표는 Kabsch 강체 정합 후 잔차 ≤ max_rel·bbox 인지 개략 확인만 한다. 계산 좌표는 항상 rad.
+
+    dump 모드(done.json strain_mode = dump, Strain 텐서 순간값 — 계약 esl_strain_fallback.md §4): strain_raw.csv 로
+    시간 누적 최대(max-hold) 계열·H·D·P 를 코어가 만들어(TCL 과 같은 규칙) 같은 형식의 npz·frames.json 을 쓴다.
+    shear_convention: dump 모드 전단 규약(extract.shear_convention).
     """
     results_dir = os.fspath(results_dir)
     out_dir = os.fspath(out_dir)
     if int(frame_stride) < 1:
         raise EslError("CONFIG_INVALID", f"frame_stride 는 1 이상이어야 함: {frame_stride}")
+    done = _read_done(results_dir)
+    if done.get("strain_mode") == "dump":
+        import shutil
+        import tempfile
+        os.makedirs(out_dir, exist_ok=True)
+        tmp = tempfile.mkdtemp(prefix="_dump_", dir=out_dir)
+        try:
+            ddone = dump_to_maxhold(results_dir, done, model, tmp, shear_convention)
+            return _pack(tmp, model, out_dir, frame_stride, coord_check, ddone)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _pack(results_dir, model, out_dir, frame_stride, coord_check, done)
+
+
+def _strain_fallback_meta(done: dict) -> dict:
+    """frames.json strain_fallback (계약 §5). 옛 done.json = max_strain·maxhold."""
+    src = done.get("strain_source") if done.get("strain_source") in STRAIN_SOURCES else "max_strain"
+    lay = done.get("strain_layers")
+    if not isinstance(lay, list):
+        lay = [done.get("strain_layer")] if done.get("strain_layer") is not None else ["Mid"]
+    out = {"source": src, "type": done.get("strain_source_type") or done.get("strain_type") or "Max_Strain",
+           "mode": done.get("strain_mode") or "maxhold", "layers": lay, "tried": done.get("strain_tried") or [],
+           "epsp_available": bool(done.get("epsp_available", True)), "dt_out": done.get("dump_dt_out"),
+           "esl_layers": done.get("dump_esl_layers")}
+    if isinstance(done.get("dump_shear"), dict):
+        out["shear"] = done["dump_shear"]
+    return out
+
+
+def _pack(results_dir, model, out_dir, frame_stride, coord_check, done) -> dict:
     frame_stride = int(frame_stride)
     from esl.config import COORD_CHECK_DEFAULTS
     cc = dict(COORD_CHECK_DEFAULTS)
     if isinstance(coord_check, dict) and coord_check.get("max_rel") is not None:
         cc["max_rel"] = coord_check["max_rel"]
-    done = _read_done(results_dir)
     warnings: list[str] = [str(w) for w in (done.get("warnings") or [])]
 
     node_id = np.asarray(model.node_id, dtype=np.int64)
@@ -558,6 +617,7 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
                  prev_eps=prev["eps"], prev_epsp=prev["epsp"], prev_available=prev_ok)
     del sv, prev
     savez_stream(os.path.join(out_dir, "disp.npz"), frame_index=D.astype(np.int32), time=tD, node_id=node_id, u=u)
+    sfb = _strain_fallback_meta(done)
     meta = {
         "schema": "esl/frames/2",
         "frame_index": hist_fi.tolist(), "time": hist_t.tolist(), "frame_stride": frame_stride,
@@ -567,8 +627,10 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
         "candidate_elems": done.get("candidate_elems"),
         "hot_k": done.get("hot_k"), "top_n": done.get("top_n"), "reach_rtol": done.get("reach_rtol"),
         "n_hot": int(hist_id.size), "n_elems": int(E), "n_nodes": int(N),
-        "h3d": done.get("h3d"), "results": {k: done.get(k) for k in ("strain_type", "strain_layer", "epsp_type",
-                                                                       "epsp_layer", "disp_type")},
+        "h3d": done.get("h3d"), "results": {**{k: done.get(k) for k in ("strain_type", "strain_layer", "epsp_type",
+                                                                         "epsp_layer", "disp_type")},
+                                            "strain_source": sfb["source"]},
+        "strain_fallback": sfb,
         "units_label": getattr(model, "units_label", ""),
         "layer": "mid", "value_columns": SCOLS, "eps_components": ["exx", "eyy", "exy"], "exy": "raw (h3d)",
         "frame0_time": t0, "model_coords": done.get("model_coords", "legacy"),
@@ -583,7 +645,8 @@ def pack_results(results_dir, model, out_dir, frame_stride=1, coord_check=None) 
     return {"n_frames": int(hist_fi.size), "n_elems": int(E), "n_nodes": int(N), "n_hot": int(hist_id.size),
             "frames_D": D.tolist(), "prev_frames": P.tolist(), "prev_available": bool(prev_ok.all()),
             "candidate_frames": cand, "warnings": warnings, "coord_deviation": coord_dev,
-            "conn_check": conn_check, "frame0": f0 is not None}
+            "conn_check": conn_check, "frame0": f0 is not None, "strain_source": sfb["source"],
+            "strain_fallback": sfb}
 
 
 def _scan_frames(path: str) -> np.ndarray:
@@ -593,6 +656,341 @@ def _scan_frames(path: str) -> np.ndarray:
         for a in _chunks(fh, cols, path):
             s.update(np.unique(_id(a[:, 0])).tolist())
     return np.array(sorted(s), dtype=np.int64)
+
+
+# ====================================================================== dump 모드(Strain 텐서 순간값, §4·§6)
+def _desc(vals: np.ndarray) -> np.ndarray:
+    """값 내림차순, 동률은 낮은 위치(= 낮은 요소 ID, elem_id 오름차순) — TCL ::esl::topk 와 같음."""
+    return np.lexsort((np.arange(vals.size), -vals))
+
+
+def _read_prev_csv(path: str, elem_id: np.ndarray):
+    """누적 씬 prev.csv(elem_id,prev_epsp,prev_eq — cumulative.write_prev_csv) → (prev_ep, prev_eq) (E,). 없는 요소 0."""
+    if not os.path.isfile(path):
+        raise EslError("INPUT_INVALID", f"prev_file 이 없음: {path}")
+    fh, cols = _open_csv(path, ["elem_id", "prev_epsp", "prev_eq"])
+    pe = np.zeros(elem_id.size)
+    pq = np.zeros(elem_id.size)
+    with fh:
+        for a in _chunks(fh, cols, path):
+            p = _lookup(elem_id, _id(a[:, 0]))
+            k = p >= 0
+            pe[p[k]] = a[k, 1]
+            pq[p[k]] = a[k, 2]
+    return pe, pq
+
+
+def _cand_prev(v: np.ndarray, prev: np.ndarray, rtol: float, top_n: int, min_incr: float):
+    """TCL ::esl::cand_frames_prev: 최종 raw > min_incr 인 요소를 (raw+prev) 내림차순으로, first-reach 는 raw 계열."""
+    from esl.mech import tstar
+    fin = v[-1]
+    fr = tstar.first_reach(v, rtol)
+    out: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for e in _desc(fin + prev):
+        if len(out) >= int(top_n):
+            break
+        if not fin[e] > min_incr:
+            continue
+        f = int(fr[e])
+        if f not in seen:
+            seen.add(f)
+            out.append((f, int(e)))
+    return out
+
+
+def _savecsv(path: str, header: str, arr: np.ndarray) -> None:
+    with open(path, "w", encoding="ascii", newline="") as fh:
+        fh.write(header + "\n")
+        if arr.size:
+            np.savetxt(fh, arr, fmt="%.17g", delimiter=",")
+
+
+def _link_or_copy(src: str, dst: str) -> None:
+    import shutil
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+
+def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: str = "auto") -> dict:
+    """dump 모드 TCL 출력(strain_raw.csv·disp.csv 전 프레임) → TCL 3패스와 같은 형식의 CSV 폴더 dst + done(dict).
+
+    프레임별 ε_eq(평면응력 vM, 전단 규약은 decide_shear — 층별 행 전부를 표본) → 층 최대 → 시간 누적 최대
+    M[f,e] = max_{g≤f} ε_eq[g,e]. 텐서 열은 최대를 만든 (프레임, 층) 의 값을 유지(eps_eq(텐서열) == M == vm_hv 열).
+    H·D·P·F0·'+prev' 순위는 TCL 과 같은 규칙(esl.mech.tstar). strain_raw.csv 는 두 번 훑는다(청크 단위).
+    """
+    from esl.mech import strain, tstar
+
+    elem_id = np.asarray(model.elem_id, dtype=np.int64)
+    E = elem_id.size
+    warnings = [str(w) for w in (done.get("warnings") or [])]
+    # ---- frames
+    path = os.path.join(results_dir, "frames.csv")
+    fh, cols = _open_csv(path, ["frame_index", "time"])
+    fi_l, t_l = [], []
+    with fh:
+        for a in _chunks(fh, cols, path):
+            fi_l.append(_id(a[:, 0]))
+            t_l.append(a[:, 1])
+    if not fi_l:
+        raise EslError("H3D_MISSING_RESULT", "frames.csv 에 프레임이 없음")
+    all_fi = np.concatenate(fi_l)
+    all_t = np.concatenate(t_l)
+    o = np.argsort(all_fi, kind="stable")
+    all_fi, all_t = all_fi[o], all_t[o]
+    F = all_fi.size
+    layers = done.get("strain_layers") if isinstance(done.get("strain_layers"), list) else [""]
+    L = max(1, len(layers))
+    raw = os.path.join(results_dir, "strain_raw.csv")
+
+    # ---- 1차: 프레임·요소별 층 최대 ε_eq(두 전단 규약), 소성, 전단 판정 표본
+    Et = np.full((F, E), -1.0)
+    Ee = np.full((F, E), -1.0)
+    Lt = np.zeros((F, E), np.int16)
+    Le = np.zeros((F, E), np.int16)
+    Ep = np.zeros((F, E))
+    got = np.zeros((F, E), bool)
+    s_vm: list[np.ndarray] = []
+    s_e: list[np.ndarray] = []
+    n_s = 0
+    vmax = 0.0
+    fh, cols = _open_csv(raw, RAW_COLS, "H3D_MISSING_RESULT")
+    with fh:
+        for a in _chunks(fh, cols, raw):
+            fp = _lookup(all_fi, _id(a[:, 0]))
+            ep = _lookup(elem_id, _id(a[:, 1]))
+            k = (fp >= 0) & (ep >= 0)
+            if not np.any(k):
+                continue
+            a, fp, ep = a[k], fp[k], ep[k]
+            if not np.all(np.isfinite(a[:, 3:])):
+                raise EslError("H3D_MISSING_RESULT", "strain_raw.csv 값에 NaN·Inf 가 있음")
+            li = a[:, 2].astype(np.int64)
+            if np.any((li < 0) | (li >= L)):
+                raise EslError("TOOL_OUTPUT_MISSING", f"strain_raw.csv layer 가 0..{L - 1} 밖(done.json strain_layers {layers})")
+            e3 = a[:, [4, 5, 7]]
+            qt = strain.eps_eq(e3)
+            qe = strain.eps_eq(tensor_eps(e3, 0.5))
+            for lv in np.unique(li):
+                m = li == lv
+                f_, e_ = fp[m], ep[m]
+                for Q, LL, q in ((Et, Lt, qt[m]), (Ee, Le, qe[m])):
+                    b = q > Q[f_, e_]
+                    Q[f_[b], e_[b]] = q[b]
+                    LL[f_[b], e_[b]] = lv
+            np.maximum.at(Ep, (fp, ep), a[:, 8])
+            got[fp, ep] = True
+            vm = a[:, 3]
+            pos = vm > 0
+            if pos.any():
+                vmax = max(vmax, float(vm[pos].max()))
+                s_vm.append(vm[pos])
+                s_e.append(e3[pos])
+                n_s += int(pos.sum())
+                if n_s > SHEAR_SAMPLE_MAX:
+                    sv, se = np.concatenate(s_vm), np.concatenate(s_e)
+                    keep = sv >= 1e-2 * vmax
+                    sv, se = sv[keep], se[keep]
+                    if sv.size > SHEAR_SAMPLE_MAX // 2:
+                        sv, se = sv[::2], se[::2]
+                    s_vm, s_e, n_s = [sv], [se], int(sv.size)
+    if not np.all(got):
+        raise EslError("ID_MISMATCH", _missing_msg("strain_raw.csv", got, elem_id, all_fi))
+    sv = np.concatenate(s_vm) if s_vm else np.zeros(0)
+    se = np.concatenate(s_e) if s_e else np.zeros((0, 3))
+    sh = decide_shear(sv, se, shear_mode)
+    del s_vm, s_e, sv, se
+    if sh["n_used"] == 0:
+        warnings.append(f"dump: Strain vonMises 가 없거나 0 — 전단 규약 판정 불가, {sh['convention']} 규약으로 가정")
+    factor = float(sh["factor"])
+    Eq, Ls = (Et, Lt) if factor == 1.0 else (Ee, Le)
+    del Et, Ee, Lt, Le, got
+
+    # ---- 시간 누적 최대(TMAX 재현)와 최대를 만든 프레임
+    M = np.maximum.accumulate(Eq, axis=0)
+    src = np.zeros((F, E), np.int32)
+    best = Eq[0].copy()
+    cur = np.zeros(E, np.int32)
+    for f in range(1, F):
+        up = Eq[f] > best
+        best = np.where(up, Eq[f], best)
+        cur = np.where(up, f, cur)
+        src[f] = cur
+    del best, cur
+
+    # ---- H·D (TCL 과 같은 규칙) + 누적 씬 '+prev'
+    hot_k = int(done.get("hot_k") or 200)
+    top_n = int(done.get("top_n") or 5)
+    rtol = float(done.get("reach_rtol") if done.get("reach_rtol") is not None else 1e-6)
+    dc = done.get("dump_cumulative") if isinstance(done.get("dump_cumulative"), dict) else None
+    prev = None
+    min_incr = float(dc.get("min_incr") or 0.0) if dc else 0.0
+    if dc and dc.get("prev_file"):
+        prev = _read_prev_csv(os.fspath(dc["prev_file"]), elem_id)
+    H = set(tstar.hot_set(M[-1], Ep[-1], hot_k).tolist())
+    if prev is not None:
+        for raw_fin, pv in ((M[-1], prev[1]), (Ep[-1], prev[0])):
+            H.update([int(e) for e in _desc(raw_fin + pv) if raw_fin[e] > min_incr][:hot_k])
+    H = np.array(sorted(H), dtype=np.int64)
+    cand: dict[str, list[int]] = {}
+    cel: dict[str, list[int]] = {}
+    cand_p: dict[str, list[int]] = {}
+    cel_p: dict[str, list[int]] = {}
+    for mname, v in (("max_strain", M), ("plastic_strain", Ep)):
+        cf = tstar.candidate_frames(v[:, H], rtol, top_n) if H.size else []
+        cand[mname] = [int(all_fi[f]) for f, _ in cf]
+        cel[mname] = [int(elem_id[H[e]]) for _, e in cf]
+    if prev is not None:
+        for mname, v, pv in (("max_strain", M, prev[1]), ("plastic_strain", Ep, prev[0])):
+            cf = _cand_prev(v[:, H], pv[H], rtol, top_n, min_incr) if H.size else []
+            cand_p[mname] = [int(all_fi[f]) for f, _ in cf]
+            cel_p[mname] = [int(elem_id[H[e]]) for _, e in cf]
+    if H.size == 0:
+        warnings.append("hot set H is empty (no positive final vonMises / plastic strain)")
+    Dset = sorted({x for v in list(cand.values()) + list(cand_p.values()) for x in v})
+    if not Dset:
+        Dset = [int(all_fi[-1])]
+        warnings.append(f"no candidate frame from H; D = last frame {Dset[0]}")
+    dpos = [int(np.flatnonzero(all_fi == f)[0]) for f in Dset]
+    Ppos = sorted({k - 1 for k in dpos if k > 0})
+    CFpos = sorted(set(dpos) | set(Ppos))
+
+    # ---- 2차: 필요한 (최대 프레임, 층) 의 텐서만 읽음
+    eidx = np.arange(E)
+    need = [src[F - 1].astype(np.int64) * E + eidx]
+    if H.size:
+        need.append((src[:, H].astype(np.int64) * E + H[None, :]).ravel())
+    for f in CFpos:
+        need.append(src[f].astype(np.int64) * E + eidx)
+    if dc and dc.get("frame0"):
+        need.append(src[0].astype(np.int64) * E + eidx)
+    keys = np.unique(np.concatenate(need))
+    del need
+    T = np.zeros((keys.size, 4))
+    have = np.zeros(keys.size, bool)
+    fh, cols = _open_csv(raw, RAW_COLS, "H3D_MISSING_RESULT")
+    with fh:
+        for a in _chunks(fh, cols, raw):
+            fp = _lookup(all_fi, _id(a[:, 0]))
+            ep = _lookup(elem_id, _id(a[:, 1]))
+            k = (fp >= 0) & (ep >= 0)
+            if not np.any(k):
+                continue
+            a, fp, ep = a[k], fp[k], ep[k]
+            k = a[:, 2].astype(np.int64) == Ls[fp, ep]
+            if not np.any(k):
+                continue
+            kk = fp[k].astype(np.int64) * E + ep[k]
+            p = np.minimum(np.searchsorted(keys, kk), keys.size - 1)
+            hit = keys[p] == kk
+            T[p[hit]] = a[k][hit][:, 4:8]
+            have[p[hit]] = True
+    if not have.all():
+        raise EslError("TOOL_OUTPUT_MISSING", "strain_raw.csv 2차 읽기에서 최대 프레임 텐서를 찾지 못함(파일이 바뀜?)")
+
+    def rows(fpos: np.ndarray, epos: np.ndarray) -> np.ndarray:
+        """(n,) 프레임·요소 위치 → (n,6) SCOLS: vm_hv = ε_eq(유지 텐서, 규약 보정) = M, 텐서 = h3d 원값, epsp."""
+        t = T[np.searchsorted(keys, src[fpos, epos].astype(np.int64) * E + epos)]
+        vm = strain.eps_eq(tensor_eps(t[:, [0, 1, 3]], factor))
+        return np.column_stack([vm, t[:, 0], t[:, 1], t[:, 2], t[:, 3], Ep[fpos, epos]])
+
+    # ---- 쓰기 (TCL 3패스 형식)
+    os.makedirs(dst, exist_ok=True)
+    for n in ("frames.csv", "model.csv", "elems.csv", "disp.csv"):
+        p = os.path.join(results_dir, n)
+        if os.path.isfile(p):
+            _link_or_copy(p, os.path.join(dst, n))
+    hdr6 = ",".join(SCOLS)
+    _savecsv(os.path.join(dst, "final.csv"), "elem_id," + hdr6,
+             np.column_stack([elem_id, rows(np.full(E, F - 1), eidx)]))
+    if H.size:
+        fg, eg = np.meshgrid(np.arange(F), H, indexing="ij")
+        hv = rows(fg.ravel(), eg.ravel())
+        _savecsv(os.path.join(dst, "history.csv"), "frame_index,elem_id," + hdr6,
+                 np.column_stack([all_fi[fg.ravel()], elem_id[eg.ravel()], hv]))
+    else:
+        _savecsv(os.path.join(dst, "history.csv"), "frame_index,elem_id," + hdr6, np.zeros((0, 8)))
+    blocks = [np.column_stack([np.full(E, all_fi[f]), elem_id, rows(np.full(E, f), eidx)]) for f in CFpos]
+    _savecsv(os.path.join(dst, "strain_frames.csv"), "frame_index,elem_id," + hdr6, np.vstack(blocks))
+    del blocks
+    out = {k: v for k, v in done.items() if k != "warnings"}
+    if dc and dc.get("frame0"):
+        _savecsv(os.path.join(dst, "frame0.csv"), "elem_id,vm_hv,epsp", np.column_stack([elem_id, M[0], Ep[0]]))
+    if dc:
+        out["cumulative"] = {"prev_file_sha256": dc.get("prev_file_sha256"), "prev_n": dc.get("prev_n"),
+                             "frame0": bool(dc.get("frame0")), "frame0_rows": int(E) if dc.get("frame0") else 0,
+                             "rank_sets": ["raw", "raw+prev"] if prev is not None else ["raw"],
+                             "min_incr": min_incr, "core": "dump"}
+        if prev is not None:
+            out["candidate_frames_prev"] = cand_p
+            out["candidate_elems_prev"] = cel_p
+    dt = float(np.median(np.diff(all_t))) if F > 1 else None
+    warnings.append(TMAX_SAMPLED.format(dt=dt if dt is not None else float("nan")))
+    outer = [str(x) for x in layers if str(x).strip().lower() not in ("", "mid")]
+    out.update(candidate_frames=cand, candidate_elems=cel, frames_D=Dset,
+               prev_frames=[int(all_fi[k]) for k in Ppos], strain_frames=[int(all_fi[k]) for k in CFpos],
+               n_hot=int(H.size), dump_dt_out=dt, dump_esl_layers=["bottom", "top"] if outer else None,
+               dump_shear={k: sh[k] for k in ("mode", "convention", "factor", "max_rel_mismatch", "median", "n_used")},
+               warnings=warnings)
+    with open(os.path.join(dst, "done.json"), "w", encoding="utf-8") as fh2:
+        json.dump(out, fh2)
+    return out
+
+
+def write_dump_csv(dir, frames_time, node_id, x0, u, elem_id, eps, vm_hv=None, ezz=None, epsp=None,
+                   layers=("Lower", "Upper"), hot_k=200, top_n=5, reach_rtol=1e-6, elem_nodes=None,
+                   epsp_available=None, h3d="synthetic_dump.h3d", dump_cumulative=None) -> str:
+    """dump 모드 TCL 출력 생성기(시험용): ``eps`` (F,E,L,3) h3d Strain [exx,eyy,exy] 순간값(층별, exy 규약은 호출자 몫),
+    ``vm_hv`` (F,E,L) 기본 ε_eq(eps), ``ezz`` 기본 −(exx+eyy), ``epsp`` (F,E) 기본 0. disp.csv 는 전 프레임."""
+    d = os.fspath(dir)
+    os.makedirs(d, exist_ok=True)
+    from esl.mech import strain
+    t = np.asarray(frames_time, dtype=np.float64).reshape(-1)
+    F = t.size
+    node_id = np.asarray(node_id, dtype=np.int64)
+    x0 = np.asarray(x0, dtype=np.float64).reshape(-1, 3)
+    u = np.asarray(u, dtype=np.float64).reshape(F, node_id.size, 3)
+    elem_id = np.asarray(elem_id, dtype=np.int64)
+    E = elem_id.size
+    L = len(layers)
+    eps = np.asarray(eps, dtype=np.float64).reshape(F, E, L, 3)
+    vm = strain.eps_eq(eps) if vm_hv is None else np.asarray(vm_hv, dtype=np.float64).reshape(F, E, L)
+    zz = -(eps[..., 0] + eps[..., 1]) if ezz is None else np.asarray(ezz, dtype=np.float64).reshape(F, E, L)
+    ep = np.zeros((F, E)) if epsp is None else np.asarray(epsp, dtype=np.float64).reshape(F, E)
+    _savecsv(os.path.join(d, "frames.csv"), "frame_index,time", np.column_stack([np.arange(F), t]))
+    c0 = x0 + u[0]
+    _savecsv(os.path.join(d, "model.csv"), "node_id,x0,y0,z0,cx,cy,cz,dx,dy,dz",
+             np.column_stack([node_id, c0 - u[0], c0, u[0]]))
+    if elem_nodes is not None:
+        en = np.asarray(elem_nodes, dtype=np.int64).reshape(E, -1)
+        en = np.where(en > 0, en, 0)
+        if en.shape[1] < 4:
+            en = np.c_[en, np.zeros((E, 4 - en.shape[1]), np.int64)]
+        _savecsv(os.path.join(d, "elems.csv"), ",".join(ELEMS_COLS), np.column_stack([elem_id, en[:, :4]]))
+    f_, e_, l_ = np.meshgrid(np.arange(F), np.arange(E), np.arange(L), indexing="ij")
+    f_, e_, l_ = f_.ravel(), e_.ravel(), l_.ravel()
+    _savecsv(os.path.join(d, "strain_raw.csv"), ",".join(RAW_COLS),
+             np.column_stack([f_, elem_id[e_], l_, vm[f_, e_, l_], eps[f_, e_, l_, 0], eps[f_, e_, l_, 1],
+                              zz[f_, e_, l_], eps[f_, e_, l_, 2], ep[f_, e_]]))
+    fg, ng = np.meshgrid(np.arange(F), np.arange(node_id.size), indexing="ij")
+    _savecsv(os.path.join(d, "disp.csv"), "frame_index,node_id,ux,uy,uz",
+             np.column_stack([fg.ravel(), node_id[ng.ravel()], u[fg.ravel(), ng.ravel()]]))
+    epa = (epsp is not None) if epsp_available is None else bool(epsp_available)
+    done = {"ok": True, "n_frames": int(F), "n_elems": int(E), "n_nodes": int(node_id.size), "hot_k": int(hot_k),
+            "top_n": int(top_n), "reach_rtol": float(reach_rtol), "h3d": h3d, "strain_type": "Strain",
+            "strain_layer": layers[0], "epsp_type": "Plastic Strain" if epa else "", "epsp_layer": "Mid",
+            "disp_type": "Displacement", "frame0_time": float(t[0]), "model_coords": "coords_minus_disp_frame0",
+            "strain_source": "strain_tensor", "strain_source_type": "Strain", "strain_layers": list(layers),
+            "strain_mode": "dump", "epsp_available": epa,
+            "strain_tried": [{"source": "max_strain", "type": None, "reason": "result type not in subcase"}],
+            **({} if elem_nodes is None else {"elems_ok": True, "n_conn": int(E)}),
+            **({} if dump_cumulative is None else {"dump_cumulative": dump_cumulative}),
+            "warnings": [] if epa else ["H3D_NO_EPSP: no plastic strain result in subcase 1; epsp = 0"]}
+    with open(os.path.join(d, "done.json"), "w", encoding="utf-8") as fh:
+        json.dump(done, fh)
+    return d
 
 
 # ====================================================================== 전단 규약 판정 (§7.1)

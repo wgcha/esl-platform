@@ -85,6 +85,10 @@ def test_h3d_extract_e2e(client, synth_inputs, worker_factory, esl_root, monkeyp
     assert rec["cwd"] == str(Path(raw).parent) and rec["env_input"] == case["h3d_path"]
     req = (Path(raw).parent / "request.txt").read_text()
     assert "part_title\tchassis rear" in req and "hot_k\t150" in req
+    # v0.12.1 변형률 결과 대체 키(설정 → request), strain_type·epsp_type 은 쓰지 않음(쓰면 하위 호환 강제 모드)
+    assert "strain_sources\tmax_strain plastic_strain strain_tensor max_stress" in req
+    assert "names_plastic_strain\tPlastic Strain|Plastic_Strain" in req and "layer_exclude\tMax|Min" in req
+    assert "strain_type\t" not in req and "epsp_type\t" not in req
     from sqlalchemy import text
 
     with engine.connect() as c:
@@ -94,6 +98,7 @@ def test_h3d_extract_e2e(client, synth_inputs, worker_factory, esl_root, monkeyp
     # 이후 기존 pack → tstar 결과(합성 Case)
     c = client.get(f"{API}/cases/{case['id']}", headers=R).json()
     assert c["extract_summary"]["part_id"] == synth_case.PART_ID
+    assert c["extract_summary"]["strain_source"] == "max_strain"
     # 0.5.5: 가짜 hw 도 elems.csv(요소 연결)를 내고 pack 이 노드 ID + 요소 연결로 같은 모델임을 확인
     assert (Path(raw) / "elems.csv").is_file()
     assert not any("CONN_CHECK_SKIPPED" in w for w in c["extract_summary"]["warnings"]), c["extract_summary"]["warnings"]
@@ -313,3 +318,29 @@ def test_reaper_releases_slot_and_hw(client, engine, mini_inputs):
         assert jobs_repo.reap_expired(c) == [ja["id"]]
         assert jobs_repo.running_slot_count(c) == 1
         assert jobs_repo.renew(c, jb["id"], jb["lease_token"], 30, slot=True)
+
+
+def test_strain_request_keys_and_failure_code(tmp_path):
+    """v0.12.1(esl_strain_fallback.md §2·§3): 설정 → request 키, done.json code H3D_NO_STRAIN_SOURCE 가 실패 메시지에 그대로."""
+    from esl_worker import h3d
+
+    r = h3d.strain_request({"extract": {"strain_sources": ["strain_tensor", "max_strain"],
+                                        "result_names": {"strain_tensor": ["Strain", "EPS 2"]}}})
+    assert r["strain_sources"] == "strain_tensor max_strain" and r["names_strain_tensor"] == "Strain|EPS 2"
+    assert r["names_max_strain"] == "Max_Strain" and r["comp_xy"] == "XY" and r["vm_comps"] == "vonMises|von Mises"
+    req = tmp_path / "request.txt"
+    h3d.write_request(str(req), part="p", hot_k=1, top_n=1, extra=r)
+    assert "names_strain_tensor\tStrain|EPS 2\n" in req.read_text()
+    out = tmp_path / "raw"
+    out.mkdir()
+    (out / "done.json").write_text(json.dumps({"ok": False, "code": "H3D_NO_STRAIN_SOURCE", "failed_step": "check_results",
+                                               "error": "no strain source in subcase 1 (tried: ...)",
+                                               "strain_tried": [{"source": "max_strain", "type": None, "reason": "x"}]}))
+    ok, msg, lines, done = h3d.evaluate(1, str(out))
+    assert not ok and "code=H3D_NO_STRAIN_SOURCE" in msg and "failed_step=check_results" in msg
+    assert h3d.done_summary(done)["strain_tried"][0]["source"] == "max_strain"
+    t = h3d.ProgressTracker(10.0, now=0.0)
+    t.feed("2026-10-30 10:00:00 dump frame 5/10 elements chunk 1/1")
+    assert 45 < t.pct < 60
+    t.feed("dump done (1.0 s, 10 element rows, 10 node rows)")
+    assert t.pct == 95

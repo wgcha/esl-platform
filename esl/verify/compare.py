@@ -23,8 +23,8 @@ import os
 import numpy as np
 
 from esl.errors import EslError
-from esl.io import tensor_eps
-from esl.mech import kabsch, strain
+from esl.io import rad_eq, strain_source_of
+from esl.mech import kabsch
 
 D_EXTRACT = "01_extract"
 ROW_LABELS = {
@@ -60,7 +60,8 @@ def _load(out: str, x0_override: dict | None = None) -> dict:
     dp = _npz(d, "disp.npz")
     fr = _json(d, "frames.json")
     factor = float(((fr.get("shear") or {}).get("factor")) or 1.0)
-    eq = strain.eps_eq(tensor_eps(sf["eps"], factor))                    # (D, E)
+    src = strain_source_of(fr)
+    eq = rad_eq(sf["eps"], sf["vm_hv"], factor, src)                     # (D, E) — 대체 source 면 epsp·σ_vM(§4)
     x0 = np.asarray(m["x0"], dtype=np.float64).copy()
     nid = np.asarray(m["node_id"], dtype=np.int64)
     if x0_override:
@@ -80,7 +81,7 @@ def _load(out: str, x0_override: dict | None = None) -> dict:
     return {"elem_id": np.asarray(m["elem_id"], dtype=np.int64), "conn": np.asarray(m["conn"], dtype=np.int64),
             "node_id": nid, "eq": eq, "time": np.asarray(sf["time"], dtype=np.float64),
             "elem_time": np.asarray(sf["elem_id"], dtype=np.int64), "ur": ur,
-            "disp_time": np.asarray(dp["time"], dtype=np.float64)}
+            "disp_time": np.asarray(dp["time"], dtype=np.float64), "strain_source": src}
 
 
 def _topology(a: dict, b: dict) -> None:
@@ -131,6 +132,9 @@ def compare(orig_out: str, verify_out: str, *, tstar_time: float | None = None, 
     p_eps = pred.get("r_epsmax")
     p_u = pred.get("r_umax")
     warns: list[str] = []
+    if a["strain_source"] != b["strain_source"]:
+        warns.append(f"VD_STRAIN_SOURCE_MISMATCH: 원 낙하 변형률 source {a['strain_source']} ≠ 검증 낙하 {b['strain_source']} "
+                     f"— ε 행 비는 서로 다른 양의 비교(참고)")
     E = a["elem_id"]
     rows = []
 
@@ -179,7 +183,9 @@ def compare(orig_out: str, verify_out: str, *, tstar_time: float | None = None, 
         row("disp_tstar", float(a["ur"][da]), float(b["ur"][db]), p_u)
         if b["time"].size > 1 and abs(ts["verify_time"] - float(tstar_time)) > float(np.max(np.diff(b["time"]))):
             warns.append("검증 낙하 후보 프레임이 원 t* 와 한 프레임 간격 이상 떨어져 있음(t* 지표는 참고)")
-    return {"rows": _clean(rows), "hot": _clean(hot), "warnings": warns, "tstar": ts, "same_tol": tol}
+    return {"rows": _clean(rows), "hot": _clean(hot), "warnings": warns, "tstar": ts, "same_tol": tol,
+            "orig_strain_source": a["strain_source"], "vd_strain_source": b["strain_source"],
+            "strain_source": b["strain_source"]}
 
 
 def _clean(o):

@@ -656,6 +656,8 @@ class EntryQuality(_Out):
     confirmed_fail: dict[str, Any] | None = None
     confirmed_undetermined: dict[str, Any] | None = None
     revalidated: dict[str, Any] | None = None   # v0.10.0 재검증 전환 기록 {from_validation_id, from_status, job_id, at, by, by_name}
+    strain_source: Literal["max_strain", "plastic_strain", "strain_tensor", "max_stress"] | None = Field(
+        default=None, description="h3d 변형률 결과 source(v0.12.1 esl_strain_fallback.md §5). null = max_strain(옛 등록)")
 
 
 class EntrySize(_Out):
@@ -1904,6 +1906,10 @@ class VerifyCompare(_Out):
     hot: dict[str, Any]
     warnings: list[str] = []
     tstar: dict[str, Any]
+    # v0.12.1(esl_strain_fallback.md §5): 양쪽 변형률 source(다르면 warnings 에 VD_STRAIN_SOURCE_MISMATCH). null = max_strain
+    strain_source: Literal["max_strain", "plastic_strain", "strain_tensor", "max_stress"] | None = Field(default=None, description="= vd_strain_source")
+    orig_strain_source: Literal["max_strain", "plastic_strain", "strain_tensor", "max_stress"] | None = None
+    vd_strain_source: Literal["max_strain", "plastic_strain", "strain_tensor", "max_stress"] | None = None
 
 
 class VerifySubmissionOut(_Out):

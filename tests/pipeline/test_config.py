@@ -150,3 +150,31 @@ def test_bad_yaml_and_missing_file(tmp_path):
     with pytest.raises(EslError) as ei:
         config.load_config(p)
     assert ei.value.code == "CONFIG_INVALID"
+
+
+# v0.12.1 h3d 변형률 결과 대체 설정(esl_strain_fallback.md §2): 선택 키, 없으면 기본값(cfg 에 주입 안 함)
+def _base_cfg():
+    with open(CFG, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def test_extract_strain_sources_optional_and_validated():
+    cfg = config.validate_settings(_base_cfg())
+    assert "strain_sources" not in cfg["extract"]
+    x = config.extract_source_settings(cfg)
+    assert x["strain_sources"] == ["max_strain", "plastic_strain", "strain_tensor", "max_stress"]
+    assert x["result_names"]["plastic_strain"] == ["Plastic Strain", "Plastic_Strain"]
+    c = _base_cfg()
+    c["extract"].update(strain_sources=["strain_tensor", "max_strain"], result_names={"strain_tensor": ["Strain", "EPS"]},
+                        tensor_layer_exclude=[])
+    x = config.extract_source_settings(config.validate_settings(c))
+    assert x["strain_sources"] == ["strain_tensor", "max_strain"] and x["result_names"]["strain_tensor"] == ["Strain", "EPS"]
+    assert x["result_names"]["max_strain"] == ["Max_Strain"] and x["tensor_layer_exclude"] == []
+    for key, val in (("strain_sources", []), ("strain_sources", ["max_strain", "max_strain"]),
+                     ("strain_sources", ["bogus"]), ("result_names", {"bogus": ["X"]}),
+                     ("result_names", {"max_strain": ["a|b"]}), ("tensor_comps", {"xx": []}), ("vm_comps", "vonMises")):
+        c = _base_cfg()
+        c["extract"][key] = val
+        with pytest.raises(EslError) as ei:
+            config.validate_settings(c)
+        assert ei.value.code == "CONFIG_INVALID" and f"extract.{key}" in ei.value.message, (key, val)

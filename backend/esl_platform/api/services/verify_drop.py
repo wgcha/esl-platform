@@ -408,7 +408,8 @@ def drop_out(ctx: AppContext, conn, d: dict[str, Any]) -> dict[str, Any]:
             "submission": None if sub is None else {k: sub[k] for k in ("request_id", "state", "attempt", "error_code",
                                                                        "error_message")},
             "files_n": len(files), "files_bytes": sum(int(f.get("size") or 0) for f in files if isinstance(f, dict)),
-            "result": None if res is None else {k: res.get(k) for k in ("rows", "hot", "warnings", "tstar")},
+            "result": None if res is None else {k: res.get(k) for k in ("rows", "hot", "warnings", "tstar", "strain_source",
+                                                                  "orig_strain_source", "vd_strain_source")},
             "job_ids": [j["id"] for j in js], "job": job_out(conn, js[-1], with_steps=True) if js else None}
 
 

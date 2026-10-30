@@ -82,8 +82,11 @@ def test_w1_noncumulative_request_unchanged(client, synth_inputs, worker_factory
     _extract(client, case["id"])
     assert worker_factory().run_once("SLOT") == "SUCCEEDED"
     work = Path(esl_root) / "_h3d" / "plain01"
-    assert (work / "request.txt").read_text() == ("# ESL 서버 h3d 추출 요청(워커가 작성)\npart_title\tchassis rear\n"
-                                                  "hot_k\t200\ntop_n\t5\n")
+    req = (work / "request.txt").read_text()
+    assert req.startswith("# ESL 서버 h3d 추출 요청(워커가 작성)\npart_title\tchassis rear\nhot_k\t200\ntop_n\t5\n")
+    # v0.12.1: 변형률 결과 대체 키(strain_sources·이름 후보)만 추가 — 누적 씬 키는 없음
+    keys = [ln.split("\t", 1)[0] for ln in req.splitlines()[4:]]
+    assert keys[0] == "strain_sources" and not {"prev_file", "frame0_pass", "cum_min_incr"} & set(keys)
     assert not (work / "prev.csv").exists()
     cs = client.get(f"{API}/cases/{case['id']}", headers=R).json()
     assert "cumulative" not in cs["extract_summary"]

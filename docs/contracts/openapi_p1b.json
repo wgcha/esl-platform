@@ -3879,6 +3879,24 @@
             ],
             "title": "Strain Exceed Frac"
           },
+          "strain_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "max_strain",
+                  "plastic_strain",
+                  "strain_tensor",
+                  "max_stress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "h3d 변형률 결과 source(v0.12.1 esl_strain_fallback.md §5). null = max_strain(옛 등록)",
+            "title": "Strain Source"
+          },
           "undetermined_reason": {
             "anyOf": [
               {
@@ -10734,6 +10752,23 @@
             "title": "Hot",
             "type": "object"
           },
+          "orig_strain_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "max_strain",
+                  "plastic_strain",
+                  "strain_tensor",
+                  "max_stress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orig Strain Source"
+          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/VerifyCompareRow"
@@ -10741,10 +10776,45 @@
             "title": "Rows",
             "type": "array"
           },
+          "strain_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "max_strain",
+                  "plastic_strain",
+                  "strain_tensor",
+                  "max_stress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "= vd_strain_source",
+            "title": "Strain Source"
+          },
           "tstar": {
             "additionalProperties": true,
             "title": "Tstar",
             "type": "object"
+          },
+          "vd_strain_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "max_strain",
+                  "plastic_strain",
+                  "strain_tensor",
+                  "max_stress"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vd Strain Source"
           },
           "warnings": {
             "default": [],
@@ -12149,7 +12219,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.12.0"
+    "version": "0.12.1"
   },
   "openapi": "3.1.0",
   "paths": {
