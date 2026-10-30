@@ -12,7 +12,7 @@
 - 어떤 결과를 썼는지(`strain_source`: max_strain | plastic_strain | strain_tensor | max_stress)를 추출 결과·ESL 요약·검증·라이브러리 품질·검증 낙하 비교(양쪽, 다르면 경고 `VD_STRAIN_SOURCE_MISMATCH`)에 기록. 대체일 때 Case 보고서 입력 표에 한 줄. 이전 자료는 max_strain 으로 봄
 - request.txt 에 `strain_type`·`epsp_type` 을 직접 적은 수동 실행은 예전처럼 `Max_Strain` 만 봄(대체 없음)
 - **강성 평가 스터디 체결 스캔이 모델 일부만 보던 문제**: paicad `--assem-dir` 에 기준 starter include 트리 전체(Case 폴더 밖 상위·형제 include 포함, 순환 방지) 사본 `prep/assem_full/`(②③ A Case = `prep/a_assem_full/`)을 넘김. 원본은 읽기만, 링크·허용 루트 밖은 `PATH_OUTSIDE_ROOT`, 엔진 rad 는 `bead_doe.same.engine_rad` 일 때만, 상한 `bead_doe.same.max_assem_mb`
-- 체결 스캔 사본만 paicad 0.14.0 미지원 집합 카드 정규화(`bead_doe.fixed_scan`): `/SURF/PART/EXT|ALL` → `/SURF/PART`, `/SURF·GRNOD/SUBSET` → 파트 목록, `/GRNOD/GENE` → `/GRNOD/NODE`, 솔리드 포함 `/SURF` → `/SURF/SEG`(외곽 면·모든 면). run 모핑 사본 중 재작성 파일은 원본 + 모핑 `/NODE` 로 복원(결과 파일은 예전과 같음). `FIXED_PARSE_FAILED` 안내에 읽은 파일 수·솔리드 면 tie 미지원 표시
+- 체결 스캔 사본만 paicad 0.14.0 미지원 집합 카드 정규화(`bead_doe.fixed_scan`): `/SURF/PART/EXT|ALL` → `/SURF/PART`, `/SURF·GRNOD/SUBSET` → 파트 목록, `/GRNOD/GENE`(first·last 쌍)·`/GRNOD/GEN_INCR` → `/GRNOD/NODE`, 솔리드 포함 `/SURF` → `/SURF/SEG`(외곽 면 = 같은 /SURF 안 솔리드 파트 전체에서 맞닿은 면 제외·모든 면). Radioss 2024.1·2026.1 입력 형식 지원 — 설정 `bead_doe.fixed_scan.subset_format`(`auto`|`2024`|`2026`|`legacy`, 기본 `auto` = starter `/BEGIN`·머리 주석으로 판정, 매니페스트·로그에 기록). TETRA10·BRIC20 여러 줄 요소 카드 지원, include 깊이 초과는 `INCLUDE_TOO_DEEP`, `prep/assem_full`·`a_assem_full` 은 재생성 파생물(백업 없이 작업 폴더 안에서만 삭제). run 모핑 사본 중 재작성 파일은 원본 + 모핑 `/NODE` 로 복원(결과 파일은 예전과 같음). `FIXED_PARSE_FAILED` 안내에 읽은 파일 수·솔리드 면 tie 미지원 표시
 
 ## [0.12.0] - 2026-10-30
 ### 추가
