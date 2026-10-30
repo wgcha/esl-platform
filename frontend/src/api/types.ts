@@ -315,7 +315,7 @@ export interface InspectResultsResult {
 // ---------------------------------------------------------------- 작업
 /** P2(계약 esl_p2_library.md §11·§12): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석),
  *  LIB_COMPARE(LIGHT, 설계 버전 비교) */
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN" | "DOE_PREP" | "DOE_PREVIEW" | "DOE_RUN" | "SCX_FETCH";
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN" | "DOE_PREP" | "DOE_PREVIEW" | "DOE_RUN" | "SCX_FETCH" | "VERIFY_DROP" | "VERIFY_POST";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -2540,4 +2540,125 @@ export interface ScxFetchIn {
 export interface ScxFetchOut {
   upload_id: string;
   job_id: string;
+}
+
+// ---------------------------------------------------------------- v0.12.0 Radioss 검증 낙하(계약 esl_scx_relay.md §7·§7.1·§9.3 — 기능 B)
+export type VerifyMode = "worst" | "all";
+export type VerifyDropPhase = "PREP" | "STAGING" | "SUBMITTED" | "RUNNING" | "FETCHED" | "POST" | "DONE" | "FAILED" | "CANCELED";
+export type VerifySubmissionState = "SUBMITTING" | "SUBMITTED" | "UNKNOWN" | "FAILED" | "ATTACHED" | "ABANDONED";
+/** 작업별 Radioss 입력 덮어쓰기(비우면 설정 hpc.scx.*) */
+export interface VerifyHpcIn {
+  version?: string | null;
+  ncpu?: number | null;
+}
+/** POST /verify-drops · /verify-drops/plan */
+export interface VerifyDropIn {
+  bead_doe_id: string;
+  design_id: string;
+  mode: VerifyMode;
+  /** worst 일 때 1~max_scenes(비우면 verify_drop.default_worst_n) */
+  n?: number | null;
+  title?: string | null;
+  hpc?: VerifyHpcIn | null;
+}
+export interface VerifyPlanScene {
+  entry_id: string;
+  case_id: string;
+  case_title: string | null;
+  r_c: number;
+  r_umax: number | null;
+  r_epsmax: number | null;
+}
+/** 씬별 제외(오류 아님): VD_CUMULATIVE_EXCLUDED·VD_ENGINE_MISSING·VD_INCLUDE_LAYOUT·VD_ALREADY_ACTIVE */
+export interface VerifyExcluded {
+  entry_id: string;
+  case_id: string;
+  code: string;
+  reason: string;
+}
+/** (보강 — 백엔드와 맞출 키) 검증 가능한 안 = best/ 가 남은 안(순위 1~paicad.keep_files_top) */
+export interface VerifyDesignOut {
+  id: string;
+  rank: number;
+}
+/** POST /verify-drops/plan (저장 안 함) */
+export interface VerifyPlanOut {
+  scenes: VerifyPlanScene[];
+  excluded: VerifyExcluded[];
+  n_submit: number;
+  /** 씬당 예상 시간(h) */
+  est_hours: number;
+  max_scenes: number;
+  /** (보강) 대화상자 안 목록 — 없으면 화면은 결과 best 1개만 */
+  designs?: VerifyDesignOut[];
+  /** (보강) verify_drop.default_worst_n — 없으면 응답 n_submit 을 N 초기값으로 */
+  default_n?: number | null;
+  /** (보강) '고급' 칸 자리표시(설정 hpc.scx.version·ncpu) */
+  hpc_default?: { version: string | null; ncpu: number | null } | null;
+}
+export interface VerifySubmissionOut {
+  request_id: string;
+  state: VerifySubmissionState;
+}
+export interface VerifyPredicted {
+  r_umax: number | null;
+  r_epsmax: number | null;
+  r_c: number | null;
+}
+export type VerifyVerdict = "better" | "worse" | "same";
+export interface VerifyCompareRow {
+  key: string;
+  label: string;
+  orig: number;
+  verify: number;
+  ratio: number;
+  predicted: number | null;
+  verdict: VerifyVerdict;
+  agree: boolean | null;
+}
+export interface VerifyCompareWarning {
+  code: string;
+  message: string;
+}
+/** §9.3 비교(정보 표시 — PASS/FAIL 없음) */
+export interface VerifyCompare {
+  rows: VerifyCompareRow[];
+  hot: { n: number; mean_ratio: number; max_ratio: number };
+  warnings: VerifyCompareWarning[];
+  tstar: { orig_time: number | null; verify_time: number | null };
+}
+export interface VerifyDropOut {
+  id: string;
+  batch_id: string;
+  bead_doe_id: string;
+  design_id: string;
+  case_id: string;
+  entry_id: string;
+  title: string | null;
+  phase: VerifyDropPhase;
+  version: number;
+  drive_dir_display: string | null;
+  scx_job_id: string | null;
+  scx_status: string | null;
+  submission: VerifySubmissionOut | null;
+  files_n: number;
+  files_bytes: number;
+  predicted: VerifyPredicted | null;
+  result: VerifyCompare | null;
+  job_ids: string[];
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+}
+/** POST /verify-drops 응답(201) */
+export interface VerifyDropCreateOut {
+  batch_id: string;
+  drops: VerifyDropOut[];
+  excluded: VerifyExcluded[];
+}
+/** POST /verify-drops/{id}/resolve */
+export interface VerifyResolveIn {
+  version: number;
+  action: "attach" | "abandon";
+  scx_job_id?: string | null;
 }

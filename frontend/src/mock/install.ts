@@ -37,6 +37,10 @@ export function installMockFetch() {
   // ?demoValidation=FAIL|UNDETERMINED|LEGACY_FAIL: 첫 검증(c-demo)을 바꿔 ④ 등록 거부 사유 시연
   const dv = params.get("demoValidation") as Parameters<typeof variantValidation>[1] | null;
   if (dv) server.validations[0] = variantValidation(server.validations[0], dv);
+  // v0.12.0 검증 낙하 시연: ?demoVerify=1 doe-1 에 완료·실행 중·결과 모름 검증 낙하, ?verifyMode=disabled|writes_off
+  if (params.get("demoVerify") === "1") server.verify.seedDemo("doe-1");
+  const vm = params.get("verifyMode");
+  if (vm === "disabled" || vm === "writes_off") server.scx.verifyMode = vm;
   if (params.get("demoPc") === "1") {
     server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
     server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");

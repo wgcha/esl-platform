@@ -25,8 +25,10 @@ const STEPS: Record<JobType, string[]> = {
   DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
   DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
   SCX_FETCH: ["SF_RAD", "SF_H3D", "SF_REGISTER"],
+  VERIFY_DROP: ["VD_PREP", "VD_STAGE", "VD_SUBMIT", "VD_WAIT", "VD_FETCH"],
+  VERIFY_POST: ["H3D_EXTRACT", "VD_EXTRACT", "VD_COMPARE", "VD_REGISTER"],
 };
-const STAGE: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11, SCX_FETCH: 12 };
+const STAGE: Record<JobType, number> = { CASE_EXTRACT: 1, ESL_SOLVE: 4, VALIDATE: 5, EXPORT: 6, CASE_REPORT: 0, LIB_ANALYZE: 0, LIB_COMPARE: 0, OPT_RUN: 10, DOE_PREP: 11, DOE_PREVIEW: 11, DOE_RUN: 11, SCX_FETCH: 12, VERIFY_DROP: 13, VERIFY_POST: 13 };
 const CASES: Record<string, { title: string; folder: string }> = {
   "c-demo": { title: "후방 충돌 40kph", folder: "rear40" },
   "c-stale": { title: "후방 충돌 56kph", folder: "rear56" },

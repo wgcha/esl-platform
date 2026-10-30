@@ -229,10 +229,16 @@ for (const [name, schema] of Object.entries(schemas)) {
 
 // 경로: types.ts 와 별개로 endpoints.ts 가 쓰는 경로가 openapi 에 있는지
 // P3: p3.ts·history.ts(있으면)도 같은 규칙으로 대조
-const epFiles = ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts", "library.ts", "scx.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
+// v0.12.0 verify.ts(검증 낙하): 백엔드(SR8)가 openapi 에 /verify-drops 를 넣은 뒤부터 대조(그 전에는 건너뜀 — 아래 안내 줄)
+const verifyInSpec = Object.keys(spec.paths ?? {}).some((p) => p.startsWith("/esl/api/verify-drops"));
+const epFiles = ["endpoints.ts", "p3.ts", "history.ts", "opt.ts", "doe.ts", "library.ts", "scx.ts", "verify.ts"].map((f) => path.resolve(path.dirname(typesPath), f));
 for (const epPath of epFiles) {
 try {
-  if (/(p3|history|opt|doe|library|scx)\.ts$/.test(epPath) && !existsSync(epPath)) continue;
+  if (/(p3|history|opt|doe|library|scx|verify)\.ts$/.test(epPath) && !existsSync(epPath)) continue;
+  if (/verify\.ts$/.test(epPath) && !verifyInSpec) {
+    console.log("check:api 안내: openapi 에 /verify-drops 경로가 없어 verify.ts 경로 대조를 건너뜀(백엔드 기능 B 병합 전)");
+    continue;
+  }
   const ep = readFileSync(epPath, "utf8");
   const epName = path.basename(epPath);
   const prefix = "/esl/api";
@@ -254,4 +260,4 @@ if (errors.length) {
   console.error(`check:api 실패 (${errors.length}건)\n` + errors.map((e) => "  - " + e).join("\n"));
   process.exit(1);
 }
-console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts·history.ts·opt.ts·doe.ts·library.ts·scx.ts 경로 모두 openapi 에 있음`);
+console.log(`check:api 통과: 스키마 ${checked}개 = types.ts, endpoints.ts·p3.ts·history.ts·opt.ts·doe.ts·library.ts·scx.ts${verifyInSpec ? "·verify.ts" : ""} 경로 모두 openapi 에 있음`);

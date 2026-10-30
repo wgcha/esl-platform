@@ -80,6 +80,8 @@ export class ScxMock {
   /** SF_H3D 진행(틱당 비율, %) */
   h3dStepPct = 25;
   fetches = new Map<string, Fetch>();
+  /** v0.12.0 검증 낙하: ok | disabled(verify_drop.enabled false) | writes_off(대시보드 드라이브 쓰기 꺼짐) */
+  verifyMode: "ok" | "disabled" | "writes_off" = "ok";
   /** 시험: 마지막 POST /scx/fetches 본문 */
   lastFetchIn: Record<string, unknown> | null = null;
 
@@ -106,17 +108,27 @@ export class ScxMock {
     return { enabled: true, reason_code: null, reason: null };
   }
 
+  /** §3 SR-D-19 사유 순서: 설정 꺼짐 → 릴레이 연결 실패 → writes_active=false */
+  verifyAvail(_pid: string): ScxAvail {
+    if (this.verifyMode === "disabled") return { enabled: false, reason_code: "VD_DISABLED", reason: "검증 낙하가 꺼져 있습니다(관리자: verify_drop.enabled)" };
+    if (this.mode === "down")
+      return { enabled: false, reason_code: "SCX_RELAY_UNREACHABLE", reason: "대시보드에 연결할 수 없습니다(대시보드 실행 여부·relay_url 포트 확인 — 관리자)" };
+    if (this.verifyMode === "writes_off")
+      return { enabled: false, reason_code: "SCX_WRITES_OFF", reason: "대시보드 드라이브 쓰기가 꺼져 있습니다(SIMDASH_DRIVE_WRITES_ENABLED) — 검증 낙하만 불가" };
+    return { enabled: true, reason_code: null, reason: null };
+  }
+
   status(pid: string): ScxStatusOut {
     const down = this.mode === "down";
     return {
       fetch: this.fetchAvail(pid),
-      verify: { enabled: false, reason_code: "VD_DISABLED", reason: "검증 낙하가 꺼져 있습니다(관리자: verify_drop.enabled)" },
+      verify: this.verifyAvail(pid),
       roots: this.fetchAvail(pid).enabled ? this.rootsFor(pid).map(({ key, label }) => ({ key, label })) : [],
       relay: {
         reachable: !down,
         drive_state: down ? null : "READY",
         queue_paused: false,
-        writes_active: false,
+        writes_active: !down && this.verifyMode !== "writes_off",
         job_api: !down,
         max_download_bytes: down ? null : this.maxDownload,
         checked_at: this.ctx.now(),
