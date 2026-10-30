@@ -368,6 +368,29 @@ class OptRunCfg(_M):
 # 매핑은 opt_run·library 키를 재사용한다(새 키 없음).
 class BeadDoeSameCfg(_M):
     max_assem_mb: float = Field(default=4096, gt=0)          # ① Case 폴더 rad/inc 합계 상한(BD-D-13, Q1 A)
+    engine_rad: bool = False      # v0.12.1 prep/assem_full 에 엔진 rad(<stem>_NNNN.rad, NNNN≠0000) 포함 여부(체결 정의 없음)
+
+
+_KW_PATH = re.compile(r"^[A-Za-z0-9_]+(/[A-Za-z0-9_]+)*$")
+
+
+class BeadDoeFixedScanCfg(_M):
+    """v0.12.1 paicad 스캔 사본(prep/assem_full)만 집합 카드 정규화(원본·모핑 사본 불변, esl.doe.assem_full).
+    paicad 0.14.0 은 /GRNOD/{NODE,PART,GRNOD}/<id>·/SURF/{PART,SEG,SURF}/<id>(id = kw[2]) 만 읽는다."""
+
+    enabled: bool = True                      # 정규화 전체 켜고 끄기
+    rules: list[list[str]] = Field(default_factory=lambda: [["SURF/PART/EXT", "SURF/PART"], ["SURF/PART/ALL", "SURF/PART"]],
+                                   max_length=50)        # 키워드 줄만(데이터 그대로)
+    expand_subset: bool = True                # /SURF/SUBSET/<EXT|ALL>/<id>·/GRNOD/SUBSET/<id> → 파트 목록 /…/PART/<id>
+    expand_gene: bool = True                  # /GRNOD/GENE/<id>(시작 끝 증분) → /GRNOD/NODE/<id>
+    expand_solid: bool = True                 # /SURF/PART·SUBSET 에 솔리드 파트 → /SURF/SEG(EXT 외곽 면·ALL 모든 면)
+
+    @model_validator(mode="after")
+    def _rules(self):
+        for r in self.rules:
+            if len(r) != 2 or not all(isinstance(x, str) and _KW_PATH.match(x) for x in r):
+                raise ValueError("fixed_scan.rules 항목은 [\"KW/SUB/OPT\", \"KW/SUB\"] 형식")
+        return self
 
 
 class BeadDoeTimeoutCfg(_M):
@@ -483,6 +506,7 @@ class BeadDoeCfg(_M):
     max_designs: int = Field(default=200, ge=3, le=10000)
     step_max_mb: float = Field(default=200, gt=0)
     same: BeadDoeSameCfg = BeadDoeSameCfg()
+    fixed_scan: BeadDoeFixedScanCfg = BeadDoeFixedScanCfg()
     paicad: BeadDoePaicadCfg = BeadDoePaicadCfg()
     mesh: BeadDoeMeshCfg = BeadDoeMeshCfg()
     doe: BeadDoeDoeCfg = BeadDoeDoeCfg()
