@@ -11,6 +11,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 PYTHON="${PYTHON:-python3}"
 export PYTHONPATH="$REPO_ROOT/backend:$REPO_ROOT/worker:$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+# v0.11.0 SCX 릴레이 어댑터(simdash_adapters, 표준 라이브러리만): 저장소 동봉 정규화 wheel 을 lock 과 대조한 뒤 zip 그대로 import 경로에
+# (설치 없이 — 운영은 Install-EslScxAdapters 가 venv 에 pip 설치). 대조 실패면 중단.
+SCX_WHEEL="$REPO_ROOT/deploy/wheels/$(sed -n 's/^ *"wheel": *"\([^"]*\)".*/\1/p' "$REPO_ROOT/deploy/simdash_adapters.lock" | head -1)"
+"$PYTHON" -I "$REPO_ROOT/deploy/paicad_wheel.py" verify --lock "$REPO_ROOT/deploy/simdash_adapters.lock" --wheel "$SCX_WHEEL" >/dev/null
+export PYTHONPATH="$SCX_WHEEL:$PYTHONPATH"
 
 PG_DIR=""
 PG_CTL=""

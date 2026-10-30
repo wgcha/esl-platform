@@ -175,6 +175,8 @@ try {
     $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock') -PaicadLock (Join-Path $repo 'deploy\paicad.lock') `
         -PaicadWheels "$($cfg.paicad_wheels)" -PhysicsaiRepo "$($cfg.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel') `
         -VendoredWheels (Join-Path $repo 'deploy\wheels')
+    $scx = Install-EslScxAdapters -VenvPy $venvPy -ScxLock (Join-Path $repo 'deploy\simdash_adapters.lock') `
+        -VendoredWheels (Join-Path $repo 'deploy\wheels')
 
     # ---- ④ 코드 스냅샷 ---------------------------------------------------------------------------------
     $stage = '코드 배치'

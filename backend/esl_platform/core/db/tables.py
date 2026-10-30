@@ -1,5 +1,5 @@
 """DB 스키마(계약 esl.md §3 + esl_platform_p1b.md §3 + esl_p2_library.md §11·§12 + esl_opt_run.md §12
-+ esl_bead_doe.md §13).
++ esl_bead_doe.md §13 + esl_scx_relay.md §11).
 SQLAlchemy Core, PostgreSQL 전용.
 
 공통: ID = UUID4 VARCHAR(36), 시간 TIMESTAMPTZ(DB 시계), 파일 본문·대용량 배열 저장 금지(경로·sha256·요약만),
@@ -41,28 +41,40 @@ TS = TIMESTAMP(timezone=True)
 
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
 JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT", "CASE_REPORT", "LIB_ANALYZE", "LIB_COMPARE", "OPT_RUN",
-             "DOE_PREP", "DOE_PREVIEW", "DOE_RUN")          # 0011: 비드 DOE 3종
+             "DOE_PREP", "DOE_PREVIEW", "DOE_RUN",          # 0011: 비드 DOE 3종
+             "SCX_FETCH", "VERIFY_DROP", "VERIFY_POST")     # 0012: SCX 드라이브 내려받기·검증 낙하(VERIFY_* 는 v0.12.0 구현)
 DOE_JOB_TYPES = ("DOE_PREP", "DOE_PREVIEW", "DOE_RUN")
+VERIFY_JOB_TYPES = ("VERIFY_DROP", "VERIFY_POST")
 ARTIFACT_KINDS = ("CASE", "EXTRACT", "TSTAR", "SUPPORT", "ESL", "VALIDATION", "EXPORT", "REPORT", "RUN", "LOG",
                   "OPT_RESULT", "OPT_SOLVE",     # 0010: 비드 최적화 결과·OptiStruct 원본
-                  "DOE_RESULT")                  # 0011: 비드 DOE 결과
+                  "DOE_RESULT",                  # 0011: 비드 DOE 결과
+                  "VERIFY_RESULT")               # 0012: 검증 낙하 비교 결과
+LANES = ("SLOT", "LIGHT", "XFER")                # 0012: XFER = HTTP 전송·원격 대기(슬롯 없음, worker.xfer_lanes)
 # 0003: 제약 SQL(마이그레이션과 공유)
 CK_JOBS_JOB_TYPE = "job_type IN (" + ",".join(f"'{t}'" for t in JOB_TYPES) + ")"
-CK_JOBS_STAGE = "stage BETWEEN 1 AND 11"    # 0004: 9 = 설계 버전 비교, 0010: 10 = 비드 최적화, 0011: 11 = 비드 DOE
-# 0004·0010·0011: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE) | 최적화 실행(OPT_RUN)
-# | 비드 DOE 연구(DOE_PREP·DOE_PREVIEW·DOE_RUN)
+CK_JOBS_STAGE = "stage BETWEEN 1 AND 13"    # 0004: 9 = 설계 버전 비교, 0010: 10 비드 최적화, 0011: 11 비드 DOE, 0012: 12 SCX 내려받기·13 검증 낙하
+CK_JOBS_LANE = "lane IN (" + ",".join(f"'{x}'" for x in LANES) + ")"
+# 0004·0010·0011·0012: 작업 대상은 정확히 하나 — Case(Case 작업) | 분석(LIB_ANALYZE) | 비교(LIB_COMPARE) | 최적화 실행(OPT_RUN)
+# | 비드 DOE 연구(DOE_PREP·DOE_PREVIEW·DOE_RUN) | 업로드 세션(SCX_FETCH) | 검증 낙하(VERIFY_DROP·VERIFY_POST)
 _DOE_IN = "('DOE_PREP','DOE_PREVIEW','DOE_RUN')"
+_VD_IN = "('VERIFY_DROP','VERIFY_POST')"
+_NO_NEW = " AND upload_id IS NULL AND verify_drop_id IS NULL"
 CK_JOBS_SUBJECT = ("(job_type = 'LIB_ANALYZE' AND case_id IS NULL AND analysis_id IS NOT NULL"
-                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL)"
+                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL" + _NO_NEW + ")"
                    " OR (job_type = 'LIB_COMPARE' AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NOT NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL)"
+                   " AND comparison_id IS NOT NULL AND opt_run_id IS NULL AND bead_doe_id IS NULL" + _NO_NEW + ")"
                    " OR (job_type = 'OPT_RUN' AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NULL AND opt_run_id IS NOT NULL AND bead_doe_id IS NULL)"
+                   " AND comparison_id IS NULL AND opt_run_id IS NOT NULL AND bead_doe_id IS NULL" + _NO_NEW + ")"
                    f" OR (job_type IN {_DOE_IN} AND case_id IS NULL AND analysis_id IS NULL"
-                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NOT NULL)"
-                   f" OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE','OPT_RUN','DOE_PREP','DOE_PREVIEW','DOE_RUN')"
+                   " AND comparison_id IS NULL AND opt_run_id IS NULL AND bead_doe_id IS NOT NULL" + _NO_NEW + ")"
+                   " OR (job_type = 'SCX_FETCH' AND case_id IS NULL AND analysis_id IS NULL AND comparison_id IS NULL"
+                   " AND opt_run_id IS NULL AND bead_doe_id IS NULL AND upload_id IS NOT NULL AND verify_drop_id IS NULL)"
+                   f" OR (job_type IN {_VD_IN} AND case_id IS NULL AND analysis_id IS NULL AND comparison_id IS NULL"
+                   " AND opt_run_id IS NULL AND bead_doe_id IS NULL AND upload_id IS NULL AND verify_drop_id IS NOT NULL)"
+                   " OR (job_type NOT IN ('LIB_ANALYZE','LIB_COMPARE','OPT_RUN','DOE_PREP','DOE_PREVIEW','DOE_RUN',"
+                   "'SCX_FETCH','VERIFY_DROP','VERIFY_POST')"
                    " AND case_id IS NOT NULL AND analysis_id IS NULL AND comparison_id IS NULL AND opt_run_id IS NULL"
-                   " AND bead_doe_id IS NULL)")
+                   " AND bead_doe_id IS NULL" + _NO_NEW + ")")
 # 0006: Case 입력 종류, step 종류(LOCAL = 워커가 외부 프로그램 실행), worker_slot 행 수(worker.slots 상한)
 CK_CASES_INPUT_KIND = "input_kind IN ('RESULTS','H3D') AND (input_kind = 'RESULTS' OR h3d_path IS NOT NULL)"
 CK_JOB_STEPS_KIND = "kind IN ('INTERNAL','LOCAL')"
@@ -124,6 +136,8 @@ jobs = Table(
     Column("comparison_id", ID, ForeignKey("comparisons.id"), nullable=True),  # 0004: LIB_COMPARE 대상 비교
     Column("opt_run_id", ID, ForeignKey("opt_runs.id"), nullable=True),        # 0010: OPT_RUN 대상 최적화 실행
     Column("bead_doe_id", ID, ForeignKey("bead_does.id"), nullable=True),      # 0011: DOE_* 대상 비드 DOE 연구
+    Column("upload_id", ID, ForeignKey("uploads.id"), nullable=True),          # 0012: SCX_FETCH 대상 업로드 세션
+    Column("verify_drop_id", ID, ForeignKey("verify_drops.id"), nullable=True),   # 0012: VERIFY_* 대상 검증 낙하
     Column("project_id", String, nullable=False),
     Column("job_type", String, nullable=False),
     Column("stage", SmallInteger, nullable=False),
@@ -158,7 +172,7 @@ jobs = Table(
     Column("updated_at", TS, nullable=False, server_default=func.now()),
     Column("version", BigInteger, nullable=False, server_default="1"),
     CheckConstraint(CK_JOBS_JOB_TYPE, name="ck_jobs_job_type"),
-    CheckConstraint("lane IN ('SLOT','LIGHT')", name="ck_jobs_lane"),
+    CheckConstraint(CK_JOBS_LANE, name="ck_jobs_lane"),
     CheckConstraint(CK_JOBS_STAGE, name="ck_jobs_stage"),
     CheckConstraint(CK_JOBS_SUBJECT, name="ck_jobs_subject"),
     CheckConstraint("state IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELED','INTERRUPTED')",
@@ -201,6 +215,13 @@ Index("ux_jobs_opt_run_active", jobs.c.opt_run_id, unique=True,
 Index("ix_jobs_bead_doe", jobs.c.bead_doe_id, postgresql_where=text("bead_doe_id IS NOT NULL"))
 Index("ux_jobs_bead_doe_active", jobs.c.bead_doe_id, unique=True,
       postgresql_where=text("bead_doe_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+# 0012: 업로드 세션당·검증 낙하당 비종료 작업 1개
+Index("ix_jobs_upload", jobs.c.upload_id, postgresql_where=text("upload_id IS NOT NULL"))
+Index("ux_jobs_upload_active", jobs.c.upload_id, unique=True,
+      postgresql_where=text("upload_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+Index("ix_jobs_verify_drop", jobs.c.verify_drop_id, postgresql_where=text("verify_drop_id IS NOT NULL"))
+Index("ux_jobs_verify_drop_active", jobs.c.verify_drop_id, unique=True,
+      postgresql_where=text("verify_drop_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
 
 job_steps = Table(
     "job_steps",
@@ -554,6 +575,64 @@ bead_does = Table(
 )
 Index("ix_bead_does_project", bead_does.c.project_id, bead_does.c.created_at.desc())
 
+# ---------------------------------------------------------------- 0012: 검증 낙하·SCX 제출 기록(계약 esl_scx_relay.md §11)
+# v0.11.0 은 표만 만든다(기능 B 구현 v0.12.0). 파일 본문 없음(경로·sha256·요약만).
+VERIFY_PHASES = ("PREP", "STAGING", "SUBMITTED", "RUNNING", "FETCHED", "POST", "DONE", "FAILED", "CANCELED")
+verify_drops = Table(
+    "verify_drops",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("batch_id", ID, nullable=False),                 # 한 요청(씬 여러 개) 묶음
+    Column("project_id", String, nullable=False),
+    Column("bead_doe_id", ID, ForeignKey("bead_does.id"), nullable=False),
+    Column("design_id", String(64), nullable=False),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False),
+    Column("entry_id", ID, ForeignKey("library_entries.id"), nullable=False),
+    Column("title", String(200), nullable=True),
+    Column("phase", String(16), nullable=False, server_default="PREP"),
+    Column("version", BigInteger, nullable=False, server_default="1"),
+    Column("params", JSONB, nullable=False, server_default=text("'{}'::jsonb")),     # hpc 덮어쓰기
+    Column("files", JSONB, nullable=False, server_default=text("'[]'::jsonb")),      # [{rel, size, sha256, source orig|morph}]
+    Column("drive_dir_rel", String(1024), nullable=True),
+    Column("scx_job_id", String, nullable=True),
+    Column("scx_status", String, nullable=True),
+    Column("predicted", JSONB, nullable=True),
+    Column("result", JSONB, nullable=True),
+    Column("dir_rel", String, nullable=False),              # _verify/<id>
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    CheckConstraint("phase IN (" + ",".join(f"'{x}'" for x in VERIFY_PHASES) + ")", name="ck_verify_drops_phase"),
+    CheckConstraint("version >= 1", name="ck_verify_drops_version"),
+    CheckConstraint("dir_rel NOT LIKE '/%' AND dir_rel NOT LIKE '%..%'", name="ck_verify_drops_dir_rel"),
+)
+Index("ix_verify_drops_doe", verify_drops.c.bead_doe_id, verify_drops.c.created_at.desc())
+Index("ix_verify_drops_batch", verify_drops.c.batch_id)
+Index("ux_verify_drops_active", verify_drops.c.bead_doe_id, verify_drops.c.design_id, verify_drops.c.case_id, unique=True,
+      postgresql_where=text("phase NOT IN ('DONE','FAILED','CANCELED')"))
+
+SUBMISSION_STATES = ("SUBMITTING", "SUBMITTED", "UNKNOWN", "FAILED", "ATTACHED", "ABANDONED")
+scx_submissions = Table(
+    "scx_submissions",
+    metadata,
+    Column("request_id", String(128), primary_key=True),    # esl-vd-<verify_drop_id>-a<attempt>
+    Column("verify_drop_id", ID, ForeignKey("verify_drops.id"), nullable=False),
+    Column("attempt", Integer, nullable=False),
+    Column("request_sha256", String(64), nullable=False),
+    Column("state", String(16), nullable=False),
+    Column("scx_job_id", String, nullable=True, unique=True),
+    Column("error_code", String, nullable=True),
+    Column("error_message", String(200), nullable=True),    # 마스킹
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    Column("resolved_at", TS, nullable=True),
+    Column("resolved_by", String, nullable=True),
+    UniqueConstraint("verify_drop_id", "attempt", name="uq_scx_submissions_drop_attempt"),
+    CheckConstraint("state IN (" + ",".join(f"'{x}'" for x in SUBMISSION_STATES) + ")", name="ck_scx_submissions_state"),
+    CheckConstraint("attempt >= 1", name="ck_scx_submissions_attempt"),
+)
+
 # P3-UX 브라우저 분할 업로드 세션(계약 esl_p3_ux.md §1.1). 파일 본문은 디스크(<upload_root>/...)에만, 여기는 목록·상태.
 UPLOAD_STATES = ("OPEN", "COMPLETED", "CANCELED", "STALE")
 uploads = Table(
@@ -691,6 +770,7 @@ __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
     "comparisons", "uploads", "opt_templates", "opt_keepouts", "opt_runs", "bead_does", "OPT_SCENARIOS", "DOE_SCENARIOS",
-    "DOE_PHASES", "DOE_JOB_TYPES", "UPLOAD_STATES", "client_codes", "client_tokens", "client_code_failures",
+    "DOE_PHASES", "DOE_JOB_TYPES", "UPLOAD_STATES", "verify_drops", "scx_submissions", "VERIFY_PHASES",
+    "SUBMISSION_STATES", "VERIFY_JOB_TYPES", "LANES", "CK_JOBS_LANE", "client_codes", "client_tokens", "client_code_failures",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
 ]

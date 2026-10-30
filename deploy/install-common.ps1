@@ -23,7 +23,9 @@ $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # v0.10.0(계약 esl_menu_restructure.md §13 MR5): 새 런타임 파일 esl/export/from_entry.py(라이브러리 내보내기 코어 어댑터)·backend/esl_platform/api/services/library_export.py 는 'esl'·'backend/esl_platform' 폴더째 복사에 포함(새 resources 없음, tests/deploy/test_menu_deploy.py)
 # v0.10.1: deploy/wheels(저장소 동봉 paicad wheel)는 설치 때 venv 에 pip 로 넣는 것이라 <런타임>\app 복사 대상이 아니다(여기 넣지 않음).
 #   git 폴더 설치는 <git>\deploy\wheels 를 그대로 읽고, 오프라인 묶음은 collect-offline 이 deploy\ 째(→ 묶음 deploy\wheels)와 묶음 wheels\ 에 넣는다.
-$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
+# v0.11.0(계약 esl_scx_relay.md §5.2·§13): resources/scx_messages.json = SCX 릴레이 오류 → 사용자 문구(백엔드·워커·화면 공용 원본).
+#   deploy/wheels 의 simdash_adapters wheel(동봉)은 paicad 와 같이 venv 에 pip 로 넣는다(Install-EslScxAdapters — app 복사 대상 아님).
+$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'resources/scx_messages.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
 function Write-EslStep([string]$Message) {
@@ -208,6 +210,51 @@ function Install-EslBeadDoe {
         Write-EslStep "강성 평가 스터디 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe (wheel: $($res.Source))"
     } else {
         Write-Warning "강성 평가 스터디 비활성(다른 기능은 그대로): $($res.Reason)"
+    }
+    return [pscustomobject]$res
+}
+
+function Install-EslScxAdapters {
+    <#
+      v0.11.0 SCX 릴레이 어댑터(계약 esl_scx_relay.md §13·SR-D-2): physicsai packages/simdash_adapters(표준 라이브러리만,
+      의존성 없음) 정규화 wheel 을 venv 에 넣는다. 설치 우선순위: (a) <VendoredWheels>(기본 = 이 파일 옆 deploy\wheels — 저장소 동봉)
+      → (b) <Wheels>(오프라인 묶음 wheels). 설치 전 deploy\simdash_adapters.lock 대조(paicad_wheel.py verify — 버전·정규화 sha256),
+      pip install --no-index --no-deps → import 확인(paicad_wheel.py check --module simdash_adapters.hpc: ScxHpcGateway·ScxRadiossRequest).
+      실패해도 throw 하지 않는다 — 설치는 계속, SCX 기능(SCX 드라이브에서 고르기·검증 낙하)만 비활성(워커 heartbeat info.scx 사유).
+      결과 [pscustomobject]{Ok, Version, Commit, Source, Reason}.
+    #>
+    param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$ScxLock,
+          [string]$Wheels = '', [string]$VendoredWheels = '')
+    $res = [ordered]@{ Ok = $false; Version = $null; Commit = $null; Source = ''; Reason = '' }
+    $helper = Join-Path $PSScriptRoot 'paicad_wheel.py'
+    if (-not $VendoredWheels) { $VendoredWheels = Join-Path $PSScriptRoot 'wheels' }
+    try {
+        $lock = Get-Content -Raw -Encoding UTF8 -LiteralPath $ScxLock | ConvertFrom-Json
+        $res.Commit = "$($lock.commit)".Substring(0, 12)
+        $whl = $null
+        $vend = Join-Path $VendoredWheels $lock.wheel
+        if (Test-Path -LiteralPath $vend) { $whl = $vend; $res.Source = 'vendored' }
+        elseif ($Wheels -and (Test-Path -LiteralPath (Join-Path $Wheels $lock.wheel))) { $whl = Join-Path $Wheels $lock.wheel; $res.Source = 'wheels' }
+        if (-not $whl) {
+            throw "simdash_adapters wheel($($lock.wheel))이 없습니다 — 저장소 동봉 deploy\wheels 가 빠졌습니다(git checkout -- deploy/wheels)"
+        }
+        Write-EslStep "SCX 릴레이 어댑터 simdash_adapters $($lock.version) (커밋 $($res.Commit)) wheel: $whl"
+        Invoke-EslNative 'simdash_adapters wheel 대조(deploy\simdash_adapters.lock — 버전·sha256)' $VenvPy @($helper, 'verify', '--lock', $ScxLock, '--wheel', $whl) `
+            'wheel 이 lock 과 다릅니다(파일 손상·부분 갱신) — git checkout -- deploy/wheels 로 되돌리세요(lock 은 고치지 마세요)'
+        Invoke-EslPip -Py $VenvPy -PipArgs @('install', '--no-index', '--no-deps', '--force-reinstall', $whl) -What "simdash_adapters $($lock.version) 설치"
+        $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $raw = @(& $VenvPy $helper check --lock $ScxLock --module 'simdash_adapters.hpc' 2>$null) } finally { $ErrorActionPreference = $eap }
+        $chk = (($raw | Where-Object { "$_".StartsWith('{') }) | Select-Object -Last 1) | ConvertFrom-Json
+        $res.Version = $chk.version
+        if (-not $chk.ok) { throw (@($chk.problems) -join '; ') }
+        $res.Ok = $true
+    } catch {
+        $res.Reason = $_.Exception.Message
+    }
+    if ($res.Ok) {
+        Write-EslStep "SCX 릴레이 어댑터: simdash_adapters $($res.Version) (커밋 $($res.Commit), wheel: $($res.Source))"
+    } else {
+        Write-Warning "SCX 기능 비활성(다른 기능은 그대로 — SCX_ADAPTER_MISSING): $($res.Reason)"
     }
     return [pscustomobject]$res
 }

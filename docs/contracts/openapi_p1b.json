@@ -5562,6 +5562,7 @@
             "type": "string"
           },
           "lane": {
+            "description": "SLOT | LIGHT | XFER(v0.11.0 — HTTP 전송·원격 대기)",
             "title": "Lane",
             "type": "string"
           },
@@ -5580,6 +5581,18 @@
             "additionalProperties": true,
             "title": "Params",
             "type": "object"
+          },
+          "progress_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "진행 라벨(예: 'h3d 12.3 / 30.0 GB', '대시보드가 SCX에서 받는 중')",
+            "title": "Progress Label"
           },
           "progress_pct": {
             "anyOf": [
@@ -5691,6 +5704,18 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.11.0 SCX_FETCH 대상 업로드 세션",
+            "title": "Upload Id"
           },
           "version": {
             "title": "Version",
@@ -7031,6 +7056,16 @@
             "default": 1,
             "title": "Slots",
             "type": "integer"
+          },
+          "xfer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueueXfer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -7038,6 +7073,33 @@
           "light"
         ],
         "title": "QueueOut",
+        "type": "object"
+      },
+      "QueueXfer": {
+        "properties": {
+          "lanes": {
+            "default": 2,
+            "title": "Lanes",
+            "type": "integer"
+          },
+          "queued": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "title": "Queued",
+            "type": "array"
+          },
+          "running_all": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "title": "Running All",
+            "type": "array"
+          }
+        },
+        "title": "QueueXfer",
         "type": "object"
       },
       "RectIn": {
@@ -7371,6 +7433,7 @@
             "type": "string"
           },
           "lane": {
+            "description": "SLOT | LIGHT | XFER(v0.11.0 — HTTP 전송·원격 대기)",
             "title": "Lane",
             "type": "string"
           },
@@ -7389,6 +7452,18 @@
             "additionalProperties": true,
             "title": "Params",
             "type": "object"
+          },
+          "progress_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "진행 라벨(예: 'h3d 12.3 / 30.0 GB', '대시보드가 SCX에서 받는 중')",
+            "title": "Progress Label"
           },
           "progress_pct": {
             "anyOf": [
@@ -7500,6 +7575,18 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.11.0 SCX_FETCH 대상 업로드 세션",
+            "title": "Upload Id"
           },
           "version": {
             "title": "Version",
@@ -8111,6 +8198,350 @@
           "same_model"
         ],
         "title": "S1EntryRow",
+        "type": "object"
+      },
+      "ScxAdaptersOut": {
+        "properties": {
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "ScxAdaptersOut",
+        "type": "object"
+      },
+      "ScxAvail": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ScxAvail",
+        "type": "object"
+      },
+      "ScxBrowseOut": {
+        "properties": {
+          "display": {
+            "description": "표시 전용 전체 경로(home_display 기준)",
+            "title": "Display",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ScxEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "path": {
+            "description": "루트 기준 상대 경로('' = 루트)",
+            "title": "Path",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "root",
+          "path",
+          "display",
+          "entries",
+          "total",
+          "truncated"
+        ],
+        "title": "ScxBrowseOut",
+        "type": "object"
+      },
+      "ScxEntryOut": {
+        "properties": {
+          "hint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rad",
+                  "engine",
+                  "h3d",
+                  "include",
+                  "state"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "kind": {
+            "enum": [
+              "dir",
+              "file"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "title": "ScxEntryOut",
+        "type": "object"
+      },
+      "ScxFetchIn": {
+        "additionalProperties": false,
+        "properties": {
+          "h3d_rel": {
+            "description": "루트 기준 h3d 경로(필수)",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "H3D Rel",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rad_rel": {
+            "description": "루트 기준 rad(starter) 경로",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Rad Rel",
+            "type": "string"
+          },
+          "root": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "root",
+          "rad_rel",
+          "h3d_rel"
+        ],
+        "title": "ScxFetchIn",
+        "type": "object"
+      },
+      "ScxFetchOut": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "job_id"
+        ],
+        "title": "ScxFetchOut",
+        "type": "object"
+      },
+      "ScxRelayOut": {
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "drive_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drive State"
+          },
+          "job_api": {
+            "default": false,
+            "title": "Job Api",
+            "type": "boolean"
+          },
+          "max_download_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Download Bytes"
+          },
+          "queue_paused": {
+            "default": false,
+            "title": "Queue Paused",
+            "type": "boolean"
+          },
+          "reachable": {
+            "title": "Reachable",
+            "type": "boolean"
+          },
+          "writes_active": {
+            "default": false,
+            "title": "Writes Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reachable"
+        ],
+        "title": "ScxRelayOut",
+        "type": "object"
+      },
+      "ScxRootOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ],
+        "title": "ScxRootOut",
+        "type": "object"
+      },
+      "ScxStatusOut": {
+        "properties": {
+          "adapters": {
+            "$ref": "#/components/schemas/ScxAdaptersOut"
+          },
+          "fetch": {
+            "$ref": "#/components/schemas/ScxAvail"
+          },
+          "relay": {
+            "$ref": "#/components/schemas/ScxRelayOut"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/ScxRootOut"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "verify": {
+            "$ref": "#/components/schemas/ScxAvail"
+          }
+        },
+        "required": [
+          "fetch",
+          "verify",
+          "roots",
+          "relay",
+          "adapters"
+        ],
+        "title": "ScxStatusOut",
         "type": "object"
       },
       "SectionLine": {
@@ -9211,6 +9642,19 @@
             ],
             "title": "Results Dir"
           },
+          "scx": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.11.0 SCX 드라이브에서 받은 세션: {root, rad_rel, h3d_rel, missing_specs[{spec, src, reason}]} (rel 은 루트 기준)",
+            "title": "Scx"
+          },
           "state_includes": {
             "default": [],
             "description": "v0.8.0 누적 씬: rad include 중 이전 런 상태 파일(.sta/.str 또는 #RADIOSS STATE FILE) {rel, spec, kinds[geometry|initial], found}",
@@ -9405,6 +9849,19 @@
             ],
             "title": "Results Dir"
           },
+          "scx": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.11.0 SCX 드라이브에서 받은 세션: {root, rad_rel, h3d_rel, missing_specs[{spec, src, reason}]} (rel 은 루트 기준)",
+            "title": "Scx"
+          },
           "state": {
             "enum": [
               "OPEN",
@@ -9541,6 +9998,18 @@
             "title": "Done",
             "type": "boolean"
           },
+          "drive_rel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.11.0 source scx: SCX 드라이브 경로(루트 기준)",
+            "title": "Drive Rel"
+          },
           "index": {
             "title": "Index",
             "type": "integer"
@@ -9606,6 +10075,16 @@
           "size": {
             "title": "Size",
             "type": "integer"
+          },
+          "source": {
+            "default": "browser",
+            "description": "v0.11.0 scx = SCX 드라이브에서 워커가 받은 파일(PUT 409)",
+            "enum": [
+              "browser",
+              "scx"
+            ],
+            "title": "Source",
+            "type": "string"
           }
         },
         "required": [
@@ -10876,7 +11355,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.10.1"
+    "version": "0.11.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -16227,6 +16706,188 @@
         "summary": "Queue",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/esl/api/scx/browse": {
+      "get": {
+        "description": "루트(scx_drive.roots) 기준 폴더 목록(폴더 먼저·이름 순, 숨김 제외, hint). power 이상. 범위 밖·SPDM 422,\n없는 루트·경로 404, 항목 과다 413, 릴레이 다운·비활성 503 SCX_UNAVAILABLE{reason_code}.",
+        "operationId": "scx_browse_esl_api_scx_browse_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "root",
+            "required": true,
+            "schema": {
+              "maxLength": 32,
+              "minLength": 1,
+              "title": "Root",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 1024,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScxBrowseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scx Browse",
+        "tags": [
+          "scx"
+        ]
+      }
+    },
+    "/esl/api/scx/fetches": {
+      "post": {
+        "description": "rad(+include·엔진 rad 자동)·h3d 내려받기 요청: 업로드 세션(OPEN, <upload_root>/<사용자>/<UTC>_<이름>/) + SCX_FETCH 작업을\n한 트랜잭션에 만든다. 끝나면 워커가 기존 complete 검사(inspect_upload)를 실행 — 이후 기존 ?upload= 화면·POST /cases.",
+        "operationId": "scx_fetch_esl_api_scx_fetches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScxFetchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScxFetchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scx Fetch",
+        "tags": [
+          "scx"
+        ]
+      }
+    },
+    "/esl/api/scx/status": {
+      "get": {
+        "description": "기능별 사용 가능 여부(항상 200 — 사유는 본문 reason_code·reason). 릴레이 헬스는 hpc.scx.health_ttl_s 캐시, 한 번 3 s 한도.",
+        "operationId": "scx_status_esl_api_scx_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScxStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scx Status",
+        "tags": [
+          "scx"
         ]
       }
     },

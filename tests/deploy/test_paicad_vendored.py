@@ -46,7 +46,8 @@ def test_vendored_wheel_present_and_matches_lock():
     lock = _lock()
     w = _vendored()
     assert w.is_file(), f"동봉 wheel 없음: {w}"
-    assert sorted(p.name for p in WHEELS.iterdir()) == [lock["wheel"]]          # 옛 버전 wheel 이 남지 않음
+    scx = pw.read_lock(DEPLOY / "simdash_adapters.lock")["wheel"]                # v0.11.0: SCX 어댑터 wheel 도 동봉
+    assert sorted(p.name for p in WHEELS.iterdir()) == sorted([lock["wheel"], scx])   # 옛 버전 wheel 이 남지 않음
     data = w.read_bytes()
     assert 100_000 < len(data) < 5_000_000                                      # 정규화(무압축) paicad wheel 크기 범위
     assert hashlib.sha256(data).hexdigest() == lock["sha256"]                    # 파일 그대로 = lock(정규화본으로 커밋)
@@ -152,7 +153,7 @@ def test_collect_dry_run_uses_vendored(tmp_path, fake_frontend):
     r = subprocess.run(["bash", str(DEPLOY / "collect-offline.sh"), "--dry-run", "--no-download", "--out", str(out), "--frontend-dist",
                         str(fake_frontend)], capture_output=True, text=True, timeout=60, env=env)
     assert r.returncode == 0, r.stderr
-    line = [ln for ln in r.stdout.splitlines() if "paicad_wheel.py collect" in ln]
+    line = [ln for ln in r.stdout.splitlines() if "paicad_wheel.py collect --lock deploy/paicad.lock" in ln]
     assert len(line) == 1 and f"--wheel 'deploy/wheels/{_lock()['wheel']}'" in line[0] and "--repo" not in line[0]
     assert "저장소 동봉" in r.stdout and not out.exists()
 

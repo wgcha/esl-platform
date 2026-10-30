@@ -14,6 +14,10 @@ v0.7.0(esl_opt_run.md §7.2): S2 템플릿 업로드(`rad/` 아래 .fem 또는 .
 `template_source`(읽기만)·`save_template_check`(result.purpose = template, COMPLETED)로 연결한다.
 v0.9.0(esl_bead_doe.md §10): 비드 DOE STEP(`rad/<파일>.step|.stp`, purpose 없이 업로드)·② B 메시는 POST /doe/check-inputs 가
 `doe_source`·`step_check`(머리·크기)·`save_doe_check`(result.purpose = doe_step|doe_mesh, COMPLETED)로 연결한다.
+v0.11.0(esl_scx_relay.md §9.1·SR-D-6): SCX 드라이브에서 고르기 — POST /scx/fetches 가 OPEN 세션(files [])과 SCX_FETCH 작업을 같이
+만들고, 워커가 files[] 에 `source: "scx"`·`drive_rel` 항목을 더한 뒤 같은 `inspect_upload` 로 result(+ `scx`)를 저장한다.
+scx 항목에는 브라우저 PUT 409 UPLOAD_SCX_MANAGED, 비종료 SCX_FETCH 가 있는 세션은 파일 추가·빼기·complete·취소 409
+UPLOAD_SCX_BUSY 이고 stale 정리에서 건너뛴다. 누락 include 는 작업이 끝난 뒤 기존 POST /uploads/{id}/files 로 같은 세션에.
 """
 
 from __future__ import annotations
@@ -77,6 +81,24 @@ def _owned(conn, principal: Principal, upload_id: str, *, for_update: bool = Fal
 def _require_open(up: dict[str, Any]) -> None:
     if up["state"] != OPEN:
         raise conflict("UPLOAD_CLOSED", f"이미 끝난 업로드입니다({up['state']})", state=up["state"])
+
+
+def _scx_job(conn, upload_id: str) -> dict[str, Any] | None:
+    from ...core.repositories import jobs as jobs_repo
+
+    return jobs_repo.active_upload_job(conn, upload_id)
+
+
+def _require_not_fetching(conn, upload_id: str) -> None:
+    """v0.11.0: 비종료 SCX_FETCH 가 있는 세션은 파일 추가·빼기·complete·취소 불가(워커가 쓰는 중)."""
+    job = _scx_job(conn, upload_id)
+    if job is not None:
+        raise conflict("UPLOAD_SCX_BUSY", "SCX 에서 내려받는 중입니다 — 끝난 뒤(또는 작업 취소 뒤) 다시 하세요", job_id=job["id"])
+
+
+def _reject_scx_file(f: dict[str, Any]) -> None:
+    if f.get("source") == "scx":
+        raise conflict("UPLOAD_SCX_MANAGED", f"SCX 에서 내려받는 파일은 브라우저로 올릴 수 없습니다: {f['rel']}", rel=f["rel"])
 
 
 def _segs(f: dict[str, Any]) -> list[str]:
@@ -193,7 +215,8 @@ def upload_out(up: dict[str, Any], cfg) -> dict[str, Any]:
             rec = _received(up, f) if (up["state"] == OPEN or done) and not removed else 0
             tot = rec
             ch = [[0, n]] if (done and n) else []
-        files.append({"index": i, "rel": f["rel"], "size": size, "received": rec, "received_total": tot, "chunks": ch,
+        files.append({"index": i, "rel": f["rel"], "source": f.get("source") or "browser", "drive_rel": f.get("drive_rel"),
+                      "size": size, "received": rec, "received_total": tot, "chunks": ch,
                       "n_chunks": n, "removed": removed, "meta": f.get("meta"), "done": done,
                       "sha256": f.get("sha256"), "sha256_expected": f.get("sha256_expected")})
     live = [f for f in files if not f["removed"]]
@@ -440,6 +463,7 @@ def add_files(ctx: AppContext, principal: Principal, upload_id: str, body) -> di
         up = _owned(conn, principal, upload_id, for_update=True)
         require_execute(principal, up["project_id"])
         _require_open(up)
+        _require_not_fetching(conn, upload_id)
         session = (session_proto(up), session_chunk(up, cfg)) if up["files"] else None
         new = _norm_files(ctx, body.files, up["files"], session)
         client = _session_client(up)
@@ -513,6 +537,7 @@ def _plan(ctx: AppContext, principal: Principal, upload_id: str, index: int, off
     f = up["files"][index]
     if f.get("removed"):
         raise conflict("UPLOAD_FILE_REMOVED", f"목록에서 뺀 파일입니다: {f['rel']}", rel=f["rel"])
+    _reject_scx_file(f)
     if not _is_p2(f):
         return ChunkPlan(mode=1, upload_id=upload_id, index=index, offset=offset)
     size, c = int(f["size"]), int(f["chunk"])
@@ -759,6 +784,7 @@ def put_chunk_v1(ctx: AppContext, principal: Principal, upload_id: str, index: i
         f = files[index]
         if f.get("removed"):
             raise conflict("UPLOAD_FILE_REMOVED", f"목록에서 뺀 파일입니다: {f['rel']}", rel=f["rel"])
+        _reject_scx_file(f)
         if f.get("done"):
             raise conflict("UPLOAD_FILE_DONE", f"이미 다 받은 파일입니다: {f['rel']}", received=int(f["size"]))
         p = U.target_path(up["dir_path"], _segs(f), create_parents=True, upload_root=root)
@@ -849,6 +875,7 @@ def _remove_file(ctx: AppContext, principal: Principal, upload_id: str, index: i
             raise conflict("UPLOAD_CLOSED", f"이미 끝난 업로드입니다({up['state']})", state=up["state"])
         if up["state"] == COMPLETED and _case_uses_upload(conn, up):
             raise conflict("UPLOAD_IN_USE", "이 업로드로 만든 Case 가 있어 파일을 뺄 수 없습니다")
+        _require_not_fetching(conn, upload_id)
         key = (upload_id, index)
         with _GUARD:
             if any(i == index for i, _k in _INFLIGHT.get(upload_id, ())) or key in _REMOVING:
@@ -1061,6 +1088,11 @@ def _pending_item(cfg, i: int, f: dict[str, Any], received: int) -> dict[str, An
     return {"index": i, "rel": f["rel"], "missing": missing}
 
 
+def scx_meta(up: dict[str, Any]) -> dict[str, Any] | None:
+    """SCX 세션이면 마지막 SF_REGISTER 가 기록한 출처(result.scx 가 add_files 로 지워진 경우 — files[] 의 scx 표지)."""
+    return next(((f.get("scx_session") or None) for f in up["files"] if f.get("scx_session")), None)
+
+
 def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str, Any]:
     require_config_ok(ctx)
     _upload_root(ctx)
@@ -1075,6 +1107,7 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
         if up["state"] == COMPLETED and up.get("result"):
             return {"upload_id": upload_id, "state": COMPLETED, **up["result"]}
         _require_open(up)
+        _require_not_fetching(conn, upload_id)
         pending = []
         for i, f in enumerate(up["files"]):
             if f.get("removed"):
@@ -1092,6 +1125,9 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
         if pending:
             raise conflict("UPLOAD_INCOMPLETE", f"아직 다 받지 못한 파일이 {len(pending)}개 있습니다", pending=pending[:100])
         res = inspect_upload(ctx, up)
+        prev_scx = (up.get("result") or {}).get("scx") or scx_meta(up)
+        if prev_scx:
+            res["scx"] = prev_scx                   # v0.11.0: SCX 세션 출처(누락 include 를 추가한 뒤 complete 해도 유지)
         vals: dict[str, Any] = {"result": res, "updated_at": func.now()}
         if res["ok"]:
             vals.update(state=COMPLETED, completed_at=func.now())
@@ -1312,6 +1348,7 @@ def cancel(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str, A
         if up["state"] == COMPLETED:
             raise conflict("UPLOAD_COMPLETED", "완료된 업로드는 취소할 수 없습니다(Case 입력으로 쓰일 수 있음)")
         _require_open(up)
+        _require_not_fetching(conn, upload_id)
         with _GUARD:
             busy = bool(_INFLIGHT.get(upload_id)) or any(k[0] == upload_id for k in _REMOVING)
         if busy:
@@ -1336,6 +1373,8 @@ def cleanup_stale(ctx: AppContext, now: _dt.datetime | None = None) -> list[str]
         with ctx.engine.begin() as conn:
             up = _row(conn, uid, for_update=True)
             if up["state"] != OPEN or up["updated_at"] >= cutoff:
+                continue
+            if _scx_job(conn, uid) is not None:     # v0.11.0: SCX_FETCH 진행 중(대기 포함) 세션은 정리하지 않음
                 continue
             _retire(ctx, conn, up, STALE, strict=False)
             out.append(uid)

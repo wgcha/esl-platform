@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "source": "wgcha/physicsai-platform",
+  "branch": "release/v0.2.14",
+  "commit": "a363a89e8f93d3acfe90a9601318bf4f6cade0a7",
+  "subdir": "packages/simdash_adapters",
+  "wheel": "simdash_adapters-0.1.0-py3-none-any.whl",
+  "sha256": "356007e7ec48108a6e37cd532e4694b8d6c4d4cd0e16144b1aca9d8aff1db8dc",
+  "build_requires": ["setuptools==80.9.0"],
+  "console_script": null,
+  "runtime_requires": []
+}

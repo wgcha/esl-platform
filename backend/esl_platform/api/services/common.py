@@ -86,9 +86,9 @@ def case_out(ctx: AppContext, case: dict[str, Any], stage_status: dict | None = 
 
 
 def require_job_view(principal: Principal, job: dict[str, Any]) -> None:
-    """OPT_RUN 작업(opt_runs 에 묶인 작업)·비드 DOE 작업(bead_does)은 그 프로젝트 조회 권한이 있어야 조회(최적화 실행·
-    DOE 연구 조회와 같은 규칙)."""
-    if (job.get("opt_run_id") or job.get("bead_doe_id")) and principal.role(job["project_id"]) is None:
+    """OPT_RUN 작업(opt_runs 에 묶인 작업)·비드 DOE 작업(bead_does)·SCX_FETCH(업로드 세션, v0.11.0)는 그 프로젝트 조회 권한이
+    있어야 조회(최적화 실행·DOE 연구 조회와 같은 규칙)."""
+    if (job.get("opt_run_id") or job.get("bead_doe_id") or job.get("upload_id")) and principal.role(job["project_id"]) is None:
         raise forbidden("이 프로젝트의 조회 권한이 없습니다")
 
 

@@ -111,13 +111,19 @@ try {
                 'sha256 불일치면 lock 을 바꾸지 말고 관리자 매뉴얼 paicad 절(lock 갱신)을 따르세요. 강성 평가 스터디 없이 묶으려면 -NoPaicad')
         }
     }
+    # v0.11.0 SCX 릴레이 어댑터 simdash_adapters: 저장소 동봉 wheel → lock 대조(불일치면 중단) → 묶음 wheels
+    $scxVendored = Join-Path 'deploy\wheels' ((Get-Content -Raw -Encoding UTF8 -LiteralPath 'deploy\simdash_adapters.lock' | ConvertFrom-Json).wheel)
+    Invoke-Step 'simdash_adapters wheel(deploy/simdash_adapters.lock — 동봉 wheel 정규화·sha256 대조) → dist/bundle/wheels' {
+        Invoke-Native 'simdash_adapters wheel 수집' $py @('-I', (Join-Path $PSScriptRoot 'paicad_wheel.py'), 'collect', '--lock', 'deploy/simdash_adapters.lock',
+            '--out-dir', 'dist/bundle/wheels', '--wheel', $scxVendored) 'git checkout -- deploy/wheels 로 동봉 wheel 을 되돌리세요(lock 은 고치지 마세요)'
+    }
     Invoke-Step "npm ci && npm run build (frontend, Node $($node.Version))" {
         # npm은 창에서 직접 친 것과 같이 콘솔 그대로(node-select.ps1 Invoke-EslNpm)
         Invoke-EslFrontendBuild -Node $node -RepoRoot $root
     }
     Invoke-Step 'copy frontend\dist, app(esl·backend\esl_platform·worker\esl_worker·migrations·alembic.ini·pyproject.toml·esl_service.py), config, deploy' {
         Copy-Item -Recurse -Force 'frontend\dist\*' 'dist\bundle\frontend\'
-        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl', 'resources\opt_method_sources.json', 'resources\doe_messages.json', 'resources\doe_method_sources.json') {
+        foreach ($it in 'esl', 'backend\esl_platform', 'worker\esl_worker', 'migrations', 'resources\tcl', 'resources\opt_method_sources.json', 'resources\doe_messages.json', 'resources\doe_method_sources.json', 'resources\scx_messages.json') {
             $dst = Join-Path 'dist\bundle\app' $it
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
             Copy-Item -Recurse -Force $it $dst

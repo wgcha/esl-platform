@@ -18,7 +18,7 @@ EXPECTED = [
     "RESOURCES.txt", "caddy/esl.caddy", "collect-offline.ps1", "collect-offline.sh", "dashboard-env.ps1", "deploy.example.json",
     "esl_service.py", "install-common.ps1", "install.bat", "install.ps1", "loopback-http.ps1", "node-select.ps1",
     "python-select.ps1", "requirements.lock", "setup.ps1", "setup_config.py", "uninstall-tasks.ps1", "update-repo.ps1",
-    "paicad.lock", "paicad_wheel.py",
+    "paicad.lock", "paicad_wheel.py", "simdash_adapters.lock",
     "update.bat", "update.ps1", "esl-service.ps1", "esl-start.bat", "esl-stop.bat", "esl-restart.bat",
     "demo/start-demo.bat", "demo/start-demo.ps1", "demo/stop-demo.bat", "demo/stop-demo.ps1", "demo/demo-python.ps1",
     "demo/demo_setup.py", "demo/demo_common.py", "demo/demo_db.py", "demo/demo_init.py", "demo/demo_procs.py",

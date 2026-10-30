@@ -1,4 +1,8 @@
-"""비드 DOE 형상 엔진 paicad wheel 수집·대조(계약 esl_bead_doe.md §6.4, BD-D-19). 표준 라이브러리만 쓴다.
+"""physicsai 패키지 wheel 수집·대조(계약 esl_bead_doe.md §6.4·BD-D-19 paicad, esl_scx_relay.md §13·SR-D-2 simdash_adapters).
+표준 라이브러리만 쓴다. lock 하나 = 패키지 하나: 패키지 이름 = lock.subdir 마지막 구간(packages/paicad → paicad,
+packages/simdash_adapters → simdash_adapters), wheel 이름 = <패키지>-<version>-py3-none-any.whl. v0.11.0: console_script 는
+null 허용(simdash_adapters — 실행 명령 없음), check 는 console_script 가 없으면 --module(기본 = lock 패키지)을 import 확인.
+파일 이름(paicad_wheel.py)은 호출부 호환을 위해 유지한다.
 
   python paicad_wheel.py collect --lock deploy/paicad.lock --out-dir <wheels> [--repo <physicsai 저장소>] [--wheel <파일>]
                                  [--work <임시 폴더>] [--python <빌드 Python>]
@@ -13,6 +17,9 @@
       설치 확인: paicad version --json(paicad ≥ min, ocp 있음 — 사유 코드 PAICAD_*), gmsh import(없으면 경고 GMSH_UNAVAILABLE).
       설치 venv 의 Python 으로 실행한다(gmsh 는 그 Python 으로 확인). --wheel(v0.10.1): 저장소 동봉 wheel(deploy/wheels) 등
       wheel 파일도 lock 과 대조(PAICAD_WHEEL_NOT_FOUND·PAICAD_WHEEL_MISMATCH). --exe·--wheel 중 하나 이상 — --wheel 만이면 파일 대조만.
+  python paicad_wheel.py check --lock deploy/simdash_adapters.lock [--module simdash_adapters.hpc] [--wheel <파일>]
+      console_script 가 null 인 lock(v0.11.0): 설치 venv 의 Python 으로 실행 — 별도 프로세스에서 모듈 import·버전 = lock 확인
+      (사유 코드 SCX_ADAPTER_*), simdash_adapters.hpc 면 ScxHpcGateway·ScxRadiossRequest 존재까지. --wheel 은 파일 대조.
 
 정규화: wheel(zip)을 같은 항목·같은 내용으로 다시 쓴다 — 무압축(ZIP_STORED, zlib 판 차이 없음), 시각 1980-01-01, 권한 0644,
 이름 순(.dist-info 는 끝, RECORD 는 맨 끝). 빌드 OS·시각·umask 와 무관하게 같은 소스 + 같은 setuptools(lock.build_requires)면
@@ -55,17 +62,19 @@ class LockError(ValueError):
 
 
 def read_lock(path: str | os.PathLike) -> dict[str, Any]:
-    """deploy/paicad.lock(JSON) 읽기·형식 검사."""
+    """deploy/<패키지>.lock(JSON) 읽기·형식 검사(paicad.lock·simdash_adapters.lock)."""
+    name = Path(path).name
     try:
         d = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
-        raise LockError(f"paicad.lock 을 읽을 수 없습니다: {path} ({exc})") from exc
+        raise LockError(f"{name} 을 읽을 수 없습니다: {path} ({exc})") from exc
     if not isinstance(d, dict):
-        raise LockError("paicad.lock 최상위가 객체가 아닙니다")
+        raise LockError(f"{name} 최상위가 객체가 아닙니다")
     miss = [k for k in LOCK_KEYS if k not in d]
     if miss:
-        raise LockError(f"paicad.lock 키 없음: {', '.join(miss)}")
+        raise LockError(f"{name} 키 없음: {', '.join(miss)}")
     errs = []
+    pkg = package_name(d)
     if not _SEMVER.match(str(d["version"])):
         errs.append("version")
     if not _REPO.match(str(d["source"])):
@@ -74,19 +83,32 @@ def read_lock(path: str | os.PathLike) -> dict[str, Any]:
         errs.append("commit(40자 소문자 16진)")
     if not _HEX64.match(str(d["sha256"])):
         errs.append("sha256(64자 소문자 16진)")
-    if d["wheel"] != f"paicad-{d['version']}-py3-none-any.whl":
-        errs.append("wheel(paicad-<version>-py3-none-any.whl)")
-    if str(d["subdir"]).strip("/") != "packages/paicad":
-        errs.append("subdir")
+    if not pkg or str(d["subdir"]).strip("/") != f"packages/{pkg}":
+        errs.append("subdir(packages/<패키지>)")
+    if d["wheel"] != f"{pkg}-{d['version']}-py3-none-any.whl":
+        errs.append("wheel(<패키지>-<version>-py3-none-any.whl)")
     if not isinstance(d["build_requires"], list) or not d["build_requires"] or not all(_PIN.match(str(x)) for x in d["build_requires"]):
         errs.append("build_requires(정확 고정 목록)")
-    if d["console_script"] != "paicad":
-        errs.append("console_script")
+    if pkg == "paicad":
+        if d["console_script"] != "paicad":
+            errs.append("console_script")
+    elif d["console_script"] is not None and not _SCRIPT.match(str(d["console_script"])):
+        errs.append("console_script(이름 또는 null)")
     if not isinstance(d["runtime_requires"], list):
         errs.append("runtime_requires")
     if errs:
-        raise LockError(f"paicad.lock 형식 오류: {', '.join(errs)}")
+        raise LockError(f"{name} 형식 오류: {', '.join(errs)}")
     return d
+
+
+_PKG = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SCRIPT = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+
+
+def package_name(lock: dict[str, Any]) -> str:
+    """lock.subdir 마지막 구간(= import 이름 = wheel 파일 이름 앞부분). 형식이 아니면 ""."""
+    last = str(lock.get("subdir") or "").strip("/").rsplit("/", 1)[-1]
+    return last if _PKG.match(last) else ""
 
 
 def _order(name: str) -> tuple[int, str]:
@@ -145,11 +167,12 @@ def verify_bytes(data: bytes, lock: dict[str, Any]) -> dict[str, Any]:
     m = wheel_meta(norm)
     sha = sha256_bytes(norm)
     problems = []
-    if m["name"].lower() != "paicad":
-        problems.append(f"이름 {m['name']!r} ≠ paicad")
+    pkg = package_name(lock)
+    if re.sub(r"[-_.]+", "_", m["name"].lower()) != pkg:
+        problems.append(f"이름 {m['name']!r} ≠ {pkg}")
     if m["version"] != lock["version"]:
         problems.append(f"버전 {m['version']} ≠ lock {lock['version']}")
-    if lock["console_script"] not in m["console_scripts"]:
+    if lock["console_script"] is not None and lock["console_script"] not in m["console_scripts"]:
         problems.append(f"실행 명령 {lock['console_script']} 없음")
     if sha != lock["sha256"]:
         problems.append(f"sha256 {sha} ≠ lock {lock['sha256']}")
@@ -165,10 +188,10 @@ def _run(argv: list[str], cwd: str | None = None) -> None:
 
 
 def export_source(lock: dict[str, Any], work: Path, repo: str | None) -> Path:
-    """lock 커밋의 packages/paicad 를 work/src 로 꺼낸다(git archive, core.autocrlf=false — 줄 끝 그대로). 원 저장소에는 쓰지 않는다."""
+    """lock 커밋의 packages/<패키지> 를 work/src 로 꺼낸다(git archive, core.autocrlf=false — 줄 끝 그대로). 원 저장소에는 쓰지 않는다."""
     git = shutil.which("git")
     if not git:
-        raise RuntimeError("git 이 없습니다(paicad 소스를 꺼내려면 git 필요 — 또는 --wheel 로 빌드된 wheel 을 주세요)")
+        raise RuntimeError("git 이 없습니다(패키지 소스를 꺼내려면 git 필요 — 또는 --wheel 로 빌드된 wheel 을 주세요)")
     commit, sub = lock["commit"], str(lock["subdir"]).strip("/")
     if repo:
         gd = repo
@@ -204,7 +227,7 @@ def build_wheel(src: Path, work: Path, lock: dict[str, Any], python: str) -> byt
     out = work / "whl"
     _run([str(vpy), "-m", "pip", "wheel", "--disable-pip-version-check", "--no-deps", "--no-build-isolation",
           "-w", str(out), str(src)])
-    whl = sorted(out.glob("paicad-*.whl"))
+    whl = sorted(out.glob(f"{package_name(lock)}-*.whl"))
     if len(whl) != 1:
         raise RuntimeError(f"빌드 결과 wheel 이 1개가 아닙니다: {[w.name for w in whl]}")
     return whl[0].read_bytes()
@@ -214,7 +237,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     lock = read_lock(args.lock)
     out_dir = Path(args.out_dir)
     tmp_own = not args.work
-    work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="paicad_build_"))
+    work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix=f"{package_name(lock) or 'pkg'}_build_"))
     try:
         if args.wheel:
             data = Path(args.wheel).read_bytes()
@@ -245,21 +268,80 @@ def _vt(s: Any) -> tuple[int, ...]:
     return tuple(int(x) for x in m.groups()) if m else (-1,)
 
 
+CODE_PREFIX = {"paicad": "PAICAD", "simdash_adapters": "SCX_ADAPTER"}
+
+
+def code_prefix(lock: dict[str, Any]) -> str:
+    pkg = package_name(lock)
+    return CODE_PREFIX.get(pkg, pkg.upper() or "WHEEL")
+
+
 def check_wheel(lock: dict[str, Any], path: str) -> dict[str, Any]:
-    """wheel 파일(저장소 동봉 deploy/wheels 등) ↔ lock 대조. {path, ok, sha256, problems(사유 코드 PAICAD_WHEEL_*)}."""
+    """wheel 파일(저장소 동봉 deploy/wheels 등) ↔ lock 대조. {path, ok, sha256, problems(사유 코드 <PFX>_WHEEL_* —
+    paicad = PAICAD_WHEEL_*, simdash_adapters = SCX_ADAPTER_WHEEL_*)}."""
+    pfx = code_prefix(lock)
     out: dict[str, Any] = {"path": path, "ok": False, "sha256": None, "problems": []}
     if not path or not os.path.isfile(path):
-        out["problems"].append(f"PAICAD_WHEEL_NOT_FOUND: wheel 파일 없음({path})")
+        out["problems"].append(f"{pfx}_WHEEL_NOT_FOUND: wheel 파일 없음({path})")
         return out
     try:
         v = verify_bytes(Path(path).read_bytes(), lock)
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
-        out["problems"].append(f"PAICAD_WHEEL_MISMATCH: wheel 을 읽을 수 없음({exc})")
+        out["problems"].append(f"{pfx}_WHEEL_MISMATCH: wheel 을 읽을 수 없음({exc})")
         return out
     out["sha256"] = v["sha256"]
-    out["problems"] = [f"PAICAD_WHEEL_MISMATCH: {p}" for p in v["problems"]]
+    out["problems"] = [f"{pfx}_WHEEL_MISMATCH: {p}" for p in v["problems"]]
     out["ok"] = v["ok"]
     return out
+
+
+# 모듈 확인(별도 프로세스, -I): import → __version__(없으면 배포 메타데이터) 출력, simdash_adapters.hpc 는 SCX 이름 존재까지
+_MODULE_PROBE = (
+    "import importlib, importlib.metadata as md, json, sys\n"
+    "m = importlib.import_module(sys.argv[1])\n"
+    "top = sys.argv[1].split('.')[0]\n"
+    "v = getattr(importlib.import_module(top), '__version__', None)\n"
+    "try:\n    v = v or md.version(sys.argv[2])\nexcept Exception:\n    pass\n"
+    "need = sys.argv[3].split(',') if len(sys.argv) > 3 and sys.argv[3] else []\n"
+    "print(json.dumps({'version': v, 'missing': [n for n in need if not hasattr(m, n)]}))\n"
+)
+MODULE_NEEDS = {"simdash_adapters.hpc": ("ScxHpcGateway", "ScxRadiossRequest")}
+
+
+def check_module(lock: dict[str, Any], module: str | None = None, *, python: str | None = None, timeout: float = 60.0,
+                 wheel: str | None = None) -> dict[str, Any]:
+    """console_script 가 없는 lock(v0.11.0 simdash_adapters)의 설치 확인: 설치 venv 의 Python(-I, 별도 프로세스)으로 module
+    (기본 = lock 패키지) import → 버전 = lock(아니면 <PFX>_VERSION_MISMATCH), MODULE_NEEDS 이름 존재(<PFX>_MISSING).
+    wheel 을 주면 파일 대조도(check_wheel). shell=False, 인자 고정."""
+    pfx = code_prefix(lock)
+    mod = module or package_name(lock)
+    res: dict[str, Any] = {"ok": False, "module": mod, "version": None, "pinned": lock["version"], "commit": lock["commit"],
+                           "problems": [], "warnings": []}
+    if wheel is not None:
+        w = check_wheel(lock, wheel)
+        res["wheel"] = {k: w[k] for k in ("path", "ok", "sha256")}
+        res["problems"].extend(w["problems"])
+    py = python or sys.executable
+    dist = package_name(lock).replace("_", "-")
+    try:
+        r = subprocess.run([py, "-I", "-c", _MODULE_PROBE, mod, dist, ",".join(MODULE_NEEDS.get(mod, ()))],
+                           capture_output=True, text=True, timeout=timeout)
+        out = json.loads((r.stdout or "").strip().splitlines()[-1]) if r.returncode == 0 and r.stdout.strip() else None
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+        out = None
+        res["problems"].append(f"{pfx}_MISSING: {mod} 확인 실패({type(exc).__name__})")
+    else:
+        if not isinstance(out, dict):
+            tail = ((r.stderr or "").strip().splitlines() or [""])[-1][:200]
+            res["problems"].append(f"{pfx}_MISSING: {mod} 를 불러오지 못함({tail})")
+    if isinstance(out, dict):
+        res["version"] = out.get("version")
+        if out.get("missing"):
+            res["problems"].append(f"{pfx}_MISSING: {mod} 에 {', '.join(out['missing'])} 없음")
+        if res["version"] != lock["version"]:
+            res["problems"].append(f"{pfx}_VERSION_MISMATCH: {res['version']} ≠ lock {lock['version']}")
+    res["ok"] = not res["problems"]
+    return res
 
 
 def check(lock: dict[str, Any], exe: str | None, *, min_version: str | None = None, python: str | None = None,
@@ -331,10 +413,13 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--exe", default="")
     k.add_argument("--wheel", default=None)
     k.add_argument("--min-version", default="")
+    k.add_argument("--module", default="")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "collect":
             res = collect(a)
+        elif a.cmd == "check" and (a.module or read_lock(a.lock)["console_script"] is None):
+            res = check_module(read_lock(a.lock), a.module or None, wheel=a.wheel)
         elif a.cmd == "check":
             if not a.exe and a.wheel is None:
                 raise ValueError("check 에는 --exe 또는 --wheel 이 필요합니다")

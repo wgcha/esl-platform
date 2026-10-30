@@ -7,7 +7,8 @@ worker.state_dir 쓰기, worker.slots(작업별 메모리·코어), 서버 h3d �
 비드 최적화(v0.7.0 esl_opt_run.md §11: altair.optistruct_path·esl_bead_post.tcl·_templates·_opt 쓰기 — GET /opt/settings.solver_ready 와
 같은 함수 opt_solver_status), 비드 DOE(v0.9.0 esl_bead_doe.md §14: bead_doe.paicad.exe 존재(stat 만 — paicad 를 실행하지
 않음), 워커가 heartbeat 에 기록한 paicad 버전·OCP·gmsh(§6.5), gmsh 모듈 설치 여부(find_spec — import 하지 않음),
-resources/doe_*.json, _doe 쓰기),
+resources/doe_*.json, _doe 쓰기), SCX 릴레이(v0.11.0 esl_scx_relay.md §13: simdash_adapters import·lock 일치, hpc.scx 검증,
+비밀 파일 형식·권한(값은 출력 안 함), 릴레이 health·max_download_bytes·drive_base, worker.xfer_lanes),
 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
@@ -329,6 +330,133 @@ def check_bead_doe(s, platform: str) -> list[Item]:
     return out
 
 
+# ---------------------------------------------------------------- v0.11.0 SCX 릴레이(계약 esl_scx_relay.md §13)
+_WIDE_SIDS = {"S-1-1-0": "Everyone", "S-1-5-32-545": "Users", "S-1-5-11": "Authenticated Users"}
+
+
+def secret_acl_wide(path: str, platform: str) -> tuple[bool | None, str]:
+    """비밀 파일을 넓은 주체가 읽을 수 있는지(SR-D-18): Windows = DACL 의 허용 ACE 중 Everyone·Users·Authenticated Users,
+    POSIX = 그룹·기타 읽기 비트. (넓음 여부 | 판정 불가 None, 설명). 외부 명령 없음(ctypes·stat 만)."""
+    if not platform.startswith("win"):
+        try:
+            mode = os.stat(path).st_mode
+        except OSError as exc:
+            return None, f"stat 실패({type(exc).__name__})"
+        wide = bool(mode & 0o044)
+        return wide, ("그룹·기타 읽기 가능" if wide else "소유자만")
+    try:  # pragma: no cover - Windows 전용
+        import ctypes
+        from ctypes import wintypes
+
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        DACL_SECURITY_INFORMATION, SE_FILE_OBJECT = 4, 1
+        pdacl, psd = ctypes.c_void_p(), ctypes.c_void_p()
+        rc = advapi.GetNamedSecurityInfoW(ctypes.c_wchar_p(path), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, None, None,
+                                          ctypes.byref(pdacl), None, ctypes.byref(psd))
+        if rc != 0:
+            return None, f"보안 정보를 읽지 못함(오류 {rc})"
+        try:
+            if not pdacl.value:
+                return True, "DACL 없음(모두 접근)"
+
+            class ACL(ctypes.Structure):
+                _fields_ = [("AclRevision", ctypes.c_ubyte), ("Sbz1", ctypes.c_ubyte), ("AclSize", wintypes.WORD),
+                            ("AceCount", wintypes.WORD), ("Sbz2", wintypes.WORD)]
+
+            class ACE_HEADER(ctypes.Structure):
+                _fields_ = [("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte), ("AceSize", wintypes.WORD)]
+
+            acl = ACL.from_address(pdacl.value)
+            found = []
+            for i in range(acl.AceCount):
+                pace = ctypes.c_void_p()
+                if not advapi.GetAce(ctypes.c_void_p(pdacl.value), i, ctypes.byref(pace)):
+                    continue
+                hdr = ACE_HEADER.from_address(pace.value)
+                if hdr.AceType != 0:                     # ACCESS_ALLOWED_ACE_TYPE 만
+                    continue
+                mask = ctypes.c_uint32.from_address(pace.value + 4).value
+                if not mask & 0x80000001 and not mask & 0x10000000:   # GENERIC_READ|FILE_READ_DATA|GENERIC_ALL
+                    continue
+                psid = ctypes.c_void_p(pace.value + 8)
+                s = ctypes.c_wchar_p()
+                if advapi.ConvertSidToStringSidW(psid, ctypes.byref(s)):
+                    sid = s.value
+                    kernel.LocalFree(s)
+                    if sid in _WIDE_SIDS:
+                        found.append(_WIDE_SIDS[sid])
+            return bool(found), (", ".join(sorted(set(found))) + " 읽기 허용") if found else "넓은 주체 읽기 없음"
+        finally:
+            kernel.LocalFree(psd)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"ACL 확인 실패({type(exc).__name__})"
+
+
+def check_scx(s, platform: str, *, use_relay: bool = True) -> list[Item]:
+    """SCX 릴레이: 어댑터 import·lock 일치, hpc.scx 검증, 비밀 파일 형식·권한, health(연결·job_api·writes_active·
+    relay_base 안의 drive_base·max_download_bytes), XFER 레인 수. 비밀 값은 출력하지 않는다."""
+    from esl_platform.core.scx import gateway, settings as scx_settings, status as scx_status
+
+    cfg = scx_settings.scx_cfg(s)
+    if cfg is None and not s.scx_drive.enabled and not s.verify_drop.enabled:
+        return [Item("hpc.scx", SKIP, "hpc.scx 없음 — SCX 드라이브에서 고르기·검증 낙하 안 씀")]
+    out: list[Item] = []
+    ad = gateway.adapter_status(refresh=True)
+    lock_path = os.path.join(_ROOT, "deploy", "simdash_adapters.lock")
+    lock_note = ""
+    if os.path.isfile(lock_path):
+        try:
+            with open(lock_path, encoding="utf-8-sig") as fh:
+                lk = json.load(fh)
+            if lk.get("commit") != gateway.ADAPTER_COMMIT or lk.get("version") != gateway.ADAPTER_VERSION:
+                out.append(Item("scx.adapter.lock", FAIL, "코드의 어댑터 고정값이 deploy/simdash_adapters.lock 과 다릅니다"))
+            lock_note = f", lock {str(lk.get('commit'))[:12]}"
+        except (OSError, ValueError):
+            out.append(Item("scx.adapter.lock", WARN, "deploy/simdash_adapters.lock 을 읽을 수 없습니다"))
+    if ad["ok"]:
+        st = OK if ad.get("version") == gateway.ADAPTER_VERSION else WARN
+        out.append(Item("scx.adapter", st, f"simdash_adapters {ad.get('version')} (커밋 {gateway.ADAPTER_COMMIT[:12]}{lock_note})"))
+    else:
+        out.append(Item("scx.adapter", WARN, f"{ad.get('reason')} — SCX 기능만 비활성(설치·업데이트 다시 실행)"))
+        return out
+    if cfg is None:
+        out.append(Item("hpc.scx", WARN, "hpc.scx 없음 — scx_drive/verify_drop 이 켜져 있어도 비활성(SCX_NOT_CONFIGURED)"))
+        return out
+    probs = scx_settings.config_problems(s)
+    out.append(Item("hpc.scx", WARN if probs else OK, "; ".join(probs)[:500] if probs else
+                    f"relay {cfg.relay_url}, client {cfg.client_name}, roots {len(s.scx_drive.roots)}개"))
+    from simdash_adapters.hpc import read_secret_file
+
+    val, why = read_secret_file(cfg.secret_file)
+    if val is None:
+        out.append(Item("hpc.scx.secret_file", WARN, f"{cfg.secret_file}: {why} (SCX_SECRET_INVALID)"))
+    else:
+        wide, note = secret_acl_wide(cfg.secret_file, platform)
+        out.append(Item("hpc.scx.secret_file", WARN if wide else OK,
+                        f"{cfg.secret_file} — 형식 OK, 권한 {note}" + (" (SCX_SECRET_ACL_WIDE)" if wide else "")))
+    out.append(Item("worker.xfer_lanes", OK, f"XFER 레인 {s.worker.xfer_lanes}개(SCX 전송 동시 수)"))
+    if probs or val is None or not use_relay:
+        return out
+    st = scx_status.evaluate(s, None, force=True)
+    rel = st["relay"]
+    if not rel["reachable"]:
+        f = st["fetch"] if st["fetch"]["reason_code"] not in ("SCX_FETCH_DISABLED",) else st["verify"]
+        out.append(Item("scx.relay", WARN, f"{f['reason_code']}: {f['reason']}"))
+        return out
+    h = st.get("_health") or {}
+    out.append(Item("scx.relay", OK, f"연결됨(drive_mode {h.get('drive_mode')}, job_api {rel['job_api']}, "
+                                    f"writes_active {rel['writes_active']}, queue_paused {rel['queue_paused']})"))
+    mdb = rel.get("max_download_bytes")
+    if isinstance(mdb, int) and mdb < int(cfg.max_download_bytes):
+        out.append(Item("scx.relay.max_download_bytes", WARN,
+                        f"대시보드 상한 {mdb} B < hpc.scx.max_download_bytes {cfg.max_download_bytes} B — 큰 h3d(30 GB) 는 받을 수 "
+                        "없음(대시보드 SIMDASH_SCX_RELAY_MAX_DOWNLOAD_BYTES ≥ 64 GiB 권장)"))
+    if not scx_status._base_inside(cfg.drive_base, str(h.get("relay_base") or "")):
+        out.append(Item("hpc.scx.drive_base", WARN, f"{cfg.drive_base} 가 relay_base 밖(SCX_BASE_OUTSIDE_RELAY — 검증 낙하 불가)"))
+    return out
+
+
 def _paicad_record(conn) -> Item:
     """워커가 heartbeat info.paicad 에 기록한 paicad 점검 결과(§6.5)."""
     from esl_platform.core.repositories import doe as doe_repo
@@ -477,6 +605,7 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
     items += check_h3d_extract(s, plat)
     items += check_opt_run(s, plat)
     items += check_bead_doe(s, plat)
+    items += check_scx(s, plat)
     items.append(check_limiter(s.worker, plat))
 
     items += check_solver(lc.core, plat)
