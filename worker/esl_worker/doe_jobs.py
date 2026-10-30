@@ -217,6 +217,9 @@ def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = ""
     echo(f"[esl-worker] {label}모델 전체 사본 prep/{rel}: 파일 {sm['n_files']}개 {sm['total_mb']:.1f} MB "
          f"(Case 폴더 밖 {sm['n_outside']}개, 엔진 rad {'포함' if sm['engine_rad'] else '제외'}"
          + (f", rad/inc 아님 제외 {len(sm['skipped'])}개" if sm["skipped"] else "") + ")")
+    sf = sm.get("subset_format") or {}
+    echo(f"[esl-worker] {label}Radioss 입력 버전 {sf.get('version') or '판정 불가'}({sf.get('source') or '-'}) → /SUBSET 규칙 "
+         f"{sf.get('used')}(설정 {sf.get('setting')})")
     echo(f"[esl-worker] {label}스캔 정규화 {sm['n_normalized']}건 "
          + json.dumps(sm["normalized"], ensure_ascii=False, sort_keys=True))
     return os.path.join(ex.cdir, "prep", rel), man

@@ -66,7 +66,7 @@ SETS = "\n".join([
     "/SUBSET/5", "#title", "SUB-SOLIDS", "#  isubs1", I(6),
     "/SUBSET/6", "SUB-TET", "",
     "/SURF/SUBSET/EXT/1362", "#title", "SURF-SUBSET", I(5),
-    "/GRNOD/GENE/20", "#title", "GLASS-NODES", "#     Ibeg      Iend      Iinc", I(201, 204, 1),
+    "/GRNOD/GENE/20", "#title", "GLASS-NODES", "#  first_ID   last_ID", I(201, 202, 203, 204),
     "/GRNOD/NODE/22", "CHR-NODES", I(1, 2, 3),
     "/GRNOD/SUBSET/23", "G-SUBSET", I(6),
 ]) + "\n"
@@ -186,7 +186,7 @@ def test_normalize_cards(tmp_path):
     # (b) /GRNOD/SUBSET → /GRNOD/PART, (c) /GRNOD/GENE → /GRNOD/NODE
     assert block(s, "/GRNOD/PART/23") == ["/GRNOD/PART/23", "G-SUBSET", I(80)]
     g = block(s, "/GRNOD/NODE/20")
-    assert g[:4] == ["/GRNOD/NODE/20", "#title", "GLASS-NODES", "#     Ibeg      Iend      Iinc"]
+    assert g[:4] == ["/GRNOD/NODE/20", "#title", "GLASS-NODES", "#  first_ID   last_ID"]
     assert A._ints(g[4]) == [201, 202, 203, 204]
     assert man["normalized"] == {"SURF/PART/EXT→SURF/PART": 1, "SURF/PART/EXT(솔리드)→SURF/SEG": 1,
                                  "SURF/PART/ALL(솔리드)→SURF/SEG": 1, "SURF/PART(솔리드)→SURF/SEG": 1,
@@ -276,3 +276,129 @@ def test_real_paicad_fixed_scan_on_staged(tmp_path):
     assert {1, 2, 3} <= ids                                            # shell-solid tie(3009): Ch/R secondary 고정
     assert kinds["INTER_TYPE2_SECONDARY"]["id"] == 3009
     assert kinds["INTER_TYPE2_MAIN"]["id"] == 3008 and {1, 2, 4, 5} <= ids   # shell-shell tie(3008): 유리 아래 main
+
+
+# ---------------------------------------------------------------- 검증 지적 보완
+def _model_from(lines_by_file, need):
+    M = A.Model()
+    for L in lines_by_file:
+        M.scan(L)
+    for L in lines_by_file:
+        M.scan_elems(L, need)
+    return M
+
+
+def _e1():
+    return [bn(0, 0, 0), bn(1, 0, 0), bn(1, 1, 0), bn(0, 1, 0), bn(0, 0, 1), bn(1, 0, 1), bn(1, 1, 1), bn(0, 1, 1)]
+
+
+def test_shell_real_fields_and_mixed_surf():
+    shell = ["/SHELL/95", "#   shell_ID     node1     node2     node3     node4                 phi            Thick",
+             I(1, 1, 2, 5, 4) + f"{0.0:20.4f}{1.2:20.4f}", I(2, 2, 3, 6, 5) + f"{0.0:20.4f}{1.2:20.4f}",
+             "3, 4, 5, 8, 7, 0.0, 1.2"]                                      # 자유 형식 + 실수 칸
+    sh3 = ["/SH3N/95", I(4, 5, 6, 9) + f"{0.0:20.4f}{0.8:20.4f}"]
+    brick = ["/BRICK/75", I(201, *_e1())]
+    surf = ["/SURF/PART/EXT/1366", "#title", "MIXED SHELL+SOLID", I(95, 75)]
+    L = shell + sh3 + brick + surf
+    M = _model_from([L], {95, 75})
+    assert len(M.elems[95]["SHELL"]) == 3 and M.elems[95]["SH3N"] == [[5, 6, 9, 9]]
+    new, c = A.normalize_lines(L, A.norm_cfg(None), M, "x.inc")
+    seg = block("\n".join(new), "/SURF/SEG/1366")[3:]
+    assert len(seg) == 4 + 6 and c == {"SURF/PART/EXT(솔리드)→SURF/SEG": 1}
+    assert A._ints(seg[0])[1:] == [1, 2, 5, 4] and A._ints(seg[3])[1:] == [5, 6, 9, 9]
+
+
+def test_multiline_solids_and_ext_across_parts():
+    b20 = list(range(1, 21))
+    L = ["/BRIC20/60", I(1, *b20[:9]), I(*b20[9:19]), I(b20[19]),
+         "/TETRA10/61", I(2, 31, 32, 33, 34, 35, 36, 37, 38, 39), I(40)]
+    M = _model_from([L], {60, 61})
+    assert M.elems[60]["BRIC20"] == [b20[:8]] and M.elems[61]["TETRA10"] == [[31, 32, 33, 34]]
+    assert len(A.solid_segments(M, [60], "EXT", "x")) == 6 and len(A.solid_segments(M, [61], "EXT", "x")) == 4
+    M2 = A.Model()
+    M2.elems = {70: {"BRICK": [_e1()]}, 71: {"BRICK": [[x + 1 for x in _e1()]]}}   # 두 파트가 한 면으로 맞닿음
+    assert len(A.solid_segments(M2, [70, 71], "EXT", "x")) == 10              # 맞닿은 면 제외
+    assert len(A.solid_segments(M2, [70], "EXT", "x")) == 6
+    with pytest.raises(EslError):                                             # 모자란 마지막 요소 → 가짜 면 금지
+        _model_from([["/BRIC20/60", I(1, *b20[:9]), I(*b20[9:19])]], {60})
+
+
+def test_restore_keeps_special_bytes(tmp_path):
+    m = model(tmp_path)
+    p = m["case"] / "101_parts.inc"
+    raw = p.read_bytes().replace(b"/NODE\n", b"/NODE\n#\x85 note\x0c here\r\n", 1)
+    p.write_bytes(raw)
+    dest, man = stage(m, tmp_path)
+    st = (dest / "101_parts.inc").read_bytes()
+    assert b"#\x85 note\x0c here" in st                                       # 사본도 그대로(줄 분할 \r?\n)
+    of = tmp_path / "of"
+    of.mkdir()
+    a, b = node(5, 10.0, 10.0, 0.0).encode(), node(5, 10.0, 10.0, 2.0).encode()
+    (of / "101_parts.inc").write_bytes(st.replace(a, b))
+    assert A.restore_out_files(str(of), ["101_parts.inc"], man) == 1
+    assert (of / "101_parts.inc").read_bytes() == raw.replace(a, b)
+
+
+def test_include_too_deep(tmp_path):
+    m = model(tmp_path)
+    with pytest.raises(EslError) as e:
+        stage(m, tmp_path, max_depth=1)                                   # tie.inc → loop.inc 는 깊이 2
+    assert e.value.code == "INCLUDE_TOO_DEEP"
+
+
+def test_drop_derived_no_backup_inputs_untouched(tmp_path):
+    from esl.library import _util as U
+    m = model(tmp_path)
+    before = tree_sha(m["root"])
+    out = tmp_path / "out"
+    dest, _ = stage(m, tmp_path)
+    w = U.Writer(str(out), inputs=[("Case 입력", str(m["root"]))])
+    assert A.drop_derived(str(out), w.guard) == [str(dest)]
+    assert not dest.exists() and not (out / "_backup").exists()
+    os.symlink(m["root"], out / "prep" / "a_assem_full")                      # 링크면 링크만 제거
+    A.drop_derived(str(out), w.guard)
+    assert not os.path.lexists(out / "prep" / "a_assem_full") and tree_sha(m["root"]) == before
+    (m["root"] / "prep" / "assem_full").mkdir(parents=True)                   # 작업 폴더 밖은 삭제 거부
+    with pytest.raises(EslError):
+        A.drop_derived(str(m["root"]), w.guard)
+    assert (m["root"] / "prep" / "assem_full").is_dir()
+
+
+@pytest.mark.parametrize("ver,head", [(2024, "#RADIOSS STARTER\n"), (2026, "#RADIOSS STARTER\n#- Radioss 2026.1\n")])
+def test_radioss_2024_2026_format(tmp_path, ver, head):
+    """2024.1·2026.1 형식: /BEGIN Invers, /SUBSET = title + 하위 subset 목록, 파트 소속 = /PART 3번째 칸,
+    /GRNOD/GENE = first·last 쌍(줄당 ≤5), /SURF/SUBSET/EXT."""
+    m = model(tmp_path)
+    (m["case"] / "model_0000.rad").write_text(
+        f"{head}/BEGIN\nmodel\n{I(ver, 0)}\n{I(1, 2, 3)}\n                  Mg                  mm                   s\n"
+        "/INCLUDE \"101_parts.inc\"\n/INCLUDE \"../common/tie.inc\"\n/INCLUDE \"../../shared/sets.inc\"\n/END\n")
+    (m["root"] / "shared" / "sets.inc").write_text("\n".join([
+        "/SUBSET/5", "SUB-SOLIDS", "#    sub_ID1   sub_ID2", I(6),
+        "/SUBSET/6", "SUB-TET",
+        "/SURF/SUBSET/EXT/1362", "SURF-SUBSET", I(5),
+        "/GRNOD/GENE/20", "GLASS-NODES", I(201, 202, 203, 204, 0, 0),
+        "/GRNOD/NODE/22", "CHR-NODES", I(1, 2, 3)]) + "\n")
+    dest, man = stage(m, tmp_path)
+    assert man["subset_format"] == {"setting": "auto", "used": str(ver), "version": ver, "source": "begin"}
+    s = (dest / "_ext" / "shared" / "sets.inc").read_text()
+    assert len(block(s, "/SURF/SEG/1362")) - 2 == 16 and A._ints(block(s, "/GRNOD/NODE/20")[2]) == [201, 202, 203, 204]
+
+
+def test_subset_format_legacy_and_header_detect(tmp_path):
+    m = model(tmp_path)
+    (m["root"] / "shared" / "sets.inc").write_text("\n".join([
+        "/SUBSET/5", "OLD STYLE PARTS", I(75, 80),                       # 구형: 데이터 줄에 파트 id
+        "/SURF/SUBSET/EXT/1362", "SURF-SUBSET", I(5)]) + "\n")
+    (m["case"] / "model_0000.rad").write_text("#RADIOSS STARTER 2024.1\n/INCLUDE \"101_parts.inc\"\n"
+                                              "/INCLUDE \"../../shared/sets.inc\"\n")
+    with pytest.raises(EslError) as e:                                   # 2024 규칙(머리 주석 판정)에선 오판 대신 오류
+        stage(m, tmp_path)
+    assert e.value.code == "FIXED_PARSE_FAILED" and "/SURF/SUBSET/EXT/1362" in e.value.message
+    d = tmp_path / "leg"
+    d.mkdir()
+    man = A.copy_model_full(str(m["starter"]), str(m["case"]), [str(m["root"])], str(d), max_mb=10,
+                            fixed_scan={"subset_format": "legacy"})
+    assert man["subset_format"]["used"] == "legacy" and man["subset_format"]["source"] == "header"
+    assert len(block((d / "_ext" / "shared" / "sets.inc").read_text(), "/SURF/SEG/1362")) - 2 == 16
+    (m["case"] / "model_0000.rad").write_text("/INCLUDE \"101_parts.inc\"\n")
+    assert A.detect_version(str(m["starter"])) == {"version": None, "source": None}

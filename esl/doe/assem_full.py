@@ -3,8 +3,8 @@
 paicad 0.14.0 ``shell fixed-scan``·``tag``·``run`` 은 ``--assem-dir`` 아래 ``*.rad``·``*.inc`` 만 재귀로 읽는다. Case 입력
 폴더를 제자리로 넘기면 폴더 밖 include(상위·형제 폴더)의 /SURF·/GRNOD 를 못 찾는다(FIXED_PARSE_FAILED). 그래서
 
-- 기준 starter rad(``*_0000.rad``)의 include 트리를 끝까지 해석(``esl.rad.parser.scan_include_refs`` — 상대경로·중첩·
-  대소문자·순환 방지)해 전체 파일 집합을 구하고, 허용 입력 루트(storage.input_roots·upload_root·Case 폴더) 밖이면
+- 기준 starter rad(``*_0000.rad``)의 include 트리를 끝까지 해석(``esl.rad.parser`` include 해석 재사용 — 상대경로·중첩·
+  대소문자·순환 방지, 깊이 초과 INCLUDE_TOO_DEEP)해 전체 파일 집합을 구하고, 허용 입력 루트(storage.input_roots·upload_root·Case 폴더) 밖이면
   PATH_OUTSIDE_ROOT(파일을 읽지 않음), 링크 → PATH_OUTSIDE_ROOT, 못 찾은 include → RAD_PARSE_ERROR.
 - rad/inc 만 복사(원본은 읽기만, 복사 전후 sha256 같아야 함, 임시 파일 + os.replace). 합계 > ``same.max_assem_mb`` →
   ASSEM_TOO_LARGE. 엔진 rad(``<stem>_NNNN.rad``, NNNN≠0000)는 ``same.engine_rad`` 가 참일 때만.
@@ -53,7 +53,6 @@ def _within_roots(p: str, roots: list[str]) -> bool:
 def model_closure(starter: str, roots: list[str], *, include_path_map: dict | None = None, max_depth: int = 8,
                   engine_rad: bool = False) -> list[str]:
     """starter include 트리 전체 파일(정규화 절대경로, 첫 항목 = starter, 실제 경로 기준 중복 없음)."""
-    from esl.rad.parser import scan_include_refs
     starts = [os.path.normpath(os.path.abspath(starter))]
     m = _ENGINE_RE.match(os.path.basename(starts[0]))
     if engine_rad and m and m.group("n") == "0000":
@@ -77,13 +76,30 @@ def model_closure(starter: str, roots: list[str], *, include_path_map: dict | No
             seen.add(key)
             out.append(p)
 
+    from esl.rad.parser import _read_include_specs, _resolve_include
+    walked: set[str] = set()
+
+    def walk(path: str, depth: int, root_dir: str) -> None:
+        key = os.path.normcase(U.real_path(path))
+        if key in walked:                          # 순환·중복 include
+            return
+        walked.add(key)
+        for orig in _read_include_specs(path) or []:
+            if not orig:
+                continue
+            found, _, _c, _w, _m = _resolve_include(orig, root_dir, path, include_path_map)
+            if found is None:
+                raise EslError("RAD_PARSE_ERROR", f"인클루드 파일을 찾을 수 없음 ({os.path.basename(path)}): {orig}")
+            if depth + 1 > max_depth:
+                raise EslError("INCLUDE_TOO_DEEP", f"인클루드 깊이 제한({max_depth}) 초과 "
+                                                   f"({os.path.basename(path)}): {orig} — case.rad_include_max_depth")
+            fp = os.path.normpath(os.path.abspath(found))
+            add(fp, orig)
+            walk(fp, depth + 1, root_dir)
+
     for s in starts:
         add(s, os.path.basename(s))
-        for r in scan_include_refs(s, include_path_map, max_depth, follow=lambda p: _within_roots(p, roots)):
-            if not r["found"]:
-                raise EslError("RAD_PARSE_ERROR", f"인클루드 파일을 찾을 수 없음 ({os.path.basename(r['src'])}): "
-                                                  f"{r['spec']}")
-            add(r["path"], r["spec"])
+        walk(s, 0, os.path.dirname(s))
     if not engine_rad:
         out = [out[0]] + [p for p in out[1:] if not _is_engine(p)]
     return out
@@ -115,11 +131,29 @@ def layout(files: list[str], case_dir: str) -> dict[str, str]:
     return lay
 
 
+def drop_derived(out: str, guard, names=(DIR, A_DIR)) -> list[str]:
+    """재생성 가능한 파생물 <out>/prep/<name>/ 삭제(_backup 으로 옮기지 않음 — 재준비마다 모델 사본이 쌓이지 않게).
+    작업 폴더 안(guard = Writer.guard: 출력 루트 안·입력 밖)의 실제 폴더만, 링크·정션이면 그 링크만 제거."""
+    gone = []
+    for n in names:
+        p = os.path.join(out, "prep", n)
+        if not os.path.lexists(p):
+            continue
+        if os.path.islink(p) or _isjunction(p):
+            guard(os.path.dirname(p))
+            os.unlink(p) if os.path.islink(p) else os.rmdir(p)
+        else:
+            guard(p)
+            shutil.rmtree(p)
+        gone.append(p)
+    return gone
+
+
 # ---------------------------------------------------------------- 스캔 사본 정규화(카드 정의만 재작성)
 # paicad 0.14.0 이 읽는 집합 = /GRNOD/{NODE,PART,GRNOD}/<id>, /SURF/{PART,SEG,SURF}/<id>(id = kw[2]). 그 밖 형태를 같은
 # 의미의 지원 형태로 바꾼다: (a) 키워드 규칙 [from, to](기본 SURF/PART/EXT|ALL → SURF/PART, 데이터 그대로)
 # (b) /SURF/SUBSET/<EXT|ALL>/<id>·/GRNOD/SUBSET/<id> → /SUBSET 트리(하위 subset·/PART 의 subset_ID, 순환 방지)를 모델
-# 전체에서 펼친 파트 목록의 /SURF/PART/<id>·/GRNOD/PART/<id> (c) /GRNOD/GENE/<id>(시작 끝 증분) → /GRNOD/NODE/<id>
+# 전체에서 펼친 파트 목록의 /SURF/PART/<id>·/GRNOD/PART/<id> (c) /GRNOD/GENE/<id>(first last 쌍)·GEN_INCR(first last incr) → /GRNOD/NODE/<id>
 # (d) /SURF/PART[/EXT|ALL]·/SURF/SUBSET[/EXT|ALL] 이 솔리드 파트를 포함하면 /SURF/SEG/<id>(쉘 = 요소, 솔리드 = 면:
 # EXT·옵션 없음 = 파트 안에서 공유되지 않는 외곽 면, ALL = 모든 면 중복 제거) — shell-shell·shell-solid tie 모두 스캔.
 MAX_EXPAND = 5_000_000
@@ -190,6 +224,7 @@ class Model:
         self.subsets: dict[int, list[int]] = {}
         self.part_subset: dict[int, int] = {}
         self.parts: set[int] = set()
+        self.fmt = "2024"           # /SUBSET 해석 규칙(2024·2026 = 하위 subset 목록만, legacy = 파트 id 도 허용)
         self.surf_parts: set[int] = set()          # /SURF/PART* 가 직접 가리키는 파트
         self.surf_subsets: set[int] = set()        # /SURF/SUBSET* 가 가리키는 subset
         self.elems: dict[int, dict[str, list]] = {}    # 파트 → {키워드: [연결 행]} (필요한 파트만)
@@ -204,27 +239,37 @@ class Model:
         return out
 
     def scan_elems(self, lines: list[str], need: set[int]) -> None:
-        """필요한 파트의 요소 연결(코너 노드) — 요소 ID 는 쓰지 않음(세그먼트 = 노드)."""
+        """필요한 파트의 요소 연결(코너 노드). 정수 칸(요소 ID·노드)만 읽고 뒤 실수 칸(phi·thick 등)은 무시,
+        여러 줄 카드(TETRA10·BRIC20)는 키워드별 노드 수만큼 정수를 모아 한 요소로(고정폭·자유 형식)."""
         for a, b in _blocks(lines):
             kw = _kw(lines[a])
             if len(kw) < 2 or not kw[1].isdigit():
                 continue
             head = kw[0].upper()
-            k = ELEM_NODES.get(head)
-            if k is None or int(kw[1]) not in need:
+            if head not in ELEM_NODES or int(kw[1]) not in need:
                 continue
+            k, total = ELEM_NODES[head], ELEM_TOTAL[head]
             rows = self.elems.setdefault(int(kw[1]), {}).setdefault(head, [])
+            buf: list[int] = []
             for i in range(a + 1, b):
                 ln = lines[i]
                 if not ln.strip() or _is_comment(ln):
                     continue
-                v = _ints(ln)
-                if not v or len(v) < (5 if head == "TETRA10" else 2):
-                    continue                                    # TETRA10 연속 줄 등
-                c = v[1:1 + k]
-                if head == "SH3N" or (head == "SHELL" and len(c) == 3):
+                v = _lead_ints(ln, 1 + total - len(buf))
+                if v is None:
+                    raise EslError("FIXED_PARSE_FAILED", f"/{head}/{kw[1]}: 요소 줄을 읽지 못함 {ln[:40]!r}")
+                buf += v
+                if len(buf) < 1 + total:
+                    continue
+                c = buf[1:1 + k]
+                buf = []
+                if head == "SH3N":
                     c = c[:3] + [c[2]]
-                rows.append((c + [0] * 4)[:max(k, 4)] if head in ("SHELL", "SH3N") else (c + [0] * k)[:k])
+                elif head == "SHELL" and (len(c) < 4 or c[3] == 0):
+                    c = c[:3] + [c[2]]
+                rows.append(c)
+            if buf:
+                raise EslError("FIXED_PARSE_FAILED", f"/{head}/{kw[1]}: 마지막 요소 줄이 모자람")
 
     def scan(self, lines: list[str]) -> None:
         for a, b in _blocks(lines):
@@ -269,7 +314,7 @@ class Model:
             for c in self.subsets[s]:
                 if c in self.subsets:
                     walk(c)
-                elif c in self.parts:
+                elif self.fmt == "legacy" and c in self.parts:
                     out.append(c)
                 else:
                     raise EslError("FIXED_PARSE_FAILED", f"{label}: /SUBSET {s} 의 하위 {c} 가 subset·파트 아님")
@@ -282,11 +327,30 @@ class Model:
 
 # 요소 키워드 → 읽을 코너 노드 수, 솔리드 면(코너 로컬 번호, 삼각면은 3개)
 ELEM_NODES = {"SHELL": 4, "SH3N": 3, "BRICK": 8, "BRIC20": 8, "TETRA4": 4, "TETRA10": 4, "PENTA6": 6}
+ELEM_TOTAL = {"SHELL": 4, "SH3N": 3, "BRICK": 8, "BRIC20": 20, "TETRA4": 4, "TETRA10": 10, "PENTA6": 6}  # 카드 노드 칸 수
 SHELL_KW = ("SHELL", "SH3N")
 _HEX = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
 _TET = [(0, 1, 2), (0, 1, 3), (1, 2, 3), (0, 2, 3)]
 _PEN = [(0, 1, 2), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)]
 SOLID_FACES = {"BRICK": _HEX, "BRIC20": _HEX, "TETRA4": _TET, "TETRA10": _TET, "PENTA6": _PEN}
+
+
+def _lead_ints(line: str, n: int) -> list[int] | None:
+    """줄 앞쪽 정수 칸 최대 n 개: 10칸 고정폭(빈칸 = 0, 줄 길이까지) 또는 자유 형식 토큰. 정수가 아니면 None.
+    뒤쪽 칸(실수 phi·thick 등)은 읽지 않는다."""
+    body = line.rstrip()
+    m = min(n, (len(body) + 9) // 10)
+    try:
+        vals = [int(t) if (t := body[k * 10:(k + 1) * 10].strip()) else 0 for k in range(m)]
+        if vals and vals[0] != 0:
+            return vals
+    except ValueError:
+        pass
+    toks = re.findall(r"[^\s,]+", line)[:n]
+    try:
+        return [int(t) for t in toks]
+    except ValueError:
+        return None
 
 
 def _faces(conn: np.ndarray, faces) -> np.ndarray:
@@ -317,9 +381,10 @@ def _clean(F: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def solid_segments(model: Model, pids: list[int], mode: str, label: str) -> list[list[int]]:
-    """파트 목록 → 세그먼트 [n1..n4]. 쉘 = 요소 자체(paicad /SURF/PART 와 같음), 솔리드 = 면(EXT = 그 파트의 다른 요소와
-    공유되지 않는 외곽 면, ALL = 모든 면 중복 제거). 혼합 파트는 합침."""
+    """파트 목록 → 세그먼트 [n1..n4]. 쉘 = 요소 자체(paicad /SURF/PART 와 같음), 솔리드 = 면(EXT = 같은 /SURF 안 솔리드
+    파트 전체를 합쳐 다른 요소와 공유되지 않는 외곽 면 — 파트끼리 맞닿은 면 제외, ALL = 모든 면 중복 제거). 혼합은 합침."""
     segs: list[np.ndarray] = []
+    F: list[np.ndarray] = []
     for pid in pids:
         el = model.elems.get(int(pid)) or {}
         if not any(el.values()):
@@ -327,16 +392,12 @@ def solid_segments(model: Model, pids: list[int], mode: str, label: str) -> list
         for kwd in SHELL_KW:
             if el.get(kwd):
                 segs.append(np.asarray(el[kwd], dtype=np.int64)[:, :4])
-        F = [_faces(np.asarray(el[k], dtype=np.int64), SOLID_FACES[k]) for k in SOLID_FACES if el.get(k)]
-        if not F:
-            continue
+        F += [_faces(np.asarray(el[k], dtype=np.int64), SOLID_FACES[k]) for k in SOLID_FACES if el.get(k)]
+    if F:
         G, key = _clean(np.concatenate(F, axis=0))
         _, first, inv, cnt = np.unique(key, axis=0, return_index=True, return_inverse=True, return_counts=True)
         inv = inv.reshape(-1)
-        if mode == "ALL":
-            segs.append(G[np.sort(first)])
-        else:
-            segs.append(G[cnt[inv] == 1])
+        segs.append(G[np.sort(first)] if mode == "ALL" else G[cnt[inv] == 1])
     if not segs:
         return []
     return np.concatenate(segs, axis=0).tolist()
@@ -353,7 +414,8 @@ def norm_cfg(fs: dict | None) -> dict:
     return {"enabled": bool(fs.get("enabled", True)),
             "rules": [([x.upper() for x in str(r[0]).split("/")], str(r[1]).split("/")) for r in fs.get("rules") or []],
             "expand_subset": bool(fs.get("expand_subset", True)), "expand_gene": bool(fs.get("expand_gene", True)),
-            "expand_solid": bool(fs.get("expand_solid", True))}
+            "expand_solid": bool(fs.get("expand_solid", True)),
+            "subset_format": str(fs.get("subset_format") or "auto")}
 
 
 def normalize_lines(lines: list[str], cfg: dict, model: Model, rel: str) -> tuple[list[str] | None, dict]:
@@ -415,25 +477,33 @@ def normalize_lines(lines: list[str], cfg: dict, model: Model, rel: str) -> tupl
                 keep = lines[a + 1:data[0] if data else b]
                 new = [f"/{up[0]}/PART" + tail(n)] + keep + _id_lines(pids)
                 key = f"{up[0]}/SUBSET→{up[0]}/PART"
-        if new is None and cfg["expand_gene"] and len(up) >= 3 and up[:2] == ["GRNOD", "GENE"] and kw[2].isdigit():
-            label = f"/GRNOD/GENE/{kw[2]} ({rel})"
+        if new is None and cfg["expand_gene"] and len(up) >= 3 and up[0] == "GRNOD" \
+                and up[1] in ("GENE", "GEN_INCR") and kw[2].isdigit():
+            # Radioss 2024.1·2026: /GRNOD/GENE 데이터 = (first_ID, last_ID) 쌍 줄당 ≤5(양 끝 포함, 증분 없음),
+            # /GRNOD/GEN_INCR = (first, last, incr) 세 개씩. 0 으로 채운 빈 쌍은 무시.
+            label = f"/GRNOD/{up[1]}/{kw[2]} ({rel})"
+            step = 2 if up[1] == "GENE" else 3
             t, data = _title_data(lines, a, b)
             ids: list[int] = []
             for i in data:
                 v = _ints(lines[i])
-                if not v or len(v) < 2:
-                    raise EslError("FIXED_PARSE_FAILED", f"{label}: 시작·끝·증분 줄을 읽지 못함 {lines[i][:40]!r}")
-                s0, s1, inc = v[0], v[1], (v[2] if len(v) > 2 and v[2] else 1)
-                if inc <= 0 or s1 < s0:
-                    raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 오류 {s0} {s1} {inc}")
-                ids.extend(range(s0, s1 + 1, inc))
-                if len(ids) > MAX_EXPAND:
-                    raise EslError("FIXED_PARSE_FAILED", f"{label}: 노드 {MAX_EXPAND}개 초과")
+                if not v or len(v) % step and any(v[len(v) - len(v) % step:]):
+                    raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 줄을 읽지 못함 {lines[i][:40]!r}")
+                for q in range(0, len(v) - len(v) % step, step):
+                    s0, s1 = v[q], v[q + 1]
+                    inc = v[q + 2] if step == 3 else 1
+                    if s0 == 0 and s1 == 0:
+                        continue
+                    if inc <= 0 or s1 < s0 or s0 <= 0:
+                        raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 오류 {s0} {s1}" + (f" {inc}" if step == 3 else ""))
+                    ids.extend(range(s0, s1 + 1, inc))
+                    if len(ids) > MAX_EXPAND:
+                        raise EslError("FIXED_PARSE_FAILED", f"{label}: 노드 {MAX_EXPAND}개 초과")
             if not ids:
                 raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 줄 없음")
             new = ["/GRNOD/NODE" + tail(2)] + \
                 lines[a + 1:data[0] if data else b] + _id_lines(ids)
-            key = "GRNOD/GENE→GRNOD/NODE"
+            key = f"GRNOD/{up[1]}→GRNOD/NODE"
         if new is not None:
             out += lines[pos:a] + new
             pos = b
@@ -447,7 +517,10 @@ def _read_lines(p: str) -> tuple[list[str], str]:
     with open(p, "rb") as fh:
         data = fh.read().decode("latin-1")
     eol = "\r\n" if "\r\n" in data[:65536] else "\n"
-    return data.splitlines(), eol
+    lines = re.split(r"\r?\n", data)          # \x85·\x0c 등은 줄 끝이 아님(보존)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines, eol
 
 
 def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str, *, max_mb: float,
@@ -470,6 +543,10 @@ def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str
     cd = os.path.normpath(os.path.abspath(case_dir))
     rows = []
     model = Model()
+    ver = detect_version(str(starter))
+    fmt_cfg = str(cfg["subset_format"])
+    model.fmt = "legacy" if fmt_cfg == "legacy" else (fmt_cfg if fmt_cfg in ("2024", "2026") else (
+        "2026" if (ver["version"] or 0) >= 2026 else "2024"))
     for src in mesh:                                   # 1) 그대로 복사(원본 sha 전후 대조) + 모델 subset 정보
         rel = lay[src]
         dst = os.path.join(dest_dir, rel)
@@ -506,13 +583,44 @@ def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str
     return {"schema": "esl/doe_assem_full/1", "starter": os.path.normpath(os.path.abspath(starter)), "case_dir": cd,
             "n_files": len(rows), "total_mb": round(mb, 3), "n_outside": sum(1 for r in rows if r["outside"]),
             "engine_rad": bool(engine_rad), "n_normalized": sum(counts.values()), "normalized": counts,
-            "skipped": skipped, "files": rows}
+            "skipped": skipped, "subset_format": {"setting": fmt_cfg, "used": model.fmt, **ver}, "files": rows}
 
 
 def summary(man: dict) -> dict:
     """로그·작업 결과용 요약(파일 목록 제외)."""
     return {k: man.get(k) for k in ("n_files", "total_mb", "n_outside", "n_normalized", "normalized", "skipped",
-                                    "engine_rad")}
+                                    "engine_rad", "subset_format")}
+
+
+_HDR_RE = re.compile(r"^#\s*RADIOSS\s+STARTER\b.*?\b(20\d\d)(?:\.\d+)?\b", re.IGNORECASE)
+
+
+def detect_version(starter: str, max_lines: int = 2000) -> dict:
+    """starter 의 Radioss 입력 버전: /BEGIN 둘째 데이터 줄 첫 칸(Invers, 예 2024) 우선, 없으면 머리 주석
+    ``#RADIOSS STARTER … 2024.1``. 반환 {version: int | None, source: begin | header | None}."""
+    hdr = None
+    try:
+        with open(starter, "rb") as fh:
+            lines = [fh.readline().decode("latin-1").rstrip("\r\n") for _ in range(max_lines)]
+    except OSError:
+        return {"version": None, "source": None}
+    for i, ln in enumerate(lines):
+        m = _HDR_RE.match(ln)
+        if m and hdr is None:
+            hdr = int(m.group(1))
+        if ln.upper().startswith("/BEGIN"):
+            data = [x for x in lines[i + 1:i + 8] if x.strip() and not _is_comment(x)]
+            if len(data) >= 2 and not data[1].startswith("/"):
+                v = _lead_ints(data[1], 1)
+                if v and 1990 <= v[0] <= 2100:
+                    return {"version": int(v[0]), "source": "begin"}
+            break
+    return {"version": hdr, "source": "header" if hdr else None}
+
+
+def _split_keep(data: bytes) -> list[bytes]:
+    """줄(끝 \\n 포함) — \\n 만 줄 끝(\\r·\\x0c 등 보존)."""
+    return re.findall(rb"[^\n]*\n|[^\n]+$", data)
 
 
 def _node_blocks(lines: list[bytes]) -> list[tuple[int, int]]:
@@ -545,15 +653,17 @@ def restore_out_files(out_files_dir: str, rels: list[str], man: dict, guard=None
         if U.sha256_file(row["src"]) != row["sha256"]:
             raise EslError("INPUT_CHANGED", f"원본 모델 파일이 준비 후 바뀜: {os.path.basename(row['src'])}")
         with open(row["src"], "rb") as fh:
-            orig = fh.read().splitlines(keepends=True)
+            orig = _split_keep(fh.read())
         with open(p, "rb") as fh:
-            mor = fh.read().splitlines(keepends=True)
+            mor = _split_keep(fh.read())
         bo, bm = _node_blocks(orig), _node_blocks(mor)
         if len(bo) != len(bm) or any((b - a) != (d - c) for (a, b), (c, d) in zip(bo, bm)):
             raise EslError("PAICAD_FAILED", f"모핑 사본 {rel} 의 /NODE 블록이 원본과 다름 — 원본 기준 복원 불가")
         res, pos = [], 0
         for (a, b), (c, d) in zip(bo, bm):
-            res += orig[pos:a] + mor[c:d]
+            res += orig[pos:a]
+            for o_ln, m_ln in zip(orig[a:b], mor[c:d]):      # 줄 내용 = 모핑, 줄 끝 = 원본(CRLF 혼용 보존)
+                res.append(m_ln.rstrip(b"\r\n") + o_ln[len(o_ln.rstrip(b"\r\n")):])
             pos = b
         res += orig[pos:]
         tmp = os.path.join(os.path.dirname(p), f".{os.path.basename(p)}.{os.getpid()}.tmp")

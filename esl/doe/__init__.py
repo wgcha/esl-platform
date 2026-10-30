@@ -54,7 +54,8 @@ DEFAULTS: dict = {
     "same": {"max_assem_mb": 4096, "engine_rad": False},     # engine_rad: prep/assem_full 에 엔진 rad 포함(v0.12.1)
     # v0.12.1 paicad 스캔 사본(prep/assem_full)만 키워드 줄 정규화 — 원본·모핑 사본(out_files) 불변
     "fixed_scan": {"enabled": True, "rules": [["SURF/PART/EXT", "SURF/PART"], ["SURF/PART/ALL", "SURF/PART"]],
-                   "expand_subset": True, "expand_gene": True, "expand_solid": True},
+                   "expand_subset": True, "expand_gene": True, "expand_solid": True,
+                   "subset_format": "auto"},
     "paicad": {
         "exe": None, "min_version": "0.14.0", "pinned_version": "0.14.0", "threads": 4,
         "timeout_s": {"version": 60, "fixed_scan": 3600, "extract": 3600, "tag": 3600, "grid": 7200, "run": 3600,

@@ -382,8 +382,11 @@ class BeadDoeFixedScanCfg(_M):
     rules: list[list[str]] = Field(default_factory=lambda: [["SURF/PART/EXT", "SURF/PART"], ["SURF/PART/ALL", "SURF/PART"]],
                                    max_length=50)        # 키워드 줄만(데이터 그대로)
     expand_subset: bool = True                # /SURF/SUBSET/<EXT|ALL>/<id>·/GRNOD/SUBSET/<id> → 파트 목록 /…/PART/<id>
-    expand_gene: bool = True                  # /GRNOD/GENE/<id>(시작 끝 증분) → /GRNOD/NODE/<id>
+    expand_gene: bool = True                  # /GRNOD/GENE(first last 쌍)·GEN_INCR → /GRNOD/NODE/<id>
     expand_solid: bool = True                 # /SURF/PART·SUBSET 에 솔리드 파트 → /SURF/SEG(EXT 외곽 면·ALL 모든 면)
+    # /SUBSET 해석: auto = starter /BEGIN 버전(Invers)·#RADIOSS STARTER 주석으로 판정(불가 → 2024 규칙), 2024·2026 =
+    # 데이터 줄 = 하위 subset ID(파트는 /PART 3번째 칸 subset_ID), legacy = 데이터 줄 id 가 파트여도 허용
+    subset_format: Literal["auto", "2024", "2026", "legacy"] = "auto"
 
     @model_validator(mode="after")
     def _rules(self):
