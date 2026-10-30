@@ -52,7 +52,7 @@
 | SR-D-5 | **탐색 범위 = 설정 `scx_drive.roots[]`**(릴레이 기준 상대 경로 + 이름 + 선택 `projects`) 안만. 서버 쪽에서 매 요청 `rel_problem`·`forbidden_reason`(health 의 `forbidden_prefixes`·`relay_base`)·루트 포함 검사. 사용자별 범위는 두지 않음 — SCX 는 공용 계정 1개라 사용자 구분 수단이 없고, 권한은 esl 프로젝트 역할(power 이상) + 루트별 프로젝트 제한으로 충분. 누가 무엇을 받았는지는 esl `jobs`(created_by)·업로드 행에 남음 | 거짓 보안 회피, 감사 가능 |
 | SR-D-6 | **A 저장 위치 = 기존 업로드 세션**: `POST /scx/fetches` 가 `uploads` 행(OPEN, 본인 폴더 `<upload_root>/<user>/<UTC>_<이름>/`)과 `SCX_FETCH` 작업을 한 트랜잭션에 만든다. 파일은 `rad/…`(include 공통 조상 기준 상대 배치 — 원문 수정 없이 `../` include 유지)·`h3d/<이름>.h3d`. 끝나면 워커가 기존 `inspect_upload` 를 실행해 `uploads.result` 저장(ok 면 COMPLETED). 이후는 기존 `?upload=` 화면·`POST /cases` 그대로 | 업로드 폴더 규칙·경로 검사·Case 생성 재사용, 쓰기 = upload_root 아래 세션 폴더만 |
 | SR-D-7 | **이어받기 = 파일 단위만**: sha256 확인이 끝난 파일은 재시도에서 건너뜀(크기·sha 기록), 받다 끊긴 파일은 `.part` 를 `_backup` 이 아니라 **덮어 새로 받음**(워커가 만든 자기 임시 파일). 재시도 가능한 오류(전송 오류·`DRIVE_BUSY`·`DRIVE_TIMEOUT`·`DRIVE_UNAVAILABLE`·`DRIVE_STAGING_FULL`·`HASH_MISMATCH`)는 파일마다 `scx_drive.file_retries`(2)회, 대기 `retry_wait_s`(30) | 릴레이에 Range 없음(RL §5.6). 대시보드 Range 지원은 후속(§16) |
-| SR-D-8 | **include 폐포는 워커가 계산**: rad 를 먼저 받고 `scan_include_refs`(로컬 사본) → 못 찾은 참조를 "참조한 파일의 드라이브 폴더 기준 상대"로 드라이브 경로화 → 같은 루트 안이면 받고 다시 스캔(깊이 `case.rad_include_max_depth`, 파일 수 `scx_drive.max_files` 2000). 절대경로(`C:\…`)·루트 밖·드라이브에 없음 = 받지 않고 `missing_includes` 로(기존 complete 표시 → 사용자는 같은 세션에 '내 PC에서 올리기'로 추가). 엔진 rad(`<stem>_0001.rad`…, 패턴 `scx_drive.engine_globs`)가 같은 폴더에 있으면 함께 받음(B 에 필요) | 백엔드는 list 만(가벼움), 상태 파일 `.sta/.str` 도 include 라 자동 |
+| SR-D-8 | **include 폐포는 워커가 계산**: rad 를 먼저 받고 `scan_include_refs`(로컬 사본) → 못 찾은 참조를 "참조한 파일의 드라이브 폴더 기준 상대"로 드라이브 경로화 → 같은 루트 안이면 받고 다시 스캔(깊이 `case.rad_include_max_depth`, 파일 수 `scx_drive.max_files` 2000). 절대경로(`C:\…`)·루트 밖·드라이브에 없음 = 받지 않고 `missing_includes` 로(기존 complete 표시 → 사용자는 SCX 패널의 [추가로 올리기]로 같은 세션에 추가). 엔진 rad(`<stem>_0001.rad`…, 패턴 `scx_drive.engine_globs`)가 같은 폴더에 있으면 함께 받음(B 에 필요) | 백엔드는 list 만(가벼움), 상태 파일 `.sta/.str` 도 include 라 자동 |
 | SR-D-9 | **새 레인 `XFER`**: HTTP 전송·원격 대기 작업(SCX_FETCH·VERIFY_DROP) 전용, 루프 수 `worker.xfer_lanes`(기본 2, 1~8), 자식 프로세스·자원 제한기 없음(워커 스레드 + 스트리밍), lease 갱신·취소 확인은 청크·폴링마다. 계산(추출·비교)은 SLOT 작업 `VERIFY_POST` 로 분리해 VERIFY_DROP 이 끝날 때 같은 트랜잭션에서 큐 | 수 시간 SCX 대기가 SLOT(2)·LIGHT(1)를 막지 않음, 계산 자원 규칙 유지 |
 | SR-D-10 | **B 대상** = 강성 평가 스터디 `scenario='same'`, phase DONE, `best/<did>/` 가 있는 안(순위 1~`paicad.keep_files_top`, Q2 A) × **낙하 씬 = 실행 시 사용자 선택(Q4)**: (A) **가장 나쁜 씬 N개** — 그 안의 ESL별 개선율 r_{d,i}(v0.10.0 §11.4, 비 = C_{d,i}/C_{d000,i}) **큰 순**(가장 덜 개선·악화 먼저, 동률 = entry_id 순), N 입력 기본 3 / (B) **스터디에서 고른 ESL 전부**. 씬 = ESL 항목의 출처 Case(같은 Case 의 ESL 이 여럿이면 r 최대 1개로 합침). 합계 ≤ `verify_drop.max_scenes`(기본 5, 넘으면 422 `VD_TOO_MANY_SCENES`). **씬마다 `verify_drops` 행 1개·VERIFY_DROP 1개·별도 Radioss 제출**, 한 번 요청한 행들은 `batch_id` 로 묶음. 같은 (스터디, 안, Case) 비종료 검증은 1개(겹치면 그 씬만 건너뛰고 경고 `VD_ALREADY_ACTIVE`) | ①만 원 모델 rad 에 형상 대입 가능(사용자 확정 5), 씬별 최악 확인(Q4) |
 | SR-D-11 | **제출 기록 영속**: 새 표 `scx_submissions`(request_id PK). 순서 = (1) 행 `SUBMITTING` 커밋 → (2) `submit_radioss`(어댑터가 같은 request_id 로만 replay) → (3) `SUBMITTED`(scx_job_id)·`UNKNOWN`·`FAILED`. request_id = `esl-vd-<verify_drop_id>-a<attempt>`. 워커 재시작·재시도 시 `SUBMITTING` 행은 **같은 request_id 로 다시 보냄**(릴레이 replay — 원격 중복 없음), `UNKNOWN` 은 자동 진행 금지 → 작업 FAILED `SCX_SUBMISSION_UNKNOWN` + 화면 [잡 ID 연결]·[포기](`/resolve` → 릴레이 resolve). 포기 후 재시도 = 새 attempt(새 request_id) | RL §1.4·§5.7·§5.10 |
@@ -207,7 +207,7 @@ worker:
 |---|---|---|---|
 | `GET /scx/status?project_id=` | – | `ScxStatusOut` | – (항상 200, 사유를 본문에) |
 | `GET /scx/browse?project_id=&root=&path=&offset=&limit=` | – | `ScxBrowseOut` | 403 `FORBIDDEN`(general), 404 `SCX_ROOT_NOT_FOUND`·`SCX_PATH_NOT_FOUND`, 422 `SCX_PATH_NOT_ALLOWED`, 503 `SCX_UNAVAILABLE{reason_code}`, 413 `SCX_LIST_LIMIT` |
-| `POST /scx/fetches` | `ScxFetchIn` | `202 ScxFetchOut` | 위 + 422 `UPLOAD_NAME_INVALID`·`SCX_NOT_RAD`·`SCX_NOT_H3D`·`SCX_FILE_TOO_LARGE`, 507 `INSUFFICIENT_STORAGE`, 429 `UPLOAD_TOO_MANY`(기존 사용자당 동시 업로드) |
+| `POST /scx/fetches` | `ScxFetchIn` | `202 ScxFetchOut` | 위 + 422 `UPLOAD_NAME_INVALID`·`SCX_NOT_RAD`·`SCX_NOT_H3D`·`SCX_FILE_TOO_LARGE`, 507 `INSUFFICIENT_STORAGE`, 429 `UPLOAD_LIMIT`(기존 사용자당 동시 업로드, detail `limit`·`open_uploads`) |
 | `POST /verify-drops` | `VerifyDropIn` | `201 VerifyDropOut`(+ VERIFY_DROP) | 404 `DOE_NOT_FOUND`, 409 `RESULT_NOT_READY`·`VD_NO_SCENES`, 422 `VD_SCENARIO_UNSUPPORTED`(②③)·`VD_DESIGN_NO_FILES`·`VD_TOO_MANY_SCENES`·`VD_ENTRY_NOT_IN_STUDY`·`INVALID_PARAMS`, 503 `SCX_UNAVAILABLE`. 씬별 제외(`VD_CUMULATIVE_EXCLUDED`·`VD_ENGINE_MISSING`·`VD_INCLUDE_LAYOUT`·`VD_ALREADY_ACTIVE`)는 오류가 아니라 응답 `excluded[]` |
 | `POST /verify-drops/plan` | `VerifyDropIn` | `VerifyPlanOut`(저장 안 함 — 대화상자 씬 목록·제출 건수·예상 시간) | 위와 같음 |
 | `GET /verify-drops?bead_doe_id=` · `GET /verify-drops/{id}` | – | `[VerifyDropOut]` / `VerifyDropOut` | 404 `VD_NOT_FOUND` |
@@ -241,7 +241,10 @@ VerifyCompare { rows: [{key, label, orig, verify, ratio, predicted|null, verdict
                 hot: {n, mean_ratio, max_ratio}, warnings: [], tstar: {orig_time, verify_time} }
 ```
 - `hint`: `*_0000.rad` → rad, `engine_globs` 일치 → engine, `.h3d` → h3d, `.inc .k` → include, `.sta .str` → state. 숨김(`.` 시작) 제외, 폴더 먼저·이름 순, offset·limit(≤ `ui.browse_page_max`).
-- 진행: 기존 `GET /jobs/{id}`(progress_pct·progress_label 예 "h3d 12.3 / 30.0 GB", "대시보드가 SCX에서 받는 중", "SCX 대기 Queued 00:42") + `GET /uploads/{id}`(파일별 done·sha256).
+- 진행: 기존 `GET /jobs/{id}`(progress_pct·progress_label 예 "h3d 12.3 / 30.0 GB", "대시보드가 SCX에서 받는 중", "SCX 대기 Queued 00:42") + `GET /uploads/{id}`(파일별 done·sha256, SF_H3D 동안 받는 중 h3d 항목 `done:false`·`received`·`received_total` = 받은 바이트 — 실패·취소 시 그 항목은 빠짐).
+- `ScxStatusOut.verify`: v0.11.0 은 항상 `enabled: false`(`VD_DISABLED` — 설정 꺼짐, 켜도 판정 끝에 `VD_NOT_AVAILABLE` "v0.12.0 에서 제공"). 화면은 B 버튼을 그리지 않는다.
+- `ScxRelayOut.checked_at`: 헬스를 확인하지 않았으면(기능 A·B 모두 꺼짐·어댑터 없음 등) `null`.
+- 오류 detail: 503 `SCX_UNAVAILABLE{reason_code}`, 507 `INSUFFICIENT_STORAGE{need, free, reserve}`, 422 `SCX_FILE_TOO_LARGE{size, limit}`, 429 `UPLOAD_LIMIT{limit, open_uploads}`, 409 `UPLOAD_SCX_MANAGED{rel}`(source scx 파일에 브라우저 PUT)·`UPLOAD_SCX_BUSY{job_id}`(비종료 SCX_FETCH 세션에 파일 추가·빼기·complete·취소).
 
 ## 8. 작업 종류 (`job_types.py`)
 
@@ -262,10 +265,10 @@ VerifyCompare { rows: [{key, label, orig, verify, ratio, predicted|null, verdict
 
 ### 9.1 A — SF_RAD·SF_H3D·SF_REGISTER
 1. 시작: health → 범위 재검사(루트 설정이 바뀌었으면 `SCX_PATH_NOT_ALLOWED`) → rad·h3d `list`(부모 폴더)로 크기 확인 → upload_root 여유 ≥ 합계 + `upload.min_free_gb`(아니면 `INSUFFICIENT_STORAGE`).
-2. SF_RAD: rad·엔진 rad → 스캔 → include 반복(SR-D-8). 배치 = 받은 파일들의 드라이브 공통 조상 C 기준 상대(`rad/<rel from C>`), 상대 경로는 `core/uploads.check_rel` 통과해야 함(아니면 그 파일은 `missing_includes` 에 사유). `uploads.files[]` 에 항목 추가: `{rel, size, sha256, done, source:"scx", drive_rel, client:{name:"scx-relay", version:<lock commit 12>}}`.
-3. SF_H3D: `h3d/<원 이름>`. 진행률 = 받은 바이트/크기(첫 바이트 전에는 "대시보드가 SCX에서 받는 중" 라벨, 경과 시간).
+2. SF_RAD: rad·엔진 rad → 스캔 → include 반복(SR-D-8). 엔진 rad 탐색은 starter 이름이 `<stem>_0000.rad` 일 때만(아니면 로그 + 작업 경고 "엔진 rad 를 찾지 않았습니다" — 화면 탭은 hint `rad`(`*_0000.rad`)만 고르게 하므로 API 직접 호출 때만 생김). 배치 = 받은 파일들의 드라이브 공통 조상 C 기준 상대(`rad/<rel from C>`), 상대 경로는 `core/uploads.check_rel` 통과해야 함(아니면 그 파일은 `missing_includes` 에 사유). `uploads.files[]` 에 항목 추가: `{rel, size, sha256, done, source:"scx", drive_rel, client:{name:"scx-relay", version:<lock commit 12>}}`.
+3. SF_H3D: `h3d/<원 이름>`. 진행률 = 받은 바이트/크기(첫 바이트 전에는 "대시보드가 SCX에서 받는 중" 라벨, 경과 시간). 시작 때 `uploads.files[]` 에 받는 중 항목(`source:"scx"`, `done:false`, 내부 키 `scx_got`)을 넣고 진행마다 갱신 → `GET /uploads/{id}` 의 그 파일 `received`·`received_total`(파일별 진행률). 끝나면 완료 항목(sha256)으로 바꾸고, 실패·취소면 뺀다.
 4. SF_REGISTER: 기존 `inspect_upload` 와 같은 함수 → `uploads.result`(ok 면 COMPLETED), `result.scx = {root, rad_rel, h3d_rel, missing_specs[]}`.
-- 업로드 서비스 변경: `source:"scx"` 항목에는 브라우저 PUT 거부(409 `UPLOAD_SCX_MANAGED`), `cleanup_stale` 은 비종료 SCX_FETCH 가 있는 세션 건너뜀, 목록·화면 `client.name = "scx-relay"` 로 출처 표시. 추가 파일(누락 include)은 기존 `POST /uploads/{id}/files` 로 같은 세션에.
+- 업로드 서비스 변경: `source:"scx"` 항목에는 브라우저 PUT 거부(409 `UPLOAD_SCX_MANAGED`), `cleanup_stale` 은 비종료 SCX_FETCH 가 있는 세션 건너뜀, 목록·화면 출처 표시 = `files[].source == "scx"`(세션 `client` 는 첫 파일 배치 전에는 null 이라 화면은 `client.name == "scx-relay"` 또는 source scx 파일 존재로 판정). 추가 파일(누락 include)은 기존 `POST /uploads/{id}/files` 로 같은 세션에.
 
 ### 9.2 B — VD_PREP·STAGE·SUBMIT·WAIT·FETCH
 1. VD_PREP: SR-D-13~15 재검사, 원 Case 입력 지문 = Case `inputs_hash` 와 같아야 함(아니면 `INPUT_CHANGED`), 노드 패치(코어 `esl.verify.patch`, 자식 프로세스 — 대형 rad 스트리밍, 원본 읽기만) → `stage/`·sha256 → `stage.json`, 합계 ≤ `hpc.scx.max_stage_bytes`.
@@ -302,7 +305,7 @@ VerifyCompare { rows: [{key, label, orig, verify, ratio, predicted|null, verdict
 └ 진행: JobProgress 재사용 — "h3d 12.3 / 28.4 GB", [취소]                                                   ┘
 ```
 - 탭 비활성: `/scx/status.fetch.enabled=false` 이면 탭 버튼에 사유 툴팁 + 패널에 사유 1줄(다른 탭 정상).
-- 끝나면 패널이 기존 업로드 complete 결과 표시(파트·누락 include·`?upload=<id>` 로 주소 갱신) → 주 버튼은 페이지의 기존 [Case 만들기]. 누락 include 가 있으면 "내 PC에서 올리기 탭에서 같은 세션에 추가" 링크.
+- 끝나면 패널이 기존 업로드 complete 결과 표시(파트·누락 include·`?upload=<id>` 로 주소 갱신) → 주 버튼은 페이지의 기존 [Case 만들기]. 누락 include 가 있으면 결과 표의 [추가로 올리기](브라우저 파일 선택 → 같은 세션 `POST /uploads/{id}/files` → complete 다시) — 다른 탭으로 옮기지 않는다.
 
 ### 10.2 강성 평가 스터디 결과 — [검증 낙하] (`pages/doe/DoeStudy.tsx` 받기 줄 옆, `components/VerifyDropCard.tsx`)
 - 버튼 표시 조건: 시나리오 ①·phase DONE. 비활성 사유(툴팁): B 꺼짐·SCX 사유(§3 SR-D-19)·선택 안에 `best/` 없음.

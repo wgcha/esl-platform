@@ -348,6 +348,8 @@ export interface JobOut {
   comparison_id?: string | null;
   /** v0.7.0 OPT_RUN 의 opt_runs.id (esl_opt_run.md §6.1) */
   opt_run_id?: string | null;
+  /** v0.11.0 SCX_FETCH 대상 업로드 세션(esl_scx_relay.md §8) */
+  upload_id?: string | null;
   project_id: string;
   job_type: JobType;
   stage: number;
@@ -360,6 +362,8 @@ export interface JobOut {
   cancel_requested: boolean;
   current_step_no: number | null;
   progress_pct: number | null;
+  /** v0.11.0 진행 문구(예 "h3d 12.3 / 30.0 GB", "h3d: 대시보드가 SCX에서 받는 중 00:42" — esl_scx_relay.md §7.1) */
+  progress_label?: string | null;
   /** 대기 중일 때 대기열 순번(1부터) */
   queue_position: number | null;
   queued_at: string | null;
@@ -378,9 +382,6 @@ export interface JobOut {
   steps?: StepOut[] | null;
 }
 export type Job = JobOut;
-/** v0.11.0 진행 문구(예 "h3d 12.3 / 30.0 GB", "대시보드가 SCX에서 받는 중" — esl_scx_relay.md §7.1). 백엔드 JobOut 스키마에
- *  progress_label 이 들어가면 JobOut 으로 옮긴다(그 전까지 check:api 가 TS 전용 키로 막지 않게 별도 타입). */
-export type JobProgressLabel = { progress_label?: string | null };
 export type JobSummary = JobOut;
 
 export interface LogOut {
@@ -406,6 +407,14 @@ export interface QueueOut {
   slots: number;
   queued: JobOut[];
   light: QueueLane;
+  /** v0.11.0 XFER 레인(HTTP 전송·원격 대기 — SCX_FETCH). 설정에 따라 없을 수 있음 */
+  xfer?: QueueXfer | null;
+}
+/** v0.11.0 XFER 레인: worker.xfer_lanes 개 루프 */
+export interface QueueXfer {
+  lanes?: number;
+  running_all?: JobOut[];
+  queued?: JobOut[];
 }
 export type Queue = QueueOut;
 
@@ -1478,6 +1487,10 @@ export interface UploadFileOut {
   n_chunks?: number;
   removed?: boolean;
   meta?: H3dMeta | null;
+  /** v0.11.0: scx = SCX 드라이브에서 워커가 받은 파일(브라우저 PUT 409 UPLOAD_SCX_MANAGED) */
+  source?: "browser" | "scx";
+  /** v0.11.0 source scx: SCX 드라이브 경로(루트 기준) */
+  drive_rel?: string | null;
 }
 /** complete 검사 결과(UploadOut.result 에도 저장) */
 export interface UploadCheckOut {
@@ -1492,7 +1505,17 @@ export interface UploadCheckOut {
   h3d_meta?: H3dMeta | null;
   /** v0.8.0: rad include 중 이전 런 상태 파일(.sta/.str) */
   state_includes?: Record<string, unknown>[];
+  /** v0.11.0 SCX 드라이브에서 받은 세션만: {root, rad_rel, h3d_rel, missing_specs} (rel 은 루트 기준) */
+  scx?: UploadScx | null;
 }
+/** v0.11.0 UploadCheckOut.scx (스키마는 자유 객체 — 키 대조 대상 아님) */
+export type UploadScx = {
+  root?: string;
+  rad_rel?: string;
+  h3d_rel?: string;
+  /** 받지 못한 include: spec(rad 안 원문), src(참조한 파일, 루트 기준), reason */
+  missing_specs?: { spec: string; src: string | null; reason: string }[];
+} & Record<string, unknown>;
 export interface StateInclude {
   rel: string | null;
   spec: string;
@@ -2452,7 +2475,7 @@ export interface DoeResultOut {
 
 // ---------------------------------------------------------------- v0.11.0 SCX 드라이브에서 고르기(계약 esl_scx_relay.md §7·§7.1 — 기능 A)
 /** 기능별 사용 가능 여부(SR-D-19: 사유 판정은 서버 1곳) */
-export interface Avail {
+export interface ScxAvail {
   enabled: boolean;
   reason_code: string | null;
   reason: string | null;
@@ -2468,7 +2491,8 @@ export interface ScxRelayOut {
   writes_active: boolean;
   job_api: boolean;
   max_download_bytes: number | null;
-  checked_at: string;
+  /** 헬스 확인 시각(설정 꺼짐 등으로 확인하지 않았으면 null) */
+  checked_at: string | null;
 }
 export interface ScxAdaptersOut {
   version: string | null;
@@ -2476,8 +2500,9 @@ export interface ScxAdaptersOut {
 }
 /** GET /scx/status?project_id= (항상 200 — 사유는 본문) */
 export interface ScxStatusOut {
-  fetch: Avail;
-  verify: Avail;
+  fetch: ScxAvail;
+  /** v0.11.0 은 항상 enabled=false(VD_DISABLED 또는 VD_NOT_AVAILABLE — 기능 B 는 v0.12.0) */
+  verify: ScxAvail;
   /** 이 프로젝트에 허용된 루트(scx_drive.roots)만 */
   roots: ScxRootOut[];
   relay: ScxRelayOut;
@@ -2485,7 +2510,7 @@ export interface ScxStatusOut {
 }
 /** §7.1 hint: *_0000.rad → rad, engine_globs → engine, .h3d → h3d, .inc·.k → include, .sta·.str → state */
 export type ScxHint = "rad" | "engine" | "h3d" | "include" | "state";
-export interface ScxBrowseEntry {
+export interface ScxEntryOut {
   name: string;
   kind: "dir" | "file";
   size: number | null;
@@ -2499,7 +2524,7 @@ export interface ScxBrowseOut {
   path: string;
   /** 표시 전용 경로(공용 계정 홈 기준) */
   display: string;
-  entries: ScxBrowseEntry[];
+  entries: ScxEntryOut[];
   total: number;
   truncated: boolean;
 }

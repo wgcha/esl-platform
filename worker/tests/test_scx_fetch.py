@@ -265,6 +265,41 @@ def test_cancel_during_dashboard_staging(client, fake_relay, worker_factory):
     assert client.delete(f"{API}/uploads/{uid}", headers=W).status_code == 200
 
 
+def test_h3d_per_file_progress_in_upload(client, fake_relay, worker_factory):
+    """SF_H3D 동안 GET /uploads/{id} 에 받는 중 h3d 항목(source scx, done False, received·received_total = 받은 바이트)."""
+    big = H3D_BYTES * 4                                                    # 어댑터는 1 MiB 단위로 읽는다 — 절반 = 2 MiB
+    model = build_model(fake_relay, h3d=big)
+    r = fetch(client, model).json()
+    uid, jid = r["upload_id"], r["job_id"]
+    gate = threading.Event()
+    w = worker_factory()
+    out: dict = {}
+
+    def arm():
+        wait_for(lambda: len(fake_relay.files_served) >= 5, timeout=30)
+        fake_relay.download_mid_gate = gate                            # 다음(h3d) 요청: 본문 절반 뒤 대기
+
+    threading.Thread(target=arm, daemon=True).start()
+    t = threading.Thread(target=lambda: out.setdefault("st", w.run_once("XFER")), daemon=True)
+    t.start()
+
+    def midway():
+        h = next((f for f in upload(client, uid)["files"] if f["rel"] == "h3d/ref.h3d"), None)
+        return h if h and not h["done"] and 0 < h["received_total"] < h["size"] else None
+
+    try:
+        h = wait_for(midway, timeout=30)
+    finally:
+        gate.set()
+    assert h["source"] == "scx" and h["drive_rel"] == "A/res/ref.h3d" and h["size"] == len(big)
+    assert h["received"] == h["received_total"] and h["sha256"] is None
+    t.join(30)
+    assert out.get("st") == "SUCCEEDED"
+    h = next(f for f in upload(client, uid)["files"] if f["rel"] == "h3d/ref.h3d")
+    assert h["done"] and h["received"] == h["size"] and h["sha256"] == hashlib.sha256(big).hexdigest()
+    assert job(client, jid)["progress_label"].startswith("h3d ")
+
+
 def test_part_symlink_rejected(client, fake_relay, worker_factory, tmp_path):
     model = build_model(fake_relay)
     r = fetch(client, model).json()

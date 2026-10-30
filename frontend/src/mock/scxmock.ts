@@ -1,6 +1,6 @@
 // 목 서버 v0.11.0 SCX 드라이브에서 고르기(계약 esl_scx_relay.md §5·§7·§8·§9.1 — 기능 A).
 // 백엔드·워커는 병렬 개발 중 — 이 목은 계약 스키마(ScxStatusOut·ScxBrowseOut·ScxFetchIn/Out)와 오류 코드만 따른다.
-import type { Avail, JobOut, JobProgressLabel, ScxBrowseEntry, ScxHint, ScxStatusOut, StepOut } from "../api/types";
+import type { ScxAvail, JobOut, ScxEntryOut, ScxHint, ScxStatusOut, StepOut } from "../api/types";
 import type { P3Mock } from "./p3mock";
 
 interface MockResponse {
@@ -98,7 +98,7 @@ export class ScxMock {
     return MOCK_SCX_ROOTS.filter((r) => !r.projects.length || r.projects.includes(pid));
   }
 
-  fetchAvail(pid: string): Avail {
+  fetchAvail(pid: string): ScxAvail {
     if (this.mode === "disabled") return { enabled: false, reason_code: "SCX_DRIVE_DISABLED", reason: "SCX 드라이브 기능이 꺼져 있습니다(관리자: scx_drive.enabled)" };
     if (this.mode === "down")
       return { enabled: false, reason_code: "SCX_RELAY_UNREACHABLE", reason: "대시보드에 연결할 수 없습니다(대시보드 실행 여부·relay_url 포트 확인 — 관리자)" };
@@ -161,7 +161,7 @@ export class ScxMock {
       if ("status" in r) return r;
       if (typeof r.node === "number") return err(422, "SCX_PATH_NOT_ALLOWED", "폴더가 아닙니다");
       const tree = r.node;
-      const all: ScxBrowseEntry[] = Object.keys(tree)
+      const all: ScxEntryOut[] = Object.keys(tree)
         .filter((n) => !n.startsWith("."))
         .map((name) => {
           const v = tree[name];
@@ -208,7 +208,7 @@ export class ScxMock {
   }
 
   /** 워커 1틱(SCX_FETCH). true = 처리함(일반 진행 대신). 끝난 step 은 호출 측이 다음으로 넘긴다 */
-  advance(j: JobOut & JobProgressLabel, step: StepOut): "running" | "step_done" | "failed" {
+  advance(j: JobOut, step: StepOut): "running" | "step_done" | "failed" {
     const f = this.fetches.get(String(j.params.upload_id ?? ""));
     if (!f) return "step_done";
     const p3 = this.ctx.p3;

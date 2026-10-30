@@ -45,6 +45,8 @@ interface Upl {
   created_at: string;
   /** POST /uploads client(esl-web·esl-pc) — 없으면 null */
   client: { name: string; version: string } | null;
+  /** v0.11.0 SCX 세션: 첫 파일이 들어올 때 client.version */
+  scxVersion?: string;
 }
 
 export function badRel(rel: string): string | null {
@@ -469,7 +471,9 @@ export class P3Mock {
       result: null,
       inUse: false,
       created_at: new Date(this.clock()).toISOString(),
-      client: { name: "scx-relay", version },
+      // 서버와 같게: 세션 client 는 files[].client 에서 온다 — 워커가 첫 파일을 넣기 전에는 null
+      client: null,
+      scxVersion: version,
       files: [],
     });
     return id;
@@ -479,7 +483,8 @@ export class P3Mock {
     const u = this.uploads.get(id)!;
     const f = u.files.find((x) => x.rel === rel && !x.removed);
     if (f) return f.index;
-    u.files.push(this.mfile(u.files.length, { rel, size }));
+    u.files.push({ ...this.mfile(u.files.length, { rel, size }), source: "scx", drive_rel: rel.replace(/^(rad|h3d)\//, "") });
+    if (!u.client) u.client = { name: "scx-relay", version: u.scxVersion ?? "" };
     return u.files.length - 1;
   }
   /** 받은 바이트 반영(크기에 닿으면 done·sha256) */

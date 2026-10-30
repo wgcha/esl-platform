@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, errorText } from "../../api/client";
 import { p3, putChunk } from "../../api/p3";
 import { relJoin, scx, shortReason } from "../../api/scx";
-import type { JobOut, ScxBrowseEntry, ScxBrowseOut, ScxHint, ScxStatusOut, UploadFileOut, UploadOut } from "../../api/types";
+import type { JobOut, ScxEntryOut, ScxBrowseOut, ScxHint, ScxStatusOut, UploadFileOut, UploadOut } from "../../api/types";
 import { Badge, Empty, ErrorLine } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { bytes, dt } from "../../lib/format";
@@ -163,7 +163,7 @@ function BrowseView({
   const [root, setRoot] = useState(status.roots[0]?.key ?? "");
   const [rel, setRel] = useState<string[]>([]);
   const [data, setData] = useState<ScxBrowseOut | null>(null);
-  const [more, setMore] = useState<ScxBrowseEntry[]>([]);
+  const [more, setMore] = useState<ScxEntryOut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [rad, setRad] = useState<Picked | null>(null);
   const [h3d, setH3d] = useState<Picked | null>(null);
@@ -187,12 +187,12 @@ function BrowseView({
   const entries = [...(data?.entries ?? []), ...more];
   const display = data?.display ?? "";
   const rootLabel = status.roots.find((r) => r.key === root)?.label ?? root;
-  const isSel = (e: ScxBrowseEntry) => {
+  const isSel = (e: ScxEntryOut) => {
     const r = relJoin(path, e.name);
     return rad?.rel === r || h3d?.rel === r;
   };
 
-  function choose(e: ScxBrowseEntry) {
+  function choose(e: ScxEntryOut) {
     const p: Picked = { rel: relJoin(path, e.name), name: e.name, size: e.size, display: display ? `${display}/${e.name}` : e.name };
     setStartErr(null);
     if (e.hint === "rad") {

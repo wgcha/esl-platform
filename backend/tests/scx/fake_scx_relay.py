@@ -1,7 +1,8 @@
 # 출처: wgcha/physicsai-platform release/v0.2.14 a363a89e8f93d3acfe90a9601318bf4f6cade0a7
 #       packages/simdash_adapters/tests/fake_scx_relay.py (계약 esl_scx_relay.md §13 — 시험 가짜 릴레이 사본).
 # esl 사본 변경(이 파일에서만): 다운로드 주입 drop_download(본문 절반 뒤 끊기 횟수)·download_delay_s(첫 바이트 전 대기 —
-# 대시보드가 SCX 에서 받는 시간 흉내)·download_gate(threading.Event — 설정되면 첫 바이트 전 그것을 기다림), files_served 기록.
+# 대시보드가 SCX 에서 받는 시간 흉내)·download_gate(threading.Event — 설정되면 첫 바이트 전 그것을 기다림), files_served 기록,
+# download_mid_gate(본문 절반 뒤 대기)·download_rate_bps(나눠 보내기).
 """가짜 SCX relay(phase3 §16.12) — `http.server`를 127.0.0.1 임의 포트에 띄워 scx_relay.md §5를 임시 폴더("드라이브")로 흉내.
 
 대시보드·SCX 없이 PhysicsAI의 업로드 → 제출 → 상태 → 회수를 시험한다. `backend/tests`·`worker/tests`가 같은 가짜를 쓴다.
@@ -65,6 +66,8 @@ class FakeRelay:
         self.drop_download = 0          # esl: 본문 절반을 보낸 뒤 연결을 끊는 횟수(중간 끊김)
         self.download_delay_s = 0.0     # esl: 첫 바이트 전 대기(대시보드가 SCX 에서 임시로 받는 시간)
         self.download_gate = None       # esl: threading.Event — 있으면 첫 바이트 전 set 될 때까지 대기
+        self.download_mid_gate = None   # esl: threading.Event — 있으면 본문 절반을 보낸 뒤 set 될 때까지 대기(파일별 진행률 확인)
+        self.download_rate_bps = 0      # esl: >0 이면 본문을 이 속도로 나눠 보냄(e2e 진행률 화면)
         self.files_served: list[str] = []
         self.output_mode = "job_dir"
         self.outputs: dict[str, bytes] = {}
@@ -358,6 +361,27 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data[: len(data) // 2])
                 self.wfile.flush()
                 return self._drop()
+            if f.download_mid_gate is not None or f.download_rate_bps:
+                import time as _time
+
+                half = len(data) // 2
+                step = max(1, int(f.download_rate_bps) // 10) if f.download_rate_bps else half or 1
+                off = 0
+                gated = False
+                while off < len(data):
+                    if not gated and off >= half and f.download_mid_gate is not None:
+                        gated = True
+                        self.wfile.flush()
+                        f.download_mid_gate.wait(30)
+                    n = min(step, len(data) - off)
+                    if not gated and f.download_mid_gate is not None and off < half:
+                        n = min(n, half - off)             # 절반에서 멈추도록
+                    self.wfile.write(data[off:off + n])
+                    off += n
+                    if f.download_rate_bps:
+                        self.wfile.flush()
+                        _time.sleep(0.1)
+                return None
             self.wfile.write(data)
             return None
         if sub.startswith("/jobs/"):

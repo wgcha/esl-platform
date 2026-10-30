@@ -204,6 +204,9 @@ def upload_out(up: dict[str, Any], cfg) -> dict[str, Any]:
             elif done:
                 rec = tot = size
                 ch = [[0, n]] if n else []
+            elif up["state"] == OPEN and f.get("source") == "scx":
+                ch = []                                  # v0.11.0 워커가 받는 중(SF_H3D): scx_got = 받은 바이트(파일별 진행률)
+                rec = tot = max(0, min(size, int(f.get("scx_got") or 0)))
             elif up["state"] == OPEN:
                 ch = [list(r) for r in (f.get("got") or [])]
                 rec, tot = _contig_bytes(ch, size, c), _got_bytes(ch, size, c)

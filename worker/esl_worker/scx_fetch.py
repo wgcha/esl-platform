@@ -99,6 +99,13 @@ def _mb(n: int) -> str:
     return f"{n / 1024 ** 2:.1f} MB"
 
 
+def _amount(got: int, size: int) -> str:
+    """진행 라벨 'x / y GB'(계약 §7.1 예). 1 GiB 미만 파일은 MB 로(0.0 / 0.0 GB 방지)."""
+    if size >= 1024 ** 3:
+        return f"{_gb(got)} / {_gb(size)} GB"
+    return f"{got / 1024 ** 2:.1f} / {size / 1024 ** 2:.1f} MB"
+
+
 # ---------------------------------------------------------------- 준비
 def _upload(conn, upload_id: str, *, for_update: bool = False) -> dict[str, Any] | None:
     q = select(uploads_t).where(uploads_t.c.id == upload_id)
@@ -169,17 +176,29 @@ class _Fetch:
         self.gw = None
         self.health: dict[str, Any] = {}
         self._list_cache: dict[str, dict[str, dict[str, Any]] | None] = {}
+        self._live_rel: str | None = None          # 받는 중인 h3d 의 uploads.files[].rel(파일별 진행률 scx_got 갱신)
 
     # ---- 공통
     def echo(self, msg: str) -> None:
         with open(self.log_path, "a", encoding="utf-8") as fh:
             fh.write(mask_text(msg, None, paths=False) + "\n")
 
-    def progress(self, pct: float, label: str | None) -> None:
+    def progress(self, pct: float, label: str | None, *, got: int | None = None) -> None:
+        """작업·step 진행 + 업로드 세션 updated_at. got 이 있고 받는 중인 h3d 항목이 있으면 그 항목의 scx_got(받은 바이트)도
+        — GET /uploads/{id} 의 files[].received·received_total 이 파일별 진행률을 보이게(§7.1)."""
         with self.ex._tx() as conn:
             jobs_repo.step_update(conn, self.ex.job["id"], self.ex.token, self.st["step_no"], progress_pct=float(pct))
             jobs_repo.set_progress(conn, self.ex.job["id"], self.ex.token, job_progress(self.st["step_key"], pct), label)
-            conn.execute(update(uploads_t).where(uploads_t.c.id == self.up["id"]).values(updated_at=_now()))
+            vals: dict[str, Any] = {"updated_at": _now()}
+            if got is not None and self._live_rel is not None:
+                up = _upload(conn, self.up["id"], for_update=True)
+                if up is not None and up["state"] == "OPEN":
+                    files = [dict(x) for x in up["files"]]
+                    for x in files:
+                        if x["rel"] == self._live_rel and x.get("source") == "scx" and not x.get("done"):
+                            x["scx_got"] = max(0, min(int(x["size"]), int(got)))
+                    vals["files"] = files
+            conn.execute(update(uploads_t).where(uploads_t.c.id == self.up["id"]).values(**vals))
 
     def wait(self, seconds: float) -> None:
         end = time.monotonic() + max(0.0, float(seconds))
@@ -305,7 +324,7 @@ class _Fetch:
                             self.progress(lo, f"{label}: 대시보드가 SCX에서 받는 중 {el // 60:02d}:{el % 60:02d}")
                         else:
                             frac = min(1.0, got / size) if size else 1.0
-                            self.progress(lo + (hi - lo) * frac, f"{label} {_gb(got)} / {_gb(size)} GB")
+                            self.progress(lo + (hi - lo) * frac, f"{label} {_amount(got, size)}", got=got)
             except BaseException:
                 stt["abort"] = True               # 취소·lease 상실: 다음 청크에서 끊김(.part 남김 — 재시도 때 덮어씀)
                 raise
@@ -339,6 +358,21 @@ class _Fetch:
                 files=files, total_bytes=sum(int(x["size"]) for x in files if not x.get("removed")), updated_at=_now(),
                 result=None))
             self.up = _upload(conn, self.up["id"])
+
+    def drop_pending(self, rel: str) -> None:
+        """받는 중(done=False) SCX 항목을 files[] 에서 뺀다 — 실패 뒤 세션은 이전처럼 받은 파일만 보인다(최선 노력)."""
+        try:
+            with self.ex._tx() as conn:
+                up = _upload(conn, self.up["id"], for_update=True)
+                if up is None or up["state"] != "OPEN":
+                    return
+                files = [dict(x) for x in up["files"]
+                         if not (x["rel"] == rel and x.get("source") == "scx" and not x.get("done"))]
+                if len(files) != len(up["files"]):
+                    conn.execute(update(uploads_t).where(uploads_t.c.id == self.up["id"]).values(
+                        files=files, total_bytes=sum(int(x["size"]) for x in files if not x.get("removed")), updated_at=_now()))
+        except Exception as exc:  # noqa: BLE001 - 원래 오류를 가리지 않음
+            self.echo(f"[esl-worker] 받는 중 항목 정리 실패(무시): {type(exc).__name__}")
 
     def file_entry(self, rel: str, size: int, sha: str, drive_rel: str, **extra: Any) -> dict[str, Any]:
         c = int(self.s.upload.chunk_bytes)
@@ -445,6 +479,9 @@ class _Fetch:
         stem = run_stem(rname)
         if stem is None:
             self.echo(f"[esl-worker] starter 이름이 '<이름>_0000.rad' 가 아니라 엔진 rad 를 찾지 않습니다: {rname}")
+            with self.ex._tx() as conn:                 # 화면(JobProgress 경고)에도 — 탭은 *_0000.rad 만 고르게 하므로 API 직접 호출 때만
+                jobs_repo.add_warnings(conn, self.ex.job["id"], self.ex.token,
+                                       [f"starter 이름이 '<이름>_0000.rad' 가 아니라 엔진 rad(_0001.rad…)를 찾지 않았습니다: {rname}"])
         else:
             for nm in sorted(engine_names(stem, [n for n, e in (self.entries(parent) or {}).items() if e.get("kind") == "file"],
                                           list(self.s.scx_drive.engine_globs))):
@@ -465,7 +502,7 @@ class _Fetch:
         if missing:
             with self.ex._tx() as conn:
                 jobs_repo.add_warnings(conn, self.ex.job["id"], self.ex.token,
-                                       [f"SCX 에서 받지 못한 include {len(missing)}개 — 내 PC에서 올리기 탭으로 같은 세션에 추가하세요"])
+                                       [f"SCX 에서 받지 못한 include {len(missing)}개 — 내려받기가 끝나면 SCX 탭의 [추가로 올리기]로 같은 세션에 추가하세요"])
         return {"files": len(m["files"]), "missing": len(missing)}
 
     def check_free(self, need: int) -> None:
@@ -625,16 +662,27 @@ class _Fetch:
         part = dst + U.PART_SUFFIX
         if os.path.lexists(part):
             U.check_existing_file(part, self.up_dir)
-        self.progress(0.0, "h3d: 대시보드가 SCX에서 받는 중")
+        # 받는 중 항목(done=False, scx_got) — 화면이 파일별 진행률을 보이게. 끝나면 같은 rel 의 완료 항목으로 바꾼다(save_files)
+        pending = self.file_entry(rel, size, "", h3d)
+        pending.update(done=False, sha256=None, sha256_expected=None, got=[], scx_got=0)
+        self.save_files([pending])
+        self._live_rel = rel
+        self.progress(0.0, "h3d: 대시보드가 SCX에서 받는 중", got=0)
         t0 = time.monotonic()
-        got, sha = self.download(h3d, part, size, "h3d")
+        try:
+            got, sha = self.download(h3d, part, size, "h3d")
+        except BaseException:
+            self.drop_pending(rel)                # 실패·취소: 받는 중 항목을 뺀다(.part 는 남김 — 재시도 때 덮어씀)
+            raise
+        finally:
+            self._live_rel = None
         U.check_existing_file(part, self.up_dir)
         if os.path.lexists(dst):
             raise _fail("UPLOAD_FILE_EXISTS", f"세션에 같은 경로 파일이 이미 있습니다(덮어쓰지 않음): {rel}")
         os.replace(part, dst)
         self.save_files([self.file_entry(rel, got, sha, h3d)])
         self.echo(f"[esl-worker] h3d: {name} {_gb(got)} GB, sha256 {sha[:12]}… ({time.monotonic() - t0:.1f}s)")
-        self.progress(100.0, f"h3d {_gb(got)} / {_gb(got)} GB")
+        self.progress(100.0, f"h3d {_amount(got, got)}")
         return {"size": got, "sha256": sha}
 
     # ---- SF_REGISTER

@@ -7,7 +7,7 @@ export type Checked = UploadCompleteOut & { parts: RadPart[]; missing_includes: 
 export const normCheck = (r: UploadCompleteOut): Checked => ({ ...r, parts: r.parts ?? [], missing_includes: r.missing_includes ?? [], problems: r.problems ?? [] });
 import { ApiError, errorText } from "../../api/client";
 import { p3 } from "../../api/p3";
-import { SCX_UPLOAD_CLIENT } from "../../api/scx";
+import { isScxUpload } from "../../api/scx";
 import { Badge, ErrorLine } from "../../components/ui";
 import { bytes, dt } from "../../lib/format";
 import { slimLine, slimTip } from "../../lib/slim";
@@ -284,14 +284,14 @@ export function UploadPanel({
           // 아직 다 받지 못한 업로드: 받은 양을 보여 주고, 같은 파일을 다시 고르면 이어 올린다고 안내
           if (!alive) return;
           clearResult();
-          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: u.client?.name === SCX_UPLOAD_CLIENT, partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
+          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: isScxUpload(u), partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
           onChange(null);
           return;
         }
         const r = normCheck(u.state === "COMPLETED" && u.result ? { ...u.result, upload_id: u.upload_id, state: "COMPLETED" } : await p3.completeUpload(initialUploadId));
         if (!alive) return;
         const meta = r.h3d_meta ?? live.find((f) => f.meta)?.meta ?? null;
-        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: u.client?.name === SCX_UPLOAD_CLIENT, meta });
+        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: isScxUpload(u), meta });
         setResult(r);
         const src = r.h3d_path ? ({ kind: "h3d", path: r.h3d_path } as const) : r.results_dir ? ({ kind: "results", path: r.results_dir } as const) : null;
         const ok = r.ok && !!r.rad_path && !!src;

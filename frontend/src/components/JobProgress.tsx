@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
-import type { JobOut, JobProgressLabel, JobState } from "../api/types";
+import type { JobOut, JobState } from "../api/types";
 import { usePolling } from "../lib/usePolling";
 import { STEP_LABEL as SHARED_STEP_LABEL } from "../api/history";
 import { JobStatusBadge } from "./ui";
@@ -25,7 +25,7 @@ export function JobProgress({ jobId, onDone, allowed = true, onRetried }: { jobI
   const [actError, setActError] = useState<string | null>(null);
   const cursor = useRef<number | null>(null);
   const doneFired = useRef(false);
-  const j = job.data as (JobOut & JobProgressLabel) | null;
+  const j = job.data;
   const terminal = !!j && TERMINAL.includes(j.state);
 
   useEffect(() => {

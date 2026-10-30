@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 import { MockServer } from "../mock/server";
 import { MOCK_SCX_ROOTS, scxHint } from "../mock/scxmock";
-import { shortReason } from "../api/scx";
+import { isScxUpload, shortReason } from "../api/scx";
 import { SCX_FETCH_LABEL, SCX_RETRY_NOTE } from "../pages/newcase/ScxPanel";
 import { GUIDE } from "../pages/guide/content";
 
@@ -256,5 +256,15 @@ describe("새 Case — SCX 드라이브에서 고르기", () => {
     const card = GUIDE.flatMap((g) => g.cards).find((c) => c.id === "scx-drive");
     expect(card?.title).toBe("새 Case — SCX 드라이브에서 고르기");
     expect(card?.target).toEqual({ kind: "new", tab: "scx" });
+  });
+});
+
+describe("SCX 세션 판정(서버 정합)", () => {
+  it("client.name scx-relay 또는 files[].source scx — 첫 파일 배치 전(client null)에도 source 로", () => {
+    const f = (source?: "browser" | "scx", removed = false) => ({ index: 0, rel: "rad/a_0000.rad", size: 1, received: 0, done: false, source, removed });
+    expect(isScxUpload({ client: { name: "scx-relay", version: "x" }, files: [] })).toBe(true);
+    expect(isScxUpload({ client: null, files: [f("scx")] })).toBe(true);
+    expect(isScxUpload({ client: null, files: [f("scx", true)] })).toBe(false);
+    expect(isScxUpload({ client: { name: "esl-web", version: "1" }, files: [f("browser")] })).toBe(false);
   });
 });
