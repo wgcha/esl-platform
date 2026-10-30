@@ -1074,7 +1074,8 @@ def doe_assem_full(out: str, doe: dict, starter: str, case_dir: str, roots: list
 
     A = _mod("esl.doe.assem_full")
     w = doe_writer(out, doe)
-    d = _wrap(w.fresh_dir, os.path.join(out, rel), out)
+    _wrap(A.drop_derived, out, w.guard, (os.path.basename(rel),))     # 파생물 — _backup 에 쌓지 않고 삭제
+    d = _wrap(w.makedirs, os.path.join(out, rel))
     return _wrap(A.copy_model_full, starter, case_dir, roots, d, max_mb=max_mb, include_path_map=include_path_map,
                  max_depth=max_depth, engine_rad=engine_rad, fixed_scan=fixed_scan, guard=w.guard)
 
