@@ -7,7 +7,9 @@
 - BD_GEOM(LOCAL): paicad version(BD-D-19 — 낮음·OCP 없음 → 작업 실패) → [②③ A Case fixed-scan → prep/a_fixed/(실패는
   정보만 — 코어가 A_FASTENERS_UNKNOWN)] → [①② fixed-scan(조립) → prep/fixed/] → [①② extract 1차(조립 없이) → prep/extract0/
   → prep/body_map.json] → extract → prep/extract/ → [①② tag → prep/tag/]. 진행률 = 명령별 균등 × PAICAD PROGRESS.
-  ① 조립 = 기준 Case 입력 폴더 **제자리**(읽기만, 링크·4096 MB 상한 = scenario.assem_dir_check), ② = input/mesh 사본.
+  ① 조립 = 기준 Case 입력 폴더 검사(링크·4096 MB 상한 = scenario.assem_dir_check) 후 **모델 전체 사본** prep/assem_full/
+  (v0.12.1 esl.doe.assem_full — starter include 트리 전체, 폴더 밖 include 포함, 스캔 정규화; ②③ A Case 는
+  prep/a_assem_full/), ② = input/mesh 사본. run 모핑 사본 중 정규화한 파일은 원본 + 모핑 /NODE 좌표로 복원.
 - BD_GRID(LOCAL): ``shell view grid``. 셀 = doe/<rev>/cells.json + 공칭 셀 ``nominal``(values {}) → doe/<rev>/grid_cells.json
   — paicad 0.14.0 grid 는 공칭 썸네일을 따로 만들지 않으므로(grid_manifest.nominal = {bbox, view_sha256}) 공칭을 셀로
   넣어 ``grid/cells/nominal/thumb.png`` 를 얻는다(백엔드 d000 썸네일 탐색 순서에 있는 경로). ③ ``--fixed-dir ""``.
@@ -181,11 +183,43 @@ def _fail(code: str, message: str, exit_code: int | None = None):
     return _StepFailed(code, message[:480], exit_code)
 
 
-def _paicad_fail(r: dict[str, Any], what: str):
+def _paicad_fail(r: dict[str, Any], what: str, man: dict[str, Any] | None = None):
     detail = f" — {r['detail']}" if r.get("detail") else ""
     msg = (f"{r.get('message') or r.get('code')} ({what}: paicad {r.get('paicad_code') or '-'}, 종료 "
-           f"{'시간 초과' if r.get('timeout') else r.get('exit_code')}){detail}")
+           f"{'시간 초과' if r.get('timeout') else r.get('exit_code')}){fixed_hint(r, man)}{detail}")
     return _fail(r.get("code") or "PAICAD_FAILED", msg, r.get("exit_code"))
+
+
+def fixed_hint(r: dict[str, Any], man: dict[str, Any] | None) -> str:
+    """FIXED_PARSE_FAILED 안내(v0.12.1): 모델 전체를 읽고도 정의 없음 / 솔리드 면 tie 미지원."""
+    if r.get("code") != "FIXED_PARSE_FAILED" or not man:
+        return ""
+    text = f"{r.get('message') or ''} {r.get('detail') or ''}"
+    out = ""
+    if "not found" in text:
+        out += f" — 모델 전체({man.get('n_files')}개 파일)를 읽었으나 정의 없음"
+    if "only shell parts are supported" in text:
+        out += " — 솔리드 파트 면(/SURF/PART) tie 는 paicad 미지원"
+    return out
+
+
+def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = "") -> tuple[str, dict[str, Any]]:
+    """v0.12.1 모델 전체 사본 prep/<rel>/(paicad --assem-dir) + 스캔 정규화 → (폴더, 매니페스트 = prep/<rel>.json)."""
+    _, dcfg = _cfg(ex)
+    cc = ((ex.lib["doe"].get("core") or {}).get("case")) or {}
+    man = core_adapter.doe_assem_full(
+        ex.cdir, ex.lib["doe"], starter, case_dir, _in_roots(ex), os.path.join("prep", rel),
+        max_mb=float(dcfg["same"]["max_assem_mb"]), max_depth=int(cc.get("rad_include_max_depth") or 8),
+        include_path_map=cc.get("include_path_map"), engine_rad=bool(dcfg["same"].get("engine_rad")),
+        fixed_scan=dcfg.get("fixed_scan"))
+    _write_json(os.path.join(ex.cdir, "prep", rel + ".json"), man)
+    sm = core_adapter.doe_assem_summary(man)
+    echo(f"[esl-worker] {label}모델 전체 사본 prep/{rel}: 파일 {sm['n_files']}개 {sm['total_mb']:.1f} MB "
+         f"(Case 폴더 밖 {sm['n_outside']}개, 엔진 rad {'포함' if sm['engine_rad'] else '제외'}"
+         + (f", rad/inc 아님 제외 {len(sm['skipped'])}개" if sm["skipped"] else "") + ")")
+    echo(f"[esl-worker] {label}스캔 정규화 {sm['n_normalized']}건 "
+         + json.dumps(sm["normalized"], ensure_ascii=False, sort_keys=True))
+    return os.path.join(ex.cdir, "prep", rel), man
 
 
 def _tick(ex):
@@ -306,7 +340,8 @@ def _a_case(ex, echo) -> dict[str, Any] | None:
             if len(hit) != 1:
                 raise DomainError("PART_NOT_FOUND", f"A Case 에서 파트 '{case.get('part_title')}' 를 하나로 찾지 못함")
             pid = hit[0]["id"]
-        return {"case_dir": d, "part_id": int(pid)}
+        sd, man = _stage_full(ex, rad, d, "a_assem_full", echo, label="A Case ")
+        return {"case_dir": sd, "part_id": int(pid), "man": man}
     except (DomainError, core_adapter.CoreError) as exc:
         echo(f"[esl-worker] A Case 체결점 조사 생략({exc.code}: {exc.message}) — A_FASTENERS_UNKNOWN")
         return None
@@ -347,6 +382,7 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     if not os.path.isfile(cad):
         raise _fail("PREREQUISITE_MISSING", "STEP 사본(input/step)이 없습니다 — BD_INPUT 부터 다시")
     assem = None
+    man = None
     if scn == "same":
         b = doe.get("base") or {}
         assem = b.get("case_dir") or os.path.dirname(b["rad_path"])
@@ -359,6 +395,8 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     if assem is not None:
         try:
             core_adapter.doe_assem_check(assem, float(dcfg["same"]["max_assem_mb"]) if scn == "same" else 1e12)
+            if scn == "same":       # v0.12.1 paicad 는 --assem-dir 아래만 읽음 → 모델 전체(include 트리) 사본
+                assem, man = _stage_full(ex, b["rad_path"], assem, "assem_full", echo)
         except core_adapter.CoreError as exc:
             raise _fail(exc.code, exc.message) from None
     a_case = _a_case(ex, echo) if scn in ("mesh", "step") else None
@@ -380,6 +418,8 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     prep = os.path.join(out, "prep")
     body_map = None
     outputs: dict[str, Any] = {"paicad_version": v.get("version"), "commands": []}
+    if man is not None:
+        outputs["assem_full"] = core_adapter.doe_assem_summary(man)
     for step in plan:
         if step == "a_fixed":
             d = fresh(os.path.join("prep", "a_fixed"))
@@ -389,7 +429,8 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
                         report=os.path.join(d, pio.SCAN_JSON), stage="prep", echo=echo, progress=progress, tick=tick,
                         label="fixed-scan(A) ")
             if not r["ok"]:
-                echo(f"[esl-worker] A Case fixed-scan 실패({r['code']}) — A 체결점은 3-2-1 만(A_FASTENERS_UNKNOWN)")
+                echo(f"[esl-worker] A Case fixed-scan 실패({r['code']}{fixed_hint(r, a_case.get('man'))}) — A 체결점은 "
+                     "3-2-1 만(A_FASTENERS_UNKNOWN)")
         elif step == "fixed":
             d = fresh(os.path.join("prep", "fixed"))
             r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
@@ -397,7 +438,7 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
                         cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
                         stage="prep", echo=echo, progress=progress, tick=tick, label="fixed-scan ")
             if not r["ok"]:
-                raise _paicad_fail(r, "fixed-scan")
+                raise _paicad_fail(r, "fixed-scan", man)
             fx = (r.get("report") or {}).get("fixed") or {}
             echo(f"[esl-worker] 고정 노드 {fx.get('total')} (클러스터 {len(fx.get('clusters') or [])})")
         elif step == "extract0":
@@ -437,7 +478,7 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
                         cwd=prep, capture=os.path.join(prep, "tag.stdout.log"), report=os.path.join(d, pio.TAG_JSON),
                         stage="prep", echo=echo, progress=progress, tick=tick, label="tag ")
             if not r["ok"]:
-                raise _paicad_fail(r, "tag")
+                raise _paicad_fail(r, "tag", man)
         outputs["commands"].append({"step": step, "exit_code": r["exit_code"], "seconds": r["seconds"], "ok": r["ok"]})
         done["i"] += 1
         prog(100.0 * done["i"] / n)
@@ -608,14 +649,15 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     inp = _read_json(os.path.join(out, "prep", "input.json"), {}) or {}
     opts = os.path.join(out, "prep", "paicad_options.json") if pc.get("options") else None
     vfile = os.path.join(out, "doe", rev, "values", f"{BASELINE if did == NOISE else did}.json")
+    man = None
+    pd = dd
     base_vals = {"cad": os.path.join(out, *str(inp["step"]["rel"]).split("/")),
                  "features": os.path.join(out, "prep", "extract", pio.EXTRACT_JSON), "values": vfile,
                  "options": opts, "threads": int(pc["threads"])}
     try:
         if scn in ("same", "mesh"):
             pd = core_adapter.doe_fresh_dir(out, os.path.join("run", "designs", did, "paicad"), doe)
-            assem = ((doe.get("base") or {}).get("case_dir") or os.path.dirname((doe.get("base") or {})["rad_path"])
-                     if scn == "same" else os.path.join(out, "input", "mesh"))
+            assem, man = assem_dir_for(out, doe)
             bm = os.path.join(out, "prep", "body_map.json")
             vals = {**base_vals, "assem_dir": assem, "tag_dir": os.path.join(out, "prep", "tag"),
                     "fixed_dir": os.path.join(out, "prep", "fixed"), "update_dir": os.path.join(pd, "update"),
@@ -632,6 +674,14 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
                 stage="design", echo=echo, procs=procs, relay=False, label=f"[{did}] {key[7:]} ")
     pa = {"ok": r["ok"], "status": r.get("status"), "code": r.get("code"), "paicad_code": r.get("paicad_code"),
           "message": r.get("message"), "seconds": r["seconds"]}
+    if key == "paicad_run" and r["ok"] and man and man.get("n_normalized"):
+        try:        # v0.12.1 모핑 사본 = 원본 + 모핑 /NODE 좌표(스캔 정규화 흔적 제거)
+            rels = list(((r.get("report") or {}).get("out_files")) or [])
+            n = core_adapter.doe_restore_out_files(out, doe, os.path.join(pd, "out_files"), rels, man)
+            if n:
+                echo(f"[{did}] 모핑 사본 {n}개 파일을 원본 기준으로 복원(스캔 정규화 제외)")
+        except core_adapter.CoreError as exc:
+            pa.update(ok=False, status="FAIL", code=exc.code, paicad_code=None, message=exc.message)
     status, code = _eval_child(ex, did, pa, procs)
     res = _read_json(os.path.join(dd, "result.json"), {}) or {}
     solve = res.get("solve") or {}
@@ -641,6 +691,18 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     else:
         line = f"[{did}] {key[7:]} {r['seconds']:.0f} s → {status} {code or res.get('code') or ''}"
     return {"design": did, "status": status, "reused": False, "line": line}
+
+
+def assem_dir_for(out: str, doe: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """①② paicad run --assem-dir: ① = prep/assem_full(v0.12.1 준비분, 매니페스트 있음) | 이전 준비분이면 Case 폴더,
+    ② = input/mesh 사본. (폴더, 매니페스트 | None)."""
+    if doe["scenario"] != "same":
+        return os.path.join(out, "input", "mesh"), None
+    man = _read_json(os.path.join(out, "prep", "assem_full.json"))
+    if isinstance(man, dict) and os.path.isdir(os.path.join(out, "prep", "assem_full")):
+        return os.path.join(out, "prep", "assem_full"), man
+    b = doe.get("base") or {}
+    return b.get("case_dir") or os.path.dirname(b["rad_path"]), None
 
 
 def _eval_child(ex, did: str, pa: dict[str, Any], procs: paicad_proc.Procs) -> tuple[str, str | None]:

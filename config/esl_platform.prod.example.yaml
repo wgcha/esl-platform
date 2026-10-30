@@ -158,7 +158,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   max_entries: 50
   max_designs: 200                    # 공칭 d000 포함 안 수 상한
   step_max_mb: 200
-  same: {max_assem_mb: 4096}          # ① 기준 Case 입력 폴더 rad/inc 합계 상한(넘으면 422 ASSEM_TOO_LARGE → ② 안내)
+  same: {max_assem_mb: 4096, engine_rad: false}   # ① 모델 전체(starter include 트리) rad/inc 합계 상한(넘으면 ASSEM_TOO_LARGE → ② 안내), engine_rad = prep/assem_full 에 엔진 rad 포함
+  fixed_scan: {enabled: true, rules: [[SURF/PART/EXT, SURF/PART], [SURF/PART/ALL, SURF/PART]], expand_subset: true, expand_gene: true, expand_solid: true}   # v0.12.1 paicad 스캔 사본만 집합 카드 정규화(원본·모핑 사본 불변)
   paicad:
     exe: null                         # setup_config 자동 감지(<런타임 venv>/Scripts 의 paicad 실행 파일이 있을 때만)
     min_version: "0.14.0"
