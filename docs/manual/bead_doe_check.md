@@ -10,13 +10,14 @@
 
 | # | 확인 | 방법 / 기대 | 결과 |
 |---|---|---|---|
-| 0-1 | 설치 콘솔 | 설치·업데이트 끝 부분에 `강성 평가 스터디 형상 엔진: paicad 0.14.0 (OCP 7.8.…), gmsh 4.15.2 — …\paicad.exe` 한 줄. `강성 평가 스터디 비활성(다른 기능은 그대로): …` 경고면 사유를 적고 관리자 매뉴얼 §2.7.1 | |
+| 0-1 | 설치 콘솔 | 설치·업데이트 끝 부분에 `강성 평가 스터디 형상 엔진: paicad 0.14.0 (OCP 7.8.…), gmsh 4.15.2 — …\paicad.exe (wheel: vendored)` 한 줄(v0.10.1 — `vendored` = 저장소 동봉 `deploy\wheels` 를 씀, physicsai 저장소·`paicad_wheels` 불필요. 그 앞 줄 `paicad 0.14.0 wheel: 저장소 동봉 …`). `강성 평가 스터디 비활성(다른 기능은 그대로): …` 경고면 사유를 적고 관리자 매뉴얼 §2.7.1 | |
 | 0-2 | paicad 버전 | `& '<런타임>\venv\Scripts\paicad.exe' version --json` → `"paicad": "0.14.0"`(≥ 0.14.0), `"ocp"` 가 **null 이 아님**, python 3.12.x | |
 | 0-3 | gmsh | `& '<런타임>\venv\Scripts\python.exe' -c "import gmsh; print(gmsh.__version__)"` → `4.15.2`. 실패하면 ③ 과 STEP 내보내기만 비활성(`GMSH_UNAVAILABLE`) | |
-| 0-4 | 종합 점검 | `& '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe'` → `"ok": true`, `problems: []`, `warnings` 에 `GMSH_UNAVAILABLE` 없음 | |
+| 0-4 | 종합 점검 | `& '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe' --wheel '<deploy>\wheels\paicad-0.14.0-py3-none-any.whl'` → `"ok": true`, `problems: []`, `"wheel": {"ok": true, "sha256": …}`(= `deploy\paicad.lock` 의 sha256), `warnings` 에 `GMSH_UNAVAILABLE` 없음 | |
 | 0-5 | 설정 자동 감지 | 설치 콘솔 `강성 평가 스터디 자동 설정: bead_doe.enabled = true, bead_doe.paicad.exe = "…/venv/Scripts/paicad.exe" 추가 (백업 …)`(처음 한 번). `config\esl_platform.yaml` 의 `bead_doe.paicad.exe` 가 실제 파일을 가리킴. 다시 업데이트해도 값이 바뀌지 않음 | |
 | 0-6 | 업로드 확장자 | `upload.allowed_ext` 를 직접 적어 둔 설정이면 `.step`·`.stp` 가 한 번 보충됨(콘솔 `업로드 허용 확장자 보충: …`) | |
-| 0-7 | 오프라인 묶음 | (폐쇄망 묶음일 때) 준비 PC 의 `collect-offline.ps1` 출력에 paicad wheel 대조 `"ok": true` 와 `sha256` 이 `deploy\paicad.lock` 값과 같음. **Windows 준비 PC 에서 처음 만든 sha256 이 lock 과 같은지** 꼭 기록(정규화로 같아야 함 — 다르면 묶음 중단, 보고) | |
+| 0-7 | 오프라인 묶음 | (폐쇄망 묶음일 때) 준비 PC 의 `collect-offline.ps1` 출력에 `paicad wheel: 저장소 동봉 …`(v0.10.1 — 빌드 없음)과 대조 `"ok": true`, `sha256` 이 `deploy\paicad.lock` 값과 같음. `-PhysicsaiRepo` 로 다시 빌드했다면 **Windows 준비 PC 에서 만든 sha256 이 lock 과 같은지** 기록(정규화로 같아야 함 — 다르면 묶음 중단, 보고) | |
+| 0-7b | 동봉 wheel 불일치 | (선택) git 폴더에서 `deploy\wheels\paicad-0.14.0-py3-none-any.whl` 을 잠시 다른 파일로 바꾸고 `update-repo.ps1` → 콘솔 `강성 평가 스터디 비활성(다른 기능은 그대로): 실패: paicad wheel 대조 …` + `git checkout -- deploy/wheels` 안내, 업데이트 자체는 성공·다른 기능 정상. `git checkout -- deploy/wheels` 로 되돌리고 다시 실행 | |
 | 0-8 | 비활성 화면 | (선택) `bead_doe.paicad.exe` 를 잠시 없는 경로로 바꾸고 워커 재시작 → 강성 평가 스터디 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)", 관리자 화면 사유 `PAICAD_NOT_FOUND`. 다른 화면(라이브러리·비드 최적화)은 정상. 값 되돌림 | |
 | 0-9 | 워커 점검 | 워커 시작 후 `bead_doe.paicad.check_interval_s`(600 s) 이내 `GET /esl/api/doe/settings` → `enabled: true`, `paicad.ready: true`, `paicad.version: "0.14.0"`, `gmsh.ready: true` | |
 

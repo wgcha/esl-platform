@@ -21,6 +21,8 @@ $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 # resources/opt_method_sources.json: 비드 최적화 방법·출처(GET /opt/settings — v0.7.2 전에는 빠져 새 비드 최적화 화면이 비었음)
 # resources/doe_messages.json·doe_method_sources.json: v0.9.0 비드 DOE 사용자 문구·방법 출처(계약 esl_bead_doe.md §6.4, V-BD-18)
 # v0.10.0(계약 esl_menu_restructure.md §13 MR5): 새 런타임 파일 esl/export/from_entry.py(라이브러리 내보내기 코어 어댑터)·backend/esl_platform/api/services/library_export.py 는 'esl'·'backend/esl_platform' 폴더째 복사에 포함(새 resources 없음, tests/deploy/test_menu_deploy.py)
+# v0.10.1: deploy/wheels(저장소 동봉 paicad wheel)는 설치 때 venv 에 pip 로 넣는 것이라 <런타임>\app 복사 대상이 아니다(여기 넣지 않음).
+#   git 폴더 설치는 <git>\deploy\wheels 를 그대로 읽고, 오프라인 묶음은 collect-offline 이 deploy\ 째(→ 묶음 deploy\wheels)와 묶음 wheels\ 에 넣는다.
 $EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
@@ -133,18 +135,23 @@ function Install-EslPackages {
 
 function Install-EslBeadDoe {
     <#
-      v0.9.0 비드 DOE(계약 esl_bead_doe.md §6.4·BD-D-19·20): ① requirements.lock bead_doe 절(cadquery-ocp·vtk·gmsh 등)
-      ② paicad wheel — <Wheels>(오프라인 묶음) 또는 <PaicadWheels>(deploy.json paicad_wheels 폴더)의 deploy\paicad.lock 이름 wheel,
-         없고 <PhysicsaiRepo>(deploy.json physicsai_root, 읽기만)가 있으면 그 저장소의 lock 커밋으로 <WorkDir>에 빌드 →
-         paicad_wheel.py verify(버전·정규화 sha256) → pip install --no-deps ③ 확인(paicad_wheel.py check: paicad version --json 의
+      v0.9.0 비드 DOE(계약 esl_bead_doe.md §6.4·BD-D-19·20): ① requirements.lock bead_doe 절(cadquery-ocp·vtk·gmsh 등 — 사내 pip 인덱스,
+         <Wheels> 가 있으면 오프라인 묶음) ② paicad wheel — v0.10.1 설치 우선순위(esl 단독 설치 — physicsai 저장소·wheel 폴더 불필요):
+         (a) <VendoredWheels>(기본 = 이 파일 옆 deploy\wheels — 저장소 동봉)의 deploy\paicad.lock 이름 wheel: 설치 전 lock 대조
+             (paicad_wheel.py verify — 버전·정규화 sha256), 불일치면 (b)(c)로 넘어가지 않고 중단(사유 기록 — DOE 만 비활성)
+         (b) <Wheels>(오프라인 묶음 wheels) 또는 <PaicadWheels>(deploy.json paicad_wheels 폴더)
+         (c) <PhysicsaiRepo>(deploy.json physicsai_root, 읽기만)의 lock 커밋으로 <WorkDir>에 빌드
+         → verify → pip install --no-deps ③ 확인(paicad_wheel.py check: paicad version --json 의
          paicad ≥ lock·ocp 있음, gmsh import). 관리자 권한·머신 환경변수 없음. 실패해도 throw 하지 않는다 — 기존 기능은 그대로,
-      비드 DOE 만 비활성(워커 점검이 사유 PAICAD_* 를 기록). 결과 [pscustomobject]{Ok, Paicad, Ocp, Gmsh, Exe, Reason, Warnings}.
+      비드 DOE 만 비활성(워커 점검이 사유 PAICAD_* 를 기록).
+      결과 [pscustomobject]{Ok, Paicad, Ocp, Gmsh, Exe, Source, Reason, Warnings} — Source = vendored·wheels·paicad_wheels·physicsai_root·installed.
     #>
     param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$LockFile,
           [Parameter(Mandatory = $true)][string]$PaicadLock, [string]$Wheels = '', [string]$PaicadWheels = '',
-          [string]$PhysicsaiRepo = '', [string]$WorkDir = '')
-    $res = [ordered]@{ Ok = $false; Paicad = $null; Ocp = $null; Gmsh = $null; Exe = $null; Reason = ''; Warnings = @() }
+          [string]$PhysicsaiRepo = '', [string]$WorkDir = '', [string]$VendoredWheels = '')
+    $res = [ordered]@{ Ok = $false; Paicad = $null; Ocp = $null; Gmsh = $null; Exe = $null; Source = ''; Reason = ''; Warnings = @() }
     $helper = Join-Path $PSScriptRoot 'paicad_wheel.py'
+    if (-not $VendoredWheels) { $VendoredWheels = Join-Path $PSScriptRoot 'wheels' }   # 저장소 동봉(deploy\wheels, v0.10.1)
     $exe = Join-Path (Split-Path -Parent $VenvPy) 'paicad.exe'   # <venv>\Scripts\paicad.exe (console script 'paicad')
     $res.Exe = $exe
     try {
@@ -156,26 +163,36 @@ function Install-EslBeadDoe {
         }
         $lock = Get-Content -Raw -Encoding UTF8 -LiteralPath $PaicadLock | ConvertFrom-Json
         $whl = $null
-        foreach ($dir in @($Wheels, $PaicadWheels)) {
-            if ($dir -and (Test-Path -LiteralPath (Join-Path $dir $lock.wheel))) { $whl = Join-Path $dir $lock.wheel; break }
+        # (a) 저장소 동봉 wheel — 있으면 이것만 쓴다(불일치면 아래 verify 에서 중단, (b)(c)로 넘어가지 않음)
+        $vend = Join-Path $VendoredWheels $lock.wheel
+        if (Test-Path -LiteralPath $vend) {
+            $whl = $vend; $res.Source = 'vendored'
+            Write-EslStep "paicad $($lock.version) wheel: 저장소 동봉 $vend (physicsai 저장소 불필요)"
         }
+        # (b) 오프라인 묶음 wheels · deploy.json paicad_wheels
+        if (-not $whl -and $Wheels -and (Test-Path -LiteralPath (Join-Path $Wheels $lock.wheel))) { $whl = Join-Path $Wheels $lock.wheel; $res.Source = 'wheels' }
+        if (-not $whl -and $PaicadWheels -and (Test-Path -LiteralPath (Join-Path $PaicadWheels $lock.wheel))) { $whl = Join-Path $PaicadWheels $lock.wheel; $res.Source = 'paicad_wheels' }
+        # (c) physicsai_root 저장소에서 빌드(읽기만)
         if (-not $whl -and $PhysicsaiRepo) {
             if (-not $WorkDir) { throw 'physicsai_root 로 paicad 를 빌드할 작업 폴더가 없습니다' }
             if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
             Write-EslStep "paicad $($lock.version) wheel 빌드: $PhysicsaiRepo (커밋 $($lock.commit.Substring(0, 12)) — 저장소는 읽기만)"
             Invoke-EslNative 'paicad wheel 빌드' $VenvPy @($helper, 'collect', '--lock', $PaicadLock, '--out-dir', $WorkDir, '--repo', $PhysicsaiRepo, '--work', (Join-Path $WorkDir 'build')) `
                 'physicsai 저장소에 lock 커밋이 있는지(git fetch), 사내 pip 설정으로 setuptools 를 받을 수 있는지 확인하세요'
-            $whl = Join-Path $WorkDir $lock.wheel
+            $whl = Join-Path $WorkDir $lock.wheel; $res.Source = 'physicsai_root'
         }
         if ($whl) {
-            Invoke-EslNative 'paicad wheel 대조(deploy\paicad.lock — 버전·sha256)' $VenvPy @($helper, 'verify', '--lock', $PaicadLock, '--wheel', $whl) `
-                'wheel 이 lock 과 다릅니다 — collect-offline 으로 다시 만든 묶음을 쓰세요'
+            $hint = if ($res.Source -eq 'vendored') {
+                "저장소 동봉 wheel($vend)이 deploy\paicad.lock 과 다릅니다(파일 손상·부분 갱신) — git status 로 확인하고 git checkout -- deploy/wheels 로 되돌리세요(lock 은 고치지 마세요)"
+            } else { 'wheel 이 lock 과 다릅니다 — collect-offline 으로 다시 만든 묶음을 쓰세요' }
+            Invoke-EslNative 'paicad wheel 대조(deploy\paicad.lock — 버전·sha256)' $VenvPy @($helper, 'verify', '--lock', $PaicadLock, '--wheel', $whl) $hint
             Invoke-EslPip -Py $VenvPy -PipArgs @('install', '--no-index', '--no-deps', '--force-reinstall', $whl) -What "paicad $($lock.version) 설치"
         } elseif (Test-Path -LiteralPath $exe) {
+            $res.Source = 'installed'
             Write-EslStep 'paicad wheel 위치가 없어 venv 에 이미 설치된 paicad 를 확인만 합니다'
         } else {
-            throw ("paicad wheel($($lock.wheel))이 없습니다 — 오프라인 묶음은 collect-offline 으로 다시 만들고, git 폴더 설치는 " +
-                'deploy.json 에 paicad_wheels(wheel 폴더) 또는 physicsai_root(physicsai 저장소)를 쓰세요')
+            throw ("paicad wheel($($lock.wheel))이 없습니다 — 저장소 동봉 deploy\wheels 가 빠졌습니다(git checkout -- deploy/wheels). " +
+                '그 밖에는 deploy.json 에 paicad_wheels(wheel 폴더) 또는 physicsai_root(physicsai 저장소)를 쓰세요')
         }
         $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         try { $raw = @(& $VenvPy $helper check --lock $PaicadLock --exe $exe 2>$null) } finally { $ErrorActionPreference = $eap }
@@ -188,7 +205,7 @@ function Install-EslBeadDoe {
     }
     foreach ($w in @($res.Warnings)) { if ($w) { Write-Warning "강성 평가 스터디: $w" } }
     if ($res.Ok) {
-        Write-EslStep "강성 평가 스터디 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe"
+        Write-EslStep "강성 평가 스터디 형상 엔진: paicad $($res.Paicad) (OCP $($res.Ocp)), gmsh $(if ($res.Gmsh) { $res.Gmsh } else { '없음 — ③ 만 비활성' }) — $exe (wheel: $($res.Source))"
     } else {
         Write-Warning "강성 평가 스터디 비활성(다른 기능은 그대로): $($res.Reason)"
     }

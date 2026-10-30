@@ -2,6 +2,11 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.10.1] - 2026-10-30
+### 수정
+- **배포: 형상 엔진 paicad wheel 을 저장소에 동봉**(`deploy\wheels\paicad-0.14.0-py3-none-any.whl`, `deploy\paicad.lock` 의 커밋·정규화 sha256 그대로). git 폴더 설치·`update-repo.ps1`·오프라인 묶음 설치가 **physicsai 저장소·wheel 폴더 없이** paicad 를 설치합니다(설치 전 sha256 대조 — 다르면 강성 평가 스터디 만 비활성 + 사유, 다른 기능은 그대로). `deploy.json` 의 `paicad_wheels`·`physicsai_root` 는 동봉 wheel 이 없을 때만 쓰는 예비 경로
+- 오프라인 묶음(`collect-offline`)은 동봉 wheel 을 빌드 없이 그대로 넣습니다(GitHub·git 불필요). 설치 확인 `paicad_wheel.py check --wheel <동봉 wheel>` 로 파일 대조도 가능
+
 ## [0.10.0] - 2026-10-29
 ### 변경
 - **상단 메뉴 2개 [ESL 생성] · [ESL 라이브러리]**: ESL 생성 = 케이스 목록 + 새 케이스, ESL 라이브러리 = ESL 목록과 그 ESL 로 하는 일(내보내기·강성 평가 스터디·비드 최적화·종합분석). 라이브러리 탭 **ESL 목록 | 강성 평가 스터디 | 비드 최적화 | 종합분석·버전 비교 | 템플릿**

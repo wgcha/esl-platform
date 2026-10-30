@@ -11,7 +11,9 @@
 #   deploy/paicad_wheel.py 로 빌드(pip wheel --no-deps, setuptools 고정)·정규화하고 버전·sha256 을 lock 과 대조해 wheels/ 에 넣는다(불일치 중단).
 #   --physicsai-repo : 그 커밋이 있는 로컬 physicsai 저장소(읽기만 — 없으면 GitHub 에서 그 커밋만 얕게 받음).
 #   --paicad-wheel   : 이미 빌드된 paicad wheel 을 대조만 해서 넣는다.  --no-paicad : paicad 를 넣지 않는다(묶음은 비드 DOE 비활성).
-#   --no-download 이면 paicad 도 건너뛴다. OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받는다.
+#   v0.10.1: 저장소 동봉 deploy/wheels/<lock.wheel> 이 있으면(기본) 빌드 없이 그 wheel 을 대조만 해서 넣는다(--no-download 여도 — 네트워크 불필요).
+#   --physicsai-repo·--paicad-wheel 을 주면 그쪽을 쓴다. 동봉 wheel 이 없고 --no-download 이면 paicad 도 건너뛴다.
+#   OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받는다.
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL·OCP·gmsh 포함 + paicad-<ver>-py3-none-any.whl), frontend/(vite build, base /esl/),
 #   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
@@ -67,8 +69,12 @@ if [ "$NODL" -eq 1 ]; then
 else
   run "$PY -m pip download --disable-pip-version-check -r deploy/requirements.lock --only-binary=:all: --platform win_amd64 --python-version 3.12 -d '$OUTDIR/wheels'"
 fi
-# 비드 DOE paicad wheel(lock 커밋 빌드·정규화·sha256 대조 — 불일치면 여기서 중단)
-if [ "$NODL" -eq 1 ] || [ "$NOPAICAD" -eq 1 ]; then
+# 비드 DOE paicad wheel(동봉 wheel 대조 또는 lock 커밋 빌드·정규화·sha256 대조 — 불일치면 여기서 중단)
+VENDORED="deploy/wheels/$(sed -n 's/^ *"wheel": *"\([^"]*\)".*/\1/p' deploy/paicad.lock | head -1)"
+if [ "$NOPAICAD" -ne 1 ] && [ -z "$PAICAD_REPO" ] && [ -z "$PAICAD_WHEEL" ] && [ -f "$VENDORED" ]; then
+  echo "paicad wheel: 저장소 동봉 $VENDORED (빌드 없음 — lock 대조 후 묶음 wheels 에 넣음)"
+  run "$PY -I deploy/paicad_wheel.py collect --lock deploy/paicad.lock --out-dir '$OUTDIR/wheels' --wheel '$VENDORED'"
+elif [ "$NODL" -eq 1 ] || [ "$NOPAICAD" -eq 1 ]; then
   echo "paicad wheel 생략(--no-download/--no-paicad) — 이 묶음으로 설치하면 강성 평가 스터디 는 비활성"
 else
   PAICAD_ARGS=""

@@ -68,7 +68,7 @@
 | `/p/:pid` | ESL 생성 — 케이스 목록 + [새 케이스](주) + '실행 이력' 링크 | — |
 | `/p/:pid/cases/new` | 새 케이스(그대로) | — |
 | `/p/:pid/c/:cid` | → `step/1` | — |
-| `/p/:pid/c/:cid/step/:n` (1..4) | 케이스 단계 | `/stage/1`→`/step/1`, `/stage/2`→`/step/2`, `/stage/3`→`/step/2`, `/stage/4`→`/step/3`(`?run=` 유지), `/stage/5`→`/step/4`(`?val=` 유지), `/stage/6`→`/step/4?moved=export`(한 줄 안내 "내보내기는 ESL 라이브러리로 옮겨졌습니다 — 등록 후 라이브러리에서 내보내세요" + 링크) |
+| `/p/:pid/c/:cid/step/:n` (1..4) | 케이스 단계 | `/stage/1`→`/step/1`, `/stage/2`→`/step/2`, `/stage/3`→`/step/2`, `/stage/4`→`/step/3`(`?run=` 유지), `/stage/5`→`/step/4`(`?val=` 유지), `/stage/6`→`/step/4?moved=export`(한 줄 안내 "⑥ 내보내기 단계는 없어졌습니다 — Case 결과는 상단 [결과 받기(zip)], 비드 최적화·강성 평가는 등록 후 ESL 라이브러리에서" + 'ESL 라이브러리 열기' 링크 — 구현 `CasePage.tsx` `MOVED_EXPORT_TEXT`, v0.10.1 정정) |
 | `/p/:pid/c/:cid/history`, `/p/:pid/history`, `/p/:pid/jobs/:jobId` | 그대로 | — |
 | `/p/:pid/library?tab=` | ESL 라이브러리: `items`(기본)·`study`·`opt`·`analyses`·`templates` | `?tab=doe`→`study`, `?tab=comparisons`→`analyses#comparisons` |
 | `/p/:pid/library/analyses/*`, `/library/comparisons/*`, `/opt/new`, `/opt/:id`, `/doe/new`, `/doe/:id` | 그대로(라벨만 변경) | `/p/:pid/doe`→`library?tab=study`, `/p/:pid/opt`→`library?tab=opt` |

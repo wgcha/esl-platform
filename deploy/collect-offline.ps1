@@ -11,8 +11,11 @@
   비드 DOE(v0.9.0, 계약 esl_bead_doe.md §6.4): OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받고, 형상 엔진 paicad 는
   deploy\paicad.lock 의 physicsai 커밋 packages\paicad 를 deploy\paicad_wheel.py 로 빌드(pip wheel --no-deps, setuptools 고정)·정규화해
   버전·sha256 을 lock 과 대조한 뒤 wheels 에 넣는다(불일치면 중단 — 묶음 안 만듦).
+  v0.10.1: 저장소 동봉 deploy\wheels\<lock.wheel> 이 있으면(기본) 빌드하지 않고 그 wheel 을 대조만 해서 그대로 넣는다(physicsai·GitHub 불필요).
+  -PaicadWheel·-PhysicsaiRepo 를 주면 그쪽을 쓴다.
 .PARAMETER PhysicsaiRepo
-  lock 커밋이 있는 로컬 physicsai-platform 저장소(선택, 읽기만). 비우면 GitHub(lock.source)에서 그 커밋만 얕게 받는다(임시 폴더).
+  lock 커밋이 있는 로컬 physicsai-platform 저장소(선택, 읽기만 — 동봉 wheel 대신 다시 빌드). 동봉 wheel 도 없고 이 값도 비면
+  GitHub(lock.source)에서 그 커밋만 얕게 받는다(임시 폴더).
 .PARAMETER PaicadWheel
   이미 빌드된 paicad wheel(선택). 빌드하지 않고 정규화·대조만 해서 넣는다.
 .PARAMETER NoPaicad
@@ -96,8 +99,13 @@ try {
         Write-Step 'paicad wheel 생략(-NoPaicad) — 이 묶음으로 설치하면 강성 평가 스터디 는 비활성(다른 기능은 그대로)'
     } else {
         $pwArgs = @('-I', (Join-Path $PSScriptRoot 'paicad_wheel.py'), 'collect', '--lock', 'deploy/paicad.lock', '--out-dir', 'dist/bundle/wheels')
+        $vendored = Join-Path 'deploy\wheels' ((Get-Content -Raw -Encoding UTF8 -LiteralPath 'deploy\paicad.lock' | ConvertFrom-Json).wheel)
         if ($PhysicsaiRepo) { $pwArgs += @('--repo', $PhysicsaiRepo) }
         if ($PaicadWheel) { $pwArgs += @('--wheel', $PaicadWheel) }
+        elseif (-not $PhysicsaiRepo -and (Test-Path -LiteralPath $vendored)) {
+            $pwArgs += @('--wheel', $vendored)   # v0.10.1 저장소 동봉 wheel — 빌드 없이 대조만
+            Write-Step "paicad wheel: 저장소 동봉 $vendored (빌드 없음 — lock 대조 후 묶음 wheels 에 넣음)"
+        }
         Invoke-Step 'paicad wheel(deploy/paicad.lock 커밋 → pip wheel --no-deps → 정규화·sha256 대조) → dist/bundle/wheels' {
             Invoke-Native 'paicad wheel 수집' $py $pwArgs ('git 설치와 GitHub(physicsai-platform) 접근을 확인하거나 -PhysicsaiRepo <저장소>/-PaicadWheel <wheel>을 주세요. ' +
                 'sha256 불일치면 lock 을 바꾸지 말고 관리자 매뉴얼 paicad 절(lock 갱신)을 따르세요. 강성 평가 스터디 없이 묶으려면 -NoPaicad')
