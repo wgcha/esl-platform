@@ -315,7 +315,7 @@ export interface InspectResultsResult {
 // ---------------------------------------------------------------- 작업
 /** P2(계약 esl_p2_library.md §11·§12): CASE_REPORT(LIGHT, Case HTML 보고서), LIB_ANALYZE(SLOT, 라이브러리 종합분석),
  *  LIB_COMPARE(LIGHT, 설계 버전 비교) */
-export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN" | "DOE_PREP" | "DOE_PREVIEW" | "DOE_RUN";
+export type JobType = "CASE_EXTRACT" | "ESL_SOLVE" | "VALIDATE" | "EXPORT" | "CASE_REPORT" | "LIB_ANALYZE" | "LIB_COMPARE" | "OPT_RUN" | "DOE_PREP" | "DOE_PREVIEW" | "DOE_RUN" | "SCX_FETCH";
 export type JobState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED" | "INTERRUPTED";
 
 export interface JobCreate {
@@ -351,7 +351,8 @@ export interface JobOut {
   project_id: string;
   job_type: JobType;
   stage: number;
-  lane: "SLOT" | "LIGHT";
+  /** v0.11.0 XFER = HTTP 전송·원격 대기 전용 레인(esl_scx_relay.md SR-D-9) */
+  lane: "SLOT" | "LIGHT" | "XFER";
   state: JobState;
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
@@ -377,6 +378,9 @@ export interface JobOut {
   steps?: StepOut[] | null;
 }
 export type Job = JobOut;
+/** v0.11.0 진행 문구(예 "h3d 12.3 / 30.0 GB", "대시보드가 SCX에서 받는 중" — esl_scx_relay.md §7.1). 백엔드 JobOut 스키마에
+ *  progress_label 이 들어가면 JobOut 으로 옮긴다(그 전까지 check:api 가 TS 전용 키로 막지 않게 별도 타입). */
+export type JobProgressLabel = { progress_label?: string | null };
 export type JobSummary = JobOut;
 
 export interface LogOut {
@@ -2444,4 +2448,71 @@ export interface DoeResultOut {
   /** 서버 정렬 키(기본 score) */
   sort?: string;
   warnings: DoeWarning[];
+}
+
+// ---------------------------------------------------------------- v0.11.0 SCX 드라이브에서 고르기(계약 esl_scx_relay.md §7·§7.1 — 기능 A)
+/** 기능별 사용 가능 여부(SR-D-19: 사유 판정은 서버 1곳) */
+export interface Avail {
+  enabled: boolean;
+  reason_code: string | null;
+  reason: string | null;
+}
+export interface ScxRootOut {
+  key: string;
+  label: string;
+}
+export interface ScxRelayOut {
+  reachable: boolean;
+  drive_state: string | null;
+  queue_paused: boolean;
+  writes_active: boolean;
+  job_api: boolean;
+  max_download_bytes: number | null;
+  checked_at: string;
+}
+export interface ScxAdaptersOut {
+  version: string | null;
+  commit: string | null;
+}
+/** GET /scx/status?project_id= (항상 200 — 사유는 본문) */
+export interface ScxStatusOut {
+  fetch: Avail;
+  verify: Avail;
+  /** 이 프로젝트에 허용된 루트(scx_drive.roots)만 */
+  roots: ScxRootOut[];
+  relay: ScxRelayOut;
+  adapters: ScxAdaptersOut;
+}
+/** §7.1 hint: *_0000.rad → rad, engine_globs → engine, .h3d → h3d, .inc·.k → include, .sta·.str → state */
+export type ScxHint = "rad" | "engine" | "h3d" | "include" | "state";
+export interface ScxBrowseEntry {
+  name: string;
+  kind: "dir" | "file";
+  size: number | null;
+  modified_at: string | null;
+  hint: ScxHint | null;
+}
+/** GET /scx/browse?project_id=&root=&path=&offset=&limit= */
+export interface ScxBrowseOut {
+  root: string;
+  /** 루트 기준 상대("" = 루트) */
+  path: string;
+  /** 표시 전용 경로(공용 계정 홈 기준) */
+  display: string;
+  entries: ScxBrowseEntry[];
+  total: number;
+  truncated: boolean;
+}
+/** POST /scx/fetches — rel 은 루트 기준, h3d 필수 */
+export interface ScxFetchIn {
+  project_id: string;
+  name: string;
+  root: string;
+  rad_rel: string;
+  h3d_rel: string;
+}
+/** 202: 업로드 세션(OPEN) + SCX_FETCH 작업 */
+export interface ScxFetchOut {
+  upload_id: string;
+  job_id: string;
 }

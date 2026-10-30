@@ -1509,6 +1509,43 @@ details.alt-input > .dropzone {
 .hint-badge.on {
   border-color: currentColor;
 }
+/* v0.11.0 SCX 드라이브에서 고르기(esl_scx_relay.md §10.1) */
+.tab.dis {
+  color: var(--text-3, var(--text-2));
+  opacity: 0.6;
+}
+.hint-badge.auto {
+  cursor: default;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--line);
+}
+.hint-badge.auto.state {
+  background: var(--wait-weak, var(--surface-2));
+}
+.hint-badge.auto:hover {
+  border-color: var(--line);
+}
+.scx-root {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.file-prog {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.file-prog .progress {
+  display: inline-block;
+  width: 10rem;
+  height: 0.5rem;
+}
+.file-prog .progress-fill {
+  display: block;
+  height: 100%;
+}
 .picked {
   display: grid;
   gap: 0.4rem;

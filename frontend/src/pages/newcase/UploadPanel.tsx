@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { H3dMeta, RadPart, UploadCompleteOut, UploadOut } from "../../api/types";
 
-type Checked = UploadCompleteOut & { parts: RadPart[]; missing_includes: string[]; problems: string[] };
+export type Checked = UploadCompleteOut & { parts: RadPart[]; missing_includes: string[]; problems: string[] };
 export const normCheck = (r: UploadCompleteOut): Checked => ({ ...r, parts: r.parts ?? [], missing_includes: r.missing_includes ?? [], problems: r.problems ?? [] });
 import { ApiError, errorText } from "../../api/client";
 import { p3 } from "../../api/p3";
+import { SCX_UPLOAD_CLIENT } from "../../api/scx";
 import { Badge, ErrorLine } from "../../components/ui";
 import { bytes, dt } from "../../lib/format";
 import { slimLine, slimTip } from "../../lib/slim";
@@ -283,14 +284,14 @@ export function UploadPanel({
           // 아직 다 받지 못한 업로드: 받은 양을 보여 주고, 같은 파일을 다시 고르면 이어 올린다고 안내
           if (!alive) return;
           clearResult();
-          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
+          setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: u.client?.name === SCX_UPLOAD_CLIENT, partial: live.map((f) => ({ rel: f.rel, size: f.size, got: f.received_total ?? f.received })) });
           onChange(null);
           return;
         }
         const r = normCheck(u.state === "COMPLETED" && u.result ? { ...u.result, upload_id: u.upload_id, state: "COMPLETED" } : await p3.completeUpload(initialUploadId));
         if (!alive) return;
         const meta = r.h3d_meta ?? live.find((f) => f.meta)?.meta ?? null;
-        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), meta });
+        setPcUpload({ name: u.name, n: live.length, bytes: u.total_bytes, id: u.upload_id, fromPc: isPcClient(u), fromScx: u.client?.name === SCX_UPLOAD_CLIENT, meta });
         setResult(r);
         const src = r.h3d_path ? ({ kind: "h3d", path: r.h3d_path } as const) : r.results_dir ? ({ kind: "results", path: r.results_dir } as const) : null;
         const ok = r.ok && !!r.rad_path && !!src;
@@ -525,7 +526,7 @@ export function UploadPanel({
       <div className="upload-panel" data-testid="pc-upload">
         <div className={pcUpload.partial ? "inspect bad" : "inspect ok"}>
           <div>
-            {pcUpload.partial ? <Badge kind="warn">다 받지 못함</Badge> : <Badge kind="info">{pcUpload.fromPc ? "PC에서 올림" : "브라우저에서 올림"}</Badge>} <b>{pcUpload.name}</b>{" "}
+            {pcUpload.partial ? <Badge kind="warn">다 받지 못함</Badge> : <Badge kind="info">{pcUpload.fromScx ? "SCX에서 받음" : pcUpload.fromPc ? "PC에서 올림" : "브라우저에서 올림"}</Badge>} <b>{pcUpload.name}</b>{" "}
             {pcUpload.meta && (
               <span title={slimTip(pcUpload.meta)} data-testid="pc-upload-mode">
                 <Badge kind={pcUpload.meta.kind === "h3d_slim" ? "ok" : "info"}>{pcUpload.meta.kind === "h3d_slim" ? "압축 모드" : "원본"}</Badge>{" "}
@@ -536,7 +537,9 @@ export function UploadPanel({
               {pcUpload.n}개 · {bytes(pcUpload.bytes)} —{" "}
               {pcUpload.partial
                 ? "일부만 받은 업로드입니다. 같은 파일을 '내 PC에서 올리기'에서 다시 고르면 이어 올립니다(PC 도구면 같은 명령을 다시 실행)."
-                : pcUpload.fromPc
+                : pcUpload.fromScx
+                  ? "SCX 드라이브에서 받은 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."
+                  : pcUpload.fromPc
                   ? "PC 도구(ESL_extract.bat·ESL_upload.bat)가 올린 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."
                   : "브라우저에서 올린 파일입니다. 아래 Case 정보를 확인하고 'Case 만들기'."}
             </span>
@@ -709,6 +712,8 @@ interface PcUpload {
   name: string;
   /** 업로드를 시작한 클라이언트가 PC 도구(client.name = esl-pc)인지 — 아니면 브라우저 */
   fromPc: boolean;
+  /** v0.11.0: SCX 워커가 받은 세션(client.name = scx-relay) */
+  fromScx?: boolean;
   n: number;
   bytes: number;
   meta?: H3dMeta | null;
@@ -842,7 +847,7 @@ function OpenUploads({
   );
 }
 
-function ResultView({ result, onAdd }: { result: Checked | null; onAdd?: () => void }) {
+export function ResultView({ result, onAdd }: { result: Checked | null; onAdd?: () => void }) {
   if (!result) return null;
   return (
     <div className={result.missing_includes.length || result.problems.length ? "inspect bad" : "inspect ok"} aria-label="올린 파일 확인 결과">

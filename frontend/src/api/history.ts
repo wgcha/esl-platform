@@ -216,6 +216,7 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   DOE_PREP: "강성 평가 준비",
   DOE_PREVIEW: "강성 평가 미리보기",
   DOE_RUN: "강성 평가 실행",
+  SCX_FETCH: "SCX 내려받기",
 };
 
 /** 단계(step_key) 한글 라벨 — v0.7.0 OPT_RUN 6단계(계약 esl_opt_run.md §6.1). 없는 키는 키 그대로 */
@@ -239,6 +240,10 @@ export const STEP_LABEL: Record<string, string> = {
   BD_DESIGNS: "안별 해석",
   BD_POST: "순위·보고서",
   BD_REGISTER: "등록",
+  // v0.11.0 SCX 드라이브에서 고르기(esl_scx_relay.md §8)
+  SF_RAD: "rad·include 받기",
+  SF_H3D: "h3d 받기",
+  SF_REGISTER: "확인·등록",
 };
 /** 작업 종류별 단계 순서(대기열 응답에는 steps 가 없어 current_step_no → 키). 서버 core/job_types.py 와 같은 순서 */
 export const JOB_STEP_KEYS: Partial<Record<JobType, string[]>> = {
@@ -246,6 +251,7 @@ export const JOB_STEP_KEYS: Partial<Record<JobType, string[]>> = {
   DOE_PREP: ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"],
   DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
   DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
+  SCX_FETCH: ["SF_RAD", "SF_H3D", "SF_REGISTER"],
 };
 export const stepLabel = (key: string | null | undefined) => (key ? STEP_LABEL[key] ?? key : "");
 /** 실행 중 작업의 현재 단계 키(steps 가 있으면 그것, 없으면 JOB_STEP_KEYS 순서) */
