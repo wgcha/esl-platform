@@ -37,7 +37,7 @@ from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.repositories import opt as opt_repo
 from sqlalchemy import and_, update
 
-from . import localproc, os_solve
+from . import inproc, localproc, os_solve
 
 STEP_ORDER = ("OPT_PREP", "OPT_LOAD", "OPT_DECK", "OS_SOLVE", "OPT_POST", "OPT_REGISTER")
 STAGE_JSON = {"opt_prep": ("target", "prep.json"), "opt_load": ("load", "load.json"),
@@ -96,8 +96,9 @@ def prepare(ex) -> tuple[str, dict[str, Any]]:
                 return any(rp == r or rp.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
 
             try:
-                refs = core_adapter.scan_include_refs(base["rad_path"], int(cc.get("rad_include_max_depth") or 8),
-                                                      cc.get("include_path_map") or None, follow=inside)
+                refs = inproc.call(ex, lambda: core_adapter.scan_include_refs(
+                    base["rad_path"], int(cc.get("rad_include_max_depth") or 8), cc.get("include_path_map") or None,
+                    follow=inside), label="include 스캔")
                 incs = [r["path"] for r in refs if r.get("path")]
             except core_adapter.CoreError as exc:
                 raise PrepareFailed("INPUT_INVALID", f"기준 Case 입력 rad 의 include 를 확인할 수 없습니다({exc.code}: "

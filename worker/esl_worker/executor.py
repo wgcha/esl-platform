@@ -54,7 +54,7 @@ from sqlalchemy.exc import IntegrityError
 
 from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES, VERIFY_JOB_TYPES
 
-from . import doe_jobs, esl_snapshot, h3d, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
+from . import doe_jobs, esl_snapshot, h3d, inproc, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -238,8 +238,9 @@ class Executor:
 
             cc = ((p.get("settings") or {}).get("case")) or {}
             try:
-                incs = core_adapter.scan_includes(self.case["rad_path"], int(cc.get("rad_include_max_depth") or 8),
-                                                  cc.get("include_path_map") or None)
+                incs = inproc.call(self, lambda: core_adapter.scan_includes(
+                    self.case["rad_path"], int(cc.get("rad_include_max_depth") or 8), cc.get("include_path_map") or None),
+                    label="include 스캔")
                 check_includes(self.settings, incs)
             except DomainError as exc:
                 raise _StepFailed(exc.code, exc.message) from None
@@ -261,7 +262,7 @@ class Executor:
         elif jt == "VALIDATE" and esl_run_stale(case, run):
             raise _StepFailed("PREREQUISITE_MISSING", stale)
         try:
-            how = esl_snapshot.ensure_on_disk(self.cdir, run)
+            how = inproc.call(self, lambda: esl_snapshot.ensure_on_disk(self.cdir, run), label="ESL 스냅샷 확인·복원")
         except (LookupError, OSError) as exc:
             raise _StepFailed("PREREQUISITE_MISSING", f"ESL 산출물이 대상 결과와 다릅니다: {exc}") from None
         if how != "current":
@@ -319,9 +320,11 @@ class Executor:
                 rels = [self._stage_dir(st["core_stage"]), "run.json", log_rel]
                 if st["core_stage"] == "esl":
                     rels.insert(0, "03_bc")
+                # v0.12.2: 산출물 sha256(파일당 ≤ 256 MB)은 트랜잭션(assert_lease FOR UPDATE) 밖 작업 스레드에서 미리
+                shas = inproc.call(self, lambda: register.artifact_shas(self.cdir, rels), label="산출물 sha256")
                 with self._tx() as conn:
                     jobs_repo.assert_lease(conn, self.job["id"], self.token)
-                    register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, rels)
+                    register.register_artifacts(conn, self.case["id"], self.job["id"], self.cdir, rels, shas)
                     rec = _stage_summary(self.cdir, st["core_stage"])
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {st["core_stage"]: rec})
                     if rec.get("warnings"):
@@ -384,8 +387,11 @@ class Executor:
         if lib_jobs.is_lib_export(self.job):        # 라이브러리 내보내기는 Case 폴더에 쓰지 않음(묶음 폴더가 보존본)
             return None
         try:
-            n = register.archive_history(self.cdir, self.job["job_type"], self.job["id"])
+            n = inproc.call(self, lambda: register.archive_history(self.cdir, self.job["job_type"], self.job["id"]),
+                            label="history 보존 사본", tick=inproc.renew_only(self))   # 등록 커밋 뒤 — 취소 안 받음
             return f"history 보존: {n}개 파일 → history/{self.job['id']}/" if n else None
+        except (_Canceled, LeaseLost):
+            raise
         except Exception as exc:  # noqa: BLE001 - 보존 실패가 작업 결과를 바꾸지 않는다
             msg = f"HISTORY_ARCHIVE_FAILED: 작업별 결과 파일 보존 실패({type(exc).__name__}: {exc})"[:300]
             log.warning("작업 %s %s", self.job["id"], msg)
@@ -551,8 +557,9 @@ class Executor:
         if self.case.get("rad_path"):
             from . import core_adapter
             try:
-                cum = core_adapter.cumulative_prev(self.case["rad_path"], p["part"], prev_csv,
-                                                   (self.job["params"] or {}).get("settings") or {})
+                cum = inproc.call(self, lambda: core_adapter.cumulative_prev(
+                    self.case["rad_path"], p["part"], prev_csv, (self.job["params"] or {}).get("settings") or {}),
+                    label="누적 씬 판정(rad 스캔)")
             except core_adapter.CoreError as exc:
                 echo(f"[esl-worker] 누적 씬 판정 생략({exc.code}: {exc.message}) — 기존 추출로 진행")
         if cum:

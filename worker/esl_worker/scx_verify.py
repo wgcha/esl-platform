@@ -53,6 +53,8 @@ from esl_platform.core.scx import status as scx_status
 from esl_platform.core.scx.mask import mask_text
 from esl_platform.core.scx.settings import run_stem, scx_cfg
 
+from . import inproc
+
 POLL_S = 0.2
 PROGRESS_S = 1.0
 STAGE_JSON = "stage.json"
@@ -603,7 +605,8 @@ class _Verify:
         for n in want:
             dst = safe_path(self.cdir, "result", n)
             r0 = man["files"].get(n)
-            if r0 and os.path.isfile(dst) and os.path.getsize(dst) == int(r0["size"]) and sha256_file(dst) == r0["sha256"]:
+            if r0 and os.path.isfile(dst) and os.path.getsize(dst) == int(r0["size"]) and inproc.call(
+                    self.ex, lambda dst=dst: sha256_file(dst), label=f"sha256 {n}", tick=lambda: self._tick(True)) == r0["sha256"]:
                 doneb += sizes[n]
                 continue
             part = dst + PART

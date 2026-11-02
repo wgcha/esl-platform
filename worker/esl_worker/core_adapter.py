@@ -1068,26 +1068,31 @@ def doe_fresh_dir(out: str, rel: str, doe: dict) -> str:
 
 
 def doe_assem_full(out: str, doe: dict, starter: str, case_dir: str, roots: list[str], rel: str, *, max_mb: float,
-                   max_depth: int, include_path_map: dict | None, engine_rad: bool, fixed_scan: dict | None) -> dict:
-    """v0.12.1 모델 전체(starter include 트리) 사본 <out>/<rel>/ + 스캔 정규화(esl.doe.assem_full). 매니페스트."""
+                   max_depth: int, include_path_map: dict | None, engine_rad: bool, fixed_scan: dict | None,
+                   guard_wrap: Callable | None = None) -> dict:
+    """v0.12.1 모델 전체(starter include 트리) 사본 <out>/<rel>/ + 스캔 정규화(esl.doe.assem_full). 매니페스트.
+    guard_wrap(guard) → 쓰기 경로 검사 감싸기(v0.12.2 inproc.stop_guard — 취소 시 협조적 중단·파일 수)."""
     import os
 
     A = _mod("esl.doe.assem_full")
     w = doe_writer(out, doe)
-    _wrap(A.drop_derived, out, w.guard, (os.path.basename(rel),))     # 파생물 — _backup 에 쌓지 않고 삭제
+    g = guard_wrap(w.guard) if guard_wrap else w.guard
+    _wrap(A.drop_derived, out, g, (os.path.basename(rel),))     # 파생물 — _backup 에 쌓지 않고 삭제
     d = _wrap(w.makedirs, os.path.join(out, rel))
     return _wrap(A.copy_model_full, starter, case_dir, roots, d, max_mb=max_mb, include_path_map=include_path_map,
-                 max_depth=max_depth, engine_rad=engine_rad, fixed_scan=fixed_scan, guard=w.guard)
+                 max_depth=max_depth, engine_rad=engine_rad, fixed_scan=fixed_scan, guard=g)
 
 
 def doe_assem_summary(man: dict) -> dict:
     return _mod("esl.doe.assem_full").summary(man)
 
 
-def doe_restore_out_files(out: str, doe: dict, out_files_dir: str, rels: list[str], man: dict) -> int:
-    """paicad run 모핑 사본 중 스캔 정규화한 파일 → 원본 + 모핑 /NODE 좌표."""
+def doe_restore_out_files(out: str, doe: dict, out_files_dir: str, rels: list[str], man: dict,
+                          guard_wrap: Callable | None = None) -> int:
+    """paicad run 모핑 사본 중 스캔 정규화한 파일 → 원본 + 모핑 /NODE 좌표. guard_wrap = doe_assem_full 과 같음."""
     w = doe_writer(out, doe)
-    return _wrap(_mod("esl.doe.assem_full").restore_out_files, out_files_dir, rels, man, guard=w.guard)
+    g = guard_wrap(w.guard) if guard_wrap else w.guard
+    return _wrap(_mod("esl.doe.assem_full").restore_out_files, out_files_dir, rels, man, guard=g)
 
 
 def doe_assem_check(d: str, max_mb: float) -> dict:

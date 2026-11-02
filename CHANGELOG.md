@@ -2,6 +2,13 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.12.2] - 2026-11-02
+### 수정
+- **강성 평가 스터디 준비(DOE_PREP)가 시작 2~3분 뒤 `WORKER_LOST`("lease 를 잃었습니다")로 끝나던 문제**(#44): 큰 모델(예 22만 요소)의 모델 전체 사본 `prep/assem_full/`·스캔 정규화가 워커 안에서 lease 갱신 없이 `worker.lease_ttl_s` 보다 오래 걸렸음. 이제 별도 스레드에서 실행하고 그동안 lease 갱신·취소 확인을 계속함. 취소하면 다음 파일 쓰기 전에 멈춘 뒤 CANCELED
+- 같은 방식으로 워커 안 긴 파일 작업 전부: 조립 폴더 검사(기준·A Case), A Case 모델 사본·파트 목록, include 스캔(Case 추출·최적화 준비·SCX 내려받기), 누적 씬 판정, ESL 스냅샷 복원, 산출물 sha256(등록 트랜잭션 밖에서 미리), history 보존 사본, OptiStruct 덱 sha256·사본, SCX 내려받기·검증 낙하 결과의 sha256 재확인, 모핑 사본 복원(취소 시 중단)
+- 긴 파일 작업 중에도 워커 상태가 "응답 없음"으로 바뀌지 않음(워커 heartbeat 유지 확인)
+- 작업 로그에 모델 사본 단계 시작·끝(경과 시간·파일 수)과 오래 걸릴 때 30초마다 진행 중 줄(경과·쓴 파일 수)
+
 ## [0.12.1] - 2026-10-30
 ### 수정
 - **서버 h3d 추출이 `Max_Strain` 없는 덱에서 막히던 문제**(`H3D_MISSING_RESULT: result type 'Max_Strain' not in subcase 1`): 변형률 결과를 순서대로 대체 — `Max_Strain` → `Plastic Strain` → `Strain`(층별 순간 텐서) → `Max_Stress`. 순서·결과/성분 이름 후보는 설정 `extract.strain_sources`·`result_names`·`tensor_comps`·`vm_comps`·`scalar_comps`·`tensor_layer_exclude`(선택, 없으면 기본값)
