@@ -3126,3 +3126,34 @@ th[aria-sort="ascending"] .th-sort::after {
 .vd-unknown .inline-actions input {
   width: 12rem;
 }
+
+/* ---------------------------------------------------------------- v0.12.5 보고서 화면 안 보기(ReportViewer) */
+details.card.fold > summary .fold-sub {
+  font-weight: 400;
+}
+details.card.fold > .fold-body {
+  padding: 0.8rem 1rem 1rem;
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.report-viewer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.report-viewer > .card-head {
+  flex-wrap: wrap;
+}
+.report-newtab {
+  white-space: nowrap;
+}
+.report-dl-error {
+  padding: 0.4rem 1rem 0;
+}
+.report-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}

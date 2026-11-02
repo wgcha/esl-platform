@@ -1,4 +1,4 @@
-// 종합분석 상세(계약 §11 UI): 진행 상태 · 요약(대표 케이스 표, 포락 미니맵) · 보고서 보기(주 버튼) · 덱 파일 다운로드.
+// 종합분석 상세(계약 §11 UI): 진행 상태 · 보고서 화면 안 보기(ReportViewer, 주 버튼 = 보고서 받기) · 위 접힘 영역 = 요약(대표 케이스 표, 포락 미니맵)·덱 파일.
 // 요약 = AnalysisOut.result(워커 _analysis_summary). 포락 격자는 result 에 없어 envelope.csv(다운로드 API)를 읽는다.
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -7,9 +7,9 @@ import { ApiError, downloadFile, warnText } from "../../api/client";
 import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
-import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
+import { Badge, Card, Empty, ErrorLine, JobStatusBadge, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
-import { openReport } from "../../components/ReportLink";
+import { ReportViewer } from "../../components/ReportViewer";
 import { BundleButton } from "../../components/BundleButton";
 import { p3 } from "../../api/p3";
 import { CopyPath, TOO_LARGE_TEXT } from "../../components/CopyPath";
@@ -146,98 +146,119 @@ export function AnalysisDetail() {
         {a?.title && <span className="muted">{a.title}</span>}
         <span className="spacer" />
         {done && <BundleButton url={p3.analysisBundleUrl(analysisId)} filename={`analysis_${analysisId}.zip`} fallbackPath={a?.folder_path} />}
-        <PrimaryButton label="보고서 보기" onClick={() => openReport(api.analysisReportUrl(analysisId))} disabledReason={reason} />
       </div>
       <ErrorLine text={an.error} />
       {a?.job_id && !done && <JobProgress jobId={a.job_id} onDone={() => void an.reload()} />}
       {a && (
-        <Card title="설정">
-          <div className="stats">
-            <Stat label="설계 대상" value={target ? entryLabel(target) : a.target_entry_id ?? "없음(정규화 격자)"} />
-            <Stat label="필터" value={filtersText(a.filters)} sub={`항목 ${a.n_entries}개`} />
-            <Stat label="정규화" value={NORM_LABEL[a.options.normalization ?? "none"]} />
-            <Stat label="목적" value={OBJ_LABEL[a.options.objective ?? "minmax"]} />
-            <Stat label="만든 사람" value={a.created_by_name} sub={dt(a.created_at)} />
-          </div>
-          <CopyPath path={a.folder_path} />
-        </Card>
-      )}
-      {done && !r && <Empty>요약이 없습니다</Empty>}
-      {r && (
-        <>
-          <Card title="요약">
-            <div className="stats">
-              <Stat label="항목 수" value={r.n_cases} />
-              <Stat label="대표 케이스" value={nRep} sub={r.load_cases.length > nRep ? `최악 케이스 ${r.load_cases.length - nRep}개 포함` : undefined} />
-              <Stat label="SVD 모드" value={r.svd.n_modes} sub={r.svd.cum_energy_at_r != null ? `누적 에너지 ${Math.round(r.svd.cum_energy_at_r * 100)}%` : undefined} />
-              <Stat label="최대 셀 합력" value={r.envelope ? `${f3(r.envelope.max)} N` : "–"} sub={r.envelope ? `셀 (${r.envelope.argmax_cell.join(", ")})` : undefined} />
-              {r.deck && (
-                <Stat
-                  label="최적화 하중 (subcase)"
-                  value={
-                    <span data-testid="deck-subcases">
-                      {r.deck.n_subcases}
-                      {r.deck.reduced && (
-                        <>
-                          {" "}
-                          <Badge kind="warn">자동 축소</Badge>
-                        </>
-                      )}
-                    </span>
-                  }
-                  sub={
-                    r.deck.reduced
-                      ? `씬 ${r.deck.n_cases}개 > 상한 ${r.deck.max_cases} → ${DECK_LABEL[r.deck.mode]} · 제외 ${r.deck.n_excluded}개(보고서)`
-                      : `${DECK_LABEL[r.deck.mode]}${r.deck.n_excluded ? ` · 제외 ${r.deck.n_excluded}개` : ""}`
-                  }
-                />
-              )}
-              {r.optdeck && <Stat label="최적화 덱" value={r.optdeck.deck} sub={`subcase ${r.optdeck.n_subcases} · 설계 요소 ${r.optdeck.n_design_elems.toLocaleString()}`} />}
-            </div>
-            {r.warnings.length > 0 && (
-              <ul className="reasons small warn-text">
-                {r.warnings.map((w) => (
-                  <li key={w}>{warnText(w)}</li>
-                ))}
-              </ul>
+        <details className="card fold" data-testid="fold-summary">
+          <summary>
+            요약·설정
+            {r && (
+              <span className="muted fold-sub">
+                {" "}
+                · 항목 {r.n_cases} · 대표 케이스 {nRep}
+                {r.envelope ? ` · 최대 셀 합력 ${f3(r.envelope.max)} N` : ""}
+              </span>
             )}
-          </Card>
-          <div className="grid-main">
-            <Card title="대표 케이스">
-              <RepTable r={r} />
+            {r && r.warnings.length > 0 && <span className="warn-text fold-sub"> · 경고 {r.warnings.length}</span>}
+          </summary>
+          <div className="fold-body">
+            <Card title="설정">
+              <div className="stats">
+                <Stat label="설계 대상" value={target ? entryLabel(target) : a.target_entry_id ?? "없음(정규화 격자)"} />
+                <Stat label="필터" value={filtersText(a.filters)} sub={`항목 ${a.n_entries}개`} />
+                <Stat label="정규화" value={NORM_LABEL[a.options.normalization ?? "none"]} />
+                <Stat label="목적" value={OBJ_LABEL[a.options.objective ?? "minmax"]} />
+                <Stat label="만든 사람" value={a.created_by_name} sub={dt(a.created_at)} />
+              </div>
+              <CopyPath path={a.folder_path} />
             </Card>
-            <Card title="셀 합력 포락">{env.data ? <EnvelopeMap env={env.data} /> : <Empty>{hasEnv || !files.data ? "불러오는 중…" : "포락 자료(envelope.csv) 없음"}</Empty>}</Card>
+          {done && !r && <Empty>요약이 없습니다</Empty>}
+          {r && (
+            <>
+              <Card title="요약">
+                <div className="stats">
+                  <Stat label="항목 수" value={r.n_cases} />
+                  <Stat label="대표 케이스" value={nRep} sub={r.load_cases.length > nRep ? `최악 케이스 ${r.load_cases.length - nRep}개 포함` : undefined} />
+                  <Stat label="SVD 모드" value={r.svd.n_modes} sub={r.svd.cum_energy_at_r != null ? `누적 에너지 ${Math.round(r.svd.cum_energy_at_r * 100)}%` : undefined} />
+                  <Stat label="최대 셀 합력" value={r.envelope ? `${f3(r.envelope.max)} N` : "–"} sub={r.envelope ? `셀 (${r.envelope.argmax_cell.join(", ")})` : undefined} />
+                  {r.deck && (
+                    <Stat
+                      label="최적화 하중 (subcase)"
+                      value={
+                        <span data-testid="deck-subcases">
+                          {r.deck.n_subcases}
+                          {r.deck.reduced && (
+                            <>
+                              {" "}
+                              <Badge kind="warn">자동 축소</Badge>
+                            </>
+                          )}
+                        </span>
+                      }
+                      sub={
+                        r.deck.reduced
+                          ? `씬 ${r.deck.n_cases}개 > 상한 ${r.deck.max_cases} → ${DECK_LABEL[r.deck.mode]} · 제외 ${r.deck.n_excluded}개(보고서)`
+                          : `${DECK_LABEL[r.deck.mode]}${r.deck.n_excluded ? ` · 제외 ${r.deck.n_excluded}개` : ""}`
+                      }
+                    />
+                  )}
+                  {r.optdeck && <Stat label="최적화 덱" value={r.optdeck.deck} sub={`subcase ${r.optdeck.n_subcases} · 설계 요소 ${r.optdeck.n_design_elems.toLocaleString()}`} />}
+                </div>
+                {r.warnings.length > 0 && (
+                  <ul className="reasons small warn-text">
+                    {r.warnings.map((w) => (
+                      <li key={w}>{warnText(w)}</li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+              <div className="grid-main">
+                <Card title="대표 케이스">
+                  <RepTable r={r} />
+                </Card>
+                <Card title="셀 합력 포락">{env.data ? <EnvelopeMap env={env.data} /> : <Empty>{hasEnv || !files.data ? "불러오는 중…" : "포락 자료(envelope.csv) 없음"}</Empty>}</Card>
+              </div>
+            </>
+          )}
           </div>
-        </>
+        </details>
       )}
       {done && (
-        <Card title="파일 (최적화 덱·보고서)">
-          {!files.data ? (
-            <Empty>{files.error ?? "불러오는 중…"}</Empty>
-          ) : files.data.length === 0 ? (
-            <Empty>파일이 없습니다</Empty>
-          ) : (
-            <div className="table-wrap scroll">
-              <table className="table compact" aria-label="분석 파일">
-                <thead>
-                  <tr>
-                    <th>파일</th>
-                    <th>종류</th>
-                    <th className="num">크기</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {files.data.map((f) => (
-                    <FileRow key={f.rel} aid={analysisId} f={f} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {a?.optdeck_rel && <div className="small muted">덱은 사용자 측(Windows/HPC)에서 OptiStruct로 실행합니다 — 먼저 optistruct -check 로 문법을 확인하세요(opt/README 참고).</div>}
-        </Card>
+        <details className="card fold" data-testid="fold-files">
+          <summary>
+            파일 (최적화 덱·보고서)
+            {files.data && <span className="muted fold-sub"> · {files.data.length}개</span>}
+          </summary>
+          <div className="fold-body">
+              {!files.data ? (
+                <Empty>{files.error ?? "불러오는 중…"}</Empty>
+              ) : files.data.length === 0 ? (
+                <Empty>파일이 없습니다</Empty>
+              ) : (
+                <div className="table-wrap scroll">
+                  <table className="table compact" aria-label="분석 파일">
+                    <thead>
+                      <tr>
+                        <th>파일</th>
+                        <th>종류</th>
+                        <th className="num">크기</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {files.data.map((f) => (
+                        <FileRow key={f.rel} aid={analysisId} f={f} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {a?.optdeck_rel && <div className="small muted">덱은 사용자 측(Windows/HPC)에서 OptiStruct로 실행합니다 — 먼저 optistruct -check 로 문법을 확인하세요(opt/README 참고).</div>}
+          </div>
+        </details>
       )}
+      <ReportViewer title="종합분석 보고서" url={api.analysisReportUrl(analysisId)} filename={`analysis_${analysisId}_report.html`} reason={reason} dep={a?.status} />
     </Shell>
   );
 }

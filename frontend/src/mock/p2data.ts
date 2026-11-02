@@ -581,5 +581,8 @@ export function makeAnalysisFiles(a: AnalysisOut): AnalysisFileOut[] {
 }
 
 export function reportHtml(title: string) {
-  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>목 보고서(자체 완결 HTML).</p></main></body></html>`;
+  // v0.12.5: 화면 안 iframe 보기 확인용으로 길이가 있는 목 보고서(인라인 style·script 만, 외부 자원 없음)
+  const rows = Array.from({ length: 24 }, (_, i) => `<tr><td>REP${(i % 4) + 1}</td><td>Scene ${i + 1}</td><td>${(1200 + 37 * i).toLocaleString()}</td><td>${i % 5 === 3 ? "FAIL" : "PASS"}</td></tr>`).join("");
+  const secs = ["개요", "대표 케이스", "셀 합력 포락", "SVD 모드", "최적화 덱"].map((h, i) => `<section><h2>${i + 1}. ${h}</h2><p>목 보고서(자체 완결 HTML) — ${h} 절.</p></section>`).join("");
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>${title}</title><style>body{font:14px/1.5 system-ui,sans-serif;margin:0;color:#1d2433}main{max-width:1100px;margin:0 auto;padding:24px 32px}h1{font-size:22px}h2{font-size:17px;margin-top:28px;border-bottom:1px solid #dde2ea;padding-bottom:4px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #dde2ea;padding:4px 8px;text-align:left}th{background:#f3f5f9}</style></head><body><main><h1>${title}</h1><p id="js">스크립트 꺼짐</p>${secs}<h2>씬 표</h2><table><thead><tr><th>대표</th><th>씬</th><th>Σ|F| (N)</th><th>판정</th></tr></thead><tbody>${rows}</tbody></table></main><script>document.getElementById("js").textContent="스크립트 동작(sandbox allow-scripts)";</script></body></html>`;
 }
