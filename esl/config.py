@@ -216,6 +216,7 @@ SCHEMA: dict[str, Any] = {
         "vm_comps": _name_list,
         "scalar_comps": _name_list,
         "tensor_layer_exclude": _name_list_or_empty,
+        "tensor_layer_prefer": _name_list_or_empty,    # 선택(v0.12.2 #46): Strain 텐서 우선 층(있는 것만, 없으면 전 층 − exclude)
         "dump_keep": _bool,                     # 선택: dump 원자료(strain_raw.csv·disp.csv) 변환 후 보존(기본 false = 삭제, 작업 폴더만)
         "dump_max_bytes": _int(1),              # 선택: dump 원자료 크기 상한(사전 추정·실제), 넘으면 STRAIN_DUMP_TOO_LARGE
     },
@@ -337,6 +338,7 @@ EXTRACT_SOURCE_DEFAULTS = {
     "vm_comps": ["vonMises", "von Mises"],
     "scalar_comps": ["Scalar value", "Scalar"],
     "tensor_layer_exclude": ["Max", "Min"],
+    "tensor_layer_prefer": ["Lower", "Upper"],
 }
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
@@ -373,7 +375,8 @@ def cumulative_settings(cfg: dict) -> dict:
 
 
 def extract_source_settings(cfg: dict | None) -> dict:
-    """extract 의 변형률 대체 설정(strain_sources·result_names·tensor_comps·vm_comps·scalar_comps·tensor_layer_exclude).
+    """extract 의 변형률 대체 설정(strain_sources·result_names·tensor_comps·vm_comps·scalar_comps·tensor_layer_exclude·
+    tensor_layer_prefer).
     없거나 일부만 있으면 EXTRACT_SOURCE_DEFAULTS 로 채운 사본. cfg 는 바꾸지 않는다(검증은 validate_settings)."""
     out = copy.deepcopy(EXTRACT_SOURCE_DEFAULTS)
     ex = cfg.get("extract") if isinstance(cfg, dict) else None

@@ -331,6 +331,11 @@ def test_strain_request_keys_and_failure_code(tmp_path):
     assert r["names_max_strain"] == "Max_Strain" and r["comp_xy"] == "XY" and r["vm_comps"] == "vonMises|von Mises"
     assert r["dump_max_bytes"] == str(40 * 1024 ** 3)
     assert h3d.strain_request({"extract": {"dump_max_bytes": 5}})["dump_max_bytes"] == "5"
+    # v0.12.2: extract.tensor_layer_prefer → request layer_prefer('|' 구분, 기본 Lower|Upper, 빈 목록 = 전 층 − exclude)
+    assert r["layer_prefer"] == "Lower|Upper"
+    r2 = h3d.strain_request({"extract": {"tensor_layer_prefer": ["Top", "Mid 1"]}})
+    assert r2["layer_prefer"] == "Top|Mid 1" and r2["layer_exclude"] == "Max|Min"
+    assert h3d.strain_request({"extract": {"tensor_layer_prefer": []}})["layer_prefer"] == ""
     assert h3d.free_bytes(str(tmp_path)) > 0 and h3d.free_bytes(str(tmp_path / "nope")) is None
     req = tmp_path / "request.txt"
     h3d.write_request(str(req), part="p", hot_k=1, top_n=1, extra=r)
