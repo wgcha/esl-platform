@@ -710,6 +710,20 @@ function Send-EslFile($Ctx, [string]$UploadId, $File, $Local, [int64]$Received, 
                 Write-Host ''
                 Say "  청크 sha256 불일치(전송 중 손상) - 같은 위치로 다시 보냅니다 ($badSha/$($Ctx.Retries))" 'Yellow'
             }
+            elseif ($r.Status -eq 422 -and $info.Code -eq 'CHUNK_VERIFY_FAILED' -and $badSha -lt $Ctx.Retries) {
+                $badSha++
+                Write-Host ''
+                Say "  서버 디스크 대조 실패 - 같은 위치로 다시 보냅니다 ($badSha/$($Ctx.Retries))" 'Yellow'
+            }
+            elseif ($r.Status -eq 422 -and $info.Code -eq 'UPLOAD_CHUNK_CORRUPT' -and $badSha -lt $Ctx.Retries) {
+                # v0.12.4: 서버가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 received(연속 앞부분)부터 다시
+                $badSha++
+                $new = [int64]$r.Json.detail.received
+                Write-Host ''
+                Say ("  서버 디스크 대조 실패 청크부터 다시 보냅니다: {0} @ {1}" -f $File.rel, (Format-EslBytes $new)) 'Yellow'
+                $Progress.Done -= ($offset - $new)
+                $offset = $new
+            }
             elseif ($r.Status -eq 422 -and $info.Code -eq 'SHA256_MISMATCH' -and -not $restarted) {
                 $restarted = $true
                 Write-Host ''
@@ -940,6 +954,20 @@ function Complete-EslSlot($S, $Slot) {
     }
     if ($status -eq 422 -and $info.Code -eq 'CHUNK_SHA256_MISMATCH') {
         Add-EslChunkRetry $S $item $fst '청크 sha256 불일치(전송 중 손상)' $true
+        return
+    }
+    if ($status -eq 422 -and $info.Code -eq 'CHUNK_VERIFY_FAILED') {
+        Add-EslChunkRetry $S $item $fst '서버 디스크 대조 실패(쓴 직후)' $true
+        return
+    }
+    if ($status -eq 422 -and $info.Code -eq 'UPLOAD_CHUNK_CORRUPT') {
+        # v0.12.4: 서버 마무리 재해시가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 범위로 맞추고 빠진 청크만 다시
+        # (같은 청크 3번째는 서버가 UPLOAD_CORRUPT 로 끝낸다 - 아래 치명 오류)
+        $S.Active.Remove($key)
+        Write-Host ''
+        Say "  서버 디스크 대조 실패 청크를 다시 보냅니다: $($fst.Rel) #$(@($obj.detail.chunks) -join ',')" 'Yellow'
+        Sync-EslFromServer $S
+        if (-not ($fst.Done -or $fst.Dead)) { Add-EslMissingChunks $S $fst }
         return
     }
     if ($status -eq 422 -and $info.Code -eq 'SHA256_MISMATCH' -and -not $fst.Restarted) {

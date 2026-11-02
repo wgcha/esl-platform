@@ -649,6 +649,20 @@ cd D:\esl                                   # git 폴더 설치는 <git>\.runtim
 
 **Q. `.bat` 실행이 "액세스가 거부되었습니다".** `.\deploy\install.ps1`(또는 `setup.ps1`, `demo\start-demo.ps1`)처럼 `.ps1`을 직접 실행한다(인자 동일). 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1`로 실행한다.
 
+**Q. 업로드한 파일로 Case 를 만들 때 `STATE_PARSE_ERROR`(1 MB 넘는 줄)·`RAD_PARSE_ERROR` 가 나고 원본 PC 파일은 정상이다(이슈 #50).** v0.12.4 전 브라우저·PC 도구 병렬 업로드는 서버가 `.part` 를 사전 할당(Windows 는 0 을 **써서** 채움)하는 동안 다른 청크가 먼저 쓰이면, 그 청크 앞부분이 0 으로 덮인 채 완료될 수 있었다(64 MiB 경계 k·64 MiB 부터 0). v0.12.4 는 사전 할당 중 다른 청크 쓰기를 기다리게 하고, 청크마다 쓴 직후·완료 때 디스크를 다시 읽어 청크 해시를 대조한다(다르면 그 청크만 자동 재전송, 같은 청크 3번이면 `UPLOAD_CORRUPT`). 이미 올라간 파일은 **읽기 전용** 탐지 명령으로 찾는다:
+
+```powershell
+cd D:\esl                                   # git 폴더 설치는 <git>\.runtime
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime .             # 설정 storage.upload_root·upload.chunk_mb, DB 기록 sha256 대조
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime . --no-sha    # 0 구간만(빠름 — sha256 재계산 생략)
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime . --json > holes.json
+```
+
+- 보고: `! <파일> [업로드 <id> <상태>]` 아래 `청크 k @ 오프셋: 0 이 N B — 청크 앞부분|청크 전체`, DB 기록과 다르면 `sha256 불일치`. 반환 코드 0 = 의심 없음, 1 = 의심 있음, 2 = 인자·설정 오류.
+- 기준: 청크 경계에서 시작하는 0 구간 ≥ `--min-zero-kb`(기본 64 KiB). 텍스트 입력(.rad·.inc·.sta·.str)은 NUL 이 없으므로 보고되면 손상이다. .h3d 는 드물게 정상 0 패딩일 수 있어 원본과 비교해 확인한다. 옛 업로드의 기록 sha256 은 손상 뒤 디스크에서 계산됐을 수 있어 일치해도 0 구간 보고가 우선이다.
+- 옵션: `--root <폴더>`(설정 대신), `--chunk-mb N`, `--no-db`, `--include-backup`(`_backup` 포함), `--include-part`(받는 중 `.part` — 받지 않은 청크는 원래 0). 파일은 읽기만 하고 DB 는 READ ONLY 트랜잭션의 SELECT 만, 링크·junction 은 따라가지 않는다.
+- 조치: 의심 파일은 원본으로 다시 올리고 그 업로드로 만든 Case 는 다시 만든다(탐지 명령은 고치거나 지우지 않는다).
+
 **Q. 작업 스케줄러 작업을 바꿀 권한이 없다고 나온다.** 다른 계정이나 관리자 권한으로 등록된 작업이다. 처음 등록한 것과 **같은 사용자 계정**으로 '관리자 권한으로 실행'한 창에서 한 번 실행하면 그 뒤로는 일반 PowerShell로 된다.
 
 ---

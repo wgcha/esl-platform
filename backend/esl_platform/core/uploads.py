@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import stat
+import threading
 
 from .config import is_within
 from .errors import forbidden, unprocessable
@@ -258,9 +259,30 @@ def append_chunk(part_path: str, data: bytes, root: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------- 프로토콜 2: 위치 지정 쓰기(계약 esl_upload_speed.md §5.3)
+_CREATE_GUARD = threading.Lock()
+_CREATE_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _create_lock(part_path: str) -> threading.Lock:
+    """`.part` 경로별 잠금(프로세스 메모리 — 백엔드 1 프로세스 전제). open_part_for_write 의 만들기·사전 할당과 다른 요청의
+    열기를 직렬화한다."""
+    key = os.path.normcase(os.path.abspath(part_path))
+    with _CREATE_GUARD:
+        return _CREATE_LOCKS.setdefault(key, threading.Lock())
+
+
 def open_part_for_write(part_path: str, size: int, root: str | None = None, *, preallocate: bool = True) -> int:
     """`.part` 를 위치 지정 쓰기용으로 연다(O_APPEND 아님). 새 파일은 O_EXCL 로 만들고 ftruncate 로 사전 할당,
-    기존 파일은 열린 fd 로 일반 파일·링크 수 1·realpath 확인(append_chunk 와 같은 검사). 요청마다 새 fd."""
+    기존 파일은 열린 fd 로 일반 파일·링크 수 1·realpath 확인(append_chunk 와 같은 검사). 요청마다 새 fd.
+
+    v0.12.4(이슈 #50): 만들기 + 사전 할당 전체를 경로별 잠금 아래에서 하고, 기존 파일을 여는 요청도 같은 잠금을 거친다.
+    Windows 의 os.ftruncate(UCRT _chsize_s)는 늘리는 구간을 0 으로 **써서** 채우므로, 그 사이 다른 요청이 먼저 쓴 청크를
+    늦게 지나가는 0 채우기가 덮어썼다(4병렬이면 4번째 청크 앞부분이 0 인 채 완료)."""
+    with _create_lock(part_path):
+        return _open_part_for_write(part_path, size, root, preallocate=preallocate)
+
+
+def _open_part_for_write(part_path: str, size: int, root: str | None, *, preallocate: bool) -> int:
     base = os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     created = False
     try:

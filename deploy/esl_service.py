@@ -5,6 +5,7 @@
   python <app>/esl_service.py migrate  [--runtime <런타임>] [--config <설정>]     alembic upgrade head
   python <app>/esl_service.py check    [--runtime <런타임>] [--config <설정>] [check 인자...]   환경 점검 표(esl_platform.check)
   python <app>/esl_service.py endpoint [--runtime <런타임>] [--config <설정>]     {"host","port","base_path","health"} JSON
+  python <app>/esl_service.py upload-holes [--runtime <런타임>] [인자...]   업로드 손상 탐지(읽기 전용, esl_platform.upload_holes)
 
 physicsai-platform 의 `--runtime` 규약과 같다: 플랫폼 코드는 환경변수(ESL_PLATFORM_CONFIG, 설정 database.url_env — 기본
 ESL_DATABASE_URL)만 읽으므로, 이 실행기가 `<런타임>/config/esl_platform.yaml`(또는 --config)과 `<런타임>/secrets/database_url`
@@ -234,6 +235,13 @@ def cmd_check(args: argparse.Namespace, cfg: str, rest: list[str]) -> int:
     return check.main(argv)
 
 
+def cmd_upload_holes(args: argparse.Namespace, cfg: str, rest: list[str]) -> int:
+    from esl_platform import upload_holes
+
+    argv = ["--config", cfg] + (["--runtime", args.runtime] if args.runtime else []) + rest
+    return upload_holes.main(argv)
+
+
 def cmd_endpoint(args: argparse.Namespace, cfg: str) -> int:
     s = server_settings(cfg)
     s["health"] = f"http://127.0.0.1:{s['port']}{s['base_path']}/api/health"
@@ -243,14 +251,14 @@ def cmd_endpoint(args: argparse.Namespace, cfg: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="esl_service", description="ESL 서버 실행기")
-    ap.add_argument("command", choices=("backend", "worker", "migrate", "check", "endpoint"))
+    ap.add_argument("command", choices=("backend", "worker", "migrate", "check", "endpoint", "upload-holes"))
     ap.add_argument("--runtime", default="", help="설치 런타임 폴더(config/esl_platform.yaml, secrets/database_url, logs)")
     ap.add_argument("--config", default="", help="플랫폼 설정 파일(기본 <런타임>/config/esl_platform.yaml 또는 env ESL_PLATFORM_CONFIG)")
     ap.add_argument("--frontend", default="", help="(backend, 시연 전용) 프런트 빌드 폴더를 {base_path}/ 아래에서 직접 서빙 — 운영은 설정 server.frontend_root")
     ap.add_argument("--log-dir", default="", help="로그 폴더(기본 <런타임>/logs, 런타임이 없으면 콘솔)")
     ap.add_argument("--console", action="store_true", help="로그를 파일 대신 콘솔로(문제 해결 — 작업을 멈추고 직접 띄울 때)")
     args, rest = ap.parse_known_args(argv)
-    if rest and args.command != "check":
+    if rest and args.command not in ("check", "upload-holes"):
         ap.error(f"알 수 없는 인자: {' '.join(rest)}")
     runtime = os.path.abspath(args.runtime) if args.runtime else None
     args.runtime = runtime or ""
@@ -267,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_backend(args, cfg) if args.command == "backend" else cmd_worker(args, cfg)
     if args.command == "migrate":
         return cmd_migrate(args, cfg)
+    if args.command == "upload-holes":
+        return cmd_upload_holes(args, cfg, rest)
     return cmd_check(args, cfg, rest)
 
 
