@@ -30,7 +30,7 @@ from typing import Any
 
 from esl_platform.core.repositories import jobs as jobs_repo
 
-from . import localproc
+from . import inproc, localproc
 
 ERRORS_TXT = "os_errors.txt"   # ERROR 블록 전체(문맥·상세 줄) — 실패 화면에서 받기
 CHECK_SHARE = 5.0          # 진행률: -check 5 % + 반복 n/DESMAX × 95 %
@@ -248,7 +248,7 @@ def run(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         raise SolveFailed("PREREQUISITE_MISSING", "덱(deck/optdeck.json)이 없습니다 — OPT_DECK 부터 다시") from None
     stem = os.path.splitext(deck)[0]
     try:
-        sha = deck_sha256(deck_dir, deck)
+        sha = inproc.call(ex, lambda: deck_sha256(deck_dir, deck), label="덱 sha256")
     except OSError as exc:
         raise SolveFailed("PREREQUISITE_MISSING", f"덱 파일을 읽을 수 없습니다: {exc}") from None
     prev = reusable(solve_dir, sha, stem)
@@ -270,8 +270,10 @@ def run(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         r.echo(f"[esl-worker] 이전 solve/ 를 옮김: {old}")
     import shutil
 
-    for name in (deck, "esl_loads.inc"):
-        shutil.copyfile(os.path.join(deck_dir, name), os.path.join(solve_dir, name))
+    def copy_deck() -> None:
+        for name in (deck, "esl_loads.inc"):
+            shutil.copyfile(os.path.join(deck_dir, name), os.path.join(solve_dir, name))
+    inproc.call(ex, copy_deck, label="덱 사본 solve/")
     scratch = os.path.join(solve_dir, "tmp")
     os.makedirs(scratch, exist_ok=True)
     fem = os.path.join(solve_dir, deck)

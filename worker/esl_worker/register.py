@@ -43,9 +43,9 @@ def _sha(path: str) -> str | None:
     return h.hexdigest()
 
 
-def register_artifacts(conn: Connection, case_id: str, job_id: str, cdir: str, rels: list[str]) -> int:
-    """폴더(재귀, `_backup` 제외) 또는 파일 상대경로 목록을 artifacts 에 upsert."""
-    n = 0
+def _artifact_files(cdir: str, rels: list[str]) -> list[tuple[str, str]]:
+    """폴더(재귀, `_backup` 제외) 또는 파일 상대경로 목록 → [(rel, 절대경로)] (링크·.tmp 제외, 정렬)."""
+    out: list[tuple[str, str]] = []
     for rel in rels:
         base = os.path.join(cdir, rel)
         if os.path.isfile(base):
@@ -62,11 +62,40 @@ def register_artifacts(conn: Connection, case_id: str, job_id: str, cdir: str, r
             p = os.path.join(cdir, f)
             if os.path.islink(p) or not os.path.isfile(p) or f.endswith(".tmp"):
                 continue
-            top = f.replace("\\", "/").split("/")[0]
-            kind = KIND_BY_DIR.get(top) or ("LOG" if top == "logs" else "RUN" if f == co.RUN_JSON else "CASE")
-            cases_repo.upsert_artifact(conn, case_id=case_id, job_id=job_id, kind=kind, rel=f.replace("\\", "/"),
-                                       size=os.path.getsize(p), sha256=_sha(p))
-            n += 1
+            out.append((f, p))
+    return out
+
+
+def _stat_key(p: str) -> tuple[int, int]:
+    st = os.stat(p)
+    return st.st_size, st.st_mtime_ns
+
+
+def artifact_shas(cdir: str, rels: list[str]) -> dict[str, tuple[tuple[int, int], str | None]]:
+    """v0.12.3: register_artifacts 의 sha256 을 DB 트랜잭션 밖에서 미리(inproc 작업 스레드) — {rel: ((size, mtime), sha)}."""
+    out: dict[str, tuple[tuple[int, int], str | None]] = {}
+    for f, p in _artifact_files(cdir, rels):
+        try:
+            k = _stat_key(p)
+            out[f] = (k, _sha(p))
+        except OSError:
+            continue
+    return out
+
+
+def register_artifacts(conn: Connection, case_id: str, job_id: str, cdir: str, rels: list[str],
+                       shas: dict[str, tuple[tuple[int, int], str | None]] | None = None) -> int:
+    """폴더(재귀, `_backup` 제외) 또는 파일 상대경로 목록을 artifacts 에 upsert. shas = artifact_shas() 결과
+    (크기·mtime 이 같을 때만 그 값, 아니면 여기서 다시 계산)."""
+    n = 0
+    for f, p in _artifact_files(cdir, rels):
+        top = f.replace("\\", "/").split("/")[0]
+        kind = KIND_BY_DIR.get(top) or ("LOG" if top == "logs" else "RUN" if f == co.RUN_JSON else "CASE")
+        pre = (shas or {}).get(f)
+        sha = pre[1] if pre is not None and pre[0] == _stat_key(p) else _sha(p)
+        cases_repo.upsert_artifact(conn, case_id=case_id, job_id=job_id, kind=kind, rel=f.replace("\\", "/"),
+                                   size=os.path.getsize(p), sha256=sha)
+        n += 1
     return n
 
 

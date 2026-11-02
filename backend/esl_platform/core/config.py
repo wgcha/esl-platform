@@ -148,6 +148,8 @@ class WorkerCfg(_M):
     claim_interval_s: float = Field(gt=0)
     cancel_check_interval_s: float = Field(gt=0)
     terminate_grace_s: float = Field(gt=0)
+    # v0.12.3: 워커 안 장시간 호출(inproc)이 취소·오류로 멈출 때 작업 스레드 종료를 기다리는 상한(넘으면 로그 후 진행)
+    inproc_join_max_s: float = Field(default=3600.0, gt=0)
     env_passthrough: list[str]
     state_dir: str
     # v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인(HTTP 전송·원격 대기 — SCX_FETCH 등) 루프 수. SLOT·LIGHT 와 독립, 슬롯 없음
