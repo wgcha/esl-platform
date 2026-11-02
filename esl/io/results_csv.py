@@ -437,7 +437,10 @@ def _strain_fallback_meta(done: dict) -> dict:
     out = {"source": src, "type": done.get("strain_source_type") or done.get("strain_type") or "Max_Strain",
            "mode": done.get("strain_mode") or "maxhold", "layers": lay, "tried": done.get("strain_tried") or [],
            "epsp_available": bool(done.get("epsp_available", True)), "dt_out": done.get("dump_dt_out"),
-           "esl_layers": done.get("dump_esl_layers")}
+           "esl_layers": done.get("dump_esl_layers"),
+           "layer_basis": done.get("strain_layer_basis"), "missing": done.get("dump_missing"),
+           "core_missing": done.get("dump_core_missing"),
+           "no_value_elems": done.get("dump_no_value_elems")}
     if isinstance(done.get("dump_shear"), dict):
         out["shear"] = done["dump_shear"]
     return out
@@ -786,19 +789,28 @@ def _raw_csv_chunks(path: str, rows: int = CHUNK_ROWS) -> Iterator[np.ndarray]:
 
 class _FrameMax:
     """프레임별 층 최대 ε_eq 와 그 층의 텐서·프레임 소성(요소 위치 인덱스 공간 n). 행은 프레임 순서로 들어온다.
-    프레임이 바뀌면 on_frame(f, q, t, ep) 를 부른다(q (n,) 층 최대, t (n,4) exx eyy ezz exy, ep (n,) 층 최대 소성)."""
+    프레임이 바뀌면 on_frame(f, q, t, ep, seen) 를 부른다(q (n,) 층 최대(값 없음 −1), t (n,4) exx eyy ezz exy, ep (n,) 층
+    최대 소성, seen (n,) 값 있음). 행이 하나도 없는 프레임(예 frame 0 값 없음)도 seen 전부 False 로 0..n_frames−1 빠짐없이."""
 
-    def __init__(self, n: int, factor: float, on_frame):
-        self.n, self.factor, self.on_frame = n, float(factor), on_frame
+    def __init__(self, n: int, factor: float, on_frame, n_frames: int | None = None):
+        self.n, self.factor, self.on_frame, self.n_frames = n, float(factor), on_frame, n_frames
         self.f = -1
+        self.next = 0
         self.q = np.full(n, -1.0)
         self.t = np.zeros((n, 4))
         self.ep = np.zeros(n)
         self.seen = np.zeros(n, bool)
 
+    def _gap(self, upto: int) -> None:
+        """값 없는 프레임 next..upto−1 을 빈 상태로 알림."""
+        while self.next < upto:
+            self.on_frame(self.next, self.q, self.t, self.ep, self.seen)
+            self.next += 1
+
     def _flush(self):
         if self.f >= 0:
             self.on_frame(self.f, self.q, self.t, self.ep, self.seen)
+            self.next = self.f + 1
         self.q.fill(-1.0)
         self.t.fill(0.0)
         self.ep.fill(0.0)
@@ -813,6 +825,7 @@ class _FrameMax:
             f = int(fp[s])
             if f != self.f:
                 self._flush()
+                self._gap(f)
                 self.f = f
             p, lv, r = pos[s:e], li[s:e], a[s:e]
             q = strain.eps_eq(tensor_eps(r[:, [4, 5, 7]], self.factor))
@@ -827,6 +840,8 @@ class _FrameMax:
 
     def close(self) -> None:
         self._flush()
+        if self.n_frames is not None:
+            self._gap(int(self.n_frames))
         self.f = -1
 
 
@@ -916,9 +931,7 @@ def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: s
         e3 = a[:, [4, 5, 7]]
         np.maximum.at(Mt, ep, strain.eps_eq(e3))
         np.maximum.at(Me, ep, strain.eps_eq(tensor_eps(e3, 0.5)))
-        m = fp == F - 1
-        if m.any():
-            np.maximum.at(ep_last, ep[m], a[m, 8])
+        np.maximum.at(ep_last, ep, a[:, 8])          # 소성 = 시간 최대(단조 — 값 없는 마지막 프레임에도 유지)
         uk = np.unique(fp * E + ep)
         uf, ue = uk // E, uk % E
         new = lastf[ue] != uf
@@ -938,18 +951,24 @@ def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: s
                 if sv.size > SHEAR_SAMPLE_MAX // 2:
                     sv, se = sv[::2], se[::2]
                 s_vm, s_e, n_s = [sv], [se], int(sv.size)
-    if not np.all(cnt == F):
-        bad = cnt != F
-        raise EslError("ID_MISMATCH", f"strain_raw.csv 에 대상 파트 요소 값 누락: 요소 {int(bad.sum())}개 "
-                                      f"(예 {elem_id[bad][:10].tolist()}, 프레임 {cnt[bad][:10].tolist()}/{F}개만 있음)")
+    # 값 없음 내성(이슈 #46): (프레임, 요소) 값이 없으면 건너뜀(누적 최대에 기여 안 함). 한 프레임도 없는 요소 = ε 미상
+    never = cnt == 0
+    if never.all():
+        raise EslError("H3D_MISSING_RESULT", "strain_raw.csv 에 대상 파트 요소 값이 하나도 없음")
+    n_gap = int(np.sum(F - cnt))
+    no_value = elem_id[never]
+    if n_gap:
+        warnings.append(f"STRAIN_DUMP_PARTIAL: 값 없는 (프레임, 요소) {n_gap}개는 건너뜀(누적 최대 = 값 있는 프레임만)"
+                        + (f", 한 프레임도 값이 없는 요소 {int(never.sum())}개(ε 미상 — 0 으로 쓰고 "
+                           f"strain_fallback.no_value_elems 에 기록, 예 {no_value[:10].tolist()})" if never.any() else ""))
     sv = np.concatenate(s_vm) if s_vm else np.zeros(0)
     se = np.concatenate(s_e) if s_e else np.zeros((0, 3))
     sh = decide_shear(sv, se, shear_mode)
-    del s_vm, s_e, sv, se, cnt, lastf
+    del s_vm, s_e, sv, se, lastf
     if sh["n_used"] == 0:
         warnings.append(f"dump: Strain vonMises 가 없거나 0 — 전단 규약 판정 불가, {sh['convention']} 규약으로 가정")
     factor = float(sh["factor"])
-    M_fin = Mt if factor == 1.0 else Me
+    M_fin = np.maximum(Mt if factor == 1.0 else Me, 0.0)
     del Mt, Me
 
     # ---- H (TCL 과 같은 규칙) + 누적 씬 '+prev'
@@ -979,12 +998,14 @@ def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: s
         hq[f], ht[f], hep[f] = q, t, ep
 
     if nH:
-        fm = _FrameMax(nH, factor, on_h)
+        fm = _FrameMax(nH, factor, on_h, F)
         for fp, ep, li, a in _dump_rows(raw, all_fi, elem_id, L, source):
             k = hpos[ep] >= 0
             if k.any():
                 fm.feed(fp[k], hpos[ep[k]], li[k], a[k])
         fm.close()
+    hq = np.maximum(hq, 0.0)                           # 값 없음(−1) → 기여 없음
+    hep = np.maximum.accumulate(hep, axis=0) if nH else hep      # 소성 유지(값 없는 프레임은 직전 값)
     hM = np.maximum.accumulate(hq, axis=0) if nH else np.zeros((F, 0))
     # 유지 텐서(최대를 처음 만든 프레임의 층 텐서)
     hT = np.zeros_like(ht)
@@ -1056,29 +1077,29 @@ def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: s
         raise EslError("INSUFFICIENT_STORAGE", f"dump 변환 출력 공간 부족(필요 약 {need} B, 여유 {free} B): {dst}")
     M = np.full(E, -1.0)
     T = np.zeros((E, 4))
+    EP = np.zeros(E)
     sfh = open(os.path.join(dst, "strain_frames.csv"), "w", encoding="ascii", newline="")
     sfh.write("frame_index,elem_id," + hdr6 + "\n")
     done_frames: list[int] = []
 
     def on_all(f, q, t, ep, seen):
-        if not seen.all():
-            raise EslError("ID_MISMATCH", f"strain_raw.csv 프레임 {int(all_fi[f])} 에 요소 {int((~seen).sum())}개 값 없음")
-        up = q > M
+        up = seen & (q > M)
         M[up] = q[up]
         T[up] = t[up]
+        np.maximum(EP, ep, out=EP)
         if f not in want:
             return
-        rows = six(T, ep)
+        rows = six(T, EP)
         if f in CFpos:
             np.savetxt(sfh, np.column_stack([np.full(E, all_fi[f]), elem_id, rows]), fmt="%.17g", delimiter=",")
         if f == F - 1:
             _savecsv(os.path.join(dst, "final.csv"), "elem_id," + hdr6, np.column_stack([elem_id, rows]))
         if f == 0 and f0:
-            _savecsv(os.path.join(dst, "frame0.csv"), "elem_id,vm_hv,epsp", np.column_stack([elem_id, rows[:, 0], ep]))
+            _savecsv(os.path.join(dst, "frame0.csv"), "elem_id,vm_hv,epsp", np.column_stack([elem_id, rows[:, 0], EP]))
         done_frames.append(f)
 
     try:
-        fm = _FrameMax(E, factor, on_all)
+        fm = _FrameMax(E, factor, on_all, F)
         for fp, ep, li, a in _dump_rows(raw, all_fi, elem_id, L, source):
             fm.feed(fp, ep, li, a)
         fm.close()
@@ -1099,6 +1120,9 @@ def dump_to_maxhold(results_dir: str, done: dict, model, dst: str, shear_mode: s
     dt = float(np.median(np.diff(all_t))) if F > 1 else None
     warnings.append(TMAX_SAMPLED.format(dt=dt if dt is not None else float("nan")))
     outer = [str(x) for x in layers if str(x).strip().lower() not in ("", "mid")]
+    if n_gap:
+        out["dump_core_missing"] = {"cells": n_gap, "no_value_elems": int(never.sum())}
+        out["dump_no_value_elems"] = no_value[:1000].tolist()
     out.update(candidate_frames=cand, candidate_elems=cel, frames_D=Dset,
                prev_frames=[int(all_fi[k]) for k in Ppos], strain_frames=[int(all_fi[k]) for k in CFpos],
                n_hot=int(nH), dump_dt_out=dt, dump_esl_layers=["bottom", "top"] if outer else None,
