@@ -140,7 +140,7 @@ def full_flow(client, engine, worker, esl_root, s, *, expect_ok: int, expect_ski
     assert j["progress_pct"] == 100.0
     g = study(client, sid)
     assert g["phase"] == "READY", g
-    assert g["prep"]["n_beads"] == 2 and g["prep"]["n_params"] == 8 and g["prep"]["paicad_version"] == "0.14.0"
+    assert g["prep"]["n_beads"] == 2 and g["prep"]["n_params"] == 8 and g["prep"]["paicad_version"] == "0.14.1"
     assert any(w["code"] == "BEAD_NEAR_FIXED" for w in g["prep"]["warnings"])
     assert api(client, "GET", f"/doe/studies/{sid}/params").status_code == 200
     for rel in ("prep/extract/shell_features.json", "prep/paicad.json", "prep/params.json", "prep/plan.json"):
@@ -366,7 +366,7 @@ def test_prep_failures_keep_phase(client, engine, worker, esl_root, inputs_root,
 def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
     from esl_platform.core.repositories import doe as doe_repo
 
-    set_control(exe, version="0.14.0", ocp=None)
+    set_control(exe, version="0.14.1", ocp=None)
     w = worker_factory()
     w.heartbeat_once()
     with engine.connect() as c:
@@ -375,12 +375,12 @@ def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
     assert rec["gmsh"]["ready"] is _gmsh_ok()
     s = api(client, "GET", "/doe/settings").json()
     assert s["enabled"] is False and s["reason"] == "PAICAD_OCP_MISSING"
-    set_control(exe, version="0.14.1")
+    set_control(exe, version="0.14.2")
     w.doe_status(force=True)
     w.heartbeat_once()
     with engine.connect() as c:
         rec = doe_repo.paicad_record(c)
-    assert rec["paicad"]["ready"] is True and rec["paicad"]["version"] == "0.14.1"
+    assert rec["paicad"]["ready"] is True and rec["paicad"]["version"] == "0.14.2"
     assert "PAICAD_VERSION_PINNED" in (rec["paicad"]["warning"] or "") and rec["paicad"]["checked_at"]
 
 

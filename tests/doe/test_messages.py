@@ -146,12 +146,14 @@ def test_messages_schema():
 
 # ---------------------------------------------------------------- 버전
 def test_version_check():
-    v = pio.parse_version_json('{"paicad": "0.14.0", "ocp": "7.8.1", "numpy": "2"}')
+    v = pio.parse_version_json('{"paicad": "0.14.1", "ocp": "7.8.1", "numpy": "2"}')
     r = pio.check_version(v, CFG)
     assert r["ready"] and r["warning"] is None and r["reason"] is None
     r = pio.check_version({"paicad": "0.13.9", "ocp": "7.8"}, CFG)
     assert not r["ready"] and r["reason"] == "PAICAD_VERSION_LOW"
-    r = pio.check_version({"paicad": "0.14.0", "ocp": None}, CFG)
+    r = pio.check_version({"paicad": "0.14.0", "ocp": "7.8"}, CFG)              # v0.12.4: 0.14.0(tag 메모리 폭증) 미만 처리
+    assert not r["ready"] and r["reason"] == "PAICAD_VERSION_LOW"
+    r = pio.check_version({"paicad": "0.14.1", "ocp": None}, CFG)
     assert not r["ready"] and r["reason"] == "PAICAD_OCP_MISSING"
     r = pio.check_version({"paicad": "0.15.2", "ocp": "7.8"}, CFG)
     assert r["ready"] and "PAICAD_VERSION_PINNED" in r["warning"]

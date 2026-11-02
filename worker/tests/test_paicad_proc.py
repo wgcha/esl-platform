@@ -218,7 +218,7 @@ def test_version_check(env, ctl, ready, reason, warn):
     set_control(env["exe"], **ctl)
     v = pp.version_check(env["s"])
     assert v["ready"] is ready and v["reason"] == reason and bool(v["warning"]) is warn, v
-    assert v["pinned"] == "0.14.0" and v["checked_at"].endswith("Z")
+    assert v["pinned"] == "0.14.1" and v["checked_at"].endswith("Z")
 
 
 def test_version_check_missing_exe(tmp_path, exe):

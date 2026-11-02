@@ -48,11 +48,11 @@ def _lock_sections() -> tuple[dict[str, str], dict[str, str]]:
 # ------------------------------------------------------------------ paicad.lock · requirements.lock
 def test_paicad_lock_format_and_pins():
     lock = pw.read_lock(LOCK)
-    assert lock["version"] == "0.14.0" and lock["source"] == "wgcha/physicsai-platform"
-    assert lock["branch"] == "release/v0.2.14" and re.fullmatch(r"[0-9a-f]{40}", lock["commit"])
-    assert lock["wheel"] == "paicad-0.14.0-py3-none-any.whl" and re.fullmatch(r"[0-9a-f]{64}", lock["sha256"])
+    assert lock["version"] == "0.14.1" and lock["source"] == "wgcha/physicsai-platform"
+    assert lock["branch"] == "release/v0.2.15" and re.fullmatch(r"[0-9a-f]{40}", lock["commit"])
+    assert lock["wheel"] == "paicad-0.14.1-py3-none-any.whl" and re.fullmatch(r"[0-9a-f]{64}", lock["sha256"])
     assert lock["console_script"] == "paicad" and lock["build_requires"] == ["setuptools==80.9.0"]
-    assert pw._vt(lock["version"]) >= (0, 14, 0)                       # 확정 1: ≥ 0.14.0
+    assert pw._vt(lock["version"]) >= (0, 14, 1)                       # v0.12.4: ≥ 0.14.1(tag 메모리 수정)
     core, opt = _lock_sections()
     ocp = [r for r in lock["runtime_requires"] if r.startswith("cadquery-ocp==")]
     assert ocp == [f"cadquery-ocp=={opt['cadquery-ocp']}"] == ["cadquery-ocp==7.8.1.1.post1"]   # paicad 고정과 같음
@@ -86,8 +86,8 @@ def test_read_lock_rejects_bad_fields(tmp_path, bad):
 
 
 # ------------------------------------------------------------------ 정규화·대조
-def _fake_wheel(version="0.14.0", *, ts=(2026, 10, 26, 12, 0, 0), mode=0o100664, compress=zipfile.ZIP_DEFLATED,
-                order=None, scripts=("paicad",), body=b"__version__ = '0.14.0'\n") -> bytes:
+def _fake_wheel(version="0.14.1", *, ts=(2026, 10, 26, 12, 0, 0), mode=0o100664, compress=zipfile.ZIP_DEFLATED,
+                order=None, scripts=("paicad",), body=b"__version__ = '0.14.1'\n") -> bytes:
     di = f"paicad-{version}.dist-info"
     files = {"paicad/__init__.py": body, "paicad/cli.py": b"def main():\n    return 0\n",
              f"{di}/METADATA": f"Metadata-Version: 2.4\nName: paicad\nVersion: {version}\nRequires-Dist: cadquery-ocp==7.8.1.1.post1\n\nbody\n".encode(),
@@ -125,7 +125,7 @@ def test_normalize_is_independent_of_zip_metadata():
     assert all(i.compress_type == zipfile.ZIP_STORED and i.date_time == pw.ZIP_DATE for i in z.infolist())
     assert {n: z.read(n) for n in z.namelist()} == {n: zipfile.ZipFile(io.BytesIO(a)).read(n) for n in names}
     # 내용이 1바이트라도 다르면 다른 sha
-    assert pw.normalize_bytes(_fake_wheel(body=b"__version__ = '0.14.1'\n")) != na
+    assert pw.normalize_bytes(_fake_wheel(body=b"__version__ = '0.14.2'\n")) != na
 
 
 def test_verify_detects_version_sha_and_script(tmp_path):
@@ -142,7 +142,7 @@ def test_verify_detects_version_sha_and_script(tmp_path):
 
 def test_cli_collect_with_wheel_and_verify(tmp_path):
     w = _fake_wheel()
-    src = tmp_path / "in" / "paicad-0.14.0-py3-none-any.whl"
+    src = tmp_path / "in" / "paicad-0.14.1-py3-none-any.whl"
     src.parent.mkdir()
     src.write_bytes(w)
     lock = _lock_for(tmp_path, w)
@@ -151,7 +151,7 @@ def test_cli_collect_with_wheel_and_verify(tmp_path):
                         "--wheel", str(src)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     res = json.loads(r.stdout)
-    dst = out / "paicad-0.14.0-py3-none-any.whl"
+    dst = out / "paicad-0.14.1-py3-none-any.whl"
     assert res["ok"] and res["how"] == "wheel" and Path(res["wheel"]) == dst
     assert pw.sha256_bytes(dst.read_bytes()) == json.loads(lock.read_text())["sha256"]   # 묶음 안 = 정규화본
     r = subprocess.run([sys.executable, "-I", str(DEPLOY / "paicad_wheel.py"), "verify", "--lock", str(lock), "--wheel", str(dst)],
@@ -179,10 +179,11 @@ def _fake_exe(tmp_path: Path, payload: str, rc: int = 0) -> str:
 
 @pytest.mark.skipif(os.name == "nt", reason="가짜 실행 파일은 shebang")
 @pytest.mark.parametrize("payload,rc,ok,code", [
-    ('{"paicad": "0.14.0", "ocp": "7.8.1", "numpy": "2.4.6"}', 0, True, None),
+    ('{"paicad": "0.14.1", "ocp": "7.8.1", "numpy": "2.4.6"}', 0, True, None),
     ('{"paicad": "0.15.1", "ocp": "7.8.1"}', 0, True, None),
     ('{"paicad": "0.13.9", "ocp": "7.8.1"}', 0, False, "PAICAD_VERSION_LOW"),
-    ('{"paicad": "0.14.0", "ocp": null}', 0, False, "PAICAD_OCP_MISSING"),
+    ('{"paicad": "0.14.0", "ocp": "7.8.1"}', 0, False, "PAICAD_VERSION_LOW"),   # v0.12.4: tag 메모리 폭증 판 거부
+    ('{"paicad": "0.14.1", "ocp": null}', 0, False, "PAICAD_OCP_MISSING"),
     ("oops", 3, False, "PAICAD_CHECK_FAILED"),
 ])
 def test_check_installed_paicad(tmp_path, payload, rc, ok, code):
@@ -191,8 +192,8 @@ def test_check_installed_paicad(tmp_path, payload, rc, ok, code):
     assert r["ok"] is ok
     if code:
         assert any(p.startswith(code) for p in r["problems"]), r
-    if ok and r["paicad"] != "0.14.0":
-        assert any("배포 고정 0.14.0" in w for w in r["warnings"])        # 고정과 다르면 경고만
+    if ok and r["paicad"] != "0.14.1":
+        assert any("배포 고정 0.14.1" in w for w in r["warnings"])        # 고정과 다르면 경고만
     if r["gmsh"] is None:
         assert any(w.startswith("GMSH_UNAVAILABLE") for w in r["warnings"])   # gmsh 없음 = ③ 만, ok 판정 무관
 
@@ -434,7 +435,7 @@ def test_build_from_github_matches_lock(tmp_path):
                         str(tmp_path / "w"), "--work", str(tmp_path / "work")], capture_output=True, text=True, timeout=900)
     assert r.returncode == 0, r.stderr[-3000:]
     res = json.loads(r.stdout)
-    assert res["ok"] and res["version"] == "0.14.0" and res["sha256"] == pw.read_lock(LOCK)["sha256"]
+    assert res["ok"] and res["version"] == "0.14.1" and res["sha256"] == pw.read_lock(LOCK)["sha256"]
 
 
 def test_manuals_paicad_sections():

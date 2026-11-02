@@ -1,4 +1,4 @@
-"""가짜 paicad 0.14.0 CLI(워커 시험용, 계약 esl_bead_doe.md §6 — V-BD-3·11·14·15).
+"""가짜 paicad 0.14.1 CLI(워커 시험용, 계약 esl_bead_doe.md §6 — V-BD-3·11·14·15).
 
 실제 paicad 의 인자·출력 규약을 흉내 낸다(physicsai release/v0.2.14 ``packages/paicad`` 소스 기준, 읽기만):
 - ``version --json`` → {paicad, ocp, numpy, scipy, python}.
@@ -41,7 +41,7 @@ import numpy as np  # noqa: E402
 
 SELF = os.environ.get("FAKE_PAICAD_SELF") or os.path.abspath(sys.argv[0])
 DIR = os.path.dirname(SELF)
-VERSION = "0.14.0"
+VERSION = "0.14.1"
 EXIT = {"OK": 0, "ARGS": 2, "INPUT": 3, "UPDATE": 10, "MORPH": 11, "GEOM": 12, "EMPTY": 13, "VIEW": 14, "INTERNAL": 20}
 CODE_EXIT = {"GEOM_FEATURE_COLLISION": 10, "SHELL_FIXED_REGION_VIOLATION": 10, "GEOM_CAD_FAILED": 10,
              "GEOM_TOPOLOGY_CHANGED": 10, "GEOM_QUALITY": 11, "GEOM_MORPH_FAILED": 11, "GEOM_DEVIATION": 11}

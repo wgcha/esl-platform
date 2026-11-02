@@ -2,6 +2,10 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.12.4] - 2026-11-02
+### 수정
+- **paicad 0.14.1(tag 메모리 수정)**: 강성 평가 스터디 준비의 `paicad tag` 가 큰 모델(예 22만 노드 × 7천 CAD 꼭짓점)에서 노드×꼭짓점 거리 행렬을 통째로 만들어 메모리가 폭증하던 문제 — physicsai `release/v0.2.15`(be21319) paicad 0.14.1 로 교체(k-d tree·블록 처리, 메모리 O(노드+꼭짓점)). 동봉 wheel·`deploy/paicad.lock`·설정 기본값 `bead_doe.paicad.min_version`·`pinned_version` = 0.14.1
+
 ## [0.12.3] - 2026-11-02
 ### 수정
 - **강성 평가 스터디 준비(DOE_PREP)가 시작 2~3분 뒤 `WORKER_LOST`("lease 를 잃었습니다")로 끝나던 문제**(#44): 큰 모델(예 22만 요소)의 모델 전체 사본 `prep/assem_full/`·스캔 정규화가 워커 안에서 lease 갱신 없이 `worker.lease_ttl_s` 보다 오래 걸렸음. 이제 별도 스레드에서 실행하고 그동안 lease 갱신·취소 확인을 계속함. 취소하면 다음 파일 쓰기 전에 멈춘 뒤 CANCELED
