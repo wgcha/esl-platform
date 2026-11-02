@@ -40,12 +40,12 @@ def doe_settings_dict(base: Path, *, paicad: bool = True, **over: Any) -> dict[s
     return d
 
 
-def record_paicad(engine, *, ready: bool = True, version: str = "0.14.0", ocp: str | None = "7.8.1",
+def record_paicad(engine, *, ready: bool = True, version: str = "0.14.1", ocp: str | None = "7.8.1",
                   reason: str | None = None, warning: str | None = None, gmsh: bool = True) -> None:
     from esl_platform.core.repositories import workers as workers_repo
 
     info = {"claims_paused": False,
-            "paicad": {"ready": ready, "version": version, "ocp": ocp, "pinned": "0.14.0", "warning": warning,
+            "paicad": {"ready": ready, "version": version, "ocp": ocp, "pinned": "0.14.1", "warning": warning,
                        "reason": reason, "checked_at": "2026-10-29T00:00:00Z"},
             "gmsh": {"ready": gmsh, "version": "4.13.1" if gmsh else None}}
     with engine.begin() as c:
@@ -129,8 +129,8 @@ def simulate_prep(engine, esl_root: Path, sid: str, job_id: str) -> None:
             "warnings": []}
     (d / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     finish_job(engine, job_id)
-    update_study(engine, sid, phase="READY", paicad_version="0.14.0",
-                 prep={"n_beads": 2, "n_params": 3, "paicad_version": "0.14.0", "warnings": [],
+    update_study(engine, sid, phase="READY", paicad_version="0.14.1",
+                 prep={"n_beads": 2, "n_params": 3, "paicad_version": "0.14.1", "warnings": [],
                        "boundary": {"n_warn": 1, "n_info": 0}})
 
 

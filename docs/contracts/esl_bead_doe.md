@@ -421,8 +421,8 @@ bead_doe:                                # 섹션 없으면 enabled: false
   same: {max_assem_mb: 4096}            # ① Case 폴더 rad/inc 합계 상한(BD-D-13)
   paicad:
     exe: null                           # setup_config 자동 감지(<런타임 venv>/Scripts/paicad.exe 있을 때만)
-    min_version: "0.14.0"
-    pinned_version: "0.14.0"
+    min_version: "0.14.1"
+    pinned_version: "0.14.1"
     threads: 4
     timeout_s: {version: 60, fixed_scan: 3600, extract: 3600, tag: 3600, grid: 7200, run: 3600, update: 1800}
     options: {}                         # paicad shell options.json 내용(선택)
