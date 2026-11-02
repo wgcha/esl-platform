@@ -33,7 +33,9 @@ def settings_dict(tmp_path, request):
     d = make_settings_dict(tmp_path)
     d["storage"]["upload_root"] = str(tmp_path / "esl-input")
     d["upload"] = {"chunk_mb": chunk, "parallel": 4, "max_file_bytes": 2 * 1024 ** 3,
-                   "max_upload_bytes": 4 * 1024 ** 3, "min_free_gb": 0}
+                   "max_upload_bytes": 4 * 1024 ** 3, "min_free_gb": 0,
+                   # v0.12.4 기본 false — 이 시험들은 사전 할당 경로(경합·507)를 보므로 켠다(noprealloc 표지면 기본값)
+                   **({} if request.node.get_closest_marker("noprealloc") else {"preallocate": True})}
     (tmp_path / "outside").mkdir()
     (tmp_path / "outside" / "secret.txt").write_text("outside")
     return d
@@ -90,7 +92,7 @@ def test_config_defaults():
     from esl_platform.core.config import UiCfg, UploadCfg
 
     u = UploadCfg()
-    assert (u.chunk_mb, u.parallel, u.write_buffer_kb, u.preallocate) == (64, 4, 1024, True)
+    assert (u.chunk_mb, u.parallel, u.write_buffer_kb, u.preallocate) == (64, 4, 1024, False)
     assert UiCfg.model_fields["upload_slim_hint_gb"].default == 5
 
 

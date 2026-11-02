@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import errno
 import os
@@ -260,15 +261,25 @@ def append_chunk(part_path: str, data: bytes, root: str | None = None) -> None:
 
 # ---------------------------------------------------------------- 프로토콜 2: 위치 지정 쓰기(계약 esl_upload_speed.md §5.3)
 _CREATE_GUARD = threading.Lock()
-_CREATE_LOCKS: dict[str, threading.Lock] = {}
+_CREATE_LOCKS: dict[str, list] = {}          # 경로 → [Lock, 참조 수] — 참조 수 0 이면 사전에서 뺀다(무한히 쌓이지 않게)
 
 
-def _create_lock(part_path: str) -> threading.Lock:
+@contextlib.contextmanager
+def _create_lock(part_path: str):
     """`.part` 경로별 잠금(프로세스 메모리 — 백엔드 1 프로세스 전제). open_part_for_write 의 만들기·사전 할당과 다른 요청의
-    열기를 직렬화한다."""
+    열기를 직렬화한다. 열기가 끝나 기다리는 요청이 없으면 항목을 지운다."""
     key = os.path.normcase(os.path.abspath(part_path))
     with _CREATE_GUARD:
-        return _CREATE_LOCKS.setdefault(key, threading.Lock())
+        ent = _CREATE_LOCKS.setdefault(key, [threading.Lock(), 0])
+        ent[1] += 1
+    try:
+        with ent[0]:
+            yield
+    finally:
+        with _CREATE_GUARD:
+            ent[1] -= 1
+            if ent[1] <= 0 and _CREATE_LOCKS.get(key) is ent:
+                del _CREATE_LOCKS[key]
 
 
 def open_part_for_write(part_path: str, size: int, root: str | None = None, *, preallocate: bool = True) -> int:
@@ -277,7 +288,8 @@ def open_part_for_write(part_path: str, size: int, root: str | None = None, *, p
 
     v0.12.4(이슈 #50): 만들기 + 사전 할당 전체를 경로별 잠금 아래에서 하고, 기존 파일을 여는 요청도 같은 잠금을 거친다.
     Windows 의 os.ftruncate(UCRT _chsize_s)는 늘리는 구간을 0 으로 **써서** 채우므로, 그 사이 다른 요청이 먼저 쓴 청크를
-    늦게 지나가는 0 채우기가 덮어썼다(4병렬이면 4번째 청크 앞부분이 0 인 채 완료)."""
+    늦게 지나가는 0 채우기가 덮어썼다(4병렬이면 4번째 청크 앞부분이 0 인 채 완료). 사전 할당은 잠금을 쥔 채 수 GB 를 0 으로
+    쓰므로(그동안 같은 파일의 다른 PUT 이 기다림) 설정 upload.preallocate 기본은 false — true 일 때만 이 잠금 안에서 한다."""
     with _create_lock(part_path):
         return _open_part_for_write(part_path, size, root, preallocate=preallocate)
 

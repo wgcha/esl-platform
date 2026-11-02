@@ -101,6 +101,31 @@ def test_issue50_prealloc_zero_fill_race_does_not_zero_a_written_chunk(client, m
     assert ch.calls == 1
 
 
+@pytest.mark.noprealloc
+def test_default_no_preallocate_parallel_puts_not_blocked_and_lock_table_drained(client, monkeypatch):
+    """기본 upload.preallocate=false: ftruncate 를 부르지 않음 → 사전 할당 0 채우기로 다른 PUT 이 기다리지 않는다.
+    열기 잠금 항목은 열기가 끝나면 사전에서 빠진다."""
+    from esl_platform.core import uploads as U
+    from esl_platform.core.config import UploadCfg
+
+    assert UploadCfg().preallocate is False
+    ch = WinChsize(pause_at=0)                         # 불리면 멈춤(go 안 줌) → 부르면 시험이 실패
+    monkeypatch.setattr(os, "ftruncate", ch)
+    data = os.urandom(5 * CS + 3)
+    up = mk_nosha(client, {"h3d/a.h3d": data})
+    parts = chunks_of(data)
+    res: list = []
+    ts = [threading.Thread(target=lambda k=k: res.append(put2(client, up["upload_id"], 0, k, parts[k])))
+          for k in (3, 0, 5, 1)]
+    [t.start() for t in ts]
+    [t.join(20) for t in ts]
+    for k in (2, 4):
+        res.append(put2(client, up["upload_id"], 0, k, parts[k]))
+    assert [r.status_code for r in res] == [200] * 6 and ch.calls == 0
+    assert (hdir(up) / "h3d" / "a.h3d").read_bytes() == data
+    assert U._CREATE_LOCKS == {}
+
+
 # ---------------------------------------------------------------- 방어: 잠금이 없어도(다른 경로의 손상) 완료 재해시가 잡는다
 def test_finalize_rehash_catches_zeroed_chunk_and_requests_only_it(client, app_ctx, monkeypatch):
     """원인 수정(만들기 잠금)을 끈 채 같은 경합 → 마지막 청크 응답이 422 UPLOAD_CHUNK_CORRUPT{chunks:[3]}, 받은 범위에서
