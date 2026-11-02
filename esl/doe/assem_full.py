@@ -156,7 +156,12 @@ def drop_derived(out: str, guard, names=(DIR, A_DIR)) -> list[str]:
 # 전체에서 펼친 파트 목록의 /SURF/PART/<id>·/GRNOD/PART/<id> (c) /GRNOD/GENE/<id>(first last 쌍)·GEN_INCR(first last incr) → /GRNOD/NODE/<id>
 # (d) /SURF/PART[/EXT|ALL]·/SURF/SUBSET[/EXT|ALL] 이 솔리드 파트를 포함하면 /SURF/SEG/<id>(쉘 = 요소, 솔리드 = 면:
 # EXT·옵션 없음 = 파트 안에서 공유되지 않는 외곽 면, ALL = 모든 면 중복 제거) — shell-shell·shell-solid tie 모두 스캔.
+# 대상 = 체결 정의(paicad fixed-scan 이 평가하는 /INTER/TYPE2·/RBE2·/RBE3·/RBODY·/BCS)가 직접·간접(/GRNOD/GRNOD·
+# /SURF/SURF 연쇄) 참조하는 집합만. 참조되지 않는 집합(예: 초기 속도·중력용 전체 노드 /GRNOD/GENE)은 사본에서도 원문
+# 그대로(paicad 0.14.0 read_assembly 는 미지원 집합을 값 없이 기록만 하고, resolve 는 체결 정의에서 닿는 집합만 한다).
+# GENE·GEN_INCR 은 모델에 실제 있는 노드(/NODE 전체)와의 교집합으로 펼치고 상한은 교집합 결과에 적용.
 MAX_EXPAND = 5_000_000
+_TOK = re.compile(r"[^\s,]+")
 
 
 def _is_comment(line: str) -> bool:
@@ -197,6 +202,56 @@ def _fields(line: str, cols: list[tuple[int, int]]) -> list[int | None]:
         return [int(toks[i]) if i < len(toks) and re.fullmatch(r"-?\d+", toks[i]) else None for i in range(len(cols))]
 
 
+def _set_key(kw: list[str], rules) -> tuple[str, int, str] | None:
+    """집합 카드 → (GRNOD|SURF, 정규화 후 id, 정규화 후 형태) — 키워드 규칙(a) 적용 후, /SURF/<형태>/EXT|ALL/<id> 포함."""
+    up = [k.upper() for k in kw]
+    if not up or up[0] not in ("GRNOD", "SURF"):
+        return None
+    eff = up
+    for frm, to in rules or []:
+        n = len(frm)
+        if len(kw) > n and up[:n] == frm and kw[n].lstrip("-").isdigit():
+            eff = [t.upper() for t in to] + up[n:]
+            break
+    if len(eff) < 3:
+        return None
+    n = 3 if eff[0] == "SURF" and len(eff) >= 4 and eff[2] in ("EXT", "ALL") else 2
+    if len(eff) > n and eff[n].lstrip("-").isdigit():
+        return eff[0], int(eff[n]), eff[1]
+    return None
+
+
+def _int_field(line: str, col: tuple[int, int], tok: int) -> int:
+    """paicad 와 같은 규칙: 고정 칸 정수, 아니면 자유 형식 토큰(둘 다 아니면 ValueError·IndexError)."""
+    t = line[col[0]:col[1]].strip()
+    if t:
+        try:
+            return int(t)
+        except ValueError:
+            pass
+    return int(_TOK.findall(line)[tok])
+
+
+def _fix_refs(head: str, sub: str, kw: list[str], data: list[str]) -> list[tuple[str, int]]:
+    """체결 정의 카드가 참조하는 집합(paicad 0.14.0 shell/assem.py read_assembly 와 같은 칸). 못 읽으면 [](paicad 가 오류 표시)."""
+    try:
+        if head == "INTER" and sub == "TYPE2" and len(kw) >= 3 and kw[2].isdigit():
+            t = _TOK.findall(data[0])
+            return [("GRNOD", int(t[0])), ("SURF", int(t[1]))]
+        if head == "RBE2" and sub.isdigit():
+            return [("GRNOD", _int_field(data[0], (30, 40), 3))]
+        if head == "RBE3" and sub.isdigit():
+            return [("GRNOD", int(_TOK.findall(d)[-1])) for d in data[1:]]
+        if head == "RBODY" and sub.isdigit():
+            g = _int_field(data[0], (60, 70), 5)
+            return [("GRNOD", g)] if g else []
+        if head == "BCS" and sub.isdigit():
+            return [("GRNOD", _int_field(data[0], (20, 30), -1))]
+    except (ValueError, IndexError):
+        return []
+    return []
+
+
 def _blocks(lines: list[str]) -> list[tuple[int, int]]:
     """[(키워드 줄 번호, 다음 키워드 줄 번호)] — 키워드 = '/' 로 시작."""
     idx = [i for i, ln in enumerate(lines) if ln.startswith("/")]
@@ -228,8 +283,71 @@ class Model:
         self.surf_parts: set[int] = set()          # /SURF/PART* 가 직접 가리키는 파트
         self.surf_subsets: set[int] = set()        # /SURF/SUBSET* 가 가리키는 subset
         self.elems: dict[int, dict[str, list]] = {}    # 파트 → {키워드: [연결 행]} (필요한 파트만)
+        self.surf_def: dict[int, tuple[set, set]] = {}  # SURF id → (직접 파트, subset)
+        self.children: dict[tuple[str, int], set[int]] = {}   # /GRNOD/GRNOD·/SURF/SURF 하위 집합
+        self.fix: set[tuple[str, int]] = set()     # 체결 정의가 직접 참조하는 집합
+        self.gene: set[tuple[str, int]] = set()    # GENE·GEN_INCR 집합
+        self.refs: set[tuple[str, int]] | None = None   # None = 모든 집합 대상(단위 호출), 아니면 참조 집합만
+        self.node_ids = np.zeros(0, np.int64)      # 모델 전체 /NODE id(정렬·중복 없음) — GENE 교집합용
+
+    def scan_refs(self, lines: list[str], rules) -> None:
+        """체결 정의 참조·집합 연쇄·GENE 집합 기록(정규화 대상 판정)."""
+        for a, b in _blocks(lines):
+            kw = _kw(lines[a])
+            up = [k.upper() for k in kw]
+            head, sub = (up[0] if up else ""), (up[1] if len(up) > 1 else "")
+            if head in ("INTER", "RBE2", "RBE3", "RBODY", "BCS"):
+                _t, data = _title_data(lines, a, b)
+                self.fix.update(_fix_refs(head, sub, kw, [lines[k] for k in data]))
+                continue
+            key = _set_key(kw, rules)
+            if key is None:
+                continue
+            kind, sid, typ = key
+            if typ == kind:                        # /GRNOD/GRNOD·/SURF/SURF
+                _t, data = _title_data(lines, a, b)
+                self.children.setdefault((kind, sid), set()).update(
+                    x for k in data for x in (_ints(lines[k]) or []) if x > 0)
+            elif kind == "GRNOD" and typ in ("GENE", "GEN_INCR"):
+                self.gene.add((kind, sid))
+
+    def resolve_refs(self) -> set[tuple[str, int]]:
+        out: set[tuple[str, int]] = set()
+        todo = list(self.fix)
+        while todo:
+            k = todo.pop()
+            if k in out:
+                continue
+            out.add(k)
+            todo += [(k[0], c) for c in self.children.get(k, ())]
+        self.refs = out
+        return out
+
+    def scan_nodes(self, lines: list[str]) -> list[int]:
+        """/NODE 블록 노드 id(10칸 고정폭 첫 칸, 아니면 첫 토큰)."""
+        out: list[int] = []
+        for a, b in _blocks(lines):
+            kw = _kw(lines[a])
+            if not kw or kw[0].upper() != "NODE":
+                continue
+            for ln in lines[a + 1:b]:
+                if not ln.strip() or _is_comment(ln):
+                    continue
+                try:
+                    out.append(int(ln[:10]))
+                except ValueError:
+                    t = _TOK.findall(ln)
+                    if t and re.fullmatch(r"-?\d+", t[0]):
+                        out.append(int(t[0]))
+        return out
 
     def needed_parts(self) -> set[int]:
+        sp, ss = set(), set()
+        for sid, (p, s) in self.surf_def.items():
+            if self.refs is None or ("SURF", sid) in self.refs:
+                sp |= p
+                ss |= s
+        self.surf_parts, self.surf_subsets = sp, ss
         out = set(self.surf_parts)
         for s in self.surf_subsets:
             try:
@@ -280,7 +398,8 @@ class Model:
                 if len(kw) > n and kw[n].isdigit():
                     _t, data = _title_data(lines, a, b)
                     ids = [x for k in data for x in (_ints(lines[k]) or []) if x > 0]
-                    (self.surf_parts if kw[1].upper() == "PART" else self.surf_subsets).update(ids)
+                    d = self.surf_def.setdefault(int(kw[n]), (set(), set()))
+                    d[0 if kw[1].upper() == "PART" else 1].update(ids)
             if head == "SUBSET" and len(kw) >= 2 and kw[1].isdigit():
                 _t, data = _title_data(lines, a, b)
                 ids: list[int] = []
@@ -403,6 +522,15 @@ def solid_segments(model: Model, pids: list[int], mode: str, label: str) -> list
     return np.concatenate(segs, axis=0).tolist()
 
 
+def _gene_vals(line: str) -> list[int] | None:
+    """GENE·GEN_INCR 범위 줄: 10칸 고정폭(빈칸 = 0) 전부 정수면 그것, 아니면 공백·쉼표 토큰."""
+    body = line.rstrip()
+    try:
+        return [int(t) if (t := body[k:k + 10].strip()) else 0 for k in range(0, len(body), 10)]
+    except ValueError:
+        return _ints(line)
+
+
 def _id_lines(ids: list[int]) -> list[str]:
     return ["".join(f"{v:10d}" for v in ids[k:k + 8]) for k in range(0, len(ids), 8)]
 
@@ -428,6 +556,11 @@ def normalize_lines(lines: list[str], cfg: dict, model: Model, rel: str) -> tupl
     for a, b in _blocks(lines):
         kw = _kw(lines[a])
         up = [k.upper() for k in kw]
+
+        if model.refs is not None:                    # 체결 정의에서 닿지 않는 집합 = 원문 그대로
+            sk = _set_key(kw, cfg["rules"])
+            if sk is not None and (sk[0], sk[1]) not in model.refs:
+                continue
 
         def tail(n: int) -> str:
             return ("/" + "/".join(kw[n:])) if len(kw) > n else ""
@@ -483,24 +616,36 @@ def normalize_lines(lines: list[str], cfg: dict, model: Model, rel: str) -> tupl
             # /GRNOD/GEN_INCR = (first, last, incr) 세 개씩. 0 으로 채운 빈 쌍은 무시.
             label = f"/GRNOD/{up[1]}/{kw[2]} ({rel})"
             step = 2 if up[1] == "GENE" else 3
+            # 리터럴 범위가 아니라 모델에 실제 있는 노드(/NODE 전체)와의 교집합, 상한은 교집합 결과에.
             t, data = _title_data(lines, a, b)
-            ids: list[int] = []
+            nid = model.node_ids
+            got: list[np.ndarray] = []
+            total, nr = 0, 0
             for i in data:
-                v = _ints(lines[i])
-                if not v or len(v) % step and any(v[len(v) - len(v) % step:]):
+                v = _gene_vals(lines[i])
+                if not v:
                     raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 줄을 읽지 못함 {lines[i][:40]!r}")
-                for q in range(0, len(v) - len(v) % step, step):
+                v = v + [0] * (-len(v) % step)
+                for q in range(0, len(v), step):
                     s0, s1 = v[q], v[q + 1]
                     inc = v[q + 2] if step == 3 else 1
                     if s0 == 0 and s1 == 0:
                         continue
                     if inc <= 0 or s1 < s0 or s0 <= 0:
                         raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 오류 {s0} {s1}" + (f" {inc}" if step == 3 else ""))
-                    ids.extend(range(s0, s1 + 1, inc))
-                    if len(ids) > MAX_EXPAND:
-                        raise EslError("FIXED_PARSE_FAILED", f"{label}: 노드 {MAX_EXPAND}개 초과")
-            if not ids:
+                    nr += 1
+                    sel = nid[np.searchsorted(nid, s0, "left"):np.searchsorted(nid, s1, "right")]
+                    if inc > 1:
+                        sel = sel[(sel - s0) % inc == 0]
+                    got.append(sel)
+                    total += len(sel)
+                    if total > MAX_EXPAND and len(np.unique(np.concatenate(got))) > MAX_EXPAND:
+                        raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 안 모델 노드 {MAX_EXPAND}개 초과")
+            if not nr:
                 raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 줄 없음")
+            ids = np.unique(np.concatenate(got)).tolist() if got else []
+            if not ids:
+                raise EslError("FIXED_PARSE_FAILED", f"{label}: 범위 안에 모델 노드 없음")
             new = ["/GRNOD/NODE" + tail(2)] + \
                 lines[a + 1:data[0] if data else b] + _id_lines(ids)
             key = f"GRNOD/{up[1]}→GRNOD/NODE"
@@ -558,14 +703,27 @@ def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str
             os.remove(tmp)
             raise EslError("INPUT_CHANGED", f"모델 파일이 복사 중 바뀜(sha256 불일치): {os.path.basename(src)}")
         os.replace(tmp, g(dst))
-        if cfg["enabled"] and (cfg["expand_subset"] or cfg["expand_solid"]):
-            model.scan(_read_lines(dst)[0])
+        if cfg["enabled"]:
+            ln = _read_lines(dst)[0]
+            model.scan_refs(ln, cfg["rules"])
+            if cfg["expand_subset"] or cfg["expand_solid"]:
+                model.scan(ln)
         rows.append({"rel": rel.replace(os.sep, "/"), "src": src, "sha256": s0, "size": os.path.getsize(dst),
                      "outside": not U.is_within(src, cd), "staged_sha256": s0, "normalized": {}})
+    if cfg["enabled"]:
+        model.resolve_refs()
     need = model.needed_parts() if cfg["enabled"] and cfg["expand_solid"] else set()
-    if need:                                           # 2) /SURF 가 가리키는 파트의 요소(솔리드 면 → /SURF/SEG)
+    need_nodes = bool(cfg["enabled"] and cfg["expand_gene"] and (model.gene & (model.refs or set())))
+    if need or need_nodes:                             # 2) 참조 /SURF 파트 요소(솔리드 면 → /SURF/SEG)·참조 GENE 용 노드
+        nodes: list[int] = []
         for r in rows:
-            model.scan_elems(_read_lines(os.path.join(dest_dir, *r["rel"].split("/")))[0], need)
+            ln = _read_lines(os.path.join(dest_dir, *r["rel"].split("/")))[0]
+            if need:
+                model.scan_elems(ln, need)
+            if need_nodes:
+                nodes += model.scan_nodes(ln)
+        if need_nodes:
+            model.node_ids = np.unique(np.asarray(nodes, dtype=np.int64))
     counts: dict[str, int] = {}
     for r in rows:                                     # 3) 스캔 사본만 카드 정의 재작성
         dst = os.path.join(dest_dir, *r["rel"].split("/"))
