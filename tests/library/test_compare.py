@@ -270,3 +270,15 @@ def test_report_reliability_badge(tmp_path):
     cmp.save(r, str(tmp_path), U.Writer(str(tmp_path)))
     doc = open(tmp_path / "report.html", encoding="utf-8").read()
     assert doc.count("id='reliability'") == 1 and "판정 신뢰 낮음" in doc and "medoid cos" in doc
+
+
+def test_report_explain_boxes(tmp_path):
+    r = cmp.compare(_version("v001", (24, 16), 1.0), _version("v002", (24, 16), 1.0), None, {"n_representative": 2})
+    r.update(comparison_id="C1", model="50QX10A", base_version="v001", new_version="v002")
+    cmp.save(r, str(tmp_path), U.Writer(str(tmp_path)))
+    doc = open(tmp_path / "report.html", encoding="utf-8").read()
+    assert re.findall(r"data-explain='(\w+)'", doc) == ["cmp_scenes", "cmp_envelope", "cmp_reps", "cmp_limits"]
+    box = re.search(r"data-explain='cmp_scenes'>(.*?)</div>", doc, re.S).group(1)
+    for w in ("cos", "합력비", "hotspot 이동", "ε_max 비"):
+        assert w in box
+    assert "margin-right:10px}.rel.warn" in doc

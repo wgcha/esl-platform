@@ -526,7 +526,7 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
     S.append("<div class='tiles'>" + "".join(f"<div class='tile'><div class='v'>{_e(v)}</div><div class='k'>{_e(k)}"
                                              "</div></div>" for k, v in tiles) + "</div>")
     # ---- 씬 표
-    S.append("<h2>1. 씬별 비교</h2><p class='muted small'>cos = 셀 합력·합모멘트 특징(단위 노름) 내적, 합력비 = Σ|f| "
+    S.append("<h2>1. 씬별 비교</h2>" + ra.explain("cmp_scenes") + "<p class='muted small'>cos = 셀 합력·합모멘트 특징(단위 노름) 내적, 합력비 = Σ|f| "
              "신/구, hotspot 이동 = hotspot1 정규화 좌표(ξ,η) 거리, ε_max 비 = 최대변형률 신/구.</p>"
              "<div class='filters'><input id='f-text' placeholder='검색(씬·항목)'><span class='muted small' "
              "id='f-count'></span></div>")
@@ -561,7 +561,7 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
     Eb, En, Ed = (np.asarray(env[k], dtype=float) for k in ("base", "new", "diff"))
     tips = [[f"셀 ({i},{j}) 구 {ra._fmt(Eb[i, j])} → 신 {ra._fmt(En[i, j])} (차 {ra._fmt(Ed[i, j])})" for j in range(ny)]
             for i in range(nx)]
-    S.append("<h2>2. 셀 포락 차이</h2><p class='muted small'>짝 씬의 셀별 max<sub>k</sub> |F<sub>cell</sub>| (정규화 격자). "
+    S.append("<h2>2. 셀 포락 차이</h2>" + ra.explain("cmp_envelope") + "<p class='muted small'>짝 씬의 셀별 max<sub>k</sub> |F<sub>cell</sub>| (정규화 격자). "
              "차이 = 신 − 구 (파랑 증가, 주황 감소).</p><div class='grid2'><div class='card'>"
              + ra.heatmap(Ed, fr, None, tips, "div", title="셀 포락 차이 (신 − 구)", w=560, legend_label="ΔF")
              + "</div><div class='card'>"
@@ -569,7 +569,8 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
                           legend_label="|F|")
              + "</div></div>")
     # ---- 대표
-    S.append(f"<h2>3. 대표 케이스 재군집 (k = {reps['k']})</h2><p class='muted small'>버전별로 짝 씬만 같은 k 로 "
+    S.append(f"<h2>3. 대표 케이스 재군집 (k = {reps['k']})</h2>" + ra.explain("cmp_reps") + "<p class='muted small'>"
+             f"버전별로 짝 씬만 같은 k 로 "
              f"k-medoids → 멤버 겹침 최대로 클러스터 매칭 → 짝 medoid 의 cos 가 기준 이상이면 같은 대표(medoid 씬이 달라도 됨). 멤버 일치율 {_pct(reps['partition_agreement'])}."
              + (f" 짝 medoid cos 는 일부 기준 미달이지만 기준 대표를 새 버전에 그대로 써도 군집 비용 증가가 "
                 f"{_pct(reps.get('base_reps_cost_excess'))} ≤ {_pct(reps.get('cost_tol'))} 이고 기준 대표 씬의 버전 간 cos 가 "
@@ -582,7 +583,7 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
                        f"<td class='num'>{m['overlap']}</td><td class='num'>{_r(m.get('medoid_cos'), 4)}</td>"
                        f"<td>{'<span class=pass>예</span>' if m.get('rep_same', m['medoid_same']) else '<span class=fail>아니오</span>'}"
                        "</td></tr>" for m in reps["matching"]) + "</tbody></table>")
-    S.append("<h2>4. 한계</h2><ul class='lim'><li>하중 패턴은 정규화 격자 셀 합력·합모멘트로 비교한다 — 셀보다 작은 "
+    S.append("<h2>4. 한계</h2>" + ra.explain("cmp_limits") + "<ul class='lim'><li>하중 패턴은 정규화 격자 셀 합력·합모멘트로 비교한다 — 셀보다 작은 "
              "국부 변화는 cos 에 작게 나타난다.</li><li>셀당 노드가 적으면(중앙값 64 미만, 특히 16 미만) 메시 해상도 차이만으로도 "
              "cos 가 낮아진다 — 이때 판정은 참고용이다.</li><li>합력비는 Σ|f_i| (자기평형 하중의 합력 벡터는 ≈ 0) 기준이다.</li>"
              "<li>판정 기준(cos_min, rep_same)은 임시값이며 실제 반복 사례로 조정해야 한다.</li></ul>")
@@ -593,7 +594,7 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
     blob = json_text(U.jsonable(data))
     css = ra.CSS + (".verdict{display:inline-block;font-size:18px;font-weight:700;padding:4px 12px;border-radius:6px;"
                     "border:1px solid currentColor;margin-right:10px}.rel{display:inline-block;font-size:13px;font-weight:600;"
-                    "padding:2px 8px;border-radius:6px;border:1px solid currentColor;margin-right:10px.rel.warn{color:var(--neg)}tr.chg td:first-child{font-weight:600}")
+                    "padding:2px 8px;border-radius:6px;border:1px solid currentColor;margin-right:10px}.rel.warn{color:var(--neg)}tr.chg td:first-child{font-weight:600}")
     doc = ("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
            f"<title>ESL 설계 버전 비교</title><style>{css}</style></head><body><main>" + "".join(S)
