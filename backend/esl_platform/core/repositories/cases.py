@@ -40,6 +40,42 @@ def list_cases(conn: Connection, project_id: str | None, status: str | None) -> 
     return [row_dict(r) for r in conn.execute(q.order_by(cases.c.created_at.desc())).all()]
 
 
+STAGE_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE", "EXPORT")
+
+
+def stage_inputs_many(conn: Connection, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """목록용 단계 상태 입력 일괄 조회(#49, 3쿼리 고정): Case 별 {latest: {job_type: job|None}, run, has_vals}.
+
+    latest = Case·작업 종류별 최신 작업(EXPORT 는 Case 단위 = params.origin 없음, 상세 stage_status 와 같은 규칙),
+    run = current_esl_run_id 의 esl_runs 행, has_vals = 그 run 의 검증 행 존재."""
+    from ..db.tables import jobs
+
+    ids = [c["id"] for c in rows]
+    out: dict[str, dict[str, Any]] = {
+        i: {"latest": {jt: None for jt in STAGE_JOB_TYPES}, "run": None, "has_vals": False} for i in ids}
+    if not ids:
+        return out
+    # Case·종류별 최신 1건(row_number — SQLAlchemy 2.0·2.1 공통, DISTINCT ON 문법 차이 회피)
+    rn = func.row_number().over(partition_by=(jobs.c.case_id, jobs.c.job_type),
+                                order_by=jobs.c.created_at.desc()).label("_rn")
+    sub = (select(jobs, rn)
+           .where(and_(jobs.c.case_id.in_(ids), jobs.c.job_type.in_(STAGE_JOB_TYPES),
+                       (jobs.c.job_type != "EXPORT") | jobs.c.params["origin"].astext.is_(None)))
+           .subquery())
+    for r in conn.execute(select(sub).where(sub.c._rn == 1)).all():
+        j = {k: v for k, v in row_dict(r).items() if k != "_rn"}
+        out[j["case_id"]]["latest"][j["job_type"]] = j
+    rids = {c["current_esl_run_id"]: c["id"] for c in rows if c.get("current_esl_run_id")}
+    if rids:
+        for r in conn.execute(select(esl_runs).where(esl_runs.c.id.in_(list(rids)))).all():
+            run = row_dict(r)
+            out[rids[run["id"]]]["run"] = run
+        for (rid,) in conn.execute(select(validations.c.esl_run_id).distinct()
+                                   .where(validations.c.esl_run_id.in_(list(rids)))).all():
+            out[rids[rid]]["has_vals"] = True
+    return out
+
+
 def update_case(conn: Connection, case_id: str, version: int | None, **values: Any) -> dict[str, Any]:
     """낙관적 잠금: version 이 주어지면 일치할 때만 갱신(불일치 → VersionConflict)."""
     cond = cases.c.id == case_id

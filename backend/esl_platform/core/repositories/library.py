@@ -67,6 +67,27 @@ def list_entries(conn: Connection, *, project_id: str | None = None, status: str
                                                          library_entries.c.id)).all()]
 
 
+def active_stats_for_cases(conn: Connection, case_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Case 목록용 등록 현황 일괄 조회(#49, 2쿼리 고정): {case_id: {count, latest}} — ACTIVE 항목 수와 가장 최근 등록 항목
+    (latest = {id, quality, registered_at}). 항목 없는 Case 는 빠진다."""
+    ids = sorted({i for i in case_ids if i})
+    if not ids:
+        return {}
+    active = and_(library_entries.c.case_id.in_(ids), library_entries.c.status == "ACTIVE")
+    out: dict[str, dict[str, Any]] = {
+        cid: {"count": int(n), "latest": None}
+        for cid, n in conn.execute(select(library_entries.c.case_id, func.count()).where(active)
+                                   .group_by(library_entries.c.case_id)).all()}
+    rn = func.row_number().over(partition_by=library_entries.c.case_id,
+                                order_by=(library_entries.c.registered_at.desc(), library_entries.c.id)).label("rn")
+    sub = (select(library_entries.c.case_id, library_entries.c.id, library_entries.c.quality,
+                  library_entries.c.registered_at, rn).where(active).subquery())
+    q = select(sub.c.case_id, sub.c.id, sub.c.quality, sub.c.registered_at).where(sub.c.rn == 1)
+    for cid, eid, quality, at in conn.execute(q).all():
+        out[cid]["latest"] = {"id": eid, "quality": quality, "registered_at": at}
+    return out
+
+
 def update_entry(conn: Connection, eid: str, version: int | None, **values: Any) -> dict[str, Any]:
     cond = library_entries.c.id == eid
     if version is not None:

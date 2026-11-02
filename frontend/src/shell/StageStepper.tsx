@@ -29,9 +29,29 @@ export function stepState(c: Pick<Case, "step_status" | "stage_status">, n: numb
   return ss[{ input: "1", esl: "4", validate: "5" }[k]];
 }
 
-const STATE_LABEL: Record<StageStateKey, string> = { none: "없음", running: "실행 중", done: "완료", stale: "이전 단계 변경됨", failed: "실패" };
+export const STATE_LABEL: Record<StageStateKey, string> = { none: "없음", running: "실행 중", done: "완료", stale: "이전 단계 변경됨", failed: "실패" };
 /** 단계 상태 → 점 색(PhysicsAI .dot 규칙: ok·run·wait·bad·off) */
-const DOT: Record<StageStateKey, string> = { none: "off", running: "run", done: "ok", stale: "wait", failed: "bad" };
+export const DOT: Record<StageStateKey, string> = { none: "off", running: "run", done: "ok", stale: "wait", failed: "bad" };
+const tipOf = (st: StageStateKey, s: StageState | undefined) => (s?.reason?.message ? `${STATE_LABEL[st]} — ${s.reason.message}` : STATE_LABEL[st]);
+
+/** #49 Case 목록 진행 칸: 4단계 점 한 줄(①입력 ②t*·지지점 ③ESL ④검증). 점 색 = 스텝퍼와 같은 규칙, 툴팁 = 단계명·상태·사유 */
+export function StepDots({ c }: { c: Pick<Case, "step_status" | "stage_status"> }) {
+  return (
+    <span className="step-dots" role="list" aria-label="단계 진행">
+      {STEP_NAMES.map((name, i) => {
+        const s = stepState(c, i + 1);
+        const st = s?.state ?? "none";
+        const tip = `${STEP_MARKS[i]} ${name}: ${tipOf(st, s)}`;
+        return (
+          <span key={name} className="step-dot" role="listitem" title={tip} aria-label={tip} data-state={st}>
+            <span className="step-mark">{STEP_MARKS[i]}</span>
+            <span className={`dot ${DOT[st]}`} />
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 export function StageStepper({ base, current, c }: { base: string; current: number; c: Pick<Case, "step_status" | "stage_status"> | null | undefined }) {
   return (
@@ -41,7 +61,7 @@ export function StageStepper({ base, current, c }: { base: string; current: numb
           const n = i + 1;
           const s = c ? stepState(c, n) : undefined;
           const st = s?.state ?? "none";
-          const tip = s?.reason?.message ? `${STATE_LABEL[st]} — ${s.reason.message}` : STATE_LABEL[st];
+          const tip = tipOf(st, s);
           return (
             <li key={n} className={`step ${n === current ? "current" : ""}`}>
               <Link to={`${base}/step/${n}`} aria-current={n === current ? "step" : undefined}>

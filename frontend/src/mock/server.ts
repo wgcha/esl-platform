@@ -3,7 +3,7 @@
 import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
-  ArtifactOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, StepStatus, SupportAuto, SupportProblem,
+  ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, StepStatus, SupportAuto, SupportProblem,
   SupportSetOut, ValidationOut,
 } from "../api/types";
 import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
@@ -413,7 +413,8 @@ export class MockServer {
       const last = this.lastJob(c.id, stage);
       let st: StageState = { state: has[n] ? "done" : "none", job_id: last?.id ?? null };
       if (n >= 4 && has[n] && runStale) st = { state: "stale", job_id: last?.id ?? null };
-      if (!has[n] && last && (last.state === "FAILED" || last.state === "INTERRUPTED")) st = { state: "failed", job_id: last.id };
+      if (!has[n] && last && (last.state === "FAILED" || last.state === "INTERRUPTED"))
+        st = { state: "failed", job_id: last.id, ...(last.failure_code || last.failure_message ? { reason: { code: last.failure_code ?? "FAILED", message: last.failure_message ?? last.failure_code ?? "" } } : {}) };
       if (active) st = { state: "running", job_id: active.id };
       out[String(n)] = st;
     }
@@ -443,6 +444,15 @@ export class MockServer {
     const sa = this.autoSupport(c);
     delete sa.node_ids;
     c.tstar = { ...c.tstar!, support_auto: sa };
+  }
+
+  /** #49 Case 목록 등록 현황: ACTIVE 항목 수 + 최신 항목 판정 */
+  private caseLibrary(caseId: string): CaseLibraryOut {
+    const act = this.entries.filter((e) => e.case_id === caseId && e.status === "ACTIVE").sort((a, b) => b.registered_at.localeCompare(a.registered_at));
+    const e = act[0];
+    if (!e) return { count: 0, latest_entry_id: null, latest_status: null, latest_registered_at: null };
+    const o = this.entryOut(e);
+    return { count: act.length, latest_entry_id: e.id, latest_status: o.eligible ? "PASS" : o.ineligible_reason ?? "LEGACY", latest_registered_at: e.registered_at };
   }
 
   /** §7.4 EntryOut 추가 키(목: Case·run 행 없이 quality 로 계산) */
@@ -599,7 +609,8 @@ export class MockServer {
     }
     if (method === "GET" && path === "/cases") {
       const pid = query.get("project_id");
-      return { status: 200, body: this.cases.filter((c) => !pid || c.project_id === pid).map((c) => this.caseOut(c)) };
+      // #49: 목록 = step_status + library(서버처럼 stage_status 없음)
+      return { status: 200, body: this.cases.filter((c) => !pid || c.project_id === pid).map((c) => ({ ...this.caseOut(c), stage_status: null, library: this.caseLibrary(c.id) })) };
     }
     if (method === "POST" && path === "/cases") {
       if (!this.canRun(String(b.project_id))) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");

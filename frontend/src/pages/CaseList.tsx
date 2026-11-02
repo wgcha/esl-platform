@@ -3,22 +3,24 @@ import { api } from "../api/endpoints";
 import type { Case } from "../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../app/AppContext";
 import { MENU_CREATE, Shell } from "../shell/Shell";
-import { N_STEPS, STEP_NAMES, stepState } from "../shell/StageStepper";
-import { Empty, ErrorLine } from "../components/ui";
+import { StepDots } from "../shell/StageStepper";
+import { Badge, Empty, ErrorLine } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
 import { dt } from "../lib/format";
 
-/** 진행 한 줄: 화면 4단계(step_status) 기준 */
-function progressOf(c: Case) {
-  let last = 0;
-  let running = 0;
-  for (let n = 1; n <= N_STEPS; n++) {
-    const s = stepState(c, n)?.state;
-    if (s === "done" || s === "stale") last = n;
-    if (s === "running" && !running) running = n;
-  }
-  if (running) return `${STEP_NAMES[running - 1]} 실행 중`;
-  return last ? `${STEP_NAMES[last - 1]}까지 완료` : "시작 전";
+const LIB_STATUS: Record<string, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "LEGACY(이전 판정 체계)" };
+
+/** #49 라이브러리 등록 배지: 이 Case 에서 등록된 ACTIVE 항목 수 + 최신 항목 판정(툴팁) */
+function LibraryBadge({ c }: { c: Case }) {
+  const n = c.library?.count ?? 0;
+  if (!n) return <span className="small muted" data-testid="lib-badge">라이브러리 없음</span>;
+  const st = c.library?.latest_status ?? null;
+  const tip = `최신 등록 판정: ${st ? LIB_STATUS[st] ?? st : "–"}${c.library?.latest_registered_at ? ` · ${dt(c.library.latest_registered_at)}` : ""}`;
+  return (
+    <span title={tip} data-testid="lib-badge">
+      <Badge kind={st === "PASS" ? "ok" : "warn"}>라이브러리 등록됨 {n}</Badge>
+    </span>
+  );
 }
 
 export function CaseList() {
@@ -64,7 +66,12 @@ export function CaseList() {
                   <Link to={`/p/${projectId}/c/${c.id}/step/1`}>{c.title}</Link>
                 </td>
                 <td className="mono">{c.folder_name}</td>
-                <td>{progressOf(c)}</td>
+                <td className="nowrap">
+                  <span className="case-progress">
+                    <StepDots c={c} />
+                    <LibraryBadge c={c} />
+                  </span>
+                </td>
                 <td>{c.created_by_name}</td>
                 <td className="num">{dt(c.updated_at)}</td>
               </tr>
