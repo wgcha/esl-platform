@@ -2,6 +2,13 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.12.2] - 2026-11-02
+### 수정
+- **강성 평가 스터디 체결 스캔 정규화 대상 한정**(#45): 스캔 사본에서 체결 정의(`/INTER/TYPE2`·`/RBE2`·`/RBE3`·`/RBODY`·`/BCS`)가 직접·간접 참조하는 집합만 정규화하고, 참조되지 않는 집합 카드는 원문 그대로 둠(`/INIVEL`·`/GRAV` 등 의미 보존). `/GRNOD/GENE`·`GEN_INCR` 은 모델 `/NODE` 전체 id 와의 교집합으로 펼침(상한 5,000,000 은 교집합에 적용) — 넓은 범위 GENE(예 100001..999999999)에서 막히던 문제 해소
+- **서버 h3d 추출 Strain 텐서 층 선택·값 없음 내성**(#46): `Strain` 텐서는 우선 층(기본 `Lower`·`Upper`, 대소문자·공백 무시) 중 있는 층만 내보내고, 하나도 없으면 전 층 − `tensor_layer_exclude`. 선택 근거는 추출 결과 `strain_layer_basis`. 값이 없는 (프레임, 층)(예 frame 0)은 0 이 아니라 건너뜀(경고 `STRAIN_DUMP_PARTIAL`), 한 프레임도 값 없는 요소는 0 으로 기록(`strain_fallback.no_value_elems`), 전부 없을 때만 `H3D_MISSING_RESULT`. HyperView 쿼리 오류는 그대로 실패
+- 설정 `extract.tensor_layer_prefer`(선택, 기본 `[Lower, Upper]`, 빈 목록 = 전 층 − exclude) 추가 — 서버 추출 요청에 그대로 전달
+- lease 장시간 작업(#44)은 다음 버전에서 다룸
+
 ## [0.12.1] - 2026-10-30
 ### 수정
 - **서버 h3d 추출이 `Max_Strain` 없는 덱에서 막히던 문제**(`H3D_MISSING_RESULT: result type 'Max_Strain' not in subcase 1`): 변형률 결과를 순서대로 대체 — `Max_Strain` → `Plastic Strain` → `Strain`(층별 순간 텐서) → `Max_Stress`. 순서·결과/성분 이름 후보는 설정 `extract.strain_sources`·`result_names`·`tensor_comps`·`vm_comps`·`scalar_comps`·`tensor_layer_exclude`(선택, 없으면 기본값)
