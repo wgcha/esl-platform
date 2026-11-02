@@ -43,7 +43,7 @@ from esl_platform.core.repositories import doe as doe_repo
 from esl_platform.core.repositories import jobs as jobs_repo
 from sqlalchemy import and_, update
 
-from . import core_adapter, paicad_proc
+from . import core_adapter, inproc, paicad_proc
 
 BASELINE = "d000"
 NOISE = "noise"
@@ -207,11 +207,15 @@ def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = ""
     """v0.12.1 모델 전체 사본 prep/<rel>/(paicad --assem-dir) + 스캔 정규화 → (폴더, 매니페스트 = prep/<rel>.json)."""
     _, dcfg = _cfg(ex)
     cc = ((ex.lib["doe"].get("core") or {}).get("case")) or {}
-    man = core_adapter.doe_assem_full(
+    # v0.12.3(#44): 22만 요소 모델 사본·정규화는 수 분 — 작업 스레드에서, 이 스레드는 lease 갱신·취소 확인
+    stop = threading.Event()
+    cnt = {"files": 0}
+    man = inproc.call(ex, lambda: core_adapter.doe_assem_full(
         ex.cdir, ex.lib["doe"], starter, case_dir, _in_roots(ex), os.path.join("prep", rel),
         max_mb=float(dcfg["same"]["max_assem_mb"]), max_depth=int(cc.get("rad_include_max_depth") or 8),
         include_path_map=cc.get("include_path_map"), engine_rad=bool(dcfg["same"].get("engine_rad")),
-        fixed_scan=dcfg.get("fixed_scan"))
+        fixed_scan=dcfg.get("fixed_scan"), guard_wrap=lambda g: inproc.stop_guard(stop, g, cnt)),
+        label=f"{label}모델 전체 사본 prep/{rel}", echo=echo, stop=stop, detail=lambda: f"파일 쓰기 {cnt['files']}건")
     _write_json(os.path.join(ex.cdir, "prep", rel + ".json"), man)
     sm = core_adapter.doe_assem_summary(man)
     echo(f"[esl-worker] {label}모델 전체 사본 prep/{rel}: 파일 {sm['n_files']}개 {sm['total_mb']:.1f} MB "
@@ -332,12 +336,15 @@ def _a_case(ex, echo) -> dict[str, Any] | None:
             raise DomainError("PREREQUISITE_MISSING", "Case 입력 rad 없음")
         rad = check_input_path(ex.settings, case["rad_path"], "RAD")
         d = os.path.dirname(rad)
-        core_adapter.doe_assem_check(d, float(dcfg["same"]["max_assem_mb"]))
+        inproc.call(ex, lambda: core_adapter.doe_assem_check(d, float(dcfg["same"]["max_assem_mb"])),
+                    label="A Case 폴더 검사")
         meta = _read_json(os.path.join(e0["dir"], "entry.json"), {}) or {}
         pid = (meta.get("model") or {}).get("part_id")
         if pid is None:
             cc = ((doe.get("core") or {}).get("case")) or {}
-            parts = core_adapter.list_parts(rad, int(cc.get("rad_include_max_depth") or 8), cc.get("include_path_map"))
+            parts = inproc.call(ex, lambda: core_adapter.list_parts(rad, int(cc.get("rad_include_max_depth") or 8),
+                                                                    cc.get("include_path_map")),
+                                label="A Case 파트 목록(rad 스캔)", echo=echo)
             want = str(case.get("part_title") or "").strip().casefold()
             hit = [p for p in parts if str(p.get("title") or "").strip().casefold() == want]
             if len(hit) != 1:
@@ -397,7 +404,8 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         assem = os.path.join(out, "input", "mesh")
     if assem is not None:
         try:
-            core_adapter.doe_assem_check(assem, float(dcfg["same"]["max_assem_mb"]) if scn == "same" else 1e12)
+            inproc.call(ex, lambda: core_adapter.doe_assem_check(
+                assem, float(dcfg["same"]["max_assem_mb"]) if scn == "same" else 1e12), label="조립 폴더 검사")
             if scn == "same":       # v0.12.1 paicad 는 --assem-dir 아래만 읽음 → 모델 전체(include 트리) 사본
                 assem, man = _stage_full(ex, b["rad_path"], assem, "assem_full", echo)
         except core_adapter.CoreError as exc:
@@ -680,9 +688,13 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     if key == "paicad_run" and r["ok"] and man and man.get("n_normalized"):
         try:        # v0.12.1 모핑 사본 = 원본 + 모핑 /NODE 좌표(스캔 정규화 흔적 제거)
             rels = list(((r.get("report") or {}).get("out_files")) or [])
-            n = core_adapter.doe_restore_out_files(out, doe, os.path.join(pd, "out_files"), rels, man)
+            # 안 스레드(메인 스레드가 lease 갱신 중) — 취소면 procs.stop 으로 다음 파일 쓰기 전에 중단(v0.12.3)
+            n = core_adapter.doe_restore_out_files(out, doe, os.path.join(pd, "out_files"), rels, man,
+                                                   guard_wrap=lambda g: inproc.stop_guard(procs.stop, g))
             if n:
                 echo(f"[{did}] 모핑 사본 {n}개 파일을 원본 기준으로 복원(스캔 정규화 제외)")
+        except inproc.Interrupted:
+            raise paicad_proc.PaicadCanceled() from None
         except core_adapter.CoreError as exc:
             pa.update(ok=False, status="FAIL", code=exc.code, paicad_code=None, message=exc.message)
     status, code = _eval_child(ex, did, pa, procs)

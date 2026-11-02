@@ -382,3 +382,63 @@ def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
         rec = doe_repo.paicad_record(c)
     assert rec["paicad"]["ready"] is True and rec["paicad"]["version"] == "0.14.1"
     assert "PAICAD_VERSION_PINNED" in (rec["paicad"]["warning"] or "") and rec["paicad"]["checked_at"]
+
+
+# ---------------------------------------------------------------- v0.12.3(#44) 모델 전체 사본 중 lease 유지·취소
+def _slow_copy(monkeypatch, seconds: float, started: threading.Event | None = None) -> None:
+    """esl.doe.assem_full.copy_model_full 앞에 seconds 동안 guard 를 부르며 잠(시험 lease_ttl 3 s 보다 길게)."""
+    import time as _t
+
+    import esl.doe.assem_full as A
+
+    real = A.copy_model_full
+
+    def slow(starter, case_dir, roots, dest_dir, **kw):
+        if started is not None:
+            started.set()
+        end = _t.monotonic() + seconds
+        while _t.monotonic() < end:
+            kw["guard"](os.path.join(dest_dir, "probe.tmp"))     # 협조적 중단 지점(Writer.guard 감싼 것)
+            _t.sleep(0.05)
+        return real(starter, case_dir, roots, dest_dir, **kw)
+
+    monkeypatch.setattr(A, "copy_model_full", slow)
+
+
+def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    s1 = make_s1(engine, esl_root, inputs_root)
+    _slow_copy(monkeypatch, 4.5)                    # > worker.lease_ttl_s(3) — v0.12.1 이면 LEASE_LOST
+    s = create(client, s1["entry_ids"])
+    j = run_job(client, worker, s["job"]["id"])
+    assert [x["state"] for x in j["steps"]] == ["SUCCEEDED", "SKIPPED", "SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]
+    lg = client.get(f"{API}/jobs/{s['job']['id']}/log", params={"step": 3}, headers=R).text
+    assert "모델 전체 사본 prep/assem_full 시작" in lg, lg[-2000:]
+    assert "모델 전체 사본 prep/assem_full 끝(" in lg and "파일 쓰기" in lg
+    assert "모델 전체 사본 prep/assem_full: 파일 " in lg
+    assert study(client, s["id"])["phase"] == "READY"
+
+
+def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    import time as _t
+
+    s1 = make_s1(engine, esl_root, inputs_root)
+    started = threading.Event()
+    _slow_copy(monkeypatch, 60.0, started)
+    s = create(client, s1["entry_ids"])
+    jid = s["job"]["id"]
+    res: dict[str, Any] = {}
+    th = threading.Thread(target=lambda: res.update(state=worker.run_once("SLOT")))
+    th.start()
+    assert started.wait(60)
+    for _ in range(12):                             # ttl(3 s) 넘게 — 그동안 워커 heartbeat(워커 기록)도 갱신됨
+        worker.heartbeat_once()
+        _t.sleep(0.3)
+    assert get_job(client, jid)["state"] == "RUNNING"           # lease 갱신 중
+    assert client.get(f"{API}/status", headers=R).json()["worker"]["online"] is True
+    r = client.post(f"{API}/jobs/{jid}/cancel", headers=W)
+    assert r.status_code in (200, 202), r.text
+    th.join(30)
+    assert not th.is_alive() and res.get("state") == "CANCELED"
+    assert get_job(client, jid)["state"] == "CANCELED"
+    lg = client.get(f"{API}/jobs/{jid}/log", params={"step": 3}, headers=R).text
+    assert "모델 전체 사본 prep/assem_full 취소로 중단" in lg, lg[-2000:]

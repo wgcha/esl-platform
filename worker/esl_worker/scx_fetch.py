@@ -45,6 +45,8 @@ from esl_platform.core.scx.gateway import ADAPTER_COMMIT
 from esl_platform.core.scx.mask import mask_text
 from esl_platform.core.scx.settings import engine_names, run_stem
 
+from . import inproc
+
 SCX_DIR = "_scx"
 STAGE = "stage"
 MANIFEST = "fetch.json"
@@ -302,6 +304,11 @@ class _Fetch:
             return None
         return {**e, "_name": str(e.get("name") or name)}
 
+    def sha(self, path: str) -> str:
+        """v0.12.3: 큰 파일(h3d 수 GB) sha256 — 작업 스레드에서, 이 스레드는 lease 갱신·취소 확인."""
+        return inproc.call(self.ex, lambda: sha256_file(path), label=f"sha256 {os.path.basename(path)}",
+                           tick=lambda: self.ex._wait_tick(self.tick))
+
     # ---- 전송(별도 스레드)
     def download(self, rel: str, part: str, size: int, label: str, *, pct_of: tuple[float, float] = (0.0, 100.0)) -> tuple[int, str]:
         lim = self.limit()
@@ -444,7 +451,7 @@ class _Fetch:
         """드라이브 파일 하나를 임시 배치로(기록이 있고 로컬 크기·sha256 이 같으면 건너뜀). 받았으면 True."""
         rec = m["files"].get(rel)
         dst = self.stage_path(rel, create=True)
-        if rec and os.path.isfile(dst) and os.path.getsize(dst) == int(rec["size"]) and sha256_file(dst) == rec["sha256"]:
+        if rec and os.path.isfile(dst) and os.path.getsize(dst) == int(rec["size"]) and self.sha(dst) == rec["sha256"]:
             return False
         src = rel
         if size is None:
@@ -549,7 +556,9 @@ class _Fetch:
             for srel in starts:
                 local = self.stage_path(srel, create=False)
                 try:
-                    refs = core_adapter.scan_include_refs(local, depth, None, follow=self.inside_stage)
+                    refs = inproc.call(self.ex, lambda local=local: core_adapter.scan_include_refs(
+                        local, depth, None, follow=self.inside_stage), label="include 스캔",
+                        tick=lambda: self.ex._wait_tick(self.tick))
                 except core_adapter.CoreError as exc:
                     self.echo(f"[esl-worker] include 스캔 실패({exc.code}) — {paths.root_sub(srel, self.root_rel)}")
                     continue
@@ -637,7 +646,7 @@ class _Fetch:
             src = self.stage_path(r, create=False)
             if os.path.lexists(dst):
                 U.check_existing_file(dst, self.up_dir)
-                if not (os.path.getsize(dst) == int(rec["size"]) and sha256_file(dst) == rec["sha256"]):
+                if not (os.path.getsize(dst) == int(rec["size"]) and self.sha(dst) == rec["sha256"]):
                     raise _fail("UPLOAD_FILE_EXISTS", f"세션에 같은 경로의 다른 파일이 있습니다(덮어쓰지 않음): {local_rel}")
             else:
                 U.check_existing_file(src, self.up_dir)

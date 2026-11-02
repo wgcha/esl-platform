@@ -92,3 +92,62 @@ def test_input_changed_fails_job(client, mini_inputs, worker_factory):
     j = client.get(f"{API}/jobs/{job['id']}", headers=R).json()
     assert j["failure_code"] == "INPUT_CHANGED"
     assert [s["state"] for s in j["steps"]] == ["SKIPPED"] * 3
+
+
+def test_tick_error_during_inproc_waits_for_thread_and_blocks_same_case(client, synth_inputs, worker_factory, engine,
+                                                                       monkeypatch):
+    """v0.12.3(Verifier): inproc.call 중 tick(취소 확인)이 DB 오류를 던져도 작업 스레드(산출물 sha256)가 끝날 때까지
+    기다린 뒤에야 실패로 끝난다. 그동안 lease 를 갱신해 작업은 RUNNING — 같은 Case 새 작업은 claim 되지 않는다."""
+    import time
+
+    from esl_platform.core.repositories import jobs as jobs_repo
+    from esl_worker import executor as ex_mod
+    from esl_worker import register
+
+    cid = create_case(client, synth_inputs).json()["id"]
+    job = client.post(f"{API}/cases/{cid}/jobs", json={"job_type": "CASE_EXTRACT", "params": {}}, headers=W).json()
+    started = threading.Event()
+    marks: dict = {}
+    real = register.artifact_shas
+
+    def slow_shas(cdir, rels):                     # stop 을 보지 않는 함수 — 시험 lease_ttl(3 s)보다 길게
+        started.set()
+        time.sleep(4.5)
+        marks["done_at"] = time.monotonic()
+        return real(cdir, rels)
+
+    real_cancel = ex_mod.Executor._cancel_requested
+
+    def flaky_cancel(self):
+        if started.is_set():
+            raise RuntimeError("tick 중 DB 오류(주입)")
+        return real_cancel(self)
+
+    monkeypatch.setattr(register, "artifact_shas", slow_shas)
+    monkeypatch.setattr(ex_mod.Executor, "_cancel_requested", flaky_cancel)
+    worker = worker_factory()
+    out: dict = {}
+
+    def run() -> None:
+        out["state"] = worker.run_once("SLOT")
+        out["end"] = time.monotonic()
+
+    t = threading.Thread(target=run)
+    t.start()
+    assert started.wait(120)
+    with engine.begin() as conn:                   # 같은 Case 의 다른 종류 작업(대기)
+        other = jobs_repo.insert_job(conn, case_id=cid, project_id="p-1", job_type="ESL_SOLVE", params={},
+                                     created_by="u", created_by_name="u")
+    other_worker = worker_factory()
+    for _ in range(12):                            # ttl(3 s) 넘게
+        time.sleep(0.3)
+        if not t.is_alive():
+            break
+        assert other_worker.run_once("SLOT") is None            # 리퍼가 가로채지 않고, 같은 Case 라 claim 안 됨
+        assert client.get(f"{API}/jobs/{job['id']}", headers=R).json()["state"] == "RUNNING"
+    t.join(60)
+    assert not t.is_alive() and out["state"] == "FAILED"
+    assert out["end"] >= marks["done_at"]                     # 작업 스레드가 끝난 뒤에야 반환
+    j = client.get(f"{API}/jobs/{job['id']}", headers=R).json()
+    assert j["state"] == "FAILED" and j["failure_code"] == "INTERNAL_ERROR"
+    assert client.get(f"{API}/jobs/{other['id']}", headers=R).json()["state"] == "QUEUED"

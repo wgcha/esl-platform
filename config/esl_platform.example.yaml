@@ -36,6 +36,7 @@ worker:
   claim_interval_s: 2
   cancel_check_interval_s: 2
   terminate_grace_s: 5                # 취소 시 코어 프로세스 terminate 후 kill 까지 대기
+  # inproc_join_max_s: 3600           # (선택, v0.12.3) 워커 안 장시간 호출이 취소·오류로 멈출 때 작업 스레드 종료 대기 상한(s)
   env_passthrough: []
   state_dir: "./state"
   xfer_lanes: 2                       # v0.11.0 XFER 레인(SCX 전송·원격 대기) 루프 수(1~8) — SLOT·LIGHT 와 독립
