@@ -69,12 +69,16 @@ SETS = "\n".join([
     "/GRNOD/GENE/20", "#title", "GLASS-NODES", "#  first_ID   last_ID", I(201, 202, 203, 204),
     "/GRNOD/NODE/22", "CHR-NODES", I(1, 2, 3),
     "/GRNOD/SUBSET/23", "G-SUBSET", I(6),
+    "/SURF/SURF/1370", "CHAIN", I(1363, 1364),                    # 간접 참조(TYPE2 3011 → 1370 → 1363·1364)
+    "/SURF/PART/EXT/1399", "UNREF", I(7),                         # 체결 정의 미참조 → 원문 그대로
 ]) + "\n"
 
 TIE = "\n".join([
     "/INCLUDE \"loop.inc\"",
     "/INTER/TYPE2/3008", "SHELL-SHELL", I(20, 1360),
     "/INTER/TYPE2/3009", "SHELL-SOLID", I(22, 1361),
+    "/INTER/TYPE2/3010", "SOLID-SUBSET", I(23, 1362),
+    "/INTER/TYPE2/3011", "SURF-CHAIN", I(23, 1370),
 ]) + "\n"
 
 
@@ -193,6 +197,7 @@ def test_normalize_cards(tmp_path):
                                  "SURF/SUBSET/EXT(솔리드)→SURF/SEG": 1, "GRNOD/GENE→GRNOD/NODE": 1,
                                  "GRNOD/SUBSET→GRNOD/PART": 1}
     assert man["n_normalized"] == 7
+    assert block(s, "/SURF/PART/EXT/1399") == ["/SURF/PART/EXT/1399", "UNREF", I(7)]   # 미참조 = 원문
     # /NODE·요소 블록 불변
     o = (m["case"] / "101_parts.inc").read_text()
     assert block(p, "/NODE") == block(o, "/NODE") and block(p, "/BRICK/75") == block(o, "/BRICK/75")
@@ -390,7 +395,7 @@ def test_subset_format_legacy_and_header_detect(tmp_path):
         "/SUBSET/5", "OLD STYLE PARTS", I(75, 80),                       # 구형: 데이터 줄에 파트 id
         "/SURF/SUBSET/EXT/1362", "SURF-SUBSET", I(5)]) + "\n")
     (m["case"] / "model_0000.rad").write_text("#RADIOSS STARTER 2024.1\n/INCLUDE \"101_parts.inc\"\n"
-                                              "/INCLUDE \"../../shared/sets.inc\"\n")
+                                              "/INCLUDE \"../common/tie.inc\"\n/INCLUDE \"../../shared/sets.inc\"\n")
     with pytest.raises(EslError) as e:                                   # 2024 규칙(머리 주석 판정)에선 오판 대신 오류
         stage(m, tmp_path)
     assert e.value.code == "FIXED_PARSE_FAILED" and "/SURF/SUBSET/EXT/1362" in e.value.message
@@ -402,3 +407,92 @@ def test_subset_format_legacy_and_header_detect(tmp_path):
     assert len(block((d / "_ext" / "shared" / "sets.inc").read_text(), "/SURF/SEG/1362")) - 2 == 16
     (m["case"] / "model_0000.rad").write_text("/INCLUDE \"101_parts.inc\"\n")
     assert A.detect_version(str(m["starter"])) == {"version": None, "source": None}
+
+
+# ---------------------------------------------------------------- v0.12.2 이슈 #45: 참조 집합만 정규화, GENE = 실제 노드 교집합
+GENE_ALL = ["/GRNOD/GENE/4", "#grnd_title", "TV_SET_NODEL_ALL2", "#first_ID1  last_ID1 first_ID2  last_ID2 ...",
+            "    100001 999999999", "#enddata"]
+INIV = "\n".join(["#RADIOSS include 106_iniv_grav_rot.inc", *GENE_ALL,
+                  "/SKEW/FIX/1", "DROP_SKEW", f"{0.0:20.4f}{0.0:20.4f}{0.0:20.4f}", f"{1.0:20.4f}{0.0:20.4f}{0.0:20.4f}",
+                  f"{0.0:20.4f}{1.0:20.4f}{0.0:20.4f}",
+                  "/FRAME/FIX/2", "DROP_FRAME", f"{0.0:20.4f}{0.0:20.4f}{0.0:20.4f}",
+                  f"{0.0:20.4f}{0.0:20.4f}{-1.0:20.4f}", f"{1.0:20.4f}{0.0:20.4f}{0.0:20.4f}",
+                  "/INIVEL/TRA/1", "INIT_VEL", f"{0.0:20.4f}{0.0:20.4f}{-5422.0:20.4f}" + I(4, 1),
+                  "/INIVEL/ROT/2", "INIT_ROT", f"{0.0:20.4f}{0.0:20.4f}{0.0:20.4f}" + I(4, 1),
+                  "/FUNCT/1", "GRAV_CURVE", "#                  X                   Y", f"{0.0:20.4f}{1.0:20.4f}",
+                  f"{1.0:20.4f}{1.0:20.4f}",
+                  "/GRAV/1", "GRAVITY", "#funct_IDT       DIR   skew_ID sensor_ID  grnd_ID", I(1) + "         Z" + I(1, 0, 4),
+                  f"{9810.0:20.4f}{1.0:20.4f}", "#enddata"]) + "\n"
+
+
+def _with(m, name, text):
+    (m["case"] / name).write_text(text)
+    st = m["starter"]
+    st.write_text(st.read_text().replace("/END\n", f"/INCLUDE \"{name}\"\n/END\n"))
+
+
+def test_unreferenced_gene_and_iniv_file_kept_verbatim(tmp_path):
+    """실서버 106_iniv_grav_rot.inc(/GRNOD/GENE/4 100001..999999999 + /INIVEL·/GRAV·/SKEW·/FRAME·/FUNCT): 체결 정의
+    미참조 → 오류 없이 사본 원문 그대로(정규화 0건), 모핑 복원 대상 아님, (paicad 있으면) fixed-scan 이 실패하지 않음."""
+    m = model(tmp_path)
+    _with(m, "106_iniv_grav_rot.inc", INIV)
+    dest, man = stage(m, tmp_path)
+    row = next(f for f in man["files"] if f["rel"] == "106_iniv_grav_rot.inc")
+    assert row["normalized"] == {} and row["staged_sha256"] == row["sha256"]
+    assert (dest / "106_iniv_grav_rot.inc").read_bytes() == (m["case"] / "106_iniv_grav_rot.inc").read_bytes()
+    assert "GRNOD/GENE→GRNOD/NODE" in man["normalized"]                 # 참조되는 GENE 20 은 그대로 펼침
+    of = tmp_path / "of"
+    of.mkdir()
+    (of / "106_iniv_grav_rot.inc").write_text(INIV)
+    assert A.restore_out_files(str(of), ["106_iniv_grav_rot.inc"], man) == 0
+    if _paicad_src() is None:
+        return
+    sys.path.insert(0, str(_paicad_src()))
+    try:
+        from paicad.shell import opts
+        from paicad.shell.assem import read_assembly
+        from paicad.shell.fixed import compute_fixed
+    finally:
+        sys.path.pop(0)
+    fx = compute_fixed(read_assembly(dest), [7], opts.load(None))
+    assert {1, 2, 3} <= set(int(x) for x in fx.node_id)
+
+
+def test_referenced_gene_intersects_model_nodes(tmp_path):
+    """참조되는(RBE2 → /GRNOD/GRNOD → GENE·GEN_INCR) 범위 999999999 → 모델에 실제 있는 노드만, 고정폭 빈칸 쌍 무시."""
+    m = model(tmp_path)
+    _with(m, "120_rbe.inc", "\n".join([
+        "/GRNOD/GENE/31", "#grnd_title", "ALL-NODES", "#first_ID1  last_ID1 first_ID2  last_ID2",
+        " " * 20 + I(1, 999999999), "#enddata",                          # 첫 쌍 빈칸(고정폭) = 무시
+        "/GRNOD/GEN_INCR/32", "ODD-100s", I(101, 999999999, 2),
+        "/GRNOD/GRNOD/30", "CHAIN", I(31, 32),
+        "/RBE2/5001", "RBE", I(1, 111111, 0, 30)]) + "\n")
+    dest, man = stage(m, tmp_path)
+    t = (dest / "120_rbe.inc").read_text()
+    allids = sorted(set(list(range(1, 10)) + list(range(101, 113)) + list(range(201, 205)) + list(range(301, 306))
+                        + list(range(401, 406))))
+    g = block(t, "/GRNOD/NODE/31")
+    assert g[:4] == ["/GRNOD/NODE/31", "#grnd_title", "ALL-NODES", "#first_ID1  last_ID1 first_ID2  last_ID2"]
+    got = [x for ln in g[4:] if not ln.startswith("#") for x in A._ints(ln)]
+    assert got == allids                                               # unrelated.inc 의 999 는 모델 밖
+    got2 = [x for ln in block(t, "/GRNOD/NODE/32")[2:] for x in A._ints(ln)]
+    assert got2 == [x for x in allids if x >= 101 and (x - 101) % 2 == 0]
+    assert block(t, "/GRNOD/GRNOD/30") == ["/GRNOD/GRNOD/30", "CHAIN", I(31, 32)]
+    # 교집합 상한·빈 교집합
+    M = A.Model()
+    M.node_ids = __import__("numpy").arange(1, 11)
+    with pytest.raises(EslError) as e:
+        A.normalize_lines(["/GRNOD/GENE/7", "T", I(100001, 999999999)], A.norm_cfg(None), M, "a.inc")
+    assert e.value.code == "FIXED_PARSE_FAILED" and "모델 노드 없음" in e.value.message
+    new, c = A.normalize_lines(["/GRNOD/GENE/7", "T", I(5, 999999999)], A.norm_cfg(None), M, "a.inc")
+    assert new == ["/GRNOD/NODE/7", "T", I(5, 6, 7, 8, 9, 10)] and c == {"GRNOD/GENE→GRNOD/NODE": 1}
+    old = A.MAX_EXPAND
+    A.MAX_EXPAND = 3
+    try:
+        with pytest.raises(EslError) as e:
+            A.normalize_lines(["/GRNOD/GENE/7", "T", I(1, 999999999)], A.norm_cfg(None), M, "a.inc")
+        assert "초과" in e.value.message
+    finally:
+        A.MAX_EXPAND = old
+    M.refs = {("GRNOD", 8)}                                              # 미참조 GENE → 범위 오류여도 손대지 않음
+    assert A.normalize_lines(["/GRNOD/GENE/7", "T", I(10, 5)], A.norm_cfg(None), M, "a.inc") == (None, {})

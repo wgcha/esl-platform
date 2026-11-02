@@ -682,13 +682,25 @@ def test_dump_missing_rows_and_bad_layer(tmp_path):
     t, u, inst = _dump_series(m, F=4, L=2)
     rd = write_dump_csv(tmp_path / "d", t, m.node_id, m.x0, u, m.elem_id, inst)
     _drop(rd, "strain_raw.csv", lambda l: l.startswith("2,3,"))      # frame 2, 요소 3 의 두 층 모두 없음
-    assert _code(pack_results, rd, m, tmp_path / "o") == "ID_MISMATCH"
+    info = pack_results(rd, m, tmp_path / "o")                        # 이슈 #46: 실패 대신 건너뜀
+    assert any(w.startswith("STRAIN_DUMP_PARTIAL") for w in info["warnings"])
+    assert info["strain_fallback"]["core_missing"] == {"cells": 1, "no_value_elems": 0}
+    q = strain.eps_eq(inst).max(axis=2)
+    q[2, 0] = 0.0                                                     # 요소 3 = 위치 0, 프레임 2 기여 없음
+    h = _load(tmp_path / "o" / "history.npz")
+    assert np.allclose(h["vm_hv"], np.maximum.accumulate(q, axis=0), rtol=1e-6)
+    _drop(rd, "strain_raw.csv", lambda l: l.split(",")[1] == "3")     # 요소 3 전 프레임 없음 → ε 미상(0, 기록)
+    info = pack_results(rd, m, tmp_path / "o1")
+    assert info["strain_fallback"]["no_value_elems"] == [3]
+    assert _load(tmp_path / "o1" / "final.npz")["vm_hv"][0] == 0
+    _drop(rd, "strain_raw.csv", lambda l: True)                       # 값이 하나도 없음 → H3D_MISSING_RESULT
+    assert _code(pack_results, rd, m, tmp_path / "o2") == "H3D_MISSING_RESULT"
     rd = write_dump_csv(tmp_path / "d2", t, m.node_id, m.x0, u, m.elem_id, inst)
     p = os.path.join(rd, "done.json")
     dj = json.load(open(p))
     dj["strain_layers"] = ["Lower"]
     json.dump(dj, open(p, "w"))
-    assert _code(pack_results, rd, m, tmp_path / "o2") == "TOOL_OUTPUT_MISSING"
+    assert _code(pack_results, rd, m, tmp_path / "o3") == "TOOL_OUTPUT_MISSING"
     # 옛 done.json(키 없음) = max_strain
     assert RC.strain_source_of({}) == "max_strain" and RC.strain_source_of({"strain_fallback": {"source": "x"}}) == "max_strain"
 

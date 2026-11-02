@@ -170,9 +170,11 @@ def test_extract_strain_sources_optional_and_validated():
     x = config.extract_source_settings(config.validate_settings(c))
     assert x["strain_sources"] == ["strain_tensor", "max_strain"] and x["result_names"]["strain_tensor"] == ["Strain", "EPS"]
     assert x["result_names"]["max_strain"] == ["Max_Strain"] and x["tensor_layer_exclude"] == []
+    assert x["tensor_layer_prefer"] == ["Lower", "Upper"]
     for key, val in (("strain_sources", []), ("strain_sources", ["max_strain", "max_strain"]),
                      ("strain_sources", ["bogus"]), ("result_names", {"bogus": ["X"]}),
-                     ("result_names", {"max_strain": ["a|b"]}), ("tensor_comps", {"xx": []}), ("vm_comps", "vonMises")):
+                     ("result_names", {"max_strain": ["a|b"]}), ("tensor_comps", {"xx": []}), ("vm_comps", "vonMises"),
+                     ("tensor_layer_prefer", ["Lower|Upper"])):
         c = _base_cfg()
         c["extract"][key] = val
         with pytest.raises(EslError) as ei:
