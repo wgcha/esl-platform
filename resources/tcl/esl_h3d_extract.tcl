@@ -54,7 +54,10 @@
 # in request.txt (then: Max_Strain only, as before), the strain result is the FIRST source of
 # strain_sources (default "max_strain plastic_strain strain_tensor max_stress") whose result type,
 # components and layers are all in the subcase. Name candidates ('|' separated): names_<source>,
-# comp_xx comp_yy comp_zz comp_xy, vm_comps, scalar_comps, layer_exclude (strain_tensor layers left out).
+# comp_xx comp_yy comp_zz comp_xy, vm_comps, scalar_comps, layer_prefer (strain_tensor: only these layers when
+# any is present, matched ignoring case/blanks/underscores; default Lower|Upper = shell surfaces), else all
+# layers minus layer_exclude. In dump mode a (frame, chunk, layer) without values is skipped (counted in
+# done.json dump_missing, warning STRAIN_DUMP_PARTIAL); query errors still fail.
 #   max_strain / plastic_strain / max_stress: max-hold, three passes as above (mode "maxhold");
 #     plastic_strain: vm_hv = epsp = Plastic Strain, exx..exy = 0; max_stress: vm_hv = stress vonMises.
 #   strain_tensor (instantaneous Strain, per layer): mode "dump" -- no ranking here; every frame x part
@@ -734,7 +737,7 @@ proc ::esl::read_config {path extra} {
         names_max_strain "Max_Strain" names_plastic_strain "Plastic Strain|Plastic_Strain" \
         names_strain_tensor "Strain" names_max_stress "Max_Stress" \
         comp_xx "XX" comp_yy "YY" comp_zz "ZZ" comp_xy "XY" vm_comps "vonMises|von Mises" \
-        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" dump_max_bytes 0 dump_free_bytes ""]
+        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" layer_prefer "Lower|Upper" dump_max_bytes 0 dump_free_bytes ""]
     set cfg [::esl::read_request $path $defaults]
     # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
     set ::esl::forced 0
@@ -939,11 +942,22 @@ proc ::esl::pick_source {res sc dtypes cfg} {
         if {$s eq "strain_tensor"} {
             if {$ls eq "?"} {
                 set lay [list ""]
+                set ::esl::layer_basis "no layer list (API did not answer)"
             } else {
-                set ex [::esl::cands [dict get $cfg layer_exclude]]
                 set lay {}
-                foreach l $ls {
-                    if {[lsearch -exact $ex $l] < 0} { lappend lay $l }
+                foreach c [::esl::cands [dict get $cfg layer_prefer]] {
+                    set hit [::esl::match_name $ls [list $c]]
+                    if {$hit ne "" && [lsearch -exact $lay $hit] < 0} { lappend lay $hit }
+                }
+                if {[llength $lay] > 0} {
+                    set ::esl::layer_basis "prefer {[dict get $cfg layer_prefer]} of {$ls}"
+                } else {
+                    set ex {}
+                    foreach c [::esl::cands [dict get $cfg layer_exclude]] { lappend ex [::esl::norm_title $c] }
+                    foreach l $ls {
+                        if {[lsearch -exact $ex [::esl::norm_title $l]] < 0} { lappend lay $l }
+                    }
+                    set ::esl::layer_basis "all layers of {$ls} minus {[dict get $cfg layer_exclude]} (no prefer layer)"
                 }
                 if {[llength $lay] == 0} {
                     lappend tried [list $s $dt "no tensor layer left after excluding {$ex} (layers: $ls)"]
@@ -1015,6 +1029,9 @@ proc ::esl::dump_pass {out res post con qry cfg src layers epsp_ok echunks nchun
     set srows 0
     set drows 0
     set miss 0
+    set ::esl::dump_cells 0
+    set ::esl::dump_frames {}
+    set epmiss 0
     for {set fi 0} {$fi < $nsim} {incr fi} {
         ::esl::set_sim $res $post $fi
         set ci 0
@@ -1023,17 +1040,22 @@ proc ::esl::dump_pass {out res post con qry cfg src layers epsp_ok echunks nchun
             ::esl::progress "dump frame [expr {$fi + 1}]/$nsim elements chunk $ci/$ne_ch"
             set ep [dict create]
             if {$epsp_ok} {
-                set ep [::esl::collect $con $qry [lindex $ch 0] element $epf "dump frame $fi chunk $ci"]
+                set ep [::esl::collect $con $qry [lindex $ch 0] element $epf "dump frame $fi chunk $ci" "" 1]
             }
             set li 0
             foreach f $lf {
-                set acc [::esl::collect $con $qry [lindex $ch 0] element $f "dump frame $fi chunk $ci layer $li"]
+                set acc [::esl::collect $con $qry [lindex $ch 0] element $f "dump frame $fi chunk $ci layer $li" "" 1]
+                if {[dict size $acc] == 0} {
+                    # no values in this (frame, chunk, layer), e.g. frame 0 initial state: skipped, not zero
+                    incr ::esl::dump_cells
+                    if {[lsearch -exact -integer $::esl::dump_frames $fi] < 0} { lappend ::esl::dump_frames $fi }
+                }
                 dict for {id vs} $acc {
                     if {[llength $vs] != $nt} { incr miss; continue }
                     set e 0
                     if {$epsp_ok} {
-                        if {![dict exists $ep $id]} { incr miss; continue }
-                        set e [lindex [dict get $ep $id] 0]
+                        # plastic strain is monotone: a missing value is written as 0 (the core keeps the running max)
+                        if {[dict exists $ep $id]} { set e [lindex [dict get $ep $id] 0] } else { incr epmiss }
                     }
                     lassign $vs xx yy zz xy v
                     if {$nt == 4} { set v 0 }
@@ -1059,7 +1081,11 @@ proc ::esl::dump_pass {out res post con qry cfg src layers epsp_ok echunks nchun
     close $fr
     close $fd
     if {$miss > 0} { ::esl::note "dump: element rows without all values skipped" $miss }
-    if {$srows == 0} { ::esl::fail H3D_MISSING_RESULT "dump: no element values ($dt)" }
+    if {$epmiss > 0} { ::esl::note "dump: element rows without plastic strain written with epsp 0" $epmiss }
+    if {$::esl::dump_cells > 0} {
+        ::esl::warn "STRAIN_DUMP_PARTIAL: $::esl::dump_cells (frame, chunk, layer) cells without values skipped (frames {$::esl::dump_frames})"
+    }
+    if {$srows == 0} { ::esl::fail H3D_MISSING_RESULT "dump: no element values ($dt) in any frame / layer" }
     lappend ::esl::passes "\"DUMP\":\{\"frames\":$nsim,\"layers\":$nl,\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
     ::esl::progress "dump done ([::esl::secs $t0] s, $srows element rows, $drows node rows)"
 }
@@ -1085,7 +1111,9 @@ proc ::esl::each_rec {qry setid fields recvar body} {
 
 # Contour values of several fields on one selection set: dict id -> {v1 v2 ...} (only ids that got
 # every field in order). keep: optional dict of wanted ids. what: label for steps/notes.
-proc ::esl::collect {con qry setid entity fields what {keep ""}} {
+# allow_empty 1: a field without any value returns an empty dict (value missing, not an error); query
+# errors (SetDataType / iterator failures) are still raised.
+proc ::esl::collect {con qry setid entity fields what {keep ""} {allow_empty 0}} {
     set acc [dict create]
     set k 0
     foreach f $fields {
@@ -1110,6 +1138,7 @@ proc ::esl::collect {con qry setid entity fields what {keep ""}} {
         }
         if {$bad > 0} { ::esl::note "[lindex $what 0] [lindex $what 1] $dt/$comp/$layer: non-numeric values skipped" $bad }
         if {$good == 0 && $keep eq ""} {
+            if {$allow_empty} { return [dict create] }
             ::esl::fail H3D_MISSING_RESULT "no values for $dt/$comp/$layer ($what)"
         }
         incr k
@@ -1511,7 +1540,7 @@ proc ::esl::run {arglist} {
         }
         set tl {}
         foreach t $::esl::tried { lappend tl "[lindex $t 0] ([lindex $t 2])" }
-        ::esl::progress "strain source: [dict get $src source] ([dict get $src type], $smode, layers {$slayers})[expr {[llength $tl] ? "; skipped: [join $tl {; }]" : ""}]"
+        ::esl::progress "strain source: [dict get $src source] ([dict get $src type], $smode, layers {$slayers}[expr {$::esl::layer_basis ne "" ? ": $::esl::layer_basis" : ""}])[expr {[llength $tl] ? "; skipped: [join $tl {; }]" : ""}]"
     }
     if {[dict get $src source] eq "plastic_strain"} {
         # vm_hv = epsp = Plastic Strain, exx..exy = 0 (esl_strain_fallback.md 3)
@@ -1674,6 +1703,7 @@ proc ::esl::run {arglist} {
     # ---- strain source members of done.json (esl_strain_fallback.md 3)
     set ::esl::src_members [list strain_source [::esl::jstr [dict get $src source]] \
         strain_source_type [::esl::jstr [dict get $cfg strain_type]] strain_layers [::esl::jarr $slayers] \
+        strain_layer_basis [::esl::jstr $::esl::layer_basis] \
         strain_mode [::esl::jstr $smode] strain_tried [::esl::tried_json] \
         epsp_available [expr {$epsp_ok ? "true" : "false"}]]
 
@@ -1721,6 +1751,7 @@ proc ::esl::run {arglist} {
             strain_system [::esl::jstr $::esl::sys_req] \
             strain_system_call [::esl::jstr $::esl::sys_applied] \
             backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] dump_cumulative $dcum \
+            dump_missing "\{\"frames\":[::esl::jints $::esl::dump_frames],\"cells\":$::esl::dump_cells\}" \
             {*}$::esl::src_members]] eq ""} {
             error "done.json could not be written"
         }
@@ -1976,6 +2007,9 @@ set ::esl::part_spec ""
 set ::esl::part_id ""
 set ::esl::tried {}
 set ::esl::forced 0
+set ::esl::layer_basis ""
+set ::esl::dump_cells 0
+set ::esl::dump_frames {}
 set ::esl::row_map {0 1 2 3 4 5}
 set ::esl::src_members {}
 set ::esl::written 0

@@ -899,3 +899,100 @@ def test_dump_size_estimate_before_writing(tmp_path, req, code):
     done = _done(out)
     assert done["ok"] is False and done["code"] == code, done.get("error")
     assert str(F * (6 * 2 * 160 + 12 * 90)) in done["error"] and not (out / "strain_raw.csv").exists()
+
+
+# ---------------- 이슈 #46: dump 층 선택(prefer)·값 없음 내성·쿼리 오류 구분
+ALL_LAYERS = ["Layer 1", "Layer 2", "Layer 3", "Layer 4", "Layer 5", "Lower", "Upper", "Max", "Min"]
+
+
+def _lines_without(stored, eq, drop):
+    """_strain_lines 에서 drop(frame, elem_id) 인 줄을 뺌."""
+    eid = [10, 11, 12, 13, 14, 15]
+    out = []
+    for f in range(F):
+        for k, e in enumerate(eid):
+            if drop(f, e):
+                continue
+            for li, L in enumerate(("Lower", "Upper")):
+                xx, yy, xy = stored[f, k, li]
+                for comp, v in (("XX", xx), ("YY", yy), ("ZZ", -(xx + yy)), ("XY", xy), ("vonMises", eq[f, k, li])):
+                    out.append(f"dict set ::mock::vals {_key('Strain', comp, L, f, e)} {float(v)!r}")
+    return "\n".join(out)
+
+
+def test_dump_prefer_lower_upper_among_many_layers(tmp_path):
+    """LAYER=ALL + NPT=LOWER/UPPER 덱: 층 목록 Layer 1..5 + Lower/Upper + Max/Min → prefer 로 Lower·Upper 만(대소문자 무시)."""
+    t, stored, eq = _inst()
+    m, ref, drv, out = _setup(tmp_path, extra_req="layer_prefer\tlower|UPPER\n",
+                              mock_extra=_dtinfo(REAL_TYPES, {"Strain": ALL_LAYERS}) + "\n"
+                              + _strain_lines(stored, eq, [10, 11, 12, 13, 14, 15]))
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_layers"] == ["Lower", "Upper"] and done["strain_layer_basis"].startswith("prefer")
+    assert done["dump_missing"] == {"frames": [], "cells": 0}
+    assert "prefer" in (out / "progress.log").read_text()
+    from esl.io import write_dump_csv
+    pack_results(out, m, tmp_path / "npz")
+    d = write_dump_csv(tmp_path / "py", ref["t"], ref["nid"], ref["x0"], ref["u"], ref["eid"], stored, vm_hv=eq,
+                       hot_k=2, top_n=3)
+    pack_results(d, m, tmp_path / "py_npz")
+    _same_npz(tmp_path / "npz", tmp_path / "py_npz")
+
+
+def test_dump_without_prefer_uses_all_minus_exclude(tmp_path):
+    """prefer 층이 없으면 exclude(Max|Min) 뒤 전 층 — 값 없는 층(Layer 1..5)은 건너뜀(STRAIN_DUMP_PARTIAL)."""
+    t, stored, eq = _inst()
+    m, ref, drv, out = _setup(tmp_path, extra_req="layer_prefer\tnone_such\n",
+                              mock_extra=_dtinfo(REAL_TYPES, {"Strain": ALL_LAYERS}) + "\n"
+                              + _strain_lines(stored, eq, [10, 11, 12, 13, 14, 15]))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["strain_layers"] == ALL_LAYERS[:7] and done["strain_layer_basis"].startswith("all layers")
+    assert done["dump_missing"]["cells"] == F * 5 and done["dump_missing"]["frames"] == list(range(F))
+    assert any(w.startswith("STRAIN_DUMP_PARTIAL") for w in done["warnings"])
+    info = pack_results(out, m, tmp_path / "npz")
+    assert info["strain_fallback"]["missing"]["cells"] == F * 5
+    held, M = _held(t)
+    assert np.allclose(_load(tmp_path / "npz" / "final.npz")["vm_hv"], M[-1], rtol=1e-6)
+
+
+def test_dump_frame0_and_partial_chunk_missing(tmp_path):
+    """frame 0 값 없음(초기 상태) + 청크 일부(요소 14·15, frame 3) 값 없음 → 실패 대신 건너뜀, 누적 최대에 기여 안 함."""
+    t, stored, eq = _inst()
+    drop = lambda f, e: f == 0 or (f == 3 and e in (14, 15))
+    m, ref, drv, out = _setup(tmp_path, extra_req="chunk\t4\n",
+                              mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper", "Max", "Min"]}) + "\n"
+                              + _lines_without(stored, eq, drop))
+    r = _run(drv)
+    assert r.returncode == 0, r.stderr
+    done = _done(out)
+    assert done["ok"] is True, done.get("errorInfo")
+    assert done["dump_missing"] == {"frames": [0, 3], "cells": 2 * 2 + 2}        # frame 0: 청크 2 × 층 2, frame 3: 청크 2 × 층 2
+    info = pack_results(out, m, tmp_path / "npz")
+    q = strain.eps_eq(t).max(axis=2)
+    q[0] = 0.0
+    q[3, 4:] = 0.0
+    h = _load(tmp_path / "npz" / "history.npz")
+    hp = np.searchsorted(ref["eid"], h["elem_id"])
+    assert np.allclose(h["vm_hv"], np.maximum.accumulate(q, axis=0)[:, hp], rtol=1e-6)
+    assert any(w.startswith("STRAIN_DUMP_PARTIAL") for w in info["warnings"])
+
+
+def test_dump_no_values_at_all_and_query_error(tmp_path):
+    """모든 프레임·층 값 없음 → H3D_MISSING_RESULT. HyperView 쿼리 오류는 값 없음과 달리 그대로 실패."""
+    m, ref, drv, out = _setup(tmp_path, mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper"]}))
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == "H3D_MISSING_RESULT" and "any frame" in done["error"]
+    (tmp_path / "b").mkdir()
+    t, stored, eq = _inst()
+    m, ref, drv, out = _setup(tmp_path / "b", mock_extra=_dtinfo(REAL_TYPES, {"Strain": ["Lower", "Upper"]}) + "\n"
+                              + _strain_lines(stored, eq, [10, 11, 12, 13, 14, 15])
+                              + "\nset ::mock::fail_query_dtype {Strain}")
+    assert _run(drv).returncode == 0
+    done = _done(out)
+    assert done["ok"] is False and done["code"] == "TOOL_LOG_ERROR" and "contour query failed" in done["error"]
+    assert done["failed_step"].startswith("dump frame 0")

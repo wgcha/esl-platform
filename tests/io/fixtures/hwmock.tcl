@@ -176,6 +176,7 @@ if {![info exists ::mock::dtinfo]} {
 proc ::mock::res_GetDataTypeList {sc} { return [dict keys $::mock::dtinfo] }
 proc ::mock::res_GetContourCtrlHandle {h} { ::mock::obj $h con }
 set ::mock::sim_calls {}
+set ::mock::fail_query_dtype {}
 proc ::mock::res_SetCurrentSimulation {i} { set ::mock::st(sim) $i; lappend ::mock::sim_calls $i }
 proc ::mock::con_SetDataType {t} { set ::mock::st(dtype) $t; set ::mock::st(layer) "" }
 proc ::mock::con_SetDataComponent {c} { set ::mock::st(comp) $c }
@@ -213,6 +214,8 @@ proc ::mock::qry_GetIteratorHandle {h} {
                 lappend recs [list $id N/A]
             }
         } else {
+            # query failure injection for one result type (a real API error, not "no value")
+            if {$st(dtype) in $::mock::fail_query_dtype} { error "mock: contour query failed for $st(dtype)" }
             set key [list $st(dtype) $st(comp) $st(layer) $st(sim) $id]
             if {[dict exists $::mock::vals $key]} {
                 lappend recs [list $id [dict get $::mock::vals $key]]
