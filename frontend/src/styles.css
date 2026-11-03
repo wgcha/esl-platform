@@ -425,6 +425,27 @@ select:disabled {
 .dot.off {
   background: var(--line-strong);
 }
+/* #49 Case 목록 진행 칸: 4단계 점 + 라이브러리 배지 한 줄 */
+.case-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.step-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.step-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: default;
+}
+.step-dot .step-mark {
+  font-size: 0.95rem;
+  color: var(--muted);
+}
 @keyframes pulse {
   50% {
     opacity: 0.35;

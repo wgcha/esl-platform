@@ -245,8 +245,17 @@ export interface CaseOut {
   stage_status?: Record<string, StageState> | null;
   /** v0.10.0 §5.4: 화면 4단계 상태 */
   step_status?: StepStatus | null;
+  /** #49: GET /cases(목록)에만 — 이 Case 의 라이브러리 등록 현황 */
+  library?: CaseLibraryOut | null;
 }
 export type Case = CaseOut;
+/** #49: Case 의 라이브러리 등록 현황 — count = ACTIVE 항목 수, latest_status = 최신 항목 판정(라이브러리 목록 판정 배지와 같은 규칙) */
+export interface CaseLibraryOut {
+  count?: number;
+  latest_entry_id?: string | null;
+  latest_status?: "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY" | null;
+  latest_registered_at?: string | null;
+}
 
 export type CaseInputKind = "RESULTS" | "H3D";
 
