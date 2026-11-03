@@ -8,6 +8,7 @@ v0.10.0(esl_menu_restructure.md §5): PUT /tstar 가 지지 세트가 없을 때
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from typing import Any
@@ -48,6 +49,7 @@ from .common import (
 )
 
 ACTIVE_STATES = (QUEUED, RUNNING)
+log = logging.getLogger("esl_platform.cases")
 
 
 def _projects(ctx: AppContext, principal: Principal, token: str | None, rid: str) -> list[dict]:
@@ -98,6 +100,11 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
         except DomainError as exc:
             out["run_all"] = None
             out["run_all_error"] = {"code": exc.code, "message": exc.message}
+        except Exception as exc:  # noqa: BLE001 - Case 생성(커밋됨)은 성공으로 보고, 일괄 실행 실패만 알림
+            log.exception("Case %s 생성 후 일괄 실행 시작 오류", out["id"])
+            out["run_all"] = None
+            out["run_all_error"] = {"code": "RUN_ALL_ERROR",
+                                    "message": f"일괄 실행 시작 중 내부 오류 — 관리자 확인: {type(exc).__name__}"}
     return out
 
 

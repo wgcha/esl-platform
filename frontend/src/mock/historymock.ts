@@ -92,6 +92,7 @@ export class HistoryMock {
       failure_message: null,
       retry_of_job_id: null,
       retried_by_job_id: null,
+      run_all_id: null,
       result_ref: null,
       result_state: null,
       stale: false,

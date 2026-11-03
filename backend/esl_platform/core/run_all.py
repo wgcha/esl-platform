@@ -439,27 +439,31 @@ def on_job_end(conn: Connection, job: dict[str, Any] | None, prep: WorkerPrep | 
     return advance(conn, run, case, env, nxt)
 
 
-def safe_on_job_end(conn: Connection, job: dict[str, Any] | None, prep: WorkerPrep | None = None) -> None:
-    """훅 오류가 종료 전이(작업 상태 기록)를 막지 않게 savepoint 로 감싼다. 실패하면 체인을 STOPPED RUN_ALL_ERROR."""
+def safe_on_job_end(conn: Connection, job: dict[str, Any] | None,
+                    prep: WorkerPrep | None = None) -> dict[str, Any] | None:
+    """훅 오류가 종료 전이(작업 상태 기록)를 막지 않게 savepoint 로 감싼다. 실패하면 체인을 STOPPED RUN_ALL_ERROR.
+    반환 = 갱신된 체인 행(진행·RUN_ALL_ERROR 멈춤), 관계없거나 오류 기록도 실패하면 None."""
     if not job or not job.get("case_id") or job.get("job_type") not in JOB_STEP:
-        return
+        return None
     try:
         with conn.begin_nested():
-            on_job_end(conn, job, prep)
+            return on_job_end(conn, job, prep)
     except Exception as exc:  # noqa: BLE001 - 작업 종료 기록이 우선
         log.exception("일괄 실행 훅 오류(작업 %s)", job.get("id"))
         try:
             with conn.begin_nested():
                 run = repo.waiting_on(conn, job["id"], for_update=True)
                 if run is not None:
-                    _stop(conn, run, JOB_STEP[job["job_type"]], "RUN_ALL_ERROR",
-                          {"job_id": job["id"], "message": f"{type(exc).__name__}: {exc}"[:300]})
+                    return _stop(conn, run, JOB_STEP[job["job_type"]], "RUN_ALL_ERROR",
+                                 {"job_id": job["id"], "message": f"{type(exc).__name__}: {exc}"[:300]})
         except Exception:  # noqa: BLE001
             log.exception("일괄 실행 오류 기록 실패(작업 %s)", job.get("id"))
+        return None
 
 
 def recover(engine, esl_root: str, limit: int = 20) -> list[str]:
-    """끊김 복구(§5): RUNNING 인데 cur_job_id 작업이 이미 종료된 체인마다 훅 1회(행 잠금으로 중복 없음). 반환 = 처리한 체인 id."""
+    """끊김 복구(§5): RUNNING 인데 cur_job_id 작업이 이미 종료된 체인마다 훅 1회(행 잠금으로 중복 없음). 반환 = 처리한 체인 id.
+    훅은 `safe_on_job_end` 로 부른다 — 훅이 예외를 내면 체인을 STOPPED RUN_ALL_ERROR 로 끝내 주기마다 같은 예외가 반복되지 않게."""
     with engine.connect() as conn:
         rows = repo.orphaned(conn, limit)
     done: list[str] = []
@@ -467,7 +471,7 @@ def recover(engine, esl_root: str, limit: int = 20) -> list[str]:
         try:
             with engine.begin() as conn:
                 job = jobs_repo.get_job(conn, r["cur_job_id"], for_update=True)
-                out = on_job_end(conn, job, WorkerPrep(esl_root=esl_root))
+                out = safe_on_job_end(conn, job, WorkerPrep(esl_root=esl_root))
                 if out is not None:
                     done.append(r["id"])
         except Exception:  # noqa: BLE001 - 다음 주기에 다시

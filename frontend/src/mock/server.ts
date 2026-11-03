@@ -1205,7 +1205,8 @@ export class MockServer {
     const superseded =
       r.status !== "RUNNING" && !!r.finished_at && this.jobs.some((j) => j.case_id === r.case_id && [1, 4, 5].includes(j.stage) && !j.params?.origin && !mine.has(j.id) && j.created_at > r.finished_at!);
     const cj = r.cur_job_id ? this.jobs.find((j) => j.id === r.cur_job_id) : undefined;
-    return { ...r, can_resume: r.status === "STOPPED" && !later, superseded, cur_job_state: r.status === "RUNNING" ? cj?.state ?? null : null };
+    // 백엔드와 같게: cur_job_state = cur_job_id 작업의 현재 상태(종료 행도 마지막 작업 상태 그대로)
+    return { ...r, can_resume: r.status === "STOPPED" && !later, superseded, cur_job_state: cj?.state ?? null };
   }
 
   latestRunAll(caseId: string): RunAllOut | null {
@@ -1220,7 +1221,9 @@ export class MockServer {
     const ss = this.stepStatus(c);
     const missing = RA_STEPS.slice(0, RA_STEPS.indexOf(f)).filter((k) => ss[k].state !== "done");
     if (missing.length) return err(409, "PREREQUISITE_MISSING", "앞 단계가 필요합니다", { missing });
-    const prev = this.runAllRows(c.id).find((x) => x.status === "STOPPED");
+    // 백엔드와 같게: 최신 행이 STOPPED 이면 이어서 실행(resumed_from_id) — from 지정 여부와 무관
+    const last = this.runAllRows(c.id)[0];
+    const prev = last?.status === "STOPPED" ? last : undefined;
     const t = this.now();
     const run: RunAllOut = {
       id: this.id("ra"),
@@ -1236,7 +1239,7 @@ export class MockServer {
       verdict: null,
       job_ids: [],
       skipped: [],
-      resumed_from_id: from && prev ? prev.id : null,
+      resumed_from_id: prev ? prev.id : null,
       created_by: this.me.user_id,
       created_by_name: this.me.display_name,
       canceled_by: null,
@@ -1255,8 +1258,7 @@ export class MockServer {
     run.stop_step = step;
     run.stop_code = code;
     run.stop_reason = { message, detail };
-    run.cur_step = null;
-    run.cur_job_id = null;
+    // 백엔드(repo.finish)는 cur_step·cur_job_id 를 그대로 둔다
     run.finished_at = this.now();
   }
 
@@ -1281,13 +1283,15 @@ export class MockServer {
         if (st.state === "failed" && st.reason?.code === "SUPPORT_AUTO_BLOCKED")
           return this.runAllStop(run, k, "SUPPORT_AUTO_BLOCKED", stopCodeText("SUPPORT_AUTO_BLOCKED"), { problems: c.tstar?.support_auto?.problems ?? [] });
         if (st.state === "none" && st.reason?.code === "TSTAR_NOT_CONFIRMED") {
-          if (this.tstarAdjusted.has(c.id)) return this.runAllStop(run, k, "TSTAR_REVIEW_REQUIRED", stopCodeText("TSTAR_REVIEW_REQUIRED"), { reasons: ["TSTAR_ADJUSTED"] });
+          if (this.tstarAdjusted.has(c.id)) return this.runAllStop(run, k, "TSTAR_REVIEW_REQUIRED", stopCodeText("TSTAR_REVIEW_REQUIRED"), { reasons: [{ code: "TSTAR_ADJUSTED", message: "1순위 시점이 변위 추출 프레임에 없어 다른 후보로 바뀌었습니다" }] });
           // 자동 확정(put_tstar 와 같은 저장): source auto + confirmed.by run_all
           c.tstar = { ...c.tstar!, source: "auto", confirmed: { by: "run_all", run_all_id: run.id, user_id: run.created_by } };
           this.applyAutoSupport(c);
           c.version += 1;
           if (!c.current_support_set_id)
             return this.runAllStop(run, k, "SUPPORT_AUTO_BLOCKED", stopCodeText("SUPPORT_AUTO_BLOCKED"), { problems: c.tstar.support_auto?.problems ?? [] });
+          run.cur_step = k;
+          run.skipped = [...run.skipped, { step: k, state: "auto_confirmed", metric: c.tstar.metric, frame_index: c.tstar.frame_index, support: c.tstar.support_auto?.status ?? null }];
           continue;
         }
         return this.runAllStop(run, k, "PREREQUISITE_MISSING", stopCodeText("PREREQUISITE_MISSING"), { missing: ["extract"] });
@@ -1306,8 +1310,9 @@ export class MockServer {
         if (v?.verdict === "UNDETERMINED")
           return this.runAllStop(run, k, "VALIDATION_UNDETERMINED", `검증 판정 불가 — ${v.undetermined_reason ?? ""}`, { verdict: "UNDETERMINED", validation_id: v.id, undetermined_reason: v.undetermined_reason });
         run.status = "DONE";
-        run.cur_step = null;
-        run.cur_job_id = null;
+        run.verdict = "PASS";
+        run.cur_step = k;
+        run.stop_reason = { message: "④ 검증 PASS — 라이브러리 등록은 ④에서", detail: { verdict: "PASS", validation_id: v?.id ?? null } };
         run.finished_at = this.now();
         return;
       }
@@ -1336,8 +1341,7 @@ export class MockServer {
       run.status = "CANCELED";
       run.stop_step = step;
       run.stop_code = "JOB_CANCELED";
-      run.stop_reason = { message: stopCodeText("JOB_CANCELED"), detail: { job_id: j.id } };
-      run.cur_job_id = null;
+      run.stop_reason = { message: stopCodeText("JOB_CANCELED"), detail: { job_id: j.id, job_type: j.job_type } };
       run.finished_at = this.now();
       return;
     }
@@ -1356,7 +1360,6 @@ export class MockServer {
     run.stop_reason = { message: stopCodeText("RUN_ALL_CANCELED"), detail: {} };
     run.finished_at = this.now();
     const j = this.jobs.find((x) => x.id === run.cur_job_id);
-    run.cur_job_id = null;
     // 체인이 만든 작업만 취소(입양 작업은 놓아 둠)
     if (j && j.run_all_id === run.id && ACTIVE.includes(j.state)) {
       j.cancel_requested = true;

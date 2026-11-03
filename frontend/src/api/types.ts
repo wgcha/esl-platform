@@ -276,15 +276,18 @@ export interface RunAllJobRef {
   job_id: string;
   adopted: boolean;
 }
-/** 건너뛴 단계(done) */
-export interface RunAllSkipped {
+/** 건너뛴 단계: state = done | auto_confirmed(② 자동 확정 — metric·frame_index·support 포함) */
+export interface RunAllSkip {
   step: StepKey;
   state: string;
+  metric?: string | null;
+  frame_index?: number | null;
+  support?: string | null;
 }
-/** §7 멈춤 사유: message 는 서버가 완성, detail 은 코드별(missing·problems·job_id·failure_code·reasons·verdict) */
+/** §7 멈춤 사유: message 는 서버가 완성, detail 은 코드별(missing·problems·job_id·failure_code·reasons·verdict) — 없으면 {} */
 export interface RunAllStopReason {
   message: string;
-  detail?: Record<string, unknown> | null;
+  detail?: Record<string, unknown>;
 }
 export interface RunAllError {
   code: string;
@@ -306,9 +309,9 @@ export interface RunAllOut {
   /** §7 멈춤 코드(TSTAR_REVIEW_REQUIRED·SUPPORT_AUTO_BLOCKED·STEP_FAILED·VALIDATION_FAIL …) */
   stop_code: string | null;
   stop_reason: RunAllStopReason | null;
-  verdict: string | null;
+  verdict: "PASS" | "FAIL" | "UNDETERMINED" | null;
   job_ids: RunAllJobRef[];
-  skipped: RunAllSkipped[];
+  skipped: RunAllSkip[];
   resumed_from_id: string | null;
   created_by: string;
   created_by_name: string;

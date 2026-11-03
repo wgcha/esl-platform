@@ -166,8 +166,6 @@ export interface ReviewOut {
   error: ReviewError;
   logs: ReviewLog[];
   result: ReviewResult;
-  /** v0.13.0 일괄 실행이 만든 작업이면 run_alls.id(job.run_all_id 와 같음) */
-  run_all_id?: string | null;
 }
 
 export interface HistoryFileOut {
