@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { RunAllBadge } from "../../shell/RunAllBar";
 import { stepOfStage, stepPath } from "../../shell/StageStepper";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
@@ -246,6 +247,11 @@ export function JobReview() {
         {r && r.result.availability !== "none" && <PrimaryButton label="그때 결과 열기" onClick={openPast} />}
       </div>
       <ErrorLine text={rv.error ?? retryErr} />
+      {(job?.run_all_id || r?.run_all_id) && (
+        <div className="small muted" data-testid="run-all-origin">
+          <RunAllBadge who={job?.created_by_name} at={job ? dt(job.created_at) : null} /> 일괄 실행으로 생성
+        </div>
+      )}
       {retryMsg && (
         <div className="small" role="status">
           {retryMsg}

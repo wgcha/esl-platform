@@ -3,13 +3,13 @@
 import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
-  ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, StageState, StepStatus, SupportAuto, SupportProblem,
+  ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, RunAllOut, StageState, StepKey, StepStatus, SupportAuto, SupportProblem,
   SupportSetOut, ValidationOut,
 } from "../api/types";
 import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
 import {
   CANDIDATE_FRAMES, CORNER_IDS, ESL_ROOT, EXTRACT_SUMMARY, FRAMES_D, MAX_ARTIFACT_BYTES, N_NODES, PLANE, PROJECTS, USERS, baseCase,
-  makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ,
+  makeArtifact, makeEslRun, makeForces, makePreview, makeSupportSet, makeTstarMetrics, makeValidation, toXYZ, variantValidation,
   type MockUserKey,
 } from "./data";
 import { makeStrainRef, enrichValidation, envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
@@ -22,6 +22,7 @@ import { OptMock, enrichEntries } from "./optdata";
 import { DoeMock } from "./doedata";
 import { ScxMock } from "./scxmock";
 import { VerifyMock } from "./verifymock";
+import { stopCodeText } from "../api/client";
 
 interface MockResponse {
   status: number;
@@ -51,6 +52,9 @@ const LIGHT: JobType[] = ["EXPORT", "CASE_REPORT", "LIB_COMPARE"];
 const XFER: JobType[] = ["SCX_FETCH", "VERIFY_DROP"];
 const XFER_LANES = 2;
 const ACTIVE: JobState[] = ["QUEUED", "RUNNING"];
+/** v0.13.0 일괄 실행 단계 순서 */
+const RA_STEPS: StepKey[] = ["input", "tstar", "esl", "validate"];
+const runAllStepTitle = (k: StepKey) => ({ input: "① 입력", tstar: "② t*·지지점", esl: "③ ESL", validate: "④ 검증" })[k];
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
 
 /** §5.2 자동 3-2-1 품질 지표(목) */
@@ -93,6 +97,14 @@ export class MockServer {
   slots = 2;
   /** v0.10.0(esl_menu_restructure.md §5): 자동 3-2-1 이 품질 검사에 걸리는 Case(시연·시험용) */
   supportBlocked = new Set<string>();
+  /** v0.13.0 일괄 실행(esl_run_all.md): 체인 행(시도 1회 = 1행) */
+  runAlls: RunAllOut[] = [];
+  /** 시연·시험용: ② 가드 실패(1순위 D 밖 → TSTAR_ADJUSTED)로 볼 Case */
+  tstarAdjusted = new Set<string>();
+  /** 시연·시험용: 이 Case 의 다음 검증 판정을 바꾼다 */
+  validationVariant = new Map<string, "FAIL" | "UNDETERMINED">();
+  /** 시연·시험용: 이 작업 종류는 첫 step 에서 FAILED */
+  failJobTypes = new Set<JobType>();
   /** v0.10.0 §6: 라이브러리 다중 내보내기 묶음 */
   exportBatches: { batch: ExportBatchOut; jobIds: string[] }[] = [];
   /** 한 번에 내보낼 수 있는 ESL 수(서버 library_export.max_entries) */
@@ -424,7 +436,7 @@ export class MockServer {
   private caseOut(c: CaseOut): CaseOut {
     const run = this.currentRun(c);
     if (run) run.stale = run.inputs !== this.inputsKey(c);
-    return { ...c, stage_status: this.stageStatus(c), step_status: this.stepStatus(c) };
+    return { ...c, stage_status: this.stageStatus(c), step_status: this.stepStatus(c), run_all: this.latestRunAll(c.id) };
   }
 
   /** §5.2 자동 3-2-1(목): supportBlocked 면 BLOCKED + problems, 아니면 PCA 꼭지점 3개 */
@@ -432,6 +444,24 @@ export class MockServer {
     if (this.supportBlocked.has(c.id))
       return { status: "BLOCKED", mode: "pca8", rule_version: 1, problems: BLOCKED_PROBLEMS, checks: { area_ratio: 0.04, min_dist_rel: 0.31, cond_ratio: 4e-4 } };
     return { status: "OK", mode: "pca4", checks: AUTO_CHECKS, rule_version: 1, node_ids: [CORNER_IDS[0], CORNER_IDS[1], CORNER_IDS[3]] };
+  }
+
+  /** §5.1: 지지 세트가 없을 때만 자동 3-2-1, 있으면 유지(KEPT) — PUT /tstar 와 일괄 실행 ② 자동 확정이 같이 쓴다 */
+  private applyAutoSupport(c: CaseOut) {
+    if (!c.tstar) return;
+    const cur = this.supportSets.find((x) => x.id === c.current_support_set_id);
+    if (cur) c.tstar.support_auto = { status: "KEPT", source: cur.source };
+    else {
+      const sa = this.autoSupport(c);
+      const ids = sa.node_ids;
+      delete sa.node_ids;
+      c.tstar.support_auto = sa;
+      if (sa.status === "OK" && ids) {
+        const ss: SupportSetOut = { id: this.id("ss"), case_id: c.id, node_ids: ids, dofs: ["123", "23", "3"], source: "auto", plane: PLANE, created_by: this.me.user_id, created_at: this.now(), is_current: true };
+        this.supportSets.push(ss);
+        c.current_support_set_id = ss.id;
+      }
+    }
   }
 
   /** 시연·시험용: Case 를 '추출 완료 + t* 있음 + 자동 지지 BLOCKED(지지 세트 없음)' 상태로 */
@@ -631,7 +661,12 @@ export class MockServer {
       c.part_title = String(b.part_title || "chassis_rear");
       c.part_id = 10;
       this.cases.push(c);
-      return { status: 201, body: this.caseOut(c) };
+      // v0.13.0 §8: run_all=true 면 생성 뒤 시작. 시작이 실패해도 Case 는 만들어진다(run_all_error)
+      if (b.run_all === true) {
+        const r = this.runAllStart(c, null);
+        if (r.status >= 400) return { status: 201, body: { ...this.caseOut(c), run_all: null, run_all_error: (r.body as { detail: { code: string; message: string } }).detail } };
+      }
+      return { status: 201, body: { ...this.caseOut(c), run_all_error: null } };
     }
     if ((r = m(/^\/cases\/([^/]+)$/))) {
       const c = this.findCase(r[1]);
@@ -649,7 +684,7 @@ export class MockServer {
     if ((r = m(/^\/cases\/([^/]+)\/(.+)$/))) {
       const c = this.findCase(r[1]);
       if (!c) return err(404, "CASE_NOT_FOUND", "Case를 찾을 수 없습니다.");
-      return this.caseSub(c, method, r[2], b);
+      return this.caseSub(c, method, r[2], b, query);
     }
     if ((r = m(/^\/jobs\/([^/]+)(\/log|\/cancel|\/retry)?$/))) {
       const j = this.jobs.find((x) => x.id === r![1]);
@@ -667,6 +702,8 @@ export class MockServer {
         return { status: 200, body: j };
       }
       if (method === "POST" && r[2] === "/retry") {
+        if (j.case_id && ["CASE_EXTRACT", "ESL_SOLVE", "VALIDATE"].includes(j.job_type) && this.runAlls.some((x) => x.case_id === j.case_id && x.status === "RUNNING"))
+          return err(409, "RUN_ALL_ACTIVE", "일괄 실행 중입니다 — 먼저 [일괄 취소]");
         if (!["FAILED", "INTERRUPTED", "CANCELED"].includes(j.state)) {
           const code = TERMINAL.includes(j.state) ? "JOB_TERMINAL" : "JOB_NOT_TERMINAL";
           return err(409, code, "실패·중단·취소된 작업만 재시도할 수 있습니다");
@@ -1024,9 +1061,28 @@ export class MockServer {
     return jt === "CASE_EXTRACT" && c?.input_kind === "H3D" ? ["H3D_EXTRACT", ...STEPS[jt]] : STEPS[jt];
   }
 
-  private caseSub(c: CaseOut, method: string, sub: string, b: Record<string, unknown>): MockResponse {
+  private caseSub(c: CaseOut, method: string, sub: string, b: Record<string, unknown>, query: URLSearchParams = new URLSearchParams(), internal = false): MockResponse {
     const write = method !== "GET";
+    if (sub === "run-all" && method === "GET")
+      return { status: 200, body: query.get("all") ? this.runAllRows(c.id).slice(0, 50).map((x) => this.runAllOut(x)) : this.latestRunAll(c.id) };
     if (write && !this.canRun(c.project_id)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
+    if (sub === "run-all" && method === "POST") {
+      const from = (b.from ?? null) as StepKey | null;
+      if (from !== null && !RA_STEPS.includes(from)) return err(422, "INVALID_PARAMS", "from 값이 올바르지 않습니다");
+      return this.runAllStart(c, from);
+    }
+    if (sub === "run-all/cancel" && method === "POST") return this.runAllCancel(c);
+    // RA-D-7: 체인 RUNNING 중 상태 변경 API 는 409 RUN_ALL_ACTIVE
+    const busyRA = this.runAlls.some((x) => x.case_id === c.id && x.status === "RUNNING");
+    const jt0 = b.job_type as JobType | undefined;
+    if (
+      busyRA &&
+      !internal &&
+      ((sub === "tstar" && method === "PUT") ||
+        (sub === "support-sets" && method === "POST") ||
+        (sub === "jobs" && method === "POST" && (jt0 === "CASE_EXTRACT" || jt0 === "ESL_SOLVE" || jt0 === "VALIDATE")))
+    )
+      return err(409, "RUN_ALL_ACTIVE", "일괄 실행 중입니다 — 먼저 [일괄 취소]");
     if (sub === "tstar" && method === "GET") {
       if (!c.extract_summary) return err(409, "PREREQUISITE_MISSING", "t* 산출물(02_tstar/tstar.json)이 없습니다", { missing: ["tstar"] });
       const sel = (c.tstar?.metric ?? "max_strain") as Metric;
@@ -1053,19 +1109,7 @@ export class MockServer {
         });
       c.tstar = { metric, frame_index: cand.frame_index, time: cand.time, elem_id: cand.elem_id, value: cand.value, source: "user" };
       // §5.1: 지지 세트가 없을 때만 자동 3-2-1, 있으면 유지(KEPT)
-      const cur = this.supportSets.find((x) => x.id === c.current_support_set_id);
-      if (cur) c.tstar.support_auto = { status: "KEPT", source: cur.source };
-      else {
-        const sa = this.autoSupport(c);
-        const ids = sa.node_ids;
-        delete sa.node_ids;
-        c.tstar.support_auto = sa;
-        if (sa.status === "OK" && ids) {
-          const ss: SupportSetOut = { id: this.id("ss"), case_id: c.id, node_ids: ids, dofs: ["123", "23", "3"], source: "auto", plane: PLANE, created_by: this.me.user_id, created_at: this.now(), is_current: true };
-          this.supportSets.push(ss);
-          c.current_support_set_id = ss.id;
-        }
-      }
+      this.applyAutoSupport(c);
       c.version += 1;
       return { status: 200, body: this.caseOut(c) };
     }
@@ -1147,6 +1191,190 @@ export class MockServer {
     return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} /cases/${c.id}/${sub}`);
   }
 
+
+  // ---------------------------------------------------------------- v0.13.0 일괄 실행(esl_run_all.md §3~§8)
+  private runAllRows(caseId: string) {
+    return this.runAlls.filter((x) => x.case_id === caseId).sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : b.id.localeCompare(a.id, "en", { numeric: true })));
+  }
+
+  /** §8 RunAllOut 파생 키(can_resume·superseded·cur_job_state) */
+  private runAllOut(r: RunAllOut): RunAllOut {
+    const rows = this.runAllRows(r.case_id);
+    const later = rows.some((x) => x.id !== r.id && x.status === "RUNNING");
+    const mine = new Set(r.job_ids.map((x) => x.job_id));
+    const superseded =
+      r.status !== "RUNNING" && !!r.finished_at && this.jobs.some((j) => j.case_id === r.case_id && [1, 4, 5].includes(j.stage) && !j.params?.origin && !mine.has(j.id) && j.created_at > r.finished_at!);
+    const cj = r.cur_job_id ? this.jobs.find((j) => j.id === r.cur_job_id) : undefined;
+    return { ...r, can_resume: r.status === "STOPPED" && !later, superseded, cur_job_state: r.status === "RUNNING" ? cj?.state ?? null : null };
+  }
+
+  latestRunAll(caseId: string): RunAllOut | null {
+    const r = this.runAllRows(caseId)[0];
+    return r ? this.runAllOut(r) : null;
+  }
+
+  private runAllStart(c: CaseOut, from: StepKey | null): MockResponse {
+    if (c.status === "ARCHIVED") return err(409, "CASE_ARCHIVED", "보관된 Case 입니다");
+    if (this.runAlls.some((x) => x.case_id === c.id && x.status === "RUNNING")) return err(409, "RUN_ALL_ACTIVE", "이미 일괄 실행 중입니다");
+    const f = from ?? "input";
+    const ss = this.stepStatus(c);
+    const missing = RA_STEPS.slice(0, RA_STEPS.indexOf(f)).filter((k) => ss[k].state !== "done");
+    if (missing.length) return err(409, "PREREQUISITE_MISSING", "앞 단계가 필요합니다", { missing });
+    const prev = this.runAllRows(c.id).find((x) => x.status === "STOPPED");
+    const t = this.now();
+    const run: RunAllOut = {
+      id: this.id("ra"),
+      case_id: c.id,
+      from_step: f,
+      status: "RUNNING",
+      cur_step: null,
+      cur_job_id: null,
+      cur_job_state: null,
+      stop_step: null,
+      stop_code: null,
+      stop_reason: null,
+      verdict: null,
+      job_ids: [],
+      skipped: [],
+      resumed_from_id: from && prev ? prev.id : null,
+      created_by: this.me.user_id,
+      created_by_name: this.me.display_name,
+      canceled_by: null,
+      created_at: t,
+      finished_at: null,
+      can_resume: false,
+      superseded: false,
+    };
+    this.runAlls.push(run);
+    this.runAllEvaluate(c, run, f);
+    return { status: 201, body: this.runAllOut(run) };
+  }
+
+  private runAllStop(run: RunAllOut, step: StepKey, code: string, message: string, detail: Record<string, unknown> = {}) {
+    run.status = "STOPPED";
+    run.stop_step = step;
+    run.stop_code = code;
+    run.stop_reason = { message, detail };
+    run.cur_step = null;
+    run.cur_job_id = null;
+    run.finished_at = this.now();
+  }
+
+  private runAllWait(run: RunAllOut, step: StepKey, j: JobOut, adopted: boolean) {
+    run.cur_step = step;
+    run.cur_job_id = j.id;
+    run.job_ids = [...run.job_ids, { step, job_id: j.id, adopted }];
+    if (!adopted) j.run_all_id = run.id;
+  }
+
+  /** §4 평가: Skip·ConfirmTstar 는 계속, Create·Adopt·Stop·Done 에서 끝 */
+  private runAllEvaluate(c: CaseOut, run: RunAllOut, start: StepKey) {
+    if (c.status === "ARCHIVED") return this.runAllStop(run, start, "CASE_ARCHIVED", stopCodeText("CASE_ARCHIVED"));
+    const JT: Record<StepKey, JobType | null> = { input: "CASE_EXTRACT", tstar: null, esl: "ESL_SOLVE", validate: "VALIDATE" };
+    for (const k of RA_STEPS.slice(RA_STEPS.indexOf(start))) {
+      const st = this.stepStatus(c)[k];
+      if (k === "tstar") {
+        if (st.state === "done") {
+          run.skipped = [...run.skipped, { step: k, state: "done" }];
+          continue;
+        }
+        if (st.state === "failed" && st.reason?.code === "SUPPORT_AUTO_BLOCKED")
+          return this.runAllStop(run, k, "SUPPORT_AUTO_BLOCKED", stopCodeText("SUPPORT_AUTO_BLOCKED"), { problems: c.tstar?.support_auto?.problems ?? [] });
+        if (st.state === "none" && st.reason?.code === "TSTAR_NOT_CONFIRMED") {
+          if (this.tstarAdjusted.has(c.id)) return this.runAllStop(run, k, "TSTAR_REVIEW_REQUIRED", stopCodeText("TSTAR_REVIEW_REQUIRED"), { reasons: ["TSTAR_ADJUSTED"] });
+          // 자동 확정(put_tstar 와 같은 저장): source auto + confirmed.by run_all
+          c.tstar = { ...c.tstar!, source: "auto", confirmed: { by: "run_all", run_all_id: run.id, user_id: run.created_by } };
+          this.applyAutoSupport(c);
+          c.version += 1;
+          if (!c.current_support_set_id)
+            return this.runAllStop(run, k, "SUPPORT_AUTO_BLOCKED", stopCodeText("SUPPORT_AUTO_BLOCKED"), { problems: c.tstar.support_auto?.problems ?? [] });
+          continue;
+        }
+        return this.runAllStop(run, k, "PREREQUISITE_MISSING", stopCodeText("PREREQUISITE_MISSING"), { missing: ["extract"] });
+      }
+      const active = this.jobs.find((j) => j.case_id === c.id && j.job_type === JT[k] && ACTIVE.includes(j.state) && !j.params?.origin);
+      if (active) return this.runAllWait(run, k, active, true);
+      if (st.state === "done") {
+        if (k !== "validate") {
+          run.skipped = [...run.skipped, { step: k, state: "done" }];
+          continue;
+        }
+        const v = this.validations.find((x) => x.id === this.currentRun(c)?.latest_validation_id);
+        run.verdict = v?.verdict ?? null;
+        if (v?.verdict === "FAIL")
+          return this.runAllStop(run, k, "VALIDATION_FAIL", stopCodeText("VALIDATION_FAIL"), { verdict: "FAIL", validation_id: v.id, fail_reasons: v.fail_reasons });
+        if (v?.verdict === "UNDETERMINED")
+          return this.runAllStop(run, k, "VALIDATION_UNDETERMINED", `검증 판정 불가 — ${v.undetermined_reason ?? ""}`, { verdict: "UNDETERMINED", validation_id: v.id, undetermined_reason: v.undetermined_reason });
+        run.status = "DONE";
+        run.cur_step = null;
+        run.cur_job_id = null;
+        run.finished_at = this.now();
+        return;
+      }
+      const params: Record<string, unknown> = k === "esl" ? { frame_index: c.tstar?.frame_index, support_set_id: c.current_support_set_id } : k === "validate" ? { esl_run_id: c.current_esl_run_id } : {};
+      const r = this.caseSub(c, "POST", "jobs", { job_type: JT[k], params }, new URLSearchParams(), true);
+      if (r.status >= 400) {
+        const d = (r.body as { detail: Record<string, unknown> }).detail;
+        const code = d.support_blocked ? "SUPPORT_AUTO_BLOCKED" : "PREREQUISITE_MISSING";
+        return this.runAllStop(run, k, code, `${stopCodeText(code)}: ${String(d.message ?? "")}`, { missing: d.missing ?? [], code: d.code });
+      }
+      return this.runAllWait(run, k, r.body as JobOut, false);
+    }
+  }
+
+  /** §5 on_job_end */
+  private runAllOnJobEnd(j: JobOut) {
+    const run = this.runAlls.find((x) => x.status === "RUNNING" && x.cur_job_id === j.id);
+    if (!run) return;
+    const c = this.findCase(run.case_id)!;
+    const step = run.cur_step!;
+    if (j.state === "SUCCEEDED") {
+      const next = RA_STEPS[RA_STEPS.indexOf(step) + (step === "validate" ? 0 : 1)];
+      return this.runAllEvaluate(c, run, next);
+    }
+    if (j.state === "CANCELED") {
+      run.status = "CANCELED";
+      run.stop_step = step;
+      run.stop_code = "JOB_CANCELED";
+      run.stop_reason = { message: stopCodeText("JOB_CANCELED"), detail: { job_id: j.id } };
+      run.cur_job_id = null;
+      run.finished_at = this.now();
+      return;
+    }
+    const code = j.state === "INTERRUPTED" ? "STEP_INTERRUPTED" : "STEP_FAILED";
+    const msg = code === "STEP_FAILED" ? `${runAllStepTitle(step)} 작업 실패: ${j.failure_code ?? ""} ${j.failure_message ?? ""}`.trim() : stopCodeText(code);
+    this.runAllStop(run, step, code, msg, { job_id: j.id, job_type: j.job_type, failure_code: j.failure_code, failure_message: j.failure_message });
+  }
+
+  private runAllCancel(c: CaseOut): MockResponse {
+    const run = this.runAlls.find((x) => x.case_id === c.id && x.status === "RUNNING");
+    if (!run) return err(409, "RUN_ALL_NOT_RUNNING", "진행 중인 일괄 실행이 없습니다");
+    run.status = "CANCELED";
+    run.canceled_by = this.me.user_id;
+    run.stop_step = run.cur_step;
+    run.stop_code = "RUN_ALL_CANCELED";
+    run.stop_reason = { message: stopCodeText("RUN_ALL_CANCELED"), detail: {} };
+    run.finished_at = this.now();
+    const j = this.jobs.find((x) => x.id === run.cur_job_id);
+    run.cur_job_id = null;
+    // 체인이 만든 작업만 취소(입양 작업은 놓아 둠)
+    if (j && j.run_all_id === run.id && ACTIVE.includes(j.state)) {
+      j.cancel_requested = true;
+      this.complete(j, "CANCELED");
+    }
+    return { status: 200, body: this.runAllOut(run) };
+  }
+
+  /** 시연·시험용: 진행 중 체인의 현재 작업을 실패시킨다 */
+  failRunAllJob(caseId: string, code = "CORE_FAILED", message = "코어 오류(목)") {
+    const run = this.runAlls.find((x) => x.case_id === caseId && x.status === "RUNNING");
+    const j = run && this.jobs.find((x) => x.id === run.cur_job_id);
+    if (!j) return;
+    j.failure_code = code;
+    j.failure_message = message;
+    this.complete(j, "FAILED");
+  }
+
   /** 작업 1단계 진행 */
   tick() {
     for (const lane of ["SLOT", "LIGHT", "XFER"] as const) {
@@ -1191,6 +1419,12 @@ export class MockServer {
       }
       return this.complete(j, "SUCCEEDED");
     }
+    if (this.failJobTypes.has(j.job_type)) {
+      step.state = "FAILED";
+      step.failure_code = j.failure_code = "CORE_FAILED";
+      step.failure_message = j.failure_message = `${step.step_key} 코어 오류(목)`;
+      return this.complete(j, "FAILED");
+    }
     step.progress_pct = Math.min(100, (step.progress_pct ?? 0) + (step.step_key === "H3D_EXTRACT" ? 25 : 50));
     if (step.step_key === "H3D_EXTRACT") {
       const pass = Math.min(3, Math.ceil(step.progress_pct / 34));
@@ -1211,6 +1445,12 @@ export class MockServer {
   }
 
   private complete(j: JobOut, state: JobState) {
+    this.completeInner(j, state);
+    // v0.13.0 RA-D-2: 종료 전이 훅 — 이 작업을 기다리는 RUNNING 체인을 진행
+    this.runAllOnJobEnd(j);
+  }
+
+  private completeInner(j: JobOut, state: JobState) {
     j.state = state;
     j.finished_at = this.now();
     this.logs[j.id].push(`작업 종료: ${state}`);
@@ -1243,7 +1483,9 @@ export class MockServer {
     }
     if (j.job_type === "VALIDATE") {
       const run = this.currentRun(c)!;
-      const v = { ...makeValidation(this.id("val"), run.id, c.id), job_id: j.id };
+      const v0 = { ...makeValidation(this.id("val"), run.id, c.id), job_id: j.id };
+      const vk = this.validationVariant.get(c.id);
+      const v = vk ? variantValidation(v0, vk) : v0;
       this.validations.push(v);
       run.latest_validation_id = v.id;
     }

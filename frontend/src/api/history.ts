@@ -38,6 +38,8 @@ export interface HistoryItem {
   stale: boolean;
   /** 목록 한 줄용: 추출 {n_elems, tstar_frame, tstar_value} · ESL {frame_index, metric} · 검증 {status, verdict, disp_rms_rel, disp_max_rel} · 내보내기 {targets, n_files} */
   summary?: Record<string, unknown> | null;
+  /** v0.13.0 일괄 실행이 만든 작업이면 run_alls.id → '일괄' 배지(esl_run_all.md §8·§9) */
+  run_all_id?: string | null;
 }
 
 export interface HistoryPage {
@@ -164,6 +166,8 @@ export interface ReviewOut {
   error: ReviewError;
   logs: ReviewLog[];
   result: ReviewResult;
+  /** v0.13.0 일괄 실행이 만든 작업이면 run_alls.id(job.run_all_id 와 같음) */
+  run_all_id?: string | null;
 }
 
 export interface HistoryFileOut {

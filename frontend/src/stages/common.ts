@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/endpoints";
-import { errorText } from "../api/client";
+import { CODE_TEXT, errorText } from "../api/client";
 import type { Case, JobType } from "../api/types";
 import { NO_PERMISSION } from "../app/AppContext";
 import { stepState } from "../shell/StageStepper";
@@ -26,9 +26,14 @@ export function useAction(reload: () => Promise<void>) {
 
 export const submitJob = (c: Case, jt: JobType, params: Record<string, unknown> = {}) => api.createJob(c.id, jt, params);
 
-/** 주 버튼 비활성 사유(우선순위: 권한 → 실행 중 → 사전조건). step = 화면 단계 1..4(v0.10.0) */
+/** v0.13.0 일괄 실행 중(esl_run_all.md RA-D-7)에는 단계 주 버튼을 막는다 — 서버 409 RUN_ALL_ACTIVE 와 같은 문구 */
+export const RUN_ALL_ACTIVE_REASON = CODE_TEXT.RUN_ALL_ACTIVE;
+export const runAllActive = (c: Pick<Case, "run_all">) => c.run_all?.status === "RUNNING";
+
+/** 주 버튼 비활성 사유(우선순위: 권한 → 일괄 실행 중 → 실행 중 → 사전조건). step = 화면 단계 1..4(v0.10.0) */
 export function blockReason(allowed: boolean, c: Case, step: number, prereq: string | null = null) {
   if (!allowed) return NO_PERMISSION;
+  if (runAllActive(c)) return RUN_ALL_ACTIVE_REASON;
   if (stepState(c, step)?.state === "running") return "작업이 진행 중입니다";
   return prereq;
 }
