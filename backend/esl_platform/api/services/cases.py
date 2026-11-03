@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from esl_worker import core_adapter
 
 from ...core import core_outputs as co
+from ...core import tstar_confirm
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, not_found, unprocessable
 from ...core.inputs import fingerprint, fingerprint_h3d
@@ -26,7 +27,9 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.cases import VersionConflict
 from ...core.db.tables import jobs as jobs_t
-from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED
+from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED  # noqa: F401
+# 단계 상태(v0.13.0: 본문은 core.step_status — 일괄 실행 워커 훅 공용)
+from ...core.step_status import REASON_MESSAGES, stage_status, step_status  # noqa: F401
 from ...core.uploads import check_principal_upload_area
 from ..context import AppContext
 from . import system
@@ -40,6 +43,7 @@ from .common import (
     require_active_case,
     require_config_ok,
     require_execute,
+    require_no_run_all,
 )
 
 ACTIVE_STATES = (QUEUED, RUNNING)
@@ -49,105 +53,13 @@ def _projects(ctx: AppContext, principal: Principal, token: str | None, rid: str
     return ctx.auth.projects(principal, token, rid)
 
 
-# ---------------------------------------------------------------- 단계 상태
-def _latest_case_export(conn, case_id: str) -> dict[str, Any] | None:
-    """Case 단위 EXPORT(params.origin 없음)의 최신 작업 — 라이브러리 내보내기(origin=library)는 ⑥ 상태에 영향 없음(MR-D-7)."""
-    from sqlalchemy import and_, select
-
-    from ...core.repositories import row_dict
-
-    return row_dict(conn.execute(
-        select(jobs_t).where(and_(jobs_t.c.case_id == case_id, jobs_t.c.job_type == "EXPORT",
-                                  jobs_t.c.params["origin"].astext.is_(None)))
-        .order_by(jobs_t.c.created_at.desc()).limit(1)).first())
-
-
-def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    latest = {jt: jobs_repo.latest_job(conn, case["id"], jt) for jt in ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE")}
-    latest["EXPORT"] = _latest_case_export(conn, case["id"])
-
-    def st(state: str, job: dict | None = None) -> dict[str, Any]:
-        return {"state": state, "job_id": job["id"] if job else None}
-
-    def failed(j: dict | None) -> bool:
-        return j is not None and j["state"] in (FAILED, INTERRUPTED)
-
-    out: dict[str, dict[str, Any]] = {}
-    ex = latest["CASE_EXTRACT"]
-    ex_stale = extract_stale(case)
-    if ex and ex["state"] in ACTIVE_STATES:
-        out["1"] = st("running", ex)
-        out["2"] = st("running", ex)
-    else:
-        if case.get("extract_summary"):
-            out["1"] = st("stale" if ex_stale else "done", ex)
-        else:
-            out["1"] = st("failed" if failed(ex) else "none", ex)
-        if case.get("tstar"):
-            out["2"] = st("stale" if ex_stale else "done")
-        else:
-            out["2"] = st("failed" if failed(ex) else "none", ex)
-    out["3"] = st(("stale" if ex_stale else "done") if case.get("current_support_set_id") else "none")
-
-    run = cases_repo.get_esl_run(conn, case["current_esl_run_id"]) if case.get("current_esl_run_id") else None
-    run_stale = esl_run_stale(case, run) if run else False
-    es = latest["ESL_SOLVE"]
-    if es and es["state"] in ACTIVE_STATES:
-        out["4"] = st("running", es)
-    elif run:
-        out["4"] = st("stale" if run_stale else "done", es)
-    else:
-        out["4"] = st("failed" if failed(es) else "none", es)
-
-    va = latest["VALIDATE"]
-    vals = cases_repo.list_validations(conn, esl_run_id=run["id"]) if run else []
-    if va and va["state"] in ACTIVE_STATES:
-        out["5"] = st("running", va)
-    elif vals:
-        out["5"] = st("stale" if run_stale else "done", va)
-    else:
-        out["5"] = st("failed" if failed(va) else "none", va)
-
-    ep = latest["EXPORT"]
-    if ep and ep["state"] in ACTIVE_STATES:
-        out["6"] = st("running", ep)
-    elif ep and ep["state"] == SUCCEEDED and run and (ep["params"] or {}).get("esl_run_id") == run["id"]:
-        out["6"] = st("stale" if run_stale else "done", ep)
-    else:
-        out["6"] = st("failed" if failed(ep) else "none", ep)
-    return out
-
-
-REASON_MESSAGES = {
-    "SUPPORT_AUTO_BLOCKED": "지지점을 자동으로 정하지 못했습니다 — ②에서 사유 확인",
-    "TSTAR_NOT_CONFIRMED": "t* 확정이 필요합니다(확정 시 지지점 자동 선택)",
-}
-
-
-def step_status(case: dict[str, Any], ss: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """화면 4단계(§5.4): input = 옛 1, tstar = t*·지지점, esl = 옛 4, validate = 옛 5."""
-    def r(code: str) -> dict[str, str]:
-        return {"code": code, "message": REASON_MESSAGES[code]}
-
-    t2 = dict(ss["2"])
-    ts = case.get("tstar")
-    if t2["state"] != "running" and ts:
-        auto = (ts.get("support_auto") or {}) if isinstance(ts, dict) else {}
-        if extract_stale(case):
-            t2 = {"state": "stale", "job_id": None}
-        elif case.get("current_support_set_id"):
-            t2 = {"state": "done", "job_id": None}
-        elif auto.get("status") == "BLOCKED":
-            t2 = {"state": "failed", "job_id": None, "reason": r("SUPPORT_AUTO_BLOCKED")}
-        else:
-            t2 = {"state": "none", "job_id": None, "reason": r("TSTAR_NOT_CONFIRMED")}
-    return {"input": dict(ss["1"]), "tstar": t2, "esl": dict(ss["4"]), "validate": dict(ss["5"])}
-
-
 def case_full(ctx: AppContext, conn, case: dict[str, Any]) -> dict[str, Any]:
+    from .run_all import latest_out
+
     ss = stage_status(conn, case)
     d = case_out(ctx, case, ss)
     d["step_status"] = step_status(case, ss)
+    d["run_all"] = latest_out(conn, case["id"])        # v0.13.0 최신 일괄 실행 1행(Case 폴링으로 화면 갱신)
     return d
 
 
@@ -173,7 +85,22 @@ def _check_part(ctx: AppContext, rad: str, results: str | None, part_title: str)
 
 
 def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: str, body) -> dict[str, Any]:
-    """v0.12.0: PATH_OUTSIDE_ROOT(include 가 입력 루트 밖) 문구·detail 의 서버 절대경로는 일반 사용자에게 가린다(전역 관리자 원문)."""
+    """v0.12.0: PATH_OUTSIDE_ROOT(include 가 입력 루트 밖) 문구·detail 의 서버 절대경로는 일반 사용자에게 가린다(전역 관리자 원문).
+    v0.13.0: body.run_all 이면 Case 생성 커밋 뒤 같은 요청에서 일괄 실행 시작(별도 트랜잭션) — 시작이 실패해도 Case 는 남고
+    run_all = null + run_all_error {code, message}."""
+    out = _create_case_masked(ctx, principal, token, rid, body)
+    if getattr(body, "run_all", False):
+        from . import run_all as run_all_svc
+
+        try:
+            out["run_all"] = run_all_svc.start(ctx, principal, out["id"], "input")
+        except DomainError as exc:
+            out["run_all"] = None
+            out["run_all_error"] = {"code": exc.code, "message": exc.message}
+    return out
+
+
+def _create_case_masked(ctx: AppContext, principal: Principal, token: str | None, rid: str, body) -> dict[str, Any]:
     try:
         return _create_case(ctx, principal, token, rid, body)
     except DomainError as exc:
@@ -293,6 +220,7 @@ def patch_case(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
         if body.title is not None:
             vals["title"] = body.title.strip()
         if body.part_title is not None and body.part_title != case["part_title"]:
+            require_no_run_all(conn, case_id)
             vals["part_title"] = body.part_title
             if case.get("input_kind") == "H3D" and case.get("h3d_path"):      # 압축 모드 h3d 는 대상 파트가 고정
                 from .uploads import check_slim_part, h3d_meta_for
@@ -315,6 +243,7 @@ def archive_case(ctx: AppContext, principal: Principal, case_id: str) -> dict[st
         case = load_case(conn, case_id, for_update=True)
         require_execute(principal, case["project_id"])
         require_config_ok(ctx)
+        require_no_run_all(conn, case_id)
         if jobs_repo.has_active_jobs(conn, case_id):
             raise conflict("CASE_HAS_ACTIVE_JOB", "실행 중이거나 대기 중인 작업이 있습니다")
         if case["status"] != "ARCHIVED":
@@ -367,45 +296,15 @@ def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict
         require_execute(principal, case["project_id"])
         require_config_ok(ctx)
         require_active_case(case)
+        require_no_run_all(conn, case_id)
         info = _tstar_info(ctx, case)
-        m = info["metrics"].get(body.metric)
-        if m is None:
-            raise unprocessable("INVALID_METRIC", f"지표 {body.metric} 가 없습니다 (가능: {list(info['metrics'])})")
-        hit = next((c for c in m["candidates"] if c["frame_index"] == body.frame_index), None)
-        if hit is not None and hit.get("in_D") is False:
-            raise unprocessable("FRAME_NOT_CANDIDATE", f"frame {body.frame_index} 은 변위가 추출된 후보 프레임(D)이 "
-                                "아닙니다", candidates=[c["frame_index"] for c in m["candidates"] if c.get("in_D")
-                                                       is not False])
-        if hit is None:
-            raise unprocessable("FRAME_NOT_CANDIDATE", f"frame {body.frame_index} 은 {body.metric} 후보가 아닙니다",
-                                candidates=[c["frame_index"] for c in m["candidates"]])
-        tstar = {"metric": body.metric, "frame_index": hit["frame_index"], "time": hit["time"],
-                 "elem_id": hit["elem_id"], "value": hit["value"], "source": "user"}
+        hit = tstar_confirm.select_candidate(info, body.metric, body.frame_index)
+        tstar = tstar_confirm.tstar_from(hit, body.metric, source="user")
         if case["version"] != body.version:
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요")
-        vals: dict[str, Any] = {}
-        if case.get("current_support_set_id"):
-            # 지지 세트 있음(자동·이전 수동 편집 모두) → 그대로(MR-D-3). 잠금 중 다른 사용자가 먼저 만든 경우도 여기
-            sup = cases_repo.get_support_set(conn, case["current_support_set_id"])
-            tstar["support_auto"] = {"status": "KEPT", "source": (sup or {}).get("source")}
-        else:
-            if auto is None:
-                auto = _auto_support(ctx, case)
-            res, nid, _x0 = auto
-            if res["status"] == "OK":
-                s = cases_repo.insert_support_set(
-                    conn, case_id=case_id, node_ids=[int(nid[i]) for i in res["idx"]], dofs=list(res["dofs"]),
-                    source="auto", plane=res.get("plane"), created_by=principal.user_id)
-                vals["current_support_set_id"] = s["id"]
-                tstar["support_auto"] = {"status": "OK", "mode": res["mode"], "checks": res.get("checks"),
-                                         "rule_version": res.get("rule_version")}
-            else:
-                tstar["support_auto"] = {"status": "BLOCKED", "mode": res["mode"], "problems": res.get("problems") or [],
-                                         "checks": res.get("checks"), "rule_version": res.get("rule_version")}
-        try:
-            case = cases_repo.update_case(conn, case_id, body.version, tstar=tstar, **vals)
-        except VersionConflict:
-            raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요") from None
+        if not case.get("current_support_set_id") and auto is None:
+            auto = _auto_support(ctx, case)
+        case = tstar_confirm.store(conn, case, tstar, auto, created_by=principal.user_id, version=body.version)
         return case_full(ctx, conn, case)
 
 
@@ -459,6 +358,8 @@ def create_support(ctx: AppContext, principal: Principal, case_id: str, body) ->
     require_execute(principal, case["project_id"])
     require_config_ok(ctx)
     require_active_case(case)
+    with ctx.engine.connect() as conn:
+        require_no_run_all(conn, case_id)
     nid, x0 = _model(ctx, case)
     pos = np.searchsorted(nid, body.node_ids)
     bad = [n for n, p in zip(body.node_ids, pos) if p >= nid.size or int(nid[p]) != int(n)]
@@ -481,6 +382,7 @@ def create_support(ctx: AppContext, principal: Principal, case_id: str, body) ->
         source, plane = "user", chk.get("plane")
     with ctx.engine.begin() as conn:
         case = load_case(conn, case_id, for_update=True)
+        require_no_run_all(conn, case_id)
         s = cases_repo.insert_support_set(conn, case_id=case_id, node_ids=[int(n) for n in body.node_ids],
                                           dofs=[dof_by_idx[i] for i in idx], source=source, plane=plane,
                                           created_by=principal.user_id)

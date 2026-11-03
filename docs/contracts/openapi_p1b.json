@@ -829,6 +829,12 @@
             ],
             "title": "Results Dir"
           },
+          "run_all": {
+            "default": false,
+            "description": "v0.13.0 생성 후 일괄 실행(①→④, 같은 요청에서 시작)",
+            "title": "Run All",
+            "type": "boolean"
+          },
           "title": {
             "maxLength": 200,
             "minLength": 1,
@@ -973,6 +979,30 @@
           "results_dir": {
             "title": "Results Dir",
             "type": "string"
+          },
+          "run_all": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunAllOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.13.0 최신 일괄 실행 1행(없으면 null)"
+          },
+          "run_all_error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.13.0 POST /cases run_all 시작 실패 {code, message}",
+            "title": "Run All Error"
           },
           "stage_status": {
             "anyOf": [
@@ -5278,6 +5308,17 @@
             ],
             "title": "Retry Of Job Id"
           },
+          "run_all_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run All Id"
+          },
           "stage": {
             "title": "Stage",
             "type": "integer"
@@ -5683,6 +5724,18 @@
               }
             ],
             "title": "Retry Of Job Id"
+          },
+          "run_all_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.13.0 일괄 실행 체인이 만든 작업(입양 작업은 null)",
+            "title": "Run All Id"
           },
           "stage": {
             "title": "Stage",
@@ -7567,6 +7620,18 @@
             ],
             "title": "Retry Of Job Id"
           },
+          "run_all_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.13.0 일괄 실행 체인이 만든 작업(입양 작업은 null)",
+            "title": "Run All Id"
+          },
           "stage": {
             "title": "Stage",
             "type": "integer"
@@ -8056,6 +8121,345 @@
           "steps"
         ],
         "title": "ReviewTiming",
+        "type": "object"
+      },
+      "RunAllJobRef": {
+        "properties": {
+          "adopted": {
+            "default": false,
+            "title": "Adopted",
+            "type": "boolean"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "step": {
+            "enum": [
+              "input",
+              "tstar",
+              "esl",
+              "validate"
+            ],
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "job_id"
+        ],
+        "title": "RunAllJobRef",
+        "type": "object"
+      },
+      "RunAllOut": {
+        "description": "v0.13.0 일괄 실행 체인 1행(계약 esl_run_all.md §8).",
+        "properties": {
+          "can_resume": {
+            "default": false,
+            "title": "Can Resume",
+            "type": "boolean"
+          },
+          "canceled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canceled By"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "created_by_name": {
+            "title": "Created By Name",
+            "type": "string"
+          },
+          "cur_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cur Job Id"
+          },
+          "cur_job_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cur Job State"
+          },
+          "cur_step": {
+            "anyOf": [
+              {
+                "enum": [
+                  "input",
+                  "tstar",
+                  "esl",
+                  "validate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cur Step"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "from_step": {
+            "enum": [
+              "input",
+              "tstar",
+              "esl",
+              "validate"
+            ],
+            "title": "From Step",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_ids": {
+            "items": {
+              "$ref": "#/components/schemas/RunAllJobRef"
+            },
+            "title": "Job Ids",
+            "type": "array"
+          },
+          "resumed_from_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resumed From Id"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/RunAllSkip"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "RUNNING",
+              "STOPPED",
+              "DONE",
+              "CANCELED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stop_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "§7 멈춤 코드(STOPPED·CANCELED, DONE 은 null)",
+            "title": "Stop Code"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunAllStopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_step": {
+            "anyOf": [
+              {
+                "enum": [
+                  "input",
+                  "tstar",
+                  "esl",
+                  "validate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Step"
+          },
+          "superseded": {
+            "default": false,
+            "title": "Superseded",
+            "type": "boolean"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNDETERMINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "from_step",
+          "status",
+          "created_by",
+          "created_by_name",
+          "created_at"
+        ],
+        "title": "RunAllOut",
+        "type": "object"
+      },
+      "RunAllSkip": {
+        "properties": {
+          "frame_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frame Index"
+          },
+          "metric": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric"
+          },
+          "state": {
+            "description": "done | auto_confirmed(② 자동 확정 — metric·frame_index·support 포함)",
+            "title": "State",
+            "type": "string"
+          },
+          "step": {
+            "enum": [
+              "input",
+              "tstar",
+              "esl",
+              "validate"
+            ],
+            "title": "Step",
+            "type": "string"
+          },
+          "support": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Support"
+          }
+        },
+        "required": [
+          "step",
+          "state"
+        ],
+        "title": "RunAllSkip",
+        "type": "object"
+      },
+      "RunAllStart": {
+        "additionalProperties": false,
+        "description": "v0.13.0 POST /cases/{id}/run-all — from 생략 = input(done 단계는 건너뜀). [이어서 실행] = 이전 행 stop_step.",
+        "properties": {
+          "from": {
+            "anyOf": [
+              {
+                "enum": [
+                  "input",
+                  "tstar",
+                  "esl",
+                  "validate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          }
+        },
+        "title": "RunAllStart",
+        "type": "object"
+      },
+      "RunAllStopReason": {
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "RunAllStopReason",
         "type": "object"
       },
       "S1Base": {
@@ -12219,7 +12623,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.12.4"
+    "version": "0.13.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -12863,6 +13267,174 @@
         "summary": "Case Report",
         "tags": [
           "results"
+        ]
+      }
+    },
+    "/esl/api/cases/{case_id}/run-all": {
+      "get": {
+        "description": "최신 1행(없으면 null). ?all=1 → 최신순 목록(최대 50 — 이력 화면).",
+        "operationId": "get_run_all_esl_api_cases__case_id__run_all_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "all",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "All",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RunAllOut"
+                    },
+                    {
+                      "items": {
+                        "$ref": "#/components/schemas/RunAllOut"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Run All Esl Api Cases  Case Id  Run All Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run All",
+        "tags": [
+          "cases"
+        ]
+      },
+      "post": {
+        "description": "①→④ 일괄 실행 시작·[이어서 실행]. 첫 동작까지 이 요청 안에서 — 응답 시점에 이미 STOPPED·DONE 일 수 있다.",
+        "operationId": "start_run_all_esl_api_cases__case_id__run_all_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunAllStart"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAllOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run All",
+        "tags": [
+          "cases"
+        ]
+      }
+    },
+    "/esl/api/cases/{case_id}/run-all/cancel": {
+      "post": {
+        "description": "[일괄 취소]: 체인 CANCELED + 체인이 만든 진행 중 작업 취소(입양 작업은 그대로). 시작한 사람 또는 전역 관리자.",
+        "operationId": "cancel_run_all_esl_api_cases__case_id__run_all_cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAllOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run All",
+        "tags": [
+          "cases"
         ]
       }
     },

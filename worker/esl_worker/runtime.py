@@ -5,6 +5,7 @@ claim 조건·부분 unique 로 직렬), LIGHT 레인은 별도 1개.
 v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인 루프 `worker.xfer_lanes` 개(HTTP 전송·원격 대기 — SCX_FETCH·VERIFY_DROP,
 v0.12.0 실행 중 VERIFY_DROP ≤ verify_drop.max_running). 슬롯·자원 제한기 없음,
 SLOT·LIGHT 와 독립 claim. heartbeat info.scx = 어댑터 확인 {ok, version, commit, reason}.
+v0.13.0(esl_run_all.md §5): 리퍼 주기마다 일괄 실행 끊김 복구(`recover_run_alls`).
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from esl_platform import __version__
 from esl_platform.core.config import LoadedConfig, Settings
+from esl_platform.core import run_all
 from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.repositories import workers as workers_repo
 
@@ -90,7 +92,17 @@ class Worker:
 
     def reap_once(self) -> list[str]:
         with self.engine.begin() as conn:
-            return jobs_repo.reap_expired(conn)
+            out = jobs_repo.reap_expired(conn)
+        self.recover_run_alls()
+        return out
+
+    def recover_run_alls(self) -> list[str]:
+        """v0.13.0 일괄 실행 끊김 복구(esl_run_all.md §5): RUNNING 체인인데 기다리는 작업이 이미 끝났으면 훅 1회."""
+        try:
+            return run_all.recover(self.engine, self.settings.storage.esl_root)
+        except Exception:  # noqa: BLE001 - 리퍼 루프 유지
+            log.exception("일괄 실행 끊김 복구 오류")
+            return []
 
     def claim(self, lane: str) -> dict[str, Any] | None:
         if self.claims_paused:

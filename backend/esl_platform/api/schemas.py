@@ -45,6 +45,7 @@ class CaseCreate(_Req):
     results_dir: str | None = Field(default=None, min_length=1, max_length=1024)
     h3d_path: str | None = Field(default=None, min_length=1, max_length=1024)
     part_title: str | None = Field(default=None, min_length=1, max_length=200)
+    run_all: bool = Field(default=False, description="v0.13.0 생성 후 일괄 실행(①→④, 같은 요청에서 시작)")
 
     @model_validator(mode="after")
     def _one_input(self) -> "CaseCreate":
@@ -103,6 +104,16 @@ class ExportParams(_Req):
                                                                 min_length=1)
 
 
+RunAllStep = Literal["input", "tstar", "esl", "validate"]
+
+
+class RunAllStart(_Req):
+    """v0.13.0 POST /cases/{id}/run-all — from 생략 = input(done 단계는 건너뜀). [이어서 실행] = 이전 행 stop_step."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    from_: RunAllStep | None = Field(default=None, alias="from")
+
+
 class TstarPut(_Req):
     version: int = Field(ge=1)
     metric: str = Field(min_length=1, max_length=40)
@@ -150,6 +161,51 @@ class StageState(_Out):
     reason: dict[str, Any] | None = None     # v0.10.0 step_status: {code, message} (예 SUPPORT_AUTO_BLOCKED)
 
 
+class RunAllStopReason(_Out):
+    message: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunAllJobRef(_Out):
+    step: RunAllStep
+    job_id: str
+    adopted: bool = False
+
+
+class RunAllSkip(_Out):
+    step: RunAllStep
+    state: str = Field(description="done | auto_confirmed(② 자동 확정 — metric·frame_index·support 포함)")
+    metric: str | None = None
+    frame_index: int | None = None
+    support: str | None = None
+
+
+class RunAllOut(_Out):
+    """v0.13.0 일괄 실행 체인 1행(계약 esl_run_all.md §8)."""
+
+    id: str
+    case_id: str
+    from_step: RunAllStep
+    status: Literal["RUNNING", "STOPPED", "DONE", "CANCELED"]
+    cur_step: RunAllStep | None = None
+    cur_job_id: str | None = None
+    cur_job_state: str | None = None
+    stop_step: RunAllStep | None = None
+    stop_code: str | None = Field(default=None, description="§7 멈춤 코드(STOPPED·CANCELED, DONE 은 null)")
+    stop_reason: RunAllStopReason | None = None
+    verdict: Literal["PASS", "FAIL", "UNDETERMINED"] | None = None
+    job_ids: list[RunAllJobRef] = Field(default_factory=list)
+    skipped: list[RunAllSkip] = Field(default_factory=list)
+    resumed_from_id: str | None = None
+    created_by: str
+    created_by_name: str
+    canceled_by: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+    can_resume: bool = False
+    superseded: bool = False
+
+
 class CaseOut(_Out):
     id: str
     project_id: str
@@ -178,6 +234,8 @@ class CaseOut(_Out):
     stage_status: dict[str, StageState] | None = None   # deprecated(v0.10.0): 옛 1..6 단계 — 화면은 step_status
     # v0.10.0(esl_menu_restructure.md §5.4): 화면 4단계 {input, tstar, esl, validate}
     step_status: dict[str, StageState] | None = None
+    run_all: RunAllOut | None = Field(default=None, description="v0.13.0 최신 일괄 실행 1행(없으면 null)")
+    run_all_error: dict[str, Any] | None = Field(default=None, description="v0.13.0 POST /cases run_all 시작 실패 {code, message}")
 
 
 class StepOut(_Out):
@@ -222,6 +280,7 @@ class JobOut(_Out):
     cancel_requested: bool
     retry_of_job_id: str | None = None
     resume_from_step: int | None = None
+    run_all_id: str | None = Field(default=None, description="v0.13.0 일괄 실행 체인이 만든 작업(입양 작업은 null)")
     created_by: str
     created_by_name: str
     created_at: datetime
@@ -1195,6 +1254,7 @@ class HistoryItem(_Out):
     failure_message: str | None = None
     retry_of_job_id: str | None = None
     retried_by_job_id: str | None = None
+    run_all_id: str | None = None             # v0.13.0 일괄 실행 체인이 만든 작업('일괄' 배지)
     result_ref: HistoryRef | None = None
     result_state: Literal["current", "past"] | None = None
     stale: bool = False

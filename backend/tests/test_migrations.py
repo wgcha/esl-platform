@@ -21,7 +21,8 @@ DOE_INDEXES = {"ix_bead_does_project", "ix_jobs_bead_doe", "ux_jobs_bead_doe_act
 SCX_TABLES = {"verify_drops", "scx_submissions"}
 SCX_INDEXES = {"ix_verify_drops_doe", "ix_verify_drops_batch", "ux_verify_drops_active", "ix_jobs_upload", "ux_jobs_upload_active",
                "ix_jobs_verify_drop", "ux_jobs_verify_drop_active"}
-HEAD = "0012"
+RUN_ALL_INDEXES = {"ux_run_alls_case_running", "ix_run_alls_case_created", "ix_jobs_run_all"}
+HEAD = "0013"
 
 
 def _cfg(db_url, script_location: str | None = None):
@@ -59,9 +60,18 @@ def _load(name: str):
     return mod
 
 
+def _to_0012(engine):
+    """0013 이전(0012) 스키마로: run_alls·jobs.run_all_id 제거."""
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE jobs DROP COLUMN IF EXISTS run_all_id"))
+        c.execute(text("DROP TABLE IF EXISTS run_alls"))
+        c.execute(text("UPDATE alembic_version SET version_num = '0012'"))
+
+
 def _to_0011(engine):
     """0012 이전(0011) 스키마로: 검증 낙하·제출 테이블, jobs.upload_id·verify_drop_id 제거, 0011 시점 CHECK(고정 상수) 복원."""
     m11 = _load("0011_bead_doe.py")
+    _to_0012(engine)
     with engine.begin() as c:
         c.execute(text("ALTER TABLE jobs DROP CONSTRAINT ck_jobs_subject"))
         c.execute(text("ALTER TABLE jobs DROP COLUMN upload_id, DROP COLUMN verify_drop_id"))
@@ -135,6 +145,10 @@ def test_empty_db_head_and_tables_match(engine):
     tabs, idx, cons, cols, ver = _state(engine)
     assert ver == HEAD and OPT_TABLES <= tabs and OPT_INDEXES <= idx and DOE_TABLES <= tabs and DOE_INDEXES <= idx
     assert SCX_TABLES <= tabs and SCX_INDEXES <= idx and {("jobs", "upload_id"), ("jobs", "verify_drop_id")} <= cols
+    assert "run_alls" in tabs and RUN_ALL_INDEXES <= idx and ("jobs", "run_all_id") in cols
+    for n in ("ck_run_alls_status", "ck_run_alls_from_step", "ck_run_alls_steps", "ck_run_alls_verdict",
+              "ck_run_alls_finished", "fk_jobs_run_all_id_run_alls", "fk_run_alls_cur_job_id_jobs"):
+        assert n in cons, n
     assert "SCX_FETCH" in cons["ck_jobs_job_type"] and "VERIFY_POST" in cons["ck_jobs_job_type"] and "13" in cons["ck_jobs_stage"]
     assert "XFER" in cons["ck_jobs_lane"] and "upload_id" in cons["ck_jobs_subject"] and "VERIFY_RESULT" in cons["ck_artifacts_kind"]
     for n in ("ck_verify_drops_phase", "ck_verify_drops_version", "ck_verify_drops_dir_rel", "ck_scx_submissions_state",
@@ -155,7 +169,7 @@ def test_empty_db_head_and_tables_match(engine):
         diffs = compare_metadata(MigrationContext.configure(c), metadata)
     flat = repr(diffs)
     for name in (*OPT_TABLES, *OPT_INDEXES, *DOE_TABLES, *DOE_INDEXES, *SCX_TABLES, *SCX_INDEXES, "opt_run_id", "bead_doe_id",
-                 "topo_sha256", "deform_mode", "upload_id", "verify_drop_id"):
+                 "topo_sha256", "deform_mode", "upload_id", "verify_drop_id", "run_alls", "run_all_id", *RUN_ALL_INDEXES):
         assert name not in flat, (name, flat)
 
 
@@ -344,6 +358,44 @@ def test_upgrade_from_0011_db_idempotent_existing_rows(engine, db_url):
         assert n == 2
 
 
+def test_upgrade_from_0012_db_idempotent_existing_rows(engine, db_url):
+    """V-RA(0013, esl_run_all.md §2): 0012 DB(작업 행 포함) → 0013, 기존 행 run_all_id NULL·멱등, tables.py(create_all)와 같은
+    제약·인덱스, Case 당 RUNNING 체인 1개, 순환 FK(jobs.run_all_id ↔ run_alls.cur_job_id)."""
+    from alembic import command
+
+    full = _state(engine)
+    _seed_old_rows(engine)
+    _to_0012(engine)
+    tabs, _, _, cols, ver = _state(engine)
+    assert ver == "0012" and "run_alls" not in tabs and ("jobs", "run_all_id") not in cols
+    command.upgrade(_cfg(db_url), "head")
+    after = _state(engine)
+    assert after[4] == HEAD and after[0] == full[0] and after[1] == full[1] and after[3] == full[3]
+    for n in ("ck_run_alls_status", "ck_run_alls_from_step", "ck_run_alls_steps", "ck_run_alls_verdict",
+              "ck_run_alls_finished", "fk_jobs_run_all_id_run_alls", "fk_run_alls_cur_job_id_jobs",
+              "fk_run_alls_case_id_cases", "fk_run_alls_resumed_from_id_run_alls", "pk_run_alls"):
+        assert after[2][n] == full[2][n], n
+    with engine.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num = '0012'"))
+    command.upgrade(_cfg(db_url), "head")
+    assert _state(engine)[1:] == after[1:]
+    run = ("INSERT INTO run_alls (id, case_id, project_id, from_step, status, cur_job_id, core_settings, created_by, "
+           "created_by_name, finished_at) VALUES (:i, 'c1', 'p-1', :f, :s, :j, '{}', 'u', 'u', :fin)")
+    with engine.begin() as c:
+        assert c.execute(text("SELECT count(*) FROM jobs WHERE id='j1' AND run_all_id IS NULL")).scalar_one() == 1
+        c.execute(text(run), {"i": "r1", "f": "input", "s": "RUNNING", "j": "j1", "fin": None})
+        c.execute(text(run), {"i": "r2", "f": "esl", "s": "STOPPED", "j": None, "fin": "2026-11-04T00:00:00Z"})
+        c.execute(text("UPDATE jobs SET run_all_id = 'r1' WHERE id = 'j1'"))
+    for bad in ({"s": "RUNNING", "fin": None},                     # Case 당 RUNNING 1개
+                {"s": "WAIT", "fin": "2026-11-04T00:00:00Z"},      # status 목록
+                {"f": "export", "s": "DONE", "fin": "2026-11-04T00:00:00Z"},   # from_step 목록
+                {"s": "DONE", "fin": None},                        # 종료 상태는 finished_at 필수
+                {"s": "STOPPED", "fin": "2026-11-04T00:00:00Z", "j": "nope"}):   # FK
+        with pytest.raises(DBAPIError):
+            with engine.begin() as c:
+                c.execute(text(run), {"i": str(uuid.uuid4()), "f": "input", "j": None, **bad})
+
+
 def test_scx_constraints(engine):
     """V-SR-12: SCX_FETCH = upload_id 만(stage 12, lane XFER), 업로드당 비종료 1개, 기존 분기에 upload_id 금지, lane·stage 범위."""
     _seed_old_rows(engine)
@@ -386,18 +438,19 @@ def test_chain_without_0009():
 
     sd = ScriptDirectory(str(REPO / "migrations"))
     assert sd.get_current_head() == HEAD
+    assert sd.get_revision("0013").down_revision == "0012"
     assert sd.get_revision("0012").down_revision == "0011"
     assert sd.get_revision("0011").down_revision == "0010"
     assert sd.get_revision("0010").down_revision == "0008"
     assert "0009" not in {r.revision for r in sd.walk_revisions()}
 
 
-MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0012(SR-D-17 — 구현 시점 HEAD 뒤)."""
+MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0013(SR-D-17 — 구현 시점 HEAD 뒤)."""
 from alembic import op
 from sqlalchemy import text
 
 revision = "0009"
-down_revision = "0012"
+down_revision = "0013"
 branch_labels = None
 depends_on = None
 
@@ -411,8 +464,9 @@ def downgrade() -> None:
 '''
 
 
-def test_chain_with_0009_after_0012(pg_server, tmp_path):
-    """0009(MCP)가 나중에 revision 0009·down_revision 0012 로 붙어도 0008 DB → 0010 → 0011 → 0012 → 0009 순서로 올라간다(단일 head)."""
+def test_chain_with_0009_after_0013(pg_server, tmp_path):
+    """0009(MCP)가 나중에 revision 0009·down_revision 0013(HEAD) 으로 붙어도 0008 DB → 0010 → 0011 → 0012 → 0013 → 0009 순서로
+    올라간다(단일 head)."""
     from alembic import command
     from alembic.script import ScriptDirectory
 
@@ -421,7 +475,7 @@ def test_chain_with_0009_after_0012(pg_server, tmp_path):
     (mig / "versions" / "0009_mcp_probe.py").write_text(MCP_0009, encoding="utf-8")
     sd = ScriptDirectory(str(mig))
     assert sd.get_current_head() == "0009" and len(sd.get_heads()) == 1
-    assert [r.revision for r in sd.walk_revisions()][:5] == ["0009", "0012", "0011", "0010", "0008"]
+    assert [r.revision for r in sd.walk_revisions()][:6] == ["0009", "0013", "0012", "0011", "0010", "0008"]
     name = f"esl_chain_{uuid.uuid4().hex[:8]}"
     with pg_server["admin"].connect() as c:
         c.execute(text(f'CREATE DATABASE "{name}"'))

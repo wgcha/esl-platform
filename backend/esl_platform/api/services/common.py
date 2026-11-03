@@ -59,6 +59,19 @@ def require_library_config(ctx: AppContext) -> dict[str, Any]:
     return ctx.config.library
 
 
+RUN_ALL_JOB_TYPES = ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE")
+
+
+def require_no_run_all(conn: Connection, case_id: str) -> None:
+    """v0.13.0 RA-D-7: 그 Case 의 일괄 실행 체인이 RUNNING 이면 상태 변경 API 는 409 RUN_ALL_ACTIVE."""
+    from ...core.repositories import run_all as run_all_repo
+
+    run = run_all_repo.running_for_case(conn, case_id)
+    if run is not None:
+        raise DomainError("RUN_ALL_ACTIVE", "일괄 실행 중인 Case 입니다 — 먼저 [일괄 취소] 하세요", status=409,
+                          run_all_id=run["id"])
+
+
 def require_active_case(case: dict[str, Any]) -> None:
     if case["status"] != "ACTIVE":
         raise DomainError("CASE_ARCHIVED", "보관된 Case 입니다", status=409)

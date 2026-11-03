@@ -115,16 +115,18 @@ def insert_job(
     upload_id: str | None = None,
     verify_drop_id: str | None = None,
     h3d: bool = False,
+    run_all_id: str | None = None,
 ) -> dict[str, Any]:
     """E1. 같은 Case·job_type(또는 같은 분석) 비종료 작업이 있으면 부분 unique 위반(IntegrityError) → 호출자가 409.
-    h3d = Case 입력이 h3d(CASE_EXTRACT 에 H3D_EXTRACT step 포함)."""
+    h3d = Case 입력이 h3d(CASE_EXTRACT 에 H3D_EXTRACT step 포함). run_all_id = 일괄 실행 체인이 만든 작업(v0.13.0)."""
     check_transition(None, QUEUED)
     jt = JOB_TYPES[job_type]
     job_id = str(uuid.uuid4())
     seq = conn.execute(select(job_queue_seq.next_value())).scalar_one()
     conn.execute(insert(jobs).values(
         id=job_id, case_id=case_id, analysis_id=analysis_id, comparison_id=comparison_id, opt_run_id=opt_run_id,
-        bead_doe_id=bead_doe_id, upload_id=upload_id, verify_drop_id=verify_drop_id, project_id=project_id,
+        bead_doe_id=bead_doe_id, upload_id=upload_id, verify_drop_id=verify_drop_id, run_all_id=run_all_id,
+        project_id=project_id,
         job_type=job_type,
         stage=jt.stage, lane=jt.lane,
         state=QUEUED, holds_slot=False, queue_seq=seq, queued_at=func.now(), params=params,
@@ -442,8 +444,9 @@ def patch_result(conn: Connection, job_id: str, token: str, patch: dict[str, Any
 
 
 def release(conn: Connection, job_id: str, token: str, next_state: str, *, failure_code: str | None = None,
-            failure_message: str | None = None) -> dict[str, Any]:
-    """E5/E6/E7: lease·슬롯 해제 + 종료 전이. 남은 PENDING step 은 SKIPPED(취소면 CANCELED)."""
+            failure_message: str | None = None, run_all_prep: Any = None) -> dict[str, Any]:
+    """E5/E6/E7: lease·슬롯 해제 + 종료 전이. 남은 PENDING step 은 SKIPPED(취소면 CANCELED).
+    v0.13.0: 같은 트랜잭션에서 일괄 실행 훅(core.run_all.on_job_end, run_all_prep = 워커 사전 계산)."""
     job = assert_lease(conn, job_id, token)
     check_transition(job["state"], next_state)
     values: dict[str, Any] = dict(state=next_state, holds_slot=False, finished_at=func.now(), updated_at=func.now(),
@@ -465,7 +468,14 @@ def release(conn: Connection, job_id: str, token: str, next_state: str, *, failu
                      .values(holder_job_id=None, **_NO_LEASE))
     out = get_job(conn, job_id)
     notify(conn, out, _END_EVENT[next_state])
+    _run_all_hook(conn, out, run_all_prep)
     return out
+
+
+def _run_all_hook(conn: Connection, job: dict[str, Any], prep: Any = None) -> None:
+    from ..run_all import safe_on_job_end     # 지연 import(순환 방지)
+
+    safe_on_job_end(conn, job, prep)
 
 
 # ---------------------------------------------------------------- 리퍼(E8)
@@ -486,7 +496,9 @@ def interrupt(conn: Connection, job: dict[str, Any]) -> bool:
                  .values(state="SKIPPED"))
     conn.execute(update(worker_slot).where(worker_slot.c.holder_job_id == job["id"])
                  .values(holder_job_id=None, **_NO_LEASE))
-    notify(conn, get_job(conn, job["id"]), "JOB_INTERRUPTED")
+    out = get_job(conn, job["id"])
+    notify(conn, out, "JOB_INTERRUPTED")
+    _run_all_hook(conn, out)
     return True
 
 
@@ -518,7 +530,9 @@ def request_cancel(conn: Connection, job_id: str, user_id: str) -> dict[str, Any
             updated_at=func.now(), version=jobs.c.version + 1))
         conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.state == "PENDING"))
                      .values(state="CANCELED"))
-        notify(conn, get_job(conn, job_id), "JOB_CANCELED")
+        out = get_job(conn, job_id)
+        notify(conn, out, "JOB_CANCELED")
+        _run_all_hook(conn, out)
     elif job["state"] == RUNNING and job["cancel_requested_at"] is None:
         conn.execute(update(jobs).where(jobs.c.id == job_id).values(
             cancel_requested_at=func.now(), cancel_requested_by=user_id, updated_at=func.now(),
