@@ -6,6 +6,7 @@ import { dt } from "../lib/format";
 import { Badge, Empty, ErrorLine, JobStatusBadge } from "./ui";
 
 import { STEP_MARKS, stepOfStage } from "../shell/StageStepper";
+import { RunAllBadge } from "../shell/RunAllBar";
 
 /** 작업 단계 표식: 옛 jobs.stage(1..6) → 화면 단계(①~④) */
 const stageMark = (stage: number) => (stage >= 1 && stage <= 6 ? STEP_MARKS[stepOfStage(stage) - 1] : "");
@@ -58,6 +59,7 @@ export function HistoryTable({ items, projectId, showCase }: { items: HistoryIte
                     {stageMark(it.stage) || "◆"}
                   </span>{" "}
                   {JOB_TYPE_LABEL[it.job_type]}
+                  {it.run_all_id && <RunAllBadge who={it.created_by_name} at={dt(it.created_at)} />}
                 </td>
                 {showCase && <td>{it.case_title ?? it.subject_title ?? "라이브러리"}</td>}
                 <td>

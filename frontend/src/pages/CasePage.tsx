@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import { canRun, useApp } from "../app/AppContext";
 import { MENU_CREATE, Shell } from "../shell/Shell";
@@ -16,6 +16,8 @@ import { BundleButton } from "../components/BundleButton";
 import { p3 } from "../api/p3";
 import { rememberCase } from "../lib/recent";
 import { CumulativeBadge } from "../components/Cumulative";
+import { RunAllBar, RunAllButton, runAllStepOf, useRunAll } from "../shell/RunAllBar";
+import type { RunAllError } from "../api/types";
 
 /** 화면 단계 ①입력 ②t*·지지점 ③ESL ④검증 (v0.10.0, esl_menu_restructure.md §4.3) — 파일 이름은 옛 번호 그대로 */
 const STEPS: ComponentType<StageProps>[] = [Stage1, Stage2, Stage4, Stage5];
@@ -29,8 +31,13 @@ export function CasePage() {
   const { me, projects } = useApp();
   const cs = usePolling(() => api.getCase(caseId), 0, [caseId]);
   const c = cs.data;
-  const anyRunning = !!c && Object.values(c.step_status ?? c.stage_status ?? {}).some((s) => s.state === "running");
+  // v0.13.0 일괄 실행: 작업 사이 순간(작업 없음)에도 체인이 RUNNING 이면 2초 갱신 유지(esl_run_all.md §9)
+  const anyRunning = !!c && (Object.values(c.step_status ?? c.stage_status ?? {}).some((s) => s.state === "running") || c.run_all?.status === "RUNNING");
   const { reload } = cs;
+  const ra = useRunAll(c, reload);
+  // 새 Case 화면이 넘긴 시작 오류(POST /cases run_all_error — Case 는 만들어짐)
+  const createError = ((useLocation().state as { runAllError?: RunAllError } | null) ?? null)?.runAllError ?? null;
+  const allowed = canRun(me, projectId);
 
   // 실행 중 작업이 있으면 Case 상태를 2초마다 갱신
   useEffect(() => {
@@ -58,10 +65,12 @@ export function CasePage() {
         { label: stepLabel(step) },
       ]}
       stepper={
+        <>
         <div className="case-bar">
-          <StageStepper base={base} current={step} c={c} />
+          <StageStepper base={base} current={step} c={c} runAllStep={runAllStepOf(c)} />
           {c && (
             <nav className="case-menu" aria-label="Case 메뉴">
+              <RunAllButton c={c} allowed={allowed} ra={ra} />
               <CumulativeBadge s={c.extract_summary?.cumulative} />
               <Link to={`${base}/history`} className="case-menu-link">
                 실행 이력
@@ -70,6 +79,8 @@ export function CasePage() {
             </nav>
           )}
         </div>
+        {c && <RunAllBar c={c} base={base} allowed={allowed} ra={ra} createError={createError} />}
+        </>
       }
     >
       {sp.get("moved") === "export" && (
@@ -78,7 +89,7 @@ export function CasePage() {
         </div>
       )}
       <ErrorLine text={cs.error} />
-      {c ? <Step key={`${caseId}-${step}`} c={c} reload={reloadCase} allowed={canRun(me, projectId)} /> : !cs.error && <Empty>불러오는 중…</Empty>}
+      {c ? <Step key={`${caseId}-${step}`} c={c} reload={reloadCase} allowed={allowed} /> : !cs.error && <Empty>불러오는 중…</Empty>}
     </Shell>
   );
 }
