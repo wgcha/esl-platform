@@ -845,6 +845,58 @@
         "title": "CaseCreate",
         "type": "object"
       },
+      "CaseLibraryOut": {
+        "description": "#49 Case 목록: 이 Case 에서 등록된 라이브러리 현황(ACTIVE 항목 수·최신 항목 판정).",
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "latest_entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Entry Id"
+          },
+          "latest_registered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Registered At"
+          },
+          "latest_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNDETERMINED",
+                  "LEGACY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Status"
+          }
+        },
+        "title": "CaseLibraryOut",
+        "type": "object"
+      },
       "CaseOut": {
         "properties": {
           "case_dir": {
@@ -946,6 +998,16 @@
             ],
             "title": "Input Kind",
             "type": "string"
+          },
+          "library": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseLibraryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "part_id": {
             "anyOf": [
@@ -12219,7 +12281,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.12.4"
+    "version": "0.12.5"
   },
   "openapi": "3.1.0",
   "paths": {

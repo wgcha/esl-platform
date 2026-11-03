@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi.responses import Response
 
-REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:"
+REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
 
 
 def html_report(path: str, filename: str, download: bool) -> Response:

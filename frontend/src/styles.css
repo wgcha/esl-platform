@@ -425,6 +425,27 @@ select:disabled {
 .dot.off {
   background: var(--line-strong);
 }
+/* #49 Case 목록 진행 칸: 4단계 점 + 라이브러리 배지 한 줄 */
+.case-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.step-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.step-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: default;
+}
+.step-dot .step-mark {
+  font-size: 0.95rem;
+  color: var(--muted);
+}
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -3125,4 +3146,35 @@ th[aria-sort="ascending"] .th-sort::after {
 }
 .vd-unknown .inline-actions input {
   width: 12rem;
+}
+
+/* ---------------------------------------------------------------- v0.12.5 보고서 화면 안 보기(ReportViewer) */
+details.card.fold > summary .fold-sub {
+  font-weight: 400;
+}
+details.card.fold > .fold-body {
+  padding: 0.8rem 1rem 1rem;
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.report-viewer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.report-viewer > .card-head {
+  flex-wrap: wrap;
+}
+.report-newtab {
+  white-space: nowrap;
+}
+.report-dl-error {
+  padding: 0.4rem 1rem 0;
+}
+.report-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }

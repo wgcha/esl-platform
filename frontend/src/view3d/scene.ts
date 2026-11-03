@@ -1,11 +1,12 @@
 // three 장면(계약 §6·§8). 이 파일만 three 를 import 한다 → 동적 import 로 별도 청크. 시험에서는 mock.
 // 좌표 mm·Z-up. onDemand 렌더: 카메라·상태 변경 때만 requestAnimationFrame 1회. 언마운트 시 geometry·material·texture·renderer dispose.
+// v0.12.5: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
 import {
   AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
   Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
@@ -16,8 +17,57 @@ import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
 import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
+import { PAN_SPEED, STATIC_MOVING, WHEEL_ZOOM_SPEED, trackballRotateSpeed } from "../lib/viewerControls";
 
 const LOD_RESTORE_MS = 250;
+/** Trackball 키(A/S/D 누른 채 끌기 = 회전/줌/팬 전환)는 쓰지 않는다 — 다른 입력란 타이핑과 섞이지 않게 */
+const NO_KEY = "esl-no-key";
+
+/** TrackballControls 내부 상태(타입 선언 없음) */
+interface TrackballInternals {
+  _eye: Vector3;
+  _panStart: Vector2;
+  _panEnd: Vector2;
+}
+const _right = new Vector3();
+const _upP = new Vector3();
+const _pan = new Vector3();
+
+/**
+ * 자유 회전 컨트롤: TrackballControls + 화면 공간 팬(커서를 그대로 따라감).
+ * 원래 Trackball 팬은 화면 비율 × 카메라 거리라 원근은 가로·세로 배율이 다르고 직교는 카메라 거리에 좌우된다 —
+ * 이전 OrbitControls(screenSpacePanning)처럼 타깃 깊이의 보이는 폭·높이로 환산한다.
+ */
+export class FreeRotateControls extends TrackballControls {
+  _panCamera() {
+    const s = this as unknown as TrackballInternals;
+    const dx = s._panEnd.x - s._panStart.x;
+    const dy = s._panEnd.y - s._panStart.y;
+    if (!dx && !dy) return;
+    const cam = this.object as PerspectiveCamera | OrthographicCamera;
+    const sw = Math.max(1, this.screen.width);
+    const sh = Math.max(1, this.screen.height);
+    let visW: number;
+    let visH: number;
+    if ((cam as OrthographicCamera).isOrthographicCamera) {
+      const o = cam as OrthographicCamera;
+      visW = (o.right - o.left) / Math.max(o.zoom, 1e-12);
+      visH = (o.top - o.bottom) / Math.max(o.zoom, 1e-12);
+    } else {
+      const p = cam as PerspectiveCamera;
+      visH = 2 * s._eye.length() * Math.tan((p.fov * Math.PI) / 360);
+      visW = (visH * sw) / sh;
+    }
+    // 오른쪽 = up × 눈(타깃→카메라), 화면 위 = 눈 × 오른쪽. 커서가 오른쪽·아래로 가면 모델도 오른쪽·아래로(카메라는 반대)
+    _right.crossVectors(cam.up, s._eye).normalize();
+    _upP.crossVectors(s._eye, _right).normalize();
+    _pan.copy(_right).multiplyScalar(-dx * visW * this.panSpeed).addScaledVector(_upP, dy * visH * this.panSpeed);
+    cam.position.add(_pan);
+    this.target.add(_pan);
+    if (this.staticMoving) s._panStart.copy(s._panEnd);
+    else s._panStart.add(new Vector2(dx, dy).multiplyScalar(this.dynamicDampingFactor));
+  }
+}
 
 interface Layer {
   geo: GeoData;
@@ -76,7 +126,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   const scene = new Scene();
   scene.background = new Color(opts.background);
-  // 투영 2종(원근/직교) — 활성 카메라 하나만 장면에 두고 헤드라이트·OrbitControls 를 옮겨 단다
+  // 투영 2종(원근/직교) — 활성 카메라 하나만 장면에 두고 헤드라이트·회전 컨트롤을 옮겨 단다
   const persp = new PerspectiveCamera(FOV, 1, opts.diag / 1000, opts.diag * 100);
   const ortho = new OrthographicCamera(-1, 1, 1, -1, -opts.diag, opts.diag);
   persp.up.set(0, 0, 1);
@@ -109,7 +159,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   camera.add(headlight);
   scene.add(camera);
 
-  const controls = new OrbitControls(camera, canvas);
+  const controls = new FreeRotateControls(camera, canvas);
   const activate = () => {
     const other = camera === persp ? ortho : persp;
     scene.remove(other);
@@ -118,8 +168,11 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     controls.object = camera;
     controls.update();
   };
-  controls.enableDamping = false;
-  controls.screenSpacePanning = true;
+  // 버튼: 왼쪽 회전·가운데 줌·오른쪽 팬(Orbit 과 같음), 휠 줌(아래로 = 멀어짐)
+  controls.staticMoving = STATIC_MOVING;
+  controls.zoomSpeed = WHEEL_ZOOM_SPEED;
+  controls.panSpeed = PAN_SPEED;
+  controls.keys = [NO_KEY, NO_KEY, NO_KEY];
 
   let renders = 0;
   let raf = 0;
@@ -365,6 +418,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     const h = Math.max(1, canvas.clientHeight);
     renderer.setSize(w, h, false);
     aspect = w / h;
+    controls.handleResize();
+    controls.rotateSpeed = trackballRotateSpeed(w, h);
     persp.aspect = aspect;
     persp.updateProjectionMatrix();
     applyOrtho();
@@ -392,13 +447,36 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     invalidate();
   };
 
-  controls.addEventListener("change", invalidate);
-  controls.addEventListener("start", () => {
-    if (lodTimer) clearTimeout(lodTimer);
-    showLod(true);
+  // Trackball 은 입력을 쌓아 두고 update() 에서 반영한다 → 조작 중(start~end)과 그 뒤 움직임이 남은 동안만 매 프레임 update
+  let ctlRaf = 0;
+  let interacting = false;
+  let moved = false;
+  const pump = () => {
+    if (ctlRaf || disposed) return;
+    ctlRaf = requestAnimationFrame(() => {
+      ctlRaf = 0;
+      if (disposed) return;
+      moved = false;
+      controls.update();
+      if (interacting || moved) pump();
+    });
+  };
+  controls.addEventListener("change", () => {
+    moved = true;
     invalidate();
   });
-  controls.addEventListener("end", scheduleFull);
+  controls.addEventListener("start", () => {
+    interacting = true;
+    if (lodTimer) clearTimeout(lodTimer);
+    showLod(true);
+    pump();
+    invalidate();
+  });
+  controls.addEventListener("end", () => {
+    interacting = false;
+    pump(); // 휠은 start·end 가 한꺼번에 온다 — 남은 줌을 다음 프레임에 반영
+    scheduleFull();
+  });
 
   // ---- 선택(클릭)
   let pickCb: ((e: PickEvent) => void) | null = null;
@@ -603,6 +681,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     dispose() {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
+      if (ctlRaf) cancelAnimationFrame(ctlRaf);
       if (lodTimer) clearTimeout(lodTimer);
       ro?.disconnect();
       canvas.removeEventListener("pointerdown", onDown);

@@ -24,6 +24,7 @@ from ...core.inputs import fingerprint, fingerprint_h3d
 from ...core.paths import check_input_path, h3d_raw_dir
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
+from ...core.repositories import library as lib_repo
 from ...core.repositories.cases import VersionConflict
 from ...core.db.tables import jobs as jobs_t
 from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED
@@ -63,11 +64,30 @@ def _latest_case_export(conn, case_id: str) -> dict[str, Any] | None:
 
 
 def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """상세용(Case 1개): 작업·run·검증을 Case 단위로 조회. 목록은 ``stage_status_many``(같은 규칙, 묶음 조회)."""
     latest = {jt: jobs_repo.latest_job(conn, case["id"], jt) for jt in ("CASE_EXTRACT", "ESL_SOLVE", "VALIDATE")}
     latest["EXPORT"] = _latest_case_export(conn, case["id"])
+    run = cases_repo.get_esl_run(conn, case["current_esl_run_id"]) if case.get("current_esl_run_id") else None
+    has_vals = bool(cases_repo.list_validations(conn, esl_run_id=run["id"])) if run else False
+    return _derive_stage_status(case, latest, run, has_vals)
 
+
+def stage_status_many(conn, rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+    """목록용(#49): Case 전체의 작업·run·검증을 한 번에 조회(쿼리 수 = Case 수와 무관) → {case_id: stage_status}."""
+    inp = cases_repo.stage_inputs_many(conn, rows)
+    return {c["id"]: _derive_stage_status(c, inp[c["id"]]["latest"], inp[c["id"]]["run"], inp[c["id"]]["has_vals"])
+            for c in rows}
+
+
+def _derive_stage_status(case: dict[str, Any], latest: dict[str, dict | None], run: dict[str, Any] | None,
+                         has_vals: bool) -> dict[str, dict[str, Any]]:
     def st(state: str, job: dict | None = None) -> dict[str, Any]:
-        return {"state": state, "job_id": job["id"] if job else None}
+        d: dict[str, Any] = {"state": state, "job_id": job["id"] if job else None}
+        if state == "failed" and job is not None and (job.get("failure_code") or job.get("failure_message")):
+            # #49: 실패 사유(작업 failure_code·message) — 목록 점 툴팁·스텝퍼에 그대로
+            d["reason"] = {"code": job.get("failure_code") or "FAILED",
+                           "message": job.get("failure_message") or job.get("failure_code")}
+        return d
 
     def failed(j: dict | None) -> bool:
         return j is not None and j["state"] in (FAILED, INTERRUPTED)
@@ -89,7 +109,6 @@ def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
             out["2"] = st("failed" if failed(ex) else "none", ex)
     out["3"] = st(("stale" if ex_stale else "done") if case.get("current_support_set_id") else "none")
 
-    run = cases_repo.get_esl_run(conn, case["current_esl_run_id"]) if case.get("current_esl_run_id") else None
     run_stale = esl_run_stale(case, run) if run else False
     es = latest["ESL_SOLVE"]
     if es and es["state"] in ACTIVE_STATES:
@@ -100,10 +119,9 @@ def stage_status(conn, case: dict[str, Any]) -> dict[str, dict[str, Any]]:
         out["4"] = st("failed" if failed(es) else "none", es)
 
     va = latest["VALIDATE"]
-    vals = cases_repo.list_validations(conn, esl_run_id=run["id"]) if run else []
     if va and va["state"] in ACTIVE_STATES:
         out["5"] = st("running", va)
-    elif vals:
+    elif has_vals:
         out["5"] = st("stale" if run_stale else "done", va)
     else:
         out["5"] = st("failed" if failed(va) else "none", va)
@@ -274,7 +292,29 @@ def list_cases(ctx: AppContext, project_id: str | None, status: str | None) -> l
     with ctx.engine.connect() as conn:
         rows = cases_repo.list_cases(conn, project_id, status)
         metas = h3d_metas_for(conn, [c["h3d_path"] for c in rows if c.get("input_kind") == "H3D"])
-        return [case_out(ctx, c, None, metas) for c in rows]
+        # #49: 목록도 4단계 상태·라이브러리 등록 현황을 함께(묶음 조회 — Case 수와 무관한 쿼리 수)
+        sss = stage_status_many(conn, rows)
+        libs = lib_repo.active_stats_for_cases(conn, [c["id"] for c in rows])
+        out = []
+        for c in rows:
+            d = case_out(ctx, c, None, metas)
+            d["step_status"] = step_status(c, sss[c["id"]])
+            d["library"] = library_summary(libs.get(c["id"]))
+            out.append(d)
+        return out
+
+
+def library_summary(stats: dict[str, Any] | None) -> dict[str, Any]:
+    """Case 의 라이브러리 등록 현황(#49): count = ACTIVE 항목 수, latest_status = 최신 항목 판정(PASS·FAIL·UNDETERMINED·LEGACY,
+    라이브러리 목록 적격 배지와 같은 규칙)."""
+    from .library import eligibility
+
+    if not stats:
+        return {"count": 0, "latest_entry_id": None, "latest_status": None, "latest_registered_at": None}
+    lt = stats.get("latest") or {}
+    ok, why = eligibility(lt.get("quality"))
+    return {"count": stats["count"], "latest_entry_id": lt.get("id"), "latest_status": "PASS" if ok else why,
+            "latest_registered_at": lt.get("registered_at")}
 
 
 def get_case(ctx: AppContext, case_id: str) -> dict[str, Any]:
