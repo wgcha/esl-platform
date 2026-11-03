@@ -15,6 +15,8 @@ from ..schemas import (
     EslRunOut,
     JobCreate,
     JobOut,
+    RunAllOut,
+    RunAllStart,
     SupportCreate,
     SupportSetOut,
     SupportSuggestOut,
@@ -23,6 +25,7 @@ from ..schemas import (
 )
 from ..services import cases as svc
 from ..services import jobs as job_svc
+from ..services import run_all as run_all_svc
 
 router = APIRouter(tags=["cases"])
 
@@ -104,3 +107,26 @@ def list_supports(case_id: str, request: Request, principal: Principal = Depends
 @router.get("/cases/{case_id}/esl-runs", response_model=list[EslRunOut])
 def list_runs(case_id: str, request: Request, principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
     return svc.list_esl_runs(get_ctx(request), case_id)
+
+
+# ---------------------------------------------------------------- v0.13.0 일괄 실행(계약 esl_run_all.md §8)
+@router.post("/cases/{case_id}/run-all", response_model=RunAllOut, status_code=201)
+def start_run_all(case_id: str, request: Request, body: RunAllStart | None = None,
+                  principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """①→④ 일괄 실행 시작·[이어서 실행]. 첫 동작까지 이 요청 안에서 — 응답 시점에 이미 STOPPED·DONE 일 수 있다."""
+    return run_all_svc.start(get_ctx(request), principal, case_id, body.from_ if body else None)
+
+
+@router.get("/cases/{case_id}/run-all", response_model=RunAllOut | list[RunAllOut] | None)
+def get_run_all(case_id: str, request: Request, all_: bool = Query(default=False, alias="all"),
+                principal: Principal = Depends(get_principal)) -> Any:
+    """최신 1행(없으면 null). ?all=1 → 최신순 목록(최대 50 — 이력 화면)."""
+    if all_:
+        return run_all_svc.list_runs(get_ctx(request), case_id)
+    return run_all_svc.get_latest(get_ctx(request), case_id)
+
+
+@router.post("/cases/{case_id}/run-all/cancel", response_model=RunAllOut)
+def cancel_run_all(case_id: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """[일괄 취소]: 체인 CANCELED + 체인이 만든 진행 중 작업 취소(입양 작업은 그대로). 시작한 사람 또는 전역 관리자."""
+    return run_all_svc.cancel(get_ctx(request), principal, case_id)

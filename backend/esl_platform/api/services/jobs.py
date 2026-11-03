@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import os
 import re
 from typing import Any
@@ -11,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from .pathmask import masks_paths
-from ...core import core_outputs as co
+from ...core import job_params
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, forbidden, unprocessable
 from ...core.inputs import case_inputs_hash, changed_inputs, fingerprint, fingerprint_h3d
@@ -24,7 +23,6 @@ from ..schemas import CaseExtractParams, CaseReportParams, EslSolveParams, Expor
 from .common import (
     analysis_dir,
     case_dir,
-    esl_run_stale,
     extract_stale,
     job_out,
     load_case,
@@ -33,6 +31,8 @@ from .common import (
     require_config_ok,
     require_execute,
     require_job_view,
+    require_no_run_all,
+    RUN_ALL_JOB_TYPES,
 )
 
 LOG_MAX_LINES = 1000
@@ -41,16 +41,8 @@ LOG_MAX_BYTES = 256 * 1024
 
 def core_settings_for(ctx: AppContext, case: dict[str, Any], *, metric: str | None = None,
                       material_override: dict | None = None) -> dict[str, Any]:
-    """코어 설정 스냅샷 + Case 값(part_title, t* 지표, 재료 override)."""
-    cfg = copy.deepcopy(ctx.config.core or {})
-    cfg.setdefault("case", {})["part_title"] = case["part_title"]
-    if metric and isinstance(cfg.get("tstar"), dict) and "metric" in cfg["tstar"]:
-        cfg["tstar"]["metric"] = metric
-    if material_override:
-        mo = dict(cfg["case"].get("material_override") or {})
-        mo.update({str(k): dict(v) for k, v in material_override.items()})
-        cfg["case"]["material_override"] = mo
-    return cfg
+    """코어 설정 스냅샷 + Case 값(part_title, t* 지표, 재료 override). v0.13.0: 본문은 core.job_params(API·워커 공용)."""
+    return job_params.core_settings_for(ctx.config.core, case, metric=metric, material_override=material_override)
 
 
 def _params(model, raw: dict[str, Any]):
@@ -114,61 +106,13 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
         return out
     if job_type == "ESL_SOLVE":
         p = _params(EslSolveParams, raw)
-        if not case.get("extract_summary") or extract_stale(case):
-            missing.append("extract")
-        ts = case.get("tstar")
-        if not ts:
-            missing.append("tstar")
-        sid = p.support_set_id or case.get("current_support_set_id")
-        sup = cases_repo.get_support_set(conn, sid) if sid else None
-        if sup is None or sup["case_id"] != case["id"]:
-            missing.append("support_set")
-        frame = p.frame_index if p.frame_index is not None else (ts or {}).get("frame_index")
-        if not missing and frame not in co.disp_frames(cdir):
-            missing.append("disp_frame")
-        if missing:
-            # v0.10.0 MR-D-4: ② 지지점 자동 선택이 품질 검사에 걸렸으면 support_blocked + 사유
-            auto = (ts or {}).get("support_auto") if isinstance(ts, dict) else None
-            blocked = "support_set" in missing and isinstance(auto, dict) and auto.get("status") == "BLOCKED"
-            extra = {"support_blocked": True, "problems": auto.get("problems") or []} if blocked else {}
-            raise conflict("PREREQUISITE_MISSING", "② 지지점 자동 선택 실패 — ②에서 사유 확인" if blocked
-                           else "앞 단계가 필요합니다", missing=missing, **extra)
-        metric = ts.get("metric") or "max_strain"
-        if p.frame_index is not None and p.frame_index != ts.get("frame_index"):
-            info = co.tstar_info(cdir)
-            cands = [c["frame_index"] for c in (info["metrics"].get(metric) or {}).get("candidates", [])]
-            if p.frame_index not in cands:
-                raise unprocessable("FRAME_NOT_CANDIDATE", f"frame {p.frame_index} 은 후보가 아닙니다", candidates=cands)
-        es = case["extract_summary"] or {}
-        from ...core.inputs import inputs_hash
-
-        ih = inputs_hash(extract_job_id=es.get("job_id"), part_title=case["part_title"],
-                         tstar={"frame_index": frame, "metric": metric}, support_set_id=sup["id"])
-        return {"settings": core_settings_for(ctx, case, metric=metric, material_override=p.material_override),
-                "frame_index": int(frame), "metric": metric, "support_set_id": sup["id"],
-                "support_node_ids": list(sup["node_ids"]), "support_dofs": list(sup["dofs"]), "inputs_hash": ih,
-                "material_override": p.material_override}
+        return job_params.esl_solve_params(conn, ctx.config.core, cdir, case, frame_index=p.frame_index,
+                                           support_set_id=p.support_set_id, material_override=p.material_override)
 
     model = RunRefParams if job_type == "VALIDATE" else ExportParams
     p = _params(model, raw)
-    run = cases_repo.get_esl_run(conn, p.esl_run_id)
-    if run is None or run["case_id"] != case["id"] or run["status"] != "READY":
-        missing.append("esl_run")
-    elif case.get("current_esl_run_id") != run["id"]:
-        missing.append("current_esl_run")
-    elif job_type == "VALIDATE" and esl_run_stale(case, run):
-        missing.append("fresh_esl_run")
-    if missing:
-        raise conflict("PREREQUISITE_MISSING", "유효한 ESL 결과가 필요합니다", missing=missing)
-    out = {"settings": core_settings_for(ctx, case, metric=run["metric"]), "esl_run_id": run["id"],
-           "frame_index": run["frame_index"], "support_node_ids": None}
-    sup = cases_repo.get_support_set(conn, run["support_set_id"])
-    out["support_node_ids"] = list(sup["node_ids"]) if sup else None
-    if job_type == "EXPORT":
-        out["targets"] = list(p.targets)
-        vals = cases_repo.list_validations(conn, esl_run_id=run["id"])
-        out["validation_verdict"] = vals[0]["verdict"] if vals else None
-    return out
+    return job_params.run_ref_params(conn, ctx.config.core, case, job_type, p.esl_run_id,
+                                     list(p.targets) if job_type == "EXPORT" else None)
 
 
 @masks_paths
@@ -178,6 +122,8 @@ def create_job(ctx: AppContext, principal: Principal, case_id: str, body) -> dic
         require_execute(principal, case["project_id"])
         require_config_ok(ctx)
         require_active_case(case)
+        if body.job_type in RUN_ALL_JOB_TYPES:
+            require_no_run_all(conn, case_id)            # v0.13.0 RA-D-7(CASE_REPORT·EXPORT 는 허용)
         params = _prepare(ctx, conn, case, body.job_type, dict(body.params or {}))
         try:
             with conn.begin_nested():
@@ -266,6 +212,8 @@ def retry_job(ctx: AppContext, principal: Principal, job_id: str) -> dict[str, A
             return retry_verify(conn, principal, job)
         case = load_case(conn, job["case_id"], for_update=True)
         require_active_case(case)
+        if job["job_type"] in RUN_ALL_JOB_TYPES:
+            require_no_run_all(conn, case["id"])
         start = jobs_repo.first_failed_step(conn, job_id)
         params = dict(job["params"])
         if job["job_type"] == "EXPORT" and params.get("origin") == "library":

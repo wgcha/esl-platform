@@ -49,6 +49,8 @@ from esl_platform.core.inputs import changed_inputs, esl_run_stale, extract_stal
 from esl_platform.core.paths import ANALYSIS_DIR, check_includes, esl_subdir
 from esl_platform.core.repositories import cases as cases_repo
 from esl_platform.core.repositories import jobs as jobs_repo
+from esl_platform.core.repositories import run_all as run_all_repo
+from esl_platform.core import run_all
 from esl_platform.core.state_machine import CANCELED, FAILED, SUCCEEDED
 from sqlalchemy.exc import IntegrityError
 
@@ -102,10 +104,38 @@ class Executor:
             return jobs_repo.is_cancel_requested(conn, self.job["id"])
 
     def _finish(self, state: str, code: str | None = None, message: str | None = None) -> None:
+        prep = self._run_all_prep(state)
         with self._tx() as conn:
-            jobs_repo.release(conn, self.job["id"], self.token, state, failure_code=code, failure_message=message)
+            jobs_repo.release(conn, self.job["id"], self.token, state, failure_code=code, failure_message=message,
+                              run_all_prep=prep)
             if self.job["job_type"] in VERIFY_JOB_TYPES:      # v0.12.0: 검증 phase 갱신·VERIFY_POST 큐(같은 트랜잭션)
                 scx_verify.on_finish(self, conn, state, code, message)
+
+    def _run_all_prep(self, state: str):
+        """v0.13.0 일괄 실행(esl_run_all.md §4.2): release 훅에 넘길 값. ① CASE_EXTRACT 성공 직후 이 작업을 기다리는 RUNNING
+        체인이 있고 등록 후 Case 에 지지 세트가 없으면 ② auto_321 을 트랜잭션 밖(작업 스레드 — lease 갱신만, 취소 안 받음)에서
+        미리 계산한다(설정 = 체인 행 core_settings). 계산 실패는 훅이 다시 계산하거나 사유로 멈춘다."""
+        if self.case is None or self.job["job_type"] not in run_all.JOB_STEP:
+            return None
+        prep = run_all.WorkerPrep(esl_root=self.settings.storage.esl_root)
+        if state != SUCCEEDED or self.job["job_type"] != "CASE_EXTRACT":
+            return prep
+        try:
+            with self.engine.connect() as conn:
+                run = run_all_repo.waiting_on(conn, self.job["id"])
+                case = cases_repo.get_case(conn, self.case["id"]) if run else None
+            if run is None or case is None or case.get("current_support_set_id"):
+                return prep
+            if (case.get("extract_summary") or {}).get("job_id") != self.job["id"]:
+                return prep
+            core_cfg = run.get("core_settings") or {}
+            prep.auto = inproc.call(self, lambda: run_all.prepare_auto(self.cdir, core_cfg, self.job["id"]),
+                                    label="② 지지점 자동 선택(일괄 실행)", tick=inproc.renew_only(self))
+        except LeaseLost:
+            raise
+        except Exception:  # noqa: BLE001 - 사전 계산 실패 → 훅이 다시 계산
+            log.exception("작업 %s 일괄 실행 ② 사전 계산 실패", self.job["id"])
+        return prep
 
     def _kill_child(self) -> None:
         hp = self.hw_proc
