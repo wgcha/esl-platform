@@ -9,7 +9,7 @@
 순서 무관·동시(upload.parallel)로 받고, 본문은 스트리밍으로 `.part`(사전 할당) 의 k·C 위치에 직접 쓴다. 받은 청크는
 files[i].got([[a,b),…] 청크 번호 범위)로 기록하고 행 잠금은 표시할 때만 짧게 잡는다. 프로토콜 1(업그레이드 전 OPEN 세션:
 proto 키 없음)은 기존 append 경로를 유지한다.
-v0.12.4(이슈 #50) 무결성: 청크마다 받은 본문 sha256 을 files[i].csha{k: hex}에 기록(X-Chunk-Sha256 이 있으면 먼저 대조)하고,
+v0.12.5(이슈 #50) 무결성: 청크마다 받은 본문 sha256 을 files[i].csha{k: hex}에 기록(X-Chunk-Sha256 이 있으면 먼저 대조)하고,
 쓴 직후 디스크에서 그 범위를 다시 읽어 대조(다르면 422 CHUNK_VERIFY_FAILED, 표시 안 함). 마무리 때 파일 전체를 다시 읽어
 청크별 해시를 기록과 대조하고 전체 sha256 을 계산 — 다른 청크는 got 에서 빼고 422 UPLOAD_CHUNK_CORRUPT{chunks} 로 그 청크만
 다시 받는다. 같은 청크가 UPLOAD_MAX_BAD(3)번 어긋나면 422 UPLOAD_CORRUPT(files[i].bad{k: 횟수}). done 항목에는 sha256 과
@@ -310,7 +310,7 @@ def _check_free(ctx: AppContext, root: str, need: int) -> None:
 
 
 # 파일 전체 sha256. 프로토콜 1: 받으며 이어서 계산(업로드 행 잠금 아래에서만). 프로토콜 2: 마무리 때 디스크 전체를 다시 읽어
-# 청크 해시 대조와 함께 계산(_scan_part, 파일별 Lock). v0.12.4 전의 "연속 앞부분" 해시 추적기는 디스크 손상 뒤에 읽으면 손상을
+# 청크 해시 대조와 함께 계산(_scan_part, 파일별 Lock). v0.12.5 전의 "연속 앞부분" 해시 추적기는 디스크 손상 뒤에 읽으면 손상을
 # 그대로 해시해 잡지 못했다(이슈 #50).
 _HASHES: dict[tuple[str, int], tuple[Any, int]] = {}
 _HASH_LOCK = threading.Lock()

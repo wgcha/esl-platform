@@ -91,7 +91,7 @@ def test_endpoint_command(tmp_path):
 
 
 def test_upload_holes_command_reads_runtime_config(tmp_path):
-    """v0.12.4(이슈 #50): `esl_service.py upload-holes --runtime` = 설정 storage.upload_root·upload.chunk_mb 로 읽기 전용 탐지."""
+    """v0.12.5(이슈 #50): `esl_service.py upload-holes --runtime` = 설정 storage.upload_root·upload.chunk_mb 로 읽기 전용 탐지."""
     rt = _runtime(tmp_path)
     cfg = rt / "config" / "esl_platform.yaml"
     d = yaml.safe_load(cfg.read_text(encoding="utf-8"))

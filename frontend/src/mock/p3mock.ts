@@ -117,7 +117,7 @@ export class P3Mock {
   chunkShas: (string | null)[] = [];
   /** 다음 n 번 청크를 CHUNK_SHA256_MISMATCH(422)로 거부(재전송 시험) */
   badShaPuts = 0;
-  /** v0.12.4 마무리 재해시 흉내: "index:k" → 남은 횟수. 파일의 마지막 청크를 받을 때 그 청크를 받은 범위에서 빼고
+  /** v0.12.5 마무리 재해시 흉내: "index:k" → 남은 횟수. 파일의 마지막 청크를 받을 때 그 청크를 받은 범위에서 빼고
    *  422 UPLOAD_CHUNK_CORRUPT{chunks}(백엔드 _finalize_file 과 같은 모양), 3번째면 UPLOAD_CORRUPT */
   corruptOnFinalize = new Map<string, number>();
   corruptCount = new Map<string, number>();

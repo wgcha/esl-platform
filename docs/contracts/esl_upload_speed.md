@@ -185,14 +185,14 @@ EndSubcase
 - 재시작: DB `got`은 디스크에 쓴 뒤에만 표시되므로 "표시됨 ⊂ 실제로 쓴 것"(프로세스 비정상 종료 시 OS 캐시는 남음). OS 자체가 죽어 표시된 청크 내용이 사라진 경우는 마무리 sha256(sha256_expected가 있을 때)·청크 sha 없는 경우 파일 sha 기록으로 감지 범위 제한 — 리스크 R4.
 - 프로토콜 1 세션(업그레이드 전 OPEN, 항목에 `proto` 없음): 기존 append 경로·`.part` 크기 기준 received·409 규칙 그대로(코드 경로 유지, `stale_hours` 72 뒤 자연 소멸). 응답 `protocol: 1`, 새 클라이언트는 순차로.
 
-### 5.4a v0.12.4 무결성 보강(이슈 #50 — 위 §5.2-7·§5.4 해시 추적기를 대체)
+### 5.4a v0.12.5 무결성 보강(이슈 #50 — 위 §5.2-7·§5.4 해시 추적기를 대체)
 
 - 원인: Windows `os.ftruncate` = UCRT `_chsize_s` 는 늘리는 구간을 0 으로 **써서** 채운다(§5.3 NTFS 메모와 다름). `.part` 를 만든 요청의 사전 할당 중 다른 요청이 같은 파일을 열어 청크를 먼저 쓰면 늦게 지나가는 0 채우기가 그 청크 앞부분을 덮어썼다. 해시 추적기는 덮인 뒤의 디스크를 읽어 손상을 그대로 해시했다.
 - 수정: `open_part_for_write` 는 `.part` 경로별 잠금 아래에서 만들기 + 사전 할당을 끝내고, 기존 파일을 여는 요청도 같은 잠금을 거친다(백엔드 1 프로세스 전제, 참조 0 이면 항목 제거). `upload.preallocate` 기본은 false(잠금 안 0 채우기 동안 다른 PUT 이 기다리지 않게), true 일 때만 잠금 안에서 사전 할당.
 - 청크 해시: 받은 본문 sha256 을 항상 계산해 `files[i].csha{k: hex}` 에 기록(`X-Chunk-Sha256` 이 있으면 먼저 대조 — 기존 422 `CHUNK_SHA256_MISMATCH`). 쓴 직후 그 범위를 디스크에서 다시 읽어 대조, 다르면 표시하지 않고 422 `CHUNK_VERIFY_FAILED{chunk, attempt}`(같은 청크 재전송).
 - 마무리: fsync → 파일 전체 재해시(청크별 해시를 `csha` 와 대조 + 전체 sha256). 다른 청크는 `got`·`csha` 에서 빼고 422 `UPLOAD_CHUNK_CORRUPT{rel, index, chunks, received, attempt}` — 클라이언트는 범위를 다시 읽고 그 청크만 다시 보낸다(complete 가 마무리하다 만나면 409 `UPLOAD_INCOMPLETE` 의 `missing`). 같은 청크 대조 실패 3번째(`files[i].bad{k: 횟수}`)면 422 `UPLOAD_CORRUPT{rel, chunk, attempts}`, 그 뒤 그 청크 PUT 도 같은 오류(파일 빼고 다시). done 항목에 `sha256`·`chunks_sha256`(= sha256(청크 hex 를 순서대로 이은 문자열), 모든 청크 해시가 있을 때만). 업그레이드 전에 받은 청크(해시 기록 없음)는 대조를 건너뛴다.
 - complete: done 이어도 프로토콜 2 `got` 이 [0, n) 전체가 아니면 누락(`UPLOAD_INCOMPLETE`)으로 거부.
-- 파일 전체 sha256 을 클라이언트가 미리 보내지 않아도 된다: 청크 해시 목록(각 청크 `X-Chunk-Sha256` + 서버 기록)이 그 역할을 한다(docs/decisions.md 0.12.4).
+- 파일 전체 sha256 을 클라이언트가 미리 보내지 않아도 된다: 청크 해시 목록(각 청크 `X-Chunk-Sha256` + 서버 기록)이 그 역할을 한다(docs/decisions.md 0.12.5).
 - 기존 손상 탐지: `esl_service.py upload-holes --runtime <런타임>`(= `python -m esl_platform.upload_holes`, 읽기 전용, admin.md §13).
 
 ### 5.5 클라이언트
@@ -276,7 +276,7 @@ EndSubcase
 | `upload.chunk_mb` | **64**(기존 16) | 8..256 | 새 세션 청크 크기 C(세션에 고정) |
 | `upload.parallel` | **4** | 1..8 | 업로드당 동시 청크(초과 429), 응답 `max_parallel` |
 | `upload.write_buffer_kb` | 1024 | 64..8192 | 스트리밍 쓰기 단위 |
-| `upload.preallocate` | false(v0.12.4 전 true) | bool | `.part` 사전 할당(ftruncate) — Windows 는 0 을 써서 채우며 그동안 같은 파일의 다른 PUT 이 기다림(§5.4a) |
+| `upload.preallocate` | false(v0.12.5 전 true) | bool | `.part` 사전 할당(ftruncate) — Windows 는 0 을 써서 채우며 그동안 같은 파일의 다른 PUT 이 기다림(§5.4a) |
 | `ui.upload_slim_hint_gb` | 5 | ≥0(0 = 안내 끔) | 브라우저 대용량 h3d 안내 임계 |
 
 - 기존 `max_file_bytes 64 GB`·`max_upload_bytes 100 GB`·`min_free_gb`·`max_concurrent_per_user 2` 그대로. 예제 yaml 두 개 갱신.

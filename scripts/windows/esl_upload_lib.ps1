@@ -716,7 +716,7 @@ function Send-EslFile($Ctx, [string]$UploadId, $File, $Local, [int64]$Received, 
                 Say "  서버 디스크 대조 실패 - 같은 위치로 다시 보냅니다 ($badSha/$($Ctx.Retries))" 'Yellow'
             }
             elseif ($r.Status -eq 422 -and $info.Code -eq 'UPLOAD_CHUNK_CORRUPT' -and $badSha -lt $Ctx.Retries) {
-                # v0.12.4: 서버가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 received(연속 앞부분)부터 다시
+                # v0.12.5: 서버가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 received(연속 앞부분)부터 다시
                 $badSha++
                 $new = [int64]$r.Json.detail.received
                 Write-Host ''
@@ -961,7 +961,7 @@ function Complete-EslSlot($S, $Slot) {
         return
     }
     if ($status -eq 422 -and $info.Code -eq 'UPLOAD_CHUNK_CORRUPT') {
-        # v0.12.4: 서버 마무리 재해시가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 범위로 맞추고 빠진 청크만 다시
+        # v0.12.5: 서버 마무리 재해시가 디스크와 다른 청크를 받은 범위에서 뺐다 -> 서버 범위로 맞추고 빠진 청크만 다시
         # (같은 청크 3번째는 서버가 UPLOAD_CORRUPT 로 끝낸다 - 아래 치명 오류)
         $S.Active.Remove($key)
         Write-Host ''

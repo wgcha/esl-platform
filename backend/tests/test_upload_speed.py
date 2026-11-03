@@ -34,7 +34,7 @@ def settings_dict(tmp_path, request):
     d["storage"]["upload_root"] = str(tmp_path / "esl-input")
     d["upload"] = {"chunk_mb": chunk, "parallel": 4, "max_file_bytes": 2 * 1024 ** 3,
                    "max_upload_bytes": 4 * 1024 ** 3, "min_free_gb": 0,
-                   # v0.12.4 기본 false — 이 시험들은 사전 할당 경로(경합·507)를 보므로 켠다(noprealloc 표지면 기본값)
+                   # v0.12.5 기본 false — 이 시험들은 사전 할당 경로(경합·507)를 보므로 켠다(noprealloc 표지면 기본값)
                    **({} if request.node.get_closest_marker("noprealloc") else {"preallocate": True})}
     (tmp_path / "outside").mkdir()
     (tmp_path / "outside" / "secret.txt").write_text("outside")

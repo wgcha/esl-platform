@@ -3,7 +3,7 @@
 //   (받은 범위는 건너뜀)로 내보내 NTFS 0 채움을 줄인다. 이어 올리기 = 서버가 알려 주는 받은 청크 범위(`chunks`).
 // - protocol 이 없는 구 서버·업그레이드 전 세션은 기존 순차 경로(offset 순서 검증, 서버 received).
 // - sha256: 파일 전체는 계산하지 않는다. 청크마다 Web Crypto 로 계산해 X-Chunk-Sha256 으로 보내고, 같은 ArrayBuffer 를 본문으로 쓴다(두 번 읽지 않음).
-//   crypto.subtle 이 없는 비보안 http 컨텍스트면 Blob 그대로(메모리 거의 0). v0.12.4(이슈 #50): 서버가 받은 본문의 청크 해시를 기록하고 쓴 직후·
+//   crypto.subtle 이 없는 비보안 http 컨텍스트면 Blob 그대로(메모리 거의 0). v0.12.5(이슈 #50): 서버가 받은 본문의 청크 해시를 기록하고 쓴 직후·
 //   마무리 때 디스크와 대조한다 — 청크 해시 목록이 파일 전체 sha256 을 대신한다(docs/decisions.md). 어긋나면 422 CHUNK_VERIFY_FAILED(그 청크 재시도)·
 //   UPLOAD_CHUNK_CORRUPT(서버 범위를 다시 읽고 빠진 청크만 다음 라운드), 같은 청크 3번째면 UPLOAD_CORRUPT(오류).
 import { ApiError, errorText } from "../api/client";
@@ -580,7 +580,7 @@ export class Uploader {
           return;
         }
         if (e.status === 422 && code === "UPLOAD_CHUNK_CORRUPT") {
-          // v0.12.4 서버 마무리 재해시: 디스크와 다른 청크를 서버가 받은 범위에서 뺐다 → 범위를 다시 읽고 그 청크만 다음 라운드에
+          // v0.12.5 서버 마무리 재해시: 디스크와 다른 청크를 서버가 받은 범위에서 뺐다 → 범위를 다시 읽고 그 청크만 다음 라운드에
           // (같은 청크 3번째 실패는 서버가 UPLOAD_CORRUPT 로 끝낸다 — 아래 기본 처리로 오류)
           this.p.retries += 1;
           await this.refresh();

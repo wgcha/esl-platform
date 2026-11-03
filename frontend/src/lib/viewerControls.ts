@@ -1,4 +1,4 @@
-// ④ 3D 뷰어 마우스 조작 상수(v0.12.4, 자유 회전). three 에 의존하지 않는다 — scene.ts 가 TrackballControls 에 적용한다.
+// ④ 3D 뷰어 마우스 조작 상수(v0.12.5, 자유 회전). three 에 의존하지 않는다 — scene.ts 가 TrackballControls 에 적용한다.
 // 체감은 v0.12.3 까지의 OrbitControls 기본값(rotateSpeed 1, zoomSpeed 1, 감쇠 없음, 화면 공간 팬)에 맞췄다.
 
 /** 회전 감도: 화면 높이만큼 끌면 몇 바퀴 도는가(OrbitControls 기본 = 1 바퀴/화면 높이) */

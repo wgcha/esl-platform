@@ -1,5 +1,5 @@
-// v0.12.4 자유 회전 증적(mock): 2560×1440 ④ 3D 하중 보기 1장 — 위아래로 극점을 넘어 계속 끌어 뒤집힌(아래·뒤에서 본) 시점.
-// 사용: node scripts/screenshots-v0124.mjs [출력폴더]   (Vite 개발 서버를 mock 모드로 직접 띄운다)
+// v0.12.5 자유 회전 증적(mock): 2560×1440 ④ 3D 하중 보기 1장 — 위아래로 극점을 넘어 계속 끌어 뒤집힌(아래·뒤에서 본) 시점.
+// 사용: node scripts/screenshots-v0125.mjs [출력폴더]   (Vite 개발 서버를 mock 모드로 직접 띄운다)
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";

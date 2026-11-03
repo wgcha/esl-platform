@@ -1,6 +1,6 @@
 // three 장면(계약 §6·§8). 이 파일만 three 를 import 한다 → 동적 import 로 별도 청크. 시험에서는 mock.
 // 좌표 mm·Z-up. onDemand 렌더: 카메라·상태 변경 때만 requestAnimationFrame 1회. 언마운트 시 geometry·material·texture·renderer dispose.
-// v0.12.4: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
+// v0.12.5: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
 import {
   AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
   Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,

@@ -1,4 +1,4 @@
-// v0.12.4 자유 회전: 실제 scene.ts(createScene) + 실제 TrackballControls, WebGLRenderer 만 가짜.
+// v0.12.5 자유 회전: 실제 scene.ts(createScene) + 실제 TrackballControls, WebGLRenderer 만 가짜.
 // 컨트롤 생성·설정, 극점 넘어 연속 회전, 투영 전환 시 컨트롤 대상 갱신, 맞춤 보기에서 up 복원, 팬 방향·크기, 휠 줌 방향, dispose.
 import { Vector3, type OrthographicCamera, type PerspectiveCamera } from "three";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,7 +88,7 @@ afterEach(() => {
   canvas.remove();
 });
 
-describe("v0.12.4 자유 회전 컨트롤(TrackballControls)", () => {
+describe("v0.12.5 자유 회전 컨트롤(TrackballControls)", () => {
   it("생성: Trackball 1개, 대상 = 활성 카메라(기본 직교), 타깃 = bbox 중심, 감쇠 없음·감도 상수", async () => {
     await make();
     expect(h.ctl).toHaveLength(1);

@@ -286,7 +286,7 @@ def open_part_for_write(part_path: str, size: int, root: str | None = None, *, p
     """`.part` 를 위치 지정 쓰기용으로 연다(O_APPEND 아님). 새 파일은 O_EXCL 로 만들고 ftruncate 로 사전 할당,
     기존 파일은 열린 fd 로 일반 파일·링크 수 1·realpath 확인(append_chunk 와 같은 검사). 요청마다 새 fd.
 
-    v0.12.4(이슈 #50): 만들기 + 사전 할당 전체를 경로별 잠금 아래에서 하고, 기존 파일을 여는 요청도 같은 잠금을 거친다.
+    v0.12.5(이슈 #50): 만들기 + 사전 할당 전체를 경로별 잠금 아래에서 하고, 기존 파일을 여는 요청도 같은 잠금을 거친다.
     Windows 의 os.ftruncate(UCRT _chsize_s)는 늘리는 구간을 0 으로 **써서** 채우므로, 그 사이 다른 요청이 먼저 쓴 청크를
     늦게 지나가는 0 채우기가 덮어썼다(4병렬이면 4번째 청크 앞부분이 0 인 채 완료). 사전 할당은 잠금을 쥔 채 수 GB 를 0 으로
     쓰므로(그동안 같은 파일의 다른 PUT 이 기다림) 설정 upload.preallocate 기본은 false — true 일 때만 이 잠금 안에서 한다."""
