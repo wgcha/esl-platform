@@ -117,6 +117,12 @@ export class P3Mock {
   chunkShas: (string | null)[] = [];
   /** 다음 n 번 청크를 CHUNK_SHA256_MISMATCH(422)로 거부(재전송 시험) */
   badShaPuts = 0;
+  /** v0.12.4 마무리 재해시 흉내: "index:k" → 남은 횟수. 파일의 마지막 청크를 받을 때 그 청크를 받은 범위에서 빼고
+   *  422 UPLOAD_CHUNK_CORRUPT{chunks}(백엔드 _finalize_file 과 같은 모양), 3번째면 UPLOAD_CORRUPT */
+  corruptOnFinalize = new Map<string, number>();
+  corruptCount = new Map<string, number>();
+  /** 다음 n 번 청크를 CHUNK_VERIFY_FAILED(422, 쓴 직후 디스크 대조 실패)로 거부 */
+  verifyFailPuts = 0;
 
   /** §9.1 PC 연결: 발급한 코드(1회용)·토큰 */
   codes: (ClientCodeOut & { user_id: string; used: boolean })[] = [];
@@ -315,9 +321,30 @@ export class P3Mock {
             if (bodySize > this.storageLeft) return err(507, "INSUFFICIENT_STORAGE", "서버 저장 공간이 부족합니다.");
             this.storageLeft -= bodySize;
           }
+          if (this.verifyFailPuts > 0) {
+            this.verifyFailPuts -= 1;
+            return err(422, "CHUNK_VERIFY_FAILED", "서버 디스크에 쓴 청크가 받은 내용과 다릅니다(표시하지 않음).", { chunk: k, attempt: 1 });
+          }
           this.putCount += 1;
           this.putLog.push(`${f.index}:${k}`);
           f.got.add(k);
+          if (f.got.size >= n) {
+            const bad = [...f.got].filter((j) => (this.corruptOnFinalize.get(`${f.index}:${j}`) ?? 0) > 0).sort((a, b) => a - b);
+            if (bad.length) {
+              let worst = 0;
+              for (const j of bad) {
+                const key = `${f.index}:${j}`;
+                this.corruptOnFinalize.set(key, (this.corruptOnFinalize.get(key) ?? 1) - 1);
+                const c = (this.corruptCount.get(key) ?? 0) + 1;
+                this.corruptCount.set(key, c);
+                worst = Math.max(worst, c);
+                f.got.delete(j);
+              }
+              this.sync(f, C);
+              if (worst >= 3) return err(422, "UPLOAD_CORRUPT", `청크 ${bad[0]} 가 3번 서버 디스크 대조에 실패했습니다: ${f.rel}`, { rel: f.rel, chunk: bad[0] });
+              return err(422, "UPLOAD_CHUNK_CORRUPT", `서버 디스크의 청크 ${bad.join(", ")} 가 받은 내용과 다릅니다: ${f.rel}`, { rel: f.rel, index: f.index, chunks: bad, received: f.received, attempt: worst });
+            }
+          }
           this.sync(f, C);
           return { status: 200, body: { index: f.index, received: f.received, received_total: f.received_total, chunk: k, duplicate: false, done: f.done, sha256: f.sha256 ?? null } };
         }

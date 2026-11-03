@@ -481,6 +481,7 @@ E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
 
 - ⑦ 전에 실패하면 이전 `app`·프런트를 되돌리고 작업 2개를 다시 시작한다(이전 버전으로 계속 사용). ⑦ 이후 실패면 되돌리는 방법을 출력한다(`git checkout <이전 커밋>` 후 다시 실행, DB는 백업 복원).
 - `.runtime\_backup`은 자동으로 지우지 않는다. 업데이트 전 DB 백업(§3.3)을 먼저 한다.
+- **v0.12.4 로 올린 직후 1회**: 업로드 손상 탐지를 돌린다(읽기 전용 — §13 이슈 #50 항목). `cd <git>\.runtime` 후 `.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime .` — 반환 1 이면 보고된 파일을 원본으로 다시 올린다. 설정 파일에 `upload.preallocate: true` 가 적혀 있으면(예시 yaml 을 복사한 설치) `false` 로 바꾸거나 줄을 지운다(설정 보충은 기존 값을 바꾸지 않는다, 기본 false).
 
 ### 3.1 업데이트(폐쇄망 서버용 묶음)
 
@@ -499,6 +500,8 @@ E:\VD_SIMULATION_WEB\esl-platform\deploy\update-repo.ps1
 | ⑥ | `alembic upgrade head` |
 | ⑦ | 시작·health·환경 점검 |
 | ⑧ | 실패하면 되돌리는 방법 출력(자동 되돌림 없음) |
+
+- **v0.12.4 로 올린 직후 1회**: `cd <install_root>` 후 `.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime .`(읽기 전용, §13 이슈 #50 항목)와 `upload.preallocate: true` → `false` 확인은 §3.0 과 같다.
 
 ### 3.2 제거
 
@@ -652,6 +655,20 @@ cd D:\esl                                   # git 폴더 설치는 <git>\.runtim
 **Q. 회사 프록시(`HTTP_PROXY`)에서 health 확인이 실패한다.** 설치 스크립트·시연의 127.0.0.1 호출은 프록시를 쓰지 않는다(`loopback-http.ps1`, physicsai와 같은 처리). pip·npm은 기존 프록시 설정을 그대로 쓴다.
 
 **Q. `.bat` 실행이 "액세스가 거부되었습니다".** `.\deploy\install.ps1`(또는 `setup.ps1`, `demo\start-demo.ps1`)처럼 `.ps1`을 직접 실행한다(인자 동일). 실행 정책 오류(스크립트를 실행할 수 없습니다)가 나면 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1`로 실행한다.
+
+**Q. 업로드한 파일로 Case 를 만들 때 `STATE_PARSE_ERROR`(1 MB 넘는 줄)·`RAD_PARSE_ERROR` 가 나고 원본 PC 파일은 정상이다(이슈 #50).** v0.12.4 전 브라우저·PC 도구 병렬 업로드는 서버가 `.part` 를 사전 할당(Windows 는 0 을 **써서** 채움)하는 동안 다른 청크가 먼저 쓰이면, 그 청크 앞부분이 0 으로 덮인 채 완료될 수 있었다(64 MiB 경계 k·64 MiB 부터 0). v0.12.4 는 사전 할당을 기본으로 끄고(`upload.preallocate` 기본 false — true 로 켜면 사전 할당이 끝날 때까지 같은 파일의 다른 청크 PUT 이 기다림, 50 GB면 수 분), 청크마다 쓴 직후·완료 때 디스크를 다시 읽어 청크 해시를 대조한다(다르면 그 청크만 자동 재전송, 같은 청크 3번이면 `UPLOAD_CORRUPT`). 이미 올라간 파일은 **읽기 전용** 탐지 명령으로 찾는다:
+
+```powershell
+cd D:\esl                                   # git 폴더 설치는 <git>\.runtime
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime .             # 설정 storage.upload_root·upload.chunk_mb, DB 기록 sha256 대조
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime . --no-sha    # 0 구간만(빠름 — sha256 재계산 생략)
+.\venv\Scripts\python.exe .\app\esl_service.py upload-holes --runtime . --json > holes.json
+```
+
+- 보고: `! <파일> [업로드 <id> <상태>]` 아래 `청크 k @ 오프셋: 0 이 N B — 청크 앞부분|청크 전체`, DB 기록과 다르면 `sha256 불일치`. 반환 코드 0 = 의심 없음, 1 = 의심 있음, 2 = 인자·설정 오류.
+- 기준: 청크 경계에서 시작하는 0 구간 ≥ `--min-zero-kb`(기본 64 KiB). 텍스트 입력(.rad·.inc·.sta·.str)은 NUL 이 없으므로 보고되면 손상이다. .h3d 는 드물게 정상 0 패딩일 수 있어 원본과 비교해 확인한다. 옛 업로드의 기록 sha256 은 손상 뒤 디스크에서 계산됐을 수 있어 일치해도 0 구간 보고가 우선이다.
+- 옵션: `--root <폴더>`(설정 대신), `--chunk-mb N`, `--no-db`, `--include-backup`(`_backup` 포함), `--include-part`(받는 중 `.part` — 받지 않은 청크는 원래 0). 파일은 읽기만 하고 DB 는 READ ONLY 트랜잭션의 SELECT 만, 링크·junction 은 따라가지 않는다.
+- 조치: 의심 파일은 원본으로 다시 올리고 그 업로드로 만든 Case 는 다시 만든다(탐지 명령은 고치거나 지우지 않는다).
 
 **Q. 작업 스케줄러 작업을 바꿀 권한이 없다고 나온다.** 다른 계정이나 관리자 권한으로 등록된 작업이다. 처음 등록한 것과 **같은 사용자 계정**으로 '관리자 권한으로 실행'한 창에서 한 번 실행하면 그 뒤로는 일반 PowerShell로 된다.
 

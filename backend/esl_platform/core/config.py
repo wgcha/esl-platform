@@ -110,7 +110,7 @@ class UploadCfg(_M):
     chunk_mb: int = Field(default=64, ge=1, le=256)                   # 새 세션 청크 크기 C(MB, 세션에 고정). 계약 범위 8..256 — 시험용으로 1 까지 허용
     parallel: int = Field(default=4, ge=1, le=8)                      # 업로드당 동시 청크(초과 429) — 응답 max_parallel
     write_buffer_kb: int = Field(default=1024, ge=64, le=8192)        # 스트리밍 쓰기 단위
-    preallocate: bool = True                                          # .part 사전 할당(ftruncate)
+    preallocate: bool = False                                         # .part 사전 할당(ftruncate). v0.12.4 기본 false — Windows 는 0 을 써서 채워 그동안 다른 청크 PUT 이 기다림
     max_file_bytes: int = Field(default=64 * 1024 ** 3, ge=1)          # 파일당(h3d 30 GB 수용)
     max_upload_bytes: int = Field(default=100 * 1024 ** 3, ge=1)       # 업로드당
     min_free_gb: float = Field(default=20, ge=0)                       # 업로드 후에도 남길 upload_root 드라이브 여유

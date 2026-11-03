@@ -7,8 +7,13 @@
 
 프로토콜 2(새 세션, 파일 항목에 proto=2): 청크 k = [k·C, min(size,(k+1)·C)). 정렬된 청크 하나를 정확히 덮어쓰는 PUT 을
 순서 무관·동시(upload.parallel)로 받고, 본문은 스트리밍으로 `.part`(사전 할당) 의 k·C 위치에 직접 쓴다. 받은 청크는
-files[i].got([[a,b),…] 청크 번호 범위)로 기록하고 행 잠금은 표시할 때만 짧게 잡는다. 파일 전체 sha256 은 "연속으로 받은
-앞부분"을 따라가는 해시 추적기가 계산한다. 프로토콜 1(업그레이드 전 OPEN 세션: proto 키 없음)은 기존 append 경로를 유지한다.
+files[i].got([[a,b),…] 청크 번호 범위)로 기록하고 행 잠금은 표시할 때만 짧게 잡는다. 프로토콜 1(업그레이드 전 OPEN 세션:
+proto 키 없음)은 기존 append 경로를 유지한다.
+v0.12.4(이슈 #50) 무결성: 청크마다 받은 본문 sha256 을 files[i].csha{k: hex}에 기록(X-Chunk-Sha256 이 있으면 먼저 대조)하고,
+쓴 직후 디스크에서 그 범위를 다시 읽어 대조(다르면 422 CHUNK_VERIFY_FAILED, 표시 안 함). 마무리 때 파일 전체를 다시 읽어
+청크별 해시를 기록과 대조하고 전체 sha256 을 계산 — 다른 청크는 got 에서 빼고 422 UPLOAD_CHUNK_CORRUPT{chunks} 로 그 청크만
+다시 받는다. 같은 청크가 UPLOAD_MAX_BAD(3)번 어긋나면 422 UPLOAD_CORRUPT(files[i].bad{k: 횟수}). done 항목에는 sha256 과
+(모든 청크 해시가 있으면) chunks_sha256 = sha256(청크 hex 를 순서대로 이은 문자열)을 남긴다.
 프로세스 메모리 상태(진행 중 청크·해시)는 백엔드 1 프로세스 전제(기존 _HASHES 와 같음).
 v0.7.0(esl_opt_run.md §7.2): S2 템플릿 업로드(`rad/` 아래 .fem 또는 .rad+include)는 complete 대신 POST /opt/templates/check 가
 `template_source`(읽기만)·`save_template_check`(result.purpose = template, COMPLETED)로 연결한다.
@@ -304,8 +309,9 @@ def _check_free(ctx: AppContext, root: str, need: int) -> None:
                           free=free, reserve=reserve)
 
 
-# 파일 전체 sha256. 프로토콜 1: 받으며 이어서 계산(업로드 행 잠금 아래에서만). 프로토콜 2: 해시 추적기 — "연속으로 받은 앞부분"
-# 까지 디스크에서 읽어 갱신(_advance_hash, 파일별 Lock). 프로세스 재시작 등으로 상태가 없거나 어긋나면 처음부터 다시 읽어 복원.
+# 파일 전체 sha256. 프로토콜 1: 받으며 이어서 계산(업로드 행 잠금 아래에서만). 프로토콜 2: 마무리 때 디스크 전체를 다시 읽어
+# 청크 해시 대조와 함께 계산(_scan_part, 파일별 Lock). v0.12.4 전의 "연속 앞부분" 해시 추적기는 디스크 손상 뒤에 읽으면 손상을
+# 그대로 해시해 잡지 못했다(이슈 #50).
 _HASHES: dict[tuple[str, int], tuple[Any, int]] = {}
 _HASH_LOCK = threading.Lock()
 _FLOCKS: dict[tuple[str, int], threading.Lock] = {}
@@ -355,39 +361,87 @@ def _hash_put(key: tuple[str, int], h, received: int | None) -> None:
             _HASHES[key] = (h, received)
 
 
-def _advance_hash_locked(key: tuple[str, int], part: str, target: int) -> int:
-    """파일 Lock 을 쥔 채 해시를 target 바이트까지 따라가게 한다. 반환 = 실제 도달 바이트."""
-    with _HASH_LOCK:
-        st = _HASHES.get(key)
-    if st is None or st[1] > target:
-        h, pos = hashlib.sha256(), 0
-    else:
-        h, pos = st
-    if pos < target:
-        fd = os.open(part, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-        try:
-            os.lseek(fd, pos, os.SEEK_SET)
-            while pos < target:
-                b = os.read(fd, min(1 << 20, target - pos))
+UPLOAD_MAX_BAD = 3          # 같은 청크 대조 실패 상한(이 횟수째면 UPLOAD_CORRUPT)
+_READ = 1 << 20
+
+
+def _hash_range(path: str, offset: int, length: int) -> str:
+    """디스크의 [offset, offset+length) sha256(짧게 읽히면 읽힌 데까지)."""
+    h = hashlib.sha256()
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        os.lseek(fd, offset, os.SEEK_SET)
+        left = length
+        while left:
+            b = os.read(fd, min(_READ, left))
+            if not b:
+                break
+            h.update(b)
+            left -= len(b)
+    finally:
+        os.close(fd)
+    return h.hexdigest()
+
+
+def _scan_part(path: str, size: int, c: int) -> tuple[str, list[str], int]:
+    """파일 전체를 한 번 읽어 (전체 sha256, 청크별 sha256 목록, 읽은 바이트 — 선언 크기보다 길면 +1)."""
+    whole = hashlib.sha256()
+    per: list[str] = []
+    pos = 0
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        for k in range(_n_chunks(size, c)):
+            h = hashlib.sha256()
+            left = _chunk_len(size, c, k)
+            while left:
+                b = os.read(fd, min(_READ, left))
                 if not b:
                     break
                 h.update(b)
+                whole.update(b)
+                left -= len(b)
                 pos += len(b)
-        finally:
-            os.close(fd)
-    _hash_put(key, h, pos)
-    return pos
-
-
-def _advance_hash(key: tuple[str, int], part: str, target: int, *, block: bool) -> bool:
-    lk = _flock(key)
-    if not lk.acquire(blocking=block):
-        return False
-    try:
-        _advance_hash_locked(key, part, target)
+            per.append(h.hexdigest())
+            if left:
+                break
+        if pos == size and os.read(fd, 1):
+            pos += 1
     finally:
-        lk.release()
-    return True
+        os.close(fd)
+    return whole.hexdigest(), per, pos
+
+
+def _bad_count(f: dict[str, Any], k: int) -> int:
+    return int((f.get("bad") or {}).get(str(k)) or 0)
+
+
+def _corrupt_error(f: dict[str, Any], k: int) -> DomainError:
+    return unprocessable("UPLOAD_CORRUPT", f"청크 {k} 가 {UPLOAD_MAX_BAD}번 서버 디스크 대조에 실패했습니다 — 이 파일을 "
+                         f"목록에서 빼고 다시 올리거나 관리자에게 알리세요(디스크·저장소 점검): {f['rel']}",
+                         rel=f["rel"], chunk=k, attempts=_bad_count(f, k))
+
+
+def _unmark_bad(ctx: AppContext, upload_id: str, index: int, ks: list[int]) -> dict[str, Any]:
+    """청크 ks 를 받은 범위·청크 해시에서 빼고 대조 실패 횟수를 1씩 올린다. 갱신된 파일 항목을 돌려준다."""
+    with ctx.engine.begin() as conn:
+        up = _row(conn, upload_id, for_update=True)
+        files = [dict(x) for x in up["files"]]
+        f = files[index]
+        n = _n_chunks(int(f["size"]), int(f["chunk"]))
+        drop = set(ks)
+        got: list = []
+        for a, b in (f.get("got") or []):
+            for k in range(a, b):
+                if k not in drop:
+                    got = _r_add(got, k)
+        csha = {kk: v for kk, v in (f.get("csha") or {}).items() if int(kk) not in drop}
+        bad = dict(f.get("bad") or {})
+        for k in ks:
+            if 0 <= k < n:
+                bad[str(k)] = int(bad.get(str(k)) or 0) + 1
+        f.update(got=got, csha=csha, bad=bad)
+        conn.execute(update(uploads).where(uploads.c.id == upload_id).values(files=files, updated_at=func.now()))
+    return f
 
 
 def _prepare_files(root: str, up_dir: str, new: list[dict[str, Any]]) -> None:
@@ -552,6 +606,8 @@ def _plan(ctx: AppContext, principal: Principal, upload_id: str, index: int, off
         raise conflict("UPLOAD_OFFSET_MISMATCH", f"offset {offset} 은 청크 경계(chunk_size {c})가 아니거나 범위 밖입니다",
                        received=_contig_bytes(got, size, c), chunk_size=c)
     k = offset // c
+    if _bad_count(f, k) >= UPLOAD_MAX_BAD:
+        raise _corrupt_error(f, k)
     exp = _chunk_len(size, c, k)
     if content_length is None:
         raise DomainError("LENGTH_REQUIRED", "Content-Length 헤더가 필요합니다", status=411)
@@ -662,14 +718,23 @@ def open_sink(ctx: AppContext, pl: ChunkPlan) -> ChunkSink:
 
 def commit_chunk(ctx: AppContext, principal: Principal, pl: ChunkPlan, sink: ChunkSink,
                  chunk_sha256: str | None) -> dict[str, Any]:
-    """본문을 다 쓴 뒤: 길이·청크 sha256 확인 → 짧은 트랜잭션으로 got 표시 → 해시 추적기 → 마무리."""
+    """본문을 다 쓴 뒤: 길이·청크 sha256(헤더) 확인 → 디스크에서 다시 읽어 대조 → 짧은 트랜잭션으로 got·csha 표시 → 마무리."""
     sink.close()
     if sink.total != pl.exp_len:
         raise unprocessable("CHUNK_LENGTH_MISMATCH", f"받은 본문 {sink.total} B 가 기대 길이 {pl.exp_len} B 와 다릅니다 "
                             "(표시하지 않음 — 같은 청크를 다시 보내세요)", expected=pl.exp_len, chunk=pl.k)
-    if chunk_sha256 is not None and sink.h.hexdigest() != chunk_sha256.lower():
+    body_sha = sink.h.hexdigest()
+    if chunk_sha256 is not None and body_sha != chunk_sha256.lower():
         raise unprocessable("CHUNK_SHA256_MISMATCH", "청크 sha256 이 다릅니다(표시하지 않음) — 같은 청크를 다시 보내세요",
                             chunk=pl.k)
+    if _hash_range(sink.part, pl.offset, pl.exp_len) != body_sha:
+        f = _unmark_bad(ctx, pl.upload_id, pl.index, [pl.k])
+        log.warning("upload %s file %s chunk %s: 쓴 직후 디스크 대조 실패(%s회)", pl.upload_id, pl.rel, pl.k,
+                    _bad_count(f, pl.k))
+        if _bad_count(f, pl.k) >= UPLOAD_MAX_BAD:
+            raise _corrupt_error(f, pl.k)
+        raise unprocessable("CHUNK_VERIFY_FAILED", "서버 디스크에 쓴 청크가 받은 내용과 다릅니다(표시하지 않음) — 같은 청크를 "
+                            "다시 보내세요", chunk=pl.k, attempt=_bad_count(f, pl.k), rel=pl.rel)
     with ctx.engine.begin() as conn:
         up = _owned(conn, principal, pl.upload_id, for_update=True)
         _require_open(up)
@@ -681,20 +746,22 @@ def commit_chunk(ctx: AppContext, principal: Principal, pl: ChunkPlan, sink: Chu
             raise conflict("UPLOAD_FILE_DONE", f"이미 다 받은 파일입니다: {f['rel']}", received=int(f["size"]))
         got = _r_add(f.get("got") or [], pl.k)
         f["got"] = got
+        f["csha"] = {**(f.get("csha") or {}), str(pl.k): body_sha}
         conn.execute(update(uploads).where(uploads.c.id == pl.upload_id).values(files=files, updated_at=func.now()))
-    key = (pl.upload_id, pl.index)
-    part = os.path.join(pl.dir_path, *pl.rel.split("/")) + U.PART_SUFFIX
-    _advance_hash(key, part, _contig_bytes(got, pl.size, pl.chunk), block=False)     # 비차단: 다른 요청이 따라가는 중이면 건너뜀
     done, sha = False, None
     if not _r_missing(got, _n_chunks(pl.size, pl.chunk)):
         done, sha = _finalize_file(ctx, pl.upload_id, pl.index)
+        if not done:                                   # 그 사이 다른 요청이 범위를 바꿨을 수 있다 — 최신 범위로 응답
+            with ctx.engine.connect() as conn:
+                got = list(_row(conn, pl.upload_id)["files"][pl.index].get("got") or [])
     return _chunk_out(pl.index, got, pl.size, pl.chunk, pl.k, False, done, sha)
 
 
 # ---------------------------------------------------------------- 파일 마무리(멱등)
 def _finalize_file(ctx: AppContext, upload_id: str, index: int) -> tuple[bool, str | None]:
-    """모든 청크가 모인 프로토콜 2 파일을 마무리: 해시 끝까지 → fsync → 크기·sha256_expected 확인 → rename → done 표시.
-    이미 done 이면 (True, sha). 아직 덜 모였으면 (False, None)."""
+    """모든 청크가 모인 프로토콜 2 파일을 마무리: fsync → 디스크 전체 재해시(청크별 해시를 기록 csha 와 대조, 전체 sha256)
+    → 크기·sha256_expected 확인 → rename → done 표시. 어긋난 청크는 got 에서 빼고 422 UPLOAD_CHUNK_CORRUPT(그 청크만
+    다시 받음, 같은 청크 UPLOAD_MAX_BAD 번째면 UPLOAD_CORRUPT). 이미 done 이면 (True, sha). 아직 덜 모였으면 (False, None)."""
     root = _upload_root(ctx)
     key = (upload_id, index)
     with _flock(key):
@@ -714,20 +781,31 @@ def _finalize_file(ctx: AppContext, upload_id: str, index: int) -> tuple[bool, s
         part = p + U.PART_SUFFIX
         user_seg = U.user_segment(up["username"], up["user_id"])
         try:
-            reached = _advance_hash_locked(key, part, size)
             fd = os.open(part, os.O_RDWR | getattr(os, "O_BINARY", 0))
             try:
                 os.fsync(fd)
                 disk = os.fstat(fd).st_size
             finally:
                 os.close(fd)
+            sha, per, reached = _scan_part(part, size, c)
         except FileNotFoundError:
-            reached, disk = -1, -1
+            sha, per, reached, disk = "", [], -1, -1
         if reached != size or disk != size:
             _reset_file(ctx, upload_id, index, key)
             raise unprocessable("UPLOAD_SIZE_MISMATCH", f"디스크의 파일 크기({disk} B)가 선언 크기({size} B)와 다릅니다 — "
                                 f"이 파일을 처음부터 다시 올리세요: {f['rel']}", rel=f["rel"], received=0)
-        sha = _HASHES[key][0].hexdigest()
+        csha = f.get("csha") or {}
+        bad = [k for k, h in enumerate(per) if csha.get(str(k)) not in (None, h)]
+        if bad:
+            f2 = _unmark_bad(ctx, upload_id, index, bad)
+            worst = max(bad, key=lambda k: _bad_count(f2, k))
+            log.warning("upload %s file %s: 마무리 재해시에서 청크 %s 가 기록과 다름", upload_id, f["rel"], bad[:20])
+            if _bad_count(f2, worst) >= UPLOAD_MAX_BAD:
+                raise _corrupt_error(f2, worst)
+            raise unprocessable("UPLOAD_CHUNK_CORRUPT", f"서버 디스크의 청크 {', '.join(map(str, bad[:20]))} 가 받은 내용과 "
+                                f"다릅니다 — 그 청크만 다시 보내세요: {f['rel']}", rel=f["rel"], index=index,
+                                chunks=bad[:1000], received=_contig_bytes(f2.get("got") or [], size, c),
+                                attempt=_bad_count(f2, worst))
         if f.get("sha256_expected") and sha != f["sha256_expected"]:
             moved = U.move_to_backup(root, user_seg, part,
                                      f"{os.path.basename(up['dir_path'])}__{'_'.join(_segs(f))}.mismatch")
@@ -736,11 +814,13 @@ def _finalize_file(ctx: AppContext, upload_id: str, index: int) -> tuple[bool, s
                                 rel=f["rel"], expected=f["sha256_expected"], actual=sha, received=0, backup_path=moved)
         if os.path.lexists(p):
             raise conflict("UPLOAD_FILE_EXISTS", f"이미 있는 파일입니다(덮어쓰지 않음): {f['rel']}", rel=f["rel"])
+        list_sha = (hashlib.sha256("".join(per).encode("ascii")).hexdigest()
+                    if per and all(str(k) in csha for k in range(len(per))) else None)
         os.rename(part, p)
         with ctx.engine.begin() as conn:
             up = _row(conn, upload_id, for_update=True)
             files = [dict(x) for x in up["files"]]
-            files[index].update(done=True, sha256=sha)
+            files[index].update(done=True, sha256=sha, chunks_sha256=list_sha)
             conn.execute(update(uploads).where(uploads.c.id == upload_id).values(files=files, updated_at=func.now()))
         _hash_put(key, None, None)
         return True, sha
@@ -752,7 +832,7 @@ def _reset_file(ctx: AppContext, upload_id: str, index: int, key: tuple[str, int
     with ctx.engine.begin() as conn:
         up = _row(conn, upload_id, for_update=True)
         files = [dict(x) for x in up["files"]]
-        files[index].update(got=[], done=False, sha256=None)
+        files[index].update(got=[], done=False, sha256=None, csha={})
         conn.execute(update(uploads).where(uploads.c.id == upload_id).values(files=files, updated_at=func.now()))
 
 
@@ -1102,7 +1182,11 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
     with ctx.engine.connect() as conn:
         up0 = _owned(conn, principal, upload_id)
     if up0["state"] == OPEN:
-        _finalize_ready_files(ctx, up0)          # 다 모였는데 마무리 전인 파일(멱등) — 행 잠금 밖에서
+        try:
+            _finalize_ready_files(ctx, up0)      # 다 모였는데 마무리 전인 파일(멱등) — 행 잠금 밖에서
+        except DomainError as exc:
+            if exc.code != "UPLOAD_CHUNK_CORRUPT":
+                raise                            # 어긋난 청크는 got 에서 빠졌다 → 아래 누락 목록(UPLOAD_INCOMPLETE)으로 알림
     cfg = ctx.settings.upload
     with ctx.engine.begin() as conn:
         up = _owned(conn, principal, upload_id, for_update=True)
@@ -1123,6 +1207,10 @@ def complete(ctx: AppContext, principal: Principal, upload_id: str) -> dict[str,
                     ok = False
                 if not ok:
                     pending.append(_pending_item(cfg, i, f, 0))     # 디스크 크기 ≠ 선언 크기 → 전체 누락으로 본다
+                elif _is_p2(f) and f.get("got") is not None:
+                    miss = _r_missing(f["got"], _n_chunks(int(f["size"]), int(f["chunk"])))
+                    if miss:                                        # done 인데 받은 범위가 [0, n) 전체가 아님(기록 불일치)
+                        pending.append({"index": i, "rel": f["rel"], "missing": miss})
             else:
                 pending.append(_pending_item(cfg, i, f, _received(up, f)))
         if pending:

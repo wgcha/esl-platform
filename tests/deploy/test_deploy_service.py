@@ -90,6 +90,28 @@ def test_endpoint_command(tmp_path):
     assert r.returncode == 2
 
 
+def test_upload_holes_command_reads_runtime_config(tmp_path):
+    """v0.12.4(이슈 #50): `esl_service.py upload-holes --runtime` = 설정 storage.upload_root·upload.chunk_mb 로 읽기 전용 탐지."""
+    rt = _runtime(tmp_path)
+    cfg = rt / "config" / "esl_platform.yaml"
+    d = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    up = tmp_path / "esl-input"
+    (up / "u" / "x" / "rad").mkdir(parents=True)
+    d["storage"]["upload_root"] = str(up)
+    d.setdefault("upload", {})["chunk_mb"] = 1
+    cfg.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+    mb = 1024 * 1024
+    bad = bytearray(b"a" * (3 * mb))
+    bad[2 * mb:2 * mb + 128 * 1024] = bytes(128 * 1024)
+    (up / "u" / "x" / "rad" / "run_0001.sta").write_bytes(bytes(bad))
+    before = (up / "u" / "x" / "rad" / "run_0001.sta").stat().st_mtime_ns
+    r = subprocess.run([PY, str(LAUNCHER), "upload-holes", "--runtime", str(rt), "--no-db"], capture_output=True,
+                       text=True, timeout=60, encoding="utf-8")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "run_0001.sta" in r.stdout and "청크 2 @ 2,097,152" in r.stdout
+    assert (up / "u" / "x" / "rad" / "run_0001.sta").stat().st_mtime_ns == before
+
+
 def _wait_health(port: int, proc: subprocess.Popen, timeout: float = 60) -> None:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     end = time.time() + timeout
