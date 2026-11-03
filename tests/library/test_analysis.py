@@ -1,4 +1,5 @@
 """P2 §3·§8 분석 단위 시험: 정규화 계수, k-medoids 재현성, SVD 모드 수, 대상 없는 격자 분석·포락·최악 케이스."""
+import html
 import json
 import re
 
@@ -210,3 +211,35 @@ def test_report_inline_json_escaped(entries, tmp_path):
     assert not re.search(r"</script|<script|<!--", blob, re.I)
     assert json.loads(blob)["analysis_id"] == evil
     assert doc.count("<script") == 2 and "<script>alert(1)" not in doc
+
+
+def test_report_scene_table_readable(entries, tmp_path):
+    """씬 표: 항목 열 숨김(행 title 툴팁), 열 순서, 정렬 data-v·필터 data 속성 유지, 절 머리 설명 박스."""
+    res, arr = an.run(entries, entries[0], {"n_representative": 2})
+    out = str(tmp_path / "report.html")
+    ra.write(res, out, arr, None, {"analysis_id": "A1"})
+    doc = open(out, encoding="utf-8").read()
+    tbl = re.search(r"<table id='scenes' class='sortable'>(.*?)</table>", doc, re.S).group(1)
+    heads = [html.unescape(h) for h in re.findall(r"<th class='sort'>(.*?)</th>", tbl)]
+    assert heads == ["#", "제품", "인치", "시나리오", "seq", "유형", "orient", "scene", "합력 Σ|F|", "변형 모드",
+                     "검증", "배율", "역할", "hotspot 오차"]
+    assert "항목" not in heads and "클러스터" not in heads
+    rows = re.findall(r"<tr (title='[^']*'[^>]*)>(.*?)</tr>", tbl.split("<tbody>")[1], re.S)
+    assert len(rows) == len(res["cases"])
+    for (attrs, body), c in zip(rows, res["cases"]):
+        assert f"title='{c['entry_id']}'" in attrs and f"data-cluster='{c['cluster']}'" in attrs
+        assert "data-drop=" in attrs and "data-verdict=" in attrs
+        assert c["entry_id"] not in body                       # 해시 코드는 셀에 안 보임
+        tds = re.findall(r"<td([^>]*)>(.*?)</td>", body, re.S)
+        assert len(tds) == len(heads)
+        col = dict(zip(heads, tds))
+        assert f"data-v='{c['index']}'" in col["#"][0]
+        assert f"data-v='{c['sum_abs_f']}'" in col["합력 Σ|F|"][0]
+        assert f"data-v='{c['cluster']}'" in col["변형 모드"][0] and col["변형 모드"][1] == f"C{c['cluster'] + 1}"
+        assert "data-v=" in col["hotspot 오차"][0] and col["hotspot 오차"][1].endswith("%")
+    assert "변형 모드 전체" in doc and "r.getAttribute('title')" in doc
+    keys = re.findall(r"data-explain='(\w+)'", doc)
+    for k in ("target", "scenes", "envelope", "modes", "representative", "scatter", "deck", "limits"):
+        assert k in keys
+    assert html.escape(ra.EXPLAIN["envelope"][0]) in doc and "비드 후보" in doc
+    assert not re.search(r"(src|href)=['\"]?https?:", doc)

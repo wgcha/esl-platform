@@ -97,7 +97,60 @@ svg .ol{stroke:var(--fg);stroke-width:1.2;fill:none;opacity:.75}
 svg rect.cell:hover,svg .pt:hover{stroke:var(--fg);stroke-width:1.5}
 ul.lim li{margin:4px 0}
 code{font-size:12px}
+.card.explain{border-left:4px solid var(--seq)}.card.explain .q{font-weight:600;margin:0 0 2px}
+.card.explain p{margin:2px 0;font-size:13px;color:var(--muted)}
 """
+
+# 절 머리 쉬운 설명(질문 1줄 + 읽는 법 1~3줄, 비전문 용어) — 분석·버전 비교 보고서 공용, 문구는 여기 한곳.
+EXPLAIN = {
+    "target": ("무엇을 기준으로 분석했나?",
+               ["분석에 넣은 씬의 조건(필터)과 계산 설정. 대상 모델이 있으면 모든 씬 하중을 그 모델 위로 옮겨 비교한다."]),
+    "scenes": ("어떤 씬들이 들어갔나?",
+               ["한 줄 = 낙하 씬 1개. 머리를 누르면 정렬, 위 칸으로 거르기. 줄에 마우스를 올리면 항목 ID.",
+                "합력 Σ|F| = 그 씬이 판에 주는 힘의 총량, 변형 모드 = 비슷한 하중 패턴끼리 묶은 번호, "
+                "hotspot 오차 = 등가하중이 원래 낙하 결과를 얼마나 잘 재현했는지(작을수록 좋음)."]),
+    "envelope": ("어디가 가장 세게 맞나?",
+                 ["모든 낙하 씬을 겹쳐 셀마다 가장 큰 힘만 남긴 지도.",
+                  "진한 셀 = 어떤 씬이든 크게 맞는 자리(비드 후보)."]),
+    "modes": ("하중 패턴이 몇 가지인가?",
+              ["씬들의 하중을 기본 패턴(모드)의 조합으로 나눔.",
+               "누적 에너지 = 상위 모드 몇 개로 전체 씬 하중의 몇 %를 설명하는지.",
+               "빨리 90%에 닿으면 소수 대표 씬으로 설계해도 대부분 커버."]),
+    "representative": ("설계에 넣을 씬은?",
+                       ["비슷한 씬 묶음(변형 모드)마다 중심에 있는 실제 씬 1개."]),
+    "scatter": ("어떤 씬들이 서로 비슷한가?",
+                ["점 1개 = 씬 1개, 가로·세로 = 그 씬에 모드1·모드2가 섞인 양.",
+                 "가까운 점 = 비슷한 하중 패턴, 동떨어진 점 = 독특한 씬(따로 확인)."]),
+    "stats": ("씬 종류·크기별로 힘이 어떻게 다른가?",
+              ["점 1개 = 씬 1개, 오른쪽일수록 큰 힘(또는 큰 오차). 색·모양 = 변형 모드."]),
+    "deck": ("최적화 해석에 실제로 넣은 하중은?",
+             ["subcase 1개 = 최적화가 동시에 버텨야 하는 하중 1개. 씬이 너무 많으면 대표·최악 씬만 남긴다."]),
+    "deck_subcase": ("덱에 들어간 씬은?",
+                     ["대표 = 묶음의 중심 씬, 최악 = 가장 크게 맞는 씬. 이 하중들로 비드 위치를 찾는다."]),
+    "excluded": ("빠진 씬은 왜 빠졌나?",
+                 ["subcase 수 상한 등으로 덱에서 뺀 씬과 이유. 대표 씬이 비슷한 하중을 대신한다."]),
+    "limits": ("이 결과를 어디까지 믿을 수 있나?",
+               ["계산에 쓴 단순화 가정. 큰 결정 전에 해당 항목을 확인."]),
+    # 버전 비교 보고서(compare.py)
+    "cmp_scenes": ("설계를 바꾼 뒤 씬별 하중이 얼마나 달라졌나?",
+                   ["cos = 하중 패턴이 얼마나 같은지(1 = 완전히 같음, 낮을수록 다름). "
+                    "합력비 = 새 힘 총량 ÷ 옛 힘 총량(1 = 같음).",
+                    "hotspot 이동 = 가장 세게 변형되는 자리가 옮겨 간 거리(0 = 그대로, 판 크기 대비). "
+                    "ε_max 비 = 새 최대 변형률 ÷ 옛 최대 변형률(1 넘으면 더 휨)."]),
+    "cmp_envelope": ("어디서 힘이 늘거나 줄었나?",
+                     ["모든 씬을 겹친 셀별 최대 힘을 새 버전 − 옛 버전으로 뺀 지도. 파랑 = 늘어남, 주황 = 줄어듦."]),
+    "cmp_reps": ("대표 씬이 그대로인가?",
+                 ["두 버전에서 각각 비슷한 씬을 묶어 중심 씬을 다시 고름. 같으면 이전 최적화 결과를 그대로 써도 된다."]),
+    "cmp_limits": ("이 비교를 어디까지 믿을 수 있나?",
+                   ["비교 방식의 단순화 가정. 판정 신뢰 배지가 있으면 참고용으로만 본다."]),
+}
+
+
+def explain(key: str) -> str:
+    """EXPLAIN[key] 설명 박스(기존 card 스타일)."""
+    q, lines = EXPLAIN[key]
+    return (f"<div class='card explain' data-explain='{_e(key)}'><p class='q'>{_e(q)}</p>"
+            + "".join(f"<p>{_e(t)}</p>" for t in lines) + "</div>")
 
 JS = """
 (function(){
@@ -113,7 +166,8 @@ JS = """
  var q=document.getElementById('f-text'),d=document.getElementById('f-drop'),v=document.getElementById('f-verdict'),
      c=document.getElementById('f-cluster'),cnt=document.getElementById('f-count');
  function apply(){var rows=document.querySelectorAll('#scenes tbody tr');var n=0;
-  rows.forEach(function(r){var ok=(!q||!q.value||r.textContent.toLowerCase().indexOf(q.value.toLowerCase())>=0)&&
+  rows.forEach(function(r){var tx=(r.textContent+' '+(r.getAttribute('title')||'')).toLowerCase();
+   var ok=(!q||!q.value||tx.indexOf(q.value.toLowerCase())>=0)&&
    (!d||!d.value||r.getAttribute('data-drop')===d.value)&&(!v||!v.value||r.getAttribute('data-verdict')===v.value)&&
    (!c||!c.value||r.getAttribute('data-cluster')===c.value);r.style.display=ok?'':'none';if(ok)n++;});
   if(cnt)cnt.textContent=n+' / '+rows.length;}
@@ -367,6 +421,10 @@ def _scene_label(c) -> str:
             f" S{c.get('scene') if c.get('scene') is not None else '?'}")
 
 
+# 씬 표 열 순서: # → 제품·인치 → 씬 관련 → 합력 → 변형 모드 → 검증·배율·역할 → hotspot 오차(항목 ID 는 행 title 툴팁).
+SCENE_COLS = ("#", "제품", "인치", "시나리오", "seq", "유형", "orient", "scene", "합력 Σ|F|", "변형 모드", "검증",
+              "배율", "역할", "hotspot 오차")
+
 DECK_MODE_KO = {"all": "모든 씬", "representative": "대표", "representative+worst": "대표+최악"}
 
 
@@ -393,13 +451,13 @@ def _deck_section(r) -> str:
            f"<tr><th>제외된 씬</th><td>{len(d.get('excluded') or [])}개</td></tr></table>"]
     sub = d.get("cases") or []
     if sub and d["mode"] != "all":
-        out.append("<h3>덱 subcase</h3><table><thead><tr><th>라벨</th><th>역할</th><th>씬</th><th>항목</th></tr></thead><tbody>"
+        out.append("<h3>덱 subcase</h3>" + explain("deck_subcase") + "<table><thead><tr><th>라벨</th><th>역할</th><th>씬</th><th>항목</th></tr></thead><tbody>"
                    + "".join(f"<tr><td>{_e(lc['label'])}</td><td>{'대표(medoid)' if lc['role'] == 'medoid' else '최악'}"
                              f"</td><td>{_e(_scene_label(cases[lc['case_index']]))}</td><td><code>{_e(lc['entry_id'])}"
                              "</code></td></tr>" for lc in sub) + "</tbody></table>")
     ex = d.get("excluded") or []
     if ex:
-        out.append("<h3>제외된 씬과 사유</h3><div class='tablewrap'><table><thead><tr><th>#</th><th>씬</th><th>항목</th>"
+        out.append("<h3>제외된 씬과 사유</h3>" + explain("excluded") + "<div class='tablewrap'><table><thead><tr><th>#</th><th>씬</th><th>항목</th>"
                    "<th>사유</th></tr></thead><tbody>"
                    + "".join(f"<tr><td class='num'>{x['case_index']}</td><td>{_e(x.get('scene'))}</td><td><code>"
                              f"{_e(x['entry_id'])}</code></td><td class='small'>{_e(x['reason'])}</td></tr>" for x in ex)
@@ -441,7 +499,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     chips = "".join(f"<span class='chip'>{_e(k)} = {_e(v)}</span>" for k, v in filt.items()) or \
         "<span class='muted'>없음(전체 활성 항목)</span>"
     tm = (tgt or {}).get("model") or {}
-    S.append("<h2>1. 대상 · 필터 · 설정</h2><div class='grid2'><div class='card'><h3>대상 모델</h3>")
+    S.append("<h2>1. 대상 · 필터 · 설정</h2>" + explain("target") + "<div class='grid2'><div class='card'><h3>대상 모델</h3>")
     if tgt:
         S.append(f"<table><tr><th>항목</th><td>{_e(tgt['entry_id'])}</td></tr><tr><th>제품·인치</th><td>"
                  f"{_e(tm.get('product'))} · {_e(tm.get('inch'))}\"</td></tr><tr><th>파트</th><td>{_e(tm.get('part_id'))}"
@@ -466,11 +524,9 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
              "<select id='f-drop'><option value=''>낙하 유형 전체</option>"
              + "".join(f"<option>{_e(d)}</option>" for d in drops) + "</select><select id='f-verdict'>"
              "<option value=''>검증 전체</option>" + "".join(f"<option>{_e(v)}</option>" for v in verdicts)
-             + "</select><select id='f-cluster'><option value=''>클러스터 전체</option>"
+             + "</select><select id='f-cluster'><option value=''>변형 모드 전체</option>"
              + "".join(f"<option value='{k}'>C{k + 1}</option>" for k in clus)
              + "</select><span class='muted small' id='f-count'></span></div>")
-    cols = ["#", "항목", "제품", "인치", "시나리오", "seq", "유형", "orient", "scene", "검증", "hotspot 오차",
-            "Σ|F|", "배율", "클러스터", "역할"]
     rows = []
     roles = {lc["case_index"]: lc["label"] for lc in r["load_cases"]}
     if r.get("deck") and r["deck"]["mode"] == "all":
@@ -478,18 +534,30 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
                  {c["index"]: roles.get(c["index"], "") for c in cases}.items()}
     for c in cases:
         role = roles.get(c["index"], "")
+        he = c.get("hotspot1_rel_err")
+        cells = {
+            "#": f"<td class='num' data-v='{c['index']}'>{c['index']}"
+                 f"{' <span class=chip>대상</span>' if c.get('self') else ''}</td>",
+            "제품": f"<td>{_e(c.get('product'))}</td>",
+            "인치": f"<td class='num'>{_e(c.get('inch'))}</td>",
+            "시나리오": f"<td>{_e(c.get('scenario'))}</td>",
+            "seq": f"<td class='num'>{_e(c.get('seq'))}</td>",
+            "유형": f"<td>{_e(c.get('drop_class'))}</td>",
+            "orient": f"<td>{_e(c.get('orient'))}</td>",
+            "scene": f"<td class='num'>{_e(c.get('scene'))}</td>",
+            "합력 Σ|F|": f"<td class='num' data-v='{c['sum_abs_f']}'>{_fmt(c['sum_abs_f'])}</td>",
+            "변형 모드": f"<td data-v='{c['cluster']}'>C{c['cluster'] + 1}</td>",
+            "검증": f"<td data-v='{_e(c.get('verdict'))}'>{_verdict(c.get('verdict'))}</td>",
+            "배율": f"<td class='num'>{_fmt(c['scale_factor'], 3)}</td>",
+            "역할": f"<td>{_e(role)}</td>",
+            "hotspot 오차": f"<td class='num' data-v='{he if he is not None else -1}'>{_pct(he)}</td>",
+        }
         rows.append(
-            f"<tr data-drop='{_e(c.get('drop_class'))}' data-verdict='{_e(c.get('verdict'))}' "
-            f"data-cluster='{c['cluster']}'><td class='num'>{c['index']}</td><td><code>{_e(c['entry_id'])}</code>"
-            f"{' <span class=chip>대상</span>' if c.get('self') else ''}</td><td>{_e(c.get('product'))}</td>"
-            f"<td class='num'>{_e(c.get('inch'))}</td><td>{_e(c.get('scenario'))}</td><td class='num'>{_e(c.get('seq'))}</td>"
-            f"<td>{_e(c.get('drop_class'))}</td><td>{_e(c.get('orient'))}</td><td class='num'>{_e(c.get('scene'))}</td>"
-            f"<td data-v='{_e(c.get('verdict'))}'>{_verdict(c.get('verdict'))}</td>"
-            f"<td class='num' data-v='{c.get('hotspot1_rel_err') if c.get('hotspot1_rel_err') is not None else -1}'>"
-            f"{_pct(c.get('hotspot1_rel_err'))}</td><td class='num' data-v='{c['sum_abs_f']}'>{_fmt(c['sum_abs_f'])}</td>"
-            f"<td class='num'>{_fmt(c['scale_factor'], 3)}</td><td>C{c['cluster'] + 1}</td><td>{_e(role)}</td></tr>")
-    S.append("<div class='tablewrap'><table id='scenes' class='sortable'><thead><tr>"
-             + "".join(f"<th class='sort'>{_e(h)}</th>" for h in cols) + "</tr></thead><tbody>" + "".join(rows)
+            f"<tr title='{_e(c['entry_id'])}' data-entry='{_e(c['entry_id'])}' data-drop='{_e(c.get('drop_class'))}' "
+            f"data-verdict='{_e(c.get('verdict'))}' data-cluster='{c['cluster']}'>"
+            + "".join(cells[h] for h in SCENE_COLS) + "</tr>")
+    S.append(explain("scenes") + "<div class='tablewrap'><table id='scenes' class='sortable'><thead><tr>"
+             + "".join(f"<th class='sort'>{_e(h)}</th>" for h in SCENE_COLS) + "</tr></thead><tbody>" + "".join(rows)
              + "</tbody></table></div>")
     # ---- 포락
     env = np.asarray(arrays["env_mag"])
@@ -501,7 +569,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
              f"방향(ξ,η,n) = ({ed[i, j, 0]:.2f}, {ed[i, j, 1]:.2f}, {ed[i, j, 2]:.2f})"
              + (f"\n대상 노드 {int(cnt[i, j])}" if cnt is not None else "") for j in range(ny)] for i in range(nx)]
     am = r["envelope"]["argmax_cell"]
-    S.append("<h2>3. 포락 맵</h2><p class='muted'>셀별 max<sub>k</sub> |F<sub>cell</sub>| (대상 메시 위 매핑·정규화된 "
+    S.append("<h2>3. 포락 맵</h2>" + explain("envelope") + "<p class='muted'>셀별 max<sub>k</sub> |F<sub>cell</sub>| (대상 메시 위 매핑·정규화된 "
              "하중의 셀 합력). 화살표 = 최대 케이스의 면내(ξ,η) 방향, 선 = 대상 형상 외곽(정규화 좌표). 셀에 마우스를 "
              "올리면 값·씬·방향.</p><div class='card'>"
              + heatmap(env, fr, outline, tips, "seq", vec=ed[..., :2] * env[..., None], title="셀 포락 max|F|",
@@ -510,7 +578,8 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     sv = r["svd"]
     nm = min(len(sv["cum_energy"]), 30)
     xs = list(range(1, nm + 1))
-    S.append("<h2>4. 대표 케이스</h2><div class='grid2'><div class='card'>"
+    S.append("<h2>4. 대표 케이스</h2><div class='grid2'>" + explain("modes") + explain("representative")
+             + "</div><div class='grid2'><div class='card'>"
              + line_chart(xs, sv["cum_energy"][:nm], "SVD 누적 에너지", "모드 번호", "누적 에너지",
                           hline=sv["threshold"], vline=sv["n_modes"], bars=sv["energy"][:nm])
              + f"<p class='small muted'>특징 {_e(sv.get('feature'))}({'행 단위 노름' if sv.get('rows') == 'unit' else '원값'}) "
@@ -543,7 +612,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     S.append("</div>")
     # ---- 통계 뷰
     st = r["stats"]
-    S.append("<h2>5. 통계 뷰</h2><div class='grid2'>")
+    S.append("<h2>5. 통계 뷰</h2><div class='grid2'>" + explain("scatter") + explain("stats") + "</div><div class='grid2'>")
     for key, lab in (("drop_class", "씬 유형별 Σ|F|"), ("inch", "인치별 Σ|F|")):
         grp = []
         for v, g in st["groups"].get(key, {}).items():
@@ -570,7 +639,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
                      + "</div>")
     S.append("</div>")
     # ---- 최적화 설정
-    S.append("<h2>6. 비드 최적화 설정</h2>")
+    S.append("<h2>6. 비드 최적화 설정</h2>" + explain("deck"))
     S.append(_deck_section(r))
     if opt_summary:
         b = opt_summary.get("bead") or {}
@@ -601,7 +670,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
                  f"합력·합모멘트 보존 상대오차 최대 {_fmt(m['conservation_rel_max'], 2)}, 병합 그룹 "
                  f"{m['n_merged_groups_total']}개, 평형 보정량 최대 {_pct(m['equilibrate_correction_rel_max'])}.</p>")
     # ---- 한계
-    S.append("<h2>7. 한계</h2><ul class='lim'>"
+    S.append("<h2>7. 한계</h2>" + explain("limits") + "<ul class='lim'>"
              "<li><b>선형 ESL</b>: F_eq 는 t* 순간의 강체 제거 변위장을 선형 탄성 쉘로 재현하는 하중이다. 소성·접촉·"
              "대변형 비선형은 반영되지 않으며 소성 영역 응력은 과대평가된다. CUMULATIVE(누적 소성) 씬은 오차가 커질 수 "
              "있으므로 검증 오차로 거른다.</li>"
