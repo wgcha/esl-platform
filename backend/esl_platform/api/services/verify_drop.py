@@ -238,7 +238,7 @@ def _plan(ctx: AppContext, conn, principal: Principal, body) -> dict[str, Any]:
         raise not_found("DOE_NOT_FOUND", "강성 평가 스터디를 찾을 수 없습니다")
     _view(principal, s["project_id"])
     require_execute(principal, s["project_id"])
-    if s["scenario"] != "same":
+    if s["scenario"] not in ("same", "select"):     # v0.15.0 select = ① 같은 형태(원 ID·/NODE 좌표만 바뀐 사본, §8.4)
         raise unprocessable("VD_SCENARIO_UNSUPPORTED", messages.text("VD_SCENARIO_UNSUPPORTED"), scenario=s["scenario"])
     if _derived_phase(s, doe_repo.latest_job(conn, s["id"])) != "DONE":
         raise conflict("RESULT_NOT_READY", "DOE 실행 결과가 아직 없습니다")

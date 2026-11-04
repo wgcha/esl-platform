@@ -72,6 +72,13 @@ ERROR_CODES_422 = ("DOE_PARAM_UNKNOWN", "DOE_RANGE_INVALID", "DOE_TOO_LARGE", "D
 
 
 # ---------------------------------------------------------------- 공통
+def _select():
+    """v0.15.0 select 서비스(doe_select — 순환 import 를 피해 지연)."""
+    from . import doe_select
+
+    return doe_select
+
+
 def cfg(ctx: AppContext) -> dict[str, Any]:
     return bead_doe_settings(ctx.settings)
 
@@ -147,9 +154,19 @@ def compare_reason(c: dict[str, Any], gmsh_ready: bool) -> str | None:
     return None
 
 
+def select_reason(c: dict[str, Any]) -> str | None:
+    """select 비활성 사유(BS-D-2): DOE_DISABLED·SELECT_DISABLED — paicad·gmsh 는 보지 않는다."""
+    if not c.get("enabled"):
+        return "DOE_DISABLED"
+    if not (c.get("select") or {}).get("enabled", True):
+        return "SELECT_DISABLED"
+    return None
+
+
 def status(ctx: AppContext) -> dict[str, Any]:
-    """{enabled, reason, paicad{ready, version, pinned, warning}, gmsh{ready, version}, scenarios{same, mesh, step, compare},
-    compare_reason}. enabled·reason 은 paicad 기준(①②③), ④ compare 는 bead_doe.enabled ∧ compare.enabled ∧ gmsh(SC-D-3)."""
+    """{enabled, reason, paicad{ready, version, pinned, warning}, gmsh{ready, version}, scenarios{same, mesh, step, compare,
+    select}, compare_reason, select_reason}. enabled·reason 은 paicad 기준(①②③), ④ compare 는 bead_doe.enabled ∧
+    compare.enabled ∧ gmsh(SC-D-3), select 는 bead_doe.enabled ∧ select.enabled(BS-D-2, paicad 무관)."""
     c = cfg(ctx)
     ok, reason = paicad_exe_status(ctx.settings)
     rec = _worker_record(ctx, c) if c.get("enabled") else None      # gmsh 점검은 paicad 와 무관하게 읽는다(④)
@@ -167,9 +184,11 @@ def status(ctx: AppContext) -> dict[str, Any]:
     gmsh = {"ready": bool(gm.get("ready")), "version": gm.get("version")}
     enabled = reason is None
     cr = compare_reason(c, gmsh["ready"])
+    sr = select_reason(c)
     return {"enabled": enabled, "reason": reason, "paicad": paicad, "gmsh": gmsh,
-            "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"], "compare": cr is None},
-            "compare_reason": cr}
+            "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"], "compare": cr is None,
+                          "select": sr is None},
+            "compare_reason": cr, "select_reason": sr}
 
 
 COMPARE_DISABLED_MSG = {
@@ -179,8 +198,18 @@ COMPARE_DISABLED_MSG = {
 }
 
 
+SELECT_DISABLED_MSG = {
+    "DOE_DISABLED": "강성 평가 스터디가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)",
+    "SELECT_DISABLED": "비드 직접 선택이 꺼져 있습니다(설정 bead_doe.select.enabled — 관리자 문의)",
+}
+
+
 def require_enabled(ctx: AppContext, scenario: str | None = None) -> dict[str, Any]:
     st = status(ctx)
+    if scenario == "select":                        # BS-D-2: paicad 없음·버전 낮음·gmsh 없음은 select 를 막지 않는다
+        if st["select_reason"]:
+            raise DomainError(st["select_reason"], SELECT_DISABLED_MSG[st["select_reason"]], status=503)
+        return st
     if scenario == "compare":                       # SC-D-3: paicad 없음·버전 낮음은 ④ 를 막지 않는다
         if st["compare_reason"]:
             raise DomainError(st["compare_reason"], COMPARE_DISABLED_MSG[st["compare_reason"]], status=503)
@@ -230,6 +259,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
     c = cfg(ctx)
     st = status(ctx)
     d = c["doe"]
+    sc = c["select"]
     return {**st, "max_entries": int(c["max_entries"]), "max_designs": int(c["max_designs"]),
             "doe": {"methods": ["lhs", "halton", "fullfact"], "default_method": d["default_method"],
                     "default_n": int(d["default_n"]), "seed": int(d["seed"]), "levels_default": int(d["levels_default"]),
@@ -241,7 +271,11 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "method_sources": method_sources(principal),
             "compare": {"enabled": st["scenarios"]["compare"], "reason": st["compare_reason"],
                         "max_shapes": int(c["compare"]["max_shapes"]), "total_max_mb": float(c["compare"]["total_max_mb"]),
-                        "mesh_size_mm": float(c["compare"]["mesh"]["size_mm"])}}
+                        "mesh_size_mm": float(c["compare"]["mesh"]["size_mm"])},
+            "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
+                       "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
+                       "max_tiers": int(sc["max_tiers"]),
+                       "blend": {"min_mm": float(sc["blend"]["min_mm"]), "max_mm": float(sc["blend"]["max_mm"])}}}
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
@@ -313,19 +347,23 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
         return r if _internal else r["out"]
     if body.shapes is not None:
         raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
-    if not body.step_upload_id:
+    if body.scenario == "select":
+        if body.step_upload_id or body.mesh_upload_id or body.part_title:
+            raise unprocessable("INVALID_PARAMS", "step_upload_id·mesh_upload_id·part_title 은 '비드 직접 선택'에서 쓰지 않습니다"
+                                "(기준 = 같은 모델 Case 메시)")
+    elif not body.step_upload_id:
         raise unprocessable("INVALID_PARAMS", "step_upload_id 가 필요합니다")
     if body.scenario != "mesh" and (body.mesh_upload_id or body.part_title):
         raise unprocessable("INVALID_PARAMS", "mesh_upload_id·part_title 은 '다른 모델(메시 있음)'에서만 지정합니다")
     with ctx.engine.connect() as conn:
         rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
     rows = backfill_opt_meta(ctx, rows)
-    step_out, step_p = _step_input(ctx, principal, body, c)
+    step_out, step_p = _step_input(ctx, principal, body, c) if body.scenario != "select" else (None, None)
     out: dict[str, Any] = {"ok": True, "step": step_out, "base": None, "mesh": None, "entries": [], "size": None,
                            "props_default": None, "mesh_size_default_mm": None, "warnings": []}
     mat: dict[str, Any] = {"rows": rows, "step": step_p, "base": None, "base_db": None, "mesh": None,
                            "props_default": None, "mesh_size_default_mm": None}
-    if body.scenario == "same":
+    if body.scenario in ("same", "select"):       # select = ① 같은 모델 기준(BS-D-1)
         same = _same_model_rows(rows)
         out["entries"] = [{"entry_id": r["entry_id"], "ok": bool(r["same_model"]), "reason": r["reason"]} for r in same]
         out["ok"] = all(r["same_model"] for r in same)
@@ -584,10 +622,15 @@ def _doe_out(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str,
     if not isinstance(doe, dict):
         return None
     d = {k: doe.get(k) for k in ("rev", "spec", "matrix_sha256", "n_designs")}
+    if s.get("scenario") == "select":
+        d["selection_sha256"] = doe.get("selection_sha256")
     pv = doe.get("preview")
     if isinstance(pv, dict):
+        sk_keys = ("collision", "fixed", "geom") + (("mesh",) if s.get("scenario") == "select" else ())
         p = {"rev": pv.get("rev"), "matrix_sha256": pv.get("matrix_sha256"), "ok": int(pv.get("ok") or 0),
-             "skipped": {k: int((pv.get("skipped") or {}).get(k) or 0) for k in ("collision", "fixed", "geom")}}
+             "skipped": {k: int((pv.get("skipped") or {}).get(k) or 0) for k in sk_keys}}
+        if s.get("scenario") == "select":   # BS-D-3: 미리보기는 선택 sha 까지 같아야 유효
+            p["selection_sha256"] = pv.get("selection_sha256") or doe.get("selection_sha256")
         cells = preview_cells(ctx, s, c)
         if cells is not None:
             p["cells"] = cells
@@ -616,10 +659,13 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 "boundary": p0.get("boundary") or {"n_warn": 0, "n_info": 0}}
         if s["scenario"] == "compare":      # ④ 준비 요약(형상 상태·요소 수·실패 사유)
             prep.update({k: p0.get(k) for k in ("n_shapes", "n_ready", "failed", "reference_source", "shapes", "mesh")})
+        elif s["scenario"] == "select":     # select 준비 요약(BD_PREP_REGISTER — 노드·요소 수·고정 출처)
+            prep.update({k: p0.get(k) for k in ("n_nodes", "n_elems", "fixed")})
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
             "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
             "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
-            "result_ready": rr, "created_by_name": s["created_by_name"], "created_at": s["created_at"]}
+            "result_ready": rr, "created_by_name": s["created_by_name"], "created_at": s["created_at"],
+            "selection": _select().selection_summary(s)}
 
 
 def list_studies(ctx: AppContext, principal: Principal, project_id: str | None) -> list[dict[str, Any]]:
@@ -682,12 +728,13 @@ def _validate_step_extras(body, c: dict[str, Any], mat: dict[str, Any]) -> tuple
 
 def _insert_study_job(ctx: AppContext, principal: Principal, *, sid: str, project_id: str, scenario: str, title: str,
                       entry_ids: list[str], base_db: dict | None, inputs: dict[str, Any], params: dict[str, Any],
-                      warns: list) -> dict[str, Any]:
+                      warns: list, selection: dict | None = None) -> dict[str, Any]:
     with ctx.engine.begin() as conn:
         s = doe_repo.insert_study(conn, id=sid, project_id=project_id, scenario=scenario, title=title,
                                   entry_ids=entry_ids, base=_jsonable(base_db) if base_db else null(),
                                   inputs=_jsonable(inputs), phase="PREP", dir_rel=f"{DOE_DIR}/{sid}",
-                                  created_by=principal.user_id, created_by_name=principal.display_name)
+                                  created_by=principal.user_id, created_by_name=principal.display_name,
+                                  **({"selection": _jsonable(selection)} if selection is not None else {}))
         job = _insert_job(conn, principal, s, "DOE_PREP", params, warns=warns)
         return study_out(ctx, conn, s, job)
 
@@ -753,7 +800,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if body.scenario == "compare":
         props, _h = _validate_step_extras(body, c, mat)
         return _create_compare(ctx, principal, body, out, mat, props)
-    if body.scenario == "same" and not out["ok"]:
+    if body.scenario in ("same", "select") and not out["ok"]:
         bad = [e for e in out["entries"] if not e["ok"]]
         raise unprocessable("MODEL_MISMATCH", f"기준 모델과 다른 ESL {len(bad)}개 — '같은 모델' DOE 는 같은 모델만"
                             "(다른 모델은 빼거나 '다른 모델' 시나리오 사용)", entries=bad)
@@ -762,11 +809,17 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     rows = mat["rows"]
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)                    # 경로 안전성(실제 생성은 워커)
-    title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
+    if body.scenario == "select":
+        b0 = out.get("base") or {}
+        label = b0.get("case_title") or b0.get("part_title") or ""
+        title = (body.title or "").strip() or f"강성 평가 스터디 {label} (비드 직접 선택)".replace("  ", " ")
+    else:
+        title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
     part_title = (mat["mesh"] or {}).get("part_title") if body.scenario == "mesh" else (
-        (mat["base"] or {}).get("part_title") if body.scenario == "same" else None)
+        (mat["base"] or {}).get("part_title") if body.scenario in ("same", "select") else None)
     step_p = mat["step"]
-    inputs = {"step": {"upload_id": step_p["upload_id"], "file_name": step_p["file_name"], "sha256": step_p["sha256"]},
+    inputs = {"step": {"upload_id": step_p["upload_id"], "file_name": step_p["file_name"], "sha256": step_p["sha256"]}
+              if step_p else None,
               "mesh": None, "part_title": part_title, "inch": body.inch, "props": props, "mesh_size_mm": h}
     if mat["mesh"]:
         mp = mat["mesh"]
@@ -778,7 +831,9 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
            "core": copy.deepcopy(ctx.config.core or {}), "mapping": (lib_cfg or {}).get("mapping"),
            "entries": [{"id": e["id"], "dir": entry_folder(ctx, e), "label": _entry_label(e), "case": e.get("case_id")}
                        for e in rows],
-           "step": dict(step_p), "inch": body.inch}
+           "inch": body.inch}
+    if step_p:
+        doe["step"] = dict(step_p)
     if mat["base"]:
         doe["base"] = dict(mat["base"])
     if mat["mesh"]:
@@ -825,6 +880,8 @@ def params_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any
     s, job = _viewable(ctx, principal, sid)
     _no_compare(s)
     _require_prep(s, job)
+    if s["scenario"] == "select":       # 변수 = 저장 선택(BS-D-6·7) — prep/params.json 없음
+        return _select().params_table(_select().require_selection(ctx, s, c))
     doc = _params_doc(ctx, s, c)
     beads = []
     for b in doc.get("beads") or []:
@@ -914,6 +971,8 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
     s, job = _viewable(ctx, principal, sid)
     _no_compare(s)
     _require_prep(s, job)
+    if s["scenario"] == "select":
+        return _select().plan_view(ctx, principal, sid)
     p = _read_json(os.path.join(study_dir(ctx, s), "prep", "plan.json"), _max_mb(c))
     if not isinstance(p, dict) or "frame" not in p:
         raise conflict("PREP_NOT_READY", "준비 결과(prep/plan.json)가 없습니다")
@@ -932,7 +991,10 @@ def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[
     from ...core.opt_core import EslError
     from ...core.opt_core import doe_matrix
 
-    tab = _params_doc(ctx, s, c)["params"]
+    if s.get("scenario") == "select":    # select 변수 표 = 저장 선택(워커는 params.doe.selection.params 로 같은 표)
+        tab = _select().params_table(_select().require_selection(ctx, s, cfg(ctx)))["params"]
+    else:
+        tab = _params_doc(ctx, s, c)["params"]
     try:
         return doe_matrix.generate(spec, tab, c)
     except EslError as exc:
@@ -1002,16 +1064,20 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
         if s.get("prep") is None:
             raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
+        sel = _select().require_selection(ctx, s, c) if s["scenario"] == "select" else None
         m = _generate(ctx, s, spec, _study_cfg(conn, s, c))
         base = _prep_params(conn, s)
         rev = int(((s.get("doe") or {}).get("rev")) or 0) + 1
         doe = copy.deepcopy(base["doe"])
         doe.update(rev=rev, spec=m["spec"], matrix_sha256=m["matrix_sha256"], paicad_version=s.get("paicad_version"))
+        new_doe = {"rev": rev, "spec": m["spec"], "matrix_sha256": m["matrix_sha256"], "n_designs": m["n_designs"],
+                   "preview": None}
+        if sel is not None:                 # BS-D-3·BD_MATRIX: 선택 rev·sha 와 변수 표를 작업에 고정
+            doe["selection"] = _select().job_selection(sel)
+            new_doe["selection_sha256"] = sel["sha256"]
         params = {"bead_doe_id": sid, "kind": "PREVIEW", "out_rel": s["dir_rel"], "doe": doe,
                   "warnings": [w for w in m["warnings"]]}
-        s = doe_repo.update_study(conn, sid, phase="PREVIEW",
-                                  doe=_jsonable({"rev": rev, "spec": m["spec"], "matrix_sha256": m["matrix_sha256"],
-                                                 "n_designs": m["n_designs"], "preview": None}))
+        s = doe_repo.update_study(conn, sid, phase="PREVIEW", doe=_jsonable(new_doe))
         job = _insert_job(conn, principal, s, "DOE_PREVIEW", params, warns=m["warnings"])
         return study_out(ctx, conn, s, job, c=c)
 
@@ -1048,11 +1114,20 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
                 or body.matrix_sha256 != doe.get("matrix_sha256")):
             raise conflict("PREVIEW_STALE", "이 DOE 행렬의 미리보기가 끝나지 않았거나 행렬이 바뀌었습니다 — 미리보기를 다시 하세요",
                            matrix_sha256=doe.get("matrix_sha256"))
+        sel = None
+        if s["scenario"] == "select":       # BS-D-3: 선택 sha 까지 같아야(선택을 고친 뒤 미리보기 안 했으면 409)
+            sel = _select().current(ctx, s, c)
+            psha = pv.get("selection_sha256") or doe.get("selection_sha256")
+            if sel is None or not psha or psha != sel.get("sha256"):
+                raise conflict("PREVIEW_STALE", "비드 선택이 미리보기 뒤에 바뀌었습니다 — 미리보기를 다시 하세요",
+                               matrix_sha256=doe.get("matrix_sha256"), selection_sha256=(sel or {}).get("sha256"))
         base = _prep_params(conn, s)
         run_opts = {"solver": "linear", "parallel": int(c["run"]["parallel"])}
         d = copy.deepcopy(base["doe"])
         d.update(rev=int(doe["rev"]), spec=doe["spec"], matrix_sha256=doe["matrix_sha256"],
                  paicad_version=s.get("paicad_version"), run=run_opts)
+        if sel is not None:
+            d["selection"] = _select().job_selection(sel)
         params = {"bead_doe_id": sid, "kind": "RUN", "out_rel": s["dir_rel"], "doe": d,
                   "preview": {"rev": pv.get("rev"), "ok": pv.get("ok")}, "warnings": []}
         s = doe_repo.update_study(conn, sid, phase="RUN", run=run_opts)
@@ -1098,7 +1173,7 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         if miss:
             raise conflict("PREREQUISITE_MISSING", f"원 연구의 형상 STEP 업로드 {len(miss)}개가 더 이상 없습니다 — 새로 올려 주세요",
                            missing=miss)
-    else:
+    elif s["scenario"] != "select":      # select 는 업로드 입력 없음(같은 Case 메시)
         st = old.get("step") or {}
         if not st.get("path") or not os.path.isfile(st["path"]) or os.path.islink(st["path"]):
             raise conflict("PREREQUISITE_MISSING", "원 연구의 STEP 업로드가 더 이상 없습니다 — 새로 올려 주세요",
@@ -1108,15 +1183,16 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
     import datetime as _dt
 
     d = {k: copy.deepcopy(v) for k, v in old.items() if k not in ("rev", "spec", "matrix_sha256", "run",
-                                                                   "paicad_version", "design", "paicad")}
+                                                                   "paicad_version", "design", "paicad", "selection")}
+    sel_copy, sel_warns = _select().clone_selection(ctx, s, cfg(ctx))
     new_title = (title or "").strip() or f"{s['title']} (복제)"[:200]
     d.update(id=nid, title=new_title, created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
              cfg=_snapshot_cfg(ctx), core=copy.deepcopy(ctx.config.core or {}))
     params = {"bead_doe_id": nid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{nid}", "doe": d,
-              "warnings": list(prep_job["params"].get("warnings") or [])}
+              "warnings": list(prep_job["params"].get("warnings") or []) + sel_warns}
     return _insert_study_job(ctx, principal, sid=nid, project_id=s["project_id"], scenario=s["scenario"],
                              title=new_title, entry_ids=list(s["entry_ids"]), base_db=s.get("base"),
-                             inputs=dict(s.get("inputs") or {}), params=params, warns=[])
+                             inputs=dict(s.get("inputs") or {}), params=params, warns=sel_warns, selection=sel_copy)
 
 
 # 연구 진행 순서(phase) — 오래된 작업 재시도·등록이 연구를 되돌리지 않게(검증 지적)

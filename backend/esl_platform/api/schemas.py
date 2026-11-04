@@ -1673,7 +1673,7 @@ class OptFileOut(_Out):
 
 # ---------------------------------------------------------------- v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §10.2)
 # 이름 = 프런트 types.ts 인터페이스 이름(check:api 대조). 중첩 인라인 객체는 dict(프런트 인라인 타입과 키 대조 생략).
-DoeScenarioLit = Literal["same", "mesh", "step", "compare"]          # v0.14.0 ④ compare(esl_step_compare.md)
+DoeScenarioLit = Literal["same", "mesh", "step", "compare", "select"]    # v0.14.0 ④ compare, v0.15.0 select(esl_bead_select.md)
 DoePhaseLit = Literal["PREP", "READY", "PREVIEW", "PREVIEW_READY", "RUN", "DONE", "FAILED"]
 
 
@@ -1697,7 +1697,7 @@ class DoeCheckIn(_Req):
     project_id: str = Field(min_length=1, max_length=64)
     scenario: DoeScenarioLit
     entry_ids: list[str] = Field(min_length=1, max_length=10000)
-    step_upload_id: str | None = Field(default=None, min_length=1, max_length=64)     # ①②③ 필수, ④ 금지
+    step_upload_id: str | None = Field(default=None, min_length=1, max_length=64)     # ①②③ 필수, ④·select 금지
     shapes: list[CompareShapeIn] | None = Field(default=None, max_length=1000)         # ④ 만(1..compare.max_shapes)
     mesh_upload_id: str | None = Field(default=None, min_length=1, max_length=64)    # ② 만
     part_title: str | None = Field(default=None, min_length=1, max_length=200)     # ② 만(기본 bead_doe.part_title)
@@ -1751,6 +1751,8 @@ class DoeSettingsOut(_Out):
     method_sources: dict[str, Any]
     compare_reason: str | None = None               # v0.14.0 ④ 비활성 사유(DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE), null = 사용 가능
     compare: dict[str, Any] | None = None          # v0.14.0 ④ {enabled, reason, max_shapes, total_max_mb, mesh_size_mm}
+    select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
+    select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
 
 
 class DoeCheckOut(_Out):
@@ -1782,6 +1784,7 @@ class DoeStudyOut(_Out):
     result_ready: bool
     created_by_name: str
     created_at: datetime
+    selection: dict[str, Any] | None = None        # v0.15.0 select 요약 {rev, sha256, mesh_sha256, n_beads, n_warnings, updated_by_name, updated_at}
 
 
 class DoeParamsOut(_Out):
@@ -1800,6 +1803,7 @@ class DoePlanOut(_Out):
     a_points: list[dict[str, Any]] = Field(default_factory=list)
     load_points: list[dict[str, Any]] = Field(default_factory=list)
     links: list[dict[str, Any]] = Field(default_factory=list)
+    nodes_ab: list[list[float]] | None = None      # v0.15.0 select 노드 점(표시 토글 — 기본 숨김)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -1853,6 +1857,75 @@ class DoeFileOut(_Out):
     rel: str
     size: int = 0
     downloadable: bool = True
+
+
+# ---------------------------------------------------------------- v0.15.0 비드 직접 선택(계약 esl_bead_select.md §4·§9)
+# 구조(형식·길이)만 여기서 본다. 의미 검사(구간 정렬·겹침·없는 요소·빈 단·단 번호·묶음·id/이름 규칙·크기)는 코어
+# esl.doe.bead_select.normalize 가 한 곳에서(422 SELECT_*·413 SELECT_TOO_LARGE).
+SelectRanges = list[list[int]]                       # [[first, last], …] 요소 ID 닫힌 구간
+
+
+class SelectElemSet(_Req):
+    q: SelectRanges = Field(default_factory=list, max_length=1_000_000)     # 4각(/SHELL)
+    t: SelectRanges = Field(default_factory=list, max_length=1_000_000)     # 3각(/SH3N)
+
+
+class SelectTierIn(_Req):
+    k: int
+    floor: SelectElemSet
+
+
+class SelectSlopeIn(_Req):
+    mode: Literal["auto", "edited"] = "auto"
+    add: SelectElemSet = Field(default_factory=SelectElemSet)
+    remove: SelectElemSet = Field(default_factory=SelectElemSet)
+
+
+class SelectBeadIn(_Req):
+    id: str = Field(max_length=16)                   # ^b[1-9][0-9]?$ (코어 검사 — SELECT_BEAD_ID_INVALID)
+    name: str | None = Field(default=None, max_length=256)   # 1..32, 제어문자 금지(코어 — SELECT_NAME_INVALID), 기본 "B<n>"
+    tiers: list[SelectTierIn] = Field(max_length=64)
+    slope: SelectSlopeIn = Field(default_factory=SelectSlopeIn)
+    blend_mm: Literal["auto"] | float = "auto"
+    floor_follow: Literal[0, 1] | None = None        # 생략 = bead_doe.select.width.floor_follow
+    links: list[list[int]] = Field(default_factory=list, max_length=64)
+
+
+class SelectionIn(_Req):
+    schema_version: Literal[1] = 1
+    feature_angle_deg: float | None = None           # 기록용(확장은 브라우저), 생략 = 설정 기본
+    beads: list[SelectBeadIn] = Field(max_length=100)
+    fixed_user: SelectElemSet = Field(default_factory=SelectElemSet)
+    exclude: SelectElemSet = Field(default_factory=SelectElemSet)
+
+
+class DoeSelectDeriveIn(_Req):
+    selection: SelectionIn
+    bead: str | None = Field(default=None, max_length=16)    # 주면 그 비드만 다시 계산
+
+
+class DoeSelectionPutIn(_Req):
+    version: int = Field(ge=1)
+    selection: SelectionIn
+
+
+class SelectionDerived(_Out):
+    rev: int | None = None                           # derive 응답은 null(저장 안 함)
+    sha256: str
+    mesh_sha256: str | None = None
+    beads: list[dict[str, Any]]
+    fixed: dict[str, Any]
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    slope_suggested: dict[str, Any] | None = None    # derive 응답만 {bead id: ElemSet}
+
+
+class DoeSelectionOut(_Out):
+    rev: int
+    sha256: str
+    input: dict[str, Any]
+    derived: dict[str, Any]
+    updated_by_name: str
+    updated_at: str
 
 
 # ---------------------------------------------------------------- v0.11.0 SCX 릴레이(계약 esl_scx_relay.md §7.1) — 기능 A

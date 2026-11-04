@@ -22,13 +22,18 @@ from ..schemas import (
     DoePerEslOut,
     DoeResultOut,
     DoeRunIn,
+    DoeSelectDeriveIn,
+    DoeSelectionOut,
+    DoeSelectionPutIn,
     DoeSettingsOut,
     DoeStudyIn,
     DoeStudyOut,
+    SelectionDerived,
     View3dOut,
 )
 from ..services import doe as svc
-from .results import ZIP_RESPONSE, zip_response
+from ..services import doe_select as sel_svc
+from .results import ZIP_RESPONSE, _etag_headers, _not_modified, zip_response
 
 router = APIRouter(tags=["doe"])
 PNG_RESPONSE = {200: {"content": {"image/png": {}}, "description": "PNG"}}
@@ -164,3 +169,55 @@ def doe_view3d_file(sid: str, did: str, name: str, request: Request,
                     principal: Principal = Depends(get_principal)) -> FileResponse:
     path, media = svc.view3d_file(get_ctx(request), principal, sid, did, name)
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------- v0.15.0 비드 직접 선택(esl_bead_select.md §9)
+SELECT_VIEW_RESPONSES = {
+    200: {"content": {"model/gltf-binary": {"schema": {"type": "string", "format": "binary"}},
+                      "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+                      "application/json": {}},
+          "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256, If-None-Match 일치 시 304)"},
+    304: {"description": "변경 없음"}}
+BASIS_RESPONSES = {
+    200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}, "application/json": {}},
+          "description": "basis.bin(변수 순서 = basis.json: 각 변수 [n:u32][idx:u32×n][vec:f32×3n], 헤더 X-ESL-Basis-Sha) / meta=1 → basis.json"}}
+
+
+@router.get("/doe/studies/{sid}/select/view/{name}", response_class=FileResponse, responses=SELECT_VIEW_RESPONSES)
+def doe_select_view(sid: str, name: str, request: Request, principal: Principal = Depends(get_principal)) -> Response:
+    """준비 산출물 prep/select/ 의 선택 보기 파일(허용 목록만). 준비 전 409 PREP_NOT_READY."""
+    path, media, etag = sel_svc.view_file(get_ctx(request), principal, sid, name)
+    if etag is None:
+        return FileResponse(path, media_type=media, headers={**_PNG_HEADERS})
+    headers = {**_etag_headers(etag), "X-Content-Type-Options": "nosniff"}
+    if _not_modified(request, etag):
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type=media, headers=headers)
+
+
+@router.post("/doe/studies/{sid}/select/derive", response_model=SelectionDerived)
+def doe_select_derive(sid: str, body: DoeSelectDeriveIn, request: Request,
+                      principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """사면 자동 추정·경계 제안·공칭 치수(저장 안 함, rev null) + slope_suggested. bead 주면 그 비드만."""
+    return sel_svc.derive_out(get_ctx(request), principal, sid, body)
+
+
+@router.get("/doe/studies/{sid}/selection", response_model=DoeSelectionOut | None)
+def doe_selection_get(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any] | None:
+    """저장된 선택(정규화 입력 + 서버 재계산 결과) 또는 null."""
+    return sel_svc.selection_get(get_ctx(request), principal, sid)
+
+
+@router.put("/doe/studies/{sid}/selection", response_model=DoeStudyOut)
+def doe_selection_put(sid: str, body: DoeSelectionPutIn, request: Request,
+                      principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """선택 저장(서버 재계산·검증, rev + 1, version + 1). READY·PREVIEW_READY 에서만 — 바꾸면 미리보기는 다시(PREVIEW_STALE)."""
+    return sel_svc.selection_put(get_ctx(request), principal, sid, body)
+
+
+@router.get("/doe/studies/{sid}/select/basis", response_class=FileResponse, responses=BASIS_RESPONSES)
+def doe_select_basis(sid: str, request: Request, rev: int | None = Query(default=None, ge=1),
+                     meta: bool = False, principal: Principal = Depends(get_principal)) -> FileResponse:
+    """미리보기한 선택의 모핑 기저(브라우저 3D 보기). 미리보기 전 409 PREVIEW_NOT_READY."""
+    path, media, headers = sel_svc.basis_file(get_ctx(request), principal, sid, rev, meta)
+    return FileResponse(path, media_type=media, headers=headers)
