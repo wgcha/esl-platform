@@ -42,8 +42,8 @@ export function normalize(v: number, min: number, max: number): number {
   return Math.max(0, Math.min(1, (v - min) / (max - min)));
 }
 
-/** 정점 색 채우기(선형 공간, 길이 3n). src 가 있으면 LOD: 정점 i 의 값 = values[src[i]] */
-export function fillVertexColors(values: ArrayLike<number>, min: number, max: number, out: Float32Array, src?: ArrayLike<number> | null): Float32Array {
+/** 정점 색 채우기(선형 공간, 길이 3n). src 가 있으면 LOD: 정점 i 의 값 = values[src[i]]. lut = 선형 색표(기본 Blues) */
+export function fillVertexColors(values: ArrayLike<number>, min: number, max: number, out: Float32Array, src?: ArrayLike<number> | null, lut: Float32Array = LUT_LINEAR): Float32Array {
   const n = src ? src.length : values.length;
   for (let i = 0; i < n; i++) {
     const t = normalize(values[src ? src[i] : i], min, max);
@@ -53,9 +53,9 @@ export function fillVertexColors(values: ArrayLike<number>, min: number, max: nu
       out[i * 3 + 2] = NAN_LINEAR[2];
     } else {
       const k = Math.round(t * (LUT_SIZE - 1)) * 3;
-      out[i * 3] = LUT_LINEAR[k];
-      out[i * 3 + 1] = LUT_LINEAR[k + 1];
-      out[i * 3 + 2] = LUT_LINEAR[k + 2];
+      out[i * 3] = lut[k];
+      out[i * 3 + 1] = lut[k + 1];
+      out[i * 3 + 2] = lut[k + 2];
     }
   }
   return out;
@@ -68,3 +68,29 @@ export function luminance(c: RGB): number {
 
 /** ColorLegend 의 CSS 띠 */
 export const BLUES_GRADIENT = `linear-gradient(90deg, ${BLUES9.map((x, i) => `rgb(${x.join(",")}) ${Math.round((100 * i) / (BLUES9.length - 1))}%`).join(", ")})`;
+
+// ---------------------------------------------------------------- v0.15.0 발산 색(esl_bead_select.md §7.2·§7.3)
+// 공칭 대비 높이 변화: 빨강 = 얕아짐(−) · 흰 = 0 · 파랑 = 깊어짐(+). ColorBrewer RdBu 11단계(빨강 → 파랑). 범위 = 모든 칸 같은 ±V.
+export const RDBU11: RGB[] = [
+  [103, 0, 31], [178, 24, 43], [214, 96, 77], [244, 165, 130], [253, 219, 199], [247, 247, 247], [209, 229, 240], [146, 197, 222], [67, 147, 195], [33, 102, 172], [5, 48, 97],
+];
+/** t ∈ [0, 1] (0 = −V 빨강, 0.5 = 0 흰, 1 = +V 파랑) */
+export function divergingSrgb(t: number): RGB {
+  const x = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0.5)) * (RDBU11.length - 1);
+  const i = Math.min(Math.floor(x), RDBU11.length - 2);
+  const f = x - i;
+  const a = RDBU11[i];
+  const b = RDBU11[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+function buildDivLut(linear: boolean): Float32Array {
+  const lut = new Float32Array(LUT_SIZE * 3);
+  for (let k = 0; k < LUT_SIZE; k++) {
+    const c = divergingSrgb(k / (LUT_SIZE - 1));
+    for (let j = 0; j < 3; j++) lut[k * 3 + j] = linear ? srgbToLinear(c[j]) : c[j] / 255;
+  }
+  return lut;
+}
+export const LUT_DIV_LINEAR = buildDivLut(true);
+/** ColorLegend·썸네일 범례의 CSS 띠(왼쪽 −V 빨강 → 오른쪽 +V 파랑) */
+export const DIVERGING_GRADIENT = `linear-gradient(90deg, ${RDBU11.map((x, i) => `rgb(${x.join(",")}) ${Math.round((100 * i) / (RDBU11.length - 1))}%`).join(", ")})`;

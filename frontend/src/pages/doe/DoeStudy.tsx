@@ -10,10 +10,13 @@ import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
 import type { CompareShapeIn } from "../../api/types";
 import {
-  PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath, scenarioBlocked,
-  shapesProblem, warnText,
+  BEAD_DEF_NAME, PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath, radioScenario,
+  scenarioBlocked, shapesProblem, warnText,
   type ParamRow, type SpecForm,
 } from "../../api/doe";
+import { BeadSelectCards, SelectDesign3D, useBeadSelect } from "../../components/BeadSelectCard";
+import { SectionMini } from "../../components/SectionMini";
+import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
 import { STEP_LABEL } from "../../api/history";
 import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
@@ -62,25 +65,41 @@ function Steps({ job }: { job: JobOut | null | undefined }) {
   );
 }
 
-/** 시나리오 라디오(자동 판별 표시). readOnly = 상세 */
+/** 시나리오 라디오(자동 판별 표시). readOnly = 상세. v0.15.0: ① 아래 하위 선택 "비드: ○ 자동 탐지(STEP) ○ 직접 선택(메시)"(BS-D-1) */
 function ScenarioRadio({ value, onChange, auto, st, readOnly }: { value: DoeScenario; onChange: (s: DoeScenario) => void; auto: DoeScenario | null; st: DoeSettingsOut | null; readOnly: boolean }) {
+  const rv = radioScenario(value);
   return (
     <div className="doe-scn" role="radiogroup" aria-label="시나리오">
       {SCENARIOS.map((s) => {
-        const why = st ? scenarioBlocked(st, s) : null;
+        // ① 은 자동 탐지·직접 선택 둘 다 막혔을 때만 막음
+        const why = st ? (s === "same" ? (scenarioBlocked(st, "same") && scenarioBlocked(st, "select") ? scenarioBlocked(st, "same") : null) : scenarioBlocked(st, s)) : null;
         return (
           <label key={s} className="check-field" title={why ?? undefined}>
-            <input type="radio" name="doe-scenario" checked={value === s} disabled={readOnly || !!why} onChange={() => onChange(s)} />
+            <input type="radio" name="doe-scenario" checked={rv === s} disabled={readOnly || !!why} onChange={() => onChange(s === "same" && st && scenarioBlocked(st, "same") && !scenarioBlocked(st, "select") ? "select" : s)} />
             <span>
               {SCENARIO_NO[s]} {SCENARIO_NAME[s]}
             </span>
           </label>
         );
       })}
+      {rv === "same" && (
+        <span className="doe-sub" role="radiogroup" aria-label="비드 정의" data-testid="doe-beaddef">
+          <span className="small muted">비드</span>
+          {(["same", "select"] as const).map((k) => {
+            const why = st ? scenarioBlocked(st, k) : null;
+            return (
+              <label key={k} className="check-field" title={why ?? undefined}>
+                <input type="radio" name="doe-beaddef" checked={value === k} disabled={readOnly || !!why} onChange={() => onChange(k)} />
+                <span>{BEAD_DEF_NAME[k]}</span>
+              </label>
+            );
+          })}
+        </span>
+      )}
       {auto && !readOnly && (
         <span className="small muted" data-testid="doe-auto">
           자동 판별: {SCENARIO_NO[auto]} {SCENARIO_NAME[auto]}
-          {auto !== value ? " (직접 바꿈)" : ""}
+          {radioScenario(auto) !== rv ? " (직접 바꿈)" : ""}
         </span>
       )}
     </div>
@@ -111,6 +130,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const mismatched = sel.filter((e) => e.topo_sha256 !== topo0 || check?.entries.some((r) => r.entry_id === e.id && !r.ok)).map((e) => e.id);
   const blocked = st ? doeBlockedReason(st, scenario) : null;
   const isCompare = scenario === "compare";
+  const isSelect = scenario === "select";
   const maxShapes = st?.compare?.max_shapes ?? 20;
   /** ④ 요청 형상(기준 = refId) */
   const compareShapes: CompareShapeIn[] = form.shapes.map((x) => ({ upload_id: x.uploadId, rel: x.rel, name: x.name.trim(), reference: x.key === form.refId }));
@@ -126,7 +146,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     setCheckError(null);
     setChecking(false);
     if (!ids.length || blocked) return;
-    if (isCompare ? !!shapesBad : !stepId || (scenario === "mesh" && !meshId)) return;
+    if (isCompare ? !!shapesBad : isSelect ? false : !stepId || (scenario === "mesh" && !meshId)) return;
     let alive = true;
     const go = () => {
       setChecking(true);
@@ -134,7 +154,9 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         .checkInputs(
           isCompare
             ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal }
-            : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null },
+            : isSelect
+              ? { project_id: projectId, scenario, entry_ids: ids }
+              : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null },
         )
         .then((c) => alive && setCheck(c))
         .catch((e) => alive && setCheckError(compareErrorText(e)))
@@ -187,7 +209,14 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       if (!check.ok) return "입력 검사에 실패한 항목이 있습니다";
       return propsProblem(form, st, false);
     }
-    if (scenario === "same" && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 다른 모델 시나리오`;
+    if ((scenario === "same" || isSelect) && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 다른 모델 시나리오`;
+    if (isSelect) {
+      if (checking) return "입력 검사 중…";
+      if (checkError) return checkError;
+      if (!check) return "입력 검사 대기 중…";
+      if (!check.ok) return "입력 검사에 실패한 항목이 있습니다";
+      return null;
+    }
     if (!form.step) return "Ch/R 중립면 STEP 을 올리세요";
     if (scenario === "mesh" && !form.mesh) return "B 메시(.rad/.inc)를 올리세요";
     if (scenario !== "same" && form.inch.trim() && !(Number.isInteger(Number(form.inch)) && Number(form.inch) > 0)) return "인치는 양의 정수입니다";
@@ -216,6 +245,18 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         nav(doePath(projectId, r.id));
       } catch (e) {
         setError(compareErrorText(e));
+        setBusy(false);
+      }
+      return;
+    }
+    if (isSelect) {
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, title: form.title.trim() || null });
+        nav(doePath(projectId, r.id));
+      } catch (e) {
+        setError(errorText(e));
         setBusy(false);
       }
       return;
@@ -280,7 +321,9 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       <div className="small muted">
         {isCompare
           ? "입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음). 준비 결과를 확인한 뒤 '비교 실행'."
-          : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
+          : isSelect
+            ? "입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."
+            : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
         입력 폴더는 읽기만 합니다.
         {!ids.length && (
           <>
@@ -432,7 +475,7 @@ function Downloads({ study, result, extra }: { study: DoeStudyOut; result: DoeRe
 /** [검증 낙하] 버튼·대화상자·카드 상태. 버튼 활성 = ① 같은 모델 · DONE · SCX 검증 사용 가능 · 고른 안이 best/ 가 남은 안(순위 1~keep_files_top) */
 function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: DoeResultOut | null, pick: string | null, allowed: boolean, isAdmin: boolean) {
   const done = study?.phase === "DONE";
-  const same = study?.scenario === "same";
+  const same = study?.scenario === "same" || study?.scenario === "select";
   const sid = study?.id ?? "";
   const status = usePolling(() => (done && same ? scx.status(projectId) : Promise.resolve(null)), 0, [projectId, done, same]);
   const avail = status.data?.verify ?? null;
@@ -474,6 +517,97 @@ function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: Doe
   return { reason, designs, initialDesign, plan, drops, reload, listError: list.error };
 }
 
+// ================================================================ v0.15.0 ④ 변수 · ⑤ 평면도 + 단면(select)
+function SelectVarsPlan(p: {
+  ready: boolean;
+  pd: import("../../api/types").DoeParamsOut | null;
+  rows: ParamRow[] | null;
+  setRows: (r: ParamRow[]) => void;
+  form: SpecForm | null;
+  setForm: (f: SpecForm) => void;
+  st: DoeSettingsOut | null;
+  matrix: DoeMatrixOut | null;
+  matrixError: string | null;
+  editable: boolean;
+  plan: import("../../api/types").DoePlanOut | null;
+  planError: string | null;
+  ctrl: ReturnType<typeof useBeadSelect>;
+  activeVar: string | null;
+  setActiveVar: (v: string) => void;
+  nodesHidden: boolean;
+  setNodesHidden: (v: boolean) => void;
+  beadPngUrl: (b: string) => string;
+}) {
+  const { pd, rows, form, st, plan } = p;
+  const params = pd?.params ?? [];
+  const av = params.find((x) => x.name === p.activeVar) ?? null;
+  const row = av ? rows?.find((r) => r.name === av.name) : null;
+  const planVar: PlanVar | null = av && (av.type === "D" || av.type === "W")
+    ? { name: av.name, type: av.type, bead: av.bead, tier: av.tier ?? null, nominal: av.nominal, lo: Number(row?.lo ?? av.default_range[0]), hi: Number(row?.hi ?? av.default_range[1]) }
+    : null;
+  const secBead = av?.bead ?? pd?.beads[0]?.id ?? null;
+  const chips = Object.fromEntries(
+    (pd?.beads ?? []).map((b) => [
+      b.id,
+      [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
+    ]),
+  );
+  return (
+    <div className="doe-grid">
+      <Card title="④ 변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
+        {!p.ready ? (
+          <Empty>비드 선택을 저장하면 단별 깊이 D·비드별 폭 W 변수 표가 열립니다</Empty>
+        ) : pd && rows && form && st ? (
+          <>
+            <DoeParamTable
+              data={pd}
+              rows={rows}
+              setRows={p.setRows}
+              readOnly={!p.editable}
+              beadPngUrl={p.beadPngUrl}
+              select={{ blendOf: p.ctrl.blendOf, setBlend: p.ctrl.setBlend, kBlend: st.select?.blend.k ?? null, blendMax: st.select?.blend.max_mm ?? 200, active: p.activeVar, onActive: p.setActiveVar }}
+            />
+            <DoeSpecRow st={st} form={form} setForm={p.setForm} matrix={p.matrix} matrixError={p.matrixError} readOnly={!p.editable} k={rows.filter((r) => r.on).length} />
+          </>
+        ) : (
+          <Empty>{p.planError ?? "불러오는 중…"}</Empty>
+        )}
+      </Card>
+      <Card
+        title="⑤ 평면도 · 단면"
+        right={
+          <label className="check-field small">
+            <input type="checkbox" checked={p.nodesHidden} onChange={(e) => p.setNodesHidden(e.target.checked)} data-testid="plan-nodes-toggle" />
+            <span>노드 점 숨김</span>
+          </label>
+        }
+      >
+        {!p.ready ? (
+          <Empty>비드 선택을 저장하면 평면도가 열립니다</Empty>
+        ) : plan ? (
+          <div className="doe-plan-grid">
+            <SelectPlan plan={plan} chips={chips} active={planVar} nodesHidden={p.nodesHidden} />
+            <div className="doe-plan-side">
+              {secBead && <SectionMini sec={plan.beads.find((b) => b.id === secBead)?.section} v={planVar && planVar.bead === secBead ? planVar : null} title={(pd?.beads.find((b) => b.id === secBead)?.name ?? secBead).toString()} />}
+              <div className="small muted">{av ? `${av.name} 범위를 그림에 표시(폭 = 최소·최대 윤곽 점선, 깊이 = 단면 점선)` : "변수 행을 고르면 범위를 그림에 표시합니다"}</div>
+              <div className="doe-legend small">
+                <span>
+                  <i className="lg-bead" /> 비드(단 = 파랑 명도)
+                </span>
+                <span>
+                  <i className="lg-fixed" /> 고정 노드
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Empty>{p.planError ?? "불러오는 중…"}</Empty>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ================================================================ 상세
 function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: string; st: DoeSettingsOut | null; stError: string | null }) {
   const nav = useNavigate();
@@ -485,14 +619,37 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const phase = s?.phase ?? null;
   const prepDone = !!s?.prep && phase !== "PREP";
   const isCompare = s?.scenario === "compare";
+  const isSelect = s?.scenario === "select";
   /** ②③④ 카드(비드·평면도·미리보기) — ④ 형상 비교는 없음 */
   const beadPrep = prepDone && !!s && !isCompare;
+  // v0.15.0 비드 직접 선택: 저장 선택(sha)이 있어야 변수·평면도(409 SELECTION_MISSING)
+  // 기준 메시가 바뀌어 저장 선택이 무효면 서버가 409 SELECTION_MISSING(reason SELECTION_DROPPED) — 선택 없음으로 보고 다시 고르게 한다
+  const [selDropped, setSelDropped] = useState(false);
+  const rawSha = s?.selection?.sha256 ?? null;
+  const selFull = usePolling(() => (isSelect && prepDone ? doe.selection(id).then((v) => ({ v })) : Promise.resolve(null)), 0, [id, isSelect, prepDone, rawSha]);
+  useEffect(() => setSelDropped(false), [rawSha]);
+  useEffect(() => {
+    // 요약은 있는데 GET selection 이 null = 무효 선택(기준 메시 바뀜)
+    if (isSelect && rawSha && selFull.data && selFull.data.v === null) setSelDropped(true);
+  }, [isSelect, rawSha, selFull.data]);
+  const selSha = selDropped ? null : rawSha;
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st);
+  const varsReady = beadPrep && (!isSelect || !!selSha);
+  /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
+  const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>
+    p.catch((e) => {
+      if (isSelect && e instanceof ApiError && e.code === "SELECTION_MISSING") {
+        if (e.detail.reason === "SELECTION_DROPPED") setSelDropped(true);
+        return null;
+      }
+      throw e;
+    });
   useEffect(() => {
     if (s) setPoll(ACTIVE_PHASE.includes(s.phase) ? 3000 : 0);
   }, [s]);
   const all = usePolling(() => api.libraryEntries({ project_id: projectId }), 0, [projectId]);
-  const params = usePolling(() => (beadPrep ? doe.params(id) : Promise.resolve(null)), 0, [id, beadPrep]);
-  const plan = usePolling(() => (beadPrep ? doe.planView(id) : Promise.resolve(null)), 0, [id, beadPrep]);
+  const params = usePolling(() => (varsReady ? selGuard(doe.params(id)) : Promise.resolve(null)), 0, [id, varsReady, selSha]);
+  const plan = usePolling(() => (varsReady ? selGuard(doe.planView(id)) : Promise.resolve(null)), 0, [id, varsReady, selSha]);
   const done = phase === "DONE";
   const result = usePolling(() => (done ? doe.results(id) : Promise.resolve(null)), 0, [id, done]);
 
@@ -504,6 +661,17 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState<string | null>(null);
   const [vdOpen, setVdOpen] = useState(false);
+  const [activeVar, setActiveVar] = useState<string | null>(null);
+  const [nodesHidden, setNodesHidden] = useState(true);
+  const [openDid, setOpenDid] = useState<string | null>(null);
+  // 선택이 바뀌면(새 rev) 변수 이름·공칭이 바뀔 수 있어 표를 다시 만든다
+  const prevSha = useRef(selSha);
+  useEffect(() => {
+    if (prevSha.current !== selSha) {
+      prevSha.current = selSha;
+      setRows(null);
+    }
+  }, [selSha]);
 
   // 변수 행·DOE 설정 기본값: 저장된 spec(있으면) 아니면 서버 기본(use_default D·W, feasible, 설정 doe.*)
   const pd = params.data;
@@ -555,16 +723,20 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   }, [id, specKey, prepDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pv = s?.doe?.preview ?? null;
-  const fresh = !!pv && !!matrix && pv.matrix_sha256 === matrix.matrix_sha256 && s?.doe?.matrix_sha256 === matrix.matrix_sha256;
+  /** select: 미리보기 뒤 선택이 바뀜(저장된 sha 다름 또는 화면 편집) — BS-D-3 */
+  const selStale = !!isSelect && !!pv && ((!!pv.selection_sha256 && pv.selection_sha256 !== selSha) || ctrl.dirty);
+  const fresh = !!pv && !!matrix && pv.matrix_sha256 === matrix.matrix_sha256 && s?.doe?.matrix_sha256 === matrix.matrix_sha256 && !selStale;
   const hasPreview = !!pv || phase === "PREVIEW";
 
   function previewReason(): string | null {
     if (!allowed) return NO_PERMISSION;
     if (!st || !s) return "불러오는 중…";
-    const b = doeBlockedReason(st);
+    const b = doeBlockedReason(st, s.scenario);
     if (b) return b;
     if (phase === "PREVIEW") return "미리보기 진행 중…";
     if (!editable) return phase === "PREP" ? "입력 준비 중…" : "이미 실행했습니다 — 복제해서 새 연구로";
+    if (isSelect && !selSha) return "비드 선택을 먼저 저장하세요";
+    if (isSelect && ctrl.dirty) return "저장 안 한 선택 변경이 있습니다 — 먼저 '선택 저장'";
     if (built.problem) return built.problem;
     if (matrixError) return matrixError;
     if (!matrix) return "안 수 계산 중…";
@@ -575,6 +747,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
     if (phase === "PREVIEW") return "미리보기 진행 중…";
     if (p) return p;
     if (!pv) return "미리보기를 먼저 실행하세요";
+    if (selStale) return "비드 선택이 미리보기 뒤에 바뀌었습니다 — 미리보기를 다시 실행하세요";
     if (!fresh) return "DOE 설정이 미리보기 뒤에 바뀌었습니다 — 미리보기를 다시 실행하세요";
     if (pv.ok <= 0) return "미리보기 OK 안이 없습니다 — 범위를 바꾸세요";
     return null;
@@ -633,6 +806,32 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       setBusy(false);
     }
   }
+  /** select: [선택 저장](PUT …/selection — 서버 재계산·검증 후 rev+1) */
+  function saveReason(): string | null {
+    if (!allowed) return NO_PERMISSION;
+    if (!st || !s) return "불러오는 중…";
+    const b = doeBlockedReason(st, "select");
+    if (b) return b;
+    if (phase === "PREVIEW") return "미리보기 진행 중…";
+    if (!editable) return "이미 실행했습니다 — 복제해서 새 연구로";
+    if (ctrl.problem) return ctrl.problem;
+    if (!ctrl.dirty && selSha) return "바뀐 선택이 없습니다";
+    return null;
+  }
+  async function saveSelection() {
+    const input = ctrl.input();
+    if (!input) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await doe.saveSelection(id, version, input);
+      study.setData(r);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function clone() {
     setBusy(true);
     setError(null);
@@ -652,6 +851,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   else if (ranStage) primary = { label: "보고서 보기", onClick: () => openReport(doe.reportUrl(id)), reason: done && s.result_ready ? null : phase === "RUN" ? "실행이 끝나면 볼 수 있습니다" : "보고서가 없습니다" };
   else if (phase === "FAILED") primary = { label: "입력 준비", onClick: () => undefined, reason: "입력 준비에 실패했습니다 — 아래 진행·로그를 확인하고 복제해 다시" };
   else if (isCompare) primary = { label: "비교 실행", onClick: runCompare, reason: compareRunReason() };
+  else if (isSelect && (phase === "READY" || phase === "PREVIEW_READY") && (!selSha || ctrl.dirty)) primary = { label: "선택 저장", onClick: saveSelection, reason: saveReason() };
   else if (!hasPreview) primary = { label: "미리보기", onClick: preview, reason: previewReason() };
   else primary = { label: "강성 평가 실행", onClick: run, reason: runReason() };
 
@@ -691,7 +891,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {blocked}
         </div>
       )}
-      {st?.paicad.warning && !isCompare && <div className="small warn-text">{st.paicad.warning}</div>}
+      {st?.paicad.warning && !isCompare && !isSelect && <div className="small warn-text">{st.paicad.warning}</div>}
       <ErrorLine text={error ?? study.error ?? stError} />
       {s && (
         <Card
@@ -701,7 +901,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <span className="small muted">
                 {isCompare
                   ? `형상 ${s.prep.n_shapes ?? s.inputs.shapes?.length ?? "?"} · 준비됨 ${s.prep.n_ready ?? "?"} · 요소 ${st?.compare?.mesh_size_mm ?? 3} mm`
-                  : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}`}
+                  : isSelect
+                    ? `Ch/R ${((s.prep.n_nodes ?? 0) / 1e4).toFixed(1)}만 노드 ✓ · 고정: ${s.prep.fixed?.source === "none" || !s.prep.fixed ? "없음 ⚠" : `fixed-scan ${s.prep.fixed.n} 노드 ✓`}`
+                    : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}`}
               </span>
             ) : undefined
           }
@@ -722,7 +924,35 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           )}
         </Card>
       )}
-      {beadPrep && (
+      {beadPrep && isSelect && selDropped && (
+        <div className="warn-box" role="alert" data-testid="selection-dropped">
+          {warnText({ code: "SELECTION_DROPPED" })}
+        </div>
+      )}
+      {beadPrep && isSelect && <BeadSelectCards ctrl={ctrl} editable={editable} st={st} fixedMissing={s?.prep?.fixed?.source === "none"} />}
+      {beadPrep && isSelect && (
+        <SelectVarsPlan
+          ready={!!selSha}
+          pd={pd}
+          rows={rows}
+          setRows={setRows}
+          form={form}
+          setForm={setForm}
+          st={st}
+          matrix={matrix}
+          matrixError={matrixError}
+          editable={editable}
+          plan={plan.data}
+          planError={plan.error ?? params.error}
+          ctrl={ctrl}
+          activeVar={activeVar}
+          setActiveVar={setActiveVar}
+          nodesHidden={nodesHidden}
+          setNodesHidden={setNodesHidden}
+          beadPngUrl={(b) => doe.beadPngUrl(id, b)}
+        />
+      )}
+      {beadPrep && !isSelect && (
         <div className="doe-grid">
           <Card title="② 비드·변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
             {pd && rows && form && st ? (
@@ -748,7 +978,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       )}
       {beadPrep && s && (
         <Card
-          title={`④ 미리보기 ${pv ? previewSummary(pv, (pv.cells?.length ?? 0) + 1) : s.doe ? `(${s.doe.n_designs})` : ""}`}
+          title={`${isSelect ? "⑥" : "④"} 미리보기 ${pv ? previewSummary(pv, (pv.cells?.length ?? 0) + 1) : s.doe ? `(${s.doe.n_designs})` : ""}`}
           right={
             <span className="inline-actions">
               {s.doe && <span className="small muted">seed {s.doe.spec.seed ?? "–"} · {s.doe.spec.method}</span>}
@@ -768,12 +998,35 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
             </>
           )}
-          {pv && matrix && !fresh && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
-          {phase !== "PREVIEW" && <DoeThumbGrid preview={pv} params={pd?.params ?? []} thumbUrl={(d) => doe.thumbUrl(id, d)} />}
+          {pv && selStale && editable && (
+            <div className="small warn-text" data-testid="selection-stale">
+              <span className="badge warn">선택 변경됨 — 다시 미리보기</span>
+            </div>
+          )}
+          {pv && matrix && !fresh && !selStale && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
+          {phase !== "PREVIEW" && (
+            <DoeThumbGrid
+              preview={pv}
+              params={pd?.params ?? []}
+              thumbUrl={(d) => doe.thumbUrl(id, d)}
+              select={isSelect}
+              onOpen={isSelect && pv ? (d) => setOpenDid(d) : undefined}
+            />
+          )}
+          {isSelect && openDid && pv && (
+            <SelectDesign3D
+              studyId={id}
+              rev={s.selection?.rev ?? 0}
+              did={openDid}
+              values={openDid === "d000" ? Object.fromEntries((pd?.params ?? []).map((p) => [p.name, p.nominal])) : pv.cells?.find((c) => c.id === openDid)?.values ?? {}}
+              vmax={pv.color?.v_max ?? 1}
+              onClose={() => setOpenDid(null)}
+            />
+          )}
         </Card>
       )}
       {ranStage && s && (
-        <Card title={`${isCompare ? "② 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && showLinks ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
+        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && showLinks ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
           {job && (phase === "RUN" || phase === "FAILED") && (
             <>
               <Steps job={job} />

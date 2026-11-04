@@ -3304,3 +3304,189 @@ details.card.fold > .fold-body {
   white-space: nowrap;
   font-size: 0.9rem;
 }
+
+/* ---------------------------------------------------------------- v0.15.0 비드 직접 선택(esl_bead_select.md §11) */
+.doe-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-left: 2px solid var(--line-strong);
+}
+.bs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.bs-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+  margin-bottom: 0.5rem;
+}
+.bs-tools .seg,
+.v3d-tools .seg {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+.bs-tool-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.doe-num.short {
+  width: 4.5rem;
+}
+.btn.icon {
+  min-width: 2rem;
+}
+.bs-host {
+  height: clamp(420px, 60vh, 860px);
+  outline: none;
+}
+.bs-host.tool-brush,
+.bs-host.tool-rect,
+.bs-host.tool-lasso {
+  cursor: crosshair;
+}
+.bs-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+.bs-hint {
+  margin-top: 0.35rem;
+}
+.bs-list {
+  display: grid;
+  gap: 0.5rem;
+  max-height: clamp(420px, 66vh, 940px);
+  overflow-y: auto;
+}
+.bs-bead {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.bs-bead.on {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.bs-bead-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+.bs-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.bs-bead-body {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0 0.6rem 0.5rem;
+}
+.bs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+.bs-list-actions {
+  flex-wrap: wrap;
+}
+.bs-blend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+.doe-params tr.bs-row-on td {
+  background: var(--accent-weak);
+}
+.bs-plan .bs-nodes circle {
+  fill: var(--text-2);
+}
+.bs-plan .bs-ring {
+  fill: none;
+  stroke: #1d3f7a;
+}
+.bs-plan .bs-plan-bead:not(.on) .bs-ring {
+  stroke-opacity: 0.35;
+}
+.bs-plan .bs-ring-range {
+  fill: none;
+  stroke: #d9480f;
+}
+.bs-chip rect {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: var(--line-strong);
+}
+.bs-chip text {
+  fill: var(--text);
+  font-weight: 600;
+}
+.bs-section {
+  margin: 0;
+}
+.bs-section svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.bs-sec-plate {
+  stroke: var(--line-strong);
+  stroke-dasharray: 2 3;
+}
+.bs-sec-nom {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.6;
+}
+.bs-sec-range {
+  fill: none;
+  stroke: #d9480f;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+.bs-sec-text {
+  font-size: 10px;
+  fill: var(--text-2);
+}
+.bs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.bs-legend i {
+  display: inline-block;
+  width: 10rem;
+  height: 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+.doe-thumb.clickable {
+  cursor: pointer;
+}
+.doe-thumb.clickable:hover {
+  border-color: var(--accent);
+}
