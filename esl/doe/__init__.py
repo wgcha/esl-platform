@@ -87,7 +87,18 @@ DEFAULTS: dict = {
                          "occ_fix_small": 1, "feature_angle": 10.0,
                          # v0.14.1 면 단위 폴백: 2D 메싱이 실패한 면만 algorithms 순서(6 Frontal-Delaunay → 5 Delaunay →
                          # 1 MeshAdapt)로 재시도, relax 면 그 면의 작은 형상 처리·구멍 둘레 분할을 풀고 다시. 면 max_faces 개 초과 → 실패
-                         "fallback": {"enabled": True, "algorithms": [6, 5, 1], "relax": True, "max_faces": 20}},
+                         # v0.15.1 형상 폴백(이슈 #53 Sphere 면 — 극점 퇴화 모서리를 OCC 정리가 지워 2D 알고리즘으로는 안 됨):
+                         # order = 단계 묶음 순서(빼면 끔), periodic_types 면은 periodic_order. nofix = OCC 정리 없이(scopes: face = 그 면만
+                         # 정리 없이 다시 가져와 대체, all = 세션 전체 정리·봉합 끔 — 다른 면 새 실패면 다음 단계). split = bbox 중심 평면 planes 개로
+                         # 나눔, fill = 경계 고리 BSpline 채움(안쪽 (points−1)² 점 통과, 편차 ≤ tol_factor × h), small = 넓이 <
+                         # area_mm2 면을 경계만으로 채움(편차 ≤ tol_factor × h)
+                         "fallback": {"enabled": True, "algorithms": [6, 5, 1], "relax": True, "max_faces": 20,
+                                      "order": ["algorithms", "relax", "split", "fill", "small"],
+                                      "periodic_types": ["Sphere"],
+                                      "periodic_order": ["nofix", "split", "fill", "small", "algorithms", "relax"],
+                                      "nofix": {"scopes": ["face", "all"]},
+                                      "split": {"planes": 2}, "fill": {"tol_factor": 0.5, "points": 8, "samples": 10},
+                                      "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}}},
                 "defeature": {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0],
                               "min_bead_height_mm": 2.0},
                 "quality": {"max_fail_ratio": 0.01,

@@ -95,7 +95,14 @@ bead_doe:
       extend_from_boundary: 0
       occ_fix_small: 1
       feature_angle: 10.0      # 기록만(SC-D-13)
-      fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20}   # v0.14.1 실패 면만 2D 알고리즘 재시도 → 제약 해제(MESH_FACE_FALLBACK)
+      fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20,   # v0.14.1 실패 면만 2D 알고리즘 재시도 → 제약 해제(MESH_FACE_FALLBACK)
+                 order: [algorithms, relax, split, fill, small],                     # v0.15.1 형상 폴백 순서(빼면 끔)
+                 periodic_types: [Sphere], periodic_order: [nofix, split, fill, small, algorithms, relax],
+                 nofix: {scopes: [face, all]},                                       # OCC 정리 끔: 그 면만 다시 가져와 대체 → 세션 전체
+                 split: {planes: 2},                                                 # bbox 중심 평면으로 그 면만 나눔
+                 fill: {tol_factor: 0.5, points: 8, samples: 10},                    # 경계 고리 BSpline 채움, 편차 ≤ 0.5 h 만
+                 small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}}             # 작은 면 경계만 채움
+                 # mesh.json mesh_fallback.faces[]: id·failed_id·type·center·stage(algorithm|relax|nofix|split|fill|small)·scope(nofix)·stage_name·deviation_mm·new_ids·errors
     defeature: {enabled: true, min_hole_area_mm2: 50.27, hole_elems: 6, hole_r_mm: [4.0, 30.0], min_bead_height_mm: 2.0}   # SC-D-13
     quality:                   # SC-D-13 이슈 #53 criteria(warn·fail), Fail 비율 상한 → 경고만
       max_fail_ratio: 0.01
