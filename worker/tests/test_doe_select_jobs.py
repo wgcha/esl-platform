@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from doe_support import api
 from doe_worker_support import calls, doe_worker_settings, set_control, write_fake_paicad
-from esl_test_support import API, REPO, H
+from esl_test_support import API, REPO, H, past_ttl_s
 from opt_support import tree
 from sqlalchemy import insert
 from test_opt_e2e import PART, seed_entry, write_case_rad
@@ -305,10 +305,12 @@ def _pid_file(esl_root, sid, jid) -> Path:
     return esl_root / "_doe" / sid / "logs" / jid / "slow_grid.pid"
 
 
-def test_select_grid_slow_keeps_lease(client, engine, worker_factory, esl_root, inputs_root, exe, monkeypatch):
-    """코어 자식 bd_select_grid 가 lease_ttl(시험 3 s)보다 오래 걸려도 executor._run_core 가 lease 를 갱신 → 성공."""
+@pytest.mark.short_lease
+def test_select_grid_slow_keeps_lease(client, engine, worker_factory, esl_root, inputs_root, exe, monkeypatch,
+                                      loaded_config):
+    """코어 자식 bd_select_grid 가 설정 lease_ttl_s 보다 오래 걸려도 executor._run_core 가 lease 를 갱신 → 성공."""
     set_control(exe, rules=[])
-    monkeypatch.setenv("ESL_TEST_SLOW_GRID_S", "4.5")
+    monkeypatch.setenv("ESL_TEST_SLOW_GRID_S", str(past_ttl_s(loaded_config)))
     wk = worker_factory(core_target="slow_core:slow_select_grid")
     wk.heartbeat_once()
     _w, s, spec = _grid_ready(client, engine, wk, esl_root, inputs_root)
@@ -322,8 +324,9 @@ def test_select_grid_slow_keeps_lease(client, engine, worker_factory, esl_root, 
     assert study(client, s["id"])["phase"] == "PREVIEW_READY"
 
 
+@pytest.mark.short_lease
 def test_select_grid_cancel_kills_core_and_retry(client, engine, worker_factory, esl_root, inputs_root, exe,
-                                                 monkeypatch):
+                                                 monkeypatch, loaded_config):
     """BD_GRID 중 취소 → 코어 자식 종료·CANCELED(lease 는 그동안 갱신), 재시도 → BD_GRID 부터 성공."""
     import threading
     import time as _t
@@ -342,7 +345,8 @@ def test_select_grid_cancel_kills_core_and_retry(client, engine, worker_factory,
     pf = _pid_file(esl_root, s["id"], jid)
     wait_for(lambda: pf.is_file() and pf.read_text().strip(), timeout=120)
     pid = int(pf.read_text())
-    for _ in range(12):                             # ttl(3 s) 넘게 — lease 갱신 중이면 RUNNING 유지
+    end = _t.monotonic() + past_ttl_s(loaded_config, 1.2)
+    while _t.monotonic() < end:                     # 설정 lease_ttl_s 넘게 — lease 갱신 중이면 RUNNING 유지
         wk.heartbeat_once()
         _t.sleep(0.3)
     j = get_job(client, jid)
