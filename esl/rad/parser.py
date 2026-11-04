@@ -256,6 +256,7 @@ class RadModel:
     includes: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     state: dict | None = None          # 누적 씬(상태 파일 include) 정보 — 없으면 None (esl_cumulative_input.md)
+    begin: list | None = None          # v0.16.0 parse_rad_part 만: 주 파일 /BEGIN 행(parse_rad 는 None — 동작 불변)
 
 
 def _include_spec(line: str) -> str:
@@ -1159,6 +1160,105 @@ def _state_summary(deck: _Deck, elem_id, node_id, node_state, sh_state, thicknes
         "node_from_state": np.asarray(node_state, bool), "elem_from_state": np.asarray(sh_state, bool),
         "thk_state": thk_state, "t0": t0,
     }
+
+
+def shell_parts(path, max_include_depth=8, max_line_bytes: int | None = None,
+                include_path_map: dict[str, str] | None = None) -> list[dict]:
+    """v0.16.0 메시 입력(esl_compare_mesh_options.md C2-D-4): 쉘 블록(/SHELL·/SH3N)이 있는 파트
+    [{id, title, n_shells, n_other, has_card}] — ``deck.scan`` 만(숫자 블록은 행 수만). /PART 카드 없는 쉘 블록도 포함."""
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
+    deck.scan(os.fspath(path))
+    return [{"id": int(pid), "title": (deck.parts.get(pid) or {}).get("title", ""), "n_shells": int(n),
+             "n_other": int(deck.other_elem_parts.get(pid, 0)), "has_card": pid in deck.parts}
+            for pid, n in sorted(deck.shell_count.items()) if n > 0]
+
+
+def parse_rad_part(path, part_id: int | None, *, need_props: bool = False, max_include_depth: int = 8,
+                   max_line_bytes: int | None = None, include_path_map: dict[str, str] | None = None) -> RadModel:
+    """v0.16.0 메시 입력 파서(esl_compare_mesh_options.md C2-D-4·5) — 파트 **ID** 로 쉘 메시를 읽는다(``parse_rad`` 는 그대로).
+
+    ``_Deck.scan``·``load_shells``·``load_nodes`` 를 공유. part_id None 이면 쉘 파트가 하나일 때만 그 파트
+    (둘 이상 → MESH_INPUT_PART_REQUIRED). 없는 ID → MESH_INPUT_PART_NOT_FOUND, 파트 안 쉘 아닌 요소 →
+    MESH_INPUT_UNSUPPORTED_ELEMENT, include 그래프에 상태 파일(.str/.sta) → MESH_INPUT_INVALID. /PART 카드 없이 쉘 블록만
+    있으면 허용(warnings 에 MESH_INPUT_PART_CARD_MISSING). ``need_props=False`` 면 두께·재료를 풀지 않음(두께 = 요소 카드
+    값 또는 0, E·ν = nan, mats = []) — 물성은 호출자(④ props). ``need_props=True`` 면 parse_rad 와 같은 규칙(override 없음).
+    중복 요소 ID → RAD_PARSE_ERROR. ``RadModel.begin`` = 주 파일 /BEGIN 행(없으면 None)."""
+    path = os.fspath(path)
+    deck = _Deck(max_include_depth, include_path_map, max_line_bytes)
+    deck.scan(path)
+    if deck.state_files:
+        raise EslError("MESH_INPUT_INVALID", "상태 파일 포함 메시는 비교 입력 불가 — include: "
+                       + ", ".join(os.path.basename(f["path"]) for f in deck.state_files))
+    shell_ids = sorted(pid for pid, n in deck.shell_count.items() if n > 0)
+    if part_id is None:
+        if len(shell_ids) != 1:
+            raise EslError("MESH_INPUT_PART_REQUIRED" if shell_ids else "MESH_INPUT_PART_NOT_FOUND",
+                           f"쉘 파트 {len(shell_ids)}개{': ' + str(shell_ids[:50]) if shell_ids else ''} — part_id 를 지정하세요")
+        part_id = shell_ids[0]
+    part_id = int(part_id)
+    if part_id not in shell_ids:
+        raise EslError("MESH_INPUT_PART_NOT_FOUND",
+                       f"파트 ID {part_id} 의 /SHELL·/SH3N 요소가 없음 (쉘 파트 {shell_ids[:50]})")
+    if deck.other_elem_parts.get(part_id, 0) > 0:
+        raise EslError("MESH_INPUT_UNSUPPORTED_ELEMENT",
+                       f"파트 {part_id} 에 쉘이 아닌 요소 {deck.other_elem_parts[part_id]}개가 있음")
+    part = deck.parts.get(part_id)
+    warns = list(deck.warnings)
+    if part is None:
+        warns.append(f"MESH_INPUT_PART_CARD_MISSING: /PART/{part_id} 카드 없음 — /SHELL·/SH3N/{part_id} 블록만 사용")
+    deck.load_shells(part_id)
+    sh = np.frombuffer(deck.sh_int, dtype=np.int64).reshape(-1, 6)
+    sel = sh[:, 1] == part_id
+    sh = sh[sel]
+    thk_card = np.frombuffer(deck.sh_thk, dtype=np.float64)[sel]
+    etype = np.frombuffer(deck.sh_type, dtype=np.int8)[sel]
+    order = np.argsort(sh[:, 0], kind="stable")
+    sh, thk_card, etype = sh[order], thk_card[order], etype[order]
+    elem_id = sh[:, 0].copy()
+    if elem_id.size > 1 and np.any(np.diff(elem_id) == 0):
+        raise _err(f"파트 {part_id} 에 중복 요소 ID 가 있음: {elem_id[:-1][np.diff(elem_id) == 0][:5].tolist()}")
+    conn_ids = sh[:, 2:6]
+    node_id = np.unique(conn_ids[conn_ids > 0])
+    x0, node_unit, found = deck.load_nodes(node_id)
+    if np.any(~found):
+        raise _err(f"요소가 참조하는 노드가 /NODE 에 없음: {node_id[~found][:10].tolist()}")
+    conn = np.full((elem_id.size, 4), -1, dtype=np.int64)
+    m = conn_ids > 0
+    conn[m] = np.searchsorted(node_id, conn_ids[m])
+    conn[etype == 3, 3] = -1
+    ne = elem_id.size
+    thickness = thk_card.copy()
+    E = np.full(ne, np.nan)
+    nu = np.full(ne, np.nan)
+    mats: list = []
+    prop_id = part.get("prop_id") if part else None
+    if need_props:
+        if part is None:
+            raise EslError("MESH_INPUT_INVALID", f"/PART/{part_id} 카드가 없어 물성을 풀 수 없음")
+        prop = deck.prop(prop_id) if prop_id is not None else None
+        need = ~(thickness > 0)
+        if np.any(need):
+            if prop is None or prop["type"] not in ("SHELL", "TYPE1") or not (prop["thick"] or 0) > 0:
+                raise _err(f"파트 {part_id} 두께를 풀 수 없음(/PROP/SHELL/{prop_id})")
+            thickness[need] = prop["thick"]
+        mid = part.get("mat_id")
+        mat = deck.mat(mid) if mid is not None else None
+        if mat is None or not mat["supported"] or not _valid_E_nu(mat["E"], mat["nu"]):
+            raise EslError("MATERIAL_UNRESOLVED", f"파트 {part_id} 재료 /MAT/../{mid} 를 풀 수 없음")
+        E[:], nu[:] = float(mat["E"]), float(mat["nu"])
+        mats = [{"id": int(mid), "law": mat["law"], "E": float(mat["E"]), "nu": float(mat["nu"]), "rho": mat["rho"],
+                 "source": "rad"}]
+    for u in np.unique(node_unit[node_unit != 0]).tolist():
+        warns.append(f"UNIT_ID_IGNORED: /NODE unit={int(u)} — 단위 변환 없이 값 그대로 사용")
+    if part is not None and part.get("unit"):
+        warns.append(f"UNIT_ID_IGNORED: /PART/{part_id} unit={int(part['unit'])} — 단위 변환 없이 값 그대로 사용")
+    return RadModel(node_id=node_id.astype(np.int64), x0=x0.astype(np.float64), elem_id=elem_id.astype(np.int64),
+                    elem_type=etype.astype(np.int8), conn=conn,
+                    elem_pid=np.full(ne, -1 if prop_id is None else int(prop_id), dtype=np.int64),
+                    thickness=thickness.astype(np.float64), E=E, nu=nu, part_id=part_id,
+                    part_title=part["title"] if part else "", units_label=deck.units_label, mats=mats,
+                    max_ids=dict(deck.max_ids), includes=list(deck.includes), warnings=warns, state=None,
+                    begin=list(deck.main_begin) if deck.main_begin is not None else None)
 
 
 def list_parts(path, max_include_depth=8, include_path_map: dict[str, str] | None = None,
