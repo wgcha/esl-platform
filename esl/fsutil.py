@@ -26,14 +26,37 @@ _cfg: dict[str, Any] = dict(DEFAULTS)
 _lock = threading.Lock()
 
 
+def user_path(path: str, root: str | None = None) -> str:
+    """사용자에게 보일 경로: root(예: esl_root) 안이면 root 기준 상대 경로('/' 구분), 아니면 파일 이름만(서버 절대 경로 숨김)."""
+    p = os.path.abspath(str(path))
+    if root:
+        r = os.path.abspath(str(root))
+        try:
+            if os.path.commonpath([p, r]) == r and p != r:
+                return os.path.relpath(p, r).replace(os.sep, "/")
+        except ValueError:                                  # Windows 다른 드라이브
+            pass
+    return os.path.basename(p)
+
+
 class FileLocked(EslError):
+    """사용자 문구(message)에는 파일 이름만 — 서버 절대 경로는 src·dst 속성(서버 로그 전용, ``log_text``)."""
+
     def __init__(self, src: str, dst: str, attempts: int, waited_s: float, cause: BaseException | None = None):
         self.src, self.dst = str(src), str(dst)
+        why = ""
+        if cause is not None:                               # str(PermissionError) 에는 절대 경로가 들어 있어 쓰지 않음
+            we = getattr(cause, "winerror", None)
+            why = f" [{'WinError ' + str(we) if we is not None else type(cause).__name__}" \
+                  f"{': ' + str(cause.strerror) if getattr(cause, 'strerror', None) else ''}]"
         super().__init__(
             "FILE_LOCKED",
             f"다른 프로그램(백신·검색 인덱서·탐색기 미리보기 등)이 파일을 쓰고 있어 바꾸지 못했습니다 "
-            f"({attempts}회, {waited_s:.1f} s 대기): {self.dst} ← {os.path.basename(self.src)}"
-            + (f" [{cause}]" if cause is not None else ""))
+            f"({attempts}회, {waited_s:.1f} s 대기): {os.path.basename(self.dst)} ← {os.path.basename(self.src)}" + why)
+
+    def log_text(self) -> str:
+        """서버 로그용(절대 경로 포함)."""
+        return f"{self.message} — 대상 {self.dst}, 임시 {self.src}"
 
 
 def configure(cfg: dict[str, Any] | None) -> dict[str, Any]:

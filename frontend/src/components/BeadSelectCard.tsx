@@ -110,7 +110,7 @@ export interface BeadSelectCtrl {
   clearLayer: () => void;
   deleteBead: (bead: number) => void;
   deleteTier: (bead: number) => void;
-  /** 이 비드 초기화(요소만, 이름 유지) · 전체 초기화(비드·고정·제외 모두) — 실행 취소 가능, 서버는 [선택 저장] 전까지 그대로 */
+  /** 이 비드 초기화(요소·그 비드 derive 결과, 이름 유지) · 전체 초기화(비드·고정·제외 모두) — 실행 취소 가능, 서버는 [선택 저장] 전까지 그대로 */
   resetBead: (bead: number) => void;
   resetAll: () => void;
   maxBeads: number;
@@ -118,6 +118,16 @@ export interface BeadSelectCtrl {
 }
 
 const json = (x: unknown) => JSON.stringify(x);
+
+/** [이 비드 초기화] 뒤 derive 에서 그 비드 결과(비드 행·사면 제안·그 비드 경고)만 뺌 — 다른 비드 결과는 그대로. 남는 비드가 없으면 null */
+export function withoutBeadDerive(d: DoeDeriveOut | null, id: string): DoeDeriveOut | null {
+  if (!d) return d;
+  const beads = d.beads.filter((b) => b.id !== id);
+  const sug = d.slope_suggested ? Object.fromEntries(Object.entries(d.slope_suggested).filter(([k]) => k !== id)) : d.slope_suggested;
+  const warnings = d.warnings?.filter((w) => w.bead !== id && w.bead_id !== id);
+  if (!beads.length) return null;
+  return { ...d, beads, slope_suggested: sug, ...(warnings ? { warnings } : {}) };
+}
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\u0000-\u001f\u007f]/;
 
@@ -390,6 +400,8 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       const p = resetBead(s, b);
       if (!p) return;
       hist.current.push(p);
+      const id = s.beads[b]?.id;
+      if (id) setDerive((d) => withoutBeadDerive(d, id));   // 그 비드의 사면 제안·D·W 도 비움(다시 계산 전까지)
       bump();
     },
     resetAll: () => {

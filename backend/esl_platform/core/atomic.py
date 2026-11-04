@@ -13,6 +13,7 @@ from typing import Any
 from .opt_core import fsutil as _F      # 코어는 어댑터(opt_core)로만 import(test_core_called_only_via_adapter)
 
 FileLocked = _F.FileLocked
+user_path = _F.user_path
 atomic_replace = _F.atomic_replace
 is_lock_error = _F.is_lock_error
 _configure = _F.configure

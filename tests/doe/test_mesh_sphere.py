@@ -104,6 +104,98 @@ def test_nofix_face_fillet_corner(tmp_path):
     _nofix_ok(meta)
 
 
+def test_pick_same_face_type_area_unique():
+    """nofix(그 면만) 대체 면: bbox(± bbox_tol)·면 종류·넓이(상대 area_rtol)가 모두 맞는 후보가 정확히 1개일 때만. 0·2개 → 건너뜀."""
+    key = (0.0, 0.0, -5.0, 10.0, 10.0, 0.0)
+    near = (0.004, 0.0, -5.0, 10.0, 10.0, 0.0)
+    cands = [(11, "Plane", 100.0, key), (12, "Sphere", 150.0, key), (13, "Sphere", 100.0, near)]
+    assert mg._pick_same_face(cands, key, "Sphere", 100.0, 1e-2, 1e-2) == 13      # 종류·넓이로 한 면(bbox 만이면 12·13)
+    assert mg._pick_same_face(cands, key, "Plane", 100.5, 1e-2, 1e-2) == 11
+    with pytest.raises(mg._GeomSkip, match="후보 0개"):
+        mg._pick_same_face(cands, key, "Sphere", 100.0, 1e-3, 1e-2)               # bbox 허용 밖
+    with pytest.raises(mg._GeomSkip, match="후보 0개"):
+        mg._pick_same_face(cands, key, "Cone", 100.0, 1e-2, 1e-2)
+    with pytest.raises(mg._GeomSkip, match="후보 2개"):
+        mg._pick_same_face(cands, key, "Sphere", 125.0, 1e-2, 0.25)               # 넓이 허용이 넓으면 2개 → 못 정함
+
+
+@needs_gmsh
+def test_nofix_face_symmetric_pair_skipped(tmp_path):
+    """같은 bbox·종류·넓이 면 2개(딤플 + bbox 중심 점대칭 구면 캡): nofix(그 면만)은 대체 면을 하나로 못 정해 건너뜀(세션 형상
+    그대로 — 면·모서리 수 불변), 사유는 기록(실패 문구 '마지막')에 남음."""
+    import gmsh
+    src = scmp.dimple_plate_step(tmp_path / "pair.step", DIMPLES, mirror=True)
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("Geometry.OCCSewFaces", 1)
+        gmsh.model.occ.importShapes(src)
+        gmsh.model.occ.synchronize()
+        sph = [t for _d, t in gmsh.model.getEntities(2) if gmsh.model.getType(2, t) == "Sphere"]
+        assert len(sph) == 2 and mg._bbox_key(gmsh, 2, sph[0]) == mg._bbox_key(gmsh, 2, sph[1])
+        n0 = [len(gmsh.model.getEntities(d)) for d in range(4)]
+        with pytest.raises(mg._GeomSkip, match="후보 2개"):
+            mg._nofix_face(gmsh, src, mg._bbox_key(gmsh, 2, sph[0]), {})
+        assert [len(gmsh.model.getEntities(d)) for d in range(4)] == n0
+    finally:
+        gmsh.finalize()
+    cfg = _ccfg(fallback={"periodic_order": ["nofix"], "nofix": {"scopes": ["face"]}})
+    with pytest.raises(EslError) as ei:
+        mg.mesh_file(src, 3.0, cfg, PROPS)
+    assert "OCC 정리 끔(그 면만) 적용 안 됨" in ei.value.message and "후보 2개" in ei.value.message
+
+
+@needs_gmsh
+def test_nofix_face_pick_matches_bbox_rule_on_normal_cases(tmp_path):
+    """정상 대체는 그대로: 대칭 쌍이 없는 형상에서는 새 규칙(bbox·종류·넓이)이 예전 규칙(bbox 가장 가까운 면)과 같은 면을 고름."""
+    import gmsh
+    for src in (scmp.dimple_plate_step(tmp_path / "d.step", DIMPLES), scmp.bead_with_features_step(tmp_path / "b.step"),
+                scmp.fillet_corner_step(tmp_path / "c.step", 5.0)):
+        gmsh.initialize(["-noenv"], readConfigFiles=False)
+        try:
+            gmsh.option.setNumber("General.Terminal", 0)
+            gmsh.option.setNumber("Geometry.OCCSewFaces", 1)
+            gmsh.model.occ.importShapes(src)
+            gmsh.model.occ.synchronize()
+            fixed = [(mg._bbox_key(gmsh, 2, t), gmsh.model.getType(2, t), gmsh.model.occ.getMass(2, t))
+                     for _d, t in gmsh.model.getEntities(2) if gmsh.model.getType(2, t) == "Sphere"]
+            gmsh.clear()
+            for k in mg.OCC_FIX_KEYS + ("Geometry.OCCSewFaces",):
+                gmsh.option.setNumber(k, 0)
+            gmsh.model.occ.importShapes(src)
+            gmsh.model.occ.synchronize()
+            new = [int(t) for _d, t in gmsh.model.getEntities(2)]
+            cands = [(t, gmsh.model.getType(2, t), gmsh.model.occ.getMass(2, t), mg._bbox_key(gmsh, 2, t)) for t in new]
+            assert fixed
+            for key, typ, area in fixed:
+                old = [t for t in new if mg._key_near(mg._bbox_key(gmsh, 2, t), key, 1e-2)]
+                old_f = min(old, key=lambda t: max(abs(a - b) for a, b in zip(mg._bbox_key(gmsh, 2, t), key)))
+                assert mg._pick_same_face(cands, key, typ, area, 1e-2, 1e-2) == old_f
+        finally:
+            gmsh.finalize()
+
+
+@needs_gmsh
+def test_nofix_face_quality_error_falls_through(tmp_path, monkeypatch):
+    """nofix(그 면만) 결과도 품질 검사(연결 성분 등): 오류면 그 결과는 버리고(원 세션 기준) 다음 단계로, 사유는 errors 에."""
+    src = scmp.dimple_plate_step(tmp_path / "dimple.step", DIMPLES)
+    real = mg.quality
+    calls = {"n": 0}
+
+    def fake(mesh, cfg, oc):
+        calls["n"] += 1
+        if calls["n"] == 1:                                                     # nofix(그 면만) 결과 검사 = 연결 끊김 주입
+            return {"errors": [{"code": "MESH_DISCONNECTED", "message": "메시 연결 성분 2개"}], "warnings": [],
+                    "metrics": {}, "quad_frac": 1.0}
+        return real(mesh, cfg, oc)
+    monkeypatch.setattr(mg, "quality", fake)
+    _m, meta = mg.mesh_file(src, 3.0, _ccfg(fallback={"periodic_order": ["nofix", "fill"],
+                                                       "nofix": {"scopes": ["face"]}}), PROPS)
+    f = meta["mesh_fallback"]["faces"][0]
+    assert f["stage"] == "fill" and any("OCC 정리 끔(그 면만) 뒤 품질 오류 MESH_DISCONNECTED" in e for e in f["errors"])
+    assert not meta["errors"]
+
+
 @needs_gmsh
 def test_nofix_all_scope(tmp_path):
     """nofix(전체): 고체 STEP(면 공유가 STEP 안 — OCCSewFaces 0) 딤플은 세션 전체를 정리 없이 다시 열어 메시. 면 공유가 없는

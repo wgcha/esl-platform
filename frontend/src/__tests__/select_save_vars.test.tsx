@@ -168,6 +168,8 @@ describe("select: 저장 선택 없음 → 선택 저장 → 변수 표", () => 
     fireEvent.click(screen.getByRole("button", { name: "이 비드 초기화" }));
     await waitFor(() => expect(floor()).toMatch(/단1 바닥 0.*단2 바닥 0/));
     expect((screen.getByLabelText("B1 이름") as HTMLInputElement).value).toBe("좌 경로 비드");
+    expect(floor()).toMatch(/자동 계산 전/);                       // 그 비드 derive(사면 제안·D·W)도 비움
+    expect(floor()).not.toMatch(/자동 \d+|D \d/);
     fireEvent.keyDown(host, { key: "z", ctrlKey: true });
     await waitFor(() => expect(floor()).toMatch(/단1 바닥 [1-9]/));
     // 전체 초기화(확인) → 비드 없음, 서버 저장본 그대로 → Ctrl+Z

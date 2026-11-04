@@ -1,5 +1,5 @@
 """이슈 #53 WinError 32: worker.fs_retry 설정(기본 = esl.fsutil.DEFAULTS, 범위 검사) → 백엔드 기동 시 esl.fsutil 설정,
-write_bytes_atomic 의 잠금 재시도·끝내 FILE_LOCKED(임시 파일 정리), API 응답 503 FILE_LOCKED(경로 포함)."""
+write_bytes_atomic 의 잠금 재시도·끝내 FILE_LOCKED(임시 파일 정리), API 응답 503 FILE_LOCKED(파일 이름·esl_root 기준 상대 경로만)."""
 
 from __future__ import annotations
 
@@ -67,21 +67,34 @@ def test_write_atomic_retry_and_give_up(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "replace", rep)
     with pytest.raises(atomic.FileLocked) as ei:
         atomic.write_text_atomic(str(p), "{\"b\": 1}")
-    assert ei.value.code == "FILE_LOCKED" and str(p) in ei.value.message
+    assert ei.value.code == "FILE_LOCKED" and "a.json" in ei.value.message and str(tmp_path) not in ei.value.message
     assert p.read_text() == "{}" and not list(tmp_path.glob("*.tmp"))       # 기존 파일 그대로, 임시 파일 정리
 
 
-def test_api_file_locked_503(tmp_path):
+def test_api_file_locked_503(tmp_path, caplog):
+    """503 FILE_LOCKED: message·path 에는 파일 이름(esl_root 안이면 상대 경로)만 — 서버 절대 경로는 서버 로그에만."""
+    import logging
+
     from esl_platform.api.context import build_context
     from esl_platform.api.main import create_app
 
     lc = load_config_dict(make_settings_dict(tmp_path), environ={})
     app = create_app(build_context(lc, None))
+    root = lc.settings.storage.esl_root
+    inside = os.path.join(root, "lib", "e1", "a.inc")
 
     def boom():
         raise F.FileLocked("/x/.a.tmp", "/x/a.inc", 8, 10.0)
+
+    def boom_in():
+        raise F.FileLocked(inside + ".tmp", inside, 8, 10.0)
     app.add_api_route("/__locked", boom)
-    r = TestClient(app).get("/__locked")
+    app.add_api_route("/__locked_in", boom_in)
+    with caplog.at_level(logging.WARNING):
+        r = TestClient(app).get("/__locked")
     assert r.status_code == 503
     det = r.json()["detail"]
-    assert det["code"] == "FILE_LOCKED" and det["path"] == "/x/a.inc" and "/x/a.inc" in det["message"]
+    assert det["code"] == "FILE_LOCKED" and det["path"] == "a.inc" and "a.inc" in det["message"]
+    assert "/x/" not in det["message"] and "/x/a.inc" in caplog.text           # 절대 경로는 로그에만
+    det = TestClient(app).get("/__locked_in").json()["detail"]
+    assert det["path"].replace("\\", "/") == "lib/e1/a.inc" and root not in det["message"]

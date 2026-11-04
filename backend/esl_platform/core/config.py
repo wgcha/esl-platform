@@ -528,6 +528,9 @@ class BeadDoeFallbackNofixCfg(_M):
     """v0.15.1 OCC 정리 끔: scopes 순서로 face(그 면만 정리 없이 다시 가져와 대체)·all(세션 전체 정리·봉합 끔)."""
 
     scopes: list[str] = Field(default_factory=lambda: ["face", "all"], min_length=1, max_length=2)
+    # face 대체 면 = 정리 없이 가져온 면 중 bbox ± bbox_tol mm·같은 면 종류·넓이 ± area_rtol(상대)이 1개일 때만(0·2개 이상 → 건너뜀)
+    bbox_tol: float = Field(default=1e-2, gt=0, le=1.0)
+    area_rtol: float = Field(default=1e-2, gt=0, le=0.5)
 
     @field_validator("scopes")
     @classmethod

@@ -1,5 +1,7 @@
 // v0.15.1 지우기(esl_bead_select.md §11.2 확장): 층 비우기 · 비드 삭제(번호·이름 정리, 묶음 함께) · 마지막 단 삭제 — 모두 History 패치 1개로 되돌림·다시.
 import { describe, expect, it } from "vitest";
+import type { DoeDeriveOut } from "../api/types";
+import { withoutBeadDerive } from "../components/BeadSelectCard";
 import { History } from "../view3d/select/history";
 import { addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, emptyState, effectiveSlope, ownerCode, paint, toggleLink, type LayerName } from "../view3d/select/layers";
 
@@ -105,5 +107,30 @@ describe("지우기", () => {
     expect(s.fixed[5]).toBe(1);
     redo(s, h);
     expect(s.beads).toEqual([]);
+  });
+});
+
+describe("이 비드 초기화 → 그 비드 derive 결과도 비움(v0.15.1 Low a)", () => {
+  const bd = (id: string) =>
+    ({ id, name: id, n_elems: 3, n_nodes: 8, tiers: [], slope: { n_elems: 2, elems: { q: [1], t: [] }, suggested_n: 2, edited: false }, boundary: { loops: [], n_nodes: 0 }, W_nom: 10, W_min: 9, W_max: 11, sense: "concave", blend_mm: 2 }) as unknown as DoeDeriveOut["beads"][number];
+  const d = {
+    sha256: "x",
+    beads: [bd("b1"), bd("b2")],
+    fixed: { scan_n: 0, user_n: 0, source: "none" },
+    warnings: [{ code: "W1", bead: "b1" }, { code: "W2", bead: "b2" }, { code: "G" }],
+    slope_suggested: { b1: { q: [1], t: [] }, b2: { q: [2], t: [] } },
+  } as unknown as DoeDeriveOut;
+
+  it("그 비드 행·사면 제안·경고만 빠지고 다른 비드는 그대로", () => {
+    const r = withoutBeadDerive(d, "b1")!;
+    expect(r.beads.map((b) => b.id)).toEqual(["b2"]);
+    expect(Object.keys(r.slope_suggested ?? {})).toEqual(["b2"]);
+    expect((r.warnings ?? []).map((w) => w.code)).toEqual(["W2", "G"]);
+    expect(d.beads.length).toBe(2); // 원본 불변
+  });
+
+  it("남는 비드가 없거나 derive 가 없으면 null", () => {
+    expect(withoutBeadDerive(withoutBeadDerive(d, "b1"), "b2")).toBeNull();
+    expect(withoutBeadDerive(null, "b1")).toBeNull();
   });
 });

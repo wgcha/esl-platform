@@ -94,13 +94,15 @@ def boss_plate_step(path, bosses, *, Lx: float = 300.0, Lz: float = 160.0, holes
     return str(path)
 
 
-def dimple_plate_step(path, dimples, *, Lx: float = 200.0, Lz: float = 150.0, solid: float = 0.0) -> str:
+def dimple_plate_step(path, dimples, *, Lx: float = 200.0, Lz: float = 150.0, solid: float = 0.0,
+                      mirror: bool = False) -> str:
     """v0.15.1 Sphere 면 재현용(이슈 #53 'Impossible to mesh periodic surface' — 중립면 STEP 의 구면 딤플·필렛 코너 패치):
     XY 판(z = 0) + 구면 딤플(원호를 z 축으로 회전 = OCC Sphere 면, u periodic·seam 있음, 극점 = 딤플 바닥이 면 안).
 
     dimples = [(x, y, R, d)]: 구 반지름 R, 깊이 d(< R). OCC 정리(Geometry.OCCFix*·OCCSewFaces)가 극점의 퇴화 모서리를
     지워 gmsh 2D 가 그 면에서 실패한다(알고리즘 무관). 면은 fragment 로 모서리를 공유.
-    solid > 0 이면 두께 solid 판 고체에서 구를 뺀 고체 STEP(면 공유가 STEP 안에 있어 OCCSewFaces 0 으로도 붙음)."""
+    solid > 0 이면 두께 solid 판 고체에서 구를 뺀 고체 STEP(면 공유가 STEP 안에 있어 OCCSewFaces 0 으로도 붙음).
+    mirror = 각 딤플 bbox 중심에 점대칭인 구면 캡(극점 z 0·테두리 z −d, 따로 떨어진 면)도 넣음 — bbox·종류·넓이가 딤플과 같은 쌍."""
     import math
 
     import gmsh
@@ -125,6 +127,11 @@ def dimple_plate_step(path, dimples, *, Lx: float = 200.0, Lz: float = 150.0, so
         top = occ.cut([(2, plate)], cuts)[0] if cuts else [(2, plate)]
         if faces:
             occ.fragment(top + faces, [])
+        if mirror:
+            for x, y, R, d in dimples:
+                a = math.sqrt(R * R - (R - d) ** 2)
+                arc = occ.addCircleArc(occ.addPoint(x + a, y, -d), occ.addPoint(x, y, -R), occ.addPoint(x, y, 0.0))
+                occ.revolve([(1, arc)], x, y, 0.0, 0.0, 0.0, 1.0, 2 * math.pi)
         occ.synchronize()
         os.makedirs(os.path.dirname(os.path.abspath(str(path))), exist_ok=True)
         gmsh.write(str(path))

@@ -477,7 +477,7 @@ def test_prep_assem_full_lock_retry_then_file_locked(client, engine, worker, esl
     s = create(client, s1["entry_ids"])
     run_job(client, worker, s["job"]["id"])
     assert st["fail"] == 3 and study(client, s["id"])["phase"] == "READY"
-    F.configure({"attempts": 2})                      # 끝내 잠김 → BD_GEOM FAILED FILE_LOCKED(경로 포함)
+    F.configure({"attempts": 2})                      # 끝내 잠김 → BD_GEOM FAILED FILE_LOCKED(파일 이름만)
     try:
         _lock_assem(monkeypatch, 10 ** 6)
         s2 = create(client, s1["entry_ids"])
@@ -485,7 +485,8 @@ def test_prep_assem_full_lock_retry_then_file_locked(client, engine, worker, esl
     finally:
         F.configure(None)
     assert j["failure_code"] == "FILE_LOCKED", j["failure_message"]
-    assert "assem_full" in j["failure_message"] and "백신" in j["failure_message"]
+    assert "백신" in j["failure_message"] and str(esl_root) not in j["failure_message"]   # 파일 이름만(서버 절대 경로 없음)
+    assert os.sep + "assem_full" + os.sep not in j["failure_message"]
     assert [x["failure_code"] for x in j["steps"] if x["state"] == "FAILED"] == ["FILE_LOCKED"]
 
 
@@ -499,4 +500,5 @@ def test_worker_side_file_locked_not_internal_error(client, engine, worker, esl_
     s1 = make_s1(engine, esl_root, inputs_root)
     s = create(client, s1["entry_ids"])
     j = run_job(client, worker, s["job"]["id"], "FAILED")
-    assert j["failure_code"] == "FILE_LOCKED" and "x.json" in j["failure_message"]
+    assert j["failure_code"] == "FILE_LOCKED" and "x.json ← .x.tmp" in j["failure_message"]
+    assert str(esl_root) not in j["failure_message"] and os.sep + "x.json" not in j["failure_message"]

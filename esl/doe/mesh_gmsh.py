@@ -400,6 +400,15 @@ STAGE_NAMES = {"algorithm": "2D 알고리즘", "relax": "제약 해제", "split"
 _AREA_RTOL = 1e-3                                           # 면 분할 전후 넓이 보존 허용(상대)
 
 
+def _fb_defaults() -> dict:
+    """DEFAULTS 의 compare.mesh.fallback(형상 폴백 기본값의 한 곳 — 코드 안 상수 중복 방지)."""
+    from esl.doe import DEFAULTS
+    try:
+        return DEFAULTS["compare"]["mesh"]["fallback"]
+    except (KeyError, TypeError):
+        return {}
+
+
 class _GeomSkip(Exception):
     """형상 폴백 단계를 이 면에 쓸 수 없음(조각 1개·넓이 불일치·편차 초과·고리 여러 개 등) — 다음 단계로."""
 
@@ -565,14 +574,31 @@ def _split_face(gmsh, s: int, n_planes: int) -> dict:
     return {"deviation_mm": 0.0, "new_ids": new_ids, "pieces": len(pieces)}
 
 
-def _nofix_face(gmsh, src: str, key: tuple) -> dict:
-    """nofix(그 면만): 같은 STEP 을 OCC 정리(OCCFix*·OCCSewFaces) 없이 한 번 더 가져와 bbox 가 같은 면만 남기고, 정리된 원 면을
-    그 면으로 바꾼 뒤 원 면 이웃과만 fragment(공유 경계 복원). 극점 퇴화 모서리가 남아 Sphere 면이 메시된다. 못 찾음·면 수 불일치
-    → _GeomSkip(원 세션 그대로)."""
+def _pick_same_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: float, area_rtol: float) -> int:
+    """nofix(그 면만) 대체 면 고르기: cands = [(tag, 종류, 넓이, bbox)] 중 bbox(± bbox_tol)·면 종류·넓이(상대 area_rtol)가 모두
+    맞는 면이 정확히 1개일 때만 그 tag. 0개·2개 이상(대칭 쌍처럼 bbox·종류·넓이가 같은 면) → _GeomSkip(엉뚱한 면 대체 방지)."""
+    hit = [int(t) for t, ty, a, bb in cands
+           if _key_near(tuple(bb), key, bbox_tol) and str(ty) == str(typ)
+           and abs(float(a) - area) <= area_rtol * max(abs(area), 1e-12)]
+    if len(hit) != 1:
+        raise _GeomSkip(f"정리 없이 가져온 형상에 같은 면(bbox ±{bbox_tol:g}·종류 {typ}·넓이 ±{area_rtol:g}) 후보 "
+                        f"{len(hit)}개{' — 하나로 정할 수 없음' if hit else ''}")
+    return hit[0]
+
+
+def _nofix_face(gmsh, src: str, key: tuple, fb: dict | None = None) -> dict:
+    """nofix(그 면만): 같은 STEP 을 OCC 정리(OCCFix*·OCCSewFaces) 없이 한 번 더 가져와 bbox·면 종류·넓이가 같은 면 하나만 남기고,
+    정리된 원 면을 그 면으로 바꾼 뒤 원 면 이웃과만 fragment(공유 경계 복원). 극점 퇴화 모서리가 남아 Sphere 면이 메시된다.
+    후보 0·2개 이상·면 수 불일치 → _GeomSkip(원 세션 그대로). 허용값 = fallback.nofix.bbox_tol·area_rtol."""
     occ = gmsh.model.occ
     s = _face_by_key(gmsh, key)
     if s is None:
         raise _GeomSkip("이 세션에서 면을 찾지 못함")
+    nf = (fb or {}).get("nofix") if isinstance((fb or {}).get("nofix"), dict) else {}
+    dn = _fb_defaults().get("nofix") or {}
+    bbox_tol = float(nf.get("bbox_tol", dn.get("bbox_tol", 1e-2)))
+    area_rtol = float(nf.get("area_rtol", dn.get("area_rtol", 1e-2)))
+    typ0, area0 = str(gmsh.model.getType(2, s)), float(occ.getMass(2, s))
     curves = sorted({abs(int(t)) for _d, t in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False)})
     nb = sorted({int(u) for c in curves for u in gmsh.model.getAdjacencies(1, c)[0]} - {s})
     before = {d: {int(t) for _x, t in occ.getEntities(d)} for d in range(4)}
@@ -589,8 +615,12 @@ def _nofix_face(gmsh, src: str, key: tuple) -> dict:
         for k, v in keep.items():
             gmsh.option.setNumber(k, v)
     new = {d: sorted(int(t) for _x, t in occ.getEntities(d) if int(t) not in before[d]) for d in range(4)}
-    cand = [t for t in new[2] if _key_near(_bbox_key(gmsh, 2, t), key, 1e-2)]
-    f = min(cand, key=lambda t: max(abs(a - b) for a, b in zip(_bbox_key(gmsh, 2, t), key))) if cand else None
+    try:
+        f = _pick_same_face([(t, gmsh.model.getType(2, t), occ.getMass(2, t), _bbox_key(gmsh, 2, t)) for t in new[2]],
+                            key, typ0, area0, bbox_tol, area_rtol)
+        why = None
+    except _GeomSkip as gs:
+        f, why = None, str(gs)
     if new[3]:
         occ.remove([(3, t) for t in new[3]])
     rest = [(2, t) for t in new[2] if t != f]
@@ -599,7 +629,7 @@ def _nofix_face(gmsh, src: str, key: tuple) -> dict:
     occ.synchronize()
     if f is None:
         _drop_free(gmsh, new[1])
-        raise _GeomSkip("정리 없이 가져온 형상에 같은 면 없음")
+        raise _GeomSkip(why)
     occ.remove([(2, s)])
     occ.synchronize()
     try:
@@ -628,7 +658,8 @@ def _apply_geom(gmsh, key: tuple, stage: str, h: float, fb: dict) -> dict:
     if stage == "fill":
         fc = fb.get("fill") if isinstance(fb.get("fill"), dict) else {}
         tol = float(fc.get("tol_factor", 0.5)) * h
-        return _fill_face(gmsh, s, h, int(fc.get("points", 6)), tol, int(fc.get("samples", 10)))
+        fd = _fb_defaults().get("fill") or {}
+        return _fill_face(gmsh, s, h, int(fc.get("points", fd.get("points", 8))), tol, int(fc.get("samples", 10)))
     if stage == "small":
         sm = fb.get("small") if isinstance(fb.get("small"), dict) else {}
         amax = float(sm.get("area_mm2", 50.27))
@@ -699,7 +730,7 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
             if stage != "nofix_face":
                 continue
             try:
-                geom[gk] = {"stage": stage, **_nofix_face(gmsh, src, gk)}
+                geom[gk] = {"stage": stage, **_nofix_face(gmsh, src, gk, fb)}
             except _GeomSkip as gs:
                 bb = list(gk)
                 raise _FaceFail(f"{STAGE_NAMES[stage]} 적용 안 됨: {gs}",
@@ -841,12 +872,15 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
                                                                 face_geom=face_geom, fb=fb, nofix_all=k_all is not None)
             if first:
                 step_done = sd
-            if k_all is not None:                           # 정리 끔(전체): 다른 면 작은 모서리·틈 → 품질 오류면 쓰지 않음
+            if k_all is not None:
                 geom[k_all] = {"stage": "nofix_all", "deviation_mm": 0.0, "new_ids": [], "scope": "all"}
+            k_nf = k_all if k_all is not None else next((k for k, st in cur.items() if st[2] == "nofix_face"), None)
+            if k_nf is not None:                            # 정리 끔(전체·그 면만): 다른 면 작은 모서리·틈·대체 면 연결 끊김
                 qe = quality(build_mesh(X, conn, et, props, normal_ref)[0], cfg, opt_cfg or opt_settings(None))["errors"]
-                if qe:
-                    raise _FaceFail(f"{STAGE_NAMES['nofix_all']} 뒤 품질 오류 {qe[0]['code']}: {qe[0]['message']}",
-                                    state[k_all]["face"], key=k_all)
+                if qe:                                      # → 품질 오류면 쓰지 않음(원 세션 기준 다음 단계)
+                    g_nf = cur[k_nf][2]
+                    raise _FaceFail(f"{STAGE_NAMES[g_nf]} 뒤 품질 오류 {qe[0]['code']}: {qe[0]['message']}",
+                                    state[k_nf]["face"], key=k_nf)
             break
         except _FaceFail as ff:
             if first and step_out:

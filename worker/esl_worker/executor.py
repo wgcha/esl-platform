@@ -225,7 +225,7 @@ class Executor:
             return "LEASE_LOST"
         except FileLocked as exc:          # 이슈 #53: 워커 쪽 교체가 재시도(worker.fs_retry) 뒤에도 잠김 → 사용자 문구·경로
             self._kill_child()
-            log.error("작업 %s 파일 잠김: %s", job["id"], exc.message)
+            log.error("작업 %s 파일 잠김: %s", job["id"], exc.log_text())   # 절대 경로는 서버 로그에만, 사용자 문구 = 파일 이름
             try:
                 self._finish(FAILED, exc.code, exc.message[:450])
             except LeaseLost:

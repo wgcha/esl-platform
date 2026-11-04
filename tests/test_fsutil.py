@@ -66,7 +66,9 @@ def test_gives_up_with_file_locked(tmp_path):
         F.atomic_replace(str(src), str(dst), _replace=rep, _sleep=sleeps.append)
     e = ei.value
     assert isinstance(e, EslError) and e.code == "FILE_LOCKED"
-    assert str(dst) in e.message and "generated_dampvrel.inc" in e.message and "백신" in e.message
+    assert "generated_dampvrel.inc" in e.message and "백신" in e.message
+    assert str(tmp_path) not in e.message                         # 사용자 문구 = 파일 이름만(서버 절대 경로는 로그에만)
+    assert str(dst) in e.log_text() and str(src) in e.log_text()
     assert e.dst == str(dst) and e.src == str(src)
     assert st["calls"] == 4 and len(sleeps) == 3                  # attempts 회 시도, 사이 대기 attempts-1 회
     assert src.read_bytes() == b"x" and not dst.exists()          # 실패한 교체는 src 를 그대로 둔다
@@ -109,3 +111,15 @@ def test_directory_replace(tmp_path):
     (a / "f").write_text("1")
     F.atomic_replace(str(a), str(tmp_path / "final"))
     assert (tmp_path / "final" / "f").read_text() == "1" and not a.exists()
+
+
+def test_file_locked_message_hides_cause_path_and_user_path(tmp_path):
+    """원인 PermissionError 의 문자열(절대 경로 포함)은 문구에 넣지 않음 — WinError 번호·설명만. user_path = root 기준 상대·밖이면 이름."""
+    cause = PermissionError(13, "다른 프로세스가 파일을 사용 중", str(tmp_path / "secret" / "a.inc"))
+    cause.winerror = 32
+    e = F.FileLocked(str(tmp_path / "secret" / ".a.tmp"), str(tmp_path / "secret" / "a.inc"), 8, 10.0, cause)
+    assert "secret" not in e.message and str(tmp_path) not in e.message
+    assert "a.inc ← .a.tmp" in e.message and "[WinError 32: 다른 프로세스가 파일을 사용 중]" in e.message
+    assert F.user_path(str(tmp_path / "secret" / "a.inc"), str(tmp_path)) == "secret/a.inc"
+    assert F.user_path(str(tmp_path / "secret" / "a.inc"), str(tmp_path / "other")) == "a.inc"
+    assert F.user_path(str(tmp_path / "a.inc")) == "a.inc"
