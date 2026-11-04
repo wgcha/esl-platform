@@ -95,6 +95,7 @@ bead_doe:
       extend_from_boundary: 0
       occ_fix_small: 1
       feature_angle: 10.0      # 기록만(SC-D-13)
+      fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20}   # v0.14.1 실패 면만 2D 알고리즘 재시도 → 제약 해제(MESH_FACE_FALLBACK)
     defeature: {enabled: true, min_hole_area_mm2: 50.27, hole_elems: 6, hole_r_mm: [4.0, 30.0], min_bead_height_mm: 2.0}   # SC-D-13
     quality:                   # SC-D-13 이슈 #53 criteria(warn·fail), Fail 비율 상한 → 경고만
       max_fail_ratio: 0.01

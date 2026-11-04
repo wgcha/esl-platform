@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
 
 ENV_CONFIG = "ESL_PLATFORM_CONFIG"
 ENV_PROFILE = "ESL_PROFILE"
@@ -514,6 +514,24 @@ class BeadDoeLimitsCfg(_M):
     min_disp_range_mm: float = Field(default=1.0, gt=0)
 
 
+class BeadDoeCompareMeshFallbackCfg(_M):
+    """v0.14.1 면 단위 폴백(esl.doe.mesh_gmsh.mesh_file): 2D 메싱이 실패한 면만 algorithms 순서로 재시도, relax 면 그 면의
+    작은 형상 처리·구멍 둘레 분할을 풀고 다시. 실패 면이 max_faces 개를 넘으면 FAILED_MESH."""
+
+    enabled: bool = True
+    algorithms: list[int] = Field(default_factory=lambda: [6, 5, 1], max_length=8)   # gmsh Mesh.Algorithm 번호
+    relax: bool = True
+    max_faces: int = Field(default=20, ge=1, le=1000)
+
+    @field_validator("algorithms")
+    @classmethod
+    def _algs(cls, v: list[int]) -> list[int]:
+        bad = [a for a in v if a not in (1, 2, 5, 6, 7, 8, 9, 11)]
+        if bad:
+            raise ValueError(f"gmsh 2D 알고리즘 번호가 아님: {bad}")
+        return v
+
+
 class BeadDoeCompareMeshCfg(_M):
     """v0.14.0 ④ 메시 프로필(esl_step_compare.md SC-D-5): bead_doe.mesh 를 키별 덮어씀. size_mm 범위는 BeadDoeCfg 가 확인."""
 
@@ -523,6 +541,7 @@ class BeadDoeCompareMeshCfg(_M):
     extend_from_boundary: int = Field(default=0, ge=0, le=1)  # gmsh Mesh.MeshSizeExtendFromBoundary
     occ_fix_small: int = Field(default=1, ge=0, le=1)        # gmsh Geometry.OCCFixDegenerated·SmallEdges·SmallFaces
     feature_angle: float = Field(default=10.0, ge=0, le=180)  # 이슈 #53 BatchMesher feature_angle(기록만 — gmsh 대응 없음)
+    fallback: BeadDoeCompareMeshFallbackCfg = BeadDoeCompareMeshFallbackCfg()   # v0.14.1 면 단위 폴백
 
 
 class BeadDoeCompareDefeatureCfg(_M):

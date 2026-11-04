@@ -215,7 +215,52 @@ def _face_loops(gmsh, s: int) -> list[list[int]]:
     return [sorted(g) for _k, g in sorted(groups.items())]
 
 
-def defeature(gmsh, df: dict, h: float) -> dict:
+def _curve_points(gmsh, c: int) -> set[int]:
+    """곡선 끝점(닫힌 곡선도 — combined=True 는 시작=끝 점을 지워 빈 목록을 줌)."""
+    return {abs(int(p)) for _d, p in gmsh.model.getBoundary([(1, int(c))], combined=False, oriented=False)}
+
+
+def _seam_points(gmsh, s: int) -> set[int]:
+    """면 s 의 seam(같은 면 경계에 두 번 나오는 곡선 — 원통·원뿔·토러스 등 periodic 면의 이음선) 끝점 태그.
+    ``getBoundary(combined=True)`` 는 seam 을 지워 periodic 면의 양 끝 고리가 따로 떨어진 고리처럼 보인다(v0.14.1)."""
+    seen: dict[int, int] = {}
+    for _d, t in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False):
+        seen[abs(int(t))] = seen.get(abs(int(t)), 0) + 1
+    pts: set[int] = set()
+    for c, n in seen.items():
+        if n >= 2:
+            pts |= _curve_points(gmsh, c)
+    return pts
+
+
+def _is_hole(gmsh, s: int, cl: list[int], seam_pts: set[int]) -> bool:
+    """고리 cl 이 면 s 의 '구멍'인가(v0.14.1 — 이슈 #53 ④ periodic 면 메싱 실패 원인 수정):
+    (a) 모든 곡선이 자유 모서리(이 면에만 붙음 — 이웃 면과 공유하면 구멍이 아니라 보스·버링 벽 같은 이음부) 이고
+    (b) seam 끝점을 지나지 않음(periodic 면을 한 바퀴 감는 끝 고리 — 원통 끝 원 — 는 구멍이 아님)."""
+    for c in cl:
+        up, _down = gmsh.model.getAdjacencies(1, abs(int(c)))
+        if any(int(f) != int(s) for f in up):
+            return False
+        if seam_pts and seam_pts & _curve_points(gmsh, abs(int(c))):
+            return False
+    return True
+
+
+def _bbox_key(gmsh, dim: int, tag: int) -> tuple:
+    """세션이 바뀌어도 같은 면을 찾는 열쇠(bbox 6값, 1e-6 mm 반올림) — 태그는 형상 처리 결과에 따라 바뀔 수 있음."""
+    return tuple(round(float(v), 6) for v in gmsh.model.getBoundingBox(dim, tag))
+
+
+def _bump(out: dict, k: str) -> None:
+    """선택 집계(0 이면 키 자체를 두지 않음 — 정상 STEP 의 mesh.json 바이트 불변)."""
+    out[k] = int(out.get(k) or 0) + 1
+
+
+def _key_near(a: tuple, b: tuple, tol: float = 1e-4) -> bool:
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def defeature(gmsh, df: dict, h: float, skip_keys: tuple = ()) -> dict:
     """④ 작은 형상 처리(이슈 #53 BatchMesher holes table 근사, esl_step_compare.md SC-D-5 보강) — 가져온 OCC 형상에서:
 
     - 면의 내부 경계(구멍) 중 면적 < ``min_hole_area_mm2``(기본 π·4² — r<4 원형·eq_diam<8·좁은 슬롯) → 같은 경계로 막는 면을
@@ -238,11 +283,19 @@ def defeature(gmsh, df: dict, h: float) -> dict:
             loops = _face_loops(gmsh, s)
             if len(loops) <= 1:
                 continue
+            if skip_keys and any(_key_near(_bbox_key(gmsh, 2, s), k) for k in skip_keys):
+                _bump(out, "relaxed")                    # 폴백 제약 해제 면: 형상 처리 안 함
+                continue
+            seam = _seam_points(gmsh, s)
             per = [_loop_info(occ, cl) for cl in loops]
             outer = int(max(range(len(per)), key=lambda i: per[i]))
             small, keep = [], [loops[outer]]
             for i, cl in enumerate(loops):
                 if i == outer:
+                    continue
+                if not _is_hole(gmsh, s, cl, seam):      # v0.14.1: 이음부·periodic 끝 고리는 구멍 아님(그대로 둠)
+                    keep.append(cl)
+                    _bump(out, "not_hole")
                     continue
                 try:
                     w = occ.addCurveLoop([int(c) for c in cl])
@@ -255,7 +308,12 @@ def defeature(gmsh, df: dict, h: float) -> dict:
                     out["skipped"] += 1
                     keep.append(cl)
                     continue
-                if a < amin:
+                if a < amin and skip_keys and any(_key_near(tuple(round(float(v), 6) for v in occ.getBoundingBox(2, pt)), k)
+                                                  for k in skip_keys):
+                    _bump(out, "relaxed")                # 폴백 제약 해제: 이 막는 면이 실패한 면 → 메우지 않음
+                    keep.append(cl)
+                    occ.remove([(2, pt)])
+                elif a < amin:
                     small.append((cl, pt))
                     out["filled_area_max"] = max(a, out["filled_area_max"] or 0.0)
                 else:
@@ -281,16 +339,21 @@ def defeature(gmsh, df: dict, h: float) -> dict:
         n_el = int(df.get("hole_elems") or 0)
         r_lo, r_hi = [float(x) for x in (df.get("hole_r_mm") or [4.0, 30.0])]
         done: set[int] = set()
+        relaxed = {s for _d, s in occ.getEntities(2)
+                   if skip_keys and any(_key_near(_bbox_key(gmsh, 2, s), k) for k in skip_keys)}
         if n_el > 0:
             for _d, s in occ.getEntities(2):
                 loops = _face_loops(gmsh, s)
-                if len(loops) <= 1:
+                if len(loops) <= 1 or s in relaxed:
                     continue
+                seam = _seam_points(gmsh, s)
                 per = [_loop_info(occ, cl) for cl in loops]
                 outer = int(max(range(len(per)), key=lambda i: per[i]))
                 for i, cl in enumerate(loops):
                     cs = [abs(int(c)) for c in cl]
                     if i == outer or any(c in done for c in cs):
+                        continue
+                    if not _is_hole(gmsh, s, cl, seam):  # v0.14.1: 이음부·periodic 끝 고리는 분할 강제 안 함
                         continue
                     P = per[i]
                     r = P / (2 * math.pi)
@@ -311,19 +374,47 @@ def defeature(gmsh, df: dict, h: float) -> dict:
     return out
 
 
-def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
-              out_dir: str | None = None, step_out: str | None = None) -> tuple[dict, dict]:
-    """BREP/STEP → (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json 을 쓴다. 이 프로세스 안에서 실행."""
-    from esl.doe import opt_settings
-    try:
-        import gmsh
-    except Exception:                                       # noqa: BLE001
-        raise EslError("GMSH_UNAVAILABLE", "gmsh 모듈을 불러오지 못함") from None
-    mc = cfg["mesh"]
-    h = check_h(h, mc)
-    opts = gmsh_options(h, mc)
-    gopts = geometry_options(mc)
-    t0 = time.monotonic()
+class _FaceFail(Exception):
+    """gmsh 2D 메싱이 한 면에서 멈춤(gmsh API 는 첫 오류에서 예외 — 그 뒤 면은 메시 안 됨)."""
+
+    def __init__(self, msg: str, face: dict | None):
+        super().__init__(msg)
+        self.msg = msg
+        self.face = face
+
+
+def _failed_face(gmsh, msg: str, log: list | None = None) -> dict | None:
+    """실패 직후 모델에서 실패 면 찾기: 메시지의 면 번호(예: 'Impossible to mesh periodic surface 2824') → gmsh 로그의
+    마지막 'Meshing surface N'(단일 스레드 — 실패한 그 면) → 태그 순 첫 '요소 0개' 면."""
+    import re
+    tags = [int(t) for _d, t in gmsh.model.getEntities(2)]
+    tag = None
+    m = re.search(r"surface\s+(\d+)", msg or "")
+    if m and int(m.group(1)) in tags:
+        tag = int(m.group(1))
+    for line in reversed(log or []):
+        if tag is not None:
+            break
+        m = re.search(r"Meshing surface (\d+)", str(line))
+        if m and int(m.group(1)) in tags:
+            tag = int(m.group(1))
+    if tag is None:
+        for t in sorted(tags):
+            if not sum(len(x) for x in gmsh.model.mesh.getElements(2, t)[1]):
+                tag = t
+                break
+    if tag is None:
+        return None
+    bb = gmsh.model.getBoundingBox(2, tag)
+    return {"id": tag, "type": str(gmsh.model.getType(2, tag)),
+            "center": [round(0.5 * (float(bb[i]) + float(bb[i + 3])), 3) for i in range(3)],
+            "key": _bbox_key(gmsh, 2, tag)}
+
+
+def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, step_out: str | None,
+             face_alg: dict, relax: tuple) -> tuple:
+    """gmsh 세션 1회(가져오기 → 옵션 → 작은 형상 처리 → 면별 알고리즘 → 2D). face_alg = {bbox 키: 2D 알고리즘},
+    relax = 제약 해제할 면 bbox 키들. 반환 (X, conn, et, ver, dfi, step_done, applied{키: 태그})."""
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -345,15 +436,112 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         dfi = None
         df = mc.get("defeature")
         if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
-            dfi = defeature(gmsh, df, h)
+            dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+        applied: dict = {}
+        if face_alg:
+            for _d, t in gmsh.model.getEntities(2):
+                k = _bbox_key(gmsh, 2, t)
+                for fk, alg in face_alg.items():
+                    if _key_near(k, fk):
+                        gmsh.model.mesh.setAlgorithm(2, t, int(alg))
+                        applied[fk] = int(t)
+        gmsh.logger.start()
         try:
             gmsh.model.mesh.generate(2)
         except Exception as exc:                            # noqa: BLE001
-            raise EslError("FAILED_MESH", f"gmsh 메싱 실패: {exc}") from None
+            msg = str(exc)
+            raise _FaceFail(msg, _failed_face(gmsh, msg, gmsh.logger.get())) from None
+        finally:
+            gmsh.logger.stop()
         X, conn, et = _extract(gmsh)
         ver = str(getattr(gmsh, "__version__", ""))
     finally:
         gmsh.finalize()
+    return X, conn, et, ver, dfi, step_done, applied
+
+
+ALG_NAMES = {1: "MeshAdapt", 2: "Automatic", 5: "Delaunay", 6: "Frontal-Delaunay", 7: "BAMG",
+             8: "Frontal-Delaunay for Quads", 9: "Packing of Parallelograms", 11: "Quasi-structured Quad"}
+
+
+def _ladder(mc: dict, fb: dict) -> list[tuple[int, bool]]:
+    """면 폴백 순서(설정 ``mesh.fallback``): [(알고리즘, 제약 해제)] — 먼저 ``algorithms`` 를 차례로(제약 그대로),
+    ``relax`` 면 제약(작은 형상 처리·구멍 둘레 분할)을 푼 뒤 기본 알고리즘 + ``algorithms`` 를 다시 차례로."""
+    base = int(mc["algorithm"])
+    algs = [int(a) for a in (fb.get("algorithms") or [])]
+    steps = [(a, False) for a in algs if a != base]
+    if fb.get("relax"):
+        steps += [(a, True) for a in [base] + [x for x in algs if x != base]]
+    return steps
+
+
+def _face_label(f: dict) -> str:
+    c = f.get("center") or []
+    return f"면 {f.get('id')}({f.get('type')}, 위치 x {c[0]:g}, y {c[1]:g}, z {c[2]:g} mm 부근)" if len(c) == 3 else \
+        f"면 {f.get('id')}({f.get('type')})"
+
+
+def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
+              out_dir: str | None = None, step_out: str | None = None) -> tuple[dict, dict]:
+    """BREP/STEP → (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json 을 쓴다. 이 프로세스 안에서 실행.
+
+    v0.14.1 면 단위 폴백(선택 키 ``mesh.fallback`` — ④ 프로필만, ③ 은 키 없음 → 예전 그대로): 2D 메싱이 한 면에서 실패하면
+    **그 면만** 다른 2D 알고리즘(``fallback.algorithms`` 순서)으로, 그래도 실패하면 그 면의 작은 형상 처리·구멍 둘레 분할을
+    풀고(``fallback.relax``) 다시 메싱한다. 시도마다 새 gmsh 세션(같은 입력 → 같은 결과). 성공 형상의 다른 면은 그대로.
+    폴백이 쓰인 면 → meta.mesh_fallback + 경고 MESH_FACE_FALLBACK. 끝내 실패 → FAILED_MESH(면 id·종류·bbox 중심)."""
+    from esl.doe import opt_settings
+    try:
+        import gmsh
+    except Exception:                                       # noqa: BLE001
+        raise EslError("GMSH_UNAVAILABLE", "gmsh 모듈을 불러오지 못함") from None
+    mc = cfg["mesh"]
+    h = check_h(h, mc)
+    opts = gmsh_options(h, mc)
+    gopts = geometry_options(mc)
+    fb = mc.get("fallback") if isinstance(mc.get("fallback"), dict) else {}
+    ladder = _ladder(mc, fb) if fb.get("enabled") else []
+    max_faces = max(1, int(fb.get("max_faces") or 20))
+    t0 = time.monotonic()
+    state: dict = {}                                        # bbox 키 → {face, step(ladder 위치), errors[]}
+    step_done = None
+    first = True
+    while True:
+        face_alg = {k: ladder[v["step"]][0] for k, v in state.items()}
+        relax = tuple(k for k, v in state.items() if ladder[v["step"]][1])
+        try:
+            X, conn, et, ver, dfi, sd, applied = _session(gmsh, src, mc, h, opts, gopts,
+                                                          step_out=step_out if first else None,
+                                                          face_alg=face_alg, relax=relax)
+            if first:
+                step_done = sd
+            break
+        except _FaceFail as ff:
+            if first and step_out:
+                step_done = os.path.basename(step_out)
+            first = False
+            f = ff.face
+            if f is None or not ladder:
+                if f is None:
+                    raise EslError("FAILED_MESH", f"gmsh 메싱 실패: {ff.msg}") from None
+                raise EslError("FAILED_MESH", f"gmsh 메싱 실패: {_face_label(f)} — {ff.msg}") from None
+            k = next((kk for kk in state if _key_near(kk, f["key"])), None)
+            if k is None:
+                if max_faces and len(state) >= max_faces:
+                    raise EslError("FAILED_MESH", f"gmsh 메싱 실패: 메시가 안 되는 면이 {max_faces}개를 넘음"
+                                   f"(mesh.fallback.max_faces) — 마지막 {_face_label(f)}: {ff.msg}") from None
+                k = f["key"]
+                state[k] = {"face": f, "step": 0, "errors": [ff.msg]}
+            else:
+                state[k]["errors"].append(ff.msg)
+                state[k]["step"] += 1
+                if state[k]["step"] >= len(ladder):
+                    tried = " → ".join(f"{ALG_NAMES.get(a, a)}{'(제약 해제)' if r else ''}" for a, r in ladder)
+                    raise EslError("FAILED_MESH", f"gmsh 메싱 실패: {_face_label(f)}을(를) 메시하지 못했습니다 — "
+                                   f"기본 {ALG_NAMES.get(int(mc['algorithm']), mc['algorithm'])} 뒤 {tried} 재시도도 실패. "
+                                   f"CAD 에서 이 면(작은 모서리·좁은 띠·이음선)을 확인하세요. (gmsh: {ff.msg})") from None
+            a, r = ladder[state[k]["step"]]
+            print(f"[mesh_fallback] {_face_label(f)} 실패: {ff.msg} → 이 면만 {ALG_NAMES.get(a, a)}"
+                  f"{' + 제약 해제(작은 형상 처리·구멍 둘레 분할 끔)' if r else ''} 로 다시", flush=True)
     mesh, info = build_mesh(X, conn, et, props, normal_ref)
     oc = opt_cfg or opt_settings(None)
     qual = quality(mesh, cfg, oc)
@@ -363,6 +551,21 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             "step": step_done, "seconds": round(time.monotonic() - t0, 3)}
     if dfi is not None:
         meta["defeature"] = dfi
+    if state:                                               # v0.14.1 면 폴백 기록(정상 STEP 은 키 없음 — 바이트 불변)
+        faces = []
+        for k, v in state.items():
+            a, r = ladder[v["step"]]
+            faces.append({"id": applied.get(k, v["face"]["id"]), "failed_id": v["face"]["id"], "type": v["face"]["type"],
+                          "center": v["face"]["center"], "algorithm": a, "algorithm_name": ALG_NAMES.get(a, str(a)),
+                          "relaxed": bool(r), "errors": v["errors"]})
+        meta["mesh_fallback"] = {"n_faces": len(faces), "faces": faces}
+        ids = ", ".join(str(x["failed_id"]) for x in faces)
+        meta["warnings"] = list(meta["warnings"]) + [{
+            "code": "MESH_FACE_FALLBACK",
+            "message": f"면 {len(faces)}개(gmsh 면 id {ids})가 기본 2D 알고리즘으로 메시되지 않아 그 면만 다른 알고리즘"
+                       f"{'·제약 해제' if any(x['relaxed'] for x in faces) else ''}로 메시함 — "
+                       + "; ".join(f"{_face_label(x | {'id': x['failed_id']})} → {x['algorithm_name']}"
+                                   f"{'(제약 해제)' if x['relaxed'] else ''}" for x in faces)}]
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         save_npz_det(os.path.join(out_dir, MESH_NPZ), {k: mesh[k] for k in MESH_KEYS})
