@@ -254,3 +254,23 @@ def test_backend_api(G):
     assert {"frame", "outline", "holes", "elems", "beads", "fixed", "nodes_ab", "warnings"} <= set(pd)
     assert pd["beads"][0]["ring_ab"] == b1["plan"]["ring_ab"] and len(pd["fixed"]) == fx.size
     json.dumps(pd, allow_nan=False)
+
+
+def test_width_end_ratio_from_settings(G):
+    """§5.7 끝단 반직선 제외 배수: 코어 WIDTH_END_RATIO = DEFAULTS(백엔드 BeadDoeSelectWidthCfg.end_ratio 거울) —
+    설정 select.width.end_ratio 가 있으면 그 값, 키가 없을 때만 모듈 기본값."""
+    import copy
+
+    from esl.doe import DEFAULTS
+    g, D = G
+    assert bs.WIDTH_END_RATIO == DEFAULTS["select"]["width"]["end_ratio"] == CFG["select"]["width"]["end_ratio"]
+    sel = sb.selection(g)
+    tight = settings({"bead_doe": {"enabled": True, "select": {"width": {"end_ratio": 1.05}}}})
+    Dt = bs.derive_obj(g["mesh"], bs.normalize_input(sel, tight), tight, fixed_node_ids=g["fixed_ids"])
+    w0, wt = D.bead("b1").w_j, Dt.bead("b1").w_j
+    assert 0 < wt.size < w0.size
+    assert wt.max() <= 1.05 * np.median(w0[np.isfinite(w0)]) * 1.2
+    nokey = copy.deepcopy(CFG)
+    nokey["select"]["width"].pop("end_ratio")
+    Dn = bs.derive_obj(g["mesh"], bs.normalize_input(sel, nokey), nokey, fixed_node_ids=g["fixed_ids"])
+    assert np.array_equal(Dn.bead("b1").w_j, w0)

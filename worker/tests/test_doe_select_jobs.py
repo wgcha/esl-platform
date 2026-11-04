@@ -289,3 +289,83 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     moved, bad = node_block_diff(w["rad"].read_bytes(), inc.read_bytes())
     assert bad == 0 and moved > 0
     assert tree(inputs_root) == in_before and tree(esl_root / "_library") == lib_before
+
+
+# ---------------------------------------------------------------- BD_GRID(bd_select_grid) lease 유지·취소
+def _grid_ready(client, engine, worker, esl_root, inputs_root):
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create(client, w["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    s = save_selection(client, study(client, s["id"]), sb.selection(w["g"]))
+    spec = {"method": "lhs", "n": 3, "seed": 1, "params": [{"name": "B1_D1", "lo": 21.0, "hi": 23.0}]}
+    return w, s, spec
+
+
+def _pid_file(esl_root, sid, jid) -> Path:
+    return esl_root / "_doe" / sid / "logs" / jid / "slow_grid.pid"
+
+
+def test_select_grid_slow_keeps_lease(client, engine, worker_factory, esl_root, inputs_root, exe, monkeypatch):
+    """코어 자식 bd_select_grid 가 lease_ttl(시험 3 s)보다 오래 걸려도 executor._run_core 가 lease 를 갱신 → 성공."""
+    set_control(exe, rules=[])
+    monkeypatch.setenv("ESL_TEST_SLOW_GRID_S", "4.5")
+    wk = worker_factory(core_target="slow_core:slow_select_grid")
+    wk.heartbeat_once()
+    _w, s, spec = _grid_ready(client, engine, wk, esl_root, inputs_root)
+    p = preview(client, s, spec)
+    j = run_job(client, wk, p["job"]["id"])
+    assert [(x["step_key"], x["state"]) for x in j["steps"]] == [
+        ("BD_MATRIX", "SUCCEEDED"), ("BD_GRID", "SUCCEEDED"), ("BD_PREVIEW_REGISTER", "SUCCEEDED")]
+    assert _pid_file(esl_root, s["id"], j["id"]).is_file()
+    lg = client.get(f"{API}/jobs/{j['id']}/log", params={"step": 2}, headers=R).text
+    assert "[slow_select_grid] 대기 끝" in lg and "[bd_select_grid]" in lg, lg[-2000:]
+    assert study(client, s["id"])["phase"] == "PREVIEW_READY"
+
+
+def test_select_grid_cancel_kills_core_and_retry(client, engine, worker_factory, esl_root, inputs_root, exe,
+                                                 monkeypatch):
+    """BD_GRID 중 취소 → 코어 자식 종료·CANCELED(lease 는 그동안 갱신), 재시도 → BD_GRID 부터 성공."""
+    import threading
+    import time as _t
+
+    from esl_test_support import wait_for
+    set_control(exe, rules=[])
+    monkeypatch.setenv("ESL_TEST_SLOW_GRID_S", "600")
+    wk = worker_factory(core_target="slow_core:slow_select_grid")
+    wk.heartbeat_once()
+    _w, s, spec = _grid_ready(client, engine, wk, esl_root, inputs_root)
+    p = preview(client, s, spec)
+    jid = p["job"]["id"]
+    res: dict[str, Any] = {}
+    th = threading.Thread(target=lambda: res.update(state=wk.run_once("SLOT")))
+    th.start()
+    pf = _pid_file(esl_root, s["id"], jid)
+    wait_for(lambda: pf.is_file() and pf.read_text().strip(), timeout=120)
+    pid = int(pf.read_text())
+    for _ in range(12):                             # ttl(3 s) 넘게 — lease 갱신 중이면 RUNNING 유지
+        wk.heartbeat_once()
+        _t.sleep(0.3)
+    j = get_job(client, jid)
+    assert j["state"] == "RUNNING" and {x["step_key"]: x["state"] for x in j["steps"]}["BD_GRID"] == "RUNNING"
+    r = client.post(f"{API}/jobs/{jid}/cancel", headers=H("tok-power", True))
+    assert r.status_code in (200, 202), r.text
+    th.join(60)
+    assert not th.is_alive() and res.get("state") == "CANCELED"
+    try:
+        os.kill(pid, 0)
+        alive = True
+    except OSError:
+        alive = False
+    assert not alive                                # 코어 자식 종료
+    j = get_job(client, jid)
+    assert j["state"] == "CANCELED"
+    st = {x["step_key"]: x["state"] for x in j["steps"]}
+    assert st["BD_MATRIX"] == "SUCCEEDED" and st["BD_GRID"] == "CANCELED"
+    rev = study(client, s["id"])["doe"]["rev"]
+    assert not (esl_root / "_doe" / s["id"] / "doe" / str(rev) / "grid" / "grid_manifest.json").exists()
+    monkeypatch.setenv("ESL_TEST_SLOW_GRID_S", "0")
+    r = client.post(f"{API}/jobs/{jid}/retry", headers=H("tok-power", True))
+    assert r.status_code in (200, 201), r.text
+    j2 = run_job(client, wk, r.json()["id"])
+    assert {x["step_key"]: x["state"] for x in j2["steps"]}["BD_GRID"] == "SUCCEEDED"
+    assert study(client, s["id"])["phase"] == "PREVIEW_READY"

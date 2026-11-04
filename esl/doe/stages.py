@@ -1566,22 +1566,47 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
 
 
 def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
-    """Case 입력 폴더의 rad/include 중 대상 파트 노드(/NODE)를 가진 파일 [(rel, 경로)] (정렬)."""
+    """BS-D-14·§8.3: 모델 파일 중 대상 파트 노드(/NODE)를 가진 rad/include [(사본 rel, 원본 경로)] (rel 정렬).
+
+    파일 집합 = ``prep/assem_full.json`` 매니페스트(paicad 준비분, 있으면 — rel 은 매니페스트 배치 그대로, 원본은 매니페스트
+    sha256 과 같아야 함) | 없으면 기준 rad 의 include 트리(``include_path_map`` 반영, ``assem_full.layout`` 배치: Case 폴더 안 =
+    Case 기준 상대경로, 밖 = ``_ext/…``). Case 폴더의 관계없는 rad 는 보지 않고, Case 밖 include 도 원본을 읽는다(읽기만)."""
     if hasattr(c, "_sel_rad"):
         return c._sel_rad
+    from esl.doe import assem_full as af
+    from esl.rad.parser import scan_include_refs
     b = c.D.get("base") or {}
-    root = b.get("case_dir") or os.path.dirname(b["rad_path"])
+    rad = os.path.normpath(os.path.abspath(b["rad_path"]))
+    root = b.get("case_dir") or os.path.dirname(rad)
+    man = U.read_json(c.p("prep", af.DIR + ".json")) if os.path.isfile(c.p("prep", af.DIR + ".json")) else None
+    cands: list[tuple[str, str, str | None]] = []
+    if isinstance(man, dict) and isinstance(man.get("files"), list) and os.path.isdir(c.p("prep", af.DIR)):
+        for r in man["files"]:
+            cands.append((str(r["rel"]).replace(os.sep, "/"), str(r["src"]), r.get("sha256")))
+        source = "assem_full"
+    else:
+        kw = c.parse_kw()
+        files = [rad]
+        for ref in scan_include_refs(rad, kw["include_path_map"], kw["max_include_depth"], max_line_bytes=c.max_line()):
+            if not ref["found"]:
+                raise EslError("RAD_PARSE_ERROR", f"인클루드 파일을 찾을 수 없음: {ref['spec']}")
+            if all(os.path.normcase(U.real_path(ref["path"])) != os.path.normcase(U.real_path(f)) for f in files):
+                files.append(ref["path"])
+        lay = af.layout(files, root)
+        cands = [(lay[f].replace(os.sep, "/"), f, None) for f in files]
+        source = "include"
     want = set(int(v) for v in nid.tolist())
     out = []
-    for r, dirs, files in os.walk(root, followlinks=False):
-        dirs.sort()
-        for name in sorted(files):
-            p = os.path.join(r, name)
-            if os.path.islink(p) or os.path.splitext(name)[1].lower() not in sc.MESH_EXT:
-                continue
-            if nd.read_nodes(p, want, c.max_line()):
-                out.append((os.path.relpath(p, root).replace(os.sep, "/"), p))
+    for rel, src, sha in cands:
+        if os.path.islink(src) or os.path.splitext(src)[1].lower() not in sc.MESH_EXT or not os.path.isfile(src):
+            continue
+        if nd.read_nodes(src, want, c.max_line()):
+            if sha and U.sha256_file(src) != sha:
+                raise EslError("INPUT_CHANGED", f"모델 파일이 준비 뒤 바뀜(sha256 불일치): {os.path.basename(src)}")
+            out.append((rel, src))
+    out.sort()
     c._sel_rad = out
+    c._sel_rad_source = source
     return out
 
 

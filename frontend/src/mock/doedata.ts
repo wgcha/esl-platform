@@ -29,7 +29,7 @@ export interface DoeCtx {
 
 // ---------------------------------------------------------------- 설정·방법 출처(원본 resources/doe_method_sources.json 형식)
 export const DOE_METHOD_SOURCES: DoeMethodSources = {
-  version: "2026-10-29.1",
+  version: "2026-11-04.1",
   summary_ko: [
     "선택한 ESL(낙하 t* 한 시점의 등가정적하중)을 비드 형상 안마다 같은 지지(3-2-1)로 선형 정적 해석합니다.",
     "순위 = 선택 ESL 중 최악 컴플라이언스 ÷ 베이스라인(공칭) 최악 컴플라이언스 — 작을수록 강성이 좋습니다.",

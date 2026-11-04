@@ -172,7 +172,7 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 ### 5.7 공칭 치수·기본 범위
 - D_nom,k = 단 k 바닥 노드 z 의 중앙값. planarity = 바닥 노드 z 의 (p95 − p5).
 - 국부 폭: 경계 노드 j 에서 −ê_j 방향(평면 m_b 투영) 반직선이 맞은편 경계 고리 선분과 처음 만나는 거리 w_j(2D 선분 교차, 경계 노드 ≤ 수천 — O(n²) 블록). 끝단(맞은편이 같은 끝단)·교차 없음 제외. W_nom = median w_j, W_min·W_max = p5·p95.
-  - 끝단 제외 규칙(구현 확정): 교차가 있는 w_j 의 중앙값 med 에 대해 w_j > `WIDTH_END_RATIO` × med 인 반직선 제외. `WIDTH_END_RATIO = 2.0` 은 `bead_select` **모듈 상수**(설정 `select.width.end_ratio` 가 있으면 그 값 — §10 예시 밖 구현 키). 근거: 끝단 근처 경계 노드의 −ê 반직선은 경로를 따라 맞은편 끝단까지 가서 비드 길이(폭의 수 배)를 잰다 — 폭이 50 → 70 처럼 가변이어도 정상 w_j 는 중앙값의 1.4배 안이므로 2배면 가변 폭을 남기고 길이 방향 측정만 떨어낸다. 실기(V-BS-R1)에서 벗어나는 형상이 나오기 전까지는 사용자 조정 대상이 아니라 설정 예시에 넣지 않음.
+  - 끝단 제외 규칙(구현 확정): 교차가 있는 w_j 의 중앙값 med 에 대해 w_j > `WIDTH_END_RATIO` × med 인 반직선 제외. `WIDTH_END_RATIO = 2.0` 은 `bead_select` **모듈 상수**(설정 `select.width.end_ratio` 가 있으면 그 값, 키가 없을 때만 상수 — 백엔드 `BeadDoeSelectWidthCfg.end_ratio`(기본 2.0, 1 초과) = 코어 `DEFAULTS["select"]["width"]["end_ratio"]`, §10 예시 밖 구현 키). 근거: 끝단 근처 경계 노드의 −ê 반직선은 경로를 따라 맞은편 끝단까지 가서 비드 길이(폭의 수 배)를 잰다 — 폭이 50 → 70 처럼 가변이어도 정상 w_j 는 중앙값의 1.4배 안이므로 2배면 가변 폭을 남기고 길이 방향 측정만 떨어낸다. 실기(V-BS-R1)에서 벗어나는 형상이 나오기 전까지는 사용자 조정 대상이 아니라 설정 예시에 넣지 않음.
   - 남는 w_j 가 없으면(교차 없음·전부 제외) 그 비드 W 변수 비활성 + 경고 `SELECT_WIDTH_UNDEFINED`.
 - 기본 범위(추정, `source: estimate`): D_k ∈ [D_nom·(1 − r), D_nom·(1 + r)], r = `select.range.depth_rel`(0.3), 하한 > 위 수준 깊이 + `select.range.min_step_mm`(1)(단이 위 단·상판을 넘지 않게). W ∈ [W_nom·(1 − `width_rel` 0.2), W_nom·(1 + 0.2)], f = 1 이면 하한 ≥ 바닥 최소 폭 > 0 이 되게(가장자리 간 거리 − ΔW > h_med). 사용자 범위는 BD-D-7 처럼 경고만(D·W > 0 은 422).
 
@@ -241,7 +241,7 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 ```
 ### 8.3 DOE_RUN
 - BD_BASELINE = ① d000. BD_DESIGNS(LOCAL 단계 없음 — 코어 `bd_eval` 만, 스레드 풀 `run.parallel`): x_d = 기저 모핑(같은 basis.npz) → ① 하중·지지 → 해석. 품질·고정은 미리보기 결과를 다시 확인(같은 함수, 다르면 내부 오류).
-- BD_POST = ① 그대로 + 산출물 BS-D-14(rad 사본은 `prep/assem_full` 매니페스트(있으면)·없으면 Case include 트리에서 Ch/R `/NODE` 블록을 가진 파일만 → `nodes.write_morphed`), `best/<did>/selection.json`. 정리(BD-D-17)는 대상 없음(paicad 폴더 없음).
+- BD_POST = ① 그대로 + 산출물 BS-D-14(rad 사본은 `prep/assem_full.json` 매니페스트(있으면 — rel 은 매니페스트 배치, 원본 sha256 이 매니페스트와 다르면 INPUT_CHANGED)·없으면 기준 rad include 트리(`include_path_map` 반영, `assem_full.layout` 배치: Case 밖 = `_ext/…`, 못 찾은 include → RAD_PARSE_ERROR)에서 Ch/R `/NODE` 블록을 가진 파일만 → 원본을 읽어 `nodes.write_morphed` 로 `best/<did>/include/<rel>` 에만 씀. Case 폴더를 훑지 않음 — 관계없는 rad 사본 제외, 입력·SPDM 폴더 무쓰기), `best/<did>/selection.json`. 정리(BD-D-17)는 대상 없음(paicad 폴더 없음).
 ### 8.4 검증 낙하
 - `select` 최적 안은 ① 과 같은 형태(원 ID·/NODE 좌표만 바뀐 include)라 기존 검증 낙하(VD)가 `same` 과 같이 동작하도록 VD 의 시나리오 허용 목록에 `select` 추가(`verify*.py` 판정 1줄 — 파일 소스만 `best/<did>/` 로 같음).
 

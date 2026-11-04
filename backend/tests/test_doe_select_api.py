@@ -362,7 +362,7 @@ def test_select_defaults_mirror_contract():
 
     want = {"enabled": True, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6, "max_selection_kb": 4096,
             "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5, "slope_max_mm": 80.0,
-            "fixed_tol_mm": 0.01, "width": {"floor_follow": 1, "knn": 8},
+            "fixed_tol_mm": 0.01, "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},
             "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
             "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0},
             "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0},
@@ -375,7 +375,8 @@ def test_select_defaults_mirror_contract():
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
         assert BeadDoeCfg.model_validate(y["bead_doe"]).select.model_dump() == want, p
     for bad in ({"feature_angle_deg": 0.5}, {"max_tiers": 10}, {"width": {"floor_follow": 2}},
-                {"blend": {"min_mm": 30.0, "max_mm": 20.0}}, {"blend": {"min_mm": 0}}, {"unknown": 1}):
+                {"blend": {"min_mm": 30.0, "max_mm": 20.0}}, {"blend": {"min_mm": 0}}, {"unknown": 1},
+                {"width": {"end_ratio": 1.0}}):
         with pytest.raises(ValueError):
             BeadDoeSelectCfg.model_validate(bad)
 
@@ -696,6 +697,32 @@ def test_preview_without_selection_sha_in_preview(client, world, engine, esl_roo
     assert api(client, "GET", f"/doe/studies/{sid}/select/basis").status_code == 404     # 파일 없음
     r = api(client, "POST", f"/doe/studies/{sid}/run", json={"version": g["version"], "matrix_sha256": m["matrix_sha256"]})
     assert r.status_code == 202, r.text
+
+
+def test_basis_rejects_non_hex_sha12(client, world, engine, esl_root):
+    """basis_file: select/<sha12> 의 sha12 는 16진수 12자리만 — 경로 조각·대문자·짧은 값이면 파일이 있어도 404."""
+    s = _saved(client, world, engine, esl_root)
+    sid = s["id"]
+    m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": s["version"], "spec": SPEC}).json()
+    p = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": s["version"], "spec": SPEC}).json()
+    sha = s["selection"]["sha256"]
+    simulate_select_preview(engine, esl_root, sid, p["job"]["id"], m, sha)
+    assert api(client, "GET", f"/doe/studies/{sid}/select/basis").status_code == 200
+    from esl_platform.core.repositories import doe as doe_repo
+
+    base = study_dir(esl_root, sid)
+    for bad in ("../" + sha[:9] + "x" * 55, sha[:12].upper() + sha[12:], "zzzzzzzzzzzz" + sha[12:]):
+        d = base / "select" / bad[:12]
+        if "/" not in bad[:12]:
+            d.mkdir(parents=True, exist_ok=True)
+            for f in ("basis.bin", "basis.json"):
+                (d / f).write_bytes((base / "select" / sha[:12] / f).read_bytes())
+        with engine.begin() as c:
+            doe = dict(doe_repo.get_study(c, sid)["doe"])
+        doe["preview"] = {**doe["preview"], "selection_sha256": bad}
+        update_study(engine, sid, doe=doe)
+        r = api(client, "GET", f"/doe/studies/{sid}/select/basis")
+        assert r.status_code == 404 and code(r) == "FILE_NOT_FOUND", (bad, r.text)
 
 
 # ================================================================ 복제

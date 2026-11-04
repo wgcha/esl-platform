@@ -597,6 +597,7 @@ class BeadDoeCompareCfg(_M):
 class BeadDoeSelectWidthCfg(_M):
     floor_follow: Literal[0, 1] = 1                          # Q1 A: 폭 변경 시 바닥도 따라감(사면 각 유지)
     knn: int = Field(default=8, ge=1, le=64)                 # 경계 변위장 가중 평균 이웃 수(§5.4)
+    end_ratio: float = Field(default=2.0, gt=1.0, le=100.0)  # §5.7 끝단 반직선 제외(국부 폭 중앙값 배수, 코어 WIDTH_END_RATIO)
 
 
 class BeadDoeSelectBlendCfg(_M):

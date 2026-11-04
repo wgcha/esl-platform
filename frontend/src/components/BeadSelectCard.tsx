@@ -701,7 +701,8 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
       try {
         const meta = await doe.basisMeta(studyId, rev);
         const [g, b] = await Promise.all([fetchBinary(doe.selectViewUrl(studyId, "part.glb")), fetchBinary(doe.basisUrl(studyId, rev))]);
-        if (alive) setLoaded({ glb: parseGlb(g), vars: parseBasis(b, meta), meta });
+        const glb = parseGlb(g);
+        if (alive) setLoaded({ glb, vars: parseBasis(b, meta, meta.n_nodes ?? glb.positions.length / 3), meta });
       } catch (e) {
         if (alive) {
           setErr(errorText(e));

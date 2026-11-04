@@ -102,7 +102,7 @@ DEFAULTS: dict = {
     "select": {"enabled": True, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6, "max_selection_kb": 4096,
                "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5,
                "slope_max_mm": 80.0, "fixed_tol_mm": 0.01,
-               "width": {"floor_follow": 1, "knn": 8},
+               "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},   # end_ratio = bead_select.WIDTH_END_RATIO(§5.7)
                "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
                "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0},
                "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0},

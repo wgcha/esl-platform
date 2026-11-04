@@ -69,6 +69,11 @@ describe("V-BS-FMT basis.json·basis.bin(코어 basis_meta·basis_bin 픽스처)
     const vars = parseBasis(bin("basis.bin"), meta);
     expect(vars.map((v) => v.name)).toEqual(meta.vars.map((v) => v.name));
     const n = mf.n_nodes;
+    expect(meta.n_nodes).toBe(n);
+    // idx < n_nodes 검사: 가장 큰 idx 이하 노드 수 → 거부, 검사 없이(undefined) 는 통과
+    const maxIdx = Math.max(...vars.map((v) => Math.max(...v.idx)));
+    expect(() => parseBasis(bin("basis.bin"), { ...meta, n_nodes: maxIdx })).toThrow(/노드 번호/);
+    expect(() => parseBasis(bin("basis.bin"), meta, maxIdx + 1)).not.toThrow();
     const u = morph(vars, exp.values, n);
     expect(Math.abs(maxAbs(u) - exp.u_max_abs)).toBeLessThan(1e-4);
     const s = [0, 0, 0];

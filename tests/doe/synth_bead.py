@@ -133,8 +133,8 @@ def generate(h: float = 5.0, *, open_end: bool = False, wavy: bool = False, scal
             full[i, j] = c == 1.0 and a == 1.0 and xa <= x <= xb
             Dn[i, j] = D
     # 원형 비드 b2 (정사각 블록 → 원)
-    cx, cy, R0, B = 560.0, 345.0, 20.0, 25.0
-    rmap = [(0.0, 0.0), (5.0, 5.5), (10.0, 11.0), (15.0, 20.0 - 6.0 / TAN60), (20.0, 20.0)]
+    cx, cy, R0, B, D2 = 560.0, 345.0, 20.0, 25.0, 6.0
+    rmap = [(0.0, 0.0), (5.0, 5.5), (10.0, 11.0), (15.0, 20.0 - D2 / TAN60), (20.0, 20.0)]
     b2_floor = np.zeros((nx, ny), bool)
     b2_rho = np.full((nx, ny), np.inf)
     for i, x in enumerate(xs):
@@ -146,7 +146,9 @@ def generate(h: float = 5.0, *, open_end: bool = False, wavy: bool = False, scal
                 continue
             b2_rho[i, j] = rho
             d = math.hypot(dx, dy)
-            if d < 1e-12:
+            if d < 1e-12:                         # 중심 노드: 사상 없음(제자리) — 바닥 깊이만(z = −D)
+                X[i, j, 2] = -D2
+                b2_floor[i, j] = True
                 continue
             u = np.array([dx, dy]) / d
             if rho <= 20.0 + 1e-9:
@@ -157,7 +159,7 @@ def generate(h: float = 5.0, *, open_end: bool = False, wavy: bool = False, scal
                 q = (1 - t) * u * (20.0 + (rho - 20.0)) + t * np.array([dx, dy])
             X[i, j, 0], X[i, j, 1] = cx + q[0], cy + q[1]
             if rho <= 15.0 + 1e-9:
-                X[i, j, 2] = -6.0
+                X[i, j, 2] = -D2
                 b2_floor[i, j] = True
     if wavy:
         plate_node = (zcode == 0) & ~np.isfinite(b2_rho)

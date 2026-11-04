@@ -38,6 +38,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import re
 import threading
 from typing import Any
 
@@ -50,6 +51,7 @@ from .common import require_config_ok, require_execute
 
 SELECT_VIEW_FILES = {"part.glb": "model/gltf-binary", "select.bin": "application/octet-stream",
                      "select_manifest.json": "application/json"}
+_SHA12_RE = re.compile(r"[0-9a-f]{12}")
 BASIS_FILES = {"bin": ("basis.bin", "application/octet-stream"), "meta": ("basis.json", "application/json")}
 SUMMARY_DROP = ("section", "plan")            # DB 요약에서 빼는 그림 자료(§4.3)
 _LOAD_N = 2
@@ -491,6 +493,8 @@ def basis_file(ctx: AppContext, principal: Principal, sid: str, rev: int | None,
     sha = (pv or {}).get("selection_sha256") or (doe.get("selection_sha256") if pv else None)
     if not pv or not isinstance(sha, str) or len(sha) < 12:
         raise conflict("PREVIEW_NOT_READY", "기저가 없습니다 — 미리보기를 먼저 하세요")
+    if not _SHA12_RE.fullmatch(sha[:12]):                # 폴더 이름 select/<sha12> — 16진수 12자리만(경로 조각 거부)
+        raise not_found("FILE_NOT_FOUND", "기저 파일이 없습니다(선택 sha 형식이 아님)")
     doc = current(ctx, s, c)
     if rev is not None and (doc is None or int(doc.get("rev") or 0) != int(rev) or doc.get("sha256") != sha):
         raise not_found("FILE_NOT_FOUND", "그 선택 rev 의 기저가 없습니다(선택이 바뀌었으면 다시 미리보기)")

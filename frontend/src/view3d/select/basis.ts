@@ -11,7 +11,8 @@ export interface BasisVar {
   vec: Float32Array;
 }
 
-export function parseBasis(buf: ArrayBuffer, meta: DoeBasisMeta): BasisVar[] {
+/** nNodes(기본 basis.json `n_nodes`)가 있으면 idx < nNodes 검사 — 범위 밖 노드 번호는 morph 가 배열 밖에 쓰지 않게 거부 */
+export function parseBasis(buf: ArrayBuffer, meta: DoeBasisMeta, nNodes: number | undefined = meta.n_nodes): BasisVar[] {
   const dv = new DataView(buf);
   let off = 0;
   const out: BasisVar[] = [];
@@ -22,7 +23,10 @@ export function parseBasis(buf: ArrayBuffer, meta: DoeBasisMeta): BasisVar[] {
     if (n !== v.n) throw new Error(`기저 ${v.name}: 노드 수가 basis.json 과 다릅니다`);
     if (off + n * 16 > buf.byteLength) throw new Error("기저 파일이 짧습니다");
     const idx = new Uint32Array(n);
-    for (let i = 0; i < n; i++) idx[i] = dv.getUint32(off + i * 4, true);
+    for (let i = 0; i < n; i++) {
+      idx[i] = dv.getUint32(off + i * 4, true);
+      if (nNodes !== undefined && idx[i] >= nNodes) throw new Error(`기저 ${v.name}: 노드 번호 ${idx[i]} 가 노드 수 ${nNodes} 이상입니다`);
+    }
     off += n * 4;
     const vec = new Float32Array(n * 3);
     for (let i = 0; i < n * 3; i++) vec[i] = dv.getFloat32(off + i * 4, true);

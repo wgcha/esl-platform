@@ -50,7 +50,7 @@ SCHEMA_VERSION = 1
 BEAD_ID_RE = re.compile(r"^b[1-9][0-9]?$")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 U_EPS = 1e-9                       # 영향 판정(§6, mm)
-WIDTH_END_RATIO = 2.0              # §5.7 끝단 반직선 제외(국부 폭 중앙값 배수) — 설정 select.width.end_ratio 로 덮어씀(§10 밖 구현 키)
+WIDTH_END_RATIO = 2.0              # §5.7 끝단 반직선 제외(국부 폭 중앙값 배수) — 설정 select.width.end_ratio 가 있으면 그 값(없을 때만 이 값, DEFAULTS 와 같음)
 _EPS = 1e-12
 
 
@@ -978,7 +978,8 @@ def _width(ix: MeshIndex, bd: BeadDerived, sc: dict, mesh: dict) -> None:
     fin = np.isfinite(w)
     if fin.any():
         med = float(np.median(w[fin]))
-        keep = fin & (w <= float(sc["width"].get("end_ratio", WIDTH_END_RATIO)) * med)
+        er = (sc.get("width") or {}).get("end_ratio")
+        keep = fin & (w <= float(WIDTH_END_RATIO if er is None else er) * med)
     else:
         keep = fin
     bd.w_j, bd.w_jnodes = w[keep], bn[keep]
