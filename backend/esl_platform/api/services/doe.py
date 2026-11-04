@@ -136,11 +136,23 @@ def reset_status_cache() -> None:
         _STATUS_CACHE.clear()
 
 
+def compare_reason(c: dict[str, Any], gmsh_ready: bool) -> str | None:
+    """④ 비활성 사유(SC-D-3): DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE — paicad 사유는 보지 않는다."""
+    if not c.get("enabled"):
+        return "DOE_DISABLED"
+    if not (c.get("compare") or {}).get("enabled", True):
+        return "COMPARE_DISABLED"
+    if not gmsh_ready:
+        return "GMSH_UNAVAILABLE"
+    return None
+
+
 def status(ctx: AppContext) -> dict[str, Any]:
-    """{enabled, reason, paicad{ready, version, pinned, warning}, gmsh{ready, version}, scenarios{same, mesh, step}}."""
+    """{enabled, reason, paicad{ready, version, pinned, warning}, gmsh{ready, version}, scenarios{same, mesh, step, compare},
+    compare_reason}. enabled·reason 은 paicad 기준(①②③), ④ compare 는 bead_doe.enabled ∧ compare.enabled ∧ gmsh(SC-D-3)."""
     c = cfg(ctx)
     ok, reason = paicad_exe_status(ctx.settings)
-    rec = _worker_record(ctx, c) if ok else None
+    rec = _worker_record(ctx, c) if c.get("enabled") else None      # gmsh 점검은 paicad 와 무관하게 읽는다(④)
     pc = (rec or {}).get("paicad") or {}
     gm = (rec or {}).get("gmsh") or {}
     paicad = {"ready": False, "version": pc.get("version"), "pinned": c["paicad"].get("pinned_version"),
@@ -154,12 +166,25 @@ def status(ctx: AppContext) -> dict[str, Any]:
             paicad["ready"] = True
     gmsh = {"ready": bool(gm.get("ready")), "version": gm.get("version")}
     enabled = reason is None
+    cr = compare_reason(c, gmsh["ready"])
     return {"enabled": enabled, "reason": reason, "paicad": paicad, "gmsh": gmsh,
-            "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"]}}
+            "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"], "compare": cr is None},
+            "compare_reason": cr}
+
+
+COMPARE_DISABLED_MSG = {
+    "DOE_DISABLED": "강성 평가 스터디가 꺼져 있습니다(설정 bead_doe.enabled — 관리자 문의)",
+    "COMPARE_DISABLED": "형상 직접 비교가 꺼져 있습니다(설정 bead_doe.compare.enabled — 관리자 문의)",
+    "GMSH_UNAVAILABLE": "메시 생성기(gmsh)가 없어 '형상 직접 비교'를 쓸 수 없습니다(관리자 문의)",
+}
 
 
 def require_enabled(ctx: AppContext, scenario: str | None = None) -> dict[str, Any]:
     st = status(ctx)
+    if scenario == "compare":                       # SC-D-3: paicad 없음·버전 낮음은 ④ 를 막지 않는다
+        if st["compare_reason"]:
+            raise DomainError(st["compare_reason"], COMPARE_DISABLED_MSG[st["compare_reason"]], status=503)
+        return st
     if not st["enabled"]:
         raise DomainError(st["reason"] or "DOE_DISABLED", _disabled_message(st["reason"]), status=503)
     if scenario == "step" and not st["gmsh"]["ready"]:
@@ -213,7 +238,10 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
                      "size_max_mm": float(c["mesh"]["size_max_mm"])},
             "boundary": {k: float(c["boundary"][k]) for k in ("fastener_warn_mm", "load_warn_mm", "load_share_min")},
             "step_max_mb": float(c["step_max_mb"]), "part_title": c["part_title"],
-            "method_sources": method_sources(principal)}
+            "method_sources": method_sources(principal),
+            "compare": {"enabled": st["scenarios"]["compare"], "reason": st["compare_reason"],
+                        "max_shapes": int(c["compare"]["max_shapes"]), "total_max_mb": float(c["compare"]["total_max_mb"]),
+                        "mesh_size_mm": float(c["compare"]["mesh"]["size_mm"])}}
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
@@ -280,6 +308,13 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     require_enabled(ctx, body.scenario)
     if len(body.entry_ids) > int(c["max_entries"]):
         raise unprocessable("INVALID_PARAMS", f"ESL 은 최대 {c['max_entries']}개 (요청 {len(body.entry_ids)}개)")
+    if body.scenario == "compare":
+        r = _compare_check(ctx, principal, body, c)
+        return r if _internal else r["out"]
+    if body.shapes is not None:
+        raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
+    if not body.step_upload_id:
+        raise unprocessable("INVALID_PARAMS", "step_upload_id 가 필요합니다")
     if body.scenario != "mesh" and (body.mesh_upload_id or body.part_title):
         raise unprocessable("INVALID_PARAMS", "mesh_upload_id·part_title 은 '다른 모델(메시 있음)'에서만 지정합니다")
     with ctx.engine.connect() as conn:
@@ -340,6 +375,128 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     if _internal:
         return {"out": out, "mat": mat}
     return out
+
+
+# ---------------------------------------------------------------- ④ 형상 직접 비교 입력(esl_step_compare.md §3)
+def _shape_name(raw: str, index: int) -> str:
+    import unicodedata
+
+    name = (raw or "").strip()
+    if not 1 <= len(name) <= 64 or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp") for ch in name):
+        raise unprocessable("SHAPE_NAME_INVALID", f"형상 {index + 1}: 이름은 1~64자, 제어 문자 없이 입력하세요", index=index)
+    return name
+
+
+def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any]) -> dict[str, Any]:
+    """④ check-inputs: 형상 수·기준·이름·중복·업로드·STEP·합계 크기 → ESL → (기준 미지정) 첫 ESL Case 입력 + 경고.
+    반환 {"out": DoeCheckOut, "mat": 작업 재료}. 크기 비교(SC-D-7)는 메시 후라 size = null(준비에서 확정)."""
+    from ...core.opt_core import EslError
+    from ...core.opt_core import doe_scenario
+    from ...core.opt_core import size as osize
+
+    cc = c["compare"]
+    if body.step_upload_id or body.mesh_upload_id or body.part_title:
+        raise unprocessable("INVALID_PARAMS", "step_upload_id·mesh_upload_id·part_title 은 '형상 직접 비교'에서 쓰지 않습니다"
+                            "(형상은 shapes)")
+    shapes = list(body.shapes or [])
+    if not shapes:
+        raise unprocessable("SHAPES_EMPTY", "비교할 형상(STEP)을 올리세요")
+    if len(shapes) > int(cc["max_shapes"]):
+        raise unprocessable("SHAPES_TOO_MANY", f"형상은 최대 {cc['max_shapes']}개 (요청 {len(shapes)}개)",
+                            max_shapes=int(cc["max_shapes"]))
+    refs = [i for i, sh in enumerate(shapes) if sh.reference]
+    if len(refs) > 1:
+        raise unprocessable("REFERENCE_MULTIPLE", "기준 형상은 하나만 지정할 수 있습니다", index=refs)
+    need = 2 if refs else 1
+    if len(shapes) < need:
+        raise unprocessable("SHAPES_TOO_FEW", "기준 STEP 을 지정하면 형상이 2개 이상 필요합니다(비교 대상)" if refs else
+                            "형상이 1개 이상 필요합니다", min_shapes=need)
+    names = [_shape_name(sh.name, i) for i, sh in enumerate(shapes)]
+    seen: dict[str, int] = {}
+    for i, n in enumerate(names):
+        k = n.casefold()
+        if k in seen:
+            raise unprocessable("SHAPE_NAME_DUPLICATE", f"형상 이름 '{n}' 이 겹칩니다(대소문자 무시)", index=[seen[k], i])
+        seen[k] = i
+    ups = [(sh.upload_id, sh.rel) for sh in shapes]
+    if len(set(ups)) != len(ups) or any(r is None for u, r in ups if sum(1 for u2, _ in ups if u2 == u) > 1):
+        raise unprocessable("INVALID_PARAMS", "같은 업로드 파일(upload_id·rel)을 두 번 넣었습니다 — 한 업로드에 STEP 이 "
+                            "여러 개면 형상마다 rel 을 주세요")
+    out_shapes, mat_shapes, total = [], [], 0.0
+    for i, sh in enumerate(shapes):
+        try:
+            up, _root, path = up_svc.doe_source(ctx, principal, sh.upload_id, body.project_id, "step", rel=sh.rel)
+            info = up_svc.step_check(path, float(c["step_max_mb"]))
+        except DomainError as exc:
+            raise DomainError(exc.code, f"형상 {i + 1}({names[i]}): {exc.message}", status=exc.status,
+                              **{**exc.extra, "index": i}) from None
+        sha = up_svc.upload_file_sha(up, path)
+        total += os.path.getsize(path) / (1024 * 1024)
+        out_shapes.append({"index": i, "name": names[i], "file_name": info["file_name"], "sha256": sha,
+                           "size_mb": info["size_mb"], "reference": bool(sh.reference)})
+        mat_shapes.append({"path": path, "upload_id": up["id"], "rel": sh.rel, "name": names[i],
+                           "file_name": info["file_name"], "sha256": sha, "reference": bool(sh.reference), "_up": up})
+    if total > float(cc["total_max_mb"]):
+        raise unprocessable("SHAPES_TOO_LARGE", f"형상 STEP 합계 {total:.1f} MB > 상한 {float(cc['total_max_mb']):g} MB "
+                            "(bead_doe.compare.total_max_mb)", total_mb=round(total, 3),
+                            limit_mb=float(cc["total_max_mb"]))
+    with ctx.engine.connect() as conn:
+        rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
+    rows = backfill_opt_meta(ctx, rows)
+    warns: list[dict[str, Any]] = []
+    src = "step" if refs else "case"
+    base_out = base_mat = base_db = None
+    if src == "case":
+        if not rows[0].get("case_id"):
+            raise conflict("PREREQUISITE_MISSING", "기준 STEP 이 없으면 첫 ESL 의 Case 입력이 필요합니다", missing=["case"])
+        with ctx.engine.connect() as conn:
+            base = _s1_base(ctx, conn, body.project_id, rows[0], with_mesh=False)
+        base_out = {"entry_id": base["entry_id"], "case_id": base["case_id"], "part_title": base.get("part_title"),
+                    "n_nodes": base.get("n_nodes"), "n_elems": base.get("n_elems")}
+        base_mat = {"entry_id": base["entry_id"], "case_id": base["case_id"], "rad_path": base["rad_path"],
+                    "part_title": base.get("part_title"), "case_dir": os.path.dirname(base["rad_path"])}
+        base_db = {**base_out, "case_title": base.get("case_title"), "rad_file_name": base.get("rad_file_name"),
+                   "source": "case"}
+        warns.append({"code": "COMPARE_REF_CASE_MESH",
+                      "message": "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다 — 기준 STEP 지정을 권장합니다"})
+    dup: dict[str, int] = {}
+    for x in out_shapes:
+        if x["sha256"] in dup:
+            warns.append({"code": "SHAPE_DUPLICATE_FILE", "message": f"형상 {dup[x['sha256']] + 1}·{x['index'] + 1} 이 같은 "
+                          "STEP 파일(sha256)입니다", "index": [dup[x["sha256"]], x["index"]]})
+        dup.setdefault(x["sha256"], x["index"])
+    try:
+        osize.assert_ok([_size_row(e) for e in rows], opt_settings(ctx.settings)["size"])
+    except EslError as exc:
+        raise _esl_error(exc) from None
+    _mesh, _meta, raw = _entry_mesh(ctx, rows[0])
+    try:
+        pd = doe_scenario.props_default(raw)
+    except (EslError, KeyError, ValueError) as exc:
+        raise unprocessable("MESH_INVALID", f"기준 ESL 메시에서 물성 기본값을 얻지 못했습니다: {exc}") from None
+    props_default = {"t": float(pd["t"]), "E": float(pd["E"]), "nu": float(pd["nu"])}
+    # SC-D-4 형상 id: 기준 STEP = d000, 나머지 요청 순서 d001…(기준 미지정이면 d000 = Case 메시, STEP 은 d001…)
+    order = ([i for i in range(len(mat_shapes)) if mat_shapes[i]["reference"]]
+             + [i for i in range(len(mat_shapes)) if not mat_shapes[i]["reference"]])
+    k0 = 0 if src == "step" else 1
+    for k, i in enumerate(order):
+        mat_shapes[i]["id"] = f"d{k + k0:03d}"
+        out_shapes[i]["id"] = mat_shapes[i]["id"]
+    per_up: dict[str, list] = {}
+    for sh in mat_shapes:
+        up = sh.pop("_up")
+        rel = os.path.relpath(sh["path"], up["dir_path"]).replace(os.sep, "/")
+        per_up.setdefault(up["id"], []).append({"rel": rel, "sha256": sh["sha256"]})
+    for uid, fs in per_up.items():          # 업로드당 1회(한 세션 여러 STEP 이면 files 목록)
+        up_svc.save_doe_check(ctx, uid, up_svc.DOE_STEP_PURPOSE, fs[0]["rel"], fs[0]["sha256"], True,
+                              {"files": fs} if len(fs) > 1 else None)
+    out = {"ok": True, "step": None, "shapes": out_shapes, "reference_source": src, "base": base_out,
+           "mesh": None, "entries": [{"entry_id": e["id"], "ok": True, "reason": None} for e in rows], "size": None,
+           "props_default": props_default, "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "warnings": warns}
+    mat = {"rows": rows, "step": None, "shapes": [mat_shapes[i] for i in order], "reference_source": src,
+           "base": base_mat, "base_db": base_db, "mesh": None, "props_default": props_default,
+           "mesh_size_default_mm": float(cc["mesh"]["size_mm"])}
+    return {"out": _jsonable(out), "mat": mat}
 
 
 # ---------------------------------------------------------------- 직렬화
@@ -444,10 +601,13 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
         rr = True
     prep = s.get("prep")
     if isinstance(prep, dict):
-        prep = {"n_beads": int(prep.get("n_beads") or 0), "n_params": int(prep.get("n_params") or 0),
-                "paicad_version": prep.get("paicad_version") or s.get("paicad_version"),
-                "warnings": list(prep.get("warnings") or []),
-                "boundary": prep.get("boundary") or {"n_warn": 0, "n_info": 0}}
+        p0 = prep
+        prep = {"n_beads": int(p0.get("n_beads") or 0), "n_params": int(p0.get("n_params") or 0),
+                "paicad_version": p0.get("paicad_version") or s.get("paicad_version"),
+                "warnings": list(p0.get("warnings") or []),
+                "boundary": p0.get("boundary") or {"n_warn": 0, "n_info": 0}}
+        if s["scenario"] == "compare":      # ④ 준비 요약(형상 상태·요소 수·실패 사유)
+            prep.update({k: p0.get(k) for k in ("n_shapes", "n_ready", "failed", "reference_source", "shapes", "mesh")})
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
             "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
             "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
@@ -495,6 +655,11 @@ def _snapshot_cfg(ctx: AppContext) -> dict[str, Any]:
 
 
 def _validate_step_extras(body, c: dict[str, Any], mat: dict[str, Any]) -> tuple[dict | None, float | None]:
+    if body.scenario == "compare":
+        if body.mesh_size_mm is not None:
+            raise unprocessable("INVALID_PARAMS", "형상 직접 비교의 요소 크기는 설정(bead_doe.compare.mesh.size_mm)으로 고정입니다")
+        props = body.props.model_dump() if body.props is not None else dict(mat["props_default"])
+        return {k: float(props[k]) for k in ("t", "E", "nu")}, None
     if body.scenario != "step":
         if body.props is not None or body.mesh_size_mm is not None:
             raise unprocessable("INVALID_PARAMS", "props·mesh_size_mm 은 '다른 모델(STEP만)'에서만 지정합니다")
@@ -541,11 +706,45 @@ def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, pa
     return job
 
 
+def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, Any], mat: dict[str, Any],
+                    props: dict[str, Any]) -> dict[str, Any]:
+    """④ 연구 생성: inputs = {shapes[{id, name, file_name, sha256, upload_id, reference}], reference_source, inch, props},
+    작업 params.doe += shapes[{… path}], reference_source, base?(Case 기준), props."""
+    import datetime as _dt
+
+    lib_cfg = require_library_config(ctx)
+    rows = mat["rows"]
+    sid = str(uuid.uuid4())
+    doe_dir(ctx.settings, sid)
+    first = next((x for x in mat["shapes"] if not x["reference"]), mat["shapes"][0])
+    title = (body.title or "").strip() or f"형상 직접 비교 {first['name']} 외 {max(len(mat['shapes']) - 1, 0)}"[:200]
+    shapes_db = [{k: x[k] for k in ("id", "name", "file_name", "sha256", "upload_id", "rel", "reference")}
+                 for x in mat["shapes"]]
+    inputs = {"shapes": shapes_db, "reference_source": mat["reference_source"], "inch": body.inch, "props": props}
+    doe = {"id": sid, "scenario": "compare", "title": title,
+           "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "cfg": _snapshot_cfg(ctx),
+           "core": copy.deepcopy(ctx.config.core or {}), "mapping": (lib_cfg or {}).get("mapping"),
+           "entries": [{"id": e["id"], "dir": entry_folder(ctx, e), "label": _entry_label(e), "case": e.get("case_id")}
+                       for e in rows],
+           "shapes": [dict(x) for x in mat["shapes"]], "reference_source": mat["reference_source"],
+           "inch": body.inch, "props": props}
+    if mat["base"]:
+        doe["base"] = dict(mat["base"])
+    params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
+              "warnings": list(out["warnings"])}
+    return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario="compare", title=title,
+                             entry_ids=[e["id"] for e in rows], base_db=mat["base_db"], inputs=inputs, params=params,
+                             warns=out["warnings"])
+
+
 def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     c = cfg(ctx)
     r = check_inputs(ctx, principal, body, _internal=True)
     out, mat = r["out"], r["mat"]
     require_eligible(mat["rows"])                 # v0.10.0 MR-D-10: 현재 기준 PASS 항목만(422 ENTRY_NOT_ELIGIBLE)
+    if body.scenario == "compare":
+        props, _h = _validate_step_extras(body, c, mat)
+        return _create_compare(ctx, principal, body, out, mat, props)
     if body.scenario == "same" and not out["ok"]:
         bad = [e for e in out["entries"] if not e["ok"]]
         raise unprocessable("MODEL_MISMATCH", f"기준 모델과 다른 ESL {len(bad)}개 — '같은 모델' DOE 는 같은 모델만"
@@ -587,6 +786,13 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 준비 결과: 변수 표·비드 PNG·평면도
+def _no_compare(s: dict[str, Any]) -> None:
+    """④ 에는 변수·DOE·미리보기·평면도가 없다(SC-D-1) → 409 SCENARIO_UNSUPPORTED."""
+    if s.get("scenario") == "compare":
+        raise conflict("SCENARIO_UNSUPPORTED", "형상 직접 비교에는 변수·DOE 행렬·미리보기·평면도가 없습니다",
+                       scenario="compare")
+
+
 def _require_prep(s: dict[str, Any], job: dict[str, Any] | None) -> None:
     """준비 요약(BD_PREP_REGISTER)이 있어야 변수 표·평면도·행렬을 낸다(아니면 409 PREP_NOT_READY)."""
     if s.get("prep") is None:
@@ -609,6 +815,7 @@ def _pair(v: Any, fallback: list[float]) -> list[float]:
 def params_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
+    _no_compare(s)
     _require_prep(s, job)
     doc = _params_doc(ctx, s, c)
     beads = []
@@ -639,6 +846,7 @@ def params_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any
 def bead_png(ctx: AppContext, principal: Principal, sid: str, bead: str) -> str:
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
+    _no_compare(s)
     _require_prep(s, job)
     if not BEAD_RE.match(bead or ""):
         raise not_found("FILE_NOT_FOUND", "비드 그림이 없습니다")
@@ -696,6 +904,7 @@ def _link_coords(plan: dict[str, Any]) -> list[dict[str, Any]]:
 def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
+    _no_compare(s)
     _require_prep(s, job)
     p = _read_json(os.path.join(study_dir(ctx, s), "prep", "plan.json"), _max_mb(c))
     if not isinstance(p, dict) or "frame" not in p:
@@ -745,6 +954,7 @@ def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, A
     """행렬 생성만(저장 안 함) — 화면 안 수·경고 즉시 표시. 같은 함수를 미리보기·워커 BD_MATRIX 가 쓴다(같은 sha)."""
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
+    _no_compare(s)
     _require_prep(s, job)
     with ctx.engine.connect() as conn:
         mc = _study_cfg(conn, s, c)
@@ -772,6 +982,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
     with ctx.engine.connect() as conn:
         s0 = load_study(conn, sid)
     require_execute(principal, s0["project_id"])
+    _no_compare(s0)
     require_config_ok(ctx)
     require_enabled(ctx, s0["scenario"])
     spec = _spec_dict(body)
@@ -812,6 +1023,17 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
             raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         if s.get("run") is not None or s["phase"] in ("RUN", "DONE"):
             raise conflict("ALREADY_RUN", "이미 실행한 연구입니다 — 다시 하려면 복제하세요")
+        if s["scenario"] == "compare":      # SC-D-1: PREP → READY → RUN(행렬·미리보기 없음, matrix_sha256 무시)
+            if _derived_phase(s, job) != "READY" or s.get("prep") is None:
+                raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다 — [입력 준비]를 먼저 하세요")
+            base = _prep_params(conn, s)
+            run_opts = {"solver": "linear", "parallel": int(c["run"]["parallel"])}
+            d = copy.deepcopy(base["doe"])
+            d.update(run=run_opts)
+            params = {"bead_doe_id": sid, "kind": "RUN", "out_rel": s["dir_rel"], "doe": d, "warnings": []}
+            s = doe_repo.update_study(conn, sid, phase="RUN", run=run_opts)
+            job = _insert_job(conn, principal, s, "DOE_RUN", params)
+            return study_out(ctx, conn, s, job, c=c)
         doe = s.get("doe") or {}
         pv = doe.get("preview") or {}
         if (_derived_phase(s, job) != "PREVIEW_READY" or not pv or pv.get("matrix_sha256") != doe.get("matrix_sha256")
@@ -847,8 +1069,9 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         from ...core.db.tables import uploads as uploads_t
 
         snap = ((prep_job or {}).get("params") or {}).get("doe") or {}
-        for k in ("step", "mesh"):
-            uid = (snap.get(k) or {}).get("upload_id")
+        uids = [(k, (snap.get(k) or {}).get("upload_id")) for k in ("step", "mesh")]
+        uids += [(f"shapes[{i}]", (x or {}).get("upload_id")) for i, x in enumerate(snap.get("shapes") or [])]
+        for k, uid in uids:
             if not uid:
                 continue
             owner = conn.execute(uploads_t.select().with_only_columns(uploads_t.c.user_id)
@@ -861,9 +1084,17 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
     if prep_job is None or not isinstance((prep_job.get("params") or {}).get("doe"), dict):
         raise conflict("PREREQUISITE_MISSING", "원 연구의 입력 스냅샷이 없습니다", missing=["prep_job"])
     old = prep_job["params"]["doe"]
-    st = old.get("step") or {}
-    if not st.get("path") or not os.path.isfile(st["path"]) or os.path.islink(st["path"]):
-        raise conflict("PREREQUISITE_MISSING", "원 연구의 STEP 업로드가 더 이상 없습니다 — 새로 올려 주세요", missing=["step"])
+    if s["scenario"] == "compare":       # ④ 모든 형상 업로드가 남아 있어야(missing = 형상 순서 index — id 순)
+        miss = [i for i, x in enumerate(old.get("shapes") or [])
+                if not x.get("path") or not os.path.isfile(x["path"]) or os.path.islink(x["path"])]
+        if miss:
+            raise conflict("PREREQUISITE_MISSING", f"원 연구의 형상 STEP 업로드 {len(miss)}개가 더 이상 없습니다 — 새로 올려 주세요",
+                           missing=miss)
+    else:
+        st = old.get("step") or {}
+        if not st.get("path") or not os.path.isfile(st["path"]) or os.path.islink(st["path"]):
+            raise conflict("PREREQUISITE_MISSING", "원 연구의 STEP 업로드가 더 이상 없습니다 — 새로 올려 주세요",
+                           missing=["step"])
     nid = str(uuid.uuid4())
     doe_dir(ctx.settings, nid)
     import datetime as _dt
@@ -956,7 +1187,8 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     rev = int(((s.get("doe") or {}).get("rev")) or 0)
     m = _matrix_doc(ctx, s, rev, c) if rev else None
     vals = {d["id"]: d.get("values") or {} for d in (m or {}).get("designs") or [] if isinstance(d, dict)}
-    excluded = [{"id": d["id"], "status": d.get("status"), "code": d.get("code"), "values": vals.get(d["id"], {})}
+    excluded = [{"id": d["id"], "status": d.get("status"), "code": d.get("code"), "values": vals.get(d["id"], {}),
+                 **({"shape": d["shape"]} if isinstance(d.get("shape"), dict) else {})}
                 for d in designs.get("designs") or []
                 if isinstance(d, dict) and d.get("id") != "d000" and d.get("status") not in ("OK", None)]
     ranking = []
@@ -986,9 +1218,12 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     b = dict(r.get("baseline") or {})
     warns = [w if isinstance(w, dict) else {"code": str(w).split(":", 1)[0], "message": str(w)}
              for w in r.get("warnings") or []]
-    if r.get("sensitivity") is None and r.get("sensitivity_reason"):
+    if r.get("sensitivity") is None and r.get("sensitivity_reason") and r.get("sensitivity_reason") != "COMPARE_NO_PARAMS":
         warns.append({"code": "SENSITIVITY_TOO_FEW", "message": str(r.get("sensitivity_reason"))})
-    out = {"C_ref": r.get("C_ref"), "baseline": {k: b.get(k) for k in ("id", "score", "umax", "epsmax")} | {"id": "d000"},
+    keep_b = ("id", "score", "umax", "epsmax") + (("shape",) if s["scenario"] == "compare" else ())
+    out = {"scenario": s["scenario"], "reference_source": r.get("reference_source"),
+           "sensitivity_reason": r.get("sensitivity_reason"),
+           "C_ref": r.get("C_ref"), "baseline": {k: b.get(k) for k in keep_b} | {"id": "d000"},
            "n_ok": int(r.get("n_ok") or 0), "n_skipped": {k: int(v) for k, v in (r.get("n_skipped") or {}).items()},
            "n_failed": {k: int(v) for k, v in (r.get("n_failed") or {}).items()}, "ranking": ranking,
            "excluded": excluded, "sensitivity": r.get("sensitivity"),
@@ -1015,8 +1250,10 @@ def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str
     miss = [i for i in ids if i not in allv]
     if miss:
         raise DomainError("DESIGN_NOT_FOUND", f"순위 안에 없는 안입니다: {miss[:5]}", status=404, designs=miss)
+    names = d.get("names") if isinstance(d.get("names"), dict) else {}
     return _jsonable({"esl": d.get("esl") or [], "ratio_tol": d.get("ratio_tol"),
-                      "designs": [{"id": i, "per_esl": allv[i]} for i in ids]})
+                      "designs": [{"id": i, "per_esl": allv[i], **({"name": names[i]} if i in names else {})}
+                                  for i in ids]})
 
 
 # ---------------------------------------------------------------- 파일·보고서·받기
@@ -1109,6 +1346,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, parts_raw: str | Non
 # ---------------------------------------------------------------- 썸네일·3D 비교
 def thumb(ctx: AppContext, principal: Principal, sid: str, did: str) -> str:
     s, _job = _viewable(ctx, principal, sid)
+    _no_compare(s)
     pv = (s.get("doe") or {}).get("preview")
     if not DID_RE.match(did or "") or not isinstance(pv, dict) or pv.get("rev") is None:
         raise not_found("FILE_NOT_FOUND", "썸네일이 없습니다")

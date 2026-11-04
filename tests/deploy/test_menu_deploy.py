@@ -61,7 +61,7 @@ def test_resources_used_by_code_are_collected():
         assert _covered(rel, items), f"{rel} 이 $EslAppItems 에 없음"
 
 
-def test_version_is_0_13_0():
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.13.0"
+def test_version_is_0_14_0():
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.14.0"
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [0.13.0]" in log and "## [0.12.5]" in log and "## [0.12.4]" in log and "## [0.12.3]" in log and "## [0.12.2]" in log and "## [0.12.1]" in log and "## [0.12.0]" in log and "## [0.11.0]" in log and "## [0.10.1]" in log and "## [0.10.0]" in log
+    assert "## [0.14.0]" in log and "## [0.13.0]" in log and "## [0.12.5]" in log and "## [0.12.4]" in log and "## [0.12.3]" in log and "## [0.12.2]" in log and "## [0.12.1]" in log and "## [0.12.0]" in log and "## [0.11.0]" in log and "## [0.10.1]" in log and "## [0.10.0]" in log

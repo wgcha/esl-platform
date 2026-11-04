@@ -72,6 +72,9 @@ class Ctx:
         st = self.D.get("step") or {}
         if st.get("path"):
             ins.append(("STEP 업로드", os.path.dirname(st["path"])))
+        for sh in self.D.get("shapes") or []:          # ④ 형상 STEP 업로드(읽기만)
+            if sh.get("path"):
+                ins.append(("STEP 업로드", os.path.dirname(sh["path"])))
         ins += [tuple(x) for x in self.D.get("input_roots") or []]
         return ins
 
@@ -152,6 +155,8 @@ def bd_input(spec: dict, echo=print) -> dict:
     from esl.doe.assem_full import drop_derived
     drop_derived(c.out, c.writer.guard)          # prep/assem_full·a_assem_full = 재생성 파생물(_backup 제외)
     c.fresh("prep")
+    if c.scn == "compare":
+        return _cmp_input(c, echo)
     st = D["step"]
     step_rel = os.path.join("input", "step", os.path.basename(st.get("file_name") or st["path"]))
     step_sha = _copy_verified(st["path"], c.p(step_rel), c.writer, st.get("sha256"))
@@ -222,6 +227,8 @@ def _step_props(c: Ctx, base_raw: dict | None) -> tuple[dict, float]:
 
 def bd_mesh0(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
+    if c.scn == "compare":
+        return _cmp_mesh0(c, echo)
     if c.scn != "step":
         return {"skipped": True, "files": [], "warnings": []}
     c.progress(0)
@@ -269,6 +276,8 @@ def _params_out(c: Ctx, doc: dict, frame: dict) -> dict:
 
 def bd_loads(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
+    if c.scn == "compare":
+        return _cmp_loads(c, echo)
     c.progress(0)
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
@@ -382,7 +391,7 @@ def _matrix(c: Ctx) -> dict:
 
 
 def _design_values(c: Ctx, did: str) -> dict:
-    if did == NOISE:
+    if did == NOISE or c.scn == "compare":       # ④ 변수 없음
         return {}
     for x in _matrix(c)["designs"]:
         if x["id"] == did:
@@ -398,6 +407,17 @@ def _cfg_hash(c: Ctx) -> str:
 
 def design_dir(c: Ctx, did: str) -> str:
     return c.p("run", "designs", did)
+
+
+def design_sha(c: Ctx, did: str) -> str:
+    """BD-D-16 안 input_sha256(bd_eval 이 done.json 에 쓰는 값 — 워커 이어하기도 같은 함수). ④ = 형상 기준
+    (STEP sha, 형상 메시 sha, 기준 frame sha, 물성·프로필·설정 해시)."""
+    if c.scn == "compare":
+        return _cmp_sha(c, did)
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    inp = U.read_json(c.p("prep", "input.json"))
+    return ev.input_sha256(_design_values(c, did), bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"),
+                           _cfg_hash(c), c.D.get("paicad_version"))
 
 
 def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) -> tuple[dict, list, list, dict]:
@@ -440,8 +460,7 @@ def bd_eval(spec: dict, echo=print) -> dict:
     t, bmeta = sc.load_base(c.p("prep"))
     inp = U.read_json(c.p("prep", "input.json"))
     values = _design_values(c, did)
-    sha = ev.input_sha256(values, bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"), _cfg_hash(c),
-                          c.D.get("paicad_version"))
+    sha = design_sha(c, did)
     dd = design_dir(c, did)
     c.writer.makedirs(dd)
     prev = ev.reusable(dd, sha)
@@ -461,11 +480,15 @@ def bd_eval(spec: dict, echo=print) -> dict:
         return {"design": did, "status": status, "reused": False}
     status, code, msg, per, warns, mesh_info, solve = "OK", None, None, None, [], None, None
     try:
-        mesh, sup, loads, mesh_info = _design_mesh(c, t, did, inp, bmeta, fresh=True)
+        if c.scn == "compare":
+            mesh, sup, loads, mesh_info = _cmp_design_mesh(c, t, did)
+        else:
+            mesh, sup, loads, mesh_info = _design_mesh(c, t, did, inp, bmeta, fresh=True)
         c.progress(40)
         r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"])
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
-        ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if c.scn == "step" and did != BASELINE else None, c.writer)
+        keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
+        ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if keep_mesh else None, c.writer)
     except EslError as exc:
         code, msg = exc.code, exc.message
         if exc.code in ("FAILED_MESH", "GMSH_UNAVAILABLE"):
@@ -481,10 +504,11 @@ def bd_eval(spec: dict, echo=print) -> dict:
                         code=code, message=msg)
     U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), doc)
     ev.write_done(dd, sha, status, c.writer)
+    tag = f"[{did} {_cmp_name(c, did)}]" if c.scn == "compare" else f"[{did}]"      # 이름은 로그 표시만
     if status == "OK":
-        echo(f"[{did}] solve {len(per)} ESL {solve['seconds']:.1f} s · C_max {doc['C_max']:.4g}")
+        echo(f"{tag} solve {len(per)} ESL {solve['seconds']:.1f} s · C_max {doc['C_max']:.4g}")
     else:
-        echo(f"[{did}] {status} {code}: {msg}")
+        echo(f"{tag} {status} {code}: {msg}")
     c.progress(100)
     return {"design": did, "status": status, "reused": False, "code": code, "warnings": warns}
 
@@ -549,12 +573,12 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
     """안(또는 베이스라인)의 최악 ESL 로 view3d 파일 → post/view3d/<did>/."""
     from esl.view3d import build_view
     dd = design_dir(c, did)
-    if did == BASELINE:
+    if did == BASELINE and c.scn != "compare":
         mesh, sup = dict(t.mesh), list(t.supports)
         _, loads = sc.load_loads(c.p("prep"))
     else:
         dz = ev.load_design(dd)
-        if c.scn == "step":
+        if c.scn in ("step", "compare"):
             mesh = {"node_id": dz["node_id"], "x0": dz["x"], "conn": dz["conn"], "elem_type": dz["type"],
                     "elem_pid": dz["pid"], "elem_id": np.arange(1, dz["conn"].shape[0] + 1, dtype=np.int64)}
             ne = mesh["conn"].shape[0]
@@ -659,6 +683,8 @@ def _cleanup(c: Ctx, keep: set[str]) -> int:
 def bd_post(spec: dict, echo=print) -> dict:
     """순위·민감도 → post/, view3d(베이스라인 + 상위 k), 산출물 best/, report.html, 파일 정리 → post/result.json."""
     c = Ctx(spec)
+    if c.scn == "compare":
+        return _cmp_post(c, echo)
     c.progress(0)
     t, bmeta = sc.load_base(c.p("prep"))
     inp = U.read_json(c.p("prep", "input.json"))
@@ -767,6 +793,414 @@ def bd_post(spec: dict, echo=print) -> dict:
     return {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
             "warnings": warns,
             "result": out}
+
+
+# ---------------------------------------------------------------- ④ 형상 직접 비교 (v0.14.0, esl_step_compare.md §5)
+# 폴더: input/shapes/<did>.step · prep/{shapes.json, shapes/<did>/mesh/, base.json, base_mesh.npz, loads.npz, compare.json}
+# · run/designs/<did>/ · post/ · best/<did>/(형상 메시 ch_r.rad·ch_r.fem) · report.html. paicad 단계 없음(BD_GEOM SKIPPED).
+REF_CASE_MSG = "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다"
+LIMIT_MSG = ("형상마다 새 메시 — 작은 차이는 메시 차이일 수 있음(잡음 바닥 미측정)", "모든 STEP 이 같은 좌표계·같은 위치라는 전제"
+             "(어긋난 형상은 정렬 검사로 제외)", "defeature(작은 구멍·필렛 제거) 없음 — gmsh 설정만 같게")
+
+
+def _cmp_shapes(c: Ctx) -> list[dict]:
+    return list(U.read_json(c.p("prep", sc.SHAPES_JSON))["shapes"])
+
+
+def _cmp_by(c: Ctx) -> dict:
+    if not hasattr(c, "_cmp_by_cache"):
+        try:
+            c._cmp_by_cache = {s["id"]: s for s in _cmp_shapes(c)}
+        except (OSError, ValueError, KeyError):
+            c._cmp_by_cache = {}
+    return c._cmp_by_cache
+
+
+def _cmp_name(c: Ctx, did: str) -> str:
+    return str((_cmp_by(c).get(did) or {}).get("name") or did)
+
+
+def _cmp_props(c: Ctx) -> dict:
+    p = c.D.get("props")
+    if not p:
+        raise EslError("INPUT_INVALID", "④ 쉘 물성(props)이 없음")
+    return {"t": float(p["t"]), "E": float(p["E"]), "nu": float(p["nu"])}
+
+
+def _cmp_mesh_dir(c: Ctx, did: str) -> str:
+    return c.p("prep", "shapes", did, "mesh")
+
+
+def _cmp_doc(c: Ctx) -> dict:
+    return U.read_json(c.p("prep", sc.COMPARE_JSON))
+
+
+def _cmp_input(c: Ctx, echo) -> dict:
+    """BD_INPUT ④: 형상 STEP → input/shapes/<did>.step(sha256 재확인) + prep/shapes.json. 기준 미지정 = 첫 ESL Case 메시 → d000."""
+    D = c.D
+    shapes = list(D.get("shapes") or [])
+    src = D.get("reference_source") or ("step" if any(s.get("reference") for s in shapes) else "case")
+    rows, warns, info = [], [], []
+    for k, s in enumerate(shapes):
+        did = str(s["id"])
+        if not did.startswith("d") or not did[1:].isdigit() or len(did) != 4:
+            raise EslError("INPUT_INVALID", f"형상 id 형식: {did}")
+        rel = os.path.join("input", "shapes", f"{did}.step")
+        sha = _copy_verified(s["path"], c.p(rel), c.writer, s.get("sha256"))
+        rows.append({"id": did, "name": str(s["name"]), "file_name": s.get("file_name"), "sha256": sha,
+                     "reference": bool(s.get("reference")), "rel": rel.replace(os.sep, "/"), "source": "step",
+                     "size_mb": round(os.path.getsize(c.p(rel)) / (1024 * 1024), 3)})
+        c.progress(5 + 60 * (k + 1) / max(len(shapes), 1))
+    case_info = None
+    if src == "case":
+        b = D.get("base") or {}
+        ents = c.entries(raw=True)
+        be = next((e for e in ents if e.meta.get("entry_id") == b.get("entry_id")), ents[0])
+        mesh, case_info = sc.case_ref_mesh(b["rad_path"], b["part_title"], be, _cmp_props(c), coord_tol_rel=c.coord_tol(),
+                                           parse_kw=c.parse_kw())
+        d = _cmp_mesh_dir(c, BASELINE)
+        c.writer.makedirs(d)
+        mg.save_npz_det(c.writer.guard(os.path.join(d, mg.MESH_NPZ)), {k: mesh[k] for k in mg.MESH_KEYS})
+        U.write_json(c.writer.guard(os.path.join(d, mg.MESH_JSON)),
+                     {"schema": "esl/doe_mesh/1", "source": "case", "case_id": b.get("case_id"),
+                      "entry_id": b.get("entry_id"), **case_info, "errors": [], "options": None, "h": None})
+        rows.insert(0, {"id": BASELINE, "name": "Case 메시", "file_name": None, "sha256": None, "reference": True,
+                        "rel": None, "source": "case", "case_id": b.get("case_id"), "entry_id": b.get("entry_id")})
+        warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
+        echo(f"[bd_input] ④ 기준 = 첫 ESL Case 메시(파트 {case_info.get('part_title')}, 노드 {case_info['n_nodes']} · 요소 "
+             f"{case_info['n_elems']}) — {REF_CASE_MSG}")
+    seen: dict[str, str] = {}
+    for r in rows:
+        if r.get("sha256"):
+            if r["sha256"] in seen:
+                warns.append(f"SHAPE_DUPLICATE_FILE: {r['id']} 와 {seen[r['sha256']]} 가 같은 STEP 파일(sha256)")
+            seen.setdefault(r["sha256"], r["id"])
+    if not any(r["id"] == BASELINE for r in rows):
+        raise EslError("INPUT_INVALID", "④ 기준 형상(d000)이 없음")
+    c.write_json(os.path.join("prep", sc.SHAPES_JSON), {"schema": "esl/doe_shapes/1", "reference_source": src,
+                                                        "shapes": rows})
+    inp = {"schema": "esl/doe_input/1", "scenario": "compare", "step": None, "assem": None, "reference_source": src,
+           "entries": [e["id"] for e in D["entries"]], "shapes": [{k: r.get(k) for k in ("id", "rel", "sha256")}
+                                                                 for r in rows],
+           "case_mesh": case_info, "warnings": warns, "info": info}
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    echo(f"[bd_input] ④ 형상 {len(rows)}개(기준 {'STEP' if src == 'step' else 'Case 메시'}) 복사·sha256 확인")
+    for w in warns:
+        echo(f"  경고: {w}")
+    c.progress(100)
+    return {"files": ["prep/input.json", f"prep/{sc.SHAPES_JSON}"], "warnings": warns, "info": info,
+            "n_shapes": len(rows), "reference_source": src}
+
+
+def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict) -> dict:
+    """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}."""
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    c.writer.makedirs(d)
+    try:
+        mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg)
+    except EslError as exc:
+        if exc.code == "GMSH_UNAVAILABLE":
+            raise
+        mj = os.path.join(d, mg.MESH_JSON)
+        errs = U.read_json(mj).get("errors") if os.path.isfile(mj) else []
+        code = "MESH_TOO_LARGE" if any(e.get("code") == "MESH_TOO_LARGE" for e in errs or []) else "MESH_FAILED"
+        return {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+    dfi = meta.get("defeature") or {}
+    return {"id": did, "status": "READY", "code": None, "message": None, "n_nodes": meta["n_nodes"],
+            "n_elems": meta["n_elems"], "quad_ratio": meta["quad_frac"], "seconds": meta.get("wall_seconds"),
+            "quality": _cmp_quality(c, mesh), "defeature": dfi or None,
+            "warnings": [w.get("message") for w in meta.get("warnings") or []] + list(dfi.get("warnings") or [])}
+
+
+def _cmp_quality(c: Ctx, mesh: dict) -> dict:
+    """이슈 #53 criteria 품질 요약(bead_doe.compare.quality) — 차단 안 함."""
+    from esl.doe import mesh_quality as mq
+    return mq.summarize(mesh, c.cfg["compare"]["quality"])
+
+
+def _cmp_mesh0(c: Ctx, echo) -> dict:
+    """BD_MESH0 ④: 모든 STEP 같은 gmsh 프로필(SC-D-5)·형상별 병렬(run.parallel, SC-D-9). 기준 실패 → 작업 실패
+    (MESH_FAILED·MESH_TOO_LARGE), 기준 크기(SC-D-7a) 불일치 → SIZE_MISMATCH. 그 밖 형상 실패 → FAILED_MESH(진행)."""
+    from concurrent.futures import ThreadPoolExecutor
+    c.progress(0)
+    shapes = _cmp_shapes(c)
+    steps = [r for r in shapes if r.get("rel")]
+    ver = None
+    if steps:
+        ok, ver = mg.available()
+        if not ok:
+            raise EslError("GMSH_UNAVAILABLE", "gmsh 가 없어 ④ 형상 메시를 만들 수 없음")
+    props = _cmp_props(c)
+    prof = sc.compare_profile(c.cfg)
+    ccfg = sc.compare_cfg(c.cfg)
+    h = mg.check_h(float(prof["size_mm"]), prof)
+    par = max(1, min(int(c.cfg["run"]["parallel"]), len(steps) or 1))
+    echo(f"[bd_mesh0] ④ gmsh {ver or '-'} 프로필 h {h:g} mm · 최소 {h * float(prof['min_size_factor']):g} mm · 곡률 "
+         f"{int(prof['curvature_n'])} · 경계 확장 {prof.get('extend_from_boundary')} · OCC 정리 {prof.get('occ_fix_small')} — "
+         f"형상 {len(steps)}개 동시 {par}")
+    res: dict[str, dict] = {}
+    done = [0]
+    if steps:
+        with ThreadPoolExecutor(max_workers=par, thread_name_prefix="esl-cmp-mesh") as pool:
+            futs = {pool.submit(_cmp_mesh_one, c, r, h, ccfg, props): r["id"] for r in steps}   # 기준이 먼저(id 순)
+            for f, did in futs.items():
+                r = f.result()
+                res[did] = r
+                done[0] += 1
+                nm = _cmp_name(c, did)
+                if r["status"] == "READY":
+                    qy = r["quality"]
+                    df = r.get("defeature") or {}
+                    echo(f"[{did} {nm}] mesh {h:g} mm {float(r.get('seconds') or 0):.0f} s {r['n_elems']} 요소 · quad "
+                         f"{r['quad_ratio']:.3f} · 품질 Fail {qy['fail_elems']}({qy['fail_ratio'] * 100:.2f} %) Warn "
+                         f"{qy['warn_elems']} · 구멍 메움 {df.get('filled', 0)}·둘레 조정 {df.get('hole_sized', 0)}")
+                else:
+                    echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
+                if did == BASELINE and r["status"] != "READY":
+                    for g in futs:
+                        g.cancel()
+                    raise EslError(r["code"], f"기준 형상 메시 실패: {r['message']}")
+                c.progress(5 + 75 * done[0] / len(steps))
+    ref = next(r for r in shapes if r["id"] == BASELINE)
+    if ref["source"] == "case":
+        mj = U.read_json(os.path.join(_cmp_mesh_dir(c, BASELINE), mg.MESH_JSON))
+        res[BASELINE] = {"id": BASELINE, "status": "READY", "code": None, "message": None, "n_nodes": mj["n_nodes"],
+                         "n_elems": mj["n_elems"], "quad_ratio": mj["quad_frac"], "seconds": None,
+                         "quality": _cmp_quality(c, mg.load_mesh(_cmp_mesh_dir(c, BASELINE))), "defeature": None,
+                         "warnings": []}
+    ents = c.entries(raw=False)
+    ref_mesh = mg.load_mesh(_cmp_mesh_dir(c, BASELINE))
+    t, size_info = sc.template_base(ref_mesh, ents, c.ocfg["size"], inch=c.D.get("inch"),
+                                    source={"reference": ref["source"], "name": ref["name"]})
+    prof_rec = {k: prof.get(k) for k in ("size_mm", "curvature_n", "min_size_factor", "extend_from_boundary",
+                                         "occ_fix_small", "feature_angle", "algorithm", "occ_sew_faces")}
+    prof_rec["defeature"] = dict(c.cfg["compare"].get("defeature") or {})
+    bm = sc.save_base(t, c.p("prep"), "compare", c.writer,
+                      extra={"props": props, "h": h, "gmsh_version": ver, "reference_source": ref["source"],
+                             "profile": prof_rec, "profile_sha256": ev.config_hash(prof_rec)})
+    warns = list(size_info.get("warnings") or [])
+    for r in shapes:
+        x = res[r["id"]]
+        qy = x.get("quality")
+        if qy and qy["over_limit"]:
+            warns.append(f"SHAPE_QUALITY_FAIL: {r['id']} {r['name']} 품질 Fail 요소 {qy['fail_elems']}개 "
+                         f"({qy['fail_ratio'] * 100:.2f} % > {qy['max_fail_ratio'] * 100:g} %) — 차단 아님")
+    doc = {"schema": "esl/doe_compare/1", "reference_source": ref["source"], "profile": prof_rec, "h": h,
+           "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
+           "shapes": [{"id": r["id"], "name": r["name"], "file_name": r.get("file_name"), "reference": r["reference"],
+                       "source": r["source"], **{k: v for k, v in res[r["id"]].items() if k != "id"}} for r in shapes]}
+    doc["warnings"] = warns
+    c.write_json(os.path.join("prep", sc.COMPARE_JSON), doc)
+    inp = U.read_json(c.p("prep", "input.json"))
+    inp.update(size=size_info, props=props, mesh_size_mm=h, gmsh_version=ver)
+    inp["warnings"] = list(inp.get("warnings") or []) + warns
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    nf = sum(1 for r in doc["shapes"] if r["status"] != "READY")
+    echo(f"[bd_mesh0] 기준 d000 노드 {bm['n_nodes']} · 요소 {bm['n_elems']}, 형상 메시 실패 {nf}개")
+    c.progress(100)
+    return {"files": [f"prep/{sc.COMPARE_JSON}", "prep/base_mesh.npz", "prep/base.json"], "warnings": warns,
+            "h": h, "n_failed": nf}
+
+
+def _cmp_loads(c: Ctx, echo) -> dict:
+    """BD_LOADS ④: 기준 frame 고정(prep/base.json), d000 하중(셀 매핑) → loads.npz, 형상별 크기·정렬(SC-D-7b) →
+    FAILED_SIZE(그 형상만), 셀당 노드 경고 → prep/compare.json."""
+    c.progress(0)
+    t, bmeta = sc.load_base(c.p("prep"))
+    ents = c.entries(raw=True)
+    loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                  (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], loads, c.writer)
+    warns = list(linfo["warnings"])
+    doc = _cmp_doc(c)
+    ccfg = c.cfg["compare"]
+    grid = (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"])
+    n = len(doc["shapes"])
+    for k, r in enumerate(doc["shapes"]):
+        if r["id"] == BASELINE or r["status"] != "READY":
+            continue
+        mesh = mg.load_mesh(_cmp_mesh_dir(c, r["id"]))
+        chk = sc.shape_check(mesh, t.frame, ents, c.ocfg["size"], ccfg, inch=c.D.get("inch"))
+        r.update(size=chk["size"], align=chk["align"])
+        if not chk["ok"]:
+            r.update(status="FAILED_SIZE", code=chk["code"], message=chk["message"])
+            echo(f"[{r['id']} {r['name']}] FAILED_SIZE {chk['code']}: {chk['message']}")
+            continue
+        w = sc.mapping_resolution(mesh, t.frame, grid, c.ocfg["check"]["min_nodes_per_cell"])
+        if w:
+            r.setdefault("warnings", []).append(w)
+            warns.append(f"{w} — {r['id']}")
+        c.progress(10 + 80 * (k + 1) / n)
+    doc["loads"] = {"sha256": loads_sha, **linfo}
+    c.write_json(os.path.join("prep", sc.COMPARE_JSON), doc)
+    inp = U.read_json(c.p("prep", "input.json"))
+    inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0)
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    ready = [r["id"] for r in doc["shapes"] if r["status"] == "READY"]
+    echo(f"[bd_loads] ④ 기준 frame 고정 · ESL {len(loads)}개 셀 매핑 · 실행 대상 형상 {len(ready)}/{n}")
+    c.progress(100)
+    return {"files": ["prep/loads.npz", f"prep/{sc.COMPARE_JSON}"], "warnings": warns, "info": [],
+            "n_ready": len(ready), "n_shapes": n}
+
+
+def _cmp_sha(c: Ctx, did: str) -> str:
+    """④ input_sha256 = (STEP sha, 형상 메시 sha, 기준 frame sha, 물성·메시 프로필·설정 해시) — 같으면 재사용."""
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    sh = _cmp_by(c).get(did) or {}
+    mesh_sha = bmeta["mesh_sha256"] if did == BASELINE else U.sha256_file(os.path.join(_cmp_mesh_dir(c, did), mg.MESH_NPZ))
+    cfg = ev.config_hash({"cfg": _cfg_hash(c), "props": bmeta.get("props"), "profile": bmeta.get("profile"),
+                          "step": sh.get("sha256"), "source": sh.get("source")})
+    return ev.input_sha256({}, mesh_sha, ev.config_hash(bmeta["frame"]), cfg, None)
+
+
+def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
+    """④ 형상(기준 d000 포함 같은 규칙): 메시 → compare_target(frame 고정·auto_supports) → 셀 매핑 하중."""
+    mesh = dict(t.mesh) if did == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, did))
+    dt = sc.compare_target(mesh, t.frame)
+    loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+    et = np.asarray(dt.mesh["elem_type"]).astype(int)
+    return dt.mesh, list(dt.supports), loads, {"n_nodes": dt.n_nodes, "n_elems": dt.n_elems,
+                                               "quad_frac": float(np.sum(et == 4)) / max(et.size, 1)}
+
+
+def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str]) -> str:
+    """④ ranking.csv: 변수 열 대신 name·file_name."""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["id", "rank", "status", "name", "file_name", "score", "improvement", "worst", "umax", "epsmax"]
+               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids])
+    rr = {x["id"]: x for x in rank["ranking"]}
+    for r in sorted(results, key=lambda x: x["id"]):
+        x = rr.get(r["id"])
+        sh = shapes.get(r["id"]) or {}
+        head = [r["id"], "", r["status"], sh.get("name") or "", sh.get("file_name") or ""]
+        C = {p["entry_id"]: p["C"] for p in r.get("per_esl") or []}
+        extra = [""] * (len(PER_ESL_COLS) + len(entry_ids))
+        if r["id"] == BASELINE:
+            row = head + [1.0, 0.0, rank["baseline"]["worst_entry_id"], rank["baseline"]["umax"], rank["baseline"]["epsmax"]]
+            extra = [1.0, 0.0, False, 0, 0, 0.0, ""] + [1.0 if e in C else "" for e in entry_ids]
+        elif x is not None:
+            head[1] = x["rank"]
+            row = head + [x["score"], x["improvement"], x["worst_entry_id"], x["umax"], x["epsmax"]]
+            ratio = {p["entry_id"]: p["ratio"] for p in x.get("per_esl") or []}
+            extra = [x.get(k, "") if x.get(k) is not None else "" for k in PER_ESL_COLS] + [ratio.get(e, "")
+                                                                                       for e in entry_ids]
+        else:
+            row = head + ["", "", "", "", ""]
+        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra)
+    return buf.getvalue()
+
+
+def _cmp_export(c: Ctx, did: str, props: dict) -> list[str]:
+    """SC-D-11 형상 메시 산출물 → best/<did>/{ch_r.rad, ch_r.fem}(전 OK 형상, keep_files_top 무관)."""
+    dz = ev.load_design(design_dir(c, did))
+    ne = dz["conn"].shape[0]
+    mesh = {"node_id": dz["node_id"], "x0": dz["x"], "conn": dz["conn"], "elem_type": dz["type"], "elem_pid": dz["pid"],
+            "elem_id": np.arange(1, ne + 1, dtype=np.int64), "thickness": np.full(ne, float(props["t"])),
+            "E": np.full(ne, float(props["E"])), "nu": np.full(ne, float(props["nu"]))}
+    bd = c.writer.fresh_dir(c.p("best", did), c.out)
+    from esl.doe import export_mesh
+    return export_mesh.write(bd, mesh, guard=c.writer.guard)
+
+
+def _cmp_post(c: Ctx, echo) -> dict:
+    """BD_POST ④: 순위·ESL별 지표(§11·§11.4 그대로), 민감도 생략(COMPARE_NO_PARAMS), 형상 이름, view3d(기준 + 상위 k),
+    메시 산출물(전 OK 형상), report.html → post/result.json."""
+    c.progress(0)
+    t, bmeta = sc.load_base(c.p("prep"))
+    doc = _cmp_doc(c)
+    shapes = {r["id"]: r for r in doc["shapes"]}
+    results = []
+    for r in doc["shapes"]:
+        p = os.path.join(design_dir(c, r["id"]), ev.RESULT_JSON)
+        if r["status"] == "READY" and os.path.isfile(p):
+            results.append(U.read_json(p))
+        elif r["status"] == "READY":
+            results.append(ev.result_doc(r["id"], "CANCELED", {}))
+        else:
+            results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
+    R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"})
+    rk.attach_shapes(R, shapes)
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    for x in R["ranking"]:
+        for p in x["per_esl"]:
+            p["label"] = labels.get(p["entry_id"], p["entry_id"][:8])
+    by = {x["id"]: x for x in R["ranking"]}
+    for r in results:
+        if r["id"] == BASELINE:
+            r["score"] = 1.0
+        elif r["id"] in by:
+            r["score"] = by[r["id"]]["score"]
+        p = os.path.join(design_dir(c, r["id"]), ev.RESULT_JSON)
+        if os.path.isfile(p):
+            U.write_json(c.writer.guard(p), r)
+    c.progress(20)
+    c.writer.makedirs(c.p("post"))
+    eids = [e["id"] for e in c.D["entries"]]
+    with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(_cmp_ranking_csv(R, results, shapes, eids))
+
+    def shp(did):
+        s = shapes.get(did) or {}
+        return {"name": s.get("name"), "file_name": s.get("file_name"), "reference": bool(s.get("reference"))}
+    c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
+                                                                    "code": r.get("code"), "score": r.get("score"),
+                                                                    "shape": shp(r["id"])} for r in results]})
+    warns = [w["code"] for w in R["warnings"]]
+    inp = U.read_json(c.p("prep", "input.json"))
+    if doc["reference_source"] == "case":
+        warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
+    k = int(c.cfg["view3d"]["top_k"])
+    top = [x["id"] for x in R["ranking"][:k]]
+    v3 = []
+    for did in [BASELINE] + top:
+        res = next(r for r in results if r["id"] == did)
+        try:
+            v3.append(_view3d(c, t, bmeta, did, inp, res))
+        except EslError as exc:
+            warns.append(f"VIEW3D_FAILED: {did} {exc.code}")
+    c.progress(60)
+    props = bmeta["props"]
+    best_files: dict[str, list[str]] = {}
+    for r in results:
+        if r.get("status") == "OK":
+            best_files[r["id"]] = _cmp_export(c, r["id"], props)
+    c.progress(85)
+    inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
+    esl = [{"entry_id": e, "label": labels.get(e, e[:8])} for e in R["esl_order"]]
+    c.write_json(os.path.join("post", "per_esl.json"),
+                 {"esl": esl, "ratio_tol": R["ratio_tol"], "designs": {x["id"]: x["per_esl"] for x in R["ranking"]},
+                  "names": {x["id"]: x["shape"]["name"] for x in R["ranking"]}})
+    best_id = R["ranking"][0]["id"] if R["ranking"] else None
+    out = {"scenario": "compare", "reference_source": doc["reference_source"], "C_ref": R["C_ref"],
+           "baseline": R["baseline"], "n_ok": R["n_ok"], "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
+           "ranking": [{kk: v for kk, v in x.items() if kk != "C" and (kk != "per_esl" or inline)} for x in R["ranking"]],
+           "per_esl_inline": inline, "ratio_tol": R["ratio_tol"], "esl": esl, "sensitivity": None,
+           "sensitivity_reason": "COMPARE_NO_PARAMS", "boundary_warnings_n": 0, "view3d": v3,
+           "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])},
+           "best_all": [{"id": i, "files": f} for i, f in sorted(best_files.items())], "noise_floor": None,
+           "matrix_sha256": None, "profile": doc.get("profile"), "warnings": warns}
+    ms = load_method_sources()
+    ctx = {"study": {"id": c.D.get("id"), "title": c.D.get("title"), "scenario": "compare",
+                     "created_at": c.D.get("created_at"), "entry_ids": eids},
+           "inputs": {"inch": c.D.get("inch"), "props": props, "mesh_size_mm": bmeta.get("h"),
+                      "entries": [{"entry_id": e["id"], "label": e.get("label"), "case": e.get("case")}
+                                  for e in c.D["entries"]]},
+           "versions": {"paicad": None, "gmsh": bmeta.get("gmsh_version")}, "shapes": doc["shapes"],
+           "profile": doc.get("profile"), "reference_source": doc["reference_source"],
+           "result": {**R, "sensitivity": None}, "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"],
+           "esl": esl, "limits_extra": list(LIMIT_MSG), "warnings": warns,
+           "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
+    from esl.doe import report_doe
+    report_doe.write(c.writer.guard(c.p("report.html")), ctx)
+    out["cleanup_bytes"] = 0
+    c.write_json(os.path.join("post", "result.json"), out)
+    echo(f"[bd_post] ④ 성공 {R['n_ok']} · 최적 {best_id or '-'}"
+         + (f" ({_cmp_name(c, best_id)}) score {R['ranking'][0]['score']:.4f}" if best_id else ""))
+    c.progress(100)
+    return {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
+            "warnings": warns, "result": out}
 
 
 __all__ = ["STAGES", "run_stage", "bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post",

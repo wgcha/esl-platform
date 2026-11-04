@@ -1673,7 +1673,7 @@ class OptFileOut(_Out):
 
 # ---------------------------------------------------------------- v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §10.2)
 # 이름 = 프런트 types.ts 인터페이스 이름(check:api 대조). 중첩 인라인 객체는 dict(프런트 인라인 타입과 키 대조 생략).
-DoeScenarioLit = Literal["same", "mesh", "step"]
+DoeScenarioLit = Literal["same", "mesh", "step", "compare"]          # v0.14.0 ④ compare(esl_step_compare.md)
 DoePhaseLit = Literal["PREP", "READY", "PREVIEW", "PREVIEW_READY", "RUN", "DONE", "FAILED"]
 
 
@@ -1683,11 +1683,22 @@ class DoeProps(_Req):
     nu: float = Field(ge=0, lt=0.5)
 
 
+class CompareShapeIn(_Req):
+    """v0.14.0 ④ 형상 1개(esl_step_compare.md §3): 업로드 세션 1개에 STEP 1개(rel 생략) 또는 여러 개(rel 로 고름). name 은 앞뒤 공백 제거 후 1..64자·제어문자 금지
+    (서비스가 검사 — 422 SHAPE_NAME_INVALID), reference = 기준(최대 1개, 없으면 첫 ESL Case 메시)."""
+
+    upload_id: str = Field(min_length=1, max_length=64)
+    rel: str | None = Field(default=None, min_length=1, max_length=1024)   # 업로드 안 STEP 파일(여러 STEP 한 세션) — 1개면 생략
+    name: str = Field(max_length=256)
+    reference: bool = False
+
+
 class DoeCheckIn(_Req):
     project_id: str = Field(min_length=1, max_length=64)
     scenario: DoeScenarioLit
     entry_ids: list[str] = Field(min_length=1, max_length=10000)
-    step_upload_id: str = Field(min_length=1, max_length=64)
+    step_upload_id: str | None = Field(default=None, min_length=1, max_length=64)     # ①②③ 필수, ④ 금지
+    shapes: list[CompareShapeIn] | None = Field(default=None, max_length=1000)         # ④ 만(1..compare.max_shapes)
     mesh_upload_id: str | None = Field(default=None, min_length=1, max_length=64)    # ② 만
     part_title: str | None = Field(default=None, min_length=1, max_length=200)     # ② 만(기본 bead_doe.part_title)
     inch: int | None = Field(default=None, ge=1, le=1000)
@@ -1695,7 +1706,7 @@ class DoeCheckIn(_Req):
 
 class DoeStudyIn(DoeCheckIn):
     title: str | None = Field(default=None, max_length=200)
-    props: DoeProps | None = None                                                  # ③ 만(기본 = A Ch/R, Q2 A)
+    props: DoeProps | None = None                                                  # ③④ 만(기본 = A Ch/R, Q2 A)
     mesh_size_mm: float | None = Field(default=None, gt=0)                         # ③ 만(bead_doe.mesh.size_*_mm)
 
 
@@ -1720,7 +1731,7 @@ class DoeMatrixIn(_Req):
 
 class DoeRunIn(_Req):
     version: int = Field(ge=1)
-    matrix_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    matrix_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")     # ①②③ 필수, ④ 없음(SC-D-1)
     solver: str = Field(default="linear", max_length=32)      # linear 만(다른 값 422 SOLVER_UNSUPPORTED, UI 칸 없음)
 
 
@@ -1738,11 +1749,14 @@ class DoeSettingsOut(_Out):
     step_max_mb: float
     part_title: str | None = None
     method_sources: dict[str, Any]
+    compare: dict[str, Any] | None = None          # v0.14.0 ④ {max_shapes, total_max_mb, mesh_size_mm}
 
 
 class DoeCheckOut(_Out):
     ok: bool
-    step: dict[str, Any]
+    step: dict[str, Any] | None = None             # ④ 은 null(형상은 shapes)
+    shapes: list[dict[str, Any]] | None = None     # ④ [{index, name, file_name, sha256, size_mb, reference}]
+    reference_source: Literal["step", "case"] | None = None     # ④ 기준 출처
     base: dict[str, Any] | None = None
     mesh: MeshCheckOut | None = None
     entries: list[dict[str, Any]]
@@ -1798,6 +1812,9 @@ class DoeMatrixOut(_Out):
 
 
 class DoeResultOut(_Out):
+    scenario: DoeScenarioLit | None = None          # v0.14.0
+    reference_source: Literal["step", "case"] | None = None    # ④ 만
+    sensitivity_reason: str | None = None           # ④ COMPARE_NO_PARAMS
     C_ref: float
     baseline: dict[str, Any]
     n_ok: int
@@ -1821,6 +1838,7 @@ class DoeResultOut(_Out):
 
 class DoePerEslDesign(_Out):
     id: str
+    name: str | None = None                         # v0.14.0 ④ 형상 이름
     per_esl: list[dict[str, Any]]
 
 

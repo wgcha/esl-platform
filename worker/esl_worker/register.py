@@ -665,6 +665,8 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
     from . import core_adapter
 
     s = _study(conn, job)
+    if s.get("scenario") == "compare":
+        return _register_compare_prep(conn, s, ddir)
     inp = _doe_json(os.path.join(ddir, "prep", "input.json"))
     params = _doe_json(os.path.join(ddir, "prep", "params.json"))
     if not isinstance(inp, dict) or not isinstance(params, dict):
@@ -687,6 +689,48 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
                                                                 "n_info": int(bnd.get("n_info") or 0)}}
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
+
+
+COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status", "code", "message", "n_nodes", "n_elems",
+                      "quad_ratio", "quality")
+
+
+def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> dict[str, Any]:
+    """④ BD_PREP_REGISTER(esl_step_compare.md §5): phase READY, prep = {n_beads 0, n_params 0, paicad_version null,
+    warnings, boundary null, n_shapes, n_ready, failed[{id, status, code}], reference_source, shapes[{id, name, file_name,
+    reference, source, status, code, message, n_nodes, n_elems, quad_ratio, quality{fail_elems, fail_ratio, warn_elems,
+    warn_ratio, tria_pct, over_limit}}]}(프런트 계약 보강)."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    from . import core_adapter
+
+    inp = _doe_json(os.path.join(ddir, "prep", "input.json"))
+    cmp = _doe_json(os.path.join(ddir, "prep", "compare.json"))
+    if not isinstance(inp, dict) or not isinstance(cmp, dict) or not isinstance(cmp.get("shapes"), list):
+        raise RegisterError("TOOL_OUTPUT_MISSING", "준비 결과(prep/input.json·compare.json)가 없습니다")
+    try:
+        msgs = core_adapter.doe_messages().get("messages") or {}
+    except core_adapter.CoreError:
+        msgs = {}
+    warns = []
+    for w in list(inp.get("warnings") or []) + list(inp.get("info") or []) + list((cmp.get("loads") or {}).get("warnings")
+                                                                                 or []):
+        x = _doe_warning(w, msgs)
+        if x is not None and x not in warns:
+            warns.append(x)
+    shapes = [{k: r.get(k) for k in COMPARE_SHAPE_KEYS} for r in cmp["shapes"] if isinstance(r, dict)]
+    for x in shapes:
+        q = x.get("quality")
+        if isinstance(q, dict):
+            x["quality"] = {k: q.get(k) for k in ("fail_elems", "fail_ratio", "warn_elems", "warn_ratio", "tria_pct",
+                                                  "over_limit", "max_fail_ratio")}
+    failed = [{"id": r["id"], "status": r["status"], "code": r.get("code")} for r in shapes if r.get("status") != "READY"]
+    prep = {"n_beads": 0, "n_params": 0, "paicad_version": None, "warnings": warns, "boundary": None,
+            "n_shapes": len(shapes), "n_ready": len(shapes) - len(failed), "failed": failed,
+            "reference_source": cmp.get("reference_source"), "shapes": shapes,
+            "mesh": {"size_mm": (cmp.get("profile") or {}).get("size_mm"), "gmsh_version": cmp.get("gmsh_version")}}
+    doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep))
+    return {"bead_doe_id": s["id"], "phase": "READY", "n_shapes": prep["n_shapes"], "n_ready": prep["n_ready"]}
 
 
 def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
