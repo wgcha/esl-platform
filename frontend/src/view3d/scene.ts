@@ -3,8 +3,8 @@
 // v0.12.5: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
 import {
   AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
-  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, SphereGeometry, Sprite, SpriteMaterial,
-  SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
+  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial,
+  SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer,
 } from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -12,7 +12,8 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { ARROW_COLOR, ARROW_PICK_PX, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
-import { fillVertexColors } from "./colors";
+import { LUT_DIV_LINEAR, LUT_LINEAR, fillVertexColors, srgbToLinear } from "./colors";
+import { idToRgb, type IdPatch, type Rect } from "./select/lasso";
 import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
@@ -220,9 +221,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   };
   const srcOf = (l: Layer) => l.geo.src;
 
+  let lut: Float32Array = LUT_LINEAR;
   const paintLayer = (l: Layer) => {
     if (!colorArgs) return;
-    fillVertexColors(colorArgs.values, colorArgs.min, colorArgs.max, l.color.array as Float32Array, srcOf(l));
+    fillVertexColors(colorArgs.values, colorArgs.min, colorArgs.max, l.color.array as Float32Array, srcOf(l), lut);
     l.color.needsUpdate = true;
   };
   const deformLayer = (l: Layer) => {
@@ -239,6 +241,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     l.geometry.computeBoundingSphere();
   };
   const showLod = (on: boolean) => {
+    if (elemLayer) return; // v0.15.0 요소 모드: 노드 층은 숨긴 채
     if (!layers.lod || !layers.full) return;
     layers.lod.mesh.visible = on;
     layers.full.mesh.visible = !on;
@@ -333,6 +336,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     const w = Math.max(1, canvas.clientWidth);
     const h = Math.max(1, canvas.clientHeight);
     supMat.resolution.set(w, h);
+    overlayMat.resolution.set(w, h);
     for (const g of lineGroups) g.obj.material.resolution.set(w, h);
     writeHeads();
   };
@@ -381,6 +385,37 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   selMarker.renderOrder = 9;
   selMarker.scale.setScalar(opts.diag * 0.011);
   scene.add(selMarker);
+
+  // ---- v0.15.0 요소 모드(비드 직접 선택): 비색인 삼각형 표면(요소별 평면 음영) + ID 버퍼 + 경계선
+  interface ElemLayer {
+    mesh: Mesh;
+    idMesh: Mesh;
+    geometry: BufferGeometry;
+    color: BufferAttribute;
+    tri2elem: Uint32Array;
+    nElems: number;
+  }
+  let elemLayer: ElemLayer | null = null;
+  const elemMat = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const idMat = new ShaderMaterial({
+    vertexShader: "attribute vec3 idc; varying vec3 vIdc; void main() { vIdc = idc; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    fragmentShader: "varying vec3 vIdc; void main() { gl_FragColor = vec4(vIdc, 1.0); }",
+    side: DoubleSide,
+  });
+  const idScene = new Scene();
+  let idTarget: WebGLRenderTarget | null = null;
+  let idKey = "";
+  const overlayMat = new LineMaterial({ color: 0x111111, linewidth: 2, worldUnits: false });
+  let overlay: LineSegments2 | null = null;
+  const disposeElemLayer = () => {
+    if (!elemLayer) return;
+    scene.remove(elemLayer.mesh);
+    idScene.remove(elemLayer.idMesh);
+    elemLayer.geometry.dispose();
+    elemLayer = null;
+  };
+  const tmpV4 = new Vector4();
+  const viewProj = new Matrix4();
 
   // ---- 3-2-1 지지 기호
   const supMat = new LineMaterial({ color: SUPPORT_COLOR, linewidth: SUPPORT_LINE_PX, depthTest: false, transparent: true, worldUnits: false });
@@ -677,6 +712,171 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     onPick(cb) {
       pickCb = cb;
     },
+    setColorMap(map) {
+      lut = map === "diverging" ? LUT_DIV_LINEAR : LUT_LINEAR;
+      if (layers.full) paintLayer(layers.full);
+      if (layers.lod) paintLayer(layers.lod);
+      invalidate();
+    },
+    setElements(tri2elem, nElems) {
+      disposeElemLayer();
+      const g = layers.full?.geo;
+      if (!g) return;
+      const nT = tri2elem.length;
+      const pos = new Float32Array(nT * 9);
+      const idc = new Uint8Array(nT * 9);
+      for (let t = 0; t < nT; t++) {
+        const rgb = idToRgb(tri2elem[t]);
+        for (let j = 0; j < 3; j++) {
+          const v = g.indices[t * 3 + j] * 3;
+          const o = (t * 3 + j) * 3;
+          pos[o] = g.positions[v];
+          pos[o + 1] = g.positions[v + 1];
+          pos[o + 2] = g.positions[v + 2];
+          idc[o] = rgb[0];
+          idc[o + 1] = rgb[1];
+          idc[o + 2] = rgb[2];
+        }
+      }
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new BufferAttribute(pos, 3));
+      const color = new BufferAttribute(new Float32Array(nT * 9).fill(0.6), 3);
+      geometry.setAttribute("color", color);
+      geometry.setAttribute("idc", new BufferAttribute(idc, 3, true));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      const mesh = new Mesh(geometry, elemMat);
+      mesh.frustumCulled = false;
+      const idMesh = new Mesh(geometry, idMat);
+      idMesh.frustumCulled = false;
+      scene.add(mesh);
+      idScene.add(idMesh);
+      elemLayer = { mesh, idMesh, geometry, color, tri2elem, nElems };
+      if (layers.full) layers.full.mesh.visible = false;
+      if (layers.lod) layers.lod.mesh.visible = false;
+      idKey = "";
+      invalidate();
+    },
+    setElemColors(rgba) {
+      if (!elemLayer) return;
+      const out = elemLayer.color.array as Float32Array;
+      const t2e = elemLayer.tri2elem;
+      const lin = new Float32Array(256);
+      for (let i = 0; i < 256; i++) lin[i] = srgbToLinear(i);
+      for (let t = 0; t < t2e.length; t++) {
+        const e = t2e[t] * 4;
+        const r = lin[rgba[e]];
+        const gg = lin[rgba[e + 1]];
+        const b = lin[rgba[e + 2]];
+        for (let j = 0; j < 3; j++) {
+          const o = (t * 3 + j) * 3;
+          out[o] = r;
+          out[o + 1] = gg;
+          out[o + 2] = b;
+        }
+      }
+      elemLayer.color.needsUpdate = true;
+      invalidate();
+    },
+    pickElem(clientX, clientY) {
+      if (!elemLayer) return null;
+      const r = canvas.getBoundingClientRect();
+      const p = new Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(p, camera);
+      if (camera === ortho && ortho.near < 0) raycaster.ray.origin.addScaledVector(raycaster.ray.direction, ortho.near);
+      const hit = raycaster.intersectObject(elemLayer.mesh, false)[0];
+      if (!hit || hit.faceIndex == null) return null;
+      return { elem: elemLayer.tri2elem[hit.faceIndex], point: [hit.point.x, hit.point.y, hit.point.z] };
+    },
+    idBuffer(rect: Rect): IdPatch {
+      const cw = Math.max(1, canvas.clientWidth);
+      const ch = Math.max(1, canvas.clientHeight);
+      const x0 = Math.max(0, Math.floor(rect.x));
+      const y0 = Math.max(0, Math.floor(rect.y));
+      const x1 = Math.min(cw, Math.ceil(rect.x + rect.w));
+      const y1 = Math.min(ch, Math.ceil(rect.y + rect.h));
+      const w = Math.max(0, x1 - x0);
+      const h = Math.max(0, y1 - y0);
+      const out: IdPatch = { rect: { x: x0, y: y0, w, h }, ids: new Uint32Array(w * h) };
+      if (!elemLayer || !w || !h) return out;
+      const W = renderer.domElement.width;
+      const H = renderer.domElement.height;
+      if (!idTarget || idTarget.width !== W || idTarget.height !== H) {
+        idTarget?.dispose();
+        idTarget = new WebGLRenderTarget(W, H);
+        idKey = "";
+      }
+      if (proj === "ortho") applyOrtho();
+      camera.updateMatrixWorld();
+      const key = `${W}x${H}|${camera.matrixWorld.elements.join(",")}|${camera.projectionMatrix.elements.join(",")}`;
+      if (key !== idKey) {
+        const prevBg = idScene.background;
+        renderer.setRenderTarget(idTarget);
+        renderer.setClearColor(0x000000, 1);
+        renderer.clear();
+        renderer.render(idScene, camera);
+        renderer.setRenderTarget(null);
+        idScene.background = prevBg;
+        idKey = key;
+      }
+      const sx = W / cw;
+      const sy = H / ch;
+      const dx0 = Math.floor(x0 * sx);
+      const dx1 = Math.min(W, Math.ceil(x1 * sx));
+      const dy0 = Math.floor(y0 * sy);
+      const dy1 = Math.min(H, Math.ceil(y1 * sy));
+      const dw = Math.max(1, dx1 - dx0);
+      const dh = Math.max(1, dy1 - dy0);
+      const buf = new Uint8Array(dw * dh * 4);
+      // GL 행 0 = 아래
+      renderer.readRenderTargetPixels(idTarget, dx0, H - dy1, dw, dh, buf);
+      for (let j = 0; j < h; j++)
+        for (let i = 0; i < w; i++) {
+          const px = Math.min(dw - 1, Math.floor((x0 + i + 0.5) * sx) - dx0);
+          const pyTop = Math.min(dh - 1, Math.floor((y0 + j + 0.5) * sy) - dy0);
+          const k = ((dh - 1 - pyTop) * dw + px) * 4;
+          out.ids[j * w + i] = buf[k] | (buf[k + 1] << 8) | (buf[k + 2] << 16);
+        }
+      return out;
+    },
+    projectCentroids(c) {
+      if (proj === "ortho") applyOrtho();
+      camera.updateMatrixWorld();
+      viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      const cw = Math.max(1, canvas.clientWidth);
+      const ch = Math.max(1, canvas.clientHeight);
+      const n = c.length / 3;
+      const out = new Float32Array(n * 2);
+      for (let e = 0; e < n; e++) {
+        tmpV4.set(c[e * 3], c[e * 3 + 1], c[e * 3 + 2], 1).applyMatrix4(viewProj);
+        const w = tmpV4.w;
+        const nz = tmpV4.z / w;
+        if (!(w > 0) || nz < -1 || nz > 1) {
+          out[e * 2] = NaN;
+          out[e * 2 + 1] = NaN;
+          continue;
+        }
+        out[e * 2] = ((tmpV4.x / w + 1) / 2) * cw;
+        out[e * 2 + 1] = ((1 - tmpV4.y / w) / 2) * ch;
+      }
+      return out;
+    },
+    setOverlayLines(segs) {
+      if (overlay) {
+        scene.remove(overlay);
+        overlay.geometry.dispose();
+        overlay = null;
+      }
+      if (segs && segs.length) {
+        const g = new LineSegmentsGeometry();
+        g.setPositions(segs);
+        overlay = new LineSegments2(g, overlayMat);
+        overlay.frustumCulled = false;
+        overlay.renderOrder = 4;
+        scene.add(overlay);
+      }
+      invalidate();
+    },
     stats: () => ({ renders }),
     dispose() {
       disposed = true;
@@ -691,8 +891,11 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       clearSupports();
       disposeLayer(layers.full);
       disposeLayer(layers.lod);
+      disposeElemLayer();
+      overlay?.geometry.dispose();
+      idTarget?.dispose();
       for (const g of [headGeo, sphereGeo]) g.dispose();
-      for (const m of [surfMat, arrowMat, supMat, selMarker.material as MeshBasicMaterial]) m.dispose();
+      for (const m of [surfMat, arrowMat, supMat, selMarker.material as MeshBasicMaterial, elemMat, idMat, overlayMat]) m.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
     },

@@ -594,6 +594,72 @@ class BeadDoeCompareCfg(_M):
     quality: BeadDoeCompareQualityCfg = BeadDoeCompareQualityCfg()
 
 
+class BeadDoeSelectWidthCfg(_M):
+    floor_follow: Literal[0, 1] = 1                          # Q1 A: 폭 변경 시 바닥도 따라감(사면 각 유지)
+    knn: int = Field(default=8, ge=1, le=64)                 # 경계 변위장 가중 평균 이웃 수(§5.4)
+    end_ratio: float = Field(default=2.0, gt=1.0, le=100.0)  # §5.7 끝단 반직선 제외(국부 폭 중앙값 배수, 코어 WIDTH_END_RATIO)
+
+
+class BeadDoeSelectBlendCfg(_M):
+    min_mm: float = Field(default=15.0, gt=0)
+    max_mm: float = Field(default=200.0, gt=0)
+    k: float = Field(default=8.0, gt=0)                      # R 자동 = k × 최대 한쪽 이동(§5.6)
+    fixed_margin_mm: float = Field(default=3.0, ge=0)
+
+    @model_validator(mode="after")
+    def _order(self) -> "BeadDoeSelectBlendCfg":
+        if not self.min_mm <= self.max_mm:
+            raise ValueError(f"bead_doe.select.blend.min_mm {self.min_mm:g} ≤ max_mm {self.max_mm:g} 이어야 합니다")
+        return self
+
+
+class BeadDoeSelectRangeCfg(_M):
+    depth_rel: float = Field(default=0.3, gt=0, lt=1)
+    width_rel: float = Field(default=0.2, gt=0, lt=1)
+    min_step_mm: float = Field(default=1.0, ge=0)
+
+
+class BeadDoeSelectQualityCfg(_M):
+    """기준값은 bead_doe.compare.quality 한 곳(복제 없음) — 여기는 차단 비율·뒤집힘 각만(BS-D-12)."""
+
+    max_fail_ratio: float = Field(default=0.01, ge=0, le=1)
+    flip_deg: float = Field(default=60.0, gt=0, le=180)
+
+
+class BeadDoeSelectThumbCfg(_M):
+    w: int = Field(default=320, ge=16, le=4096)
+    h: int = Field(default=240, ge=16, le=4096)
+    supersample: int = Field(default=2, ge=1, le=4)
+    view: Literal["auto"] | list[float] = "auto"
+    tilt_deg: float = Field(default=25.0, ge=-89, le=89)
+    margin: float = Field(default=1.15, ge=1, le=5)
+    ambient: float = Field(default=0.35, ge=0, le=1)
+
+
+class BeadDoeSelectCfg(_M):
+    """v0.15.0 select — 비드 직접 선택·규칙 모핑(esl_bead_select.md §10, esl.doe.DEFAULTS["select"] 거울). 섹션 없으면 기본값
+    (enabled true — 전역 bead_doe.enabled 필요, paicad 무관 BS-D-2)."""
+
+    enabled: bool = True
+    feature_angle_deg: float = Field(default=15.0, ge=1, le=45)
+    max_beads: int = Field(default=20, ge=1, le=99)            # 비드 id ^b[1-9][0-9]?$
+    max_tiers: int = Field(default=6, ge=1, le=9)
+    max_selection_kb: float = Field(default=4096, gt=0)
+    normal_radius_mm: float = Field(default=10.0, gt=0)
+    plane_rms_mm: float = Field(default=2.0, gt=0)
+    plate_tol_mm: float = Field(default=1.0, gt=0)
+    level_eps_mm: float = Field(default=0.5, gt=0)
+    slope_max_mm: float = Field(default=80.0, gt=0)
+    fixed_tol_mm: float = Field(default=0.01, ge=0)
+    width: BeadDoeSelectWidthCfg = BeadDoeSelectWidthCfg()
+    blend: BeadDoeSelectBlendCfg = BeadDoeSelectBlendCfg()
+    range: BeadDoeSelectRangeCfg = BeadDoeSelectRangeCfg()
+    quality: BeadDoeSelectQualityCfg = BeadDoeSelectQualityCfg()
+    thumb: BeadDoeSelectThumbCfg = BeadDoeSelectThumbCfg()
+    derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔
+    derive_timeout_s: float = Field(default=20, gt=0, le=600)
+
+
 class BeadDoeCfg(_M):
     """비드 형상 DOE(esl_bead_doe.md §14). 섹션이 없으면 enabled false(GET /doe/settings reason DOE_DISABLED)."""
 
@@ -615,6 +681,7 @@ class BeadDoeCfg(_M):
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
+    select: BeadDoeSelectCfg = BeadDoeSelectCfg()            # v0.15.0 select(esl_bead_select.md §10)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
 
     @model_validator(mode="after")
@@ -1038,8 +1105,12 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     from .opt_core import doe_settings as _doe_settings
 
     if s is None or s.bead_doe is None:
-        return _doe_settings(None)
-    return _doe_settings({"bead_doe": s.bead_doe.model_dump()})
+        d = _doe_settings(None)
+    else:
+        d = _doe_settings({"bead_doe": s.bead_doe.model_dump()})
+    if "select" not in d:               # v0.15.0: 코어 DEFAULTS["select"](S1) 없는 코어와도 같은 기본값(거울)
+        d["select"] = BeadDoeSelectCfg().model_dump()
+    return d
 
 
 def bead_doe_commands(s: Settings) -> dict[str, list[str]]:

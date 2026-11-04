@@ -29,7 +29,7 @@
 
 | 범위 (v0.14.0) | 비범위 (후속) |
 |---|---|
-| STEP N개(≤ `compare.max_shapes`) 업로드·이름·기준 지정 | defeature(작은 구멍·필렛 제거 형상 처리) |
+| STEP N개(≤ `compare.max_shapes`) 업로드·이름·기준 지정 | defeature 중 필렛 제거·비드 억제(작은 구멍 메움만 있음 — SC-D-13 `defeature`) |
 | 동일 gmsh 프로필 메싱(형상별 병렬) | 영역별 성긴 메시(체결부 밀·그 밖 성김) |
 | 기준 frame 고정 셀 매핑·형상별 auto_supports | 형상별 물성(t·E·ν 다르게) |
 | 순위·개선율·ESL별 개선율·3D 비교·보고서·CSV | 민감도·DOE·미리보기, 검증 낙하(VD) |
@@ -144,7 +144,7 @@ POST /doe/studies/{id}/run → DOE_RUN
 - `excluded[]` = 실패 형상 `{id, status, code, shape}`. `boundary_warnings_n = 0`.
 - `scenario: "compare"`, `reference_source`. 나머지(score·improvement·worst_entry_id·umax·epsmax·per_esl·worst_ratio·pareto·sort) **불변**.
 - `post/ranking.csv`: 변수 열 대신 `name`·`file_name` 열. `GET …/results/per-esl` 행에 `name`.
-- 보고서: 시나리오 ④, 형상 표(id·이름·파일·sha256·요소 수·quad 비율·상태), 메시 프로필, 기준 출처(+ `COMPARE_REF_CASE_MESH`), 한계 절(+ 메시 차이·같은 좌표계 전제·defeature 없음).
+- 보고서: 시나리오 ④, 형상 표(id·이름·파일·sha256·요소 수·quad 비율·상태), 메시 프로필, 기준 출처(+ `COMPARE_REF_CASE_MESH`), 한계 절(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만 있음, 필렛 제거·비드 억제 없음).
 
 ## 7. 화면 (2560×1440 기준, 1920×1080 잘림·가로 스크롤 없음, 필수만)
 

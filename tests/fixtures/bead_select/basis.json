@@ -1,0 +1,49 @@
+{
+ "basis_sha256": null,
+ "n_nodes": 4029,
+ "schema": "esl/bead_select_basis/1",
+ "selection_sha256": "2b64fa06651c27697f49d3a2306bf9825b9e55f94d20e54a9a255cb30b16bd03",
+ "sha256": "47040cf82502200cec2ce49267dee1be28192491260a2ab4ccc8cd821ab542dc",
+ "vars": [
+  {
+   "R_mm": null,
+   "bead": "b1",
+   "n": 294,
+   "name": "B1_D1",
+   "nominal": 22.0,
+   "type": "D"
+  },
+  {
+   "R_mm": null,
+   "bead": "b1",
+   "n": 120,
+   "name": "B1_D2",
+   "nominal": 14.0,
+   "type": "D"
+  },
+  {
+   "R_mm": 18.450000000000003,
+   "bead": "b1",
+   "n": 749,
+   "name": "B1_W",
+   "nominal": 58.9137,
+   "type": "W"
+  },
+  {
+   "R_mm": null,
+   "bead": "b2",
+   "n": 12,
+   "name": "B2_D1",
+   "nominal": 6.0,
+   "type": "D"
+  },
+  {
+   "R_mm": 27.305073981123257,
+   "bead": "b2",
+   "n": 114,
+   "name": "B2_W",
+   "nominal": 34.1314,
+   "type": "W"
+  }
+ ]
+}

@@ -9,6 +9,7 @@ load_method_sources, ``size``(S2 크기 규칙), ``identity``(topo_sha256), ``me
 v0.9.0 비드 DOE(esl_bead_doe.md §17 경계): ``esl.doe`` 의 settings·commands·메시지·방법·출처(``doe_*``),
 ``doe_matrix``(행렬 생성 — API 와 워커가 같은 함수), ``doe_paicad_io``(준비 결과 JSON 읽기·셀 상태 — 실행 없음),
 ``doe_scenario``(조립 폴더 크기·링크 검사, 물성·요소 크기 기본값). paicad·gmsh·쉘 솔버는 워커만.
+v0.15.0 select: ``doe_bead_select``(선택 정규화·sha·사면/경계 derive·평면도 자료 — numpy·scipy 만, 외부 명령 없음).
 
 사용: ``from ...core.opt_core import EslError, keepout, modes`` (모듈은 처음 쓸 때 불러온다 — PEP 562).
 """
@@ -25,6 +26,8 @@ _MODULES = {
     "femread": "esl.opt.femread", "keepout": "esl.opt.keepout", "modes": "esl.opt.modes", "target": "esl.opt.target",
     "library_entry": "esl.library.entry",
     "doe_matrix": "esl.doe.matrix", "doe_paicad_io": "esl.doe.paicad_io", "doe_scenario": "esl.doe.scenario",
+    # v0.15.0 select(esl_bead_select.md §17 경계): normalize·derive·plan_data 만(기저·모핑·품질·렌더는 워커)
+    "doe_bead_select": "esl.doe.bead_select",
 }
 _OPT_ATTRS = ("settings", "load_method_sources", "sources_ref", "DEFAULTS", "MODES", "STRATEGIES", "OBJECTIVE_NORMS",
               "METHOD_SOURCES_PATH", "BEAD_POST_TCL")

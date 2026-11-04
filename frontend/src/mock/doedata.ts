@@ -6,6 +6,8 @@ import type {
   DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
+import type { DoeSelectionIn, DoeSelectionOut } from "../api/types";
+import { selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
 
 interface MockResponse {
   status: number;
@@ -27,7 +29,7 @@ export interface DoeCtx {
 
 // ---------------------------------------------------------------- 설정·방법 출처(원본 resources/doe_method_sources.json 형식)
 export const DOE_METHOD_SOURCES: DoeMethodSources = {
-  version: "2026-10-29.1",
+  version: "2026-11-04.1",
   summary_ko: [
     "선택한 ESL(낙하 t* 한 시점의 등가정적하중)을 비드 형상 안마다 같은 지지(3-2-1)로 선형 정적 해석합니다.",
     "순위 = 선택 ESL 중 최악 컴플라이언스 ÷ 베이스라인(공칭) 최악 컴플라이언스 — 작을수록 강성이 좋습니다.",
@@ -58,7 +60,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
     gmsh: { ready: true, version: "4.13.1" },
-    scenarios: { same: true, mesh: true, step: true, compare: true },
+    scenarios: { same: true, mesh: true, step: true, compare: true, select: true },
     max_entries: 50,
     max_designs: 200,
     doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -69,6 +71,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     method_sources: DOE_METHOD_SOURCES,
     compare_reason: null,
     compare: { enabled: true, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
+    select: { enabled: true, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: 8 } },
   };
 }
 
@@ -104,6 +107,7 @@ export const PARAMS: DoeParam[] = [
   p("B3", 3, "W", 14, [10, 18], true, ["CHR_BEAD_W_4"]),
   p("B5", 5, "D", 2.0, [1.0, 3.0], false),
 ];
+const DEFAULT_PARAMS = PARAMS;
 const PARAM_WARNINGS: DoeWarning[] = [
   { code: "BEAD_FIXED_OVERLAP", bead: "B5", message: "B5 비드가 체결 고정 영역과 겹쳐 기본 제외했습니다." },
   { code: "BEAD_NEAR_FIXED", bead: "B4", message: "B4 비드가 체결부에서 6.2 mm 떨어져 있습니다(넓히면 고정 침범 가능)." },
@@ -141,7 +145,7 @@ export function fnv(s: string) {
 }
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
-export function makeMatrix(spec: DoeSpec): DoeMatrixOut {
+export function makeMatrix(spec: DoeSpec, PARAMS: DoeParam[] = DEFAULT_PARAMS): DoeMatrixOut {
   const ps = [...spec.params].sort((a, b) => a.name.localeCompare(b.name));
   const k = ps.length;
   const seed = spec.seed ?? 1;
@@ -201,7 +205,7 @@ export function makeMatrix(spec: DoeSpec): DoeMatrixOut {
 }
 
 /** spec 검증(§5) — null = 통과 */
-export function specProblem(spec: DoeSpec | undefined, st: DoeSettingsOut): MockResponse | null {
+export function specProblem(spec: DoeSpec | undefined, st: DoeSettingsOut, PARAMS: DoeParam[] = DEFAULT_PARAMS): MockResponse | null {
   if (!spec || !Array.isArray(spec.params) || !spec.params.length) return err(422, "DOE_NO_PARAMS", "포함 변수가 없습니다.");
   for (const x of spec.params) {
     const q = PARAMS.find((y) => y.name === x.name);
@@ -229,7 +233,7 @@ export function makeCells(m: DoeMatrixOut): DoePreviewCell[] {
 }
 
 const COEF: Record<string, number> = { D: 0.95, W: 0.35, U: -0.08, V: 0.05 };
-function scoreOf(values: Record<string, number>): number {
+function scoreOf(values: Record<string, number>, PARAMS: DoeParam[]): number {
   let s = 1;
   for (const [name, v] of Object.entries(values)) {
     const q = PARAMS.find((x) => x.name === name);
@@ -287,7 +291,7 @@ const sd = (a: number[]) => {
   return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / Math.max(1, a.length - 1));
 };
 
-export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: string[], scenario: DoeScenario): DoeResultOut {
+export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: string[], scenario: DoeScenario, PARAMS: DoeParam[] = DEFAULT_PARAMS): DoeResultOut {
   const C_ref = 4.82e5;
   const base = { id: "d000" as const, score: 1, umax: 3.92, epsmax: 0.0026 };
   const excluded: DoeExcluded[] = [];
@@ -302,7 +306,7 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
       excluded.push({ id: c.id, status: "FAILED_MORPH", code: "GEOM_QUALITY", values: c.values });
       continue;
     }
-    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values) });
+    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values, PARAMS) });
   }
   okRows.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
   const noise_floor = scenario === "step" ? 0.012 : null;
@@ -652,6 +656,11 @@ interface Rec {
   cells: DoePreviewCell[] | null;
   result: DoeResultOut | null;
   stepUpload: string | null;
+  /** v0.15.0 select 저장 선택 */
+  sel?: DoeSelectionOut | null;
+  pendingSel?: string | null;
+  /** 시험용: 기준 메시가 바뀌어 저장 선택이 무효(409 SELECTION_MISSING reason SELECTION_DROPPED) */
+  selDropped?: boolean;
 }
 
 const STEPS_OF: Record<string, string[]> = {
@@ -807,10 +816,41 @@ export class DoeMock {
     const jd = doneJob(this.id("j-doe"), "p-body", d.out.id, "DOE_PREP", "2026-11-04T01:00:05Z", "2026-11-04T01:05:00Z", true);
     this.seededJobs.push(jd);
     d.jobIds.push(jd.id);
-    this.recs.push(a, b, c, d);
+    // 5) v0.15.0 비드 직접 선택 — 선택 저장됨(READY, 미리보기 전)
+    const sel5 = base("doe-5", "select", "75형 Ch/R 비드 직접 선택", "2026-11-04T03:00:00Z");
+    sel5.out.inputs = { step: null, mesh: null, part_title: "chassis_rear", inch: null, props: null, mesh_size_mm: null };
+    sel5.out.prep = this.selectPrep();
+    this.saveSelection(sel5, selDefaultSelection(), "김해석");
+    sel5.out.prep = { ...sel5.out.prep, n_beads: 2, n_params: this.paramsOf(sel5).length };
+    sel5.out.version = 4;
+    const j5 = doneJob(this.id("j-doe"), "p-body", sel5.out.id, "DOE_PREP", "2026-11-04T03:00:05Z", "2026-11-04T03:02:00Z");
+    this.seededJobs.push(j5);
+    sel5.jobIds.push(j5.id);
+    // 6) 비드 직접 선택 — 미리보기 완료(썸네일 3D 음영·범례)
+    const sel6 = base("doe-6", "select", "75형 Ch/R 비드 직접 선택 — 미리보기", "2026-11-04T04:00:00Z");
+    sel6.out.inputs = { ...sel5.out.inputs };
+    sel6.out.prep = { ...sel5.out.prep };
+    this.saveSelection(sel6, selDefaultSelection(), "김해석");
+    const ps6 = this.paramsOf(sel6);
+    const spec6: DoeSpec = { method: "lhs", n: 24, seed: 3, params: ps6.filter((x) => x.use_default).map((x) => ({ name: x.name, lo: x.default_range[0], hi: x.default_range[1] })) };
+    const m6 = makeMatrix(spec6, ps6);
+    sel6.cells = this.selectCells(sel6, m6);
+    sel6.out.doe = { rev: 1, spec: m6.spec, matrix_sha256: m6.matrix_sha256, n_designs: m6.n_designs, preview: this.previewOf(1, m6, sel6.cells, sel6) };
+    sel6.out.phase = "PREVIEW_READY";
+    sel6.out.version = 6;
+    for (const [jt, t0, t1] of [
+      ["DOE_PREP", "2026-11-04T04:00:05Z", "2026-11-04T04:02:00Z"],
+      ["DOE_PREVIEW", "2026-11-04T04:10:00Z", "2026-11-04T04:13:00Z"],
+    ] as [JobType, string, string][]) {
+      const j = doneJob(this.id("j-doe"), "p-body", sel6.out.id, jt, t0, t1);
+      this.seededJobs.push(j);
+      sel6.jobIds.push(j.id);
+    }
+    this.recs.push(a, b, c, d, sel5, sel6);
   }
 
-  private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[]) {
+  private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[], r?: Rec) {
+    const sel = r?.out.scenario === "select";
     return {
       rev,
       matrix_sha256: m.matrix_sha256,
@@ -819,8 +859,10 @@ export class DoeMock {
         collision: cells.filter((c) => c.status === "SKIPPED_COLLISION").length,
         fixed: cells.filter((c) => c.status === "SKIPPED_FIXED").length,
         geom: cells.filter((c) => c.status === "SKIPPED_GEOM").length,
+        ...(sel ? { mesh: cells.filter((c) => c.status === "FAILED_MESH").length } : {}),
       },
       cells,
+      ...(sel && r ? { selection_sha256: r.sel?.sha256 ?? null, color: { v_max: selColorMax(cells, this.paramsOf(r)), unit: "mm" } } : {}),
     };
   }
 
@@ -854,6 +896,11 @@ export class DoeMock {
       r.out.phase = "DONE";
       r.out.version += 1;
     }
+    if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "select") {
+      r.out.phase = "READY";
+      r.out.prep = this.selectPrep();
+      r.out.version += 1;
+    }
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP") {
       r.out.phase = "READY";
       r.out.prep = {
@@ -866,14 +913,14 @@ export class DoeMock {
       r.out.version += 1;
     }
     if (r.out.phase === "PREVIEW" && j.job_type === "DOE_PREVIEW" && r.pending && r.out.doe) {
-      r.cells = makeCells(r.pending);
-      r.out.doe.preview = this.previewOf(r.out.doe.rev, r.pending, r.cells);
+      r.cells = r.out.scenario === "select" ? this.selectCells(r, r.pending) : makeCells(r.pending);
+      r.out.doe.preview = this.previewOf(r.out.doe.rev, r.pending, r.cells, r);
       r.pending = null;
       r.out.phase = "PREVIEW_READY";
       r.out.version += 1;
     }
     if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.doe && r.cells) {
-      r.result = makeResult(r.out.doe.spec, r.cells, r.out.entry_ids, r.out.scenario);
+      r.result = makeResult(r.out.doe.spec, r.cells, r.out.entry_ids, r.out.scenario, this.paramsOf(r));
       r.out.phase = "DONE";
       r.out.version += 1;
     }
@@ -881,7 +928,111 @@ export class DoeMock {
 
   private studyOut(r: Rec): DoeStudyOut {
     this.sync(r);
-    return { ...r.out, job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
+    const selection = r.out.scenario === "select" ? (r.sel ? { rev: r.sel.rev, sha256: r.sel.sha256, mesh_sha256: r.sel.derived.mesh_sha256 ?? null, n_beads: r.sel.input.beads.length, n_warnings: r.sel.derived.warnings?.length ?? 0, updated_by_name: r.sel.updated_by_name, updated_at: r.sel.updated_at } : null) : undefined;
+    return { ...r.out, ...(selection !== undefined ? { selection } : {}), job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
+  }
+
+  // ---------------------------------------------------------------- v0.15.0 select
+  private selectPrep(): NonNullable<DoeStudyOut["prep"]> {
+    const mf = selManifest();
+    const ready = this.settings.paicad.ready;
+    return {
+      n_beads: 0,
+      n_params: 0,
+      paicad_version: ready ? this.settings.paicad.version : null,
+      warnings: ready ? [] : [{ code: "FIXED_INFO_MISSING", message: "체결 정보 없음 — 체결부를 고정으로 칠하세요" }],
+      n_nodes: mf.n_nodes,
+      n_elems: mf.n_elems,
+      fixed: ready ? { source: "scan", n: mf.fixed.scan_n } : { source: "none", n: 0 },
+    };
+  }
+  /** select 변수(선택 저장 후) — 행렬·결과의 공칭·변수 이름 */
+  paramsOf(r: Rec): DoeParam[] {
+    if (r.out.scenario !== "select") return DEFAULT_PARAMS;
+    if (!r.sel) return [];
+    return selParams(r.sel.input, r.sel.derived).params;
+  }
+  private selectCells(r: Rec, m: DoeMatrixOut): DoePreviewCell[] {
+    const ps = this.paramsOf(r);
+    return m.designs.filter((d) => d.id !== "d000").map((d) => ({ id: d.id, values: d.values, ...selCellStatus(d.id, d.values, ps) }));
+  }
+  saveSelection(r: Rec, input: DoeSelectionIn, who: string) {
+    const { out } = selDerive(input, this.settings);
+    const rev = (r.sel?.rev ?? 0) + 1;
+    const { slope_suggested: _s, ...derived } = out;
+    void _s;
+    r.sel = { rev, sha256: out.sha256, input, derived: { ...derived, rev }, updated_by_name: who, updated_at: this.ctx.now() };
+  }
+  /** select 경로(§9). null = 해당 없음 */
+  private handleSelect(rec: Rec, method: string, sub: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
+    const prepReady = rec.out.phase !== "PREP" && !!rec.out.prep;
+    const notReady = () => err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
+    let r: RegExpMatchArray | null;
+    if ((r = sub.match(/^\/select\/view\/([^/]+)$/)) && method === "GET") {
+      if (!prepReady) return notReady();
+      const m = selMesh();
+      if (r[1] === "select_manifest.json") return ok(selManifest());
+      if (r[1] === "part.glb") return { status: 200, body: m.glb };
+      if (r[1] === "select.bin") return { status: 200, body: m.bin };
+      return err(404, "NOT_FOUND", "파일이 없습니다.");
+    }
+    if (method === "POST" && sub === "/select/derive") {
+      if (!prepReady) return notReady();
+      const sel = b.selection as DoeSelectionIn | undefined;
+      const bad = selValidate(sel, this.settings);
+      if (bad) return bad;
+      return ok(selDerive(sel!, this.settings).out);
+    }
+    if (method === "GET" && sub === "/selection") {
+      if (!prepReady) return notReady();
+      return ok(rec.sel && !rec.selDropped ? rec.sel : null);
+    }
+    if (method === "PUT" && sub === "/selection") {
+      if (!prepReady) return notReady();
+      if (b.version !== rec.out.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로 고친 뒤 다시 시도하세요");
+      if (this.active(rec)) return err(409, "JOB_ACTIVE", "이 연구의 작업이 진행 중입니다.");
+      if (rec.out.phase === "RUN" || rec.out.phase === "DONE") return err(409, "ALREADY_RUN", "이미 실행했습니다 — 복제해서 새 연구로.");
+      const sel = b.selection as DoeSelectionIn | undefined;
+      const bad = selValidate(sel, this.settings);
+      if (bad) return bad;
+      this.saveSelection(rec, sel!, this.ctx.me().display_name);
+      rec.selDropped = false;
+      rec.out.version += 1;
+      rec.out.prep = { ...rec.out.prep!, n_beads: sel!.beads.length, n_params: this.paramsOf(rec).length };
+      return ok(this.studyOut(rec));
+    }
+    if (method === "GET" && sub === "/select/basis") {
+      const pv = rec.out.doe?.preview;
+      if (!rec.sel || !pv) return err(409, "PREVIEW_NOT_READY", "미리보기 전이라 기저가 없습니다.");
+      const want = query.get("rev");
+      if (want != null && Number(want) !== rec.sel.rev) return err(404, "FILE_NOT_FOUND", "그 선택 rev 의 기저가 없습니다(선택이 바뀌었으면 다시 미리보기)");
+      const bs = selBasis(rec.sel.input, this.settings);
+      if (query.get("meta") === "1") return ok(bs.meta);
+      return { status: 200, body: bs.bin };
+    }
+    if (method === "GET" && (sub === "/params" || sub === "/plan-view")) {
+      if (!prepReady) return notReady();
+      if (!rec.sel || rec.selDropped) return err(409, "SELECTION_MISSING", rec.selDropped ? "비드 선택을 저장한 뒤에 하세요 — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다" : "비드 선택을 먼저 저장하세요.", rec.selDropped ? { reason: "SELECTION_DROPPED" } : {});
+      return ok(sub === "/params" ? selParams(rec.sel.input, rec.sel.derived) : selPlan(rec.sel.input, this.settings));
+    }
+    if (method === "POST" && (sub === "/matrix" || sub === "/preview") && !rec.sel) {
+      if (!prepReady) return notReady();
+      return err(409, "SELECTION_MISSING", "비드 선택을 먼저 저장하세요.");
+    }
+    if ((r = sub.match(/^\/preview\/thumb\/([^/]+)$/)) && method === "GET") {
+      const did = decodeURIComponent(r[1]);
+      const ps = this.paramsOf(rec);
+      const v = rec.out.doe?.preview?.color?.v_max ?? 1;
+      if (did === "d000" && rec.out.doe?.preview) return { status: 200, body: selThumbSvg(null, ps, v, "NOMINAL") };
+      const c = rec.cells?.find((x) => x.id === did);
+      if (!c || !c.thumb) return err(404, "NOT_FOUND", "썸네일이 없습니다.");
+      return { status: 200, body: selThumbSvg(c.values, ps, v, c.status) };
+    }
+    if (method === "POST" && sub === "/run") {
+      const pv = rec.out.doe?.preview;
+      if (rec.sel && pv && pv.selection_sha256 !== rec.sel.sha256) return err(409, "PREVIEW_STALE", "비드 선택이 미리보기 뒤에 바뀌었습니다 — 미리보기를 다시 실행하세요.");
+    }
+    return null;
   }
 
   private active(r: Rec) {
@@ -912,7 +1063,8 @@ export class DoeMock {
     const scenario = b.scenario as DoeScenario;
     if (scenario === "compare") return this.checkCompare(b, pid);
     if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
-    if (!["same", "mesh", "step"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
+    if (!["same", "mesh", "step", "select"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
+    if (scenario === "select") return this.checkSelect(b, pid);
     const ids = (b.entry_ids as string[]) ?? [];
     const es = this.ctx.entries();
     const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
@@ -946,6 +1098,28 @@ export class DoeMock {
       out.props_default = { t: 1.2, E: 205000, nu: 0.3 };
       out.mesh_size_default_mm = 5;
     }
+    return ok(out);
+  }
+
+  /** v0.15.0 select check-inputs: ① 과 같음(base), STEP·B 메시·파트 제목·형상 금지, paicad 무관(BS-D-2) */
+  private checkSelect(b: Record<string, unknown>, pid: string): MockResponse {
+    const sc = this.settings.select;
+    if (!sc?.enabled) return err(503, "SELECT_DISABLED", "비드 직접 선택이 서버에서 꺼져 있습니다.");
+    if (b.step_upload_id != null || b.mesh_upload_id != null || b.part_title != null || b.shapes != null) return err(422, "INVALID_PARAMS", "직접 선택에는 STEP·B 메시·파트 제목·형상을 쓰지 않습니다.");
+    const ids = (b.entry_ids as string[]) ?? [];
+    const es = this.ctx.entries();
+    const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
+    if (!ids.length || sel.some((e) => !e)) return err(422, "ENTRY_NOT_FOUND", "선택한 ESL 중 이 프로젝트의 활성 항목이 아닌 것이 있습니다.");
+    const first = sel[0]!;
+    const entries = sel.map((e) => ({ entry_id: e!.id, ok: e!.topo_sha256 === first.topo_sha256, reason: e!.topo_sha256 !== first.topo_sha256 ? "MODEL_MISMATCH" : null }));
+    const mf = selManifest();
+    const out: DoeCheckOut = {
+      ok: entries.every((x) => x.ok),
+      step: null,
+      entries,
+      base: { entry_id: first.id, case_id: first.case_id, case_title: first.case_title ?? null, part_title: "chassis_rear", n_nodes: mf.n_nodes, n_elems: mf.n_elems, topo_sha256: first.topo_sha256 ?? "" },
+      warnings: [],
+    };
     return ok(out);
   }
 
@@ -1057,7 +1231,7 @@ export class DoeMock {
         this.recs.push(rec);
         return ok(this.studyOut(rec), 201);
       }
-      if (b.scenario === "same" && !co.ok) return err(422, "MODEL_MISMATCH", "다른 모델 ESL 이 있습니다 — 빼거나 '다른 모델' 시나리오로.");
+      if ((b.scenario === "same" || b.scenario === "select") && !co.ok) return err(422, "MODEL_MISMATCH", "다른 모델 ESL 이 있습니다 — 빼거나 '다른 모델' 시나리오로.");
       const title = String(b.title ?? "").trim();
       if (title.length > 200) return err(422, "INVALID_PARAMS", "제목은 200자 이하입니다.");
       const props = b.props as DoeStudyOut["inputs"]["props"];
@@ -1068,7 +1242,7 @@ export class DoeMock {
           id,
           project_id: String(b.project_id),
           scenario: b.scenario as DoeScenario,
-          title: title || `강성 평가 ${co.step?.file_name ?? ""}`,
+          title: title || (b.scenario === "select" ? "비드 직접 선택" : `강성 평가 ${co.step?.file_name ?? ""}`),
           entry_ids: b.entry_ids as string[],
           inputs: {
             step: co.step ? { file_name: co.step.file_name, sha256: co.step.sha256 } : null,
@@ -1089,7 +1263,7 @@ export class DoeMock {
         pending: null,
         cells: null,
         result: null,
-        stepUpload: String(b.step_upload_id),
+        stepUpload: b.step_upload_id != null ? String(b.step_upload_id) : null,
       };
       const j = this.ctx.newJob(rec.out.project_id, "DOE_PREP", { bead_doe_id: id });
       rec.jobIds.push(j.id);
@@ -1109,6 +1283,10 @@ export class DoeMock {
       this.sync(rec);
       const st = this.settings;
       if (method === "GET" && sub === "") return ok(this.studyOut(rec));
+      if (rec.out.scenario === "select") {
+        const sr = this.handleSelect(rec, method, sub, query, b);
+        if (sr) return sr;
+      } else if (/^\/(select\/|selection$)/.test(sub)) return err(409, "SCENARIO_UNSUPPORTED", "비드 직접 선택 스터디가 아닙니다.");
       // ④ 형상 비교: 비드·DOE·미리보기 경로 없음(SC-D-1)
       if (rec.out.scenario === "compare" && (/^\/(params|plan-view|matrix|preview)$/.test(sub) || /^\/(beads|preview\/thumb)\//.test(sub)))
         return err(409, "SCENARIO_UNSUPPORTED", "형상 직접 비교에서는 쓸 수 없습니다.");
@@ -1125,14 +1303,16 @@ export class DoeMock {
       if (method === "POST" && (sub === "/matrix" || sub === "/preview")) {
         if (rec.out.phase === "PREP" || !rec.out.prep) return err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
         const spec = b.spec as DoeSpec | undefined;
-        const bad = specProblem(spec, st);
+        const ps = this.paramsOf(rec);
+        const bad = specProblem(spec, st, ps);
         if (bad) return bad;
-        const m = makeMatrix(spec!);
+        const m = makeMatrix(spec!, ps);
         if (sub === "/matrix") return ok(m);
         if (b.version !== rec.out.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로 고친 뒤 다시 시도하세요");
         if (this.active(rec)) return err(409, "JOB_ACTIVE", "이 연구의 작업이 진행 중입니다.");
         if (rec.out.phase === "RUN" || rec.out.phase === "DONE") return err(409, "ALREADY_RUN", "이미 실행했습니다 — 복제해서 새 연구로.");
         rec.out.doe = { rev: (rec.out.doe?.rev ?? 0) + 1, spec: m.spec, matrix_sha256: m.matrix_sha256, n_designs: m.n_designs, preview: null };
+        if (rec.out.scenario === "select") rec.pendingSel = rec.sel?.sha256 ?? null;
         rec.pending = m;
         rec.cells = null;
         rec.out.phase = "PREVIEW";
@@ -1174,7 +1354,7 @@ export class DoeMock {
       }
       if (method === "POST" && sub === "/clone") {
         const id = this.id("doe");
-        const n: Rec = { out: { ...rec.out, id, title: String(b.title ?? `${rec.out.title} (복제)`), phase: "PREP", version: 1, prep: null, doe: null, created_at: this.ctx.now(), created_by_name: this.ctx.me().display_name }, jobIds: [], pending: null, cells: null, result: null, stepUpload: rec.stepUpload };
+        const n: Rec = { out: { ...rec.out, id, title: String(b.title ?? `${rec.out.title} (복제)`), phase: "PREP", version: 1, prep: null, doe: null, created_at: this.ctx.now(), created_by_name: this.ctx.me().display_name }, jobIds: [], pending: null, cells: null, result: null, stepUpload: rec.stepUpload, sel: rec.sel ? { ...rec.sel, rev: 1 } : null };
         n.jobIds.push(this.ctx.newJob(n.out.project_id, "DOE_PREP", { bead_doe_id: id }).id);
         this.recs.push(n);
         return ok(this.studyOut(n), 201);

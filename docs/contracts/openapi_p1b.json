@@ -2255,7 +2255,8 @@
               "same",
               "mesh",
               "step",
-              "compare"
+              "compare",
+              "select"
             ],
             "title": "Scenario",
             "type": "string"
@@ -2678,6 +2679,23 @@
             "title": "Load Points",
             "type": "array"
           },
+          "nodes_ab": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodes Ab"
+          },
           "outline": {
             "items": {
               "items": {
@@ -2851,7 +2869,8 @@
                   "same",
                   "mesh",
                   "step",
-                  "compare"
+                  "compare",
+                  "select"
                 ],
                 "type": "string"
               },
@@ -2951,6 +2970,90 @@
         "title": "DoeRunIn",
         "type": "object"
       },
+      "DoeSelectDeriveIn": {
+        "additionalProperties": false,
+        "properties": {
+          "bead": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bead"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SelectionIn"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "title": "DoeSelectDeriveIn",
+        "type": "object"
+      },
+      "DoeSelectionOut": {
+        "properties": {
+          "derived": {
+            "additionalProperties": true,
+            "title": "Derived",
+            "type": "object"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "rev": {
+            "title": "Rev",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by_name": {
+            "title": "Updated By Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rev",
+          "sha256",
+          "input",
+          "derived",
+          "updated_by_name",
+          "updated_at"
+        ],
+        "title": "DoeSelectionOut",
+        "type": "object"
+      },
+      "DoeSelectionPutIn": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/components/schemas/SelectionIn"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "selection"
+        ],
+        "title": "DoeSelectionPutIn",
+        "type": "object"
+      },
       "DoeSettingsOut": {
         "properties": {
           "boundary": {
@@ -3046,6 +3149,29 @@
             },
             "title": "Scenarios",
             "type": "object"
+          },
+          "select": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Select"
+          },
+          "select_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Select Reason"
           },
           "step_max_mb": {
             "title": "Step Max Mb",
@@ -3239,7 +3365,8 @@
               "same",
               "mesh",
               "step",
-              "compare"
+              "compare",
+              "select"
             ],
             "title": "Scenario",
             "type": "string"
@@ -3380,10 +3507,23 @@
               "same",
               "mesh",
               "step",
-              "compare"
+              "compare",
+              "select"
             ],
             "title": "Scenario",
             "type": "string"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection"
           },
           "title": {
             "title": "Title",
@@ -9539,6 +9679,264 @@
         "title": "SectionSuggest",
         "type": "object"
       },
+      "SelectBeadIn": {
+        "additionalProperties": false,
+        "properties": {
+          "blend_mm": {
+            "anyOf": [
+              {
+                "const": "auto",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "default": "auto",
+            "title": "Blend Mm"
+          },
+          "floor_follow": {
+            "anyOf": [
+              {
+                "enum": [
+                  0,
+                  1
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Follow"
+          },
+          "id": {
+            "maxLength": 16,
+            "title": "Id",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "maxItems": 64,
+            "title": "Links",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "slope": {
+            "$ref": "#/components/schemas/SelectSlopeIn"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/SelectTierIn"
+            },
+            "maxItems": 64,
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "tiers"
+        ],
+        "title": "SelectBeadIn",
+        "type": "object"
+      },
+      "SelectElemSet": {
+        "additionalProperties": false,
+        "properties": {
+          "q": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "maxItems": 1000000,
+            "title": "Q",
+            "type": "array"
+          },
+          "t": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "maxItems": 1000000,
+            "title": "T",
+            "type": "array"
+          }
+        },
+        "title": "SelectElemSet",
+        "type": "object"
+      },
+      "SelectSlopeIn": {
+        "additionalProperties": false,
+        "properties": {
+          "add": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "mode": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "edited"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "remove": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          }
+        },
+        "title": "SelectSlopeIn",
+        "type": "object"
+      },
+      "SelectTierIn": {
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "k": {
+            "title": "K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "k",
+          "floor"
+        ],
+        "title": "SelectTierIn",
+        "type": "object"
+      },
+      "SelectionDerived": {
+        "properties": {
+          "beads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Beads",
+            "type": "array"
+          },
+          "fixed": {
+            "additionalProperties": true,
+            "title": "Fixed",
+            "type": "object"
+          },
+          "mesh_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Sha256"
+          },
+          "rev": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rev"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "slope_suggested": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slope Suggested"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sha256",
+          "beads",
+          "fixed"
+        ],
+        "title": "SelectionDerived",
+        "type": "object"
+      },
+      "SelectionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "beads": {
+            "items": {
+              "$ref": "#/components/schemas/SelectBeadIn"
+            },
+            "maxItems": 100,
+            "title": "Beads",
+            "type": "array"
+          },
+          "exclude": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "feature_angle_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Angle Deg"
+          },
+          "fixed_user": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "beads"
+        ],
+        "title": "SelectionIn",
+        "type": "object"
+      },
       "StageState": {
         "properties": {
           "job_id": {
@@ -12890,7 +13288,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.14.1"
+    "version": "0.15.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15117,6 +15515,296 @@
           }
         },
         "summary": "Doe Run",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/select/basis": {
+      "get": {
+        "description": "미리보기한 선택의 모핑 기저(브라우저 3D 보기). 미리보기 전 409 PREVIEW_NOT_READY.",
+        "operationId": "doe_select_basis_esl_api_doe_studies__sid__select_basis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rev",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Rev"
+            }
+          },
+          {
+            "in": "query",
+            "name": "meta",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Meta",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {},
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "basis.bin(변수 순서 = basis.json: 각 변수 [n:u32][idx:u32×n][vec:f32×3n], 헤더 X-ESL-Basis-Sha) / meta=1 → basis.json"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Select Basis",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/select/derive": {
+      "post": {
+        "description": "사면 자동 추정·경계 제안·공칭 치수(저장 안 함, rev null) + slope_suggested. bead 주면 그 비드만.",
+        "operationId": "doe_select_derive_esl_api_doe_studies__sid__select_derive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeSelectDeriveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectionDerived"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Select Derive",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/select/view/{name}": {
+      "get": {
+        "description": "준비 산출물 prep/select/ 의 선택 보기 파일(허용 목록만). 준비 전 409 PREP_NOT_READY.",
+        "operationId": "doe_select_view_esl_api_doe_studies__sid__select_view__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {},
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "model/gltf-binary": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256, If-None-Match 일치 시 304)"
+          },
+          "304": {
+            "description": "변경 없음"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Select View",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/selection": {
+      "get": {
+        "description": "저장된 선택(정규화 입력 + 서버 재계산 결과) 또는 null.",
+        "operationId": "doe_selection_get_esl_api_doe_studies__sid__selection_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DoeSelectionOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Doe Selection Get Esl Api Doe Studies  Sid  Selection Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Selection Get",
+        "tags": [
+          "doe"
+        ]
+      },
+      "put": {
+        "description": "선택 저장(서버 재계산·검증, rev + 1, version + 1). READY·PREVIEW_READY 에서만 — 바꾸면 미리보기는 다시(PREVIEW_STALE).",
+        "operationId": "doe_selection_put_esl_api_doe_studies__sid__selection_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DoeSelectionPutIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Selection Put",
         "tags": [
           "doe"
         ]

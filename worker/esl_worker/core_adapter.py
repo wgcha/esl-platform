@@ -994,7 +994,7 @@ def _opt_post(spec: dict, echo) -> dict:
 # ``<step 로그>.stage.json`` 으로 남겨 부모(doe_jobs)가 읽는다. paicad 판정·argv·보고 JSON 읽기(esl.doe.paicad_io)는
 # 가벼운 순수 함수라 워커 부모 프로세스에서 쓴다(외부 실행은 paicad_proc). 쓰기는 spec["out"](= <esl_root>/_doe/<id>/)
 # 아래만 — 코어 Writer 의 입력 목록(라이브러리 항목·① Case 입력·업로드)에는 쓰지 않는다.
-DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post")
+DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post", "bd_select_grid")
 
 
 def doe_paicad_io():

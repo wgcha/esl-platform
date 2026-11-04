@@ -99,3 +99,61 @@ def morphed_coords(out_files_dir: str, rels: list[str], node_id, x_base, *, expe
     d = np.linalg.norm(X - np.asarray(x_base, dtype=np.float64), axis=1) if X.size else np.zeros(0)
     return X, {"n_found": len(found), "n_moved": int(np.sum(d > 0)), "max_disp": float(d.max()) if d.size else 0.0,
                "files": files}
+
+
+# ---------------------------------------------------------------- v0.15.0 select 산출물(esl_bead_select.md BS-D-14) — 추가만
+def _fmt_f20(v: float) -> str:
+    s = f"{float(v):20.13E}"
+    if len(s) > 20:                       # 지수 3자리(극단값) — 유효숫자를 줄여 20칸 유지
+        s = f"{float(v):20.12E}"
+    return s
+
+
+def write_morphed(src: str, dst: str, node_id, x_new, x_old=None, *, max_line: int | None = None,
+                  guard=None) -> dict:
+    """원본 rad/include 사본 → ``/NODE`` 블록에서 좌표가 바뀐 대상 노드 행의 **좌표 칸만** 교체(ID 칸·다른 줄·줄바꿈 바이트 그대로).
+
+    고정 칸(I10·F20×3)은 10..70 칸을 ``%20.13E`` 로, 자유 형식(쉼표)은 좌표 필드만 ``repr`` 로 바꾼다. 좌표가 안 바뀐
+    노드(x_old 와 같음)는 원본 바이트 유지. 반환 {n_nodes(대상 행), n_changed}."""
+    nid = np.asarray(node_id, dtype=np.int64)
+    X = np.asarray(x_new, dtype=np.float64)
+    X0 = None if x_old is None else np.asarray(x_old, dtype=np.float64)
+    pos = {int(v): i for i, v in enumerate(nid.tolist())}
+    g = guard or (lambda p: p)
+    n_rows = n_chg = 0
+    in_node = False
+    tmp = f"{dst}.{os.getpid()}.tmp"
+    with open(src, "rb") as fi, open(g(tmp), "wb") as fo:
+        readline = bounded_readline(fi, src, max_line)
+        lineno = 0
+        while True:
+            raw = readline()
+            if not raw:
+                break
+            lineno += 1
+            out = raw
+            if raw[:1] in (b"#", b"$"):
+                pass
+            elif raw[:1] == b"/":
+                toks = raw[1:].split(b"/")[0].split()
+                in_node = bool(toks) and toks[0].upper() == b"NODE"
+            elif in_node and raw.strip():
+                line = _decode(raw)
+                k, _ = _parse_node_line(line, src, lineno)
+                i = pos.get(int(k))
+                if i is not None:
+                    n_rows += 1
+                    if X0 is None or not np.array_equal(X[i], X0[i]):
+                        eol = raw[len(raw.rstrip(b"\r\n")):]
+                        if "," in line:
+                            f = line.split(",")
+                            f += [""] * max(0, 4 - len(f))
+                            f[1:4] = [repr(float(v)) for v in X[i]]
+                            body = ",".join(f)
+                        else:
+                            body = line[:10].ljust(10) + "".join(_fmt_f20(v) for v in X[i]) + line[70:]
+                        out = body.encode("utf-8") + eol
+                        n_chg += 1
+            fo.write(out)
+    os.replace(tmp, g(dst))
+    return {"n_nodes": n_rows, "n_changed": n_chg}

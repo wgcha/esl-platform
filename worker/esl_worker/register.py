@@ -687,6 +687,11 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
             "paicad_version": pv.get("version"), "warnings": warns,
             "boundary": None if not isinstance(bnd, dict) else {"n_warn": int(bnd.get("n_warn") or 0),
                                                                 "n_info": int(bnd.get("n_info") or 0)}}
+    if s.get("scenario") == "select":       # v0.15.0 BD_PREP_REGISTER select 요약(esl_bead_select.md §8.1 5)
+        base = _doe_json(os.path.join(ddir, "prep", "base.json")) or {}
+        fx = inp.get("fixed") if isinstance(inp.get("fixed"), dict) else {}
+        prep.update(n_nodes=base.get("n_nodes"), n_elems=base.get("n_elems"),
+                    fixed={"source": fx.get("source") or "none", "n": int(fx.get("n") or 0)})
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
 
@@ -735,7 +740,9 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
 
 def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
     """BD_PREVIEW_REGISTER: phase PREVIEW_READY, doe.preview = {rev, matrix_sha256, ok, skipped{collision, fixed, geom}}
-    (doe 의 나머지 키 유지). 셀 상태 원본은 doe/<rev>/grid/grid_manifest.json(백엔드가 읽음)."""
+    (doe 의 나머지 키 유지). 셀 상태 원본은 doe/<rev>/grid/grid_manifest.json(백엔드가 읽음).
+    v0.15.0 select: + preview.selection_sha256(grid_manifest = 작업 params.doe.selection.sha256 — 다르면 PREVIEW_STALE),
+    skipped.mesh(FAILED_MESH 셀 수)."""
     from esl_platform.core.repositories import doe as doe_repo
 
     from . import core_adapter, doe_jobs
@@ -758,6 +765,13 @@ def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir:
     cnt = doe_jobs.count_states([r for r in g["cells"] if r["id"] in want])
     doe["preview"] = {"rev": rev, "matrix_sha256": m.get("matrix_sha256"), "ok": cnt["ok"],
                       "skipped": {k: cnt[k] for k in ("collision", "fixed", "geom")}}
+    if s.get("scenario") == "select":
+        msha = (g.get("manifest") or {}).get("selection_sha256")
+        jsha = (d.get("selection") or {}).get("sha256")
+        if not msha or (jsha and msha != jsha):
+            raise RegisterError("PREVIEW_STALE", f"미리보기 선택 sha256({str(msha)[:12]}…)이 작업 선택({str(jsha)[:12]}…)과 다릅니다")
+        doe["preview"]["selection_sha256"] = msha
+        doe["preview"]["skipped"]["mesh"] = doe_jobs.count_select_states([r for r in g["cells"] if r["id"] in want])["mesh"]
     doe_repo.update_study(conn, s["id"], phase="PREVIEW_READY", doe=_jsonable(doe))
     return {"bead_doe_id": s["id"], "phase": "PREVIEW_READY", **doe["preview"]}
 

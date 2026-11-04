@@ -1,0 +1,819 @@
+// v0.15.0 비드 직접 선택 카드(esl_bead_select.md §3-3·§11): ② 3D 요소 선택(클릭+확장·브러시·사각·올가미, 보이는 면만) + ③ 비드 목록·도구(BeadList).
+// 상태(층·실행 취소·derive)는 useBeadSelect 가 갖고, 페이지(DoeStudy)가 [선택 저장](주 버튼)·변수 표 블렌딩 편집에 같은 컨트롤러를 쓴다.
+// 3D 는 기존 장면(scene.ts — TrackballControls 회전 그대로)에 요소 모드만 더한다. 그리기 도구 중 왼쪽 끌기 = 도구, Ctrl+끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { doe, warnText } from "../api/doe";
+import { errorText } from "../api/client";
+import type { DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
+import { fetchBinary } from "../view3d/fetchFiles";
+import { parseGlb, type ParsedGlb } from "../view3d/glb";
+import { loadScene } from "../view3d/loadThree";
+import type { SceneApi } from "../view3d/sceneApi";
+import { hasWebGL } from "../view3d/webgl";
+import { DIVERGING_GRADIENT } from "../view3d/colors";
+import { boundaryEdges, buildTopo, ringStep, type MeshTopo } from "../view3d/select/adjacency";
+import { grow } from "../view3d/select/grow";
+import { History, type Patch } from "../view3d/select/history";
+import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
+import {
+  addBead, addTier, applyPatch, effectiveSlope, elemColors, emptyState, fromSelectionIn, ownerBead, paint, toSelectionIn, toggleLink,
+  type Layer, type LayerName, type SelState,
+} from "../view3d/select/layers";
+import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
+import { parseSelectBin, type SelectBin } from "../view3d/select/view";
+import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
+import { BeadList } from "./BeadList";
+import { Card, ErrorLine } from "./ui";
+
+export const NO_3D = "이 브라우저에서 3D 보기를 쓸 수 없습니다";
+const BACKGROUND = "#dfe3e8";
+
+export interface SelectData {
+  manifest: DoeSelectViewManifest;
+  glb: ParsedGlb;
+  bin: SelectBin;
+  topo: MeshTopo;
+  idx: ElemIndex;
+}
+
+/** 선택 보기 자료(part.glb · select.bin · manifest) — 준비 후 1회 */
+function useSelectData(studyId: string, on: boolean) {
+  const [data, setData] = useState<SelectData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    if (!on) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const manifest = await doe.selectManifest(studyId);
+        const [g, b] = await Promise.all([fetchBinary(doe.selectViewUrl(studyId, "part.glb")), fetchBinary(doe.selectViewUrl(studyId, "select.bin"))]);
+        const glb = parseGlb(g);
+        if (glb.positions.length / 3 !== manifest.n_nodes) throw new Error("3D 형상의 노드 수가 manifest 와 다릅니다");
+        const bin = parseSelectBin(b, manifest);
+        const topo = buildTopo(glb.positions, glb.indices, bin.tri2elem, manifest.n_elems);
+        if (alive) setData({ manifest, glb, bin, topo, idx: elemIndex(bin.elemId, bin.elemType) });
+      } catch (e) {
+        if (alive) setError(errorText(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [studyId, on]);
+  return { data, error };
+}
+
+export type Tool = "click" | "brush" | "rect" | "lasso";
+
+export interface BeadSelectCtrl {
+  data: SelectData | null;
+  error: string | null;
+  state: SelState | null;
+  tick: number;
+  active: number;
+  setActive: (b: number) => void;
+  layer: Layer | null;
+  setLayer: (l: Layer) => void;
+  featureAngle: number;
+  setFeatureAngle: (v: number) => void;
+  derive: DoeDeriveOut | null;
+  deriving: boolean;
+  deriveError: string | null;
+  runDerive: () => void;
+  /** 저장본과 다름(또는 미저장) */
+  dirty: boolean;
+  /** 저장 전 화면 검사(빈 단·비드 없음·이름) — null = 통과 */
+  problem: string | null;
+  input: () => DoeSelectionIn | null;
+  suggested: (b: number) => Uint8Array | null;
+  paintElems: (elems: number[], layer: Layer, mode: "add" | "remove", merge?: boolean) => void;
+  endStroke: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  addBead: () => void;
+  addTier: () => void;
+  link: (bead: number, a: number, c: number) => void;
+  rename: (bead: number, name: string) => void;
+  setBlend: (beadId: string, v: "auto" | number) => void;
+  blendOf: (beadId: string) => "auto" | number | null;
+  ring: (dir: 1 | -1) => void;
+  maxBeads: number;
+  maxTiers: number;
+}
+
+const json = (x: unknown) => JSON.stringify(x);
+// eslint-disable-next-line no-control-regex
+const CTRL = /[\u0000-\u001f\u007f]/;
+
+/** 선택 편집 상태(층·실행 취소·derive·저장본 비교) */
+export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionOut | null, st: DoeSettingsOut | null): BeadSelectCtrl {
+  const { data, error } = useSelectData(studyId, on);
+  const stRef = useRef<SelState | null>(null);
+  const hist = useRef(new History<LayerName>());
+  const stroke = useRef<Patch<LayerName> | null>(null);
+  const [tick, setTick] = useState(0);
+  const bump = useCallback(() => setTick((t) => t + 1), []);
+  const [active, setActive] = useState(0);
+  const [layer, setLayer] = useState<Layer | null>(null);
+  const [featureAngle, setFeatureAngle] = useState<number>(st?.select?.feature_angle_deg ?? 15);
+  const [derive, setDerive] = useState<DoeDeriveOut | null>(null);
+  const [deriving, setDeriving] = useState(false);
+  const [deriveError, setDeriveError] = useState<string | null>(null);
+  const [baseJson, setBaseJson] = useState<string | null>(null);
+  const loadedSha = useRef<string | null | undefined>(undefined);
+  const maxBeads = st?.select?.max_beads ?? 20;
+  const maxTiers = st?.select?.max_tiers ?? 6;
+
+  const input = useCallback((): DoeSelectionIn | null => {
+    const s = stRef.current;
+    if (!s || !data) return null;
+    return toSelectionIn(s, data.bin.elemId, data.bin.elemType, featureAngle);
+  }, [data, featureAngle]);
+
+  const doDerive = useCallback(
+    (sel: DoeSelectionIn | null) => {
+      if (!sel || !sel.beads.length) return;
+      setDeriving(true);
+      setDeriveError(null);
+      doe
+        .derive(studyId, sel)
+        .then((d) => setDerive(d))
+        .catch((e) => setDeriveError(errorText(e)))
+        .finally(() => setDeriving(false));
+    },
+    [studyId],
+  );
+
+  // 저장본 → 화면 상태: 처음 1회 불러옴. 저장 직후(화면 = 새 저장본)는 기준만 바꾸고, 저장 안 한 편집이 있으면 덮지 않는다
+  useEffect(() => {
+    if (!data) return;
+    const sha = saved?.sha256 ?? null;
+    if (loadedSha.current === sha) return;
+    loadedSha.current = sha;
+    const n = data.manifest.n_elems;
+    const fromSaved = saved ? fromSelectionIn(saved.input, data.idx, n).state : null;
+    const savedIn = fromSaved && saved ? toSelectionIn(fromSaved, data.bin.elemId, data.bin.elemType, saved.input.feature_angle_deg) : null;
+    const savedJson = savedIn ? json(savedIn) : null;
+    const cur = stRef.current ? input() : null;
+    const curJ = cur ? json(cur) : null;
+    if (stRef.current && (curJ === savedJson || (baseJson !== null && curJ !== baseJson))) {
+      setBaseJson(savedJson);
+      bump();
+      return;
+    }
+    stRef.current = fromSaved ?? emptyState(n);
+    if (saved) setFeatureAngle(saved.input.feature_angle_deg);
+    setBaseJson(savedJson);
+    setDerive(null);
+    hist.current.clear();
+    if (savedIn) doDerive(savedIn);
+    setActive(0);
+    setLayer(stRef.current.beads.length ? { kind: "tier", bead: 0, k: 1 } : null);
+    bump();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, saved?.sha256]);
+
+  const curJson = useMemo(() => {
+    const x = input();
+    return x ? json(x) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, tick]);
+  const dirty = !!curJson && curJson !== baseJson;
+
+  const problem = useMemo((): string | null => {
+    const s = stRef.current;
+    if (!s) return data ? null : error ? `선택 자료를 불러오지 못했습니다 — ${error}` : "선택 자료 불러오는 중…";
+    if (!s.beads.length) return "[+ 비드] 로 비드를 만들고 바닥을 고르세요";
+    const x = input();
+    for (const b of x?.beads ?? []) {
+      const nm = b.name.trim();
+      if (!nm || nm.length > 32 || CTRL.test(nm)) return `${b.id.toUpperCase()}: 이름은 1~32자, 제어문자 없이`;
+      const empty = b.tiers.find((t) => !t.floor.q.length && !t.floor.t.length);
+      if (empty) return `${nm}: 단 ${empty.k} 바닥이 비었습니다 — 바닥 요소를 고르세요`;
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, data, error, input]);
+
+  const sugMasks = useMemo(() => {
+    const out = new Map<string, Uint8Array>();
+    if (!derive || !data) return out;
+    for (const [id, set] of Object.entries(derive.slope_suggested ?? {})) {
+      const m = new Uint8Array(data.manifest.n_elems);
+      for (const e of fromElemSet(set as DoeElemSet, data.idx).elems) m[e] = 1;
+      out.set(id, m);
+    }
+    return out;
+  }, [derive, data]);
+  const suggested = useCallback((b: number) => {
+    const id = stRef.current?.beads[b]?.id;
+    return id ? sugMasks.get(id) ?? null : null;
+  }, [sugMasks]);
+
+  const paintElems = useCallback(
+    (elems: number[], l: Layer, mode: "add" | "remove", merge = false) => {
+      const s = stRef.current;
+      if (!s || !elems.length) return;
+      const p = paint(s, elems, l, mode, suggested);
+      if (merge) {
+        const cur = stroke.current ?? { changes: [] };
+        cur.changes.push(...p.changes);
+        stroke.current = cur;
+      } else hist.current.push(p);
+      bump();
+    },
+    [suggested, bump],
+  );
+  const endStroke = useCallback(() => {
+    if (stroke.current) hist.current.push(stroke.current);
+    stroke.current = null;
+    bump();
+  }, [bump]);
+  const undo = useCallback(() => {
+    const s = stRef.current;
+    const p = hist.current.undo();
+    if (s && p) {
+      // 한 획 안 같은 요소가 여러 번 바뀌었으면 뒤에서부터 되돌린다
+      applyPatch(s, { changes: [...p.changes].reverse() }, "undo");
+      bump();
+    }
+  }, [bump]);
+  const redo = useCallback(() => {
+    const s = stRef.current;
+    const p = hist.current.redo();
+    if (s && p) {
+      applyPatch(s, p, "redo");
+      bump();
+    }
+  }, [bump]);
+
+  const ctrl: BeadSelectCtrl = {
+    data,
+    error,
+    state: stRef.current,
+    tick,
+    active,
+    setActive: (b) => {
+      setActive(b);
+      setLayer({ kind: "tier", bead: b, k: 1 });
+    },
+    layer,
+    setLayer,
+    featureAngle,
+    setFeatureAngle: (v) => {
+      setFeatureAngle(v);
+      bump();
+    },
+    derive,
+    deriving,
+    deriveError,
+    runDerive: () => doDerive(input()),
+    dirty,
+    problem,
+    input,
+    suggested,
+    paintElems,
+    endStroke,
+    undo,
+    redo,
+    canUndo: hist.current.canUndo,
+    canRedo: hist.current.canRedo,
+    addBead: () => {
+      const s = stRef.current;
+      if (!s) return;
+      const b = addBead(s, maxBeads, 1); // Q1 = A: 폭 변경 시 바닥도 따라감(floor_follow 1)
+      if (b === null) return;
+      setActive(b);
+      setLayer({ kind: "tier", bead: b, k: 1 });
+      bump();
+    },
+    addTier: () => {
+      const s = stRef.current;
+      if (!s) return;
+      const k = addTier(s, active, maxTiers);
+      if (k === null) return;
+      setLayer({ kind: "tier", bead: active, k });
+      bump();
+    },
+    link: (b, a, c) => {
+      const s = stRef.current;
+      if (!s?.beads[b]) return;
+      toggleLink(s.beads[b], a, c);
+      bump();
+    },
+    rename: (b, name) => {
+      const s = stRef.current;
+      if (!s?.beads[b]) return;
+      s.beads[b].name = name;
+      bump();
+    },
+    setBlend: (id, v) => {
+      const b = stRef.current?.beads.find((x) => x.id === id);
+      if (!b) return;
+      b.blend = v;
+      bump();
+    },
+    blendOf: (id) => stRef.current?.beads.find((x) => x.id === id)?.blend ?? null,
+    ring: (dir) => {
+      const s = stRef.current;
+      if (!s || !data) return;
+      const sug = suggested(active);
+      const slope = effectiveSlope(s, active, sug);
+      const inB = (e: number) => ownerBead(s.owner[e]) === active || !!slope[e];
+      // +1 = 비드 밖(다른 비드 아님) 요소를 사면에 더함, −1 = 경계에 닿은 사면 요소를 뺌(바닥은 그대로)
+      const cand = dir === 1 ? (e: number) => s.owner[e] < 0 : (e: number) => !!slope[e] && (s.owner[e] < 0 || s.owner[e] === active * 16);
+      const elems = ringStep(data.topo, inB, dir, cand);
+      if (!elems.length) return;
+      paintElems(elems, { kind: "slope", bead: active }, dir === 1 ? "add" : "remove");
+    },
+    maxBeads,
+    maxTiers,
+  };
+  return ctrl;
+}
+
+// ================================================================ ② 3D 선택
+const TOOL_NAME: Record<Tool, string> = { click: "클릭+확장", brush: "브러시", rect: "사각", lasso: "올가미" };
+
+export function layerLabel(s: SelState, l: Layer): string {
+  if (l.kind === "fixed") return "고정";
+  if (l.kind === "exclude") return "제외(사면 자동에서 뺌)";
+  const b = s.beads[l.bead];
+  const n = b?.name ?? `B${l.bead + 1}`;
+  return l.kind === "tier" ? `${n} · 단 ${l.k} 바닥` : `${n} · 사면`;
+}
+const layerKey = (l: Layer | null) => (!l ? "" : l.kind === "tier" ? `t:${l.bead}:${l.k}` : l.kind === "slope" ? `s:${l.bead}` : l.kind);
+function parseLayer(k: string): Layer | null {
+  const [a, b, c] = k.split(":");
+  if (a === "t") return { kind: "tier", bead: Number(b), k: Number(c) };
+  if (a === "s") return { kind: "slope", bead: Number(b) };
+  if (a === "fixed" || a === "exclude") return { kind: a };
+  return null;
+}
+
+function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; brushPx: number; visibleOnly: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  const overlay = useRef<HTMLCanvasElement>(null);
+  const sceneRef = useRef<SceneApi | null>(null);
+  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "nowebgl" | "error">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+  const data = ctrl.data;
+
+  useEffect(() => {
+    if (!data) return;
+    if (!hasWebGL()) {
+      setPhase("nowebgl");
+      return;
+    }
+    let cancelled = false;
+    let scene: SceneApi | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    setPhase("loading");
+    void (async () => {
+      try {
+        const mod = await loadScene();
+        if (cancelled || !host.current) return;
+        canvas = document.createElement("canvas");
+        canvas.className = "v3d-canvas";
+        host.current.insertBefore(canvas, host.current.firstChild);
+        const p = data.glb.positions;
+        const mn = [Infinity, Infinity, Infinity];
+        const mx = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < p.length; i += 3) for (let c = 0; c < 3; c++) (mn[c] = Math.min(mn[c], p[i + c])), (mx[c] = Math.max(mx[c], p[i + c]));
+        const diag = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
+        scene = mod.createScene(canvas, { background: BACKGROUND, diag, bbox: { min: mn, max: mx }, projection: "ortho" });
+        if (!scene.setElements) throw new Error(NO_3D);
+        scene.setGeometry({ positions: data.glb.positions, indices: data.glb.indices, src: null }, null);
+        scene.setElements(data.bin.tri2elem, data.manifest.n_elems);
+        sceneRef.current = scene;
+        setPhase("ready");
+      } catch (e) {
+        if (!cancelled) {
+          setPhase("error");
+          setMsg(e instanceof Error && e.message === NO_3D ? NO_3D : errorText(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sceneRef.current = null;
+      scene?.dispose();
+      canvas?.remove();
+    };
+  }, [data]);
+
+  // 요소 색·경계선(상태가 바뀔 때마다)
+  const s = ctrl.state;
+  useEffect(() => {
+    const sc = sceneRef.current;
+    if (!sc || !s || !data || phase !== "ready") return;
+    sc.setElemColors?.(elemColors(s, ctrl.active, ctrl.suggested));
+    if (s.beads[ctrl.active]) {
+      const slope = effectiveSlope(s, ctrl.active, ctrl.suggested(ctrl.active));
+      const pairs = boundaryEdges(data.topo, (e) => ownerBead(s.owner[e]) === ctrl.active || !!slope[e]);
+      const pos = data.glb.positions;
+      const segs = new Float32Array(pairs.length * 3);
+      for (let i = 0; i < pairs.length; i++) for (let c = 0; c < 3; c++) segs[i * 3 + c] = pos[pairs[i] * 3 + c];
+      sc.setOverlayLines?.(segs);
+    } else sc.setOverlayLines?.(null);
+  }, [ctrl.tick, ctrl.active, ctrl.suggested, phase, s, data]);
+
+  // ---- 입력: 그리기 도구(왼쪽 끌기) · 클릭+확장 · 더블클릭 중심
+  const strokeRef = useRef<{ mode: "add" | "remove"; start: Pt; pts: Pt[]; centroids: Float32Array | null } | null>(null);
+  const downRef = useRef<{ x: number; y: number } | null>(null);
+  const local = (e: { clientX: number; clientY: number }): Pt => {
+    const r = host.current!.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  const drawOverlay = (kind: "brush" | "rect" | "lasso" | "none", pts: Pt[], at?: Pt) => {
+    const cv = overlay.current;
+    if (!cv || !host.current) return;
+    const w = host.current.clientWidth;
+    const h = host.current.clientHeight;
+    if (cv.width !== w || cv.height !== h) {
+      cv.width = w;
+      cv.height = h;
+    }
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = "#111";
+    g.fillStyle = "rgba(29,91,191,0.12)";
+    g.lineWidth = 1.5;
+    g.setLineDash(kind === "brush" ? [] : [5, 4]);
+    if (kind === "brush" && at) {
+      g.beginPath();
+      g.arc(at[0], at[1], brushPx, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    } else if (kind === "rect" && pts.length === 2) {
+      const r = rectOf(pts[0], pts[1]);
+      g.fillRect(r.x, r.y, r.w, r.h);
+      g.strokeRect(r.x, r.y, r.w, r.h);
+    } else if (kind === "lasso" && pts.length > 1) {
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (const p of pts) g.lineTo(p[0], p[1]);
+      g.closePath();
+      g.fill();
+      g.stroke();
+    }
+  };
+  /** 판정 함수 · bbox → 요소(보이는 면만 = ID 버퍼, 아니면 중심 투영) */
+  const elemsIn = (test: (x: number, y: number) => boolean, bbox: { x: number; y: number; w: number; h: number }) => {
+    const sc = sceneRef.current;
+    if (!sc || !data) return [];
+    if (visibleOnly) return sc.idBuffer ? idsInMask(sc.idBuffer(bbox), test) : [];
+    const st = strokeRef.current;
+    const c = st?.centroids ?? sc.projectCentroids?.(data.topo.centroids) ?? null;
+    if (st && !st.centroids) st.centroids = c;
+    return c ? centroidsInMask(c, test) : [];
+  };
+  const brushAt = (p: Pt, mode: "add" | "remove") => {
+    if (!ctrl.layer) return;
+    const r = brushPx;
+    const elems = elemsIn((x, y) => inCircle(x, y, p[0], p[1], r), { x: p[0] - r, y: p[1] - r, w: 2 * r + 1, h: 2 * r + 1 });
+    ctrl.paintElems(elems, ctrl.layer, mode, true);
+  };
+  const canDraw = editable && phase === "ready" && !!ctrl.layer;
+  const onDownCapture = (e: RPointerEvent<HTMLDivElement>) => {
+    downRef.current = { x: e.clientX, y: e.clientY };
+    if (!canDraw || tool === "click" || e.button !== 0 || e.ctrlKey || e.metaKey) return;
+    // 그리기: Trackball 이 받지 않도록 캡처 단계에서 멈춤
+    e.stopPropagation();
+    e.preventDefault();
+    host.current?.setPointerCapture?.(e.pointerId);
+    const p = local(e);
+    strokeRef.current = { mode: e.altKey ? "remove" : "add", start: p, pts: [p], centroids: null };
+    if (tool === "brush") {
+      brushAt(p, strokeRef.current.mode);
+      drawOverlay("brush", [], p);
+    }
+  };
+  const onMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const p = local(e);
+    const st = strokeRef.current;
+    if (!st) {
+      if (canDraw && tool === "brush") drawOverlay("brush", [], p);
+      return;
+    }
+    if (tool === "brush") {
+      brushAt(p, st.mode);
+      drawOverlay("brush", [], p);
+    } else if (tool === "rect") drawOverlay("rect", [st.start, p]);
+    else {
+      st.pts.push(p);
+      drawOverlay("lasso", st.pts);
+    }
+  };
+  const onUp = (e: RPointerEvent<HTMLDivElement>) => {
+    const st = strokeRef.current;
+    const down = downRef.current;
+    downRef.current = null;
+    if (st) {
+      strokeRef.current = null;
+      const p = local(e);
+      if (ctrl.layer && tool === "rect") {
+        const r = rectOf(st.start, p);
+        if (r.w > 1 && r.h > 1) ctrl.paintElems(elemsIn((x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h, r), ctrl.layer, st.mode, true);
+      } else if (ctrl.layer && tool === "lasso" && st.pts.length > 2) {
+        const poly = st.pts;
+        ctrl.paintElems(elemsIn((x, y) => pointInPolygon(x, y, poly), polyBounds(poly)), ctrl.layer, st.mode, true);
+      }
+      ctrl.endStroke();
+      drawOverlay(tool === "brush" ? "brush" : "none", [], p);
+      return;
+    }
+    // 클릭+확장: 끌지 않은 왼쪽 클릭
+    if (!canDraw || tool !== "click" || e.button !== 0 || !down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+    const sc = sceneRef.current;
+    const hit = sc?.pickElem?.(e.clientX, e.clientY);
+    if (!hit || !ctrl.state || !data || !ctrl.layer) return;
+    const l = ctrl.layer;
+    const s2 = ctrl.state;
+    const own = l.kind === "tier" || l.kind === "slope" ? l.bead : -1;
+    const elems = grow(data.topo, hit.elem, ctrl.featureAngle, own >= 0 ? (x) => s2.owner[x] >= 0 && ownerBead(s2.owner[x]) !== own : undefined);
+    ctrl.paintElems(elems, l, e.altKey ? "remove" : "add");
+  };
+  const onDouble = (e: React.MouseEvent<HTMLDivElement>) => {
+    const sc = sceneRef.current;
+    const hit = sc?.pickElem?.(e.clientX, e.clientY);
+    if (hit) sc!.focus(hit.point);
+  };
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "z" || e.key === "Z") {
+      e.preventDefault();
+      if (e.shiftKey) ctrl.redo();
+      else ctrl.undo();
+    } else if (e.key === "y" || e.key === "Y") {
+      e.preventDefault();
+      ctrl.redo();
+    }
+  };
+
+  return (
+    <div className="v3d-stage">
+      <div
+        ref={host}
+        className={`v3d-host bs-host tool-${tool}`}
+        data-testid="bs-host"
+        data-phase={phase}
+        tabIndex={0}
+        onPointerDownCapture={onDownCapture}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerLeave={() => !strokeRef.current && drawOverlay("none", [])}
+        onDoubleClick={onDouble}
+        onKeyDown={onKey}
+        aria-label="비드 선택 3D"
+      >
+        <canvas ref={overlay} className="bs-overlay" aria-hidden="true" />
+      </div>
+      {(phase === "nowebgl" || phase === "error") && (
+        <div className="v3d-msg" role="status" data-testid="bs-unavailable">
+          {phase === "error" && msg && msg !== NO_3D ? msg : NO_3D}
+        </div>
+      )}
+      {(phase === "loading" || (!data && !ctrl.error)) && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
+      {ctrl.error && !data && (
+        <div className="v3d-msg" role="alert">
+          {ctrl.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ② 비드 선택 + ③ 비드 목록·도구(§11.1) */
+export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean }) {
+  const [tool, setTool] = useState<Tool>("click");
+  const [brushPx, setBrushPx] = useState(20);
+  const [visibleOnly, setVisibleOnly] = useState(true);
+  const s = ctrl.state;
+  const layers: Layer[] = s
+    ? [...s.beads.flatMap((b, bi) => [...Array.from({ length: b.nTiers }, (_, i): Layer => ({ kind: "tier", bead: bi, k: i + 1 })), { kind: "slope", bead: bi } as Layer]), { kind: "fixed" }, { kind: "exclude" }]
+    : [];
+  const ro = !editable;
+  const noBead = !s?.beads.length;
+  return (
+    <div className="bs-grid">
+      <Card title="② 비드 선택" right={<span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
+        {fixedMissing && (
+          <div className="warn-box small" role="alert" data-testid="bs-fixed-missing">
+            체결 정보 없음 — 체결부를 고정으로 칠하세요(③ [고정 칠하기])
+          </div>
+        )}
+        <div className="bs-tools" role="toolbar" aria-label="선택 도구">
+          <span className="seg" role="radiogroup" aria-label="도구">
+            {(Object.keys(TOOL_NAME) as Tool[]).map((t) => (
+              <button key={t} type="button" role="radio" aria-checked={tool === t} className={`btn small ghost toggle${tool === t ? " on" : ""}`} onClick={() => setTool(t)} disabled={ro}>
+                {TOOL_NAME[t]}
+              </button>
+            ))}
+          </span>
+          {tool === "brush" && (
+            <label className="range-field">
+              <span>브러시</span>
+              <input type="range" min={4} max={80} step={1} value={brushPx} aria-label="브러시 크기(px)" onChange={(e) => setBrushPx(Number(e.target.value))} />
+              <span className="mono small range-val">{brushPx}px</span>
+            </label>
+          )}
+          <label className="field-inline">
+            <span>층</span>
+            <select aria-label="대상 층" value={layerKey(ctrl.layer)} disabled={ro || noBead} onChange={(e) => {
+              const l = parseLayer(e.target.value);
+              if (l) {
+                ctrl.setLayer(l);
+                if (l.kind === "tier" || l.kind === "slope") ctrl.setActive(l.bead), ctrl.setLayer(l);
+              }
+            }}>
+              {noBead && <option value="">비드 없음 — [+ 비드]</option>}
+              {s && layers.map((l) => (
+                <option key={layerKey(l)} value={layerKey(l)}>
+                  {layerLabel(s, l)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check-field" title="체크 = 화면에 보이는 면만 고름(가려진 뒷면 제외), 해제 = 관통 선택">
+            <input type="checkbox" checked={visibleOnly} onChange={(e) => setVisibleOnly(e.target.checked)} />
+            <span>보이는 면만</span>
+          </label>
+          <label className="field-inline" title="클릭+확장·사면 자동의 같은 법선 판정 각">
+            <span>feature</span>
+            <input type="number" className="doe-num short" min={1} max={45} step={0.5} aria-label="feature angle(°)" value={ctrl.featureAngle} disabled={ro} onChange={(e) => {
+              const v = Number(e.target.value);
+              if (v >= 1 && v <= 45) ctrl.setFeatureAngle(v);
+            }} />
+            <span className="small muted">°</span>
+          </label>
+          <span className="bs-tool-group">
+            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title="서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)">
+              {ctrl.deriving ? "계산 중…" : "사면·경계 자동"}
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => ctrl.ring(1)} disabled={ro || noBead} title="경계 바깥 한 줄을 사면에 더합니다">
+              경계 +1줄
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => ctrl.ring(-1)} disabled={ro || noBead} title="경계에 닿은 사면 한 줄을 뺍니다">
+              −1줄
+            </button>
+            <button type="button" className="btn small ghost icon" onClick={ctrl.undo} disabled={ro || !ctrl.canUndo} aria-label="실행 취소" title="실행 취소(Ctrl+Z)">
+              ↶
+            </button>
+            <button type="button" className="btn small ghost icon" onClick={ctrl.redo} disabled={ro || !ctrl.canRedo} aria-label="다시 실행" title="다시 실행(Ctrl+Y)">
+              ↷
+            </button>
+          </span>
+        </div>
+        <Select3D ctrl={ctrl} editable={editable} tool={tool} brushPx={brushPx} visibleOnly={visibleOnly} />
+        <div className="small muted bs-hint" data-testid="bs-hint">
+          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt = 빼기 · Ctrl+끌기 = 회전"} · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열, 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
+        </div>
+        <ErrorLine text={ctrl.deriveError} />
+      </Card>
+      <Card title="③ 비드 목록·도구">
+        <BeadList ctrl={ctrl} editable={editable} st={st} />
+      </Card>
+    </div>
+  );
+}
+
+// ================================================================ 미리보기 안 3D 보기(§7.3) — 썸네일 클릭
+export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { studyId: string; rev: number; did: string; values: Record<string, number>; vmax: number; onClose: () => void }) {
+  const host = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<SceneApi | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "nowebgl" | "error">("loading");
+  const [err, setErr] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{ glb: ParsedGlb; vars: BasisVar[]; meta: DoeBasisMeta } | null>(null);
+  const [showDesign, setShowDesign] = useState(true);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    let alive = true;
+    setLoaded(null);
+    setErr(null);
+    void (async () => {
+      try {
+        const meta = await doe.basisMeta(studyId, rev);
+        const [g, b] = await Promise.all([fetchBinary(doe.selectViewUrl(studyId, "part.glb")), fetchBinary(doe.basisUrl(studyId, rev))]);
+        const glb = parseGlb(g);
+        if (alive) setLoaded({ glb, vars: parseBasis(b, meta, meta.n_nodes ?? glb.positions.length / 3), meta });
+      } catch (e) {
+        if (alive) {
+          setErr(errorText(e));
+          setPhase("error");
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [studyId, rev]);
+
+  const n = loaded ? loaded.glb.positions.length / 3 : 0;
+  const u = useMemo(() => (loaded ? morph(loaded.vars, values, n) : null), [loaded, values, n]);
+  const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, n) : null), [loaded, values, n]);
+  const V = vmax > 0 ? vmax : Math.max(1, c ? maxAbs(c) : 1);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!hasWebGL()) {
+      setPhase("nowebgl");
+      return;
+    }
+    let cancelled = false;
+    let scene: SceneApi | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    void (async () => {
+      try {
+        const mod = await loadScene();
+        if (cancelled || !host.current) return;
+        canvas = document.createElement("canvas");
+        canvas.className = "v3d-canvas";
+        host.current.appendChild(canvas);
+        const p = loaded.glb.positions;
+        const mn = [Infinity, Infinity, Infinity];
+        const mx = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < p.length; i += 3) for (let k = 0; k < 3; k++) (mn[k] = Math.min(mn[k], p[i + k])), (mx[k] = Math.max(mx[k], p[i + k]));
+        scene = mod.createScene(canvas, { background: BACKGROUND, diag: Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1, bbox: { min: mn, max: mx }, projection: "ortho" });
+        scene.setGeometry({ positions: loaded.glb.positions, indices: loaded.glb.indices, src: null }, null);
+        scene.setColorMap?.("diverging");
+        sceneRef.current = scene;
+        setPhase("ready");
+      } catch (e) {
+        if (!cancelled) {
+          setErr(errorText(e));
+          setPhase("error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sceneRef.current = null;
+      scene?.dispose();
+      canvas?.remove();
+    };
+  }, [loaded]);
+
+  useEffect(() => {
+    const sc = sceneRef.current;
+    if (!sc || phase !== "ready" || !u || !c) return;
+    sc.setColors(showDesign ? c : new Float32Array(c.length), -V, V);
+    sc.setDeform(showDesign ? u : null, scale);
+  }, [phase, u, c, showDesign, scale, V]);
+
+  return (
+    <Card title={`안 ${did} 3D 보기`} right={<button type="button" className="btn small ghost" onClick={onClose}>닫기</button>}>
+      <div className="v3d">
+        <div className="v3d-tools">
+          <span className="seg" role="radiogroup" aria-label="형상">
+            <button type="button" role="radio" aria-checked={!showDesign} className={`btn small ghost toggle${!showDesign ? " on" : ""}`} onClick={() => setShowDesign(false)}>
+              공칭
+            </button>
+            <button type="button" role="radio" aria-checked={showDesign} className={`btn small ghost toggle${showDesign ? " on" : ""}`} onClick={() => setShowDesign(true)}>
+              안 {did}
+            </button>
+          </span>
+          <label className="field-inline" title="화면 표시용 확대(값·판정 영향 없음)">
+            <span>크게 보기</span>
+            <select aria-label="변형 배율" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
+              {[1, 2, 5].map((k) => (
+                <option key={k} value={k}>
+                  ×{k}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
+        </div>
+        <div className="v3d-stage">
+          <div ref={host} className="v3d-host" data-testid="bs-design-host" data-phase={phase} />
+          {(phase === "nowebgl" || phase === "error") && <div className="v3d-msg" role="status">{err ?? NO_3D}</div>}
+          {phase === "loading" && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
+        </div>
+        <HeightLegend vmax={V} />
+      </div>
+    </Card>
+  );
+}
+
+/** 높이 변화 범례 1개(파랑 = 깊어짐 · 빨강 = 얕아짐, 모든 칸 같은 ±V) */
+export function HeightLegend({ vmax, unit = "mm" }: { vmax: number; unit?: string }) {
+  const v = vmax.toFixed(vmax < 10 ? 1 : 0);
+  return (
+    <div className="bs-legend small" data-testid="height-legend">
+      <span>공칭 대비 높이 변화</span>
+      <span className="mono">−{v}</span>
+      <i style={{ background: DIVERGING_GRADIENT }} aria-hidden="true" />
+      <span className="mono">+{v} {unit}</span>
+      <span className="muted">빨강 = 얕아짐 · 파랑 = 깊어짐</span>
+    </div>
+  );
+}
+
+export const beadWarnText = (w: { code: string; message?: string | null }) => warnText(w);

@@ -131,3 +131,72 @@ def summarize(mesh: dict, qcfg: dict) -> dict:
     return {"n_elems": ne, "fail_elems": int(fail.sum()), "fail_ratio": fr, "warn_elems": int(warn.sum()),
             "warn_ratio": float(warn.sum()) / ne if ne else 0.0, "tria_pct": tp, "tria_level": level,
             "fail_by": fail_by, "warn_by": warn_by, "worst": worst, "max_fail_ratio": mx, "over_limit": bool(fr > mx)}
+
+
+# ---------------------------------------------------------------- v0.15.0 비드 직접 선택(esl_bead_select.md §6) — 추가만
+def _elem_normals(x, conn, elem_type) -> np.ndarray:
+    X = np.asarray(x, dtype=np.float64)
+    C = np.asarray(conn, dtype=np.int64)
+    q = np.asarray(elem_type).astype(int) == 4
+    a, b, c = X[C[:, 0]], X[C[:, 1]], X[C[:, 2]]
+    w = np.cross(b - a, c - a)
+    if q.any():
+        w[q] = np.cross(c[q] - a[q], X[C[q, 3]] - b[q])
+    return w / np.maximum(np.linalg.norm(w, axis=1, keepdims=True), 1e-300)
+
+
+def _fail_mask(m: dict, qcfg: dict) -> tuple[np.ndarray, dict]:
+    """기준별 Fail(summarize 와 같은 판정) — (Fail 마스크, {기준: 마스크})."""
+    q = m["is_quad"]
+    ne = int(q.size)
+    fail = np.zeros(ne, bool)
+    by = {}
+    for name, (key, side, app) in CRITERIA.items():
+        lim = qcfg.get(name)
+        if not isinstance(lim, dict):
+            continue
+        use = q if app == "quad" else (~q if app == "tria" else np.ones(ne, bool))
+        v = m[key]
+        f = use & ((v < float(lim["fail"])) if side == "lo" else (v > float(lim["fail"])))
+        by[name] = f
+        fail |= f
+    return fail, by
+
+
+def affected_quality(base_mesh: dict, x_design, elem_mask, qcfg: dict, *, flip_deg: float,
+                     max_fail_ratio: float | None = None) -> dict:
+    """영향 요소(elem_mask)만 공칭·안 지표 → 새 Fail(공칭 Fail 아님 ∧ 안 Fail)·뒤집힘(야코비안 ≤ 0(4각) 또는 법선 각 변화
+    > flip_deg). 반환 {n_affected, new_fail, new_fail_ratio, fail_by{기준: 새 Fail 수}, inverted, max_flip_deg,
+    worst{기준: 안 값}, over_limit, max_fail_ratio}. 기준값 = qcfg(bead_doe.compare.quality), tria_pct 는 위상 불변이라 제외.
+    max_fail_ratio 를 주지 않으면 qcfg.max_fail_ratio."""
+    em = np.asarray(elem_mask, bool)
+    idx = np.flatnonzero(em)
+    mx = float(qcfg.get("max_fail_ratio", 0.01) if max_fail_ratio is None else max_fail_ratio)
+    out = {"n_affected": int(idx.size), "new_fail": 0, "new_fail_ratio": 0.0, "fail_by": {}, "inverted": 0,
+           "max_flip_deg": 0.0, "worst": {}, "over_limit": False, "max_fail_ratio": mx}
+    if idx.size == 0:
+        return out
+    C = np.asarray(base_mesh["conn"])[idx]
+    et = np.asarray(base_mesh["elem_type"])[idx]
+    m0 = element_metrics(base_mesh["x0"], C, et)
+    m1 = element_metrics(x_design, C, et)
+    f0, _ = _fail_mask(m0, qcfg)
+    f1, by1 = _fail_mask(m1, qcfg)
+    new = f1 & ~f0
+    n0 = _elem_normals(base_mesh["x0"], C, et)
+    n1 = _elem_normals(x_design, C, et)
+    ang = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", n0, n1), -1.0, 1.0)))
+    q = m1["is_quad"]
+    inv = (q & (m1["jacobian"] <= 0.0)) | (ang > float(flip_deg))
+    for name, (key, side, app) in CRITERIA.items():
+        if name not in by1:
+            continue
+        use = q if app == "quad" else (~q if app == "tria" else np.ones(q.size, bool))
+        if use.any():
+            v = m1[key][use]
+            out["worst"][name] = float(v.min() if side == "lo" else v.max())
+        out["fail_by"][name] = int((by1[name] & ~f0).sum())
+    out.update(new_fail=int(new.sum()), new_fail_ratio=float(new.sum()) / idx.size, inverted=int(inv.sum()),
+               max_flip_deg=float(ang.max()))
+    out["over_limit"] = bool(out["new_fail_ratio"] > mx)
+    return out

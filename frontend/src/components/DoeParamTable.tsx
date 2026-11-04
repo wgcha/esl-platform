@@ -122,12 +122,50 @@ function beadText(b: DoeBead) {
   return `${SHAPE[b.shape] ?? b.shape} ${SENSE[b.sense] ?? b.sense} · 공칭 D ${n.depth} · W ${n.width}${n.length ? ` · L ${n.length}` : ""} mm`;
 }
 
-export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl }: {
+/** v0.15.0 select: 블렌딩 반경 편집(선택 상태 — 바꾸면 [선택 저장])·행 고르기(평면도 범위 표시) */
+export interface SelectTableOpts {
+  blendOf: (bead: string) => "auto" | number | null;
+  setBlend: (bead: string, v: "auto" | number) => void;
+  /** select.blend.k(서버) — 없으면 "R 작음" 배지 없음 */
+  kBlend: number | null;
+  blendMax: number;
+  active: string | null;
+  onActive: (name: string) => void;
+}
+
+/** "R 작음"(§5.6): R < k × 최대 한쪽 이동(|W − W_nom|/2) */
+export function blendSmall(R: number | null | undefined, k: number | null, nominal: number, lo: number, hi: number): boolean {
+  if (R == null || !k || !Number.isFinite(lo) || !Number.isFinite(hi)) return false;
+  return R < (k * Math.max(Math.abs(hi - nominal), Math.abs(lo - nominal))) / 2;
+}
+
+function BlendField({ bead, opts, readOnly, resolved }: { bead: string; opts: SelectTableOpts; readOnly: boolean; resolved: number | null | undefined }) {
+  const v = opts.blendOf(bead);
+  const auto = v === "auto" || v === null;
+  return (
+    <span className="bs-blend">
+      블렌딩
+      <select aria-label={`${bead.toUpperCase()} 블렌딩 반경`} value={auto ? "auto" : "num"} disabled={readOnly} onChange={(e) => opts.setBlend(bead, e.target.value === "auto" ? "auto" : Math.round(resolved ?? 20))}>
+        <option value="auto">auto{resolved != null && auto ? ` ${resolved} mm` : ""}</option>
+        <option value="num">숫자</option>
+      </select>
+      {!auto && (
+        <input type="number" className="doe-num short" aria-label={`${bead.toUpperCase()} 블렌딩 mm`} min={0} max={opts.blendMax} step={1} value={v as number} disabled={readOnly} onChange={(e) => {
+          const x = Number(e.target.value);
+          if (Number.isFinite(x) && x >= 0 && x <= opts.blendMax) opts.setBlend(bead, x);
+        }} />
+      )}
+    </span>
+  );
+}
+
+export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, select }: {
   data: DoeParamsOut;
   rows: ParamRow[];
   setRows: (r: ParamRow[]) => void;
   readOnly: boolean;
   beadPngUrl: (bead: string) => string;
+  select?: SelectTableOpts;
 }) {
   const byName = new Map(rows.map((r) => [r.name, r]));
   const upd = (name: string, patch: Partial<ParamRow>) => setRows(rows.map((r) => (r.name === name ? { ...r, ...patch } : r)));
@@ -149,6 +187,64 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl }: {
         <tbody>
           {data.beads.map((b) => {
             const ps = data.params.filter((p) => p.bead === b.id);
+            if (select && b.kind === "select") {
+              const wp = ps.find((p) => p.type === "W");
+              const wr = wp ? byName.get(wp.name) : undefined;
+              const own = select.blendOf(b.id);
+              const R = typeof own === "number" ? own : b.blend_mm;
+              const small = !!wp && !!wr?.on && blendSmall(R, select.kBlend, wp.nominal, Number(wr.lo), Number(wr.hi));
+              return [
+                <tr key={b.id} className="doe-bead-row">
+                  <td colSpan={7}>
+                    <span className="doe-bead-head">
+                      <b>{b.id.toUpperCase()}</b> <span>{b.name}</span>
+                      <span className="small mono">
+                        단 {b.n_tiers} · W {b.W_nom ?? "–"} ({b.W_min ?? "–"}–{b.W_max ?? "–"}) mm
+                      </span>
+                      <BlendField bead={b.id} opts={select} readOnly={readOnly} resolved={b.blend_mm} />
+                      {small && (
+                        <span className="badge warn" data-testid={`blend-small-${b.id}`} title="블렌딩 반경이 폭 이동량에 비해 작습니다 — 품질 실패가 늘 수 있습니다">
+                          R 작음
+                        </span>
+                      )}
+                      {(b.warnings ?? []).map((w, i) => (
+                        <span key={i} className="badge warn" title={warnText(w)}>
+                          ⚠ {warnText(w).split(" — ")[0].slice(0, 24)}
+                        </span>
+                      ))}
+                    </span>
+                  </td>
+                </tr>,
+                ...ps.map((p) => {
+                  const r = byName.get(p.name) ?? { name: p.name, on: false, lo: "", hi: "" };
+                  const why = rowProblem(p, r);
+                  const label = `${b.id.toUpperCase()} ${p.type === "D" ? `D${p.tier ?? ""}` : "W"}`;
+                  const on = select.active === p.name;
+                  return (
+                    <tr key={p.name} className={`${why ? "bad-row " : ""}${on ? "bs-row-on" : ""}`} data-testid={`param-${p.name}`} aria-selected={on} onClick={() => select.onActive(p.name)}>
+                      <td>
+                        <input type="checkbox" aria-label={`${label} 포함`} checked={r.on} disabled={readOnly} onChange={(e) => upd(p.name, { on: e.target.checked })} />
+                      </td>
+                      <td>
+                        {p.type === "D" ? `깊이 D${p.tier ?? ""}` : "폭 W"} <span className="mono small muted">{p.name}</span>
+                        {p.group_members.length > 0 && <span className="small muted" title={`같은 값: ${p.group_members.join(", ")}`}> · 묶음 {[p.name, ...p.group_members].map((n) => n.split("_")[1]).join("+")}</span>}
+                      </td>
+                      <td className="num">
+                        <input type="number" className="doe-num" aria-label={`${label} 하한`} step="any" value={r.lo} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { lo: e.target.value })} onFocus={() => select.onActive(p.name)} />
+                      </td>
+                      <td className="num">
+                        <input type="number" className="doe-num" aria-label={`${label} 상한`} step="any" value={r.hi} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { hi: e.target.value })} onFocus={() => select.onActive(p.name)} />
+                      </td>
+                      <td className="num mono">{p.nominal}</td>
+                      <td className="small mono" title="선택에서 추정한 기본 범위 — 미리보기로 확인">
+                        {p.feasible[0]}–{p.feasible[1]}
+                      </td>
+                      <td>{why ? <span className="small error-text">{why}</span> : outsideFeasible(p, r) ? <span className="badge warn" title="추정 범위 밖 — 미리보기에서 실패 안이 늘 수 있습니다(차단 아님)">⚠ 범위 밖</span> : null}</td>
+                    </tr>
+                  );
+                }),
+              ];
+            }
             const mirrored = !ps.length && data.params.some((p) => p.group_members.some((m) => m.endsWith(`_${b.k}`)));
             return [
               <tr key={b.id} className="doe-bead-row">

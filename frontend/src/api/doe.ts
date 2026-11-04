@@ -1,6 +1,7 @@
 // v0.9.0 비드 형상 DOE API(계약 esl_bead_doe.md §10). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
+  DoeBasisMeta, DoeDeriveOut, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
@@ -16,7 +17,7 @@ const DEFAULT_SETTINGS: Omit<DoeSettingsOut, "method_sources"> = {
   reason: null,
   paicad: { ready: false, version: null, pinned: null, warning: null },
   gmsh: { ready: false, version: null },
-  scenarios: { same: false, mesh: false, step: false, compare: false },
+  scenarios: { same: false, mesh: false, step: false, compare: false, select: false },
   max_entries: 50,
   max_designs: 200,
   doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -26,6 +27,8 @@ const DEFAULT_SETTINGS: Omit<DoeSettingsOut, "method_sources"> = {
   part_title: null,
   compare_reason: null,
   compare: { enabled: false, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
+  select_reason: null,
+  select: { enabled: false, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: null } },
 };
 
 export const doeSourcesOk = (m: DoeMethodSources | null | undefined): m is DoeMethodSources =>
@@ -71,6 +74,24 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     method_sources: normalizeDoeSources(r.method_sources),
     compare_reason: typeof r.compare_reason === "string" ? r.compare_reason : null,
     compare: normalizeCompareCfg(r.compare, r),
+    select: normalizeSelectCfg(r.select, r),
+    select_reason: typeof r.select_reason === "string" ? r.select_reason : null,
+  };
+}
+
+/** v0.15.0 select 설정 보정(빠진 칸 = 계약 기본값, enabled 가 없으면 scenarios.select) */
+function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSelectCfg {
+  const v = isObj(raw) ? raw : {};
+  const d = DEFAULT_SETTINGS.select!;
+  const sc = isObj(top.scenarios) ? top.scenarios : {};
+  const bl = isObj(v.blend) ? v.blend : {};
+  return {
+    enabled: typeof v.enabled === "boolean" ? v.enabled : sc.select === true,
+    reason: typeof v.reason === "string" ? v.reason : typeof top.select_reason === "string" ? top.select_reason : null,
+    feature_angle_deg: num(v.feature_angle_deg, d.feature_angle_deg),
+    max_beads: num(v.max_beads, d.max_beads),
+    max_tiers: num(v.max_tiers, d.max_tiers),
+    blend: { min_mm: num(bl.min_mm, d.blend.min_mm), max_mm: num(bl.max_mm, d.blend.max_mm), k: typeof bl.k === "number" ? bl.k : null },
   };
 }
 
@@ -148,6 +169,7 @@ export const DISABLED_REASON: Record<string, string> = {
   GMSH_UNAVAILABLE: "메시 생성기(gmsh)가 없어 'STEP만' 시나리오를 쓸 수 없습니다(관리자 문의)",
   COMPARE_DISABLED: "'형상 직접 비교'가 서버에서 꺼져 있습니다(관리자 문의)",
   COMPARE_GMSH_UNAVAILABLE: "메시 생성기(gmsh)가 없어 '형상 직접 비교'를 쓸 수 없습니다(관리자 문의)",
+  SELECT_DISABLED: "'비드 직접 선택'이 서버에서 꺼져 있습니다(관리자 문의)",
 };
 
 /** ④ 비활성 사유 코드(서버 compare_reason → compare.reason → 옛 서버면 reason 이 DOE_DISABLED 일 때만) */
@@ -158,12 +180,15 @@ export const compareReason = (st: DoeSettingsOut): string | null =>
 export function doeBlockedReason(st: DoeSettingsOut, scenario?: DoeScenario | null): string | null {
   if (st.enabled) return null;
   if (scenario === "compare") return compareReason(st) === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : null;
+  // v0.15.0 select 는 paicad 무관(BS-D-2) — DOE 꺼짐만 막는다
+  if (scenario === "select") return st.reason === "DOE_DISABLED" || (st.select_reason ?? st.select?.reason) === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : null;
   return (st.reason && DISABLED_REASON[st.reason]) ?? DISABLED_REASON.PAICAD_NOT_CONFIGURED;
 }
 
 /** 시나리오별 비활성 사유(설정 scenarios·gmsh) */
 export function scenarioBlocked(st: DoeSettingsOut, s: DoeScenario): string | null {
   if (st.scenarios[s]) return null;
+  if (s === "select") return (st.select_reason ?? st.select?.reason) === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : DISABLED_REASON.SELECT_DISABLED;
   if (s === "step" && !st.gmsh.ready) return DISABLED_REASON.GMSH_UNAVAILABLE;
   if (s === "compare") {
     const r = compareReason(st);
@@ -202,12 +227,28 @@ export const doe = {
   reportUrl: (id: string) => `${API_PREFIX}/doe/studies/${id}/report`,
   /** 3D 비교 manifest(기존 view3d 파일 API 규칙 — 파일 URL 은 manifest 의 geometry_url·values_url) */
   view3dPath: (id: string, did: string, file = "manifest.json") => `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/${file}`,
+  // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §9)
+  /** 선택 보기 파일(part.glb · select.bin · select_manifest.json) */
+  selectViewUrl: (id: string, file: "part.glb" | "select.bin" | "select_manifest.json") => `${API_PREFIX}/doe/studies/${id}/select/view/${file}`,
+  selectManifest: (id: string) => request<DoeSelectViewManifest>("GET", `/doe/studies/${id}/select/view/select_manifest.json`),
+  /** 저장 없이 서버 재계산(사면·경계·공칭·경고). bead 주면 그 비드만 */
+  derive: (id: string, selection: DoeSelectionIn, bead?: string | null) =>
+    request<DoeDeriveOut>("POST", `/doe/studies/${id}/select/derive`, { body: (bead ? { selection, bead } : { selection }) satisfies DoeSelectDeriveIn }),
+  selection: (id: string) => request<DoeSelectionOut | null>("GET", `/doe/studies/${id}/selection`),
+  saveSelection: (id: string, version: number, selection: DoeSelectionIn) => request<DoeStudyOut>("PUT", `/doe/studies/${id}/selection`, { body: { version, selection } satisfies DoeSelectionPutIn }),
+  /** 기저(rev = 저장 선택 rev — 미리보기한 선택과 다르면 404) */
+  basisUrl: (id: string, rev: number) => `${API_PREFIX}/doe/studies/${id}/select/basis?rev=${rev}`,
+  basisMeta: (id: string, rev: number) => request<DoeBasisMeta>("GET", `/doe/studies/${id}/select/basis`, { query: { meta: "1", rev: String(rev) } }),
 };
 
 // ---------------------------------------------------------------- 표기
 export const SCENARIOS: DoeScenario[] = ["same", "mesh", "step", "compare"];
-export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)" };
-export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④" };
+export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)", select: "같은 모델" };
+export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④", select: "①" };
+/** ① 하위 선택 "비드 정의"(BS-D-1) */
+export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선택(메시)" } as const;
+/** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
+export const radioScenario = (s: DoeScenario): DoeScenario => (s === "select" ? "same" : s);
 export const METHOD_NAME: Record<DoeMethod, string> = { lhs: "LHS", halton: "Halton", fullfact: "풀 팩토리얼" };
 export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V" };
 export const PHASE_NAME: Record<DoePhase, string> = {
@@ -233,12 +274,43 @@ export const STATUS_NAME: Record<DoeDesignStatus, string> = {
   CANCELED: "취소",
 };
 export const isSkipped = (s: DoeDesignStatus) => s.startsWith("SKIPPED_");
+/** v0.15.0 select 셀 상태 이름: FAILED_MESH = 품질 실패(§6) */
+export const cellStatusName = (s: DoeDesignStatus, select: boolean) => (select && s === "FAILED_MESH" ? "품질 실패" : STATUS_NAME[s]);
 export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s === "CANCELED";
 
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
-export const warnText = (w: { code: string; message?: string | null }) => w.message || CODE_TEXT[w.code] || w.code;
+export const warnText = (w: { code: string; message?: string | null }) => w.message || CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+
+// ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
+export const SELECT_CODE_TEXT: Record<string, string> = {
+  SELECTION_MISSING: "비드 선택을 먼저 저장하세요",
+  FIXED_INFO_MISSING: "체결 정보 없음 — 체결부를 '고정'으로 칠하세요",
+  SELECT_SLOPE_LEAK: "사면이 너무 멀리 퍼졌습니다 — 바닥을 더 고르거나 경계 −1줄",
+  SELECT_TIER_MISSING: "고르지 않은 단이 있습니다 — [+ 단]으로 그 바닥을 고르세요",
+  SELECT_OPEN_BOUNDARY: "경계가 판 가장자리에서 열려 있어 폭 W 변수를 쓸 수 없습니다",
+  SELECT_DISCONNECTED: "비드 요소가 여러 덩어리로 나뉘어 있습니다",
+  SELECT_NONPLANAR_BASE: "상판이 평면이 아니라 사면 보간을 거리 비율로 합니다",
+  SELECT_BLEND_OVERLAP: "다른 비드의 블렌딩 범위와 겹칩니다(변위 합산)",
+  SELECT_BLEND_CLIPPED: "체결부 앞에서 블렌딩 반경을 줄였습니다",
+  SELECT_FIXED_IN_BEAD: "비드 안에 고정 노드가 있어 그 비드 변수를 기본 제외했습니다",
+  SELECT_FIXED_IN_BLEND: "블렌딩 범위 안에 고정 노드가 있어 폭을 바꾼 안은 제외됩니다",
+  SELECTION_DROPPED: "기준 메시가 바뀌어 저장된 비드 선택을 쓸 수 없습니다 — 다시 고르고 '선택 저장'",
+  SELECT_OVERLAP: "한 요소가 두 비드·층에 들어 있습니다",
+  SELECT_ELEM_UNKNOWN: "기준 메시에 없는 요소가 있습니다",
+  SELECT_EMPTY_TIER: "바닥 요소가 없는 단이 있습니다",
+  SELECT_TIERS_GAP: "단 번호가 건너뜁니다",
+  SELECT_LINK_INVALID: "단 묶음이 올바르지 않습니다",
+  SELECT_BEAD_ID_INVALID: "비드 id 가 올바르지 않습니다",
+  SELECT_NAME_INVALID: "비드 이름은 1~32자, 제어문자 없이 쓰세요",
+  SELECT_TOO_LARGE: "선택이 너무 큽니다 — 비드·층을 줄이세요",
+  SELECT_DERIVE_TIMEOUT: "사면·경계 계산 시간이 초과됐습니다 — 비드 하나씩 계산하세요",
+  PREVIEW_NOT_READY: "미리보기를 먼저 실행하세요",
+  SELECT_FIXED_VIOLATION: "고정 노드 침범",
+  SELECT_QUALITY_FAIL: "모핑 후 메시 품질 Fail 비율 초과",
+  SELECT_MORPH_INVERTED: "모핑 후 요소 뒤집힘",
+};
 
 // ---------------------------------------------------------------- v0.14.0 ④ 형상 직접 비교(esl_step_compare.md)
 /** 민감도 숨김 사유(결과 sensitivity_reason) */

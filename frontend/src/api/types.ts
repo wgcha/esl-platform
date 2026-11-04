@@ -2266,7 +2266,8 @@ export interface OptFileOut {
 // ---------------------------------------------------------------- v0.9.0 비드 형상 DOE (esl_bead_doe.md §10.2)
 // 인터페이스 이름 = 계약 스키마 이름(check:api 대조 — 백엔드 openapi 가 나오면 맞춤). 계약에 없는 보강 칸은 "(보강)" 표시.
 /** v0.14.0 compare = ④ 형상 직접 비교(esl_step_compare.md) */
-export type DoeScenario = "same" | "mesh" | "step" | "compare";
+/** v0.15.0 select = ① 같은 모델 + 비드 직접 선택(esl_bead_select.md BS-D-1) */
+export type DoeScenario = "same" | "mesh" | "step" | "compare" | "select";
 export type DoeMethod = "lhs" | "halton" | "fullfact";
 export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
 export type DoeParamType = "D" | "W" | "U" | "V";
@@ -2310,7 +2311,8 @@ export interface DoeSettingsOut {
   reason: string | null;
   paicad: { ready: boolean; version: string | null; pinned: string | null; warning: string | null };
   gmsh: { ready: boolean; version: string | null };
-  scenarios: Record<DoeScenario, boolean>;
+  /** select 는 v0.15.0 이후 서버만(없으면 꺼짐) */
+  scenarios: Record<Exclude<DoeScenario, "select">, boolean> & { select?: boolean };
   max_entries: number;
   max_designs: number;
   doe: {
@@ -2333,6 +2335,21 @@ export interface DoeSettingsOut {
   compare_reason?: string | null;
   /** v0.14.0 ④ 형상 직접 비교 설정(bead_doe.compare.*) */
   compare?: DoeCompareCfg | null;
+  /** v0.15.0 비드 직접 선택 설정(esl_bead_select.md §9 — bead_doe.select.*) */
+  select?: DoeSelectCfg | null;
+  /** v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED, paicad 무관). null = 사용 가능 */
+  select_reason?: string | null;
+}
+/** v0.15.0 GET /doe/settings select 칸 */
+export interface DoeSelectCfg {
+  enabled: boolean;
+  /** DOE_DISABLED · SELECT_DISABLED */
+  reason: string | null;
+  feature_angle_deg: number;
+  max_beads: number;
+  max_tiers: number;
+  /** k = select.blend.k(표 "R 작음" 배지) — 서버가 안 주면 배지 없음 */
+  blend: { min_mm: number; max_mm: number; k?: number | null };
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2457,8 +2474,13 @@ export interface DoePreviewOut {
   rev: number;
   matrix_sha256: string;
   ok: number;
-  skipped: { collision: number; fixed: number; geom: number };
+  /** v0.15.0 mesh = FAILED_MESH(품질 실패) 수 */
+  skipped: { collision: number; fixed: number; geom: number; mesh?: number };
   cells?: DoePreviewCell[];
+  /** v0.15.0 select: 미리보기를 만든 선택 sha(BS-D-3) */
+  selection_sha256?: string | null;
+  /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max) */
+  color?: { v_max: number; unit: string } | null;
 }
 export interface DoeStudyOut {
   id: string;
@@ -2495,8 +2517,14 @@ export interface DoeStudyOut {
     mesh?: { size_mm: number | null; gmsh_version: string | null } | null;
     /** ④ 형상별 메시·상태·품질 */
     shapes?: DoePrepShape[];
+    /** v0.15.0 select 준비 요약(§8.1 BD_PREP_REGISTER) */
+    n_nodes?: number;
+    n_elems?: number;
+    fixed?: { source: DoeFixedSource; n: number } | null;
   } | null;
   doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
+  /** v0.15.0 select: 저장된 선택 요약(PUT …/selection 응답) — 없으면 미저장 */
+  selection?: DoeSelectionSummary | null;
   job: JobOut | null;
   result_ready: boolean;
   created_by_name: string;
@@ -2511,11 +2539,23 @@ export interface DoeBead {
   nominal: { depth: number; width: number; length?: number | null };
   fixed_overlap: boolean;
   png: string | null;
+  /** v0.15.0 select 비드(§9 params): kind = "select" */
+  kind?: "select" | null;
+  name?: string | null;
+  n_tiers?: number | null;
+  W_nom?: number | null;
+  W_min?: number | null;
+  W_max?: number | null;
+  /** 해석된 블렌딩 반경(mm) */
+  blend_mm?: number | null;
+  warnings?: DoeWarning[] | null;
 }
 export interface DoeParam {
   name: string;
   type: DoeParamType;
   bead: string;
+  /** v0.15.0 select D 변수의 단 번호 */
+  tier?: number | null;
   nominal: number;
   feasible: XY;
   feasible_source: "estimate" | "sweep";
@@ -2543,8 +2583,13 @@ export interface DoePlanOut {
   outline: XY[];
   holes: XY[][];
   elems: PlanViewElems;
-  beads: { id: string; ring: XY[] }[];
-  fixed: { label: string; kind: string; a: number; b: number }[];
+  /** v0.15.0 select: ring 대신 ring_ab·e_ab·label_ab·tiers(§7.1) */
+  beads: { id: string; ring: XY[]; name?: string; ring_ab?: XY[][]; e_ab?: XY[][]; label_ab?: XY; tiers?: { k: number; ring_ab: XY[][] }[]; section?: DoeSection | null }[];
+  /** v0.15.0 select: 노드 점(표시 토글, 기본 숨김) */
+  nodes_ab?: XY[] | null;
+
+  /** select 는 {a, b} 만(§7.1) */
+  fixed: { label?: string; kind?: string; a: number; b: number }[];
   a_points: { label: string; a: number; b: number }[];
   load_points: { entry_id: string; share: number; a: number; b: number }[];
   links: DoePlanLink[];
@@ -2877,4 +2922,174 @@ export interface VerifyResolveIn {
   version: number;
   action: "attach" | "link" | "abandon";
   scx_job_id?: string | null;
+}
+
+// ---------------------------------------------------------------- v0.15.0 비드 직접 선택(esl_bead_select.md §4·§9)
+/** 요소 ID 정렬·겹침 없음·닫힌 구간 [[first, last], …] */
+export type DoeRanges = [number, number][];
+/** q = 4각(/SHELL), t = 3각(/SH3N) — openapi SelectElemSet */
+export interface SelectElemSet {
+  q: DoeRanges;
+  t: DoeRanges;
+}
+export type DoeElemSet = SelectElemSet;
+/** openapi SelectTierIn */
+export interface SelectTierIn {
+  k: number;
+  floor: SelectElemSet;
+}
+/** openapi SelectSlopeIn */
+export interface SelectSlopeIn {
+  mode: "auto" | "edited";
+  add: SelectElemSet;
+  remove: SelectElemSet;
+}
+/** openapi SelectBeadIn(요청 — 서버가 기본값을 채움). 화면이 보내는 값은 DoeBeadSel(더 엄격) */
+export interface SelectBeadIn {
+  id: string;
+  name?: string | null;
+  tiers: SelectTierIn[];
+  slope?: SelectSlopeIn;
+  blend_mm?: "auto" | number;
+  floor_follow?: 0 | 1 | null;
+  links?: number[][];
+}
+/** openapi SelectionIn(요청) */
+export interface SelectionIn {
+  schema_version?: 1;
+  feature_angle_deg?: number | null;
+  beads: SelectBeadIn[];
+  fixed_user?: SelectElemSet;
+  exclude?: SelectElemSet;
+}
+/** POST …/select/derive 요청 */
+export interface DoeSelectDeriveIn {
+  selection: SelectionIn;
+  bead?: string | null;
+}
+/** PUT …/selection 요청 */
+export interface DoeSelectionPutIn {
+  version: number;
+  selection: SelectionIn;
+}
+export interface DoeBeadSel {
+  /** ^b[1-9][0-9]?$ */
+  id: string;
+  name: string;
+  tiers: { k: number; floor: DoeElemSet }[];
+  slope: { mode: "auto" | "edited"; add: DoeElemSet; remove: DoeElemSet };
+  blend_mm: "auto" | number;
+  floor_follow: 0 | 1;
+  links: number[][];
+}
+/** SelectionIn(schema_version 1) — API·DB 공통 */
+export interface DoeSelectionIn {
+  schema_version: 1;
+  feature_angle_deg: number;
+  beads: DoeBeadSel[];
+  fixed_user: DoeElemSet;
+  exclude: DoeElemSet;
+}
+export interface DoeSection {
+  s: number[];
+  z: number[];
+  dz_dD: Record<string, number[]>;
+  ds_dW: number[];
+  dz_dW: number[];
+}
+export interface DoeBeadDerived {
+  id: string;
+  name: string;
+  n_elems: number;
+  n_nodes: number;
+  tiers: { k: number; n_elems: number; D_nom: number; normal: [number, number, number]; planarity_mm: number }[];
+  slope: { n_elems: number; elems: DoeElemSet; suggested_n: number; edited: boolean };
+  boundary: { loops: { closed: boolean; n_nodes: number; length_mm: number }[]; n_nodes: number };
+  W_nom: number | null;
+  W_min: number | null;
+  W_max: number | null;
+  sense: "concave" | "convex";
+  blend_mm: number;
+  blend_clipped: boolean;
+  fixed_in_bead_n: number;
+  fixed_in_blend_n: number;
+  plan?: { ring_ab: XY[][]; e_ab: XY[][] } | null;
+  section?: DoeSection | null;
+  range_default: { D: Record<string, XY>; W: XY | null };
+  warnings: DoeWarning[];
+}
+export type DoeFixedSource = "scan" | "user" | "scan+user" | "none";
+/** openapi SelectionDerived(derive 응답·GET selection.derived — 저장 요약은 section·plan·slope_suggested 없음) */
+export interface SelectionDerived {
+  rev?: number | null;
+  sha256: string;
+  mesh_sha256?: string | null;
+  beads: DoeBeadDerived[];
+  fixed: { scan_n: number; user_n: number; source: DoeFixedSource };
+  warnings?: DoeWarning[];
+  slope_suggested?: Record<string, DoeElemSet> | null;
+}
+export type DoeSelectionDerived = SelectionDerived;
+/** POST …/select/derive 응답 */
+export type DoeDeriveOut = SelectionDerived;
+/** GET …/selection 응답(없으면 null) */
+export interface DoeSelectionOut {
+  rev: number;
+  sha256: string;
+  input: DoeSelectionIn;
+  derived: DoeSelectionDerived;
+  updated_by_name: string;
+  updated_at: string;
+}
+/** DoeStudyOut.selection 요약 */
+export interface DoeSelectionSummary {
+  rev: number;
+  sha256: string;
+  mesh_sha256?: string | null;
+  n_beads?: number;
+  n_warnings?: number;
+  updated_by_name?: string;
+  updated_at?: string;
+}
+/** select/view/select_manifest.json(schema esl/bead_select_view/1) */
+export interface DoeSelectViewManifest {
+  schema: string;
+  n_nodes: number;
+  n_elems: number;
+  n_tris: number;
+  mesh_sha256: string;
+  h_med: number;
+  plate_normal: [number, number, number];
+  fixed: { scan_n: number; source?: "scan" | "none" };
+  glb?: { name: string; bytes: number };
+  /** select.bin 섹션 배치(코어 bead_select.view_files — 섹션마다 4바이트 경계 채움) */
+  bin: { name: string; bytes: number; layout: DoeSelectBinSection[] };
+}
+/** select.bin 섹션 1개: offset = 바이트, count = 원소 수, dtype = numpy dtype.str('<u4' | 'u1') */
+export interface DoeSelectBinSection {
+  name: string;
+  dtype: string;
+  offset: number;
+  count: number;
+}
+/** basis.json 변수 1개(순서 = basis.bin). R_mm = 폭 변수 블렌딩 반경(깊이 변수 null) */
+export interface DoeBasisVar {
+  name: string;
+  type: "D" | "W";
+  bead: string;
+  nominal: number;
+  n: number;
+  R_mm: number | null;
+}
+/** select/basis?meta=1 → basis.json(schema esl/bead_select_basis/1, 변수 순서 = basis.bin). 비드 방향 n̂_b 는 없음 — basis.bin 이 3D 벡터 전체를 담는다 */
+export interface DoeBasisMeta {
+  schema?: string;
+  /** basis.bin sha256(헤더 X-ESL-Basis-Sha 와 같음) */
+  sha256: string;
+  selection_sha256: string;
+  basis_sha256?: string | null;
+  mesh_sha256?: string;
+  cfg_sha256?: string;
+  n_nodes?: number;
+  vars: DoeBasisVar[];
 }

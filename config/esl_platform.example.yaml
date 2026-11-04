@@ -174,6 +174,25 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     align_deg: 5.0                    # 법선 각 허용(°)
     mesh: {size_mm: 3.0, curvature_n: 0, min_size_factor: 0.8, extend_from_boundary: 0, occ_fix_small: 1,   # bead_doe.mesh 를 키별 덮어씀(모든 STEP 같은 설정)
            fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20}}   # v0.14.1 메시 실패 면만 2D 알고리즘 6→5→1 재시도, 그다음 그 면 제약 해제
+  select:                             # v0.15.0 비드 직접 선택·규칙 모핑(계약 esl_bead_select.md §10) — paicad 불필요(있으면 fixed-scan 만)
+    enabled: true
+    feature_angle_deg: 15.0           # 브라우저 확장·사면 BFS 평행 판정 기본(°, 1..45)
+    max_beads: 20
+    max_tiers: 6
+    max_selection_kb: 4096            # 정규화 선택 JSON 상한(넘으면 413 SELECT_TOO_LARGE)
+    normal_radius_mm: 10.0
+    plane_rms_mm: 2.0
+    plate_tol_mm: 1.0
+    level_eps_mm: 0.5
+    slope_max_mm: 80.0
+    fixed_tol_mm: 0.01                # 고정 노드 변위 허용 — 넘으면 안 SKIPPED_FIXED
+    width: {floor_follow: 1, knn: 8}  # Q1 A: 폭 변경 시 바닥도 따라감
+    blend: {min_mm: 15.0, max_mm: 200.0, k: 8.0, fixed_margin_mm: 3.0}
+    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0}
+    quality: {max_fail_ratio: 0.01, flip_deg: 60.0}   # 기준값 = bead_doe.compare.quality(한 곳)
+    thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
+    derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
+    derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)
 hpc:                                  # v0.11.0 대시보드 SCX 릴레이(계약 esl_scx_relay.md §6). 키 이름 = physicsai hpc.scx.*(블록 복사) + client_name
   scx:                                # 섹션이 없으면 SCX 기능 전부 비활성. 값이 틀려도 기동은 하고 SCX 기능만 비활성(환경 점검 hpc.scx)
     relay_url: ""                     # 필수. http://127.0.0.1:<대시보드 백엔드 포트>(loopback·포트만 — 화면·프록시 포트 아님)

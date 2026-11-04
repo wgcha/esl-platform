@@ -17,7 +17,8 @@ from __future__ import annotations
 from esl.doe import load_messages
 from esl.report import html as H
 
-SCN_KO = {"same": "① 같은 모델", "mesh": "② 다른 모델(메시 있음)", "step": "③ 다른 모델(STEP 만)", "compare": "④ 형상 직접 비교"}
+SCN_KO = {"same": "① 같은 모델", "mesh": "② 다른 모델(메시 있음)", "step": "③ 다른 모델(STEP 만)", "compare": "④ 형상 직접 비교",
+          "select": "① 같은 모델 · 비드 직접 선택"}
 METHOD_KO = {"lhs": "LHS", "halton": "Halton", "fullfact": "풀 팩토리얼"}
 STATE_KO = {"READY": "실행 대상", "OK": "성공", "SKIPPED_COLLISION": "충돌 스킵", "SKIPPED_FIXED": "고정 침범 스킵",
             "SKIPPED_GEOM": "형상 실패 스킵", "FAILED_MORPH": "모핑 실패", "FAILED_MESH": "메시 실패",
@@ -253,6 +254,37 @@ def render_compare(ctx: dict) -> str:
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 
+def selection_html(sel: dict, ms: dict | None = None) -> str:
+    """v0.15.0 select: 비드 표(단 깊이·폭·사면·블렌딩·경고) + 모핑 규칙 + 미리보기 품질(새 Fail/영향 요소)."""
+    rows = []
+    for b in sel.get("beads") or []:
+        tiers = " · ".join(f"D{t['k']} {_f(t.get('D_nom'))}" for t in b.get("tiers") or [])
+        w = "—" if b.get("W_nom") is None else f"{_f(b['W_nom'])} ({_f(b.get('W_min'))}–{_f(b.get('W_max'))})"
+        rows.append([b.get("id"), b.get("name"), tiers, w, (b.get("slope") or {}).get("n_elems"),
+                     _f(b.get("blend_mm")) + (" (잘림)" if b.get("blend_clipped") else ""),
+                     ", ".join(sorted({x.get("code", "") for x in b.get("warnings") or []})) or "—"])
+    inner = H.table(["비드", "이름", "단 깊이 mm", "폭 mm (최소–최대)", "사면 요소", "블렌딩 R mm", "경고"], rows)
+    fx = sel.get("fixed") or {}
+    inner += (f"<p class='small'>선택 sha256 <code>{H.esc(str(sel.get('sha256'))[:16])}…</code> · 고정 노드 "
+              f"{H.esc(fx.get('source'))} (스캔 {H.esc(fx.get('scan_n', 0))} · 사용자 {H.esc(fx.get('user_n', 0))})</p>")
+    q = sel.get("quality") or []
+    if q:
+        inner += "<h3>미리보기 품질(새 Fail / 영향 요소)</h3>" + H.table(
+            ["안", "상태", "새 Fail", "영향 요소", "고정 최대 변위 mm"],
+            [[x["id"], STATE_KO.get(x.get("state"), x.get("state")), x.get("new_fail"), x.get("n_affected"),
+              _f(x.get("fixed_max_mm"))] for x in q], num=(2, 3, 4))
+    sm = (ms or {}).get("select") or {}
+    if sm:
+        inner += "<h3>모핑 규칙</h3><ul>" + "".join(f"<li><b>{H.esc(k)}</b>: {H.esc(v)}</li>"
+                                                for k, v in (sm.get("methods") or {}).items()) + "</ul>"
+        inner += "<ul class='small'>" + "".join(f"<li>{H.esc(x)}</li>" for x in sm.get("limits_ko") or []) + "</ul>"
+        src = [f"<li>{H.esc(x['title'])}" + (f" — {H.esc(x['authors'])}" if x.get("authors") else "")
+               + (f" <span class='muted'>({H.esc(x['note'])})</span>" if x.get("note") else "") + "</li>"
+               for x in sm.get("sources") or []]
+        inner += "<ol class='small'>" + "".join(src) + "</ol>"
+    return inner
+
+
 def render(ctx: dict) -> str:
     st = ctx.get("study") or {}
     if st.get("scenario") == "compare":
@@ -275,8 +307,11 @@ def render(ctx: dict) -> str:
                           ("개선율", H.esc(_pct(b["improvement"]))), ("성공 안", H.esc(res.get("n_ok"))),
                           ("경계 경고", H.esc(len(bd.get("warnings") or [])))]))
     # 1. 입력
+    step_row = ("STEP", f"{(ip.get('step') or {}).get('file_name')} (sha256 {str((ip.get('step') or {}).get('sha256'))[:12]}…)")
+    if st.get("scenario") == "select":
+        step_row = ("STEP", "없음 — 낙하 메시에서 비드 직접 선택(산출물에 CAD 없음)")
     pairs = [("시나리오", SCN_KO.get(st.get("scenario"), str(st.get("scenario")))),
-             ("STEP", f"{(ip.get('step') or {}).get('file_name')} (sha256 {str((ip.get('step') or {}).get('sha256'))[:12]}…)"),
+             step_row,
              ("파트 제목", ip.get("part_title")), ("인치", ip.get("inch")),
              ("paicad 버전", ver.get("paicad")), ("gmsh 버전", ver.get("gmsh"))]
     if ip.get("mesh"):
@@ -293,6 +328,8 @@ def render(ctx: dict) -> str:
                                               [[e.get("entry_id"), e.get("label") or "", e.get("case") or ""]
                                                for e in ents])
     S.append(H.section("inputs", "1. 입력", inner))
+    if ctx.get("selection"):
+        S.append(H.section("selection", "1-1. 비드 선택·모핑 규칙", selection_html(ctx["selection"], ms)))
     # 2. 변수·DOE
     rows = []
     inc = {p["name"]: p for p in spec.get("params") or []}

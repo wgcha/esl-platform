@@ -22,7 +22,7 @@ SCX_TABLES = {"verify_drops", "scx_submissions"}
 SCX_INDEXES = {"ix_verify_drops_doe", "ix_verify_drops_batch", "ux_verify_drops_active", "ix_jobs_upload", "ux_jobs_upload_active",
                "ix_jobs_verify_drop", "ux_jobs_verify_drop_active"}
 RUN_ALL_INDEXES = {"ux_run_alls_case_running", "ix_run_alls_case_created", "ix_jobs_run_all"}
-HEAD = "0014"
+HEAD = "0015"
 
 
 def _cfg(db_url, script_location: str | None = None):
@@ -60,8 +60,20 @@ def _load(name: str):
     return mod
 
 
+def _to_0014(engine):
+    """0015 이전(0014) 스키마로: bead_does.selection·ck_bead_does_selection 제거, CHECK ('same','mesh','step','compare')."""
+    m14 = _load("0014_step_compare.py")
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE bead_does DROP CONSTRAINT IF EXISTS ck_bead_does_selection"))
+        c.execute(text("ALTER TABLE bead_does DROP COLUMN IF EXISTS selection"))
+        c.execute(text("ALTER TABLE bead_does DROP CONSTRAINT IF EXISTS ck_bead_does_scenario"))
+        c.execute(text(f"ALTER TABLE bead_does ADD CONSTRAINT ck_bead_does_scenario CHECK ({m14.CK_BEAD_DOES_SCENARIO_0014})"))
+        c.execute(text("UPDATE alembic_version SET version_num = '0014'"))
+
+
 def _to_0013(engine):
-    """0014 이전(0013) 스키마로: bead_does.scenario VARCHAR(4)·CHECK ('same','mesh','step')."""
+    """0014 이전(0013) 스키마로: (0015 되돌린 뒤) bead_does.scenario VARCHAR(4)·CHECK ('same','mesh','step')."""
+    _to_0014(engine)
     with engine.begin() as c:
         c.execute(text("ALTER TABLE bead_does DROP CONSTRAINT IF EXISTS ck_bead_does_scenario"))
         c.execute(text("ALTER TABLE bead_does ALTER COLUMN scenario TYPE VARCHAR(4)"))
@@ -434,7 +446,7 @@ def test_upgrade_from_0013_db_step_compare(engine, db_url):
     assert col_len() == 4 and _state(engine)[4] == "0013"
     command.upgrade(_cfg(db_url), "head")
     after = _state(engine)
-    assert after[4] == HEAD == "0014" and after[2]["ck_bead_does_scenario"] == full[2]["ck_bead_does_scenario"]
+    assert after[4] == HEAD == "0015" and after[2]["ck_bead_does_scenario"] == full[2]["ck_bead_does_scenario"]
     assert col_len() == 8 == tables.bead_does.c.scenario.type.length and after[0] == full[0] and after[1] == full[1]
     assert "compare" in tables.DOE_SCENARIOS
     with engine.begin() as c:
@@ -447,10 +459,69 @@ def test_upgrade_from_0013_db_step_compare(engine, db_url):
     with pytest.raises(DBAPIError):
         put("d3", "compar2")
     sd = ScriptDirectory(str(REPO / "migrations"))
-    assert sd.get_heads() == ["0014"]
+    assert sd.get_heads() == [HEAD]
     with pytest.raises(Exception):
         command.downgrade(_cfg(db_url), "0013")                            # downgrade 미지원(데이터 보호)
-    assert _state(engine)[4] == "0014"
+    assert _state(engine)[4] == HEAD
+
+
+def test_upgrade_from_0014_db_bead_select(engine, db_url):
+    """V-BS-16(0015, esl_bead_select.md §15): 0014 DB(selection 열 없음·CHECK 4종, 기존 연구 행) → 0015 — selection JSONB NULL·
+    CHECK 5종·ck_bead_does_selection(tables.py create_all 과 같음), 기존 행 보존(selection NULL), 'select' 행·selection CHECK,
+    멱등(열·CHECK 가 이미 있어도), 단일 head, downgrade 거부, 고정 상수."""
+    from alembic import command
+    from alembic.script import ScriptDirectory
+    from esl_platform.core.db import tables
+
+    ins = ("INSERT INTO bead_does (id, project_id, scenario, title, entry_ids, inputs, dir_rel, created_by, created_by_name"
+           "{extra_cols}) VALUES (:i, 'p-1', :s, 't', CAST(:e AS jsonb), CAST(:inp AS jsonb), :d, 'u', 'u'{extra_vals})")
+
+    def put(i, s, selection=None):
+        extra = ("", "") if selection is None else (", selection", ", CAST(:sel AS jsonb)")
+        with engine.begin() as c:
+            c.execute(text(ins.format(extra_cols=extra[0], extra_vals=extra[1])),
+                      {"i": i, "s": s, "e": '["e1"]', "inp": '{"k": 1}', "d": f"_doe/{i}", "sel": selection})
+
+    full = _state(engine)
+    assert ("bead_does", "selection") in full[3] and "ck_bead_does_selection" in full[2]
+    _seed_old_rows(engine)
+    _to_0014(engine)
+    put("d1", "compare")
+    put("d2", "step")
+    with pytest.raises(DBAPIError):                                        # 0014: 'select' 거부
+        put("d0", "select")
+    st14 = _state(engine)
+    assert ("bead_does", "selection") not in st14[3] and "ck_bead_does_selection" not in st14[2] and st14[4] == "0014"
+    command.upgrade(_cfg(db_url), "head")
+    after = _state(engine)
+    assert after[4] == HEAD and after[0] == full[0] and after[1] == full[1] and after[3] == full[3]
+    for k in ("ck_bead_does_scenario", "ck_bead_does_selection"):
+        assert after[2][k] == full[2][k], k
+    assert "select" in tables.DOE_SCENARIOS and "selection" in tables.bead_does.c
+    with engine.connect() as c:                                            # 기존 행 보존(selection NULL, 다른 열 그대로)
+        rows = {r[0]: (r[1], r[2], r[3]) for r in c.execute(text("SELECT id, scenario, selection, inputs FROM bead_does"))}
+    assert rows == {"d1": ("compare", None, {"k": 1}), "d2": ("step", None, {"k": 1})}
+    with engine.begin() as c:                                              # 멱등: 0014 로 표시만 되돌려 다시
+        c.execute(text("UPDATE alembic_version SET version_num = '0014'"))
+    command.upgrade(_cfg(db_url), "head")
+    command.upgrade(_cfg(db_url), "head")
+    assert _state(engine)[1:] == after[1:]
+    put("d3", "select")                                                    # select 행(선택 없음·있음)
+    put("d4", "select", '{"rev": 1, "sha256": "x"}')
+    with pytest.raises(DBAPIError):                                        # 다른 시나리오에 selection 금지
+        put("d5", "step", '{"rev": 1}')
+    with pytest.raises(DBAPIError):
+        put("d6", "selectx")
+    sd = ScriptDirectory(str(REPO / "migrations"))
+    assert sd.get_heads() == [HEAD] and sd.get_revision("0015").down_revision == "0014"
+    with pytest.raises(Exception):
+        command.downgrade(_cfg(db_url), "0014")                            # downgrade 미지원(데이터 보호)
+    assert _state(engine)[4] == HEAD
+    m15 = _load("0015_bead_select.py")
+    src = (REPO / "migrations" / "versions" / "0015_bead_select.py").read_text(encoding="utf-8")
+    assert "import" not in src.split("from sqlalchemy import text", 1)[1]                       # 시점 고정 상수만
+    assert m15.CK_BEAD_DOES_SCENARIO_0015 == "scenario IN ('same','mesh','step','compare','select')"
+    assert m15.CK_BEAD_DOES_SELECTION_0015 == "scenario = 'select' OR selection IS NULL"
 
 
 def test_scx_constraints(engine):
@@ -495,6 +566,7 @@ def test_chain_without_0009():
 
     sd = ScriptDirectory(str(REPO / "migrations"))
     assert sd.get_current_head() == HEAD
+    assert sd.get_revision("0015").down_revision == "0014"
     assert sd.get_revision("0014").down_revision == "0013"
     assert sd.get_revision("0013").down_revision == "0012"
     assert sd.get_revision("0012").down_revision == "0011"
@@ -503,12 +575,12 @@ def test_chain_without_0009():
     assert "0009" not in {r.revision for r in sd.walk_revisions()}
 
 
-MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0014(SR-D-17 — 구현 시점 HEAD 뒤)."""
+MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0015(SR-D-17 — 구현 시점 HEAD 뒤)."""
 from alembic import op
 from sqlalchemy import text
 
 revision = "0009"
-down_revision = "0014"
+down_revision = "0015"
 branch_labels = None
 depends_on = None
 
@@ -522,8 +594,8 @@ def downgrade() -> None:
 '''
 
 
-def test_chain_with_0009_after_0014(pg_server, tmp_path):
-    """0009(MCP)가 나중에 revision 0009·down_revision 0014(HEAD) 으로 붙어도 0008 DB → 0010 → 0011 → 0012 → 0013 → 0014 → 0009 순서로
+def test_chain_with_0009_after_0015(pg_server, tmp_path):
+    """0009(MCP)가 나중에 revision 0009·down_revision 0015(HEAD) 으로 붙어도 0008 DB → 0010 → … → 0014 → 0015 → 0009 순서로
     올라간다(단일 head)."""
     from alembic import command
     from alembic.script import ScriptDirectory
@@ -533,7 +605,7 @@ def test_chain_with_0009_after_0014(pg_server, tmp_path):
     (mig / "versions" / "0009_mcp_probe.py").write_text(MCP_0009, encoding="utf-8")
     sd = ScriptDirectory(str(mig))
     assert sd.get_current_head() == "0009" and len(sd.get_heads()) == 1
-    assert [r.revision for r in sd.walk_revisions()][:7] == ["0009", "0014", "0013", "0012", "0011", "0010", "0008"]
+    assert [r.revision for r in sd.walk_revisions()][:8] == ["0009", "0015", "0014", "0013", "0012", "0011", "0010", "0008"]
     name = f"esl_chain_{uuid.uuid4().hex[:8]}"
     with pg_server["admin"].connect() as c:
         c.execute(text(f'CREATE DATABASE "{name}"'))

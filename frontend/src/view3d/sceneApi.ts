@@ -4,6 +4,7 @@ import type { ArrowSpec } from "./arrows";
 import type { V3 } from "./pick";
 import type { Projection } from "./projection";
 import type { SupportSpec } from "./supports";
+import type { IdPatch, Rect } from "./select/lasso";
 
 export interface GeoData {
   /** float32 mm, 길이 3n */
@@ -49,6 +50,22 @@ export interface SceneApi {
   onPick(cb: (e: PickEvent) => void): void;
   stats(): { renders: number };
   dispose(): void;
+
+  // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §11.2) — 선택 모드 전용, 위 메서드 동작은 그대로. 없는 구현(시험 mock)은 선택 모드를 못 씀
+  /** 표면 색표: blues(기본) · diverging(발산 ±, §7.3) */
+  setColorMap?(map: "blues" | "diverging"): void;
+  /** 요소 모드 시작: 삼각형 t → 요소 tri2elem[t]. 이후 표면 = 요소별 평면 음영(setElemColors) */
+  setElements?(tri2elem: Uint32Array, nElems: number): void;
+  /** 요소별 RGBA(sRGB 8비트, 길이 4·nElems) */
+  setElemColors?(rgba: Uint8Array): void;
+  /** 화면 좌표(client px) 아래 보이는 요소(Raycaster faceIndex → tri2elem) */
+  pickElem?(clientX: number, clientY: number): { elem: number; point: V3 } | null;
+  /** 보이는 면만: 요소 번호 + 1 을 24비트 색으로 그린 오프스크린 버퍼의 rect(캔버스 CSS px) 조각 */
+  idBuffer?(rect: Rect): IdPatch;
+  /** 관통 선택: 요소 중심(3·n) → 화면 CSS px(2·n, 화면 밖 = NaN) */
+  projectCentroids?(centroids: Float32Array): Float32Array;
+  /** 경계선(검정 2 px) — 선분 끝점 6 개씩, null = 지움 */
+  setOverlayLines?(segments: Float32Array | null): void;
 }
 
 export type CreateScene = (canvas: HTMLCanvasElement, opts: SceneOptions) => SceneApi;
