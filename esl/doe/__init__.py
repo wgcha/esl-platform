@@ -16,7 +16,9 @@
 - ``rank``        : 순위(score = 안 최악 C / 베이스라인 최악 C)·민감도(SRC + Spearman, 주효과)
 - ``export_mesh`` : ③ 메시 산출물 ch_r.rad·ch_r.fem
 - ``report_doe``  : 자체 완결 보고서 HTML(방법·출처·한계 절)
-- ``stages``      : 워커 진입점 bd_input·bd_mesh0·bd_loads·bd_matrix·bd_eval·bd_post
+- ``stages``      : 워커 진입점 bd_input·bd_mesh0·bd_loads·bd_matrix·bd_eval·bd_post·bd_select_grid
+- ``bead_select`` : v0.15.0 비드 직접 선택(정규화·derive·선형 기저 모핑·고정 판정·단면·평면도 자료)
+- ``select_render``: v0.15.0 미리보기 3D 썸네일(깊이 버퍼 래스터, paicad 비의존)
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ RESOURCES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path
 MESSAGES_PATH = os.path.join(RESOURCES, "doe_messages.json")
 METHOD_SOURCES_PATH = os.path.join(RESOURCES, "doe_method_sources.json")
 
-SCENARIOS = ("same", "mesh", "step", "compare")      # v0.14.0 ④ compare(esl_step_compare.md)
+SCENARIOS = ("same", "mesh", "step", "compare", "select")      # v0.14.0 ④ compare, v0.15.0 select(esl_bead_select.md)
 METHODS = ("lhs", "halton", "fullfact")
 PARAM_TYPES = ("D", "W", "U", "V")
 SOLVERS = ("linear",)
@@ -92,6 +94,18 @@ DEFAULTS: dict = {
                             "quad_min_angle": {"warn": 46.0, "fail": 40.0}, "quad_max_angle": {"warn": 134.0, "fail": 140.0},
                             "tria_min_angle": {"warn": 34.0, "fail": 30.0}, "tria_max_angle": {"warn": 112.0, "fail": 120.0},
                             "tria_pct": {"warn": 10.0, "fail": 15.0}}},
+    # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
+    # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 키 추가 금지).
+    "select": {"enabled": True, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6, "max_selection_kb": 4096,
+               "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5,
+               "slope_max_mm": 80.0, "fixed_tol_mm": 0.01,
+               "width": {"floor_follow": 1, "knn": 8},
+               "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
+               "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0},
+               "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0},
+               "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15,
+                         "ambient": 0.35},
+               "derive_cache_n": 8, "derive_timeout_s": 20},
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,
                "ranking_report_rows": 20, "min_disp_range_mm": 1.0},

@@ -51,5 +51,29 @@
    "authors": "physicsai-platform",
    "note": "비드 파라미터 <COMP>_BEAD_<D|U|V|W>_<k>, 노드·요소 ID 불변 모핑, feasible 추정"
   }
- ]
+ ],
+ "select": {
+  "methods": {
+   "depth": "깊이 D_k: 단 바닥 노드를 국부 평균 법선 방향으로, 사면 노드는 가까운 두 수준(경계 0·단 바닥) 사이 높이 비율로 선형 보간, 경계 고정",
+   "width": "폭 W: 경계를 평면 안 바깥 법선으로 ±ΔW/2, 사면 평행 이동(floor_follow 1) 또는 높이 비례 감쇠(0), 바닥은 그래프 라플라시안 조화 확장",
+   "blend": "블렌딩: 경계 밖 노드 β(d/R) = (1−t)⁴(4t+1) (Wendland C²) — 경계에서 변위·기울기 연속, R 밖 불변",
+   "quality": "품질: 영향 요소만 이슈 #53 criteria(bead_doe.compare.quality) — 공칭 대비 새 Fail 비율·뒤집힘으로 제외"
+  },
+  "limits_ko": [
+   "선형 기저(작은 변형 가정) — 큰 깊이 변화에서 법선 방향 고정 이동이 실제 설계 의도와 다를 수 있습니다.",
+   "산출물은 /NODE 좌표만 바뀐 메시입니다 — CAD(BREP/STEP)는 없습니다."
+  ],
+  "sources": [
+   {
+    "title": "Piecewise polynomial, positive definite and compactly supported radial functions of minimal degree",
+    "authors": "Wendland, H. (1995), Advances in Computational Mathematics 4",
+    "note": "블렌딩 함수 β(t) = (1−t)⁴(4t+1)"
+   },
+   {
+    "title": "On Linear Variational Surface Deformation Methods",
+    "authors": "Botsch, M., Sorkine, O. (2008), IEEE TVCG 14(1)",
+    "note": "라플라시안(조화) 확장에 의한 메시 변형"
+   }
+  ]
+ }
 }

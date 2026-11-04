@@ -39,7 +39,7 @@ from esl.doe import scenario as sc
 from esl.errors import EslError
 from esl.library import _util as U
 
-STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post")
+STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post", "bd_select_grid")
 BASELINE = "d000"
 NOISE = "noise"
 FAILED_SOLVE_CODES = ("SUPPORT_DEGENERATE", "SOLVER_SINGULAR", "SOLVER_OUT_OF_MEMORY", "NODE_NOT_IN_PART",
@@ -129,7 +129,7 @@ class Ctx:
 
 def run_stage(spec: dict, echo=print) -> dict:
     fn = {"bd_input": bd_input, "bd_mesh0": bd_mesh0, "bd_loads": bd_loads, "bd_matrix": bd_matrix,
-          "bd_eval": bd_eval, "bd_post": bd_post}.get(spec.get("stage"))
+          "bd_eval": bd_eval, "bd_post": bd_post, "bd_select_grid": bd_select_grid}.get(spec.get("stage"))
     if fn is None:
         raise EslError("INPUT_INVALID", f"알 수 없는 강성 평가 스터디 단계: {spec.get('stage')}")
     return fn(spec, echo)
@@ -157,6 +157,8 @@ def bd_input(spec: dict, echo=print) -> dict:
     c.fresh("prep")
     if c.scn == "compare":
         return _cmp_input(c, echo)
+    if c.scn == "select":
+        return _sel_input(c, echo)
     st = D["step"]
     step_rel = os.path.join("input", "step", os.path.basename(st.get("file_name") or st["path"]))
     step_sha = _copy_verified(st["path"], c.p(step_rel), c.writer, st.get("sha256"))
@@ -278,6 +280,8 @@ def bd_loads(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
     if c.scn == "compare":
         return _cmp_loads(c, echo)
+    if c.scn == "select":
+        return _sel_loads(c, echo)
     c.progress(0)
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
@@ -353,6 +357,8 @@ def _boundary(c: Ctx, t, ents, info: list) -> dict:
 
 # ---------------------------------------------------------------- BD_MATRIX
 def params_table(c: Ctx) -> list:
+    if c.scn == "select":
+        return U.read_json(os.path.join(_sel_dir(c, _sel_rev_doc(c)["selection_sha256"]), "params.json"))["params"]
     return U.read_json(c.p("prep", "params.json"))["params"]
 
 
@@ -361,7 +367,8 @@ def bd_matrix(spec: dict, echo=print) -> dict:
     rev = int(c.D["rev"])
     c.progress(0)
     t, _ = sc.load_base(c.p("prep"))
-    tab = params_table(c)
+    sel_doc = _sel_prepare(c, t, echo) if c.scn == "select" else None
+    tab = sel_doc["params"] if sel_doc else params_table(c)
     m = mx.generate(c.D["spec"], tab, c.cfg)
     want = c.D.get("matrix_sha256")
     if want and want != m["matrix_sha256"]:
@@ -374,15 +381,23 @@ def bd_matrix(spec: dict, echo=print) -> dict:
     for x in m["designs"]:
         c.write_json(os.path.join(d, "values", f"{x['id']}.json"), mx.values_doc(x["values"] if x["id"] != BASELINE
                                                                                  else {}))
+    if sel_doc:
+        c.write_json(os.path.join(d, SEL_REV_JSON), sel_doc["rev_doc"])
     opts = c.cfg["paicad"].get("options") or {}
     if opts:
         c.write_json(os.path.join("prep", "paicad_options.json"), opts)
     echo(f"[bd_matrix] rev {rev} {m['spec']['method']} 안 {m['n_designs']}(공칭 포함, 중복 제거 {m['dropped_duplicates']}) "
          f"sha {m['matrix_sha256'][:12]}…")
     c.progress(100)
-    return {"files": [f"{d}/matrix.json", f"{d}/cells.json", f"{d}/thumb_options.json"],
-            "matrix_sha256": m["matrix_sha256"], "n_designs": m["n_designs"],
-            "warnings": [f"{w['code']}: {w['name']}" for w in m["warnings"]]}
+    out = {"files": [f"{d}/matrix.json", f"{d}/cells.json", f"{d}/thumb_options.json"],
+           "matrix_sha256": m["matrix_sha256"], "n_designs": m["n_designs"],
+           "warnings": [f"{w['code']}: {w['name']}" for w in m["warnings"]]}
+    if sel_doc:
+        out.update(selection_sha256=sel_doc["rev_doc"]["selection_sha256"],
+                   basis_sha256=sel_doc["rev_doc"]["basis_sha256"])
+        out["files"].append(f"{d}/{SEL_REV_JSON}")
+        out["warnings"] += sel_doc["warnings"]
+    return out
 
 
 # ---------------------------------------------------------------- BD_EVAL (안 1개)
@@ -402,6 +417,8 @@ def _design_values(c: Ctx, did: str) -> dict:
 def _cfg_hash(c: Ctx) -> str:
     keep = {"solver": c.solver_cfg(), "mesh": c.cfg["mesh"], "solve": c.cfg["solve"], "grid": c.ocfg["grid"],
             "mapping": c.mapping_opts(), "paicad_options": c.cfg["paicad"].get("options") or {}}
+    if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
+        keep.update(select=c.cfg["select"], quality=c.cfg["compare"]["quality"])
     return ev.config_hash(keep)
 
 
@@ -416,6 +433,10 @@ def design_sha(c: Ctx, did: str) -> str:
         return _cmp_sha(c, did)
     bmeta = U.read_json(c.p("prep", "base.json"))
     inp = U.read_json(c.p("prep", "input.json"))
+    if c.scn == "select":                       # BS-D-13: paicad 자리 = 선택 sha + 기저 sha
+        r = _sel_rev_doc(c)
+        return ev.input_sha256(_design_values(c, did), bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"),
+                               _cfg_hash(c), f"select:{r['selection_sha256']}:{r['basis_sha256']}")
     return ev.input_sha256(_design_values(c, did), bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"),
                            _cfg_hash(c), c.D.get("paicad_version"))
 
@@ -426,6 +447,13 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
     if did == BASELINE:
         _, loads = sc.load_loads(c.p("prep"))
         return dict(t.mesh), list(t.supports), loads, {"n_nodes": t.n_nodes, "n_elems": t.n_elems}
+    if c.scn == "select":
+        x, st = _sel_design(c, t, did)
+        m = dict(t.mesh)
+        m["x0"] = x
+        _, loads = sc.load_loads(c.p("prep"))
+        return m, list(t.supports), loads, {"n_nodes": t.n_nodes, "n_elems": t.n_elems, "quality": st["quality"],
+                                            "fixed_max_mm": st["fixed"]["max_mm"]}
     if c.scn in ("same", "mesh"):
         pd = os.path.join(dd, "paicad")
         rels, _ = pio.run_out_files(os.path.join(pd, "check"), c.max_mb)
@@ -468,6 +496,18 @@ def bd_eval(spec: dict, echo=print) -> dict:
         echo(f"[{did}] 이전 결과 재사용({prev['status']})")
         c.progress(100)
         return {"design": did, "status": prev["status"], "reused": True}
+    if c.scn == "select" and did != BASELINE:
+        _, st = _sel_design(c, t, did)
+        if st["state"] != "READY":              # 고정 침범·품질(미리보기와 같은 함수)
+            doc = ev.result_doc(did, st["state"], values, mesh={"n_nodes": t.n_nodes, "n_elems": t.n_elems,
+                                                                "quality": st["quality"],
+                                                                "fixed_max_mm": st["fixed"]["max_mm"]},
+                                code=st["code"], message=_sel_msg(st["code"]))
+            U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), doc)
+            ev.write_done(dd, sha, st["state"], c.writer)
+            echo(f"[{did}] {st['state']} {st['code']}")
+            c.progress(100)
+            return {"design": did, "status": st["state"], "reused": False, "code": st["code"]}
     pa = c.D.get("paicad")
     if pa is not None and not pa.get("ok", False) and did not in (BASELINE,):
         status = pa.get("status") or "FAILED_MORPH"
@@ -625,6 +665,8 @@ def _best(c: Ctx, did: str, values: dict, warns: list) -> list[str]:
     files = []
     U.write_json(c.writer.guard(os.path.join(bd, "values.json")), mx.values_doc(values))
     files.append("values.json")
+    if c.scn == "select":
+        return files + _sel_best(c, did, bd)
     if c.scn in ("same", "mesh"):
         src = os.path.join(dd, "paicad", "out_files")
         if os.path.isdir(src):
@@ -762,14 +804,17 @@ def bd_post(spec: dict, echo=print) -> dict:
     ms = load_method_sources()
     pjson = c.p("prep", "plan.json")
     cnt = {"ok": 0, "collision": 0, "fixed": 0, "geom": 0}
+    if c.scn == "select":
+        cnt["mesh"] = 0                          # v0.15.0 select: 품질 실패(FAILED_MESH) 셀
     for r in pv.values():
-        key = {"READY": "ok", "SKIPPED_COLLISION": "collision", "SKIPPED_FIXED": "fixed", "SKIPPED_GEOM": "geom"}.get(
-            r["state"])
+        key = {"READY": "ok", "SKIPPED_COLLISION": "collision", "SKIPPED_FIXED": "fixed", "SKIPPED_GEOM": "geom",
+               "FAILED_MESH": "mesh" if c.scn == "select" else None}.get(r["state"])
         if key:
             cnt[key] += 1
     ctx = {"study": {"id": c.D.get("id"), "title": c.D.get("title"), "scenario": c.scn,
                      "created_at": c.D.get("created_at"), "entry_ids": [e["id"] for e in c.D["entries"]]},
-           "inputs": {"step": {"file_name": os.path.basename(inp["step"]["rel"]), "sha256": inp["step"]["sha256"]},
+           "inputs": {"step": None if inp.get("step") is None else {"file_name": os.path.basename(inp["step"]["rel"]),
+                                                                    "sha256": inp["step"]["sha256"]},
                       "mesh": inp.get("mesh"), "part_title": inp.get("part_title"), "inch": c.D.get("inch"),
                       "props": bmeta.get("props"), "mesh_size_mm": bmeta.get("h"),
                       "entries": [{"entry_id": e["id"], "label": e.get("label"), "case": e.get("case")}
@@ -782,6 +827,8 @@ def bd_post(spec: dict, echo=print) -> dict:
            "best": None if not best_ids else {"id": best_ids[0], "values": by[best_ids[0]]["values"],
                                               "files": best_files[best_ids[0]]},
            "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"], "esl": out["esl"]}
+    if c.scn == "select":
+        ctx["selection"] = _sel_report(c, results)
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
@@ -1204,5 +1251,362 @@ def _cmp_post(c: Ctx, echo) -> dict:
             "warnings": warns, "result": out}
 
 
+# ---------------------------------------------------------------- v0.15.0 비드 직접 선택 select (esl_bead_select.md §8)
+# 폴더: prep/{base_mesh.npz, base.json, input.json(STEP 없음), fixed/(워커 fixed-scan, 없을 수 있음), loads.npz, params.json(빈 표),
+# plan.json, select/{part.glb, select.bin, select_manifest.json}} · select/<sel_sha12>/{derived.json, derived.npz, basis.npz,
+# basis.json, params.json} · doe/<rev>/{matrix.json, …, selection.json, grid/{grid_manifest.json, cells/<id>/thumb.png}} ·
+# run/designs/<did>/ · best/<did>/{values.json, selection.json, include/<rel>(/NODE 좌표만 교체), ch_r.rad, ch_r.fem}.
+# 코어는 paicad 를 쓰지 않는다(BS-D-15). 선택(SelectionIn)은 spec doe.selection = {rev, sha256, input} 로 받는다.
+SEL_REV_JSON = "selection.json"
+SEL_VIEW_SCHEMA = "esl/bead_select_view/1"
+
+
+def _sel_dir(c: Ctx, sha: str) -> str:
+    return c.p("select", str(sha)[:12])
+
+
+def _sel_rev_doc(c: Ctx) -> dict:
+    p = c.p("doe", str(int(c.D["rev"])), SEL_REV_JSON)
+    if not os.path.isfile(p):
+        raise EslError("PREVIEW_NOT_READY", "선택 기저(doe/<rev>/selection.json)가 없음 — 미리보기(행렬) 먼저")
+    return U.read_json(p)
+
+
+def _sel_norm(c: Ctx) -> tuple[dict, str]:
+    from esl.doe import bead_select as bsel
+    s = c.D.get("selection") or {}
+    if not isinstance(s, dict) or not s.get("input"):
+        raise EslError("SELECTION_MISSING", "비드 선택이 저장되지 않음")
+    norm, sha = bsel.normalize(s["input"], c.cfg)
+    if s.get("sha256") and s["sha256"] != sha:
+        raise EslError("PREVIEW_STALE", f"선택 sha256 불일치(저장 {str(s['sha256'])[:12]}… ≠ 계산 {sha[:12]}…)")
+    return norm, sha
+
+
+def _sel_fixed_ids(c: Ctx) -> tuple[np.ndarray, str | None]:
+    """paicad fixed-scan(prep/fixed — 워커 BD_GEOM, 있으면) 노드 ID. 없음/실패 → (빈, 경고 코드)."""
+    d = c.p("prep", "fixed")
+    if not os.path.isfile(os.path.join(d, pio.SCAN_JSON)):
+        return np.zeros(0, np.int64), "FIXED_INFO_MISSING"
+    try:
+        fx = pio.read_fixed(d, c.max_mb)
+    except EslError:
+        return np.zeros(0, np.int64), "FIXED_INFO_MISSING"
+    return np.asarray(fx["node_id"], dtype=np.int64), None
+
+
+def _sel_input(c: Ctx, echo) -> dict:
+    """BD_INPUT select: ① 과 같은 기준 Case 제자리 읽기·동일성(STEP 없음)."""
+    D = c.D
+    b = D["base"]
+    inp = {"schema": "esl/doe_input/1", "scenario": "select", "step": None, "entries": [e["id"] for e in D["entries"]]}
+    ents = c.entries(raw=True)
+    c.progress(10)
+    assem = sc.assem_dir_check(b.get("case_dir") or os.path.dirname(b["rad_path"]), c.cfg["same"]["max_assem_mb"])
+    be = next((e for e in ents if e.meta["entry_id"] == b["entry_id"]), None)
+    if be is None:
+        raise EslError("INPUT_INVALID", "기준 ESL 이 선택 목록에 없음")
+    echo(f"[bd_input] select 기준 Case 입력 rad 제자리 읽기 (파트 {b['part_title']}, 조립 {assem['n_files']}개 파일 "
+         f"{assem['total_mb']:.1f} MB)")
+    t, info = sc.same_base(b["rad_path"], b["part_title"], be, [e for e in ents if e is not be],
+                           coord_tol_rel=c.coord_tol(), parse_kw=c.parse_kw())
+    inp.update(assem="case", assem_info=assem, part_id=int(t.source["part_id"]), part_title=t.source["part_title"],
+               base_entry_id=b["entry_id"])
+    meta = sc.save_base(t, c.p("prep"), c.scn, c.writer)
+    c.progress(90)
+    inp.update(warnings=[], info=info)
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    echo(f"[bd_input] 기준 메시 노드 {meta['n_nodes']} · 요소 {meta['n_elems']} · topo {str(meta['topo_sha256'])[:12]}…")
+    c.progress(100)
+    return {"files": ["prep/input.json", "prep/base_mesh.npz", "prep/base.json"], "warnings": [], "info": info,
+            "part_id": inp["part_id"]}
+
+
+def _sel_loads(c: Ctx, echo) -> dict:
+    """BD_LOADS select: ① 하중(노드 직접)·지지 + 선택 보기 자료 prep/select/(part.glb·select.bin·manifest)."""
+    from esl.doe import bead_select as bsel
+    from esl import view3d as v3
+    c.progress(0)
+    t, bmeta = sc.load_base(c.p("prep"))
+    ents = c.entries(raw=True)
+    warns, info = [], []
+    loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                  (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    warns += linfo["warnings"]
+    loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], loads, c.writer)
+    c.progress(50)
+    params = {"beads": [], "params": [], "warnings": []}            # 변수 = 선택 저장 후(select/<sha>/params.json)
+    c.write_json(os.path.join("prep", "params.json"), params)
+    plan = bnd.plan(t.mesh, t.frame, c.ocfg["keepout"], int(c.ocfg["ui"]["max_preview_points"]))
+    c.write_json(os.path.join("prep", "plan.json"), plan)
+    fids, fw = _sel_fixed_ids(c)
+    if fw:
+        warns.append(fw)
+    m = t.mesh
+    nid = np.asarray(m["node_id"], dtype=np.int64)
+    fixed = np.isin(nid, fids)
+    sd = c.fresh(os.path.join("prep", "select"))
+    X = np.asarray(m["x0"], dtype=np.float64)
+    tris = v3.triangulate(np.asarray(m["conn"]), np.asarray(m["elem_type"]))
+    lo, hi = X.min(axis=0), X.max(axis=0)
+    center, half = (lo + hi) / 2.0, (hi - lo) / 2.0
+    q = v3.quantize_positions(X, center, half)
+    extras = {"units": "mm", "up": "Z", "generator": f"esl bead_select view {v3.BUILDER_VERSION}"}
+    gbytes = v3.write_glb(c.writer.guard(os.path.join(sd, "part.glb")), q, center, half, "_NODE_ID",
+                          nid.astype(np.uint32), tris, extras)
+    blob, lay = bsel.view_files(m, fixed)
+    with open(c.writer.guard(os.path.join(sd, "select.bin")), "wb") as fh:
+        fh.write(blob)
+    ix = bsel.mesh_index(m)
+    man = {"schema": SEL_VIEW_SCHEMA, "n_nodes": t.n_nodes, "n_elems": t.n_elems, "n_tris": lay["n_tris"],
+           "mesh_sha256": bmeta["mesh_sha256"], "h_med": float(ix.h_med), "plate_normal": v3.plate_normal(X).tolist(),
+           "fixed": {"scan_n": int(fixed.sum()), "source": "none" if fw else "scan"},
+           "glb": {"name": "part.glb", "bytes": int(gbytes)}, "bin": {"name": "select.bin", "bytes": len(blob),
+                                                                      "layout": lay["layout"]}}
+    c.write_json(os.path.join("prep", "select", "select_manifest.json"), man)
+    inp = U.read_json(c.p("prep", "input.json"))
+    inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0,
+               fixed={"source": "none" if fw else "scan", "n": int(fixed.sum())})
+    inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    echo(f"[bd_loads] select ESL {len(loads)}개 하중({linfo['method']}), 고정 노드 {int(fixed.sum())}"
+         + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else ""))
+    c.progress(100)
+    return {"files": ["prep/loads.npz", "prep/params.json", "prep/plan.json", "prep/select/part.glb",
+                      "prep/select/select.bin", "prep/select/select_manifest.json"],
+            "warnings": warns, "info": info, "boundary": None, "n_beads": 0, "n_params": 0,
+            "fixed": {"source": "none" if fw else "scan", "n": int(fixed.sum())}}
+
+
+def _sel_prepare(c: Ctx, t, echo) -> dict:
+    """BD_MATRIX select: 선택 정규화·sha 확인 → derive → 기저 → select/<sha12>/ (같은 sha 면 재사용)."""
+    from esl.doe import bead_select as bsel
+    norm, sha = _sel_norm(c)
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    d = _sel_dir(c, sha)
+    pb, pj, pp = os.path.join(d, "basis.npz"), os.path.join(d, "basis.json"), os.path.join(d, "params.json")
+    if all(os.path.isfile(p) for p in (pb, pj, pp, os.path.join(d, "basis.bin"))):
+        bj = U.read_json(pj)
+        if bj.get("selection_sha256") == sha and bj.get("mesh_sha256") == bmeta["mesh_sha256"] and \
+                bj.get("basis_sha256") == U.sha256_file(pb) and bj.get("cfg_sha256") == _sel_cfg_sha(c):
+            echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
+            return {"params": U.read_json(pp)["params"], "warnings": [],
+                    "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
+    fids, _ = _sel_fixed_ids(c)
+    ms = (c.D.get("selection") or {}).get("mesh_sha256")
+    if ms and ms != bmeta["mesh_sha256"]:
+        raise EslError("PREVIEW_STALE", "선택의 mesh_sha256 이 준비 기준 메시와 다름(SELECTION_DROPPED)")
+    D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
+                        with_section=False)
+    B = bsel.basis(t.mesh, D, c.cfg)
+    tab = bsel.params_table(D, c.cfg)
+    c.writer.makedirs(d)
+    bsel.save_basis(pb, B, guard=c.writer.guard)
+    bsha = U.sha256_file(pb)
+    blob = bsel.basis_bin(B)                    # 브라우저 3D 보기(§7.3, GET …/select/basis)
+    with open(c.writer.guard(os.path.join(d, "basis.bin")), "wb") as fh:
+        fh.write(blob)
+    _sel_save_derived(c, os.path.join(d, "derived.npz"), D)
+    c.write_json(os.path.relpath(os.path.join(d, "derived.json"), c.out), D.summary(with_figures=False))
+    c.write_json(os.path.relpath(pp, c.out), {"beads": [{"id": b.id, "name": b.name, "kind": "select",
+                                                         "n_tiers": len(b.tiers), "W_nom": b.W_nom, "W_min": b.W_min,
+                                                         "W_max": b.W_max, "blend_mm": b.blend_mm,
+                                                         "warnings": b.warnings} for b in D.beads],
+                                              "params": tab, "warnings": D.warnings})
+    meta = bsel.basis_meta(B, bsha)
+    import hashlib
+    meta.update(sha256=hashlib.sha256(blob).hexdigest(), mesh_sha256=bmeta["mesh_sha256"], cfg_sha256=_sel_cfg_sha(c))
+    c.write_json(os.path.relpath(pj, c.out), meta)
+    warns = [f"{w['code']}: {b.id}" for b in D.beads for w in b.warnings]
+    echo(f"[bd_matrix] select {sha[:12]}… 비드 {len(D.beads)} · 변수 {len(B.vars)} · 기저 sha {bsha[:12]}…")
+    return {"params": tab, "warnings": warns, "rev_doc": _sel_rev(c, sha, bsha)}
+
+
+def _sel_cfg_sha(c: Ctx) -> str:
+    import hashlib
+    import json
+    s = json.dumps({"select": c.cfg["select"], "quality": c.cfg["compare"]["quality"]}, sort_keys=True,
+                   separators=(",", ":"))
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _sel_rev(c: Ctx, sha: str, bsha: str) -> dict:
+    return {"schema": "esl/doe_selection_rev/1", "selection_sha256": sha, "basis_sha256": bsha,
+            "selection_rev": (c.D.get("selection") or {}).get("rev"), "dir": f"select/{sha[:12]}"}
+
+
+def _sel_save_derived(c: Ctx, path: str, D) -> None:
+    from esl.doe.mesh_gmsh import save_npz_det
+    arr = {"fixed": np.asarray(D.fixed_mask, dtype=np.uint8)}
+    for b in D.beads:
+        lp = [lp["nodes"] for lp in b.loops]
+        arr[f"{b.id}_loops"] = np.concatenate(lp).astype(np.int64) if lp else np.zeros(0, np.int64)
+        arr[f"{b.id}_ptr"] = np.concatenate([[0], np.cumsum([x.size for x in lp])]).astype(np.int64)
+        arr[f"{b.id}_nodes"] = b.bead_nodes.astype(np.int64)
+        arr[f"{b.id}_nhat"] = np.asarray(b.n_hat, dtype=np.float64)
+    save_npz_det(c.writer.guard(path), arr)
+
+
+def _sel_loaded(c: Ctx) -> dict:
+    """(기저, 고정 마스크, 고리) — 안 반복에서 1회만 읽음."""
+    if not hasattr(c, "_sel_cache"):
+        from esl.doe import bead_select as bsel
+        r = _sel_rev_doc(c)
+        d = c.p(*r["dir"].split("/"))
+        pb = os.path.join(d, "basis.npz")
+        if U.sha256_file(pb) != r["basis_sha256"]:
+            raise EslError("PREVIEW_STALE", "basis.npz sha256 이 미리보기 기록과 다름")
+        z = U.load_npz(os.path.join(d, "derived.npz"))
+        loops, nh = [], []
+        for k in sorted(z):
+            if k.endswith("_ptr"):
+                bid = k[:-4]
+                L, P = z[f"{bid}_loops"], z[k]
+                loops += [L[P[i]:P[i + 1]] for i in range(P.size - 1)]
+                nh.append(z[f"{bid}_nhat"])
+        c._sel_cache = {"B": bsel.load_basis(pb), "fixed": z["fixed"].astype(bool), "loops": loops, "rev": r,
+                        "n_hat": np.mean(nh, axis=0) if nh else np.array([0.0, 0.0, 1.0])}
+    return c._sel_cache
+
+
+def _sel_design(c: Ctx, t, did: str) -> tuple[np.ndarray, dict]:
+    from esl.doe import bead_select as bsel
+    L = _sel_loaded(c)
+    x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
+    x = bsel.morph(x0, L["B"], _design_values(c, did))
+    return x, bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg)
+
+
+def _sel_msg(code: str | None) -> str | None:
+    if not code:
+        return None
+    from esl.doe import message
+    return message(code)
+
+
+def bd_select_grid(spec: dict, echo=print) -> dict:
+    """BS-D-11 미리보기(select): 안마다 기저 모핑 → 고정·뒤집힘·품질 → 3D 썸네일 → doe/<rev>/grid/(paicad grid 와 같은 형식).
+
+    grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm}],
+    nominal{thumb}, color{v_max, unit}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
+    from esl import view3d as v3
+    from esl.doe import bead_select as bsel
+    from esl.doe import select_render as sr
+    c = Ctx(spec)
+    rev = int(c.D["rev"])
+    c.progress(0)
+    t, _ = sc.load_base(c.p("prep"))
+    L = _sel_loaded(c)
+    m = _matrix(c)
+    x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
+    gd_rel = os.path.join("doe", str(rev), "grid")
+    gd = c.fresh(gd_rel)
+    tcfg = c.cfg["select"]["thumb"]
+    designs = [x for x in m["designs"] if x["id"] != BASELINE]
+    direction, has = bsel.node_direction(L["B"])
+    states, vmax = {}, 0.0
+    for k, x in enumerate(designs):
+        xd = bsel.morph(x0, L["B"], x["values"])
+        st = bsel.design_state(t.mesh, x0, xd, L["fixed"], c.cfg)
+        states[x["id"]] = st
+        if st["state"] == "READY":
+            cv = sr.color_values(x0, xd, direction, has)
+            vmax = max(vmax, float(np.abs(cv).max()) if cv.size else 0.0)
+        c.progress(5 + 30 * (k + 1) / max(len(designs), 1))
+    V = vmax if vmax > 0 else float(c.cfg["limits"]["min_disp_range_mm"])
+    view = sr.view(x0, has, L["n_hat"], t.frame, tcfg)
+    tris = v3.triangulate(np.asarray(t.mesh["conn"]), np.asarray(t.mesh["elem_type"]))
+    os.makedirs(c.writer.guard(os.path.join(gd, "cells", "nominal")), exist_ok=True)
+    with open(c.writer.guard(os.path.join(gd, "cells", "nominal", "thumb.png")), "wb") as fh:
+        fh.write(sr.render(x0, tris, None, None, view, V, tcfg, loops=L["loops"]))
+    cells = []
+    for k, x in enumerate(designs):
+        xd = bsel.morph(x0, L["B"], x["values"])
+        cv = sr.color_values(x0, xd, direction, has)
+        rel = f"cells/{x['id']}/thumb.png"
+        c.writer.makedirs(os.path.join(gd, "cells", x["id"]))
+        with open(c.writer.guard(os.path.join(gd, *rel.split("/"))), "wb") as fh:
+            fh.write(sr.render(xd, tris, cv, has, view, V, tcfg, loops=L["loops"]))
+        st = states[x["id"]]
+        q = st["quality"]
+        cells.append({"id": x["id"], "status": "OK" if st["state"] == "READY" else "FAIL", "code": st["code"],
+                      "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
+                      "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
+                                                       "max_flip_deg", "fail_by")}})
+        c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
+    man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
+           "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],
+           "basis_sha256": L["rev"]["basis_sha256"]}
+    c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))
+    cnt = {"ok": sum(x["status"] == "OK" for x in cells),
+           "fixed": sum(x["code"] == "SELECT_FIXED_VIOLATION" for x in cells),
+           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED") for x in cells)}
+    echo(f"[bd_select_grid] rev {rev} 안 {len(cells)} · OK {cnt['ok']} · 고정 침범 {cnt['fixed']} · 품질 실패 "
+         f"{cnt['mesh']} · V {V:.3g} mm")
+    c.progress(100)
+    return {"files": [f"{gd_rel}/{pio.GRID_MANIFEST}".replace(os.sep, "/")], "counts": cnt,
+            "selection_sha256": L["rev"]["selection_sha256"], "warnings": []}
+
+
+def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
+    """Case 입력 폴더의 rad/include 중 대상 파트 노드(/NODE)를 가진 파일 [(rel, 경로)] (정렬)."""
+    if hasattr(c, "_sel_rad"):
+        return c._sel_rad
+    b = c.D.get("base") or {}
+    root = b.get("case_dir") or os.path.dirname(b["rad_path"])
+    want = set(int(v) for v in nid.tolist())
+    out = []
+    for r, dirs, files in os.walk(root, followlinks=False):
+        dirs.sort()
+        for name in sorted(files):
+            p = os.path.join(r, name)
+            if os.path.islink(p) or os.path.splitext(name)[1].lower() not in sc.MESH_EXT:
+                continue
+            if nd.read_nodes(p, want, c.max_line()):
+                out.append((os.path.relpath(p, root).replace(os.sep, "/"), p))
+    c._sel_rad = out
+    return out
+
+
+def _sel_best(c: Ctx, did: str, bd: str) -> list[str]:
+    """BS-D-14: rad/include 사본(/NODE 좌표만) + ch_r.rad·ch_r.fem + selection.json (best/<did> 상대경로)."""
+    from esl.doe import export_mesh
+    t, _ = sc.load_base(c.p("prep"))
+    dz = ev.load_design(design_dir(c, did))
+    nid = np.asarray(t.mesh["node_id"], dtype=np.int64)
+    files = []
+    for rel, src in _sel_rad_files(c, nid):
+        dst = os.path.join(bd, "include", *rel.split("/"))
+        c.writer.makedirs(os.path.dirname(dst))
+        nd.write_morphed(src, dst, nid, dz["x"], t.mesh["x0"], max_line=c.max_line(), guard=c.writer.guard)
+        files.append("include/" + rel)
+    mesh = {k: t.mesh[k] for k in ("node_id", "elem_id", "elem_type", "conn", "elem_pid", "thickness", "E", "nu")}
+    mesh["x0"] = dz["x"]
+    files += export_mesh.write(bd, mesh, part_title=str(c.D.get("base", {}).get("part_title") or "ch_r"),
+                               header=["esl bead DOE (scenario select)"], guard=c.writer.guard)
+    s = c.D.get("selection") or {}
+    r = _sel_rev_doc(c)
+    U.write_json(c.writer.guard(os.path.join(bd, "selection.json")),
+                 {"schema": "esl/doe_selection/1", "rev": s.get("rev"), "sha256": r["selection_sha256"],
+                  "basis_sha256": r["basis_sha256"], "input": s.get("input")})
+    files.append("selection.json")
+    return files
+
+
+def _sel_report(c: Ctx, results: list) -> dict:
+    r = _sel_rev_doc(c)
+    dj = c.p(*r["dir"].split("/"), "derived.json")
+    der = U.read_json(dj) if os.path.isfile(dj) else {}
+    q = []
+    for x in results:
+        mi = x.get("mesh") or {}
+        qq = mi.get("quality") or {}
+        if x["id"] != BASELINE and qq:
+            q.append({"id": x["id"], "state": x["status"], "new_fail": qq.get("new_fail"),
+                      "n_affected": qq.get("n_affected"), "fixed_max_mm": mi.get("fixed_max_mm")})
+    return {"sha256": r["selection_sha256"], "beads": der.get("beads") or [], "fixed": der.get("fixed") or {},
+            "quality": q}
+
+
 __all__ = ["STAGES", "run_stage", "bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post",
-           "SKIPPED", "FAILED"]
+           "bd_select_grid", "SKIPPED", "FAILED"]
