@@ -514,6 +514,28 @@ class BeadDoeLimitsCfg(_M):
     min_disp_range_mm: float = Field(default=1.0, gt=0)
 
 
+class BeadDoeFallbackSplitCfg(_M):
+    """v0.15.1 면 분할: 실패 면을 bbox 중심을 지나는 평면 planes 개(가장 긴 bbox 방향 법선 순)로 나눔."""
+
+    planes: int = Field(default=2, ge=1, le=2)
+
+
+class BeadDoeFallbackFillCfg(_M):
+    """v0.15.1 채움 면 대체: 경계 고리 BSpline 채움(안쪽 (points−1)² 점 통과), 원 면 대비 편차 ≤ tol_factor × h 일 때만."""
+
+    tol_factor: float = Field(default=0.5, ge=0)
+    points: int = Field(default=8, ge=0, le=30)
+    samples: int = Field(default=10, ge=2, le=50)
+
+
+class BeadDoeFallbackSmallCfg(_M):
+    """v0.15.1 작은 면 평면 채움: 넓이 < area_mm2 면을 경계만으로 채움(편차 ≤ tol_factor × h)."""
+
+    area_mm2: float = Field(default=50.27, ge=0)
+    tol_factor: float = Field(default=1.0, ge=0)
+    samples: int = Field(default=10, ge=2, le=50)
+
+
 class BeadDoeCompareMeshFallbackCfg(_M):
     """v0.14.1 면 단위 폴백(esl.doe.mesh_gmsh.mesh_file): 2D 메싱이 실패한 면만 algorithms 순서로 재시도, relax 면 그 면의
     작은 형상 처리·구멍 둘레 분할을 풀고 다시. 실패 면이 max_faces 개를 넘으면 FAILED_MESH."""
@@ -522,6 +544,14 @@ class BeadDoeCompareMeshFallbackCfg(_M):
     algorithms: list[int] = Field(default_factory=lambda: [6, 5, 1], max_length=8)   # gmsh Mesh.Algorithm 번호
     relax: bool = True
     max_faces: int = Field(default=20, ge=1, le=1000)
+    # v0.15.1 형상 폴백(이슈 #53 Sphere 면): 단계 묶음 순서(빼면 끔), periodic_types 면은 periodic_order
+    order: list[str] = Field(default_factory=lambda: ["algorithms", "relax", "split", "fill", "small"], max_length=5)
+    periodic_types: list[str] = Field(default_factory=lambda: ["Sphere"], max_length=16)
+    periodic_order: list[str] = Field(default_factory=lambda: ["split", "fill", "small", "algorithms", "relax"],
+                                      max_length=5)
+    split: BeadDoeFallbackSplitCfg = BeadDoeFallbackSplitCfg()
+    fill: BeadDoeFallbackFillCfg = BeadDoeFallbackFillCfg()
+    small: BeadDoeFallbackSmallCfg = BeadDoeFallbackSmallCfg()
 
     @field_validator("algorithms")
     @classmethod
@@ -529,6 +559,15 @@ class BeadDoeCompareMeshFallbackCfg(_M):
         bad = [a for a in v if a not in (1, 2, 5, 6, 7, 8, 9, 11)]
         if bad:
             raise ValueError(f"gmsh 2D 알고리즘 번호가 아님: {bad}")
+        return v
+
+    @field_validator("order", "periodic_order")
+    @classmethod
+    def _order(cls, v: list[str]) -> list[str]:
+        ok = ("algorithms", "relax", "split", "fill", "small")
+        bad = [x for x in v if x not in ok]
+        if bad or len(set(v)) != len(v):
+            raise ValueError(f"폴백 단계는 {', '.join(ok)} 중 중복 없이: {v}")
         return v
 
 

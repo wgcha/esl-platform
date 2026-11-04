@@ -2,6 +2,9 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## Unreleased
+- **④ 형상 비교: 구면(Sphere) 면이 있는 STEP 의 메시 실패 수정**(이슈 #53 `Impossible to mesh periodic surface`, 중립면 딤플·세 필렛 코너): 실패한 면만 형상 폴백 — 면 분할(bbox 중심 평면) → 채움 면 대체(경계 고리 BSpline, 원 면 대비 편차 ≤ 0.5 × 요소 크기일 때만) → 작은 면(< 50.27 mm²) 평면 채움. 순서·on/off 는 설정 `bead_doe.compare.mesh.fallback.order`·`periodic_types`·`periodic_order`·`split`·`fill`·`small`, 쓰인 단계와 편차는 경고 `MESH_FACE_FALLBACK`·`mesh.json mesh_fallback`·보고서 형상 표에 표시. 정상 STEP 과 ③ 의 메시는 그대로
+
 ## [0.15.0] - 2026-11-04
 ### 추가
 - **강성 평가 스터디 ① 비드 직접 선택(메시)**: ① 같은 모델에서 "비드 정의 ○ 자동 탐지(STEP) ● 직접 선택(메시)" 을 고르면 STEP 없이 낙하 Radioss 메시(Ch/R) 위에서 비드를 직접 골라 깊이·폭 DOE 를 한다. 형상 엔진(paicad)이 없어도 쓸 수 있다(있으면 체결 고정 노드만 fixed-scan 으로 가져옴, 없으면 경고 `FIXED_INFO_MISSING` + "고정" 층을 직접 칠함). 기본값은 지금처럼 자동 탐지

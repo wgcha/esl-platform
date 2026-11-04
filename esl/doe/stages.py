@@ -963,7 +963,8 @@ def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict) -> dict:
     fb = meta.get("mesh_fallback")
     if fb:                                               # v0.14.1 면 폴백(정상 형상은 키 없음 — 결과 바이트 불변)
         ids = [int(f["failed_id"]) for f in fb["faces"]]
-        qy.update(fallback_faces=len(ids), fallback_face_ids=ids)
+        qy.update(fallback_faces=len(ids), fallback_face_ids=ids,
+                  fallback_stages=[mg.fallback_label(f) for f in fb["faces"]])   # v0.15.1 면마다 쓰인 단계(편차)
         out["mesh_fallback"] = fb
     return out
 
@@ -1015,7 +1016,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                     for f in (r.get("mesh_fallback") or {}).get("faces") or []:
                         cc = f.get("center") or [0, 0, 0]
                         echo(f"[{did} {nm}]   면 {f['failed_id']}({f['type']}, 중심 {cc[0]:g},{cc[1]:g},{cc[2]:g} mm) → "
-                             f"{f['algorithm_name']}{'(제약 해제)' if f['relaxed'] else ''} · 처음 오류: {f['errors'][0]}")
+                             f"{mg.fallback_label(f)} · 처음 오류: {f['errors'][0]}")
                 else:
                     echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
                 if did == BASELINE and r["status"] != "READY":
@@ -1049,7 +1050,8 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                          f"({qy['fail_ratio'] * 100:.2f} % > {qy['max_fail_ratio'] * 100:g} %) — 차단 아님")
         if qy and qy.get("fallback_faces"):
             warns.append(f"MESH_FACE_FALLBACK: {r['id']} {r['name']} 면 {qy['fallback_faces']}개(gmsh 면 id "
-                         f"{', '.join(map(str, qy['fallback_face_ids']))})를 다른 2D 알고리즘·제약 해제로 메시 — "
+                         f"{', '.join(map(str, qy['fallback_face_ids']))})를 면 폴백("
+                         f"{', '.join(qy.get('fallback_stages') or []) or '다른 2D 알고리즘·제약 해제'})으로 메시 — "
                          "그 면 주변 요소 모양이 다른 형상과 다를 수 있음(mesh.json mesh_fallback)")
     doc = {"schema": "esl/doe_compare/1", "reference_source": ref["source"], "profile": prof_rec, "h": h,
            "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
