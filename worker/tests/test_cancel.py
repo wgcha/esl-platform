@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import threading
 
-from esl_test_support import API, H, create_case, wait_for
+import pytest
+from esl_test_support import API, H, create_case, past_ttl_s, wait_for
 
 W = H("tok-power", True)
 R = H("tok-power")
@@ -94,8 +95,9 @@ def test_input_changed_fails_job(client, mini_inputs, worker_factory):
     assert [s["state"] for s in j["steps"]] == ["SKIPPED"] * 3
 
 
+@pytest.mark.short_lease
 def test_tick_error_during_inproc_waits_for_thread_and_blocks_same_case(client, synth_inputs, worker_factory, engine,
-                                                                       monkeypatch):
+                                                                       monkeypatch, loaded_config):
     """v0.12.3(Verifier): inproc.call 중 tick(취소 확인)이 DB 오류를 던져도 작업 스레드(산출물 sha256)가 끝날 때까지
     기다린 뒤에야 실패로 끝난다. 그동안 lease 를 갱신해 작업은 RUNNING — 같은 Case 새 작업은 claim 되지 않는다."""
     import time
@@ -109,10 +111,11 @@ def test_tick_error_during_inproc_waits_for_thread_and_blocks_same_case(client, 
     started = threading.Event()
     marks: dict = {}
     real = register.artifact_shas
+    beyond = past_ttl_s(loaded_config)
 
-    def slow_shas(cdir, rels):                     # stop 을 보지 않는 함수 — 시험 lease_ttl(3 s)보다 길게
+    def slow_shas(cdir, rels):                     # stop 을 보지 않는 함수 — 설정 lease_ttl_s 보다 길게
         started.set()
-        time.sleep(4.5)
+        time.sleep(beyond)
         marks["done_at"] = time.monotonic()
         return real(cdir, rels)
 
@@ -139,7 +142,8 @@ def test_tick_error_during_inproc_waits_for_thread_and_blocks_same_case(client, 
         other = jobs_repo.insert_job(conn, case_id=cid, project_id="p-1", job_type="ESL_SOLVE", params={},
                                      created_by="u", created_by_name="u")
     other_worker = worker_factory()
-    for _ in range(12):                            # ttl(3 s) 넘게
+    end = time.monotonic() + past_ttl_s(loaded_config, 1.2)
+    while time.monotonic() < end:                  # 설정 lease_ttl_s 넘게
         time.sleep(0.3)
         if not t.is_alive():
             break

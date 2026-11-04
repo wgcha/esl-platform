@@ -32,7 +32,7 @@ from doe_worker_support import (
     started_pids,
     write_fake_paicad,
 )
-from esl_test_support import API, H, wait_for
+from esl_test_support import API, H, past_ttl_s, wait_for
 from opt_support import plate, tree, upload_files
 from sqlalchemy import select
 from test_opt_e2e import make_s1
@@ -386,7 +386,7 @@ def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
 
 # ---------------------------------------------------------------- v0.12.3(#44) 모델 전체 사본 중 lease 유지·취소
 def _slow_copy(monkeypatch, seconds: float, started: threading.Event | None = None) -> None:
-    """esl.doe.assem_full.copy_model_full 앞에 seconds 동안 guard 를 부르며 잠(시험 lease_ttl 3 s 보다 길게)."""
+    """esl.doe.assem_full.copy_model_full 앞에 seconds 동안 guard 를 부르며 잠(시험 설정 lease_ttl_s 보다 길게)."""
     import time as _t
 
     import esl.doe.assem_full as A
@@ -405,9 +405,11 @@ def _slow_copy(monkeypatch, seconds: float, started: threading.Event | None = No
     monkeypatch.setattr(A, "copy_model_full", slow)
 
 
-def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+@pytest.mark.short_lease
+def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inputs_root, exe, monkeypatch,
+                                          loaded_config):
     s1 = make_s1(engine, esl_root, inputs_root)
-    _slow_copy(monkeypatch, 4.5)                    # > worker.lease_ttl_s(3) — v0.12.1 이면 LEASE_LOST
+    _slow_copy(monkeypatch, past_ttl_s(loaded_config))   # > worker.lease_ttl_s — v0.12.1 이면 LEASE_LOST
     s = create(client, s1["entry_ids"])
     j = run_job(client, worker, s["job"]["id"])
     assert [x["state"] for x in j["steps"]] == ["SUCCEEDED", "SKIPPED", "SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]
@@ -418,7 +420,8 @@ def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inpu
     assert study(client, s["id"])["phase"] == "READY"
 
 
-def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+@pytest.mark.short_lease
+def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_root, exe, monkeypatch, loaded_config):
     import time as _t
 
     s1 = make_s1(engine, esl_root, inputs_root)
@@ -430,7 +433,8 @@ def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_
     th = threading.Thread(target=lambda: res.update(state=worker.run_once("SLOT")))
     th.start()
     assert started.wait(60)
-    for _ in range(12):                             # ttl(3 s) 넘게 — 그동안 워커 heartbeat(워커 기록)도 갱신됨
+    end = _t.monotonic() + past_ttl_s(loaded_config, 1.2)
+    while _t.monotonic() < end:                     # 설정 lease_ttl_s 넘게 — 그동안 워커 heartbeat(워커 기록)도 갱신됨
         worker.heartbeat_once()
         _t.sleep(0.3)
     assert get_job(client, jid)["state"] == "RUNNING"           # lease 갱신 중
