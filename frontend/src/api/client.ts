@@ -130,6 +130,7 @@ export const CODE_TEXT: Record<string, string> = {
   SHAPE_DUPLICATE_FILE: "같은 STEP 파일이 두 번 이상 들어 있습니다",
   SHAPE_QUALITY_FAIL: "메시 품질 Fail 요소 비율이 상한을 넘었습니다(차단 아님 — 결과에 메시 품질 차이가 섞일 수 있음)",
   DEFEATURE_SKIPPED: "작은 구멍 메움을 건너뛰고 그대로 메싱했습니다",
+  MESH_FACE_FALLBACK: "일부 면을 다른 2D 알고리즘(또는 제약 해제)으로 메시했습니다 — 그 면 주변 요소 모양이 다를 수 있음",
 };
 
 /** 일괄 실행 멈춤 코드 중 일반 API 오류와 이름이 같아 CODE_TEXT 에 넣지 않는 것(errorText 회귀 방지) */

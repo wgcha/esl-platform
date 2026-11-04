@@ -82,7 +82,10 @@ DEFAULTS: dict = {
     # 없음), holes table → defeature, criteria → quality(기준별 warn·fail, Fail 비율 상한 max_fail_ratio — 경고만).
     "compare": {"enabled": True, "max_shapes": 20, "total_max_mb": 1000, "align_tol": 0.05, "align_deg": 5.0,
                 "mesh": {"size_mm": 3.0, "curvature_n": 0, "min_size_factor": 0.8, "extend_from_boundary": 0,
-                         "occ_fix_small": 1, "feature_angle": 10.0},
+                         "occ_fix_small": 1, "feature_angle": 10.0,
+                         # v0.14.1 면 단위 폴백: 2D 메싱이 실패한 면만 algorithms 순서(6 Frontal-Delaunay → 5 Delaunay →
+                         # 1 MeshAdapt)로 재시도, relax 면 그 면의 작은 형상 처리·구멍 둘레 분할을 풀고 다시. 면 max_faces 개 초과 → 실패
+                         "fallback": {"enabled": True, "algorithms": [6, 5, 1], "relax": True, "max_faces": 20}},
                 "defeature": {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0],
                               "min_bead_height_mm": 2.0},
                 "quality": {"max_fail_ratio": 0.01,

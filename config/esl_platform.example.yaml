@@ -172,7 +172,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     total_max_mb: 1000                # STEP 합계 크기 상한(파일당 = step_max_mb)
     align_tol: 0.05                   # 형상 frame 원점의 기준 frame (ξ,η) 차 허용 — 넘으면 그 형상만 FAILED_SIZE
     align_deg: 5.0                    # 법선 각 허용(°)
-    mesh: {size_mm: 3.0, curvature_n: 0, min_size_factor: 0.8, extend_from_boundary: 0, occ_fix_small: 1}   # bead_doe.mesh 를 키별 덮어씀(모든 STEP 같은 설정)
+    mesh: {size_mm: 3.0, curvature_n: 0, min_size_factor: 0.8, extend_from_boundary: 0, occ_fix_small: 1,   # bead_doe.mesh 를 키별 덮어씀(모든 STEP 같은 설정)
+           fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20}}   # v0.14.1 메시 실패 면만 2D 알고리즘 6→5→1 재시도, 그다음 그 면 제약 해제
 hpc:                                  # v0.11.0 대시보드 SCX 릴레이(계약 esl_scx_relay.md §6). 키 이름 = physicsai hpc.scx.*(블록 복사) + client_name
   scx:                                # 섹션이 없으면 SCX 기능 전부 비활성. 값이 틀려도 기동은 하고 SCX 기능만 비활성(환경 점검 hpc.scx)
     relay_url: ""                     # 필수. http://127.0.0.1:<대시보드 백엔드 포트>(loopback·포트만 — 화면·프록시 포트 아님)
