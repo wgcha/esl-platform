@@ -2265,7 +2265,8 @@ export interface OptFileOut {
 
 // ---------------------------------------------------------------- v0.9.0 비드 형상 DOE (esl_bead_doe.md §10.2)
 // 인터페이스 이름 = 계약 스키마 이름(check:api 대조 — 백엔드 openapi 가 나오면 맞춤). 계약에 없는 보강 칸은 "(보강)" 표시.
-export type DoeScenario = "same" | "mesh" | "step";
+/** v0.14.0 compare = ④ 형상 직접 비교(esl_step_compare.md) */
+export type DoeScenario = "same" | "mesh" | "step" | "compare";
 export type DoeMethod = "lhs" | "halton" | "fullfact";
 export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
 export type DoeParamType = "D" | "W" | "U" | "V";
@@ -2280,6 +2281,8 @@ export type DoeDesignStatus =
   | "FAILED_MORPH"
   | "FAILED_MESH"
   | "FAILED_SOLVE"
+  /** v0.14.0 ④ 형상 크기·정렬 불일치(SC-D-7b) */
+  | "FAILED_SIZE"
   | "CANCELED";
 /** 경고·정보 1건(code 는 §6.3·§8.2·§10.3 코드, message 는 서버 resources/doe_messages.json 문구) */
 export interface DoeWarning {
@@ -2326,15 +2329,53 @@ export interface DoeSettingsOut {
   /** (보강) ② B 메시 기본 파트 제목 — 설정 bead_doe.part_title */
   part_title?: string | null;
   method_sources: DoeMethodSources;
+  /** v0.14.0 ④ 형상 직접 비교 설정(bead_doe.compare.*) */
+  compare?: { max_shapes: number; total_max_mb: number; mesh_size_mm: number } | null;
+}
+/** v0.14.0 ④ 형상 1개(esl_step_compare.md §3) */
+export interface CompareShapeIn {
+  upload_id: string;
+  name: string;
+  reference?: boolean;
 }
 export interface DoeCheckIn {
   project_id: string;
   scenario: DoeScenario;
   entry_ids: string[];
-  step_upload_id: string;
+  /** ①②③ 필수, ④ 금지 */
+  step_upload_id?: string | null;
   mesh_upload_id?: string | null;
   part_title?: string | null;
   inch?: number | null;
+  /** ④ 만(1..compare.max_shapes) */
+  shapes?: CompareShapeIn[] | null;
+}
+/** ④ check-inputs 형상 1행 */
+export interface DoeCheckShape {
+  index: number;
+  name: string;
+  file_name: string;
+  sha256: string;
+  size_mb: number;
+  reference: boolean;
+}
+/** ④ 형상 이름·파일(결과 행·기준). Case 메시 기준 = {name:"Case 메시", file_name:null, source:"case"} */
+export interface DoeShapeRef {
+  name: string;
+  file_name: string | null;
+  reference?: boolean;
+  source?: "step" | "case" | null;
+}
+/** (보강) ④ 준비 결과 형상 1행 — 메시 요소 수·상태(계약 prep 요약 failed[] 를 형상 전체로 넓힘) */
+export interface DoePrepShape {
+  id: string;
+  name: string;
+  file_name: string | null;
+  reference: boolean;
+  status: DoeDesignStatus;
+  code?: string | null;
+  n_elems?: number | null;
+  quad_ratio?: number | null;
 }
 export interface DoeProps {
   t: number;
@@ -2343,13 +2384,17 @@ export interface DoeProps {
 }
 export interface DoeCheckOut {
   ok: boolean;
-  step: { file_name: string; sha256: string; size_mb: number };
+  /** ①②③ 만(④ 는 shapes) */
+  step?: { file_name: string; sha256: string; size_mb: number } | null;
   base?: { entry_id: string; case_id: string; case_title?: string | null; part_title: string; n_nodes: number; n_elems: number; topo_sha256: string } | null;
   mesh?: MeshCheckOut | null;
   entries: { entry_id: string; ok: boolean; reason: string | null }[];
   size?: { L_xi: number; L_eta: number; inch: number | null; rel_xi: number; rel_eta: number } | null;
   props_default?: DoeProps | null;
   mesh_size_default_mm?: number | null;
+  /** ④ 형상 목록·기준 출처 */
+  shapes?: DoeCheckShape[] | null;
+  reference_source?: "step" | "case" | null;
   warnings: DoeWarning[];
 }
 export interface DoeStudyIn extends DoeCheckIn {
@@ -2393,16 +2438,33 @@ export interface DoeStudyOut {
   title: string;
   entry_ids: string[];
   inputs: {
-    step: { file_name: string; sha256: string };
+    /** ①②③ 만 */
+    step?: { file_name: string; sha256: string } | null;
     mesh?: { file_name: string; sha256: string } | null;
     part_title: string | null;
     inch: number | null;
     props?: DoeProps | null;
     mesh_size_mm?: number | null;
+    /** ④ 형상(d000 = 기준 STEP, 기준 없음이면 d001…) */
+    shapes?: { id: string; name: string; file_name: string; sha256: string; upload_id: string; reference: boolean }[] | null;
+    reference_source?: "step" | "case" | null;
   };
   phase: DoePhase;
   version: number;
-  prep: { n_beads: number; n_params: number; paicad_version: string | null; warnings: DoeWarning[]; boundary: { n_warn: number; n_info: number } } | null;
+  prep: {
+    n_beads?: number;
+    n_params?: number;
+    paicad_version?: string | null;
+    warnings: DoeWarning[];
+    boundary?: { n_warn: number; n_info: number };
+    /** ④ 준비 요약(§5 BD_PREP_REGISTER) */
+    n_shapes?: number;
+    n_ready?: number;
+    failed?: { id: string; status: DoeDesignStatus; code: string | null }[];
+    reference_source?: "step" | "case" | null;
+    /** (보강) ④ 형상별 메시·상태 */
+    shapes?: DoePrepShape[];
+  } | null;
   doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
   job: JobOut | null;
   result_ready: boolean;
@@ -2471,7 +2533,8 @@ export interface DoeMatrixOut {
 }
 export interface DoeRunIn {
   version: number;
-  matrix_sha256: string;
+  /** ④ 는 없음 */
+  matrix_sha256?: string | null;
   solver?: "linear";
 }
 export interface DoeRankRow {
@@ -2498,6 +2561,8 @@ export interface DoeRankRow {
   pareto?: boolean;
   /** 결과의 per_esl_inline 이 true 일 때만(아니면 GET …/results/per-esl) */
   per_esl?: DoePerEsl[];
+  /** ④ 형상 이름(values = {}) */
+  shape?: DoeShapeRef | null;
 }
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
 export interface DoePerEsl {
@@ -2510,6 +2575,8 @@ export interface DoePerEsl {
 }
 export interface DoePerEslDesign {
   id: string;
+  /** ④ 형상 이름 */
+  name?: string | null;
   per_esl: DoePerEsl[];
 }
 /** GET /doe/studies/{id}/results/per-esl?design=… */
@@ -2523,7 +2590,10 @@ export interface DoeExcluded {
   id: string;
   status: DoeDesignStatus;
   code?: string | null;
-  values: Record<string, number>;
+  /** ④ 는 없음 */
+  values?: Record<string, number>;
+  /** ④ 형상 이름 */
+  shape?: DoeShapeRef | null;
 }
 export interface DoeSensParam {
   name: string;
@@ -2538,13 +2608,17 @@ export interface DoeFileOut {
 }
 export interface DoeResultOut {
   C_ref: number;
-  baseline: { id: "d000"; score: number; umax: number; epsmax: number };
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number; shape?: DoeShapeRef | null };
   n_ok: number;
   n_skipped: Record<string, number>;
   n_failed: Record<string, number>;
   ranking: DoeRankRow[];
   excluded?: DoeExcluded[];
   sensitivity: { method: string; r2: number; params: DoeSensParam[] } | null;
+  /** ④ = "COMPARE_NO_PARAMS" */
+  sensitivity_reason?: string | null;
+  scenario?: DoeScenario;
+  reference_source?: "step" | "case" | null;
   boundary_warnings_n: number;
   view3d: string[];
   best: { id: string; files: DoeFileOut[] } | null;

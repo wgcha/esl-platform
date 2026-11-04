@@ -2628,6 +2628,49 @@ details.open-uploads .actions {
 .doe-fields input[type="number"] {
   width: 7rem;
 }
+/* v0.14.0 ④ 형상 직접 비교: 형상 표 */
+.doe-shapes,
+.doe-shape-summary {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.doe-shape-table {
+  max-width: 72rem;
+}
+.doe-shape-table .doe-ref-col,
+.doe-shape-table .doe-x-col {
+  width: 3rem;
+  text-align: center;
+}
+.doe-shape-name {
+  width: min(22rem, 100%);
+}
+.doe-shape-file {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doe-name-col {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  text-align: left;
+}
+tbody th.doe-name-col {
+  background: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.doe-mesh-note {
+  align-self: end;
+  padding-bottom: 0.35rem;
+}
 .doe-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);

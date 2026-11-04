@@ -114,6 +114,20 @@ export const CODE_TEXT: Record<string, string> = {
   TSTAR_ADJUSTED: "1순위 시점이 변위 추출 프레임에 없어 다른 후보로 바뀌었습니다",
   TSTAR_METRIC_ERROR: "t* 지표 계산에 오류가 있습니다",
   USER_TSTAR_CHANGED: "직접 고른 t* 와 새 자동 t* 가 다릅니다",
+  // v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §8) — 원본 문구는 서버 resources/doe_messages.json, 여기는 메시지 없을 때
+  COMPARE_DISABLED: "'형상 직접 비교'가 서버에서 꺼져 있습니다(관리자 문의)",
+  SHAPES_EMPTY: "비교할 STEP 을 올리세요",
+  SHAPES_TOO_FEW: "기준 STEP 외에 비교할 STEP 을 하나 이상 올리세요",
+  SHAPES_TOO_MANY: "STEP 개수가 상한을 넘었습니다",
+  SHAPES_TOO_LARGE: "STEP 파일 합계 크기가 상한을 넘었습니다",
+  SHAPE_NAME_INVALID: "형상 이름이 올바르지 않습니다(1~64자, 제어문자 금지)",
+  SHAPE_NAME_DUPLICATE: "형상 이름이 겹칩니다(대소문자 무시)",
+  REFERENCE_MULTIPLE: "기준 형상은 하나만 고를 수 있습니다",
+  SCENARIO_UNSUPPORTED: "이 시나리오에서는 쓸 수 없는 기능입니다",
+  SHAPE_SIZE_MISMATCH: "기준과 크기가 다릅니다(±5 % 밖)",
+  SHAPE_MISALIGNED: "기준과 위치·방향이 다릅니다 — 같은 좌표계로 내보낸 STEP 인지 확인하세요",
+  COMPARE_REF_CASE_MESH: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다",
+  SHAPE_DUPLICATE_FILE: "같은 STEP 파일이 두 번 이상 들어 있습니다",
 };
 
 /** 일괄 실행 멈춤 코드 중 일반 API 오류와 이름이 같아 CODE_TEXT 에 넣지 않는 것(errorText 회귀 방지) */
