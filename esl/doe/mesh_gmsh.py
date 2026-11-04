@@ -24,6 +24,7 @@ import zipfile
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 
 MESH_NPZ = "mesh.npz"
 MESH_JSON = "mesh.json"
@@ -55,7 +56,7 @@ def save_npz_det(path: str, arrays: dict) -> str:
             zi.external_attr = 0o644 << 16
             with zf.open(zi, "w", force_zip64=True) as fh:
                 np.lib.format.write_array(fh, np.ascontiguousarray(arrays[k]), allow_pickle=False)
-    os.replace(tmp, path)
+    atomic_replace(tmp, path)
     return path
 
 

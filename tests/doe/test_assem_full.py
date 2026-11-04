@@ -496,3 +496,41 @@ def test_referenced_gene_intersects_model_nodes(tmp_path):
         A.MAX_EXPAND = old
     M.refs = {("GRNOD", 8)}                                              # 미참조 GENE → 범위 오류여도 손대지 않음
     assert A.normalize_lines(["/GRNOD/GENE/7", "T", I(10, 5)], A.norm_cfg(None), M, "a.inc") == (None, {})
+
+
+# ---------------------------------------------------------------- 이슈 #53 WinError 32(실서버 실패 지점 = 1) 복사 뒤 교체)
+def _locked_replace(n_fail: int, match: str):
+    real = os.replace
+    st = {"fail": 0}
+
+    def rep(src, dst):
+        if match in os.path.basename(str(dst)) and st["fail"] < n_fail:
+            st["fail"] += 1
+            e = PermissionError(13, "다른 프로세스가 파일을 사용 중")
+            e.winerror = 32                         # Windows 공유 위반 흉내(백신·인덱서가 방금 쓴 파일을 잠깐 엶)
+            raise e
+        real(src, dst)
+    return rep, st
+
+
+def test_lock_retry_same_bytes_and_gives_up_file_locked(tmp_path, monkeypatch):
+    from esl import fsutil as F
+
+    m = model(tmp_path)
+    d0, man0 = stage(m, tmp_path / "ref")
+    rep, st = _locked_replace(3, "tie.inc")
+    monkeypatch.setattr(os, "replace", rep)
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    d1, man1 = stage(m, tmp_path / "locked")
+    assert st["fail"] == 3
+    assert tree_sha(d1) == tree_sha(d0)                         # 재시도 후 결과 = 재시도 없는 결과(바이트)
+    assert [f["staged_sha256"] for f in man1["files"]] == [f["staged_sha256"] for f in man0["files"]]
+    F.configure({"attempts": 3})
+    try:
+        rep, _ = _locked_replace(10 ** 6, "tie.inc")
+        monkeypatch.setattr(os, "replace", rep)
+        with pytest.raises(EslError) as ei:
+            stage(m, tmp_path / "gave_up")
+    finally:
+        F.configure(None)
+    assert ei.value.code == "FILE_LOCKED" and "tie.inc" in ei.value.message

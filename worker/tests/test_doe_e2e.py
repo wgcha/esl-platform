@@ -442,3 +442,57 @@ def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_
     assert get_job(client, jid)["state"] == "CANCELED"
     lg = client.get(f"{API}/jobs/{jid}/log", params={"step": 3}, headers=R).text
     assert "모델 전체 사본 prep/assem_full 취소로 중단" in lg, lg[-2000:]
+
+
+# ---------------------------------------------------------------- 이슈 #53 WinError 32: prep/assem_full 교체 잠금
+def _lock_assem(monkeypatch, n_fail: int) -> dict:
+    """prep/assem_full/ 안 대상 파일로의 os.replace 를 처음 n_fail 회 Windows 공유 위반(WinError 32)으로."""
+    import esl.fsutil as F
+
+    real = os.replace
+    st = {"fail": 0}
+    mark = os.sep + "assem_full" + os.sep
+
+    def rep(src, dst):
+        if mark in str(dst) and st["fail"] < n_fail:
+            st["fail"] += 1
+            e = PermissionError(13, "다른 프로세스가 파일을 사용 중")
+            e.winerror = 32
+            raise e
+        real(src, dst)
+    monkeypatch.setattr(os, "replace", rep)
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    return st
+
+
+def test_prep_assem_full_lock_retry_then_file_locked(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    import esl.fsutil as F
+
+    s1 = make_s1(engine, esl_root, inputs_root)
+    st = _lock_assem(monkeypatch, 3)                  # 잠깐 잠김 → 재시도로 성공
+    s = create(client, s1["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    assert st["fail"] == 3 and study(client, s["id"])["phase"] == "READY"
+    F.configure({"attempts": 2})                      # 끝내 잠김 → BD_GEOM FAILED FILE_LOCKED(경로 포함)
+    try:
+        _lock_assem(monkeypatch, 10 ** 6)
+        s2 = create(client, s1["entry_ids"])
+        j = run_job(client, worker, s2["job"]["id"], "FAILED")
+    finally:
+        F.configure(None)
+    assert j["failure_code"] == "FILE_LOCKED", j["failure_message"]
+    assert "assem_full" in j["failure_message"] and "백신" in j["failure_message"]
+    assert [x["failure_code"] for x in j["steps"] if x["state"] == "FAILED"] == ["FILE_LOCKED"]
+
+
+def test_worker_side_file_locked_not_internal_error(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    import esl.fsutil as F
+    from esl_worker import doe_jobs
+
+    def boom(ex, st, log_path):
+        raise F.FileLocked(os.path.join(ex.cdir, ".x.tmp"), os.path.join(ex.cdir, "x.json"), 8, 10.0)
+    monkeypatch.setattr(doe_jobs, "run_step", boom)
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"])
+    j = run_job(client, worker, s["job"]["id"], "FAILED")
+    assert j["failure_code"] == "FILE_LOCKED" and "x.json" in j["failure_message"]

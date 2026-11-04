@@ -50,6 +50,7 @@ from esl import cumulative as _cum
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
+from esl.fsutil import atomic_replace
 from esl.io import RESULT_FILES, SCALAR_SOURCES, decide_shear, pack_results, rad_eq, strain_source_of
 from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
@@ -311,14 +312,14 @@ class Context:
         d = self.guard(self.p(sub))
         if os.path.isdir(d) and os.listdir(d):
             dst = self._backup_target(sub)
-            os.replace(d, dst)
+            atomic_replace(d, dst)
         os.makedirs(d, exist_ok=True)
         return self.guard(d)
 
     def backup_file(self, name: str) -> None:
         src = self.guard(self.p(name))
         if os.path.exists(src):
-            os.replace(src, self._backup_target(name))
+            atomic_replace(src, self._backup_target(name))
 
     def _backup_target(self, name: str) -> str:
         root = self.guard(self.p(BACKUP_DIR, self.ts))

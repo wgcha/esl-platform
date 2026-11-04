@@ -20,6 +20,8 @@ import re
 import time
 from typing import Any
 
+from esl_platform.core.atomic import atomic_replace
+
 from . import localproc
 from .localproc import (  # noqa: F401 - 기존 import 경로 유지
     BAT_META,
@@ -166,7 +168,7 @@ def backup_previous(out_dir: str) -> str | None:
         k += 1
     os.makedirs(dst)
     for n in names:
-        os.replace(os.path.join(out_dir, n), os.path.join(dst, n))
+        atomic_replace(os.path.join(out_dir, n), os.path.join(dst, n))
     return dst
 
 
@@ -184,7 +186,7 @@ def backup_prev_csv(work: str) -> str | None:
         dst = f"{base}_{k}"
         k += 1
     os.makedirs(dst, exist_ok=True)
-    os.replace(src, os.path.join(dst, PREV_CSV))
+    atomic_replace(src, os.path.join(dst, PREV_CSV))
     return dst
 
 

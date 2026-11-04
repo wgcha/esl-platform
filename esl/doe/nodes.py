@@ -16,6 +16,7 @@ import os
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.library import _util as U
 from esl.rad.parser import _decode, _f, _i, bounded_readline
 
@@ -155,5 +156,5 @@ def write_morphed(src: str, dst: str, node_id, x_new, x_old=None, *, max_line: i
                         out = body.encode("utf-8") + eol
                         n_chg += 1
             fo.write(out)
-    os.replace(tmp, g(dst))
+    atomic_replace(tmp, g(dst))
     return {"n_nodes": n_rows, "n_changed": n_chg}

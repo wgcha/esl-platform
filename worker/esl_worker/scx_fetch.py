@@ -31,6 +31,7 @@ from typing import Any
 from sqlalchemy import and_, select, update
 
 from esl_platform.core import uploads as U
+from esl_platform.core.atomic import atomic_replace
 from esl_platform.core.atomic import write_text_atomic
 from esl_platform.core.config import is_within
 from esl_platform.core.db.tables import jobs as jobs_t
@@ -469,7 +470,7 @@ class _Fetch:
         U.check_existing_file(part, self.up_dir)
         if os.path.lexists(dst):
             U.check_existing_file(dst, self.up_dir)
-        os.replace(part, dst)
+        atomic_replace(part, dst)
         m["files"][rel] = {"size": got, "sha256": sha, "kind": kind}
         self.save_manifest(m)
         self.echo(f"[esl-worker] {kind}: {paths.root_sub(rel, self.root_rel)} ({_mb(got)}, sha256 {sha[:12]}…)")
@@ -650,7 +651,7 @@ class _Fetch:
                     raise _fail("UPLOAD_FILE_EXISTS", f"세션에 같은 경로의 다른 파일이 있습니다(덮어쓰지 않음): {local_rel}")
             else:
                 U.check_existing_file(src, self.up_dir)
-                os.replace(src, dst)
+                atomic_replace(src, dst)
             placed[r] = local_rel
             extra = {"scx_session": self.scx_meta(m)} if rec["kind"] == "rad" else {}
             entries.append(self.file_entry(local_rel, int(rec["size"]), rec["sha256"], r, **extra))
@@ -706,7 +707,7 @@ class _Fetch:
         U.check_existing_file(part, self.up_dir)
         if os.path.lexists(dst):
             raise _fail("UPLOAD_FILE_EXISTS", f"세션에 같은 경로 파일이 이미 있습니다(덮어쓰지 않음): {rel}")
-        os.replace(part, dst)
+        atomic_replace(part, dst)
         self.save_files([self.file_entry(rel, got, sha, h3d)])
         self.echo(f"[esl-worker] h3d: {name} {_gb(got)} GB, sha256 {sha[:12]}… ({time.monotonic() - t0:.1f}s)")
         self.progress(100.0, f"h3d {_amount(got, got)}")

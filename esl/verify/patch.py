@@ -19,6 +19,7 @@ import os
 from collections.abc import Callable, Iterable
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.rad.parser import _decode, _f, _i, bounded_readline
 
 FIX_FMT = "%20.13E"
@@ -152,7 +153,7 @@ def _write(src: str, dst: str, want: dict[int, tuple], max_line: int | None) -> 
             fo.write(out)
             h.update(out)
             size += len(out)
-    os.replace(tmp, dst)
+    atomic_replace(tmp, dst)
     return h.hexdigest(), size, n
 
 

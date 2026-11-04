@@ -23,6 +23,7 @@ import shutil
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.library import _util as U
 
 MESH_EXT = (".rad", ".inc")
@@ -702,7 +703,7 @@ def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str
         if U.sha256_file(src) != s0 or U.sha256_file(tmp) != s0:
             os.remove(tmp)
             raise EslError("INPUT_CHANGED", f"모델 파일이 복사 중 바뀜(sha256 불일치): {os.path.basename(src)}")
-        os.replace(tmp, g(dst))
+        atomic_replace(tmp, g(dst))
         if cfg["enabled"]:
             ln = _read_lines(dst)[0]
             model.scan_refs(ln, cfg["rules"])
@@ -734,7 +735,7 @@ def copy_model_full(starter: str, case_dir: str, roots: list[str], dest_dir: str
         tmp = os.path.join(os.path.dirname(dst), f".{os.path.basename(dst)}.{os.getpid()}.tmp")
         with open(g(tmp), "wb") as fh:
             fh.write((eol.join(new) + eol).encode("latin-1"))
-        os.replace(tmp, g(dst))
+        atomic_replace(tmp, g(dst))
         r.update(staged_sha256=U.sha256_file(dst), normalized=c)
         for k, v in c.items():
             counts[k] = counts.get(k, 0) + v
@@ -827,7 +828,7 @@ def restore_out_files(out_files_dir: str, rels: list[str], man: dict, guard=None
         tmp = os.path.join(os.path.dirname(p), f".{os.path.basename(p)}.{os.getpid()}.tmp")
         with open(g(tmp), "wb") as fh:
             fh.write(b"".join(res))
-        os.replace(tmp, g(p))
+        atomic_replace(tmp, g(p))
         n += 1
     return n
 

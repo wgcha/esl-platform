@@ -126,6 +126,8 @@ def child_entry(spec: dict[str, Any]) -> None:
             os._exit(1)
         from esl_worker.core_adapter import CoreError
 
+        if spec.get("fs_retry") is not None:    # 이슈 #53: atomic_replace 잠금 재시도(부모 worker.fs_retry)
+            importlib.import_module("esl.fsutil").configure(spec["fs_retry"])
         try:
             fn = _resolve(spec.get("target") or "esl_worker.child:run_core")
             fn(spec, echo)

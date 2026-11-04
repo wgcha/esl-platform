@@ -28,6 +28,7 @@ import re
 import time
 from typing import Any
 
+from esl_platform.core.atomic import atomic_replace
 from esl_platform.core.repositories import jobs as jobs_repo
 
 from . import inproc, localproc
@@ -167,7 +168,7 @@ class _Runner:
             jobs_repo.step_update(conn, ex.job["id"], ex.token, self.no, command=argv)
         self.echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False))
         if os.path.exists(out_path) and self.prev_label:   # 이전 시도(-check·라이선스 실패)의 .out 은 이름을 바꿔 보존
-            os.replace(out_path, f"{out_path}.{self.prev_label}")
+            atomic_replace(out_path, f"{out_path}.{self.prev_label}")
         if check:
             self.prev_label = "check"
         else:

@@ -44,6 +44,7 @@ import os
 import time
 from typing import Any
 
+from esl_platform.core.atomic import FileLocked, fs_retry_dict
 from esl_platform.core.errors import DomainError, LeaseLost
 from esl_platform.core.inputs import changed_inputs, esl_run_stale, extract_stale, inputs_hash
 from esl_platform.core.paths import ANALYSIS_DIR, check_includes, esl_subdir
@@ -222,6 +223,14 @@ class Executor:
             self._kill_child()
             log.error("lease 를 잃었습니다 — 작업 %s 상태를 더 쓰지 않습니다", job["id"])
             return "LEASE_LOST"
+        except FileLocked as exc:          # 이슈 #53: 워커 쪽 교체가 재시도(worker.fs_retry) 뒤에도 잠김 → 사용자 문구·경로
+            self._kill_child()
+            log.error("작업 %s 파일 잠김: %s", job["id"], exc.message)
+            try:
+                self._finish(FAILED, exc.code, exc.message[:450])
+            except LeaseLost:
+                return "LEASE_LOST"
+            return FAILED
         except Exception as exc:
             self._kill_child()
             log.exception("작업 %s 실행 오류", job["id"])
@@ -468,7 +477,8 @@ class Executor:
                 "log_path": log_path, "result_path": result_path, "priority": self.settings.worker.priority,
                 "target": self.worker.core_target, "job_id": self.job["id"], "tag": self.job["id"],
                 "export_targets": list(p["targets"]) if stage == "export" and p.get("targets") else None,
-                "parent_pid": os.getpid(), "progress_path": progress_path}
+                "parent_pid": os.getpid(), "progress_path": progress_path,
+                "fs_retry": fs_retry_dict(self.settings)}          # 이슈 #53: 자식도 같은 잠금 재시도 설정
         if spec_over:
             spec.update(spec_over)
         gate = limiter.prepare(self.worker, spec, self.lim)

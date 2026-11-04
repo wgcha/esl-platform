@@ -10,11 +10,10 @@ Q1(가정 확정 A): max_strain 의 이전 값 prev_eq = 이전 소성 변형률
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 
 AGGS = ("mid_mean", "mid_max", "max", "mean")
 MODES = ("cumulative", "incremental", "trivial")
@@ -123,5 +122,5 @@ def write_prev_csv(model, path: str, agg: str = "auto") -> int:
         fh.write("elem_id,prev_epsp,prev_eq\n")
         for i, v in zip(eid.tolist(), prev.tolist()):
             fh.write(f"{i},{v!r},{v!r}\n")
-    os.replace(tmp, path)
+    atomic_replace(tmp, path)
     return int(eid.size)
