@@ -41,13 +41,16 @@ def doe_settings_dict(base: Path, *, paicad: bool = True, **over: Any) -> dict[s
 
 
 def record_paicad(engine, *, ready: bool = True, version: str = "0.14.1", ocp: str | None = "7.8.1",
-                  reason: str | None = None, warning: str | None = None, gmsh: bool = True) -> None:
+                  reason: str | None = None, warning: str | None = None, gmsh: bool = True,
+                  remesh: bool | None = True) -> None:
+    """워커 점검 기록(heartbeat info). remesh = v0.16.0 gmsh importStl 지원 기록(None = 키 없음 — 옛 워커)."""
     from esl_platform.core.repositories import workers as workers_repo
 
     info = {"claims_paused": False,
             "paicad": {"ready": ready, "version": version, "ocp": ocp, "pinned": "0.14.1", "warning": warning,
                        "reason": reason, "checked_at": "2026-10-29T00:00:00Z"},
-            "gmsh": {"ready": gmsh, "version": "4.13.1" if gmsh else None}}
+            "gmsh": {"ready": gmsh, "version": "4.13.1" if gmsh else None,
+                     **({} if remesh is None else {"remesh": bool(gmsh and remesh)})}}
     with engine.begin() as c:
         workers_repo.heartbeat(c, worker_id="w-doe", host="h", pid=1, app_version="0.9.0", limiter="none", info=info)
 

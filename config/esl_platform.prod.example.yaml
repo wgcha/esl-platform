@@ -191,7 +191,38 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
                       periodic_order: [nofix, split, fill, small, algorithms, relax], nofix: {scopes: [face, all], bbox_tol: 0.01, area_rtol: 0.01},   # nofix = OCC 정리 끔(그 면만 → 전체), 그 면 대체는 bbox·종류·넓이 같은 후보 1개일 때만
                       split: {planes: 2},   # 면 분할: bbox 중심 평면 1~2개
                       fill: {tol_factor: 0.5, points: 8, samples: 10},   # 채움 면 대체: 원 면 대비 편차 ≤ 0.5 × 요소 크기
-                      small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}}}   # 넓이 < 50.27 mm² 면은 경계만으로 채움
+                      small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}},   # 넓이 < 50.27 mm² 면은 경계만으로 채움
+           mode: auto,                # v0.16.0 메시 방식 cad | remesh | auto(실패 형상만 ladder 순서로 폴백 — 계약 esl_compare_mesh_options.md C2-D-9)
+           ladder: [cad, refine_local, refine_global, remesh]}   # auto 폴백 순서(cad 맨 앞, 빼면 그 단계 끔, 중복 금지)
+    remesh:                           # v0.16.0 삼각형 재메시(C2-D-11~14): OCC 삼각화 → 면 분류(특징각) → quad 우선 재메시
+      enabled: true
+      feature_angle_deg: 30.0         # classifySurfaces 특징각(0..90 미만)
+      curve_angle_deg: 180.0          # 곡선 분할각(0 초과..180)
+      linear_deflection_mm: 0.05      # OCC 삼각화 선형 편차(> 0, ≤ fidelity.warn_mm)
+      angular_deflection_deg: 5.0
+      merge_tol_mm: 0.001
+      stl_max_tris: 5000000
+      algorithms: [6, 5, 1]           # 모델 전체 재시도 순서(gmsh 2D 알고리즘)
+      recombine: true                 # quad 우선
+      keep_stl: false                 # true 면 prep/shapes/<id>/mesh/remesh_stl.npz 보관
+      timeout_s: null                 # null = bead_doe.mesh.timeout_s
+      fidelity: {warn_mm: 0.3, fail_mm: 1.5, samples_max: 200000}   # Hausdorff > warn 경고, > fail 실패(null = 끔)
+    mesh_input:                       # v0.16.0 메시 입력(C2-D-2~8): 형상마다 사용자 메시(Radioss .rad/.inc, 업로드 폴더 안 include)
+      enabled: true
+      formats: [".rad", ".inc"]
+      max_mb: 500                     # 주 + include 합계(형상당)
+      include: true
+      max_include_depth: 8
+      size_warn_ratio: 1.5            # 모서리 길이 중앙값이 [h/r, h×r] 밖이면 경고 MESH_INPUT_SIZE_DIFF
+    refine:                           # v0.16.0 세분화 폴백(C2-D-18~24): 기본 3 mm 메시 실패 형상만 더 잘게
+      enabled: true
+      min_size_mm: 0.5
+      max_elems: 600000               # 세분화 시도 요소 상한(bead_doe.mesh.max_elems 이상)
+      total_timeout_s: 3600           # 형상 1개 사다리 전체 시간 예산(s)
+      elem_per_h2: 1.0                # 요소 수 예측 보정 기본(quad)
+      local: {factors: [0.75, 0.5, 0.33], neighbor_rings: 1, max_faces: 20}   # 실패 면 + 이웃 고리 크기 = h × factor
+      global: {factors: [0.8, 0.667]}   # 3 → 2.4 → 2.0 mm
+      convergence: {enabled: true, tol: null, same_h_baseline: false}   # 기준 d000 을 세분화 h 로 다시 풀어 메시 편향 δ 표시(tol null = rank.ratio_tol)
   select:                             # v0.15.0 비드 직접 선택·규칙 모핑(계약 esl_bead_select.md §10) — paicad 불필요(있으면 fixed-scan 만)
     enabled: true
     feature_angle_deg: 15.0           # 브라우저 확장·사면 BFS 평행 판정 기본(°, 1..45)
