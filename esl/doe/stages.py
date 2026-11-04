@@ -908,10 +908,17 @@ def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict) -> dict:
         code = "MESH_TOO_LARGE" if any(e.get("code") == "MESH_TOO_LARGE" for e in errs or []) else "MESH_FAILED"
         return {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
     dfi = meta.get("defeature") or {}
-    return {"id": did, "status": "READY", "code": None, "message": None, "n_nodes": meta["n_nodes"],
-            "n_elems": meta["n_elems"], "quad_ratio": meta["quad_frac"], "seconds": meta.get("wall_seconds"),
-            "quality": _cmp_quality(c, mesh), "defeature": dfi or None,
-            "warnings": [w.get("message") for w in meta.get("warnings") or []] + list(dfi.get("warnings") or [])}
+    qy = _cmp_quality(c, mesh)
+    out = {"id": did, "status": "READY", "code": None, "message": None, "n_nodes": meta["n_nodes"],
+           "n_elems": meta["n_elems"], "quad_ratio": meta["quad_frac"], "seconds": meta.get("wall_seconds"),
+           "quality": qy, "defeature": dfi or None,
+           "warnings": [w.get("message") for w in meta.get("warnings") or []] + list(dfi.get("warnings") or [])}
+    fb = meta.get("mesh_fallback")
+    if fb:                                               # v0.14.1 면 폴백(정상 형상은 키 없음 — 결과 바이트 불변)
+        ids = [int(f["failed_id"]) for f in fb["faces"]]
+        qy.update(fallback_faces=len(ids), fallback_face_ids=ids)
+        out["mesh_fallback"] = fb
+    return out
 
 
 def _cmp_quality(c: Ctx, mesh: dict) -> dict:
@@ -955,7 +962,13 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                     df = r.get("defeature") or {}
                     echo(f"[{did} {nm}] mesh {h:g} mm {float(r.get('seconds') or 0):.0f} s {r['n_elems']} 요소 · quad "
                          f"{r['quad_ratio']:.3f} · 품질 Fail {qy['fail_elems']}({qy['fail_ratio'] * 100:.2f} %) Warn "
-                         f"{qy['warn_elems']} · 구멍 메움 {df.get('filled', 0)}·둘레 조정 {df.get('hole_sized', 0)}")
+                         f"{qy['warn_elems']} · 구멍 메움 {df.get('filled', 0)}·둘레 조정 {df.get('hole_sized', 0)}"
+                         + (f" · 폴백 면 {qy['fallback_faces']}개(id {', '.join(map(str, qy['fallback_face_ids']))})"
+                            if qy.get("fallback_faces") else ""))
+                    for f in (r.get("mesh_fallback") or {}).get("faces") or []:
+                        cc = f.get("center") or [0, 0, 0]
+                        echo(f"[{did} {nm}]   면 {f['failed_id']}({f['type']}, 중심 {cc[0]:g},{cc[1]:g},{cc[2]:g} mm) → "
+                             f"{f['algorithm_name']}{'(제약 해제)' if f['relaxed'] else ''} · 처음 오류: {f['errors'][0]}")
                 else:
                     echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
                 if did == BASELINE and r["status"] != "READY":
@@ -987,6 +1000,10 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
         if qy and qy["over_limit"]:
             warns.append(f"SHAPE_QUALITY_FAIL: {r['id']} {r['name']} 품질 Fail 요소 {qy['fail_elems']}개 "
                          f"({qy['fail_ratio'] * 100:.2f} % > {qy['max_fail_ratio'] * 100:g} %) — 차단 아님")
+        if qy and qy.get("fallback_faces"):
+            warns.append(f"MESH_FACE_FALLBACK: {r['id']} {r['name']} 면 {qy['fallback_faces']}개(gmsh 면 id "
+                         f"{', '.join(map(str, qy['fallback_face_ids']))})를 다른 2D 알고리즘·제약 해제로 메시 — "
+                         "그 면 주변 요소 모양이 다른 형상과 다를 수 있음(mesh.json mesh_fallback)")
     doc = {"schema": "esl/doe_compare/1", "reference_source": ref["source"], "profile": prof_rec, "h": h,
            "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
            "shapes": [{"id": r["id"], "name": r["name"], "file_name": r.get("file_name"), "reference": r["reference"],

@@ -205,7 +205,10 @@ def render_compare(ctx: dict) -> str:
         trs.append([s["id"], s.get("name") or "", s.get("file_name") or ("Case 메시" if s.get("source") == "case" else ""),
                     (str(s.get("sha256") or "")[:12] + "…") if s.get("sha256") else "", s.get("n_elems") or "",
                     "" if s.get("quad_ratio") is None else _f(s.get("quad_ratio")),
-                    "" if not s.get("quality") else f"{s['quality']['fail_elems']} ({s['quality']['fail_ratio'] * 100:.2f} %)",
+                    "" if not s.get("quality") else f"{s['quality']['fail_elems']} ({s['quality']['fail_ratio'] * 100:.2f} %)"
+                    + (f" · 폴백 면 {s['quality']['fallback_faces']}개(id "
+                       f"{', '.join(map(str, s['quality'].get('fallback_face_ids') or []))})"
+                       if s["quality"].get("fallback_faces") else ""),
                     SHAPE_STATE_KO.get(s.get("status"), s.get("status") or ""), s.get("code") or ""])
     S.append(H.section("shapes", "2. 형상", H.table(["id", "이름", "파일", "sha256", "요소 수", "quad 비율", "품질 Fail",
                                                      "준비 상태", "코드"], trs, num=(4, 5))))

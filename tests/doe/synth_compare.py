@@ -53,3 +53,42 @@ def plate_step(path, n_beads: int = 0, *, Lx: float = 400.0, Lz: float = 300.0, 
     finally:
         gmsh.finalize()
     return str(path)
+
+
+def boss_plate_step(path, bosses, *, Lx: float = 300.0, Lz: float = 160.0, holes=()) -> str:
+    """v0.14.1 periodic 면 재현용: XY 판(z = 0) + 회전체 보스(원통·원뿔 = gmsh periodic 면, seam 있음).
+
+    bosses = [(r1, r2, d, r3, side_r)]: 판 구멍 r1 → 벽(r2 < r1 원뿔, 같으면 원통) 깊이 d → r3 > 0 이면 바닥 고리 평면(가운데 구멍
+    반지름 r3, 나사 자리), 0 이면 벽 끝이 열린 버링/관. side_r > 0 이면 벽 옆에 반지름 side_r 구멍(seam 반대편 90°).
+    holes = [(x, y, r)] 판의 진짜 구멍. 면은 fragment 로 모서리를 공유(봉합된 쉘)."""
+    import math
+
+    import gmsh
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        occ = gmsh.model.occ
+        plate = occ.addRectangle(0.0, 0.0, 0.0, Lx, Lz)
+        faces, cuts = [], []
+        for i, (r1, r2, d, r3, side_r) in enumerate(bosses):
+            x, y = 40.0 + 60.0 * i, Lz / 2
+            p0, p1 = occ.addPoint(x + r1, y, 0.0), occ.addPoint(x + r2, y, -d)
+            cs = [occ.addLine(p0, p1)]
+            if r3 > 0:
+                cs.append(occ.addLine(p1, occ.addPoint(x + r3, y, -d)))
+            fs = [e for e in occ.revolve([(1, c) for c in cs], x, y, 0.0, 0.0, 0.0, 1.0, 2 * math.pi) if e[0] == 2]
+            if side_r > 0:
+                tool = occ.addCylinder(x, y, -d / 2, 0.0, r1 + 5.0, 0.0, side_r)
+                fs, _ = occ.cut(fs, [(3, tool)])
+            faces += fs
+            cuts.append((2, occ.addDisk(x, y, 0.0, r1, r1)))
+        cuts += [(2, occ.addDisk(hx, hy, 0.0, hr, hr)) for hx, hy, hr in holes]
+        top, _ = occ.cut([(2, plate)], cuts)
+        occ.synchronize()
+        occ.fragment(top + faces, [])
+        occ.synchronize()
+        os.makedirs(os.path.dirname(os.path.abspath(str(path))), exist_ok=True)
+        gmsh.write(str(path))
+    finally:
+        gmsh.finalize()
+    return str(path)
