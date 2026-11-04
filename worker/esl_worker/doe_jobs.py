@@ -21,6 +21,9 @@
 - BD_POST = 코어 bd_post(순위·view3d·산출물·보고서·대형 rad 사본 정리 — 상위 keep_files_top + 베이스라인 유지).
 - 등록 BD_PREP_REGISTER·BD_PREVIEW_REGISTER·BD_REGISTER = register.register_doe_*(bead_does phase·요약). 실패 시 phase 불변.
 - 작업 진행률 = step 가중 ``DOE_STEP_WEIGHTS``(PREP 10·5·60·20·5, PREVIEW 5·90·5, RUN 5·85·9·1) × step 진행률.
+- v0.15.0 select(비드 직접 선택, esl_bead_select.md §8): BD_MESH0 SKIPPED, BD_GEOM = paicad 준비됨이면 모델 전체 사본 →
+  fixed-scan(Ch/R 파트) → prep/fixed/ 만(extract·tag 없음), paicad 없음·실패 → SKIPPED + 경고 FIXED_INFO_MISSING(준비 성공).
+  BD_GRID = 코어 자식 ``bd_select_grid``(paicad grid 없음, 같은 grid_manifest 형식). BD_DESIGNS = paicad 없이 코어 bd_eval.
 - 쓰기는 ``_doe/<id>/`` 아래만(코어 Writer 입력 목록 = 항목·Case 입력·업로드 거부), 작은 JSON 은 core/atomic.
 """
 
@@ -278,8 +281,13 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         res = {"core_stage": st["core_stage"]}
         if out.get("skipped"):
             res["_skipped"] = True
-            res["skipped"] = "③ 이 아님 — 기준 메시 gmsh 없음"
+            res["skipped"] = ("select 비드 직접 선택 — 기준 메시 = Case 메시(gmsh 없음)"
+                              if ex.lib["doe"].get("scenario") == "select" else "③ 이 아님 — 기준 메시 gmsh 없음")
         return res
+    if key == "BD_GEOM" and ex.lib["doe"].get("scenario") == "select":
+        return _geom_select(ex, st, log_path)
+    if key == "BD_GRID" and ex.lib["doe"].get("scenario") == "select":
+        return _grid_select(ex, st, log_path)
     if key == "BD_GEOM":
         if ex.lib["doe"].get("scenario") == "compare":      # v0.14.0 ④: paicad 호출 없음(version 점검도 안 함, SC-D-3)
             with open(log_path, "a", encoding="utf-8") as fh:
@@ -503,7 +511,119 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     return outputs
 
 
+def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
+    """select BD_GEOM(§8.1, BS-D-8): paicad 준비됨 → prep/assem_full(모델 전체 사본) → fixed-scan(Ch/R 파트) → prep/fixed/.
+    paicad 없음·버전 불가·사본/fixed-scan 실패 → SKIPPED + 경고 FIXED_INFO_MISSING(준비는 계속 — 코어 bd_loads 가 고정 없음 처리)."""
+    echo = _echo_fn(log_path)
+    doe = ex.lib["doe"]
+    full, dcfg = _cfg(ex)
+    out = ex.cdir
+    prep = os.path.join(out, "prep")
+    prog = _Progress(ex, st)
+    prog(0)
+    inp = _read_json(os.path.join(prep, "input.json"))
+    if not isinstance(inp, dict):
+        raise _fail("PREREQUISITE_MISSING", "prep/input.json 이 없습니다 — BD_INPUT 부터 다시")
+    outputs: dict[str, Any] = {"paicad_version": None, "commands": [], "fixed": None}
+
+    def fresh(rel: str) -> str:
+        try:
+            return core_adapter.doe_fresh_dir(out, rel, doe)
+        except core_adapter.CoreError as exc:
+            raise _fail(exc.code, exc.message) from None
+
+    def skip(reason: str) -> dict[str, Any]:
+        if os.path.isdir(os.path.join(prep, "fixed")):       # 부분 결과를 고정 정보로 쓰지 않게(_backup 으로 이동)
+            fresh(os.path.join("prep", "fixed"))
+        echo(f"[esl-worker] BD_GEOM(select): 체결(고정) 정보 없음 — {reason} → SKIPPED(FIXED_INFO_MISSING)")
+        outputs["fixed"] = {"source": "none", "reason": reason[:300]}
+        with ex._tx() as conn:
+            jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] FIXED_INFO_MISSING: {reason[:300]}"])
+            jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_geom": _jsonable(outputs)})
+        prog(100)
+        return {"_skipped": True, "skipped": f"체결 정보 없음(FIXED_INFO_MISSING) — {reason[:200]}"}
+
+    v = paicad_proc.version_check(ex.settings, full)
+    if not v.get("ready"):
+        return skip(f"paicad 를 쓸 수 없음({v.get('reason') or 'PAICAD_CHECK_FAILED'})")
+    echo(f"[esl-worker] paicad version: {v.get('version')} (OCP {v.get('ocp')}, 고정 {v.get('pinned')})"
+         + (f" — {v['warning']}" if v.get("warning") else ""))
+    outputs["paicad_version"] = v.get("version")
+    _write_json(os.path.join(prep, "paicad.json"), {k: v.get(k) for k in ("version", "ocp", "pinned", "warning",
+                                                                          "checked_at")})
+    b = doe.get("base") or {}
+    try:
+        check_input_path(ex.settings, b["rad_path"], "RAD")
+    except DomainError as exc:
+        raise _fail(exc.code, f"기준 Case 입력을 쓸 수 없습니다: {exc.message}") from None
+    case_dir = b.get("case_dir") or os.path.dirname(b["rad_path"])
+    try:
+        inproc.call(ex, lambda: core_adapter.doe_assem_check(case_dir, float(dcfg["same"]["max_assem_mb"])),
+                    label="조립 폴더 검사")
+        assem, man = _stage_full(ex, b["rad_path"], case_dir, "assem_full", echo)
+    except core_adapter.CoreError as exc:
+        return skip(f"모델 전체 사본 실패({exc.code}: {exc.message})")
+    outputs["assem_full"] = core_adapter.doe_assem_summary(man)
+    prog(30)
+    pc = dcfg["paicad"]
+    opts = None
+    if pc.get("options"):
+        opts = os.path.join(prep, "paicad_options.json")
+        _write_json(opts, pc["options"])
+    pio = core_adapter.doe_paicad_io()
+    d = fresh(os.path.join("prep", "fixed"))
+    r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
+                                              "out_dir": d, "options": opts, "threads": int(pc["threads"])},
+                cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
+                stage="prep", echo=echo, progress=lambda pct, _m: prog(30 + 0.7 * pct), tick=_tick(ex),
+                label="fixed-scan ")
+    outputs["commands"].append({"step": "fixed", "exit_code": r["exit_code"], "seconds": r["seconds"], "ok": r["ok"]})
+    if not r["ok"]:
+        return skip(f"fixed-scan 실패({r.get('code')}{fixed_hint(r, man)})")
+    fx = (r.get("report") or {}).get("fixed") or {}
+    echo(f"[esl-worker] 고정 노드 {fx.get('total')} (클러스터 {len(fx.get('clusters') or [])})")
+    outputs["fixed"] = {"source": "scan", "n": fx.get("total")}
+    if v.get("warning"):
+        with ex._tx() as conn:
+            jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] {v['warning']}"])
+    with ex._tx() as conn:
+        jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_geom": _jsonable(outputs)})
+    prog(100)
+    return outputs
+
+
 # ---------------------------------------------------------------- BD_GRID
+def _grid_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
+    """select BD_GRID(BS-D-11): 코어 자식 ``bd_select_grid``(lease 갱신·취소·진행률 = executor._run_core) →
+    doe/<rev>/grid/grid_manifest.json(paicad grid 와 같은 형식) → 셀 상태 요약."""
+    echo = _echo_fn(log_path)
+    doe = ex.lib["doe"]
+    _, dcfg = _cfg(ex)
+    rev = str(int(doe["rev"]))
+    set_progress(ex, st, 0.0)
+    ex._run_core({**st, "core_stage": "bd_select_grid"}, log_path)
+    out = _stage_warnings(ex, "BD_GRID", log_path)
+    m = _read_json(os.path.join(ex.cdir, "doe", rev, "matrix.json"), {}) or {}
+    ids = [x["id"] for x in m.get("designs") or [] if x.get("id") != BASELINE]
+    pio = core_adapter.doe_paicad_io()
+    try:
+        g = pio.read_grid(os.path.join(ex.cdir, "doe", rev, "grid"), ids, float(dcfg["limits"]["max_json_mb"]))
+    except Exception as exc:  # noqa: BLE001 - EslError(PAICAD_FAILED)
+        raise _fail("INTERNAL_ERROR", f"select 미리보기 결과를 읽지 못했습니다: {getattr(exc, 'message', exc)}") from None
+    sel = (doe.get("selection") or {}).get("sha256")
+    msha = (g.get("manifest") or {}).get("selection_sha256")
+    if sel and msha != sel:
+        raise _fail("PREVIEW_STALE", f"미리보기 선택 sha256({str(msha)[:12]}…)이 작업 선택({sel[:12]}…)과 다릅니다")
+    want = set(ids)
+    cnt = count_select_states([x for x in g["cells"] if x["id"] in want])
+    echo(f"[esl-worker] 미리보기 셀 {len(ids)}: OK {cnt['ok']} · 고정 침범 {cnt['fixed']} · 품질 실패 {cnt['mesh']}")
+    res = {"cells": len(ids), **cnt, "selection_sha256": msha,
+           "basis_sha256": (g.get("manifest") or {}).get("basis_sha256")}
+    with ex._tx() as conn:
+        jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_select_grid": _jsonable({**_summary(out), **res})})
+    return res
+
+
 def _grid(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     echo = _echo_fn(log_path)
     doe = ex.lib["doe"]
@@ -554,6 +674,11 @@ def count_states(rows: list[dict[str, Any]]) -> dict[str, int]:
             "fixed": sum(r["state"] == "SKIPPED_FIXED" for r in rows),
             "geom": sum(r["state"] == "SKIPPED_GEOM" for r in rows),
             "thumb_warn": sum(r.get("warning") == "THUMB_UNAVAILABLE" for r in rows)}
+
+
+def count_select_states(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """select 셀 상태 수(count_states + mesh = FAILED_MESH 품질 실패 셀, esl_bead_select.md §14)."""
+    return {**count_states(rows), "mesh": sum(r["state"] == "FAILED_MESH" for r in rows)}
 
 
 # ---------------------------------------------------------------- BD_DESIGNS
@@ -678,6 +803,8 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     os.makedirs(dd, exist_ok=True)
     if scn == "compare":
         return _one_shape(ex, did, procs)
+    if scn == "select":                 # BS-D-13: paicad 없음 — 코어 bd_eval 이 기저 모핑 좌표로 해석
+        return _one_select(ex, did, procs)
     pio = core_adapter.doe_paicad_io()
     inp = _read_json(os.path.join(out, "prep", "input.json"), {}) or {}
     opts = os.path.join(out, "prep", "paicad_options.json") if pc.get("options") else None
@@ -745,6 +872,19 @@ def _one_shape(ex, did: str, procs: paicad_proc.Procs) -> dict[str, Any]:
                 f"{float(solve.get('seconds') or 0):.1f} s · C_max {float(res.get('C_max') or 0):.4g}")
     else:
         line = f"[{did} {name}] → {status} {code or res.get('code') or ''}"
+    return {"design": did, "status": status, "reused": False, "line": line}
+
+
+def _one_select(ex, did: str, procs: paicad_proc.Procs) -> dict[str, Any]:
+    """select 안 1개: paicad 없이 코어 자식 bd_eval(기저 모핑 → 고정·품질 재확인 → ① 하중·지지 → 해석)."""
+    status, code = _eval_child(ex, did, None, procs)
+    res = _read_json(os.path.join(ex.cdir, "run", "designs", did, "result.json"), {}) or {}
+    solve = res.get("solve") or {}
+    if status == "OK":
+        line = (f"[{did}] 모핑 · solve {len(res.get('per_esl') or [])} ESL {float(solve.get('seconds') or 0):.1f} s · "
+                f"C_max {float(res.get('C_max') or 0):.4g}")
+    else:
+        line = f"[{did}] → {status} {code or res.get('code') or ''}"
     return {"design": did, "status": status, "reused": False, "line": line}
 
 

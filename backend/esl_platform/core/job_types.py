@@ -87,7 +87,8 @@ OPT_STAGES = ("opt_prep", "opt_load", "opt_deck", "opt_post")
 OPT_STEP_WEIGHTS = {"OPT_PREP": 1, "OPT_LOAD": 4, "OPT_DECK": 1, "OS_SOLVE": 82, "OPT_POST": 10, "OPT_REGISTER": 2}
 
 DOE_JOB_TYPES = ("DOE_PREP", "DOE_PREVIEW", "DOE_RUN")
-DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post")   # = esl.doe.stages.STAGES
+DOE_STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post",
+              "bd_select_grid")   # = esl.doe.stages.STAGES(v0.15.0 select 미리보기 = BD_GRID 안 코어 자식)
 # 계약 §9.3: 작업 progress 가중(step 순서, 합 100)
 DOE_STEP_WEIGHTS = {
     "DOE_PREP": {"BD_INPUT": 10, "BD_MESH0": 5, "BD_GEOM": 60, "BD_LOADS": 20, "BD_PREP_REGISTER": 5},
