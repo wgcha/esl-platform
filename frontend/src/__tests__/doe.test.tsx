@@ -120,7 +120,7 @@ describe("라이브러리 진입(§12.1)", () => {
     renderApp("/p/p-body/library?tab=doe");
     const t = await screen.findByRole("table", { name: "강성 평가 스터디 목록" });
     expect(screen.getByRole("tab", { name: "강성 평가 스터디" }).getAttribute("aria-selected")).toBe("true");
-    await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(5)); // 머리 + ①②④④(v0.14.0 목 doe-3·doe-4)
+    await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(7)); // 머리 + ①②④④(v0.14.0 목 doe-3·doe-4) + ①직접 선택 2(v0.15.0 목 doe-5·doe-6)
     expect(t.textContent).toMatch(/75형 Ch\/R 비드 1차/);
     expect(t.textContent).toMatch(/② 다른 모델\(메시 있음\)/);
     expect(t.textContent).toMatch(/LHS · 31안 · 변수 6/);

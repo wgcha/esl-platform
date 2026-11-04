@@ -1718,6 +1718,8 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     const isBin = (typeof Blob !== "undefined" && raw instanceof Blob) || isBuf;
     const body = raw && !isBin ? JSON.parse(String(raw)) : undefined;
     const r = server.handle(method, url.pathname, url.searchParams, body, isBin ? (raw instanceof Blob ? raw.size : (raw as ArrayBuffer).byteLength) : 0);
+    // v0.15.0 select 바이너리(part.glb·select.bin·basis.bin)
+    if (r.body instanceof ArrayBuffer) return new Response(r.body, { status: r.status, headers: { "Content-Type": "application/octet-stream" } });
     if (typeof r.body === "string") {
       // v0.7.0: 목 비드 맵은 SVG(실제 서버는 PNG)
       // v0.9.0: 목 DOE 썸네일·비드 그림도 SVG(실제 서버는 PNG)

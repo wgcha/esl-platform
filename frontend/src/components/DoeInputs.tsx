@@ -184,7 +184,7 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
           STEP {check.step.file_name} · {check.step.size_mb.toFixed(2)} MB <span className="ok-text">✓</span> (크기 검사는 입력 준비에서)
         </span>
       )}
-      {check.base && scenario === "same" && (
+      {check.base && (scenario === "same" || scenario === "select") && (
         <span>
           기준 Case {check.base.case_title ?? check.base.case_id} · 파트 {check.base.part_title} · 노드 {check.base.n_nodes.toLocaleString()} · 요소 {check.base.n_elems.toLocaleString()}
         </span>
@@ -241,16 +241,16 @@ export function DoeInputs({ projectId, scenario, st, entries, ids, onIds, mismat
           <ul className="chip-list">
             {ids.map((id) => {
               const e = byId.get(id);
-              const bad = scenario === "same" && mismatched.includes(id);
+              const bad = (scenario === "same" || scenario === "select") && mismatched.includes(id);
               return (
                 <li key={id} className={`chip${bad ? " bad" : ""}`}>
-                  {e ? entryKey(e) : id} {scenario === "same" && (bad ? <span className="error-text" title="다른 모델(노드 ID·요소 연결 다름)">✗</span> : <span className="ok-text">✓</span>)}
+                  {e ? entryKey(e) : id} {(scenario === "same" || scenario === "select") && (bad ? <span className="error-text" title="다른 모델(노드 ID·요소 연결 다름)">✗</span> : <span className="ok-text">✓</span>)}
                 </li>
               );
             })}
           </ul>
         )}
-        {scenario === "same" && mismatched.length > 0 && (
+        {(scenario === "same" || scenario === "select") && mismatched.length > 0 && (
           <button type="button" className="btn small" onClick={() => onIds(ids.filter((x) => !mismatched.includes(x)))}>
             다른 모델 빼기
           </button>
@@ -258,6 +258,10 @@ export function DoeInputs({ projectId, scenario, st, entries, ids, onIds, mismat
       </div>
       {scenario === "compare" ? (
         <CompareShapes projectId={projectId} st={st} form={form} setForm={setForm} allowed={allowed} />
+      ) : scenario === "select" ? (
+        <div className="small muted" data-testid="doe-select-note">
+          STEP 없이 기준 Case 의 낙하 메시(노드·요소 ID 그대로)에서 비드를 직접 고릅니다 — 입력 준비 후 3D 에서 선택
+        </div>
       ) : (
       <div className="doe-files">
         <UploadDrop
@@ -296,7 +300,7 @@ export function DoeInputs({ projectId, scenario, st, entries, ids, onIds, mismat
             <input aria-label="B 파트 제목" value={form.partTitle} placeholder={st.part_title ?? ""} onChange={(e) => set("partTitle", e.target.value)} />
           </Field>
         )}
-        {scenario !== "same" && (
+        {scenario !== "same" && scenario !== "select" && (
           <Field label="인치(선택)">
             <input type="number" aria-label="인치" min={1} value={form.inch} onChange={(e) => set("inch", e.target.value)} />
           </Field>
@@ -353,6 +357,12 @@ export function DoeInputsSummary({ study, entries }: { study: DoeStudyOut; entri
       </div>
       {study.scenario === "compare" ? (
         <CompareShapeSummary study={study} />
+      ) : study.scenario === "select" ? (
+        <div className="small" data-testid="doe-input-summary">
+          비드 직접 선택(메시){i.part_title ? ` · 파트 ${i.part_title}` : ""}
+          {study.prep?.n_elems ? ` · 요소 ${study.prep.n_elems.toLocaleString()} · 노드 ${(study.prep.n_nodes ?? 0).toLocaleString()}` : ""}
+          {study.selection ? ` · 선택 rev ${study.selection.rev}` : " · 선택 미저장"}
+        </div>
       ) : (
       <div className="small" data-testid="doe-input-summary">
         STEP {i.step?.file_name ?? "–"}
