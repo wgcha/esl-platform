@@ -32,6 +32,26 @@ export function renderServer(server: MockServer, path: string) {
 }
 
 const primaries = (container: HTMLElement) => container.querySelectorAll("button[data-primary]");
+/** 주 버튼(링크 포함) — [보고서 받기] 는 ?download=1 링크 */
+const anyPrimaries = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>("[data-primary]"));
+/** 화면 안 보고서: 주 버튼 1개 = [보고서 받기](?download=1), 보조 [새 탭에서 열기], iframe sandbox="allow-scripts"(allow-same-origin 없음)·src = 보고서 URL */
+async function expectInlineReport(container: HTMLElement, title: string, url: string) {
+  const frame = (await screen.findByTitle(title)) as HTMLIFrameElement;
+  expect(frame.tagName).toBe("IFRAME");
+  expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+  expect(frame.getAttribute("src")).toBe(url);
+  const prim = anyPrimaries(container);
+  expect(prim).toHaveLength(1);
+  expect(prim[0].textContent).toBe("보고서 받기");
+  expect(prim[0].getAttribute("href")).toBe(`${url}?download=1`);
+  expect(prim[0].hasAttribute("download")).toBe(true);
+  const tab = screen.getByRole("link", { name: "새 탭에서 열기" });
+  expect(tab.getAttribute("href")).toBe(url);
+  expect(tab.getAttribute("target")).toBe("_blank");
+  expect(tab.getAttribute("rel")).toContain("noopener");
+  expect(screen.queryByRole("button", { name: "보고서 보기" })).toBeNull();
+}
 const STAGE5 = "/p/p-body/c/c-demo/step/4"; // v0.10.0: ④ 검증
 
 describe("⑤ 겹쳐보기 색·회색 규칙", () => {
@@ -304,21 +324,25 @@ describe("종합분석 만들기", () => {
     expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true);
     server.drain();
     expect(await screen.findByRole("table", { name: "대표 케이스" }, { timeout: 6000 })).toBeTruthy();
-    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false));
+    // 끝나면 주 버튼 = [보고서 받기] 링크(?download=1) + 화면 안 보고서(iframe)
+    await waitFor(() => expect(anyPrimaries(container)[0].getAttribute("href")).toMatch(/\/report\?download=1$/));
+    expect(await screen.findByTitle("종합분석 보고서")).toBeTruthy();
   }, 12000);
 });
 
 describe("종합분석 상세", () => {
-  it("요약·대표 케이스·포락 미니맵·파일(큰 파일은 경로 복사), 주 버튼 '보고서 보기' 1개", async () => {
+  it("요약·대표 케이스·포락 미니맵·파일(큰 파일은 경로 복사)은 위 접힘 영역, 보고서는 화면 안 sandbox iframe, 주 버튼 '보고서 받기' 1개", async () => {
     const { container } = renderApp("/p/p-body/library/analyses/an-1");
     const reps = await screen.findByRole("table", { name: "대표 케이스" });
     expect(within(reps).getAllByRole("row").slice(1)).toHaveLength(4);
     expect(within(reps).getByText("REP1")).toBeTruthy();
     // 포락 미니맵: envelope.csv(다운로드 API) 24×14 격자
     expect((await screen.findByRole("img", { name: "셀 합력 포락 미니맵" })).querySelectorAll("rect").length).toBe(24 * 14 + 1);
-    expect(primaries(container)).toHaveLength(1);
-    expect(primaries(container)[0].textContent).toBe("보고서 보기");
-    expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false);
+    await expectInlineReport(container, "종합분석 보고서", "/esl/api/library/analyses/an-1/report");
+    // 요약·파일은 보고서 위 접힘 영역(기본 닫힘)
+    expect((screen.getByTestId("fold-summary") as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByTestId("fold-files") as HTMLDetailsElement).open).toBe(false);
+    expect(within(screen.getByTestId("fold-summary")).getByRole("table", { name: "대표 케이스" })).toBeTruthy();
     const files = await screen.findByRole("table", { name: "분석 파일" });
     expect(within(files).getByText("opt/esl_bead.fem")).toBeTruthy();
     const links = within(files).getAllByRole("link", { name: "다운로드" });
@@ -412,10 +436,12 @@ describe("설계 버전 비교(§12.2)", () => {
     expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(true);
     server.drain();
     expect(await screen.findByTestId("verdict", {}, { timeout: 6000 })).toBeTruthy();
-    await waitFor(() => expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false));
+    // 끝나면 주 버튼 = [보고서 받기] 링크(?download=1) + 화면 안 보고서(iframe)
+    await waitFor(() => expect(anyPrimaries(container)[0].getAttribute("href")).toMatch(/\/report\?download=1$/));
+    expect(await screen.findByTitle("버전 비교 보고서")).toBeTruthy();
   }, 12000);
 
-  it("비교 상세: 판정 배지·사유·씬 표(바뀐 씬 강조), 주 버튼 '보고서 보기' 1개", async () => {
+  it("비교 상세: 판정 배지·사유·씬 표(바뀐 씬 강조, 접힘 영역), 보고서 화면 안 iframe, 주 버튼 '보고서 받기' 1개", async () => {
     const { container } = renderApp("/p/p-body/library/comparisons/cmp-1");
     const v = await screen.findByTestId("verdict");
     expect(within(v).getByText("추가 반복 권장")).toBeTruthy();
@@ -426,9 +452,8 @@ describe("설계 버전 비교(§12.2)", () => {
     const rows = within(screen.getByRole("table", { name: "씬별 비교" })).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(3);
     expect(rows.filter((r) => r.className === "hl")).toHaveLength(1);
-    expect(primaries(container)).toHaveLength(1);
-    expect(primaries(container)[0].textContent).toBe("보고서 보기");
-    expect((primaries(container)[0] as HTMLButtonElement).disabled).toBe(false);
+    expect(within(screen.getByTestId("fold-summary")).getByRole("table", { name: "씬별 비교" })).toBeTruthy();
+    await expectInlineReport(container, "버전 비교 보고서", "/esl/api/library/comparisons/cmp-1/report");
   });
 
   it("조회 사용자: 비교 실행 비활성", async () => {

@@ -425,6 +425,27 @@ select:disabled {
 .dot.off {
   background: var(--line-strong);
 }
+/* #49 Case 목록 진행 칸: 4단계 점 + 라이브러리 배지 한 줄 */
+.case-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.step-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.step-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: default;
+}
+.step-dot .step-mark {
+  font-size: 0.95rem;
+  color: var(--muted);
+}
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -3125,4 +3146,118 @@ th[aria-sort="ascending"] .th-sort::after {
 }
 .vd-unknown .inline-actions input {
   width: 12rem;
+}
+
+/* ---------------------------------------------------------------- v0.12.5 보고서 화면 안 보기(ReportViewer) */
+details.card.fold > summary .fold-sub {
+  font-weight: 400;
+}
+details.card.fold > .fold-body {
+  padding: 0.8rem 1rem 1rem;
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.report-viewer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.report-viewer > .card-head {
+  flex-wrap: wrap;
+}
+.report-newtab {
+  white-space: nowrap;
+}
+.report-dl-error {
+  padding: 0.4rem 1rem 0;
+}
+.report-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* ---- v0.13.0 일괄 실행 (계약 esl_run_all.md §9) ---- */
+.btn.run-all-btn {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-weak);
+  font-weight: 650;
+}
+.btn.run-all-btn:hover:not(:disabled) {
+  background: var(--surface);
+}
+.step.run-all-step a {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+.run-all-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  margin: 0.5rem 1.25rem 0;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+.run-all-bar.run {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+.run-all-bar.bad {
+  border-color: var(--bad);
+  background: var(--bad-weak);
+  color: var(--bad);
+}
+.run-all-bar.ok {
+  border-color: var(--ok);
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.run-all-bar.off {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.run-all-tag {
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.run-all-text {
+  flex: 1 1 24rem;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.run-all-detail {
+  font-weight: 400;
+}
+.run-all-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: none;
+}
+.run-all-link {
+  white-space: nowrap;
+}
+.run-all-badge {
+  margin-left: 0.35rem;
+}
+.run-all-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  font-size: 0.9rem;
 }

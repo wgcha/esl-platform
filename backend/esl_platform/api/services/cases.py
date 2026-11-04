@@ -8,6 +8,7 @@ v0.10.0(esl_menu_restructure.md §5): PUT /tstar 가 지지 세트가 없을 때
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from typing import Any
@@ -25,11 +26,12 @@ from ...core.inputs import fingerprint, fingerprint_h3d
 from ...core.paths import check_input_path, h3d_raw_dir
 from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
+from ...core.repositories import library as lib_repo
 from ...core.repositories.cases import VersionConflict
 from ...core.db.tables import jobs as jobs_t
 from ...core.state_machine import FAILED, INTERRUPTED, QUEUED, RUNNING, SUCCEEDED  # noqa: F401
 # 단계 상태(v0.13.0: 본문은 core.step_status — 일괄 실행 워커 훅 공용)
-from ...core.step_status import REASON_MESSAGES, stage_status, step_status  # noqa: F401
+from ...core.step_status import REASON_MESSAGES, stage_status, stage_status_many, step_status  # noqa: F401
 from ...core.uploads import check_principal_upload_area
 from ..context import AppContext
 from . import system
@@ -47,6 +49,7 @@ from .common import (
 )
 
 ACTIVE_STATES = (QUEUED, RUNNING)
+log = logging.getLogger("esl_platform.cases")
 
 
 def _projects(ctx: AppContext, principal: Principal, token: str | None, rid: str) -> list[dict]:
@@ -97,6 +100,11 @@ def create_case(ctx: AppContext, principal: Principal, token: str | None, rid: s
         except DomainError as exc:
             out["run_all"] = None
             out["run_all_error"] = {"code": exc.code, "message": exc.message}
+        except Exception as exc:  # noqa: BLE001 - Case 생성(커밋됨)은 성공으로 보고, 일괄 실행 실패만 알림
+            log.exception("Case %s 생성 후 일괄 실행 시작 오류", out["id"])
+            out["run_all"] = None
+            out["run_all_error"] = {"code": "RUN_ALL_ERROR",
+                                    "message": f"일괄 실행 시작 중 내부 오류 — 관리자 확인: {type(exc).__name__}"}
     return out
 
 
@@ -201,7 +209,29 @@ def list_cases(ctx: AppContext, project_id: str | None, status: str | None) -> l
     with ctx.engine.connect() as conn:
         rows = cases_repo.list_cases(conn, project_id, status)
         metas = h3d_metas_for(conn, [c["h3d_path"] for c in rows if c.get("input_kind") == "H3D"])
-        return [case_out(ctx, c, None, metas) for c in rows]
+        # #49: 목록도 4단계 상태·라이브러리 등록 현황을 함께(묶음 조회 — Case 수와 무관한 쿼리 수)
+        sss = stage_status_many(conn, rows)
+        libs = lib_repo.active_stats_for_cases(conn, [c["id"] for c in rows])
+        out = []
+        for c in rows:
+            d = case_out(ctx, c, None, metas)
+            d["step_status"] = step_status(c, sss[c["id"]])
+            d["library"] = library_summary(libs.get(c["id"]))
+            out.append(d)
+        return out
+
+
+def library_summary(stats: dict[str, Any] | None) -> dict[str, Any]:
+    """Case 의 라이브러리 등록 현황(#49): count = ACTIVE 항목 수, latest_status = 최신 항목 판정(PASS·FAIL·UNDETERMINED·LEGACY,
+    라이브러리 목록 적격 배지와 같은 규칙)."""
+    from .library import eligibility
+
+    if not stats:
+        return {"count": 0, "latest_entry_id": None, "latest_status": None, "latest_registered_at": None}
+    lt = stats.get("latest") or {}
+    ok, why = eligibility(lt.get("quality"))
+    return {"count": stats["count"], "latest_entry_id": lt.get("id"), "latest_status": "PASS" if ok else why,
+            "latest_registered_at": lt.get("registered_at")}
 
 
 def get_case(ctx: AppContext, case_id: str) -> dict[str, Any]:

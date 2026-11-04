@@ -93,13 +93,18 @@ def start(ctx: AppContext, principal: Principal, case_id: str, from_step: str | 
         ts = case.get("tstar") or {}
         prev_user = ({"metric": ts.get("metric"), "frame_index": ts.get("frame_index")}
                      if ts.get("source") == "user" else None)
+        resumed = prev if prev and prev["status"] == "STOPPED" else None
+        if prev_user is None and resumed is not None and resumed.get("prev_user_tstar"):
+            # §4.5 이어서 실행: 사람이 다시 고르지 않았으면(현재 t* 가 auto) 이전 시도의 '사람이 고른 t*' 를 이어받아
+            # G4 가 같은 사유(USER_TSTAR_CHANGED)로 다시 멈추게 한다 — 이어받지 않으면 auto t* 가 그대로 통과됨
+            prev_user = dict(resumed["prev_user_tstar"])
         try:
             with conn.begin_nested():
                 run = repo.insert_run(conn, case_id=case_id, project_id=case["project_id"], from_step=from_step,
                                       core_settings=copy.deepcopy(ctx.config.core or {}),
                                       created_by=principal.user_id, created_by_name=principal.display_name,
                                       prev_user_tstar=prev_user,
-                                      resumed_from_id=prev["id"] if prev and prev["status"] == "STOPPED" else None)
+                                      resumed_from_id=resumed["id"] if resumed else None)
         except IntegrityError:
             raise conflict("RUN_ALL_ACTIVE", "이미 일괄 실행 중입니다") from None
         env = core.Env(esl_root=ctx.settings.storage.esl_root, auto=auto,

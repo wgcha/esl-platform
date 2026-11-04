@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 W = H("tok-power", True)
 R = H("tok-power")
-CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:"
+CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
 
 
 @pytest.fixture()
@@ -134,6 +134,7 @@ def test_case_report_csp_download_and_guard(client, case, tmp_path):
     assert r.headers["content-type"].startswith("text/html")
     assert r.headers["content-security-policy"] == CSP
     assert r.headers["x-content-type-options"] == "nosniff" and "content-disposition" not in r.headers
+    assert "x-frame-options" not in r.headers  # v0.12.5 화면 안 iframe 보기: 같은 출처 틀만 허용(CSP frame-ancestors 'self')
     r = client.get(f"{API}/cases/{cid}/report", params={"download": 1}, headers=R)
     assert r.status_code == 200 and r.headers["content-disposition"].startswith("attachment;")
     assert r.headers["content-security-policy"] == CSP

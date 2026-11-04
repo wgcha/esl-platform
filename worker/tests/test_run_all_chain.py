@@ -228,6 +228,12 @@ def test_v_ra_4_user_tstar_changed_and_adopt(client, synth_inputs, worker_factor
     assert run["stop_reason"]["detail"]["reasons"][0]["code"] == "USER_TSTAR_CHANGED"
     assert f"frame {other}" in run["stop_reason"]["message"] and f"frame {auto['frame_index']}" in run["stop_reason"]["message"]
     assert len(_jobs(client, cid)) == 2 and j["id"] != j2["id"]
+    # §4.5 아무것도 안 고치고 [이어서 실행] → 이전 시도의 prev_user_tstar 를 이어받아 같은 사유로 다시 STOPPED
+    s = _start(client, cid, "tstar")
+    assert s["status"] == "STOPPED" and s["stop_code"] == "TSTAR_REVIEW_REQUIRED" and s["resumed_from_id"] == run["id"]
+    assert [r["code"] for r in s["stop_reason"]["detail"]["reasons"]] == ["USER_TSTAR_CHANGED"]
+    assert f"frame {other}" in s["stop_reason"]["message"]
+    assert len(_jobs(client, cid)) == 2                            # 새 작업 없음
     # 사람이 현재 auto 값을 확정(source user, 같은 frame) → 이어서 → G4 통과 → ③
     case = _case(client, cid)
     r = client.put(f"{API}/cases/{cid}/tstar", json={"version": case["version"], "metric": auto["metric"],
@@ -407,3 +413,42 @@ def test_v_ra_case_changed_and_archived(client, synth_inputs, worker_factory, en
 def test_v_ra_start_invalid_from(client, synth_inputs, bad):
     r = create_case(client, synth_inputs, folder="ra17", title="ra17")
     assert client.post(f"{API}/cases/{r.json()['id']}/run-all", json={"from": bad}, headers=W).status_code == 422
+
+
+# ---------------------------------------------------------------- RUN_ALL_ERROR 안전장치
+def test_v_ra_hook_error_stops_chain_keeps_job(client, synth_inputs, worker_factory, engine, esl_root, monkeypatch):
+    """종료 훅이 예외를 내도 작업 종료(SUCCEEDED)는 기록되고, 체인은 STOPPED RUN_ALL_ERROR(멈춤 사유에 예외)."""
+    worker = worker_factory()
+    c = _new_chain(client, synth_inputs, "ra18")
+
+    def boom(*a, **k):
+        raise RuntimeError("훅 폭발")
+    monkeypatch.setattr(ra, "on_job_end", boom)
+    job = _fake_end(engine, worker, "SUCCEEDED", esl_root)
+    assert client.get(f"{API}/jobs/{job['id']}", headers=R).json()["state"] == "SUCCEEDED"
+    run = _ra(client, c["id"])
+    assert run["status"] == "STOPPED" and run["stop_code"] == "RUN_ALL_ERROR" and run["stop_step"] == "input"
+    assert "RuntimeError" in run["stop_reason"]["message"] and run["stop_reason"]["detail"]["job_id"] == job["id"]
+    assert run["can_resume"] is True
+    with engine.connect() as conn:
+        assert repo.orphaned(conn) == []                           # 끊김 복구 대상 아님(체인 종료)
+
+
+def test_v_ra_recover_hook_error_stops_chain(client, synth_inputs, worker_factory, engine, monkeypatch):
+    """끊김 복구도 safe_on_job_end 로 — 훅이 매번 예외를 내면 1주기에 STOPPED RUN_ALL_ERROR(주기마다 반복 안 함)."""
+    from esl_worker import executor
+
+    worker = worker_factory()
+    c = _new_chain(client, synth_inputs, "ra19")
+    monkeypatch.setattr(executor.Executor, "_run_all_prep", lambda self, state: None)
+    assert worker.run_once("SLOT") == "SUCCEEDED"
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise RuntimeError("복구 훅 폭발")
+    monkeypatch.setattr(ra, "on_job_end", boom)
+    assert worker.recover_run_alls() == [c["run_all"]["id"]]
+    run = _ra(client, c["id"])
+    assert run["status"] == "STOPPED" and run["stop_code"] == "RUN_ALL_ERROR" and "RuntimeError" in run["stop_reason"]["message"]
+    assert worker.recover_run_alls() == [] and len(calls) == 1      # 다음 주기엔 대상 없음

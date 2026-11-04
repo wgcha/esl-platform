@@ -1,13 +1,13 @@
-// 설계 버전 비교 상세(계약 §12.2): 진행 · 판정 배지(수렴/추가 반복 권장) · 집계 · 씬 표 · 보고서 보기(주 버튼).
+// 설계 버전 비교 상세(계약 §12.2): 진행 · 판정 배지(수렴/추가 반복 권장)·사유 · 위 접힘 영역 = 집계·씬 표·설정 · 보고서 화면 안 보기(ReportViewer, 주 버튼 = 보고서 받기).
 // 요약 = ComparisonOut.result(워커 _compare_summary).
 import { useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import type { ComparisonResolution, ComparisonResult, ComparisonVerdict, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
-import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
+import { Badge, Card, Empty, ErrorLine, JobStatusBadge, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
-import { openReport } from "../../components/ReportLink";
+import { ReportViewer } from "../../components/ReportViewer";
 import { CopyPath } from "../../components/CopyPath";
 import { usePolling } from "../../lib/usePolling";
 import { dt, pv } from "../../lib/format";
@@ -102,8 +102,6 @@ export function ComparisonDetail() {
             {c.model} · {c.base_version} → {c.new_version}
           </span>
         )}
-        <span className="spacer" />
-        <PrimaryButton label="보고서 보기" onClick={() => openReport(api.comparisonReportUrl(comparisonId))} disabledReason={reason} />
       </div>
       <ErrorLine text={cp.error} />
       {c?.job_id && !done && <JobProgress jobId={c.job_id} onDone={() => void cp.reload()} />}
@@ -127,36 +125,55 @@ export function ComparisonDetail() {
           ) : (
             <div className="small muted">모든 짝 씬의 하중 패턴이 기준 이상으로 같고 대표 케이스가 그대로입니다 — 추가 비드 최적화 반복이 필요 없습니다.</div>
           )}
-          <div className="stats">
-            <Stat label="짝 씬" value={r.n_paired} sub={`기준 ${r.n_base} · 비교 ${r.n_new}`} />
-            <Stat label="cos 최소" value={n3(r.aggregate.cos_min, 4)} sub={r.aggregate.argmin_cos} tone={r.aggregate.cos_min < cv.criteria.cos_min ? "bad" : "ok"} />
-            <Stat label="cos 평균" value={n3(r.aggregate.cos_mean, 4)} />
-            <Stat label="대표 동일" value={r.representatives.rep_same ? "예" : "아니오"} sub={`k = ${r.representatives.k} · 멤버 일치 ${pv(100 * r.representatives.partition_agreement)}`} tone={r.representatives.rep_same ? "ok" : "bad"} />
-            <Stat label="합력비" value={range(r.aggregate.force_ratio)} />
-            <Stat label="ε_max 비 최대" value={n3(r.aggregate.eps_ratio.max)} />
-          </div>
-        </Card>
-      )}
-      {r && (
-        <Card title={`씬별 비교 ${r.scenes.length}개`} right={r.aggregate.n_changed ? <span className="small warn-text">바뀐 씬 {r.aggregate.n_changed}개</span> : undefined}>
-          <SceneTable r={r} />
-          {r.unpaired && r.unpaired.base_only.length + r.unpaired.new_only.length > 0 && (
-            <div className="small muted">
-              짝 없는 씬(비교 제외): 기준에만 {r.unpaired.base_only.length} · 비교에만 {r.unpaired.new_only.length}
-            </div>
-          )}
         </Card>
       )}
       {c && (
-        <Card title="설정">
-          <div className="stats">
-            <Stat label="제품" value={c.model} />
-            <Stat label="기준 → 비교" value={`${c.base_version} → ${c.new_version}`} sub={`항목 ${c.base_entry_ids.length} · ${c.new_entry_ids.length}`} />
-            <Stat label="만든 사람" value={c.created_by_name} sub={dt(c.created_at)} />
+        <details className="card fold" data-testid="fold-summary">
+          <summary>
+            집계·씬별 비교·설정
+            {r && (
+              <span className="muted fold-sub">
+                {" "}
+                · 짝 씬 {r.n_paired} · cos 최소 {n3(r.aggregate.cos_min, 4)}
+              </span>
+            )}
+            {r && r.aggregate.n_changed > 0 && <span className="warn-text fold-sub"> · 바뀐 씬 {r.aggregate.n_changed}</span>}
+          </summary>
+          <div className="fold-body">
+            {r && cv && (
+              <Card title="집계">
+                <div className="stats">
+                  <Stat label="짝 씬" value={r.n_paired} sub={`기준 ${r.n_base} · 비교 ${r.n_new}`} />
+                  <Stat label="cos 최소" value={n3(r.aggregate.cos_min, 4)} sub={r.aggregate.argmin_cos} tone={r.aggregate.cos_min < cv.criteria.cos_min ? "bad" : "ok"} />
+                  <Stat label="cos 평균" value={n3(r.aggregate.cos_mean, 4)} />
+                  <Stat label="대표 동일" value={r.representatives.rep_same ? "예" : "아니오"} sub={`k = ${r.representatives.k} · 멤버 일치 ${pv(100 * r.representatives.partition_agreement)}`} tone={r.representatives.rep_same ? "ok" : "bad"} />
+                  <Stat label="합력비" value={range(r.aggregate.force_ratio)} />
+                  <Stat label="ε_max 비 최대" value={n3(r.aggregate.eps_ratio.max)} />
+                </div>
+              </Card>
+            )}
+            {r && (
+              <Card title={`씬별 비교 ${r.scenes.length}개`} right={r.aggregate.n_changed ? <span className="small warn-text">바뀐 씬 {r.aggregate.n_changed}개</span> : undefined}>
+                <SceneTable r={r} />
+                {r.unpaired && r.unpaired.base_only.length + r.unpaired.new_only.length > 0 && (
+                  <div className="small muted">
+                    짝 없는 씬(비교 제외): 기준에만 {r.unpaired.base_only.length} · 비교에만 {r.unpaired.new_only.length}
+                  </div>
+                )}
+              </Card>
+            )}
+            <Card title="설정">
+              <div className="stats">
+                <Stat label="제품" value={c.model} />
+                <Stat label="기준 → 비교" value={`${c.base_version} → ${c.new_version}`} sub={`항목 ${c.base_entry_ids.length} · ${c.new_entry_ids.length}`} />
+                <Stat label="만든 사람" value={c.created_by_name} sub={dt(c.created_at)} />
+              </div>
+              <CopyPath path={c.folder_path} />
+            </Card>
           </div>
-          <CopyPath path={c.folder_path} />
-        </Card>
+        </details>
       )}
+      <ReportViewer title="버전 비교 보고서" url={api.comparisonReportUrl(comparisonId)} filename={`comparison_${comparisonId}_report.html`} reason={reason} dep={c?.status} />
     </Shell>
   );
 }

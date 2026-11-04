@@ -164,6 +164,19 @@ def test_v_ra_2_run_all_error_keeps_case(client, mini_inputs, monkeypatch):
     assert client.get(f"{API}/cases/{c['id']}", headers=R).status_code == 200
 
 
+def test_v_ra_2_run_all_unexpected_error_keeps_case(client, mini_inputs, monkeypatch):
+    """DomainError 가 아닌 예외도 Case 생성(201)은 성공, run_all_error = RUN_ALL_ERROR."""
+    from esl_platform.api.services import run_all as svc
+
+    def boom(*a, **k):
+        raise RuntimeError("뜻밖")
+    monkeypatch.setattr(svc, "start", boom)
+    c = _new(client, mini_inputs, run_all=True)
+    assert c["run_all"] is None and c["run_all_error"]["code"] == "RUN_ALL_ERROR"
+    assert "RuntimeError" in c["run_all_error"]["message"]
+    assert client.get(f"{API}/cases/{c['id']}", headers=R).status_code == 200
+
+
 def test_v_ra_start_validation(client, mini_inputs):
     c = _new(client, mini_inputs)
     r = client.post(f"{API}/cases/{c['id']}/run-all", json={"from": "esl"}, headers=W)

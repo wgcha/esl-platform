@@ -116,6 +116,31 @@ describe("V-US-12 브라우저 병렬 업로더", () => {
     expect(server.p3.putCount).toBe(16);
   });
 
+  it("v0.12.5 UPLOAD_CHUNK_CORRUPT(마무리 재해시): 서버 범위를 다시 읽고 그 청크만 자동으로 다시 보낸다", async () => {
+    const server = setup(8);
+    server.p3.corruptOnFinalize.set("3:3", 2); // h3d(index 3) 청크 3 이 두 번 어긋남
+    const up = new Uploader("p-body", "c", picks(), undefined, noSleep);
+    expect(await up.run()).toBe(true);
+    expect(server.p3.putCount).toBe(18); // 16 + 청크 3 두 번
+    expect(server.p3.putLog.slice(-2)).toEqual(["3:3", "3:3"]);
+    expect(up.progress.retries).toBe(2);
+    expect(up.progress.phase).toBe("uploaded");
+  });
+
+  it("v0.12.5 CHUNK_VERIFY_FAILED 는 그 청크만 재시도, 같은 청크 3번째 실패(UPLOAD_CORRUPT)는 오류로 멈춘다", async () => {
+    const server = setup(8);
+    server.p3.verifyFailPuts = 1;
+    const a = new Uploader("p-body", "v", picks(), undefined, noSleep);
+    expect(await a.run()).toBe(true);
+    expect(a.progress.retries).toBe(1);
+    const s2 = setup(8);
+    s2.p3.corruptOnFinalize.set("0:1", 5);
+    const b = new Uploader("p-body", "x", [{ file: file("m_0000.rad", 20), rel: "rad/m_0000.rad" }], undefined, noSleep);
+    expect(await b.run()).toBe(false);
+    expect(b.progress.phase).toBe("error");
+    expect(b.progress.errorCode).toBe("UPLOAD_CORRUPT");
+  });
+
   it("stop(): 진행 중 PUT 을 Abort 하고, 새 Uploader 는 서버가 받은 청크 범위만 건너뛴다", async () => {
     const server = setup(8);
     let aborted = 0;

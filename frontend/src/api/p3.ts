@@ -1,7 +1,7 @@
 // P3-UX API(계약 esl_p3_ux.md §1~§3·§6·§8). check:api 가 endpoints.ts 와 함께 이 파일의 경로도 openapi 와 대조한다.
 import { API_PREFIX, ApiError, buildUrl, request } from "./client";
 import type {
-  ApiErrorDetail, BrowseOut, CaseCreate, CaseOut, ChangelogEntry, ClientCodeOut, ClientTokenOut, UploadChunkOut, UploadCompleteOut, UploadCreate, UploadFileIn, UploadOut, UploadState, VersionOut,
+  ApiErrorDetail, BrowseOut, CaseCreate, CaseOut, RunAllOut, StepKey, ChangelogEntry, ClientCodeOut, ClientTokenOut, UploadChunkOut, UploadCompleteOut, UploadCreate, UploadFileIn, UploadOut, UploadState, VersionOut,
 } from "./types";
 
 export const BUNDLE_PARTS_DEFAULT = "export,report,summary";
@@ -9,6 +9,13 @@ export const BUNDLE_PARTS_DEFAULT = "export,report,summary";
 export const p3 = {
   /** §6: h3d_path 또는 results_dir 중 하나 */
   createCase: (body: CaseCreate) => request<CaseOut>("POST", "/cases", { body }),
+  /** v0.13.0 일괄 실행(esl_run_all.md §8): from 생략 = input 부터([일괄 실행]), [이어서 실행] = 멈춘 단계 */
+  startRunAll: (caseId: string, from?: StepKey | null) => request<RunAllOut>("POST", `/cases/${caseId}/run-all`, { body: from ? { from } : {} }),
+  /** 최신 1행(없으면 null) */
+  getRunAll: (caseId: string) => request<RunAllOut | null>("GET", `/cases/${caseId}/run-all`),
+  /** 이력(최신순, 최대 50) */
+  listRunAll: (caseId: string) => request<RunAllOut[]>("GET", `/cases/${caseId}/run-all`, { query: { all: 1 } }),
+  cancelRunAll: (caseId: string) => request<RunAllOut>("POST", `/cases/${caseId}/run-all/cancel`, { body: {} }),
   createUpload: (body: UploadCreate) => request<UploadOut>("POST", "/uploads", { body }),
   /** 내 업로드 목록(최근 50개). state=OPEN 이면 사용자당 한도(UPLOAD_LIMIT)에 걸리는 진행 중 업로드 */
   uploads: (state?: UploadState) => request<UploadOut[]>("GET", "/uploads", { query: { state } }),

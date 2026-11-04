@@ -23,7 +23,7 @@ import synth_lib
 
 W = H("tok-power", True)
 R = H("tok-power")
-CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:"
+CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
 # (모델, 배율, nx, ny, 하중 패턴, orient)
 SPECS = [("50QX10A", 1.0, 24, 16, "A", "Corner146"), ("60QX10A", 1.2, 30, 20, "B", "Edge34"),
          ("50QX10A", 1.0, 30, 20, "A", "Face3")]

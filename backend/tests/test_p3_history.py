@@ -895,7 +895,7 @@ def test_h9_report_api(client, world):
     r = client.get(f"{API}/jobs/{rep}/report", headers=R)
     assert r.status_code == 200 and "이전 보고서" in r.text
     assert r.headers["content-security-policy"] == "default-src 'none'; style-src 'unsafe-inline'; " \
-                                                   "script-src 'unsafe-inline'; img-src data:"
+                                                   "script-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
     assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
     assert "attachment" in client.get(f"{API}/jobs/{rep}/report", params={"download": "1"}, headers=R).headers[
         "content-disposition"]

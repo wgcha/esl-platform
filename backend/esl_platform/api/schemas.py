@@ -161,6 +161,14 @@ class StageState(_Out):
     reason: dict[str, Any] | None = None     # v0.10.0 step_status: {code, message} (예 SUPPORT_AUTO_BLOCKED)
 
 
+class CaseLibraryOut(_Out):
+    """#49 Case 목록: 이 Case 에서 등록된 라이브러리 현황(ACTIVE 항목 수·최신 항목 판정)."""
+    count: int = 0
+    latest_entry_id: str | None = None
+    latest_status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    latest_registered_at: datetime | None = None
+
+
 class RunAllStopReason(_Out):
     message: str
     detail: dict[str, Any] = Field(default_factory=dict)
@@ -234,6 +242,8 @@ class CaseOut(_Out):
     stage_status: dict[str, StageState] | None = None   # deprecated(v0.10.0): 옛 1..6 단계 — 화면은 step_status
     # v0.10.0(esl_menu_restructure.md §5.4): 화면 4단계 {input, tstar, esl, validate}
     step_status: dict[str, StageState] | None = None
+    # #49: GET /cases(목록)에만 — 라이브러리 등록 현황
+    library: CaseLibraryOut | None = None
     run_all: RunAllOut | None = Field(default=None, description="v0.13.0 최신 일괄 실행 1행(없으면 null)")
     run_all_error: dict[str, Any] | None = Field(default=None, description="v0.13.0 POST /cases run_all 시작 실패 {code, message}")
 

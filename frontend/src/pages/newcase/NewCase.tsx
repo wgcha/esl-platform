@@ -19,6 +19,7 @@ import type { ScxStatusOut } from "../../api/types";
 import type { InputSelection } from "./types";
 
 export const DEFAULT_PART = "chassis_rear";
+export const RUN_ALL_CHECK_LABEL = "생성 후 일괄 실행";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 type Tab = "upload" | "server" | "pc" | "scx";
 const TABS: Tab[] = ["upload", "server", "pc", "scx"];
@@ -66,6 +67,8 @@ export function NewCase() {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // v0.13.0 일괄 실행(esl_run_all.md §9): 기본 꺼짐·기억 안 함
+  const [runAll, setRunAll] = useState(false);
 
   const cur = sel[tab];
   const onChange = (t: Tab) => (s: InputSelection | null, suggested?: string) => {
@@ -104,10 +107,12 @@ export function NewCase() {
         h3d_path: cur.source.kind === "h3d" ? cur.source.path : null,
         results_dir: cur.source.kind === "results" ? cur.source.path : null,
         part_title: part.trim(),
+        ...(runAll ? { run_all: true } : {}),
       });
       uploadStore.dropByRad(cur.rad_path);
       if (tab === "scx") clearScxRun(projectId);
-      nav(`/p/${projectId}/c/${c.id}/step/1`);
+      // 시작이 실패해도 Case 는 만들어진다 — 사유는 Case 화면 진행 줄에
+      nav(`/p/${projectId}/c/${c.id}/step/1`, c.run_all_error ? { state: { runAllError: c.run_all_error } } : undefined);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
@@ -123,6 +128,10 @@ export function NewCase() {
         <Link to="/guide#new-case" className="topbar-link">
           도움말
         </Link>
+        <label className="run-all-check" title="Case 를 만든 뒤 ①입력 → ②t*·지지점 → ③ESL → ④검증을 이어서 실행합니다. 사람 확인이 필요하면 그 단계에서 멈추고, 라이브러리 등록은 하지 않습니다.">
+          <input type="checkbox" checked={runAll} disabled={!allowed} onChange={(e) => setRunAll(e.target.checked)} data-testid="run-all-check" />
+          {RUN_ALL_CHECK_LABEL}
+        </label>
         <PrimaryButton label="Case 만들기" onClick={create} disabledReason={reason} busy={busy} />
       </div>
       <div className="tabs" role="tablist" aria-label="입력 방법">
