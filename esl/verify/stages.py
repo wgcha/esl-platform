@@ -14,6 +14,7 @@ import os
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 
 STAGES = ("vd_patch", "vd_compare")
 
@@ -22,7 +23,7 @@ def _write_json(path: str, obj) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1, sort_keys=True)
-    os.replace(tmp, path)
+    atomic_replace(tmp, path)
 
 
 def vd_patch(spec: dict, echo=print) -> dict:
@@ -69,7 +70,7 @@ def vd_compare(spec: dict, echo=print) -> dict:
     tmp = spec["out_csv"] + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(compare_csv(res))
-    os.replace(tmp, spec["out_csv"])
+    atomic_replace(tmp, spec["out_csv"])
     for r in res["rows"]:
         echo(f"[vd_compare] {r['key']}: 원 {r['orig']} · 검증 {r['verify']} · 비 {r['ratio']} · 예측 {r['predicted']} "
              f"→ {r['verdict']} 일치 {r['agree']}")

@@ -1322,6 +1322,36 @@ def fixed_violation(x0, x, fixed_mask_or_idx, tol: float) -> dict:
     return {"n_fixed": int(idx.size), "max_mm": float(d.max()), "n_violated": nv, "violated": nv > 0}
 
 
+def fixed_violation_detail(x0, x, fixed_mask_or_idx, B: "Basis", values: dict, tol: float, cap: int = 500) -> dict:
+    """v0.15.1 고정 침범 원인(미리보기 셀 ``fixed_viol``): 침범 노드 수·최대 이동, 바뀐 변수별 그 노드들 이동(n·max_mm, 큰 순),
+    침범 노드 번호(0 기준, 오름차순, 최대 cap 개 — 3D 빨간 점). 침범 없으면 n = 0·빈 목록."""
+    fm = np.asarray(fixed_mask_or_idx)
+    idx = np.flatnonzero(fm) if fm.dtype == bool else np.sort(fm.astype(np.int64))
+    d = np.linalg.norm(np.asarray(x)[idx] - np.asarray(x0)[idx], axis=1) if idx.size else np.zeros(0)
+    bad = idx[d > tol]
+    out = {"n": int(bad.size), "max_mm": round(float(d.max()) if d.size else 0.0, 4), "bead_vars": [],
+           "node_idx": [int(i) for i in bad[:cap]]}
+    if not bad.size:
+        return out
+    rows = []
+    for v in B.vars:
+        if v["name"] not in values or v["idx"].size == 0:
+            continue
+        dv = float(values[v["name"]]) - float(v["nominal"])
+        if dv == 0.0:
+            continue
+        hit = np.isin(v["idx"], bad)
+        if not hit.any():
+            continue
+        m = np.linalg.norm(dv * v["vec"][hit], axis=1)
+        k = m > tol
+        if k.any():
+            rows.append({"name": v["name"], "bead": v["bead"], "n": int(k.sum()), "max_mm": round(float(m.max()), 4)})
+    rows.sort(key=lambda r: (-r["max_mm"], r["name"]))
+    out["bead_vars"] = rows
+    return out
+
+
 def affected_elems(mesh: dict, x0, x, eps: float = U_EPS) -> np.ndarray:
     u = np.linalg.norm(np.asarray(x) - np.asarray(x0), axis=1) > eps
     C = np.asarray(mesh["conn"], dtype=np.int64)

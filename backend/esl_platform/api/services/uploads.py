@@ -43,6 +43,7 @@ from sqlalchemy import and_, func, insert, or_, select, update
 from esl_worker import core_adapter
 
 from ...core import uploads as U
+from ...core.atomic import atomic_replace
 from ...core.auth import Principal
 from ...core.config import is_within
 from ...core.db.tables import cases, uploads
@@ -455,7 +456,7 @@ def _prepare_files(root: str, up_dir: str, new: list[dict[str, Any]]) -> None:
             sha = sha256_file(p + U.PART_SUFFIX)
             if f["sha256_expected"] and f["sha256_expected"] != sha:
                 raise unprocessable("SHA256_MISMATCH", f"sha256 이 다릅니다: {f['rel']}", rel=f["rel"])
-            os.replace(p + U.PART_SUFFIX, p)
+            atomic_replace(p + U.PART_SUFFIX, p)
             f.update(done=True, sha256=sha)
 
 

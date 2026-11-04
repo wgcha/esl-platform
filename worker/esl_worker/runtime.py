@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from esl_platform import __version__
 from esl_platform.core.config import LoadedConfig, Settings
 from esl_platform.core import run_all
+from esl_platform.core.atomic import configure_fs_retry
 from esl_platform.core.repositories import jobs as jobs_repo
 from esl_platform.core.repositories import workers as workers_repo
 
@@ -47,6 +48,7 @@ class Worker:
         # 자원 제한기(worker.limiter): Windows 는 여기서 워커 수명 Job Object 를 만든다(실패 → 코어 step LIMITER_FAILED)
         self.proc_limiter = limiter_mod.create(self.settings.worker)
         self.doe_cache = paicad_proc.StatusCache()   # heartbeat info.paicad·gmsh(v0.9.0 비드 DOE)
+        configure_fs_retry(self.settings)            # 이슈 #53: atomic_replace 잠금 재시도(worker.fs_retry)
 
     @property
     def settings(self) -> Settings:

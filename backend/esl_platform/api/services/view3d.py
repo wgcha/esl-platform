@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from ...core import core_outputs as co
+from ...core.atomic import atomic_replace
 from ...core.errors import DomainError, conflict, not_found
 from ...core.repositories import cases as cases_repo
 from ..context import AppContext
@@ -182,7 +183,7 @@ def _build(inp: Inputs) -> dict[str, Any]:
             dest = _backup_dir(inp)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.move(inp.dir, dest)               # 삭제 금지: _backup 으로 이동
-        os.replace(tmp, inp.dir)
+        atomic_replace(tmp, inp.dir)
         ok = True
         return m
     finally:

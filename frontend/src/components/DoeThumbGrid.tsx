@@ -62,7 +62,7 @@ function Thumb({ id, url, cell, params, select, onOpen }: { id: string; url: str
       onKeyDown={open ? (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open()) : undefined}
     >
       <div className="doe-thumb-img">
-        {src ? <img src={src} alt="" /> : <span className="small muted">{error || !url ? "썸네일 없음" : "…"}</span>}
+        {src ? <img src={src} alt="" /> : <span className="small muted">{error || !url ? "그림 없음" : "…"}</span>}
       </div>
       <div className="doe-thumb-cap">
         <span className="mono">{id}</span>

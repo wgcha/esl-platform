@@ -151,6 +151,30 @@ def core_settings(precision64: bool = True) -> dict[str, Any]:
     return d
 
 
+# 시험 워커 lease(worker.heartbeat_interval_s·lease_ttl_s). 기본 LEASE = 시험 프로세스(VM)가 CPU 경합·전체 시험 부하로
+# 수 초 멈춰도 lease 를 잃지 않는 값 — 운영 예시(10 s / 60 s)처럼 ttl 이 갱신 간격보다 충분히 김. ttl 3 s 기본에서는
+# 2.7 s 정지만으로 LEASE_LOST 가 났다(test_select_e2e_depth_ranking BD_BASELINE flake, v0.15.1 조사).
+# ttl 을 넘겨 기다리며 갱신 자체를 확인하는 시험만 @pytest.mark.short_lease → SHORT_LEASE(대기 시간은 past_ttl_s 로).
+LEASE = {"heartbeat_interval_s": 0.3, "lease_ttl_s": 30.0}
+SHORT_LEASE = {"heartbeat_interval_s": 0.3, "lease_ttl_s": 3.0}
+_lease_now: dict[str, float] = dict(LEASE)
+
+
+@pytest.fixture(autouse=True)
+def lease_profile(request):
+    """short_lease 표시 시험은 SHORT_LEASE, 나머지는 LEASE 로 make_settings_dict 의 worker lease 값을 정한다."""
+    _lease_now.clear()
+    _lease_now.update(SHORT_LEASE if request.node.get_closest_marker("short_lease") else LEASE)
+    yield dict(_lease_now)
+    _lease_now.clear()
+    _lease_now.update(LEASE)
+
+
+def past_ttl_s(loaded_config, factor: float = 1.5) -> float:
+    """설정 worker.lease_ttl_s 를 넘기는 대기 시간(갱신이 없으면 lease 를 잃을 만큼)."""
+    return float(loaded_config.settings.worker.lease_ttl_s) * factor
+
+
 def make_settings_dict(base: Path, **overrides: Any) -> dict[str, Any]:
     esl_root = base / "esl_root"
     inputs = base / "inputs"
@@ -160,7 +184,7 @@ def make_settings_dict(base: Path, **overrides: Any) -> dict[str, Any]:
     d["profile"] = "dev"
     d["auth"]["mode"] = "dashboard"
     d["storage"] = {"esl_root": str(esl_root), "input_roots": [str(inputs)], "spdm_roots": [str(base / "spdm")]}
-    d["worker"].update({"heartbeat_interval_s": 0.3, "lease_ttl_s": 3, "claim_interval_s": 0.1,
+    d["worker"].update({**_lease_now, "claim_interval_s": 0.1,
                         "cancel_check_interval_s": 0.2, "terminate_grace_s": 2, "state_dir": str(base / "state")})
     d["core"] = {"settings": core_settings()}
     d["library"] = {"config_path": str(LIBRARY_EXAMPLE)}

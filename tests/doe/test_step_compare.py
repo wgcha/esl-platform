@@ -338,3 +338,32 @@ def test_synthetic_plate_3mm_solves(tmp_path):
     with pytest.raises(EslError) as ei:
         sm.factorize(spc).solve(F)
     assert ei.value.code == "SOLVER_SINGULAR" and "후방 오차" in ei.value.message
+
+
+# ---------------------------------------------------------------- v0.15.1 Sphere 면 형상 폴백(이슈 #53) — 준비 기록·보고서 표
+@needs_gmsh
+def test_compare_sphere_fallback_recorded(tmp_path):
+    _a, ents = _lib(tmp_path / "lib")
+    up = tmp_path / "up"
+    paths = [scmp.dimple_plate_step(up / "u0" / "flat.step", [], Lx=LX, Lz=LZ),
+             scmp.dimple_plate_step(up / "u1" / "dimple.step", [(100.0, 75.0, 20.0, 5.0)], Lx=LX, Lz=LZ)]
+    stamp = sc.tree_stamp(str(up))
+    shapes = [{"id": f"d{k:03d}", "name": n, "file_name": os.path.basename(p), "path": p, "reference": k == 0,
+               "sha256": U.sha256_file(p)} for k, (n, p) in enumerate(zip(("평판", "딤플"), paths))]
+    doe = {"id": "C2", "scenario": "compare", "title": "④ 구면", "cfg": _cfg(), "entries": ents, "shapes": shapes,
+           "reference_source": "step", "inch": 75, "props": PROPS}
+    out = tmp_path / "_doe" / "C2"
+    _run(out, doe, stages=("bd_input", "bd_mesh0"))
+    cmp = U.read_json(str(out / "prep" / "compare.json"))
+    d1 = next(x for x in cmp["shapes"] if x["id"] == "d001")
+    d0 = next(x for x in cmp["shapes"] if x["id"] == "d000")
+    assert "mesh_fallback" not in d0 and "fallback_faces" not in d0["quality"]       # 정상 형상은 기록 없음
+    assert d1["status"] == "READY" and d1["quality"]["fallback_faces"] == 1
+    assert d1["quality"]["fallback_stages"] == ["OCC 정리 끔(그 면만)"]
+    f = d1["mesh_fallback"]["faces"][0]
+    assert f["stage"] == "nofix" and f["scope"] == "face" and f["type"] == "Sphere" and f["deviation_mm"] == 0.0
+    assert any(w.startswith("MESH_FACE_FALLBACK: d001") and "OCC 정리 끔(그 면만)" in w for w in cmp["warnings"])
+    assert sc.tree_stamp(str(up)) == stamp                                   # 업로드 폴더(원본 STEP) 불변
+    from esl.doe import report_doe as rd
+    html = rd.render_compare({"study": {"id": "C2"}, "shapes": cmp["shapes"], "profile": cmp["profile"]})
+    assert "폴백 면 1개(id " in html and "OCC 정리 끔(그 면만)" in html

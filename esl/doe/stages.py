@@ -37,6 +37,7 @@ from esl.doe import paicad_io as pio
 from esl.doe import rank as rk
 from esl.doe import scenario as sc
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.library import _util as U
 
 STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post", "bd_select_grid")
@@ -90,7 +91,7 @@ class Ctx:
         tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="ascii") as fh:
             fh.write(str(v))
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
 
     def write_json(self, rel: str, obj) -> str:
         p = self.p(rel)
@@ -963,7 +964,8 @@ def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict) -> dict:
     fb = meta.get("mesh_fallback")
     if fb:                                               # v0.14.1 면 폴백(정상 형상은 키 없음 — 결과 바이트 불변)
         ids = [int(f["failed_id"]) for f in fb["faces"]]
-        qy.update(fallback_faces=len(ids), fallback_face_ids=ids)
+        qy.update(fallback_faces=len(ids), fallback_face_ids=ids,
+                  fallback_stages=[mg.fallback_label(f) for f in fb["faces"]])   # v0.15.1 면마다 쓰인 단계(편차)
         out["mesh_fallback"] = fb
     return out
 
@@ -1015,7 +1017,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                     for f in (r.get("mesh_fallback") or {}).get("faces") or []:
                         cc = f.get("center") or [0, 0, 0]
                         echo(f"[{did} {nm}]   면 {f['failed_id']}({f['type']}, 중심 {cc[0]:g},{cc[1]:g},{cc[2]:g} mm) → "
-                             f"{f['algorithm_name']}{'(제약 해제)' if f['relaxed'] else ''} · 처음 오류: {f['errors'][0]}")
+                             f"{mg.fallback_label(f)} · 처음 오류: {f['errors'][0]}")
                 else:
                     echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
                 if did == BASELINE and r["status"] != "READY":
@@ -1049,7 +1051,8 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                          f"({qy['fail_ratio'] * 100:.2f} % > {qy['max_fail_ratio'] * 100:g} %) — 차단 아님")
         if qy and qy.get("fallback_faces"):
             warns.append(f"MESH_FACE_FALLBACK: {r['id']} {r['name']} 면 {qy['fallback_faces']}개(gmsh 면 id "
-                         f"{', '.join(map(str, qy['fallback_face_ids']))})를 다른 2D 알고리즘·제약 해제로 메시 — "
+                         f"{', '.join(map(str, qy['fallback_face_ids']))})를 면 폴백("
+                         f"{', '.join(qy.get('fallback_stages') or []) or '다른 2D 알고리즘·제약 해제'})으로 메시 — "
                          "그 면 주변 요소 모양이 다른 형상과 다를 수 있음(mesh.json mesh_fallback)")
     doc = {"schema": "esl/doe_compare/1", "reference_source": ref["source"], "profile": prof_rec, "h": h,
            "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
@@ -1504,7 +1507,7 @@ def _sel_msg(code: str | None) -> str | None:
 def bd_select_grid(spec: dict, echo=print) -> dict:
     """BS-D-11 미리보기(select): 안마다 기저 모핑 → 고정·뒤집힘·품질 → 3D 썸네일 → doe/<rev>/grid/(paicad grid 와 같은 형식).
 
-    grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm}],
+    grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm, fixed_viol?}],
     nominal{thumb}, color{v_max, unit}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
     from esl import view3d as v3
     from esl.doe import bead_select as bsel
@@ -1546,10 +1549,14 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
             fh.write(sr.render(xd, tris, cv, has, view, V, tcfg, loops=L["loops"]))
         st = states[x["id"]]
         q = st["quality"]
-        cells.append({"id": x["id"], "status": "OK" if st["state"] == "READY" else "FAIL", "code": st["code"],
-                      "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
-                      "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
-                                                       "max_flip_deg", "fail_by")}})
+        cell = {"id": x["id"], "status": "OK" if st["state"] == "READY" else "FAIL", "code": st["code"],
+                "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
+                "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
+                                                 "max_flip_deg", "fail_by")}}
+        if st["state"] == "SKIPPED_FIXED":       # v0.15.1 침범 원인(변수·노드) — 고정 침범 칸만(그 밖 칸 바이트 그대로)
+            cell["fixed_viol"] = bsel.fixed_violation_detail(x0, xd, L["fixed"], L["B"], x["values"],
+                                                             float(bsel._cfg(c.cfg)["fixed_tol_mm"]))
+        cells.append(cell)
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
            "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],

@@ -16,6 +16,7 @@ import { loadScene } from "./loadThree";
 import { readProjection, writeProjection, type Projection } from "./projection";
 import { selectionFromPick, sceneSelection } from "./selection";
 import type { SceneApi } from "./sceneApi";
+import { ViewToolbar } from "./ViewToolbar";
 import { buildSupportSpecs } from "./supports";
 import type { LoadView } from "./useLoadView";
 import { colorField, decodeValues, type DecodedValues } from "./values";
@@ -260,12 +261,10 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
               <input type="checkbox" checked={proj === "persp"} onChange={(e) => toggleProj(e.target.checked)} data-testid="v3d-persp" />
               <span>원근</span>
             </label>
-            <button type="button" className="btn small ghost" onClick={() => sceneRef.current?.fit()} disabled={phase !== "ready"} title="부품 전체가 보이도록 카메라를 맞춥니다">
-              맞춤
-            </button>
           </div>
           <div className="v3d-stage">
-            <div ref={host} className="v3d-host" data-testid="v3d-host" data-phase={phase} />
+            <div ref={host} className="v3d-host" data-testid="v3d-host" data-phase={phase} tabIndex={0} aria-label="3D 하중 보기" />
+            {phase === "ready" && <ViewToolbar scene={() => sceneRef.current} modelBbox={manifest.bbox} keyTarget={host} />}
             {(phase === "nowebgl" || phase === "error") && (
               <div className="v3d-msg" role="status" data-testid="v3d-unavailable">
                 {phase === "error" && phaseErr && phaseErr !== NO_3D_TEXT ? phaseErr : NO_3D_TEXT}

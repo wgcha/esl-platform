@@ -118,13 +118,134 @@ export function paint(s: SelState, elems: ArrayLike<number>, layer: Layer, mode:
   };
 }
 
-/** 패치 되돌리기(undo = before) / 다시(redo = after) */
+/** 패치 되돌리기(undo = before) / 다시(redo = after). 비드 목록 스냅숏(meta)이 있으면 함께 */
 export function applyPatch(s: SelState, p: Patch<LayerName>, dir: "undo" | "redo") {
   for (const c of p.changes) {
     const arr = s[c.layer as LayerName];
     const v = dir === "undo" ? c.before : c.after;
     for (let i = 0; i < c.idx.length; i++) arr[c.idx[i]] = v[i];
   }
+  if (p.meta) s.beads = cloneBeads((dir === "undo" ? p.meta.before : p.meta.after) as BeadMeta[]);
+}
+
+const cloneBeads = (b: BeadMeta[]): BeadMeta[] => b.map((x) => ({ ...x, links: x.links.map((g) => [...g]) }));
+
+/** 배열 변경 기록기(바뀐 값만) → 패치 */
+function recorder(s: SelState) {
+  const ch: Record<LayerName, { idx: number[]; before: number[]; after: number[] }> = {
+    owner: { idx: [], before: [], after: [] },
+    remove: { idx: [], before: [], after: [] },
+    fixed: { idx: [], before: [], after: [] },
+    exclude: { idx: [], before: [], after: [] },
+  };
+  return {
+    set(name: LayerName, e: number, v: number) {
+      const arr = s[name];
+      if (arr[e] === v) return;
+      ch[name].idx.push(e);
+      ch[name].before.push(arr[e]);
+      ch[name].after.push(v);
+      arr[e] = v;
+    },
+    patch(meta?: Patch<LayerName>["meta"]): Patch<LayerName> {
+      return {
+        changes: (Object.keys(ch) as LayerName[])
+          .filter((k) => ch[k].idx.length)
+          .map((k) => ({ layer: k, idx: Uint32Array.from(ch[k].idx), before: Int32Array.from(ch[k].before), after: Int32Array.from(ch[k].after) })),
+        ...(meta ? { meta } : {}),
+      };
+    },
+  };
+}
+
+/** 지금 층의 요소(층 비우기 대상): 단 = 그 바닥, 사면 = 최종 사면(자동 포함), 고정·제외 = 칠한 요소 */
+export function layerElems(s: SelState, layer: Layer, suggested?: (bead: number) => Uint8Array | null): number[] {
+  const out: number[] = [];
+  if (layer.kind === "fixed" || layer.kind === "exclude") {
+    const a = s[layer.kind];
+    for (let e = 0; e < s.nElems; e++) if (a[e]) out.push(e);
+  } else if (layer.kind === "tier") {
+    const code = ownerCode(layer.bead, layer.k);
+    for (let e = 0; e < s.nElems; e++) if (s.owner[e] === code) out.push(e);
+  } else {
+    const m = effectiveSlope(s, layer.bead, suggested?.(layer.bead) ?? null);
+    for (let e = 0; e < s.nElems; e++) if (m[e]) out.push(e);
+  }
+  return out;
+}
+
+/** 층 비우기 = 그 층 요소를 모두 빼기(사면 자동 요소는 '빼기' 표시) — 패치 1개 */
+export function clearLayer(s: SelState, layer: Layer, suggested?: (bead: number) => Uint8Array | null): Patch<LayerName> {
+  return paint(s, layerElems(s, layer, suggested), layer, "remove", suggested);
+}
+
+/** 기본 이름(B<n>)이면 새 번호로 따라 바꿈 */
+const DEFAULT_NAME = /^B\d+$/;
+
+/**
+ * 비드 삭제: 그 비드 요소·사면 빼기 표시를 지우고, 뒤 비드 번호를 앞으로 당긴다(id b<n> 을 1 부터 다시, 기본 이름 B<n> 도 따라감).
+ * 묶음·블렌딩은 비드 정보와 함께 사라진다(변수 = 저장 후 서버가 다시 만듦). 패치 1개(비드 목록 스냅숏 포함).
+ */
+export function deleteBead(s: SelState, bead: number): Patch<LayerName> | null {
+  if (!s.beads[bead]) return null;
+  const before = cloneBeads(s.beads);
+  const r = recorder(s);
+  for (let e = 0; e < s.nElems; e++) {
+    const o = s.owner[e];
+    const b = ownerBead(o);
+    if (b === bead) r.set("owner", e, -1);
+    else if (b > bead) r.set("owner", e, ownerCode(b - 1, ownerLayer(o)));
+    const rm = s.remove[e];
+    if (rm === bead) r.set("remove", e, -1);
+    else if (rm > bead) r.set("remove", e, rm - 1);
+  }
+  const next = cloneBeads(s.beads.filter((_, i) => i !== bead));
+  next.forEach((b, i) => {
+    const id = `b${i + 1}`;
+    if (b.id !== id && DEFAULT_NAME.test(b.name) && b.name === b.id.toUpperCase()) b.name = id.toUpperCase();
+    b.id = id;
+  });
+  s.beads = next;
+  return r.patch({ before, after: cloneBeads(next) });
+}
+
+/** 이 비드 초기화: 그 비드의 바닥·사면 더하기·사면 빼기 표시를 비움(이름·단 수·묶음·블렌딩 유지). 패치 1개 */
+export function resetBead(s: SelState, bead: number): Patch<LayerName> | null {
+  if (!s.beads[bead]) return null;
+  const r = recorder(s);
+  for (let e = 0; e < s.nElems; e++) {
+    if (ownerBead(s.owner[e]) === bead) r.set("owner", e, -1);
+    if (s.remove[e] === bead) r.set("remove", e, -1);
+  }
+  return r.patch();
+}
+
+/** 전체 초기화: 비드 목록·모든 층(바닥·사면·고정·제외)을 비움. 패치 1개(비드 목록 스냅숏 포함) */
+export function resetAll(s: SelState): Patch<LayerName> {
+  const before = cloneBeads(s.beads);
+  const r = recorder(s);
+  for (let e = 0; e < s.nElems; e++) {
+    r.set("owner", e, -1);
+    r.set("remove", e, -1);
+    r.set("fixed", e, 0);
+    r.set("exclude", e, 0);
+  }
+  s.beads = [];
+  return r.patch({ before, after: [] });
+}
+
+/** 마지막 단 삭제(단 1 개면 null — 비드 삭제를 쓴다): 그 바닥 요소를 비우고 묶음에서 뺀다. 패치 1개 */
+export function deleteLastTier(s: SelState, bead: number): Patch<LayerName> | null {
+  const b = s.beads[bead];
+  if (!b || b.nTiers <= 1) return null;
+  const before = cloneBeads(s.beads);
+  const r = recorder(s);
+  const k = b.nTiers;
+  const code = ownerCode(bead, k);
+  for (let e = 0; e < s.nElems; e++) if (s.owner[e] === code) r.set("owner", e, -1);
+  b.nTiers = k - 1;
+  b.links = b.links.map((g) => g.filter((x) => x !== k)).filter((g) => g.length > 1);
+  return r.patch({ before, after: cloneBeads(s.beads) });
 }
 
 /** 비드 b 에 속한 요소(바닥 전부 + 사면 더하기) */

@@ -31,5 +31,6 @@ def retry(job_id: str, request: Request, principal: Principal = Depends(get_prin
 
 @router.get("/jobs/{job_id}/log", response_model=LogOut)
 def log(job_id: str, request: Request, step: int | None = Query(default=None, ge=1),
-        cursor: int = Query(default=0, ge=0), principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.job_log(get_ctx(request), job_id, step, cursor, principal)
+        cursor: int = Query(default=0, ge=0), tail: bool = False,
+        principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return svc.job_log(get_ctx(request), job_id, step, cursor, principal, tail=tail)

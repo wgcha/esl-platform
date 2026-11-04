@@ -34,6 +34,7 @@ from typing import Any, Iterator
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.mech import strain
 
 CHUNK_ROWS = 200_000
@@ -422,7 +423,7 @@ def _delete_dump(results_dir: str, done: dict) -> list[str]:
         try:
             with open(p + ".tmp", "w", encoding="utf-8") as fh:
                 json.dump(d, fh)
-            os.replace(p + ".tmp", p)
+            atomic_replace(p + ".tmp", p)
         except OSError:
             pass
     return gone

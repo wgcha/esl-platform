@@ -343,7 +343,8 @@ def _masker(ctx: AppContext, principal: Principal | None = None):
 
 
 def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
-            principal: Principal | None = None) -> dict[str, Any]:
+            principal: Principal | None = None, tail: bool = False) -> dict[str, Any]:
+    """step 로그 읽기(cursor 부터 LOG_MAX_BYTES). v0.15.1 tail=True: 끝에서 LOG_MAX_BYTES 안의 완결된 줄부터(화면 '로그 보기')."""
     with ctx.engine.connect() as conn:
         job = load_job(conn, job_id)
         if principal is not None:
@@ -399,6 +400,12 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
         return {"step": st["step_no"], "lines": [], "next_cursor": cursor, "eof": terminal}
     size = os.path.getsize(path)
     cursor = max(0, min(int(cursor), size))
+    if tail and size > LOG_MAX_BYTES:
+        with open(path, "rb") as fh:
+            fh.seek(size - LOG_MAX_BYTES)
+            head = fh.read(LOG_MAX_BYTES)
+        nl = head.find(b"\n")
+        cursor = size - LOG_MAX_BYTES + (nl + 1 if nl >= 0 else 0)
     with open(path, "rb") as fh:
         fh.seek(cursor)
         data = fh.read(LOG_MAX_BYTES)
@@ -409,8 +416,8 @@ def job_log(ctx: AppContext, job_id: str, step: int | None, cursor: int,
     raw_lines = data.split(b"\n")
     if raw_lines and raw_lines[-1] == b"":
         raw_lines.pop()
-    raw_lines = raw_lines[:LOG_MAX_LINES]
-    consumed = min(len(data), sum(len(x) + 1 for x in raw_lines))
+    raw_lines = raw_lines[-LOG_MAX_LINES:] if tail else raw_lines[:LOG_MAX_LINES]
+    consumed = len(data) if tail else min(len(data), sum(len(x) + 1 for x in raw_lines))
     lines = [x.rstrip(b"\r").decode("utf-8", errors="replace") for x in raw_lines]
     mask = _masker(ctx, principal)
     nxt = cursor + consumed

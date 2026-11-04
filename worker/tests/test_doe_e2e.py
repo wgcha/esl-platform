@@ -32,7 +32,7 @@ from doe_worker_support import (
     started_pids,
     write_fake_paicad,
 )
-from esl_test_support import API, H, wait_for
+from esl_test_support import API, H, past_ttl_s, wait_for
 from opt_support import plate, tree, upload_files
 from sqlalchemy import select
 from test_opt_e2e import make_s1
@@ -386,7 +386,7 @@ def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
 
 # ---------------------------------------------------------------- v0.12.3(#44) 모델 전체 사본 중 lease 유지·취소
 def _slow_copy(monkeypatch, seconds: float, started: threading.Event | None = None) -> None:
-    """esl.doe.assem_full.copy_model_full 앞에 seconds 동안 guard 를 부르며 잠(시험 lease_ttl 3 s 보다 길게)."""
+    """esl.doe.assem_full.copy_model_full 앞에 seconds 동안 guard 를 부르며 잠(시험 설정 lease_ttl_s 보다 길게)."""
     import time as _t
 
     import esl.doe.assem_full as A
@@ -405,9 +405,11 @@ def _slow_copy(monkeypatch, seconds: float, started: threading.Event | None = No
     monkeypatch.setattr(A, "copy_model_full", slow)
 
 
-def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+@pytest.mark.short_lease
+def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inputs_root, exe, monkeypatch,
+                                          loaded_config):
     s1 = make_s1(engine, esl_root, inputs_root)
-    _slow_copy(monkeypatch, 4.5)                    # > worker.lease_ttl_s(3) — v0.12.1 이면 LEASE_LOST
+    _slow_copy(monkeypatch, past_ttl_s(loaded_config))   # > worker.lease_ttl_s — v0.12.1 이면 LEASE_LOST
     s = create(client, s1["entry_ids"])
     j = run_job(client, worker, s["job"]["id"])
     assert [x["state"] for x in j["steps"]] == ["SUCCEEDED", "SKIPPED", "SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]
@@ -418,7 +420,8 @@ def test_prep_slow_assem_full_keeps_lease(client, engine, worker, esl_root, inpu
     assert study(client, s["id"])["phase"] == "READY"
 
 
-def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+@pytest.mark.short_lease
+def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_root, exe, monkeypatch, loaded_config):
     import time as _t
 
     s1 = make_s1(engine, esl_root, inputs_root)
@@ -430,7 +433,8 @@ def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_
     th = threading.Thread(target=lambda: res.update(state=worker.run_once("SLOT")))
     th.start()
     assert started.wait(60)
-    for _ in range(12):                             # ttl(3 s) 넘게 — 그동안 워커 heartbeat(워커 기록)도 갱신됨
+    end = _t.monotonic() + past_ttl_s(loaded_config, 1.2)
+    while _t.monotonic() < end:                     # 설정 lease_ttl_s 넘게 — 그동안 워커 heartbeat(워커 기록)도 갱신됨
         worker.heartbeat_once()
         _t.sleep(0.3)
     assert get_job(client, jid)["state"] == "RUNNING"           # lease 갱신 중
@@ -442,3 +446,59 @@ def test_prep_cancel_during_assem_full(client, engine, worker, esl_root, inputs_
     assert get_job(client, jid)["state"] == "CANCELED"
     lg = client.get(f"{API}/jobs/{jid}/log", params={"step": 3}, headers=R).text
     assert "모델 전체 사본 prep/assem_full 취소로 중단" in lg, lg[-2000:]
+
+
+# ---------------------------------------------------------------- 이슈 #53 WinError 32: prep/assem_full 교체 잠금
+def _lock_assem(monkeypatch, n_fail: int) -> dict:
+    """prep/assem_full/ 안 대상 파일로의 os.replace 를 처음 n_fail 회 Windows 공유 위반(WinError 32)으로."""
+    import esl.fsutil as F
+
+    real = os.replace
+    st = {"fail": 0}
+    mark = os.sep + "assem_full" + os.sep
+
+    def rep(src, dst):
+        if mark in str(dst) and st["fail"] < n_fail:
+            st["fail"] += 1
+            e = PermissionError(13, "다른 프로세스가 파일을 사용 중")
+            e.winerror = 32
+            raise e
+        real(src, dst)
+    monkeypatch.setattr(os, "replace", rep)
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    return st
+
+
+def test_prep_assem_full_lock_retry_then_file_locked(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    import esl.fsutil as F
+
+    s1 = make_s1(engine, esl_root, inputs_root)
+    st = _lock_assem(monkeypatch, 3)                  # 잠깐 잠김 → 재시도로 성공
+    s = create(client, s1["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    assert st["fail"] == 3 and study(client, s["id"])["phase"] == "READY"
+    F.configure({"attempts": 2})                      # 끝내 잠김 → BD_GEOM FAILED FILE_LOCKED(파일 이름만)
+    try:
+        _lock_assem(monkeypatch, 10 ** 6)
+        s2 = create(client, s1["entry_ids"])
+        j = run_job(client, worker, s2["job"]["id"], "FAILED")
+    finally:
+        F.configure(None)
+    assert j["failure_code"] == "FILE_LOCKED", j["failure_message"]
+    assert "백신" in j["failure_message"] and str(esl_root) not in j["failure_message"]   # 파일 이름만(서버 절대 경로 없음)
+    assert os.sep + "assem_full" + os.sep not in j["failure_message"]
+    assert [x["failure_code"] for x in j["steps"] if x["state"] == "FAILED"] == ["FILE_LOCKED"]
+
+
+def test_worker_side_file_locked_not_internal_error(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    import esl.fsutil as F
+    from esl_worker import doe_jobs
+
+    def boom(ex, st, log_path):
+        raise F.FileLocked(os.path.join(ex.cdir, ".x.tmp"), os.path.join(ex.cdir, "x.json"), 8, 10.0)
+    monkeypatch.setattr(doe_jobs, "run_step", boom)
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"])
+    j = run_job(client, worker, s["job"]["id"], "FAILED")
+    assert j["failure_code"] == "FILE_LOCKED" and "x.json ← .x.tmp" in j["failure_message"]
+    assert str(esl_root) not in j["failure_message"] and os.sep + "x.json" not in j["failure_message"]

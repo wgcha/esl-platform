@@ -77,7 +77,7 @@ describe("상세(doe-5: 선택 저장됨, READY)", () => {
     expect([...layer.options].map((o) => o.textContent)).toEqual(["좌 경로 비드 · 단 1 바닥", "좌 경로 비드 · 단 2 바닥", "좌 경로 비드 · 사면", "원형 비드 · 단 1 바닥", "원형 비드 · 사면", "고정", "제외(사면 자동에서 뺌)"]);
     fireEvent.click(within(tb).getByRole("radio", { name: "브러시" }));
     expect(screen.getByLabelText("브러시 크기(px)")).toBeTruthy();
-    expect(screen.getByTestId("bs-hint").textContent).toMatch(/Shift = 더하기 · Alt = 빼기/);
+    expect(screen.getByTestId("bs-hint").textContent).toMatch(/Shift = 더하기 · Alt 또는 지우개 = 빼기/);
     // derive(저장본 불러올 때 1회) → 경고 배지(블렌딩 자르기)·공칭 D
     await waitFor(() => expect(screen.getByTestId("bead-warn-b1")).toBeTruthy());
     expect(screen.getByTestId("bead-b1").textContent).toMatch(/D 22\.0/);

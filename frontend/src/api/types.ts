@@ -2469,6 +2469,14 @@ export interface DoePreviewCell {
   code?: string | null;
   /** 썸네일 있음(false = THUMB_UNAVAILABLE 회색) */
   thumb: boolean;
+  /** v0.15.1 select 고정 침범 원인(SKIPPED_FIXED 칸만): 침범 노드 수·최대 이동·변수별 이동(큰 순)·노드 번호(0 기준, 최대 500) */
+  fixed_viol?: DoeFixedViol | null;
+}
+export interface DoeFixedViol {
+  n: number;
+  max_mm: number;
+  bead_vars: { name: string; bead: string; n: number; max_mm: number }[];
+  node_idx: number[];
 }
 export interface DoePreviewOut {
   rev: number;

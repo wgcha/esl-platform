@@ -152,6 +152,10 @@ def test_select_stage_flow(tmp_path, G):
     assert sorted(c["id"] for c in gm["cells"]) == ids
     for cell in gm["cells"]:
         assert decode_png_size((gd / cell["thumb"]).read_bytes()) == (TC["w"], TC["h"])
+        # v0.15.1 고정 침범 칸만 fixed_viol{n, max_mm, bead_vars, node_idx}
+        assert ("fixed_viol" in cell) == (cell["code"] == "SELECT_FIXED_VIOLATION"), cell
+        if "fixed_viol" in cell:
+            assert cell["fixed_viol"]["n"] > 0 and cell["fixed_viol"]["bead_vars"], cell["fixed_viol"]
     g1 = pio.read_grid(str(gd), ids)
     st = {x["id"]: x["state"] for x in g1["cells"]}
     first = (gd / gm["cells"][0]["thumb"]).read_bytes()
@@ -206,3 +210,30 @@ def test_select_stage_flow(tmp_path, G):
     assert "비드 선택·모핑 규칙" in html and "Wendland" in html and "STEP" in html
     assert sc.tree_stamp(cd) == stamp_case and sc.tree_stamp(str(lib)) == stamp_lib
     assert os.path.isfile(str(out / "post" / "result.json"))
+
+
+def test_fixed_violation_detail_v0151():
+    """고정 침범 원인: 침범 노드·변수별 이동(큰 순)·노드 번호 상한, 공칭·영향 없는 변수 제외."""
+    from esl.doe import bead_select as bsel
+
+    x0 = np.zeros((6, 3))
+    vars_ = [
+        {"name": "B1_W", "type": "W", "bead": "b1", "nominal": 50.0, "idx": np.array([0, 1, 2], dtype=np.int32),
+         "vec": np.array([[0.5, 0, 0], [0.1, 0, 0], [0.01, 0, 0]])},
+        {"name": "B1_D1", "type": "D", "bead": "b1", "nominal": 20.0, "idx": np.array([1, 4], dtype=np.int32),
+         "vec": np.array([[0, 0, 1.0], [0, 0, 1.0]])},
+        {"name": "B2_D1", "type": "D", "bead": "b2", "nominal": 6.0, "idx": np.array([5], dtype=np.int32),
+         "vec": np.array([[0, 0, 1.0]])},
+    ]
+    B = bsel.Basis(vars_, 6, "s")
+    vals = {"B1_W": 52.0, "B1_D1": 20.5, "B2_D1": 6.0}
+    x = bsel.morph(x0, B, vals)
+    fixed = np.array([True, True, True, False, False, True])
+    r = bsel.fixed_violation_detail(x0, x, fixed, B, vals, tol=0.05)
+    assert r["n"] == 2 and r["node_idx"] == [0, 1]
+    assert [v["name"] for v in r["bead_vars"]] == ["B1_W", "B1_D1"]
+    assert r["bead_vars"][0] == {"name": "B1_W", "bead": "b1", "n": 2, "max_mm": 1.0}
+    assert r["bead_vars"][1]["n"] == 1 and r["bead_vars"][1]["max_mm"] == 0.5
+    assert bsel.fixed_violation_detail(x0, x, fixed, B, vals, tol=0.05, cap=1)["node_idx"] == [0]
+    none = bsel.fixed_violation_detail(x0, x0, fixed, B, vals, tol=0.05)
+    assert none == {"n": 0, "max_mm": 0.0, "bead_vars": [], "node_idx": []}
