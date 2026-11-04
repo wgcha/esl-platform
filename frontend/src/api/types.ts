@@ -2358,6 +2358,71 @@ export interface DoeCompareCfg {
   max_shapes: number;
   total_max_mb: number;
   mesh_size_mm: number;
+  /** v0.16.0 메시 방식 기본값(bead_doe.compare.mesh.mode, C2-D-9) — 옛 서버면 없음(고급 설정 숨김) */
+  mesh_mode?: DoeMeshMode | null;
+  /** v0.16.0 삼각형 재메시 가능(gmsh importStl, C2-D-16) */
+  remesh_available?: boolean;
+  /** v0.16.0 메시 입력(C2-D-2) */
+  mesh_input?: { enabled: boolean; formats: string[]; max_mb: number } | null;
+  /** v0.16.0 gmsh 준비(STEP 형상 가능) */
+  step_ready?: boolean;
+}
+/** v0.16.0 ④ 메시 방식 모드(esl_compare_mesh_options.md C2-D-9) */
+export type DoeMeshMode = "cad" | "remesh" | "auto";
+/** v0.16.0 ④ 형상 출처(C2-D-1) — case = 기준 Case 메시 */
+export type DoeShapeSource = "step" | "mesh" | "case";
+/** v0.16.0 ④ 결과 메시 방식(C2-D-10·22) */
+export type DoeMeshMethod = "cad" | "refine" | "remesh" | "fallback" | "mesh_input";
+/** v0.16.0 재메시 충실도(C2-D-13) */
+export interface DoeShapeFidelity {
+  hausdorff_mm: number;
+  max_dev_mm: number;
+  p95_mm: number;
+  area_ratio: number;
+  deflection_mm: number;
+  warn_mm: number;
+  fail_mm: number | null;
+  over_warn: boolean;
+}
+/** v0.16.0 메시 입력 파트 1개(check-inputs parts[], ≤50) */
+export interface DoeMeshPart {
+  id: number;
+  title: string;
+  n_shells: number;
+}
+/** (보강, 계약 §3 미기재 — C2-D-22 mesh.json.refine 을 형상 행에 그대로) 세분화 기록 */
+export interface DoeShapeRefine {
+  kind: "local" | "global";
+  stage_index?: number | null;
+  h_mm: number;
+  factor: number;
+  base_h_mm: number;
+  faces?: { bbox_key: string; type?: string | null; center?: number[] | null; ring?: number | null }[] | null;
+  n_elems?: number | null;
+  n_est?: number | null;
+  elem_ratio_h?: number | null;
+  elem_ratio_ref?: number | null;
+  attempts?: DoeMeshAttempt[] | null;
+}
+/** 사다리 시도 1건(C2-D-22 attempts[]) — skipped 면 reason(REFINE_SKIPPED_LIMIT: elems·memory·time) */
+export interface DoeMeshAttempt {
+  stage: string;
+  factor?: number | null;
+  h_mm?: number | null;
+  status: string;
+  code?: string | null;
+  seconds?: number | null;
+  n_elems?: number | null;
+  skipped?: boolean | null;
+  reason?: string | null;
+}
+/** (보강, C2-D-24) 수렴 점검: 기준 d000 을 h_r 로 다시 풀어 얻은 메시 편향 δ_e(ESL별) */
+export interface DoeRefineBias {
+  h_mm: number;
+  delta_max: number;
+  tol: number | null;
+  over_tol: boolean;
+  per_esl?: { entry_id: string; delta: number }[] | null;
 }
 /** v0.14.0 ④ 형상 1개(esl_step_compare.md §3) */
 export interface CompareShapeIn {
@@ -2366,6 +2431,10 @@ export interface CompareShapeIn {
   rel?: string | null;
   name: string;
   reference?: boolean;
+  /** v0.16.0 형상 출처(기본 step). mesh = rel 이 메시 주 파일(C2-D-1·2) */
+  source?: "step" | "mesh";
+  /** v0.16.0 메시 형상 파트 ID(쉘 파트가 하나면 생략 가능, C2-D-4) */
+  part_id?: number | null;
 }
 export interface DoeCheckIn {
   project_id: string;
@@ -2378,6 +2447,10 @@ export interface DoeCheckIn {
   inch?: number | null;
   /** ④ 만(1..compare.max_shapes) */
   shapes?: CompareShapeIn[] | null;
+  /** v0.16.0 ④ 메시 방식(없으면 설정값, C2-D-9) */
+  mesh_mode?: DoeMeshMode | null;
+  /** (보강, 계약 §3 미기재 — §8 '실패 시 세분화 허용' = ladder 에 refine_* 포함, C2-D-18) false 면 auto 사다리에서 refine_* 를 뺌. 없으면 설정값 */
+  mesh_refine?: boolean | null;
 }
 /** ④ check-inputs 형상 1행 */
 export interface DoeCheckShape {
@@ -2389,13 +2462,28 @@ export interface DoeCheckShape {
   sha256: string;
   size_mb: number;
   reference: boolean;
+  /** v0.16.0 */
+  source?: "step" | "mesh";
+  part_id?: number | null;
+  /** 메시 주 파일 rel */
+  main_rel?: string | null;
+  /** 메시: 주 + include */
+  files?: { rel: string; sha256: string; size_mb: number }[] | null;
+  /** 메시: 파트 목록(≤50) — 하나면 화면이 자동 채움 */
+  parts?: DoeMeshPart[] | null;
 }
 /** ④ 형상 이름·파일(결과 행·기준). Case 메시 기준 = {name:"Case 메시", file_name:null, source:"case"} */
 export interface DoeShapeRef {
   name: string;
   file_name: string | null;
   reference?: boolean;
-  source?: "step" | "case" | null;
+  source?: DoeShapeSource | null;
+  /** v0.16.0 메시 방식·충실도(C2-D-10·13) */
+  mesh_method?: DoeMeshMethod | null;
+  fidelity?: DoeShapeFidelity | null;
+  /** (보강) 세분화 기록·수렴 점검 δ(C2-D-22·24) */
+  refine?: DoeShapeRefine | null;
+  refine_bias?: DoeRefineBias | null;
 }
 /** ④ 형상 메시 품질 요약(SC-D-13, 이슈 #53 criteria) — over_limit = fail_ratio > max_fail_ratio(경고 SHAPE_QUALITY_FAIL, 차단 아님) */
 export interface DoeShapeQuality {
@@ -2413,8 +2501,8 @@ export interface DoePrepShape {
   name: string;
   file_name: string | null;
   reference: boolean;
-  /** step = 업로드 STEP, case = 첫 ESL Case 메시(기준 미지정) */
-  source?: "step" | "case" | null;
+  /** step = 업로드 STEP, mesh = 업로드 메시(v0.16.0), case = 첫 ESL Case 메시(기준 미지정) */
+  source?: DoeShapeSource | null;
   status: DoeDesignStatus;
   code?: string | null;
   message?: string | null;
@@ -2422,6 +2510,14 @@ export interface DoePrepShape {
   n_elems?: number | null;
   quad_ratio?: number | null;
   quality?: DoeShapeQuality | null;
+  /** v0.16.0 메시 방식(C2-D-10)·CAD 첫 오류·충실도·요소 크기 중앙값·연결 성분 수 */
+  mesh_method?: DoeMeshMethod | null;
+  cad_error?: { code: string; message: string } | null;
+  fidelity?: DoeShapeFidelity | null;
+  edge_median_mm?: number | null;
+  n_components?: number | null;
+  /** (보강) 세분화 기록(C2-D-22) */
+  refine?: DoeShapeRefine | null;
 }
 export interface DoeProps {
   t: number;
@@ -2441,6 +2537,9 @@ export interface DoeCheckOut {
   /** ④ 형상 목록·기준 출처 */
   shapes?: DoeCheckShape[] | null;
   reference_source?: "step" | "case" | null;
+  /** v0.16.0 ④ 적용 메시 방식·재메시 가능 */
+  mesh_mode?: DoeMeshMode | null;
+  remesh_available?: boolean;
   warnings: DoeWarning[];
 }
 export interface DoeStudyIn extends DoeCheckIn {
@@ -2505,8 +2604,12 @@ export interface DoeStudyOut {
     props?: DoeProps | null;
     mesh_size_mm?: number | null;
     /** ④ 형상(d000 = 기준 STEP, 기준 없음이면 d001…) */
-    shapes?: { id: string; name: string; file_name: string | null; sha256: string | null; upload_id: string | null; rel?: string | null; reference: boolean }[] | null;
+    shapes?: { id: string; name: string; file_name: string | null; sha256: string | null; upload_id: string | null; rel?: string | null; reference: boolean; source?: "step" | "mesh"; part_id?: number | null }[] | null;
     reference_source?: "step" | "case" | null;
+    /** v0.16.0 ④ 메시 방식(v0.15.x 스터디는 없음 = cad) */
+    mesh_mode?: DoeMeshMode | null;
+    /** (보강) 세분화 허용 */
+    mesh_refine?: boolean | null;
   };
   phase: DoePhase;
   version: number;

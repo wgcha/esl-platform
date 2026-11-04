@@ -1,5 +1,6 @@
 // 강성 평가 스터디 'ESL별 개선율' 표(v0.10.0, esl_bead_doe.md §11.4): 행 = 순위 상위 N 안(+ 선택 안), 열 = ESL,
 // 셀 = 개선율 1 − C_안,i / C_베이스라인,i(개선 초록 · 악화 빨강 히트맵). 가로 스크롤은 표 안에서만(2560·1920 잘림 없음).
+// v0.16.0 ④ 이름 옆 짧은 '메시 방식' 배지(DoeRanking 과 같음).
 // 순위 행에 per_esl 이 없으면(안 수 × ESL 수 > 설정 상한) GET …/results/per-esl?design=… 로 보이는 행만 읽는다.
 import { useEffect, useState } from "react";
 import { doe, pctText } from "../api/doe";
@@ -7,6 +8,7 @@ import type { DoePerEsl, DoeResultOut, EntryOut } from "../api/types";
 import { errorText } from "../api/client";
 import { entryKey } from "./ModeSelect";
 import { Empty, ErrorLine } from "./ui";
+import { ShapeNameCell } from "./DoeInputs";
 
 export const PER_ESL_TOP_N = 10;
 
@@ -62,6 +64,7 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
   const perOf = (id: string): DoePerEsl[] | undefined => (inline ? result.ranking.find((r) => r.id === id)?.per_esl : fetched[id]);
   // v0.14.0 ④ 형상 비교: 안 옆에 형상 이름 열
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
+  const shapeOf = (id: string) => result.ranking.find((r) => r.id === id)?.shape ?? (id === "d000" ? result.baseline.shape : null) ?? null;
   const nameOf = (id: string) => result.ranking.find((r) => r.id === id)?.shape?.name ?? names[id] ?? (id === "d000" ? result.baseline.shape?.name : null) ?? "–";
   if (!cols.length) return <Empty>ESL별 지표가 없습니다(v0.10.0 이전 실행 — 복제해 다시 실행하면 보입니다)</Empty>;
   return (
@@ -89,7 +92,7 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
                   <td className="mono">{id}</td>
                   {named && (
                     <th scope="row" className="doe-name-col">
-                      {nameOf(id)}
+                      <ShapeNameCell name={nameOf(id)} shape={shapeOf(id)} testId={`per-esl-method-${id}`} />
                     </th>
                   )}
                   {cols.map((c) => {
