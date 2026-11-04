@@ -80,8 +80,12 @@ def pareto_flags(vecs: dict[str, list[float]], baseline: list[float] | None = No
     return out
 
 
-def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 1e-6) -> dict:
-    """result.json 목록(베이스라인 포함) → DoeResultOut 순위 부분(+ ESL별 개선 지표, 행의 per_esl)."""
+def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 1e-6,
+         extra_failed: dict | None = None) -> dict:
+    """result.json 목록(베이스라인 포함) → DoeResultOut 순위 부분(+ ESL별 개선 지표, 행의 per_esl).
+
+    extra_failed = 추가 실패 상태 {상태: n_failed 키}(④ ``{"FAILED_SIZE": "size"}`` — 없으면 ①②③ 결과 그대로)."""
+    fail_key = dict(_FAIL_KEY, **(extra_failed or {}))
     by = {r["id"]: r for r in results}
     b = by.get(BASELINE)
     if b is None or b.get("status") != "OK":
@@ -90,7 +94,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     C_ref = ba["C"]
     if not C_ref > 0:
         raise EslError("BASELINE_FAILED", f"베이스라인 최악 컴플라이언스가 양수가 아님 ({C_ref})")
-    rows, n_sk, n_fl, n_other = [], {v: 0 for v in _SKIP_KEY.values()}, {v: 0 for v in _FAIL_KEY.values()}, 0
+    rows, n_sk, n_fl, n_other = [], {v: 0 for v in _SKIP_KEY.values()}, {v: 0 for v in fail_key.values()}, 0
     tl = ratio_tol(noise_floor, tol)
     base_C = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
     order = [p["entry_id"] for p in b.get("per_esl") or [] if float(p["C"]) > 0]
@@ -103,8 +107,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
         if st in SKIPPED:
             n_sk[_SKIP_KEY[st]] += 1
             continue
-        if st in FAILED:
-            n_fl[_FAIL_KEY[st]] += 1
+        if st in FAILED or st in fail_key:
+            n_fl[fail_key[st]] += 1
             continue
         if st != "OK":
             n_other += 1
@@ -135,6 +139,22 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                                          "worst_entry_id": ba["worst"]},
             "n_ok": len(rows), "n_skipped": n_sk, "n_failed": n_fl, "n_other": n_other, "ranking": rows,
             "noise_floor": noise_floor, "ratio_tol": tl, "esl_order": order, "warnings": warns}
+
+
+def attach_shapes(R: dict, shapes: dict[str, dict]) -> dict:
+    """④ 형상 이름(v0.14.0 SC-D-4): 순위 행·베이스라인에 shape{name, file_name, reference}. shapes = {id: {name, file_name,
+    reference, source?}}. 민감도는 변수가 없어 생략(COMPARE_NO_PARAMS — 호출자)."""
+    def sh(did: str) -> dict:
+        s = shapes.get(did) or {}
+        out = {"name": s.get("name") or did, "file_name": s.get("file_name"), "reference": bool(s.get("reference"))}
+        if s.get("source") == "case":          # 기준 = Case 메시(SC-D-2)
+            out["source"] = "case"
+        return out
+    for x in R["ranking"]:
+        x["shape"] = sh(x["id"])
+        x["values"] = {}
+    R["baseline"]["shape"] = sh(BASELINE)
+    return R
 
 
 SORT_KEYS = {

@@ -185,9 +185,9 @@ def _load_analysis(root, aid):
 
 def reference_compliance(mesh: dict, supports, Fs, solver: dict) -> list[float]:
     """자체 쉘 솔버로 C_k = Σ F·u (3-2-1, 병진 성분). 하중별 기준 컴플라이언스."""
-    from esl.mech.shell import ShellModel
+    from esl.mech.shell import ShellModel, solver_check_kwargs
     sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
-                    drill_factor=solver["drill_factor"], backend=solver["backend"])
+                    drill_factor=solver["drill_factor"], backend=solver["backend"], **solver_check_kwargs(solver))
     nid = np.asarray(mesh["node_id"])
     spc = [(int(np.searchsorted(nid, n)), str(dof)) for n, dof in supports]
     out = []

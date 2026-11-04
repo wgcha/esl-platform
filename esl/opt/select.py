@@ -39,10 +39,11 @@ def initial_compliance(target, entry_ids: list, load_fn, solver_cfg: dict, *, st
     load_fn(entry_id) -> F (N,3) (대상 노드 순서). u_store: 경로면 np.memmap(float32, (K, 3N)), None 이면 메모리 배열.
     반환 {entry_ids, C (K,), umax (K,), U (K,3N) float32 | None, stats}.
     """
-    from esl.mech.shell import ShellModel
+    from esl.mech.shell import ShellModel, solver_check_kwargs
     m = target.mesh
     sm = ShellModel(m["x0"], m["conn"], m["elem_type"], m["thickness"], m["E"], m["nu"],
-                    drill_factor=float(solver_cfg["drill_factor"]), backend=str(solver_cfg["backend"]))
+                    drill_factor=float(solver_cfg["drill_factor"]), backend=str(solver_cfg["backend"]),
+                    **solver_check_kwargs(solver_cfg))
     nid = np.asarray(m["node_id"], dtype=np.int64)
     order = np.argsort(nid, kind="stable")
     spc = []

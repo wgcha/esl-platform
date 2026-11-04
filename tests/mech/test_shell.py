@@ -505,3 +505,102 @@ def test_out_of_memory_superlu_malloc(monkeypatch):
     with pytest.raises(EslError) as ei:
         _shell._SuperLU(sps.csc_matrix(np.eye(2)))
     assert ei.value.code == "SOLVER_SINGULAR"
+
+
+def test_resid_check_backward_error():
+    """v0.14.0 해 잔차 판정: ‖r‖/‖F‖ ≤ 1e-8(옛 판정) 또는 후방 오차 η = ‖r‖/(‖K‖∞‖u‖+‖F‖) ≤ 1e-9 이면 수용."""
+    import scipy.sparse as sps_
+
+    st = {}
+    rhs = np.ones(4)
+    uf = np.full(4, 1e6)                                     # 조건수 큰 문제: ‖u‖ ≫ ‖F‖/‖K‖
+    res = np.full(4, 3e-8)                                   # ‖r‖/‖F‖ 3e-8 > 1e-8
+    assert _shell._check_resid(None, uf, res, rhs, 1.0, st) == pytest.approx(3e-8)
+    assert st["solve_backward_err"] == pytest.approx(3e-8 * 2 / (1e6 * 2 + 2))
+    with pytest.raises(EslError) as ei:                      # η 도 큼(‖u‖ 작음) → 특이
+        _shell._check_resid(None, np.ones(4), np.full(4, 3e-8), rhs, 1.0, {})
+    assert ei.value.code == "SOLVER_SINGULAR"
+    with pytest.raises(EslError) as ei:                      # 유한하지 않은 해
+        _shell._check_resid(None, np.array([np.nan, 0, 0, 0]), np.zeros(4), rhs, 1.0, {})
+    assert ei.value.code == "SOLVER_SINGULAR"
+    assert _shell._check_resid(None, np.ones(4), np.full(4, 1e-9), rhs, 1.0, {}) == pytest.approx(1e-9)   # 옛 판정 통과
+
+    class FakeCG(_shell._CG):                                # 반복법은 옛 판정(max(1e-8, 100·rtol)) 그대로
+        def __init__(self):
+            self.rtol = 1e-10
+    with pytest.raises(EslError):
+        _shell._check_resid(FakeCG(), uf, res, rhs, 1.0, {})
+    assert _shell._norm_inf(sps_.csr_matrix(np.array([[2.0, -1.0], [-1.0, 3.0]]))) == 4.0
+
+
+def _plate_321(nx=40, ny=30):
+    X, c, et = rect_quads(400.0, 300.0, nx, ny)
+    X = np.c_[X, np.zeros(len(X))] if X.shape[1] == 2 else X
+    m = ShellModel(X, c, et, 0.8, 210000.0, 0.3, backend="superlu")
+    a = int(np.argmin(X[:, 0] + X[:, 1]))
+    b = int(np.argmin(-X[:, 0] + X[:, 1]))
+    cc = int(np.argmin(X[:, 0] - X[:, 1]))
+    return m, X, a, b, cc
+
+
+def test_resid_check_rejects_rigid_mode_unbalanced_load():
+    """검증 반례 1(v0.14.0 수정): 강체 x 병진이 남은 K_ff(구속 검사 우회) + 평형 안 맞는 Fx — η 9.6e-18 이지만
+    ‖r‖/‖F‖ 6.8 → 상대 잔차 상한(resid_rel_cap)으로 거부. 상한을 풀어도 반력 평형 검사가 거부."""
+    from esl.config import SOLVER_CHECK_DEFAULTS
+    m, X, a, b, cc = _plate_321()
+    spc = [(a, "23"), (b, "23"), (cc, "3")]
+    m._check_restraint = lambda cons: None
+    F = np.zeros((m.n_nodes, 3))
+    F[:, 0] = 1.0
+    with pytest.raises(EslError) as ei:
+        m.solve(F, spc)
+    assert ei.value.code == "SOLVER_SINGULAR" and "잔차" in ei.value.message
+    assert m.resid_rel_cap == SOLVER_CHECK_DEFAULTS["resid_rel_cap"]
+    m2, *_ = _plate_321()
+    m2._check_restraint = lambda cons: None
+    m2.resid_rel_cap = 1.0e3                                  # 잔차 상한 해제 → 평형 검사가 막아야 함
+    with pytest.raises(EslError) as ei:
+        m2.solve(F, spc)
+    assert ei.value.code == "SOLVER_SINGULAR" and "평형" in ei.value.message
+
+
+def test_resid_check_rejects_pivot_perturbation():
+    """검증 반례 2(v0.14.0 수정): 대각 1e-8 섭동한 K_ff 로 푼 해 — η 1.3e-10 ≤ 1e-9 이지만 ‖r‖/‖F‖ 1e-2 → 거부."""
+    import scipy.sparse as sps_
+
+    m, X, a, b, cc = _plate_321()
+    K = m.K()
+    cons = sorted({(a, 0), (a, 1), (a, 2), (b, 1), (b, 2), (cc, 2)})
+    fixed = np.array([6 * p + d for p, d in cons])
+    free = np.setdiff1d(np.arange(6 * m.n_nodes), fixed)
+    Kff = _shell._principal_submatrix(K, free).tocsc()
+    nK = _shell._norm_inf(Kff)
+    rng = np.random.default_rng(0)
+    rhs = rng.normal(size=free.size)
+    D = sps_.diags(Kff.diagonal() * 1e-8 * rng.uniform(-1, 1, free.size))
+    uf = spla.spsolve((Kff + D).tocsc(), rhs)
+    st = {}
+    with pytest.raises(EslError) as ei:
+        _shell._check_resid(None, uf, Kff @ uf - rhs, rhs, nK, st)
+    assert ei.value.code == "SOLVER_SINGULAR"
+    uf0 = spla.spsolve(Kff, rhs)                               # 섭동 없는 해는 그대로 통과
+    _shell._check_resid(None, uf0, Kff @ uf0 - rhs, rhs, nK, st)
+
+
+def test_equilibrium_check_and_settings():
+    """반력 평형 |ΣR+ΣF|/max(|ΣF|,Σ|F|) 검사·설정 키(solver.resid_rel_cap·equilibrium_tol_rel, 없으면 기본값)."""
+    from esl.config import SOLVER_CHECK_DEFAULTS, solver_check_settings
+    from esl.mech.shell import solver_check_kwargs
+    m, X, a, b, cc = _plate_321(20, 15)
+    F = np.zeros((m.n_nodes, 3))
+    F[:, 2] = -1.0
+    u, R = m.solve(F, [(a, "123"), (b, "23"), (cc, "3")])
+    assert m.stats["solve_equilibrium_rel"] < 1e-8
+    F2 = np.zeros((2, 3)); F2[0, 0] = 1.0; F2[1, 0] = -1.0     # 자기평형 하중도 Σ|F| 로 규모
+    assert _shell._check_equilibrium(F2, np.zeros((2, 3)), {}) == 0.0
+    with pytest.raises(EslError) as ei:
+        _shell._check_equilibrium(F2, np.array([[0.1, 0, 0], [0, 0, 0]]), {})
+    assert ei.value.code == "SOLVER_SINGULAR"
+    assert solver_check_settings(None) == SOLVER_CHECK_DEFAULTS
+    assert solver_check_kwargs({"drill_factor": 1e-4, "resid_rel_cap": 1e-3, "equilibrium_tol_rel": None}) == {
+        "resid_rel_cap": 1e-3, "equil_tol_rel": SOLVER_CHECK_DEFAULTS["equilibrium_tol_rel"]}

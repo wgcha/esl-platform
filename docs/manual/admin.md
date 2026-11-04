@@ -239,6 +239,8 @@ handle /esl/* {
 
 #### 2.7.1 강성 평가 스터디 형상 엔진 paicad·OCP·gmsh(v0.9.0, 이전 이름: 비드 DOE) — 설치·확인
 
+**④ 형상 직접 비교(v0.14.0)** — paicad 와 무관하게 `bead_doe.enabled` ∧ `bead_doe.compare.enabled` ∧ 워커 gmsh 점검(`info.gmsh.ready`) 이면 켜진다(`GET /doe/settings` 의 `scenarios.compare`·`compare.reason` = `DOE_DISABLED`·`COMPARE_DISABLED`·`GMSH_UNAVAILABLE`). 설정 `bead_doe.compare`: `max_shapes`(20)·`total_max_mb`(1000)·`align_tol`(0.05)·`align_deg`(5)·`mesh`(`size_mm` 3·`curvature_n` 0·`min_size_factor` 0.8·`extend_from_boundary` 0·`occ_fix_small` 1·`feature_angle` 10 기록만)·`defeature`(`min_hole_area_mm2` 50.27·`hole_elems` 6 = r 4~30 구멍 둘레 최소 분할, 실제 분할 = max(`hole_elems`, ceil(둘레/`size_mm`))·`hole_r_mm` [4,30]·`min_bead_height_mm` 2 기록만)·`quality`(이슈 #53 criteria 표 warn·fail, `max_fail_ratio` 0.01 — 경고만). 기준 원문 `docs/reference/radioss_chr_3mm_batchmesh.md`. `size_mm` 은 `bead_doe.mesh.size_min_mm..size_max_mm` 안이어야 한다(아니면 설정 오류). 형상 메싱은 작업 슬롯 1개 안에서 `bead_doe.run.parallel` 개 동시(gmsh spawn 자식 — 부모가 죽으면 자식도 끝남), 형상 해석은 BD-D-15 메모리 자동 축소(가장 큰 형상 노드 수 기준). migration 0014(`bead_does.scenario` 8자).
+
 강성 평가 스터디(계약 `docs/contracts/esl_bead_doe.md` §6.4)는 physicsai-platform 의 `packages/paicad`(형상 엔진, 외부 명령)와 gmsh(③ STEP 만 시나리오 메싱)를 쓴다.
 설치·업데이트 스크립트가 **기본 의존성 다음에 따로** 설치하며, 실패해도 설치·업데이트는 계속되고 **다른 기능은 그대로 — 강성 평가 스터디 만 비활성**이다
 (콘솔 경고 `강성 평가 스터디 비활성(다른 기능은 그대로): …`, 화면 상단 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)").
@@ -647,6 +649,8 @@ cd D:\esl                                   # git 폴더 설치는 <git>\.runtim
 **Q. 매핑 드라이브(E: → `\\서버\share`)를 입력·ESL 루트로 쓰는데 워커만 못 읽는다.** 매핑 드라이브는 로그온 세션별이다. `Background`(세션 0)에서는 사용자가 매핑한 드라이브가 보이지 않는다 → UNC 경로를 쓰거나 `Interactive`로 등록.
 
 **Q. 작업이 `SOLVER_OUT_OF_MEMORY`로 실패한다.** 코어 자식이 메모리 한도에 걸렸다. `worker.max_memory_gb`(Windows: Job 안 코어 자식 커밋 합계 — SLOT·LIGHT 동시 실행분 포함, POSIX: × `vm_headroom` 가상 한도)와 서버 가용 메모리를 확인하고, 동시에 도는 다른 작업을 줄이거나 코어 `solver.backend: iterative`(반복법)를 쓴다. 특이(`SOLVER_SINGULAR`)와는 원인이 다르다(구속·메시 문제가 아님).
+
+**Q. 작업이 `SOLVER_SINGULAR` "해 잔차 과대"로 실패한다.** v0.14.0 부터 직접법 해는 ‖Ku−F‖/‖F‖ ≤ 1e-8 또는 후방 오차 η = ‖Ku−F‖/(‖K‖·‖u‖+‖F‖) ≤ 1e-9 이면 수용한다(얇은 판·3점 지지처럼 조건수가 큰 정상 해는 앞의 값이 1e-8 을 넘어도 η 로 통과). 메시지의 η 가 1e-9 를 넘으면 해가 실제로 부정확한 것이니 지지(구속)·메시 연결(떨어진 요소·겹친 노드)·물성(0 두께·E)을 확인한다.
 
 **Q. ESL 계산이 매우 느리거나 메모리 부족.** 환경 점검 `solver.backend`가 `superlu`면 pypardiso/MKL이 로드되지 않은 것이다(`solver.pypardiso` 메시지). 묶음 설치면 wheels에 mkl·intel-openmp·tbb가 있는지 확인. 코어 `validation.full_solve`(auto|never)도 본다.
 

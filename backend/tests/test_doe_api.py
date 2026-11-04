@@ -89,7 +89,7 @@ def test_settings_enabled_and_method_sources(client, world):
     s = api(client, "GET", "/doe/settings").json()
     assert s["enabled"] is True and s["reason"] is None
     assert s["paicad"] == {"ready": True, "version": "0.14.1", "pinned": "0.14.1", "warning": None}
-    assert s["gmsh"] == {"ready": True, "version": "4.13.1"} and s["scenarios"] == {"same": True, "mesh": True, "step": True}
+    assert s["gmsh"] == {"ready": True, "version": "4.13.1"} and s["scenarios"] == {"same": True, "mesh": True, "step": True, "compare": True}
     assert s["doe"]["default_types"] == ["D", "W"] and s["doe"]["methods"] == ["lhs", "halton", "fullfact"]
     assert s["part_title"] == "chassis rear" and s["max_designs"] == 200 and s["step_max_mb"] == 200
     ms = load_method_sources()
@@ -128,7 +128,7 @@ def test_disabled_reasons(tmp_path, engine, fake_dashboard, clock, case):
         eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1")
         uid = upload_step(c)
         if want is None:                                          # gmsh 없음 → ③ 만 비활성
-            assert s["scenarios"] == {"same": True, "mesh": True, "step": False}
+            assert s["scenarios"] == {"same": True, "mesh": True, "step": False, "compare": False}
             r = c.post(f"{API}/doe/check-inputs", json=body([eid], uid, "step"), headers=W)
             assert r.status_code == 503 and r.json()["detail"]["code"] == "GMSH_UNAVAILABLE"
         else:
@@ -678,7 +678,7 @@ def test_results_per_esl_metrics_sort_and_endpoint(client, world, engine, esl_ro
     bad = api(client, "GET", f"/doe/studies/{sid}/results", params={"sort": "nope"})
     assert bad.status_code == 422 and bad.json()["detail"]["code"] == "INVALID_PARAMS"
     pe = api(client, "GET", f"/doe/studies/{sid}/results/per-esl", params={"design": row["id"]}, token="tok-general")
-    assert pe.status_code == 200 and pe.json()["designs"] == [{"id": row["id"], "per_esl": per_a}]
+    assert pe.status_code == 200 and pe.json()["designs"] == [{"id": row["id"], "name": None, "per_esl": per_a}]
     assert [d["id"] for d in api(client, "GET", f"/doe/studies/{sid}/results/per-esl").json()["designs"]] == sorted(
         [row["id"], "d099"])
     nf = api(client, "GET", f"/doe/studies/{sid}/results/per-esl", params={"design": "zz"})

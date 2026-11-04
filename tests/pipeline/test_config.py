@@ -182,6 +182,23 @@ def test_extract_strain_sources_optional_and_validated():
         assert ei.value.code == "CONFIG_INVALID" and f"extract.{key}" in ei.value.message, (key, val)
 
 
+def test_solver_check_keys_optional():
+    """solver.resid_rel_cap·equilibrium_tol_rel(D-0.14-RESID) 선택 키: 없으면 SOLVER_CHECK_DEFAULTS, 범위 밖 CONFIG_INVALID."""
+    cfg = config.validate_settings(_base_cfg())
+    assert config.solver_check_settings(cfg["solver"]) == config.SOLVER_CHECK_DEFAULTS
+    assert "resid_rel_cap" not in cfg["solver"]                  # cfg 에 주입하지 않음
+    c = _base_cfg()
+    c["solver"].update(resid_rel_cap=1e-3, equilibrium_tol_rel=1e-5)
+    assert config.solver_check_settings(config.validate_settings(c)["solver"]) == {
+        "resid_rel_cap": 1e-3, "equilibrium_tol_rel": 1e-5}
+    for key, val in (("resid_rel_cap", 0.0), ("equilibrium_tol_rel", 1.0)):
+        c = _base_cfg()
+        c["solver"][key] = val
+        with pytest.raises(EslError) as ei:
+            config.validate_settings(c)
+        assert f"solver.{key}" in ei.value.message
+
+
 def test_extract_dump_keys_optional():
     cfg = config.validate_settings(_base_cfg())
     assert config.dump_settings(cfg) == {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}

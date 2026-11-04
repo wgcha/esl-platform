@@ -32,6 +32,12 @@ def test_defaults_mirror_core_and_missing_section_disabled(tmp_path):
     assert o["enabled"] is True and o["loads"]["mac_merge"] == 0.9 and o["loads"]["max_cases"] == 20
     assert o["keepout"]["max_rects"] == 5 and o["keepout"]["hole_radius_mm"] == 15.0
     assert o == core_opt.settings({"opt_run": d["opt_run"]})
+    # 선택 키 opt_run.solver.resid_rel_cap·equilibrium_tol_rel(D-0.14-RESID): 지정했을 때만 dump, 범위 밖 거부
+    d["opt_run"] = {"enabled": True, "solver": {"resid_rel_cap": 1e-3}}
+    o = opt_settings(load_config_dict(d, environ={}).settings)
+    assert o["solver"] == {"drill_factor": 1e-4, "backend": "auto", "resid_rel_cap": 1e-3}
+    d["opt_run"] = {"enabled": True, "solver": {"equilibrium_tol_rel": 0.0}}
+    assert not load_config_dict(d, environ={}).ok
 
 
 def test_examples_parse_with_opt_section():

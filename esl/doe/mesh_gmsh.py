@@ -67,10 +67,24 @@ def check_h(h: float, mcfg: dict) -> float:
 
 
 def gmsh_options(h: float, mcfg: dict) -> dict:
+    """메싱 옵션(가져온 뒤 적용). 선택 키(v0.14.0 ④ 프로필, esl_step_compare.md SC-D-5): ``extend_from_boundary`` 가 있으면
+    Mesh.MeshSizeExtendFromBoundary = 그 값(없으면 지금 값 1 — ③ 결과 바이트 불변, V-SC-8)."""
+    efb = int(mcfg["extend_from_boundary"]) if mcfg.get("extend_from_boundary") is not None else 1
     return {"Mesh.MeshSizeMax": float(h), "Mesh.MeshSizeMin": float(h) * float(mcfg["min_size_factor"]),
-            "Mesh.MeshSizeFromCurvature": int(mcfg["curvature_n"]), "Mesh.MeshSizeExtendFromBoundary": 1,
+            "Mesh.MeshSizeFromCurvature": int(mcfg["curvature_n"]), "Mesh.MeshSizeExtendFromBoundary": efb,
             "Mesh.Algorithm": int(mcfg["algorithm"]), "Mesh.RecombineAll": 1, "Mesh.RecombinationAlgorithm": 1,
             "Mesh.SubdivisionAlgorithm": 0, "Mesh.ElementOrder": 1, "Mesh.Smoothing": 3}
+
+
+OCC_FIX_KEYS = ("Geometry.OCCFixDegenerated", "Geometry.OCCFixSmallEdges", "Geometry.OCCFixSmallFaces")
+
+
+def geometry_options(mcfg: dict) -> dict:
+    """가져오기 전 OCC 옵션(선택 키 ``occ_fix_small`` — 1 이면 작은 모서리·면·퇴화 정리 = 1). 키 없음·0 → {}(gmsh 기본, ③ 불변)."""
+    v = mcfg.get("occ_fix_small")
+    if v is None or not int(v):
+        return {}
+    return {k: 1 for k in OCC_FIX_KEYS}
 
 
 def _elem_area(X, conn, et):
@@ -173,6 +187,130 @@ def quality(mesh: dict, cfg: dict, opt_cfg: dict) -> dict:
     return {"errors": errs, "warnings": warns, "metrics": r["metrics"], "quad_frac": qf}
 
 
+def _loop_info(occ, curves) -> float:
+    return float(sum(occ.getMass(1, abs(int(c))) for c in curves))
+
+
+def _face_loops(gmsh, s: int) -> list[list[int]]:
+    """면 s 의 경계 곡선을 끝점 공유로 묶은 닫힌 고리들(gmsh getCurveLoops 는 외곽·구멍을 한 고리로 줄 때가 있음)."""
+    curves = sorted({abs(int(t)) for _d, t in gmsh.model.getBoundary([(2, s)], oriented=False)})
+    parent = {c: c for c in curves}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    by_pt: dict[int, int] = {}
+    for c in curves:
+        for _d, p in gmsh.model.getBoundary([(1, c)], oriented=False):
+            p = abs(int(p))
+            if p in by_pt:
+                parent[find(c)] = find(by_pt[p])
+            else:
+                by_pt[p] = c
+    groups: dict[int, list[int]] = {}
+    for c in curves:
+        groups.setdefault(find(c), []).append(c)
+    return [sorted(g) for _k, g in sorted(groups.items())]
+
+
+def defeature(gmsh, df: dict, h: float) -> dict:
+    """④ 작은 형상 처리(이슈 #53 BatchMesher holes table 근사, esl_step_compare.md SC-D-5 보강) — 가져온 OCC 형상에서:
+
+    - 면의 내부 경계(구멍) 중 면적 < ``min_hole_area_mm2``(기본 π·4² — r<4 원형·eq_diam<8·좁은 슬롯) → 같은 경계로 막는 면을
+      평면 면은 외곽·큰 구멍 고리로 다시 만들어 작은 구멍 내부 wire 를 지움(곡면은 막는 면을 fragment 로 붙임 —
+      경계 모서리는 남음). OCP ShapeUpgrade_RemoveInternalWires 와 같은 결과를
+      gmsh API 만으로(OCP 불필요).
+    - 남은 구멍(원형 가정 r = 둘레/2π) 반지름 ``hole_r_mm`` 범위 → 둘레 분할 수 = max(hole_elems, ceil(P/h)) transfinite 곡선
+      (v0.14.0 수정: 예전 min(hole_elems 6, …) 은 큰 구멍 둘레 모서리가 P/6 으로 길어져 품질 max_length Fail — 이제 구멍
+      모서리 ≤ h, 작은 구멍은 최소 hole_elems 분할). hole_elems 0 이면 생략.
+    실패는 형상 처리만 건너뛰고 경고(DEFEATURE_SKIPPED). 반환 {filled, filled_area_max, hole_sized, skipped, warnings}."""
+    import math
+
+    occ = gmsh.model.occ
+    amin = float(df.get("min_hole_area_mm2") or 0.0)
+    out = {"filled": 0, "filled_area_max": None, "hole_sized": 0, "skipped": 0, "warnings": []}
+    try:
+        surfs = [t for _d, t in occ.getEntities(2)]
+        patches, rebuilt = [], []
+        for s in surfs:
+            loops = _face_loops(gmsh, s)
+            if len(loops) <= 1:
+                continue
+            per = [_loop_info(occ, cl) for cl in loops]
+            outer = int(max(range(len(per)), key=lambda i: per[i]))
+            small, keep = [], [loops[outer]]
+            for i, cl in enumerate(loops):
+                if i == outer:
+                    continue
+                try:
+                    w = occ.addCurveLoop([int(c) for c in cl])
+                    try:
+                        pt = occ.addPlaneSurface([w])
+                    except Exception:                    # noqa: BLE001 - 평면 아님 → 채움 면
+                        pt = occ.addSurfaceFilling(w)
+                    a = float(occ.getMass(2, pt))
+                except Exception:                        # noqa: BLE001
+                    out["skipped"] += 1
+                    keep.append(cl)
+                    continue
+                if a < amin:
+                    small.append((cl, pt))
+                    out["filled_area_max"] = max(a, out["filled_area_max"] or 0.0)
+                else:
+                    keep.append(cl)
+                    occ.remove([(2, pt)])
+            if not small:
+                continue
+            if gmsh.model.getType(2, s) == "Plane":
+                # 평면 면: 외곽 + 큰 구멍 고리만으로 다시 만든다(작은 구멍 내부 wire 삭제 — ShapeUpgrade_RemoveInternalWires 와 같음)
+                for _cl, pt in small:
+                    occ.remove([(2, pt)])
+                occ.remove([(2, s)])
+                occ.addPlaneSurface([occ.addCurveLoop([int(c) for c in cl]) for cl in keep], s)
+                rebuilt += [int(c) for cl, _pt in small for c in cl]
+            else:                                        # 곡면: 막는 면을 붙임(구멍 경계 모서리는 남음)
+                patches += [pt for _cl, pt in small]
+            out["filled"] += len(small)
+        if patches:
+            occ.fragment([(2, s) for _d, s in occ.getEntities(2) if s not in patches], [(2, p) for p in patches])
+        if rebuilt:
+            occ.remove([(1, c) for c in sorted(set(rebuilt))], recursive=True)
+        occ.synchronize()
+        n_el = int(df.get("hole_elems") or 0)
+        r_lo, r_hi = [float(x) for x in (df.get("hole_r_mm") or [4.0, 30.0])]
+        done: set[int] = set()
+        if n_el > 0:
+            for _d, s in occ.getEntities(2):
+                loops = _face_loops(gmsh, s)
+                if len(loops) <= 1:
+                    continue
+                per = [_loop_info(occ, cl) for cl in loops]
+                outer = int(max(range(len(per)), key=lambda i: per[i]))
+                for i, cl in enumerate(loops):
+                    cs = [abs(int(c)) for c in cl]
+                    if i == outer or any(c in done for c in cs):
+                        continue
+                    P = per[i]
+                    r = P / (2 * math.pi)
+                    if not r_lo <= r <= r_hi:
+                        continue
+                    n = max(n_el, int(math.ceil(P / h - 1e-9)))       # 모서리 ≤ h, 최소 hole_elems 분할
+                    for c in cs:
+                        L = float(occ.getMass(1, c))
+                        gmsh.model.mesh.setTransfiniteCurve(c, max(2, int(round(n * L / P)) + 1))
+                        done.add(c)
+                    out["hole_sized"] += 1
+    except Exception as exc:                             # noqa: BLE001 - 형상 처리 실패는 메싱을 막지 않음
+        out["warnings"].append(f"DEFEATURE_SKIPPED: 작은 형상 처리 실패 — {exc}")
+        try:
+            occ.synchronize()
+        except Exception:                                # noqa: BLE001
+            pass
+    return out
+
+
 def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
               out_dir: str | None = None, step_out: str | None = None) -> tuple[dict, dict]:
     """BREP/STEP → (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json 을 쓴다. 이 프로세스 안에서 실행."""
@@ -184,12 +322,15 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     mc = cfg["mesh"]
     h = check_h(h, mc)
     opts = gmsh_options(h, mc)
+    gopts = geometry_options(mc)
     t0 = time.monotonic()
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.option.setNumber("General.NumThreads", 1)
         gmsh.option.setNumber("Geometry.OCCSewFaces", int(mc.get("occ_sew_faces", 0)))
+        for k, v in gopts.items():
+            gmsh.option.setNumber(k, v)
         try:
             gmsh.model.occ.importShapes(os.fspath(src))
             gmsh.model.occ.synchronize()
@@ -201,6 +342,10 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             step_done = os.path.basename(step_out)
         for k, v in opts.items():
             gmsh.option.setNumber(k, v)
+        dfi = None
+        df = mc.get("defeature")
+        if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
+            dfi = defeature(gmsh, df, h)
         try:
             gmsh.model.mesh.generate(2)
         except Exception as exc:                            # noqa: BLE001
@@ -212,10 +357,12 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     mesh, info = build_mesh(X, conn, et, props, normal_ref)
     oc = opt_cfg or opt_settings(None)
     qual = quality(mesh, cfg, oc)
-    meta = {"schema": "esl/doe_mesh/1", "gmsh_version": ver, "options": opts, "h": h, "props": dict(props),
+    meta = {"schema": "esl/doe_mesh/1", "gmsh_version": ver, "options": {**opts, **gopts}, "h": h, "props": dict(props),
             "n_nodes": int(mesh["node_id"].size), "n_elems": int(mesh["elem_id"].size), "quad_frac": qual["quad_frac"],
             "quality": qual["metrics"], "errors": qual["errors"], "warnings": qual["warnings"], **info,
             "step": step_done, "seconds": round(time.monotonic() - t0, 3)}
+    if dfi is not None:
+        meta["defeature"] = dfi
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         save_npz_det(os.path.join(out_dir, MESH_NPZ), {k: mesh[k] for k in MESH_KEYS})
@@ -275,12 +422,27 @@ def _child(job_path: str) -> int:
     return 0
 
 
-def _child_entry(job_path: str, log_path: str) -> None:
+def _watch_parent(ppid: int, interval: float = 1.0) -> None:
+    """부모(코어 자식)가 강제 종료되면 이 gmsh 자식도 끝낸다(v0.14.0 — ④ 형상 병렬 메싱 취소 시 고아 방지)."""
+    import threading
+
+    def run() -> None:
+        while True:
+            time.sleep(interval)
+            if os.getppid() != ppid:
+                os._exit(4)
+    if ppid > 1:
+        threading.Thread(target=run, name="esl-gmsh-parent-watch", daemon=True).start()
+
+
+def _child_entry(job_path: str, log_path: str, ppid: int | None = None) -> None:
     """spawn 자식 진입점: fd 1·2 → mesh.log, 실패는 mesh_error.json + 종료코드 3."""
     fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     os.dup2(fd, 1)
     os.dup2(fd, 2)
     os.close(fd)
+    if ppid and os.name != "nt":
+        _watch_parent(int(ppid))
     sys.exit(_child(job_path))
 
 
@@ -289,7 +451,7 @@ def _spawn(job: dict, out_dir: str, to: float) -> int:
     jp = os.path.join(out_dir, "mesh_job.json")
     U.write_json(jp, job)
     ctx = multiprocessing.get_context("spawn")
-    p = ctx.Process(target=_child_entry, args=(jp, os.path.join(out_dir, MESH_LOG)), daemon=True)
+    p = ctx.Process(target=_child_entry, args=(jp, os.path.join(out_dir, MESH_LOG), os.getpid()), daemon=True)
     p.start()
     p.join(to)
     if p.is_alive():

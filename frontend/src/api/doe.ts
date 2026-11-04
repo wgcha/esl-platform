@@ -1,7 +1,7 @@
 // v0.9.0 비드 형상 DOE API(계약 esl_bead_doe.md §10). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
-import { API_PREFIX, request } from "./client";
+import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
-  DoeCheckIn, DoeCheckOut, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
 
@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: Omit<DoeSettingsOut, "method_sources"> = {
   reason: null,
   paicad: { ready: false, version: null, pinned: null, warning: null },
   gmsh: { ready: false, version: null },
-  scenarios: { same: false, mesh: false, step: false },
+  scenarios: { same: false, mesh: false, step: false, compare: false },
   max_entries: 50,
   max_designs: 200,
   doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -24,6 +24,8 @@ const DEFAULT_SETTINGS: Omit<DoeSettingsOut, "method_sources"> = {
   boundary: { fastener_warn_mm: 10, load_warn_mm: 20, load_share_min: 0.2 },
   step_max_mb: 200,
   part_title: null,
+  compare_reason: null,
+  compare: { enabled: false, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
 };
 
 export const doeSourcesOk = (m: DoeMethodSources | null | undefined): m is DoeMethodSources =>
@@ -67,6 +69,23 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     step_max_mb: num(r.step_max_mb, DEFAULT_SETTINGS.step_max_mb),
     part_title: typeof r.part_title === "string" ? r.part_title : null,
     method_sources: normalizeDoeSources(r.method_sources),
+    compare_reason: typeof r.compare_reason === "string" ? r.compare_reason : null,
+    compare: normalizeCompareCfg(r.compare, r),
+  };
+}
+
+/** ④ compare 설정 보정(빠진 칸 = 계약 기본값). enabled·reason 이 없으면 scenarios.compare·compare_reason 에서 */
+function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCompareCfg {
+  const v = isObj(raw) ? raw : {};
+  const d = DEFAULT_SETTINGS.compare!;
+  const sc = isObj(top.scenarios) ? top.scenarios : {};
+  const reason = typeof v.reason === "string" ? v.reason : typeof top.compare_reason === "string" ? top.compare_reason : null;
+  return {
+    enabled: typeof v.enabled === "boolean" ? v.enabled : sc.compare === true,
+    reason,
+    max_shapes: num(v.max_shapes, d.max_shapes),
+    total_max_mb: num(v.total_max_mb, d.total_max_mb),
+    mesh_size_mm: num(v.mesh_size_mm, d.mesh_size_mm),
   };
 }
 
@@ -127,11 +146,18 @@ export const DISABLED_REASON: Record<string, string> = {
   PAICAD_OCP_MISSING: "형상 엔진(paicad)의 CAD 커널(OCP)이 없습니다(관리자 문의)",
   PAICAD_CHECK_FAILED: "형상 엔진(paicad) 점검에 실패했습니다(관리자 문의)",
   GMSH_UNAVAILABLE: "메시 생성기(gmsh)가 없어 'STEP만' 시나리오를 쓸 수 없습니다(관리자 문의)",
+  COMPARE_DISABLED: "'형상 직접 비교'가 서버에서 꺼져 있습니다(관리자 문의)",
+  COMPARE_GMSH_UNAVAILABLE: "메시 생성기(gmsh)가 없어 '형상 직접 비교'를 쓸 수 없습니다(관리자 문의)",
 };
 
-/** 실행 불가 사유(꺼짐) — null = 사용 가능 */
-export function doeBlockedReason(st: DoeSettingsOut): string | null {
+/** ④ 비활성 사유 코드(서버 compare_reason → compare.reason → 옛 서버면 reason 이 DOE_DISABLED 일 때만) */
+export const compareReason = (st: DoeSettingsOut): string | null =>
+  st.compare_reason ?? st.compare?.reason ?? (st.reason === "DOE_DISABLED" ? "DOE_DISABLED" : null);
+
+/** 실행 불가 사유(꺼짐) — null = 사용 가능. ④ 는 paicad 를 쓰지 않아 paicad 사유로 막지 않는다(SC-D-3) */
+export function doeBlockedReason(st: DoeSettingsOut, scenario?: DoeScenario | null): string | null {
   if (st.enabled) return null;
+  if (scenario === "compare") return compareReason(st) === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : null;
   return (st.reason && DISABLED_REASON[st.reason]) ?? DISABLED_REASON.PAICAD_NOT_CONFIGURED;
 }
 
@@ -139,6 +165,12 @@ export function doeBlockedReason(st: DoeSettingsOut): string | null {
 export function scenarioBlocked(st: DoeSettingsOut, s: DoeScenario): string | null {
   if (st.scenarios[s]) return null;
   if (s === "step" && !st.gmsh.ready) return DISABLED_REASON.GMSH_UNAVAILABLE;
+  if (s === "compare") {
+    const r = compareReason(st);
+    if (r === "DOE_DISABLED") return DISABLED_REASON.DOE_DISABLED;
+    if (r === "GMSH_UNAVAILABLE" || (!r && !st.gmsh.ready)) return DISABLED_REASON.COMPARE_GMSH_UNAVAILABLE;
+    return DISABLED_REASON.COMPARE_DISABLED;
+  }
   return "서버에서 이 시나리오가 꺼져 있습니다";
 }
 
@@ -155,6 +187,8 @@ export const doe = {
   preview: (id: string, version: number, spec: DoeSpec) => request<DoeStudyOut>("POST", `/doe/studies/${id}/preview`, { body: { version, spec } }),
   /** solver 는 보내지 않음(기본 linear — UI 선택 칸 없음, 확정 6) */
   run: (id: string, version: number, matrix_sha256: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version, matrix_sha256 } }),
+  /** ④ 비교 실행(matrix_sha256 없음, SC-D-1) */
+  runCompare: (id: string, version: number) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version } }),
   clone: (id: string, title?: string | null) => request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: title ? { title } : {} }),
   results: (id: string) => request<DoeResultOut>("GET", `/doe/studies/${id}/results`).then(normalizeResult),
   /** §11.4 ESL별 지표(순위 행에 per_esl 이 없을 때) */
@@ -171,9 +205,9 @@ export const doe = {
 };
 
 // ---------------------------------------------------------------- 표기
-export const SCENARIOS: DoeScenario[] = ["same", "mesh", "step"];
-export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)" };
-export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③" };
+export const SCENARIOS: DoeScenario[] = ["same", "mesh", "step", "compare"];
+export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)" };
+export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④" };
 export const METHOD_NAME: Record<DoeMethod, string> = { lhs: "LHS", halton: "Halton", fullfact: "풀 팩토리얼" };
 export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V" };
 export const PHASE_NAME: Record<DoePhase, string> = {
@@ -195,6 +229,7 @@ export const STATUS_NAME: Record<DoeDesignStatus, string> = {
   FAILED_MORPH: "모핑 실패",
   FAILED_MESH: "메시 실패",
   FAILED_SOLVE: "해석 실패",
+  FAILED_SIZE: "크기·정렬 불일치",
   CANCELED: "취소",
 };
 export const isSkipped = (s: DoeDesignStatus) => s.startsWith("SKIPPED_");
@@ -202,8 +237,56 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
-/** 경고 1줄(서버 문구 우선, 없으면 코드) */
-export const warnText = (w: { code: string; message?: string | null }) => w.message || w.code;
+/** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
+export const warnText = (w: { code: string; message?: string | null }) => w.message || CODE_TEXT[w.code] || w.code;
+
+// ---------------------------------------------------------------- v0.14.0 ④ 형상 직접 비교(esl_step_compare.md)
+/** 민감도 숨김 사유(결과 sensitivity_reason) */
+export const SENS_REASON: Record<string, string> = {
+  COMPARE_NO_PARAMS: "형상 직접 비교는 변수가 없어 민감도를 계산하지 않습니다 — 형상 이름 표로 비교하세요",
+};
+/** ④ 형상 상태 사유 코드(재사용 코드 — 서버 메시지가 없을 때만) */
+const SHAPE_CODE_TEXT: Record<string, string> = {
+  STEP_INVALID: "STEP 파일이 올바르지 않습니다",
+  MESH_FAILED: "메시 생성 실패",
+  MESH_TOO_LARGE: "메시 요소 수 상한 초과",
+  SIZE_MISMATCH: "기준 형상과 ESL 의 크기가 다릅니다",
+  SUPPORT_DEGENERATE: "지지 조건을 만들지 못했습니다",
+};
+export const shapeCodeText = (code: string | null | undefined) => (code ? CODE_TEXT[code] ?? SHAPE_CODE_TEXT[code] ?? code : "");
+/** 이름 규칙(§3): 앞뒤 공백 제거 1~64자, 제어문자 금지, 대소문자 무시 중복 금지 */
+export const SHAPE_NAME_MAX = 64;
+// eslint-disable-next-line no-control-regex
+const CTRL = /[\u0000-\u001f\u007f]/;
+export function shapeNameProblem(name: string, all: string[], index: number): string | null {
+  const n = name.trim();
+  if (!n) return "이름을 입력하세요";
+  if (n.length > SHAPE_NAME_MAX) return `이름은 ${SHAPE_NAME_MAX}자 이하입니다`;
+  if (CTRL.test(n)) return "이름에 제어문자를 쓸 수 없습니다";
+  const k = n.toLowerCase();
+  if (all.some((x, i) => i !== index && x.trim().toLowerCase() === k)) return "이름이 겹칩니다(대소문자 무시)";
+  return null;
+}
+/** 파일 이름 → 기본 형상 이름(확장자 제외, 64자) */
+export const defaultShapeName = (file: string) => file.replace(/\.[^.]+$/, "").slice(0, SHAPE_NAME_MAX);
+/** 형상 표 전체 규칙(§3 순서): 개수·기준 1개·이름. null = 통과 */
+export function shapesProblem(shapes: { name: string }[], hasRef: boolean, maxShapes: number): string | null {
+  if (!shapes.length) return "비교할 STEP 을 올리세요";
+  if (shapes.length > maxShapes) return `STEP 은 최대 ${maxShapes}개입니다`;
+  if (hasRef ? shapes.length < 2 : shapes.length < 1) return "기준 STEP 외에 비교할 STEP 을 하나 이상 올리세요";
+  const names = shapes.map((s) => s.name);
+  for (let i = 0; i < names.length; i++) {
+    const why = shapeNameProblem(names[i], names, i);
+    if (why) return `형상 ${i + 1}: ${why}`;
+  }
+  return null;
+}
+/** ④ 오류 문구(detail.index 가 있으면 형상 번호 붙임) */
+export function compareErrorText(e: unknown): string {
+  const base = errorText(e);
+  if (e instanceof ApiError && typeof e.detail.index === "number") return `${base} (형상 ${e.detail.index + 1})`;
+  return base;
+}
 
 // ---------------------------------------------------------------- 시나리오 자동 판별
 /** 모든 ESL 이 같은 모델(topo_sha256 같음)이면 ①, 아니면 B 메시를 올렸으면 ②, 아니면 ③ */

@@ -29,13 +29,19 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
   const inline = !!result.per_esl_inline;
   const [fetched, setFetched] = useState<Record<string, DoePerEsl[]>>({});
   const [error, setError] = useState<string | null>(null);
+  /** ④ GET …/results/per-esl 행 name(순위 행 shape 가 없을 때) */
+  const [names, setNames] = useState<Record<string, string>>({});
   const need = inline ? [] : ids.filter((i) => !(i in fetched));
   useEffect(() => {
     if (!need.length) return;
     let alive = true;
     doe
       .perEsl(studyId, need)
-      .then((o) => alive && setFetched((f) => ({ ...f, ...Object.fromEntries(o.designs.map((d) => [d.id, d.per_esl])) })))
+      .then((o) => {
+        if (!alive) return;
+        setFetched((f) => ({ ...f, ...Object.fromEntries(o.designs.map((d) => [d.id, d.per_esl])) }));
+        setNames((n) => ({ ...n, ...Object.fromEntries(o.designs.filter((d) => d.name).map((d) => [d.id, d.name as string])) }));
+      })
       .catch((e) => alive && setError(errorText(e)));
     return () => {
       alive = false;
@@ -54,6 +60,9 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
     return { ...c, label: `${c.label} #${k}` };
   });
   const perOf = (id: string): DoePerEsl[] | undefined => (inline ? result.ranking.find((r) => r.id === id)?.per_esl : fetched[id]);
+  // v0.14.0 ④ 형상 비교: 안 옆에 형상 이름 열
+  const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
+  const nameOf = (id: string) => result.ranking.find((r) => r.id === id)?.shape?.name ?? names[id] ?? (id === "d000" ? result.baseline.shape?.name : null) ?? "–";
   if (!cols.length) return <Empty>ESL별 지표가 없습니다(v0.10.0 이전 실행 — 복제해 다시 실행하면 보입니다)</Empty>;
   return (
     <div className="doe-per-esl">
@@ -63,6 +72,7 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
           <thead>
             <tr>
               <th>안</th>
+              {named && <th className="doe-name-col">이름</th>}
               {cols.map((c) => (
                 <th key={c.id} className="num" title={c.id}>
                   {c.label}
@@ -77,6 +87,11 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
               return (
                 <tr key={id} className={pick === id ? "hl" : undefined} data-testid={`per-esl-${id}`}>
                   <td className="mono">{id}</td>
+                  {named && (
+                    <th scope="row" className="doe-name-col">
+                      {nameOf(id)}
+                    </th>
+                  )}
                   {cols.map((c) => {
                     const p = m.get(c.id);
                     const imp = p ? 1 - p.ratio : null;

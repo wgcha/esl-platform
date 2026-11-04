@@ -37,7 +37,7 @@ def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: fl
     """mesh(x0 = 안 좌표) + 지지 + [(entry_id, F)] → {per_esl[{entry_id, C, umax, epsmax}], warnings, stats, u{eid: u3}}.
 
     keep_u = 변위 (N,3) 를 돌려줄 entry_id 목록(view3d 용)."""
-    from esl.mech.shell import ShellModel
+    from esl.mech.shell import ShellModel, solver_check_kwargs
     from esl.mech.strain import eps_eq_max_layer
     from esl.mech import supports as msup
     from esl.opt.target import support_check
@@ -46,7 +46,8 @@ def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: fl
         raise EslError("SUPPORT_DEGENERATE", f"3-2-1 지지가 강체 6모드를 구속하지 못함: {list(supports)}")
     t0 = time.monotonic()
     sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
-                    drill_factor=float(solver_cfg["drill_factor"]), backend=str(solver_cfg["backend"]))
+                    drill_factor=float(solver_cfg["drill_factor"]), backend=str(solver_cfg["backend"]),
+                    **solver_check_kwargs(solver_cfg))
     h = sm.factorize(spc_of(mesh, supports))
     per, warns, keep = [], [], {}
     want = set(keep_u or ())

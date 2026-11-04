@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
 ENV_CONFIG = "ESL_PLATFORM_CONFIG"
 ENV_PROFILE = "ESL_PROFILE"
@@ -287,6 +287,18 @@ class OptModeCfg(_M):
 class OptSolverCfg(_M):
     drill_factor: float = Field(default=1.0e-4, gt=0)
     backend: str = "auto"
+    # 자체 쉘 솔버 해 수용 검사(D-0.14-RESID). None = 코어 기본값(esl.config.SOLVER_CHECK_DEFAULTS) — 지정했을 때만
+    # dump 에 넣는다(코어 opt DEFAULTS 와 같은 모양·DOE 설정 해시 불변)
+    resid_rel_cap: float | None = Field(default=None, gt=0, lt=1)
+    equilibrium_tol_rel: float | None = Field(default=None, gt=0, lt=1)
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_checks(self, handler):
+        d = handler(self)
+        for k in ("resid_rel_cap", "equilibrium_tol_rel"):
+            if d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class OptLicenseRetryCfg(_M):
@@ -502,6 +514,67 @@ class BeadDoeLimitsCfg(_M):
     min_disp_range_mm: float = Field(default=1.0, gt=0)
 
 
+class BeadDoeCompareMeshCfg(_M):
+    """v0.14.0 ④ 메시 프로필(esl_step_compare.md SC-D-5): bead_doe.mesh 를 키별 덮어씀. size_mm 범위는 BeadDoeCfg 가 확인."""
+
+    size_mm: float = Field(default=3.0, gt=0)                # h 고정(auto 아님)
+    curvature_n: int = Field(default=0, ge=0, le=1000)       # 곡률 세분화 끔
+    min_size_factor: float = Field(default=0.8, gt=0, le=1)  # 최소 크기 = h × 이 값
+    extend_from_boundary: int = Field(default=0, ge=0, le=1)  # gmsh Mesh.MeshSizeExtendFromBoundary
+    occ_fix_small: int = Field(default=1, ge=0, le=1)        # gmsh Geometry.OCCFixDegenerated·SmallEdges·SmallFaces
+    feature_angle: float = Field(default=10.0, ge=0, le=180)  # 이슈 #53 BatchMesher feature_angle(기록만 — gmsh 대응 없음)
+
+
+class BeadDoeCompareDefeatureCfg(_M):
+    """이슈 #53 holes table 근사(메싱 전 OCC 형상): 내부 경계 면적 < min_hole_area_mm2 메움(r<4 원형·eq_diam<8·좁은 슬롯),
+    반지름 hole_r_mm 구멍 둘레 분할 = max(hole_elems, ceil(둘레/h)) (0 = 끔). min_bead_height_mm = 비드 억제 기준(기록만)."""
+
+    enabled: bool = True
+    min_hole_area_mm2: float = Field(default=50.27, ge=0)
+    hole_elems: int = Field(default=6, ge=0, le=100)
+    hole_r_mm: list[float] = Field(default_factory=lambda: [4.0, 30.0], min_length=2, max_length=2)
+    min_bead_height_mm: float = Field(default=2.0, ge=0)
+
+
+class QualityLimitCfg(_M):
+    warn: float
+    fail: float
+
+
+def _ql(w: float, f: float):
+    return Field(default_factory=lambda: QualityLimitCfg(warn=w, fail=f))
+
+
+class BeadDoeCompareQualityCfg(_M):
+    """이슈 #53 2D criteria 표(esl.doe.mesh_quality): 기준별 warn·fail. Fail 요소 비율 > max_fail_ratio → 경고(차단 안 함)."""
+
+    max_fail_ratio: float = Field(default=0.01, ge=0, le=1)
+    min_length: QualityLimitCfg = _ql(1.8, 1.2)
+    max_length: QualityLimitCfg = _ql(4.5, 5.25)
+    aspect: QualityLimitCfg = _ql(4.4, 5.0)
+    warpage: QualityLimitCfg = _ql(13.0, 15.0)
+    skew: QualityLimitCfg = _ql(34.0, 40.0)
+    jacobian: QualityLimitCfg = _ql(0.7, 0.6)
+    quad_min_angle: QualityLimitCfg = _ql(46.0, 40.0)
+    quad_max_angle: QualityLimitCfg = _ql(134.0, 140.0)
+    tria_min_angle: QualityLimitCfg = _ql(34.0, 30.0)
+    tria_max_angle: QualityLimitCfg = _ql(112.0, 120.0)
+    tria_pct: QualityLimitCfg = _ql(10.0, 15.0)
+
+
+class BeadDoeCompareCfg(_M):
+    """v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4). 섹션 없으면 기본값(enabled true — 전역 bead_doe.enabled·gmsh 필요)."""
+
+    enabled: bool = True
+    max_shapes: int = Field(default=20, ge=1, le=200)
+    total_max_mb: float = Field(default=1000, gt=0)
+    align_tol: float = Field(default=0.05, ge=0, le=1)        # 형상 frame 원점의 기준 frame (ξ,η) 차 허용
+    align_deg: float = Field(default=5.0, ge=0, le=90)        # 법선 각 허용(°)
+    mesh: BeadDoeCompareMeshCfg = BeadDoeCompareMeshCfg()
+    defeature: BeadDoeCompareDefeatureCfg = BeadDoeCompareDefeatureCfg()
+    quality: BeadDoeCompareQualityCfg = BeadDoeCompareQualityCfg()
+
+
 class BeadDoeCfg(_M):
     """비드 형상 DOE(esl_bead_doe.md §14). 섹션이 없으면 enabled false(GET /doe/settings reason DOE_DISABLED)."""
 
@@ -522,7 +595,16 @@ class BeadDoeCfg(_M):
     view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
+    compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
+
+    @model_validator(mode="after")
+    def _compare_size(self) -> "BeadDoeCfg":
+        h = self.compare.mesh.size_mm
+        if not self.mesh.size_min_mm <= h <= self.mesh.size_max_mm:
+            raise ValueError(f"bead_doe.compare.mesh.size_mm {h:g} 는 bead_doe.mesh.size_min_mm..size_max_mm "
+                             f"({self.mesh.size_min_mm:g}..{self.mesh.size_max_mm:g}) 안이어야 합니다")
+        return self
 
 
 class ClientTokenCfg(_M):
