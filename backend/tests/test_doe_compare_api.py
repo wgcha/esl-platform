@@ -94,16 +94,22 @@ def code(r):
 def test_settings_compare_block(client, world):
     s = api(client, "GET", "/doe/settings").json()
     assert s["scenarios"]["compare"] is True and s["compare"] == {
-        "enabled": True, "reason": None, "max_shapes": 20, "total_max_mb": 1000.0, "mesh_size_mm": 3.0}
+        "enabled": True, "reason": None, "max_shapes": 20, "total_max_mb": 1000.0, "mesh_size_mm": 3.0,
+        # v0.16.0 §6 (C2-D-9·16): 설정 기본 메시 방식·재메시 가능·메시 입력·STEP 사용 가능
+        "mesh_mode": "auto", "remesh_available": True,
+        "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500.0}, "step_ready": True}
 
 
-@pytest.mark.parametrize("case", ["paicad_low", "paicad_missing", "no_gmsh", "compare_off", "doe_off"])
+@pytest.mark.parametrize("case", ["paicad_low", "paicad_missing", "no_gmsh", "no_gmsh_no_mesh_input", "compare_off",
+                                  "doe_off"])
 def test_compare_enable_rules(tmp_path, engine, fake_dashboard, clock, case):
     base = tmp_path / case
     base.mkdir()
     d = doe_settings_dict(base, paicad=case != "paicad_missing")
     if case == "compare_off":
         d["bead_doe"]["compare"] = {"enabled": False}
+    if case == "no_gmsh_no_mesh_input":
+        d["bead_doe"]["compare"] = {"mesh_input": {"enabled": False}}
     if case == "doe_off":
         d["bead_doe"]["enabled"] = False
     if case == "paicad_low":
@@ -111,12 +117,15 @@ def test_compare_enable_rules(tmp_path, engine, fake_dashboard, clock, case):
     elif case == "paicad_missing":
         record_paicad(engine, ready=False, version=None, reason="PAICAD_NOT_FOUND")
     else:
-        record_paicad(engine, gmsh=case != "no_gmsh")
-    want = {"paicad_low": None, "paicad_missing": None, "no_gmsh": "GMSH_UNAVAILABLE", "compare_off": "COMPARE_DISABLED",
-            "doe_off": "DOE_DISABLED"}[case]
+        record_paicad(engine, gmsh=not case.startswith("no_gmsh"))
+    # v0.16.0 C2-D-16: gmsh 가 없어도 메시 입력이 켜져 있으면 ④ 활성(STEP 형상만 check-inputs 503 GMSH_UNAVAILABLE)
+    want = {"paicad_low": None, "paicad_missing": None, "no_gmsh": None, "no_gmsh_no_mesh_input": "GMSH_UNAVAILABLE",
+            "compare_off": "COMPARE_DISABLED", "doe_off": "DOE_DISABLED"}[case]
+    want_check = "GMSH_UNAVAILABLE" if case == "no_gmsh" else want
     with _app(tmp_path, engine, fake_dashboard, clock, d) as c:
         s = c.get(f"{API}/doe/settings", headers=R).json()
         assert s["scenarios"]["compare"] is (want is None) and s["compare"]["reason"] == want
+        assert s["compare"]["step_ready"] is (not case.startswith("no_gmsh") and case != "doe_off")
         if case.startswith("paicad"):
             assert s["enabled"] is False and s["scenarios"]["same"] is False        # ①②③ 은 막힘, ④ 는 활성
         make_case(engine, Path(d["storage"]["input_roots"][0]), "c1")
@@ -126,10 +135,12 @@ def test_compare_enable_rules(tmp_path, engine, fake_dashboard, clock, case):
              "shapes": [{"upload_id": uid, "rel": rels[0], "name": "A", "reference": True},
                         {"upload_id": uid, "rel": rels[1], "name": "B"}]}
         r = c.post(f"{API}/doe/check-inputs", json=b, headers=W)
-        if want is None:
+        if want_check is None:
             assert r.status_code == 200, r.text
         else:
-            assert r.status_code == 503 and code(r) == want
+            assert r.status_code == 503 and code(r) == want_check
+        if case == "no_gmsh":
+            assert r.json()["detail"]["index"] == [0, 1]                       # STEP 형상 index
 
 
 # ================================================================ 입력 검사(V-SC-4)
@@ -341,3 +352,267 @@ def test_other_scenarios_reject_shapes(client, world):
     assert r.status_code == 422 and code(r) == "INVALID_PARAMS"
     r = api(client, "POST", "/doe/check-inputs", json={"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]]})
     assert r.status_code == 422 and code(r) == "INVALID_PARAMS"
+
+
+# ================================================================ v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §3·§6, V-C2-9)
+def _f10(*v) -> str:
+    return "".join(f"{x:>10}" for x in v)
+
+
+def rad_bytes(parts=((1, "plate A", "SHELL"),), *, include: str | None = None, nodes: int = 6) -> bytes:
+    """작은 Radioss 덱(1차 스캔용): /NODE + /PART(제목) + 파트마다 /SHELL·/SH3N 블록 1행, include 1줄(선택)."""
+    ln = ["#RADIOSS STARTER", "/NODE"] + [f"{i:>10}{float(i):>20}{0.0:>20}{0.0:>20}" for i in range(1, nodes + 1)]
+    for pid, title, _kw in parts:
+        if title is not None:
+            ln += [f"/PART/{pid}", title, _f10(1, 1)]
+    for pid, _title, kw in parts:
+        ln += [f"/{kw}/{pid}", _f10(pid, 1, 2, 3, 4) if kw == "SHELL" else _f10(pid, 1, 2, 3)]
+    if include:
+        ln.append(f"#include {include}")
+    ln.append("/END")
+    return ("\n".join(ln) + "\n").encode()
+
+
+def inc_bytes(pid: int, kw: str = "SHELL", extra: str = "") -> bytes:
+    return (f"/{kw}/{pid}\n" + _f10(100 + pid, 3, 4, 5, 6) + "\n" + extra).encode()
+
+
+def mesh_upload(client) -> str:
+    """주 rad(파트 1·2 카드, 2 = 쉘 + 솔리드) + include(파트 3 쉘 블록만 — /PART 카드 없음)."""
+    main = rad_bytes(((1, "plate A", "SHELL"), (2, "plate B", "SH3N")), include="part3.inc")
+    inc = inc_bytes(3, extra="/BRICK/2\n" + _f10(9, 1, 2, 3, 4, 5, 6, 1, 2) + "\n")
+    return upload_files(client, {"rad/model.rad": main, "rad/part3.inc": inc})
+
+
+def upload_dir(engine, uid: str) -> Path:
+    with engine.connect() as c:
+        return Path(c.execute(text("SELECT dir_path FROM uploads WHERE id=:i"), {"i": uid}).scalar_one())
+
+
+def mshape(uid, name, rel=None, part_id=None, **kw):
+    d = {"upload_id": uid, "name": name, "source": "mesh", **kw}
+    if rel is not None:
+        d["rel"] = rel
+    if part_id is not None:
+        d["part_id"] = part_id
+    return d
+
+
+def test_mesh_shape_check(client, world, engine):
+    sh = shapes3(client)
+    mu = mesh_upload(client)
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(mu, "메시 안", part_id=1)]))
+    assert r.status_code == 200, r.text
+    o = r.json()
+    assert o["mesh_mode"] == "auto" and o["remesh_available"] is True and o["warnings"] == []
+    s0, s1 = o["shapes"]
+    assert (s0["source"], s0["part_id"], s0["main_rel"]) == ("step", None, "rad/s0.step")
+    assert (s1["source"], s1["part_id"], s1["main_rel"], s1["file_name"], s1["id"]) == (
+        "mesh", 1, "rad/model.rad", "model.rad", "d001")
+    assert [f["rel"] for f in s1["files"]] == ["rad/model.rad", "rad/part3.inc"] and all(len(f["sha256"]) == 64
+                                                                                          for f in s1["files"])
+    assert s1["sha256"] == s1["files"][0]["sha256"]
+    assert s1["parts"] == [{"id": 1, "title": "plate A", "n_shells": 1}, {"id": 2, "title": "plate B", "n_shells": 1},
+                           {"id": 3, "title": None, "n_shells": 1}]
+    with engine.connect() as c:                                               # 업로드 결과 purpose doe_mesh(파트·파일 목록)
+        res = c.execute(text("SELECT result FROM uploads WHERE id=:i"), {"i": mu}).scalar_one()
+    assert res["purpose"] == "doe_mesh" and res["rel"] == "rad/model.rad" and res["part_id"] == 1
+    assert [f["rel"] for f in res["files"]] == ["rad/model.rad", "rad/part3.inc"]
+
+    def err(shapes, **kw):
+        rr = api(client, "POST", "/doe/check-inputs", json=cbody(world, shapes, **kw))
+        assert rr.status_code in (400, 409, 422, 503), rr.text
+        return rr.json()["detail"]
+    d = err([sh[0], mshape(mu, "M")])                                         # 쉘 파트 3개 + ID 없음
+    assert d["code"] == "MESH_INPUT_PART_REQUIRED" and d["index"] == 1 and [p["id"] for p in d["parts"]] == [1, 2, 3]
+    assert err([sh[0], mshape(mu, "M", part_id=99)])["code"] == "MESH_INPUT_PART_NOT_FOUND"
+    assert err([sh[0], mshape(mu, "M", part_id=2)])["code"] == "MESH_INPUT_UNSUPPORTED_ELEMENT"   # 파트 2 = 쉘 + 솔리드
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(mu, "M", part_id=3)]))
+    assert r.status_code == 200 and [(w["code"], w["index"]) for w in r.json()["warnings"]] == [
+        ("MESH_INPUT_PART_CARD_MISSING", 1)]                                  # /PART 없이 쉘 블록만(부분 export) → info
+    # source·part_id 검증(§6 순서): source 값, step 에 part_id
+    assert err([sh[0], dict(sh[1], source="bdf")])["code"] == "INVALID_PARAMS"
+    d = err([sh[0], dict(sh[1], part_id=1)])
+    assert d["code"] == "INVALID_PARAMS" and d["index"] == 1
+    assert err([sh[0], mshape(mu, "M", part_id=0)])["code"] == "INVALID_PARAMS"
+    # mesh rel 지정: 업로드에 없는 rel → MESH_INPUT_INVALID, 형식 밖(.fem — Q2) → MESH_FORMAT_UNSUPPORTED
+    d = err([sh[0], mshape(mu, "M", rel="rad/nope.rad", part_id=1)])
+    assert d["code"] == "MESH_INPUT_INVALID" and d["index"] == 1
+    fu = upload_files(client, {"rad/a.rad": rad_bytes(), "rad/b.fem": b"$ fem\n"})
+    assert err([sh[0], mshape(fu, "M", rel="rad/b.fem")])["code"] == "MESH_FORMAT_UNSUPPORTED"
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(fu, "M", rel="rad/a.rad")]))
+    assert r.status_code == 200 and r.json()["shapes"][1]["part_id"] == 1      # 쉘 파트 하나 → part_id 생략 가능
+    # 한 rad 의 다른 파트 = 다른 형상(허용), 같은 파트 두 번 = 422
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(mu, "P1", part_id=1),
+                                                                   mshape(mu, "P3", part_id=3)]))
+    assert r.status_code == 200, r.text
+    assert err([sh[0], mshape(mu, "P1", part_id=1), mshape(mu, "P1b", part_id=1)])["code"] == "INVALID_PARAMS"
+    assert err([sh[0], mshape(mu, "P1", part_id=1), mshape(mu, "P1b", rel="rad/model.rad", part_id=1)])["code"] == \
+        "INVALID_PARAMS"                                                      # 지정 방식만 다른 같은 파일·파트
+    # 같은 내용 다른 업로드(같은 sha·파트) → 경고만
+    mu2 = mesh_upload(client)
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(mu, "A", part_id=1),
+                                                                   mshape(mu2, "B", part_id=1)]))
+    assert r.status_code == 200 and [w["code"] for w in r.json()["warnings"]] == ["SHAPE_DUPLICATE_FILE"]
+    # .inc 하나(부분 export, /PART 없음) — 주 파일 자동 선택
+    iu = upload_files(client, {"rad/only.inc": inc_bytes(7)})
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(iu, "inc")]))
+    assert r.status_code == 200, r.text
+    assert r.json()["shapes"][1]["part_id"] == 7 and r.json()["warnings"][0]["code"] == "MESH_INPUT_PART_CARD_MISSING"
+    # 세션에 rad 가 둘이면 rel 필요(② 와 같은 주 파일 규칙)
+    two = upload_files(client, {"rad/x.rad": rad_bytes(), "rad/y.rad": rad_bytes()})
+    assert err([sh[0], mshape(two, "M")])["code"] == "MESH_INVALID"
+    # 쉘 없는 덱
+    nos = upload_files(client, {"rad/n.rad": b"#RADIOSS STARTER\n/END\n"})
+    assert err([sh[0], mshape(nos, "M")])["code"] == "MESH_INPUT_INVALID"
+    # 기준 = 메시 형상, 나머지 STEP(혼합 Q1) — 형상 id 규칙 동일
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [dict(sh[1], reference=False),
+                                                                   mshape(mu, "기준 메시", part_id=1, reference=True)]))
+    assert r.status_code == 200 and [x["id"] for x in r.json()["shapes"]] == ["d001", "d000"]
+
+
+def test_mesh_shape_include_rules(client, world, engine, tmp_path):
+    """C2-D-3: include 는 업로드 폴더 안만(밖·링크 → PATH_OUTSIDE_ROOT), 못 찾음·상태 파일 → MESH_INPUT_INVALID, 원본 불변."""
+    sh = shapes3(client)
+
+    def err(uid, **kw):
+        rr = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(uid, "M", **kw)]))
+        assert rr.status_code == 422, rr.text
+        return rr.json()["detail"]
+    outside = tmp_path / "outside.inc"
+    outside.write_bytes(inc_bytes(5))
+    u = upload_files(client, {"rad/m.rad": rad_bytes(include=str(outside))})
+    d = err(u)
+    assert d["code"] == "PATH_OUTSIDE_ROOT" and str(tmp_path) not in json.dumps(d)
+    u = upload_files(client, {"rad/m.rad": rad_bytes(include="../../../x.inc")})
+    assert err(u)["code"] == "PATH_OUTSIDE_ROOT"                             # 없어도 같은 코드(존재 확인 통로 차단)
+    u = upload_files(client, {"rad/m.rad": rad_bytes(include="nothere.inc")})
+    assert err(u)["code"] == "MESH_INPUT_INVALID"
+    u = upload_files(client, {"rad/m.rad": rad_bytes(include="prev.sta"), "rad/prev.sta": b"#radioss state file\n"})
+    assert err(u)["code"] == "MESH_INPUT_INVALID"                            # 상태 파일 include
+    u = upload_files(client, {"rad/m.rad": rad_bytes(include="lnk.inc")})
+    (upload_dir(engine, u) / "rad" / "lnk.inc").symlink_to(outside)
+    assert err(u)["code"] == "PATH_OUTSIDE_ROOT"                             # 링크
+    # 정상 include 2단 + 원본 sha 전후 불변
+    main = rad_bytes(include="sub/a.inc")
+    a = b"#include b.inc\n" + inc_bytes(4)
+    b = inc_bytes(4, kw="SH3N")
+    u = upload_files(client, {"rad/m.rad": main, "rad/sub/a.inc": a, "rad/sub/b.inc": b})
+    before = {p.name: p.read_bytes() for p in (upload_dir(engine, u) / "rad").rglob("*") if p.is_file()}
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], mshape(u, "M", part_id=4)]))
+    assert r.status_code == 200, r.text
+    assert [f["rel"] for f in r.json()["shapes"][1]["files"]] == ["rad/m.rad", "rad/sub/a.inc", "rad/sub/b.inc"]
+    after = {p.name: p.read_bytes() for p in (upload_dir(engine, u) / "rad").rglob("*") if p.is_file()}
+    assert before == after
+
+
+def test_mesh_input_settings_rules(tmp_path, engine, fake_dashboard, clock):
+    """크기 상한(MESH_INPUT_TOO_LARGE)·include 끔·형식 좁힘·메시 입력 끔, gmsh 없음 + 메시만 = 허용."""
+    d = doe_settings_dict(tmp_path)
+    d["bead_doe"]["compare"] = {"mesh_input": {"max_mb": 0.0001, "formats": [".rad"]}}
+    record_paicad(engine, gmsh=False)
+    with _app(tmp_path, engine, fake_dashboard, clock, d) as c:
+        make_case(engine, Path(d["storage"]["input_roots"][0]), "c1")
+        eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1")
+
+        def post(shapes):
+            return c.post(f"{API}/doe/check-inputs", headers=W,
+                          json={"project_id": "p-1", "scenario": "compare", "entry_ids": [eid], "shapes": shapes})
+        big = upload_files(c, {"rad/m.rad": rad_bytes(nodes=400)})
+        r = post([mshape(big, "A")])
+        assert r.status_code == 422 and code(r) == "MESH_INPUT_TOO_LARGE" and r.json()["detail"]["index"] == 0
+        iu = upload_files(c, {"rad/only.inc": inc_bytes(7)})
+        r = post([mshape(iu, "A")])
+        assert r.status_code == 422 and code(r) == "MESH_FORMAT_UNSUPPORTED"     # formats = [.rad] → .inc 거부
+    d["bead_doe"]["compare"] = {"mesh_input": {"include": False}}
+    with _app(tmp_path, engine, fake_dashboard, clock, d) as c:
+        eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1", scene_no=3)
+
+        def post(shapes):
+            return c.post(f"{API}/doe/check-inputs", headers=W,
+                          json={"project_id": "p-1", "scenario": "compare", "entry_ids": [eid], "shapes": shapes})
+        u = upload_files(c, {"rad/m.rad": rad_bytes(include="a.inc"), "rad/a.inc": inc_bytes(2)})
+        r = post([mshape(u, "A", part_id=1)])
+        assert r.status_code == 422 and code(r) == "MESH_INPUT_INVALID"
+        ok = upload_files(c, {"rad/m.rad": rad_bytes()})
+        r = post([mshape(ok, "A")])                                            # gmsh 없음 + 메시 형상만 → 허용
+        assert r.status_code == 200, r.text
+        assert r.json()["remesh_available"] is False                           # STEP 없으면 재메시 경고 없음
+        assert [w["code"] for w in r.json()["warnings"]] == ["COMPARE_REF_CASE_MESH"]
+        uid, rels = multi_upload(c, 1)
+        r = post([mshape(ok, "A"), {"upload_id": uid, "rel": rels[0], "name": "S"}])
+        assert r.status_code == 503 and code(r) == "GMSH_UNAVAILABLE" and r.json()["detail"]["index"] == [1]
+    d["bead_doe"]["compare"] = {"mesh_input": {"enabled": False}}
+    record_paicad(engine)
+    with _app(tmp_path, engine, fake_dashboard, clock, d) as c:
+        eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1", scene_no=4)
+        ok = upload_files(c, {"rad/m.rad": rad_bytes()})
+        r = c.post(f"{API}/doe/check-inputs", headers=W, json={"project_id": "p-1", "scenario": "compare",
+                                                                "entry_ids": [eid], "shapes": [mshape(ok, "A")]})
+        assert r.status_code == 422 and code(r) == "INVALID_PARAMS" and r.json()["detail"]["index"] == [0]
+
+
+def test_mesh_mode_rules(client, world, engine):
+    """C2-D-9·16: mesh_mode 값·④ 전용, remesh 미지원 → mode remesh 422 REMESH_UNAVAILABLE / auto 경고 1회 / 메시만이면 무관."""
+    sh = shapes3(client)
+    mu = mesh_upload(client)
+    for m in ("cad", "remesh", "auto"):
+        r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh, mesh_mode=m))
+        assert r.status_code == 200 and r.json()["mesh_mode"] == m, r.text
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh, mesh_mode="fast"))
+    assert r.status_code == 422 and code(r) == "INVALID_PARAMS"
+    r = api(client, "POST", "/doe/check-inputs", json={"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]],
+                                                       "step_upload_id": sh[0]["upload_id"], "mesh_mode": "cad"})
+    assert r.status_code == 422 and code(r) == "INVALID_PARAMS"
+    record_paicad(engine, remesh=False)                                         # 워커: importStl 없음
+    from esl_platform.api.services import doe as svc
+
+    svc.reset_status_cache()
+    assert api(client, "GET", "/doe/settings").json()["compare"]["remesh_available"] is False
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh, mesh_mode="remesh"))
+    assert r.status_code == 422 and code(r) == "REMESH_UNAVAILABLE" and "4.13.1" in r.json()["detail"]["message"]
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh))           # auto(설정 기본) → 경고 1회
+    assert r.status_code == 200 and [w["code"] for w in r.json()["warnings"]] == ["REMESH_UNAVAILABLE"]
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh, mesh_mode="cad"))
+    assert r.status_code == 200 and r.json()["warnings"] == []
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [mshape(mu, "M", part_id=1)], mesh_mode="remesh"))
+    assert r.status_code == 200 and [w["code"] for w in r.json()["warnings"]] == ["COMPARE_REF_CASE_MESH"]  # 메시 형상에는 해당 없음
+    record_paicad(engine, remesh=None)                                          # 옛 워커(기록 없음) → 불가로 봄
+    svc.reset_status_cache()
+    assert api(client, "GET", "/doe/settings").json()["compare"]["remesh_available"] is False
+
+
+def test_mesh_shape_study_and_clone(client, world, engine):
+    sh = shapes3(client)
+    mu = mesh_upload(client)
+    body = cbody(world, [sh[0], mshape(mu, "메시 안", part_id=3), sh[1]], mesh_mode="cad")
+    r = api(client, "POST", "/doe/studies", json=body)
+    assert r.status_code == 201, r.text
+    s = r.json()
+    ins = s["inputs"]
+    assert ins["mesh_mode"] == "cad"
+    assert [(x["id"], x["source"], x["part_id"]) for x in ins["shapes"]] == [
+        ("d000", "step", None), ("d001", "mesh", 3), ("d002", "step", None)]
+    assert "path" not in json.dumps(ins) and "upload_root" not in json.dumps(ins)
+    dd = _job(engine, s["job"]["id"])["params"]["doe"]
+    assert dd["mesh_mode"] == "cad"
+    m = dd["shapes"][1]
+    assert m["source"] == "mesh" and m["part_id"] == 3 and m["main_rel"] == "rad/model.rad"
+    assert Path(m["path"]).is_file() and Path(m["upload_root"]).is_dir()
+    assert [f["rel"] for f in m["files"]] == ["rad/model.rad", "rad/part3.inc"]
+    assert dd["shapes"][0]["source"] == "step"
+    assert dd["mesh_refine"] is None and dd["mesh_ladder"] == ["cad", "refine_local", "refine_global", "remesh"]
+    r = api(client, "POST", "/doe/studies", json={**body, "mesh_mode": None, "mesh_refine": False})   # 생략 → 설정(auto)
+    assert r.status_code == 201 and r.json()["inputs"]["mesh_mode"] == "auto", r.text
+    assert r.json()["inputs"]["mesh_refine"] is False
+    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_ladder"] == ["cad", "remesh"]
+    r = api(client, "POST", "/doe/check-inputs", json={"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]],
+                                                       "step_upload_id": sh[0]["upload_id"], "mesh_refine": True})
+    assert r.status_code == 422 and code(r) == "INVALID_PARAMS"                # ④ 전용
+    finish_job(engine, s["job"]["id"])
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
+    assert r.status_code == 201, r.text
+    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_mode"] == "cad"
+    (upload_dir(engine, mu) / "rad" / "part3.inc").unlink()                      # include 업로드 누락 → 복제 409
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
+    assert r.status_code == 409 and code(r) == "PREREQUISITE_MISSING" and r.json()["detail"]["missing"] == [1]

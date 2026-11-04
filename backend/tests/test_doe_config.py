@@ -17,7 +17,16 @@ def test_defaults_mirror_core():
     dump = BeadDoeCfg().model_dump()
     if "select" not in DEFAULTS:        # v0.15.0 S1(esl.doe.DEFAULTS["select"]) 병합 전에만 — 병합 후에는 전체 대조(이 분기 사라짐)
         dump.pop("select")
-    assert dump == DEFAULTS                                            # 숫자는 한 곳(코어 기본값 거울)과 같게
+    # v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §5): 코어 DEFAULTS["compare"] 새 키 병합 전에는 그 키만 빼고 대조
+    # (병합 후에는 전체 대조 — 이 분기는 아무것도 빼지 않음). 키별 거울은 tests/pipeline/test_config.py(V-C2-10·17)
+    core_cmp = DEFAULTS.get("compare") or {}
+    for k in ("remesh", "mesh_input", "refine"):
+        if k not in core_cmp:
+            dump["compare"].pop(k)
+    for k in ("mode", "ladder"):
+        if k not in (core_cmp.get("mesh") or {}):
+            dump["compare"]["mesh"].pop(k)
+    assert dump == DEFAULTS                                           # 숫자는 한 곳(코어 기본값 거울)과 같게
     cc = CommandsCfg()
     assert {k: getattr(cc, k) for k in PAICAD_DEFAULTS} == DEFAULT_COMMANDS
     assert bead_doe_settings(None)["enabled"] is False

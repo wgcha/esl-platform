@@ -211,3 +211,97 @@ def test_extract_dump_keys_optional():
         with pytest.raises(EslError) as ei:
             config.validate_settings(c)
         assert f"extract.{key}" in ei.value.message
+
+
+# ---------------------------------------------------------------- v0.16.0 ④ 메시 옵션 설정 거울(esl_compare_mesh_options.md §5)
+# 거울 규칙: esl.doe.DEFAULTS["compare"] = 플랫폼 pydantic(BeadDoeCompareCfg) 기본값 = config/esl_platform*.example.yaml.
+# 코어 DEFAULTS 에 새 키가 아직 없으면(Core 병합 전) 그 키의 코어 대조만 건너뜀(S2 방식) — pydantic·yaml 대조는 항상.
+_C2_KEYS = ("remesh", "mesh_input", "refine")
+_C2_MESH_KEYS = ("mode", "ladder")
+_PLATFORM_YAMLS = ("esl_platform.example.yaml", "esl_platform.prod.example.yaml")
+
+
+def _platform_cfg():
+    return pytest.importorskip("esl_platform.core.config")
+
+
+def _bead_doe_yaml(name):
+    with open(os.path.join(ROOT, "config", name), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)["bead_doe"]
+
+
+def test_compare_mesh_options_mirror():
+    """V-C2-10·17: DEFAULTS = pydantic = example yaml 2개(메시 방식·사다리·재메시·메시 입력·세분화)."""
+    pc = _platform_cfg()
+    from esl.doe import DEFAULTS
+
+    dump = pc.BeadDoeCfg().model_dump()["compare"]
+    assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "remesh"]
+    assert dump["remesh"]["feature_angle_deg"] == 30.0 and dump["remesh"]["fidelity"] == {
+        "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}
+    assert dump["mesh_input"] == {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
+                                  "max_include_depth": 8, "size_warn_ratio": 1.5}
+    assert dump["refine"]["global"] == {"factors": [0.8, 0.667]} and dump["refine"]["max_elems"] == 600000
+    core = DEFAULTS["compare"]
+    for k in _C2_KEYS:
+        if k in core:
+            assert core[k] == dump[k], k
+    for k in _C2_MESH_KEYS:
+        if k in core["mesh"]:
+            assert core["mesh"][k] == dump["mesh"][k], k
+    for name in _PLATFORM_YAMLS:
+        y = _bead_doe_yaml(name)["compare"]
+        for k in _C2_KEYS:
+            assert y[k] == dump[k], (name, k)
+        for k in _C2_MESH_KEYS:
+            assert y["mesh"][k] == dump["mesh"][k], (name, k)
+        assert pc.BeadDoeCfg.model_validate(_bead_doe_yaml(name)).compare.refine.global_.factors == [0.8, 0.667]
+    # 섹션이 없는 설정·옛 코어 DEFAULTS 와도 bead_doe_settings 는 새 키를 채움(백엔드 서비스가 키를 그대로 읽음)
+    s = pc.bead_doe_settings(None)["compare"]
+    assert all(k in s for k in _C2_KEYS) and all(k in s["mesh"] for k in _C2_MESH_KEYS)
+
+
+@pytest.mark.parametrize("over, frag", [
+    ({"compare": {"mesh": {"mode": "fast"}}}, "mode"),
+    ({"compare": {"mesh": {"ladder": ["refine_local", "cad"]}}}, "ladder"),            # cad 맨 앞
+    ({"compare": {"mesh": {"ladder": ["cad", "remesh", "remesh"]}}}, "ladder"),        # 중복
+    ({"compare": {"mesh": {"ladder": ["cad", "split"]}}}, "ladder"),                   # 모르는 단계
+    ({"compare": {"mesh": {"ladder": []}}}, "ladder"),
+    ({"compare": {"remesh": {"feature_angle_deg": 90}}}, "feature_angle_deg"),         # (0, 90)
+    ({"compare": {"remesh": {"feature_angle_deg": 0}}}, "feature_angle_deg"),
+    ({"compare": {"remesh": {"curve_angle_deg": 181}}}, "curve_angle_deg"),            # (0, 180]
+    ({"compare": {"remesh": {"linear_deflection_mm": 0}}}, "linear_deflection_mm"),
+    ({"compare": {"remesh": {"linear_deflection_mm": 0.5}}}, "linear_deflection_mm"),  # > fidelity.warn_mm
+    ({"compare": {"remesh": {"fidelity": {"warn_mm": 0.3, "fail_mm": 0.2}}}}, "fail_mm"),
+    ({"compare": {"remesh": {"algorithms": [3]}}}, "algorithms"),
+    ({"compare": {"mesh_input": {"formats": [".bdf"]}}}, "formats"),                   # Q2: v0.16.0 은 rad·inc 만
+    ({"compare": {"mesh_input": {"formats": [".rad", ".rad"]}}}, "formats"),
+    ({"compare": {"mesh_input": {"max_mb": 0}}}, "max_mb"),
+    ({"compare": {"mesh_input": {"size_warn_ratio": 1.0}}}, "size_warn_ratio"),
+    ({"compare": {"refine": {"local": {"factors": [0.5, 0.75]}}}}, "factors"),         # 내림차순
+    ({"compare": {"refine": {"global": {"factors": [1.0]}}}}, "factors"),              # (0, 1)
+    ({"compare": {"refine": {"min_size_mm": 0}}}, "min_size_mm"),
+    ({"compare": {"refine": {"max_elems": 400000}}}, "max_elems"),                     # ≥ bead_doe.mesh.max_elems
+    ({"compare": {"refine": {"convergence": {"tol": -1}}}}, "tol"),
+    ({"compare": {"refine": {"unknown": 1}}}, "unknown"),
+])
+def test_compare_mesh_options_invalid(over, frag):
+    """V-C2-10·17: 잘못된 값 → 검증 실패(키 경로·이유에 해당 키)."""
+    pc = _platform_cfg()
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as ei:
+        pc.BeadDoeCfg.model_validate({"enabled": True, **over})
+    assert frag in str(ei.value), str(ei.value)
+
+
+def test_compare_mesh_options_valid_overrides():
+    pc = _platform_cfg()
+    b = pc.BeadDoeCfg.model_validate({"compare": {
+        "mesh": {"mode": "cad", "ladder": ["cad", "remesh"]},
+        "remesh": {"fidelity": {"warn_mm": 0.3, "fail_mm": None}, "timeout_s": 600},
+        "mesh_input": {"formats": [".rad"]},
+        "refine": {"enabled": False, "global": {"factors": [0.9, 0.5]}, "convergence": {"tol": 0.01}}}})
+    d = b.model_dump()["compare"]
+    assert d["mesh"]["ladder"] == ["cad", "remesh"] and d["remesh"]["fidelity"]["fail_mm"] is None
+    assert d["refine"]["global"] == {"factors": [0.9, 0.5]} and d["mesh_input"]["formats"] == [".rad"]

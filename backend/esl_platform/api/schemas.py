@@ -1691,6 +1691,10 @@ class CompareShapeIn(_Req):
     rel: str | None = Field(default=None, min_length=1, max_length=1024)   # 업로드 안 STEP 파일(여러 STEP 한 세션) — 1개면 생략
     name: str = Field(max_length=256)
     reference: bool = False
+    # v0.16.0 메시 옵션(esl_compare_mesh_options.md §3·C2-D-1·4): source = 형상 출처(생략 = step, 기존 동작), mesh 면 rel = 메시
+    # 주 파일(.rad/.inc — 세션에 둘 이상이면 필수), part_id = 쉘 파트 ID(파트 하나면 생략, step 에 주면 422 INVALID_PARAMS)
+    source: Literal["step", "mesh"] = "step"
+    part_id: int | None = Field(default=None, ge=1, le=2 ** 31 - 1)
 
 
 class DoeCheckIn(_Req):
@@ -1702,6 +1706,8 @@ class DoeCheckIn(_Req):
     mesh_upload_id: str | None = Field(default=None, min_length=1, max_length=64)    # ② 만
     part_title: str | None = Field(default=None, min_length=1, max_length=200)     # ② 만(기본 bead_doe.part_title)
     inch: int | None = Field(default=None, ge=1, le=1000)
+    mesh_mode: Literal["cad", "remesh", "auto"] | None = None    # v0.16.0 ④ 만(C2-D-9) — 없으면 bead_doe.compare.mesh.mode
+    mesh_refine: bool | None = None     # v0.16.0 ④ 만(§8 '실패 시 세분화 허용') — false 면 ladder 에서 refine_* 제외, 없으면 설정
 
 
 class DoeStudyIn(DoeCheckIn):
@@ -1750,7 +1756,8 @@ class DoeSettingsOut(_Out):
     part_title: str | None = None
     method_sources: dict[str, Any]
     compare_reason: str | None = None               # v0.14.0 ④ 비활성 사유(DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE), null = 사용 가능
-    compare: dict[str, Any] | None = None          # v0.14.0 ④ {enabled, reason, max_shapes, total_max_mb, mesh_size_mm}
+    compare: dict[str, Any] | None = None          # v0.14.0 ④ {enabled, reason, max_shapes, total_max_mb, mesh_size_mm} + v0.16.0
+    #                                                 {mesh_mode, remesh_available, mesh_input{enabled, formats, max_mb}, step_ready}
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
 
@@ -1758,7 +1765,8 @@ class DoeSettingsOut(_Out):
 class DoeCheckOut(_Out):
     ok: bool
     step: dict[str, Any] | None = None             # ④ 은 null(형상은 shapes)
-    shapes: list[dict[str, Any]] | None = None     # ④ [{index, name, file_name, sha256, size_mb, reference}]
+    shapes: list[dict[str, Any]] | None = None     # ④ [{index, name, file_name, sha256, size_mb, reference, id, source, part_id,
+    #                                                 main_rel, files?[{rel, sha256, size_mb}], parts?[{id, title, n_shells}]}]
     reference_source: Literal["step", "case"] | None = None     # ④ 기준 출처
     base: dict[str, Any] | None = None
     mesh: MeshCheckOut | None = None
@@ -1767,6 +1775,8 @@ class DoeCheckOut(_Out):
     props_default: dict[str, Any] | None = None
     mesh_size_default_mm: float | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+    mesh_mode: Literal["cad", "remesh", "auto"] | None = None   # v0.16.0 ④ 적용 메시 방식(요청 또는 설정)
+    remesh_available: bool | None = None                        # v0.16.0 ④ 삼각형 재메시 가능(C2-D-16)
 
 
 class DoeStudyOut(_Out):

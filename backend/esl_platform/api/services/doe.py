@@ -144,14 +144,27 @@ def reset_status_cache() -> None:
 
 
 def compare_reason(c: dict[str, Any], gmsh_ready: bool) -> str | None:
-    """④ 비활성 사유(SC-D-3): DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE — paicad 사유는 보지 않는다."""
+    """④ 비활성 사유(SC-D-3): DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE — paicad 사유는 보지 않는다.
+    v0.16.0 C2-D-16: 활성 = enabled ∧ compare.enabled ∧ (gmsh.ready ∨ mesh_input.enabled) — gmsh 가 없어도 메시 입력만으로 쓸
+    수 있다(STEP 형상은 check-inputs 에서 503 GMSH_UNAVAILABLE)."""
     if not c.get("enabled"):
         return "DOE_DISABLED"
-    if not (c.get("compare") or {}).get("enabled", True):
+    cc = c.get("compare") or {}
+    if not cc.get("enabled", True):
         return "COMPARE_DISABLED"
-    if not gmsh_ready:
+    if not gmsh_ready and not (cc.get("mesh_input") or {}).get("enabled", False):
         return "GMSH_UNAVAILABLE"
     return None
+
+
+def remesh_available(ctx: AppContext, c: dict[str, Any]) -> bool:
+    """C2-D-16·R-C2-1: 삼각형 재메시 가능 = bead_doe.enabled ∧ compare.remesh.enabled ∧ 워커 점검 기록 gmsh.ready ∧
+    gmsh.remesh(워커가 ``gmsh.model.mesh.importStl`` 존재를 확인해 기록 — 기록이 없으면 불가로 본다)."""
+    rm = (c.get("compare") or {}).get("remesh") or {}
+    if not c.get("enabled") or not rm.get("enabled", False):
+        return False
+    gm = (_worker_record(ctx, c) or {}).get("gmsh") or {}
+    return bool(gm.get("ready") and gm.get("remesh"))
 
 
 def select_reason(c: dict[str, Any]) -> str | None:
@@ -255,6 +268,19 @@ def method_sources(principal: Principal | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- GET /doe/settings
+def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) -> dict[str, Any]:
+    """④ 블록(SC-D-3 + v0.16.0 §6): mesh_mode(설정 기본), remesh_available, mesh_input{enabled, formats, max_mb},
+    step_ready(= gmsh.ready — STEP 형상 사용 가능)."""
+    cc = c["compare"]
+    mi = cc["mesh_input"]
+    return {"enabled": st["scenarios"]["compare"], "reason": st["compare_reason"],
+            "max_shapes": int(cc["max_shapes"]), "total_max_mb": float(cc["total_max_mb"]),
+            "mesh_size_mm": float(cc["mesh"]["size_mm"]), "mesh_mode": str(cc["mesh"]["mode"]),
+            "remesh_available": remesh_available(ctx, c),
+            "mesh_input": {"enabled": bool(mi["enabled"]), "formats": list(mi["formats"]), "max_mb": float(mi["max_mb"])},
+            "step_ready": bool(st["gmsh"]["ready"])}
+
+
 def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
     c = cfg(ctx)
     st = status(ctx)
@@ -269,9 +295,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "boundary": {k: float(c["boundary"][k]) for k in ("fastener_warn_mm", "load_warn_mm", "load_share_min")},
             "step_max_mb": float(c["step_max_mb"]), "part_title": c["part_title"],
             "method_sources": method_sources(principal),
-            "compare": {"enabled": st["scenarios"]["compare"], "reason": st["compare_reason"],
-                        "max_shapes": int(c["compare"]["max_shapes"]), "total_max_mb": float(c["compare"]["total_max_mb"]),
-                        "mesh_size_mm": float(c["compare"]["mesh"]["size_mm"])},
+            "compare": _compare_settings(ctx, c, st),
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
                        "max_tiers": int(sc["max_tiers"]),
@@ -347,6 +371,8 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
         return r if _internal else r["out"]
     if body.shapes is not None:
         raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
+    if body.mesh_mode is not None or body.mesh_refine is not None:
+        raise unprocessable("INVALID_PARAMS", up_svc.doe_text("MESH_MODE_COMPARE_ONLY"))
     if body.scenario == "select":
         if body.step_upload_id or body.mesh_upload_id or body.part_title:
             raise unprocessable("INVALID_PARAMS", "step_upload_id·mesh_upload_id·part_title 은 '비드 직접 선택'에서 쓰지 않습니다"
@@ -425,6 +451,40 @@ def _shape_name(raw: str, index: int) -> str:
     return name
 
 
+PARTS_OUT_MAX = 50          # check-inputs 메시 형상 parts[] 상한(계약 §3 — 화면 datalist)
+
+
+def _pick_mesh_part(info: dict[str, Any], part_id: int | None, index: int) -> tuple[int, list[dict[str, Any]]]:
+    """v0.16.0 C2-D-4 파트 선택(deck.scan 결과만): 쉘 파트 하나면 part_id 생략 가능, 둘 이상이면 422 MESH_INPUT_PART_REQUIRED,
+    없는 ID → MESH_INPUT_PART_NOT_FOUND, 파트에 쉘이 아닌 요소 → MESH_INPUT_UNSUPPORTED_ELEMENT. /PART 카드 없이 쉘 블록만
+    있으면 허용 + info MESH_INPUT_PART_CARD_MISSING. 반환 (part_id, 경고)."""
+    parts = info["parts"]
+    pub = [{k: p[k] for k in ("id", "title", "n_shells")} for p in parts[:PARTS_OUT_MAX]]
+    if not parts:
+        raise unprocessable("MESH_INPUT_INVALID", up_svc.doe_text("MESH_INPUT_NO_SHELL"), parts=[])
+    if part_id is None:
+        if len(parts) != 1:
+            raise unprocessable("MESH_INPUT_PART_REQUIRED", up_svc.doe_text("MESH_INPUT_PART_REQUIRED", n=len(parts)),
+                                parts=pub)
+        p = parts[0]
+    else:
+        p = next((x for x in parts if x["id"] == int(part_id)), None)
+        if p is None:
+            if int(part_id) in (info.get("other_parts") or {}):      # 쉘 없이 다른 요소만 있는 파트
+                raise unprocessable("MESH_INPUT_UNSUPPORTED_ELEMENT",
+                                    up_svc.doe_text("MESH_INPUT_UNSUPPORTED_ELEMENT", part_id=int(part_id)), parts=pub)
+            raise unprocessable("MESH_INPUT_PART_NOT_FOUND", up_svc.doe_text("MESH_INPUT_PART_NOT_FOUND",
+                                                                              part_id=int(part_id)), parts=pub)
+    if p["n_other"]:
+        raise unprocessable("MESH_INPUT_UNSUPPORTED_ELEMENT",
+                            up_svc.doe_text("MESH_INPUT_UNSUPPORTED_ELEMENT", part_id=p["id"]), parts=pub)
+    warns = []
+    if not p["card"]:
+        warns.append({"code": "MESH_INPUT_PART_CARD_MISSING", "level": "info", "index": index,
+                      "message": up_svc.doe_text("MESH_INPUT_PART_CARD_MISSING", part_id=p["id"])})
+    return int(p["id"]), warns
+
+
 def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any]) -> dict[str, Any]:
     """④ check-inputs: 형상 수·기준·이름·중복·업로드·STEP·합계 크기 → ESL → (기준 미지정) 첫 ESL Case 입력 + 경고.
     반환 {"out": DoeCheckOut, "mat": 작업 재료}. 크기 비교(SC-D-7)는 메시 후라 size = null(준비에서 확정)."""
@@ -456,32 +516,85 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
         if k in seen:
             raise unprocessable("SHAPE_NAME_DUPLICATE", f"형상 이름 '{n}' 이 겹칩니다(대소문자 무시)", index=[seen[k], i])
         seen[k] = i
-    ups = [(sh.upload_id, sh.rel) for sh in shapes]
-    if len(set(ups)) != len(ups) or any(r is None for u, r in ups if sum(1 for u2, _ in ups if u2 == u) > 1):
+    # v0.16.0 §6 검증 순서: source 값(스키마 — INVALID_PARAMS) → step 에 part_id → (upload_id, rel) 중복 → 형상별 업로드
+    for i, sh in enumerate(shapes):
+        if sh.source == "step" and sh.part_id is not None:
+            raise unprocessable("INVALID_PARAMS", up_svc.doe_text("SHAPE_PART_ID_STEP", index=i + 1), index=i)
+    # 메시 형상은 (upload_id, rel, part_id) — 한 rad 의 다른 파트는 다른 형상. rel 생략 + 같은 업로드 규칙은 STEP 만(메시 rel
+    # 생략은 주 파일 규칙으로 하나로 정해지고, 실제 같은 파일·파트는 아래 정규화 경로 판정이 거부)
+    ups = [(sh.upload_id, sh.rel, sh.part_id if sh.source == "mesh" else None) for sh in shapes]
+    steps = [(sh.upload_id, sh.rel) for sh in shapes if sh.source == "step"]
+    if len(set(ups)) != len(ups) or any(r is None for u, r in steps if sum(1 for u2, _ in steps if u2 == u) > 1):
         raise unprocessable("INVALID_PARAMS", "같은 업로드 파일(upload_id·rel)을 두 번 넣었습니다 — 한 업로드에 STEP 이 "
                             "여러 개면 형상마다 rel 을 주세요")
+    mi = cc["mesh_input"]
+    step_idx = [i for i, sh in enumerate(shapes) if sh.source == "step"]
+    mesh_idx = [i for i, sh in enumerate(shapes) if sh.source == "mesh"]
+    if mesh_idx and not mi["enabled"]:
+        raise unprocessable("INVALID_PARAMS", up_svc.doe_text("MESH_INPUT_DISABLED"), index=mesh_idx)
+    st = status(ctx)
+    if step_idx and not st["gmsh"]["ready"]:        # C2-D-16: 메시 형상만 있는 비교는 gmsh 없이도 허용
+        raise DomainError("GMSH_UNAVAILABLE", up_svc.doe_text("SHAPES_STEP_GMSH"), status=503, index=step_idx)
+    ra = remesh_available(ctx, c)
+    mode = body.mesh_mode or str(cc["mesh"]["mode"])
+    # 화면 '실패 시 세분화 허용'(§8): mesh_refine false → 사다리에서 refine_* 제외, 생략 → 설정 ladder 그대로
+    ladder = [x for x in cc["mesh"]["ladder"] if body.mesh_refine is not False or not x.startswith("refine_")]
+    warns0: list[dict[str, Any]] = []       # v0.16.0 경고(기존 경고 뒤에 붙임 — 기존 순서 불변)
+    if step_idx and not ra:
+        ver = st["gmsh"].get("version") or "?"
+        if mode == "remesh":
+            raise unprocessable("REMESH_UNAVAILABLE", up_svc.doe_text(
+                "REMESH_UNAVAILABLE" if cc["remesh"]["enabled"] else "REMESH_DISABLED", ver=ver), mesh_mode=mode)
+        if mode == "auto" and "remesh" in ladder:      # 사다리에서 remesh 만 빼고 진행(경고 1회)
+            warns0.append({"code": "REMESH_UNAVAILABLE",
+                           "message": up_svc.doe_text("REMESH_UNAVAILABLE_AUTO", ver=ver)})
     out_shapes, mat_shapes, total = [], [], 0.0
-    seen_path: dict[str, int] = {}
+    seen_path: dict[tuple, int] = {}
     for i, sh in enumerate(shapes):
+        minfo = pid = None
         try:
-            up, _root, path = up_svc.doe_source(ctx, principal, sh.upload_id, body.project_id, "step", rel=sh.rel)
-            info = up_svc.step_check(path, float(c["step_max_mb"]))
+            if sh.source == "mesh":
+                up, _root, path = up_svc.doe_source(ctx, principal, sh.upload_id, body.project_id, "mesh", rel=sh.rel,
+                                                    formats=mi["formats"])
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in [f.lower() for f in mi["formats"]]:      # rel 생략(주 파일 자동 선택) 경로의 형식 검사
+                    raise unprocessable("MESH_FORMAT_UNSUPPORTED", up_svc.doe_text(
+                        "MESH_FORMAT_UNSUPPORTED", ext=ext, formats=", ".join(mi["formats"])), formats=list(mi["formats"]))
+                minfo = up_svc.mesh_shape_inspect(up, path, mi)
+                pid, pw = _pick_mesh_part(minfo, sh.part_id, i)
+                warns0 += pw
+                info = {"file_name": os.path.basename(path), "size_mb": minfo["size_mb"]}
+            else:
+                up, _root, path = up_svc.doe_source(ctx, principal, sh.upload_id, body.project_id, "step", rel=sh.rel)
+                info = up_svc.step_check(path, float(c["step_max_mb"]))
         except DomainError as exc:
             raise DomainError(exc.code, f"형상 {i + 1}({names[i]}): {exc.message}", status=exc.status,
                               **{**exc.extra, "index": i}) from None
         # 정규화된 동일 파일 판정(v0.14.0 검증 수정): (upload_id, rel=None) 과 같은 파일을 rel 로 고른 형상 등
-        # 지정 방식이 달라도 실제 파일이 같으면 거부(같은 내용 다른 파일은 아래 SHAPE_DUPLICATE_FILE 경고만)
-        key = os.path.normcase(os.path.realpath(path))
+        # 지정 방식이 달라도 실제 파일이 같으면 거부(같은 내용 다른 파일은 아래 SHAPE_DUPLICATE_FILE 경고만).
+        # 메시 형상은 (파일, part_id) — 한 rad 의 다른 파트는 다른 형상
+        key = (os.path.normcase(os.path.realpath(path)), pid)
         if key in seen_path:
             raise unprocessable("INVALID_PARAMS", f"형상 {seen_path[key] + 1}({names[seen_path[key]]})·{i + 1}({names[i]}) 이 "
                                 "같은 업로드 파일입니다 — 형상마다 다른 STEP 파일을 고르세요", index=[seen_path[key], i])
         seen_path[key] = i
-        sha = up_svc.upload_file_sha(up, path)
-        total += os.path.getsize(path) / (1024 * 1024)
+        if minfo is not None:
+            sha = minfo["files"][0]["sha256"]
+            pub = {"source": "mesh", "part_id": pid, "main_rel": minfo["main_rel"], "files": minfo["files"],
+                   "parts": [{k: p[k] for k in ("id", "title", "n_shells")} for p in minfo["parts"][:PARTS_OUT_MAX]]}
+            extra = {"source": "mesh", "part_id": pid, "main_rel": minfo["main_rel"], "files": minfo["files"],
+                     "upload_root": up["dir_path"]}
+        else:
+            sha = up_svc.upload_file_sha(up, path)
+            total += os.path.getsize(path) / (1024 * 1024)
+            rel0 = os.path.relpath(path, up["dir_path"]).replace(os.sep, "/")
+            pub = {"source": "step", "part_id": None, "main_rel": rel0}
+            extra = {"source": "step"}
         out_shapes.append({"index": i, "name": names[i], "file_name": info["file_name"], "sha256": sha,
-                           "size_mb": info["size_mb"], "reference": bool(sh.reference)})
+                           "size_mb": info["size_mb"], "reference": bool(sh.reference), **pub})
         mat_shapes.append({"path": path, "upload_id": up["id"], "rel": sh.rel, "name": names[i],
-                           "file_name": info["file_name"], "sha256": sha, "reference": bool(sh.reference), "_up": up})
+                           "file_name": info["file_name"], "sha256": sha, "reference": bool(sh.reference), "_up": up,
+                           **extra})
     if total > float(cc["total_max_mb"]):
         raise unprocessable("SHAPES_TOO_LARGE", f"형상 STEP 합계 {total:.1f} MB > 상한 {float(cc['total_max_mb']):g} MB "
                             "(bead_doe.compare.total_max_mb)", total_mb=round(total, 3),
@@ -505,12 +618,15 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
                    "source": "case"}
         warns.append({"code": "COMPARE_REF_CASE_MESH",
                       "message": "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다 — 기준 STEP 지정을 권장합니다"})
-    dup: dict[str, int] = {}
-    for x in out_shapes:
-        if x["sha256"] in dup:
-            warns.append({"code": "SHAPE_DUPLICATE_FILE", "message": f"형상 {dup[x['sha256']] + 1}·{x['index'] + 1} 이 같은 "
-                          "STEP 파일(sha256)입니다", "index": [dup[x["sha256"]], x["index"]]})
-        dup.setdefault(x["sha256"], x["index"])
+    dup: dict[tuple, int] = {}
+    for x in out_shapes:                    # 메시 형상은 (주 파일 sha256, part_id) — 같은 rad 의 다른 파트는 다른 형상
+        dk = (x["sha256"], x.get("part_id"))
+        if dk in dup:
+            warns.append({"code": "SHAPE_DUPLICATE_FILE", "message": f"형상 {dup[dk] + 1}·{x['index'] + 1} 이 같은 "
+                          f"{'메시' if x.get('source') == 'mesh' else 'STEP'} 파일(sha256)입니다",
+                          "index": [dup[dk], x["index"]]})
+        dup.setdefault(dk, x["index"])
+    warns += warns0
     try:
         osize.assert_ok([_size_row(e) for e in rows], opt_settings(ctx.settings)["size"])
     except EslError as exc:
@@ -528,20 +644,27 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
     for k, i in enumerate(order):
         mat_shapes[i]["id"] = f"d{k + k0:03d}"
         out_shapes[i]["id"] = mat_shapes[i]["id"]
-    per_up: dict[str, list] = {}
+    per_up: dict[tuple, list] = {}
     for sh in mat_shapes:
         up = sh.pop("_up")
         rel = os.path.relpath(sh["path"], up["dir_path"]).replace(os.sep, "/")
-        per_up.setdefault(up["id"], []).append({"rel": rel, "sha256": sh["sha256"]})
-    for uid, fs in per_up.items():          # 업로드당 1회(한 세션 여러 STEP 이면 files 목록)
-        up_svc.save_doe_check(ctx, uid, up_svc.DOE_STEP_PURPOSE, fs[0]["rel"], fs[0]["sha256"], True,
-                              {"files": fs} if len(fs) > 1 else None)
+        purpose = up_svc.DOE_MESH_PURPOSE if sh.get("source") == "mesh" else up_svc.DOE_STEP_PURPOSE
+        row = {"rel": rel, "sha256": sh["sha256"]}
+        if sh.get("source") == "mesh":      # 메시 형상: 파트 ID·주 + include 파일 목록(C2-D-3 — BD_INPUT 이 sha 재확인)
+            row.update(part_id=sh["part_id"], files=sh["files"])
+        per_up.setdefault((up["id"], purpose), []).append(row)
+    for (uid, purpose), fs in per_up.items():   # 업로드·용도당 1회(한 세션 여러 형상이면 files 목록)
+        extra = {"files": fs} if len(fs) > 1 else (
+            {k: fs[0][k] for k in ("part_id", "files")} if purpose == up_svc.DOE_MESH_PURPOSE else None)
+        up_svc.save_doe_check(ctx, uid, purpose, fs[0]["rel"], fs[0]["sha256"], True, extra)
     out = {"ok": True, "step": None, "shapes": out_shapes, "reference_source": src, "base": base_out,
            "mesh": None, "entries": [{"entry_id": e["id"], "ok": True, "reason": None} for e in rows], "size": None,
-           "props_default": props_default, "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "warnings": warns}
+           "props_default": props_default, "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "warnings": warns,
+           "mesh_mode": mode, "remesh_available": ra}
     mat = {"rows": rows, "step": None, "shapes": [mat_shapes[i] for i in order], "reference_source": src,
            "base": base_mat, "base_db": base_db, "mesh": None, "props_default": props_default,
-           "mesh_size_default_mm": float(cc["mesh"]["size_mm"])}
+           "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "mesh_mode": mode,
+           "mesh_refine": body.mesh_refine, "mesh_ladder": ladder}
     return {"out": _jsonable(out), "mat": mat}
 
 
@@ -769,8 +892,9 @@ def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, pa
 
 def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, Any], mat: dict[str, Any],
                     props: dict[str, Any]) -> dict[str, Any]:
-    """④ 연구 생성: inputs = {shapes[{id, name, file_name, sha256, upload_id, reference}], reference_source, inch, props},
-    작업 params.doe += shapes[{… path}], reference_source, base?(Case 기준), props."""
+    """④ 연구 생성: inputs = {shapes[{id, name, file_name, sha256, upload_id, reference, source, part_id}], reference_source,
+    inch, props, mesh_mode}, 작업 params.doe += shapes[{… path, source(, 메시: upload_root·main_rel·part_id·files)}],
+    reference_source, base?(Case 기준), props, mesh_mode."""
     import datetime as _dt
 
     lib_cfg = require_library_config(ctx)
@@ -779,16 +903,20 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
     doe_dir(ctx.settings, sid)
     first = next((x for x in mat["shapes"] if not x["reference"]), mat["shapes"][0])
     title = (body.title or "").strip() or f"형상 직접 비교 {first['name']} 외 {max(len(mat['shapes']) - 1, 0)}"[:200]
-    shapes_db = [{k: x[k] for k in ("id", "name", "file_name", "sha256", "upload_id", "rel", "reference")}
-                 for x in mat["shapes"]]
-    inputs = {"shapes": shapes_db, "reference_source": mat["reference_source"], "inch": body.inch, "props": props}
+    shapes_db = [{**{k: x[k] for k in ("id", "name", "file_name", "sha256", "upload_id", "rel", "reference")},
+                  "source": x.get("source", "step"), "part_id": x.get("part_id")} for x in mat["shapes"]]
+    # v0.16.0 §3: inputs.shapes[] += {source, part_id}, inputs += {mesh_mode}(요청 또는 설정 — v0.15.x 스터디는 없음 = cad)
+    # mesh_refine(요청 원값, null = 설정)·mesh_ladder(적용 사다리 — 워커가 auto 에서 이 순서로 시도)
+    inputs = {"shapes": shapes_db, "reference_source": mat["reference_source"], "inch": body.inch, "props": props,
+              "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"]}
     doe = {"id": sid, "scenario": "compare", "title": title,
            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "cfg": _snapshot_cfg(ctx),
            "core": copy.deepcopy(ctx.config.core or {}), "mapping": (lib_cfg or {}).get("mapping"),
            "entries": [{"id": e["id"], "dir": entry_folder(ctx, e), "label": _entry_label(e), "case": e.get("case_id")}
                        for e in rows],
            "shapes": [dict(x) for x in mat["shapes"]], "reference_source": mat["reference_source"],
-           "inch": body.inch, "props": props}
+           "inch": body.inch, "props": props, "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"],
+           "mesh_ladder": list(mat["mesh_ladder"])}
     if mat["base"]:
         doe["base"] = dict(mat["base"])
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
@@ -1141,6 +1269,27 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
         return study_out(ctx, conn, s, job, c=c)
 
 
+def _clone_shape_present(x: dict[str, Any]) -> bool:
+    """④ 복제 전제: STEP = 파일 1개, 메시(v0.16.0 §6) = 주 + include 업로드가 모두 남아 있어야(링크·업로드 폴더 밖 아님)."""
+    from ...core.config import is_within
+
+    def ok(p: str | None) -> bool:
+        return bool(p) and os.path.isfile(p) and not os.path.islink(p)
+    if not ok(x.get("path")):
+        return False
+    if x.get("source") != "mesh":
+        return True
+    root = x.get("upload_root")
+    if not root:
+        return False
+    real = os.path.realpath(root)
+    for f in x.get("files") or []:
+        p = os.path.join(root, *str(f.get("rel") or "").split("/"))
+        if not f.get("rel") or not ok(p) or not is_within(os.path.realpath(p), real):
+            return False
+    return True
+
+
 def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] | None) -> dict[str, Any]:
     """같은 입력(연구 스냅샷 경로·설정은 지금 설정)으로 새 연구 + DOE_PREP. 준비 산출물은 재사용하지 않는다."""
     body = body or {}
@@ -1174,11 +1323,14 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         raise conflict("PREREQUISITE_MISSING", "원 연구의 입력 스냅샷이 없습니다", missing=["prep_job"])
     old = prep_job["params"]["doe"]
     if s["scenario"] == "compare":       # ④ 모든 형상 업로드가 남아 있어야(missing = 형상 순서 index — id 순)
-        miss = [i for i, x in enumerate(old.get("shapes") or [])
-                if not x.get("path") or not os.path.isfile(x["path"]) or os.path.islink(x["path"])]
+        shapes_old = old.get("shapes") or []
+        miss = [i for i, x in enumerate(shapes_old) if not _clone_shape_present(x)]
         if miss:
             raise conflict("PREREQUISITE_MISSING", f"원 연구의 형상 STEP 업로드 {len(miss)}개가 더 이상 없습니다 — 새로 올려 주세요",
                            missing=miss)
+        step_i = [i for i, x in enumerate(shapes_old) if x.get("source", "step") == "step"]
+        if step_i and not status(ctx)["gmsh"]["ready"]:      # C2-D-16: STEP 형상은 gmsh 필요(메시 형상만이면 허용)
+            raise DomainError("GMSH_UNAVAILABLE", up_svc.doe_text("SHAPES_STEP_GMSH"), status=503, index=step_i)
     elif s["scenario"] != "select":      # select 는 업로드 입력 없음(같은 Case 메시)
         st = old.get("step") or {}
         if not st.get("path") or not os.path.isfile(st["path"]) or os.path.islink(st["path"]):
