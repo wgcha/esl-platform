@@ -98,7 +98,33 @@ export const CODE_TEXT: Record<string, string> = {
   STRAIN_TMAX_SAMPLED: "변형률 최대를 h3d 출력 프레임에서 재현 — ε 과소평가·t* 출력 간격 양자화 가능. 덱에 /H3D/SHELL/TENS/STRAIN/TMAX 출력을 권장합니다.",
   STRAIN_FROM_STRESS: "변형률 결과가 없어 응력(Max_Stress)으로 대체 — 변형률 참고 지표는 생략, 판정은 변위 기준입니다.",
   VD_STRAIN_SOURCE_MISMATCH: "원 낙하와 검증 낙하의 변형률 기준이 다릅니다 — ε 비는 참고만 하세요.",
+  // v0.13.0 일괄 실행(esl_run_all.md §7): API 오류 + 멈춤 코드(run_alls.stop_code) + ② 가드 사유(stop_reason.detail.reasons)
+  RUN_ALL_ACTIVE: "일괄 실행 중입니다 — 바꾸려면 먼저 [일괄 취소]",
+  RUN_ALL_NOT_RUNNING: "진행 중인 일괄 실행이 없습니다.",
+  TSTAR_REVIEW_REQUIRED: "t* 확인이 필요합니다 — ②에서 후보를 보고 [t* 확정]",
+  SUPPORT_AUTO_BLOCKED: "지지점을 자동으로 정하지 못했습니다 — ②에서 사유 확인",
+  SUPPORT_AUTO_ERROR: "지지점 자동 선택 중 오류 — 관리자에게 알리세요.",
+  STEP_FAILED: "작업 실패 — 로그 확인 후 [재시도] 또는 입력 수정",
+  STEP_INTERRUPTED: "워커가 끊겨 작업이 중단되었습니다",
+  VALIDATION_FAIL: "검증 FAIL — 원인 확인 후 ②·③ 조건을 바꿔 [이어서 실행]",
+  VALIDATION_UNDETERMINED: "검증 판정 불가 — ④ 결과 확인",
+  CASE_CHANGED: "실행 중 Case 가 바뀌었습니다",
+  JOB_CANCELED: "작업이 취소되었습니다",
+  RUN_ALL_CANCELED: "일괄 실행을 취소했습니다",
+  TSTAR_ADJUSTED: "1순위 시점이 변위 추출 프레임에 없어 다른 후보로 바뀌었습니다",
+  TSTAR_METRIC_ERROR: "t* 지표 계산에 오류가 있습니다",
+  USER_TSTAR_CHANGED: "직접 고른 t* 와 새 자동 t* 가 다릅니다",
 };
+
+/** 일괄 실행 멈춤 코드 중 일반 API 오류와 이름이 같아 CODE_TEXT 에 넣지 않는 것(errorText 회귀 방지) */
+export const RUN_ALL_STOP_TEXT: Record<string, string> = {
+  PREREQUISITE_MISSING: "앞 단계가 필요합니다",
+  CASE_ARCHIVED: "보관된 Case 입니다",
+  FRAME_NOT_CANDIDATE: "현재 t* 프레임이 후보에 없습니다",
+};
+
+/** 멈춤·사유 코드 → 사람말(모르는 코드는 그대로) */
+export const stopCodeText = (code: string | null | undefined) => (code ? CODE_TEXT[code] ?? RUN_ALL_STOP_TEXT[code] ?? code : "");
 
 /** 경고 문자열(코드 또는 "코드: 상세") → 사람말. 모르는 코드·일반 문구는 그대로 */
 export function warnText(w: string): string {

@@ -139,6 +139,13 @@ export interface TStar {
   source: "auto" | "user";
   /** v0.10.0 §5.1: t* 확정 때 함께 한 자동 3-2-1 결과(추출 재등록 시 사라짐) */
   support_auto?: SupportAuto | null;
+  /** v0.13.0 일괄 실행이 자동 확정했으면 {by:"run_all", run_all_id, user_id}(esl_run_all.md §4.2) */
+  confirmed?: TStarConfirmed | null;
+}
+export interface TStarConfirmed {
+  by: string;
+  run_all_id?: string | null;
+  user_id?: string | null;
 }
 
 export interface MaterialSummary {
@@ -247,6 +254,10 @@ export interface CaseOut {
   step_status?: StepStatus | null;
   /** #49: GET /cases(목록)에만 — 이 Case 의 라이브러리 등록 현황 */
   library?: CaseLibraryOut | null;
+  /** v0.13.0 일괄 실행(esl_run_all.md §8): 최신 체인 1행 요약(없으면 null) */
+  run_all?: RunAllOut | null;
+  /** v0.13.0 §8: POST /cases run_all=true 인데 시작이 실패했을 때(Case 는 만들어짐) */
+  run_all_error?: RunAllError | null;
 }
 export type Case = CaseOut;
 /** #49: Case 의 라이브러리 등록 현황 — count = ACTIVE 항목 수, latest_status = 최신 항목 판정(라이브러리 목록 판정 배지와 같은 규칙) */
@@ -255,6 +266,62 @@ export interface CaseLibraryOut {
   latest_entry_id?: string | null;
   latest_status?: "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY" | null;
   latest_registered_at?: string | null;
+}
+
+// ---------------------------------------------------------------- v0.13.0 일괄 실행 (esl_run_all.md §2·§7·§8)
+export type RunAllStatus = "RUNNING" | "STOPPED" | "DONE" | "CANCELED";
+/** 체인이 만든·입양한 작업(순서대로) */
+export interface RunAllJobRef {
+  step: StepKey;
+  job_id: string;
+  adopted: boolean;
+}
+/** 건너뛴 단계: state = done | auto_confirmed(② 자동 확정 — metric·frame_index·support 포함) */
+export interface RunAllSkip {
+  step: StepKey;
+  state: string;
+  metric?: string | null;
+  frame_index?: number | null;
+  support?: string | null;
+}
+/** §7 멈춤 사유: message 는 서버가 완성, detail 은 코드별(missing·problems·job_id·failure_code·reasons·verdict) — 없으면 {} */
+export interface RunAllStopReason {
+  message: string;
+  detail?: Record<string, unknown>;
+}
+export interface RunAllError {
+  code: string;
+  message: string;
+}
+/** POST /cases/{id}/run-all body. from 생략 = input */
+export interface RunAllStart {
+  from?: StepKey | null;
+}
+export interface RunAllOut {
+  id: string;
+  case_id: string;
+  from_step: StepKey;
+  status: RunAllStatus;
+  cur_step: StepKey | null;
+  cur_job_id: string | null;
+  cur_job_state: JobState | null;
+  stop_step: StepKey | null;
+  /** §7 멈춤 코드(TSTAR_REVIEW_REQUIRED·SUPPORT_AUTO_BLOCKED·STEP_FAILED·VALIDATION_FAIL …) */
+  stop_code: string | null;
+  stop_reason: RunAllStopReason | null;
+  verdict: "PASS" | "FAIL" | "UNDETERMINED" | null;
+  job_ids: RunAllJobRef[];
+  skipped: RunAllSkip[];
+  resumed_from_id: string | null;
+  created_by: string;
+  created_by_name: string;
+  canceled_by: string | null;
+  created_at: string;
+  finished_at: string | null;
+  /** STOPPED ∧ 이후 RUNNING 행 없음 → 화면 주 버튼 [이어서 실행] */
+  can_resume: boolean;
+  /** 종료 뒤 이 체인과 무관한 ①③④ 작업이 새로 생김 → 진행 줄 숨김 */
+  superseded: boolean;
 }
 
 export type CaseInputKind = "RESULTS" | "H3D";
@@ -268,6 +335,8 @@ export interface CaseCreate {
   h3d_path?: string | null;
   results_dir?: string | null;
   part_title?: string | null;
+  /** v0.13.0 §8: true 면 생성 직후 일괄 실행 시작(기본 false) */
+  run_all?: boolean;
 }
 
 export interface CasePatch {
@@ -395,6 +464,8 @@ export interface JobOut {
   version: number;
   /** GET /jobs/{id}·작업 생성 응답에만 */
   steps?: StepOut[] | null;
+  /** v0.13.0 일괄 실행이 만든 작업이면 run_alls.id(입양 작업·일반 작업은 null) */
+  run_all_id?: string | null;
 }
 export type Job = JobOut;
 export type JobSummary = JobOut;

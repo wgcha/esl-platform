@@ -138,6 +138,9 @@ jobs = Table(
     Column("bead_doe_id", ID, ForeignKey("bead_does.id"), nullable=True),      # 0011: DOE_* 대상 비드 DOE 연구
     Column("upload_id", ID, ForeignKey("uploads.id"), nullable=True),          # 0012: SCX_FETCH 대상 업로드 세션
     Column("verify_drop_id", ID, ForeignKey("verify_drops.id"), nullable=True),   # 0012: VERIFY_* 대상 검증 낙하
+    # 0013(esl_run_all.md §2): 일괄 실행 체인이 만든 작업만(입양 작업은 NULL). run_alls.cur_job_id 와 순환 FK → use_alter
+    Column("run_all_id", ID, ForeignKey("run_alls.id", use_alter=True, name="fk_jobs_run_all_id_run_alls"),
+           nullable=True),
     Column("project_id", String, nullable=False),
     Column("job_type", String, nullable=False),
     Column("stage", SmallInteger, nullable=False),
@@ -222,6 +225,7 @@ Index("ux_jobs_upload_active", jobs.c.upload_id, unique=True,
 Index("ix_jobs_verify_drop", jobs.c.verify_drop_id, postgresql_where=text("verify_drop_id IS NOT NULL"))
 Index("ux_jobs_verify_drop_active", jobs.c.verify_drop_id, unique=True,
       postgresql_where=text("verify_drop_id IS NOT NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELED','INTERRUPTED')"))
+Index("ix_jobs_run_all", jobs.c.run_all_id, postgresql_where=text("run_all_id IS NOT NULL"))   # 0013
 
 job_steps = Table(
     "job_steps",
@@ -633,6 +637,46 @@ scx_submissions = Table(
     CheckConstraint("attempt >= 1", name="ck_scx_submissions_attempt"),
 )
 
+# ---------------------------------------------------------------- 0013: 일괄 실행 체인(계약 esl_run_all.md §2)
+RUN_ALL_STATUSES = ("RUNNING", "STOPPED", "DONE", "CANCELED")
+RUN_ALL_STEPS = ("input", "tstar", "esl", "validate")
+_STEPS_IN = "(" + ",".join(f"'{x}'" for x in RUN_ALL_STEPS) + ")"
+run_alls = Table(
+    "run_alls",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("case_id", ID, ForeignKey("cases.id"), nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("from_step", String(16), nullable=False),
+    Column("status", String(16), nullable=False, server_default="RUNNING"),
+    Column("cur_step", String(16), nullable=True),
+    Column("cur_job_id", ID, ForeignKey("jobs.id", use_alter=True, name="fk_run_alls_cur_job_id_jobs"), nullable=True),
+    Column("stop_step", String(16), nullable=True),
+    Column("stop_code", String(64), nullable=True),
+    Column("stop_reason", JSONB, nullable=True),            # {message, detail}
+    Column("verdict", String(16), nullable=True),
+    Column("job_ids", JSONB, nullable=False, server_default=text("'[]'::jsonb")),    # [{step, job_id, adopted}]
+    Column("skipped", JSONB, nullable=False, server_default=text("'[]'::jsonb")),    # [{step, state}]
+    Column("prev_user_tstar", JSONB, nullable=True),        # {metric, frame_index}(시작 시 source user 였을 때)
+    Column("core_settings", JSONB, nullable=False),         # RA-D-6 코어 설정 스냅샷
+    Column("resumed_from_id", ID, ForeignKey("run_alls.id"), nullable=True),
+    Column("created_by", String, nullable=False),
+    Column("created_by_name", String, nullable=False),
+    Column("canceled_by", String, nullable=True),
+    Column("created_at", TS, nullable=False, server_default=func.now()),
+    Column("updated_at", TS, nullable=False, server_default=func.now()),
+    Column("finished_at", TS, nullable=True),
+    CheckConstraint("status IN (" + ",".join(f"'{x}'" for x in RUN_ALL_STATUSES) + ")", name="ck_run_alls_status"),
+    CheckConstraint(f"from_step IN {_STEPS_IN}", name="ck_run_alls_from_step"),
+    CheckConstraint(f"(cur_step IS NULL OR cur_step IN {_STEPS_IN}) AND (stop_step IS NULL OR stop_step IN {_STEPS_IN})",
+                    name="ck_run_alls_steps"),
+    CheckConstraint("verdict IS NULL OR verdict IN ('PASS','FAIL','UNDETERMINED')", name="ck_run_alls_verdict"),
+    CheckConstraint("(status = 'RUNNING') = (finished_at IS NULL)", name="ck_run_alls_finished"),
+)
+# Case 당 RUNNING 체인 1개(중복 시작 방지 최종 보장), 이력(최신순)
+Index("ux_run_alls_case_running", run_alls.c.case_id, unique=True, postgresql_where=text("status = 'RUNNING'"))
+Index("ix_run_alls_case_created", run_alls.c.case_id, run_alls.c.created_at.desc())
+
 # P3-UX 브라우저 분할 업로드 세션(계약 esl_p3_ux.md §1.1). 파일 본문은 디스크(<upload_root>/...)에만, 여기는 목록·상태.
 UPLOAD_STATES = ("OPEN", "COMPLETED", "CANCELED", "STALE")
 uploads = Table(
@@ -772,5 +816,5 @@ __all__ = [
     "comparisons", "uploads", "opt_templates", "opt_keepouts", "opt_runs", "bead_does", "OPT_SCENARIOS", "DOE_SCENARIOS",
     "DOE_PHASES", "DOE_JOB_TYPES", "UPLOAD_STATES", "verify_drops", "scx_submissions", "VERIFY_PHASES",
     "SUBMISSION_STATES", "VERIFY_JOB_TYPES", "LANES", "CK_JOBS_LANE", "client_codes", "client_tokens", "client_code_failures",
-    "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS",
+    "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS", "run_alls", "RUN_ALL_STATUSES", "RUN_ALL_STEPS",
 ]

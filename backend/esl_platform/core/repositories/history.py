@@ -20,7 +20,8 @@ LIST_COLUMNS = (
     jobs.c.project_id,
     jobs.c.job_type,
     jobs.c.stage, jobs.c.state, jobs.c.queued_at, jobs.c.started_at, jobs.c.finished_at, jobs.c.current_step_no,
-    jobs.c.progress_pct, jobs.c.failure_code, jobs.c.failure_message, jobs.c.retry_of_job_id, jobs.c.created_by,
+    jobs.c.progress_pct, jobs.c.failure_code, jobs.c.failure_message, jobs.c.retry_of_job_id, jobs.c.run_all_id,
+    jobs.c.created_by,
     jobs.c.created_by_name, jobs.c.created_at,
     # params·result 에서 필요한 스칼라만(원문은 목록에 넣지 않는다)
     jobs.c.params[("settings", "case", "part_title")].label("p_part_title"),   # ESL 실행 당시 part_title

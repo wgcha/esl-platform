@@ -53,7 +53,8 @@ export function StepDots({ c }: { c: Pick<Case, "step_status" | "stage_status"> 
   );
 }
 
-export function StageStepper({ base, current, c }: { base: string; current: number; c: Pick<Case, "step_status" | "stage_status"> | null | undefined }) {
+/** runAllStep(v0.13.0 esl_run_all.md §9): 일괄 실행 진행 줄의 현재 단계(RUNNING=cur_step, STOPPED=stop_step) — 그 점에만 테두리 강조 */
+export function StageStepper({ base, current, c, runAllStep }: { base: string; current: number; c: Pick<Case, "step_status" | "stage_status"> | null | undefined; runAllStep?: StepKey | null }) {
   return (
     <nav aria-label="단계">
       <ol className="stepper">
@@ -63,7 +64,11 @@ export function StageStepper({ base, current, c }: { base: string; current: numb
           const st = s?.state ?? "none";
           const tip = tipOf(st, s);
           return (
-            <li key={n} className={`step ${n === current ? "current" : ""}`}>
+            <li
+              key={n}
+              className={`step ${n === current ? "current" : ""}${runAllStep === STEP_KEYS[i] ? " run-all-step" : ""}`}
+              data-run-all-step={runAllStep === STEP_KEYS[i] ? "true" : undefined}
+            >
               <Link to={`${base}/step/${n}`} aria-current={n === current ? "step" : undefined}>
                 <span className="step-mark">{STEP_MARKS[i]}</span>
                 <span className="step-name">{name}</span>

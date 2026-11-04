@@ -41,6 +41,16 @@ export function installMockFetch() {
   if (params.get("demoVerify") === "1") server.verify.seedDemo("doe-1");
   const vm = params.get("verifyMode");
   if (vm === "disabled" || vm === "writes_off") server.scx.verifyMode = vm;
+  // v0.13.0 일괄 실행 시연: ?demoRunAll=running|tstar|blocked|failed|done — c-new 에 체인(진행 중 · ② t* 확인 멈춤 · ② 지지 BLOCKED · ③ 실패 · ④ PASS)
+  const dra = params.get("demoRunAll");
+  if (dra) {
+    if (dra === "tstar") server.tstarAdjusted.add("c-new");
+    if (dra === "blocked") server.supportBlocked.add("c-new");
+    if (dra === "failed") server.failJobTypes.add("ESL_SOLVE");
+    server.handle("POST", "/cases/c-new/run-all", new URLSearchParams(), {});
+    if (dra === "running") server.tick();
+    else server.drain();
+  }
   if (params.get("demoPc") === "1") {
     server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
     server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");

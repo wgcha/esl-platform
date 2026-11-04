@@ -288,6 +288,7 @@ def _item(row: dict[str, Any], b: Batch, res: Resolved) -> dict[str, Any]:
         "current_step_no": row["current_step_no"], "progress_pct": row["progress_pct"],
         "failure_code": row["failure_code"], "failure_message": row["failure_message"],
         "retry_of_job_id": row["retry_of_job_id"], "retried_by_job_id": b.retried_by.get(row["id"]),
+        "run_all_id": row.get("run_all_id"),
         "result_ref": res.ref, "result_state": res.state, "stale": bool(res.reasons), "summary": res.summary,
     }
 
