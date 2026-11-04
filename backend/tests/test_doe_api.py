@@ -89,7 +89,8 @@ def test_settings_enabled_and_method_sources(client, world):
     s = api(client, "GET", "/doe/settings").json()
     assert s["enabled"] is True and s["reason"] is None
     assert s["paicad"] == {"ready": True, "version": "0.14.1", "pinned": "0.14.1", "warning": None}
-    assert s["gmsh"] == {"ready": True, "version": "4.13.1"} and s["scenarios"] == {"same": True, "mesh": True, "step": True, "compare": True}
+    assert s["gmsh"] == {"ready": True, "version": "4.13.1"} and s["scenarios"] == {"same": True, "mesh": True, "step": True, "compare": True,
+                                                                           "select": True}
     assert s["doe"]["default_types"] == ["D", "W"] and s["doe"]["methods"] == ["lhs", "halton", "fullfact"]
     assert s["part_title"] == "chassis rear" and s["max_designs"] == 200 and s["step_max_mb"] == 200
     ms = load_method_sources()
@@ -128,7 +129,7 @@ def test_disabled_reasons(tmp_path, engine, fake_dashboard, clock, case):
         eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1")
         uid = upload_step(c)
         if want is None:                                          # gmsh 없음 → ③ 만 비활성
-            assert s["scenarios"] == {"same": True, "mesh": True, "step": False, "compare": False}
+            assert s["scenarios"] == {"same": True, "mesh": True, "step": False, "compare": False, "select": True}
             r = c.post(f"{API}/doe/check-inputs", json=body([eid], uid, "step"), headers=W)
             assert r.status_code == 503 and r.json()["detail"]["code"] == "GMSH_UNAVAILABLE"
         else:

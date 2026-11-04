@@ -14,7 +14,10 @@ def test_defaults_mirror_core():
     from esl.doe import DEFAULT_COMMANDS, DEFAULTS
     from esl_platform.core.config import PAICAD_DEFAULTS, BeadDoeCfg, CommandsCfg, bead_doe_settings
 
-    assert BeadDoeCfg().model_dump() == DEFAULTS                       # 숫자는 한 곳(코어 기본값 거울)과 같게
+    dump = BeadDoeCfg().model_dump()
+    if "select" not in DEFAULTS:        # v0.15.0 S1(esl.doe.DEFAULTS["select"]) 병합 전에만 — 병합 후에는 전체 대조(이 분기 사라짐)
+        dump.pop("select")
+    assert dump == DEFAULTS                                            # 숫자는 한 곳(코어 기본값 거울)과 같게
     cc = CommandsCfg()
     assert {k: getattr(cc, k) for k in PAICAD_DEFAULTS} == DEFAULT_COMMANDS
     assert bead_doe_settings(None)["enabled"] is False
