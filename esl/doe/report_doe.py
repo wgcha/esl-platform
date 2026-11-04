@@ -164,6 +164,78 @@ def _methods_limits(ms: dict, extra_limits: list | None = None) -> list[str]:
             H.section("limits", "한계", "<ul>" + "".join(f"<li>{H.esc(s)}</li>" for s in lim) + "</ul>")]
 
 
+SOURCE_KO = {"step": "STEP", "mesh": "메시", "case": "Case"}
+METHOD_LABEL = {"cad": "CAD", "refine": "세분화", "remesh": "재메시", "fallback": "재메시(폴백)", "mesh_input": "메시 입력"}
+MESH_HEAD_CODES = ("COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_INPUT_SIZE_DIFF",
+                   "MESH_INPUT_DISCONNECTED", "MESH_REFINED", "MESH_REFINE_BIAS")
+
+
+def method_label(s: dict) -> str:
+    """'메시 방식' 짧은 표기(§8): 세분화(국부 ×0.5 · 1.5 mm · 면 3 · 요소 ×1.4) / 세분화(전역 2.4 mm · 요소 ×1.6)."""
+    m = s.get("mesh_method")
+    if not m:
+        return ""
+    rf = s.get("refine") or {}
+    if m == "refine" and rf:
+        r = rf.get("elem_ratio_ref") or rf.get("elem_ratio_h")
+        tail = f" · 요소 ×{float(r):.2f}" if r else ""
+        if rf.get("kind") == "local":
+            return (f"세분화(국부 ×{_f(rf.get('factor'))} · {_f(rf.get('h_mm'))} mm · 면 {len(rf.get('faces') or [])}"
+                    f"{tail})")
+        return f"세분화(전역 {_f(rf.get('h_mm'))} mm{tail})"
+    return METHOD_LABEL.get(m, m)
+
+
+def mesh_detail_html(shapes: list) -> str:
+    """메시 방식 상세 표(§9): 출처·방식·파트 ID·충실도(Hausdorff·면적비, 원 CAD 대비 ≤ +편차)·요소 크기 중앙값·h·배율·세분화 면·
+    요소 배수. CAD 만 쓴 정상 비교(모두 cad·step)면 표를 생략."""
+    if all((s.get("mesh_method") in (None, "cad")) and (s.get("source") or "step") == "step" for s in shapes):
+        return ""
+    trs = []
+    for s in shapes:
+        fd = s.get("fidelity") or {}
+        rf = s.get("refine") or {}
+        fid = ""
+        if fd.get("hausdorff_mm") is not None:
+            fid = (f"{float(fd['hausdorff_mm']):.3f} mm · 면적비 {float(fd.get('area_ratio') or 0):.3f} "
+                   f"(원 CAD 대비 ≤ {float(fd['hausdorff_mm']) + float(fd.get('deflection_mm') or 0):.3f} mm)")
+        r = rf.get("elem_ratio_ref") or rf.get("elem_ratio_h")
+        trs.append([s["id"], s.get("name") or "", SOURCE_KO.get(s.get("source") or "step", s.get("source") or ""),
+                    method_label(s), "" if s.get("part_id") is None else s.get("part_id"), fid,
+                    "" if s.get("edge_median_mm") is None else _f(s.get("edge_median_mm")),
+                    "" if not rf else _f(rf.get("h_mm")), "" if not rf or rf.get("factor") is None else _f(rf.get("factor")),
+                    "" if not rf or rf.get("kind") != "local" else len(rf.get("faces") or []),
+                    "" if not r else f"×{float(r):.2f}",
+                    "" if not s.get("cad_error") else f"{s['cad_error'].get('code')}: {s['cad_error'].get('message') or ''}"])
+    return ("<h3>메시 방식</h3>" + H.table(["id", "이름", "출처", "메시 방식", "파트 ID", "충실도(Hausdorff)", "요소 크기 중앙값 mm",
+                                         "h mm", "배율", "세분화 면", "요소 배수", "CAD 첫 오류"], trs, num=(4, 6, 7, 8, 9)))
+
+
+def convergence_html(shapes: list, bias: dict, esl: list) -> str:
+    """수렴 점검 표(C2-D-24): 세분화 형상마다 기준 d000 을 h_r 로 다시 푼 ESL별 δ(same_h_baseline 이면 두 개선율)."""
+    if not bias:
+        return ""
+    labels = {e["entry_id"]: e.get("label") or e["entry_id"][:8] for e in esl}
+    trs = []
+    for s in shapes:
+        b = bias.get(s["id"])
+        if not b:
+            continue
+        if b.get("delta_max") is None:
+            trs.append([s["id"], s.get("name") or "", _f(b.get("h_mm")), "—", "—", f"실패 {b.get('error') or ''}", ""])
+            continue
+        per = " · ".join(f"{labels.get(p['entry_id'], p['entry_id'][:8])} {p['delta'] * 100:+.2f} %"
+                         for p in b.get("per_esl") or [])
+        both = ""
+        if b.get("improvement_same_h") is not None:
+            both = f"같은 h 기준 {_pct(b['improvement_same_h'])}"
+        trs.append([s["id"], s.get("name") or "", _f(b.get("h_mm")), f"{float(b['delta_max']) * 100:.2f} %",
+                    f"{float(b.get('tol') or 0) * 100:g} %", ("초과 ⚠ " if b.get("over_tol") else "") + per, both])
+    return ("<h3>수렴 점검(기준 d000 을 세분화 h 로 다시 해석)</h3>"
+            + H.table(["id", "이름", "h_r mm", "max|δ|", "허용", "ESL별 δ = C_ref(h_r)/C_ref(h) − 1", "개선율"], trs,
+                      num=(2, 3, 4)))
+
+
 def render_compare(ctx: dict) -> str:
     """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
     ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만·필렛 제거 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
@@ -180,6 +252,10 @@ def render_compare(ctx: dict) -> str:
          f"{len(st.get('entry_ids') or [])}개 · 형상 {len(shapes)}개</p>"]
     if case_ref:
         S.append(f"<p class='warn'><b>COMPARE_REF_CASE_MESH</b> — {H.esc(_msg('COMPARE_REF_CASE_MESH'))}</p>")
+    for w in ctx.get("warnings") or []:                     # v0.16.0 메시 방식 머리 경고(esl_compare_mesh_options.md §9)
+        code, _sep, msg = str(w).partition(": ")
+        if code in MESH_HEAD_CODES:
+            S.append(f"<p class='warn'><b>{H.esc(code)}</b> — {H.esc(msg or _msg(code))}</p>")
     rk = res.get("ranking") or []
     if rk:
         b = rk[0]
@@ -204,6 +280,7 @@ def render_compare(ctx: dict) -> str:
     trs = []
     for s in shapes:
         trs.append([s["id"], s.get("name") or "", s.get("file_name") or ("Case 메시" if s.get("source") == "case" else ""),
+                    SOURCE_KO.get(s.get("source") or "step", s.get("source") or ""), method_label(s),
                     (str(s.get("sha256") or "")[:12] + "…") if s.get("sha256") else "", s.get("n_elems") or "",
                     "" if s.get("quad_ratio") is None else _f(s.get("quad_ratio")),
                     "" if not s.get("quality") else f"{s['quality']['fail_elems']} ({s['quality']['fail_ratio'] * 100:.2f} %)"
@@ -212,8 +289,10 @@ def render_compare(ctx: dict) -> str:
                        + (f": {', '.join(s['quality']['fallback_stages'])}" if s["quality"].get("fallback_stages") else "")
                        + ")" if s["quality"].get("fallback_faces") else ""),
                     SHAPE_STATE_KO.get(s.get("status"), s.get("status") or ""), s.get("code") or ""])
-    S.append(H.section("shapes", "2. 형상", H.table(["id", "이름", "파일", "sha256", "요소 수", "quad 비율", "품질 Fail",
-                                                     "준비 상태", "코드"], trs, num=(4, 5))))
+    inner = H.table(["id", "이름", "파일", "출처", "메시 방식", "sha256", "요소 수", "quad 비율", "품질 Fail", "준비 상태", "코드"],
+                    trs, num=(6, 7))
+    inner += mesh_detail_html(shapes) + convergence_html(shapes, ctx.get("refine_bias") or {}, ctx.get("esl") or [])
+    S.append(H.section("shapes", "2. 형상", inner))
     df = prof.get("defeature") or {}
     if df:
         S.append("<p class='small muted'>작은 형상 처리(이슈 #53 holes table 근사): 내부 경계 면적 &lt; "

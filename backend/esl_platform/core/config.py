@@ -648,7 +648,7 @@ class BeadDoeCompareRemeshCfg(_M):
 
     enabled: bool = True
     feature_angle_deg: float = Field(default=30.0, gt=0, lt=90)
-    curve_angle_deg: float = Field(default=180.0, gt=0, le=180)
+    curve_angle_deg: float = Field(default=60.0, gt=0, le=180)      # v0.16.0 통합: 180 → 60(판 모서리 0.79 → 0.13 mm)
     linear_deflection_mm: float = Field(default=0.05, gt=0)
     angular_deflection_deg: float = Field(default=5.0, gt=0, le=180)
     merge_tol_mm: float = Field(default=0.001, gt=0)

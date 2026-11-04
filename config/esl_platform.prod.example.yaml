@@ -197,7 +197,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     remesh:                           # v0.16.0 삼각형 재메시(C2-D-11~14): OCC 삼각화 → 면 분류(특징각) → quad 우선 재메시
       enabled: true
       feature_angle_deg: 30.0         # classifySurfaces 특징각(0..90 미만)
-      curve_angle_deg: 180.0          # 곡선 분할각(0 초과..180)
+      curve_angle_deg: 60.0           # 곡선 분할각(0 초과..180) — 60 이면 판 모서리 꼭짓점 유지(180 은 0.8 mm 깎임)
       linear_deflection_mm: 0.05      # OCC 삼각화 선형 편차(> 0, ≤ fidelity.warn_mm)
       angular_deflection_deg: 5.0
       merge_tol_mm: 0.001

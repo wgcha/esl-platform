@@ -239,9 +239,11 @@ def test_gmsh_check_and_status_cache(env, monkeypatch):
     g = pp.gmsh_check()
     try:
         import gmsh  # noqa: F401
+        import gmsh as _g
         assert g["ready"] is True and g["version"]
-    except Exception:  # noqa: BLE001
-        assert g == {"ready": False, "version": None}
+        assert g["remesh"] is bool(hasattr(_g.model.mesh, "importStl"))        # v0.16.0 C2-D-16 재메시 가능 기록
+    except ImportError:
+        assert g == {"ready": False, "version": None, "remesh": False}
     c = pp.StatusCache()
     v1 = c.get(env["s"])
     assert v1["paicad"]["ready"] is True and "gmsh" in v1

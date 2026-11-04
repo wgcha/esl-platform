@@ -62,6 +62,6 @@ def test_resources_used_by_code_are_collected():
 
 
 def test_version_is_0_15_0():
-    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.15.1"
+    assert (ROOT / "VERSION").read_text(encoding="utf-8").strip() == "0.16.0"
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [0.15.0]" in log and "## [0.14.1]" in log and "## [0.14.0]" in log and "## [0.13.0]" in log and "## [0.12.5]" in log and "## [0.12.4]" in log and "## [0.12.3]" in log and "## [0.12.2]" in log and "## [0.12.1]" in log and "## [0.12.0]" in log and "## [0.11.0]" in log and "## [0.10.1]" in log and "## [0.10.0]" in log

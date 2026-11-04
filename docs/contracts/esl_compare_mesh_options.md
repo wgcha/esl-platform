@@ -105,6 +105,7 @@ DoeResultOut.ranking[].shape / baseline.shape / excluded[].shape += { source, me
 - **Core 신규** `esl/doe/mesh_refine.py`: `plan(stage, prev_meta, h, cfg, avail_bytes) → [attempt…]`(예측·건너뜀 판정), `neighbor_faces(gmsh, keys, rings)`, `estimate_elems(face_areas, h, local_keys, h_l)`.
 - **Core 추가** `esl/doe/mesh_gmsh.py`: 선택 cfg 키 `mesh.size_fields: [{keys:[bbox_key…], size_mm}]` 를 `_session` 에서 OCC 동기화 직후에 Field 로 적용(키가 없으면 아무것도 하지 않음), `quality()` 는 `mc["max_elems"]` 를 그대로 읽음(호출자가 refine 상한을 넣은 cfg 사본을 넘김). **mesh-sphere 병합 뒤에** `_session` 몇 줄만 추가합니다(충돌 영역이므로 선행 조건 유지).
 - **Worker** `esl/doe/stages.py _cmp_mesh_shape`: 사다리 실행기(시도마다 `run_isolated`, 시도 폴더 `prep/shapes/<did>/mesh/try_<n>/`, 성공본을 `mesh/` 로 `atomic_replace`), `_cmp_refine_bias`(BD_BASELINE 뒤 d000 h_r 재해석, BD_POST 에서 δ 계산), `report_doe.py` 열·경고.
+  - (통합 2026-11-04 구현) auto 의 첫 cad 시도는 기존 경로 그대로 `mesh/` 에서(성공이면 시도 폴더 없음 — 바이트 불변), 실패한 뒤의 시도만 `try_<n>/`(n = 1부터). d000 h_r 재해석은 BD_POST 시작 부분에서 실행(별도 작업 단계 없음, 캐시 `run/designs/d000_h<h>/` — done.json 해시가 같으면 재사용). 결과 shape `refine.faces[].bbox_key` 는 문자열(bbox 6값 쉼표 연결 — 프런트 타입). 메시 입력 기준의 `reference_source` 는 `step`(Literal step|case 유지).
 - 메시지(`resources/doe_messages.json`): `MESH_REFINED`, `MESH_REFINE_BIAS`, `REFINE_SKIPPED_LIMIT`, `REFINE_LOCAL_NO_FACE`, `REFINE_CONVERGENCE_SKIPPED`.
 
 ## 5. 설정 키 (거울 규칙: `esl/doe/__init__.DEFAULTS["compare"]` = `core/config.py` pydantic 기본값 = `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml`, `tests/pipeline/test_config.py` 거울 시험)
@@ -117,7 +118,7 @@ bead_doe:
     remesh:                      # C2-D-11~14
       enabled: true
       feature_angle_deg: 30.0    # classifySurfaces 특징각(1..89)
-      curve_angle_deg: 180.0     # 곡선 분할각
+      curve_angle_deg: 60.0      # 곡선 분할각(통합 2026-11-04: 180 → 60 — 180 이면 판 모서리가 0.79 mm 깎이고 60 이면 0.13 mm)
       linear_deflection_mm: 0.05 # OCC 삼각화 선형 편차(>0, ≤ fidelity.warn_mm)
       angular_deflection_deg: 5.0
       merge_tol_mm: 0.001
@@ -155,7 +156,7 @@ bead_doe:
       global: {factors: [0.8, 0.667]}   # 3 → 2.4 → 2.0 mm
       convergence: {enabled: true, tol: null, same_h_baseline: false}
 ```
-- pydantic: factors 는 (0,1) 범위에서 내림차순, `min_size_mm` > 0, `max_elems` ≥ `mesh.max_elems`, ladder ⊆ {cad, refine_local, refine_global, remesh} 이고 cad 가 맨 앞, `mesh.size_min_mm` ≤ `min_size_mm`(아니면 CONFIG_INVALID — `check_h` 범위와 맞춤).
+- pydantic: factors 는 (0,1) 범위에서 내림차순, `min_size_mm` > 0, `max_elems` ≥ `mesh.max_elems`, ladder ⊆ {cad, refine_local, refine_global, remesh} 이고 cad 가 맨 앞. `mesh.size_min_mm` 과 `min_size_mm` 의 대소 검증은 하지 않습니다(기본값 1.0 > 0.5 와 충돌) — 세분화 시도만 하한을 `refine.min_size_mm` 으로 낮춥니다(attempt_cfg — `mesh_refine.attempt_cfg` 가 `check_h` 하한을 내림, 통합 2026-11-04).
 
 ## 6. API · 스키마 · DB
 
@@ -216,7 +217,7 @@ BD_LOADS·BD_*·BD_POST  변경 없음(메시 dict 형식 같음). ranking.csv �
 | V-C2-13 | 실패 주입(monkeypatch: h > 2.5 면 특정 bbox 면 실패) → refine_local 0.75 에서 성공, `mesh_method refine`·`refine.kind local`·faces·elem_ratio, `MESH_REFINED`. local 을 끄면 global 2.4 에서 성공. 국부 성공의 요소 수 < 전역 | `tests/doe/test_mesh_refine.py`, `tests/doe/test_step_compare.py` |
 | V-C2-14 | 상한: `refine.max_elems` 를 작게 → 해당 단계 `REFINE_SKIPPED_LIMIT`(reason elems) 후 다음 단계·remesh. 가용 메모리 monkeypatch → reason memory. `total_timeout_s` → reason time. 예측식 단위 시험(평판 면적/h²) | 같은 파일 |
 | V-C2-15 | 정상 형상: 사다리 미진입, `size_fields` 없음 → gmsh 옵션 dict·`mesh.npz` 바이트가 v0.15.x 와 동일(V-C2-8 확장). 세분화 시도 2회 실행 → 바이트 동일 | `tests/doe/test_mesh_gmsh.py` |
-| V-C2-16 | 수렴 점검: 합성 평판 d000 을 h 와 h_r 로 풀어 δ 기록, tol 경계에서 `MESH_REFINE_BIAS`, same_h_baseline 개선율, Case 기준이면 생략 info, 캐시 재사용 | `worker/tests/test_doe_compare_e2e.py` |
+| V-C2-16 | 수렴 점검: 합성 평판 d000 을 h 와 h_r 로 풀어 δ 기록, tol 경계에서 `MESH_REFINE_BIAS`, same_h_baseline 개선율, Case 기준이면 생략 info, 캐시 재사용 | `tests/doe/test_step_compare.py`(통합 2026-11-04: 세분화 형상을 만들려면 cad 시도 실패 주입이 필요한데 워커 E2E 는 코어 단계를 spawn 자식에서 돌려 monkeypatch 가 닿지 않음 — 코어 단계 직접 실행으로 이동) |
 | V-C2-17 | 설정 거울·검증(ladder 순서·factors·상한 관계) | `tests/pipeline/test_config.py` |
 
 ## 11. 파일 소유권과 작업 단계
@@ -243,7 +244,7 @@ BD_LOADS·BD_*·BD_POST  변경 없음(메시 dict 형식 같음). ranking.csv �
 | ID | 리스크 | 대응 |
 |---|---|---|
 | R-C2-1 | 배포 gmsh 에 `model.mesh.importStl` 이 없거나 OCC STL 옵션 이름이 다름 | 시작 시 `hasattr` 확인 → `remesh_available`, 미지원이면 auto 는 cad 만(C2-D-16). 구현 첫 작업으로 배포 gmsh 버전에서 R3 확인 |
-| R-C2-2 | classify 가 비드 측벽·작은 필렛을 아주 작은 패치로 쪼개 재메시가 실패하거나 요소가 나빠짐 | 특징각 설정 키, `algorithms` 재시도, 실패 문구로 메시 입력 안내 |
+| R-C2-2 | classify 가 비드 측벽·작은 필렛을 아주 작은 패치로 쪼개 재메시가 실패하거나 요소가 나빠짐. **알려진 한계(통합 2026-11-04)**: 필렛이 접선으로 이어진 비드(측벽–필렛–바닥이 G1 연속)는 특징각으로 경계를 못 찾아 `REMESH_CLASSIFY_FAILED` 로 실패할 수 있음 | 특징각 설정 키, `algorithms` 재시도, 실패 문구로 메시 입력 안내. `auto` 사다리는 cad → refine_local → refine_global → remesh 순이라 이런 형상은 세분화가 먼저 시도되어(대개 CAD 면 구조로 성공) 영향이 줄어듦. 남는 경우는 메시 입력(옵션 1) 권장(user.md ④ 메시 옵션) |
 | R-C2-3 | 재메시가 날카로운 비드 모서리를 둥글게 만들어 강성이 달라짐 | 충실도 지표·경고, 방식 혼합 경고, 보고서 한계 절 |
 | R-C2-4 | 메시 입력 크기·품질이 STEP 메시와 달라 개선율에 메시 차이가 섞임 | `MESH_INPUT_SIZE_DIFF`, 품질 요약, 혼합 경고, V-C2-7 등가 시험 |
 | R-C2-5 | 큰 rad(수백 MB, 파트 많음)의 check-inputs 스캔 시간 | `deck.scan` 만(숫자 블록 위치만), `max_mb` 상한 |

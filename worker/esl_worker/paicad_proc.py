@@ -284,15 +284,19 @@ def version_check(settings, cfg: dict | None = None) -> dict[str, Any]:
 
 
 def gmsh_check(timeout: float = 60.0) -> dict[str, Any]:
-    """{ready, version} — 별도 python 프로세스에서 import(공유 라이브러리 누락·크래시가 워커에 영향 없음)."""
-    code = "import json, gmsh; print(json.dumps({'version': str(getattr(gmsh, '__version__', '') or '') or None}))"
+    """{ready, version, remesh} — 별도 python 프로세스에서 import(공유 라이브러리 누락·크래시가 워커에 영향 없음).
+    v0.16.0 remesh = ``gmsh.model.mesh.importStl`` 존재(④ 삼각형 재메시, esl_compare_mesh_options.md C2-D-16·R-C2-1) —
+    백엔드 ``remesh_available`` 가 이 값을 읽는다."""
+    code = ("import json, gmsh; print(json.dumps({'version': str(getattr(gmsh, '__version__', '') or '') or None, "
+            "'remesh': bool(hasattr(gmsh.model.mesh, 'importStl'))}))")
     try:
         rc, out = localproc.run_capture([sys.executable, "-c", code], cwd=None, env=None, timeout_s=timeout, what="gmsh")
         if rc != 0:
-            return {"ready": False, "version": None}
-        return {"ready": True, "version": json.loads(out.decode("utf-8", errors="replace").strip()).get("version")}
+            return {"ready": False, "version": None, "remesh": False}
+        v = json.loads(out.decode("utf-8", errors="replace").strip())
+        return {"ready": True, "version": v.get("version"), "remesh": bool(v.get("remesh"))}
     except (localproc.ProcError, ValueError):
-        return {"ready": False, "version": None}
+        return {"ready": False, "version": None, "remesh": False}
 
 
 def _settings_cfg(settings) -> dict:

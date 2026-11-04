@@ -103,7 +103,7 @@ DEFAULTS: dict = {
                          # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤)
                          "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "remesh"]},
                 # v0.16.0 삼각형 재메시(C2-D-11~14 — esl.doe.mesh_remesh)
-                "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 180.0,
+                "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
                            "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
                            "stl_max_tris": 5000000, "algorithms": [6, 5, 1], "recombine": True, "keep_stl": False,
                            "timeout_s": None, "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}},
