@@ -5,6 +5,7 @@ SCENARIO_UNSUPPORTED, run 이 matrix_sha256 없이 동작(PREP_NOT_READY·ALREAD
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -180,6 +181,33 @@ def test_check_inputs_errors(client, world, engine, settings_dict):
     r = api(client, "POST", "/doe/check-inputs", json=cbody(world, [sh[0], {"upload_id": u1, "name": "D1"},
                                                                    {"upload_id": u2, "name": "D2"}]))
     assert r.status_code == 200 and [w["code"] for w in r.json()["warnings"]] == ["SHAPE_DUPLICATE_FILE"]
+    # 같은 파일을 (upload_id, rel 생략)·(upload_id, rel) 로 두 번 → 422(정규화된 동일 파일 판정)
+    for pair in ([{"upload_id": u1, "name": "D1"}, {"upload_id": u1, "rel": "rad/dup.step", "name": "D1b"}],
+                 [{"upload_id": u1, "rel": "rad/dup.step", "name": "D1"}, {"upload_id": u1, "name": "D1b"}]):
+        d = err([sh[0], *pair])
+        assert d["code"] == "INVALID_PARAMS", d
+
+
+
+def test_check_inputs_same_resolved_file(client, world, monkeypatch):
+    """지정(upload_id·rel)이 달라도 해석된 실제 파일이 같으면(정규화 경로) 422 INVALID_PARAMS + index."""
+    from esl_platform.api.services import doe as svc
+
+    sh = shapes3(client)
+    real = svc.up_svc.doe_source
+    calls = {}
+
+    def fake(ctx, principal, upload_id, project_id, kind, rel=None):
+        up, root, path = real(ctx, principal, upload_id, project_id, kind, rel=rel)
+        if rel == sh[2]["rel"]:                                  # 세 번째 형상 → 두 번째와 같은 파일(경로 표기만 다름)
+            path = os.path.join(os.path.dirname(calls["p1"]), ".", os.path.basename(calls["p1"]))
+        elif rel == sh[1]["rel"]:
+            calls["p1"] = path
+        return up, root, path
+    monkeypatch.setattr(svc.up_svc, "doe_source", fake)
+    r = api(client, "POST", "/doe/check-inputs", json=cbody(world, sh))
+    assert r.status_code == 422 and code(r) == "INVALID_PARAMS", r.text
+    assert r.json()["detail"]["index"] == [1, 2]
 
 
 def test_total_size_limit(tmp_path, engine, fake_dashboard, clock):

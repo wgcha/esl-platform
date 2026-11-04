@@ -47,6 +47,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
+from esl.config import SOLVER_CHECK_DEFAULTS, solver_check_settings
 from esl.errors import EslError
 from esl.mech import _elements as el
 
@@ -207,16 +208,27 @@ class _NotPD(Exception):
     """양정치가 아님(분해 중 0/음 피벗)."""
 
 
-# 정적 해 잔차 판정(v0.14.0, decisions D-0.14-RESID). 직접법 해는 아래 둘 중 하나를 만족하면 수용한다.
-#  1) 상대 잔차 ‖Ku−F‖/‖F‖ ≤ RESID_REL_TOL(1e-8) — 이전 판정 그대로(이전에 통과한 해는 그대로 통과 = 결과 불변).
-#  2) 노름 후방 오차 η = ‖Ku−F‖ / (‖K_ff‖∞·‖u‖ + ‖F‖) ≤ RESID_BACKWARD_TOL(1e-9).
+# 정적 해 잔차 판정(v0.14.0, decisions D-0.14-RESID; 0.14.0 검증 수정). 직접법 해는 아래 1) 또는 2) 를 만족하고 3) 을 만족하면 수용.
+#  1) 상대 잔차 rr = ‖Ku−F‖/‖F‖ ≤ RESID_REL_TOL(1e-8) — 이전 판정 그대로(이전에 통과한 해는 그대로 통과 = 결과 불변).
+#  2) 노름 후방 오차 η = ‖Ku−F‖ / (‖K_ff‖∞·‖u‖ + ‖F‖) ≤ RESID_BACKWARD_TOL(1e-9) **이면서** rr ≤ resid_rel_cap
+#     (설정 solver.resid_rel_cap, 기본 esl.config.SOLVER_CHECK_DEFAULTS).
+#  3) 반력 평형 |ΣR+ΣF|∞ / max(|ΣF|∞, Σ|F|, tiny) ≤ equilibrium_tol_rel(설정 solver.equilibrium_tol_rel) — _check_equilibrium.
 # 1) 만으로는 조건수 κ 가 큰 문제(얇은 판·3점 지지·3 mm 메시 — 같은 분해 품질에서도 ‖r‖/‖F‖ ≈ ε·κ)가 정상 해인데도
 # SOLVER_SINGULAR 가 된다(합성 평판 3 mm t 0.8: ‖r‖/‖F‖ 3.4e-8, η 2.7e-17). 후방 오차는 문제 크기(‖K‖·‖u‖)에 비례한
-# 기준이라 조건수와 무관하고, 후방 안정 직접법은 η ≈ 1e-17~1e-14 다. 1e-9 ≈ 4.5e6·ε 는 dof 수백만에서도 정상 해를 막지
-# 않으면서 피벗 섭동(1e-8)·분해 실패 해(η ≫ 1e-9)는 막는다. 특이 판정의 1차 방어는 _check_coverage·_check_restraint·분해
-# 오류이고 이 검사는 해의 수치 품질만 본다. 반복법(CG)은 기존 판정(max(1e-8, 100·rtol)) 그대로.
+# 기준이라 조건수와 무관하다. 단 η 는 ‖u‖ 가 커지면 분모가 커져 작아지므로, 강체 모드가 남은 K_ff 에 평형이 안 맞는
+# 하중(‖u‖ ~1e11, rr 6.8 인데 η 1e-17)이나 대각 1e-8 섭동(rr 1e-2, η 1e-10)을 η 만으로는 거르지 못한다. 그래서
+# 2) 에 상대 잔차 상한을 함께 걸고 3) 반력 평형을 따로 본다(강체 모드 하중 성분은 반력으로 전달되지 않아 평형이 깨진다).
+# 특이 판정의 1차 방어는 _check_coverage·_check_restraint·분해 오류다. 반복법(CG)은 1) 대신 max(1e-8, 100·rtol), 3) 은 공통.
 RESID_REL_TOL = 1e-8
 RESID_BACKWARD_TOL = 1e-9
+RESID_REL_CAP = float(SOLVER_CHECK_DEFAULTS["resid_rel_cap"])
+EQUIL_TOL_REL = float(SOLVER_CHECK_DEFAULTS["equilibrium_tol_rel"])
+
+
+def solver_check_kwargs(solver_cfg: dict | None) -> dict:
+    """설정 solver 절(esl solver·opt_run.solver)에서 ShellModel 해 검사 인자(resid_rel_cap·equil_tol_rel). 없으면 기본값."""
+    c = solver_check_settings(solver_cfg)
+    return {"resid_rel_cap": float(c["resid_rel_cap"]), "equil_tol_rel": float(c["equilibrium_tol_rel"])}
 
 
 def _norm_inf(A) -> float:
@@ -226,7 +238,8 @@ def _norm_inf(A) -> float:
     return float(np.max(np.asarray(abs(A).sum(axis=1)).ravel()))
 
 
-def _check_resid(lu, uf, res, rhs, norm_K: float, stats: dict, backward_tol: float = RESID_BACKWARD_TOL) -> float:
+def _check_resid(lu, uf, res, rhs, norm_K: float, stats: dict, backward_tol: float = RESID_BACKWARD_TOL,
+                 rel_cap: float = RESID_REL_CAP) -> float:
     """해 잔차 판정(위 주석). 통과하면 상대 잔차 rr 을 돌려주고 stats 에 solve_resid_rel·solve_backward_err 기록."""
     nr = float(np.linalg.norm(rhs))
     nres = float(np.linalg.norm(res))
@@ -237,13 +250,28 @@ def _check_resid(lu, uf, res, rhs, norm_K: float, stats: dict, backward_tol: flo
     if isinstance(lu, _CG):
         ok = finite and rr <= max(RESID_REL_TOL, 100 * lu.rtol)
     else:
-        ok = finite and (rr <= RESID_REL_TOL or eta <= backward_tol)
+        ok = finite and (rr <= RESID_REL_TOL or (eta <= backward_tol and rr <= rel_cap))
     if not ok:
         raise EslError("SOLVER_SINGULAR", f"해 잔차 과대 ‖Ku−F‖/‖F‖={rr:.2e}, 후방 오차 η={eta:.2e}"
-                       f"(허용 ‖r‖/‖F‖ ≤ {RESID_REL_TOL:.0e} 또는 η ≤ {backward_tol:.0e})")
+                       f"(허용 ‖r‖/‖F‖ ≤ {RESID_REL_TOL:.0e} 또는 η ≤ {backward_tol:.0e} 이면서 "
+                       f"‖r‖/‖F‖ ≤ {rel_cap:.0e})")
     stats["solve_resid_rel"] = rr
     stats["solve_backward_err"] = eta
     return rr
+
+
+def _check_equilibrium(F, R, stats: dict, tol: float = EQUIL_TOL_REL) -> float:
+    """반력 평형(위 주석 3): e = |ΣR+ΣF|∞ / max(|ΣF|∞, Σ|F|, tiny). 자기평형 하중(ΣF≈0)도 Σ|F| 로 규모를 잡는다.
+    넘으면 SOLVER_SINGULAR, 통과하면 stats["solve_equilibrium_rel"] 기록."""
+    F = np.asarray(F, dtype=np.float64)
+    sf = np.abs(F.sum(axis=0)).max() if F.size else 0.0
+    scale = max(float(sf), float(np.abs(F).sum()), np.finfo(float).tiny)
+    e = float(np.abs(np.asarray(R).sum(axis=0) + F.sum(axis=0)).max()) / scale if F.size else 0.0
+    if not np.isfinite(e) or e > tol:
+        raise EslError("SOLVER_SINGULAR", f"반력 평형 불일치 |ΣR+ΣF|/Σ|F|={e:.2e}(허용 ≤ {tol:.0e}) — "
+                       "구속되지 않은 강체 모드 또는 특이 K_ff 의심")
+    stats["solve_equilibrium_rel"] = e
+    return e
 
 
 OOM_CODE = "SOLVER_OUT_OF_MEMORY"
@@ -553,9 +581,12 @@ def _principal_submatrix(K: sp.csr_matrix, keep: np.ndarray) -> sp.csr_matrix:
 class ShellModel:
     def __init__(self, x0, conn, elem_type, thickness, E, nu, drill_factor: float = 1e-4,
                  backend: str = "auto", iter_rtol: float = 1e-10, iter_maxiter: int | None = None,
-                 resid_backward_tol: float = RESID_BACKWARD_TOL):
+                 resid_backward_tol: float = RESID_BACKWARD_TOL, resid_rel_cap: float = RESID_REL_CAP,
+                 equil_tol_rel: float = EQUIL_TOL_REL):
         self.x0 = np.ascontiguousarray(x0, dtype=np.float64)
         self.resid_backward_tol = float(resid_backward_tol)
+        self.resid_rel_cap = float(resid_rel_cap)
+        self.equil_tol_rel = float(equil_tol_rel)
         self.conn = np.asarray(conn, dtype=np.int64)
         self.elem_type = np.asarray(elem_type).astype(np.int64)
         ne = self.conn.shape[0]
@@ -840,13 +871,14 @@ class ShellModel:
             uf = uf - lu.solve(resid(uf))            # 반복 개선 1회
         res = resid(uf)
         _record_iter(lu, self.stats["K_ff"])
-        _check_resid(lu, uf, res, rhs, norm_K, self.stats, self.resid_backward_tol)
+        _check_resid(lu, uf, res, rhs, norm_K, self.stats, self.resid_backward_tol, self.resid_rel_cap)
         del lu
         u[free] = uf
         reac = (K @ u - f).reshape(self.n_nodes, 6)[:, :3]
         R = np.zeros((self.n_nodes, 3))
         for p, d in cons:
             R[p, d] = reac[p, d]
+        _check_equilibrium(F, R, self.stats, self.equil_tol_rel)
         return u.reshape(self.n_nodes, 6), R
 
     # ------------------------------------------------------------------
@@ -963,11 +995,12 @@ class FactorizedSolve:
             uf = uf - lu.solve(resid(uf))
         res = resid(uf)
         _record_iter(lu, m.stats["K_ff"])
-        _check_resid(lu, uf, res, rhs, self.norm_K, m.stats, m.resid_backward_tol)
+        _check_resid(lu, uf, res, rhs, self.norm_K, m.stats, m.resid_backward_tol, m.resid_rel_cap)
         u[free] = uf
         reac = (K @ u - f).reshape(m.n_nodes, 6)[:, :3]
         R = np.zeros((m.n_nodes, 3))
         for p, d in self.cons:
             R[p, d] = reac[p, d]
+        _check_equilibrium(F, R, m.stats, m.equil_tol_rel)
         self.n_solves += 1
         return u.reshape(m.n_nodes, 6), R

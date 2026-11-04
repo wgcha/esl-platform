@@ -249,6 +249,9 @@ SCHEMA: dict[str, Any] = {
         "iter_maxiter": _opt(_int(1)),          # null = 자동(ShellModel 기본)
         "drill_factor": _num(0.0, 1.0, lo_open=True),
         "equilibrium_warn_rel": _num(0.0, lo_open=True),
+        # 선택(OPTIONAL_KEYS, v0.14.0 D-0.14-RESID): 자체 쉘 솔버 해 수용 검사. 없으면 SOLVER_CHECK_DEFAULTS
+        "resid_rel_cap": _num(0.0, 1.0, lo_open=True, hi_open=True),      # 후방 오차로 수용할 때도 ‖Ku−F‖/‖F‖ 상한
+        "equilibrium_tol_rel": _num(0.0, 1.0, lo_open=True, hi_open=True),  # 반력 평형 |ΣR+ΣF|/max(|ΣF|,Σ|F|) 허용값(넘으면 SOLVER_SINGULAR)
     },
     "validation": {
         "disp_rms_rel_max": _num(0.0, lo_open=True),
@@ -340,11 +343,13 @@ EXTRACT_SOURCE_DEFAULTS = {
     "tensor_layer_exclude": ["Max", "Min"],
     "tensor_layer_prefer": ["Lower", "Upper"],
 }
+# v0.14.0 자체 쉘 솔버 해 수용 검사(D-0.14-RESID) 기본값 단일 출처 — esl solver 절·opt_run.solver 공통, cfg 에는 주입 안 함.
+SOLVER_CHECK_DEFAULTS = {"resid_rel_cap": 1.0e-4, "equilibrium_tol_rel": 1.0e-6}
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
                            *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
-                           "extract.dump_max_bytes"})
+                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS)})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 
@@ -399,6 +404,14 @@ def support_check_settings(cfg: dict | None) -> dict:
     ac = sup.get("auto_check") if isinstance(sup, dict) else None
     if isinstance(ac, dict):
         out.update({k: v for k, v in ac.items() if k in SUPPORT_CHECK_DEFAULTS})
+    return out
+
+
+def solver_check_settings(solver_cfg: dict | None) -> dict:
+    """solver 절(esl 설정 solver 또는 opt_run.solver dict)의 해 수용 검사 키. 없거나 None 이면 SOLVER_CHECK_DEFAULTS."""
+    out = dict(SOLVER_CHECK_DEFAULTS)
+    if isinstance(solver_cfg, dict):
+        out.update({k: float(solver_cfg[k]) for k in SOLVER_CHECK_DEFAULTS if solver_cfg.get(k) is not None})
     return out
 
 

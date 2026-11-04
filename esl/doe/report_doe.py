@@ -165,7 +165,7 @@ def _methods_limits(ms: dict, extra_limits: list | None = None) -> list[str]:
 
 def render_compare(ctx: dict) -> str:
     """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
-    ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·defeature 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
+    ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만·필렛 제거 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
     st = ctx.get("study") or {}
     ip = ctx.get("inputs") or {}
     ver = ctx.get("versions") or {}

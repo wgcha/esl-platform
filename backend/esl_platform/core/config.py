@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
 ENV_CONFIG = "ESL_PLATFORM_CONFIG"
 ENV_PROFILE = "ESL_PROFILE"
@@ -287,6 +287,18 @@ class OptModeCfg(_M):
 class OptSolverCfg(_M):
     drill_factor: float = Field(default=1.0e-4, gt=0)
     backend: str = "auto"
+    # 자체 쉘 솔버 해 수용 검사(D-0.14-RESID). None = 코어 기본값(esl.config.SOLVER_CHECK_DEFAULTS) — 지정했을 때만
+    # dump 에 넣는다(코어 opt DEFAULTS 와 같은 모양·DOE 설정 해시 불변)
+    resid_rel_cap: float | None = Field(default=None, gt=0, lt=1)
+    equilibrium_tol_rel: float | None = Field(default=None, gt=0, lt=1)
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_checks(self, handler):
+        d = handler(self)
+        for k in ("resid_rel_cap", "equilibrium_tol_rel"):
+            if d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class OptLicenseRetryCfg(_M):

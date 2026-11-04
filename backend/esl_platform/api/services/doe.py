@@ -423,6 +423,7 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
         raise unprocessable("INVALID_PARAMS", "같은 업로드 파일(upload_id·rel)을 두 번 넣었습니다 — 한 업로드에 STEP 이 "
                             "여러 개면 형상마다 rel 을 주세요")
     out_shapes, mat_shapes, total = [], [], 0.0
+    seen_path: dict[str, int] = {}
     for i, sh in enumerate(shapes):
         try:
             up, _root, path = up_svc.doe_source(ctx, principal, sh.upload_id, body.project_id, "step", rel=sh.rel)
@@ -430,6 +431,13 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
         except DomainError as exc:
             raise DomainError(exc.code, f"형상 {i + 1}({names[i]}): {exc.message}", status=exc.status,
                               **{**exc.extra, "index": i}) from None
+        # 정규화된 동일 파일 판정(v0.14.0 검증 수정): (upload_id, rel=None) 과 같은 파일을 rel 로 고른 형상 등
+        # 지정 방식이 달라도 실제 파일이 같으면 거부(같은 내용 다른 파일은 아래 SHAPE_DUPLICATE_FILE 경고만)
+        key = os.path.normcase(os.path.realpath(path))
+        if key in seen_path:
+            raise unprocessable("INVALID_PARAMS", f"형상 {seen_path[key] + 1}({names[seen_path[key]]})·{i + 1}({names[i]}) 이 "
+                                "같은 업로드 파일입니다 — 형상마다 다른 STEP 파일을 고르세요", index=[seen_path[key], i])
+        seen_path[key] = i
         sha = up_svc.upload_file_sha(up, path)
         total += os.path.getsize(path) / (1024 * 1024)
         out_shapes.append({"index": i, "name": names[i], "file_name": info["file_name"], "sha256": sha,

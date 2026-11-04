@@ -53,7 +53,7 @@ from esl.export import csvout, optistruct, radioss
 from esl.io import RESULT_FILES, SCALAR_SOURCES, decide_shear, pack_results, rad_eq, strain_source_of
 from esl.io.results_csv import METRICS
 from esl.mech import kabsch, strain, supports, tstar
-from esl.mech.shell import ShellModel
+from esl.mech.shell import ShellModel, solver_check_kwargs
 from esl.rad import parse_rad, scan_includes
 from esl.rad.parser import max_line_bytes_of
 from esl.report import field as _field
@@ -203,9 +203,11 @@ class StoredModel:
     includes: list = field(default_factory=list)
 
     def shell(self, drill_factor: float, backend: str = "auto", iter_rtol: float = 1e-10,
-              iter_maxiter: int | None = None) -> ShellModel:
+              iter_maxiter: int | None = None, **check) -> ShellModel:
+        """check = solver_check_kwargs(solver 설정) — 해 수용 검사(resid_rel_cap·equil_tol_rel), 없으면 기본값."""
         return ShellModel(self.x0, self.conn, self.elem_type, self.thickness, self.E, self.nu,
-                          drill_factor=drill_factor, backend=backend, iter_rtol=iter_rtol, iter_maxiter=iter_maxiter)
+                          drill_factor=drill_factor, backend=backend, iter_rtol=iter_rtol, iter_maxiter=iter_maxiter,
+                          **check)
 
     def centroids(self) -> np.ndarray:
         q = self.elem_type == 4
@@ -972,7 +974,8 @@ def _shell(ctx: Context, model: StoredModel) -> ShellModel:
     scfg = ctx.cfg["solver"]
     with warnings.catch_warnings(record=True) as wl:
         warnings.simplefilter("always", RuntimeWarning)
-        sm = model.shell(scfg["drill_factor"], scfg["backend"], scfg["iter_rtol"], scfg["iter_maxiter"])
+        sm = model.shell(scfg["drill_factor"], scfg["backend"], scfg["iter_rtol"], scfg["iter_maxiter"],
+                         **solver_check_kwargs(scfg))
     ctx.warnings.extend(str(w.message) for w in wl)
     return sm
 
