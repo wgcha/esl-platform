@@ -2539,7 +2539,7 @@ export interface DoeCheckOut {
   reference_source?: "step" | "case" | null;
   /** v0.16.0 ④ 적용 메시 방식·재메시 가능 */
   mesh_mode?: DoeMeshMode | null;
-  remesh_available?: boolean;
+  remesh_available?: boolean | null;
   warnings: DoeWarning[];
 }
 export interface DoeStudyIn extends DoeCheckIn {
