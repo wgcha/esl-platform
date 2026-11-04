@@ -207,6 +207,45 @@ class _NotPD(Exception):
     """양정치가 아님(분해 중 0/음 피벗)."""
 
 
+# 정적 해 잔차 판정(v0.14.0, decisions D-0.14-RESID). 직접법 해는 아래 둘 중 하나를 만족하면 수용한다.
+#  1) 상대 잔차 ‖Ku−F‖/‖F‖ ≤ RESID_REL_TOL(1e-8) — 이전 판정 그대로(이전에 통과한 해는 그대로 통과 = 결과 불변).
+#  2) 노름 후방 오차 η = ‖Ku−F‖ / (‖K_ff‖∞·‖u‖ + ‖F‖) ≤ RESID_BACKWARD_TOL(1e-9).
+# 1) 만으로는 조건수 κ 가 큰 문제(얇은 판·3점 지지·3 mm 메시 — 같은 분해 품질에서도 ‖r‖/‖F‖ ≈ ε·κ)가 정상 해인데도
+# SOLVER_SINGULAR 가 된다(합성 평판 3 mm t 0.8: ‖r‖/‖F‖ 3.4e-8, η 2.7e-17). 후방 오차는 문제 크기(‖K‖·‖u‖)에 비례한
+# 기준이라 조건수와 무관하고, 후방 안정 직접법은 η ≈ 1e-17~1e-14 다. 1e-9 ≈ 4.5e6·ε 는 dof 수백만에서도 정상 해를 막지
+# 않으면서 피벗 섭동(1e-8)·분해 실패 해(η ≫ 1e-9)는 막는다. 특이 판정의 1차 방어는 _check_coverage·_check_restraint·분해
+# 오류이고 이 검사는 해의 수치 품질만 본다. 반복법(CG)은 기존 판정(max(1e-8, 100·rtol)) 그대로.
+RESID_REL_TOL = 1e-8
+RESID_BACKWARD_TOL = 1e-9
+
+
+def _norm_inf(A) -> float:
+    """희소 행렬 ∞-노름(최대 행 절댓값 합). 대칭이면 ‖A‖₂ ≤ ‖A‖∞."""
+    if A.shape[0] == 0:
+        return 0.0
+    return float(np.max(np.asarray(abs(A).sum(axis=1)).ravel()))
+
+
+def _check_resid(lu, uf, res, rhs, norm_K: float, stats: dict, backward_tol: float = RESID_BACKWARD_TOL) -> float:
+    """해 잔차 판정(위 주석). 통과하면 상대 잔차 rr 을 돌려주고 stats 에 solve_resid_rel·solve_backward_err 기록."""
+    nr = float(np.linalg.norm(rhs))
+    nres = float(np.linalg.norm(res))
+    rr = nres / nr if nr > 0 else 0.0
+    den = norm_K * float(np.linalg.norm(uf)) + nr
+    eta = nres / den if den > 0 else 0.0
+    finite = bool(np.all(np.isfinite(uf))) and np.isfinite(rr)
+    if isinstance(lu, _CG):
+        ok = finite and rr <= max(RESID_REL_TOL, 100 * lu.rtol)
+    else:
+        ok = finite and (rr <= RESID_REL_TOL or eta <= backward_tol)
+    if not ok:
+        raise EslError("SOLVER_SINGULAR", f"해 잔차 과대 ‖Ku−F‖/‖F‖={rr:.2e}, 후방 오차 η={eta:.2e}"
+                       f"(허용 ‖r‖/‖F‖ ≤ {RESID_REL_TOL:.0e} 또는 η ≤ {backward_tol:.0e})")
+    stats["solve_resid_rel"] = rr
+    stats["solve_backward_err"] = eta
+    return rr
+
+
 OOM_CODE = "SOLVER_OUT_OF_MEMORY"
 _OOM_HINT = ("서버 메모리·worker.max_memory_gb(POSIX 는 × worker.vm_headroom) 확인, 동시 작업 줄이기 또는 "
              "solver.backend: iterative")
@@ -513,8 +552,10 @@ def _principal_submatrix(K: sp.csr_matrix, keep: np.ndarray) -> sp.csr_matrix:
 # ======================================================================
 class ShellModel:
     def __init__(self, x0, conn, elem_type, thickness, E, nu, drill_factor: float = 1e-4,
-                 backend: str = "auto", iter_rtol: float = 1e-10, iter_maxiter: int | None = None):
+                 backend: str = "auto", iter_rtol: float = 1e-10, iter_maxiter: int | None = None,
+                 resid_backward_tol: float = RESID_BACKWARD_TOL):
         self.x0 = np.ascontiguousarray(x0, dtype=np.float64)
+        self.resid_backward_tol = float(resid_backward_tol)
         self.conn = np.asarray(conn, dtype=np.int64)
         self.elem_type = np.asarray(elem_type).astype(np.int64)
         ne = self.conn.shape[0]
@@ -783,6 +824,7 @@ class ShellModel:
             return {"blocks": M, "near_null": B.reshape(-1, 6)[free]}
 
         Kff = _principal_submatrix(K, free)
+        norm_K = _norm_inf(Kff)
         lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
                         iter_opts=self.iter_opts, iter_setup=iter_setup)
         if not isinstance(lu, _CG):
@@ -797,13 +839,8 @@ class ShellModel:
         if not isinstance(lu, _CG):
             uf = uf - lu.solve(resid(uf))            # 반복 개선 1회
         res = resid(uf)
-        nr = np.linalg.norm(rhs)
-        rr = float(np.linalg.norm(res) / nr) if nr > 0 else 0.0
         _record_iter(lu, self.stats["K_ff"])
-        tol = 1e-8 if not isinstance(lu, _CG) else max(1e-8, 100 * lu.rtol)
-        if not np.all(np.isfinite(uf)) or rr > tol:
-            raise EslError("SOLVER_SINGULAR", f"해 잔차 과대 ‖Ku−F‖/‖F‖={rr:.2e}")
-        self.stats["solve_resid_rel"] = rr
+        _check_resid(lu, uf, res, rhs, norm_K, self.stats, self.resid_backward_tol)
         del lu
         u[free] = uf
         reac = (K @ u - f).reshape(self.n_nodes, 6)[:, :3]
@@ -848,11 +885,12 @@ class ShellModel:
             return {"blocks": M, "near_null": B.reshape(-1, 6)[free]}
 
         Kff = _principal_submatrix(K, free)
+        norm_K = _norm_inf(Kff)
         lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
                         iter_opts=self.iter_opts, iter_setup=iter_setup)
         del Kff
         self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
-        return FactorizedSolve(self, K, lu, cons, free)
+        return FactorizedSolve(self, K, lu, cons, free, norm_K)
 
     def solve_many(self, Fs, spc):
         """하중 목록(반복자) → (u (N,6), R (N,3)) 를 차례로 낸다(분해 1회). 메모리에는 하중 1개씩만."""
@@ -894,12 +932,13 @@ class ShellModel:
 class FactorizedSolve:
     """``ShellModel.factorize`` 결과: 같은 K_ff 분해로 여러 하중을 푼다(반복 개선 1회·잔차 검사는 ``solve`` 와 같음)."""
 
-    def __init__(self, model: "ShellModel", K, lu, cons, free):
+    def __init__(self, model: "ShellModel", K, lu, cons, free, norm_K: float | None = None):
         self.model = model
         self.K = K
         self.lu = lu
         self.cons = cons
         self.free = free
+        self.norm_K = _norm_inf(_principal_submatrix(K, free)) if norm_K is None else float(norm_K)
         self.n_solves = 0
 
     @_oom_guard("정적 해(K_ff, 분해 재사용)")
@@ -923,13 +962,8 @@ class FactorizedSolve:
         if not isinstance(lu, _CG):
             uf = uf - lu.solve(resid(uf))
         res = resid(uf)
-        nr = np.linalg.norm(rhs)
-        rr = float(np.linalg.norm(res) / nr) if nr > 0 else 0.0
         _record_iter(lu, m.stats["K_ff"])
-        tol = 1e-8 if not isinstance(lu, _CG) else max(1e-8, 100 * lu.rtol)
-        if not np.all(np.isfinite(uf)) or rr > tol:
-            raise EslError("SOLVER_SINGULAR", f"해 잔차 과대 ‖Ku−F‖/‖F‖={rr:.2e}")
-        m.stats["solve_resid_rel"] = rr
+        _check_resid(lu, uf, res, rhs, self.norm_K, m.stats, m.resid_backward_tol)
         u[free] = uf
         reac = (K @ u - f).reshape(m.n_nodes, 6)[:, :3]
         R = np.zeros((m.n_nodes, 3))

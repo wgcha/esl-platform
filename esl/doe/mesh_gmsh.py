@@ -222,8 +222,9 @@ def defeature(gmsh, df: dict, h: float) -> dict:
       평면 면은 외곽·큰 구멍 고리로 다시 만들어 작은 구멍 내부 wire 를 지움(곡면은 막는 면을 fragment 로 붙임 —
       경계 모서리는 남음). OCP ShapeUpgrade_RemoveInternalWires 와 같은 결과를
       gmsh API 만으로(OCP 불필요).
-    - 남은 구멍(원형 가정 r = 둘레/2π) 반지름 ``hole_r_mm`` 범위 → 둘레 분할 수 = max(3, min(hole_elems, round(P/h)))
-      (= 구멍 모서리 크기 max(P/hole_elems, h)) transfinite 곡선. hole_elems 0 이면 생략.
+    - 남은 구멍(원형 가정 r = 둘레/2π) 반지름 ``hole_r_mm`` 범위 → 둘레 분할 수 = max(hole_elems, ceil(P/h)) transfinite 곡선
+      (v0.14.0 수정: 예전 min(hole_elems 6, …) 은 큰 구멍 둘레 모서리가 P/6 으로 길어져 품질 max_length Fail — 이제 구멍
+      모서리 ≤ h, 작은 구멍은 최소 hole_elems 분할). hole_elems 0 이면 생략.
     실패는 형상 처리만 건너뛰고 경고(DEFEATURE_SKIPPED). 반환 {filled, filled_area_max, hole_sized, skipped, warnings}."""
     import math
 
@@ -295,9 +296,7 @@ def defeature(gmsh, df: dict, h: float) -> dict:
                     r = P / (2 * math.pi)
                     if not r_lo <= r <= r_hi:
                         continue
-                    n = max(3, min(n_el, int(round(P / h))))
-                    if n >= int(round(P / h)):
-                        continue                         # 기본 메시가 이미 더 성김 — 손대지 않음
+                    n = max(n_el, int(math.ceil(P / h - 1e-9)))       # 모서리 ≤ h, 최소 hole_elems 분할
                     for c in cs:
                         L = float(occ.getMass(1, c))
                         gmsh.model.mesh.setTransfiniteCurve(c, max(2, int(round(n * L / P)) + 1))

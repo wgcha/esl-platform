@@ -1,7 +1,7 @@
 // v0.9.0 비드 형상 DOE API(계약 esl_bead_doe.md §10). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
-  DoeCheckIn, DoeCheckOut, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
 
@@ -24,7 +24,8 @@ const DEFAULT_SETTINGS: Omit<DoeSettingsOut, "method_sources"> = {
   boundary: { fastener_warn_mm: 10, load_warn_mm: 20, load_share_min: 0.2 },
   step_max_mb: 200,
   part_title: null,
-  compare: { max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
+  compare_reason: null,
+  compare: { enabled: false, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
 };
 
 export const doeSourcesOk = (m: DoeMethodSources | null | undefined): m is DoeMethodSources =>
@@ -68,15 +69,24 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     step_max_mb: num(r.step_max_mb, DEFAULT_SETTINGS.step_max_mb),
     part_title: typeof r.part_title === "string" ? r.part_title : null,
     method_sources: normalizeDoeSources(r.method_sources),
-    compare: normalizeCompareCfg(r.compare),
+    compare_reason: typeof r.compare_reason === "string" ? r.compare_reason : null,
+    compare: normalizeCompareCfg(r.compare, r),
   };
 }
 
-/** ④ compare 설정 보정(빠진 칸 = 계약 기본값) */
-function normalizeCompareCfg(raw: unknown): NonNullable<DoeSettingsOut["compare"]> {
+/** ④ compare 설정 보정(빠진 칸 = 계약 기본값). enabled·reason 이 없으면 scenarios.compare·compare_reason 에서 */
+function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCompareCfg {
   const v = isObj(raw) ? raw : {};
   const d = DEFAULT_SETTINGS.compare!;
-  return { max_shapes: num(v.max_shapes, d.max_shapes), total_max_mb: num(v.total_max_mb, d.total_max_mb), mesh_size_mm: num(v.mesh_size_mm, d.mesh_size_mm) };
+  const sc = isObj(top.scenarios) ? top.scenarios : {};
+  const reason = typeof v.reason === "string" ? v.reason : typeof top.compare_reason === "string" ? top.compare_reason : null;
+  return {
+    enabled: typeof v.enabled === "boolean" ? v.enabled : sc.compare === true,
+    reason,
+    max_shapes: num(v.max_shapes, d.max_shapes),
+    total_max_mb: num(v.total_max_mb, d.total_max_mb),
+    mesh_size_mm: num(v.mesh_size_mm, d.mesh_size_mm),
+  };
 }
 
 /** best.files: 문자열 rel 목록이 와도 같은 모양으로 */
@@ -140,10 +150,14 @@ export const DISABLED_REASON: Record<string, string> = {
   COMPARE_GMSH_UNAVAILABLE: "메시 생성기(gmsh)가 없어 '형상 직접 비교'를 쓸 수 없습니다(관리자 문의)",
 };
 
+/** ④ 비활성 사유 코드(서버 compare_reason → compare.reason → 옛 서버면 reason 이 DOE_DISABLED 일 때만) */
+export const compareReason = (st: DoeSettingsOut): string | null =>
+  st.compare_reason ?? st.compare?.reason ?? (st.reason === "DOE_DISABLED" ? "DOE_DISABLED" : null);
+
 /** 실행 불가 사유(꺼짐) — null = 사용 가능. ④ 는 paicad 를 쓰지 않아 paicad 사유로 막지 않는다(SC-D-3) */
 export function doeBlockedReason(st: DoeSettingsOut, scenario?: DoeScenario | null): string | null {
   if (st.enabled) return null;
-  if (scenario === "compare") return st.reason === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : null;
+  if (scenario === "compare") return compareReason(st) === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : null;
   return (st.reason && DISABLED_REASON[st.reason]) ?? DISABLED_REASON.PAICAD_NOT_CONFIGURED;
 }
 
@@ -151,7 +165,12 @@ export function doeBlockedReason(st: DoeSettingsOut, scenario?: DoeScenario | nu
 export function scenarioBlocked(st: DoeSettingsOut, s: DoeScenario): string | null {
   if (st.scenarios[s]) return null;
   if (s === "step" && !st.gmsh.ready) return DISABLED_REASON.GMSH_UNAVAILABLE;
-  if (s === "compare") return st.reason === "DOE_DISABLED" ? DISABLED_REASON.DOE_DISABLED : !st.gmsh.ready ? DISABLED_REASON.COMPARE_GMSH_UNAVAILABLE : DISABLED_REASON.COMPARE_DISABLED;
+  if (s === "compare") {
+    const r = compareReason(st);
+    if (r === "DOE_DISABLED") return DISABLED_REASON.DOE_DISABLED;
+    if (r === "GMSH_UNAVAILABLE" || (!r && !st.gmsh.ready)) return DISABLED_REASON.COMPARE_GMSH_UNAVAILABLE;
+    return DISABLED_REASON.COMPARE_DISABLED;
+  }
   return "서버에서 이 시나리오가 꺼져 있습니다";
 }
 

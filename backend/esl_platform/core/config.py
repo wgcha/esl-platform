@@ -515,7 +515,7 @@ class BeadDoeCompareMeshCfg(_M):
 
 class BeadDoeCompareDefeatureCfg(_M):
     """이슈 #53 holes table 근사(메싱 전 OCC 형상): 내부 경계 면적 < min_hole_area_mm2 메움(r<4 원형·eq_diam<8·좁은 슬롯),
-    반지름 hole_r_mm 구멍 둘레 분할 = max(3, min(hole_elems, 둘레/h)) (0 = 끔). min_bead_height_mm = 비드 억제 기준(기록만)."""
+    반지름 hole_r_mm 구멍 둘레 분할 = max(hole_elems, ceil(둘레/h)) (0 = 끔). min_bead_height_mm = 비드 억제 기준(기록만)."""
 
     enabled: bool = True
     min_hole_area_mm2: float = Field(default=50.27, ge=0)

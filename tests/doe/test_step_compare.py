@@ -1,7 +1,7 @@
 """v0.14.0 ④ 형상 직접 비교 코어(계약 esl_step_compare.md V-SC-1·2·3·5·6·8 코어 부분 + 이슈 #53 메싱 기준).
 
 - V-SC-6/8: gmsh 선택 키(ExtendFromBoundary·OCCFix*) — 키 없으면 ③ 옵션 그대로, ④ 프로필이 gmsh 에 그대로, 같은 STEP 2회 바이트 동일,
-  작은 구멍(Ø2·Ø6) 메움(이슈 #53 holes table) → 최소 모서리 ≥ 0.6 h, r 4~30 구멍 둘레 6 분할.
+  작은 구멍(Ø2·Ø6) 메움(이슈 #53 holes table) → 최소 모서리 ≥ 0.6 h, r 4~30 구멍 둘레 분할 max(6, ceil(둘레/h))(둘레 요소 max_length Fail 0).
 - V-SC-1(코어)·2: 합성 STEP 3개(평판 / 비드 1 / 비드 2) + 어긋난 형상 1개 → 순위 비드 2 < 비드 1 < 기준, frame 고정(바이트 동일),
   형상별 auto_supports, 셀 매핑 합력·합모멘트 평형, FAILED_SIZE 형상만 제외, 이름·CSV·보고서·메시 산출물, 민감도 생략.
 - V-SC-3: 기준 미지정 → 첫 ESL Case 메시 d000(셀 매핑·auto_supports) + COMPARE_REF_CASE_MESH(준비·결과·보고서).
@@ -80,19 +80,31 @@ def test_profile_deterministic_and_small_holes(tmp_path):
     assert o["Mesh.MeshSizeMax"] == H and o["Mesh.MeshSizeMin"] == pytest.approx(0.8 * H)
     assert o["Mesh.MeshSizeFromCurvature"] == 0 and o["Mesh.MeshSizeExtendFromBoundary"] == 0
     assert all(o[k] == 1 for k in mg.OCC_FIX_KEYS)
-    # 이슈 #53 holes table: r < 4(면적 < π·4²) 메움 → 작은 모서리 없음, r 4~30 둘레 6 분할
+    # 이슈 #53 holes table: r < 4(면적 < π·4²) 메움 → 작은 모서리 없음, r 4~30 둘레 분할 = max(6, ceil(둘레/h))
     for d, filled in ((2.0, 1), (6.0, 1)):
         p = scmp.plate_step(tmp_path / f"h{d}.step", Lx=LX, Lz=LZ, hole=(100.0, 75.0, d))
         m, mt = mg.mesh_file(p, 3.0, cfg3, PROPS)
         assert mt["defeature"]["filled"] == filled
         L = _edge_lengths(m["x0"], m["conn"], np.asarray(m["elem_type"]).astype(int))
         assert float(np.min(L)) >= 0.6 * 3.0, float(np.min(L))
-    p = scmp.plate_step(tmp_path / "h24.step", Lx=LX, Lz=LZ, hole=(100.0, 75.0, 24.0))
-    m, mt = mg.mesh_file(p, 3.0, cfg3, PROPS)
-    assert mt["defeature"]["filled"] == 0 and mt["defeature"]["hole_sized"] == 1
-    X = m["x0"]
-    r = np.hypot(X[:, 0] - 100.0, X[:, 2] - 75.0)
-    assert int(np.sum(np.abs(r - 12.0) < 1e-6)) == 6                       # 둘레 노드 6개
+    q = settings()["compare"]["quality"]
+    for dia, hh in ((24.0, 3.0), (56.0, 3.0), (8.4, 3.0), (8.4, 6.0)):
+        p = scmp.plate_step(tmp_path / f"h{dia}_{hh}.step", Lx=LX, Lz=LZ, hole=(100.0, 75.0, dia))
+        m, mt = mg.mesh_file(p, hh, cfg3, PROPS)
+        assert mt["defeature"]["filled"] == 0 and mt["defeature"]["hole_sized"] == 1
+        X = m["x0"]
+        r = np.hypot(X[:, 0] - 100.0, X[:, 2] - 75.0)
+        n_exp = max(6, int(np.ceil(np.pi * dia / hh)))                     # r 12 → 26, r 28 → 59, r 4.2 → 9(h 3)·6(h 6)
+        assert int(np.sum(np.abs(r - dia / 2) < 1e-6)) == n_exp, (dia, hh)
+        on = np.abs(r - dia / 2) < 1e-6
+        e = m["conn"]
+        et = np.asarray(m["elem_type"]).astype(int)
+        L = _edge_lengths(X, e, et)
+        touch = on[e[:, :3]].sum(axis=1) >= 1
+        assert float(np.nanmax(L[touch])) <= max(hh, np.pi * dia / 6) * 1.25, (dia, hh, float(np.nanmax(L[touch])))
+        if hh == 3.0:                                                      # 큰 구멍 둘레 요소 max_length Fail 없음(이슈 #53)
+            met = mq.element_metrics(X, e, et)
+            assert int(np.sum(met["max_length"][touch] > q["max_length"]["fail"])) == 0, dia
     off = sc.compare_cfg(settings({"bead_doe": {"enabled": True, "mesh": {"occ_sew_faces": 1},
                                                 "compare": {"defeature": {"enabled": False}}}}))
     _m, mt = mg.mesh_file(scmp.plate_step(tmp_path / "h2b.step", Lx=LX, Lz=LZ, hole=(100.0, 75.0, 2.0)), 3.0, off, PROPS)
@@ -291,3 +303,38 @@ def test_reference_mesh_failure_and_size(tmp_path):
     _run(tmp_path / "_doe" / "C5", doe3)
     st = {x["id"]: x for x in U.read_json(str(tmp_path / "_doe" / "C5" / "prep" / "compare.json"))["shapes"]}
     assert st["d000"]["status"] == "READY" and st["d001"]["status"] == "FAILED_MESH" and st["d001"]["code"] == "MESH_FAILED"
+
+
+# ---------------------------------------------------------------- v0.14.0 해 잔차 판정(후방 오차, decisions D-0.14-RESID)
+@needs_gmsh
+def test_synthetic_plate_3mm_solves(tmp_path):
+    """합성 평판 400×300 · 3 mm 메시 · 3점 auto_supports: 얇은 판(t 0.8)은 조건수가 커 ‖Ku−F‖/‖F‖ 가 옛 허용 1e-8 을 넘지만
+    (정상 해) 노름 후방 오차 η 는 기계 정밀도 수준 → SOLVER_SINGULAR 가 아니다. t 2.0 은 옛 기준으로도 통과(결과 불변 경로)."""
+    from esl.doe import evaluate as ev
+    from esl.mech import shell as _shell
+    from esl.mech.shell import ShellModel
+
+    cfg = sc.compare_cfg(settings({"bead_doe": {"enabled": True, "mesh": {"occ_sew_faces": 1}}}))
+    p = scmp.plate_step(tmp_path / "flat.step", 0, Lx=400.0, Lz=300.0)
+    m, mt = mg.mesh_file(p, 3.0, cfg, PROPS)
+    assert mt["options"]["Mesh.MeshSizeMax"] == 3.0 and m["conn"].shape[0] > 12000
+    spc = ev.spc_of(m, tg.auto_supports(m))
+    X = m["x0"]
+    F = np.zeros_like(X)
+    F[:, 1] = np.sin(np.pi * (X[:, 0] - X[:, 0].min()) / 400.0) * 10.0
+    F[:, 2] = np.cos(np.pi * (X[:, 2] - X[:, 2].min()) / 300.0) * 3.0
+    F -= F.mean(axis=0)
+    rr = {}
+    for t in (0.8, 2.0):
+        sm = ShellModel(X, m["conn"], m["elem_type"], t, 205000.0, 0.3, backend="superlu")
+        u, _R = sm.factorize(spc).solve(F)
+        assert np.all(np.isfinite(u))
+        rr[t] = sm.stats["solve_resid_rel"]
+        assert sm.stats["solve_backward_err"] < 1e-14, sm.stats
+    assert rr[0.8] > _shell.RESID_REL_TOL, rr                     # 옛 판정이면 SOLVER_SINGULAR 였던 경우
+    assert rr[2.0] <= _shell.RESID_REL_TOL, rr
+    # 허용치를 기계 정밀도 아래로 조이면 같은 해도 SOLVER_SINGULAR(판정이 실제로 η 를 본다)
+    sm = ShellModel(X, m["conn"], m["elem_type"], 0.8, 205000.0, 0.3, backend="superlu", resid_backward_tol=1e-30)
+    with pytest.raises(EslError) as ei:
+        sm.factorize(spc).solve(F)
+    assert ei.value.code == "SOLVER_SINGULAR" and "후방 오차" in ei.value.message

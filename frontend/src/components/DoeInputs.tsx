@@ -1,6 +1,7 @@
 // 비드 DOE ① 입력 카드(esl_bead_doe.md §3·§12.2): ESL 목록(같은 모델 ✓/✗ · 다른 모델 빼기) · STEP 끌어다 놓기(기존 청크 업로드) ·
 // ② B 메시(rad + include/inc)·파트 제목·인치 · ③ 쉘 물성 3칸(t·E·ν, 서버 기본값)·평균 요소 크기 · 입력 검사 한 줄.
-// v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §7): STEP 여러 개(파일마다 업로드 1개) · 형상 표(기준 라디오 + '기준 없음(Case 메시)'·이름·빼기) · 물성 3칸.
+// v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §3·§7): STEP 여러 개(놓을 때마다 업로드 세션 1개에 STEP 여러 개 — 형상마다 rel) ·
+// 형상 표(기준 라디오 + '기준 없음(Case 메시)'·이름·빼기) · 물성 3칸 · 준비 후 메시 품질 요약(Fail 비율·상한 경고).
 import { useRef, useState } from "react";
 import { CODE_TEXT, errorText } from "../api/client";
 import { SCENARIO_NAME, STATUS_NAME, defaultShapeName, shapeCodeText, shapeNameProblem, warnText } from "../api/doe";
@@ -15,9 +16,12 @@ export interface UploadedSet {
   names: string[];
   /** 올린 바이트(④ 형상 표 크기) */
   bytes?: number;
+  /** ④ 업로드 안 파일 rel(한 세션 여러 STEP — 형상마다 요청 shapes[].rel) */
+  rel?: string;
 }
 
-/** 파일 끌어다 놓기 + 청크 업로드(Uploader). 다 올리면 onDone(uploadId). split = 파일마다 업로드 1개(④ 형상 STEP) */
+/** 파일 끌어다 놓기 + 청크 업로드(Uploader). 다 올리면 onDone(uploadId). split = 놓은 파일 전부를 업로드 세션 1개로 올린 뒤
+ * 파일마다 onDone({uploadId, rel})(④ 형상 STEP — 한 세션에 STEP 여러 개, 동시 세션 한도와 무관) */
 export function UploadDrop({ projectId, label, hint, ext, validate, name, value, onDone, onClear, disabled, testId, split, display }: {
   projectId: string;
   label: string;
@@ -32,7 +36,7 @@ export function UploadDrop({ projectId, label, hint, ext, validate, name, value,
   onClear: () => void;
   disabled?: boolean;
   testId: string;
-  /** 파일마다 따로 올려 파일마다 onDone(값 표시 없음, onClear 안 부름) */
+  /** 한 세션으로 올려 파일마다 onDone(값 표시 없음, onClear 안 부름) */
   split?: boolean;
   /** 제목 대신 보일 문구(예: 상한 도달 '최대 20개') */
   display?: string;
@@ -55,12 +59,11 @@ export function UploadDrop({ projectId, label, hint, ext, validate, name, value,
     setBusy(true);
     if (split) {
       try {
-        for (const f of picked) {
-          const up = new Uploader(projectId, name([f]), [{ file: f, rel: `rad/${f.name}` }], setProg);
-          const done = await up.run();
-          if (!done || !up.uploadId) throw new Error(`${f.name}: ${up.progress.error ?? "업로드가 멈췄습니다"}`);
-          onDone({ uploadId: up.uploadId, names: [f.name], bytes: f.size });
-        }
+        const files = picked.map((f) => ({ file: f, rel: `rad/${f.name}` }));
+        const up = new Uploader(projectId, name(picked), files, setProg);
+        const done = await up.run();
+        if (!done || !up.uploadId) throw new Error(up.progress.error ?? "업로드가 멈췄습니다");
+        for (const x of files) onDone({ uploadId: up.uploadId, names: [x.file.name], bytes: x.file.size, rel: x.rel });
         setProg(null);
       } catch (x) {
         setError(errorText(x));
@@ -118,9 +121,12 @@ export function UploadDrop({ projectId, label, hint, ext, validate, name, value,
   );
 }
 
-/** ④ 형상 표 1행 */
+/** ④ 형상 표 1행(key = uploadId + rel — 한 업로드 세션에 STEP 여러 개) */
 export interface ShapeRow {
+  key: string;
   uploadId: string;
+  /** 업로드 안 STEP rel(요청 shapes[].rel) */
+  rel: string;
   fileName: string;
   bytes: number;
   name: string;
@@ -138,7 +144,7 @@ export interface InputsForm {
   title: string;
   /** ④ 형상 표 */
   shapes: ShapeRow[];
-  /** ④ 기준 형상 uploadId(null = 기준 없음 → 첫 ESL Case 메시) */
+  /** ④ 기준 형상 key(null = 기준 없음 → 첫 ESL Case 메시) */
   refId: string | null;
 }
 
@@ -379,6 +385,8 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
   const names = shapes.map((x) => x.name);
   const validate = (fs: File[]) => {
     if (shapes.length + fs.length > max) return `STEP 은 최대 ${max}개입니다(지금 ${shapes.length}개)`;
+    const dupName = fs.find((f, i) => fs.findIndex((g) => g.name === f.name) !== i);
+    if (dupName) return `${dupName.name}: 같은 이름의 파일을 한 번에 올릴 수 없습니다`;
     const big = fs.find((f) => f.size > st.step_max_mb * 1024 ** 2);
     if (big) return `${big.name}: STEP 은 파일당 최대 ${st.step_max_mb} MB 입니다`;
     const total = mb(shapes.reduce((a, x) => a + x.bytes, 0) + fs.reduce((a, f) => a + f.size, 0));
@@ -387,12 +395,13 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
   };
   const add = (v: UploadedSet) =>
     setForm((f) => {
-      const row: ShapeRow = { uploadId: v.uploadId, fileName: v.names[0], bytes: v.bytes ?? 0, name: defaultShapeName(v.names[0]) };
+      const rel = v.rel ?? `rad/${v.names[0]}`;
+      const row: ShapeRow = { key: `${v.uploadId}:${rel}`, uploadId: v.uploadId, rel, fileName: v.names[0], bytes: v.bytes ?? 0, name: defaultShapeName(v.names[0]) };
       // 첫 형상이 들어오면 기준으로(기준 STEP 지정 권장 — 바꾸려면 라디오)
-      return { ...f, shapes: [...f.shapes, row], refId: f.shapes.length === 0 ? row.uploadId : f.refId };
+      return { ...f, shapes: [...f.shapes, row], refId: f.shapes.length === 0 ? row.key : f.refId };
     });
-  const remove = (id: string) => setForm((f) => ({ ...f, shapes: f.shapes.filter((x) => x.uploadId !== id), refId: f.refId === id ? null : f.refId }));
-  const rename = (id: string, name: string) => setForm((f) => ({ ...f, shapes: f.shapes.map((x) => (x.uploadId === id ? { ...x, name } : x)) }));
+  const remove = (id: string) => setForm((f) => ({ ...f, shapes: f.shapes.filter((x) => x.key !== id), refId: f.refId === id ? null : f.refId }));
+  const rename = (id: string, name: string) => setForm((f) => ({ ...f, shapes: f.shapes.map((x) => (x.key === id ? { ...x, name } : x)) }));
   const setRef = (id: string | null) => setForm((f) => ({ ...f, refId: id }));
   return (
     <div className="doe-shapes">
@@ -400,7 +409,7 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
         projectId={projectId}
         label="비교할 STEP 끌어다 놓기(여러 개)"
         display={full ? `최대 ${max}개` : undefined}
-        hint={`형상마다 STEP 1개 · 최대 ${max}개 · 파일당 ${st.step_max_mb} MB · 같은 좌표계로 내보낸 STEP`}
+        hint={`여러 파일을 한 번에 놓을 수 있음 · 최대 ${max}개 · 파일당 ${st.step_max_mb} MB · 같은 좌표계로 내보낸 STEP`}
         ext={[".step", ".stp"]}
         validate={validate}
         name={(fs) => `doe_compare_${defaultShapeName(fs[0].name)}`}
@@ -434,12 +443,12 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
             {shapes.map((x, i) => {
               const why = shapeNameProblem(x.name, names, i);
               return (
-                <tr key={x.uploadId} data-testid={`shape-row-${i + 1}`} className={form.refId === x.uploadId ? "hl" : undefined}>
+                <tr key={x.key} data-testid={`shape-row-${i + 1}`} className={form.refId === x.key ? "hl" : undefined}>
                   <td className="doe-ref-col">
-                    <input type="radio" name="doe-ref" aria-label={`형상 ${i + 1} 기준`} checked={form.refId === x.uploadId} onChange={() => setRef(x.uploadId)} disabled={!allowed} />
+                    <input type="radio" name="doe-ref" aria-label={`형상 ${i + 1} 기준`} checked={form.refId === x.key} onChange={() => setRef(x.key)} disabled={!allowed} />
                   </td>
                   <td>
-                    <input className="doe-shape-name" aria-label={`형상 ${i + 1} 이름`} aria-invalid={!!why} value={x.name} maxLength={80} onChange={(e) => rename(x.uploadId, e.target.value)} disabled={!allowed} />
+                    <input className="doe-shape-name" aria-label={`형상 ${i + 1} 이름`} aria-invalid={!!why} value={x.name} maxLength={80} onChange={(e) => rename(x.key, e.target.value)} disabled={!allowed} />
                     {why && <div className="small error-text">{why}</div>}
                   </td>
                   <td className="small mono doe-shape-file" title={x.fileName}>
@@ -447,7 +456,7 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
                   </td>
                   <td className="num small">{bytes(x.bytes)}</td>
                   <td className="doe-x-col">
-                    <button type="button" className="btn small ghost" aria-label={`형상 ${i + 1} 빼기`} onClick={() => remove(x.uploadId)} disabled={!allowed}>
+                    <button type="button" className="btn small ghost" aria-label={`형상 ${i + 1} 빼기`} onClick={() => remove(x.key)} disabled={!allowed}>
                       ✕
                     </button>
                   </td>
@@ -469,6 +478,7 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
   );
 }
 
+const pct = (v: number) => `${(v * 100).toFixed(2)} %`;
 const statusKind = (s: DoeDesignStatus) => (s === "READY" || s === "OK" ? "ok" : s === "RUNNING" ? "info" : "bad");
 
 /** ④ 상세: 형상 표(준비 결과 — 메시 요소 수·상태·실패 사유). prep.shapes 가 없으면 inputs.shapes + prep.failed */
@@ -481,23 +491,38 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
     prep?.shapes && prep.shapes.length
       ? prep.shapes
       : [
-          ...(i.reference_source === "case" ? [{ id: "d000", name: "Case 메시", file_name: null, reference: true, status: pending }] : []),
+          ...(i.reference_source === "case" ? [{ id: "d000", name: "Case 메시", file_name: null, reference: true, source: "case" as const, status: pending }] : []),
           ...(i.shapes ?? []).map((x) => ({
             id: x.id,
             name: x.name,
             file_name: x.file_name,
             reference: x.reference,
+            source: "step" as const,
             status: failed.get(x.id)?.status ?? pending,
             code: failed.get(x.id)?.code ?? null,
           })),
         ];
+  const withQ = rows.filter((r) => r.quality);
+  const over = withQ.filter((r) => r.quality!.over_limit);
+  const maxFail = withQ[0]?.quality?.max_fail_ratio ?? null;
   return (
     <div className="doe-shape-summary">
       <div className="small" data-testid="doe-input-summary">
         형상 {rows.length}개 · 기준 {i.reference_source === "case" ? "Case 메시" : rows.find((r) => r.reference)?.name ?? "?"}
         {i.inch ? ` · ${i.inch}형` : ""}
         {i.props ? ` · t ${i.props.t} mm · E ${i.props.E.toLocaleString()} MPa · ν ${i.props.nu}` : ""}
+        {prep?.mesh?.size_mm != null ? ` · 메시 ${prep.mesh.size_mm} mm` : ""}
+        {prep?.mesh?.gmsh_version ? ` (gmsh ${prep.mesh.gmsh_version})` : ""}
       </div>
+      {withQ.length > 0 && (
+        <div className={`small ${over.length ? "warn-text" : "muted"}`} data-testid="doe-quality-summary">
+          메시 품질(이슈 #53 기준): Fail 비율 최대 {pct(Math.max(...withQ.map((r) => r.quality!.fail_ratio)))}
+          {maxFail != null ? ` · 상한 ${pct(maxFail)}` : ""}
+          {over.length
+            ? ` — 상한 초과 ${over.length}개(${over.map((r) => r.name).join(", ")}): 결과에 메시 품질 차이가 섞일 수 있습니다(차단 아님)`
+            : " — 모든 형상 상한 이내"}
+        </div>
+      )}
       <div className="table-wrap">
         <table className="table compact doe-shape-table" aria-label="형상 표">
           <thead>
@@ -507,6 +532,8 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
               <th>파일</th>
               <th className="num">요소</th>
               <th className="num">quad</th>
+              <th className="num" title="품질 Fail 요소 비율(Warn 비율)">Fail</th>
+              <th className="num" title="삼각형 요소 비율">tria</th>
               <th>상태</th>
             </tr>
           </thead>
@@ -522,11 +549,27 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                 </td>
                 <td className="num mono">{r.n_elems != null ? r.n_elems.toLocaleString() : "–"}</td>
                 <td className="num mono">{r.quad_ratio != null ? `${(r.quad_ratio * 100).toFixed(0)} %` : "–"}</td>
+                <td className="num mono" data-testid={`prep-quality-${r.id}`} title={r.quality ? `Fail ${r.quality.fail_elems.toLocaleString()} · Warn ${r.quality.warn_elems.toLocaleString()} (${pct(r.quality.warn_ratio)})` : undefined}>
+                  {r.quality ? (
+                    <>
+                      {pct(r.quality.fail_ratio)}
+                      {r.quality.over_limit && (
+                        <span className="badge warn" title={CODE_TEXT.SHAPE_QUALITY_FAIL}>
+                          {" "}
+                          상한 초과
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    "–"
+                  )}
+                </td>
+                <td className="num mono">{r.quality ? `${r.quality.tria_pct.toFixed(1)} %` : "–"}</td>
                 <td>
                   <span className={`badge ${statusKind(r.status)}`} title={r.code ?? undefined}>
                     {r.status === "READY" ? "준비됨" : r.status === "RUNNING" ? "준비 중" : STATUS_NAME[r.status]}
                   </span>
-                  {r.code && r.status !== "READY" && <span className="small error-text"> {shapeCodeText(r.code)}</span>}
+                  {r.code && r.status !== "READY" && <span className="small error-text" title={r.message ?? undefined}> {r.message || shapeCodeText(r.code)}</span>}
                 </td>
               </tr>
             ))}

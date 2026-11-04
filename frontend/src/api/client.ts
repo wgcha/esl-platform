@@ -128,6 +128,8 @@ export const CODE_TEXT: Record<string, string> = {
   SHAPE_MISALIGNED: "기준과 위치·방향이 다릅니다 — 같은 좌표계로 내보낸 STEP 인지 확인하세요",
   COMPARE_REF_CASE_MESH: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다",
   SHAPE_DUPLICATE_FILE: "같은 STEP 파일이 두 번 이상 들어 있습니다",
+  SHAPE_QUALITY_FAIL: "메시 품질 Fail 요소 비율이 상한을 넘었습니다(차단 아님 — 결과에 메시 품질 차이가 섞일 수 있음)",
+  DEFEATURE_SKIPPED: "작은 구멍 메움을 건너뛰고 그대로 메싱했습니다",
 };
 
 /** 일괄 실행 멈춤 코드 중 일반 API 오류와 이름이 같아 CODE_TEXT 에 넣지 않는 것(errorText 회귀 방지) */

@@ -55,7 +55,11 @@ describe("④ 규칙(화면 쪽 함수)", () => {
     expect(doeBlockedReason(st, "compare")).toMatch(/꺼져 있습니다/);
     const n = normalizeDoeSettings({});
     expect(n.scenarios.compare).toBe(false);
-    expect(n.compare).toEqual({ max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 });
+    expect(n.compare).toEqual({ enabled: false, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 });
+    // 서버 compare_reason 우선(SC-D-3)
+    const g = normalizeDoeSettings({ enabled: true, scenarios: { compare: false }, compare_reason: "GMSH_UNAVAILABLE", gmsh: { ready: true } });
+    expect(g.compare?.reason).toBe("GMSH_UNAVAILABLE");
+    expect(scenarioBlocked(g, "compare")).toMatch(/gmsh.*형상 직접 비교/);
   });
 
   it("목: 형상 id(기준 = d000, 기준 없음 → d001…), 결과 values {}·shape·민감도 없음", () => {
@@ -125,7 +129,7 @@ describe("④ 새 연구 — 입력 카드", () => {
 
   it("상한: max_shapes 도달 → 놓기 칸 '최대 n개'·비활성, 넘게 고르면 사유", async () => {
     await openCompare(undefined, (s) => {
-      s.doe.settings.compare = { max_shapes: 2, total_max_mb: 1000, mesh_size_mm: 3 };
+      s.doe.settings.compare = { enabled: true, reason: null, max_shapes: 2, total_max_mb: 1000, mesh_size_mm: 3 };
     });
     fireEvent.change(screen.getByLabelText(DROP), { target: { files: ["a.step", "b.step", "c.step"].map(step) } });
     expect(await screen.findByText(/STEP 은 최대 2개입니다/)).toBeTruthy();
@@ -168,13 +172,21 @@ describe("④ 흐름 — 입력 준비 → 준비 결과 → 비교 실행 → �
     expect(rec.out.scenario).toBe("compare");
     expect(rec.out.inputs.shapes!.map((x) => [x.id, x.name, x.reference])).toEqual([["d000", "현행", true], ["d001", "chr_rib_A", false], ["d002", "chr_D_shift", false]]);
     expect(rec.out.inputs.props).toEqual({ t: 1.2, E: 205000, nu: 0.3 });
+    // 한 업로드 세션에 STEP 여러 개 — 형상마다 rel(§3)
+    const ups = new Set(rec.out.inputs.shapes!.map((x) => x.upload_id));
+    expect(ups.size).toBe(1);
+    expect(rec.out.inputs.shapes!.map((x) => x.rel)).toEqual(["rad/chr_base.step", "rad/chr_rib_A.step", "rad/chr_D_shift.step"]);
     await waitFor(() => expect(reasonOf(primaries(container)[0])).toMatch(/입력 준비 중/));
     server.drain();
     await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["비교 실행"]), { timeout: 6000 });
     const d1 = screen.getByTestId("prep-shape-d001");
     expect(d1.textContent).toMatch(/\d{3},\d{3}/);
     expect(d1.textContent).toMatch(/준비됨/);
-    expect(screen.getByTestId("prep-shape-d002").textContent).toMatch(/크기·정렬 불일치.*위치·방향이 다릅니다/);
+    // 서버 message 우선(없으면 화면 문구)
+    expect(screen.getByTestId("prep-shape-d002").textContent).toMatch(/크기·정렬 불일치.*원점·법선이 다릅니다/);
+    // 품질 요약: Fail 비율 열 + 한 줄 요약(상한 이내)
+    expect(screen.getByTestId("prep-quality-d001").textContent).toMatch(/^\d+\.\d{2} %$/);
+    expect(screen.getByTestId("doe-quality-summary").textContent).toMatch(/Fail 비율 최대 .* · 상한 1\.00 % — 모든 형상 상한 이내/);
     expect(screen.getByTestId("prep-shape-d000").textContent).toMatch(/현행.*기준/);
     expect(screen.queryByRole("table", { name: "비드 변수" })).toBeNull();
     expect(screen.queryByRole("img", { name: "비드·경계 평면도" })).toBeNull();
@@ -198,7 +210,7 @@ describe("④ 흐름 — 입력 준비 → 준비 결과 → 비교 실행 → �
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     expect(screen.getByText(CODE_TEXT.COMPARE_REF_CASE_MESH)).toBeTruthy();
     expect(screen.getByTestId("prep-shape-d000").textContent).toMatch(/Case 메시.*\(낙하 메시\)/);
-    expect(screen.getByTestId("prep-shape-d003").textContent).toMatch(/크기·정렬 불일치.*크기가 다릅니다/);
+    expect(screen.getByTestId("prep-shape-d003").textContent).toMatch(/크기·정렬 불일치.*크기가 ±5 % 밖/);
     expect(radio(/④ 형상 직접 비교/).checked).toBe(true);
   });
 });
@@ -217,6 +229,9 @@ describe("④ 결과 — doe-3", () => {
     expect(names.sort()).toEqual(["리브 A안", "리브 B안", "비드 C안"]);
     expect(within(t).getByTestId("excluded-d004").textContent).toMatch(/D안\(원점 다름\).*실패 · 크기·정렬 불일치/);
     expect(t.querySelector('button[aria-label$="값 펼치기"]')).toBeNull();
+    // 준비 결과 품질: 'rough' 형상 Fail 비율 상한 초과 → 배지 + 요약 경고(차단 아님)
+    expect(screen.getByTestId("prep-quality-d002").textContent).toMatch(/1\.84 %.*상한 초과/);
+    expect(screen.getByTestId("doe-quality-summary").textContent).toMatch(/상한 초과 1개\(리브 B안\).*차단 아님/);
     // 민감도 숨김
     expect(screen.getByTestId("sens-hidden").textContent).toMatch(/변수가 없어 민감도를 계산하지 않습니다/);
     expect(screen.queryByRole("img", { name: "민감도 막대(SRC·Spearman)" })).toBeNull();

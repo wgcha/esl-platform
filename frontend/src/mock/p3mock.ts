@@ -49,10 +49,6 @@ interface Upl {
   scxVersion?: string;
 }
 
-/** 사용자당 동시 업로드 한도에 세는 세션. v0.14.0 ④ 형상 STEP(이름 doe_compare_*, 형상마다 1개 — 최대 20개)은 다 받은 뒤엔 세지 않음
- *  (가정: 백엔드 uploads.py '다중 doe_step' — esl_step_compare.md §11. 실제 서버 규칙이 다르면 목을 맞출 것) */
-const countsOpen = (u: Upl) => u.state === "OPEN" && !(u.name.startsWith("doe_compare_") && u.files.length > 0 && u.files.every((f) => f.done || f.removed));
-
 export function badRel(rel: string): string | null {
   if (!/^(rad|h3d|results)\//.test(rel)) return "rad/·h3d/·results/ 아래 상대경로만 허용합니다";
   // eslint-disable-next-line no-control-regex
@@ -235,7 +231,7 @@ export class P3Mock {
         if (bad) return err(422, "UPLOAD_NAME_INVALID", `${f.rel}: ${bad}`);
         if (f.size > 64 * 1024 ** 3) return err(413, "UPLOAD_TOO_LARGE", `${f.rel}: 파일당 최대 64 GB`);
       }
-      const open = [...this.uploads.values()].filter(countsOpen);
+      const open = [...this.uploads.values()].filter((u) => u.state === "OPEN");
       if (open.length >= this.maxOpen)
         return err(429, "UPLOAD_LIMIT", `진행 중인 업로드가 ${open.length}개입니다(사용자당 최대 ${this.maxOpen}개) — 끝내거나 취소한 뒤 다시 시도하세요`, {
           limit: this.maxOpen,
@@ -529,7 +525,7 @@ export class P3Mock {
     return this.uploads.get(id)?.files.filter((f) => !f.removed) ?? [];
   }
   openCount(): number {
-    return [...this.uploads.values()].filter(countsOpen).length;
+    return [...this.uploads.values()].filter((u) => u.state === "OPEN").length;
   }
 
   private out(u: Upl): UploadOut {

@@ -1749,7 +1749,8 @@ class DoeSettingsOut(_Out):
     step_max_mb: float
     part_title: str | None = None
     method_sources: dict[str, Any]
-    compare: dict[str, Any] | None = None          # v0.14.0 ④ {max_shapes, total_max_mb, mesh_size_mm}
+    compare_reason: str | None = None               # v0.14.0 ④ 비활성 사유(DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE), null = 사용 가능
+    compare: dict[str, Any] | None = None          # v0.14.0 ④ {enabled, reason, max_shapes, total_max_mb, mesh_size_mm}
 
 
 class DoeCheckOut(_Out):

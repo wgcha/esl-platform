@@ -5,13 +5,15 @@
 ## [0.14.0] - 2026-11-04
 ### 추가
 - **강성 평가 스터디 ④ 형상 직접 비교**: STEP 여러 개(최대 20, 한 업로드에 여러 파일 가능)에 이름을 붙여 올리고 하나를 기준으로 지정 → 라이브러리 ESL(여러 씬)로 형상마다 선형 해석해 기준 대비 컴플라이언스·개선율·ESL별 개선율·Pareto·3D 비교. 비드 인식·DOE·미리보기·paicad 없이 **gmsh 만**으로 동작(paicad 가 없어도 ④ 는 켜짐)
-- 흐름 [입력 준비] → [비교 실행]: 준비에서 모든 형상을 같은 gmsh 설정(요소 3 mm·곡률 세분화 끔·최소 2.4 mm, 이슈 #53 Radioss Ch/R 3 mm 낙하 메시 기준 근사)으로 병렬 메시하고 크기(±5 %)·정렬(기준 frame 원점 0.05·법선 5°) 검사 — 어긋난 형상만 `FAILED_SIZE`, 메시 실패 형상만 `FAILED_MESH`(나머지 진행). 형상마다 요소 수·4각 비율·품질 요약(이슈 #53 criteria 표: Fail·Warn 요소 수·비율 — Fail 비율 1 % 초과 시 경고 `SHAPE_QUALITY_FAIL`, 차단 안 함)
-- 작은 형상 처리: 면적 < π·4² mm² 구멍(r<4 원형·좁은 슬롯) 메움, r 4~30 구멍 둘레 6 분할(이슈 #53 holes table 근사). 높이 2 mm 미만 비드 억제는 기준만 기록(미적용)
+- 흐름 [입력 준비] → [비교 실행]: 준비에서 모든 형상을 같은 gmsh 설정(요소 3 mm·곡률 세분화 끔·최소 2.4 mm, 이슈 #53 Radioss Ch/R 3 mm 낙하 메시 기준 근사)으로 병렬 메시하고 크기(±5 %)·정렬(기준 frame 원점 0.05·법선 5°) 검사 — 어긋난 형상만 `FAILED_SIZE`, 메시 실패 형상만 `FAILED_MESH`(나머지 진행). 형상마다 요소 수·4각 비율·품질 요약(이슈 #53 criteria 표: Fail·Warn 요소 수·비율 — Fail 비율 1 % 초과 시 경고 `SHAPE_QUALITY_FAIL`, 차단 안 함). 준비 결과 화면 형상 표에 Fail 비율·tria 비율 열과 "상한 초과" 배지, 표 위 품질 요약 한 줄
+- 작은 형상 처리: 면적 < π·4² mm² 구멍(r<4 원형·좁은 슬롯) 메움, r 4~30 구멍 둘레 분할 = max(6, ceil(둘레/요소 크기)) — 큰 구멍도 둘레 요소가 요소 크기 이하(이슈 #53 holes table 근사). 높이 2 mm 미만 비드 억제는 기준만 기록(미적용)
 - 하중 = 기준 형상 frame 을 고정한 셀 매핑, 지지 = 형상마다 같은 규칙 auto 3-2-1. 기준 STEP 을 지정하지 않으면 첫 ESL 의 Case 메시가 기준(경고 `COMPARE_REF_CASE_MESH` — 메싱 방식 차이가 섞임)
 - 결과: 순위표 이름 열·민감도 숨김(`COMPARE_NO_PARAMS`), 형상별 메시 `ch_r.rad`·`ch_r.fem`(전 성공 형상), 순위 CSV(이름·파일 열), 보고서(형상 표·메시 프로필·한계)
-- API: `scenario: "compare"` + `shapes[{upload_id, rel?, name, reference}]`(check-inputs·studies), `POST …/run` 은 `matrix_sha256` 없이, `matrix`·`preview`·`params`·`plan-view`·썸네일·비드 그림 = 409 `SCENARIO_UNSUPPORTED`, `GET /doe/settings` 의 `scenarios.compare`·`compare{enabled, reason, max_shapes, total_max_mb, mesh_size_mm}`, 준비 요약 `prep.shapes[{…, status, n_elems, quad_ratio, quality}]`, 결과 `scenario`·`reference_source`·행 `shape{name, file_name}`
+- API: `scenario: "compare"` + `shapes[{upload_id, rel?, name, reference}]`(check-inputs·studies), `POST …/run` 은 `matrix_sha256` 없이, `matrix`·`preview`·`params`·`plan-view`·썸네일·비드 그림 = 409 `SCENARIO_UNSUPPORTED`, `GET /doe/settings` 의 `scenarios.compare`·`compare_reason`·`compare{enabled, reason, max_shapes, total_max_mb, mesh_size_mm}`, check-inputs `shapes[{index, name, file_name, sha256, size_mb, reference}]`·`reference_source`·`base`, 준비 요약 `prep.{n_shapes, n_ready, failed, reference_source, mesh{size_mm, gmsh_version}, shapes[{…, status, n_elems, quad_ratio, quality}]}`, 결과 `scenario`·`reference_source`·`sensitivity_reason`·행 `shape{name, file_name}`·ESL별 지표 행 `name`. 화면은 한 번에 놓은 STEP 들을 업로드 세션 1개로 올리고 형상마다 `rel` 로 지정
 - 설정 `bead_doe.compare.*`(enabled·max_shapes·total_max_mb·align_tol·align_deg·mesh·defeature·quality). 키가 없으면 기본값(③ 결과는 바이트 그대로)
 - DB migration 0014: `bead_does.scenario` 길이 8·CHECK 에 `compare`
+### 수정
+- 자체 쉘 솔버 해 잔차 판정: 얇은 판·3점 지지·3 mm 메시처럼 조건수가 큰 정상 해가 `SOLVER_SINGULAR`(‖Ku−F‖/‖F‖ 1.1e-8 > 1e-8)로 실패하던 문제 — 직접법은 예전 기준(‖r‖/‖F‖ ≤ 1e-8) 또는 노름 후방 오차 ‖r‖/(‖K‖·‖u‖+‖F‖) ≤ 1e-9 면 수용(예전에 통과한 해는 그대로 — ①②③ 결과 불변). 해 통계에 `solve_backward_err` 추가
 
 ## [0.13.0] - 2026-11-04
 ### 추가

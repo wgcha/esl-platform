@@ -113,7 +113,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const isCompare = scenario === "compare";
   const maxShapes = st?.compare?.max_shapes ?? 20;
   /** ④ 요청 형상(기준 = refId) */
-  const compareShapes: CompareShapeIn[] = form.shapes.map((x) => ({ upload_id: x.uploadId, name: x.name.trim(), reference: x.uploadId === form.refId }));
+  const compareShapes: CompareShapeIn[] = form.shapes.map((x) => ({ upload_id: x.uploadId, rel: x.rel, name: x.name.trim(), reference: x.key === form.refId }));
   const shapesKey = isCompare ? JSON.stringify(compareShapes) : "";
   const shapesBad = isCompare ? shapesProblem(form.shapes, form.refId !== null, maxShapes) : null;
   const inchVal = scenario !== "same" && form.inch.trim() && Number.isInteger(Number(form.inch)) && Number(form.inch) > 0 ? Number(form.inch) : null;

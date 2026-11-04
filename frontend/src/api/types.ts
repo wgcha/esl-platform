@@ -2329,12 +2329,24 @@ export interface DoeSettingsOut {
   /** (보강) ② B 메시 기본 파트 제목 — 설정 bead_doe.part_title */
   part_title?: string | null;
   method_sources: DoeMethodSources;
+  /** v0.14.0 ④ 비활성 사유(DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE — paicad 사유 없음, SC-D-3). null = 사용 가능 */
+  compare_reason?: string | null;
   /** v0.14.0 ④ 형상 직접 비교 설정(bead_doe.compare.*) */
-  compare?: { max_shapes: number; total_max_mb: number; mesh_size_mm: number } | null;
+  compare?: DoeCompareCfg | null;
+}
+/** v0.14.0 ④ GET /doe/settings compare 칸 */
+export interface DoeCompareCfg {
+  enabled: boolean;
+  reason: string | null;
+  max_shapes: number;
+  total_max_mb: number;
+  mesh_size_mm: number;
 }
 /** v0.14.0 ④ 형상 1개(esl_step_compare.md §3) */
 export interface CompareShapeIn {
   upload_id: string;
+  /** 업로드 안 STEP 파일 rel(한 세션에 STEP 여러 개면 필수) */
+  rel?: string | null;
   name: string;
   reference?: boolean;
 }
@@ -2353,6 +2365,8 @@ export interface DoeCheckIn {
 /** ④ check-inputs 형상 1행 */
 export interface DoeCheckShape {
   index: number;
+  /** 형상 id(기준 STEP = d000, 나머지 d001…) */
+  id?: string;
   name: string;
   file_name: string;
   sha256: string;
@@ -2366,16 +2380,31 @@ export interface DoeShapeRef {
   reference?: boolean;
   source?: "step" | "case" | null;
 }
-/** (보강) ④ 준비 결과 형상 1행 — 메시 요소 수·상태(계약 prep 요약 failed[] 를 형상 전체로 넓힘) */
+/** ④ 형상 메시 품질 요약(SC-D-13, 이슈 #53 criteria) — over_limit = fail_ratio > max_fail_ratio(경고 SHAPE_QUALITY_FAIL, 차단 아님) */
+export interface DoeShapeQuality {
+  fail_elems: number;
+  fail_ratio: number;
+  warn_elems: number;
+  warn_ratio: number;
+  tria_pct: number;
+  over_limit: boolean;
+  max_fail_ratio: number;
+}
+/** ④ 준비 결과 형상 1행(prep.shapes) — 메시 요소 수·상태·품질 */
 export interface DoePrepShape {
   id: string;
   name: string;
   file_name: string | null;
   reference: boolean;
+  /** step = 업로드 STEP, case = 첫 ESL Case 메시(기준 미지정) */
+  source?: "step" | "case" | null;
   status: DoeDesignStatus;
   code?: string | null;
+  message?: string | null;
+  n_nodes?: number | null;
   n_elems?: number | null;
   quad_ratio?: number | null;
+  quality?: DoeShapeQuality | null;
 }
 export interface DoeProps {
   t: number;
@@ -2446,7 +2475,7 @@ export interface DoeStudyOut {
     props?: DoeProps | null;
     mesh_size_mm?: number | null;
     /** ④ 형상(d000 = 기준 STEP, 기준 없음이면 d001…) */
-    shapes?: { id: string; name: string; file_name: string; sha256: string; upload_id: string; reference: boolean }[] | null;
+    shapes?: { id: string; name: string; file_name: string | null; sha256: string | null; upload_id: string | null; rel?: string | null; reference: boolean }[] | null;
     reference_source?: "step" | "case" | null;
   };
   phase: DoePhase;
@@ -2456,13 +2485,15 @@ export interface DoeStudyOut {
     n_params?: number;
     paicad_version?: string | null;
     warnings: DoeWarning[];
-    boundary?: { n_warn: number; n_info: number };
+    boundary?: { n_warn: number; n_info: number } | null;
     /** ④ 준비 요약(§5 BD_PREP_REGISTER) */
     n_shapes?: number;
     n_ready?: number;
     failed?: { id: string; status: DoeDesignStatus; code: string | null }[];
     reference_source?: "step" | "case" | null;
-    /** (보강) ④ 형상별 메시·상태 */
+    /** ④ 메시 프로필(모든 형상 같음) */
+    mesh?: { size_mm: number | null; gmsh_version: string | null } | null;
+    /** ④ 형상별 메시·상태·품질 */
     shapes?: DoePrepShape[];
   } | null;
   doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
@@ -2617,7 +2648,7 @@ export interface DoeResultOut {
   sensitivity: { method: string; r2: number; params: DoeSensParam[] } | null;
   /** ④ = "COMPARE_NO_PARAMS" */
   sensitivity_reason?: string | null;
-  scenario?: DoeScenario;
+  scenario?: DoeScenario | null;
   reference_source?: "step" | "case" | null;
   boundary_warnings_n: number;
   view3d: string[];

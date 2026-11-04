@@ -3,7 +3,7 @@
 // 행렬·셀 상태·순위·민감도는 입력에서 결정적으로 만든다(같은 spec → 같은 sha·같은 결과).
 import type {
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
 
@@ -67,7 +67,8 @@ export function makeDoeSettings(): DoeSettingsOut {
     step_max_mb: 200,
     part_title: "chassis rear",
     method_sources: DOE_METHOD_SOURCES,
-    compare: { max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
+    compare_reason: null,
+    compare: { enabled: true, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
   };
 }
 
@@ -498,32 +499,76 @@ type CompareInputShape = NonNullable<DoeStudyOut["inputs"]["shapes"]>[number];
 const CTRL_RE = /[\u0000-\u001f\u007f]/;
 /** 목 sha256 = 파일 이름 해시(같은 파일 이름 = 같은 내용으로 봄 → SHAPE_DUPLICATE_FILE 경고) */
 const shaOfFile = (file: string) => fnv(`step:${file}`).padEnd(64, "e");
+const COMPARE_FAIL_MSG: Record<string, string> = {
+  SHAPE_MISALIGNED: "기준 frame 과 원점·법선이 다릅니다(같은 좌표계 STEP 인지 확인)",
+  SHAPE_SIZE_MISMATCH: "기준과 크기가 ±5 % 밖입니다",
+  MESH_FAILED: "gmsh 메시 생성에 실패했습니다",
+};
 export const COMPARE_REF_CASE_MESH: DoeWarning = { code: "COMPARE_REF_CASE_MESH", message: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다" };
 
-/** 준비 결과(형상별 메시·크기·정렬, 결정적): 이름·파일에 'shift' → SHAPE_MISALIGNED, 'big' → SHAPE_SIZE_MISMATCH, 'broken' → MESH_FAILED */
+const MAX_FAIL_RATIO = 0.01;
+/** 형상 메시 품질 요약(결정적, SC-D-13): 'rough' 가 이름·파일에 있으면 Fail 비율 상한 초과(경고 SHAPE_QUALITY_FAIL, 차단 아님) */
+function mockQuality(key: string, h: number, nElems: number): DoeShapeQuality {
+  const fail_ratio = key.includes("rough") ? 0.0184 : +(0.0006 + 0.002 * h).toFixed(4);
+  const warn_ratio = +(fail_ratio * 3.2 + 0.004).toFixed(4);
+  return {
+    fail_elems: Math.round(nElems * fail_ratio),
+    fail_ratio,
+    warn_elems: Math.round(nElems * warn_ratio),
+    warn_ratio,
+    tria_pct: +(2 + 4 * h).toFixed(1),
+    over_limit: fail_ratio > MAX_FAIL_RATIO,
+    max_fail_ratio: MAX_FAIL_RATIO,
+  };
+}
+
+/** 준비 결과(형상별 메시·크기·정렬·품질, 결정적): 이름·파일에 'shift' → SHAPE_MISALIGNED, 'big' → SHAPE_SIZE_MISMATCH, 'broken' → MESH_FAILED,
+ *  'rough' → 품질 Fail 비율 상한 초과 */
 export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" | "case"): NonNullable<DoeStudyOut["prep"]> {
   const rows: DoePrepShape[] = [];
-  if (refSource === "case") rows.push({ id: "d000", name: "Case 메시", file_name: null, reference: true, status: "READY", code: null, n_elems: 218_400, quad_ratio: 0.98 });
+  if (refSource === "case")
+    rows.push({ id: "d000", name: "Case 메시", file_name: null, reference: true, source: "case", status: "READY", code: null, message: null, n_nodes: 221_380, n_elems: 218_400, quad_ratio: 0.98, quality: mockQuality("case", 0.2, 218_400) });
   for (const x of shapes) {
     const key = `${x.name} ${x.file_name}`.toLowerCase();
-    const h = parseInt(fnv(x.file_name).slice(0, 4), 16) / 0xffff;
+    const h = parseInt(fnv(x.file_name ?? x.id).slice(0, 4), 16) / 0xffff;
     const fail = x.reference ? null : key.includes("shift") ? ["FAILED_SIZE", "SHAPE_MISALIGNED"] : key.includes("big") ? ["FAILED_SIZE", "SHAPE_SIZE_MISMATCH"] : key.includes("broken") ? ["FAILED_MESH", "MESH_FAILED"] : null;
+    const meshed = fail?.[0] !== "FAILED_MESH";
+    const nElems = Math.round(168_000 + 26_000 * h);
     rows.push({
       id: x.id,
       name: x.name,
       file_name: x.file_name,
       reference: x.reference,
+      source: "step",
       status: (fail?.[0] ?? "READY") as DoeDesignStatus,
       code: fail?.[1] ?? null,
-      n_elems: fail?.[0] === "FAILED_MESH" ? null : Math.round(168_000 + 26_000 * h),
-      quad_ratio: fail?.[0] === "FAILED_MESH" ? null : +(0.93 + 0.05 * h).toFixed(3),
+      message: fail ? COMPARE_FAIL_MSG[fail[1]] : null,
+      n_nodes: meshed ? Math.round(nElems * 1.02) : null,
+      n_elems: meshed ? nElems : null,
+      quad_ratio: meshed ? +(0.93 + 0.05 * h).toFixed(3) : null,
+      quality: meshed ? mockQuality(key, h, nElems) : null,
     });
   }
   const failed = rows.filter((r) => r.status !== "READY").map((r) => ({ id: r.id, status: r.status, code: r.code ?? null }));
   const warnings: DoeWarning[] = refSource === "case" ? [COMPARE_REF_CASE_MESH] : [];
   const files = shapes.map((x) => x.sha256);
   if (new Set(files).size < files.length) warnings.push({ code: "SHAPE_DUPLICATE_FILE", message: "같은 STEP 파일이 두 번 이상 들어 있습니다" });
-  return { warnings, n_shapes: rows.length, n_ready: rows.length - failed.length, failed, reference_source: refSource, shapes: rows };
+  for (const r of rows)
+    if (r.quality?.over_limit)
+      warnings.push({ code: "SHAPE_QUALITY_FAIL", message: `${r.id} ${r.name}: 메시 품질 Fail 요소 비율 ${(r.quality.fail_ratio * 100).toFixed(2)} % > ${r.quality.max_fail_ratio * 100} % — 차단 아님` });
+  return {
+    n_beads: 0,
+    n_params: 0,
+    paicad_version: null,
+    warnings,
+    boundary: null,
+    n_shapes: rows.length,
+    n_ready: rows.length - failed.length,
+    failed,
+    reference_source: refSource,
+    shapes: rows,
+    mesh: { size_mm: 3, gmsh_version: "4.13.1" },
+  };
 }
 
 /** 비교 결과(결정적): READY 형상마다 score(형상 해시), 실패 형상은 excluded, 민감도 없음(COMPARE_NO_PARAMS) */
@@ -588,12 +633,13 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
 }
 
 /** 요청 형상 → 형상 id(SC-D-4): 기준 STEP = d000, 나머지 요청 순서 d001…(기준 없음이면 d001 부터) */
-export function compareIds(shapes: { upload_id: string; name: string; reference?: boolean; file_name: string; sha256: string }[]): CompareInputShape[] {
+export function compareIds(shapes: { upload_id: string; rel?: string | null; name: string; reference?: boolean; file_name: string; sha256: string }[]): CompareInputShape[] {
   const ref = shapes.find((x) => x.reference);
   const out: CompareInputShape[] = [];
-  if (ref) out.push({ id: "d000", name: ref.name.trim(), file_name: ref.file_name, sha256: ref.sha256, upload_id: ref.upload_id, reference: true });
+  if (ref) out.push({ id: "d000", name: ref.name.trim(), file_name: ref.file_name, sha256: ref.sha256, upload_id: ref.upload_id, rel: ref.rel ?? null, reference: true });
   let k = 1;
-  for (const x of shapes) if (x !== ref) out.push({ id: `d${String(k++).padStart(3, "0")}`, name: x.name.trim(), file_name: x.file_name, sha256: x.sha256, upload_id: x.upload_id, reference: false });
+  for (const x of shapes)
+    if (x !== ref) out.push({ id: `d${String(k++).padStart(3, "0")}`, name: x.name.trim(), file_name: x.file_name, sha256: x.sha256, upload_id: x.upload_id, rel: x.rel ?? null, reference: false });
   return out;
 }
 
@@ -730,7 +776,7 @@ export class DoeMock {
     }
     // 3) ④ 형상 직접 비교 완료(기준 STEP + 4형상, 1개 정렬 실패)
     const mk = (files: [string, string][], refIdx: number | null) =>
-      compareIds(files.map(([f, n], i) => ({ upload_id: `up-cmp-${f}`, name: n, reference: i === refIdx, file_name: f, sha256: shaOfFile(f) })));
+      compareIds(files.map(([f, n], i) => ({ upload_id: "up-cmp-seed", rel: `rad/${f}`, name: n, reference: i === refIdx, file_name: f, sha256: shaOfFile(f) })));
     const cmp = (id: string, title: string, at: string, shapes: CompareInputShape[], refSource: "step" | "case"): Rec => {
       const r = base(id, "compare", title, at);
       r.out.inputs = { step: null, mesh: null, part_title: null, inch: null, props: { t: 1.2, E: 205000, nu: 0.3 }, mesh_size_mm: null, shapes, reference_source: refSource };
@@ -741,7 +787,7 @@ export class DoeMock {
       "doe-3",
       "Ch/R 형상 비교 — 75형 4안",
       "2026-11-03T02:00:00Z",
-      mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"], ["chr_D_shift.step", "D안(원점 다름)"]], 0),
+      mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B_rough.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"], ["chr_D_shift.step", "D안(원점 다름)"]], 0),
       "step",
     );
     c.result = makeCompareResult(c.out.prep!, c.out.entry_ids);
@@ -906,8 +952,9 @@ export class DoeMock {
   /** ④ check-inputs(§3 검증 순서) — paicad 무관(SC-D-3) */
   private checkCompare(b: Record<string, unknown>, pid: string): MockResponse {
     const st = this.settings;
-    if (!st.enabled && st.reason === "DOE_DISABLED") return err(503, "DOE_DISABLED", "강성 평가 스터디가 꺼져 있습니다.");
-    if (!st.scenarios.compare) return st.gmsh.ready ? err(503, "COMPARE_DISABLED", "형상 직접 비교가 꺼져 있습니다.") : err(503, "GMSH_UNAVAILABLE", "gmsh 가 없습니다.");
+    const why = st.compare_reason ?? (!st.enabled && st.reason === "DOE_DISABLED" ? "DOE_DISABLED" : !st.scenarios.compare ? (st.gmsh.ready ? "COMPARE_DISABLED" : "GMSH_UNAVAILABLE") : null);
+    if (why === "DOE_DISABLED") return err(503, "DOE_DISABLED", "강성 평가 스터디가 꺼져 있습니다.");
+    if (why) return err(503, why, why === "GMSH_UNAVAILABLE" ? "gmsh 가 없습니다." : "형상 직접 비교가 꺼져 있습니다.");
     if (b.step_upload_id != null || b.mesh_upload_id != null || b.part_title != null) return err(422, "INVALID_PARAMS", "형상 직접 비교에는 step_upload_id·mesh_upload_id·part_title 을 쓰지 않습니다.");
     const ids = (b.entry_ids as string[]) ?? [];
     const es = this.ctx.entries();
@@ -928,14 +975,20 @@ export class DoeMock {
       if (seen.has(n.toLowerCase())) return err(422, "SHAPE_NAME_DUPLICATE", "형상 이름이 겹칩니다.", { index: i });
       seen.add(n.toLowerCase());
     }
-    if (new Set(shapes.map((x) => x.upload_id)).size < shapes.length) return err(422, "INVALID_PARAMS", "같은 업로드를 두 번 넣었습니다.");
+    // 같은 (upload_id, rel) 2번, 또는 한 업로드를 여러 형상이 쓰는데 rel 이 없으면 INVALID_PARAMS(서버 _compare_check 와 같음)
+    const keyOf = (x: CompareShapeIn) => `${x.upload_id}\u0000${x.rel ?? ""}`;
+    const perUp = (u: string) => shapes.filter((x) => x.upload_id === u).length;
+    if (new Set(shapes.map(keyOf)).size < shapes.length || shapes.some((x) => !x.rel && perUp(x.upload_id) > 1))
+      return err(422, "INVALID_PARAMS", "같은 업로드 파일(upload_id·rel)을 두 번 넣었습니다 — 한 업로드에 STEP 이 여러 개면 형상마다 rel 을 주세요.");
     const rows: DoeCheckShape[] = [];
     for (let i = 0; i < shapes.length; i++) {
       const up = this.ctx.upload(String(shapes[i].upload_id ?? ""));
       if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.", { index: i });
       if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.", { index: i });
-      const f = up.files.find((x) => /\.(step|stp)$/i.test(x));
-      if (!f) return err(422, "STEP_INVALID", "STEP(.step·.stp) 파일이 없습니다.", { index: i });
+      const steps = up.files.filter((x) => /\.(step|stp)$/i.test(x));
+      const rel = shapes[i].rel;
+      const f = rel ? steps.find((x) => x === rel) : steps.length === 1 ? steps[0] : undefined;
+      if (!f) return err(422, "STEP_INVALID", rel ? `업로드에 STEP 파일 '${rel}' 이 없습니다.` : "업로드에 STEP 이 하나가 아닙니다(rel 지정).", { index: i });
       this.ctx.markUploadCompleted(String(shapes[i].upload_id));
       const file = f.split("/").pop()!;
       rows.push({ index: i, name: String(shapes[i].name).trim(), file_name: file, sha256: shaOfFile(file), size_mb: +(3.4 + 0.3 * i).toFixed(2), reference: !!shapes[i].reference });

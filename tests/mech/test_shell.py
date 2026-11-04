@@ -505,3 +505,29 @@ def test_out_of_memory_superlu_malloc(monkeypatch):
     with pytest.raises(EslError) as ei:
         _shell._SuperLU(sps.csc_matrix(np.eye(2)))
     assert ei.value.code == "SOLVER_SINGULAR"
+
+
+def test_resid_check_backward_error():
+    """v0.14.0 해 잔차 판정: ‖r‖/‖F‖ ≤ 1e-8(옛 판정) 또는 후방 오차 η = ‖r‖/(‖K‖∞‖u‖+‖F‖) ≤ 1e-9 이면 수용."""
+    import scipy.sparse as sps_
+
+    st = {}
+    rhs = np.ones(4)
+    uf = np.full(4, 1e6)                                     # 조건수 큰 문제: ‖u‖ ≫ ‖F‖/‖K‖
+    res = np.full(4, 3e-8)                                   # ‖r‖/‖F‖ 3e-8 > 1e-8
+    assert _shell._check_resid(None, uf, res, rhs, 1.0, st) == pytest.approx(3e-8)
+    assert st["solve_backward_err"] == pytest.approx(3e-8 * 2 / (1e6 * 2 + 2))
+    with pytest.raises(EslError) as ei:                      # η 도 큼(‖u‖ 작음) → 특이
+        _shell._check_resid(None, np.ones(4), np.full(4, 3e-8), rhs, 1.0, {})
+    assert ei.value.code == "SOLVER_SINGULAR"
+    with pytest.raises(EslError) as ei:                      # 유한하지 않은 해
+        _shell._check_resid(None, np.array([np.nan, 0, 0, 0]), np.zeros(4), rhs, 1.0, {})
+    assert ei.value.code == "SOLVER_SINGULAR"
+    assert _shell._check_resid(None, np.ones(4), np.full(4, 1e-9), rhs, 1.0, {}) == pytest.approx(1e-9)   # 옛 판정 통과
+
+    class FakeCG(_shell._CG):                                # 반복법은 옛 판정(max(1e-8, 100·rtol)) 그대로
+        def __init__(self):
+            self.rtol = 1e-10
+    with pytest.raises(EslError):
+        _shell._check_resid(FakeCG(), uf, res, rhs, 1.0, {})
+    assert _shell._norm_inf(sps_.csr_matrix(np.array([[2.0, -1.0], [-1.0, 3.0]]))) == 4.0
