@@ -36,6 +36,7 @@ from typing import Any
 
 from sqlalchemy import and_, func, select, update
 
+from esl_platform.core.atomic import atomic_replace
 from esl_platform.core.atomic import write_text_atomic
 from esl_platform.core.db.tables import jobs as jobs_t
 from esl_platform.core.db.tables import verify_drops as vd_t
@@ -305,7 +306,7 @@ class _Verify:
         if os.path.lexists(stage):                     # 이전 시도 산출물 → _backup(지우지 않음)
             bk = safe_path(self.cdir, "_backup", _now().strftime("%Y%m%dT%H%M%S%f"))
             os.makedirs(os.path.dirname(bk), exist_ok=True)
-            os.replace(stage, bk)
+            atomic_replace(stage, bk)
         self.echo(f"[esl-worker] VD_PREP: 원 Case 입력 {len(info['files'])}개(starter·include·엔진 {info['engines']}), "
                   f"안 {self.d['design_id']} 모핑 사본 {len(self.p.get('best_rels') or [])}개")
         mx = int((self.p.get("core_case") or {}).get("rad_max_line_kb") or 0) * 1024 or None
@@ -630,7 +631,7 @@ class _Verify:
             got, sha = self.call(f"내려받기 {n}", once)
             if os.path.islink(part) or os.path.islink(dst):
                 raise _fail("PATH_UNSAFE", "결과 파일이 링크입니다")
-            os.replace(part, dst)
+            atomic_replace(part, dst)
             man["files"][n] = {"size": int(got), "sha256": sha}
             _write(safe_path(self.cdir, FETCH_JSON), man)
             doneb += sizes[n]

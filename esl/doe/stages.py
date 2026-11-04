@@ -37,6 +37,7 @@ from esl.doe import paicad_io as pio
 from esl.doe import rank as rk
 from esl.doe import scenario as sc
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 from esl.library import _util as U
 
 STAGES = ("bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post", "bd_select_grid")
@@ -90,7 +91,7 @@ class Ctx:
         tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="ascii") as fh:
             fh.write(str(v))
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
 
     def write_json(self, rel: str, obj) -> str:
         p = self.p(rel)

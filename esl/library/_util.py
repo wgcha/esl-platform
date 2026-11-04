@@ -13,6 +13,7 @@ import os
 import numpy as np
 
 from esl.errors import EslError
+from esl.fsutil import atomic_replace
 
 BACKUP_DIR = "_backup"
 _CHUNK = 4 * 1024 * 1024
@@ -157,7 +158,7 @@ class Writer:
             dst = os.path.join(base, BACKUP_DIR, self.ts, f"{rel}.{k}")
             k += 1
         self.makedirs(os.path.dirname(dst))
-        os.replace(path, self.guard(dst))
+        atomic_replace(path, self.guard(dst))
         return dst
 
     def fresh_file(self, path: str, base: str) -> str:

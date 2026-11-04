@@ -31,6 +31,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from esl.fsutil import atomic_replace
 import esl
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, csvout, force_mask, optistruct, plan_ids, radioss
@@ -57,7 +58,7 @@ def _write_json_atomic(path: str, obj) -> None:
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x))
         fh.write("\n")
-    os.replace(tmp, path)
+    atomic_replace(tmp, path)
 
 
 def _load_npz(path: str) -> dict:
@@ -279,9 +280,9 @@ def _publish(stage: str, d: str, out_root: str) -> None:
         _check_safe(out_root, bdir)
         os.makedirs(bdir, exist_ok=True)
         _check_safe(out_root, bdir)
-        os.replace(d, os.path.join(bdir, os.path.basename(d)))
+        atomic_replace(d, os.path.join(bdir, os.path.basename(d)))
     _check_safe(out_root, d)
-    os.replace(stage, d)
+    atomic_replace(stage, d)
 
 
 def run_items(items: list[dict], out_root: str, targets, cfg: dict, *, wait_s: float = 600.0, poll_s: float = 0.5,

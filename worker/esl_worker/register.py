@@ -16,6 +16,7 @@ import numpy as np
 from sqlalchemy.engine import Connection
 
 from esl_platform.core import core_outputs as co
+from esl_platform.core.atomic import atomic_replace
 from esl_platform.core.repositories import cases as cases_repo
 
 from . import esl_snapshot
@@ -425,7 +426,7 @@ def archive_history(cdir: str, job_type: str, job_id: str) -> int:
         else:
             shutil.copy2(src, os.path.join(tmp, co.HISTORY_REPORT))
             n = 1
-        os.replace(tmp, dst)
+        atomic_replace(tmp, dst)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise

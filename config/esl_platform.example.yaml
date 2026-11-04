@@ -40,6 +40,7 @@ worker:
   env_passthrough: []
   state_dir: "./state"
   xfer_lanes: 2                       # v0.11.0 XFER 레인(SCX 전송·원격 대기) 루프 수(1~8) — SLOT·LIGHT 와 독립
+  # fs_retry: {attempts: 8, max_wait_s: 10, base_s: 0.05}  # (선택) 파일 교체가 백신·인덱서 잠금(WinError 5/32)에 걸리면 지수 백오프 재시도, 끝내 실패 → FILE_LOCKED
 ui:
   max_artifact_bytes: 20971520
   max_preview_points: 20000           # 2D 산점·겹쳐보기(/validations/{id}/field) 최대 점 수(초과 시 다운샘플)

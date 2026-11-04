@@ -15,6 +15,7 @@ import shutil
 from typing import Any
 
 from esl_platform.core import core_outputs as co
+from esl_platform.core.atomic import atomic_replace
 
 
 def _copy_tree(src: str, dst: str) -> None:
@@ -42,7 +43,7 @@ def save(cdir: str, run_id: str) -> str:
         os.makedirs(tmp)
         for sub in co.SNAPSHOT_DIRS:
             _copy_tree(_inside(cdir, os.path.join(cdir, sub)), os.path.join(tmp, sub))
-        os.replace(tmp, snap)
+        atomic_replace(tmp, snap)
     return f"{co.RUNS_DIR}/{run_id}"
 
 
@@ -67,7 +68,7 @@ def ensure_on_disk(cdir: str, run: dict[str, Any]) -> str:
         cur = _inside(cdir, os.path.join(cdir, sub))
         if os.path.lexists(cur):
             os.makedirs(bdir, exist_ok=True)
-            os.replace(cur, os.path.join(bdir, sub))
+            atomic_replace(cur, os.path.join(bdir, sub))
         _copy_tree(os.path.join(snap, sub), cur)
     if co.esl_tag(cdir) != want:  # pragma: no cover - 방어
         raise LookupError("스냅샷 복원 후에도 04_esl tag 가 다릅니다")
@@ -92,6 +93,6 @@ def save_validation(cdir: str, run_id: str, validation_id: str) -> str:
         ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         bdir = _inside(cdir, os.path.join(cdir, "_backup", ts, co.RUNS_DIR, run_id))
         os.makedirs(bdir, exist_ok=True)
-        os.replace(dst, os.path.join(bdir, co.VAL_SNAPSHOT))
-    os.replace(tmp, dst)
+        atomic_replace(dst, os.path.join(bdir, co.VAL_SNAPSHOT))
+    atomic_replace(tmp, dst)
     return f"{co.RUNS_DIR}/{run_id}/{co.VAL_SNAPSHOT}"

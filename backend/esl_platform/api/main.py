@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import __version__
+from ..core.atomic import FileLocked
 from ..core.config import LoadedConfig, load_config
 from ..core.errors import DomainError
 from .display_json import DisplayJSONResponse
@@ -51,6 +52,12 @@ def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
     @app.exception_handler(DomainError)
     async def _domain(_req: Request, exc: DomainError) -> JSONResponse:
         return DisplayJSONResponse(status_code=exc.status, content={"detail": exc.detail()}, headers=exc.headers)
+
+    @app.exception_handler(FileLocked)
+    async def _locked(_req: Request, exc: FileLocked) -> JSONResponse:
+        # 이슈 #53: 업로드·3D 보기 사본 교체가 worker.fs_retry 재시도 뒤에도 잠김(백신·인덱서 등) — 잠시 뒤 다시 시도
+        log.warning("파일 잠김: %s", exc.message)
+        return _error(503, exc.code, exc.message, path=exc.dst)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_req: Request, exc: RequestValidationError) -> JSONResponse:

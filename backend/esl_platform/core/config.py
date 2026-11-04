@@ -132,6 +132,14 @@ class UploadCfg(_M):
 MAX_SLOTS = 16   # worker_slot 행 수(0006) — worker.slots 상한
 
 
+class FsRetryCfg(_M):
+    """이슈 #53 WinError 32: 원자적 교체(esl.fsutil.atomic_replace)의 Windows 잠금(WinError 5/32) 재시도.
+    기본값 = esl.fsutil.DEFAULTS(시험 test_fs_retry 가 확인). 대기 = base_s × 2^i(합계 ≤ max_wait_s)."""
+    attempts: int = Field(default=8, ge=1, le=100)
+    max_wait_s: float = Field(default=10.0, ge=0, le=600)
+    base_s: float = Field(default=0.05, gt=0, le=10)
+
+
 class WorkerCfg(_M):
     limiter: Literal["auto", "none", "posix", "windows_job"]
     max_logical_cores: int = Field(ge=1)
@@ -154,6 +162,8 @@ class WorkerCfg(_M):
     state_dir: str
     # v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인(HTTP 전송·원격 대기 — SCX_FETCH 등) 루프 수. SLOT·LIGHT 와 독립, 슬롯 없음
     xfer_lanes: int = Field(default=2, ge=1, le=8)
+    # 이슈 #53: 파일 교체가 백신·인덱서 등의 잠깐 잠금(WinError 5/32)에 걸릴 때 재시도(끝내 실패 → FILE_LOCKED). 백엔드도 같은 값
+    fs_retry: FsRetryCfg = Field(default_factory=FsRetryCfg)
 
 
 H3D_EXTRACT_DEFAULT = ["{hw}", "-clientconfig", "hwpost.dat", "-b", "-tcl", "{extract_tcl_fwd}", "-input", "{h3d_fwd}",
