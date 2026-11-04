@@ -2,12 +2,16 @@
 // (자동 판별 + 표시), 주 버튼 1개 = 단계별 [입력 준비 | 미리보기 | DOE 실행 | 보고서 보기](비활성 사유 툴팁).
 // 카드: ① 입력 · ② 비드·변수 + DOE 방식 · ③ 평면도(비드 번호·경계 경고) · ④ 미리보기 격자 · ⑤ 결과(순위·민감도·3D 비교·받기).
 // 솔버 선택 칸 없음(선형만, 확정 6). 설정값은 모두 GET /doe/settings.
+// v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §7, SC-D-1): 주 버튼 [입력 준비] → (형상 표에 메시 요소 수·상태) → [비교 실행].
+// ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
+import type { CompareShapeIn } from "../../api/types";
 import {
-  PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, autoScenario, buildSpec, defaultRows, doe, doeBlockedReason, doePath, scenarioBlocked, warnText,
+  PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath, scenarioBlocked,
+  shapesProblem, warnText,
   type ParamRow, type SpecForm,
 } from "../../api/doe";
 import { STEP_LABEL } from "../../api/history";
@@ -105,36 +109,54 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mismatched = sel.filter((e) => e.topo_sha256 !== topo0 || check?.entries.some((r) => r.entry_id === e.id && !r.ok)).map((e) => e.id);
-  const blocked = st ? doeBlockedReason(st) : null;
+  const blocked = st ? doeBlockedReason(st, scenario) : null;
+  const isCompare = scenario === "compare";
+  const maxShapes = st?.compare?.max_shapes ?? 20;
+  /** ④ 요청 형상(기준 = refId) */
+  const compareShapes: CompareShapeIn[] = form.shapes.map((x) => ({ upload_id: x.uploadId, name: x.name.trim(), reference: x.uploadId === form.refId }));
+  const shapesKey = isCompare ? JSON.stringify(compareShapes) : "";
+  const shapesBad = isCompare ? shapesProblem(form.shapes, form.refId !== null, maxShapes) : null;
+  const inchVal = scenario !== "same" && form.inch.trim() && Number.isInteger(Number(form.inch)) && Number(form.inch) > 0 ? Number(form.inch) : null;
 
-  // 입력 검사: STEP(②는 B 메시도) 업로드가 끝나면 자동(POST /doe/check-inputs)
+  // 입력 검사: STEP(②는 B 메시도, ④ 는 형상 표) 업로드가 끝나면 자동(POST /doe/check-inputs). ④ 는 이름 입력 중 0.3 s 모아서
   const stepId = form.step?.uploadId ?? null;
   const meshId = form.mesh?.uploadId ?? null;
   useEffect(() => {
     setCheck(null);
     setCheckError(null);
-    if (!stepId || !ids.length || (scenario === "mesh" && !meshId) || blocked) return;
+    setChecking(false);
+    if (!ids.length || blocked) return;
+    if (isCompare ? !!shapesBad : !stepId || (scenario === "mesh" && !meshId)) return;
     let alive = true;
-    setChecking(true);
-    doe
-      .checkInputs({ project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null })
-      .then((c) => alive && setCheck(c))
-      .catch((e) => alive && setCheckError(errorText(e)))
-      .finally(() => alive && setChecking(false));
+    const go = () => {
+      setChecking(true);
+      doe
+        .checkInputs(
+          isCompare
+            ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal }
+            : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null },
+        )
+        .then((c) => alive && setCheck(c))
+        .catch((e) => alive && setCheckError(compareErrorText(e)))
+        .finally(() => alive && setChecking(false));
+    };
+    const t = isCompare ? setTimeout(go, 300) : null;
+    if (!t) go();
     return () => {
       alive = false;
+      if (t) clearTimeout(t);
     };
-  }, [projectId, scenario, idsKey, stepId, meshId, blocked]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, scenario, idsKey, stepId, meshId, blocked, shapesKey, shapesBad]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ③ 쉘 물성·요소 크기 기본값(서버 props_default·mesh_size_default_mm)
+  // ③④ 쉘 물성(③ 은 요소 크기도) 기본값(서버 props_default·mesh_size_default_mm)
   useEffect(() => {
-    if (!check || scenario !== "step") return;
+    if (!check || (scenario !== "step" && scenario !== "compare")) return;
     setForm((f) => ({
       ...f,
       t: f.t || (check.props_default ? String(check.props_default.t) : ""),
       E: f.E || (check.props_default ? String(check.props_default.E) : ""),
       nu: f.nu || (check.props_default ? String(check.props_default.nu) : ""),
-      meshSize: f.meshSize || (check.mesh_size_default_mm != null ? String(check.mesh_size_default_mm) : ""),
+      meshSize: scenario === "step" ? f.meshSize || (check.mesh_size_default_mm != null ? String(check.mesh_size_default_mm) : "") : f.meshSize,
     }));
   }, [check, scenario]);
   useEffect(() => {
@@ -156,6 +178,15 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     if (!ids.length) return "ESL 을 고르세요 — ESL 라이브러리 › ESL 목록에서 체크한 뒤 '강성 평가 스터디'";
     if (sel.length !== ids.length) return "라이브러리에 없는 항목이 있습니다";
     if (ids.length > st.max_entries) return `ESL 은 최대 ${st.max_entries}개입니다`;
+    if (isCompare) {
+      if (shapesBad) return shapesBad;
+      if (form.inch.trim() && !inchVal) return "인치는 양의 정수입니다";
+      if (checking) return "입력 검사 중…";
+      if (checkError) return checkError;
+      if (!check) return "입력 검사 대기 중…";
+      if (!check.ok) return "입력 검사에 실패한 항목이 있습니다";
+      return propsProblem(form, st, false);
+    }
     if (scenario === "same" && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 다른 모델 시나리오`;
     if (!form.step) return "Ch/R 중립면 STEP 을 올리세요";
     if (scenario === "mesh" && !form.mesh) return "B 메시(.rad/.inc)를 올리세요";
@@ -169,6 +200,26 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   }
 
   async function prepare() {
+    if (isCompare) {
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await doe.createStudy({
+          project_id: projectId,
+          scenario,
+          entry_ids: ids,
+          shapes: compareShapes,
+          inch: inchVal,
+          title: form.title.trim() || null,
+          props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
+        });
+        nav(doePath(projectId, r.id));
+      } catch (e) {
+        setError(compareErrorText(e));
+        setBusy(false);
+      }
+      return;
+    }
     if (!form.step) return;
     setBusy(true);
     setError(null);
@@ -227,7 +278,10 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         )}
       </Card>
       <div className="small muted">
-        입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식). 입력 폴더는 읽기만 합니다.
+        {isCompare
+          ? "입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음). 준비 결과를 확인한 뒤 '비교 실행'."
+          : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
+        입력 폴더는 읽기만 합니다.
         {!ids.length && (
           <>
             {" "}
@@ -292,6 +346,9 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
 
 function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
+  // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
+  const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
+  const nameOf = (d: string) => result.ranking.find((r) => r.id === d)?.shape?.name ?? null;
   const did = pick && others.includes(pick) ? pick : others[0] ?? null;
   const base = useDoeView(studyId, result.view3d.includes("d000") ? "d000" : null);
   const cand = useDoeView(studyId, did);
@@ -303,11 +360,12 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
   return (
     <div className="doe-compare">
       <div className="inline-actions">
-        <span className="small muted">비교 안</span>
+        <span className="small muted">{named ? "비교 형상" : "비교 안"}</span>
         <select aria-label="3D 비교 안" value={did ?? ""} onChange={(e) => setPick(e.target.value)}>
           {others.map((d) => (
             <option key={d} value={d}>
               {d}
+              {nameOf(d) ? ` ${nameOf(d)}` : ""}
               {result.ranking.find((r) => r.id === d) ? ` · ${result.ranking.find((r) => r.id === d)!.rank}위` : ""}
             </option>
           ))}
@@ -315,8 +373,8 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
         <span className="small muted">색 = 변위 |u|(최악 ESL), 두 그림 같은 범위</span>
       </div>
       <div className="doe-compare-grid">
-        {base && <View3DCard view={base} options={opts("베이스라인 d000")} />}
-        {cand && <View3DCard view={cand} options={opts(`안 ${did}`)} />}
+        {base && <View3DCard view={base} options={opts(named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000")} />}
+        {cand && <View3DCard view={cand} options={opts(named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`)} />}
       </div>
     </div>
   );
@@ -358,7 +416,7 @@ function Downloads({ study, result, extra }: { study: DoeStudyOut; result: DoeRe
     <div className="inline-actions" data-testid="doe-downloads">
       <span className="small muted">받기{result.best ? ` · 최적 ${result.best.id}` : ""}</span>
       {mesh.map((f) => (
-        <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={`${study.scenario === "step" ? "메시" : "include"} ${name(f.rel)}`} />
+        <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={`${study.scenario === "step" || study.scenario === "compare" ? "메시" : "include"} ${name(f.rel)}`} />
       ))}
       {geom.map((f) => (
         <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={name(f.rel).split(".").pop()!.toUpperCase()} />
@@ -426,12 +484,15 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const s = study.data;
   const phase = s?.phase ?? null;
   const prepDone = !!s?.prep && phase !== "PREP";
+  const isCompare = s?.scenario === "compare";
+  /** ②③④ 카드(비드·평면도·미리보기) — ④ 형상 비교는 없음 */
+  const beadPrep = prepDone && !!s && !isCompare;
   useEffect(() => {
     if (s) setPoll(ACTIVE_PHASE.includes(s.phase) ? 3000 : 0);
   }, [s]);
   const all = usePolling(() => api.libraryEntries({ project_id: projectId }), 0, [projectId]);
-  const params = usePolling(() => (prepDone ? doe.params(id) : Promise.resolve(null)), 0, [id, prepDone]);
-  const plan = usePolling(() => (prepDone ? doe.planView(id) : Promise.resolve(null)), 0, [id, prepDone]);
+  const params = usePolling(() => (beadPrep ? doe.params(id) : Promise.resolve(null)), 0, [id, beadPrep]);
+  const plan = usePolling(() => (beadPrep ? doe.planView(id) : Promise.resolve(null)), 0, [id, beadPrep]);
   const done = phase === "DONE";
   const result = usePolling(() => (done ? doe.results(id) : Promise.resolve(null)), 0, [id, done]);
 
@@ -547,6 +608,31 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       setBusy(false);
     }
   }
+  /** ④ 비교 실행(SC-D-1: matrix 없이 READY → RUN) */
+  function compareRunReason(): string | null {
+    if (!allowed) return NO_PERMISSION;
+    if (!st || !s) return "불러오는 중…";
+    const b = doeBlockedReason(st, "compare") ?? scenarioBlocked(st, "compare");
+    if (b) return b;
+    if (phase !== "READY") return "이미 실행했습니다 — 복제해서 새 연구로";
+    // 기준 외 준비된 형상 수(prep.shapes 가 없으면 서버 판정에 맡김)
+    const others = s.prep?.shapes ? s.prep.shapes.filter((x) => !x.reference && x.status === "READY").length : 1;
+    if (others < 1) return "비교할 수 있는 형상이 없습니다(준비 실패) — 형상 표의 사유를 확인하고 복제해 다시";
+    return null;
+  }
+  async function runCompare() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await doe.runCompare(id, version);
+      study.setData(r);
+      setPoll(3000);
+    } catch (e) {
+      setError(compareErrorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function clone() {
     setBusy(true);
     setError(null);
@@ -561,16 +647,18 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
 
   // 주 버튼(단계별 1개)
   let primary: { label: string; onClick: () => void; reason: string | null };
+  const ranStage = phase === "RUN" || phase === "DONE" || (phase === "FAILED" && (isCompare ? !!s?.prep : !!s?.doe?.preview));
   if (!s || phase === "PREP") primary = { label: "입력 준비", onClick: () => undefined, reason: s ? "입력 준비 중…" : "불러오는 중…" };
-  else if (phase === "RUN" || phase === "DONE" || (phase === "FAILED" && s.doe?.preview)) primary = { label: "보고서 보기", onClick: () => openReport(doe.reportUrl(id)), reason: done && s.result_ready ? null : phase === "RUN" ? "실행이 끝나면 볼 수 있습니다" : "보고서가 없습니다" };
+  else if (ranStage) primary = { label: "보고서 보기", onClick: () => openReport(doe.reportUrl(id)), reason: done && s.result_ready ? null : phase === "RUN" ? "실행이 끝나면 볼 수 있습니다" : "보고서가 없습니다" };
   else if (phase === "FAILED") primary = { label: "입력 준비", onClick: () => undefined, reason: "입력 준비에 실패했습니다 — 아래 진행·로그를 확인하고 복제해 다시" };
+  else if (isCompare) primary = { label: "비교 실행", onClick: runCompare, reason: compareRunReason() };
   else if (!hasPreview) primary = { label: "미리보기", onClick: preview, reason: previewReason() };
   else primary = { label: "강성 평가 실행", onClick: run, reason: runReason() };
 
   const entries = all.data ?? [];
   const varNames = s?.doe?.spec.params.map((p) => p.name) ?? [];
-  const showLinks = s?.scenario !== "same";
-  const blocked = st ? doeBlockedReason(st) : null;
+  const showLinks = s?.scenario === "mesh" || s?.scenario === "step";
+  const blocked = st ? doeBlockedReason(st, s?.scenario) : null;
   const job = s?.job ?? null;
   const jobActive = !!job && (job.state === "QUEUED" || job.state === "RUNNING");
   const vd = useVerifyDrop(projectId, s, result.data, pick, allowed, !!me?.is_global_admin);
@@ -603,10 +691,21 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {blocked}
         </div>
       )}
-      {st?.paicad.warning && <div className="small warn-text">{st.paicad.warning}</div>}
+      {st?.paicad.warning && !isCompare && <div className="small warn-text">{st.paicad.warning}</div>}
       <ErrorLine text={error ?? study.error ?? stError} />
       {s && (
-        <Card title="① 입력" right={s.prep ? <span className="small muted">비드 {s.prep.n_beads} · 변수 {s.prep.n_params} · paicad {s.prep.paicad_version ?? "?"}</span> : undefined}>
+        <Card
+          title="① 입력"
+          right={
+            s.prep ? (
+              <span className="small muted">
+                {isCompare
+                  ? `형상 ${s.prep.n_shapes ?? s.inputs.shapes?.length ?? "?"} · 준비됨 ${s.prep.n_ready ?? "?"} · 요소 ${st?.compare?.mesh_size_mm ?? 3} mm`
+                  : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}`}
+              </span>
+            ) : undefined
+          }
+        >
           <DoeInputsSummary study={s} entries={entries} />
           {(phase === "PREP" || (phase === "FAILED" && !s.prep)) && job && (
             <>
@@ -623,7 +722,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           )}
         </Card>
       )}
-      {prepDone && (
+      {beadPrep && (
         <div className="doe-grid">
           <Card title="② 비드·변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
             {pd && rows && form && st ? (
@@ -635,11 +734,11 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <Empty>{params.error ?? "불러오는 중…"}</Empty>
             )}
           </Card>
-          <Card title={showLinks ? "③ 평면도 · 경계 매핑" : "③ 평면도"} right={showLinks && s?.prep ? <span className="small">경고 {s.prep.boundary.n_warn}</span> : undefined}>
+          <Card title={showLinks ? "③ 평면도 · 경계 매핑" : "③ 평면도"} right={showLinks && s?.prep ? <span className="small">경고 {s.prep.boundary?.n_warn ?? 0}</span> : undefined}>
             {plan.data && st ? (
               <div className="doe-plan-grid">
                 <BoundaryPlan plan={plan.data} showLinks={showLinks} />
-                <BoundaryLegend plan={plan.data} st={st} showLinks={showLinks} nWarn={s?.prep?.boundary.n_warn ?? null} />
+                <BoundaryLegend plan={plan.data} st={st} showLinks={showLinks} nWarn={s?.prep?.boundary?.n_warn ?? null} />
               </div>
             ) : (
               <Empty>{plan.error ?? "불러오는 중…"}</Empty>
@@ -647,7 +746,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           </Card>
         </div>
       )}
-      {prepDone && s && (
+      {beadPrep && s && (
         <Card
           title={`④ 미리보기 ${pv ? previewSummary(pv, (pv.cells?.length ?? 0) + 1) : s.doe ? `(${s.doe.n_designs})` : ""}`}
           right={
@@ -673,8 +772,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {phase !== "PREVIEW" && <DoeThumbGrid preview={pv} params={pd?.params ?? []} thumbUrl={(d) => doe.thumbUrl(id, d)} />}
         </Card>
       )}
-      {(phase === "RUN" || phase === "DONE" || (phase === "FAILED" && s?.doe?.preview)) && s && (
-        <Card title={`⑤ 결과${result.data ? ` · OK ${result.data.n_ok}안` : ""}`} right={result.data && showLinks ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
+      {ranStage && s && (
+        <Card title={`${isCompare ? "② 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && showLinks ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
           {job && (phase === "RUN" || phase === "FAILED") && (
             <>
               <Steps job={job} />
@@ -696,23 +795,37 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} />
               <div className="sub-title">ESL별 개선율</div>
               <DoePerEslTable studyId={id} result={result.data} entries={entries} pick={pick} />
-              <div className="doe-result-grid">
-                <div>
-                  <div className="sub-title">민감도</div>
-                  <Sensitivity sens={result.data.sensitivity} params={pd?.params ?? []} warnings={result.data.warnings} />
-                </div>
-                <div>
+              {isCompare || result.data.sensitivity_reason ? (
+                <>
+                  <div className="small muted" data-testid="sens-hidden">
+                    민감도: {SENS_REASON[result.data.sensitivity_reason ?? "COMPARE_NO_PARAMS"] ?? result.data.sensitivity_reason}
+                  </div>
                   <div className="sub-title">3D 비교</div>
                   <Compare3D studyId={id} result={result.data} pick={pick} setPick={setPick} />
+                </>
+              ) : (
+                <div className="doe-result-grid">
+                  <div>
+                    <div className="sub-title">민감도</div>
+                    <Sensitivity sens={result.data.sensitivity} params={pd?.params ?? []} warnings={result.data.warnings} />
+                  </div>
+                  <div>
+                    <div className="sub-title">3D 비교</div>
+                    <Compare3D studyId={id} result={result.data} pick={pick} setPick={setPick} />
+                  </div>
                 </div>
+              )}
+              <Downloads study={s} result={result.data} extra={isCompare ? undefined : vdButton} />
+              <div className="small muted">
+                {isCompare
+                  ? "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 정리 없음). 방법·한계는 보고서에."
+                  : "선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에."}
               </div>
-              <Downloads study={s} result={result.data} extra={vdButton} />
-              <div className="small muted">선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에.</div>
             </>
           )}
         </Card>
       )}
-      {done && (
+      {done && !isCompare && (
         <ErrorBoundary>
           <ErrorLine text={vd.listError} />
           <VerifyDropCard drops={vd.drops} entries={entries} allowed={allowed} onChanged={vd.reload} />

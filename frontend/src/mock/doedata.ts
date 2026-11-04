@@ -2,8 +2,8 @@
 // 준비·미리보기·실행 작업(DOE_PREP·DOE_PREVIEW·DOE_RUN)은 목 서버 대기열로 돌고, 끝나면 GET 시점에 연구 상태를 채운다.
 // 행렬·셀 상태·순위·민감도는 입력에서 결정적으로 만든다(같은 spec → 같은 sha·같은 결과).
 import type {
-  DoeBead, DoeCheckOut, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut, DoePreviewCell, DoeRankRow,
-  DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
+  DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
 
@@ -58,7 +58,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
     gmsh: { ready: true, version: "4.13.1" },
-    scenarios: { same: true, mesh: true, step: true },
+    scenarios: { same: true, mesh: true, step: true, compare: true },
     max_entries: 50,
     max_designs: 200,
     doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -67,6 +67,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     step_max_mb: 200,
     part_title: "chassis rear",
     method_sources: DOE_METHOD_SOURCES,
+    compare: { max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
   };
 }
 
@@ -491,6 +492,111 @@ export function thumbSvg(values: Record<string, number> | null, status: DoeDesig
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${Hh}" width="${W}" height="${Hh}"><rect width="${W}" height="${Hh}" fill="#f4f5f7"/><g${grey}><rect x="14" y="14" width="${W - 28}" height="${Hh - 28}" fill="#dfe3e8" stroke="#3d4450"/>${HOLES.map(([a, b]) => `<circle cx="${sx(a)}" cy="${sy(b)}" r="3" fill="#fff" stroke="#3d4450"/>`).join("")}${shapes}</g></svg>`;
 }
 
+// ---------------------------------------------------------------- v0.14.0 ④ 형상 직접 비교(esl_step_compare.md)
+type CompareInputShape = NonNullable<DoeStudyOut["inputs"]["shapes"]>[number];
+// eslint-disable-next-line no-control-regex
+const CTRL_RE = /[\u0000-\u001f\u007f]/;
+/** 목 sha256 = 파일 이름 해시(같은 파일 이름 = 같은 내용으로 봄 → SHAPE_DUPLICATE_FILE 경고) */
+const shaOfFile = (file: string) => fnv(`step:${file}`).padEnd(64, "e");
+export const COMPARE_REF_CASE_MESH: DoeWarning = { code: "COMPARE_REF_CASE_MESH", message: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다" };
+
+/** 준비 결과(형상별 메시·크기·정렬, 결정적): 이름·파일에 'shift' → SHAPE_MISALIGNED, 'big' → SHAPE_SIZE_MISMATCH, 'broken' → MESH_FAILED */
+export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" | "case"): NonNullable<DoeStudyOut["prep"]> {
+  const rows: DoePrepShape[] = [];
+  if (refSource === "case") rows.push({ id: "d000", name: "Case 메시", file_name: null, reference: true, status: "READY", code: null, n_elems: 218_400, quad_ratio: 0.98 });
+  for (const x of shapes) {
+    const key = `${x.name} ${x.file_name}`.toLowerCase();
+    const h = parseInt(fnv(x.file_name).slice(0, 4), 16) / 0xffff;
+    const fail = x.reference ? null : key.includes("shift") ? ["FAILED_SIZE", "SHAPE_MISALIGNED"] : key.includes("big") ? ["FAILED_SIZE", "SHAPE_SIZE_MISMATCH"] : key.includes("broken") ? ["FAILED_MESH", "MESH_FAILED"] : null;
+    rows.push({
+      id: x.id,
+      name: x.name,
+      file_name: x.file_name,
+      reference: x.reference,
+      status: (fail?.[0] ?? "READY") as DoeDesignStatus,
+      code: fail?.[1] ?? null,
+      n_elems: fail?.[0] === "FAILED_MESH" ? null : Math.round(168_000 + 26_000 * h),
+      quad_ratio: fail?.[0] === "FAILED_MESH" ? null : +(0.93 + 0.05 * h).toFixed(3),
+    });
+  }
+  const failed = rows.filter((r) => r.status !== "READY").map((r) => ({ id: r.id, status: r.status, code: r.code ?? null }));
+  const warnings: DoeWarning[] = refSource === "case" ? [COMPARE_REF_CASE_MESH] : [];
+  const files = shapes.map((x) => x.sha256);
+  if (new Set(files).size < files.length) warnings.push({ code: "SHAPE_DUPLICATE_FILE", message: "같은 STEP 파일이 두 번 이상 들어 있습니다" });
+  return { warnings, n_shapes: rows.length, n_ready: rows.length - failed.length, failed, reference_source: refSource, shapes: rows };
+}
+
+/** 비교 결과(결정적): READY 형상마다 score(형상 해시), 실패 형상은 excluded, 민감도 없음(COMPARE_NO_PARAMS) */
+export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryIds: string[]): DoeResultOut {
+  const rows = prep.shapes ?? [];
+  const ref = rows.find((r) => r.reference) ?? rows[0];
+  const refShape: DoeShapeRef = prep.reference_source === "case" ? { name: "Case 메시", file_name: null, source: "case" } : { name: ref?.name ?? "기준", file_name: ref?.file_name ?? null, source: "step" };
+  const base = { id: "d000" as const, score: 1, umax: 3.92, epsmax: 0.0026, shape: refShape };
+  const ok = rows
+    .filter((r) => !r.reference && r.status === "READY")
+    .map((r) => ({ r, score: +(0.74 + 0.32 * (parseInt(fnv(`${r.name}|${r.file_name}`).slice(0, 4), 16) / 0xffff)).toFixed(4) }))
+    .sort((a, b) => a.score - b.score || a.r.id.localeCompare(b.r.id));
+  const ranking: DoeRankRow[] = ok.map(({ r, score }, k) => ({
+    rank: k + 1,
+    id: r.id,
+    values: {},
+    shape: { name: r.name, file_name: r.file_name, reference: false },
+    score,
+    improvement: +(1 - score).toFixed(4),
+    worst_entry_id: entryIds[parseInt(fnv(r.id).slice(0, 2), 16) % entryIds.length],
+    umax: +(base.umax * score ** 0.9).toFixed(3),
+    epsmax: +(base.epsmax * score ** 0.7).toFixed(5),
+    umax_all: +(base.umax * score ** 0.9 * 1.04).toFixed(3),
+    epsmax_all: +(base.epsmax * score ** 0.7 * 1.06).toFixed(5),
+    noise: false,
+    warnings_n: 0,
+    ...perEslMock(r.id, score, entryIds, null),
+  }));
+  const vec = (r: DoeRankRow) => (r.per_esl ?? []).map((p) => p.ratio);
+  for (const r of ranking) {
+    const a = vec(r);
+    const others = [...ranking.filter((o) => o !== r).map(vec), a.map(() => 1)];
+    r.pareto = !others.some((o) => o.length === a.length && o.every((v, i) => v <= a[i]) && o.some((v, i) => v < a[i]));
+  }
+  const excluded: DoeExcluded[] = rows.filter((r) => r.status !== "READY").map((r) => ({ id: r.id, status: r.status, code: r.code ?? null, shape: { name: r.name, file_name: r.file_name } }));
+  const n_failed = excluded.reduce<Record<string, number>>((m, e) => ((m[e.status] = (m[e.status] ?? 0) + 1), m), {});
+  const best = ranking[0]?.id ?? null;
+  const warnings: DoeWarning[] = prep.reference_source === "case" ? [COMPARE_REF_CASE_MESH] : [];
+  if (!ranking.length) warnings.push({ code: "NO_FEASIBLE_DESIGNS", message: "비교할 수 있는 형상이 없습니다(모두 실패)" });
+  return {
+    C_ref: 4.82e5,
+    baseline: base,
+    n_ok: ranking.length,
+    n_skipped: {},
+    n_failed,
+    ranking,
+    excluded,
+    sensitivity: null,
+    sensitivity_reason: "COMPARE_NO_PARAMS",
+    scenario: "compare",
+    reference_source: prep.reference_source ?? "step",
+    boundary_warnings_n: 0,
+    view3d: ["d000", ...ranking.slice(0, 3).map((r) => r.id)],
+    best: best ? { id: best, files: [{ rel: `best/${best}/ch_r.rad`, size: 18_220_331, downloadable: true }, { rel: `best/${best}/ch_r.fem`, size: 16_118_002, downloadable: true }] } : null,
+    noise_floor: null,
+    ratio_tol: 1e-6,
+    per_esl_inline: true,
+    esl: entryIds.map((e) => ({ entry_id: e, label: e.slice(0, 8) })),
+    sort: "score",
+    warnings,
+  };
+}
+
+/** 요청 형상 → 형상 id(SC-D-4): 기준 STEP = d000, 나머지 요청 순서 d001…(기준 없음이면 d001 부터) */
+export function compareIds(shapes: { upload_id: string; name: string; reference?: boolean; file_name: string; sha256: string }[]): CompareInputShape[] {
+  const ref = shapes.find((x) => x.reference);
+  const out: CompareInputShape[] = [];
+  if (ref) out.push({ id: "d000", name: ref.name.trim(), file_name: ref.file_name, sha256: ref.sha256, upload_id: ref.upload_id, reference: true });
+  let k = 1;
+  for (const x of shapes) if (x !== ref) out.push({ id: `d${String(k++).padStart(3, "0")}`, name: x.name.trim(), file_name: x.file_name, sha256: x.sha256, upload_id: x.upload_id, reference: false });
+  return out;
+}
+
 // ---------------------------------------------------------------- 상태
 interface Rec {
   out: Omit<DoeStudyOut, "job" | "result_ready">;
@@ -507,7 +613,7 @@ const STEPS_OF: Record<string, string[]> = {
   DOE_PREVIEW: ["BD_MATRIX", "BD_GRID", "BD_PREVIEW_REGISTER"],
   DOE_RUN: ["BD_BASELINE", "BD_DESIGNS", "BD_POST", "BD_REGISTER"],
 };
-function doneJob(id: string, projectId: string, studyId: string, jt: JobType, t0: string, t1: string): JobOut {
+function doneJob(id: string, projectId: string, studyId: string, jt: JobType, t0: string, t1: string, compare = false): JobOut {
   return {
     id,
     case_id: null,
@@ -535,7 +641,7 @@ function doneJob(id: string, projectId: string, studyId: string, jt: JobType, t0
     created_at: t0,
     updated_at: t1,
     version: 1,
-    steps: STEPS_OF[jt].map((k, i) => ({ step_no: i + 1, step_key: k, kind: k === "BD_GEOM" || k === "BD_GRID" || k === "BD_DESIGNS" ? "LOCAL" : "INTERNAL", core_stage: null, state: k === "BD_MESH0" ? "SKIPPED" : "SUCCEEDED", progress_pct: 100, exit_code: 0, failure_code: null, failure_message: null, started_at: t0, finished_at: t1 })),
+    steps: STEPS_OF[jt].map((k, i) => ({ step_no: i + 1, step_key: k, kind: k === "BD_GEOM" || k === "BD_GRID" || k === "BD_DESIGNS" ? "LOCAL" : "INTERNAL", core_stage: null, state: (compare ? k === "BD_GEOM" : k === "BD_MESH0") ? "SKIPPED" : "SUCCEEDED", progress_pct: 100, exit_code: 0, failure_code: null, failure_message: null, started_at: t0, finished_at: t1 })),
   };
 }
 
@@ -622,7 +728,40 @@ export class DoeMock {
       this.seededJobs.push(j);
       b.jobIds.push(j.id);
     }
-    this.recs.push(a, b);
+    // 3) ④ 형상 직접 비교 완료(기준 STEP + 4형상, 1개 정렬 실패)
+    const mk = (files: [string, string][], refIdx: number | null) =>
+      compareIds(files.map(([f, n], i) => ({ upload_id: `up-cmp-${f}`, name: n, reference: i === refIdx, file_name: f, sha256: shaOfFile(f) })));
+    const cmp = (id: string, title: string, at: string, shapes: CompareInputShape[], refSource: "step" | "case"): Rec => {
+      const r = base(id, "compare", title, at);
+      r.out.inputs = { step: null, mesh: null, part_title: null, inch: null, props: { t: 1.2, E: 205000, nu: 0.3 }, mesh_size_mm: null, shapes, reference_source: refSource };
+      r.out.prep = makeComparePrep(shapes, refSource);
+      return r;
+    };
+    const c = cmp(
+      "doe-3",
+      "Ch/R 형상 비교 — 75형 4안",
+      "2026-11-03T02:00:00Z",
+      mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"], ["chr_D_shift.step", "D안(원점 다름)"]], 0),
+      "step",
+    );
+    c.result = makeCompareResult(c.out.prep!, c.out.entry_ids);
+    c.out.phase = "DONE";
+    c.out.version = 4;
+    for (const [jt, t0, t1] of [
+      ["DOE_PREP", "2026-11-03T02:00:05Z", "2026-11-03T02:06:00Z"],
+      ["DOE_RUN", "2026-11-03T02:10:00Z", "2026-11-03T02:21:00Z"],
+    ] as [JobType, string, string][]) {
+      const j = doneJob(this.id("j-doe"), "p-body", c.out.id, jt, t0, t1, true);
+      this.seededJobs.push(j);
+      c.jobIds.push(j.id);
+    }
+    // 4) ④ 준비 완료(기준 없음 = Case 메시, 1개 크기 불일치) — 비교 실행 대기
+    const d = cmp("doe-4", "Ch/R 형상 비교 — Case 기준", "2026-11-04T01:00:00Z", mk([["chr_rib_A.step", "리브 A안"], ["chr_rib_B.step", "리브 B안"], ["chr_big_E.step", "E안(큰 판)"]], null), "case");
+    d.out.version = 2;
+    const jd = doneJob(this.id("j-doe"), "p-body", d.out.id, "DOE_PREP", "2026-11-04T01:00:05Z", "2026-11-04T01:05:00Z", true);
+    this.seededJobs.push(jd);
+    d.jobIds.push(jd.id);
+    this.recs.push(a, b, c, d);
   }
 
   private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[]) {
@@ -659,6 +798,16 @@ export class DoeMock {
       return;
     }
     if (j.state !== "SUCCEEDED") return;
+    if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "compare") {
+      r.out.phase = "READY";
+      r.out.prep = makeComparePrep(r.out.inputs.shapes ?? [], r.out.inputs.reference_source ?? "step");
+      r.out.version += 1;
+    }
+    if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.scenario === "compare" && r.out.prep) {
+      r.result = makeCompareResult(r.out.prep, r.out.entry_ids);
+      r.out.phase = "DONE";
+      r.out.version += 1;
+    }
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP") {
       r.out.phase = "READY";
       r.out.prep = {
@@ -714,8 +863,9 @@ export class DoeMock {
     if (this.checkError) return this.checkError;
     const pid = String(b.project_id ?? "");
     if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
-    if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
     const scenario = b.scenario as DoeScenario;
+    if (scenario === "compare") return this.checkCompare(b, pid);
+    if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
     if (!["same", "mesh", "step"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
     const ids = (b.entry_ids as string[]) ?? [];
     const es = this.ctx.entries();
@@ -753,6 +903,65 @@ export class DoeMock {
     return ok(out);
   }
 
+  /** ④ check-inputs(§3 검증 순서) — paicad 무관(SC-D-3) */
+  private checkCompare(b: Record<string, unknown>, pid: string): MockResponse {
+    const st = this.settings;
+    if (!st.enabled && st.reason === "DOE_DISABLED") return err(503, "DOE_DISABLED", "강성 평가 스터디가 꺼져 있습니다.");
+    if (!st.scenarios.compare) return st.gmsh.ready ? err(503, "COMPARE_DISABLED", "형상 직접 비교가 꺼져 있습니다.") : err(503, "GMSH_UNAVAILABLE", "gmsh 가 없습니다.");
+    if (b.step_upload_id != null || b.mesh_upload_id != null || b.part_title != null) return err(422, "INVALID_PARAMS", "형상 직접 비교에는 step_upload_id·mesh_upload_id·part_title 을 쓰지 않습니다.");
+    const ids = (b.entry_ids as string[]) ?? [];
+    const es = this.ctx.entries();
+    const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
+    if (!ids.length || sel.some((e) => !e)) return err(422, "ENTRY_NOT_FOUND", "선택한 ESL 중 이 프로젝트의 활성 항목이 아닌 것이 있습니다.");
+    if (ids.length > st.max_entries) return err(422, "INVALID_PARAMS", `ESL 은 최대 ${st.max_entries}개입니다.`);
+    const shapes = (Array.isArray(b.shapes) ? b.shapes : []) as CompareShapeIn[];
+    const max = st.compare?.max_shapes ?? 20;
+    if (!shapes.length) return err(422, "SHAPES_EMPTY", "형상이 없습니다.");
+    if (shapes.length > max) return err(422, "SHAPES_TOO_MANY", `형상은 최대 ${max}개입니다.`);
+    const nRef = shapes.filter((x) => x.reference).length;
+    if (nRef > 1) return err(422, "REFERENCE_MULTIPLE", "기준 형상은 하나만 지정할 수 있습니다.");
+    if (nRef ? shapes.length < 2 : shapes.length < 1) return err(422, "SHAPES_TOO_FEW", "비교할 형상이 부족합니다.");
+    const seen = new Set<string>();
+    for (let i = 0; i < shapes.length; i++) {
+      const n = String(shapes[i].name ?? "").trim();
+      if (!n || n.length > 64 || CTRL_RE.test(n)) return err(422, "SHAPE_NAME_INVALID", "형상 이름이 올바르지 않습니다.", { index: i });
+      if (seen.has(n.toLowerCase())) return err(422, "SHAPE_NAME_DUPLICATE", "형상 이름이 겹칩니다.", { index: i });
+      seen.add(n.toLowerCase());
+    }
+    if (new Set(shapes.map((x) => x.upload_id)).size < shapes.length) return err(422, "INVALID_PARAMS", "같은 업로드를 두 번 넣었습니다.");
+    const rows: DoeCheckShape[] = [];
+    for (let i = 0; i < shapes.length; i++) {
+      const up = this.ctx.upload(String(shapes[i].upload_id ?? ""));
+      if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.", { index: i });
+      if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.", { index: i });
+      const f = up.files.find((x) => /\.(step|stp)$/i.test(x));
+      if (!f) return err(422, "STEP_INVALID", "STEP(.step·.stp) 파일이 없습니다.", { index: i });
+      this.ctx.markUploadCompleted(String(shapes[i].upload_id));
+      const file = f.split("/").pop()!;
+      rows.push({ index: i, name: String(shapes[i].name).trim(), file_name: file, sha256: shaOfFile(file), size_mb: +(3.4 + 0.3 * i).toFixed(2), reference: !!shapes[i].reference });
+    }
+    const total = rows.reduce((a, x) => a + x.size_mb, 0);
+    if (total > (st.compare?.total_max_mb ?? 1000)) return err(422, "SHAPES_TOO_LARGE", "STEP 합계 크기가 상한을 넘었습니다.");
+    const first = sel[0]!;
+    const warnings: DoeWarning[] = [];
+    const out: DoeCheckOut = {
+      ok: true,
+      step: null,
+      entries: sel.map((e) => ({ entry_id: e!.id, ok: true, reason: null })),
+      shapes: rows,
+      reference_source: nRef ? "step" : "case",
+      size: null,
+      props_default: { t: 1.2, E: 205000, nu: 0.3 },
+      warnings,
+    };
+    if (!nRef) {
+      out.base = { entry_id: first.id, case_id: first.case_id, case_title: first.case_title ?? null, part_title: "chassis_rear", n_nodes: 221_380, n_elems: 218_400, topo_sha256: first.topo_sha256 ?? "" };
+      warnings.push(COMPARE_REF_CASE_MESH);
+    }
+    if (new Set(rows.map((x) => x.sha256)).size < rows.length) warnings.push({ code: "SHAPE_DUPLICATE_FILE", message: "같은 STEP 파일이 두 번 이상 들어 있습니다" });
+    return ok(out);
+  }
+
   handle(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
     if (!path.startsWith("/doe/")) return null;
     let r: RegExpMatchArray | null;
@@ -762,6 +971,39 @@ export class DoeMock {
       const c = this.check(b);
       if (c.status !== 200) return c;
       const co = c.body as DoeCheckOut;
+      if (b.scenario === "compare") {
+        if (b.mesh_size_mm != null) return err(422, "INVALID_PARAMS", "형상 직접 비교는 메시 크기를 바꿀 수 없습니다(설정 고정).");
+        const props = (b.props as DoeStudyOut["inputs"]["props"]) ?? co.props_default ?? null;
+        if (props && !(props.t > 0 && props.E > 0 && props.nu >= 0 && props.nu < 0.5)) return err(422, "INVALID_PARAMS", "쉘 물성이 올바르지 않습니다(t>0, E>0, 0≤ν<0.5).");
+        const req = b.shapes as CompareShapeIn[];
+        const shapes = compareIds(req.map((x, i) => ({ ...x, file_name: co.shapes![i].file_name, sha256: co.shapes![i].sha256 })));
+        const id = this.id("doe");
+        const title = String(b.title ?? "").trim();
+        const rec: Rec = {
+          out: {
+            id,
+            project_id: String(b.project_id),
+            scenario: "compare",
+            title: title || `형상 비교 ${shapes.length}개`,
+            entry_ids: b.entry_ids as string[],
+            inputs: { step: null, mesh: null, part_title: null, inch: typeof b.inch === "number" ? b.inch : null, props, mesh_size_mm: null, shapes, reference_source: co.reference_source ?? "step" },
+            phase: "PREP",
+            version: 1,
+            prep: null,
+            doe: null,
+            created_by_name: this.ctx.me().display_name,
+            created_at: this.ctx.now(),
+          },
+          jobIds: [],
+          pending: null,
+          cells: null,
+          result: null,
+          stepUpload: null,
+        };
+        rec.jobIds.push(this.ctx.newJob(rec.out.project_id, "DOE_PREP", { bead_doe_id: id }).id);
+        this.recs.push(rec);
+        return ok(this.studyOut(rec), 201);
+      }
       if (b.scenario === "same" && !co.ok) return err(422, "MODEL_MISMATCH", "다른 모델 ESL 이 있습니다 — 빼거나 '다른 모델' 시나리오로.");
       const title = String(b.title ?? "").trim();
       if (title.length > 200) return err(422, "INVALID_PARAMS", "제목은 200자 이하입니다.");
@@ -773,10 +1015,10 @@ export class DoeMock {
           id,
           project_id: String(b.project_id),
           scenario: b.scenario as DoeScenario,
-          title: title || `강성 평가 ${co.step.file_name}`,
+          title: title || `강성 평가 ${co.step?.file_name ?? ""}`,
           entry_ids: b.entry_ids as string[],
           inputs: {
-            step: { file_name: co.step.file_name, sha256: co.step.sha256 },
+            step: co.step ? { file_name: co.step.file_name, sha256: co.step.sha256 } : null,
             mesh: co.mesh ? { file_name: co.mesh.file_name, sha256: co.mesh.sha256 } : null,
             part_title: (b.part_title as string | null) ?? (b.scenario === "mesh" ? this.settings.part_title ?? null : co.base?.part_title ?? null),
             inch: typeof b.inch === "number" ? b.inch : null,
@@ -814,6 +1056,9 @@ export class DoeMock {
       this.sync(rec);
       const st = this.settings;
       if (method === "GET" && sub === "") return ok(this.studyOut(rec));
+      // ④ 형상 비교: 비드·DOE·미리보기 경로 없음(SC-D-1)
+      if (rec.out.scenario === "compare" && (/^\/(params|plan-view|matrix|preview)$/.test(sub) || /^\/(beads|preview\/thumb)\//.test(sub)))
+        return err(409, "SCENARIO_UNSUPPORTED", "형상 직접 비교에서는 쓸 수 없습니다.");
       if (method === "GET" && sub === "/params") {
         if (rec.out.phase === "PREP" || !rec.out.prep) return err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
         const out: DoeParamsOut = { beads: BEADS, params: PARAMS, warnings: PARAM_WARNINGS };
@@ -850,6 +1095,17 @@ export class DoeMock {
         if (!c || !c.thumb) return err(404, "NOT_FOUND", "썸네일이 없습니다.");
         return { status: 200, body: thumbSvg(c.values, c.status) };
       }
+      if (method === "POST" && sub === "/run" && rec.out.scenario === "compare") {
+        if (b.solver != null && b.solver !== "linear") return err(422, "SOLVER_UNSUPPORTED", "솔버는 linear 만 지원합니다.");
+        if (b.version !== rec.out.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로 고친 뒤 다시 시도하세요");
+        if (this.active(rec)) return err(409, "JOB_ACTIVE", "이 연구의 작업이 진행 중입니다.");
+        if (rec.out.phase === "RUN" || rec.out.phase === "DONE") return err(409, "ALREADY_RUN", "이미 실행했습니다 — 복제해서 새 연구로.");
+        if (rec.out.phase !== "READY") return err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
+        rec.out.phase = "RUN";
+        rec.out.version += 1;
+        rec.jobIds.push(this.ctx.newJob(rec.out.project_id, "DOE_RUN", { bead_doe_id: rec.out.id }).id);
+        return ok(this.studyOut(rec), 202);
+      }
       if (method === "POST" && sub === "/run") {
         if (b.solver != null && b.solver !== "linear") return err(422, "SOLVER_UNSUPPORTED", "솔버는 linear 만 지원합니다.");
         if (b.version !== rec.out.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로 고친 뒤 다시 시도하세요");
@@ -878,7 +1134,7 @@ export class DoeMock {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
         const want = (query.get("design") ?? "").split(",").filter(Boolean);
         const rows = rec.result.ranking.filter((x) => !want.length || want.includes(x.id));
-        return ok({ esl: rec.result.esl ?? [], ratio_tol: rec.result.ratio_tol ?? null, designs: rows.map((x) => ({ id: x.id, per_esl: x.per_esl ?? [] })) });
+        return ok({ esl: rec.result.esl ?? [], ratio_tol: rec.result.ratio_tol ?? null, designs: rows.map((x) => ({ id: x.id, name: x.shape?.name ?? null, per_esl: x.per_esl ?? [] })) });
       }
       if (method === "GET" && sub === "/files") {
         const files: DoeFileOut[] = [{ rel: "report.html", size: 512_331, downloadable: true }, { rel: "post/ranking.csv", size: 8_204, downloadable: true }, ...(rec.result?.best?.files ?? [])];

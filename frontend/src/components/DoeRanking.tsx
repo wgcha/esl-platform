@@ -2,6 +2,7 @@
 // 순위 밖(스킵·실패) 안은 상태 배지로 아래에. 1920 폭에서는 변수 열을 접고 행 펼치기로 값을 본다(가로 스크롤 없음).
 // v0.10.0 §11.4: ESL별 개선 지표 열 [전 씬 개선 ✓/✗][최소 개선율][개선/악화 씬][기하평균 개선율][Pareto ●], 열 머리 클릭 정렬(기본 score),
 // ⓘ 지표 정의. 최악 절대 max(score)만으로는 한 씬의 문제가 다른 씬으로 옮겨가는 상황을 못 보기 때문.
+// v0.14.0 ④ 형상 직접 비교: 변수 열 대신 '이름' 열(행 머리, shape.name), 베이스라인 = 기준 형상, 값 펼치기 없음.
 import { Fragment, useState } from "react";
 import { METRIC_DEFS, STATUS_NAME, isSkipped, pctText, sortRanking, type RankSortKey } from "../api/doe";
 import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
@@ -29,7 +30,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       return n;
     });
   const [sortKey, setSortKey] = useState<RankSortKey>("score");
-  const cols = 14 + varNames.length;
+  /** ④ 형상 비교(이름 열) */
+  const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
+  const cols = 14 + varNames.length + (named ? 1 : 0);
   const b = result.baseline;
   if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>순위가 없습니다</Empty>;
   const rows = sortRanking(result.ranking, sortKey);
@@ -65,6 +68,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
           <tr>
             <th className="num">순위</th>
             <th>안</th>
+            {named && <th className="doe-name-col">이름</th>}
             {sortTh("score", "score", "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
@@ -88,9 +92,14 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
           <tr className="doe-base-row">
             <td className="num">–</td>
             <td className="mono">d000</td>
+            {named && (
+              <th scope="row" className="doe-name-col" title={b.shape?.file_name ?? undefined}>
+                {b.shape?.name ?? "기준"}
+              </th>
+            )}
             <td className="num mono">{b.score.toFixed(2)}</td>
             <td className="num">기준</td>
-            <td className="small muted">공칭</td>
+            <td className="small muted">{named ? "기준 형상" : "공칭"}</td>
             <td className="num mono">{b.umax.toFixed(2)} mm</td>
             <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>
             <td />
@@ -104,7 +113,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               </td>
             ))}
             <td>
-              <span className="badge info">베이스라인</span>
+              <span className="badge info">{named ? "기준" : "베이스라인"}</span>
             </td>
             <td className="doe-expand-col" />
           </tr>
@@ -113,6 +122,11 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               <tr className={`pickable${selected === r.id ? " hl" : ""}`} onClick={() => onSelect(r.id)} data-testid={`rank-${r.id}`}>
                 <td className="num">{r.rank}</td>
                 <td className="mono">{r.id}</td>
+                {named && (
+                  <th scope="row" className="doe-name-col" title={r.shape?.file_name ?? undefined}>
+                    {r.shape?.name ?? "–"}
+                  </th>
+                )}
                 <td className="num mono">{r.score.toFixed(2)}</td>
                 <td className={`num ${r.improvement > 0 ? "ok-text" : "error-text"}`}>
                   {pctText(r.improvement)}
@@ -162,6 +176,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                   )}
                 </td>
                 <td className="doe-expand-col">
+                  {!named && (
                   <button
                     type="button"
                     className="btn small ghost"
@@ -174,6 +189,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                   >
                     {open.has(r.id) ? "▾" : "▸"}
                   </button>
+                  )}
                 </td>
               </tr>
               {open.has(r.id) && (
@@ -189,6 +205,11 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <tr key={x.id} className="doe-excluded" data-testid={`excluded-${x.id}`}>
               <td className="num">–</td>
               <td className="mono">{x.id}</td>
+              {named && (
+                <th scope="row" className="doe-name-col" title={x.shape?.file_name ?? undefined}>
+                  {x.shape?.name ?? "–"}
+                </th>
+              )}
               <td className="num muted">–</td>
               <td className="num muted">–</td>
               <td />
@@ -201,7 +222,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               <td />
               {varNames.map((n) => (
                 <td key={n} className="num mono doe-vcol muted">
-                  {x.values[n] ?? "–"}
+                  {x.values?.[n] ?? "–"}
                 </td>
               ))}
               <td>

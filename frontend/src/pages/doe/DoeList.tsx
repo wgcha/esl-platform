@@ -37,7 +37,7 @@ export function DoeList({ projectId }: { projectId: string }) {
                   <td className="num">{dt(s.created_at)}</td>
                   <td>
                     <div>{s.title}</div>
-                    <span className="small muted">{s.inputs.step.file_name}</span>
+                    <span className="small muted">{s.scenario === "compare" ? `형상 ${s.inputs.shapes?.length ?? 0}개` : s.inputs.step?.file_name ?? ""}</span>
                   </td>
                   <td>
                     {SCENARIO_NO[s.scenario]} {SCENARIO_NAME[s.scenario]}
