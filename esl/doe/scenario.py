@@ -30,7 +30,7 @@ BASE_JSON = "base.json"
 LOADS_NPZ = "loads.npz"
 MESH_EXT = (".rad", ".inc")
 STATE_EXT = (".str", ".sta")
-SCN_TARGET = {"same": "S1", "mesh": "S2", "step": "S2"}
+SCN_TARGET = {"same": "S1", "mesh": "S2", "step": "S2", "compare": "S2"}
 
 
 # ---------------------------------------------------------------- 입력 보호·조립 폴더
@@ -293,3 +293,100 @@ def mesh_size_default(raw: dict, mcfg: dict) -> float:
                       np.asarray(raw["elem_type"]).astype(int))
     h = float(np.nanmedian(L))
     return float(min(max(h, float(mcfg["size_min_mm"])), float(mcfg["size_max_mm"])))
+
+
+# ---------------------------------------------------------------- ④ 형상 직접 비교 (v0.14.0, esl_step_compare.md)
+COMPARE_JSON = "compare.json"
+SHAPES_JSON = "shapes.json"
+
+
+def compare_profile(cfg: dict) -> dict:
+    """SC-D-5 메시 프로필 = ``bead_doe.mesh`` 를 ``bead_doe.compare.mesh`` 로 키별 덮어씀(size_mm = h 고정)."""
+    m = dict(cfg["mesh"])
+    m.update(dict(((cfg.get("compare") or {}).get("mesh")) or {}))
+    return m
+
+
+def compare_cfg(cfg: dict) -> dict:
+    """gmsh 메싱에 넘길 bead_doe 설정(mesh = ④ 프로필). 원 설정은 바꾸지 않는다."""
+    out = dict(cfg)
+    out["mesh"] = compare_profile(cfg)
+    df = (cfg.get("compare") or {}).get("defeature")
+    if isinstance(df, dict):
+        out["mesh"]["defeature"] = dict(df)          # mesh_gmsh 선택 키(작은 형상 처리 — 없으면 ③ 그대로)
+    return out
+
+
+def case_ref_mesh(rad_path: str, part_title: str, base_entry, props: dict, *, coord_tol_rel: float,
+                  parse_kw: dict | None = None) -> tuple[dict, dict]:
+    """SC-D-2 기준 미지정: 첫 ESL Case 입력 rad 의 Ch/R 메시(① 과 같은 제자리 읽기·동일성 확인) → (mesh, 정보).
+    물성은 모든 형상과 같은 값(SC-D-8)으로 덮어쓴다. 하중·지지는 STEP 형상과 같은 규칙(셀 매핑·auto_supports)."""
+    t = tg.case_target(rad_path, part_title, dict(base_entry.meta), base_entry.raw, coord_tol_rel=coord_tol_rel,
+                       parse_kw=parse_kw)
+    m = {k: np.asarray(t.mesh[k]) for k in tg.MESH_KEYS}
+    ne = int(m["elem_id"].size)
+    m["thickness"] = np.full(ne, float(props["t"]))
+    m["E"] = np.full(ne, float(props["E"]))
+    m["nu"] = np.full(ne, float(props["nu"]))
+    et = np.asarray(m["elem_type"]).astype(int)
+    qf = float(np.sum(et == 4)) / ne if ne else 0.0
+    return m, {"n_nodes": int(m["node_id"].size), "n_elems": ne, "quad_frac": qf,
+               "part_title": t.source.get("part_title"), "part_id": t.source.get("part_id"),
+               "warnings": list(t.warnings)}
+
+
+def shape_frame(mesh: dict, axis_ref: dict | None) -> dict:
+    return nz.frame(np.asarray(mesh["x0"], dtype=np.float64), axis_ref, np.asarray(mesh["conn"]),
+                    np.asarray(mesh["elem_type"]))
+
+
+def align_check(ref_frame: dict, fr: dict, tol: float, deg: float) -> dict:
+    """SC-D-7b 정렬: 형상 frame 원점을 기준 frame (ξ,η) 정규 좌표로 본 차(|Δξ|, |Δη| ≤ tol)와 법선 각(≤ deg °).
+    반환 {dxi, deta, angle_deg, ok}."""
+    o = np.asarray(fr["origin"], dtype=np.float64) - np.asarray(ref_frame["origin"], dtype=np.float64)
+    dxi = float(o @ np.asarray(ref_frame["e_xi"], dtype=np.float64)) / float(ref_frame["L_xi"])
+    deta = float(o @ np.asarray(ref_frame["e_eta"], dtype=np.float64)) / float(ref_frame["L_eta"])
+    nn = np.asarray(fr["n"], dtype=np.float64) @ np.asarray(ref_frame["n"], dtype=np.float64)
+    ang = float(np.degrees(np.arccos(float(np.clip(abs(nn), 0.0, 1.0)))))
+    ok = abs(dxi) <= float(tol) and abs(deta) <= float(tol) and ang <= float(deg)
+    return {"dxi": dxi, "deta": deta, "angle_deg": ang, "ok": bool(ok)}
+
+
+def shape_check(mesh: dict, ref_frame: dict, entries, size_cfg: dict, ccfg: dict, *, inch=None) -> dict:
+    """SC-D-7b 형상 1개: 크기(형상 자신의 frame 을 템플릿 자리로 ``size.assert_ok``) + 정렬(기준 frame 대비).
+    반환 {ok, code(SHAPE_SIZE_MISMATCH|SHAPE_MISALIGNED|None), message, size{L_xi, L_eta}, align{…}|None, warnings}."""
+    fr = shape_frame(mesh, ref_frame.get("axis_ref"))
+    out = {"ok": True, "code": None, "message": None, "size": {"L_xi": float(fr["L_xi"]), "L_eta": float(fr["L_eta"])},
+           "align": None, "warnings": []}
+    try:
+        info = sz.assert_ok(size_rows(entries), size_cfg, {"inch": inch, "L_xi": fr["L_xi"], "L_eta": fr["L_eta"]})
+        out["warnings"] = list(info.get("warnings") or [])
+    except EslError as exc:
+        out.update(ok=False, code="SHAPE_SIZE_MISMATCH", message=exc.message)
+        return out
+    al = align_check(ref_frame, fr, float(ccfg["align_tol"]), float(ccfg["align_deg"]))
+    out["align"] = al
+    if not al["ok"]:
+        out.update(ok=False, code="SHAPE_MISALIGNED",
+                   message=f"기준 형상과 위치·방향이 다름: Δξ {al['dxi']:+.3f} · Δη {al['deta']:+.3f} (허용 "
+                           f"{float(ccfg['align_tol']):g}) · 법선 {al['angle_deg']:.1f}° (허용 {float(ccfg['align_deg']):g}°)")
+    return out
+
+
+def compare_target(mesh: dict, ref_frame: dict) -> tg.Target:
+    """SC-D-6 형상 대상(기준 d000 포함 같은 함수): 법선을 기준 frame n 쪽으로 정렬, frame = 기준 고정(바이트 동일),
+    지지 = 형상 메시 auto_supports(rank < 6 → SUPPORT_DEGENERATE)."""
+    m = {k: np.asarray(mesh[k]) for k in tg.MESH_KEYS}
+    m["conn"], _ = tg.align_normals(m, ref_frame["n"])
+    return design_target(m, ref_frame)
+
+
+def mapping_resolution(mesh: dict, frame: dict, grid: tuple, min_nodes_per_cell: int) -> str | None:
+    """셀당 노드 중앙값 < min_nodes_per_cell → 경고 문자열(③ entry_loads 와 같은 문구)."""
+    nx, ny = int(grid[0]), int(grid[1])
+    i, j, _ = nz.cell_index(frame, np.asarray(mesh["x0"], dtype=np.float64), nx, ny)
+    cnt = np.bincount(i * ny + j, minlength=nx * ny)
+    med = float(np.median(cnt[cnt > 0])) if np.any(cnt > 0) else 0.0
+    if med < float(min_nodes_per_cell):
+        return f"MAPPING_RESOLUTION: 셀당 노드 중앙값 {med:.0f} < {min_nodes_per_cell} ({nx}×{ny} 셀)"
+    return None

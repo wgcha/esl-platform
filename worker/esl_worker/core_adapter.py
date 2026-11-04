@@ -1102,19 +1102,10 @@ def doe_assem_check(d: str, max_mb: float) -> dict:
 
 def doe_design_sha(doe: dict, out: str, did: str) -> str:
     """BD-D-16 안 input_sha256(= bd_eval 이 done.json 에 쓰는 값) — 이어하기에서 paicad 를 다시 돌릴지 판단."""
-    import os
-
     S = _mod("esl.doe.stages")
-    ev = _mod("esl.doe.evaluate")
-    U = _mod("esl.library._util")
 
     def calc() -> str:
-        c = S.Ctx({"doe": doe, "out": out})
-        bmeta = U.read_json(os.path.join(out, "prep", "base.json"))
-        inp = U.read_json(os.path.join(out, "prep", "input.json"))
-        values = S._design_values(c, did)
-        return ev.input_sha256(values, bmeta["mesh_sha256"], (inp.get("loads") or {}).get("sha256"), S._cfg_hash(c),
-                               doe.get("paicad_version"))
+        return S.design_sha(S.Ctx({"doe": doe, "out": out}), did)      # 코어 bd_eval 과 같은 함수(④ 형상 기준 포함)
     return _wrap(calc)
 
 

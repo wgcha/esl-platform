@@ -30,7 +30,7 @@ RESOURCES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path
 MESSAGES_PATH = os.path.join(RESOURCES, "doe_messages.json")
 METHOD_SOURCES_PATH = os.path.join(RESOURCES, "doe_method_sources.json")
 
-SCENARIOS = ("same", "mesh", "step")
+SCENARIOS = ("same", "mesh", "step", "compare")      # v0.14.0 ④ compare(esl_step_compare.md)
 METHODS = ("lhs", "halton", "fullfact")
 PARAM_TYPES = ("D", "W", "U", "V")
 SOLVERS = ("linear",)
@@ -75,6 +75,23 @@ DEFAULTS: dict = {
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
     "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000},
     "settings_cache_s": 300,
+    # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
+    # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).
+    # 이슈 #53(Radioss Ch/R 3 mm BatchMesher param·criteria, docs/reference/radioss_chr_3mm_batchmesh.md) 근사:
+    # element_size 3 → size_mm, min length good 2.4 → min_size_factor 0.8, feature_angle 10(기록 — gmsh OCC 가져오기에 대응 옵션
+    # 없음), holes table → defeature, criteria → quality(기준별 warn·fail, Fail 비율 상한 max_fail_ratio — 경고만).
+    "compare": {"enabled": True, "max_shapes": 20, "total_max_mb": 1000, "align_tol": 0.05, "align_deg": 5.0,
+                "mesh": {"size_mm": 3.0, "curvature_n": 0, "min_size_factor": 0.8, "extend_from_boundary": 0,
+                         "occ_fix_small": 1, "feature_angle": 10.0},
+                "defeature": {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0],
+                              "min_bead_height_mm": 2.0},
+                "quality": {"max_fail_ratio": 0.01,
+                            "min_length": {"warn": 1.8, "fail": 1.2}, "max_length": {"warn": 4.5, "fail": 5.25},
+                            "aspect": {"warn": 4.4, "fail": 5.0}, "warpage": {"warn": 13.0, "fail": 15.0},
+                            "skew": {"warn": 34.0, "fail": 40.0}, "jacobian": {"warn": 0.7, "fail": 0.6},
+                            "quad_min_angle": {"warn": 46.0, "fail": 40.0}, "quad_max_angle": {"warn": 134.0, "fail": 140.0},
+                            "tria_min_angle": {"warn": 34.0, "fail": 30.0}, "tria_max_angle": {"warn": 112.0, "fail": 120.0},
+                            "tria_pct": {"warn": 10.0, "fail": 15.0}}},
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,
                "ranking_report_rows": 20, "min_disp_range_mm": 1.0},

@@ -1469,6 +1469,47 @@
         "title": "ColorRangeRobust",
         "type": "object"
       },
+      "CompareShapeIn": {
+        "additionalProperties": false,
+        "description": "v0.14.0 ④ 형상 1개(esl_step_compare.md §3): 업로드 세션 1개에 STEP 1개(rel 생략) 또는 여러 개(rel 로 고름). name 은 앞뒤 공백 제거 후 1..64자·제어문자 금지\n(서비스가 검사 — 422 SHAPE_NAME_INVALID), reference = 기준(최대 1개, 없으면 첫 ESL Case 메시).",
+        "properties": {
+          "name": {
+            "maxLength": 256,
+            "title": "Name",
+            "type": "string"
+          },
+          "reference": {
+            "default": false,
+            "title": "Reference",
+            "type": "boolean"
+          },
+          "rel": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rel"
+          },
+          "upload_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "name"
+        ],
+        "title": "CompareShapeIn",
+        "type": "object"
+      },
       "ComparisonCreate": {
         "additionalProperties": false,
         "properties": {
@@ -2151,23 +2192,45 @@
             "enum": [
               "same",
               "mesh",
-              "step"
+              "step",
+              "compare"
             ],
             "title": "Scenario",
             "type": "string"
           },
+          "shapes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareShapeIn"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shapes"
+          },
           "step_upload_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Step Upload Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Upload Id"
           }
         },
         "required": [
           "project_id",
           "scenario",
-          "entry_ids",
-          "step_upload_id"
+          "entry_ids"
         ],
         "title": "DoeCheckIn",
         "type": "object"
@@ -2231,6 +2294,36 @@
             ],
             "title": "Props Default"
           },
+          "reference_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "step",
+                  "case"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Source"
+          },
+          "shapes": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shapes"
+          },
           "size": {
             "anyOf": [
               {
@@ -2244,9 +2337,16 @@
             "title": "Size"
           },
           "step": {
-            "additionalProperties": true,
-            "title": "Step",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
           },
           "warnings": {
             "items": {
@@ -2259,7 +2359,6 @@
         },
         "required": [
           "ok",
-          "step",
           "entries"
         ],
         "title": "DoeCheckOut",
@@ -2392,6 +2491,17 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           },
           "per_esl": {
             "items": {
@@ -2657,6 +2767,38 @@
             ],
             "title": "Ratio Tol"
           },
+          "reference_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "step",
+                  "case"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Source"
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "enum": [
+                  "same",
+                  "mesh",
+                  "step",
+                  "compare"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario"
+          },
           "sensitivity": {
             "anyOf": [
               {
@@ -2668,6 +2810,17 @@
               }
             ],
             "title": "Sensitivity"
+          },
+          "sensitivity_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity Reason"
           },
           "sort": {
             "default": "score",
@@ -2707,9 +2860,16 @@
         "additionalProperties": false,
         "properties": {
           "matrix_sha256": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Matrix Sha256",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matrix Sha256"
           },
           "solver": {
             "default": "linear",
@@ -2724,8 +2884,7 @@
           }
         },
         "required": [
-          "version",
-          "matrix_sha256"
+          "version"
         ],
         "title": "DoeRunIn",
         "type": "object"
@@ -2736,6 +2895,18 @@
             "additionalProperties": true,
             "title": "Boundary",
             "type": "object"
+          },
+          "compare": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare"
           },
           "doe": {
             "additionalProperties": true,
@@ -2994,16 +3165,39 @@
             "enum": [
               "same",
               "mesh",
-              "step"
+              "step",
+              "compare"
             ],
             "title": "Scenario",
             "type": "string"
           },
+          "shapes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareShapeIn"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shapes"
+          },
           "step_upload_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Step Upload Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Upload Id"
           },
           "title": {
             "anyOf": [
@@ -3021,8 +3215,7 @@
         "required": [
           "project_id",
           "scenario",
-          "entry_ids",
-          "step_upload_id"
+          "entry_ids"
         ],
         "title": "DoeStudyIn",
         "type": "object"
@@ -3113,7 +3306,8 @@
             "enum": [
               "same",
               "mesh",
-              "step"
+              "step",
+              "compare"
             ],
             "title": "Scenario",
             "type": "string"

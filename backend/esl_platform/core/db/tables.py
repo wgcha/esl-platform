@@ -543,14 +543,14 @@ Index("ix_opt_runs_project", opt_runs.c.project_id, opt_runs.c.created_at.desc()
 Index("ix_opt_runs_template", opt_runs.c.template_id)
 
 # ---------------------------------------------------------------- 0011: 비드 DOE(계약 esl_bead_doe.md §13)
-DOE_SCENARIOS = ("same", "mesh", "step")
+DOE_SCENARIOS = ("same", "mesh", "step", "compare")          # v0.14.0 ④ compare(0014)
 DOE_PHASES = ("PREP", "READY", "PREVIEW", "PREVIEW_READY", "RUN", "DONE", "FAILED")
 bead_does = Table(
     "bead_does",
     metadata,
     Column("id", ID, primary_key=True),
     Column("project_id", String, nullable=False),
-    Column("scenario", String(4), nullable=False),
+    Column("scenario", String(8), nullable=False),          # 0014: 4 → 8(compare)
     Column("title", String(200), nullable=False),
     Column("entry_ids", JSONB, nullable=False),
     Column("base", JSONB, nullable=True),                   # ① 기준 entry·case·part(서버 경로 없음 — 경로는 작업 params 에만)
@@ -568,7 +568,7 @@ bead_does = Table(
     Column("created_by_name", String, nullable=False),
     Column("created_at", TS, nullable=False, server_default=func.now()),
     Column("updated_at", TS, nullable=False, server_default=func.now()),
-    CheckConstraint("scenario IN ('same','mesh','step')", name="ck_bead_does_scenario"),
+    CheckConstraint("scenario IN ('same','mesh','step','compare')", name="ck_bead_does_scenario"),
     CheckConstraint("phase IN ('PREP','READY','PREVIEW','PREVIEW_READY','RUN','DONE','FAILED')",
                     name="ck_bead_does_phase"),
     CheckConstraint("scenario <> 'same' OR base IS NOT NULL", name="ck_bead_does_base"),

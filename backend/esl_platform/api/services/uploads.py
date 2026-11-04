@@ -1208,7 +1208,7 @@ STEP_MAGIC = b"ISO-10303-21;"
 
 
 def doe_source(ctx: AppContext, principal: Principal, upload_id: str, project_id: str,
-               kind: str) -> tuple[dict[str, Any], str, str]:
+               kind: str, rel: str | None = None) -> tuple[dict[str, Any], str, str]:
     """비드 DOE 입력 업로드(읽기만) → (업로드 행, 업로드 루트, 주 파일 절대경로). purpose 없이 올린 업로드(rel `rad/<파일>`)를
     여기서 판정한다(complete 를 거치지 않아도 됨).
 
@@ -1216,6 +1216,13 @@ def doe_source(ctx: AppContext, principal: Principal, upload_id: str, project_id
     - kind ``mesh``: ② B 메시 — `.rad` 하나(`*_0000.rad` 우선, + include) 또는 `.rad` 가 없으면 `.inc` 하나
       (아니면 422 MESH_INVALID·MESH_FORMAT_UNSUPPORTED). `.fem` 은 받지 않는다(paicad 조립 = rad/inc)."""
     up, root, rels = _ready_upload(ctx, principal, upload_id, project_id)
+    if kind == "step" and rel is not None:
+        # v0.14.0 ④ 다중 doe_step: 한 업로드 세션에 STEP 여러 개 — 형상마다 rel 로 고름(업로드 동시 세션 한도와 무관하게
+        # 형상 20개까지). rel = 업로드 기록의 살아 있는 파일 rel 과 정확히 같아야 함
+        if rel not in rels or not rel.lower().endswith(DOE_STEP_EXT):
+            raise unprocessable("STEP_INVALID", f"업로드에 STEP 파일 '{rel}' 이 없습니다", files=[r for r in rels
+                                                                                         if r.lower().endswith(DOE_STEP_EXT)][:50])
+        return up, root, U.target_path(up["dir_path"], rel.split("/"), upload_root=root)
     if kind == "step":
         pick = [r for r in rels if r.lower().endswith(DOE_STEP_EXT)]
         if len(pick) != 1:

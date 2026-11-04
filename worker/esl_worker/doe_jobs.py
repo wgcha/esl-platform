@@ -281,6 +281,11 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
             res["skipped"] = "③ 이 아님 — 기준 메시 gmsh 없음"
         return res
     if key == "BD_GEOM":
+        if ex.lib["doe"].get("scenario") == "compare":      # v0.14.0 ④: paicad 호출 없음(version 점검도 안 함, SC-D-3)
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write("[esl-worker] BD_GEOM: ④ 형상 직접 비교 — paicad 단계 없음(SKIPPED)\n")
+            set_progress(ex, st, 100.0)
+            return {"_skipped": True, "skipped": "④ 형상 직접 비교 — paicad 단계 없음"}
         return _geom(ex, st, log_path)
     if key == "BD_GRID":
         return _grid(ex, st, log_path)
@@ -552,9 +557,20 @@ def count_states(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------- BD_DESIGNS
+def compare_list(ex) -> tuple[list[str], dict[str, Any]]:
+    """④ 실행 대상 형상 id(준비 READY, d000 제외, id 순) + prep/compare.json 행(id → 행)."""
+    doc = _read_json(os.path.join(ex.cdir, "prep", "compare.json"))
+    if not isinstance(doc, dict) or not isinstance(doc.get("shapes"), list):
+        raise _fail("PREREQUISITE_MISSING", "prep/compare.json 이 없습니다 — 입력 준비부터 다시")
+    by = {r["id"]: r for r in doc["shapes"] if isinstance(r, dict) and r.get("id")}
+    return sorted(i for i, r in by.items() if i != BASELINE and r.get("status") == "READY"), by
+
+
 def design_list(ex) -> tuple[list[str], dict[str, Any]]:
-    """실행 대상 안 id(미리보기 READY, id 순) + ③ noise, 미리보기 행."""
+    """실행 대상 안 id(미리보기 READY, id 순) + ③ noise, 미리보기 행. ④ = 준비 READY 형상."""
     doe = ex.lib["doe"]
+    if doe.get("scenario") == "compare":
+        return compare_list(ex)
     _, dcfg = _cfg(ex)
     out = ex.cdir
     rev = str(int(doe["rev"]))
@@ -591,10 +607,14 @@ def _designs(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     prog(0)
     ids, _pv = design_list(ex)
     base = _read_json(os.path.join(out, "prep", "base.json"), {}) or {}
-    lim = parallel(ex, int(base.get("n_nodes") or 1))
+    n_nodes = int(base.get("n_nodes") or 1)
+    if doe.get("scenario") == "compare":            # ④ 형상마다 메시가 달라 가장 큰 형상 기준(BD-D-15 메모리 자동 축소)
+        n_nodes = max([n_nodes] + [int((_pv.get(i) or {}).get("n_nodes") or 0) for i in ids])
+    lim = parallel(ex, n_nodes)
     p = int(lim["parallel"])
     gb = 1024 ** 3
-    echo(f"[esl-worker] BD_DESIGNS: 대상 안 {len(ids)}개(미리보기 OK{' + 잡음 바닥' if NOISE in ids else ''}), 동시 {p}"
+    what = "형상 {n}개(준비 READY)" if doe.get("scenario") == "compare" else "안 {n}개(미리보기 OK{x})"
+    echo(f"[esl-worker] BD_DESIGNS: 대상 {what.format(n=len(ids), x=' + 잡음 바닥' if NOISE in ids else '')}, 동시 {p}"
          + (f" (요청 {lim['requested']} → 메모리 자동 축소: 추정 {lim['estimate_bytes'] / gb:.2f} GB × {p} ≤ 가용 "
             f"{(lim['available_bytes'] or 0) / gb:.1f} GB × run.memory_margin)" if lim.get("reduced") else ""))
     set_progress(ex, st, 0.0, outputs=_jsonable({"parallel": lim, "n_designs": len(ids)}))
@@ -604,7 +624,7 @@ def _designs(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     tick = _tick(ex)
     finished = 0
     if not ids:
-        echo("[esl-worker] 실행할 안이 없습니다(미리보기 OK 0) — 순위 없음")
+        echo("[esl-worker] 실행할 안이 없습니다(미리보기·준비 OK 0) — 순위 없음")
         return {"n_designs": 0, "parallel": lim, **stats}
     pool = ThreadPoolExecutor(max_workers=p, thread_name_prefix="esl-doe")
     futs = {pool.submit(_one_design, ex, did, procs, echo): did for did in ids}
@@ -645,7 +665,7 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     scn = doe["scenario"]
     full, dcfg = _cfg(ex)
     pc = dcfg["paicad"]
-    rev = str(int(doe["rev"]))
+    rev = str(int(doe["rev"])) if doe.get("rev") is not None else None      # ④ 행렬 없음
     dd = os.path.join(out, "run", "designs", did)
     try:
         sha = core_adapter.doe_design_sha(doe, out, did)
@@ -656,6 +676,8 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
         return {"design": did, "status": prev.get("status"), "reused": True,
                 "line": f"[{did}] 이전 결과 재사용({prev.get('status')}) — paicad·해석 생략"}
     os.makedirs(dd, exist_ok=True)
+    if scn == "compare":
+        return _one_shape(ex, did, procs)
     pio = core_adapter.doe_paicad_io()
     inp = _read_json(os.path.join(out, "prep", "input.json"), {}) or {}
     opts = os.path.join(out, "prep", "paicad_options.json") if pc.get("options") else None
@@ -705,6 +727,24 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
                 f"{float(solve.get('seconds') or 0):.1f} s · C_max {float(res.get('C_max') or 0):.4g}")
     else:
         line = f"[{did}] {key[7:]} {r['seconds']:.0f} s → {status} {code or res.get('code') or ''}"
+    return {"design": did, "status": status, "reused": False, "line": line}
+
+
+def _one_shape(ex, did: str, procs: paicad_proc.Procs) -> dict[str, Any]:
+    """④ 형상 1개: paicad 없이 코어 자식 bd_eval(준비 메시 재사용 → frame 고정 대상 → 셀 매핑 하중 → 해석)."""
+    status, code = _eval_child(ex, did, None, procs)
+    dd = os.path.join(ex.cdir, "run", "designs", did)
+    res = _read_json(os.path.join(dd, "result.json"), {}) or {}
+    row = (_read_json(os.path.join(ex.cdir, "prep", "compare.json"), {}) or {}).get("shapes") or []
+    sh = next((r for r in row if isinstance(r, dict) and r.get("id") == did), {})
+    name = str(sh.get("name") or "")[:64]
+    solve = res.get("solve") or {}
+    mesh = res.get("mesh") or {}
+    if status == "OK":
+        line = (f"[{did} {name}] {mesh.get('n_elems')} 요소 · solve {len(res.get('per_esl') or [])} ESL "
+                f"{float(solve.get('seconds') or 0):.1f} s · C_max {float(res.get('C_max') or 0):.4g}")
+    else:
+        line = f"[{did} {name}] → {status} {code or res.get('code') or ''}"
     return {"design": did, "status": status, "reused": False, "line": line}
 
 

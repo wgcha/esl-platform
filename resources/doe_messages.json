@@ -1,5 +1,5 @@
 {
- "version": "2026-10-29.1",
+ "version": "2026-11-04.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -89,6 +89,21 @@
   "PAICAD_VERSION_LOW": "형상 엔진(paicad) 버전이 낮습니다(관리자 문의).",
   "PAICAD_OCP_MISSING": "형상 엔진(paicad)의 CAD 커널(OCP)이 없습니다(관리자 문의).",
   "PAICAD_CHECK_FAILED": "형상 엔진(paicad) 점검 실행에 실패했습니다(관리자 문의).",
-  "PAICAD_VERSION_PINNED": "형상 엔진(paicad) 버전이 배포 고정 버전과 다릅니다(경고)."
+  "PAICAD_VERSION_PINNED": "형상 엔진(paicad) 버전이 배포 고정 버전과 다릅니다(경고).",
+  "COMPARE_DISABLED": "형상 직접 비교가 꺼져 있습니다(설정 bead_doe.compare.enabled — 관리자 문의).",
+  "SHAPES_EMPTY": "비교할 형상(STEP)을 올리세요.",
+  "SHAPES_TOO_FEW": "형상이 부족합니다 — 기준 STEP 을 지정하면 2개 이상, 기준 없음(Case 메시)이면 1개 이상.",
+  "SHAPES_TOO_MANY": "형상이 너무 많습니다(설정 bead_doe.compare.max_shapes).",
+  "SHAPES_TOO_LARGE": "형상 STEP 합계 크기가 상한을 넘습니다(설정 bead_doe.compare.total_max_mb).",
+  "SHAPE_NAME_INVALID": "형상 이름은 1~64자, 제어 문자 없이 입력하세요.",
+  "SHAPE_NAME_DUPLICATE": "형상 이름이 겹칩니다(대소문자 무시) — 서로 다른 이름을 쓰세요.",
+  "REFERENCE_MULTIPLE": "기준 형상은 하나만 지정할 수 있습니다.",
+  "SCENARIO_UNSUPPORTED": "이 시나리오에서는 쓸 수 없는 기능입니다(④ 형상 직접 비교 — DOE·미리보기 없음).",
+  "SHAPE_SIZE_MISMATCH": "형상 크기가 ESL 과 다릅니다(±허용 밖) — 이 형상만 비교에서 뺐습니다.",
+  "SHAPE_MISALIGNED": "형상 위치·방향이 기준 형상과 다릅니다(같은 좌표계·같은 위치 STEP 필요) — 이 형상만 비교에서 뺐습니다.",
+  "FAILED_SIZE": "형상 크기·정렬 검사 실패 — 이 형상만 비교에서 뺐습니다.",
+  "COMPARE_REF_CASE_MESH": "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다 — 기준 STEP 지정을 권장합니다.",
+  "SHAPE_DUPLICATE_FILE": "같은 STEP 파일(sha256)이 두 번 이상 올라왔습니다(경고 — 차단 아님).",
+  "COMPARE_NO_PARAMS": "형상 직접 비교에는 변수가 없어 민감도를 계산하지 않습니다(형상 이름 표 참조)."
  }
 }

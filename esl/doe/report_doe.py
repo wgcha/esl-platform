@@ -17,7 +17,7 @@ from __future__ import annotations
 from esl.doe import load_messages
 from esl.report import html as H
 
-SCN_KO = {"same": "① 같은 모델", "mesh": "② 다른 모델(메시 있음)", "step": "③ 다른 모델(STEP 만)"}
+SCN_KO = {"same": "① 같은 모델", "mesh": "② 다른 모델(메시 있음)", "step": "③ 다른 모델(STEP 만)", "compare": "④ 형상 직접 비교"}
 METHOD_KO = {"lhs": "LHS", "halton": "Halton", "fullfact": "풀 팩토리얼"}
 STATE_KO = {"READY": "실행 대상", "OK": "성공", "SKIPPED_COLLISION": "충돌 스킵", "SKIPPED_FIXED": "고정 침범 스킵",
             "SKIPPED_GEOM": "형상 실패 스킵", "FAILED_MORPH": "모핑 실패", "FAILED_MESH": "메시 실패",
@@ -141,8 +141,119 @@ def plan_svg(plan: dict | None, w: int = 620) -> str:
     return "".join(out)
 
 
+SHAPE_STATE_KO = {"READY": "실행 대상", "OK": "성공", "FAILED_MESH": "메시 실패", "FAILED_SIZE": "크기·정렬 불일치",
+                  "FAILED_SOLVE": "해석 실패", "CANCELED": "취소"}
+
+
+def _methods_limits(ms: dict, extra_limits: list | None = None) -> list[str]:
+    if not ms:
+        return []
+    inner = "<ul>" + "".join(f"<li>{H.esc(s)}</li>" for s in ms.get("summary_ko") or []) + "</ul>"
+    src = []
+    for s in ms.get("sources") or []:
+        t = H.esc(s["title"])
+        if s.get("url"):
+            t = f'<a href="{H.esc(s["url"])}" rel="noreferrer">{t}</a>'
+        src.append(f"<li>{t}" + (f" — {H.esc(s['authors'])}" if s.get("authors") else "")
+                   + (f" <span class='muted'>({H.esc(s['note'])})</span>" if s.get("note") else "") + "</li>")
+    inner += "<h3>출처</h3><ol>" + "".join(src) + "</ol>"
+    inner += f"<p class='small muted'>자료 버전 {H.esc(ms.get('version'))}</p>"
+    lim = list(extra_limits or []) + list(ms.get("limits_ko") or [])
+    return [H.section("method", "방법·출처", inner),
+            H.section("limits", "한계", "<ul>" + "".join(f"<li>{H.esc(s)}</li>" for s in lim) + "</ul>")]
+
+
+def render_compare(ctx: dict) -> str:
+    """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
+    ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·defeature 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
+    st = ctx.get("study") or {}
+    ip = ctx.get("inputs") or {}
+    ver = ctx.get("versions") or {}
+    res = ctx.get("result") or {}
+    prof = ctx.get("profile") or {}
+    shapes = ctx.get("shapes") or []
+    names = {s["id"]: s.get("name") or s["id"] for s in shapes}
+    case_ref = ctx.get("reference_source") == "case"
+    S = [f"<h1>강성 평가 스터디 · ④ 형상 직접 비교 · {H.esc(st.get('title') or st.get('id'))}</h1>",
+         f"<p class='muted small'>연구 {H.esc(st.get('id'))} · {H.esc(st.get('created_at'))} · ESL "
+         f"{len(st.get('entry_ids') or [])}개 · 형상 {len(shapes)}개</p>"]
+    if case_ref:
+        S.append(f"<p class='warn'><b>COMPARE_REF_CASE_MESH</b> — {H.esc(_msg('COMPARE_REF_CASE_MESH'))}</p>")
+    rk = res.get("ranking") or []
+    if rk:
+        b = rk[0]
+        S.append(H.cards([("최적 형상", H.esc(names.get(b["id"], b["id"]))), ("score", H.esc(_f(b["score"]))),
+                          ("개선율", H.esc(_pct(b["improvement"]))), ("성공 형상", H.esc(res.get("n_ok")))]))
+    pairs = [("시나리오", "④ 형상 직접 비교"),
+             ("기준", f"{names.get('d000', 'd000')} ({'첫 ESL Case 메시' if case_ref else '기준 STEP'})"),
+             ("인치", ip.get("inch")), ("gmsh 버전", ver.get("gmsh"))]
+    if ip.get("props"):
+        p = ip["props"]
+        pairs.append(("쉘 물성(모든 형상 같음)", f"t {_f(p.get('t'))} mm · E {_f(p.get('E'))} MPa · ν {_f(p.get('nu'))}"))
+    pairs.append(("메시 프로필", f"요소 {_f(prof.get('size_mm'))} mm · 최소 ×{_f(prof.get('min_size_factor'))} · 곡률 "
+                               f"{prof.get('curvature_n')} · 경계 확장 {prof.get('extend_from_boundary')} · OCC 작은 형상 정리 "
+                               f"{prof.get('occ_fix_small')}"))
+    inner = H.kv_table(pairs)
+    ents = ip.get("entries") or []
+    if ents:
+        inner += "<h3>선택 ESL</h3>" + H.table(["ESL", "이름", "출처 Case"],
+                                              [[e.get("entry_id"), e.get("label") or "", e.get("case") or ""]
+                                               for e in ents])
+    S.append(H.section("inputs", "1. 입력", inner))
+    trs = []
+    for s in shapes:
+        trs.append([s["id"], s.get("name") or "", s.get("file_name") or ("Case 메시" if s.get("source") == "case" else ""),
+                    (str(s.get("sha256") or "")[:12] + "…") if s.get("sha256") else "", s.get("n_elems") or "",
+                    "" if s.get("quad_ratio") is None else _f(s.get("quad_ratio")),
+                    "" if not s.get("quality") else f"{s['quality']['fail_elems']} ({s['quality']['fail_ratio'] * 100:.2f} %)",
+                    SHAPE_STATE_KO.get(s.get("status"), s.get("status") or ""), s.get("code") or ""])
+    S.append(H.section("shapes", "2. 형상", H.table(["id", "이름", "파일", "sha256", "요소 수", "quad 비율", "품질 Fail",
+                                                     "준비 상태", "코드"], trs, num=(4, 5))))
+    df = prof.get("defeature") or {}
+    if df:
+        S.append("<p class='small muted'>작은 형상 처리(이슈 #53 holes table 근사): 내부 경계 면적 &lt; "
+                 f"{H.esc(_f(df.get('min_hole_area_mm2')))} mm² 메움 · 반지름 {H.esc(df.get('hole_r_mm'))} mm 구멍 둘레 요소 "
+                 f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(기록만 — 미적용)</p>")
+    if rk:
+        top_n = int(ctx.get("ranking_rows") or 20)
+        hdr = ["순위", "id", "이름", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
+               "기하평균 개선율", "Pareto"]
+        rows = []
+        for x in rk[:top_n]:
+            allv = x.get("all_improved")
+            rows.append([x["rank"], x["id"], names.get(x["id"], x["id"]), x["score"], _pct(x["improvement"]),
+                         x.get("worst_entry_id") or "", x["umax"], x["epsmax"],
+                         "–" if allv is None else ("✓" if allv else "✗"), _pct(x.get("min_improvement")),
+                         f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
+                         "●" if x.get("pareto") else ""])
+        inner = H.table(hdr, rows, num=(0, 3, 6, 7, 9, 11))
+        inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
+        inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)
+                  + f" (허용치 {H.esc(_f(res.get('ratio_tol')))})</p>")
+        inner += (f"<p class='small muted'>C_ref(기준 형상 최악) {H.esc(_f(res.get('C_ref')))} · 기준 umax "
+                  f"{H.esc(_f((res.get('baseline') or {}).get('umax')))} · 전체는 ranking.csv</p>")
+    else:
+        inner = f"<p>{H.esc(_msg('NO_FEASIBLE_DESIGNS'))}</p>"
+    nf = res.get("n_failed") or {}
+    inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
+              f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
+    S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
+    best = ctx.get("best")
+    if best:
+        S.append(H.section("best", f"4. 최적 형상 {best.get('id')} {names.get(best.get('id'), '')}",
+                           "<p class='small'>산출물: " + H.esc(", ".join(best.get("files") or [])) + "</p>"))
+    warns = [w for w in ctx.get("warnings") or [] if not str(w).startswith("COMPARE_REF_CASE_MESH")]
+    if warns:
+        S.append(H.section("warnings", "경고", "<ul>" + "".join(f"<li>{H.esc(w)}</li>" for w in warns) + "</ul>"))
+    S += _methods_limits(ctx.get("sources") or {}, ctx.get("limits_extra"))
+    title = f"강성 평가 스터디 {st.get('title') or st.get('id') or ''}".strip()
+    return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
+
+
 def render(ctx: dict) -> str:
     st = ctx.get("study") or {}
+    if st.get("scenario") == "compare":
+        return render_compare(ctx)
     ip = ctx.get("inputs") or {}
     ver = ctx.get("versions") or {}
     spec = ctx.get("spec") or {}

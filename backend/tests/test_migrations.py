@@ -22,7 +22,7 @@ SCX_TABLES = {"verify_drops", "scx_submissions"}
 SCX_INDEXES = {"ix_verify_drops_doe", "ix_verify_drops_batch", "ux_verify_drops_active", "ix_jobs_upload", "ux_jobs_upload_active",
                "ix_jobs_verify_drop", "ux_jobs_verify_drop_active"}
 RUN_ALL_INDEXES = {"ux_run_alls_case_running", "ix_run_alls_case_created", "ix_jobs_run_all"}
-HEAD = "0013"
+HEAD = "0014"
 
 
 def _cfg(db_url, script_location: str | None = None):
@@ -60,8 +60,18 @@ def _load(name: str):
     return mod
 
 
+def _to_0013(engine):
+    """0014 이전(0013) 스키마로: bead_does.scenario VARCHAR(4)·CHECK ('same','mesh','step')."""
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE bead_does DROP CONSTRAINT IF EXISTS ck_bead_does_scenario"))
+        c.execute(text("ALTER TABLE bead_does ALTER COLUMN scenario TYPE VARCHAR(4)"))
+        c.execute(text("ALTER TABLE bead_does ADD CONSTRAINT ck_bead_does_scenario CHECK (scenario IN ('same','mesh','step'))"))
+        c.execute(text("UPDATE alembic_version SET version_num = '0013'"))
+
+
 def _to_0012(engine):
-    """0013 이전(0012) 스키마로: run_alls·jobs.run_all_id 제거."""
+    """0013 이전(0012) 스키마로: (0014 되돌린 뒤) run_alls·jobs.run_all_id 제거."""
+    _to_0013(engine)
     with engine.begin() as c:
         c.execute(text("ALTER TABLE jobs DROP COLUMN IF EXISTS run_all_id"))
         c.execute(text("DROP TABLE IF EXISTS run_alls"))
@@ -396,6 +406,53 @@ def test_upgrade_from_0012_db_idempotent_existing_rows(engine, db_url):
                 c.execute(text(run), {"i": str(uuid.uuid4()), "f": "input", "j": None, **bad})
 
 
+def test_upgrade_from_0013_db_step_compare(engine, db_url):
+    """V-SC-9(0014, esl_step_compare.md §9): 0013 DB(scenario VARCHAR(4)·3종 CHECK, 기존 연구 행) → 0014 — 열 VARCHAR(8)·
+    CHECK 4종(tables.py create_all 과 같음), 기존 행 보존, 'compare' 행 삽입, 멱등, 단일 head, downgrade 거부."""
+    from alembic import command
+    from alembic.script import ScriptDirectory
+    from esl_platform.core.db import tables
+
+    ins = ("INSERT INTO bead_does (id, project_id, scenario, title, entry_ids, inputs, dir_rel, created_by, created_by_name)"
+           " VALUES (:i, 'p-1', :s, 't', CAST(:e AS jsonb), '{}', :d, 'u', 'u')")
+
+    def put(i, s):
+        with engine.begin() as c:
+            c.execute(text(ins), {"i": i, "s": s, "e": '["e1"]', "d": f"_doe/{i}"})
+
+    def col_len():
+        with engine.connect() as c:
+            return c.execute(text("SELECT character_maximum_length FROM information_schema.columns WHERE "
+                                  "table_name='bead_does' AND column_name='scenario'")).scalar_one()
+
+    full = _state(engine)
+    _seed_old_rows(engine)
+    _to_0013(engine)
+    put("d1", "step")
+    with pytest.raises(DBAPIError):                                        # 0013: 'compare' 거부(길이·CHECK)
+        put("d0", "compare")
+    assert col_len() == 4 and _state(engine)[4] == "0013"
+    command.upgrade(_cfg(db_url), "head")
+    after = _state(engine)
+    assert after[4] == HEAD == "0014" and after[2]["ck_bead_does_scenario"] == full[2]["ck_bead_does_scenario"]
+    assert col_len() == 8 == tables.bead_does.c.scenario.type.length and after[0] == full[0] and after[1] == full[1]
+    assert "compare" in tables.DOE_SCENARIOS
+    with engine.begin() as c:
+        c.execute(text("UPDATE alembic_version SET version_num = '0013'"))
+    command.upgrade(_cfg(db_url), "head")                                 # 멱등
+    assert _state(engine)[1:] == after[1:] and col_len() == 8
+    with engine.connect() as c:
+        assert c.execute(text("SELECT scenario FROM bead_does WHERE id='d1'")).scalar_one() == "step"
+    put("d2", "compare")
+    with pytest.raises(DBAPIError):
+        put("d3", "compar2")
+    sd = ScriptDirectory(str(REPO / "migrations"))
+    assert sd.get_heads() == ["0014"]
+    with pytest.raises(Exception):
+        command.downgrade(_cfg(db_url), "0013")                            # downgrade 미지원(데이터 보호)
+    assert _state(engine)[4] == "0014"
+
+
 def test_scx_constraints(engine):
     """V-SR-12: SCX_FETCH = upload_id 만(stage 12, lane XFER), 업로드당 비종료 1개, 기존 분기에 upload_id 금지, lane·stage 범위."""
     _seed_old_rows(engine)
@@ -438,6 +495,7 @@ def test_chain_without_0009():
 
     sd = ScriptDirectory(str(REPO / "migrations"))
     assert sd.get_current_head() == HEAD
+    assert sd.get_revision("0014").down_revision == "0013"
     assert sd.get_revision("0013").down_revision == "0012"
     assert sd.get_revision("0012").down_revision == "0011"
     assert sd.get_revision("0011").down_revision == "0010"
@@ -445,12 +503,12 @@ def test_chain_without_0009():
     assert "0009" not in {r.revision for r in sd.walk_revisions()}
 
 
-MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0013(SR-D-17 — 구현 시점 HEAD 뒤)."""
+MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0014(SR-D-17 — 구현 시점 HEAD 뒤)."""
 from alembic import op
 from sqlalchemy import text
 
 revision = "0009"
-down_revision = "0013"
+down_revision = "0014"
 branch_labels = None
 depends_on = None
 
@@ -464,8 +522,8 @@ def downgrade() -> None:
 '''
 
 
-def test_chain_with_0009_after_0013(pg_server, tmp_path):
-    """0009(MCP)가 나중에 revision 0009·down_revision 0013(HEAD) 으로 붙어도 0008 DB → 0010 → 0011 → 0012 → 0013 → 0009 순서로
+def test_chain_with_0009_after_0014(pg_server, tmp_path):
+    """0009(MCP)가 나중에 revision 0009·down_revision 0014(HEAD) 으로 붙어도 0008 DB → 0010 → 0011 → 0012 → 0013 → 0014 → 0009 순서로
     올라간다(단일 head)."""
     from alembic import command
     from alembic.script import ScriptDirectory
@@ -475,7 +533,7 @@ def test_chain_with_0009_after_0013(pg_server, tmp_path):
     (mig / "versions" / "0009_mcp_probe.py").write_text(MCP_0009, encoding="utf-8")
     sd = ScriptDirectory(str(mig))
     assert sd.get_current_head() == "0009" and len(sd.get_heads()) == 1
-    assert [r.revision for r in sd.walk_revisions()][:6] == ["0009", "0013", "0012", "0011", "0010", "0008"]
+    assert [r.revision for r in sd.walk_revisions()][:7] == ["0009", "0014", "0013", "0012", "0011", "0010", "0008"]
     name = f"esl_chain_{uuid.uuid4().hex[:8]}"
     with pg_server["admin"].connect() as c:
         c.execute(text(f'CREATE DATABASE "{name}"'))
