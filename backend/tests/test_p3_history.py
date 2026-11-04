@@ -753,6 +753,23 @@ def test_h7_log_masking_kept(client, world):
     assert review(client, jid)["logs"][0]["has_log"] is True
 
 
+def test_log_tail_v0151(client, world):
+    """v0.15.1 화면 '로그 보기': tail=true = 끝 LOG_MAX_BYTES 안의 완결된 줄부터(첫 줄 잘림 없음), 마스킹 유지, 권한 그대로."""
+    from esl_platform.api.services.jobs import LOG_MAX_BYTES
+
+    c = world.case("c1")
+    (c["dir"] / "logs" / "j9").mkdir(parents=True)
+    body = "".join(f"line {i:06d} " + "x" * 50 + "\n" for i in range(LOG_MAX_BYTES // 40)) + "password = hunter2\nLAST\n"
+    (c["dir"] / "logs" / "j9" / "step_01_EXTRACT.log").write_text(body)
+    jid = world.job(case_id=c["id"], created=1, steps=[{"key": "EXTRACT", "log_rel": "logs/j9/step_01_EXTRACT.log"}])
+    head = client.get(f"{API}/jobs/{jid}/log", params={"step": 1}, headers=R).json()
+    assert head["lines"][0].startswith("line 000000")
+    r = client.get(f"{API}/jobs/{jid}/log", params={"step": 1, "tail": "true"}, headers=R)
+    t = r.json()
+    assert r.status_code == 200 and t["lines"][-1] == "LAST" and t["lines"][0].startswith("line ") and len(t["lines"][0]) == 62
+    assert "hunter2" not in json.dumps(t) and t["next_cursor"] == len(body.encode())
+
+
 # ================================================================ V-H-8 _backup 표식 탐색
 def _val_dir(base: Path, ts_name: str, run_id: str, vid: str | None, n=40, marker: str | None = None) -> Path:
     d = base / "_backup" / ts_name / "runs" / run_id / "05_val"

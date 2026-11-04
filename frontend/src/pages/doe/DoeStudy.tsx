@@ -46,6 +46,8 @@ import type { VerifyDropOut, VerifyPlanOut } from "../../api/types";
 import { VerifyDropDialog } from "../../components/VerifyDropDialog";
 import { VerifyDropCard } from "../../components/VerifyDropCard";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
+import { FixedViolNote } from "../../components/FixedViol";
+import { JobFailBanner, failedStep, isFailedJob, progressText } from "../../components/JobFailBanner";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -104,6 +106,20 @@ function ScenarioRadio({ value, onChange, auto, st, readOnly }: { value: DoeScen
       )}
     </div>
   );
+}
+
+/** OK 0개 사유별 개수(고정 침범·품질 실패·뒤집힘·그 밖) */
+export function zeroOkText(cells: { status: string; code?: string | null }[]): string {
+  const n = (f: (c: { status: string; code?: string | null }) => boolean) => cells.filter(f).length;
+  const parts: [string, number][] = [
+    ["고정 침범", n((c) => c.code === "SELECT_FIXED_VIOLATION" || c.status === "SKIPPED_FIXED")],
+    ["품질 실패", n((c) => c.code === "SELECT_QUALITY_FAIL")],
+    ["뒤집힘", n((c) => c.code === "SELECT_MORPH_INVERTED")],
+    ["충돌", n((c) => c.status === "SKIPPED_COLLISION")],
+  ];
+  const known = parts.reduce((a, [, v]) => a + v, 0);
+  const other = cells.filter((c) => c.status !== "READY").length - known;
+  return [...parts.filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`), ...(other > 0 ? [`그 밖 ${other}`] : [])].join(" · ") || "사유 없음";
 }
 
 // ================================================================ 새 연구
@@ -518,6 +534,31 @@ function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: Doe
 }
 
 // ================================================================ v0.15.0 ④ 변수 · ⑤ 평면도 + 단면(select)
+/** v0.15.1 변수 표 옆 고정 경고(SELECT_FIXED_IN_BEAD·SELECT_FIXED_IN_BLEND — 전에는 비드 목록 ⚠ 툴팁에만) */
+const FIXED_WARN = ["SELECT_FIXED_IN_BEAD", "SELECT_FIXED_IN_BLEND"];
+function FixedWarnings({ pd }: { pd: { beads: { id: string; name?: string | null; warnings?: { code: string; message?: string | null }[] | null }[] } }) {
+  const ws = pd.beads.flatMap((b) => (b.warnings ?? []).filter((w) => FIXED_WARN.includes(w.code)).map((w) => ({ b, w })));
+  if (!ws.length) return null;
+  return (
+    <ul className="reasons warn-text small" data-testid="vars-fixed-warn">
+      {ws.map(({ b, w }, i) => (
+        <li key={i}>
+          {b.name || b.id.toUpperCase()}: {warnText(w)}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** select 변수 0개 사유: 비드·전체 경고 문구(없으면 일반 안내) */
+export function noVarsReason(pd: { beads: { id: string; name?: string | null; warnings?: { code: string; message?: string | null }[] | null }[]; warnings: { code: string; message?: string | null }[] }): string {
+  const ws = [
+    ...pd.beads.flatMap((b) => (b.warnings ?? []).map((w) => `${b.name || b.id.toUpperCase()}: ${warnText(w)}`)),
+    ...pd.warnings.map((w) => warnText(w)),
+  ];
+  return ws.length ? [...new Set(ws)].join(" · ") : "비드의 바닥·사면을 다시 고르고 [사면·경계 자동] 로 공칭 깊이·폭을 확인한 뒤 다시 저장하세요";
+}
+
 function SelectVarsPlan(p: {
   ready: boolean;
   pd: import("../../api/types").DoeParamsOut | null;
@@ -556,9 +597,16 @@ function SelectVarsPlan(p: {
     <div className="doe-grid">
       <Card title="④ 변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
         {!p.ready ? (
-          <Empty>비드 선택을 저장하면 단별 깊이 D·비드별 폭 W 변수 표가 열립니다</Empty>
+          <div className="empty small" data-testid="vars-next">
+            {p.ctrl.state?.beads.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
+          </div>
+        ) : pd && !pd.params.length ? (
+          <div className="warn-box small" role="alert" data-testid="vars-empty">
+            변수가 없습니다 — {noVarsReason(pd)}
+          </div>
         ) : pd && rows && form && st ? (
           <>
+            <FixedWarnings pd={pd} />
             <DoeParamTable
               data={pd}
               rows={rows}
@@ -626,11 +674,12 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   // 기준 메시가 바뀌어 저장 선택이 무효면 서버가 409 SELECTION_MISSING(reason SELECTION_DROPPED) — 선택 없음으로 보고 다시 고르게 한다
   const [selDropped, setSelDropped] = useState(false);
   const rawSha = s?.selection?.sha256 ?? null;
-  const selFull = usePolling(() => (isSelect && prepDone ? doe.selection(id).then((v) => ({ v })) : Promise.resolve(null)), 0, [id, isSelect, prepDone, rawSha]);
+  // 응답에 요청 당시 요약 sha 를 붙인다 — 저장 직후(요약 sha 가 막 생김) 아직 남아 있는 이전 응답({v: null})을 '무효 선택'으로 오판하지 않게(v0.15.1)
+  const selFull = usePolling(() => (isSelect && prepDone ? doe.selection(id).then((v) => ({ v, sha: rawSha })) : Promise.resolve(null)), 0, [id, isSelect, prepDone, rawSha]);
   useEffect(() => setSelDropped(false), [rawSha]);
   useEffect(() => {
-    // 요약은 있는데 GET selection 이 null = 무효 선택(기준 메시 바뀜)
-    if (isSelect && rawSha && selFull.data && selFull.data.v === null) setSelDropped(true);
+    // 요약은 있는데 (그 요약 sha 로 요청한) GET selection 이 null = 무효 선택(기준 메시 바뀜)
+    if (isSelect && rawSha && selFull.data && selFull.data.sha === rawSha && selFull.data.v === null) setSelDropped(true);
   }, [isSelect, rawSha, selFull.data]);
   const selSha = selDropped ? null : rawSha;
   const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st);
@@ -892,7 +941,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         </div>
       )}
       {st?.paicad.warning && !isCompare && !isSelect && <div className="small warn-text">{st.paicad.warning}</div>}
-      <ErrorLine text={error ?? study.error ?? stError} />
+      <JobFailBanner job={s?.job} />
+      {error ? <ErrorLine text={error} onClose={() => setError(null)} /> : <ErrorLine text={study.error ?? stError} />}
       {s && (
         <Card
           title="① 입력"
@@ -994,6 +1044,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         >
           {phase === "PREVIEW" && job && (
             <>
+              <div className="small" data-testid="preview-progress">
+                미리보기 진행 중 · {progressText(job) ?? "대기 중"}
+              </div>
               <Steps job={job} />
               <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
             </>
@@ -1004,6 +1057,19 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
             </div>
           )}
           {pv && matrix && !fresh && !selStale && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
+          {phase !== "PREVIEW" && isFailedJob(job) && job.job_type === "DOE_PREVIEW" && (
+            <div className="warn-box small" role="alert" data-testid="preview-failed">
+              미리보기가 끝나지 못했습니다 — 단계 {failedStep(job)?.step_no ?? "?"} {STEP_LABEL[failedStep(job)?.step_key ?? ""] ?? failedStep(job)?.step_key ?? ""}
+              {(failedStep(job)?.failure_code ?? job.failure_code) ? ` · ${failedStep(job)?.failure_code ?? job.failure_code}` : ""} · 위 배너의 [로그 보기]에서 원인을 확인하고 다시 [미리보기]
+              {pv ? " (아래는 이전 미리보기)" : ""}
+            </div>
+          )}
+          {phase !== "PREVIEW" && pv && pv.ok === 0 && (pv.cells?.length ?? 0) > 0 && (
+            <div className="warn-box small" role="alert" data-testid="preview-zero-ok">
+              쓸 수 있는 안(OK)이 0개입니다 — {zeroOkText(pv.cells ?? [])}. 범위를 줄이거나 선택(고정·사면)을 고친 뒤 다시 미리보기
+              <FixedViolNote cells={pv.cells ?? []} title="고정 침범 원인" />
+            </div>
+          )}
           {phase !== "PREVIEW" && (
             <DoeThumbGrid
               preview={pv}
@@ -1021,6 +1087,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               values={openDid === "d000" ? Object.fromEntries((pd?.params ?? []).map((p) => [p.name, p.nominal])) : pv.cells?.find((c) => c.id === openDid)?.values ?? {}}
               vmax={pv.color?.v_max ?? 1}
               onClose={() => setOpenDid(null)}
+              fixedViol={pv.cells?.find((c) => c.id === openDid)?.fixed_viol ?? null}
             />
           )}
         </Card>

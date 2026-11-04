@@ -13288,7 +13288,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.15.0"
+    "version": "0.15.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -16784,6 +16784,16 @@
               "minimum": 0,
               "title": "Cursor",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Tail",
+              "type": "boolean"
             }
           }
         ],

@@ -82,6 +82,12 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
     g = study(client, sid)
     assert g["phase"] == "PREVIEW_READY" and g["doe"]["preview"]["ok"] == 4
     assert g["doe"]["preview"]["selection_sha256"] == s["selection"]["sha256"]
+    # v0.15.1 "미리보기 했는데 안 보임": select grid_manifest(kind select) → 셀 4개·썸네일 있음, 썸네일·공칭 PNG 200
+    cells = g["doe"]["preview"]["cells"]
+    assert [c["status"] for c in cells] == ["READY"] * 4 and all(c["thumb"] for c in cells), cells
+    for did in ("d000", cells[0]["id"]):
+        th = api(client, "GET", f"/doe/studies/{sid}/preview/thumb/{did}")
+        assert th.status_code == 200 and th.content[:4] == b"\x89PNG", (did, th.status_code)
     r = start_run(client, g)
     j = run_job(client, worker, r["job"]["id"])
     assert j["progress_pct"] == 100.0

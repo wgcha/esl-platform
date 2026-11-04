@@ -3490,3 +3490,85 @@ details.card.fold > .fold-body {
 .doe-thumb.clickable:hover {
   border-color: var(--accent);
 }
+
+/* ---------------------------------------------------------------- v0.15.1 3D 시점 툴바(정면 ±X·±Y·±Z · 등각 · 꽉 차게 · 선택 맞춤) */
+.v3d-view-bar {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 3;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.v3d-view-bar .v3d-vbtn {
+  min-width: 1.9rem;
+  height: 1.7rem;
+  padding: 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.v3d-view-bar .v3d-vbtn.on {
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+}
+
+/* v0.15.1 실패 배너·로그 tail·오류 닫기 */
+.job-fail-banner {
+  display: grid;
+  gap: 0.35rem;
+}
+.job-fail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.4rem;
+}
+.job-fail-head .spacer {
+  flex: 1;
+}
+.job-log-tail pre {
+  max-height: 22rem;
+  overflow: auto;
+  margin: 0.3rem 0 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.error-text .err-close {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.fixed-viol .reasons {
+  margin: 0.2rem 0 0;
+}
+.fixed-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #d61f1f;
+  vertical-align: middle;
+}
+.bs-row.cur {
+  background: var(--accent-weak);
+  border-radius: 4px;
+}
+.bs-layer-pick {
+  margin-right: 0.35rem;
+}
+.bs-bead-actions {
+  margin-top: 0.3rem;
+}

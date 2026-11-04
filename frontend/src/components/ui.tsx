@@ -85,11 +85,17 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
-export function ErrorLine({ text }: { text: string | null | undefined }) {
+/** onClose 가 있으면 [닫기] — v0.15.1: 동작 오류는 사용자가 닫거나 같은 동작을 다시 할 때만 지운다(폴링·재렌더로 지우지 않음) */
+export function ErrorLine({ text, onClose }: { text: string | null | undefined; onClose?: () => void }) {
   if (!text) return null;
   return (
     <div className="error-text" role="alert">
       {text}
+      {onClose && (
+        <button type="button" className="btn small ghost icon err-close" aria-label="오류 닫기" title="닫기" onClick={onClose}>
+          ✕
+        </button>
+      )}
     </div>
   );
 }

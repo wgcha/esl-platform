@@ -606,14 +606,20 @@ def preview_cells(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> list
     except (EslError, OSError, ValueError):
         return None
     by = {r["id"]: r for r in g["cells"]}
+    # v0.15.1 select 고정 침범 원인(코어 bd_select_grid 셀 fixed_viol — 있을 때만 그대로 전달)
+    viol = {str(x.get("id")): x["fixed_viol"] for x in (g.get("manifest") or {}).get("cells") or []
+            if isinstance(x, dict) and isinstance(x.get("fixed_viol"), dict)}
     out = []
     for d in m["designs"]:
         if d.get("id") == "d000":
             continue
         r = by.get(d["id"]) or {"state": "SKIPPED_GEOM", "code": "GRID_CELL_MISSING", "warning": None}
         thumb = r.get("warning") != "THUMB_UNAVAILABLE" and _cell_thumb(gdir, g.get("manifest") or {}, d["id"]) is not None
-        out.append({"id": d["id"], "values": d.get("values") or {}, "status": r["state"], "code": r.get("code"),
-                    "thumb": bool(thumb)})
+        row = {"id": d["id"], "values": d.get("values") or {}, "status": r["state"], "code": r.get("code"),
+               "thumb": bool(thumb)}
+        if d["id"] in viol:
+            row["fixed_viol"] = viol[d["id"]]
+        out.append(row)
     return out
 
 

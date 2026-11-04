@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { doe, warnText } from "../api/doe";
 import { errorText } from "../api/client";
-import type { DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
+import type { DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
 import { loadScene } from "../view3d/loadThree";
@@ -16,16 +16,21 @@ import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
-  addBead, addTier, applyPatch, effectiveSlope, elemColors, emptyState, fromSelectionIn, ownerBead, paint, toSelectionIn, toggleLink,
+  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, fromSelectionIn, ownerBead, paint, toSelectionIn, toggleLink,
   type Layer, type LayerName, type SelState,
 } from "../view3d/select/layers";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
 import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
+import { ViewToolbar } from "../view3d/ViewToolbar";
+import { elemsBbox, positionsBbox } from "../view3d/viewFit";
 import { BeadList } from "./BeadList";
+import { FixedViolNote } from "./FixedViol";
 import { Card, ErrorLine } from "./ui";
 
 export const NO_3D = "이 브라우저에서 3D 보기를 쓸 수 없습니다";
+/** 편집 불가(실행 후·권한 없음) 버튼 툴팁 */
+export const RO_TIP = "실행 후에는 이 스터디의 선택을 바꿀 수 없습니다 — 복제해서 편집";
 const BACKGROUND = "#dfe3e8";
 
 export interface SelectData {
@@ -101,6 +106,13 @@ export interface BeadSelectCtrl {
   setBlend: (beadId: string, v: "auto" | number) => void;
   blendOf: (beadId: string) => "auto" | number | null;
   ring: (dir: 1 | -1) => void;
+  /** v0.15.1 지우기: 지금 층 비우기 · 비드 삭제(번호 정리) · 마지막 단 삭제 — 모두 실행 취소 가능 */
+  clearLayer: () => void;
+  deleteBead: (bead: number) => void;
+  deleteTier: (bead: number) => void;
+  /** 이 비드 초기화(요소만, 이름 유지) · 전체 초기화(비드·고정·제외 모두) — 실행 취소 가능, 서버는 [선택 저장] 전까지 그대로 */
+  resetBead: (bead: number) => void;
+  resetAll: () => void;
   maxBeads: number;
   maxTiers: number;
 }
@@ -233,23 +245,41 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     stroke.current = null;
     bump();
   }, [bump]);
+  /** 비드 목록이 바뀐 뒤(삭제·되돌리기): 지금 비드·층을 범위 안으로, derive(비드 id 기준)는 다시 계산하도록 비움 */
+  const afterMeta = useCallback((pref?: number) => {
+    const s = stRef.current;
+    if (!s) return;
+    setDerive(null);
+    const n = s.beads.length;
+    const a = n ? Math.min(Math.max(0, pref ?? 0), n - 1) : 0;
+    setActive(a);
+    setLayer((l) => {
+      if (!n) return l && (l.kind === "fixed" || l.kind === "exclude") ? l : null;
+      if (!l || l.kind === "fixed" || l.kind === "exclude") return l ?? { kind: "tier", bead: a, k: 1 };
+      if (l.bead >= n) return { kind: "tier", bead: a, k: 1 };
+      if (l.kind === "tier" && l.k > s.beads[l.bead].nTiers) return { kind: "tier", bead: l.bead, k: s.beads[l.bead].nTiers };
+      return l;
+    });
+  }, []);
   const undo = useCallback(() => {
     const s = stRef.current;
     const p = hist.current.undo();
     if (s && p) {
       // 한 획 안 같은 요소가 여러 번 바뀌었으면 뒤에서부터 되돌린다
-      applyPatch(s, { changes: [...p.changes].reverse() }, "undo");
+      applyPatch(s, { ...p, changes: [...p.changes].reverse() }, "undo");
+      if (p.meta) afterMeta(active);
       bump();
     }
-  }, [bump]);
+  }, [bump, afterMeta, active]);
   const redo = useCallback(() => {
     const s = stRef.current;
     const p = hist.current.redo();
     if (s && p) {
       applyPatch(s, p, "redo");
+      if (p.meta) afterMeta(active);
       bump();
     }
-  }, [bump]);
+  }, [bump, afterMeta, active]);
 
   const ctrl: BeadSelectCtrl = {
     data,
@@ -330,6 +360,45 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       if (!elems.length) return;
       paintElems(elems, { kind: "slope", bead: active }, dir === 1 ? "add" : "remove");
     },
+    clearLayer: () => {
+      const s = stRef.current;
+      if (!s || !layer) return;
+      hist.current.push(clearLayer(s, layer, suggested));
+      bump();
+    },
+    deleteBead: (b) => {
+      const s = stRef.current;
+      if (!s) return;
+      const p = deleteBead(s, b);
+      if (!p) return;
+      hist.current.push(p);
+      afterMeta(b > 0 ? b - 1 : 0);
+      bump();
+    },
+    deleteTier: (b) => {
+      const s = stRef.current;
+      if (!s) return;
+      const p = deleteLastTier(s, b);
+      if (!p) return;
+      hist.current.push(p);
+      afterMeta(b);
+      bump();
+    },
+    resetBead: (b) => {
+      const s = stRef.current;
+      if (!s) return;
+      const p = resetBead(s, b);
+      if (!p) return;
+      hist.current.push(p);
+      bump();
+    },
+    resetAll: () => {
+      const s = stRef.current;
+      if (!s) return;
+      hist.current.push(resetAll(s));
+      afterMeta(0);
+      bump();
+    },
     maxBeads,
     maxTiers,
   };
@@ -355,13 +424,27 @@ function parseLayer(k: string): Layer | null {
   return null;
 }
 
-function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; brushPx: number; visibleOnly: boolean }) {
+function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; brushPx: number; visibleOnly: boolean; eraser: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<SceneApi | null>(null);
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "nowebgl" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
   const data = ctrl.data;
+  const modelBbox = useMemo(() => (data ? positionsBbox(data.glb.positions) : null), [data]);
+  /** 선택 맞춤: 지금 비드(바닥 + 사면) 요소, 없으면 고른 모든 비드 요소 */
+  const selectionBbox = () => {
+    const st = ctrl.state;
+    if (!st || !data) return null;
+    const { positions, indices } = data.glb;
+    const t2e = data.bin.tri2elem;
+    if (st.beads[ctrl.active]) {
+      const slope = effectiveSlope(st, ctrl.active, ctrl.suggested(ctrl.active));
+      const b = elemsBbox(positions, indices, t2e, (e) => ownerBead(st.owner[e]) === ctrl.active || !!slope[e]);
+      if (b) return b;
+    }
+    return elemsBbox(positions, indices, t2e, (e) => st.owner[e] >= 0);
+  };
 
   useEffect(() => {
     if (!data) return;
@@ -380,10 +463,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSe
         canvas = document.createElement("canvas");
         canvas.className = "v3d-canvas";
         host.current.insertBefore(canvas, host.current.firstChild);
-        const p = data.glb.positions;
-        const mn = [Infinity, Infinity, Infinity];
-        const mx = [-Infinity, -Infinity, -Infinity];
-        for (let i = 0; i < p.length; i += 3) for (let c = 0; c < 3; c++) (mn[c] = Math.min(mn[c], p[i + c])), (mx[c] = Math.max(mx[c], p[i + c]));
+        const { min: mn, max: mx } = modelBbox!;
         const diag = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
         scene = mod.createScene(canvas, { background: BACKGROUND, diag, bbox: { min: mn, max: mx }, projection: "ortho" });
         if (!scene.setElements) throw new Error(NO_3D);
@@ -488,7 +568,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSe
     e.preventDefault();
     host.current?.setPointerCapture?.(e.pointerId);
     const p = local(e);
-    strokeRef.current = { mode: e.altKey ? "remove" : "add", start: p, pts: [p], centroids: null };
+    strokeRef.current = { mode: e.altKey || eraser ? "remove" : "add", start: p, pts: [p], centroids: null };
     if (tool === "brush") {
       brushAt(p, strokeRef.current.mode);
       drawOverlay("brush", [], p);
@@ -537,7 +617,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSe
     const s2 = ctrl.state;
     const own = l.kind === "tier" || l.kind === "slope" ? l.bead : -1;
     const elems = grow(data.topo, hit.elem, ctrl.featureAngle, own >= 0 ? (x) => s2.owner[x] >= 0 && ownerBead(s2.owner[x]) !== own : undefined);
-    ctrl.paintElems(elems, l, e.altKey ? "remove" : "add");
+    ctrl.paintElems(elems, l, e.altKey || eraser ? "remove" : "add");
   };
   const onDouble = (e: React.MouseEvent<HTMLDivElement>) => {
     const sc = sceneRef.current;
@@ -560,7 +640,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSe
     <div className="v3d-stage">
       <div
         ref={host}
-        className={`v3d-host bs-host tool-${tool}`}
+        className={`v3d-host bs-host tool-${tool}${eraser ? " erasing" : ""}`}
         data-testid="bs-host"
         data-phase={phase}
         tabIndex={0}
@@ -574,6 +654,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly }: { ctrl: BeadSe
       >
         <canvas ref={overlay} className="bs-overlay" aria-hidden="true" />
       </div>
+      {phase === "ready" && modelBbox && <ViewToolbar scene={() => sceneRef.current} modelBbox={modelBbox} selectionBbox={selectionBbox} keyTarget={host} />}
       {(phase === "nowebgl" || phase === "error") && (
         <div className="v3d-msg" role="status" data-testid="bs-unavailable">
           {phase === "error" && msg && msg !== NO_3D ? msg : NO_3D}
@@ -594,6 +675,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
   const [tool, setTool] = useState<Tool>("click");
   const [brushPx, setBrushPx] = useState(20);
   const [visibleOnly, setVisibleOnly] = useState(true);
+  const [eraser, setEraser] = useState(false);
   const s = ctrl.state;
   const layers: Layer[] = s
     ? [...s.beads.flatMap((b, bi) => [...Array.from({ length: b.nTiers }, (_, i): Layer => ({ kind: "tier", bead: bi, k: i + 1 })), { kind: "slope", bead: bi } as Layer]), { kind: "fixed" }, { kind: "exclude" }]
@@ -653,6 +735,15 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
             <span className="small muted">°</span>
           </label>
           <span className="bs-tool-group">
+            <button type="button" className={`btn small ghost icon toggle${eraser ? " on" : ""}`} aria-pressed={eraser} aria-label="지우개" onClick={() => setEraser((x) => !x)} disabled={ro || noBead && ctrl.layer?.kind !== "fixed"} title={ro ? RO_TIP : "지우개: 켜면 클릭·끌기가 지금 층에서 빼기(Alt 와 같음)"} data-testid="bs-eraser">
+              <EraserIcon />
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => {
+              if (!s || !ctrl.layer) return;
+              if (window.confirm(`'${layerLabel(s, ctrl.layer)}' 층의 요소를 모두 비웁니다. 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.`)) ctrl.clearLayer();
+            }} disabled={ro || !ctrl.layer} title={ro ? RO_TIP : "지금 층(단 바닥·사면·고정·제외)의 요소를 모두 비웁니다(실행 취소 가능)"}>
+              층 비우기
+            </button>
             <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title="서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)">
               {ctrl.deriving ? "계산 중…" : "사면·경계 자동"}
             </button>
@@ -670,9 +761,10 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
             </button>
           </span>
         </div>
-        <Select3D ctrl={ctrl} editable={editable} tool={tool} brushPx={brushPx} visibleOnly={visibleOnly} />
+        <Select3D ctrl={ctrl} editable={editable} tool={tool} brushPx={brushPx} visibleOnly={visibleOnly} eraser={eraser} />
         <div className="small muted bs-hint" data-testid="bs-hint">
-          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt = 빼기 · Ctrl+끌기 = 회전"} · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열, 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
+          {eraser ? "지우개 켜짐: 클릭·끌기 = 지금 층에서 빼기(다시 누르면 더하기) · " : ""}
+          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 또는 지우개 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt 또는 지우개 = 빼기 · Ctrl+끌기 = 회전"} · 층 비우기·비드 ✕·단 삭제 · Ctrl+Z = 실행 취소 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열, 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
         </div>
         <ErrorLine text={ctrl.deriveError} />
       </Card>
@@ -684,7 +776,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
 }
 
 // ================================================================ 미리보기 안 3D 보기(§7.3) — 썸네일 클릭
-export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { studyId: string; rev: number; did: string; values: Record<string, number>; vmax: number; onClose: () => void }) {
+export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixedViol }: { studyId: string; rev: number; did: string; values: Record<string, number>; vmax: number; onClose: () => void; fixedViol?: DoeFixedViol | null }) {
   const host = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneApi | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "nowebgl" | "error">("loading");
@@ -719,6 +811,22 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
   const u = useMemo(() => (loaded ? morph(loaded.vars, values, n) : null), [loaded, values, n]);
   const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, n) : null), [loaded, values, n]);
   const V = vmax > 0 ? vmax : Math.max(1, c ? maxAbs(c) : 1);
+  const designBbox = useMemo(() => (loaded ? positionsBbox(loaded.glb.positions) : null), [loaded]);
+  /** 선택 맞춤 = 기저가 움직이는 노드(비드 + 블렌딩) bbox */
+  const beadBbox = useMemo(() => {
+    if (!loaded) return () => null;
+    const p = loaded.glb.positions;
+    const mn = [Infinity, Infinity, Infinity];
+    const mx = [-Infinity, -Infinity, -Infinity];
+    let any = false;
+    for (const v of loaded.vars)
+      for (const i of v.idx) {
+        any = true;
+        for (let k = 0; k < 3; k++) (mn[k] = Math.min(mn[k], p[i * 3 + k])), (mx[k] = Math.max(mx[k], p[i * 3 + k]));
+      }
+    const b = any ? { min: mn, max: mx } : null;
+    return () => b;
+  }, [loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -736,10 +844,7 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
         canvas = document.createElement("canvas");
         canvas.className = "v3d-canvas";
         host.current.appendChild(canvas);
-        const p = loaded.glb.positions;
-        const mn = [Infinity, Infinity, Infinity];
-        const mx = [-Infinity, -Infinity, -Infinity];
-        for (let i = 0; i < p.length; i += 3) for (let k = 0; k < 3; k++) (mn[k] = Math.min(mn[k], p[i + k])), (mx[k] = Math.max(mx[k], p[i + k]));
+        const { min: mn, max: mx } = positionsBbox(loaded.glb.positions);
         scene = mod.createScene(canvas, { background: BACKGROUND, diag: Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1, bbox: { min: mn, max: mx }, projection: "ortho" });
         scene.setGeometry({ positions: loaded.glb.positions, indices: loaded.glb.indices, src: null }, null);
         scene.setColorMap?.("diverging");
@@ -765,7 +870,20 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
     if (!sc || phase !== "ready" || !u || !c) return;
     sc.setColors(showDesign ? c : new Float32Array(c.length), -V, V);
     sc.setDeform(showDesign ? u : null, scale);
-  }, [phase, u, c, showDesign, scale, V]);
+    // v0.15.1 침범한 고정 노드 = 빨간 점(지금 보이는 형상 위치)
+    const ids = fixedViol?.node_idx ?? [];
+    if (sc.setMarkers) {
+      if (!ids.length || !loaded) sc.setMarkers(null);
+      else {
+        const p = loaded.glb.positions;
+        const pts = new Float32Array(ids.length * 3);
+        ids.forEach((i, k) => {
+          for (let d = 0; d < 3; d++) pts[k * 3 + d] = p[i * 3 + d] + (showDesign ? u[i * 3 + d] * scale : 0);
+        });
+        sc.setMarkers(pts);
+      }
+    }
+  }, [phase, u, c, showDesign, scale, V, fixedViol, loaded]);
 
   return (
     <Card title={`안 ${did} 3D 보기`} right={<button type="button" className="btn small ghost" onClick={onClose}>닫기</button>}>
@@ -791,14 +909,30 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
           </label>
           <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
         </div>
+        {fixedViol && fixedViol.n > 0 && (
+          <div className="small warn-text" data-testid="design-fixed-viol">
+            <span className="fixed-dot" aria-hidden="true" /> 빨간 점 = 움직인 고정 노드 {fixedViol.n.toLocaleString()}개(최대 {fixedViol.max_mm} mm)
+            <FixedViolNote cells={[{ fixed_viol: fixedViol }]} testId="design-fixed-viol-row" />
+          </div>
+        )}
         <div className="v3d-stage">
-          <div ref={host} className="v3d-host" data-testid="bs-design-host" data-phase={phase} />
+          <div ref={host} className="v3d-host" data-testid="bs-design-host" data-phase={phase} tabIndex={0} aria-label={`안 ${did} 3D`} />
+          {phase === "ready" && designBbox && <ViewToolbar scene={() => sceneRef.current} modelBbox={designBbox} selectionBbox={beadBbox} keyTarget={host} />}
           {(phase === "nowebgl" || phase === "error") && <div className="v3d-msg" role="status">{err ?? NO_3D}</div>}
           {phase === "loading" && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
         </div>
         <HeightLegend vmax={V} />
       </div>
     </Card>
+  );
+}
+
+function EraserIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} aria-hidden="true">
+      <path d="M9.5 2.5 14 7l-6.5 6.5H4L1.8 11.3a1 1 0 0 1 0-1.4z" />
+      <path d="M6 6l4.5 4.5M7.5 13.5H14" />
+    </svg>
   );
 }
 

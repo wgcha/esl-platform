@@ -312,7 +312,10 @@ def _saved(client, world, engine, esl_root, sel=None, **kw):
 SPEC = {"method": "lhs", "n": 4, "seed": 3, "params": [{"name": "B1_D1", "lo": 3.0, "hi": 5.0}]}
 
 
-def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, basis=True):
+FV = {"n": 37, "max_mm": 0.8, "bead_vars": [{"name": "B1_D1", "bead": "b1", "n": 37, "max_mm": 0.8}], "node_idx": [0, 3]}
+
+
+def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, basis=True, fixed_first=False):
     rev = 1
     base = study_dir(esl_root, sid)
     gd = base / "doe" / str(rev) / "grid"
@@ -323,8 +326,12 @@ def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, b
     for i, d in enumerate(x for x in matrix["designs"] if x["id"] != "d000"):
         (gd / "cells" / d["id"]).mkdir(parents=True, exist_ok=True)
         (gd / "cells" / d["id"] / "thumb.png").write_bytes(png_bytes())
-        cells.append({"id": d["id"], "status": "OK", "code": None})
-    (gd / "grid_manifest.json").write_text(json.dumps({"schema_version": 1, "cells": cells,
+        if fixed_first and i == 0:      # v0.15.1 코어 bd_select_grid 고정 침범 칸(fixed_viol)
+            cells.append({"id": d["id"], "status": "FAIL", "code": "SELECT_FIXED_VIOLATION", "fixed_max_mm": 0.8,
+                          "fixed_viol": FV})
+        else:
+            cells.append({"id": d["id"], "status": "OK", "code": None})
+    (gd / "grid_manifest.json").write_text(json.dumps({"schema_version": 1, "kind": "select", "cells": cells,
                                                        "color": {"v_max": 3.0, "unit": "mm"}}), encoding="utf-8")
     if basis:
         bd = base / "select" / sel_sha[:12]
@@ -340,8 +347,9 @@ def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, b
     with engine.begin() as c:
         s = doe_repo.get_study(c, sid)
     doe = dict(s["doe"])
-    doe["preview"] = {"rev": rev, "matrix_sha256": doe["matrix_sha256"], "ok": len(cells), "selection_sha256": sel_sha,
-                      "skipped": {"collision": 0, "fixed": 0, "geom": 0, "mesh": 0}}
+    nf = sum(c["status"] != "OK" for c in cells)
+    doe["preview"] = {"rev": rev, "matrix_sha256": doe["matrix_sha256"], "ok": len(cells) - nf, "selection_sha256": sel_sha,
+                      "skipped": {"collision": 0, "fixed": nf, "geom": 0, "mesh": 0}}
     update_study(engine, sid, phase="PREVIEW_READY", doe=doe)
 
 
@@ -598,6 +606,24 @@ def test_save_get_version_and_summary(client, world, engine, esl_root):
     assert next(x for x in lst if x["id"] == sid)["selection"]["rev"] == 2
 
 
+def test_first_save_sequence_selection_then_params(client, world, engine, esl_root):
+    """v0.15.1 회귀(화면 '저장해도 변수 안 뜸'): 화면이 기대는 응답 순서 고정 — 저장 전 GET selection = null(요약 없음) →
+    PUT = 상세(요약 sha) → GET selection sha 같음 → params 행(B1_D1). 화면은 저장 직후 이전 null 응답을 무효 선택으로 오판하지 않아야 한다."""
+    s = _ready(client, world, engine, esl_root)
+    sid = s["id"]
+    assert s["selection"] is None
+    g0 = api(client, "GET", f"/doe/studies/{sid}/selection")
+    assert g0.status_code == 200 and g0.json() is None
+    r = api(client, "GET", f"/doe/studies/{sid}/params")
+    assert r.status_code == 409 and code(r) == "SELECTION_MISSING" and "reason" not in r.json()["detail"]
+    o = _save(client, s).json()
+    sha = o["selection"]["sha256"]
+    g1 = api(client, "GET", f"/doe/studies/{sid}/selection").json()
+    assert g1["sha256"] == sha and g1["rev"] == 1
+    p = api(client, "GET", f"/doe/studies/{sid}/params").json()
+    assert [x["name"] for x in p["params"]][:1] == ["B1_D1"]
+
+
 def test_params_table_and_plan_view(client, world, engine, esl_root):
     sel = selection(bead("b1", tiers=((1, 4), (20, 22), (30, 31)), links=[[1, 2]]),
                     bead("b2", "edge", tiers=((40, 41),)), bead("b3", tiers=((60, 61),)))
@@ -677,6 +703,19 @@ def test_matrix_preview_run_selection_sha(client, world, engine, esl_root):
     finish_job(engine, r.json()["job"]["id"])
     r = _save(client, api(client, "GET", f"/doe/studies/{sid}").json())
     assert r.status_code == 409 and code(r) == "ALREADY_RUN"
+
+
+def test_preview_cells_fixed_viol_v0151(client, world, engine, esl_root):
+    """v0.15.1: 고정 침범 칸 = SKIPPED_FIXED + 코어 fixed_viol 그대로(원인 변수·노드), 나머지 칸엔 키 없음."""
+    s = _saved(client, world, engine, esl_root)
+    sid = s["id"]
+    sel_sha = s["selection"]["sha256"]
+    p = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": s["version"], "spec": SPEC}).json()
+    m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": p["version"], "spec": SPEC}).json()
+    simulate_select_preview(engine, esl_root, sid, p["job"]["id"], m, sel_sha, fixed_first=True)
+    cells = api(client, "GET", f"/doe/studies/{sid}").json()["doe"]["preview"]["cells"]
+    assert cells[0]["status"] == "SKIPPED_FIXED" and cells[0]["code"] == "SELECT_FIXED_VIOLATION" and cells[0]["fixed_viol"] == FV
+    assert all("fixed_viol" not in c and c["status"] == "READY" for c in cells[1:])
 
 
 def test_preview_without_selection_sha_in_preview(client, world, engine, esl_root):

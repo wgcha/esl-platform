@@ -1504,7 +1504,7 @@ def _sel_msg(code: str | None) -> str | None:
 def bd_select_grid(spec: dict, echo=print) -> dict:
     """BS-D-11 미리보기(select): 안마다 기저 모핑 → 고정·뒤집힘·품질 → 3D 썸네일 → doe/<rev>/grid/(paicad grid 와 같은 형식).
 
-    grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm}],
+    grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm, fixed_viol?}],
     nominal{thumb}, color{v_max, unit}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
     from esl import view3d as v3
     from esl.doe import bead_select as bsel
@@ -1546,10 +1546,14 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
             fh.write(sr.render(xd, tris, cv, has, view, V, tcfg, loops=L["loops"]))
         st = states[x["id"]]
         q = st["quality"]
-        cells.append({"id": x["id"], "status": "OK" if st["state"] == "READY" else "FAIL", "code": st["code"],
-                      "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
-                      "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
-                                                       "max_flip_deg", "fail_by")}})
+        cell = {"id": x["id"], "status": "OK" if st["state"] == "READY" else "FAIL", "code": st["code"],
+                "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
+                "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
+                                                 "max_flip_deg", "fail_by")}}
+        if st["state"] == "SKIPPED_FIXED":       # v0.15.1 침범 원인(변수·노드) — 고정 침범 칸만(그 밖 칸 바이트 그대로)
+            cell["fixed_viol"] = bsel.fixed_violation_detail(x0, xd, L["fixed"], L["B"], x["values"],
+                                                             float(bsel._cfg(c.cfg)["fixed_tol_mm"]))
+        cells.append(cell)
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
            "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],

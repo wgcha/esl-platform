@@ -3,7 +3,7 @@
 // v0.12.5: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
 import {
   AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
-  Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial,
+  Matrix4, Mesh, MeshBasicMaterial, Points, PointsMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer,
 } from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
@@ -17,6 +17,7 @@ import { idToRgb, type IdPatch, type Rect } from "./select/lasso";
 import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
+import { fitView, validBbox, viewBasis, type Bbox, type FitResult } from "./viewFit";
 import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
 import { PAN_SPEED, STATIC_MOVING, WHEEL_ZOOM_SPEED, trackballRotateSpeed } from "../lib/viewerControls";
 
@@ -385,6 +386,9 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   selMarker.renderOrder = 9;
   selMarker.scale.setScalar(opts.diag * 0.011);
   scene.add(selMarker);
+  // v0.15.1 강조 점(고정 침범 노드 등) — 화면 크기 고정·가려져도 보임
+  const markMat = new PointsMaterial({ color: 0xd61f1f, size: 9, sizeAttenuation: false, depthTest: false });
+  let marks: Points | null = null;
 
   // ---- v0.15.0 요소 모드(비드 직접 선택): 비색인 삼각형 표면(요소별 평면 음영) + ID 버퍼 + 경계선
   interface ElemLayer {
@@ -480,6 +484,28 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     }
     controls.update();
     invalidate();
+  };
+
+  // v0.15.1 시점·꽉 차게: 카메라 위치·up·Trackball target 을 함께 바꾸고(잔여 회전 없음), 직교는 반높이·zoom 1 로
+  const modelBbox: Bbox = opts.bbox;
+  const applyFit = (r: FitResult) => {
+    camera.position.set(r.position[0], r.position[1], r.position[2]);
+    camera.up.set(r.up[0], r.up[1], r.up[2]);
+    controls.target.set(r.target[0], r.target[1], r.target[2]);
+    camera.lookAt(controls.target);
+    if (camera === ortho) {
+      orthoHalfH = r.halfH;
+      ortho.zoom = 1;
+      applyOrtho();
+    } else persp.updateProjectionMatrix();
+    controls.update();
+    sizeSprites();
+    invalidate();
+  };
+  const fitBox = (b: Bbox) => {
+    const eye = v3(tmpDir.copy(camera.position).sub(controls.target));
+    if (!(Math.hypot(eye[0], eye[1], eye[2]) > 0)) eye.splice(0, 3, 1, 1, 1);
+    applyFit(fitView(b, eye, v3(camera.up), aspect, proj));
   };
 
   // Trackball 은 입력을 쌓아 두고 update() 에서 반영한다 → 조작 중(start~end)과 그 뒤 움직임이 남은 동안만 매 프레임 update
@@ -681,7 +707,16 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       controls.update();
       invalidate();
     },
-    fit,
+    fit(bbox) {
+      // 인자 없음 = 기존 동작(등각 +X+Y+Z·up +Z·모델 중심), bbox = 지금 시선 그대로 그 bbox 를 꽉 차게(화면비 반영)
+      if (bbox === undefined) fit();
+      else fitBox(validBbox(bbox) ? bbox : modelBbox);
+    },
+    setView(axis, sign = 1, bbox) {
+      const b = validBbox(bbox) ? bbox : modelBbox;
+      const v = viewBasis(axis, sign);
+      applyFit(fitView(b, v.eye, v.up, aspect, proj));
+    },
     setProjection(p) {
       if (p === proj) return;
       const t = controls.target;
@@ -711,6 +746,21 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     projection: () => proj,
     onPick(cb) {
       pickCb = cb;
+    },
+    setMarkers(points) {
+      if (marks) {
+        scene.remove(marks);
+        marks.geometry.dispose();
+        marks = null;
+      }
+      if (points && points.length >= 3) {
+        const g = new BufferGeometry();
+        g.setAttribute("position", new BufferAttribute(new Float32Array(points), 3));
+        marks = new Points(g, markMat);
+        marks.renderOrder = 10;
+        scene.add(marks);
+      }
+      invalidate();
     },
     setColorMap(map) {
       lut = map === "diverging" ? LUT_DIV_LINEAR : LUT_LINEAR;
@@ -893,6 +943,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       disposeLayer(layers.lod);
       disposeElemLayer();
       overlay?.geometry.dispose();
+      marks?.geometry.dispose();
+      markMat.dispose();
       idTarget?.dispose();
       for (const g of [headGeo, sphereGeo]) g.dispose();
       for (const m of [surfMat, arrowMat, supMat, selMarker.material as MeshBasicMaterial, elemMat, idMat, overlayMat]) m.dispose();

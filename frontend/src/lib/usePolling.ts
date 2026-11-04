@@ -21,9 +21,14 @@ export function usePolling<T>(fn: () => Promise<T>, intervalMs: number, deps: un
     }
   }, []);
 
+  // v0.15.1: 주기(intervalMs)만 바뀌면 자료를 비우지 않는다 — 비우면 화면 전체가 한 번 사라졌다 다시 그려져
+  // (작업이 끝나 3초 → 0 으로 바뀔 때) 오류 줄·열어 둔 로그·자식 상태가 지워졌다("에러가 떴는데 창이 금방 사라짐")
+  const prevDeps = useRef<unknown[] | null>(null);
   useEffect(() => {
     alive.current = true;
-    setData(null);
+    const same = prevDeps.current !== null && prevDeps.current.length === deps.length && prevDeps.current.every((v, i) => Object.is(v, deps[i]));
+    prevDeps.current = deps;
+    if (!same) setData(null);
     void reload();
     if (!intervalMs) return () => {
       alive.current = false;

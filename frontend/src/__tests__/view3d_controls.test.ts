@@ -231,3 +231,93 @@ describe("v0.12.5 자유 회전 컨트롤(TrackballControls)", () => {
     expect(c.object.position.distanceTo(pos)).toBe(0);
   });
 });
+
+describe("v0.15.1 시점 버튼: setView(축, 방향)·fit(bbox) — Trackball target·up 함께, 직교·원근", () => {
+  /** bbox 8 꼭짓점의 NDC 최대 |x|·|y| */
+  const ndcExtent = (b: { min: number[]; max: number[] }) => {
+    const c = ctl().object;
+    c.updateMatrixWorld();
+    let ax = 0;
+    let ay = 0;
+    for (let i = 0; i < 8; i++) {
+      const q = new Vector3(i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]).project(c);
+      ax = Math.max(ax, Math.abs(q.x));
+      ay = Math.max(ay, Math.abs(q.y));
+    }
+    return { ax, ay };
+  };
+  const cases: ["x" | "y" | "z", 1 | -1, [number, number, number], [number, number, number]][] = [
+    ["x", 1, [1, 0, 0], [0, 0, 1]],
+    ["x", -1, [-1, 0, 0], [0, 0, 1]],
+    ["y", 1, [0, 1, 0], [0, 0, 1]],
+    ["y", -1, [0, -1, 0], [0, 0, 1]],
+    ["z", 1, [0, 0, 1], [0, 1, 0]],
+    ["z", -1, [0, 0, -1], [0, 1, 0]],
+  ];
+  it("정면 ±X·±Y·±Z: 카메라 = 그 쪽, up(X·Y = +Z, Z = +Y), 타깃 = 중심, 꽉 참(화면 안·직교는 여백 1.08), 잔여 회전 없음", async () => {
+    for (const p of ["ortho", "persp"] as const) {
+      const s = await make(p);
+      drag(400, 300, 520, 380); // 아무 회전 후
+      drag(100, 100, 300, 200, 2);
+      for (const [axis, sign, eyeDir, up] of cases) {
+        s.setView(axis, sign);
+        expect(ctl().target.distanceTo(CENTER)).toBeLessThan(1e-9);
+        expect(eye().normalize().distanceTo(new Vector3(...eyeDir))).toBeLessThan(1e-9);
+        expect(ctl().object.up.distanceTo(new Vector3(...up))).toBeLessThan(1e-9);
+        const { ax, ay } = ndcExtent(BBOX);
+        expect(Math.max(ax, ay)).toBeLessThanOrEqual(1 + 1e-9);
+        if (p === "ortho") expect(Math.max(ax, ay)).toBeCloseTo(1 / 1.08, 6);
+        else expect(Math.max(ax, ay)).toBeGreaterThan(0.6);
+        const pos = ctl().object.position.clone();
+        ctl().update();
+        expect(ctl().object.position.distanceTo(pos)).toBeLessThan(1e-9);
+        expect(ctl().object.up.distanceTo(new Vector3(...up))).toBeLessThan(1e-9);
+      }
+      s.setView("iso", 1);
+      expect(eye().normalize().distanceTo(new Vector3(1, 1, 1).normalize())).toBeLessThan(1e-9);
+      s.setView("iso", -1);
+      expect(eye().normalize().distanceTo(new Vector3(-1, -1, 1).normalize())).toBeLessThan(1e-9);
+      s.dispose();
+      api = null;
+    }
+  });
+
+  it("fit(bbox): 지금 시선 그대로 그 bbox 꽉 차게(화면비 반영) — 작은 선택 영역도, 투영 전환 뒤에도", async () => {
+    for (const p of ["ortho", "persp"] as const) {
+      const s = await make(p);
+      s.setView("z", 1);
+      const sel = { min: [10, 10, 0], max: [30, 20, 5] };
+      s.fit(sel);
+      expect(ctl().target.distanceTo(new Vector3(20, 15, 2.5))).toBeLessThan(1e-9);
+      expect(eye().normalize().distanceTo(new Vector3(0, 0, 1))).toBeLessThan(1e-9);
+      const e1 = ndcExtent(sel);
+      expect(Math.max(e1.ax, e1.ay)).toBeLessThanOrEqual(1 + 1e-9);
+      // 가로 20 > 세로 10 × 화면비 4:3 → 가로가 맞춤 기준
+      if (p === "ortho") expect(e1.ax).toBeCloseTo(1 / 1.08, 6);
+      else expect(e1.ax).toBeGreaterThan(0.6);
+      s.fit(BBOX); // 모델 전체
+      const e2 = ndcExtent(BBOX);
+      expect(Math.max(e2.ax, e2.ay)).toBeLessThanOrEqual(1 + 1e-9);
+      s.setProjection(p === "ortho" ? "persp" : "ortho");
+      s.fit(BBOX);
+      const e3 = ndcExtent(BBOX);
+      expect(Math.max(e3.ax, e3.ay)).toBeLessThanOrEqual(1 + 1e-9);
+      expect(Math.max(e3.ax, e3.ay)).toBeGreaterThan(0.6);
+      s.dispose();
+      api = null;
+    }
+  });
+});
+
+describe("v0.15.1 강조 점 setMarkers", () => {
+  it("점 추가·교체·지우기(렌더 요청), dispose 안전", async () => {
+    const s = await make("ortho");
+    expect(s.setMarkers).toBeTypeOf("function");
+    s.setMarkers!(Float32Array.from([0, 0, 0, 10, 10, 10]));
+    s.setMarkers!(Float32Array.from([1, 2, 3]));
+    s.setMarkers!(null);
+    s.setMarkers!(Float32Array.from([1, 2, 3]));
+    await frame();
+    expect(s.stats().renders).toBeGreaterThan(0);
+  });
+});

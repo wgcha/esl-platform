@@ -692,6 +692,7 @@ export class MockServer {
       if (method === "GET" && !r[2]) return { status: 200, body: j };
       if (method === "GET" && r[2] === "/log") {
         const lines = this.logs[j.id] ?? [];
+        if (query.get("tail") === "true") return { status: 200, body: { step: Number(query.get("step")) || (j.current_step_no ?? 1), lines: lines.slice(-200), next_cursor: lines.length, eof: TERMINAL.includes(j.state) } };
         const cur = Number(query.get("cursor") ?? 0) || 0;
         return { status: 200, body: { step: j.current_step_no ?? 1, lines: lines.slice(cur), next_cursor: lines.length, eof: TERMINAL.includes(j.state) } };
       }

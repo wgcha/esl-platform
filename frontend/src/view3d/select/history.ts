@@ -3,6 +3,8 @@
 export interface Patch<K extends string = string> {
   /** 바뀐 배열 이름 → 요소 번호·이전 값·새 값 */
   changes: { layer: K; idx: Uint32Array; before: Int32Array; after: Int32Array }[];
+  /** v0.15.1 비드·단 삭제: 요소 밖 상태(비드 목록 등) 앞·뒤 스냅숏 — 적용은 호출자 */
+  meta?: { before: unknown; after: unknown };
 }
 
 export const HISTORY_MAX = 50;
@@ -12,7 +14,7 @@ export class History<K extends string = string> {
   private undone: Patch<K>[] = [];
   constructor(private max = HISTORY_MAX) {}
   push(p: Patch<K>) {
-    if (!p.changes.some((c) => c.idx.length)) return;
+    if (!p.meta && !p.changes.some((c) => c.idx.length)) return;
     this.done.push(p);
     if (this.done.length > this.max) this.done.shift();
     this.undone = [];

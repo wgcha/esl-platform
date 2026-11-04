@@ -3,6 +3,7 @@
 // 원형 1단 비드 b2(D 6 · W 40), 체결 고정 노드 고리 5개(하나는 b1 경계에서 18 mm). 요소별 정답 표지(label). 결정적(난수 없음).
 // 서버 알고리즘(§5)의 단순 흉내다 — 공칭 치수·단면·기저는 합성 해석식으로 만든다(화면 개발용).
 import type {
+  DoeFixedViol,
   DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn,
   DoeSettingsOut, DoeWarning, XY,
 } from "../api/types";
@@ -608,11 +609,18 @@ export function selBasis(sel: DoeSelectionIn, st: DoeSettingsOut): { meta: DoeBa
 }
 
 /** 미리보기 셀 상태(목·결정적): 폭을 공칭보다 15 % 넘게 줄이면 품질 실패, 안 번호 %13 = 5 품질 실패, %11 = 4 고정 침범 */
-export function selCellStatus(id: string, values: Record<string, number>, params: DoeParam[]): { status: DoeDesignStatus; code: string | null; thumb: boolean } {
+export function selCellStatus(id: string, values: Record<string, number>, params: DoeParam[]): { status: DoeDesignStatus; code: string | null; thumb: boolean; fixed_viol?: DoeFixedViol } {
   const i = Number(id.slice(1));
   const narrow = params.some((p) => p.type === "W" && values[p.name] != null && values[p.name] < p.nominal * 0.85);
   if (narrow || i % 13 === 5) return { status: "FAILED_MESH", code: narrow ? "SELECT_MORPH_INVERTED" : "SELECT_QUALITY_FAIL", thumb: true };
-  if (i % 11 === 4) return { status: "SKIPPED_FIXED", code: "SELECT_FIXED_VIOLATION", thumb: true };
+  if (i % 11 === 4) {
+    // v0.15.1 코어 fixed_viol 흉내: 폭 변수가 고정 고리(b1 아래)를 37 노드 움직임
+    const w = params.find((p) => p.type === "W") ?? params[0];
+    const m = selMesh();
+    const node_idx = [...m.fixed.keys()].filter((k) => m.fixed[k]).slice(0, 37);
+    const mm = Math.round(Math.abs((values[w?.name ?? ""] ?? 0) - (w?.nominal ?? 0)) * 10) / 100 || 0.8;
+    return { status: "SKIPPED_FIXED", code: "SELECT_FIXED_VIOLATION", thumb: true, fixed_viol: { n: node_idx.length, max_mm: mm, bead_vars: w ? [{ name: w.name, bead: w.bead, n: node_idx.length, max_mm: mm }] : [], node_idx } };
+  }
   return { status: "READY", code: null, thumb: true };
 }
 

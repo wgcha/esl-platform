@@ -36,6 +36,7 @@ vi.mock("../view3d/loadThree", () => ({
           select: rec("select"),
           focus: rec("focus"),
           fit: rec("fit"),
+          setView: rec("setView"),
           onPick: (cb: (e: PickEvent) => void) => (pick = cb),
           stats: () => ({ renders: 0 }),
           dispose: rec("dispose"),
@@ -185,11 +186,30 @@ describe("V-L3-11 ④ 3D 하중 보기", () => {
     expect(scale.disabled).toBe(true);
   });
 
-  it("맞춤 버튼 → scene.fit()", async () => {
+  it("시점 툴바(v0.15.1): 꽉 차게 → fit(모델 bbox), X 두 번 → +X·−X, 등각, 단축키 7·F", async () => {
     renderApp(url("c-demo", 4));
     await ready();
-    fireEvent.click(screen.getByRole("button", { name: "맞춤" }));
-    expect(last("fit")).toBeTruthy();
+    const bar = screen.getByRole("toolbar", { name: "시점" });
+    fireEvent.click(within(bar).getByRole("button", { name: "꽉 차게 보기" }));
+    expect(last("fit")).toEqual([scene().opts.bbox]);
+    const x = within(bar).getByRole("button", { name: "X 보기" });
+    fireEvent.click(x);
+    expect(last("setView")).toEqual(["x", 1]);
+    expect(x.textContent).toBe("+X");
+    fireEvent.click(x);
+    expect(last("setView")).toEqual(["x", -1]);
+    expect(x.textContent).toBe("−X");
+    fireEvent.click(within(bar).getByRole("button", { name: "등각 보기" }));
+    expect(last("setView")).toEqual(["iso", 1]);
+    expect(within(bar).queryByRole("button", { name: "선택 영역에 맞추기" })).toBeNull();
+    const host = screen.getByTestId("v3d-host");
+    fireEvent.keyDown(host, { key: "7" });
+    expect(last("setView")).toEqual(["z", 1]);
+    fireEvent.keyDown(host, { key: "7" });
+    expect(last("setView")).toEqual(["z", -1]);
+    const n = (scene().calls.fit ?? []).length;
+    fireEvent.keyDown(host, { key: "f" });
+    expect((scene().calls.fit ?? []).length).toBe(n + 1);
   });
 
   it("언마운트 시 scene.dispose()", async () => {

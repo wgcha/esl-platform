@@ -296,6 +296,8 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   SELECT_BLEND_CLIPPED: "체결부 앞에서 블렌딩 반경을 줄였습니다",
   SELECT_FIXED_IN_BEAD: "비드 안에 고정 노드가 있어 그 비드 변수를 기본 제외했습니다",
   SELECT_FIXED_IN_BLEND: "블렌딩 범위 안에 고정 노드가 있어 폭을 바꾼 안은 제외됩니다",
+  SELECT_WIDTH_UNDEFINED: "국부 폭을 잴 수 없어 폭 변수를 쓰지 않습니다",
+  SELECT_FIXED_LAYER_OVERLAP: "'고정' 층이 비드 층과 겹칩니다",
   SELECTION_DROPPED: "기준 메시가 바뀌어 저장된 비드 선택을 쓸 수 없습니다 — 다시 고르고 '선택 저장'",
   SELECT_OVERLAP: "한 요소가 두 비드·층에 들어 있습니다",
   SELECT_ELEM_UNKNOWN: "기준 메시에 없는 요소가 있습니다",

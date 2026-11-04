@@ -29,7 +29,9 @@ export const api = {
   getJob: (id: string) => request<JobOut>("GET", `/jobs/${id}`),
   cancelJob: (id: string) => request<JobOut>("POST", `/jobs/${id}/cancel`),
   retryJob: (id: string) => request<JobOut>("POST", `/jobs/${id}/retry`),
-  jobLog: (id: string, cursor?: number | null) => request<LogOut>("GET", `/jobs/${id}/log`, { query: { cursor } }),
+  /** v0.15.1 opt.step·tail(끝부분, 화면 '로그 보기') */
+  jobLog: (id: string, cursor?: number | null, opt?: { step?: number | null; tail?: boolean }) =>
+    request<LogOut>("GET", `/jobs/${id}/log`, { query: { cursor, step: opt?.step ?? undefined, tail: opt?.tail ? "true" : undefined } }),
   tstar: (caseId: string) => request<TstarView>("GET", `/cases/${caseId}/tstar`),
   putTstar: (caseId: string, body: { version: number; metric: Metric; frame_index: number }) =>
     request<CaseOut>("PUT", `/cases/${caseId}/tstar`, { body }),

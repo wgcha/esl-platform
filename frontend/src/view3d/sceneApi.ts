@@ -5,6 +5,7 @@ import type { V3 } from "./pick";
 import type { Projection } from "./projection";
 import type { SupportSpec } from "./supports";
 import type { IdPatch, Rect } from "./select/lasso";
+import type { Bbox, ViewAxis, ViewSign } from "./viewFit";
 
 export interface GeoData {
   /** float32 mm, 길이 3n */
@@ -42,8 +43,10 @@ export interface SceneApi {
   select(arrowIndex: number | null, vertex: number | null): void;
   /** 카메라 중심을 이 점으로(더블클릭) */
   focus(point: V3): void;
-  /** bbox 맞춤(등각 +X+Y+Z, up = +Z) */
-  fit(): void;
+  /** 인자 없음 = bbox 맞춤 초기화(등각 +X+Y+Z, up = +Z). bbox 를 주면(v0.15.1) 지금 시선·up 그대로 그 bbox 를 꽉 차게(화면비 반영, 직교·원근) */
+  fit(bbox?: Bbox): void;
+  /** 정면·등각 보기(v0.15.1): "+X" = +X 쪽에서 봄. X·Y up = +Z, Z up = +Y. bbox(기본 모델) 꽉 차게. Trackball target·up 함께 갱신 */
+  setView(axis: ViewAxis, sign?: ViewSign, bbox?: Bbox): void;
   /** 투영 전환(원근/직교) — 위치·타깃·방향 보존, 전환 전후 타깃 거리의 보이는 높이 같음 */
   setProjection(p: Projection): void;
   projection(): Projection;
@@ -52,6 +55,8 @@ export interface SceneApi {
   dispose(): void;
 
   // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §11.2) — 선택 모드 전용, 위 메서드 동작은 그대로. 없는 구현(시험 mock)은 선택 모드를 못 씀
+  /** v0.15.1 강조 점(빨강, 화면 크기 고정·가려져도 보임) — 좌표 3·n, null = 지움 */
+  setMarkers?(points: Float32Array | null): void;
   /** 표면 색표: blues(기본) · diverging(발산 ±, §7.3) */
   setColorMap?(map: "blues" | "diverging"): void;
   /** 요소 모드 시작: 삼각형 t → 요소 tri2elem[t]. 이후 표면 = 요소별 평면 음영(setElemColors) */
