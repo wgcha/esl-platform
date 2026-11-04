@@ -514,6 +514,19 @@ class BeadDoeLimitsCfg(_M):
     min_disp_range_mm: float = Field(default=1.0, gt=0)
 
 
+class BeadDoeFallbackNofixCfg(_M):
+    """v0.15.1 OCC 정리 끔: scopes 순서로 face(그 면만 정리 없이 다시 가져와 대체)·all(세션 전체 정리·봉합 끔)."""
+
+    scopes: list[str] = Field(default_factory=lambda: ["face", "all"], min_length=1, max_length=2)
+
+    @field_validator("scopes")
+    @classmethod
+    def _scopes(cls, v: list[str]) -> list[str]:
+        if any(x not in ("face", "all") for x in v) or len(set(v)) != len(v):
+            raise ValueError(f"nofix.scopes 는 face·all 중 중복 없이: {v}")
+        return v
+
+
 class BeadDoeFallbackSplitCfg(_M):
     """v0.15.1 면 분할: 실패 면을 bbox 중심을 지나는 평면 planes 개(가장 긴 bbox 방향 법선 순)로 나눔."""
 
@@ -545,10 +558,11 @@ class BeadDoeCompareMeshFallbackCfg(_M):
     relax: bool = True
     max_faces: int = Field(default=20, ge=1, le=1000)
     # v0.15.1 형상 폴백(이슈 #53 Sphere 면): 단계 묶음 순서(빼면 끔), periodic_types 면은 periodic_order
-    order: list[str] = Field(default_factory=lambda: ["algorithms", "relax", "split", "fill", "small"], max_length=5)
+    order: list[str] = Field(default_factory=lambda: ["algorithms", "relax", "split", "fill", "small"], max_length=6)
     periodic_types: list[str] = Field(default_factory=lambda: ["Sphere"], max_length=16)
-    periodic_order: list[str] = Field(default_factory=lambda: ["split", "fill", "small", "algorithms", "relax"],
-                                      max_length=5)
+    periodic_order: list[str] = Field(default_factory=lambda: ["nofix", "split", "fill", "small", "algorithms", "relax"],
+                                      max_length=6)
+    nofix: BeadDoeFallbackNofixCfg = BeadDoeFallbackNofixCfg()
     split: BeadDoeFallbackSplitCfg = BeadDoeFallbackSplitCfg()
     fill: BeadDoeFallbackFillCfg = BeadDoeFallbackFillCfg()
     small: BeadDoeFallbackSmallCfg = BeadDoeFallbackSmallCfg()
@@ -564,7 +578,7 @@ class BeadDoeCompareMeshFallbackCfg(_M):
     @field_validator("order", "periodic_order")
     @classmethod
     def _order(cls, v: list[str]) -> list[str]:
-        ok = ("algorithms", "relax", "split", "fill", "small")
+        ok = ("algorithms", "relax", "nofix", "split", "fill", "small")
         bad = [x for x in v if x not in ok]
         if bad or len(set(v)) != len(v):
             raise ValueError(f"폴백 단계는 {', '.join(ok)} 중 중복 없이: {v}")

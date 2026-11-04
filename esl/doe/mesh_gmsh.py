@@ -392,8 +392,10 @@ class _FaceFail(Exception):
 
 # ---------------------------------------------------------------- v0.15.1 형상 폴백(실패 면만 — 이슈 #53 Sphere 면)
 GEOM_STAGES = ("split", "fill", "small")
+NOFIX_SCOPES = ("face", "all")                               # nofix 범위: 그 면만 정리 없이 다시 가져와 대체 / 세션 전체 정리 끔
 STAGE_NAMES = {"algorithm": "2D 알고리즘", "relax": "제약 해제", "split": "면 분할", "fill": "채움 면 대체",
-               "small": "작은 면 평면 채움"}
+               "small": "작은 면 평면 채움", "nofix": "OCC 정리 끔", "nofix_face": "OCC 정리 끔(그 면만)",
+               "nofix_all": "OCC 정리 끔(전체)"}
 _AREA_RTOL = 1e-3                                           # 면 분할 전후 넓이 보존 허용(상대)
 
 
@@ -562,6 +564,57 @@ def _split_face(gmsh, s: int, n_planes: int) -> dict:
     return {"deviation_mm": 0.0, "new_ids": new_ids, "pieces": len(pieces)}
 
 
+def _nofix_face(gmsh, src: str, key: tuple) -> dict:
+    """nofix(그 면만): 같은 STEP 을 OCC 정리(OCCFix*·OCCSewFaces) 없이 한 번 더 가져와 bbox 가 같은 면만 남기고, 정리된 원 면을
+    그 면으로 바꾼 뒤 원 면 이웃과만 fragment(공유 경계 복원). 극점 퇴화 모서리가 남아 Sphere 면이 메시된다. 못 찾음·면 수 불일치
+    → _GeomSkip(원 세션 그대로)."""
+    occ = gmsh.model.occ
+    s = _face_by_key(gmsh, key)
+    if s is None:
+        raise _GeomSkip("이 세션에서 면을 찾지 못함")
+    curves = sorted({abs(int(t)) for _d, t in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False)})
+    nb = sorted({int(u) for c in curves for u in gmsh.model.getAdjacencies(1, c)[0]} - {s})
+    before = {d: {int(t) for _x, t in occ.getEntities(d)} for d in range(4)}
+    n_before = len(before[2])
+    keep = {k: gmsh.option.getNumber(k) for k in OCC_FIX_KEYS + ("Geometry.OCCSewFaces",)}
+    try:
+        for k in keep:
+            gmsh.option.setNumber(k, 0)
+        occ.importShapes(os.fspath(src))
+        occ.synchronize()
+    except Exception as exc:                                 # noqa: BLE001
+        raise _GeomSkip(f"정리 없이 다시 가져오지 못함: {exc}") from None
+    finally:
+        for k, v in keep.items():
+            gmsh.option.setNumber(k, v)
+    new = {d: sorted(int(t) for _x, t in occ.getEntities(d) if int(t) not in before[d]) for d in range(4)}
+    cand = [t for t in new[2] if _key_near(_bbox_key(gmsh, 2, t), key, 1e-2)]
+    f = min(cand, key=lambda t: max(abs(a - b) for a, b in zip(_bbox_key(gmsh, 2, t), key))) if cand else None
+    if new[3]:
+        occ.remove([(3, t) for t in new[3]])
+    rest = [(2, t) for t in new[2] if t != f]
+    if rest:
+        occ.remove(rest, recursive=True)
+    occ.synchronize()
+    if f is None:
+        _drop_free(gmsh, new[1])
+        raise _GeomSkip("정리 없이 가져온 형상에 같은 면 없음")
+    occ.remove([(2, s)])
+    occ.synchronize()
+    try:
+        occ.fragment([(2, f)] + [(2, t) for t in nb], [])
+        occ.synchronize()
+    except Exception as exc:                                 # noqa: BLE001
+        occ.synchronize()
+        raise _GeomSkip(f"이웃 면과 봉합 실패: {exc}") from None
+    _drop_free(gmsh, set(curves) | set(new[1]))
+    n_after = len(occ.getEntities(2))
+    if n_after != n_before:
+        raise _GeomSkip(f"대체 뒤 면 수 {n_after} ≠ {n_before}")
+    nid = _face_by_key(gmsh, _bbox_key(gmsh, 2, f)) if f in {int(t) for _d, t in occ.getEntities(2)} else None
+    return {"deviation_mm": 0.0, "new_ids": [int(nid if nid is not None else f)], "scope": "face"}
+
+
 def _apply_geom(gmsh, key: tuple, stage: str, h: float, fb: dict) -> dict:
     """형상 폴백 한 단계를 bbox 키 면에 적용(이 세션 OCC 모델 — 원본 STEP 은 건드리지 않음). 반환 기록."""
     s = _face_by_key(gmsh, key)
@@ -614,18 +667,20 @@ def _failed_face(gmsh, msg: str, log: list | None = None) -> dict | None:
 
 
 def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, step_out: str | None,
-             face_alg: dict, relax: tuple, face_geom: dict | None = None, fb: dict | None = None) -> tuple:
+             face_alg: dict, relax: tuple, face_geom: dict | None = None, fb: dict | None = None,
+             nofix_all: bool = False) -> tuple:
     """gmsh 세션 1회(가져오기 → 옵션 → 작은 형상 처리 → 형상 폴백 → 면별 알고리즘 → 2D). face_alg = {bbox 키: 2D 알고리즘},
     relax = 제약 해제할 면 bbox 키들, face_geom = {bbox 키: 형상 폴백 단계(split·fill·small)} — 이 세션의 OCC 모델만 바꿈
-    (원본 STEP·step_out 은 가져온 그대로). 적용 못 하면 _FaceFail(key=그 키, 메싱 전).
+    (원본 STEP·step_out 은 가져온 그대로). 적용 못 하면 _FaceFail(key=그 키, 메싱 전). nofix_face 는 작은 형상 처리 전에,
+    nofix_all = 이 세션 전체를 OCC 정리(OCCFix*·OCCSewFaces) 없이 가져옴.
     반환 (X, conn, et, ver, dfi, step_done, applied{키: 태그}, geom{키: 기록})."""
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.option.setNumber("General.NumThreads", 1)
-        gmsh.option.setNumber("Geometry.OCCSewFaces", int(mc.get("occ_sew_faces", 0)))
+        gmsh.option.setNumber("Geometry.OCCSewFaces", 0 if nofix_all else int(mc.get("occ_sew_faces", 0)))
         for k, v in gopts.items():
-            gmsh.option.setNumber(k, v)
+            gmsh.option.setNumber(k, 0 if nofix_all and k in OCC_FIX_KEYS else v)
         try:
             gmsh.model.occ.importShapes(os.fspath(src))
             gmsh.model.occ.synchronize()
@@ -637,13 +692,26 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
             step_done = os.path.basename(step_out)
         for k, v in opts.items():
             gmsh.option.setNumber(k, v)
+        applied: dict = {}
+        geom: dict = {}
+        for gk, stage in (face_geom or {}).items():          # v0.15.1 nofix(그 면만) — 작은 형상 처리 전
+            if stage != "nofix_face":
+                continue
+            try:
+                geom[gk] = {"stage": stage, **_nofix_face(gmsh, src, gk)}
+            except _GeomSkip as gs:
+                bb = list(gk)
+                raise _FaceFail(f"{STAGE_NAMES[stage]} 적용 안 됨: {gs}",
+                                {"id": None, "type": None, "key": gk,
+                                 "center": [round(0.5 * (bb[i] + bb[i + 3]), 3) for i in range(3)]}, key=gk) from None
+            applied[gk] = int(geom[gk]["new_ids"][0])
         dfi = None
         df = mc.get("defeature")
         if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
             dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
-        applied: dict = {}
-        geom: dict = {}
         for gk, stage in (face_geom or {}).items():          # v0.15.1 형상 폴백(실패했던 면만, state 순서 = 결정적)
+            if stage in ("nofix_face", "nofix_all"):
+                continue
             try:
                 geom[gk] = {"stage": stage, **_apply_geom(gmsh, gk, stage, h, fb or {})}
             except _GeomSkip as gs:
@@ -687,7 +755,8 @@ def _ladder(mc: dict, fb: dict, ftype: str | None = None) -> list[tuple[int, boo
     algorithms → relax — v0.14.1 그대로), 실패 면 종류가 ``periodic_types`` 에 있으면 ``periodic_order``(있을 때):
     - ``algorithms``: ``algorithms`` 를 차례로(제약 그대로)
     - ``relax``: ``relax`` 면 제약(작은 형상 처리·구멍 둘레 분할)을 푼 뒤 기본 알고리즘 + ``algorithms`` 를 다시 차례로
-    - ``split``·``fill``·``small``(v0.15.1 형상 폴백): 그 면만 형상을 바꾼 뒤 기본 알고리즘(목록에 없으면 끔)."""
+    - ``split``·``fill``·``small``(v0.15.1 형상 폴백): 그 면만 형상을 바꾼 뒤 기본 알고리즘(목록에 없으면 끔)
+    - ``nofix``: OCC 정리 없이 — ``nofix.scopes`` 순서(face = 그 면만 정리 없이 다시 가져와 대체, all = 세션 전체 정리 끔)."""
     base = int(mc["algorithm"])
     algs = [int(a) for a in (fb.get("algorithms") or [])]
     order = list(fb.get("order") or DEFAULT_ORDER)
@@ -701,12 +770,17 @@ def _ladder(mc: dict, fb: dict, ftype: str | None = None) -> list[tuple[int, boo
             steps += [(a, True, None) for a in [base] + [x for x in algs if x != base]]
         elif st in GEOM_STAGES:
             steps.append((base, False, st))
+        elif st == "nofix":
+            nf = fb.get("nofix") if isinstance(fb.get("nofix"), dict) else {}
+            steps += [(base, False, f"nofix_{x}") for x in (nf.get("scopes") or NOFIX_SCOPES) if x in NOFIX_SCOPES]
     return steps
 
 
 def fallback_label(x: dict) -> str:
     """mesh_fallback 면 기록 한 줄(경고·보고서 공용): 알고리즘 단계 = 알고리즘 이름(+제약 해제), 형상 단계 = 단계명(+편차)."""
     st = x.get("stage") or ("relax" if x.get("relaxed") else "algorithm")
+    if st == "nofix":
+        return STAGE_NAMES[f"nofix_{x['scope']}"] if x.get("scope") in NOFIX_SCOPES else STAGE_NAMES["nofix"]
     if st in GEOM_STAGES:
         d = x.get("deviation_mm")
         return f"{STAGE_NAMES[st]}" + (f"(편차 {float(d):.2f} mm)" if d is not None and st != "split" else "")
@@ -758,13 +832,20 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         face_alg = {k: st[0] for k, st in cur.items() if st[2] is None}
         relax = tuple(k for k, st in cur.items() if st[1])
         face_geom = {k: st[2] for k, st in cur.items() if st[2]}
+        k_all = next((k for k, st in cur.items() if st[2] == "nofix_all"), None)
         try:
             X, conn, et, ver, dfi, sd, applied, geom = _session(gmsh, src, mc, h, opts, gopts,
                                                                 step_out=step_out if first else None,
                                                                 face_alg=face_alg, relax=relax,
-                                                                face_geom=face_geom, fb=fb)
+                                                                face_geom=face_geom, fb=fb, nofix_all=k_all is not None)
             if first:
                 step_done = sd
+            if k_all is not None:                           # 정리 끔(전체): 다른 면 작은 모서리·틈 → 품질 오류면 쓰지 않음
+                geom[k_all] = {"stage": "nofix_all", "deviation_mm": 0.0, "new_ids": [], "scope": "all"}
+                qe = quality(build_mesh(X, conn, et, props, normal_ref)[0], cfg, opt_cfg or opt_settings(None))["errors"]
+                if qe:
+                    raise _FaceFail(f"{STAGE_NAMES['nofix_all']} 뒤 품질 오류 {qe[0]['code']}: {qe[0]['message']}",
+                                    state[k_all]["face"], key=k_all)
             break
         except _FaceFail as ff:
             if first and step_out:
@@ -783,6 +864,8 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
                 if k is None:                               # 형상 폴백으로 나뉜/바뀐 조각의 실패 = 원 면의 실패
                     k = next((kk for kk, v in state.items() if v["ladder"][v["step"]][2]
                               and _key_in(f["key"], kk, max(1e-3, h))), None)
+            if k is None and k_all is not None:             # 정리 끔(전체)이 만든 다른 면 실패 → 그 단계 실패(원 세션 기준)
+                k = k_all
             if k is None:
                 if max_faces and len(state) >= max_faces:
                     raise EslError("FAILED_MESH", f"gmsh 메싱 실패: 메시가 안 되는 면이 {max_faces}개를 넘음"
@@ -820,7 +903,7 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         faces = []
         for k, v in state.items():
             a, r, g = v["ladder"][v["step"]]
-            stage = g or ("relax" if r else "algorithm")
+            stage = ("nofix" if g and g.startswith("nofix") else g) or ("relax" if r else "algorithm")
             gr = geom.get(k) or {}
             x = {"id": applied.get(k, v["face"]["id"]), "failed_id": v["face"]["id"], "type": v["face"]["type"],
                  "center": v["face"]["center"], "stage": stage, "stage_name": STAGE_NAMES[stage], "algorithm": a,
@@ -828,6 +911,8 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
                  "deviation_mm": gr.get("deviation_mm"), "errors": v["errors"]}
             if g:
                 x["new_ids"] = list(gr.get("new_ids") or [])
+            if stage == "nofix":
+                x["scope"] = gr.get("scope") or g.split("_", 1)[1]
             faces.append(x)
         meta["mesh_fallback"] = {"n_faces": len(faces), "faces": faces}
         ids = ", ".join(str(x["failed_id"]) for x in faces)

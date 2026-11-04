@@ -188,7 +188,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     mesh: {size_mm: 3.0, curvature_n: 0, min_size_factor: 0.8, extend_from_boundary: 0, occ_fix_small: 1,   # bead_doe.mesh 를 키별 덮어씀(모든 STEP 같은 설정)
            fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20,   # v0.14.1 메시 실패 면만 2D 알고리즘 6→5→1 재시도, 그다음 그 면 제약 해제
                       order: [algorithms, relax, split, fill, small], periodic_types: [Sphere],   # v0.15.1 형상 폴백 순서(빼면 끔) — Sphere 면은 periodic_order
-                      periodic_order: [split, fill, small, algorithms, relax], split: {planes: 2},   # 면 분할: bbox 중심 평면 1~2개
+                      periodic_order: [nofix, split, fill, small, algorithms, relax], nofix: {scopes: [face, all]},   # nofix = OCC 정리 끔(그 면만 → 전체)
+                      split: {planes: 2},   # 면 분할: bbox 중심 평면 1~2개
                       fill: {tol_factor: 0.5, points: 8, samples: 10},   # 채움 면 대체: 원 면 대비 편차 ≤ 0.5 × 요소 크기
                       small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}}}   # 넓이 < 50.27 mm² 면은 경계만으로 채움
   select:                             # v0.15.0 비드 직접 선택·규칙 모핑(계약 esl_bead_select.md §10) — paicad 불필요(있으면 fixed-scan 만)

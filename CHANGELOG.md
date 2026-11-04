@@ -3,7 +3,7 @@
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
 ## Unreleased
-- **④ 형상 비교: 구면(Sphere) 면이 있는 STEP 의 메시 실패 수정**(이슈 #53 `Impossible to mesh periodic surface`, 중립면 딤플·세 필렛 코너): 실패한 면만 형상 폴백 — 면 분할(bbox 중심 평면) → 채움 면 대체(경계 고리 BSpline, 원 면 대비 편차 ≤ 0.5 × 요소 크기일 때만) → 작은 면(< 50.27 mm²) 평면 채움. 순서·on/off 는 설정 `bead_doe.compare.mesh.fallback.order`·`periodic_types`·`periodic_order`·`split`·`fill`·`small`, 쓰인 단계와 편차는 경고 `MESH_FACE_FALLBACK`·`mesh.json mesh_fallback`·보고서 형상 표에 표시. 정상 STEP 과 ③ 의 메시는 그대로
+- **④ 형상 비교: 구면(Sphere) 면이 있는 STEP 의 메시 실패 수정**(이슈 #53 `Impossible to mesh periodic surface`, 중립면 딤플·세 필렛 코너): 실패한 면만 형상 폴백 — OCC 정리 끔(그 면만 정리 없이 다시 가져와 대체 → 안 되면 전체 정리 끔, 다른 면이 새로 실패하면 쓰지 않음) → 면 분할(bbox 중심 평면) → 채움 면 대체(경계 고리 BSpline, 원 면 대비 편차 ≤ 0.5 × 요소 크기일 때만) → 작은 면(< 50.27 mm²) 평면 채움. 순서·on/off 는 설정 `bead_doe.compare.mesh.fallback.order`·`periodic_types`·`periodic_order`·`nofix`·`split`·`fill`·`small`, 쓰인 단계와 편차는 경고 `MESH_FACE_FALLBACK`·`mesh.json mesh_fallback`·보고서 형상 표에 표시. 정상 STEP 과 ③ 의 메시는 그대로
 
 ## [0.15.0] - 2026-11-04
 ### 추가

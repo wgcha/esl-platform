@@ -359,11 +359,11 @@ def test_compare_sphere_fallback_recorded(tmp_path):
     d0 = next(x for x in cmp["shapes"] if x["id"] == "d000")
     assert "mesh_fallback" not in d0 and "fallback_faces" not in d0["quality"]       # 정상 형상은 기록 없음
     assert d1["status"] == "READY" and d1["quality"]["fallback_faces"] == 1
-    assert d1["quality"]["fallback_stages"][0].startswith("채움 면 대체(편차")
+    assert d1["quality"]["fallback_stages"] == ["OCC 정리 끔(그 면만)"]
     f = d1["mesh_fallback"]["faces"][0]
-    assert f["stage"] == "fill" and f["type"] == "Sphere" and f["deviation_mm"] <= 0.5 * H
-    assert any(w.startswith("MESH_FACE_FALLBACK: d001") and "채움 면 대체" in w for w in cmp["warnings"])
+    assert f["stage"] == "nofix" and f["scope"] == "face" and f["type"] == "Sphere" and f["deviation_mm"] == 0.0
+    assert any(w.startswith("MESH_FACE_FALLBACK: d001") and "OCC 정리 끔(그 면만)" in w for w in cmp["warnings"])
     assert sc.tree_stamp(str(up)) == stamp                                   # 업로드 폴더(원본 STEP) 불변
     from esl.doe import report_doe as rd
     html = rd.render_compare({"study": {"id": "C2"}, "shapes": cmp["shapes"], "profile": cmp["profile"]})
-    assert "폴백 면 1개(id " in html and "채움 면 대체(편차" in html
+    assert "폴백 면 1개(id " in html and "OCC 정리 끔(그 면만)" in html
