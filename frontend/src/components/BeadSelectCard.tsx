@@ -716,7 +716,7 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose }: { s
 
   const n = loaded ? loaded.glb.positions.length / 3 : 0;
   const u = useMemo(() => (loaded ? morph(loaded.vars, values, n) : null), [loaded, values, n]);
-  const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, loaded.meta, n) : null), [loaded, values, n]);
+  const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, n) : null), [loaded, values, n]);
   const V = vmax > 0 ? vmax : Math.max(1, c ? maxAbs(c) : 1);
 
   useEffect(() => {

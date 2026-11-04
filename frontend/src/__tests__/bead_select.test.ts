@@ -229,7 +229,7 @@ describe("기저 합·select.bin", () => {
     for (let i = 0; i < u.length; i++) lin = Math.max(lin, Math.abs(u[i] - sum[i]));
     expect(lin).toBeLessThanOrEqual(1e-4);
     // 색 = 비드 방향 성분: D 를 깊게(+) 하면 양수
-    const c = heightChange(vars, { B1_D1: params.find((p) => p.name === "B1_D1")!.nominal + 3 }, meta, m.n);
+    const c = heightChange(vars, { B1_D1: params.find((p) => p.name === "B1_D1")!.nominal + 3 }, m.n);
     expect(maxAbs(c)).toBeCloseTo(3, 4);
     expect(Math.min(...c)).toBeGreaterThanOrEqual(-1e-6);
     expect(() => parseBasis(bin.slice(0, bin.byteLength - 4), meta)).toThrow(/짧|길이/);
@@ -244,7 +244,10 @@ describe("기저 합·select.bin", () => {
     expect(b.elemId[0]).toBe(m.elemId[0]);
     expect(b.fixed.reduce((s, v) => s + v, 0)).toBe(mf.fixed.scan_n);
     expect(() => parseSelectBin(m.bin.slice(1), mf)).toThrow(/길이/);
-    expect(writeSelectBin(b).byteLength).toBe(m.bin.byteLength);
+    const w = writeSelectBin(b);
+    expect(w.buf.byteLength).toBe(m.bin.byteLength);
+    expect(w.bin).toEqual(mf.bin);
+    for (const L of mf.bin.layout) expect(L.offset % 4).toBe(0);
     expect(parseGlb(m.glb).positions.length / 3).toBe(mf.n_nodes);
     const fe = fixedElems(b.fixed, m.topo.elemNodesPtr, m.topo.elemNodes);
     expect(fe.reduce((s, v) => s + v, 0)).toBeGreaterThan(0);

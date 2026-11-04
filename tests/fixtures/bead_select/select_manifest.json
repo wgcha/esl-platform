@@ -1,0 +1,36 @@
+{
+ "bin": {
+  "bytes": 54860,
+  "layout": [
+   {
+    "count": 7800,
+    "dtype": "<u4",
+    "name": "tri2elem",
+    "offset": 0
+   },
+   {
+    "count": 3925,
+    "dtype": "<u4",
+    "name": "elem_id",
+    "offset": 31200
+   },
+   {
+    "count": 3925,
+    "dtype": "u1",
+    "name": "elem_type",
+    "offset": 46900
+   },
+   {
+    "count": 4029,
+    "dtype": "u1",
+    "name": "fixed",
+    "offset": 50828
+   }
+  ],
+  "name": "select.bin"
+ },
+ "n_elems": 3925,
+ "n_nodes": 4029,
+ "n_tris": 7800,
+ "schema": "esl/bead_select_view/1"
+}

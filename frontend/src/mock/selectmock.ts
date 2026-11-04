@@ -91,6 +91,8 @@ export interface SelMesh {
   topo: MeshTopo;
   glb: ArrayBuffer;
   bin: ArrayBuffer;
+  /** select_manifest.json 의 bin 항목(섹션 배치) */
+  binInfo: DoeSelectViewManifest["bin"];
 }
 let MESH: SelMesh | null = null;
 export function selMesh(): SelMesh {
@@ -141,13 +143,17 @@ export function selMesh(): SelMesh {
   }
   const topo = buildTopo(x, indices, tri2elem, nE);
   const mm = { n, x, nodeIds, indices, quads };
-  MESH = { ...mm, tri2elem, elemId, elemType, fixed, label, topo, glb: writeGlb(mm), bin: writeSelectBin({ tri2elem, elemId, elemType, fixed }) };
+  MESH = { ...mm, tri2elem, elemId, elemType, fixed, label, topo, glb: writeGlb(mm), ...selBin(writeSelectBin({ tri2elem, elemId, elemType, fixed })) };
   return MESH;
+}
+
+function selBin(w: ReturnType<typeof writeSelectBin>) {
+  return { bin: w.buf, binInfo: w.bin };
 }
 
 export function selManifest(): DoeSelectViewManifest {
   const m = selMesh();
-  return { schema: "esl/bead_select_view/1", n_nodes: m.n, n_elems: m.elemId.length, n_tris: m.tri2elem.length, mesh_sha256: "5e1ec7".padEnd(64, "0"), h_med: SEL_H, plate_normal: [0, 0, 1], fixed: { scan_n: m.fixed.reduce((s, v) => s + v, 0) } };
+  return { schema: "esl/bead_select_view/1", n_nodes: m.n, n_elems: m.elemId.length, n_tris: m.tri2elem.length, mesh_sha256: "5e1ec7".padEnd(64, "0"), h_med: SEL_H, plate_normal: [0, 0, 1], fixed: { scan_n: m.fixed.reduce((s, v) => s + v, 0), source: "scan" }, glb: { name: "part.glb", bytes: m.glb.byteLength }, bin: m.binInfo };
 }
 
 /** 정답 표지로 만든 기본 선택(b1 = 단1·단2, b2 = 단1) — 목 시드·시험용 */
@@ -550,12 +556,11 @@ export function selBasis(sel: DoeSelectionIn, st: DoeSettingsOut): { meta: DoeBa
   const { out, beads } = selDerive(sel, st);
   const ps = selParams(sel, out);
   const vars: { idx: number[]; vec: number[] }[] = [];
-  const meta: DoeBasisMeta = { sha256: "", selection_sha256: out.sha256, variables: [], beads: {} };
+  const meta: DoeBasisMeta = { schema: "esl/bead_select_basis/1", sha256: "", selection_sha256: out.sha256, n_nodes: m.n, vars: [] };
   for (const p of ps.params) {
     const bi = sel.beads.findIndex((b) => b.id === p.bead);
     const B = beads[bi];
     const der = out.beads[bi];
-    meta.beads[p.bead] = { n_hat: [0, 0, -1], blend_mm: der.blend_mm };
     const idx: number[] = [];
     const vec: number[] = [];
     const nodeTier = new Int32Array(m.n);
@@ -596,7 +601,7 @@ export function selBasis(sel: DoeSelectionIn, st: DoeSettingsOut): { meta: DoeBa
       }
     }
     vars.push({ idx, vec });
-    meta.variables.push({ name: p.name, bead: p.bead, type: p.type as "D" | "W", nominal: p.nominal, n: idx.length });
+    meta.vars.push({ name: p.name, type: p.type as "D" | "W", bead: p.bead, nominal: p.nominal, n: idx.length, R_mm: p.type === "W" ? der.blend_mm : null });
   }
   meta.sha256 = (fnv(`basis:${out.sha256}`) + fnv(out.sha256)).padEnd(64, "b");
   return { meta, bin: writeBasis(vars), params: ps.params };

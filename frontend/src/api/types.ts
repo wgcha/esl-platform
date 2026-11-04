@@ -3060,13 +3060,36 @@ export interface DoeSelectViewManifest {
   mesh_sha256: string;
   h_med: number;
   plate_normal: [number, number, number];
-  fixed: { scan_n: number };
+  fixed: { scan_n: number; source?: "scan" | "none" };
+  glb?: { name: string; bytes: number };
+  /** select.bin 섹션 배치(코어 bead_select.view_files — 섹션마다 4바이트 경계 채움) */
+  bin: { name: string; bytes: number; layout: DoeSelectBinSection[] };
 }
-/** select/basis?meta=1 → basis.json(변수 순서 = basis.bin) */
+/** select.bin 섹션 1개: offset = 바이트, count = 원소 수, dtype = numpy dtype.str('<u4' | 'u1') */
+export interface DoeSelectBinSection {
+  name: string;
+  dtype: string;
+  offset: number;
+  count: number;
+}
+/** basis.json 변수 1개(순서 = basis.bin). R_mm = 폭 변수 블렌딩 반경(깊이 변수 null) */
+export interface DoeBasisVar {
+  name: string;
+  type: "D" | "W";
+  bead: string;
+  nominal: number;
+  n: number;
+  R_mm: number | null;
+}
+/** select/basis?meta=1 → basis.json(schema esl/bead_select_basis/1, 변수 순서 = basis.bin). 비드 방향 n̂_b 는 없음 — basis.bin 이 3D 벡터 전체를 담는다 */
 export interface DoeBasisMeta {
+  schema?: string;
+  /** basis.bin sha256(헤더 X-ESL-Basis-Sha 와 같음) */
   sha256: string;
   selection_sha256: string;
-  variables: { name: string; bead: string; type: "D" | "W"; nominal: number; n: number }[];
-  /** 비드 방향 n̂_b(색 = 비드 방향 성분, §7.2) */
-  beads: Record<string, { n_hat: [number, number, number]; blend_mm: number }>;
+  basis_sha256?: string | null;
+  mesh_sha256?: string;
+  cfg_sha256?: string;
+  n_nodes?: number;
+  vars: DoeBasisVar[];
 }

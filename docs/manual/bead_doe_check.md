@@ -76,6 +76,25 @@
 | ①-7 | 디스크 정리 | 끝난 뒤 `run/designs/*/paicad/out_files` 는 상위 3개 + 베이스라인만 남음(BD-D-17), `_doe/<id>/` 전체 크기 | |
 | ①-8 | 입력 보호 | Case 폴더 파일 목록·수정 시각·sha 가 실행 전후 같음(paicad 출력이 `_doe/<id>/` 밖으로 안 감) | |
 
+## V-BS-R1 — ① 비드 직접 선택(메시, v0.15.0, 실제 Ch/R 약 22만 요소)
+
+준비: R-① 과 같은 Case(rad + include)·ESL 3개 이상. STEP 은 필요 없다. 대상 비드 = 깊이 ≈ 22 mm·밑변 폭 ≈ 60 mm·다단·경로형(계약 `esl_bead_select.md` 사용자 확정 1). 형상 엔진 있음/없음 두 번 확인하면 좋다.
+
+| # | 확인 | 방법 / 기대 | 결과 |
+|---|---|---|---|
+| BS-R1-1 | 활성·준비 | 비드 정의 하위 선택 "직접 선택(메시)" 활성(기본값은 자동 탐지). [입력 준비] 시간·메모리(BD_LOADS 선택 보기 자료 ≤ 10 s·≤ 1 GB 목표), paicad 없음 → `FIXED_INFO_MISSING` 띠·준비 성공 | |
+| BS-R1-2 | 3D 반응 | 22만 요소에서 클릭 확장 ≤ 100 ms 체감, 브러시 1획 끊김 없음, 보이는 면만 선택이 뒤쪽 면을 안 잡음, 1920×1080·2560×1440 잘림·가로 스크롤 없음 | |
+| BS-R1-3 | 선택 소요 시간 | 비드 1개(다단 포함)를 고르고 [사면·경계 자동]까지 걸린 시간 — 목표 ≤ 5 분. feature 15° 에서 바닥이 새거나 모자라면 맞는 각도 기록(R-BS-1 기본각 조정 근거) | |
+| BS-R1-4 | derive | [사면·경계 자동] 응답 시간(p95 ≤ 3 s)·백엔드 메모리 피크(≤ 1.5 GB). 사면·경계가 실제 비드와 맞는지(±1줄 수정 횟수), 공칭 D·W 가 도면 값(22·60)과 맞는지, 경고 목록(특히 `SELECT_SLOPE_LEAK`·`SELECT_TIER_MISSING`·`SELECT_WIDTH_UNDEFINED`) | |
+| BS-R1-5 | 고정 노드 | 체결 고정 노드(fixed-scan 또는 칠한 고정 층) 수, `SELECT_FIXED_IN_BEAD`·`SELECT_FIXED_IN_BLEND`·`SELECT_BLEND_CLIPPED` 유무, `SELECT_FIXED_LAYER_OVERLAP` 이 의도한 겹침인지 | |
+| BS-R1-6 | 기저·미리보기 | BD_MATRIX 기저 시간·메모리(≤ 30 s·≤ 2 GB), 미리보기 안 수·총 시간(200안 ≤ 5 분), 안별 썸네일 ≤ 1 s, 품질 실패(`FAILED_MESH`) 비율·고정 침범(`SKIPPED_FIXED`) 비율 기록 | |
+| BS-R1-7 | 3D 보기 | 썸네일 클릭 → 3D 안 형상이 썸네일과 같은 모양·색 부호(깊어짐 파랑), 공칭 ↔ 안 전환 | |
+| BS-R1-8 | 노드 ID 불변 | 최적 안 include 사본(`best/<id>/`)이 원본과 `/NODE` 좌표 칸 외 바이트 동일, ID·연결·PID 불변 | |
+| BS-R1-9 | 순위 경향 | 실행 후 D 깊어질수록 score 감소 경향인지, 최적 안 검증 낙하 1회(①-VD 와 같은 절차)로 변위·변형률 경향이 순위와 같은 방향인지 | |
+| BS-R1-10 | 입력 보호 | Case 폴더 파일 목록·수정 시각·sha 가 실행 전후 같음 | |
+
+결과 보고: 위 시간·메모리 값, 선택 소요 시간, 품질 실패 비율, feature 각 조정 필요 여부, 검증 낙하 결과 요약.
+
 ## 문제 해결 메모
 
 - `PAICAD_OCP_MISSING`: `paicad version --json` 의 `ocp` 가 null — `cadquery-ocp` 설치 실패 또는 VC++ 재배포 런타임 없음. `pip show cadquery-ocp`(설치 venv) 확인.

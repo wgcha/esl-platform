@@ -330,7 +330,10 @@ def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, b
         bd = base / "select" / sel_sha[:12]
         bd.mkdir(parents=True, exist_ok=True)
         (bd / "basis.bin").write_bytes(b"\x01\x00\x00\x00" + b"\x00" * 16)
-        (bd / "basis.json").write_text(json.dumps({"sha256": "f" * 64, "variables": ["B1_D1"]}), encoding="utf-8")
+        (bd / "basis.json").write_text(json.dumps({"schema": "esl/bead_select_basis/1", "sha256": "f" * 64,   # 코어 basis_meta 형식
+                                                  "selection_sha256": sel_sha, "n_nodes": 1,
+                                                  "vars": [{"name": "B1_D1", "type": "D", "bead": "b1", "nominal": 22.0,
+                                                            "n": 1, "R_mm": None}]}), encoding="utf-8")
     finish_job(engine, job_id)
     from esl_platform.core.repositories import doe as doe_repo
 
@@ -653,7 +656,7 @@ def test_matrix_preview_run_selection_sha(client, world, engine, esl_root):
     b = api(client, "GET", f"/doe/studies/{sid}/select/basis", "tok-general")
     assert b.status_code == 200 and b.headers["x-esl-basis-sha"] == "f" * 64 and b.content.startswith(b"\x01\x00\x00\x00")
     bm = api(client, "GET", f"/doe/studies/{sid}/select/basis?meta=1&rev=1")
-    assert bm.status_code == 200 and bm.json()["variables"] == ["B1_D1"]
+    assert bm.status_code == 200 and [v["name"] for v in bm.json()["vars"]] == ["B1_D1"]
     assert api(client, "GET", f"/doe/studies/{sid}/select/basis?rev=2").status_code == 404
     # 선택을 바꾸면 미리보기 무효 → run 409 PREVIEW_STALE(행렬 sha 가 같아도)
     ch = _save(client, g, selection(bead("b1", tiers=((1, 5), (20, 22)))))

@@ -1,6 +1,6 @@
 # 계약: 강성 평가 스터디 — 비드 직접 선택·규칙 모핑 DOE (BEAD_SELECT, v0.15.0)
 
-- 상태: **초안** (2026-11-04, Plan). 사용자 확정 방향(아래) 반영, 결정 질문 3개(§19) — 권장안으로 작성, 답에 따라 해당 절만 고친다.
+- 상태: **확정** (2026-11-04). 사용자 확정 방향(아래) 반영, 결정 질문 3개(§19) = A/A/A 확정. v0.15.0 통합 때 구현 형식(§5.4·§5.7·§7·§8.1·§9·§14)을 실제 코드에 맞춰 갱신.
 - 버전: **v0.15.0** (main a0ed2b2 = v0.13.0 기준 작성). **구현 착수 = v0.14.0(STEP_COMPARE, migration 0014) 이 main 에 병합된 뒤**(같은 파일을 고침 — §17). migration **필요**(§15 — `0015_bead_select`).
 - 관계: `esl_bead_doe.md`(BEAD_DOE) 시나리오 ① `same` 의 **변수 출처를 바꾼 변형**. 기준 메시 읽기(`scenario.same_base`, 동일 모델 판정 `topo_sha256`)·하중(① 노드 직접, 모든 안 같은 노드 하중 BD-D-3)·지지(기준 ESL 3-2-1, BD-D-4)·DOE 생성(`esl.doe.matrix`, BD-D-8)·미리보기 필수(BD-D-9)·해석(`evaluate`, BD-D-5)·순위·민감도·ESL별 지표(§11·§11.4)·작업 3종(`DOE_PREP`·`DOE_PREVIEW`·`DOE_RUN`)·폴더(`_doe/<id>/`)·보안(§15)·이어하기(BD-D-16)를 **그대로 재사용**한다. `esl_step_compare.md`(v0.14.0)의 품질 판정(`esl/doe/mesh_quality.py`, `bead_doe.compare.quality` — 이슈 #53 criteria)을 재사용한다. 이 문서에 없는 규칙은 BEAD_DOE 를 따르고, 충돌 시 `select` 범위에서 이 문서가 우선.
 - ID 규칙: 결정 `BS-D-n`, 요구 `BS-n`, 시험 `V-BS-n`, 리스크 `R-BS-n`.
@@ -154,7 +154,10 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 - 경계 노드: B_W[j] = ½ ê_j.
 - 사면 노드 x: B_W[x] = (1 − s')·w(x) + s'·f·w(x) = (1 − s'(1 − f))·w(x) — s' = §5.3 의 x 의 경계↔가장 가까운 바닥 수준 비율, f = `floor_follow`. f = 1 → 사면이 통째로 평행 이동(각 유지), f = 0 → 바닥 쪽으로 갈수록 0.
 - 바닥 노드: f = 0 → 0. f = 1 → 바닥 가장자리 노드(사면 요소와 공유) = w(x) 를 디리클레로 두고 바닥 내부는 **조화 확장**(그래프 라플라시안 L u = 0, 모서리 가중 1/길이, 성분별 `scipy.sparse.linalg.splu` 1회) — 경로형 바닥이 양쪽 가장자리 사이에서 선형으로 늘어남.
-- 모든 B_W 는 노드 국부 접평면으로 사영(u ← u − (u·ν_i)ν_i, ν_i = 기준 노드 법선 `view3d.node_geometry`) — 폭 변수는 면외로 판을 휘게 하지 않는다.
+- **사영 규칙(구현 확정)** — 폭 변수는 면외로 판을 휘게 하지 않는다:
+  - **비드 노드**(경계·사면·바닥): 비드 기준면 안으로 사영 u ← u − (u·n̂_b)n̂_b(n̂_b = §5.1 비드 방향).
+  - **블렌딩 노드**(비드 밖, d < R): 노드 국부 접평면으로 사영 u ← u − (u·ν_i)ν_i, ν_i = 기준 노드 법선 `view3d.node_geometry`.
+  - 근거: 경계 노드는 상판·사면이 만나는 꺾인 모서리라 노드 법선 ν_i 가 두 면 사이로 기울어 있다. 비드 노드를 ν_i 로 사영하면 상판 가장자리가 면외로 움직인다(V-BS-2 면외 성분 ≤ 1e-9 위반). 비드 밖 상판은 휜 판일 수 있어 국부 법선이 맞다.
 
 ### 5.5 블렌딩 (폭 변수만 — 깊이는 경계 고정이라 불필요)
 - 비드 밖 노드 x(상판), 경계까지 평면 거리 d(x) = 가장 가까운 경계 노드 거리(cKDTree), R = 블렌딩 반경:
@@ -169,6 +172,8 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 ### 5.7 공칭 치수·기본 범위
 - D_nom,k = 단 k 바닥 노드 z 의 중앙값. planarity = 바닥 노드 z 의 (p95 − p5).
 - 국부 폭: 경계 노드 j 에서 −ê_j 방향(평면 m_b 투영) 반직선이 맞은편 경계 고리 선분과 처음 만나는 거리 w_j(2D 선분 교차, 경계 노드 ≤ 수천 — O(n²) 블록). 끝단(맞은편이 같은 끝단)·교차 없음 제외. W_nom = median w_j, W_min·W_max = p5·p95.
+  - 끝단 제외 규칙(구현 확정): 교차가 있는 w_j 의 중앙값 med 에 대해 w_j > `WIDTH_END_RATIO` × med 인 반직선 제외. `WIDTH_END_RATIO = 2.0` 은 `bead_select` **모듈 상수**(설정 `select.width.end_ratio` 가 있으면 그 값 — §10 예시 밖 구현 키). 근거: 끝단 근처 경계 노드의 −ê 반직선은 경로를 따라 맞은편 끝단까지 가서 비드 길이(폭의 수 배)를 잰다 — 폭이 50 → 70 처럼 가변이어도 정상 w_j 는 중앙값의 1.4배 안이므로 2배면 가변 폭을 남기고 길이 방향 측정만 떨어낸다. 실기(V-BS-R1)에서 벗어나는 형상이 나오기 전까지는 사용자 조정 대상이 아니라 설정 예시에 넣지 않음.
+  - 남는 w_j 가 없으면(교차 없음·전부 제외) 그 비드 W 변수 비활성 + 경고 `SELECT_WIDTH_UNDEFINED`.
 - 기본 범위(추정, `source: estimate`): D_k ∈ [D_nom·(1 − r), D_nom·(1 + r)], r = `select.range.depth_rel`(0.3), 하한 > 위 수준 깊이 + `select.range.min_step_mm`(1)(단이 위 단·상판을 넘지 않게). W ∈ [W_nom·(1 − `width_rel` 0.2), W_nom·(1 + 0.2)], f = 1 이면 하한 ≥ 바닥 최소 폭 > 0 이 되게(가장자리 간 거리 − ΔW > h_med). 사용자 범위는 BD-D-7 처럼 경고만(D·W > 0 은 422).
 
 ### 5.8 성능·메모리 목표 (22만 노드·22만 요소, 비드 ≤ 20·단 ≤ 6)
@@ -195,20 +200,22 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 
 ### 7.1 평면도 (`DoePlanOut` select 판 + 프런트 `BoundaryPlan` 재사용)
 - 자료(`GET …/plan-view`, select): 기존 형식(frame·outline·holes·elems) + `beads[{id, name, ring_ab, e_ab, label_ab, tiers[{k, ring_ab}]}]`, `fixed[{a, b}]`(고정 노드 점), `nodes_ab`(노드 점 — 표시 토글, 기본 숨김), 비드별 `section`.
+- `derive` 응답의 `fixed_ab[{a, b}]` = 같은 고정 노드 점(평면 좌표, 소수 3자리) — 저장 전 편집 중에도 평면도에 고정 점을 그린다. 저장된 선택의 plan-view 는 `fixed_ab` 를 `fixed` 로 그대로 옮긴다(`bead_select.plan_data`).
 - 표시: 노드 점 [숨김 ☑](기본 숨김), 고른 비드 = 진하게(단마다 명도 차), 나머지 요소 = 흐리게(불투명 0.25), **라벨 칩** "B1 · D1 22.0 · D2 14.5 · W 60.2"(비드 중심 근처, 겹치면 밀어냄).
 - 변수 행 선택 시 범위:
   - **폭 W**: 최소·최대 윤곽 점선 = ring_ab + e_ab × (W_lo − W_nom)/2, (W_hi − W_nom)/2(브라우저 계산 — 표의 현재 범위 즉시 반영). 공칭 = 실선.
   - **깊이 D_k**: 평면도 옆 **단면 미니 그림**(SVG 240×120): 실제 단면 = 공칭 폭 중앙값 위치의 경계 노드에서 −ê 방향 평면(ê, n̂_b)과 메시의 교선(요소-평면 교차 폴리라인, 서버 `section`), 공칭 실선 + lo·hi 점선(z + (D − D_nom)·dz_dD[k], 브라우저 계산), 치수 글자 "22.0 (15.4–28.6)". 단면 위치는 평면도에 짧은 선으로 표시.
 
 ### 7.2 미리보기 썸네일 (워커 `esl/doe/select_render.py`, paicad 비의존)
-- 입력: 기준 메시(삼각화 `view3d.triangulate`), 안 좌표, 색 값 c_i = (x_d,i − x0,i)·ν_i^b(비드 방향 성분: 비드 노드·블렌딩 노드는 그 비드 n̂_b 기준 깊어짐 +, 그 밖 0).
+- 입력: 기준 메시(삼각화 `view3d.triangulate`), 안 좌표, 색 값 c_i = (x_d,i − x0,i)·ν_i^b(비드 방향 성분: 비드 노드·블렌딩 노드는 그 비드 n̂_b 기준 깊어짐 +, 그 밖 0). 워커는 `basis.npz` 의 변수별 `n_hat` 을 쓴다(`bead_select.node_direction` — 겹치는 노드는 비드 id 순서 첫 비드).
 - 시점: `select.thumb.view` `auto` = 선택 비드 전체(+ 블렌딩) bbox 를 비드 평균 n̂ 반대쪽(깊어짐을 보는 쪽)에서 −η 로 `tilt_deg`(25°) 기울인 직교 투영, 여백 1.15. 모든 칸 **같은 시점·같은 축척**(공칭 bbox 기준).
 - 래스터: 2배 내부 해상도(640×480) — `png.rasterize` 방식에 **깊이 버퍼** 추가(픽셀 중심 무게중심 보간 z, 가까운 것 유지, 동률 = 작은 삼각형 번호), 요소 법선 램버트(광원 = 시선 + 위 20°, 주변광 0.35) × 색, 2×2 평균 축소 → `encode_png`(결정적 바이트).
 - 색: 발산 색(파랑 = 깊어짐 +, 흰 = 0, 빨강 = 얕아짐 −, 회색 음영 = 영향 없음), **모든 칸 같은 범위** ±V, V = max over READY 안 |c| (0 이면 1 mm), 격자 위 범례 1개(`grid_manifest.color{v_max, unit}`). 안 경계선(현재 위치) 진회색 1 px.
 - 공칭 칸 `nominal` = 같은 시점 회색 음영(색 0).
 
 ### 7.3 3D 보기 (썸네일 클릭)
-- 브라우저: 선택 보기 GLB(공칭) + `GET …/select/basis` (기저: 변수별 영향 노드 인덱스 + float32 변위) + 안 값(행렬) → u = Σ (v − v_nom)·B_v → 기존 `setDeform(u, 1)`·`setColors(c, −V, V)`(같은 발산 색표 — `colors.ts` 에 추가). [공칭 ↔ 안] 전환, 크게 보기(배율 1·2·5 — 표시만). 워커 계산과 같은 식이라 float32 오차(≤ 1e-4 mm) 외 동일(V-BS-12).
+- 브라우저: 선택 보기 GLB(공칭) + `GET …/select/basis` (기저: 변수별 영향 노드 인덱스 + float32 변위) + 안 값(행렬) → u = Σ (v − v_nom)·B_v → 기존 `setDeform(u, 1)`·`setColors(c, −V, V)`(같은 발산 색표 — `colors.ts` 에 추가).
+- `basis.json` 에는 n̂_b 가 **없다**(`basis.bin` 이 3D 변위 벡터 전체를 담으므로 모핑엔 불필요). 브라우저 색의 비드 방향 = 그 비드 깊이 변수 기저 벡터 합의 정규화(`basis.ts beadDirections` — 깊이 기저는 바닥 노드 = 단 법선 n_i^k 라 n̂_b 와 같은 쪽, 합성 픽스처에서 코어 n̂_b 와 내적 > 0.999). 겹치는 노드는 비드별 성분 합(표시 전용 — 워커 썸네일과 겹침 노드에서만 다를 수 있음). [공칭 ↔ 안] 전환, 크게 보기(배율 1·2·5 — 표시만). 워커 계산과 같은 식이라 float32 오차(≤ 1e-4 mm) 외 동일(V-BS-12).
 
 ## 8. 파이프라인 · 작업 (job_types 변경 없음, step 내부 `select` 분기)
 
@@ -219,13 +226,15 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 3 BD_GEOM    paicad 준비됨: assem_full 사본 → fixed-scan(Ch/R 파트) → prep/fixed/  (extract·tag 없음)
              paicad 없음·실패: SKIPPED + 경고 FIXED_INFO_MISSING (준비는 성공)
 4 BD_LOADS   ① 와 같음(frame·3-2-1·노드 하중 prep/loads.npz) + 선택 보기 자료 prep/select/:
-             part.glb(view3d.write_glb, _NODE_ID), select.bin(삼각형→요소 index uint32, elem_id·type, 노드 고정 마스크 uint8),
-             select_manifest.json{schema "esl/bead_select_view/1", n_nodes, n_elems, n_tris, mesh_sha256, h_med, plate_normal, fixed{scan_n}}
+             part.glb(view3d.write_glb, _NODE_ID), select.bin(아래 배치), select_manifest.json(아래)
 5 BD_PREP_REGISTER  prep 요약 {n_nodes, n_elems, fixed{source, n}, warnings}
 ```
+- **`select.bin` 배치**(`bead_select.view_files`, 리틀 엔디언): 섹션 순서 `tri2elem`(`<u4` × n_tris, 삼각형 → 요소 index) · `elem_id`(`<u4` × n_elems) · `elem_type`(`u1` × n_elems, 4 = /SHELL·3 = /SH3N) · `fixed`(`u1` × n_nodes, 노드 고정 마스크). **각 섹션 끝을 4바이트 경계까지 0 으로 채움**(n_elems·n_nodes 가 4의 배수가 아니면 섹션 사이에 1~3 바이트). 읽는 쪽은 길이 계산이 아니라 **manifest `bin.layout` 의 offset 을 따른다**.
+- **`select_manifest.json`**: `{schema "esl/bead_select_view/1", n_nodes, n_elems, n_tris, mesh_sha256, h_med, plate_normal[3], fixed{scan_n, source "scan"|"none"}, glb{name "part.glb", bytes}, bin{name "select.bin", bytes, layout[{name, dtype("<u4"|"u1" — numpy dtype.str), offset(바이트, 4의 배수), count(원소 수)}]}}`. 프런트(`view3d/select/view.ts parseSelectBin`)는 bytes·섹션 이름·dtype·count(= n_*)·offset 정렬을 검사하고 다르면 거부.
+- 시험 픽스처 `tests/fixtures/bead_select/`(코어 함수로 생성 — `make_fixture.py`, n_elems 3925·n_nodes 4029): select.bin·select_manifest.json·basis.bin·basis.json·expected.json.
 ### 8.2 DOE_PREVIEW
 ```
-1 BD_MATRIX  행렬(같은 함수) + 선택 rev 확인 → select/<sel_sha12>/{derived.npz(노드 집합·경계), basis.npz(변수별 idx·vec), basis.json(sha·변수·R)}
+1 BD_MATRIX  행렬(같은 함수) + 선택 rev 확인 → select/<sel_sha12>/{derived.npz(노드 집합·경계), basis.npz(변수별 idx·vec·n_hat·R), basis.bin, basis.json(아래 §9)}
              (같은 sha 폴더가 있으면 재사용)
 2 BD_GRID    (LOCAL, 코어 하위 프로세스 bd_select_grid) 안마다 모핑 → 고정 판정 → 품질 → 썸네일 → doe/<rev>/grid/{grid_manifest.json, cells/<id>/thumb.png}
 3 BD_PREVIEW_REGISTER  셀 상태 요약 + doe.preview.selection_sha256
@@ -242,16 +251,17 @@ SelectionDerived { rev, sha256, mesh_sha256, beads: [BeadDerived], fixed: { scan
 |---|---|---|---|
 | `POST /doe/check-inputs`·`POST /doe/studies` (select) | `{project_id, scenario:"select", entry_ids, title?}` — `step_upload_id`·`mesh_upload_id`·`part_title`·`shapes` 금지 | ① 과 같음(`base`, step 없음) | ① 과 같음 + 503 `SELECT_DISABLED` |
 | `GET /doe/studies/{id}/select/view/{file}` | file ∈ part.glb·select.bin·select_manifest.json | 바이너리/JSON(기존 view3d 파일 API 규칙, ETag = mesh_sha256) | 409 `PREP_NOT_READY`, 404 |
-| `POST /doe/studies/{id}/select/derive` | `{selection: SelectionIn, bead?: id}`(bead 주면 그 비드만) | `SelectionDerived`(저장 안 함, rev 없음) + `slope_suggested: {bead: ElemSet}` | 422 `SELECT_*`(§14), 413 `SELECT_TOO_LARGE`, 409 `PREP_NOT_READY` |
+| `POST /doe/studies/{id}/select/derive` | `{selection: SelectionIn, bead?: id}`(bead 주면 그 비드만) | `SelectionDerived`(저장 안 함, rev 없음) + `slope_suggested: {bead: ElemSet}` + `fixed_ab: [{a, b}]`(고정 노드 평면 좌표, §7.1) | 422 `SELECT_*`(§14), 413 `SELECT_TOO_LARGE`, 409 `PREP_NOT_READY` |
 | `GET /doe/studies/{id}/selection` | – | `{rev, sha256, input, derived, updated_by_name, updated_at}` 또는 `null` | 409 `PREP_NOT_READY` |
 | `PUT /doe/studies/{id}/selection` | `{version, selection: SelectionIn}` | `DoeStudyOut`(version+1, selection 요약) | 위 + 409 `VERSION_CONFLICT`·`JOB_ACTIVE`·`ALREADY_RUN`, 403(power 미만) |
 | `GET /doe/studies/{id}/params` (select) | – | `DoeParamsOut`: `beads[{id, name, kind:"select", n_tiers, W_nom, W_min, W_max, blend_mm, warnings}]`, `params[{name:"B1_D1"…"B1_W", type:"D"|"W", bead, tier?, nominal, feasible:[lo,hi], feasible_source:"estimate", default_range, use_default, group_members(links)}]` | 409 `SELECTION_MISSING` |
 | `GET /doe/studies/{id}/plan-view` (select) | – | §7.1 | 409 `SELECTION_MISSING` |
 | `POST …/matrix`·`…/preview` (select) | 기존 | 기존 + preview 응답 `doe.preview.selection_sha256` | + 409 `SELECTION_MISSING` |
-| `GET /doe/studies/{id}/select/basis?rev=` | – | `basis.bin`(변수 순서 = basis.json: 각 변수 [n:u32][idx:u32×n][vec:f32×3n]) + 헤더 `X-ESL-Basis-Sha` / `?meta=1` → basis.json | 409 `PREVIEW_NOT_READY`, 404 |
+| `GET /doe/studies/{id}/select/basis?rev=` | – | `basis.bin`(변수 순서 = basis.json `vars`: 각 변수 [n:u32][idx:u32×n][vec:f32×3n], 채움 없음) + 헤더 `X-ESL-Basis-Sha` / `?meta=1` → basis.json | 409 `PREVIEW_NOT_READY`, 404 |
 | `POST …/run` (select) | `{version, matrix_sha256, solver?}` | 기존 | + 409 `PREVIEW_STALE`(matrix 또는 selection sha 불일치) |
 | `POST …/clone` (select) | `{title?}` | 새 스터디 + 선택 복사(rev 1, 같은 sha — 메시 sha 같을 때만, 다르면 선택 없이 + 경고 `SELECTION_DROPPED`) | – |
 
+- **`basis.json`**(`bead_select.basis_meta` + 워커): `{schema "esl/bead_select_basis/1", sha256(basis.bin — X-ESL-Basis-Sha), selection_sha256, basis_sha256(basis.npz), mesh_sha256, cfg_sha256, n_nodes, vars:[{name, type "D"|"W", bead, nominal, n(영향 노드 수 = basis.bin 의 n), R_mm(폭 변수 블렌딩 반경, 깊이 변수 null)}]}`. **`beads`·`n_hat` 키 없음**(§7.3). 변수 순서 = 이름 정렬.
 - 변수 이름 `<bead id 대문자>_D<k>`·`_W`(예 `B1_D2`) — `matrix` 의 이름 규칙·값 파일과 같음. 묶음은 대표 = 가장 작은 k(`B1_D1` 이 D1·D2 를 함께 바꿈, `group_members`).
 - `SelectionIn` 이름·사용자 문자열은 DB·응답·보고서(HTML 이스케이프)에만, 경로·argv 에 넣지 않음.
 - `GET /doe/settings` += `scenarios.select`, `select:{enabled, reason, feature_angle_deg, max_beads, max_tiers, blend:{min_mm, max_mm}}`.
@@ -328,6 +338,8 @@ bead_doe:
 | `PREVIEW_NOT_READY` | 409 | 기저 없음(미리보기 전) |
 | 경고 `FIXED_INFO_MISSING` | 준비 | paicad 없음·fixed-scan 실패(BS-D-8) |
 | 경고 `SELECT_SLOPE_LEAK`·`SELECT_TIER_MISSING`·`SELECT_OPEN_BOUNDARY`·`SELECT_DISCONNECTED`·`SELECT_NONPLANAR_BASE`·`SELECT_BLEND_OVERLAP`·`SELECT_BLEND_CLIPPED`·`SELECT_FIXED_IN_BEAD`·`SELECT_FIXED_IN_BLEND`·`SELECTION_DROPPED` | derive·저장·clone | §5 |
+| 경고 `SELECT_FIXED_LAYER_OVERLAP{n}` | derive·저장(선택 전체) | '고정' 층(`fixed_user`)이 비드 층(단 바닥·사면 add)과 겹친 요소 수 n — 허용(§4.1), 그 요소 노드는 고정으로 셈 |
+| 경고 `SELECT_WIDTH_UNDEFINED` | derive·저장(비드) | 닫힌 경계지만 국부 폭 w_j 를 하나도 못 잼(§5.7) → 그 비드 W 변수 비활성(D 는 가능) |
 | 셀/안 `SELECT_FIXED_VIOLATION` | → `SKIPPED_FIXED` | BS-D-10 |
 | 셀/안 `SELECT_QUALITY_FAIL`·`SELECT_MORPH_INVERTED` | → `FAILED_MESH` | §6 |
 | 재사용 | | `MODEL_MISMATCH`·`ENTRY_NOT_FOUND`·`PREREQUISITE_MISSING`·`ASSEM_TOO_LARGE`·`PREP_NOT_READY`·`PREVIEW_STALE`·`ALREADY_RUN`·`VERSION_CONFLICT`·`JOB_ACTIVE`·`DOE_*`·`BASELINE_FAILED`·`NO_FEASIBLE_DESIGNS`·`SUPPORT_DEGENERATE` |
@@ -356,7 +368,7 @@ bead_doe:
 | V-BS-9 | **선택 검증**: 겹침·없는 요소·빈 단·단 번호 건너뜀·묶음 겹침·id/이름 규칙·크기 상한 → 422/413, 구간 정규화(인접 병합) | `tests/doe/test_bead_select_derive.py`, `backend/tests/test_doe_select_api.py` |
 | V-BS-10 | **렌더**: 썸네일 크기·결정적 바이트, 색 부호(깊어짐 = 파랑 채널 우세), 모든 칸 같은 V(manifest), 같은 시점(공칭 bbox), 공칭 칸 회색 | `tests/doe/test_select_render.py` |
 | V-BS-11 | **성능(slow 표지)**: 22만 노드 합성 — derive ≤ 3 s·≤ 1.5 GB, 기저 ≤ 30 s·≤ 2 GB, 안 모핑 ≤ 50 ms, 품질 ≤ 0.5 s, 썸네일 ≤ 1 s(tracemalloc·시간 기록, CI 는 기록만, 실기 체크리스트 판정) | `tests/doe/test_bead_select_perf.py` |
-| V-BS-12 | **브라우저**: 인접·seed 확장(θ 경계 14.9/15.1°)이 합성 소형 픽스처에서 정답 바닥과 같음, 구간 압축이 서버 정규화와 같은 JSON, 기저 합 u 가 워커 x_d 와 ≤ 1e-4 mm, 실행 취소 | `frontend/__tests__/bead_select.test.ts`, 픽스처 `tests/fixtures/bead_select/small/*`(생성기로 만든 결과 커밋) |
+| V-BS-12 | **브라우저**: 인접·seed 확장(θ 경계 14.9/15.1°)이 합성 소형 픽스처에서 정답 바닥과 같음, 구간 압축이 서버 정규화와 같은 JSON, 기저 합 u 가 워커 x_d 와 ≤ 1e-4 mm, 실행 취소 | `frontend/__tests__/bead_select.test.ts`·`bead_select_fixture.test.ts`(select.bin layout 채움·basis.json `vars` — n_elems 4의 배수 아님), 픽스처 `tests/fixtures/bead_select/*`(코어 함수로 만든 결과 커밋, 생성 `make_fixture.py`) |
 | V-BS-13 | **API**: 권한(조회·power), 순서 409(PREP_NOT_READY·SELECTION_MISSING·PREVIEW_NOT_READY), 저장 version 충돌, 선택 바꾸면 run 409 `PREVIEW_STALE`, clone 선택 복사·`SELECTION_DROPPED`, select 에 step/mesh 필드 422, paicad 비활성이어도 select 활성, view 파일 경로 탈출 거부 | `backend/tests/test_doe_select_api.py` |
 | V-BS-14 | **작업**: PREP(fixed-scan 있음/없음 → FIXED_INFO_MISSING), PREVIEW grid_manifest 가 paicad grid 형식과 같은 키, 셀 상태 매핑(SELECT_* → SKIPPED_FIXED/FAILED_MESH), RUN 이 READY 안만·이어하기(selection·basis sha 포함), 산출물 rad 사본 = 원본과 **`/NODE` 좌표 칸 외 바이트 동일**·ID 불변, 입력 폴더 불변 | `worker/tests/test_doe_select_jobs.py` |
 | V-BS-15 | **E2E**: 합성 메시를 Case 로 등록 + 자기평형 ESL 2개 → 선택(API) → 미리보기 → 실행 → D1 깊어질수록 score 단조 감소, 보고서·받기·VD 진입 가능 | `worker/tests/test_doe_select_e2e.py` |
@@ -391,13 +403,13 @@ bead_doe:
 | R-BS-7 | v0.14.0 과 같은 파일 동시 수정 충돌 | 착수 = v0.14.0 병합 후(§17), `mesh_quality` 는 추가만 |
 | R-BS-8 | 선형 기저(작은 변형 가정) — 큰 깊이 변화에서 법선 방향 고정 이동이 실제 설계 의도와 다를 수 있음 | 범위 기본 ±30 %, 단면 미니 그림으로 결과 형상을 사전 확인 |
 
-## 19. 사용자에게 물을 결정 (≤ 3, 권장안으로 작성됨)
+## 19. 결정 질문 — **확정: A/A/A (2026-11-04 사용자)**
 
-| # | 질문 | 선택지 | 권장 |
+| # | 질문 | 확정 | 내용 |
 |---|---|---|---|
-| Q1 | 폭 W 를 바꿀 때 단 바닥은? | **A** 바닥도 같이 넓어짐(단면 평행 이동, 사면 각 유지 — `floor_follow 1`) / B 바닥 고정(상판 개구만, 사면 각이 변함) | **A** — 설계 폭 변경 의미에 가깝고 사면 각이 유지돼 품질 실패가 적음. B 는 설정 키·비드별 칸으로 남김 |
-| Q2 | ③ STEP 스터디의 재메싱 → 모핑 전환 | **A** 별도 계약(v0.16.0) — 이 엔진을 메시 출처 무관하게 만들어 둠 / B 이 계약에 포함 | **A** — 변수 출처(paicad)·재메싱 폴백·잡음 정책이 달라 범위가 두 배, v0.14.0 gmsh 변경과 겹침(§13) |
-| Q3 | 위치 이동(U/V, 경로 수직 평행 이동) | **A** 보류(후속) / B v0.15.0 포함(경로 수직 방향 평행 이동 1변수, 블렌딩 = 폭과 같은 방식) | **A** — 경로형 비드 이동은 블렌딩 범위가 커서 품질·고정 침범 스킵이 많고, 1차 효과는 깊이·폭이 큼 |
+| Q1 | 폭 W 를 바꿀 때 단 바닥은? | **A** | 바닥도 같이 넓어짐(단면 평행 이동, 사면 각 유지 — `floor_follow 1` 기본). B(바닥 고정)는 설정 키·비드별 칸으로 남김 (`docs/decisions.md` D-0.15-Q1) |
+| Q2 | ③ STEP 스터디의 재메싱 → 모핑 전환 | **A** | 별도 계약(v0.16.0) — 이 엔진은 메시 출처 무관하게 둠(§13) (D-0.15-Q2) |
+| Q3 | 위치 이동(U/V) | **A** | 보류(후속) — 데이터 모델 `type` 자리만(BS-D-16) (D-0.15-Q3) |
 
 ## 20. 후속
 - 위치 이동 U/V, 단별 폭, 끝단 길이 변수, 경로 일부 구간만 바꾸기(경로 매개변수 구간 변수).
