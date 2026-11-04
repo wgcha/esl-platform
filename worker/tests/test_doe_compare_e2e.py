@@ -158,8 +158,11 @@ def test_compare_failures_and_case_reference(client, engine, worker, esl_root, i
     g = study(client, s["id"])
     st = {x["id"]: x for x in g["prep"]["shapes"]}
     assert g["prep"]["reference_source"] == "case" and st["d000"]["name"] == "Case 메시" and st["d000"]["status"] == "READY"
-    assert st["d002"]["status"] == "FAILED_MESH" and st["d002"]["code"] == "MESH_FAILED"
-    assert g["prep"]["failed"] == [{"id": "d002", "status": "FAILED_MESH", "code": "MESH_FAILED"}]
+    # v0.16.0 기본 auto(C2-D-9·18): cad 실패 → 사다리(세분화·재메시)까지 실패 → code = 재메시 코드 + cad_error(§4)
+    assert st["d002"]["status"] == "FAILED_MESH" and st["d002"]["code"].startswith("REMESH_"), st["d002"]
+    assert st["d002"]["cad_error"]["code"] == "MESH_FAILED" and st["d002"]["attempts"][0]["stage"] == "cad"
+    assert g["prep"]["failed"] == [{"id": "d002", "status": "FAILED_MESH", "code": st["d002"]["code"]}]
+    assert st["d001"]["mesh_method"] == "cad" and st["d000"]["mesh_method"] == "mesh_input"
     assert any(w["code"] == "COMPARE_REF_CASE_MESH" for w in g["prep"]["warnings"])
     r = api(client, "POST", f"/doe/studies/{s['id']}/run", json={"version": g["version"]})
     run_job(client, worker, r.json()["job"]["id"])
@@ -172,6 +175,78 @@ def test_compare_failures_and_case_reference(client, engine, worker, esl_root, i
     s2 = create(client, s1["entry_ids"], [{"upload_id": uid, "rel": "rad/junk.step", "name": "기준(망가짐)", "reference": True},
                                           {"upload_id": uid, "rel": "rad/bead1.step", "name": "B1"}])
     j = run_job(client, worker, s2["job"]["id"], expect="FAILED")
-    assert j["failure_code"] == "MESH_FAILED" and study(client, s2["id"])["phase"] == "FAILED"
+    assert j["failure_code"].startswith("REMESH_") and study(client, s2["id"])["phase"] == "FAILED"
     assert [x["state"] for x in j["steps"]][:2] == ["SUCCEEDED", "FAILED"]
     assert len([c for c in calls(exe) if c["cmd"] != "version"]) == 0
+
+
+def _mesh_files(esl_root: Path, sid: str, ids) -> dict[str, bytes]:
+    """④ 산출물 best/<did>/ch_r.rad 를 메시 형상 업로드용으로(업로드 안 rel = rad/<did>.rad)."""
+    return {f"rad/{did}.rad": (esl_root / "_doe" / sid / "best" / did / "ch_r.rad").read_bytes() for did in ids}
+
+
+def _ratios(res: dict) -> dict:
+    return {x["id"]: (x["score"], {p["entry_id"]: p["ratio"] for p in x["per_esl"]}) for x in res["ranking"]}
+
+
+def test_compare_mesh_input_e2e_equivalent(client, engine, worker, esl_root, inputs_root, exe, tmp_path, settings_dict):
+    """V-C2-7: STEP 3개 ④ → 각 best/<did>/ch_r.rad 를 메시 형상으로 다시 올려 ④ → 순위·score·ESL별 ratio 1e-9 안 동일
+    (gmsh 단계 생략, mesh_method mesh_input, 업로드 원본 불변). 혼합(기준 메시 + STEP 2) → 같은 순위 + COMPARE_MESH_METHOD_MIXED."""
+    s1 = make_s1(engine, esl_root, inputs_root, kinds=(("bend", 2.0), ("twist", 1.5)))
+    files = steps(tmp_path, [("flat", 0, {}), ("bead1", 1, {}), ("bead2", 2, {})])
+    uid = upload_files(client, files)
+    names = {"rad/flat.step": "기준", "rad/bead1.step": "비드 1", "rad/bead2.step": "비드 2"}
+    s = create(client, s1["entry_ids"], [{"upload_id": uid, "rel": r, "name": n, "reference": r == "rad/flat.step"}
+                                         for r, n in names.items()])
+    run_job(client, worker, s["job"]["id"])
+    r = api(client, "POST", f"/doe/studies/{s['id']}/run", json={"version": study(client, s["id"])["version"]})
+    run_job(client, worker, r.json()["job"]["id"])
+    res_step = api(client, "GET", f"/doe/studies/{s['id']}/results").json()
+    want = _ratios(res_step)
+    assert list(want) == ["d002", "d001"]
+    # 메시 형상 3개(같은 업로드 세션, rel 로 주 파일 지정)
+    mfiles = _mesh_files(esl_root, s["id"], ("d000", "d001", "d002"))
+    muid = upload_files(client, mfiles)
+    up_root = Path(settings_dict["storage"]["upload_root"])
+    up_before = tree(up_root)
+    ms = create(client, s1["entry_ids"], [{"upload_id": muid, "rel": f"rad/{d}.rad", "name": n, "source": "mesh",
+                                           "reference": d == "d000"}
+                                          for d, n in (("d000", "기준"), ("d001", "비드 1"), ("d002", "비드 2"))])
+    j = run_job(client, worker, ms["job"]["id"])
+    log = client.get(f"{API}/jobs/{ms['job']['id']}/log", params={"step": 2}, headers=R).text
+    assert "메시 입력(파트 1" in log and "gmsh -" in log                    # gmsh 확인 생략(STEP 형상 없음)
+    g = study(client, ms["id"])
+    assert all(x["status"] == "READY" and x["source"] == "mesh" and x["mesh_method"] == "mesh_input" and x["part_id"] == 1
+               for x in g["prep"]["shapes"]), g["prep"]["shapes"]
+    assert all(x["edge_median_mm"] > 0 and x["n_components"] == 1 for x in g["prep"]["shapes"])
+    assert not any(w["code"] == "COMPARE_MESH_METHOD_MIXED" for w in g["prep"]["warnings"])
+    r = api(client, "POST", f"/doe/studies/{ms['id']}/run", json={"version": g["version"]})
+    run_job(client, worker, r.json()["job"]["id"])
+    res_mesh = api(client, "GET", f"/doe/studies/{ms['id']}/results").json()
+    got = _ratios(res_mesh)
+    assert list(got) == list(want)
+    for did, (sc_, rr) in want.items():
+        assert abs(got[did][0] - sc_) <= 1e-9 and rr.keys() == got[did][1].keys()
+        assert all(abs(got[did][1][e] - v) <= 1e-9 for e, v in rr.items())
+    assert res_mesh["ranking"][0]["shape"]["source"] == "mesh" and res_mesh["ranking"][0]["shape"]["mesh_method"] == "mesh_input"
+    ddir = esl_root / "_doe" / ms["id"]
+    assert (ddir / "input" / "shapes" / "d001" / "rad" / "d001.rad").is_file()
+    assert (ddir / "prep" / "shapes" / "d001" / "mesh" / "id_map.npz").is_file()
+    assert (ddir / "best" / "d001" / "ch_r.rad").is_file()
+    assert tree(up_root) == up_before                                         # 원본 업로드 불변
+    # 혼합: 기준 = 메시, 나머지 STEP 2 → 같은 순위, 방식 혼합 경고
+    xs = create(client, s1["entry_ids"], [{"upload_id": muid, "rel": "rad/d000.rad", "name": "기준", "source": "mesh",
+                                           "reference": True},
+                                          {"upload_id": uid, "rel": "rad/bead1.step", "name": "비드 1"},
+                                          {"upload_id": uid, "rel": "rad/bead2.step", "name": "비드 2"}])
+    run_job(client, worker, xs["job"]["id"])
+    g = study(client, xs["id"])
+    assert any(w["code"] == "COMPARE_MESH_METHOD_MIXED" for w in g["prep"]["warnings"])
+    assert {x["id"]: x["mesh_method"] for x in g["prep"]["shapes"]} == {"d000": "mesh_input", "d001": "cad", "d002": "cad"}
+    r = api(client, "POST", f"/doe/studies/{xs['id']}/run", json={"version": g["version"]})
+    run_job(client, worker, r.json()["job"]["id"])
+    res_mix = api(client, "GET", f"/doe/studies/{xs['id']}/results").json()
+    gm = _ratios(res_mix)
+    assert list(gm) == list(want)
+    assert all(abs(gm[d][0] - want[d][0]) <= 1e-9 for d in want)
+    assert any(w["code"] == "COMPARE_MESH_METHOD_MIXED" for w in res_mix["warnings"])

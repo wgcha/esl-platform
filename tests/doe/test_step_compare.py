@@ -216,7 +216,8 @@ def test_compare_pipeline_frame_fixed(tmp_path):
     assert rk == ["d002", "d001"], [(x["id"], x["score"]) for x in res["ranking"]]
     s1, s2 = (next(x for x in res["ranking"] if x["id"] == d)["score"] for d in ("d001", "d002"))
     assert s2 < s1 < 1.0
-    assert res["ranking"][0]["shape"] == {"name": "비드 2", "file_name": "p2.step", "reference": False}
+    assert res["ranking"][0]["shape"] == {"name": "비드 2", "file_name": "p2.step", "reference": False,
+                                          "source": "step", "mesh_method": "cad"}      # v0.16.0 §3 새 키(source·mesh_method)
     assert res["baseline"]["shape"]["name"] == "기준 평판" and res["ranking"][0]["values"] == {}
     assert res["sensitivity"] is None and res["sensitivity_reason"] == "COMPARE_NO_PARAMS" and res["noise_floor"] is None
     assert res["n_failed"]["size"] == 1 and res["scenario"] == "compare" and res["reference_source"] == "step"
@@ -273,7 +274,11 @@ def test_case_reference(tmp_path):
         assert stg.run_stage(spec("bd_eval", design=did), lambda m: None)["status"] == "OK"
     res = stg.run_stage(spec("bd_post"), lambda m: None)["result"]
     assert res["reference_source"] == "case" and any(str(w).startswith("COMPARE_REF_CASE_MESH") for w in res["warnings"])
-    assert res["baseline"]["shape"] == {"name": "Case 메시", "file_name": None, "reference": True, "source": "case"}
+    assert res["baseline"]["shape"] == {"name": "Case 메시", "file_name": None, "reference": True, "source": "case",
+                                        "mesh_method": "mesh_input"}        # v0.16.0 C2-D-10: Case 기준 = mesh_input(source 로 구분)
+    # C2-D-1(v0.16.0 Verifier Med 1): {cad, Case 메시} 만이면 COMPARE_REF_CASE_MESH 와 겹치므로 MIXED 없음
+    assert not any(str(w).startswith("COMPARE_MESH_METHOD_MIXED") for w in res["warnings"])
+    assert not any(str(w).startswith("COMPARE_MESH_METHOD_MIXED") for w in r["bd_mesh0"]["warnings"])
     html = (out / "report.html").read_text(encoding="utf-8")
     assert "COMPARE_REF_CASE_MESH" in html and "첫 ESL Case 메시" in html
     assert sc.tree_stamp(str(case)) == stamp
@@ -367,3 +372,303 @@ def test_compare_sphere_fallback_recorded(tmp_path):
     from esl.doe import report_doe as rd
     html = rd.render_compare({"study": {"id": "C2"}, "shapes": cmp["shapes"], "profile": cmp["profile"]})
     assert "폴백 면 1개(id " in html and "OCC 정리 끔(그 면만)" in html
+
+
+# ---------------------------------------------------------------- v0.16.0 메시 방식 사다리(esl_compare_mesh_options.md V-C2-3·13·15·16)
+def _two(tmp_path, sid: str, **doe_kw):
+    """기준 평판 d000 + 비드 1 d001 ④ doe dict(STEP 2개)."""
+    _a, ents = _lib(tmp_path / "lib")
+    up = tmp_path / "up"
+    paths = [scmp.plate_step(up / f"u{k}" / f"p{k}.step", k, Lx=LX, Lz=LZ, depth=5.0) for k in range(2)]
+    shapes = [{"id": f"d{k:03d}", "name": n, "file_name": os.path.basename(p), "path": p, "reference": k == 0,
+               "sha256": U.sha256_file(p)} for k, (n, p) in enumerate(zip(("평판", "비드"), paths))]
+    doe = {"id": sid, "scenario": "compare", "title": "④ 사다리", "cfg": _cfg(), "entries": ents, "shapes": shapes,
+           "reference_source": "step", "inch": 75, "props": PROPS, **doe_kw}
+    return doe, up
+
+
+def _inject_cad_fail(monkeypatch, ids, code="MESH_FAILED", err=None):
+    """cad 시도(stages._cmp_mesh_one)만 실패 주입 — 사다리 다음 단계는 실제 gmsh(시험용 monkeypatch, 설정 키 아님)."""
+    real = stg._cmp_mesh_one
+
+    def fake(c, row, h, ccfg, props, *, fail_info=False, timeout_s=None):
+        if row["id"] in ids:
+            d = stg._cmp_mesh_dir(c, row["id"])
+            c.writer.makedirs(d)
+            if err is not None:
+                U.write_json(os.path.join(d, mg.MESH_ERROR), err)
+            return {"id": row["id"], "status": "FAILED_MESH", "code": code, "message": "주입된 CAD 실패"}
+        return real(c, row, h, ccfg, props, fail_info=fail_info, timeout_s=timeout_s)
+    monkeypatch.setattr(stg, "_cmp_mesh_one", fake)
+
+
+def _shape(out, did):
+    return next(x for x in U.read_json(str(out / "prep" / "compare.json"))["shapes"] if x["id"] == did)
+
+
+@needs_gmsh
+def test_mesh_mode_auto_cad_ok_bytes_equal_cad(tmp_path):
+    """V-C2-3·8·15: cad 가 성공하는 auto = mode cad 와 mesh.npz·loads.npz·base_mesh.npz 바이트 동일, 사다리 미진입(시도 폴더·
+    size_fields·refine 없음), input_sha256 은 cad(=v0.15.x)만 불변."""
+    doe, _up = _two(tmp_path, "A0")
+    outs = {}
+    for mode in ("cad", "auto"):
+        out = tmp_path / "_doe" / mode
+        kw = {} if mode == "cad" else {"mesh_mode": "auto"}
+        r, spec = _run(out, {**doe, **kw})
+        outs[mode] = (out, spec)
+        for did in ("d000", "d001"):
+            s = _shape(out, did)
+            assert s["status"] == "READY" and s["mesh_method"] == "cad" and "refine" not in s and "cad_error" not in s
+            md = out / "prep" / "shapes" / did / "mesh"
+            assert not [p for p in os.listdir(md) if p.startswith("try_")]
+            assert "size_fields" not in U.read_json(str(md / "mesh.json"))
+    (oc, sc_), (oa, sa) = outs["cad"], outs["auto"]
+    for rel in ("prep/shapes/d000/mesh/mesh.npz", "prep/shapes/d001/mesh/mesh.npz", "prep/loads.npz", "prep/base_mesh.npz"):
+        assert (oc / rel).read_bytes() == (oa / rel).read_bytes(), rel
+    cmp_c = U.read_json(str(oc / "prep" / "compare.json"))
+    assert "mesh_mode" not in cmp_c and U.read_json(str(oa / "prep" / "compare.json"))["mesh_mode"] == "auto"
+    # 이어하기 해시: cad 는 v0.15.x 와 같은 키 구성(mesh_mode 없음 = cad), auto 는 사다리 설정이 들어가 다름
+    h_cad = stg.design_sha(stg.Ctx(sc_("bd_eval", design="d001")), "d001")
+    h_auto = stg.design_sha(stg.Ctx(sa("bd_eval", design="d001")), "d001")
+    assert h_cad != h_auto
+    assert stg.design_sha(stg.Ctx(sc_("bd_eval", design="d001", mesh_mode="cad")), "d001") == h_cad
+
+
+@needs_gmsh
+def test_mesh_mode_auto_fallback_and_too_large(tmp_path, monkeypatch):
+    """V-C2-3: cad MESH_FAILED 주입 → 재메시 폴백(method fallback·REMESH_USED·cad_error·fidelity, 성공본 mesh/ 로 교체, 시도 폴더
+    삭제). cad MESH_TOO_LARGE 주입 → 폴백 없음."""
+    doe, up = _two(tmp_path, "A1", mesh_mode="auto", mesh_ladder=["cad", "remesh"])
+    stamp = sc.tree_stamp(str(up))
+    _inject_cad_fail(monkeypatch, {"d001"})
+    out = tmp_path / "_doe" / "A1"
+    r, spec = _run(out, doe)
+    s = _shape(out, "d001")
+    assert s["status"] == "READY" and s["mesh_method"] == "fallback", s
+    assert s["cad_error"] == {"code": "MESH_FAILED", "message": "주입된 CAD 실패"}
+    assert s["fidelity"]["hausdorff_mm"] >= 0 and "area_ratio" in s["fidelity"]
+    assert [a["stage"] for a in s["attempts"]] == ["cad", "remesh"] and s["attempts"][-1]["status"] == "READY"
+    md = out / "prep" / "shapes" / "d001" / "mesh"
+    assert (md / "mesh.npz").is_file() and not (md / "mesh_error.json").exists()
+    assert not [p for p in os.listdir(md) if p.startswith("try_")]
+    mj = U.read_json(str(md / "mesh.json"))
+    assert mj["method"] == "remesh" and mj["mesh_method"] == "fallback"
+    ws = r["bd_mesh0"]["warnings"]
+    assert any(w.startswith("REMESH_USED") and "주입된 CAD 실패" in w and "d001" in w for w in ws)
+    assert any(w.startswith("COMPARE_MESH_METHOD_MIXED") for w in ws)
+    assert _shape(out, "d000")["mesh_method"] == "cad"
+    # 결과 shape·ranking.csv·보고서
+    for did in ("d000", "d001"):
+        assert stg.run_stage(spec("bd_eval", design=did), lambda m: None)["status"] == "OK"
+    res = stg.run_stage(spec("bd_post"), lambda m: None)["result"]
+    x = res["ranking"][0]
+    assert x["shape"]["mesh_method"] == "fallback" and x["shape"]["source"] == "step" and "fidelity" in x["shape"]
+    assert any(str(w).startswith("REMESH_USED") for w in res["warnings"])
+    csv = (out / "post" / "ranking.csv").read_text(encoding="utf-8").splitlines()
+    assert csv[0].endswith(",source,mesh_method,hausdorff_mm,refine_h_mm,elem_ratio_ref")
+    assert any(ln.startswith("d001,1,OK") and ",step,fallback," in ln for ln in csv)
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "재메시(폴백)" in html and "REMESH_USED" in html and "CAD 면 구조를 버린 근사" in html
+    assert sc.tree_stamp(str(up)) == stamp
+    # MESH_TOO_LARGE(사용자 상한) → 폴백 없음
+    _inject_cad_fail(monkeypatch, {"d001"}, code="MESH_TOO_LARGE")
+    out2 = tmp_path / "_doe" / "A2"
+    _run(out2, {**doe, "id": "A2"}, stages=("bd_input", "bd_mesh0"))
+    s2 = _shape(out2, "d001")
+    assert s2["status"] == "FAILED_MESH" and s2["code"] == "MESH_TOO_LARGE" and "attempts" not in s2
+
+
+def _face_key(path):
+    """시험용: STEP 을 ④ 가져오기 옵션으로 읽어 가장 큰 면의 bbox 키·넓이와 전체 넓이."""
+    import gmsh
+    cfg = sc.compare_cfg(settings({"bead_doe": _cfg()["bead_doe"]}))
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("Geometry.OCCSewFaces", int(cfg["mesh"].get("occ_sew_faces", 0)))
+        for k, v in mg.geometry_options(cfg["mesh"]).items():
+            gmsh.option.setNumber(k, v)
+        gmsh.model.occ.importShapes(str(path))
+        gmsh.model.occ.synchronize()
+        ar = {t: gmsh.model.occ.getMass(2, t) for _d, t in gmsh.model.getEntities(2)}
+        big = max(ar, key=lambda t: (ar[t], -t))
+        small = min(ar, key=lambda t: (ar[t], t))
+        return list(mg._bbox_key(gmsh, 2, small)), float(ar[small]), float(sum(ar.values())), big
+    finally:
+        gmsh.finalize()
+
+
+@needs_gmsh
+def test_mesh_refine_local_then_global(tmp_path, monkeypatch):
+    """V-C2-13(워커 사다리): 실패 면 기록이 있으면 refine_local ×0.75 에서 성공(method refine·kind local·faces·elem_ratio_ref·
+    MESH_REFINED). 면 기록이 없으면 REFINE_LOCAL_NO_FACE 후 refine_global ×0.8 성공. 국부 요소 수 < 전역."""
+    doe, up = _two(tmp_path, "R1", mesh_mode="auto")
+    key, a_loc, A, _big = _face_key(doe["shapes"][1]["path"])
+    err = {"code": "FAILED_MESH", "message": "x", "face": {"id": 7, "type": "Plane", "center": [0, 0, 0], "key": key},
+           "geom": {"area_mm2": A, "n_faces": 9, "local_area_mm2": a_loc * 3, "local_faces": 3}}
+    _inject_cad_fail(monkeypatch, {"d001"}, err=err)
+    out = tmp_path / "_doe" / "R1"
+    r, _spec = _run(out, doe, stages=("bd_input", "bd_mesh0"))
+    s = _shape(out, "d001")
+    rf = s["refine"]
+    assert s["status"] == "READY" and s["mesh_method"] == "refine" and rf["kind"] == "local", s
+    assert rf["factor"] == 0.75 and rf["h_mm"] == pytest.approx(0.75 * H) and rf["base_h_mm"] == H
+    assert rf["faces"] and all(isinstance(f["bbox_key"], str) and f["ring"] in (0, 1) for f in rf["faces"])
+    assert rf["elem_ratio_ref"] == pytest.approx(s["n_elems"] / _shape(out, "d000")["n_elems"], abs=1e-4)
+    assert rf["n_est"] and rf["elem_ratio_h"] and [a["stage"] for a in rf["attempts"]] == ["cad", "refine_local"]
+    mj = U.read_json(str(out / "prep" / "shapes" / "d001" / "mesh" / "mesh.json"))
+    assert mj["refine"]["elem_ratio_ref"] == rf["elem_ratio_ref"] and mj["size_fields"]["entries"][0]["faces"]
+    assert any(w.startswith("MESH_REFINED") and "국부 세분화" in w and f"h {0.75 * H:g} mm" in w for w in r["bd_mesh0"]["warnings"])
+    n_local = s["n_elems"]
+    # 면 기록 없음 → 국부 건너뜀(info) → 전역 ×0.8
+    _inject_cad_fail(monkeypatch, {"d001"}, err=None)
+    out2 = tmp_path / "_doe" / "R2"
+    r2, _ = _run(out2, {**doe, "id": "R2"}, stages=("bd_input", "bd_mesh0"))
+    s2 = _shape(out2, "d001")
+    assert s2["mesh_method"] == "refine" and s2["refine"]["kind"] == "global" and s2["refine"]["h_mm"] == pytest.approx(0.8 * H)
+    assert [a["stage"] for a in s2["attempts"]] == ["cad", "refine_local", "refine_global"]
+    assert s2["attempts"][1]["skipped"] and s2["attempts"][1]["reason"] == "no_face"
+    assert any(i.startswith("REFINE_LOCAL_NO_FACE") for i in r2["bd_mesh0"]["info"])
+    assert n_local < s2["n_elems"]
+    # 상한(V-C2-14): refine.max_elems 를 아주 작게 → 세분화 모두 건너뜀(REFINE_SKIPPED_LIMIT elems) → remesh
+    cfg3 = _cfg()
+    cfg3["bead_doe"]["compare"]["refine"] = {"max_elems": 300000}
+    cfg3["bead_doe"]["mesh"]["max_elems"] = 300000
+    _inject_cad_fail(monkeypatch, {"d001"}, err={**err, "geom": {**err["geom"], "area_mm2": A * 1e4}})
+    out3 = tmp_path / "_doe" / "R3"
+    r3, _ = _run(out3, {**doe, "id": "R3", "cfg": cfg3}, stages=("bd_input", "bd_mesh0"))
+    s3 = _shape(out3, "d001")
+    assert s3["mesh_method"] == "fallback", s3["attempts"]
+    assert {a["reason"] for a in s3["attempts"] if a.get("skipped")} == {"elems"}
+    assert any(i.startswith("REFINE_SKIPPED_LIMIT") and "elems" in i for i in r3["bd_mesh0"]["info"])
+
+
+def _fake_iso(monkeypatch, did, *, hang=False, other_timeout=None):
+    """시험용: 형상 did(시도 폴더 prep/shapes/<did>/mesh…) 의 run_isolated 를 모두 실패로 바꿈(hang = 제한 시간만큼 멈춘 뒤 시간 초과, 아니면 즉시 크래시).
+    다른 형상은 실제 gmsh(other_timeout 이 있으면 그 제한 시간으로). 반환 = 호출 기록 [{kind, timeout, t0, t1}]."""
+    import time
+    real = mg.run_isolated
+    calls: list[dict] = []
+
+    def fake(src, out_dir, h, cfg, props, *, timeout_s=None, kind="cad", **kw):
+        if f"{os.sep}shapes{os.sep}{did}{os.sep}" not in os.path.abspath(str(out_dir)) + os.sep:
+            return real(src, out_dir, h, cfg, props, timeout_s=other_timeout or timeout_s, kind=kind, **kw)
+        to = float(timeout_s if timeout_s is not None else cfg["mesh"]["timeout_s"])
+        t0 = time.monotonic()
+        if hang:
+            time.sleep(to)
+        calls.append({"kind": kind, "timeout": to, "t0": t0, "t1": time.monotonic()})
+        raise EslError("REMESH_FAILED" if kind == "remesh" else "FAILED_MESH",
+                       f"{kind} 주입 {'시간 초과' if hang else '크래시'}")
+    monkeypatch.setattr(mg, "run_isolated", fake)
+    return calls
+
+
+@needs_gmsh
+def test_ladder_time_budget_without_area(tmp_path, monkeypatch):
+    """Verifier Med 3: cad 가 시간 초과(넓이 기록 없음 → n_est 없음)여도 누적 예산 refine.total_timeout_s 로 판정. 시도마다
+    제한 시간 = min(mesh.timeout_s, 남은 예산), 예산이 다 되면 남은 세분화·remesh 는 REFINE_SKIPPED_LIMIT(time). 총 시간 ≤ 예산."""
+    budget, to = 1.0, 0.4
+    cfg = _cfg()
+    cfg["bead_doe"]["mesh"]["timeout_s"] = to
+    cfg["bead_doe"]["compare"]["refine"] = {"total_timeout_s": budget}
+    doe, _up = _two(tmp_path, "T1", mesh_mode="auto", cfg=cfg)
+    calls = _fake_iso(monkeypatch, "d001", hang=True, other_timeout=600)
+    out = tmp_path / "_doe" / "T1"
+    r, _ = _run(out, doe, stages=("bd_input", "bd_mesh0"))
+    s = _shape(out, "d001")
+    assert s["status"] == "FAILED_MESH" and s["cad_error"]["message"] == "cad 주입 시간 초과", s
+    assert [c["kind"] for c in calls] == ["cad", "cad", "cad"]          # cad + 전역 ×0.8 + ×0.667(남은 0.2 s)
+    assert calls[0]["timeout"] == pytest.approx(to) and calls[1]["timeout"] == pytest.approx(to)
+    assert calls[2]["timeout"] < to                                      # 남은 예산으로 줄임
+    assert sum(c["timeout"] for c in calls) <= budget + 1e-6
+    assert calls[-1]["t1"] - calls[0]["t0"] <= budget + 0.5               # 총 시간 ≤ 예산(+ 프로세스 밖 여유)
+    att = s["attempts"]
+    assert [a["stage"] for a in att] == ["cad", "refine_local", "refine_global", "refine_global", "remesh"]
+    assert att[1]["reason"] == "no_face" and att[-1]["skipped"] and att[-1]["reason"] == "time"
+    assert any(i.startswith("REFINE_SKIPPED_LIMIT") and "remesh" in i and "time" in i for i in r["bd_mesh0"].get("info") or [])
+    # check_limits 단위: n_est 없어도 누적 시간이 예산 이상이면 time
+    from esl.doe import mesh_refine as mr
+    c2 = {"compare": {"refine": {"total_timeout_s": 10}}}
+    assert mr.check_limits({"n_est": None}, c2, None, 10.0) == "time"
+    assert mr.check_limits({"n_est": None}, c2, None, 9.0) is None
+    assert mr.attempt_timeout(1800, c2, 7.5) == pytest.approx(2.5) and mr.attempt_timeout(1, c2, 0) == 1.0
+
+
+@needs_gmsh
+def test_ladder_all_fail_reference_message_and_tries(tmp_path, monkeypatch):
+    """Verifier Med 2·Low: 기준 d000 이 사다리 전부 실패 → 작업 실패 메시지에 CAD 원 오류와 마지막 오류. 시도 폴더는 마지막
+    것만 남음(keep_tries false), keep_tries true 면 모두 남음."""
+    doe, _up = _two(tmp_path, "F1", mesh_mode="auto")
+    _fake_iso(monkeypatch, "d000")
+    with pytest.raises(EslError) as ei:
+        _run(tmp_path / "_doe" / "F1", doe, stages=("bd_input", "bd_mesh0"))
+    assert ei.value.code == "REMESH_FAILED"
+    assert ei.value.message == "기준 형상 메시 실패: CAD 메시 실패: cad 주입 크래시 → 세분화·재메시도 실패: remesh 주입 크래시"
+    md = tmp_path / "_doe" / "F1" / "prep" / "shapes" / "d000" / "mesh"
+    assert sorted(p for p in os.listdir(md) if p.startswith("try_")) == ["try_3"]      # 전역 ×0.8·×0.667·remesh 중 마지막
+    cfg = _cfg()
+    cfg["bead_doe"]["compare"]["mesh"]["keep_tries"] = True
+    with pytest.raises(EslError):
+        _run(tmp_path / "_doe" / "F2", {**doe, "id": "F2", "cfg": cfg}, stages=("bd_input", "bd_mesh0"))
+    md2 = tmp_path / "_doe" / "F2" / "prep" / "shapes" / "d000" / "mesh"
+    assert sorted(p for p in os.listdir(md2) if p.startswith("try_")) == ["try_1", "try_2", "try_3"]
+    # 문구 함수: cad_error 없으면 원 message, 모두 건너뛰면 사유
+    assert stg._ladder_fail_text({"message": "m"}) == "m"
+    assert stg._ladder_fail_text({"message": "m", "cad_error": {"code": "MESH_FAILED", "message": "c"},
+                                  "attempts": [{"stage": "remesh", "skipped": True, "reason": "time"}]}) == \
+        "CAD 메시 실패: c → 세분화·재메시는 건너뜀(time)"
+
+
+@needs_gmsh
+def test_refine_convergence_check(tmp_path, monkeypatch):
+    """V-C2-16: 세분화 형상(전역 h_r) → BD_POST 가 기준 d000 을 h_r 로 다시 메시·해석(run/designs/d000_h<h>/), ESL별 δ 기록,
+    tol 경계에서 MESH_REFINE_BIAS, same_h_baseline 개선율, 캐시 재사용, Case 기준이면 생략 info."""
+    doe, _up = _two(tmp_path, "V1", mesh_mode="auto", mesh_ladder=["cad", "refine_global"])
+    _inject_cad_fail(monkeypatch, {"d001"})
+    out = tmp_path / "_doe" / "V1"
+    _r, spec = _run(out, doe)
+    assert _shape(out, "d001")["mesh_method"] == "refine"
+    hr = 0.8 * H
+    for did in ("d000", "d001"):
+        assert stg.run_stage(spec("bd_eval", design=did), lambda m: None)["status"] == "OK"
+    logs: list[str] = []
+    ret = stg.run_stage(spec("bd_post"), logs.append)
+    res = ret["result"]
+    b = res["refine_bias"]["d001"]
+    assert b["h_mm"] == pytest.approx(hr) and len(b["per_esl"]) == 2 and b["delta_max"] >= 0
+    assert all(p["delta"] == pytest.approx(p["C_hr"] / p["C_h"] - 1.0) for p in b["per_esl"])
+    assert (out / "run" / "designs" / f"d000_h{hr:g}" / "result.json").is_file()
+    assert any(f"수렴 점검 d000 h {hr:g} mm" in ln for ln in logs)
+    row = next(x for x in res["ranking"] if x["id"] == "d001")
+    assert row["shape"]["refine_bias"]["h_mm"] == pytest.approx(hr) and row["shape"]["refine"]["kind"] == "global"
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "수렴 점검" in html and "세분화(전역" in html and "메시 의존 오차" in html
+    dmax = b["delta_max"]
+    # tol 경계: tol < δ → 경고, tol > δ → 없음. 캐시 재사용(같은 h_r, 판정 설정만 다름)
+    for tol, want in ((dmax * 0.5, True), (dmax * 2.0 + 1e-9, False)):
+        cfg = _cfg()
+        cfg["bead_doe"]["compare"]["refine"] = {"convergence": {"tol": tol, "same_h_baseline": True}}
+        logs = []
+        res2 = stg.run_stage(spec("bd_post", cfg=cfg), logs.append)["result"]
+        assert any("이전 결과 재사용" in ln for ln in logs)
+        assert any(str(w).startswith("MESH_REFINE_BIAS") for w in res2["warnings"]) is want
+        b2 = res2["refine_bias"]["d001"]
+        assert b2["over_tol"] is want and b2["tol"] == pytest.approx(tol)
+        assert b2["improvement_same_h"] == pytest.approx(1.0 - b2["score_same_h"])
+        assert next(x for x in res2["ranking"] if x["id"] == "d001")["improvement_same_h"] == b2["improvement_same_h"]
+    # 캐시 키에 gmsh·occ 버전(Verifier Low): 버전이 바뀌면 재사용하지 않고 다시 메시·해석
+    from esl.doe import mesh_remesh
+    v0 = mesh_remesh.build_versions()
+    assert v0["gmsh"] == mg.available()[1] and v0["occ"]
+    monkeypatch.setattr(mesh_remesh, "build_versions", lambda: {**v0, "occ": "0.0.0-test"})
+    logs = []
+    stg.run_stage(spec("bd_post"), logs.append)
+    assert not any("이전 결과 재사용" in ln for ln in logs) and any(f"수렴 점검 d000 h {hr:g} mm · 요소" in ln for ln in logs)
+    # Case 기준·메시 입력 기준 → 다시 메시할 수 없어 생략(info)
+    c = stg.Ctx(spec("bd_post"))
+    doc = {"reference_source": "case", "shapes": [{"id": "d000", "source": "case"},
+                                                  {"id": "d001", "name": "b", "mesh_method": "refine", "refine": {"h_mm": 4}}]}
+    bias, w, info = stg._cmp_refine_bias(c, None, doc, [{"id": "d001", "status": "OK"}], 1e-6, lambda m: None)
+    assert bias == {} and w == [] and info[0].startswith("REFINE_CONVERGENCE_SKIPPED")

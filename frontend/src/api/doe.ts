@@ -2,7 +2,7 @@
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeDeriveOut, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
-  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
 
@@ -107,6 +107,19 @@ function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCom
     max_shapes: num(v.max_shapes, d.max_shapes),
     total_max_mb: num(v.total_max_mb, d.total_max_mb),
     mesh_size_mm: num(v.mesh_size_mm, d.mesh_size_mm),
+    // v0.16.0 메시 옵션 칸 — 서버가 줄 때만(옛 서버 = 없음 → 고급 설정 숨김, 메시 입력 안 받음)
+    ...(v.mesh_mode === "cad" || v.mesh_mode === "remesh" || v.mesh_mode === "auto" ? { mesh_mode: v.mesh_mode as DoeMeshMode } : {}),
+    ...(typeof v.remesh_available === "boolean" ? { remesh_available: v.remesh_available } : {}),
+    ...(isObj(v.mesh_input)
+      ? {
+          mesh_input: {
+            enabled: v.mesh_input.enabled === true,
+            formats: Array.isArray(v.mesh_input.formats) ? v.mesh_input.formats.filter((x): x is string => typeof x === "string") : [".rad", ".inc"],
+            max_mb: num(v.mesh_input.max_mb, 500),
+          },
+        }
+      : {}),
+    ...(typeof v.step_ready === "boolean" ? { step_ready: v.step_ready } : {}),
   };
 }
 
@@ -326,6 +339,20 @@ const SHAPE_CODE_TEXT: Record<string, string> = {
   MESH_TOO_LARGE: "메시 요소 수 상한 초과",
   SIZE_MISMATCH: "기준 형상과 ESL 의 크기가 다릅니다",
   SUPPORT_DEGENERATE: "지지 조건을 만들지 못했습니다",
+  // v0.16.0 메시 옵션(서버 message 가 없을 때만)
+  REMESH_FAILED: "삼각형 재메시에 실패했습니다 — 특징각을 키우거나 메시 파일로 올리세요",
+  REMESH_CLASSIFY_FAILED: "면 분류에 실패했습니다",
+  REMESH_STL_EMPTY: "STEP 에서 삼각화를 만들지 못했습니다(면 없음)",
+  REMESH_FIDELITY: "재메시가 원 형상과 너무 다릅니다",
+  REMESH_UNAVAILABLE: "이 gmsh 버전은 삼각형 재메시를 지원하지 않습니다",
+  MESH_FORMAT_UNSUPPORTED: "지원하지 않는 메시 형식입니다(.rad·.inc 만)",
+  MESH_INPUT_INVALID: "메시 파일을 읽지 못했습니다",
+  MESH_INPUT_PART_REQUIRED: "쉘 파트가 여러 개입니다 — 파트 ID 를 고르세요",
+  MESH_INPUT_PART_NOT_FOUND: "파트 ID 가 메시에 없습니다",
+  MESH_INPUT_UNSUPPORTED_ELEMENT: "파트에 쉘이 아닌 요소가 있습니다",
+  MESH_INPUT_UNIT: "메시 길이 단위가 mm 가 아닙니다",
+  MESH_INPUT_TOO_LARGE: "메시 파일(주 + include) 합계가 상한을 넘었습니다",
+  PATH_OUTSIDE_ROOT: "include 경로가 업로드 폴더 밖입니다",
 };
 export const shapeCodeText = (code: string | null | undefined) => (code ? CODE_TEXT[code] ?? SHAPE_CODE_TEXT[code] ?? code : "");
 /** 이름 규칙(§3): 앞뒤 공백 제거 1~64자, 제어문자 금지, 대소문자 무시 중복 금지 */
@@ -355,6 +382,127 @@ export function shapesProblem(shapes: { name: string }[], hasRef: boolean, maxSh
   }
   return null;
 }
+// ---------------------------------------------------------------- v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8)
+export const STEP_EXT = [".step", ".stp"];
+/** 파일 이름 → 형상 출처 기본값(확장자, §8). 그 밖 = null */
+export function shapeKindOf(file: string, meshFormats: string[] = [".rad", ".inc"]): "step" | "mesh" | null {
+  const f = file.toLowerCase();
+  if (STEP_EXT.some((x) => f.endsWith(x))) return "step";
+  if (meshFormats.some((x) => f.endsWith(x.toLowerCase()))) return "mesh";
+  return null;
+}
+/** 메시 묶음 주 파일 후보(C2-D-2 규칙 = 서버 doe_source(kind mesh)): *_0000.rad 1개 → .rad 1개 → (.rad 없으면) .inc 1개.
+ *  정해지면 [그 파일], 못 정하면 후보 전부(.rad 가 있으면 .rad, 없으면 .inc — 화면에서 고름) */
+export function meshMainCandidates(names: string[]): string[] {
+  const rad = names.filter((n) => /\.rad$/i.test(n));
+  const z = rad.filter((n) => /_0000\.rad$/i.test(n));
+  if (z.length === 1) return z;
+  if (rad.length === 1) return rad;
+  if (rad.length) return [...(z.length ? z : rad)].sort();
+  return names.filter((n) => /\.inc$/i.test(n)).sort();
+}
+/** part_id 칸 검사(빈 칸 = 서버가 파트 하나면 자동, C2-D-4) */
+export function partIdProblem(v: string): string | null {
+  const t = v.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isInteger(n) && n >= 1 && n <= 2 ** 31 - 1 ? null : "파트 ID 는 1 이상 정수입니다";
+}
+/** check-inputs 오류에 실린 파트 목록(422 MESH_INPUT_PART_REQUIRED detail.parts, detail.index) */
+export function partsFromError(e: unknown): { index: number; parts: DoeMeshPart[] } | null {
+  if (!(e instanceof ApiError) || typeof e.detail.index !== "number" || !Array.isArray(e.detail.parts)) return null;
+  return { index: e.detail.index, parts: (e.detail.parts as unknown[]).filter((p): p is DoeMeshPart => isObj(p) && typeof p.id === "number") as DoeMeshPart[] };
+}
+export const MESH_MODE_NAME: Record<DoeMeshMode, string> = { auto: "자동", cad: "CAD", remesh: "재메시" };
+export const MESH_MODE_HINT: Record<DoeMeshMode, string> = {
+  auto: "CAD 메시가 실패한 형상만 세분화 → 삼각형 재메시 순서로 다시 시도(성공한 형상은 그대로)",
+  cad: "CAD 면 구조 그대로 gmsh 메시(v0.15 방식)",
+  remesh: "모든 STEP 을 삼각형 재메시(CAD 면 구조를 버림 — 원 형상과 편차 표시)",
+};
+/** remesh_available false 사유(REMESH_UNAVAILABLE 문구) */
+export const remeshUnavailableText = (ver: string | null | undefined) => `이 gmsh 버전(${ver ?? "?"})은 삼각형 재메시를 지원하지 않습니다`;
+/** 메시 방식 짧은 배지(순위표·ESL별 표) */
+export const MESH_METHOD_SHORT: Record<DoeMeshMethod, string> = { cad: "CAD", refine: "세분화", remesh: "재메시", fallback: "재메시(폴백)", mesh_input: "메시 입력" };
+type MeshShape = Pick<DoePrepShape, "mesh_method" | "refine" | "fidelity"> & { cad_error?: DoePrepShape["cad_error"]; refine_bias?: DoeShapeRef["refine_bias"]; edge_median_mm?: number | null; n_components?: number | null; source?: DoePrepShape["source"] };
+const x1 = (v: number) => `×${Number(v.toFixed(2))}`;
+const mm = (v: number) => `${Number(v.toFixed(2))} mm`;
+/** '메시 방식' 열 문구(§8): CAD / 세분화(국부 ×0.5 · 1.5 mm · 면 3 · 요소 ×1.4) / 세분화(전역 2.4 mm · 요소 ×1.6) / 재메시 / 재메시(폴백) / 메시 입력 */
+export function meshMethodLabel(s: MeshShape): string {
+  const m = s.mesh_method;
+  if (!m) return "–";
+  if (m !== "refine" || !s.refine) return MESH_METHOD_SHORT[m];
+  const r = s.refine;
+  const ratio = r.elem_ratio_ref ?? r.elem_ratio_h;
+  const parts =
+    r.kind === "local"
+      ? [`국부 ${x1(r.factor)}`, mm(r.h_mm), ...(r.faces?.length ? [`면 ${r.faces.length}`] : [])]
+      : [`전역 ${mm(r.h_mm)}`];
+  if (ratio != null) parts.push(`요소 ×${ratio.toFixed(1)}`);
+  return `세분화(${parts.join(" · ")})`;
+}
+const SKIP_REASON: Record<string, string> = { elems: "요소 상한", memory: "메모리", time: "시간 예산" };
+const STAGE_NAME: Record<string, string> = { cad: "CAD", refine_local: "국부 세분화", refine_global: "전역 세분화", remesh: "재메시" };
+function attemptText(a: DoeMeshAttempt): string {
+  const head = [STAGE_NAME[a.stage] ?? a.stage, a.factor != null && a.stage.startsWith("refine") ? x1(a.factor) : null, a.h_mm != null ? mm(a.h_mm) : null].filter(Boolean).join(" ");
+  if (a.skipped) return `${head} — 건너뜀(${SKIP_REASON[a.reason ?? ""] ?? a.reason ?? a.code ?? "상한"})`;
+  const ok = a.status === "OK" || a.status === "READY" || a.status === "SUCCEEDED";
+  const tail = [ok ? "성공" : `실패${a.code ? ` ${a.code}` : ""}`, a.n_elems != null ? `요소 ${a.n_elems.toLocaleString()}` : null, a.seconds != null ? `${Math.round(a.seconds)} s` : null].filter(Boolean).join(" · ");
+  return `${head} — ${tail}`;
+}
+/** '메시 방식' 툴팁(§8): 충실도 · CAD 첫 오류 · 시도 목록(건너뛴 사유) · 수렴 δ · 메시 입력(파트 ID·요소 크기 중앙값) */
+export function meshMethodTip(s: MeshShape, partId?: number | null): string {
+  const out: string[] = [];
+  if (s.mesh_method === "mesh_input") {
+    if (s.source === "case") out.push("기준 Case 낙하 메시");
+    if (partId != null) out.push(`파트 ID ${partId}`);
+    if (s.edge_median_mm != null) out.push(`요소 크기 중앙값 ${mm(s.edge_median_mm)}`);
+    if (s.n_components != null && s.n_components > 1) out.push(`연결 성분 ${s.n_components}개`);
+  }
+  if (s.fidelity) {
+    const f = s.fidelity;
+    out.push(`최대 편차 ${f.max_dev_mm.toFixed(2)} mm · 면적비 ${f.area_ratio.toFixed(2)}x`);
+    out.push(`Hausdorff ${f.hausdorff_mm.toFixed(2)} mm(경고 ${f.warn_mm} mm${f.fail_mm != null ? ` · 실패 ${f.fail_mm} mm` : ""}) · 원 CAD 대비 ≤ ${(f.hausdorff_mm + f.deflection_mm).toFixed(2)} mm`);
+  }
+  if (s.cad_error) out.push(`CAD 실패: ${s.cad_error.message || s.cad_error.code}`);
+  if (s.refine?.attempts?.length) out.push("시도:", ...s.refine.attempts.map((a, i) => `${i + 1}. ${attemptText(a)}`));
+  if (s.refine_bias) {
+    const b = s.refine_bias;
+    out.push(`수렴 점검 δ 최대 ${pctText(b.delta_max, 1)} (기준을 ${mm(b.h_mm)} 로 다시 해석${b.tol != null ? ` · 허용 ${pctText(b.tol, 1)}` : ""})${b.over_tol ? " — 메시 편향 큼" : ""}`);
+  }
+  return out.join("\n");
+}
+const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", remesh: "재메시" };
+type FailShape = Pick<DoePrepShape, "status" | "code" | "message" | "cad_error" | "attempts">;
+/** auto 사다리가 모두 실패한 형상 문구(워커 _ladder_fail_text 와 같은 틀): "CAD 메시 실패: … → 세분화·재메시도 실패: …".
+ *  cad_error 가 없으면 원 message(없으면 코드 문구) */
+export function shapeFailText(r: FailShape): string {
+  const last = r.message || shapeCodeText(r.code);
+  const ce = r.cad_error;
+  if (!ce) return last;
+  const cad = ce.message || ce.code;
+  const tried: string[] = [];
+  for (const a of r.attempts ?? []) {
+    const lb = LADDER_LABEL[a.stage];
+    if (lb && !a.skipped && !tried.includes(lb)) tried.push(lb);
+  }
+  if (!tried.length) {
+    const why = [...new Set((r.attempts ?? []).filter((a) => a.skipped && a.reason).map((a) => a.reason as string))].sort();
+    return `CAD 메시 실패: ${cad} → 세분화·재메시는 건너뜀(${why.join(", ") || "-"})`;
+  }
+  return `CAD 메시 실패: ${cad} → ${tried.join("·")}도 실패: ${last || "?"}`;
+}
+/** 실패 행 툴팁: 문구 + 시도 목록 */
+export function shapeFailTip(r: FailShape): string {
+  const out = [shapeFailText(r)];
+  if (r.cad_error && r.attempts?.length) out.push("시도:", ...r.attempts.map((a, i) => `${i + 1}. ${attemptText(a)}`));
+  return out.join("\n");
+}
+/** 배지 색: 충실도 경고·수렴 편향 초과 = 주황, 세분화·재메시 = info, 그 밖 = neutral */
+export function meshMethodKind(s: MeshShape): "warn" | "info" | "neutral" {
+  if (s.fidelity?.over_warn || s.refine_bias?.over_tol) return "warn";
+  return s.mesh_method === "refine" || s.mesh_method === "remesh" || s.mesh_method === "fallback" ? "info" : "neutral";
+}
+
 /** ④ 오류 문구(detail.index 가 있으면 형상 번호 붙임) */
 export function compareErrorText(e: unknown): string {
   const base = errorText(e);

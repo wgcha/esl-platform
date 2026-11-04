@@ -129,7 +129,8 @@ def test_disabled_reasons(tmp_path, engine, fake_dashboard, clock, case):
         eid = seed_opt_entry(engine, Path(d["storage"]["esl_root"]), "c1")
         uid = upload_step(c)
         if want is None:                                          # gmsh 없음 → ③ 만 비활성
-            assert s["scenarios"] == {"same": True, "mesh": True, "step": False, "compare": False, "select": True}
+            # v0.16.0 C2-D-16: ④ 는 메시 입력(기본 켬)으로 활성 — STEP 형상만 check-inputs 503(test_doe_compare_api)
+            assert s["scenarios"] == {"same": True, "mesh": True, "step": False, "compare": True, "select": True}
             r = c.post(f"{API}/doe/check-inputs", json=body([eid], uid, "step"), headers=W)
             assert r.status_code == 503 and r.json()["detail"]["code"] == "GMSH_UNAVAILABLE"
         else:

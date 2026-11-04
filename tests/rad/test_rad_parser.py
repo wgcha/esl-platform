@@ -333,3 +333,46 @@ def test_real_model_part_title_padded_and_hwcolor():
     assert parse_rad(real, "chassis_rear").part_id == 10
     assert parse_rad(real, "chassis rear").part_id == 10
     assert _code(parse_rad, real, "chassis rear", match="exact") == "PART_NOT_FOUND"
+
+
+# ---------------------------------------------------------------- v0.16.0 parse_rad_part (V-C2-5, esl_compare_mesh_options.md C2-D-4·5)
+def _two_part_deck(d):
+    import synth_mesh_rad as smr
+    ids, X, e1, c1 = smr.grid(4, 3, 3.0, 3.0)
+    ids2, X2, e2, c2 = smr.grid(2, 2, 3.0, 3.0, x0=50.0, nid0=1001, eid0=901)
+    smr.write(d / "inc" / "deep.inc", smr.nodes(ids2, X2) + smr.shells(2, e2[:2], c2[:2])
+              + smr.sh3n(2, [999], [c2[2][:3]]))
+    smr.write(d / "inc" / "lvl1.inc", smr.part(2, "second") + ['/INCLUDE "deep.inc"'] + smr.shells(1, e1[6:], c1[6:]))
+    return smr.write(d / "main.rad", smr.begin("mm") + smr.part(1, "first") + smr.nodes(ids, X)
+                     + smr.shells(1, e1[:6], c1[:6]) + ['/INCLUDE "inc/lvl1.inc"', "/END"])
+
+
+def test_parse_rad_part_ids_includes_mixed(tmp_path):
+    from esl.rad.parser import parse_rad_part, shell_parts
+    main = _two_part_deck(tmp_path)
+    m = parse_rad_part(main, 1)
+    assert m.part_id == 1 and m.elem_id.size == 12 and np.all(np.diff(m.elem_id) > 0)
+    assert np.isnan(m.E).all() and m.mats == [] and m.begin and "mm" in m.begin[2]
+    m2 = parse_rad_part(main, 2)                                   # include 2단(lvl1 → deep)·SHELL+SH3N 혼합
+    assert m2.elem_id.tolist() == [901, 902, 999] and m2.elem_type.tolist() == [4, 4, 3] and m2.conn[2, 3] == -1
+    assert [(p["id"], p["title"], p["n_shells"]) for p in shell_parts(main)] == [(1, "first", 12), (2, "second", 3)]
+    assert _code(parse_rad_part, main, None) == "MESH_INPUT_PART_REQUIRED"
+    assert _code(parse_rad_part, main, 7) == "MESH_INPUT_PART_NOT_FOUND"
+    assert parse_rad(MAIN, "main board").part_id == 10                 # 기존 parse_rad 그대로(begin 은 None)
+    assert parse_rad(MAIN, "main board").begin is None
+
+
+def test_parse_rad_part_no_card_non_shell_state(tmp_path):
+    import synth_mesh_rad as smr
+    from esl.rad.parser import parse_rad_part
+    ids, X, e, c = smr.grid(2, 2, 3.0, 3.0)
+    inc = smr.write(tmp_path / "part.inc", smr.nodes(ids, X) + smr.shells(5, e, c))     # /PART 없는 부분 export
+    m = parse_rad_part(inc, None)
+    assert m.part_id == 5 and m.part_title == "" and any("MESH_INPUT_PART_CARD_MISSING" in w for w in m.warnings)
+    assert m.begin is None
+    bad = smr.write(tmp_path / "solid.rad", smr.nodes(ids, X) + smr.shells(5, e, c)
+                    + ["/BRICK/5", f"{77:10d}" + "".join(f"{int(n):10d}" for n in list(ids[:8]))])
+    assert _code(parse_rad_part, bad, 5) == "MESH_INPUT_UNSUPPORTED_ELEMENT"
+    (tmp_path / "prev.sta").write_text("/BEGIN\nprev\n")
+    st = smr.write(tmp_path / "st.rad", smr.nodes(ids, X) + smr.shells(5, e, c) + ['/INCLUDE "prev.sta"'])
+    assert _code(parse_rad_part, st, 5) == "MESH_INPUT_INVALID"

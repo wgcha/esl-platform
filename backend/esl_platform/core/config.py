@@ -598,6 +598,12 @@ class BeadDoeCompareMeshFallbackCfg(_M):
         return v
 
 
+# v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §5): 폴백 사다리 단계 이름(C2-D-18)·메시 입력 형식(C2-D-2, Q2 — .bdf·.fem 은
+# v0.16.x 에서 이 목록을 넓힘)
+COMPARE_LADDER_STAGES = ("cad", "refine_local", "refine_global", "remesh")
+COMPARE_MESH_FORMATS = (".rad", ".inc")
+
+
 class BeadDoeCompareMeshCfg(_M):
     """v0.14.0 ④ 메시 프로필(esl_step_compare.md SC-D-5): bead_doe.mesh 를 키별 덮어씀. size_mm 범위는 BeadDoeCfg 가 확인."""
 
@@ -608,6 +614,133 @@ class BeadDoeCompareMeshCfg(_M):
     occ_fix_small: int = Field(default=1, ge=0, le=1)        # gmsh Geometry.OCCFixDegenerated·SmallEdges·SmallFaces
     feature_angle: float = Field(default=10.0, ge=0, le=180)  # 이슈 #53 BatchMesher feature_angle(기록만 — gmsh 대응 없음)
     fallback: BeadDoeCompareMeshFallbackCfg = BeadDoeCompareMeshFallbackCfg()   # v0.14.1 면 단위 폴백
+    # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤), cad = [cad],
+    # remesh = [remesh]. ladder 는 cad 가 맨 앞, 빼면 그 단계 끔, 중복 금지
+    mode: Literal["cad", "remesh", "auto"] = "auto"
+    ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_STAGES), min_length=1, max_length=4)
+    keep_tries: bool = False   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만 — 진단용)
+
+    @field_validator("ladder")
+    @classmethod
+    def _ladder(cls, v: list[str]) -> list[str]:
+        bad = [x for x in v if x not in COMPARE_LADDER_STAGES]
+        if bad or len(set(v)) != len(v) or v[0] != "cad":
+            raise ValueError(f"mesh.ladder 는 {', '.join(COMPARE_LADDER_STAGES)} 중 중복 없이, cad 가 맨 앞: {v}")
+        return v
+
+
+class BeadDoeCompareRemeshFidelityCfg(_M):
+    """v0.16.0 재메시 충실도(C2-D-13): hausdorff > warn_mm 경고, > fail_mm 실패(null = 끔), 샘플 상한(고정 간격 추출)."""
+
+    warn_mm: float = Field(default=0.3, gt=0)
+    fail_mm: float | None = Field(default=1.5, gt=0)
+    samples_max: int = Field(default=200000, ge=1)
+
+    @model_validator(mode="after")
+    def _order(self) -> "BeadDoeCompareRemeshFidelityCfg":
+        if self.fail_mm is not None and self.fail_mm < self.warn_mm:
+            raise ValueError(f"remesh.fidelity.fail_mm {self.fail_mm:g} 는 null 또는 warn_mm {self.warn_mm:g} 이상이어야 합니다")
+        return self
+
+
+class BeadDoeCompareRemeshCfg(_M):
+    """v0.16.0 삼각형 재메시(C2-D-11~14, esl.doe.mesh_remesh): OCC 삼각화 → classifySurfaces(특징각) → createGeometry →
+    quad 우선 재메시. algorithms = 모델 전체 재시도 순서, timeout_s null = bead_doe.mesh.timeout_s."""
+
+    enabled: bool = True
+    feature_angle_deg: float = Field(default=30.0, gt=0, lt=90)
+    curve_angle_deg: float = Field(default=60.0, gt=0, le=180)      # v0.16.0 통합: 180 → 60(판 모서리 0.79 → 0.13 mm)
+    linear_deflection_mm: float = Field(default=0.05, gt=0)
+    angular_deflection_deg: float = Field(default=5.0, gt=0, le=180)
+    merge_tol_mm: float = Field(default=0.001, gt=0)
+    stl_max_tris: int = Field(default=5000000, ge=1)
+    algorithms: list[int] = Field(default_factory=lambda: [6, 5, 1], min_length=1, max_length=8)
+    recombine: bool = True
+    keep_stl: bool = False
+    timeout_s: float | None = Field(default=None, gt=0)
+    fidelity: BeadDoeCompareRemeshFidelityCfg = BeadDoeCompareRemeshFidelityCfg()
+
+    @field_validator("algorithms")
+    @classmethod
+    def _algs(cls, v: list[int]) -> list[int]:
+        return BeadDoeCompareMeshFallbackCfg._algs(v)         # 같은 검사기(gmsh 2D 알고리즘 번호)
+
+    @model_validator(mode="after")
+    def _deflection(self) -> "BeadDoeCompareRemeshCfg":
+        if self.linear_deflection_mm > self.fidelity.warn_mm:
+            raise ValueError(f"remesh.linear_deflection_mm {self.linear_deflection_mm:g} 는 fidelity.warn_mm "
+                             f"{self.fidelity.warn_mm:g} 이하여야 합니다")
+        return self
+
+
+class BeadDoeCompareMeshInputCfg(_M):
+    """v0.16.0 메시 입력(C2-D-2~8): 형상마다 사용자 메시(Radioss rad/inc). formats ⊆ COMPARE_MESH_FORMATS(Q2 로 넓힘),
+    max_mb = 주 + include 합계(형상당), include 는 업로드 폴더 안만, size_warn_ratio = 모서리 중앙값 허용 배수."""
+
+    enabled: bool = True
+    formats: list[str] = Field(default_factory=lambda: list(COMPARE_MESH_FORMATS), min_length=1, max_length=8)
+    max_mb: float = Field(default=500, gt=0)
+    include: bool = True
+    max_include_depth: int = Field(default=8, ge=0, le=64)
+    size_warn_ratio: float = Field(default=1.5, gt=1)
+
+    @field_validator("formats")
+    @classmethod
+    def _formats(cls, v: list[str]) -> list[str]:
+        bad = [x for x in v if x not in COMPARE_MESH_FORMATS]
+        if bad or len(set(v)) != len(v):
+            raise ValueError(f"mesh_input.formats 는 {', '.join(COMPARE_MESH_FORMATS)} 중 중복 없이: {v}")
+        return v
+
+
+def _desc_factors(v: list[float], key: str) -> list[float]:
+    if any(not 0 < f < 1 for f in v) or any(b >= a for a, b in zip(v, v[1:])):
+        raise ValueError(f"{key} 는 (0, 1) 범위에서 내림차순: {v}")
+    return v
+
+
+class BeadDoeCompareRefineLocalCfg(_M):
+    factors: list[float] = Field(default_factory=lambda: [0.75, 0.5, 0.33], min_length=1, max_length=10)
+    neighbor_rings: int = Field(default=1, ge=0, le=10)
+    max_faces: int = Field(default=20, ge=1, le=1000)
+
+    @field_validator("factors")
+    @classmethod
+    def _f(cls, v: list[float]) -> list[float]:
+        return _desc_factors(v, "refine.local.factors")
+
+
+class BeadDoeCompareRefineGlobalCfg(_M):
+    factors: list[float] = Field(default_factory=lambda: [0.8, 0.667], min_length=1, max_length=10)
+
+    @field_validator("factors")
+    @classmethod
+    def _f(cls, v: list[float]) -> list[float]:
+        return _desc_factors(v, "refine.global.factors")
+
+
+class BeadDoeCompareRefineConvergenceCfg(_M):
+    enabled: bool = True
+    tol: float | None = Field(default=None, ge=0, lt=1)       # null = bead_doe.rank.ratio_tol
+    same_h_baseline: bool = False
+
+
+class BeadDoeCompareRefineCfg(_M):
+    """v0.16.0 세분화 폴백(C2-D-18~24): refine_local(실패 면 + 이웃 고리)·refine_global(h × factor). max_elems = 세분화
+    시도 요소 상한(bead_doe.mesh.max_elems 이상), total_timeout_s = 형상 1개 사다리 전체 시간 예산. ``global`` 은 파이썬
+    예약어라 필드 이름 global_ (설정·dump 키는 global)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, validate_by_name=True, validate_by_alias=True,
+                              serialize_by_alias=True)
+
+    enabled: bool = True
+    min_size_mm: float = Field(default=0.5, gt=0)
+    max_elems: int = Field(default=600000, ge=1)
+    total_timeout_s: float = Field(default=3600, gt=0)
+    elem_per_h2: float = Field(default=1.0, gt=0)
+    local: BeadDoeCompareRefineLocalCfg = BeadDoeCompareRefineLocalCfg()
+    global_: BeadDoeCompareRefineGlobalCfg = Field(default_factory=BeadDoeCompareRefineGlobalCfg, alias="global")
+    convergence: BeadDoeCompareRefineConvergenceCfg = BeadDoeCompareRefineConvergenceCfg()
 
 
 class BeadDoeCompareDefeatureCfg(_M):
@@ -658,6 +791,9 @@ class BeadDoeCompareCfg(_M):
     mesh: BeadDoeCompareMeshCfg = BeadDoeCompareMeshCfg()
     defeature: BeadDoeCompareDefeatureCfg = BeadDoeCompareDefeatureCfg()
     quality: BeadDoeCompareQualityCfg = BeadDoeCompareQualityCfg()
+    remesh: BeadDoeCompareRemeshCfg = BeadDoeCompareRemeshCfg()               # v0.16.0 C2-D-11~14
+    mesh_input: BeadDoeCompareMeshInputCfg = BeadDoeCompareMeshInputCfg()     # v0.16.0 C2-D-2~8
+    refine: BeadDoeCompareRefineCfg = BeadDoeCompareRefineCfg()               # v0.16.0 C2-D-18~24
 
 
 class BeadDoeSelectWidthCfg(_M):
@@ -756,6 +892,10 @@ class BeadDoeCfg(_M):
         if not self.mesh.size_min_mm <= h <= self.mesh.size_max_mm:
             raise ValueError(f"bead_doe.compare.mesh.size_mm {h:g} 는 bead_doe.mesh.size_min_mm..size_max_mm "
                              f"({self.mesh.size_min_mm:g}..{self.mesh.size_max_mm:g}) 안이어야 합니다")
+        rf = self.compare.refine
+        if rf.max_elems < self.mesh.max_elems:          # C2-D-21: 세분화 상한은 cad 시도 상한 이상
+            raise ValueError(f"bead_doe.compare.refine.max_elems {rf.max_elems} 는 bead_doe.mesh.max_elems "
+                             f"{self.mesh.max_elems} 이상이어야 합니다")
         return self
 
 
@@ -1176,6 +1316,13 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
         d = _doe_settings({"bead_doe": s.bead_doe.model_dump()})
     if "select" not in d:               # v0.15.0: 코어 DEFAULTS["select"](S1) 없는 코어와도 같은 기본값(거울)
         d["select"] = BeadDoeSelectCfg().model_dump()
+    # v0.16.0 ④ 메시 옵션: 코어 DEFAULTS["compare"] 에 새 키(mesh.mode·ladder·remesh·mesh_input·refine)가 없는 코어와도 같은 기본값
+    cd = BeadDoeCompareCfg().model_dump()
+    comp = d.setdefault("compare", {})
+    for k in ("remesh", "mesh_input", "refine"):
+        comp.setdefault(k, cd[k])
+    for k in ("mode", "ladder", "keep_tries"):
+        comp.setdefault("mesh", {}).setdefault(k, cd["mesh"][k])
     return d
 
 

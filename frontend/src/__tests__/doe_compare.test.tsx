@@ -10,7 +10,7 @@ import { compareIds, makeComparePrep, makeCompareResult, makeDoeSettings } from 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
 const radio = (name: RegExp | string) => screen.getByRole("radio", { name }) as HTMLInputElement;
-const DROP = "비교할 STEP 끌어다 놓기(여러 개)";
+const DROP = /^비교할 STEP(·메시)? 끌어다 놓기\(여러 개\)$/; // v0.16.0 메시 입력이 켜지면 "STEP·메시"
 const step = (name: string) => new File([new Uint8Array(4096)], name);
 
 async function openCompare(path = "/p/p-body/doe/new?entries=le-1,le-2,le-9", mut?: Parameters<typeof renderApp>[2]) {

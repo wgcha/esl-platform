@@ -45,7 +45,7 @@ from esl_worker import core_adapter
 from ...core import uploads as U
 from ...core.atomic import atomic_replace
 from ...core.auth import Principal
-from ...core.config import is_within
+from ...core.config import COMPARE_MESH_FORMATS, is_within
 from ...core.db.tables import cases, uploads
 from ...core.errors import DomainError, conflict, not_found, unprocessable
 from ...core.inputs import sha256_file
@@ -1291,20 +1291,53 @@ def template_source(ctx: AppContext, principal: Principal, upload_id: str,
 
 # ---------------------------------------------------------------- v0.9.0 비드 DOE 업로드 연결(계약 esl_bead_doe.md §10·§13)
 DOE_STEP_EXT = (".step", ".stp")
+DOE_MESH_EXT = COMPARE_MESH_FORMATS       # ④ 메시 형상 형식 기본(설정 bead_doe.compare.mesh_input.formats 가 우선)
 DOE_STEP_PURPOSE = "doe_step"
 DOE_MESH_PURPOSE = "doe_mesh"
 STEP_MAGIC = b"ISO-10303-21;"
 
 
+def doe_text(key: str, **kw: Any) -> str:
+    """resources/doe_messages.json 문구(키 = 코드 또는 문구 키) + {자리} 채움(모르는 자리는 그대로). 자료가 없으면 키."""
+    from ...core.opt_core import doe_message
+
+    try:
+        t = doe_message(key)
+    except Exception:  # noqa: BLE001 - 자료 파일이 없어도 오류 응답은 낸다
+        t = key
+
+    class _Keep(dict):
+        def __missing__(self, k: str) -> str:
+            return "{" + k + "}"
+    try:
+        return t.format_map(_Keep(kw))
+    except (ValueError, IndexError):
+        return t
+
+
 def doe_source(ctx: AppContext, principal: Principal, upload_id: str, project_id: str,
-               kind: str, rel: str | None = None) -> tuple[dict[str, Any], str, str]:
+               kind: str, rel: str | None = None, formats: tuple[str, ...] | list[str] | None = None,
+               ) -> tuple[dict[str, Any], str, str]:
     """비드 DOE 입력 업로드(읽기만) → (업로드 행, 업로드 루트, 주 파일 절대경로). purpose 없이 올린 업로드(rel `rad/<파일>`)를
     여기서 판정한다(complete 를 거치지 않아도 됨).
 
     - kind ``step``: `.step`·`.stp` 정확히 1개(아니면 422 STEP_INVALID).
     - kind ``mesh``: ② B 메시 — `.rad` 하나(`*_0000.rad` 우선, + include) 또는 `.rad` 가 없으면 `.inc` 하나
-      (아니면 422 MESH_INVALID·MESH_FORMAT_UNSUPPORTED). `.fem` 은 받지 않는다(paicad 조립 = rad/inc)."""
+      (아니면 422 MESH_INVALID·MESH_FORMAT_UNSUPPORTED). `.fem` 은 받지 않는다(paicad 조립 = rad/inc).
+    - v0.16.0 ④ 메시 형상(esl_compare_mesh_options.md C2-D-2·§6): kind ``mesh`` + ``rel`` = 주 파일을 고름(다중 STEP 과 같은
+      규칙 — 살아 있는 파일 rel 과 정확히 같아야, 아니면 422 MESH_INPUT_INVALID). 확장자 ∉ ``formats``
+      (bead_doe.compare.mesh_input.formats) → 422 MESH_FORMAT_UNSUPPORTED."""
     up, root, rels = _ready_upload(ctx, principal, upload_id, project_id)
+    if kind == "mesh" and rel is not None:
+        fm = tuple(x.lower() for x in (formats or DOE_MESH_EXT))
+        if rel not in rels:
+            raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_NOT_FOUND", rel=rel),
+                                files=[r for r in rels if os.path.splitext(r)[1].lower() in fm][:50])
+        ext = os.path.splitext(rel)[1].lower()
+        if ext not in fm:
+            raise unprocessable("MESH_FORMAT_UNSUPPORTED", doe_text("MESH_FORMAT_UNSUPPORTED", ext=ext or rel,
+                                                                    formats=", ".join(fm)), formats=list(fm))
+        return up, root, U.target_path(up["dir_path"], rel.split("/"), upload_root=root)
     if kind == "step" and rel is not None:
         # v0.14.0 ④ 다중 doe_step: 한 업로드 세션에 STEP 여러 개 — 형상마다 rel 로 고름(업로드 동시 세션 한도와 무관하게
         # 형상 20개까지). rel = 업로드 기록의 살아 있는 파일 rel 과 정확히 같아야 함
@@ -1355,6 +1388,70 @@ def upload_file_sha(up: dict[str, Any], path: str) -> str:
         if f.get("rel") == rel and not f.get("removed") and f.get("sha256"):
             return str(f["sha256"]).lower()
     return sha256_file(path)
+
+
+def mesh_shape_inspect(up: dict[str, Any], path: str, mi: dict[str, Any]) -> dict[str, Any]:
+    """v0.16.0 ④ 메시 형상 주 파일 검사(esl_compare_mesh_options.md C2-D-3·4·5·§6, 읽기만 — 업로드 폴더에 쓰지 않음).
+
+    - include: ``mi.include`` 면 ``mi.max_include_depth`` 까지 업로드 폴더 안만 따라감(밖·링크 → 422 PATH_OUTSIDE_ROOT,
+      못 찾음·상태 파일(.str/.sta) → 422 MESH_INPUT_INVALID). ``include_path_map`` 은 쓰지 않음. 밖 파일은 읽지도 따라가지도 않음.
+    - 크기: 주 + include 합계 > ``mi.max_mb`` → 422 MESH_INPUT_TOO_LARGE.
+    - 파트: 코어 ``_Deck.scan`` 1차 스캔만(숫자 블록은 행 수만) → 쉘 파트 {id, title, n_shells, n_other, card}.
+    반환 {main_rel, files[{rel, sha256, size_mb}], size_mb, parts[…], begin_units}."""
+    from ...core.opt_core import EslError, rad_deck
+
+    d = up["dir_path"]
+    real_d = os.path.realpath(d)
+
+    def inside(p: str) -> bool:
+        return _rel_of(d, p) is not None and is_within(os.path.realpath(p), real_d)
+
+    def outside(spec: str):
+        return unprocessable("PATH_OUTSIDE_ROOT", doe_text("PATH_OUTSIDE_ROOT", spec=spec))
+
+    if U.is_link_like(path) or not inside(path):
+        raise outside(os.path.basename(path))
+    depth = int(mi["max_include_depth"])
+    try:
+        refs = core_adapter.scan_include_refs(path, depth, None, follow=lambda p: inside(p) and not U.is_link_like(p))
+    except core_adapter.CoreError as exc:
+        raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_INVALID", reason=exc.message)) from None
+    files = [path]
+    for ref in refs:
+        p, spec = ref.get("path"), str(ref.get("spec") or "")
+        if not mi["include"]:
+            raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_INCLUDE_OFF", spec=spec), spec=spec)
+        if not p or _rel_of(d, p) is None or (ref.get("found") and (U.is_link_like(p) or not inside(p))):
+            raise outside(spec)                 # 업로드 밖(존재 여부와 무관하게 같은 문구 — 서버 파일 존재 확인 통로 차단)
+        if _state_ext(p) or _state_ext(spec) or (ref.get("found") and _state_probe(p, header_only=True)[0]):
+            raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_STATE_FILE", spec=spec), spec=spec)
+        if not ref.get("found"):
+            raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_INCLUDE_MISSING", spec=spec), spec=spec,
+                                missing=[_rel_of(d, p)])
+        if p not in files:
+            files.append(p)
+    sizes = [os.path.getsize(p) for p in files]
+    mb = sum(sizes) / (1024 * 1024)
+    if mb > float(mi["max_mb"]):
+        raise unprocessable("MESH_INPUT_TOO_LARGE", doe_text("MESH_INPUT_TOO_LARGE", size_mb=f"{mb:.1f}",
+                                                             limit_mb=f"{float(mi['max_mb']):g}"),
+                            size_mb=round(mb, 3), limit_mb=float(mi["max_mb"]))
+    try:
+        deck = rad_deck(depth, None, None)
+        deck.scan(path)                         # 1차 스캔만: /PART·/BEGIN 카드 + 요소 블록 행 수(숫자 해석 없음)
+    except (EslError, OSError, ValueError) as exc:
+        raise unprocessable("MESH_INPUT_INVALID", doe_text("MESH_INPUT_INVALID",
+                                                           reason=getattr(exc, "message", None) or str(exc))) from None
+    shell = {int(k): int(v) for k, v in (deck.shell_count or {}).items() if int(v) > 0}
+    other = {int(k): int(v) for k, v in (deck.other_elem_parts or {}).items() if int(v) > 0}
+    cards = deck.parts or {}
+    parts = [{"id": pid, "title": (cards.get(pid) or {}).get("title"), "n_shells": n, "n_other": other.get(pid, 0),
+              "card": pid in cards} for pid, n in sorted(shell.items())]
+    return {"main_rel": _rel_of(d, path),
+            "files": [{"rel": _rel_of(d, p), "sha256": upload_file_sha(up, p), "size_mb": round(s / (1024 * 1024), 3)}
+                      for p, s in zip(files, sizes)],
+            "size_mb": round(mb, 3), "parts": parts, "other_parts": other,
+            "begin_units": getattr(deck, "units_label", "") or ""}
 
 
 def save_doe_check(ctx: AppContext, upload_id: str, purpose: str, rel: str, sha256: str, ok: bool,

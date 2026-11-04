@@ -47,7 +47,7 @@ const check = async (page, w, h, name) => {
 const openNew = async (page) => {
   await page.goto(NEW);
   await page.getByRole("radio", { name: /④ 형상 직접 비교/ }).check();
-  await page.getByLabel("비교할 STEP 끌어다 놓기(여러 개)").setInputFiles(FILES.map((name) => ({ name, mimeType: "application/step", buffer: Buffer.from(`ISO-10303-21;\n${name}\n`.repeat(400)) })));
+  await page.getByLabel(/^비교할 STEP(·메시)? 끌어다 놓기\(여러 개\)$/).setInputFiles(FILES.map((name) => ({ name, mimeType: "application/step", buffer: Buffer.from(`ISO-10303-21;\n${name}\n`.repeat(400)) })));
   await page.getByTestId(`shape-row-${FILES.length}`).waitFor({ timeout: 20000 });
   await page.getByRole("textbox", { name: "형상 1 이름" }).fill("현행");
   await page.getByRole("textbox", { name: "형상 2 이름" }).fill("리브 A안");

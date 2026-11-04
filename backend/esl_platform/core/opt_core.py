@@ -10,6 +10,7 @@ v0.9.0 비드 DOE(esl_bead_doe.md §17 경계): ``esl.doe`` 의 settings·comman
 ``doe_matrix``(행렬 생성 — API 와 워커가 같은 함수), ``doe_paicad_io``(준비 결과 JSON 읽기·셀 상태 — 실행 없음),
 ``doe_scenario``(조립 폴더 크기·링크 검사, 물성·요소 크기 기본값). paicad·gmsh·쉘 솔버는 워커만.
 v0.15.0 select: ``doe_bead_select``(선택 정규화·sha·사면/경계 derive·평면도 자료 — numpy·scipy 만, 외부 명령 없음).
+v0.16.0 ④ 메시 입력: ``rad_deck``(``esl.rad.parser._Deck`` 1차 ``scan`` 만 — 파트·쉘 블록 행 수, check-inputs 파트 목록).
 이슈 #53: ``fsutil``(``esl.fsutil`` — Windows 잠금 재시도 원자적 교체, 플랫폼은 ``esl_platform.core.atomic`` 으로 씀).
 
 사용: ``from ...core.opt_core import EslError, keepout, modes`` (모듈은 처음 쓸 때 불러온다 — PEP 562).
@@ -39,7 +40,9 @@ _FUNCS = {"build_template": ("esl.opt.target", "build_template"),
           "doe_defaults": ("esl.doe", "DEFAULTS"), "doe_default_commands": ("esl.doe", "DEFAULT_COMMANDS"),
           "doe_load_messages": ("esl.doe", "load_messages"), "doe_message": ("esl.doe", "message"),
           "doe_load_method_sources": ("esl.doe", "load_method_sources"),
-          "doe_sort_rows": ("esl.doe.rank", "sort_rows")}             # v0.10.0 §11.4 순위표 정렬 키
+          "doe_sort_rows": ("esl.doe.rank", "sort_rows"),             # v0.10.0 §11.4 순위표 정렬 키
+          # v0.16.0 ④ 메시 입력 파트 스캔(esl_compare_mesh_options.md §6 — 1차 스캔만, 숫자 블록은 위치·행 수만)
+          "rad_deck": ("esl.rad.parser", "_Deck")}
 
 
 def __getattr__(name: str) -> Any:

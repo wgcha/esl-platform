@@ -24,6 +24,7 @@ import csv
 import io
 import os
 import shutil
+import time
 
 import numpy as np
 
@@ -74,7 +75,9 @@ class Ctx:
         if st.get("path"):
             ins.append(("STEP 업로드", os.path.dirname(st["path"])))
         for sh in self.D.get("shapes") or []:          # ④ 형상 STEP 업로드(읽기만)
-            if sh.get("path"):
+            if sh.get("source") == "mesh" and sh.get("upload_root"):    # v0.16.0 메시 형상 = 업로드 폴더 전체(주 + include)
+                ins.append(("메시 업로드", sh["upload_root"]))
+            elif sh.get("path"):
                 ins.append(("STEP 업로드", os.path.dirname(sh["path"])))
         ins += [tuple(x) for x in self.D.get("input_roots") or []]
         return ins
@@ -894,6 +897,10 @@ def _cmp_input(c: Ctx, echo) -> dict:
         did = str(s["id"])
         if not did.startswith("d") or not did[1:].isdigit() or len(did) != 4:
             raise EslError("INPUT_INVALID", f"형상 id 형식: {did}")
+        if s.get("source") == "mesh":                   # v0.16.0 메시 입력(C2-D-2·3) — 주 + include 복사·sha 재확인
+            rows.append(_cmp_input_mesh(c, did, s))
+            c.progress(5 + 60 * (k + 1) / max(len(shapes), 1))
+            continue
         rel = os.path.join("input", "shapes", f"{did}.step")
         sha = _copy_verified(s["path"], c.p(rel), c.writer, s.get("sha256"))
         rows.append({"id": did, "name": str(s["name"]), "file_name": s.get("file_name"), "sha256": sha,
@@ -918,12 +925,14 @@ def _cmp_input(c: Ctx, echo) -> dict:
         warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
         echo(f"[bd_input] ④ 기준 = 첫 ESL Case 메시(파트 {case_info.get('part_title')}, 노드 {case_info['n_nodes']} · 요소 "
              f"{case_info['n_elems']}) — {REF_CASE_MSG}")
-    seen: dict[str, str] = {}
+    seen: dict = {}
     for r in rows:
         if r.get("sha256"):
-            if r["sha256"] in seen:
-                warns.append(f"SHAPE_DUPLICATE_FILE: {r['id']} 와 {seen[r['sha256']]} 가 같은 STEP 파일(sha256)")
-            seen.setdefault(r["sha256"], r["id"])
+            key = r["sha256"] if r.get("source") != "mesh" else (r["sha256"], r.get("part_id"))   # 메시 = (주 sha, 파트)
+            if key in seen:
+                warns.append(f"SHAPE_DUPLICATE_FILE: {r['id']} 와 {seen[key]} 가 같은 "
+                             f"{'메시' if r.get('source') == 'mesh' else 'STEP'} 파일(sha256)")
+            seen.setdefault(key, r["id"])
     if not any(r["id"] == BASELINE for r in rows):
         raise EslError("INPUT_INVALID", "④ 기준 형상(d000)이 없음")
     c.write_json(os.path.join("prep", sc.SHAPES_JSON), {"schema": "esl/doe_shapes/1", "reference_source": src,
@@ -933,7 +942,9 @@ def _cmp_input(c: Ctx, echo) -> dict:
                                                                  for r in rows],
            "case_mesh": case_info, "warnings": warns, "info": info}
     c.write_json(os.path.join("prep", "input.json"), inp)
-    echo(f"[bd_input] ④ 형상 {len(rows)}개(기준 {'STEP' if src == 'step' else 'Case 메시'}) 복사·sha256 확인")
+    nm = sum(1 for r in rows if r.get("source") == "mesh")
+    echo(f"[bd_input] ④ 형상 {len(rows)}개(기준 {'STEP' if src == 'step' else 'Case 메시'}"
+         + (f", 메시 입력 {nm}개" if nm else "") + ") 복사·sha256 확인")
     for w in warns:
         echo(f"  경고: {w}")
     c.progress(100)
@@ -941,20 +952,77 @@ def _cmp_input(c: Ctx, echo) -> dict:
             "n_shapes": len(rows), "reference_source": src}
 
 
-def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict) -> dict:
-    """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}."""
+def _cmp_input_mesh(c: Ctx, did: str, s: dict) -> dict:
+    """v0.16.0 메시 입력 형상(C2-D-2·3): 주 + include → input/shapes/<did>/<업로드 상대경로>(copy_mesh_upload — 업로드 폴더 안
+    include 만, 링크 거부, 복사본 sha256 재확인). 스냅샷 files[].sha256 이 있으면 원본 sha 와 대조. 원본에는 쓰지 않는다."""
+    root = s.get("upload_root")
+    if not root or not s.get("path"):
+        raise EslError("INPUT_INVALID", f"메시 형상 {did} 의 업로드 경로(upload_root·path)가 없음")
+    from esl.doe import mesh_input as mi
+    mcfg = mi._mcfg(c.cfg)
+    rel_dir = os.path.join("input", "shapes", did)
+    dest = c.p(rel_dir)
+    c.writer.makedirs(dest)
+    try:
+        files = sc.copy_mesh_upload(s["path"], root, dest, c.writer,
+                                    max_depth=int(mcfg["max_include_depth"]) if mcfg.get("include", True) else 0)
+    except EslError as exc:
+        code = "MESH_INPUT_INVALID" if exc.code == "MESH_INVALID" else exc.code
+        raise EslError(code, f"메시 형상 {did}: {exc.message}") from None
+    want = {str(f.get("rel")): f.get("sha256") for f in s.get("files") or [] if f.get("rel")}
+    for f in files:
+        if want.get(f["rel"]) and want[f["rel"]] != f["sha256"]:
+            raise EslError("MESH_INPUT_INVALID", f"메시 형상 {did}: 업로드 파일 sha256 이 등록값과 다름({f['rel']})")
+    main_rel = os.path.relpath(U.real_path(s["path"]), U.real_path(root)).replace(os.sep, "/")
+    return {"id": did, "name": str(s["name"]), "file_name": s.get("file_name"), "sha256": files[0]["sha256"],
+            "reference": bool(s.get("reference")), "rel": rel_dir.replace(os.sep, "/"), "source": "mesh",
+            "main_rel": main_rel, "part_id": None if s.get("part_id") is None else int(s["part_id"]),
+            "files": [{"rel": f["rel"], "sha256": f["sha256"], "size": f["size"]} for f in files],
+            "size_mb": round(sum(f["size"] for f in files) / (1024 * 1024), 3)}
+
+
+def _cmp_text(code: str, **kw) -> str:
+    """'CODE: 문구'(resources/doe_messages.json 틀 — 자리 표시자 누락은 그대로 둠)."""
+    from esl.doe import load_messages
+    try:
+        tpl = str(load_messages()["messages"].get(code) or code)
+    except Exception:                                       # noqa: BLE001 - 문구 누락으로 실패하지 않음
+        tpl = code
+
+    class _D(dict):
+        def __missing__(self, k):
+            return "{" + k + "}"
+    return f"{code}: {tpl.format_map(_D(kw))}"
+
+
+def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_info: bool = False,
+                  timeout_s: float | None = None) -> dict:
+    """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}.
+    fail_info(v0.16.0 auto 사다리) = 실패 시 mesh_error.json 에 실패 면·넓이(세분화 입력) — 성공 결과는 같음."""
     did = row["id"]
     d = _cmp_mesh_dir(c, did)
     c.writer.makedirs(d)
     try:
-        mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg)
+        if fail_info:
+            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, fail_info=True,
+                                         timeout_s=timeout_s)
+        else:
+            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, timeout_s=timeout_s)
     except EslError as exc:
         if exc.code == "GMSH_UNAVAILABLE":
             raise
-        mj = os.path.join(d, mg.MESH_JSON)
-        errs = U.read_json(mj).get("errors") if os.path.isfile(mj) else []
-        code = "MESH_TOO_LARGE" if any(e.get("code") == "MESH_TOO_LARGE" for e in errs or []) else "MESH_FAILED"
-        return {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+        return {"id": did, "status": "FAILED_MESH", "code": _cad_code(d), "message": exc.message}
+    return _cmp_ready(c, did, mesh, meta)
+
+
+def _cad_code(d: str) -> str:
+    mj = os.path.join(d, mg.MESH_JSON)
+    errs = U.read_json(mj).get("errors") if os.path.isfile(mj) else []
+    return "MESH_TOO_LARGE" if any(e.get("code") == "MESH_TOO_LARGE" for e in errs or []) else "MESH_FAILED"
+
+
+def _cmp_ready(c: Ctx, did: str, mesh: dict, meta: dict) -> dict:
+    """성공 메시 → 형상 행(v0.14.0 형식 그대로 — 정상 STEP 은 키·값 불변)."""
     dfi = meta.get("defeature") or {}
     qy = _cmp_quality(c, mesh)
     out = {"id": did, "status": "READY", "code": None, "message": None, "n_nodes": meta["n_nodes"],
@@ -976,31 +1044,468 @@ def _cmp_quality(c: Ctx, mesh: dict) -> dict:
     return mq.summarize(mesh, c.cfg["compare"]["quality"])
 
 
+# ---------------------------------------------------------------- v0.16.0 메시 방식(esl_compare_mesh_options.md §4A·§7)
+MESH_METHODS = ("cad", "refine", "remesh", "fallback", "mesh_input")
+TRY_PREFIX = "try_"
+
+
+def _cmp_mode(c: Ctx) -> tuple[str, list[str]]:
+    """(메시 모드, 사다리). 스냅샷 doe.mesh_mode 가 없으면(v0.15.x 스터디·코어 직접 호출) cad(C2-D-15). auto 사다리 = 스냅샷
+    mesh_ladder(백엔드가 '세분화 허용' 반영) → 없으면 설정 compare.mesh.ladder."""
+    from esl.doe import mesh_refine as mr
+    mode = str(c.D.get("mesh_mode") or "cad")
+    if mode != "auto":
+        return mode, mr.ladder(c.cfg, mode)
+    lad = c.D.get("mesh_ladder")
+    if lad is None:
+        return mode, mr.ladder(c.cfg, "auto")
+    lad = [str(x) for x in lad]
+    if any(x not in mr.STAGES for x in lad) or len(set(lad)) != len(lad) or (lad and lad[0] != "cad"):
+        raise EslError("CONFIG_INVALID", f"mesh_ladder {lad} — 단계 ⊆ {list(mr.STAGES)}, cad 맨 앞, 중복 금지")
+    return mode, lad or ["cad"]
+
+
+def _remesh_ready(c: Ctx) -> bool:
+    """재메시 가능 = compare.remesh.enabled ∧ gmsh importStl(C2-D-16). 경고는 백엔드가 이미 냄(다시 내지 않음)."""
+    from esl.doe import mesh_remesh
+    if not ((c.cfg.get("compare") or {}).get("remesh") or {}).get("enabled", True):
+        return False
+    return bool(mesh_remesh.available()[0])
+
+
+def _clear_tries(c: Ctx, d: str) -> None:
+    if not os.path.isdir(d):
+        return
+    for x in sorted(os.listdir(d)):
+        p = os.path.join(d, x)
+        if x.startswith(TRY_PREFIX) and os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(c.writer.guard(p))
+
+
+def _keep_tries(ccfg: dict) -> bool:
+    """compare.mesh.keep_tries(기본 false): true 면 모든 시도 폴더 try_<n>/ 를 남김, false 면 실패 시 마지막 시도만 남김."""
+    from esl.doe import DEFAULTS
+    v = (ccfg.get("mesh") or {}).get("keep_tries")
+    return bool(DEFAULTS["compare"]["mesh"]["keep_tries"] if v is None else v)
+
+
+def _promote(c: Ctx, td: str, d: str, extra: dict | None = None) -> None:
+    """성공한 시도 폴더 → mesh/. extra(mesh_method·cad_error 등)를 시도 폴더 mesh.json 에 먼저 합친 뒤, mesh.json 이 아닌
+    파일을 atomic_replace 로 옮기고 이전 실패 기록 mesh_error.json 을 지운 다음 mesh.json 을 맨 마지막에 옮깁니다 — 중간에
+    멈추면 mesh/ 에 새 mesh.json 이 없으므로 성공으로 읽히지 않습니다. 빈 시도 폴더는 삭제."""
+    if extra:
+        _patch_mesh_json(c, td, extra)
+    names = sorted(x for x in os.listdir(td) if os.path.isfile(os.path.join(td, x))
+                   and not os.path.islink(os.path.join(td, x)))
+    for x in [n for n in names if n != mg.MESH_JSON]:
+        atomic_replace(c.writer.guard(os.path.join(td, x)), c.writer.guard(os.path.join(d, x)))
+    ep = os.path.join(d, mg.MESH_ERROR)
+    if os.path.isfile(ep) and mg.MESH_ERROR not in names:
+        os.remove(c.writer.guard(ep))
+    if mg.MESH_JSON in names:
+        atomic_replace(c.writer.guard(os.path.join(td, mg.MESH_JSON)), c.writer.guard(os.path.join(d, mg.MESH_JSON)))
+    shutil.rmtree(c.writer.guard(td), ignore_errors=True)
+
+
+def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
+    """새 시도 폴더 try_<n>/ (keep_tries false 면 앞 시도 폴더를 먼저 지움 — 마지막 시도 기록만 남음)."""
+    if not keep:
+        _clear_tries(c, d)
+    td = os.path.join(d, f"{TRY_PREFIX}{n_try}")
+    c.writer.fresh_dir(td, c.out)
+    return td
+
+
+LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "remesh": "재메시"}
+
+
+def _ladder_fail_text(r: dict) -> str:
+    """auto 사다리가 모두 실패한 형상의 사용자 문구(Verifier Med 2): CAD 첫 오류 → 시도한 단계의 마지막 오류.
+    cad_error 가 없으면 원 message 그대로."""
+    ce = r.get("cad_error")
+    if not ce:
+        return str(r.get("message") or r.get("code") or "")
+    cad = ce.get("message") or ce.get("code") or "?"
+    tried: list[str] = []
+    for a in r.get("attempts") or []:
+        lb = LADDER_STAGE_LABEL.get(a.get("stage"))
+        if lb and not a.get("skipped") and lb not in tried:
+            tried.append(lb)
+    if not tried:
+        why = sorted({str(a.get("reason")) for a in r.get("attempts") or [] if a.get("skipped") and a.get("reason")})
+        return _cmp_text("MESH_LADDER_SKIPPED", cad=cad, reasons=", ".join(why) or "-").split(": ", 1)[1]
+    last = r.get("message") or r.get("code") or "?"
+    return _cmp_text("MESH_LADDER_FAILED", cad=cad, stages="·".join(tried), last=last).split(": ", 1)[1]
+
+
+def _bbox_str(k) -> str:
+    return ",".join(f"{float(v):g}" for v in (k or []))
+
+
+def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: str, lad: list[str],
+                    remesh_ok: bool, avail: int | None) -> dict:
+    """BD_MESH0 ④ 형상 1개 분기(§7): mesh → 메시 입력(in-process), cad → 기존 그대로, remesh → 재메시, auto → cad 를 기존
+    경로로 먼저(성공이면 v0.15.x 와 바이트 동일) 실패하면 사다리(C2-D-18) — 시도 폴더 mesh/try_<n>/, 성공본을 mesh/ 로."""
+    if row.get("source") == "mesh":
+        return _cmp_mesh_input_one(c, row, ccfg, props)
+    d = _cmp_mesh_dir(c, row["id"])
+    _clear_tries(c, d)
+    if mode == "remesh":
+        c.writer.makedirs(d)
+        r = _cmp_remesh_one(c, row, h, ccfg, props, d)
+        r["mesh_method"] = "remesh"
+        return r
+    t0 = time.monotonic()
+    auto = mode == "auto" and len(lad) > 1
+    to = None
+    if auto:                                            # 사다리 시간 예산(refine.total_timeout_s)은 cad 시도부터 셈
+        from esl.doe import mesh_refine as mr
+        to = mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, 0.0)
+    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and "refine_local" in lad, timeout_s=to)
+    r["mesh_method"] = "cad"
+    if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
+        return r
+    return _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail)
+
+
+def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], r0: dict, t_cad: float,
+                remesh_ok: bool, avail: int | None) -> dict:
+    """C2-D-18~22 사다리 실행기(cad 실패 뒤). 단계마다 ``mesh_refine.plan`` → 시도 직전 ``check_limits`` 재판정 →
+    ``run_isolated(kind cad, size_fields·max_elems)`` 또는 재메시. 첫 성공에서 멈춤."""
+    from esl.doe import mesh_refine as mr
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    src = c.p(row["rel"])
+    rc = mr._rcfg(ccfg)
+    cad_err = {"code": r0["code"], "message": r0["message"]}
+    attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
+                 "seconds": round(t_cad, 3)}]
+    infos: list[str] = []
+    pm = mr.read_attempt(d)
+    pm["wall_seconds"] = round(t_cad, 3)
+    geom0 = pm.get("geom") or {}
+    area = geom0.get("area_mm2")
+    e_h2 = float(rc["elem_per_h2"])
+    pm["n_est"] = mr.estimate_elems(area, h, elem_per_h2=e_h2) if area else None
+    faces: list[dict] = []
+
+    def acc(meta: dict) -> bool:
+        """새 실패 면 누적(≤ local.max_faces, 각 면 local_area_mm2 = 그 시도 geom.local_area_mm2)."""
+        f = meta.get("face")
+        if not f or f.get("key") is None:
+            return False
+        k = tuple(round(float(v), 6) for v in f["key"])
+        if any(tuple(round(float(v), 6) for v in x["key"]) == k for x in faces):
+            return False
+        if len(faces) >= int(rc["local"]["max_faces"]):
+            return False
+        faces.append({**f, "local_area_mm2": (meta.get("geom") or {}).get("local_area_mm2")})
+        return True
+    acc(pm)
+    pm["faces"] = list(faces)
+    elapsed = float(t_cad)
+    last = dict(r0)
+    n_try = 0
+    keep = _keep_tries(ccfg)
+    to_cad = float(ccfg["mesh"]["timeout_s"])
+    rt = ((ccfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
+    to_remesh = float(rt) if rt is not None else to_cad
+
+    def info_skip(a: dict) -> None:
+        if a.get("reason") == "no_face":
+            infos.append(f"{mr.NO_FACE_INFO}: {did} {row['name']} — "
+                         + _cmp_text(mr.NO_FACE_INFO).split(": ", 1)[1])
+            return
+        infos.append(_cmp_text(mr.SKIP_INFO, stage=a["stage"],
+                               factor="—" if a.get("factor") is None else f"{float(a['factor']):g}",
+                               n_est="—" if a.get("n_est") is None else a.get("n_est"), bytes_est=_gb(a.get("bytes_est")),
+                               reason=a.get("reason")) + f" — {did} {row['name']}")
+
+    for si, stage in enumerate(lad):
+        if stage == "cad":
+            continue
+        if stage == "remesh":
+            if not remesh_ok:
+                attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": None,
+                                 "seconds": None, "skipped": True, "reason": "unavailable"})
+                continue
+            if mr.remaining_s(ccfg, elapsed) <= 0:          # 같은 형상 누적 예산(refine.total_timeout_s) 소진
+                info_skip({"stage": "remesh", "factor": None, "n_est": None, "bytes_est": None, "reason": "time"})
+                attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": mr.SKIP_INFO,
+                                 "seconds": None, "skipped": True, "reason": "time"})
+                continue
+            n_try += 1
+            td = _next_try(c, d, n_try, keep)
+            t1 = time.monotonic()
+            rr = _cmp_remesh_one(c, row, h, ccfg, props, td, timeout_s=mr.attempt_timeout(to_remesh, ccfg, elapsed))
+            dt = time.monotonic() - t1
+            elapsed += dt
+            attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": rr["status"], "code": rr["code"],
+                             "seconds": round(dt, 3), **({"n_elems": rr["n_elems"]} if rr.get("n_elems") else {})})
+            if rr["status"] == "READY":
+                _promote(c, td, d, {"mesh_method": "fallback", "cad_error": cad_err, "attempts": attempts})
+                if not keep:
+                    _clear_tries(c, d)
+                rr.update(mesh_method="fallback", cad_error=cad_err, attempts=attempts, info=infos)
+                return rr
+            last = rr
+            continue
+        queue = mr.plan(stage, pm, h, ccfg, avail, elapsed_s=elapsed)
+        while queue:
+            a = queue.pop(0)
+            if a.get("skipped"):
+                info_skip(a)
+                attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "SKIPPED",
+                                 "code": a.get("info"), "seconds": None, "skipped": True, "reason": a.get("reason")})
+                continue
+            why = mr.check_limits(a, ccfg, avail, elapsed, pm.get("wall_seconds"), pm.get("n_est"))
+            if why:
+                a.update(skipped=True, reason=why, info=mr.SKIP_INFO)
+                info_skip(a)
+                attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "SKIPPED",
+                                 "code": mr.SKIP_INFO, "seconds": None, "skipped": True, "reason": why})
+                continue
+            n_try += 1
+            td = _next_try(c, d, n_try, keep)
+            t1 = time.monotonic()
+            try:
+                mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
+                                             max_elems=a.get("max_elems"), fail_info=True,
+                                             timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
+            except EslError as exc:
+                if exc.code == "GMSH_UNAVAILABLE":
+                    raise
+                dt = time.monotonic() - t1
+                elapsed += dt
+                code = _cad_code(td)
+                attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "FAILED_MESH",
+                                 "code": code, "seconds": round(dt, 3)})
+                last = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+                nm = mr.read_attempt(td)
+                nm["wall_seconds"] = round(dt, 3)
+                nm.setdefault("geom", geom0)
+                nm["n_est"] = a.get("n_est")
+                grew = acc(nm)
+                nm["faces"] = list(faces)
+                pm = nm
+                if stage == "refine_local" and grew:            # 새로 실패한 면 누적 → 남은(더 작은) 배율로 다시 계획
+                    f0 = float(a.get("factor") or 1.0)
+                    queue = [x for x in mr.plan(stage, pm, h, ccfg, avail, elapsed_s=elapsed)
+                             if x.get("factor") is not None and float(x["factor"]) < f0]
+                continue
+            dt = time.monotonic() - t1
+            attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "READY",
+                             "code": None, "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
+            out = _cmp_ready(c, did, mesh, meta)
+            sf = meta.get("size_fields") or {}
+            fr = [{"bbox_key": _bbox_str(f.get("key")), "type": f.get("type"), "center": f.get("center"),
+                   "ring": f.get("ring")} for e in sf.get("entries") or [] for f in e.get("faces") or []]
+            n_h = mr.estimate_elems(area, h, elem_per_h2=e_h2) if area else None
+            ref = {"kind": a.get("kind"), "stage_index": si, "h_mm": float(a["h_mm"]), "factor": a.get("factor"),
+                   "base_h_mm": h, "faces": fr, "n_elems": int(meta["n_elems"]), "n_est": a.get("n_est"),
+                   "elem_ratio_h": round(int(meta["n_elems"]) / n_h, 4) if n_h else None, "elem_ratio_ref": None,
+                   "attempts": attempts}
+            out.update(mesh_method="refine", cad_error=cad_err, refine=ref, attempts=attempts, info=infos)
+            out["seconds"] = round(elapsed + dt, 3)
+            _promote(c, td, d, {"mesh_method": "refine", "cad_error": cad_err, "refine": ref})
+            if not keep:
+                _clear_tries(c, d)
+            return out
+    last = {k: v for k, v in last.items() if k in ("id", "status", "code", "message", "fidelity")}
+    last.update(status="FAILED_MESH", mesh_method=None, cad_error=cad_err, attempts=attempts, info=infos)
+    return last
+
+
+def _gb(b) -> str:
+    return "—" if b is None else f"{float(b) / 1024 ** 3:.2f} GB"
+
+
+def _patch_mesh_json(c: Ctx, d: str, extra: dict) -> None:
+    p = os.path.join(d, mg.MESH_JSON)
+    if os.path.isfile(p):
+        U.write_json(c.writer.guard(p), {**U.read_json(p), **extra})
+
+
+def _cmp_remesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, out_dir: str,
+                    timeout_s: float | None = None) -> dict:
+    """삼각형 재메시 1회(C2-D-11, spawn 격리 run_isolated kind remesh) → 형상 행 + fidelity. 실패 = REMESH_* 코드.
+    timeout_s None = remesh.timeout_s(null 이면 mesh.timeout_s), auto 사다리는 남은 예산으로 줄여 넘김."""
+    did = row["id"]
+    try:
+        mesh, meta = mg.run_isolated(c.p(row["rel"]), out_dir, h, ccfg, props, opt_cfg=c.ocfg, kind="remesh",
+                                     timeout_s=timeout_s)
+    except EslError as exc:
+        if exc.code == "GMSH_UNAVAILABLE":
+            raise
+        code = exc.code if exc.code.startswith("REMESH_") or exc.code == "MESH_TOO_LARGE" else "REMESH_FAILED"
+        out = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+        mj = os.path.join(out_dir, mg.MESH_JSON)
+        if os.path.isfile(mj) and U.read_json(mj).get("fidelity"):
+            out["fidelity"] = U.read_json(mj)["fidelity"]
+        return out
+    out = _cmp_ready(c, did, mesh, meta)
+    if meta.get("fidelity"):
+        out["fidelity"] = dict(meta["fidelity"])
+    return out
+
+
+def _cmp_mesh_input_one(c: Ctx, row: dict, ccfg: dict, props: dict) -> dict:
+    """메시 입력 형상(C2-D-7): read_shape_mesh(in-process, gmsh 없음) → mesh/{mesh.npz, mesh.json, id_map.npz}."""
+    from esl.doe import mesh_input as mi
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    c.writer.makedirs(d)
+    for name in (mg.MESH_NPZ, mg.MESH_JSON, mi.ID_MAP_NPZ):
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            os.remove(c.writer.guard(p))
+    t0 = time.monotonic()
+    try:
+        mesh, meta = mi.read_shape_mesh(c.p(row["rel"]), row["main_rel"], row.get("part_id"), props, ccfg,
+                                        opt_cfg=c.ocfg, out_dir=c.writer.guard(d))
+    except EslError as exc:
+        return {"id": did, "status": "FAILED_MESH", "code": exc.code, "message": exc.message, "mesh_method": "mesh_input"}
+    out = _cmp_ready(c, did, mesh, meta)
+    out.update(seconds=round(time.monotonic() - t0, 3), mesh_method="mesh_input", part_id=meta.get("part_id"),
+               edge_median_mm=meta.get("edge_median_mm"), n_components=meta.get("n_components"),
+               warn_codes=[w for w in meta.get("warnings") or [] if str(w.get("code", "")).startswith("MESH_INPUT_")],
+               info=[f"{x['code']}: {did} {row['name']} {x.get('message') or ''}".rstrip() for x in meta.get("infos") or []])
+    return out
+
+
+def _method_echo(r: dict, h: float) -> str:
+    """준비 로그 머리(cad 는 v0.15.x 문구 그대로)."""
+    m = r.get("mesh_method")
+    if m == "refine":
+        rf = r.get("refine") or {}
+        return (f"mesh 세분화({'국부' if rf.get('kind') == 'local' else '전역'} h {float(rf.get('h_mm') or h):g} mm"
+                + (f" · 면 {len(rf.get('faces') or [])}" if rf.get("kind") == "local" else "") + ")")
+    if m in ("remesh", "fallback"):
+        fd = r.get("fidelity") or {}
+        return (f"mesh 재메시{'(폴백)' if m == 'fallback' else ''} {h:g} mm"
+                + (f" · 최대 편차 {float(fd['hausdorff_mm']):.3f} mm" if fd.get("hausdorff_mm") is not None else ""))
+    if m == "mesh_input":
+        return f"메시 입력(파트 {r.get('part_id')} · 요소 크기 중앙값 {float(r.get('edge_median_mm') or 0):.2f} mm)"
+    return f"mesh {h:g} mm"
+
+
+def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: float, warns: list) -> list[str]:
+    """v0.16.0 형상 행 보강·경고(C2-D-1·8·10·13·22·23): edge_median_mm·n_components, elem_ratio_ref, 기준 대비 크기 차이,
+    COMPARE_MESH_METHOD_MIXED·REMESH_USED·REMESH_FIDELITY_WARN·MESH_REFINED·MESH_INPUT_*. 반환 info 문구."""
+    from esl.doe import mesh_input as mi
+    infos: list[str] = []
+    ref_e50 = None
+    n_ref = (res.get(BASELINE) or {}).get("n_elems")
+    r_warn = float(mi._mcfg(c.cfg)["size_warn_ratio"])
+    for r in shapes:
+        x = res[r["id"]]
+        infos += list(x.pop("info", None) or [])
+        wc = x.pop("warn_codes", None) or []
+        if r.get("source") == "case":
+            x["mesh_method"] = "mesh_input"
+        if r.get("source") == "mesh":
+            x["part_id"] = x.get("part_id", r.get("part_id"))
+        if x.get("status") != "READY":
+            continue
+        if x.get("edge_median_mm") is None or x.get("n_components") is None:
+            m = ref_mesh if r["id"] == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, r["id"]))
+            x["edge_median_mm"] = round(mi.edge_median(m), 6)
+            x["n_components"] = mi.n_components(m)
+        if r["id"] == BASELINE:
+            ref_e50 = x["edge_median_mm"]
+        for w in wc:
+            warns.append(f"{w['code']}: {r['id']} {r['name']} {w.get('message') or ''}".rstrip())
+    for r in shapes:
+        x = res[r["id"]]
+        if x.get("status") != "READY":
+            continue
+        nm = f"{r['id']} {r['name']}"
+        m = x.get("mesh_method")
+        if m == "mesh_input" and r.get("source") == "mesh" and r["id"] != BASELINE and ref_e50 and x.get("edge_median_mm"):
+            e50 = float(x["edge_median_mm"])
+            if max(e50 / ref_e50, ref_e50 / e50) > r_warn and not any(
+                    str(w).startswith("MESH_INPUT_SIZE_DIFF") and nm in str(w) for w in warns):
+                warns.append(_cmp_text("MESH_INPUT_SIZE_DIFF", name=nm, e50=f"{e50:.2f}", ref=f"{ref_e50:.2f}",
+                                       ratio=f"{r_warn:g}"))
+        if m == "fallback":
+            warns.append(_cmp_text("REMESH_USED", first=(x.get("cad_error") or {}).get("message") or "?") + f" — {nm}")
+        fd = x.get("fidelity") or {}
+        if fd.get("over_warn"):
+            warns.append(_cmp_text("REMESH_FIDELITY_WARN", mm=f"{float(fd['hausdorff_mm']):.3f}",
+                                   warn=f"{float(fd['warn_mm']):g}") + f" — {nm}")
+        rf = x.get("refine")
+        if m == "refine" and rf:
+            if n_ref:
+                rf["elem_ratio_ref"] = round(int(x["n_elems"]) / int(n_ref), 4)
+                _patch_mesh_json(c, _cmp_mesh_dir(c, r["id"]), {"refine": rf})
+            ratio = rf.get("elem_ratio_ref") or rf.get("elem_ratio_h")
+            local = rf.get("kind") == "local"
+            warns.append(_cmp_text("MESH_REFINED", name=nm, h0=f"{float(rf['base_h_mm']):g}", kind="국부" if local else "전역",
+                                   h=f"{float(rf['h_mm']):g}", faces=f", 면 {len(rf.get('faces') or [])}개" if local else "",
+                                   r="—" if ratio is None else f"{float(ratio):.2f}"))
+    kinds = _method_kinds(shapes, res)
+    if mixed_methods(kinds):
+        warns.append(_cmp_text("COMPARE_MESH_METHOD_MIXED") + f" ({', '.join(sorted(kinds))})")
+    return infos
+
+
+MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
+
+
+def _method_kinds(shapes: list[dict], res: dict) -> set:
+    """READY 형상의 메시 방식 집합(Case 기준 메시 = 'case', 사용자 메시 입력 = 'mesh_input')."""
+    out = set()
+    for r in shapes:
+        x = res[r["id"]]
+        if x.get("status") != "READY":
+            continue
+        k = "case" if r.get("source") == "case" else x.get("mesh_method")
+        if k:
+            out.add(k)
+    return out
+
+
+def mixed_methods(kinds) -> bool:
+    """C2-D-1 경고 조건: 방식이 둘 이상이고 refine·remesh·fallback·메시 입력(source mesh) 중 하나가 섞임."""
+    ks = set(kinds)
+    return len(ks) > 1 and bool(ks & set(MIXED_TRIGGER))
+
+
 def _cmp_mesh0(c: Ctx, echo) -> dict:
     """BD_MESH0 ④: 모든 STEP 같은 gmsh 프로필(SC-D-5)·형상별 병렬(run.parallel, SC-D-9). 기준 실패 → 작업 실패
     (MESH_FAILED·MESH_TOO_LARGE), 기준 크기(SC-D-7a) 불일치 → SIZE_MISMATCH. 그 밖 형상 실패 → FAILED_MESH(진행)."""
     from concurrent.futures import ThreadPoolExecutor
     c.progress(0)
     shapes = _cmp_shapes(c)
-    steps = [r for r in shapes if r.get("rel")]
-    ver = None
-    if steps:
-        ok, ver = mg.available()
-        if not ok:
+    steps = [r for r in shapes if r.get("rel")]                 # gmsh 또는 메시 입력으로 메시를 만들 형상(case 제외)
+    ver, gm_ok = None, False
+    if any(r.get("source", "step") == "step" for r in steps):  # gmsh 확인은 STEP 형상이 있을 때만(C2-D-16)
+        gm_ok, ver = mg.available()
+        if not gm_ok:
             raise EslError("GMSH_UNAVAILABLE", "gmsh 가 없어 ④ 형상 메시를 만들 수 없음")
     props = _cmp_props(c)
     prof = sc.compare_profile(c.cfg)
     ccfg = sc.compare_cfg(c.cfg)
     h = mg.check_h(float(prof["size_mm"]), prof)
+    mode, lad = _cmp_mode(c)
+    remesh_ok = gm_ok and ("remesh" in lad) and _remesh_ready(c)
+    avail = None
+    if mode == "auto" and any(s.startswith("refine_") for s in lad):
+        from esl.mech.shell import available_memory_bytes
+        avail = available_memory_bytes()
     par = max(1, min(int(c.cfg["run"]["parallel"]), len(steps) or 1))
     echo(f"[bd_mesh0] ④ gmsh {ver or '-'} 프로필 h {h:g} mm · 최소 {h * float(prof['min_size_factor']):g} mm · 곡률 "
          f"{int(prof['curvature_n'])} · 경계 확장 {prof.get('extend_from_boundary')} · OCC 정리 {prof.get('occ_fix_small')} — "
          f"형상 {len(steps)}개 동시 {par}")
+    if mode != "cad":
+        echo(f"[bd_mesh0] 메시 방식 {mode}" + (f" · 사다리 {' → '.join(lad)}" if mode == "auto" else "")
+             + ("" if remesh_ok or "remesh" not in lad else " (재메시 사용 불가 — 건너뜀)"))
     res: dict[str, dict] = {}
     done = [0]
     if steps:
         with ThreadPoolExecutor(max_workers=par, thread_name_prefix="esl-cmp-mesh") as pool:
-            futs = {pool.submit(_cmp_mesh_one, c, r, h, ccfg, props): r["id"] for r in steps}   # 기준이 먼저(id 순)
+            futs = {pool.submit(_cmp_mesh_shape, c, r, h, ccfg, props, mode, lad, remesh_ok, avail): r["id"]
+                    for r in steps}   # 기준이 먼저(id 순)
             for f, did in futs.items():
                 r = f.result()
                 res[did] = r
@@ -1009,7 +1514,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                 if r["status"] == "READY":
                     qy = r["quality"]
                     df = r.get("defeature") or {}
-                    echo(f"[{did} {nm}] mesh {h:g} mm {float(r.get('seconds') or 0):.0f} s {r['n_elems']} 요소 · quad "
+                    echo(f"[{did} {nm}] {_method_echo(r, h)} {float(r.get('seconds') or 0):.0f} s {r['n_elems']} 요소 · quad "
                          f"{r['quad_ratio']:.3f} · 품질 Fail {qy['fail_elems']}({qy['fail_ratio'] * 100:.2f} %) Warn "
                          f"{qy['warn_elems']} · 구멍 메움 {df.get('filled', 0)}·둘레 조정 {df.get('hole_sized', 0)}"
                          + (f" · 폴백 면 {qy['fallback_faces']}개(id {', '.join(map(str, qy['fallback_face_ids']))})"
@@ -1019,13 +1524,19 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                         echo(f"[{did} {nm}]   면 {f['failed_id']}({f['type']}, 중심 {cc[0]:g},{cc[1]:g},{cc[2]:g} mm) → "
                              f"{mg.fallback_label(f)} · 처음 오류: {f['errors'][0]}")
                 else:
-                    echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
+                    echo(f"[{did} {nm}] {r['status']} {r['code']}: {_ladder_fail_text(r)}")
+                if r.get("cad_error"):
+                    for a in r.get("attempts") or []:
+                        echo(f"[{did} {nm}]   사다리 {a['stage']}" + (f" ×{a['factor']:g}" if a.get("factor") else "")
+                             + (f" h {a['h_mm']:g} mm" if a.get("h_mm") else "") + f" → {a['status']}"
+                             + (f" {a['code']}" if a.get("code") else "") + (f" ({a['reason']})" if a.get("reason") else ""))
                 if did == BASELINE and r["status"] != "READY":
                     for g in futs:
                         g.cancel()
-                    raise EslError(r["code"], f"기준 형상 메시 실패: {r['message']}")
+                    raise EslError(r["code"], f"기준 형상 메시 실패: {_ladder_fail_text(r)}")
                 c.progress(5 + 75 * done[0] / len(steps))
     ref = next(r for r in shapes if r["id"] == BASELINE)
+    ref_src = "case" if ref["source"] == "case" else "step"     # 기준 출처 step|case(메시 입력 기준도 step — §3 불변)
     if ref["source"] == "case":
         mj = U.read_json(os.path.join(_cmp_mesh_dir(c, BASELINE), mg.MESH_JSON))
         res[BASELINE] = {"id": BASELINE, "status": "READY", "code": None, "message": None, "n_nodes": mj["n_nodes"],
@@ -1040,9 +1551,10 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                                          "occ_fix_small", "feature_angle", "algorithm", "occ_sew_faces")}
     prof_rec["defeature"] = dict(c.cfg["compare"].get("defeature") or {})
     bm = sc.save_base(t, c.p("prep"), "compare", c.writer,
-                      extra={"props": props, "h": h, "gmsh_version": ver, "reference_source": ref["source"],
+                      extra={"props": props, "h": h, "gmsh_version": ver, "reference_source": ref_src,
                              "profile": prof_rec, "profile_sha256": ev.config_hash(prof_rec)})
     warns = list(size_info.get("warnings") or [])
+    infos = _cmp_mesh_notes(c, shapes, res, ref_mesh, h, warns)
     for r in shapes:
         x = res[r["id"]]
         qy = x.get("quality")
@@ -1054,21 +1566,29 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                          f"{', '.join(map(str, qy['fallback_face_ids']))})를 면 폴백("
                          f"{', '.join(qy.get('fallback_stages') or []) or '다른 2D 알고리즘·제약 해제'})으로 메시 — "
                          "그 면 주변 요소 모양이 다른 형상과 다를 수 있음(mesh.json mesh_fallback)")
-    doc = {"schema": "esl/doe_compare/1", "reference_source": ref["source"], "profile": prof_rec, "h": h,
+    doc = {"schema": "esl/doe_compare/1", "reference_source": ref_src, "profile": prof_rec, "h": h,
            "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
            "shapes": [{"id": r["id"], "name": r["name"], "file_name": r.get("file_name"), "reference": r["reference"],
                        "source": r["source"], **{k: v for k, v in res[r["id"]].items() if k != "id"}} for r in shapes]}
     doc["warnings"] = warns
+    if mode != "cad":                                   # v0.16.0(cad = 키 없음 — v0.15.x 와 같은 문서)
+        doc["mesh_mode"] = mode
+        doc["mesh_ladder"] = lad
     c.write_json(os.path.join("prep", sc.COMPARE_JSON), doc)
     inp = U.read_json(c.p("prep", "input.json"))
     inp.update(size=size_info, props=props, mesh_size_mm=h, gmsh_version=ver)
     inp["warnings"] = list(inp.get("warnings") or []) + warns
+    if infos:
+        inp["info"] = list(inp.get("info") or []) + infos
     c.write_json(os.path.join("prep", "input.json"), inp)
     nf = sum(1 for r in doc["shapes"] if r["status"] != "READY")
     echo(f"[bd_mesh0] 기준 d000 노드 {bm['n_nodes']} · 요소 {bm['n_elems']}, 형상 메시 실패 {nf}개")
     c.progress(100)
-    return {"files": [f"prep/{sc.COMPARE_JSON}", "prep/base_mesh.npz", "prep/base.json"], "warnings": warns,
-            "h": h, "n_failed": nf}
+    out = {"files": [f"prep/{sc.COMPARE_JSON}", "prep/base_mesh.npz", "prep/base.json"], "warnings": warns,
+           "h": h, "n_failed": nf}
+    if infos:
+        out["info"] = infos
+    return out
 
 
 def _cmp_loads(c: Ctx, echo) -> dict:
@@ -1117,8 +1637,21 @@ def _cmp_sha(c: Ctx, did: str) -> str:
     bmeta = U.read_json(c.p("prep", "base.json"))
     sh = _cmp_by(c).get(did) or {}
     mesh_sha = bmeta["mesh_sha256"] if did == BASELINE else U.sha256_file(os.path.join(_cmp_mesh_dir(c, did), mg.MESH_NPZ))
-    cfg = ev.config_hash({"cfg": _cfg_hash(c), "props": bmeta.get("props"), "profile": bmeta.get("profile"),
-                          "step": sh.get("sha256"), "source": sh.get("source")})
+    keep = {"cfg": _cfg_hash(c), "props": bmeta.get("props"), "profile": bmeta.get("profile"),
+            "step": sh.get("sha256"), "source": sh.get("source")}
+    mode = str(c.D.get("mesh_mode") or "cad")
+    if mode != "cad":                       # C2-D-15·25: mode ≠ cad 일 때만(v0.15.x·cad 스터디 해시 불변)
+        cc = c.cfg.get("compare") or {}
+        keep["mesh_mode"] = mode
+        keep["remesh"] = ev.config_hash(cc.get("remesh") or {})
+        keep["ladder"] = list(_cmp_mode(c)[1])
+        keep["refine"] = ev.config_hash(cc.get("refine") or {})
+    if sh.get("source") == "mesh":          # 메시 형상 = (주·include sha256 목록, part_id, mesh_input 설정 해시)
+        from esl.doe import mesh_input as mi
+        keep["mesh_files"] = [f.get("sha256") for f in sh.get("files") or []]
+        keep["part_id"] = sh.get("part_id")
+        keep["mesh_input"] = ev.config_hash(mi._mcfg(c.cfg))
+    cfg = ev.config_hash(keep)
     return ev.input_sha256({}, mesh_sha, ev.config_hash(bmeta["frame"]), cfg, None)
 
 
@@ -1133,11 +1666,12 @@ def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
 
 
 def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str]) -> str:
-    """④ ranking.csv: 변수 열 대신 name·file_name."""
+    """④ ranking.csv: 변수 열 대신 name·file_name. v0.16.0 끝 열(§7·C2-D-22) = source·mesh_method·hausdorff_mm·refine_h_mm·
+    elem_ratio_ref(기존 열 위치 불변)."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["id", "rank", "status", "name", "file_name", "score", "improvement", "worst", "umax", "epsmax"]
-               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids])
+               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids] + MESH_CSV_COLS)
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
@@ -1156,8 +1690,19 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
                                                                                        for e in entry_ids]
         else:
             row = head + ["", "", "", "", ""]
-        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra)
+        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra + _mesh_csv(sh))
     return buf.getvalue()
+
+
+MESH_CSV_COLS = ["source", "mesh_method", "hausdorff_mm", "refine_h_mm", "elem_ratio_ref"]
+
+
+def _mesh_csv(sh: dict) -> list:
+    fd = sh.get("fidelity") or {}
+    rf = sh.get("refine") or {}
+    v = [sh.get("source"), sh.get("mesh_method"), fd.get("hausdorff_mm"), rf.get("h_mm") if rf else None,
+         rf.get("elem_ratio_ref") if rf else None]
+    return ["" if x is None else x for x in v]
 
 
 def _cmp_export(c: Ctx, did: str, props: dict) -> list[str]:
@@ -1170,6 +1715,128 @@ def _cmp_export(c: Ctx, did: str, props: dict) -> list[str]:
     bd = c.writer.fresh_dir(c.p("best", did), c.out)
     from esl.doe import export_mesh
     return export_mesh.write(bd, mesh, guard=c.writer.guard)
+
+
+MESH_HEAD_CODES = ("COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_INPUT_SIZE_DIFF",
+                   "MESH_INPUT_DISCONNECTED", "MESH_REFINED")
+
+
+def _refine_hr(c: Ctx, row: dict) -> float:
+    """수렴 점검 h_r(C2-D-24): 전역 = 세분화 h, 국부 = 그 형상의 평균 요소 크기 √(ΣA/n)(같은 면에 같은 Field 를 줄 수
+    없으므로 전역 대표값). 하한 refine.min_size_mm, 1e-3 mm 반올림(캐시 키)."""
+    from esl.doe import mesh_refine as mr
+    rf = row.get("refine") or {}
+    if rf.get("kind") != "local":
+        h = float(rf["h_mm"])
+    else:
+        m = mg.load_mesh(_cmp_mesh_dir(c, row["id"]))
+        conn = np.asarray(m["conn"])
+        A = mg._elem_area(np.asarray(m["x0"]), np.where(conn >= 0, conn, conn[:, :1]), np.asarray(m["elem_type"]))
+        h = float(np.sqrt(float(np.sum(A)) / max(int(A.size), 1)))
+    return round(max(h, float(mr._rcfg(c.cfg)["min_size_mm"])), 3)
+
+
+def _cmp_refine_bias(c: Ctx, t, doc: dict, results: list[dict], tol_rank: float, echo) -> tuple[dict, list, list]:
+    """C2-D-24 수렴 점검: 세분화 형상이 쓴 h_r 마다 기준 d000 STEP 을 h_r 로 다시 메시·해석(같은 frame·하중 규칙, 캐시
+    run/designs/d000_h<h>/ — done.json 해시 같으면 재사용) → δ_e = C_ref(h_r)/C_ref(h) − 1. 반환 ({id: refine_bias}, 경고, info)."""
+    from esl.doe import mesh_refine as mr
+    rc = mr._rcfg(c.cfg)
+    conv = rc.get("convergence") or {}
+    by_res = {r["id"]: r for r in results}
+    refined = [s for s in doc["shapes"] if s.get("mesh_method") == "refine" and s.get("refine")
+               and (by_res.get(s["id"]) or {}).get("status") == "OK" and s["id"] != BASELINE]
+    if not conv.get("enabled", True) or not refined:
+        return {}, [], []
+    ref = next(s for s in doc["shapes"] if s["id"] == BASELINE)
+    if doc.get("reference_source") == "case" or ref.get("source") != "step":
+        echo("[bd_post] 수렴 점검 생략 — 기준이 Case 메시 또는 메시 입력")
+        return {}, [], [_cmp_text("REFINE_CONVERGENCE_SKIPPED")]
+    tol = float(conv["tol"]) if conv.get("tol") is not None else float(tol_rank)
+    base = by_res[BASELINE]
+    C_h = {p["entry_id"]: float(p["C"]) for p in base.get("per_esl") or []}
+    row0 = _cmp_by(c).get(BASELINE) or {}
+    src = c.p(row0["rel"])
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    props = bmeta["props"]
+    ccfg = sc.compare_cfg(c.cfg)
+    hr_of = {s["id"]: _refine_hr(c, s) for s in refined}
+    from esl.doe import mesh_remesh
+    tools = mesh_remesh.build_versions()
+    C_hr: dict[float, dict | None] = {}
+    errs: dict[float, str] = {}
+    for hr in sorted(set(hr_of.values()), reverse=True):
+        dd = design_dir(c, f"{BASELINE}_h{hr:g}")
+        c.writer.makedirs(dd)
+        sha = ev.config_hash({"step": row0.get("sha256"), "h_r": hr, "cfg": _cfg_hash(c), "props": props,
+                              "profile": bmeta.get("profile"), "frame": ev.config_hash(bmeta["frame"]),
+                              "refine": ev.config_hash({k: v for k, v in rc.items() if k != "convergence"}),
+                              "entries": [e["id"] for e in c.D["entries"]],
+                              "tools": tools})     # 판정(tol·same_h)은 캐시 키 아님, gmsh·occ 버전은 키(메시가 바뀜)
+        prev = ev.reusable(dd, sha)
+        if prev is not None and prev.get("status") == "OK":
+            C_hr[hr] = {p["entry_id"]: float(p["C"]) for p in U.read_json(os.path.join(dd, ev.RESULT_JSON))["per_esl"]}
+            echo(f"[bd_post] 수렴 점검 d000 h {hr:g} mm — 이전 결과 재사용")
+            continue
+        try:
+            a = {"stage": "refine_global", "max_elems": int(rc["max_elems"])}
+            mesh, meta = mg.run_isolated(src, os.path.join(dd, "mesh"), hr, mr.attempt_cfg(ccfg, a), props,
+                                         opt_cfg=c.ocfg, max_elems=int(rc["max_elems"]))
+            dt = sc.compare_target(mesh, t.frame)
+            loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+            r = ev.evaluate(dt.mesh, list(dt.supports), loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"])
+            rd = ev.result_doc(f"{BASELINE}_h{hr:g}", "OK", {}, mesh={"n_nodes": dt.n_nodes, "n_elems": dt.n_elems, "h": hr},
+                               solve=r["stats"], per_esl=r["per_esl"], warnings=r["warnings"])
+            U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), rd)
+            ev.write_done(dd, sha, "OK", c.writer)
+            C_hr[hr] = {p["entry_id"]: float(p["C"]) for p in r["per_esl"]}
+            echo(f"[bd_post] 수렴 점검 d000 h {hr:g} mm · 요소 {dt.n_elems} · solve {r['stats']['seconds']:.1f} s")
+        except EslError as exc:
+            if exc.code == "GMSH_UNAVAILABLE":
+                raise
+            C_hr[hr] = None
+            errs[hr] = f"{exc.code}: {exc.message}"
+            echo(f"[bd_post] 수렴 점검 d000 h {hr:g} mm 실패 {exc.code}: {exc.message}")
+    out, warns, infos = {}, [], []
+    same_h = bool(conv.get("same_h_baseline", False))
+    for s in refined:
+        hr = hr_of[s["id"]]
+        cr = C_hr.get(hr)
+        if cr is None:
+            out[s["id"]] = {"h_mm": hr, "delta_max": None, "tol": tol, "over_tol": False, "per_esl": [],
+                            "error": errs.get(hr)}
+            infos.append(f"REFINE_CONVERGENCE_SKIPPED: {s['id']} {s['name']} 기준 d000 h {hr:g} mm 해석 실패 — {errs.get(hr)}")
+            continue
+        per = [{"entry_id": e, "delta": cr[e] / C_h[e] - 1.0, "C_h": C_h[e], "C_hr": cr[e]}
+               for e in C_h if C_h[e] > 0 and e in cr]
+        dmax = max((abs(p["delta"]) for p in per), default=0.0)
+        b = {"h_mm": hr, "delta_max": dmax, "tol": tol, "over_tol": bool(dmax > tol), "per_esl": per,
+             "same_h_baseline": same_h}
+        if same_h:
+            mine = {p["entry_id"]: float(p["C"]) for p in by_res[s["id"]].get("per_esl") or []}
+            for p in per:
+                if p["entry_id"] in mine and p["C_hr"] > 0:
+                    p["ratio_same_h"] = mine[p["entry_id"]] / p["C_hr"]
+            if mine and cr:
+                sc_h = max(mine.values()) / max(cr[e] for e in mine if e in cr)
+                b.update(score_same_h=sc_h, improvement_same_h=1.0 - sc_h)
+        out[s["id"]] = b
+        if b["over_tol"]:
+            warns.append(_cmp_text("MESH_REFINE_BIAS", name=f"{s['id']} {s['name']}", h=f"{hr:g}",
+                                   delta=f"{dmax * 100:.2f} %", tol=f"{tol * 100:g} %"))
+    return out, warns, infos
+
+
+def _shape_ext(s: dict, bias: dict | None = None) -> dict:
+    """v0.16.0 결과 shape 보강(§3): source·mesh_method(+ part_id, fidelity, refine, refine_bias 있을 때만)."""
+    out = {"source": s.get("source") or "step", "mesh_method": s.get("mesh_method")}
+    if s.get("source") == "mesh":
+        out["part_id"] = s.get("part_id")
+    for k in ("fidelity", "refine"):
+        if s.get(k):
+            out[k] = s[k]
+    if bias:
+        out["refine_bias"] = bias
+    return out
 
 
 def _cmp_post(c: Ctx, echo) -> dict:
@@ -1190,6 +1857,13 @@ def _cmp_post(c: Ctx, echo) -> dict:
             results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
     R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"})
     rk.attach_shapes(R, shapes)
+    bias, bias_w, bias_i = _cmp_refine_bias(c, t, doc, results, float(R["ratio_tol"]), echo)     # v0.16.0 C2-D-24
+    for x in R["ranking"]:
+        x["shape"].update(_shape_ext(shapes.get(x["id"]) or {}, bias.get(x["id"])))
+        b = bias.get(x["id"]) or {}
+        if b.get("improvement_same_h") is not None:            # same_h_baseline: 원래 개선율과 함께 표시
+            x["improvement_same_h"] = b["improvement_same_h"]
+    R["baseline"]["shape"].update(_shape_ext(shapes.get(BASELINE) or {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     for x in R["ranking"]:
         for p in x["per_esl"]:
@@ -1211,7 +1885,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
 
     def shp(did):
         s = shapes.get(did) or {}
-        return {"name": s.get("name"), "file_name": s.get("file_name"), "reference": bool(s.get("reference"))}
+        return {"name": s.get("name"), "file_name": s.get("file_name"), "reference": bool(s.get("reference")),
+                **_shape_ext(s, bias.get(did))}
     c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
                                                                     "code": r.get("code"), "score": r.get("score"),
                                                                     "shape": shp(r["id"])} for r in results]})
@@ -1219,6 +1894,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
     inp = U.read_json(c.p("prep", "input.json"))
     if doc["reference_source"] == "case":
         warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
+    warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -1258,17 +1934,38 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "versions": {"paicad": None, "gmsh": bmeta.get("gmsh_version")}, "shapes": doc["shapes"],
            "profile": doc.get("profile"), "reference_source": doc["reference_source"],
            "result": {**R, "sensitivity": None}, "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"],
-           "esl": esl, "limits_extra": list(LIMIT_MSG), "warnings": warns,
+           "esl": esl, "limits_extra": list(LIMIT_MSG) + _mesh_limits(doc["shapes"]), "warnings": warns,
+           "refine_bias": bias, "mesh_mode": doc.get("mesh_mode"),
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     out["cleanup_bytes"] = 0
+    if bias:
+        out["refine_bias"] = bias
     c.write_json(os.path.join("post", "result.json"), out)
     echo(f"[bd_post] ④ 성공 {R['n_ok']} · 최적 {best_id or '-'}"
          + (f" ({_cmp_name(c, best_id)}) score {R['ranking'][0]['score']:.4f}" if best_id else ""))
     c.progress(100)
-    return {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
-            "warnings": warns, "result": out}
+    ret = {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
+           "warnings": warns, "result": out}
+    if bias_i:
+        ret["info"] = bias_i
+    return ret
+
+
+MESH_LIMIT_MSG = {
+    "refine": "세분화 형상은 요소 크기가 기준 메시와 달라 메시 의존 오차를 포함합니다 — 수렴 점검 δ 참고",
+    "remesh": "재메시는 CAD 면 구조를 버린 근사입니다(단순화 후 CAD 대비 편차 표시) — 구멍 둘레 분할 미적용, 필렛이 접선으로 "
+              "이어진 비드는 면 분류에 실패할 수 있음(REMESH_CLASSIFY_FAILED)",
+    "mesh_input": "메시 입력은 그대로 사용합니다 — 크기·품질은 사용자 메시 책임"}
+
+
+def _mesh_limits(rows: list[dict]) -> list[str]:
+    """§9 한계 절 추가(쓰인 방식만 — 정상 STEP 만이면 없음)."""
+    ms = {r.get("mesh_method") for r in rows if r.get("status") in ("READY", "OK") or r.get("mesh_method")}
+    ms |= {"remesh"} if "fallback" in ms else set()
+    ms.discard("mesh_input") if not any(r.get("source") == "mesh" for r in rows) else None
+    return [MESH_LIMIT_MSG[k] for k in ("refine", "remesh", "mesh_input") if k in ms]
 
 
 # ---------------------------------------------------------------- v0.15.0 비드 직접 선택 select (esl_bead_select.md §8)

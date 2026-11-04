@@ -3,7 +3,7 @@
 // 행렬·셀 상태·순위·민감도는 입력에서 결정적으로 만든다(같은 spec → 같은 sha·같은 결과).
 import type {
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
 import type { DoeSelectionIn, DoeSelectionOut } from "../api/types";
@@ -70,7 +70,18 @@ export function makeDoeSettings(): DoeSettingsOut {
     part_title: "chassis rear",
     method_sources: DOE_METHOD_SOURCES,
     compare_reason: null,
-    compare: { enabled: true, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 },
+    compare: {
+      enabled: true,
+      reason: null,
+      max_shapes: 20,
+      total_max_mb: 1000,
+      mesh_size_mm: 3,
+      // v0.16.0 메시 옵션(esl_compare_mesh_options.md §6 GET /doe/settings compare)
+      mesh_mode: "auto",
+      remesh_available: true,
+      mesh_input: { enabled: true, formats: [".rad", ".inc"], max_mb: 500 },
+      step_ready: true,
+    },
     select: { enabled: true, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: 8 } },
   };
 }
@@ -507,7 +518,11 @@ const COMPARE_FAIL_MSG: Record<string, string> = {
   SHAPE_MISALIGNED: "기준 frame 과 원점·법선이 다릅니다(같은 좌표계 STEP 인지 확인)",
   SHAPE_SIZE_MISMATCH: "기준과 크기가 ±5 % 밖입니다",
   MESH_FAILED: "gmsh 메시 생성에 실패했습니다",
+  REMESH_FAILED: "삼각형 재메시에 실패했습니다: 면 분류 실패. 특징각(remesh.feature_angle_deg)을 키우거나 메시 파일로 올리세요",
 };
+/** C2-D-1 COMPARE_MESH_METHOD_MIXED 조건: 방식이 둘 이상이고 refine·remesh·fallback·mesh_input(메시 입력) 중 하나가 섞임 */
+export const MIXED_TRIGGER = ["refine", "remesh", "fallback", "mesh_input"];
+export const meshMethodsMixed = (kinds: Set<string>) => kinds.size > 1 && [...kinds].some((k) => MIXED_TRIGGER.includes(k));
 export const COMPARE_REF_CASE_MESH: DoeWarning = { code: "COMPARE_REF_CASE_MESH", message: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다" };
 
 const MAX_FAIL_RATIO = 0.01;
@@ -526,18 +541,77 @@ function mockQuality(key: string, h: number, nElems: number): DoeShapeQuality {
   };
 }
 
-/** 준비 결과(형상별 메시·크기·정렬·품질, 결정적): 이름·파일에 'shift' → SHAPE_MISALIGNED, 'big' → SHAPE_SIZE_MISMATCH, 'broken' → MESH_FAILED,
- *  'rough' → 품질 Fail 비율 상한 초과 */
-export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" | "case"): NonNullable<DoeStudyOut["prep"]> {
+/** v0.16.0 목 메시 방식(결정적, C2-D-9·18): mode 없음(v0.15 스터디) = cad. 메시 형상 = mesh_input.
+ *  auto 에서 이름·파일에 'complex' → 국부 세분화, 'hard' → 전역 세분화(세분화 끔이면 재메시 폴백), 'broken' → 재메시 폴백('coarse' 면 충실도 경고).
+ *  cad 에서 'broken' 은 MESH_FAILED(v0.15 와 같음). remesh = 모든 STEP 재메시. auto 에서 'dead' → 사다리 전부 실패(REMESH_FAILED + cad_error) */
+const MOCK_CAD_ERROR = { code: "MESH_FAILED", message: "gmsh 메시 생성에 실패했습니다(면 37: 1D 메시 실패)" };
+function mockFidelity(key: string) {
+  const hd = key.includes("coarse") ? 0.42 : 0.12;
+  return { hausdorff_mm: hd, max_dev_mm: +(hd * 0.9).toFixed(3), p95_mm: +(hd * 0.35).toFixed(3), area_ratio: key.includes("coarse") ? 0.996 : 1.001, deflection_mm: 0.05, warn_mm: 0.3, fail_mm: 1.5, over_warn: hd > 0.3 };
+}
+function mockMethod(x: CompareInputShape, key: string, mode: DoeMeshMode, refine: boolean, nRef: number): Partial<DoePrepShape> & { fail?: [string, string] } {
+  if (x.source === "mesh") return { mesh_method: "mesh_input", edge_median_mm: key.includes("fine") ? 1.6 : 3.05, n_components: key.includes("split") ? 2 : 1 };
+  const cadFail = { stage: "cad", h_mm: 3, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 41 };
+  if (mode === "remesh") return { mesh_method: "remesh", fidelity: mockFidelity(key) };
+  if (mode === "cad") return key.includes("broken") ? { fail: ["FAILED_MESH", "MESH_FAILED"] } : { mesh_method: "cad" };
+  if (key.includes("dead"))
+    return {
+      fail: ["FAILED_MESH", "REMESH_FAILED"],
+      cad_error: MOCK_CAD_ERROR,
+      attempts: [
+        cadFail,
+        ...(refine ? [{ stage: "refine_local", factor: 0.75, h_mm: 2.25, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 50 }, { stage: "refine_global", factor: 0.8, h_mm: 2.4, status: "SKIPPED", skipped: true, reason: "time", code: "REFINE_SKIPPED_LIMIT" }] : []),
+        { stage: "remesh", h_mm: 3, status: "FAILED_MESH", code: "REMESH_FAILED", seconds: 12 },
+      ],
+    };
+  if (refine && key.includes("complex")) {
+    const n = Math.round(nRef * 1.4);
+    return {
+      mesh_method: "refine",
+      cad_error: MOCK_CAD_ERROR,
+      refine: {
+        kind: "local", stage_index: 1, h_mm: 1.5, factor: 0.5, base_h_mm: 3,
+        faces: [0, 1, 2].map((k) => ({ bbox_key: `f${k}`, type: "BSplineSurface", center: [400 + 30 * k, 210, 4], ring: k ? 1 : 0 })),
+        n_elems: n, n_est: Math.round(n * 0.96), elem_ratio_h: 1.38, elem_ratio_ref: 1.4,
+        attempts: [cadFail, { stage: "refine_local", factor: 0.75, h_mm: 2.25, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 52 }, { stage: "refine_local", factor: 0.5, h_mm: 1.5, status: "OK", seconds: 63, n_elems: n }],
+      },
+    };
+  }
+  if (refine && key.includes("hard")) {
+    const n = Math.round(nRef * 1.6);
+    return {
+      mesh_method: "refine",
+      cad_error: MOCK_CAD_ERROR,
+      refine: {
+        kind: "global", stage_index: 2, h_mm: 2.4, factor: 0.8, base_h_mm: 3, faces: [], n_elems: n, n_est: Math.round(n * 1.02), elem_ratio_h: 1.55, elem_ratio_ref: 1.6,
+        attempts: [
+          cadFail,
+          { stage: "refine_local", status: "SKIPPED", skipped: true, reason: null, code: "REFINE_LOCAL_NO_FACE" },
+          { stage: "refine_global", factor: 0.8, h_mm: 2.4, status: "OK", seconds: 88, n_elems: n },
+        ],
+      },
+    };
+  }
+  if (key.includes("broken") || (!refine && (key.includes("complex") || key.includes("hard")))) return { mesh_method: "fallback", cad_error: MOCK_CAD_ERROR, fidelity: mockFidelity(key) };
+  return { mesh_method: "cad" };
+}
+
+/** 준비 결과(형상별 메시·크기·정렬·품질, 결정적): 이름·파일에 'shift' → SHAPE_MISALIGNED, 'big' → SHAPE_SIZE_MISMATCH, 'broken' → MESH_FAILED(cad),
+ *  'rough' → 품질 Fail 비율 상한 초과. v0.16.0 mode·refine = 메시 방식(mockMethod) */
+export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" | "case", mode: DoeMeshMode | null = null, refine = true): NonNullable<DoeStudyOut["prep"]> {
   const rows: DoePrepShape[] = [];
+  const m: DoeMeshMode = mode ?? "cad";
   if (refSource === "case")
-    rows.push({ id: "d000", name: "Case 메시", file_name: null, reference: true, source: "case", status: "READY", code: null, message: null, n_nodes: 221_380, n_elems: 218_400, quad_ratio: 0.98, quality: mockQuality("case", 0.2, 218_400) });
+    rows.push({ id: "d000", name: "Case 메시", file_name: null, reference: true, source: "case", status: "READY", code: null, message: null, n_nodes: 221_380, n_elems: 218_400, quad_ratio: 0.98, quality: mockQuality("case", 0.2, 218_400), mesh_method: "mesh_input", edge_median_mm: 3.0, n_components: 1 });
   for (const x of shapes) {
     const key = `${x.name} ${x.file_name}`.toLowerCase();
     const h = parseInt(fnv(x.file_name ?? x.id).slice(0, 4), 16) / 0xffff;
-    const fail = x.reference ? null : key.includes("shift") ? ["FAILED_SIZE", "SHAPE_MISALIGNED"] : key.includes("big") ? ["FAILED_SIZE", "SHAPE_SIZE_MISMATCH"] : key.includes("broken") ? ["FAILED_MESH", "MESH_FAILED"] : null;
+    const mm0 = mockMethod(x, key, m, refine, 180_000);
+    const fail = x.reference ? null : key.includes("shift") ? ["FAILED_SIZE", "SHAPE_MISALIGNED"] : key.includes("big") ? ["FAILED_SIZE", "SHAPE_SIZE_MISMATCH"] : mm0.fail ?? null;
+    const { fail: _f, ...meth } = mm0;
+    void _f;
     const meshed = fail?.[0] !== "FAILED_MESH";
-    const nElems = Math.round(168_000 + 26_000 * h);
+    const nElems = meth.refine?.n_elems ?? Math.round(168_000 + 26_000 * h);
     rows.push({
       id: x.id,
       name: x.name,
@@ -551,10 +625,31 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
       n_elems: meshed ? nElems : null,
       quad_ratio: meshed ? +(0.93 + 0.05 * h).toFixed(3) : null,
       quality: meshed ? mockQuality(key, h, nElems) : null,
+      ...(mode != null || x.source === "mesh" ? (meshed ? meth : { mesh_method: null, ...(meth.cad_error ? { cad_error: meth.cad_error, attempts: meth.attempts } : {}) }) : {}),
+      ...(x.source === "mesh" ? { source: "mesh" as const } : {}),
     });
   }
   const failed = rows.filter((r) => r.status !== "READY").map((r) => ({ id: r.id, status: r.status, code: r.code ?? null }));
   const warnings: DoeWarning[] = refSource === "case" ? [COMPARE_REF_CASE_MESH] : [];
+  // v0.16.0 경고(C2-D-1·10·13·23)
+  if (mode != null || shapes.some((x) => x.source === "mesh")) {
+    // C2-D-1: {cad, Case 메시} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림 — refine·remesh·fallback·메시 입력이 섞일 때만
+    const kinds = new Set(rows.filter((r) => r.status === "READY" && r.mesh_method).map((r) => (r.source === "case" ? "case" : (r.mesh_method as DoeMeshMethod))));
+    if (meshMethodsMixed(kinds)) warnings.push({ code: "COMPARE_MESH_METHOD_MIXED", message: "형상마다 메시 방식이 달라 개선율에 메시 차이가 섞입니다" });
+    for (const r of rows) {
+      if (r.mesh_method === "fallback") warnings.push({ code: "REMESH_USED", name: r.name, message: `${r.name}: CAD 메시 실패 → 삼각형 재메시: ${r.cad_error?.message ?? ""}` });
+      if (r.fidelity?.over_warn) warnings.push({ code: "REMESH_FIDELITY_WARN", name: r.name, message: `${r.name}: 재메시가 원 형상과 최대 ${r.fidelity.hausdorff_mm} mm 다릅니다(> ${r.fidelity.warn_mm} mm)` });
+      if (r.mesh_method === "refine" && r.refine)
+        warnings.push({
+          code: "MESH_REFINED",
+          name: r.name,
+          message: `${r.name}: 기본 3 mm 메시에 실패해 ${r.refine.kind === "local" ? "국부" : "전역"} 세분화(h ${r.refine.h_mm} mm${r.refine.faces?.length ? `, 면 ${r.refine.faces.length}개` : ""})로 메시했습니다. 요소 수 기준 대비 ×${r.refine.elem_ratio_ref}. 요소 크기가 기준 메시와 달라 컴플라이언스에 메시 의존 오차가 섞입니다(작은 개선율은 해석 차이일 수 있음)`,
+        });
+      if (r.source === "mesh" && r.edge_median_mm != null && (r.edge_median_mm < 3 / 1.5 || r.edge_median_mm > 3 * 1.5))
+        warnings.push({ code: "MESH_INPUT_SIZE_DIFF", name: r.name, message: `${r.name}: 메시 요소 크기 중앙값 ${r.edge_median_mm} mm 가 기준 3 mm 와 많이 다릅니다` });
+      if (r.source === "mesh" && (r.n_components ?? 1) > 1) warnings.push({ code: "MESH_INPUT_DISCONNECTED", name: r.name, message: `${r.name}: 메시가 ${r.n_components}조각입니다` });
+    }
+  }
   const files = shapes.map((x) => x.sha256);
   if (new Set(files).size < files.length) warnings.push({ code: "SHAPE_DUPLICATE_FILE", message: "같은 STEP 파일이 두 번 이상 들어 있습니다" });
   for (const r of rows)
@@ -579,7 +674,20 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
 export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryIds: string[]): DoeResultOut {
   const rows = prep.shapes ?? [];
   const ref = rows.find((r) => r.reference) ?? rows[0];
-  const refShape: DoeShapeRef = prep.reference_source === "case" ? { name: "Case 메시", file_name: null, source: "case" } : { name: ref?.name ?? "기준", file_name: ref?.file_name ?? null, source: "step" };
+  /** v0.16.0 결과 shape 메시 칸(C2-D-10): 있으면 복사, 세분화 형상은 수렴 점검 δ(C2-D-24 — 기준 d000 을 h_r 로 다시 풀어) */
+  const meshOf = (r: DoePrepShape | undefined): Partial<DoeShapeRef> => {
+    if (!r?.mesh_method) return {};
+    const out: Partial<DoeShapeRef> = { mesh_method: r.mesh_method, ...(r.fidelity ? { fidelity: r.fidelity } : {}), ...(r.refine ? { refine: r.refine } : {}) };
+    if (r.refine && prep.reference_source !== "case") {
+      const d = r.refine.kind === "local" ? 0.012 : 0.006;
+      out.refine_bias = { h_mm: r.refine.h_mm, delta_max: d, tol: 0.01, over_tol: d > 0.01, per_esl: entryIds.map((e, k) => ({ entry_id: e, delta: +(d * (1 - 0.3 * k)).toFixed(4) })) };
+    }
+    return out;
+  };
+  const refShape: DoeShapeRef =
+    prep.reference_source === "case"
+      ? { name: "Case 메시", file_name: null, source: "case", ...meshOf(ref) }
+      : { name: ref?.name ?? "기준", file_name: ref?.file_name ?? null, source: ref?.source === "mesh" ? "mesh" : "step", ...meshOf(ref) };
   const base = { id: "d000" as const, score: 1, umax: 3.92, epsmax: 0.0026, shape: refShape };
   const ok = rows
     .filter((r) => !r.reference && r.status === "READY")
@@ -589,7 +697,7 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
     rank: k + 1,
     id: r.id,
     values: {},
-    shape: { name: r.name, file_name: r.file_name, reference: false },
+    shape: { name: r.name, file_name: r.file_name, reference: false, ...(r.source === "mesh" ? { source: "mesh" as const } : {}), ...meshOf(r) },
     score,
     improvement: +(1 - score).toFixed(4),
     worst_entry_id: entryIds[parseInt(fnv(r.id).slice(0, 2), 16) % entryIds.length],
@@ -611,6 +719,10 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
   const n_failed = excluded.reduce<Record<string, number>>((m, e) => ((m[e.status] = (m[e.status] ?? 0) + 1), m), {});
   const best = ranking[0]?.id ?? null;
   const warnings: DoeWarning[] = prep.reference_source === "case" ? [COMPARE_REF_CASE_MESH] : [];
+  for (const w of prep.warnings) if (["COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_REFINED"].includes(w.code)) warnings.push(w);
+  for (const r of ranking)
+    if (r.shape?.refine_bias?.over_tol)
+      warnings.push({ code: "MESH_REFINE_BIAS", name: r.shape.name, message: `${r.shape.name}: 기준을 ${r.shape.refine_bias.h_mm} mm 로 다시 풀면 컴플라이언스가 최대 ${(r.shape.refine_bias.delta_max * 100).toFixed(1)} % 달라집니다(메시 편향)` });
   if (!ranking.length) warnings.push({ code: "NO_FEASIBLE_DESIGNS", message: "비교할 수 있는 형상이 없습니다(모두 실패)" });
   return {
     C_ref: 4.82e5,
@@ -637,14 +749,23 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
 }
 
 /** 요청 형상 → 형상 id(SC-D-4): 기준 STEP = d000, 나머지 요청 순서 d001…(기준 없음이면 d001 부터) */
-export function compareIds(shapes: { upload_id: string; rel?: string | null; name: string; reference?: boolean; file_name: string; sha256: string }[]): CompareInputShape[] {
+export function compareIds(shapes: { upload_id: string; rel?: string | null; name: string; reference?: boolean; file_name: string; sha256: string; source?: "step" | "mesh"; part_id?: number | null }[]): CompareInputShape[] {
   const ref = shapes.find((x) => x.reference);
   const out: CompareInputShape[] = [];
-  if (ref) out.push({ id: "d000", name: ref.name.trim(), file_name: ref.file_name, sha256: ref.sha256, upload_id: ref.upload_id, rel: ref.rel ?? null, reference: true });
+  // v0.16.0 메시 형상만 source·part_id(STEP 형상은 v0.15 와 같은 모양)
+  const extra = (x: (typeof shapes)[number]) => (x.source === "mesh" ? { source: "mesh" as const, part_id: x.part_id ?? null } : {});
+  if (ref) out.push({ id: "d000", name: ref.name.trim(), file_name: ref.file_name, sha256: ref.sha256, upload_id: ref.upload_id, rel: ref.rel ?? null, reference: true, ...extra(ref) });
   let k = 1;
   for (const x of shapes)
-    if (x !== ref) out.push({ id: `d${String(k++).padStart(3, "0")}`, name: x.name.trim(), file_name: x.file_name, sha256: x.sha256, upload_id: x.upload_id, rel: x.rel ?? null, reference: false });
+    if (x !== ref) out.push({ id: `d${String(k++).padStart(3, "0")}`, name: x.name.trim(), file_name: x.file_name, sha256: x.sha256, upload_id: x.upload_id, rel: x.rel ?? null, reference: false, ...extra(x) });
   return out;
+}
+
+/** v0.16.0 목 메시 파트(결정적): 주 파일 이름에 'multi' → 쉘 파트 2개, 아니면 1개 */
+export function mockMeshParts(mainFile: string): DoeMeshPart[] {
+  return mainFile.toLowerCase().includes("multi")
+    ? [{ id: 1001, title: "chassis_rear", n_shells: 182_400 }, { id: 2001, title: "bracket_L", n_shells: 6_120 }]
+    : [{ id: 1001, title: "chassis_rear", n_shells: 182_400 }];
 }
 
 // ---------------------------------------------------------------- 상태
@@ -816,6 +937,27 @@ export class DoeMock {
     const jd = doneJob(this.id("j-doe"), "p-body", d.out.id, "DOE_PREP", "2026-11-04T01:00:05Z", "2026-11-04T01:05:00Z", true);
     this.seededJobs.push(jd);
     d.jobIds.push(jd.id);
+    // 4b) v0.16.0 ④ 메시 옵션 완료(기준 = HyperMesh 메시 입력 + STEP 4: CAD · 국부 세분화 · 전역 세분화 · 재메시 폴백(충실도 경고))
+    const s7 = compareIds([
+      { upload_id: "up-cmp-mesh", rel: "rad/chr_base_0000.rad", name: "현행(HM 메시)", reference: true, file_name: "chr_base_0000.rad", sha256: shaOfFile("chr_base_0000.rad"), source: "mesh", part_id: 1001 },
+      ...([["chr_rib_A.step", "리브 A안"], ["chr_rib_F_complex.step", "리브 F안(복잡)"], ["chr_G_hard.step", "G안(곡면)"], ["chr_H_broken_coarse.step", "H안(띠 면)"]] as [string, string][]).map(([f, n]) => ({
+        upload_id: "up-cmp-mesh", rel: `rad/${f}`, name: n, reference: false, file_name: f, sha256: shaOfFile(f),
+      })),
+    ]);
+    const g = base("doe-7", "compare", "Ch/R 형상 비교 — 메시 옵션(v0.16)", "2026-11-04T05:00:00Z");
+    g.out.inputs = { step: null, mesh: null, part_title: null, inch: null, props: { t: 1.2, E: 205000, nu: 0.3 }, mesh_size_mm: null, shapes: s7, reference_source: "step", mesh_mode: "auto", mesh_refine: true };
+    g.out.prep = makeComparePrep(s7, "step", "auto", true);
+    g.result = makeCompareResult(g.out.prep, g.out.entry_ids);
+    g.out.phase = "DONE";
+    g.out.version = 4;
+    for (const [jt, t0, t1] of [
+      ["DOE_PREP", "2026-11-04T05:00:05Z", "2026-11-04T05:14:00Z"],
+      ["DOE_RUN", "2026-11-04T05:20:00Z", "2026-11-04T05:41:00Z"],
+    ] as [JobType, string, string][]) {
+      const j = doneJob(this.id("j-doe"), "p-body", g.out.id, jt, t0, t1, true);
+      this.seededJobs.push(j);
+      g.jobIds.push(j.id);
+    }
     // 5) v0.15.0 비드 직접 선택 — 선택 저장됨(READY, 미리보기 전)
     const sel5 = base("doe-5", "select", "75형 Ch/R 비드 직접 선택", "2026-11-04T03:00:00Z");
     sel5.out.inputs = { step: null, mesh: null, part_title: "chassis_rear", inch: null, props: null, mesh_size_mm: null };
@@ -846,7 +988,7 @@ export class DoeMock {
       this.seededJobs.push(j);
       sel6.jobIds.push(j.id);
     }
-    this.recs.push(a, b, c, d, sel5, sel6);
+    this.recs.push(a, b, c, d, g, sel5, sel6);
   }
 
   private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[], r?: Rec) {
@@ -888,7 +1030,7 @@ export class DoeMock {
     if (j.state !== "SUCCEEDED") return;
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "compare") {
       r.out.phase = "READY";
-      r.out.prep = makeComparePrep(r.out.inputs.shapes ?? [], r.out.inputs.reference_source ?? "step");
+      r.out.prep = makeComparePrep(r.out.inputs.shapes ?? [], r.out.inputs.reference_source ?? "step", r.out.inputs.mesh_mode ?? null, r.out.inputs.mesh_refine !== false);
       r.out.version += 1;
     }
     if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.scenario === "compare" && r.out.prep) {
@@ -1154,11 +1296,37 @@ export class DoeMock {
     const perUp = (u: string) => shapes.filter((x) => x.upload_id === u).length;
     if (new Set(shapes.map(keyOf)).size < shapes.length || shapes.some((x) => !x.rel && perUp(x.upload_id) > 1))
       return err(422, "INVALID_PARAMS", "같은 업로드 파일(upload_id·rel)을 두 번 넣었습니다 — 한 업로드에 STEP 이 여러 개면 형상마다 rel 을 주세요.");
+    // v0.16.0 메시 방식·출처 검사(§6 순서)
+    const cc = st.compare;
+    const mode = b.mesh_mode;
+    if (mode != null && mode !== "cad" && mode !== "remesh" && mode !== "auto") return err(422, "INVALID_PARAMS", "메시 방식이 올바르지 않습니다.");
+    if (mode === "remesh" && !cc?.remesh_available) return err(422, "REMESH_UNAVAILABLE", `이 gmsh 버전(${st.gmsh.version ?? "?"})은 삼각형 재메시를 지원하지 않습니다`);
     const rows: DoeCheckShape[] = [];
     for (let i = 0; i < shapes.length; i++) {
+      const src = shapes[i].source ?? "step";
+      if (src !== "step" && src !== "mesh") return err(422, "INVALID_PARAMS", "형상 출처가 올바르지 않습니다.", { index: i });
+      if (src === "step" && shapes[i].part_id != null) return err(422, "INVALID_PARAMS", "STEP 형상에는 파트 ID 를 쓰지 않습니다.", { index: i });
       const up = this.ctx.upload(String(shapes[i].upload_id ?? ""));
-      if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.", { index: i });
-      if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.", { index: i });
+      if (!up) return err(404, "UPLOAD_NOT_FOUND", src === "mesh" ? "메시 업로드를 찾을 수 없습니다." : "STEP 업로드를 찾을 수 없습니다.", { index: i });
+      if (!up.ready) return err(409, "UPLOAD_NOT_READY", "업로드가 아직 끝나지 않았습니다.", { index: i });
+      if (src === "mesh") {
+        if (!cc?.mesh_input?.enabled) return err(422, "MESH_FORMAT_UNSUPPORTED", "메시 입력이 꺼져 있습니다.", { index: i });
+        const meshes = up.files.filter((x) => /\.(rad|inc)$/i.test(x));
+        const rel = shapes[i].rel;
+        if (rel && /\.(bdf|fem)$/i.test(rel)) return err(422, "MESH_FORMAT_UNSUPPORTED", "Nastran 메시는 아직 지원하지 않습니다(.rad·.inc 만).", { index: i });
+        const main = rel ? meshes.find((x) => x === rel) : meshes.length === 1 ? meshes[0] : undefined;
+        if (!main) return err(422, "MESH_INPUT_INVALID", rel ? `업로드에 메시 파일 '${rel}' 이 없습니다.` : "업로드에 메시 파일이 여러 개입니다(rel 로 주 파일 지정).", { index: i });
+        const file = main.split("/").pop()!;
+        const parts = mockMeshParts(file);
+        const pidv = shapes[i].part_id;
+        if (pidv == null && parts.length > 1) return err(422, "MESH_INPUT_PART_REQUIRED", "쉘 파트가 여러 개입니다 — 파트 ID 를 고르세요.", { index: i, parts });
+        if (pidv != null && !parts.some((p) => p.id === pidv)) return err(422, "MESH_INPUT_PART_NOT_FOUND", `파트 ID ${pidv} 가 메시에 없습니다.`, { index: i, parts });
+        this.ctx.markUploadCompleted(String(shapes[i].upload_id));
+        const files = meshes.filter((x) => x.startsWith("rad/")).map((x, k) => ({ rel: x, sha256: shaOfFile(x), size_mb: +(x === main ? 42.5 : 3.1 + k).toFixed(2) }));
+        const size = files.reduce((a, x) => a + x.size_mb, 0);
+        rows.push({ index: i, name: String(shapes[i].name).trim(), file_name: file, sha256: shaOfFile(file), size_mb: +size.toFixed(2), reference: !!shapes[i].reference, source: "mesh", part_id: pidv ?? parts[0].id, main_rel: main, files, parts });
+        continue;
+      }
       const steps = up.files.filter((x) => /\.(step|stp)$/i.test(x));
       const rel = shapes[i].rel;
       const f = rel ? steps.find((x) => x === rel) : steps.length === 1 ? steps[0] : undefined;
@@ -1179,6 +1347,7 @@ export class DoeMock {
       reference_source: nRef ? "step" : "case",
       size: null,
       props_default: { t: 1.2, E: 205000, nu: 0.3 },
+      ...(cc?.mesh_mode ? { mesh_mode: (mode as DoeMeshMode | undefined) ?? cc.mesh_mode, remesh_available: !!cc.remesh_available } : {}),
       warnings,
     };
     if (!nRef) {
@@ -1203,7 +1372,7 @@ export class DoeMock {
         const props = (b.props as DoeStudyOut["inputs"]["props"]) ?? co.props_default ?? null;
         if (props && !(props.t > 0 && props.E > 0 && props.nu >= 0 && props.nu < 0.5)) return err(422, "INVALID_PARAMS", "쉘 물성이 올바르지 않습니다(t>0, E>0, 0≤ν<0.5).");
         const req = b.shapes as CompareShapeIn[];
-        const shapes = compareIds(req.map((x, i) => ({ ...x, file_name: co.shapes![i].file_name, sha256: co.shapes![i].sha256 })));
+        const shapes = compareIds(req.map((x, i) => ({ ...x, file_name: co.shapes![i].file_name, sha256: co.shapes![i].sha256, part_id: co.shapes![i].part_id ?? x.part_id ?? null })));
         const id = this.id("doe");
         const title = String(b.title ?? "").trim();
         const rec: Rec = {
@@ -1213,7 +1382,18 @@ export class DoeMock {
             scenario: "compare",
             title: title || `형상 비교 ${shapes.length}개`,
             entry_ids: b.entry_ids as string[],
-            inputs: { step: null, mesh: null, part_title: null, inch: typeof b.inch === "number" ? b.inch : null, props, mesh_size_mm: null, shapes, reference_source: co.reference_source ?? "step" },
+            inputs: {
+              step: null,
+              mesh: null,
+              part_title: null,
+              inch: typeof b.inch === "number" ? b.inch : null,
+              props,
+              mesh_size_mm: null,
+              shapes,
+              reference_source: co.reference_source ?? "step",
+              // v0.16.0 적용 메시 방식(요청 없으면 설정값) — 메시 형상만이면 해당 없음이지만 값은 기록
+              ...(co.mesh_mode ? { mesh_mode: co.mesh_mode, mesh_refine: b.mesh_refine === false ? false : true } : {}),
+            },
             phase: "PREP",
             version: 1,
             prep: null,

@@ -698,7 +698,10 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
 
 
 COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status", "code", "message", "n_nodes", "n_elems",
-                      "quad_ratio", "quality")
+                      "quad_ratio", "quality",
+                      # v0.16.0 메시 옵션(esl_compare_mesh_options.md §3·C2-D-22) — 프런트는 refine·refine_bias 를 그대로 읽음
+                      "part_id", "mesh_method", "cad_error", "fidelity", "edge_median_mm", "n_components", "refine",
+                      "attempts")
 
 
 def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> dict[str, Any]:

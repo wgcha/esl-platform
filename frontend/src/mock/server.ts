@@ -16,7 +16,7 @@ import { makeStrainRef, enrichValidation, envelopeCsv, makeAnalysisFiles, makeAn
 import { makeDispField } from "./dispdata";
 import { entryStatus, statusOf } from "../components/VerdictStatus";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
-import { P3Mock } from "./p3mock";
+import { MOCK_VERSION, P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
 import { OptMock, enrichEntries } from "./optdata";
 import { DoeMock } from "./doedata";
@@ -546,7 +546,7 @@ export class MockServer {
     const sr = this.scx.handle(method, path, query, b);
     if (sr) return sr;
 
-    if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: "mock" } };
+    if (method === "GET" && path === "/health") return { status: 200, body: { status: "ok", version: MOCK_VERSION.version } };
     if (method === "GET" && path === "/me") return { status: 200, body: this.me };
     if (method === "GET" && path === "/projects") return { status: 200, body: PROJECTS };
     if (method === "GET" && path === "/status")
@@ -556,8 +556,8 @@ export class MockServer {
           config: { ok: this.configErrors.length === 0, errors: this.configErrors },
           worker: { online: this.workerOnline, last_seen_at: this.now(), limiter: "posix" },
           tools: { solver_backend: "cholmod", solver_backends_available: ["cholmod", "pardiso", "superlu", "iterative"] },
-          version: "mock",
-          core_version: "mock",
+          version: MOCK_VERSION.version,
+          core_version: MOCK_VERSION.version,
         },
       };
     if ((r = m(/^\/cases\/([^/]+)\/report$/)) && method === "GET") {

@@ -2671,6 +2671,62 @@ tbody th.doe-name-col {
   align-self: end;
   padding-bottom: 0.35rem;
 }
+/* v0.16.0 ④ 메시 옵션: 출처 토글 · 파트 ID · 고급 설정 · '메시 방식' 열/배지 */
+.doe-shape-table .doe-src-col {
+  width: 8rem;
+  white-space: nowrap;
+}
+.doe-src-seg button {
+  padding: 0.12rem 0.55rem;
+}
+.doe-src-seg button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.doe-shape-table .doe-part-col {
+  width: 8rem;
+}
+.doe-part-id {
+  width: 7rem;
+}
+.doe-shape-file select {
+  max-width: 14rem;
+}
+.doe-adv {
+  max-width: 72rem;
+}
+.doe-adv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.doe-adv .seg button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.doe-mm-col {
+  max-width: 24rem;
+  white-space: normal;
+}
+.doe-mm-badge {
+  white-space: nowrap;
+  cursor: help;
+}
+.doe-mm-col .doe-mm-badge {
+  white-space: normal;
+}
+.doe-name-col:has(.doe-mm-badge) {
+  max-width: 21rem;
+}
+.doe-name-text {
+  display: inline-block;
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .doe-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);

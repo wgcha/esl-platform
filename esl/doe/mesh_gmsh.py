@@ -698,6 +698,41 @@ def _failed_face(gmsh, msg: str, log: list | None = None) -> dict | None:
             "key": _bbox_key(gmsh, 2, tag)}
 
 
+SIZE_FIELDS_KEY = "__size_fields__"                         # _session 반환 geom 안 세분화 기록 키(bbox 키와 겹치지 않음)
+
+
+def apply_size_fields(gmsh, entries: list, mc: dict) -> dict:
+    """v0.16.0 국부 세분화(esl_compare_mesh_options.md C2-D-19, §4A): ``mesh.size_fields = [{keys:[bbox 키…], size_mm,
+    rings?}]`` 의 면(bbox 키 → 이 세션 면, ``rings`` 고리 이웃 포함 — ``mesh_refine.neighbor_faces``)에 gmsh Constant Field
+    (VIn = size_mm, 경계 곡선 포함)를 주고 Min 배경장으로 둔다. 이 시도에서만 Mesh.MeshSizeMin = min(size_mm) × min_size_factor.
+    반환 {entries:[{size_mm, rings, n_keys, faces:[{tag, ring, key, type, center, area}]}], mesh_size_min}."""
+    from esl.doe import mesh_refine as mr
+    fld = gmsh.model.mesh.field
+    ids, rec, smin = [], [], None
+    for e in entries:
+        size = float(e["size_mm"])
+        rings = int(e.get("rings") or 0)
+        keys = [tuple(float(v) for v in k) for k in (e.get("keys") or [])]
+        faces = mr.neighbor_faces(gmsh, keys, rings)
+        rec.append({"size_mm": size, "rings": rings, "n_keys": len(keys), "faces": faces})
+        if not faces:
+            continue
+        f = fld.add("Constant")
+        fld.setNumber(f, "VIn", size)
+        fld.setNumber(f, "IncludeBoundary", 1)
+        fld.setNumbers(f, "SurfacesList", sorted(int(x["tag"]) for x in faces))
+        ids.append(f)
+        smin = size if smin is None else min(smin, size)
+    out = {"entries": rec, "mesh_size_min": None}
+    if ids:
+        m = fld.add("Min")
+        fld.setNumbers(m, "FieldsList", ids)
+        fld.setAsBackgroundMesh(m)
+        out["mesh_size_min"] = float(smin) * float(mc["min_size_factor"])
+        gmsh.option.setNumber("Mesh.MeshSizeMin", out["mesh_size_min"])
+    return out
+
+
 def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, step_out: str | None,
              face_alg: dict, relax: tuple, face_geom: dict | None = None, fb: dict | None = None,
              nofix_all: bool = False) -> tuple:
@@ -753,6 +788,8 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
                                  "center": [round(0.5 * (bb[i] + bb[i + 3]), 3) for i in range(3)]}, key=gk) from None
             if geom[gk].get("new_ids"):
                 applied[gk] = int(geom[gk]["new_ids"][0])
+        if mc.get("size_fields"):                             # v0.16.0 세분화(C2-D-19) — 키 없으면 아무것도 안 함(바이트 불변)
+            geom[SIZE_FIELDS_KEY] = apply_size_fields(gmsh, mc["size_fields"], mc)
         if face_alg:
             for _d, t in gmsh.model.getEntities(2):
                 k = _bbox_key(gmsh, 2, t)
@@ -934,7 +971,9 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             "step": step_done, "seconds": round(time.monotonic() - t0, 3)}
     if dfi is not None:
         meta["defeature"] = dfi
-    if state:                                               # v0.14.1 면 폴백 기록(정상 STEP 은 키 없음 — 바이트 불변)
+    if mc.get("size_fields"):                               # v0.16.0 세분화 기록(키 없으면 mesh.json 바이트 불변)
+        meta["size_fields"] = geom.get(SIZE_FIELDS_KEY)
+    if state:                                             # v0.14.1 면 폴백 기록(정상 STEP 은 키 없음 — 바이트 불변)
         faces = []
         for k, v in state.items():
             a, r, g = v["ladder"][v["step"]]
@@ -1006,13 +1045,46 @@ def _child(job_path: str) -> int:
         if job.get("step_only"):
             write_step(job["src"], job["step_out"])
             return 0
+        if job.get("kind") == "remesh":                     # v0.16.0 삼각형 재메시(C2-D-11)
+            from esl.doe import mesh_remesh
+            mesh_remesh.remesh_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
+                                    normal_ref=job.get("normal_ref"), out_dir=out)
+            return 0
         mesh_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
                   normal_ref=job.get("normal_ref"), out_dir=out, step_out=job.get("step_out"))
     except EslError as exc:
+        rec = {"code": exc.code, "message": exc.message}
+        if job.get("fail_info") and exc.code == "FAILED_MESH":          # v0.16.0 세분화 입력(실패 면·면적, C2-D-19·21)
+            rec.update(_fail_info(exc, job))
         with open(err, "w", encoding="utf-8") as fh:
-            json.dump({"code": exc.code, "message": exc.message}, fh, ensure_ascii=False)
+            json.dump(rec, fh, ensure_ascii=False)
         return 3
     return 0
+
+
+def _fail_info(exc: BaseException, job: dict) -> dict:
+    """cad 시도 실패 → {face?:{id, type, center, key}, geom?:{area_mm2, n_faces, local_area_mm2, local_faces}}.
+    면 = 마지막 _FaceFail(mesh_file 이 ``raise … from None`` 으로 던져도 __context__ 에 남음). geom = 같은 STEP 을 같은
+    가져오기 옵션으로 다시 읽은 넓이(세분화 요소 수 예측용). 실패해도 빈 dict(오류 기록은 그대로)."""
+    out: dict = {}
+    e, n = exc.__context__, 0
+    while e is not None and n < 8:
+        if isinstance(e, _FaceFail) and e.face:
+            f = e.face
+            key = e.key if e.key is not None else f.get("key")
+            if key is not None:
+                out["face"] = {"id": f.get("id"), "type": f.get("type"), "center": f.get("center"),
+                               "key": [float(v) for v in key]}
+            break
+        e, n = e.__context__, n + 1
+    try:
+        from esl.doe import mesh_refine as mr
+        rings = int(((job["cfg"].get("compare") or {}).get("refine") or {}).get("local", {}).get("neighbor_rings") or 0)
+        keys = [tuple(out["face"]["key"])] if "face" in out else []
+        out["geom"] = mr.geom_summary(job["src"], job["cfg"]["mesh"], keys, rings)
+    except Exception:                                       # noqa: BLE001 - 예측 자료 없음 = 상한 판정 생략
+        pass
+    return out
 
 
 def _watch_parent(ppid: int, interval: float = 1.0) -> None:
@@ -1080,20 +1152,42 @@ def export_step_isolated(src: str, dst: str, cfg: dict, timeout_s: float | None 
     return dst
 
 
+MESH_ERROR = "mesh_error.json"
+RUN_KINDS = ("cad", "remesh")
+
+
 def run_isolated(src: str, out_dir: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None,
-                 normal_ref=None, step_out: str | None = None, timeout_s: float | None = None) -> tuple[dict, dict]:
-    """하위 프로세스에서 ``mesh_file`` → (mesh, mesh.json). 타임아웃·크래시 → FAILED_MESH, gmsh 없음 → GMSH_UNAVAILABLE."""
+                 normal_ref=None, step_out: str | None = None, timeout_s: float | None = None,
+                 kind: str = "cad", max_elems: int | None = None, fail_info: bool = False) -> tuple[dict, dict]:
+    """하위 프로세스에서 ``mesh_file``(kind cad) 또는 ``mesh_remesh.remesh_file``(kind remesh, v0.16.0 C2-D-11) →
+    (mesh, mesh.json). 타임아웃·크래시 → FAILED_MESH, gmsh 없음 → GMSH_UNAVAILABLE.
+
+    v0.16.0 선택 인자(기본값이면 job·결과가 v0.15.x 와 같음): ``max_elems`` = 품질 요소 상한 덮어쓰기(세분화 시도 =
+    refine.max_elems, C2-D-21 — cfg 사본의 mesh.max_elems), ``fail_info`` = cad 실패 시 mesh_error.json 에 실패 면·넓이
+    (``face``·``geom`` — ``mesh_refine.plan`` 입력). kind remesh 의 제한 시간 = remesh.timeout_s(null 이면 mesh.timeout_s)."""
     from esl.doe import opt_settings
     from esl.library import _util as U
+    if kind not in RUN_KINDS:
+        raise EslError("INPUT_INVALID", f"알 수 없는 메시 작업 종류 {kind!r} ({'|'.join(RUN_KINDS)})")
     os.makedirs(out_dir, exist_ok=True)
+    if max_elems is not None:
+        cfg = dict(cfg)
+        cfg["mesh"] = dict(cfg["mesh"], max_elems=int(max_elems))
     job = {"src": os.path.abspath(src), "out_dir": os.path.abspath(out_dir), "h": float(h), "cfg": cfg,
            "props": {k: float(v) for k, v in props.items()}, "opt_cfg": opt_cfg or opt_settings(None),
            "normal_ref": None if normal_ref is None else [float(x) for x in normal_ref],
            "step_out": None if not step_out else os.path.abspath(step_out)}
-    for name in (MESH_NPZ, MESH_JSON, "mesh_error.json"):
+    if kind != "cad":
+        job["kind"] = kind
+    if fail_info:
+        job["fail_info"] = True
+    for name in (MESH_NPZ, MESH_JSON, MESH_ERROR):
         p = os.path.join(out_dir, name)
         if os.path.exists(p):
             os.remove(p)
+    if timeout_s is None and kind == "remesh":
+        rt = ((cfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
+        timeout_s = float(rt) if rt is not None else None
     to = float(timeout_s if timeout_s is not None else cfg["mesh"]["timeout_s"])
     t0 = time.monotonic()
     _spawn(job, out_dir, to)

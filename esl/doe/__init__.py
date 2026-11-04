@@ -99,7 +99,23 @@ DEFAULTS: dict = {
                                       "periodic_order": ["nofix", "split", "fill", "small", "algorithms", "relax"],
                                       "nofix": {"scopes": ["face", "all"], "bbox_tol": 1e-2, "area_rtol": 1e-2},
                                       "split": {"planes": 2}, "fill": {"tol_factor": 0.5, "points": 8, "samples": 10},
-                                      "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}}},
+                                      "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}},
+                         # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤)
+                         "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "remesh"],
+                         "keep_tries": False},   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
+                # v0.16.0 삼각형 재메시(C2-D-11~14 — esl.doe.mesh_remesh)
+                "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
+                           "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
+                           "stl_max_tris": 5000000, "algorithms": [6, 5, 1], "recombine": True, "keep_stl": False,
+                           "timeout_s": None, "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}},
+                # v0.16.0 메시 입력(C2-D-2~8 — esl.doe.mesh_input)
+                "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
+                               "max_include_depth": 8, "size_warn_ratio": 1.5},
+                # v0.16.0 세분화 폴백(C2-D-18~24 — esl.doe.mesh_refine)
+                "refine": {"enabled": True, "min_size_mm": 0.5, "max_elems": 600000, "total_timeout_s": 3600,
+                           "elem_per_h2": 1.0, "local": {"factors": [0.75, 0.5, 0.33], "neighbor_rings": 1, "max_faces": 20},
+                           "global": {"factors": [0.8, 0.667]},
+                           "convergence": {"enabled": True, "tol": None, "same_h_baseline": False}},
                 "defeature": {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0],
                               "min_bead_height_mm": 2.0},
                 "quality": {"max_fail_ratio": 0.01,
