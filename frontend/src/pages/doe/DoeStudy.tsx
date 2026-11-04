@@ -4,14 +4,16 @@
 // 솔버 선택 칸 없음(선형만, 확정 6). 설정값은 모두 GET /doe/settings.
 // v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §7, SC-D-1): 주 버튼 [입력 준비] → (형상 표에 메시 요소 수·상태) → [비교 실행].
 // ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
+// v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8): ① 입력 카드 물성 칸 아래 '고급 설정'(접힘) = 메시 방식 [자동 | CAD | 재메시] + '실패 시 세분화 허용'.
+// 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
-import type { CompareShapeIn } from "../../api/types";
+import type { CompareShapeIn, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
-  BEAD_DEF_NAME, PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath, radioScenario,
-  scenarioBlocked, shapesProblem, warnText,
+  BEAD_DEF_NAME, MESH_MODE_HINT, MESH_MODE_NAME, PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
+  partIdProblem, partsFromError, radioScenario, remeshUnavailableText, scenarioBlocked, shapesProblem, warnText,
   type ParamRow, type SpecForm,
 } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, useBeadSelect } from "../../components/BeadSelectCard";
@@ -22,7 +24,7 @@ import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeScenario, DoeSettingsO
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/ui";
-import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, type InputsForm } from "../../components/DoeInputs";
+import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, rowSource, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
 import { DoeThumbGrid, previewSummary } from "../../components/DoeThumbGrid";
 import { BoundaryLegend, BoundaryPlan } from "../../components/BoundaryPlan";
@@ -148,10 +150,21 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const isCompare = scenario === "compare";
   const isSelect = scenario === "select";
   const maxShapes = st?.compare?.max_shapes ?? 20;
-  /** ④ 요청 형상(기준 = refId) */
-  const compareShapes: CompareShapeIn[] = form.shapes.map((x) => ({ upload_id: x.uploadId, rel: x.rel, name: x.name.trim(), reference: x.key === form.refId }));
-  const shapesKey = isCompare ? JSON.stringify(compareShapes) : "";
-  const shapesBad = isCompare ? shapesProblem(form.shapes, form.refId !== null, maxShapes) : null;
+  /** ④ 요청 형상(기준 = refId). v0.16.0 메시 행만 source·part_id(STEP 행 요청은 v0.15 와 같음) */
+  const compareShapes: CompareShapeIn[] = form.shapes.map((x) => {
+    const base: CompareShapeIn = { upload_id: x.uploadId, rel: x.rel, name: x.name.trim(), reference: x.key === form.refId };
+    if (rowSource(x) !== "mesh") return base;
+    const pid = (x.partId ?? "").trim();
+    return { ...base, source: "mesh", ...(pid && !partIdProblem(pid) ? { part_id: Number(pid) } : {}) };
+  });
+  /** v0.16.0 메시 방식(사용자가 바꾼 경우만 — 없으면 서버 설정값). STEP 형상이 없으면 보내지 않음 */
+  const hasStep = form.shapes.some((x) => rowSource(x) === "step");
+  const meshOpts = isCompare && hasStep ? { ...(form.meshMode ? { mesh_mode: form.meshMode } : {}), ...(form.meshRefine != null ? { mesh_refine: form.meshRefine } : {}) } : {};
+  const shapesKey = isCompare ? JSON.stringify([compareShapes, meshOpts]) : "";
+  const partBad = isCompare
+    ? form.shapes.map((x, i) => (rowSource(x) === "mesh" && partIdProblem(x.partId ?? "") ? `형상 ${i + 1}: ${partIdProblem(x.partId ?? "")}` : null)).find(Boolean) ?? null
+    : null;
+  const shapesBad = isCompare ? shapesProblem(form.shapes, form.refId !== null, maxShapes) ?? partBad : null;
   const inchVal = scenario !== "same" && form.inch.trim() && Number.isInteger(Number(form.inch)) && Number(form.inch) > 0 ? Number(form.inch) : null;
 
   // 입력 검사: STEP(②는 B 메시도, ④ 는 형상 표) 업로드가 끝나면 자동(POST /doe/check-inputs). ④ 는 이름 입력 중 0.3 s 모아서
@@ -169,13 +182,22 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       doe
         .checkInputs(
           isCompare
-            ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal }
+            ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts }
             : isSelect
               ? { project_id: projectId, scenario, entry_ids: ids }
               : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null },
         )
-        .then((c) => alive && setCheck(c))
-        .catch((e) => alive && setCheckError(compareErrorText(e)))
+        .then((c) => {
+          if (!alive) return;
+          setCheck(c);
+          if (isCompare) applyParts((c.shapes ?? []).map((x) => [x.index, x.parts ?? null] as const));
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setCheckError(compareErrorText(e));
+          const pe = isCompare ? partsFromError(e) : null;
+          if (pe) applyParts([[pe.index, pe.parts]]);
+        })
         .finally(() => alive && setChecking(false));
     };
     const t = isCompare ? setTimeout(go, 300) : null;
@@ -185,6 +207,25 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       if (t) clearTimeout(t);
     };
   }, [projectId, scenario, idsKey, stepId, meshId, blocked, shapesKey, shapesBad]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** v0.16.0 check-inputs parts[] → 메시 행 datalist, 파트가 하나면 빈 칸 자동 채움(C2-D-4·§8) */
+  function applyParts(list: readonly (readonly [number, DoeMeshPart[] | null])[]) {
+    const byIdx = new Map(list.filter(([, p]) => !!p).map(([i, p]) => [i, p!]));
+    if (!byIdx.size) return;
+    setForm((f) => {
+      let changed = false;
+      const shapes = f.shapes.map((x, i) => {
+        const parts = byIdx.get(i);
+        if (!parts || rowSource(x) !== "mesh") return x;
+        const same = JSON.stringify(parts) === JSON.stringify(x.parts ?? null);
+        const fill = parts.length === 1 && !(x.partId ?? "").trim();
+        if (same && !fill) return x;
+        changed = true;
+        return { ...x, parts, partId: fill ? String(parts[0].id) : x.partId };
+      });
+      return changed ? { ...f, shapes } : f;
+    });
+  }
 
   // ③④ 쉘 물성(③ 은 요소 크기도) 기본값(서버 props_default·mesh_size_default_mm)
   useEffect(() => {
@@ -255,6 +296,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
           entry_ids: ids,
           shapes: compareShapes,
           inch: inchVal,
+          ...meshOpts,
           title: form.title.trim() || null,
           props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
         });
@@ -329,6 +371,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
             checkError={checkError}
             checking={checking}
             allowed={allowed}
+            advanced={isCompare && st.compare?.mesh_mode && (hasStep || !form.shapes.length) ? <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} /> : null}
           />
         ) : (
           <Empty>불러오는 중…</Empty>
@@ -349,6 +392,62 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         )}
       </div>
     </>
+  );
+}
+
+// ================================================================ v0.16.0 ④ 고급 설정(메시 방식)
+/** 물성 칸 아래 접힘 칸: 메시 방식 [자동(기본) | CAD | 재메시] + '실패 시 세분화 허용'(자동일 때만). 재메시 미지원이면 비활성·사유 툴팁 */
+function CompareMeshAdvanced({ st, check, form, setForm, allowed }: {
+  st: DoeSettingsOut;
+  check: DoeCheckOut | null;
+  form: InputsForm;
+  setForm: (f: InputsForm | ((p: InputsForm) => InputsForm)) => void;
+  allowed: boolean;
+}) {
+  const def: DoeMeshMode = st.compare?.mesh_mode ?? "auto";
+  const mode: DoeMeshMode = form.meshMode ?? def;
+  const remeshOk = check?.remesh_available ?? st.compare?.remesh_available ?? false;
+  const remeshWhy = remeshOk ? null : remeshUnavailableText(st.gmsh.version);
+  const refine = form.meshRefine ?? true;
+  const set = (m: DoeMeshMode) => setForm((f) => ({ ...f, meshMode: m === def ? null : m }));
+  return (
+    <details className="adv-input doe-adv" data-testid="compare-adv">
+      <summary>
+        고급 설정 <span className="muted small">· 메시 방식 {MESH_MODE_NAME[mode]}{mode === "auto" && !refine ? "(세분화 끔)" : ""}</span>
+      </summary>
+      <div className="adv-body doe-adv-body">
+        <div className="doe-adv-row">
+          <span className="field-label">메시 방식</span>
+          <div className="seg" role="radiogroup" aria-label="메시 방식">
+            {(["auto", "cad", "remesh"] as const).map((m) => {
+              const off = !allowed || (m === "remesh" && !remeshOk);
+              return (
+                <span key={m} title={m === "remesh" && remeshWhy ? remeshWhy : MESH_MODE_HINT[m]}>
+                  <button type="button" role="radio" aria-checked={mode === m} className={mode === m ? "on" : undefined} disabled={off} onClick={() => set(m)}>
+                    {MESH_MODE_NAME[m]}
+                    {m === def ? "(기본)" : ""}
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+          <label className="check" title={mode === "auto" ? "CAD 메시가 실패하면 요소를 더 잘게(국부 → 전역) 다시 시도 — 요소 수가 늘어남" : "자동일 때만 씁니다"}>
+            <input
+              type="checkbox"
+              aria-label="실패 시 세분화 허용"
+              checked={refine}
+              disabled={!allowed || mode !== "auto"}
+              onChange={(e) => setForm((f) => ({ ...f, meshRefine: e.target.checked ? null : false }))}
+            />{" "}
+            실패 시 세분화 허용
+          </label>
+        </div>
+        <div className="small muted" data-testid="compare-adv-hint">
+          {MESH_MODE_HINT[mode]}
+          {remeshWhy ? ` · 재메시 불가: ${remeshWhy}` : ""}
+        </div>
+      </div>
+    </details>
   );
 }
 

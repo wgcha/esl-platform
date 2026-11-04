@@ -3,12 +3,14 @@
 // v0.10.0 §11.4: ESL별 개선 지표 열 [전 씬 개선 ✓/✗][최소 개선율][개선/악화 씬][기하평균 개선율][Pareto ●], 열 머리 클릭 정렬(기본 score),
 // ⓘ 지표 정의. 최악 절대 max(score)만으로는 한 씬의 문제가 다른 씬으로 옮겨가는 상황을 못 보기 때문.
 // v0.14.0 ④ 형상 직접 비교: 변수 열 대신 '이름' 열(행 머리, shape.name), 베이스라인 = 기준 형상, 값 펼치기 없음.
+// v0.16.0 이름 옆 짧은 '메시 방식' 배지(세분화·재메시·메시 입력 — CAD 는 생략), 툴팁 = 충실도·시도·수렴 δ.
 import { Fragment, useState } from "react";
 import { METRIC_DEFS, STATUS_NAME, isSkipped, pctText, sortRanking, type RankSortKey } from "../api/doe";
 import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
+import { ShapeNameCell } from "./DoeInputs";
 
 export function DoeRanking({ result, params, entries, selected, onSelect, varNames }: {
   result: DoeResultOut;
@@ -94,7 +96,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <td className="mono">d000</td>
             {named && (
               <th scope="row" className="doe-name-col" title={b.shape?.file_name ?? undefined}>
-                {b.shape?.name ?? "기준"}
+                <ShapeNameCell name={b.shape?.name ?? "기준"} shape={b.shape} testId="rank-method-d000" />
               </th>
             )}
             <td className="num mono">{b.score.toFixed(2)}</td>
@@ -124,7 +126,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 <td className="mono">{r.id}</td>
                 {named && (
                   <th scope="row" className="doe-name-col" title={r.shape?.file_name ?? undefined}>
-                    {r.shape?.name ?? "–"}
+                    <ShapeNameCell name={r.shape?.name ?? "–"} shape={r.shape} testId={`rank-method-${r.id}`} />
                   </th>
                 )}
                 <td className="num mono">{r.score.toFixed(2)}</td>
@@ -207,7 +209,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               <td className="mono">{x.id}</td>
               {named && (
                 <th scope="row" className="doe-name-col" title={x.shape?.file_name ?? undefined}>
-                  {x.shape?.name ?? "–"}
+                  <ShapeNameCell name={x.shape?.name ?? "–"} shape={x.shape} />
                 </th>
               )}
               <td className="num muted">–</td>
