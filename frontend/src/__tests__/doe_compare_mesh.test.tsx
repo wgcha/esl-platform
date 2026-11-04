@@ -1,11 +1,13 @@
 // V-C2-12(esl_compare_mesh_options.md §8·§10): ④ 메시 옵션 화면 — 형상 행 [STEP | 메시] 토글(기본 = 확장자)·rad/inc 묶음 = 메시 행 1개·
 // 파트 ID 칸(datalist, 하나면 자동 채움)·주 파일 고르기, 고급 설정 메시 방식(재메시 미지원 사유)·세분화 허용, 결과 '메시 방식' 열·배지·툴팁.
 // 화면 크기(2560×1440·1920×1080 잘림·가로 스크롤 없음)는 scripts/screenshots-v0160.mjs.
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, normalizeDoeSettings, partIdProblem, shapeKindOf } from "../api/doe";
-import { compareIds, makeComparePrep, makeCompareResult } from "../mock/doedata";
+import { meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, normalizeDoeSettings, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf } from "../api/doe";
+import type { DoeStudyOut } from "../api/types";
+import { CompareShapeSummary } from "../components/DoeInputs";
+import { compareIds, makeComparePrep, makeCompareResult, meshMethodsMixed } from "../mock/doedata";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const reasonOf = (b: HTMLButtonElement) => b.closest(".primary-wrap")?.getAttribute("title") ?? null;
@@ -233,5 +235,44 @@ describe("④ 결과 — doe-7(메시 입력 기준 + CAD·세분화·재메시 
     expect(within(pe).getByTestId("per-esl-method-d003").textContent).toBe("세분화");
     // 경고(서버 message)
     expect(screen.getAllByText(/형상마다 메시 방식이 달라/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("v0.16.0 Verifier 수정(경고 조건·사다리 실패 문구)", () => {
+  const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
+  it("C2-D-1: {cad, Case 메시} 만이면 COMPARE_MESH_METHOD_MIXED 없음(COMPARE_REF_CASE_MESH 만), 세분화·폴백·메시 입력이 섞이면 경고", () => {
+    expect(meshMethodsMixed(new Set(["cad", "case"]))).toBe(false);
+    expect(meshMethodsMixed(new Set(["cad"]))).toBe(false);
+    expect(meshMethodsMixed(new Set(["remesh"]))).toBe(false);
+    expect(meshMethodsMixed(new Set(["cad", "refine"]))).toBe(true);
+    expect(meshMethodsMixed(new Set(["case", "fallback"]))).toBe(true);
+    expect(meshMethodsMixed(new Set(["cad", "mesh_input"]))).toBe(true);
+    const caseOnly = makeComparePrep(compareIds([sh("a"), sh("b")]), "case", "auto");
+    expect(caseOnly.warnings.map((w) => w.code)).toEqual(["COMPARE_REF_CASE_MESH"]);
+    const caseMix = makeComparePrep(compareIds([sh("a"), sh("b_broken")]), "case", "auto");
+    expect(caseMix.warnings.map((w) => w.code)).toEqual(expect.arrayContaining(["COMPARE_REF_CASE_MESH", "COMPARE_MESH_METHOD_MIXED"]));
+  });
+
+  it("결과 경고 목록에 REMESH_FIDELITY_WARN 포함", () => {
+    const prep = makeComparePrep(compareIds([sh("base", true), sh("H_broken_coarse")]), "step", "auto");
+    const res = makeCompareResult(prep, ["e1"]);
+    expect(res.warnings.map((w) => w.code)).toEqual(expect.arrayContaining(["REMESH_FIDELITY_WARN", "REMESH_USED"]));
+  });
+
+  it("사다리 전부 실패: 형상 표 실패 행 문구·툴팁에 CAD 원 오류 + 마지막 오류", () => {
+    const prep = makeComparePrep(compareIds([sh("base", true), sh("Z_dead")]), "step", "auto");
+    const d = prep.shapes!.find((x) => x.id === "d001")!;
+    expect(d.status).toBe("FAILED_MESH");
+    expect(shapeFailText(d)).toBe(`CAD 메시 실패: gmsh 메시 생성에 실패했습니다(면 37: 1D 메시 실패) → 세분화·재메시도 실패: ${d.message}`);
+    expect(shapeFailTip(d)).toMatch(/시도:\n1\. CAD 3 mm — 실패 MESH_FAILED[\s\S]*3\. 전역 세분화 ×0\.8 2\.4 mm — 건너뜀\(시간 예산\)[\s\S]*4\. 재메시 3 mm — 실패 REMESH_FAILED/);
+    expect(shapeFailText({ status: "FAILED_MESH", code: "MESH_FAILED", message: "x" })).toBe("x");
+    expect(
+      shapeFailText({ status: "FAILED_MESH", code: "REMESH_FAILED", message: "m", cad_error: { code: "MESH_FAILED", message: "c" }, attempts: [{ stage: "remesh", status: "SKIPPED", skipped: true, reason: "time" }] }),
+    ).toBe("CAD 메시 실패: c → 세분화·재메시는 건너뜀(time)");
+    const study = { inputs: { reference_source: "step", shapes: [], mesh_mode: "auto" }, prep } as unknown as DoeStudyOut;
+    render(<CompareShapeSummary study={study} />);
+    const cell = screen.getByTestId("prep-fail-d001");
+    expect(cell.textContent).toMatch(/CAD 메시 실패: gmsh 메시 생성에 실패했습니다\(면 37: 1D 메시 실패\) → 세분화·재메시도 실패: 삼각형 재메시에 실패/);
+    expect(cell.getAttribute("title")).toMatch(/시도:\n1\. CAD/);
   });
 });

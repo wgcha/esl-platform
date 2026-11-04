@@ -53,6 +53,38 @@ def occ_version(gmsh) -> str | None:
     return m.group(1) if m else None
 
 
+_BUILD_VERSIONS: dict | None = None
+
+
+def build_versions() -> dict:
+    """{gmsh, occ} 버전(프로세스당 한 번 — 캐시 키용, v0.16.0 수렴 점검). gmsh 가 이미 초기화돼 있으면 그대로 읽고, 아니면
+    설정 파일·시그널 처리 없이 잠깐 초기화했다 닫습니다. 읽지 못한 값은 None."""
+    global _BUILD_VERSIONS
+    if _BUILD_VERSIONS is not None:
+        return dict(_BUILD_VERSIONS)
+    ok, ver = available()
+    occ = None
+    if ok:
+        import gmsh
+        own = False
+        try:
+            if not gmsh.isInitialized():
+                gmsh.initialize(readConfigFiles=False, interruptible=False)
+                own = True
+                gmsh.option.setNumber("General.Terminal", 0)
+            occ = occ_version(gmsh)
+        except Exception:                                   # noqa: BLE001 - 버전 기록 실패는 캐시 키 None
+            occ = None
+        finally:
+            if own:
+                try:
+                    gmsh.finalize()
+                except Exception:                           # noqa: BLE001
+                    pass
+    _BUILD_VERSIONS = {"gmsh": ver, "occ": occ}
+    return dict(_BUILD_VERSIONS)
+
+
 # ---------------------------------------------------------------- 기하(점-삼각형 거리)
 def point_tri_dist(P: np.ndarray, A: np.ndarray, B: np.ndarray, C: np.ndarray) -> np.ndarray:
     """점 P 와 삼각형 ABC 의 최단 거리(브로드캐스트, (...,3) → (...)). Ericson 'Real-Time Collision Detection' 5.1.5

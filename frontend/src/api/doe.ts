@@ -471,6 +471,32 @@ export function meshMethodTip(s: MeshShape, partId?: number | null): string {
   }
   return out.join("\n");
 }
+const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", remesh: "재메시" };
+type FailShape = Pick<DoePrepShape, "status" | "code" | "message" | "cad_error" | "attempts">;
+/** auto 사다리가 모두 실패한 형상 문구(워커 _ladder_fail_text 와 같은 틀): "CAD 메시 실패: … → 세분화·재메시도 실패: …".
+ *  cad_error 가 없으면 원 message(없으면 코드 문구) */
+export function shapeFailText(r: FailShape): string {
+  const last = r.message || shapeCodeText(r.code);
+  const ce = r.cad_error;
+  if (!ce) return last;
+  const cad = ce.message || ce.code;
+  const tried: string[] = [];
+  for (const a of r.attempts ?? []) {
+    const lb = LADDER_LABEL[a.stage];
+    if (lb && !a.skipped && !tried.includes(lb)) tried.push(lb);
+  }
+  if (!tried.length) {
+    const why = [...new Set((r.attempts ?? []).filter((a) => a.skipped && a.reason).map((a) => a.reason as string))].sort();
+    return `CAD 메시 실패: ${cad} → 세분화·재메시는 건너뜀(${why.join(", ") || "-"})`;
+  }
+  return `CAD 메시 실패: ${cad} → ${tried.join("·")}도 실패: ${last || "?"}`;
+}
+/** 실패 행 툴팁: 문구 + 시도 목록 */
+export function shapeFailTip(r: FailShape): string {
+  const out = [shapeFailText(r)];
+  if (r.cad_error && r.attempts?.length) out.push("시도:", ...r.attempts.map((a, i) => `${i + 1}. ${attemptText(a)}`));
+  return out.join("\n");
+}
 /** 배지 색: 충실도 경고·수렴 편향 초과 = 주황, 세분화·재메시 = info, 그 밖 = neutral */
 export function meshMethodKind(s: MeshShape): "warn" | "info" | "neutral" {
   if (s.fidelity?.over_warn || s.refine_bias?.over_tol) return "warn";

@@ -618,6 +618,7 @@ class BeadDoeCompareMeshCfg(_M):
     # remesh = [remesh]. ladder 는 cad 가 맨 앞, 빼면 그 단계 끔, 중복 금지
     mode: Literal["cad", "remesh", "auto"] = "auto"
     ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_STAGES), min_length=1, max_length=4)
+    keep_tries: bool = False   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만 — 진단용)
 
     @field_validator("ladder")
     @classmethod
@@ -1320,7 +1321,7 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     comp = d.setdefault("compare", {})
     for k in ("remesh", "mesh_input", "refine"):
         comp.setdefault(k, cd[k])
-    for k in ("mode", "ladder"):
+    for k in ("mode", "ladder", "keep_tries"):
         comp.setdefault("mesh", {}).setdefault(k, cd["mesh"][k])
     return d
 

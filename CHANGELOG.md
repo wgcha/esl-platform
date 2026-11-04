@@ -11,6 +11,7 @@
   - 재메시 형상은 원 형상 대비 최대 편차·면적비(경고 `REMESH_FIDELITY_WARN` 0.3 mm, 실패 1.5 mm), CAD 실패 후 재메시면 `REMESH_USED`
   - 고급 설정 '메시 방식'(자동 | CAD | 재메시)·'실패 시 세분화 허용'. 준비·결과 형상 표와 순위표에 '메시 방식' 열(툴팁: 시도 목록·건너뛴 사유·δ·편차), 보고서에 메시 방식 상세·수렴 점검 표·한계, ranking.csv 끝 열 `source`·`mesh_method`·`hausdorff_mm`·`refine_h_mm`·`elem_ratio_ref`
   - 설정 `bead_doe.compare.mesh.mode`·`ladder`, `compare.remesh.*`(곡선 분할각 기본 60° — 판 모서리 깎임 0.13 mm), `compare.mesh_input.*`, `compare.refine.*`. 워커 점검 기록에 `gmsh.remesh`(재메시 지원 여부). DB migration 없음
+  - 자동 폴백이 모두 실패하면 형상 표·작업 실패 메시지에 원래 CAD 오류를 함께 표시("CAD 메시 실패: … → 세분화·재메시도 실패: …"). 형상 1개 폴백 전체가 `compare.refine.total_timeout_s` 안에 끝남(시도마다 남은 시간으로 제한). 경고 '메시 방식 섞임'은 세분화·재메시·메시 입력이 섞일 때만(기준이 Case 메시뿐이면 기존 경고만). 시도 폴더는 실패 시 마지막 것만 남김(`compare.mesh.keep_tries`)
 - 알려진 한계: 필렛이 접선으로 이어진 비드는 재메시 면 분류가 실패할 수 있음(`REMESH_CLASSIFY_FAILED`) — 자동 폴백은 세분화를 먼저 시도하므로 영향이 줄어들고, 남으면 메시 파일로 올린다
 
 ## [0.15.1] - 2026-11-04

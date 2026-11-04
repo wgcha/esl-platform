@@ -995,7 +995,8 @@ def _cmp_text(code: str, **kw) -> str:
     return f"{code}: {tpl.format_map(_D(kw))}"
 
 
-def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_info: bool = False) -> dict:
+def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_info: bool = False,
+                  timeout_s: float | None = None) -> dict:
     """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}.
     fail_info(v0.16.0 auto 사다리) = 실패 시 mesh_error.json 에 실패 면·넓이(세분화 입력) — 성공 결과는 같음."""
     did = row["id"]
@@ -1003,9 +1004,10 @@ def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_
     c.writer.makedirs(d)
     try:
         if fail_info:
-            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, fail_info=True)
+            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, fail_info=True,
+                                         timeout_s=timeout_s)
         else:
-            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg)
+            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, timeout_s=timeout_s)
     except EslError as exc:
         if exc.code == "GMSH_UNAVAILABLE":
             raise
@@ -1080,16 +1082,60 @@ def _clear_tries(c: Ctx, d: str) -> None:
             shutil.rmtree(c.writer.guard(p))
 
 
-def _promote(c: Ctx, td: str, d: str) -> None:
-    """성공한 시도 폴더 → mesh/ (파일마다 atomic_replace, 이전 실패 기록 mesh_error.json 제거, 빈 시도 폴더 삭제)."""
-    for x in sorted(os.listdir(td)):
-        s = os.path.join(td, x)
-        if os.path.isfile(s) and not os.path.islink(s):
-            atomic_replace(c.writer.guard(s), c.writer.guard(os.path.join(d, x)))
+def _keep_tries(ccfg: dict) -> bool:
+    """compare.mesh.keep_tries(기본 false): true 면 모든 시도 폴더 try_<n>/ 를 남김, false 면 실패 시 마지막 시도만 남김."""
+    from esl.doe import DEFAULTS
+    v = (ccfg.get("mesh") or {}).get("keep_tries")
+    return bool(DEFAULTS["compare"]["mesh"]["keep_tries"] if v is None else v)
+
+
+def _promote(c: Ctx, td: str, d: str, extra: dict | None = None) -> None:
+    """성공한 시도 폴더 → mesh/. extra(mesh_method·cad_error 등)를 시도 폴더 mesh.json 에 먼저 합친 뒤, mesh.json 이 아닌
+    파일을 atomic_replace 로 옮기고 이전 실패 기록 mesh_error.json 을 지운 다음 mesh.json 을 맨 마지막에 옮깁니다 — 중간에
+    멈추면 mesh/ 에 새 mesh.json 이 없으므로 성공으로 읽히지 않습니다. 빈 시도 폴더는 삭제."""
+    if extra:
+        _patch_mesh_json(c, td, extra)
+    names = sorted(x for x in os.listdir(td) if os.path.isfile(os.path.join(td, x))
+                   and not os.path.islink(os.path.join(td, x)))
+    for x in [n for n in names if n != mg.MESH_JSON]:
+        atomic_replace(c.writer.guard(os.path.join(td, x)), c.writer.guard(os.path.join(d, x)))
     ep = os.path.join(d, mg.MESH_ERROR)
-    if os.path.isfile(ep) and not os.path.isfile(os.path.join(td, mg.MESH_ERROR)):
+    if os.path.isfile(ep) and mg.MESH_ERROR not in names:
         os.remove(c.writer.guard(ep))
+    if mg.MESH_JSON in names:
+        atomic_replace(c.writer.guard(os.path.join(td, mg.MESH_JSON)), c.writer.guard(os.path.join(d, mg.MESH_JSON)))
     shutil.rmtree(c.writer.guard(td), ignore_errors=True)
+
+
+def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
+    """새 시도 폴더 try_<n>/ (keep_tries false 면 앞 시도 폴더를 먼저 지움 — 마지막 시도 기록만 남음)."""
+    if not keep:
+        _clear_tries(c, d)
+    td = os.path.join(d, f"{TRY_PREFIX}{n_try}")
+    c.writer.fresh_dir(td, c.out)
+    return td
+
+
+LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "remesh": "재메시"}
+
+
+def _ladder_fail_text(r: dict) -> str:
+    """auto 사다리가 모두 실패한 형상의 사용자 문구(Verifier Med 2): CAD 첫 오류 → 시도한 단계의 마지막 오류.
+    cad_error 가 없으면 원 message 그대로."""
+    ce = r.get("cad_error")
+    if not ce:
+        return str(r.get("message") or r.get("code") or "")
+    cad = ce.get("message") or ce.get("code") or "?"
+    tried: list[str] = []
+    for a in r.get("attempts") or []:
+        lb = LADDER_STAGE_LABEL.get(a.get("stage"))
+        if lb and not a.get("skipped") and lb not in tried:
+            tried.append(lb)
+    if not tried:
+        why = sorted({str(a.get("reason")) for a in r.get("attempts") or [] if a.get("skipped") and a.get("reason")})
+        return _cmp_text("MESH_LADDER_SKIPPED", cad=cad, reasons=", ".join(why) or "-").split(": ", 1)[1]
+    last = r.get("message") or r.get("code") or "?"
+    return _cmp_text("MESH_LADDER_FAILED", cad=cad, stages="·".join(tried), last=last).split(": ", 1)[1]
 
 
 def _bbox_str(k) -> str:
@@ -1111,7 +1157,11 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         return r
     t0 = time.monotonic()
     auto = mode == "auto" and len(lad) > 1
-    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and "refine_local" in lad)
+    to = None
+    if auto:                                            # 사다리 시간 예산(refine.total_timeout_s)은 cad 시도부터 셈
+        from esl.doe import mesh_refine as mr
+        to = mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, 0.0)
+    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and "refine_local" in lad, timeout_s=to)
     r["mesh_method"] = "cad"
     if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
@@ -1156,15 +1206,20 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     elapsed = float(t_cad)
     last = dict(r0)
     n_try = 0
+    keep = _keep_tries(ccfg)
+    to_cad = float(ccfg["mesh"]["timeout_s"])
+    rt = ((ccfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
+    to_remesh = float(rt) if rt is not None else to_cad
 
     def info_skip(a: dict) -> None:
         if a.get("reason") == "no_face":
             infos.append(f"{mr.NO_FACE_INFO}: {did} {row['name']} — "
                          + _cmp_text(mr.NO_FACE_INFO).split(": ", 1)[1])
             return
-        infos.append(_cmp_text(mr.SKIP_INFO, stage=a["stage"], factor=f"{float(a['factor']):g}",
-                               n_est=a.get("n_est"), bytes_est=_gb(a.get("bytes_est")), reason=a.get("reason"))
-                     + f" — {did} {row['name']}")
+        infos.append(_cmp_text(mr.SKIP_INFO, stage=a["stage"],
+                               factor="—" if a.get("factor") is None else f"{float(a['factor']):g}",
+                               n_est="—" if a.get("n_est") is None else a.get("n_est"), bytes_est=_gb(a.get("bytes_est")),
+                               reason=a.get("reason")) + f" — {did} {row['name']}")
 
     for si, stage in enumerate(lad):
         if stage == "cad":
@@ -1174,19 +1229,24 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                 attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": None,
                                  "seconds": None, "skipped": True, "reason": "unavailable"})
                 continue
+            if mr.remaining_s(ccfg, elapsed) <= 0:          # 같은 형상 누적 예산(refine.total_timeout_s) 소진
+                info_skip({"stage": "remesh", "factor": None, "n_est": None, "bytes_est": None, "reason": "time"})
+                attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": mr.SKIP_INFO,
+                                 "seconds": None, "skipped": True, "reason": "time"})
+                continue
             n_try += 1
-            td = os.path.join(d, f"{TRY_PREFIX}{n_try}")
-            c.writer.fresh_dir(td, c.out)
+            td = _next_try(c, d, n_try, keep)
             t1 = time.monotonic()
-            rr = _cmp_remesh_one(c, row, h, ccfg, props, td)
+            rr = _cmp_remesh_one(c, row, h, ccfg, props, td, timeout_s=mr.attempt_timeout(to_remesh, ccfg, elapsed))
             dt = time.monotonic() - t1
             elapsed += dt
             attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": rr["status"], "code": rr["code"],
                              "seconds": round(dt, 3), **({"n_elems": rr["n_elems"]} if rr.get("n_elems") else {})})
             if rr["status"] == "READY":
-                _promote(c, td, d)
+                _promote(c, td, d, {"mesh_method": "fallback", "cad_error": cad_err, "attempts": attempts})
+                if not keep:
+                    _clear_tries(c, d)
                 rr.update(mesh_method="fallback", cad_error=cad_err, attempts=attempts, info=infos)
-                _patch_mesh_json(c, d, {"mesh_method": "fallback", "cad_error": cad_err, "attempts": attempts})
                 return rr
             last = rr
             continue
@@ -1206,12 +1266,12 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                                  "code": mr.SKIP_INFO, "seconds": None, "skipped": True, "reason": why})
                 continue
             n_try += 1
-            td = os.path.join(d, f"{TRY_PREFIX}{n_try}")
-            c.writer.fresh_dir(td, c.out)
+            td = _next_try(c, d, n_try, keep)
             t1 = time.monotonic()
             try:
                 mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
-                                             max_elems=a.get("max_elems"), fail_info=True)
+                                             max_elems=a.get("max_elems"), fail_info=True,
+                                             timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
             except EslError as exc:
                 if exc.code == "GMSH_UNAVAILABLE":
                     raise
@@ -1236,7 +1296,6 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
             dt = time.monotonic() - t1
             attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "READY",
                              "code": None, "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
-            _promote(c, td, d)
             out = _cmp_ready(c, did, mesh, meta)
             sf = meta.get("size_fields") or {}
             fr = [{"bbox_key": _bbox_str(f.get("key")), "type": f.get("type"), "center": f.get("center"),
@@ -1248,7 +1307,9 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                    "attempts": attempts}
             out.update(mesh_method="refine", cad_error=cad_err, refine=ref, attempts=attempts, info=infos)
             out["seconds"] = round(elapsed + dt, 3)
-            _patch_mesh_json(c, d, {"mesh_method": "refine", "cad_error": cad_err, "refine": ref})
+            _promote(c, td, d, {"mesh_method": "refine", "cad_error": cad_err, "refine": ref})
+            if not keep:
+                _clear_tries(c, d)
             return out
     last = {k: v for k, v in last.items() if k in ("id", "status", "code", "message", "fidelity")}
     last.update(status="FAILED_MESH", mesh_method=None, cad_error=cad_err, attempts=attempts, info=infos)
@@ -1265,11 +1326,14 @@ def _patch_mesh_json(c: Ctx, d: str, extra: dict) -> None:
         U.write_json(c.writer.guard(p), {**U.read_json(p), **extra})
 
 
-def _cmp_remesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, out_dir: str) -> dict:
-    """삼각형 재메시 1회(C2-D-11, spawn 격리 run_isolated kind remesh) → 형상 행 + fidelity. 실패 = REMESH_* 코드."""
+def _cmp_remesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, out_dir: str,
+                    timeout_s: float | None = None) -> dict:
+    """삼각형 재메시 1회(C2-D-11, spawn 격리 run_isolated kind remesh) → 형상 행 + fidelity. 실패 = REMESH_* 코드.
+    timeout_s None = remesh.timeout_s(null 이면 mesh.timeout_s), auto 사다리는 남은 예산으로 줄여 넘김."""
     did = row["id"]
     try:
-        mesh, meta = mg.run_isolated(c.p(row["rel"]), out_dir, h, ccfg, props, opt_cfg=c.ocfg, kind="remesh")
+        mesh, meta = mg.run_isolated(c.p(row["rel"]), out_dir, h, ccfg, props, opt_cfg=c.ocfg, kind="remesh",
+                                     timeout_s=timeout_s)
     except EslError as exc:
         if exc.code == "GMSH_UNAVAILABLE":
             raise
@@ -1379,11 +1443,32 @@ def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: fl
             warns.append(_cmp_text("MESH_REFINED", name=nm, h0=f"{float(rf['base_h_mm']):g}", kind="국부" if local else "전역",
                                    h=f"{float(rf['h_mm']):g}", faces=f", 면 {len(rf.get('faces') or [])}개" if local else "",
                                    r="—" if ratio is None else f"{float(ratio):.2f}"))
-    methods = sorted({res[r["id"]].get("mesh_method") for r in shapes
-                      if res[r["id"]].get("status") == "READY" and res[r["id"]].get("mesh_method")})
-    if len(methods) > 1:
-        warns.append(_cmp_text("COMPARE_MESH_METHOD_MIXED") + f" ({', '.join(methods)})")
+    kinds = _method_kinds(shapes, res)
+    if mixed_methods(kinds):
+        warns.append(_cmp_text("COMPARE_MESH_METHOD_MIXED") + f" ({', '.join(sorted(kinds))})")
     return infos
+
+
+MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
+
+
+def _method_kinds(shapes: list[dict], res: dict) -> set:
+    """READY 형상의 메시 방식 집합(Case 기준 메시 = 'case', 사용자 메시 입력 = 'mesh_input')."""
+    out = set()
+    for r in shapes:
+        x = res[r["id"]]
+        if x.get("status") != "READY":
+            continue
+        k = "case" if r.get("source") == "case" else x.get("mesh_method")
+        if k:
+            out.add(k)
+    return out
+
+
+def mixed_methods(kinds) -> bool:
+    """C2-D-1 경고 조건: 방식이 둘 이상이고 refine·remesh·fallback·메시 입력(source mesh) 중 하나가 섞임."""
+    ks = set(kinds)
+    return len(ks) > 1 and bool(ks & set(MIXED_TRIGGER))
 
 
 def _cmp_mesh0(c: Ctx, echo) -> dict:
@@ -1439,7 +1524,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                         echo(f"[{did} {nm}]   면 {f['failed_id']}({f['type']}, 중심 {cc[0]:g},{cc[1]:g},{cc[2]:g} mm) → "
                              f"{mg.fallback_label(f)} · 처음 오류: {f['errors'][0]}")
                 else:
-                    echo(f"[{did} {nm}] {r['status']} {r['code']}: {r['message']}")
+                    echo(f"[{did} {nm}] {r['status']} {r['code']}: {_ladder_fail_text(r)}")
                 if r.get("cad_error"):
                     for a in r.get("attempts") or []:
                         echo(f"[{did} {nm}]   사다리 {a['stage']}" + (f" ×{a['factor']:g}" if a.get("factor") else "")
@@ -1448,7 +1533,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                 if did == BASELINE and r["status"] != "READY":
                     for g in futs:
                         g.cancel()
-                    raise EslError(r["code"], f"기준 형상 메시 실패: {r['message']}")
+                    raise EslError(r["code"], f"기준 형상 메시 실패: {_ladder_fail_text(r)}")
                 c.progress(5 + 75 * done[0] / len(steps))
     ref = next(r for r in shapes if r["id"] == BASELINE)
     ref_src = "case" if ref["source"] == "case" else "step"     # 기준 출처 step|case(메시 입력 기준도 step — §3 불변)
@@ -1675,6 +1760,8 @@ def _cmp_refine_bias(c: Ctx, t, doc: dict, results: list[dict], tol_rank: float,
     props = bmeta["props"]
     ccfg = sc.compare_cfg(c.cfg)
     hr_of = {s["id"]: _refine_hr(c, s) for s in refined}
+    from esl.doe import mesh_remesh
+    tools = mesh_remesh.build_versions()
     C_hr: dict[float, dict | None] = {}
     errs: dict[float, str] = {}
     for hr in sorted(set(hr_of.values()), reverse=True):
@@ -1683,7 +1770,8 @@ def _cmp_refine_bias(c: Ctx, t, doc: dict, results: list[dict], tol_rank: float,
         sha = ev.config_hash({"step": row0.get("sha256"), "h_r": hr, "cfg": _cfg_hash(c), "props": props,
                               "profile": bmeta.get("profile"), "frame": ev.config_hash(bmeta["frame"]),
                               "refine": ev.config_hash({k: v for k, v in rc.items() if k != "convergence"}),
-                              "entries": [e["id"] for e in c.D["entries"]]})     # 판정(tol·same_h)은 캐시 키 아님
+                              "entries": [e["id"] for e in c.D["entries"]],
+                              "tools": tools})     # 판정(tol·same_h)은 캐시 키 아님, gmsh·occ 버전은 키(메시가 바뀜)
         prev = ev.reusable(dd, sha)
         if prev is not None and prev.get("status") == "OK":
             C_hr[hr] = {p["entry_id"]: float(p["C"]) for p in U.read_json(os.path.join(dd, ev.RESULT_JSON))["per_esl"]}

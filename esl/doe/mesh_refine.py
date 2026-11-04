@@ -88,9 +88,13 @@ def _bytes_est(n_est: int, avail: int | None, margin: float) -> float:
 
 def check_limits(attempt: dict, cfg: dict, avail_bytes: int | None, elapsed_s: float | None = None,
                  t_prev: float | None = None, n_prev: int | None = None) -> str | None:
-    """시도 실행 전 상한 판정(C2-D-21) → 'elems' | 'memory' | 'time' | None. n_est 가 없으면(넓이 모름) 판정 생략."""
+    """시도 실행 전 상한 판정(C2-D-21) → 'elems' | 'memory' | 'time' | None. 누적 시간이 refine.total_timeout_s 이상이면
+    n_est 와 무관하게 'time'. n_est 가 없으면(넓이 모름 — cad 시간 초과·크래시) 요소·메모리·시간 외삽 판정은 생략합니다
+    (시도 제한 시간이 남은 예산으로 줄어 총 시간은 예산 안 — ``attempt_timeout``)."""
     rc = _rcfg(cfg)
     n = attempt.get("n_est")
+    if elapsed_s is not None and remaining_s(cfg, elapsed_s) <= 0:
+        return "time"
     if n is None:
         return None
     if n > int(rc["max_elems"]):
@@ -105,6 +109,16 @@ def check_limits(attempt: dict, cfg: dict, avail_bytes: int | None, elapsed_s: f
         if float(elapsed_s) + float(t_prev) * (float(n) / float(n_prev)) > float(rc["total_timeout_s"]):
             return "time"
     return None
+
+
+def remaining_s(cfg: dict, elapsed_s: float | None) -> float:
+    """형상 1개 사다리의 남은 시간 예산(refine.total_timeout_s − 누적, 음수 가능)."""
+    return float(_rcfg(cfg)["total_timeout_s"]) - float(elapsed_s or 0.0)
+
+
+def attempt_timeout(base_s: float, cfg: dict, elapsed_s: float | None) -> float:
+    """시도 1회 제한 시간 = min(단계 기본 제한 시간, 남은 예산)(C2-D-21, v0.16.0 수정)."""
+    return max(0.0, min(float(base_s), remaining_s(cfg, elapsed_s)))
 
 
 # ---------------------------------------------------------------- 직전 시도

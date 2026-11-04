@@ -7,7 +7,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { CODE_TEXT, errorText } from "../api/client";
 import {
-  MESH_METHOD_SHORT, MESH_MODE_NAME, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeCodeText, shapeKindOf,
+  MESH_METHOD_SHORT, MESH_MODE_NAME, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf,
   shapeNameProblem, warnText,
 } from "../api/doe";
 import type { DoeCheckOut, DoeDesignStatus, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeScenario, DoeSettingsOut, DoeStudyOut, EntryOut } from "../api/types";
@@ -752,7 +752,12 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                   <span className={`badge ${statusKind(r.status)}`} title={r.code ?? undefined}>
                     {r.status === "READY" ? "준비됨" : r.status === "RUNNING" ? "준비 중" : STATUS_NAME[r.status]}
                   </span>
-                  {r.code && r.status !== "READY" && <span className="small error-text" title={r.message ?? undefined}> {r.message || shapeCodeText(r.code)}</span>}
+                  {r.code && r.status !== "READY" && (
+                    <span className="small error-text" title={shapeFailTip(r) || undefined} data-testid={`prep-fail-${r.id}`}>
+                      {" "}
+                      {shapeFailText(r)}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}

@@ -170,6 +170,8 @@
   "MESH_REFINED": "{name}: 기본 {h0} mm 메시에 실패해 {kind} 세분화(h {h} mm{faces})로 메시했습니다. 요소 수 기준 대비 ×{r}. 요소 크기가 기준 메시와 달라 컴플라이언스에 메시 의존 오차가 섞입니다(작은 개선율은 해석 차이일 수 있음)",
   "MESH_REFINE_BIAS": "{name}: 기준 형상을 h {h} mm 로 다시 풀면 컴플라이언스가 최대 {delta} 달라집니다(허용 {tol}) — 세분화 형상의 개선율에 메시 편향이 섞입니다",
   "REFINE_SKIPPED_LIMIT": "세분화 {stage}(×{factor})를 건너뛰었습니다: 예상 요소 {n_est}·메모리 {bytes_est} — {reason} 상한",
+  "MESH_LADDER_FAILED": "CAD 메시 실패: {cad} → {stages}도 실패: {last}",
+  "MESH_LADDER_SKIPPED": "CAD 메시 실패: {cad} → 세분화·재메시는 건너뜀({reasons})",
   "REFINE_LOCAL_NO_FACE": "실패한 면을 특정하지 못해 국부 세분화를 건너뛰었습니다",
   "REFINE_CONVERGENCE_SKIPPED": "기준이 Case 메시 또는 메시 입력이라 다시 메시할 수 없어 수렴 점검을 생략했습니다",
   "MESH_MODE_COMPARE_ONLY": "mesh_mode 는 '형상 직접 비교'에서만 지정합니다"

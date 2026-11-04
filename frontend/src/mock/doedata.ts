@@ -518,7 +518,11 @@ const COMPARE_FAIL_MSG: Record<string, string> = {
   SHAPE_MISALIGNED: "기준 frame 과 원점·법선이 다릅니다(같은 좌표계 STEP 인지 확인)",
   SHAPE_SIZE_MISMATCH: "기준과 크기가 ±5 % 밖입니다",
   MESH_FAILED: "gmsh 메시 생성에 실패했습니다",
+  REMESH_FAILED: "삼각형 재메시에 실패했습니다: 면 분류 실패. 특징각(remesh.feature_angle_deg)을 키우거나 메시 파일로 올리세요",
 };
+/** C2-D-1 COMPARE_MESH_METHOD_MIXED 조건: 방식이 둘 이상이고 refine·remesh·fallback·mesh_input(메시 입력) 중 하나가 섞임 */
+export const MIXED_TRIGGER = ["refine", "remesh", "fallback", "mesh_input"];
+export const meshMethodsMixed = (kinds: Set<string>) => kinds.size > 1 && [...kinds].some((k) => MIXED_TRIGGER.includes(k));
 export const COMPARE_REF_CASE_MESH: DoeWarning = { code: "COMPARE_REF_CASE_MESH", message: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다" };
 
 const MAX_FAIL_RATIO = 0.01;
@@ -539,7 +543,7 @@ function mockQuality(key: string, h: number, nElems: number): DoeShapeQuality {
 
 /** v0.16.0 목 메시 방식(결정적, C2-D-9·18): mode 없음(v0.15 스터디) = cad. 메시 형상 = mesh_input.
  *  auto 에서 이름·파일에 'complex' → 국부 세분화, 'hard' → 전역 세분화(세분화 끔이면 재메시 폴백), 'broken' → 재메시 폴백('coarse' 면 충실도 경고).
- *  cad 에서 'broken' 은 MESH_FAILED(v0.15 와 같음). remesh = 모든 STEP 재메시 */
+ *  cad 에서 'broken' 은 MESH_FAILED(v0.15 와 같음). remesh = 모든 STEP 재메시. auto 에서 'dead' → 사다리 전부 실패(REMESH_FAILED + cad_error) */
 const MOCK_CAD_ERROR = { code: "MESH_FAILED", message: "gmsh 메시 생성에 실패했습니다(면 37: 1D 메시 실패)" };
 function mockFidelity(key: string) {
   const hd = key.includes("coarse") ? 0.42 : 0.12;
@@ -550,6 +554,16 @@ function mockMethod(x: CompareInputShape, key: string, mode: DoeMeshMode, refine
   const cadFail = { stage: "cad", h_mm: 3, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 41 };
   if (mode === "remesh") return { mesh_method: "remesh", fidelity: mockFidelity(key) };
   if (mode === "cad") return key.includes("broken") ? { fail: ["FAILED_MESH", "MESH_FAILED"] } : { mesh_method: "cad" };
+  if (key.includes("dead"))
+    return {
+      fail: ["FAILED_MESH", "REMESH_FAILED"],
+      cad_error: MOCK_CAD_ERROR,
+      attempts: [
+        cadFail,
+        ...(refine ? [{ stage: "refine_local", factor: 0.75, h_mm: 2.25, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 50 }, { stage: "refine_global", factor: 0.8, h_mm: 2.4, status: "SKIPPED", skipped: true, reason: "time", code: "REFINE_SKIPPED_LIMIT" }] : []),
+        { stage: "remesh", h_mm: 3, status: "FAILED_MESH", code: "REMESH_FAILED", seconds: 12 },
+      ],
+    };
   if (refine && key.includes("complex")) {
     const n = Math.round(nRef * 1.4);
     return {
@@ -611,7 +625,7 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
       n_elems: meshed ? nElems : null,
       quad_ratio: meshed ? +(0.93 + 0.05 * h).toFixed(3) : null,
       quality: meshed ? mockQuality(key, h, nElems) : null,
-      ...(mode != null || x.source === "mesh" ? (meshed ? meth : { mesh_method: null }) : {}),
+      ...(mode != null || x.source === "mesh" ? (meshed ? meth : { mesh_method: null, ...(meth.cad_error ? { cad_error: meth.cad_error, attempts: meth.attempts } : {}) }) : {}),
       ...(x.source === "mesh" ? { source: "mesh" as const } : {}),
     });
   }
@@ -619,8 +633,9 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
   const warnings: DoeWarning[] = refSource === "case" ? [COMPARE_REF_CASE_MESH] : [];
   // v0.16.0 경고(C2-D-1·10·13·23)
   if (mode != null || shapes.some((x) => x.source === "mesh")) {
-    const methods = new Set(rows.filter((r) => r.status === "READY" && r.mesh_method).map((r) => r.mesh_method as DoeMeshMethod));
-    if (methods.size > 1) warnings.push({ code: "COMPARE_MESH_METHOD_MIXED", message: "형상마다 메시 방식이 달라 개선율에 메시 차이가 섞입니다" });
+    // C2-D-1: {cad, Case 메시} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림 — refine·remesh·fallback·메시 입력이 섞일 때만
+    const kinds = new Set(rows.filter((r) => r.status === "READY" && r.mesh_method).map((r) => (r.source === "case" ? "case" : (r.mesh_method as DoeMeshMethod))));
+    if (meshMethodsMixed(kinds)) warnings.push({ code: "COMPARE_MESH_METHOD_MIXED", message: "형상마다 메시 방식이 달라 개선율에 메시 차이가 섞입니다" });
     for (const r of rows) {
       if (r.mesh_method === "fallback") warnings.push({ code: "REMESH_USED", name: r.name, message: `${r.name}: CAD 메시 실패 → 삼각형 재메시: ${r.cad_error?.message ?? ""}` });
       if (r.fidelity?.over_warn) warnings.push({ code: "REMESH_FIDELITY_WARN", name: r.name, message: `${r.name}: 재메시가 원 형상과 최대 ${r.fidelity.hausdorff_mm} mm 다릅니다(> ${r.fidelity.warn_mm} mm)` });
@@ -704,7 +719,7 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
   const n_failed = excluded.reduce<Record<string, number>>((m, e) => ((m[e.status] = (m[e.status] ?? 0) + 1), m), {});
   const best = ranking[0]?.id ?? null;
   const warnings: DoeWarning[] = prep.reference_source === "case" ? [COMPARE_REF_CASE_MESH] : [];
-  for (const w of prep.warnings) if (["COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "MESH_REFINED"].includes(w.code)) warnings.push(w);
+  for (const w of prep.warnings) if (["COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_REFINED"].includes(w.code)) warnings.push(w);
   for (const r of ranking)
     if (r.shape?.refine_bias?.over_tol)
       warnings.push({ code: "MESH_REFINE_BIAS", name: r.shape.name, message: `${r.shape.name}: 기준을 ${r.shape.refine_bias.h_mm} mm 로 다시 풀면 컴플라이언스가 최대 ${(r.shape.refine_bias.delta_max * 100).toFixed(1)} % 달라집니다(메시 편향)` });

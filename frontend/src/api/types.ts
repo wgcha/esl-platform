@@ -2518,6 +2518,8 @@ export interface DoePrepShape {
   n_components?: number | null;
   /** (보강) 세분화 기록(C2-D-22) */
   refine?: DoeShapeRefine | null;
+  /** auto 사다리 시도 목록(cad 실패 뒤 — 모두 실패한 형상의 문구·툴팁) */
+  attempts?: DoeMeshAttempt[] | null;
 }
 export interface DoeProps {
   t: number;
