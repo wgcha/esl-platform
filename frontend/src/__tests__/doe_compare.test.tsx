@@ -255,3 +255,41 @@ describe("④ 결과 — doe-3", () => {
     expect(screen.queryByRole("table", { name: "비드 변수" })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------- V-SR-25(esl_select_relax.md §11): 형상 단순화(defeature)·억제 목록·메시 입력 진단(mock)
+describe("V-SR-25 ④ 형상 단순화·억제 목록·진단", () => {
+  it("doe-7: K안(딤플) 메시 방식 '형상 단순화' + 툴팁 요약·시도, ▸ 펼침 = 억제 목록 표(GET …/shapes/{did}/defeature), 메시 입력 진단 글자", async () => {
+    renderApp("/p/p-body/doe/doe-7");
+    const row = await screen.findByTestId("prep-shape-d005");
+    const m = within(row).getByTestId("prep-method-d005");
+    expect(m.querySelector(".badge")!.textContent).toBe("형상 단순화");
+    const tip = m.querySelector(".badge")!.getAttribute("title")!;
+    expect(tip).toMatch(/구멍 1 · 딤플 1 · 필렛 3 억제, 억제 영역 최대 2\.5 mm, 그 밖 0\.12 mm/);
+    expect(tip).toMatch(/형상 단순화 3 mm — 성공/);
+    expect(screen.getByTestId("prep-diag-d000").textContent).toMatch(/작은 구멍 6 · 섬 3/);
+    expect(screen.queryByTestId("prep-diag-d001")).toBeNull();
+    fireEvent.click(within(m).getByRole("button", { name: "d005 억제 목록 펼치기" }));
+    const list = await screen.findByTestId("defeat-list-d005");
+    const rows = within(list).getAllByRole("row");
+    expect(rows).toHaveLength(1 + 5);
+    expect(rows[1].textContent).toMatch(/딤플.*120\.0, 130\.0, 1\.5.*h 1\.5.*1\.48/);
+    expect(within(list).getByText("Ø5")).toBeTruthy();
+    expect(within(m).getByRole("button", { name: "d005 억제 목록 접기" })).toBeTruthy();
+  });
+
+  it("억제 목록 50행 상한 + '외 n개'", async () => {
+    const { DefeatureList } = await import("../components/DoeInputs");
+    const { render } = await import("@testing-library/react");
+    const feats = Array.from({ length: 60 }, (_, i) => ({ id: i, kind: "hole" as const, center: [i, 0, 0] as [number, number, number], size: { d_mm: 4 }, action: "suppressed", dev_mm: 2 }));
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ features: feats, n: 612, truncated: true }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+    try {
+      const r = render(<DefeatureList studyId="doe-x" did="d001" />);
+      const list = await within(r.container).findByTestId("defeat-list-d001");
+      expect(within(list).getAllByRole("row")).toHaveLength(1 + 50);
+      expect(list.textContent).toMatch(/외 562개 \(목록 상한 — 개수만 기록\)/);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+});

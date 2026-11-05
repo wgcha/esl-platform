@@ -1,7 +1,7 @@
 // 비드 DOE ④ 미리보기 썸네일 격자(esl_bead_doe.md §5·§12.2): d000 공칭 + 안별 썸네일(320×240 축소), 스킵 = 회색 + 사유 배지,
 // 마우스를 올리면 값 툴팁. 2560 폭 8열 · 1920 폭 6열(가로 스크롤 없음).
 import { useEffect, useState } from "react";
-import { cellStatusName, isFailed, isSkipped } from "../api/doe";
+import { cellStatusName, cellWarnText, isFailed, isSkipped } from "../api/doe";
 import { HeightLegend } from "./BeadSelectCard";
 import type { DoeParam, DoePreviewCell, DoePreviewOut } from "../api/types";
 import { Empty } from "./ui";
@@ -48,7 +48,10 @@ export const valuesText = (params: DoeParam[], values: Record<string, number>) =
 function Thumb({ id, url, cell, params, select, onOpen }: { id: string; url: string | null; cell: DoePreviewCell | null; params: DoeParam[]; select?: boolean; onOpen?: (id: string) => void }) {
   const { src, error } = useBlobUrl(url);
   const skipped = cell ? isSkipped(cell.status) || (!!select && isFailed(cell.status)) : false;
-  const tip = cell ? `${id} · ${valuesText(params, cell.values)}${cell.code ? ` · ${cell.code}` : ""}` : `${id} 공칭`;
+  const warns = !skipped ? cell?.warnings ?? [] : [];
+  const moved = warns.find((w) => w.code === "SELECT_FIXED_MOVED");
+  const warnTip = warns.map((w) => (w.code === "SELECT_FIXED_MOVED" ? `체결 위치 어긋남: ${cellWarnText(w)}` : `품질 경고: ${cellWarnText(w)}`)).join("\n");
+  const tip = cell ? `${id} · ${valuesText(params, cell.values)}${cell.code ? ` · ${cell.code}` : ""}${warnTip ? `\n${warnTip}` : ""}` : `${id} 공칭`;
   const open = onOpen ? () => onOpen(id) : undefined;
   return (
     <li
@@ -56,6 +59,7 @@ function Thumb({ id, url, cell, params, select, onOpen }: { id: string; url: str
       title={open ? `${tip} — 클릭하면 3D 로 봅니다` : tip}
       data-testid={`thumb-${id}`}
       data-status={cell?.status ?? "NOMINAL"}
+      data-warn={warns.length ? warns.map((w) => w.code).join(" ") : undefined}
       tabIndex={0}
       aria-label={tip}
       onClick={open}
@@ -67,17 +71,28 @@ function Thumb({ id, url, cell, params, select, onOpen }: { id: string; url: str
       <div className="doe-thumb-cap">
         <span className="mono">{id}</span>
         {!cell && <span className="badge info">공칭</span>}
-        {cell && skipped && <span className="badge bad">⨯{cellStatusName(cell.status, !!select)}</span>}
-        {cell && select && !skipped && <span className="badge ok">OK</span>}
+        {cell && skipped && <span className="badge bad">⨯{select && cell.code === "SELECT_MORPH_INVERTED" ? "뒤집힘" : cellStatusName(cell.status, !!select)}</span>}
+        {cell && select && !skipped && !warns.length && <span className="badge ok">OK</span>}
+        {warns.length > 0 && (
+          <span className="badge warn" title={warnTip} data-testid={`thumb-warn-${id}`}>
+            ⚠
+          </span>
+        )}
         {cell && !skipped && !cell.thumb && <span className="badge warn" title="썸네일을 만들지 못했습니다(형상 변경은 성공)">그림 없음</span>}
       </div>
+      {moved && (
+        <div className="doe-thumb-warn small warn-text" data-testid={`thumb-moved-${id}`}>
+          {cellWarnText(moved)}
+        </div>
+      )}
     </li>
   );
 }
 
 export function previewSummary(p: DoePreviewOut, n: number): string {
   const s = p.skipped;
-  return `(${n}) OK ${p.ok}${s.collision ? ` · 충돌 ${s.collision}` : ""}${s.fixed ? ` · 고정 침범 ${s.fixed}` : ""}${s.geom ? ` · 형상 불가 ${s.geom}` : ""}${s.mesh ? ` · 품질 실패 ${s.mesh}` : ""}`;
+  const warn = p.warn ?? (p.cells ?? []).filter((c) => c.warnings?.length && !isSkipped(c.status) && !isFailed(c.status)).length;
+  return `(${n}) OK ${p.ok}${warn ? `(경고 ${warn})` : ""}${s.collision ? ` · 충돌 ${s.collision}` : ""}${s.fixed ? ` · 고정 침범 ${s.fixed}` : ""}${s.geom ? ` · 형상 불가 ${s.geom}` : ""}${s.mesh ? ` · 품질 실패 ${s.mesh}` : ""}`;
 }
 
 /** select = v0.15.0 비드 직접 선택(범례 1개·품질 실패 배지·클릭 → 3D) */

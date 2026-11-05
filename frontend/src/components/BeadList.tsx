@@ -2,11 +2,20 @@
 // 지금 고치는 비드만 펼친다(1920 에서도 세로로 짧게). 숫자(D·W·사면·경고)는 마지막 [사면·경계 자동](서버 derive) 결과.
 import { warnText } from "../api/doe";
 import type { DoeBeadDerived, DoeSettingsOut } from "../api/types";
-import { counts } from "../view3d/select/layers";
+import { counts, islandCount } from "../view3d/select/layers";
 import { RO_TIP, type BeadSelectCtrl } from "./BeadSelectCard";
 
 const FIXED_SRC: Record<string, string> = { scan: "fixed-scan", user: "사용자 칠함", "scan+user": "fixed-scan + 사용자", none: "없음" };
 const f1 = (v: number | null | undefined) => (v == null ? "–" : v.toFixed(1));
+
+/** v0.16.1 "섬 n · 구멍 m"(derive 결과 — 편집 뒤 derive 전이면 브라우저 섬 수, 구멍은 서버만). 없으면 null */
+export function islandHoleText(x: DoeBeadDerived | null, localIslands: number | null): string | null {
+  const isl = localIslands ?? x?.islands?.length ?? null;
+  const holes = x?.holes?.n ?? null;
+  if (isl == null && holes == null) return null;
+  if (!isl && !holes) return null;
+  return [`섬 ${isl ?? 0}`, holes != null ? `구멍 ${holes}` : null].filter(Boolean).join(" · ");
+}
 
 export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null }) {
   const s = ctrl.state;
@@ -93,12 +102,37 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
                     </span>
                   </span>
                 </div>
+                {(() => {
+                  const ih = islandHoleText(x, ctrl.localIslands ? islandCount(ctrl.localIslands, bi) : null);
+                  return ih ? (
+                    <div className="bs-row muted" data-testid={`bead-islands-${b.id}`} title="섬(딤플·버링) = 바닥과 같이 이동 · 관통 구멍 = 둘레가 바닥과 같이 이동(경계 아님). 섬을 빼려면 '제외' 층으로 칠하세요">
+                      {ih}
+                    </div>
+                  ) : null;
+                })()}
                 <div className="bs-row">
                   <span>
                     W <b className="mono">{f1(x?.W_nom)}</b> <span className="muted mono">({f1(x?.W_min)}–{f1(x?.W_max)})</span> · 블렌딩 {b.blend === "auto" ? "auto" : "직접"} <span className="mono">{x ? `${f1(x.blend_mm)} mm` : ""}</span>
                     {x?.blend_clipped && <span className="badge warn" title="체결부 앞에서 줄임">잘림</span>}
                   </span>
                 </div>
+                {(() => {
+                  const nFix = x ? x.fixed_in_bead_n + x.fixed_in_blend_n : 0;
+                  const can = !ro && (b.holdFixed === 1 || nFix > 0);
+                  const tip = ro
+                    ? RO_TIP
+                    : nFix > 0 || b.holdFixed
+                      ? `체결 구멍 둘레를 제자리에 두고 바깥을 블렌딩해 보스처럼 남깁니다 — 링 ${ctrl.hold.ring_mm} mm 제자리 · ${ctrl.hold.blend_mm} mm 블렌딩`
+                      : x
+                        ? "이 비드 안·블렌딩 안에 고정 노드가 없습니다"
+                        : "[사면 다시 계산] 후 고정 노드가 있으면 켤 수 있습니다";
+                  return (
+                    <label className="check-field bs-row" title={tip}>
+                      <input type="checkbox" checked={b.holdFixed === 1} disabled={!can} onChange={(e) => ctrl.setHold(bi, e.target.checked ? 1 : 0)} data-testid={`bead-hold-${b.id}`} />
+                      <span>체결 구멍 둘레 고정</span>
+                    </label>
+                  );
+                })()}
                 <div className="inline-actions bs-bead-actions">
                   <button type="button" className="btn small ghost" disabled={ro || ctrl.deriving} onClick={ctrl.runDerive} title={ro ? RO_TIP : "사면·경계·공칭 치수를 다시 계산합니다(저장 안 함)"}>
                     {ctrl.deriving ? "계산 중…" : "사면 다시 계산"}

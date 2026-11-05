@@ -14,8 +14,7 @@ import type { CompareShapeIn, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
   BEAD_DEF_NAME, MESH_MODE_HINT, MESH_MODE_NAME, PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   partIdProblem, partsFromError, radioScenario, remeshUnavailableText, scenarioBlocked, shapesProblem, warnText,
-  type ParamRow, type SpecForm,
-} from "../../api/doe";
+  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, useBeadSelect } from "../../components/BeadSelectCard";
 import { SectionMini } from "../../components/SectionMini";
 import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
@@ -1169,6 +1168,14 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <FixedViolNote cells={pv.cells ?? []} title="고정 침범 원인" />
             </div>
           )}
+          {phase !== "PREVIEW" && pv?.rules_outdated && (
+            <div className="small warn-text" data-testid="rules-outdated">
+              <span className="badge warn">{RULES_OUTDATED_TEXT}</span>
+            </div>
+          )}
+          {phase !== "PREVIEW" && pv && pv.ok > 0 && (
+            <FixedViolNote cells={(pv.cells ?? []).filter((c) => c.status === "READY" || c.status === "OK")} title="체결 위치 어긋남(경고 안 — 실행함)" testId="fixed-moved" />
+          )}
           {phase !== "PREVIEW" && (
             <DoeThumbGrid
               preview={pv}
@@ -1237,7 +1244,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <Downloads study={s} result={result.data} extra={isCompare ? undefined : vdButton} />
               <div className="small muted">
                 {isCompare
-                  ? "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 정리 없음). 방법·한계는 보고서에."
+                  ? "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 억제는 CAD 메시가 실패한 형상만 — 형상 표 '형상 단순화'). 방법·한계는 보고서에."
                   : "선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에."}
               </div>
             </>

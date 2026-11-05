@@ -1,6 +1,7 @@
 // V-BS-17(esl_bead_select.md §16): 비드 직접 선택 화면(mock) — ① 하위 선택(비활성 사유)·STEP 칸 숨김, 도구 4종·층·보이는 면만, 비드 목록 경고 배지,
 // 주 버튼 전환(선택 저장 ↔ 미리보기), 평면도 노드 토글·라벨 칩·폭 점선·단면 미니 그림, 썸네일 범례·품질 실패 배지·클릭 3D, SELECTION_DROPPED 처리.
 // 화면 크기(2560×1440·1920×1080 잘림·가로 스크롤)는 scripts/screenshots-v0150.mjs.
+// v0.16.1 V-SR-14(esl_select_relax.md §11): ⚠ 배지·문구, 비드 행 체크 1개(고정 없으면 비활성), "섬 n · 구멍 m", 순위 ⚠·best_clean, 규칙 띠 — 맨 아래 describe.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
@@ -138,8 +139,10 @@ describe("상세(doe-6: 미리보기 완료)", () => {
     await waitFor(() => expect(screen.getByTestId("height-legend")).toBeTruthy());
     expect(screen.getAllByTestId("height-legend")).toHaveLength(1);
     const thumbs = screen.getByRole("list", { name: "미리보기 썸네일" });
-    expect(within(thumbs).getAllByText(/⨯품질 실패/).length).toBeGreaterThan(0);
-    expect(within(thumbs).getAllByText(/⨯고정 침범/).length).toBeGreaterThan(0);
+    // v0.16.1 warn 정책: 뒤집힘만 ⨯(품질 실패 칸 = SELECT_MORPH_INVERTED), 고정 침범·품질 FAIL 은 READY + ⚠
+    expect(within(thumbs).getAllByText(/⨯뒤집힘/).length).toBeGreaterThan(0);
+    expect(within(thumbs).queryAllByText(/⨯고정 침범/)).toHaveLength(0);
+    expect(thumbs.querySelectorAll('[data-warn*="SELECT_FIXED_MOVED"]').length).toBeGreaterThan(0);
     expect(within(thumbs).getAllByText("OK").length).toBeGreaterThan(0);
     await waitFor(() => expect(primaries(r.container)[0].textContent).toBe("강성 평가 실행"));
     fireEvent.click(screen.getByTestId("thumb-d001"));
@@ -150,5 +153,68 @@ describe("상세(doe-6: 미리보기 완료)", () => {
     fireEvent.click(screen.getByRole("button", { name: "묶기" }));
     await waitFor(() => expect(screen.getByTestId("selection-stale")).toBeTruthy());
     expect(primaries(r.container)[0].textContent).toBe("선택 저장");
+  });
+});
+
+describe("V-SR-14 v0.16.1 경고 안·섬·체결 구멍 둘레 고정(mock)", () => {
+  it("미리보기 ⚠ 배지·'고정 노드 n개, 최대 x mm 이동' 1줄·품질 경고 툴팁, 요약 '(경고 n)', 원인 줄", async () => {
+    renderApp("/p/p-body/doe/doe-6", "power");
+    const thumbs = await screen.findByRole("list", { name: "미리보기 썸네일" });
+    const moved = thumbs.querySelector('[data-warn*="SELECT_FIXED_MOVED"]') as HTMLElement;
+    const id = moved.getAttribute("data-testid")!.replace("thumb-", "");
+    expect(within(moved).getByTestId(`thumb-warn-${id}`).textContent).toBe("⚠");
+    expect(within(moved).getByTestId(`thumb-moved-${id}`).textContent).toMatch(/^고정 노드 37개, 최대 [\d.]+ mm 이동$/);
+    const q = [...thumbs.querySelectorAll('[data-warn*="SELECT_QUALITY_WARN"]')][0] as HTMLElement;
+    expect(q.querySelector(".badge.warn")!.getAttribute("title")).toMatch(/품질 경고: 새 Fail 412 \(1\.9 %\)/);
+    expect(screen.getByText(/미리보기 \(\d+\) OK \d+\(경고 \d+\)/)).toBeTruthy();
+    expect(screen.getByTestId("fixed-moved").textContent).toMatch(/체결 위치 어긋남.*고정 노드 37개/);
+    expect(screen.queryByTestId("rules-outdated")).toBeNull();
+  });
+
+  it("rules_outdated 띠 1줄(실행은 막지 않음)", async () => {
+    renderApp("/p/p-body/doe/doe-6", "power", (s) => {
+      const r = (s.doe as unknown as { recs: { out: { id: string; doe: { preview: { rules_outdated?: boolean } } } }[] }).recs.find((x) => x.out.id === "doe-6")!;
+      r.out.doe.preview.rules_outdated = true;
+    });
+    await waitFor(() => expect(screen.getByTestId("rules-outdated").textContent).toBe("판정 규칙이 바뀌었습니다 — 다시 미리보기하면 경고 안도 실행됩니다"));
+  });
+
+  it("비드 행: '섬 n · 구멍 m', 체결 구멍 둘레 고정 체크 1개(고정 있는 b1 활성·툴팁, 없는 b2 비활성) → 저장 대상 변경", async () => {
+    renderApp("/p/p-body/doe/doe-5", "power");
+    await waitFor(() => expect(screen.getByTestId("bead-islands-b1").textContent).toBe("섬 1 · 구멍 0"));
+    const hold = screen.getByTestId("bead-hold-b1") as HTMLInputElement;
+    expect(hold.disabled).toBe(false);
+    expect(hold.closest("label")!.getAttribute("title")).toMatch(/링 3 mm 제자리 · 8 mm 블렌딩/);
+    expect(screen.getAllByRole("checkbox", { name: "체결 구멍 둘레 고정" })).toHaveLength(1); // 지금 비드만 펼침
+    fireEvent.click(hold);
+    await waitFor(() => expect(screen.getByTestId("bs-dirty")).toBeTruthy());
+    // 새 비드(계산 전) = 비활성 + 사유, 섬 줄 없음
+    fireEvent.click(screen.getByRole("button", { name: "+ 비드" }));
+    await waitFor(() => expect(screen.getByTestId("bead-hold-b3")).toBeTruthy());
+    const h3 = screen.getByTestId("bead-hold-b3") as HTMLInputElement;
+    expect(h3.disabled).toBe(true);
+    expect(h3.closest("label")!.getAttribute("title")).toMatch(/사면 다시 계산/);
+    expect(screen.queryByTestId("bead-islands-b3")).toBeNull();
+  });
+});
+
+describe("V-SR-14 순위 ⚠·경고 없는 최상위(Q1 = A)", () => {
+  it("1위가 경고 안이면 순위는 그대로 + ⚠ + '경고 없는 최상위' 1줄, 1위가 깨끗하면 줄 없음", async () => {
+    const { render } = await import("@testing-library/react");
+    const { DoeRanking } = await import("../components/DoeRanking");
+    const row = (rank: number, id: string, warn?: ("FIXED_MOVED" | "QUALITY_WARN")[]) => ({
+      rank, id, values: {}, score: 0.8 + rank / 100, improvement: 0.2, worst_entry_id: "le-1", umax: 1, epsmax: 0.001, umax_all: 1, epsmax_all: 0.001, warnings_n: 0, ...(warn ? { warn } : {}),
+    });
+    const base = { C_ref: 1, baseline: { id: "d000" as const, score: 1, umax: 1, epsmax: 0.001 }, n_ok: 3, n_skipped: {}, n_failed: {}, excluded: [], sensitivity: null, boundary_warnings_n: 0, view3d: [], best: null, warnings: [] };
+    const res = { ...base, ranking: [row(1, "d004", ["FIXED_MOVED"]), row(2, "d009", ["QUALITY_WARN"]), row(3, "d002")], summary: { best_clean: "d002" } };
+    const r = render(<DoeRanking result={res} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} />);
+    expect(within(r.container).getByTestId("best-clean").textContent).toBe("⚠ 1위가 경고 안입니다(체결 위치 어긋남) — 경고 없는 최상위: d002");
+    expect(within(r.container).getByTestId("rank-warn-d004").getAttribute("title")).toBe("체결 위치 어긋남");
+    expect(within(r.container).getByTestId("rank-warn-d009").getAttribute("title")).toBe("품질 경고");
+    expect(within(r.container).queryByTestId("rank-warn-d002")).toBeNull();
+    expect(within(r.container).getByTestId("rank-d004").querySelector("td")!.textContent).toBe("1");
+    r.unmount();
+    const r2 = render(<DoeRanking result={{ ...base, ranking: [row(1, "d002"), row(2, "d004", ["FIXED_MOVED"])], summary: { best_clean: "d002" } }} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} />);
+    expect(within(r2.container).queryByTestId("best-clean")).toBeNull();
   });
 });

@@ -4,13 +4,15 @@
 // 형상 표(기준 라디오 + '기준 없음(Case 메시)'·이름·빼기) · 물성 3칸 · 준비 후 메시 품질 요약(Fail 비율·상한 경고).
 // v0.16.0 메시 옵션(esl_compare_mesh_options.md §8): 형상 행 [STEP | 메시] 토글(기본 = 확장자), 한 번에 놓은 rad/inc 묶음 = 메시 행 1개
 // (주 파일 C2-D-2), 파트 ID 칸(check-inputs parts[] datalist, 하나면 자동 채움), 준비 후·결과 '메시 방식' 열(툴팁 충실도·시도·δ).
-import { useRef, useState, type ReactNode } from "react";
+// v0.16.1(esl_select_relax.md §8): 메시 방식 "형상 단순화"(defeature) + 억제 목록 펼침(GET …/shapes/{did}/defeature, 상위 50행), 메시 입력 진단 글자.
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { CODE_TEXT, errorText } from "../api/client";
 import {
+  DEFEATURE_KIND_NAME, diagText, doe, featureSizeText,
   MESH_METHOD_SHORT, MESH_MODE_NAME, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf,
   shapeNameProblem, warnText,
 } from "../api/doe";
-import type { DoeCheckOut, DoeDesignStatus, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeScenario, DoeSettingsOut, DoeStudyOut, EntryOut } from "../api/types";
+import type { DoeDefeatureList, DoeCheckOut, DoeDesignStatus, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeScenario, DoeSettingsOut, DoeStudyOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { Empty, ErrorLine, Field } from "./ui";
 import { Uploader, type UploadProgress } from "../lib/uploader";
@@ -652,6 +654,59 @@ export function ShapeNameCell({ name, shape, testId }: { name: string; shape?: P
 }
 
 const pct = (v: number) => `${(v * 100).toFixed(2)} %`;
+/** 억제 목록 표 행 상한(§8) */
+export const DEFEATURE_ROWS = 50;
+const n2 = (v: number) => Number(v.toFixed(2)).toString();
+
+/** ④ 형상 상세 펼침: 억제 목록(종류·중심 xyz·크기·편차, 상위 50행 + "외 n개") */
+export function DefeatureList({ studyId, did }: { studyId: string; did: string }) {
+  const [data, setData] = useState<DoeDefeatureList | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    setError(null);
+    doe
+      .shapeDefeature(studyId, did)
+      .then((d) => alive && setData(d))
+      .catch((e) => alive && setError(errorText(e)));
+    return () => {
+      alive = false;
+    };
+  }, [studyId, did]);
+  if (error) return <ErrorLine text={error} />;
+  if (!data) return <span className="small muted">불러오는 중…</span>;
+  const rows = data.features.slice(0, DEFEATURE_ROWS);
+  const total = Math.max(data.n ?? data.features.length, data.features.length);
+  const more = total - rows.length;
+  return (
+    <div data-testid={`defeat-list-${did}`}>
+      <table className="table compact doe-defeat-table" aria-label={`${did} 억제 목록`}>
+        <thead>
+          <tr>
+            <th>종류</th>
+            <th>중심 x, y, z (mm)</th>
+            <th>크기 (mm)</th>
+            <th className="num" title="억제 영역 안 원 STEP 과의 최대 거리">편차 (mm)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((f, i) => (
+            <tr key={`${f.id}-${i}`}>
+              <td>{DEFEATURE_KIND_NAME[f.kind] ?? f.kind}</td>
+              <td className="mono">{f.center.map((v) => v.toFixed(1)).join(", ")}</td>
+              <td className="mono">{featureSizeText(f)}</td>
+              <td className="num mono" title={f.action === "skipped" ? f.reason ?? undefined : undefined}>
+                {f.action === "skipped" ? "건너뜀" : f.dev_mm != null ? n2(f.dev_mm) : "–"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {more > 0 && <div className="small muted">외 {more.toLocaleString()}개{data.truncated ? " (목록 상한 — 개수만 기록)" : ""}</div>}
+    </div>
+  );
+}
 const statusKind = (s: DoeDesignStatus) => (s === "READY" || s === "OK" ? "ok" : s === "RUNNING" ? "info" : "bad");
 
 /** ④ 상세: 형상 표(준비 결과 — 메시 요소 수·상태·실패 사유). prep.shapes 가 없으면 inputs.shapes + prep.failed */
@@ -680,6 +735,8 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
   const maxFail = withQ[0]?.quality?.max_fail_ratio ?? null;
   const partOf = new Map((i.shapes ?? []).map((x) => [x.id, x.part_id ?? null]));
   const showMethod = rows.some((r) => r.mesh_method);
+  const [openDf, setOpenDf] = useState<string | null>(null);
+  const nCols = 8 + (showMethod ? 1 : 0);
   return (
     <div className="doe-shape-summary">
       <div className="small" data-testid="doe-input-summary">
@@ -716,10 +773,17 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} data-testid={`prep-shape-${r.id}`}>
+              <Fragment key={r.id}>
+              <tr data-testid={`prep-shape-${r.id}`}>
                 <td className="mono">{r.id}</td>
                 <td>
                   {r.name} {r.reference && <span className="badge info">기준</span>}
+                  {diagText(r.diag) && (
+                    <span className="small muted" title="메시 입력 진단(보고만 — 메시는 그대로). 필요하면 HyperMesh 에서 고치세요" data-testid={`prep-diag-${r.id}`}>
+                      {" "}
+                      {diagText(r.diag)}
+                    </span>
+                  )}
                 </td>
                 <td className="small mono doe-shape-file" title={r.file_name ?? undefined}>
                   {r.file_name ?? "(낙하 메시)"}
@@ -746,6 +810,18 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                 {showMethod && (
                   <td className="doe-mm-col" data-testid={`prep-method-${r.id}`}>
                     <MeshMethodBadge shape={r} partId={partOf.get(r.id)} />
+                    {r.mesh_method === "defeature" && (
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        aria-expanded={openDf === r.id}
+                        aria-label={`${r.id} 억제 목록 ${openDf === r.id ? "접기" : "펼치기"}`}
+                        title="억제한 작은 형상 목록(종류·위치·크기·편차)"
+                        onClick={() => setOpenDf((x) => (x === r.id ? null : r.id))}
+                      >
+                        {openDf === r.id ? "▾" : "▸"}
+                      </button>
+                    )}
                   </td>
                 )}
                 <td>
@@ -760,6 +836,14 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                   )}
                 </td>
               </tr>
+              {openDf === r.id && (
+                <tr className="doe-defeat-row">
+                  <td colSpan={nCols}>
+                    <DefeatureList studyId={study.id} did={r.id} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

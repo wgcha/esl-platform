@@ -124,15 +124,15 @@ describe("select: 저장 선택 없음 → 선택 저장 → 변수 표", () => 
     okConfirm.mockRestore();
   });
 
-  it("고정 침범 안 3D 보기(v0.15.1): 침범 노드 빨간 점(setMarkers 3·n) + 원인 줄, 다른 안은 점 없음", async () => {
+  it("고정 침범(v0.16.1 = 경고 안 READY + fixed_viol) 3D 보기: 침범 노드 빨간 점(setMarkers 3·n) + 원인 줄, 다른 안은 점 없음", async () => {
     renderApp("/p/p-body/doe/doe-6", "power");
     const thumbs = await screen.findByRole("list", { name: "미리보기 썸네일" });
-    const fixedCell = [...thumbs.querySelectorAll('[data-status="SKIPPED_FIXED"]')][0] as HTMLElement;
+    const fixedCell = [...thumbs.querySelectorAll('[data-warn*="SELECT_FIXED_MOVED"]')][0] as HTMLElement;
     fireEvent.click(fixedCell);
     await waitFor(() => expect(screen.getByTestId("bs-design-host").getAttribute("data-phase")).toBe("ready"));
     await waitFor(() => expect(h.markers.some((m) => m && m.length === 37 * 3)).toBe(true));
     expect(screen.getByTestId("design-fixed-viol").textContent).toMatch(/빨간 점 = 움직인 고정 노드 37개/);
-    const ok = [...thumbs.querySelectorAll('[data-status="READY"]')][0] as HTMLElement;
+    const ok = [...thumbs.querySelectorAll('[data-status="READY"]:not([data-warn])')][0] as HTMLElement;
     h.markers.length = 0;
     fireEvent.click(ok);
     await waitFor(() => expect(h.markers.length).toBeGreaterThan(0));
