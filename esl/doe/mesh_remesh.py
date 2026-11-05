@@ -274,6 +274,31 @@ def _fail(code: str, msg: str) -> EslError:
     return EslError(code, msg)
 
 
+def occ_triangulate(gmsh, rc: dict) -> tuple[np.ndarray, np.ndarray]:
+    """R3 현재 세션 OCC 형상 → 삼각화 (X0 노드 태그 순, T0 노드 인덱스). linear/angular deflection = remesh 설정.
+    실패 = REMESH_FAILED | REMESH_STL_EMPTY. ④ defeature 단계 충실도 기준 S0(``esl.geom.defeature.reference_tris``)도 이 함수."""
+    try:
+        gmsh.option.setNumber("Mesh.StlLinearDeflection", float(rc["linear_deflection_mm"]))
+        gmsh.option.setNumber("Mesh.StlLinearDeflectionRelative", 0)
+        gmsh.option.setNumber("Mesh.StlAngularDeflection", math.radians(float(rc["angular_deflection_deg"])))
+        gmsh.model.mesh.importStl()
+        tags, xyz, _ = gmsh.model.mesh.getNodes()
+        types, _etags, enodes = gmsh.model.mesh.getElements(2)
+    except Exception as exc:                                # noqa: BLE001
+        raise _fail("REMESH_FAILED", f"OCC 삼각화 실패: {exc}") from None
+    tags = np.asarray(tags, dtype=np.int64)
+    X0 = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
+    tri = [np.asarray(nd, dtype=np.int64).reshape(-1, 3) for t, nd in zip(types, enodes) if int(t) == 2]
+    T0 = np.concatenate(tri) if tri else np.zeros((0, 3), np.int64)
+    if not T0.shape[0]:
+        raise _fail("REMESH_STL_EMPTY", "STEP 에서 삼각화를 만들지 못함(면 없음)")
+    if T0.shape[0] > int(rc["stl_max_tris"]):
+        raise _fail("REMESH_FAILED", f"삼각화 {T0.shape[0]}개 > 상한 remesh.stl_max_tris {rc['stl_max_tris']}")
+    o = np.argsort(tags, kind="stable")
+    tags, X0 = tags[o], X0[o]
+    return X0, np.searchsorted(tags, T0)
+
+
 def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
                 out_dir: str | None = None) -> tuple[dict, dict]:
     """STEP → 삼각형 재메시 (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json(·remesh_stl.npz) 를 쓴다.
@@ -345,27 +370,8 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
                     rec["resewn"] = True
                 except Exception as exc:                    # noqa: BLE001
                     raise _fail("REMESH_FAILED", f"작은 구멍 메움 뒤 형상 봉합 실패: {exc}") from None
-        # R3 OCC 삼각화
-        try:
-            gmsh.option.setNumber("Mesh.StlLinearDeflection", float(rc["linear_deflection_mm"]))
-            gmsh.option.setNumber("Mesh.StlLinearDeflectionRelative", 0)
-            gmsh.option.setNumber("Mesh.StlAngularDeflection", math.radians(float(rc["angular_deflection_deg"])))
-            gmsh.model.mesh.importStl()
-            tags, xyz, _ = gmsh.model.mesh.getNodes()
-            types, _etags, enodes = gmsh.model.mesh.getElements(2)
-        except Exception as exc:                            # noqa: BLE001
-            raise _fail("REMESH_FAILED", f"OCC 삼각화 실패: {exc}") from None
-        tags = np.asarray(tags, dtype=np.int64)
-        X0 = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
-        tri = [np.asarray(nd, dtype=np.int64).reshape(-1, 3) for t, nd in zip(types, enodes) if int(t) == 2]
-        T0 = np.concatenate(tri) if tri else np.zeros((0, 3), np.int64)
-        if not T0.shape[0]:
-            raise _fail("REMESH_STL_EMPTY", "STEP 에서 삼각화를 만들지 못함(면 없음)")
-        if T0.shape[0] > int(rc["stl_max_tris"]):
-            raise _fail("REMESH_FAILED", f"삼각화 {T0.shape[0]}개 > 상한 remesh.stl_max_tris {rc['stl_max_tris']}")
-        o = np.argsort(tags, kind="stable")
-        tags, X0 = tags[o], X0[o]
-        T0 = np.searchsorted(tags, T0)
+        # R3 OCC 삼각화(v0.16.1 함수로 분리 — esl.geom.defeature.reference_tris 와 같은 코드)
+        X0, T0 = occ_triangulate(gmsh, rc)
         # R4 이산 면 1개로 병합
         S_X, S_T, n_merged = merge_nodes(X0, T0, float(rc["merge_tol_mm"]))
         rec.update(n_stl_tris=int(T0.shape[0]), n_stl_nodes=int(X0.shape[0]), n_merged=n_merged,

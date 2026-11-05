@@ -528,6 +528,8 @@ def _failed_face(gmsh, msg: str, log: list | None = None) -> dict | None:
             "key": _bbox_key(gmsh, 2, tag)}
 
 
+DEFEAT_KEY = "__defeature_stage__"                          # v0.16.1 _session 반환 geom 안 defeature 단계 기록 키
+_LAST_DEFEAT: dict = {}                                     # 자식 프로세스 1작업: 마지막 세션 compound 면 bbox(실패 기록용)
 SIZE_FIELDS_KEY = "__size_fields__"                         # _session 반환 geom 안 세분화 기록 키(bbox 키와 겹치지 않음)
 
 
@@ -604,8 +606,22 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
             applied[gk] = int(geom[gk]["new_ids"][0])
         dfi = None
         df = mc.get("defeature")
+        ds = mc.get("defeature_stage")                       # v0.16.1 ④ 사다리 defeature 단계(키 없으면 v0.16.0 그대로)
+        feats: list = []
         if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
-            dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+            if isinstance(ds, dict):
+                dfi = gdf.holes(gmsh, df, h, relax, collect=feats)
+            else:
+                dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+        if isinstance(ds, dict):
+            crit = ds["crit"]
+            found = gdf.find_features(gmsh, crit)
+            sup = gdf.suppress(gmsh, found, crit, h, compound=bool(ds.get("compound", True)))
+            _LAST_DEFEAT.clear()
+            _LAST_DEFEAT.update(compound_keys=sup["compound_keys"])
+            if sup["n"] == 0:
+                raise EslError("DEFEATURE_NO_FEATURE", "형상 단순화 단계: 억제할 작은 형상이 없음")
+            geom[DEFEAT_KEY] = {"collected": feats, **sup}
         for gk, stage in (face_geom or {}).items():          # v0.15.1 형상 폴백(실패했던 면만, state 순서 = 결정적)
             if stage in ("nofix_face", "nofix_all"):
                 continue
@@ -803,6 +819,10 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         meta["defeature"] = dfi
     if mc.get("size_fields"):                               # v0.16.0 세분화 기록(키 없으면 mesh.json 바이트 불변)
         meta["size_fields"] = geom.get(SIZE_FIELDS_KEY)
+    dlist = None
+    if isinstance(mc.get("defeature_stage"), dict) and geom.get(DEFEAT_KEY) is not None:   # v0.16.1 SR-D-19·20
+        meta["defeature_stage"], dlist = _defeature_record(gmsh, src, mc, cfg, mesh, h, geom[DEFEAT_KEY])
+        meta["warnings"] = list(meta["warnings"]) + dlist.pop("_warnings")
     if state:                                             # v0.14.1 면 폴백 기록(정상 STEP 은 키 없음 — 바이트 불변)
         faces = []
         for k, v in state.items():
@@ -829,12 +849,60 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         os.makedirs(out_dir, exist_ok=True)
         save_npz_det(os.path.join(out_dir, MESH_NPZ), {k: mesh[k] for k in MESH_KEYS})
         from esl.library import _util as U
+        if dlist is not None:
+            U.write_json(os.path.join(out_dir, DEFEAT_LIST), dlist)
         U.write_json(os.path.join(out_dir, MESH_JSON), {k: v for k, v in meta.items() if k != "seconds"}
                      | {"seconds": meta["seconds"]})
+    if dlist is not None and meta["defeature_stage"]["fidelity"]["fail"]:
+        o = meta["defeature_stage"]["fidelity"]["outside"]
+        raise EslError("DEFEATURE_FIDELITY", f"작은 형상 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 최대 {o['hausdorff_mm']:.3f} mm "
+                                             f"다름(> {o['fail_mm']:g} mm)")
     if qual["errors"]:
         e = qual["errors"][0]
         raise EslError("FAILED_MESH", f"메시 품질 오류 {e['code']}: {e['message']}")
     return mesh, meta
+
+
+DEFEAT_LIST = "defeature.json"
+
+
+def _defeature_record(gmsh, src: str, mc: dict, cfg: dict, mesh: dict, h: float, rec: dict) -> tuple[dict, dict]:
+    """defeature 단계 성공 메시 → (mesh.json.defeature_stage, defeature.json 목록 + _warnings). 원 STEP 을 같은 정리 옵션으로
+    다시 가져와 OCC 삼각화(S0) → 억제 영역 안/밖 충실도(SR-D-19). 바깥 fail 이면 fidelity.fail True(호출자가 DEFEATURE_FIDELITY)."""
+    from esl.doe import mesh_remesh as mrm
+    crit = mc["defeature_stage"]["crit"]
+    rc = mrm._rcfg(cfg)
+    feats = list(rec.get("collected") or []) + list(rec.get("features") or [])
+    for i, f in enumerate(rec.get("collected") or []):
+        f["id"] = f"h{i + 1:04d}"
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("General.NumThreads", 1)
+        S_X, S_T = gdf.reference_tris(gmsh, src, mc, rc)
+    finally:
+        gmsh.finalize()
+    fid = gdf.fidelity_split(S_X, S_T, mesh, h, rc, feats, float(crit["region_pad"]))
+    o = fid["outside"]
+    fid_rec = {"outside": o, "suppressed_max_mm": fid["suppressed_max_mm"],
+               "fail": bool(o.get("fail_mm") is not None and o["hausdorff_mm"] > float(o["fail_mm"]))}
+    ok = [f for f in feats if f.get("action", "suppressed") == "suppressed"]
+    counts: dict = {}
+    for f in ok:
+        counts[f["kind"]] = counts.get(f["kind"], 0) + 1
+    doc = gdf.list_doc(feats, int(crit["list_max"]))
+    warns = []
+    tm = next((f["too_many"] for f in feats if f.get("too_many")), None)
+    if tm:
+        warns.append({"code": "DEFEATURE_TOO_MANY", "message": f"작은 형상 {tm['n']}개 > 상한 {tm['max']} — 앞 {tm['max']}개만"})
+    if o.get("over_warn"):
+        warns.append({"code": "REMESH_FIDELITY_WARN",
+                      "message": f"형상 단순화 메시가 억제 영역 밖에서 원 STEP 과 최대 {o['hausdorff_mm']:.3f} mm 다름"
+                                 f"(> 경고 {o['warn_mm']:g} mm)"})
+    doc["_warnings"] = warns
+    stage = {"counts": dict(sorted(counts.items())), "n": len(ok), "skipped_n": int(rec.get("skipped_n") or 0),
+             "compound": [list(g) for g in rec.get("compound_groups") or []], "fidelity": fid_rec, "list_file": DEFEAT_LIST}
+    return stage, doc
 
 
 def load_mesh(d: str) -> dict:
@@ -886,6 +954,9 @@ def _child(job_path: str) -> int:
         rec = {"code": exc.code, "message": exc.message}
         if job.get("fail_info") and exc.code == "FAILED_MESH":          # v0.16.0 세분화 입력(실패 면·면적, C2-D-19·21)
             rec.update(_fail_info(exc, job))
+        if isinstance((job.get("cfg") or {}).get("mesh", {}).get("defeature_stage"), dict) and \
+                _LAST_DEFEAT.get("compound_keys"):                     # v0.16.1 compound 면 실패 판정(2번째 시도)
+            rec["compound_keys"] = _LAST_DEFEAT["compound_keys"]
         with open(err, "w", encoding="utf-8") as fh:
             json.dump(rec, fh, ensure_ascii=False)
         return 3

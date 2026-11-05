@@ -29,6 +29,26 @@ def _mcfg(cfg: dict) -> dict:
     return _deep_merge(DEFAULTS["compare"]["mesh_input"], over if isinstance(over, dict) else {})
 
 
+def hash_view(cfg: dict) -> dict:
+    """이어하기 해시용 mesh_input 설정(v0.16.1 SR-D-24 — 보고만인 ``diag`` 절 제외 → 형상 해시 불변)."""
+    return {k: v for k, v in _mcfg(cfg).items() if k != "diag"}
+
+
+def diag(mesh: dict, cfg: dict) -> dict | None:
+    """SR-D-24 메시 입력 진단(보고만): ``esl.mesh.features.diagnose`` — 구멍 크기 기준 = compare.defeature.hole_max_d_mm,
+    섬 = select.island.max_mm. diag.enabled false 면 None."""
+    from esl.doe import DEFAULTS
+    from esl.mesh import features
+    dc = _mcfg(cfg).get("diag") or {}
+    if not dc.get("enabled", True):
+        return None
+    cc = cfg.get("compare") or {}
+    hd = (cc.get("defeature") or {}).get("hole_max_d_mm") or DEFAULTS["compare"]["defeature"]["hole_max_d_mm"]
+    im = ((cfg.get("select") or {}).get("island") or {}).get("max_mm") or DEFAULTS["select"]["island"]["max_mm"]
+    return features.diagnose(mesh, feature_angle_deg=float(dc.get("feature_angle_deg") or 30.0),
+                             hole_max_d_mm=float(hd), island_max_mm=float(im))
+
+
 def _real(p: str) -> str:
     return os.path.normcase(os.path.realpath(os.path.abspath(p)))
 
@@ -179,12 +199,17 @@ def read_shape_mesh(dir: str, main_rel: str, part_id: int | None, props: dict, c
                       "message": f"요소 크기 중앙값 {e50:.2f} mm 가 기준 형상 {float(ref_e50):.2f} mm 와 ×{r:g} 넘게 다름"})
     if ncomp > 1:
         warns.append({"code": "MESH_INPUT_DISCONNECTED", "message": f"메시 연결 성분 {ncomp}개(조각난 메시)"})
+    dg = diag(mesh, cfg)                                   # v0.16.1 SR-D-24(보고만 — 메시·하중 불변)
+    if dg is not None and (dg["holes_small_n"] or dg["islands_n"]):
+        infos.append({"code": "MESH_INPUT_DIAG", "message": f"작은 구멍 {dg['holes_small_n']} · 섬 {dg['islands_n']}"})
     meta = {"schema": "esl/doe_mesh/1", "method": "mesh_input", "source": "mesh", "main_rel": files[0]["rel"],
             "files": [{"rel": f["rel"], "size": f["size"]} for f in files], "part_id": int(rm.part_id),
             "part_title": rm.part_title, "length_unit": lu["unit"], "props": dict(props),
             "n_nodes": int(mesh["node_id"].size), "n_elems": int(mesh["elem_id"].size), "quad_frac": qual["quad_frac"],
             "quality": qual["metrics"], "errors": errs, "warnings": list(qual["warnings"]) + warns, "infos": infos,
             "edge_median_mm": round(e50, 6), "n_components": ncomp, **info}
+    if dg is not None:
+        meta["diag"] = {k: dg[k] for k in ("holes_n", "holes_small_n", "islands_n", "free_loops_n")}
     if out_dir:
         from esl.library import _util as U
         os.makedirs(out_dir, exist_ok=True)

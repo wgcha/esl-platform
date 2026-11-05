@@ -642,9 +642,29 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     S_auto = np.zeros(ix.n_elems, bool)
     S_auto[sub[np.isfinite(d) & (d <= lim)]] = True
     S_auto &= ~F
+    # v0.16.1 비드 네트워크(T·L 교차): 다른 비드 바닥이 사면으로 이어지면 사면 요소는 가까운 바닥 쪽 비드(측지 Voronoi).
+    # 다른 바닥에 닿는 경로가 없으면 d_o = ∞ → v0.16.0 과 같은 결과(바이트 불변)
+    n_net = 0
+    lose = np.zeros(ix.n_elems, bool)
+    if own.any() and S_auto.any():
+        sub2 = np.flatnonzero(F | allowed | own)
+        A2 = ix.adj[sub2][:, sub2].tocoo()
+        keep = ~(own[sub2[A2.row]] & own[sub2[A2.col]])
+        r2, c2 = A2.row[keep], A2.col[keep]
+        w2 = np.linalg.norm(ix.centroid[sub2[r2]] - ix.centroid[sub2[c2]], axis=1)
+        G2 = sparse.csr_matrix((np.maximum(w2, 1e-9), (r2, c2)), shape=(sub2.size, sub2.size))
+        so = np.flatnonzero(own[sub2] & np.isin(sub2, ix.adj[np.flatnonzero(allowed)].indices))
+        if so.size:
+            d_o = np.full(ix.n_elems, np.inf)
+            d_o[sub2] = csgraph.dijkstra(G2, directed=False, indices=so, min_only=True, limit=lim)
+            d_s = np.full(ix.n_elems, np.inf)
+            d_s[sub] = d
+            lose = S_auto & (d_o < d_s)
+            n_net = int(lose.sum())
+            S_auto &= ~lose
     # 새는 사면: S_auto 이웃 중 허용인데 거리 초과
     nb = ix.adj[np.flatnonzero(S_auto)].indices if S_auto.any() else np.zeros(0, np.int64)
-    leak = np.unique(nb[allowed[nb] & ~S_auto[nb]]) if nb.size else nb
+    leak = np.unique(nb[allowed[nb] & ~S_auto[nb] & ~lose[nb]]) if nb.size else nb   # 이웃 비드 몫(lose)은 샘 아님
     if leak.size:
         bd.warnings.append({"code": "SELECT_SLOPE_LEAK", "n_elems": int(leak.size), "limit_mm": lim})
     rem = elems_of(ix, b["slope"]["remove"], where=f"{b['id']} 사면 remove")
@@ -676,9 +696,22 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
         P = X[lp["nodes"]]
         seg = np.linalg.norm(np.diff(np.vstack([P, P[:1]]) if lp["closed"] else P, axis=0), axis=1)
         lp["length"] = float(seg.sum())
+    # v0.16.1 비드 네트워크: 이웃 비드와 맞닿은 경계 노드(이웃 바닥·이웃 몫 사면·바닥에 붙은 평행 비선택 요소)는 기준 평면에서 뺌
+    # (교차부 경계는 개구 평면이 아니라 바닥·벽을 지남). 맞닿음이 없으면 J 가 비어 v0.16.0 과 같음(바이트 불변)
+    J = np.zeros(ix.n_nodes, bool)
+    nbm = own | lose | (bead_owner >= 0)              # 이웃 비드 영역(앞서 정한 비드 BM 포함)
+    if nbm.any():
+        J[ix.elem_nodes(nbm)] = True
+    fpar = ~BM & par & ~excl & ~own
+    if fpar.any():
+        Fn = np.zeros(ix.n_nodes, bool)
+        Fn[ix.elem_nodes(F)] = True
+        J[ix.elem_nodes(fpar)[Fn[ix.elem_nodes(fpar)]]] = True
     if loops:
         main = max(range(len(loops)), key=lambda i: (loops[i]["length"], -i))
-        pts = X[loops[main]["nodes"]]
+        ln = loops[main]["nodes"]
+        jn = J[ln]
+        pts = X[ln[~jn]] if jn.any() and int((~jn).sum()) >= 3 else X[ln]
     else:
         pts = X[bd.boundary_nodes] if bd.boundary_nodes.size else X[ix.elem_nodes(F)]
     p_b, m_b, rms = _plane(pts)
@@ -714,7 +747,10 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     _o, inner = features.split_outer_inner(loops, X, m_b)
     bd.inner_loops_n = len(inner)
     if inner:                                       # SR-D-7: 섬이 아닌 안쪽 고리 = v0.16.0 대로(오프셋·고정)
-        bd.warnings.append({"code": "SELECT_INNER_LOOP", "n": len(inner)})
+        w_il = {"code": "SELECT_INNER_LOOP", "n": len(inner)}
+        if getattr(bd, "ring_n", 0):                  # v0.16.1 고리형 비드 안쪽 둔덕 수(정상 — 표시 낮춤 제안 근거)
+            w_il["ring"] = int(bd.ring_n)
+        bd.warnings.append(w_il)
     bd.open = bool(free) or any(not lp["closed"] for lp in loops) or not loops
     if bd.open:
         bd.warnings.append({"code": "SELECT_OPEN_BOUNDARY", "n_loops": len(loops)})
@@ -770,6 +806,22 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     if miss.any():
         bd.warnings.append({"code": "SELECT_TIER_MISSING", "z_mm": _r(float(np.median(zs[miss]))),
                             "n_elems": int(miss.sum())})
+    # v0.16.1 비드 네트워크: 경계가 바닥 높이의 이어진 면(선택 안 한 이웃 비드 바닥)을 가로지르거나 다른 비드 바닥·사면과 맞닿음
+    cont = 0
+    if tiers and zs.size and any(t["mask"].any() for t in tiers):   # 바닥 높이 평행 비선택 영역 중 섬 크기보다 큰 것(보스 발치 제외)
+        zc = ix.centroid @ n_bar                     # 바닥 평균 법선 높이(기준 평면과 무관 — 샌 사면에도 안정)
+        lv = np.array([float(np.median(zc[t["mask"]])) for t in tiers if t["mask"].any()])
+        flv = ~BM & par & ~excl & (np.min(np.abs(zc[:, None] - lv[None, :]), axis=1) <= tol)
+        fl = np.flatnonzero(flv)
+        if fl.size and np.any(stop[fl]):
+            nc, cl = csgraph.connected_components(ix.adj[fl][:, fl], directed=False)
+            for c in np.unique(cl[stop[fl]]):
+                kn = ix.elem_nodes(_mask_of(ix.n_elems, fl[cl == c]))
+                if np.linalg.norm(X[kn].max(axis=0) - X[kn].min(axis=0)) > float(sc["island"]["max_mm"]):
+                    cont += int(np.sum(stop[fl[cl == c]]))
+    touch = int(own[np.unique(ix.adj[np.flatnonzero(BM)].indices)].sum()) if BM.any() and own.any() else 0
+    if cont or touch or n_net:
+        bd.warnings.append({"code": "SELECT_BEAD_NETWORK", "n_elems": cont + touch, "slope_split": n_net})
     # 사면 노드 수준 보간(§5.3)
     slope_nodes = ix.elem_nodes(S)
     slope_nodes = slope_nodes[~assigned[slope_nodes]]
@@ -801,7 +853,8 @@ def _islands(ix: MeshIndex, bd: BeadDerived, floor_masks: list, F: np.ndarray, t
         owner[Fk] = k
         polys[k] = features.outer_polygon(ix, Fk, n_bar)
     r = features.enclosed_components(ix, cand, owner, ix.X, n_bar, max_mm=float(sc["island"]["max_mm"]),
-                                     outer_poly=polys)
+                                     outer_poly=polys, ring_frac=float(sc["island"]["ring_frac"]))
+    bd.ring_n = len(r.get("rings") or [])
     bd.islands = [{"k": int(i["owner"]) + 1, "elems": np.asarray(i["elems"], np.int64), "rim": i["rim"],
                    "interior": i["interior"], "size_mm": float(i["size_mm"]), "free_loops": 0} for i in r["islands"]]
     for t in r["too_large"]:

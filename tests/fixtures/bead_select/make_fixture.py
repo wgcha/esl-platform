@@ -67,6 +67,10 @@ def main() -> None:
 
 
 def main_features() -> None:
+    """V-SR-12 섬 픽스처 → features/: select_manifest.json·select.bin·part.glb(코어 bd_loads 와 같은 함수) · selection.json
+    (SelectionIn, 섬 미포함) · expected.json{islands{bead: [요소 인덱스(0 기준, select.bin elem_id 순)]}, island_groups,
+    islands_elem_id, islands_suggested(ElemSet), holes, feature_angle_deg, island_max_mm, algo} · mesh.json(대조용 원 메시)."""
+    from esl import view3d as v3
     cfg = settings({"bead_doe": {"enabled": True}})
     g = sb.generate(H_MM, features=True)
     m = g["mesh"]
@@ -76,19 +80,39 @@ def main_features() -> None:
     D = bs.derive_obj(m, norm, cfg, fixed_node_ids=g["fixed_ids"])
     out = os.path.join(HERE, "features")
     os.makedirs(out, exist_ok=True)
+    nid = np.asarray(m["node_id"], dtype=np.int64)
+    fixed = np.isin(nid, np.asarray(g["fixed_ids"], dtype=np.int64))
+    X = np.asarray(m["x0"], dtype=np.float64)
+    tris = v3.triangulate(np.asarray(m["conn"]), np.asarray(m["elem_type"]))
+    lo, hi = X.min(axis=0), X.max(axis=0)
+    center, half = (lo + hi) / 2.0, (hi - lo) / 2.0
+    q = v3.quantize_positions(X, center, half)
+    extras = {"units": "mm", "up": "Z", "generator": f"esl bead_select view {v3.BUILDER_VERSION}"}
+    gbytes = v3.write_glb(os.path.join(out, "part.glb"), q, center, half, "_NODE_ID", nid.astype(np.uint32), tris, extras)
+    blob, lay = bs.view_files(m, fixed)
+    with open(os.path.join(out, "select.bin"), "wb") as fh:
+        fh.write(blob)
+    ix = bs.mesh_index(m)
+    man = {"schema": "esl/bead_select_view/1", "n_nodes": int(nid.size), "n_elems": int(len(m["elem_id"])),
+           "n_tris": lay["n_tris"], "h_med": float(ix.h_med), "plate_normal": v3.plate_normal(X).tolist(),
+           "fixed": {"scan_n": int(fixed.sum()), "source": "scan"},
+           "glb": {"name": "part.glb", "bytes": int(gbytes)},
+           "bin": {"name": "select.bin", "bytes": len(blob), "layout": lay["layout"]}}
     mesh = {"node_id": [int(v) for v in m["node_id"]], "x0": [[round(float(c), 9) for c in r] for r in m["x0"]],
             "elem_id": [int(v) for v in m["elem_id"]], "elem_type": [int(v) for v in m["elem_type"]],
             "conn": [[int(v) for v in r] for r in m["conn"]]}
+    groups = {b.id: [sorted(int(e) for e in i["elems"]) for i in b.islands] for b in D.beads}
     exp = {"feature_angle_deg": norm["feature_angle_deg"], "island_max_mm": cfg["select"]["island"]["max_mm"],
-           "islands_suggested": d["islands_suggested"],
-           "islands": {b.id: [sorted(int(e) for e in i["elems"]) for i in b.islands] for b in D.beads},
-           "holes": {b["id"]: b["holes"] for b in d["beads"]}, "algo": d["algo"]}
-    for name, doc in (("mesh.json", mesh), ("selection.json", sel), ("expected.json", exp)):
+           "islands": {k: sorted(e for gr in v for e in gr) for k, v in groups.items()}, "island_groups": groups,
+           "islands_elem_id": {k: sorted(int(m["elem_id"][e]) for gr in v for e in gr) for k, v in groups.items()},
+           "islands_suggested": d["islands_suggested"], "holes": {b["id"]: b["holes"] for b in d["beads"]},
+           "algo": d["algo"]}
+    for name, doc in (("mesh.json", mesh), ("selection.json", sel), ("expected.json", exp), ("select_manifest.json", man)):
         with open(os.path.join(out, name), "w", encoding="utf-8", newline="\n") as fh:
             json.dump(doc, fh, ensure_ascii=False, separators=(",", ":") if name == "mesh.json" else None,
                       indent=None if name == "mesh.json" else 1, sort_keys=True)
             fh.write("\n")
-    print(f"features: 섬 {sum(len(v) for v in exp['islands'].values())} · 요소 {len(mesh['elem_id'])}")
+    print(f"features: 섬 {sum(len(v) for v in groups.values())} · 요소 {len(mesh['elem_id'])}")
 
 
 if __name__ == "__main__":

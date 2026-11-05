@@ -165,7 +165,38 @@ def _methods_limits(ms: dict, extra_limits: list | None = None) -> list[str]:
 
 
 SOURCE_KO = {"step": "STEP", "mesh": "메시", "case": "Case"}
-METHOD_LABEL = {"cad": "CAD", "refine": "세분화", "remesh": "재메시", "fallback": "재메시(폴백)", "mesh_input": "메시 입력"}
+METHOD_LABEL = {"cad": "CAD", "refine": "세분화", "remesh": "재메시", "fallback": "재메시(폴백)", "mesh_input": "메시 입력",
+                "defeature": "형상 단순화"}
+KIND_KO = {"hole": "구멍", "slot": "슬롯", "flange": "버링", "bead": "딤플·비드", "fillet": "필렛", "narrow": "좁은 띠"}
+
+
+def defeature_html(shapes: list, lists: dict, top: int = 20) -> str:
+    """v0.16.1 '작은 형상 억제' 절(§5A.5): 형상별 종류별 개수·억제 영역 최대 편차·바깥 Hausdorff + 목록 상위 top 행."""
+    rows = [s for s in shapes if s.get("mesh_method") == "defeature"]
+    if not rows:
+        return ""
+    out = ["<h3>작은 형상 억제</h3><p class='small'>CAD 메시가 실패한 형상만 작은 형상을 억제한 뒤 메시했습니다(원 STEP 대비 "
+           "편차는 억제 영역과 그 밖을 따로 셈).</p>"]
+    trs = []
+    for s in rows:
+        ds = s.get("defeature") or {}
+        trs.append([s["id"], s.get("name") or "", ds.get("n"),
+                    " · ".join(f"{KIND_KO.get(k, k)} {v}" for k, v in (ds.get("counts") or {}).items()),
+                    ds.get("skipped_n"), _f(ds.get("suppressed_max_mm")), _f(ds.get("outside_hausdorff_mm"))])
+    out.append(H.table(["id", "이름", "억제 수", "종류별", "건너뜀", "억제 영역 최대 편차 mm", "그 밖 Hausdorff mm"], trs,
+                       num=(2, 4, 5, 6)))
+    for s in rows:
+        doc = (lists or {}).get(s["id"]) or {}
+        fs = (doc.get("features") or [])[:top]
+        if not fs:
+            continue
+        out.append(f"<p class='small'>{H.esc(s['id'])} 억제 목록(상위 {len(fs)} / {doc.get('n', len(fs))})</p>")
+        out.append(H.table(["종류", "중심 x, y, z mm", "크기", "처리", "편차 mm"],
+                           [[KIND_KO.get(f["kind"], f["kind"]), ", ".join(_f(v) for v in f.get("center") or []),
+                             ", ".join(f"{k} {_f(v)}" for k, v in (f.get("size") or {}).items()),
+                             f"{f.get('action')} {f.get('method') or ''}".strip() + (f" ({f['reason']})" if f.get("reason") else ""),
+                             _f(f.get("dev_mm"))] for f in fs]))
+    return "".join(out)
 MESH_HEAD_CODES = ("COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_INPUT_SIZE_DIFF",
                    "MESH_INPUT_DISCONNECTED", "MESH_REFINED", "MESH_REFINE_BIAS")
 
@@ -292,12 +323,13 @@ def render_compare(ctx: dict) -> str:
     inner = H.table(["id", "이름", "파일", "출처", "메시 방식", "sha256", "요소 수", "quad 비율", "품질 Fail", "준비 상태", "코드"],
                     trs, num=(6, 7))
     inner += mesh_detail_html(shapes) + convergence_html(shapes, ctx.get("refine_bias") or {}, ctx.get("esl") or [])
+    inner += defeature_html(shapes, ctx.get("defeature_lists") or {})
     S.append(H.section("shapes", "2. 형상", inner))
     df = prof.get("defeature") or {}
     if df:
         S.append("<p class='small muted'>작은 형상 처리(이슈 #53 holes table 근사): 내부 경계 면적 &lt; "
                  f"{H.esc(_f(df.get('min_hole_area_mm2')))} mm² 메움 · 반지름 {H.esc(df.get('hole_r_mm'))} mm 구멍 둘레 요소 "
-                 f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(기록만 — 미적용)</p>")
+                 f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(defeature 단계에서 적용)</p>")
     if rk:
         top_n = int(ctx.get("ranking_rows") or 20)
         hdr = ["순위", "id", "이름", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",

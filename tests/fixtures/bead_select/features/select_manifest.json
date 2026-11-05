@@ -1,0 +1,50 @@
+{
+ "bin": {
+  "bytes": 54812,
+  "layout": [
+   {
+    "count": 7792,
+    "dtype": "<u4",
+    "name": "tri2elem",
+    "offset": 0
+   },
+   {
+    "count": 3921,
+    "dtype": "<u4",
+    "name": "elem_id",
+    "offset": 31168
+   },
+   {
+    "count": 3921,
+    "dtype": "u1",
+    "name": "elem_type",
+    "offset": 46852
+   },
+   {
+    "count": 4034,
+    "dtype": "u1",
+    "name": "fixed",
+    "offset": 50776
+   }
+  ],
+  "name": "select.bin"
+ },
+ "fixed": {
+  "scan_n": 16,
+  "source": "scan"
+ },
+ "glb": {
+  "bytes": 142920,
+  "name": "part.glb"
+ },
+ "h_med": 8.0,
+ "n_elems": 3921,
+ "n_nodes": 4034,
+ "n_tris": 7792,
+ "plate_normal": [
+  -0.00017490385249752916,
+  -0.0014634568896859902,
+  0.9999989138506973
+ ],
+ "schema": "esl/bead_select_view/1"
+}

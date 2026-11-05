@@ -1072,7 +1072,11 @@ def _cmp_quality(c: Ctx, mesh: dict) -> dict:
 
 
 # ---------------------------------------------------------------- v0.16.0 메시 방식(esl_compare_mesh_options.md §4A·§7)
-MESH_METHODS = ("cad", "refine", "remesh", "fallback", "mesh_input")
+MESH_METHODS = ("cad", "refine", "remesh", "fallback", "mesh_input", "defeature")   # v0.16.1 defeature(SR-D-20)
+# v0.16.1 compare.defeature 새 키(defeature 단계에서만 읽음) — base.json profile·profile_sha256 에서 값과 무관하게 뺌(SR-D-21b)
+DEFEAT_NEW_KEYS_V0161 = ("kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm",
+                         "narrow_w_factor", "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor",
+                         "max_features", "list_max")
 TRY_PREFIX = "try_"
 
 
@@ -1143,7 +1147,7 @@ def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
     return td
 
 
-LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "remesh": "재메시"}
+LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "defeature": "형상 단순화", "remesh": "재메시"}
 
 
 def _ladder_fail_text(r: dict) -> str:
@@ -1277,6 +1281,14 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                 return rr
             last = rr
             continue
+        if stage == "defeature":                        # v0.16.1 §5A.1 형상 단순화(작은 형상 억제) 단계
+            rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err)
+            n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
+            if rr.get("status") == "READY":
+                return rr
+            if rr.get("status") == "FAILED_MESH":
+                last = rr
+            continue
         queue = mr.plan(stage, pm, h, ccfg, avail, elapsed_s=elapsed)
         while queue:
             a = queue.pop(0)
@@ -1343,6 +1355,92 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     return last
 
 
+def _defeat_summary(meta: dict) -> dict | None:
+    """형상 행 defeature 요약(§5A.5 — mesh.json.defeature_stage 에서): {n, counts, skipped_n, suppressed_max_mm, outside_hausdorff_mm}."""
+    ds = meta.get("defeature_stage")
+    if not ds:
+        return None
+    fd = ds.get("fidelity") or {}
+    return {"n": ds.get("n"), "counts": ds.get("counts"), "skipped_n": ds.get("skipped_n"),
+            "suppressed_max_mm": fd.get("suppressed_max_mm"),
+            "outside_hausdorff_mm": (fd.get("outside") or {}).get("hausdorff_mm")}
+
+
+def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, pm: dict, avail, elapsed: float,
+                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict) -> dict:
+    """사다리 defeature 단계 시도(최대 2 — compound 켬 → compound 면 실패 때만 끔). 반환 성공 형상 행 | {status FAILED_MESH…}
+    | {status SKIPPED} (+ _n_try·_elapsed). 억제 대상 0 = DEFEATURE_NO_FEATURE(메싱 안 함, 2번째 시도도 건너뜀)."""
+    from esl.doe import mesh_refine as mr
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    src = c.p(row["rel"])
+    to_cad = float(ccfg["mesh"]["timeout_s"])
+    first = None
+    out: dict = {"status": "SKIPPED"}
+    for a in mr.plan("defeature", pm, h, ccfg, avail, elapsed_s=elapsed):
+        rec = {"stage": "defeature", "factor": None, "h_mm": h, "compound": bool(a.get("compound"))}
+        if a.get("only_if") == "compound_failed" and not mr.compound_failed(first):   # 조건 먼저(한도 판정보다 앞)
+            attempts.append({**rec, "status": "SKIPPED", "code": None, "seconds": None, "skipped": True,
+                             "reason": "not_compound"})
+            continue
+        if a.get("skipped"):
+            infos.append(_cmp_text(mr.SKIP_INFO, stage="defeature", factor="—", n_est=a.get("n_est") or "—",
+                                   bytes_est=_gb(a.get("bytes_est")), reason=a.get("reason")) + f" — {did} {row['name']}")
+            attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
+                             "reason": a.get("reason")})
+            continue
+        why = mr.check_limits(a, ccfg, avail, elapsed, pm.get("wall_seconds"), pm.get("n_est"))
+        if why:
+            attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
+                             "reason": why})
+            continue
+        n_try += 1
+        td = _next_try(c, d, n_try, keep)
+        t1 = time.monotonic()
+        try:
+            mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
+                                         fail_info=True, timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
+        except EslError as exc:
+            if exc.code == "GMSH_UNAVAILABLE":
+                raise
+            dt = time.monotonic() - t1
+            elapsed += dt
+            if exc.code == "DEFEATURE_NO_FEATURE":
+                attempts.append({**rec, "status": "SKIPPED", "code": "DEFEATURE_NO_FEATURE", "seconds": round(dt, 3),
+                                 "skipped": True, "reason": "no_feature"})
+                infos.append(_cmp_text("DEFEATURE_NO_FEATURE") + f" — {did} {row['name']}")
+                break
+            code = exc.code if exc.code == "DEFEATURE_FIDELITY" else _cad_code(td)
+            attempts.append({**rec, "status": "FAILED_MESH", "code": code, "seconds": round(dt, 3)})
+            first = mr.read_attempt(td) if first is None else first
+            out = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+            continue
+        dt = time.monotonic() - t1
+        elapsed += dt
+        attempts.append({**rec, "status": "READY", "code": None, "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
+        res = _cmp_ready(c, did, mesh, meta)
+        res.update(mesh_method="defeature", cad_error=cad_err, attempts=attempts, info=infos,
+                   defeature=_defeat_summary(meta))     # §5A.5 형상 행 defeature = 단계 요약(cad 단계 holes 기록 대신)
+        res["seconds"] = round(elapsed, 3)
+        _promote(c, td, d, {"mesh_method": "defeature", "cad_error": cad_err, "attempts": attempts})
+        if not keep:
+            _clear_tries(c, d)
+        res.update(_n_try=n_try, _elapsed=elapsed)
+        return res
+    out.update(_n_try=n_try, _elapsed=elapsed)
+    return out
+
+
+def _defeat_lists(c: Ctx, shapes: list[dict]) -> dict:
+    """보고서 '작은 형상 억제' 절: defeature 형상의 mesh/defeature.json(없으면 빈 목록)."""
+    out = {}
+    for x in shapes:
+        if x.get("mesh_method") == "defeature":
+            p = os.path.join(_cmp_mesh_dir(c, x["id"]), mg.DEFEAT_LIST)
+            out[x["id"]] = U.read_json(p) if os.path.isfile(p) else {"n": 0, "features": []}
+    return out
+
+
 def _gb(b) -> str:
     return "—" if b is None else f"{float(b) / 1024 ** 3:.2f} GB"
 
@@ -1397,6 +1495,8 @@ def _cmp_mesh_input_one(c: Ctx, row: dict, ccfg: dict, props: dict) -> dict:
                edge_median_mm=meta.get("edge_median_mm"), n_components=meta.get("n_components"),
                warn_codes=[w for w in meta.get("warnings") or [] if str(w.get("code", "")).startswith("MESH_INPUT_")],
                info=[f"{x['code']}: {did} {row['name']} {x.get('message') or ''}".rstrip() for x in meta.get("infos") or []])
+    if meta.get("diag"):                     # v0.16.1 SR-D-24 메시 입력 진단(보고만)
+        out["diag"] = meta["diag"]
     return out
 
 
@@ -1413,6 +1513,9 @@ def _method_echo(r: dict, h: float) -> str:
                 + (f" · 최대 편차 {float(fd['hausdorff_mm']):.3f} mm" if fd.get("hausdorff_mm") is not None else ""))
     if m == "mesh_input":
         return f"메시 입력(파트 {r.get('part_id')} · 요소 크기 중앙값 {float(r.get('edge_median_mm') or 0):.2f} mm)"
+    if m == "defeature":
+        ds = r.get("defeature") or {}
+        return f"mesh 형상 단순화 {h:g} mm(작은 형상 {ds.get('n', 0)}개 억제)"
     return f"mesh {h:g} mm"
 
 
@@ -1460,6 +1563,14 @@ def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: fl
         if fd.get("over_warn"):
             warns.append(_cmp_text("REMESH_FIDELITY_WARN", mm=f"{float(fd['hausdorff_mm']):.3f}",
                                    warn=f"{float(fd['warn_mm']):g}") + f" — {nm}")
+        if m == "defeature":                     # v0.16.1 SR-D-20 MESH_DEFEATURED
+            ds = x.get("defeature") or {}
+            ce = (x.get("cad_error") or {}).get("message") or "?"
+            cnt = ", ".join(f"{k} {v}" for k, v in (ds.get("counts") or {}).items())
+            warns.append(_cmp_text("MESH_DEFEATURED", n=ds.get("n"), counts=cnt,
+                                   suppressed_max_mm=f"{float(ds.get('suppressed_max_mm') or 0):.3f}",
+                                   outside_mm=f"{float(ds.get('outside_hausdorff_mm') or 0):.3f}", first=ce)
+                         + f" — {nm}")
         rf = x.get("refine")
         if m == "refine" and rf:
             if n_ref:
@@ -1476,7 +1587,7 @@ def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: fl
     return infos
 
 
-MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
+MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input", "defeature")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
 
 
 def _method_kinds(shapes: list[dict], res: dict) -> set:
@@ -1576,7 +1687,8 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                                     source={"reference": ref["source"], "name": ref["name"]})
     prof_rec = {k: prof.get(k) for k in ("size_mm", "curvature_n", "min_size_factor", "extend_from_boundary",
                                          "occ_fix_small", "feature_angle", "algorithm", "occ_sew_faces")}
-    prof_rec["defeature"] = dict(c.cfg["compare"].get("defeature") or {})
+    prof_rec["defeature"] = {k: v for k, v in (c.cfg["compare"].get("defeature") or {}).items()
+                             if k not in DEFEAT_NEW_KEYS_V0161}   # v0.16.1 새 키 제외(SR-D-21b — base.json 바이트 불변)
     bm = sc.save_base(t, c.p("prep"), "compare", c.writer,
                       extra={"props": props, "h": h, "gmsh_version": ver, "reference_source": ref_src,
                              "profile": prof_rec, "profile_sha256": ev.config_hash(prof_rec)})
@@ -1677,9 +1789,20 @@ def _cmp_sha(c: Ctx, did: str) -> str:
         from esl.doe import mesh_input as mi
         keep["mesh_files"] = [f.get("sha256") for f in sh.get("files") or []]
         keep["part_id"] = sh.get("part_id")
-        keep["mesh_input"] = ev.config_hash(mi._mcfg(c.cfg))
+        keep["mesh_input"] = ev.config_hash(mi.hash_view(c.cfg))      # v0.16.1: diag 절 제외(SR-D-24)
+    if _cmp_row_method(c, did) == "defeature":   # v0.16.1 SR-D-21b: defeature 형상만 설정 해시(기준 d000 포함)
+        df = (c.cfg.get("compare") or {}).get("defeature") or {}
+        keep["defeature_cfg"] = ev.config_hash({k: df.get(k) for k in DEFEAT_NEW_KEYS_V0161 + ("min_bead_height_mm",)})
     cfg = ev.config_hash(keep)
     return ev.input_sha256({}, mesh_sha, ev.config_hash(bmeta["frame"]), cfg, None)
+
+
+def _cmp_row_method(c: Ctx, did: str) -> str | None:
+    """prep/compare.json 형상 행의 mesh_method(없으면 None)."""
+    try:
+        return next((x.get("mesh_method") for x in _cmp_doc(c)["shapes"] if x.get("id") == did), None)
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
@@ -1858,9 +1981,11 @@ def _shape_ext(s: dict, bias: dict | None = None) -> dict:
     out = {"source": s.get("source") or "step", "mesh_method": s.get("mesh_method")}
     if s.get("source") == "mesh":
         out["part_id"] = s.get("part_id")
-    for k in ("fidelity", "refine"):
+    for k in ("fidelity", "refine", "diag"):
         if s.get(k):
             out[k] = s[k]
+    if s.get("mesh_method") == "defeature" and s.get("defeature"):   # v0.16.1 §5A.5(cad 형상의 holes 기록은 넣지 않음 — 바이트 불변)
+        out["defeature"] = s["defeature"]
     if bias:
         out["refine_bias"] = bias
     return out
@@ -1961,6 +2086,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "versions": {"paicad": None, "gmsh": bmeta.get("gmsh_version")}, "shapes": doc["shapes"],
            "profile": doc.get("profile"), "reference_source": doc["reference_source"],
            "result": {**R, "sensitivity": None}, "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"],
+           "defeature_lists": _defeat_lists(c, doc["shapes"]),
            "esl": esl, "limits_extra": list(LIMIT_MSG) + _mesh_limits(doc["shapes"]), "warnings": warns,
            "refine_bias": bias, "mesh_mode": doc.get("mesh_mode"),
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
@@ -1984,7 +2110,9 @@ MESH_LIMIT_MSG = {
     "refine": "세분화 형상은 요소 크기가 기준 메시와 달라 메시 의존 오차를 포함합니다 — 수렴 점검 δ 참고",
     "remesh": "재메시는 CAD 면 구조를 버린 근사입니다(단순화 후 CAD 대비 편차 표시) — 구멍 둘레 분할 미적용, 필렛이 접선으로 "
               "이어진 비드는 면 분류에 실패할 수 있음(REMESH_CLASSIFY_FAILED)",
-    "mesh_input": "메시 입력은 그대로 사용합니다 — 크기·품질은 사용자 메시 책임"}
+    "mesh_input": "메시 입력은 그대로 사용합니다 — 크기·품질은 사용자 메시 책임",
+    "defeature": "형상 단순화 형상은 작은 형상(구멍·낮은 딤플·버링·작은 필렛)을 억제한 메시라 강성에 억제 영향이 섞입니다 — "
+                 "억제 목록·억제 영역 편차(작은 형상 억제 절) 참고"}
 
 
 def _mesh_limits(rows: list[dict]) -> list[str]:
@@ -1992,7 +2120,7 @@ def _mesh_limits(rows: list[dict]) -> list[str]:
     ms = {r.get("mesh_method") for r in rows if r.get("status") in ("READY", "OK") or r.get("mesh_method")}
     ms |= {"remesh"} if "fallback" in ms else set()
     ms.discard("mesh_input") if not any(r.get("source") == "mesh" for r in rows) else None
-    return [MESH_LIMIT_MSG[k] for k in ("refine", "remesh", "mesh_input") if k in ms]
+    return [MESH_LIMIT_MSG[k] for k in ("refine", "remesh", "mesh_input", "defeature") if k in ms]
 
 
 # ---------------------------------------------------------------- v0.15.0 비드 직접 선택 select (esl_bead_select.md §8)

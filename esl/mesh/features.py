@@ -184,12 +184,15 @@ def boundary_loops(index: MeshIndex, bead_mask: np.ndarray, *,
 
 # ====================================================================== v0.16.1 섬·구멍 분류 (§5.2·§5.3)
 def _plane_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """섬 크기·다각형 판정 평면 기저(브라우저 grow.ts enclosedIslands 와 같은 정의 — V-SR-12):
+    u = n × e_a(a = |n| 성분이 가장 작은 좌표축, 동률 = 앞 축), v = n × u. 크기 = 이 평면 bbox 대각."""
     n = np.asarray(n, dtype=np.float64)
     n = n / max(float(np.linalg.norm(n)), 1e-300)
-    a = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-    e1 = a - (a @ n) * n
-    e1 /= np.linalg.norm(e1)
-    return e1, np.cross(n, e1)
+    ax = np.zeros(3)
+    ax[int(np.argmin(np.abs(n)))] = 1.0
+    u = np.cross(n, ax)
+    u /= np.linalg.norm(u)
+    return u, np.cross(n, u)
 
 
 def _uv(P: np.ndarray, n_ref: np.ndarray) -> np.ndarray:
@@ -321,12 +324,16 @@ def free_edge_components(ix: MeshIndex, mask: np.ndarray, boundary_nodes: np.nda
 
 
 def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: np.ndarray, n_ref: np.ndarray, *,
-                        max_mm: float, outer_poly: dict[int, np.ndarray] | None = None) -> dict:
+                        max_mm: float, outer_poly: dict[int, np.ndarray] | None = None,
+                        ring_frac: float | None = None) -> dict:
     """§5.2 일반형. cand = 후보 요소 마스크, owner = 요소별 주인 번호(≥ 0 = 주인, −1 = 후보, −2 = 막힘).
     성분 K 가 섬 ⇔ 이웃(K 밖 인접 요소) 주인이 하나(≥ 0) ∧ 최대 성분 아님(요소 수 최대, 동률 = 최소 요소 번호) ∧ 노드 평면
     bbox 대각 ≤ max_mm ∧ (outer_poly 에 그 주인이 있으면) 요소 중심 평균이 그 다각형(3D 좌표 — n_ref 평면 투영) 안.
     반환 {islands: [{owner, elems, rim, interior, size_mm}], too_large: [{owner, n_elems, size_mm}]}, 성분 번호 = 최소 요소 순.
-    rim = 섬 노드 ∩ 주인 요소 노드, interior = 그 밖 섬 노드."""
+    rim = 섬 노드 ∩ 주인 요소 노드, interior = 그 밖 섬 노드.
+    ring_frac(v0.16.1 고리형 비드): 주면 성분이 주인 바닥에서 판 쪽으로 ≥ ring_frac·D(D = 주인 바닥 ↔ 최대 성분 평행 요소의
+    n_ref 높이 차 중앙값) 솟으면 섬 아님 = 고리형 비드의 안쪽 둔덕(진짜 경계) → ``rings`` [{owner, n_elems, size_mm}] 에(크기 판정
+    전 — too_large 아님). None 이면 v0.16.0·R1 과 같음."""
     cand = np.asarray(cand, bool)
     owner = np.asarray(owner, dtype=np.int64)
     out = {"islands": [], "too_large": []}
@@ -342,6 +349,14 @@ def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: n
     A = ix.adj.tocsr()
     polys: dict = {}
     onodes: dict = {}
+    nr = np.asarray(n_ref, np.float64) / max(float(np.linalg.norm(n_ref)), 1e-300)
+    zfl: dict = {}
+    zb = None
+    if ring_frac is not None:
+        Kb = ce[lab == big]
+        pb = Kb[np.abs(ix.normal[Kb] @ nr) >= float(np.cos(np.radians(15.0)))]
+        zb = float(np.median(ix.centroid[pb] @ nr)) if pb.size else None
+        out["rings"] = []
     for c in order.tolist():
         if c == big:
             continue
@@ -357,6 +372,13 @@ def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: n
         kn = ix.elem_nodes(km)
         uv = _uv(X[kn], n_ref)
         sz = float(np.linalg.norm(uv.max(axis=0) - uv.min(axis=0))) if kn.size else 0.0
+        if zb is not None:                                  # 고리형 비드 안쪽 둔덕(판 높이까지 솟음) = 섬 아님
+            if k not in zfl:
+                zfl[k] = float(np.median(ix.centroid[owner == k] @ nr))
+            D = zb - zfl[k]
+            if abs(D) > _EPS and float(np.max((X[kn] @ nr - zfl[k]) * np.sign(D))) >= float(ring_frac) * abs(D):
+                out["rings"].append({"owner": k, "n_elems": int(K.size), "size_mm": sz})
+                continue
         ok = sz <= float(max_mm)
         if ok and outer_poly is not None and k in outer_poly and len(outer_poly[k]) >= 3:
             if k not in polys:
