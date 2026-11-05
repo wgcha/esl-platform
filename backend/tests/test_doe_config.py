@@ -26,7 +26,9 @@ def test_defaults_mirror_core():
     for k in ("mode", "ladder"):
         if k not in (core_cmp.get("mesh") or {}):
             dump["compare"]["mesh"].pop(k)
-    assert dump == DEFAULTS                                           # 숫자는 한 곳(코어 기본값 거울)과 같게
+    from doe_support import core_view_v0161
+
+    assert core_view_v0161(dump, DEFAULTS) == DEFAULTS                # 숫자는 한 곳(코어 기본값 거울)과 같게(v0.16.1 키는 코어 병합 후)
     cc = CommandsCfg()
     assert {k: getattr(cc, k) for k in PAICAD_DEFAULTS} == DEFAULT_COMMANDS
     assert bead_doe_settings(None)["enabled"] is False

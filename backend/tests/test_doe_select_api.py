@@ -38,6 +38,9 @@ from opt_support import make_case, plate, seed_opt_entry
 from sqlalchemy import text
 
 SLOW = threading.Event()
+# v0.16.1 코어 대역 판(esl_select_relax.md §4.1·§4.2): None = v0.16.0 코어(algo 없음), 2 = 섬·구멍·hold·w_enabled·range_feasible
+FAKE = {"algo": None}
+NORM_IN: list[dict] = []
 
 
 # ================================================================ 코어 대역(계약 §4.1 검증·§4.2 결과 형식)
@@ -72,6 +75,7 @@ def _ids(es) -> set[tuple[str, int]]:
 def fake_normalize(selection, cfg, *, mesh=None):
     sc = cfg["select"]
     sel = copy.deepcopy(selection)
+    NORM_IN.append(copy.deepcopy(selection))
     beads = sel.get("beads") or []
     if not 1 <= len(beads) <= int(sc["max_beads"]):
         raise _err("SELECT_BEAD_ID_INVALID", "비드 수", n=len(beads))
@@ -118,7 +122,8 @@ def fake_normalize(selection, cfg, *, mesh=None):
                           "blend_mm": b.get("blend_mm", "auto"),
                           "floor_follow": b["floor_follow"] if b.get("floor_follow") is not None
                           else int(sc["width"]["floor_follow"]),
-                          "links": sorted(sorted(g) for g in b.get("links") or [])})
+                          "links": sorted(sorted(g) for g in b.get("links") or []),
+                          **({"hold_fixed": 1} if b.get("hold_fixed") == 1 else {})})     # v0.16.1 SR-D-13a: 1 일 때만
     out = {"schema_version": 1, "feature_angle_deg": float(sel.get("feature_angle_deg") or sc["feature_angle_deg"]),
            "beads": sorted(out_beads, key=lambda x: int(x["id"][1:])),
            "fixed_user": {k: _merge(sel["fixed_user"][k], "fixed") for k in ("q", "t")},
@@ -170,9 +175,24 @@ def fake_derive(mesh, selection, cfg, *, frame, fixed_scan, bead=None):
                                         "W": [40.0 * (1 - r["width_rel"]), 40.0 * (1 + r["width_rel"])]},
                       "warnings": warns})
         sugg[b["id"]] = {"q": [[90, 90]], "t": []}
+        if FAKE["algo"]:                    # v0.16.1: 관통 구멍은 열린 경계 아님(SELECT_OPEN_BOUNDARY 는 판 가장자리만)
+            bd = beads[-1]
+            holey = b["name"].startswith("holey")
+            bd.update(islands=[{"k": 1, "n_elems": 2, "n_nodes": 6, "elems": {"q": [[95, 96]], "t": []}, "rim_n": 4,
+                                "size_mm": 16.0, "free_loops": 0}] if holey else [],
+                      holes={"n": 1 if holey else 0, "n_nodes": 8 if holey else 0}, inner_loops_n=0,
+                      hold_fixed=int(b.get("hold_fixed", 0)),
+                      hold={"n_ring_nodes": 3, "n_blend_nodes": 5, "n_fixed": 1} if b.get("hold_fixed") == 1 else None,
+                      w_enabled=closed and not b["name"].startswith("nowidth"))
+            if b["id"] == "b1":             # 코어가 feasible 을 직접 주는 경우(없으면 백엔드가 요약에서 계산)
+                bd["range_feasible"] = {"D": {str(t["k"]): [1.0, t["D_nom"] * 2.0] for t in tiers}, "W": [30.0, 64.0]}
     src = ("scan+user" if user_fixed else "scan") if len(fixed_scan) else ("user" if user_fixed else "none")
-    return {"beads": beads, "fixed": {"scan_n": len(fixed_scan), "user_n": len(user_fixed), "source": src},
-            "warnings": [], "slope_suggested": sugg}
+    out = {"beads": beads, "fixed": {"scan_n": len(fixed_scan), "user_n": len(user_fixed), "source": src},
+           "warnings": [], "slope_suggested": sugg}
+    if FAKE["algo"]:
+        out["algo"] = FAKE["algo"]
+        out["islands_suggested"] = {b["id"]: b["islands"][0]["elems"] for b in beads if b.get("islands")}
+    return out
 
 
 def fake_plan_data(mesh, selection, derived, cfg, *, frame):
@@ -194,8 +214,11 @@ def _fake_core(monkeypatch):
     svc.reset_status_cache()
     doe_select.reset_caches()
     CALLS.clear()
+    NORM_IN.clear()
     SLOW.clear()
+    FAKE["algo"] = None
     yield mod
+    FAKE["algo"] = None
     SLOW.set()
     svc.reset_status_cache()
     doe_select.reset_caches()
@@ -313,9 +336,12 @@ SPEC = {"method": "lhs", "n": 4, "seed": 3, "params": [{"name": "B1_D1", "lo": 3
 
 
 FV = {"n": 37, "max_mm": 0.8, "bead_vars": [{"name": "B1_D1", "bead": "b1", "n": 37, "max_mm": 0.8}], "node_idx": [0, 3]}
+WARNS = [{"code": "SELECT_FIXED_MOVED", "n": 37, "max_mm": 0.8},
+         {"code": "SELECT_QUALITY_WARN", "new_fail": 12, "new_fail_ratio": 0.02}]
 
 
-def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, basis=True, fixed_first=False):
+def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, basis=True, fixed_first=False,
+                            warn_first=False, rules=None):
     rev = 1
     base = study_dir(esl_root, sid)
     gd = base / "doe" / str(rev) / "grid"
@@ -329,10 +355,14 @@ def simulate_select_preview(engine, esl_root, sid, job_id, matrix, sel_sha, *, b
         if fixed_first and i == 0:      # v0.15.1 코어 bd_select_grid 고정 침범 칸(fixed_viol)
             cells.append({"id": d["id"], "status": "FAIL", "code": "SELECT_FIXED_VIOLATION", "fixed_max_mm": 0.8,
                           "fixed_viol": FV})
+        elif warn_first and i == 0:     # v0.16.1 warn 정책: 침범 + 새 Fail 초과여도 READY + warnings, fixed_viol 은 상태 무관
+            cells.append({"id": d["id"], "status": "OK", "code": None, "fixed_viol": FV, "warnings": WARNS})
         else:
             cells.append({"id": d["id"], "status": "OK", "code": None})
-    (gd / "grid_manifest.json").write_text(json.dumps({"schema_version": 1, "kind": "select", "cells": cells,
-                                                       "color": {"v_max": 3.0, "unit": "mm"}}), encoding="utf-8")
+    gm = {"schema_version": 1, "kind": "select", "cells": cells, "color": {"v_max": 3.0, "unit": "mm"}}
+    if rules is not None:
+        gm["rules"] = rules
+    (gd / "grid_manifest.json").write_text(json.dumps(gm), encoding="utf-8")
     if basis:
         bd = base / "select" / sel_sha[:12]
         bd.mkdir(parents=True, exist_ok=True)
@@ -358,7 +388,9 @@ def test_settings_select_block(client, world):
     s = api(client, "GET", "/doe/settings").json()
     assert s["scenarios"]["select"] is True and s["select_reason"] is None
     assert s["select"] == {"enabled": True, "reason": None, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6,
-                           "blend": {"min_mm": 15.0, "max_mm": 200.0}}
+                           "blend": {"min_mm": 15.0, "max_mm": 200.0},
+                           # v0.16.1 V-SR-13(settings 키)
+                           "fixed_policy": "warn", "quality_fail_policy": "warn", "hold": {"ring_mm": 3.0, "blend_mm": 8.0}}
 
 
 def test_select_defaults_mirror_contract():
@@ -372,19 +404,27 @@ def test_select_defaults_mirror_contract():
             "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5, "slope_max_mm": 80.0,
             "fixed_tol_mm": 0.01, "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},
             "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
-            "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0},
-            "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0},
+            "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0, "depth_max_rel": 1.0, "width_max_rel": 0.6},
+            "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0, "fail_policy": "warn"},
             "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15, "ambient": 0.35},
-            "derive_cache_n": 8, "derive_timeout_s": 20}
+            "derive_cache_n": 8, "derive_timeout_s": 20,
+            # v0.16.1(esl_select_relax.md §4.4)
+            "fixed_policy": "warn", "island": {"max_mm": 40.0}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0}}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
-        assert DEFAULTS["select"] == want
+        from doe_support import core_view_v0161
+
+        assert DEFAULTS["select"] == core_view_v0161({"select": want}, DEFAULTS)["select"]
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
         assert BeadDoeCfg.model_validate(y["bead_doe"]).select.model_dump() == want, p
     for bad in ({"feature_angle_deg": 0.5}, {"max_tiers": 10}, {"width": {"floor_follow": 2}},
                 {"blend": {"min_mm": 30.0, "max_mm": 20.0}}, {"blend": {"min_mm": 0}}, {"unknown": 1},
-                {"width": {"end_ratio": 1.0}}):
+                {"width": {"end_ratio": 1.0}},
+                # v0.16.1: 정책 값·feasible 상한(≥ 기본 범위)·섬·보스
+                {"fixed_policy": "drop"}, {"quality": {"fail_policy": "ignore"}},
+                {"range": {"depth_max_rel": 0.2}}, {"range": {"width_max_rel": 0.1}}, {"range": {"depth_max_rel": 6}},
+                {"island": {"max_mm": 0}}, {"hold": {"ring_mm": -1}}, {"hold": {"blend_mm": 0}}):
         with pytest.raises(ValueError):
             BeadDoeSelectCfg.model_validate(bad)
 
@@ -790,3 +830,170 @@ def test_clone_copies_selection_or_drops(client, world, engine, esl_root):
     assert c3["selection"] is None and c2s["selection"]["rev"] == 1
     w = _job(engine, c3["job"]["id"])["warnings"]
     assert [x["code"] for x in w] == ["SELECTION_DROPPED"]
+
+
+# ================================================================ v0.16.1 제약 완화(esl_select_relax.md §4·§7·§9, V-SR-13)
+@pytest.mark.parametrize("bad", [True, False, 2, -1, "1", 0.5])
+def test_hold_fixed_invalid_422(client, world, engine, esl_root, bad):
+    """hold_fixed 형식(0|1 정수만, bool 금지) → 422 SELECT_HOLD_INVALID(derive·저장 둘 다)."""
+    s = _ready(client, world, engine, esl_root)
+    sel = selection(bead("b1", hold_fixed=bad))
+    r = api(client, "POST", f"/doe/studies/{s['id']}/select/derive", json={"selection": sel})
+    assert r.status_code == 422 and code(r) == "SELECT_HOLD_INVALID", r.text
+    assert any("hold_fixed" in e["loc"] for e in r.json()["detail"]["errors"])
+    r = _save(client, s, sel)
+    assert r.status_code == 422 and code(r) == "SELECT_HOLD_INVALID"
+
+
+def test_hold_fixed_sha_and_passthrough(client, world, engine, esl_root):
+    """SR-D-13a: hold_fixed 생략·null 이면 코어에 키를 넘기지 않음(기존 선택 sha 불변), 0 은 그대로(코어가 생략), 1 이면 sha 변경."""
+    FAKE["algo"] = 2
+    s = _ready(client, world, engine, esl_root)
+    sid = s["id"]
+    o0 = _save(client, s, selection(bead("b1"))).json()
+    assert "hold_fixed" not in NORM_IN[-1]["beads"][0]
+    o1 = _save(client, o0, selection(bead("b1", hold_fixed=None))).json()
+    assert "hold_fixed" not in NORM_IN[-1]["beads"][0] and o1["selection"]["sha256"] == o0["selection"]["sha256"]
+    o2 = _save(client, o1, selection(bead("b1", hold_fixed=0))).json()
+    assert NORM_IN[-1]["beads"][0]["hold_fixed"] == 0 and o2["selection"]["sha256"] == o0["selection"]["sha256"]
+    o3 = _save(client, o2, selection(bead("b1", hold_fixed=1))).json()
+    assert o3["selection"]["sha256"] != o0["selection"]["sha256"]
+    row = _row(engine, sid)["selection"]
+    assert row["input"]["beads"][0]["hold_fixed"] == 1 and row["derived"]["algo"] == 2
+    assert row["derived"]["beads"][0]["hold"] == {"n_ring_nodes": 3, "n_blend_nodes": 5, "n_fixed": 1}
+    d = api(client, "POST", f"/doe/studies/{sid}/select/derive",
+            json={"selection": selection(bead("b1", "holey"))}).json()
+    assert d["algo"] == 2 and d["islands_suggested"] == {"b1": {"q": [[95, 96]], "t": []}}
+    assert d["beads"][0]["holes"] == {"n": 1, "n_nodes": 8} and len(d["beads"][0]["islands"]) == 1
+    assert "islands_suggested" not in row["derived"] and "slope_suggested" not in row["derived"]     # DB 요약에는 없음
+    g = api(client, "GET", f"/doe/studies/{sid}/selection").json()
+    assert "islands_suggested" not in g["derived"] and g["derived"]["algo"] == 2
+
+
+def test_params_v0161_feasible_use_default_w(client, world, engine, esl_root):
+    """V-SR-13 params: algo 2 → feasible = SR-D-10(코어 range_feasible 우선, 없으면 요약에서), default_range 불변, warn 정책이면
+    비드 안 고정 노드여도 기본 체크, W 행 = 코어 w_enabled(구멍 비드는 W 있음·폭 측정 불가 비드는 없음)."""
+    FAKE["algo"] = 2
+    m = world["mesh"]
+    sel = selection(bead("b1", "holey", tiers=((1, 4), (20, 22))), bead("b2", "nowidth", tiers=((40, 41),)),
+                    bead("b3", tiers=((60, 61),)), bead("b4", "edge", tiers=((70, 71),)))
+    s = _saved(client, world, engine, esl_root, sel, fixed=[int(m["node_id"][m["conn"][59][0]])])
+    p = api(client, "GET", f"/doe/studies/{s['id']}/params", "tok-general").json()
+    rows = {x["name"]: x for x in p["params"]}
+    assert list(rows) == ["B1_D1", "B1_D2", "B1_W", "B2_D1", "B3_D1", "B3_W", "B4_D1"]
+    assert rows["B1_D1"]["feasible"] == [1.0, 8.0] and rows["B1_D1"]["default_range"] == [2.8, 5.2]      # 코어 range_feasible
+    assert rows["B1_W"]["feasible"] == [30.0, 64.0] and rows["B1_W"]["default_range"] == [32.0, 48.0]
+    # 요약 계산: D [위 수준 + min_step, D·(1 + depth_max_rel)], W [기본 하한, W·(1 + width_max_rel)]
+    assert rows["B3_D1"]["feasible"] == [1.0, 8.0] and rows["B3_W"]["feasible"] == [32.0, 64.0]
+    assert rows["B3_D1"]["use_default"] is True and rows["B3_W"]["use_default"] is True          # warn: 체크 해제 안 함
+    assert any(w["code"] == "SELECT_FIXED_IN_BEAD" for w in p["beads"][2]["warnings"])           # 경고는 남음
+    b1 = p["beads"][0]
+    assert b1["islands_n"] == 1 and b1["holes"] == {"n": 1, "n_nodes": 8} and b1["inner_loops_n"] == 0
+    assert b1["hold_fixed"] == 0 and b1["fixed_in_bead_n"] == 0
+
+
+def test_params_v0161_policy_skip_and_v0160_rules():
+    """skip 정책 = v0.16.0 기본 체크 해제, algo 없는 derived(v0.16.0) = 정책·범위 설정과 무관하게 v0.16.0 표(바이트 불변)."""
+    from esl_platform.api.services import doe_select
+    from esl_platform.core.config import BeadDoeCfg
+
+    c = BeadDoeCfg().model_dump()
+    bd = {"id": "b1", "name": "B1", "tiers": [{"k": 1, "D_nom": 10.0}, {"k": 2, "D_nom": 15.0}], "W_nom": 40.0,
+          "boundary": {"loops": [{"closed": True}]}, "w_enabled": True,
+          "range_default": {"D": {"1": [7.0, 13.0], "2": [11.0, 19.5]}, "W": [32.0, 48.0]},
+          "warnings": [{"code": "SELECT_FIXED_IN_BEAD", "tiers": [2]}]}
+    doc = {"input": {"beads": [{"id": "b1"}]}, "derived": {"algo": 2, "beads": [bd]}}
+    t = {r["name"]: r for r in doe_select.params_table(doc, c)["params"]}
+    assert t["B1_D2"]["feasible"] == [11.0, 30.0] and t["B1_D2"]["use_default"] and t["B1_W"]["use_default"]
+    skip = copy.deepcopy(c)
+    skip["select"]["fixed_policy"] = "skip"
+    skip["select"]["range"]["depth_max_rel"] = 0.5
+    t = {r["name"]: r for r in doe_select.params_table(doc, skip)["params"]}
+    assert t["B1_D1"]["use_default"] and not t["B1_D2"]["use_default"] and not t["B1_W"]["use_default"]
+    assert t["B1_D2"]["feasible"] == [11.0, 22.5]
+    old = {"input": doc["input"], "derived": {"beads": [bd]}}
+    v0 = doe_select.params_table(old, c)
+    assert v0 == doe_select.params_table(old, skip) == doe_select.params_table(old)
+    t0 = {r["name"]: r for r in v0["params"]}
+    assert t0["B1_D2"]["feasible"] == t0["B1_D2"]["default_range"] == [11.0, 19.5] and not t0["B1_D2"]["use_default"]
+    assert "islands_n" not in v0["beads"][0]
+
+
+def test_derived_algo_lazy_refresh(client, world, engine, esl_root):
+    """§7.5: algo 없는 DB 요약(v0.16.0 derive) → GET selection·params·plan-view 때 다시 derive 해 요약만 갱신(rev·sha·input·
+    version 불변). 코어가 algo 를 내지 않으면(병합 전) DB 를 바꾸지 않는다."""
+    from esl_platform.api.services import doe_select
+
+    s = _saved(client, world, engine, esl_root, selection(bead("b1", "holey")))
+    sid = s["id"]
+    row0 = _row(engine, sid)
+    assert "algo" not in row0["selection"]["derived"]
+    api(client, "GET", f"/doe/studies/{sid}/params")                        # 옛 코어 → 그대로
+    assert _row(engine, sid)["selection"] == row0["selection"]
+    FAKE["algo"] = 2                                                         # 코어 갱신(배포) 뒤
+    doe_select.reset_caches()
+    for path in ("params", "selection", "plan-view"):
+        r = api(client, "GET", f"/doe/studies/{sid}/{path}", "tok-general")   # 조회 권한만으로도 캐시 갱신
+        assert r.status_code == 200, (path, r.text)
+        row = _row(engine, sid)
+        assert row["version"] == row0["version"] and row["selection"]["rev"] == row0["selection"]["rev"]
+        assert row["selection"]["sha256"] == row0["selection"]["sha256"]
+        assert row["selection"]["input"] == row0["selection"]["input"] and row["selection"]["derived"]["algo"] == 2
+        assert row["selection"]["derived"]["beads"][0]["holes"]["n"] == 1
+        assert "section" not in row["selection"]["derived"]["beads"][0]
+        doe_select.reset_caches()
+        with engine.begin() as c:                                           # 다음 경로도 갱신하는지 — 다시 옛 요약으로
+            c.execute(text("UPDATE bead_does SET selection = CAST(:s AS jsonb) WHERE id = :i"),
+                      {"s": json.dumps(row0["selection"]), "i": sid})
+    p = api(client, "GET", f"/doe/studies/{sid}/params").json()
+    assert next(r for r in p["params"] if r["name"] == "B1_W")["feasible"] == [30.0, 64.0]   # 갱신된 요약 기준 표
+    n = len(CALLS)
+    api(client, "GET", f"/doe/studies/{sid}/params")                        # 이미 algo 있음 → 다시 derive 안 함
+    assert len(CALLS) == n
+
+
+def test_preview_cells_warnings_and_rules(client, world, engine, esl_root):
+    """§4.3·§7.4: warn 정책 경고 칸 = READY + warnings + fixed_viol(상태 무관), 경고 없는 칸엔 키 없음. grid_manifest.rules 없는
+    select 미리보기 → preview.rules_outdated true(실행은 막지 않음), rules 2 면 키 없음."""
+    s = _saved(client, world, engine, esl_root)
+    sid = s["id"]
+    sel_sha = s["selection"]["sha256"]
+    p = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": s["version"], "spec": SPEC}).json()
+    m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": p["version"], "spec": SPEC}).json()
+    simulate_select_preview(engine, esl_root, sid, p["job"]["id"], m, sel_sha, warn_first=True)
+    g = api(client, "GET", f"/doe/studies/{sid}", "tok-general").json()
+    pv = g["doe"]["preview"]
+    cells = pv["cells"]
+    assert cells[0]["status"] == "READY" and cells[0]["warnings"] == WARNS and cells[0]["fixed_viol"] == FV
+    assert all("warnings" not in c and "fixed_viol" not in c for c in cells[1:])
+    assert pv["rules_outdated"] is True
+    r = api(client, "POST", f"/doe/studies/{sid}/run", json={"version": g["version"], "matrix_sha256": m["matrix_sha256"]})
+    assert r.status_code == 202, r.text                                    # 띠만 — 실행은 막지 않음
+    gd = study_dir(esl_root, sid) / "doe" / "1" / "grid" / "grid_manifest.json"
+    gm = json.loads(gd.read_text(encoding="utf-8"))
+    gm["rules"] = 2
+    gd.write_text(json.dumps(gm), encoding="utf-8")
+    pv = api(client, "GET", f"/doe/studies/{sid}").json()["doe"]["preview"]
+    assert "rules_outdated" not in pv and pv["cells"][0]["warnings"] == WARNS
+
+
+def test_results_best_clean_and_warn_rows(client, world, engine, esl_root):
+    """SR-D-11: 순위 행 warn 그대로, 결과 summary.best_clean(코어 결과에 있을 때만)."""
+    s = _saved(client, world, engine, esl_root)
+    sid = s["id"]
+    base = study_dir(esl_root, sid)
+    (base / "post").mkdir(parents=True, exist_ok=True)
+    res = {"scenario": "select", "C_ref": 10.0, "baseline": {"id": "d000", "score": 1.0, "umax": 1.0, "epsmax": 1e-3},
+           "n_ok": 2, "n_skipped": {"collision": 0, "fixed": 0, "geom": 0, "mesh": 0}, "n_failed": {},
+           "ranking": [{"id": "d001", "values": {"B1_D1": 4.0}, "score": 0.8, "rank": 1, "warn": ["FIXED_MOVED"]},
+                       {"id": "d002", "values": {"B1_D1": 3.0}, "score": 0.9, "rank": 2}],
+           "sensitivity": None, "boundary_warnings_n": 0, "view3d": [], "best": None, "warnings": [],
+           "summary": {"best_clean": "d002"}}
+    (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
+    update_study(engine, sid, phase="DONE", result=res)
+    o = api(client, "GET", f"/doe/studies/{sid}/results", "tok-general").json()
+    assert o["ranking"][0]["warn"] == ["FIXED_MOVED"] and "warn" not in o["ranking"][1]
+    assert o["summary"] == {"best_clean": "d002"}
+    res.pop("summary")
+    (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
+    assert api(client, "GET", f"/doe/studies/{sid}/results").json()["summary"] is None     # v0.16.0 결과 = 키 없음(null)

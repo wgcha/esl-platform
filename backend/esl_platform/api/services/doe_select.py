@@ -54,6 +54,8 @@ SELECT_VIEW_FILES = {"part.glb": "model/gltf-binary", "select.bin": "application
 _SHA12_RE = re.compile(r"[0-9a-f]{12}")
 BASIS_FILES = {"bin": ("basis.bin", "application/octet-stream"), "meta": ("basis.json", "application/json")}
 SUMMARY_DROP = ("section", "plan")            # DB 요약에서 빼는 그림 자료(§4.3)
+# v0.16.1 비드 요약(esl_select_relax.md §4.2) — 변수 표 비드 행에 있으면 그대로 전달(화면 "섬 n · 구멍 m"·hold 체크 활성)
+BEAD_V0161_KEYS = ("holes", "inner_loops_n", "hold_fixed", "hold", "fixed_in_bead_n", "fixed_in_blend_n")
 _LOAD_N = 2
 
 
@@ -178,6 +180,15 @@ def canonical_bytes(doc: Any) -> bytes:
     return json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def selection_in(sel) -> dict[str, Any]:
+    """API SelectionIn → 코어 입력 dict. v0.16.1 hold_fixed 는 준 비드에만(생략 = 키 없음 — 기존 선택 sha 불변, SR-D-13a)."""
+    d = sel.model_dump()
+    for b in d.get("beads") or []:
+        if b.get("hold_fixed") is None:
+            b.pop("hold_fixed", None)
+    return d
+
+
 def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None) -> tuple[dict[str, Any], str]:
     """코어 normalize + 크기 상한(정규화 JSON > select.max_selection_kb → 413 SELECT_TOO_LARGE, BS-D-4)."""
     from ...core.opt_core import EslError
@@ -235,9 +246,12 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
     return out
 
 
+DERIVE_ONLY = ("slope_suggested", "islands_suggested")      # derive 응답에만(화면 제안 — DB·선택 조회에는 없음)
+
+
 def summary(derived: dict[str, Any]) -> dict[str, Any]:
-    """DB 요약: 비드의 section·plan(그림 자료)과 slope_suggested 제외."""
-    d = {k: copy.deepcopy(v) for k, v in derived.items() if k != "slope_suggested"}
+    """DB 요약: 비드의 section·plan(그림 자료)과 slope_suggested·islands_suggested(v0.16.1) 제외."""
+    d = {k: copy.deepcopy(v) for k, v in derived.items() if k not in DERIVE_ONLY}
     d["beads"] = [{k: v for k, v in b.items() if k not in SUMMARY_DROP} for b in d.get("beads") or []
                   if isinstance(b, dict)]
     return d
@@ -286,6 +300,30 @@ def full_derived(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dic
     return d
 
 
+def refresh_derived(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any],
+                    inputs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """v0.16.1 계산 규칙 판 지연 갱신(esl_select_relax.md §7.5·SR-D-13c): 저장 요약에 ``algo`` 가 없으면(v0.16.0 derive) 다시
+    derive 해 DB 요약만 바꾼다(rev·sha·input·version 불변 — 계산 캐시). 코어가 algo 를 내지 않거나(코어 병합 전) 계산 실패면
+    그대로 둔다. 갱신한 선택 문서(또는 원래 doc)를 돌려준다."""
+    d = doc.get("derived")
+    if isinstance(d, dict) and isinstance(d.get("algo"), int):
+        return doc
+    try:
+        full = full_derived(ctx, s, c, doc, inputs)
+    except DomainError:
+        return doc
+    if not isinstance(full.get("algo"), int):
+        return doc
+    rev = int(doc.get("rev") or 0)
+    new = _svc()._jsonable({**doc, "derived": summary({**full, "rev": rev})})
+    with ctx.engine.begin() as conn:
+        if not doe_repo.refresh_selection_derived(conn, s["id"], rev, str(doc["sha256"]), new):
+            return doc                       # 그 사이 선택이 바뀜 — 다음 조회에서 다시
+    if isinstance(s.get("selection"), dict) and s["selection"].get("sha256") == doc["sha256"]:
+        s["selection"] = new
+    return new
+
+
 # ---------------------------------------------------------------- DOE 변수 표(선택 → 변수, §9 params)
 def _pair(v: Any) -> list[float] | None:
     if isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, (int, float)) for x in v):
@@ -297,14 +335,72 @@ def _code(w: Any) -> str | None:
     return w.get("code") if isinstance(w, dict) else None
 
 
-def params_table(doc: dict[str, Any]) -> dict[str, Any]:
+def _round(v: float, nd: int = 4) -> float:
+    """코어 bead_select._r 와 같은 반올림(표 값 동일성 — test_doe_select_params_core)."""
+    return round(float(v), nd) + 0.0
+
+
+def _policy(c: dict[str, Any] | None) -> str:
+    """select.fixed_policy(v0.16.1 SR-D-2). c 가 없으면 설정 모델 기본값."""
+    if isinstance(c, dict) and isinstance((c.get("select") or {}).get("fixed_policy"), str):
+        return str(c["select"]["fixed_policy"])
+    from ...core.config import BeadDoeSelectCfg
+
+    return BeadDoeSelectCfg().fixed_policy
+
+
+def _range_cfg(c: dict[str, Any] | None) -> dict[str, Any]:
+    from ...core.config import BeadDoeSelectRangeCfg
+
+    rg = BeadDoeSelectRangeCfg().model_dump()
+    if isinstance(c, dict):
+        rg.update((c.get("select") or {}).get("range") or {})
+    return rg
+
+
+def _feasible(bd: dict[str, Any], rg: dict[str, Any], kind: str, k: int | None, dflt: list[float]) -> list[float]:
+    """v0.16.1 SR-D-10 feasible(기하 한계): 코어 derived 의 range_feasible 이 있으면 그대로, 없으면 요약에서 계산 —
+    D: [위 수준 + min_step, D_nom·(1 + depth_max_rel)], W: [기본 범위 하한(바닥 최소 폭 조건), W_nom·(1 + width_max_rel)]."""
+    rf = bd.get("range_feasible")
+    if isinstance(rf, dict):
+        v = (rf.get("D") or {}).get(str(k)) if kind == "D" else rf.get("W")
+        if _pair(v) is not None:
+            return _pair(v)
+    if kind == "W":
+        nom = float(bd.get("W_nom") or 0.0)
+        hi = _round(nom * (1.0 + float(rg["width_max_rel"])))
+        return [min(dflt[0], hi), max(dflt[1], hi)]
+    t = next((x for x in bd.get("tiers") or [] if isinstance(x, dict) and int(x.get("k", -1)) == k), {})
+    D = float(t.get("D_nom") or 0.0)
+    zs = [0.0] + [float(x.get("D_nom") or 0.0) for x in bd.get("tiers") or [] if isinstance(x, dict)]
+    above = max([z for z in zs if z < D - 1e-9], default=0.0)
+    hi = D * (1.0 + float(rg["depth_max_rel"]))
+    lo = min(above + float(rg["min_step_mm"]), hi)
+    return [_round(min(lo, dflt[0])), _round(max(hi, dflt[1]))]
+
+
+def _bead_v0161(bd: dict[str, Any]) -> dict[str, Any]:
+    """algo ≥ 2 비드 행 덧붙임: islands_n(섬 개수 — 요소 집합은 선택 derived 에만) + BEAD_V0161_KEYS 중 있는 것."""
+    out = {k: bd[k] for k in BEAD_V0161_KEYS if k in bd}
+    if isinstance(bd.get("islands"), list):
+        out["islands_n"] = len(bd["islands"])
+    return out
+
+
+def params_table(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:
     """{beads, params, warnings} (DoeParamsOut select 판). 변수 이름 <비드 id 대문자>_D<k>·_W(예 B1_D2), 묶음 대표 = 가장 작은 k.
 
-    - D: 단마다(묶음은 1개, group_members = 묶인 단 이름). W: 비드마다, 경계 고리가 모두 닫혔을 때만(SELECT_OPEN_BOUNDARY 면 없음).
-    - SELECT_FIXED_IN_BEAD{tiers} → 그 단 D·그 비드 W 기본 체크 해제(tiers 없으면 비드 전체, §5.6).
-    - feasible = default_range = derive range_default(source estimate, §5.7). 범위가 없으면 [공칭, 공칭](사용자 입력 필요)."""
+    - D: 단마다(묶음은 1개, group_members = 묶인 단 이름). W: 비드마다 — derived ``w_enabled`` 가 있으면 그대로(코어 판정:
+      v0.16.1 관통 구멍은 열린 경계 아님), 없으면 경계 고리가 모두 닫혔을 때만(SELECT_OPEN_BOUNDARY 면 없음).
+    - default_range = derive range_default(source estimate, §5.7). 범위가 없으면 [공칭, 공칭](사용자 입력 필요).
+    - 판정 규칙 판(derived ``algo``, esl_select_relax.md SR-D-13c): 없으면(v0.16.0 derive) v0.16.0 규칙 — feasible = default_range,
+      SELECT_FIXED_IN_BEAD{tiers} → 그 단 D·그 비드 W 기본 체크 해제. algo ≥ 2 → feasible = SR-D-10(기하 한계), 기본 체크 해제는
+      ``select.fixed_policy: skip`` 일 때만(warn 이면 경고만 — SR-D-8)."""
     inp = {str(b.get("id")): b for b in (doc.get("input") or {}).get("beads") or [] if isinstance(b, dict)}
     d = doc.get("derived") or {}
+    v161 = isinstance(d.get("algo"), int) and d["algo"] >= 2
+    uncheck = not v161 or _policy(c) == "skip"
+    rg = _range_cfg(c)
     beads, params = [], []
     for bd in d.get("beads") or []:
         if not isinstance(bd, dict) or "id" not in bd:
@@ -319,7 +415,7 @@ def params_table(doc: dict[str, Any]) -> dict[str, Any]:
         warns = [w for w in bd.get("warnings") or [] if isinstance(w, dict)]
         fixed_all, fixed_tiers = False, set()
         for w in warns:
-            if _code(w) == "SELECT_FIXED_IN_BEAD":
+            if uncheck and _code(w) == "SELECT_FIXED_IN_BEAD":
                 ts = w.get("tiers")
                 if isinstance(ts, list) and ts:
                     fixed_tiers |= {int(t) for t in ts}
@@ -335,31 +431,36 @@ def params_table(doc: dict[str, Any]) -> dict[str, Any]:
                 continue
             members = [kk for kk in ks if rep.get(kk, kk) == k]
             nom = float(t.get("D_nom") or 0.0)
-            fe = _pair(rdD.get(str(k), rdD.get(k) if isinstance(rdD, dict) else None)) or [nom, nom]
+            dr = _pair(rdD.get(str(k), rdD.get(k) if isinstance(rdD, dict) else None)) or [nom, nom]
+            fe = _feasible(bd, rg, "D", k, dr) if v161 else list(dr)
             params.append({"name": f"{pref}_D{k}", "type": "D", "bead": bid, "tier": k, "nominal": nom, "feasible": fe,
-                           "feasible_source": "estimate", "default_range": list(fe),
+                           "feasible_source": "estimate", "default_range": list(dr),
                            "use_default": not (fixed_all or any(kk in fixed_tiers for kk in members)),
                            "group_members": [f"{pref}_D{kk}" for kk in members]})
-        loops = ((bd.get("boundary") or {}).get("loops")) or []
-        open_b = any(isinstance(lp, dict) and not lp.get("closed") for lp in loops) or \
-            any(_code(w) == "SELECT_OPEN_BOUNDARY" for w in warns)
-        if not open_b and isinstance(bd.get("W_nom"), (int, float)):
+        if isinstance(bd.get("w_enabled"), bool):
+            w_on = bd["w_enabled"]
+        else:
+            loops = ((bd.get("boundary") or {}).get("loops")) or []
+            w_on = not (any(isinstance(lp, dict) and not lp.get("closed") for lp in loops) or
+                        any(_code(w) == "SELECT_OPEN_BOUNDARY" for w in warns))
+        if w_on and isinstance(bd.get("W_nom"), (int, float)):
             nom = float(bd["W_nom"])
-            fe = _pair(rd.get("W")) or [nom, nom]
+            dr = _pair(rd.get("W")) or [nom, nom]
+            fe = _feasible(bd, rg, "W", None, dr) if v161 else list(dr)
             params.append({"name": f"{pref}_W", "type": "W", "bead": bid, "tier": None, "nominal": nom, "feasible": fe,
-                           "feasible_source": "estimate", "default_range": list(fe),
+                           "feasible_source": "estimate", "default_range": list(dr),
                            "use_default": not (fixed_all or fixed_tiers), "group_members": [f"{pref}_W"]})
         beads.append({"id": bid, "name": str(bd.get("name") or (inp.get(bid) or {}).get("name") or pref), "kind": "select",
                       "n_tiers": len(tiers), "W_nom": bd.get("W_nom"), "W_min": bd.get("W_min"), "W_max": bd.get("W_max"),
-                      "blend_mm": bd.get("blend_mm"), "warnings": warns})
+                      "blend_mm": bd.get("blend_mm"), "warnings": warns, **(_bead_v0161(bd) if v161 else {})})
     return _svc()._jsonable({"beads": beads, "params": params,
                              "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
 
 
-def job_selection(doc: dict[str, Any]) -> dict[str, Any]:
-    """작업 params.doe.selection(워커 S3: 기저·모핑·이어하기 sha)."""
+def job_selection(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:
+    """작업 params.doe.selection(워커 S3: 기저·모핑·이어하기 sha). params = 행렬 생성과 같은 표(같은 c)."""
     return {"rev": int(doc.get("rev") or 0), "sha256": doc["sha256"], "mesh_sha256": doc.get("mesh_sha256"),
-            "input": copy.deepcopy(doc["input"]), "params": params_table(doc)["params"]}
+            "input": copy.deepcopy(doc["input"]), "params": params_table(doc, c)["params"]}
 
 
 # ---------------------------------------------------------------- 엔드포인트
@@ -404,7 +505,7 @@ def derive_out(ctx: AppContext, principal: Principal, sid: str, body) -> dict[st
     """POST …/select/derive: 저장 안 함(rev null). bead 주면 그 비드만."""
     s, c = _editable_prechecks(ctx, principal, sid)
     inputs = load_inputs(ctx, s, c)
-    norm, sha = normalize(c, body.selection.model_dump(), inputs["mesh"])
+    norm, sha = normalize(c, selection_in(body.selection), inputs["mesh"])
     if body.bead is not None and body.bead not in {str(b.get("id")) for b in norm.get("beads") or []}:
         raise unprocessable("SELECT_BEAD_ID_INVALID", f"선택에 없는 비드입니다: {body.bead!r}", bead=body.bead)
     d = derive(c, inputs, norm, sha, bead=body.bead)
@@ -421,11 +522,13 @@ def selection_get(ctx: AppContext, principal: Principal, sid: str) -> dict[str, 
     doc = current(ctx, s, c)
     if doc is None:
         return None
+    doc = refresh_derived(ctx, s, c, doc)
     try:
         derived = full_derived(ctx, s, c, doc)
     except DomainError:
         derived = {**(doc.get("derived") or {}), "rev": int(doc.get("rev") or 0)}     # 그림 자료 없이 요약만
-    derived.pop("slope_suggested", None)
+    for k in DERIVE_ONLY:
+        derived.pop(k, None)
     return {"rev": int(doc["rev"]), "sha256": doc["sha256"], "input": doc["input"], "derived": derived,
             "updated_by_name": doc.get("updated_by_name") or "", "updated_at": str(doc.get("updated_at") or "")}
 
@@ -435,7 +538,7 @@ def selection_put(ctx: AppContext, principal: Principal, sid: str, body) -> dict
     svc = _svc()
     s0, c = _editable_prechecks(ctx, principal, sid)
     inputs = load_inputs(ctx, s0, c)
-    norm, sha = normalize(c, body.selection.model_dump(), inputs["mesh"])
+    norm, sha = normalize(c, selection_in(body.selection), inputs["mesh"])
     derived = derive(c, inputs, norm, sha)
     with ctx.engine.begin() as conn:
         s, job = svc._lock(conn, sid, body.version)
@@ -465,6 +568,7 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
         raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
     doc = require_selection(ctx, s, c)
     inputs = load_inputs(ctx, s, c)
+    doc = refresh_derived(ctx, s, c, doc, inputs)
     derived = full_derived(ctx, s, c, doc, inputs)
     try:
         pd = _bs().plan_data(inputs["mesh"], doc["input"], derived, c, frame=inputs["frame"])
@@ -530,4 +634,5 @@ def clone_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tu
 
 
 __all__ = ["view_file", "derive_out", "selection_get", "selection_put", "plan_view", "basis_file", "params_table",
-           "job_selection", "current", "require_selection", "selection_summary", "clone_selection", "reset_caches"]
+           "job_selection", "current", "require_selection", "selection_summary", "clone_selection", "reset_caches",
+           "refresh_derived", "selection_in"]
