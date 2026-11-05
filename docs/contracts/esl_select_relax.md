@@ -1,9 +1,14 @@
-# 계약: 비드 직접 선택(select) 제약 완화 · 비드 안 형상(구멍·섬·체결 구멍) 처리 (SELECT_RELAX, v0.16.1)
+# 계약: 비드 직접 선택(select) 제약 완화 · 비드 안 형상(구멍·섬·체결 구멍) 처리 · 작은 형상 억제 메시 단계 · 공통 모듈 (SELECT_RELAX, v0.16.1)
 
-- 상태: **초안** (2026-11-05). 사용자 확정 사항(아래, 2026-11-04) 반영. 결정 질문 3개(§14) 미확정 — 권장안으로 작성, 확정 시 해당 절만 갱신.
+- 상태: **확정** (2026-11-05). Q1~Q3 = 권장안 A 확정(사용자 2026-11-05, §14). 범위 A(④ 사다리 `defeature` 단계, §5A)·범위 B(공통 모듈, §5B) 추가(사용자 2026-11-05). 남은 질문 Q4·Q5(§14)는 권장안을 기본값으로 적었고, 답이 다르면 그 값만 바꾼다(구조 불변).
 - 버전: **v0.16.1** (기준 main ef7545c = v0.16.0). migration **불필요**(§7.6).
-- 관계: `esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. 이 문서에 없는 규칙은 BS 를 따르고, 충돌 시 이 문서가 우선. `docs/decisions.md` D-0.16-P2(고정 침범·품질 FAIL = 경고, 뒤집힘만 제외)를 구체화한다.
-- ID 규칙: 결정 `SR-D-n`, 시험 `V-SR-n`, 리스크 `R-SR-n`, 질문 `Q1~Q3`.
+- 관계: `esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. 이 문서에 없는 규칙은 BS 를 따르고, 충돌 시 이 문서가 우선. `docs/decisions.md` D-0.16-P2(고정 침범·품질 FAIL = 경고, 뒤집힘만 제외)를 구체화한다. §5A 는 `esl_compare_mesh_options.md`(이하 "C2")의 사다리(C2-D-18)·충실도(C2-D-13)·기록(C2-D-10)·`esl_step_compare.md` SC-D-5(작은 형상 처리)의 **변경 계약**.
+- ID 규칙: 결정 `SR-D-n`, 시험 `V-SR-n`, 리스크 `R-SR-n`, 질문 `Q1~Q5`.
+
+### 사용자 확정 (2026-11-05, 변경 금지)
+5. **Q1~Q3 = A**: 경고 안이 1위여도 순위 유지 + ⚠ + "경고 없는 최상위" 1줄 / 보스 링 ρ 3 mm·블렌딩 8 mm / 기본 범위는 넓히지 않음(feasible 만).
+6. **"어떻게든 메시를 성공시키자"**: ④ 자동 사다리에 작은 형상 억제(defeature) 단계 — 순서 `cad → refine_local → refine_global → defeature → remesh`, `compare.mesh.ladder` 로 순서·사용 변경. BatchMesher 기준(holes table, beads_suppression `minimal_beads_height 2`, surface fillet, flanged_suppr)을 gmsh/OCC CAD 단계에서. 원 STEP 대비 편차(억제 영역 따로), `mesh_method = defeature`, 억제 목록, 경고 `MESH_DEFEATURED`. CAD 로 성공하는 형상은 바이트 불변.
+7. **"이 기술이 전반적으로 통용돼서 쓰이도록"**: CAD 단계 억제·인식 = 공통 모듈 `esl/geom/defeature.py`(③ STEP 스터디 메싱·④ 형상 비교·향후 STEP 모핑), 메시 단계 섬·구멍 분류 = 공통 모듈 `esl/mesh/features.py`(select·v0.16.2 P3 자동 탐지 초기 선택·④ 메시 입력 진단). 기존 `mg.defeature` 는 얇은 래퍼(바이트 불변).
 
 ### 사용자 확정 (2026-11-04, 변경 금지)
 1. **고정 침범**: 안 제외하지 않고 경고만. 고정 노드도 모핑대로 같이 움직인다. 안에 ⚠ 배지 + "고정 노드 n개, 최대 x mm 이동". 보고서·받기 rad 사본에 "체결 위치 어긋남" 경고. 설정 `select.fixed_policy: warn`(기본) | `skip`.
@@ -32,6 +37,11 @@
 | C12 | 선택 sha | `normalize_input` `:213-216`(비드 키를 기본값 채워 모두 씀), `selection_sha256` `:277` | 새 비드 키를 기본값으로 쓰면 기존 선택 sha 전부 변경 | §7 대응 필요 |
 | C13 | 클릭 확장 | `frontend/src/view3d/select/grow.ts:16-41` | seed 법선 BFS 만 — 섬은 빈 구멍으로 남음 | 확정 4 "자동 포함" 없음 |
 | C14 | 미리보기 배지 | `frontend/src/components/DoeThumbGrid.tsx:50`·`:70`(스킵·실패만 ⨯ 배지) | 경고 상태 없음 | 확정 1 배지 없음 |
+| C15 | ④ 작은 형상 처리 = 구멍만 | `esl/doe/mesh_gmsh.py:269-401`(`defeature`: 면 내부 고리 중 `_is_hole` ∧ 넓이 < `min_hole_area_mm2` 메움 + 둘레 분할), 호출 `mesh_gmsh.py:776-778`(④ cad 세션)·`mesh_remesh.py:324-326`(재메시 R2) | 한 면에만 붙은 고리만, seam 을 지나는 구멍·여러 면에 걸친 구멍은 안 메움(v0.14.1 보수적). 필렛·비드·버링·좁은 띠 처리 없음 — `min_bead_height_mm` 은 기록만(`stages.py:854-855`, `report_doe.py:300`) | 확정 6 |
+| C16 | 사다리 4단계 고정 | `mesh_refine.py:26`(`STAGES`), `backend/.../core/config.py:603`(`COMPARE_LADDER_STAGES`, `ladder max_length=4`), DEFAULTS `esl/doe/__init__.py:104`, `stages.py:1048`(`MESH_METHODS`), `:1119`(`LADDER_STAGE_LABEL`) | defeature 단계 없음 | 확정 6 |
+| C17 | 해시·기록에 defeature 설정 전체 | `stages.py:1551-1552`(`prof_rec["defeature"]` = `compare.defeature` 전체 → base.json `profile`·`profile_sha256`), `_cmp_sha:1634-1652`(`profile` 이 keep 에) | 새 키를 기본값으로 넣기만 해도 모든 ④ 형상 해시·base.json 바이트 변경 | §7.7 대응 |
+| C18 | 위상 도우미가 메싱 모듈 안 | `mesh_gmsh.py:191-266`(`_loop_info`·`_face_loops`·`_curve_points`·`_seam_points`·`_is_hole`·`_bbox_key`·`_key_near`), `bead_select.py:282-383`(`MeshIndex`·`mesh_index`), `:505`(`_loops`), `:567`(`_node_graph`) | ③·④·select 가 각자 모듈 내부 함수에 묶임 | 확정 7 |
+| C19 | ③ 메싱 호출 | `stages.py:249`(③ 베이스라인 STEP), `:478`(③ 안 BREP) → `mg.run_isolated(..., c.cfg)` — `cfg["mesh"]` 에 `defeature` 키 없음 → 작은 형상 처리 안 함(`scenario.compare_cfg:314-316` 은 ④ 만 주입) | ③ 은 같은 세션 함수를 지나지만 꺼져 있음 | 확정 7(③ 기본 동작은 유지) |
 
 ## 1. 범위 / 비범위
 
@@ -44,6 +54,10 @@
 | 비드별 옵션 `hold_fixed`(체결 구멍 둘레 링 고정 + 블렌딩 보스) | 검증 낙하(VD) 판정 변경 |
 | feasible 범위 분리·확대(기본 범위·R_auto 불변) | 기본 범위(±30 %/±20 %) 변경 — Q3 |
 | 경고 배지·보고서·받기 rad 주석, 이어하기 호환 | migration |
+| **A** ④ 사다리 `defeature` 단계(§5A): 작은 구멍·슬롯(여러 면·seam 구멍 포함), 낮은 딤플·비드 평탄화, 낮은 버링 제거, 작은 필렛·좁은 띠 처리, 억제 목록·편차·`MESH_DEFEATURED` | ③ STEP 스터디의 사다리·defeature 폴백(③ 은 공통 모듈 호출 지점만 — 기본 꺼짐, Q4) |
+| **B** 공통 모듈 `esl/geom/defeature.py`·`esl/mesh/features.py`(§5B) — 기존 함수 이동 + 래퍼(바이트 불변), 호출 지점 명시 | STEP 모핑(③ 전환, 보류)·v0.16.2 P3 의 실제 연결 — 시그니처·호출 지점만 예약 |
+| ④ 메시 입력 품질 진단(작은 구멍 수·섬 수 — 보고만) | 진단 결과로 메시 입력을 고치는 것(억제는 CAD 단계만) |
+| | 로고·나사산·플랜지 인식(BatchMesher `remove_logo 0`·`threads_removal 0`·`flange_recognition 0` — 원 기준도 끔) |
 
 ## 2. 결정
 
@@ -59,11 +73,20 @@
 | SR-D-8 | **체결 구멍 기본 = 바닥과 이동 + 경고**(`fixed_policy` 따름). 비드 안 고정 노드 경고 `SELECT_FIXED_IN_BEAD` 는 남기되 **`fixed_policy: warn` 이면 기본 체크 해제 안 함**(skip 이면 v0.16.0 대로 해제) | 확정 4·1, C5 |
 | SR-D-9 | **비드별 옵션 `hold_fixed`(0|1, 기본 0)**: 1 이면 그 비드의 모든 변수 기저에 링 계수 φ(x) 곱 — 고정 노드에서 거리 ≤ ρ(`select.hold.ring_mm`) = 0(제자리), ρ..ρ+b(`select.hold.blend_mm`) Wendland 블렌딩, 그 밖 1(§5.5). 선형 유지(φ 는 변수 값과 무관) | 확정 4 보스 옵션, BS-D-9 선형 기저 유지 |
 | SR-D-10 | **feasible 분리**: `feasible` = 기하 한계(D: 위 수준 + min_step ~ D_nom·(1 + `range.depth_max_rel`), W: 바닥 최소 폭 조건 ~ W_nom·(1 + `range.width_max_rel`)), `default_range` = v0.16.0 값 그대로. R_auto 는 default_range 기준 그대로 | 확정 3 상한 완화. 기본 범위·R 이 그대로라 기저 바이트 불변(§7) |
-| SR-D-11 | **경고 안도 순위·받기 대상**: READY(경고 포함) 안은 실행·순위·민감도에 그대로 들어간다. 순위 행·결과 카드·보고서에 ⚠ 표시, 결과 요약에 "경고 없는 최상위 안" 1줄 추가(순위 자체는 바꾸지 않음) — **Q1** | 확정 1 "제외하지 않음" |
+| SR-D-11 | **경고 안도 순위·받기 대상**: READY(경고 포함) 안은 실행·순위·민감도에 그대로 들어간다. 순위 행·결과 카드·보고서에 ⚠ 표시, 결과 요약에 "경고 없는 최상위 안" 1줄 추가(순위 자체는 바꾸지 않음) — **Q1 = A 확정** | 확정 1 "제외하지 않음", 확정 5 |
 | SR-D-12 | **받기 rad 경고** = 고정 침범 안의 rad/include 사본에서 **첫 `/NODE` 줄 바로 앞**에 ASCII 주석 줄(`#` 시작) 삽입 + `ch_r.rad` 머리 주석 + `values.json.warnings`. 침범 없는 안은 v0.16.0 과 바이트 동일 | 확정 1 "rad 사본에 경고". Radioss 입력은 `#` 주석 허용, 비ASCII 는 솔버 판독 위험이라 영문 고정 문구 |
 | SR-D-13 | **이어하기 호환 4규칙**(§7): (a) 새 비드 키는 기본값이면 정규화에서 생략 → 기존 선택 sha 불변, (b) 해시용 설정 사본에서 새 키가 기본값이면 생략 → `_cfg_hash`·`_sel_cfg_sha` 불변, (c) 기저 `algo: 2` 표지 → 기존 기저 1회 재계산(섬·구멍·hold 없으면 같은 바이트 → 안 해시 불변), (d) 안 재사용 시 판정을 다시 적용 | 기존 스터디를 깨지 않고 완화만 반영 |
 | SR-D-14 | **클릭 확장 자동 포함**: 브라우저 `grow` 뒤에 `enclosedIslands`(같은 위상 규칙 — §5.2 의 1~3단계, 크기 상한 포함)로 섬을 즉시 표시. **저장 대상 아님**(입력 ElemSet 에 넣지 않음) — 서버 `derive` 가 같은 규칙으로 다시 정하고 응답의 `islands` 가 표시를 대체 | BS-D-5(서버가 원본) 유지 + 즉시 반응. 두 구현 일치는 픽스처 시험(V-SR-12) |
 | SR-D-15 | **섬 끄기 = `exclude` 층**: 사용자가 섬 요소를 "제외" 층으로 칠하면 그 성분은 섬이 아님 → v0.16.0 동작(안쪽 고리) + `SELECT_INNER_LOOP`. 새 층 없음 | 화면 요소 최소(확정 "필수만") |
+| SR-D-16 | **사다리 `defeature` 단계**: `mesh_refine.STAGES` += `defeature`, 기본 `compare.mesh.ladder = [cad, refine_local, refine_global, defeature, remesh]`. 규칙(cad 맨 앞·중복 금지·빼면 끔)은 C2-D-18 그대로, 순서는 cad 뒤 자유. 화면 "실패 시 세분화 허용" 끔은 `refine_*` 만 뺌(defeature 유지). 기존 스터디는 스냅샷 `mesh_ladder`(defeature 없음)를 그대로 써 동작·해시 불변 | 확정 6. 요소 수가 가장 적게 느는 세분화를 먼저, 형상을 바꾸는 억제는 그 뒤, 원 위상을 버리는 재메시는 마지막 |
+| SR-D-17 | **억제는 CAD(OCC) 세션 안에서만**, 대상 6종 = `hole`(지름 ≤ `hole_max_d_mm` 8 — 등가 지름 4A/P, 여러 면·seam 에 걸친 자유 모서리 고리 포함), `slot`(폭 ≤ 1.9 ∧ 길이 ≤ 14), `flange`(구멍 둘레 버링 높이 ≤ `flange_max_h_mm` 1.5 → 벽 제거 후 구멍 규칙), `bead`(닫힌 둘레 고리 1개로 바탕 면에 붙은 면 묶음, 높이 < `min_bead_height_mm` 2 → 둘레 고리로 채운 평면/채움 면), `fillet`(반경 ≤ `fillet_max_r_mm`), `narrow`(폭 < `narrow_w_factor`·h). 순서 = flange → hole·slot → bead → fillet → narrow(앞 단계 결과 위상에서 다음 인식) | BatchMesher param 대응(§5A.2 표). 메시(요소) 단계 억제는 CAD 대응이 사라져 하중·frame 매핑과 충실도 계산이 어려움 |
+| SR-D-18 | **필렛·좁은 띠 = 형상 제거 우선, 쉘은 메시 병합**: 그 면이 고체(dim 3)에 속하면 `gmsh.model.occ.defeature(vols, faces)`(= OCC `BRepAlgoAPI_Defeaturing`), 쉘(중립면 STEP — 대부분)이면 형상은 두고 `gmsh.model.mesh.setCompound(2, [면, 이웃 …])` 로 한 면처럼 메시. 병합 메시 실패 → 같은 단계 2번째 시도 = 병합 없이(억제 대상에서 fillet·narrow 만 뺌) | 쉘의 필렛 제거(날카로운 모서리 재구성)는 OCC 에 일반 도구가 없음. compound 는 형상 편차 0 |
+| SR-D-19 | **충실도 = 원 STEP 기준, 억제 영역 분리**: 원 STEP 을 같은 자식 프로세스에서 정리 옵션 그대로 다시 가져와 OCC 삼각화 S0(C2-D-13 과 같은 `linear_deflection_mm`) → 메시 M 과 양방향 거리. 억제 영역 Ω_f = 특징 f 의 bbox 를 `region_pad_factor`·h 만큼 넓힌 상자. **바깥**(Ω 밖 샘플) = `outside{hausdorff_mm, …}`(C2-D-13 지표·warn/fail 그대로 — fail 이면 이 단계 실패 → 다음 단계), **억제 영역** = 특징별 `dev_mm` = Ω_f 안 양방향 최대 거리(판정 없음, 보고만), `suppressed_max_mm` = 그 최대 | 확정 6 "원 STEP 대비 편차, 억제 영역은 별도 집계". 억제 영역 편차는 의도된 차이(구멍 반지름·딤플 높이 수준)라 실패 판정에 넣으면 단계 의미가 없음 |
+| SR-D-20 | **기록**: `mesh_method = "defeature"`(C2-D-10 열거 += defeature), `cad_error`, `attempts`(stage defeature), `mesh.json.defeature_stage = {counts{kind: n}, n, skipped_n, compound, fidelity{outside, suppressed_max_mm}, list_file}`, 전체 목록 `mesh/defeature.json`(특징 `{id, kind, center, bbox, size, area_mm2, faces_n, action, method, reason?, dev_mm}`, 결정적 순서 = kind → 중심 좌표(1e-3 반올림) 사전순, 행 ≤ `list_max` 500 — 넘으면 `truncated` + 개수만). 경고 `MESH_DEFEATURED{n, counts, suppressed_max_mm, outside_mm, first}` | 확정 6 "억제 목록(종류·위치·크기)" |
+| SR-D-21 | **바이트 불변 3중 보장**: (a) defeature 단계는 cad·refine 이 실패한 형상에서만 실행(첫 cad 시도 경로 `_cmp_mesh_one` 불변), (b) 새 설정 키(§4.4 `compare.defeature` 의 v0.16.1 키)는 base.json `profile`·`profile_sha256` 에서 **항상** 제외하고 `_cmp_sha` 에는 `mesh_method == defeature` 형상에만 `defeature_cfg` 해시로 추가, (c) `gdf.holes`(=`mg.defeature` 본문)는 `collect` 인자를 줄 때만 목록을 모음 — cad 단계 `mesh.json.defeature` 불변 | 확정 6 "CAD 성공 형상 결과 불변", C17 |
+| SR-D-22 | **공통 모듈 CAD 단계 `esl/geom/defeature.py`**(소유 Core): 인식(`find_features`)과 실행(`suppress`)을 나누고, v0.14.1 구멍 메움은 `holes` 로 이동(본문 그대로). `mesh_gmsh.defeature` = `gdf.holes` 호출 1줄, 위상 도우미(C18)는 이 모듈로 옮기고 `mesh_gmsh` 는 같은 이름으로 재노출. 호출 지점 = mesh_gmsh 세션(③ 베이스라인·③ 안 BREP·④ cad/refine/defeature) + 재메시 R2 + (예약) STEP 모핑 | 확정 7. 같은 기준·같은 결과를 한 곳에서 |
+| SR-D-23 | **공통 모듈 메시 단계 `esl/mesh/features.py`**(소유 Core): `MeshIndex`·`mesh_index`·`node_graph`·`boundary_loops`(= `_loops`) 이동(bead_select 재노출), §5.2 섬 판정 = `enclosed_components`, §5.3 구멍 분류 = `free_edge_components`, 진단 = `diagnose`. 호출 지점 = select derive·(예약) v0.16.2 P3 paicad 영역 → 초기 선택·④ 메시 입력 진단. 브라우저 `grow.ts` `enclosedIslands` 는 `enclosed_components` 의 거울(V-SR-12) | 확정 7, SR-D-4 |
+| SR-D-24 | **④ 메시 입력 진단 = 보고만**: `mesh_input.read_shape_mesh` 뒤 `features.diagnose` → 형상 행 `diag{holes_n, holes_small_n, islands_n, free_loops_n}`, 작은 구멍·섬이 있으면 정보 `MESH_INPUT_DIAG`. 메시·하중·해시 불변(`mesh_input` 설정 해시에서 `diag` 절 제외) | 확정 7. 메시 입력은 CAD 가 없어 억제 불가 — 사용자가 HyperMesh 에서 고칠 근거만 |
 
 ## 3. 막는 조건 결정표 (확정 3)
 
@@ -90,7 +113,7 @@
 | C1 | 고정 침범 → `SKIPPED_FIXED` | `design_state:1374` | 스킵 | **경고**(`fixed_policy`) | 확정 1 |
 | C2 | 새 Fail 비율 > 0.01 → `FAILED_MESH` | `:1378` | 제외 | **경고**(`quality.fail_policy`) | 확정 2 |
 | C3 | 뒤집힘(야코비안 ≤ 0 · 법선 > 60°) | `:1376` | 제외 | 유지 | 확정 2, 해석 무의미 |
-| D1 | 기본 범위 D ±30 %, W ±20 % | `_ranges_blend:1045-1051` | 기본값 | 유지(Q3) | R_auto 가 이 값 기준 — 바꾸면 기저 변경 |
+| D1 | 기본 범위 D ±30 %, W ±20 % | `_ranges_blend:1045-1051` | 기본값 | 유지(Q3 = A 확정) | R_auto 가 이 값 기준 — 바꾸면 기저 변경 |
 | D2 | feasible = 기본 범위 | `params_table:1159·1165` | 밖 → 경고 | **완화**(SR-D-10: D 하한 = 위 수준 + 1, 상한 ×2.0 · W 상한 ×1.6) | 확정 3 |
 | D3 | lo ≤ 0 (D·W) | `matrix.py:107-108` | 422 | 유지 | 물리적 불가 |
 | D4 | lo ≥ hi | `matrix.py:104-105` | 422 | 유지 | 형식 |
@@ -130,14 +153,40 @@ bead_doe:
     quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn}   # fail_policy warn | skip
     range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6}  # *_max_rel = feasible 상한(SR-D-10)
     island: {max_mm: 40.0}        # 섬 평면 bbox 대각 상한(§5.2)
-    hold: {ring_mm: 3.0, blend_mm: 8.0}                                  # Q2
+    hold: {ring_mm: 3.0, blend_mm: 8.0}                                  # Q2 = A 확정
+  compare:
+    mesh:
+      ladder: [cad, refine_local, refine_global, defeature, remesh]      # SR-D-16 (v0.16.0: defeature 없음)
+    defeature:                    # 기존 키(enabled·min_hole_area_mm2·hole_elems·hole_r_mm·min_bead_height_mm) 의미 불변 — cad 단계
+      min_bead_height_mm: 2.0     # v0.16.0 '기록만' → defeature 단계에서 bead 기준으로 적용(cad 단계는 여전히 안 읽음)
+      # ↓ v0.16.1 새 키 — defeature 단계에서만 읽음(SR-D-21b: profile 해시 제외)
+      kinds: [flange, hole, slot, bead, fillet, narrow]   # 빼면 그 종류 끔, 이 순서로 실행(SR-D-17)
+      hole_max_d_mm: 8.0          # 등가 지름 4A/P ≤ (BatchMesher shape(1) rad<4·shape(62) eq_diam<8 action 1)
+      slot_max_w_mm: 1.9          # shape(2) width<1.9 ∧ length<14 action 1
+      slot_max_l_mm: 14.0
+      flange_max_h_mm: 1.5        # appl_flanged_suppr 1 · flanged_suppr_height 1.5
+      fillet_max_r_mm: 1.5        # Q5 (BatchMesher surface/edge fillet 인식 끔 — 0.5·h 권장)
+      narrow_w_factor: 0.4        # × h  (narrow_surfs_merge_width Lmin·0.5, Lmin = min_size_factor 0.8 · h)
+      feature_max_mm: 40.0        # bead·flange 특징 bbox 대각 상한(= select.island.max_mm 과 같은 값, 따로 둠)
+      plane_tol_mm: 0.01          # 둘레 고리 평면 판정(넘으면 채움 면)
+      compound: true              # 쉘 fillet·narrow 를 mesh.setCompound 로 병합(SR-D-18)
+      region_pad_factor: 1.0      # 억제 영역 Ω_f = bbox ± 이 값 × h (SR-D-19)
+      max_features: 2000          # 인식 상한(넘으면 앞 2000개만 + 경고 DEFEATURE_TOO_MANY)
+      list_max: 500               # defeature.json 행 상한
+    mesh_input:
+      diag: {enabled: true, feature_angle_deg: 30.0}   # SR-D-24. 구멍·섬 크기 기준 = defeature.hole_max_d_mm · select.island.max_mm
 ```
+- ③(`bead_doe.mesh`)에는 키를 추가하지 않는다. ③ 에서 작은 형상 처리를 켜려면 `bead_doe.mesh.defeature`(④ 와 같은 형식, DEFAULTS 에 없음 — 없으면 ③ 그대로)를 직접 쓰며, 그 경우 cad 세션의 `gdf.holes` 만 실행(사다리 없음 — Q4).
 | 위치 | 추가 | pydantic 검사 |
 |---|---|---|
 | `esl/doe/__init__.py:130-140` DEFAULTS | `fixed_policy`, `quality.fail_policy`, `range.depth_max_rel`·`width_max_rel`, `island`, `hold` | – |
 | `backend/esl_platform/core/config.py:818-862` | `BeadDoeSelectCfg.fixed_policy: Literal["warn","skip"]="warn"`, `BeadDoeSelectQualityCfg.fail_policy: Literal[...]="warn"`, `BeadDoeSelectRangeCfg.depth_max_rel: float(gt=0, le=5)=1.0`·`width_max_rel(gt=0, le=5)=0.6`(각 `*_max_rel ≥ *_rel` 검사), `BeadDoeSelectIslandCfg.max_mm(gt=0)=40`, `BeadDoeSelectHoldCfg.ring_mm(ge=0)=3`·`blend_mm(gt=0)=8` | 섹션 없으면 기본 |
 | `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml`(select 절이 있는 예시 2개) | 위 yaml 그대로 | – |
 | `GET /doe/settings` `select` | `fixed_policy`, `quality_fail_policy`, `hold{ring_mm, blend_mm}` | – |
+| `esl/doe/__init__.py:104`·`:119-120` DEFAULTS compare | `mesh.ladder` += defeature, `defeature` 새 키, `mesh_input.diag` | – |
+| `backend/.../core/config.py:603`·`:620`·`:748-754`·mesh_input 모델 | `COMPARE_LADDER_STAGES` += `"defeature"`, `ladder max_length=5`, `BeadDoeCompareDefeatureCfg` 새 칸(`kinds: list[Literal[…6종]]` 중복 금지, `*_mm gt=0`, `narrow_w_factor (0,1]`, `region_pad_factor ge=0`, `max_features ge=1`, `list_max ge=1`, `compound: bool`), `BeadDoeCompareMeshInputDiagCfg{enabled, feature_angle_deg (0,90]}`. `_doe_settings` 기본값 거울(`:1319-1326`)에 `defeature` 새 키·`mesh_input.diag` 추가 | 섹션 없으면 기본 |
+| `config/*.example.yaml` 2개 | compare 절 위 yaml 그대로 | – |
+| `GET /doe/settings` `compare` | `mesh.ladder`(defeature 포함), `defeature{hole_max_d_mm, min_bead_height_mm, fillet_max_r_mm, kinds}` | – |
 
 ## 5. 알고리즘 (`esl/doe/bead_select.py`)
 
@@ -148,6 +197,7 @@ bead_doe:
 - 섬·구멍이 없으면 2·5 의 결과가 공집합/거짓 → 이후 모든 배열이 v0.16.0 과 같다(V-SR-1).
 
 ### 5.2 섬 판정 (바깥/안쪽 구분 — 섬)
+- 구현 위치 = 공통 `esl.mesh.features.enclosed_components`(§5B.2). bead_select 는 아래 1의 후보·주인 표(owner = 단 번호)를 만들어 부른다.
 1. 후보 Cand = ¬F ∧ ¬taken(다른 비드 층·자기 사면 add) ∧ ¬exclude ∧ (bead_owner < 0).
 2. Cand 의 요소 인접(`ix.adj[Cand][:, Cand]`) 연결 성분 K_1..K_m(`csgraph.connected_components`, 성분 번호 = 최소 요소 번호 순으로 다시 매김 — 결정적).
 3. 성분 K 가 단 k 의 **섬** ⇔ 아래를 모두 만족:
@@ -160,6 +210,7 @@ bead_doe:
 - 비용: 22만 요소 연결 성분 1회/비드(≈ 50 ms) — BS §5.8 derive ≤ 3 s 안.
 
 ### 5.3 구멍 분류 (자유 모서리)
+- 구현 위치 = 공통 `esl.mesh.features.free_edge_components`(§5B.2).
 - 자유 모서리 Efree = BM 요소 1개만 쓰는 모서리(`edge_count == 1 ∧ nin == 1`). Efree 노드 그래프의 연결 성분 c 마다:
   - c 의 노드 중 경계 노드(BM·비BM 공유)가 있으면 → **판 가장자리**(열린 경계, B4 유지) → `bd.open = True`.
   - 없으면 → **관통 구멍**: 열린 경계 판정에서 제외, `holes.n += 1`(섬 안이면 그 섬 `free_loops += 1`).
@@ -182,7 +233,7 @@ bead_doe:
   → φ(ρ) = 0, φ(ρ + b) = 1, 양 끝 기울기 0(C¹ 이상 연속).
 - 그 비드의 **모든 변수** 기저 행에 B_v[x] ← φ(x)·B_v[x](섬 채움 §5.5 뒤, `_compact` 앞 — 0 행은 `_compact` 가 지움). φ = 1 인 행은 곱하지 않아 바이트 불변.
 - 결과: 링(고정 노드 + ρ) 은 제자리, 바닥은 D 만큼 이동 → 높이 ΔD 의 보스, 벽 폭 = b. 링 안 고정 노드 침범 0. 다른 비드 블렌딩이 같은 노드를 움직이면 그 비드 규칙대로(경고).
-- 설정값 근거(Q2): ρ 3 mm = 와셔 접촉 여유, b 8 mm = ΔD 6.6 mm(22 × 30 %)에서 벽 각 ≈ 40° → 품질 경고 최소.
+- 설정값 근거(Q2 = A 확정 2026-11-05): ρ 3 mm = 와셔 접촉 여유, b 8 mm = ΔD 6.6 mm(22 × 30 %)에서 벽 각 ≈ 40° → 품질 경고 최소.
 
 ### 5.7 고정·품질 판정 (`design_state`, SR-D-1)
 ```text
@@ -193,6 +244,125 @@ elif q.over_limit and fail_policy=skip:  -> FAILED_MESH / SELECT_QUALITY_FAIL
 else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.over_limit
 ```
 - 순서 변경 영향: v0.16.0 은 고정 침범 + 뒤집힘 동시 안을 `SKIPPED_FIXED` 로, v0.16.1 은 `FAILED_MESH` 로 기록(둘 다 실행 안 함 — 개수 표만 다름, §7.4).
+
+## 5A. ④ 사다리 `defeature` 단계 (범위 A, SR-D-16~21)
+
+### 5A.1 실행 위치·흐름 (`stages._cmp_ladder`, `mesh_refine`)
+- `mesh_refine.STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh")`. `mesh_refine.plan("defeature", pm, h, cfg, avail, elapsed_s)` → 시도 2개 `[{stage: defeature, kind: None, factor: None, h_mm: h, mesh_h: h, compound: cfg.compound}, {…, compound: False, only_if: "compound_failed"}]` — 두 번째는 첫 시도가 **compound 면에서** 실패했을 때만(실패 면 key 가 그 시도의 compound 묶음에 속함), 아니면 건너뜀(`reason: not_compound`). 첫 시도에 compound 대상이 없으면 두 번째 없음. `check_limits`(시간·요소 예측 = 기본 h 예측과 같음)·`attempt_timeout`·시도 폴더 `try_<n>/`·`_promote` 는 v0.16.0 그대로(D-0.16-BUDGET·TRIES).
+- `_cmp_ladder` 분기: stage == `defeature` → `mg.run_isolated(src, td, h, mr.attempt_cfg(ccfg, a), props, kind="cad", fail_info=True, timeout_s=…)`. `attempt_cfg` 는 사본 `mesh.defeature_stage = {crit: gdf.criteria(compare.defeature, h), compound: a.compound}` 를 넣는다(키 없으면 세션은 v0.16.0 그대로 — 다른 단계 바이트 불변).
+- 세션 순서(`mesh_gmsh._session`, 변경 부분만): 가져오기 → nofix_face → **`gdf.holes`(기존 cad 단계와 같은 호출, `collect=feats` 만 추가)** → **`feats += gdf.find_features(gmsh, crit, kinds=…)` → `gdf.suppress(gmsh, feats, crit, h, compound=…)`** → v0.15.1 형상 폴백(실패 면) → size_fields(없음) → 메싱(v0.14.1 면 단위 폴백도 그대로 동작) → 품질 → **`gdf.reference_tris(gmsh_new_session, src, rc)` + `gdf.fidelity_split(...)`**(§5A.4) → `mesh.json.defeature_stage`·`defeature.json`.
+- 성공(READY ∧ 바깥 충실도 fail 아님) → `_promote(..., {"mesh_method": "defeature", "cad_error": …, "attempts": …})`, 형상 행 `mesh_method: defeature`, 경고 `MESH_DEFEATURED`. 실패 → 다음 단계(보통 remesh). 억제 대상이 0개면 메싱하지 않고 `SKIPPED`(`reason: no_feature`, 정보 `DEFEATURE_NO_FEATURE`) — 같은 형상을 다시 메시하는 시간 낭비 방지.
+- 재메시 단계(R2)는 계속 `gdf.holes` 만(C2-D-12 그대로). defeature 단계 결과를 재메시에 넘기지 않는다(단계 독립 — 사다리 순서를 바꿔도 각 단계 결과가 같음).
+
+### 5A.2 BatchMesher 기준 대응 (`docs/reference/radioss_chr_3mm_batchmesh.md`)
+
+| BatchMesher | 값 | 대응 종류 | 설정 키 | 처리(gmsh/OCC) |
+|---|---|---|---|---|
+| holes `shape(1) rad(0,4) action(1)` · `shape(62) eq_diam(0,8) action(1)` | r < 4 · 등가 지름 < 8 | `hole` | `hole_max_d_mm` 8 | 자유 모서리 고리 → `addCurveLoop`(기존 곡선) + `addPlaneSurface`(평면 ≤ `plane_tol_mm`) 또는 `addSurfaceFilling` → `occ.fragment`(이웃과 곡선 공유) |
+| holes `shape(2) width(0,1.9) length(0,14) action(1)` | 슬롯 | `slot` | `slot_max_w_mm` 1.9 · `slot_max_l_mm` 14 | hole 과 같음. 폭·길이 = t² − (P/2)t + A = 0 의 두 근(사각 근사) |
+| `appl_flanged_suppr 1` · `flanged_suppr_height 1.5` | 버링 높이 ≤ 1.5 | `flange` | `flange_max_h_mm` 1.5 | 버링 벽 면 묶음 제거 → 남은 둘레가 자유 고리 → 같은 실행 안에서 hole 규칙 |
+| `beads_suppression 1` · `minimal_beads_height 2` | 높이 < 2 | `bead`(딤플·비드·엠보) | `min_bead_height_mm` 2 | 면 묶음 제거 → 둘레 고리(기존 곡선)로 평면/채움 면 — 이웃 공유 곡선 그대로라 fragment 불필요 |
+| `surface_fillet_table` · `max_fillet_radius 9`(인식 0 = 끔) | – | `fillet` | `fillet_max_r_mm` 1.5(Q5) | 고체 = `occ.defeature`, 쉘 = `mesh.setCompound`(SR-D-18) |
+| `merge_narrow_surfs 1` · `narrow_surfs_merge_width Lmin·0.5` | 폭 < 0.5·Lmin | `narrow` | `narrow_w_factor` 0.4 (·h) | 쉘 = `mesh.setCompound`(가장 긴 공유 곡선 이웃 1개와), 고체 = `occ.defeature` |
+| holes `rad(4,30) elems(6) washer(1)` | 둘레 분할 | (cad 단계 기존) | `hole_elems`·`hole_r_mm` | v0.14.1 `gdf.holes` 그대로(washer 층은 비범위) |
+
+### 5A.3 인식 규칙 (`gdf.find_features`, 형상 불변)
+- 공통: 면 인접 그래프 G(곡선 공유), 곡선별 인접 면 수 `getAdjacencies(1, c)`. 크기는 모두 mm, 좌표는 STEP 그대로. 결정적 순회 = 면·곡선 태그 오름차순.
+- **hole·slot**: 자유 곡선(인접 면 1개)으로 이은 닫힌 고리들(쉘 전체 — 면 경계에 묶지 않음, seam 끝점·여러 면 통과 허용 → v0.14.1 이 남긴 구멍 포함). 쉘 바깥 경계 = 자유 고리 중 평면 투영 |넓이| 최대(연결 쉘 성분마다 1개)는 제외. A = Newell 투영 넓이, P = 곡선 길이 합, d_eq = 4A/P. `hole` ⇔ d_eq ≤ `hole_max_d_mm`, 아니면 `slot` 판정. 이미 cad 단계 `gdf.holes` 가 메운 고리는 `collect` 목록으로 들어오고(method `holes_v0141`) 다시 세지 않음.
+- **flange**: 바탕 면 B 의 안쪽 고리 L 이 구멍이 아님(`is_hole` 거짓 — 이웃 면 공유) ∧ L 건너편 면 묶음 C(B 를 지나지 않는 G 의 BFS) 가 자유 고리를 정확히 1개 가짐 ∧ C 의 bbox 대각 ≤ `feature_max_mm`. 높이 h_C = C 각 면 bbox(`getBoundingBox`) 8 꼭짓점을 L 최소제곱 평면 법선 n_L 에 투영한 거리 최대(위쪽 근사 — n_L 이 축과 나란하면 정확, 기울면 크게 나옴 → 억제가 줄어드는 쪽, 경계값에서 결정적). ≤ `flange_max_h_mm` 이면 flange.
+- **bead**: 위와 같은 C 가 자유 고리 0개(닫힌 둘레 L 하나로만 B 에 붙음) ∧ bbox 대각 ≤ `feature_max_mm` ∧ h_C < `min_bead_height_mm`. C 에 든 필렛 면(딤플 둘레 필렛)은 bead 의 일부(따로 fillet 으로 세지 않음). C 가 BFS 중 크기 상한을 넘으면 즉시 중단(비용 상한).
+- **fillet**: 면 종류 Cylinder·Torus(또는 BSpline 이면서 주곡률 하나 ≈ 0) ∧ 반경 r = 1/max|κ|(면 매개 중앙 `getPrincipalCurvatures`) ≤ `fillet_max_r_mm` ∧ 정확히 두 이웃과 곡선 2개 이상 공유(띠 모양). 원통 구멍 벽·버링 벽(자유 고리 포함)은 제외.
+- **narrow**: fillet 아님 ∧ 폭 w(사각 근사 작은 근) < `narrow_w_factor`·h ∧ 길이 > w.
+- 특징 수 > `max_features` → 종류 순서·태그 순서로 앞에서 자르고 경고 `DEFEATURE_TOO_MANY{n, max}`.
+
+### 5A.4 실행·충실도 (`gdf.suppress`, `gdf.reference_tris`, `gdf.fidelity_split`)
+- 실행은 종류 순서(`kinds`), 특징마다 try → 실패하면 그 특징만 `action: skipped, reason` 하고 형상은 직전 상태(`occ` 작업 전에 대상 태그 목록만 확정, 실패 시 새로 만든 엔티티 제거) — 한 특징 실패가 단계 전체를 막지 않음. flange 제거 뒤 생긴 자유 고리는 같은 호출 안에서 hole 규칙으로 다시 판정.
+- compound: 쉘 fillet·narrow 묶음을 `setCompound(2, tags)`(서로 겹치는 묶음은 합침). `compound=False` 면 fillet·narrow 는 모두 `skipped, reason: compound_off`.
+- 충실도: 메싱 성공 뒤 같은 자식에서 `gmsh.clear()` 후 원 STEP 을 같은 정리 옵션으로 다시 가져와 OCC 삼각화(`mesh_remesh` R3 의 삼각화 함수를 `gdf.reference_tris` 가 호출 — 코드 1곳) → S0. `fidelity_split` = C2-D-13 `mesh_remesh.fidelity` 와 같은 샘플링·k=8 후보·정확한 점-삼각형 거리, 샘플을 Ω = ∪Ω_f 안/밖으로 나눔. 바깥 지표가 `remesh.fidelity.fail_mm` 초과 → 시도 실패 `DEFEATURE_FIDELITY`(다음 단계), warn 초과 → 경고 `REMESH_FIDELITY_WARN` 재사용. 특징별 `dev_mm` 은 Ω_f 샘플 최대(구멍 ≈ 반지름, 딤플 ≈ 높이). compound 면은 형상 그대로라 Ω 에 넣지 않음(바깥 지표에 포함).
+- 시간: reference_tris + fidelity 는 시도 제한 시간 안. 넘으면 시도 실패(TIMEOUT) — 다음 단계.
+
+### 5A.5 기록·표시
+- `mesh/defeature.json`(SR-D-20), `mesh.json.defeature_stage`, 형상 행(`DoeStudyOut.prep(compare).shapes[]`·`ranking[].shape`) += `defeature?: {n, counts, skipped_n, suppressed_max_mm, outside_hausdorff_mm}`(defeature 형상만), ranking.csv `mesh_method` 열 값 `defeature`.
+- `COMPARE_MESH_METHOD_MIXED`(D-0.16-MIXED): defeature 는 refine·remesh 와 같은 "비 cad" 방식으로 센다.
+- 보고서(`report_doe.py`): 형상 표 메시 방식 "형상 단순화", 절 **"작은 형상 억제"**(형상별 종류별 개수·억제 영역 최대 편차·바깥 Hausdorff, 목록 상위 20행), 프로필 문단의 "비드 억제 기준 … (기록만 — 미적용)" → "(defeature 단계에서 적용)".
+- 실패 문구(D-0.16-LADDER-MSG): `LADDER_STAGE_LABEL["defeature"] = "형상 단순화"`.
+
+## 5B. 공통 모듈 (범위 B, SR-D-22~24)
+
+### 5B.1 `esl/geom/defeature.py` — CAD 단계 인식·억제 (소유 **Impl-Core**)
+gmsh 모듈을 인자로 받고 **현재 gmsh 세션** 안에서만 동작(초기화·종료는 호출자). 설정 dict 는 호출자가 넘김(DEFAULTS 직접 참조는 `criteria` 의 기본값 채움만).
+
+```python
+# 위상 도우미 — mesh_gmsh 에서 이동(본문 그대로), mesh_gmsh 는 같은 _이름으로 재노출
+def loop_length(occ, curves: list[int]) -> float                        # = mesh_gmsh._loop_info
+def face_loops(gmsh, s: int) -> list[list[int]]                         # = _face_loops
+def curve_points(gmsh, c: int) -> set[int]                              # = _curve_points
+def seam_points(gmsh, s: int) -> set[int]                               # = _seam_points
+def is_hole(gmsh, s: int, cl: list[int], seam_pts: set[int]) -> bool    # = _is_hole (v0.14.1)
+def bbox_key(gmsh, dim: int, tag: int) -> tuple                         # = _bbox_key
+def key_near(a: tuple, b: tuple, tol: float = 1e-4) -> bool             # = _key_near
+
+def criteria(df: dict, h: float) -> dict
+    """compare.defeature(+기본값) → 절대 기준 {kinds, hole_max_d, slot_max_w, slot_max_l, flange_max_h, bead_min_h,
+    fillet_max_r, narrow_w (= narrow_w_factor·h), feature_max, plane_tol, region_pad (= region_pad_factor·h),
+    max_features, list_max}. 검증 실패 → EslError CONFIG_INVALID."""
+def holes(gmsh, df: dict, h: float, skip_keys: tuple = (), *, collect: list | None = None) -> dict
+    """v0.14.1 mesh_gmsh.defeature 본문 그대로(반환 {filled, filled_area_max, hole_sized, skipped, warnings, …}).
+    collect 가 list 면 메운 고리마다 특징 dict(kind hole, method holes_v0141)를 덧붙임 — None 이면 동작·반환 바이트 불변."""
+def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None) -> list[dict]
+    """§5A.3 인식만(형상 불변). 특징 = {id, kind, faces, curves, base_face, key(bbox6), center[3], size{d_mm|w_mm,l_mm|h_mm|r_mm},
+    area_mm2}. 순서 결정적(SR-D-20)."""
+def suppress(gmsh, feats: list[dict], crit: dict, h: float, *, compound: bool = True) -> dict
+    """§5A.4 실행. 반환 {features(+action suppressed|skipped, method plane|filling|removed+hole|occ_defeature|compound,
+    reason?), counts{kind: n}, n, skipped_n, compound_groups[[tag…]], warnings}. occ.synchronize 포함."""
+def reference_tris(gmsh, src: str, mc: dict, rc: dict) -> tuple[np.ndarray, np.ndarray]
+    """원 STEP 을 mc 정리 옵션으로 다시 가져와 OCC 삼각화(S0) — mesh_remesh R3 와 같은 삼각화 함수."""
+def fidelity_split(S_X, S_T, mesh: dict, h: float, rc: dict, feats: list[dict], pad_mm: float) -> dict
+    """SR-D-19 {outside: C2-D-13 지표, per_feature: {id: dev_mm}, suppressed_max_mm}. 특징 dict 에 dev_mm 을 채움."""
+```
+| 호출 지점 | 사용 함수 | 기본 동작 |
+|---|---|---|
+| `mesh_gmsh.defeature(gmsh, df, h, skip_keys)` | `return gdf.holes(gmsh, df, h, skip_keys)` 1줄(래퍼 — 기존 호출자·시험 그대로) | 바이트 불변(V-SR-16) |
+| `mesh_gmsh._session` ④ cad·refine(`compare_cfg` 가 `mesh.defeature` 주입) | `holes`(래퍼 경유) | 불변 |
+| `mesh_gmsh._session` ④ defeature 단계(`mesh.defeature_stage` 있을 때만) | `holes(collect=)`·`criteria`·`find_features`·`suppress`·`reference_tris`·`fidelity_split` | 새 단계 |
+| `mesh_gmsh._session` ③ 베이스라인 `stages.py:249`·③ 안 BREP `:478` | `holes`(`bead_doe.mesh.defeature` 가 있을 때만 — 기본 없음) | 불변(C19) |
+| `mesh_remesh.remesh_file` R2 `:324-326` | `mg.defeature`(래퍼) → `holes` | 불변 |
+| (예약) STEP 모핑(③ 전환, 보류) | `find_features`(모핑 대상에서 뺄 작은 형상·체결 구멍 인식) | 시그니처만 |
+
+### 5B.2 `esl/mesh/features.py` — 메시 단계 섬·구멍 분류 (소유 **Impl-Core**)
+numpy/scipy 만(gmsh 불필요). 노드·요소 **인덱스** 기반.
+
+```python
+class MeshIndex: ...                                     # bead_select 에서 이동(본문 그대로), bead_select 는 재노출
+def mesh_index(mesh: dict) -> MeshIndex
+def node_graph(ix: MeshIndex, emask: np.ndarray) -> sparse.csr_matrix          # = bead_select._node_graph
+def boundary_loops(ix: MeshIndex, mask: np.ndarray, *, edge_nodes: np.ndarray | None = None) -> tuple[list[dict], bool]
+    """= bead_select._loops. edge_nodes(판 가장자리 노드)를 주면 두 번째 반환 = '판 가장자리 자유 모서리 있음'(§5.3),
+    None 이면 v0.16.0 의미(자유 모서리 하나라도) — 호출자별 의미 고정."""
+def split_outer_inner(loops: list[dict], X: np.ndarray, n_ref: np.ndarray) -> tuple[int | None, list[int]]
+    """바깥 고리 = 평면 |넓이| 최대 닫힌 고리, 나머지 = 안쪽(SR-D-7)."""
+def free_edge_components(ix: MeshIndex, mask: np.ndarray, boundary_nodes: np.ndarray) -> dict
+    """§5.3. {edge: [nodes…](경계 노드에 닿는 성분 = 판 가장자리), holes: [{nodes(순서), perim_mm, eq_d_mm, center[3]}]}."""
+def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: np.ndarray, n_ref: np.ndarray, *,
+                        max_mm: float, outer_poly: dict[int, np.ndarray] | None = None) -> dict
+    """§5.2 일반형. cand = 후보 요소 마스크, owner = 요소별 주인 번호(≥ 0 = 주인, −1 = 후보, −2 = 막힘).
+    성분 K 가 섬 ⇔ 이웃 주인이 하나(≥0) ∧ 최대 성분 아님 ∧ bbox 대각 ≤ max_mm ∧ (outer_poly 있으면) 중심이 그 주인 다각형 안.
+    반환 {islands: [{owner, elems, rim, interior, size_mm}], too_large: [{owner, n_elems, size_mm}]}, 성분 번호 = 최소 요소 순."""
+def feature_segments(ix: MeshIndex, feature_angle_deg: float) -> np.ndarray      # 이면각 > 기준 모서리로 나눈 요소 영역 번호
+def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, island_max_mm: float,
+             index: MeshIndex | None = None) -> dict
+    """SR-D-24 {holes_n, holes_small_n, islands_n, free_loops_n, small_holes: [{center, eq_d_mm}] ≤ 50}. 섬 = feature_segments 중
+    bbox 대각 ≤ island_max_mm 인 영역을 cand, 그보다 큰 영역 번호를 owner 로 한 enclosed_components."""
+```
+| 호출 지점 | 사용 함수 | 기본 동작 |
+|---|---|---|
+| `bead_select` 전역(`MeshIndex`·`mesh_index`·`_node_graph`·`_loops`) | 이동 + 재노출(`from esl.mesh.features import …`) | 바이트 불변(V-SR-1) |
+| `bead_select._derive_bead` §5.2·§5.3 | `enclosed_components`(owner = 단 번호), `free_edge_components`, `boundary_loops(edge_nodes=)`, `split_outer_inner` | 새 규칙(섬·구멍 없으면 v0.16.0 과 같음) |
+| (예약) v0.16.2 P3 '자동 탐지 → 같은 UI': paicad 비드 영역 → `SelectionIn` 초기 선택(`paicad_io.beads_table` 결과 → 단 바닥 요소) | `enclosed_components` 로 영역 안 섬을 F 에서 빼고 섬으로 둠(derive 와 같은 규칙) | 시그니처만 |
+| `mesh_input.read_shape_mesh` 뒤(④ 메시 입력) | `diagnose` | 보고만(SR-D-24) |
+| 브라우저 `view3d/select/grow.ts` `enclosedIslands` | 거울 구현(같은 위상 규칙) | V-SR-12 픽스처 동일성 |
+
+- 의존 방향: `esl.mesh.features` ← `esl.doe.bead_select`·`esl.doe.mesh_input`(역방향 import 금지). `esl.geom.defeature` ← `esl.doe.mesh_gmsh`·`esl.doe.mesh_remesh`(역방향은 삼각화 함수 1개 — `reference_tris` 안에서 지연 import). 새 패키지 `esl/geom/__init__.py`·`esl/mesh/__init__.py` 는 비움.
 
 ## 6. 정책 변경의 영향
 
@@ -231,6 +401,14 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 ### 7.6 버전
 - `VERSION` 0.16.1, `CHANGELOG.md`, `openapi` info.version. migration 없음(`selection` JSONB 안 키 추가, 시나리오 CHECK 불변).
 
+### 7.7 ④ defeature 단계 · 공통 모듈의 해시·바이트 (SR-D-21)
+- **base.json `profile`**: `prof_rec["defeature"]` = `compare.defeature` 에서 `stages.DEFEAT_NEW_KEYS_V0161`(§4.4 새 키 목록 상수 1곳)을 **값과 무관하게** 뺀 사본 → base.json·`profile_sha256` 은 v0.16.0 과 바이트 동일, 새 키를 바꿔도 cad 성공 형상 해시 불변. `min_bead_height_mm`(기존 키)는 그대로 들어간다(값 변경 = v0.16.0 과 같은 해시 변경).
+- **`_cmp_sha`**: 형상 행 `mesh_method == "defeature"` 일 때만 `keep["defeature_cfg"] = config_hash({k: compare.defeature[k] for k in DEFEAT_NEW_KEYS_V0161} | {min_bead_height_mm})`. 메시 sha(형상 mesh.npz)가 이미 keep 에 있어 억제 결과가 바뀌면 해시도 바뀐다 — 이 키는 설정만 바꾸고 메시가 우연히 같을 때를 위한 것.
+- **사다리**: `keep["ladder"]`(mode ≠ cad 만)는 스냅샷 `mesh_ladder`. v0.16.0 스냅샷(defeature 없음) → 해시·동작 불변. 새 스터디는 기본 사다리에 defeature 포함 — 새 스터디라 비교 대상 해시 없음.
+- **메시 입력**: `keep["mesh_input"] = config_hash(mi._mcfg(cfg))` 계산 전에 `diag` 절을 뺀다(`mesh_input.hash_view`) → 메시 입력 형상 해시 불변.
+- **공통 모듈 이동**: 함수 본문 이동 + 재노출만 — 같은 입력에 같은 출력. mesh_gmsh·bead_select 의 기존 시험·픽스처 바이트 비교(V-SR-1·16)로 고정.
+- **③**: `bead_doe.mesh` 에 키 추가 없음 → `_cfg_hash`(`stages.py:421`, `mesh` 절 포함) 불변.
+
 ## 8. 화면 (2560×1440 기준, 1920×1080 잘림·가로 스크롤 없음, 필수만)
 
 | 위치 | 추가 | 파일 |
@@ -240,6 +418,9 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 | 3D 선택 | 섬 = 그 단 색의 밝은 단계(새 층 아님), 클릭 확장 직후 표시(SR-D-14) | `view3d/select/grow.ts`(`enclosedIslands`), `layers.ts`(`elemColors` 섬 색), `BeadSelectCard.tsx` |
 | 결과 카드·순위 | 순위 행 ⚠, 요약 "경고 없는 최상위: d0xx"(1위가 경고 안일 때만) | `pages/doe/DoeStudy.tsx`, 기존 결과 컴포넌트 |
 | 띠 | `rules_outdated` 1줄(§7.4) | `DoeStudy.tsx` |
+| ④ 형상 표 | 메시 방식 "형상 단순화"(defeature), 툴팁 "구멍 a · 딤플 b · 필렛 c · … 억제, 억제 영역 최대 x mm, 그 밖 y mm" + 시도 목록(기존) | 기존 형상 표 컴포넌트(`pages/doe/` compare 준비 표), `api/types.ts` |
+| ④ 형상 상세(펼침) | 억제 목록 표(종류·중심 xyz·크기·편차, 상위 50행 + "외 n개") — 새 API 없이 형상 행 `defeature` 요약 + `GET /doe/studies/{sid}/shapes/{did}/defeature`(§9) | 같은 컴포넌트, `api/doe.ts` |
+| ④ 형상 표(메시 입력) | 진단 글자 "작은 구멍 n · 섬 m"(있을 때만) | 같은 컴포넌트 |
 
 ## 9. API 변경 (`/esl/api`)
 
@@ -250,6 +431,9 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 | 미리보기 셀(`preview_cells` `doe.py:713-746`) | `warnings`(있을 때만), `fixed_viol`(침범 있으면 상태 무관), `rules_outdated` |
 | `GET /doe/settings` | §4.4 |
 | 결과(`result`·순위) | 행 `warn`, `summary.best_clean` |
+| ④ 준비·결과 형상 행 | `mesh_method` Literal += `"defeature"`, `defeature?`(§5A.5), `diag?`(SR-D-24), attempts `stage` += `"defeature"`, `reason` += `"no_feature"`·`"not_compound"` |
+| `GET /doe/studies/{sid}/shapes/{did}/defeature` (신규, 읽기, `routers/doe.py`) | `mesh/defeature.json` 그대로(없으면 404 `NOT_FOUND`). 권한 = 스터디 읽기와 같음 |
+| `POST …/doe` compare 준비 | `mesh_ladder` 검증 단계 집합 += defeature(백엔드 `doe.py:540-548` — `mesh_refine: false` 는 `refine_*` 만 뺌) |
 - 스키마: `backend/esl_platform/api/schemas.py`(`SelectBeadIn.hold_fixed: Literal[0, 1] | None`, `SelectionDerived` 칸, 셀·순위 칸 Optional), `frontend/src/api/types.ts` 거울, `openapi` 재생성(`check:api`).
 
 ## 10. 오류·경고 코드 (신규, 문구 원본 `resources/doe_messages.json`)
@@ -263,6 +447,11 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 | `SELECT_ISLAND_SHEAR` | derive 경고 | 곡면 바닥에서 섬 평행 이동과 둘레 차(표시만) |
 | `SELECT_HOLD_NO_FIXED` | derive 경고 | `hold_fixed` 1 인데 대상 고정 노드 없음 |
 | `SELECT_HOLD_INVALID` | 422 | `hold_fixed` 형식 |
+| `MESH_DEFEATURED` | 형상 경고 | "CAD 메시 실패 → 작은 형상 {n}개 억제({counts}), 억제 영역 최대 {suppressed_max_mm} mm · 그 밖 최대 {outside_mm} mm: {first}" |
+| `DEFEATURE_FIDELITY` | 시도 실패 코드 | 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 `fail_mm` 초과 차이 → 다음 단계 |
+| `DEFEATURE_NO_FEATURE` | 정보 | defeature 단계에 억제 대상 없음 — 건너뜀 |
+| `DEFEATURE_TOO_MANY` | 형상 경고 | 특징 수 > `max_features` — 앞에서 자름 |
+| `MESH_INPUT_DIAG` | 정보 | 메시 입력에 작은 구멍 n·섬 m(보고만) |
 - 기존 `SELECT_FIXED_VIOLATION`·`SELECT_QUALITY_FAIL` 은 `skip` 정책에서만 나온다. `SELECT_OPEN_BOUNDARY` 는 판 가장자리 성분일 때만.
 
 ## 11. 시험 (V-SR-*)
@@ -288,19 +477,40 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 | V-SR-15 | **성능(slow)**: 22만 노드 + 섬 200·구멍 300 합성 — derive ≤ 3 s, 기저 ≤ 30 s(BS V-BS-11 기준 유지) | `tests/doe/test_bead_select_perf.py` |
 | V-SR-R1 | **실기**: 실제 Ch/R — 비드별 섬·구멍 수 확인, W 변수 활성 비드 수(전/후), 경고 안 비율, hold 1 보스 품질, 순위 1 경고 여부 | `docs/manual/bead_doe_check.md` 절 추가 |
 
+**defeature·공통 모듈 합성 형상** (`tests/doe/synth_compare.py`, 코드 추가 없이 spec 덮어쓰기만):
+- `FEAT_SPEC = {"dimples": BEAD_FEATURES["dimples"] + [(120.0, 130.0, 10.0, 1.5)]}`(비드 바닥 x 60..240·y 50..150 안, 다른 딤플·버링과 20 mm 이상 떨어짐) — 기존 딤플 3개(깊이 2·5·8) + **작은 딤플 높이 1.5 mm**. Ø5·Ø10 관통 구멍, 버링(r 4, 길이 8), 비드 필렛 3, 딤플 둘레 필렛 1.5 는 기본 그대로.
+- 정답(§4.4 기본 기준): 억제 = `hole` Ø5 1개(cad 단계 `holes` 가 이미 메움 → method `holes_v0141`), `bead` 1개(딤플 1.5 — 둘레 필렛 포함, 필렛 따로 안 셈), `fillet` = 깊이 2·5·8 딤플의 둘레 필렛 면(쉘 → compound). 억제 안 함 = Ø10(d 10 > 8), 버링(높이 8 > 1.5), 딤플 깊이 2(< 2 아님 — 경계값), 5·8, 비드 필렛 3(> 1.5), 비드 자체(bbox > 40).
+- 단계 진입은 실패 주입(V-C2-13 방식, monkeypatch — cad·refine 시도에서 딤플 1.5 의 구면 bbox 면 실패, defeature 시도는 그 면이 없어 통과).
+
+| ID | 시험 | 위치 |
+|---|---|---|
+| V-SR-16 | **래퍼·이동 무변경**: `mg.defeature(gmsh, df, h[, skip_keys])` 반환 = `gdf.holes(...)` 반환(dict 동일), `collect=None` 이면 v0.16.0 결과와 같음. 기존 ④ 합성 STEP(plate·boss·dimple·bead_with_features·fillet_corner) cad 메시 mesh.npz·mesh.json **바이트 동일**(v0.16.0 기대값), base.json `profile`·`profile_sha256` 동일(새 키 기본값·변경값 둘 다), `_cmp_sha` 동일(cad 형상, 새 키 변경 시에도). ③ 베이스라인·안 BREP 메시 바이트 동일. `mesh_gmsh._face_loops` 등 재노출 이름 존재 | `tests/doe/test_mesh_gmsh.py`·`test_step_compare.py`·`tests/geom/test_defeature.py`(신규) |
+| V-SR-17 | **인식**: FEAT_SPEC 형상에서 `find_features` = 정답(종류·개수·중심 ± 0.01·크기 ± 0.05 mm — 딤플 h 1.5, 필렛 r 1.5), 형상 불변(전후 면 수·넓이 합 동일). `kinds` 에서 fillet 을 빼면 fillet 0. 경계값: `min_bead_height_mm` 2.1 → 깊이 2 딤플도 bead. `hole_max_d_mm` 12 → Ø10 도 hole. `feature_max_mm` 10 → 딤플 1.5(둘레 지름 2√(2Rd−d²) ≈ 10.5 + 필렛) 제외. 깊이 2 딤플은 h_C(bbox 위쪽 근사) = 2.0 ≥ 2 라 억제 안 됨(축 정렬 — 정확) | `tests/geom/test_defeature.py` |
+| V-SR-18 | **단계 성공**: 실패 주입 → attempts = cad → refine_local(…) → refine_global(…) → defeature(READY), remesh 시도 없음, `mesh_method defeature`, `cad_error`, `MESH_DEFEATURED`(n·counts 정답), `mesh/defeature.json` = 정답 목록·결정적 순서(두 번 실행 바이트 동일), `defeature_stage.counts`. 주입 없이(cad 성공) 같은 형상 → defeature 단계 미진입·결과 V-SR-16 과 동일 | `tests/doe/test_step_compare.py`·`test_mesh_refine.py` |
+| V-SR-19 | **편차**: 바깥 `outside.hausdorff_mm` ≤ `linear_deflection_mm` + 0.1·h(필렛 compound 는 바깥 — 편차 ≈ 0), 딤플 1.5 `dev_mm` = 1.5 ± 0.15, Ø5 구멍 `dev_mm` = 2.5 ± 0.15, `suppressed_max_mm` = 그 최대. 주입으로 바깥 편차 > fail_mm → `DEFEATURE_FIDELITY` → remesh 단계로 | `tests/geom/test_defeature.py`·`test_step_compare.py` |
+| V-SR-20 | **사다리 설정**: 기본 ladder 5단계, `ladder` 에서 defeature 빼면 v0.16.0 순서, 순서 바꿈(`[cad, defeature, refine_local, …]`) 허용, 중복·cad 아님 맨 앞·알 수 없는 단계 → CONFIG_INVALID(코어)·422(백엔드), `mesh_refine: false` → refine 만 빠지고 defeature 유지, 억제 대상 0 → `SKIPPED no_feature`. compound 묶음 면 실패 주입 → 2번째 시도(compound 없음) 성공, 아니면 `not_compound` 건너뜀 | `tests/doe/test_mesh_refine.py`, `backend/tests/test_doe_compare_api.py` |
+| V-SR-21 | **이어하기**: v0.16.0 스냅샷(`mesh_ladder` 4단계) 스터디 → `_cmp_sha` v0.16.0 상수 기대값과 같음, defeature 실행 안 함. 새 키 변경 → defeature 형상만 해시 변경. 메시 입력 `diag` 변경 → 해시 불변 | `tests/doe/test_step_compare.py`, `worker/tests/test_doe_compare_jobs.py` |
+| V-SR-22 | **메시 공통 모듈**: `esl.mesh.features` 로 옮긴 뒤 V-SR-1 바이트 동일, `bead_select.MeshIndex is features.MeshIndex`. `enclosed_components`·`free_edge_components` 가 `synth_bead.generate(features=True)` 정답(섬 4·구멍)과 같음. `diagnose`: features 메시 → `holes_small_n`(Ø8 이하 구멍 수)·`islands_n` 4 정답, 매끈한 판 → 0 | `tests/mesh/test_features.py`(신규) |
+| V-SR-23 | **메시 입력 진단**: 메시 입력 형상 행 `diag`·`MESH_INPUT_DIAG`, mesh.npz·loads 바이트 불변, `enabled: false` 면 키 없음 | `tests/doe/test_mesh_input.py` |
+| V-SR-24 | **워커 E2E**: ④ 비교(기준 cad 성공 + 안 1개 FEAT_SPEC 실패 주입 형상 — 주입은 코어 시험에서만 가능(D-0.16-WORKER) → E2E 는 `compare.mesh.ladder = [cad, defeature]` + `refine.enabled` 무관, 설정만으로 cad 실패가 나는 형상 `fillet_corner_step`(정리 끔 Sphere 실패 재현)) → 형상 행 `mesh_method defeature`·`defeature` 요약, ranking.csv `defeature`, `COMPARE_MESH_METHOD_MIXED`, 보고서 "작은 형상 억제" 절, `GET …/shapes/{did}/defeature` 200 | `worker/tests/test_doe_compare_e2e.py`, `backend/tests/test_doe_compare_api.py` |
+| V-SR-25 | **UI**: 메시 방식 "형상 단순화"·툴팁 문구, 억제 목록 표(50행 + 외 n), 메시 입력 진단 글자, 2560·1920 잘림 없음 | `frontend/__tests__/doe_compare.test.tsx`, mock |
+| V-SR-R2 | **실기**: 이슈 #53 Ch/R STEP(사다리 v0.16.0 에서 remesh 까지 간 형상) — defeature 단계 성공 여부, 종류별 억제 수, 억제 영역 최대·바깥 편차, cad 성공 형상 결과 불변, 강성 지표 차(기준 대비 — 억제 영향 크기) | `docs/manual/bead_doe_check.md` 절 추가 |
+
 ## 12. 파일 소유권 · 작업 분해
 
 | 단계 | 담당 | 파일(소유) | 완료 조건 |
 |---|---|---|---|
 | R1 코어 | **Impl-Core** | `esl/doe/bead_select.py`(섬·구멍 §5.2·5.3, `_island_fill`, `_hold_factor`, `normalize_input` hold, `design_state` SR-D-1, `fixed_violation_detail` 상태 무관 호출용, `select_hash_view`·`HASH_NEW_KEYS_V0161`, `ALGO`, params_table feasible·use_default), `esl/doe/__init__.py`(DEFAULTS), `esl/doe/stages.py`(`_cfg_hash`·`_sel_cfg_sha` 해시 사본, 기저 재사용 algo, `bd_select_grid` 셀 warnings·rules·counts, `bd_eval` 재판정 재사용, `_sel_best` 주석·values.json, BD_POST `best_clean`·순위 warn), `esl/doe/nodes.py`(`write_morphed` `comment_lines`), `esl/doe/paicad_io.py`(`cell_state` 가 셀 `warnings` 통과), `esl/doe/report_doe.py`, `resources/doe_messages.json`, `tests/doe/synth_bead.py`·`test_bead_select_*.py`·`test_mesh_quality.py`·`test_select_render.py`, `tests/fixtures/bead_select/features/`·`make_fixture.py` | V-SR-1~9, 15 |
-| R2 백엔드 | **Impl-Backend** | `backend/esl_platform/core/config.py`(§4.4), `api/schemas.py`, `api/services/doe_select.py`(hold 검증 전달, params_table W 조건·use_default·feasible, derived `algo` 지연 갱신), `api/services/doe.py`(`preview_cells` warnings·fixed_viol·rules_outdated, settings, 결과 `best_clean`), `config/*.example.yaml` 2개, `openapi`, `backend/tests/test_doe_select_api.py` | V-SR-13 |
-| R3 워커 | **Impl-Worker** | `worker/esl_worker/register.py`(미리보기 요약 `warn` 수·`rules`), `worker/esl_worker/doe_jobs.py`(변경 최소 — 코어 단계 그대로, 이어하기 경로 확인), `worker/tests/test_doe_select_jobs.py`·`test_doe_select_e2e.py` | V-SR-10, 11 |
-| R4 프런트 | **Impl-Frontend** | `src/view3d/select/grow.ts`(`enclosedIslands`), `layers.ts`(섬 색·`hold_fixed` 상태·`toSelectionIn`/`fromSelectionIn`), `components/BeadList.tsx`, `BeadSelectCard.tsx`, `DoeThumbGrid.tsx`, `FixedViol.tsx`, `pages/doe/DoeStudy.tsx`, `api/types.ts`·`api/doe.ts`, `mock/doedata.ts`, `__tests__/bead_select.test.ts`·`doe_select.test.tsx` | V-SR-12, 14 |
-| R5 문서 | Plan/Impl | `VERSION`·`CHANGELOG.md` 0.16.1, `docs/decisions.md`(SR 확정분), `docs/manual/user.md`(섬·구멍·hold·경고), `docs/manual/bead_doe_check.md`(V-SR-R1), `esl_bead_select.md` 머리에 "v0.16.1 변경 = esl_select_relax.md" 1줄 | – |
+| R1b 코어 — 공통 모듈 | **Impl-Core** | **신규** `esl/geom/__init__.py`·`esl/geom/defeature.py`(§5B.1 전부), `esl/mesh/__init__.py`·`esl/mesh/features.py`(§5B.2 전부); 이동 원본 `esl/doe/mesh_gmsh.py`(위상 도우미 재노출, `defeature` 래퍼 1줄, `_session` 의 `mesh.defeature_stage` 분기 §5A.1), `esl/doe/bead_select.py`(`MeshIndex`·`mesh_index`·`_node_graph`·`_loops` 재노출, §5.2·5.3 호출 교체), `esl/doe/mesh_remesh.py`(R3 삼각화를 함수로 분리 — `reference_tris` 가 호출), `esl/doe/mesh_input.py`(`diagnose` 호출·`hash_view`), `tests/geom/test_defeature.py`·`tests/mesh/test_features.py`(신규) | V-SR-16, 17, 19, 22, 23 |
+| R1c 코어 — 사다리 | **Impl-Core** | `esl/doe/mesh_refine.py`(`STAGES`·`plan("defeature")`·`attempt_cfg`), `esl/doe/stages.py`(`_cmp_ladder` defeature 분기·`MESH_METHODS`·`LADDER_STAGE_LABEL`·`DEFEAT_NEW_KEYS_V0161`·`prof_rec` 사본·`_cmp_sha` `defeature_cfg`·형상 행 `defeature`·`diag`·`mixed_methods`), `esl/doe/__init__.py`(DEFAULTS compare), `esl/doe/report_doe.py`("작은 형상 억제" 절·프로필 문구), `resources/doe_messages.json`(§10 새 코드), `tests/doe/test_mesh_refine.py`·`test_step_compare.py` | V-SR-18, 20, 21 |
+| R2 백엔드 | **Impl-Backend** | `backend/esl_platform/core/config.py`(§4.4 — select·compare.defeature·ladder·mesh_input.diag, `_doe_settings` 거울), `api/schemas.py`(select 칸 + 형상 행 `mesh_method`·`defeature`·`diag`·attempts 칸), `api/services/doe_select.py`(hold 검증 전달, params_table W 조건·use_default·feasible, derived `algo` 지연 갱신), `api/services/doe.py`(`preview_cells` warnings·fixed_viol·rules_outdated, settings, 결과 `best_clean`, `mesh_ladder` 검증 집합, 형상 행 통과), `api/routers/doe.py`(`GET /doe/studies/{sid}/shapes/{did}/defeature`), `config/*.example.yaml` 2개, `openapi`, `backend/tests/test_doe_select_api.py`·`test_doe_compare_api.py` | V-SR-13, 20(백엔드), 24(API) |
+| R3 워커 | **Impl-Worker** | `worker/esl_worker/register.py`(미리보기 요약 `warn` 수·`rules`, 비교 준비 요약에 defeature 형상 수), `worker/esl_worker/doe_jobs.py`(변경 최소 — 코어 단계 그대로, 이어하기 경로 확인), `worker/tests/test_doe_select_jobs.py`·`test_doe_select_e2e.py`·`test_doe_compare_jobs.py`·`test_doe_compare_e2e.py` | V-SR-10, 11, 21(워커), 24 |
+| R4 프런트 | **Impl-Frontend** | `src/view3d/select/grow.ts`(`enclosedIslands` — `features.enclosed_components` 거울), `layers.ts`(섬 색·`hold_fixed` 상태·`toSelectionIn`/`fromSelectionIn`), `components/BeadList.tsx`, `BeadSelectCard.tsx`, `DoeThumbGrid.tsx`, `FixedViol.tsx`, `pages/doe/DoeStudy.tsx`, ④ 형상 표 컴포넌트(메시 방식 라벨·툴팁·억제 목록 펼침·진단 글자), `api/types.ts`·`api/doe.ts`(`getShapeDefeature`), `mock/doedata.ts`(defeature 형상·메시 입력 진단 예), `__tests__/bead_select.test.ts`·`doe_select.test.tsx`·`doe_compare.test.tsx` | V-SR-12, 14, 25 |
+| R5 문서 | Plan/Impl | `VERSION`·`CHANGELOG.md` 0.16.1, `docs/decisions.md`(D-0.16.1-Q1·Q2·Q3·DEFEAT·COMMON — 이 커밋에서 기록), `docs/manual/user.md`(섬·구멍·hold·경고·형상 단순화 단계·억제 목록 보는 법), `docs/manual/bead_doe_check.md`(V-SR-R1·R2), `esl_bead_select.md`·`esl_compare_mesh_options.md`·`esl_step_compare.md` 머리에 "v0.16.1 변경 = esl_select_relax.md" 1줄 | – |
 
 - **병렬**: R1 ∥ R2(스키마·설정은 §4 가 계약 — 코어 없이 시작) ∥ R4(mock + `select/*` 순수 모듈 먼저, 섬 픽스처는 R1 의 `make_fixture.py --features` 산출 후 V-SR-12 연결). R3 은 R1·R2 병합 후. E2E(V-SR-11) → 실기.
-- R1 내부 순서: synth features(V-SR-1 회귀 먼저 고정) → 섬·구멍 판정 → 섬 채움·hold 기저 → 판정 정책 → 해시·이어하기 → 받기·보고서.
-- 공동 수정 파일: `stages.py`(R1 단독 소유 — 워커는 고치지 않음), `doe_messages.json`(R1), `schemas.py`(R2), `types.ts`(R4 — R2 스키마 확정 뒤 거울).
+- R1 내부 순서: **R1b 이동(래퍼·재노출, V-SR-16·22 바이트 고정) 먼저** → synth features(V-SR-1 회귀 고정) → 섬·구멍 판정(`features` 사용) → 섬 채움·hold 기저 → 판정 정책 → 해시·이어하기 → 받기·보고서. R1c(사다리)는 R1b 의 `gdf` 시그니처 뒤 병렬 가능(같은 Impl-Core 가 순서대로 하거나 2명이면 R1b 병합 후 R1c).
+- 공동 수정 파일: `stages.py`·`mesh_gmsh.py`·`bead_select.py`(R1 단독 소유 — 워커는 고치지 않음), `doe_messages.json`(R1), `schemas.py`(R2), `types.ts`(R4 — R2 스키마 확정 뒤 거울).
 
 ## 13. 리스크
 
@@ -308,17 +518,27 @@ else READY, warnings += FIXED_MOVED(fx) if fx.violated, QUALITY_WARN(q) if q.ove
 |---|---|---|
 | R-SR-1 | 큰 오목 형상(보강 리브 섬, 큰 개구)을 섬으로 잡아 통째 이동 | `island.max_mm` 40, 크기 초과 경고, `exclude` 로 끔(SR-D-15), 화면 섬 색으로 바로 보임 |
 | R-SR-2 | 곡면 바닥에서 섬 평행 이동과 둘레 사이 전단 | `SELECT_ISLAND_SHEAR` 진단, 품질 판정(경고), 실기 확인 |
-| R-SR-3 | 경고 안이 순위 1 → 체결부 어긋난 형상을 최적으로 오인 | ⚠·`best_clean`·보고서 절·rad 주석, Q1 |
+| R-SR-3 | 경고 안이 순위 1 → 체결부 어긋난 형상을 최적으로 오인 | ⚠·`best_clean`·보고서 절·rad 주석, Q1 = A |
 | R-SR-4 | 품질 경고 안의 해석 결과 신뢰도(찌그러진 요소 강성) | 뒤집힘 제외 유지, 보고서에 새 Fail 수, 필요 시 `fail_policy: skip` |
 | R-SR-5 | 해시 사본 규칙 실수로 기존 스터디 전량 재해석 | V-SR-10 상수 기대값(v0.16.0 실제 해시) 시험 |
 | R-SR-6 | rad 주석 삽입이 하위 도구(HyperMesh 가져오기) 판독 방해 | `#` 줄은 Radioss 표준 주석, ASCII 만, 경고 안에만. 실기에서 HyperMesh 가져오기 1회 확인 |
 | R-SR-7 | 브라우저·서버 섬 판정 불일치 | 서버가 원본(SR-D-14), 픽스처 동일성 시험, derive 응답으로 표시 대체 |
-| R-SR-8 | hold 블렌딩 b 가 작아 보스 벽 품질 경고 다발 | 기본 8 mm, 설정 조정, Q2 |
+| R-SR-8 | hold 블렌딩 b 가 작아 보스 벽 품질 경고 다발 | 기본 8 mm, 설정 조정, Q2 = A |
+| R-SR-9 | 억제가 강성을 바꿔(딤플 평탄화·구멍 메움) 비교 결과가 형상 차가 아니라 억제 차를 반영 | cad·refine 실패 형상에만 적용(SR-D-21a), `MESH_DEFEATURED`·`MIXED`·보고서 절·억제 목록·영역 편차로 드러냄, 기준 d000 이 defeature 면 수렴 점검 δ(C2-D-24)와 함께 표시. 실기 V-SR-R2 에서 억제 전후 강성 차 확인 |
+| R-SR-10 | 인식 오탐(기능상 중요한 낮은 리브·체결 버링을 억제) | 기준을 BatchMesher 사내 값과 같게, `feature_max_mm` 상한, `kinds` 로 종류별 끔, 목록·위치 표시 |
+| R-SR-11 | OCC 채움 면·제거가 위상을 깨 오히려 새 면 실패 | 특징별 try·실패 시 그 특징만 건너뜀, v0.14.1 면 폴백·v0.15.1 형상 폴백이 이 단계에서도 동작, 그래도 실패하면 다음 단계(remesh) |
+| R-SR-12 | 쉘 compound 메싱 실패(재매개변수화 불가 — 구멍 있는 묶음 등) | 묶음은 fillet/narrow + 이웃만, 실패 시 compound 없는 2번째 시도(SR-D-18) |
+| R-SR-13 | 공통 모듈 이동 중 미세 동작 변경(import 순서·부동소수 순서)으로 기존 결과 바이트 변화 | 이동을 첫 작업으로 분리하고 V-SR-1·16·22 바이트 비교 통과 후 기능 추가 |
+| R-SR-14 | defeature 단계 시간(인식 BFS + 원 STEP 재삼각화)이 예산을 먹어 remesh 기회 상실 | 같은 `refine.total_timeout_s`·`attempt_timeout`, 억제 대상 0 이면 건너뜀, BFS 크기 상한, `max_features` |
+| R-SR-15 | 새 설정 키로 ④ 해시 변경 → 기존 스터디 재메시·재해석 | SR-D-21b 사본 규칙, V-SR-16·21 상수 기대값 |
 
-## 14. 결정 질문 (권장안 포함)
+## 14. 결정 질문 (Q1~Q3 확정 2026-11-05 = A, Q4·Q5 = 남은 질문 — 권장안을 기본값으로 작성)
 
-| # | 질문 | 선택지 | 권장 |
+| # | 질문 | 선택지 | 권장 / 확정 |
 |---|---|---|---|
-| Q1 | 경고 안(고정 어긋남·품질 경고)이 순위 1 이면? | **A** 순위 그대로 + ⚠ + "경고 없는 최상위" 1줄 병기 / B 받기·보고서 대표 안을 경고 없는 최상위로 자동 대체 / C 순위에서 경고 안을 뒤로 | **A** — 확정 1 "제외하지 않음"과 같은 결, 판단은 사용자가 표시를 보고 |
-| Q2 | 체결 구멍 둘레 고정 링 기준·기본값 | **A** 고정 노드(RBE2 등)에서 거리 ρ = 3 mm 제자리 + 블렌딩 8 mm / B 구멍 중심에서 반경 R(구멍 크기별 입력) | **A** — 구멍 중심·반경을 따로 찾지 않아도 되고 fixed-scan 노드만으로 정의, 구멍 크기가 달라도 같은 여유 |
-| Q3 | 기본 범위(D ±30 %, W ±20 %)도 넓힐지 | **A** 기본 범위·R_auto 그대로, feasible(경고 경계)만 D ×2.0·W ×1.6 / B 기본 범위도 D ±50 %·W ±40 % | **A** — 기본 범위를 바꾸면 R_auto 가 바뀌어 기존 스터디 기저가 전부 바뀜(재해석). 넓은 범위는 표에서 직접 입력(경고만) |
+| Q4 | ③ STEP 스터디 베이스라인 메시가 실패할 때도 같은 defeature(사다리) 폴백을 쓸지 | **A** v0.16.1 은 ④ 만, ③ 은 공통 모듈 호출 지점만 두고 꺼 둠(`bead_doe.mesh.defeature` 수동) / B ③ 베이스라인에도 cad 실패 시 defeature 1회 | **A** — ③ 은 paicad 가 같은 형상을 모핑해 안마다 BREP 을 다시 메시하므로 기준만 억제하면 안과 위상이 달라짐. ③ 전환(STEP 모핑) 때 `find_features` 로 함께 다룸 |
+| Q5 | 작은 필렛 제거 기준 반경 | **A** 1.5 mm(= 0.5·h, 사면 필렛 3 mm 는 유지) / B BatchMesher `max_fillet_radius` 9 mm / C 끔(kinds 에서 fillet 제외) | **A** — 원 BatchMesher 는 필렛 인식을 꺼 두고 9 는 인식용 상한. 9 면 비드 사면 필렛까지 병합돼 형상 의미가 바뀜. 1.5 는 요소 1개 폭보다 좁은 띠만 |
+| | **확정 (2026-11-05 사용자 — 아래 Q1~Q3 모두 A)** | | |
+| Q1 | 경고 안(고정 어긋남·품질 경고)이 순위 1 이면? | **A** 순위 그대로 + ⚠ + "경고 없는 최상위" 1줄 병기 / B 받기·보고서 대표 안을 경고 없는 최상위로 자동 대체 / C 순위에서 경고 안을 뒤로 | **A 확정**(2026-11-05) — 확정 1 "제외하지 않음"과 같은 결, 판단은 사용자가 표시를 보고 |
+| Q2 | 체결 구멍 둘레 고정 링 기준·기본값 | **A** 고정 노드(RBE2 등)에서 거리 ρ = 3 mm 제자리 + 블렌딩 8 mm / B 구멍 중심에서 반경 R(구멍 크기별 입력) | **A 확정**(2026-11-05) — 구멍 중심·반경을 따로 찾지 않아도 되고 fixed-scan 노드만으로 정의, 구멍 크기가 달라도 같은 여유 |
+| Q3 | 기본 범위(D ±30 %, W ±20 %)도 넓힐지 | **A** 기본 범위·R_auto 그대로, feasible(경고 경계)만 D ×2.0·W ×1.6 / B 기본 범위도 D ±50 %·W ±40 % | **A 확정**(2026-11-05) — 기본 범위를 바꾸면 R_auto 가 바뀌어 기존 스터디 기저가 전부 바뀜(재해석). 넓은 범위는 표에서 직접 입력(경고만) |
