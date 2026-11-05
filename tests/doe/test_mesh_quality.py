@@ -15,12 +15,14 @@ from esl.doe import bead_select as bs
 from esl.doe import mesh_quality as mq
 from esl.doe import settings
 
-def _cfg(h: float) -> dict:
-    """합성 메시 h mm(이슈 #53 기준은 3 mm 메시) → 길이 기준만 h/3 배로 맞춘 시험 설정(나머지 기준 = 기본값)."""
+def _cfg(h: float, policy: str = "skip") -> dict:
+    """합성 메시 h mm(이슈 #53 기준은 3 mm 메시) → 길이 기준만 h/3 배로 맞춘 시험 설정(나머지 기준 = 기본값).
+    v0.16.1: 기본 정책은 warn — 이 파일의 v0.15.0 기대값(V-BS-7)은 quality.fail_policy skip 으로(V-SR-9 skip 경로)."""
     q = copy.deepcopy(DEFAULTS["compare"]["quality"])
     for k in ("min_length", "max_length"):
         q[k] = {kk: vv * h / 3.0 for kk, vv in q[k].items()}
-    return settings({"bead_doe": {"enabled": True, "compare": {"quality": q}}})
+    return settings({"bead_doe": {"enabled": True, "compare": {"quality": q},
+                                  "select": {"fixed_policy": policy, "quality": {"fail_policy": policy}}}})
 
 
 CFG = _cfg(5.0)
@@ -68,7 +70,7 @@ def test_inverted_and_quality_fail(G):
     assert st["quality"]["new_fail_ratio"] > CFG["select"]["quality"]["max_fail_ratio"]
     assert st["quality"]["fail_by"]["max_length"] > 0
     # compare.quality 기준값 변경이 그대로 반영(한 곳)
-    cfg2 = settings({"bead_doe": {"enabled": True, "compare": {"quality": {
+    cfg2 = settings({"bead_doe": {"enabled": True, "select": {"quality": {"fail_policy": "skip"}}, "compare": {"quality": {
         "max_length": {"warn": 50.0, "fail": 60.0}, "aspect": {"warn": 50.0, "fail": 60.0},
         "skew": {"warn": 80.0, "fail": 89.0}, "quad_max_angle": {"warn": 170.0, "fail": 179.0},
         "quad_min_angle": {"warn": 2.0, "fail": 1.0}, "jacobian": {"warn": 0.1, "fail": 0.05},
@@ -76,8 +78,16 @@ def test_inverted_and_quality_fail(G):
     st2 = bs.design_state(m, X0, x, Ds.fixed_mask, cfg2)
     assert st2["state"] == "READY", st2["quality"]
     # select.quality.max_fail_ratio 상한도 반영
-    cfg3 = settings({"bead_doe": {"enabled": True, "select": {"quality": {"max_fail_ratio": 0.99}}}})
+    cfg3 = settings({"bead_doe": {"enabled": True, "select": {"quality": {"max_fail_ratio": 0.99, "fail_policy": "skip"}}}})
     assert bs.design_state(m, X0, x, Ds.fixed_mask, cfg3)["state"] == "READY"
+    # V-SR-9 warn 정책(기본): 같은 안 = READY + SELECT_QUALITY_WARN, 뒤집힘 안은 여전히 FAILED_MESH
+    W = _cfg(5.0, "warn")
+    st = bs.design_state(m, X0, x, Ds.fixed_mask, W)
+    assert st["state"] == "READY" and st["code"] is None
+    qw = [w for w in st["warnings"] if w["code"] == "SELECT_QUALITY_WARN"]
+    assert qw and qw[0]["new_fail"] == st["quality"]["new_fail"] > 0
+    xi = bs.morph(X0, B, {"B1_W": 0.6 * B.nominal()["B1_W"]})
+    assert bs.design_state(m, X0, xi, D.fixed_mask, W)["code"] == "SELECT_MORPH_INVERTED"
 
 
 def test_nominal_fail_not_counted(G):

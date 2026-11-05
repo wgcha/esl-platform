@@ -243,7 +243,8 @@ def test_backend_api(G):
     assert ei.value.code == "SELECT_ELEM_UNKNOWN" and ei.value.extra == {"n": 3, "first": 10 ** 7}
     fx = np.asarray(g["fixed_ids"], dtype=np.int64)
     d = bs.derive(m, norm, CFG, frame=frame, fixed_scan=fx)
-    assert set(d) == {"beads", "fixed", "warnings", "slope_suggested", "fixed_ab"}
+    assert set(d) == {"beads", "fixed", "warnings", "slope_suggested", "fixed_ab", "algo", "islands_suggested"}
+    assert d["algo"] == bs.ALGO == 2
     assert d["fixed"]["source"] == "scan" and len(d["fixed_ab"]) == fx.size
     b1 = d["beads"][0]
     assert {"section", "plan", "range_default", "tiers", "slope", "boundary", "W_nom"} <= set(b1)

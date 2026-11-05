@@ -142,7 +142,7 @@ def test_select_stage_flow(tmp_path, G):
     r = run("bd_select_grid", rev=1)
     gd = out / "doe" / "1" / "grid"
     gm = U.read_json(str(gd / pio.GRID_MANIFEST))
-    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png"
+    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 2
     assert gm["color"]["unit"] == "mm" and gm["color"]["v_max"] > 0
     assert (gd / "cells" / "nominal" / "thumb.png").is_file()
     nomp = sr.png_rgb((gd / "cells" / "nominal" / "thumb.png").read_bytes())
@@ -152,8 +152,11 @@ def test_select_stage_flow(tmp_path, G):
     assert sorted(c["id"] for c in gm["cells"]) == ids
     for cell in gm["cells"]:
         assert decode_png_size((gd / cell["thumb"]).read_bytes()) == (TC["w"], TC["h"])
-        # v0.15.1 고정 침범 칸만 fixed_viol{n, max_mm, bead_vars, node_idx}
-        assert ("fixed_viol" in cell) == (cell["code"] == "SELECT_FIXED_VIOLATION"), cell
+        # v0.16.1 SR-D-3: 고정 침범이 있는 모든 칸(상태 무관)에 fixed_viol{n, max_mm, bead_vars, node_idx}
+        assert ("fixed_viol" in cell) == (cell["fixed_max_mm"] > CFG["select"]["fixed_tol_mm"]), cell
+        assert cell["code"] != "SELECT_FIXED_VIOLATION"                      # warn 정책(기본) — 스킵 없음
+        if cell["status"] == "OK" and "fixed_viol" in cell:
+            assert any(w["code"] == "SELECT_FIXED_MOVED" for w in cell["warnings"])
         if "fixed_viol" in cell:
             assert cell["fixed_viol"]["n"] > 0 and cell["fixed_viol"]["bead_vars"], cell["fixed_viol"]
     g1 = pio.read_grid(str(gd), ids)
@@ -237,3 +240,73 @@ def test_fixed_violation_detail_v0151():
     assert bsel.fixed_violation_detail(x0, x, fixed, B, vals, tol=0.05, cap=1)["node_idx"] == [0]
     none = bsel.fixed_violation_detail(x0, x0, fixed, B, vals, tol=0.05)
     assert none == {"n": 0, "max_mm": 0.0, "bead_vars": [], "node_idx": []}
+
+
+def test_select_warn_flow_v0161(tmp_path, G):
+    """v0.16.1(SR-D-1·3·11·12·13d): 블렌딩이 고정 노드에 닿는 선택 — warn 정책이면 침범 안도 READY(셀 warnings·fixed_viol),
+    실행·순위에 포함(행 warn), summary.best_clean, 경고 안 받기 rad 사본 첫 /NODE 앞 ASCII 주석·values.json warnings.
+    v0.16.0 SKIPPED_FIXED done.json(같은 sha) → 재사용하지 않고 해석."""
+    g, _, _ = G
+    m = g["mesh"]
+    cd, rad = _case(tmp_path, g)
+    lib = tmp_path / "lib"
+    dirs = [sd.save_entry(str(lib), f"E{k}", m, kind, 1.0 + k, seed=k)[0] for k, kind in enumerate(("bend",))]
+    sel_in = sb.selection(g)
+    sel_in["beads"][0]["blend_mm"] = 24.0
+    sha = bs.selection_sha256(bs.normalize_input(sel_in, CFG))
+    doe = {"id": "S8", "scenario": "select", "title": "t", "cfg": {"bead_doe": {"enabled": True},
+                                                                   "opt_run": {"solver": {"backend": "superlu"}}},
+           "entries": [{"id": "E0", "dir": dirs[0]}],
+           "base": {"entry_id": "E0", "rad_path": rad, "part_title": sd.PART_TITLE, "case_dir": cd},
+           "selection": {"rev": 1, "sha256": sha, "input": sel_in}}
+    out = tmp_path / "_doe" / "S8"
+
+    def run(stage, **kw):
+        return stg.run_stage({"stage": stage, "out": str(out), "doe": {**doe, **kw}}, lambda s: None)
+
+    run("bd_input")
+    run("bd_loads")
+    pos = {int(v): i for i, v in enumerate(m["node_id"].tolist())}
+    sd.write_fixed(str(out / "prep" / "fixed"), m, [[pos[int(v)] for v in gr] for gr in g["fixed_groups"]])
+    W = next(b for b in bs.derive_obj(m, bs.normalize_input(sel_in, CFG), CFG).beads if b.id == "b1").W_nom
+    spec = {"method": "lhs", "n": 3, "seed": 2, "params": [{"name": "B1_W", "lo": W + 4.0, "hi": W + 8.0}]}
+    run("bd_matrix", rev=1, spec=spec)
+    bj = U.read_json(str(out / "select" / sha[:12] / "basis.json"))
+    assert bj["algo"] == bs.ALGO
+    run("bd_select_grid", rev=1)
+    gm = U.read_json(str(out / "doe" / "1" / "grid" / pio.GRID_MANIFEST))
+    assert gm["rules"] == 2
+    warned = [c["id"] for c in gm["cells"] if c["status"] == "OK" and c.get("warnings")]
+    assert warned and all("fixed_viol" in c for c in gm["cells"] if c["id"] in warned)
+    st = {x["id"]: x for x in pio.read_grid(str(out / "doe" / "1" / "grid"), [c["id"] for c in gm["cells"]])["cells"]}
+    assert all(st[i]["state"] == "READY" and st[i].get("warnings") for i in warned), [st[i] for i in warned]
+    run("bd_eval", rev=1, design="d000")
+    # v0.16.0 이 남긴 SKIPPED_FIXED done.json(같은 sha) → 지금 READY 라 재사용하지 않음
+    c0 = stg.Ctx({"stage": "x", "out": str(out), "doe": {**doe, "rev": 1}})
+    dd = stg.design_dir(c0, warned[0])
+    os.makedirs(dd, exist_ok=True)
+    from esl.doe import evaluate as ev
+    ev.write_done(dd, stg.design_sha(c0, warned[0]), "SKIPPED_FIXED")
+    U.write_json(os.path.join(dd, ev.RESULT_JSON), ev.result_doc(warned[0], "SKIPPED_FIXED", {}))
+    for c in gm["cells"]:
+        r = run("bd_eval", rev=1, design=c["id"])
+        assert r["status"] == "OK" and not r["reused"], r
+    res = U.read_json(os.path.join(dd, ev.RESULT_JSON))
+    assert res["select_warnings"][0]["code"] == "SELECT_FIXED_MOVED" and res["select_fixed_viol"]["bead_vars"]
+    assert any(w.startswith("SELECT_FIXED_MOVED") for w in res["warnings"])
+    post = run("bd_post", rev=1)["result"]
+    rows = {x["id"]: x for x in post["ranking"]}
+    assert all("FIXED_MOVED" in (rows[i].get("warn") or []) for i in warned), [(i, rows.get(i)) for i in warned]
+    clean = [x["id"] for x in post["ranking"] if not x.get("warn")]
+    assert post["summary"]["best_clean"] == (clean[0] if clean else None)
+    best = post["best"]["id"]
+    bd = out / "best" / best
+    if best in warned:
+        b = (bd / "include" / "model.rad").read_bytes()
+        k = b.index(b"/NODE")
+        head = b[:k].splitlines()
+        assert head[-1].startswith(b"#ESL WARNING FIXED_NODES") or head[-1].startswith(b"#ESL WARNING FIXED_MOVED")
+        assert b"#ESL WARNING FIXED_MOVED" in (bd / "ch_r.rad").read_bytes()
+        assert U.read_json(str(bd / "values.json"))["warnings"][0]["code"] == "SELECT_FIXED_MOVED"
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "체결 위치 어긋남" in html and "⚠" in html

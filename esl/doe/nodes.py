@@ -111,11 +111,16 @@ def _fmt_f20(v: float) -> str:
 
 
 def write_morphed(src: str, dst: str, node_id, x_new, x_old=None, *, max_line: int | None = None,
-                  guard=None) -> dict:
+                  guard=None, comment_lines: list[str] | None = None) -> dict:
     """원본 rad/include 사본 → ``/NODE`` 블록에서 좌표가 바뀐 대상 노드 행의 **좌표 칸만** 교체(ID 칸·다른 줄·줄바꿈 바이트 그대로).
 
     고정 칸(I10·F20×3)은 10..70 칸을 ``%20.13E`` 로, 자유 형식(쉼표)은 좌표 필드만 ``repr`` 로 바꾼다. 좌표가 안 바뀐
-    노드(x_old 와 같음)는 원본 바이트 유지. 반환 {n_nodes(대상 행), n_changed}."""
+    노드(x_old 와 같음)는 원본 바이트 유지. 반환 {n_nodes(대상 행), n_changed}.
+    v0.16.1 comment_lines(ASCII, ``#`` 시작 — esl_select_relax.md SR-D-12): 첫 ``/NODE`` 줄 바로 앞에 끼움(줄바꿈 = 그 /NODE 줄의
+    원본 줄바꿈 바이트). None·빈 목록이면 v0.16.0 과 바이트 동일."""
+    for cl in comment_lines or []:
+        if not cl.startswith("#") or not cl.isascii() or "\n" in cl or "\r" in cl:
+            raise ValueError(f"comment_lines 는 '#' 로 시작하는 ASCII 한 줄: {cl!r}")
     nid = np.asarray(node_id, dtype=np.int64)
     X = np.asarray(x_new, dtype=np.float64)
     X0 = None if x_old is None else np.asarray(x_old, dtype=np.float64)
@@ -138,6 +143,10 @@ def write_morphed(src: str, dst: str, node_id, x_new, x_old=None, *, max_line: i
             elif raw[:1] == b"/":
                 toks = raw[1:].split(b"/")[0].split()
                 in_node = bool(toks) and toks[0].upper() == b"NODE"
+                if in_node and comment_lines:
+                    eol = raw[len(raw.rstrip(b"\r\n")):] or b"\n"
+                    fo.write(b"".join(cl.encode("ascii") + eol for cl in comment_lines))
+                    comment_lines = None
             elif in_node and raw.strip():
                 line = _decode(raw)
                 k, _ = _parse_node_line(line, src, lineno)

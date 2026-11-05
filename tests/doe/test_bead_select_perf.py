@@ -74,3 +74,21 @@ def test_perf_220k():
     _check("썸네일", time.perf_counter() - t, 1.0, rows=rows)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     print("\n".join(rows))
+
+
+@pytest.mark.perf
+def test_perf_220k_islands_holes():
+    """V-SR-15: 22만 노드 + 섬 200·구멍 300 — derive ≤ 3 s, 기저 ≤ 30 s(V-BS-11 기준 유지)."""
+    g = sb.generate(scale="big", features=(200, 300))
+    m = g["mesh"]
+    norm = bs.normalize_input(sb.selection(g), CFG)
+    ix = bs.mesh_index(m)
+    rows = []
+    D, dt, mb = _measure(lambda: bs.derive_obj(m, norm, CFG, fixed_node_ids=g["fixed_ids"], index=ix))
+    _check("derive(섬 200·구멍 300)", dt, 3.0, mb, 1536, rows)
+    b1 = D.bead("b1")
+    assert len(b1.islands) == 200 and len(b1.holes) == 300 and b1.w_enabled
+    B, dt, mb = _measure(lambda: bs.basis(m, D, CFG))
+    _check("기저(섬 200·구멍 300)", dt, 30.0, mb, 2048, rows)
+    assert "B1_W" in B.by_name()
+    print("\n".join(rows))

@@ -334,6 +334,13 @@ def render_compare(ctx: dict) -> str:
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 
+WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고"}
+
+
+def _warn_ko(w) -> str:
+    return "⚠ " + " · ".join(WARN_KO.get(x, x) for x in w) if w else ""
+
+
 def selection_html(sel: dict, ms: dict | None = None) -> str:
     """v0.15.0 select: 비드 표(단 깊이·폭·사면·블렌딩·경고) + 모핑 규칙 + 미리보기 품질(새 Fail/영향 요소)."""
     rows = []
@@ -350,9 +357,17 @@ def selection_html(sel: dict, ms: dict | None = None) -> str:
     q = sel.get("quality") or []
     if q:
         inner += "<h3>미리보기 품질(새 Fail / 영향 요소)</h3>" + H.table(
-            ["안", "상태", "새 Fail", "영향 요소", "고정 최대 변위 mm"],
+            ["안", "상태", "새 Fail", "영향 요소", "고정 최대 변위 mm", "경고"],
             [[x["id"], STATE_KO.get(x.get("state"), x.get("state")), x.get("new_fail"), x.get("n_affected"),
-              _f(x.get("fixed_max_mm"))] for x in q], num=(2, 3, 4))
+              _f(x.get("fixed_max_mm")), _warn_ko(x.get("warn"))] for x in q], num=(2, 3, 4))
+    mv = sel.get("fixed_moved") or []
+    if mv:                                       # v0.16.1 확정 1: 고정 노드도 모핑대로 움직인 안(제외하지 않음)
+        inner += ("<h3>체결 위치 어긋남</h3><p class='small'>아래 안은 고정 노드(체결 위치)가 모핑으로 같이 움직였습니다 — "
+                  "결과·받기 파일을 쓰기 전에 RBE2/TIE 위치를 확인하세요(받기 rad 사본에 경고 주석).</p>")
+        inner += H.table(["안", "고정 노드 수", "최대 이동 mm", "원인 변수(상위 3)"],
+                         [[x["id"], x.get("n"), _f(x.get("max_mm")),
+                           ", ".join(f"{v['name']} {_f(v['max_mm'])} mm" for v in x.get("bead_vars") or []) or "—"]
+                          for x in mv], num=(1, 2))
     sm = (ms or {}).get("select") or {}
     if sm:
         inner += "<h3>모핑 규칙</h3><ul>" + "".join(f"<li><b>{H.esc(k)}</b>: {H.esc(v)}</li>"
@@ -386,6 +401,10 @@ def render(ctx: dict) -> str:
         S.append(H.cards([("최적 안", H.esc(b["id"])), ("score", H.esc(_f(b["score"]))),
                           ("개선율", H.esc(_pct(b["improvement"]))), ("성공 안", H.esc(res.get("n_ok"))),
                           ("경계 경고", H.esc(len(bd.get("warnings") or [])))]))
+        if b.get("warn"):                        # v0.16.1 Q1 = A: 순위 그대로 + 경고 없는 최상위 1줄
+            bc = (ctx.get("selection") or {}).get("best_clean")
+            S.append(f"<p class='warn'>⚠ 최적 안 {H.esc(b['id'])} 은(는) {H.esc(_warn_ko(b['warn'])[2:])} 경고 안입니다 — "
+                     f"경고 없는 최상위: {H.esc(bc or '없음')}</p>")
     # 1. 입력
     step_row = ("STEP", f"{(ip.get('step') or {}).get('file_name')} (sha256 {str((ip.get('step') or {}).get('sha256'))[:12]}…)")
     if st.get("scenario") == "select":
@@ -438,8 +457,9 @@ def render(ctx: dict) -> str:
     top_n = int(ctx.get("ranking_rows") or 20)
     names = [p["name"] for p in spec.get("params") or []]
     if rk:
+        sel_w = st.get("scenario") == "select"     # v0.16.1 ⚠ 열(select 만 — 다른 시나리오 보고서 불변)
         hdr = (["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
-                "기하평균 개선율", "Pareto"] + names + ["경고"])
+                "기하평균 개선율", "Pareto"] + names + ["경고"] + (["⚠"] if sel_w else []))
         trs = []
         for x in rk[:top_n]:
             imp = H.esc(_pct(x["improvement"])) + (" <span class='muted'>(잡음 이내)</span>" if x.get("noise") else "")
@@ -448,7 +468,8 @@ def render(ctx: dict) -> str:
                         "–" if allv is None else ("✓" if allv else "✗"), _pct(x.get("min_improvement")),
                         f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
                         "●" if x.get("pareto") else ""]
-                       + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)])
+                       + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)]
+                       + ([_warn_ko(x.get("warn"))] if sel_w else []))
         inner = H.table(hdr, trs, num=(0, 2, 5, 6, 8, 10) + tuple(range(12, 12 + len(names))), raw=(3,))
         inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
         inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)

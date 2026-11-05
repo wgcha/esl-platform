@@ -21,7 +21,7 @@ from esl.doe import settings  # noqa: E402
 from esl.mesh import features as ft  # noqa: E402
 
 GOLD = json.load(open(os.path.join(HERE, "..", "fixtures", "bead_select", "v0160_golden.json"), encoding="utf-8"))
-NEW_SUMMARY_KEYS = ("algo", "islands", "holes", "inner_loops_n", "hold_fixed", "hold")   # §4.2 v0.16.1 칸(비교에서 뺌)
+NEW_SUMMARY_KEYS = ("algo", "islands", "holes", "inner_loops_n", "hold_fixed", "hold", "range_feasible")   # §4.2 v0.16.1 칸(비교에서 뺌)
 VARIANTS = {"h8": {"h": 8.0}, "h5open": {"h": 5.0, "open_end": True}, "h6wavy": {"h": 6.0, "wavy": True}}
 
 
@@ -73,7 +73,7 @@ def test_moved_names_reexported():
     assert bs._node_graph is ft.node_graph and bs._loops is ft.boundary_loops
 
 
-@pytest.mark.parametrize("name", ["h8", "h5open"])
+@pytest.mark.parametrize("name", list(VARIANTS))
 def test_v0160_bytes_skip_policy(name):
     """V-SR-1·22: features 없는 메시 → derive 요약(v0.16.1 칸 제외)·기저·판정(skip 정책)이 v0.16.0 과 같음.
     판정 순서 변경(SR-D-1, §5.7): v0.16.0 SKIPPED_FIXED 이면서 뒤집힘이 있던 안만 FAILED_MESH/SELECT_MORPH_INVERTED."""

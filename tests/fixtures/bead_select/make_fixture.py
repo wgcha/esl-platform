@@ -5,6 +5,9 @@
 
 다시 만들기(저장소 루트에서): ``python tests/fixtures/bead_select/make_fixture.py``
 출력: select.bin · select_manifest.json(bin 항목 + n_*) · basis.bin · basis.json · expected.json(프런트 대조값)
+``--features``(v0.16.1 V-SR-12, esl_select_relax.md SR-D-14): ``features/`` 에 섬 픽스처 — synth_bead(h 8, features=True) 의
+mesh.json(node_id·x0·elem_id·elem_type·conn 노드 인덱스) · selection.json(SelectionIn, 섬 미포함) · expected.json(코어 derive
+결과: 비드별 islands_suggested ElemSet·섬별 요소 인덱스·holes·feature_angle_deg·island_max_mm) — 브라우저 enclosedIslands 대조.
 """
 from __future__ import annotations
 
@@ -63,5 +66,33 @@ def main() -> None:
     print(f"select.bin {len(blob)} B · basis.bin {len(bb)} B · vars {[v['name'] for v in B.vars]}")
 
 
+def main_features() -> None:
+    cfg = settings({"bead_doe": {"enabled": True}})
+    g = sb.generate(H_MM, features=True)
+    m = g["mesh"]
+    sel = sb.selection(g)
+    norm = bs.normalize_input(sel, cfg)
+    d = bs.derive(m, norm, cfg, fixed_scan=g["fixed_ids"])
+    D = bs.derive_obj(m, norm, cfg, fixed_node_ids=g["fixed_ids"])
+    out = os.path.join(HERE, "features")
+    os.makedirs(out, exist_ok=True)
+    mesh = {"node_id": [int(v) for v in m["node_id"]], "x0": [[round(float(c), 9) for c in r] for r in m["x0"]],
+            "elem_id": [int(v) for v in m["elem_id"]], "elem_type": [int(v) for v in m["elem_type"]],
+            "conn": [[int(v) for v in r] for r in m["conn"]]}
+    exp = {"feature_angle_deg": norm["feature_angle_deg"], "island_max_mm": cfg["select"]["island"]["max_mm"],
+           "islands_suggested": d["islands_suggested"],
+           "islands": {b.id: [sorted(int(e) for e in i["elems"]) for i in b.islands] for b in D.beads},
+           "holes": {b["id"]: b["holes"] for b in d["beads"]}, "algo": d["algo"]}
+    for name, doc in (("mesh.json", mesh), ("selection.json", sel), ("expected.json", exp)):
+        with open(os.path.join(out, name), "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(doc, fh, ensure_ascii=False, separators=(",", ":") if name == "mesh.json" else None,
+                      indent=None if name == "mesh.json" else 1, sort_keys=True)
+            fh.write("\n")
+    print(f"features: 섬 {sum(len(v) for v in exp['islands'].values())} · 요소 {len(mesh['elem_id'])}")
+
+
 if __name__ == "__main__":
-    main()
+    if "--features" in sys.argv[1:]:
+        main_features()
+    else:
+        main()
