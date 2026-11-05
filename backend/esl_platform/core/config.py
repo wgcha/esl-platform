@@ -600,8 +600,10 @@ class BeadDoeCompareMeshFallbackCfg(_M):
 
 # v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §5): 폴백 사다리 단계 이름(C2-D-18)·메시 입력 형식(C2-D-2, Q2 — .bdf·.fem 은
 # v0.16.x 에서 이 목록을 넓힘)
-COMPARE_LADDER_STAGES = ("cad", "refine_local", "refine_global", "remesh")
+COMPARE_LADDER_STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh")   # v0.16.1 += defeature(SR-D-16)
 COMPARE_MESH_FORMATS = (".rad", ".inc")
+# v0.16.1 작은 형상 억제 종류(esl_select_relax.md SR-D-17 — 이 순서로 실행)
+DEFEATURE_KINDS = ("flange", "hole", "slot", "bead", "fillet", "narrow")
 
 
 class BeadDoeCompareMeshCfg(_M):
@@ -617,7 +619,8 @@ class BeadDoeCompareMeshCfg(_M):
     # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤), cad = [cad],
     # remesh = [remesh]. ladder 는 cad 가 맨 앞, 빼면 그 단계 끔, 중복 금지
     mode: Literal["cad", "remesh", "auto"] = "auto"
-    ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_STAGES), min_length=1, max_length=4)
+    ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_STAGES), min_length=1,
+                              max_length=len(COMPARE_LADDER_STAGES))
     keep_tries: bool = False   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만 — 진단용)
 
     @field_validator("ladder")
@@ -673,6 +676,13 @@ class BeadDoeCompareRemeshCfg(_M):
         return self
 
 
+class BeadDoeCompareMeshInputDiagCfg(_M):
+    """v0.16.1 메시 입력 진단(SR-D-24 — 보고만): 구멍·섬 크기 기준 = compare.defeature.hole_max_d_mm · select.island.max_mm."""
+
+    enabled: bool = True
+    feature_angle_deg: float = Field(default=30.0, gt=0, le=90)
+
+
 class BeadDoeCompareMeshInputCfg(_M):
     """v0.16.0 메시 입력(C2-D-2~8): 형상마다 사용자 메시(Radioss rad/inc). formats ⊆ COMPARE_MESH_FORMATS(Q2 로 넓힘),
     max_mb = 주 + include 합계(형상당), include 는 업로드 폴더 안만, size_warn_ratio = 모서리 중앙값 허용 배수."""
@@ -683,6 +693,7 @@ class BeadDoeCompareMeshInputCfg(_M):
     include: bool = True
     max_include_depth: int = Field(default=8, ge=0, le=64)
     size_warn_ratio: float = Field(default=1.5, gt=1)
+    diag: BeadDoeCompareMeshInputDiagCfg = BeadDoeCompareMeshInputDiagCfg()     # v0.16.1 SR-D-24
 
     @field_validator("formats")
     @classmethod
@@ -745,13 +756,41 @@ class BeadDoeCompareRefineCfg(_M):
 
 class BeadDoeCompareDefeatureCfg(_M):
     """이슈 #53 holes table 근사(메싱 전 OCC 형상): 내부 경계 면적 < min_hole_area_mm2 메움(r<4 원형·eq_diam<8·좁은 슬롯),
-    반지름 hole_r_mm 구멍 둘레 분할 = max(hole_elems, ceil(둘레/h)) (0 = 끔). min_bead_height_mm = 비드 억제 기준(기록만)."""
+    반지름 hole_r_mm 구멍 둘레 분할 = max(hole_elems, ceil(둘레/h)) (0 = 끔) — cad 단계. min_bead_height_mm = bead 억제 기준
+    (v0.16.1 defeature 단계에서 적용, cad 단계는 읽지 않음).
+
+    v0.16.1 새 키(esl_select_relax.md §4.4 — ④ 사다리 defeature 단계에서만 읽음, base.json profile 해시 제외 SR-D-21b):
+    kinds = 억제 종류·실행 순서(빼면 그 종류 끔), hole_max_d_mm = 등가 지름 4A/P 상한, slot_max_w_mm·slot_max_l_mm = 슬롯,
+    flange_max_h_mm = 버링 높이, fillet_max_r_mm = 필렛 반경, narrow_w_factor = 좁은 띠 폭 × h, feature_max_mm = bead·flange
+    bbox 대각 상한, plane_tol_mm = 둘레 평면 판정, compound = 쉘 fillet·narrow 병합 메시, region_pad_factor = 억제 영역 여유 × h,
+    max_features = 인식 상한, list_max = defeature.json 행 상한."""
 
     enabled: bool = True
     min_hole_area_mm2: float = Field(default=50.27, ge=0)
     hole_elems: int = Field(default=6, ge=0, le=100)
     hole_r_mm: list[float] = Field(default_factory=lambda: [4.0, 30.0], min_length=2, max_length=2)
     min_bead_height_mm: float = Field(default=2.0, ge=0)
+    kinds: list[Literal["flange", "hole", "slot", "bead", "fillet", "narrow"]] = Field(
+        default_factory=lambda: list(DEFEATURE_KINDS), max_length=len(DEFEATURE_KINDS))
+    hole_max_d_mm: float = Field(default=8.0, gt=0)
+    slot_max_w_mm: float = Field(default=1.9, gt=0)
+    slot_max_l_mm: float = Field(default=14.0, gt=0)
+    flange_max_h_mm: float = Field(default=1.5, gt=0)
+    fillet_max_r_mm: float = Field(default=1.5, gt=0)          # Q5 A
+    narrow_w_factor: float = Field(default=0.4, gt=0, le=1)
+    feature_max_mm: float = Field(default=40.0, gt=0)
+    plane_tol_mm: float = Field(default=0.01, gt=0)
+    compound: bool = True
+    region_pad_factor: float = Field(default=1.0, ge=0)
+    max_features: int = Field(default=2000, ge=1)
+    list_max: int = Field(default=500, ge=1)
+
+    @field_validator("kinds")
+    @classmethod
+    def _kinds(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError(f"defeature.kinds 는 {', '.join(DEFEATURE_KINDS)} 중 중복 없이: {v}")
+        return v
 
 
 class QualityLimitCfg(_M):
@@ -816,16 +855,43 @@ class BeadDoeSelectBlendCfg(_M):
 
 
 class BeadDoeSelectRangeCfg(_M):
+    """기본 범위 = 공칭 × (1 ± *_rel)(v0.16.0 그대로 — R_auto 기준), v0.16.1 feasible 상한 = 공칭 × (1 + *_max_rel)(SR-D-10)."""
+
     depth_rel: float = Field(default=0.3, gt=0, lt=1)
     width_rel: float = Field(default=0.2, gt=0, lt=1)
     min_step_mm: float = Field(default=1.0, ge=0)
+    depth_max_rel: float = Field(default=1.0, gt=0, le=5)
+    width_max_rel: float = Field(default=0.6, gt=0, le=5)
+
+    @model_validator(mode="after")
+    def _max_rel(self) -> "BeadDoeSelectRangeCfg":
+        for k in ("depth", "width"):
+            lo, hi = getattr(self, f"{k}_rel"), getattr(self, f"{k}_max_rel")
+            if hi < lo:
+                raise ValueError(f"bead_doe.select.range.{k}_max_rel {hi:g} 는 {k}_rel {lo:g} 이상이어야 합니다")
+        return self
 
 
 class BeadDoeSelectQualityCfg(_M):
-    """기준값은 bead_doe.compare.quality 한 곳(복제 없음) — 여기는 차단 비율·뒤집힘 각만(BS-D-12)."""
+    """기준값은 bead_doe.compare.quality 한 곳(복제 없음) — 여기는 차단 비율·뒤집힘 각만(BS-D-12). v0.16.1 fail_policy:
+    warn = 새 Fail 비율 초과 안도 실행(경고 SELECT_QUALITY_WARN), skip = v0.16.0 대로 제외(뒤집힘은 정책과 무관하게 제외, SR-D-1·2)."""
 
     max_fail_ratio: float = Field(default=0.01, ge=0, le=1)
     flip_deg: float = Field(default=60.0, gt=0, le=180)
+    fail_policy: Literal["warn", "skip"] = "warn"
+
+
+class BeadDoeSelectIslandCfg(_M):
+    """v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한(§5.2) — 넘으면 섬 아님(SELECT_ISLAND_TOO_LARGE)."""
+
+    max_mm: float = Field(default=40.0, gt=0)
+
+
+class BeadDoeSelectHoldCfg(_M):
+    """v0.16.1 비드별 '체결 구멍 둘레 고정'(hold_fixed, SR-D-9 — Q2 A): 고정 노드에서 ring_mm 안 제자리, blend_mm 블렌딩(보스)."""
+
+    ring_mm: float = Field(default=3.0, ge=0)
+    blend_mm: float = Field(default=8.0, gt=0)
 
 
 class BeadDoeSelectThumbCfg(_M):
@@ -858,6 +924,10 @@ class BeadDoeSelectCfg(_M):
     range: BeadDoeSelectRangeCfg = BeadDoeSelectRangeCfg()
     quality: BeadDoeSelectQualityCfg = BeadDoeSelectQualityCfg()
     thumb: BeadDoeSelectThumbCfg = BeadDoeSelectThumbCfg()
+    # v0.16.1(esl_select_relax.md SR-D-2·§5.2·SR-D-9): 고정 침범 = warn(경고만 — 실행) | skip(v0.16.0 대로 제외), 섬, 보스
+    fixed_policy: Literal["warn", "skip"] = "warn"
+    island: BeadDoeSelectIslandCfg = BeadDoeSelectIslandCfg()
+    hold: BeadDoeSelectHoldCfg = BeadDoeSelectHoldCfg()
     derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔
     derive_timeout_s: float = Field(default=20, gt=0, le=600)
 
@@ -1314,16 +1384,20 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
         d = _doe_settings(None)
     else:
         d = _doe_settings({"bead_doe": s.bead_doe.model_dump()})
-    if "select" not in d:               # v0.15.0: 코어 DEFAULTS["select"](S1) 없는 코어와도 같은 기본값(거울)
-        d["select"] = BeadDoeSelectCfg().model_dump()
-    # v0.16.0 ④ 메시 옵션: 코어 DEFAULTS["compare"] 에 새 키(mesh.mode·ladder·remesh·mesh_input·refine)가 없는 코어와도 같은 기본값
-    cd = BeadDoeCompareCfg().model_dump()
-    comp = d.setdefault("compare", {})
-    for k in ("remesh", "mesh_input", "refine"):
-        comp.setdefault(k, cd[k])
-    for k in ("mode", "ladder", "keep_tries"):
-        comp.setdefault("mesh", {}).setdefault(k, cd["mesh"][k])
+    # v0.15.0 select·v0.16.0 ④ 메시 옵션·v0.16.1 select 정책·섬·보스·defeature 단계·메시 입력 진단: 코어 DEFAULTS 에 아직 없는
+    # 키(코어 병합 전)도 pydantic 기본값(거울)으로 채운다 — 있는 키는 그대로(덮어쓰지 않음)
+    _fill_missing(d.setdefault("select", {}), BeadDoeSelectCfg().model_dump())
+    _fill_missing(d.setdefault("compare", {}), BeadDoeCompareCfg().model_dump())
     return d
+
+
+def _fill_missing(d: dict[str, Any], defaults: dict[str, Any]) -> None:
+    """defaults 의 키 중 d 에 없는 것만 깊은 사본으로 넣는다(중첩 dict 는 재귀, 값이 있는 키는 그대로)."""
+    for k, v in defaults.items():
+        if k not in d:
+            d[k] = copy.deepcopy(v)
+        elif isinstance(v, dict) and isinstance(d[k], dict):
+            _fill_missing(d[k], v)
 
 
 def bead_doe_commands(s: Settings) -> dict[str, list[str]]:

@@ -24,6 +24,10 @@ from .routers import cases, client_tokens, doe, history, jobs, library, opt, res
 log = logging.getLogger("esl_platform.api")
 
 
+# 요청 검증 오류 중 계약이 전용 코드를 정한 필드(loc 에 이 이름이 있으면 INVALID_PARAMS 대신 그 코드 — 형식은 같음)
+FIELD_ERROR_CODES = {"hold_fixed": "SELECT_HOLD_INVALID"}      # v0.16.1 esl_select_relax.md §4.1·§10
+
+
 class StartupRefused(RuntimeError):
     """기동 거부(CONFIG_INVALID)."""
 
@@ -63,7 +67,8 @@ def create_app(ctx: AppContext, *, bind_host: str | None = None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def _validation(_req: Request, exc: RequestValidationError) -> JSONResponse:
         errors = [{"loc": [str(x) for x in e.get("loc", [])], "msg": str(e.get("msg", ""))} for e in exc.errors()]
-        return _error(422, "INVALID_PARAMS", "요청 값이 올바르지 않습니다", errors=errors)
+        code = next((FIELD_ERROR_CODES[x] for e in errors for x in e["loc"] if x in FIELD_ERROR_CODES), "INVALID_PARAMS")
+        return _error(422, code, "요청 값이 올바르지 않습니다", errors=errors)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_req: Request, exc: StarletteHTTPException) -> JSONResponse:

@@ -216,3 +216,46 @@ def simulate_run(engine, esl_root: Path, sid: str, job_id: str, matrix: dict[str
 def api(client, method: str, path: str, token: str = "tok-power", write: bool | None = None, **kw: Any):
     w = write if write is not None else method != "GET"
     return client.request(method, f"{API}{path}", headers=H(token, w), **kw)
+
+
+# ---------------------------------------------------------------- v0.16.1 거울 대조(esl_select_relax.md §4.4)
+# 코어 esl.doe.DEFAULTS 에 v0.16.1 새 키가 아직 없으면(Impl-Core 병합 전) 그 키만 빼고 대조한다 — 병합 후에는 전체 대조.
+SELECT_KEYS_V0161 = (("fixed_policy",), ("island",), ("hold",), ("quality", "fail_policy"), ("range", "depth_max_rel"),
+                     ("range", "width_max_rel"))
+COMPARE_KEYS_V0161 = tuple(("defeature", k) for k in (
+    "kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm", "narrow_w_factor",
+    "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),)
+
+
+def _has(d: Any, path: tuple) -> bool:
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return False
+        d = d[k]
+    return True
+
+
+def _drop(d: dict, path: tuple) -> None:
+    for k in path[:-1]:
+        d = d.get(k) if isinstance(d, dict) else None
+    if isinstance(d, dict):
+        d.pop(path[-1], None)
+
+
+def core_view_v0161(dump: dict[str, Any], core: dict[str, Any]) -> dict[str, Any]:
+    """bead_doe dump(사본) 에서 코어 DEFAULTS 에 아직 없는 v0.16.1 키를 뺀다(select·compare). 사다리: 코어 ladder 에
+    defeature 가 없으면 dump ladder 에서도 뺀다."""
+    import copy
+
+    out = copy.deepcopy(dump)
+    for sect, keys in (("select", SELECT_KEYS_V0161), ("compare", COMPARE_KEYS_V0161)):
+        if sect not in out:
+            continue
+        for path in keys:
+            if not _has(core.get(sect), path):
+                _drop(out[sect], path)
+    lad = (((out.get("compare") or {}).get("mesh")) or {}).get("ladder")
+    core_lad = (((core.get("compare") or {}).get("mesh")) or {}).get("ladder")
+    if isinstance(lad, list) and isinstance(core_lad, list) and "defeature" not in core_lad:
+        out["compare"]["mesh"]["ladder"] = [x for x in lad if x != "defeature"]
+    return out

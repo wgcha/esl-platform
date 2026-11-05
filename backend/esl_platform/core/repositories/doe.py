@@ -57,6 +57,14 @@ def update_study(conn: Connection, sid: str, *, expect_version: int | None = Non
     return get_study(conn, sid)
 
 
+def refresh_selection_derived(conn: Connection, sid: str, rev: int, sha256: str, doc: dict[str, Any]) -> bool:
+    """v0.16.1 선택 계산 캐시 갱신(esl_select_relax.md §7.5): 저장 선택의 rev·sha256 이 그대로일 때만 selection 을 doc 로 바꾼다 —
+    version·updated_at 은 그대로(사용자 편집 아님 — 낙관적 잠금과 충돌하지 않음). 바꿨으면 True."""
+    cond = and_(bead_does.c.id == sid, bead_does.c.selection["sha256"].astext == str(sha256),
+                bead_does.c.selection["rev"].astext == str(int(rev)))
+    return conn.execute(update(bead_does).where(cond).values(selection=doc)).rowcount == 1
+
+
 def studies_by_ids(conn: Connection, ids: list[str]) -> dict[str, dict[str, Any]]:
     if not ids:
         return {}
