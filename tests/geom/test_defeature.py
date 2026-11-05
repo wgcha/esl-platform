@@ -324,3 +324,15 @@ def test_list_doc_truncated_and_order():
     assert [f["kind"] for f in d["features"]] == ["bead", "bead", "fillet", "hole"]
     assert [f["center"][0] for f in d["features"][:2]] == [5.0, 8.0]
     assert d["counts"] == {"bead": 2, "hole": 2} and d["features"][0].get("reason") is None
+
+
+@needs_gmsh
+def test_find_features_h4_no_zero_height(tmp_path):
+    """SR-D-41(v0.16.1 어려운 사례 H4 ④): 개구 경계에 걸친 보스의 평평한 조각(바탕 면과 한 평면, 높이 0)은 bead·flange 로 목록에
+    넣지 않음 — 실제로 바뀌는 것만. 그 보스의 Ø6 구멍은 hole, 루버 h 1.5 는 bead."""
+    import synth_hard as sh
+    src, _nf, _nd = sh.h4_step(str(tmp_path / "h4.step"))
+    ff, _st = _recognize(src)
+    assert all(f["size"].get("h_mm", 1.0) > 0.01 for f in ff if f["kind"] in ("bead", "flange"))
+    assert sorted(f["kind"] for f in ff) == ["bead", "bead", "hole", "hole", "hole"]
+    assert any(f["kind"] == "hole" and abs(f["center"][0] - 170.0) < 0.5 and abs(f["center"][1] - 120.0) < 0.5 for f in ff)

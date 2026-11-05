@@ -145,6 +145,40 @@ def _elem_normals(x, conn, elem_type) -> np.ndarray:
     return w / np.maximum(np.linalg.norm(w, axis=1, keepdims=True), 1e-300)
 
 
+def inverted_count(x0, x, conn, elem_type, idx, *, flip_deg: float) -> int:
+    """v0.16.1 ``affected_quality`` 의 뒤집힘 수와 같은 판정(야코비안 ≤ 0(4각, element_metrics 와 같은 2×2 가우스 점·같은 투영)
+    ∨ 법선 각 변화 > flip_deg)만 — 품질 지표를 다 계산하지 않아 빠름(select 범위 조합 점검용)."""
+    idx = np.asarray(idx, dtype=np.int64)
+    if idx.size == 0:
+        return 0
+    C = np.asarray(conn, dtype=np.int64)[idx]
+    et = np.asarray(elem_type).astype(int)[idx]
+    n0 = _elem_normals(x0, C, et)
+    n1 = _elem_normals(x, C, et)
+    inv = np.einsum("ij,ij->i", n0, n1) < float(np.cos(np.radians(float(flip_deg))))
+    q = et == 4
+    if q.any():
+        P = np.asarray(x, dtype=np.float64)[C[q][:, :4]]
+        p0, p1, p2, p3 = (P[:, i] for i in range(4))
+        n = np.cross(p2 - p0, p3 - p1)
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+        e1 = (p1 - p0) - np.einsum("ij,ij->i", p1 - p0, n)[:, None] * n
+        e1 /= np.maximum(np.linalg.norm(e1, axis=1, keepdims=True), 1e-300)
+        e2 = np.cross(n, e1)
+        R = P - P.mean(axis=1, keepdims=True)
+        xy = np.stack([np.einsum("mkj,mj->mk", R, e1), np.einsum("mkj,mj->mk", R, e2)], axis=2)
+        g = 1.0 / np.sqrt(3.0)
+        dmin = np.full(P.shape[0], np.inf)
+        for xi, eta in ((-g, -g), (g, -g), (g, g), (-g, g)):
+            dxi = 0.25 * np.array([-(1 - eta), (1 - eta), (1 + eta), -(1 + eta)])
+            deta = 0.25 * np.array([-(1 - xi), -(1 + xi), (1 + xi), (1 - xi)])
+            a = np.einsum("k,mkj->mj", dxi, xy)
+            b = np.einsum("k,mkj->mj", deta, xy)
+            dmin = np.minimum(dmin, a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
+        inv[q] |= dmin <= 0.0
+    return int(inv.sum())
+
+
 def _fail_mask(m: dict, qcfg: dict) -> tuple[np.ndarray, dict]:
     """기준별 Fail(summarize 와 같은 판정) — (Fail 마스크, {기준: 마스크})."""
     q = m["is_quad"]

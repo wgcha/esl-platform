@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { p3 } from "../api/p3";
 import { useApp } from "../app/AppContext";
-import { Shell } from "../shell/Shell";
+import { Shell, shownVersion } from "../shell/Shell";
 import { Badge, Empty, ErrorLine } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
 import { SECTIONS, cmpVersion, markVersionSeen } from "../lib/changelog";
@@ -14,7 +14,7 @@ export function Updates() {
   const { version } = useApp();
   const log = usePolling(p3.changelog, 0);
   useEffect(() => {
-    if (version) markVersionSeen(version.version);
+    if (version) markVersionSeen(shownVersion(version.version));
   }, [version]);
   return (
     <Shell crumbs={[{ label: "업데이트 내역" }]}>
@@ -22,7 +22,7 @@ export function Updates() {
         <h1 className="page-title">업데이트 내역</h1>
         {version && (
           <span className="muted small" data-testid="current-version">
-            지금 버전 v{version.version}
+            지금 버전 v{shownVersion(version.version)}
             {version.commit ? ` · ${version.commit}` : ""}
             {version.built_at ? ` · 배포 ${dt(version.built_at)}` : ""}
           </span>
@@ -32,7 +32,7 @@ export function Updates() {
       {log.data && log.data.length === 0 && <Empty>내역이 없습니다</Empty>}
       <div className="release-list">
         {(log.data ?? []).map((r) => {
-          const isCur = !!version && cmpVersion(r.version, version.version) === 0;
+          const isCur = !!version && cmpVersion(r.version, shownVersion(version.version)) === 0;
           return (
             <article key={r.version} className={isCur ? "release current" : "release"} aria-label={`v${r.version}`}>
               <header className="release-head">

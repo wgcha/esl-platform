@@ -366,7 +366,7 @@ def render_compare(ctx: dict) -> str:
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 
-WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고"}
+WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고", "CROSS_BEAD_MOVE": "다른 비드 침범"}
 
 
 def _warn_ko(w) -> str:

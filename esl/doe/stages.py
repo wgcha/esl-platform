@@ -468,7 +468,14 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
         m = dict(t.mesh)
         m["x0"] = x
         _, loads = sc.load_loads(c.p("prep"))
-        return m, list(t.supports), loads, {"n_nodes": t.n_nodes, "n_elems": t.n_elems, **ninfo}
+        info = {"n_nodes": t.n_nodes, "n_elems": t.n_elems, **ninfo}
+        from esl.morph import core as mcore           # SR-D-44 자동 탐지 기본 모핑(paicad 안 좌표)도 공통 모핑 코어 사후 점검
+        sq = c.cfg["select"]["quality"]                # (극단 요소 — 해당 없으면 키 없음: 기존 결과 바이트 불변)
+        mw = mcore.post_morph_warnings(t.mesh, t.mesh["x0"], x, sq, flip_deg=float(sq["flip_deg"]))
+        if mw:
+            info["morph_warnings"] = mw
+        return m, list(t.supports), loads, info
+    # TODO(SR-D-44): ③ STEP 모핑(보류) — 안 메시가 나오면 esl.morph.core(post_morph_warnings·피처 안전망)를 여기서 호출
     # ③: 안 BREP → gmsh(베이스라인과 같은 h·옵션) → frame 고정 매핑
     brep = os.path.join(dd, "update", pio.SAMPLE_BREP)
     if not os.path.isfile(brep):
@@ -2285,7 +2292,9 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     B = bsel.basis(t.mesh, D, c.cfg)
     rc_w = bsel.range_check(t.mesh, D, B, c.cfg)   # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 → 비드 경고(범위·기저 불변)
     if rc_w:
-        echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" for w in rc_w))
+        echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(
+            f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" if "var" in w else
+            f"조합(표본 {w['corners']} 중 뒤집힘 {w['inverted_n']}) 함께 쓸 범위 ≈ 공칭 ± {w['scale']} 배" for w in rc_w))
     tab = bsel.params_table(D, c.cfg)
     c.writer.makedirs(d)
     bsel.save_basis(pb, B, guard=c.writer.guard)
@@ -2293,7 +2302,7 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     blob = bsel.basis_bin(B)                    # 브라우저 3D 보기(§7.3, GET …/select/basis)
     with open(c.writer.guard(os.path.join(d, "basis.bin")), "wb") as fh:
         fh.write(blob)
-    _sel_save_derived(c, os.path.join(d, "derived.npz"), D)
+    _sel_save_derived(c, os.path.join(d, "derived.npz"), D, B)
     c.write_json(os.path.relpath(os.path.join(d, "derived.json"), c.out), D.summary(with_figures=False))
     c.write_json(os.path.relpath(pp, c.out), {"beads": [{"id": b.id, "name": b.name, "kind": "select",
                                                          "n_tiers": len(b.tiers), "W_nom": b.W_nom, "W_min": b.W_min,
@@ -2324,9 +2333,12 @@ def _sel_rev(c: Ctx, sha: str, bsha: str) -> dict:
             "selection_rev": (c.D.get("selection") or {}).get("rev"), "dir": f"select/{sha[:12]}"}
 
 
-def _sel_save_derived(c: Ctx, path: str, D) -> None:
+def _sel_save_derived(c: Ctx, path: str, D, B=None) -> None:
+    from esl.doe import bead_select as bsel
     from esl.doe.mesh_gmsh import save_npz_det
     arr = {"fixed": np.asarray(D.fixed_mask, dtype=np.uint8)}
+    if B is not None:                    # v0.16.1 SR-D-37·38 안 판정 보조(피처·다른 비드 침범) — 없으면 키 없음(바이트 불변)
+        arr.update(bsel.checks_arrays(bsel.design_checks(D, B)))
     for b in D.beads:
         lp = [lp["nodes"] for lp in b.loops]
         arr[f"{b.id}_loops"] = np.concatenate(lp).astype(np.int64) if lp else np.zeros(0, np.int64)
@@ -2348,13 +2360,13 @@ def _sel_loaded(c: Ctx) -> dict:
         z = U.load_npz(os.path.join(d, "derived.npz"))
         loops, nh = [], []
         for k in sorted(z):
-            if k.endswith("_ptr"):
+            if k.endswith("_ptr") and not k.startswith("chk_"):
                 bid = k[:-4]
                 L, P = z[f"{bid}_loops"], z[k]
                 loops += [L[P[i]:P[i + 1]] for i in range(P.size - 1)]
                 nh.append(z[f"{bid}_nhat"])
         c._sel_cache = {"B": bsel.load_basis(pb), "fixed": z["fixed"].astype(bool), "loops": loops, "rev": r,
-                        "n_hats": nh}
+                        "n_hats": nh, "checks": bsel.checks_from_arrays(z)}
     return c._sel_cache
 
 
@@ -2362,8 +2374,9 @@ def _sel_design(c: Ctx, t, did: str) -> tuple[np.ndarray, dict]:
     from esl.doe import bead_select as bsel
     L = _sel_loaded(c)
     x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
-    x = bsel.morph(x0, L["B"], _design_values(c, did))
-    return x, bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg)
+    vals = _design_values(c, did)
+    x = bsel.morph(x0, L["B"], vals)
+    return x, bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg, checks=L.get("checks"), values=vals)
 
 
 def _sel_warn_text(w: dict) -> str:
@@ -2401,7 +2414,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
     states, vmax = {}, 0.0
     for k, x in enumerate(designs):
         xd = bsel.morph(x0, L["B"], x["values"])
-        st = bsel.design_state(t.mesh, x0, xd, L["fixed"], c.cfg)
+        st = bsel.design_state(t.mesh, x0, xd, L["fixed"], c.cfg, checks=L.get("checks"), values=x["values"])
         states[x["id"]] = st
         if st["state"] == "READY":
             cv = sr.color_values(x0, xd, direction, has)
@@ -2440,7 +2453,8 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
     c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))
     cnt = {"ok": sum(x["status"] == "OK" for x in cells),
            "fixed": sum(x["code"] == "SELECT_FIXED_VIOLATION" for x in cells),
-           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED") for x in cells),
+           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED", "SELECT_FEATURE_DISTORTED")
+                       for x in cells),
            "warn": sum(x["status"] == "OK" and bool(x.get("warnings")) for x in cells)}
     echo(f"[bd_select_grid] rev {rev} 안 {len(cells)} · OK {cnt['ok']}(경고 {cnt['warn']}) · 고정 침범 {cnt['fixed']} · "
          f"품질 실패 {cnt['mesh']} · V {V:.3g} mm")
@@ -2495,6 +2509,7 @@ def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
 
 
 SEL_WARN_NODES_PER_LINE, SEL_WARN_NODES_MAX = 10, 50       # SR-D-12 주석 줄의 고정 노드 ID(줄당·전체 상한)
+SEL_WARN_LINE_MAX = 100                                     # SR-D-43 주석 줄 길이 상한(자, Radioss 입력 줄 한도)
 
 
 def _sel_fixed_comment(c: Ctx, t, did: str, x: np.ndarray) -> tuple[list[str], list[dict]]:
@@ -2503,7 +2518,7 @@ def _sel_fixed_comment(c: Ctx, t, did: str, x: np.ndarray) -> tuple[list[str], l
     from esl.doe import bead_select as bsel
     L = _sel_loaded(c)
     x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
-    st = bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg)
+    st = bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg, checks=L.get("checks"), values=_design_values(c, did))
     sw = list(st.get("warnings") or [])
     fm = next((w for w in sw if w["code"] == "SELECT_FIXED_MOVED"), None)
     if fm is None:
@@ -2511,10 +2526,29 @@ def _sel_fixed_comment(c: Ctx, t, did: str, x: np.ndarray) -> tuple[list[str], l
     det = bsel.fixed_violation_detail(x0, x, L["fixed"], L["B"], _design_values(c, did),
                                       float(bsel._cfg(c.cfg)["fixed_tol_mm"]), cap=SEL_WARN_NODES_MAX)
     ids = [int(t.mesh["node_id"][i]) for i in det["node_idx"]]
-    lines = [f"#ESL WARNING FIXED_MOVED n={fm['n']} max_mm={fm['max_mm']} : fastener positions moved, check RBE2/TIE"]
-    for k in range(0, len(ids), SEL_WARN_NODES_PER_LINE):
-        lines.append("#ESL WARNING FIXED_NODES " + " ".join(str(v) for v in ids[k:k + SEL_WARN_NODES_PER_LINE]))
-    return lines, sw
+    return sel_warn_lines(fm, ids), sw
+
+
+def sel_warn_lines(fm: dict, ids: list[int]) -> list[str]:
+    """SR-D-12·43 받기 rad 주석 줄: FIXED_MOVED 머리 + FIXED_NODES(줄당 ≤ SEL_WARN_NODES_PER_LINE 개 ∧ ≤ SEL_WARN_LINE_MAX 자 —
+    머리도 넘으면 설명을 다음 줄로). 짧은 ID 면 v0.16.1 첫 판과 같은 줄."""
+    head = f"#ESL WARNING FIXED_MOVED n={fm['n']} max_mm={fm['max_mm']} : fastener positions moved, check RBE2/TIE"
+    if len(head) > SEL_WARN_LINE_MAX:
+        lines = [f"#ESL WARNING FIXED_MOVED n={fm['n']} max_mm={fm['max_mm']}",
+                 "#ESL WARNING FIXED_MOVED : fastener positions moved, check RBE2/TIE"]
+    else:
+        lines = [head]
+    pre = "#ESL WARNING FIXED_NODES"
+    cur: list[str] = []
+    for v in ids:
+        if cur and (len(cur) >= SEL_WARN_NODES_PER_LINE or len(pre) + sum(len(x) + 1 for x in cur) + len(str(v)) + 1
+                    > SEL_WARN_LINE_MAX):
+            lines.append(pre + " " + " ".join(cur))
+            cur = []
+        cur.append(str(v))
+    if cur:
+        lines.append(pre + " " + " ".join(cur))
+    return lines
 
 
 def _insert_after_first_line(c: Ctx, path: str, lines: list[str]) -> None:

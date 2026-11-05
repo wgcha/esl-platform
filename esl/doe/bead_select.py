@@ -47,6 +47,7 @@ from scipy.spatial import cKDTree
 from esl.errors import EslError
 from esl.mesh import features
 from esl.mesh.features import MeshIndex, mesh_index  # noqa: F401 - 재노출(백엔드·워커·시험)
+from esl.morph import core as _mc
 
 SCHEMA_VERSION = 1
 BEAD_ID_RE = re.compile(r"^b[1-9][0-9]?$")
@@ -58,7 +59,10 @@ ALGO = 2                           # v0.16.1 계산 규칙 판(SelectionDerived.
 RULES = 2                          # v0.16.1 판정 규칙 판(grid_manifest.rules — §7.4)
 # v0.16.1 새 select 설정 키(점 경로) — 기본값과 같으면 이어하기 해시 사본에서 뺀다(SR-D-13b, §7.2). 이후 판도 같은 방식으로 추가.
 HASH_NEW_KEYS_V0161 = ("fixed_policy", "quality.fail_policy", "range.depth_max_rel", "range.width_max_rel", "island",
-                       "hold", "range.width_floor_q", "range.check_steps")
+                       "hold", "range.width_floor_q", "range.check_steps",
+                       # v0.16.1 어려운 사례 수정(SR-D-37~40)
+                       "cross_bead_policy", "cross_bead_tol_mm", "range.combo_samples", "quality.rot_warn_deg",
+                       "quality.area_ratio_min", "quality.distort_rel", "quality.distort_min_mm")
 POLICIES = ("warn", "skip")
 
 
@@ -97,11 +101,11 @@ def select_hash_view(sel_cfg: dict) -> dict:
 
 
 def _policy(sc: dict, which: str) -> str:
-    v = sc.get("fixed_policy") if which == "fixed" else (sc.get("quality") or {}).get("fail_policy")
+    key = {"fixed": "fixed_policy", "cross": "cross_bead_policy"}.get(which, "quality.fail_policy")
+    v = sc.get(key) if which in ("fixed", "cross") else (sc.get("quality") or {}).get("fail_policy")
     v = "warn" if v is None else v
     if v not in POLICIES:
-        raise EslError("CONFIG_INVALID", f"select.{'fixed_policy' if which == 'fixed' else 'quality.fail_policy'} "
-                                         f"는 warn|skip (값 {v!r})")
+        raise EslError("CONFIG_INVALID", f"select.{key} 는 warn|skip (값 {v!r})")
     return v
 
 
@@ -383,6 +387,7 @@ class BeadDerived:
         self.inner_loops_n = 0
         self.hold_fixed, self.hold = 0, None
         self.hold_idx, self.hold_phi = np.zeros(0, np.int64), np.zeros(0)
+        self.features: list[dict] = []
 
 
 class Derived:
@@ -477,14 +482,7 @@ def _mean_normal(index: MeshIndex, mask: np.ndarray, ref: np.ndarray | None = No
 _loops = features.boundary_loops                    # v0.16.1 공통 모듈(edge_nodes 없으면 v0.16.0 의미)
 
 
-def _plane(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
-    p = X.mean(axis=0)
-    if X.shape[0] < 3:
-        return p, np.array([0.0, 0.0, 1.0]), 0.0
-    _, s, vt = np.linalg.svd(X - p, full_matrices=False)
-    m = vt[-1]
-    rms = float(np.sqrt(np.mean(((X - p) @ m) ** 2)))
-    return p, m / np.linalg.norm(m), rms
+_plane = _mc.plane_fit                              # 공통 모핑 코어(SR-D-44)
 
 
 def _basis2(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -562,10 +560,13 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
         floors[b["id"]] = [elems_of(ix, t["floor"], where=f"{b['id']} 단 {t['k']}") for t in b["tiers"]]
         adds[b["id"]] = elems_of(ix, b["slope"]["add"], where=f"{b['id']} 사면 add")
     taken = np.zeros(ix.n_elems, bool)
+    rank = np.full(ix.n_elems, np.iinfo(np.int64).max, np.int64)      # SR-D-43 층 주인 비드 번호(교차부 동률 = 작은 id)
     for b in norm["beads"]:
         for m in floors[b["id"]]:
             taken |= m
+            rank[m] = np.minimum(rank[m], int(b["id"][1:]))
         taken |= adds[b["id"]]
+        rank[adds[b["id"]]] = np.minimum(rank[adds[b["id"]]], int(b["id"][1:]))
     warns: list[dict] = []
     if (fu_mask & taken).any():
         warns.append({"code": "SELECT_FIXED_LAYER_OVERLAP", "n": int((fu_mask & taken).sum())})
@@ -576,7 +577,8 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
     for bi, b in enumerate(norm["beads"]):
         if only is not None and b["id"] != only:
             continue
-        bd = _derive_bead(ix, b, floors[b["id"]], adds[b["id"]], taken, excl, bead_owner, fixed, sc, cos_t, h, mesh)
+        bd = _derive_bead(ix, b, floors[b["id"]], adds[b["id"]], taken, excl, bead_owner, fixed, sc, cos_t, h, mesh,
+                          lower=rank < int(b["id"][1:]))
         bead_owner[bd.bead_mask & (bead_owner < 0)] = bi
         beads.append(bd)
     # 블렌딩 겹침(다른 비드의 블렌딩·비드 영역)
@@ -587,6 +589,7 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
             if _regions_touch(ix, a, b):
                 a.warnings.append({"code": "SELECT_BLEND_OVERLAP", "with": b.id})
                 b.warnings.append({"code": "SELECT_BLEND_OVERLAP", "with": a.id})
+    _w_limits(ix, beads)
     D = Derived(norm, selection_sha256(norm), beads, {"scan_n": int(fixed_scan.sum()), "user_n": int(fixed_user.sum()),
                                                        "source": src}, warns, ix, mesh_sha256)
     D.fixed_mask = fixed
@@ -597,6 +600,16 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
         for bd in beads:
             bd.section = None
     return D
+
+
+def _w_limits(ix: MeshIndex, beads: list) -> None:
+    """SR-D-39b → ``esl.morph.core.w_limits``(공통 모핑 코어) 경고를 각 비드에 단다."""
+    items = [{"id": b.id, "W_nom": b.W_nom if getattr(b, "w_enabled", False) else None,
+              "W_range": b.range_default.get("W") if getattr(b, "w_enabled", False) else None,
+              "tier_masks": [t["mask"] for t in b.tiers], "p_b": b.p_b, "e1": b.e1, "e2": b.e2,
+              "boundary_nodes": b.boundary_nodes} for b in beads]
+    for bi, w in _mc.w_limits(ix, items):
+        beads[bi].warnings.append(w)
 
 
 def _regions_touch(ix: MeshIndex, a: BeadDerived, b: BeadDerived) -> bool:
@@ -618,7 +631,8 @@ def _regions_touch(ix: MeshIndex, a: BeadDerived, b: BeadDerived) -> bool:
 
 
 def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray, taken: np.ndarray, excl: np.ndarray,
-                 bead_owner: np.ndarray, fixed: np.ndarray, sc: dict, cos_t: float, h: float, mesh: dict) -> BeadDerived:
+                 bead_owner: np.ndarray, fixed: np.ndarray, sc: dict, cos_t: float, h: float, mesh: dict,
+                 lower: np.ndarray | None = None) -> BeadDerived:
     bd = BeadDerived(b["id"], b["name"])
     bd.floor_follow = int(b["floor_follow"])
     bd.links = [list(g) for g in b["links"]]
@@ -678,6 +692,12 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
             d_s = np.full(ix.n_elems, np.inf)
             d_s[sub] = d
             lose = S_auto & (d_o < d_s)
+            if lower is not None and (own & lower).any():   # SR-D-43 동률(거리 같음) = 비드 id 작은 쪽 — 작은 id 이웃과 같으면 내줌
+                sl = np.flatnonzero(own[sub2] & lower[sub2] & np.isin(sub2, ix.adj[np.flatnonzero(allowed)].indices))
+                if sl.size:
+                    d_l = np.full(ix.n_elems, np.inf)
+                    d_l[sub2] = csgraph.dijkstra(G2, directed=False, indices=sl, min_only=True, limit=lim)
+                    lose |= S_auto & np.isfinite(d_s) & (d_l == d_s)
             n_net = int(lose.sum())
             S_auto &= ~lose
     # 새는 사면: S_auto 이웃 중 허용인데 거리 초과
@@ -699,7 +719,8 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     bd.boundary_nodes = np.flatnonzero(bnd)
     bd.bead_nodes = np.flatnonzero(cin > 0)
     # v0.16.1 §5.3 구멍 분류: 경계 노드에 닿지 않는 자유 모서리 성분 = 관통 구멍(열린 경계 아님)
-    fe = features.free_edge_components(ix, BM, bd.boundary_nodes, n_ref=n_bar)
+    # SR-D-35: 판 가장자리 = 판 전체 외곽 자유 모서리만(경계 노드에 닿는 구멍 — 벽을 가로지르는 슬롯 — 도 구멍)
+    fe = features.free_edge_components(ix, BM, bd.boundary_nodes, n_ref=n_bar, plate_edge=features.plate_edge_nodes(ix))
     bd.holes = []
     for hl in fe["holes"]:
         isl = next((i for i in bd.islands if np.isin(hl["elems"], i["elems"]).all()), None)
@@ -708,6 +729,7 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
         else:
             bd.holes.append(hl)
     loops, free = _loops(ix, BM, edge_nodes=fe["edge"])
+    loops = _bridge_holes(ix, loops, [hl for hl in bd.holes if hl.get("touch")])
     # 평면(가장 긴 고리) → n̂_b
     X = ix.X
     for lp in loops:
@@ -733,6 +755,10 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     else:
         pts = X[bd.boundary_nodes] if bd.boundary_nodes.size else X[ix.elem_nodes(F)]
     p_b, m_b, rms = _plane(pts)
+    if rms > float(sc["plane_rms_mm"]):           # SR-D-36: 교차하는 비선택 비드(벽·바닥)를 지나는 경계 → 판 쪽 노드만 다시 맞춤
+        rf = _plate_refit(ix, bd, BM, F, par, excl, n_bar, loops, J, sc)
+        if rf is not None:
+            p_b, m_b, rms = rf
     cF = ix.centroid[F].mean(axis=0)
     if (cF - p_b) @ m_b < 0:
         m_b = -m_b
@@ -813,6 +839,8 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
                       "D_nom": float(np.median(zk)) if zk.size else 0.0,
                       "planarity": float(np.percentile(zk, 95) - np.percentile(zk, 5)) if zk.size else 0.0})
     bd.tiers = tiers
+    if inner:                                      # SR-D-37 안쪽 고리로 남은(제자리) 피처
+        _stuck_features(ix, bd, BM, excl, taken | (bead_owner >= 0), floor_masks, X, p_b, m_b, sc)
     # 멈춘 평행 요소: 상판 / 빠진 단
     stop = np.zeros(ix.n_elems, bool)
     if BM.any():
@@ -861,6 +889,40 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     return bd
 
 
+def _stuck_features(ix: MeshIndex, bd: BeadDerived, BM: np.ndarray, excl: np.ndarray, others: np.ndarray, floor_masks: list,
+                    X: np.ndarray, p_b: np.ndarray, m_b: np.ndarray, sc: dict) -> None:
+    """SR-D-37 b 안쪽 고리로 남은(제자리) 피처 → ``esl.morph.core.stuck_features`` 결과를 bd.features 에 더한다."""
+    bd.features.extend(_mc.stuck_features(ix, BM, excl, others, floor_masks, [t["D_nom"] for t in bd.tiers], p_b, m_b,
+                                          bd.e1, bd.e2, plate_tol=float(sc["plate_tol_mm"]),
+                                          island_max=float(sc["island"]["max_mm"]),
+                                          ring_frac=float(sc["island"]["ring_frac"])))
+
+
+def _plate_refit(ix: MeshIndex, bd: BeadDerived, BM: np.ndarray, F: np.ndarray, par: np.ndarray, excl: np.ndarray,
+                 n_bar: np.ndarray, loops: list, J: np.ndarray, sc: dict):
+    """SR-D-36 → ``esl.morph.core.plate_refit``: None(증거 없음 — v0.16.0 대로) | (p, m, rms) + 정보 SELECT_BASE_REFIT |
+    derive 오류 SELECT_BASE_AMBIGUOUS(교차하는 비드를 함께 선택하라는 안내)."""
+    if not loops:
+        return None
+    main = max(range(len(loops)), key=lambda i: (loops[i]["length"], -i))
+    r = _mc.plate_refit(ix, BM, F, par, excl, n_bar, loops[main]["nodes"], J, plate_tol=float(sc["plate_tol_mm"]),
+                        island_max=float(sc["island"]["max_mm"]), plane_rms=float(sc["plane_rms_mm"]))
+    if r is None:
+        return None
+    if r["status"] == "ok":
+        bd.warnings.append({"code": "SELECT_BASE_REFIT", "n_excluded": r["n_excluded"], "rms_mm": _r(r["rms"]),
+                            "level": "info"})
+        return r["p"], r["m"], r["rms"]
+    _bad("SELECT_BASE_AMBIGUOUS", f"비드 {bd.id}({bd.name}) 의 기준 평면을 정할 수 없습니다 — 경계가 선택하지 않은 다른 비드(벽·바닥)를 "
+                                  "지납니다. 교차하는 비드를 함께 선택하세요.", bead=bd.id, rms_mm=_r(r["rms"]), n_plate=r["n_plate"])
+
+
+def _bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict]) -> list[dict]:
+    """→ ``esl.morph.core.bridge_holes``(공통 모핑 코어, SR-D-44)."""
+    return _mc.bridge_holes(ix, loops, holes)
+
+
+
 def _slope_over_plate(ix: MeshIndex, F: np.ndarray, S_auto: np.ndarray, par: np.ndarray, excl: np.ndarray,
                       n_bar: np.ndarray, tol: float) -> np.ndarray | None:
     """SR-D-28 판(상판 기준면) 높이 위 요소 마스크 | None. 판 묶음 = 사면이 멈춘 평행 요소(사면 이웃, 바닥·제외 아님)의
@@ -900,7 +962,7 @@ def _islands(ix: MeshIndex, bd: BeadDerived, floor_masks: list, F: np.ndarray, t
     polys = {}
     for k, Fk in enumerate(floor_masks):
         owner[Fk] = k
-        polys[k] = features.outer_polygon(ix, Fk, n_bar)
+        polys[k] = features.outer_polygons(ix, Fk, n_bar)      # v0.16.1 SR-D-35: 조각마다 바깥 고리(구멍이 끊어도 닫힘)
     r = features.enclosed_components(ix, cand, owner, ix.X, n_bar, max_mm=float(sc["island"]["max_mm"]),
                                      outer_poly=polys, ring_frac=float(sc["island"]["ring_frac"]))
     bd.ring_n = len(r.get("rings") or [])
@@ -908,6 +970,7 @@ def _islands(ix: MeshIndex, bd: BeadDerived, floor_masks: list, F: np.ndarray, t
                    "interior": i["interior"], "size_mm": float(i["size_mm"]), "free_loops": 0} for i in r["islands"]]
     for t in r["too_large"]:
         bd.warnings.append({"code": "SELECT_ISLAND_TOO_LARGE", "n_elems": int(t["n_elems"]), "size_mm": _r(t["size_mm"])})
+    bd.features = _mc.enclosed_features(ix, r["too_large"], floor_masks)   # SR-D-37 a 섬이 못 된 둘러싸인 피처
     I = np.zeros(ix.n_elems, bool)
     for i in bd.islands:
         I[i["elems"]] = True
@@ -1541,6 +1604,7 @@ def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None)
         st = design_state(mesh, x0, morph(x0, B, {name: float(v)}), derived.fixed_mask, cfg)
         return int(st["quality"]["inverted"]) if st["code"] == "SELECT_MORPH_INVERTED" else 0
 
+    ends: list = []
     for row in params_table(derived, cfg):
         lo, hi = (float(v) for v in row["default_range"])
         nom = float(row["nominal"])
@@ -1565,39 +1629,117 @@ def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None)
             if b is not None:
                 b.warnings.append(w)
             out.append(w)
+        ends.append((row["name"], nom, float(res[0][1]), float(res[1][1])))
+    wc = _range_combo(mesh, derived, B, cfg, ends, int(sc["range"].get("combo_samples", 0) or 0), n)
+    if wc is not None:
+        derived.warnings.append(wc)
+        out.append(wc)
     return out
 
 
-def design_state(mesh: dict, x0, x, fixed_mask, cfg: dict | None = None) -> dict:
-    """안 1개 판정(미리보기·실행 공통, v0.16.1 SR-D-1 — 뒤집힘 → 고정 → 품질 순):
-    뒤집힘 → FAILED_MESH(SELECT_MORPH_INVERTED, 정책 무관), 고정 침범 ∧ fixed_policy skip → SKIPPED_FIXED
-    (SELECT_FIXED_VIOLATION), 새 Fail 비율 초과 ∧ quality.fail_policy skip → FAILED_MESH(SELECT_QUALITY_FAIL), 그 밖 READY —
-    warn 정책이면 warnings += SELECT_FIXED_MOVED{n, max_mm}·SELECT_QUALITY_WARN{new_fail, new_fail_ratio}.
-    반환 {state, code, warnings[], fixed, quality}."""
+def _range_combo(mesh: dict, derived: Derived, B: Basis, cfg, ends: list, m: int, steps: int) -> dict | None:
+    """SR-D-39 조합 검증 → ``esl.morph.core.range_combo``(뒤집힘 = ``core.inverted_any`` — design_state 와 같은 식)."""
+    x0 = np.asarray(mesh["x0"], dtype=np.float64)
+    flip = float(_cfg(cfg)["quality"]["flip_deg"])
+    return _mc.range_combo(ends, lambda vals: _mc.inverted_any(mesh, x0, morph(x0, B, vals), flip), m, steps)
+
+
+def design_state(mesh: dict, x0, x, fixed_mask, cfg: dict | None = None, *, checks: dict | None = None,
+                 values: dict | None = None) -> dict:
+    """안 1개 판정(미리보기·실행 공통, v0.16.1 SR-D-1 — 뒤집힘 → 피처 왜곡 → 고정 → 다른 비드 침범 → 품질 순):
+    뒤집힘 → FAILED_MESH(SELECT_MORPH_INVERTED, 정책 무관), 비드 안 비선택 피처 왜곡(SR-D-37, ``checks``) → FAILED_MESH
+    (SELECT_FEATURE_DISTORTED, 정책 무관), 고정 침범 ∧ fixed_policy skip → SKIPPED_FIXED(SELECT_FIXED_VIOLATION), 다른 선택 비드
+    침범(SR-D-38, ``checks`` + ``values``) ∧ cross_bead_policy skip → SKIPPED_COLLISION(SELECT_CROSS_BEAD_VIOLATION), 새 Fail 비율
+    초과 ∧ quality.fail_policy skip → FAILED_MESH(SELECT_QUALITY_FAIL), 그 밖 READY — warn 정책이면 warnings += SELECT_FIXED_MOVED{n, max_mm}·
+    SELECT_CROSS_BEAD_MOVE{n, max_mm, beads}·SELECT_QUALITY_WARN{new_fail, new_fail_ratio[, area_ratio_min, rot_max_deg]}(새 Fail 비율
+    초과 또는 warn 정책에서 요소 극단값 — SR-D-40: 넓이 비 < quality.area_ratio_min ∨ 법선 회전 > quality.rot_warn_deg).
+    checks = ``design_checks`` 결과(없으면 v0.16.1 첫 판 규칙 — 피처·침범 검사 없음). 반환 {state, code, warnings[], fixed, quality}."""
     from esl.doe import mesh_quality as mq
     sc = _cfg(cfg)
+    qc = sc["quality"]
     fx = fixed_violation(x0, x, fixed_mask, float(sc["fixed_tol_mm"]))
     am = affected_elems(mesh, x0, x)
-    q = mq.affected_quality(mesh, x, am, _qcfg(cfg), flip_deg=float(sc["quality"]["flip_deg"]),
-                            max_fail_ratio=float(sc["quality"]["max_fail_ratio"]))
+    q = mq.affected_quality(mesh, x, am, _qcfg(cfg), flip_deg=float(qc["flip_deg"]),
+                            max_fail_ratio=float(qc["max_fail_ratio"]))
+    # SR-D-40 극단값은 warn 정책의 경고만(skip 정책 = v0.16.0 판정 그대로 — V-SR-1)
+    ext = _extremes(mesh, x0, x, am, q, qc) if _policy(sc, "quality") == "warn" else None
+    dist = _feature_distortion(x0, x, checks, qc) if checks else None
+    cross = _cross_move(checks, values, float(sc.get("cross_bead_tol_mm", 0.1))) if checks and values else None
     warns: list[dict] = []
     if q["inverted"] > 0:
         st, code = "FAILED_MESH", "SELECT_MORPH_INVERTED"
+    elif dist is not None:
+        st, code = "FAILED_MESH", "SELECT_FEATURE_DISTORTED"
+        warns.append(dist)
     elif fx["violated"] and _policy(sc, "fixed") == "skip":
         st, code = "SKIPPED_FIXED", "SELECT_FIXED_VIOLATION"
+    elif cross is not None and _policy(sc, "cross") == "skip":
+        st, code = "SKIPPED_COLLISION", "SELECT_CROSS_BEAD_VIOLATION"
+        warns.append(cross)
     elif q["over_limit"] and _policy(sc, "quality") == "skip":
         st, code = "FAILED_MESH", "SELECT_QUALITY_FAIL"
     else:
         st, code = "READY", None
         if fx["violated"]:
             warns.append({"code": "SELECT_FIXED_MOVED", "n": int(fx["n_violated"]), "max_mm": _r(fx["max_mm"])})
-        if q["over_limit"]:
-            warns.append({"code": "SELECT_QUALITY_WARN", "new_fail": int(q["new_fail"]),
-                          "new_fail_ratio": _r(q["new_fail_ratio"], 6)})
+        if cross is not None:
+            warns.append(cross)
+        if q["over_limit"] or ext is not None:
+            w = {"code": "SELECT_QUALITY_WARN", "new_fail": int(q["new_fail"]), "new_fail_ratio": _r(q["new_fail_ratio"], 6)}
+            if ext is not None:
+                w.update(ext)
+            warns.append(w)
     return {"state": st, "code": code, "warnings": warns, "fixed": fx, "quality": q}
 
 
-# ====================================================================== 저장·직렬화
+def _extremes(mesh: dict, x0, x, am: np.ndarray, q: dict, qc: dict) -> dict | None:
+    """→ ``esl.morph.core.extremes``(공통 모핑 코어, SR-D-44)."""
+    return _mc.extremes(mesh, x0, x, am, q, qc)
+
+
+
+def _feature_distortion(x0, x, checks: dict, qc: dict) -> dict | None:
+    """→ ``esl.morph.core.feature_distortion``(공통 모핑 코어, SR-D-44)."""
+    return _mc.feature_distortion(x0, x, checks, qc)
+
+
+
+def _cross_move(checks: dict, values: dict, tol: float) -> dict | None:
+    """→ ``esl.morph.core.cross_move``(공통 모핑 코어, SR-D-44)."""
+    return _mc.cross_move(checks, values, tol)
+
+
+
+def design_checks(derived: "Derived", B: "Basis") -> dict:
+    """SR-D-37·38 안 판정 보조 자료(derive·기저에서 1회): features[{bead, k, rim, interior}](섬이 못 된 둘러싸인 피처),
+    cross[{var, bead, other, nominal, idx, mag}](W 변수 기저가 다른 선택 비드의 경계·바닥 노드에 주는 크기 ‖B_v‖ > 0).
+    둘 다 비면 {} (= 검사 없음 — 섬·교차 없는 선택은 판정 바이트 불변)."""
+    out: dict = {}
+    feats = [{"bead": b.id, "k": f["k"], "rim": np.asarray(f["rim"], np.int64), "interior": np.asarray(f["interior"], np.int64)}
+             for b in derived.beads for f in getattr(b, "features", [])]
+    if feats:
+        out["features"] = feats
+    if len(derived.beads) >= 2:
+        ix = derived.index
+        reg = {b.id: np.union1d(b.boundary_nodes, ix.elem_nodes(b.floor_mask)) for b in derived.beads}
+        cross = _mc.cross_footprint(B.vars, reg)
+        if cross:
+            out["cross"] = cross
+    return out
+
+
+def checks_arrays(checks: dict) -> dict:
+    """→ ``esl.morph.core.checks_arrays``(공통 모핑 코어, SR-D-44)."""
+    return _mc.checks_arrays(checks)
+
+
+
+def checks_from_arrays(z) -> dict:
+    """→ ``esl.morph.core.checks_from_arrays``(공통 모핑 코어, SR-D-44)."""
+    return _mc.checks_from_arrays(z)
+
+
+
 def save_basis(path: str, B: Basis, guard=None) -> str:
     """basis.npz(결정적): names, types, nominal, ptr, idx(int32), vec(float64), n_hat(var,3), R."""
     from esl.doe.mesh_gmsh import save_npz_det

@@ -3,7 +3,7 @@
 // 상태는 요소 번호(select.bin 순서) 색인 Int32Array — 칠하기 1획 = History 패치 1개.
 import type { DoeBeadSel, DoeSelectionIn } from "../../api/types";
 import type { MeshTopo } from "./adjacency";
-import { enclosedComponents, outerPolygon, type Island, type Vec3 } from "./grow";
+import { enclosedComponents, outerPolygons, type Island, type Vec3 } from "./grow";
 import type { Patch } from "./history";
 import { EMPTY_SET, fromElemSet, toElemSet, type ElemIndex } from "./ranges";
 
@@ -433,7 +433,7 @@ export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, 
     if (!normals.has(b)) normals.set(b, beadMeanNormal(t, s, b));
     return normals.get(b)!;
   };
-  const r = enclosedComponents(t, cand, owner, X, nOf, { maxMm, ringFrac, outerPoly: (o) => outerPolygon(t, X, (e) => s.owner[e] === o, nOf(o)) });
+  const r = enclosedComponents(t, cand, owner, X, nOf, { maxMm, ringFrac, outerPoly: (o) => outerPolygons(t, X, (e) => s.owner[e] === o, nOf(o)) });
   const io = new Int32Array(n).fill(-1);
   for (const il of r.islands) for (const e of il.elems) io[e] = il.owner;
   return { owner: io, islands: r.islands, tooLarge: r.tooLarge };

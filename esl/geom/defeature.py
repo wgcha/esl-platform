@@ -488,6 +488,8 @@ def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None) -> 
             continue
         taken.append(sC)
         area = float(sum(occ.getMass(2, f) for f in C))
+        if hC <= crit["plane_tol"] and len(fl) <= 1:      # SR-D-41: 높이 0 묶음(바탕 면과 한 평면 — 경계에 걸친 보스의 평평한
+            continue                                      # 조각)은 억제해도 형상이 안 바뀜 → 목록 제외(그 안 구멍은 아래 hole 규칙)
         if len(fl) == 1 and "flange" in kinds and hC <= crit["flange_max_h"] + LE_TOL:
             feats.append(_feat(gmsh, "flange", C, L, B, {"h_mm": hC}, area) | {"free_loop": fl[0]})
         elif not fl and "bead" in kinds and hC < crit["bead_min_h"]:

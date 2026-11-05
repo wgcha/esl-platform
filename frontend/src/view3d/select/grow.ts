@@ -212,6 +212,21 @@ export function outerPolygon(t: MeshTopo, X: ArrayLike<number>, mask: (e: number
 }
 
 /**
+ * v0.16.1 SR-D-35(코어 outer_polygons 거울 — 근사): 주인 마스크의 닫힌 고리(자유 모서리 포함 — maskLoops) 전부의 평면 다각형.
+ * 섬 판정 (d) 는 "어느 고리 안" — 조각마다 바깥 고리 안과 같음(안쪽 고리는 바깥 고리 안). 닫힌 고리가 없으면 볼록 껍질 1개.
+ * 조각 사이 섬(코어 _between_pieces)은 서버 derive 가 정함(화면 표시는 응답 islands 로 대체 — SR-D-14).
+ */
+export function outerPolygons(t: MeshTopo, X: ArrayLike<number>, mask: (e: number) => boolean, n: Vec3): number[][] {
+  const b = planeBasis(n);
+  const out: number[][] = [];
+  for (const lp of maskLoops(t, mask)) {
+    if (!lp.closed || lp.nodes.length < 3) continue;
+    out.push(lp.nodes.flatMap((v) => proj(X, v, b)));
+  }
+  return out.length ? out : [outerPolygon(t, X, mask, n)];
+}
+
+/**
  * §5.2 일반형(코어 enclosed_components 거울). cand = 후보 요소(1), owner = 요소별 주인(≥ 0 주인, −1 후보, −2 막힘),
  * X = 노드 좌표(3·nNodes), nRef(owner) = 그 주인의 평면 법선, outerPoly(owner) = 그 주인 바깥 고리(평면 좌표, null = 검사 안 함).
  */
@@ -221,7 +236,7 @@ export function enclosedComponents(
   owner: Int32Array,
   X: ArrayLike<number>,
   nRef: (owner: number) => Vec3,
-  opts: { maxMm: number; outerPoly?: (owner: number) => ArrayLike<number> | null; ringFrac?: number | null },
+  opts: { maxMm: number; outerPoly?: (owner: number) => ArrayLike<number> | ArrayLike<number>[] | null; ringFrac?: number | null },
 ): EnclosedOut {
   const nE = t.nElems;
   const comp = new Int32Array(nE).fill(-1);
@@ -283,7 +298,7 @@ export function enclosedComponents(
   const zfl = new Map<number, number>();
   const cz = (e: number, n: Vec3) => t.centroids[e * 3] * n[0] + t.centroids[e * 3 + 1] * n[1] + t.centroids[e * 3 + 2] * n[2];
   if (ringFrac != null) out.rings = [];
-  const polyCache = new Map<number, ArrayLike<number> | null>();
+  const polyCache = new Map<number, ArrayLike<number> | ArrayLike<number>[] | null>();
   const ownerNodes = new Map<number, Uint8Array>();
   const nodesOfOwner = (o: number) => {
     let m = ownerNodes.get(o);
@@ -343,8 +358,9 @@ export function enclosedComponents(
     let ok = sizeMm <= opts.maxMm;
     if (ok && opts.outerPoly) {
       if (!polyCache.has(o)) polyCache.set(o, opts.outerPoly(o));
-      const poly = polyCache.get(o);
-      if (poly && poly.length >= 6) {
+      const pg = polyCache.get(o);
+      const polys = (pg == null ? [] : Array.isArray(pg) && pg.length > 0 && typeof pg[0] !== "number" ? (pg as ArrayLike<number>[]) : [pg as ArrayLike<number>]).filter((q) => q.length >= 6);
+      if (polys.length) {
         let cx = 0;
         let cy = 0;
         let cz = 0;
@@ -355,7 +371,7 @@ export function enclosedComponents(
         }
         const m = elems.length;
         const p = proj([cx / m, cy / m, cz / m], 0, b);
-        ok = inPoly2(p[0], p[1], poly);
+        ok = polys.some((q) => inPoly2(p[0], p[1], q));
       }
     }
     if (!ok) {

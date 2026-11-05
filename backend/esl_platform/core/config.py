@@ -868,6 +868,8 @@ class BeadDoeSelectRangeCfg(_M):
     width_floor_q: float = Field(default=0.25, gt=0, lt=1)
     # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 점검 이분 횟수(BD_MATRIX — SELECT_RANGE_INVERTS{usable}), 0 = 끔
     check_steps: int = Field(default=5, ge=0, le=20)
+    # v0.16.1 SR-D-39: usable 끝 모서리 조합 표본 수(SELECT_RANGE_COMBO), 0 = 끔
+    combo_samples: int = Field(default=16, ge=0, le=1024)
 
     @model_validator(mode="after")
     def _max_rel(self) -> "BeadDoeSelectRangeCfg":
@@ -885,6 +887,12 @@ class BeadDoeSelectQualityCfg(_M):
     max_fail_ratio: float = Field(default=0.01, ge=0, le=1)
     flip_deg: float = Field(default=60.0, gt=0, le=180)
     fail_policy: Literal["warn", "skip"] = "warn"
+    # v0.16.1 SR-D-40 요소별 극단값 → SELECT_QUALITY_WARN(warn 정책만, 0 = 그 조건 끔)
+    rot_warn_deg: float = Field(default=45.0, ge=0, le=180)
+    area_ratio_min: float = Field(default=0.2, ge=0, lt=1)
+    # v0.16.1 SR-D-37 비드 안 비선택 피처 왜곡 → FAILED_MESH(SELECT_FEATURE_DISTORTED)
+    distort_rel: float = Field(default=0.25, gt=0, le=10)
+    distort_min_mm: float = Field(default=0.1, ge=0)
 
 
 class BeadDoeSelectIslandCfg(_M):
@@ -934,6 +942,9 @@ class BeadDoeSelectCfg(_M):
     thumb: BeadDoeSelectThumbCfg = BeadDoeSelectThumbCfg()
     # v0.16.1(esl_select_relax.md SR-D-2·§5.2·SR-D-9): 고정 침범 = warn(경고만 — 실행) | skip(v0.16.0 대로 제외), 섬, 보스
     fixed_policy: Literal["warn", "skip"] = "warn"
+    # v0.16.1 SR-D-38 다른 선택 비드 침범(W 변화가 다른 비드 경계·바닥을 움직임): warn = 경고만 | skip = 안 제외(SKIPPED_COLLISION)
+    cross_bead_policy: Literal["warn", "skip"] = "warn"
+    cross_bead_tol_mm: float = Field(default=0.1, ge=0)
     island: BeadDoeSelectIslandCfg = BeadDoeSelectIslandCfg()
     hold: BeadDoeSelectHoldCfg = BeadDoeSelectHoldCfg()
     derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔

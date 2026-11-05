@@ -5,6 +5,7 @@
 - 관계: `esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. 이 문서에 없는 규칙은 BS 를 따르고, 충돌 시 이 문서가 우선. `docs/decisions.md` D-0.16-P2(고정 침범·품질 FAIL = 경고, 뒤집힘만 제외)를 구체화한다. §5A 는 `esl_compare_mesh_options.md`(이하 "C2")의 사다리(C2-D-18)·충실도(C2-D-13)·기록(C2-D-10)·`esl_step_compare.md` SC-D-5(작은 형상 처리)의 **변경 계약**.
 - ID 규칙: 결정 `SR-D-n`, 시험 `V-SR-n`, 리스크 `R-SR-n`, 질문 `Q1~Q5`.
 - 구현 갱신(2026-11-05 통합 release/v0.16.1): Core R1c 가 실제 Ch/R 사례로 더한 규칙과 통합 때 반영한 Core 제안을 SR-D-25~31, 실제 사례 그림 점검 결함 3건 수정을 SR-D-32~34 로 추가(§2 끝), V-SR-19 기준 갱신(§11), 설정 키 `select.island.ring_frac`·`compare.remesh.fidelity.warn_rel_cad`(§4.4), 정보 수준 경고(`level: "info"`)·새 코드(§10).
+- 구현 갱신(2026-11-05 어려운 사례 H1~H4 수정, release/v0.16.1): 시험 엔지니어 H1~H4(X 교차·3단·근접·밀집+슬롯) 결함 9건 수정을 SR-D-35~43, 메시 출처 무관 공통 모핑 코어를 SR-D-44 로 추가(§2 끝), 설정 키(§4.4), 새 코드(§10), V-SR-28(§11). 재사용 문구 = "OK 만 재사용"(SR-D-31·§7.4).
 
 ### 사용자 확정 (2026-11-05, 변경 금지)
 5. **Q1~Q3 = A**: 경고 안이 1위여도 순위 유지 + ⚠ + "경고 없는 최상위" 1줄 / 보스 링 ρ 3 mm·블렌딩 8 mm / 기본 범위는 넓히지 않음(feasible 만).
@@ -97,7 +98,17 @@
 | SR-D-32 | **W 기본 범위는 공칭을 포함**: floor_follow 1 의 바닥 최소 폭 조건으로 하한 lo > W_nom 이면(국부 폭 5 % 분위 W_min 이 보스·구멍·교차부 오탐) 바닥 폭을 `range.width_floor_q`(0.25) 분위 국부 폭으로 다시 계산, 그래도 lo > W_nom 이면 뒤집힌 범위(lo > hi)는 W_nom·(1 ± width_rel), 아니면 lo = W_nom(넓히기만) + 경고 `SELECT_W_RANGE_RESET{lo_mm, hi_mm, new_lo_mm, w_min_mm, q}`. feasible 하한도 같은 바닥 폭 기준. lo ≤ W_nom 인 v0.16.0 범위는 그대로(바이트 불변 — 단 v0.16.0 에서 lo > hi 로 쓸 수 없던 범위는 고쳐지므로 그 비드 R_auto·기저가 바뀜: 합성 h6wavy) | 실 사례 5: [50.29, 48.0] 처럼 하한 > 상한, 공칭 40 이 범위 밖 |
 | SR-D-33 | **기본 범위 끝 뒤집힘 점검**(`bead_select.range_check`, BD_MATRIX 기저 직후): 변수마다 default_range 양 끝 단독 안을 `design_state` 로 판정, 뒤집힘이면 공칭 쪽으로 `range.check_steps`(5) 회 이분해 뒤집힘 없는 끝을 찾아 비드 경고 `SELECT_RANGE_INVERTS{var, lo_mm, hi_mm, usable[lo, hi], inverted[lo, hi]}`(params.json·derived.json·로그). 범위·기저는 바꾸지 않음(R_auto 순환 회피), 0 = 끔. 블렌딩 반경·이웃 거리로 상한을 정하는 규칙은 사례 2 에서 원인이 사면·블렌딩 경계 국부 왜곡(쓸 수 있는 ΔW ≈ ±4 %)이라 단순 식으로 맞지 않아 보류 — 실측 점검으로 대체 | 실 사례 2: 96·144 양 끝 뒤집힘 263·112, 쓸 수 있는 범위 ≈ 115.5~124.5 |
 | SR-D-34 | **썸네일 시점 = 판 법선 쪽 위에서**(`select_render.view`·`view_normal`): 비드마다 n̂_b 를 판 법선(`view3d.plate_normal`) 쪽으로 맞춰 평균(볼록·오목 섞여도 상쇄 없음), 카메라 = 그 쪽 위에서 내려다봄(f = −cos t·n + sin t·η), 화면 오른쪽 = η × n, 위 ≈ +η — sense 무관. **모든 select 썸네일 PNG 바이트가 v0.16.0 과 다름**(표시만 — 해시·판정·결과 불변) | 오목 비드에서 상하·좌우가 뒤집힌 그림 |
-| SR-D-31 | **select 워커 재사용 = OK·FAILED_SOLVE 만**(`doe_jobs.SELECT_REUSE_STATES`): 같은 키 done.json 이어도 스킵 문서(v0.16.0 `SKIPPED_FIXED` 등)면 워커가 재사용하지 않고 코어 bd_eval 에 넘겨 SR-D-13d 재판정 | 워커가 코어보다 먼저 `ev.reusable` 로 재사용해 warn 정책에서 v0.16.0 스킵 안이 다시 실행되지 않던 경로를 막음 |
+| SR-D-31 | **select 워커 재사용 = OK 만**(`doe_jobs.SELECT_REUSE_STATES` 는 OK·FAILED_SOLVE 를 통과시키지만 FAILED_SOLVE 는 `ev.reusable` 이 재시도 대상(`RETRY_STATES`)으로 거르므로 실제 재사용 = OK 뿐): 같은 키 done.json 이어도 스킵 문서(v0.16.0 `SKIPPED_FIXED` 등)면 워커가 재사용하지 않고 코어 bd_eval 에 넘겨 SR-D-13d 재판정 | 워커가 코어보다 먼저 `ev.reusable` 로 재사용해 warn 정책에서 v0.16.0 스킵 안이 다시 실행되지 않던 경로를 막음 |
+| SR-D-35 | **섬 포함 판정 = 단 바닥의 모든 조각·열린 고리**(H1·H2·H4 — Med#3·#4, High#1 근본 원인): `features.outer_polygons(ix, F_k, n)` = F_k 의 요소 연결 조각(최소 요소 순)마다 경계(조각 요소 1 ∧ (밖 요소 ≥ 1 ∨ 자유 모서리)) 고리 중 \|넓이\| 최대 닫힌 고리(없으면 그 조각 볼록 껍질) — §5.2(d) 는 어느 조각 안이면 통과, 바닥 조각 사이(섬이 조각을 가름)면 섬 노드에서 2h 안 조각 ≥ 2 의 고리 점 합 볼록 껍질 안. **판 가장자리 = 판 전체 외곽 자유 모서리만**(`features.plate_edge_nodes` = 메시 연결 성분마다 자유 고리 중 평면 투영 넓이 최대 — ix 캐시): 경계 노드에 닿는 구멍(비드 벽을 가로지르는 슬롯)은 관통 구멍(`touch`), 그 구멍이 끊은 경계 고리는 구멍을 건너 잇는다(`_bridge_holes` — 열린 고리 끝점이 같은 구멍 노드인 고리끼리 평면 거리 가까운 쪽, 가상 선분 1개, `bridged` 수). 조각 1개·자유 모서리 없음·판 외곽에만 닿는 자유 모서리면 v0.16.1 첫 판과 같음(바이트 불변) | 교차 비드가 바닥을 두 조각으로 가르거나 구멍이 바닥 가장자리를 끊으면 가장 큰 닫힌 고리 하나가 다른 조각·딤플 고리라 11~14 mm 딤플·보스가 `SELECT_ISLAND_TOO_LARGE` → 사면 보간으로 찢어짐. 벽을 가로지르는 슬롯 1개로 `SELECT_OPEN_BOUNDARY` → W 꺼짐 |
+| SR-D-36 | **교차 비드 하나만 고를 때 기준 평면 = 판 쪽 경계 노드**(H1 High#2): 첫 맞춤 잔차 > `plane_rms_mm` 일 때만 `_plate_refit` — 비드에 닿은 밖 평행 요소 높이 묶음(간격 > `plate_tol_mm`) 중 최다 = 판(멈춤 요소의 절반 이상일 때만), 다른 묶음 중 판에서 이 비드 바닥 쪽 높이이고 판 영역과 평행으로 이어지지 않으며(벽으로만 이어짐) 섬 상한보다 큰 평행 영역 = 교차하는 다른 비드 바닥(증거). 증거가 있으면 밖 요소가 모두 판 높이 평행 요소인 바깥 고리 노드(J 제외)로 다시 맞춤 → 잔차 ≤ `plane_rms_mm` 이면 그 평면 + 정보 `SELECT_BASE_REFIT{n_excluded, rms_mm, level info}`, 아니면 **derive 오류 `SELECT_BASE_AMBIGUOUS{bead, rms_mm, n_plate}`**(422 — "교차하는 비드를 함께 선택"). 증거가 없으면(물결 판 등) v0.16.1 첫 판 그대로 `SELECT_NONPLANAR_BASE`. **영향**: 실 사례 1 레일 A 만 선택 = D 7.07 → 8.00(참값), NONPLANAR·TIER_MISSING → BASE_REFIT(2026-11-05 통합 판단 "정상" 을 대체) | S 만 고르면 D_nom 0.21(참값 15), Dp 만 21.8(참값 25) — 경계가 다른 비드 바닥(−25)·벽을 지나 평면이 기움 |
+| SR-D-37 | **바닥이 움직이는데 붙은 피처가 안 움직이면 안 실패**(H4 High#1 안전망): derive 가 `bd.features` = (a) 섬이 못 된 둘러싸인 성분(`SELECT_ISLAND_TOO_LARGE` — 크기·다각형 탈락) {rim = 주인 바닥 노드, interior = 나머지}, (b) 안쪽 고리로 남은 피처(비드 밖 연결 성분 중 판 아닌 것 — 다른 비드·제외 없음, bbox ≤ `island.max_mm`, 가장 가까운 단 바닥 높이에서 `plate_tol_mm` 넘게 벗어나고 판 쪽으로 `ring_frac`·D 미만: 바닥 높이 요철·고리형 둔덕 제외) {rim = 그 단 바닥 노드 중 가장 가까운 고리(최소 거리 + 2h), interior = 성분 노드}. 안마다 u = x − x0, t = mean u(rim), dev = max ‖u(interior) − t‖ > max(`quality.distort_min_mm` 0.1, `quality.distort_rel` 0.25 × ‖t‖) → **FAILED_MESH `SELECT_FEATURE_DISTORTED{bead, k, dev_mm, floor_mm}`**(정책 무관, 뒤집힘 다음 순서). 자료 = `design_checks(D, B)` → `derived.npz` `chk_f*`(없으면 키 없음 — 바이트 불변), `design_state(..., checks=, values=)`(checks 없으면 검사 없음) | 슬롯·섬 판정 실패로 보스·루버가 사면/안쪽 고리로 남으면 D +1.5 에서 보스 +0.75·루버 0 인데 READY(경고만) |
+| SR-D-38 | **다른 선택 비드 침범**(H3 Med#6): `design_checks.cross` = W 변수 v(비드 a)의 기저가 다른 선택 비드 b 의 경계·바닥 노드(a 자신의 경계·바닥 제외)에 주는 ‖B_v‖ > 0 인 노드·크기(`chk_c*`). 안에서 \|Δv\|·‖B_v‖ > `cross_bead_tol_mm`(0.1) 인 노드가 있으면 `SELECT_CROSS_BEAD_MOVE{n, max_mm, beads[[v, b]…]}` — `cross_bead_policy: warn`(기본) = READY + 안 경고(받기·순위 `warn` CROSS_BEAD_MOVE), `skip` = **SKIPPED_COLLISION `SELECT_CROSS_BEAD_VIOLATION`**(`paicad_io.SELECT_CELL_STATE`). 판정 순서 = 뒤집힘 → 피처 왜곡 → 고정(skip) → 침범(skip) → 품질(skip) | P 의 W 상한이 A 바닥을 4.2 mm·경계를 6 mm 움직여도 알림 없음 |
+| SR-D-39 | **범위 = 조합 검증 + 다단·이웃 제약 경고**(H1·H2·H3 Med#5): (a) `range_check` 끝에 `_range_combo` — 변수별 usable 끝의 모서리 조합 표본(변수 n ≤ log2 m 이면 2^n 전부, 아니면 시드 0 난수 m = `range.combo_samples` 16 — 결정적)을 뒤집힘 판정(`mesh_quality.inverted_count` = affected_quality 의 뒤집힘과 같은 식, 품질 지표 생략)해 뒤집힌 조합이 있으면 공칭 쪽 같은 비율 s 를 `check_steps` 회 이분 → 선택 경고 `SELECT_RANGE_COMBO{vars, corners, inverted_n, scale, usable{var: [lo, hi]}}`(Derived.warnings·params.json warnings — 범위·기저 불변, 0 = 끔). (b) derive `SELECT_W_RANGE_LIMIT{by: tier\|neighbor, move_mm, lim_mm[, with]}` — W 기본 범위 끝 경계 이동 max\|W − 끝\|/2 가 다단 비드의 이웃 단 바닥 노드 사이 최소 평면 간격, 또는 맞닿지 않은(> h) 다른 선택 비드 경계까지 최소 거리의 절반보다 크면(경고만 — 단 간격을 범위 식에 넣는 것은 R_auto·기저 순환이라 보류) | 변수별 usable 끝을 따로 구해 조합 2^4 중 READY 4/16(H1)·2/8(H3), 3단 W 범위 끝 모두 뒤집힘(H2) |
+| SR-D-40 | **요소별 극단값 = 안 단위 품질 경고**(H1 Med#7): 영향 요소의 넓이 비(안/공칭) 최소 < `quality.area_ratio_min` 0.2 또는 법선 회전 최대 > `quality.rot_warn_deg` 45°(≤ `flip_deg`)이면 새 Fail 비율과 무관하게 `SELECT_QUALITY_WARN{…, area_ratio_min, rot_max_deg}`(warn 정책만 — skip 정책은 v0.16.0 판정 그대로(V-SR-1), 극단값으로 제외하지 않음), 0 = 그 조건 끔. `quality` dict(result.json)는 그대로. **`flip_deg` 60° 유지**(검토): 45° 로 낮추면 H2 D3 하한(52.9°)·실 사례 5 D 하한(56.4°)처럼 넓이 비 ≥ 0.5 인 가파른 사면 정상 변형이 뒤집힘(실행 제외)이 됨 — 45~60° 는 경고(이 결정)로, 60° 초과·야코비안 ≤ 0 만 제외 | 넓이 비 0.11·법선 52~59° 요소가 경고 없이 READY |
+| SR-D-41 | **④ defeature 목록 = 실제로 바뀐 것만**(H4 Low#8): `gdf.find_features` 에서 높이 hC ≤ `plane_tol_mm` 인 묶음(자유 고리 ≤ 1 — 바탕 면과 한 평면인 경계에 걸친 보스의 평평한 조각)은 bead·flange 아님(목록·억제 없음, 그 안 구멍은 hole 규칙). defeature 단계(cad·refine 실패 형상)에서만 쓰여 cad 성공 형상 바이트 불변 | 경계에 걸친 보스가 "bead h 0.0" 으로 적혀 `suppressed_max_mm` 2.11 이 그 행에도 붙음 |
+| SR-D-42 | **벽에 붙은 섬**(H1 변형 Low#9): 원인 = 보스가 바닥을 두 조각으로 가름 → SR-D-35 조각 사이 규칙으로 섬(B2_D1 +3.7 READY). 바닥 둘레가 아예 끊겨(요소 1개 안) 벽 성분에 이어진 보스는 위상으로 떼지 못함(법선 골·발치 요소 분리 시도 — 구조 4각 메시에서 보스 벽·비드 벽 법선 차 60~80° 라 오탐/누락) → 섬으로 흡수하지 않고 SR-D-37 (b) 안전망이 FAILED_MESH 로 막음 | 보스 r_top 3.5 에서 섬 0·구멍 1 → D 변경 뒤집힘 |
+| SR-D-43 | **Verifier Low 4건**: (a) 교차부 사면 Voronoi 거리 동률 = **비드 id 작은 쪽**(`derive_obj` 층 주인 번호 rank — 작은 id 이웃과 거리가 같으면 내줌, 전체·단일 비드 derive 같은 규칙), (b) 받기 rad `#ESL WARNING` 주석 줄 ≤ 100자(`stages.sel_warn_lines` — FIXED_NODES 줄당 ≤ 10개 ∧ ≤ 100자, 머리 줄이 넘으면 설명을 다음 줄로; 짧은 ID 는 첫 판과 같은 줄), (c) 재사용 문구 = "OK 만 재사용"(SR-D-31·§7.4), (d) 프런트 상단 바 버전 칩 = 빌드 시 저장소 루트 `VERSION`(`__APP_VERSION__` — vite define, 없으면 GET /version; 서버 판이 다르면 툴팁 "서버 v…") | 검증 지적 |
+| SR-D-44 | **모핑 코어는 메시 출처와 무관하게 공통 적용**(사용자 지시 2026-11-05): SR-D-35~43 규칙은 select 전용이 아니라 공통 모듈 — 섬·구멍·바닥 조각 다각형·판 가장자리 = `esl/mesh/features.py`(`enclosed_components`·`free_edge_components`·`outer_polygons`·`plate_edge_nodes`·`_between_pieces`), 기준 평면·피처·안 판정 = 새 `esl/morph/core.py`(`plane_fit`·`plate_refit`·`bridge_holes`·`stuck_features`·`enclosed_features`·`w_limits`·`inverted_any`·`range_combo`·`cross_footprint`·`extremes`·`feature_distortion`·`cross_move`·`checks_arrays`·`checks_from_arrays`·`post_morph_warnings`). 입력 = 메시 노드·요소(MeshIndex/MESH_KEYS dict)·좌표·피처 라벨(요소 마스크)만, 출처(gmsh STEP 메시·사용자 .rad/.inc·재메시)를 모름. 호출: select(`bead_select` — 기준 메시가 STEP gmsh 이든 Case .rad/.inc 이든 같은 경로), 자동 탐지 기본 모핑(paicad same·mesh 안 좌표 → `post_morph_warnings` = 극단 요소 경고 `MORPH_EXTREME_ELEMENTS`, 해당 없으면 키 없음), ③ STEP 모핑(보류 — `stages._design_mesh` 에 호출 지점 TODO 1줄). 시험 = H1~H4 메모리 메시 ↔ .rad + `#include` .inc 왕복, H4 gmsh STEP 메시 ↔ .rad/.inc 왕복의 판정·경고 코드 동일 | 같은 비드라도 메시를 어디서 만들었는지에 따라 판정이 달라지면 안 됨 |
 
 ## 3. 막는 조건 결정표 (확정 3)
 
@@ -163,7 +174,12 @@ bead_doe:
     fixed_policy: warn            # warn | skip (SR-D-2)
     quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn}   # fail_policy warn | skip
     range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6,  # *_max_rel = feasible 상한(SR-D-10)
-            width_floor_q: 0.25, check_steps: 5}   # SR-D-32 바닥 폭 분위 · SR-D-33 범위 끝 점검(0 = 끔) — 기본값이면 해시 제외
+            width_floor_q: 0.25, check_steps: 5,   # SR-D-32 바닥 폭 분위 · SR-D-33 범위 끝 점검(0 = 끔) — 기본값이면 해시 제외
+            combo_samples: 16}                     # SR-D-39 usable 모서리 조합 표본(0 = 끔)
+    # SR-D-40 요소 극단값 경고 · SR-D-37 비드 안 피처 왜곡(FAILED_MESH) — quality 절에 추가(기본값이면 해시 제외)
+    #   quality: {…, rot_warn_deg: 45.0, area_ratio_min: 0.2, distort_rel: 0.25, distort_min_mm: 0.1}
+    cross_bead_policy: warn        # SR-D-38 다른 선택 비드 침범: warn | skip(SKIPPED_COLLISION)
+    cross_bead_tol_mm: 0.1
     island: {max_mm: 40.0, ring_frac: 0.9}   # 섬 평면 bbox 대각 상한(§5.2) · 고리형 둔덕 비율(SR-D-26)
     hold: {ring_mm: 3.0, blend_mm: 8.0}                                  # Q2 = A 확정
   compare:
@@ -406,7 +422,7 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 
 ### 7.4 판정 규칙 판 (미리보기·실행)
 - `grid_manifest.rules = 2`. 백엔드 `preview_cells` 는 `rules` 없는 미리보기에 `rules_outdated: true` 를 붙이고, 화면은 띠 1줄 "판정 규칙이 바뀌었습니다 — 다시 미리보기하면 경고 안도 실행됩니다"(실행은 막지 않음 — 그 미리보기의 READY 안만 실행).
-- 안 재사용(SR-D-13d): select 의 `bd_eval` 은 재사용 전에 `design_state` 를 다시 계산. 현재 state ≠ READY → 스킵 문서(재사용 안 함). 현재 READY ∧ 이전 done 상태 ∈ {OK, FAILED_SOLVE} → 재사용. 현재 READY ∧ 이전 `SKIPPED_FIXED` → 재사용 안 함(해석).
+- 안 재사용(SR-D-13d): select 의 `bd_eval` 은 재사용 전에 `design_state` 를 다시 계산. 현재 state ≠ READY → 스킵 문서(재사용 안 함). 현재 READY ∧ 이전 done 상태 OK → 재사용(OK 만 재사용 — FAILED_SOLVE 는 `ev.reusable` 이 재시도 대상으로 거름). 현재 READY ∧ 이전 `SKIPPED_FIXED` → 재사용 안 함(해석).
 
 ### 7.5 이미 끝난(DONE) 스터디
 - 결과·보고서·받기 파일 변경 없음(자동 재생성 없음). 복제(`clone`)하면 선택 sha 그대로 복사, 새 규칙으로 미리보기부터.
@@ -455,12 +471,20 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 | 코드 | 종류 | 의미 |
 |---|---|---|
 | `SELECT_FIXED_MOVED` | 안 경고 | 고정 노드 n개 최대 x mm 이동(warn 정책) — 화면 "체결 위치 어긋남" |
-| `SELECT_QUALITY_WARN` | 안 경고 | 새 Fail 비율 > 상한(warn 정책) |
+| `SELECT_QUALITY_WARN` | 안 경고 | 새 Fail 비율 > 상한 또는 요소 극단값(넓이 비 < area_ratio_min ∨ 법선 회전 > rot_warn_deg — `area_ratio_min`·`rot_max_deg` 키, SR-D-40)(warn 정책) |
 | `SELECT_INNER_LOOP` | derive 경고 | 섬이 아닌 안쪽 고리 n개 — v0.16.0 대로 처리. 모두 고리형 둔덕(ring = n)이면 `level: "info"`(SR-D-25, 문구 `SELECT_INNER_LOOP_RING`) |
 | `SELECT_W_RANGE_RESET` | derive 경고 | W 기본 하한 > 공칭 → 분위값·공칭 기준으로 고침(SR-D-32) |
 | `SELECT_RANGE_INVERTS` | 기저 경고(BD_MATRIX) | 기본 범위 끝 뒤집힘 + 쓸 수 있는 범위 `usable`(SR-D-33) |
 | `SELECT_BEAD_NETWORK` | derive 경고 | 비드가 다른 비드와 이어짐(T·L 교차) — 교차부 사면 Voronoi 분할(SR-D-29) |
 | `SELECT_SLOPE_ABOVE_PLATE` | derive 정보(`level: "info"`) | 판 높이 위로 나간 사면 요소 n개를 빼고 다시 탐색(SR-D-28) |
+| `SELECT_BASE_AMBIGUOUS` | derive 오류(422) | 교차하는 비선택 비드 때문에 판 쪽 노드로도 기준 평면이 안 정해짐 — 교차 비드 함께 선택(SR-D-36) |
+| `SELECT_BASE_REFIT` | derive 정보(`level: "info"`) | 판 쪽 경계 노드만으로 기준 평면 다시 맞춤{n_excluded, rms_mm}(SR-D-36) |
+| `SELECT_FEATURE_DISTORTED` | 안 FAILED_MESH | 비드 안 비선택 피처 왜곡{bead, k, dev_mm, floor_mm}(SR-D-37) |
+| `SELECT_CROSS_BEAD_MOVE` | 안 경고 | W 변화가 다른 선택 비드 경계·바닥 이동{n, max_mm, beads}(warn, SR-D-38) |
+| `SELECT_CROSS_BEAD_VIOLATION` | 안 SKIPPED_COLLISION | 위와 같음, `cross_bead_policy: skip`(SR-D-38) |
+| `SELECT_RANGE_COMBO` | 선택 경고(BD_MATRIX) | usable 끝 조합 뒤집힘 + 함께 쓸 범위{scale, usable}(SR-D-39) |
+| `SELECT_W_RANGE_LIMIT` | derive 경고 | W 범위 끝 경계 이동 > 단 간격·이웃 거리 절반(SR-D-39) |
+| `MORPH_EXTREME_ELEMENTS` | 안 경고(자동 탐지 기본 모핑) | 공통 모핑 코어 사후 점검 극단 요소{area_ratio_min, rot_max_deg}(SR-D-44) |
 | `SELECT_ISLAND_TOO_LARGE` | derive 경고 | 둘러싸였지만 `island.max_mm` 초과 — 섬 아님 |
 | `SELECT_ISLAND_SHEAR` | derive 경고 | 곡면 바닥에서 섬 평행 이동과 둘레 차(표시만) |
 | `SELECT_HOLD_NO_FIXED` | derive 경고 | `hold_fixed` 1 인데 대상 고정 노드 없음 |
@@ -515,6 +539,7 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 | V-SR-25 | **UI**: 메시 방식 "형상 단순화"·툴팁 문구, 억제 목록 표(50행 + 외 n), 메시 입력 진단 글자, 2560·1920 잘림 없음 | `frontend/__tests__/doe_compare.test.tsx`, mock |
 | V-SR-26 | **통합 규칙(SR-D-25~31)**: 고리형 비드 R1·R2·R3 `SELECT_INNER_LOOP{n 1, ring 1, level info}`; 경계에 걸친 보스 `SELECT_SLOPE_ABOVE_PLATE` + 보스 윗면 고리 없음; `cad_chord_mm`(원통 R 10·h 3 = R(1 − cos(h/2R)) ± 5 %, 평면·90° 모서리 0), `warn_rel_cad 0` = 절대; 기본 설정 `_cmp_sha`·profile 해시 불변(regress); 워커 v0.16.0 SKIPPED_FIXED done → 재해석(SR-D-31) | `tests/doe/test_bead_select_real.py`·`test_mesh_remesh.py`, `worker/tests/test_doe_select_relax_jobs.py` |
 | V-SR-27 | **결함 3건**: 사례 5 W 범위 공칭 포함 + `SELECT_W_RANGE_RESET`, 사례 2·5 `range_check` usable 양 끝 뒤집힘 없음·기본 범위 끝 FAILED_MESH(명시 경고), check_steps 0 = 끔; 볼록·오목 거울 메시 썸네일 시점 벡터 동일·전경 무게중심 ≤ 5 px; h6wavy golden = 뒤집힌 v0.16.0 범위만 예외 | `tests/doe/test_bead_select_real.py`·`test_select_render.py`·`tests/mesh/test_features.py` |
+| V-SR-28 | **어려운 사례 H1~H4(SR-D-35~43)**: H1 둘 다 선택 S 섬 2·Dp 섬 1·TOO_LARGE 없음·D 변경 섬 강체 오차 < 1e-9; S 단독 D_nom = 15 ± 0.2·Dp 단독 25 ± 0.2(`SELECT_BASE_REFIT`), 판 요철 + plane_rms 0.2 → `SELECT_BASE_AMBIGUOUS`; 보스 r 3.5 변형 섬 1·B2_D1 +3.7 READY; H2 단 1·2·3 섬·구멍 1·W 켜짐·`SELECT_W_RANGE_LIMIT{tier}`; H3 B3_W 72 → `SELECT_CROSS_BEAD_MOVE`(skip = SKIPPED_COLLISION); H4 슬롯 있음 OPEN_BOUNDARY 없음·고리 닫힘(bridged 1)·W 켜짐·섬 4·D +1.5 섬 강체(+1.5), island.max_mm 8 → FAILED_MESH, 벽에 붙은 보스 → `SELECT_FEATURE_DISTORTED`; H1 usable 조합 2^4 → `SELECT_RANGE_COMBO` usable 조합 뒤집힘 0; READY 극단 요소 = QUALITY_WARN(극단값); 동률 규칙; `inverted_count` = affected_quality; ④ H4 STEP `find_features` 높이 0 bead·flange 없음; 받기 주석 줄 ≤ 100자. 회귀: 섬·구멍·교차 없는 합성(h5·h2·feat·open·wavy·openfeat)과 실 사례 7종 derive·기저·판정 상태 불변(조합 경고 `SELECT_RANGE_COMBO` 가 h5 params/derived 경고에 더해짐 — 판정·기저 불변), 정상 STEP ④·③·①② regress 바이트 동일 | `tests/doe/test_bead_select_hard.py`(생성기 `tests/doe/synth_hard.py`), `tests/geom/test_defeature.py`, `tests/doe/test_select_render.py` |
 | V-SR-R2 | **실기**: 이슈 #53 Ch/R STEP(사다리 v0.16.0 에서 remesh 까지 간 형상) — defeature 단계 성공 여부, 종류별 억제 수, 억제 영역 최대·바깥 편차, cad 성공 형상 결과 불변, 강성 지표 차(기준 대비 — 억제 영향 크기) | `docs/manual/bead_doe_check.md` 절 추가 |
 
 ## 12. 파일 소유권 · 작업 분해

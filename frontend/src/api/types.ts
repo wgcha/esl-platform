@@ -2635,7 +2635,11 @@ export interface DoePreviewCell {
   warnings?: DoeCellWarning[] | null;
 }
 /** v0.16.1 안 경고(§4.3) */
-export type DoeCellWarning = { code: "SELECT_FIXED_MOVED"; n: number; max_mm: number } | { code: "SELECT_QUALITY_WARN"; new_fail: number; new_fail_ratio: number };
+export type DoeCellWarning =
+  | { code: "SELECT_FIXED_MOVED"; n: number; max_mm: number }
+  | { code: "SELECT_QUALITY_WARN"; new_fail: number; new_fail_ratio: number; area_ratio_min?: number; rot_max_deg?: number }
+  /** v0.16.1 SR-D-38 다른 선택 비드 침범(warn 정책) */
+  | { code: "SELECT_CROSS_BEAD_MOVE"; n: number; max_mm: number; beads?: string[][] };
 export interface DoeFixedViol {
   n: number;
   max_mm: number;

@@ -1,5 +1,5 @@
 {
- "version": "2026-11-05.1",
+ "version": "2026-11-05.2",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -187,6 +187,14 @@
   "SELECT_ISLAND_SHEAR": "곡면 바닥에서 섬(딤플·버링)의 평행 이동과 둘레 이동이 다릅니다(표시만) — 섬 둘레 요소 품질을 확인하세요.",
   "SELECT_HOLD_NO_FIXED": "'체결 구멍 둘레 고정'을 켰지만 비드·블렌딩 영역에 고정 노드가 없습니다 — 옵션이 아무것도 바꾸지 않습니다.",
   "SELECT_HOLD_INVALID": "hold_fixed 는 0 또는 1 이어야 합니다.",
+  "SELECT_BASE_AMBIGUOUS": "비드 기준 평면을 정할 수 없습니다 — 경계가 선택하지 않은 다른 비드(벽·바닥)를 지납니다. 교차하는 비드를 함께 선택하세요.",
+  "SELECT_BASE_REFIT": "(정보) 경계가 선택하지 않은 다른 비드를 지나 판 쪽 경계 노드만으로 기준 평면을 다시 맞췄습니다(뺀 노드 {n_excluded}개) — 교차하는 비드도 함께 선택하는 것이 정확합니다.",
+  "SELECT_FEATURE_DISTORTED": "비드 바닥이 움직이는데 바닥 안 비선택 피처(보스·딤플·루버 — 섬으로 보지 못한 것)가 같이 움직이지 않아 형상이 찢어져 이 안을 제외했습니다(최대 {dev_mm} mm). 섬 크기 상한(select.island.max_mm)을 확인하거나 피처를 바닥에 넣으세요.",
+  "SELECT_CROSS_BEAD_MOVE": "한 비드의 폭(W) 변화가 다른 선택 비드의 경계·바닥을 움직였습니다(노드 {n}개, 최대 {max_mm} mm) — 실행·순위에는 포함됩니다(select.cross_bead_policy: skip 이면 제외).",
+  "SELECT_CROSS_BEAD_VIOLATION": "한 비드의 폭(W) 변화가 다른 선택 비드의 경계·바닥을 움직여 이 안을 제외했습니다(select.cross_bead_policy: skip).",
+  "SELECT_RANGE_COMBO": "변수별로는 뒤집히지 않는 범위라도 함께 바꾸면 뒤집히는 조합이 있습니다(표본 {corners}개 중 {inverted_n}개) — 함께 쓸 수 있는 범위 ≈ 공칭에서 {scale} 배: {usable}.",
+  "SELECT_W_RANGE_LIMIT": "폭 W 기본 범위 끝의 경계 이동({move_mm} mm)이 {by} 제약({lim_mm} mm — tier = 이웃 단 바닥 간격, neighbor = 다른 비드 경계까지 거리의 절반)보다 큽니다 — 범위 끝 안이 뒤집힐 수 있습니다.",
+  "MORPH_EXTREME_ELEMENTS": "모핑 뒤 극단 요소(넓이 비 최소 {area_ratio_min}, 법선 회전 {rot_max_deg}°)가 있습니다 — 메시 출처와 무관한 공통 모핑 점검(경고만).",
   "MESH_DEFEATURED": "CAD 메시 실패 → 작은 형상 {n}개 억제({counts}), 억제 영역 최대 {suppressed_max_mm} mm · 그 밖 최대 {outside_mm} mm: {first} — 형상 단순화 메시라 강성에 억제 영향이 섞일 수 있습니다.",
   "DEFEATURE_FIDELITY": "작은 형상 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 허용치(remesh.fidelity.fail_mm)보다 멀어 다음 단계로 넘겼습니다.",
   "DEFEATURE_NO_FEATURE": "형상 단순화 단계: 억제할 작은 형상이 없어 건너뛰었습니다.",

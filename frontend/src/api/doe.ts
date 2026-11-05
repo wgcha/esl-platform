@@ -370,22 +370,34 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   SELECT_SLOPE_ABOVE_PLATE: "판 높이 위(경계에 걸친 보스 벽)로는 사면을 넓히지 않았습니다",
   SELECT_W_RANGE_RESET: "폭 W 기본 하한이 공칭보다 커서(국부 폭 오탐) 공칭을 포함하도록 고쳤습니다",
   SELECT_RANGE_INVERTS: "기본 범위 끝에서 요소가 뒤집힙니다 — 범위를 줄이거나 블렌딩 반경을 키우세요",
+  // v0.16.1 어려운 사례 수정(SR-D-35~43)
+  SELECT_BASE_AMBIGUOUS: "기준 평면을 정할 수 없습니다 — 교차하는 비드를 함께 선택하세요",
+  SELECT_BASE_REFIT: "경계가 선택하지 않은 다른 비드를 지나 판 쪽 경계로 기준 평면을 다시 맞췄습니다 — 교차 비드도 함께 선택하세요",
+  SELECT_FEATURE_DISTORTED: "바닥 안 비선택 피처가 바닥과 같이 움직이지 않아 형상이 찢어집니다(제외)",
+  SELECT_CROSS_BEAD_MOVE: "폭 변화가 다른 선택 비드의 경계·바닥을 움직였습니다",
+  SELECT_CROSS_BEAD_VIOLATION: "다른 선택 비드 침범(제외)",
+  SELECT_RANGE_COMBO: "변수를 함께 바꾸면 뒤집히는 조합이 있습니다 — 함께 쓸 수 있는 범위를 확인하세요",
+  SELECT_W_RANGE_LIMIT: "폭 W 범위 끝의 경계 이동이 단 간격·이웃 비드 거리보다 큽니다",
 };
 /** v0.16.1 derive 경고 코드(비드·선택 warnings[].code — 서버 문구 원본 resources/doe_messages.json) */
 export type SelectDeriveWarnCode =
   | "SELECT_SLOPE_LEAK" | "SELECT_TIER_MISSING" | "SELECT_OPEN_BOUNDARY" | "SELECT_DISCONNECTED" | "SELECT_NONPLANAR_BASE"
   | "SELECT_BLEND_OVERLAP" | "SELECT_BLEND_CLIPPED" | "SELECT_FIXED_IN_BEAD" | "SELECT_FIXED_IN_BLEND" | "SELECT_WIDTH_UNDEFINED"
   | "SELECT_FIXED_LAYER_OVERLAP" | "SELECT_INNER_LOOP" | "SELECT_ISLAND_TOO_LARGE" | "SELECT_ISLAND_SHEAR"
-  | "SELECT_HOLD_NO_FIXED" | "SELECT_BEAD_NETWORK" | "SELECT_SLOPE_ABOVE_PLATE" | "SELECT_W_RANGE_RESET" | "SELECT_RANGE_INVERTS";
+  | "SELECT_HOLD_NO_FIXED" | "SELECT_BEAD_NETWORK" | "SELECT_SLOPE_ABOVE_PLATE" | "SELECT_W_RANGE_RESET" | "SELECT_RANGE_INVERTS"
+  | "SELECT_BASE_REFIT" | "SELECT_RANGE_COMBO" | "SELECT_W_RANGE_LIMIT";
 
 const mm1 = (v: number) => (v < 10 ? Number(v.toFixed(2)).toString() : v.toFixed(1));
 /** v0.16.1 안 경고 1줄(§8): FIXED_MOVED = "고정 노드 n개, 최대 x mm 이동", QUALITY_WARN = "새 Fail m (r %)" */
 export function cellWarnText(w: DoeCellWarning): string {
   if (w.code === "SELECT_FIXED_MOVED") return `고정 노드 ${w.n.toLocaleString()}개, 최대 ${mm1(w.max_mm)} mm 이동`;
-  return `새 Fail ${w.new_fail.toLocaleString()} (${(w.new_fail_ratio * 100).toFixed(1)} %)`;
+  if (w.code === "SELECT_CROSS_BEAD_MOVE") return `다른 비드 경계·바닥 ${w.n.toLocaleString()}노드, 최대 ${mm1(w.max_mm)} mm 이동`;
+  const ext = w.area_ratio_min != null || w.rot_max_deg != null
+    ? ` · 넓이 비 최소 ${Number(w.area_ratio_min ?? 1).toFixed(2)} · 법선 회전 ${Math.round(Number(w.rot_max_deg ?? 0))}°` : "";
+  return `새 Fail ${w.new_fail.toLocaleString()} (${(w.new_fail_ratio * 100).toFixed(1)} %)${ext}`;
 }
 /** 순위 행 경고 이름 */
-export const RANK_WARN_NAME: Record<string, string> = { FIXED_MOVED: "체결 위치 어긋남", QUALITY_WARN: "품질 경고" };
+export const RANK_WARN_NAME: Record<string, string> = { FIXED_MOVED: "체결 위치 어긋남", QUALITY_WARN: "품질 경고", CROSS_BEAD_MOVE: "다른 비드 침범" };
 /** v0.16.1 판정 규칙 판 띠(§7.4) */
 export const RULES_OUTDATED_TEXT = "판정 규칙이 바뀌었습니다 — 다시 미리보기하면 경고 안도 실행됩니다";
 

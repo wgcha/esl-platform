@@ -146,6 +146,15 @@ def boundary_loops(index: MeshIndex, bead_mask: np.ndarray, *,
     E = index.edge_nodes[bedge]
     if E.size == 0:
         return [], bool(free.any())
+    return loops_from_edges(E), bool(free.any())
+
+
+def loops_from_edges(E: np.ndarray) -> list[dict]:
+    """모서리 (m,2) 노드 쌍 → 고리 [{nodes(idx 순서), closed}] (``boundary_loops`` 본문 — 끝점(차수 1) 먼저, 그다음 최소 노드,
+    작은 이웃 우선. 결정적)."""
+    E = np.asarray(E, dtype=np.int64)
+    if E.size == 0:
+        return []
     # 노드 → 이웃(경계 그래프)
     nodes = np.unique(E.ravel())
     pos = {int(v): i for i, v in enumerate(nodes.tolist())}
@@ -179,7 +188,7 @@ def boundary_loops(index: MeshIndex, bead_mask: np.ndarray, *,
                 break
             cur, nxt = nxt, cand[0]
         loops.append({"nodes": np.asarray(chain, np.int64), "closed": closed})
-    return loops, bool(free.any())
+    return loops
 
 
 # ====================================================================== v0.16.1 섬·구멍 분류 (§5.2·§5.3)
@@ -244,6 +253,69 @@ def outer_polygon(ix: MeshIndex, mask: np.ndarray, n_ref: np.ndarray) -> np.ndar
     return ix.X[nodes[hull.vertices]]
 
 
+def outer_polygons(ix: MeshIndex, mask: np.ndarray, n_ref: np.ndarray) -> list[np.ndarray]:
+    """v0.16.1 SR-D-35 요소 마스크의 조각(요소 인접 연결 성분, 최소 요소 순)마다 바깥 고리 노드 좌표(3D) 목록.
+    조각 경계 = 조각 요소 1개 ∧ (밖 요소 ≥ 1 ∨ 자유 모서리) — 구멍·슬롯이 바닥 가장자리를 끊어도 고리가 닫힌다. 바깥 고리 = 닫힌
+    고리 |평면 넓이| 최대, 닫힌 고리가 없으면 조각 노드 볼록 껍질. 조각 1개 ∧ 자유 모서리 없음이면 ``outer_polygon`` 과 같은 고리."""
+    m = np.asarray(mask, bool)
+    e = np.flatnonzero(m)
+    if e.size == 0:
+        return []
+    ncomp, lab = csgraph.connected_components(ix.adj[e][:, e], directed=False)
+    first = np.full(ncomp, np.iinfo(np.int64).max)
+    np.minimum.at(first, lab, e)
+    out = []
+    for c in np.argsort(first, kind="stable").tolist():
+        pm = np.zeros(ix.n_elems, bool)
+        pm[e[lab == c]] = True
+        nin = ix.edge_in_count(pm)
+        sel = (nin >= 1) & (((ix.edge_count - nin) >= 1) | (ix.edge_count == 1))
+        loops = loops_from_edges(ix.edge_nodes[sel])
+        o, _inner = split_outer_inner(loops, ix.X, n_ref)
+        if o is not None:
+            out.append(ix.X[loops[o]["nodes"]])
+            continue
+        out.append(_hull(ix, pm, n_ref))
+    return out
+
+
+def _hull(ix: MeshIndex, mask: np.ndarray, n_ref: np.ndarray) -> np.ndarray:
+    nodes = ix.elem_nodes(mask)
+    if nodes.size < 3:
+        return ix.X[nodes]
+    from scipy.spatial import ConvexHull
+    try:
+        hull = ConvexHull(_uv(ix.X[nodes], n_ref))
+    except Exception:                                   # noqa: BLE001 - 일직선 등 퇴화
+        return ix.X[nodes]
+    return ix.X[nodes[hull.vertices]]
+
+
+def plate_edge_nodes(ix: MeshIndex) -> np.ndarray:
+    """v0.16.1 SR-D-35 판 가장자리 = 판 전체 외곽 자유 모서리: 메시 요소 연결 성분마다 자유 모서리 고리 성분 중 평면 투영
+    |넓이| 최대(판 법선 = 그 성분 면적 가중 평균 법선, 동률 = 둘레 긴 쪽 → 최소 노드) 성분의 노드. 그 밖 자유 모서리 고리 = 관통
+    구멍·슬롯·컷아웃. 결과는 ``ix`` 에 캐시(위상·좌표 불변 전제)."""
+    got = getattr(ix, "_plate_edge", None)
+    if got is not None:
+        return got
+    ncomp, lab = csgraph.connected_components(ix.adj, directed=False)
+    parts = []
+    for c in range(ncomp):
+        pm = lab == c
+        n_ref = (ix.normal[pm] * ix.area[pm][:, None]).sum(axis=0)
+        if np.linalg.norm(n_ref) < _EPS:
+            n_ref = np.array([0.0, 0.0, 1.0])
+        fe = free_edge_components(ix, pm, np.zeros(0, np.int64), n_ref=n_ref)
+        if not fe["holes"]:
+            continue
+        ar = [(lp["eq_d_mm"] * lp["perim_mm"] / 4.0, lp["perim_mm"]) for lp in fe["holes"]]
+        k = max(range(len(ar)), key=lambda i: (ar[i][0], ar[i][1], -i))
+        parts.append(np.unique(fe["holes"][k]["nodes"]))
+    out = np.unique(np.concatenate(parts)) if parts else np.zeros(0, np.int64)
+    ix._plate_edge = out
+    return out
+
+
 def _edge_owner_elems(ix: MeshIndex, eidx: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """모서리별 mask 안 첫 요소(자유 모서리 = mask 요소 1개)."""
     out = np.full(eidx.size, -1, np.int64)
@@ -279,11 +351,13 @@ def _chain(E: np.ndarray) -> np.ndarray:
 
 
 def free_edge_components(ix: MeshIndex, mask: np.ndarray, boundary_nodes: np.ndarray, *,
-                         n_ref: np.ndarray | None = None) -> dict:
+                         n_ref: np.ndarray | None = None, plate_edge: np.ndarray | None = None) -> dict:
     """§5.3 자유 모서리(mask 요소 1개만 쓰는 모서리 — ``edge_count == 1 ∧ nin == 1``)의 노드 그래프 연결 성분.
     경계 노드(boundary_nodes)에 닿는 성분 = 판 가장자리(``edge`` 노드 합), 아니면 관통 구멍
     ``holes[{nodes(순서), elems(자유 모서리 주인 요소), perim_mm, eq_d_mm(4A/P, Newell 투영 넓이), center[3]}]``.
-    성분 순서 = 최소 노드 번호 순(결정적)."""
+    성분 순서 = 최소 노드 번호 순(결정적).
+    v0.16.1 SR-D-35: plate_edge(판 외곽 자유 모서리 노드 — ``plate_edge_nodes``)를 주면 판 가장자리 = 그 노드에 닿는 성분만
+    (경계 노드에 닿는 구멍 — 비드 벽을 가로지르는 슬롯 — 도 관통 구멍, ``touch`` = 경계 노드에 닿음). None 이면 위 규칙."""
     m = np.asarray(mask, bool)
     nin = ix.edge_in_count(m)
     free = np.flatnonzero((nin == 1) & (ix.edge_count == 1))
@@ -297,13 +371,17 @@ def free_edge_components(ix: MeshIndex, mask: np.ndarray, boundary_nodes: np.nda
     ncomp, lab = csgraph.connected_components(G, directed=False)
     bset = np.zeros(ix.n_nodes, bool)
     bset[np.asarray(boundary_nodes, dtype=np.int64)] = True
+    eset = bset
+    if plate_edge is not None:
+        eset = np.zeros(ix.n_nodes, bool)
+        eset[np.asarray(plate_edge, dtype=np.int64)] = True
     first = np.full(ncomp, np.iinfo(np.int64).max)
     np.minimum.at(first, lab, nodes)
     edge_parts = []
     for c in np.argsort(first, kind="stable").tolist():
         cn = nodes[lab == c]
         ce = lab[pos[:, 0]] == c
-        if bset[cn].any():
+        if eset[cn].any():
             edge_parts.append(cn)
             continue
         chain = _chain(E[ce])
@@ -315,9 +393,12 @@ def free_edge_components(ix: MeshIndex, mask: np.ndarray, boundary_nodes: np.nda
             A = abs(float(nn @ (np.asarray(n_ref, float) / max(np.linalg.norm(n_ref), 1e-300))))
         else:
             A = float(np.linalg.norm(nn))
-        out["holes"].append({"nodes": chain, "elems": np.unique(_edge_owner_elems(ix, free[ce], m)),
-                             "perim_mm": perim, "eq_d_mm": (4.0 * A / perim) if perim > 0 else 0.0,
-                             "center": P.mean(axis=0)})
+        hl = {"nodes": chain, "elems": np.unique(_edge_owner_elems(ix, free[ce], m)),
+              "perim_mm": perim, "eq_d_mm": (4.0 * A / perim) if perim > 0 else 0.0, "center": P.mean(axis=0)}
+        if plate_edge is not None:
+            hl["touch"] = bool(bset[cn].any())
+            hl["all_nodes"] = cn
+        out["holes"].append(hl)
     if edge_parts:
         out["edge"] = np.unique(np.concatenate(edge_parts))
     return out
@@ -380,12 +461,16 @@ def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: n
                 out["rings"].append({"owner": k, "n_elems": int(K.size), "size_mm": sz})
                 continue
         ok = sz <= float(max_mm)
-        if ok and outer_poly is not None and k in outer_poly and len(outer_poly[k]) >= 3:
-            if k not in polys:
-                polys[k] = _uv(np.asarray(outer_poly[k], float), n_ref)
-            ok = _inside(_uv(ix.centroid[K].mean(axis=0)[None, :], n_ref)[0], polys[k])
+        if ok and outer_poly is not None and k in outer_poly and _npoly(outer_poly[k]):
+            if k not in polys:                          # v0.16.1 SR-D-35: 목록이면 조각마다 바깥 고리 — 어느 하나 안이면 됨
+                pk = outer_poly[k] if isinstance(outer_poly[k], list) else [outer_poly[k]]
+                polys[k] = [_uv(np.asarray(p, float), n_ref) for p in pk if len(p) >= 3]
+            c2 = _uv(ix.centroid[K].mean(axis=0)[None, :], n_ref)[0]
+            ok = any(_inside(c2, p) for p in polys[k])
+            if not ok and len(polys[k]) > 1:            # 바닥 조각 사이(조각을 가르는 섬): 닿은 조각 ≥ 2 의 합 볼록 껍질 안
+                ok = _between_pieces(c2, uv, polys[k], 2.0 * ix.h_med)
         if not ok:
-            out["too_large"].append({"owner": k, "n_elems": int(K.size), "size_mm": sz})
+            out["too_large"].append({"owner": k, "n_elems": int(K.size), "size_mm": sz, "elems": K})
             continue
         if k not in onodes:
             onodes[k] = np.zeros(ix.n_nodes, bool)
@@ -393,6 +478,27 @@ def enclosed_components(ix: MeshIndex, cand: np.ndarray, owner: np.ndarray, X: n
         on = onodes[k]
         out["islands"].append({"owner": k, "elems": K, "rim": kn[on[kn]], "interior": kn[~on[kn]], "size_mm": sz})
     return out
+
+
+def _between_pieces(c2: np.ndarray, uvK: np.ndarray, polys: list, gap: float) -> bool:
+    """SR-D-35 섬 성분 노드(평면 uvK)에서 gap 안에 있는 바닥 조각 고리가 2개 이상이면 그 고리 점 합의 볼록 껍질 안에 c2 가 있는지."""
+    from scipy.spatial import ConvexHull, cKDTree
+    t = cKDTree(uvK)
+    near = [p for p in polys if len(p) >= 3 and float(t.query(p, k=1)[0].min()) <= gap]
+    if len(near) < 2:
+        return False
+    P = np.vstack(near)
+    try:
+        hull = ConvexHull(P)
+    except Exception:                                   # noqa: BLE001 - 퇴화
+        return False
+    return _inside(c2, P[hull.vertices])
+
+
+def _npoly(p) -> bool:
+    if isinstance(p, list):
+        return any(len(x) >= 3 for x in p)
+    return len(p) >= 3
 
 
 def feature_segments(ix: MeshIndex, feature_angle_deg: float) -> np.ndarray:

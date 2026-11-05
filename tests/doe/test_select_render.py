@@ -306,6 +306,7 @@ def test_select_warn_flow_v0161(tmp_path, G):
         k = b.index(b"/NODE")
         head = b[:k].splitlines()
         assert head[-1].startswith(b"#ESL WARNING FIXED_NODES") or head[-1].startswith(b"#ESL WARNING FIXED_MOVED")
+        assert all(len(x) <= 100 for x in head if x.startswith(b"#ESL"))              # SR-D-43 주석 줄 ≤ 100자
         assert b"#ESL WARNING FIXED_MOVED" in (bd / "ch_r.rad").read_bytes()
         assert U.read_json(str(bd / "values.json"))["warnings"][0]["code"] == "SELECT_FIXED_MOVED"
     html = (out / "report.html").read_text(encoding="utf-8")
@@ -340,3 +341,15 @@ def test_thumb_orientation_convex_concave_v0161():
     assert abs(c1[0] - c2[0]) <= 5 and abs(c1[1] - c2[1]) <= 5
     n = D1.beads[0].n_hat
     assert np.linalg.norm(sr.view_normal(m["x0"], [n, -n])) == pytest.approx(1.0)
+
+
+def test_sel_warn_lines_max_100():
+    """SR-D-43: 받기 rad #ESL WARNING 줄 ≤ 100자(긴 노드 ID·큰 n 에서 나눠 씀), 짧은 ID 는 줄당 10개(v0.16.1 첫 판 그대로)."""
+    from esl.doe import stages as stg
+    short = stg.sel_warn_lines({"n": 12, "max_mm": 1.25}, list(range(1, 13)))
+    assert short[0] == "#ESL WARNING FIXED_MOVED n=12 max_mm=1.25 : fastener positions moved, check RBE2/TIE"
+    assert short[1] == "#ESL WARNING FIXED_NODES " + " ".join(str(v) for v in range(1, 11)) and short[2].endswith("11 12")
+    big = stg.sel_warn_lines({"n": 10 ** 15, "max_mm": 123456.7891}, [9_000_000_000 + k for k in range(50)])
+    assert all(len(x) <= 100 for x in big) and big[1].startswith("#ESL WARNING FIXED_MOVED :")
+    got = [int(v) for x in big if x.startswith("#ESL WARNING FIXED_NODES") for v in x.split()[3:]]
+    assert got == [9_000_000_000 + k for k in range(50)]
