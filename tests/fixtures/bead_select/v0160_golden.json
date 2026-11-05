@@ -1,0 +1,382 @@
+{
+ "_doc": "v0.16.0(ef7545c) 기대값 — esl_select_relax.md V-SR-1·16·22 바이트 불변 시험. 생성: v0.16.0 트리에서 같은 입력(synth_bead·synth_compare)으로 계산한 sha256 앞 16자.",
+ "bead_select": {
+  "h5open": {
+   "basis_bin": "94860431d311e24c",
+   "basis_npz": "4f2af03963466b5e",
+   "norm_sha": "679067681e75a9abab3cb16a96da2dc60492ec501076e605f28747d5fe0b38e3",
+   "states": [
+    {
+     "code": "SELECT_QUALITY_FAIL",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "55543990f8a55431"
+    },
+    {
+     "code": "SELECT_QUALITY_FAIL",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "b001171260224ae9"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "0748874bbf7c2d7a"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "ce9a6e509f748c02"
+    },
+    {
+     "code": "SELECT_QUALITY_FAIL",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "d8aee17010b67124"
+    },
+    {
+     "code": "SELECT_QUALITY_FAIL",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "ab61d8649fe9893c"
+    },
+    {
+     "code": "SELECT_QUALITY_FAIL",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "3f40caf067cf9d22"
+    },
+    {
+     "code": "SELECT_MORPH_INVERTED",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 33,
+     "over_limit": true,
+     "state": "FAILED_MESH",
+     "x": "518878c403c476e3"
+    }
+   ],
+   "summary": "5093afd4ea6d8771"
+  },
+  "h6wavy": {
+   "basis_bin": "29bd311478aeea93",
+   "basis_npz": "fd28ba301b4993a4",
+   "norm_sha": "e17fdb74c39616855a1030f7d752d1b01e861367eaea3cefde52ce41e7e5ca19",
+   "states": [
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 19.907355733273032,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 491,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "7c7a3db31cc697c5"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 3.2901496054963757,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 98,
+     "over_limit": false,
+     "state": "SKIPPED_FIXED",
+     "x": "7cd9be13b99d8883"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 4.431092950185119,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 125,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "0e46a9da273e1559"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 15.931701391607591,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 380,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "b1a28e587600be6a"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 18.704582034775854,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 467,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "b986a195a2c88472"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 11.501186322525255,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 245,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "7a1db206eb7825ae"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 11.088705586211287,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 237,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "001f309ddedc899c"
+    },
+    {
+     "code": "SELECT_FIXED_VIOLATION",
+     "fixed_max": 11.002646703585475,
+     "fixed_n": 2,
+     "fixed_violated": true,
+     "inverted": 276,
+     "over_limit": true,
+     "state": "SKIPPED_FIXED",
+     "x": "f1cba5f4724aa46a"
+    }
+   ],
+   "summary": "3fe485bd767985c3"
+  },
+  "h8": {
+   "basis_bin": "47040cf82502200c",
+   "basis_npz": "5357a5a89527a46c",
+   "norm_sha": "2b64fa06651c27697f49d3a2306bf9825b9e55f94d20e54a9a255cb30b16bd03",
+   "states": [
+    {
+     "code": "SELECT_MORPH_INVERTED",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 16,
+     "over_limit": false,
+     "state": "FAILED_MESH",
+     "x": "43b773e08da0f61a"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "1dfd961a02f18793"
+    },
+    {
+     "code": "SELECT_MORPH_INVERTED",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 6,
+     "over_limit": false,
+     "state": "FAILED_MESH",
+     "x": "d4a1906d76b37c64"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "77b9805d410a0f57"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "f7b307d283432836"
+    },
+    {
+     "code": "SELECT_MORPH_INVERTED",
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 14,
+     "over_limit": false,
+     "state": "FAILED_MESH",
+     "x": "359d53106e8de57b"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "80f3f02e2b51d7f8"
+    },
+    {
+     "code": null,
+     "fixed_max": 0.0,
+     "fixed_n": 0,
+     "fixed_violated": false,
+     "inverted": 0,
+     "over_limit": false,
+     "state": "READY",
+     "x": "1107ae0d4e3a50f1"
+    }
+   ],
+   "summary": "02e90a4135fd6674"
+  }
+ },
+ "mesh": {
+  "c3/boss": {
+   "defeature": null,
+   "err": null,
+   "json": "e2ceed0ae25bc6d7",
+   "npz": "4638e01ca4034dd1"
+  },
+  "c3/bwf": {
+   "defeature": null,
+   "err": "FAILED_MESH",
+   "json": null,
+   "npz": null
+  },
+  "c3/dimple": {
+   "defeature": null,
+   "err": "FAILED_MESH",
+   "json": null,
+   "npz": null
+  },
+  "c3/fillet_corner": {
+   "defeature": null,
+   "err": "FAILED_MESH",
+   "json": null,
+   "npz": null
+  },
+  "c3/plate": {
+   "defeature": null,
+   "err": null,
+   "json": "5428b96377aec7bd",
+   "npz": "8644956cb0ca4965"
+  },
+  "c3/plate_hole": {
+   "defeature": null,
+   "err": null,
+   "json": "1ece293fabdcd5f0",
+   "npz": "8e76acccac1743be"
+  },
+  "c4/boss": {
+   "defeature": {
+    "filled": 3,
+    "filled_area_max": 28.274333882308138,
+    "hole_sized": 0,
+    "not_hole": 4,
+    "skipped": 0,
+    "warnings": []
+   },
+   "err": null,
+   "json": "919a157969cace14",
+   "npz": "dc203b186542e431"
+  },
+  "c4/dimple": {
+   "defeature": {
+    "filled": 0,
+    "filled_area_max": null,
+    "hole_sized": 0,
+    "not_hole": 2,
+    "skipped": 0,
+    "warnings": []
+   },
+   "err": null,
+   "json": "4b13c17a5193245a",
+   "npz": "a38019ac8b0eb7c0"
+  },
+  "c4/plate": {
+   "defeature": {
+    "filled": 0,
+    "filled_area_max": null,
+    "hole_sized": 0,
+    "skipped": 0,
+    "warnings": []
+   },
+   "err": null,
+   "json": "38020691cc1c09a7",
+   "npz": "8fa524c01d3286d8"
+  },
+  "c4/plate_hole": {
+   "defeature": {
+    "filled": 1,
+    "filled_area_max": 3.141592653589794,
+    "hole_sized": 0,
+    "skipped": 0,
+    "warnings": []
+   },
+   "err": null,
+   "json": "037b1b89ef05dec7",
+   "npz": "5cf30467317441b1"
+  }
+ },
+ "mesh_nondeterministic": {
+  "c4/bwf": {
+   "defeature": {
+    "filled": 1,
+    "filled_area_max": 19.634954084936208,
+    "hole_sized": 1,
+    "not_hole": 12,
+    "skipped": 0,
+    "warnings": []
+   },
+   "n_nodes": 3186,
+   "note": "v0.16.0 에서도 같은 입력 두 번 메시 바이트가 다름(nofix_face 폴백 3면) — 구조만 비교"
+  },
+  "c4/fillet_corner": {
+   "defeature": {
+    "filled": 0,
+    "filled_area_max": null,
+    "hole_sized": 0,
+    "skipped": 0,
+    "warnings": []
+   },
+   "n_nodes": 510,
+   "note": "v0.16.0 에서도 실행마다 두 가지 바이트가 번갈아 나옴 — 구조만 비교"
+  }
+ }
+}
