@@ -239,7 +239,7 @@ def test_compare_mesh_options_mirror():
     assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "defeature",
                                                                          "remesh"]      # v0.16.1 += defeature(SR-D-16)
     assert dump["remesh"]["feature_angle_deg"] == 30.0 and dump["remesh"]["fidelity"] == {
-        "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}
+        "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}     # v0.16.1 SR-D-27
     assert dump["mesh_input"] == {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
                                   "max_include_depth": 8, "size_warn_ratio": 1.5,
                                   "diag": {"enabled": True, "feature_angle_deg": 30.0}}       # v0.16.1 SR-D-24

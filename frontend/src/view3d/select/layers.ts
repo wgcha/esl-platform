@@ -319,7 +319,8 @@ export function fromSelectionIn(sel: DoeSelectionIn, idx: ElemIndex, nElems: num
     r.elems.forEach(fn);
   };
   sel.beads.forEach((b, bi) => {
-    s.beads.push({ id: b.id, name: b.name, nTiers: Math.max(1, b.tiers.length), blend: b.blend_mm, floorFollow: b.floor_follow, links: b.links.map((g) => [...g]), holdFixed: b.hold_fixed === 1 ? 1 : 0 });
+    // 생략 가능한 칸(서버 SelectionIn 기본값 — links [], floor_follow 설정값)은 없어도 읽음(코어 정규화 사본·픽스처는 기본값을 생략)
+    s.beads.push({ id: b.id, name: b.name, nTiers: Math.max(1, b.tiers.length), blend: b.blend_mm ?? "auto", floorFollow: b.floor_follow, links: (b.links ?? []).map((g) => [...g]), holdFixed: b.hold_fixed === 1 ? 1 : 0 });
     for (const t of b.tiers) take(t.floor, (e) => (s.owner[e] = ownerCode(bi, t.k)));
     take(b.slope.add, (e) => (s.owner[e] = ownerCode(bi, SLOPE)));
     take(b.slope.remove, (e) => (s.remove[e] = bi));
@@ -381,18 +382,26 @@ export function elemColors(s: SelState, active: number, suggested: (bead: number
 // ---------------------------------------------------------------- v0.16.1 섬(SR-D-4·14, §5.2)
 /** 비드 b 단 바닥 전체의 평균 법선(면적 가중, 첫 요소 법선 쪽으로 부호 맞춤) — 섬 판정 평면 n̄_b */
 export function beadMeanNormal(t: MeshTopo, s: SelState, bead: number): Vec3 {
+  // 법선 부호 기준 = 면적 최대 요소(동률 = 최소 요소 번호) — 코어 bead_select._mean_normal 과 같음(v0.16.1 통합)
   let ref = -1;
+  for (let e = 0; e < s.nElems; e++) {
+    const o = s.owner[e];
+    if (o < 0 || ownerBead(o) !== bead || ownerLayer(o) === SLOPE) continue;
+    if (ref < 0 || t.areas[e] > t.areas[ref]) ref = e;
+  }
   const acc: Vec3 = [0, 0, 0];
   for (let e = 0; e < s.nElems; e++) {
     const o = s.owner[e];
     if (o < 0 || ownerBead(o) !== bead || ownerLayer(o) === SLOPE) continue;
-    if (ref < 0) ref = e;
     const sg = t.normals[e * 3] * t.normals[ref * 3] + t.normals[e * 3 + 1] * t.normals[ref * 3 + 1] + t.normals[e * 3 + 2] * t.normals[ref * 3 + 2] < 0 ? -1 : 1;
     for (let c = 0; c < 3; c++) acc[c] += sg * t.areas[e] * t.normals[e * 3 + c];
   }
   const l = Math.hypot(acc[0], acc[1], acc[2]);
   return l > 0 ? [acc[0] / l, acc[1] / l, acc[2] / l] : [0, 0, 1];
 }
+
+/** select.island.ring_frac 기본(코어 DEFAULTS·백엔드 BeadDoeSelectIslandCfg 거울 — 설정이 오면 그 값) */
+export const RING_FRAC = 0.9;
 
 export interface SelIslands {
   /** 요소별 섬 주인 코드 ownerCode(b, k), 없음 −1 */
@@ -405,7 +414,7 @@ export interface SelIslands {
  * 화면 선택의 섬(SR-D-14 enclosedIslands): 후보 = 어느 비드 층에도 없고 제외도 아닌 요소, 주인 = 각 비드 단 바닥(코드 bead·16 + k),
  * 사면 더하기·제외 = 막힘. 모든 비드를 한 번에(후보는 비드와 무관하게 같음). X = 노드 좌표. 저장 대상 아님.
  */
-export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, maxMm: number): SelIslands {
+export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, maxMm: number, ringFrac: number | null = RING_FRAC): SelIslands {
   const n = s.nElems;
   const cand = new Uint8Array(n);
   const owner = new Int32Array(n);
@@ -424,7 +433,7 @@ export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, 
     if (!normals.has(b)) normals.set(b, beadMeanNormal(t, s, b));
     return normals.get(b)!;
   };
-  const r = enclosedComponents(t, cand, owner, X, nOf, { maxMm, outerPoly: (o) => outerPolygon(t, X, (e) => s.owner[e] === o, nOf(o)) });
+  const r = enclosedComponents(t, cand, owner, X, nOf, { maxMm, ringFrac, outerPoly: (o) => outerPolygon(t, X, (e) => s.owner[e] === o, nOf(o)) });
   const io = new Int32Array(n).fill(-1);
   for (const il of r.islands) for (const e of il.elems) io[e] = il.owner;
   return { owner: io, islands: r.islands, tooLarge: r.tooLarge };

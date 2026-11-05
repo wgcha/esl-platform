@@ -156,7 +156,7 @@ def test_ring_inner_loop_is_boundary(ring):
         b = D.bead(f"b{k + 1}")
         assert b.islands == [] and b.inner_loops_n == 1 and len(b.loops) == 2, name
         w = [x for x in b.warnings if x["code"] == "SELECT_INNER_LOOP"]
-        assert w == [{"code": "SELECT_INNER_LOOP", "n": 1, "ring": 1}], name
+        assert w == [{"code": "SELECT_INNER_LOOP", "n": 1, "ring": 1, "level": "info"}], name   # SR-D-25 정보
         assert "SELECT_ISLAND_TOO_LARGE" not in _codes(b)
         assert b.W_nom == pytest.approx(g["beads"][name]["W"], abs=1.5 * H), name
     # 규칙 끔(ring_frac 아주 큼) → 작은 둔덕 R3 이 섬으로 흡수돼 W 가 틀어짐(이 규칙이 막는 회귀)
@@ -187,14 +187,20 @@ def test_ring_width_offsets_both_loops(ring):
 # ---------------------------------------------------------------- 5 경계에 반쯤 걸친 보스(들쭉날쭉한 경계)
 def test_edge_boss_width_and_no_silent_tear():
     """W·D 공칭 = 정답, 바닥 안 보스 1 = 섬, 보스 발치 평평한 요소로 SELECT_BEAD_NETWORK 오탐 없음, 범위 끝 안은 찢어지면
-    반드시 FAILED_MESH. (한계: 판 쪽 보스 벽까지 사면 BFS 가 올라가 보스 윗면이 안쪽 고리로 남고 국부 폭 최소가 튐 — 보고만.)"""
+    반드시 FAILED_MESH. SR-D-28: 사면 BFS 는 판 높이까지만 — 판 쪽 보스 윗면이 안쪽 고리로 남지 않음(정보 SELECT_SLOPE_ABOVE_PLATE).
+    (남은 한계: 보스 발치의 고르지 않은 바닥 요소 1개짜리 안쪽 고리 4 — 바닥 높이, 보고만.)"""
     g = sb.real_case("edge_boss", H)
     D = _derive(g, ["G"])
     B = bs.basis(g["mesh"], D, CFG)
     b = D.bead("b1")
     assert b.W_nom == pytest.approx(40.0, abs=H) and b.tiers[0]["D_nom"] == pytest.approx(10.0, abs=0.05)
     assert len(b.islands) == 1 and "SELECT_BEAD_NETWORK" not in _codes(b) and b.w_enabled
-    assert b.inner_loops_n >= 2                                                         # 한계(위 문서) 고정
+    w = next(x for x in b.warnings if x["code"] == "SELECT_SLOPE_ABOVE_PLATE")
+    assert w["level"] == "info" and w["n_elems"] > 0
+    zl = [float(np.max(np.abs(b.z_node[lp["nodes"]] - b.tiers[0]["D_nom"]))) for lp in b.loops[1:]]
+    assert b.inner_loops_n == 4 and all(z < 0.5 for z in zl)                           # 보스 윗면 고리 없음(바닥 높이 고리만)
+    zo = b.z_node[b.loops[0]["nodes"]]
+    assert float(np.max(np.abs(zo))) < 2.5                                              # 바깥 고리 = 판 높이 근처(보스 윗면 4 아님)
     _never_silently_torn(_states(g, D, B))
 
 
@@ -212,3 +218,36 @@ def test_channel_width_stable():
     st = _states(g, D, B)
     _never_silently_torn(st)
     assert all(s == "READY" for n, _v, s, _c, _i in st if n.endswith("_D1"))
+
+
+# ---------------------------------------------------------------- SR-D-32·33 기본 범위(사례 2·5)
+def test_w_range_contains_nominal_and_end_check():
+    """사례 5(경계에 걸친 보스): 국부 폭 극단값(5 % 분위 오탐)으로 W 하한 > 상한이던 것 → 공칭 포함(분위값 또는 공칭 ± width_rel) +
+    SELECT_W_RANGE_RESET, feasible 도 기본 범위 포함. 사례 2(돌출 평판 + 보스 12): 기본 범위 끝이 뒤집힘 → range_check 가
+    SELECT_RANGE_INVERTS{usable} — usable 양 끝 안은 뒤집힘 없음(READY 또는 경고), 기본 범위 끝은 FAILED_MESH 로 명시."""
+    for kind, ids in (("edge_boss", ["G"]), ("boss_field", ["P"])):
+        g = sb.real_case(kind, H)
+        D = _derive(g, ids)
+        B = bs.basis(g["mesh"], D, CFG)
+        b = D.bead("b1")
+        row = next(r for r in bs.params_table(D, CFG) if r["name"] == "B1_W")
+        lo, hi = row["default_range"]
+        assert lo < row["nominal"] < hi and row["feasible"][0] <= lo and row["feasible"][1] >= hi, kind
+        assert ("SELECT_W_RANGE_RESET" in _codes(b)) == (kind == "edge_boss")
+        ws = bs.range_check(g["mesh"], D, B, CFG)
+        w = next(x for x in ws if x["var"] == "B1_W")
+        assert w in b.warnings and w["inverted"][0] > 0 and w["inverted"][1] > 0, kind
+        ulo, uhi = w["usable"]
+        assert lo < ulo <= row["nominal"] <= uhi < hi, kind
+        x0 = g["mesh"]["x0"]
+        for v, want in ((lo, "FAILED_MESH"), (hi, "FAILED_MESH"), (ulo, None), (uhi, None)):
+            st = bs.design_state(g["mesh"], x0, bs.morph(x0, B, {"B1_W": v}), D.fixed_mask, CFG)
+            if want:
+                assert st["state"] == want, (kind, v)
+            else:
+                assert st["code"] != "SELECT_MORPH_INVERTED", (kind, v, st)
+    # 끔(check_steps 0) → 경고 없음
+    cfg0 = settings({"bead_doe": {"enabled": True, "select": {"range": {"check_steps": 0}}}})
+    g = sb.real_case("boss_field", H)
+    D = _derive(g, ["P"], cfg0)
+    assert bs.range_check(g["mesh"], D, bs.basis(g["mesh"], D, cfg0), cfg0) == []

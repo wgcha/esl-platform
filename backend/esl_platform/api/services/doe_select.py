@@ -285,7 +285,10 @@ def selection_summary(s: dict[str, Any]) -> dict[str, Any] | None:
     if s.get("scenario") != "select" or not isinstance(doc, dict):
         return None
     d = doc.get("derived") or {}
-    n_w = len(d.get("warnings") or []) + sum(len(b.get("warnings") or []) for b in d.get("beads") or [] if isinstance(b, dict))
+    # v0.16.1: level "info"(고리형 안쪽 고리·판 위 사면 막음 — SR-D-25·28)는 경고 수에서 뺌
+    n_w = sum(1 for w in list(d.get("warnings") or []) + [w for b in d.get("beads") or [] if isinstance(b, dict)
+                                                           for w in b.get("warnings") or []]
+              if not (isinstance(w, dict) and w.get("level") == "info"))
     return {"rev": int(doc.get("rev") or 0), "sha256": doc.get("sha256"), "mesh_sha256": doc.get("mesh_sha256"),
             "n_beads": len((doc.get("input") or {}).get("beads") or []), "n_warnings": n_w,
             "updated_by_name": doc.get("updated_by_name"), "updated_at": doc.get("updated_at")}

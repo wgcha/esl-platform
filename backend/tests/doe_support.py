@@ -221,7 +221,7 @@ def api(client, method: str, path: str, token: str = "tok-power", write: bool | 
 # ---------------------------------------------------------------- v0.16.1 거울 대조(esl_select_relax.md §4.4)
 # 코어 esl.doe.DEFAULTS 에 v0.16.1 새 키가 아직 없으면(Impl-Core 병합 전) 그 키만 빼고 대조한다 — 병합 후에는 전체 대조.
 SELECT_KEYS_V0161 = (("fixed_policy",), ("island",), ("hold",), ("quality", "fail_policy"), ("range", "depth_max_rel"),
-                     ("range", "width_max_rel"))
+                     ("range", "width_max_rel"), ("range", "width_floor_q"), ("range", "check_steps"))
 COMPARE_KEYS_V0161 = tuple(("defeature", k) for k in (
     "kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm", "narrow_w_factor",
     "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),)

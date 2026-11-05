@@ -4,6 +4,7 @@
 - 버전: **v0.16.1** (기준 main ef7545c = v0.16.0). migration **불필요**(§7.6).
 - 관계: `esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. 이 문서에 없는 규칙은 BS 를 따르고, 충돌 시 이 문서가 우선. `docs/decisions.md` D-0.16-P2(고정 침범·품질 FAIL = 경고, 뒤집힘만 제외)를 구체화한다. §5A 는 `esl_compare_mesh_options.md`(이하 "C2")의 사다리(C2-D-18)·충실도(C2-D-13)·기록(C2-D-10)·`esl_step_compare.md` SC-D-5(작은 형상 처리)의 **변경 계약**.
 - ID 규칙: 결정 `SR-D-n`, 시험 `V-SR-n`, 리스크 `R-SR-n`, 질문 `Q1~Q5`.
+- 구현 갱신(2026-11-05 통합 release/v0.16.1): Core R1c 가 실제 Ch/R 사례로 더한 규칙과 통합 때 반영한 Core 제안을 SR-D-25~31, 실제 사례 그림 점검 결함 3건 수정을 SR-D-32~34 로 추가(§2 끝), V-SR-19 기준 갱신(§11), 설정 키 `select.island.ring_frac`·`compare.remesh.fidelity.warn_rel_cad`(§4.4), 정보 수준 경고(`level: "info"`)·새 코드(§10).
 
 ### 사용자 확정 (2026-11-05, 변경 금지)
 5. **Q1~Q3 = A**: 경고 안이 1위여도 순위 유지 + ⚠ + "경고 없는 최상위" 1줄 / 보스 링 ρ 3 mm·블렌딩 8 mm / 기본 범위는 넓히지 않음(feasible 만).
@@ -87,6 +88,16 @@
 | SR-D-22 | **공통 모듈 CAD 단계 `esl/geom/defeature.py`**(소유 Core): 인식(`find_features`)과 실행(`suppress`)을 나누고, v0.14.1 구멍 메움은 `holes` 로 이동(본문 그대로). `mesh_gmsh.defeature` = `gdf.holes` 호출 1줄, 위상 도우미(C18)는 이 모듈로 옮기고 `mesh_gmsh` 는 같은 이름으로 재노출. 호출 지점 = mesh_gmsh 세션(③ 베이스라인·③ 안 BREP·④ cad/refine/defeature) + 재메시 R2 + (예약) STEP 모핑 | 확정 7. 같은 기준·같은 결과를 한 곳에서 |
 | SR-D-23 | **공통 모듈 메시 단계 `esl/mesh/features.py`**(소유 Core): `MeshIndex`·`mesh_index`·`node_graph`·`boundary_loops`(= `_loops`) 이동(bead_select 재노출), §5.2 섬 판정 = `enclosed_components`, §5.3 구멍 분류 = `free_edge_components`, 진단 = `diagnose`. 호출 지점 = select derive·(예약) v0.16.2 P3 paicad 영역 → 초기 선택·④ 메시 입력 진단. 브라우저 `grow.ts` `enclosedIslands` 는 `enclosed_components` 의 거울(V-SR-12) | 확정 7, SR-D-4 |
 | SR-D-24 | **④ 메시 입력 진단 = 보고만**: `mesh_input.read_shape_mesh` 뒤 `features.diagnose` → 형상 행 `diag{holes_n, holes_small_n, islands_n, free_loops_n}`, 작은 구멍·섬이 있으면 정보 `MESH_INPUT_DIAG`. 메시·하중·해시 불변(`mesh_input` 설정 해시에서 `diag` 절 제외) | 확정 7. 메시 입력은 CAD 가 없어 억제 불가 — 사용자가 HyperMesh 에서 고칠 근거만 |
+| SR-D-25 | **고리형 비드 안쪽 고리 = 정보**: 섬 판정에서 고리형 둔덕(SR-D-26)으로 뺀 성분 수 `ring` 이 안쪽 고리 수 `n` 과 같으면 `SELECT_INNER_LOOP{n, ring, level: "info"}`(⚠ 개수·선택 요약 `n_warnings` 에서 뺌, 화면 ⓘ + 문구 `SELECT_INNER_LOOP_RING`). ring < n 이면 지금처럼 경고 | 고리형 홈 비드의 안쪽 고리는 정상 경계 — 경고로 두면 실 Ch/R 마다 ⚠ 가 떠 진짜 딤플 경고가 묻힘 |
+| SR-D-26 | **고리형 둔덕은 섬 아님(`select.island.ring_frac` 0.9)**: `enclosed_components(ring_frac=)` — 둘러싸인 성분이 주인 바닥에서 판 쪽으로 ≥ ring_frac·D(D = 주인 바닥 ↔ 최대 성분 평행(≤ 15°) 요소 높이 차 중앙값) 솟으면 섬 아님(`rings`, 크기 판정 전). 거울 키 = 코어 DEFAULTS·백엔드 `BeadDoeSelectIslandCfg.ring_frac`(gt 0)·yaml 2개·`GET /doe/settings select.island{max_mm, ring_frac}`·브라우저 `enclosedComponents(opts.ringFrac)`. 섬 판정 평면 법선 부호 = 면적 최대 요소 쪽(동률 = 최소 요소 번호 — 코어 `_mean_normal`, 프런트 `beadMeanNormal` 같게; 판정 결과는 부호와 무관) | 판 높이까지 솟은 둔덕(Ø14 처럼 크기로는 섬 상한 안)을 섬으로 흡수하면 W 가 2배로 틀어짐 |
+| SR-D-27 | **바깥 충실도 경고 = cad 메시 현 편차 대비 상대**: defeature 단계 바깥·재메시 R8 의 경고 기준 = max(`fidelity.warn_mm`, `fidelity.warn_rel_cad` × chord), chord = `mesh_remesh.cad_chord_mm(S0, h, 2·angular_deflection_deg)` = S0 내부 모서리(이면각 0 < θ ≤ 2·각 편차)마다 R = ((A₀+A₁)/\|e\|)/θ, s = R(1 − cos(min(h/2R, π/4)))의 최대(곡률 세분 없는 h CAD 메시가 곡면에서 갖는 처짐, 상한 ≈ 0.19·h). 기본 `warn_rel_cad` 2.0, 0 = 절대 기준만(v0.16.0). fail_mm 은 절대 그대로. 기록 `fidelity{warn_mm(= 실제 기준), cad_chord_mm}`. **해시**: 경고 전용 키라 `_cmp_sha` 의 `keep["remesh"]` 에서 항상 제외(`stages.REMESH_HASH_SKIP_V0161`) — v0.16.0 스냅샷·cad 형상 해시 불변 | 0.3 mm 절대값이면 h 3 의 필렛·구면 딤플마다 CAD 메시 자체 처짐(0.4~0.6 mm)으로 `REMESH_FIDELITY_WARN` 이 떠 경고가 뜻이 없음 |
+| SR-D-28 | **사면 탐색 높이 = 판 높이까지**: 첫 사면 BFS 가 새지 않았을 때(SELECT_SLOPE_LEAK 조건 거짓)만, 사면이 멈춘 평행 요소 높이(n̄ 방향 중심) 묶음(간격 > `plate_tol_mm` 에서 나눔) 중 요소 수 최대 묶음 = 판(멈춤 요소의 절반 이상일 때만), 판 쪽 끝 z_far 보다 바닥 반대쪽으로 `plate_tol_mm` 넘게 나간 요소를 사면 후보에서 빼고 BFS 1회 다시. 뺀 요소가 있으면 정보 `SELECT_SLOPE_ABOVE_PLATE{n_elems, level: "info"}`. 판 위로 나간 사면이 없으면 아무것도 바꾸지 않음(섬·교차 없는 선택 바이트 불변 — V-SR-1) | 개구 경계에 반쯤 걸친 보스에서 사면이 보스 벽을 타고 윗면까지 올라가 보스 윗면이 안쪽 고리로 남고 국부 폭이 튐(실 Ch/R 사례 5) |
+| SR-D-29 | **비드 네트워크(T·L 교차)**(R1c): 다른 비드 바닥이 사면으로 이어지면 사면 요소는 측지 거리가 가까운 바닥의 비드 몫(Voronoi — `lose`), 교차부 경계 노드(이웃 비드 영역·바닥에 붙은 평행 비선택 요소)는 기준 평면 맞춤에서 뺌. 경계가 섬 상한보다 큰 바닥 높이 평행 영역(선택 안 한 이웃 비드 바닥)을 가로지르거나 다른 비드와 맞닿으면 경고 `SELECT_BEAD_NETWORK{n_elems, slope_split}`(화면 비드 목록 ⚠ 툴팁·`SelectDeriveWarnCode`). 맞닿음이 없으면 v0.16.0 과 같음 | 사다리 레일·가로대처럼 이어진 비드를 하나씩 고르면 사면이 이웃 바닥까지 번지거나 기준 평면이 기울어짐 |
+| SR-D-30 | **보스 바닥 고리 구멍 = hole**(R1c, `gdf.find_features`): 자유 고리가 평면(≤ `plane_tol_mm`) 위에 있으면 높은 보스의 바닥·윗면 구멍도 hole 규칙(등가 지름) — 버링 관 끝(자유 고리가 원통 벽 끝)만 hole 에서 제외(flange 규칙). 보스 자체는 남김 | 실 Ch/R 사례 7: 체결 보스는 형상 유지, 가운데 구멍만 메움 |
+| SR-D-32 | **W 기본 범위는 공칭을 포함**: floor_follow 1 의 바닥 최소 폭 조건으로 하한 lo > W_nom 이면(국부 폭 5 % 분위 W_min 이 보스·구멍·교차부 오탐) 바닥 폭을 `range.width_floor_q`(0.25) 분위 국부 폭으로 다시 계산, 그래도 lo > W_nom 이면 뒤집힌 범위(lo > hi)는 W_nom·(1 ± width_rel), 아니면 lo = W_nom(넓히기만) + 경고 `SELECT_W_RANGE_RESET{lo_mm, hi_mm, new_lo_mm, w_min_mm, q}`. feasible 하한도 같은 바닥 폭 기준. lo ≤ W_nom 인 v0.16.0 범위는 그대로(바이트 불변 — 단 v0.16.0 에서 lo > hi 로 쓸 수 없던 범위는 고쳐지므로 그 비드 R_auto·기저가 바뀜: 합성 h6wavy) | 실 사례 5: [50.29, 48.0] 처럼 하한 > 상한, 공칭 40 이 범위 밖 |
+| SR-D-33 | **기본 범위 끝 뒤집힘 점검**(`bead_select.range_check`, BD_MATRIX 기저 직후): 변수마다 default_range 양 끝 단독 안을 `design_state` 로 판정, 뒤집힘이면 공칭 쪽으로 `range.check_steps`(5) 회 이분해 뒤집힘 없는 끝을 찾아 비드 경고 `SELECT_RANGE_INVERTS{var, lo_mm, hi_mm, usable[lo, hi], inverted[lo, hi]}`(params.json·derived.json·로그). 범위·기저는 바꾸지 않음(R_auto 순환 회피), 0 = 끔. 블렌딩 반경·이웃 거리로 상한을 정하는 규칙은 사례 2 에서 원인이 사면·블렌딩 경계 국부 왜곡(쓸 수 있는 ΔW ≈ ±4 %)이라 단순 식으로 맞지 않아 보류 — 실측 점검으로 대체 | 실 사례 2: 96·144 양 끝 뒤집힘 263·112, 쓸 수 있는 범위 ≈ 115.5~124.5 |
+| SR-D-34 | **썸네일 시점 = 판 법선 쪽 위에서**(`select_render.view`·`view_normal`): 비드마다 n̂_b 를 판 법선(`view3d.plate_normal`) 쪽으로 맞춰 평균(볼록·오목 섞여도 상쇄 없음), 카메라 = 그 쪽 위에서 내려다봄(f = −cos t·n + sin t·η), 화면 오른쪽 = η × n, 위 ≈ +η — sense 무관. **모든 select 썸네일 PNG 바이트가 v0.16.0 과 다름**(표시만 — 해시·판정·결과 불변) | 오목 비드에서 상하·좌우가 뒤집힌 그림 |
+| SR-D-31 | **select 워커 재사용 = OK·FAILED_SOLVE 만**(`doe_jobs.SELECT_REUSE_STATES`): 같은 키 done.json 이어도 스킵 문서(v0.16.0 `SKIPPED_FIXED` 등)면 워커가 재사용하지 않고 코어 bd_eval 에 넘겨 SR-D-13d 재판정 | 워커가 코어보다 먼저 `ev.reusable` 로 재사용해 warn 정책에서 v0.16.0 스킵 안이 다시 실행되지 않던 경로를 막음 |
 
 ## 3. 막는 조건 결정표 (확정 3)
 
@@ -151,8 +162,9 @@ bead_doe:
   select:
     fixed_policy: warn            # warn | skip (SR-D-2)
     quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn}   # fail_policy warn | skip
-    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6}  # *_max_rel = feasible 상한(SR-D-10)
-    island: {max_mm: 40.0}        # 섬 평면 bbox 대각 상한(§5.2)
+    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6,  # *_max_rel = feasible 상한(SR-D-10)
+            width_floor_q: 0.25, check_steps: 5}   # SR-D-32 바닥 폭 분위 · SR-D-33 범위 끝 점검(0 = 끔) — 기본값이면 해시 제외
+    island: {max_mm: 40.0, ring_frac: 0.9}   # 섬 평면 bbox 대각 상한(§5.2) · 고리형 둔덕 비율(SR-D-26)
     hold: {ring_mm: 3.0, blend_mm: 8.0}                                  # Q2 = A 확정
   compare:
     mesh:
@@ -173,6 +185,8 @@ bead_doe:
       region_pad_factor: 1.0      # 억제 영역 Ω_f = bbox ± 이 값 × h (SR-D-19)
       max_features: 2000          # 인식 상한(넘으면 앞 2000개만 + 경고 DEFEATURE_TOO_MANY)
       list_max: 500               # defeature.json 행 상한
+    remesh:
+      fidelity: {warn_rel_cad: 2.0}  # SR-D-27 경고 = max(warn_mm, 2 × cad 메시 현 편차) — 0 = 절대만, 해시 제외
     mesh_input:
       diag: {enabled: true, feature_angle_deg: 30.0}   # SR-D-24. 구멍·섬 크기 기준 = defeature.hole_max_d_mm · select.island.max_mm
 ```
@@ -182,7 +196,7 @@ bead_doe:
 | `esl/doe/__init__.py:130-140` DEFAULTS | `fixed_policy`, `quality.fail_policy`, `range.depth_max_rel`·`width_max_rel`, `island`, `hold` | – |
 | `backend/esl_platform/core/config.py:818-862` | `BeadDoeSelectCfg.fixed_policy: Literal["warn","skip"]="warn"`, `BeadDoeSelectQualityCfg.fail_policy: Literal[...]="warn"`, `BeadDoeSelectRangeCfg.depth_max_rel: float(gt=0, le=5)=1.0`·`width_max_rel(gt=0, le=5)=0.6`(각 `*_max_rel ≥ *_rel` 검사), `BeadDoeSelectIslandCfg.max_mm(gt=0)=40`, `BeadDoeSelectHoldCfg.ring_mm(ge=0)=3`·`blend_mm(gt=0)=8` | 섹션 없으면 기본 |
 | `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml`(select 절이 있는 예시 2개) | 위 yaml 그대로 | – |
-| `GET /doe/settings` `select` | `fixed_policy`, `quality_fail_policy`, `hold{ring_mm, blend_mm}` | – |
+| `GET /doe/settings` `select` | `fixed_policy`, `quality_fail_policy`, `hold{ring_mm, blend_mm}`, `island{max_mm, ring_frac}`(SR-D-26 거울) | – |
 | `esl/doe/__init__.py:104`·`:119-120` DEFAULTS compare | `mesh.ladder` += defeature, `defeature` 새 키, `mesh_input.diag` | – |
 | `backend/.../core/config.py:603`·`:620`·`:748-754`·mesh_input 모델 | `COMPARE_LADDER_STAGES` += `"defeature"`, `ladder max_length=5`, `BeadDoeCompareDefeatureCfg` 새 칸(`kinds: list[Literal[…6종]]` 중복 금지, `*_mm gt=0`, `narrow_w_factor (0,1]`, `region_pad_factor ge=0`, `max_features ge=1`, `list_max ge=1`, `compound: bool`), `BeadDoeCompareMeshInputDiagCfg{enabled, feature_angle_deg (0,90]}`. `_doe_settings` 기본값 거울(`:1319-1326`)에 `defeature` 새 키·`mesh_input.diag` 추가 | 섹션 없으면 기본 |
 | `config/*.example.yaml` 2개 | compare 절 위 yaml 그대로 | – |
@@ -442,7 +456,11 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 |---|---|---|
 | `SELECT_FIXED_MOVED` | 안 경고 | 고정 노드 n개 최대 x mm 이동(warn 정책) — 화면 "체결 위치 어긋남" |
 | `SELECT_QUALITY_WARN` | 안 경고 | 새 Fail 비율 > 상한(warn 정책) |
-| `SELECT_INNER_LOOP` | derive 경고 | 섬이 아닌 안쪽 고리 n개 — v0.16.0 대로 처리 |
+| `SELECT_INNER_LOOP` | derive 경고 | 섬이 아닌 안쪽 고리 n개 — v0.16.0 대로 처리. 모두 고리형 둔덕(ring = n)이면 `level: "info"`(SR-D-25, 문구 `SELECT_INNER_LOOP_RING`) |
+| `SELECT_W_RANGE_RESET` | derive 경고 | W 기본 하한 > 공칭 → 분위값·공칭 기준으로 고침(SR-D-32) |
+| `SELECT_RANGE_INVERTS` | 기저 경고(BD_MATRIX) | 기본 범위 끝 뒤집힘 + 쓸 수 있는 범위 `usable`(SR-D-33) |
+| `SELECT_BEAD_NETWORK` | derive 경고 | 비드가 다른 비드와 이어짐(T·L 교차) — 교차부 사면 Voronoi 분할(SR-D-29) |
+| `SELECT_SLOPE_ABOVE_PLATE` | derive 정보(`level: "info"`) | 판 높이 위로 나간 사면 요소 n개를 빼고 다시 탐색(SR-D-28) |
 | `SELECT_ISLAND_TOO_LARGE` | derive 경고 | 둘러싸였지만 `island.max_mm` 초과 — 섬 아님 |
 | `SELECT_ISLAND_SHEAR` | derive 경고 | 곡면 바닥에서 섬 평행 이동과 둘레 차(표시만) |
 | `SELECT_HOLD_NO_FIXED` | derive 경고 | `hold_fixed` 1 인데 대상 고정 노드 없음 |
@@ -452,6 +470,7 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 | `DEFEATURE_NO_FEATURE` | 정보 | defeature 단계에 억제 대상 없음 — 건너뜀 |
 | `DEFEATURE_TOO_MANY` | 형상 경고 | 특징 수 > `max_features` — 앞에서 자름 |
 | `MESH_INPUT_DIAG` | 정보 | 메시 입력에 작은 구멍 n·섬 m(보고만) |
+- derive 경고 dict 의 `level: "info"` = 정상 안내(⚠ 개수·`selection.n_warnings` 제외, 화면 ⓘ). 없으면 경고.
 - 기존 `SELECT_FIXED_VIOLATION`·`SELECT_QUALITY_FAIL` 은 `skip` 정책에서만 나온다. `SELECT_OPEN_BOUNDARY` 는 판 가장자리 성분일 때만.
 
 ## 11. 시험 (V-SR-*)
@@ -469,7 +488,7 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 | V-SR-7 | **폭 기저 = 바깥 고리**: W ±6 에서 딤플 둘레 상대 형상 불변(섬 내부 노드 쌍 거리 불변 1e-9), 국부 폭 변화 = ΔW ± 0.02h | 같은 파일 |
 | V-SR-8 | **hold**: `hold_fixed` 1 → 고정 노드·ρ 안 노드 바이트 불변, d ≥ ρ + b 노드는 hold 0 결과와 바이트 동일, φ 연속(ρ·ρ+b 양쪽 첫 줄 차), 보스 높이 = ΔD ± 1e-9, `SELECT_FIXED_MOVED` 없음. hold 0 → `SELECT_FIXED_MOVED{n, max_mm}` 의 n·max = 정답 | 같은 파일 |
 | V-SR-9 | **판정**: warn 정책 — 침범 안 READY + `SELECT_FIXED_MOVED`, 새 Fail 초과 안 READY + `SELECT_QUALITY_WARN`, 뒤집힘(W −40 %) `FAILED_MESH`, 침범+뒤집힘 동시 → `FAILED_MESH`. skip 정책 — v0.16.0 V-BS-4·7 기대값 그대로 | `test_bead_select_morph.py`·`test_mesh_quality.py` |
-| V-SR-10 | **sha·이어하기**: hold 없는 v0.16.0 선택 JSON → sha 동일, hold 1 → 다름; 기본 설정 `_cfg_hash`·`_sel_cfg_sha` = v0.16.0 값(상수 기대값); `algo` 없는 basis.json → 재계산 후 같은 바이트; v0.16.0 `SKIPPED_FIXED` done.json + warn → 재해석, OK done.json → 재사용 | `worker/tests/test_doe_select_jobs.py` |
+| V-SR-10 | **sha·이어하기**(구현: `worker/tests/test_doe_select_relax_jobs.py` — 상수 = ef7545c 트리 계산값): hold 없는 v0.16.0 선택 JSON → sha 동일, hold 1 → 다름; 기본 설정 `_cfg_hash`·`_sel_cfg_sha` = v0.16.0 값(상수 기대값); `algo` 없는 basis.json → 재계산 후 같은 바이트; v0.16.0 `SKIPPED_FIXED` done.json + warn → 재해석, OK done.json → 재사용 | `worker/tests/test_doe_select_jobs.py` |
 | V-SR-11 | **받기·보고서**: 경고 안 rad 사본 = 원본과 "삽입 주석 줄 + /NODE 좌표 칸" 외 바이트 동일, 주석 ASCII·원본 줄바꿈, 경고 없는 안은 v0.16.0 V-BS-14 그대로, `ch_r.rad` 머리 주석, 보고서 "체결 위치 어긋남" 절·⚠ 열·`best_clean` | `worker/tests/test_doe_select_jobs.py`·`test_doe_select_e2e.py` |
 | V-SR-12 | **브라우저 섬**: `enclosedIslands` 가 합성 소형 픽스처(features)에서 코어 `islands` 와 같은 요소 집합, 22만 요소에서 클릭 확장 + 섬 ≤ 150 ms, 섬은 `toSelectionIn` 출력에 없음 | `frontend/__tests__/bead_select.test.ts`, 픽스처 `tests/fixtures/bead_select/features/*`(코어 `make_fixture.py --features`) |
 | V-SR-13 | **API**: `hold_fixed` 422, params `feasible`(SR-D-10)·`use_default`(warn 이면 체크), 구멍 비드 W 행 존재, 셀 `warnings`·`fixed_viol`(READY 칸)·`rules_outdated`, settings 키, `algo` 없는 derived 지연 갱신(version 불변) | `backend/tests/test_doe_select_api.py` |
@@ -487,13 +506,15 @@ def diagnose(mesh: dict, *, feature_angle_deg: float, hole_max_d_mm: float, isla
 | V-SR-16 | **래퍼·이동 무변경**: `mg.defeature(gmsh, df, h[, skip_keys])` 반환 = `gdf.holes(...)` 반환(dict 동일), `collect=None` 이면 v0.16.0 결과와 같음. 기존 ④ 합성 STEP(plate·boss·dimple·bead_with_features·fillet_corner) cad 메시 mesh.npz·mesh.json **바이트 동일**(v0.16.0 기대값), base.json `profile`·`profile_sha256` 동일(새 키 기본값·변경값 둘 다), `_cmp_sha` 동일(cad 형상, 새 키 변경 시에도). ③ 베이스라인·안 BREP 메시 바이트 동일. `mesh_gmsh._face_loops` 등 재노출 이름 존재 | `tests/doe/test_mesh_gmsh.py`·`test_step_compare.py`·`tests/geom/test_defeature.py`(신규) |
 | V-SR-17 | **인식**: FEAT_SPEC 형상에서 `find_features` = 정답(종류·개수·중심 ± 0.01·크기 ± 0.05 mm — 딤플 h 1.5, 필렛 r 1.5), 형상 불변(전후 면 수·넓이 합 동일). `kinds` 에서 fillet 을 빼면 fillet 0. 경계값: `min_bead_height_mm` 2.1 → 깊이 2 딤플도 bead. `hole_max_d_mm` 12 → Ø10 도 hole. `feature_max_mm` 10 → 딤플 1.5(둘레 지름 2√(2Rd−d²) ≈ 10.5 + 필렛) 제외. 깊이 2 딤플은 h_C(bbox 위쪽 근사) = 2.0 ≥ 2 라 억제 안 됨(축 정렬 — 정확) | `tests/geom/test_defeature.py` |
 | V-SR-18 | **단계 성공**: 실패 주입 → attempts = cad → refine_local(…) → refine_global(…) → defeature(READY), remesh 시도 없음, `mesh_method defeature`, `cad_error`, `MESH_DEFEATURED`(n·counts 정답), `mesh/defeature.json` = 정답 목록·결정적 순서(두 번 실행 바이트 동일), `defeature_stage.counts`. 주입 없이(cad 성공) 같은 형상 → defeature 단계 미진입·결과 V-SR-16 과 동일 | `tests/doe/test_step_compare.py`·`test_mesh_refine.py` |
-| V-SR-19 | **편차**: 바깥 `outside.hausdorff_mm` ≤ `linear_deflection_mm` + 0.1·h(필렛 compound 는 바깥 — 편차 ≈ 0), 딤플 1.5 `dev_mm` = 1.5 ± 0.15, Ø5 구멍 `dev_mm` = 2.5 ± 0.15, `suppressed_max_mm` = 그 최대. 주입으로 바깥 편차 > fail_mm → `DEFEATURE_FIDELITY` → remesh 단계로 | `tests/geom/test_defeature.py`·`test_step_compare.py` |
+| V-SR-19 | **편차**(2026-11-05 기준 갱신 — 실측: compound 필렛·구면 딤플의 h 3 현 처짐이 바깥에 들어가고, 메운 구멍 원판은 둘레 분할 메시라 중심만 r 에 가까움): 바깥 `outside.hausdorff_mm` ≤ 1.0 mm, 바깥 경고 기준 = max(0.3, 2 × `cad_chord_mm`)(SR-D-27 — 이 형상은 경고 없음), 딤플 1.5 `dev_mm` = 1.5 ± 0.15, Ø5 구멍 `dev_mm` ∈ [0.4 r, r + 0.15](r 2.5), `suppressed_max_mm` = 그 최대. 주입으로 바깥 편차 > fail_mm → `DEFEATURE_FIDELITY` → remesh 단계로 | `tests/geom/test_defeature.py`·`test_step_compare.py` |
 | V-SR-20 | **사다리 설정**: 기본 ladder 5단계, `ladder` 에서 defeature 빼면 v0.16.0 순서, 순서 바꿈(`[cad, defeature, refine_local, …]`) 허용, 중복·cad 아님 맨 앞·알 수 없는 단계 → CONFIG_INVALID(코어)·422(백엔드), `mesh_refine: false` → refine 만 빠지고 defeature 유지, 억제 대상 0 → `SKIPPED no_feature`. compound 묶음 면 실패 주입 → 2번째 시도(compound 없음) 성공, 아니면 `not_compound` 건너뜀 | `tests/doe/test_mesh_refine.py`, `backend/tests/test_doe_compare_api.py` |
 | V-SR-21 | **이어하기**: v0.16.0 스냅샷(`mesh_ladder` 4단계) 스터디 → `_cmp_sha` v0.16.0 상수 기대값과 같음, defeature 실행 안 함. 새 키 변경 → defeature 형상만 해시 변경. 메시 입력 `diag` 변경 → 해시 불변 | `tests/doe/test_step_compare.py`, `worker/tests/test_doe_compare_jobs.py` |
 | V-SR-22 | **메시 공통 모듈**: `esl.mesh.features` 로 옮긴 뒤 V-SR-1 바이트 동일, `bead_select.MeshIndex is features.MeshIndex`. `enclosed_components`·`free_edge_components` 가 `synth_bead.generate(features=True)` 정답(섬 4·구멍)과 같음. `diagnose`: features 메시 → `holes_small_n`(Ø8 이하 구멍 수)·`islands_n` 4 정답, 매끈한 판 → 0 | `tests/mesh/test_features.py`(신규) |
 | V-SR-23 | **메시 입력 진단**: 메시 입력 형상 행 `diag`·`MESH_INPUT_DIAG`, mesh.npz·loads 바이트 불변, `enabled: false` 면 키 없음 | `tests/doe/test_mesh_input.py` |
 | V-SR-24 | **워커 E2E**: ④ 비교(기준 cad 성공 + 안 1개 FEAT_SPEC 실패 주입 형상 — 주입은 코어 시험에서만 가능(D-0.16-WORKER) → E2E 는 `compare.mesh.ladder = [cad, defeature]` + `refine.enabled` 무관, 설정만으로 cad 실패가 나는 형상 `fillet_corner_step`(정리 끔 Sphere 실패 재현)) → 형상 행 `mesh_method defeature`·`defeature` 요약, ranking.csv `defeature`, `COMPARE_MESH_METHOD_MIXED`, 보고서 "작은 형상 억제" 절, `GET …/shapes/{did}/defeature` 200 | `worker/tests/test_doe_compare_e2e.py`, `backend/tests/test_doe_compare_api.py` |
 | V-SR-25 | **UI**: 메시 방식 "형상 단순화"·툴팁 문구, 억제 목록 표(50행 + 외 n), 메시 입력 진단 글자, 2560·1920 잘림 없음 | `frontend/__tests__/doe_compare.test.tsx`, mock |
+| V-SR-26 | **통합 규칙(SR-D-25~31)**: 고리형 비드 R1·R2·R3 `SELECT_INNER_LOOP{n 1, ring 1, level info}`; 경계에 걸친 보스 `SELECT_SLOPE_ABOVE_PLATE` + 보스 윗면 고리 없음; `cad_chord_mm`(원통 R 10·h 3 = R(1 − cos(h/2R)) ± 5 %, 평면·90° 모서리 0), `warn_rel_cad 0` = 절대; 기본 설정 `_cmp_sha`·profile 해시 불변(regress); 워커 v0.16.0 SKIPPED_FIXED done → 재해석(SR-D-31) | `tests/doe/test_bead_select_real.py`·`test_mesh_remesh.py`, `worker/tests/test_doe_select_relax_jobs.py` |
+| V-SR-27 | **결함 3건**: 사례 5 W 범위 공칭 포함 + `SELECT_W_RANGE_RESET`, 사례 2·5 `range_check` usable 양 끝 뒤집힘 없음·기본 범위 끝 FAILED_MESH(명시 경고), check_steps 0 = 끔; 볼록·오목 거울 메시 썸네일 시점 벡터 동일·전경 무게중심 ≤ 5 px; h6wavy golden = 뒤집힌 v0.16.0 범위만 예외 | `tests/doe/test_bead_select_real.py`·`test_select_render.py`·`tests/mesh/test_features.py` |
 | V-SR-R2 | **실기**: 이슈 #53 Ch/R STEP(사다리 v0.16.0 에서 remesh 까지 간 형상) — defeature 단계 성공 여부, 종류별 억제 수, 억제 영역 최대·바깥 편차, cad 성공 형상 결과 불변, 강성 지표 차(기준 대비 — 억제 영향 크기) | `docs/manual/bead_doe_check.md` 절 추가 |
 
 ## 12. 파일 소유권 · 작업 분해

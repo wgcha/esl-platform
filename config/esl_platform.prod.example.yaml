@@ -207,7 +207,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       recombine: true                 # quad 우선
       keep_stl: false                 # true 면 prep/shapes/<id>/mesh/remesh_stl.npz 보관
       timeout_s: null                 # null = bead_doe.mesh.timeout_s
-      fidelity: {warn_mm: 0.3, fail_mm: 1.5, samples_max: 200000}   # Hausdorff > warn 경고, > fail 실패(null = 끔)
+      fidelity: {warn_mm: 0.3, fail_mm: 1.5, samples_max: 200000, warn_rel_cad: 2.0}   # Hausdorff > warn 경고, > fail 실패(null = 끔)
+      #   warn_rel_cad(v0.16.1): 경고 기준 = max(warn_mm, warn_rel_cad × h 크기 CAD 메시 현 편차 추정) — 곡면 형상 오경고 방지, 0 = 절대만
     mesh_input:                       # v0.16.0 메시 입력(C2-D-2~8): 형상마다 사용자 메시(Radioss .rad/.inc, 업로드 폴더 안 include)
       enabled: true
       formats: [".rad", ".inc"]
@@ -260,9 +261,9 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     fixed_policy: warn                # v0.16.1 고정 침범: warn = 경고만(실행·순위 포함) | skip = 안 제외(v0.16.0)
     width: {floor_follow: 1, knn: 8}  # Q1 A: 폭 변경 시 바닥도 따라감
     blend: {min_mm: 15.0, max_mm: 200.0, k: 8.0, fixed_margin_mm: 3.0}
-    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6}   # *_max_rel = feasible 상한(v0.16.1)
+    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6, width_floor_q: 0.25, check_steps: 5}   # *_max_rel = feasible 상한(v0.16.1)
     quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn}   # 기준값 = bead_doe.compare.quality(한 곳). fail_policy warn | skip(뒤집힘은 항상 제외)
-    island: {max_mm: 40.0}            # v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한
+    island: {max_mm: 40.0, ring_frac: 0.9}   # v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한 · 고리형 비드 안쪽 둔덕 비율(× D)
     hold: {ring_mm: 3.0, blend_mm: 8.0}   # v0.16.1 '체결 구멍 둘레 고정': 고정 노드에서 ring 제자리 + blend 블렌딩(보스)
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)

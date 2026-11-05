@@ -2290,6 +2290,8 @@ export interface DoeWarning {
   code: string;
   message?: string | null;
   name?: string | null;
+  /** v0.16.1 select derive: "info" = 정상 안내(⚠ 개수 제외 — SR-D-25·28) */
+  level?: "info" | null;
   [k: string]: unknown;
 }
 /** 방법·출처(원본 resources/doe_method_sources.json, GET /doe/settings.method_sources) */
@@ -2355,6 +2357,8 @@ export interface DoeSelectCfg {
   quality_fail_policy?: "warn" | "skip" | null;
   /** v0.16.1 체결 구멍 둘레 고정 링·블렌딩(SR-D-9, Q2 = A: 3 · 8 mm) */
   hold?: { ring_mm: number; blend_mm: number } | null;
+  /** v0.16.1 섬 판정(§5.2·SR-D-26 — 브라우저 enclosedIslands 거울): 크기 상한·고리형 둔덕 비율 */
+  island?: { max_mm: number; ring_frac: number } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2693,6 +2697,8 @@ export interface DoeStudyOut {
     mesh?: { size_mm: number | null; gmsh_version: string | null } | null;
     /** ④ 형상별 메시·상태·품질 */
     shapes?: DoePrepShape[];
+    /** v0.16.1 작은 형상 억제(defeature) 단계로 메시한 형상 수 */
+    n_defeature?: number | null;
     /** v0.15.0 select 준비 요약(§8.1 BD_PREP_REGISTER) */
     n_nodes?: number;
     n_elems?: number;

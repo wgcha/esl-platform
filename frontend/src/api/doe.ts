@@ -317,7 +317,15 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
-export const warnText = (w: { code: string; message?: string | null }) => w.message || CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown }) =>
+  w.message ||
+  (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||
+  (w.code === "SELECT_RANGE_INVERTS" && Array.isArray(w.usable) && w.usable.length === 2
+    ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
+    : "") ||
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+/** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시 */
+export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info";
 
 // ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
 export const SELECT_CODE_TEXT: Record<string, string> = {
@@ -356,7 +364,19 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   SELECT_ISLAND_SHEAR: "곡면 바닥이라 섬 평행 이동과 둘레 사이에 차이가 있습니다",
   SELECT_HOLD_NO_FIXED: "'체결 구멍 둘레 고정'을 켰지만 이 비드에 고정 노드가 없습니다",
   SELECT_HOLD_INVALID: "'체결 구멍 둘레 고정' 값이 올바르지 않습니다",
+  // v0.16.1 R1c·통합(SR-D-25~28)
+  SELECT_BEAD_NETWORK: "다른 비드와 이어져 있습니다(T·L 교차) — 교차부 사면은 가까운 바닥의 비드로 나눴습니다. 이웃 비드도 함께 선택했는지 확인하세요",
+  SELECT_INNER_LOOP_RING: "고리형 비드 — 안쪽 둔덕 둘레도 폭 변경에 따라 움직입니다(정상)",
+  SELECT_SLOPE_ABOVE_PLATE: "판 높이 위(경계에 걸친 보스 벽)로는 사면을 넓히지 않았습니다",
+  SELECT_W_RANGE_RESET: "폭 W 기본 하한이 공칭보다 커서(국부 폭 오탐) 공칭을 포함하도록 고쳤습니다",
+  SELECT_RANGE_INVERTS: "기본 범위 끝에서 요소가 뒤집힙니다 — 범위를 줄이거나 블렌딩 반경을 키우세요",
 };
+/** v0.16.1 derive 경고 코드(비드·선택 warnings[].code — 서버 문구 원본 resources/doe_messages.json) */
+export type SelectDeriveWarnCode =
+  | "SELECT_SLOPE_LEAK" | "SELECT_TIER_MISSING" | "SELECT_OPEN_BOUNDARY" | "SELECT_DISCONNECTED" | "SELECT_NONPLANAR_BASE"
+  | "SELECT_BLEND_OVERLAP" | "SELECT_BLEND_CLIPPED" | "SELECT_FIXED_IN_BEAD" | "SELECT_FIXED_IN_BLEND" | "SELECT_WIDTH_UNDEFINED"
+  | "SELECT_FIXED_LAYER_OVERLAP" | "SELECT_INNER_LOOP" | "SELECT_ISLAND_TOO_LARGE" | "SELECT_ISLAND_SHEAR"
+  | "SELECT_HOLD_NO_FIXED" | "SELECT_BEAD_NETWORK" | "SELECT_SLOPE_ABOVE_PLATE" | "SELECT_W_RANGE_RESET" | "SELECT_RANGE_INVERTS";
 
 const mm1 = (v: number) => (v < 10 ? Number(v.toFixed(2)).toString() : v.toFixed(1));
 /** v0.16.1 안 경고 1줄(§8): FIXED_MOVED = "고정 노드 n개, 최대 x mm 이동", QUALITY_WARN = "새 Fail m (r %)" */

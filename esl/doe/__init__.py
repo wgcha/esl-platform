@@ -108,7 +108,9 @@ DEFAULTS: dict = {
                 "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
                            "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
                            "stl_max_tris": 5000000, "algorithms": [6, 5, 1], "recombine": True, "keep_stl": False,
-                           "timeout_s": None, "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}},
+                           "timeout_s": None,
+                           # warn_rel_cad(v0.16.1 SR-D-27): 경고 = max(warn_mm, warn_rel_cad × cad 메시 현 편차 추정), 0 = 절대만
+                           "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}},
                 # v0.16.0 메시 입력(C2-D-2~8 — esl.doe.mesh_input)
                 "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
                                "max_include_depth": 8, "size_warn_ratio": 1.5,
@@ -145,7 +147,7 @@ DEFAULTS: dict = {
                "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},   # end_ratio = bead_select.WIDTH_END_RATIO(§5.7)
                "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
                "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0, "depth_max_rel": 1.0,
-                         "width_max_rel": 0.6},
+                         "width_max_rel": 0.6, "width_floor_q": 0.25, "check_steps": 5},
                "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0, "fail_policy": "warn"},
                "island": {"max_mm": 40.0, "ring_frac": 0.9}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
                "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15,

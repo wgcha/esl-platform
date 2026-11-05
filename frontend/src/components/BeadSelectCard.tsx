@@ -16,7 +16,7 @@ import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
-  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
+  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
   type Layer, type LayerName, type SelIslands, type SelState,
 } from "../view3d/select/layers";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
@@ -182,15 +182,16 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
   const loadedSha = useRef<string | null | undefined>(undefined);
   const maxBeads = st?.select?.max_beads ?? 20;
   const maxTiers = st?.select?.max_tiers ?? 6;
-  const islandMax = (st?.select as { island?: { max_mm?: number } } | null | undefined)?.island?.max_mm ?? ISLAND_MAX_MM;
+  const islandMax = st?.select?.island?.max_mm ?? ISLAND_MAX_MM;
+  const ringFrac = st?.select?.island?.ring_frac ?? RING_FRAC;
   const hold = st?.select?.hold ?? { ring_mm: 3, blend_mm: 8 };
   const [localIslands, setLocalIslands] = useState<SelIslands | null>(null);
   /** 편집 뒤 섬 다시 계산(브라우저 — 표시만) */
   const refreshIslands = useCallback(() => {
     const s = stRef.current;
     if (!s || !data) return;
-    setLocalIslands(s.beads.length ? enclosedIslands(data.topo, s, data.glb.positions, islandMax) : null);
-  }, [data, islandMax]);
+    setLocalIslands(s.beads.length ? enclosedIslands(data.topo, s, data.glb.positions, islandMax, ringFrac) : null);
+  }, [data, islandMax, ringFrac]);
 
   const input = useCallback((): DoeSelectionIn | null => {
     const s = stRef.current;

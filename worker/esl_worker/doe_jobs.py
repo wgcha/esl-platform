@@ -616,7 +616,7 @@ def _grid_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         raise _fail("PREVIEW_STALE", f"미리보기 선택 sha256({str(msha)[:12]}…)이 작업 선택({sel[:12]}…)과 다릅니다")
     want = set(ids)
     cnt = count_select_states([x for x in g["cells"] if x["id"] in want])
-    echo(f"[esl-worker] 미리보기 셀 {len(ids)}: OK {cnt['ok']} · 고정 침범 {cnt['fixed']} · 품질 실패 {cnt['mesh']}")
+    echo(f"[esl-worker] 미리보기 셀 {len(ids)}: OK {cnt['ok']}(경고 {cnt['warn']}) · 고정 침범 {cnt['fixed']} · 품질 실패 {cnt['mesh']}")
     res = {"cells": len(ids), **cnt, "selection_sha256": msha,
            "basis_sha256": (g.get("manifest") or {}).get("basis_sha256")}
     with ex._tx() as conn:
@@ -677,8 +677,10 @@ def count_states(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def count_select_states(rows: list[dict[str, Any]]) -> dict[str, int]:
-    """select 셀 상태 수(count_states + mesh = FAILED_MESH 품질 실패 셀, esl_bead_select.md §14)."""
-    return {**count_states(rows), "mesh": sum(r["state"] == "FAILED_MESH" for r in rows)}
+    """select 셀 상태 수(count_states + mesh = FAILED_MESH 품질 실패 셀, esl_bead_select.md §14,
+    + warn = 경고가 있는 READY 셀 — v0.16.1 esl_select_relax.md §6)."""
+    return {**count_states(rows), "mesh": sum(r["state"] == "FAILED_MESH" for r in rows),
+            "warn": sum(r["state"] == "READY" and bool(r.get("warnings")) for r in rows)}
 
 
 # ---------------------------------------------------------------- BD_DESIGNS
@@ -781,6 +783,9 @@ def _designs(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     return {"n_designs": len(ids), "parallel": lim, **stats}
 
 
+SELECT_REUSE_STATES = ("OK", "FAILED_SOLVE")      # select 워커가 코어 없이 재사용하는 done 상태(그 밖은 코어 재판정 — SR-D-13d)
+
+
 def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
     """안 1개(스레드): 이어하기 판단 → paicad → 코어 bd_eval 자식. 반환 {design, status, reused, line}."""
     if procs.stop.is_set():
@@ -797,6 +802,8 @@ def _one_design(ex, did: str, procs: paicad_proc.Procs, echo) -> dict[str, Any]:
         prev = core_adapter.doe_reusable(dd, sha)
     except core_adapter.CoreError as exc:
         raise _fail(exc.code, exc.message) from None
+    if prev is not None and scn == "select" and did != BASELINE and prev.get("status") not in SELECT_REUSE_STATES:
+        prev = None     # v0.16.1 SR-D-13d: 스킵 문서(v0.16.0 SKIPPED_FIXED 등)는 코어 bd_eval 이 판정을 다시 해 정함
     if prev is not None:
         return {"design": did, "status": prev.get("status"), "reused": True,
                 "line": f"[{did}] 이전 결과 재사용({prev.get('status')}) — paicad·해석 생략"}

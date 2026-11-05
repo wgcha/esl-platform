@@ -310,3 +310,33 @@ def test_select_warn_flow_v0161(tmp_path, G):
         assert U.read_json(str(bd / "values.json"))["warnings"][0]["code"] == "SELECT_FIXED_MOVED"
     html = (out / "report.html").read_text(encoding="utf-8")
     assert "체결 위치 어긋남" in html and "⚠" in html
+
+
+def test_thumb_orientation_convex_concave_v0161():
+    """SR-D-34: 볼록·오목(n̂ 부호 반대) 비드 썸네일 시점이 같다 — 화면 오른쪽 = η × n_p(+x), 위 ≈ +η(+y), 카메라는 판 법선 쪽 위.
+    같은 판에서 비드 깊이만 거울(z → −z)로 만든 두 메시의 공칭 썸네일: 시점 벡터 동일, 비드(가장 어두운 음영 아닌 전경) 무게중심이
+    같은 쪽(화면 좌표 차 ≤ 5 px), 비드 중심(x 큰 쪽 b2)이 화면 오른쪽. view_normal 은 볼록·오목이 섞여도 상쇄되지 않음."""
+    g = sb.generate()
+    m = g["mesh"]
+    m2 = dict(m)
+    x2 = np.array(m["x0"], dtype=np.float64)
+    x2[:, 2] *= -1.0
+    m2["x0"] = x2
+    out = []
+    for mesh in (m, m2):
+        D = bs.derive_obj(mesh, bs.normalize_input(sb.selection(g), CFG), CFG, fixed_node_ids=g["fixed_ids"])
+        B = bs.basis(mesh, D, CFG)
+        _d, has = bs.node_direction(B)
+        vw = sr.view(mesh["x0"], has, sr.view_normal(mesh["x0"], [b.n_hat for b in D.beads]), None, TC)
+        tris = v3.triangulate(mesh["conn"], mesh["elem_type"])
+        img = sr.png_rgb(sr.render(mesh["x0"], tris, None, None, vw, 5.0, TC)).astype(int)
+        ys, xs = np.nonzero(img.sum(axis=2) < 3 * 250)
+        out.append((sorted({b.sense for b in D.beads}), vw, (xs.mean(), ys.mean()), D))
+    (s1, v1, c1, D1), (s2, v2, c2, _D2) = out
+    assert s1 != s2                                                        # 한쪽 볼록, 다른 쪽 오목
+    for k in ("f", "r", "u"):
+        assert np.allclose(v1[k], v2[k], atol=1e-9), k
+    assert v1["r"][0] > 0.99 and v1["u"][1] > 0.5 and v1["f"][2] < 0       # 오른쪽 +x, 위 +y, 위에서 내려다봄
+    assert abs(c1[0] - c2[0]) <= 5 and abs(c1[1] - c2[1]) <= 5
+    n = D1.beads[0].n_hat
+    assert np.linalg.norm(sr.view_normal(m["x0"], [n, -n])) == pytest.approx(1.0)

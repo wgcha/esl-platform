@@ -1,6 +1,6 @@
 // v0.15.0 ③ 비드 목록·도구(esl_bead_select.md §11.1): 비드마다 이름·단별 바닥 요소 수·공칭 D·[묶기], 사면(자동+편집)·W(최소–최대)·블렌딩, ⚠ 경고 배지(툴팁).
 // 지금 고치는 비드만 펼친다(1920 에서도 세로로 짧게). 숫자(D·W·사면·경고)는 마지막 [사면·경계 자동](서버 derive) 결과.
-import { warnText } from "../api/doe";
+import { isInfoWarn, warnText } from "../api/doe";
 import type { DoeBeadDerived, DoeSettingsOut } from "../api/types";
 import { counts, islandCount } from "../view3d/select/layers";
 import { RO_TIP, type BeadSelectCtrl } from "./BeadSelectCard";
@@ -30,7 +30,9 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
       {s.beads.map((b, bi) => {
         const c = counts(s, bi);
         const x = der(b.id);
-        const warns = x?.warnings ?? [];
+        const allw = x?.warnings ?? [];
+        const warns = allw.filter((w) => !isInfoWarn(w));
+        const infos = allw.filter((w) => isInfoWarn(w));
         const on = bi === ctrl.active;
         const linkOf = (k: number) => b.links.find((g) => g.includes(k));
         return (
@@ -41,6 +43,11 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
               {warns.length > 0 && (
                 <span className="badge warn" title={warns.map((w) => warnText(w)).join("\n")} data-testid={`bead-warn-${b.id}`}>
                   ⚠{warns.length}
+                </span>
+              )}
+              {infos.length > 0 && (
+                <span className="badge" title={infos.map((w) => warnText(w)).join("\n")} data-testid={`bead-info-${b.id}`}>
+                  ⓘ{infos.length}
                 </span>
               )}
               {!on && <span className="small muted">바닥 {c.tiers.reduce((a, v) => a + v, 0).toLocaleString()} · 단 {b.nTiers}</span>}
@@ -150,6 +157,13 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
                 {warns.length > 0 && (
                   <ul className="reasons warn-text">
                     {warns.map((w, i) => (
+                      <li key={i}>{warnText(w)}</li>
+                    ))}
+                  </ul>
+                )}
+                {infos.length > 0 && (
+                  <ul className="reasons small muted" data-testid={`bead-infos-${b.id}`}>
+                    {infos.map((w, i) => (
                       <li key={i}>{warnText(w)}</li>
                     ))}
                   </ul>

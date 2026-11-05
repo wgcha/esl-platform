@@ -1782,7 +1782,7 @@ def _cmp_sha(c: Ctx, did: str) -> str:
     if mode != "cad":                       # C2-D-15·25: mode ≠ cad 일 때만(v0.15.x·cad 스터디 해시 불변)
         cc = c.cfg.get("compare") or {}
         keep["mesh_mode"] = mode
-        keep["remesh"] = ev.config_hash(cc.get("remesh") or {})
+        keep["remesh"] = ev.config_hash(_remesh_hash_view(cc.get("remesh") or {}))
         keep["ladder"] = list(_cmp_mode(c)[1])
         keep["refine"] = ev.config_hash(cc.get("refine") or {})
     if sh.get("source") == "mesh":          # 메시 형상 = (주·include sha256 목록, part_id, mesh_input 설정 해시)
@@ -1795,6 +1795,17 @@ def _cmp_sha(c: Ctx, did: str) -> str:
         keep["defeature_cfg"] = ev.config_hash({k: df.get(k) for k in DEFEAT_NEW_KEYS_V0161 + ("min_bead_height_mm",)})
     cfg = ev.config_hash(keep)
     return ev.input_sha256({}, mesh_sha, ev.config_hash(bmeta["frame"]), cfg, None)
+
+
+REMESH_HASH_SKIP_V0161 = ("warn_rel_cad",)    # remesh.fidelity 의 경고 전용 새 키(SR-D-27) — 메시와 무관해 해시에서 항상 제외
+
+
+def _remesh_hash_view(rm: dict) -> dict:
+    """keep["remesh"] 해시용 사본: fidelity 의 경고 전용 v0.16.1 키를 뺌 → v0.16.0 스냅샷·cad 형상 해시 불변(SR-D-27)."""
+    out = dict(rm)
+    if isinstance(out.get("fidelity"), dict):
+        out["fidelity"] = {k: v for k, v in out["fidelity"].items() if k not in REMESH_HASH_SKIP_V0161}
+    return out
 
 
 def _cmp_row_method(c: Ctx, did: str) -> str | None:
@@ -2272,6 +2283,9 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
                         with_section=False)
     B = bsel.basis(t.mesh, D, c.cfg)
+    rc_w = bsel.range_check(t.mesh, D, B, c.cfg)   # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 → 비드 경고(범위·기저 불변)
+    if rc_w:
+        echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" for w in rc_w))
     tab = bsel.params_table(D, c.cfg)
     c.writer.makedirs(d)
     bsel.save_basis(pb, B, guard=c.writer.guard)
@@ -2340,7 +2354,7 @@ def _sel_loaded(c: Ctx) -> dict:
                 loops += [L[P[i]:P[i + 1]] for i in range(P.size - 1)]
                 nh.append(z[f"{bid}_nhat"])
         c._sel_cache = {"B": bsel.load_basis(pb), "fixed": z["fixed"].astype(bool), "loops": loops, "rev": r,
-                        "n_hat": np.mean(nh, axis=0) if nh else np.array([0.0, 0.0, 1.0])}
+                        "n_hats": nh}
     return c._sel_cache
 
 
@@ -2394,7 +2408,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
             vmax = max(vmax, float(np.abs(cv).max()) if cv.size else 0.0)
         c.progress(5 + 30 * (k + 1) / max(len(designs), 1))
     V = vmax if vmax > 0 else float(c.cfg["limits"]["min_disp_range_mm"])
-    view = sr.view(x0, has, L["n_hat"], t.frame, tcfg)
+    view = sr.view(x0, has, sr.view_normal(x0, L["n_hats"]), t.frame, tcfg)
     tris = v3.triangulate(np.asarray(t.mesh["conn"]), np.asarray(t.mesh["elem_type"]))
     os.makedirs(c.writer.guard(os.path.join(gd, "cells", "nominal")), exist_ok=True)
     with open(c.writer.guard(os.path.join(gd, "cells", "nominal", "thumb.png")), "wb") as fh:

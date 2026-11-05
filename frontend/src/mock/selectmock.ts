@@ -373,8 +373,8 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
     }
     return nb.get(bi)!;
   };
-  const islandMax = (st.select as { island?: { max_mm?: number } } | null)?.island?.max_mm ?? 40;
-  const enc = enclosedComponents(t, cand, own, m.x, nOf, { maxMm: islandMax, outerPoly: (o) => outerPolygon(t, m.x, (e) => own[e] === o, nOf(o)) });
+  const islandMax = st.select?.island?.max_mm ?? 40;
+  const enc = enclosedComponents(t, cand, own, m.x, nOf, { maxMm: islandMax, ringFrac: st.select?.island?.ring_frac ?? 0.9, outerPoly: (o) => outerPolygon(t, m.x, (e) => own[e] === o, nOf(o)) });
   const isl = new Uint8Array(t.nElems);
   for (const il of enc.islands) for (const e of il.elems) isl[e] = 1;
   const beads: DeriveBead[] = sel.beads.map((b, bi) => {

@@ -70,6 +70,35 @@ describe("enclosedComponents(코어 §5.2 거울) — 합성 격자 정답", () 
     expect(enclosedComponents(g.topo, cand, o3, g.X, nz, { maxMm: 40 }).islands).toEqual([]);
   });
 
+  it("ringFrac(코어 ring_frac 거울, SR-D-26): 판 높이까지 솟은 둔덕 = 섬 아님(rings), 낮은 딤플 = 섬", () => {
+    // 바닥(단1) 노드 z −10, 판 0. 후보 2×2 의 가운데 노드 높이: 0(판 높이 = 고리형 둔덕) | −8(딤플 높이 2 < 0.9·10)
+    const make = (zc: number) => {
+      const X = Float64Array.from(g.X);
+      for (let e = 0; e < n; e++)
+        if (e % 12 >= 2 && e % 12 <= 9 && Math.floor(e / 12) >= 2 && Math.floor(e / 12) <= 9) for (let k = g.topo.elemNodesPtr[e]; k < g.topo.elemNodesPtr[e + 1]; k++) X[g.topo.elemNodes[k] * 3 + 2] = -10;
+      const mid = 6 * 13 + 6; // 노드 (6, 6)
+      X[mid * 3 + 2] = zc;
+      const idx: number[] = [];
+      const t2e: number[] = [];
+      for (let j = 0; j < 12; j++)
+        for (let i = 0; i < 12; i++) {
+          const a = j * 13 + i;
+          idx.push(a, a + 1, a + 14, a, a + 14, a + 13);
+          t2e.push(j * 12 + i, j * 12 + i);
+        }
+      return { X, topo: buildTopo(X, Uint32Array.from(idx), Uint32Array.from(t2e), n) };
+    };
+    const up = make(0);
+    const r1 = enclosedComponents(up.topo, cand, owner, up.X, nz, { maxMm: 40, ringFrac: 0.9 });
+    expect(r1.islands).toEqual([]);
+    expect(r1.rings).toEqual([{ owner: 1, nElems: 4, sizeMm: Math.SQRT2 * 2 }]);
+    expect(enclosedComponents(up.topo, cand, owner, up.X, nz, { maxMm: 40 }).islands).toHaveLength(1); // 규칙 끔 = v0.16.0
+    const dn = make(-8);
+    const r2 = enclosedComponents(dn.topo, cand, owner, dn.X, nz, { maxMm: 40, ringFrac: 0.9 });
+    expect(r2.islands).toHaveLength(1);
+    expect(r2.rings).toEqual([]);
+  });
+
   it("가장 큰 성분이 둘러싸여도 섬 아님(동률 = 최소 요소 번호가 '가장 큼')", () => {
     // 판 전체를 바닥으로 덮고 두 성분(같은 크기 4)만 후보
     const o = new Int32Array(n).fill(1);

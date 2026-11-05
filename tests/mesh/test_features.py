@@ -79,6 +79,13 @@ def test_v0160_bytes_skip_policy(name):
     판정 순서 변경(SR-D-1, §5.7): v0.16.0 SKIPPED_FIXED 이면서 뒤집힘이 있던 안만 FAILED_MESH/SELECT_MORPH_INVERTED."""
     gv = golden_values(name, SKIP)
     gd = GOLD["bead_select"][name]
+    reset = [w for b in gv["D"].beads for w in b.warnings if w["code"] == "SELECT_W_RANGE_RESET"]
+    if reset:
+        # SR-D-32(의도된 변경): v0.16.0 기본 W 범위가 뒤집혀(하한 > 상한 — 행렬 422 라 쓸 수 없던 범위) 공칭 포함 범위로 고침 →
+        # 그 비드 기저(R_auto)·요약만 다름. 이 경우만 바이트 대조 대신 뒤집힘이었음을 확인(h6wavy: [102.76, 74.45] → [49.63, 74.45])
+        assert name == "h6wavy" and all(w["lo_mm"] > w["hi_mm"] and w["new_lo_mm"] < w["hi_mm"] for w in reset)
+        assert gv["norm_sha"] == gd["norm_sha"]
+        return
     for k in ("summary", "basis_npz", "basis_bin", "norm_sha"):
         assert gv[k] == gd[k], (name, k)
     for got, exp in zip(gv["states"], gd["states"]):

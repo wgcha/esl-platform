@@ -390,7 +390,8 @@ def test_settings_select_block(client, world):
     assert s["select"] == {"enabled": True, "reason": None, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6,
                            "blend": {"min_mm": 15.0, "max_mm": 200.0},
                            # v0.16.1 V-SR-13(settings 키)
-                           "fixed_policy": "warn", "quality_fail_policy": "warn", "hold": {"ring_mm": 3.0, "blend_mm": 8.0}}
+                           "fixed_policy": "warn", "quality_fail_policy": "warn", "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
+                           "island": {"max_mm": 40.0, "ring_frac": 0.9}}           # 브라우저 섬 판정 거울(SR-D-26)
 
 
 def test_select_defaults_mirror_contract():
@@ -404,12 +405,13 @@ def test_select_defaults_mirror_contract():
             "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5, "slope_max_mm": 80.0,
             "fixed_tol_mm": 0.01, "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},
             "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
-            "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0, "depth_max_rel": 1.0, "width_max_rel": 0.6},
+            "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0, "depth_max_rel": 1.0, "width_max_rel": 0.6,
+                      "width_floor_q": 0.25, "check_steps": 5},
             "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0, "fail_policy": "warn"},
             "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15, "ambient": 0.35},
             "derive_cache_n": 8, "derive_timeout_s": 20,
             # v0.16.1(esl_select_relax.md §4.4)
-            "fixed_policy": "warn", "island": {"max_mm": 40.0}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0}}
+            "fixed_policy": "warn", "island": {"max_mm": 40.0, "ring_frac": 0.9}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0}}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
         from doe_support import core_view_v0161

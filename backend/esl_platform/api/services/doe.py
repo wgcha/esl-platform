@@ -307,7 +307,10 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
                        "blend": {"min_mm": float(sc["blend"]["min_mm"]), "max_mm": float(sc["blend"]["max_mm"])},
                        # v0.16.1(esl_select_relax.md §4.4): 고정 침범·품질 FAIL 정책, 체결 구멍 둘레 고정 기본값(툴팁)
                        "fixed_policy": str(sc["fixed_policy"]), "quality_fail_policy": str(sc["quality"]["fail_policy"]),
-                       "hold": {"ring_mm": float(sc["hold"]["ring_mm"]), "blend_mm": float(sc["hold"]["blend_mm"])}}}
+                       "hold": {"ring_mm": float(sc["hold"]["ring_mm"]), "blend_mm": float(sc["hold"]["blend_mm"])},
+                       # 섬 판정 거울 키(SR-D-26 — 브라우저 enclosedIslands 가 같은 값으로)
+                       "island": {"max_mm": float(sc["island"]["max_mm"]),
+                                  "ring_frac": float(sc["island"].get("ring_frac", 0.9))}}}
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
@@ -814,6 +817,8 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 "boundary": p0.get("boundary") or {"n_warn": 0, "n_info": 0}}
         if s["scenario"] == "compare":      # ④ 준비 요약(형상 상태·요소 수·실패 사유)
             prep.update({k: p0.get(k) for k in ("n_shapes", "n_ready", "failed", "reference_source", "shapes", "mesh")})
+            if p0.get("n_defeature") is not None:   # v0.16.1 작은 형상 억제 단계로 메시한 형상 수(워커 준비 요약)
+                prep["n_defeature"] = int(p0["n_defeature"])
         elif s["scenario"] == "select":     # select 준비 요약(BD_PREP_REGISTER — 노드·요소 수·고정 출처)
             prep.update({k: p0.get(k) for k in ("n_nodes", "n_elems", "fixed")})
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],

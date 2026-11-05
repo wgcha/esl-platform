@@ -58,7 +58,7 @@ ALGO = 2                           # v0.16.1 계산 규칙 판(SelectionDerived.
 RULES = 2                          # v0.16.1 판정 규칙 판(grid_manifest.rules — §7.4)
 # v0.16.1 새 select 설정 키(점 경로) — 기본값과 같으면 이어하기 해시 사본에서 뺀다(SR-D-13b, §7.2). 이후 판도 같은 방식으로 추가.
 HASH_NEW_KEYS_V0161 = ("fixed_policy", "quality.fail_policy", "range.depth_max_rel", "range.width_max_rel", "island",
-                       "hold")
+                       "hold", "range.width_floor_q", "range.check_steps")
 POLICIES = ("warn", "skip")
 
 
@@ -642,6 +642,24 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     S_auto = np.zeros(ix.n_elems, bool)
     S_auto[sub[np.isfinite(d) & (d <= lim)]] = True
     S_auto &= ~F
+    # v0.16.1 SR-D-28 사면 높이 = 판 높이까지: 판보다 바닥 반대쪽으로 더 나간 사면(경계에 반쯤 걸친 보스 벽)이 있을 때만
+    # 그 높이를 막고 BFS 를 다시 — 없으면 아무것도 바꾸지 않음(바이트 불변)
+    nb0 = ix.adj[np.flatnonzero(S_auto)].indices if S_auto.any() else np.zeros(0, np.int64)
+    leak0 = bool(nb0.size and np.any(allowed[nb0] & ~S_auto[nb0]))      # 샌 사면(판이 멈춤 기준이 못 됨) → 막지 않음
+    over = None if leak0 else _slope_over_plate(ix, F, S_auto, par, excl, n_bar, float(sc["plate_tol_mm"]))
+    if over is not None and (S_auto & over).any():
+        n_cut = int((S_auto & over).sum())
+        allowed &= ~over
+        sub = np.flatnonzero(F | allowed)
+        A = ix.adj[sub][:, sub].tocoo()
+        w = np.linalg.norm(ix.centroid[sub[A.row]] - ix.centroid[sub[A.col]], axis=1)
+        G = sparse.csr_matrix((np.maximum(w, 1e-9), (A.row, A.col)), shape=(sub.size, sub.size))
+        src = np.flatnonzero(F[sub])
+        d = csgraph.dijkstra(G, directed=False, indices=src, min_only=True, limit=lim)
+        S_auto = np.zeros(ix.n_elems, bool)
+        S_auto[sub[np.isfinite(d) & (d <= lim)]] = True
+        S_auto &= ~F
+        bd.warnings.append({"code": "SELECT_SLOPE_ABOVE_PLATE", "n_elems": n_cut, "level": "info"})
     # v0.16.1 비드 네트워크(T·L 교차): 다른 비드 바닥이 사면으로 이어지면 사면 요소는 가까운 바닥 쪽 비드(측지 Voronoi).
     # 다른 바닥에 닿는 경로가 없으면 d_o = ∞ → v0.16.0 과 같은 결과(바이트 불변)
     n_net = 0
@@ -748,8 +766,10 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     bd.inner_loops_n = len(inner)
     if inner:                                       # SR-D-7: 섬이 아닌 안쪽 고리 = v0.16.0 대로(오프셋·고정)
         w_il = {"code": "SELECT_INNER_LOOP", "n": len(inner)}
-        if getattr(bd, "ring_n", 0):                  # v0.16.1 고리형 비드 안쪽 둔덕 수(정상 — 표시 낮춤 제안 근거)
+        if getattr(bd, "ring_n", 0):                  # v0.16.1 고리형 비드 안쪽 둔덕 수
             w_il["ring"] = int(bd.ring_n)
+            if int(bd.ring_n) == len(inner):          # SR-D-25: 안쪽 고리가 모두 고리형 둔덕 = 정상 → 정보로 낮춤
+                w_il["level"] = "info"
         bd.warnings.append(w_il)
     bd.open = bool(free) or any(not lp["closed"] for lp in loops) or not loops
     if bd.open:
@@ -841,6 +861,35 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
     return bd
 
 
+def _slope_over_plate(ix: MeshIndex, F: np.ndarray, S_auto: np.ndarray, par: np.ndarray, excl: np.ndarray,
+                      n_bar: np.ndarray, tol: float) -> np.ndarray | None:
+    """SR-D-28 판(상판 기준면) 높이 위 요소 마스크 | None. 판 묶음 = 사면이 멈춘 평행 요소(사면 이웃, 바닥·제외 아님)의
+    높이(n̄ 방향 요소 중심)를 정렬해 간격 > tol 에서 나눈 묶음 중 요소 수가 가장 많은 것(동률 = 바닥에서 가까운 쪽), z_p = 그 중앙값.
+    바닥 중앙 높이 z_F 에서 판 쪽 부호 σ = sign(z_p − z_F), 반환 = σ·(z − z_far) > tol 인 요소(z_far = 판 묶음의 판 쪽 끝 —
+    물결 판도 묶음 안이면 막지 않음). 판을 못 찾거나 판 묶음 < 멈춤 요소의 절반이거나 |z_p − z_F| ≤ tol 이면 None.
+    호출자는 사면이 샌 비드(SELECT_SLOPE_LEAK 조건)에서는 부르지 않는다."""
+    if not S_auto.any() or not F.any():
+        return None
+    nb = np.unique(ix.adj[np.flatnonzero(S_auto)].indices)
+    stop = nb[par[nb] & ~F[nb] & ~excl[nb] & ~S_auto[nb]]
+    if stop.size == 0:
+        return None
+    zc = ix.centroid @ n_bar
+    zF = float(np.median(zc[F]))
+    zs = np.sort(zc[stop])
+    cut = np.flatnonzero(np.diff(zs) > tol)
+    groups = np.split(zs, cut + 1)
+    best = max(groups, key=lambda g: (g.size, -abs(float(np.median(g)) - zF)))
+    if 2 * best.size < zs.size:                   # 판 묶음이 멈춤 요소의 절반 미만 = 판 높이가 하나로 안 정해짐
+        return None
+    zp = float(np.median(best))
+    if abs(zp - zF) <= tol:
+        return None
+    sg = 1.0 if zp > zF else -1.0
+    z_far = float(best.max()) if sg > 0 else float(best.min())     # 판 묶음의 바닥 반대쪽 끝(물결 판은 묶음 전체 = 판)
+    return sg * (zc - z_far) > tol
+
+
 def _islands(ix: MeshIndex, bd: BeadDerived, floor_masks: list, F: np.ndarray, taken: np.ndarray, excl: np.ndarray,
              bead_owner: np.ndarray, n_bar: np.ndarray, sc: dict) -> np.ndarray:
     """§5.2 섬 판정(공통 ``features.enclosed_components``, owner = 단 번호 0..). 후보 = ¬F ∧ ¬taken(다른 비드 층·자기 사면 add)
@@ -878,8 +927,11 @@ def _feasible(bd: BeadDerived, rd: dict, rg: dict, zs: list, h: float) -> dict:
                                  _r(max(D * (1.0 + float(rg["depth_max_rel"])), float(hi0)))]
     if rd["W"] is not None:
         W = float(bd.W_nom)
-        if bd.floor_follow == 1:
-            lo_g = W - (((bd.W_min or W) - 2.0 * bd.run_med) - h)
+        wref = getattr(bd, "w_floor_ref", bd.W_min)   # SR-D-32: 기본 범위와 같은 바닥 폭 기준(극단값 오탐이면 분위값)
+        if bd.floor_follow == 1 and wref is None:
+            lo_g = float(rd["W"][0])
+        elif bd.floor_follow == 1:
+            lo_g = W - (((wref or W) - 2.0 * bd.run_med) - h)
         else:
             lo_g = W - 2.0 * max(bd.run_med - 0.5 * h, 0.0)
         lo_g = max(lo_g, float(rg["min_step_mm"]))
@@ -1107,12 +1159,25 @@ def _ranges_blend(ix: MeshIndex, bd: BeadDerived, fixed: np.ndarray, sc: dict, h
         hi = D * (1.0 + float(rg["depth_rel"]))
         lo = min(lo, hi)
         rd["D"][str(t["k"])] = [_r(lo), _r(hi)]
+    bd.w_floor_ref = bd.W_min
     if bd.w_enabled:
         W = bd.W_nom
-        lo, hi = W * (1.0 - float(rg["width_rel"])), W * (1.0 + float(rg["width_rel"]))
+        lo0, hi = W * (1.0 - float(rg["width_rel"])), W * (1.0 + float(rg["width_rel"]))
+        lo = lo0
         if bd.floor_follow == 1:
             floor_min = (bd.W_min or W) - 2.0 * bd.run_med
-            lo = max(lo, W - (floor_min - h))
+            lo = max(lo0, W - (floor_min - h))
+            if lo > W:                     # SR-D-32: 하한이 공칭보다 큼(국부 폭 극단값 — 5 % 분위 보스·구멍 오탐이 바닥 최소 폭 조건을
+                q = float(rg.get("width_floor_q", 0.25))     # 뒤집음). lo == W(좁힐 수 없음 — 넓히기만)는 v0.16.0 그대로
+                wq = float(np.percentile(bd.w_j, 100.0 * q)) if bd.w_j.size else W
+                lo_q = max(lo0, W - ((wq - 2.0 * bd.run_med) - h))
+                bd.w_floor_ref = wq
+                if lo_q > W:               # 분위값으로도 공칭 밖: 뒤집힌 범위면 공칭 × (1 ± width_rel), 아니면 하한 = 공칭(넓히기만)
+                    lo_q = lo0 if lo > hi else W
+                    bd.w_floor_ref = None if lo > hi else bd.W_min
+                bd.warnings.append({"code": "SELECT_W_RANGE_RESET", "lo_mm": _r(lo), "hi_mm": _r(hi),
+                                    "new_lo_mm": _r(lo_q), "w_min_mm": _r(bd.W_min), "q": q})
+                lo = lo_q
         rd["W"] = [_r(lo), _r(hi)]
     bd.range_default = rd
     bd.range_feasible = _feasible(bd, rd, rg, zs, h)
@@ -1457,6 +1522,50 @@ def affected_elems(mesh: dict, x0, x, eps: float = U_EPS) -> np.ndarray:
     q = et == 4
     m[q] |= u[C[q, 3]]
     return m
+
+
+def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None) -> list[dict]:
+    """SR-D-33 기본 범위 끝 점검(기저가 있을 때 — BD_MATRIX): 변수마다 default_range 양 끝을 그 변수만 바꾼 안으로 모핑해
+    뒤집힘(``design_state`` 와 같은 판정)이 있으면 공칭 쪽으로 ``range.check_steps`` 회 이분해 뒤집힘 없는 끝 ``usable`` 을 찾고 그 비드에
+    경고 ``SELECT_RANGE_INVERTS{var, lo_mm, hi_mm, usable[lo, hi], inverted[lo, hi]}`` 를 단다(범위는 바꾸지 않음 — 기저·R_auto 불변).
+    check_steps 0 = 끔. 반환 = 단 경고 목록. 뒤집힘이 없으면 아무것도 바꾸지 않음."""
+    sc = _cfg(cfg)
+    n = int(sc["range"].get("check_steps", 0) or 0)
+    out: list[dict] = []
+    if n <= 0:
+        return out
+    x0 = np.asarray(mesh["x0"], dtype=np.float64)
+    by = {b.id: b for b in derived.beads}
+
+    def inv(name: str, v: float) -> int:
+        st = design_state(mesh, x0, morph(x0, B, {name: float(v)}), derived.fixed_mask, cfg)
+        return int(st["quality"]["inverted"]) if st["code"] == "SELECT_MORPH_INVERTED" else 0
+
+    for row in params_table(derived, cfg):
+        lo, hi = (float(v) for v in row["default_range"])
+        nom = float(row["nominal"])
+        res = []
+        for end in (lo, hi):
+            k = inv(row["name"], end)
+            good = end
+            if k:
+                a, b2 = nom, end                       # a = 뒤집힘 없음(공칭), b2 = 뒤집힘
+                for _ in range(n):
+                    m = 0.5 * (a + b2)
+                    if inv(row["name"], m):
+                        b2 = m
+                    else:
+                        a = m
+                good = a
+            res.append((k, good))
+        if res[0][0] or res[1][0]:
+            w = {"code": "SELECT_RANGE_INVERTS", "var": row["name"], "lo_mm": _r(lo), "hi_mm": _r(hi),
+                 "usable": [_r(res[0][1]), _r(res[1][1])], "inverted": [res[0][0], res[1][0]]}
+            b = by.get(row["bead"])
+            if b is not None:
+                b.warnings.append(w)
+            out.append(w)
+    return out
 
 
 def design_state(mesh: dict, x0, x, fixed_mask, cfg: dict | None = None) -> dict:

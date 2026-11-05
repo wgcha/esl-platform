@@ -5,7 +5,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { doeBlockedReason, normalizeDoeSettings, scenarioBlocked } from "../api/doe";
+import { doeBlockedReason, isInfoWarn, normalizeDoeSettings, scenarioBlocked, warnText } from "../api/doe";
 import { makeDoeSettings } from "../mock/doedata";
 import { blendSmall } from "../components/DoeParamTable";
 import { offsetRing } from "../components/BoundaryPlan";
@@ -27,6 +27,17 @@ describe("select 규칙(화면 쪽 함수)", () => {
     expect(n.select?.enabled).toBe(true);
     expect(n.select?.feature_angle_deg).toBe(15);
     expect(normalizeDoeSettings({}).select?.enabled).toBe(false);
+  });
+  it("v0.16.1 정보 수준 경고(SR-D-25·28)·네트워크 경고 문구(SR-D-29)", () => {
+    expect(isInfoWarn({ code: "SELECT_INNER_LOOP", level: "info" })).toBe(true);
+    expect(isInfoWarn({ code: "SELECT_INNER_LOOP" })).toBe(false);
+    expect(warnText({ code: "SELECT_INNER_LOOP", level: "info" })).toMatch(/고리형 비드.*정상/);
+    expect(warnText({ code: "SELECT_INNER_LOOP" })).toMatch(/섬이 아닌 안쪽 고리/);
+    expect(warnText({ code: "SELECT_BEAD_NETWORK" })).toMatch(/T·L 교차/);
+    expect(warnText({ code: "SELECT_SLOPE_ABOVE_PLATE", level: "info" })).toMatch(/판 높이 위/);
+    expect(warnText({ code: "SELECT_INNER_LOOP", level: "info", message: "서버 문구" })).toBe("서버 문구");
+    expect(warnText({ code: "SELECT_RANGE_INVERTS", var: "B1_W", usable: [115.5, 124.5] })).toBe("B1_W 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ 115.5~124.5 mm");
+    expect(warnText({ code: "SELECT_W_RANGE_RESET" })).toMatch(/공칭을 포함/);
   });
   it("R 작음 배지·폭 윤곽 오프셋·단면 범위 선", () => {
     expect(blendSmall(15, 8, 60, 48, 72)).toBe(true); // 15 < 8·12/2

@@ -638,6 +638,8 @@ class BeadDoeCompareRemeshFidelityCfg(_M):
     warn_mm: float = Field(default=0.3, gt=0)
     fail_mm: float | None = Field(default=1.5, gt=0)
     samples_max: int = Field(default=200000, ge=1)
+    # v0.16.1 SR-D-27: 경고 = max(warn_mm, warn_rel_cad × cad 메시 현 편차 추정) — 0 = 절대 기준만(v0.16.0). 해시 제외(경고 전용)
+    warn_rel_cad: float = Field(default=2.0, ge=0, le=10)
 
     @model_validator(mode="after")
     def _order(self) -> "BeadDoeCompareRemeshFidelityCfg":
@@ -862,6 +864,10 @@ class BeadDoeSelectRangeCfg(_M):
     min_step_mm: float = Field(default=1.0, ge=0)
     depth_max_rel: float = Field(default=1.0, gt=0, le=5)
     width_max_rel: float = Field(default=0.6, gt=0, le=5)
+    # v0.16.1 SR-D-32: W 하한 > 공칭이면 바닥 최소 폭을 국부 폭 이 분위값으로 다시(극단값 오탐 회피)
+    width_floor_q: float = Field(default=0.25, gt=0, lt=1)
+    # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 점검 이분 횟수(BD_MATRIX — SELECT_RANGE_INVERTS{usable}), 0 = 끔
+    check_steps: int = Field(default=5, ge=0, le=20)
 
     @model_validator(mode="after")
     def _max_rel(self) -> "BeadDoeSelectRangeCfg":
@@ -882,9 +888,11 @@ class BeadDoeSelectQualityCfg(_M):
 
 
 class BeadDoeSelectIslandCfg(_M):
-    """v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한(§5.2) — 넘으면 섬 아님(SELECT_ISLAND_TOO_LARGE)."""
+    """v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한(§5.2) — 넘으면 섬 아님(SELECT_ISLAND_TOO_LARGE). ring_frac(SR-D-26) = 주인 바닥에서
+    판 쪽으로 ≥ ring_frac·D 솟은 둘러싸인 성분은 고리형 비드 안쪽 둔덕(섬 아님, SELECT_INNER_LOOP 정보)."""
 
     max_mm: float = Field(default=40.0, gt=0)
+    ring_frac: float = Field(default=0.9, gt=0)
 
 
 class BeadDoeSelectHoldCfg(_M):

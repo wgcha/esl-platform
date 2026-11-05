@@ -264,8 +264,12 @@ def test_stage_mesh_feat_spec_fidelity_and_list(feat_steps, tmp_path):
     assert all(f["method"] == "compound" and f["dev_mm"] is None for f in doc["features"] if f["kind"] == "fillet")
     fd = ds["fidelity"]
     assert fd["suppressed_max_mm"] == pytest.approx(max(by["bead"]["dev_mm"], by["hole"]["dev_mm"]))
-    assert fd["outside"]["hausdorff_mm"] <= 1.0 and fd["outside"]["over_warn"]
-    assert "REMESH_FIDELITY_WARN" in [w["code"] for w in meta["warnings"]]
+    # SR-D-27: 바깥 경고 기준 = max(0.3, 2 × cad 메시 현 편차) — 곡면(구면 딤플·compound 필렛)의 h 3 현 편차만큼은 경고 아님
+    o = fd["outside"]
+    assert o["hausdorff_mm"] <= 1.0 and 0.2 < o["cad_chord_mm"] <= 0.19 * H3 + 1e-6 and o["warn_mm"] == pytest.approx(
+        max(0.3, 2.0 * o["cad_chord_mm"]), abs=1e-6) and not o["over_warn"]
+    assert o["over_warn"] == (o["hausdorff_mm"] > o["warn_mm"])
+    assert ("REMESH_FIDELITY_WARN" in [w["code"] for w in meta["warnings"]]) == o["over_warn"]
     # 원 형상(구면 딤플 1.5 그대로)과 메시 사이 거리가 큰 곳은 억제 영역 안뿐: 같은 메시·같은 S0 로 Ω 없이 재면 더 큼
     assert fd["outside"]["hausdorff_mm"] < fd["suppressed_max_mm"]
 

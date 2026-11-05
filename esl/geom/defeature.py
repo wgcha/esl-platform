@@ -708,12 +708,14 @@ def fidelity_split(S_X, S_T, mesh: dict, h: float, rc: dict, feats: list[dict], 
     a, b = d_ms[oa], d_sm[ob]
     allv = np.concatenate([a, b])
     haus = float(max(a.max(initial=0.0), b.max(initial=0.0)))
-    warn = float(fc["warn_mm"])
+    warn, chord = mrm.warn_threshold(S_X, S_T, h, rc)      # SR-D-27 cad 메시 편차 대비 상대 경고(절대 warn_mm 이 하한)
     fail = fc.get("fail_mm")
     outside = {"hausdorff_mm": round(haus, 6), "max_dev_mm": round(float(a.max(initial=0.0)), 6),
                "p95_mm": round(float(np.percentile(allv, 95)) if allv.size else 0.0, 6),
-               "deflection_mm": float(rc["linear_deflection_mm"]), "samples": int(allv.size), "warn_mm": warn,
+               "deflection_mm": float(rc["linear_deflection_mm"]), "samples": int(allv.size), "warn_mm": round(warn, 6),
                "fail_mm": None if fail is None else float(fail), "over_warn": bool(haus > warn)}
+    if chord is not None:
+        outside["cad_chord_mm"] = chord
     return {"outside": outside, "per_feature": per,
             "suppressed_max_mm": round(max(per.values()), 6) if per else 0.0}
 

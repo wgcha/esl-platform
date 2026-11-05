@@ -1,5 +1,6 @@
 # 계약: 강성 평가 스터디 시나리오 ④ 형상 직접 비교 (STEP_COMPARE, v0.14.0)
 
+- **v0.16.1 변경 = `esl_select_relax.md`**(SELECT_RELAX — 이 문서와 충돌하면 그 문서가 우선).
 - 상태: **확정** (2026-11-04, 사용자 확정 기능 + 결정 SC-D-1·SC-D-2 권장안 확정). 미결 없음.
 - 버전: **v0.14.0** (main 2191318 = v0.12.5 기준, 구현은 v0.13.0 일괄 실행 `impl/run-all-be` 위). migration **필요**(§9 — `0014_step_compare`).
 - 관계: `esl_bead_doe.md`(BEAD_DOE, 시나리오 ①②③)의 **확장**. ③ `step` 의 gmsh 메싱(`esl/doe/mesh_gmsh.py`)·셀 매핑(`mapping.to_target`, frame 고정)·지지(`target.auto_supports`)·크기 규칙(`esl.opt.size.assert_ok`)·해석(`esl/doe/evaluate.py`)·순위·ESL별 지표(§11·§11.4)·작업 구조(`DOE_PREP`·`DOE_RUN`, BD_* step)·폴더 규칙(`_doe/<id>/`)·보안 규칙(§15)을 **그대로 재사용**한다. 이 문서에 없는 규칙은 BEAD_DOE 를 따른다. 충돌 시 ④ 범위에서 이 문서가 우선.
