@@ -37,13 +37,18 @@ def test_params_table_matches_core():
              (g, sb.selection(g, links=[[1, 2]]), np.concatenate([g["fixed_ids"], nid[m["conn"][floor][:, 0]]])),
              (go, sb.selection(go), go["fixed_ids"])]
     seen_off, seen_no_w = False, False
-    for gg, sel, fx in cases:
-        norm = bs.normalize_input(sel, cfg)
-        D = bs.derive_obj(gg["mesh"], norm, cfg, fixed_node_ids=fx)
-        core = bs.params_table(D, cfg)
-        for fig in (True, False):
-            doc = {"input": norm, "derived": json.loads(json.dumps(D.summary(with_figures=fig)))}
-            assert doe_select.params_table(doc)["params"] == core
-        seen_off |= any(not r["use_default"] for r in core)
-        seen_no_w |= not any(r["name"] == "B1_W" for r in core)
-    assert seen_off and seen_no_w                                       # 체크 해제·W 없음 분기까지 대조
+    # v0.16.1 SR-D-8: 기본 warn 정책은 비드 안 고정 노드가 있어도 체크 해제 안 함 → skip 정책도 함께 대조(체크 해제 분기)
+    skip = doe_settings({"bead_doe": {"enabled": True, "select": {"fixed_policy": "skip"}}})
+    for cc in (cfg, skip):
+        for gg, sel, fx in cases:
+            norm = bs.normalize_input(sel, cc)
+            D = bs.derive_obj(gg["mesh"], norm, cc, fixed_node_ids=fx)
+            core = bs.params_table(D, cc)
+            for fig in (True, False):
+                doc = {"input": norm, "derived": json.loads(json.dumps(D.summary(with_figures=fig)))}
+                assert doe_select.params_table(doc, cc)["params"] == core
+            if cc is cfg:
+                assert all(r["use_default"] for r in core)
+            seen_off |= any(not r["use_default"] for r in core)
+            seen_no_w |= not any(r["name"] == "B1_W" for r in core)
+    assert seen_off and seen_no_w                                       # 체크 해제(skip)·W 없음 분기까지 대조

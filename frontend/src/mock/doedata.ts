@@ -2,6 +2,7 @@
 // 준비·미리보기·실행 작업(DOE_PREP·DOE_PREVIEW·DOE_RUN)은 목 서버 대기열로 돌고, 끝나면 GET 시점에 연구 상태를 채운다.
 // 행렬·셀 상태·순위·민감도는 입력에서 결정적으로 만든다(같은 spec → 같은 sha·같은 결과).
 import type {
+  DoeDefeatureFeature, DoeDefeatureList, DoeRankWarn,
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
   DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
@@ -81,8 +82,15 @@ export function makeDoeSettings(): DoeSettingsOut {
       remesh_available: true,
       mesh_input: { enabled: true, formats: [".rad", ".inc"], max_mb: 500 },
       step_ready: true,
+      // v0.16.1(esl_select_relax.md §4.4)
+      mesh: { ladder: ["cad", "refine_local", "refine_global", "defeature", "remesh"] },
+      defeature: { hole_max_d_mm: 8, min_bead_height_mm: 2, fillet_max_r_mm: 1.5, kinds: ["flange", "hole", "slot", "bead", "fillet", "narrow"] },
     },
-    select: { enabled: true, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: 8 } },
+    select: {
+      enabled: true, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: 8 },
+      // v0.16.1 SR-D-2·9
+      fixed_policy: "warn", quality_fail_policy: "warn", hold: { ring_mm: 3, blend_mm: 8 },
+    },
   };
 }
 
@@ -306,7 +314,7 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
   const C_ref = 4.82e5;
   const base = { id: "d000" as const, score: 1, umax: 3.92, epsmax: 0.0026 };
   const excluded: DoeExcluded[] = [];
-  const okRows: { id: string; values: Record<string, number>; score: number }[] = [];
+  const okRows: { id: string; values: Record<string, number>; score: number; warn: DoeRankWarn[] }[] = [];
   for (const c of cells) {
     if (c.status !== "READY") {
       excluded.push({ id: c.id, status: c.status, code: c.code ?? null, values: c.values });
@@ -317,7 +325,7 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
       excluded.push({ id: c.id, status: "FAILED_MORPH", code: "GEOM_QUALITY", values: c.values });
       continue;
     }
-    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values, PARAMS) });
+    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values, PARAMS), warn: (c.warnings ?? []).map((w) => (w.code === "SELECT_FIXED_MOVED" ? "FIXED_MOVED" : "QUALITY_WARN") as DoeRankWarn) });
   }
   okRows.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
   const noise_floor = scenario === "step" ? 0.012 : null;
@@ -334,6 +342,7 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
     epsmax_all: +(base.epsmax * r.score ** 0.7 * 1.06).toFixed(5),
     noise: noise_floor != null ? Math.abs(1 - r.score) < noise_floor : false,
     warnings_n: Number(r.id.slice(1)) % 7 === 2 ? 1 : 0,
+    ...(r.warn.length ? { warn: r.warn } : {}),
     ...perEslMock(r.id, r.score, entryIds, noise_floor),
   }));
   // Pareto(§11.4): 다른 안·베이스라인(전부 1)에 모든 ESL 에서 지배당하지 않음
@@ -406,6 +415,7 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
     per_esl_inline: true,
     esl: entryIds.map((e) => ({ entry_id: e, label: e.slice(0, 8) })),
     sort: "score",
+    ...(scenario === "select" ? { summary: { best_clean: ranking.find((r) => !r.warn?.length)?.id ?? null } } : {}),
     warnings,
   };
 }
@@ -521,7 +531,7 @@ const COMPARE_FAIL_MSG: Record<string, string> = {
   REMESH_FAILED: "삼각형 재메시에 실패했습니다: 면 분류 실패. 특징각(remesh.feature_angle_deg)을 키우거나 메시 파일로 올리세요",
 };
 /** C2-D-1 COMPARE_MESH_METHOD_MIXED 조건: 방식이 둘 이상이고 refine·remesh·fallback·mesh_input(메시 입력) 중 하나가 섞임 */
-export const MIXED_TRIGGER = ["refine", "remesh", "fallback", "mesh_input"];
+export const MIXED_TRIGGER = ["refine", "remesh", "fallback", "mesh_input", "defeature"];
 export const meshMethodsMixed = (kinds: Set<string>) => kinds.size > 1 && [...kinds].some((k) => MIXED_TRIGGER.includes(k));
 export const COMPARE_REF_CASE_MESH: DoeWarning = { code: "COMPARE_REF_CASE_MESH", message: "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다" };
 
@@ -545,12 +555,29 @@ function mockQuality(key: string, h: number, nElems: number): DoeShapeQuality {
  *  auto 에서 이름·파일에 'complex' → 국부 세분화, 'hard' → 전역 세분화(세분화 끔이면 재메시 폴백), 'broken' → 재메시 폴백('coarse' 면 충실도 경고).
  *  cad 에서 'broken' 은 MESH_FAILED(v0.15 와 같음). remesh = 모든 STEP 재메시. auto 에서 'dead' → 사다리 전부 실패(REMESH_FAILED + cad_error) */
 const MOCK_CAD_ERROR = { code: "MESH_FAILED", message: "gmsh 메시 생성에 실패했습니다(면 37: 1D 메시 실패)" };
+/** v0.16.1 목 억제 목록(SR-D-20 순서 = kind → 중심 사전순): 구멍 1 · 딤플 1 · 필렛 3 + 큰 목록 'many' 은 60행(50 + 외 10) */
+export function mockDefeatureList(did: string): DoeDefeatureList {
+  const f = (i: number, kind: DoeDefeatureFeature["kind"], center: [number, number, number], size: DoeDefeatureFeature["size"], dev: number): DoeDefeatureFeature => ({
+    id: `f${i}`, kind, center, bbox: null, size, area_mm2: null, faces_n: kind === "fillet" ? 1 : 2, action: "suppressed", method: kind === "hole" ? "holes_v0141" : kind === "fillet" ? "compound" : "plane", dev_mm: dev,
+  });
+  const features: DoeDefeatureFeature[] = [
+    f(1, "bead", [120, 130, 1.5], { h_mm: 1.5 }, 1.48),
+    f(2, "fillet", [80, 100, 0.8], { r_mm: 1.5 }, 0.02),
+    f(3, "fillet", [160, 100, 2.4], { r_mm: 1.5 }, 0.02),
+    f(4, "fillet", [200, 100, 4.1], { r_mm: 1.5 }, 0.03),
+    f(5, "hole", [60, 40, 0], { d_mm: 5 }, 2.5),
+  ];
+  void did;
+  return { features, n: features.length, truncated: false, counts: { hole: 1, bead: 1, fillet: 3 } };
+}
+
 function mockFidelity(key: string) {
   const hd = key.includes("coarse") ? 0.42 : 0.12;
   return { hausdorff_mm: hd, max_dev_mm: +(hd * 0.9).toFixed(3), p95_mm: +(hd * 0.35).toFixed(3), area_ratio: key.includes("coarse") ? 0.996 : 1.001, deflection_mm: 0.05, warn_mm: 0.3, fail_mm: 1.5, over_warn: hd > 0.3 };
 }
 function mockMethod(x: CompareInputShape, key: string, mode: DoeMeshMode, refine: boolean, nRef: number): Partial<DoePrepShape> & { fail?: [string, string] } {
-  if (x.source === "mesh") return { mesh_method: "mesh_input", edge_median_mm: key.includes("fine") ? 1.6 : 3.05, n_components: key.includes("split") ? 2 : 1 };
+  if (x.source === "mesh")
+    return { mesh_method: "mesh_input", edge_median_mm: key.includes("fine") ? 1.6 : 3.05, n_components: key.includes("split") ? 2 : 1, ...(key.includes("clean") ? {} : { diag: { holes_n: 14, holes_small_n: 6, islands_n: 3, free_loops_n: 14 } }) };
   const cadFail = { stage: "cad", h_mm: 3, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 41 };
   if (mode === "remesh") return { mesh_method: "remesh", fidelity: mockFidelity(key) };
   if (mode === "cad") return key.includes("broken") ? { fail: ["FAILED_MESH", "MESH_FAILED"] } : { mesh_method: "cad" };
@@ -562,6 +589,18 @@ function mockMethod(x: CompareInputShape, key: string, mode: DoeMeshMode, refine
         cadFail,
         ...(refine ? [{ stage: "refine_local", factor: 0.75, h_mm: 2.25, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 50 }, { stage: "refine_global", factor: 0.8, h_mm: 2.4, status: "SKIPPED", skipped: true, reason: "time", code: "REFINE_SKIPPED_LIMIT" }] : []),
         { stage: "remesh", h_mm: 3, status: "FAILED_MESH", code: "REMESH_FAILED", seconds: 12 },
+      ],
+    };
+  // v0.16.1 'dimple' → cad·세분화 실패 후 형상 단순화(defeature) 성공(SR-D-16)
+  if (key.includes("dimple"))
+    return {
+      mesh_method: "defeature",
+      cad_error: MOCK_CAD_ERROR,
+      defeature: { n: 5, counts: { hole: 1, bead: 1, fillet: 3 }, skipped_n: 0, suppressed_max_mm: 2.5, outside_hausdorff_mm: 0.12 },
+      attempts: [
+        cadFail,
+        ...(refine ? [{ stage: "refine_local", factor: 0.75, h_mm: 2.25, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 48 }, { stage: "refine_global", factor: 0.8, h_mm: 2.4, status: "FAILED_MESH", code: "MESH_FAILED", seconds: 71 }] : []),
+        { stage: "defeature", h_mm: 3, status: "OK", seconds: 36, n_elems: Math.round(nRef * 0.99) },
       ],
     };
   if (refine && key.includes("complex")) {
@@ -637,6 +676,8 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
     const kinds = new Set(rows.filter((r) => r.status === "READY" && r.mesh_method).map((r) => (r.source === "case" ? "case" : (r.mesh_method as DoeMeshMethod))));
     if (meshMethodsMixed(kinds)) warnings.push({ code: "COMPARE_MESH_METHOD_MIXED", message: "형상마다 메시 방식이 달라 개선율에 메시 차이가 섞입니다" });
     for (const r of rows) {
+      if (r.mesh_method === "defeature" && r.defeature)
+        warnings.push({ code: "MESH_DEFEATURED", name: r.name, message: `${r.name}: CAD 메시 실패 → 작은 형상 ${r.defeature.n}개 억제(구멍 1 · 딤플 1 · 필렛 3), 억제 영역 최대 ${r.defeature.suppressed_max_mm} mm · 그 밖 최대 ${r.defeature.outside_hausdorff_mm} mm` });
       if (r.mesh_method === "fallback") warnings.push({ code: "REMESH_USED", name: r.name, message: `${r.name}: CAD 메시 실패 → 삼각형 재메시: ${r.cad_error?.message ?? ""}` });
       if (r.fidelity?.over_warn) warnings.push({ code: "REMESH_FIDELITY_WARN", name: r.name, message: `${r.name}: 재메시가 원 형상과 최대 ${r.fidelity.hausdorff_mm} mm 다릅니다(> ${r.fidelity.warn_mm} mm)` });
       if (r.mesh_method === "refine" && r.refine)
@@ -677,7 +718,7 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
   /** v0.16.0 결과 shape 메시 칸(C2-D-10): 있으면 복사, 세분화 형상은 수렴 점검 δ(C2-D-24 — 기준 d000 을 h_r 로 다시 풀어) */
   const meshOf = (r: DoePrepShape | undefined): Partial<DoeShapeRef> => {
     if (!r?.mesh_method) return {};
-    const out: Partial<DoeShapeRef> = { mesh_method: r.mesh_method, ...(r.fidelity ? { fidelity: r.fidelity } : {}), ...(r.refine ? { refine: r.refine } : {}) };
+    const out: Partial<DoeShapeRef> = { mesh_method: r.mesh_method, ...(r.fidelity ? { fidelity: r.fidelity } : {}), ...(r.refine ? { refine: r.refine } : {}), ...(r.defeature ? { defeature: r.defeature } : {}) };
     if (r.refine && prep.reference_source !== "case") {
       const d = r.refine.kind === "local" ? 0.012 : 0.006;
       out.refine_bias = { h_mm: r.refine.h_mm, delta_max: d, tol: 0.01, over_tol: d > 0.01, per_esl: entryIds.map((e, k) => ({ entry_id: e, delta: +(d * (1 - 0.3 * k)).toFixed(4) })) };
@@ -719,7 +760,7 @@ export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryI
   const n_failed = excluded.reduce<Record<string, number>>((m, e) => ((m[e.status] = (m[e.status] ?? 0) + 1), m), {});
   const best = ranking[0]?.id ?? null;
   const warnings: DoeWarning[] = prep.reference_source === "case" ? [COMPARE_REF_CASE_MESH] : [];
-  for (const w of prep.warnings) if (["COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_REFINED"].includes(w.code)) warnings.push(w);
+  for (const w of prep.warnings) if (["COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_REFINED", "MESH_DEFEATURED"].includes(w.code)) warnings.push(w);
   for (const r of ranking)
     if (r.shape?.refine_bias?.over_tol)
       warnings.push({ code: "MESH_REFINE_BIAS", name: r.shape.name, message: `${r.shape.name}: 기준을 ${r.shape.refine_bias.h_mm} mm 로 다시 풀면 컴플라이언스가 최대 ${(r.shape.refine_bias.delta_max * 100).toFixed(1)} % 달라집니다(메시 편향)` });
@@ -940,7 +981,7 @@ export class DoeMock {
     // 4b) v0.16.0 ④ 메시 옵션 완료(기준 = HyperMesh 메시 입력 + STEP 4: CAD · 국부 세분화 · 전역 세분화 · 재메시 폴백(충실도 경고))
     const s7 = compareIds([
       { upload_id: "up-cmp-mesh", rel: "rad/chr_base_0000.rad", name: "현행(HM 메시)", reference: true, file_name: "chr_base_0000.rad", sha256: shaOfFile("chr_base_0000.rad"), source: "mesh", part_id: 1001 },
-      ...([["chr_rib_A.step", "리브 A안"], ["chr_rib_F_complex.step", "리브 F안(복잡)"], ["chr_G_hard.step", "G안(곡면)"], ["chr_H_broken_coarse.step", "H안(띠 면)"]] as [string, string][]).map(([f, n]) => ({
+      ...([["chr_rib_A.step", "리브 A안"], ["chr_rib_F_complex.step", "리브 F안(복잡)"], ["chr_G_hard.step", "G안(곡면)"], ["chr_H_broken_coarse.step", "H안(띠 면)"], ["chr_K_dimple.step", "K안(딤플)"]] as [string, string][]).map(([f, n]) => ({
         upload_id: "up-cmp-mesh", rel: `rad/${f}`, name: n, reference: false, file_name: f, sha256: shaOfFile(f),
       })),
     ]);
@@ -1004,6 +1045,7 @@ export class DoeMock {
         ...(sel ? { mesh: cells.filter((c) => c.status === "FAILED_MESH").length } : {}),
       },
       cells,
+      ...(sel ? { warn: cells.filter((c) => c.status === "READY" && c.warnings?.length).length } : {}),
       ...(sel && r ? { selection_sha256: r.sel?.sha256 ?? null, color: { v_max: selColorMax(cells, this.paramsOf(r)), unit: "mm" } } : {}),
     };
   }
@@ -1092,11 +1134,12 @@ export class DoeMock {
   paramsOf(r: Rec): DoeParam[] {
     if (r.out.scenario !== "select") return DEFAULT_PARAMS;
     if (!r.sel) return [];
-    return selParams(r.sel.input, r.sel.derived).params;
+    return selParams(r.sel.input, r.sel.derived, this.settings.select?.fixed_policy ?? "warn").params;
   }
   private selectCells(r: Rec, m: DoeMatrixOut): DoePreviewCell[] {
     const ps = this.paramsOf(r);
-    return m.designs.filter((d) => d.id !== "d000").map((d) => ({ id: d.id, values: d.values, ...selCellStatus(d.id, d.values, ps) }));
+    const pol = { fixed: this.settings.select?.fixed_policy ?? "warn", quality: this.settings.select?.quality_fail_policy ?? "warn" } as const;
+    return m.designs.filter((d) => d.id !== "d000").map((d) => ({ id: d.id, values: d.values, ...selCellStatus(d.id, d.values, ps, pol) }));
   }
   saveSelection(r: Rec, input: DoeSelectionIn, who: string) {
     const { out } = selDerive(input, this.settings);
@@ -1155,7 +1198,7 @@ export class DoeMock {
     if (method === "GET" && (sub === "/params" || sub === "/plan-view")) {
       if (!prepReady) return notReady();
       if (!rec.sel || rec.selDropped) return err(409, "SELECTION_MISSING", rec.selDropped ? "비드 선택을 저장한 뒤에 하세요 — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다" : "비드 선택을 먼저 저장하세요.", rec.selDropped ? { reason: "SELECTION_DROPPED" } : {});
-      return ok(sub === "/params" ? selParams(rec.sel.input, rec.sel.derived) : selPlan(rec.sel.input, this.settings));
+      return ok(sub === "/params" ? selParams(rec.sel.input, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : selPlan(rec.sel.input, this.settings));
     }
     if (method === "POST" && (sub === "/matrix" || sub === "/preview") && !rec.sel) {
       if (!prepReady) return notReady();
@@ -1538,6 +1581,12 @@ export class DoeMock {
         n.jobIds.push(this.ctx.newJob(n.out.project_id, "DOE_PREP", { bead_doe_id: id }).id);
         this.recs.push(n);
         return ok(this.studyOut(n), 201);
+      }
+      // v0.16.1 ④ 억제 목록(esl_select_relax.md §9 — mesh/defeature.json 그대로, 없으면 404)
+      if ((r = sub.match(/^\/shapes\/([^/]+)\/defeature$/)) && method === "GET") {
+        const sh = rec.out.prep?.shapes?.find((x) => x.id === r![1]);
+        if (!sh || sh.mesh_method !== "defeature") return err(404, "NOT_FOUND", "억제 목록이 없습니다.");
+        return ok(mockDefeatureList(sh.id));
       }
       if (method === "GET" && sub === "/results") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");

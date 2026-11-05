@@ -1,5 +1,6 @@
 # 계약: 시나리오 ④ 형상 직접 비교 — 메시 성공률 향상 옵션 (COMPARE_MESH, v0.16.0)
 
+- **v0.16.1 변경 = `esl_select_relax.md`**(SELECT_RELAX — 이 문서와 충돌하면 그 문서가 우선).
 - 상태: **확정** (2026-11-04 사용자, 20:33). 사용자 확정 방향(아래)과 §13 결정 Q1~Q3 을 반영했습니다. 세분화 폴백(확정 5, C2-D-18~25, §4A)을 포함합니다.
 - 버전: **v0.16.0** (기준 main d01ab2f = v0.15.0). **착수 조건 = `fix/mesh-sphere`·`fix/winerror32` 가 main 에 병합된 뒤(v0.15.1)**. 같은 파일·블록(`mesh_gmsh.py`, `compare.mesh` 설정 블록, `stages._cmp_mesh*`, `atomic_replace`)을 고치기 때문입니다(§11). migration **불필요**(§6).
 - 관계: `esl_step_compare.md`(④, SC-D-*)를 **확장**합니다. 업로드·검사·정렬/크기(SC-D-7)·기준 frame 고정 셀 매핑과 `auto_supports`(SC-D-6)·물성(SC-D-8)·병렬(SC-D-9)·품질(SC-D-13 `mesh_quality.summarize`)·순위·보고서는 그대로 재사용합니다. ② B 메시 읽기 규칙(`scenario.copy_mesh_upload`, purpose `doe_mesh`)과 rad 파서(`esl/rad/parser.py`)도 재사용합니다. 이 문서에 없는 규칙은 STEP_COMPARE 를 따르고, 충돌하면 이 문서가 우선합니다.

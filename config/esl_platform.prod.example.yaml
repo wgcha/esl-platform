@@ -193,7 +193,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
                       fill: {tol_factor: 0.5, points: 8, samples: 10},   # 채움 면 대체: 원 면 대비 편차 ≤ 0.5 × 요소 크기
                       small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}},   # 넓이 < 50.27 mm² 면은 경계만으로 채움
            mode: auto,                # v0.16.0 메시 방식 cad | remesh | auto(실패 형상만 ladder 순서로 폴백 — 계약 esl_compare_mesh_options.md C2-D-9)
-           ladder: [cad, refine_local, refine_global, remesh],   # auto 폴백 순서(cad 맨 앞, 빼면 그 단계 끔, 중복 금지)
+           ladder: [cad, refine_local, refine_global, defeature, remesh],   # auto 폴백 순서(cad 맨 앞, 빼면 그 단계 끔, 중복 금지 — v0.16.1 += defeature)
            keep_tries: false}         # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
     remesh:                           # v0.16.0 삼각형 재메시(C2-D-11~14): OCC 삼각화 → 면 분류(특징각) → quad 우선 재메시
       enabled: true
@@ -207,7 +207,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       recombine: true                 # quad 우선
       keep_stl: false                 # true 면 prep/shapes/<id>/mesh/remesh_stl.npz 보관
       timeout_s: null                 # null = bead_doe.mesh.timeout_s
-      fidelity: {warn_mm: 0.3, fail_mm: 1.5, samples_max: 200000}   # Hausdorff > warn 경고, > fail 실패(null = 끔)
+      fidelity: {warn_mm: 0.3, fail_mm: 1.5, samples_max: 200000, warn_rel_cad: 2.0}   # Hausdorff > warn 경고, > fail 실패(null = 끔)
+      #   warn_rel_cad(v0.16.1): 경고 기준 = max(warn_mm, warn_rel_cad × h 크기 CAD 메시 현 편차 추정) — 곡면 형상 오경고 방지, 0 = 절대만
     mesh_input:                       # v0.16.0 메시 입력(C2-D-2~8): 형상마다 사용자 메시(Radioss .rad/.inc, 업로드 폴더 안 include)
       enabled: true
       formats: [".rad", ".inc"]
@@ -215,6 +216,27 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       include: true
       max_include_depth: 8
       size_warn_ratio: 1.5            # 모서리 길이 중앙값이 [h/r, h×r] 밖이면 경고 MESH_INPUT_SIZE_DIFF
+      diag: {enabled: true, feature_angle_deg: 30.0}   # v0.16.1 메시 입력 진단(작은 구멍·섬 수 — 보고만, esl_select_relax.md SR-D-24)
+    defeature:                        # 작은 형상 처리(이슈 #53 BatchMesher holes table 근사 — cad 단계: 내부 고리 넓이 < min_hole_area_mm2 메움)
+      enabled: true
+      min_hole_area_mm2: 50.27
+      hole_elems: 6                   # 반지름 hole_r_mm 구멍 둘레 분할 = max(hole_elems, ceil(둘레/h))
+      hole_r_mm: [4.0, 30.0]
+      min_bead_height_mm: 2.0         # bead(딤플·비드) 억제 높이 기준 — v0.16.1 defeature 단계에서 적용
+      # ↓ v0.16.1 사다리 defeature 단계(esl_select_relax.md §5A — cad·세분화가 실패한 형상만, BatchMesher 기준)
+      kinds: [flange, hole, slot, bead, fillet, narrow]   # 빼면 그 종류 끔, 이 순서로 실행
+      hole_max_d_mm: 8.0              # 등가 지름 4A/P ≤
+      slot_max_w_mm: 1.9              # 폭 ≤ 1.9 ∧ 길이 ≤ 14
+      slot_max_l_mm: 14.0
+      flange_max_h_mm: 1.5            # 버링 높이
+      fillet_max_r_mm: 1.5            # 필렛 반경(0.5·h)
+      narrow_w_factor: 0.4            # 좁은 띠 폭 < 이 값 × h
+      feature_max_mm: 40.0            # bead·flange bbox 대각 상한
+      plane_tol_mm: 0.01              # 둘레 고리 평면 판정(넘으면 채움 면)
+      compound: true                  # 쉘 fillet·narrow 를 병합 메시
+      region_pad_factor: 1.0          # 억제 영역 = 특징 bbox ± 이 값 × h(편차 따로 집계)
+      max_features: 2000              # 인식 상한(넘으면 앞에서 자르고 경고 DEFEATURE_TOO_MANY)
+      list_max: 500                   # mesh/defeature.json 행 상한
     refine:                           # v0.16.0 세분화 폴백(C2-D-18~24): 기본 3 mm 메시 실패 형상만 더 잘게
       enabled: true
       min_size_mm: 0.5
@@ -235,11 +257,16 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     plate_tol_mm: 1.0
     level_eps_mm: 0.5
     slope_max_mm: 80.0
-    fixed_tol_mm: 0.01                # 고정 노드 변위 허용 — 넘으면 안 SKIPPED_FIXED
+    fixed_tol_mm: 0.01                # 고정 노드 변위 허용 — 넘으면 고정 침범(fixed_policy)
+    fixed_policy: warn                # v0.16.1 고정 침범: warn = 경고만(실행·순위 포함) | skip = 안 제외(v0.16.0)
+    cross_bead_policy: warn           # v0.16.1 다른 선택 비드 침범(W 변화가 다른 비드 경계·바닥 이동): warn = 경고만 | skip = 안 제외
+    cross_bead_tol_mm: 0.1            # 침범 판정 이동량(mm)
     width: {floor_follow: 1, knn: 8}  # Q1 A: 폭 변경 시 바닥도 따라감
     blend: {min_mm: 15.0, max_mm: 200.0, k: 8.0, fixed_margin_mm: 3.0}
-    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0}
-    quality: {max_fail_ratio: 0.01, flip_deg: 60.0}   # 기준값 = bead_doe.compare.quality(한 곳)
+    range: {depth_rel: 0.3, width_rel: 0.2, min_step_mm: 1.0, depth_max_rel: 1.0, width_max_rel: 0.6, width_floor_q: 0.25, check_steps: 5, combo_samples: 16}   # *_max_rel = feasible 상한(v0.16.1) · combo_samples = usable 조합 표본(0 = 끔)
+    quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn, rot_warn_deg: 45.0, area_ratio_min: 0.2, distort_rel: 0.25, distort_min_mm: 0.1}   # 기준값 = bead_doe.compare.quality(한 곳). fail_policy warn | skip(뒤집힘은 항상 제외) · rot_warn_deg·area_ratio_min = 요소 극단값 경고 · distort_* = 비드 안 피처 왜곡(FAILED_MESH)
+    island: {max_mm: 40.0, ring_frac: 0.9}   # v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한 · 고리형 비드 안쪽 둔덕 비율(× D)
+    hold: {ring_mm: 3.0, blend_mm: 8.0}   # v0.16.1 '체결 구멍 둘레 고정': 고정 노드에서 ring 제자리 + blend 블렌딩(보스)
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
     derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)

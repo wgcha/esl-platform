@@ -171,6 +171,14 @@ def doe_view3d_file(sid: str, did: str, name: str, request: Request,
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
+@router.get("/doe/studies/{sid}/shapes/{did}/defeature", response_model=dict[str, Any])
+def doe_shape_defeature(sid: str, did: str, request: Request,
+                        principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.16.1 ④ 형상의 작은 형상 억제 목록(prep/shapes/{did}/mesh/defeature.json 그대로 — 특징 {id, kind, center, bbox, size,
+    area_mm2, faces_n, action, method, reason?, dev_mm}, 행 상한 넘으면 truncated). 형상 단순화 단계로 메시한 형상만, 없으면 404."""
+    return svc.shape_defeature(get_ctx(request), principal, sid, did)
+
+
 # ---------------------------------------------------------------- v0.15.0 비드 직접 선택(esl_bead_select.md §9)
 SELECT_VIEW_RESPONSES = {
     200: {"content": {"model/gltf-binary": {"schema": {"type": "string", "format": "binary"}},

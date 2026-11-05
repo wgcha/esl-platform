@@ -165,7 +165,38 @@ def _methods_limits(ms: dict, extra_limits: list | None = None) -> list[str]:
 
 
 SOURCE_KO = {"step": "STEP", "mesh": "메시", "case": "Case"}
-METHOD_LABEL = {"cad": "CAD", "refine": "세분화", "remesh": "재메시", "fallback": "재메시(폴백)", "mesh_input": "메시 입력"}
+METHOD_LABEL = {"cad": "CAD", "refine": "세분화", "remesh": "재메시", "fallback": "재메시(폴백)", "mesh_input": "메시 입력",
+                "defeature": "형상 단순화"}
+KIND_KO = {"hole": "구멍", "slot": "슬롯", "flange": "버링", "bead": "딤플·비드", "fillet": "필렛", "narrow": "좁은 띠"}
+
+
+def defeature_html(shapes: list, lists: dict, top: int = 20) -> str:
+    """v0.16.1 '작은 형상 억제' 절(§5A.5): 형상별 종류별 개수·억제 영역 최대 편차·바깥 Hausdorff + 목록 상위 top 행."""
+    rows = [s for s in shapes if s.get("mesh_method") == "defeature"]
+    if not rows:
+        return ""
+    out = ["<h3>작은 형상 억제</h3><p class='small'>CAD 메시가 실패한 형상만 작은 형상을 억제한 뒤 메시했습니다(원 STEP 대비 "
+           "편차는 억제 영역과 그 밖을 따로 셈).</p>"]
+    trs = []
+    for s in rows:
+        ds = s.get("defeature") or {}
+        trs.append([s["id"], s.get("name") or "", ds.get("n"),
+                    " · ".join(f"{KIND_KO.get(k, k)} {v}" for k, v in (ds.get("counts") or {}).items()),
+                    ds.get("skipped_n"), _f(ds.get("suppressed_max_mm")), _f(ds.get("outside_hausdorff_mm"))])
+    out.append(H.table(["id", "이름", "억제 수", "종류별", "건너뜀", "억제 영역 최대 편차 mm", "그 밖 Hausdorff mm"], trs,
+                       num=(2, 4, 5, 6)))
+    for s in rows:
+        doc = (lists or {}).get(s["id"]) or {}
+        fs = (doc.get("features") or [])[:top]
+        if not fs:
+            continue
+        out.append(f"<p class='small'>{H.esc(s['id'])} 억제 목록(상위 {len(fs)} / {doc.get('n', len(fs))})</p>")
+        out.append(H.table(["종류", "중심 x, y, z mm", "크기", "처리", "편차 mm"],
+                           [[KIND_KO.get(f["kind"], f["kind"]), ", ".join(_f(v) for v in f.get("center") or []),
+                             ", ".join(f"{k} {_f(v)}" for k, v in (f.get("size") or {}).items()),
+                             f"{f.get('action')} {f.get('method') or ''}".strip() + (f" ({f['reason']})" if f.get("reason") else ""),
+                             _f(f.get("dev_mm"))] for f in fs]))
+    return "".join(out)
 MESH_HEAD_CODES = ("COMPARE_MESH_METHOD_MIXED", "REMESH_USED", "REMESH_FIDELITY_WARN", "MESH_INPUT_SIZE_DIFF",
                    "MESH_INPUT_DISCONNECTED", "MESH_REFINED", "MESH_REFINE_BIAS")
 
@@ -292,12 +323,13 @@ def render_compare(ctx: dict) -> str:
     inner = H.table(["id", "이름", "파일", "출처", "메시 방식", "sha256", "요소 수", "quad 비율", "품질 Fail", "준비 상태", "코드"],
                     trs, num=(6, 7))
     inner += mesh_detail_html(shapes) + convergence_html(shapes, ctx.get("refine_bias") or {}, ctx.get("esl") or [])
+    inner += defeature_html(shapes, ctx.get("defeature_lists") or {})
     S.append(H.section("shapes", "2. 형상", inner))
     df = prof.get("defeature") or {}
     if df:
         S.append("<p class='small muted'>작은 형상 처리(이슈 #53 holes table 근사): 내부 경계 면적 &lt; "
                  f"{H.esc(_f(df.get('min_hole_area_mm2')))} mm² 메움 · 반지름 {H.esc(df.get('hole_r_mm'))} mm 구멍 둘레 요소 "
-                 f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(기록만 — 미적용)</p>")
+                 f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(defeature 단계에서 적용)</p>")
     if rk:
         top_n = int(ctx.get("ranking_rows") or 20)
         hdr = ["순위", "id", "이름", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
@@ -334,6 +366,13 @@ def render_compare(ctx: dict) -> str:
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 
+WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고", "CROSS_BEAD_MOVE": "다른 비드 침범"}
+
+
+def _warn_ko(w) -> str:
+    return "⚠ " + " · ".join(WARN_KO.get(x, x) for x in w) if w else ""
+
+
 def selection_html(sel: dict, ms: dict | None = None) -> str:
     """v0.15.0 select: 비드 표(단 깊이·폭·사면·블렌딩·경고) + 모핑 규칙 + 미리보기 품질(새 Fail/영향 요소)."""
     rows = []
@@ -350,9 +389,17 @@ def selection_html(sel: dict, ms: dict | None = None) -> str:
     q = sel.get("quality") or []
     if q:
         inner += "<h3>미리보기 품질(새 Fail / 영향 요소)</h3>" + H.table(
-            ["안", "상태", "새 Fail", "영향 요소", "고정 최대 변위 mm"],
+            ["안", "상태", "새 Fail", "영향 요소", "고정 최대 변위 mm", "경고"],
             [[x["id"], STATE_KO.get(x.get("state"), x.get("state")), x.get("new_fail"), x.get("n_affected"),
-              _f(x.get("fixed_max_mm"))] for x in q], num=(2, 3, 4))
+              _f(x.get("fixed_max_mm")), _warn_ko(x.get("warn"))] for x in q], num=(2, 3, 4))
+    mv = sel.get("fixed_moved") or []
+    if mv:                                       # v0.16.1 확정 1: 고정 노드도 모핑대로 움직인 안(제외하지 않음)
+        inner += ("<h3>체결 위치 어긋남</h3><p class='small'>아래 안은 고정 노드(체결 위치)가 모핑으로 같이 움직였습니다 — "
+                  "결과·받기 파일을 쓰기 전에 RBE2/TIE 위치를 확인하세요(받기 rad 사본에 경고 주석).</p>")
+        inner += H.table(["안", "고정 노드 수", "최대 이동 mm", "원인 변수(상위 3)"],
+                         [[x["id"], x.get("n"), _f(x.get("max_mm")),
+                           ", ".join(f"{v['name']} {_f(v['max_mm'])} mm" for v in x.get("bead_vars") or []) or "—"]
+                          for x in mv], num=(1, 2))
     sm = (ms or {}).get("select") or {}
     if sm:
         inner += "<h3>모핑 규칙</h3><ul>" + "".join(f"<li><b>{H.esc(k)}</b>: {H.esc(v)}</li>"
@@ -386,6 +433,10 @@ def render(ctx: dict) -> str:
         S.append(H.cards([("최적 안", H.esc(b["id"])), ("score", H.esc(_f(b["score"]))),
                           ("개선율", H.esc(_pct(b["improvement"]))), ("성공 안", H.esc(res.get("n_ok"))),
                           ("경계 경고", H.esc(len(bd.get("warnings") or [])))]))
+        if b.get("warn"):                        # v0.16.1 Q1 = A: 순위 그대로 + 경고 없는 최상위 1줄
+            bc = (ctx.get("selection") or {}).get("best_clean")
+            S.append(f"<p class='warn'>⚠ 최적 안 {H.esc(b['id'])} 은(는) {H.esc(_warn_ko(b['warn'])[2:])} 경고 안입니다 — "
+                     f"경고 없는 최상위: {H.esc(bc or '없음')}</p>")
     # 1. 입력
     step_row = ("STEP", f"{(ip.get('step') or {}).get('file_name')} (sha256 {str((ip.get('step') or {}).get('sha256'))[:12]}…)")
     if st.get("scenario") == "select":
@@ -438,8 +489,9 @@ def render(ctx: dict) -> str:
     top_n = int(ctx.get("ranking_rows") or 20)
     names = [p["name"] for p in spec.get("params") or []]
     if rk:
+        sel_w = st.get("scenario") == "select"     # v0.16.1 ⚠ 열(select 만 — 다른 시나리오 보고서 불변)
         hdr = (["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
-                "기하평균 개선율", "Pareto"] + names + ["경고"])
+                "기하평균 개선율", "Pareto"] + names + ["경고"] + (["⚠"] if sel_w else []))
         trs = []
         for x in rk[:top_n]:
             imp = H.esc(_pct(x["improvement"])) + (" <span class='muted'>(잡음 이내)</span>" if x.get("noise") else "")
@@ -448,7 +500,8 @@ def render(ctx: dict) -> str:
                         "–" if allv is None else ("✓" if allv else "✗"), _pct(x.get("min_improvement")),
                         f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
                         "●" if x.get("pareto") else ""]
-                       + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)])
+                       + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)]
+                       + ([_warn_ko(x.get("warn"))] if sel_w else []))
         inner = H.table(hdr, trs, num=(0, 2, 5, 6, 8, 10) + tuple(range(12, 12 + len(names))), raw=(3,))
         inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
         inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)

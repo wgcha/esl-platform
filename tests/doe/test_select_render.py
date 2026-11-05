@@ -142,7 +142,7 @@ def test_select_stage_flow(tmp_path, G):
     r = run("bd_select_grid", rev=1)
     gd = out / "doe" / "1" / "grid"
     gm = U.read_json(str(gd / pio.GRID_MANIFEST))
-    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png"
+    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 2
     assert gm["color"]["unit"] == "mm" and gm["color"]["v_max"] > 0
     assert (gd / "cells" / "nominal" / "thumb.png").is_file()
     nomp = sr.png_rgb((gd / "cells" / "nominal" / "thumb.png").read_bytes())
@@ -152,8 +152,11 @@ def test_select_stage_flow(tmp_path, G):
     assert sorted(c["id"] for c in gm["cells"]) == ids
     for cell in gm["cells"]:
         assert decode_png_size((gd / cell["thumb"]).read_bytes()) == (TC["w"], TC["h"])
-        # v0.15.1 고정 침범 칸만 fixed_viol{n, max_mm, bead_vars, node_idx}
-        assert ("fixed_viol" in cell) == (cell["code"] == "SELECT_FIXED_VIOLATION"), cell
+        # v0.16.1 SR-D-3: 고정 침범이 있는 모든 칸(상태 무관)에 fixed_viol{n, max_mm, bead_vars, node_idx}
+        assert ("fixed_viol" in cell) == (cell["fixed_max_mm"] > CFG["select"]["fixed_tol_mm"]), cell
+        assert cell["code"] != "SELECT_FIXED_VIOLATION"                      # warn 정책(기본) — 스킵 없음
+        if cell["status"] == "OK" and "fixed_viol" in cell:
+            assert any(w["code"] == "SELECT_FIXED_MOVED" for w in cell["warnings"])
         if "fixed_viol" in cell:
             assert cell["fixed_viol"]["n"] > 0 and cell["fixed_viol"]["bead_vars"], cell["fixed_viol"]
     g1 = pio.read_grid(str(gd), ids)
@@ -237,3 +240,116 @@ def test_fixed_violation_detail_v0151():
     assert bsel.fixed_violation_detail(x0, x, fixed, B, vals, tol=0.05, cap=1)["node_idx"] == [0]
     none = bsel.fixed_violation_detail(x0, x0, fixed, B, vals, tol=0.05)
     assert none == {"n": 0, "max_mm": 0.0, "bead_vars": [], "node_idx": []}
+
+
+def test_select_warn_flow_v0161(tmp_path, G):
+    """v0.16.1(SR-D-1·3·11·12·13d): 블렌딩이 고정 노드에 닿는 선택 — warn 정책이면 침범 안도 READY(셀 warnings·fixed_viol),
+    실행·순위에 포함(행 warn), summary.best_clean, 경고 안 받기 rad 사본 첫 /NODE 앞 ASCII 주석·values.json warnings.
+    v0.16.0 SKIPPED_FIXED done.json(같은 sha) → 재사용하지 않고 해석."""
+    g, _, _ = G
+    m = g["mesh"]
+    cd, rad = _case(tmp_path, g)
+    lib = tmp_path / "lib"
+    dirs = [sd.save_entry(str(lib), f"E{k}", m, kind, 1.0 + k, seed=k)[0] for k, kind in enumerate(("bend",))]
+    sel_in = sb.selection(g)
+    sel_in["beads"][0]["blend_mm"] = 24.0
+    sha = bs.selection_sha256(bs.normalize_input(sel_in, CFG))
+    doe = {"id": "S8", "scenario": "select", "title": "t", "cfg": {"bead_doe": {"enabled": True},
+                                                                   "opt_run": {"solver": {"backend": "superlu"}}},
+           "entries": [{"id": "E0", "dir": dirs[0]}],
+           "base": {"entry_id": "E0", "rad_path": rad, "part_title": sd.PART_TITLE, "case_dir": cd},
+           "selection": {"rev": 1, "sha256": sha, "input": sel_in}}
+    out = tmp_path / "_doe" / "S8"
+
+    def run(stage, **kw):
+        return stg.run_stage({"stage": stage, "out": str(out), "doe": {**doe, **kw}}, lambda s: None)
+
+    run("bd_input")
+    run("bd_loads")
+    pos = {int(v): i for i, v in enumerate(m["node_id"].tolist())}
+    sd.write_fixed(str(out / "prep" / "fixed"), m, [[pos[int(v)] for v in gr] for gr in g["fixed_groups"]])
+    W = next(b for b in bs.derive_obj(m, bs.normalize_input(sel_in, CFG), CFG).beads if b.id == "b1").W_nom
+    spec = {"method": "lhs", "n": 3, "seed": 2, "params": [{"name": "B1_W", "lo": W + 4.0, "hi": W + 8.0}]}
+    run("bd_matrix", rev=1, spec=spec)
+    bj = U.read_json(str(out / "select" / sha[:12] / "basis.json"))
+    assert bj["algo"] == bs.ALGO
+    run("bd_select_grid", rev=1)
+    gm = U.read_json(str(out / "doe" / "1" / "grid" / pio.GRID_MANIFEST))
+    assert gm["rules"] == 2
+    warned = [c["id"] for c in gm["cells"] if c["status"] == "OK" and c.get("warnings")]
+    assert warned and all("fixed_viol" in c for c in gm["cells"] if c["id"] in warned)
+    st = {x["id"]: x for x in pio.read_grid(str(out / "doe" / "1" / "grid"), [c["id"] for c in gm["cells"]])["cells"]}
+    assert all(st[i]["state"] == "READY" and st[i].get("warnings") for i in warned), [st[i] for i in warned]
+    run("bd_eval", rev=1, design="d000")
+    # v0.16.0 이 남긴 SKIPPED_FIXED done.json(같은 sha) → 지금 READY 라 재사용하지 않음
+    c0 = stg.Ctx({"stage": "x", "out": str(out), "doe": {**doe, "rev": 1}})
+    dd = stg.design_dir(c0, warned[0])
+    os.makedirs(dd, exist_ok=True)
+    from esl.doe import evaluate as ev
+    ev.write_done(dd, stg.design_sha(c0, warned[0]), "SKIPPED_FIXED")
+    U.write_json(os.path.join(dd, ev.RESULT_JSON), ev.result_doc(warned[0], "SKIPPED_FIXED", {}))
+    for c in gm["cells"]:
+        r = run("bd_eval", rev=1, design=c["id"])
+        assert r["status"] == "OK" and not r["reused"], r
+    res = U.read_json(os.path.join(dd, ev.RESULT_JSON))
+    assert res["select_warnings"][0]["code"] == "SELECT_FIXED_MOVED" and res["select_fixed_viol"]["bead_vars"]
+    assert any(w.startswith("SELECT_FIXED_MOVED") for w in res["warnings"])
+    post = run("bd_post", rev=1)["result"]
+    rows = {x["id"]: x for x in post["ranking"]}
+    assert all("FIXED_MOVED" in (rows[i].get("warn") or []) for i in warned), [(i, rows.get(i)) for i in warned]
+    clean = [x["id"] for x in post["ranking"] if not x.get("warn")]
+    assert post["summary"]["best_clean"] == (clean[0] if clean else None)
+    best = post["best"]["id"]
+    bd = out / "best" / best
+    if best in warned:
+        b = (bd / "include" / "model.rad").read_bytes()
+        k = b.index(b"/NODE")
+        head = b[:k].splitlines()
+        assert head[-1].startswith(b"#ESL WARNING FIXED_NODES") or head[-1].startswith(b"#ESL WARNING FIXED_MOVED")
+        assert all(len(x) <= 100 for x in head if x.startswith(b"#ESL"))              # SR-D-43 주석 줄 ≤ 100자
+        assert b"#ESL WARNING FIXED_MOVED" in (bd / "ch_r.rad").read_bytes()
+        assert U.read_json(str(bd / "values.json"))["warnings"][0]["code"] == "SELECT_FIXED_MOVED"
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "체결 위치 어긋남" in html and "⚠" in html
+
+
+def test_thumb_orientation_convex_concave_v0161():
+    """SR-D-34: 볼록·오목(n̂ 부호 반대) 비드 썸네일 시점이 같다 — 화면 오른쪽 = η × n_p(+x), 위 ≈ +η(+y), 카메라는 판 법선 쪽 위.
+    같은 판에서 비드 깊이만 거울(z → −z)로 만든 두 메시의 공칭 썸네일: 시점 벡터 동일, 비드(가장 어두운 음영 아닌 전경) 무게중심이
+    같은 쪽(화면 좌표 차 ≤ 5 px), 비드 중심(x 큰 쪽 b2)이 화면 오른쪽. view_normal 은 볼록·오목이 섞여도 상쇄되지 않음."""
+    g = sb.generate()
+    m = g["mesh"]
+    m2 = dict(m)
+    x2 = np.array(m["x0"], dtype=np.float64)
+    x2[:, 2] *= -1.0
+    m2["x0"] = x2
+    out = []
+    for mesh in (m, m2):
+        D = bs.derive_obj(mesh, bs.normalize_input(sb.selection(g), CFG), CFG, fixed_node_ids=g["fixed_ids"])
+        B = bs.basis(mesh, D, CFG)
+        _d, has = bs.node_direction(B)
+        vw = sr.view(mesh["x0"], has, sr.view_normal(mesh["x0"], [b.n_hat for b in D.beads]), None, TC)
+        tris = v3.triangulate(mesh["conn"], mesh["elem_type"])
+        img = sr.png_rgb(sr.render(mesh["x0"], tris, None, None, vw, 5.0, TC)).astype(int)
+        ys, xs = np.nonzero(img.sum(axis=2) < 3 * 250)
+        out.append((sorted({b.sense for b in D.beads}), vw, (xs.mean(), ys.mean()), D))
+    (s1, v1, c1, D1), (s2, v2, c2, _D2) = out
+    assert s1 != s2                                                        # 한쪽 볼록, 다른 쪽 오목
+    for k in ("f", "r", "u"):
+        assert np.allclose(v1[k], v2[k], atol=1e-9), k
+    assert v1["r"][0] > 0.99 and v1["u"][1] > 0.5 and v1["f"][2] < 0       # 오른쪽 +x, 위 +y, 위에서 내려다봄
+    assert abs(c1[0] - c2[0]) <= 5 and abs(c1[1] - c2[1]) <= 5
+    n = D1.beads[0].n_hat
+    assert np.linalg.norm(sr.view_normal(m["x0"], [n, -n])) == pytest.approx(1.0)
+
+
+def test_sel_warn_lines_max_100():
+    """SR-D-43: 받기 rad #ESL WARNING 줄 ≤ 100자(긴 노드 ID·큰 n 에서 나눠 씀), 짧은 ID 는 줄당 10개(v0.16.1 첫 판 그대로)."""
+    from esl.doe import stages as stg
+    short = stg.sel_warn_lines({"n": 12, "max_mm": 1.25}, list(range(1, 13)))
+    assert short[0] == "#ESL WARNING FIXED_MOVED n=12 max_mm=1.25 : fastener positions moved, check RBE2/TIE"
+    assert short[1] == "#ESL WARNING FIXED_NODES " + " ".join(str(v) for v in range(1, 11)) and short[2].endswith("11 12")
+    big = stg.sel_warn_lines({"n": 10 ** 15, "max_mm": 123456.7891}, [9_000_000_000 + k for k in range(50)])
+    assert all(len(x) <= 100 for x in big) and big[1].startswith("#ESL WARNING FIXED_MOVED :")
+    got = [int(v) for x in big if x.startswith("#ESL WARNING FIXED_NODES") for v in x.split()[3:]]
+    assert got == [9_000_000_000 + k for k in range(50)]

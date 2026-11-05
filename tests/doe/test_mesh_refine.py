@@ -98,7 +98,7 @@ def test_refine_local_no_face_and_ladder():
     assert mr.plan("cad", None, H, _cfg(), None)[0]["mesh_h"] == H
     assert mr.plan("refine_global", None, H, _cfg(refine={"enabled": False}), None) == []
     c = _cfg()
-    assert mr.ladder(c) == ["cad", "refine_local", "refine_global", "remesh"]
+    assert mr.ladder(c) == ["cad", "refine_local", "refine_global", "defeature", "remesh"]   # v0.16.1 SR-D-16
     assert mr.ladder(c, "cad") == ["cad"] and mr.ladder(c, "remesh") == ["remesh"]
     c["compare"] = dict(c["compare"], mesh=dict(c["compare"]["mesh"], ladder=["cad", "cad"]))
     with pytest.raises(EslError):
@@ -183,3 +183,42 @@ class mg_session:                                                       # noqa: 
     def __exit__(self, *a):
         import gmsh
         gmsh.finalize()
+
+
+# ---------------------------------------------------------------- v0.16.1 V-SR-20 사다리 defeature 단계(esl_select_relax.md §5A.1)
+def test_ladder_defeature_config():
+    c = _cfg()
+    lad = lambda x: mr.ladder(dict(c, compare=dict(c["compare"], mesh=dict(c["compare"]["mesh"], ladder=x))))  # noqa: E731
+    assert lad(["cad", "refine_local", "refine_global", "remesh"]) == ["cad", "refine_local", "refine_global", "remesh"]
+    assert lad(["cad", "defeature", "refine_local", "remesh"]) == ["cad", "defeature", "refine_local", "remesh"]
+    for bad in (["defeature", "cad"], ["cad", "defeature", "defeature"], ["cad", "simplify"]):
+        with pytest.raises(EslError) as ei:
+            lad(bad)
+        assert ei.value.code == "CONFIG_INVALID"
+
+
+def test_plan_defeature_attempts():
+    c = _cfg()
+    att = mr.plan("defeature", {"geom": {"area_mm2": 3e4}}, H, c, None)
+    assert [(a["stage"], a["compound"], a.get("only_if"), a["mesh_h"], a["factor"]) for a in att] == \
+        [("defeature", True, None, H, None), ("defeature", False, "compound_failed", H, None)]
+    assert att[0]["n_est"] == mr.estimate_elems(3e4, H)
+    c2 = _cfg()
+    c2["compare"] = dict(c2["compare"], defeature=dict(c2["compare"]["defeature"], kinds=["hole", "bead"]))
+    assert len(mr.plan("defeature", None, H, c2, None)) == 1                  # compound 대상 종류 없음 → 2번째 없음
+    c3 = _cfg()
+    c3["compare"] = dict(c3["compare"], defeature=dict(c3["compare"]["defeature"], compound=False))
+    assert len(mr.plan("defeature", None, H, c3, None)) == 1
+    t = mr.plan("defeature", None, H, _cfg(refine={"total_timeout_s": 5}), None, elapsed_s=9.0)
+    assert all(a["skipped"] and a["reason"] == "time" for a in t)
+    ac = mr.attempt_cfg(c, att[1])
+    assert ac["mesh"]["defeature_stage"]["compound"] is False and ac["mesh"]["defeature_stage"]["crit"]["hole_max_d"] == 8.0
+    assert "defeature_stage" not in mr.attempt_cfg(ac, {"stage": "remesh", "mesh_h": H})["mesh"]   # 다른 단계 = 키 없음
+
+
+def test_compound_failed():
+    k = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert mr.compound_failed({"compound_keys": [k], "face": {"key": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0000001]}})
+    assert not mr.compound_failed({"compound_keys": [k], "face": {"key": [0, 0, 0, 1, 1, 1]}})
+    assert mr.compound_failed({"compound_keys": [k]})                        # 면을 특정 못 함 = compound 탓
+    assert not mr.compound_failed({"face": {"key": k}}) and not mr.compound_failed(None)

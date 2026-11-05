@@ -120,18 +120,41 @@ def test_fidelity_thresholds(tmp_path):
     fail_mm 를 그 값 아래로 → REMESH_FIDELITY(mesh.json 은 남음), fail_mm null → 실패 없음. 구멍 메움 영역은 S·M 둘 다 메운 형상이라
     지표에 안 들어감(정상 설정 hausdorff < warn — test_complex_plate…)."""
     src = scx.complex_plate_step(tmp_path / "c.step")
-    rough = {"feature_angle_deg": 89.0, "linear_deflection_mm": 2.0, "fidelity": {"warn_mm": 0.05, "fail_mm": None}}
+    rough = {"feature_angle_deg": 89.0, "linear_deflection_mm": 2.0,
+             "fidelity": {"warn_mm": 0.05, "fail_mm": None, "warn_rel_cad": 0}}      # 절대 기준만(SR-D-27 끔)
     _m, meta = mr.remesh_file(src, H, _cfg(remesh=rough), PROPS)
     hd = meta["fidelity"]["hausdorff_mm"]
     assert hd > 0.05 and meta["fidelity"]["over_warn"] and meta["fidelity"]["fail_mm"] is None
     assert any(w["code"] == "REMESH_FIDELITY_WARN" for w in meta["warnings"])
-    bad = dict(rough, fidelity={"warn_mm": 0.05, "fail_mm": round(hd * 0.5, 6)})
+    bad = dict(rough, fidelity={"warn_mm": 0.05, "fail_mm": round(hd * 0.5, 6), "warn_rel_cad": 0})
     e = _code(mr.remesh_file, src, H, _cfg(remesh=bad), PROPS, out_dir=str(tmp_path / "f"))
     assert e.code == "REMESH_FIDELITY"
     mj = json.loads((tmp_path / "f" / mg.MESH_JSON).read_text(encoding="utf-8"))
     assert mj["errors"][0]["code"] == "REMESH_FIDELITY"
-    ok = dict(rough, fidelity={"warn_mm": 0.05, "fail_mm": round(hd * 2.0, 6)})
+    ok = dict(rough, fidelity={"warn_mm": 0.05, "fail_mm": round(hd * 2.0, 6), "warn_rel_cad": 0})
     assert mr.remesh_file(src, H, _cfg(remesh=ok), PROPS)[1]["fidelity"]["hausdorff_mm"] == pytest.approx(hd)
+
+
+def test_cad_chord_relative_warn():
+    """SR-D-27: cad_chord_mm = 매끈한 곡면에서 h 현의 처짐 R(1 − cos(h/2R)) (원통 R 10·h 3 → ≈ 0.112), 평면 0, 날카로운 모서리
+    (각 > 상한) 0. warn_threshold = max(warn_mm, k × chord), k 0 = 절대만."""
+    R, L, nt, nz = 10.0, 30.0, 180, 10
+    th = np.linspace(0.0, np.pi, nt + 1)
+    zz = np.linspace(0.0, L, nz + 1)
+    X = np.array([[R * np.cos(a), R * np.sin(a), z] for a in th for z in zz])
+    idx = lambda i, j: i * (nz + 1) + j                                     # noqa: E731
+    T = np.array([t for i in range(nt) for j in range(nz)
+                  for t in ((idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)), (idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)))])
+    ch = mr.cad_chord_mm(X, T, 3.0, 10.0)
+    assert ch == pytest.approx(R * (1 - np.cos(3.0 / (2 * R))), rel=0.05)
+    P = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1]], float)
+    assert mr.cad_chord_mm(P[:4], np.array([[0, 1, 2], [0, 2, 3]]), 3.0, 10.0) == 0.0          # 평면
+    assert mr.cad_chord_mm(P, np.array([[0, 1, 2], [0, 1, 5], [0, 5, 4]]), 3.0, 10.0) == 0.0  # 90° 모서리 = 날카로움
+    rc = {"angular_deflection_deg": 5.0, "fidelity": {"warn_mm": 0.05, "warn_rel_cad": 2.0}}
+    w, c = mr.warn_threshold(X, T, 3.0, rc)
+    assert c == pytest.approx(ch, abs=1e-6) and w == pytest.approx(2.0 * ch, abs=1e-6)
+    rc["fidelity"]["warn_rel_cad"] = 0
+    assert mr.warn_threshold(X, T, 3.0, rc) == (0.05, None)
 
 
 @needs_remesh

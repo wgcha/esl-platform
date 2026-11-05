@@ -273,12 +273,17 @@ def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) ->
     step_ready(= gmsh.ready — STEP 형상 사용 가능)."""
     cc = c["compare"]
     mi = cc["mesh_input"]
+    df = cc["defeature"]
     return {"enabled": st["scenarios"]["compare"], "reason": st["compare_reason"],
             "max_shapes": int(cc["max_shapes"]), "total_max_mb": float(cc["total_max_mb"]),
             "mesh_size_mm": float(cc["mesh"]["size_mm"]), "mesh_mode": str(cc["mesh"]["mode"]),
             "remesh_available": remesh_available(ctx, c),
             "mesh_input": {"enabled": bool(mi["enabled"]), "formats": list(mi["formats"]), "max_mb": float(mi["max_mb"])},
-            "step_ready": bool(st["gmsh"]["ready"])}
+            "step_ready": bool(st["gmsh"]["ready"]),
+            # v0.16.1(esl_select_relax.md §4.4): 사다리(defeature 포함)·작은 형상 억제 기준(화면 툴팁)
+            "mesh": {"ladder": list(cc["mesh"]["ladder"])},
+            "defeature": {"hole_max_d_mm": float(df["hole_max_d_mm"]), "min_bead_height_mm": float(df["min_bead_height_mm"]),
+                          "fillet_max_r_mm": float(df["fillet_max_r_mm"]), "kinds": list(df["kinds"])}}
 
 
 def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
@@ -299,7 +304,13 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
                        "max_tiers": int(sc["max_tiers"]),
-                       "blend": {"min_mm": float(sc["blend"]["min_mm"]), "max_mm": float(sc["blend"]["max_mm"])}}}
+                       "blend": {"min_mm": float(sc["blend"]["min_mm"]), "max_mm": float(sc["blend"]["max_mm"])},
+                       # v0.16.1(esl_select_relax.md §4.4): 고정 침범·품질 FAIL 정책, 체결 구멍 둘레 고정 기본값(툴팁)
+                       "fixed_policy": str(sc["fixed_policy"]), "quality_fail_policy": str(sc["quality"]["fail_policy"]),
+                       "hold": {"ring_mm": float(sc["hold"]["ring_mm"]), "blend_mm": float(sc["hold"]["blend_mm"])},
+                       # 섬 판정 거울 키(SR-D-26 — 브라우저 enclosedIslands 가 같은 값으로)
+                       "island": {"max_mm": float(sc["island"]["max_mm"]),
+                                  "ring_frac": float(sc["island"].get("ring_frac", 0.9))}}}
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
@@ -712,6 +723,13 @@ def _cell_thumb(gdir: str, manifest: dict[str, Any], did: str) -> str | None:
 
 def preview_cells(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> list[dict[str, Any]] | None:
     """미리보기 셀 [{id, values, status, code, thumb}] (d000 제외) — doe/<rev>/grid/grid_manifest.json + matrix.json."""
+    got = _preview_grid(ctx, s, c)
+    return None if got is None else got[0]
+
+
+def _preview_grid(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[list[dict[str, Any]], dict] | None:
+    """(셀 목록, grid_manifest) 또는 None. v0.16.1 select(esl_select_relax.md §4.3): 셀 warnings(있을 때만)·fixed_viol(침범이
+    있으면 상태와 무관 — 코어가 기록한 대로)."""
     from ...core.opt_core import EslError
     from ...core.opt_core import doe_paicad_io as pio
 
@@ -729,9 +747,12 @@ def preview_cells(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> list
     except (EslError, OSError, ValueError):
         return None
     by = {r["id"]: r for r in g["cells"]}
+    mcells = [x for x in (g.get("manifest") or {}).get("cells") or [] if isinstance(x, dict)]
     # v0.15.1 select 고정 침범 원인(코어 bd_select_grid 셀 fixed_viol — 있을 때만 그대로 전달)
-    viol = {str(x.get("id")): x["fixed_viol"] for x in (g.get("manifest") or {}).get("cells") or []
-            if isinstance(x, dict) and isinstance(x.get("fixed_viol"), dict)}
+    viol = {str(x.get("id")): x["fixed_viol"] for x in mcells if isinstance(x.get("fixed_viol"), dict)}
+    # v0.16.1 경고 안(READY + SELECT_FIXED_MOVED·SELECT_QUALITY_WARN) — 비었으면 키 없음
+    cwarn = {str(x.get("id")): [w for w in x["warnings"] if isinstance(w, dict)] for x in mcells
+             if isinstance(x.get("warnings"), list) and any(isinstance(w, dict) for w in x["warnings"])}
     out = []
     for d in m["designs"]:
         if d.get("id") == "d000":
@@ -742,8 +763,11 @@ def preview_cells(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> list
                "thumb": bool(thumb)}
         if d["id"] in viol:
             row["fixed_viol"] = viol[d["id"]]
+        ws = r.get("warnings") if isinstance(r.get("warnings"), list) and r.get("warnings") else cwarn.get(d["id"])
+        if ws:
+            row["warnings"] = ws
         out.append(row)
-    return out
+    return out, (g.get("manifest") or {})
 
 
 def _doe_out(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
@@ -760,9 +784,14 @@ def _doe_out(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str,
              "skipped": {k: int((pv.get("skipped") or {}).get(k) or 0) for k in sk_keys}}
         if s.get("scenario") == "select":   # BS-D-3: 미리보기는 선택 sha 까지 같아야 유효
             p["selection_sha256"] = pv.get("selection_sha256") or doe.get("selection_sha256")
-        cells = preview_cells(ctx, s, c)
-        if cells is not None:
-            p["cells"] = cells
+            if pv.get("warn") is not None:   # v0.16.1 경고 READY 안 수(워커 요약)
+                p["warn"] = int(pv.get("warn") or 0)
+        got = _preview_grid(ctx, s, c)
+        if got is not None:
+            p["cells"] = got[0]
+            # v0.16.1 §7.4: 판정 규칙 판(grid_manifest.rules)이 없는 select 미리보기 = v0.16.0 규칙(경고 안도 제외됨) — 화면 띠
+            if s.get("scenario") == "select" and not isinstance(got[1].get("rules"), int):
+                p["rules_outdated"] = True
         d["preview"] = p
     else:
         d["preview"] = None
@@ -788,6 +817,8 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 "boundary": p0.get("boundary") or {"n_warn": 0, "n_info": 0}}
         if s["scenario"] == "compare":      # ④ 준비 요약(형상 상태·요소 수·실패 사유)
             prep.update({k: p0.get(k) for k in ("n_shapes", "n_ready", "failed", "reference_source", "shapes", "mesh")})
+            if p0.get("n_defeature") is not None:   # v0.16.1 작은 형상 억제 단계로 메시한 형상 수(워커 준비 요약)
+                prep["n_defeature"] = int(p0["n_defeature"])
         elif s["scenario"] == "select":     # select 준비 요약(BD_PREP_REGISTER — 노드·요소 수·고정 출처)
             prep.update({k: p0.get(k) for k in ("n_nodes", "n_elems", "fixed")})
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
@@ -1015,7 +1046,10 @@ def params_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any
     _no_compare(s)
     _require_prep(s, job)
     if s["scenario"] == "select":       # 변수 = 저장 선택(BS-D-6·7) — prep/params.json 없음
-        return _select().params_table(_select().require_selection(ctx, s, c))
+        doc = _select().refresh_derived(ctx, s, c, _select().require_selection(ctx, s, c))   # v0.16.1 §7.5 algo 지연 갱신
+        with ctx.engine.connect() as conn:
+            mc = _study_cfg(conn, s, c)     # 행렬 생성·작업 표와 같은 설정(fixed_policy·range — 같은 표)
+        return _select().params_table(doc, mc)
     doc = _params_doc(ctx, s, c)
     beads = []
     for b in doc.get("beads") or []:
@@ -1126,7 +1160,7 @@ def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[
     from ...core.opt_core import doe_matrix
 
     if s.get("scenario") == "select":    # select 변수 표 = 저장 선택(워커는 params.doe.selection.params 로 같은 표)
-        tab = _select().params_table(_select().require_selection(ctx, s, cfg(ctx)))["params"]
+        tab = _select().params_table(_select().require_selection(ctx, s, cfg(ctx)), c)["params"]
     else:
         tab = _params_doc(ctx, s, c)["params"]
     try:
@@ -1199,7 +1233,8 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
         if s.get("prep") is None:
             raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
         sel = _select().require_selection(ctx, s, c) if s["scenario"] == "select" else None
-        m = _generate(ctx, s, spec, _study_cfg(conn, s, c))
+        mc = _study_cfg(conn, s, c)
+        m = _generate(ctx, s, spec, mc)
         base = _prep_params(conn, s)
         rev = int(((s.get("doe") or {}).get("rev")) or 0) + 1
         doe = copy.deepcopy(base["doe"])
@@ -1207,7 +1242,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
         new_doe = {"rev": rev, "spec": m["spec"], "matrix_sha256": m["matrix_sha256"], "n_designs": m["n_designs"],
                    "preview": None}
         if sel is not None:                 # BS-D-3·BD_MATRIX: 선택 rev·sha 와 변수 표를 작업에 고정
-            doe["selection"] = _select().job_selection(sel)
+            doe["selection"] = _select().job_selection(sel, mc)
             new_doe["selection_sha256"] = sel["sha256"]
         params = {"bead_doe_id": sid, "kind": "PREVIEW", "out_rel": s["dir_rel"], "doe": doe,
                   "warnings": [w for w in m["warnings"]]}
@@ -1261,7 +1296,7 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
         d.update(rev=int(doe["rev"]), spec=doe["spec"], matrix_sha256=doe["matrix_sha256"],
                  paicad_version=s.get("paicad_version"), run=run_opts)
         if sel is not None:
-            d["selection"] = _select().job_selection(sel)
+            d["selection"] = _select().job_selection(sel, _study_cfg(conn, s, c))
         params = {"bead_doe_id": sid, "kind": "RUN", "out_rel": s["dir_rel"], "doe": d,
                   "preview": {"rev": pv.get("rev"), "ok": pv.get("ok")}, "warnings": []}
         s = doe_repo.update_study(conn, sid, phase="RUN", run=run_opts)
@@ -1473,6 +1508,10 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
            "view3d": [str(v) for v in r.get("view3d") or [] if v], "best": best, "noise_floor": r.get("noise_floor"),
            "ratio_tol": r.get("ratio_tol"), "per_esl_inline": bool(r.get("per_esl_inline")),
            "esl": [e for e in r.get("esl") or [] if isinstance(e, dict)], "sort": sort, "warnings": warns}
+    # v0.16.1 select(SR-D-11): 경고 없는 최상위 안(코어 결과 summary.best_clean — 있을 때만). 순위 행 warn 은 행 그대로
+    rs = r.get("summary") if isinstance(r.get("summary"), dict) else {}
+    if "best_clean" in rs or "best_clean" in r:
+        out["summary"] = {"best_clean": rs.get("best_clean", r.get("best_clean"))}
     return _jsonable(out)
 
 
@@ -1637,6 +1676,30 @@ def view3d_file(ctx: AppContext, principal: Principal, sid: str, did: str, name:
     return p, VIEW3D_FILES[name]
 
 
+# ---------------------------------------------------------------- v0.16.1 ④ 작은 형상 억제 목록(esl_select_relax.md §5A.5·§9)
+DEFEATURE_LIST = "defeature.json"      # prep/shapes/<did>/mesh/defeature.json(코어 SR-D-20 — defeature 단계로 메시한 형상만)
+
+
+def shape_defeature(ctx: AppContext, principal: Principal, sid: str, did: str) -> dict[str, Any]:
+    """GET …/shapes/{did}/defeature: 억제 목록 그대로(읽기 — 권한 = 스터디 조회). 경로 고정(prep/shapes/<did>/mesh/ 안, 링크
+    거부), ④ 가 아니거나 형상 id 형식이 아니거나 파일이 없으면 404 NOT_FOUND."""
+    c = cfg(ctx)
+    s, _job = _viewable(ctx, principal, sid)
+    msg = "작은 형상 억제 목록이 없습니다(형상 단순화 단계로 메시한 형상만)"
+    if s.get("scenario") != "compare" or not DID_RE.match(did or ""):
+        raise not_found("NOT_FOUND", msg)
+    base = study_dir(ctx, s)
+    d = safe_case_file(base, f"prep/shapes/{did}/mesh")
+    parts = [os.path.join(base, "prep"), os.path.join(base, "prep", "shapes"), os.path.join(base, "prep", "shapes", did), d]
+    if any(os.path.islink(x) for x in parts):
+        raise not_found("NOT_FOUND", msg)
+    doc = _read_json(os.path.join(d, DEFEATURE_LIST), _max_mb(c))      # 링크·크기 초과·깨진 JSON = None
+    if not isinstance(doc, dict):
+        raise not_found("NOT_FOUND", msg)
+    return _jsonable(doc)
+
+
 __all__ = ["settings_out", "check_inputs", "create_study", "list_studies", "get_study", "params_out", "plan_view",
            "matrix", "preview", "run", "clone", "results", "results_per_esl", "list_files", "study_file", "report", "bundle", "thumb",
-           "view3d_manifest", "view3d_file", "bead_png", "retry_job", "status", "reset_status_cache"]
+           "view3d_manifest", "view3d_file", "bead_png", "retry_job", "status", "reset_status_cache",
+           "shape_defeature"]

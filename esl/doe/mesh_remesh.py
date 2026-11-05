@@ -204,6 +204,56 @@ def _dist_to_tris(P: np.ndarray, X: np.ndarray, T: np.ndarray, chunk: int = 5000
     return out
 
 
+def cad_chord_mm(S_X: np.ndarray, S_T: np.ndarray, h: float, max_angle_deg: float) -> float:
+    """SR-D-27 h 크기 CAD 메시(곡률 세분 없음 — compare.mesh.curvature_n 0)가 기준 삼각화 S0 곡면에서 가질 현 편차 추정(mm).
+    S0 내부 모서리 e(삼각형 2개 공유)마다 이면각 θ_e(0 < θ_e ≤ max_angle_deg — 더 큰 각 = 날카로운 모서리: CAD 메시 노드가 그 위에
+    놓여 편차 없음)와 모서리에 수직인 폭 d_e = (A_0 + A_1)/|e| 로 곡률 반경 R_e = d_e / θ_e, 현 편차 s_e = R_e·(1 − cos(min(h / (2 R_e), π/4)))(요소 하나가 걸치는 호 ≤ 90° 굽힘 —
+    판금 필렛·굽힘 기준, 상한 ≈ 0.19·h).
+    반환 = max_e s_e(곡면 없음 = 0). 결정적(정렬·벡터 연산만)."""
+    X = np.asarray(S_X, dtype=np.float64)
+    T = np.asarray(S_T, dtype=np.int64).reshape(-1, 3)
+    if T.shape[0] < 2:
+        return 0.0
+    a, b, c = X[T[:, 0]], X[T[:, 1]], X[T[:, 2]]
+    n = np.cross(b - a, c - a)
+    ln = np.linalg.norm(n, axis=1)
+    ok = ln > 1e-300
+    n[ok] /= ln[ok, None]
+    area = 0.5 * ln
+    E = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+    tri = np.tile(np.arange(T.shape[0]), 3)
+    order = np.lexsort((E[:, 1], E[:, 0]))
+    E, tri = E[order], tri[order]
+    same = np.all(E[1:] == E[:-1], axis=1)
+    two = np.flatnonzero(same & np.r_[True, ~same[:-1]] & np.r_[~same[1:], True])   # 정확히 2개 공유한 모서리
+    t0, t1 = tri[two], tri[two + 1]
+    good = ok[t0] & ok[t1]
+    t0, t1 = t0[good], t1[good]
+    if t0.size == 0:
+        return 0.0
+    th = np.arccos(np.clip(np.abs(np.einsum("ij,ij->i", n[t0], n[t1])), -1.0, 1.0))
+    ev = E[two][good]
+    le = np.linalg.norm(X[ev[:, 0]] - X[ev[:, 1]], axis=1)
+    d = (area[t0] + area[t1]) / np.maximum(le, 1e-300)       # 모서리에 수직인 두 삼각형 폭(가늘고 긴 삼각형에도 안정)
+    m = (th > 1e-9) & (th <= math.radians(float(max_angle_deg))) & (d > 1e-12)
+    if not m.any():
+        return 0.0
+    R = d[m] / th[m]
+    s = R * (1.0 - np.cos(np.minimum(float(h) / (2.0 * R), 0.25 * math.pi)))   # 현 하나가 걸치는 호 ≤ 90°
+    return float(s.max())
+
+
+def warn_threshold(S_X: np.ndarray, S_T: np.ndarray, h: float, rc: dict) -> tuple[float, float | None]:
+    """SR-D-27 바깥 충실도 경고 기준 = max(fidelity.warn_mm, warn_rel_cad × cad_chord_mm). warn_rel_cad 0(또는 없음) = 절대 기준만
+    (v0.16.0). 반환 (경고 mm, cad_chord_mm | None). 곡률 각 상한 = 2 × angular_deflection_deg(OCC 삼각화가 매끈한 곡면을 나누는 각)."""
+    fc = rc["fidelity"]
+    k = float(fc.get("warn_rel_cad") or 0.0)
+    if k <= 0:
+        return float(fc["warn_mm"]), None
+    ch = cad_chord_mm(S_X, S_T, h, 2.0 * float(rc["angular_deflection_deg"]))
+    return max(float(fc["warn_mm"]), k * ch), round(ch, 6)
+
+
 def fidelity(S_X: np.ndarray, S_T: np.ndarray, mesh: dict, h: float, rc: dict) -> dict:
     """C2-D-13 양방향 거리 지표 {hausdorff_mm, max_dev_mm, p95_mm, area_ratio, deflection_mm, samples, warn_mm, fail_mm,
     over_warn}. 샘플 > fidelity.samples_max 면 고정 간격 추출."""
@@ -222,13 +272,16 @@ def fidelity(S_X: np.ndarray, S_T: np.ndarray, mesh: dict, h: float, rc: dict) -
     a_s = _tri_area(S_X, S_T)
     a_m = _tri_area(X, MT)
     haus = float(max(d_ms.max(initial=0.0), d_sm.max(initial=0.0)))
-    warn = float(fc["warn_mm"])
+    warn, chord = warn_threshold(S_X, S_T, h, rc)          # SR-D-27 cad 메시 편차 대비 상대 경고(절대 warn_mm 이 하한)
     fail = fc.get("fail_mm")
-    return {"hausdorff_mm": round(haus, 6), "max_dev_mm": round(float(d_ms.max(initial=0.0)), 6),
-            "p95_mm": round(float(np.percentile(allv, 95)) if allv.size else 0.0, 6),
-            "area_ratio": round(a_m / a_s, 6) if a_s > 0 else None,
-            "deflection_mm": float(rc["linear_deflection_mm"]), "samples": int(allv.size),
-            "warn_mm": warn, "fail_mm": None if fail is None else float(fail), "over_warn": bool(haus > warn)}
+    out = {"hausdorff_mm": round(haus, 6), "max_dev_mm": round(float(d_ms.max(initial=0.0)), 6),
+           "p95_mm": round(float(np.percentile(allv, 95)) if allv.size else 0.0, 6),
+           "area_ratio": round(a_m / a_s, 6) if a_s > 0 else None,
+           "deflection_mm": float(rc["linear_deflection_mm"]), "samples": int(allv.size),
+           "warn_mm": round(warn, 6), "fail_mm": None if fail is None else float(fail), "over_warn": bool(haus > warn)}
+    if chord is not None:
+        out["cad_chord_mm"] = chord
+    return out
 
 
 # ---------------------------------------------------------------- 삼각화 정리(R4)
@@ -272,6 +325,31 @@ def merge_nodes(X: np.ndarray, T: np.ndarray, tol: float) -> tuple[np.ndarray, n
 # ---------------------------------------------------------------- 본체
 def _fail(code: str, msg: str) -> EslError:
     return EslError(code, msg)
+
+
+def occ_triangulate(gmsh, rc: dict) -> tuple[np.ndarray, np.ndarray]:
+    """R3 현재 세션 OCC 형상 → 삼각화 (X0 노드 태그 순, T0 노드 인덱스). linear/angular deflection = remesh 설정.
+    실패 = REMESH_FAILED | REMESH_STL_EMPTY. ④ defeature 단계 충실도 기준 S0(``esl.geom.defeature.reference_tris``)도 이 함수."""
+    try:
+        gmsh.option.setNumber("Mesh.StlLinearDeflection", float(rc["linear_deflection_mm"]))
+        gmsh.option.setNumber("Mesh.StlLinearDeflectionRelative", 0)
+        gmsh.option.setNumber("Mesh.StlAngularDeflection", math.radians(float(rc["angular_deflection_deg"])))
+        gmsh.model.mesh.importStl()
+        tags, xyz, _ = gmsh.model.mesh.getNodes()
+        types, _etags, enodes = gmsh.model.mesh.getElements(2)
+    except Exception as exc:                                # noqa: BLE001
+        raise _fail("REMESH_FAILED", f"OCC 삼각화 실패: {exc}") from None
+    tags = np.asarray(tags, dtype=np.int64)
+    X0 = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
+    tri = [np.asarray(nd, dtype=np.int64).reshape(-1, 3) for t, nd in zip(types, enodes) if int(t) == 2]
+    T0 = np.concatenate(tri) if tri else np.zeros((0, 3), np.int64)
+    if not T0.shape[0]:
+        raise _fail("REMESH_STL_EMPTY", "STEP 에서 삼각화를 만들지 못함(면 없음)")
+    if T0.shape[0] > int(rc["stl_max_tris"]):
+        raise _fail("REMESH_FAILED", f"삼각화 {T0.shape[0]}개 > 상한 remesh.stl_max_tris {rc['stl_max_tris']}")
+    o = np.argsort(tags, kind="stable")
+    tags, X0 = tags[o], X0[o]
+    return X0, np.searchsorted(tags, T0)
 
 
 def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
@@ -345,27 +423,8 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
                     rec["resewn"] = True
                 except Exception as exc:                    # noqa: BLE001
                     raise _fail("REMESH_FAILED", f"작은 구멍 메움 뒤 형상 봉합 실패: {exc}") from None
-        # R3 OCC 삼각화
-        try:
-            gmsh.option.setNumber("Mesh.StlLinearDeflection", float(rc["linear_deflection_mm"]))
-            gmsh.option.setNumber("Mesh.StlLinearDeflectionRelative", 0)
-            gmsh.option.setNumber("Mesh.StlAngularDeflection", math.radians(float(rc["angular_deflection_deg"])))
-            gmsh.model.mesh.importStl()
-            tags, xyz, _ = gmsh.model.mesh.getNodes()
-            types, _etags, enodes = gmsh.model.mesh.getElements(2)
-        except Exception as exc:                            # noqa: BLE001
-            raise _fail("REMESH_FAILED", f"OCC 삼각화 실패: {exc}") from None
-        tags = np.asarray(tags, dtype=np.int64)
-        X0 = np.asarray(xyz, dtype=np.float64).reshape(-1, 3)
-        tri = [np.asarray(nd, dtype=np.int64).reshape(-1, 3) for t, nd in zip(types, enodes) if int(t) == 2]
-        T0 = np.concatenate(tri) if tri else np.zeros((0, 3), np.int64)
-        if not T0.shape[0]:
-            raise _fail("REMESH_STL_EMPTY", "STEP 에서 삼각화를 만들지 못함(면 없음)")
-        if T0.shape[0] > int(rc["stl_max_tris"]):
-            raise _fail("REMESH_FAILED", f"삼각화 {T0.shape[0]}개 > 상한 remesh.stl_max_tris {rc['stl_max_tris']}")
-        o = np.argsort(tags, kind="stable")
-        tags, X0 = tags[o], X0[o]
-        T0 = np.searchsorted(tags, T0)
+        # R3 OCC 삼각화(v0.16.1 함수로 분리 — esl.geom.defeature.reference_tris 와 같은 코드)
+        X0, T0 = occ_triangulate(gmsh, rc)
         # R4 이산 면 1개로 병합
         S_X, S_T, n_merged = merge_nodes(X0, T0, float(rc["merge_tol_mm"]))
         rec.update(n_stl_tris=int(T0.shape[0]), n_stl_nodes=int(X0.shape[0]), n_merged=n_merged,

@@ -236,19 +236,22 @@ def test_compare_mesh_options_mirror():
     from esl.doe import DEFAULTS
 
     dump = pc.BeadDoeCfg().model_dump()["compare"]
-    assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "remesh"]
+    assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "defeature",
+                                                                         "remesh"]      # v0.16.1 += defeature(SR-D-16)
     assert dump["remesh"]["feature_angle_deg"] == 30.0 and dump["remesh"]["fidelity"] == {
-        "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}
+        "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}     # v0.16.1 SR-D-27
     assert dump["mesh_input"] == {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
-                                  "max_include_depth": 8, "size_warn_ratio": 1.5}
+                                  "max_include_depth": 8, "size_warn_ratio": 1.5,
+                                  "diag": {"enabled": True, "feature_angle_deg": 30.0}}       # v0.16.1 SR-D-24
     assert dump["refine"]["global"] == {"factors": [0.8, 0.667]} and dump["refine"]["max_elems"] == 600000
     core = DEFAULTS["compare"]
+    cview = _core_view_v0161(dump, core)
     for k in _C2_KEYS:
         if k in core:
-            assert core[k] == dump[k], k
+            assert core[k] == cview[k], k
     for k in _C2_MESH_KEYS:
         if k in core["mesh"]:
-            assert core["mesh"][k] == dump["mesh"][k], k
+            assert core["mesh"][k] == cview["mesh"][k], k
     for name in _PLATFORM_YAMLS:
         y = _bead_doe_yaml(name)["compare"]
         for k in _C2_KEYS:
@@ -259,6 +262,78 @@ def test_compare_mesh_options_mirror():
     # 섹션이 없는 설정·옛 코어 DEFAULTS 와도 bead_doe_settings 는 새 키를 채움(백엔드 서비스가 키를 그대로 읽음)
     s = pc.bead_doe_settings(None)["compare"]
     assert all(k in s for k in _C2_KEYS) and all(k in s["mesh"] for k in _C2_MESH_KEYS)
+
+
+# v0.16.1(esl_select_relax.md §4.4): defeature 단계 새 키·메시 입력 진단 — 코어 DEFAULTS 에 아직 없으면 그 키만 코어 대조 생략
+_DEFEAT_KEYS_V0161 = ("kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm",
+                      "narrow_w_factor", "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features",
+                      "list_max")
+
+
+def _core_view_v0161(dump, core):
+    import copy
+
+    out = copy.deepcopy(dump)
+    for k in _DEFEAT_KEYS_V0161:
+        if k not in (core.get("defeature") or {}):
+            out["defeature"].pop(k)
+    if "diag" not in (core.get("mesh_input") or {}):
+        out["mesh_input"].pop("diag")
+    if "defeature" not in (core.get("mesh") or {}).get("ladder", ["defeature"]):
+        out["mesh"]["ladder"] = [x for x in out["mesh"]["ladder"] if x != "defeature"]
+    return out
+
+
+def test_compare_defeature_stage_mirror():
+    """V-SR-20(설정): defeature 새 키 기본값 = 계약 §4.4 = example yaml 2개(코어 DEFAULTS 에 있으면 그것과도)."""
+    pc = _platform_cfg()
+    from esl.doe import DEFAULTS
+
+    want = {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0], "min_bead_height_mm": 2.0,
+            "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"], "hole_max_d_mm": 8.0, "slot_max_w_mm": 1.9,
+            "slot_max_l_mm": 14.0, "flange_max_h_mm": 1.5, "fillet_max_r_mm": 1.5, "narrow_w_factor": 0.4,
+            "feature_max_mm": 40.0, "plane_tol_mm": 0.01, "compound": True, "region_pad_factor": 1.0,
+            "max_features": 2000, "list_max": 500}
+    dump = pc.BeadDoeCfg().model_dump()["compare"]
+    assert dump["defeature"] == want
+    core = DEFAULTS["compare"]
+    assert core["defeature"] == _core_view_v0161(dump, core)["defeature"]
+    for name in _PLATFORM_YAMLS:
+        y = _bead_doe_yaml(name)["compare"]
+        assert y["defeature"] == want and y["mesh_input"]["diag"] == dump["mesh_input"]["diag"], name
+        assert y["mesh"]["ladder"] == dump["mesh"]["ladder"], name
+    s = pc.bead_doe_settings(None)["compare"]
+    assert all(k in s["defeature"] for k in _DEFEAT_KEYS_V0161) and "diag" in s["mesh_input"]
+
+
+@pytest.mark.parametrize("over, frag", [
+    ({"compare": {"mesh": {"ladder": ["cad", "defeature", "defeature"]}}}, "ladder"),       # 중복
+    ({"compare": {"mesh": {"ladder": ["defeature", "cad"]}}}, "ladder"),                    # cad 맨 앞
+    ({"compare": {"defeature": {"kinds": ["hole", "hole"]}}}, "kinds"),
+    ({"compare": {"defeature": {"kinds": ["logo"]}}}, "kinds"),
+    ({"compare": {"defeature": {"hole_max_d_mm": 0}}}, "hole_max_d_mm"),
+    ({"compare": {"defeature": {"narrow_w_factor": 1.5}}}, "narrow_w_factor"),             # (0, 1]
+    ({"compare": {"defeature": {"region_pad_factor": -1}}}, "region_pad_factor"),
+    ({"compare": {"defeature": {"max_features": 0}}}, "max_features"),
+    ({"compare": {"defeature": {"list_max": 0}}}, "list_max"),
+    ({"compare": {"mesh_input": {"diag": {"feature_angle_deg": 91}}}}, "feature_angle_deg"),
+])
+def test_compare_defeature_stage_invalid(over, frag):
+    pc = _platform_cfg()
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as ei:
+        pc.BeadDoeCfg.model_validate({"enabled": True, **over})
+    assert frag in str(ei.value), str(ei.value)
+
+
+def test_compare_defeature_stage_valid():
+    """순서 바꿈(cad 뒤 자유)·defeature 뺌(v0.16.0 순서)·종류 끔 허용."""
+    pc = _platform_cfg()
+    for lad in (["cad", "defeature", "refine_local", "refine_global", "remesh"], ["cad", "refine_local", "refine_global", "remesh"]):
+        assert pc.BeadDoeCfg.model_validate({"compare": {"mesh": {"ladder": lad}}}).compare.mesh.ladder == lad
+    d = pc.BeadDoeCfg.model_validate({"compare": {"defeature": {"kinds": ["hole"], "compound": False}}}).compare.defeature
+    assert d.kinds == ["hole"] and d.compound is False
 
 
 @pytest.mark.parametrize("over, frag", [

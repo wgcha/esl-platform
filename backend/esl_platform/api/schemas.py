@@ -1849,6 +1849,8 @@ class DoeResultOut(_Out):
     esl: list[dict[str, Any]] = Field(default_factory=list)
     sort: str = "score"
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+    # v0.16.1 select(esl_select_relax.md SR-D-11): {best_clean: 경고 없는 최상위 안 id | null}. ranking 행 warn[] 은 행 dict 안
+    summary: dict[str, Any] | None = None
 
 
 class DoePerEslDesign(_Out):
@@ -1899,6 +1901,16 @@ class SelectBeadIn(_Req):
     blend_mm: Literal["auto"] | float = "auto"
     floor_follow: Literal[0, 1] | None = None        # 생략 = bead_doe.select.width.floor_follow
     links: list[list[int]] = Field(default_factory=list, max_length=64)
+    # v0.16.1 '체결 구멍 둘레 고정'(esl_select_relax.md SR-D-9): 1 = 고정 노드 둘레 링 제자리 + 블렌딩(보스). 생략·0 = 끔.
+    # 형식 오류(bool·0/1 밖) = 422 SELECT_HOLD_INVALID(main 의 검증 오류 코드 표)
+    hold_fixed: Literal[0, 1] | None = None
+
+    @field_validator("hold_fixed", mode="before")
+    @classmethod
+    def _hold_not_bool(cls, v: Any) -> Any:
+        if isinstance(v, bool):                      # Literal[0, 1] 은 True == 1 을 받으므로 bool 은 따로 거부(코어 규칙과 같게)
+            raise ValueError("hold_fixed 는 0 또는 1(정수)")
+        return v
 
 
 class SelectionIn(_Req):
@@ -1906,7 +1918,7 @@ class SelectionIn(_Req):
     feature_angle_deg: float | None = None           # 기록용(확장은 브라우저), 생략 = 설정 기본
     beads: list[SelectBeadIn] = Field(max_length=100)
     fixed_user: SelectElemSet = Field(default_factory=SelectElemSet)
-    exclude: SelectElemSet = Field(default_factory=SelectElemSet)
+    exclude: SelectElemSet = Field(default_factory=SelectElemSet)   # v0.16.1: 사면 자동·섬 판정에서 뺄 요소(SR-D-15)
 
 
 class DoeSelectDeriveIn(_Req):
@@ -1927,6 +1939,10 @@ class SelectionDerived(_Out):
     fixed: dict[str, Any]
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     slope_suggested: dict[str, Any] | None = None    # derive 응답만 {bead id: ElemSet}
+    # v0.16.1(esl_select_relax.md §4.2): 계산 규칙 판(없음 = v0.16.0), derive 응답만 섬 표시용 {bead id: ElemSet}(SR-D-14).
+    # 비드별 islands·holes·inner_loops_n·hold_fixed·hold 는 beads[] dict 안
+    algo: int | None = None
+    islands_suggested: dict[str, Any] | None = None
 
 
 class DoeSelectionOut(_Out):

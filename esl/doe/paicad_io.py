@@ -367,16 +367,22 @@ def fixed_points(fx: dict) -> list[dict]:
 # ---------------------------------------------------------------- grid / run / update
 # v0.15.0 select(워커 bd_select_grid) 셀 코드 → 안 상태 (FAIL → FAILED_MESH 허용)
 SELECT_CELL_STATE = {"SELECT_FIXED_VIOLATION": "SKIPPED_FIXED", "SELECT_QUALITY_FAIL": "FAILED_MESH",
-                     "SELECT_MORPH_INVERTED": "FAILED_MESH"}
+                     "SELECT_MORPH_INVERTED": "FAILED_MESH",
+                     # v0.16.1 SR-D-37·38
+                     "SELECT_FEATURE_DISTORTED": "FAILED_MESH", "SELECT_CROSS_BEAD_VIOLATION": "SKIPPED_COLLISION"}
 
 
 def cell_state(cell: dict) -> dict:
-    """grid_manifest 셀 → {id, state, code, warning} (§5: OK→READY, FAIL→스킵, ERROR VIEW_*→READY+경고, 그 밖→SKIPPED_GEOM)."""
+    """grid_manifest 셀 → {id, state, code, warning[, warnings]} (§5: OK→READY, FAIL→스킵, ERROR VIEW_*→READY+경고, 그 밖→SKIPPED_GEOM).
+    v0.16.1: select OK 셀의 ``warnings``(있을 때만)는 그대로 통과."""
     st, code = cell.get("status"), cell.get("code")
     if st == "FAIL" and str(code or "") in SELECT_CELL_STATE:      # v0.15.0 select 워커 셀(esl_bead_select.md §14)
         return {"id": cell["id"], "state": SELECT_CELL_STATE[code], "code": code, "warning": None}
     if st == "OK":
-        return {"id": cell["id"], "state": "READY", "code": None, "warning": None}
+        r = {"id": cell["id"], "state": "READY", "code": None, "warning": None}
+        if cell.get("warnings"):                 # v0.16.1 select 경고 안(SELECT_FIXED_MOVED·QUALITY_WARN — 실행 대상)
+            r["warnings"] = list(cell["warnings"])
+        return r
     if st == "ERROR" and str(code or "").startswith("VIEW_"):
         return {"id": cell["id"], "state": "READY", "code": code, "warning": "THUMB_UNAVAILABLE"}
     if st == "FAIL":

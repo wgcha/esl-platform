@@ -1,5 +1,6 @@
 # 계약: 강성 평가 스터디 — 비드 직접 선택·규칙 모핑 DOE (BEAD_SELECT, v0.15.0)
 
+- **v0.16.1 변경 = `esl_select_relax.md`**(SELECT_RELAX — 이 문서와 충돌하면 그 문서가 우선).
 - 상태: **확정** (2026-11-04). 사용자 확정 방향(아래) 반영, 결정 질문 3개(§19) = A/A/A 확정. v0.15.0 통합 때 구현 형식(§5.4·§5.7·§7·§8.1·§9·§14)을 실제 코드에 맞춰 갱신.
 - 버전: **v0.15.0** (main a0ed2b2 = v0.13.0 기준 작성). **구현 착수 = v0.14.0(STEP_COMPARE, migration 0014) 이 main 에 병합된 뒤**(같은 파일을 고침 — §17). migration **필요**(§15 — `0015_bead_select`).
 - 관계: `esl_bead_doe.md`(BEAD_DOE) 시나리오 ① `same` 의 **변수 출처를 바꾼 변형**. 기준 메시 읽기(`scenario.same_base`, 동일 모델 판정 `topo_sha256`)·하중(① 노드 직접, 모든 안 같은 노드 하중 BD-D-3)·지지(기준 ESL 3-2-1, BD-D-4)·DOE 생성(`esl.doe.matrix`, BD-D-8)·미리보기 필수(BD-D-9)·해석(`evaluate`, BD-D-5)·순위·민감도·ESL별 지표(§11·§11.4)·작업 3종(`DOE_PREP`·`DOE_PREVIEW`·`DOE_RUN`)·폴더(`_doe/<id>/`)·보안(§15)·이어하기(BD-D-16)를 **그대로 재사용**한다. `esl_step_compare.md`(v0.14.0)의 품질 판정(`esl/doe/mesh_quality.py`, `bead_doe.compare.quality` — 이슈 #53 criteria)을 재사용한다. 이 문서에 없는 규칙은 BEAD_DOE 를 따르고, 충돌 시 `select` 범위에서 이 문서가 우선.

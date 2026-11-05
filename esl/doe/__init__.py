@@ -101,23 +101,34 @@ DEFAULTS: dict = {
                                       "split": {"planes": 2}, "fill": {"tol_factor": 0.5, "points": 8, "samples": 10},
                                       "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}},
                          # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤)
-                         "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "remesh"],
+                         # v0.16.1 defeature = 작은 형상 억제 단계(esl_select_relax.md SR-D-16 — 세분화 뒤·재메시 앞)
+                         "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "defeature", "remesh"],
                          "keep_tries": False},   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
                 # v0.16.0 삼각형 재메시(C2-D-11~14 — esl.doe.mesh_remesh)
                 "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
                            "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
                            "stl_max_tris": 5000000, "algorithms": [6, 5, 1], "recombine": True, "keep_stl": False,
-                           "timeout_s": None, "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000}},
+                           "timeout_s": None,
+                           # warn_rel_cad(v0.16.1 SR-D-27): 경고 = max(warn_mm, warn_rel_cad × cad 메시 현 편차 추정), 0 = 절대만
+                           "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}},
                 # v0.16.0 메시 입력(C2-D-2~8 — esl.doe.mesh_input)
                 "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
-                               "max_include_depth": 8, "size_warn_ratio": 1.5},
+                               "max_include_depth": 8, "size_warn_ratio": 1.5,
+                               "diag": {"enabled": True, "feature_angle_deg": 30.0}},   # v0.16.1 SR-D-24(보고만, 해시 제외)
                 # v0.16.0 세분화 폴백(C2-D-18~24 — esl.doe.mesh_refine)
                 "refine": {"enabled": True, "min_size_mm": 0.5, "max_elems": 600000, "total_timeout_s": 3600,
                            "elem_per_h2": 1.0, "local": {"factors": [0.75, 0.5, 0.33], "neighbor_rings": 1, "max_faces": 20},
                            "global": {"factors": [0.8, 0.667]},
                            "convergence": {"enabled": True, "tol": None, "same_h_baseline": False}},
+                # enabled·min_hole_area_mm2·hole_elems·hole_r_mm = cad 단계(v0.14.1 holes). min_bead_height_mm 와 아래 v0.16.1 키 =
+                # defeature 단계(SR-D-17 — BatchMesher holes·flanged_suppr·beads_suppression 근사, profile 해시 제외 SR-D-21b)
                 "defeature": {"enabled": True, "min_hole_area_mm2": 50.27, "hole_elems": 6, "hole_r_mm": [4.0, 30.0],
-                              "min_bead_height_mm": 2.0},
+                              "min_bead_height_mm": 2.0,
+                              "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"], "hole_max_d_mm": 8.0,
+                              "slot_max_w_mm": 1.9, "slot_max_l_mm": 14.0, "flange_max_h_mm": 1.5,
+                              "fillet_max_r_mm": 1.5, "narrow_w_factor": 0.4, "feature_max_mm": 40.0,
+                              "plane_tol_mm": 0.01, "compound": True, "region_pad_factor": 1.0, "max_features": 2000,
+                              "list_max": 500},
                 "quality": {"max_fail_ratio": 0.01,
                             "min_length": {"warn": 1.8, "fail": 1.2}, "max_length": {"warn": 4.5, "fail": 5.25},
                             "aspect": {"warn": 4.4, "fail": 5.0}, "warpage": {"warn": 13.0, "fail": 15.0},
@@ -126,14 +137,22 @@ DEFAULTS: dict = {
                             "tria_min_angle": {"warn": 34.0, "fail": 30.0}, "tria_max_angle": {"warn": 112.0, "fail": 120.0},
                             "tria_pct": {"warn": 10.0, "fail": 15.0}}},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
-    # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 키 추가 금지).
+    # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 계약 없이 키 추가 금지).
+    # v0.16.1(esl_select_relax.md §4.4): fixed_policy·quality.fail_policy = warn(경고만, 뒤집힘만 제외) | skip(v0.16.0 동작),
+    # range.*_max_rel = feasible 상한(SR-D-10), island.max_mm = 섬 평면 bbox 대각 상한(§5.2), hold = 체결 구멍 둘레 고정 링·블렌딩
+    # (SR-D-9). 이 키들은 기본값이면 이어하기 해시에서 빠진다(bead_select.HASH_NEW_KEYS_V0161).
     "select": {"enabled": True, "feature_angle_deg": 15.0, "max_beads": 20, "max_tiers": 6, "max_selection_kb": 4096,
                "normal_radius_mm": 10.0, "plane_rms_mm": 2.0, "plate_tol_mm": 1.0, "level_eps_mm": 0.5,
-               "slope_max_mm": 80.0, "fixed_tol_mm": 0.01,
+               "slope_max_mm": 80.0, "fixed_tol_mm": 0.01, "fixed_policy": "warn",
+               "cross_bead_policy": "warn", "cross_bead_tol_mm": 0.1,          # SR-D-38 다른 선택 비드 침범(warn | skip)
                "width": {"floor_follow": 1, "knn": 8, "end_ratio": 2.0},   # end_ratio = bead_select.WIDTH_END_RATIO(§5.7)
                "blend": {"min_mm": 15.0, "max_mm": 200.0, "k": 8.0, "fixed_margin_mm": 3.0},
-               "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0},
-               "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0},
+               "range": {"depth_rel": 0.3, "width_rel": 0.2, "min_step_mm": 1.0, "depth_max_rel": 1.0,
+                         "width_max_rel": 0.6, "width_floor_q": 0.25, "check_steps": 5, "combo_samples": 16},
+               # SR-D-40 요소별 극단값(QUALITY_WARN) · SR-D-37 비드 안 비선택 피처 왜곡(FAILED_MESH)
+               "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0, "fail_policy": "warn", "rot_warn_deg": 45.0,
+                           "area_ratio_min": 0.2, "distort_rel": 0.25, "distort_min_mm": 0.1},
+               "island": {"max_mm": 40.0, "ring_frac": 0.9}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
                "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15,
                          "ambient": 0.35},
                "derive_cache_n": 8, "derive_timeout_s": 20},
