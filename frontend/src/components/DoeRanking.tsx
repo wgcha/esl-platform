@@ -3,9 +3,10 @@
 // v0.10.0 §11.4: ESL별 개선 지표 열 [전 씬 개선 ✓/✗][최소 개선율][개선/악화 씬][기하평균 개선율][Pareto ●], 열 머리 클릭 정렬(기본 score),
 // ⓘ 지표 정의. 최악 절대 max(score)만으로는 한 씬의 문제가 다른 씬으로 옮겨가는 상황을 못 보기 때문.
 // v0.14.0 ④ 형상 직접 비교: 변수 열 대신 '이름' 열(행 머리, shape.name), 베이스라인 = 기준 형상, 값 펼치기 없음.
+// v0.16.1 경고 안(SR-D-11): 순위 그대로 + 상태 칸 ⚠ + 1위가 경고 안이면 "경고 없는 최상위" 1줄(Q1 = A).
 // v0.16.0 이름 옆 짧은 '메시 방식' 배지(세분화·재메시·메시 입력 — CAD 는 생략), 툴팁 = 충실도·시도·수렴 δ.
 import { Fragment, useState } from "react";
-import { METRIC_DEFS, STATUS_NAME, isSkipped, pctText, sortRanking, type RankSortKey } from "../api/doe";
+import { METRIC_DEFS, RANK_WARN_NAME, STATUS_NAME, isSkipped, pctText, sortRanking, type RankSortKey } from "../api/doe";
 import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
@@ -49,6 +50,17 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   );
   return (
     <>
+    {(() => {
+      // Q1 = A: 1위가 경고 안이면 순위는 그대로 두고 "경고 없는 최상위" 1줄
+      const top = result.ranking.find((r) => r.rank === 1) ?? result.ranking[0];
+      if (!top?.warn?.length) return null;
+      const clean = result.summary?.best_clean ?? result.ranking.filter((r) => !r.warn?.length).sort((a, c) => a.rank - c.rank)[0]?.id ?? null;
+      return (
+        <div className="small warn-text" data-testid="best-clean">
+          ⚠ 1위가 경고 안입니다({top.warn.map((w) => RANK_WARN_NAME[w] ?? w).join(" · ")}) — 경고 없는 최상위: {clean ? <b className="mono">{clean}</b> : "없음"}
+        </div>
+      );
+    })()}
     <div className="doe-metric-bar small">
       <span className="muted">정렬: {sortKey === "score" ? "score(최악 ESL 절대값)" : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
       <details className="doe-metric-help">
@@ -171,6 +183,11 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 ))}
                 <td>
                   <span className="badge ok">OK</span>
+                  {!!r.warn?.length && (
+                    <span className="badge warn" title={r.warn.map((w) => RANK_WARN_NAME[w] ?? w).join(" · ")} data-testid={`rank-warn-${r.id}`}>
+                      ⚠
+                    </span>
+                  )}
                   {r.warnings_n > 0 && (
                     <span className="badge warn" title="안 경고(반력 잔차 등) — 보고서에 상세">
                       ⚠ {r.warnings_n}

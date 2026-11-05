@@ -1,13 +1,16 @@
 // v0.15.0 비드 직접 선택 목(esl_bead_select.md) — 합성 메시·derive·변수·평면도·기저·미리보기 셀. DoeMock(doedata.ts) 이 select 경로에서 부른다.
 // 600×400 판(5 mm 4각), 경로형 2단 비드 b1(꺾인 경로 3 구간, 폭 50 → 70 mm 선형, 단1 깊이 22 · 단2 깊이 14 — 경로 뒤쪽만, 사면 60°),
 // 원형 1단 비드 b2(D 6 · W 40), 체결 고정 노드 고리 5개(하나는 b1 경계에서 18 mm). 요소별 정답 표지(label). 결정적(난수 없음).
+// v0.16.1: b1 단2 바닥 (450, 180) 에 작은 딤플(위로 3 mm, 요소 12개 — 섬 정답 LABEL.b1i), derive 가 섬·구멍·hold 를 돌려줌(esl_select_relax.md §4.2).
 // 서버 알고리즘(§5)의 단순 흉내다 — 공칭 치수·단면·기저는 합성 해석식으로 만든다(화면 개발용).
 import type {
+  DoeCellWarning,
   DoeFixedViol,
   DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn,
   DoeSettingsOut, DoeWarning, XY,
 } from "../api/types";
 import { boundaryNodes, buildTopo, type MeshTopo } from "../view3d/select/adjacency";
+import { enclosedComponents, outerPolygon, type Vec3 } from "../view3d/select/grow";
 import { writeBasis } from "../view3d/select/basis";
 import { EMPTY_SET, elemIndex, fromElemSet, normalizeElemSet, toElemSet } from "../view3d/select/ranges";
 import { writeSelectBin } from "../view3d/select/view";
@@ -38,9 +41,12 @@ const SEL_ELEM0 = 500001;
 const SEL_PATH: XY[] = [[80, 300], [260, 300], [380, 180], [520, 180]];
 const SLOPE_TAN = Math.tan((60 * Math.PI) / 180);
 const CIRC = { c: [470, 80] as XY, W: 40, D: 6 };
-export const SEL_FIXED_CENTERS: XY[] = [[30, 30], [570, 30], [30, 370], [570, 370], [150, 344]];
-/** 정답 표지: 0 상판 · 1 b1 단1 바닥 · 2 b1 단2 바닥 · 3 사면·전이 · 4 b2 바닥 */
-export const LABEL = { plate: 0, b1t1: 1, b1t2: 2, slope: 3, b2: 4 } as const;
+export const SEL_FIXED_CENTERS: XY[] = [[30, 30], [570, 30], [30, 370], [570, 370], [150, 344], [200, 300]]; // 마지막 = b1 단1 바닥 안 체결 구멍(v0.16.1)
+/** 정답 표지: 0 상판 · 1 b1 단1 바닥 · 2 b1 단2 바닥 · 3 사면·전이 · 4 b2 바닥 · 5 b1 단2 섬(딤플, v0.16.1) */
+export const LABEL = { plate: 0, b1t1: 1, b1t2: 2, slope: 3, b2: 4, b1i: 5 } as const;
+/** v0.16.1 딤플(섬): 중심·반경 안 노드를 위로 3 mm */
+export const SEL_DIMPLE = { c: [450, 180] as XY, r: 5.1, up: 3 };
+const inDimple = (x: number, y: number) => Math.hypot(x - SEL_DIMPLE.c[0], y - SEL_DIMPLE.c[1]) <= SEL_DIMPLE.r;
 
 const PATH_L = (() => {
   const L = [0];
@@ -109,7 +115,7 @@ export function selMesh(): SelMesh {
       const py = j * SEL_H;
       x[k * 3] = px;
       x[k * 3 + 1] = py;
-      x[k * 3 + 2] = -depthAt(px, py);
+      x[k * 3 + 2] = -depthAt(px, py) + (inDimple(px, py) ? SEL_DIMPLE.up : 0);
       nodeIds[k] = SEL_NODE0 + k;
       if (SEL_FIXED_CENTERS.some(([cx, cy]) => Math.hypot(px - cx, py - cy) <= 8)) fixed[k] = 1;
     }
@@ -136,7 +142,8 @@ export function selMesh(): SelMesh {
     const cx = quads[e].reduce((s, v) => s + x[v * 3], 0) / 4;
     const cy = quads[e].reduce((s, v) => s + x[v * 3 + 1], 0) / 4;
     const flat = Math.max(...zs) - Math.min(...zs) < 1e-6;
-    if (flat && zs[0] < 1e-6) label[e] = LABEL.plate;
+    if (quads[e].some((v) => inDimple(x[v * 3], x[v * 3 + 1]))) label[e] = LABEL.b1i;
+    else if (flat && zs[0] < 1e-6) label[e] = LABEL.plate;
     else if (flat && Math.hypot(cx - CIRC.c[0], cy - CIRC.c[1]) < CIRC.W / 2) label[e] = LABEL.b2;
     else if (flat && Math.abs(zs[0] - 22) < 1e-6) label[e] = LABEL.b1t1;
     else if (flat && Math.abs(zs[0] - 14) < 1e-6) label[e] = LABEL.b1t2;
@@ -187,6 +194,7 @@ export function selNormalize(sel: DoeSelectionIn): DoeSelectionIn {
       blend_mm: b.blend_mm ?? "auto",
       floor_follow: b.floor_follow ?? 1,
       links: (b.links ?? []).map((g) => [...g].sort((p, q) => p - q)),
+      ...(b.hold_fixed === 1 ? { hold_fixed: 1 as const } : {}), // SR-D-13a: 0 은 생략
     })),
     fixed_user: ns(sel.fixed_user),
     exclude: ns(sel.exclude),
@@ -214,6 +222,8 @@ export function selValidate(sel: DoeSelectionIn | undefined, st: DoeSettingsOut)
     ids.add(b.id);
     if (!b.name || b.name.length > 32 || CTRL_RE.test(b.name)) return err(422, "SELECT_NAME_INVALID", "비드 이름은 1~32자, 제어문자 없음입니다.", { bead: b.id });
     if (!b.tiers.length || b.tiers.length > cfg.max_tiers) return err(422, "SELECT_EMPTY_TIER", `${b.name}: 단이 없습니다.`, { bead: b.id });
+    const hf = (b as { hold_fixed?: unknown }).hold_fixed;
+    if (hf !== undefined && hf !== null && hf !== 0 && hf !== 1) return err(422, "SELECT_HOLD_INVALID", `${b.name}: '체결 구멍 둘레 고정' 값은 0 또는 1 입니다.`, { bead: b.id });
     if (b.tiers.some((t, i) => t.k !== i + 1)) return err(422, "SELECT_TIERS_GAP", `${b.name}: 단 번호가 건너뜁니다.`, { bead: b.id });
     const seenK = new Set<number>();
     for (const g of b.links ?? [])
@@ -264,6 +274,8 @@ export interface DeriveBead {
   suggested: number[];
   geo: BeadGeo;
   derived: DoeBeadDerived;
+  /** v0.16.1 섬 요소(바닥과 같이 이동 — 기저 흉내에서 바닥과 같은 변위) */
+  islands: number[];
 }
 
 function pathAt(tt: number): { p: XY; nrm: XY } {
@@ -339,6 +351,32 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
   const isFixed = (v: number) => !!(m.fixed[v] || fixedUser[v]);
   const blendCfg = st.select?.blend ?? { min_mm: 15, max_mm: 200, k: 8 };
   const warnings: DoeWarning[] = [];
+  // v0.16.1 섬 판정(§5.2) — 브라우저 enclosedComponents 와 같은 함수(서버 흉내). 주인 = bead·16 + k
+  const own = new Int32Array(t.nElems).fill(-1);
+  const cand = new Uint8Array(t.nElems);
+  sel.beads.forEach((b, bi) => {
+    for (const tr of b.tiers) for (const e of fromElemSet(tr.floor, idx).elems) own[e] = bi * 16 + tr.k;
+    for (const e of fromElemSet(b.slope?.add ?? EMPTY_SET(), idx).elems) own[e] = -2;
+  });
+  for (let e = 0; e < t.nElems; e++) {
+    if (own[e] === -1 && excl[e]) own[e] = -2;
+    if (own[e] === -1) cand[e] = 1;
+  }
+  const nb = new Map<number, Vec3>();
+  const nOf = (o: number): Vec3 => {
+    const bi = Math.floor(o / 16);
+    if (!nb.has(bi)) {
+      const a: Vec3 = [0, 0, 0];
+      for (let e = 0; e < t.nElems; e++) if (own[e] >= 0 && Math.floor(own[e] / 16) === bi) for (let c = 0; c < 3; c++) a[c] += t.normals[e * 3 + c] * t.areas[e];
+      const l = Math.hypot(...a) || 1;
+      nb.set(bi, [a[0] / l, a[1] / l, a[2] / l]);
+    }
+    return nb.get(bi)!;
+  };
+  const islandMax = (st.select as { island?: { max_mm?: number } } | null)?.island?.max_mm ?? 40;
+  const enc = enclosedComponents(t, cand, own, m.x, nOf, { maxMm: islandMax, outerPoly: (o) => outerPolygon(t, m.x, (e) => own[e] === o, nOf(o)) });
+  const isl = new Uint8Array(t.nElems);
+  for (const il of enc.islands) for (const e of il.elems) isl[e] = 1;
   const beads: DeriveBead[] = sel.beads.map((b, bi) => {
     const floors = b.tiers.map((tr) => fromElemSet(tr.floor, idx).elems);
     const all = floors.flat();
@@ -363,7 +401,7 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
     for (let h = 0; h < q.length; h++) {
       const e = q[h];
       for (const f of t.nbr.subarray(t.nbrPtr[e], t.nbrPtr[e + 1])) {
-        if (F[f] || S[f] || excl[f] || (taken[f] >= 0 && taken[f] !== bi)) continue;
+        if (F[f] || S[f] || excl[f] || isl[f] || (taken[f] >= 0 && taken[f] !== bi)) continue;
         const c = Math.abs((t.normals[f * 3] * nx + t.normals[f * 3 + 1] * ny + t.normals[f * 3 + 2] * nz) / nl);
         if (c + 1e-12 >= cosT) {
           const z = -t.centroids[f * 3 + 2];
@@ -383,8 +421,13 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
     for (const e of add) S[e] = 1;
     for (const e of rem) S[e] = 0;
     for (let e = 0; e < t.nElems; e++) if (excl[e]) S[e] = 0;
+    const myIsl = enc.islands.filter((il) => Math.floor(il.owner / 16) === bi);
+    const I = new Uint8Array(t.nElems);
+    for (const il of myIsl) for (const e of il.elems) I[e] = 1;
+    for (const x of enc.tooLarge.filter((y) => Math.floor(y.owner / 16) === bi))
+      bwarn.push({ code: "SELECT_ISLAND_TOO_LARGE", bead: b.id, n_elems: x.nElems, size_mm: +x.sizeMm.toFixed(1), message: `${b.name}: 둘러싸인 영역(요소 ${x.nElems}개, ${x.sizeMm.toFixed(1)} mm)이 섬 크기 상한보다 커서 섬으로 보지 않았습니다` });
     if (missN) bwarn.push({ code: "SELECT_TIER_MISSING", bead: b.id, z_mm: missZ, n_elems: missN, message: `${b.name}: 고르지 않은 단이 있습니다(깊이 ${missZ} mm, 요소 ${missN}개)` });
-    const inB = (e: number) => !!(F[e] || S[e]);
+    const inB = (e: number) => !!(F[e] || S[e] || I[e]);
     const bn = boundaryNodes(t, inB);
     const nodes = new Set<number>();
     for (let e = 0; e < t.nElems; e++) if (inB(e)) for (const v of m.quads[e]) nodes.add(v);
@@ -425,8 +468,12 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
         if (h.d - h.a < blend) inBlend++;
       }
     }
-    if (inBeadN) bwarn.push({ code: "SELECT_FIXED_IN_BEAD", bead: b.id, n: inBeadN, message: `${b.name}: 비드 안에 고정 노드 ${inBeadN}개 — 그 비드 변수는 기본 제외` });
-    if (inBlend) bwarn.push({ code: "SELECT_FIXED_IN_BLEND", bead: b.id, n: inBlend, message: `${b.name}: 블렌딩 범위 안 고정 노드 ${inBlend}개 — 폭을 바꾼 안은 고정 침범으로 제외됩니다` });
+    const warnPolicy = (st.select?.fixed_policy ?? "warn") === "warn";
+    if (inBeadN) bwarn.push({ code: "SELECT_FIXED_IN_BEAD", bead: b.id, n: inBeadN, message: warnPolicy ? `${b.name}: 비드 안에 고정 노드 ${inBeadN}개 — 바닥과 같이 움직입니다(경고). 제자리에 두려면 '체결 구멍 둘레 고정'` : `${b.name}: 비드 안에 고정 노드 ${inBeadN}개 — 그 비드 변수는 기본 제외` });
+    if (inBlend) bwarn.push({ code: "SELECT_FIXED_IN_BLEND", bead: b.id, n: inBlend, message: warnPolicy ? `${b.name}: 블렌딩 범위 안 고정 노드 ${inBlend}개 — 폭을 바꾼 안에 '체결 위치 어긋남' 경고가 붙습니다` : `${b.name}: 블렌딩 범위 안 고정 노드 ${inBlend}개 — 폭을 바꾼 안은 고정 침범으로 제외됩니다` });
+    const holdOn = b.hold_fixed === 1;
+    const nFix = inBeadN + inBlend;
+    if (holdOn && !nFix) bwarn.push({ code: "SELECT_HOLD_NO_FIXED", bead: b.id, message: `${b.name}: '체결 구멍 둘레 고정'을 켰지만 이 비드에 고정 노드가 없습니다` });
     const outer = ringOf(geo, (a) => a);
     // 단면(§7.1): 경로 t = 0.3 의 폭 방향, s = 중심 기준(−: 왼쪽), z = 깊이(+ 아래)
     const tt = 0.3;
@@ -454,7 +501,7 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
     const derived: DoeBeadDerived = {
       id: b.id,
       name: b.name,
-      n_elems: all.length + slopeN,
+      n_elems: all.length + slopeN + I.reduce((s2, v) => s2 + v, 0),
       n_nodes: nodes.size,
       tiers,
       slope: { n_elems: slopeN, elems: toElemSet([...S.keys()].filter((e) => S[e]), m.elemId, m.elemType), suggested_n: suggested.length, edited: add.length + rem.length > 0 },
@@ -471,9 +518,14 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
       section: { s: sec.s, z: sec.z, dz_dD: Object.fromEntries(tiers.map((tr) => [String(tr.k), tr.k === 1 ? sec.dzd : sec.dzd.map(() => 0)])), ds_dW: sec.dsw, dz_dW: sec.dsw.map(() => 0) },
       range_default,
       warnings: bwarn,
+      islands: myIsl.map((il) => ({ k: il.owner % 16, n_elems: il.elems.length, n_nodes: il.rim.length + il.interior.length, elems: toElemSet(il.elems, m.elemId, m.elemType), rim_n: il.rim.length, size_mm: +il.sizeMm.toFixed(1), free_loops: 0 })),
+      holes: { n: 0, n_nodes: 0 },
+      inner_loops_n: 0,
+      hold_fixed: holdOn ? 1 : 0,
+      hold: holdOn && nFix ? { n_ring_nodes: nFix * 2, n_blend_nodes: nFix * 6, n_fixed: nFix } : null,
     };
     warnings.push(...bwarn);
-    return { floors, slope: S, suggested, geo, derived };
+    return { floors, slope: S, suggested, geo, derived, islands: myIsl.flatMap((il) => il.elems) };
   });
   const scanN = m.fixed.reduce((s, v) => s + v, 0);
   const userN = fixedUser.reduce((s, v) => s + v, 0);
@@ -484,21 +536,25 @@ export function selDerive(sel: DoeSelectionIn, st: DoeSettingsOut): { out: DoeDe
     fixed: { scan_n: scanN, user_n: userN, source: scanN && userN ? "scan+user" : scanN ? "scan" : userN ? "user" : "none" },
     warnings,
     slope_suggested: Object.fromEntries(sel.beads.map((b, i) => [b.id, toElemSet(beads[i].suggested, m.elemId, m.elemType)])),
+    islands_suggested: Object.fromEntries(sel.beads.map((b, i) => [b.id, toElemSet(beads[i].islands, m.elemId, m.elemType)])),
+    algo: 2,
   };
   return { out, beads };
 }
 
 /** 변수 표(§9 params select). 이름 = <비드 id 대문자>_D<k>·_W, 묶음 대표 = 가장 작은 k */
-export function selParams(sel: DoeSelectionIn, d: DoeSelectionDerived): DoeParamsOut {
+/** 변수 표(§9). v0.16.1: feasible = 기하 한계(D 하한 = 위 수준 + 1, 상한 ×2.0 · W 상한 ×1.6, SR-D-10), warn 정책이면 비드 안 고정이어도 기본 체크(SR-D-8) */
+export function selParams(sel: DoeSelectionIn, d: DoeSelectionDerived, policy: "warn" | "skip" = "warn"): DoeParamsOut {
   const beads: DoeBead[] = [];
   const params: DoeParam[] = [];
   sel.beads.forEach((b, bi) => {
     const x = d.beads[bi];
     const up = b.id.toUpperCase();
     const fixedIn = x.fixed_in_bead_n > 0;
+    const off = fixedIn && policy === "skip";
     beads.push({
       id: b.id, k: bi + 1, shape: "select", sense: x.sense, center_ab: x.plan?.ring_ab[0]?.[0] ?? [0, 0], nominal: { depth: x.tiers[0]?.D_nom ?? 0, width: x.W_nom ?? 0 }, fixed_overlap: fixedIn, png: null,
-      kind: "select", name: b.name, n_tiers: b.tiers.length, W_nom: x.W_nom, W_min: x.W_min, W_max: x.W_max, blend_mm: x.blend_mm, warnings: x.warnings,
+      kind: "select", name: b.name, n_tiers: b.tiers.length, W_nom: x.W_nom, W_min: x.W_min, W_max: x.W_max, blend_mm: x.blend_mm, warnings: x.warnings, islands_n: x.islands?.length ?? 0,
     });
     const linked = new Set<number>();
     for (const tr of x.tiers) {
@@ -506,10 +562,12 @@ export function selParams(sel: DoeSelectionIn, d: DoeSelectionDerived): DoeParam
       const g = (b.links ?? []).find((l) => l.includes(tr.k));
       g?.forEach((k) => linked.add(k));
       const r = x.range_default.D[String(tr.k)];
-      params.push({ name: `${up}_D${tr.k}`, type: "D", bead: b.id, tier: tr.k, nominal: tr.D_nom, feasible: r, feasible_source: "estimate", default_range: r, use_default: !fixedIn, group_members: g ? g.filter((k) => k !== tr.k).map((k) => `${up}_D${k}`) : [] });
+      const above = tr.k > 1 ? x.tiers.find((y) => y.k === tr.k - 1)?.D_nom ?? 0 : 0;
+      const feas: XY = [+(above + 1).toFixed(1), +(tr.D_nom * 2).toFixed(1)];
+      params.push({ name: `${up}_D${tr.k}`, type: "D", bead: b.id, tier: tr.k, nominal: tr.D_nom, feasible: tr.k > 1 ? [Math.min(feas[0], r[0]), feas[1]] : [Math.min(1, r[0]), feas[1]], feasible_source: "estimate", default_range: r, use_default: !off, group_members: g ? g.filter((k) => k !== tr.k).map((k) => `${up}_D${k}`) : [] });
     }
     if (x.range_default.W && x.W_nom != null)
-      params.push({ name: `${up}_W`, type: "W", bead: b.id, nominal: x.W_nom, feasible: x.range_default.W, feasible_source: "estimate", default_range: x.range_default.W, use_default: !fixedIn, group_members: [] });
+      params.push({ name: `${up}_W`, type: "W", bead: b.id, nominal: x.W_nom, feasible: [x.range_default.W[0], +(x.W_nom * 1.6).toFixed(1)], feasible_source: "estimate", default_range: x.range_default.W, use_default: !off, group_members: [] });
   });
   return { beads, params, warnings: d.warnings ?? [] };
 }
@@ -566,6 +624,8 @@ export function selBasis(sel: DoeSelectionIn, st: DoeSettingsOut): { meta: DoeBa
     const vec: number[] = [];
     const nodeTier = new Int32Array(m.n);
     B.floors.forEach((fl, i) => fl.forEach((e) => m.quads[e].forEach((v) => (nodeTier[v] = i + 1))));
+    // v0.16.1 섬 = 그 단 바닥과 같은 변위(평면 바닥 → 둘레 평균 = 바닥 값, SR-D-5)
+    for (const il of der.islands ?? []) for (const e of fromElemSet(il.elems, elemIndex(m.elemId, m.elemType)).elems) m.quads[e].forEach((v) => (nodeTier[v] ||= il.k));
     const slopeNode = new Uint8Array(m.n);
     for (let e = 0; e < m.topo.nElems; e++) if (B.slope[e]) m.quads[e].forEach((v) => (slopeNode[v] = 1));
     if (p.type === "D") {
@@ -608,19 +668,27 @@ export function selBasis(sel: DoeSelectionIn, st: DoeSettingsOut): { meta: DoeBa
   return { meta, bin: writeBasis(vars), params: ps.params };
 }
 
-/** 미리보기 셀 상태(목·결정적): 폭을 공칭보다 15 % 넘게 줄이면 품질 실패, 안 번호 %13 = 5 품질 실패, %11 = 4 고정 침범 */
-export function selCellStatus(id: string, values: Record<string, number>, params: DoeParam[]): { status: DoeDesignStatus; code: string | null; thumb: boolean; fixed_viol?: DoeFixedViol } {
+/** 미리보기 셀 상태(목·결정적): 폭을 공칭보다 15 % 넘게 줄이면 뒤집힘(제외), 안 번호 %13 = 5·%10 = 9 품질 FAIL, %11 = 4 고정 침범 — v0.16.1 기본 warn 정책이면 READY + 경고 */
+export function selCellStatus(id: string, values: Record<string, number>, params: DoeParam[], policy: { fixed: "warn" | "skip"; quality: "warn" | "skip" } = { fixed: "warn", quality: "warn" }): { status: DoeDesignStatus; code: string | null; thumb: boolean; fixed_viol?: DoeFixedViol; warnings?: DoeCellWarning[] } {
   const i = Number(id.slice(1));
   const narrow = params.some((p) => p.type === "W" && values[p.name] != null && values[p.name] < p.nominal * 0.85);
-  if (narrow || i % 13 === 5) return { status: "FAILED_MESH", code: narrow ? "SELECT_MORPH_INVERTED" : "SELECT_QUALITY_FAIL", thumb: true };
+  // SR-D-1 순서: 뒤집힘(항상 제외) → 고정(fixed_policy) → 품질(fail_policy)
+  if (narrow) return { status: "FAILED_MESH", code: "SELECT_MORPH_INVERTED", thumb: true };
+  const qFail = i % 13 === 5 || i % 10 === 9;
   if (i % 11 === 4) {
     // v0.15.1 코어 fixed_viol 흉내: 폭 변수가 고정 고리(b1 아래)를 37 노드 움직임
     const w = params.find((p) => p.type === "W") ?? params[0];
     const m = selMesh();
     const node_idx = [...m.fixed.keys()].filter((k) => m.fixed[k]).slice(0, 37);
     const mm = Math.round(Math.abs((values[w?.name ?? ""] ?? 0) - (w?.nominal ?? 0)) * 10) / 100 || 0.8;
-    return { status: "SKIPPED_FIXED", code: "SELECT_FIXED_VIOLATION", thumb: true, fixed_viol: { n: node_idx.length, max_mm: mm, bead_vars: w ? [{ name: w.name, bead: w.bead, n: node_idx.length, max_mm: mm }] : [], node_idx } };
+    const fixed_viol = { n: node_idx.length, max_mm: mm, bead_vars: w ? [{ name: w.name, bead: w.bead, n: node_idx.length, max_mm: mm }] : [], node_idx };
+    if (policy.fixed === "skip") return { status: "SKIPPED_FIXED", code: "SELECT_FIXED_VIOLATION", thumb: true, fixed_viol };
+    const warnings: DoeCellWarning[] = [{ code: "SELECT_FIXED_MOVED", n: node_idx.length, max_mm: mm }];
+    if (qFail && policy.quality === "warn") warnings.push({ code: "SELECT_QUALITY_WARN", new_fail: 412, new_fail_ratio: 0.019 });
+    else if (qFail) return { status: "FAILED_MESH", code: "SELECT_QUALITY_FAIL", thumb: true, fixed_viol };
+    return { status: "READY", code: null, thumb: true, fixed_viol, warnings };
   }
+  if (qFail) return policy.quality === "skip" ? { status: "FAILED_MESH", code: "SELECT_QUALITY_FAIL", thumb: true } : { status: "READY", code: null, thumb: true, warnings: [{ code: "SELECT_QUALITY_WARN", new_fail: 412, new_fail_ratio: 0.019 }] };
   return { status: "READY", code: null, thumb: true };
 }
 

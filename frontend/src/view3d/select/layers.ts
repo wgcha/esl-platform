@@ -2,6 +2,8 @@
 // 규칙: 한 요소는 최대 1 개 비드·1 개 층(단 바닥|사면 더하기) — 다른 비드 요소는 덮어쓰지 않는다. 고정·제외는 비드 층과 겹칠 수 있다.
 // 상태는 요소 번호(select.bin 순서) 색인 Int32Array — 칠하기 1획 = History 패치 1개.
 import type { DoeBeadSel, DoeSelectionIn } from "../../api/types";
+import type { MeshTopo } from "./adjacency";
+import { enclosedComponents, outerPolygon, type Island, type Vec3 } from "./grow";
 import type { Patch } from "./history";
 import { EMPTY_SET, fromElemSet, toElemSet, type ElemIndex } from "./ranges";
 
@@ -21,6 +23,8 @@ export interface BeadMeta {
   blend: "auto" | number;
   floorFollow: 0 | 1;
   links: number[][];
+  /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) — 0 이면 SelectionIn 에 키를 쓰지 않음(SR-D-13a) */
+  holdFixed: 0 | 1;
 }
 
 export interface SelState {
@@ -44,7 +48,7 @@ export function addBead(s: SelState, maxBeads = MAX_BEADS, floorFollow: 0 | 1 = 
   if (s.beads.length >= maxBeads) return null;
   let n = 1;
   while (s.beads.some((b) => b.id === `b${n}`)) n++;
-  s.beads.push({ id: `b${n}`, name: `B${n}`, nTiers: 1, blend: "auto", floorFollow, links: [] });
+  s.beads.push({ id: `b${n}`, name: `B${n}`, nTiers: 1, blend: "auto", floorFollow, links: [], holdFixed: 0 });
   return s.beads.length - 1;
 }
 
@@ -299,6 +303,7 @@ export function toSelectionIn(s: SelState, elemId: ArrayLike<number>, elemType: 
       blend_mm: b.blend,
       floor_follow: b.floorFollow,
       links: b.links.map((g) => [...g]),
+      ...(b.holdFixed ? { hold_fixed: 1 as const } : {}),
     };
   });
   return { schema_version: 1, feature_angle_deg: featureAngle, beads, fixed_user: lists((e) => !!s.fixed[e]), exclude: lists((e) => !!s.exclude[e]) };
@@ -314,7 +319,7 @@ export function fromSelectionIn(sel: DoeSelectionIn, idx: ElemIndex, nElems: num
     r.elems.forEach(fn);
   };
   sel.beads.forEach((b, bi) => {
-    s.beads.push({ id: b.id, name: b.name, nTiers: Math.max(1, b.tiers.length), blend: b.blend_mm, floorFollow: b.floor_follow, links: b.links.map((g) => [...g]) });
+    s.beads.push({ id: b.id, name: b.name, nTiers: Math.max(1, b.tiers.length), blend: b.blend_mm, floorFollow: b.floor_follow, links: b.links.map((g) => [...g]), holdFixed: b.hold_fixed === 1 ? 1 : 0 });
     for (const t of b.tiers) take(t.floor, (e) => (s.owner[e] = ownerCode(bi, t.k)));
     take(b.slope.add, (e) => (s.owner[e] = ownerCode(bi, SLOPE)));
     take(b.slope.remove, (e) => (s.remove[e] = bi));
@@ -337,16 +342,26 @@ export function tierColor(k: number): [number, number, number] {
 }
 const mix = (a: [number, number, number], b: [number, number, number], t: number): [number, number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
-/** 요소별 RGBA(길이 4·nElems). active = 지금 고치는 비드(그 밖 비드는 흐리게), suggested(b) = 비드 b 자동 사면 */
-export function elemColors(s: SelState, active: number, suggested: (bead: number) => Uint8Array | null): Uint8Array {
+/** 섬 색 = 그 단 색의 밝은 단계(새 층 아님, §8) */
+export const islandColor = (k: number): [number, number, number] => mix(tierColor(k), [255, 255, 255], 0.55);
+
+/**
+ * 요소별 RGBA(길이 4·nElems). active = 지금 고치는 비드(그 밖 비드는 흐리게), suggested(b) = 비드 b 자동 사면,
+ * islands = 요소별 섬 주인 코드(ownerCode(b, k), 없음 −1 — 표시 전용, 저장 안 함)
+ */
+export function elemColors(s: SelState, active: number, suggested: (bead: number) => Uint8Array | null, islands?: Int32Array | null): Uint8Array {
   const out = new Uint8Array(s.nElems * 4);
   const sug = s.beads.map((_, b) => suggested(b));
   for (let e = 0; e < s.nElems; e++) {
     const o = s.owner[e];
     let c = COLOR_NONE;
     let bead = ownerBead(o);
+    const il = o < 0 && !s.exclude[e] ? islands?.[e] ?? -1 : -1;
     if (o >= 0) c = ownerLayer(o) === SLOPE ? COLOR_SLOPE : tierColor(ownerLayer(o));
-    else {
+    else if (il >= 0) {
+      c = islandColor(ownerLayer(il));
+      bead = ownerBead(il);
+    } else {
       const b = sug.findIndex((m, bi) => !!m?.[e] && s.remove[e] !== bi);
       if (b >= 0 && !s.exclude[e]) {
         c = COLOR_SLOPE_AUTO;
@@ -361,4 +376,61 @@ export function elemColors(s: SelState, active: number, suggested: (bead: number
     out[e * 4 + 3] = 255;
   }
   return out;
+}
+
+// ---------------------------------------------------------------- v0.16.1 섬(SR-D-4·14, §5.2)
+/** 비드 b 단 바닥 전체의 평균 법선(면적 가중, 첫 요소 법선 쪽으로 부호 맞춤) — 섬 판정 평면 n̄_b */
+export function beadMeanNormal(t: MeshTopo, s: SelState, bead: number): Vec3 {
+  let ref = -1;
+  const acc: Vec3 = [0, 0, 0];
+  for (let e = 0; e < s.nElems; e++) {
+    const o = s.owner[e];
+    if (o < 0 || ownerBead(o) !== bead || ownerLayer(o) === SLOPE) continue;
+    if (ref < 0) ref = e;
+    const sg = t.normals[e * 3] * t.normals[ref * 3] + t.normals[e * 3 + 1] * t.normals[ref * 3 + 1] + t.normals[e * 3 + 2] * t.normals[ref * 3 + 2] < 0 ? -1 : 1;
+    for (let c = 0; c < 3; c++) acc[c] += sg * t.areas[e] * t.normals[e * 3 + c];
+  }
+  const l = Math.hypot(acc[0], acc[1], acc[2]);
+  return l > 0 ? [acc[0] / l, acc[1] / l, acc[2] / l] : [0, 0, 1];
+}
+
+export interface SelIslands {
+  /** 요소별 섬 주인 코드 ownerCode(b, k), 없음 −1 */
+  owner: Int32Array;
+  islands: Island[];
+  tooLarge: { owner: number; nElems: number; sizeMm: number }[];
+}
+
+/**
+ * 화면 선택의 섬(SR-D-14 enclosedIslands): 후보 = 어느 비드 층에도 없고 제외도 아닌 요소, 주인 = 각 비드 단 바닥(코드 bead·16 + k),
+ * 사면 더하기·제외 = 막힘. 모든 비드를 한 번에(후보는 비드와 무관하게 같음). X = 노드 좌표. 저장 대상 아님.
+ */
+export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, maxMm: number): SelIslands {
+  const n = s.nElems;
+  const cand = new Uint8Array(n);
+  const owner = new Int32Array(n);
+  for (let e = 0; e < n; e++) {
+    const o = s.owner[e];
+    if (o >= 0) owner[e] = ownerLayer(o) === SLOPE ? -2 : o;
+    else if (s.exclude[e]) owner[e] = -2;
+    else {
+      owner[e] = -1;
+      cand[e] = 1;
+    }
+  }
+  const normals = new Map<number, Vec3>();
+  const nOf = (o: number) => {
+    const b = ownerBead(o);
+    if (!normals.has(b)) normals.set(b, beadMeanNormal(t, s, b));
+    return normals.get(b)!;
+  };
+  const r = enclosedComponents(t, cand, owner, X, nOf, { maxMm, outerPoly: (o) => outerPolygon(t, X, (e) => s.owner[e] === o, nOf(o)) });
+  const io = new Int32Array(n).fill(-1);
+  for (const il of r.islands) for (const e of il.elems) io[e] = il.owner;
+  return { owner: io, islands: r.islands, tooLarge: r.tooLarge };
+}
+
+/** 비드별 섬 수(표시용) */
+export function islandCount(isl: SelIslands | null, bead: number): number {
+  return isl ? isl.islands.filter((x) => ownerBead(x.owner) === bead).length : 0;
 }

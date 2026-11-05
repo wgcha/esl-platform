@@ -16,8 +16,8 @@ import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
-  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, fromSelectionIn, ownerBead, paint, toSelectionIn, toggleLink,
-  type Layer, type LayerName, type SelState,
+  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
+  type Layer, type LayerName, type SelIslands, type SelState,
 } from "../view3d/select/layers";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
@@ -115,6 +115,39 @@ export interface BeadSelectCtrl {
   resetAll: () => void;
   maxBeads: number;
   maxTiers: number;
+  /** v0.16.1 섬(SR-D-14): 요소별 섬 주인 코드(표시 전용) — 편집 직후 = 브라우저 계산, derive 뒤 = 서버 islands */
+  islandMask: Int32Array | null;
+  /** 브라우저 계산 섬(편집 뒤 derive 전까지) — 비드별 수 표시용 */
+  localIslands: SelIslands | null;
+  /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) */
+  setHold: (bead: number, v: 0 | 1) => void;
+  hold: { ring_mm: number; blend_mm: number };
+}
+
+/** 섬 크기 상한 기본값(설정 select.island.max_mm 거울 — 서버가 settings 에 주면 그 값) */
+export const ISLAND_MAX_MM = 40;
+
+/** derive 응답 → 요소별 섬 주인 코드(beads[].islands 의 k, 없으면 islands_suggested 를 단 1 로). 섬이 없으면 null */
+export function serverIslandMask(d: DoeDeriveOut | null, s: SelState | null, idx: ElemIndex | null, nElems: number): Int32Array | null {
+  if (!d || !s || !idx) return null;
+  const out = new Int32Array(nElems).fill(-1);
+  let any = false;
+  s.beads.forEach((b, bi) => {
+    const x = d.beads.find((y) => y.id === b.id);
+    if (x?.islands?.length) {
+      for (const il of x.islands)
+        for (const e of fromElemSet(il.elems, idx).elems) {
+          out[e] = ownerCode(bi, Math.max(1, il.k));
+          any = true;
+        }
+    } else if (d.islands_suggested?.[b.id]) {
+      for (const e of fromElemSet(d.islands_suggested[b.id], idx).elems) {
+        out[e] = ownerCode(bi, 1);
+        any = true;
+      }
+    }
+  });
+  return any ? out : null;
 }
 
 const json = (x: unknown) => JSON.stringify(x);
@@ -149,6 +182,15 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
   const loadedSha = useRef<string | null | undefined>(undefined);
   const maxBeads = st?.select?.max_beads ?? 20;
   const maxTiers = st?.select?.max_tiers ?? 6;
+  const islandMax = (st?.select as { island?: { max_mm?: number } } | null | undefined)?.island?.max_mm ?? ISLAND_MAX_MM;
+  const hold = st?.select?.hold ?? { ring_mm: 3, blend_mm: 8 };
+  const [localIslands, setLocalIslands] = useState<SelIslands | null>(null);
+  /** 편집 뒤 섬 다시 계산(브라우저 — 표시만) */
+  const refreshIslands = useCallback(() => {
+    const s = stRef.current;
+    if (!s || !data) return;
+    setLocalIslands(s.beads.length ? enclosedIslands(data.topo, s, data.glb.positions, islandMax) : null);
+  }, [data, islandMax]);
 
   const input = useCallback((): DoeSelectionIn | null => {
     const s = stRef.current;
@@ -163,7 +205,10 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       setDeriveError(null);
       doe
         .derive(studyId, sel)
-        .then((d) => setDerive(d))
+        .then((d) => {
+          setDerive(d);
+          setLocalIslands(null); // 서버 islands 가 표시를 대체(SR-D-14)
+        })
         .catch((e) => setDeriveError(errorText(e)))
         .finally(() => setDeriving(false));
     },
@@ -191,6 +236,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     if (saved) setFeatureAngle(saved.input.feature_angle_deg);
     setBaseJson(savedJson);
     setDerive(null);
+    setLocalIslands(null);
     hist.current.clear();
     if (savedIn) doDerive(savedIn);
     setActive(0);
@@ -245,16 +291,22 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
         const cur = stroke.current ?? { changes: [] };
         cur.changes.push(...p.changes);
         stroke.current = cur;
-      } else hist.current.push(p);
+      } else {
+        hist.current.push(p);
+        if (p.changes.length) refreshIslands();
+      }
       bump();
     },
-    [suggested, bump],
+    [suggested, bump, refreshIslands],
   );
   const endStroke = useCallback(() => {
-    if (stroke.current) hist.current.push(stroke.current);
+    if (stroke.current) {
+      hist.current.push(stroke.current);
+      if (stroke.current.changes.length) refreshIslands();
+    }
     stroke.current = null;
     bump();
-  }, [bump]);
+  }, [bump, refreshIslands]);
   /** 비드 목록이 바뀐 뒤(삭제·되돌리기): 지금 비드·층을 범위 안으로, derive(비드 id 기준)는 다시 계산하도록 비움 */
   const afterMeta = useCallback((pref?: number) => {
     const s = stRef.current;
@@ -278,19 +330,26 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       // 한 획 안 같은 요소가 여러 번 바뀌었으면 뒤에서부터 되돌린다
       applyPatch(s, { ...p, changes: [...p.changes].reverse() }, "undo");
       if (p.meta) afterMeta(active);
+      refreshIslands();
       bump();
     }
-  }, [bump, afterMeta, active]);
+  }, [bump, afterMeta, active, refreshIslands]);
   const redo = useCallback(() => {
     const s = stRef.current;
     const p = hist.current.redo();
     if (s && p) {
       applyPatch(s, p, "redo");
       if (p.meta) afterMeta(active);
+      refreshIslands();
       bump();
     }
-  }, [bump, afterMeta, active]);
+  }, [bump, afterMeta, active, refreshIslands]);
 
+  const serverMask = useMemo(
+    () => serverIslandMask(derive, stRef.current, data?.idx ?? null, data?.manifest.n_elems ?? 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [derive, data],
+  );
   const ctrl: BeadSelectCtrl = {
     data,
     error,
@@ -374,6 +433,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       const s = stRef.current;
       if (!s || !layer) return;
       hist.current.push(clearLayer(s, layer, suggested));
+      refreshIslands();
       bump();
     },
     deleteBead: (b) => {
@@ -383,6 +443,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       if (!p) return;
       hist.current.push(p);
       afterMeta(b > 0 ? b - 1 : 0);
+      refreshIslands();
       bump();
     },
     deleteTier: (b) => {
@@ -392,6 +453,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       if (!p) return;
       hist.current.push(p);
       afterMeta(b);
+      refreshIslands();
       bump();
     },
     resetBead: (b) => {
@@ -402,6 +464,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       hist.current.push(p);
       const id = s.beads[b]?.id;
       if (id) setDerive((d) => withoutBeadDerive(d, id));   // 그 비드의 사면 제안·D·W 도 비움(다시 계산 전까지)
+      refreshIslands();
       bump();
     },
     resetAll: () => {
@@ -409,10 +472,20 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       if (!s) return;
       hist.current.push(resetAll(s));
       afterMeta(0);
+      setLocalIslands(null);
       bump();
     },
     maxBeads,
     maxTiers,
+    islandMask: localIslands ? localIslands.owner : serverMask,
+    localIslands,
+    setHold: (bi, v) => {
+      const b = stRef.current?.beads[bi];
+      if (!b) return;
+      b.holdFixed = v;
+      bump();
+    },
+    hold,
   };
   return ctrl;
 }
@@ -503,7 +576,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
   useEffect(() => {
     const sc = sceneRef.current;
     if (!sc || !s || !data || phase !== "ready") return;
-    sc.setElemColors?.(elemColors(s, ctrl.active, ctrl.suggested));
+    sc.setElemColors?.(elemColors(s, ctrl.active, ctrl.suggested, ctrl.islandMask));
     if (s.beads[ctrl.active]) {
       const slope = effectiveSlope(s, ctrl.active, ctrl.suggested(ctrl.active));
       const pairs = boundaryEdges(data.topo, (e) => ownerBead(s.owner[e]) === ctrl.active || !!slope[e]);
@@ -512,7 +585,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
       for (let i = 0; i < pairs.length; i++) for (let c = 0; c < 3; c++) segs[i * 3 + c] = pos[pairs[i] * 3 + c];
       sc.setOverlayLines?.(segs);
     } else sc.setOverlayLines?.(null);
-  }, [ctrl.tick, ctrl.active, ctrl.suggested, phase, s, data]);
+  }, [ctrl.tick, ctrl.active, ctrl.suggested, ctrl.islandMask, phase, s, data]);
 
   // ---- 입력: 그리기 도구(왼쪽 끌기) · 클릭+확장 · 더블클릭 중심
   const strokeRef = useRef<{ mode: "add" | "remove"; start: Pt; pts: Pt[]; centroids: Float32Array | null } | null>(null);
@@ -776,7 +849,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
         <Select3D ctrl={ctrl} editable={editable} tool={tool} brushPx={brushPx} visibleOnly={visibleOnly} eraser={eraser} />
         <div className="small muted bs-hint" data-testid="bs-hint">
           {eraser ? "지우개 켜짐: 클릭·끌기 = 지금 층에서 빼기(다시 누르면 더하기) · " : ""}
-          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 또는 지우개 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt 또는 지우개 = 빼기 · Ctrl+끌기 = 회전"} · 층 비우기·비드 ✕·단 삭제 · Ctrl+Z = 실행 취소 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열, 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
+          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 또는 지우개 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt 또는 지우개 = 빼기 · Ctrl+끌기 = 회전"} · 층 비우기·비드 ✕·단 삭제 · Ctrl+Z = 실행 취소 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열(밝은 단계 = 섬 — 바닥과 같이 이동), 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
         </div>
         <ErrorLine text={ctrl.deriveError} />
       </Card>
