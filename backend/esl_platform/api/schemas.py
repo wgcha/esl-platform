@@ -1708,6 +1708,10 @@ class DoeCheckIn(_Req):
     inch: int | None = Field(default=None, ge=1, le=1000)
     mesh_mode: Literal["cad", "remesh", "auto"] | None = None    # v0.16.0 ④ 만(C2-D-9) — 없으면 bead_doe.compare.mesh.mode
     mesh_refine: bool | None = None     # v0.16.0 ④ 만(§8 '실패 시 세분화 허용') — false 면 ladder 에서 refine_* 제외, 없으면 설정
+    # v0.16.2 select 만(esl_bead_auto.md §3.3): seed 출처 auto(paicad 자동 탐지 — step_upload_id 필수)|manual(기본 — STEP 금지),
+    # 기준 메시 case(기본 — 같은 모델 Case 메시)|mesh(② B 메시 — mesh_upload_id 필수, part_title·inch 선택). 다른 시나리오 422
+    bead_source: Literal["auto", "manual"] | None = None
+    select_base: Literal["case", "mesh"] | None = None
 
 
 class DoeStudyIn(DoeCheckIn):
@@ -1785,7 +1789,7 @@ class DoeStudyOut(_Out):
     scenario: DoeScenarioLit
     title: str
     entry_ids: list[str]
-    inputs: dict[str, Any]
+    inputs: dict[str, Any]                          # v0.16.2 select: + bead_source("auto"|"manual"), select_base?("mesh" — ② 만)
     phase: DoePhaseLit
     version: int
     prep: dict[str, Any] | None = None
@@ -1943,6 +1947,17 @@ class SelectionDerived(_Out):
     # 비드별 islands·holes·inner_loops_n·hold_fixed·hold 는 beads[] dict 안
     algo: int | None = None
     islands_suggested: dict[str, Any] | None = None
+
+
+class DoeSelectAutoOut(_Out):
+    """v0.16.2 GET …/select/auto(esl_bead_auto.md §3.3): 자동 탐지 seed = SelectionIn schema 1 + 정규화 sha(수동 저장과 같은 식),
+    map[{bead, paicad_id, n_floor}], warnings(AUTO_* 코드), paicad_version."""
+
+    selection: dict[str, Any]
+    sha256: str | None = None
+    map: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    paicad_version: str | None = None
 
 
 class DoeSelectionOut(_Out):

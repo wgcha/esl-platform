@@ -280,3 +280,52 @@ def test_linearity_determinism_sha(G, tmp_path):
     sel2["beads"][1]["tiers"][0]["floor"]["q"] = split[::-1]
     sel2["beads"][1]["tiers"] = sel2["beads"][1]["tiers"][::-1]
     assert bs.selection_sha256(bs.normalize_input(sel, CFG)) == bs.selection_sha256(bs.normalize_input(sel2, CFG))
+
+
+# ---------------------------------------------------------------- V-AD-8 ALGO 3 재계산(v0.16.2 AD-D-11)
+def test_algo3_recompute_once_same_bytes(tmp_path, G):
+    """옛 basis.json(algo 2 — v0.16.1)은 BD_MATRIX 에서 1회 재계산: 선택 sha·basis.npz 바이트·basis_sha 동일, algo 3 기록,
+    다음 BD_MATRIX 는 재사용. 기본 설정 select 해시(cfg_sha256)도 v0.16.1 과 같다(새 키 기본값 제외)."""
+    import json
+
+    import synth_doe as sd
+    from esl.doe import stages as stg
+    g, norm, _D, _B = G
+    m = g["mesh"]
+    cd = tmp_path / "case" / "input"
+    cd.mkdir(parents=True)
+    rad = sd.write_mesh_rad(str(cd / "model.rad"), m)
+    dirs = [sd.save_entry(str(tmp_path / "lib"), "E0", m, "bend", 1.0, seed=0)[0]]
+    sel_in = sb.selection(g)
+    sha = bs.selection_sha256(norm)
+    doe = {"id": "S7", "scenario": "select", "title": "t",
+           "cfg": {"bead_doe": {"enabled": True}, "opt_run": {"solver": {"backend": "superlu"}}},
+           "entries": [{"id": "E0", "dir": dirs[0]}],
+           "base": {"entry_id": "E0", "rad_path": rad, "part_title": sd.PART_TITLE, "case_dir": str(cd)},
+           "selection": {"rev": 1, "sha256": sha, "input": sel_in}}
+    out = tmp_path / "_doe" / "S7"
+    msgs = []
+
+    def run(stage, **kw):
+        return stg.run_stage({"stage": stage, "out": str(out), "doe": {**doe, **kw}}, msgs.append)
+    run("bd_input")
+    run("bd_loads")
+    spec = {"method": "lhs", "n": 3, "seed": 1, "params": [{"name": "B1_D1", "lo": 18.0, "hi": 26.0}]}
+    r1 = run("bd_matrix", rev=1, spec=spec)
+    sdir = out / "select" / sha[:12]
+    bj = json.loads((sdir / "basis.json").read_text(encoding="utf-8"))
+    npz = (sdir / "basis.npz").read_bytes()
+    assert bj["algo"] == bs.ALGO == 3 and r1["selection_sha256"] == sha
+    c = stg.Ctx({"stage": "x", "out": str(out), "doe": doe})
+    v0161 = {k: v for k, v in c.cfg["select"].items() if k not in ("hole", "auto")}
+    assert bj["cfg_sha256"] == stg._sel_cfg_sha(c)
+    assert bs.select_hash_view(c.cfg["select"]) == bs.select_hash_view(v0161)
+    (sdir / "basis.json").write_text(json.dumps({**bj, "algo": 2}), encoding="utf-8")
+    msgs.clear()
+    r2 = run("bd_matrix", rev=2, spec=spec)
+    assert not any("재사용" in s for s in msgs)                         # algo 2 → 재계산
+    assert (sdir / "basis.npz").read_bytes() == npz and r2["basis_sha256"] == r1["basis_sha256"]
+    assert json.loads((sdir / "basis.json").read_text(encoding="utf-8"))["algo"] == 3
+    msgs.clear()
+    run("bd_matrix", rev=3, spec=spec)
+    assert any("재사용" in s for s in msgs)

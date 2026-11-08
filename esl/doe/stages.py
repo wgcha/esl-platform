@@ -151,6 +151,61 @@ def _copy_verified(src: str, dst: str, writer: U.Writer, sha: str | None = None)
 
 
 # ---------------------------------------------------------------- 1 BD_INPUT
+def select_base(c: Ctx) -> str:
+    """v0.16.2 AD-D-13: select 기준 메시 출처 ``case``(① Case 제자리, 기본) | ``mesh``(② B 메시 업로드). 스펙 ``doe.select_base``
+    (백엔드가 ``inputs.select_base`` 를 그대로 넣음), 없으면 준비 결과 ``prep/input.json`` 의 값, 그것도 없으면 case."""
+    v = c.D.get("select_base")
+    if v is None and os.path.isfile(c.p("prep", "input.json")):
+        v = U.read_json(c.p("prep", "input.json")).get("select_base")
+    return "mesh" if v == "mesh" else "case"
+
+
+def _is_mesh_base(c: Ctx) -> bool:
+    """② B 메시 기준(legacy ``mesh`` 시나리오 또는 select + select_base mesh — AD-D-18)."""
+    return c.scn == "mesh" or (c.scn == "select" and select_base(c) == "mesh")
+
+
+def bead_source(c: Ctx) -> str:
+    """v0.16.2 AD-D-1: select 초기 선택 출처 ``auto`` | ``manual``(기본). 스펙 ``doe.bead_source``(백엔드가 ``inputs.bead_source``
+    를 그대로 넣음), 없으면 ``prep/input.json`` 의 값."""
+    v = c.D.get("bead_source")
+    if v is None and os.path.isfile(c.p("prep", "input.json")):
+        v = U.read_json(c.p("prep", "input.json")).get("bead_source")
+    return "auto" if v == "auto" else "manual"
+
+
+def _mesh_base(c: Ctx, ents, inp: dict, warns: list, scenario: str) -> dict:
+    """② B 메시 기준(BD-D-12·AD-D-15 — legacy ``mesh`` 와 select + select_base mesh 공통): 업로드 rad/inc → input/mesh 사본·sha
+    → ``load_mesh``(B 파트, 원 노드 ID 유지) → ``sc.template_base``(frame = B, 법선 정렬, 자동 3-2-1, 크기 규칙 B = 템플릿)
+    → prep/base_mesh.npz·base.json(scenario = ``scenario``). inp(input.json)·warns 를 채우고 base 메타를 돌려준다."""
+    D = c.D
+    m = D["mesh"]
+    files = sc.copy_mesh_upload(m["path"], m["upload_root"], c.p("input", "mesh"), c.writer)
+    main_rel = os.path.relpath(U.real_path(m["path"]), U.real_path(m["upload_root"]))
+    from esl.opt.mesh_check import load_mesh
+    mesh, minfo = load_mesh(c.p("input", "mesh", main_rel), m.get("part_title") or c.cfg["part_title"])
+    warns += list(minfo.get("warnings") or [])
+    if mesh.get("part_id") is None:
+        raise EslError("MESH_INVALID", "B 메시에서 파트 id 를 얻지 못함(rad/inc 만 지원)")
+    c.progress(60)
+    t, size_info = sc.template_base(mesh, ents, c.ocfg["size"], inch=D.get("inch"),
+                                    source={"file_name": os.path.basename(m["path"]), "files": files})
+    warns += list(size_info.get("warnings") or [])
+    inp.update(assem="input/mesh", mesh={"main": main_rel.replace(os.sep, "/"), "files": files},
+               part_id=int(mesh.get("part_id")), part_title=mesh.get("part_title"), size=size_info)
+    return sc.save_base(t, c.p("prep"), scenario, c.writer)
+
+
+def select_prep_info(out_dir: str) -> dict:
+    """(워커 BD_GEOM select 용, AD-D-17) 준비 폴더의 prep/input.json → {select_base, bead_source, assem("case" | "input/mesh"),
+    part_id, part_title, step_rel | None}. BD_INPUT 뒤에만 의미."""
+    inp = U.read_json(os.path.join(out_dir, "prep", "input.json"))
+    st = inp.get("step") or None
+    return {"select_base": inp.get("select_base") or "case", "bead_source": inp.get("bead_source") or "manual",
+            "assem": inp.get("assem"), "part_id": inp.get("part_id"), "part_title": inp.get("part_title"),
+            "step_rel": st.get("rel") if isinstance(st, dict) else None}
+
+
 def bd_input(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
     D = c.D
@@ -187,21 +242,7 @@ def bd_input(spec: dict, echo=print) -> dict:
                    base_entry_id=b["entry_id"])
         meta = sc.save_base(t, c.p("prep"), c.scn, c.writer)
     elif c.scn == "mesh":
-        m = D["mesh"]
-        files = sc.copy_mesh_upload(m["path"], m["upload_root"], c.p("input", "mesh"), c.writer)
-        main_rel = os.path.relpath(U.real_path(m["path"]), U.real_path(m["upload_root"]))
-        from esl.opt.mesh_check import load_mesh
-        mesh, minfo = load_mesh(c.p("input", "mesh", main_rel), m.get("part_title") or c.cfg["part_title"])
-        warns += list(minfo.get("warnings") or [])
-        if mesh.get("part_id") is None:
-            raise EslError("MESH_INVALID", "B 메시에서 파트 id 를 얻지 못함(rad/inc 만 지원)")
-        c.progress(60)
-        t, size_info = sc.template_base(mesh, ents, c.ocfg["size"], inch=D.get("inch"),
-                                        source={"file_name": os.path.basename(m["path"]), "files": files})
-        warns += list(size_info.get("warnings") or [])
-        inp.update(assem="input/mesh", mesh={"main": main_rel.replace(os.sep, "/"), "files": files},
-                   part_id=int(mesh.get("part_id")), part_title=mesh.get("part_title"), size=size_info)
-        meta = sc.save_base(t, c.p("prep"), c.scn, c.writer)
+        meta = _mesh_base(c, ents, inp, warns, c.scn)
     else:
         inp.update(assem=None)
         meta = None
@@ -337,7 +378,7 @@ def _boundary(c: Ctx, t, ents, info: list) -> dict:
             a_known = False
     a_pts = bnd.a_fastener_points(fa, a_fx, sup)
     b_fx = None
-    if c.scn == "mesh" and os.path.isfile(c.p("prep", "fixed", pio.SCAN_JSON)):
+    if _is_mesh_base(c) and os.path.isfile(c.p("prep", "fixed", pio.SCAN_JSON)):   # AD-D-18 select_base mesh 도
         fx = pio.read_fixed(c.p("prep", "fixed"), c.max_mb)
         b_fx = pio.fixed_points(fx)
         if not b_fx:
@@ -556,11 +597,16 @@ def bd_eval(spec: dict, echo=print) -> dict:
         if did == BASELINE:
             raise EslError("BASELINE_FAILED", f"베이스라인 평가 실패 {exc.code}: {exc.message}") from None
     paicad = None if pa is None else {"code": pa.get("code"), "seconds": pa.get("seconds")}
+    mw = list((mesh_info or {}).get("morph_warnings") or [])
+    if mw:                                       # v0.16.2 AD-D-8: 공통 코어 극단 요소(MORPH_EXTREME_ELEMENTS)도 result.json warnings
+        warns = list(warns) + [_sel_warn_text(w) for w in mw]
     sw = list((st or {}).get("warnings") or [])
     if sw:                                       # v0.16.1 select 경고 안(SR-D-11): 문자열은 warnings, 원본 dict 는 select_warnings
         warns = list(warns) + [_sel_warn_text(w) for w in sw]
     doc = ev.result_doc(did, status, values, paicad=paicad, mesh=mesh_info, solve=solve, per_esl=per, warnings=warns,
                         code=code, message=msg)
+    if mw:
+        doc["morph_warnings"] = mw
     if sw:
         doc["select_warnings"] = sw
         if any(w["code"] == "SELECT_FIXED_MOVED" for w in sw):  # 보고서 '체결 위치 어긋남' 원인 변수(상위 3)
@@ -780,6 +826,10 @@ def bd_post(spec: dict, echo=print) -> dict:
             if rw.get(x["id"]):
                 x["warn"] = rw[x["id"]]
         best_clean = next((x["id"] for x in R["ranking"] if not x.get("warn")), None)
+    mwn = {r["id"]: [str(w["code"]) for w in r.get("morph_warnings") or []] for r in results}
+    for x in R["ranking"]:                       # v0.16.2 AD-D-8: 극단 요소 경고 안 ⚠(시나리오 무관 — 없으면 키 없음, 바이트 불변)
+        if mwn.get(x["id"]):
+            x["warn"] = list(x.get("warn") or []) + [k for k in mwn[x["id"]] if k not in (x.get("warn") or [])]
     for r in results:
         if r["id"] == BASELINE:
             r["score"] = 1.0
@@ -853,6 +903,7 @@ def bd_post(spec: dict, echo=print) -> dict:
            "inputs": {"step": None if inp.get("step") is None else {"file_name": os.path.basename(inp["step"]["rel"]),
                                                                     "sha256": inp["step"]["sha256"]},
                       "mesh": inp.get("mesh"), "part_title": inp.get("part_title"), "inch": c.D.get("inch"),
+                      **({"select_base": "mesh"} if inp.get("select_base") == "mesh" else {}),
                       "props": bmeta.get("props"), "mesh_size_mm": bmeta.get("h"),
                       "entries": [{"entry_id": e["id"], "label": e.get("label"), "case": e.get("case")}
                                   for e in c.D["entries"]]},
@@ -2185,13 +2236,41 @@ def _sel_fixed_ids(c: Ctx) -> tuple[np.ndarray, str | None]:
     return np.asarray(fx["node_id"], dtype=np.int64), None
 
 
+def _sel_step(c: Ctx, inp: dict) -> None:
+    """v0.16.2 auto(AD-D-2·14): STEP 이 주어지면 input/step 사본·sha(paicad extract 입력, 워커가 ``select_prep_info`` 로 읽음)
+    + input.json ``bead_source: auto``. manual(STEP 없음)은 v0.16.1 input.json 그대로(키 추가 없음 — AD-D-22)."""
+    st = c.D.get("step") or None
+    if bead_source(c) == "auto":
+        inp["bead_source"] = "auto"
+    if isinstance(st, dict) and st.get("path"):
+        rel = os.path.join("input", "step", os.path.basename(st.get("file_name") or st["path"]))
+        sha = _copy_verified(st["path"], c.p(rel), c.writer, st.get("sha256"))
+        inp["step"] = {"rel": rel.replace(os.sep, "/"), "sha256": sha}
+
+
 def _sel_input(c: Ctx, echo) -> dict:
-    """BD_INPUT select: ① 과 같은 기준 Case 제자리 읽기·동일성(STEP 없음)."""
+    """BD_INPUT select: ① 과 같은 기준 Case 제자리 읽기·동일성 | v0.16.2 select_base mesh = ② B 메시(``_mesh_base`` — AD-D-15)."""
     D = c.D
-    b = D["base"]
     inp = {"schema": "esl/doe_input/1", "scenario": "select", "step": None, "entries": [e["id"] for e in D["entries"]]}
     ents = c.entries(raw=True)
     c.progress(10)
+    _sel_step(c, inp)
+    if select_base(c) == "mesh":
+        warns: list = []
+        inp["select_base"] = "mesh"
+        echo(f"[bd_input] select 기준 B 메시 사본 읽기 (파트 {D['mesh'].get('part_title') or c.cfg['part_title']})")
+        meta = _mesh_base(c, ents, inp, warns, "select")
+        c.progress(90)
+        inp.update(warnings=warns, info=[])
+        c.write_json(os.path.join("prep", "input.json"), inp)
+        echo(f"[bd_input] 기준 메시 노드 {meta['n_nodes']} · 요소 {meta['n_elems']} · topo {str(meta['topo_sha256'])[:12]}…"
+             " (B 메시 — 하중 셀 매핑, 지지 자동 3-2-1)")
+        for w in warns:
+            echo(f"  경고: {w}")
+        c.progress(100)
+        return {"files": ["prep/input.json", "prep/base_mesh.npz", "prep/base.json"], "warnings": warns, "info": [],
+                "part_id": inp["part_id"]}
+    b = D["base"]
     assem = sc.assem_dir_check(b.get("case_dir") or os.path.dirname(b["rad_path"]), c.cfg["same"]["max_assem_mb"])
     be = next((e for e in ents if e.meta["entry_id"] == b["entry_id"]), None)
     if be is None:
@@ -2227,7 +2306,12 @@ def _sel_loads(c: Ctx, echo) -> dict:
     c.progress(50)
     params = {"beads": [], "params": [], "warnings": []}            # 변수 = 선택 저장 후(select/<sha>/params.json)
     c.write_json(os.path.join("prep", "params.json"), params)
-    plan = bnd.plan(t.mesh, t.frame, c.ocfg["keepout"], int(c.ocfg["ui"]["max_preview_points"]))
+    res = None
+    if _is_mesh_base(c):                         # v0.16.2 AD-D-18: ② B 메시 기준 = ② 경계 경고 그대로(BD-D-14)
+        res = _boundary(c, t, ents, info)
+        warns += [f"{w['code']}: {w.get('label') or w.get('entry_id')} {w.get('d_mm')}" for w in res["warnings"]]
+        c.write_json(os.path.join("prep", "boundary.json"), res)
+    plan = bnd.plan(t.mesh, t.frame, c.ocfg["keepout"], int(c.ocfg["ui"]["max_preview_points"]), result=res)
     c.write_json(os.path.join("prep", "plan.json"), plan)
     fids, fw = _sel_fixed_ids(c)
     if fw:
@@ -2254,18 +2338,69 @@ def _sel_loads(c: Ctx, echo) -> dict:
            "glb": {"name": "part.glb", "bytes": int(gbytes)}, "bin": {"name": "select.bin", "bytes": len(blob),
                                                                       "layout": lay["layout"]}}
     c.write_json(os.path.join("prep", "select", "select_manifest.json"), man)
+    files = ["prep/loads.npz", "prep/params.json", "prep/plan.json", "prep/select/part.glb", "prep/select/select.bin",
+             "prep/select/select_manifest.json"]
+    auto = None
+    if bead_source(c) == "auto":                 # v0.16.2 AD-D-2·3·21: 자동 탐지 seed(실패해도 준비 계속)
+        auto = _sel_auto(c, m, bmeta, warns, echo)
+        if auto.get("file"):
+            files.append(auto["file"])
     inp = U.read_json(c.p("prep", "input.json"))
     inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0,
                fixed={"source": "none" if fw else "scan", "n": int(fixed.sum())})
     inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
+    if auto is not None:
+        inp["auto"] = {k: v for k, v in auto.items() if k != "file"}
     c.write_json(os.path.join("prep", "input.json"), inp)
     echo(f"[bd_loads] select ESL {len(loads)}개 하중({linfo['method']}), 고정 노드 {int(fixed.sum())}"
-         + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else ""))
+         + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else "")
+         + (f", 경계 경고 {res['n_warn']} · 정보 {res['n_info']}" if res else ""))
     c.progress(100)
-    return {"files": ["prep/loads.npz", "prep/params.json", "prep/plan.json", "prep/select/part.glb",
-                      "prep/select/select.bin", "prep/select/select_manifest.json"],
-            "warnings": warns, "info": info, "boundary": None, "n_beads": 0, "n_params": 0,
-            "fixed": {"source": "none" if fw else "scan", "n": int(fixed.sum())}}
+    return {"files": files + (["prep/boundary.json"] if res else []),
+            "warnings": warns, "info": info,
+            "boundary": None if res is None else {"n_warn": res["n_warn"], "n_info": res["n_info"]},
+            "n_beads": 0, "n_params": 0, "fixed": {"source": "none" if fw else "scan", "n": int(fixed.sum())},
+            **({"auto": {k: v for k, v in auto.items() if k != "file"}} if auto is not None else {})}
+
+
+def _sel_auto(c: Ctx, mesh: dict, bmeta: dict, warns: list, echo) -> dict:
+    """v0.16.2 자동 탐지 seed: prep/auto_detect.json(워커) 이 OK 면 prep/extract·prep/tag → ``bead_auto.auto_selection`` →
+    prep/select/auto_selection.json(결정적 바이트). 실패·비드 0 = 파일 없음 + 경고 ``AUTO_DETECT_FAILED{step, code}``(문자열은
+    warns 에, 원본 dict 는 반환 warnings 에). 반환 {ok, step, code, n_beads, selection_sha256, warnings[], file?}."""
+    from esl.doe import bead_auto as ba
+    ad = pio.read_auto_detect(c.p("prep"), c.max_mb) or {"ok": False, "step": "version", "code": "AUTO_DETECT_MISSING",
+                                                         "paicad_version": None}
+    out = {"ok": False, "step": ad.get("step"), "code": ad.get("code"), "n_beads": 0, "selection_sha256": None,
+           "warnings": []}
+
+    def fail(step, code):
+        w = {"code": "AUTO_DETECT_FAILED", "step": step, "detail": code}
+        out.update(ok=False, step=step, code=code)
+        out["warnings"].append(w)
+        warns.append(f"AUTO_DETECT_FAILED: step={step} code={code}")
+        echo(f"[bd_loads] 자동 탐지 실패({step} {code}) — 빈 초기 선택, 수동 선택")
+    if not ad.get("ok"):
+        fail(ad.get("step") or "version", ad.get("code"))
+        return out
+    try:
+        sel, mp, aw = ba.auto_from_prep(c.p("prep"), mesh, c.cfg, c.max_mb)
+    except EslError as exc:
+        fail(getattr(exc, "step", None) or "tag", exc.code)
+        return out
+    out["warnings"] += aw
+    for w in aw:
+        if w.get("level") != "info":
+            warns.append(_sel_warn_text(w))
+    if sel is None:
+        fail("tag", "AUTO_BEAD_UNMAPPED")
+        return out
+    sha = ba.write_auto_selection(c.p("prep", "select", ba.AUTO_SELECTION_JSON), sel, mp, aw,
+                                  mesh_sha256=bmeta["mesh_sha256"], paicad_version=ad.get("paicad_version"),
+                                  guard=c.writer.guard)
+    out.update(ok=True, step=None, code=None, n_beads=len(sel["beads"]), selection_sha256=sha,
+               file="prep/select/" + ba.AUTO_SELECTION_JSON)
+    echo(f"[bd_loads] 자동 탐지 초기 선택 비드 {len(sel['beads'])} · sha {sha[:12]}…")
+    return out
 
 
 def _sel_prepare(c: Ctx, t, echo) -> dict:
@@ -2471,6 +2606,8 @@ def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
     Case 기준 상대경로, 밖 = ``_ext/…``). Case 폴더의 관계없는 rad 는 보지 않고, Case 밖 include 도 원본을 읽는다(읽기만)."""
     if hasattr(c, "_sel_rad"):
         return c._sel_rad
+    if select_base(c) == "mesh":                 # v0.16.2 AD-D-20: ② B 메시 기준 = input/mesh 사본(rel = 업로드 상대경로)
+        return _sel_rad_files_mesh(c, nid)
     from esl.doe import assem_full as af
     from esl.rad.parser import scan_include_refs
     b = c.D.get("base") or {}
@@ -2506,6 +2643,37 @@ def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
     c._sel_rad = out
     c._sel_rad_source = source
     return out
+
+
+def _sel_rad_files_mesh(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
+    """AD-D-20: prep/input.json ``mesh.files``(BD_INPUT 이 복사·sha 기록한 input/mesh 사본) 중 B 파트 /NODE 를 가진 파일
+    [(rel, 사본 경로)] (rel 정렬). 사본 sha 가 기록과 다르면 INPUT_CHANGED."""
+    inp = U.read_json(c.p("prep", "input.json"))
+    want = set(int(v) for v in nid.tolist())
+    out = []
+    for f in (inp.get("mesh") or {}).get("files") or []:
+        rel = str(f["rel"]).replace(os.sep, "/")
+        src = c.p("input", "mesh", *rel.split("/"))
+        if os.path.islink(src) or os.path.splitext(src)[1].lower() not in sc.MESH_EXT or not os.path.isfile(src):
+            continue
+        if nd.read_nodes(src, want, c.max_line()):
+            if f.get("sha256") and U.sha256_file(src) != f["sha256"]:
+                raise EslError("INPUT_CHANGED", f"B 메시 사본이 준비 뒤 바뀜(sha256 불일치): {os.path.basename(src)}")
+            out.append((rel, src))
+    out.sort()
+    c._sel_rad = out
+    c._sel_rad_source = "input/mesh"
+    return out
+
+
+def _sel_part_title(c: Ctx) -> str:
+    """받기 ch_r.rad 파트 제목: ① = 기준 Case 파트, ② select_base mesh = B 파트(AD-D-20 — inputs.part_title, 없으면 B 메시에서
+    읽은 제목·설정 기본)."""
+    if select_base(c) == "mesh":
+        inp = U.read_json(c.p("prep", "input.json"))
+        return str((c.D.get("mesh") or {}).get("part_title") or c.D.get("part_title") or inp.get("part_title")
+                   or c.cfg["part_title"])
+    return str(c.D.get("base", {}).get("part_title") or "ch_r")
 
 
 SEL_WARN_NODES_PER_LINE, SEL_WARN_NODES_MAX = 10, 50       # SR-D-12 주석 줄의 고정 노드 ID(줄당·전체 상한)
@@ -2581,7 +2749,7 @@ def _sel_best(c: Ctx, did: str, bd: str) -> list[str]:
         files.append("include/" + rel)
     mesh = {k: t.mesh[k] for k in ("node_id", "elem_id", "elem_type", "conn", "elem_pid", "thickness", "E", "nu")}
     mesh["x0"] = dz["x"]
-    files += export_mesh.write(bd, mesh, part_title=str(c.D.get("base", {}).get("part_title") or "ch_r"),
+    files += export_mesh.write(bd, mesh, part_title=_sel_part_title(c),
                                header=["esl bead DOE (scenario select)"], guard=c.writer.guard)
     if cl:
         _insert_after_first_line(c, os.path.join(bd, export_mesh.RAD_NAME), cl)

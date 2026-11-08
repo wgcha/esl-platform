@@ -22,6 +22,7 @@ from ..schemas import (
     DoePerEslOut,
     DoeResultOut,
     DoeRunIn,
+    DoeSelectAutoOut,
     DoeSelectDeriveIn,
     DoeSelectionOut,
     DoeSelectionPutIn,
@@ -208,6 +209,13 @@ def doe_select_derive(sid: str, body: DoeSelectDeriveIn, request: Request,
                       principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """사면 자동 추정·경계 제안·공칭 치수(저장 안 함, rev null) + slope_suggested. bead 주면 그 비드만."""
     return sel_svc.derive_out(get_ctx(request), principal, sid, body)
+
+
+@router.get("/doe/studies/{sid}/select/auto", response_model=DoeSelectAutoOut)
+def doe_select_auto(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.16.2 자동 탐지 seed(prep/select/auto_selection.json — 저장 안 함). manual·탐지 실패 404 AUTO_NOT_AVAILABLE,
+    준비 전 409 PREP_NOT_READY."""
+    return sel_svc.auto_out(get_ctx(request), principal, sid)
 
 
 @router.get("/doe/studies/{sid}/selection", response_model=DoeSelectionOut | None)

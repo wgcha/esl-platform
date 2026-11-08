@@ -25,6 +25,10 @@ EXTRACT_JSON = "shell_features.json"
 SCAN_JSON = "shell_scan.json"
 FIXED_NPZ = "fixed_nodes.npz"
 TAG_JSON = "shell_tag.json"
+TAG_NPZ = "shell_tag_nodes.npz"              # shell tag 노드 표(paicad shell/tag.py — files.nodes 가 우선)
+TAG_KIND_FACE, TAG_KIND_EDGE, TAG_KIND_VERTEX = 1, 2, 3   # paicad tag kind: -1 unmatched, 0 interior, 1 face, 2 edge, 3 vertex
+AUTO_DETECT_JSON = "auto_detect.json"        # v0.16.2 워커 자동 탐지 결과(prep/, AD-D-2)
+AUTO_DETECT_SCHEMA = "esl/doe_auto_detect/1"
 UPDATE_JSON = "shell_update.json"
 MORPH_JSON = "shell_morph.json"
 CHECK_JSON = "shell_check.json"
@@ -362,6 +366,55 @@ def fixed_points(fx: dict) -> list[dict]:
         kind = "INTER_TYPE2" if kind.startswith("INTER_TYPE2") else kind
         out.append({"label": f"{kind}#{c}", "kind": kind, "xyz": X[m].mean(axis=0).tolist(), "n": int(m.sum())})
     return out
+
+
+# ---------------------------------------------------------------- tag (v0.16.2 자동 탐지 seed — esl_bead_auto.md §4)
+def read_tag(d: str, max_mb: float = 64) -> dict:
+    """shell tag 결과(prep/tag) → {doc, node_id int64, kind int8, entity int32}. 노드 ID = tag 의 assem 원 번호(① Case·② B
+    메시 원 ID — AD-D-15·21). 상태가 OK 가 아니거나 표가 없으면 EslError(PAICAD_FAILED)."""
+    doc = read_json_limited(os.path.join(d, TAG_JSON), max_mb)
+    if doc.get("status") != "OK":
+        raise EslError("PAICAD_FAILED", f"shell_tag.json 상태 {doc.get('status')} {doc.get('code')}")
+    name = str((doc.get("files") or {}).get("nodes") or TAG_NPZ)
+    p = os.path.join(d, os.path.basename(name))
+    if not os.path.isfile(p) or os.path.islink(p):
+        raise EslError("PAICAD_FAILED", f"tag 노드 표가 없음: {os.path.basename(name)}")
+    if os.path.getsize(p) > float(max_mb) * 1024 * 1024:
+        raise EslError("PAICAD_FAILED", f"tag 노드 표가 상한 {max_mb} MB 를 넘음")
+    try:
+        with np.load(p, allow_pickle=False) as z:
+            arr = {"node_id": np.asarray(z["node_id"]).astype(np.int64), "kind": np.asarray(z["kind"]).astype(np.int8),
+                   "entity": np.asarray(z["entity"]).astype(np.int32)}
+    except (OSError, KeyError, ValueError) as exc:
+        raise EslError("PAICAD_FAILED", f"tag 노드 표를 읽지 못함: {exc.__class__.__name__}") from None
+    if not (arr["node_id"].shape == arr["kind"].shape == arr["entity"].shape) or arr["node_id"].ndim != 1:
+        raise EslError("PAICAD_FAILED", "tag 노드 표 열 길이가 다름")
+    return {"doc": doc, **arr}
+
+
+def face_ids(refs) -> list[int]:
+    """paicad 면 참조 ["F12", …] → [12, …](정렬·중복 제거, 형식이 다르면 건너뜀)."""
+    out = set()
+    for r in refs or []:
+        m = re.fullmatch(r"F(\d+)", str(r))
+        if m:
+            out.add(int(m.group(1)))
+    return sorted(out)
+
+
+def read_auto_detect(d: str, max_mb: float = 64) -> dict | None:
+    """prep/auto_detect.json(AD-D-2, 워커가 씀) → {ok, step, code, paicad_version} | None(없음·형식 오류)."""
+    p = os.path.join(d, AUTO_DETECT_JSON)
+    if not os.path.isfile(p):
+        return None
+    try:
+        doc = read_json_limited(p, max_mb)
+    except EslError:
+        return None
+    if doc.get("schema") != AUTO_DETECT_SCHEMA:
+        return None
+    return {"ok": bool(doc.get("ok")), "step": doc.get("step"), "code": doc.get("code"),
+            "paicad_version": doc.get("paicad_version")}
 
 
 # ---------------------------------------------------------------- grid / run / update

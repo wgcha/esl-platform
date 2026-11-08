@@ -247,7 +247,7 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     from sqlalchemy import select as sa_select
     with engine.connect() as c:
         dpv = c.execute(sa_select(bead_does.c.doe).where(bead_does.c.id == s["id"])).scalar()["preview"]
-    assert dpv["warn"] == 2 and dpv["rules"] == 2
+    assert dpv["warn"] == 2 and dpv["rules"] == 3
     # 실행: READY 안만, paicad 없음
     n_before = len([c for c in calls(exe) if c["cmd"] != "version"])
     r = start_run(client, g)
@@ -396,3 +396,196 @@ def test_select_grid_cancel_kills_core_and_retry(client, engine, worker_factory,
     j2 = run_job(client, wk, r.json()["id"])
     assert {x["step_key"]: x["state"] for x in j2["steps"]}["BD_GRID"] == "SUCCEEDED"
     assert study(client, s["id"])["phase"] == "PREVIEW_READY"
+
+
+# ================================================================ v0.16.2 자동 탐지 · ② B 메시 기준 select(esl_bead_auto.md AD-D-2·16·17)
+# 코어(Impl-Core) 병합 전에는 BD_INPUT 이 select 의 STEP 사본·B 메시 기준을 만들지 않는다 — 그 단계에 기대는 시험만 건너뛴다.
+def _core_v0162() -> tuple[bool, bool]:
+    import importlib.util
+
+    from esl.doe import stages
+
+    return importlib.util.find_spec("esl.doe.bead_auto") is not None, hasattr(stages, "_mesh_base")
+
+
+CORE_AUTO, CORE_MESH_BASE = _core_v0162()
+needs_core_auto = pytest.mark.skipif(not CORE_AUTO, reason="코어 esl.doe.bead_auto·select STEP 사본(v0.16.2 Impl-Core) 병합 후")
+needs_core_mesh = pytest.mark.skipif(not CORE_MESH_BASE, reason="코어 stages._mesh_base(v0.16.2 Impl-Core) 병합 후")
+AUTO_CMDS = ["extract", "extract", "tag"]       # extract0(1차) · extract · tag (가짜 paicad 명령 이름)
+
+
+def create_select(client, entry_ids, *, auto=False, mesh_uid=None, **kw) -> dict[str, Any]:
+    from doe_support import upload_step
+
+    b = {"project_id": "p-1", "scenario": "select", "entry_ids": entry_ids, "title": "select v0.16.2", **kw}
+    if auto:
+        b.update(bead_source="auto", step_upload_id=upload_step(client))
+    if mesh_uid:
+        b.update(select_base="mesh", mesh_upload_id=mesh_uid)
+    r = api(client, "POST", "/doe/studies", json=b)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def b_mesh_upload(client, tmp_path, mesh, node_base: int = 100000) -> str:
+    """B 메시 = 같은 형상, 노드 ID 만 다른 rad(A 체결점 ID 와 겹치지 않게 — O-1 고정 확인용)."""
+    from doe_support import rad_mesh_bytes
+    from opt_support import upload_files
+
+    m = dict(mesh)
+    m["node_id"] = np.asarray(mesh["node_id"]) + node_base
+    return upload_files(client, {"rad/B_0000.rad": rad_mesh_bytes(tmp_path, m, part_title=PART)})
+
+
+def auto_doc(esl_root, sid) -> dict[str, Any]:
+    return json.loads((esl_root / "_doe" / sid / "prep" / "auto_detect.json").read_text())
+
+
+def test_v0162_auto_prep_paicad_unusable_manual_continues(client, engine, worker, esl_root, inputs_root, exe):
+    """V-AD-4: paicad 불가 + auto → 준비 READY + AUTO_DETECT_FAILED{step: version} + FIXED_INFO_MISSING + 빈 seed(GET …/select/auto
+    404), 수동 저장·미리보기·실행은 그대로."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], auto=True)
+    set_control(exe, rules=[], version="0.1.0")
+    j = run_job(client, worker, s["job"]["id"])
+    st = {x["step_key"]: x["state"] for x in j["steps"]}
+    assert st["BD_GEOM"] == "SKIPPED" and st["BD_LOADS"] == "SUCCEEDED"
+    assert [c["cmd"] for c in calls(exe) if c["cmd"] != "version"] == []
+    ad = auto_doc(esl_root, s["id"])
+    assert ad["schema"] == "esl/doe_auto_detect/1" and ad["ok"] is False and ad["step"] == "version"
+    assert isinstance(ad["code"], str) and ad["code"] and ad["paicad_version"] is None
+    assert any("AUTO_DETECT_FAILED" in x for x in j["warnings"]) and any("FIXED_INFO_MISSING" in x for x in j["warnings"])
+    g = study(client, s["id"])
+    assert g["phase"] == "READY" and g["inputs"]["bead_source"] == "auto" and "select_base" not in g["prep"]
+    assert g["prep"]["auto"] == {"ok": False, "step": "version", "code": ad["code"], "available": False, "n_beads": 0,
+                                 "selection_sha256": None}
+    codes = [x["code"] for x in g["prep"]["warnings"]]
+    assert "AUTO_DETECT_FAILED" in codes and "FIXED_INFO_MISSING" in codes and codes.count("AUTO_DETECT_FAILED") == 1
+    adw = next(x for x in g["prep"]["warnings"] if x["code"] == "AUTO_DETECT_FAILED")
+    assert (adw["step"], adw["detail"]) == ("version", ad["code"])           # 안쪽 코드 = detail(경고 code 와 겹치지 않게)
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto")
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "AUTO_NOT_AVAILABLE"
+    s = save_selection(client, g, sb.selection(w["g"]))
+    p = preview(client, s, {"method": "fullfact", "levels": 2, "params": [{"name": "B1_D1", "lo": 20.0, "hi": 24.0}]})
+    run_job(client, worker, p["job"]["id"])
+    r = start_run(client, study(client, s["id"]))
+    run_job(client, worker, r["job"]["id"])
+    g = study(client, s["id"])
+    assert g["phase"] == "DONE" and g["result_ready"] is True
+
+
+def test_v0162_auto_prep_case_plan(client, engine, worker, esl_root, inputs_root, exe):
+    """AD-D-17 ① plan: assem_full → fixed → extract0 → extract → tag(조립 = prep/assem_full). 코어가 STEP 사본을 남기기 전
+    (병합 전)에는 extract0 앞에서 AUTO_DETECT_FAILED{extract0, PREREQUISITE_MISSING} — 어느 쪽이든 준비 READY."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], auto=True)
+    j = run_job(client, worker, s["job"]["id"])
+    st = {x["step_key"]: x["state"] for x in j["steps"]}
+    assert st["BD_GEOM"] == "SUCCEEDED" and st["BD_MESH0"] == "SKIPPED"
+    d = esl_root / "_doe" / s["id"]
+    inp = json.loads((d / "prep" / "input.json").read_text())
+    cmds = [c for c in calls(exe) if c["cmd"] != "version"]
+    ad = auto_doc(esl_root, s["id"])
+    assert ad["paicad_version"] == "0.14.1"
+    if inp.get("step"):
+        assert [c["cmd"] for c in cmds] == ["fixed-scan"] + AUTO_CMDS
+        assert ad["ok"] is True and ad["step"] is None and ad["code"] is None
+        for c in cmds[2:]:          # extract(2차)·tag 조립 = 모델 전체 사본
+            i = c["argv"].index("--assem-dir")
+            assert c["argv"][i + 1].endswith(os.path.join("prep", "assem_full"))
+        assert (d / "prep" / "tag" / "shell_tag.json").is_file() and (d / "prep" / "body_map.json").is_file()
+    else:
+        assert [c["cmd"] for c in cmds] == ["fixed-scan"]
+        assert ad == {"schema": "esl/doe_auto_detect/1", "ok": False, "step": "extract0", "code": "PREREQUISITE_MISSING",
+                      "paicad_version": "0.14.1"}
+    g = study(client, s["id"])
+    assert g["phase"] == "READY" and g["prep"]["fixed"]["source"] == "scan"
+    pa = g["prep"]["auto"]          # 준비 요약 = 코어 BD_LOADS 결과(탐지 OK 여도 seed 가 없으면 ok false — 가짜 tag 는 노드 tag 없음)
+    assert pa["ok"] is pa["available"] and (pa["n_beads"] > 0) is pa["available"]
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto")
+    assert r.status_code == (200 if pa["available"] else 404)
+    if pa["available"]:
+        assert r.json()["sha256"] and r.json()["selection"]["beads"]
+    else:
+        assert pa["step"] == (ad["step"] or "tag")
+    # 수동 스터디는 auto_detect.json 을 쓰지 않고 plan 도 그대로(fixed-scan 만 — v0.16.1 바이트 동일 경로)
+    m = create_select(client, w["entry_ids"])
+    run_job(client, worker, m["job"]["id"])
+    assert not (esl_root / "_doe" / m["id"] / "prep" / "auto_detect.json").exists()
+    assert "auto" not in study(client, m["id"])["prep"]
+
+
+@needs_core_auto
+@pytest.mark.parametrize("ctl, step, code", [
+    ({"fail": {"extract": {"code": "GEOM_CAD_FAILED", "exit": 10}}}, "extract0", "GEOM_CAD_FAILED"),
+    ({"fail": {"tag": {"code": "GEOM_INPUT_INVALID", "exit": 3}}}, "tag", "GEOM_INPUT_INVALID"),
+    ({"fail": {"fixed-scan": {"code": "FIXED_PARSE_FAILED", "exit": 3}}}, "tag", "FIXED_INFO_MISSING"),
+], ids=["extract_failed", "tag_failed", "fixed_failed_no_tag"])
+def test_v0162_auto_prep_step_failures(client, engine, worker, esl_root, inputs_root, exe, ctl, step, code):
+    """V-AD-4: extract0·extract·tag 실패 = AUTO_DETECT_FAILED{step, code} + 빈 seed, fixed-scan 실패 = FIXED_INFO_MISSING(tag 는
+    고정 결과가 입력이라 실행하지 않음). 준비는 READY."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], auto=True)
+    set_control(exe, rules=[], **ctl)
+    j = run_job(client, worker, s["job"]["id"])
+    ad = auto_doc(esl_root, s["id"])
+    assert (ad["ok"], ad["step"], ad["code"]) == (False, step, code)
+    cmds = [c["cmd"] for c in calls(exe) if c["cmd"] != "version"]
+    if step == "extract0":
+        assert cmds == ["fixed-scan", "extract"]
+    else:
+        assert cmds == ["fixed-scan", "extract", "extract"] + (["tag"] if code != "FIXED_INFO_MISSING" else [])
+    assert any("AUTO_DETECT_FAILED" in x for x in j["warnings"])
+    g = study(client, s["id"])
+    assert g["phase"] == "READY" and g["prep"]["auto"]["available"] is False
+    adw = [x for x in g["prep"]["warnings"] if x["code"] == "AUTO_DETECT_FAILED"]
+    assert [(x["step"], x["detail"]) for x in adw] == [(step, code)]
+    assert api(client, "GET", f"/doe/studies/{s['id']}/select/auto").status_code == 404
+
+
+@needs_core_mesh
+def test_v0162_select_mesh_prep_fixed(client, engine, worker, esl_root, inputs_root, exe, tmp_path):
+    """V-AD-12(워커): select(mesh) plan = a_fixed(A Case) → fixed(assem = input/mesh, B part_id) → prep/fixed 는 B 원 노드 ID 만
+    (A 체결점은 고정 노드에 없음 — O-1), base.json scenario select·target S2, 준비 요약 select_base mesh·fixed scan."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], mesh_uid=b_mesh_upload(client, tmp_path, w["mesh"]))
+    j = run_job(client, worker, s["job"]["id"])
+    assert {x["step_key"]: x["state"] for x in j["steps"]}["BD_GEOM"] == "SUCCEEDED"
+    cmds = [c for c in calls(exe) if c["cmd"] != "version"]
+    assert [c["cmd"] for c in cmds] == ["fixed-scan", "fixed-scan"]           # A(a_fixed) → B(fixed), extract·tag 없음
+    d = esl_root / "_doe" / s["id"]
+    b_argv = cmds[1]["argv"]
+    assert b_argv[b_argv.index("--assem-dir") + 1] == str(d / "input" / "mesh")
+    assert not (d / "prep" / "assem_full").exists()
+    fx = np.load(d / "prep" / "fixed" / "fixed_nodes.npz")["node_id"]
+    ax = np.load(d / "prep" / "a_fixed" / "fixed_nodes.npz")["node_id"]
+    assert fx.size > 0 and (fx >= 100000).all() and not set(ax.tolist()) & set(fx.tolist())
+    base = json.loads((d / "prep" / "base.json").read_text())
+    assert base["scenario"] == "select" and base["target"] == "S2"
+    inp = json.loads((d / "prep" / "input.json").read_text())
+    assert inp["select_base"] == "mesh" and inp["assem"] == "input/mesh"
+    g = study(client, s["id"])
+    assert g["phase"] == "READY" and g["prep"]["select_base"] == "mesh" and g["prep"]["fixed"]["source"] == "scan"
+    assert "auto" not in g["prep"] and not (d / "prep" / "auto_detect.json").exists()
+
+
+@needs_core_mesh
+@pytest.mark.parametrize("auto, ctl", [(False, {"fail": {"fixed-scan": {"code": "FIXED_PARSE_FAILED", "exit": 3}}}),
+                                       (True, {"version": "0.1.0"})], ids=["fixed_failed", "paicad_unusable_auto"])
+def test_v0162_select_mesh_prep_without_fixed(client, engine, worker, esl_root, inputs_root, exe, tmp_path, auto, ctl):
+    """V-AD-12: B fixed-scan 실패·paicad 없음 → FIXED_INFO_MISSING(② 의 준비 실패가 아니라 select 규칙) + READY + fixed_user 지정
+    가능, auto 면 AUTO_DETECT_FAILED{version}."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], auto=auto, mesh_uid=b_mesh_upload(client, tmp_path, w["mesh"]))
+    set_control(exe, rules=[], **ctl)
+    j = run_job(client, worker, s["job"]["id"])
+    assert {x["step_key"]: x["state"] for x in j["steps"]}["BD_GEOM"] == "SKIPPED"
+    assert any("FIXED_INFO_MISSING" in x for x in j["warnings"])
+    g = study(client, s["id"])
+    assert g["phase"] == "READY" and g["prep"]["fixed"] == {"source": "none", "n": 0}
+    if auto:
+        assert auto_doc(esl_root, s["id"])["step"] == "version" and g["prep"]["auto"]["ok"] is False
+    sel = sb.selection(w["g"])
+    sel["fixed_user"] = sb.elemset(w["mesh"], np.arange(w["mesh"]["elem_id"].size) < 4)
+    s = save_selection(client, g, sel)
+    assert s["selection"]["rev"] == 1

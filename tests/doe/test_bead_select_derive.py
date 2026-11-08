@@ -244,7 +244,7 @@ def test_backend_api(G):
     fx = np.asarray(g["fixed_ids"], dtype=np.int64)
     d = bs.derive(m, norm, CFG, frame=frame, fixed_scan=fx)
     assert set(d) == {"beads", "fixed", "warnings", "slope_suggested", "fixed_ab", "algo", "islands_suggested"}
-    assert d["algo"] == bs.ALGO == 2
+    assert d["algo"] == bs.ALGO == 3
     assert d["fixed"]["source"] == "scan" and len(d["fixed_ab"]) == fx.size
     b1 = d["beads"][0]
     assert {"section", "plan", "range_default", "tiers", "slope", "boundary", "W_nom"} <= set(b1)

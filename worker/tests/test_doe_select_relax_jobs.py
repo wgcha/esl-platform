@@ -105,16 +105,16 @@ def test_select_warn_resume_and_best_comments(client, engine, worker, esl_root, 
     # V-SR-10 algo 없는 basis.json(v0.16.0 기저) → 다시 미리보기에서 1회 재계산, 바이트·basis_sha 동일
     sdir = d / "select" / sel_sha[:12]
     bj = json.loads((sdir / "basis.json").read_text())
-    assert bj["algo"] == 2
+    assert bj["algo"] == 3
     npz0 = (sdir / "basis.npz").read_bytes()
     (sdir / "basis.json").write_text(json.dumps({k: v for k, v in bj.items() if k != "algo"}))
     p2 = preview(client, g, spec)
     j2 = run_job(client, worker, p2["job"]["id"])
     assert "기저 재사용" not in _job_log(client, j2["id"], 1)
-    assert (sdir / "basis.npz").read_bytes() == npz0 and json.loads((sdir / "basis.json").read_text())["algo"] == 2
+    assert (sdir / "basis.npz").read_bytes() == npz0 and json.loads((sdir / "basis.json").read_text())["algo"] == 3
     g = study(client, s["id"])
     man2 = json.loads((d / "doe" / str(g["doe"]["rev"]) / "grid" / "grid_manifest.json").read_text())
-    assert man2["basis_sha256"] == bj["basis_sha256"] and man2["rules"] == 2
+    assert man2["basis_sha256"] == bj["basis_sha256"] and man2["rules"] == 3
     # 실행: 경고 안도 실행·순위(SR-D-11)
     r = start_run(client, g)
     j1 = run_job(client, worker, r["job"]["id"])

@@ -255,6 +255,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     quality: {max_fail_ratio: 0.01, flip_deg: 60.0, fail_policy: warn, rot_warn_deg: 45.0, area_ratio_min: 0.2, distort_rel: 0.25, distort_min_mm: 0.1}   # 기준값 = bead_doe.compare.quality(한 곳). fail_policy warn | skip(뒤집힘은 항상 제외) · rot_warn_deg·area_ratio_min = 요소 극단값 경고 · distort_* = 비드 안 피처 왜곡(FAILED_MESH)
     island: {max_mm: 40.0, ring_frac: 0.9}   # v0.16.1 섬(딤플·버링) 평면 bbox 대각 상한 · 고리형 비드 안쪽 둔덕 비율(× D)
     hold: {ring_mm: 3.0, blend_mm: 8.0}   # v0.16.1 '체결 구멍 둘레 고정': 고정 노드에서 ring 제자리 + blend 블렌딩(보스)
+    hole: {bridge_max_mm: 20.0}     # v0.16.2 구멍 건너 잇기 상한(등가 지름 mm) — 넘으면 건너 잇지 않음(SELECT_BRIDGE_SKIPPED)
+    auto: {slope_diff_rel: 0.2}     # v0.16.2 자동 탐지 seed: paicad 사면 폭이 유도 사면과 이 비율 넘게 다르면 info AUTO_SLOPE_DIFF
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
     derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)

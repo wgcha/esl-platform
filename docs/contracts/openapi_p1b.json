@@ -2218,6 +2218,21 @@
       "DoeCheckIn": {
         "additionalProperties": false,
         "properties": {
+          "bead_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bead Source"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -2309,6 +2324,21 @@
             ],
             "title": "Scenario",
             "type": "string"
+          },
+          "select_base": {
+            "anyOf": [
+              {
+                "enum": [
+                  "case",
+                  "mesh"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Select Base"
           },
           "shapes": {
             "anyOf": [
@@ -3058,6 +3088,59 @@
         "title": "DoeRunIn",
         "type": "object"
       },
+      "DoeSelectAutoOut": {
+        "description": "v0.16.2 GET …/select/auto(esl_bead_auto.md §3.3): 자동 탐지 seed = SelectionIn schema 1 + 정규화 sha(수동 저장과 같은 식),\nmap[{bead, paicad_id, n_floor}], warnings(AUTO_* 코드), paicad_version.",
+        "properties": {
+          "map": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Map",
+            "type": "array"
+          },
+          "paicad_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paicad Version"
+          },
+          "selection": {
+            "additionalProperties": true,
+            "title": "Selection",
+            "type": "object"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "selection"
+        ],
+        "title": "DoeSelectAutoOut",
+        "type": "object"
+      },
       "DoeSelectDeriveIn": {
         "additionalProperties": false,
         "properties": {
@@ -3372,6 +3455,21 @@
       "DoeStudyIn": {
         "additionalProperties": false,
         "properties": {
+          "bead_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bead Source"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -3485,6 +3583,21 @@
             ],
             "title": "Scenario",
             "type": "string"
+          },
+          "select_base": {
+            "anyOf": [
+              {
+                "enum": [
+                  "case",
+                  "mesh"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Select Base"
           },
           "shapes": {
             "anyOf": [
@@ -15668,6 +15781,49 @@
           }
         },
         "summary": "Doe Run",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/select/auto": {
+      "get": {
+        "description": "v0.16.2 자동 탐지 seed(prep/select/auto_selection.json — 저장 안 함). manual·탐지 실패 404 AUTO_NOT_AVAILABLE,\n준비 전 409 PREP_NOT_READY.",
+        "operationId": "doe_select_auto_esl_api_doe_studies__sid__select_auto_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeSelectAutoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Select Auto",
         "tags": [
           "doe"
         ]

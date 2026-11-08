@@ -200,7 +200,10 @@ def status(ctx: AppContext) -> dict[str, Any]:
     sr = select_reason(c)
     return {"enabled": enabled, "reason": reason, "paicad": paicad, "gmsh": gmsh,
             "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"], "compare": cr is None,
-                          "select": sr is None},
+                          "select": sr is None,
+                          # v0.16.2(esl_bead_auto.md §3.2): 자동 탐지 = select 가능 ∧ paicad 준비됨, ② B 메시 기준 select =
+                          # select 가능(수동은 paicad 불필요 — 자동 탐지는 select_auto 도 봐야 함)
+                          "select_auto": sr is None and paicad["ready"], "select_mesh": sr is None},
             "compare_reason": cr, "select_reason": sr}
 
 
@@ -310,10 +313,17 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
                        "hold": {"ring_mm": float(sc["hold"]["ring_mm"]), "blend_mm": float(sc["hold"]["blend_mm"])},
                        # 섬 판정 거울 키(SR-D-26 — 브라우저 enclosedIslands 가 같은 값으로)
                        "island": {"max_mm": float(sc["island"]["max_mm"]),
-                                  "ring_frac": float(sc["island"].get("ring_frac", 0.9))}}}
+                                  "ring_frac": float(sc["island"].get("ring_frac", 0.9))},
+                       # v0.16.2 AD-D-7 구멍 건너 잇기 상한(브라우저 거울)
+                       "hole": {"bridge_max_mm": float((sc.get("hole") or {}).get("bridge_max_mm", 20.0))}}}
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
+def select_kind(body) -> tuple[str, str]:
+    """v0.16.2 select (bead_source, select_base) — 생략 = ("manual", "case")(esl_bead_auto.md §3.3)."""
+    return (getattr(body, "bead_source", None) or "manual"), (getattr(body, "select_base", None) or "case")
+
+
 def _esl_error(exc) -> DomainError:
     return unprocessable(exc.code, exc.message)
 
@@ -384,23 +394,37 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
         raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
     if body.mesh_mode is not None or body.mesh_refine is not None:
         raise unprocessable("INVALID_PARAMS", up_svc.doe_text("MESH_MODE_COMPARE_ONLY"))
-    if body.scenario == "select":
-        if body.step_upload_id or body.mesh_upload_id or body.part_title:
-            raise unprocessable("INVALID_PARAMS", "step_upload_id·mesh_upload_id·part_title 은 '비드 직접 선택'에서 쓰지 않습니다"
-                                "(기준 = 같은 모델 Case 메시)")
+    src, sbase = select_kind(body)
+    is_sel = body.scenario == "select"
+    if is_sel:
+        # v0.16.2(esl_bead_auto.md §3.3·AD-D-1·13·14): 자동 탐지 = paicad extract·tag 입력 STEP 필수, 수동 = STEP 금지.
+        # case = 같은 모델 Case 메시(B 메시·파트 금지), mesh = ② B 메시(.rad/.inc) 필수
+        if src == "auto" and not body.step_upload_id:
+            raise unprocessable("INVALID_PARAMS", "'자동 탐지'에는 step_upload_id(STEP — paicad 비드 탐지 입력)가 필요합니다")
+        if src == "manual" and body.step_upload_id:
+            raise unprocessable("INVALID_PARAMS", "step_upload_id 는 '비드 직접 선택 — 수동'에서 쓰지 않습니다(자동 탐지만)")
+        if sbase == "case" and (body.mesh_upload_id or body.part_title):
+            raise unprocessable("INVALID_PARAMS", "mesh_upload_id·part_title 은 '비드 직접 선택'(같은 모델)에서 쓰지 않습니다"
+                                "(기준 = 같은 모델 Case 메시 — 다른 모델은 select_base mesh)")
+        if sbase == "mesh" and not body.mesh_upload_id:
+            raise unprocessable("INVALID_PARAMS", "'비드 직접 선택 — 다른 모델(B 메시)'에는 mesh_upload_id 가 필요합니다")
+    elif body.bead_source is not None or body.select_base is not None:
+        raise unprocessable("INVALID_PARAMS", "bead_source·select_base 는 '비드 직접 선택'에서만 지정합니다")
     elif not body.step_upload_id:
         raise unprocessable("INVALID_PARAMS", "step_upload_id 가 필요합니다")
-    if body.scenario != "mesh" and (body.mesh_upload_id or body.part_title):
+    if body.scenario not in ("mesh", "select") and (body.mesh_upload_id or body.part_title):
         raise unprocessable("INVALID_PARAMS", "mesh_upload_id·part_title 은 '다른 모델(메시 있음)'에서만 지정합니다")
+    mesh_base = body.scenario == "mesh" or (is_sel and sbase == "mesh")
     with ctx.engine.connect() as conn:
         rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
     rows = backfill_opt_meta(ctx, rows)
-    step_out, step_p = _step_input(ctx, principal, body, c) if body.scenario != "select" else (None, None)
+    step_out, step_p = _step_input(ctx, principal, body, c) if (not is_sel or src == "auto") else (None, None)
     out: dict[str, Any] = {"ok": True, "step": step_out, "base": None, "mesh": None, "entries": [], "size": None,
                            "props_default": None, "mesh_size_default_mm": None, "warnings": []}
     mat: dict[str, Any] = {"rows": rows, "step": step_p, "base": None, "base_db": None, "mesh": None,
-                           "props_default": None, "mesh_size_default_mm": None}
-    if body.scenario in ("same", "select"):       # select = ① 같은 모델 기준(BS-D-1)
+                           "props_default": None, "mesh_size_default_mm": None, "bead_source": src if is_sel else None,
+                           "select_base": sbase if is_sel else None}
+    if body.scenario == "same" or (is_sel and not mesh_base):     # select(case) = ① 같은 모델 기준(BS-D-1)
         same = _same_model_rows(rows)
         out["entries"] = [{"entry_id": r["entry_id"], "ok": bool(r["same_model"]), "reason": r["reason"]} for r in same]
         out["ok"] = all(r["same_model"] for r in same)
@@ -424,7 +448,7 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
         mat["base_db"] = {**out["base"], "rad_file_name": base.get("rad_file_name"), "assem": assem}
     else:
         out["entries"] = [{"entry_id": e["id"], "ok": True, "reason": None} for e in rows]
-        if body.scenario == "mesh":
+        if mesh_base:           # ② · select(mesh) — ② 입력·검사 그대로(AD-D-14: 같은 모델 검사 없음, 크기 규칙 B = 템플릿)
             chk, size, warns, mesh_p = _mesh_input(ctx, principal, body, c, rows)
             out.update(mesh=chk, size=size)
             out["warnings"] += warns
@@ -821,6 +845,12 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 prep["n_defeature"] = int(p0["n_defeature"])
         elif s["scenario"] == "select":     # select 준비 요약(BD_PREP_REGISTER — 노드·요소 수·고정 출처)
             prep.update({k: p0.get(k) for k in ("n_nodes", "n_elems", "fixed")})
+            if isinstance(p0.get("auto"), dict):    # v0.16.2 자동 탐지 결과 {ok, step, code, available, n_beads}(auto 만)
+                prep["auto"] = p0["auto"]
+            if p0.get("select_base") == "mesh":     # v0.16.2 ② B 메시 기준(① 은 키 없음)
+                prep["select_base"] = "mesh"
+    if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
+        inputs.setdefault("bead_source", "manual")
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
             "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
             "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
@@ -974,13 +1004,15 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     rows = mat["rows"]
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)                    # 경로 안전성(실제 생성은 워커)
+    sel_mesh = body.scenario == "select" and mat.get("select_base") == "mesh"
     if body.scenario == "select":
         b0 = out.get("base") or {}
-        label = b0.get("case_title") or b0.get("part_title") or ""
-        title = (body.title or "").strip() or f"강성 평가 스터디 {label} (비드 직접 선택)".replace("  ", " ")
+        label = (mat["mesh"] or {}).get("file_name") if sel_mesh else (b0.get("case_title") or b0.get("part_title"))
+        kind = "비드 직접 선택 · B 메시" if sel_mesh else "비드 직접 선택"
+        title = (body.title or "").strip() or f"강성 평가 스터디 {label or ''} ({kind})".replace("  ", " ")
     else:
         title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
-    part_title = (mat["mesh"] or {}).get("part_title") if body.scenario == "mesh" else (
+    part_title = (mat["mesh"] or {}).get("part_title") if (body.scenario == "mesh" or sel_mesh) else (
         (mat["base"] or {}).get("part_title") if body.scenario in ("same", "select") else None)
     step_p = mat["step"]
     inputs = {"step": {"upload_id": step_p["upload_id"], "file_name": step_p["file_name"], "sha256": step_p["sha256"]}
@@ -989,6 +1021,10 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if mat["mesh"]:
         mp = mat["mesh"]
         inputs["mesh"] = {"upload_id": mp["upload_id"], "file_name": mp["file_name"], "sha256": mp["sha256"]}
+    if body.scenario == "select":       # v0.16.2 §3.1: bead_source(select 만), select_base 는 "mesh" 일 때만(① = 키 없음, AD-D-22)
+        inputs["bead_source"] = mat["bead_source"]
+        if sel_mesh:
+            inputs["select_base"] = "mesh"
     import datetime as _dt
 
     created = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -1006,6 +1042,10 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if props is not None:
         doe["props"] = props
         doe["mesh_size_mm"] = h
+    if body.scenario == "select":       # 워커·코어 분기(BD_INPUT _sel_input·BD_GEOM plan) — select_base 는 mesh 일 때만
+        doe["bead_source"] = mat["bead_source"]
+        if sel_mesh:
+            doe["select_base"] = "mesh"
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,
@@ -1366,11 +1406,14 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         step_i = [i for i, x in enumerate(shapes_old) if x.get("source", "step") == "step"]
         if step_i and not status(ctx)["gmsh"]["ready"]:      # C2-D-16: STEP 형상은 gmsh 필요(메시 형상만이면 허용)
             raise DomainError("GMSH_UNAVAILABLE", up_svc.doe_text("SHAPES_STEP_GMSH"), status=503, index=step_i)
-    elif s["scenario"] != "select":      # select 는 업로드 입력 없음(같은 Case 메시)
-        st = old.get("step") or {}
-        if not st.get("path") or not os.path.isfile(st["path"]) or os.path.islink(st["path"]):
-            raise conflict("PREREQUISITE_MISSING", "원 연구의 STEP 업로드가 더 이상 없습니다 — 새로 올려 주세요",
-                           missing=["step"])
+    elif s["scenario"] != "select" or old.get("step") or old.get("mesh"):
+        # select(manual·case) 는 업로드 입력 없음(같은 Case 메시). v0.16.2 select auto = STEP, select(mesh) = B 메시 업로드
+        need = ["step"] if s["scenario"] != "select" else [k for k in ("step", "mesh") if old.get(k)]
+        miss = [k for k in need if not (old.get(k) or {}).get("path") or not os.path.isfile(old[k]["path"])
+                or os.path.islink(old[k]["path"])]
+        if miss:
+            raise conflict("PREREQUISITE_MISSING", "원 연구의 STEP·B 메시 업로드가 더 이상 없습니다 — 새로 올려 주세요"
+                           if miss != ["step"] else "원 연구의 STEP 업로드가 더 이상 없습니다 — 새로 올려 주세요", missing=miss)
     nid = str(uuid.uuid4())
     doe_dir(ctx.settings, nid)
     import datetime as _dt

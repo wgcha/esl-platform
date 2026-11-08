@@ -36,6 +36,15 @@ def test_report_escape_and_sections(tmp_path):
     ctx["result"]["sensitivity"] = {"null": False, "r2": 0.9, "params": [{"name": "CR_BEAD_D_1", "src": -0.8,
                                                                           "spearman": -0.7}]}
     assert "<rect" in rd.render(ctx)
+    # v0.16.2 AD-D-8(V-AD-7 코어): 경고 안이 없으면 ⚠ 열 없음(보고서 불변), 극단 요소 안은 ⚠ 열 + 최적 안 경고 줄
+    assert "<th>⚠</th>" not in rd.render(ctx) and "극단 요소" not in rd.render(ctx)
+    ctx["result"]["ranking"][0]["warn"] = ["MORPH_EXTREME_ELEMENTS"]
+    h2 = rd.render(ctx)
+    assert "극단 요소" in h2 and "경고 없는 최상위: 없음" in h2 and "<th>⚠</th>" in h2
+    # v0.16.2 AD-D-20: select_base mesh 머리
+    ctx["study"]["scenario"] = "select"
+    ctx["inputs"]["select_base"] = "mesh"
+    assert rd.MESH_BASE_KO in rd.render(ctx)
 
 
 def test_compare_report_mesh_options():
