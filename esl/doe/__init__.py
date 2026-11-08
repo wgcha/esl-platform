@@ -153,6 +153,10 @@ DEFAULTS: dict = {
                "quality": {"max_fail_ratio": 0.01, "flip_deg": 60.0, "fail_policy": "warn", "rot_warn_deg": 45.0,
                            "area_ratio_min": 0.2, "distort_rel": 0.25, "distort_min_mm": 0.1},
                "island": {"max_mm": 40.0, "ring_frac": 0.9}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
+               # v0.16.2 AD-D-7 구멍 건너 잇기 상한(등가 지름 mm — 넘으면 SELECT_BRIDGE_SKIPPED, HASH_NEW_KEYS_V0162)
+               "hole": {"bridge_max_mm": 20.0},
+               # v0.16.2 AD-D-12 자동 탐지 seed 사면 힌트(paicad flank 대비 상대 차 > 이 값 → info AUTO_SLOPE_DIFF, 보고만 — 해시 제외)
+               "auto": {"slope_diff_rel": 0.2},
                "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15,
                          "ambient": 0.35},
                "derive_cache_n": 8, "derive_timeout_s": 20},

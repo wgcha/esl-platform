@@ -110,3 +110,78 @@ def test_mesh_pipeline_mapping_once(tmp_path):
     res = stg.run_stage(spec("bd_post", rev=1), lambda s: None)["result"]
     assert res["n_ok"] == 2 and res["boundary_warnings_n"] == bj["n_warn"]
     assert sc.tree_stamp(str(up)) == stamp
+
+
+# ---------------------------------------------------------------- V-AD-9·15(코어) ② select_base mesh = ② 매핑 재사용(v0.16.2)
+def _b_setup(tmp_path):
+    a = sd.plate(nx=24, ny=14, Lx=480.0, Lz=280.0)
+    lib = tmp_path / "lib"
+    dirs = [sd.save_entry(str(lib), f"E{k}", a, kind, 1.0 + k, seed=k)[0] for k, kind in enumerate(("bend", "twist"))]
+    b = sd.plate(nx=26, ny=15, Lx=490.0, Lz=276.0, holes=[(12, 14, 6, 8)])
+    up = tmp_path / "up"
+    up.mkdir()
+    sd.write_mesh_rad(str(up / "b.inc"), b)
+    (up / "b.rad").write_text("#RADIOSS STARTER\n#include b.inc\n/END\n")
+    ents = [{"id": f"E{k}", "dir": d} for k, d in enumerate(dirs)]
+    mesh = {"path": str(up / "b.rad"), "upload_root": str(up), "part_title": sd.PART_TITLE}
+    return a, b, up, ents, mesh
+
+
+def test_select_mesh_base_reuses_mapping(tmp_path):
+    a, b, up, ents, mesh = _b_setup(tmp_path)
+    stamp = sc.tree_stamp(str(up))
+    outs = {}
+    for name, doe in (("legacy", {"id": "L", "scenario": "mesh", "cfg": CFG_FULL, "entries": ents, "mesh": mesh,
+                                  "step": {"path": str(up / "b.rad"), "file_name": "b.step"}, "inch": 75}),
+                      ("select", {"id": "S", "scenario": "select", "cfg": CFG_FULL, "entries": ents, "mesh": mesh,
+                                  "select_base": "mesh", "inch": 75})):
+        out = tmp_path / "_doe" / name
+        sp = {"stage": "bd_input", "out": str(out), "doe": doe}
+        r_in = stg.run_stage(sp, lambda s: None)
+        assert r_in["part_id"] == sd.PART_ID
+        if name == "legacy":
+            sd.write_extract(str(out / "prep" / "extract"), sd.features_doc(b, 2))
+        sd.write_fixed(str(out / "prep" / "fixed"), b, [[0, 1], [40, 41]])          # B 자신의 fixed-scan(AD-D-16)
+        sd.write_fixed(str(out / "prep" / "a_fixed"), a, [[0, 1, 15], [200, 201]])  # A 체결점(경고만 — O-1)
+        r = stg.run_stage({**sp, "stage": "bd_loads"}, lambda s: None)
+        outs[name] = (out, r)
+    (lo, lr), (so, sr) = outs["legacy"], outs["select"]
+    lb = U.read_json(str(lo / "prep" / "base.json"))
+    sb_ = U.read_json(str(so / "prep" / "base.json"))
+    assert sb_["scenario"] == "select" and sb_["target"] == "S2" == lb["target"]
+    assert sb_["frame"] == lb["frame"] and sb_["supports"] == lb["supports"] and sb_["mesh_sha256"] == lb["mesh_sha256"]
+    assert (so / "prep" / "loads.npz").read_bytes() == (lo / "prep" / "loads.npz").read_bytes()
+    assert (so / "prep" / "boundary.json").read_bytes() == (lo / "prep" / "boundary.json").read_bytes()   # V-AD-15 경계
+    assert sr["boundary"] == lr["boundary"] and "prep/boundary.json" in sr["files"]
+    inp = U.read_json(str(so / "prep" / "input.json"))
+    assert inp["select_base"] == "mesh" and inp["assem"] == "input/mesh" and inp["mesh"]["main"] == "b.rad"
+    assert [f["rel"] for f in inp["mesh"]["files"]] == ["b.rad", "b.inc"] and inp["fixed"] == {"source": "scan", "n": 4}
+    assert stg.select_prep_info(str(so))["assem"] == "input/mesh"
+    plan = U.read_json(str(so / "prep" / "plan.json"))
+    assert plan["a_points"] == U.read_json(str(lo / "prep" / "boundary.json"))["a_points"]
+    # 선택 보기 = B 원 노드 ID(재번호 없음)
+    t, _ = sc.load_base(str(so / "prep"))
+    assert np.array_equal(t.mesh["node_id"], np.asarray(b["node_id"]))
+    # (b) ④ 함수 재사용: compare_target(B, frame_B) + entry_loads 와 F·지지 좌표·frame 같음
+    dt = sc.compare_target({k: np.asarray(b[k]) for k in sc.tg.MESH_KEYS}, t.frame)
+    from esl.library.entry import load as load_entry
+    loads4, _ = sc.entry_loads(dt, [load_entry(e["dir"]) for e in ents], None)
+    nid, loads = sc.load_loads(str(so / "prep"))
+    assert np.array_equal(nid, dt.mesh["node_id"])
+    for (e1, F1), (e2, F2) in zip(loads, loads4):
+        assert e1 == e2 and np.abs(F1 - F2).max() <= 1e-12 * max(1.0, np.abs(F1).max())
+    pos = {int(v): i for i, v in enumerate(t.mesh["node_id"].tolist())}
+    pos4 = {int(v): i for i, v in enumerate(dt.mesh["node_id"].tolist())}
+    xs = sorted(tuple(np.asarray(t.mesh["x0"])[pos[n]].tolist()) + (d,) for n, d in t.supports)
+    x4 = sorted(tuple(np.asarray(dt.mesh["x0"])[pos4[int(n)]].tolist()) + (str(d),) for n, d in dt.supports)
+    assert xs == x4 and dt.frame == t.frame
+    # V-AD-15 받기 파일: input/mesh 사본 중 B 파트 /NODE 를 가진 파일만, part_title = B 파트
+    c = stg.Ctx({"stage": "x", "out": str(so), "doe": {"id": "S", "scenario": "select", "cfg": CFG_FULL, "entries": ents,
+                                                        "mesh": mesh, "select_base": "mesh"}})
+    files = stg._sel_rad_files(c, np.asarray(t.mesh["node_id"]))
+    assert [r for r, _ in files] == ["b.inc"] and files[0][1] == str(so / "input" / "mesh" / "b.inc")
+    assert stg._sel_part_title(c) == sd.PART_TITLE and stg._is_mesh_base(c)
+    assert sc.tree_stamp(str(up)) == stamp                                          # 업로드 폴더 쓰기 없음
+    # select_base 는 스펙이 없어도 준비 결과(input.json)에서 이어짐(BD_MATRIX·BD_EVAL·BD_POST)
+    c2 = stg.Ctx({"stage": "x", "out": str(so), "doe": {"id": "S", "scenario": "select", "cfg": CFG_FULL, "entries": ents}})
+    assert stg.select_base(c2) == "mesh" and stg.bead_source(c2) == "manual"

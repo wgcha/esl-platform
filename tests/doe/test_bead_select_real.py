@@ -246,8 +246,11 @@ def test_w_range_contains_nominal_and_end_check():
                 assert st["state"] == want, (kind, v)
             else:
                 assert st["code"] != "SELECT_MORPH_INVERTED", (kind, v, st)
-    # 끔(check_steps 0) → 경고 없음
+    # 끝 점검 끔(check_steps 0) → 변수별 SELECT_RANGE_INVERTS 없음. v0.16.2 AD-D-9: 조합 점검은 combo_samples 로만 정함
     cfg0 = settings({"bead_doe": {"enabled": True, "select": {"range": {"check_steps": 0}}}})
     g = sb.real_case("boss_field", H)
     D = _derive(g, ["P"], cfg0)
-    assert bs.range_check(g["mesh"], D, bs.basis(g["mesh"], D, cfg0), cfg0) == []
+    assert not any(w["code"] == "SELECT_RANGE_INVERTS" for w in bs.range_check(g["mesh"], D, bs.basis(g["mesh"], D, cfg0), cfg0))
+    cfg00 = settings({"bead_doe": {"enabled": True, "select": {"range": {"check_steps": 0, "combo_samples": 0}}}})
+    D = _derive(g, ["P"], cfg00)
+    assert bs.range_check(g["mesh"], D, bs.basis(g["mesh"], D, cfg00), cfg00) == []

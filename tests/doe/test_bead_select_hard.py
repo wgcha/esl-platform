@@ -13,6 +13,10 @@ from esl.doe import settings
 from esl.errors import EslError
 
 CFG = settings({"bead_doe": {"enabled": True}})
+# v0.16.2 AD-D-6 V-SR-28 회귀 예외 목록: 판정(state)·기저 바이트가 같을 때 아래 경고가 더해지는 것은 회귀 실패가 아님
+# (AD-D-9·SR-D-39 로 늘어난 경고). 사례: feat, edge_boss:G, 실 사례 1 전체 5(L), edge_boss B1_D1 7.0146, h5, 레일 A 단독.
+REGRESS_WARN_EXCEPTIONS_V0162 = ("SELECT_RANGE_COMBO", "SELECT_W_RANGE_LIMIT", "SELECT_BASE_REFIT",
+                                 "SELECT_SLOPE_ABOVE_PLATE", "SELECT_QUALITY_WARN", "SELECT_RANGE_INVERTS")
 
 
 def _derive(g, beads, cfg=CFG, **extra):
@@ -384,3 +388,57 @@ def test_gmsh_mesh_vs_rad_inc_h4(tmp_path):
     a = _signature(g, [("G", 1)])
     b = _signature(_rad_inc_roundtrip(g, tmp_path / "r"), [("G", 1)])
     assert a == b
+
+
+# ---------------------------------------------------------------- V-AD-5 구멍 건너 잇기 상한(v0.16.2 AD-D-7)
+def test_bridge_cap_skips_large_opening(h4):
+    """H4 슬롯(등가 지름 ≤ 20 mm)은 기본 상한에서 v0.16.1 그대로 건너 이음(상한 없음과 기저·요약 바이트 동일, 경고 없음).
+    상한을 슬롯 등가 지름보다 작게 하면 건너 잇지 않고 SELECT_BRIDGE_SKIPPED{eq_d_mm, gap_mm}(고리 열림)."""
+    g, D, B = h4
+    b = D.bead("b1")
+    eq = float(b.holes[0]["eq_d_mm"])
+    assert eq <= CFG["select"]["hole"]["bridge_max_mm"] == 20.0
+    assert "SELECT_BRIDGE_SKIPPED" not in _codes(b) and b.loops[0].get("bridged") == 1
+    big = settings({"bead_doe": {"enabled": True, "select": {"hole": {"bridge_max_mm": 1e9}}}})
+    Db = _derive(g, [("G", 1)], big)
+    assert bs.basis_bin(bs.basis(g["mesh"], Db, big)) == bs.basis_bin(B)
+    assert Db.summary(with_figures=False) == D.summary(with_figures=False)
+    small = settings({"bead_doe": {"enabled": True, "select": {"hole": {"bridge_max_mm": 0.5 * eq}}}})
+    Ds = _derive(g, [("G", 1)], small)
+    bsk = Ds.bead("b1")
+    w = [x for x in bsk.warnings if x["code"] == "SELECT_BRIDGE_SKIPPED"]
+    assert len(w) == 1 and w[0]["eq_d_mm"] == pytest.approx(eq, abs=1e-3) and w[0]["gap_mm"] > 0
+    assert all(lp.get("bridged", 0) == 0 for lp in bsk.loops)
+    # 해시: 기본값이면 select_hash_view 에서 빠짐(v0.16.1 해시 불변), 값을 바꾸면 남음
+    assert "hole" not in bs.select_hash_view(CFG["select"]) and "auto" not in bs.select_hash_view(CFG["select"])
+    assert bs.select_hash_view(small["select"])["hole"] == {"bridge_max_mm": 0.5 * eq}
+    tweak = settings({"bead_doe": {"enabled": True, "select": {"auto": {"slope_diff_rel": 0.5}}}})
+    assert bs.select_hash_view(tweak["select"]) == bs.select_hash_view(CFG["select"])
+
+
+def test_bridge_holes_core_cap_unit():
+    """공통 코어 ``bridge_holes``: 같은 구멍 양 끝 열린 고리 — 상한 이하 = 닫힘(bridged 1), 상한 초과 = 열린 채 + 경고 1개."""
+    from esl.morph import core as mc
+
+    class IX:
+        X = np.array([[0.0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 1, 0]])
+    loops = [{"nodes": np.array([0, 1, 2, 3]), "closed": False}]
+    hole = [{"nodes": np.array([3, 4, 0]), "eq_d_mm": 30.0}]
+    out = mc.bridge_holes(IX, loops, hole)
+    assert out[0]["closed"] and out[0]["bridged"] == 1
+    sk: list = []
+    out2 = mc.bridge_holes(IX, loops, hole, max_d_mm=20.0, skipped=sk)
+    assert not out2[0]["closed"] and out2[0]["bridged"] == 0
+    assert sk == [{"code": "SELECT_BRIDGE_SKIPPED", "eq_d_mm": 30.0, "gap_mm": 10.0}]
+    assert mc.bridge_holes(IX, loops, hole, max_d_mm=30.0)[0]["closed"]
+
+
+def test_regress_exception_list_codes_have_messages():
+    """AD-D-6 예외 목록 = 계약 그대로 6개, 모두 문구가 있는 경고 코드(새 코드 SELECT_BRIDGE_SKIPPED 는 예외 아님 — 상한 이하 바이트 불변)."""
+    from esl.doe import load_messages
+    msgs = load_messages()["messages"]
+    assert len(set(REGRESS_WARN_EXCEPTIONS_V0162)) == 6 and all(c in msgs for c in REGRESS_WARN_EXCEPTIONS_V0162)
+    assert "SELECT_BRIDGE_SKIPPED" not in REGRESS_WARN_EXCEPTIONS_V0162
+    for c in ("AUTO_DETECT_FAILED", "AUTO_TOO_MANY_BEADS", "AUTO_GROUP_DROPPED", "AUTO_BEAD_UNMAPPED", "AUTO_SLOPE_DIFF",
+              "SELECT_BRIDGE_SKIPPED", "MORPH_EXTREME_ELEMENTS", "AUTO_NOT_AVAILABLE", "PREP_NOT_READY"):
+        assert c in msgs, c
