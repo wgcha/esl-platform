@@ -30,6 +30,8 @@ _MODULES = {
     "doe_matrix": "esl.doe.matrix", "doe_paicad_io": "esl.doe.paicad_io", "doe_scenario": "esl.doe.scenario",
     # v0.15.0 select(esl_bead_select.md §17 경계): normalize·derive·plan_data 만(기저·모핑·품질·렌더는 워커)
     "doe_bead_select": "esl.doe.bead_select",
+    # v0.16.2 자동 탐지 seed 읽기(esl_bead_auto.md AD-D-3 — read_auto_selection 만, 탐지·쓰기는 워커·코어)
+    "doe_bead_auto": "esl.doe.bead_auto",
     # 이슈 #53: 원자적 교체 공통 함수(atomic_replace·FileLocked·configure) — esl_platform.core.atomic 이 재노출
     "fsutil": "esl.fsutil",
 }

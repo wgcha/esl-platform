@@ -693,8 +693,50 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
         fx = inp.get("fixed") if isinstance(inp.get("fixed"), dict) else {}
         prep.update(n_nodes=base.get("n_nodes"), n_elems=base.get("n_elems"),
                     fixed={"source": fx.get("source") or "none", "n": int(fx.get("n") or 0)})
+        prep.update(_select_auto_prep(s, inp, ddir, msgs, warns))
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
+
+
+AUTO_DETECT_MSG = "자동 탐지(paicad {step})가 실패했습니다({detail}) — 빈 선택에서 수동으로 선택하세요"
+
+
+def _select_auto_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: dict[str, str],
+                      warns: list[dict[str, Any]]) -> dict[str, Any]:
+    """v0.16.2 select 준비 요약 보강(esl_bead_auto.md AD-D-2·3·13): select_base(mesh 일 때만 — ① 요약 불변), auto 스터디는
+    auto = {ok, step, code, available(prep/select/auto_selection.json 있음), n_beads, selection_sha256}. 출처 = 코어 BD_LOADS 의
+    prep/input.json auto(탐지 → seed 결과), 없으면 워커 prep/auto_detect.json. 실패면 준비 경고
+    {code: AUTO_DETECT_FAILED, message, step, detail}(detail = 안쪽 paicad·코어 코드 — 경고 자신의 code 와 겹치지 않게)를 한 번,
+    코어 seed 경고(AUTO_* — info 제외)도 준비 경고에 더한다(warns 제자리)."""
+    out: dict[str, Any] = {}
+    inputs = s.get("inputs") or {}
+    if inputs.get("select_base") == "mesh" or inp.get("select_base") == "mesh":
+        out["select_base"] = "mesh"
+    if inputs.get("bead_source") != "auto" and inp.get("bead_source") != "auto":
+        return out
+    core = inp.get("auto") if isinstance(inp.get("auto"), dict) else None
+    ad = _doe_json(os.path.join(ddir, "prep", "auto_detect.json"))
+    src = core or (ad if isinstance(ad, dict) else {"ok": False, "step": "version", "code": "AUTO_DETECT_MISSING"})
+    avail = os.path.isfile(os.path.join(ddir, "prep", "select", "auto_selection.json"))
+    auto = {"ok": bool(src.get("ok")) and (avail or core is None), "step": src.get("step"), "code": src.get("code"),
+            "available": avail, "n_beads": int((core or {}).get("n_beads") or 0),
+            "selection_sha256": (core or {}).get("selection_sha256")}
+    for w in (core or {}).get("warnings") or []:
+        if isinstance(w, dict) and w.get("code") != "AUTO_DETECT_FAILED" and w.get("level") != "info":
+            x = _doe_warning(w, msgs)
+            if x is not None and x not in warns:
+                warns.append(x)
+    warns[:] = [w for w in warns if w.get("code") != "AUTO_DETECT_FAILED"]   # 코어 문자열 경고 → 아래 한 개(필드 포함)
+    if not auto["ok"]:
+        step, detail = auto["step"] or "version", auto["code"]
+        tmpl = msgs.get("AUTO_DETECT_FAILED") or AUTO_DETECT_MSG
+        try:
+            msg = tmpl.format(step=step, detail=detail)
+        except (KeyError, IndexError, ValueError):
+            msg = AUTO_DETECT_MSG.format(step=step, detail=detail)
+        warns.append({"code": "AUTO_DETECT_FAILED", "message": msg[:300], "step": step, "detail": detail})
+    out["auto"] = auto
+    return out
 
 
 COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status", "code", "message", "n_nodes", "n_elems",
