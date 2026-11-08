@@ -17,7 +17,7 @@ export function islandHoleText(x: DoeBeadDerived | null, localIslands: number | 
   return [`섬 ${isl ?? 0}`, holes != null ? `구멍 ${holes}` : null].filter(Boolean).join(" · ");
 }
 
-export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null }) {
+export function BeadList({ ctrl, editable, st, hideDirty }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; hideDirty?: boolean }) {
   const s = ctrl.state;
   const d = ctrl.derive;
   void st;
@@ -148,7 +148,7 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
                     type="button"
                     className="btn small ghost"
                     disabled={ro}
-                    title={ro ? RO_TIP : "이 비드의 바닥·사면 선택을 비웁니다(이름·단 수 유지 · 실행 취소 가능)"}
+                    title={ro ? RO_TIP : ctrl.hasSeed ? "이 비드를 자동 탐지 결과로 되돌립니다(이름 유지 · 실행 취소 가능)" : "이 비드의 바닥·사면 선택을 비웁니다(이름·단 수 유지 · 실행 취소 가능)"}
                     onClick={() => ctrl.resetBead(bi)}
                   >
                     이 비드 초기화
@@ -187,8 +187,14 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
           type="button"
           className="btn small ghost"
           disabled={ro}
-          title={ro ? RO_TIP : "모든 비드와 고정·제외 층을 비웁니다(실행 취소 가능 · 저장 전까지 서버는 그대로)"}
-          onClick={() => window.confirm("모든 비드와 고정·제외 층을 비웁니다. [선택 저장] 전까지 서버의 저장 선택은 그대로이고, 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.") && ctrl.resetAll()}
+          title={ro ? RO_TIP : ctrl.hasSeed ? "모든 비드·고정·제외 층을 자동 탐지 결과로 되돌립니다(실행 취소 가능 · 저장 전까지 서버는 그대로)" : "모든 비드와 고정·제외 층을 비웁니다(실행 취소 가능 · 저장 전까지 서버는 그대로)"}
+          onClick={() =>
+            window.confirm(
+              ctrl.hasSeed
+                ? "모든 비드와 고정·제외 층을 자동 탐지 결과로 되돌립니다. [선택 저장] 전까지 서버의 저장 선택은 그대로이고, 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다."
+                : "모든 비드와 고정·제외 층을 비웁니다. [선택 저장] 전까지 서버의 저장 선택은 그대로이고, 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.",
+            ) && ctrl.resetAll()
+          }
         >
           전체 초기화
         </button>
@@ -198,7 +204,7 @@ export function BeadList({ ctrl, editable, st }: { ctrl: BeadSelectCtrl; editabl
           고정: {FIXED_SRC[d.fixed.source] ?? d.fixed.source} · 스캔 {d.fixed.scan_n} · 사용자 {d.fixed.user_n} 노드
         </div>
       )}
-      {ctrl.dirty && <div className="small warn-text" data-testid="bs-dirty">저장 안 한 변경이 있습니다 — [선택 저장]</div>}
+      {ctrl.dirty && !hideDirty && <div className="small warn-text" data-testid="bs-dirty">저장 안 한 변경이 있습니다 — [선택 저장]</div>}
     </div>
   );
 }

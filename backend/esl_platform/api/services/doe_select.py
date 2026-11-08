@@ -621,6 +621,74 @@ def basis_file(ctx: AppContext, principal: Principal, sid: str, rev: int | None,
     return p, media, {"X-ESL-Basis-Sha": bsha, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
 
 
+# ---------------------------------------------------------------- v0.16.2 자동 탐지 seed(esl_bead_auto.md AD-D-3·4, §3.3)
+AUTO_SELECTION_REL = ("select", "auto_selection.json")      # prep/select/auto_selection.json(코어 BD_LOADS write_auto_selection)
+AUTO_DETECT_REL = "auto_detect.json"                        # prep/auto_detect.json(워커 BD_GEOM — AD-D-2)
+
+
+def auto_detect_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
+    d = _svc()._read_json(os.path.join(_prep_dir(ctx, s), AUTO_DETECT_REL), _svc()._max_mb(c))
+    return d if isinstance(d, dict) else None
+
+
+def _read_auto_selection(p: str, max_mb: float) -> dict[str, Any] | None:
+    """코어 ``bead_auto.read_auto_selection``(schema esl/doe_auto_selection/1 확인) — 크기 상한 먼저. 없거나 형식 오류 = None."""
+    from ...core import opt_core
+    from ...core.opt_core import EslError
+
+    try:
+        if os.path.getsize(p) > max_mb * 1024 * 1024:
+            return None
+        return opt_core.doe_bead_auto.read_auto_selection(p)
+    except ImportError:             # 옛 코어(bead_auto 없음) — 같은 JSON 을 그대로
+        return _svc()._read_json(p, max_mb)
+    except (EslError, OSError, ValueError):
+        return None
+
+
+def auto_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+    """GET …/select/auto: {selection, sha256, map, warnings, paicad_version}. manual 스터디·seed 파일 없음 → 404
+    AUTO_NOT_AVAILABLE, 준비 전 → 409 PREP_NOT_READY. sha256 = 파일 값(코어가 bsel.normalize 로 계산) 또는 같은 normalize 로
+    다시 계산(seed 를 그대로 저장한 sha 와 같음 — V-AD-1). 저장하지 않는다(화면이 [선택 저장] 으로 PUT …/selection)."""
+    from ...core.opt_core import EslError
+
+    svc = _svc()
+    c = svc.cfg(ctx)
+    s, _job = _load_viewable(ctx, principal, sid)
+    if (s.get("inputs") or {}).get("bead_source") != "auto":
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 스터디가 아닙니다(수동 선택)")
+    if s.get("prep") is None:
+        raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
+    pd = _prep_dir(ctx, s)
+    p = os.path.join(pd, *AUTO_SELECTION_REL)
+    if not os.path.isfile(p) or os.path.islink(p) or os.path.islink(os.path.join(pd, AUTO_SELECTION_REL[0])):
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과가 없습니다(탐지 실패 — 수동으로 선택하세요)")
+    doc = _read_auto_selection(p, svc._max_mb(c))
+    if not isinstance(doc, dict):
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과를 읽지 못했습니다(수동으로 선택하세요)")
+    sel = doc.get("selection") if isinstance(doc.get("selection"), dict) else (doc if "beads" in doc else None)
+    if not isinstance(sel, dict):
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과에 선택이 없습니다(수동으로 선택하세요)")
+    sha = None
+    if sel.get("beads"):        # PUT …/selection 과 같은 길(API 모델 → selection_in → normalize) — seed 그대로 저장한 sha
+        try:
+            from ..schemas import SelectionIn
+
+            sha = normalize(c, selection_in(SelectionIn.model_validate(sel)), None)[1]
+        except (EslError, DomainError, KeyError, TypeError, ValueError):
+            sha = None
+    if sha is None and isinstance(doc.get("sha256"), str):
+        sha = doc["sha256"]
+    ad = auto_detect_doc(ctx, s, c) or {}
+    pv = doc.get("paicad_version") or ad.get("paicad_version") or (s.get("prep") or {}).get("paicad_version") \
+        or s.get("paicad_version")
+    warns = [w if isinstance(w, dict) else {"code": str(w).split(":", 1)[0], "message": str(w)}
+             for w in doc.get("warnings") or [] if w]
+    return svc._jsonable({"selection": sel, "sha256": sha,
+                          "map": [x for x in doc.get("map") or [] if isinstance(x, dict)], "warnings": warns,
+                          "paicad_version": str(pv) if pv is not None else None})
+
+
 def clone_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[dict[str, Any] | None, list]:
     """복제: 원 선택이 원 준비 메시와 맞으면 rev 1 로 복사(같은 sha), 아니면 선택 없이 + 경고 SELECTION_DROPPED.
     새 연구 준비 메시가 다르면 이후 사용 시 current() 가 None(SELECTION_MISSING reason SELECTION_DROPPED)."""
@@ -638,4 +706,4 @@ def clone_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tu
 
 __all__ = ["view_file", "derive_out", "selection_get", "selection_put", "plan_view", "basis_file", "params_table",
            "job_selection", "current", "require_selection", "selection_summary", "clone_selection", "reset_caches",
-           "refresh_derived", "selection_in"]
+           "refresh_derived", "selection_in", "auto_out", "auto_detect_doc"]

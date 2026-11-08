@@ -6,7 +6,7 @@
   (조립 폴더 아래 rad/inc 를 esl.rad 로 읽어 대상 파트 꼭짓점 근처 노드를 RBE2 클러스터로).
 - ``shell extract --cad --out-dir [--assem-dir --body-map --options --no-png --threads]`` → shell_features.json
   (D1 fixture ``tests/doe/synth_doe.features_doc`` 형식, 판 범위 = 제어 파일 plate), beads/*.png.
-- ``shell tag`` → shell_tag.json, ``shell update`` → sample.brep·shell_update.json·face_map.json,
+- ``shell tag`` → shell_tag.json·shell_tag_nodes.npz(v0.16.2 — 비드 바닥 = F(100+k), extract beads.bottom 과 같은 번호), ``shell update`` → sample.brep·shell_update.json·face_map.json,
   ``shell run`` → update/·morph/shell_morph.json·check/{shell_check.json, shell_run.json}·out_files/<rel>
   (원본 rad/inc 에서 **/NODE 좌표 필드만** 바꾼 사본, 노드가 바뀐 파일만 — synth_doe.morph_x, 고정 노드 불변),
   ``shell view grid`` → grid_manifest.json(nominal = {bbox, view_sha256} — 공칭 썸네일 없음)·cells/<id>/thumb.png.
@@ -261,6 +261,8 @@ def cmd_extract(a, rep) -> int:
     pid = pid_of_body_map(a.body_map)
     doc["parts"] = [{"body": "SHEET", "part_id": pid, "title": None}]
     doc["engine_version"] = CTL.get("version", VERSION)
+    for b in doc["beads"]:                       # v0.16.2 자동 탐지: 비드 바닥 면 번호(tag entity 와 같은 번호 — FAKE_BOTTOM_FACE + k)
+        b["bottom"] = [f"F{FAKE_BOTTOM_FACE + int(b['k'])}"]
     if not a.no_png:
         for f in doc["features"]:
             p = os.path.join(a.out_dir, f["png"])
@@ -283,11 +285,38 @@ def cmd_tag(a, rep) -> int:
     pid = pid_of_body_map(a.body_map)
     m = part_mesh(a.assem_dir, pid)
     maybe_sleep("tag", rep)
+    kind, ent = fake_tag(m["x0"])
+    np.savez(os.path.join(a.out_dir, "shell_tag_nodes.npz"), node_id=np.asarray(m["node_id"], np.int64),
+             part=np.zeros(m["node_id"].size, np.int32), kind=kind, entity=ent,
+             uv=np.zeros((m["node_id"].size, 2)), dist=np.zeros(m["node_id"].size),
+             fixed=np.zeros(m["node_id"].size, bool), geo_dist_fixed=np.full(m["node_id"].size, np.inf))
     dump(os.path.join(a.out_dir, "shell_tag.json"), env(status="OK", code=None, part_id=pid,
-                                                        n_nodes=int(m["node_id"].size), warnings=[]))
+                                                        n_nodes=int(m["node_id"].size), warnings=[],
+                                                        files={"nodes": "shell_tag_nodes.npz"}))
     rep.progress(100, "tag done")
     rep.result("OK", None, "shell_tag.json")
     return 0
+
+
+FAKE_BOTTOM_FACE = 100                       # 가짜 비드 k 바닥 면 = F(100 + k), 나머지 판 = F1
+
+
+def fake_tag(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """v0.16.2 가짜 shell tag: 모든 노드 FACE(1), 비드 k 바닥(가짜 extract 의 중심 ± 폭/2 × 길이/2 직사각형 — x·z) = F(100 + k),
+    그 밖 = F1. 제어 tag_empty 면 모두 미분류(−1 — AUTO_BEAD_UNMAPPED 시험)."""
+    import synth_doe as sd
+    n = X.shape[0]
+    kind = np.ones(n, np.int8)
+    ent = np.ones(n, np.int32)
+    if CTL.get("tag_empty"):
+        return np.full(n, -1, np.int8), np.zeros(n, np.int32)
+    doc = sd.features_doc({"x0": plate_box()}, int(CTL.get("n_beads", 2)), comp=COMP)
+    for b in doc["beads"]:
+        c, nom = b["center"], b["nominal"]
+        m = (np.abs(X[:, 0] - c[0]) <= 0.5 * float(nom["width"]) + 1e-9) & \
+            (np.abs(X[:, 2] - c[2]) <= 0.5 * float(nom["length"]) + 1e-9)
+        ent[m] = FAKE_BOTTOM_FACE + int(b["k"])
+    return kind, ent
 
 
 def write_brep(path: str, values: dict) -> None:

@@ -54,7 +54,7 @@ def test_islands_truth(F):
     assert D.bead("b2").islands == []                                       # 판 나머지(최대 성분)는 섬 아님
     s = D.summary(with_figures=False)
     b1s = next(b for b in s["beads"] if b["id"] == "b1")
-    assert len(b1s["islands"]) == 4 and sum(x["free_loops"] for x in b1s["islands"]) == 1 and s["algo"] == 2
+    assert len(b1s["islands"]) == 4 and sum(x["free_loops"] for x in b1s["islands"]) == 1 and s["algo"] == 3
     assert sum(bs.elems_of(D.index, x["elems"]).sum() for x in b1s["islands"]) == (g["label"] == "b1i").sum()
     d = bs.derive(g["mesh"], bs.normalize_input(sb.selection(g), CFG), CFG, fixed_scan=g["fixed_ids"])
     assert bs.elems_of(D.index, d["islands_suggested"]["b1"]).sum() == (g["label"] == "b1i").sum()
@@ -284,3 +284,22 @@ def test_features_module_truth(F):
     gp = sb.generate(H)
     dp = ft.diagnose(gp["mesh"], feature_angle_deg=30.0, hole_max_d_mm=8.0, island_max_mm=40.0)
     assert dp["holes_n"] == 0 and dp["holes_small_n"] == 0
+
+
+# ---------------------------------------------------------------- V-AD-6 range_check: check_steps 0 이어도 조합 점검(v0.16.2 AD-D-9)
+def test_range_check_combo_without_check_steps():
+    import synth_hard as sh
+    h1 = sh.build(sh.case("H1"))
+    out = {}
+    for steps in (5, 0):
+        cfg = settings({"bead_doe": {"enabled": True, "select": {"range": {"check_steps": steps}}}})
+        D = bs.derive_obj(h1["mesh"], bs.normalize_input(sh.selection(h1, [("S", 1), ("Dp", 1)]), cfg), cfg,
+                          fixed_node_ids=h1["fixed_ids"])
+        out[steps] = bs.range_check(h1["mesh"], D, bs.basis(h1["mesh"], D, cfg), cfg)
+    assert any(w["code"] == "SELECT_RANGE_COMBO" for w in out[5])
+    w0 = [w for w in out[0] if w["code"] == "SELECT_RANGE_COMBO"]
+    assert len(w0) == 1 and w0[0]["inverted_n"] > 0                     # 끝 점검을 꺼도 조합 점검은 실행
+    assert not any(w["code"] == "SELECT_RANGE_INVERTS" for w in out[0])  # 변수별 끝 이분은 꺼짐
+    cfg_off = settings({"bead_doe": {"enabled": True, "select": {"range": {"check_steps": 0, "combo_samples": 0}}}})
+    D = bs.derive_obj(h1["mesh"], bs.normalize_input(sh.selection(h1, [("S", 1), ("Dp", 1)]), cfg_off), cfg_off)
+    assert bs.range_check(h1["mesh"], D, bs.basis(h1["mesh"], D, cfg_off), cfg_off) == []

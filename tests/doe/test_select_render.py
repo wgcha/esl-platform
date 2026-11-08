@@ -142,7 +142,7 @@ def test_select_stage_flow(tmp_path, G):
     r = run("bd_select_grid", rev=1)
     gd = out / "doe" / "1" / "grid"
     gm = U.read_json(str(gd / pio.GRID_MANIFEST))
-    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 2
+    assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 3
     assert gm["color"]["unit"] == "mm" and gm["color"]["v_max"] > 0
     assert (gd / "cells" / "nominal" / "thumb.png").is_file()
     nomp = sr.png_rgb((gd / "cells" / "nominal" / "thumb.png").read_bytes())
@@ -275,7 +275,7 @@ def test_select_warn_flow_v0161(tmp_path, G):
     assert bj["algo"] == bs.ALGO
     run("bd_select_grid", rev=1)
     gm = U.read_json(str(out / "doe" / "1" / "grid" / pio.GRID_MANIFEST))
-    assert gm["rules"] == 2
+    assert gm["rules"] == 3
     warned = [c["id"] for c in gm["cells"] if c["status"] == "OK" and c.get("warnings")]
     assert warned and all("fixed_viol" in c for c in gm["cells"] if c["id"] in warned)
     st = {x["id"]: x for x in pio.read_grid(str(out / "doe" / "1" / "grid"), [c["id"] for c in gm["cells"]])["cells"]}

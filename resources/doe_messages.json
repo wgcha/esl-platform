@@ -1,5 +1,5 @@
 {
- "version": "2026-11-05.2",
+ "version": "2026-11-08.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -199,6 +199,14 @@
   "DEFEATURE_FIDELITY": "작은 형상 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 허용치(remesh.fidelity.fail_mm)보다 멀어 다음 단계로 넘겼습니다.",
   "DEFEATURE_NO_FEATURE": "형상 단순화 단계: 억제할 작은 형상이 없어 건너뛰었습니다.",
   "DEFEATURE_TOO_MANY": "작은 형상 인식 수가 상한(compare.defeature.max_features)을 넘어 앞에서부터만 억제했습니다.",
-  "MESH_INPUT_DIAG": "메시 입력에 작은 구멍·섬이 있습니다(보고만 — 메시는 바꾸지 않음). 필요하면 HyperMesh 에서 정리하세요."
+  "MESH_INPUT_DIAG": "메시 입력에 작은 구멍·섬이 있습니다(보고만 — 메시는 바꾸지 않음). 필요하면 HyperMesh 에서 정리하세요.",
+  "AUTO_DETECT_FAILED": "자동 탐지(paicad {step})가 실패했습니다({detail}) — 준비는 완료됐고 초기 선택이 비어 있습니다. 비드를 직접 선택하세요. (Auto detection failed at {step} ({detail}); preparation is ready with an empty selection — select beads manually.)",
+  "AUTO_TOO_MANY_BEADS": "자동 탐지 비드 {n}개가 상한 {max}개(select.max_beads)를 넘어 앞에서부터 {max}개만 초기 선택에 넣었습니다. ({n} detected beads exceed select.max_beads {max}; only the first {max} were kept.)",
+  "AUTO_GROUP_DROPPED": "(정보) paicad 대칭 묶음(group)은 초기 선택에 넣지 않았습니다 — 비드마다 따로 변수가 됩니다. (Info: paicad symmetry groups were not carried over; each bead gets its own variables.)",
+  "AUTO_BEAD_UNMAPPED": "자동 탐지 비드 {bead}의 바닥 면에 tag 된 메시 요소가 없어 초기 선택에서 뺐습니다 — STEP 과 메시의 위치·좌표계를 확인하세요. (Detected bead {bead} has no mesh floor elements tagged to its bottom face; check that the STEP and the mesh share position and coordinate system.)",
+  "AUTO_SLOPE_DIFF": "(정보) 비드 {bead}: 유도 사면 폭이 paicad 사면(flank) 폭과 {rel} 만큼(상대) 다릅니다 — 사면 자동 탐색 결과를 확인하세요(값은 바꾸지 않음). (Info: bead {bead} derived slope width differs from the paicad flank by {rel} (relative); check the slope — nothing was changed.)",
+  "SELECT_BRIDGE_SKIPPED": "경계를 끊는 큰 구멍(등가 지름 {eq_d_mm} mm > select.hole.bridge_max_mm)은 건너 잇지 않았습니다(끝점 간격 {gap_mm} mm) — 비드 경계가 열린 채로 남습니다. (A large opening (equivalent diameter {eq_d_mm} mm > select.hole.bridge_max_mm) was not bridged (gap {gap_mm} mm); the bead boundary stays open.)",
+  "AUTO_NOT_AVAILABLE": "자동 탐지 초기 선택이 없습니다(수동 스터디이거나 자동 탐지 결과가 없음). (No auto-detected selection: manual study or no detection result.)",
+  "PREP_NOT_READY": "준비(DOE_PREP)가 끝나지 않았습니다. (Preparation is not ready.)"
  }
 }

@@ -24,6 +24,9 @@
 - v0.15.0 select(비드 직접 선택, esl_bead_select.md §8): BD_MESH0 SKIPPED, BD_GEOM = paicad 준비됨이면 모델 전체 사본 →
   fixed-scan(Ch/R 파트) → prep/fixed/ 만(extract·tag 없음), paicad 없음·실패 → SKIPPED + 경고 FIXED_INFO_MISSING(준비 성공).
   BD_GRID = 코어 자식 ``bd_select_grid``(paicad grid 없음, 같은 grid_manifest 형식). BD_DESIGNS = paicad 없이 코어 bd_eval.
+- v0.16.2(esl_bead_auto.md AD-D-2·17): select 자동 탐지(doe.bead_source auto)는 BD_GEOM 에 extract0 → extract → tag 를 더하고
+  결과를 prep/auto_detect.json 에(실패 = AUTO_DETECT_FAILED 경고, 준비 계속). select_base mesh(② B 메시 기준) = assem
+  input/mesh(사본 없음) + A Case a_fixed(② 그대로). 안 평가·받기는 코어(_sel_*) — 워커 분기 없음.
 - 쓰기는 ``_doe/<id>/`` 아래만(코어 Writer 입력 목록 = 항목·Case 입력·업로드 거부), 작은 JSON 은 core/atomic.
 """
 
@@ -511,9 +514,29 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     return outputs
 
 
+AUTO_DETECT_SCHEMA = "esl/doe_auto_detect/1"
+AUTO_STEPS = ("extract0", "extract", "tag")
+
+
+def select_mode(doe: dict[str, Any], info: dict[str, Any] | None = None) -> tuple[bool, bool]:
+    """v0.16.2(esl_bead_auto.md AD-D-1·13): select 작업의 (자동 탐지, B 메시 기준) = 작업 스펙 doe.bead_source·select_base, 없으면
+    준비 결과(코어 select_prep_info 또는 prep/input.json). 둘 다 없으면 (수동, Case)."""
+    info = info or {}
+    auto = (doe.get("bead_source") or info.get("bead_source")) == "auto"
+    mesh = (doe.get("select_base") or info.get("select_base")) == "mesh"
+    return auto, mesh
+
+
 def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
-    """select BD_GEOM(§8.1, BS-D-8): paicad 준비됨 → prep/assem_full(모델 전체 사본) → fixed-scan(Ch/R 파트) → prep/fixed/.
-    paicad 없음·버전 불가·사본/fixed-scan 실패 → SKIPPED + 경고 FIXED_INFO_MISSING(준비는 계속 — 코어 bd_loads 가 고정 없음 처리)."""
+    """select BD_GEOM(BS-D-8 + v0.16.2 esl_bead_auto.md AD-D-2·16·17).
+
+    plan — case: assem_full(모델 전체 사본) → fixed → (auto) extract0 → extract → tag.
+    mesh: [a_fixed(A Case 있으면 — ② 그대로)] → fixed(assem = input/mesh, 상한 1e12 = ②) → (auto) extract0 → extract → tag.
+    실패 처리 — 준비는 언제나 계속(READY): paicad 없음·조립 실패·fixed-scan 실패 = FIXED_INFO_MISSING(step SKIPPED, 코어 bd_loads
+    가 고정 없음 처리), extract0·extract·tag 실패 = AUTO_DETECT_FAILED{step, code}(빈 seed — 수동 계속). paicad 없음 + auto =
+    AUTO_DETECT_FAILED{step: "version"}. tag 는 fixed-scan 결과를 입력으로 받으므로 고정 정보가 없으면 실행하지 않고
+    AUTO_DETECT_FAILED{step: "tag", code: FIXED_INFO_MISSING}. auto 면 결과를 prep/auto_detect.json
+    {schema, ok, step, code, paicad_version} 으로 남긴다(코어 BD_LOADS 가 읽어 auto_selection)."""
     echo = _echo_fn(log_path)
     doe = ex.lib["doe"]
     full, dcfg = _cfg(ex)
@@ -524,7 +547,18 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     inp = _read_json(os.path.join(prep, "input.json"))
     if not isinstance(inp, dict):
         raise _fail("PREREQUISITE_MISSING", "prep/input.json 이 없습니다 — BD_INPUT 부터 다시")
+    try:
+        info = core_adapter.doe_select_prep_info(out) or {}
+    except core_adapter.CoreError:
+        info = {}
+    if not info:                    # 옛 코어: prep/input.json 에서 같은 값
+        st0 = inp.get("step") if isinstance(inp.get("step"), dict) else {}
+        info = {"select_base": inp.get("select_base"), "bead_source": inp.get("bead_source"),
+                "part_id": inp.get("part_id"), "step_rel": st0.get("rel")}
+    auto, mesh_base = select_mode(doe, info)
     outputs: dict[str, Any] = {"paicad_version": None, "commands": [], "fixed": None}
+    state: dict[str, Any] = {"fixed": None, "auto": None}     # fixed = 고정 정보 없음 사유, auto = (step, code)
+    pio = core_adapter.doe_paicad_io()
 
     def fresh(rel: str) -> str:
         try:
@@ -532,64 +566,174 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         except core_adapter.CoreError as exc:
             raise _fail(exc.code, exc.message) from None
 
-    def skip(reason: str) -> dict[str, Any]:
-        if os.path.isdir(os.path.join(prep, "fixed")):       # 부분 결과를 고정 정보로 쓰지 않게(_backup 으로 이동)
-            fresh(os.path.join("prep", "fixed"))
-        echo(f"[esl-worker] BD_GEOM(select): 체결(고정) 정보 없음 — {reason} → SKIPPED(FIXED_INFO_MISSING)")
-        outputs["fixed"] = {"source": "none", "reason": reason[:300]}
+    def auto_failed(step: str, code: str | None) -> None:
+        if auto and state["auto"] is None:
+            state["auto"] = (step, str(code or "PAICAD_FAILED"))
+            echo(f"[esl-worker] 자동 탐지 실패({step}: {state['auto'][1]}) — AUTO_DETECT_FAILED, 빈 seed(수동 선택 계속)")
+
+    def finish() -> dict[str, Any]:
+        warns: list[str] = []
+        if auto:
+            step, code = state["auto"] or (None, None)
+            doc = {"schema": AUTO_DETECT_SCHEMA, "ok": state["auto"] is None, "step": step, "code": code,
+                   "paicad_version": outputs["paicad_version"]}
+            _write_json(os.path.join(prep, "auto_detect.json"), doc)
+            outputs["auto"] = {k: doc[k] for k in ("ok", "step", "code")}
+            if state["auto"] is not None:
+                warns.append(f"[BD_GEOM] AUTO_DETECT_FAILED: 자동 탐지 실패({step}: {code}) — 수동으로 선택하세요")
+        reason = state["fixed"]
+        if reason is not None:
+            if os.path.isdir(os.path.join(prep, "fixed")):   # 부분 결과를 고정 정보로 쓰지 않게(_backup 으로 이동)
+                fresh(os.path.join("prep", "fixed"))
+            echo(f"[esl-worker] BD_GEOM(select): 체결(고정) 정보 없음 — {reason} → SKIPPED(FIXED_INFO_MISSING)")
+            outputs["fixed"] = {"source": "none", "reason": reason[:300]}
+            warns.insert(0, f"[BD_GEOM] FIXED_INFO_MISSING: {reason[:300]}")
         with ex._tx() as conn:
-            jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] FIXED_INFO_MISSING: {reason[:300]}"])
+            if warns:
+                jobs_repo.add_warnings(conn, ex.job["id"], ex.token, warns)
             jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_geom": _jsonable(outputs)})
         prog(100)
-        return {"_skipped": True, "skipped": f"체결 정보 없음(FIXED_INFO_MISSING) — {reason[:200]}"}
+        if reason is not None:
+            return {"_skipped": True, "skipped": f"체결 정보 없음(FIXED_INFO_MISSING) — {reason[:200]}"}
+        return outputs
 
     v = paicad_proc.version_check(ex.settings, full)
     if not v.get("ready"):
-        return skip(f"paicad 를 쓸 수 없음({v.get('reason') or 'PAICAD_CHECK_FAILED'})")
+        code = v.get("reason") or "PAICAD_CHECK_FAILED"
+        state["fixed"] = f"paicad 를 쓸 수 없음({code})"
+        auto_failed("version", code)
+        return finish()
     echo(f"[esl-worker] paicad version: {v.get('version')} (OCP {v.get('ocp')}, 고정 {v.get('pinned')})"
-         + (f" — {v['warning']}" if v.get("warning") else ""))
+         + (f" — {v['warning']}" if v.get("warning") else "")
+         + f" · select {'자동 탐지' if auto else '수동'} · 기준 {'B 메시' if mesh_base else 'Case 메시'}")
     outputs["paicad_version"] = v.get("version")
     _write_json(os.path.join(prep, "paicad.json"), {k: v.get(k) for k in ("version", "ocp", "pinned", "warning",
                                                                           "checked_at")})
-    b = doe.get("base") or {}
-    try:
-        check_input_path(ex.settings, b["rad_path"], "RAD")
-    except DomainError as exc:
-        raise _fail(exc.code, f"기준 Case 입력을 쓸 수 없습니다: {exc.message}") from None
-    case_dir = b.get("case_dir") or os.path.dirname(b["rad_path"])
-    try:
-        inproc.call(ex, lambda: core_adapter.doe_assem_check(case_dir, float(dcfg["same"]["max_assem_mb"])),
-                    label="조립 폴더 검사")
-        assem, man = _stage_full(ex, b["rad_path"], case_dir, "assem_full", echo)
-    except core_adapter.CoreError as exc:
-        return skip(f"모델 전체 사본 실패({exc.code}: {exc.message})")
-    outputs["assem_full"] = core_adapter.doe_assem_summary(man)
-    prog(30)
+    if v.get("warning"):
+        with ex._tx() as conn:
+            jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] {v['warning']}"])
+    assem = man = None
+    if mesh_base:           # AD-D-17: ② 와 같음 — assem = input/mesh(사본 없음), 폴더 검사 상한 1e12
+        assem = os.path.join(out, "input", "mesh")
+        try:
+            inproc.call(ex, lambda: core_adapter.doe_assem_check(assem, 1e12), label="조립 폴더 검사(B 메시)")
+        except core_adapter.CoreError as exc:
+            state["fixed"] = f"B 메시 조립 폴더 검사 실패({exc.code}: {exc.message})"
+            auto_failed("assem", exc.code)
+            assem = None
+    else:
+        b = doe.get("base") or {}
+        try:
+            check_input_path(ex.settings, b["rad_path"], "RAD")
+        except DomainError as exc:
+            raise _fail(exc.code, f"기준 Case 입력을 쓸 수 없습니다: {exc.message}") from None
+        case_dir = b.get("case_dir") or os.path.dirname(b["rad_path"])
+        try:
+            inproc.call(ex, lambda: core_adapter.doe_assem_check(case_dir, float(dcfg["same"]["max_assem_mb"])),
+                        label="조립 폴더 검사")
+            assem, man = _stage_full(ex, b["rad_path"], case_dir, "assem_full", echo)
+        except core_adapter.CoreError as exc:
+            state["fixed"] = f"모델 전체 사본 실패({exc.code}: {exc.message})"
+            auto_failed("assem_full", exc.code)
+            assem = None
+        if man is not None:
+            outputs["assem_full"] = core_adapter.doe_assem_summary(man)
+    prog(20)
+    a_case = _a_case(ex, echo) if mesh_base else None       # ② 그대로: A 체결점은 경계 경고용(고정 노드에 넣지 않음, O-1)
+    plan = (["a_fixed"] if a_case else []) + (["fixed"] if assem else []) + (list(AUTO_STEPS) if auto and assem else [])
+    n = max(len(plan), 1)
+    done = {"i": 0}
+
+    def progress(pct: int, _msg: str) -> None:
+        prog(20 + 80.0 * (done["i"] + pct / 100.0) / n)
+
     pc = dcfg["paicad"]
     opts = None
     if pc.get("options"):
         opts = os.path.join(prep, "paicad_options.json")
         _write_json(opts, pc["options"])
-    pio = core_adapter.doe_paicad_io()
-    d = fresh(os.path.join("prep", "fixed"))
-    r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
-                                              "out_dir": d, "options": opts, "threads": int(pc["threads"])},
-                cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
-                stage="prep", echo=echo, progress=lambda pct, _m: prog(30 + 0.7 * pct), tick=_tick(ex),
-                label="fixed-scan ")
-    outputs["commands"].append({"step": "fixed", "exit_code": r["exit_code"], "seconds": r["seconds"], "ok": r["ok"]})
-    if not r["ok"]:
-        return skip(f"fixed-scan 실패({r.get('code')}{fixed_hint(r, man)})")
-    fx = (r.get("report") or {}).get("fixed") or {}
-    echo(f"[esl-worker] 고정 노드 {fx.get('total')} (클러스터 {len(fx.get('clusters') or [])})")
-    outputs["fixed"] = {"source": "scan", "n": fx.get("total")}
-    if v.get("warning"):
-        with ex._tx() as conn:
-            jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] {v['warning']}"])
-    with ex._tx() as conn:
-        jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_geom": _jsonable(outputs)})
-    prog(100)
-    return outputs
+    threads = int(pc["threads"])
+    cad = os.path.join(out, *str(info["step_rel"]).split("/")) if info.get("step_rel") else None
+    body_map = None
+    tick = _tick(ex)
+    for step in plan:
+        if step in AUTO_STEPS and state["auto"] is not None:
+            break
+        r = None
+        if step == "a_fixed":
+            d = fresh(os.path.join("prep", "a_fixed"))
+            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": a_case["case_dir"], "parts": str(a_case["part_id"]),
+                                                      "out_dir": d, "options": opts, "threads": threads},
+                        cwd=prep, capture=os.path.join(prep, "a_fixed.stdout.log"),
+                        report=os.path.join(d, pio.SCAN_JSON), stage="prep", echo=echo, progress=progress, tick=tick,
+                        label="fixed-scan(A) ")
+            if not r["ok"]:
+                echo(f"[esl-worker] A Case fixed-scan 실패({r['code']}{fixed_hint(r, a_case.get('man'))}) — A 체결점은 "
+                     "3-2-1 만(A_FASTENERS_UNKNOWN)")
+        elif step == "fixed":
+            d = fresh(os.path.join("prep", "fixed"))
+            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
+                                                      "out_dir": d, "options": opts, "threads": threads},
+                        cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
+                        stage="prep", echo=echo, progress=progress, tick=tick, label="fixed-scan ")
+            if r["ok"]:
+                fx = (r.get("report") or {}).get("fixed") or {}
+                echo(f"[esl-worker] 고정 노드 {fx.get('total')} (클러스터 {len(fx.get('clusters') or [])})")
+                outputs["fixed"] = {"source": "scan", "n": fx.get("total")}
+            else:
+                state["fixed"] = f"fixed-scan 실패({r.get('code')}{fixed_hint(r, man)})"
+        elif step == "extract0":
+            if cad is None or not os.path.isfile(cad):
+                auto_failed("extract0", "PREREQUISITE_MISSING")     # 코어 BD_INPUT 이 STEP 사본(input/step)을 남기지 않음
+                continue
+            d = fresh(os.path.join("prep", "extract0"))
+            r = _paicad(ex, st, "paicad_extract", {"cad": cad, "out_dir": d, "assem_dir": None, "body_map": None,
+                                                   "options": opts, "threads": threads},
+                        cwd=prep, capture=os.path.join(prep, "extract0.stdout.log"),
+                        report=os.path.join(d, pio.EXTRACT_JSON), stage="prep", echo=echo, progress=progress,
+                        tick=tick, label="extract(1차) ")
+            if not r["ok"]:
+                auto_failed("extract0", r.get("paicad_code") or r.get("code"))
+            else:
+                try:
+                    bm = pio.body_map_doc(pio.read_json_limited(os.path.join(d, pio.EXTRACT_JSON),
+                                                                float(dcfg["limits"]["max_json_mb"])), inp["part_id"])
+                    body_map = os.path.join(prep, "body_map.json")
+                    _write_json(body_map, bm)
+                except Exception as exc:  # noqa: BLE001 - EslError(STEP_BODY_COUNT·PAICAD_FAILED)
+                    auto_failed("extract0", getattr(exc, "code", "PAICAD_FAILED"))
+        elif step == "extract":
+            d = fresh(os.path.join("prep", "extract"))
+            r = _paicad(ex, st, "paicad_extract", {"cad": cad, "out_dir": d, "assem_dir": assem, "body_map": body_map,
+                                                   "options": opts, "threads": threads},
+                        cwd=prep, capture=os.path.join(prep, "extract.stdout.log"),
+                        report=os.path.join(d, pio.EXTRACT_JSON), stage="prep", echo=echo, progress=progress,
+                        tick=tick, label="extract ")
+            if r["ok"]:
+                doc = r.get("report") or {}
+                echo(f"[esl-worker] 비드 {len(doc.get('beads') or [])} · 특징 {len(doc.get('features') or [])}")
+                outputs["n_beads"] = len(doc.get("beads") or [])
+            else:
+                auto_failed("extract", r.get("paicad_code") or r.get("code"))
+        else:   # tag
+            if state["fixed"] is not None:          # tag 입력 = fixed-scan 결과(--fixed-dir)
+                auto_failed("tag", "FIXED_INFO_MISSING")
+                continue
+            d = fresh(os.path.join("prep", "tag"))
+            r = _paicad(ex, st, "paicad_tag", {"cad": cad, "features": os.path.join(prep, "extract", pio.EXTRACT_JSON),
+                                               "assem_dir": assem, "fixed_dir": os.path.join(prep, "fixed"),
+                                               "out_dir": d, "body_map": body_map, "options": opts,
+                                               "threads": threads},
+                        cwd=prep, capture=os.path.join(prep, "tag.stdout.log"), report=os.path.join(d, pio.TAG_JSON),
+                        stage="prep", echo=echo, progress=progress, tick=tick, label="tag ")
+            if not r["ok"]:
+                auto_failed("tag", r.get("paicad_code") or r.get("code"))
+        if r is not None:
+            outputs["commands"].append({"step": step, "exit_code": r["exit_code"], "seconds": r["seconds"],
+                                        "ok": r["ok"]})
+        done["i"] += 1
+        prog(20 + 80.0 * done["i"] / n)
+    return finish()
 
 
 # ---------------------------------------------------------------- BD_GRID

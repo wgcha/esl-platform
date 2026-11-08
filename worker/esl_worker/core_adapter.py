@@ -1100,6 +1100,16 @@ def doe_assem_check(d: str, max_mb: float) -> dict:
     return _wrap(_attr("esl.doe.scenario", "assem_dir_check"), d, max_mb)
 
 
+def doe_select_prep_info(out: str) -> dict | None:
+    """v0.16.2 select BD_GEOM plan 재료(esl.doe.stages.select_prep_info — {select_base, bead_source, assem, part_id, part_title,
+    step_rel}). 코어에 없으면(옛 코어) None — 호출자가 prep/input.json·작업 스펙으로 대신 판단."""
+    try:
+        fn = _attr("esl.doe.stages", "select_prep_info")
+    except CoreUnavailable:
+        return None
+    return _wrap(fn, out)
+
+
 def doe_design_sha(doe: dict, out: str, did: str) -> str:
     """BD-D-16 안 input_sha256(= bd_eval 이 done.json 에 쓰는 값) — 이어하기에서 paicad 를 다시 돌릴지 판단."""
     S = _mod("esl.doe.stages")

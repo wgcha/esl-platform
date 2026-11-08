@@ -223,7 +223,9 @@ def api(client, method: str, path: str, token: str = "tok-power", write: bool | 
 SELECT_KEYS_V0161 = (("fixed_policy",), ("island",), ("hold",), ("quality", "fail_policy"), ("range", "depth_max_rel"),
                      ("range", "width_max_rel"), ("range", "width_floor_q"), ("range", "check_steps"),
                      ("range", "combo_samples"), ("quality", "rot_warn_deg"), ("quality", "area_ratio_min"),
-                     ("quality", "distort_rel"), ("quality", "distort_min_mm"), ("cross_bead_policy",), ("cross_bead_tol_mm",))
+                     ("quality", "distort_rel"), ("quality", "distort_min_mm"), ("cross_bead_policy",), ("cross_bead_tol_mm",),
+                     # v0.16.2(esl_bead_auto.md §3.2): 구멍 건너 잇기 상한·자동 탐지 사면 힌트 — 코어 병합 전에는 대조 생략
+                     ("hole",), ("auto",))
 COMPARE_KEYS_V0161 = tuple(("defeature", k) for k in (
     "kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm", "narrow_w_factor",
     "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),)

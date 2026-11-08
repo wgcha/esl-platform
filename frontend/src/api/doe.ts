@@ -1,7 +1,7 @@
 // v0.9.0 비드 형상 DOE API(계약 esl_bead_doe.md §10). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
-  DoeBasisMeta, DoeDeriveOut, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
+  DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
@@ -64,7 +64,7 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     reason: typeof r.reason === "string" ? r.reason : null,
     paicad: sub("paicad"),
     gmsh: sub("gmsh"),
-    scenarios: sub("scenarios"),
+    scenarios: normalizeScenarios(sub("scenarios"), r.scenarios),
     max_entries: num(r.max_entries, DEFAULT_SETTINGS.max_entries),
     max_designs: num(r.max_designs, DEFAULT_SETTINGS.max_designs),
     doe: sub("doe"),
@@ -77,6 +77,16 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     compare: normalizeCompareCfg(r.compare, r),
     select: normalizeSelectCfg(r.select, r),
     select_reason: typeof r.select_reason === "string" ? r.select_reason : null,
+  };
+}
+
+/** v0.16.2 scenarios.select_auto·select_mesh(esl_bead_auto.md §3.2) — 서버가 줄 때만 */
+function normalizeScenarios(base: DoeSettingsOut["scenarios"], raw: unknown): DoeSettingsOut["scenarios"] {
+  const v = isObj(raw) ? raw : {};
+  return {
+    ...base,
+    ...(typeof v.select_auto === "boolean" ? { select_auto: v.select_auto } : {}),
+    ...(typeof v.select_mesh === "boolean" ? { select_mesh: v.select_mesh } : {}),
   };
 }
 
@@ -97,6 +107,8 @@ function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSele
     ...(v.fixed_policy === "warn" || v.fixed_policy === "skip" ? { fixed_policy: v.fixed_policy } : {}),
     ...(v.quality_fail_policy === "warn" || v.quality_fail_policy === "skip" ? { quality_fail_policy: v.quality_fail_policy } : {}),
     ...(isObj(v.hold) ? { hold: { ring_mm: num(v.hold.ring_mm, 3), blend_mm: num(v.hold.blend_mm, 8) } } : {}),
+    // v0.16.2 AD-D-7
+    ...(isObj(v.hole) ? { hole: { bridge_max_mm: num(v.hole.bridge_max_mm, 20) } } : {}),
   };
 }
 
@@ -261,7 +273,22 @@ export const doe = {
   basisMeta: (id: string, rev: number) => request<DoeBasisMeta>("GET", `/doe/studies/${id}/select/basis`, { query: { meta: "1", rev: String(rev) } }),
   // ---- v0.16.1 ④ 작은 형상 억제 목록(esl_select_relax.md §9 — mesh/defeature.json 그대로, 없으면 404)
   shapeDefeature: (id: string, did: string) => request<DoeDefeatureList>("GET", `/doe/studies/${id}/shapes/${encodeURIComponent(did)}/defeature`).then(normalizeDefeatureList),
+  // ---- v0.16.2 자동 탐지 seed(esl_bead_auto.md §3.3 — 404 AUTO_NOT_AVAILABLE · 409 PREP_NOT_READY)
+  selectAuto: (id: string) => request<DoeSelectAutoOut>("GET", `/doe/studies/${id}/select/auto`),
 };
+/** 계약 이름(api/doe.ts getSelectAuto) */
+export const getSelectAuto = doe.selectAuto;
+/** seed 불러오기: 404 AUTO_NOT_AVAILABLE = seed 없음(null), 그 밖 오류는 그대로. 비드 0개 seed(자동 탐지 실패)도 null */
+export async function loadSelectAuto(id: string): Promise<{ seed: DoeSelectAutoOut | null; code: string | null }> {
+  try {
+    const r = await doe.selectAuto(id);
+    if (!r?.selection || !Array.isArray(r.selection.beads) || !r.selection.beads.length) return { seed: null, code: r?.warnings?.find((w) => w.code === "AUTO_DETECT_FAILED") ? "AUTO_DETECT_FAILED" : "AUTO_EMPTY" };
+    return { seed: { ...r, warnings: Array.isArray(r.warnings) ? r.warnings : [], map: Array.isArray(r.map) ? r.map : [] }, code: null };
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "AUTO_NOT_AVAILABLE") return { seed: null, code: "AUTO_NOT_AVAILABLE" };
+    throw e;
+  }
+}
 /** 계약 R4 이름(api/doe.ts getShapeDefeature) */
 export const getShapeDefeature = doe.shapeDefeature;
 
@@ -279,8 +306,33 @@ export function normalizeDefeatureList(raw: unknown): DoeDefeatureList {
 
 // ---------------------------------------------------------------- 표기
 export const SCENARIOS: DoeScenario[] = ["same", "mesh", "step", "compare"];
+/** v0.16.2 새 스터디 라디오 위치(①②③④). ①② = 시나리오 select(① case · ② mesh) — same·mesh 는 새로 만들지 않음(AD-D-1·13) */
+export type NewRadio = "case" | "bmesh" | "step" | "compare";
+export const NEW_RADIOS: NewRadio[] = ["case", "bmesh", "step", "compare"];
+export const NEW_RADIO_NO: Record<NewRadio, string> = { case: "①", bmesh: "②", step: "③", compare: "④" };
+export const NEW_RADIO_NAME: Record<NewRadio, string> = { case: "같은 모델", bmesh: "다른 모델(B 메시)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)" };
+/** 라디오 → 요청 시나리오·기준 */
+export const radioRequest = (r: NewRadio): { scenario: DoeScenario; selectBase: DoeSelectBase | null } =>
+  r === "case" ? { scenario: "select", selectBase: "case" } : r === "bmesh" ? { scenario: "select", selectBase: "mesh" } : { scenario: r, selectBase: null };
+/** 기존 스터디 → 라디오 위치(same = ①, mesh = ②, select = select_base) */
+export const studyRadio = (s: DoeScenario, base?: DoeSelectBase | null): NewRadio =>
+  s === "same" ? "case" : s === "mesh" ? "bmesh" : s === "select" ? (base === "mesh" ? "bmesh" : "case") : s;
+/** ①② 하위 라디오(AD-D-1) */
+export const BEAD_SOURCE_NAME: Record<DoeBeadSource, string> = { auto: "자동 탐지", manual: "직접 선택" };
+/** v0.16.2 ①② 하위 선택 비활성 사유(null = 가능). 옛 서버(select_auto·select_mesh 없음)는 paicad 준비·select 가능으로 판정 */
+export function selectSubBlocked(st: DoeSettingsOut, base: DoeSelectBase, source: DoeBeadSource): string | null {
+  const sb = scenarioBlocked(st, "select");
+  if (sb) return sb;
+  if (base === "mesh" && st.scenarios.select_mesh === false) return "서버에서 다른 모델(B 메시) 비드 선택이 꺼져 있습니다";
+  const paicadOff = !st.enabled && !!st.reason && st.reason.startsWith("PAICAD");
+  if (source === "auto" && (paicadOff || (st.scenarios.select_auto ?? st.paicad.ready) === false)) return "형상 엔진(paicad)이 준비되지 않아 자동 탐지를 쓸 수 없습니다 — 직접 선택을 쓰세요";
+  return null;
+}
 export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)", select: "같은 모델" };
 export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④", select: "①" };
+/** v0.16.2 스터디 목록 시나리오 표기: ② B 메시 기준 select(inputs.select_base "mesh") = "② 다른 모델(B 메시)", 그 밖 = SCENARIO_NO·NAME */
+export const studyScenarioLabel = (s: DoeScenario, base?: DoeSelectBase | null): string =>
+  s === "select" && base === "mesh" ? `${NEW_RADIO_NO.bmesh} ${NEW_RADIO_NAME.bmesh}` : `${SCENARIO_NO[s]} ${SCENARIO_NAME[s]}`;
 /** ① 하위 선택 "비드 정의"(BS-D-1) */
 export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선택(메시)" } as const;
 /** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
@@ -323,9 +375,10 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
   (w.code === "SELECT_RANGE_INVERTS" && Array.isArray(w.usable) && w.usable.length === 2
     ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
     : "") ||
+  autoWarnText(w) ||
   CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
-/** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시 */
-export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info";
+/** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
+export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && AUTO_INFO.has(w.code));
 
 // ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
 export const SELECT_CODE_TEXT: Record<string, string> = {
@@ -378,7 +431,38 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   SELECT_CROSS_BEAD_VIOLATION: "다른 선택 비드 침범(제외)",
   SELECT_RANGE_COMBO: "변수를 함께 바꾸면 뒤집히는 조합이 있습니다 — 함께 쓸 수 있는 범위를 확인하세요",
   SELECT_W_RANGE_LIMIT: "폭 W 범위 끝의 경계 이동이 단 간격·이웃 비드 거리보다 큽니다",
+  // v0.16.2 자동 탐지·건너 잇기·극단 요소(esl_bead_auto.md §8)
+  AUTO_DETECT_FAILED: "비드 자동 탐지에 실패했습니다 — 직접 선택으로 진행하세요",
+  AUTO_TOO_MANY_BEADS: "자동 탐지 비드가 상한보다 많아 앞에서부터 잘랐습니다",
+  AUTO_GROUP_DROPPED: "자동 탐지의 비드 묶음은 풀어서 가져왔습니다",
+  AUTO_BEAD_UNMAPPED: "자동 탐지 비드의 바닥 요소를 메시에서 찾지 못했습니다",
+  AUTO_SLOPE_DIFF: "자동 탐지 사면 폭이 계산한 사면과 다릅니다(참고)",
+  AUTO_NOT_AVAILABLE: "자동 탐지 결과가 없습니다",
+  SELECT_BRIDGE_SKIPPED: "큰 구멍은 건너 잇지 않았습니다",
+  MORPH_EXTREME_ELEMENTS: "모핑 후 극단 요소(넓이 비·법선 회전)가 있습니다",
 };
+/** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */
+const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
+/** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
+const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF"]);
+/** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
+function autoWarnText(w: Record<string, unknown>): string {
+  const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
+  switch (w.code) {
+    case "AUTO_DETECT_FAILED":
+      return `비드 자동 탐지 실패(${AUTO_STEP_NAME[String(w.step ?? "")] ?? String(w.step ?? "?")}${w.detail ? ` · ${String(w.detail)}` : ""}) — 직접 선택으로 진행하세요`;
+    case "AUTO_TOO_MANY_BEADS":
+      return w.n != null && w.max != null ? `자동 탐지 비드 ${n(w.n)}개 — 상한 ${n(w.max)}개까지만 가져왔습니다` : "";
+    case "AUTO_BEAD_UNMAPPED":
+      return w.bead != null ? `${String(w.bead).toUpperCase()}: 바닥 요소를 메시에서 찾지 못했습니다 — 직접 고르세요` : "";
+    case "AUTO_SLOPE_DIFF":
+      return w.bead != null && typeof w.rel === "number" ? `${String(w.bead).toUpperCase()}: 자동 탐지 사면 폭이 계산값과 ${(w.rel * 100).toFixed(0)} % 다릅니다(참고)` : "";
+    case "SELECT_BRIDGE_SKIPPED":
+      return w.eq_d_mm != null ? `등가 지름 ${n(w.eq_d_mm)} mm 구멍은 건너 잇지 않았습니다${w.gap_mm != null ? `(틈 ${n(w.gap_mm)} mm)` : ""}` : "";
+    default:
+      return "";
+  }
+}
 /** v0.16.1 derive 경고 코드(비드·선택 warnings[].code — 서버 문구 원본 resources/doe_messages.json) */
 export type SelectDeriveWarnCode =
   | "SELECT_SLOPE_LEAK" | "SELECT_TIER_MISSING" | "SELECT_OPEN_BOUNDARY" | "SELECT_DISCONNECTED" | "SELECT_NONPLANAR_BASE"
@@ -397,7 +481,7 @@ export function cellWarnText(w: DoeCellWarning): string {
   return `새 Fail ${w.new_fail.toLocaleString()} (${(w.new_fail_ratio * 100).toFixed(1)} %)${ext}`;
 }
 /** 순위 행 경고 이름 */
-export const RANK_WARN_NAME: Record<string, string> = { FIXED_MOVED: "체결 위치 어긋남", QUALITY_WARN: "품질 경고", CROSS_BEAD_MOVE: "다른 비드 침범" };
+export const RANK_WARN_NAME: Record<string, string> = { FIXED_MOVED: "체결 위치 어긋남", QUALITY_WARN: "품질 경고", CROSS_BEAD_MOVE: "다른 비드 침범", MORPH_EXTREME_ELEMENTS: "극단 요소" };
 /** v0.16.1 판정 규칙 판 띠(§7.4) */
 export const RULES_OUTDATED_TEXT = "판정 규칙이 바뀌었습니다 — 다시 미리보기하면 경고 안도 실행됩니다";
 

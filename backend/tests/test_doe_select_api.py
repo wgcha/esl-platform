@@ -25,16 +25,18 @@ from doe_support import (
     R,
     W,
     api,
+    body,
     doe_settings_dict,
     finish_job,
     png_bytes,
+    rad_mesh_bytes,
     record_paicad,
     study_dir,
     update_study,
     upload_step,
 )
 from esl_test_support import API, H
-from opt_support import make_case, plate, seed_opt_entry
+from opt_support import make_case, plate, seed_opt_entry, upload_files
 from sqlalchemy import text
 
 SLOW = threading.Event()
@@ -391,7 +393,8 @@ def test_settings_select_block(client, world):
                            "blend": {"min_mm": 15.0, "max_mm": 200.0},
                            # v0.16.1 V-SR-13(settings 키)
                            "fixed_policy": "warn", "quality_fail_policy": "warn", "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
-                           "island": {"max_mm": 40.0, "ring_frac": 0.9}}           # 브라우저 섬 판정 거울(SR-D-26)
+                           "island": {"max_mm": 40.0, "ring_frac": 0.9},           # 브라우저 섬 판정 거울(SR-D-26)
+                           "hole": {"bridge_max_mm": 20.0}}                         # v0.16.2 AD-D-7
 
 
 def test_select_defaults_mirror_contract():
@@ -414,7 +417,9 @@ def test_select_defaults_mirror_contract():
             # v0.16.1(esl_select_relax.md §4.4)
             "fixed_policy": "warn", "island": {"max_mm": 40.0, "ring_frac": 0.9}, "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
             # v0.16.1 어려운 사례 수정(SR-D-37~40)
-            "cross_bead_policy": "warn", "cross_bead_tol_mm": 0.1}
+            "cross_bead_policy": "warn", "cross_bead_tol_mm": 0.1,
+            # v0.16.2(esl_bead_auto.md §3.2 — AD-D-7·12)
+            "hole": {"bridge_max_mm": 20.0}, "auto": {"slope_diff_rel": 0.2}}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
         from doe_support import core_view_v0161
@@ -429,7 +434,9 @@ def test_select_defaults_mirror_contract():
                 # v0.16.1: 정책 값·feasible 상한(≥ 기본 범위)·섬·보스
                 {"fixed_policy": "drop"}, {"quality": {"fail_policy": "ignore"}},
                 {"range": {"depth_max_rel": 0.2}}, {"range": {"width_max_rel": 0.1}}, {"range": {"depth_max_rel": 6}},
-                {"island": {"max_mm": 0}}, {"hold": {"ring_mm": -1}}, {"hold": {"blend_mm": 0}}):
+                {"island": {"max_mm": 0}}, {"hold": {"ring_mm": -1}}, {"hold": {"blend_mm": 0}},
+                # v0.16.2
+                {"hole": {"bridge_max_mm": 0}}, {"auto": {"slope_diff_rel": -0.1}}):
         with pytest.raises(ValueError):
             BeadDoeSelectCfg.model_validate(bad)
 
@@ -1002,3 +1009,209 @@ def test_results_best_clean_and_warn_rows(client, world, engine, esl_root):
     res.pop("summary")
     (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
     assert api(client, "GET", f"/doe/studies/{sid}/results").json()["summary"] is None     # v0.16.0 결과 = 키 없음(null)
+
+
+# ================================================================ v0.16.2 자동 탐지 seed · ② B 메시 기준 select(esl_bead_auto.md §3, V-AD-13·14)
+def _auto_files(engine, esl_root, sid, *, ok=True, step=None, code_=None, sel=None, version="0.14.1"):
+    """워커 BD_GEOM(prep/auto_detect.json) + 코어 BD_LOADS(prep/select/auto_selection.json) 흉내."""
+    d = study_dir(esl_root, sid) / "prep"
+    (d / "auto_detect.json").write_text(json.dumps({"schema": "esl/doe_auto_detect/1", "ok": ok, "step": step,
+                                                    "code": code_, "paicad_version": version}), encoding="utf-8")
+    if sel is not None:
+        (d / "select").mkdir(parents=True, exist_ok=True)
+        (d / "select" / "auto_selection.json").write_text(json.dumps({
+            "schema": "esl/doe_auto_selection/1", "selection": sel,
+            "map": [{"bead": b["id"], "paicad_id": f"B{i + 1}", "n_floor": 4} for i, b in enumerate(sel["beads"])],
+            "warnings": [{"code": "AUTO_GROUP_DROPPED", "level": "info"}]}, sort_keys=True), encoding="utf-8")
+
+
+def test_v0162_settings_select_auto_mesh(client, world, engine):
+    s = api(client, "GET", "/doe/settings").json()
+    assert s["scenarios"]["select_auto"] is True and s["scenarios"]["select_mesh"] is True
+    assert s["select"]["hole"] == {"bridge_max_mm": 20.0}
+    # paicad 준비 안 됨 → 자동 탐지만 막힘(수동·B 메시 수동은 paicad 불필요 — BS-D-2)
+    from esl_platform.api.services import doe as svc
+
+    record_paicad(engine, ready=False, reason="PAICAD_VERSION_UNSUPPORTED")
+    svc.reset_status_cache()
+    s = api(client, "GET", "/doe/settings").json()
+    assert s["scenarios"]["select"] is True and s["scenarios"]["select_mesh"] is True
+    assert s["scenarios"]["select_auto"] is False
+
+
+def test_v0162_select_case_bead_source(client, world, engine):
+    """V-AD-13(①): auto 는 STEP 필수, manual 은 STEP 금지, case 는 B 메시·파트 금지, select 밖 bead_source·select_base 422."""
+    uid = upload_step(client)
+    for extra in ({"bead_source": "auto"}, {"bead_source": "manual", "step_upload_id": uid},
+                  {"step_upload_id": uid}, {"select_base": "case", "mesh_upload_id": uid},
+                  {"bead_source": "auto", "step_upload_id": uid, "part_title": "x"}):
+        r = api(client, "POST", "/doe/check-inputs", json=sbody(world, **extra))
+        assert r.status_code == 422 and code(r) == "INVALID_PARAMS", (extra, r.text)
+    for extra in ({"bead_source": "manual"}, {"select_base": "case"}):
+        r = api(client, "POST", "/doe/check-inputs", json=body([world["a"]], uid, "same", **extra))
+        assert r.status_code == 422 and code(r) == "INVALID_PARAMS", extra
+    r = api(client, "POST", "/doe/check-inputs", json=sbody(world, bead_source="bogus"))
+    assert r.status_code == 422
+    r = api(client, "POST", "/doe/check-inputs", json=sbody(world, bead_source="auto", step_upload_id=uid))
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["step"]["file_name"] and out["base"]["case_id"] == "c1" and out["mesh"] is None
+    s = _create(client, world, bead_source="auto", step_upload_id=uid)
+    assert s["scenario"] == "select" and s["inputs"]["bead_source"] == "auto" and "select_base" not in s["inputs"]
+    assert s["inputs"]["step"]["upload_id"] == uid and s["inputs"]["mesh"] is None
+    jp = _job(engine, s["job"]["id"])["params"]["doe"]
+    assert jp["bead_source"] == "auto" and "select_base" not in jp and jp["step"]["path"].endswith(".step")
+    assert jp["base"]["case_id"] == "c1"
+    assert _row(engine, s["id"])["base"]["case_id"] == "c1"
+    m = _create(client, world)                  # 기본 = manual(v0.16.1 과 같은 작업 params + bead_source)
+    assert m["inputs"]["bead_source"] == "manual" and m["inputs"]["step"] is None
+    jp = _job(engine, m["job"]["id"])["params"]["doe"]
+    assert jp["bead_source"] == "manual" and "step" not in jp and "select_base" not in jp
+    # v0.16.1 이전 select 스터디(inputs 에 bead_source 없음) → 응답은 manual
+    with engine.begin() as c:
+        c.execute(text("UPDATE bead_does SET inputs = inputs - 'bead_source' WHERE id=:i"), {"i": m["id"]})
+    assert api(client, "GET", f"/doe/studies/{m['id']}").json()["inputs"]["bead_source"] == "manual"
+
+
+def test_v0162_select_mesh_inputs(client, world, engine, tmp_path):
+    """V-AD-13(②): mesh_upload_id 없음 422, auto + STEP 없음 422, manual + STEP 422, 크기·인치 SIZE_MISMATCH, include 업로드 밖
+    거부·파트 없음 = ② 규칙 그대로(MESH_INVALID·PART_NOT_FOUND), 같은 모델 검사 안 함. 생성 = scenario select + select_base mesh."""
+    step = upload_step(client)
+    mesh = upload_files(client, {"rad/B_0000.rad": rad_mesh_bytes(tmp_path)})
+    ids = [world["a"], world["other"]]          # 다른 모델 섞임 — ② 규칙(같은 모델 검사 없음)
+
+    def chk(**kw):
+        return api(client, "POST", "/doe/check-inputs", json=sbody(world, ids, select_base="mesh", **kw))
+    for kw in ({}, {"bead_source": "auto", "mesh_upload_id": mesh}, {"bead_source": "manual", "mesh_upload_id": mesh,
+                                                                     "step_upload_id": step}):
+        r = chk(**kw)
+        assert r.status_code == 422 and code(r) == "INVALID_PARAMS", (kw, r.text)
+    r = chk(mesh_upload_id=mesh, inch=55)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] is True and all(e["ok"] for e in out["entries"]) and out["base"] is None and out["step"] is None
+    assert out["mesh"]["ok"] is True and out["mesh"]["format"] == "rad" and out["size"]["inch"] == 55
+    big = upload_files(client, {"rad/B_0000.rad": rad_mesh_bytes(tmp_path, plate(Lx=360.0))})
+    assert code(chk(mesh_upload_id=big)) == "SIZE_MISMATCH"
+    assert code(chk(mesh_upload_id=mesh, inch=65)) == "SIZE_MISMATCH"
+    r = chk(mesh_upload_id=mesh, part_title="nothing here")
+    assert r.status_code == 422 and code(r) == "PART_NOT_FOUND"
+    outside = tmp_path / "outside.inc"
+    outside.write_bytes(b"/SHELL/9\n         1         1         2         3         4\n")
+    rb = rad_mesh_bytes(tmp_path).replace(b"/END", f"#include {outside}\n/END".encode(), 1)
+    bad = upload_files(client, {"rad/B_0000.rad": rb})
+    r = chk(mesh_upload_id=bad)
+    # include 업로드 밖 = ② 와 같은 판정(AD-D-14 "② 입력 그대로" — 템플릿 메시 검사가 MESH_INVALID 로 거부)
+    r2 = api(client, "POST", "/doe/check-inputs", json=body([world["a"]], step, "mesh", mesh_upload_id=bad))
+    assert r.status_code == r2.status_code == 422 and code(r) == code(r2) and code(r) in ("MESH_INVALID", "PATH_OUTSIDE_ROOT")
+    # 생성: auto(STEP 필수) — DB scenario select·base NULL·inputs.mesh, 작업 params = ② mesh + select_base·bead_source·step
+    r = api(client, "POST", "/doe/studies", json=sbody(world, ids, select_base="mesh", bead_source="auto",
+                                                       mesh_upload_id=mesh, step_upload_id=step, inch=55))
+    assert r.status_code == 201, r.text
+    s = r.json()
+    assert s["scenario"] == "select" and s["inputs"]["select_base"] == "mesh" and s["inputs"]["bead_source"] == "auto"
+    assert s["inputs"]["mesh"]["upload_id"] == mesh and s["inputs"]["step"]["upload_id"] == step
+    assert s["inputs"]["part_title"] == "chassis rear" and s["inputs"]["inch"] == 55 and "B 메시" in s["title"]
+    row = _row(engine, s["id"])
+    assert row["scenario"] == "select" and row["base"] is None and row["selection"] is None
+    jp = _job(engine, s["job"]["id"])["params"]["doe"]
+    assert jp["select_base"] == "mesh" and jp["bead_source"] == "auto" and "base" not in jp
+    assert jp["mesh"]["path"].endswith("rad/B_0000.rad") and Path(jp["mesh"]["upload_root"]).is_dir()
+    assert jp["mesh"]["part_title"] and jp["step"]["path"].endswith(".step") and jp["inch"] == 55
+    assert "rad_path" not in json.dumps(s) and "upload_root" not in json.dumps(s)
+    # manual(STEP 없음)
+    r = api(client, "POST", "/doe/studies", json=sbody(world, ids, select_base="mesh", mesh_upload_id=mesh))
+    assert r.status_code == 201, r.text
+    sm = r.json()
+    assert sm["inputs"]["bead_source"] == "manual" and sm["inputs"]["step"] is None
+    assert "step" not in _job(engine, sm["job"]["id"])["params"]["doe"]
+    # 복제 = select(mesh) 유지(B 메시 업로드 재사용), 업로드가 없어지면 409 PREREQUISITE_MISSING
+    c = api(client, "POST", f"/doe/studies/{sm['id']}/clone", json={})
+    assert c.status_code == 201, c.text
+    c = c.json()
+    assert c["scenario"] == "select" and c["inputs"]["select_base"] == "mesh"
+    assert _job(engine, c["job"]["id"])["params"]["doe"]["select_base"] == "mesh"
+    Path(jp["mesh"]["path"]).unlink()
+    r = api(client, "POST", f"/doe/studies/{sm['id']}/clone", json={})
+    assert r.status_code == 409 and code(r) == "PREREQUISITE_MISSING" and r.json()["detail"]["missing"] == ["mesh"]
+
+
+def test_v0162_legacy_same_mesh_still_accepted(client, world, engine, tmp_path):
+    """AD-D-23 · V-AD-14(API): 화면에서 숨겨도 API 는 same·mesh 생성을 계속 받는다(스크립트 호환)."""
+    step = upload_step(client)
+    r = api(client, "POST", "/doe/studies", json=body([world["a"], world["b"]], step, "same"))
+    assert r.status_code == 201 and r.json()["scenario"] == "same", r.text
+    assert "bead_source" not in r.json()["inputs"]
+    mesh = upload_files(client, {"rad/B_0000.rad": rad_mesh_bytes(tmp_path)})
+    r = api(client, "POST", "/doe/studies", json=body([world["a"]], step, "mesh", mesh_upload_id=mesh))
+    assert r.status_code == 201 and r.json()["scenario"] == "mesh", r.text
+    jp = _job(engine, r.json()["job"]["id"])["params"]["doe"]
+    assert "select_base" not in jp and "bead_source" not in jp
+
+
+def test_v0162_select_auto_endpoint(client, world, engine, esl_root):
+    """GET …/select/auto: manual 404 AUTO_NOT_AVAILABLE, 준비 전 409 PREP_NOT_READY, seed 없음(탐지 실패) 404, seed 있음 =
+    {selection, sha256(= 같은 선택을 PUT 한 sha — V-AD-1 API 쪽), map, warnings, paicad_version}. 저장하지 않는다."""
+    uid = upload_step(client)
+    man = _ready(client, world, engine, esl_root)
+    r = api(client, "GET", f"/doe/studies/{man['id']}/select/auto")
+    assert r.status_code == 404 and code(r) == "AUTO_NOT_AVAILABLE"
+    s = _create(client, world, bead_source="auto", step_upload_id=uid)
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto")
+    assert r.status_code == 409 and code(r) == "PREP_NOT_READY"
+    simulate_select_prep(engine, esl_root, s["id"], s["job"]["id"], world["mesh"])
+    _auto_files(engine, esl_root, s["id"], ok=False, step="tag", code_="GEOM_INPUT_INVALID")
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto")
+    assert r.status_code == 404 and code(r) == "AUTO_NOT_AVAILABLE"
+    seed = selection(bead("b1", tiers=((1, 4),)), bead("b2", tiers=((10, 12),)))
+    _auto_files(engine, esl_root, s["id"], sel=seed, version="0.14.2")
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto", "tok-general")     # 조회 권한이면 읽기 가능
+    assert r.status_code == 200, r.text
+    a = r.json()
+    assert a["selection"] == seed and a["paicad_version"] == "0.14.2"
+    assert a["map"] == [{"bead": "b1", "paicad_id": "B1", "n_floor": 4}, {"bead": "b2", "paicad_id": "B2", "n_floor": 4}]
+    assert [w["code"] for w in a["warnings"]] == ["AUTO_GROUP_DROPPED"]
+    g = api(client, "GET", f"/doe/studies/{s['id']}").json()
+    assert g["selection"] is None                                   # seed 는 저장 전 미저장(AD-D-4)
+    saved = _save(client, g, seed)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["selection"]["sha256"] == a["sha256"]       # seed 그대로 저장 = 같은 sha
+    assert api(client, "GET", "/doe/studies/nope/select/auto").status_code == 404
+    r = api(client, "GET", f"/doe/studies/{s['id']}/select/auto", "tok-nonmember")
+    assert r.status_code == 403
+
+
+def test_v0162_prep_summary_auto_passthrough(client, world, engine, esl_root):
+    """준비 요약 prep.auto{ok, step, code, available, n_beads}·select_base(워커 BD_PREP_REGISTER) → DoeStudyOut.prep 그대로."""
+    uid = upload_step(client)
+    s = _create(client, world, bead_source="auto", step_upload_id=uid)
+    simulate_select_prep(engine, esl_root, s["id"], s["job"]["id"], world["mesh"])
+    with engine.connect() as c:
+        prep = dict(c.execute(text("SELECT prep FROM bead_does WHERE id=:i"), {"i": s["id"]}).scalar_one())
+    prep.update(auto={"ok": False, "step": "version", "code": "PAICAD_NOT_FOUND", "available": False, "n_beads": 0},
+                select_base="mesh")
+    update_study(engine, s["id"], prep=prep)
+    g = api(client, "GET", f"/doe/studies/{s['id']}").json()
+    assert g["prep"]["auto"] == prep["auto"] and g["prep"]["select_base"] == "mesh"
+
+
+def test_v0162_legacy_result_warnings_visible(client, world, engine, esl_root):
+    """V-AD-7(API 쪽 · AD-D-8): 코어가 result.json warnings·순위 행 warn 에 올린 MORPH_EXTREME_ELEMENTS 는 GET …/results 에 그대로
+    보인다(legacy same 결과도 — 백엔드는 거르지 않음)."""
+    r = api(client, "POST", "/doe/studies", json=body([world["a"], world["b"]], upload_step(client), "same"))
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    base = study_dir(esl_root, sid)
+    (base / "post").mkdir(parents=True, exist_ok=True)
+    ext = {"code": "MORPH_EXTREME_ELEMENTS", "n": 3, "rot_max_deg": 61.0, "area_ratio_min": 0.12, "design": "d001"}
+    res = {"scenario": "same", "C_ref": 10.0, "baseline": {"id": "d000", "score": 1.0, "umax": 1.0, "epsmax": 1e-3},
+           "n_ok": 1, "n_skipped": {"collision": 0, "fixed": 0, "geom": 0}, "n_failed": {},
+           "ranking": [{"id": "d001", "values": {"X": 4.0}, "score": 0.8, "rank": 1, "warn": ["MORPH_EXTREME_ELEMENTS"]}],
+           "sensitivity": None, "boundary_warnings_n": 0, "view3d": [], "best": None,
+           "warnings": [ext, "STEP_EXPORT_SKIPPED: x"]}
+    (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
+    finish_job(engine, r.json()["job"]["id"])
+    update_study(engine, sid, phase="DONE", result=res)
+    o = api(client, "GET", f"/doe/studies/{sid}/results").json()
+    assert o["warnings"][0] == ext and o["warnings"][1]["code"] == "STEP_EXPORT_SKIPPED"
+    assert o["ranking"][0]["warn"] == ["MORPH_EXTREME_ELEMENTS"]

@@ -19,6 +19,7 @@ from scipy.spatial import cKDTree
 from esl.mesh.features import MeshIndex
 
 _EPS = 1e-12
+U_EPS = 1e-9                       # 영향 판정(노드 변위 > U_EPS mm — bead_select §6, AD-D-10: 한 곳에서 정의, bead_select 는 재노출)
 
 
 def _r(v, nd: int = 4):
@@ -35,6 +36,12 @@ def _mask_of(n: int, idx) -> np.ndarray:
     m = np.zeros(n, bool)
     m[np.asarray(idx, dtype=np.int64)] = True
     return m
+
+
+def _quality_cfg(qc: dict | None) -> dict:
+    """select.quality 설정(DEFAULTS 위에 병합 — AD-D-10: 리터럴 기본값을 코드에 두지 않음)."""
+    from esl.doe import DEFAULTS, _deep_merge
+    return _deep_merge(DEFAULTS["select"]["quality"], qc or {})
 
 
 def plane_fit(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -202,7 +209,7 @@ def w_limits(ix: MeshIndex, items: list[dict]) -> list[tuple[int, dict]]:
 def inverted_any(mesh: dict, x0: np.ndarray, x: np.ndarray, flip_deg: float) -> bool:
     """안 좌표 x 의 뒤집힘(``design_state`` 와 같은 식 — 영향 요소의 야코비안 ≤ 0 ∨ 법선 각 > flip_deg) 여부."""
     from esl.doe import mesh_quality as mq
-    u = np.linalg.norm(np.asarray(x) - np.asarray(x0), axis=1) > 1e-9
+    u = np.linalg.norm(np.asarray(x) - np.asarray(x0), axis=1) > U_EPS
     C = np.asarray(mesh["conn"], dtype=np.int64)
     et = np.asarray(mesh["elem_type"]).astype(np.int64)
     am = u[C[:, 0]] | u[C[:, 1]] | u[C[:, 2]]
@@ -271,7 +278,7 @@ def post_morph_warnings(mesh: dict, x0, x, qc: dict, *, flip_deg: float) -> list
     from esl.doe import mesh_quality as mq
     x0 = np.asarray(x0, dtype=np.float64)
     x = np.asarray(x, dtype=np.float64)
-    u = np.linalg.norm(x - x0, axis=1) > 1e-9
+    u = np.linalg.norm(x - x0, axis=1) > U_EPS
     C = np.asarray(mesh["conn"], dtype=np.int64)
     et = np.asarray(mesh["elem_type"]).astype(np.int64)
     am = u[C[:, 0]] | u[C[:, 1]] | u[C[:, 2]]
@@ -286,12 +293,21 @@ def post_morph_warnings(mesh: dict, x0, x, qc: dict, *, flip_deg: float) -> list
     return [{"code": "MORPH_EXTREME_ELEMENTS", **e}] if e else []
 
 
-def bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict]) -> list[dict]:
+def bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict], *, max_d_mm: float | None = None,
+                 skipped: list | None = None) -> list[dict]:
     """SR-D-35 경계 고리를 끊는 구멍(경계 노드에 닿는 관통 구멍 — 비드 벽을 가로지르는 슬롯) 건너 잇기: 열린 고리의 끝점이
     구멍 자유 모서리 노드면 같은 구멍에 끝점이 있는 열린 고리(자기 자신 포함, 평면 거리 가까운 쪽 — 동률 = 앞 고리)와 이어 붙인다
-    (구멍을 가로지르는 가상 선분 1개). 자기 자신과 이어지면 닫힌 고리(``bridged`` = 건넌 구멍 수). 구멍이 없으면 입력 그대로."""
+    (구멍을 가로지르는 가상 선분 1개). 자기 자신과 이어지면 닫힌 고리(``bridged`` = 건넌 구멍 수). 구멍이 없으면 입력 그대로.
+    AD-D-7 상한: ``max_d_mm`` 가 있으면 등가 지름(``eq_d_mm``) > max_d_mm 인 구멍은 건너 잇지 않고(고리는 열린 채) ``skipped`` 에
+    {code SELECT_BRIDGE_SKIPPED, eq_d_mm, gap_mm}(gap = 건너 이었을 끝점 사이 거리, 구멍마다 1번)을 더한다. 상한 이하 구멍만이면
+    v0.16.1 과 같은 결과(바이트 불변)."""
     if not holes or all(lp["closed"] for lp in loops):
         return loops
+    big = set()
+    if max_d_mm is not None:
+        big = {k for k, hl in enumerate(holes) if float(hl.get("eq_d_mm") or 0.0) > float(max_d_mm)}
+    seen_big: set = set()
+    blocked: set = set()                                 # 큰 구멍에 닿은 끝점(건너 잇지 않음)
     hid = {}
     for k, hl in enumerate(holes):
         for v in np.asarray(hl.get("all_nodes", hl["nodes"])).tolist():
@@ -307,11 +323,11 @@ def bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict]) -> list[di
             if lp["closed"]:
                 continue
             end = int(lp["nodes"][-1])
-            h = hid.get(end)
+            h = None if end in blocked else hid.get(end)
             if h is None:
                 lp["nodes"] = lp["nodes"][::-1]          # 반대쪽 끝이 구멍에 닿으면 뒤집어 다시
                 end = int(lp["nodes"][-1])
-                h = hid.get(end)
+                h = None if end in blocked else hid.get(end)
                 if h is None:
                     continue
             best = None
@@ -328,6 +344,15 @@ def bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict]) -> list[di
             if best is None:
                 continue
             _d, j, side = best
+            if h in big:                                 # AD-D-7: 큰 개구는 건너 잇지 않음(경고 1번)
+                if h not in seen_big:
+                    seen_big.add(h)
+                    if skipped is not None:
+                        skipped.append({"code": "SELECT_BRIDGE_SKIPPED", "eq_d_mm": _r(holes[h].get("eq_d_mm")),
+                                        "gap_mm": _r(_d)})
+                blocked.add(end)
+                changed = True
+                break
             if j == i:
                 lp["closed"] = True
                 lp["bridged"] += 1
@@ -376,7 +401,8 @@ def feature_distortion(x0, x, checks: dict, qc: dict) -> dict | None:
     if not feats:
         return None
     u = np.asarray(x, dtype=np.float64) - np.asarray(x0, dtype=np.float64)
-    rel, mn = float(qc.get("distort_rel", 0.25)), float(qc.get("distort_min_mm", 0.1))
+    qd = _quality_cfg(qc)
+    rel, mn = float(qd["distort_rel"]), float(qd["distort_min_mm"])
     worst = None
     for f in feats:
         if f["rim"].size == 0 or f["interior"].size == 0:

@@ -366,7 +366,9 @@ def render_compare(ctx: dict) -> str:
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
 
 
-WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고", "CROSS_BEAD_MOVE": "다른 비드 침범"}
+WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고", "CROSS_BEAD_MOVE": "다른 비드 침범",
+           "MORPH_EXTREME_ELEMENTS": "극단 요소"}           # v0.16.2 AD-D-8
+MESH_BASE_KO = "B 메시(다른 모델 — 하중 셀 매핑, 지지 자동 3-2-1)"   # v0.16.2 AD-D-20 select_base mesh 머리
 
 
 def _warn_ko(w) -> str:
@@ -435,16 +437,22 @@ def render(ctx: dict) -> str:
                           ("경계 경고", H.esc(len(bd.get("warnings") or [])))]))
         if b.get("warn"):                        # v0.16.1 Q1 = A: 순위 그대로 + 경고 없는 최상위 1줄
             bc = (ctx.get("selection") or {}).get("best_clean")
+            if not ctx.get("selection"):         # v0.16.2 AD-D-8 다른 시나리오(극단 요소 ⚠): 순위에서 경고 없는 최상위
+                bc = next((x["id"] for x in res["ranking"] if not x.get("warn")), None)
             S.append(f"<p class='warn'>⚠ 최적 안 {H.esc(b['id'])} 은(는) {H.esc(_warn_ko(b['warn'])[2:])} 경고 안입니다 — "
                      f"경고 없는 최상위: {H.esc(bc or '없음')}</p>")
     # 1. 입력
     step_row = ("STEP", f"{(ip.get('step') or {}).get('file_name')} (sha256 {str((ip.get('step') or {}).get('sha256'))[:12]}…)")
     if st.get("scenario") == "select":
         step_row = ("STEP", "없음 — 낙하 메시에서 비드 직접 선택(산출물에 CAD 없음)")
+        if ip.get("step"):                       # v0.16.2 자동 탐지(seed 출처 — 산출물에 CAD 없음)
+            step_row = ("STEP", f"{(ip.get('step') or {}).get('file_name')} — 자동 탐지 초기 선택 입력(산출물에 CAD 없음)")
     pairs = [("시나리오", SCN_KO.get(st.get("scenario"), str(st.get("scenario")))),
              step_row,
              ("파트 제목", ip.get("part_title")), ("인치", ip.get("inch")),
              ("paicad 버전", ver.get("paicad")), ("gmsh 버전", ver.get("gmsh"))]
+    if ip.get("select_base") == "mesh":
+        pairs.insert(1, ("기준", MESH_BASE_KO))
     if ip.get("mesh"):
         pairs.append(("B 메시", ", ".join(f.get("rel", "") for f in ip["mesh"].get("files") or [])))
     if ip.get("props"):
@@ -489,7 +497,8 @@ def render(ctx: dict) -> str:
     top_n = int(ctx.get("ranking_rows") or 20)
     names = [p["name"] for p in spec.get("params") or []]
     if rk:
-        sel_w = st.get("scenario") == "select"     # v0.16.1 ⚠ 열(select 만 — 다른 시나리오 보고서 불변)
+        # v0.16.1 ⚠ 열(select) — v0.16.2 AD-D-8: 다른 시나리오도 경고 안(극단 요소)이 있을 때만(없으면 보고서 불변)
+        sel_w = st.get("scenario") == "select" or any(x.get("warn") for x in rk)
         hdr = (["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
                 "기하평균 개선율", "Pareto"] + names + ["경고"] + (["⚠"] if sel_w else []))
         trs = []

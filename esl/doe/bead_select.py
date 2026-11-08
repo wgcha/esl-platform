@@ -52,17 +52,21 @@ from esl.morph import core as _mc
 SCHEMA_VERSION = 1
 BEAD_ID_RE = re.compile(r"^b[1-9][0-9]?$")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
-U_EPS = 1e-9                       # 영향 판정(§6, mm)
+U_EPS = _mc.U_EPS                  # 영향 판정(§6, mm) — v0.16.2 AD-D-10: esl.morph.core 정의 재노출
 WIDTH_END_RATIO = 2.0              # §5.7 끝단 반직선 제외(국부 폭 중앙값 배수) — 설정 select.width.end_ratio 가 있으면 그 값(없을 때만 이 값, DEFAULTS 와 같음)
 _EPS = 1e-12
-ALGO = 2                           # v0.16.1 계산 규칙 판(SelectionDerived.algo·basis.json.algo — SR-D-13c)
-RULES = 2                          # v0.16.1 판정 규칙 판(grid_manifest.rules — §7.4)
+ALGO = 3                           # 계산 규칙 판(SelectionDerived.algo·basis.json.algo — SR-D-13c). v0.16.2 AD-D-11: 2 → 3(구멍 건너 잇기 상한)
+RULES = 3                          # 판정 규칙 판(grid_manifest.rules — §7.4). v0.16.2 AD-D-11: 2 → 3(range_check 조합 점검 AD-D-9)
 # v0.16.1 새 select 설정 키(점 경로) — 기본값과 같으면 이어하기 해시 사본에서 뺀다(SR-D-13b, §7.2). 이후 판도 같은 방식으로 추가.
 HASH_NEW_KEYS_V0161 = ("fixed_policy", "quality.fail_policy", "range.depth_max_rel", "range.width_max_rel", "island",
                        "hold", "range.width_floor_q", "range.check_steps",
                        # v0.16.1 어려운 사례 수정(SR-D-37~40)
                        "cross_bead_policy", "cross_bead_tol_mm", "range.combo_samples", "quality.rot_warn_deg",
                        "quality.area_ratio_min", "quality.distort_rel", "quality.distort_min_mm")
+# v0.16.2 새 select 설정 키(AD-D-7) — 기본값이면 해시 사본에서 뺀다. select.auto.* 는 보고 전용이라 값과 무관하게 항상 뺀다(§6).
+HASH_NEW_KEYS_V0162 = ("hole.bridge_max_mm",)
+HASH_NEW_SECTIONS_V0162 = ("hole",)                # 위 키를 빼고 비면 절째 제거
+HASH_EXCLUDE_ALWAYS = ("auto",)
 POLICIES = ("warn", "skip")
 
 
@@ -84,12 +88,13 @@ def _qcfg(cfg: dict | None) -> dict:
 
 
 def select_hash_view(sel_cfg: dict) -> dict:
-    """§7.2 이어하기 해시용 select 설정 사본: ``HASH_NEW_KEYS_V0161`` 키가 기본값과 같으면 제거(빈 절도 제거)
-    → 기본 설정이면 v0.16.0 해시와 같음. 값을 바꾸면 그 키만 남아 해시가 바뀐다."""
+    """§7.2 이어하기 해시용 select 설정 사본: ``HASH_NEW_KEYS_V0161``·``HASH_NEW_KEYS_V0162`` 키가 기본값과 같으면 제거(그래서
+    빈 절이 된 v0.16.2 절도 제거), ``HASH_EXCLUDE_ALWAYS`` 절은 항상 제거 → 기본 설정이면 v0.16.0 해시와 같음. 값을 바꾸면 그 키만
+    남아 해시가 바뀐다."""
     from esl.doe import DEFAULTS
     out = copy.deepcopy(sel_cfg)
     dflt = DEFAULTS["select"]
-    for path in HASH_NEW_KEYS_V0161:
+    for path in HASH_NEW_KEYS_V0161 + HASH_NEW_KEYS_V0162:
         ks = path.split(".")
         cur, ref = out, dflt
         for k in ks[:-1]:
@@ -97,6 +102,11 @@ def select_hash_view(sel_cfg: dict) -> dict:
             ref = ref.get(k) if isinstance(ref, dict) else None
         if isinstance(cur, dict) and ks[-1] in cur and isinstance(ref, dict) and cur[ks[-1]] == ref.get(ks[-1]):
             del cur[ks[-1]]
+    for top in HASH_NEW_SECTIONS_V0162:              # v0.16.2 새 절이 비면 절째 제거(v0.16.1 해시 불변 — AD-D-7)
+        if isinstance(out.get(top), dict) and not out[top]:
+            del out[top]
+    for k in HASH_EXCLUDE_ALWAYS:
+        out.pop(k, None)
     return out
 
 
@@ -729,7 +739,7 @@ def _derive_bead(ix: MeshIndex, b: dict, floor_masks: list, add_mask: np.ndarray
         else:
             bd.holes.append(hl)
     loops, free = _loops(ix, BM, edge_nodes=fe["edge"])
-    loops = _bridge_holes(ix, loops, [hl for hl in bd.holes if hl.get("touch")])
+    loops = _bridge_holes(ix, loops, [hl for hl in bd.holes if hl.get("touch")], sc, bd)
     # 평면(가장 긴 고리) → n̂_b
     X = ix.X
     for lp in loops:
@@ -917,9 +927,13 @@ def _plate_refit(ix: MeshIndex, bd: BeadDerived, BM: np.ndarray, F: np.ndarray, 
                                   "지납니다. 교차하는 비드를 함께 선택하세요.", bead=bd.id, rms_mm=_r(r["rms"]), n_plate=r["n_plate"])
 
 
-def _bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict]) -> list[dict]:
-    """→ ``esl.morph.core.bridge_holes``(공통 모핑 코어, SR-D-44)."""
-    return _mc.bridge_holes(ix, loops, holes)
+def _bridge_holes(ix: MeshIndex, loops: list[dict], holes: list[dict], sc: dict, bd: BeadDerived) -> list[dict]:
+    """→ ``esl.morph.core.bridge_holes``(공통 모핑 코어, SR-D-44). v0.16.2 AD-D-7: 등가 지름 > ``select.hole.bridge_max_mm``
+    구멍은 건너 잇지 않고 비드 경고 ``SELECT_BRIDGE_SKIPPED{eq_d_mm, gap_mm}``."""
+    skipped: list = []
+    out = _mc.bridge_holes(ix, loops, holes, max_d_mm=float(sc["hole"]["bridge_max_mm"]), skipped=skipped)
+    bd.warnings.extend(skipped)
+    return out
 
 
 
@@ -1154,8 +1168,7 @@ def _width(ix: MeshIndex, bd: BeadDerived, sc: dict, mesh: dict) -> None:
     fin = np.isfinite(w)
     if fin.any():
         med = float(np.median(w[fin]))
-        er = (sc.get("width") or {}).get("end_ratio")
-        keep = fin & (w <= float(WIDTH_END_RATIO if er is None else er) * med)
+        keep = fin & (w <= float(sc["width"]["end_ratio"]) * med)     # AD-D-10: DEFAULTS 병합 cfg(WIDTH_END_RATIO = 거울)
     else:
         keep = fin
     bd.w_j, bd.w_jnodes = w[keep], bn[keep]
@@ -1231,7 +1244,7 @@ def _ranges_blend(ix: MeshIndex, bd: BeadDerived, fixed: np.ndarray, sc: dict, h
             floor_min = (bd.W_min or W) - 2.0 * bd.run_med
             lo = max(lo0, W - (floor_min - h))
             if lo > W:                     # SR-D-32: 하한이 공칭보다 큼(국부 폭 극단값 — 5 % 분위 보스·구멍 오탐이 바닥 최소 폭 조건을
-                q = float(rg.get("width_floor_q", 0.25))     # 뒤집음). lo == W(좁힐 수 없음 — 넓히기만)는 v0.16.0 그대로
+                q = float(rg["width_floor_q"])               # 뒤집음). lo == W(좁힐 수 없음 — 넓히기만)는 v0.16.0 그대로
                 wq = float(np.percentile(bd.w_j, 100.0 * q)) if bd.w_j.size else W
                 lo_q = max(lo0, W - ((wq - 2.0 * bd.run_med) - h))
                 bd.w_floor_ref = wq
@@ -1591,11 +1604,13 @@ def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None)
     """SR-D-33 기본 범위 끝 점검(기저가 있을 때 — BD_MATRIX): 변수마다 default_range 양 끝을 그 변수만 바꾼 안으로 모핑해
     뒤집힘(``design_state`` 와 같은 판정)이 있으면 공칭 쪽으로 ``range.check_steps`` 회 이분해 뒤집힘 없는 끝 ``usable`` 을 찾고 그 비드에
     경고 ``SELECT_RANGE_INVERTS{var, lo_mm, hi_mm, usable[lo, hi], inverted[lo, hi]}`` 를 단다(범위는 바꾸지 않음 — 기저·R_auto 불변).
-    check_steps 0 = 끔. 반환 = 단 경고 목록. 뒤집힘이 없으면 아무것도 바꾸지 않음."""
+    check_steps 0 = 변수별 끝 점검 끔. v0.16.2 AD-D-9: 그래도 일찍 끝나지 않고 조합 점검(SR-D-39)은 ``range.combo_samples`` > 0
+    으로만 정함(끝 = 기본 범위 끝 그대로). 반환 = 단 경고 목록. 뒤집힘이 없으면 아무것도 바꾸지 않음."""
     sc = _cfg(cfg)
-    n = int(sc["range"].get("check_steps", 0) or 0)
+    n = int(sc["range"]["check_steps"] or 0)
+    n_combo = int(sc["range"]["combo_samples"] or 0)
     out: list[dict] = []
-    if n <= 0:
+    if n <= 0 and n_combo <= 0:
         return out
     x0 = np.asarray(mesh["x0"], dtype=np.float64)
     by = {b.id: b for b in derived.beads}
@@ -1610,6 +1625,9 @@ def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None)
         nom = float(row["nominal"])
         res = []
         for end in (lo, hi):
+            if n <= 0:                                 # AD-D-9: 끝 점검 끔 — 끝 그대로 조합 점검에만
+                res.append((0, end))
+                continue
             k = inv(row["name"], end)
             good = end
             if k:
@@ -1630,7 +1648,7 @@ def range_check(mesh: dict, derived: Derived, B: Basis, cfg: dict | None = None)
                 b.warnings.append(w)
             out.append(w)
         ends.append((row["name"], nom, float(res[0][1]), float(res[1][1])))
-    wc = _range_combo(mesh, derived, B, cfg, ends, int(sc["range"].get("combo_samples", 0) or 0), n)
+    wc = _range_combo(mesh, derived, B, cfg, ends, n_combo, n)
     if wc is not None:
         derived.warnings.append(wc)
         out.append(wc)
@@ -1664,7 +1682,7 @@ def design_state(mesh: dict, x0, x, fixed_mask, cfg: dict | None = None, *, chec
     # SR-D-40 극단값은 warn 정책의 경고만(skip 정책 = v0.16.0 판정 그대로 — V-SR-1)
     ext = _extremes(mesh, x0, x, am, q, qc) if _policy(sc, "quality") == "warn" else None
     dist = _feature_distortion(x0, x, checks, qc) if checks else None
-    cross = _cross_move(checks, values, float(sc.get("cross_bead_tol_mm", 0.1))) if checks and values else None
+    cross = _cross_move(checks, values, float(sc["cross_bead_tol_mm"])) if checks and values else None
     warns: list[dict] = []
     if q["inverted"] > 0:
         st, code = "FAILED_MESH", "SELECT_MORPH_INVERTED"

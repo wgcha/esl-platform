@@ -910,6 +910,20 @@ class BeadDoeSelectHoldCfg(_M):
     blend_mm: float = Field(default=8.0, gt=0)
 
 
+class BeadDoeSelectHoleCfg(_M):
+    """v0.16.2 구멍 건너 잇기 상한(esl_bead_auto.md AD-D-7): 등가 지름 > bridge_max_mm 인 구멍은 건너 잇지 않음
+    (SELECT_BRIDGE_SKIPPED). 코어 HASH_NEW_KEYS_V0162 — 기본값이면 select 해시에서 빠짐."""
+
+    bridge_max_mm: float = Field(default=20.0, gt=0)
+
+
+class BeadDoeSelectAutoCfg(_M):
+    """v0.16.2 자동 탐지 seed(AD-D-12): paicad 사면 폭이 유도 사면과 slope_diff_rel 넘게 다르면 info AUTO_SLOPE_DIFF(보고만 —
+    해시 제외)."""
+
+    slope_diff_rel: float = Field(default=0.2, ge=0, le=10)
+
+
 class BeadDoeSelectThumbCfg(_M):
     w: int = Field(default=320, ge=16, le=4096)
     h: int = Field(default=240, ge=16, le=4096)
@@ -947,6 +961,8 @@ class BeadDoeSelectCfg(_M):
     cross_bead_tol_mm: float = Field(default=0.1, ge=0)
     island: BeadDoeSelectIslandCfg = BeadDoeSelectIslandCfg()
     hold: BeadDoeSelectHoldCfg = BeadDoeSelectHoldCfg()
+    hole: BeadDoeSelectHoleCfg = BeadDoeSelectHoleCfg()        # v0.16.2 AD-D-7 구멍 건너 잇기 상한
+    auto: BeadDoeSelectAutoCfg = BeadDoeSelectAutoCfg()        # v0.16.2 AD-D-12 자동 탐지 사면 힌트 기준
     derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔
     derive_timeout_s: float = Field(default=20, gt=0, le=600)
 
