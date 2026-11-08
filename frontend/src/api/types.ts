@@ -2727,6 +2727,10 @@ export interface DoeStudyOut {
     n_nodes?: number;
     n_elems?: number;
     fixed?: { source: DoeFixedSource; n: number } | null;
+    /** v0.16.2 자동 탐지 결과(bead_source auto 만, esl_bead_auto.md §3.4) */
+    auto?: DoePrepAuto | null;
+    /** v0.16.2 ② B 메시 기준 select 만 "mesh"(① 은 키 없음) */
+    select_base?: "mesh" | null;
   } | null;
   doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
   /** v0.15.0 select: 저장된 선택 요약(PUT …/selection 응답) — 없으면 미저장 */
@@ -3279,6 +3283,16 @@ export interface DoeSelectionOut {
   updated_by_name: string;
   updated_at: string;
 }
+/** v0.16.2 DoeStudyOut.prep.auto — 자동 탐지 결과(워커 BD_PREP_REGISTER). step·code = 실패 단계·코드(성공이면 null) */
+export interface DoePrepAuto {
+  ok: boolean;
+  step: string | null;
+  code: string | null;
+  /** prep/select/auto_selection.json 있음(GET …/select/auto 가능) */
+  available: boolean;
+  n_beads: number;
+  selection_sha256: string | null;
+}
 /** v0.16.2 GET …/select/auto 비드 대응 1행(paicad 비드 → b<i>) */
 export interface DoeSelectAutoMap {
   bead: string;
@@ -3288,7 +3302,8 @@ export interface DoeSelectAutoMap {
 /** v0.16.2 GET /doe/studies/{id}/select/auto(esl_bead_auto.md §3.3) — 자동 탐지 seed. 404 AUTO_NOT_AVAILABLE · 409 PREP_NOT_READY */
 export interface DoeSelectAutoOut {
   selection: DoeSelectionIn;
-  sha256: string;
+  /** 정규화 sha(수동 저장과 같은 식) — 서버 스키마 null 허용 */
+  sha256: string | null;
   map: DoeSelectAutoMap[];
   warnings: DoeWarning[];
   paicad_version: string | null;

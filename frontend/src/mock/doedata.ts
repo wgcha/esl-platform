@@ -1048,7 +1048,7 @@ export class DoeMock {
     // 9) 자동 탐지 실패(paicad extract) — 준비는 READY, seed 없음(404) → 직접 선택 도구로
     const sel9 = base("doe-9", "select", "75형 Ch/R 비드 자동 탐지 — 실패", "2026-11-08T03:00:00Z");
     sel9.out.inputs = { ...sel8.out.inputs };
-    sel9.out.prep = { ...this.selectPrep(), warnings: [{ code: "AUTO_DETECT_FAILED", step: "extract", paicad_code: "EXTRACT_NO_BEAD" }] };
+    sel9.out.prep = { ...this.selectPrep(), warnings: [{ code: "AUTO_DETECT_FAILED", message: "", step: "extract", detail: "EXTRACT_NO_BEAD" }] };
     sel9.autoSel = null;
     sel9.out.version = 2;
     const j9 = doneJob(this.id("j-doe"), "p-body", sel9.out.id, "DOE_PREP", "2026-11-08T03:00:05Z", "2026-11-08T03:02:00Z");

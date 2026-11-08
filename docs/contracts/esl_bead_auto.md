@@ -4,6 +4,7 @@
 - 버전: **v0.16.2** (기준 main 4008821 = v0.16.1). migration **불필요**(§3.4).
 - 관계: `esl_select_relax.md`(SELECT_RELAX, v0.16.1 — 이하 "SR")·`esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. ② 부분은 `esl_bead_doe.md`(BEAD_DOE — 이하 "BD") BD-D-3·4·12·14 와 `esl_step_compare.md`(이하 "SC") SC-D-6, `esl_compare_mesh_options.md`(이하 "C2") C2-D-2~7 을 **재사용**한다(새 매핑 없음). 이 문서에 없는 규칙은 SR → BS → BD 순서로 따르고, 충돌 시 이 문서가 우선.
 - ID 규칙: 결정 `AD-D-n`, 시험 `V-AD-n`, 리스크 `R-AD-n`, 열린 항목 `O-n`.
+- 구현 갱신(2026-11-08 v0.16.2 통합): 구현이 계약과 다르게 정한 4건을 수용 편차로 §14 에 기록(AD-X-1~4). §14 가 해당 문장(§4 2, AD-D-2·17, V-AD-2·10·13)보다 우선.
 
 ### 사용자 확정 (2026-11-08, 변경 금지)
 1. **자동 탐지 = select 의 출발점**: 자동 탐지(paicad extract·tag)는 별도 시나리오가 아니라 시나리오 `select` 의 **초기 선택(seed) 출처**. 화면은 수동 직접 선택과 같고, seed 는 사용자가 고칠 수 있다.
@@ -48,7 +49,7 @@
 | AD-D-3 | **신규 `esl/doe/bead_auto.py`** `auto_selection(mesh, extract_doc, tag_npz, cfg) -> {selection, map, warnings}`. `selection` = SelectionIn **schema 1**(BS §4.1 그대로). 바닥 = 그 비드 bottom face 에 tag 된(FACE) 노드가 **모두** 들어가는 요소, 여기서 `esl.mesh.features.enclosed_components` 섬을 뺌. 비드당 **1단**, `slope: auto`, `blend: auto`, `hold_fixed: 0`. id = `b1..bn`(paicad 비드 순서). 경고 `AUTO_TOO_MANY_BEADS`(> `select.max_beads`, 앞에서부터 자름), `AUTO_GROUP_DROPPED`(info — paicad 묶음 해제), `AUTO_BEAD_UNMAPPED`(바닥 요소 0). 출력 `prep/select/auto_selection.json`, **결정적 바이트**(정렬 키·`write_json` 고정) | 공통 모듈 SR-D-23 의 예약 호출 지점 |
 | AD-D-4 | **화면 seed**: seed 를 기본 상태로 불러옴. 되돌리기·비드별 초기화·전체 초기화 = seed 로. [선택 저장] 전에는 미저장(배지 "자동 탐지 결과 — 수정 후 저장"). paicad 범위(ranges)는 가져오지 않음(범위 = SR 기본 범위) | 수동 경로와 같은 화면·같은 저장 |
 | AD-D-5 | 자동 경로도 **전체 코어 점검**(SR-D-37 피처 왜곡 / 38 다른 비드 침범 / 33 범위 끝 뒤집힘 / 39 조합 / 40 극단 요소)을 `esl/morph/core.py` 로 — 메시 출처 무관(SR-D-44) | 저장된 선택은 수동과 같은 select 이므로 같은 판정 |
-| AD-D-6 | **V-SR-28 예외 목록**: 판정(state)·기저 바이트가 같을 때 경고가 더해지는 것은 허용 — `SELECT_RANGE_COMBO`, `SELECT_W_RANGE_LIMIT`, `SELECT_BASE_REFIT`, `SELECT_SLOPE_ABOVE_PLATE`, `SELECT_QUALITY_WARN`(극단값), `SELECT_RANGE_INVERTS`. 사례: feat, edge_boss:G, 실 사례 1 전체 5(L), edge_boss B1_D1 7.0146, h5, 레일 A 단독 | AD-D-9·SR-D-39 로 늘어난 경고가 회귀 실패로 잡히지 않게 |
+| AD-D-6 | **V-SR-28 예외 목록**: 판정(state)·기저 바이트가 같을 때 경고가 더해지는 것은 허용 — `SELECT_RANGE_COMBO`, `SELECT_W_RANGE_LIMIT`, `SELECT_BASE_REFIT`, `SELECT_SLOPE_ABOVE_PLATE`, `SELECT_QUALITY_WARN`(극단값), `SELECT_RANGE_INVERTS`. 사례: feat, edge_boss:G, 실 사례 1 전체 5(L), edge_boss B1_D1 7.0146, h5, 레일 A 단독. 시험 상수 = `tests/doe/test_bead_select_hard.py` `REGRESS_WARN_EXCEPTIONS_V0162`(6개 고정, `SELECT_BRIDGE_SKIPPED` 는 넣지 않음 — V-AD-5 가 따로 검사). `esl_select_relax.md` V-SR-28 회귀 문장도 이 목록을 따른다 | AD-D-9·SR-D-39 로 늘어난 경고가 회귀 실패로 잡히지 않게 |
 | AD-D-7 | `select.hole.bridge_max_mm` = **20**. 등가 지름이 이보다 큰 구멍은 건너 잇지 않고 경고 `SELECT_BRIDGE_SKIPPED{eq_d_mm, gap_mm}`. 키를 `HASH_NEW_KEYS_V0162` 에 넣고(기본값이면 해시 제외) 모든 설정 거울(DEFAULTS·pydantic·yaml 2개·`GET /doe/settings`·브라우저)에 | 큰 개구를 건너 이으면 경계가 판을 가로지름 |
 | AD-D-8 | `MORPH_EXTREME_ELEMENTS` 를 `result.json.warnings`·순위 ⚠·보고서에 노출 | 지금은 info 에만 있어 사용자가 못 봄 |
 | AD-D-9 | `range_check` 는 `check_steps = 0` 이어도 일찍 끝나지 않는다. 조합 점검은 `combo_samples > 0` 으로만 결정 | 설정 하나로 다른 점검이 꺼지던 결함 |
@@ -206,3 +207,17 @@ DOE_PREVIEW / DOE_RUN = select 그대로(_sel_prepare → basis → bd_eval: x =
 |---|---|---|---|
 | O-1 | **A 체결점(고정)을 B 고정 노드로 옮기기** | ②·④ 하중 매핑(`mapping.to_target`)은 셀 합력·합모멘트만 옮기고 구속·고정을 옮기지 않음. ④ 에는 모핑 고정 개념이 없음(`auto_supports` 만). `boundary.py` 는 A 체결점을 (a,b) 로 투영해 **경고만** 냄 | B 자신의 fixed-scan 만 사용(AD-D-16), 없으면 `FIXED_INFO_MISSING` + 수동 `fixed_user` |
 | O-2 | **STEP → gmsh B 메시 기준 select** | ② 는 rad/inc 만 받음, gmsh 메시는 ③ 경로이고 체결(tie·RBE2)이 없어 fixed-scan·tag(assem rad 필요)를 쓸 수 없음 | 범위 밖(② 입력 = rad/inc 만) |
+
+## 14. 수용된 구현 편차 (2026-11-08, v0.16.2 통합)
+
+계약 문장과 구현이 다르지만 근거가 있어 **수용**한 항목. 이 표가 해당 계약 문장보다 우선한다.
+
+| ID | 계약 문장 | 구현(수용) | 근거 |
+|---|---|---|---|
+| AD-X-1 | §4 2 / AD-D-3: 바닥 후보 = 요소의 **모든** 노드가 비드 k bottom 에 FACE-tag | 바닥 = (모든 노드 FACE-bottom 인 요소) ∪ (노드가 FACE-bottom 또는 EDGE·VERTEX-tag 이고, FACE-bottom 노드가 **1개 이상**이며, 요소 법선이 앞 집합 평균 법선과 `select.feature_angle_deg` 안에서 평행한 요소). 다른 면에 FACE-tag 된 노드가 하나라도 있으면 제외 | paicad tag 는 B-rep 모서리·꼭짓점 위 노드를 EDGE·VERTEX 로 분류 — CAD 를 따르는 메시는 바닥 가장자리 요소 줄이 "모든 노드 FACE" 에서 빠져 바닥이 한 줄 안쪽에서 멈춤(`esl/doe/bead_auto.py` 머리 주석) |
+| AD-X-2 | V-AD-2·10: auto 스터디 보고서 = 같은 선택 수동 스터디 보고서 바이트 동일(타임스탬프 제외) | 보고서 **입력 CAD 행**은 auto 쪽에 "자동 탐지 초기 선택 입력" STEP 이름이 있어 다름 — 비교에서 id·생성 시각과 함께 이 행을 뺌. 결과·순위·ESL별 지표는 바이트 동일 | 입력 출처 표기일 뿐 결과가 아님(`worker/tests/test_doe_select_e2e.py` `_report`) |
+| AD-X-3 | V-AD-13: ② include 업로드 밖 = `PATH_OUTSIDE_ROOT` | ② select 검사 = `MESH_INVALID`(템플릿 메시 검사가 거부) | AD-D-14 "② 입력 그대로" — legacy ② 와 같은 판정(`backend/tests/test_doe_select_api.py`) |
+| AD-X-4 | AD-D-2·17: fixed-scan 실패 = `FIXED_INFO_MISSING`(별도 경고) | auto 스터디에서 fixed-scan 실패로 tag 를 못 하면 `AUTO_DETECT_FAILED{step:"tag", detail:"FIXED_INFO_MISSING"}`(준비 READY·빈 seed·수동 `fixed_user` 그대로). 경고 모양 = `{code, message, step, detail}` — `detail` = 안쪽 paicad·코어 코드(경고 자신의 code 와 겹치지 않게), 화면은 `detail` 을 읽음 | tag 단계가 fixed-scan 결과(조립·파트 해석)에 의존 — 실패 단계를 tag 로, 원인을 detail 로 한 경고에 모음(`worker/esl_worker/register.py` `_select_auto_prep`) |
+
+- AD-D-18 화면(평면도 링크): ② select 의 `GET …/plan-view` 는 `prep/plan.json` 위에 코어 `plan_data` 를 덮어써 `links`·`a_points`·`load_points` = `[]`, `fixed` = `{a, b}`(label 없음)로 나간다 — 링크 좌표가 API 에 없어 v0.16.2 평면도(SelectPlan)는 **경고 수만** 표시(준비 요약 "경계 경고 n", 결과 카드). 링크 선 그리기는 API 가 링크를 넘길 때(다음 판).
+

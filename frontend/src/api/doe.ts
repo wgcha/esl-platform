@@ -330,6 +330,9 @@ export function selectSubBlocked(st: DoeSettingsOut, base: DoeSelectBase, source
 }
 export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)", select: "같은 모델" };
 export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④", select: "①" };
+/** v0.16.2 스터디 목록 시나리오 표기: ② B 메시 기준 select(inputs.select_base "mesh") = "② 다른 모델(B 메시)", 그 밖 = SCENARIO_NO·NAME */
+export const studyScenarioLabel = (s: DoeScenario, base?: DoeSelectBase | null): string =>
+  s === "select" && base === "mesh" ? `${NEW_RADIO_NO.bmesh} ${NEW_RADIO_NAME.bmesh}` : `${SCENARIO_NO[s]} ${SCENARIO_NAME[s]}`;
 /** ① 하위 선택 "비드 정의"(BS-D-1) */
 export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선택(메시)" } as const;
 /** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
@@ -442,12 +445,12 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
 const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
 /** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
 const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF"]);
-/** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때 */
+/** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
 function autoWarnText(w: Record<string, unknown>): string {
   const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
   switch (w.code) {
     case "AUTO_DETECT_FAILED":
-      return `비드 자동 탐지 실패(${AUTO_STEP_NAME[String(w.step ?? "")] ?? String(w.step ?? "?")}${w.code_detail ?? w.paicad_code ? ` · ${String(w.code_detail ?? w.paicad_code)}` : ""}) — 직접 선택으로 진행하세요`;
+      return `비드 자동 탐지 실패(${AUTO_STEP_NAME[String(w.step ?? "")] ?? String(w.step ?? "?")}${w.detail ? ` · ${String(w.detail)}` : ""}) — 직접 선택으로 진행하세요`;
     case "AUTO_TOO_MANY_BEADS":
       return w.n != null && w.max != null ? `자동 탐지 비드 ${n(w.n)}개 — 상한 ${n(w.max)}개까지만 가져왔습니다` : "";
     case "AUTO_BEAD_UNMAPPED":

@@ -1,6 +1,6 @@
 // 비드 DOE 목록(esl_bead_doe.md §12.1 라이브러리 탭 [비드 DOE]): 연구별 시나리오·ESL·DOE·상태·최적 개선율. 결과는 라이브러리에 넣지 않는다.
 import { Link } from "react-router-dom";
-import { METHOD_NAME, PHASE_NAME, SCENARIO_NAME, SCENARIO_NO, doe, doePath } from "../../api/doe";
+import { METHOD_NAME, PHASE_NAME, doe, doePath, studyScenarioLabel } from "../../api/doe";
 import type { DoePhase } from "../../api/types";
 import { Badge, Card, Empty } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
@@ -39,9 +39,7 @@ export function DoeList({ projectId }: { projectId: string }) {
                     <div>{s.title}</div>
                     <span className="small muted">{s.scenario === "compare" ? `형상 ${s.inputs.shapes?.length ?? 0}개` : s.inputs.step?.file_name ?? ""}</span>
                   </td>
-                  <td>
-                    {SCENARIO_NO[s.scenario]} {SCENARIO_NAME[s.scenario]}
-                  </td>
+                  <td>{studyScenarioLabel(s.scenario, s.inputs.select_base)}</td>
                   <td className="num">{s.entry_ids.length}</td>
                   <td className="small">{s.doe ? `${METHOD_NAME[s.doe.spec.method] ?? s.doe.spec.method} · ${s.doe.n_designs}안 · 변수 ${s.doe.spec.params.length}` : "–"}</td>
                   <td className="small">{s.doe?.preview ? `OK ${s.doe.preview.ok} · 스킵 ${s.doe.preview.skipped.collision + s.doe.preview.skipped.fixed + s.doe.preview.skipped.geom}` : "–"}</td>
