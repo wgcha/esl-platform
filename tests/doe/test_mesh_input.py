@@ -128,3 +128,25 @@ def test_length_unit_rules():
     assert mi.length_unit(smr.begin("m")[1:])["ok"] is False
     assert mi.length_unit(smr.begin("0.001")[1:])["ok"] is True
     assert mi.length_unit(smr.begin("1.0")[1:])["ok"] is False
+
+
+def test_mesh_input_diag_report_only(tmp_path):
+    """V-SR-23(SR-D-24): 작은 구멍(3×3 mm 요소 1개 뺀 구멍, 등가 지름 3 ≤ 8) → 형상 meta.diag·정보 MESH_INPUT_DIAG,
+    mesh.npz 바이트 = 진단 끈 결과와 같음(보고만), diag.enabled false → 키 없음, 설정 해시(hash_view)에서 diag 절 제외."""
+    ids, X, e, c = smr.grid(10, 8, 3.0, 3.0)
+    keep = np.ones(e.size, bool)
+    keep[4 * 8 + 3] = False                                             # 가운데 요소 1개
+    smr.write(tmp_path / "in" / "h.rad", smr.begin("mm") + smr.part(1, "chassis") + smr.nodes(ids, X)
+              + smr.shells(1, e[keep], c[keep]) + ["/END"])
+    outs = {}
+    for k, cfg in (("on", _cfg()), ("off", _cfg(mesh_input={"diag": {"enabled": False}}))):
+        od = tmp_path / k
+        _m, meta = mi.read_shape_mesh(str(tmp_path / "in"), "h.rad", 1, PROPS, cfg, out_dir=str(od))
+        outs[k] = (meta, _sha(od / mg.MESH_NPZ))
+    on, off = outs["on"][0], outs["off"][0]
+    assert on["diag"] == {"holes_n": 1, "holes_small_n": 1, "islands_n": 0, "free_loops_n": 2}
+    assert any(i["code"] == "MESH_INPUT_DIAG" and "작은 구멍 1" in i["message"] for i in on["infos"])
+    assert "diag" not in off and not any(i["code"] == "MESH_INPUT_DIAG" for i in off["infos"])
+    assert outs["on"][1] == outs["off"][1]
+    assert mi.hash_view(_cfg()) == mi.hash_view(_cfg(mesh_input={"diag": {"enabled": False}}))
+    assert "diag" not in mi.hash_view(_cfg()) and mi.hash_view(_cfg()) != mi.hash_view(_cfg(mesh_input={"max_mb": 10}))

@@ -3,7 +3,8 @@
 기본 h(3 mm)로 CAD 메시가 실패한 형상만 요소를 더 잘게 짜서 다시 시도한다. 이 모듈은 **계획**(시도 목록·요소 수 예측·
 상한 판정)과 gmsh 세션 안 면 찾기만 한다. 실행(시도 폴더·``run_isolated``·성공본 교체)은 워커 ``stages._cmp_mesh_shape``.
 
-- ``plan(stage, prev_meta, h, cfg, avail_bytes)`` → 시도 목록. stage = cad | refine_local | refine_global | remesh.
+- ``plan(stage, prev_meta, h, cfg, avail_bytes)`` → 시도 목록. stage = cad | refine_local | refine_global | defeature | remesh.
+  defeature(v0.16.1 esl_select_relax.md §5A.1) = 시도 2개(compound 켬 → compound 면 실패 때만 compound 끔, only_if).
   시도 dict = {stage, kind(local|global|None), factor, h_mm(목표 크기), mesh_h(run_isolated 의 h), base_h_mm, n_est,
   bytes_est, size_fields?, max_elems?, skipped, reason(elems|memory|time|no_face|None), info?}.
 - ``attempt_cfg(cfg, attempt)`` → 그 시도에 넘길 cfg 사본(mesh.size_fields, 세분화면 mesh.max_elems = refine.max_elems).
@@ -23,7 +24,7 @@ import os
 
 from esl.errors import EslError
 
-STAGES = ("cad", "refine_local", "refine_global", "remesh")
+STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh")   # v0.16.1 defeature(SR-D-16)
 REFINE_STAGES = ("refine_local", "refine_global")
 SKIP_INFO = "REFINE_SKIPPED_LIMIT"
 NO_FACE_INFO = "REFINE_LOCAL_NO_FACE"
@@ -49,8 +50,8 @@ def ladder(cfg: dict, mode: str | None = None) -> list[str]:
         raise EslError("CONFIG_INVALID", f"compare.mesh.mode {m!r} (cad|remesh|auto)")
     lad = list(cm.get("ladder") or DEFAULTS["compare"]["mesh"]["ladder"])
     bad = [s for s in lad if s not in STAGES]
-    if bad or len(set(lad)) != len(lad):
-        raise EslError("CONFIG_INVALID", f"compare.mesh.ladder {lad} — 단계 ⊆ {list(STAGES)}, 중복 금지")
+    if bad or len(set(lad)) != len(lad) or lad[0] != "cad":
+        raise EslError("CONFIG_INVALID", f"compare.mesh.ladder {lad} — 단계 ⊆ {list(STAGES)}, cad 맨 앞, 중복 금지")
     return lad
 
 
@@ -177,6 +178,23 @@ def plan(stage: str, prev_meta: dict | None, h: float, cfg: dict, avail_bytes: i
             "bytes_est": None, "skipped": False, "reason": None}
     if stage in ("cad", "remesh"):
         return [base]
+    if stage == "defeature":                                # v0.16.1 §5A.1: 기본 h 그대로, 형상만 단순화
+        from esl.geom import defeature as gdf
+        crit = gdf.criteria(((cfg.get("compare") or {}).get("defeature")) or {}, h)
+        pm = dict(prev_meta or {})
+        area = (pm.get("geom") or {}).get("area_mm2")
+        rc = _rcfg(cfg)
+        n = estimate_elems(area, h, elem_per_h2=_calib(pm, rc)) if area else None
+        a1 = dict(base, n_est=n, compound=bool(crit["compound"]))
+        out = [a1]
+        if crit["compound"] and ({"fillet", "narrow"} & set(crit["kinds"])):
+            out.append(dict(base, n_est=n, compound=False, only_if="compound_failed"))
+        el = float(elapsed_s) if elapsed_s is not None else None
+        for a in out:
+            why = check_limits(a, cfg, avail_bytes, el, pm.get("wall_seconds", pm.get("seconds")), pm.get("n_est"))
+            if why:
+                a.update(skipped=True, reason=why, info=SKIP_INFO)
+        return out
     rc = _rcfg(cfg)
     if not rc.get("enabled", True):
         return []
@@ -236,6 +254,13 @@ def attempt_cfg(cfg: dict, attempt: dict) -> dict:
         mc["size_fields"] = copy.deepcopy(attempt["size_fields"])
     else:
         mc.pop("size_fields", None)
+    if attempt.get("stage") == "defeature":                 # v0.16.1: 이 키가 있을 때만 세션이 defeature 단계(다른 단계 바이트 불변)
+        from esl.geom import defeature as gdf
+        mc["defeature_stage"] = {"crit": gdf.criteria(((cfg.get("compare") or {}).get("defeature")) or {},
+                                                      float(attempt.get("mesh_h") or attempt.get("h_mm"))),
+                                 "compound": bool(attempt.get("compound", True))}
+    else:
+        mc.pop("defeature_stage", None)
     if attempt.get("stage") in REFINE_STAGES:
         if attempt.get("max_elems") is not None:
             mc["max_elems"] = int(attempt["max_elems"])
@@ -310,3 +335,16 @@ def geom_summary(src: str, mc: dict, keys, rings: int) -> dict:
                 "local_faces": len(loc)}
     finally:
         gmsh.finalize()
+
+
+def compound_failed(meta: dict | None) -> bool:
+    """defeature 첫 시도 실패 면(mesh_error.json face.key)이 그 시도의 compound 묶음 면인가(§5A.1 2번째 시도 조건)."""
+    from esl.doe.mesh_gmsh import _key_near
+    m = meta or {}
+    ks = [tuple(float(v) for v in k) for k in (m.get("compound_keys") or [])]
+    f = (m.get("face") or {}).get("key")
+    if not ks:
+        return False
+    if f is None:                                           # 면을 특정 못 한 실패(compound 재매개변수화 등) = compound 탓으로 봄
+        return True
+    return any(_key_near(tuple(float(v) for v in f), k, 1e-3) for k in ks)

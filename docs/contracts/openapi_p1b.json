@@ -2984,6 +2984,18 @@
             "title": "Sort",
             "type": "string"
           },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
           "view3d": {
             "items": {
               "type": "string"
@@ -9813,6 +9825,21 @@
             ],
             "title": "Floor Follow"
           },
+          "hold_fixed": {
+            "anyOf": [
+              {
+                "enum": [
+                  0,
+                  1
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Fixed"
+          },
           "id": {
             "maxLength": 16,
             "title": "Id",
@@ -9931,6 +9958,17 @@
       },
       "SelectionDerived": {
         "properties": {
+          "algo": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Algo"
+          },
           "beads": {
             "items": {
               "additionalProperties": true,
@@ -9943,6 +9981,18 @@
             "additionalProperties": true,
             "title": "Fixed",
             "type": "object"
+          },
+          "islands_suggested": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Islands Suggested"
           },
           "mesh_sha256": {
             "anyOf": [
@@ -13391,7 +13441,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.16.0"
+    "version": "0.16.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15908,6 +15958,60 @@
           }
         },
         "summary": "Doe Selection Put",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/shapes/{did}/defeature": {
+      "get": {
+        "description": "v0.16.1 ④ 형상의 작은 형상 억제 목록(prep/shapes/{did}/mesh/defeature.json 그대로 — 특징 {id, kind, center, bbox, size,\narea_mm2, faces_n, action, method, reason?, dev_mm}, 행 상한 넘으면 truncated). 형상 단순화 단계로 메시한 형상만, 없으면 404.",
+        "operationId": "doe_shape_defeature_esl_api_doe_studies__sid__shapes__did__defeature_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Doe Shape Defeature Esl Api Doe Studies  Sid  Shapes  Did  Defeature Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Shape Defeature",
         "tags": [
           "doe"
         ]

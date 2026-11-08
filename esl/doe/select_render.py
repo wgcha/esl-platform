@@ -39,12 +39,30 @@ def color_values(x0, x, direction, has) -> np.ndarray:
     return np.where(has, c, 0.0)
 
 
+def view_normal(x0, n_hats) -> np.ndarray:
+    """SR-D-34 시점 법선: 비드마다 n̂_b(바닥 쪽 — 볼록·오목이면 서로 반대)를 판 법선(``view3d.plate_normal``) 쪽으로 맞춘 뒤 평균.
+    볼록·오목이 섞여도 상쇄되지 않고, sense 와 무관하게 같은 쪽에서 본다."""
+    from esl.view3d import plate_normal
+    pn = plate_normal(np.asarray(x0, dtype=np.float64))
+    ns = [np.asarray(n, dtype=np.float64) for n in n_hats]
+    if not ns:
+        return pn
+    v = np.mean([n if float(n @ pn) >= 0 else -n for n in ns], axis=0)
+    nv = float(np.linalg.norm(v))
+    return v / nv if nv > 1e-12 else pn
+
+
 def view(x0, affected: np.ndarray, n_hat_mean, frame: dict | None, tcfg: dict) -> dict:
-    """{f(시선), r(오른쪽), u(위), center, scale(px/mm 내부), w, h} — 공칭 bbox 기준(모든 칸 같은 값)."""
+    """{f(시선), r(오른쪽), u(위), center, scale(px/mm 내부), w, h} — 공칭 bbox 기준(모든 칸 같은 값).
+    v0.16.1 SR-D-34: 시점 법선은 판 법선 쪽으로 맞추고 카메라는 그 쪽에서 내려다봄 — 볼록·오목(n̂ 부호)과 무관하게 화면 오른쪽 =
+    η × n_p, 위 ≈ +η(n_p = 판 법선, η = frame e_eta 또는 y)."""
+    from esl.view3d import plate_normal
     X = np.asarray(x0, dtype=np.float64)
     pts = X[affected] if np.any(affected) else X
     n = np.asarray(n_hat_mean, dtype=np.float64)
     n = n / max(np.linalg.norm(n), 1e-300)
+    if float(n @ plate_normal(X)) < 0:
+        n = -n
     eta = np.asarray((frame or {}).get("e_eta") or [0.0, 1.0, 0.0], dtype=np.float64)
     eta = eta - (eta @ n) * n
     if np.linalg.norm(eta) < 1e-9:
@@ -52,7 +70,8 @@ def view(x0, affected: np.ndarray, n_hat_mean, frame: dict | None, tcfg: dict) -
         eta = eta - (eta @ n) * n
     eta /= np.linalg.norm(eta)
     t = math.radians(float(tcfg["tilt_deg"]))
-    f = math.cos(t) * n + math.sin(t) * eta                    # 카메라는 −n̂ 쪽 위, −η 쪽으로 기울임
+    # SR-D-34: 카메라 = 판 법선(+n) 쪽 위에서 내려다봄(−n), η 쪽으로 기울임 → 화면 오른쪽 = η × n, 위 ≈ +η(평면도와 같은 방향)
+    f = -math.cos(t) * n + math.sin(t) * eta
     f /= np.linalg.norm(f)
     xi = np.cross(eta, n)
     r = xi - (xi @ f) * f

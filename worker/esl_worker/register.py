@@ -701,7 +701,12 @@ COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status"
                       "quad_ratio", "quality",
                       # v0.16.0 메시 옵션(esl_compare_mesh_options.md §3·C2-D-22) — 프런트는 refine·refine_bias 를 그대로 읽음
                       "part_id", "mesh_method", "cad_error", "fidelity", "edge_median_mm", "n_components", "refine",
-                      "attempts")
+                      "attempts",
+                      # v0.16.1(esl_select_relax.md §5A.5·SR-D-24): mesh_method "defeature" 형상만 억제 요약
+                      # {n, counts, skipped_n, suppressed_max_mm, outside_hausdorff_mm}(cad 형상의 코어 행 defeature = v0.14.1
+                      # 구멍 메움 기록 — 넘기지 않음), 메시 입력 진단 diag{holes_n, …}
+                      # (attempts 행의 stage defeature·compound·reason 은 attempts 그대로)
+                      "defeature", "diag")
 
 
 def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> dict[str, Any]:
@@ -734,8 +739,15 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
             x["quality"] = {k: q.get(k) for k in ("fail_elems", "fail_ratio", "warn_elems", "warn_ratio", "tria_pct",
                                                   "over_limit", "max_fail_ratio")}
     failed = [{"id": r["id"], "status": r["status"], "code": r.get("code")} for r in shapes if r.get("status") != "READY"]
+    for x in shapes:                     # v0.16.1 키는 있을 때만(v0.16.0 준비 요약 그대로). 코어 행 defeature 는 cad 형상이면
+        if x.get("mesh_method") != "defeature" or not isinstance(x.get("defeature"), dict):   # v0.14.1 구멍 메움 기록 → 넣지 않음
+            x.pop("defeature", None)
+        if not isinstance(x.get("diag"), dict):
+            x.pop("diag", None)
     prep = {"n_beads": 0, "n_params": 0, "paicad_version": None, "warnings": warns, "boundary": None,
             "n_shapes": len(shapes), "n_ready": len(shapes) - len(failed), "failed": failed,
+            # v0.16.1 R3: 작은 형상 억제(defeature) 단계로 메시한 형상 수
+            "n_defeature": sum(r.get("mesh_method") == "defeature" for r in shapes),
             "reference_source": cmp.get("reference_source"), "shapes": shapes,
             "mesh": {"size_mm": (cmp.get("profile") or {}).get("size_mm"), "gmsh_version": cmp.get("gmsh_version")}}
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep))
@@ -746,7 +758,7 @@ def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir:
     """BD_PREVIEW_REGISTER: phase PREVIEW_READY, doe.preview = {rev, matrix_sha256, ok, skipped{collision, fixed, geom}}
     (doe 의 나머지 키 유지). 셀 상태 원본은 doe/<rev>/grid/grid_manifest.json(백엔드가 읽음).
     v0.15.0 select: + preview.selection_sha256(grid_manifest = 작업 params.doe.selection.sha256 — 다르면 PREVIEW_STALE),
-    skipped.mesh(FAILED_MESH 셀 수)."""
+    skipped.mesh(FAILED_MESH 셀 수). v0.16.1 select: + warn(경고 READY 수), rules(grid_manifest.rules — 있을 때만)."""
     from esl_platform.core.repositories import doe as doe_repo
 
     from . import core_adapter, doe_jobs
@@ -769,20 +781,27 @@ def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir:
     cnt = doe_jobs.count_states([r for r in g["cells"] if r["id"] in want])
     doe["preview"] = {"rev": rev, "matrix_sha256": m.get("matrix_sha256"), "ok": cnt["ok"],
                       "skipped": {k: cnt[k] for k in ("collision", "fixed", "geom")}}
+    man = g.get("manifest") or {}
     if s.get("scenario") == "select":
         msha = (g.get("manifest") or {}).get("selection_sha256")
         jsha = (d.get("selection") or {}).get("sha256")
         if not msha or (jsha and msha != jsha):
             raise RegisterError("PREVIEW_STALE", f"미리보기 선택 sha256({str(msha)[:12]}…)이 작업 선택({str(jsha)[:12]}…)과 다릅니다")
         doe["preview"]["selection_sha256"] = msha
-        doe["preview"]["skipped"]["mesh"] = doe_jobs.count_select_states([r for r in g["cells"] if r["id"] in want])["mesh"]
+        sc = doe_jobs.count_select_states([r for r in g["cells"] if r["id"] in want])
+        doe["preview"]["skipped"]["mesh"] = sc["mesh"]
+        # v0.16.1(esl_select_relax.md §4.3·§7.4): 경고 READY 안 수(실행 대상) · 판정 규칙 판(grid_manifest.rules — 없으면 v0.16.0 규칙,
+        # 백엔드가 rules_outdated 띠). 셀별 warnings·fixed_viol 은 grid_manifest 원본(백엔드 preview_cells 가 읽음)
+        doe["preview"]["warn"] = sc["warn"]
+        if isinstance(man.get("rules"), int):
+            doe["preview"]["rules"] = int(man["rules"])
     doe_repo.update_study(conn, s["id"], phase="PREVIEW_READY", doe=_jsonable(doe))
     return {"bead_doe_id": s["id"], "phase": "PREVIEW_READY", **doe["preview"]}
 
 
 def register_doe_run(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
     """BD_REGISTER: phase DONE, result = post/result.json 요약(best_all 제외 — ranking 은 max_designs 행 이내),
-    report_rel = report.html."""
+    report_rel = report.html. v0.16.1 select: ranking 행 warn[]·warnings·summary.best_clean(SR-D-11)은 결과 그대로."""
     from esl_platform.core.repositories import doe as doe_repo
 
     s = _study(conn, job)

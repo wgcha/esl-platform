@@ -6,6 +6,7 @@ import { ROLE_LABEL, useApp } from "../app/AppContext";
 import { StatusChips, StatusDrawer, useRunStatus } from "./RunStatus";
 import { SEEN_EVENT, isNewVersion, lastSeenVersion } from "../lib/changelog";
 import { dt } from "../lib/format";
+import VERSION_TXT from "../../../VERSION?raw";
 
 export const GUIDE_PATH = "/guide";
 export const UPDATES_PATH = "/updates";
@@ -32,6 +33,13 @@ export function UploadChip() {
   );
 }
 
+/** 상단 바 버전 = 프런트 빌드에 묶인 저장소 루트 VERSION(없으면 서버 GET /version) — v0.16.1 SR-D-43(d): 서버 BUILD.json 이
+ * 옛 값이어도 배포된 화면 판(VERSION) 기준 */
+export const APP_VERSION = String(VERSION_TXT ?? "").trim();
+export function shownVersion(server: string | null | undefined): string {
+  return APP_VERSION || server || "";
+}
+
 /** 상단 바 버전 표기: v0.4.0(툴팁 commit·배포 시각) + 마지막으로 본 버전보다 새로우면 점 배지 → 업데이트 내역 */
 export function VersionChip() {
   const { version } = useApp();
@@ -42,11 +50,13 @@ export function VersionChip() {
     return () => window.removeEventListener(SEEN_EVENT, on);
   }, []);
   if (!version) return null;
-  const fresh = isNewVersion(version.version, seen);
-  const tip = [`commit ${version.commit ?? "–"}`, `배포 ${version.built_at ? dt(version.built_at) : "–"}`].join(" · ");
+  const ver = shownVersion(version.version);
+  const fresh = isNewVersion(ver, seen);
+  const tip = [`commit ${version.commit ?? "–"}`, `배포 ${version.built_at ? dt(version.built_at) : "–"}`,
+    ...(version.version && version.version !== ver ? [`서버 v${version.version}`] : [])].join(" · ");
   return (
-    <Link to={UPDATES_PATH} className="version-chip" title={tip} data-testid="version-chip" aria-label={`버전 v${version.version}${fresh ? " (새 버전)" : ""} — 업데이트 내역`}>
-      v{version.version}
+    <Link to={UPDATES_PATH} className="version-chip" title={tip} data-testid="version-chip" aria-label={`버전 v${ver}${fresh ? " (새 버전)" : ""} — 업데이트 내역`}>
+      v{ver}
       {fresh && <span className="new-dot" data-testid="version-new" aria-hidden="true" />}
     </Link>
   );

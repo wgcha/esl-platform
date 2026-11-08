@@ -122,6 +122,7 @@ def test_best_writes_only_work_copies(world, monkeypatch):
     monkeypatch.setattr(ev, "load_design", lambda _d: {"x": x1})
     monkeypatch.setattr(export_mesh, "write", lambda bd, m, **kw: [])
     monkeypatch.setattr(S, "_sel_rev_doc", lambda c: {"selection_sha256": "a" * 64, "basis_sha256": "b" * 64})
+    monkeypatch.setattr(S, "_sel_fixed_comment", lambda c, t, did, x: ([], []))   # v0.16.1 경고 없는 안
     before = _tree(world["inp"])
     c = _ctx(world)
     bd = str(world["out"] / "best" / "d001")
@@ -135,3 +136,26 @@ def test_best_writes_only_work_copies(world, monkeypatch):
     written = {os.path.relpath(os.path.join(r, f), world["out"]) for r, _d, fs in os.walk(world["out"]) for f in fs}
     assert all(p.startswith(os.path.join("best", "d001")) for p in written), written
     assert not any("old_copy" in p or "backup_part" in p for p in written)
+
+
+def test_write_morphed_comment_lines(tmp_path):
+    """V-SR-11(코어): comment_lines = 첫 /NODE 줄 바로 앞, 원본 줄바꿈(\\r\\n) 따름, 그 밖 바이트 = 주석 없는 사본과 같음.
+    None·빈 목록 → v0.16.0 과 바이트 동일, 비ASCII·'#' 아님 → ValueError."""
+    from esl.doe import nodes as nd
+    src = tmp_path / "m.rad"
+    src.write_bytes(b"#RADIOSS\r\n/BEGIN\r\nx\r\n/NODE\r\n         1                 0.0                 0.0                 0.0\r\n"
+                    b"/NODE\r\n         2                 1.0                 0.0                 0.0\r\n/END\r\n")
+    nid = np.array([1, 2])
+    x0 = np.array([[0.0, 0, 0], [1.0, 0, 0]])
+    x1 = x0 + [[0, 0, 1.0], [0, 0, 0]]
+    nd.write_morphed(str(src), str(tmp_path / "a.rad"), nid, x1, x0)
+    nd.write_morphed(str(src), str(tmp_path / "b.rad"), nid, x1, x0, comment_lines=[])
+    cl = ["#ESL WARNING FIXED_MOVED n=1 max_mm=1.0 : fastener positions moved, check RBE2/TIE", "#ESL WARNING FIXED_NODES 1"]
+    nd.write_morphed(str(src), str(tmp_path / "c.rad"), nid, x1, x0, comment_lines=cl)
+    a, b, c = ((tmp_path / f).read_bytes() for f in ("a.rad", "b.rad", "c.rad"))
+    assert a == b
+    ins = b"".join(x.encode() + b"\r\n" for x in cl)
+    k = a.index(b"/NODE")
+    assert c == a[:k] + ins + a[k:] and c.count(b"#ESL") == 2
+    with pytest.raises(ValueError):
+        nd.write_morphed(str(src), str(tmp_path / "d.rad"), nid, x1, x0, comment_lines=["# 한글"])

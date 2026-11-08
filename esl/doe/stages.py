@@ -422,7 +422,8 @@ def _cfg_hash(c: Ctx) -> str:
     keep = {"solver": c.solver_cfg(), "mesh": c.cfg["mesh"], "solve": c.cfg["solve"], "grid": c.ocfg["grid"],
             "mapping": c.mapping_opts(), "paicad_options": c.cfg["paicad"].get("options") or {}}
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
-        keep.update(select=c.cfg["select"], quality=c.cfg["compare"]["quality"])
+        from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
+        keep.update(select=bsel.select_hash_view(c.cfg["select"]), quality=c.cfg["compare"]["quality"])
     return ev.config_hash(keep)
 
 
@@ -467,7 +468,14 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
         m = dict(t.mesh)
         m["x0"] = x
         _, loads = sc.load_loads(c.p("prep"))
-        return m, list(t.supports), loads, {"n_nodes": t.n_nodes, "n_elems": t.n_elems, **ninfo}
+        info = {"n_nodes": t.n_nodes, "n_elems": t.n_elems, **ninfo}
+        from esl.morph import core as mcore           # SR-D-44 자동 탐지 기본 모핑(paicad 안 좌표)도 공통 모핑 코어 사후 점검
+        sq = c.cfg["select"]["quality"]                # (극단 요소 — 해당 없으면 키 없음: 기존 결과 바이트 불변)
+        mw = mcore.post_morph_warnings(t.mesh, t.mesh["x0"], x, sq, flip_deg=float(sq["flip_deg"]))
+        if mw:
+            info["morph_warnings"] = mw
+        return m, list(t.supports), loads, info
+    # TODO(SR-D-44): ③ STEP 모핑(보류) — 안 메시가 나오면 esl.morph.core(post_morph_warnings·피처 안전망)를 여기서 호출
     # ③: 안 BREP → gmsh(베이스라인과 같은 h·옵션) → frame 고정 매핑
     brep = os.path.join(dd, "update", pio.SAMPLE_BREP)
     if not os.path.isfile(brep):
@@ -496,13 +504,17 @@ def bd_eval(spec: dict, echo=print) -> dict:
     dd = design_dir(c, did)
     c.writer.makedirs(dd)
     prev = ev.reusable(dd, sha)
+    st = xs = None
+    if c.scn == "select" and did != BASELINE:    # v0.16.1 SR-D-13d: 재사용 전에 판정을 다시(규칙이 바뀌었을 수 있음)
+        xs, st = _sel_design(c, t, did)
+        if prev is not None and (st["state"] != "READY" or prev.get("status") not in ("OK", "FAILED_SOLVE")):
+            prev = None                          # 지금 스킵 = 스킵 문서 새로, v0.16.0 SKIPPED_FIXED → 지금 READY(경고) = 해석
     if prev is not None:
         echo(f"[{did}] 이전 결과 재사용({prev['status']})")
         c.progress(100)
         return {"design": did, "status": prev["status"], "reused": True}
-    if c.scn == "select" and did != BASELINE:
-        _, st = _sel_design(c, t, did)
-        if st["state"] != "READY":              # 고정 침범·품질(미리보기와 같은 함수)
+    if st is not None:
+        if st["state"] != "READY":              # 뒤집힘·skip 정책 고정 침범·품질(미리보기와 같은 함수)
             doc = ev.result_doc(did, st["state"], values, mesh={"n_nodes": t.n_nodes, "n_elems": t.n_elems,
                                                                 "quality": st["quality"],
                                                                 "fixed_max_mm": st["fixed"]["max_mm"]},
@@ -544,8 +556,19 @@ def bd_eval(spec: dict, echo=print) -> dict:
         if did == BASELINE:
             raise EslError("BASELINE_FAILED", f"베이스라인 평가 실패 {exc.code}: {exc.message}") from None
     paicad = None if pa is None else {"code": pa.get("code"), "seconds": pa.get("seconds")}
+    sw = list((st or {}).get("warnings") or [])
+    if sw:                                       # v0.16.1 select 경고 안(SR-D-11): 문자열은 warnings, 원본 dict 는 select_warnings
+        warns = list(warns) + [_sel_warn_text(w) for w in sw]
     doc = ev.result_doc(did, status, values, paicad=paicad, mesh=mesh_info, solve=solve, per_esl=per, warnings=warns,
                         code=code, message=msg)
+    if sw:
+        doc["select_warnings"] = sw
+        if any(w["code"] == "SELECT_FIXED_MOVED" for w in sw):  # 보고서 '체결 위치 어긋남' 원인 변수(상위 3)
+            from esl.doe import bead_select as bsel
+            L = _sel_loaded(c)
+            det = bsel.fixed_violation_detail(np.asarray(t.mesh["x0"], dtype=np.float64), xs, L["fixed"], L["B"],
+                                              values, float(bsel._cfg(c.cfg)["fixed_tol_mm"]), cap=0)
+            doc["select_fixed_viol"] = {"n": det["n"], "max_mm": det["max_mm"], "bead_vars": det["bead_vars"][:3]}
     U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), doc)
     ev.write_done(dd, sha, status, c.writer)
     tag = f"[{did} {_cmp_name(c, did)}]" if c.scn == "compare" else f"[{did}]"      # 이름은 로그 표시만
@@ -749,6 +772,14 @@ def bd_post(spec: dict, echo=print) -> dict:
         for p in x["per_esl"]:
             p["label"] = labels.get(p["entry_id"], p["entry_id"][:8])
     by = {x["id"]: x for x in R["ranking"]}
+    best_clean = None
+    if c.scn == "select":                        # v0.16.1 SR-D-11: 경고 안도 순위 그대로 + 행 warn, 경고 없는 최상위
+        rw = {r["id"]: [str(w["code"]).replace("SELECT_", "", 1) for w in r.get("select_warnings") or []]
+              for r in results}
+        for x in R["ranking"]:
+            if rw.get(x["id"]):
+                x["warn"] = rw[x["id"]]
+        best_clean = next((x["id"] for x in R["ranking"] if not x.get("warn")), None)
     for r in results:
         if r["id"] == BASELINE:
             r["score"] = 1.0
@@ -805,6 +836,8 @@ def bd_post(spec: dict, echo=print) -> dict:
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
            "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise,
            "matrix_sha256": m["matrix_sha256"], "warnings": warns}
+    if c.scn == "select":
+        out["summary"] = {"best_clean": best_clean}
     ms = load_method_sources()
     pjson = c.p("prep", "plan.json")
     cnt = {"ok": 0, "collision": 0, "fixed": 0, "geom": 0}
@@ -833,6 +866,7 @@ def bd_post(spec: dict, echo=print) -> dict:
            "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"], "esl": out["esl"]}
     if c.scn == "select":
         ctx["selection"] = _sel_report(c, results)
+        ctx["selection"]["best_clean"] = best_clean
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
@@ -1045,7 +1079,11 @@ def _cmp_quality(c: Ctx, mesh: dict) -> dict:
 
 
 # ---------------------------------------------------------------- v0.16.0 메시 방식(esl_compare_mesh_options.md §4A·§7)
-MESH_METHODS = ("cad", "refine", "remesh", "fallback", "mesh_input")
+MESH_METHODS = ("cad", "refine", "remesh", "fallback", "mesh_input", "defeature")   # v0.16.1 defeature(SR-D-20)
+# v0.16.1 compare.defeature 새 키(defeature 단계에서만 읽음) — base.json profile·profile_sha256 에서 값과 무관하게 뺌(SR-D-21b)
+DEFEAT_NEW_KEYS_V0161 = ("kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm",
+                         "narrow_w_factor", "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor",
+                         "max_features", "list_max")
 TRY_PREFIX = "try_"
 
 
@@ -1116,7 +1154,7 @@ def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
     return td
 
 
-LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "remesh": "재메시"}
+LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "defeature": "형상 단순화", "remesh": "재메시"}
 
 
 def _ladder_fail_text(r: dict) -> str:
@@ -1250,6 +1288,14 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                 return rr
             last = rr
             continue
+        if stage == "defeature":                        # v0.16.1 §5A.1 형상 단순화(작은 형상 억제) 단계
+            rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err)
+            n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
+            if rr.get("status") == "READY":
+                return rr
+            if rr.get("status") == "FAILED_MESH":
+                last = rr
+            continue
         queue = mr.plan(stage, pm, h, ccfg, avail, elapsed_s=elapsed)
         while queue:
             a = queue.pop(0)
@@ -1316,6 +1362,92 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     return last
 
 
+def _defeat_summary(meta: dict) -> dict | None:
+    """형상 행 defeature 요약(§5A.5 — mesh.json.defeature_stage 에서): {n, counts, skipped_n, suppressed_max_mm, outside_hausdorff_mm}."""
+    ds = meta.get("defeature_stage")
+    if not ds:
+        return None
+    fd = ds.get("fidelity") or {}
+    return {"n": ds.get("n"), "counts": ds.get("counts"), "skipped_n": ds.get("skipped_n"),
+            "suppressed_max_mm": fd.get("suppressed_max_mm"),
+            "outside_hausdorff_mm": (fd.get("outside") or {}).get("hausdorff_mm")}
+
+
+def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, pm: dict, avail, elapsed: float,
+                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict) -> dict:
+    """사다리 defeature 단계 시도(최대 2 — compound 켬 → compound 면 실패 때만 끔). 반환 성공 형상 행 | {status FAILED_MESH…}
+    | {status SKIPPED} (+ _n_try·_elapsed). 억제 대상 0 = DEFEATURE_NO_FEATURE(메싱 안 함, 2번째 시도도 건너뜀)."""
+    from esl.doe import mesh_refine as mr
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    src = c.p(row["rel"])
+    to_cad = float(ccfg["mesh"]["timeout_s"])
+    first = None
+    out: dict = {"status": "SKIPPED"}
+    for a in mr.plan("defeature", pm, h, ccfg, avail, elapsed_s=elapsed):
+        rec = {"stage": "defeature", "factor": None, "h_mm": h, "compound": bool(a.get("compound"))}
+        if a.get("only_if") == "compound_failed" and not mr.compound_failed(first):   # 조건 먼저(한도 판정보다 앞)
+            attempts.append({**rec, "status": "SKIPPED", "code": None, "seconds": None, "skipped": True,
+                             "reason": "not_compound"})
+            continue
+        if a.get("skipped"):
+            infos.append(_cmp_text(mr.SKIP_INFO, stage="defeature", factor="—", n_est=a.get("n_est") or "—",
+                                   bytes_est=_gb(a.get("bytes_est")), reason=a.get("reason")) + f" — {did} {row['name']}")
+            attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
+                             "reason": a.get("reason")})
+            continue
+        why = mr.check_limits(a, ccfg, avail, elapsed, pm.get("wall_seconds"), pm.get("n_est"))
+        if why:
+            attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
+                             "reason": why})
+            continue
+        n_try += 1
+        td = _next_try(c, d, n_try, keep)
+        t1 = time.monotonic()
+        try:
+            mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
+                                         fail_info=True, timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
+        except EslError as exc:
+            if exc.code == "GMSH_UNAVAILABLE":
+                raise
+            dt = time.monotonic() - t1
+            elapsed += dt
+            if exc.code == "DEFEATURE_NO_FEATURE":
+                attempts.append({**rec, "status": "SKIPPED", "code": "DEFEATURE_NO_FEATURE", "seconds": round(dt, 3),
+                                 "skipped": True, "reason": "no_feature"})
+                infos.append(_cmp_text("DEFEATURE_NO_FEATURE") + f" — {did} {row['name']}")
+                break
+            code = exc.code if exc.code == "DEFEATURE_FIDELITY" else _cad_code(td)
+            attempts.append({**rec, "status": "FAILED_MESH", "code": code, "seconds": round(dt, 3)})
+            first = mr.read_attempt(td) if first is None else first
+            out = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
+            continue
+        dt = time.monotonic() - t1
+        elapsed += dt
+        attempts.append({**rec, "status": "READY", "code": None, "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
+        res = _cmp_ready(c, did, mesh, meta)
+        res.update(mesh_method="defeature", cad_error=cad_err, attempts=attempts, info=infos,
+                   defeature=_defeat_summary(meta))     # §5A.5 형상 행 defeature = 단계 요약(cad 단계 holes 기록 대신)
+        res["seconds"] = round(elapsed, 3)
+        _promote(c, td, d, {"mesh_method": "defeature", "cad_error": cad_err, "attempts": attempts})
+        if not keep:
+            _clear_tries(c, d)
+        res.update(_n_try=n_try, _elapsed=elapsed)
+        return res
+    out.update(_n_try=n_try, _elapsed=elapsed)
+    return out
+
+
+def _defeat_lists(c: Ctx, shapes: list[dict]) -> dict:
+    """보고서 '작은 형상 억제' 절: defeature 형상의 mesh/defeature.json(없으면 빈 목록)."""
+    out = {}
+    for x in shapes:
+        if x.get("mesh_method") == "defeature":
+            p = os.path.join(_cmp_mesh_dir(c, x["id"]), mg.DEFEAT_LIST)
+            out[x["id"]] = U.read_json(p) if os.path.isfile(p) else {"n": 0, "features": []}
+    return out
+
+
 def _gb(b) -> str:
     return "—" if b is None else f"{float(b) / 1024 ** 3:.2f} GB"
 
@@ -1370,6 +1502,8 @@ def _cmp_mesh_input_one(c: Ctx, row: dict, ccfg: dict, props: dict) -> dict:
                edge_median_mm=meta.get("edge_median_mm"), n_components=meta.get("n_components"),
                warn_codes=[w for w in meta.get("warnings") or [] if str(w.get("code", "")).startswith("MESH_INPUT_")],
                info=[f"{x['code']}: {did} {row['name']} {x.get('message') or ''}".rstrip() for x in meta.get("infos") or []])
+    if meta.get("diag"):                     # v0.16.1 SR-D-24 메시 입력 진단(보고만)
+        out["diag"] = meta["diag"]
     return out
 
 
@@ -1386,6 +1520,9 @@ def _method_echo(r: dict, h: float) -> str:
                 + (f" · 최대 편차 {float(fd['hausdorff_mm']):.3f} mm" if fd.get("hausdorff_mm") is not None else ""))
     if m == "mesh_input":
         return f"메시 입력(파트 {r.get('part_id')} · 요소 크기 중앙값 {float(r.get('edge_median_mm') or 0):.2f} mm)"
+    if m == "defeature":
+        ds = r.get("defeature") or {}
+        return f"mesh 형상 단순화 {h:g} mm(작은 형상 {ds.get('n', 0)}개 억제)"
     return f"mesh {h:g} mm"
 
 
@@ -1433,6 +1570,14 @@ def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: fl
         if fd.get("over_warn"):
             warns.append(_cmp_text("REMESH_FIDELITY_WARN", mm=f"{float(fd['hausdorff_mm']):.3f}",
                                    warn=f"{float(fd['warn_mm']):g}") + f" — {nm}")
+        if m == "defeature":                     # v0.16.1 SR-D-20 MESH_DEFEATURED
+            ds = x.get("defeature") or {}
+            ce = (x.get("cad_error") or {}).get("message") or "?"
+            cnt = ", ".join(f"{k} {v}" for k, v in (ds.get("counts") or {}).items())
+            warns.append(_cmp_text("MESH_DEFEATURED", n=ds.get("n"), counts=cnt,
+                                   suppressed_max_mm=f"{float(ds.get('suppressed_max_mm') or 0):.3f}",
+                                   outside_mm=f"{float(ds.get('outside_hausdorff_mm') or 0):.3f}", first=ce)
+                         + f" — {nm}")
         rf = x.get("refine")
         if m == "refine" and rf:
             if n_ref:
@@ -1449,7 +1594,7 @@ def _cmp_mesh_notes(c: Ctx, shapes: list[dict], res: dict, ref_mesh: dict, h: fl
     return infos
 
 
-MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
+MIXED_TRIGGER = ("refine", "remesh", "fallback", "mesh_input", "defeature")   # C2-D-1: {cad, case} 만이면 COMPARE_REF_CASE_MESH 가 이미 알림
 
 
 def _method_kinds(shapes: list[dict], res: dict) -> set:
@@ -1549,7 +1694,8 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
                                     source={"reference": ref["source"], "name": ref["name"]})
     prof_rec = {k: prof.get(k) for k in ("size_mm", "curvature_n", "min_size_factor", "extend_from_boundary",
                                          "occ_fix_small", "feature_angle", "algorithm", "occ_sew_faces")}
-    prof_rec["defeature"] = dict(c.cfg["compare"].get("defeature") or {})
+    prof_rec["defeature"] = {k: v for k, v in (c.cfg["compare"].get("defeature") or {}).items()
+                             if k not in DEFEAT_NEW_KEYS_V0161}   # v0.16.1 새 키 제외(SR-D-21b — base.json 바이트 불변)
     bm = sc.save_base(t, c.p("prep"), "compare", c.writer,
                       extra={"props": props, "h": h, "gmsh_version": ver, "reference_source": ref_src,
                              "profile": prof_rec, "profile_sha256": ev.config_hash(prof_rec)})
@@ -1643,16 +1789,38 @@ def _cmp_sha(c: Ctx, did: str) -> str:
     if mode != "cad":                       # C2-D-15·25: mode ≠ cad 일 때만(v0.15.x·cad 스터디 해시 불변)
         cc = c.cfg.get("compare") or {}
         keep["mesh_mode"] = mode
-        keep["remesh"] = ev.config_hash(cc.get("remesh") or {})
+        keep["remesh"] = ev.config_hash(_remesh_hash_view(cc.get("remesh") or {}))
         keep["ladder"] = list(_cmp_mode(c)[1])
         keep["refine"] = ev.config_hash(cc.get("refine") or {})
     if sh.get("source") == "mesh":          # 메시 형상 = (주·include sha256 목록, part_id, mesh_input 설정 해시)
         from esl.doe import mesh_input as mi
         keep["mesh_files"] = [f.get("sha256") for f in sh.get("files") or []]
         keep["part_id"] = sh.get("part_id")
-        keep["mesh_input"] = ev.config_hash(mi._mcfg(c.cfg))
+        keep["mesh_input"] = ev.config_hash(mi.hash_view(c.cfg))      # v0.16.1: diag 절 제외(SR-D-24)
+    if _cmp_row_method(c, did) == "defeature":   # v0.16.1 SR-D-21b: defeature 형상만 설정 해시(기준 d000 포함)
+        df = (c.cfg.get("compare") or {}).get("defeature") or {}
+        keep["defeature_cfg"] = ev.config_hash({k: df.get(k) for k in DEFEAT_NEW_KEYS_V0161 + ("min_bead_height_mm",)})
     cfg = ev.config_hash(keep)
     return ev.input_sha256({}, mesh_sha, ev.config_hash(bmeta["frame"]), cfg, None)
+
+
+REMESH_HASH_SKIP_V0161 = ("warn_rel_cad",)    # remesh.fidelity 의 경고 전용 새 키(SR-D-27) — 메시와 무관해 해시에서 항상 제외
+
+
+def _remesh_hash_view(rm: dict) -> dict:
+    """keep["remesh"] 해시용 사본: fidelity 의 경고 전용 v0.16.1 키를 뺌 → v0.16.0 스냅샷·cad 형상 해시 불변(SR-D-27)."""
+    out = dict(rm)
+    if isinstance(out.get("fidelity"), dict):
+        out["fidelity"] = {k: v for k, v in out["fidelity"].items() if k not in REMESH_HASH_SKIP_V0161}
+    return out
+
+
+def _cmp_row_method(c: Ctx, did: str) -> str | None:
+    """prep/compare.json 형상 행의 mesh_method(없으면 None)."""
+    try:
+        return next((x.get("mesh_method") for x in _cmp_doc(c)["shapes"] if x.get("id") == did), None)
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
@@ -1831,9 +1999,11 @@ def _shape_ext(s: dict, bias: dict | None = None) -> dict:
     out = {"source": s.get("source") or "step", "mesh_method": s.get("mesh_method")}
     if s.get("source") == "mesh":
         out["part_id"] = s.get("part_id")
-    for k in ("fidelity", "refine"):
+    for k in ("fidelity", "refine", "diag"):
         if s.get(k):
             out[k] = s[k]
+    if s.get("mesh_method") == "defeature" and s.get("defeature"):   # v0.16.1 §5A.5(cad 형상의 holes 기록은 넣지 않음 — 바이트 불변)
+        out["defeature"] = s["defeature"]
     if bias:
         out["refine_bias"] = bias
     return out
@@ -1934,6 +2104,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "versions": {"paicad": None, "gmsh": bmeta.get("gmsh_version")}, "shapes": doc["shapes"],
            "profile": doc.get("profile"), "reference_source": doc["reference_source"],
            "result": {**R, "sensitivity": None}, "sources": ms, "ranking_rows": c.cfg["limits"]["ranking_report_rows"],
+           "defeature_lists": _defeat_lists(c, doc["shapes"]),
            "esl": esl, "limits_extra": list(LIMIT_MSG) + _mesh_limits(doc["shapes"]), "warnings": warns,
            "refine_bias": bias, "mesh_mode": doc.get("mesh_mode"),
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
@@ -1957,7 +2128,9 @@ MESH_LIMIT_MSG = {
     "refine": "세분화 형상은 요소 크기가 기준 메시와 달라 메시 의존 오차를 포함합니다 — 수렴 점검 δ 참고",
     "remesh": "재메시는 CAD 면 구조를 버린 근사입니다(단순화 후 CAD 대비 편차 표시) — 구멍 둘레 분할 미적용, 필렛이 접선으로 "
               "이어진 비드는 면 분류에 실패할 수 있음(REMESH_CLASSIFY_FAILED)",
-    "mesh_input": "메시 입력은 그대로 사용합니다 — 크기·품질은 사용자 메시 책임"}
+    "mesh_input": "메시 입력은 그대로 사용합니다 — 크기·품질은 사용자 메시 책임",
+    "defeature": "형상 단순화 형상은 작은 형상(구멍·낮은 딤플·버링·작은 필렛)을 억제한 메시라 강성에 억제 영향이 섞입니다 — "
+                 "억제 목록·억제 영역 편차(작은 형상 억제 절) 참고"}
 
 
 def _mesh_limits(rows: list[dict]) -> list[str]:
@@ -1965,7 +2138,7 @@ def _mesh_limits(rows: list[dict]) -> list[str]:
     ms = {r.get("mesh_method") for r in rows if r.get("status") in ("READY", "OK") or r.get("mesh_method")}
     ms |= {"remesh"} if "fallback" in ms else set()
     ms.discard("mesh_input") if not any(r.get("source") == "mesh" for r in rows) else None
-    return [MESH_LIMIT_MSG[k] for k in ("refine", "remesh", "mesh_input") if k in ms]
+    return [MESH_LIMIT_MSG[k] for k in ("refine", "remesh", "mesh_input", "defeature") if k in ms]
 
 
 # ---------------------------------------------------------------- v0.15.0 비드 직접 선택 select (esl_bead_select.md §8)
@@ -2105,7 +2278,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     if all(os.path.isfile(p) for p in (pb, pj, pp, os.path.join(d, "basis.bin"))):
         bj = U.read_json(pj)
         if bj.get("selection_sha256") == sha and bj.get("mesh_sha256") == bmeta["mesh_sha256"] and \
-                bj.get("basis_sha256") == U.sha256_file(pb) and bj.get("cfg_sha256") == _sel_cfg_sha(c):
+                bj.get("basis_sha256") == U.sha256_file(pb) and bj.get("cfg_sha256") == _sel_cfg_sha(c) and \
+                bj.get("algo", 1) == bsel.ALGO:         # v0.16.1 SR-D-13c: 옛 규칙 기저는 1회 재계산
             echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
             return {"params": U.read_json(pp)["params"], "warnings": [],
                     "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
@@ -2116,6 +2290,11 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
                         with_section=False)
     B = bsel.basis(t.mesh, D, c.cfg)
+    rc_w = bsel.range_check(t.mesh, D, B, c.cfg)   # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 → 비드 경고(범위·기저 불변)
+    if rc_w:
+        echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(
+            f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" if "var" in w else
+            f"조합(표본 {w['corners']} 중 뒤집힘 {w['inverted_n']}) 함께 쓸 범위 ≈ 공칭 ± {w['scale']} 배" for w in rc_w))
     tab = bsel.params_table(D, c.cfg)
     c.writer.makedirs(d)
     bsel.save_basis(pb, B, guard=c.writer.guard)
@@ -2123,7 +2302,7 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     blob = bsel.basis_bin(B)                    # 브라우저 3D 보기(§7.3, GET …/select/basis)
     with open(c.writer.guard(os.path.join(d, "basis.bin")), "wb") as fh:
         fh.write(blob)
-    _sel_save_derived(c, os.path.join(d, "derived.npz"), D)
+    _sel_save_derived(c, os.path.join(d, "derived.npz"), D, B)
     c.write_json(os.path.relpath(os.path.join(d, "derived.json"), c.out), D.summary(with_figures=False))
     c.write_json(os.path.relpath(pp, c.out), {"beads": [{"id": b.id, "name": b.name, "kind": "select",
                                                          "n_tiers": len(b.tiers), "W_nom": b.W_nom, "W_min": b.W_min,
@@ -2142,8 +2321,10 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
 def _sel_cfg_sha(c: Ctx) -> str:
     import hashlib
     import json
-    s = json.dumps({"select": c.cfg["select"], "quality": c.cfg["compare"]["quality"]}, sort_keys=True,
-                   separators=(",", ":"))
+
+    from esl.doe import bead_select as bsel
+    s = json.dumps({"select": bsel.select_hash_view(c.cfg["select"]), "quality": c.cfg["compare"]["quality"]},
+                   sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
@@ -2152,9 +2333,12 @@ def _sel_rev(c: Ctx, sha: str, bsha: str) -> dict:
             "selection_rev": (c.D.get("selection") or {}).get("rev"), "dir": f"select/{sha[:12]}"}
 
 
-def _sel_save_derived(c: Ctx, path: str, D) -> None:
+def _sel_save_derived(c: Ctx, path: str, D, B=None) -> None:
+    from esl.doe import bead_select as bsel
     from esl.doe.mesh_gmsh import save_npz_det
     arr = {"fixed": np.asarray(D.fixed_mask, dtype=np.uint8)}
+    if B is not None:                    # v0.16.1 SR-D-37·38 안 판정 보조(피처·다른 비드 침범) — 없으면 키 없음(바이트 불변)
+        arr.update(bsel.checks_arrays(bsel.design_checks(D, B)))
     for b in D.beads:
         lp = [lp["nodes"] for lp in b.loops]
         arr[f"{b.id}_loops"] = np.concatenate(lp).astype(np.int64) if lp else np.zeros(0, np.int64)
@@ -2176,13 +2360,13 @@ def _sel_loaded(c: Ctx) -> dict:
         z = U.load_npz(os.path.join(d, "derived.npz"))
         loops, nh = [], []
         for k in sorted(z):
-            if k.endswith("_ptr"):
+            if k.endswith("_ptr") and not k.startswith("chk_"):
                 bid = k[:-4]
                 L, P = z[f"{bid}_loops"], z[k]
                 loops += [L[P[i]:P[i + 1]] for i in range(P.size - 1)]
                 nh.append(z[f"{bid}_nhat"])
         c._sel_cache = {"B": bsel.load_basis(pb), "fixed": z["fixed"].astype(bool), "loops": loops, "rev": r,
-                        "n_hat": np.mean(nh, axis=0) if nh else np.array([0.0, 0.0, 1.0])}
+                        "n_hats": nh, "checks": bsel.checks_from_arrays(z)}
     return c._sel_cache
 
 
@@ -2190,8 +2374,14 @@ def _sel_design(c: Ctx, t, did: str) -> tuple[np.ndarray, dict]:
     from esl.doe import bead_select as bsel
     L = _sel_loaded(c)
     x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
-    x = bsel.morph(x0, L["B"], _design_values(c, did))
-    return x, bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg)
+    vals = _design_values(c, did)
+    x = bsel.morph(x0, L["B"], vals)
+    return x, bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg, checks=L.get("checks"), values=vals)
+
+
+def _sel_warn_text(w: dict) -> str:
+    """경고 dict → 'CODE: k=v …' 한 줄(result.json warnings·보고서)."""
+    return f"{w['code']}: " + " ".join(f"{k}={v}" for k, v in w.items() if k != "code")
 
 
 def _sel_msg(code: str | None) -> str | None:
@@ -2224,14 +2414,14 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
     states, vmax = {}, 0.0
     for k, x in enumerate(designs):
         xd = bsel.morph(x0, L["B"], x["values"])
-        st = bsel.design_state(t.mesh, x0, xd, L["fixed"], c.cfg)
+        st = bsel.design_state(t.mesh, x0, xd, L["fixed"], c.cfg, checks=L.get("checks"), values=x["values"])
         states[x["id"]] = st
         if st["state"] == "READY":
             cv = sr.color_values(x0, xd, direction, has)
             vmax = max(vmax, float(np.abs(cv).max()) if cv.size else 0.0)
         c.progress(5 + 30 * (k + 1) / max(len(designs), 1))
     V = vmax if vmax > 0 else float(c.cfg["limits"]["min_disp_range_mm"])
-    view = sr.view(x0, has, L["n_hat"], t.frame, tcfg)
+    view = sr.view(x0, has, sr.view_normal(x0, L["n_hats"]), t.frame, tcfg)
     tris = v3.triangulate(np.asarray(t.mesh["conn"]), np.asarray(t.mesh["elem_type"]))
     os.makedirs(c.writer.guard(os.path.join(gd, "cells", "nominal")), exist_ok=True)
     with open(c.writer.guard(os.path.join(gd, "cells", "nominal", "thumb.png")), "wb") as fh:
@@ -2250,20 +2440,24 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
                 "thumb": rel, "fixed_max_mm": st["fixed"]["max_mm"],
                 "quality": {kk: q[kk] for kk in ("n_affected", "new_fail", "new_fail_ratio", "inverted",
                                                  "max_flip_deg", "fail_by")}}
-        if st["state"] == "SKIPPED_FIXED":       # v0.15.1 침범 원인(변수·노드) — 고정 침범 칸만(그 밖 칸 바이트 그대로)
+        if st.get("warnings"):                   # v0.16.1 경고 안(READY — 실행·순위 대상, SR-D-1·11)
+            cell["warnings"] = st["warnings"]
+        if st["fixed"]["violated"]:              # v0.16.1 SR-D-3: 침범 원인 = 침범이 있는 모든 칸(상태 무관)
             cell["fixed_viol"] = bsel.fixed_violation_detail(x0, xd, L["fixed"], L["B"], x["values"],
                                                              float(bsel._cfg(c.cfg)["fixed_tol_mm"]))
         cells.append(cell)
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
            "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],
-           "basis_sha256": L["rev"]["basis_sha256"]}
+           "basis_sha256": L["rev"]["basis_sha256"], "rules": bsel.RULES}
     c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))
     cnt = {"ok": sum(x["status"] == "OK" for x in cells),
            "fixed": sum(x["code"] == "SELECT_FIXED_VIOLATION" for x in cells),
-           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED") for x in cells)}
-    echo(f"[bd_select_grid] rev {rev} 안 {len(cells)} · OK {cnt['ok']} · 고정 침범 {cnt['fixed']} · 품질 실패 "
-         f"{cnt['mesh']} · V {V:.3g} mm")
+           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED", "SELECT_FEATURE_DISTORTED")
+                       for x in cells),
+           "warn": sum(x["status"] == "OK" and bool(x.get("warnings")) for x in cells)}
+    echo(f"[bd_select_grid] rev {rev} 안 {len(cells)} · OK {cnt['ok']}(경고 {cnt['warn']}) · 고정 침범 {cnt['fixed']} · "
+         f"품질 실패 {cnt['mesh']} · V {V:.3g} mm")
     c.progress(100)
     return {"files": [f"{gd_rel}/{pio.GRID_MANIFEST}".replace(os.sep, "/")], "counts": cnt,
             "selection_sha256": L["rev"]["selection_sha256"], "warnings": []}
@@ -2314,22 +2508,88 @@ def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
     return out
 
 
+SEL_WARN_NODES_PER_LINE, SEL_WARN_NODES_MAX = 10, 50       # SR-D-12 주석 줄의 고정 노드 ID(줄당·전체 상한)
+SEL_WARN_LINE_MAX = 100                                     # SR-D-43 주석 줄 길이 상한(자, Radioss 입력 줄 한도)
+
+
+def _sel_fixed_comment(c: Ctx, t, did: str, x: np.ndarray) -> tuple[list[str], list[dict]]:
+    """v0.16.1 SR-D-12 받기 경고: 고정 침범 안이면 ASCII 주석 줄(#ESL WARNING FIXED_MOVED … + FIXED_NODES), 그리고
+    values.json warnings(고정·품질 경고 dict). 경고 없는 안 = ([], [])."""
+    from esl.doe import bead_select as bsel
+    L = _sel_loaded(c)
+    x0 = np.asarray(t.mesh["x0"], dtype=np.float64)
+    st = bsel.design_state(t.mesh, x0, x, L["fixed"], c.cfg, checks=L.get("checks"), values=_design_values(c, did))
+    sw = list(st.get("warnings") or [])
+    fm = next((w for w in sw if w["code"] == "SELECT_FIXED_MOVED"), None)
+    if fm is None:
+        return [], sw
+    det = bsel.fixed_violation_detail(x0, x, L["fixed"], L["B"], _design_values(c, did),
+                                      float(bsel._cfg(c.cfg)["fixed_tol_mm"]), cap=SEL_WARN_NODES_MAX)
+    ids = [int(t.mesh["node_id"][i]) for i in det["node_idx"]]
+    return sel_warn_lines(fm, ids), sw
+
+
+def sel_warn_lines(fm: dict, ids: list[int]) -> list[str]:
+    """SR-D-12·43 받기 rad 주석 줄: FIXED_MOVED 머리 + FIXED_NODES(줄당 ≤ SEL_WARN_NODES_PER_LINE 개 ∧ ≤ SEL_WARN_LINE_MAX 자 —
+    머리도 넘으면 설명을 다음 줄로). 짧은 ID 면 v0.16.1 첫 판과 같은 줄."""
+    head = f"#ESL WARNING FIXED_MOVED n={fm['n']} max_mm={fm['max_mm']} : fastener positions moved, check RBE2/TIE"
+    if len(head) > SEL_WARN_LINE_MAX:
+        lines = [f"#ESL WARNING FIXED_MOVED n={fm['n']} max_mm={fm['max_mm']}",
+                 "#ESL WARNING FIXED_MOVED : fastener positions moved, check RBE2/TIE"]
+    else:
+        lines = [head]
+    pre = "#ESL WARNING FIXED_NODES"
+    cur: list[str] = []
+    for v in ids:
+        if cur and (len(cur) >= SEL_WARN_NODES_PER_LINE or len(pre) + sum(len(x) + 1 for x in cur) + len(str(v)) + 1
+                    > SEL_WARN_LINE_MAX):
+            lines.append(pre + " " + " ".join(cur))
+            cur = []
+        cur.append(str(v))
+    if cur:
+        lines.append(pre + " " + " ".join(cur))
+    return lines
+
+
+def _insert_after_first_line(c: Ctx, path: str, lines: list[str]) -> None:
+    """파일 첫 줄 뒤에 주석 줄(첫 줄 줄바꿈 바이트 따름) — ch_r.rad 머리 주석(SR-D-12)."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    k = raw.find(b"\n")
+    head, rest = (raw[:k + 1], raw[k + 1:]) if k >= 0 else (raw + b"\n", b"")
+    eol = b"\r\n" if head.endswith(b"\r\n") else b"\n"
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(c.writer.guard(tmp), "wb") as fh:
+        fh.write(head + b"".join(x.encode("ascii") + eol for x in lines) + rest)
+    atomic_replace(tmp, c.writer.guard(path))
+
+
 def _sel_best(c: Ctx, did: str, bd: str) -> list[str]:
-    """BS-D-14: rad/include 사본(/NODE 좌표만) + ch_r.rad·ch_r.fem + selection.json (best/<did> 상대경로)."""
+    """BS-D-14: rad/include 사본(/NODE 좌표만) + ch_r.rad·ch_r.fem + selection.json (best/<did> 상대경로).
+    v0.16.1 SR-D-12: 고정 침범 경고 안은 사본 첫 /NODE 앞·ch_r.rad 머리에 ASCII 주석, values.json 에 warnings."""
     from esl.doe import export_mesh
     t, _ = sc.load_base(c.p("prep"))
     dz = ev.load_design(design_dir(c, did))
     nid = np.asarray(t.mesh["node_id"], dtype=np.int64)
+    cl, sw = _sel_fixed_comment(c, t, did, np.asarray(dz["x"], dtype=np.float64))
     files = []
     for rel, src in _sel_rad_files(c, nid):
         dst = os.path.join(bd, "include", *rel.split("/"))
         c.writer.makedirs(os.path.dirname(dst))
-        nd.write_morphed(src, dst, nid, dz["x"], t.mesh["x0"], max_line=c.max_line(), guard=c.writer.guard)
+        nd.write_morphed(src, dst, nid, dz["x"], t.mesh["x0"], max_line=c.max_line(), guard=c.writer.guard,
+                         comment_lines=cl or None)
         files.append("include/" + rel)
     mesh = {k: t.mesh[k] for k in ("node_id", "elem_id", "elem_type", "conn", "elem_pid", "thickness", "E", "nu")}
     mesh["x0"] = dz["x"]
     files += export_mesh.write(bd, mesh, part_title=str(c.D.get("base", {}).get("part_title") or "ch_r"),
                                header=["esl bead DOE (scenario select)"], guard=c.writer.guard)
+    if cl:
+        _insert_after_first_line(c, os.path.join(bd, export_mesh.RAD_NAME), cl)
+    if sw:
+        vp = os.path.join(bd, "values.json")
+        vd = U.read_json(vp)
+        vd["warnings"] = sw
+        U.write_json(c.writer.guard(vp), vd)
     s = c.D.get("selection") or {}
     r = _sel_rev_doc(c)
     U.write_json(c.writer.guard(os.path.join(bd, "selection.json")),
@@ -2348,10 +2608,17 @@ def _sel_report(c: Ctx, results: list) -> dict:
         mi = x.get("mesh") or {}
         qq = mi.get("quality") or {}
         if x["id"] != BASELINE and qq:
-            q.append({"id": x["id"], "state": x["status"], "new_fail": qq.get("new_fail"),
-                      "n_affected": qq.get("n_affected"), "fixed_max_mm": mi.get("fixed_max_mm")})
-    return {"sha256": r["selection_sha256"], "beads": der.get("beads") or [], "fixed": der.get("fixed") or {},
-            "quality": q}
+            row = {"id": x["id"], "state": x["status"], "new_fail": qq.get("new_fail"),
+                   "n_affected": qq.get("n_affected"), "fixed_max_mm": mi.get("fixed_max_mm")}
+            if x.get("select_warnings"):         # v0.16.1 경고 열
+                row["warn"] = [str(w["code"]).replace("SELECT_", "", 1) for w in x["select_warnings"]]
+            q.append(row)
+    moved = [{"id": x["id"], **x["select_fixed_viol"]} for x in results if x.get("select_fixed_viol")]
+    out = {"sha256": r["selection_sha256"], "beads": der.get("beads") or [], "fixed": der.get("fixed") or {},
+           "quality": q}
+    if moved:                                    # v0.16.1 '체결 위치 어긋남' 절(SR-D-11·§6)
+        out["fixed_moved"] = moved
+    return out
 
 
 __all__ = ["STAGES", "run_stage", "bd_input", "bd_mesh0", "bd_loads", "bd_matrix", "bd_eval", "bd_post",

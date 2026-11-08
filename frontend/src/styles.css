@@ -2898,6 +2898,21 @@ tbody th.doe-name-col {
   font-size: 0.8rem;
   min-width: 0;
 }
+/* v0.16.1 경고 안 1줄(고정 노드 n개, 최대 x mm 이동) */
+.doe-thumb-warn {
+  padding: 0 0.4rem 0.2rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+/* v0.16.1 ④ 억제 목록 펼침 */
+.doe-defeat-row > td {
+  background: var(--surface-2);
+}
+.doe-defeat-table {
+  width: auto;
+  max-width: 100%;
+}
 .doe-params .doe-num {
   width: 5.5rem;
 }

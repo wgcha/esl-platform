@@ -8,6 +8,9 @@
   selection_sha256·skipped.mesh.
 - RUN: READY 안만 실행(paicad 없음), 이어하기(재시도 → 재사용, done.json input_sha256 = 선택·기저 sha 포함), 산출물 rad 사본 =
   원본과 /NODE 좌표 칸 외 바이트 동일·ID 불변, 입력 폴더·라이브러리 불변.
+- v0.16.1(esl_select_relax.md, 기본 warn 정책): 고정 침범 안 = READY + SELECT_FIXED_MOVED(셀 warnings·fixed_viol), 뒤집힘이 먼저
+  (침범 + 뒤집힘 = FAILED_MESH), doe.preview warn·rules, 경고 안도 실행·순위(행 warn, summary.best_clean). V-SR-10·11 은
+  ``test_doe_select_relax_jobs.py``.
 """
 
 from __future__ import annotations
@@ -128,6 +131,11 @@ def ring_selection(g) -> dict[str, Any]:
     return sel
 
 
+def strip_esl_comments(b: bytes) -> bytes:
+    """v0.16.1 SR-D-12 받기 경고 주석 줄(#ESL WARNING …) 제거 — 원본 줄바꿈 그대로."""
+    return b"".join(x for x in b.splitlines(keepends=True) if not x.startswith(b"#ESL WARNING "))
+
+
 def node_block_diff(a: bytes, b: bytes) -> tuple[int, int]:
     """두 rad 의 줄 비교: (바뀐 /NODE 줄 수, /NODE 밖 또는 ID 칸이 바뀐 줄 수)."""
     la, lb = a.split(b"\n"), b.split(b"\n")
@@ -220,16 +228,26 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     pv = g["doe"]["preview"]
     cells = {c["id"]: c for c in pv["cells"]}
     fixed = {i for i, v in vals.items() if abs(v["B1_W"] - 58.7175) > 0.01}
-    inverted = {i for i, v in vals.items() if i not in fixed and abs(v["B2_W"] - 25.0) < 1e-9}
-    assert len(fixed) == 6 and len(inverted) == 1
-    for i in fixed:
-        assert cells[i]["status"] == "SKIPPED_FIXED", (i, cells[i])
+    # SR-D-1: 뒤집힘 판정이 먼저 — B2_W 25(사면 겹침)·B1_W 47(고정 고리 안쪽으로 좁힘 = 고정 층 둘레 요소 뒤집힘)
+    inverted = {i for i, v in vals.items() if abs(v["B2_W"] - 25.0) < 1e-9 or abs(v["B1_W"] - 47.0) < 1e-9}
+    moved = fixed - inverted
+    assert len(fixed) == 6 and len(inverted) == 5 and len(moved) == 2
     for i in inverted:
-        assert cells[i]["status"] == "FAILED_MESH", (i, cells[i])
+        assert (cells[i]["status"], cells[i]["code"]) == ("FAILED_MESH", "SELECT_MORPH_INVERTED"), (i, cells[i])
+    for i in moved:                                                                   # warn 정책: 실행 대상 + 경고
+        assert cells[i]["status"] == "READY", (i, cells[i])
+        assert [w["code"] for w in cells[i]["warnings"]] == ["SELECT_FIXED_MOVED"], (i, cells[i])
+        assert cells[i]["warnings"][0]["n"] == cells[i]["fixed_viol"]["n"] > 0
     ready = {i for i, c in cells.items() if c["status"] == "READY"}
-    assert ready == set(vals) - fixed - inverted and len(ready) == 2
-    assert pv["selection_sha256"] == sel_sha
-    assert pv["skipped"] == {"collision": 0, "fixed": 6, "geom": 0, "mesh": 1} and pv["ok"] == 2
+    assert ready == set(vals) - inverted and len(ready) == 4
+    assert all("warnings" not in cells[i] for i in ready - moved)
+    assert pv["selection_sha256"] == sel_sha and "rules_outdated" not in pv
+    assert pv["skipped"] == {"collision": 0, "fixed": 0, "geom": 0, "mesh": 5} and pv["ok"] == 4 and pv["warn"] == 2
+    from esl_platform.core.db.tables import bead_does
+    from sqlalchemy import select as sa_select
+    with engine.connect() as c:
+        dpv = c.execute(sa_select(bead_does.c.doe).where(bead_does.c.id == s["id"])).scalar()["preview"]
+    assert dpv["warn"] == 2 and dpv["rules"] == 2
     # 실행: READY 안만, paicad 없음
     n_before = len([c for c in calls(exe) if c["cmd"] != "version"])
     r = start_run(client, g)
@@ -239,9 +257,12 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     ran = {p.name for p in (d / "run" / "designs").iterdir() if (p / "done.json").is_file()}
     assert ran == {"d000"} | ready
     log = client.get(f"{API}/jobs/{j['id']}/log", params={"step": 2}, headers=R).text
-    assert "대상 안 2개" in log and "모핑 · solve 2 ESL" in log
+    assert "대상 안 4개" in log and "모핑 · solve 2 ESL" in log
     res = api(client, "GET", f"/doe/studies/{s['id']}/results").json()
-    assert {x["id"] for x in res["ranking"]} == ready
+    assert {x["id"] for x in res["ranking"]} == ready                                 # 경고 안도 순위(SR-D-11)
+    assert {x["id"] for x in res["ranking"] if x.get("warn")} == moved
+    assert all(x["warn"] == ["FIXED_MOVED"] for x in res["ranking"] if x.get("warn"))
+    assert res["summary"]["best_clean"] == next(x["id"] for x in res["ranking"] if not x.get("warn"))
     # 이어하기 키 = 선택·기저 sha 포함(BS-D-13)
     from esl_worker import core_adapter
 
@@ -251,7 +272,7 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     from esl.doe import evaluate as ev
     with engine.connect() as c:
         params = c.execute(text("SELECT params FROM jobs WHERE id=:i"), {"i": j["id"]}).scalar()
-    did = sorted(ready)[0]
+    did = sorted(ready - moved)[0]
     sha = core_adapter.doe_design_sha(params["doe"], str(d), did)
     done = json.loads((d / "run" / "designs" / did / "done.json").read_text())
     assert done["input_sha256"] == sha and done["status"] == "OK"
@@ -286,8 +307,10 @@ def test_select_preview_states_run_resume(client, engine, worker, esl_root, inpu
     best = res["best"]["id"] if isinstance(res.get("best"), dict) else res["ranking"][0]["id"]
     inc = d / "best" / best / "include" / w["rad"].name
     assert inc.is_file() and (d / "best" / best / "selection.json").is_file()
-    moved, bad = node_block_diff(w["rad"].read_bytes(), inc.read_bytes())
-    assert bad == 0 and moved > 0
+    raw = inc.read_bytes()
+    assert (b"#ESL WARNING FIXED_MOVED" in raw) == (best in moved)                    # SR-D-12 경고 안만 주석
+    n_moved, bad = node_block_diff(w["rad"].read_bytes(), strip_esl_comments(raw))
+    assert bad == 0 and n_moved > 0
     assert tree(inputs_root) == in_before and tree(esl_root / "_library") == lib_before
 
 

@@ -2,6 +2,7 @@
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeDeriveOut, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
+  DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
 } from "./types";
@@ -92,6 +93,10 @@ function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSele
     max_beads: num(v.max_beads, d.max_beads),
     max_tiers: num(v.max_tiers, d.max_tiers),
     blend: { min_mm: num(bl.min_mm, d.blend.min_mm), max_mm: num(bl.max_mm, d.blend.max_mm), k: typeof bl.k === "number" ? bl.k : null },
+    // v0.16.1(SR-D-2·9) — 서버가 줄 때만
+    ...(v.fixed_policy === "warn" || v.fixed_policy === "skip" ? { fixed_policy: v.fixed_policy } : {}),
+    ...(v.quality_fail_policy === "warn" || v.quality_fail_policy === "skip" ? { quality_fail_policy: v.quality_fail_policy } : {}),
+    ...(isObj(v.hold) ? { hold: { ring_mm: num(v.hold.ring_mm, 3), blend_mm: num(v.hold.blend_mm, 8) } } : {}),
   };
 }
 
@@ -120,6 +125,8 @@ function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCom
         }
       : {}),
     ...(typeof v.step_ready === "boolean" ? { step_ready: v.step_ready } : {}),
+    ...(isObj(v.mesh) ? { mesh: v.mesh as DoeCompareCfg["mesh"] } : {}),
+    ...(isObj(v.defeature) ? { defeature: v.defeature as DoeCompareCfg["defeature"] } : {}),
   };
 }
 
@@ -252,7 +259,23 @@ export const doe = {
   /** 기저(rev = 저장 선택 rev — 미리보기한 선택과 다르면 404) */
   basisUrl: (id: string, rev: number) => `${API_PREFIX}/doe/studies/${id}/select/basis?rev=${rev}`,
   basisMeta: (id: string, rev: number) => request<DoeBasisMeta>("GET", `/doe/studies/${id}/select/basis`, { query: { meta: "1", rev: String(rev) } }),
+  // ---- v0.16.1 ④ 작은 형상 억제 목록(esl_select_relax.md §9 — mesh/defeature.json 그대로, 없으면 404)
+  shapeDefeature: (id: string, did: string) => request<DoeDefeatureList>("GET", `/doe/studies/${id}/shapes/${encodeURIComponent(did)}/defeature`).then(normalizeDefeatureList),
 };
+/** 계약 R4 이름(api/doe.ts getShapeDefeature) */
+export const getShapeDefeature = doe.shapeDefeature;
+
+/** defeature.json 보정(빠진 칸·잘못된 행 무시) */
+export function normalizeDefeatureList(raw: unknown): DoeDefeatureList {
+  const r = isObj(raw) ? raw : {};
+  const features = Array.isArray(r.features) ? (r.features.filter((f) => isObj(f) && typeof f.kind === "string" && Array.isArray(f.center)) as unknown as DoeDefeatureFeature[]) : [];
+  return {
+    features,
+    n: typeof r.n === "number" ? r.n : features.length,
+    truncated: r.truncated === true,
+    counts: isObj(r.counts) ? (r.counts as DoeDefeatureList["counts"]) : null,
+  };
+}
 
 // ---------------------------------------------------------------- 표기
 export const SCENARIOS: DoeScenario[] = ["same", "mesh", "step", "compare"];
@@ -294,7 +317,15 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
-export const warnText = (w: { code: string; message?: string | null }) => w.message || CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown }) =>
+  w.message ||
+  (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||
+  (w.code === "SELECT_RANGE_INVERTS" && Array.isArray(w.usable) && w.usable.length === 2
+    ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
+    : "") ||
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+/** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시 */
+export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info";
 
 // ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
 export const SELECT_CODE_TEXT: Record<string, string> = {
@@ -325,7 +356,50 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   SELECT_FIXED_VIOLATION: "고정 노드 침범",
   SELECT_QUALITY_FAIL: "모핑 후 메시 품질 Fail 비율 초과",
   SELECT_MORPH_INVERTED: "모핑 후 요소 뒤집힘",
+  // v0.16.1(esl_select_relax.md §10)
+  SELECT_FIXED_MOVED: "체결 위치 어긋남 — 고정 노드가 모핑대로 움직였습니다",
+  SELECT_QUALITY_WARN: "모핑 후 메시 품질 Fail 비율 초과(경고 — 실행함)",
+  SELECT_INNER_LOOP: "섬이 아닌 안쪽 고리가 있어 그 둘레도 폭 변경에 따라 움직입니다",
+  SELECT_ISLAND_TOO_LARGE: "둘러싸인 영역이 섬 크기 상한보다 커서 섬으로 보지 않았습니다",
+  SELECT_ISLAND_SHEAR: "곡면 바닥이라 섬 평행 이동과 둘레 사이에 차이가 있습니다",
+  SELECT_HOLD_NO_FIXED: "'체결 구멍 둘레 고정'을 켰지만 이 비드에 고정 노드가 없습니다",
+  SELECT_HOLD_INVALID: "'체결 구멍 둘레 고정' 값이 올바르지 않습니다",
+  // v0.16.1 R1c·통합(SR-D-25~28)
+  SELECT_BEAD_NETWORK: "다른 비드와 이어져 있습니다(T·L 교차) — 교차부 사면은 가까운 바닥의 비드로 나눴습니다. 이웃 비드도 함께 선택했는지 확인하세요",
+  SELECT_INNER_LOOP_RING: "고리형 비드 — 안쪽 둔덕 둘레도 폭 변경에 따라 움직입니다(정상)",
+  SELECT_SLOPE_ABOVE_PLATE: "판 높이 위(경계에 걸친 보스 벽)로는 사면을 넓히지 않았습니다",
+  SELECT_W_RANGE_RESET: "폭 W 기본 하한이 공칭보다 커서(국부 폭 오탐) 공칭을 포함하도록 고쳤습니다",
+  SELECT_RANGE_INVERTS: "기본 범위 끝에서 요소가 뒤집힙니다 — 범위를 줄이거나 블렌딩 반경을 키우세요",
+  // v0.16.1 어려운 사례 수정(SR-D-35~43)
+  SELECT_BASE_AMBIGUOUS: "기준 평면을 정할 수 없습니다 — 교차하는 비드를 함께 선택하세요",
+  SELECT_BASE_REFIT: "경계가 선택하지 않은 다른 비드를 지나 판 쪽 경계로 기준 평면을 다시 맞췄습니다 — 교차 비드도 함께 선택하세요",
+  SELECT_FEATURE_DISTORTED: "바닥 안 비선택 피처가 바닥과 같이 움직이지 않아 형상이 찢어집니다(제외)",
+  SELECT_CROSS_BEAD_MOVE: "폭 변화가 다른 선택 비드의 경계·바닥을 움직였습니다",
+  SELECT_CROSS_BEAD_VIOLATION: "다른 선택 비드 침범(제외)",
+  SELECT_RANGE_COMBO: "변수를 함께 바꾸면 뒤집히는 조합이 있습니다 — 함께 쓸 수 있는 범위를 확인하세요",
+  SELECT_W_RANGE_LIMIT: "폭 W 범위 끝의 경계 이동이 단 간격·이웃 비드 거리보다 큽니다",
 };
+/** v0.16.1 derive 경고 코드(비드·선택 warnings[].code — 서버 문구 원본 resources/doe_messages.json) */
+export type SelectDeriveWarnCode =
+  | "SELECT_SLOPE_LEAK" | "SELECT_TIER_MISSING" | "SELECT_OPEN_BOUNDARY" | "SELECT_DISCONNECTED" | "SELECT_NONPLANAR_BASE"
+  | "SELECT_BLEND_OVERLAP" | "SELECT_BLEND_CLIPPED" | "SELECT_FIXED_IN_BEAD" | "SELECT_FIXED_IN_BLEND" | "SELECT_WIDTH_UNDEFINED"
+  | "SELECT_FIXED_LAYER_OVERLAP" | "SELECT_INNER_LOOP" | "SELECT_ISLAND_TOO_LARGE" | "SELECT_ISLAND_SHEAR"
+  | "SELECT_HOLD_NO_FIXED" | "SELECT_BEAD_NETWORK" | "SELECT_SLOPE_ABOVE_PLATE" | "SELECT_W_RANGE_RESET" | "SELECT_RANGE_INVERTS"
+  | "SELECT_BASE_REFIT" | "SELECT_RANGE_COMBO" | "SELECT_W_RANGE_LIMIT";
+
+const mm1 = (v: number) => (v < 10 ? Number(v.toFixed(2)).toString() : v.toFixed(1));
+/** v0.16.1 안 경고 1줄(§8): FIXED_MOVED = "고정 노드 n개, 최대 x mm 이동", QUALITY_WARN = "새 Fail m (r %)" */
+export function cellWarnText(w: DoeCellWarning): string {
+  if (w.code === "SELECT_FIXED_MOVED") return `고정 노드 ${w.n.toLocaleString()}개, 최대 ${mm1(w.max_mm)} mm 이동`;
+  if (w.code === "SELECT_CROSS_BEAD_MOVE") return `다른 비드 경계·바닥 ${w.n.toLocaleString()}노드, 최대 ${mm1(w.max_mm)} mm 이동`;
+  const ext = w.area_ratio_min != null || w.rot_max_deg != null
+    ? ` · 넓이 비 최소 ${Number(w.area_ratio_min ?? 1).toFixed(2)} · 법선 회전 ${Math.round(Number(w.rot_max_deg ?? 0))}°` : "";
+  return `새 Fail ${w.new_fail.toLocaleString()} (${(w.new_fail_ratio * 100).toFixed(1)} %)${ext}`;
+}
+/** 순위 행 경고 이름 */
+export const RANK_WARN_NAME: Record<string, string> = { FIXED_MOVED: "체결 위치 어긋남", QUALITY_WARN: "품질 경고", CROSS_BEAD_MOVE: "다른 비드 침범" };
+/** v0.16.1 판정 규칙 판 띠(§7.4) */
+export const RULES_OUTDATED_TEXT = "판정 규칙이 바뀌었습니다 — 다시 미리보기하면 경고 안도 실행됩니다";
 
 // ---------------------------------------------------------------- v0.14.0 ④ 형상 직접 비교(esl_step_compare.md)
 /** 민감도 숨김 사유(결과 sensitivity_reason) */
@@ -415,15 +489,41 @@ export function partsFromError(e: unknown): { index: number; parts: DoeMeshPart[
 }
 export const MESH_MODE_NAME: Record<DoeMeshMode, string> = { auto: "자동", cad: "CAD", remesh: "재메시" };
 export const MESH_MODE_HINT: Record<DoeMeshMode, string> = {
-  auto: "CAD 메시가 실패한 형상만 세분화 → 삼각형 재메시 순서로 다시 시도(성공한 형상은 그대로)",
+  auto: "CAD 메시가 실패한 형상만 세분화 → 형상 단순화(작은 형상 억제) → 삼각형 재메시 순서로 다시 시도(성공한 형상은 그대로)",
   cad: "CAD 면 구조 그대로 gmsh 메시(v0.15 방식)",
   remesh: "모든 STEP 을 삼각형 재메시(CAD 면 구조를 버림 — 원 형상과 편차 표시)",
 };
 /** remesh_available false 사유(REMESH_UNAVAILABLE 문구) */
 export const remeshUnavailableText = (ver: string | null | undefined) => `이 gmsh 버전(${ver ?? "?"})은 삼각형 재메시를 지원하지 않습니다`;
 /** 메시 방식 짧은 배지(순위표·ESL별 표) */
-export const MESH_METHOD_SHORT: Record<DoeMeshMethod, string> = { cad: "CAD", refine: "세분화", remesh: "재메시", fallback: "재메시(폴백)", mesh_input: "메시 입력" };
-type MeshShape = Pick<DoePrepShape, "mesh_method" | "refine" | "fidelity"> & { cad_error?: DoePrepShape["cad_error"]; refine_bias?: DoeShapeRef["refine_bias"]; edge_median_mm?: number | null; n_components?: number | null; source?: DoePrepShape["source"] };
+export const MESH_METHOD_SHORT: Record<DoeMeshMethod, string> = { cad: "CAD", refine: "세분화", remesh: "재메시", fallback: "재메시(폴백)", mesh_input: "메시 입력", defeature: "형상 단순화" };
+/** v0.16.1 억제 종류 이름(§8 툴팁 "구멍 a · 딤플 b · 필렛 c") */
+export const DEFEATURE_KIND_NAME: Record<DoeDefeatureKind, string> = { hole: "구멍", slot: "슬롯", flange: "버링", bead: "딤플", fillet: "필렛", narrow: "좁은 띠" };
+const KIND_ORDER: DoeDefeatureKind[] = ["hole", "slot", "flange", "bead", "fillet", "narrow"];
+/** 억제 요약 1줄: "구멍 1 · 딤플 1 · 필렛 3 억제, 억제 영역 최대 2.5 mm, 그 밖 0.12 mm" */
+export function defeatureText(d: DoeShapeDefeature): string {
+  const parts = KIND_ORDER.filter((k) => (d.counts?.[k] ?? 0) > 0).map((k) => `${DEFEATURE_KIND_NAME[k]} ${d.counts[k]}`);
+  const out = [`${parts.length ? parts.join(" · ") : `작은 형상 ${d.n}개`} 억제`];
+  if (d.suppressed_max_mm != null) out.push(`억제 영역 최대 ${mm1(d.suppressed_max_mm)} mm`);
+  if (d.outside_hausdorff_mm != null) out.push(`그 밖 ${mm1(d.outside_hausdorff_mm)} mm`);
+  return out.join(", ") + (d.skipped_n ? ` (건너뜀 ${d.skipped_n})` : "");
+}
+/** 특징 크기 문구: Ø5 / 1.9×12 / h 1.5 / r 1.5 */
+export function featureSizeText(f: DoeDefeatureFeature): string {
+  const z = f.size ?? {};
+  const n = (v: number) => Number(v.toFixed(2)).toString();
+  if (z.d_mm != null) return `Ø${n(z.d_mm)}`;
+  if (z.w_mm != null && z.l_mm != null) return `${n(z.w_mm)}×${n(z.l_mm)}`;
+  if (z.h_mm != null) return `h ${n(z.h_mm)}`;
+  if (z.r_mm != null) return `r ${n(z.r_mm)}`;
+  return "–";
+}
+/** v0.16.1 메시 입력 진단 글자(있을 때만): "작은 구멍 n · 섬 m" */
+export function diagText(d: DoeShapeDiag | null | undefined): string | null {
+  if (!d || (!d.holes_small_n && !d.islands_n)) return null;
+  return [d.holes_small_n ? `작은 구멍 ${d.holes_small_n}` : null, d.islands_n ? `섬 ${d.islands_n}` : null].filter(Boolean).join(" · ");
+}
+type MeshShape = Pick<DoePrepShape, "mesh_method" | "refine" | "fidelity"> & { defeature?: DoeShapeDefeature | null; attempts?: DoeMeshAttempt[] | null; cad_error?: DoePrepShape["cad_error"]; refine_bias?: DoeShapeRef["refine_bias"]; edge_median_mm?: number | null; n_components?: number | null; source?: DoePrepShape["source"] };
 const x1 = (v: number) => `×${Number(v.toFixed(2))}`;
 const mm = (v: number) => `${Number(v.toFixed(2))} mm`;
 /** '메시 방식' 열 문구(§8): CAD / 세분화(국부 ×0.5 · 1.5 mm · 면 3 · 요소 ×1.4) / 세분화(전역 2.4 mm · 요소 ×1.6) / 재메시 / 재메시(폴백) / 메시 입력 */
@@ -440,8 +540,8 @@ export function meshMethodLabel(s: MeshShape): string {
   if (ratio != null) parts.push(`요소 ×${ratio.toFixed(1)}`);
   return `세분화(${parts.join(" · ")})`;
 }
-const SKIP_REASON: Record<string, string> = { elems: "요소 상한", memory: "메모리", time: "시간 예산" };
-const STAGE_NAME: Record<string, string> = { cad: "CAD", refine_local: "국부 세분화", refine_global: "전역 세분화", remesh: "재메시" };
+const SKIP_REASON: Record<string, string> = { elems: "요소 상한", memory: "메모리", time: "시간 예산", no_feature: "억제 대상 없음", not_compound: "병합 면 실패 아님" };
+const STAGE_NAME: Record<string, string> = { cad: "CAD", refine_local: "국부 세분화", refine_global: "전역 세분화", defeature: "형상 단순화", remesh: "재메시" };
 function attemptText(a: DoeMeshAttempt): string {
   const head = [STAGE_NAME[a.stage] ?? a.stage, a.factor != null && a.stage.startsWith("refine") ? x1(a.factor) : null, a.h_mm != null ? mm(a.h_mm) : null].filter(Boolean).join(" ");
   if (a.skipped) return `${head} — 건너뜀(${SKIP_REASON[a.reason ?? ""] ?? a.reason ?? a.code ?? "상한"})`;
@@ -463,15 +563,17 @@ export function meshMethodTip(s: MeshShape, partId?: number | null): string {
     out.push(`최대 편차 ${f.max_dev_mm.toFixed(2)} mm · 면적비 ${f.area_ratio.toFixed(2)}x`);
     out.push(`Hausdorff ${f.hausdorff_mm.toFixed(2)} mm(경고 ${f.warn_mm} mm${f.fail_mm != null ? ` · 실패 ${f.fail_mm} mm` : ""}) · 원 CAD 대비 ≤ ${(f.hausdorff_mm + f.deflection_mm).toFixed(2)} mm`);
   }
+  if (s.mesh_method === "defeature" && s.defeature) out.push(defeatureText(s.defeature));
   if (s.cad_error) out.push(`CAD 실패: ${s.cad_error.message || s.cad_error.code}`);
-  if (s.refine?.attempts?.length) out.push("시도:", ...s.refine.attempts.map((a, i) => `${i + 1}. ${attemptText(a)}`));
+  const atts = s.refine?.attempts?.length ? s.refine.attempts : s.mesh_method === "defeature" ? s.attempts ?? null : null;
+  if (atts?.length) out.push("시도:", ...atts.map((a, i) => `${i + 1}. ${attemptText(a)}`));
   if (s.refine_bias) {
     const b = s.refine_bias;
     out.push(`수렴 점검 δ 최대 ${pctText(b.delta_max, 1)} (기준을 ${mm(b.h_mm)} 로 다시 해석${b.tol != null ? ` · 허용 ${pctText(b.tol, 1)}` : ""})${b.over_tol ? " — 메시 편향 큼" : ""}`);
   }
   return out.join("\n");
 }
-const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", remesh: "재메시" };
+const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", defeature: "형상 단순화", remesh: "재메시" };
 type FailShape = Pick<DoePrepShape, "status" | "code" | "message" | "cad_error" | "attempts">;
 /** auto 사다리가 모두 실패한 형상 문구(워커 _ladder_fail_text 와 같은 틀): "CAD 메시 실패: … → 세분화·재메시도 실패: …".
  *  cad_error 가 없으면 원 message(없으면 코드 문구) */
@@ -500,7 +602,7 @@ export function shapeFailTip(r: FailShape): string {
 /** 배지 색: 충실도 경고·수렴 편향 초과 = 주황, 세분화·재메시 = info, 그 밖 = neutral */
 export function meshMethodKind(s: MeshShape): "warn" | "info" | "neutral" {
   if (s.fidelity?.over_warn || s.refine_bias?.over_tol) return "warn";
-  return s.mesh_method === "refine" || s.mesh_method === "remesh" || s.mesh_method === "fallback" ? "info" : "neutral";
+  return s.mesh_method === "refine" || s.mesh_method === "remesh" || s.mesh_method === "fallback" || s.mesh_method === "defeature" ? "info" : "neutral";
 }
 
 /** ④ 오류 문구(detail.index 가 있으면 형상 번호 붙임) */

@@ -11,6 +11,7 @@ from esl.doe import settings
 from esl.library import _util as U
 
 CFG = settings({"bead_doe": {"enabled": True}})
+SKIP = settings({"bead_doe": {"enabled": True, "select": {"fixed_policy": "skip", "quality": {"fail_policy": "skip"}}}})
 
 
 @pytest.fixture(scope="module")
@@ -209,15 +210,21 @@ def test_fixed_nodes(G):
         x = bs.morph(X0, B, v)
         st = bs.design_state(m, X0, x, fm, CFG)
         assert np.array_equal(x[fm], X0[fm]) and st["state"] != "SKIPPED_FIXED", st
-    # 사용자 R 24 > 고정까지 거리 → 침범 → SKIPPED_FIXED
+    # 사용자 R 24 > 고정까지 거리 → 침범 → skip 정책 SKIPPED_FIXED (v0.16.0 V-BS-4 그대로 — V-SR-9 skip 경로)
     sel = sb.selection(g)
     sel["beads"][0]["blend_mm"] = 24.0
     Du = bs.derive_obj(m, bs.normalize_input(sel, CFG), CFG, fixed_node_ids=g["fixed_ids"])
     assert any(w["code"] == "SELECT_FIXED_IN_BLEND" for w in Du.bead("b1").warnings)
     Bu = bs.basis(m, Du, CFG)
     x = bs.morph(X0, Bu, {"B1_W": Bu.nominal()["B1_W"] + 6})
-    st = bs.design_state(m, X0, x, Du.fixed_mask, CFG)
+    st = bs.design_state(m, X0, x, Du.fixed_mask, SKIP)
     assert st["state"] == "SKIPPED_FIXED" and st["code"] == "SELECT_FIXED_VIOLATION"
+    # warn 정책(기본, V-SR-9): READY + SELECT_FIXED_MOVED{n, max_mm} = 정답(고정 노드 변위)
+    st = bs.design_state(m, X0, x, Du.fixed_mask, CFG)
+    d = np.linalg.norm(x[Du.fixed_mask] - X0[Du.fixed_mask], axis=1)
+    fmv = [w for w in st["warnings"] if w["code"] == "SELECT_FIXED_MOVED"]
+    assert st["state"] == "READY" and fmv and fmv[0]["n"] == int(np.sum(d > CFG["select"]["fixed_tol_mm"]))
+    assert fmv[0]["max_mm"] == pytest.approx(float(d.max()), abs=1e-4)
     x = bs.morph(X0, Bu, {"B1_D1": 24.0})                            # 깊이만 → 고정 불변
     assert bs.design_state(m, X0, x, Du.fixed_mask, CFG)["state"] == "READY"
     # 비드 안 고정(사용자 고정 층) → 경고 + 그 비드 변수 기본 체크 해제
@@ -230,9 +237,11 @@ def test_fixed_nodes(G):
     Df = bs.derive_obj(m, bs.normalize_input(sel, CFG), CFG)
     assert any(w["code"] == "SELECT_FIXED_IN_BEAD" for w in Df.bead("b1").warnings)
     assert Df.fixed["source"] == "user"
-    tab = {r["name"]: r for r in bs.params_table(Df, CFG)}
+    tab = {r["name"]: r for r in bs.params_table(Df, SKIP)}             # skip 정책 = v0.16.0 기본 체크 해제
     assert not tab["B1_D1"]["use_default"] and not tab["B1_W"]["use_default"] and tab["B1_D2"]["use_default"]
     assert tab["B2_D1"]["use_default"]
+    tab = {r["name"]: r for r in bs.params_table(Df, CFG)}              # warn(기본, SR-D-8) = 해제하지 않음
+    assert all(r["use_default"] for r in tab.values())
 
 
 # ---------------------------------------------------------------- V-BS-8 선형성·결정성

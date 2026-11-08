@@ -25,6 +25,7 @@ import numpy as np
 
 from esl.errors import EslError
 from esl.fsutil import atomic_replace
+from esl.geom import defeature as gdf
 
 MESH_NPZ = "mesh.npz"
 MESH_JSON = "mesh.json"
@@ -188,77 +189,15 @@ def quality(mesh: dict, cfg: dict, opt_cfg: dict) -> dict:
     return {"errors": errs, "warnings": warns, "metrics": r["metrics"], "quad_frac": qf}
 
 
-def _loop_info(occ, curves) -> float:
-    return float(sum(occ.getMass(1, abs(int(c))) for c in curves))
-
-
-def _face_loops(gmsh, s: int) -> list[list[int]]:
-    """면 s 의 경계 곡선을 끝점 공유로 묶은 닫힌 고리들(gmsh getCurveLoops 는 외곽·구멍을 한 고리로 줄 때가 있음)."""
-    curves = sorted({abs(int(t)) for _d, t in gmsh.model.getBoundary([(2, s)], oriented=False)})
-    parent = {c: c for c in curves}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-    by_pt: dict[int, int] = {}
-    for c in curves:
-        for _d, p in gmsh.model.getBoundary([(1, c)], oriented=False):
-            p = abs(int(p))
-            if p in by_pt:
-                parent[find(c)] = find(by_pt[p])
-            else:
-                by_pt[p] = c
-    groups: dict[int, list[int]] = {}
-    for c in curves:
-        groups.setdefault(find(c), []).append(c)
-    return [sorted(g) for _k, g in sorted(groups.items())]
-
-
-def _curve_points(gmsh, c: int) -> set[int]:
-    """곡선 끝점(닫힌 곡선도 — combined=True 는 시작=끝 점을 지워 빈 목록을 줌)."""
-    return {abs(int(p)) for _d, p in gmsh.model.getBoundary([(1, int(c))], combined=False, oriented=False)}
-
-
-def _seam_points(gmsh, s: int) -> set[int]:
-    """면 s 의 seam(같은 면 경계에 두 번 나오는 곡선 — 원통·원뿔·토러스 등 periodic 면의 이음선) 끝점 태그.
-    ``getBoundary(combined=True)`` 는 seam 을 지워 periodic 면의 양 끝 고리가 따로 떨어진 고리처럼 보인다(v0.14.1)."""
-    seen: dict[int, int] = {}
-    for _d, t in gmsh.model.getBoundary([(2, s)], combined=False, oriented=False):
-        seen[abs(int(t))] = seen.get(abs(int(t)), 0) + 1
-    pts: set[int] = set()
-    for c, n in seen.items():
-        if n >= 2:
-            pts |= _curve_points(gmsh, c)
-    return pts
-
-
-def _is_hole(gmsh, s: int, cl: list[int], seam_pts: set[int]) -> bool:
-    """고리 cl 이 면 s 의 '구멍'인가(v0.14.1 — 이슈 #53 ④ periodic 면 메싱 실패 원인 수정):
-    (a) 모든 곡선이 자유 모서리(이 면에만 붙음 — 이웃 면과 공유하면 구멍이 아니라 보스·버링 벽 같은 이음부) 이고
-    (b) seam 끝점을 지나지 않음(periodic 면을 한 바퀴 감는 끝 고리 — 원통 끝 원 — 는 구멍이 아님)."""
-    for c in cl:
-        up, _down = gmsh.model.getAdjacencies(1, abs(int(c)))
-        if any(int(f) != int(s) for f in up):
-            return False
-        if seam_pts and seam_pts & _curve_points(gmsh, abs(int(c))):
-            return False
-    return True
-
-
-def _bbox_key(gmsh, dim: int, tag: int) -> tuple:
-    """세션이 바뀌어도 같은 면을 찾는 열쇠(bbox 6값, 1e-6 mm 반올림) — 태그는 형상 처리 결과에 따라 바뀔 수 있음."""
-    return tuple(round(float(v), 6) for v in gmsh.model.getBoundingBox(dim, tag))
-
-
-def _bump(out: dict, k: str) -> None:
-    """선택 집계(0 이면 키 자체를 두지 않음 — 정상 STEP 의 mesh.json 바이트 불변)."""
-    out[k] = int(out.get(k) or 0) + 1
-
-
-def _key_near(a: tuple, b: tuple, tol: float = 1e-4) -> bool:
-    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+# v0.16.1 위상 도우미·작은 구멍 처리 = 공통 모듈 esl.geom.defeature(SR-D-22) — 같은 _이름으로 재노출(본문 이동만, 바이트 불변)
+_loop_info = gdf.loop_length
+_face_loops = gdf.face_loops
+_curve_points = gdf.curve_points
+_seam_points = gdf.seam_points
+_is_hole = gdf.is_hole
+_bbox_key = gdf.bbox_key
+_key_near = gdf.key_near
+_bump = gdf._bump
 
 
 def _key_in(a: tuple, b: tuple, tol: float = 1e-3) -> bool:
@@ -267,117 +206,8 @@ def _key_in(a: tuple, b: tuple, tol: float = 1e-3) -> bool:
 
 
 def defeature(gmsh, df: dict, h: float, skip_keys: tuple = ()) -> dict:
-    """④ 작은 형상 처리(이슈 #53 BatchMesher holes table 근사, esl_step_compare.md SC-D-5 보강) — 가져온 OCC 형상에서:
-
-    - 면의 내부 경계(구멍) 중 면적 < ``min_hole_area_mm2``(기본 π·4² — r<4 원형·eq_diam<8·좁은 슬롯) → 같은 경계로 막는 면을
-      평면 면은 외곽·큰 구멍 고리로 다시 만들어 작은 구멍 내부 wire 를 지움(곡면은 막는 면을 fragment 로 붙임 —
-      경계 모서리는 남음). OCP ShapeUpgrade_RemoveInternalWires 와 같은 결과를
-      gmsh API 만으로(OCP 불필요).
-    - 남은 구멍(원형 가정 r = 둘레/2π) 반지름 ``hole_r_mm`` 범위 → 둘레 분할 수 = max(hole_elems, ceil(P/h)) transfinite 곡선
-      (v0.14.0 수정: 예전 min(hole_elems 6, …) 은 큰 구멍 둘레 모서리가 P/6 으로 길어져 품질 max_length Fail — 이제 구멍
-      모서리 ≤ h, 작은 구멍은 최소 hole_elems 분할). hole_elems 0 이면 생략.
-    실패는 형상 처리만 건너뛰고 경고(DEFEATURE_SKIPPED). 반환 {filled, filled_area_max, hole_sized, skipped, warnings}."""
-    import math
-
-    occ = gmsh.model.occ
-    amin = float(df.get("min_hole_area_mm2") or 0.0)
-    out = {"filled": 0, "filled_area_max": None, "hole_sized": 0, "skipped": 0, "warnings": []}
-    try:
-        surfs = [t for _d, t in occ.getEntities(2)]
-        patches, rebuilt = [], []
-        for s in surfs:
-            loops = _face_loops(gmsh, s)
-            if len(loops) <= 1:
-                continue
-            if skip_keys and any(_key_near(_bbox_key(gmsh, 2, s), k) for k in skip_keys):
-                _bump(out, "relaxed")                    # 폴백 제약 해제 면: 형상 처리 안 함
-                continue
-            seam = _seam_points(gmsh, s)
-            per = [_loop_info(occ, cl) for cl in loops]
-            outer = int(max(range(len(per)), key=lambda i: per[i]))
-            small, keep = [], [loops[outer]]
-            for i, cl in enumerate(loops):
-                if i == outer:
-                    continue
-                if not _is_hole(gmsh, s, cl, seam):      # v0.14.1: 이음부·periodic 끝 고리는 구멍 아님(그대로 둠)
-                    keep.append(cl)
-                    _bump(out, "not_hole")
-                    continue
-                try:
-                    w = occ.addCurveLoop([int(c) for c in cl])
-                    try:
-                        pt = occ.addPlaneSurface([w])
-                    except Exception:                    # noqa: BLE001 - 평면 아님 → 채움 면
-                        pt = occ.addSurfaceFilling(w)
-                    a = float(occ.getMass(2, pt))
-                except Exception:                        # noqa: BLE001
-                    out["skipped"] += 1
-                    keep.append(cl)
-                    continue
-                if a < amin and skip_keys and any(_key_near(tuple(round(float(v), 6) for v in occ.getBoundingBox(2, pt)), k)
-                                                  for k in skip_keys):
-                    _bump(out, "relaxed")                # 폴백 제약 해제: 이 막는 면이 실패한 면 → 메우지 않음
-                    keep.append(cl)
-                    occ.remove([(2, pt)])
-                elif a < amin:
-                    small.append((cl, pt))
-                    out["filled_area_max"] = max(a, out["filled_area_max"] or 0.0)
-                else:
-                    keep.append(cl)
-                    occ.remove([(2, pt)])
-            if not small:
-                continue
-            if gmsh.model.getType(2, s) == "Plane":
-                # 평면 면: 외곽 + 큰 구멍 고리만으로 다시 만든다(작은 구멍 내부 wire 삭제 — ShapeUpgrade_RemoveInternalWires 와 같음)
-                for _cl, pt in small:
-                    occ.remove([(2, pt)])
-                occ.remove([(2, s)])
-                occ.addPlaneSurface([occ.addCurveLoop([int(c) for c in cl]) for cl in keep], s)
-                rebuilt += [int(c) for cl, _pt in small for c in cl]
-            else:                                        # 곡면: 막는 면을 붙임(구멍 경계 모서리는 남음)
-                patches += [pt for _cl, pt in small]
-            out["filled"] += len(small)
-        if patches:
-            occ.fragment([(2, s) for _d, s in occ.getEntities(2) if s not in patches], [(2, p) for p in patches])
-        if rebuilt:
-            occ.remove([(1, c) for c in sorted(set(rebuilt))], recursive=True)
-        occ.synchronize()
-        n_el = int(df.get("hole_elems") or 0)
-        r_lo, r_hi = [float(x) for x in (df.get("hole_r_mm") or [4.0, 30.0])]
-        done: set[int] = set()
-        relaxed = {s for _d, s in occ.getEntities(2)
-                   if skip_keys and any(_key_near(_bbox_key(gmsh, 2, s), k) for k in skip_keys)}
-        if n_el > 0:
-            for _d, s in occ.getEntities(2):
-                loops = _face_loops(gmsh, s)
-                if len(loops) <= 1 or s in relaxed:
-                    continue
-                seam = _seam_points(gmsh, s)
-                per = [_loop_info(occ, cl) for cl in loops]
-                outer = int(max(range(len(per)), key=lambda i: per[i]))
-                for i, cl in enumerate(loops):
-                    cs = [abs(int(c)) for c in cl]
-                    if i == outer or any(c in done for c in cs):
-                        continue
-                    if not _is_hole(gmsh, s, cl, seam):  # v0.14.1: 이음부·periodic 끝 고리는 분할 강제 안 함
-                        continue
-                    P = per[i]
-                    r = P / (2 * math.pi)
-                    if not r_lo <= r <= r_hi:
-                        continue
-                    n = max(n_el, int(math.ceil(P / h - 1e-9)))       # 모서리 ≤ h, 최소 hole_elems 분할
-                    for c in cs:
-                        L = float(occ.getMass(1, c))
-                        gmsh.model.mesh.setTransfiniteCurve(c, max(2, int(round(n * L / P)) + 1))
-                        done.add(c)
-                    out["hole_sized"] += 1
-    except Exception as exc:                             # noqa: BLE001 - 형상 처리 실패는 메싱을 막지 않음
-        out["warnings"].append(f"DEFEATURE_SKIPPED: 작은 형상 처리 실패 — {exc}")
-        try:
-            occ.synchronize()
-        except Exception:                                # noqa: BLE001
-            pass
-    return out
+    """④ 작은 형상 처리(v0.14.1 holes table 근사) — 래퍼(v0.16.1): 본문 = ``esl.geom.defeature.holes``(SR-D-22, V-SR-16)."""
+    return gdf.holes(gmsh, df, h, skip_keys)
 
 
 class _FaceFail(Exception):
@@ -698,6 +528,8 @@ def _failed_face(gmsh, msg: str, log: list | None = None) -> dict | None:
             "key": _bbox_key(gmsh, 2, tag)}
 
 
+DEFEAT_KEY = "__defeature_stage__"                          # v0.16.1 _session 반환 geom 안 defeature 단계 기록 키
+_LAST_DEFEAT: dict = {}                                     # 자식 프로세스 1작업: 마지막 세션 compound 면 bbox(실패 기록용)
 SIZE_FIELDS_KEY = "__size_fields__"                         # _session 반환 geom 안 세분화 기록 키(bbox 키와 겹치지 않음)
 
 
@@ -774,8 +606,22 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
             applied[gk] = int(geom[gk]["new_ids"][0])
         dfi = None
         df = mc.get("defeature")
+        ds = mc.get("defeature_stage")                       # v0.16.1 ④ 사다리 defeature 단계(키 없으면 v0.16.0 그대로)
+        feats: list = []
         if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
-            dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+            if isinstance(ds, dict):
+                dfi = gdf.holes(gmsh, df, h, relax, collect=feats)
+            else:
+                dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+        if isinstance(ds, dict):
+            crit = ds["crit"]
+            found = gdf.find_features(gmsh, crit)
+            sup = gdf.suppress(gmsh, found, crit, h, compound=bool(ds.get("compound", True)))
+            _LAST_DEFEAT.clear()
+            _LAST_DEFEAT.update(compound_keys=sup["compound_keys"])
+            if sup["n"] == 0:
+                raise EslError("DEFEATURE_NO_FEATURE", "형상 단순화 단계: 억제할 작은 형상이 없음")
+            geom[DEFEAT_KEY] = {"collected": feats, **sup}
         for gk, stage in (face_geom or {}).items():          # v0.15.1 형상 폴백(실패했던 면만, state 순서 = 결정적)
             if stage in ("nofix_face", "nofix_all"):
                 continue
@@ -973,6 +819,10 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         meta["defeature"] = dfi
     if mc.get("size_fields"):                               # v0.16.0 세분화 기록(키 없으면 mesh.json 바이트 불변)
         meta["size_fields"] = geom.get(SIZE_FIELDS_KEY)
+    dlist = None
+    if isinstance(mc.get("defeature_stage"), dict) and geom.get(DEFEAT_KEY) is not None:   # v0.16.1 SR-D-19·20
+        meta["defeature_stage"], dlist = _defeature_record(gmsh, src, mc, cfg, mesh, h, geom[DEFEAT_KEY])
+        meta["warnings"] = list(meta["warnings"]) + dlist.pop("_warnings")
     if state:                                             # v0.14.1 면 폴백 기록(정상 STEP 은 키 없음 — 바이트 불변)
         faces = []
         for k, v in state.items():
@@ -999,12 +849,60 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         os.makedirs(out_dir, exist_ok=True)
         save_npz_det(os.path.join(out_dir, MESH_NPZ), {k: mesh[k] for k in MESH_KEYS})
         from esl.library import _util as U
+        if dlist is not None:
+            U.write_json(os.path.join(out_dir, DEFEAT_LIST), dlist)
         U.write_json(os.path.join(out_dir, MESH_JSON), {k: v for k, v in meta.items() if k != "seconds"}
                      | {"seconds": meta["seconds"]})
+    if dlist is not None and meta["defeature_stage"]["fidelity"]["fail"]:
+        o = meta["defeature_stage"]["fidelity"]["outside"]
+        raise EslError("DEFEATURE_FIDELITY", f"작은 형상 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 최대 {o['hausdorff_mm']:.3f} mm "
+                                             f"다름(> {o['fail_mm']:g} mm)")
     if qual["errors"]:
         e = qual["errors"][0]
         raise EslError("FAILED_MESH", f"메시 품질 오류 {e['code']}: {e['message']}")
     return mesh, meta
+
+
+DEFEAT_LIST = "defeature.json"
+
+
+def _defeature_record(gmsh, src: str, mc: dict, cfg: dict, mesh: dict, h: float, rec: dict) -> tuple[dict, dict]:
+    """defeature 단계 성공 메시 → (mesh.json.defeature_stage, defeature.json 목록 + _warnings). 원 STEP 을 같은 정리 옵션으로
+    다시 가져와 OCC 삼각화(S0) → 억제 영역 안/밖 충실도(SR-D-19). 바깥 fail 이면 fidelity.fail True(호출자가 DEFEATURE_FIDELITY)."""
+    from esl.doe import mesh_remesh as mrm
+    crit = mc["defeature_stage"]["crit"]
+    rc = mrm._rcfg(cfg)
+    feats = list(rec.get("collected") or []) + list(rec.get("features") or [])
+    for i, f in enumerate(rec.get("collected") or []):
+        f["id"] = f"h{i + 1:04d}"
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("General.NumThreads", 1)
+        S_X, S_T = gdf.reference_tris(gmsh, src, mc, rc)
+    finally:
+        gmsh.finalize()
+    fid = gdf.fidelity_split(S_X, S_T, mesh, h, rc, feats, float(crit["region_pad"]))
+    o = fid["outside"]
+    fid_rec = {"outside": o, "suppressed_max_mm": fid["suppressed_max_mm"],
+               "fail": bool(o.get("fail_mm") is not None and o["hausdorff_mm"] > float(o["fail_mm"]))}
+    ok = [f for f in feats if f.get("action", "suppressed") == "suppressed"]
+    counts: dict = {}
+    for f in ok:
+        counts[f["kind"]] = counts.get(f["kind"], 0) + 1
+    doc = gdf.list_doc(feats, int(crit["list_max"]))
+    warns = []
+    tm = next((f["too_many"] for f in feats if f.get("too_many")), None)
+    if tm:
+        warns.append({"code": "DEFEATURE_TOO_MANY", "message": f"작은 형상 {tm['n']}개 > 상한 {tm['max']} — 앞 {tm['max']}개만"})
+    if o.get("over_warn"):
+        warns.append({"code": "REMESH_FIDELITY_WARN",
+                      "message": f"형상 단순화 메시가 억제 영역 밖에서 원 STEP 과 최대 {o['hausdorff_mm']:.3f} mm 다름"
+                                 f"(> 경고 {o['warn_mm']:g} mm)"})
+    doc["_warnings"] = warns
+    stage = {"counts": dict(sorted(counts.items())), "n": len(ok), "skipped_n": int(rec.get("skipped_n") or 0),
+             "compound": [list(g) for g in rec.get("compound_groups") or []], "fidelity": fid_rec, "list_file": DEFEAT_LIST}
+    return stage, doc
 
 
 def load_mesh(d: str) -> dict:
@@ -1056,6 +954,9 @@ def _child(job_path: str) -> int:
         rec = {"code": exc.code, "message": exc.message}
         if job.get("fail_info") and exc.code == "FAILED_MESH":          # v0.16.0 세분화 입력(실패 면·면적, C2-D-19·21)
             rec.update(_fail_info(exc, job))
+        if isinstance((job.get("cfg") or {}).get("mesh", {}).get("defeature_stage"), dict) and \
+                _LAST_DEFEAT.get("compound_keys"):                     # v0.16.1 compound 면 실패 판정(2번째 시도)
+            rec["compound_keys"] = _LAST_DEFEAT["compound_keys"]
         with open(err, "w", encoding="utf-8") as fh:
             json.dump(rec, fh, ensure_ascii=False)
         return 3

@@ -97,7 +97,11 @@ def test_settings_compare_block(client, world):
         "enabled": True, "reason": None, "max_shapes": 20, "total_max_mb": 1000.0, "mesh_size_mm": 3.0,
         # v0.16.0 §6 (C2-D-9·16): 설정 기본 메시 방식·재메시 가능·메시 입력·STEP 사용 가능
         "mesh_mode": "auto", "remesh_available": True,
-        "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500.0}, "step_ready": True}
+        "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500.0}, "step_ready": True,
+        # v0.16.1 §4.4(esl_select_relax.md): 사다리(defeature 포함)·작은 형상 억제 기준
+        "mesh": {"ladder": ["cad", "refine_local", "refine_global", "defeature", "remesh"]},
+        "defeature": {"hole_max_d_mm": 8.0, "min_bead_height_mm": 2.0, "fillet_max_r_mm": 1.5,
+                      "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"]}}
 
 
 @pytest.mark.parametrize("case", ["paicad_low", "paicad_missing", "no_gmsh", "no_gmsh_no_mesh_input", "compare_off",
@@ -601,11 +605,13 @@ def test_mesh_shape_study_and_clone(client, world, engine):
     assert Path(m["path"]).is_file() and Path(m["upload_root"]).is_dir()
     assert [f["rel"] for f in m["files"]] == ["rad/model.rad", "rad/part3.inc"]
     assert dd["shapes"][0]["source"] == "step"
-    assert dd["mesh_refine"] is None and dd["mesh_ladder"] == ["cad", "refine_local", "refine_global", "remesh"]
+    assert dd["mesh_refine"] is None and dd["mesh_ladder"] == ["cad", "refine_local", "refine_global", "defeature",
+                                                               "remesh"]           # v0.16.1 SR-D-16
     r = api(client, "POST", "/doe/studies", json={**body, "mesh_mode": None, "mesh_refine": False})   # 생략 → 설정(auto)
     assert r.status_code == 201 and r.json()["inputs"]["mesh_mode"] == "auto", r.text
     assert r.json()["inputs"]["mesh_refine"] is False
-    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_ladder"] == ["cad", "remesh"]
+    # V-SR-20(백엔드): '실패 시 세분화 허용' 끔 = refine_* 만 뺌 — defeature 는 남음
+    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_ladder"] == ["cad", "defeature", "remesh"]
     r = api(client, "POST", "/doe/check-inputs", json={"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]],
                                                        "step_upload_id": sh[0]["upload_id"], "mesh_refine": True})
     assert r.status_code == 422 and code(r) == "INVALID_PARAMS"                # ④ 전용
@@ -616,3 +622,59 @@ def test_mesh_shape_study_and_clone(client, world, engine):
     (upload_dir(engine, mu) / "rad" / "part3.inc").unlink()                      # include 업로드 누락 → 복제 409
     r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
     assert r.status_code == 409 and code(r) == "PREREQUISITE_MISSING" and r.json()["detail"]["missing"] == [1]
+
+
+# ================================================================ v0.16.1 작은 형상 억제 목록(esl_select_relax.md §5A.5·§9, V-SR-24 API)
+def test_shape_defeature_list(client, world, engine, esl_root):
+    """GET …/shapes/{did}/defeature: mesh/defeature.json 그대로(조회 권한), 없음·형식 아닌 id·링크·④ 아님 → 404 NOT_FOUND."""
+    sh = shapes3(client)
+    s = api(client, "POST", "/doe/studies", json=cbody(world, sh)).json()
+    sid = s["id"]
+    mdir = study_dir(esl_root, sid) / "prep" / "shapes" / "d001" / "mesh"
+    mdir.mkdir(parents=True)
+    doc = {"schema": "esl/doe_defeature/1", "shape": "d001", "n": 2, "truncated": False,
+           "counts": {"hole": 1, "bead": 1},
+           "features": [{"id": "f1", "kind": "bead", "center": [120.0, 130.0, 0.0], "bbox": [115, 125, -1.5, 125, 135, 0],
+                         "size": {"h_mm": 1.5}, "area_mm2": 80.1, "faces_n": 3, "action": "suppressed", "method": "plane",
+                         "dev_mm": 1.49},
+                        {"id": "f2", "kind": "hole", "center": [80.0, 70.0, 0.0], "bbox": [77.5, 67.5, 0, 82.5, 72.5, 0],
+                         "size": {"d_mm": 5.0}, "area_mm2": 19.6, "faces_n": 1, "action": "suppressed",
+                         "method": "holes_v0141", "dev_mm": 2.5}]}
+    (mdir / "defeature.json").write_text(json.dumps(doc), encoding="utf-8")
+    url = f"/doe/studies/{sid}/shapes/d001/defeature"
+    r = api(client, "GET", url, "tok-general")                              # 조회 권한이면 충분
+    assert r.status_code == 200 and r.json() == doc, r.text
+    assert api(client, "GET", url, "tok-nonmember").status_code == 403
+    for bad in ("d002", "D001", "d001.json", "d%2e%2e"):                    # 파일 없음·id 형식 아님
+        rr = api(client, "GET", f"/doe/studies/{sid}/shapes/{bad}/defeature")
+        assert rr.status_code == 404 and code(rr) == "NOT_FOUND", (bad, rr.text)
+    (mdir / "defeature.json").write_text("{broken", encoding="utf-8")       # 깨진 JSON
+    assert code(api(client, "GET", url)) == "NOT_FOUND"
+    (mdir / "defeature.json").write_text(json.dumps(doc), encoding="utf-8")
+    other = study_dir(esl_root, sid) / "outside"
+    other.mkdir()
+    (other / "defeature.json").write_text(json.dumps(doc), encoding="utf-8")
+    link = study_dir(esl_root, sid) / "prep" / "shapes" / "d002"
+    link.mkdir()
+    (link / "mesh").symlink_to(other, target_is_directory=True)             # 링크 폴더 → 거부
+    assert code(api(client, "GET", f"/doe/studies/{sid}/shapes/d002/defeature")) == "NOT_FOUND"
+    assert code(api(client, "GET", f"/doe/studies/nope/shapes/d001/defeature")) == "DOE_NOT_FOUND"
+
+
+def test_ladder_defeature_order_rules(tmp_path, engine, fake_dashboard, clock):
+    """V-SR-20(백엔드): 사다리 순서 바꿈 허용(cad 뒤 자유 — 설정 그대로 화면·작업에), 중복·cad 아님 맨 앞·모르는 단계는 설정 검증
+    실패(기동 시 CONFIG_INVALID). 세분화 끔(refine_* 만 뺌)은 test_mesh_shape_study_and_clone."""
+    from esl_platform.core.config import load_config_dict
+
+    d = doe_settings_dict(tmp_path)
+    d["bead_doe"]["compare"] = {"mesh": {"ladder": ["cad", "defeature", "refine_global", "remesh"]}}
+    assert load_config_dict(d, environ={}).ok
+    for bad in (["cad", "defeature", "defeature"], ["defeature", "cad"], ["cad", "simplify"]):
+        d["bead_doe"]["compare"] = {"mesh": {"ladder": bad}}
+        lc = load_config_dict(d, environ={})
+        assert not lc.ok and any("ladder" in k for k in lc.error_keys()), bad
+    d["bead_doe"]["compare"] = {"mesh": {"ladder": ["cad", "defeature", "refine_global", "remesh"]}}
+    c = _app(tmp_path, engine, fake_dashboard, clock, d)
+    record_paicad(engine)
+    assert api(c, "GET", "/doe/settings").json()["compare"]["mesh"]["ladder"] == ["cad", "defeature", "refine_global",
+                                                                                     "remesh"]

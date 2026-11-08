@@ -2290,6 +2290,8 @@ export interface DoeWarning {
   code: string;
   message?: string | null;
   name?: string | null;
+  /** v0.16.1 select derive: "info" = 정상 안내(⚠ 개수 제외 — SR-D-25·28) */
+  level?: "info" | null;
   [k: string]: unknown;
 }
 /** 방법·출처(원본 resources/doe_method_sources.json, GET /doe/settings.method_sources) */
@@ -2350,6 +2352,13 @@ export interface DoeSelectCfg {
   max_tiers: number;
   /** k = select.blend.k(표 "R 작음" 배지) — 서버가 안 주면 배지 없음 */
   blend: { min_mm: number; max_mm: number; k?: number | null };
+  /** v0.16.1 고정 침범·품질 FAIL 정책(esl_select_relax.md SR-D-2) — 옛 서버면 없음(= skip 동작) */
+  fixed_policy?: "warn" | "skip" | null;
+  quality_fail_policy?: "warn" | "skip" | null;
+  /** v0.16.1 체결 구멍 둘레 고정 링·블렌딩(SR-D-9, Q2 = A: 3 · 8 mm) */
+  hold?: { ring_mm: number; blend_mm: number } | null;
+  /** v0.16.1 섬 판정(§5.2·SR-D-26 — 브라우저 enclosedIslands 거울): 크기 상한·고리형 둔덕 비율 */
+  island?: { max_mm: number; ring_frac: number } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2366,13 +2375,57 @@ export interface DoeCompareCfg {
   mesh_input?: { enabled: boolean; formats: string[]; max_mb: number } | null;
   /** v0.16.0 gmsh 준비(STEP 형상 가능) */
   step_ready?: boolean;
+  /** v0.16.1 사다리(SR-D-16 — defeature 포함) */
+  mesh?: { ladder?: DoeLadderStage[] | null } | null;
+  /** v0.16.1 작은 형상 억제 기준(§4.4) */
+  defeature?: { hole_max_d_mm: number; min_bead_height_mm: number; fillet_max_r_mm: number; kinds: DoeDefeatureKind[] } | null;
+}
+/** v0.16.1 ④ 사다리 단계(SR-D-16) */
+export type DoeLadderStage = "cad" | "refine_local" | "refine_global" | "defeature" | "remesh";
+/** v0.16.1 억제 특징 종류(SR-D-17) */
+export type DoeDefeatureKind = "hole" | "slot" | "flange" | "bead" | "fillet" | "narrow";
+/** v0.16.1 형상 행 억제 요약(§5A.5 — defeature 형상만) */
+export interface DoeShapeDefeature {
+  n: number;
+  counts: Partial<Record<DoeDefeatureKind, number>>;
+  skipped_n?: number | null;
+  suppressed_max_mm?: number | null;
+  outside_hausdorff_mm?: number | null;
+}
+/** v0.16.1 메시 입력 진단(SR-D-24 — 보고만) */
+export interface DoeShapeDiag {
+  holes_n: number;
+  holes_small_n: number;
+  islands_n: number;
+  free_loops_n: number;
+}
+/** v0.16.1 억제 특징 1개(SR-D-20 mesh/defeature.json) */
+export interface DoeDefeatureFeature {
+  id: string | number;
+  kind: DoeDefeatureKind;
+  center: [number, number, number];
+  bbox?: number[] | null;
+  size?: { d_mm?: number; w_mm?: number; l_mm?: number; h_mm?: number; r_mm?: number } | null;
+  area_mm2?: number | null;
+  faces_n?: number | null;
+  action?: "suppressed" | "skipped" | string | null;
+  method?: string | null;
+  reason?: string | null;
+  dev_mm?: number | null;
+}
+/** v0.16.1 GET /doe/studies/{sid}/shapes/{did}/defeature = mesh/defeature.json 그대로(행 ≤ list_max, 넘으면 truncated + 개수만) */
+export interface DoeDefeatureList {
+  features: DoeDefeatureFeature[];
+  n?: number | null;
+  truncated?: boolean | null;
+  counts?: Partial<Record<DoeDefeatureKind, number>> | null;
 }
 /** v0.16.0 ④ 메시 방식 모드(esl_compare_mesh_options.md C2-D-9) */
 export type DoeMeshMode = "cad" | "remesh" | "auto";
 /** v0.16.0 ④ 형상 출처(C2-D-1) — case = 기준 Case 메시 */
 export type DoeShapeSource = "step" | "mesh" | "case";
 /** v0.16.0 ④ 결과 메시 방식(C2-D-10·22) */
-export type DoeMeshMethod = "cad" | "refine" | "remesh" | "fallback" | "mesh_input";
+export type DoeMeshMethod = "cad" | "refine" | "remesh" | "fallback" | "mesh_input" | "defeature";
 /** v0.16.0 재메시 충실도(C2-D-13) */
 export interface DoeShapeFidelity {
   hausdorff_mm: number;
@@ -2484,6 +2537,9 @@ export interface DoeShapeRef {
   /** (보강) 세분화 기록·수렴 점검 δ(C2-D-22·24) */
   refine?: DoeShapeRefine | null;
   refine_bias?: DoeRefineBias | null;
+  /** v0.16.1 작은 형상 억제 요약(defeature 형상만)·메시 입력 진단 */
+  defeature?: DoeShapeDefeature | null;
+  diag?: DoeShapeDiag | null;
 }
 /** ④ 형상 메시 품질 요약(SC-D-13, 이슈 #53 criteria) — over_limit = fail_ratio > max_fail_ratio(경고 SHAPE_QUALITY_FAIL, 차단 아님) */
 export interface DoeShapeQuality {
@@ -2520,6 +2576,9 @@ export interface DoePrepShape {
   refine?: DoeShapeRefine | null;
   /** auto 사다리 시도 목록(cad 실패 뒤 — 모두 실패한 형상의 문구·툴팁) */
   attempts?: DoeMeshAttempt[] | null;
+  /** v0.16.1 작은 형상 억제 요약(defeature 형상만, §5A.5)·메시 입력 진단(SR-D-24) */
+  defeature?: DoeShapeDefeature | null;
+  diag?: DoeShapeDiag | null;
 }
 export interface DoeProps {
   t: number;
@@ -2572,7 +2631,15 @@ export interface DoePreviewCell {
   thumb: boolean;
   /** v0.15.1 select 고정 침범 원인(SKIPPED_FIXED 칸만): 침범 노드 수·최대 이동·변수별 이동(큰 순)·노드 번호(0 기준, 최대 500) */
   fixed_viol?: DoeFixedViol | null;
+  /** v0.16.1 경고 안(READY + 경고, SR-D-1) — 비었으면 키 없음 */
+  warnings?: DoeCellWarning[] | null;
 }
+/** v0.16.1 안 경고(§4.3) */
+export type DoeCellWarning =
+  | { code: "SELECT_FIXED_MOVED"; n: number; max_mm: number }
+  | { code: "SELECT_QUALITY_WARN"; new_fail: number; new_fail_ratio: number; area_ratio_min?: number; rot_max_deg?: number }
+  /** v0.16.1 SR-D-38 다른 선택 비드 침범(warn 정책) */
+  | { code: "SELECT_CROSS_BEAD_MOVE"; n: number; max_mm: number; beads?: string[][] };
 export interface DoeFixedViol {
   n: number;
   max_mm: number;
@@ -2590,6 +2657,10 @@ export interface DoePreviewOut {
   selection_sha256?: string | null;
   /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max) */
   color?: { v_max: number; unit: string } | null;
+  /** v0.16.1 경고 READY 수(§6 counts.warn) */
+  warn?: number | null;
+  /** v0.16.1 판정 규칙 판이 옛 미리보기(grid_manifest.rules 없음, §7.4) */
+  rules_outdated?: boolean | null;
 }
 export interface DoeStudyOut {
   id: string;
@@ -2630,6 +2701,8 @@ export interface DoeStudyOut {
     mesh?: { size_mm: number | null; gmsh_version: string | null } | null;
     /** ④ 형상별 메시·상태·품질 */
     shapes?: DoePrepShape[];
+    /** v0.16.1 작은 형상 억제(defeature) 단계로 메시한 형상 수 */
+    n_defeature?: number | null;
     /** v0.15.0 select 준비 요약(§8.1 BD_PREP_REGISTER) */
     n_nodes?: number;
     n_elems?: number;
@@ -2662,6 +2735,8 @@ export interface DoeBead {
   /** 해석된 블렌딩 반경(mm) */
   blend_mm?: number | null;
   warnings?: DoeWarning[] | null;
+  /** v0.16.1 select 비드 섬 수(params 비드 행) */
+  islands_n?: number | null;
 }
 export interface DoeParam {
   name: string;
@@ -2752,7 +2827,10 @@ export interface DoeRankRow {
   per_esl?: DoePerEsl[];
   /** ④ 형상 이름(values = {}) */
   shape?: DoeShapeRef | null;
+  /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
+  warn?: DoeRankWarn[] | null;
 }
+export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
 export interface DoePerEsl {
   entry_id: string;
@@ -2821,6 +2899,8 @@ export interface DoeResultOut {
   esl?: { entry_id: string; label?: string | null }[];
   /** 서버 정렬 키(기본 score) */
   sort?: string;
+  /** v0.16.1 결과 요약 — best_clean = 경고 없는 최상위 안 id(없으면 null, Q1 = A) */
+  summary?: { best_clean?: string | null } | null;
   warnings: DoeWarning[];
 }
 
@@ -3066,6 +3146,8 @@ export interface SelectBeadIn {
   blend_mm?: "auto" | number;
   floor_follow?: 0 | 1 | null;
   links?: number[][];
+  /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) */
+  hold_fixed?: 0 | 1 | null;
 }
 /** openapi SelectionIn(요청) */
 export interface SelectionIn {
@@ -3094,6 +3176,8 @@ export interface DoeBeadSel {
   blend_mm: "auto" | number;
   floor_follow: 0 | 1;
   links: number[][];
+  /** v0.16.1 체결 구멍 둘레 고정 — 1 일 때만 키(정규화가 0 을 생략, SR-D-13a) */
+  hold_fixed?: 1;
 }
 /** SelectionIn(schema_version 1) — API·DB 공통 */
 export interface DoeSelectionIn {
@@ -3130,6 +3214,22 @@ export interface DoeBeadDerived {
   section?: DoeSection | null;
   range_default: { D: Record<string, XY>; W: XY | null };
   warnings: DoeWarning[];
+  /** v0.16.1 섬·관통 구멍·안쪽 고리·hold(esl_select_relax.md §4.2) — 옛 서버면 없음 */
+  islands?: DoeIslandDerived[] | null;
+  holes?: { n: number; n_nodes: number } | null;
+  inner_loops_n?: number | null;
+  hold_fixed?: 0 | 1 | null;
+  hold?: { n_ring_nodes: number; n_blend_nodes: number; n_fixed: number } | null;
+}
+/** v0.16.1 섬 1개(§4.2) */
+export interface DoeIslandDerived {
+  k: number;
+  n_elems: number;
+  n_nodes: number;
+  elems: DoeElemSet;
+  rim_n: number;
+  size_mm: number;
+  free_loops: number;
 }
 export type DoeFixedSource = "scan" | "user" | "scan+user" | "none";
 /** openapi SelectionDerived(derive 응답·GET selection.derived — 저장 요약은 section·plan·slope_suggested 없음) */
@@ -3141,6 +3241,10 @@ export interface SelectionDerived {
   fixed: { scan_n: number; user_n: number; source: DoeFixedSource };
   warnings?: DoeWarning[];
   slope_suggested?: Record<string, DoeElemSet> | null;
+  /** v0.16.1 derive 응답 — 비드별 섬 요소(화면 표시용, SR-D-14) */
+  islands_suggested?: Record<string, DoeElemSet> | null;
+  /** v0.16.1 계산 규칙 판(SR-D-13c) */
+  algo?: number | null;
 }
 export type DoeSelectionDerived = SelectionDerived;
 /** POST …/select/derive 응답 */

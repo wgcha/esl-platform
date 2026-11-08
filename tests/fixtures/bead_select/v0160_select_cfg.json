@@ -1,0 +1,44 @@
+{
+ "blend": {
+  "fixed_margin_mm": 3.0,
+  "k": 8.0,
+  "max_mm": 200.0,
+  "min_mm": 15.0
+ },
+ "derive_cache_n": 8,
+ "derive_timeout_s": 20,
+ "enabled": true,
+ "feature_angle_deg": 15.0,
+ "fixed_tol_mm": 0.01,
+ "level_eps_mm": 0.5,
+ "max_beads": 20,
+ "max_selection_kb": 4096,
+ "max_tiers": 6,
+ "normal_radius_mm": 10.0,
+ "plane_rms_mm": 2.0,
+ "plate_tol_mm": 1.0,
+ "quality": {
+  "flip_deg": 60.0,
+  "max_fail_ratio": 0.01
+ },
+ "range": {
+  "depth_rel": 0.3,
+  "min_step_mm": 1.0,
+  "width_rel": 0.2
+ },
+ "slope_max_mm": 80.0,
+ "thumb": {
+  "ambient": 0.35,
+  "h": 240,
+  "margin": 1.15,
+  "supersample": 2,
+  "tilt_deg": 25.0,
+  "view": "auto",
+  "w": 320
+ },
+ "width": {
+  "end_ratio": 2.0,
+  "floor_follow": 1,
+  "knn": 8
+ }
+}
