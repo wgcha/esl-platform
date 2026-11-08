@@ -6,13 +6,13 @@
 import type {
   DoeCellWarning,
   DoeFixedViol,
-  DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn,
+  DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn, DoeSelectAutoOut,
   DoeSettingsOut, DoeWarning, XY,
 } from "../api/types";
 import { boundaryNodes, buildTopo, type MeshTopo } from "../view3d/select/adjacency";
 import { enclosedComponents, outerPolygons, type Vec3 } from "../view3d/select/grow";
 import { writeBasis } from "../view3d/select/basis";
-import { EMPTY_SET, elemIndex, fromElemSet, normalizeElemSet, toElemSet } from "../view3d/select/ranges";
+import { EMPTY_SET, elemIndex, elemSetCount, fromElemSet, normalizeElemSet, toElemSet } from "../view3d/select/ranges";
 import { writeSelectBin } from "../view3d/select/view";
 import { writeGlb } from "./view3dmock";
 
@@ -178,6 +178,32 @@ export function selDefaultSelection(): DoeSelectionIn {
     links: [] as number[][],
   });
   return { schema_version: 1, feature_angle_deg: 15, beads: [bead("b1", "좌 경로 비드", [pick(LABEL.b1t1), pick(LABEL.b1t2)]), bead("b2", "원형 비드", [pick(LABEL.b2)])], fixed_user: EMPTY_SET(), exclude: EMPTY_SET() };
+}
+
+/** v0.16.2 자동 탐지 seed 목(esl_bead_auto.md AD-D-3): 비드당 1단(paicad 는 다단을 1단으로 — b1 은 단 1 바닥만), id b1..bn, 이름 B<n> */
+export function selAutoSeed(): DoeSelectAutoOut {
+  const m = selMesh();
+  const pick = (lab: number) => toElemSet([...m.label.keys()].filter((e) => m.label[e] === lab), m.elemId, m.elemType);
+  const bead = (i: number, floor: DoeElemSet) => ({
+    id: `b${i}`,
+    name: `B${i}`,
+    tiers: [{ k: 1, floor }],
+    slope: { mode: "auto" as const, add: EMPTY_SET(), remove: EMPTY_SET() },
+    blend_mm: "auto" as const,
+    floor_follow: 1 as const,
+    links: [] as number[][],
+  });
+  const selection: DoeSelectionIn = { schema_version: 1, feature_angle_deg: 15, beads: [bead(1, pick(LABEL.b1t1)), bead(2, pick(LABEL.b2))], fixed_user: EMPTY_SET(), exclude: EMPTY_SET() };
+  return {
+    selection,
+    sha256: selSha(selection),
+    map: selection.beads.map((b, i) => ({ bead: b.id, paicad_id: i + 1, n_floor: elemSetCount(b.tiers[0].floor) })),
+    warnings: [
+      { code: "AUTO_GROUP_DROPPED", level: "info", message: "자동 탐지의 비드 묶음(B1·B2)은 풀어서 가져왔습니다" },
+      { code: "AUTO_SLOPE_DIFF", level: "info", bead: "b2", rel: 0.27 },
+    ],
+    paicad_version: "0.14.0",
+  };
 }
 
 /** 정규화(구간 병합·기본값) — sha 입력 */

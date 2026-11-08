@@ -2,9 +2,9 @@
 // 상태(층·실행 취소·derive)는 useBeadSelect 가 갖고, 페이지(DoeStudy)가 [선택 저장](주 버튼)·변수 표 블렌딩 편집에 같은 컨트롤러를 쓴다.
 // 3D 는 기존 장면(scene.ts — TrackballControls 회전 그대로)에 요소 모드만 더한다. 그리기 도구 중 왼쪽 끌기 = 도구, Ctrl+끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { doe, warnText } from "../api/doe";
+import { BEAD_SOURCE_NAME, doe, isInfoWarn, warnText } from "../api/doe";
 import { errorText } from "../api/client";
-import type { DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
+import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
 import { loadScene } from "../view3d/loadThree";
@@ -16,7 +16,7 @@ import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
-  addBead, addTier, applyPatch, clearLayer, deleteBead, deleteLastTier, resetAll, resetBead, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
+  addBead, addTier, applyPatch, clearLayer, cloneState, deleteBead, deleteLastTier, resetAll, resetAllTo, resetBead, resetBeadTo, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
   type Layer, type LayerName, type SelIslands, type SelState,
 } from "../view3d/select/layers";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
@@ -122,6 +122,8 @@ export interface BeadSelectCtrl {
   /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) */
   setHold: (bead: number, v: 0 | 1) => void;
   hold: { ring_mm: number; blend_mm: number };
+  /** v0.16.2 자동 탐지 seed 가 기준 상태(되돌리기·비드별/전체 초기화 = seed, AD-D-4) */
+  hasSeed: boolean;
 }
 
 /** 섬 크기 상한 기본값(설정 select.island.max_mm 거울 — 서버가 settings 에 주면 그 값) */
@@ -164,8 +166,12 @@ export function withoutBeadDerive(d: DoeDeriveOut | null, id: string): DoeDerive
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\u0000-\u001f\u007f]/;
 
-/** 선택 편집 상태(층·실행 취소·derive·저장본 비교) */
-export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionOut | null, st: DoeSettingsOut | null): BeadSelectCtrl {
+/**
+ * 선택 편집 상태(층·실행 취소·derive·저장본 비교).
+ * v0.16.2 seed(자동 탐지, esl_bead_auto.md AD-D-4): 저장본이 없으면 seed 를 기본 상태로 불러옴(실행 취소 스택 비움).
+ * 비드별·전체 초기화는 seed 로(수동 = 빈 선택). seed === undefined = 아직 불러오는 중(초기 상태를 만들지 않고 기다림), null = seed 없음
+ */
+export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionOut | null, st: DoeSettingsOut | null, seed: DoeSelectionIn | null | undefined = null): BeadSelectCtrl {
   const { data, error } = useSelectData(studyId, on);
   const stRef = useRef<SelState | null>(null);
   const hist = useRef(new History<LayerName>());
@@ -180,6 +186,8 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
   const [deriveError, setDeriveError] = useState<string | null>(null);
   const [baseJson, setBaseJson] = useState<string | null>(null);
   const loadedSha = useRef<string | null | undefined>(undefined);
+  /** seed 기준 상태(편집과 분리된 사본) — 없으면 null */
+  const seedRef = useRef<SelState | null>(null);
   const maxBeads = st?.select?.max_beads ?? 20;
   const maxTiers = st?.select?.max_tiers ?? 6;
   const islandMax = st?.select?.island?.max_mm ?? ISLAND_MAX_MM;
@@ -218,11 +226,12 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
 
   // 저장본 → 화면 상태: 처음 1회 불러옴. 저장 직후(화면 = 새 저장본)는 기준만 바꾸고, 저장 안 한 편집이 있으면 덮지 않는다
   useEffect(() => {
-    if (!data) return;
+    if (!data || seed === undefined) return;
+    const n = data.manifest.n_elems;
+    seedRef.current = seed && seed.beads.length ? fromSelectionIn(seed, data.idx, n).state : null;
     const sha = saved?.sha256 ?? null;
     if (loadedSha.current === sha) return;
     loadedSha.current = sha;
-    const n = data.manifest.n_elems;
     const fromSaved = saved ? fromSelectionIn(saved.input, data.idx, n).state : null;
     const savedIn = fromSaved && saved ? toSelectionIn(fromSaved, data.bin.elemId, data.bin.elemType, saved.input.feature_angle_deg) : null;
     const savedJson = savedIn ? json(savedIn) : null;
@@ -233,18 +242,21 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       bump();
       return;
     }
-    stRef.current = fromSaved ?? emptyState(n);
+    const fromSeed = !fromSaved && seedRef.current ? cloneState(seedRef.current) : null;
+    stRef.current = fromSaved ?? fromSeed ?? emptyState(n);
     if (saved) setFeatureAngle(saved.input.feature_angle_deg);
+    else if (fromSeed && seed) setFeatureAngle(seed.feature_angle_deg);
     setBaseJson(savedJson);
     setDerive(null);
     setLocalIslands(null);
     hist.current.clear();
     if (savedIn) doDerive(savedIn);
+    else if (fromSeed && seed) doDerive(toSelectionIn(fromSeed, data.bin.elemId, data.bin.elemType, seed.feature_angle_deg));
     setActive(0);
     setLayer(stRef.current.beads.length ? { kind: "tier", bead: 0, k: 1 } : null);
     bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, saved?.sha256]);
+  }, [data, saved?.sha256, seed]);
 
   const curJson = useMemo(() => {
     const x = input();
@@ -460,20 +472,23 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     resetBead: (b) => {
       const s = stRef.current;
       if (!s) return;
-      const p = resetBead(s, b);
+      const p = seedRef.current ? resetBeadTo(s, b, seedRef.current) : resetBead(s, b);
       if (!p) return;
       hist.current.push(p);
       const id = s.beads[b]?.id;
       if (id) setDerive((d) => withoutBeadDerive(d, id));   // 그 비드의 사면 제안·D·W 도 비움(다시 계산 전까지)
+      if (p.meta) afterMeta(b);
       refreshIslands();
       bump();
     },
     resetAll: () => {
       const s = stRef.current;
       if (!s) return;
-      hist.current.push(resetAll(s));
+      const seedS = seedRef.current;
+      hist.current.push(seedS ? resetAllTo(s, seedS) : resetAll(s));
       afterMeta(0);
       setLocalIslands(null);
+      if (seedS) doDerive(input()); // seed 의 사면 제안·D·W 를 다시
       bump();
     },
     maxBeads,
@@ -487,6 +502,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       bump();
     },
     hold,
+    hasSeed: !!seedRef.current,
   };
   return ctrl;
 }
@@ -757,7 +773,57 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
 }
 
 /** ② 비드 선택 + ③ 비드 목록·도구(§11.1) */
-export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean }) {
+/** v0.16.2 자동 탐지 표시(esl_bead_auto.md §7): 미저장 배지 · seed 없음 안내 1줄 · AUTO_* 경고 */
+export interface AutoSeedView {
+  /** seed 를 불러왔고 아직 [선택 저장] 전 */
+  unsaved: boolean;
+  /** seed 없음 안내(null = 없음) */
+  notice: string | null;
+  /** GET …/select/auto warnings */
+  warnings: DoeWarning[];
+}
+export const AUTO_BADGE = "자동 탐지 결과 — 수정 후 저장";
+
+function AutoSeedBar({ auto }: { auto: AutoSeedView }) {
+  const warns = auto.warnings.filter((w) => !isInfoWarn(w));
+  const infos = auto.warnings.filter(isInfoWarn);
+  if (!auto.unsaved && !auto.notice && !auto.warnings.length) return null;
+  return (
+    <div className="bs-auto" data-testid="bs-auto" style={{ marginBottom: 8 }}>
+      <div className="inline-actions" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      {auto.unsaved && (
+        <span className="badge info" data-testid="bs-auto-badge" title="자동 탐지(paicad)가 찾은 비드로 채웠습니다 — 고친 뒤 [선택 저장]. 되돌리기·초기화는 이 결과로 돌아갑니다">
+          {AUTO_BADGE}
+        </span>
+      )}
+      {auto.notice && (
+        <span className="small warn-text" role="status" data-testid="bs-auto-notice">
+          {auto.notice}
+        </span>
+      )}
+      </div>
+      {warns.length > 0 && (
+        <ul className="reasons small warn-text" data-testid="bs-auto-warn">
+          {warns.map((w, i) => (
+            <li key={i}>{warnText(w)}</li>
+          ))}
+        </ul>
+      )}
+      {infos.length > 0 && (
+        <ul className="reasons small muted" data-testid="bs-auto-info">
+          {infos.map((w, i) => (
+            <li key={i}>ⓘ {warnText(w)}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+/** seed 없음 안내 1줄(자동 탐지 실패·결과 없음) */
+export const autoNoticeText = (code: string | null) =>
+  code ? `${code === "AUTO_DETECT_FAILED" ? "비드 자동 탐지에 실패했습니다" : "자동 탐지 결과가 없습니다"} — ${BEAD_SOURCE_NAME.manual} 도구로 비드를 고르세요` : null;
+
+export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null }) {
   const [tool, setTool] = useState<Tool>("click");
   const [brushPx, setBrushPx] = useState(20);
   const [visibleOnly, setVisibleOnly] = useState(true);
@@ -771,6 +837,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
   return (
     <div className="bs-grid">
       <Card title="② 비드 선택" right={<span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
+        {auto && <AutoSeedBar auto={auto} />}
         {fixedMissing && (
           <div className="warn-box small" role="alert" data-testid="bs-fixed-missing">
             체결 정보 없음 — 체결부를 고정으로 칠하세요(③ [고정 칠하기])
@@ -839,7 +906,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
             <button type="button" className="btn small ghost" onClick={() => ctrl.ring(-1)} disabled={ro || noBead} title="경계에 닿은 사면 한 줄을 뺍니다">
               −1줄
             </button>
-            <button type="button" className="btn small ghost icon" onClick={ctrl.undo} disabled={ro || !ctrl.canUndo} aria-label="실행 취소" title="실행 취소(Ctrl+Z)">
+            <button type="button" className="btn small ghost icon" onClick={ctrl.undo} disabled={ro || !ctrl.canUndo} aria-label="실행 취소" title={ctrl.hasSeed ? "실행 취소(Ctrl+Z) — 끝까지 되돌리면 자동 탐지 결과" : "실행 취소(Ctrl+Z)"}>
               ↶
             </button>
             <button type="button" className="btn small ghost icon" onClick={ctrl.redo} disabled={ro || !ctrl.canRedo} aria-label="다시 실행" title="다시 실행(Ctrl+Y)">
@@ -855,7 +922,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing }: { ctrl: Be
         <ErrorLine text={ctrl.deriveError} />
       </Card>
       <Card title="③ 비드 목록·도구">
-        <BeadList ctrl={ctrl} editable={editable} st={st} />
+        <BeadList ctrl={ctrl} editable={editable} st={st} hideDirty={!!auto?.unsaved} />
       </Card>
     </div>
   );

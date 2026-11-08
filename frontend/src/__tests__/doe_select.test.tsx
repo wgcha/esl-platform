@@ -50,30 +50,40 @@ describe("select 규칙(화면 쪽 함수)", () => {
   });
 });
 
-describe("새 스터디 — ① 비드 정의 하위 선택", () => {
-  it("직접 선택(메시): STEP 칸 숨김 → 입력 검사 → [입력 준비] → 준비 후 비드 선택 카드", async () => {
+describe("새 스터디 — ① 비드 정의 하위 선택(v0.16.2 자동 탐지 / 직접 선택 = bead_source)", () => {
+  it("직접 선택(기본): STEP 칸 숨김 → 입력 검사 → [입력 준비] → select + bead_source manual", async () => {
     const r = renderApp("/p/p-body/doe/new?entries=le-1,le-2", "power");
     await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
     expect(screen.getByTestId("doe-beaddef")).toBeTruthy();
-    expect(radio("자동 탐지(STEP)").checked).toBe(true);
-    fireEvent.click(radio("직접 선택(메시)"));
+    expect(radio("직접 선택").checked).toBe(true);
     expect(screen.queryByTestId("doe-step-drop")).toBeNull();
     expect(screen.getByTestId("doe-select-note")).toBeTruthy();
+    // 자동 탐지로 바꾸면 STEP 칸
+    fireEvent.click(radio("자동 탐지"));
+    expect(screen.getByTestId("doe-step-drop")).toBeTruthy();
+    fireEvent.click(radio("직접 선택"));
     await waitFor(() => expect(screen.getByTestId("doe-check").textContent).toMatch(/기준 Case/));
     const [p] = primaries(r.container);
     expect(p.textContent).toBe("입력 준비");
     await waitFor(() => expect(p.disabled).toBe(false));
     fireEvent.click(p);
     await waitFor(() => expect(screen.getByRole("heading", { name: "강성 평가 스터디" })).toBeTruthy());
+    const rec = r.server.doe.recs[r.server.doe.recs.length - 1];
+    expect(rec.out.scenario).toBe("select");
+    expect(rec.out.inputs.bead_source).toBe("manual");
   });
 
-  it("select 꺼짐: 하위 라디오 비활성 + 사유", async () => {
+  it("새 스터디 목록에 same·mesh 없음(①②는 select), select 꺼짐: ①·하위 라디오 비활성 + 사유", async () => {
     renderApp("/p/p-body/doe/new?entries=le-1,le-2", "power", (s) => {
       s.doe.settings.scenarios.select = false;
       s.doe.settings.select!.enabled = false;
     });
-    await waitFor(() => expect(radio("직접 선택(메시)").disabled).toBe(true));
-    expect(radio("직접 선택(메시)").closest("label")?.getAttribute("title")).toMatch(/꺼져/);
+    await waitFor(() => expect(radio("직접 선택").disabled).toBe(true));
+    expect(radio("직접 선택").closest("label")?.getAttribute("title")).toMatch(/꺼져/);
+    expect(radio(/① 같은 모델/).disabled).toBe(true);
+    const names = screen.getAllByRole("radio").filter((x) => (x as HTMLInputElement).name === "doe-scenario").map((x) => x.closest("label")!.textContent);
+    expect(names).toEqual(["① 같은 모델", "② 다른 모델(B 메시)", "③ 다른 모델(STEP만)", "④ 형상 직접 비교(STEP 여러 개)"]);
+    expect(screen.queryByRole("radio", { name: /자동 탐지\(STEP\)|메시 있음/ })).toBeNull();
   });
 });
 
@@ -82,6 +92,7 @@ describe("상세(doe-5: 선택 저장됨, READY)", () => {
     const r = renderApp("/p/p-body/doe/doe-5", "power");
     await waitFor(() => expect(screen.getByRole("toolbar", { name: "선택 도구" })).toBeTruthy());
     const tb = screen.getByRole("toolbar", { name: "선택 도구" });
+    await waitFor(() => expect(screen.getByTestId("bead-b1")).toBeTruthy(), { timeout: 8000 }); // 첫 선택 메시 생성(목) 대기
     for (const t of ["클릭+확장", "브러시", "사각", "올가미"]) expect(within(tb).getByRole("radio", { name: t })).toBeTruthy();
     expect((within(tb).getByLabelText("보이는 면만") as HTMLInputElement).checked).toBe(true);
     await waitFor(() => expect(screen.getByTestId("bead-b1")).toBeTruthy());
@@ -106,7 +117,7 @@ describe("상세(doe-5: 선택 저장됨, READY)", () => {
     fireEvent.click(save);
     await waitFor(() => expect(primaries(r.container)[0].textContent).toBe("미리보기"));
     expect(r.server.doe.recs.find((x) => x.out.id === "doe-5")!.sel!.rev).toBe(2);
-  });
+  }, 15000);
 
   it("[+ 비드] 후 빈 단이면 저장 불가 사유, 묶기", async () => {
     const r = renderApp("/p/p-body/doe/doe-5", "power");
