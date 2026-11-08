@@ -238,6 +238,52 @@ export function resetAll(s: SelState): Patch<LayerName> {
   return r.patch({ before, after: [] });
 }
 
+/** 상태 깊은 복사(v0.16.2 seed 기준 상태 — 편집이 seed 를 바꾸지 않게) */
+export function cloneState(s: SelState): SelState {
+  return { nElems: s.nElems, beads: cloneBeads(s.beads), owner: s.owner.slice(), remove: s.remove.slice(), fixed: s.fixed.slice(), exclude: s.exclude.slice() };
+}
+
+/**
+ * v0.16.2 이 비드 초기화 = seed 로(esl_bead_auto.md AD-D-4): 그 비드의 바닥·사면 표시를 비운 뒤 seed 의 같은 id 비드 요소를 되돌린다
+ * (다른 비드가 차지한 요소는 덮지 않음). 단 수·묶음·블렌딩·hold 도 seed 값(이름은 유지). seed 에 그 비드가 없으면 빈 선택(resetBead 와 같음). 패치 1개
+ */
+export function resetBeadTo(s: SelState, bead: number, seed: SelState): Patch<LayerName> | null {
+  const b = s.beads[bead];
+  if (!b) return null;
+  const si = seed.beads.findIndex((x) => x.id === b.id);
+  const before = cloneBeads(s.beads);
+  const r = recorder(s);
+  for (let e = 0; e < s.nElems; e++) {
+    if (ownerBead(s.owner[e]) === bead) r.set("owner", e, -1);
+    if (s.remove[e] === bead) r.set("remove", e, -1);
+  }
+  if (si < 0) return r.patch();
+  for (let e = 0; e < s.nElems; e++) {
+    const o = seed.owner[e];
+    if (ownerBead(o) === si && s.owner[e] < 0) r.set("owner", e, ownerCode(bead, ownerLayer(o)));
+    if (seed.remove[e] === si && s.remove[e] < 0) r.set("remove", e, bead);
+  }
+  const sb = seed.beads[si];
+  const next: BeadMeta = { ...b, nTiers: sb.nTiers, blend: sb.blend, floorFollow: sb.floorFollow, links: sb.links.map((g) => [...g]), holdFixed: sb.holdFixed };
+  if (JSON.stringify(next) === JSON.stringify(b)) return r.patch();
+  s.beads = cloneBeads(s.beads.map((x, i) => (i === bead ? next : x)));
+  return r.patch({ before, after: cloneBeads(s.beads) });
+}
+
+/** v0.16.2 전체 초기화 = seed 로: 비드 목록·모든 층을 seed 그대로. 패치 1개(비드 목록 스냅숏 포함) */
+export function resetAllTo(s: SelState, seed: SelState): Patch<LayerName> {
+  const before = cloneBeads(s.beads);
+  const r = recorder(s);
+  for (let e = 0; e < s.nElems; e++) {
+    r.set("owner", e, seed.owner[e]);
+    r.set("remove", e, seed.remove[e]);
+    r.set("fixed", e, seed.fixed[e]);
+    r.set("exclude", e, seed.exclude[e]);
+  }
+  s.beads = cloneBeads(seed.beads);
+  return r.patch({ before, after: cloneBeads(seed.beads) });
+}
+
 /** 마지막 단 삭제(단 1 개면 null — 비드 삭제를 쓴다): 그 바닥 요소를 비우고 묶음에서 뺀다. 패치 1개 */
 export function deleteLastTier(s: SelState, bead: number): Patch<LayerName> | null {
   const b = s.beads[bead];

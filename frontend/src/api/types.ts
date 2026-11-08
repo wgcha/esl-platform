@@ -2268,6 +2268,10 @@ export interface OptFileOut {
 /** v0.14.0 compare = ④ 형상 직접 비교(esl_step_compare.md) */
 /** v0.15.0 select = ① 같은 모델 + 비드 직접 선택(esl_bead_select.md BS-D-1) */
 export type DoeScenario = "same" | "mesh" | "step" | "compare" | "select";
+/** v0.16.2 select 초기 선택 출처(esl_bead_auto.md AD-D-1) — auto = 자동 탐지 seed, manual = 빈 선택(기본) */
+export type DoeBeadSource = "auto" | "manual";
+/** v0.16.2 select 기준 메시(AD-D-13) — case = ① Case 메시(기본, 키 없음), mesh = ② B 메시 */
+export type DoeSelectBase = "case" | "mesh";
 export type DoeMethod = "lhs" | "halton" | "fullfact";
 export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
 export type DoeParamType = "D" | "W" | "U" | "V";
@@ -2314,7 +2318,13 @@ export interface DoeSettingsOut {
   paicad: { ready: boolean; version: string | null; pinned: string | null; warning: string | null };
   gmsh: { ready: boolean; version: string | null };
   /** select 는 v0.15.0 이후 서버만(없으면 꺼짐) */
-  scenarios: Record<Exclude<DoeScenario, "select">, boolean> & { select?: boolean };
+  scenarios: Record<Exclude<DoeScenario, "select">, boolean> & {
+    select?: boolean;
+    /** v0.16.2 자동 탐지 가능(select 가능 ∧ paicad 준비됨, esl_bead_auto.md §3.2) — 옛 서버면 없음 */
+    select_auto?: boolean;
+    /** v0.16.2 ② B 메시 기준 select 가능(= select 가능) — 옛 서버면 없음 */
+    select_mesh?: boolean;
+  };
   max_entries: number;
   max_designs: number;
   doe: {
@@ -2359,6 +2369,8 @@ export interface DoeSelectCfg {
   hold?: { ring_mm: number; blend_mm: number } | null;
   /** v0.16.1 섬 판정(§5.2·SR-D-26 — 브라우저 enclosedIslands 거울): 크기 상한·고리형 둔덕 비율 */
   island?: { max_mm: number; ring_frac: number } | null;
+  /** v0.16.2 구멍 건너 잇기 상한(AD-D-7, 기본 20 mm) */
+  hole?: { bridge_max_mm: number } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2504,6 +2516,10 @@ export interface DoeCheckIn {
   mesh_mode?: DoeMeshMode | null;
   /** (보강, 계약 §3 미기재 — §8 '실패 시 세분화 허용' = ladder 에 refine_* 포함, C2-D-18) false 면 auto 사다리에서 refine_* 를 뺌. 없으면 설정값 */
   mesh_refine?: boolean | null;
+  /** v0.16.2 select 만: auto = STEP(step_upload_id) 필수, manual(기본) = STEP 금지(esl_bead_auto.md §3.3) */
+  bead_source?: DoeBeadSource | null;
+  /** v0.16.2 select 만: mesh = ② B 메시(mesh_upload_id 필수), case(기본) = ① Case 메시 */
+  select_base?: DoeSelectBase | null;
 }
 /** ④ check-inputs 형상 1행 */
 export interface DoeCheckShape {
@@ -2683,6 +2699,10 @@ export interface DoeStudyOut {
     mesh_mode?: DoeMeshMode | null;
     /** (보강) 세분화 허용 */
     mesh_refine?: boolean | null;
+    /** v0.16.2 select 초기 선택 출처(없으면 manual) */
+    bead_source?: DoeBeadSource | null;
+    /** v0.16.2 select 기준 메시("mesh" 일 때만 — 없으면 case) */
+    select_base?: DoeSelectBase | null;
   };
   phase: DoePhase;
   version: number;
@@ -2830,7 +2850,8 @@ export interface DoeRankRow {
   /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
   warn?: DoeRankWarn[] | null;
 }
-export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN";
+/** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
+export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
 export interface DoePerEsl {
   entry_id: string;
@@ -3257,6 +3278,20 @@ export interface DoeSelectionOut {
   derived: DoeSelectionDerived;
   updated_by_name: string;
   updated_at: string;
+}
+/** v0.16.2 GET …/select/auto 비드 대응 1행(paicad 비드 → b<i>) */
+export interface DoeSelectAutoMap {
+  bead: string;
+  paicad_id: string | number | null;
+  n_floor: number;
+}
+/** v0.16.2 GET /doe/studies/{id}/select/auto(esl_bead_auto.md §3.3) — 자동 탐지 seed. 404 AUTO_NOT_AVAILABLE · 409 PREP_NOT_READY */
+export interface DoeSelectAutoOut {
+  selection: DoeSelectionIn;
+  sha256: string;
+  map: DoeSelectAutoMap[];
+  warnings: DoeWarning[];
+  paicad_version: string | null;
 }
 /** DoeStudyOut.selection 요약 */
 export interface DoeSelectionSummary {

@@ -10,16 +10,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
-import type { CompareShapeIn, DoeMeshMode, DoeMeshPart } from "../../api/types";
+import type { CompareShapeIn, DoeBeadSource, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
-  BEAD_DEF_NAME, MESH_MODE_HINT, MESH_MODE_NAME, PHASE_NAME, SCENARIOS, SCENARIO_NAME, SCENARIO_NO, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
-  partIdProblem, partsFromError, radioScenario, remeshUnavailableText, scenarioBlocked, shapesProblem, warnText,
+  BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
+  loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
+  type NewRadio,
   type ParamRow, type SpecForm, RULES_OUTDATED_TEXT } from "../../api/doe";
-import { BeadSelectCards, SelectDesign3D, useBeadSelect } from "../../components/BeadSelectCard";
+import { BeadSelectCards, SelectDesign3D, autoNoticeText, useBeadSelect, type AutoSeedView } from "../../components/BeadSelectCard";
 import { SectionMini } from "../../components/SectionMini";
 import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
 import { STEP_LABEL } from "../../api/history";
-import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
+import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/ui";
@@ -68,32 +69,50 @@ function Steps({ job }: { job: JobOut | null | undefined }) {
   );
 }
 
-/** 시나리오 라디오(자동 판별 표시). readOnly = 상세. v0.15.0: ① 아래 하위 선택 "비드: ○ 자동 탐지(STEP) ○ 직접 선택(메시)"(BS-D-1) */
-function ScenarioRadio({ value, onChange, auto, st, readOnly }: { value: DoeScenario; onChange: (s: DoeScenario) => void; auto: DoeScenario | null; st: DoeSettingsOut | null; readOnly: boolean }) {
-  const rv = radioScenario(value);
+/** 시나리오 라디오(자동 판별 표시). readOnly = 상세.
+ * v0.16.2(esl_bead_auto.md AD-D-1·13): ①(같은 모델)·②(다른 모델 B 메시) = 시나리오 select, 그 아래 하위 라디오 "비드: ○ 자동 탐지 ○ 직접 선택"(bead_source).
+ * same·mesh 는 새로 만들지 않음 — 기존 same·mesh 스터디(상세)는 ①·② 위치에 '이전 방식' 표시 */
+function ScenarioRadio({ value, source, onChange, onSource, auto, st, readOnly, legacy }: {
+  value: NewRadio;
+  source: DoeBeadSource | null;
+  onChange: (r: NewRadio) => void;
+  onSource: (s: DoeBeadSource) => void;
+  auto: NewRadio | null;
+  st: DoeSettingsOut | null;
+  readOnly: boolean;
+  /** 기존 same·mesh 스터디 하위 문구 */
+  legacy?: string | null;
+}) {
+  const base = value === "bmesh" ? "mesh" : "case";
+  const isSel = value === "case" || value === "bmesh";
   return (
     <div className="doe-scn" role="radiogroup" aria-label="시나리오">
-      {SCENARIOS.map((s) => {
-        // ① 은 자동 탐지·직접 선택 둘 다 막혔을 때만 막음
-        const why = st ? (s === "same" ? (scenarioBlocked(st, "same") && scenarioBlocked(st, "select") ? scenarioBlocked(st, "same") : null) : scenarioBlocked(st, s)) : null;
+      {NEW_RADIOS.map((r) => {
+        // ①② 는 직접 선택(paicad 불필요)까지 막혔을 때만 막음
+        const why = st ? (r === "case" || r === "bmesh" ? selectSubBlocked(st, r === "bmesh" ? "mesh" : "case", "manual") : scenarioBlocked(st, r)) : null;
         return (
-          <label key={s} className="check-field" title={why ?? undefined}>
-            <input type="radio" name="doe-scenario" checked={rv === s} disabled={readOnly || !!why} onChange={() => onChange(s === "same" && st && scenarioBlocked(st, "same") && !scenarioBlocked(st, "select") ? "select" : s)} />
+          <label key={r} className="check-field" title={why ?? undefined}>
+            <input type="radio" name="doe-scenario" checked={value === r} disabled={readOnly || !!why} onChange={() => onChange(r)} />
             <span>
-              {SCENARIO_NO[s]} {SCENARIO_NAME[s]}
+              {NEW_RADIO_NO[r]} {NEW_RADIO_NAME[r]}
             </span>
           </label>
         );
       })}
-      {rv === "same" && (
+      {isSel && legacy && (
+        <span className="small muted" data-testid="doe-legacy">
+          {legacy}
+        </span>
+      )}
+      {isSel && !legacy && (
         <span className="doe-sub" role="radiogroup" aria-label="비드 정의" data-testid="doe-beaddef">
           <span className="small muted">비드</span>
-          {(["same", "select"] as const).map((k) => {
-            const why = st ? scenarioBlocked(st, k) : null;
+          {(["auto", "manual"] as const).map((k) => {
+            const why = st ? selectSubBlocked(st, base, k) : null;
             return (
-              <label key={k} className="check-field" title={why ?? undefined}>
-                <input type="radio" name="doe-beaddef" checked={value === k} disabled={readOnly || !!why} onChange={() => onChange(k)} />
-                <span>{BEAD_DEF_NAME[k]}</span>
+              <label key={k} className="check-field" title={why ?? (k === "auto" ? "형상 엔진(paicad)이 STEP 에서 비드를 찾아 3D 선택을 채웁니다 — 고친 뒤 저장" : "3D 에서 비드 바닥을 직접 고릅니다")}>
+                <input type="radio" name="doe-beaddef" checked={source === k} disabled={readOnly || !!why} onChange={() => onSource(k)} />
+                <span>{BEAD_SOURCE_NAME[k]}</span>
               </label>
             );
           })}
@@ -101,8 +120,8 @@ function ScenarioRadio({ value, onChange, auto, st, readOnly }: { value: DoeScen
       )}
       {auto && !readOnly && (
         <span className="small muted" data-testid="doe-auto">
-          자동 판별: {SCENARIO_NO[auto]} {SCENARIO_NAME[auto]}
-          {radioScenario(auto) !== rv ? " (직접 바꿈)" : ""}
+          자동 판별: {NEW_RADIO_NO[auto]} {NEW_RADIO_NAME[auto]}
+          {auto !== value ? " (직접 바꿈)" : ""}
         </span>
       )}
     </div>
@@ -135,19 +154,29 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const byId = new Map((all.data ?? []).map((e) => [e.id, e]));
   const sel = ids.map((id) => byId.get(id)).filter((e): e is EntryOut => !!e);
   const [form, setForm] = useState<InputsForm>(EMPTY_INPUTS);
-  const [chosen, setChosen] = useState<DoeScenario | null>(null);
-  const auto = all.data ? autoScenario(sel, !!form.mesh) : null;
-  const scenario: DoeScenario = chosen ?? auto ?? "same";
+  const [chosen, setChosen] = useState<NewRadio | null>(null);
+  /** v0.16.2 ①② 하위 라디오(기본 직접 선택 — AD-D-1) */
+  const [source, setSource] = useState<DoeBeadSource>("manual");
+  const autoS = all.data ? autoScenario(sel, !!form.mesh) : null;
+  const auto: NewRadio | null = autoS ? studyRadio(autoS) : null;
+  const radio: NewRadio = chosen ?? auto ?? "case";
+  const { scenario, selectBase } = radioRequest(radio);
   const topo0 = sel[0]?.topo_sha256 ?? null;
   const [check, setCheck] = useState<DoeCheckOut | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const mismatched = sel.filter((e) => e.topo_sha256 !== topo0 || check?.entries.some((r) => r.entry_id === e.id && !r.ok)).map((e) => e.id);
   const blocked = st ? doeBlockedReason(st, scenario) : null;
   const isCompare = scenario === "compare";
   const isSelect = scenario === "select";
+  /** ② B 메시 기준 select */
+  const meshBase = isSelect && selectBase === "mesh";
+  /** 자동 탐지(STEP 필수) */
+  const isAuto = isSelect && source === "auto";
+  /** 같은 모델 검사(①) */
+  const sameModel = isSelect && !meshBase;
+  const mismatched = sameModel ? sel.filter((e) => e.topo_sha256 !== topo0 || check?.entries.some((r) => r.entry_id === e.id && !r.ok)).map((e) => e.id) : [];
   const maxShapes = st?.compare?.max_shapes ?? 20;
   /** ④ 요청 형상(기준 = refId). v0.16.0 메시 행만 source·part_id(STEP 행 요청은 v0.15 와 같음) */
   const compareShapes: CompareShapeIn[] = form.shapes.map((x) => {
@@ -164,17 +193,24 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     ? form.shapes.map((x, i) => (rowSource(x) === "mesh" && partIdProblem(x.partId ?? "") ? `형상 ${i + 1}: ${partIdProblem(x.partId ?? "")}` : null)).find(Boolean) ?? null
     : null;
   const shapesBad = isCompare ? shapesProblem(form.shapes, form.refId !== null, maxShapes) ?? partBad : null;
-  const inchVal = scenario !== "same" && form.inch.trim() && Number.isInteger(Number(form.inch)) && Number(form.inch) > 0 ? Number(form.inch) : null;
+  const inchOn = scenario === "step" || isCompare || meshBase;
+  const inchVal = inchOn && form.inch.trim() && Number.isInteger(Number(form.inch)) && Number(form.inch) > 0 ? Number(form.inch) : null;
 
-  // 입력 검사: STEP(②는 B 메시도, ④ 는 형상 표) 업로드가 끝나면 자동(POST /doe/check-inputs). ④ 는 이름 입력 중 0.3 s 모아서
+  // 입력 검사: 필요한 업로드가 끝나면 자동(POST /doe/check-inputs). ④ 는 이름 입력 중 0.3 s 모아서
   const stepId = form.step?.uploadId ?? null;
   const meshId = form.mesh?.uploadId ?? null;
+  /** select 요청 칸(AD-D-1·13·14): bead_source 항상, select_base 는 mesh 일 때만, STEP 은 auto 만, B 메시는 ② 만 */
+  const selectBody = () => ({
+    bead_source: source,
+    ...(meshBase ? { select_base: "mesh" as const, mesh_upload_id: meshId } : {}),
+    ...(isAuto ? { step_upload_id: stepId } : {}),
+  });
   useEffect(() => {
     setCheck(null);
     setCheckError(null);
     setChecking(false);
     if (!ids.length || blocked) return;
-    if (isCompare ? !!shapesBad : isSelect ? false : !stepId || (scenario === "mesh" && !meshId)) return;
+    if (isCompare ? !!shapesBad : isSelect ? (isAuto && !stepId) || (meshBase && !meshId) : !stepId) return;
     let alive = true;
     const go = () => {
       setChecking(true);
@@ -183,8 +219,8 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
           isCompare
             ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts }
             : isSelect
-              ? { project_id: projectId, scenario, entry_ids: ids }
-              : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, mesh_upload_id: scenario === "mesh" ? meshId : null },
+              ? { project_id: projectId, scenario, entry_ids: ids, ...selectBody() }
+              : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId },
         )
         .then((c) => {
           if (!alive) return;
@@ -205,7 +241,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       alive = false;
       if (t) clearTimeout(t);
     };
-  }, [projectId, scenario, idsKey, stepId, meshId, blocked, shapesKey, shapesBad]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, scenario, selectBase, source, idsKey, stepId, meshId, blocked, shapesKey, shapesBad]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** v0.16.0 check-inputs parts[] → 메시 행 datalist, 파트가 하나면 빈 칸 자동 채움(C2-D-4·§8) */
   function applyParts(list: readonly (readonly [number, DoeMeshPart[] | null])[]) {
@@ -240,6 +276,10 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   useEffect(() => {
     if (st?.part_title) setForm((f) => (f.partTitle ? f : { ...f, partTitle: st.part_title ?? "" }));
   }, [st]);
+  // 자동 탐지를 못 쓰면(paicad 없음) 직접 선택으로
+  useEffect(() => {
+    if (st && isSelect && source === "auto" && selectSubBlocked(st, selectBase ?? "case", "auto")) setSource("manual");
+  }, [st, isSelect, source, selectBase]);
 
   const setIds = (next: string[]) => {
     const q = new URLSearchParams(sp);
@@ -251,7 +291,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     if (!allowed) return NO_PERMISSION;
     if (!st || !all.data) return "불러오는 중…";
     if (blocked) return blocked;
-    const sb = scenarioBlocked(st, scenario);
+    const sb = isSelect ? selectSubBlocked(st, selectBase ?? "case", source) : scenarioBlocked(st, scenario);
     if (sb) return sb;
     if (!ids.length) return "ESL 을 고르세요 — ESL 라이브러리 › ESL 목록에서 체크한 뒤 '강성 평가 스터디'";
     if (sel.length !== ids.length) return "라이브러리에 없는 항목이 있습니다";
@@ -265,17 +305,10 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       if (!check.ok) return "입력 검사에 실패한 항목이 있습니다";
       return propsProblem(form, st, false);
     }
-    if ((scenario === "same" || isSelect) && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 다른 모델 시나리오`;
-    if (isSelect) {
-      if (checking) return "입력 검사 중…";
-      if (checkError) return checkError;
-      if (!check) return "입력 검사 대기 중…";
-      if (!check.ok) return "입력 검사에 실패한 항목이 있습니다";
-      return null;
-    }
-    if (!form.step) return "Ch/R 중립면 STEP 을 올리세요";
-    if (scenario === "mesh" && !form.mesh) return "B 메시(.rad/.inc)를 올리세요";
-    if (scenario !== "same" && form.inch.trim() && !(Number.isInteger(Number(form.inch)) && Number(form.inch) > 0)) return "인치는 양의 정수입니다";
+    if (sameModel && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 ② 다른 모델(B 메시)`;
+    if (meshBase && !form.mesh) return "B 메시(.rad/.inc)를 올리세요";
+    if ((isAuto || scenario === "step") && !form.step) return isAuto ? "자동 탐지에 쓸 Ch/R 중립면 STEP 을 올리세요" : "Ch/R 중립면 STEP 을 올리세요";
+    if (inchOn && form.inch.trim() && !inchVal) return "인치는 양의 정수입니다";
     if (checking) return "입력 검사 중…";
     if (checkError) return checkError;
     if (!check) return "입력 검사 대기 중…";
@@ -285,57 +318,34 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   }
 
   async function prepare() {
-    if (isCompare) {
-      setBusy(true);
-      setError(null);
-      try {
-        const r = await doe.createStudy({
-          project_id: projectId,
-          scenario,
-          entry_ids: ids,
-          shapes: compareShapes,
-          inch: inchVal,
-          ...meshOpts,
-          title: form.title.trim() || null,
-          props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
-        });
-        nav(doePath(projectId, r.id));
-      } catch (e) {
-        setError(compareErrorText(e));
-        setBusy(false);
-      }
-      return;
-    }
-    if (isSelect) {
-      setBusy(true);
-      setError(null);
-      try {
-        const r = await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, title: form.title.trim() || null });
-        nav(doePath(projectId, r.id));
-      } catch (e) {
-        setError(errorText(e));
-        setBusy(false);
-      }
-      return;
-    }
-    if (!form.step) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await doe.createStudy({
-        project_id: projectId,
-        scenario,
-        entry_ids: ids,
-        step_upload_id: form.step.uploadId,
-        mesh_upload_id: scenario === "mesh" ? form.mesh?.uploadId ?? null : null,
-        part_title: scenario === "mesh" ? form.partTitle.trim() || null : null,
-        inch: scenario !== "same" && form.inch.trim() ? Number(form.inch) : null,
-        title: form.title.trim() || null,
-        ...(scenario === "step" ? { props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) }, mesh_size_mm: Number(form.meshSize) } : {}),
-      });
+      const title = form.title.trim() || null;
+      const r = isCompare
+        ? await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, title, props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } })
+        : isSelect
+          ? await doe.createStudy({
+              project_id: projectId,
+              scenario,
+              entry_ids: ids,
+              ...selectBody(),
+              ...(meshBase ? { part_title: form.partTitle.trim() || null, inch: inchVal } : {}),
+              title,
+            })
+          : await doe.createStudy({
+              project_id: projectId,
+              scenario,
+              entry_ids: ids,
+              step_upload_id: stepId,
+              inch: inchVal,
+              title,
+              props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
+              mesh_size_mm: Number(form.meshSize),
+            });
       nav(doePath(projectId, r.id));
     } catch (e) {
-      setError(errorText(e));
+      setError(isCompare ? compareErrorText(e) : errorText(e));
       setBusy(false);
     }
   }
@@ -344,7 +354,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     <>
       <div className="page-title-row">
         <h1 className="page-title">새 강성 평가 스터디</h1>
-        <ScenarioRadio value={scenario} onChange={setChosen} auto={auto} st={st} readOnly={false} />
+        <ScenarioRadio value={radio} source={source} onChange={setChosen} onSource={setSource} auto={auto} st={st} readOnly={false} />
         <span className="spacer" />
         <PrimaryButton label="입력 준비" onClick={prepare} disabledReason={reason()} busy={busy} />
       </div>
@@ -359,6 +369,8 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
           <DoeInputs
             projectId={projectId}
             scenario={scenario}
+            selectBase={selectBase}
+            beadSource={isSelect ? source : null}
             st={st}
             entries={all.data}
             ids={ids}
@@ -379,10 +391,12 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       <div className="small muted">
         {isCompare
           ? "입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음). 준비 결과를 확인한 뒤 '비교 실행'."
-          : isSelect
-            ? "입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."
-            : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
-        입력 폴더는 읽기만 합니다.
+          : isAuto
+            ? "입력 준비에서 형상 엔진(paicad)이 STEP 의 비드를 찾아 3D 선택을 채웁니다 — 고친 뒤 '선택 저장'. 자동 탐지가 실패해도 직접 고를 수 있습니다."
+            : isSelect
+              ? "입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."
+              : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
+        {meshBase ? "하중은 셀 매핑, 지지는 B 메시 자동 3-2-1 입니다. " : ""}입력 폴더는 읽기만 합니다.
         {!ids.length && (
           <>
             {" "}
@@ -589,7 +603,8 @@ function Downloads({ study, result, extra }: { study: DoeStudyOut; result: DoeRe
 /** [검증 낙하] 버튼·대화상자·카드 상태. 버튼 활성 = ① 같은 모델 · DONE · SCX 검증 사용 가능 · 고른 안이 best/ 가 남은 안(순위 1~keep_files_top) */
 function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: DoeResultOut | null, pick: string | null, allowed: boolean, isAdmin: boolean) {
   const done = study?.phase === "DONE";
-  const same = study?.scenario === "same" || study?.scenario === "select";
+  // v0.16.2: ② B 메시 기준 select 는 다른 모델 — 검증 낙하 대상 아님(① 만)
+  const same = study?.scenario === "same" || (study?.scenario === "select" && study.inputs.select_base !== "mesh");
   const sid = study?.id ?? "";
   const status = usePolling(() => (done && same ? scx.status(projectId) : Promise.resolve(null)), 0, [projectId, done, same]);
   const avail = status.data?.verify ?? null;
@@ -780,7 +795,12 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
     if (isSelect && rawSha && selFull.data && selFull.data.sha === rawSha && selFull.data.v === null) setSelDropped(true);
   }, [isSelect, rawSha, selFull.data]);
   const selSha = selDropped ? null : rawSha;
-  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st);
+  // v0.16.2 자동 탐지 seed(esl_bead_auto.md AD-D-4): auto 스터디는 GET …/select/auto 를 기본 상태로(404·빈 seed = 직접 선택 도구로)
+  const isAuto = !!isSelect && s?.inputs.bead_source === "auto";
+  const meshBaseSel = !!isSelect && s?.inputs.select_base === "mesh";
+  const autoSeed = usePolling(() => (isAuto && prepDone ? loadSelectAuto(id) : Promise.resolve(null)), 0, [id, isAuto, prepDone]);
+  const seedSel = !isAuto ? null : autoSeed.data ? autoSeed.data.seed?.selection ?? null : autoSeed.error ? null : undefined;
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel);
   const varsReady = beadPrep && (!isSelect || !!selSha);
   /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
   const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>
@@ -1005,6 +1025,15 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const entries = all.data ?? [];
   const varNames = s?.doe?.spec.params.map((p) => p.name) ?? [];
   const showLinks = s?.scenario === "mesh" || s?.scenario === "step";
+  const prepAutoFailed = !!s?.prep?.warnings.some((w) => w.code === "AUTO_DETECT_FAILED");
+  /** v0.16.2 자동 탐지 표시: 미저장 배지(seed 를 불러왔고 저장 선택 없음) · seed 없음 안내 1줄 · AUTO_* 경고 */
+  const autoView: AutoSeedView | null = isAuto
+    ? {
+        unsaved: ctrl.hasSeed && !selSha && !selFull.data?.v,
+        notice: autoSeed.data && !autoSeed.data.seed && !selSha ? autoNoticeText(prepAutoFailed ? "AUTO_DETECT_FAILED" : autoSeed.data.code) : autoSeed.error && !selSha ? autoNoticeText("AUTO_NOT_AVAILABLE") : null,
+        warnings: autoSeed.data?.seed?.warnings ?? [],
+      }
+    : null;
   const blocked = st ? doeBlockedReason(st, s?.scenario) : null;
   const job = s?.job ?? null;
   const jobActive = !!job && (job.state === "QUEUED" || job.state === "RUNNING");
@@ -1023,7 +1052,18 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       <div className="page-title-row">
         <h1 className="page-title">강성 평가 스터디</h1>
         {s && <span className="muted">{s.title}</span>}
-        {s && <ScenarioRadio value={s.scenario} onChange={() => undefined} auto={null} st={st} readOnly />}
+        {s && (
+          <ScenarioRadio
+            value={studyRadio(s.scenario, s.inputs.select_base)}
+            source={s.scenario === "select" ? s.inputs.bead_source ?? "manual" : null}
+            onChange={() => undefined}
+            onSource={() => undefined}
+            auto={null}
+            st={st}
+            readOnly
+            legacy={s.scenario === "same" ? "비드: STEP 인식(이전 방식)" : s.scenario === "mesh" ? "비드: STEP 인식 · B 메시(이전 방식)" : null}
+          />
+        )}
         {s && <Badge kind={phase === "FAILED" ? "bad" : phase === "DONE" ? "ok" : "info"}>{PHASE_NAME[s.phase]}</Badge>}
         <span className="spacer" />
         {(phase === "DONE" || phase === "FAILED") && allowed && (
@@ -1050,7 +1090,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 {isCompare
                   ? `형상 ${s.prep.n_shapes ?? s.inputs.shapes?.length ?? "?"} · 준비됨 ${s.prep.n_ready ?? "?"} · 요소 ${st?.compare?.mesh_size_mm ?? 3} mm`
                   : isSelect
-                    ? `Ch/R ${((s.prep.n_nodes ?? 0) / 1e4).toFixed(1)}만 노드 ✓ · 고정: ${s.prep.fixed?.source === "none" || !s.prep.fixed ? "없음 ⚠" : `fixed-scan ${s.prep.fixed.n} 노드 ✓`}`
+                    ? `${meshBaseSel ? "B 메시" : "Ch/R"} ${((s.prep.n_nodes ?? 0) / 1e4).toFixed(1)}만 노드 ✓ · 고정: ${s.prep.fixed?.source === "none" || !s.prep.fixed ? "없음 ⚠" : `fixed-scan ${s.prep.fixed.n} 노드 ✓`}${meshBaseSel && s.prep.boundary ? ` · 경계 경고 ${s.prep.boundary.n_warn}` : ""}`
                     : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}`}
               </span>
             ) : undefined
@@ -1077,7 +1117,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {warnText({ code: "SELECTION_DROPPED" })}
         </div>
       )}
-      {beadPrep && isSelect && <BeadSelectCards ctrl={ctrl} editable={editable} st={st} fixedMissing={s?.prep?.fixed?.source === "none"} />}
+      {beadPrep && isSelect && <BeadSelectCards ctrl={ctrl} editable={editable} st={st} fixedMissing={s?.prep?.fixed?.source === "none"} auto={autoView} />}
       {beadPrep && isSelect && (
         <SelectVarsPlan
           ready={!!selSha}
@@ -1199,7 +1239,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         </Card>
       )}
       {ranStage && s && (
-        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && showLinks ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
+        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && (showLinks || meshBaseSel) ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
           {job && (phase === "RUN" || phase === "FAILED") && (
             <>
               <Steps job={job} />

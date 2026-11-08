@@ -7,8 +7,8 @@ import type {
   DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
-import type { DoeSelectionIn, DoeSelectionOut } from "../api/types";
-import { selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
+import type { DoeSelectAutoOut, DoeSelectionIn, DoeSelectionOut } from "../api/types";
+import { selAutoSeed, selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
 
 interface MockResponse {
   status: number;
@@ -61,7 +61,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
     gmsh: { ready: true, version: "4.13.1" },
-    scenarios: { same: true, mesh: true, step: true, compare: true, select: true },
+    scenarios: { same: true, mesh: true, step: true, compare: true, select: true, select_auto: true, select_mesh: true },
     max_entries: 50,
     max_designs: 200,
     doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -90,6 +90,8 @@ export function makeDoeSettings(): DoeSettingsOut {
       enabled: true, reason: null, feature_angle_deg: 15, max_beads: 20, max_tiers: 6, blend: { min_mm: 15, max_mm: 200, k: 8 },
       // v0.16.1 SR-D-2·9
       fixed_policy: "warn", quality_fail_policy: "warn", hold: { ring_mm: 3, blend_mm: 8 },
+      // v0.16.2 AD-D-7
+      hole: { bridge_max_mm: 20 },
     },
   };
 }
@@ -325,7 +327,10 @@ export function makeResult(spec: DoeSpec, cells: DoePreviewCell[], entryIds: str
       excluded.push({ id: c.id, status: "FAILED_MORPH", code: "GEOM_QUALITY", values: c.values });
       continue;
     }
-    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values, PARAMS), warn: (c.warnings ?? []).map((w) => (w.code === "SELECT_FIXED_MOVED" ? "FIXED_MOVED" : "QUALITY_WARN") as DoeRankWarn) });
+    const warn = (c.warnings ?? []).map((w) => (w.code === "SELECT_FIXED_MOVED" ? "FIXED_MOVED" : "QUALITY_WARN") as DoeRankWarn);
+    // v0.16.2 AD-D-8: 극단 요소(MORPH_EXTREME_ELEMENTS)도 순위 ⚠ — select 목 일부 안
+    if (scenario === "select" && okRows.length % 7 === 1) warn.push("MORPH_EXTREME_ELEMENTS");
+    okRows.push({ id: c.id, values: c.values, score: scoreOf(c.values, PARAMS), warn });
   }
   okRows.sort((a, b) => a.score - b.score || a.id.localeCompare(b.id));
   const noise_floor = scenario === "step" ? 0.012 : null;
@@ -823,6 +828,8 @@ interface Rec {
   pendingSel?: string | null;
   /** 시험용: 기준 메시가 바뀌어 저장 선택이 무효(409 SELECTION_MISSING reason SELECTION_DROPPED) */
   selDropped?: boolean;
+  /** v0.16.2 자동 탐지 seed(GET …/select/auto) — 없으면 404 AUTO_NOT_AVAILABLE */
+  autoSel?: DoeSelectAutoOut | null;
 }
 
 const STEPS_OF: Record<string, string[]> = {
@@ -1029,7 +1036,25 @@ export class DoeMock {
       this.seededJobs.push(j);
       sel6.jobIds.push(j.id);
     }
-    this.recs.push(a, b, c, d, g, sel5, sel6);
+    // 8) v0.16.2 자동 탐지 seed — 준비 완료, 선택 미저장(seed = 화면 기본 상태)
+    const sel8 = base("doe-8", "select", "75형 Ch/R 비드 자동 탐지", "2026-11-08T02:00:00Z");
+    sel8.out.inputs = { ...sel5.out.inputs, step: { file_name: "ChR_75_mid.stp", sha256: "a8".padEnd(64, "0") }, bead_source: "auto" };
+    sel8.out.prep = { ...this.selectPrep(), paicad_version: "0.14.0" };
+    sel8.autoSel = selAutoSeed();
+    sel8.out.version = 2;
+    const j8 = doneJob(this.id("j-doe"), "p-body", sel8.out.id, "DOE_PREP", "2026-11-08T02:00:05Z", "2026-11-08T02:03:00Z");
+    this.seededJobs.push(j8);
+    sel8.jobIds.push(j8.id);
+    // 9) 자동 탐지 실패(paicad extract) — 준비는 READY, seed 없음(404) → 직접 선택 도구로
+    const sel9 = base("doe-9", "select", "75형 Ch/R 비드 자동 탐지 — 실패", "2026-11-08T03:00:00Z");
+    sel9.out.inputs = { ...sel8.out.inputs };
+    sel9.out.prep = { ...this.selectPrep(), warnings: [{ code: "AUTO_DETECT_FAILED", step: "extract", paicad_code: "EXTRACT_NO_BEAD" }] };
+    sel9.autoSel = null;
+    sel9.out.version = 2;
+    const j9 = doneJob(this.id("j-doe"), "p-body", sel9.out.id, "DOE_PREP", "2026-11-08T03:00:05Z", "2026-11-08T03:02:00Z");
+    this.seededJobs.push(j9);
+    sel9.jobIds.push(j9.id);
+    this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9);
   }
 
   private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[], r?: Rec) {
@@ -1083,6 +1108,12 @@ export class DoeMock {
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "select") {
       r.out.phase = "READY";
       r.out.prep = this.selectPrep();
+      // v0.16.2 자동 탐지(AD-D-2): paicad 있으면 seed, 없으면 AUTO_DETECT_FAILED{step:"version"} + seed 없음(준비는 READY)
+      if (r.out.inputs.bead_source === "auto") {
+        if (this.settings.paicad.ready) r.autoSel = selAutoSeed();
+        else r.out.prep = { ...r.out.prep, warnings: [...r.out.prep.warnings, { code: "AUTO_DETECT_FAILED", step: "version" }] };
+      }
+      if (r.out.inputs.select_base === "mesh") r.out.prep = { ...r.out.prep, boundary: boundaryCount("mesh", r.out.entry_ids) };
       r.out.version += 1;
     }
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP") {
@@ -1167,6 +1198,11 @@ export class DoeMock {
       const bad = selValidate(sel, this.settings);
       if (bad) return bad;
       return ok(selDerive(sel!, this.settings).out);
+    }
+    if (method === "GET" && sub === "/select/auto") {
+      if (!prepReady) return notReady();
+      if (rec.out.inputs.bead_source !== "auto" || !rec.autoSel) return err(404, "AUTO_NOT_AVAILABLE", "자동 탐지 결과가 없습니다.");
+      return ok(rec.autoSel);
     }
     if (method === "GET" && sub === "/selection") {
       if (!prepReady) return notReady();
@@ -1286,27 +1322,64 @@ export class DoeMock {
     return ok(out);
   }
 
-  /** v0.15.0 select check-inputs: ① 과 같음(base), STEP·B 메시·파트 제목·형상 금지, paicad 무관(BS-D-2) */
+  /** v0.15.0 select check-inputs: ① 과 같음(base), paicad 무관(BS-D-2).
+   *  v0.16.2(esl_bead_auto.md §3.3): bead_source auto = STEP 필수·manual = STEP 금지, select_base mesh = B 메시 필수(② 검사 — 같은 모델 검사 없음) */
   private checkSelect(b: Record<string, unknown>, pid: string): MockResponse {
     const sc = this.settings.select;
     if (!sc?.enabled) return err(503, "SELECT_DISABLED", "비드 직접 선택이 서버에서 꺼져 있습니다.");
-    if (b.step_upload_id != null || b.mesh_upload_id != null || b.part_title != null || b.shapes != null) return err(422, "INVALID_PARAMS", "직접 선택에는 STEP·B 메시·파트 제목·형상을 쓰지 않습니다.");
+    const src = (b.bead_source ?? "manual") as string;
+    const baseK = (b.select_base ?? "case") as string;
+    if (!["auto", "manual"].includes(src) || !["case", "mesh"].includes(baseK)) return err(422, "INVALID_PARAMS", "bead_source·select_base 가 올바르지 않습니다.");
+    if (b.shapes != null) return err(422, "INVALID_PARAMS", "비드 선택에는 형상을 쓰지 않습니다.");
+    if (src === "manual" && b.step_upload_id != null) return err(422, "INVALID_PARAMS", "직접 선택에는 STEP 을 쓰지 않습니다.");
+    if (src === "auto" && b.step_upload_id == null) return err(422, "INVALID_PARAMS", "자동 탐지에는 STEP 이 필요합니다.");
+    if (src === "auto" && this.settings.scenarios.select_auto === false) return err(503, "PAICAD_NOT_CONFIGURED", "형상 엔진(paicad)이 준비되지 않아 자동 탐지를 쓸 수 없습니다.");
+    if (baseK === "case" && (b.mesh_upload_id != null || b.part_title != null)) return err(422, "INVALID_PARAMS", "① 비드 선택에는 B 메시·파트 제목을 쓰지 않습니다.");
+    if (baseK === "mesh" && b.mesh_upload_id == null) return err(422, "INVALID_PARAMS", "B 메시가 필요합니다.");
     const ids = (b.entry_ids as string[]) ?? [];
     const es = this.ctx.entries();
     const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
     if (!ids.length || sel.some((e) => !e)) return err(422, "ENTRY_NOT_FOUND", "선택한 ESL 중 이 프로젝트의 활성 항목이 아닌 것이 있습니다.");
+    let step: DoeCheckOut["step"] = null;
+    if (src === "auto") {
+      const up = this.ctx.upload(String(b.step_upload_id));
+      if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.");
+      if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.");
+      const f = up.files.find((x) => /\.(step|stp)$/i.test(x));
+      if (!f) return err(422, "STEP_INVALID", "STEP(.step·.stp) 파일이 없습니다.");
+      this.ctx.markUploadCompleted(String(b.step_upload_id));
+      step = { file_name: f.split("/").pop()!, sha256: `sha-${b.step_upload_id}`.padEnd(64, "a"), size_mb: 3.4 };
+    }
     const first = sel[0]!;
+    if (baseK === "mesh") {
+      const mu = this.ctx.upload(String(b.mesh_upload_id));
+      if (!mu) return err(404, "UPLOAD_NOT_FOUND", "B 메시 업로드를 찾을 수 없습니다.");
+      if (!mu.ready) return err(409, "UPLOAD_NOT_READY", "B 메시 업로드가 아직 끝나지 않았습니다.");
+      const main = mu.files.find((f) => /\.rad$/i.test(f)) ?? mu.files.find((f) => /\.inc$/i.test(f));
+      if (!main) return err(422, "MESH_INVALID", "B 메시(.rad 또는 .inc)가 없습니다.");
+      this.ctx.markUploadCompleted(String(b.mesh_upload_id));
+      const out: DoeCheckOut = {
+        ok: true,
+        step,
+        entries: sel.map((e) => ({ entry_id: e!.id, ok: true, reason: null })),
+        mesh: this.meshCheck(String(b.mesh_upload_id), main),
+        size: { L_xi: 1652, L_eta: 940, inch: typeof b.inch === "number" ? b.inch : 75, rel_xi: -0.005, rel_eta: -0.0074 },
+        warnings: [],
+      };
+      return ok(out);
+    }
     const entries = sel.map((e) => ({ entry_id: e!.id, ok: e!.topo_sha256 === first.topo_sha256, reason: e!.topo_sha256 !== first.topo_sha256 ? "MODEL_MISMATCH" : null }));
     const mf = selManifest();
     const out: DoeCheckOut = {
       ok: entries.every((x) => x.ok),
-      step: null,
+      step,
       entries,
       base: { entry_id: first.id, case_id: first.case_id, case_title: first.case_title ?? null, part_title: "chassis_rear", n_nodes: mf.n_nodes, n_elems: mf.n_elems, topo_sha256: first.topo_sha256 ?? "" },
       warnings: [],
     };
     return ok(out);
   }
+
 
   /** ④ check-inputs(§3 검증 순서) — paicad 무관(SC-D-3) */
   private checkCompare(b: Record<string, unknown>, pid: string): MockResponse {
@@ -1470,10 +1543,12 @@ export class DoeMock {
           inputs: {
             step: co.step ? { file_name: co.step.file_name, sha256: co.step.sha256 } : null,
             mesh: co.mesh ? { file_name: co.mesh.file_name, sha256: co.mesh.sha256 } : null,
-            part_title: (b.part_title as string | null) ?? (b.scenario === "mesh" ? this.settings.part_title ?? null : co.base?.part_title ?? null),
+            part_title: (b.part_title as string | null) ?? (b.scenario === "mesh" || b.select_base === "mesh" ? this.settings.part_title ?? null : co.base?.part_title ?? null),
             inch: typeof b.inch === "number" ? b.inch : null,
             props: props ?? null,
             mesh_size_mm: typeof b.mesh_size_mm === "number" ? b.mesh_size_mm : null,
+            // v0.16.2 select: bead_source 항상, select_base 는 mesh 일 때만(AD-D-22)
+            ...(b.scenario === "select" ? { bead_source: (b.bead_source as "auto" | "manual" | undefined) ?? "manual", ...(b.select_base === "mesh" ? { select_base: "mesh" as const } : {}) } : {}),
           },
           phase: "PREP",
           version: 1,
