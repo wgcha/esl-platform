@@ -15,7 +15,7 @@ import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   type NewRadio,
-  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT } from "../../api/doe";
+  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, useBeadSelect, type AutoSeedView } from "../../components/BeadSelectCard";
 import { SectionMini } from "../../components/SectionMini";
 import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
@@ -172,7 +172,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const isSelect = scenario === "select";
   /** ② B 메시 기준 select */
   const meshBase = isSelect && selectBase === "mesh";
-  /** 자동 탐지(STEP 필수) */
+  /** 자동 탐지(v0.17.0 메시 분류기 — STEP 선택, 있으면 paicad 힌트만) */
   const isAuto = isSelect && source === "auto";
   /** 같은 모델 검사(①) */
   const sameModel = isSelect && !meshBase;
@@ -203,14 +203,14 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const selectBody = () => ({
     bead_source: source,
     ...(meshBase ? { select_base: "mesh" as const, mesh_upload_id: meshId } : {}),
-    ...(isAuto ? { step_upload_id: stepId } : {}),
+    ...(isAuto && stepId ? { step_upload_id: stepId } : {}),
   });
   useEffect(() => {
     setCheck(null);
     setCheckError(null);
     setChecking(false);
     if (!ids.length || blocked) return;
-    if (isCompare ? !!shapesBad : isSelect ? (isAuto && !stepId) || (meshBase && !meshId) : !stepId) return;
+    if (isCompare ? !!shapesBad : isSelect ? meshBase && !meshId : !stepId) return;
     let alive = true;
     const go = () => {
       setChecking(true);
@@ -307,7 +307,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     }
     if (sameModel && mismatched.length) return `다른 모델 ESL ${mismatched.length}개 — '다른 모델 빼기' 또는 ② 다른 모델(B 메시)`;
     if (meshBase && !form.mesh) return "B 메시(.rad/.inc)를 올리세요";
-    if ((isAuto || scenario === "step") && !form.step) return isAuto ? "자동 탐지에 쓸 Ch/R 중립면 STEP 을 올리세요" : "Ch/R 중립면 STEP 을 올리세요";
+    if (scenario === "step" && !form.step) return "Ch/R 중립면 STEP 을 올리세요";
     if (inchOn && form.inch.trim() && !inchVal) return "인치는 양의 정수입니다";
     if (checking) return "입력 검사 중…";
     if (checkError) return checkError;
@@ -392,7 +392,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         {isCompare
           ? "입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음). 준비 결과를 확인한 뒤 '비교 실행'."
           : isAuto
-            ? "입력 준비에서 형상 엔진(paicad)이 STEP 의 비드를 찾아 3D 선택을 채웁니다 — 고친 뒤 '선택 저장'. 자동 탐지가 실패해도 직접 고를 수 있습니다."
+            ? "입력 준비에서 메시 분류기가 비드 네트워크(세그먼트·접합)를 찾아 3D 선택을 채웁니다 — 고친 뒤 '선택 저장'. STEP 은 없어도 됩니다(있으면 참고 힌트). 분류가 실패해도 직접 칠할 수 있습니다."
             : isSelect
               ? "입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."
               : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
@@ -800,7 +800,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const meshBaseSel = !!isSelect && s?.inputs.select_base === "mesh";
   const autoSeed = usePolling(() => (isAuto && prepDone ? loadSelectAuto(id) : Promise.resolve(null)), 0, [id, isAuto, prepDone]);
   const seedSel = !isAuto ? null : autoSeed.data ? autoSeed.data.seed?.selection ?? null : autoSeed.error ? null : undefined;
-  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel);
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null });
   const varsReady = beadPrep && (!isSelect || !!selSha);
   /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
   const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>
@@ -994,7 +994,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       const r = await doe.saveSelection(id, version, input);
       study.setData(r);
     } catch (e) {
-      setError(errorText(e));
+      // v0.17.0 409 BG_GRAPH_STALE: 그래프를 다시 받고 앵커로 다시 해석(띠) — 확인 후 다시 저장
+      setError(ctrl.onSaveError(e) ? BG_STALE_TEXT : errorText(e));
     } finally {
       setBusy(false);
     }

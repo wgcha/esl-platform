@@ -1,8 +1,9 @@
 // 선택 층(esl_bead_select.md §4.1·§11.2): 층 = 비드 b 의 단 k 바닥 | 비드 b 사면(자동 결과에 더하기·빼기) | 고정 | 제외.
 // 규칙: 한 요소는 최대 1 개 비드·1 개 층(단 바닥|사면 더하기) — 다른 비드 요소는 덮어쓰지 않는다. 고정·제외는 비드 층과 겹칠 수 있다.
 // 상태는 요소 번호(select.bin 순서) 색인 Int32Array — 칠하기 1획 = History 패치 1개.
-import type { DoeBeadSel, DoeSelectionIn } from "../../api/types";
+import type { BgEdits, BgSegRef, DoeBeadSel, DoeBeadSelElems, DoeBeadSelGraph, DoeSelectionAny, DoeSelectionIn, DoeSelectionV2 } from "../../api/types";
 import type { MeshTopo } from "./adjacency";
+import { networkAnchor, refKey, repOf, resolveRef, sortRefs, editView, type GraphIndex } from "./graph";
 import { enclosedComponents, outerPolygons, type Island, type Vec3 } from "./grow";
 import type { Patch } from "./history";
 import { EMPTY_SET, fromElemSet, toElemSet, type ElemIndex } from "./ranges";
@@ -23,9 +24,19 @@ export interface BeadMeta {
   blend: "auto" | number;
   floorFollow: 0 | 1;
   links: number[][];
-  /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) — 0 이면 SelectionIn 에 키를 쓰지 않음(SR-D-13a) */
+  /** v0.16.1 체결 구멍 둘레 고정(SR-D-9) — 0 이면 SelectionIn 에 키를 쓰지 않음(SR-D-13a). v0.17.0 그래프 비드 기본 1 */
   holdFixed: 0 | 1;
+  /** v0.17.0 schema 2 출처(없음 = elems — 칠하기 비드) */
+  src?: "graph";
+  /** v0.17.0 그래프 비드 세그먼트 참조(앵커 | 네트워크) */
+  segs?: BgSegRef[];
+  /** v0.17.0 변수(없음 = 가능한 것 전부) */
+  vars?: ("D" | "W")[];
 }
+
+/** v0.17.0 그래프 편집 빈 값 */
+export const emptyEdits = (): BgEdits => ({ toggle: [], merge: [], split: [] });
+const cloneEdits = (e: BgEdits): BgEdits => ({ toggle: e.toggle.map((x) => ({ ...x })), merge: e.merge.map((g) => g.map((x) => ({ ...x }))), split: e.split.map((x) => ({ anchor: x.anchor, at: [x.at[0], x.at[1]] })) });
 
 export interface SelState {
   nElems: number;
@@ -35,10 +46,38 @@ export interface SelState {
   remove: Int32Array;
   fixed: Int32Array;
   exclude: Int32Array;
+  /** v0.17.0 선택 schema(없음 = 1) */
+  schema?: 1 | 2;
+  /** v0.17.0 그래프 기준(sha·rules) — schema 2 + 그래프 있음(GRAPH_FAILED 면 null) */
+  graphRef?: { sha256: string; rules: number } | null;
+  /** v0.17.0 그래프 편집(toggle·merge·split) */
+  edits?: BgEdits;
+  /** v0.17.0 대칭 묶기(비드 id 묶음) */
+  ties?: string[][];
 }
 
-export function emptyState(nElems: number): SelState {
-  return { nElems, beads: [], owner: new Int32Array(nElems).fill(-1), remove: new Int32Array(nElems).fill(-1), fixed: new Int32Array(nElems), exclude: new Int32Array(nElems) };
+export function emptyState(nElems: number, schema: 1 | 2 = 1, graphRef: { sha256: string; rules: number } | null = null): SelState {
+  const s: SelState = { nElems, beads: [], owner: new Int32Array(nElems).fill(-1), remove: new Int32Array(nElems).fill(-1), fixed: new Int32Array(nElems), exclude: new Int32Array(nElems) };
+  if (schema === 2) Object.assign(s, { schema: 2, graphRef, edits: emptyEdits(), ties: [] });
+  return s;
+}
+
+/** 비드 목록·그래프 편집·대칭 묶기 스냅숏(실행 취소 meta) */
+interface Snap {
+  beads: BeadMeta[];
+  edits?: BgEdits;
+  ties?: string[][];
+}
+const snap = (s: SelState): Snap => ({ beads: cloneBeads(s.beads), ...(s.edits ? { edits: cloneEdits(s.edits) } : {}), ...(s.ties ? { ties: s.ties.map((g) => [...g]) } : {}) });
+function restore(s: SelState, m: unknown) {
+  if (Array.isArray(m)) {
+    s.beads = cloneBeads(m as BeadMeta[]);
+    return;
+  }
+  const x = m as Snap;
+  s.beads = cloneBeads(x.beads);
+  if (x.edits) s.edits = cloneEdits(x.edits);
+  if (x.ties) s.ties = x.ties.map((g) => [...g]);
 }
 
 export const MAX_BEADS = 20;
@@ -129,10 +168,11 @@ export function applyPatch(s: SelState, p: Patch<LayerName>, dir: "undo" | "redo
     const v = dir === "undo" ? c.before : c.after;
     for (let i = 0; i < c.idx.length; i++) arr[c.idx[i]] = v[i];
   }
-  if (p.meta) s.beads = cloneBeads((dir === "undo" ? p.meta.before : p.meta.after) as BeadMeta[]);
+  if (p.meta) restore(s, dir === "undo" ? p.meta.before : p.meta.after);
 }
 
-const cloneBeads = (b: BeadMeta[]): BeadMeta[] => b.map((x) => ({ ...x, links: x.links.map((g) => [...g]) }));
+const cloneBeads = (b: BeadMeta[]): BeadMeta[] =>
+  b.map((x) => ({ ...x, links: x.links.map((g) => [...g]), ...(x.segs ? { segs: x.segs.map((r) => ({ ...r })) } : {}), ...(x.vars ? { vars: [...x.vars] } : {}) }));
 
 /** 배열 변경 기록기(바뀐 값만) → 패치 */
 function recorder(s: SelState) {
@@ -192,7 +232,8 @@ const DEFAULT_NAME = /^B\d+$/;
  */
 export function deleteBead(s: SelState, bead: number): Patch<LayerName> | null {
   if (!s.beads[bead]) return null;
-  const before = cloneBeads(s.beads);
+  const before = snap(s);
+  const oldIds = s.beads.map((b) => b.id);
   const r = recorder(s);
   for (let e = 0; e < s.nElems; e++) {
     const o = s.owner[e];
@@ -210,7 +251,13 @@ export function deleteBead(s: SelState, bead: number): Patch<LayerName> | null {
     b.id = id;
   });
   s.beads = next;
-  return r.patch({ before, after: cloneBeads(next) });
+  if (s.ties) {
+    // 대칭 묶기: 지운 비드는 빼고 id 를 새 번호로(2개 미만 묶음은 없앰)
+    const map = new Map<string, string>();
+    oldIds.forEach((id, i) => i !== bead && map.set(id, `b${i < bead ? i + 1 : i}`));
+    s.ties = s.ties.map((g) => g.filter((id) => map.has(id)).map((id) => map.get(id)!)).filter((g) => g.length > 1);
+  }
+  return r.patch({ before, after: snap(s) });
 }
 
 /** 이 비드 초기화: 그 비드의 바닥·사면 더하기·사면 빼기 표시를 비움(이름·단 수·묶음·블렌딩 유지). 패치 1개 */
@@ -221,12 +268,19 @@ export function resetBead(s: SelState, bead: number): Patch<LayerName> | null {
     if (ownerBead(s.owner[e]) === bead) r.set("owner", e, -1);
     if (s.remove[e] === bead) r.set("remove", e, -1);
   }
+  const b = s.beads[bead];
+  if (b.src === "graph" && b.segs?.length) {
+    // v0.17.0 그래프 비드(seed 없음): 세그먼트 참조를 비움
+    const before = snap(s);
+    b.segs = [];
+    return r.patch({ before, after: snap(s) });
+  }
   return r.patch();
 }
 
 /** 전체 초기화: 비드 목록·모든 층(바닥·사면·고정·제외)을 비움. 패치 1개(비드 목록 스냅숏 포함) */
 export function resetAll(s: SelState): Patch<LayerName> {
-  const before = cloneBeads(s.beads);
+  const before = snap(s);
   const r = recorder(s);
   for (let e = 0; e < s.nElems; e++) {
     r.set("owner", e, -1);
@@ -235,12 +289,16 @@ export function resetAll(s: SelState): Patch<LayerName> {
     r.set("exclude", e, 0);
   }
   s.beads = [];
-  return r.patch({ before, after: [] });
+  if (s.edits) s.edits = emptyEdits();
+  if (s.ties) s.ties = [];
+  return r.patch({ before, after: snap(s) });
 }
 
 /** 상태 깊은 복사(v0.16.2 seed 기준 상태 — 편집이 seed 를 바꾸지 않게) */
 export function cloneState(s: SelState): SelState {
-  return { nElems: s.nElems, beads: cloneBeads(s.beads), owner: s.owner.slice(), remove: s.remove.slice(), fixed: s.fixed.slice(), exclude: s.exclude.slice() };
+  const c: SelState = { nElems: s.nElems, beads: cloneBeads(s.beads), owner: s.owner.slice(), remove: s.remove.slice(), fixed: s.fixed.slice(), exclude: s.exclude.slice() };
+  if (s.schema === 2) Object.assign(c, { schema: 2, graphRef: s.graphRef ? { ...s.graphRef } : null, edits: cloneEdits(s.edits ?? emptyEdits()), ties: (s.ties ?? []).map((g) => [...g]) });
+  return c;
 }
 
 /**
@@ -251,7 +309,7 @@ export function resetBeadTo(s: SelState, bead: number, seed: SelState): Patch<La
   const b = s.beads[bead];
   if (!b) return null;
   const si = seed.beads.findIndex((x) => x.id === b.id);
-  const before = cloneBeads(s.beads);
+  const before = snap(s);
   const r = recorder(s);
   for (let e = 0; e < s.nElems; e++) {
     if (ownerBead(s.owner[e]) === bead) r.set("owner", e, -1);
@@ -264,15 +322,19 @@ export function resetBeadTo(s: SelState, bead: number, seed: SelState): Patch<La
     if (seed.remove[e] === si && s.remove[e] < 0) r.set("remove", e, bead);
   }
   const sb = seed.beads[si];
-  const next: BeadMeta = { ...b, nTiers: sb.nTiers, blend: sb.blend, floorFollow: sb.floorFollow, links: sb.links.map((g) => [...g]), holdFixed: sb.holdFixed };
+  // v0.17.0 그래프 비드: 세그먼트·변수·hold 도 seed 값(출처가 다르면 seed 출처로)
+  const next: BeadMeta = cloneBeads([{ ...b, nTiers: sb.nTiers, blend: sb.blend, floorFollow: sb.floorFollow, links: sb.links, holdFixed: sb.holdFixed, src: sb.src, segs: sb.segs, vars: sb.vars }])[0];
+  if (!sb.src) delete next.src;
+  if (!sb.segs) delete next.segs;
+  if (!sb.vars) delete next.vars;
   if (JSON.stringify(next) === JSON.stringify(b)) return r.patch();
   s.beads = cloneBeads(s.beads.map((x, i) => (i === bead ? next : x)));
-  return r.patch({ before, after: cloneBeads(s.beads) });
+  return r.patch({ before, after: snap(s) });
 }
 
 /** v0.16.2 전체 초기화 = seed 로: 비드 목록·모든 층을 seed 그대로. 패치 1개(비드 목록 스냅숏 포함) */
 export function resetAllTo(s: SelState, seed: SelState): Patch<LayerName> {
-  const before = cloneBeads(s.beads);
+  const before = snap(s);
   const r = recorder(s);
   for (let e = 0; e < s.nElems; e++) {
     r.set("owner", e, seed.owner[e]);
@@ -281,21 +343,25 @@ export function resetAllTo(s: SelState, seed: SelState): Patch<LayerName> {
     r.set("exclude", e, seed.exclude[e]);
   }
   s.beads = cloneBeads(seed.beads);
-  return r.patch({ before, after: cloneBeads(seed.beads) });
+  if (s.schema === 2) {
+    s.edits = cloneEdits(seed.edits ?? emptyEdits());
+    s.ties = (seed.ties ?? []).map((g) => [...g]);
+  }
+  return r.patch({ before, after: snap(s) });
 }
 
 /** 마지막 단 삭제(단 1 개면 null — 비드 삭제를 쓴다): 그 바닥 요소를 비우고 묶음에서 뺀다. 패치 1개 */
 export function deleteLastTier(s: SelState, bead: number): Patch<LayerName> | null {
   const b = s.beads[bead];
   if (!b || b.nTiers <= 1) return null;
-  const before = cloneBeads(s.beads);
+  const before = snap(s);
   const r = recorder(s);
   const k = b.nTiers;
   const code = ownerCode(bead, k);
   for (let e = 0; e < s.nElems; e++) if (s.owner[e] === code) r.set("owner", e, -1);
   b.nTiers = k - 1;
   b.links = b.links.map((g) => g.filter((x) => x !== k)).filter((g) => g.length > 1);
-  return r.patch({ before, after: cloneBeads(s.beads) });
+  return r.patch({ before, after: snap(s) });
 }
 
 /** 비드 b 에 속한 요소(바닥 전부 + 사면 더하기) */
@@ -330,7 +396,43 @@ export function counts(s: SelState, bead: number): { tiers: number[]; slopeAdd: 
   return { tiers, slopeAdd, slopeRemove };
 }
 
-/** 화면 상태 → SelectionIn(§4.1). 빈 단도 그대로 넣는다(서버가 SELECT_EMPTY_TIER 로 거름) */
+/** 화면 상태 → SelectionIn(§4.1). 빈 단도 그대로 넣는다(서버가 SELECT_EMPTY_TIER 로 거름). v0.17.0 schema 2 상태 = SelectionIn v2(BG-D-36) */
+export function toSelectionAny(s: SelState, elemId: ArrayLike<number>, elemType: ArrayLike<number>, featureAngle: number): DoeSelectionAny {
+  const v1 = toSelectionIn(s, elemId, elemType, featureAngle);
+  if (s.schema !== 2) return v1;
+  const beads = s.beads.map((b, bi): DoeBeadSelGraph | DoeBeadSelElems => {
+    if (b.src !== "graph") return { ...v1.beads[bi], src: "elems" };
+    return {
+      id: b.id,
+      name: b.name,
+      src: "graph",
+      segs: sortRefs(b.segs ?? []),
+      ...(b.vars && b.vars.length < 2 ? { vars: [...b.vars] } : {}),
+      ...(b.holdFixed === 0 ? { hold_fixed: 0 as const } : {}),
+    };
+  });
+  const out: DoeSelectionV2 = {
+    schema_version: 2,
+    feature_angle_deg: featureAngle,
+    ...(s.graphRef ? { graph: { sha256: s.graphRef.sha256, rules: s.graphRef.rules, edits: normalizeEdits(s.edits ?? emptyEdits()) } } : {}),
+    beads,
+    ties: (s.ties ?? []).map((g) => [...g].sort(byBeadId)).sort((a, b) => byBeadId(a[0], b[0])),
+    fixed_user: v1.fixed_user,
+    exclude: v1.exclude,
+  };
+  return out;
+}
+const byBeadId = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));
+/** 편집 정규화(BG-D-37 각 목록 정렬 순) */
+export function normalizeEdits(e: BgEdits): BgEdits {
+  return {
+    toggle: [...e.toggle].sort((a, b) => a.anchor - b.anchor),
+    merge: e.merge.map((g) => [...g].sort((a, b) => a.anchor - b.anchor)).sort((a, b) => a[0].anchor - b[0].anchor),
+    split: [...e.split].sort((a, b) => a.anchor - b.anchor || a.at[0] - b.at[0] || a.at[1] - b.at[1]),
+  };
+}
+
+/** schema 1 SelectionIn(그래프 비드는 빈 단으로 — schema 2 상태는 toSelectionAny) */
 export function toSelectionIn(s: SelState, elemId: ArrayLike<number>, elemType: ArrayLike<number>, featureAngle: number): DoeSelectionIn {
   const lists = (pred: (e: number) => boolean) => {
     const out: number[] = [];
@@ -356,15 +458,25 @@ export function toSelectionIn(s: SelState, elemId: ArrayLike<number>, elemType: 
 }
 
 /** SelectionIn → 화면 상태(저장된 선택 불러오기). 메시에 없는 ID 수 = unknown */
-export function fromSelectionIn(sel: DoeSelectionIn, idx: ElemIndex, nElems: number): { state: SelState; unknown: number } {
-  const s = emptyState(nElems);
+export function fromSelectionIn(sel: DoeSelectionAny, idx: ElemIndex, nElems: number): { state: SelState; unknown: number } {
+  const v2 = sel.schema_version === 2;
+  const s = emptyState(nElems, v2 ? 2 : 1, v2 && sel.graph ? { sha256: sel.graph.sha256, rules: sel.graph.rules } : null);
+  if (v2) {
+    if (sel.graph?.edits) s.edits = cloneEdits({ toggle: sel.graph.edits.toggle ?? [], merge: sel.graph.edits.merge ?? [], split: sel.graph.edits.split ?? [] });
+    s.ties = (sel.ties ?? []).map((g) => [...g]);
+  }
   let unknown = 0;
   const take = (set: DoeBeadSel["slope"]["add"] | undefined, fn: (e: number) => void) => {
     const r = fromElemSet(set ?? EMPTY_SET(), idx);
     unknown += r.unknown;
     r.elems.forEach(fn);
   };
-  sel.beads.forEach((b, bi) => {
+  sel.beads.forEach((bb, bi) => {
+    if ("src" in bb && bb.src === "graph") {
+      s.beads.push({ id: bb.id, name: bb.name ?? bb.id.toUpperCase(), nTiers: 1, blend: "auto", floorFollow: 1, links: [], holdFixed: bb.hold_fixed === 0 ? 0 : 1, src: "graph", segs: (bb.segs ?? []).map((r) => ({ ...r })), ...(bb.vars ? { vars: [...bb.vars] } : {}) });
+      return;
+    }
+    const b = bb as DoeBeadSel;
     // 생략 가능한 칸(서버 SelectionIn 기본값 — links [], floor_follow 설정값)은 없어도 읽음(코어 정규화 사본·픽스처는 기본값을 생략)
     s.beads.push({ id: b.id, name: b.name, nTiers: Math.max(1, b.tiers.length), blend: b.blend_mm ?? "auto", floorFollow: b.floor_follow, links: (b.links ?? []).map((g) => [...g]), holdFixed: b.hold_fixed === 1 ? 1 : 0 });
     for (const t of b.tiers) take(t.floor, (e) => (s.owner[e] = ownerCode(bi, t.k)));
@@ -488,4 +600,208 @@ export function enclosedIslands(t: MeshTopo, s: SelState, X: ArrayLike<number>, 
 /** 비드별 섬 수(표시용) */
 export function islandCount(isl: SelIslands | null, bead: number): number {
   return isl ? isl.islands.filter((x) => ownerBead(x.owner) === bead).length : 0;
+}
+
+// ---------------------------------------------------------------- v0.17.0 그래프 비드·편집(esl_beadgraph.md §5.1·§6.2) — 모두 실행 취소 가능(패치 meta)
+/** 비드 목록·편집·묶기만 바꾸는 연산 → 패치(바뀐 것 없으면 null) */
+function metaOp(s: SelState, fn: () => boolean | void): Patch<LayerName> | null {
+  const before = snap(s);
+  if (fn() === false) return null;
+  const after = snap(s);
+  if (JSON.stringify(before) === JSON.stringify(after)) return null;
+  return { changes: [], meta: { before, after } };
+}
+
+/** 그래프 비드 추가(세그먼트 없음, hold 기본 1 — BG-D-28). 상한이면 null */
+export function addGraphBead(s: SelState, maxBeads = MAX_BEADS): { bead: number; patch: Patch<LayerName> } | null {
+  if (s.beads.length >= maxBeads) return null;
+  let bead = -1;
+  const patch = metaOp(s, () => {
+    let n = 1;
+    while (s.beads.some((b) => b.id === `b${n}`)) n++;
+    s.beads.push({ id: `b${n}`, name: `B${n}`, nTiers: 1, blend: "auto", floorFollow: 1, links: [], holdFixed: 1, src: "graph", segs: [] });
+    bead = s.beads.length - 1;
+  });
+  return patch ? { bead, patch } : null;
+}
+
+/** 비드의 세그먼트 집합(원 세그먼트 id — 병합 그룹 전체 포함) */
+export function beadSegs(s: SelState, gi: GraphIndex, bead: number): Set<number> {
+  const b = s.beads[bead];
+  const out = new Set<number>();
+  if (!b || b.src !== "graph") return out;
+  const v = editView(gi, s.edits);
+  const reps = new Set<number>();
+  for (const r of b.segs ?? []) for (const id of resolveRef(gi, r)) reps.add(repOf(v, id));
+  for (const sg of gi.graph.segments) if (reps.has(repOf(v, sg.id))) out.add(sg.id);
+  return out;
+}
+
+/** 세그먼트를 가진 비드 번호(없으면 −1) */
+export function beadOfSeg(s: SelState, gi: GraphIndex, seg: number): number {
+  for (let i = 0; i < s.beads.length; i++) if (beadSegs(s, gi, i).has(seg)) return i;
+  return -1;
+}
+
+/**
+ * 트리 체크·3D 클릭: 세그먼트를 지금 비드에 더하기/빼기. 다른 비드 것이면 바꾸지 않음(겹침 금지 — 칠하기와 같은 규칙).
+ * 네트워크 묶음에서 빼면 묶음을 풀어 나머지 세그먼트 앵커로 바꾼다.
+ */
+export function toggleSeg(s: SelState, gi: GraphIndex, bead: number, seg: number): { patch: Patch<LayerName> | null; reason: string | null } {
+  const b = s.beads[bead];
+  if (!b || b.src !== "graph") return { patch: null, reason: "그래프 비드가 아닙니다 — [+ 비드]로 만드세요" };
+  const sg = gi.segById.get(seg);
+  if (!sg || sg.type === "base") return { patch: null, reason: "플랜지(뿌리)는 변수가 없습니다" };
+  const owner = beadOfSeg(s, gi, seg);
+  if (owner >= 0 && owner !== bead) return { patch: null, reason: `${s.beads[owner].name} 에 들어 있습니다` };
+  const v = editView(gi, s.edits);
+  const rep = repOf(v, seg);
+  const patch = metaOp(s, () => {
+    const cur = s.beads[bead];
+    if (owner === bead) {
+      const next: BgSegRef[] = [];
+      for (const r of cur.segs ?? []) {
+        const ids = resolveRef(gi, r);
+        if (!ids.some((id) => repOf(v, id) === rep)) next.push(r);
+        else if ("network" in r) for (const id of ids) if (repOf(v, id) !== rep) next.push({ anchor: gi.segById.get(id)!.anchor });
+      }
+      cur.segs = dedupeRefs(next);
+    } else cur.segs = dedupeRefs([...(cur.segs ?? []), { anchor: gi.segById.get(rep)?.anchor ?? sg.anchor }]);
+  });
+  return { patch, reason: null };
+}
+
+/** 네트워크 전체로 묶기(BG-D-18): 그 네트워크 세그먼트 참조를 {network} 하나로. 다른 비드가 그 네트워크 세그먼트를 가지면 null */
+export function groupNetwork(s: SelState, gi: GraphIndex, bead: number, seg: number): { patch: Patch<LayerName> | null; reason: string | null } {
+  const b = s.beads[bead];
+  const sg = gi.segById.get(seg);
+  if (!b || b.src !== "graph" || !sg || sg.network < 0) return { patch: null, reason: "네트워크가 없는 세그먼트입니다" };
+  const na = networkAnchor(gi, sg.network);
+  if (na == null) return { patch: null, reason: "네트워크 앵커를 찾지 못했습니다" };
+  const members = new Set(gi.graph.networks.find((n) => n.id === sg.network)?.segments ?? []);
+  for (const id of members) {
+    const o = beadOfSeg(s, gi, id);
+    if (o >= 0 && o !== bead) return { patch: null, reason: `${s.beads[o].name} 에 이 네트워크 세그먼트가 있습니다` };
+  }
+  const patch = metaOp(s, () => {
+    const keep = (b.segs ?? []).filter((r) => !resolveRef(gi, r).some((id) => members.has(id)));
+    s.beads[bead].segs = dedupeRefs([...keep, { network: na }]);
+  });
+  return { patch, reason: null };
+}
+
+function dedupeRefs(r: BgSegRef[]): BgSegRef[] {
+  const seen = new Set<string>();
+  return sortRefs(r.filter((x) => (seen.has(refKey(x)) ? false : (seen.add(refKey(x)), true))));
+}
+
+/** 섬 ↔ 비드 전환(D8, BG-D-9): 원래 종류로 되돌리면 편집 항목을 지움 */
+export function toggleIsland(s: SelState, anchor: number, as: "bead" | "island", original: "bead" | "island"): Patch<LayerName> | null {
+  if (!s.edits) return null;
+  return metaOp(s, () => {
+    const e = s.edits!;
+    e.toggle = e.toggle.filter((t) => t.anchor !== anchor);
+    if (as !== original) e.toggle.push({ anchor, as });
+    // 섬으로 바꾼 세그먼트는 비드에서 뺌
+    if (as === "island") for (const b of s.beads) if (b.segs) b.segs = b.segs.filter((r) => !("anchor" in r) || r.anchor !== anchor);
+  });
+}
+
+/** 인접 세그먼트 병합(BG-D-37): 이미 병합 묶음에 있으면 그 묶음을 넓힘. 비드 참조는 묶음 대표(최소 앵커)로 */
+export function mergeSegs(s: SelState, gi: GraphIndex, a: number, b: number): Patch<LayerName> | null {
+  const sa = gi.segById.get(a);
+  const sb = gi.segById.get(b);
+  if (!s.edits || !sa || !sb || sa.floor !== sb.floor || a === b) return null;
+  return metaOp(s, () => {
+    const e = s.edits!;
+    const hit = e.merge.filter((g) => g.some((r) => r.anchor === sa.anchor || r.anchor === sb.anchor));
+    const anchors = new Set<number>([sa.anchor, sb.anchor, ...hit.flatMap((g) => g.map((r) => r.anchor))]);
+    e.merge = [...e.merge.filter((g) => !hit.includes(g)), [...anchors].sort((x, y) => x - y).map((anchor) => ({ anchor }))];
+    const rep = Math.min(...anchors);
+    for (const bd of s.beads) if (bd.segs) bd.segs = dedupeRefs(bd.segs.map((r) => ("anchor" in r && anchors.has(r.anchor) ? { anchor: rep } : r)));
+  });
+}
+
+/** 세그먼트 분할(BG-D-37): 골격에서 at 에 가장 가까운 점 — 계산은 서버, 화면은 편집만 기록 */
+export function splitSeg(s: SelState, anchor: number, at: [number, number]): Patch<LayerName> | null {
+  if (!s.edits) return null;
+  return metaOp(s, () => {
+    if (s.edits!.split.some((x) => x.anchor === anchor && x.at[0] === at[0] && x.at[1] === at[1])) return false;
+    s.edits!.split.push({ anchor, at });
+  });
+}
+
+/** 편집 1개 취소(목록의 ✕) */
+export function removeEdit(s: SelState, kind: "toggle" | "merge" | "split", i: number): Patch<LayerName> | null {
+  if (!s.edits) return null;
+  return metaOp(s, () => {
+    (s.edits![kind] as unknown[]).splice(i, 1);
+  });
+}
+
+/** 대칭 묶기(BG-D-21) 켜기/끄기: 같은 묶음이 있으면 풂, 아니면 그 비드들을 다른 묶음에서 빼고 새 묶음 */
+export function toggleTie(s: SelState, ids: string[]): Patch<LayerName> | null {
+  if (!s.ties || ids.length < 2) return null;
+  const key = [...ids].sort(byBeadId).join(",");
+  return metaOp(s, () => {
+    const t = s.ties!;
+    const same = t.findIndex((g) => [...g].sort(byBeadId).join(",") === key);
+    if (same >= 0) t.splice(same, 1);
+    else {
+      s.ties = t.map((g) => g.filter((x) => !ids.includes(x))).filter((g) => g.length > 1);
+      s.ties.push([...ids].sort(byBeadId));
+    }
+  });
+}
+
+/** 비드 변수(D·W) 켜기/끄기 — 둘 다 끌 수는 없음 */
+export function setBeadVars(s: SelState, bead: number, vars: ("D" | "W")[]): Patch<LayerName> | null {
+  const b = s.beads[bead];
+  if (!b || b.src !== "graph" || !vars.length) return null;
+  return metaOp(s, () => {
+    if (vars.length >= 2) delete b.vars;
+    else b.vars = [...vars];
+  });
+}
+
+/**
+ * BG_GRAPH_STALE 뒤 다시 해석(BG-D-38): 앵커가 가리키는 요소가 새 그래프의 어느 세그먼트에 있는지로 바꿈. 못 찾은 앵커 목록을 돌려줌
+ * (그 참조는 남겨 두고 화면에 BG_SEG_UNKNOWN 으로 표시 — 사용자가 지움).
+ */
+export function reresolve(s: SelState, gi: GraphIndex, sha256: string, rules: number): { unknown: number[]; patch: Patch<LayerName> | null } {
+  const unknown: number[] = [];
+  const patch = metaOp(s, () => {
+    s.graphRef = { sha256, rules };
+    for (const b of s.beads) {
+      if (b.src !== "graph" || !b.segs) continue;
+      b.segs = dedupeRefs(
+        b.segs.map((r) => {
+          if ("network" in r) {
+            if (!gi.netByAnchor.has(r.network)) unknown.push(r.network);
+            return r;
+          }
+          const id = resolveRef(gi, r)[0];
+          if (id == null) {
+            unknown.push(r.anchor);
+            return r;
+          }
+          return { anchor: gi.segById.get(id)!.anchor };
+        }),
+      );
+    }
+  });
+  return { unknown, patch };
+}
+
+/** 비드로 바꾼 섬(앵커 참조)을 지금 비드에 더하기/빼기 — 다른 비드 것이면 사유 */
+export function toggleAnchorRef(s: SelState, bead: number, anchor: number): { patch: Patch<LayerName> | null; reason: string | null } {
+  const b = s.beads[bead];
+  if (!b || b.src !== "graph") return { patch: null, reason: "그래프 비드를 고르거나 [+ 비드]로 만드세요" };
+  const has = (x: BeadMeta) => !!x.segs?.some((r) => "anchor" in r && r.anchor === anchor);
+  const owner = s.beads.findIndex(has);
+  if (owner >= 0 && owner !== bead) return { patch: null, reason: `${s.beads[owner].name} 에 들어 있습니다` };
+  const patch = metaOp(s, () => {
+    b.segs = owner === bead ? (b.segs ?? []).filter((r) => !("anchor" in r) || r.anchor !== anchor) : dedupeRefs([...(b.segs ?? []), { anchor }]);
+  });
+  return { patch, reason: null };
 }
