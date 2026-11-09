@@ -379,6 +379,12 @@ def selection_html(sel: dict, ms: dict | None = None) -> str:
     """v0.15.0 select: 비드 표(단 깊이·폭·사면·블렌딩·경고) + 모핑 규칙 + 미리보기 품질(새 Fail/영향 요소)."""
     rows = []
     for b in sel.get("beads") or []:
+        if b.get("src") == "graph":                  # v0.17.0 그래프 비드 1줄(§6.3) — schema 1 행은 그대로
+            w = "—" if b.get("W_nom") is None else _f(b["W_nom"])
+            rows.append([b.get("id"), b.get("name"), f"D {_f(b.get('D_nom'))} (상대)", w,
+                         f"세그먼트 {b.get('n_segments', 0)} · 접합 구역 {b.get('n_junction_zones', 0)} · 묶음 출처(그래프)",
+                         "—", ", ".join(sorted({x.get("code", "") for x in b.get("warnings") or []})) or "—"])
+            continue
         tiers = " · ".join(f"D{t['k']} {_f(t.get('D_nom'))}" for t in b.get("tiers") or [])
         w = "—" if b.get("W_nom") is None else f"{_f(b['W_nom'])} ({_f(b.get('W_min'))}–{_f(b.get('W_max'))})"
         rows.append([b.get("id"), b.get("name"), tiers, w, (b.get("slope") or {}).get("n_elems"),

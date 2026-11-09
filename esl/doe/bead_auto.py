@@ -17,7 +17,9 @@
 - ``write_auto_selection(path, selection, map_list, warnings, *, mesh_sha256=None, paicad_version=None, guard=None) -> sha256``
     결정적 바이트 JSON(정렬 키·indent 1·끝 줄바꿈) ``{schema "esl/doe_auto_selection/1", selection, sha256, map, warnings,
     mesh_sha256, paicad_version}`` — 백엔드 ``GET …/select/auto`` 가 읽는 파일(prep/select/auto_selection.json).
-- ``read_auto_selection(path) -> dict`` (위 문서, 백엔드·시험용)
+- ``read_auto_selection(path) -> dict`` (위 문서, 백엔드·시험용) — v0.17.0: schema 2 스터디 문서
+    ``esl/doe_auto_selection/2``(``bead_graph.auto_doc_v2`` — {source "graph", selection(schema 2), sha256, sym_pairs, hints,
+    warnings, mesh_sha256, graph_sha256})도 그대로 돌려줌
 - ``auto_from_prep(prep_dir, mesh, cfg, max_mb) -> (selection, map_list, warnings)`` : prep/extract·prep/tag 를 읽어 위 계산
     (읽기 실패 = EslError 그대로 — 호출자가 ``AUTO_DETECT_FAILED{step}`` 로 바꿈)
 
@@ -44,6 +46,9 @@ from esl.mesh import features
 
 AUTO_SELECTION_JSON = "auto_selection.json"
 AUTO_SELECTION_SCHEMA = "esl/doe_auto_selection/1"
+# v0.17.0 BG-D-42: select_schema 2 스터디의 seed = 메시 분류 그래프(esl.doe.bead_graph.auto_seed — source "graph", paicad 는
+# AUTO_SLOPE_DIFF 힌트만). 이 모듈의 paicad seed 경로(schema 1 스터디)는 그대로.
+AUTO_SELECTION_SCHEMA_V2 = "esl/doe_auto_selection/2"
 
 
 def _r(v, nd: int = 4):
@@ -235,10 +240,10 @@ def read_auto_selection(path: str) -> dict:
     with open(path, "rb") as fh:
         raw = fh.read()
     doc = json.loads(raw.decode("utf-8"))
-    if not isinstance(doc, dict) or doc.get("schema") != AUTO_SELECTION_SCHEMA:
+    if not isinstance(doc, dict) or doc.get("schema") not in (AUTO_SELECTION_SCHEMA, AUTO_SELECTION_SCHEMA_V2):
         raise EslError("INPUT_INVALID", "auto_selection.json 형식이 아님")
     return doc
 
 
 __all__ = ["auto_selection", "write_auto_selection", "read_auto_selection", "auto_from_prep", "auto_doc", "auto_bytes",
-           "AUTO_SELECTION_JSON", "AUTO_SELECTION_SCHEMA"]
+           "AUTO_SELECTION_JSON", "AUTO_SELECTION_SCHEMA", "AUTO_SELECTION_SCHEMA_V2"]

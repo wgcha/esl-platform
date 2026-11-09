@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beadgraph"
+dynamic = ["version"]
+description = "Shared bead-network classifier + segment morph for shell meshes (esl-platform / physicsai-platform)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26,<3", "scipy>=1.11"]
+
+[project.optional-dependencies]
+# synthetic fixture generators only (tests use the frozen fixtures — no gmsh needed); gmsh = deploy/requirements.lock
+synth = ["gmsh==4.15.2", "shapely>=2"]
+test = ["pytest"]
+
+[tool.setuptools.dynamic]
+version = {attr = "beadgraph.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"beadgraph.testing" = ["fixtures/*.npz", "expected.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["slow: H6 full classification / morph runs (tens of seconds)"]
