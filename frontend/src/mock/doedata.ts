@@ -7,7 +7,8 @@ import type {
   DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
-import type { DoeSelectAutoOut, DoeSelectionIn, DoeSelectionOut } from "../api/types";
+import type { DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
+import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate } from "./graphmock";
 import { selAutoSeed, selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
 
 interface MockResponse {
@@ -92,6 +93,8 @@ export function makeDoeSettings(): DoeSettingsOut {
       fixed_policy: "warn", quality_fail_policy: "warn", hold: { ring_mm: 3, blend_mm: 8 },
       // v0.16.2 AD-D-7
       hole: { bridge_max_mm: 20 },
+      // v0.17.0 BEADGRAPH(§5.5)
+      graph: { enabled: true, island: { max_mm: 60 }, sym_tol_mm: 0.5 },
     },
   };
 }
@@ -830,7 +833,11 @@ interface Rec {
   selDropped?: boolean;
   /** v0.16.2 자동 탐지 seed(GET …/select/auto) — 없으면 404 AUTO_NOT_AVAILABLE */
   autoSel?: DoeSelectAutoOut | null;
+  /** v0.17.0 schema 2 스터디의 GRAPH_FAILED(GET …/select/graph 404) */
+  graphFailed?: boolean;
 }
+/** v0.17.0 schema 2(그래프) select 스터디 */
+const isG = (r: Rec) => r.out.scenario === "select" && r.out.inputs.select_schema === 2;
 
 const STEPS_OF: Record<string, string[]> = {
   DOE_PREP: ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"],
@@ -1054,7 +1061,25 @@ export class DoeMock {
     const j9 = doneJob(this.id("j-doe"), "p-body", sel9.out.id, "DOE_PREP", "2026-11-08T03:00:05Z", "2026-11-08T03:02:00Z");
     this.seededJobs.push(j9);
     sel9.jobIds.push(j9.id);
-    this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9);
+    // 10) v0.17.0 비드 네트워크 자동 분류(그래프 seed, STEP 없음) — 준비 완료, 선택 미저장
+    const sel10 = base("doe-10", "select", "75형 Ch/R 비드 네트워크 자동 분류", "2026-11-09T02:00:00Z");
+    sel10.out.inputs = { ...sel5.out.inputs, bead_source: "auto", select_schema: 2 };
+    sel10.out.prep = this.graphPrep(false);
+    sel10.autoSel = graphAutoSeed();
+    sel10.out.version = 2;
+    const j10 = doneJob(this.id("j-doe"), "p-body", sel10.out.id, "DOE_PREP", "2026-11-09T02:00:05Z", "2026-11-09T02:01:10Z");
+    this.seededJobs.push(j10);
+    sel10.jobIds.push(j10.id);
+    // 11) v0.17.0 GRAPH_FAILED — 준비 READY, 그래프 없음(404) → 직접 칠하기(요소 비드)
+    const sel11 = base("doe-11", "select", "75형 Ch/R 비드 분류 실패 — 직접 칠하기", "2026-11-09T03:00:00Z");
+    sel11.out.inputs = { ...sel5.out.inputs, bead_source: "manual", select_schema: 2 };
+    sel11.out.prep = this.graphPrep(true);
+    sel11.graphFailed = true;
+    sel11.out.version = 2;
+    const j11 = doneJob(this.id("j-doe"), "p-body", sel11.out.id, "DOE_PREP", "2026-11-09T03:00:05Z", "2026-11-09T03:01:00Z");
+    this.seededJobs.push(j11);
+    sel11.jobIds.push(j11.id);
+    this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
   }
 
   private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[], r?: Rec) {
@@ -1103,6 +1128,13 @@ export class DoeMock {
     if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.scenario === "compare" && r.out.prep) {
       r.result = makeCompareResult(r.out.prep, r.out.entry_ids);
       r.out.phase = "DONE";
+      r.out.version += 1;
+    }
+    if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && isG(r)) {
+      // v0.17.0 그래프 스터디: 분류 → 자동 = 그래프 seed(paicad 무관), 수동 = 빈 seed + 같은 트리
+      r.out.phase = "READY";
+      r.out.prep = this.graphPrep(false);
+      if (r.out.inputs.bead_source === "auto") r.autoSel = graphAutoSeed();
       r.out.version += 1;
     }
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "select") {
@@ -1161,10 +1193,16 @@ export class DoeMock {
       fixed: ready ? { source: "scan", n: mf.fixed.scan_n } : { source: "none", n: 0 },
     };
   }
+  /** v0.17.0 schema 2 준비 요약(H6 목 메시) — failed = GRAPH_FAILED{TIMEOUT} 경고 */
+  private graphPrep(failed: boolean): NonNullable<DoeStudyOut["prep"]> {
+    const mf = graphManifest();
+    return { n_beads: 0, n_params: 0, paicad_version: null, warnings: failed ? [{ code: "GRAPH_FAILED", detail: "TIMEOUT", message: "" }] : [], n_nodes: mf.n_nodes, n_elems: mf.n_elems, fixed: { source: "scan", n: mf.fixed.scan_n } };
+  }
   /** select 변수(선택 저장 후) — 행렬·결과의 공칭·변수 이름 */
   paramsOf(r: Rec): DoeParam[] {
     if (r.out.scenario !== "select") return DEFAULT_PARAMS;
     if (!r.sel) return [];
+    if (r.sel.input.schema_version === 2) return graphParams(r.sel.input).params;
     return selParams(r.sel.input, r.sel.derived, this.settings.select?.fixed_policy ?? "warn").params;
   }
   private selectCells(r: Rec, m: DoeMatrixOut): DoePreviewCell[] {
@@ -1172,7 +1210,13 @@ export class DoeMock {
     const pol = { fixed: this.settings.select?.fixed_policy ?? "warn", quality: this.settings.select?.quality_fail_policy ?? "warn" } as const;
     return m.designs.filter((d) => d.id !== "d000").map((d) => ({ id: d.id, values: d.values, ...selCellStatus(d.id, d.values, ps, pol) }));
   }
-  saveSelection(r: Rec, input: DoeSelectionIn, who: string) {
+  saveSelection(r: Rec, input: DoeSelectionAny, who: string) {
+    if (input.schema_version === 2) {
+      const d = graphDerive(input).body as import("../api/types").DoeDeriveOut;
+      const rev = (r.sel?.rev ?? 0) + 1;
+      r.sel = { rev, sha256: d.sha256, input, derived: { ...d, rev }, updated_by_name: who, updated_at: this.ctx.now() };
+      return;
+    }
     const { out } = selDerive(input, this.settings);
     const rev = (r.sel?.rev ?? 0) + 1;
     const { slope_suggested: _s, ...derived } = out;
@@ -1184,6 +1228,11 @@ export class DoeMock {
     const prepReady = rec.out.phase !== "PREP" && !!rec.out.prep;
     const notReady = () => err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
     let r: RegExpMatchArray | null;
+    // ---- v0.17.0 schema 2(그래프) 스터디: H6 목 메시·graph.bin·GET …/select/graph
+    if (isG(rec)) {
+      const g = this.handleGraph(rec, method, sub, query, b, prepReady);
+      if (g) return g;
+    }
     if ((r = sub.match(/^\/select\/view\/([^/]+)$/)) && method === "GET") {
       if (!prepReady) return notReady();
       const m = selMesh();
@@ -1227,14 +1276,14 @@ export class DoeMock {
       if (!rec.sel || !pv) return err(409, "PREVIEW_NOT_READY", "미리보기 전이라 기저가 없습니다.");
       const want = query.get("rev");
       if (want != null && Number(want) !== rec.sel.rev) return err(404, "FILE_NOT_FOUND", "그 선택 rev 의 기저가 없습니다(선택이 바뀌었으면 다시 미리보기)");
-      const bs = selBasis(rec.sel.input, this.settings);
+      const bs = selBasis(rec.sel.input as DoeSelectionIn, this.settings);
       if (query.get("meta") === "1") return ok(bs.meta);
       return { status: 200, body: bs.bin };
     }
     if (method === "GET" && (sub === "/params" || sub === "/plan-view")) {
       if (!prepReady) return notReady();
       if (!rec.sel || rec.selDropped) return err(409, "SELECTION_MISSING", rec.selDropped ? "비드 선택을 저장한 뒤에 하세요 — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다" : "비드 선택을 먼저 저장하세요.", rec.selDropped ? { reason: "SELECTION_DROPPED" } : {});
-      return ok(sub === "/params" ? selParams(rec.sel.input, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : selPlan(rec.sel.input, this.settings));
+      return ok(sub === "/params" ? selParams(rec.sel.input as DoeSelectionIn, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : selPlan(rec.sel.input as DoeSelectionIn, this.settings));
     }
     if (method === "POST" && (sub === "/matrix" || sub === "/preview") && !rec.sel) {
       if (!prepReady) return notReady();
@@ -1252,6 +1301,52 @@ export class DoeMock {
     if (method === "POST" && sub === "/run") {
       const pv = rec.out.doe?.preview;
       if (rec.sel && pv && pv.selection_sha256 !== rec.sel.sha256) return err(409, "PREVIEW_STALE", "비드 선택이 미리보기 뒤에 바뀌었습니다 — 미리보기를 다시 실행하세요.");
+    }
+    return null;
+  }
+
+  /** v0.17.0 그래프 스터디 select 경로(esl_beadgraph.md §6.1). null = 공통 처리 */
+  private handleGraph(rec: Rec, method: string, sub: string, query: URLSearchParams, b: Record<string, unknown>, prepReady: boolean): MockResponse | null {
+    const notReady = () => err(409, "PREP_NOT_READY", "입력 준비가 끝나지 않았습니다.");
+    let r: RegExpMatchArray | null;
+    if ((r = sub.match(/^\/select\/view\/([^/]+)$/)) && method === "GET") {
+      if (!prepReady) return notReady();
+      const m = graphMesh();
+      if (r[1] === "select_manifest.json") return ok(graphManifest());
+      if (r[1] === "part.glb") return { status: 200, body: m.glb };
+      if (r[1] === "select.bin") return { status: 200, body: m.bin };
+      if (r[1] === "graph.bin") return rec.graphFailed ? err(404, "GRAPH_NOT_AVAILABLE", "분류 결과가 없습니다.") : { status: 200, body: m.graphBin };
+      return err(404, "NOT_FOUND", "파일이 없습니다.");
+    }
+    if (method === "GET" && sub === "/select/graph") {
+      if (!prepReady) return notReady();
+      return rec.graphFailed ? err(404, "GRAPH_NOT_AVAILABLE", "분류 결과가 없습니다(GRAPH_FAILED).") : ok(graphOut());
+    }
+    if (method === "POST" && sub === "/select/derive") {
+      if (!prepReady) return notReady();
+      const sel = b.selection as DoeSelectionV2 | undefined;
+      return graphValidate(sel, !rec.graphFailed) ?? graphDerive(sel!);
+    }
+    if (method === "PUT" && sub === "/selection") {
+      if (!prepReady) return notReady();
+      if (b.version !== rec.out.version) return err(409, "VERSION_CONFLICT", "다른 사용자가 먼저 바꿨습니다. 새로 고친 뒤 다시 시도하세요");
+      if (rec.out.phase === "RUN" || rec.out.phase === "DONE") return err(409, "ALREADY_RUN", "이미 실행했습니다 — 복제해서 새 연구로.");
+      const sel = b.selection as DoeSelectionV2 | undefined;
+      const bad = graphValidate(sel, !rec.graphFailed);
+      if (bad) return bad;
+      this.saveSelection(rec, sel!, this.ctx.me().display_name);
+      rec.out.version += 1;
+      rec.out.prep = { ...rec.out.prep!, n_beads: sel!.beads.length, n_params: this.paramsOf(rec).length };
+      return ok(this.studyOut(rec));
+    }
+    if (method === "GET" && sub === "/select/basis" && rec.sel?.input.schema_version === 2) {
+      if (!rec.out.doe?.preview) return err(409, "PREVIEW_NOT_READY", "미리보기 전이라 기저가 없습니다.");
+      const bs = graphBasis(rec.sel.input);
+      return query.get("meta") === "1" ? ok(bs.meta) : { status: 200, body: bs.bin };
+    }
+    if (method === "GET" && (sub === "/params" || sub === "/plan-view") && rec.sel?.input.schema_version === 2) {
+      if (!prepReady) return notReady();
+      return ok(sub === "/params" ? graphParams(rec.sel.input) : graphPlan(rec.sel.input));
     }
     return null;
   }
@@ -1332,8 +1427,8 @@ export class DoeMock {
     if (!["auto", "manual"].includes(src) || !["case", "mesh"].includes(baseK)) return err(422, "INVALID_PARAMS", "bead_source·select_base 가 올바르지 않습니다.");
     if (b.shapes != null) return err(422, "INVALID_PARAMS", "비드 선택에는 형상을 쓰지 않습니다.");
     if (src === "manual" && b.step_upload_id != null) return err(422, "INVALID_PARAMS", "직접 선택에는 STEP 을 쓰지 않습니다.");
-    if (src === "auto" && b.step_upload_id == null) return err(422, "INVALID_PARAMS", "자동 탐지에는 STEP 이 필요합니다.");
-    if (src === "auto" && this.settings.scenarios.select_auto === false) return err(503, "PAICAD_NOT_CONFIGURED", "형상 엔진(paicad)이 준비되지 않아 자동 탐지를 쓸 수 없습니다.");
+    // v0.17.0(BG §5.3): auto 의 STEP 은 선택(힌트) — 자동 분류는 paicad 무관
+    if (src === "auto" && this.settings.scenarios.select_auto === false) return err(503, "SELECT_DISABLED", "서버에서 비드 자동 분류가 꺼져 있습니다.");
     if (baseK === "case" && (b.mesh_upload_id != null || b.part_title != null)) return err(422, "INVALID_PARAMS", "① 비드 선택에는 B 메시·파트 제목을 쓰지 않습니다.");
     if (baseK === "mesh" && b.mesh_upload_id == null) return err(422, "INVALID_PARAMS", "B 메시가 필요합니다.");
     const ids = (b.entry_ids as string[]) ?? [];
@@ -1341,7 +1436,7 @@ export class DoeMock {
     const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
     if (!ids.length || sel.some((e) => !e)) return err(422, "ENTRY_NOT_FOUND", "선택한 ESL 중 이 프로젝트의 활성 항목이 아닌 것이 있습니다.");
     let step: DoeCheckOut["step"] = null;
-    if (src === "auto") {
+    if (src === "auto" && b.step_upload_id != null) {
       const up = this.ctx.upload(String(b.step_upload_id));
       if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.");
       if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.");
@@ -1548,7 +1643,8 @@ export class DoeMock {
             props: props ?? null,
             mesh_size_mm: typeof b.mesh_size_mm === "number" ? b.mesh_size_mm : null,
             // v0.16.2 select: bead_source 항상, select_base 는 mesh 일 때만(AD-D-22)
-            ...(b.scenario === "select" ? { bead_source: (b.bead_source as "auto" | "manual" | undefined) ?? "manual", ...(b.select_base === "mesh" ? { select_base: "mesh" as const } : {}) } : {}),
+            // v0.17.0 새 select 스터디 = schema 2(BG-D-35)
+            ...(b.scenario === "select" ? { bead_source: (b.bead_source as "auto" | "manual" | undefined) ?? "manual", select_schema: 2 as const, ...(b.select_base === "mesh" ? { select_base: "mesh" as const } : {}) } : {}),
           },
           phase: "PREP",
           version: 1,
