@@ -435,9 +435,46 @@ def cross_move(checks: dict, values: dict, tol: float) -> dict | None:
         return None
     return {"code": "SELECT_CROSS_BEAD_MOVE", "n": n, "max_mm": _r(mx), "beads": pairs}
 
+def outside_moved(x0, x, allowed, changed, tol: float) -> dict | None:
+    """v0.17.0 BG-D-34 바깥 이동: 바뀐 변수들의 허용 노드 합 A 밖 노드의 최대 이동 > tol 이면
+    {code BG_OUTSIDE_MOVED, n, max_mm, vars} (안 판정 FAILED_MESH — 정책 무관), 아니면 None.
+    allowed = [{var, nominal, zone(노드 index) | mask(bool)}], changed = 값 dict(공칭과 다른 변수만) 또는 변수 이름 목록."""
+    x0 = np.asarray(x0, dtype=np.float64)
+    if isinstance(changed, dict):
+        names = {a["var"] for a in allowed if a["var"] in changed and float(changed[a["var"]]) != float(a.get("nominal",
+                                                                                                          np.nan))}
+    else:
+        names = set(changed)
+    if not names:
+        return None
+    ok = np.zeros(x0.shape[0], bool)
+    for a in allowed:
+        if a["var"] in names:
+            if "mask" in a:
+                ok |= np.asarray(a["mask"], bool)
+            else:
+                ok[np.asarray(a["zone"], np.int64)] = True
+    d = np.linalg.norm(np.asarray(x, dtype=np.float64) - x0, axis=1)
+    d[ok] = 0.0
+    n = int(np.sum(d > tol))
+    if not n:
+        return None
+    return {"code": "BG_OUTSIDE_MOVED", "n": n, "max_mm": _r(float(d.max()), 6), "vars": sorted(names)}
+
+
 def checks_arrays(checks: dict) -> dict:
-    """design_checks → npz 배열(키 chk_*; 비면 빈 dict — derived.npz 바이트 불변)."""
+    """design_checks → npz 배열(키 chk_*; 비면 빈 dict — derived.npz 바이트 불변). v0.17.0: chk_o<i>_bits = 변수별 허용 노드
+    마스크 비트열(np.packbits) + chk_o<i>_meta {var, nominal, n} — 그래프 기저가 있을 때만(schema 1 키 없음)."""
     arr = {}
+    for i, o in enumerate(checks.get("outside") or []):
+        n = int(o["n"]) if "n" in o else None
+        zone = np.asarray(o["zone"], np.int64)
+        nn = n if n is not None else int(o.get("n_nodes", 0))
+        mask = np.zeros(nn, bool)
+        mask[zone] = True
+        arr[f"chk_o{i}_bits"] = np.packbits(mask)
+        arr[f"chk_o{i}_meta"] = np.frombuffer(json.dumps({"var": o["var"], "nominal": o["nominal"], "n": nn}).encode(),
+                                              np.uint8)
     for i, f in enumerate(checks.get("features") or []):
         arr[f"chk_f{i}_rim"] = f["rim"].astype(np.int64)
         arr[f"chk_f{i}_int"] = f["interior"].astype(np.int64)
@@ -453,6 +490,13 @@ def checks_from_arrays(z) -> dict:
     """checks_arrays 의 역(키가 없으면 {})."""
     out: dict = {}
     keys = sorted(k for k in z if k.startswith("chk_"))
+    oi = sorted({int(k.split("_")[1][1:]) for k in keys if k.startswith("chk_o")})
+    if oi:
+        out["outside"] = []
+        for i in oi:
+            meta = json.loads(bytes(np.asarray(z[f"chk_o{i}_meta"], np.uint8)).decode())
+            m = np.unpackbits(np.asarray(z[f"chk_o{i}_bits"], np.uint8))[:meta["n"]].astype(bool)
+            out["outside"].append({"var": meta["var"], "nominal": meta["nominal"], "zone": np.flatnonzero(m)})
     fi = sorted({int(k.split("_")[1][1:]) for k in keys if k.startswith("chk_f")})
     ci = sorted({int(k.split("_")[1][1:]) for k in keys if k.startswith("chk_c")})
     if fi:

@@ -50,6 +50,7 @@ from esl.mesh.features import MeshIndex, mesh_index  # noqa: F401 - 재노출(�
 from esl.morph import core as _mc
 
 SCHEMA_VERSION = 1
+SCHEMA_VERSIONS = (1, 2)            # v0.17.0 BG-D-35: 2 = 그래프 세그먼트 참조(esl.doe.bead_graph) — schema 1 경로 코드 불변
 BEAD_ID_RE = re.compile(r"^b[1-9][0-9]?$")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 U_EPS = _mc.U_EPS                  # 영향 판정(§6, mm) — v0.16.2 AD-D-10: esl.morph.core 정의 재노출
@@ -66,6 +67,8 @@ HASH_NEW_KEYS_V0161 = ("fixed_policy", "quality.fail_policy", "range.depth_max_r
 # v0.16.2 새 select 설정 키(AD-D-7) — 기본값이면 해시 사본에서 뺀다. select.auto.* 는 보고 전용이라 값과 무관하게 항상 뺀다(§6).
 HASH_NEW_KEYS_V0162 = ("hole.bridge_max_mm",)
 HASH_NEW_SECTIONS_V0162 = ("hole",)                # 위 키를 빼고 비면 절째 제거
+# v0.17.0 BG-D-41: 새 절 select.graph — 기본값이면 해시 사본에서 빠짐(_cfg_hash·_sel_cfg_sha = v0.16.2 와 같음), 다르면 절 그대로
+HASH_NEW_KEYS_V0170 = ("graph",)
 HASH_EXCLUDE_ALWAYS = ("auto",)
 POLICIES = ("warn", "skip")
 
@@ -105,6 +108,9 @@ def select_hash_view(sel_cfg: dict) -> dict:
     for top in HASH_NEW_SECTIONS_V0162:              # v0.16.2 새 절이 비면 절째 제거(v0.16.1 해시 불변 — AD-D-7)
         if isinstance(out.get(top), dict) and not out[top]:
             del out[top]
+    for k in HASH_NEW_KEYS_V0170:                      # v0.17.0 BG-D-41: 기본값과 같으면 절째 제거
+        if k in out and out[k] == dflt.get(k):
+            del out[k]
     for k in HASH_EXCLUDE_ALWAYS:
         out.pop(k, None)
     return out
@@ -297,9 +303,20 @@ def normalize_input(sel, cfg: dict | None = None) -> dict:
     return norm
 
 
-def normalize(selection, cfg: dict | None = None, *, mesh: dict | None = None) -> tuple[dict, str]:
+def normalize(selection, cfg: dict | None = None, *, mesh: dict | None = None, graph: dict | None = None,
+              labels: dict | None = None) -> tuple[dict, str]:
     """(백엔드·워커 공통 API) SelectionIn → (정규화 선택, sha256). mesh(MESH_KEYS)를 주면 요소 ID 존재 검사
-    (SELECT_ELEM_UNKNOWN{n, first}). 실패 = EslError(SELECT_*), 세부 = ``exc.extra``."""
+    (SELECT_ELEM_UNKNOWN{n, first}). 실패 = EslError(SELECT_*), 세부 = ``exc.extra``.
+    v0.17.0: schema_version 2 = ``bead_graph.normalize_v2``(graph·labels 필요 — 없으면 GRAPH_NOT_AVAILABLE)."""
+    if isinstance(selection, dict) and selection.get("schema_version") == 2:
+        from esl.doe import bead_graph as bgr
+        if graph is None or labels is None:
+            raise EslError("GRAPH_NOT_AVAILABLE", "schema 2 선택은 분류 그래프가 필요")
+        norm, sha = bgr.normalize_v2(selection, graph, cfg, labels=labels, mesh=mesh)
+        if mesh is not None:
+            check_elems(mesh, {"fixed_user": norm["fixed_user"], "exclude": norm["exclude"],
+                               "beads": [b for b in norm["beads"] if b["src"] == "elems"]})
+        return norm, sha
     norm = normalize_input(selection, cfg)
     if mesh is not None:
         check_elems(mesh, norm)
@@ -516,10 +533,19 @@ def _dist_from(G: sparse.csr_matrix, sub: np.ndarray, src: np.ndarray) -> np.nda
 
 
 def derive(mesh: dict, selection: dict, cfg: dict | None = None, *, frame: dict | None = None, fixed_scan=(),
-           bead: str | None = None, index: MeshIndex | None = None) -> dict:
+           bead: str | None = None, index: MeshIndex | None = None, graph: dict | None = None,
+           labels: dict | None = None) -> dict:
     """(백엔드 API) 정규화 선택 → {beads: [BeadDerived §4.2 — section·plan 포함], fixed{scan_n, user_n, source},
     warnings, slope_suggested{bead: ElemSet}, fixed_ab[{a, b}]}. rev·sha256·mesh_sha256 은 호출자가 붙인다.
-    bead 를 주면 그 비드만 계산(다른 비드 층은 침범 금지로만 씀). 결정적."""
+    bead 를 주면 그 비드만 계산(다른 비드 층은 침범 금지로만 씀). 결정적.
+    v0.17.0: 정규화된 schema 2 선택 = ``bead_graph.derive_v2``(graph·labels = ``bead_graph.load_graph``) → SelectionDerived
+    + graph 블록(§6.1)·graph_algo."""
+    if isinstance(selection, dict) and selection.get("schema_version") == 2:
+        from esl.doe import bead_graph as bgr
+        if graph is None or labels is None:
+            raise EslError("GRAPH_NOT_AVAILABLE", "schema 2 선택은 분류 그래프가 필요")
+        return bgr.derive_v2(mesh, selection, cfg, graph, labels, frame=frame, fixed_scan=fixed_scan, bead=bead,
+                             index=index)
     if isinstance(selection, dict) and "schema_version" not in selection:
         selection = normalize_input(selection, cfg)
     D = derive_obj(mesh, selection, cfg, fixed_node_ids=fixed_scan, index=index, only=bead)
@@ -542,7 +568,8 @@ def _fixed_ab(D: "Derived", frame: dict) -> list:
 
 def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_ids=(), index: MeshIndex | None = None,
                with_section: bool = True, mesh_sha256: str | None = None, only: str | None = None) -> Derived:
-    """선택(정규화) → Derived 객체(배열 포함, 결정적 — 워커 기저·시험용). cfg = bead_doe 설정(``settings``) — select 절."""
+    """선택(정규화) → Derived 객체(배열 포함, 결정적 — 워커 기저·시험용). cfg = bead_doe 설정(``settings``) — select 절.
+    v0.17.0: schema 2 는 ``derive_v2``(그래프 필요) — 이 함수는 schema 1 전용(코드 불변)."""
     sc = _cfg(cfg)
     ix = index or mesh_index(mesh)
     theta = float(norm["feature_angle_deg"])
@@ -1353,6 +1380,9 @@ def params_table(derived: Derived, cfg: dict | None = None) -> list[dict]:
     default_range, use_default, group_members}. v0.16.1: feasible = 기하 한계(SR-D-10 — D: 위 수준 + min_step ~
     D_nom·(1 + depth_max_rel), W: 바닥 최소 폭 조건 ~ W_nom·(1 + width_max_rel), 항상 default_range 포함), 비드 안 고정 노드
     기본 체크 해제는 ``fixed_policy: skip`` 일 때만(SR-D-8 — warn 이면 체크)."""
+    if getattr(derived, "schema_version", 1) == 2:     # v0.17.0 schema 2 → bead_graph(schema 1 경로 불변)
+        from esl.doe import bead_graph as bgr
+        return bgr.params_rows_v2(derived, cfg)
     sc = _cfg(cfg)
     skip = _policy(sc, "fixed") == "skip"
     out = []
@@ -1473,6 +1503,9 @@ def _floor_harmonic(ix: MeshIndex, bd: BeadDerived, fn: np.ndarray, sc: dict) ->
 
 def basis(mesh: dict, derived: Derived, cfg: dict | None = None, *, index: MeshIndex | None = None) -> Basis:
     """선택 rev 기저(§5, BS-D-9). 변수 순서 = 이름 정렬(params_table 과 같음)."""
+    if getattr(derived, "schema_version", 1) == 2:     # v0.17.0 schema 2 → bead_graph.basis_v2
+        from esl.doe import bead_graph as bgr
+        return bgr.basis_v2(mesh, derived, cfg)
     sc = _cfg(cfg)
     ix = index or derived.index
     from esl.view3d import node_geometry
@@ -1683,9 +1716,15 @@ def design_state(mesh: dict, x0, x, fixed_mask, cfg: dict | None = None, *, chec
     ext = _extremes(mesh, x0, x, am, q, qc) if _policy(sc, "quality") == "warn" else None
     dist = _feature_distortion(x0, x, checks, qc) if checks else None
     cross = _cross_move(checks, values, float(sc["cross_bead_tol_mm"])) if checks and values else None
+    # v0.17.0 BG-D-34 바깥 이동(그래프 기저 — checks 에 outside 가 있을 때만: schema 1 판정 불변)
+    outm = (_mc.outside_moved(x0, x, checks["outside"], values or {}, float(sc["graph"]["morph"]["outside_tol_mm"]))
+            if checks and checks.get("outside") else None)
     warns: list[dict] = []
     if q["inverted"] > 0:
         st, code = "FAILED_MESH", "SELECT_MORPH_INVERTED"
+    elif outm is not None:
+        st, code = "FAILED_MESH", "BG_OUTSIDE_MOVED"
+        warns.append(outm)
     elif dist is not None:
         st, code = "FAILED_MESH", "SELECT_FEATURE_DISTORTED"
         warns.append(dist)
@@ -1732,6 +1771,9 @@ def design_checks(derived: "Derived", B: "Basis") -> dict:
     """SR-D-37·38 안 판정 보조 자료(derive·기저에서 1회): features[{bead, k, rim, interior}](섬이 못 된 둘러싸인 피처),
     cross[{var, bead, other, nominal, idx, mag}](W 변수 기저가 다른 선택 비드의 경계·바닥 노드에 주는 크기 ‖B_v‖ > 0).
     둘 다 비면 {} (= 검사 없음 — 섬·교차 없는 선택은 판정 바이트 불변)."""
+    if getattr(derived, "schema_version", 1) == 2:     # v0.17.0 schema 2 (+ 허용 구역 chk_o* — BG-D-34)
+        from esl.doe import bead_graph as bgr
+        return bgr.design_checks_v2(derived, B)
     out: dict = {}
     feats = [{"bead": b.id, "k": f["k"], "rim": np.asarray(f["rim"], np.int64), "interior": np.asarray(f["interior"], np.int64)}
              for b in derived.beads for f in getattr(b, "features", [])]

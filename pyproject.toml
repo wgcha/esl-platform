@@ -2,7 +2,8 @@
 name = "esl"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["numpy", "scipy", "pyyaml"]
+# beadgraph = in-repo shared package (packages/beadgraph, same release — esl_beadgraph.md §8.3); dev: pip install -e packages/beadgraph
+dependencies = ["numpy", "scipy", "pyyaml", "beadgraph==1.0.0"]
 
 [project.optional-dependencies]
 test = ["pytest"]
@@ -16,6 +17,7 @@ fast = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "packages/beadgraph/src"]
 testpaths = ["tests"]
-markers = ["perf: 성능 측정(기준 초과는 경고 + 측정값 기록, 큰 초과만 실패)"]
+markers = ["perf: 성능 측정(기준 초과는 경고 + 측정값 기록, 큰 초과만 실패)",
+           "slow: 수십 초 걸리는 H6 전체 시험(v0.17.0 BEADGRAPH)"]
