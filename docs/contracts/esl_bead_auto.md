@@ -1,5 +1,6 @@
 # 계약: 비드 자동 탐지 → 직접 선택(select) 초기 선택 · ② B 메시 기준 select · 공통 코어 정리 (BEAD_AUTO, v0.16.2)
 
+- **v0.17.0 변경 = `esl_beadgraph.md`**(BEADGRAPH — 선택 schema 2 스터디의 자동 seed 출처 = 메시 분류기. schema 1 스터디는 이 문서 그대로).
 - 상태: **확정** (2026-11-08). 기본안(AD-D-1~12, API, V-AD-1~8, R-AD-1~5) = 사용자 승인안 그대로. ② `mesh` 의 select 전환(AD-D-13~23, V-AD-9~15, R-AD-6~10) = 사용자 선택(2026-11-08)을 코드 조사로 구체화. 막힌 항목은 §13 열린 항목(해법을 만들지 않음).
 - 버전: **v0.16.2** (기준 main 4008821 = v0.16.1). migration **불필요**(§3.4).
 - 관계: `esl_select_relax.md`(SELECT_RELAX, v0.16.1 — 이하 "SR")·`esl_bead_select.md`(BEAD_SELECT, v0.15.0 — 이하 "BS")의 **변경 계약**. ② 부분은 `esl_bead_doe.md`(BEAD_DOE — 이하 "BD") BD-D-3·4·12·14 와 `esl_step_compare.md`(이하 "SC") SC-D-6, `esl_compare_mesh_options.md`(이하 "C2") C2-D-2~7 을 **재사용**한다(새 매핑 없음). 이 문서에 없는 규칙은 SR → BS → BD 순서로 따르고, 충돌 시 이 문서가 우선.

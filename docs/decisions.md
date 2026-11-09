@@ -190,3 +190,13 @@
 - (0.16.2 통합 D-0.16.2-RPTCAD, 2026-11-08) V-AD-2·10 보고서 비교는 입력 CAD 행(auto = 자동 탐지 입력 STEP 이름)을 빼고 바이트 동일 — 입력 출처 표기라 결과 아님, 수용 편차(근거: esl_bead_auto.md §14 AD-X-2).
 - (0.16.2 통합 D-0.16.2-MESHINV, 2026-11-08) V-AD-13 ② select include 업로드 밖 = `MESH_INVALID`(계약 PATH_OUTSIDE_ROOT 대신 legacy ② 와 같은 판정), 수용 편차(근거: esl_bead_auto.md §14 AD-X-3·AD-D-14).
 - (0.16.2 통합 D-0.16.2-AUTOFIX, 2026-11-08) auto 에서 fixed-scan 실패 = `AUTO_DETECT_FAILED{step:"tag", detail:"FIXED_INFO_MISSING"}`, 경고 모양 `{code, message, step, detail}` — 화면은 `detail` 을 읽음(옛 paicad_code·code_detail 안 읽음), 수용 편차(근거: esl_bead_auto.md §14 AD-X-4).
+- (0.17.0 확정 D-0.17.0-RELDEPTH, 2026-11-09) D1 비드 깊이는 부모 바닥 대비 상대값(위계 플랜지 → 고리 띠 → 플래토 → 채널·포켓), 자식은 부모를 강체로 따라간다(근거: 사용자 확정 2026-11-09 — esl_beadgraph.md BG-D-15·23).
+- (0.17.0 확정 D-0.17.0-SHARED, 2026-11-09) D2 분류기·세그먼트 모핑 = esl-platform·physicsai-platform 공통 순수 numpy/scipy 패키지 `packages/beadgraph/`(입력 메시 노드·요소·고정 노드, 출력 JSON 그래프 `beadgraph/1`, 독립 semver 1.0.0, esl 경로 설치·physicsai 휠 정확 고정)(근거: 사용자 확정 — esl_beadgraph.md §8, BG-D-43).
+- (0.17.0 확정 D-0.17.0-SECTION, 2026-11-09) D3 단면 = 사면 45°·입구 폭 고정(깊어지면 바닥이 좁아짐), 바닥 코너는 코너 가드로 국부적으로 가팔라짐 허용(근거: 사용자 확정, H6 d_g 뒤집힘 0 — esl_beadgraph.md BG-D-25·26).
+- (0.17.0 확정 D-0.17.0-RAMP, 2026-11-09) D4 접합 램프 = smoothstep, 길이 max(3·ΔD, 3·h); 바뀐 세그먼트·자식 밖 이동은 0 이어야 하며 넘으면 FAILED_MESH `BG_OUTSIDE_MOVED`(근거: 사용자 확정, H5 — esl_beadgraph.md BG-D-24·34).
+- (0.17.0 확정 D-0.17.0-VCHAN, 2026-11-09) D5 세로 채널은 기본 각각 별도 변수, 대칭 묶기(`ties`)는 옵션(근거: 사용자 확정 — esl_beadgraph.md BG-D-20·21).
+- (0.17.0 확정 D-0.17.0-STRADDLE, 2026-11-09) D6 벽에 걸친 보스는 채널을 따라가고, 실제 체결·고정 노드만 기존 hold 블렌딩(ρ 3·블렌딩 8)으로 제자리 — 보스 전체 고정 폐지(근거: 사용자 확정, H6 (b) 미달 패치 — esl_beadgraph.md BG-D-27·28).
+- (0.17.0 확정 D-0.17.0-RINGSIDE, 2026-11-09) D7 고리 윗변 넓어진 코너·코너와 다리 사이 짧은 띠는 변수 없는 접합 구역으로 흡수, 고리 변수 = 4변(위·아래·왼쪽·오른쪽)(근거: 사용자 확정 — esl_beadgraph.md BG-D-13·19).
+- (0.17.0 확정 D-0.17.0-ISLAND60, 2026-11-09) D8 그래프 분류의 `island.max_mm` = 60, 화면에서 어떤 조각이든 섬 ↔ 비드 전환 가능(근거: 사용자 확정 — esl_beadgraph.md BG-D-9·37; schema 1 스터디 적용 여부는 O-BG-1).
+- (0.17.0 확정 D-0.17.0-SEEDSRC, 2026-11-09) D9 자동 탐지 seed 출처 = 메시 분류기(paicad B-rep 인식 대신), paicad flanks 는 힌트만 — paicad 가 고리 + ㅛ 네트워크를 BEAD_IRREGULAR 로 버림(근거: 사용자 확정·관찰 — esl_beadgraph.md BG-D-20·42, §5.3).
+- (0.17.0 확정 D-0.17.0-UIFLOW, 2026-11-09) D10 기존 화면 흐름 재사용(자동 seed → 같은 BeadSelectCard/BeadList 편집 + 세그먼트 트리 보기), 새 화면 없음(근거: 사용자 확정 — esl_beadgraph.md §6.2).
