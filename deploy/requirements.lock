@@ -63,3 +63,6 @@ pyparsing==3.3.3
 python-dateutil==2.9.0.post0
 six==1.17.0
 vtk==9.3.1
+# v0.17.0 BEADGRAPH(계약 esl_beadgraph.md §8.3): 저장소 안 순수 파이썬 패키지 packages/beadgraph(numpy·scipy 만 — PyPI 에 없음).
+# collect-offline 이 pip download 에서 빼고 저장소 경로에서 휠(beadgraph-<ver>-py3-none-any.whl)을 빌드해 wheels/ 에 넣는다(판 = __version__).
+beadgraph==1.0.0

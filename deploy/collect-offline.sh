@@ -14,6 +14,8 @@
 #   v0.10.1: 저장소 동봉 deploy/wheels/<lock.wheel> 이 있으면(기본) 빌드 없이 그 wheel 을 대조만 해서 넣는다(--no-download 여도 — 네트워크 불필요).
 #   --physicsai-repo·--paicad-wheel 을 주면 그쪽을 쓴다. 동봉 wheel 이 없고 --no-download 이면 paicad 도 건너뛴다.
 #   OCP(cadquery-ocp)·gmsh 휠은 requirements.lock 의 bead_doe 절로 함께 받는다.
+#   v0.17.0 beadgraph(계약 esl_beadgraph.md §8.3 — 저장소 안 순수 파이썬 패키지 packages/beadgraph, PyPI 에 없음): pip download 대상에서
+#   빼고(requirements.lock 의 beadgraph== 줄) 저장소 경로에서 pip wheel --no-deps 로 빌드해 wheels/ 에 넣는다 — 휠 판 ≠ lock 판이면 중단.
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL·OCP·gmsh 포함 + paicad-<ver>-py3-none-any.whl), frontend/(vite build, base /esl/),
 #   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json·scx_messages.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
@@ -67,7 +69,17 @@ run "mkdir -p '$OUTDIR/wheels' '$OUTDIR/frontend' '$OUTDIR/app/backend' '$OUTDIR
 if [ "$NODL" -eq 1 ]; then
   run "cp deploy/requirements.lock '$OUTDIR/wheels/DOWNLOAD-LIST.txt'"
 else
-  run "$PY -m pip download --disable-pip-version-check -r deploy/requirements.lock --only-binary=:all: --platform win_amd64 --python-version 3.12 -d '$OUTDIR/wheels'"
+  run "grep -v '^beadgraph==' deploy/requirements.lock > '$OUTDIR/requirements.download.txt'"
+  run "$PY -m pip download --disable-pip-version-check -r '$OUTDIR/requirements.download.txt' --only-binary=:all: --platform win_amd64 --python-version 3.12 -d '$OUTDIR/wheels'"
+  run "rm -f '$OUTDIR/requirements.download.txt'"
+  # v0.17.0 beadgraph 휠(저장소 경로 빌드 — 순수 파이썬 py3-none-any) → lock 판 대조(불일치면 중단)
+  BG_VER="$(sed -n 's/^beadgraph==\(.*\)$/\1/p' deploy/requirements.lock | head -1)"
+  if [ -n "$BG_VER" ]; then
+    [ "$DRY" -eq 1 ] || [ -f packages/beadgraph/pyproject.toml ] || { echo "packages/beadgraph 가 없습니다(requirements.lock beadgraph==$BG_VER)" >&2; exit 1; }
+    run "$PY -m pip wheel --disable-pip-version-check --no-deps packages/beadgraph -w '$OUTDIR/wheels'"
+    [ "$DRY" -eq 1 ] || [ -f "$OUTDIR/wheels/beadgraph-$BG_VER-py3-none-any.whl" ] || {
+      echo "beadgraph 휠 판이 lock(beadgraph==$BG_VER)과 다릅니다 — packages/beadgraph __version__ 과 deploy/requirements.lock 을 맞추세요" >&2; exit 1; }
+  fi
 fi
 # 비드 DOE paicad wheel(동봉 wheel 대조 또는 lock 커밋 빌드·정규화·sha256 대조 — 불일치면 여기서 중단)
 VENDORED="deploy/wheels/$(sed -n 's/^ *"wheel": *"\([^"]*\)".*/\1/p' deploy/paicad.lock | head -1)"

@@ -32,6 +32,8 @@ _MODULES = {
     "doe_bead_select": "esl.doe.bead_select",
     # v0.16.2 자동 탐지 seed 읽기(esl_bead_auto.md AD-D-3 — read_auto_selection 만, 탐지·쓰기는 워커·코어)
     "doe_bead_auto": "esl.doe.bead_auto",
+    # v0.17.0 BEADGRAPH(esl_beadgraph.md §8.6): schema 2 정규화·derive(normalize_v2·derive_v2) — 분류는 워커 DOE_PREP 코어 단계
+    "doe_bead_graph": "esl.doe.bead_graph",
     # 이슈 #53: 원자적 교체 공통 함수(atomic_replace·FileLocked·configure) — esl_platform.core.atomic 이 재노출
     "fsutil": "esl.fsutil",
 }

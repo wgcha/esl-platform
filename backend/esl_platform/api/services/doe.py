@@ -198,12 +198,13 @@ def status(ctx: AppContext) -> dict[str, Any]:
     enabled = reason is None
     cr = compare_reason(c, gmsh["ready"])
     sr = select_reason(c)
+    graph_on = bool(((c.get("select") or {}).get("graph") or {}).get("enabled", True))
     return {"enabled": enabled, "reason": reason, "paicad": paicad, "gmsh": gmsh,
             "scenarios": {"same": enabled, "mesh": enabled, "step": enabled and gmsh["ready"], "compare": cr is None,
                           "select": sr is None,
-                          # v0.16.2(esl_bead_auto.md §3.2): 자동 탐지 = select 가능 ∧ paicad 준비됨, ② B 메시 기준 select =
-                          # select 가능(수동은 paicad 불필요 — 자동 탐지는 select_auto 도 봐야 함)
-                          "select_auto": sr is None and paicad["ready"], "select_mesh": sr is None},
+                          # v0.17.0(esl_beadgraph.md §5.5 D9): 자동 탐지 seed = 메시 분류기 → select 가능 ∧ graph.enabled
+                          # (paicad 무관 — paicad extract 는 힌트만). ② B 메시 기준 select = select 가능
+                          "select_auto": sr is None and graph_on, "select_mesh": sr is None},
             "compare_reason": cr, "select_reason": sr}
 
 
@@ -315,7 +316,20 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
                        "island": {"max_mm": float(sc["island"]["max_mm"]),
                                   "ring_frac": float(sc["island"].get("ring_frac", 0.9))},
                        # v0.16.2 AD-D-7 구멍 건너 잇기 상한(브라우저 거울)
-                       "hole": {"bridge_max_mm": float((sc.get("hole") or {}).get("bridge_max_mm", 20.0))}}}
+                       "hole": {"bridge_max_mm": float((sc.get("hole") or {}).get("bridge_max_mm", 20.0))},
+                       # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5): 그래프 분류 사용·섬 상한(D8)·대칭 묶기 허용차(화면 거울)
+                       "graph": _graph_settings(sc)}}
+
+
+def _graph_settings(sc: dict[str, Any]) -> dict[str, Any]:
+    from ...core.config import BeadDoeSelectGraphCfg
+
+    g = BeadDoeSelectGraphCfg.model_validate(sc.get("graph") or {})
+    return {"enabled": bool(g.enabled), "island": {"max_mm": float(g.island.max_mm)}, "sym_tol_mm": float(g.sym_tol_mm)}
+
+
+# v0.17.0(esl_beadgraph.md BG-D-35): 이 판 이후 만든 select 스터디의 선택 schema(inputs.select_schema — 키 없음 = 1, v0.16.2 이전)
+SELECT_SCHEMA_NEW = 2
 
 
 # ---------------------------------------------------------------- POST /doe/check-inputs
@@ -397,10 +411,9 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     src, sbase = select_kind(body)
     is_sel = body.scenario == "select"
     if is_sel:
-        # v0.16.2(esl_bead_auto.md §3.3·AD-D-1·13·14): 자동 탐지 = paicad extract·tag 입력 STEP 필수, 수동 = STEP 금지.
+        # v0.16.2(esl_bead_auto.md §3.3·AD-D-1·13): 수동 = STEP 금지. v0.17.0(esl_beadgraph.md §5.3): 자동 탐지 seed = 메시
+        # 분류기 → STEP 선택(있으면 paicad extract 힌트만 — AD-D-14 의 'auto + STEP 없음 422' 폐지, 새 스터디 = schema 2).
         # case = 같은 모델 Case 메시(B 메시·파트 금지), mesh = ② B 메시(.rad/.inc) 필수
-        if src == "auto" and not body.step_upload_id:
-            raise unprocessable("INVALID_PARAMS", "'자동 탐지'에는 step_upload_id(STEP — paicad 비드 탐지 입력)가 필요합니다")
         if src == "manual" and body.step_upload_id:
             raise unprocessable("INVALID_PARAMS", "step_upload_id 는 '비드 직접 선택 — 수동'에서 쓰지 않습니다(자동 탐지만)")
         if sbase == "case" and (body.mesh_upload_id or body.part_title):
@@ -418,7 +431,8 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     with ctx.engine.connect() as conn:
         rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
     rows = backfill_opt_meta(ctx, rows)
-    step_out, step_p = _step_input(ctx, principal, body, c) if (not is_sel or src == "auto") else (None, None)
+    step_out, step_p = _step_input(ctx, principal, body, c) if (not is_sel or (src == "auto" and body.step_upload_id)) \
+        else (None, None)
     out: dict[str, Any] = {"ok": True, "step": step_out, "base": None, "mesh": None, "entries": [], "size": None,
                            "props_default": None, "mesh_size_default_mm": None, "warnings": []}
     mat: dict[str, Any] = {"rows": rows, "step": step_p, "base": None, "base_db": None, "mesh": None,
@@ -849,6 +863,8 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 prep["auto"] = p0["auto"]
             if p0.get("select_base") == "mesh":     # v0.16.2 ② B 메시 기준(① 은 키 없음)
                 prep["select_base"] = "mesh"
+            if isinstance(p0.get("graph"), dict):   # v0.17.0 분류 결과 {ok, code, sha256, n_segments, …}(schema 2 만)
+                prep["graph"] = p0["graph"]
     if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
         inputs.setdefault("bead_source", "manual")
     return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
@@ -1025,6 +1041,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         inputs["bead_source"] = mat["bead_source"]
         if sel_mesh:
             inputs["select_base"] = "mesh"
+        inputs["select_schema"] = SELECT_SCHEMA_NEW     # v0.17.0 BG-D-35(복제 = 원 스터디 값 유지)
     import datetime as _dt
 
     created = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -1046,6 +1063,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         doe["bead_source"] = mat["bead_source"]
         if sel_mesh:
             doe["select_base"] = "mesh"
+        doe["select_schema"] = SELECT_SCHEMA_NEW        # v0.17.0 BG-D-40: BD_LOADS 그래프 단계·BD_GEOM 힌트 plan(키 없음 = 1)
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,

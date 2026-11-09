@@ -90,9 +90,27 @@ try {
             New-Item -ItemType Directory -Force -Path $d | Out-Null
         }
     }
-    Invoke-Step 'pip download -r deploy/requirements.lock --only-binary=:all: --platform win_amd64 --python-version 3.12 -d dist/bundle/wheels' {
-        Invoke-Native 'pip download (requirements.lock)' $py @('-m', 'pip', 'download', '--disable-pip-version-check', '-r', 'deploy/requirements.lock',
+    # v0.17.0 beadgraph(esl_beadgraph.md §8.3): 저장소 안 순수 파이썬 패키지(packages\beadgraph, PyPI 에 없음) — pip download 에서 빼고 아래에서 빌드
+    $dlList = 'dist\bundle\requirements.download.txt'
+    $bgVer = $null
+    $dlLines = foreach ($ln in (Get-Content -Encoding UTF8 -LiteralPath 'deploy\requirements.lock')) {
+        if ("$ln" -match '^beadgraph==(.+)$') { $bgVer = $Matches[1].Trim() } else { $ln }
+    }
+    Invoke-Step 'pip download -r deploy/requirements.lock(beadgraph 제외) --only-binary=:all: --platform win_amd64 --python-version 3.12 -d dist/bundle/wheels' {
+        [IO.File]::WriteAllLines((Join-Path $root $dlList), [string[]]$dlLines)
+        Invoke-Native 'pip download (requirements.lock)' $py @('-m', 'pip', 'download', '--disable-pip-version-check', '-r', $dlList,
             '--only-binary=:all:', '--platform', 'win_amd64', '--python-version', '3.12', '-d', 'dist/bundle/wheels') $pipHint
+    }
+    if (Test-Path -LiteralPath $dlList) { Remove-Item -LiteralPath $dlList -Force }
+    if ($bgVer) {
+        Invoke-Step "beadgraph $bgVer wheel(packages\beadgraph → pip wheel --no-deps) → dist/bundle/wheels" {
+            if (-not (Test-Path -LiteralPath 'packages\beadgraph\pyproject.toml')) { throw "packages\beadgraph 가 없습니다(requirements.lock beadgraph==$bgVer)" }
+            Invoke-Native 'beadgraph wheel 빌드' $py @('-m', 'pip', 'wheel', '--disable-pip-version-check', '--no-deps', 'packages/beadgraph',
+                '-w', 'dist/bundle/wheels') $pipHint
+            if (-not (Test-Path -LiteralPath "dist\bundle\wheels\beadgraph-$bgVer-py3-none-any.whl")) {
+                throw "beadgraph 휠 판이 lock(beadgraph==$bgVer)과 다릅니다 — packages\beadgraph __version__ 과 deploy\requirements.lock 을 맞추세요"
+            }
+        }
     }
     # 비드 DOE 형상 엔진 paicad: lock 커밋 빌드·정규화·sha256 대조(불일치면 중단). 빌드 venv 는 paicad_wheel.py 가 임시로 만들고 지운다
     if ($NoPaicad) {

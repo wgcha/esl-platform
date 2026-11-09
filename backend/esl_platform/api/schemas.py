@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_validator
 
 FOLDER_RE = r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$"
 WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
@@ -1925,14 +1925,144 @@ class SelectionIn(_Req):
     exclude: SelectElemSet = Field(default_factory=SelectElemSet)   # v0.16.1: 사면 자동·섬 판정에서 뺄 요소(SR-D-15)
 
 
+# ---------------------------------------------------------------- v0.17.0 선택 schema 2(계약 esl_beadgraph.md §5.1 BG-D-35~38)
+# 구조(형식·길이)만 여기서 본다. 의미 검사(앵커 해석·묶음 연결·tie 공칭·편집 유효성·요소 겹침)는 코어 esl.doe.bead_graph
+# (422 BG_*·SELECT_OVERLAP). schema 1 은 위 SelectionIn 그대로(본문·dump·sha 바이트 불변).
+_ANCHOR = Field(ge=0, le=2 ** 31 - 1)
+
+
+def _no_bool(v: Any, what: str) -> Any:
+    if isinstance(v, bool):                          # Literal[0, 1]·int 는 True 를 받으므로 bool 은 따로 거부
+        raise ValueError(f"{what} 는 정수")
+    return v
+
+
+class GraphAnchorRef(_Req):
+    anchor: int = _ANCHOR
+
+    @field_validator("anchor", mode="before")
+    @classmethod
+    def _a(cls, v: Any) -> Any:
+        return _no_bool(v, "anchor")
+
+
+class GraphSegRef(_Req):
+    """비드 구성 = 세그먼트 앵커 {anchor} 또는 네트워크 묶기 {network: 앵커}(BG-D-17·18) — 정확히 하나."""
+
+    anchor: int | None = Field(default=None, ge=0, le=2 ** 31 - 1)
+    network: int | None = Field(default=None, ge=0, le=2 ** 31 - 1)
+
+    @field_validator("anchor", "network", mode="before")
+    @classmethod
+    def _a(cls, v: Any) -> Any:
+        return _no_bool(v, "anchor")
+
+    @model_validator(mode="after")
+    def _one(self) -> "GraphSegRef":
+        if (self.anchor is None) == (self.network is None):
+            raise ValueError("segs 항목은 {anchor} 또는 {network} 중 하나")
+        return self
+
+
+class GraphToggleIn(_Req):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    anchor: int = _ANCHOR
+    as_: Literal["bead", "island"] = Field(alias="as")
+
+
+class GraphSplitIn(_Req):
+    anchor: int = _ANCHOR
+    at: list[float] = Field(min_length=2, max_length=2)       # 평면 좌표 [x, y](mm)
+
+    @field_validator("at")
+    @classmethod
+    def _finite(cls, v: list[float]) -> list[float]:
+        if any(x != x or x in (float("inf"), float("-inf")) for x in v):
+            raise ValueError("at 은 유한한 수")
+        return v
+
+
+class GraphEditsIn(_Req):
+    """BG-D-37 편집: 적용 순서 toggle → merge → split(코어 beadgraph.apply_edits)."""
+
+    toggle: list[GraphToggleIn] = Field(default_factory=list, max_length=10000)
+    merge: list[Annotated[list[GraphAnchorRef], Field(min_length=2, max_length=1000)]] = Field(default_factory=list,
+                                                                                             max_length=10000)
+    split: list[GraphSplitIn] = Field(default_factory=list, max_length=10000)
+
+
+class GraphRefIn(_Req):
+    """선택이 기준으로 삼은 분류 결과 — sha256 = prep/select/graph.json 바이트 sha(다르면 409 BG_GRAPH_STALE, BG-D-38)."""
+
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rules: int = Field(ge=0, le=1_000_000)
+    edits: GraphEditsIn = Field(default_factory=GraphEditsIn)
+
+
+class SelectGraphBeadIn(_Req):
+    """src graph 비드(BG-D-17) = 세그먼트 앵커 묶음 → 변수 D(·W). vars 생략 = 가능한 것 전부, hold_fixed 생략 = 1(BG-D-28)."""
+
+    id: str = Field(max_length=16)
+    name: str | None = Field(default=None, max_length=256)
+    src: Literal["graph"]
+    segs: list[GraphSegRef] = Field(min_length=1, max_length=1000)
+    vars: list[Literal["D", "W"]] | None = Field(default=None, min_length=1, max_length=2)
+    hold_fixed: Literal[0, 1] | None = None
+
+    @field_validator("hold_fixed", mode="before")
+    @classmethod
+    def _hold_not_bool(cls, v: Any) -> Any:
+        if isinstance(v, bool):
+            raise ValueError("hold_fixed 는 0 또는 1(정수)")
+        return v
+
+    @field_validator("vars")
+    @classmethod
+    def _uniq(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None and len(set(v)) != len(v):
+            raise ValueError("vars 중복")
+        return v
+
+
+class SelectElemsBeadIn(SelectBeadIn):
+    """src elems 비드 = schema 1 비드 본문 그대로(BG-D-36 — v0.16.2 derive 경로, 섬 상한만 그래프 값)."""
+
+    src: Literal["elems"]
+
+
+SelectBeadV2 = Annotated[Union[SelectGraphBeadIn, SelectElemsBeadIn], Field(discriminator="src")]
+
+
+class SelectionInV2(_Req):
+    """v0.17.0 SelectionIn schema 2(BG-D-36). graph 생략 = 분류 결과 없음(GRAPH_FAILED — elems 비드만)."""
+
+    schema_version: Literal[2]
+    feature_angle_deg: float | None = None
+    graph: GraphRefIn | None = None
+    beads: list[SelectBeadV2] = Field(max_length=100)
+    ties: list[Annotated[list[str], Field(min_length=2, max_length=100)]] = Field(default_factory=list, max_length=100)
+    fixed_user: SelectElemSet = Field(default_factory=SelectElemSet)
+    exclude: SelectElemSet = Field(default_factory=SelectElemSet)
+
+
+def _selection_tag(v: Any) -> str:
+    sv = v.get("schema_version") if isinstance(v, dict) else getattr(v, "schema_version", None)
+    return "2" if sv == 2 and not isinstance(sv, bool) else "1"
+
+
+# schema_version 2 → SelectionInV2, 그 밖(생략·1·잘못된 값) → schema 1 모델(오류도 v0.16.2 와 같음)
+SelectionAny = Annotated[Union[Annotated[SelectionIn, Tag("1")], Annotated[SelectionInV2, Tag("2")]],
+                         Discriminator(_selection_tag)]
+
+
 class DoeSelectDeriveIn(_Req):
-    selection: SelectionIn
+    selection: SelectionAny
     bead: str | None = Field(default=None, max_length=16)    # 주면 그 비드만 다시 계산
 
 
 class DoeSelectionPutIn(_Req):
     version: int = Field(ge=1)
-    selection: SelectionIn
+    selection: SelectionAny
 
 
 class SelectionDerived(_Out):
@@ -1947,6 +2077,9 @@ class SelectionDerived(_Out):
     # 비드별 islands·holes·inner_loops_n·hold_fixed·hold 는 beads[] dict 안
     algo: int | None = None
     islands_suggested: dict[str, Any] | None = None
+    # v0.17.0(esl_beadgraph.md §6.1): schema 2 — graph{sha256, graph_algo, edits_applied, segments, junction_zones, beads, sym_pairs}
+    graph: dict[str, Any] | None = None
+    graph_algo: int | None = None
 
 
 class DoeSelectAutoOut(_Out):
@@ -1958,6 +2091,21 @@ class DoeSelectAutoOut(_Out):
     map: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     paicad_version: str | None = None
+    # v0.17.0(esl_beadgraph.md BG-D-42·§6.1): schema 2 스터디 = source "graph"(메시 분류기 seed), hints = paicad flanks 비교(있으면)
+    source: Literal["paicad", "graph"] | None = None
+    hints: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DoeSelectGraphOut(_Out):
+    """v0.17.0 GET …/select/graph(esl_beadgraph.md §6.1): 분류 결과 beadgraph/1(편집 적용 전), sha256 = graph.json 바이트 sha."""
+
+    graph: dict[str, Any]
+    sha256: str
+    edits_applied: dict[str, Any] | None = None
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    beadgraph_version: str | None = None
+    rules: int | None = None
+    morph_rules: int | None = None
 
 
 class DoeSelectionOut(_Out):
