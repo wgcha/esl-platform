@@ -279,8 +279,9 @@ def selection(*beads, **kw):
 
 
 def simulate_select_prep(engine, esl_root: Path, sid: str, job_id: str, mesh: dict, *, fixed: list[int] | None = None,
-                         node_shift: float = 0.0) -> str:
-    """워커 DOE_PREP(select) 흉내: prep/base_mesh.npz·base.json(scenario.save_base) + prep/select/ + (fixed-scan) prep/fixed/."""
+                         node_shift: float = 0.0, schema: int = 1) -> str:
+    """워커 DOE_PREP(select) 흉내: prep/base_mesh.npz·base.json(scenario.save_base) + prep/select/ + (fixed-scan) prep/fixed/.
+    v0.17.0: 새 스터디는 inputs.select_schema 2 — schema=1(기본)이면 키를 지워 v0.16.2 이전 스터디로 만든다(schema 1 회귀 V-BG-12)."""
     from esl.doe import scenario as sc
     from esl.opt import target as tg
 
@@ -307,6 +308,9 @@ def simulate_select_prep(engine, esl_root: Path, sid: str, job_id: str, mesh: di
                  prep={"n_beads": 0, "n_params": 0, "warnings": [], "boundary": None, "n_nodes": int(m["node_id"].size),
                        "n_elems": int(m["elem_id"].size), "fixed": {"source": "scan" if fixed else "none",
                                                                      "n": len(fixed or [])}})
+    if schema == 1:
+        with engine.begin() as c:
+            c.execute(text("UPDATE bead_does SET inputs = inputs - 'select_schema' WHERE id=:i"), {"i": sid})
     return meta["mesh_sha256"]
 
 
@@ -394,7 +398,9 @@ def test_settings_select_block(client, world):
                            # v0.16.1 V-SR-13(settings 키)
                            "fixed_policy": "warn", "quality_fail_policy": "warn", "hold": {"ring_mm": 3.0, "blend_mm": 8.0},
                            "island": {"max_mm": 40.0, "ring_frac": 0.9},           # 브라우저 섬 판정 거울(SR-D-26)
-                           "hole": {"bridge_max_mm": 20.0}}                         # v0.16.2 AD-D-7
+                           "hole": {"bridge_max_mm": 20.0},                         # v0.16.2 AD-D-7
+                           # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5) — 그래프 분류·섬 상한 60(D8)·대칭 묶기 허용차
+                           "graph": {"enabled": True, "island": {"max_mm": 60.0}, "sym_tol_mm": 0.5}}
 
 
 def test_select_defaults_mirror_contract():
@@ -419,7 +425,9 @@ def test_select_defaults_mirror_contract():
             # v0.16.1 어려운 사례 수정(SR-D-37~40)
             "cross_bead_policy": "warn", "cross_bead_tol_mm": 0.1,
             # v0.16.2(esl_bead_auto.md §3.2 — AD-D-7·12)
-            "hole": {"bridge_max_mm": 20.0}, "auto": {"slope_diff_rel": 0.2}}
+            "hole": {"bridge_max_mm": 20.0}, "auto": {"slope_diff_rel": 0.2},
+            # v0.17.0(esl_beadgraph.md §5.5 — 계약 yaml 그대로)
+            "graph": GRAPH_DEFAULTS}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
         from doe_support import core_view_v0161
@@ -436,9 +444,28 @@ def test_select_defaults_mirror_contract():
                 {"range": {"depth_max_rel": 0.2}}, {"range": {"width_max_rel": 0.1}}, {"range": {"depth_max_rel": 6}},
                 {"island": {"max_mm": 0}}, {"hold": {"ring_mm": -1}}, {"hold": {"blend_mm": 0}},
                 # v0.16.2
-                {"hole": {"bridge_max_mm": 0}}, {"auto": {"slope_diff_rel": -0.1}}):
+                {"hole": {"bridge_max_mm": 0}}, {"auto": {"slope_diff_rel": -0.1}},
+                # v0.17.0 select.graph 검사(§5.5 표)
+                *({"graph": g} for g in GRAPH_BAD)):
         with pytest.raises(ValueError):
             BeadDoeSelectCfg.model_validate(bad)
+
+
+GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.3, "min_floor_area_mm2": 12.0,
+                  "root_free_frac": 0.2, "raster_mm": 1.0, "island": {"max_mm": 60.0, "straddle_frac": 0.15},
+                  "bead": {"max_width_mm": 80.0, "prune_k": 2.2, "bend_deg": 50.0, "width_jump": 0.35, "min_zone_mm": 12.0,
+                           "open_ext_mm": 90.0, "absorb_len_mm": 60.0},
+                  "morph": {"ramp_k": 3.0, "outside_tol_mm": 1.0e-6, "achieved_tol_mm": 1.0e-6,
+                            "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40}},
+                  "sym_tol_mm": 0.5, "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}
+GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
+             {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
+             {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},
+             {"morph": {"outside_tol_mm": 0}}, {"morph": {"outside_tol_mm": 2e-3}},
+             {"morph": {"corner": {"area_ratio_min": 1.0}}}, {"morph": {"corner": {"shrink": 1.0}}},
+             {"morph": {"corner": {"iters": 0}}}, {"morph": {"corner": {"iters": 201}}}, {"limits": {"max_elems": 0}},
+             {"limits": {"max_elems": 2_000_001}}, {"limits": {"timeout_s": 0}}, {"limits": {"max_raster_px": 99_999}},
+             {"unknown": 1})
 
 
 @pytest.mark.parametrize("case", ["paicad_missing", "no_gmsh", "select_off", "doe_off"])
@@ -1036,13 +1063,15 @@ def test_v0162_settings_select_auto_mesh(client, world, engine):
     svc.reset_status_cache()
     s = api(client, "GET", "/doe/settings").json()
     assert s["scenarios"]["select"] is True and s["scenarios"]["select_mesh"] is True
-    assert s["scenarios"]["select_auto"] is False
+    # v0.17.0(esl_beadgraph.md §5.5 D9): 자동 seed = 메시 분류기 → paicad 무관(select 가능 ∧ graph.enabled)
+    assert s["scenarios"]["select_auto"] is True
 
 
 def test_v0162_select_case_bead_source(client, world, engine):
-    """V-AD-13(①): auto 는 STEP 필수, manual 은 STEP 금지, case 는 B 메시·파트 금지, select 밖 bead_source·select_base 422."""
+    """V-AD-13(①): manual 은 STEP 금지, case 는 B 메시·파트 금지, select 밖 bead_source·select_base 422.
+    v0.17.0(esl_beadgraph.md §5.3): auto + STEP 없음 허용(힌트 없음) — V-BG-15."""
     uid = upload_step(client)
-    for extra in ({"bead_source": "auto"}, {"bead_source": "manual", "step_upload_id": uid},
+    for extra in ({"bead_source": "manual", "step_upload_id": uid},
                   {"step_upload_id": uid}, {"select_base": "case", "mesh_upload_id": uid},
                   {"bead_source": "auto", "step_upload_id": uid, "part_title": "x"}):
         r = api(client, "POST", "/doe/check-inputs", json=sbody(world, **extra))
@@ -1074,7 +1103,7 @@ def test_v0162_select_case_bead_source(client, world, engine):
 
 
 def test_v0162_select_mesh_inputs(client, world, engine, tmp_path):
-    """V-AD-13(②): mesh_upload_id 없음 422, auto + STEP 없음 422, manual + STEP 422, 크기·인치 SIZE_MISMATCH, include 업로드 밖
+    """V-AD-13(②): mesh_upload_id 없음 422, manual + STEP 422(v0.17.0: auto + STEP 없음은 허용 — V-BG-15), 크기·인치 SIZE_MISMATCH, include 업로드 밖
     거부·파트 없음 = ② 규칙 그대로(MESH_INVALID·PART_NOT_FOUND), 같은 모델 검사 안 함. 생성 = scenario select + select_base mesh."""
     step = upload_step(client)
     mesh = upload_files(client, {"rad/B_0000.rad": rad_mesh_bytes(tmp_path)})
@@ -1082,8 +1111,7 @@ def test_v0162_select_mesh_inputs(client, world, engine, tmp_path):
 
     def chk(**kw):
         return api(client, "POST", "/doe/check-inputs", json=sbody(world, ids, select_base="mesh", **kw))
-    for kw in ({}, {"bead_source": "auto", "mesh_upload_id": mesh}, {"bead_source": "manual", "mesh_upload_id": mesh,
-                                                                     "step_upload_id": step}):
+    for kw in ({}, {"bead_source": "manual", "mesh_upload_id": mesh, "step_upload_id": step}):
         r = chk(**kw)
         assert r.status_code == 422 and code(r) == "INVALID_PARAMS", (kw, r.text)
     r = chk(mesh_upload_id=mesh, inch=55)

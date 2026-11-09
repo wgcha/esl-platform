@@ -24,6 +24,7 @@ from ..schemas import (
     DoeRunIn,
     DoeSelectAutoOut,
     DoeSelectDeriveIn,
+    DoeSelectGraphOut,
     DoeSelectionOut,
     DoeSelectionPutIn,
     DoeSettingsOut,
@@ -185,7 +186,8 @@ SELECT_VIEW_RESPONSES = {
     200: {"content": {"model/gltf-binary": {"schema": {"type": "string", "format": "binary"}},
                       "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
                       "application/json": {}},
-          "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256, If-None-Match 일치 시 304)"},
+          "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256 · v0.17.0 graph.bin, "
+                         "ETag = graph.json sha256 — If-None-Match 일치 시 304)"},
     304: {"description": "변경 없음"}}
 BASIS_RESPONSES = {
     200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}, "application/json": {}},
@@ -216,6 +218,13 @@ def doe_select_auto(sid: str, request: Request, principal: Principal = Depends(g
     """v0.16.2 자동 탐지 seed(prep/select/auto_selection.json — 저장 안 함). manual·탐지 실패 404 AUTO_NOT_AVAILABLE,
     준비 전 409 PREP_NOT_READY."""
     return sel_svc.auto_out(get_ctx(request), principal, sid)
+
+
+@router.get("/doe/studies/{sid}/select/graph", response_model=DoeSelectGraphOut)
+def doe_select_graph(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.17.0 메시 비드 네트워크 분류 결과(beadgraph/1 — 편집 적용 전, sha256 = prep/select/graph.json 바이트).
+    schema 1 스터디·분류 실패 404 GRAPH_NOT_AVAILABLE, 준비 전 409 PREP_NOT_READY."""
+    return sel_svc.graph_out(get_ctx(request), principal, sid)
 
 
 @router.get("/doe/studies/{sid}/selection", response_model=DoeSelectionOut | None)

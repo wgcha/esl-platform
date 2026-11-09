@@ -3091,6 +3091,14 @@
       "DoeSelectAutoOut": {
         "description": "v0.16.2 GET …/select/auto(esl_bead_auto.md §3.3): 자동 탐지 seed = SelectionIn schema 1 + 정규화 sha(수동 저장과 같은 식),\nmap[{bead, paicad_id, n_floor}], warnings(AUTO_* 코드), paicad_version.",
         "properties": {
+          "hints": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Hints",
+            "type": "array"
+          },
           "map": {
             "items": {
               "additionalProperties": true,
@@ -3126,6 +3134,21 @@
             ],
             "title": "Sha256"
           },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paicad",
+                  "graph"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
           "warnings": {
             "items": {
               "additionalProperties": true,
@@ -3157,13 +3180,94 @@
             "title": "Bead"
           },
           "selection": {
-            "$ref": "#/components/schemas/SelectionIn"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SelectionIn"
+              },
+              {
+                "$ref": "#/components/schemas/SelectionInV2"
+              }
+            ],
+            "title": "Selection"
           }
         },
         "required": [
           "selection"
         ],
         "title": "DoeSelectDeriveIn",
+        "type": "object"
+      },
+      "DoeSelectGraphOut": {
+        "description": "v0.17.0 GET …/select/graph(esl_beadgraph.md §6.1): 분류 결과 beadgraph/1(편집 적용 전), sha256 = graph.json 바이트 sha.",
+        "properties": {
+          "beadgraph_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beadgraph Version"
+          },
+          "edits_applied": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edits Applied"
+          },
+          "graph": {
+            "additionalProperties": true,
+            "title": "Graph",
+            "type": "object"
+          },
+          "morph_rules": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Morph Rules"
+          },
+          "rules": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graph",
+          "sha256"
+        ],
+        "title": "DoeSelectGraphOut",
         "type": "object"
       },
       "DoeSelectionOut": {
@@ -3210,7 +3314,15 @@
         "additionalProperties": false,
         "properties": {
           "selection": {
-            "$ref": "#/components/schemas/SelectionIn"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SelectionIn"
+              },
+              {
+                "$ref": "#/components/schemas/SelectionInV2"
+              }
+            ],
+            "title": "Selection"
           },
           "version": {
             "minimum": 1.0,
@@ -5672,6 +5784,170 @@
           "rows"
         ],
         "title": "ForcesOut",
+        "type": "object"
+      },
+      "GraphAnchorRef": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Anchor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "anchor"
+        ],
+        "title": "GraphAnchorRef",
+        "type": "object"
+      },
+      "GraphEditsIn": {
+        "additionalProperties": false,
+        "description": "BG-D-37 편집: 적용 순서 toggle → merge → split(코어 beadgraph.apply_edits).",
+        "properties": {
+          "merge": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/GraphAnchorRef"
+              },
+              "maxItems": 1000,
+              "minItems": 2,
+              "type": "array"
+            },
+            "maxItems": 10000,
+            "title": "Merge",
+            "type": "array"
+          },
+          "split": {
+            "items": {
+              "$ref": "#/components/schemas/GraphSplitIn"
+            },
+            "maxItems": 10000,
+            "title": "Split",
+            "type": "array"
+          },
+          "toggle": {
+            "items": {
+              "$ref": "#/components/schemas/GraphToggleIn"
+            },
+            "maxItems": 10000,
+            "title": "Toggle",
+            "type": "array"
+          }
+        },
+        "title": "GraphEditsIn",
+        "type": "object"
+      },
+      "GraphRefIn": {
+        "additionalProperties": false,
+        "description": "선택이 기준으로 삼은 분류 결과 — sha256 = prep/select/graph.json 바이트 sha(다르면 409 BG_GRAPH_STALE, BG-D-38).",
+        "properties": {
+          "edits": {
+            "$ref": "#/components/schemas/GraphEditsIn"
+          },
+          "rules": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Rules",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "rules"
+        ],
+        "title": "GraphRefIn",
+        "type": "object"
+      },
+      "GraphSegRef": {
+        "additionalProperties": false,
+        "description": "비드 구성 = 세그먼트 앵커 {anchor} 또는 네트워크 묶기 {network: 앵커}(BG-D-17·18) — 정확히 하나.",
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          }
+        },
+        "title": "GraphSegRef",
+        "type": "object"
+      },
+      "GraphSplitIn": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Anchor",
+            "type": "integer"
+          },
+          "at": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "At",
+            "type": "array"
+          }
+        },
+        "required": [
+          "anchor",
+          "at"
+        ],
+        "title": "GraphSplitIn",
+        "type": "object"
+      },
+      "GraphToggleIn": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Anchor",
+            "type": "integer"
+          },
+          "as": {
+            "enum": [
+              "bead",
+              "island"
+            ],
+            "title": "As",
+            "type": "string"
+          }
+        },
+        "required": [
+          "anchor",
+          "as"
+        ],
+        "title": "GraphToggleIn",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -10029,6 +10305,185 @@
         "title": "SelectElemSet",
         "type": "object"
       },
+      "SelectElemsBeadIn": {
+        "additionalProperties": false,
+        "description": "src elems 비드 = schema 1 비드 본문 그대로(BG-D-36 — v0.16.2 derive 경로, 섬 상한만 그래프 값).",
+        "properties": {
+          "blend_mm": {
+            "anyOf": [
+              {
+                "const": "auto",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "default": "auto",
+            "title": "Blend Mm"
+          },
+          "floor_follow": {
+            "anyOf": [
+              {
+                "enum": [
+                  0,
+                  1
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Follow"
+          },
+          "hold_fixed": {
+            "anyOf": [
+              {
+                "enum": [
+                  0,
+                  1
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Fixed"
+          },
+          "id": {
+            "maxLength": 16,
+            "title": "Id",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "maxItems": 64,
+            "title": "Links",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "slope": {
+            "$ref": "#/components/schemas/SelectSlopeIn"
+          },
+          "src": {
+            "const": "elems",
+            "title": "Src",
+            "type": "string"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/SelectTierIn"
+            },
+            "maxItems": 64,
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "tiers",
+          "src"
+        ],
+        "title": "SelectElemsBeadIn",
+        "type": "object"
+      },
+      "SelectGraphBeadIn": {
+        "additionalProperties": false,
+        "description": "src graph 비드(BG-D-17) = 세그먼트 앵커 묶음 → 변수 D(·W). vars 생략 = 가능한 것 전부, hold_fixed 생략 = 1(BG-D-28).",
+        "properties": {
+          "hold_fixed": {
+            "anyOf": [
+              {
+                "enum": [
+                  0,
+                  1
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Fixed"
+          },
+          "id": {
+            "maxLength": 16,
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "segs": {
+            "items": {
+              "$ref": "#/components/schemas/GraphSegRef"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Segs",
+            "type": "array"
+          },
+          "src": {
+            "const": "graph",
+            "title": "Src",
+            "type": "string"
+          },
+          "vars": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "D",
+                    "W"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 2,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vars"
+          }
+        },
+        "required": [
+          "id",
+          "src",
+          "segs"
+        ],
+        "title": "SelectGraphBeadIn",
+        "type": "object"
+      },
       "SelectSlopeIn": {
         "additionalProperties": false,
         "properties": {
@@ -10094,6 +10549,29 @@
             "additionalProperties": true,
             "title": "Fixed",
             "type": "object"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph"
+          },
+          "graph_algo": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Algo"
           },
           "islands_suggested": {
             "anyOf": [
@@ -10201,6 +10679,85 @@
           "beads"
         ],
         "title": "SelectionIn",
+        "type": "object"
+      },
+      "SelectionInV2": {
+        "additionalProperties": false,
+        "description": "v0.17.0 SelectionIn schema 2(BG-D-36). graph 생략 = 분류 결과 없음(GRAPH_FAILED — elems 비드만).",
+        "properties": {
+          "beads": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "elems": "#/components/schemas/SelectElemsBeadIn",
+                  "graph": "#/components/schemas/SelectGraphBeadIn"
+                },
+                "propertyName": "src"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SelectGraphBeadIn"
+                },
+                {
+                  "$ref": "#/components/schemas/SelectElemsBeadIn"
+                }
+              ]
+            },
+            "maxItems": 100,
+            "title": "Beads",
+            "type": "array"
+          },
+          "exclude": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "feature_angle_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Angle Deg"
+          },
+          "fixed_user": {
+            "$ref": "#/components/schemas/SelectElemSet"
+          },
+          "graph": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphRefIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": 2,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "ties": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 2,
+              "type": "array"
+            },
+            "maxItems": 100,
+            "title": "Ties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "beads"
+        ],
+        "title": "SelectionInV2",
         "type": "object"
       },
       "StageState": {
@@ -15954,6 +16511,49 @@
         ]
       }
     },
+    "/esl/api/doe/studies/{sid}/select/graph": {
+      "get": {
+        "description": "v0.17.0 메시 비드 네트워크 분류 결과(beadgraph/1 — 편집 적용 전, sha256 = prep/select/graph.json 바이트).\nschema 1 스터디·분류 실패 404 GRAPH_NOT_AVAILABLE, 준비 전 409 PREP_NOT_READY.",
+        "operationId": "doe_select_graph_esl_api_doe_studies__sid__select_graph_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeSelectGraphOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Select Graph",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
     "/esl/api/doe/studies/{sid}/select/view/{name}": {
       "get": {
         "description": "준비 산출물 prep/select/ 의 선택 보기 파일(허용 목록만). 준비 전 409 PREP_NOT_READY.",
@@ -15995,7 +16595,7 @@
                 }
               }
             },
-            "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256, If-None-Match 일치 시 304)"
+            "description": "선택 보기 자료(part.glb·select.bin·select_manifest.json, ETag = mesh_sha256 · v0.17.0 graph.bin, ETag = graph.json sha256 — If-None-Match 일치 시 304)"
           },
           "304": {
             "description": "변경 없음"

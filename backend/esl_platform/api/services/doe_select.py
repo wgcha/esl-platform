@@ -50,7 +50,8 @@ from ..context import AppContext
 from .common import require_config_ok, require_execute
 
 SELECT_VIEW_FILES = {"part.glb": "model/gltf-binary", "select.bin": "application/octet-stream",
-                     "select_manifest.json": "application/json"}
+                     "select_manifest.json": "application/json",
+                     "graph.bin": "application/octet-stream"}       # v0.17.0 BEADGRAPH 요소 라벨(esl_beadgraph.md §6.1)
 _SHA12_RE = re.compile(r"[0-9a-f]{12}")
 BASIS_FILES = {"bin": ("basis.bin", "application/octet-stream"), "meta": ("basis.json", "application/json")}
 SUMMARY_DROP = ("section", "plan")            # DB 요약에서 빼는 그림 자료(§4.3)
@@ -82,13 +83,15 @@ def scfg(c: dict[str, Any]) -> dict[str, Any]:
 
 
 def sel_error(exc) -> DomainError:
-    """코어 EslError → API 오류(§14): SELECT_TOO_LARGE 413, SELECT_DERIVE_TIMEOUT 503, 그 밖 422."""
+    """코어 EslError → API 오류(§14): SELECT_TOO_LARGE 413, SELECT_DERIVE_TIMEOUT 503, BG_GRAPH_STALE 409, 그 밖 422.
+    v0.17.0: BG_* 코드(esl_beadgraph.md §6.4)는 그대로 전달, 그 밖 접두어는 SELECT_INVALID."""
     code = str(getattr(exc, "code", "") or "SELECT_INVALID")
     extra = getattr(exc, "extra", None)
     extra = dict(extra) if isinstance(extra, dict) else {}
     extra = {k: v for k, v in extra.items() if k not in ("code", "message", "status")}
-    status = 413 if code == "SELECT_TOO_LARGE" else 503 if code == "SELECT_DERIVE_TIMEOUT" else 422
-    if not code.startswith("SELECT_"):
+    status = 413 if code == "SELECT_TOO_LARGE" else 503 if code == "SELECT_DERIVE_TIMEOUT" else \
+        409 if code == "BG_GRAPH_STALE" else 422
+    if not code.startswith(("SELECT_", "BG_")):
         code = "SELECT_INVALID"
     return DomainError(code, str(getattr(exc, "message", "") or exc), status=status, **_svc()._jsonable(extra))
 
@@ -163,6 +166,167 @@ def prep_mesh_sha(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> str 
     return v if isinstance(v, str) else None
 
 
+# ---------------------------------------------------------------- v0.17.0 BEADGRAPH(esl_beadgraph.md §5·§6.1)
+GRAPH_JSON = ("select", "graph.json")                       # prep/select/graph.json(코어 BD_LOADS prep_graph — 결정적 바이트)
+GRAPH_LABELS = ("select", "graph_labels.npz")               # 요소별 int32 라벨(allow_pickle=False)
+GRAPH_SCHEMA_MAJOR = "beadgraph/1"
+_GRAPH_CACHE: "collections.OrderedDict[tuple, dict[str, Any]]" = collections.OrderedDict()
+_GRAPH_LOCK = threading.Lock()
+
+
+def sel_schema(sel: Any) -> int:
+    """선택 dict 의 schema(생략 = 1)."""
+    v = sel.get("schema_version") if isinstance(sel, dict) else None
+    return 2 if v == 2 and not isinstance(v, bool) else 1
+
+
+def study_schema(s: dict[str, Any]) -> int:
+    """스터디 선택 schema = inputs.select_schema(키 없음 = 1 — v0.16.2 이전 select 스터디, BG-D-35)."""
+    v = (s.get("inputs") or {}).get("select_schema")
+    return 2 if v == 2 else 1
+
+
+def _graph_mod():
+    from ...core import opt_core
+
+    try:
+        return opt_core.doe_bead_graph
+    except ImportError:
+        raise DomainError("SELECT_DISABLED", "비드 네트워크 분류 코어(esl.doe.bead_graph)가 설치되지 않았습니다(관리자 문의)",
+                          status=503) from None
+
+
+def _graph_call(name: str, *args: Any, **kw: Any) -> Any:
+    """코어 ``esl.doe.bead_graph.<name>``(계약 §8.6 시그니처) — 키워드는 함수가 받는 것만 넘김(frame·fixed_scan·bead·mesh·labels).
+    normalize_v2 결과 = (정규화 선택, sha256) 또는 {selection, sha256}."""
+    import inspect
+
+    fn = getattr(_graph_mod(), name, None)
+    if fn is None:
+        raise DomainError("SELECT_DISABLED", f"비드 네트워크 분류 코어에 {name} 이 없습니다(관리자 문의)", status=503)
+    try:
+        ps = inspect.signature(fn).parameters
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in ps.values()):
+            kw = {k: v for k, v in kw.items() if k in ps}
+    except (TypeError, ValueError):
+        pass
+    r = fn(*args, **kw)
+    if name == "normalize_v2" and isinstance(r, dict):
+        r = (r.get("selection") or r.get("input"), r.get("sha256"))
+    return r
+
+
+def _graph_paths(ctx: AppContext, s: dict[str, Any]) -> tuple[str, str]:
+    pd = _prep_dir(ctx, s)
+    return os.path.join(pd, *GRAPH_JSON), os.path.join(pd, *GRAPH_LABELS)
+
+
+def _plain_file(p: str) -> bool:
+    return os.path.isfile(p) and not os.path.islink(p) and not os.path.islink(os.path.dirname(p))
+
+
+def graph_sha(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> str | None:
+    """현재 prep/select/graph.json 바이트 sha256(없으면 None). load_graph 캐시와 같은 키."""
+    g = load_graph(ctx, s, c, labels=False)
+    return g["sha256"] if g else None
+
+
+def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels: bool = True) -> dict[str, Any] | None:
+    """schema 2 스터디의 분류 결과 {graph, labels(dict[str, int32 배열]|None), sha256}. schema 1·파일 없음·형식 오류 = None
+    (GRAPH_FAILED). 캐시 키 = (경로, mtime, 크기)."""
+    import numpy as np
+
+    if study_schema(s) != 2 or s.get("prep") is None:
+        return None
+    gp, lp = _graph_paths(ctx, s)
+    if not _plain_file(gp):
+        return None
+    try:
+        st = os.stat(gp)
+        lst = os.stat(lp) if _plain_file(lp) else None
+    except OSError:
+        return None
+    key = (os.path.realpath(gp), st.st_mtime_ns, st.st_size, (lst.st_mtime_ns, lst.st_size) if lst else None)
+    with _GRAPH_LOCK:
+        hit = _GRAPH_CACHE.get(key)
+        if hit is not None and (hit["labels"] is not None or not labels or lst is None):
+            _GRAPH_CACHE.move_to_end(key)
+            return hit
+    if st.st_size > _svc()._max_mb(c) * 1024 * 1024:
+        return None
+    try:
+        with open(gp, "rb") as fh:
+            raw = fh.read()
+        graph = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(graph, dict) or str(graph.get("schema") or "").split("/")[:2] != GRAPH_SCHEMA_MAJOR.split("/"):
+        return None
+    lab = None
+    if labels and lst is not None:
+        try:
+            with np.load(lp, allow_pickle=False) as z:
+                lab = {k: np.asarray(z[k]) for k in z.files}
+        except (OSError, ValueError, KeyError):
+            lab = None
+    out = {"graph": graph, "labels": lab, "sha256": hashlib.sha256(raw).hexdigest()}
+    with _GRAPH_LOCK:
+        _GRAPH_CACHE[key] = out
+        while len(_GRAPH_CACHE) > _LOAD_N:
+            _GRAPH_CACHE.popitem(last=False)
+    return out
+
+
+def check_schema(s: dict[str, Any], sel: dict[str, Any]) -> None:
+    """BG-D-35: 스터디 schema ≠ 선택 schema → 422 SELECT_SCHEMA_MISMATCH."""
+    ss, vs = study_schema(s), sel_schema(sel)
+    if ss != vs:
+        raise unprocessable("SELECT_SCHEMA_MISMATCH", f"이 스터디는 선택 schema {ss} 입니다(요청 schema {vs}) — "
+                            + ("v0.17.0 이전 스터디는 요소 선택(schema 1)만" if ss == 1 else
+                               "새 스터디는 세그먼트 선택(schema 2)만 — 화면을 새로 고치세요"),
+                            study_schema=ss, selection_schema=vs)
+
+
+def _uses_graph(sel: dict[str, Any]) -> bool:
+    ed = ((sel.get("graph") or {}).get("edits")) or {}
+    return any(isinstance(b, dict) and b.get("src") == "graph" for b in sel.get("beads") or []) or \
+        any(ed.get(k) for k in ("toggle", "merge", "split")) or bool(sel.get("ties"))
+
+
+def check_graph(sel: dict[str, Any], graph: dict[str, Any] | None) -> None:
+    """BG-D-38: schema 2 선택의 graph.sha256 ≠ 현재 prep/select/graph.json sha(또는 분류 결과 없음) → 409 BG_GRAPH_STALE{saved,
+    current}. 그래프 비드·편집이 있는데 graph 기준이 없으면 같은 409(saved null)."""
+    if sel_schema(sel) != 2:
+        return
+    cur = (graph or {}).get("sha256")
+    ref = sel.get("graph") if isinstance(sel.get("graph"), dict) else None
+    saved = ref.get("sha256") if ref else None
+    if ref is None and not _uses_graph(sel):
+        return
+    if saved is None or saved != cur:
+        raise conflict("BG_GRAPH_STALE", "분류 결과가 바뀌었습니다 — 다시 확인 후 저장하세요" if cur else
+                       "분류 결과가 없습니다(GRAPH_FAILED) — 요소 비드(src elems)로 선택하세요", saved=saved, current=cur)
+
+
+def _with_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    """schema 2 스터디면 inputs 에 graph(load_graph) 를 붙인다(사본 — load_inputs 캐시 불변)."""
+    if study_schema(s) != 2:
+        return inputs
+    return {**inputs, "graph": load_graph(ctx, s, c)}
+
+
+def graph_stale(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any] | None:
+    """저장 선택이 schema 2 이고 분류 결과가 바뀌었으면 {saved, current}, 아니면 None."""
+    inp = doc.get("input") if isinstance(doc.get("input"), dict) else {}
+    if sel_schema(inp) != 2:
+        return None
+    try:
+        check_graph(inp, {"sha256": graph_sha(ctx, s, c)})
+    except DomainError as exc:
+        return {"saved": exc.extra.get("saved"), "current": exc.extra.get("current")}
+    return None
+
+
 # ---------------------------------------------------------------- 정규화·derive(캐시·시간 상한)
 _DERIVE_CACHE: "collections.OrderedDict[tuple, dict[str, Any]]" = collections.OrderedDict()
 _DERIVE_LOCK = threading.Lock()
@@ -174,6 +338,8 @@ def reset_caches() -> None:
         _DERIVE_CACHE.clear()
     with _LOAD_LOCK:
         _LOAD_CACHE.clear()
+    with _GRAPH_LOCK:
+        _GRAPH_CACHE.clear()
 
 
 def canonical_bytes(doc: Any) -> bytes:
@@ -181,7 +347,10 @@ def canonical_bytes(doc: Any) -> bytes:
 
 
 def selection_in(sel) -> dict[str, Any]:
-    """API SelectionIn → 코어 입력 dict. v0.16.1 hold_fixed 는 준 비드에만(생략 = 키 없음 — 기존 선택 sha 불변, SR-D-13a)."""
+    """API SelectionIn → 코어 입력 dict. v0.16.1 hold_fixed 는 준 비드에만(생략 = 키 없음 — 기존 선택 sha 불변, SR-D-13a).
+    v0.17.0 schema 2(SelectionInV2) = 별칭(as)·None 생략 dump(정규화·기본값은 코어 normalize_v2)."""
+    if int(getattr(sel, "schema_version", 1) or 1) == 2:
+        return sel.model_dump(by_alias=True, exclude_none=True)
     d = sel.model_dump()
     for b in d.get("beads") or []:
         if b.get("hold_fixed") is None:
@@ -189,8 +358,10 @@ def selection_in(sel) -> dict[str, Any]:
     return d
 
 
-def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None) -> tuple[dict[str, Any], str]:
-    """코어 normalize + 크기 상한(정규화 JSON > select.max_selection_kb → 413 SELECT_TOO_LARGE, BS-D-4)."""
+def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None,
+              graph: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+    """코어 normalize + 크기 상한(정규화 JSON > select.max_selection_kb → 413 SELECT_TOO_LARGE, BS-D-4).
+    v0.17.0 schema 2 = 코어 ``bead_graph.normalize_v2(sel, graph, cfg)``(graph = ``load_graph`` 결과 — 없으면 None)."""
     from ...core.opt_core import EslError
 
     limit = float(scfg(c)["max_selection_kb"]) * 1024
@@ -198,7 +369,11 @@ def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None) -
         raise DomainError("SELECT_TOO_LARGE", f"선택 자료가 상한 {scfg(c)['max_selection_kb']:g} KB 를 넘습니다", status=413,
                           limit_kb=float(scfg(c)["max_selection_kb"]))
     try:
-        norm, sha = _bs().normalize(selection, c, mesh=mesh)
+        if sel_schema(selection) == 2:
+            norm, sha = _graph_call("normalize_v2", selection, (graph or {}).get("graph"), c, mesh=mesh,
+                                    labels=(graph or {}).get("labels"))
+        else:
+            norm, sha = _bs().normalize(selection, c, mesh=mesh)
     except EslError as exc:
         raise sel_error(exc) from None
     size = len(canonical_bytes(norm))
@@ -216,16 +391,21 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
 
     sc = scfg(c)
     n = int(sc["derive_cache_n"])
-    key = (sha, inputs.get("mesh_sha256"), bead)
+    key = (sha, inputs.get("mesh_sha256"), bead, (inputs.get("graph") or {}).get("sha256"))
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
             if hit is not None:
                 _DERIVE_CACHE.move_to_end(key)
                 return copy.deepcopy(hit)
-    bs = _bs()
-    fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
-                       bead=bead)
+    if sel_schema(norm) == 2:
+        g = inputs.get("graph") or {}
+        fut = _POOL.submit(_graph_call, "derive_v2", inputs["mesh"], norm, c, g.get("graph"), g.get("labels"),
+                           frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead)
+    else:
+        bs = _bs()
+        fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
+                           bead=bead)
     try:
         r = fut.result(timeout=float(sc["derive_timeout_s"]))
     except concurrent.futures.TimeoutError:
@@ -276,6 +456,9 @@ def require_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> 
         raise conflict("SELECTION_MISSING", "비드 선택을 저장한 뒤에 하세요" + (" — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다"
                                                                   if dropped else ""),
                        **({"reason": "SELECTION_DROPPED"} if dropped else {}))
+    stale = graph_stale(ctx, s, c, doc)         # v0.17.0 BG-D-38: 분류 결과가 바뀐 schema 2 선택은 쓰지 않음(다시 확인 후 저장)
+    if stale is not None:
+        raise conflict("BG_GRAPH_STALE", "분류 결과가 바뀌었습니다 — 비드 선택을 다시 확인 후 저장하세요", **stale)
     return doc
 
 
@@ -297,7 +480,9 @@ def selection_summary(s: dict[str, Any]) -> dict[str, Any] | None:
 def full_derived(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any],
                  inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     """저장 선택의 전체 derive(그림 자료 포함) — 캐시 또는 재계산."""
-    inputs = inputs or load_inputs(ctx, s, c)
+    inputs = _with_graph(ctx, s, c, inputs or load_inputs(ctx, s, c))
+    if sel_schema(doc.get("input")) == 2:
+        check_graph(doc["input"], inputs.get("graph"))
     d = derive(c, inputs, doc["input"], doc["sha256"])
     d["rev"] = int(doc.get("rev") or 0)
     return d
@@ -310,6 +495,8 @@ def refresh_derived(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: 
     그대로 둔다. 갱신한 선택 문서(또는 원래 doc)를 돌려준다."""
     d = doc.get("derived")
     if isinstance(d, dict) and isinstance(d.get("algo"), int):
+        return doc
+    if sel_schema(doc.get("input")) == 2:       # v0.17.0 schema 2 = 그래프 판(graph_algo) — v0.16.0 지연 갱신 대상 아님
         return doc
     try:
         full = full_derived(ctx, s, c, doc, inputs)
@@ -399,6 +586,8 @@ def params_table(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[s
     - 판정 규칙 판(derived ``algo``, esl_select_relax.md SR-D-13c): 없으면(v0.16.0 derive) v0.16.0 규칙 — feasible = default_range,
       SELECT_FIXED_IN_BEAD{tiers} → 그 단 D·그 비드 W 기본 체크 해제. algo ≥ 2 → feasible = SR-D-10(기하 한계), 기본 체크 해제는
       ``select.fixed_policy: skip`` 일 때만(warn 이면 경고만 — SR-D-8)."""
+    if sel_schema(doc.get("input")) == 2:
+        return _params_v2(doc, c)
     inp = {str(b.get("id")): b for b in (doc.get("input") or {}).get("beads") or [] if isinstance(b, dict)}
     d = doc.get("derived") or {}
     v161 = isinstance(d.get("algo"), int) and d["algo"] >= 2
@@ -460,6 +649,99 @@ def params_table(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[s
                              "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
 
 
+GRAPH_ROW_KEYS = ("name", "type", "bead", "tier", "nominal", "feasible", "feasible_source", "default_range", "use_default",
+                  "group_members")
+
+
+def _var(bid: str, kind: str) -> str:
+    """BG-D-22 그래프 비드 변수 이름 B<n>_D·B<n>_W(k 없음 — schema 1 B<n>_D<k> 와 겹치지 않음)."""
+    return f"{bid.upper()}_{kind}"
+
+
+def _graph_rows(bd: dict[str, Any], rg: dict[str, Any], c: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """그래프 비드 1개 → 변수 행(D·W). 코어 derived 의 range_default·range_feasible·use_default 가 있으면 그대로, 없으면 BG-D-22
+    로 계산(기본 범위 = select.range, feasible: 45° 입구 고정 — 바닥 최소 폭 max(2h, 6 mm))."""
+    bid = str(bd["id"])
+    rd = bd.get("range_default") if isinstance(bd.get("range_default"), dict) else {}
+    rf = bd.get("range_feasible") if isinstance(bd.get("range_feasible"), dict) else {}
+    ud = bd.get("use_default") if isinstance(bd.get("use_default"), dict) else {}
+    short = any(_code(w) == "BG_SEGMENT_SHORT" for w in bd.get("warnings") or [])
+    vars_ = [v for v in (bd.get("vars") or ["D", "W"]) if v in ("D", "W")]
+    h = float(bd["h_mm"]) if isinstance(bd.get("h_mm"), (int, float)) else 0.0
+    wfmin = max(2.0 * h, 6.0)
+    d_nom = bd.get("D_nom")
+    w_nom = bd.get("W_nom")
+    rows = []
+    for kind in vars_:
+        nom = d_nom if kind == "D" else w_nom
+        if not isinstance(nom, (int, float)) or isinstance(nom, bool):
+            continue
+        nom = float(nom)
+        rel = float(rg["depth_rel"] if kind == "D" else rg["width_rel"])
+        dr = _pair(rd.get(kind)) or [_round(nom * (1 - rel)), _round(nom * (1 + rel))]
+        fe = _pair(rf.get(kind))
+        if fe is None:
+            if kind == "D":
+                hi = nom * (1.0 + float(rg["depth_max_rel"]))
+                if isinstance(w_nom, (int, float)) and "W" in vars_:
+                    hi = min(hi, (float(w_nom) - wfmin) / 2.0)
+                fe = [_round(min(float(rg["min_step_mm"]), hi)), _round(hi)]
+            else:
+                fe = [_round(2.0 * float(d_nom or 0.0) + wfmin), _round(nom * (1.0 + float(rg["width_max_rel"])))]
+        use = ud.get(kind) if isinstance(ud.get(kind), bool) else not short
+        rows.append({"name": _var(bid, kind), "type": kind, "bead": bid, "tier": bd.get("tier"), "nominal": nom,
+                     "feasible": fe, "feasible_source": "estimate", "default_range": list(dr), "use_default": use,
+                     "group_members": [_var(bid, kind)]})
+    return rows
+
+
+def _params_v2(doc: dict[str, Any], c: dict[str, Any] | None) -> dict[str, Any]:
+    """v0.17.0 schema 2 변수 표(BG-D-21·22): 코어 derived 가 params(행 목록)를 주면 그대로, 아니면 비드별 — 그래프 비드 = B<n>_D·
+    B<n>_W, elems 비드 = schema 1 규칙(B<n>_D<k>·B<n>_W — 같은 함수). ties = 묶인 비드의 같은 종류 변수 1개(이름 = 가장 작은 비드
+    id, group_members = 모두)."""
+    inp = doc.get("input") or {}
+    d = doc.get("derived") or {}
+    if isinstance(d.get("params"), list) and isinstance(d.get("param_beads"), list):
+        return _svc()._jsonable({"beads": d["param_beads"], "params": d["params"],
+                                 "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
+    rg = _range_cfg(c)
+    src = {str(b.get("id")): b.get("src") for b in inp.get("beads") or [] if isinstance(b, dict)}
+    beads, params = [], []
+    elem_beads = [b for b in d.get("beads") or [] if isinstance(b, dict) and "id" in b and src.get(str(b["id"])) != "graph"]
+    if elem_beads:              # elems 비드 = schema 1 행 그대로(같은 표 함수 — 입력은 그 비드 본문)
+        sub = {"input": {**inp, "schema_version": 1,
+                         "beads": [b for b in inp.get("beads") or [] if isinstance(b, dict) and b.get("src") != "graph"]},
+               "derived": {**d, "beads": elem_beads}}
+        t1 = params_table(sub, c)
+        params += t1["params"]
+        beads += [{**b, "src": "elems"} for b in t1["beads"]]
+    for bd in d.get("beads") or []:
+        if not isinstance(bd, dict) or "id" not in bd or src.get(str(bd["id"])) != "graph":
+            continue
+        bid = str(bd["id"])
+        params += _graph_rows(bd, rg, c)
+        segs = bd.get("segs") or []
+        beads.append({"id": bid, "name": str(bd.get("name") or bid.upper()), "kind": "select", "src": "graph",
+                      "n_segs": len(segs) if isinstance(segs, list) else 0, "tier": bd.get("tier"),
+                      "D_nom": bd.get("D_nom"), "W_nom": bd.get("W_nom"),
+                      "warnings": [w for w in bd.get("warnings") or [] if isinstance(w, dict)]})
+    # 대칭 묶기(BG-D-21): 묶인 비드의 같은 종류 변수 → 대표(가장 작은 비드 번호) 1행
+    for tie in inp.get("ties") or []:
+        ids = sorted({str(x) for x in tie}, key=lambda x: int(x[1:]) if x[1:].isdigit() else 10 ** 6)
+        if len(ids) < 2:
+            continue
+        for kind in ("D", "W"):
+            names = [_var(b, kind) for b in ids]
+            rows = [r for r in params if r["name"] in names and r["type"] == kind]
+            if len(rows) < 2:
+                continue
+            rep_row = min(rows, key=lambda r: names.index(r["name"]))
+            rep_row["group_members"] = [r["name"] for r in sorted(rows, key=lambda r: names.index(r["name"]))]
+            params = [r for r in params if r is rep_row or r not in rows]
+    return _svc()._jsonable({"beads": beads, "params": params,
+                             "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
+
+
 def job_selection(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:
     """작업 params.doe.selection(워커 S3: 기저·모핑·이어하기 sha). params = 행렬 생성과 같은 표(같은 c)."""
     return {"rev": int(doc.get("rev") or 0), "sha256": doc["sha256"], "mesh_sha256": doc.get("mesh_sha256"),
@@ -485,6 +767,8 @@ def view_file(ctx: AppContext, principal: Principal, sid: str, name: str) -> tup
     p = safe_case_file(base, name)
     if not os.path.isfile(p) or os.path.islink(p) or os.path.islink(base):
         raise not_found("FILE_NOT_FOUND", "선택 보기 파일이 없습니다")
+    if name == "graph.bin":             # v0.17.0: 분류 설정이 바뀌면 메시가 같아도 내용이 바뀜 → ETag = graph.json sha
+        return p, SELECT_VIEW_FILES[name], graph_sha(ctx, s, c)
     man = _svc()._read_json(os.path.join(base, "select_manifest.json"), _svc()._max_mb(c))
     etag = man.get("mesh_sha256") if isinstance(man, dict) and isinstance(man.get("mesh_sha256"), str) else None
     return p, SELECT_VIEW_FILES[name], etag
@@ -507,8 +791,11 @@ def _editable_prechecks(ctx: AppContext, principal: Principal, sid: str) -> tupl
 def derive_out(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]:
     """POST …/select/derive: 저장 안 함(rev null). bead 주면 그 비드만."""
     s, c = _editable_prechecks(ctx, principal, sid)
-    inputs = load_inputs(ctx, s, c)
-    norm, sha = normalize(c, selection_in(body.selection), inputs["mesh"])
+    sel = selection_in(body.selection)
+    check_schema(s, sel)
+    inputs = _with_graph(ctx, s, c, load_inputs(ctx, s, c))
+    check_graph(sel, inputs.get("graph"))
+    norm, sha = normalize(c, sel, inputs["mesh"], inputs.get("graph"))
     if body.bead is not None and body.bead not in {str(b.get("id")) for b in norm.get("beads") or []}:
         raise unprocessable("SELECT_BEAD_ID_INVALID", f"선택에 없는 비드입니다: {body.bead!r}", bead=body.bead)
     d = derive(c, inputs, norm, sha, bead=body.bead)
@@ -532,6 +819,9 @@ def selection_get(ctx: AppContext, principal: Principal, sid: str) -> dict[str, 
         derived = {**(doc.get("derived") or {}), "rev": int(doc.get("rev") or 0)}     # 그림 자료 없이 요약만
     for k in DERIVE_ONLY:
         derived.pop(k, None)
+    stale = graph_stale(ctx, s, c, doc)
+    if stale is not None:               # v0.17.0 BG-D-38: 화면 띠 "분류 결과가 바뀌었습니다" + 앵커 재해석(화면 몫)
+        derived["graph_stale"] = stale
     return {"rev": int(doc["rev"]), "sha256": doc["sha256"], "input": doc["input"], "derived": derived,
             "updated_by_name": doc.get("updated_by_name") or "", "updated_at": str(doc.get("updated_at") or "")}
 
@@ -540,8 +830,11 @@ def selection_put(ctx: AppContext, principal: Principal, sid: str, body) -> dict
     """PUT …/selection: 서버 재계산·검증 → 저장(rev + 1, version + 1). READY·PREVIEW_READY 에서만(BS-D-3)."""
     svc = _svc()
     s0, c = _editable_prechecks(ctx, principal, sid)
-    inputs = load_inputs(ctx, s0, c)
-    norm, sha = normalize(c, selection_in(body.selection), inputs["mesh"])
+    sel = selection_in(body.selection)
+    check_schema(s0, sel)
+    inputs = _with_graph(ctx, s0, c, load_inputs(ctx, s0, c))
+    check_graph(sel, inputs.get("graph"))
+    norm, sha = normalize(c, sel, inputs["mesh"], inputs.get("graph"))
     derived = derive(c, inputs, norm, sha)
     with ctx.engine.begin() as conn:
         s, job = svc._lock(conn, sid, body.version)
@@ -570,7 +863,7 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
     if s.get("prep") is None:
         raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
     doc = require_selection(ctx, s, c)
-    inputs = load_inputs(ctx, s, c)
+    inputs = _with_graph(ctx, s, c, load_inputs(ctx, s, c))
     doc = refresh_derived(ctx, s, c, doc, inputs)
     derived = full_derived(ctx, s, c, doc, inputs)
     try:
@@ -663,6 +956,8 @@ def auto_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     p = os.path.join(pd, *AUTO_SELECTION_REL)
     if not os.path.isfile(p) or os.path.islink(p) or os.path.islink(os.path.join(pd, AUTO_SELECTION_REL[0])):
         raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과가 없습니다(탐지 실패 — 수동으로 선택하세요)")
+    if study_schema(s) == 2:
+        return _auto_out_v2(ctx, s, c, p)
     doc = _read_auto_selection(p, svc._max_mb(c))
     if not isinstance(doc, dict):
         raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과를 읽지 못했습니다(수동으로 선택하세요)")
@@ -689,6 +984,73 @@ def auto_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
                           "paicad_version": str(pv) if pv is not None else None})
 
 
+AUTO_SCHEMA_V2 = "esl/doe_auto_selection/2"
+
+
+def _auto_out_v2(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], p: str) -> dict[str, Any]:
+    """v0.17.0 schema 2 자동 seed(BG-D-20·42): prep/select/auto_selection.json{schema …/2, source graph, selection(schema 2),
+    sha256, hints, warnings}. sha = PUT …/selection 과 같은 길(모델 → selection_in → normalize_v2) — 실패면 파일 값."""
+    from ...core.opt_core import EslError
+
+    svc = _svc()
+    doc = None
+    try:
+        if os.path.getsize(p) <= svc._max_mb(c) * 1024 * 1024:
+            doc = svc._read_json(p, svc._max_mb(c))
+    except OSError:
+        doc = None
+    if not isinstance(doc, dict) or doc.get("schema") != AUTO_SCHEMA_V2:
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과를 읽지 못했습니다(직접 칠하기로 계속하세요)")
+    sel = doc.get("selection")
+    if not isinstance(sel, dict) or sel_schema(sel) != 2:
+        raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과에 선택이 없습니다(직접 칠하기로 계속하세요)")
+    sha = None
+    if sel.get("beads"):
+        try:
+            from pydantic import TypeAdapter
+
+            from ..schemas import SelectionAny
+
+            norm_in = selection_in(TypeAdapter(SelectionAny).validate_python(sel))
+            g = load_graph(ctx, s, c)
+            check_graph(norm_in, g)
+            sha = normalize(c, norm_in, None, g)[1]
+        except (EslError, DomainError, KeyError, TypeError, ValueError):
+            sha = None
+    if sha is None and isinstance(doc.get("sha256"), str):
+        sha = doc["sha256"]
+    warns = [w if isinstance(w, dict) else {"code": str(w).split(":", 1)[0], "message": str(w)}
+             for w in doc.get("warnings") or [] if w]
+    pv = doc.get("paicad_version") or (s.get("prep") or {}).get("paicad_version") or s.get("paicad_version")
+    return svc._jsonable({"selection": sel, "sha256": sha, "source": "graph", "map": [],
+                          "hints": [x for x in doc.get("hints") or [] if isinstance(x, dict)], "warnings": warns,
+                          "paicad_version": str(pv) if pv is not None else None})
+
+
+def graph_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+    """GET …/select/graph(esl_beadgraph.md §6.1): 분류 결과(beadgraph/1 — 편집 적용 전) + sha256(graph.json 바이트).
+    schema 1 스터디·분류 실패(GRAPH_FAILED)·파일 없음 → 404 GRAPH_NOT_AVAILABLE, 준비 전 → 409 PREP_NOT_READY."""
+    svc = _svc()
+    c = svc.cfg(ctx)
+    s, _job = _load_viewable(ctx, principal, sid)
+    if study_schema(s) != 2:
+        raise not_found("GRAPH_NOT_AVAILABLE", "세그먼트 분류는 v0.17.0 이후 만든 select 스터디에서만 씁니다(schema 1)")
+    if s.get("prep") is None:
+        raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
+    g = load_graph(ctx, s, c, labels=False)
+    if g is None:
+        raise not_found("GRAPH_NOT_AVAILABLE", "자동 분류 결과가 없습니다(GRAPH_FAILED) — 직접 칠하기(요소 비드)로 계속하세요")
+    gr = g["graph"]
+    warns = [w if isinstance(w, dict) else {"code": str(w)} for w in gr.get("warnings") or [] if w]
+
+    def _int(v: Any) -> int | None:
+        return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
+
+    return {"graph": gr, "sha256": g["sha256"], "edits_applied": None, "warnings": warns,
+            "beadgraph_version": str(gr["version"]) if gr.get("version") is not None else None,
+            "rules": _int(gr.get("rules")), "morph_rules": _int(gr.get("morph_rules"))}
+
+
 def clone_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[dict[str, Any] | None, list]:
     """복제: 원 선택이 원 준비 메시와 맞으면 rev 1 로 복사(같은 sha), 아니면 선택 없이 + 경고 SELECTION_DROPPED.
     새 연구 준비 메시가 다르면 이후 사용 시 current() 가 None(SELECTION_MISSING reason SELECTION_DROPPED)."""
@@ -706,4 +1068,5 @@ def clone_selection(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tu
 
 __all__ = ["view_file", "derive_out", "selection_get", "selection_put", "plan_view", "basis_file", "params_table",
            "job_selection", "current", "require_selection", "selection_summary", "clone_selection", "reset_caches",
-           "refresh_derived", "selection_in", "auto_out", "auto_detect_doc"]
+           "refresh_derived", "selection_in", "auto_out", "auto_detect_doc", "graph_out", "load_graph", "study_schema",
+           "check_schema", "check_graph"]

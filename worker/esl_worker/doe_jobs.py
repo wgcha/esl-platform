@@ -516,6 +516,14 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
 
 AUTO_DETECT_SCHEMA = "esl/doe_auto_detect/1"
 AUTO_STEPS = ("extract0", "extract", "tag")
+HINT_STEPS = ("extract0", "extract")        # v0.17.0 schema 2(esl_beadgraph.md §5.3): paicad = 힌트만(tag 없음)
+
+
+def select_schema(doe: dict[str, Any], info: dict[str, Any] | None = None) -> int:
+    """v0.17.0(esl_beadgraph.md BG-D-35·40): select 작업의 선택 schema = 작업 스펙 doe.select_schema, 없으면 준비 결과(info) —
+    둘 다 없으면 1(v0.16.2 이전 스터디 — 준비 plan·산출물 그대로)."""
+    v = doe.get("select_schema") or (info or {}).get("select_schema")
+    return 2 if v == 2 else 1
 
 
 def select_mode(doe: dict[str, Any], info: dict[str, Any] | None = None) -> tuple[bool, bool]:
@@ -528,7 +536,11 @@ def select_mode(doe: dict[str, Any], info: dict[str, Any] | None = None) -> tupl
 
 
 def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
-    """select BD_GEOM(BS-D-8 + v0.16.2 esl_bead_auto.md AD-D-2·16·17).
+    """select BD_GEOM(BS-D-8 + v0.16.2 esl_bead_auto.md AD-D-2·16·17 + v0.17.0 esl_beadgraph.md §5.3).
+
+    v0.17.0 schema 2(새 스터디): 자동 seed = 코어 BD_LOADS 메시 분류기 → auto plan = [a_fixed] + fixed + (STEP 있으면) extract0 →
+    extract(**힌트만** — tag 없음). extract 실패·paicad 없음 = 정보 AUTO_HINT_UNAVAILABLE{step, code}(seed 와 무관 — 준비 경고
+    아님), STEP 없음 = 힌트 없음(정보 없음). schema 1 스터디 plan 은 아래 v0.16.2 그대로.
 
     plan — case: assem_full(모델 전체 사본) → fixed → (auto) extract0 → extract → tag.
     mesh: [a_fixed(A Case 있으면 — ② 그대로)] → fixed(assem = input/mesh, 상한 1e12 = ②) → (auto) extract0 → extract → tag.
@@ -556,6 +568,8 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         info = {"select_base": inp.get("select_base"), "bead_source": inp.get("bead_source"),
                 "part_id": inp.get("part_id"), "step_rel": st0.get("rel")}
     auto, mesh_base = select_mode(doe, info)
+    v2 = select_schema(doe, info) == 2
+    cad = os.path.join(out, *str(info["step_rel"]).split("/")) if info.get("step_rel") else None
     outputs: dict[str, Any] = {"paicad_version": None, "commands": [], "fixed": None}
     state: dict[str, Any] = {"fixed": None, "auto": None}     # fixed = 고정 정보 없음 사유, auto = (step, code)
     pio = core_adapter.doe_paicad_io()
@@ -567,13 +581,27 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
             raise _fail(exc.code, exc.message) from None
 
     def auto_failed(step: str, code: str | None) -> None:
+        if v2:                      # schema 2: paicad 는 힌트만 — STEP 이 없으면 힌트도 없음(정보 없음)
+            if auto and cad is not None and state["auto"] is None:
+                state["auto"] = (step, str(code or "PAICAD_FAILED"))
+                echo(f"[esl-worker] paicad 힌트 없음({step}: {state['auto'][1]}) — AUTO_HINT_UNAVAILABLE(seed = 메시 분류기, 무관)")
+            return
         if auto and state["auto"] is None:
             state["auto"] = (step, str(code or "PAICAD_FAILED"))
             echo(f"[esl-worker] 자동 탐지 실패({step}: {state['auto'][1]}) — AUTO_DETECT_FAILED, 빈 seed(수동 선택 계속)")
 
     def finish() -> dict[str, Any]:
         warns: list[str] = []
-        if auto:
+        if auto and v2:
+            step, code = state["auto"] or (None, None)
+            hint = cad is not None and state["auto"] is None
+            doc = {"schema": AUTO_DETECT_SCHEMA, "role": "hint", "ok": hint, "step": step, "code": code,
+                   "step_given": cad is not None, "paicad_version": outputs["paicad_version"]}
+            _write_json(os.path.join(prep, "auto_detect.json"), doc)
+            outputs["auto"] = {k: doc[k] for k in ("role", "ok", "step", "code", "step_given")}
+            if state["auto"] is not None:
+                warns.append(f"[BD_GEOM] 정보 AUTO_HINT_UNAVAILABLE: paicad 힌트 없음({step}: {code}) — 자동 seed 는 메시 분류기")
+        elif auto:
             step, code = state["auto"] or (None, None)
             doc = {"schema": AUTO_DETECT_SCHEMA, "ok": state["auto"] is None, "step": step, "code": code,
                    "paicad_version": outputs["paicad_version"]}
@@ -640,7 +668,11 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
             outputs["assem_full"] = core_adapter.doe_assem_summary(man)
     prog(20)
     a_case = _a_case(ex, echo) if mesh_base else None       # ② 그대로: A 체결점은 경계 경고용(고정 노드에 넣지 않음, O-1)
-    plan = (["a_fixed"] if a_case else []) + (["fixed"] if assem else []) + (list(AUTO_STEPS) if auto and assem else [])
+    if v2:          # BG §5.3: 힌트 = STEP 이 있을 때만 extract0 → extract(tag 제거)
+        hint = list(HINT_STEPS) if auto and assem and cad is not None else []
+        plan = (["a_fixed"] if a_case else []) + (["fixed"] if assem else []) + hint
+    else:
+        plan = (["a_fixed"] if a_case else []) + (["fixed"] if assem else []) + (list(AUTO_STEPS) if auto and assem else [])
     n = max(len(plan), 1)
     done = {"i": 0}
 
@@ -653,7 +685,6 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         opts = os.path.join(prep, "paicad_options.json")
         _write_json(opts, pc["options"])
     threads = int(pc["threads"])
-    cad = os.path.join(out, *str(info["step_rel"]).split("/")) if info.get("step_rel") else None
     body_map = None
     tick = _tick(ex)
     for step in plan:

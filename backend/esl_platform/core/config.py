@@ -924,6 +924,69 @@ class BeadDoeSelectAutoCfg(_M):
     slope_diff_rel: float = Field(default=0.2, ge=0, le=10)
 
 
+class BeadDoeSelectGraphIslandCfg(_M):
+    """v0.17.0 BEADGRAPH 섬(esl_beadgraph.md BG-D-9·D8): PCA 장축 ≤ max_mm 인 부분 트리 = 섬(강체). 그래프 경로·schema 2 elems 비드만 —
+    schema 1 은 select.island.max_mm(40) 그대로(O-BG-1)."""
+
+    max_mm: float = Field(default=60.0, gt=0)
+    straddle_frac: float = Field(default=0.15, gt=0, lt=1)
+
+
+class BeadDoeSelectGraphBeadCfg(_M):
+    """v0.17.0 세그먼트 골격(BG-D-11·13): 비드형 바닥 폭 상한, 가지치기, 접합 판정(L·W), 짧은 구간·띠 흡수."""
+
+    max_width_mm: float = Field(default=80.0, gt=0)
+    prune_k: float = Field(default=2.2, gt=0)
+    bend_deg: float = Field(default=50.0, gt=0, lt=180)
+    width_jump: float = Field(default=0.35, gt=0)
+    min_zone_mm: float = Field(default=12.0, ge=0)
+    open_ext_mm: float = Field(default=90.0, ge=0)
+    absorb_len_mm: float = Field(default=60.0, ge=0)
+
+
+class BeadDoeSelectGraphCornerCfg(_M):
+    """v0.17.0 코너 가드(BG-D-26): 평면 넓이 비 < area_ratio_min 이면 움직이는 노드 평면 성분 × shrink 를 ≤ iters 회."""
+
+    area_ratio_min: float = Field(default=0.35, gt=0, lt=1)
+    shrink: float = Field(default=0.8, gt=0, lt=1)
+    iters: int = Field(default=40, ge=1, le=200)
+
+
+class BeadDoeSelectGraphMorphCfg(_M):
+    """v0.17.0 세그먼트 모핑(BG-D-24·33·34): 램프 L = max(ramp_k·ΔD_ext, ramp_k·h), 바깥 이동·달성 깊이 허용차."""
+
+    ramp_k: float = Field(default=3.0, ge=1)
+    outside_tol_mm: float = Field(default=1.0e-6, gt=0, le=1e-3)
+    achieved_tol_mm: float = Field(default=1.0e-6, gt=0)
+    corner: BeadDoeSelectGraphCornerCfg = BeadDoeSelectGraphCornerCfg()
+
+
+class BeadDoeSelectGraphLimitsCfg(_M):
+    """v0.17.0 분류 상한(§7): 요소 수 초과 = GRAPH_FAILED{TOO_LARGE}, 시간 초과 = GRAPH_FAILED{TIMEOUT}, 래스터 픽셀 상한."""
+
+    max_elems: int = Field(default=250000, ge=1, le=2_000_000)
+    timeout_s: float = Field(default=180, gt=0)
+    max_raster_px: int = Field(default=4_000_000, ge=100_000)
+
+
+class BeadDoeSelectGraphCfg(_M):
+    """v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5): 메시 비드 네트워크 분류기·세그먼트 모핑 — esl.doe.DEFAULTS["select"]["graph"]·
+    beadgraph.DEFAULTS 거울. 코어 HASH_NEW_KEYS_V0170 — 기본값이면 select 해시에서 빠짐(BG-D-41). enabled false = 새 스터디도 schema
+    2 이지만 그래프 계산 안 함(GRAPH_FAILED{code: DISABLED}, elems 비드만)."""
+
+    enabled: bool = True
+    feature_angle_deg: float = Field(default=10.0, gt=0, le=45)     # BG-D-2(#53 param feature_angle) — select.feature_angle_deg 와 별개
+    level_tol_mm: float = Field(default=0.3, gt=0)
+    min_floor_area_mm2: float = Field(default=12.0, ge=0)
+    root_free_frac: float = Field(default=0.2, ge=0, le=1)
+    raster_mm: float = Field(default=1.0, gt=0)
+    island: BeadDoeSelectGraphIslandCfg = BeadDoeSelectGraphIslandCfg()
+    bead: BeadDoeSelectGraphBeadCfg = BeadDoeSelectGraphBeadCfg()
+    morph: BeadDoeSelectGraphMorphCfg = BeadDoeSelectGraphMorphCfg()
+    sym_tol_mm: float = Field(default=0.5, gt=0)                    # BG-D-17·21
+    limits: BeadDoeSelectGraphLimitsCfg = BeadDoeSelectGraphLimitsCfg()
+
+
 class BeadDoeSelectThumbCfg(_M):
     w: int = Field(default=320, ge=16, le=4096)
     h: int = Field(default=240, ge=16, le=4096)
@@ -963,6 +1026,7 @@ class BeadDoeSelectCfg(_M):
     hold: BeadDoeSelectHoldCfg = BeadDoeSelectHoldCfg()
     hole: BeadDoeSelectHoleCfg = BeadDoeSelectHoleCfg()        # v0.16.2 AD-D-7 구멍 건너 잇기 상한
     auto: BeadDoeSelectAutoCfg = BeadDoeSelectAutoCfg()        # v0.16.2 AD-D-12 자동 탐지 사면 힌트 기준
+    graph: BeadDoeSelectGraphCfg = BeadDoeSelectGraphCfg()     # v0.17.0 BEADGRAPH 분류기·세그먼트 모핑(esl_beadgraph.md §5.5)
     derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔
     derive_timeout_s: float = Field(default=20, gt=0, le=600)
 
