@@ -23,6 +23,11 @@ def test_hash_view_default_excludes_graph():
     sc = copy.deepcopy(DEFAULTS["select"])
     sc["graph"]["island"]["max_mm"] = 55.0
     assert bs.select_hash_view(sc)["graph"]["island"]["max_mm"] == 55.0
+    # 통합 v0.17.0: 코어 구현 키 morph.w_smooth_iters 도 다른 graph 키와 같은 규칙(기본 3 = 해시 제외, 아니면 들어감)
+    assert DEFAULTS["select"]["graph"]["morph"]["w_smooth_iters"] == 3
+    sc = copy.deepcopy(DEFAULTS["select"])
+    sc["graph"]["morph"]["w_smooth_iters"] = 5
+    assert bs.select_hash_view(sc)["graph"]["morph"]["w_smooth_iters"] == 5
 
 
 def test_schema1_island_unchanged():
@@ -37,7 +42,8 @@ def test_messages_for_codes():
     for code in ("GRAPH_FAILED", "GRAPH_RASTER_COARSE", "AUTO_HINT_UNAVAILABLE", "BG_GROUP_NOT_CONNECTED",
                  "BG_TIE_NOMINAL", "BG_SEG_UNKNOWN", "BG_EDIT_INVALID", "SELECT_SCHEMA_MISMATCH", "BG_GRAPH_STALE",
                  "BG_GROUP_NOMINAL_SPREAD", "BG_SEGMENT_SHORT", "BG_RAMP_SHORT", "BG_SHARED_CHILD", "BG_CORNER_GUARD",
-                 "BG_ISLAND_HELD", "BG_BASIS_LEAK", "BG_ACHIEVED_MISMATCH", "BG_OUTSIDE_MOVED", "GRAPH_NOT_AVAILABLE"):
+                 "BG_ISLAND_HELD", "BG_BASIS_LEAK", "BG_ACHIEVED_MISMATCH", "BG_OUTSIDE_MOVED", "GRAPH_NOT_AVAILABLE",
+                 "BG_RANGE_CLAMPED"):
         assert code in m
 
 

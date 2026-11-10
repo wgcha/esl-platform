@@ -31,11 +31,11 @@ describe("graph.bin(§6.1)", () => {
     for (const k of GRAPH_BIN_ARRAYS) expect([...r[k]]).toEqual([...l[k]]);
     expect(() => parseGraphBin(buf, 36)).toThrow(/요소 수/);
   });
-  it("offset 이 머리 뒤(데이터 시작) 기준이어도 읽음", () => {
+  it("offset 은 머리 끝(4 + L) 기준 — 정렬 채움 없음(코어 graph_bin 규칙)", () => {
     const n = 5;
     const head = JSON.stringify({ n_elems: n, arrays: GRAPH_BIN_ARRAYS.map((name, k) => ({ name, offset: k * n * 4 })) });
     const hb = new TextEncoder().encode(head);
-    const start = 4 + hb.length + ((4 - ((4 + hb.length) % 4)) % 4);
+    const start = 4 + hb.length;
     const buf = new ArrayBuffer(start + 6 * n * 4);
     const dv = new DataView(buf);
     dv.setUint32(0, hb.length, true);
@@ -43,6 +43,15 @@ describe("graph.bin(§6.1)", () => {
     for (let k = 0; k < 6; k++) for (let i = 0; i < n; i++) dv.setInt32(start + (k * n + i) * 4, k * 10 + i, true);
     const r = parseGraphBin(buf, n);
     expect([...r.island]).toEqual([30, 31, 32, 33, 34]);
+    expect([...r.cls]).toEqual([0, 1, 2, 3, 4]);
+  });
+  it("코어 bead_graph.graph_bin 바이트(n 3, 머리 205 B → 데이터 209 = 4바이트 정렬 아님) 그대로 읽고, 쓰기 = 같은 바이트", () => {
+    // PYTHONPATH=.:packages/beadgraph/src python -c "…graph_bin({k: [10*j+i-1 for i in range(3)]})" (통합 v0.17.0)
+    const b64 = "zQAAAHsiYXJyYXlzIjpbeyJuYW1lIjoiY2xzIiwib2Zmc2V0IjowfSx7Im5hbWUiOiJzZWdtZW50Iiwib2Zmc2V0IjoxMn0seyJuYW1lIjoianVuY3Rpb25fem9uZSIsIm9mZnNldCI6MjR9LHsibmFtZSI6ImlzbGFuZCIsIm9mZnNldCI6MzZ9LHsibmFtZSI6ImZsb29yIiwib2Zmc2V0Ijo0OH0seyJuYW1lIjoidGllciIsIm9mZnNldCI6NjB9XSwibl9lbGVtcyI6M33/////AAAAAAEAAAAJAAAACgAAAAsAAAATAAAAFAAAABUAAAAdAAAAHgAAAB8AAAAnAAAAKAAAACkAAAAxAAAAMgAAADMAAAA=";
+    const core = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const r = parseGraphBin(core.buffer, 3);
+    GRAPH_BIN_ARRAYS.forEach((k, j) => expect([...r[k]]).toEqual([10 * j - 1, 10 * j, 10 * j + 1]));
+    expect([...new Uint8Array(writeGraphBin(r))]).toEqual([...core]);
   });
   it("220k 요소 디코드 ≤ 200 ms(§7)", () => {
     const buf = writeGraphBin(lab(220_000, (i) => i % 23));

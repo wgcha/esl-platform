@@ -200,3 +200,11 @@
 - (0.17.0 확정 D-0.17.0-ISLAND60, 2026-11-09) D8 그래프 분류의 `island.max_mm` = 60, 화면에서 어떤 조각이든 섬 ↔ 비드 전환 가능(근거: 사용자 확정 — esl_beadgraph.md BG-D-9·37; schema 1 스터디 적용 여부는 O-BG-1).
 - (0.17.0 확정 D-0.17.0-SEEDSRC, 2026-11-09) D9 자동 탐지 seed 출처 = 메시 분류기(paicad B-rep 인식 대신), paicad flanks 는 힌트만 — paicad 가 고리 + ㅛ 네트워크를 BEAD_IRREGULAR 로 버림(근거: 사용자 확정·관찰 — esl_beadgraph.md BG-D-20·42, §5.3).
 - (0.17.0 확정 D-0.17.0-UIFLOW, 2026-11-09) D10 기존 화면 흐름 재사용(자동 seed → 같은 BeadSelectCard/BeadList 편집 + 세그먼트 트리 보기), 새 화면 없음(근거: 사용자 확정 — esl_beadgraph.md §6.2).
+- (0.17.0 통합 D-0.17.0-WCLAMP, 2026-11-10) schema 2 그래프 W 기본 범위 끝이 뒤집히면 range_check usable 로 줄이고 정보 `BG_RANGE_CLAMPED` — 기저·feasible·D·schema 1 불변(근거: H6 포켓 ±15 mm·채널 −20 % 끝 뒤집힘 — esl_beadgraph.md §12 BG-X-1).
+- (0.17.0 통합 D-0.17.0-BASEPLATE, 2026-11-10) 뿌리 수준이고 평면 크기 > `island.max_mm`(60) 인 둘러싸인 판은 뿌리(root_group)로 수용(근거: H5 고리 안 판 — §12 BG-X-2).
+- (0.17.0 통합 D-0.17.0-WBOTH, 2026-11-10) W 는 입구 선이 양쪽 모두 있는 세그먼트만, 안쪽에 플래토가 있는 고리 변은 D 만으로 수용(근거: 한쪽 입구 폭은 대칭 W 이동과 맞지 않음 — §12 BG-X-3).
+- (0.17.0 통합 D-0.17.0-ELEMS, 2026-11-10) beadgraph `basis`·`check`·`apply_edits`(split)는 `elems` 키워드 필수로 수용, §8.2 시그니처 확장(근거: 연결 없이 구역·분할을 못 정함 — §12 BG-X-4).
+- (0.17.0 통합 D-0.17.0-WSMOOTH, 2026-11-10) 코어 구현 키 `select.graph.morph.w_smooth_iters` = 3 을 pydantic·예시 yaml 2개에 거울, 해시는 다른 graph 키와 같은 규칙(근거: 설정 하드코딩 금지 — §12 BG-X-5).
+- (0.17.0 통합 D-0.17.0-GFAIL, 2026-11-10) `GRAPH_FAILED` 경고는 코어·워커·화면 모두 `{code, message, detail}` 하나(AUTO_DETECT_FAILED 와 같은 꼴), 옛 문자열·다른 키는 읽지 않음(근거: 세 층 형식 불일치 — §12 BG-X-6).
+- (0.17.0 통합 D-0.17.0-GBIN, 2026-11-10) graph.bin 배열 offset = 머리 끝(4 + L) 기준·채움 없음 하나로, 화면 파서 추정 제거(근거: 코어 출력은 4바이트 정렬이 아니어서 화면이 잘못 읽음 — §12 BG-X-7).
+- (0.17.0 통합 D-0.17.0-BGINSTALL, 2026-11-10) beadgraph 는 인덱스 설치에서 빼고 `Install-EslBeadgraph`(저장소 = packages\beadgraph, 묶음 = wheels 휠)로 설치·판 대조(근거: 사내 인덱스에 없음 — §12 BG-X-8).

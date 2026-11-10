@@ -701,7 +701,6 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
 
 AUTO_DETECT_MSG = "자동 탐지(paicad {step})가 실패했습니다({detail}) — 빈 선택에서 수동으로 선택하세요"
 GRAPH_FAILED_MSG = "자동 분류 실패({detail}) — 직접 칠하기(요소 비드)로 계속"
-GRAPH_FAILED_CODES = ("ERROR", "TIMEOUT", "TOO_LARGE", "DISABLED", "NO_FLOOR")
 GRAPH_JSON_MAX_MB = 64
 
 
@@ -720,23 +719,14 @@ def _file_sha(p: str) -> str | None:
         return None
 
 
-def _graph_failed_code(inp: dict[str, Any], core: dict[str, Any], warns: list[dict[str, Any]]) -> str:
-    """GRAPH_FAILED 안쪽 코드: 코어 prep/input.json graph.code → 코어 경고 GRAPH_FAILED{code|detail}·'GRAPH_FAILED: <CODE> …' →
-    ERROR(코어가 그래프 파일도 실패 기록도 남기지 않음)."""
+def _graph_failed_code(inp: dict[str, Any], core: dict[str, Any]) -> str:
+    """GRAPH_FAILED 안쪽 사유(detail): 코어 prep/input.json graph.code → 코어 구조화 경고 GRAPH_FAILED{code, message, detail}
+    (AUTO_DETECT_FAILED 와 같은 형식) → ERROR(코어가 그래프 파일도 실패 기록도 남기지 않음)."""
     c = core.get("code")
     if isinstance(c, str) and c:
         return c
-    for w in list(inp.get("warnings") or []) + list(inp.get("info") or []):
-        if isinstance(w, dict) and w.get("code") == "GRAPH_FAILED":
-            for k in ("detail", "graph_code", "reason"):
-                if isinstance(w.get(k), str) and w[k]:
-                    return w[k]
-        elif isinstance(w, str) and w.startswith("GRAPH_FAILED"):
-            m = re.search(r"\b(" + "|".join(GRAPH_FAILED_CODES) + r")\b", w)
-            if m:
-                return m.group(1)
-    for w in warns:
-        if w.get("code") == "GRAPH_FAILED" and isinstance(w.get("detail"), str):
+    for w in inp.get("warnings") or []:
+        if isinstance(w, dict) and w.get("code") == "GRAPH_FAILED" and isinstance(w.get("detail"), str) and w["detail"]:
             return w["detail"]
     return "ERROR"
 
@@ -763,8 +753,8 @@ def _select_graph_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: 
                  "n_holes": n("holes"), "n_networks": n("networks")}
         warns[:] = [w for w in warns if w.get("code") != "GRAPH_FAILED"]
         return {"graph": graph}
-    code = _graph_failed_code(inp, core, warns)
-    warns[:] = [w for w in warns if w.get("code") != "GRAPH_FAILED"]      # 코어 문자열 경고 → 아래 한 개(필드 포함)
+    code = _graph_failed_code(inp, core)
+    warns[:] = [w for w in warns if w.get("code") != "GRAPH_FAILED"]      # _doe_warning 이 detail 을 버린 사본 → 아래 한 개
     tmpl = msgs.get("GRAPH_FAILED") or GRAPH_FAILED_MSG
     try:
         msg = tmpl.format(detail=code, code=code)

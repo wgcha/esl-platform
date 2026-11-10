@@ -4,7 +4,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
-import { doe } from "../api/doe";
+import { doe, isInfoWarn, warnText } from "../api/doe";
 import type { DoeSelectionV2 } from "../api/types";
 import { AUTO_BADGE } from "../components/BeadSelectCard";
 import { renderApp } from "../test/render";
@@ -189,4 +189,21 @@ describe("GRAPH_FAILED(doe-11)", () => {
     await waitFor(() => expect(primaries(r.container)[0].textContent).toBe("선택 저장"));
     expect(primaries(r.container)[0].disabled).toBe(true);
   }, 20000);
+});
+
+describe("GRAPH_FAILED 경고 형식(통합 v0.17.0)", () => {
+  it("{code, message, detail} 하나 — 사유는 detail 만 읽음", () => {
+    expect(warnText({ code: "GRAPH_FAILED", detail: "TIMEOUT" } as never)).toBe("자동 분류 실패(시간 초과) — 직접 칠하기(요소 비드)로 계속");
+    expect(warnText({ code: "GRAPH_FAILED", reason: "TIMEOUT" } as never)).toBe("자동 분류 실패 — 직접 칠하기(요소 비드)로 계속");
+    expect(warnText({ code: "GRAPH_FAILED", detail: "TIMEOUT", message: "서버 문구" } as never)).toBe("서버 문구");
+  });
+});
+
+describe("BG_RANGE_CLAMPED(통합 v0.17.0 — 기본 W 범위를 뒤집힘 없는 범위로)", () => {
+  it("정보(ⓘ) + 줄인 범위 문구", () => {
+    const w = { code: "BG_RANGE_CLAMPED", bead: "b10", var: "B10_W", from: [60, 90], to: [60, 76.875], inverted: [0, 118] };
+    expect(isInfoWarn(w)).toBe(true);
+    expect(isInfoWarn({ ...w, level: "info" })).toBe(true);
+    expect(warnText(w as never)).toBe("B10_W: 기본 범위 60~90 mm 끝에서 뒤집혀 60~76.9 mm 로 줄였습니다");
+  });
 });

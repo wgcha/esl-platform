@@ -953,12 +953,14 @@ class BeadDoeSelectGraphCornerCfg(_M):
 
 
 class BeadDoeSelectGraphMorphCfg(_M):
-    """v0.17.0 세그먼트 모핑(BG-D-24·33·34): 램프 L = max(ramp_k·ΔD_ext, ramp_k·h), 바깥 이동·달성 깊이 허용차."""
+    """v0.17.0 세그먼트 모핑(BG-D-24·33·34): 램프 L = max(ramp_k·ΔD_ext, ramp_k·h), 바깥 이동·달성 깊이 허용차,
+    W 바깥 방향장 완화 반복 w_smooth_iters(통합 v0.17.0 — 코어 구현 키 거울)."""
 
     ramp_k: float = Field(default=3.0, ge=1)
     outside_tol_mm: float = Field(default=1.0e-6, gt=0, le=1e-3)
     achieved_tol_mm: float = Field(default=1.0e-6, gt=0)
     corner: BeadDoeSelectGraphCornerCfg = BeadDoeSelectGraphCornerCfg()
+    w_smooth_iters: int = Field(default=3, ge=0, le=200)            # W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔) — 코어 구현 키
 
 
 class BeadDoeSelectGraphLimitsCfg(_M):

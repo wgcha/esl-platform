@@ -132,3 +132,60 @@ def test_h6_recipes_through_esl(key):
         assert any(w["code"] == "BG_SHARED_CHILD" for w in D.beads[0].warnings)
     if key == "d":
         assert any(w["code"] == "BG_CORNER_GUARD" for w in D.beads[0].warnings)
+
+
+@pytest.mark.slow
+def test_h6_default_w_range_clamped_to_usable():
+    """통합 v0.17.0(계약 §12 BG-X-1): H6 auto seed — W 기본 범위 끝 뒤집힘(포켓 ±15 mm 위 끝, 채널 −20 %)은 range_check usable 로
+    줄이고 정보 BG_RANGE_CLAMPED(SELECT_RANGE_INVERTS 대신), 줄인 범위로 다시 점검하면 그래프 W 뒤집힘 없음, D 범위·기저는 그대로."""
+    import copy
+
+    mesh, g, lab, fixed, _d = prepared("h6")
+    sel, _sym, _aw = bgr.auto_seed(g, lab, CFG)
+    norm, _ = bs.normalize(sel, CFG, mesh=mesh, graph=g, labels=lab)
+    D = bgr.derive_obj_v2(mesh, norm, CFG, g, lab, fixed_node_ids=fixed)
+    B = bs.basis(mesh, D, CFG)
+    before = {r["name"]: r for r in copy.deepcopy(bs.params_table(D, CFG))}
+    rc = bs.range_check(mesh, D, B, CFG)
+    inv = {w["var"]: w for w in rc if w["code"] == "SELECT_RANGE_INVERTS"}
+    assert inv and all(v.endswith("_W") for v in inv)                     # H6: only W ends invert
+    cl = bgr.clamp_w_ranges(D, rc)
+    assert {c["var"] for c in cl} == set(inv)
+    assert not any(w["code"] == "SELECT_RANGE_INVERTS" for w in rc)
+    after = {r["name"]: r for r in bs.params_table(D, CFG)}
+    for c in cl:
+        assert c["level"] == "info" and c["from"] == before[c["var"]]["default_range"]
+        assert after[c["var"]]["default_range"] == c["to"] == inv[c["var"]]["usable"]
+        lo, hi = c["to"]
+        assert lo < after[c["var"]]["nominal"] < hi
+        assert after[c["var"]]["feasible"] == before[c["var"]]["feasible"]
+        b = next(x for x in D.beads if x.id == c["bead"])
+        assert [w["code"] for w in b.warnings].count("BG_RANGE_CLAMPED") == 1
+        assert not any(w["code"] == "SELECT_RANGE_INVERTS" for w in b.warnings)
+    for k, r in after.items():
+        if k not in inv:
+            assert r["default_range"] == before[k]["default_range"], k
+    rc2 = bs.range_check(mesh, D, B, CFG)
+    assert not any(w["code"] == "SELECT_RANGE_INVERTS" for w in rc2), rc2
+
+
+def test_clamp_keeps_degenerate_and_non_graph():
+    """usable 이 공칭을 품지 못하면(끝이 공칭에 붙음) 줄이지 않음, 그래프 W 가 아닌 변수(elems·D)는 손대지 않음."""
+    class _B:
+        def __init__(self, bid, src="graph"):
+            self.id, self.src, self.vars, self.W_nom = bid, src, ["D", "W"], 10.0
+            self.range_default = {"D": [1.0, 2.0], "W": [8.0, 12.0]}
+            self.warnings = []
+
+    class _D:
+        norm = {"ties": []}
+        beads = [_B("b1"), _B("b2"), _B("b3", src="elems")]
+    d = _D()
+    rc = [{"code": "SELECT_RANGE_INVERTS", "var": "B1_W", "usable": [10.0, 11.0], "inverted": [3, 0]},
+          {"code": "SELECT_RANGE_INVERTS", "var": "B2_D", "usable": [1.2, 1.8], "inverted": [1, 1]},
+          {"code": "SELECT_RANGE_INVERTS", "var": "B3_W", "usable": [9.0, 11.0], "inverted": [1, 1]},
+          {"code": "SELECT_RANGE_INVERTS", "var": "B2_W", "usable": [9.0, 11.5], "inverted": [2, 1]}]
+    out = bgr.clamp_w_ranges(d, rc)
+    assert [c["var"] for c in out] == ["B2_W"] and d.beads[1].range_default["W"] == [9.0, 11.5]
+    assert d.beads[0].range_default["W"] == [8.0, 12.0] and d.beads[1].range_default["D"] == [1.0, 2.0]
+    assert [w["var"] for w in rc] == ["B1_W", "B2_D", "B3_W", "B2_W"] and rc[-1]["code"] == "BG_RANGE_CLAMPED"

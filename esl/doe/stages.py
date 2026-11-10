@@ -2386,6 +2386,8 @@ def _sel_loads(c: Ctx, echo) -> dict:
         inp["auto"] = {k: v for k, v in auto.items() if k != "file"}
     if gst is not None:
         inp["graph"] = {k: v for k, v in gst.items() if k != "warnings"}
+        if not gst["ok"]:                        # GRAPH_FAILED{code, message, detail} 1개(워커 준비 요약 그대로)
+            inp["warnings"] += [w for w in gst.get("warnings") or [] if w.get("code") == "GRAPH_FAILED"]
     c.write_json(os.path.join("prep", "input.json"), inp)
     echo(f"[bd_loads] select ESL {len(loads)}개 하중({linfo['method']}), 고정 노드 {int(fixed.sum())}"
          + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else "")
@@ -2409,8 +2411,10 @@ def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo) -> dict:
     실패 = 준비 READY 유지 + 경고 GRAPH_FAILED{code}(수동은 src elems 비드로 계속)."""
     from esl.doe import bead_graph as bgr
     st = bgr.prep_graph(mesh, fids, c.cfg, sd, guard=c.writer.guard)
-    if not st["ok"]:
-        warns.append(f"GRAPH_FAILED: code={st['code']}")
+    if not st["ok"]:                             # 구조화 경고 1개 {code, message, detail}(AUTO_DETECT_FAILED 와 같은 형식)
+        gw = graph_failed_warning(st["code"])
+        st["warnings"] = [gw]                    # inp.warnings 로(아래 bd_loads) — inp.graph 에는 code 만
+        warns.append(_sel_warn_text({"code": gw["code"], "detail": gw["detail"]}))
         echo(f"[bd_loads] 자동 분류 실패({st['code']}) — 직접 칠하기(요소 비드)로 계속")
     else:
         for w in st.get("warnings") or []:
@@ -2419,6 +2423,18 @@ def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo) -> dict:
         echo(f"[bd_loads] 분류 그래프 세그먼트 {st['n_segments']} · 접합 구역 {st['n_junction_zones']} · 섬 "
              f"{st['n_islands']} · {st['seconds']:.1f}s (beadgraph {st['beadgraph_version']} rules {st['rules']})")
     return st
+
+
+def graph_failed_warning(code: str | None) -> dict:
+    """v0.17.0 GRAPH_FAILED 준비 경고(BG-D-40·§6.4) — 코어·워커·화면 공통 형식 {code: "GRAPH_FAILED", message, detail}
+    (detail = 안쪽 사유 ERROR|TIMEOUT|TOO_LARGE|DISABLED|NO_FLOOR, AUTO_DETECT_FAILED{detail} 과 같은 규칙)."""
+    detail = str(code or "ERROR")
+    tmpl = _sel_msg("GRAPH_FAILED") or "GRAPH_FAILED"
+    try:
+        msg = tmpl.format(detail=detail, code=detail)
+    except (KeyError, IndexError, ValueError):
+        msg = tmpl
+    return {"code": "GRAPH_FAILED", "message": msg[:300], "detail": detail}
 
 
 def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list, echo) -> dict:
@@ -2532,8 +2548,11 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                             with_section=False)
     B = bsel.basis(t.mesh, D, c.cfg)
     rc_w = bsel.range_check(t.mesh, D, B, c.cfg)   # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 → 비드 경고(범위·기저 불변)
+    if v2:                                      # 통합 v0.17.0(BG-X-1): 그래프 W 기본 범위 = usable 로 줄임 + 정보 BG_RANGE_CLAMPED
+        _bgr().clamp_w_ranges(D, rc_w)
     if rc_w:
         echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(
+            f"{w['var']} 기본 범위 {w['from']} → {w['to']}(뒤집힘 없는 범위로 줄임)" if w["code"] == "BG_RANGE_CLAMPED" else
             f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" if "var" in w else
             f"조합(표본 {w['corners']} 중 뒤집힘 {w['inverted_n']}) 함께 쓸 범위 ≈ 공칭 ± {w['scale']} 배" for w in rc_w))
     tab = bsel.params_table(D, c.cfg)

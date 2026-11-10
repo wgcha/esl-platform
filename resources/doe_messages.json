@@ -208,7 +208,7 @@
   "SELECT_BRIDGE_SKIPPED": "경계를 끊는 큰 구멍(등가 지름 {eq_d_mm} mm > select.hole.bridge_max_mm)은 건너 잇지 않았습니다(끝점 간격 {gap_mm} mm) — 비드 경계가 열린 채로 남습니다. (A large opening (equivalent diameter {eq_d_mm} mm > select.hole.bridge_max_mm) was not bridged (gap {gap_mm} mm); the bead boundary stays open.)",
   "AUTO_NOT_AVAILABLE": "자동 탐지 초기 선택이 없습니다(수동 스터디이거나 자동 탐지 결과가 없음). (No auto-detected selection: manual study or no detection result.)",
   "PREP_NOT_READY": "준비(DOE_PREP)가 끝나지 않았습니다. (Preparation is not ready.)",
-  "GRAPH_FAILED": "자동 분류 실패({code}) — 직접 칠하기(요소 비드)로 계속하세요. (Automatic classification failed ({code}) — continue with painted element beads.)",
+  "GRAPH_FAILED": "자동 분류 실패({detail}) — 직접 칠하기(요소 비드)로 계속하세요. (Automatic classification failed ({detail}) — continue with painted element beads.)",
   "GRAPH_RASTER_COARSE": "(정보) 큰 바닥의 골격 해상도를 {raster_mm} mm 로 낮췄습니다. (Info: skeleton raster coarsened to {raster_mm} mm for a large floor.)",
   "GRAPH_NOT_AVAILABLE": "분류 그래프가 없습니다(schema 1 스터디 또는 자동 분류 실패). (No classification graph for this study.)",
   "AUTO_HINT_UNAVAILABLE": "(정보) paicad 사면 힌트를 만들지 못했습니다({step} {code}) — 자동 seed 와 무관합니다. (Info: paicad hints unavailable; the seed is unaffected.)",
@@ -224,6 +224,7 @@
   "BG_SHARED_CHILD": "(정보) 비드 {bead}: 공유 자식 바닥 {child} 은 제자리이고 그 벽 {n_nodes} 노드가 높이 차를 흡수합니다. (Info: shared child {child} stays; its wall absorbs the change.)",
   "BG_CORNER_GUARD": "(정보) 비드 {bead}: 바닥 코너 {n_nodes} 노드에서 사면을 가파르게 해 뒤집힘을 막았습니다(최대 {flank_max_deg}°). (Info: corner guard on {n_nodes} nodes.)",
   "BG_ISLAND_HELD": "(정보) 섬 {island} 에 고정 노드가 있어 강체 대신 고정 블렌딩을 적용했습니다. (Info: island {island} held by fixed nodes.)",
+  "BG_RANGE_CLAMPED": "(정보) {var} 기본 범위 {from} mm 끝에서 요소가 뒤집혀 뒤집힘 없는 범위 {to} mm 로 줄였습니다(기저·한계 범위는 그대로). (Info: default range of {var} clamped from {from} to {to} mm — its ends inverted elements.)",
   "BG_BASIS_LEAK": "기저 오류: {var} 가 허용 구역 밖 {n} 노드를 움직입니다(최대 {max_mm} mm) — 구현 결함. (Basis error: {var} moves {n} nodes outside its zone.)",
   "BG_ACHIEVED_MISMATCH": "기저 오류: {var} 달성 깊이·폭 오차 {err_mm} mm. (Basis error: {var} achieved error {err_mm} mm.)",
   "BG_OUTSIDE_MOVED": "바뀐 세그먼트 밖 노드 {n} 개가 움직여(최대 {max_mm} mm) 이 안을 제외했습니다. (Nodes outside the changed segments moved — design excluded.)"

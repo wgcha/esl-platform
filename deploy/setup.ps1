@@ -261,6 +261,8 @@ if ($hasDeps) {
     Write-Step 'venv 의존성 갱신(deploy\requirements.lock)'
     Install-EslPackages -VenvPy $venvPy -LockFile $lock
 }
+# v0.17.0 공통 패키지 beadgraph(저장소 packages\beadgraph — 인덱스에 없음, lock 판 대조)
+$null = Install-EslBeadgraph -VenvPy $venvPy -LockFile $lock -Repo $repo
 # 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 작성보다 먼저(setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채움)
 $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile $lock -PaicadLock (Join-Path $repo 'deploy\paicad.lock') -PaicadWheels "$($d.paicad_wheels)" `
     -PhysicsaiRepo "$($d.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel') -VendoredWheels (Join-Path $repo 'deploy\wheels')

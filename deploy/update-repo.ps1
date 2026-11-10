@@ -172,6 +172,7 @@ try {
         Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $rt 'venv'))
     }
     Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock')
+    $null = Install-EslBeadgraph -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock') -Repo $repo   # v0.17.0(저장소 packages\beadgraph)
     $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $repo 'deploy\requirements.lock') -PaicadLock (Join-Path $repo 'deploy\paicad.lock') `
         -PaicadWheels "$($cfg.paicad_wheels)" -PhysicsaiRepo "$($cfg.physicsai_root)" -WorkDir (Join-Path $rt 'paicad-wheel') `
         -VendoredWheels (Join-Path $repo 'deploy\wheels')

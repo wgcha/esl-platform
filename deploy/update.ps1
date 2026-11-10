@@ -65,6 +65,7 @@ try {
     # ---- ④ 새 설치 ---------------------------------------------------------------------------
     Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $root 'venv'))
     Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
+    $null = Install-EslBeadgraph -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')   # v0.17.0
     $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -PaicadLock (Join-Path $PSScriptRoot 'paicad.lock') -Wheels (Join-Path $pkg 'wheels')
     Install-EslApp -Source (Join-Path $pkg 'app') -Dest (Join-Path $root 'app') -BackupDir $backup
     Publish-EslFrontend -Dist (Join-Path $pkg 'frontend') -Dest $frontendRoot -BackupDir $backup

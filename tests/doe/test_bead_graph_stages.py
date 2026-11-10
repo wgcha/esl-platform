@@ -93,3 +93,25 @@ def test_schema1_no_graph(tmp_path):
     r = run("bd_loads")
     assert "graph" not in r and not (out / "prep" / "select" / bgr.GRAPH_JSON).exists()
     assert "graph" not in json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
+
+
+def test_graph_failed_structured_warning(tmp_path):
+    """통합 v0.17.0(§12 BG-X-6): 분류 실패(graph.enabled false = DISABLED) → 준비 계속, prep/input.json warnings 에
+    {code: GRAPH_FAILED, message, detail} 1개 + graph.code(옛 문자열 'GRAPH_FAILED: code=…' 없음), 작업 경고 줄은 detail=."""
+    mesh = esl_mesh(cf.load_fixture("h5"))
+    doe = _study(tmp_path, mesh, select_schema=2)
+    doe["cfg"]["bead_doe"]["select"] = {"graph": {"enabled": False}}
+    out = tmp_path / "_doe" / "G1"
+
+    def run(stage):
+        return stg.run_stage({"stage": stage, "out": str(out), "doe": doe}, lambda s: None)
+    run("bd_input")
+    r = run("bd_loads")
+    inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
+    assert inp["graph"]["ok"] is False and inp["graph"]["code"] == "DISABLED" and "warnings" not in inp["graph"]
+    gw = [w for w in inp["warnings"] if isinstance(w, dict) and w.get("code") == "GRAPH_FAILED"]
+    assert len(gw) == 1 and gw[0]["detail"] == "DISABLED" and set(gw[0]) == {"code", "message", "detail"}
+    assert "DISABLED" in gw[0]["message"]
+    assert not any(isinstance(w, str) and w.startswith("GRAPH_FAILED") for w in inp["warnings"])
+    assert "GRAPH_FAILED: detail=DISABLED" in r["warnings"]
+    assert not (out / "prep" / "select" / bgr.GRAPH_JSON).exists()

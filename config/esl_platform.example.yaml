@@ -266,7 +266,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       raster_mm: 1.0
       island: {max_mm: 60.0, straddle_frac: 0.15}   # D8 섬 상한(그래프 경로·schema 2 만 — schema 1 은 위 island.max_mm 40)
       bead: {max_width_mm: 80.0, prune_k: 2.2, bend_deg: 50.0, width_jump: 0.35, min_zone_mm: 12.0, open_ext_mm: 90.0, absorb_len_mm: 60.0}   # absorb_len_mm = D7 짧은 띠 흡수
-      morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6, corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}}
+      morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6, corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}, w_smooth_iters: 3}   # w_smooth_iters = W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔)
       sym_tol_mm: 0.5                 # 묶음 공칭 차·대칭 묶기 허용(BG-D-17·21)
       limits: {max_elems: 250000, timeout_s: 180, max_raster_px: 4000000}   # 넘으면 GRAPH_FAILED{TOO_LARGE·TIMEOUT}(준비는 READY)
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}

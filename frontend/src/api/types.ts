@@ -3186,15 +3186,69 @@ export interface SelectionIn {
   fixed_user?: SelectElemSet;
   exclude?: SelectElemSet;
 }
+/** openapi GraphAnchorRef(v0.17.0 — 세그먼트 앵커) */
+export interface GraphAnchorRef {
+  anchor: number;
+}
+/** openapi GraphToggleIn(섬 ↔ 비드 전환, BG-D-37) */
+export interface GraphToggleIn {
+  anchor: number;
+  as: "bead" | "island";
+}
+/** openapi GraphSplitIn(분할 — at = 평면 좌표 [x, y]) */
+export interface GraphSplitIn {
+  anchor: number;
+  at: number[];
+}
+/** openapi GraphEditsIn(요청 — 키 생략 = []). 화면이 보내는 값은 BgEdits(키 모두) */
+export interface GraphEditsIn {
+  toggle?: GraphToggleIn[];
+  merge?: GraphAnchorRef[][];
+  split?: GraphSplitIn[];
+}
+/** openapi GraphRefIn(선택이 기준으로 삼은 분류 결과 — sha 다르면 409 BG_GRAPH_STALE) */
+export interface GraphRefIn {
+  sha256: string;
+  rules: number;
+  edits?: GraphEditsIn;
+}
+/** openapi GraphSegRef(요청 — anchor | network 정확히 하나). 화면 값은 BgSegRef */
+export interface GraphSegRef {
+  anchor?: number | null;
+  network?: number | null;
+}
+/** openapi SelectGraphBeadIn(요청). 화면이 보내는 값은 DoeBeadSelGraph(더 엄격) */
+export interface SelectGraphBeadIn {
+  id: string;
+  name?: string | null;
+  src: "graph";
+  segs: GraphSegRef[];
+  vars?: ("D" | "W")[] | null;
+  hold_fixed?: 0 | 1 | null;
+}
+/** openapi SelectElemsBeadIn(요청 — schema 1 비드 본문 + src elems). 화면 값은 DoeBeadSelElems */
+export interface SelectElemsBeadIn extends SelectBeadIn {
+  src: "elems";
+}
+/** openapi SelectionInV2(요청, BG-D-36). graph 생략·null = 분류 결과 없음(GRAPH_FAILED — elems 비드만). 화면 값은 DoeSelectionV2 */
+export interface SelectionInV2 {
+  schema_version: 2;
+  feature_angle_deg?: number | null;
+  graph?: GraphRefIn | null;
+  beads: (SelectGraphBeadIn | SelectElemsBeadIn)[];
+  ties?: string[][];
+  fixed_user?: SelectElemSet;
+  exclude?: SelectElemSet;
+}
 /** POST …/select/derive 요청(v0.17.0 schema 2 수용) */
 export interface DoeSelectDeriveIn {
-  selection: SelectionIn | DoeSelectionV2;
+  selection: SelectionIn | SelectionInV2;
   bead?: string | null;
 }
 /** PUT …/selection 요청(v0.17.0 schema 2 수용) */
 export interface DoeSelectionPutIn {
   version: number;
-  selection: SelectionIn | DoeSelectionV2;
+  selection: SelectionIn | SelectionInV2;
 }
 export interface DoeBeadSel {
   /** ^b[1-9][0-9]?$ */
@@ -3324,8 +3378,8 @@ export interface DoeSelectAutoOut {
   selection: DoeSelectionAny;
   /** v0.17.0 seed 출처(schema 2 = "graph", 옛 = 없음/paicad) */
   source?: "graph" | "paicad" | null;
-  /** v0.17.0 paicad 힌트(AUTO_SLOPE_DIFF 등 — 미리 채우지 않음) */
-  hints?: DoeWarning[] | null;
+  /** v0.17.0 paicad 힌트(AUTO_SLOPE_DIFF 등 — 미리 채우지 않음). 서버 스키마 null 불가(없으면 키 없음·[]) */
+  hints?: DoeWarning[];
   /** 정규화 sha(수동 저장과 같은 식) — 서버 스키마 null 허용 */
   sha256: string | null;
   map: DoeSelectAutoMap[];
@@ -3519,9 +3573,10 @@ export interface DoeSelectGraphOut {
   sha256: string;
   edits_applied: null;
   warnings: DoeWarning[];
-  beadgraph_version: string;
-  rules: number;
-  morph_rules: number;
+  /** 서버 스키마 null 허용(graph.json 에 판 기록이 없을 때) */
+  beadgraph_version: string | null;
+  rules: number | null;
+  morph_rules: number | null;
 }
 /** 세그먼트 참조(앵커 = 그 집합 최소 요소 index, BG-D-12) | 네트워크 묶기(BG-D-18) */
 export type BgSegRef = { anchor: number } | { network: number };

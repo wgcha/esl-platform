@@ -106,19 +106,24 @@ function Invoke-EslPip {
 
 $EslLockOptionalMarker = '# ==== bead_doe'   # requirements.lock 에서 이 줄 아래 = 비드 DOE 선택 의존성(OCP·gmsh — 따로 설치, 실패해도 기존 기능 유지)
 
+$EslLockLocalPackages = @('beadgraph')   # v0.17.0: 저장소 안 패키지(packages\<이름> — 인덱스에 없음) — pip 인덱스 설치 목록에서 빼고 Install-EslBeadgraph 로
+
 function Get-EslLockPackages {
-    <# requirements.lock → @{ Core = 기본 고정 목록; BeadDoe = '# ==== bead_doe' 줄 아래 고정 목록 } (주석·빈 줄 제외, 'name==ver' 그대로). #>
+    <# requirements.lock → @{ Core = 기본 고정 목록; BeadDoe = '# ==== bead_doe' 줄 아래 고정 목록; Local = 저장소 안 패키지(beadgraph==<ver>) }
+       (주석·빈 줄 제외, 'name==ver' 그대로). Local 은 인덱스에 없으므로 Core·BeadDoe 에 넣지 않는다(인덱스 설치가 깨지지 않게). #>
     param([Parameter(Mandatory = $true)][string]$LockFile)
     $core = New-Object System.Collections.Generic.List[string]
     $opt = New-Object System.Collections.Generic.List[string]
+    $loc = New-Object System.Collections.Generic.List[string]
     $inOpt = $false
     foreach ($ln in (Get-Content -Encoding UTF8 -LiteralPath $LockFile)) {
         $s = "$ln".Trim()
         if ($s.StartsWith($EslLockOptionalMarker)) { $inOpt = $true; continue }
         if (-not $s -or $s.StartsWith('#')) { continue }
+        if ($EslLockLocalPackages -contains (($s -split '==', 2)[0].Trim().ToLowerInvariant())) { $loc.Add($s); continue }
         if ($inOpt) { $opt.Add($s) } else { $core.Add($s) }
     }
-    return @{ Core = [string[]]$core.ToArray(); BeadDoe = [string[]]$opt.ToArray() }
+    return @{ Core = [string[]]$core.ToArray(); BeadDoe = [string[]]$opt.ToArray(); Local = [string[]]$loc.ToArray() }
 }
 
 function Install-EslPackages {
@@ -133,6 +138,41 @@ function Install-EslPackages {
     if ($Wheels) { $a = @('install', '--no-index', '--find-links', $Wheels) + $core }
     Invoke-EslPip -Py $VenvPy -PipArgs $a -What "의존성($LockFile) 설치"
     Invoke-EslNative '설치 확인(import)' $VenvPy @('-c', 'import fastapi, uvicorn, sqlalchemy, psycopg, alembic, httpx, pydantic, yaml, numpy, scipy') '위 오류를 확인하세요(venv 패키지 설치가 끝나지 않음)'
+}
+
+function Install-EslBeadgraph {
+    <#
+      v0.17.0 BEADGRAPH(계약 esl_beadgraph.md §8.3): 공통 패키지 beadgraph(저장소 안 순수 파이썬 packages\beadgraph — PyPI·사내 인덱스에 없음)를
+      venv에 설치하고 deploy\requirements.lock 의 beadgraph==<ver> 와 판을 대조한다. 원본 우선순위:
+        (a) -Wheels(오프라인 묶음 wheels — collect-offline 이 빌드): beadgraph-<ver>-py3-none-any.whl 을 --no-index --no-deps
+        (b) -Repo(저장소 설치·갱신 — setup.ps1·update-repo.ps1): pip install --no-deps <Repo>\packages\beadgraph(빌드 의존 setuptools 는 인덱스)
+      numpy·scipy 는 Install-EslPackages 가 lock 판으로 먼저 설치(--no-deps 라 판이 바뀌지 않음). 원본이 없거나 판이 다르면 throw
+      (그래프 선택 schema 2 가 동작하지 않으므로 설치를 멈춘다). lock 에 beadgraph 가 없으면 아무것도 하지 않음($null).
+    #>
+    param([Parameter(Mandatory = $true)][string]$VenvPy, [Parameter(Mandatory = $true)][string]$LockFile,
+          [string]$Repo = '', [string]$Wheels = '')
+    $pin = @((Get-EslLockPackages -LockFile $LockFile).Local | Where-Object { $_ -match '^beadgraph==' })
+    if (-not $pin.Count) { return $null }
+    $ver = ($pin[0] -split '==', 2)[1].Trim()
+    $src = ''
+    $a = @()
+    if ($Wheels) {
+        $whl = Join-Path $Wheels "beadgraph-$ver-py3-none-any.whl"
+        if (Test-Path -LiteralPath $whl) { $src = $whl; $a = @('install', '--no-index', '--no-deps', '--force-reinstall', $whl) }
+    }
+    if (-not $src -and $Repo) {
+        $pk = Join-Path (Join-Path $Repo 'packages') 'beadgraph'
+        if (Test-Path -LiteralPath (Join-Path $pk 'pyproject.toml')) { $src = $pk; $a = @('install', '--no-deps', '--force-reinstall', $pk) }
+    }
+    if (-not $src) {
+        throw ("공통 패키지 beadgraph $ver 설치 원본이 없습니다(묶음 wheels\beadgraph-$ver-py3-none-any.whl 또는 저장소 packages\beadgraph).`n" +
+            "다음 행동: 오프라인 묶음이면 collect-offline 으로 다시 만들고, 저장소 설치면 git 폴더에 packages\beadgraph 가 있는지 확인하세요.")
+    }
+    Invoke-EslPip -Py $VenvPy -PipArgs $a -What "공통 패키지 beadgraph $ver 설치"
+    Invoke-EslNative "beadgraph 판 확인(lock $ver)" $VenvPy @('-c', "import sys, beadgraph; sys.exit(0 if beadgraph.__version__ == '$ver' else 1)") `
+        "packages\beadgraph __version__ 과 deploy\requirements.lock 의 beadgraph== 판을 맞추세요"
+    Write-EslStep "공통 패키지 beadgraph $ver 설치($src)"
+    return $ver
 }
 
 function Install-EslBeadDoe {

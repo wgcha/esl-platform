@@ -456,14 +456,16 @@ GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.
                   "bead": {"max_width_mm": 80.0, "prune_k": 2.2, "bend_deg": 50.0, "width_jump": 0.35, "min_zone_mm": 12.0,
                            "open_ext_mm": 90.0, "absorb_len_mm": 60.0},
                   "morph": {"ramp_k": 3.0, "outside_tol_mm": 1.0e-6, "achieved_tol_mm": 1.0e-6,
-                            "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40}},
+                            "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
+                            "w_smooth_iters": 3},                       # 통합 v0.17.0(§12 BG-X-5 — 코어 구현 키 거울)
                   "sym_tol_mm": 0.5, "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}
 GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
              {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
              {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},
              {"morph": {"outside_tol_mm": 0}}, {"morph": {"outside_tol_mm": 2e-3}},
              {"morph": {"corner": {"area_ratio_min": 1.0}}}, {"morph": {"corner": {"shrink": 1.0}}},
-             {"morph": {"corner": {"iters": 0}}}, {"morph": {"corner": {"iters": 201}}}, {"limits": {"max_elems": 0}},
+             {"morph": {"corner": {"iters": 0}}}, {"morph": {"corner": {"iters": 201}}},
+             {"morph": {"w_smooth_iters": -1}}, {"morph": {"w_smooth_iters": 201}}, {"limits": {"max_elems": 0}},
              {"limits": {"max_elems": 2_000_001}}, {"limits": {"timeout_s": 0}}, {"limits": {"max_raster_px": 99_999}},
              {"unknown": 1})
 

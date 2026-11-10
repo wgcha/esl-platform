@@ -189,11 +189,14 @@ def test_register_graph_summary_unit(tmp_path):
                    "n_holes": 1, "n_networks": 1}
     assert warns == []
     (tmp_path / "prep" / "select" / "graph.json").unlink()
-    # 실패: 코어 기록 graph.code → 문자열 경고 → dict 경고 → ERROR 순, 경고는 한 개(detail)
+    # 실패: 코어 기록 graph.code → 코어 구조화 경고 GRAPH_FAILED{code, message, detail} → ERROR 순, 경고는 한 개(detail).
+    # 옛 문자열 경고·다른 키(graph_code·reason)는 읽지 않음(통합 v0.17.0 — 형식 하나)
     for inp, want in (({"graph": {"ok": False, "code": "TOO_LARGE"}}, "TOO_LARGE"),
-                      ({"warnings": ["GRAPH_FAILED: 분류 시간 초과(TIMEOUT 180 s)"]}, "TIMEOUT"),
-                      ({"warnings": [{"code": "GRAPH_FAILED", "detail": "NO_FLOOR"}]}, "NO_FLOOR"),
-                      ({"info": [{"code": "GRAPH_FAILED", "graph_code": "DISABLED"}]}, "DISABLED"),
+                      ({"graph": {"ok": False, "code": "TIMEOUT"},
+                        "warnings": [{"code": "GRAPH_FAILED", "message": "m", "detail": "TIMEOUT"}]}, "TIMEOUT"),
+                      ({"warnings": [{"code": "GRAPH_FAILED", "message": "m", "detail": "NO_FLOOR"}]}, "NO_FLOOR"),
+                      ({"warnings": ["GRAPH_FAILED: code=TIMEOUT"]}, "ERROR"),
+                      ({"info": [{"code": "GRAPH_FAILED", "graph_code": "DISABLED"}]}, "ERROR"),
                       ({}, "ERROR")):
         warns = [{"code": "GRAPH_FAILED", "message": "코어 문자열"}, {"code": "FIXED_INFO_MISSING", "message": "y"}]
         out = rg._select_graph_prep(s2, inp, str(tmp_path), {"GRAPH_FAILED": "분류 실패: {detail}"}, warns)

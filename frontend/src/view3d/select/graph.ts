@@ -17,8 +17,9 @@ export const GRAPH_BIN_ARRAYS: (keyof GraphLabels)[] = ["cls", "segment", "junct
 export const CLS = { floor: 0, wall: 1, island: 2, lance: 3 } as const;
 
 /**
- * graph.bin = 머리 JSON 길이(uint32 LE) + 머리 JSON{n_elems, arrays[{name, offset}]} + int32 LE 배열.
- * offset 은 파일 시작 기준 바이트(머리 뒤를 가리키지 않으면 머리 끝(4바이트 정렬) 기준으로 읽는다).
+ * graph.bin = 머리 JSON 길이 L(uint32 LE) + 머리 JSON(L 바이트, ASCII){n_elems, arrays[{name, offset}]} + int32 LE 배열.
+ * offset = **머리 끝(바이트 4 + L)부터 잰 바이트** — 코어 esl/doe/bead_graph.py graph_bin 규칙 하나만 쓴다(정렬 채움 없음 —
+ * 배열이 4바이트 정렬이 아닐 수 있어 DataView 로 읽음).
  */
 export function parseGraphBin(buf: ArrayBuffer, nElems: number): GraphLabels {
   if (buf.byteLength < 4) throw new Error("graph.bin 이 비었습니다");
@@ -32,12 +33,13 @@ export function parseGraphBin(buf: ArrayBuffer, nElems: number): GraphLabels {
     throw new Error("graph.bin 머리 JSON 을 읽지 못했습니다");
   }
   if (head.n_elems !== nElems) throw new Error(`graph.bin 요소 수 ${head.n_elems} ≠ ${nElems}(select.bin)`);
-  const dataStart = 4 + hlen + ((4 - ((4 + hlen) % 4)) % 4);
+  const dataStart = 4 + hlen;
   const out = {} as GraphLabels;
   for (const name of GRAPH_BIN_ARRAYS) {
     const a = head.arrays?.find((x) => x.name === name);
     if (!a) throw new Error(`graph.bin: 배열 ${name} 이 없습니다`);
-    const off = a.offset >= 4 + hlen ? a.offset : dataStart + a.offset;
+    if (!Number.isInteger(a.offset) || a.offset < 0) throw new Error(`graph.bin: 배열 ${name} offset 이 올바르지 않습니다`);
+    const off = dataStart + a.offset;
     if (off + nElems * 4 > buf.byteLength) throw new Error(`graph.bin: 배열 ${name} 이 파일 밖입니다`);
     const arr = new Int32Array(nElems);
     for (let i = 0; i < nElems; i++) arr[i] = dv.getInt32(off + i * 4, true);
@@ -46,19 +48,12 @@ export function parseGraphBin(buf: ArrayBuffer, nElems: number): GraphLabels {
   return out;
 }
 
-/** graph.bin 쓰기(목·시험용 — offset = 파일 시작 기준, 머리 뒤 4바이트 정렬) */
+/** graph.bin 쓰기(목·시험용) — 코어 graph_bin 과 같은 바이트: 머리 = 키 정렬·공백 없는 JSON, offset = 머리 끝 기준, 채움 없음 */
 export function writeGraphBin(l: GraphLabels): ArrayBuffer {
   const n = l.cls.length;
-  const mk = (start: number) => JSON.stringify({ n_elems: n, arrays: GRAPH_BIN_ARRAYS.map((name, k) => ({ name, offset: start + k * n * 4 })) });
-  // 머리 길이가 offset 자릿수에 따라 바뀌므로 두 번 맞춘다
-  let head = mk(0);
-  for (let i = 0; i < 3; i++) {
-    const hb = new TextEncoder().encode(head).length;
-    const start = 4 + hb + ((4 - ((4 + hb) % 4)) % 4);
-    head = mk(start);
-  }
+  const head = JSON.stringify({ arrays: GRAPH_BIN_ARRAYS.map((name, k) => ({ name, offset: k * n * 4 })), n_elems: n });
   const hb = new TextEncoder().encode(head);
-  const start = 4 + hb.length + ((4 - ((4 + hb.length) % 4)) % 4);
+  const start = 4 + hb.length;
   const buf = new ArrayBuffer(start + GRAPH_BIN_ARRAYS.length * n * 4);
   const dv = new DataView(buf);
   dv.setUint32(0, hb.length, true);

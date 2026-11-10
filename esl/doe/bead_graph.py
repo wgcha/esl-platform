@@ -45,7 +45,8 @@ Codes: 422 BG_GROUP_NOT_CONNECTED{bead} · BG_TIE_NOMINAL{beads} · BG_SEG_UNKNO
   warnings GRAPH_FAILED{code} · GRAPH_RASTER_COARSE{raster_mm} · AUTO_HINT_UNAVAILABLE{step, code} ·
   BG_GROUP_NOMINAL_SPREAD{bead, min, max} · BG_SEGMENT_SHORT{bead, length_mm, ramp_mm} · BG_RAMP_SHORT{var, L_mm,
   need_mm}; info BG_SHARED_CHILD{bead, child, n_nodes} · BG_CORNER_GUARD{bead, n_nodes, flank_max_deg} ·
-  BG_ISLAND_HELD{island}; BD_MATRIX errors BG_BASIS_LEAK{var, n, max_mm} · BG_ACHIEVED_MISMATCH{var, err_mm};
+  BG_ISLAND_HELD{island} · BG_RANGE_CLAMPED{bead, var, from, to, inverted} (integration: default W range clamped to
+  range_check usable); BD_MATRIX errors BG_BASIS_LEAK{var, n, max_mm} · BG_ACHIEVED_MISMATCH{var, err_mm};
   cell FAILED_MESH BG_OUTSIDE_MOVED{n, max_mm, vars}.
 ----------------------------------------------------------------------------------------------------------------------
 """
@@ -800,6 +801,40 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
     B = bs.Basis(vars_, n, derived.sha256)
     B.graph_algo = GRAPH_ALGO
     return B
+
+
+def clamp_w_ranges(derived, rc_warnings: list[dict]) -> list[dict]:
+    """통합 v0.17.0(계약 §12 BG-X-1): 그래프 비드(src graph) **W** 변수의 기본 범위 끝이 뒤집히면(``bead_select.range_check`` 의
+    ``SELECT_RANGE_INVERTS{var, usable}``) 기본 범위를 그 usable 로 줄이고, 그 비드의 SELECT_RANGE_INVERTS 를 정보
+    ``BG_RANGE_CLAMPED{bead, var, from[lo, hi], to[lo, hi], inverted[lo, hi], level info}`` 로 바꾼다. 기저·램프(기본 범위 끝에서
+    고정, BG-D-24)·feasible 은 그대로(줄인 범위는 원래 범위 안). usable 이 공칭을 포함하지 못하면(한쪽 끝이 공칭에 붙음) 줄이지 않고
+    SELECT_RANGE_INVERTS 를 그대로 둔다. elems 비드·D 변수·schema 1 = 손대지 않음. rc_warnings 는 제자리(줄인 변수 항목 제거).
+    반환 = 단 BG_RANGE_CLAMPED 목록."""
+    tie = _tie_of(derived.norm)
+    by = {b.id: b for b in derived.beads if getattr(b, "src", None) == "graph"}
+    names = {}
+    for b in by.values():
+        if "W" in (b.vars or []) and (b.range_default or {}).get("W"):
+            grp = tie.get(b.id)
+            if not grp or grp[0] == b.id:
+                names[var_name(b.id, "W")] = b
+    out, keep = [], []
+    for w in rc_warnings:
+        b = names.get(w.get("var")) if w.get("code") == "SELECT_RANGE_INVERTS" else None
+        u = w.get("usable") if b is not None else None
+        if b is None or not (isinstance(u, list) and len(u) == 2 and float(u[0]) < float(b.W_nom) < float(u[1])):
+            keep.append(w)
+            continue
+        old = list(b.range_default["W"])
+        b.range_default["W"] = [_r(float(u[0])), _r(float(u[1]))]
+        c = {"code": "BG_RANGE_CLAMPED", "level": "info", "bead": b.id, "var": w["var"], "from": old,
+             "to": list(b.range_default["W"]), "inverted": list(w.get("inverted") or [])}
+        b.warnings[:] = [x for x in b.warnings if x is not w and not (x.get("code") == "SELECT_RANGE_INVERTS"
+                                                                       and x.get("var") == w["var"])]
+        b.warnings.append(c)
+        out.append(c)
+    rc_warnings[:] = keep + out
+    return out
 
 
 def ramp_short(graph_vars: list[dict], spec_params: list[dict], cfg: dict | None = None) -> list[dict]:

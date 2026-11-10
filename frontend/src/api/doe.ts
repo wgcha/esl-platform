@@ -461,6 +461,7 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   BG_SHARED_CHILD: "자식 바닥이 다른 변에도 닿아 제자리에 두고 벽이 높이 차를 흡수합니다",
   BG_CORNER_GUARD: "바닥 코너가 좁아 그 곳 사면을 가파르게 했습니다",
   BG_ISLAND_HELD: "섬 안 고정 노드를 제자리에 두었습니다",
+  BG_RANGE_CLAMPED: "기본 W 범위 끝에서 요소가 뒤집혀 뒤집힘 없는 범위로 줄였습니다",
   BG_BASIS_LEAK: "기저가 허용 구역 밖을 움직입니다(구현 오류)",
   BG_ACHIEVED_MISMATCH: "목표 깊이를 정확히 얻지 못했습니다(구현 오류)",
   BG_OUTSIDE_MOVED: "바뀐 세그먼트 밖이 움직였습니다",
@@ -470,15 +471,15 @@ export const GRAPH_FAIL_REASON: Record<string, string> = { ERROR: "분류 오류
 /** v0.17.0 띠 문구(§6.2) */
 export const GRAPH_FAILED_TEXT = "자동 분류 실패 — 직접 칠하기(요소 비드)로 계속";
 export const BG_STALE_TEXT = "분류 결과가 바뀌었습니다 — 다시 확인 후 저장";
-/** GRAPH_FAILED 사유: 경고 칸 code 가 'GRAPH_FAILED' 이라 안쪽 사유는 detail·reason·fail_code 중 하나로 온다(통합 때 확정) */
+/** GRAPH_FAILED 사유: 준비 경고 {code: "GRAPH_FAILED", message, detail} — 안쪽 사유는 detail 하나(AUTO_DETECT_FAILED 와 같은 형식) */
 export function graphFailText(w: Record<string, unknown> | null | undefined): string {
-  const c = [w?.detail, w?.reason, w?.fail_code].find((x) => typeof x === "string" && GRAPH_FAIL_REASON[x as string]) as string | undefined;
+  const c = typeof w?.detail === "string" && GRAPH_FAIL_REASON[w.detail] ? w.detail : undefined;
   return `자동 분류 실패${c ? `(${GRAPH_FAIL_REASON[c]})` : ""}`;
 }
 /** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */
 const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
 /** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
-const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD"]);
+const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED"]);
 /** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
 function autoWarnText(w: Record<string, unknown>): string {
   const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
@@ -513,6 +514,10 @@ function autoWarnText(w: Record<string, unknown>): string {
       return w.bead != null ? `${B(w.bead)}: 자식 바닥 ${n(w.child)} 은 제자리 — 이 변의 벽이 높이 차를 흡수(${n(w.n_nodes)} 노드)` : "";
     case "BG_CORNER_GUARD":
       return w.bead != null ? `${B(w.bead)}: 바닥 코너 ${n(w.n_nodes)} 노드의 사면을 최대 ${n(w.flank_max_deg)}° 로 가파르게 했습니다` : "";
+    case "BG_RANGE_CLAMPED":
+      return w.var != null && Array.isArray(w.from) && Array.isArray(w.to)
+        ? `${String(w.var)}: 기본 범위 ${n(w.from[0])}~${n(w.from[1])} mm 끝에서 뒤집혀 ${n(w.to[0])}~${n(w.to[1])} mm 로 줄였습니다`
+        : "";
     case "BG_ISLAND_HELD":
       return w.island != null ? `섬 ${n(w.island)}: 고정 노드가 있어 제자리 블렌딩` : "";
     case "BG_OUTSIDE_MOVED":

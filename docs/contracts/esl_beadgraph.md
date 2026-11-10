@@ -231,7 +231,8 @@ bead_doe:
       bead: {max_width_mm: 80.0, prune_k: 2.2, bend_deg: 50.0, width_jump: 0.35, min_zone_mm: 12.0,
              open_ext_mm: 90.0, absorb_len_mm: 60.0}      # absorb_len_mm = D7 짧은 띠 흡수
       morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6,
-              corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}}
+              corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40},
+              w_smooth_iters: 3}            # 통합 추가(§12 BG-X-5): W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔)
       sym_tol_mm: 0.5               # BG-D-17·21
       limits: {max_elems: 250000, timeout_s: 180, max_raster_px: 4000000}
 ```
@@ -254,8 +255,9 @@ GET  /doe/studies/{sid}/select/graph       → {graph (beadgraph/1 — 편집 �
                                               beadgraph_version, rules, morph_rules}
        404 GRAPH_NOT_AVAILABLE (schema 1 스터디·GRAPH_FAILED), 409 PREP_NOT_READY
 GET  /doe/studies/{sid}/select/view/graph.bin   (기존 select/view 라우트 허용 파일에 추가 — SELECT_VIEW_FILES)
-       = 머리 JSON 길이(uint32 LE) + 머리 JSON{n_elems, arrays[{name, offset}]} + int32 LE 배열 cls·segment·junction_zone·island·floor·tier
-         (요소 순서 = select.bin 요소 순서)
+       = 머리 JSON 길이 L(uint32 LE) + 머리 JSON(L 바이트, ASCII — 키 정렬·공백 없음){n_elems, arrays[{name, offset}]} + int32 LE 배열
+         cls·segment·junction_zone·island·floor·tier (요소 순서 = select.bin 요소 순서). offset = **머리 끝(바이트 4 + L)부터 잰 바이트**,
+         정렬 채움 없음(배열이 4바이트 정렬이 아닐 수 있음 — 읽기는 DataView). 원본 = esl/doe/bead_graph.py graph_bin(통합 확정 §12 BG-X-7)
 POST /doe/studies/{sid}/select/derive      schema 2 수용. 응답 SelectionDerived += graph{sha256, graph_algo, edits_applied{toggle,merge,split},
                                               segments[{id, anchor, type, side, tier, D, entry_width, length, network}],
                                               junction_zones[{id, anchor, reason}], beads[{id, src, segs[anchor], vars, D_nom, W_nom, tier}],
@@ -280,13 +282,14 @@ DoeCheckIn/DoeStudyIn(select)              auto 의 step_upload_id 선택(BG §5
 
 | 코드 | 수준 | 위치 |
 |---|---|---|
-| `GRAPH_FAILED{code: ERROR\|TIMEOUT\|TOO_LARGE\|DISABLED\|NO_FLOOR}` | 경고 | 준비(BG-D-40) |
+| `GRAPH_FAILED{code: ERROR\|TIMEOUT\|TOO_LARGE\|DISABLED\|NO_FLOOR}` — 형식은 §12 BG-X-6 `{code: "GRAPH_FAILED", message, detail}` | 경고 | 준비(BG-D-40) |
 | `GRAPH_RASTER_COARSE{raster_mm}` | info | 분류(래스터 픽셀 상한으로 해상도 2배 — §7) |
 | `AUTO_HINT_UNAVAILABLE{step, code}` | info | 준비(§5.3) |
 | `BG_GROUP_NOT_CONNECTED{bead}` · `BG_TIE_NOMINAL{beads}` · `BG_SEG_UNKNOWN{anchor}` · `BG_EDIT_INVALID{edit}` · `SELECT_SCHEMA_MISMATCH` | 422 | derive·저장 |
 | `BG_GRAPH_STALE{saved, current}` | 409 | derive·저장 |
 | `BG_GROUP_NOMINAL_SPREAD{bead, min, max}` · `BG_SEGMENT_SHORT{bead, length_mm, ramp_mm}` · `BG_RAMP_SHORT{var, L_mm, need_mm}` | 경고 | derive·params |
 | `BG_SHARED_CHILD{bead, child, n_nodes}` · `BG_CORNER_GUARD{bead, n_nodes, flank_max_deg}` · `BG_ISLAND_HELD{island}` | info | derive |
+| `BG_RANGE_CLAMPED{bead, var, from[lo, hi], to[lo, hi], inverted[lo, hi]}` (통합 추가, §12 BG-X-1) | info | BD_MATRIX params |
 | `BG_BASIS_LEAK{var, n, max_mm}` · `BG_ACHIEVED_MISMATCH{var, err_mm}` | 오류 | BD_MATRIX 실패 |
 | `BG_OUTSIDE_MOVED{n, max_mm, vars}` | FAILED_MESH | 안 판정 |
 | `GRAPH_NOT_AVAILABLE` | 404 | `GET …/select/graph` |
@@ -444,3 +447,18 @@ validate(graph) -> None                                                         
 
 - 순서: Core(패키지 `classify`·`apply_edits`·`basis` 시그니처 + `bead_graph` 함수 시그니처 먼저, §8.2 고정) ∥ Backend(스키마·graph.bin 형식은 §2.5·§6.1 고정) ∥ Frontend(mock) → 통합 E2E(V-BG-16) → 실기(V-BG-R1).
 - 공동 수정 금지: `stages.py`·`bead_select.py`·`packages/beadgraph/**` = Core 단독, `schemas.py`·`config.py`·`config/*.yaml` = Backend 단독, `types.ts` = Frontend(Backend 스키마 거울). `VERSION`·`CHANGELOG.md`·`docs/**` = 통합 담당(어느 Impl 도 아님).
+
+## 12. 통합 결정 · 수용한 편차 (v0.17.0 통합, 2026-11-10)
+
+Impl-Core·Backend·Frontend 병합 때 계약 본문과 다르게(또는 본문에 없이) 들어간 규칙을 **수용**하고 여기 고정한다. 본문과 충돌하면 이 절이 우선.
+
+| ID | 규칙 | 계약 본문 대비 | 근거 · 위치 |
+|---|---|---|---|
+| BG-X-1 | **그래프 W 기본 범위 = 뒤집힘 없는 범위로 줄임**: schema 2 BD_MATRIX 에서 `range_check`(SR-D-33)가 그래프 비드(`src: graph`) **W** 변수의 기본 범위 끝 뒤집힘을 찾으면, 기본 범위(`default_range`)를 그 `usable` 로 줄이고 그 비드의 `SELECT_RANGE_INVERTS` 를 정보 `BG_RANGE_CLAMPED{bead, var, from, to, inverted, level info}` 로 바꾼다. 기저·램프 L(원래 기본 범위 끝에서 고정 — BG-D-24)·`feasible` 은 그대로. usable 이 공칭을 품지 못하면 줄이지 않고 `SELECT_RANGE_INVERTS` 유지. D 변수·elems 비드·**schema 1 은 손대지 않음(바이트 불변)**. 줄인 범위는 첫 BD_MATRIX 뒤 `select/<sha12>/params.json` 부터 보임(API derive 의 params 는 기저 전이라 원래 범위) | BG-D-22 "기본 범위 = `select.range` 그대로" 의 예외 | H6 auto seed: 포켓 W(±15 mm) 위 끝 뒤집힘 118~144 요소, 채널 W −20 % 끝 19~52 요소 → 줄인 범위로 다시 점검하면 뒤집힘 0. `esl/doe/bead_graph.py` `clamp_w_ranges`, `tests/doe/test_bead_graph_morph.py` |
+| BG-X-2 | **둘러싸인 바닥 수준 판 = 뿌리**: 뿌리 수준(± `level_tol_mm`)인 바닥 조각 중 평면 크기(PCA 장축) > `island.max_mm`(60) 인 것은 `root_group` 에 넣는다(비드 네트워크에 둘러싸여 바깥 자유 모서리가 없어도). 섬으로 전환(`toggle as island`)한 조각은 제외 | §2.1 뿌리 정의(바깥 고리 자유 모서리 비율)에 추가 | H5 고리 안쪽 판이 고리 바닥의 솟은 자식이 되면 고리 사면을 판이 소유해 고리가 W 를 잃음. `beadgraph/classify.py` `_base_level_plates` |
+| BG-X-3 | **W 는 입구 선이 양쪽 모두 있을 때만**: 세그먼트 `entry_width` = 골격 양쪽(side ±) 에 입구 노드가 각각 ≥ 3 일 때만 계산, 아니면 null → 그 세그먼트(묶음에 하나라도 있으면 그 비드)는 **D 만**. 안쪽에 플래토가 있는 고리 변(안쪽 입구가 부모 바닥이 아님)은 D 만 | BG-D-16 "ring 변·leg·… 는 W" 를 좁힘 | 한쪽 입구만으로 정한 폭은 BG-D-30 의 대칭 평행 이동과 맞지 않음. `beadgraph/absorb.py`, `esl/doe/bead_graph.py` `_possible_vars` |
+| BG-X-4 | **기저·분할에는 요소 연결이 필요**: `beadgraph.basis(…, elems=)`·`check(…, elems=)` 는 `elems` 필수(없으면 ValueError), `apply_edits` 의 `split` 은 `nodes`·`elems` 필수(없으면 `BG_EDIT_INVALID`). §8.2 시그니처에 키워드 인자 `elems=None`(·`nodes=None`) 추가 — 소비자는 `classify` 에 준 같은 배열을 넘긴다 | §8.2 API 표면 확장(MINOR 범위 — 키워드 추가) | 연결 없이 노드만으로는 벽·바닥 구역과 분할 위치를 정할 수 없음. physicsai 인계(§8.5 4)에도 같은 인자 |
+| BG-X-5 | **설정 키 `select.graph.morph.w_smooth_iters` = 3**(코어 구현 키): W 바깥 방향장(골격 법선)을 W 이동 노드 사이 모서리로 Jacobi 평균 3회 — 꺾임·연결부에서 연속, 곧은 구간은 수직 그대로(W 정확). 0 = 끔. pydantic `BeadDoeSelectGraphMorphCfg.w_smooth_iters`(0..200)·예시 yaml 2개·`beadgraph.DEFAULTS` 거울, 해시는 다른 graph 키와 같음(`HASH_NEW_KEYS_V0170` — 기본값이면 제외). 화면 설정에는 노출 안 함 | §5.5 키 추가 | `beadgraph/morph.py` `_smooth_dirs` |
+| BG-X-6 | **`GRAPH_FAILED` 경고 형식 하나**: 코어·워커·화면 모두 `{code: "GRAPH_FAILED", message, detail}`(detail = ERROR\|TIMEOUT\|TOO_LARGE\|DISABLED\|NO_FLOOR) — `AUTO_DETECT_FAILED{…, detail}` 와 같은 꼴. 코어는 `prep/input.json` `warnings` 에 이 dict 1개 + `graph.code`, 워커는 `graph.code` → 그 경고 detail → ERROR 순으로 읽어 준비 경고 1개, 화면은 `detail` 만 읽음. 옛 문자열 `GRAPH_FAILED: code=…`·`reason`·`graph_code` 키는 읽지 않음 | §6.4 `GRAPH_FAILED{code}` 의 필드 이름 확정 | 세 층이 서로 다른 키를 읽던 것을 통합 |
+| BG-X-7 | **graph.bin offset = 머리 끝(4 + L) 기준, 채움 없음**(§6.1 갱신) — 화면 파서는 이 규칙 하나만(파일 시작 기준 추정 제거) | §6.1 확정 | 코어 `graph_bin`·`read_graph_bin` 그대로. 화면 시험에 코어 바이트 고정값 |
+| BG-X-8 | **설치**: `deploy/requirements.lock` 의 `beadgraph==<ver>` 는 인덱스 설치 목록에서 빼고(`Get-EslLockPackages` → `Local`), `Install-EslBeadgraph` 가 저장소 설치(`setup.ps1`·`update-repo.ps1` = `pip install --no-deps packages\beadgraph`)·오프라인 묶음(`install.ps1`·`update.ps1` = `wheels\beadgraph-<ver>-py3-none-any.whl`)에서 설치하고 판을 대조 | §8.3 esl 소비 보강 | 사내 인덱스에 beadgraph 가 없어 lock 그대로 `pip install` 하면 비드 DOE 의존성 설치 전체가 실패 |

@@ -92,7 +92,7 @@ function useGraphData(studyId: string, on: boolean, nElems: number | null, rev: 
         const [g, b] = await Promise.all([doe.selectGraph(studyId), fetchBinary(doe.selectViewUrl(studyId, "graph.bin"))]);
         const labels = parseGraphBin(b, nElems);
         if (!alive) return;
-        setGi({ index: graphIndex(g.graph, labels), sha256: g.sha256, rules: g.rules, warnings: g.warnings ?? [] });
+        setGi({ index: graphIndex(g.graph, labels), sha256: g.sha256, rules: g.rules ?? g.graph.rules, warnings: g.warnings ?? [] });
         setFail(null);
         setPhase("ready");
       } catch (e) {
