@@ -33,6 +33,12 @@ def _rcfg(cfg: dict) -> dict:
     return _deep_merge(DEFAULTS["compare"]["remesh"], over if isinstance(over, dict) else {})
 
 
+def _fcfg(cfg: dict) -> dict:
+    from esl.doe import DEFAULTS, _deep_merge
+    over = ((cfg.get("compare") or {}).get("freeform")) if isinstance(cfg, dict) else None
+    return _deep_merge(DEFAULTS["compare"]["freeform"], over if isinstance(over, dict) else {})
+
+
 def available() -> tuple[bool, str | None]:
     """(gmsh 에 model.mesh.importStl 이 있음, gmsh 버전) — R-C2-1·C2-D-16 ``remesh_available``."""
     try:
@@ -352,12 +358,43 @@ def occ_triangulate(gmsh, rc: dict) -> tuple[np.ndarray, np.ndarray]:
     return X0, np.searchsorted(tags, T0)
 
 
+def boundary_loops(X: np.ndarray, T: np.ndarray) -> list[float]:
+    """경계 변(삼각형 1개) 연결 성분마다 둘레 길이(mm) — 큰 순. v0.16.3 freeform 구멍 셈(C2-D-26)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    T = np.asarray(T, dtype=np.int64).reshape(-1, 3)
+    E = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+    Eu, cnt = np.unique(E, axis=0, return_counts=True)
+    B = Eu[cnt == 1]
+    if not B.shape[0]:
+        return []
+    n = int(np.asarray(X).shape[0])
+    G = coo_matrix((np.ones(B.shape[0]), (B[:, 0], B[:, 1])), shape=(n, n))
+    _k, lab = connected_components(G, directed=False)
+    L = np.linalg.norm(np.asarray(X)[B[:, 1]] - np.asarray(X)[B[:, 0]], axis=1)
+    per = np.bincount(lab[B[:, 0]], weights=L)
+    return sorted((float(x) for x in per[per > 0]), reverse=True)
+
+
+def freeform_holes(S_X, S_T, mesh: dict, h: float, factor: float) -> dict:
+    """freeform 전후 구멍 셈: S(OCC 삼각화)의 경계 고리 중 등가 지름(둘레/π) < factor × h 인 것 = 작은 구멍(번질 수 있음),
+    lost = S 고리 수 − 메시 고리 수(양수일 때). 바깥 경계도 고리 하나로 셈(양쪽 같음)."""
+    ls = boundary_loops(S_X, S_T)
+    lm = boundary_loops(mesh["x0"], mesh_tris(mesh["x0"], mesh["conn"], mesh["elem_type"]))
+    lim = float(factor) * float(h)
+    return {"loops_cad": len(ls), "loops_mesh": len(lm), "small_holes": int(sum(1 for p in ls[1:] if p / math.pi < lim)),
+            "lost": max(0, len(ls) - len(lm)), "small_d_mm": round(lim, 6)}
+
+
 def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
-                out_dir: str | None = None) -> tuple[dict, dict]:
+                out_dir: str | None = None, freeform: bool = False) -> tuple[dict, dict]:
     """STEP → 삼각형 재메시 (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json(·remesh_stl.npz) 를 쓴다.
     이 프로세스 안에서 gmsh 실행(격리는 ``mesh_gmsh.run_isolated(kind="remesh")``). 실패 = EslError(code =
     REMESH_FAILED | REMESH_STL_EMPTY | REMESH_CLASSIFY_FAILED | REMESH_FIDELITY | MESH_TOO_LARGE | GMSH_UNAVAILABLE |
-    REMESH_UNAVAILABLE)."""
+    REMESH_UNAVAILABLE).
+
+    v0.16.3 freeform(C2-D-26): 같은 이산 재메시를 CAD 단계 구멍 메움 없이(``compare.freeform.hole_fill`` false) — 경고
+    ``MESH_FREEFORM``(충실도·작은 구멍 수). 기본값(False)이면 v0.16.2 와 같음."""
     from esl.doe import mesh_gmsh as mg
     from esl.doe import opt_settings
     try:
@@ -389,6 +426,7 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
             gmsh.option.setNumber("Geometry.OCCSewFaces", int(mc.get("occ_sew_faces", 0)))
             for k, v in gopts.items():
                 gmsh.option.setNumber(k, v)
+            mg.set_import_labels(gmsh, mc)
             gmsh.model.occ.importShapes(os.fspath(src))
             gmsh.model.occ.synchronize()
             faces = [int(t) for _d, t in gmsh.model.getEntities(2)]
@@ -400,7 +438,8 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
             raise _fail("REMESH_STL_EMPTY", "STEP 에 면이 없음")
         # R2 작은 구멍 메움(CAD 단계, C2-D-12) — 구멍 둘레 분할은 재메시 곡선에 적용하지 않음
         df = mc.get("defeature")
-        if isinstance(df, dict) and df.get("enabled"):
+        fcfg = _fcfg(cfg) if freeform else None
+        if isinstance(df, dict) and df.get("enabled") and (fcfg is None or fcfg.get("hole_fill")):
             dfi = mg.defeature(gmsh, dict(df, hole_elems=0), h)
             for w in dfi.get("warnings") or []:
                 warns.append({"code": "DEFEATURE_SKIPPED", "message": str(w)})
@@ -494,6 +533,19 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
         if fid["fail_mm"] is not None and fid["hausdorff_mm"] > fid["fail_mm"]:
             errs.append({"code": "REMESH_FIDELITY",
                          "message": f"재메시가 원 형상과 최대 {fid['hausdorff_mm']:.3f} mm 다릅니다(> {fid['fail_mm']:g} mm)"})
+    if freeform:                                            # v0.16.3 C2-D-26 경고(충실도·구멍)
+        rec["freeform"] = True
+        holes = freeform_holes(S_X, S_T, mesh, h, float(fcfg["small_hole_factor"]))
+        rec["holes"] = holes
+        hz = "—" if fid is None else f"{fid['hausdorff_mm']:.3f}"
+        warns.insert(0, {"code": "MESH_FREEFORM",
+                         "message": f"CAD 면 경계를 따르지 않는 freeform 재메시(특징각 {rc['feature_angle_deg']:g}°·곡선각 "
+                                    f"{rc['curve_angle_deg']:g}°)입니다 — 요소 변이 작은 CAD 특징선을 따르지 않을 수 있습니다. 원 형상 "
+                                    f"대비 최대 {hz} mm. 지름 {holes['small_d_mm']:g} mm 미만 구멍 {holes['small_holes']}개는 번질 수 "
+                                    f"있습니다(메시에서 사라진 구멍 {holes['lost']}개)"})
+        meta_extra = {"method": "freeform"}
+    else:
+        meta_extra = {}
     opts_rec = dict(opts, **gopts)
     opts_rec["Mesh.Algorithm"] = used
     opts_rec["Mesh.RecombineAll"] = 1 if rc["recombine"] else 0
@@ -502,6 +554,7 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
             "quad_frac": qual["quad_frac"], "quality": qual["metrics"], "errors": errs,
             "warnings": list(qual["warnings"]) + warns, "infos": infos, **info, "remesh": rec, "fidelity": fid,
             "seconds": round(time.monotonic() - t0, 3)}
+    meta.update(meta_extra)
     if dfi is not None:
         meta["defeature"] = dfi
     if out_dir:

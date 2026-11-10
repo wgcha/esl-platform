@@ -170,7 +170,7 @@ describe("④ 새 연구 — 고급 설정(메시 방식)", () => {
     expect(adv.hasAttribute("open")).toBe(false);
     expect(within(adv).getByText(/메시 방식 자동/)).toBeTruthy();
     const group = within(adv).getByRole("radiogroup", { name: "메시 방식" });
-    expect(within(group).getAllByRole("radio").map((b) => b.textContent)).toEqual(["자동(기본)", "CAD", "재메시"]);
+    expect(within(group).getAllByRole("radio").map((b) => b.textContent)).toEqual(["자동(기본)", "CAD", "재메시", "freeform"]);
     expect(within(group).getByRole("radio", { name: "자동(기본)" }).getAttribute("aria-checked")).toBe("true");
     const chk = within(adv).getByRole("checkbox", { name: "실패 시 세분화 허용" }) as HTMLInputElement;
     expect(chk.checked).toBe(true);

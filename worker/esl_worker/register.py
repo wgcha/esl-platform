@@ -748,7 +748,9 @@ COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status"
                       # {n, counts, skipped_n, suppressed_max_mm, outside_hausdorff_mm}(cad 형상의 코어 행 defeature = v0.14.1
                       # 구멍 메움 기록 — 넘기지 않음), 메시 입력 진단 diag{holes_n, …}
                       # (attempts 행의 stage defeature·compound·reason 은 attempts 그대로)
-                      "defeature", "diag")
+                      "defeature", "diag",
+                      # v0.16.3(C2-D-28·30): 성공한 이산 단계(freeform | tria | remesh)·단계별 결과·초
+                      "fallback_stage", "stage_times")
 
 
 def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> dict[str, Any]:

@@ -600,10 +600,28 @@ class BeadDoeCompareMeshFallbackCfg(_M):
 
 # v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §5): 폴백 사다리 단계 이름(C2-D-18)·메시 입력 형식(C2-D-2, Q2 — .bdf·.fem 은
 # v0.16.x 에서 이 목록을 넓힘)
-COMPARE_LADDER_STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh")   # v0.16.1 += defeature(SR-D-16)
+COMPARE_LADDER_STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh", "freeform", "tria")   # v0.16.1 += defeature(SR-D-16), v0.16.3 += freeform·tria(C2-D-26·28)
+COMPARE_LADDER_DEFAULT = ("cad", "refine_local", "refine_global", "freeform", "defeature", "tria")   # v0.16.3 기본 순서
 COMPARE_MESH_FORMATS = (".rad", ".inc")
 # v0.16.1 작은 형상 억제 종류(esl_select_relax.md SR-D-17 — 이 순서로 실행)
 DEFEATURE_KINDS = ("flange", "hole", "slot", "bead", "fillet", "narrow")
+
+
+class BeadDoeCompareFaceFailCfg(_M):
+    """v0.16.3 면 실패 판정(C2-D-27): 실패 면 종류 ∈ types 또는 gmsh 문구에 patterns(대소문자 무시) → skip 단계를 건너뜀."""
+
+    enabled: bool = True
+    types: list[str] = Field(default_factory=lambda: ["Sphere"], max_length=32)
+    patterns: list[str] = Field(default_factory=lambda: ["periodic surface", "closed loop", "degenerate"], max_length=32)
+    skip: list[str] = Field(default_factory=lambda: ["refine_local", "refine_global"], max_length=8)
+
+    @field_validator("skip")
+    @classmethod
+    def _skip(cls, v: list[str]) -> list[str]:
+        bad = [x for x in v if x not in COMPARE_LADDER_STAGES or x == "cad"]
+        if bad or len(set(v)) != len(v):
+            raise ValueError(f"mesh.face_fail.skip 는 cad 를 뺀 사다리 단계 중 중복 없이: {v}")
+        return v
 
 
 class BeadDoeCompareMeshCfg(_M):
@@ -618,10 +636,12 @@ class BeadDoeCompareMeshCfg(_M):
     fallback: BeadDoeCompareMeshFallbackCfg = BeadDoeCompareMeshFallbackCfg()   # v0.14.1 면 단위 폴백
     # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤), cad = [cad],
     # remesh = [remesh]. ladder 는 cad 가 맨 앞, 빼면 그 단계 끔, 중복 금지
-    mode: Literal["cad", "remesh", "auto"] = "auto"
-    ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_STAGES), min_length=1,
+    mode: Literal["cad", "remesh", "freeform", "auto"] = "auto"      # v0.16.3 += freeform(C2-D-26)
+    ladder: list[str] = Field(default_factory=lambda: list(COMPARE_LADDER_DEFAULT), min_length=1,
                               max_length=len(COMPARE_LADDER_STAGES))
     keep_tries: bool = False   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만 — 진단용)
+    face_fail: BeadDoeCompareFaceFailCfg = BeadDoeCompareFaceFailCfg()   # v0.16.3 C2-D-27
+    occ_import_labels: int = Field(default=0, ge=0, le=1)    # v0.16.3 C2-D-31 STEP 라벨 읽기(0 = 안 읽음 — 수천 면 가져오기 시간)
 
     @field_validator("ladder")
     @classmethod
@@ -750,10 +770,55 @@ class BeadDoeCompareRefineCfg(_M):
     min_size_mm: float = Field(default=0.5, gt=0)
     max_elems: int = Field(default=600000, ge=1)
     total_timeout_s: float = Field(default=3600, gt=0)
+    # v0.16.3 C2-D-29 단계 몫(total_timeout_s 비율 — 뒤 단계 몫은 앞 단계가 못 씀), 남은 몫 < min_attempt_s 면 시도 안 함
+    stage_share: dict[str, float] = Field(default_factory=lambda: {"cad": 0.3, "refine_local": 0.1, "refine_global": 0.1,
+                                                                   "freeform": 0.2, "defeature": 0.15, "remesh": 0.2,
+                                                                   "tria": 0.15})
+    min_attempt_s: float = Field(default=5.0, ge=0)
     elem_per_h2: float = Field(default=1.0, gt=0)
     local: BeadDoeCompareRefineLocalCfg = BeadDoeCompareRefineLocalCfg()
     global_: BeadDoeCompareRefineGlobalCfg = Field(default_factory=BeadDoeCompareRefineGlobalCfg, alias="global")
     convergence: BeadDoeCompareRefineConvergenceCfg = BeadDoeCompareRefineConvergenceCfg()
+
+    @field_validator("stage_share")
+    @classmethod
+    def _share(cls, v: dict[str, float]) -> dict[str, float]:
+        bad = [k for k, x in v.items() if k not in COMPARE_LADDER_STAGES or not 0 <= float(x) <= 1]
+        if bad:
+            raise ValueError(f"refine.stage_share 키는 사다리 단계, 값은 0..1: {bad}")
+        return v
+
+
+class BeadDoeCompareFreeformCfg(_M):
+    """v0.16.3 freeform(C2-D-26): remesh 설정으로 이산 재메시하되 CAD 단계 구멍 메움 없이(hole_fill false). 지름 <
+    small_hole_factor × h 구멍 수를 MESH_FREEFORM 경고에 적음. timeout_s null = remesh.timeout_s."""
+
+    enabled: bool = True
+    hole_fill: bool = False
+    small_hole_factor: float = Field(default=1.0, gt=0, le=10)
+    timeout_s: float | None = Field(default=None, gt=0)
+
+
+class BeadDoeCompareTriaCfg(_M):
+    """v0.16.3 OCC 삼각형 폴백(C2-D-28, esl.doe.mesh_tria): BRepMesh 편차 = deflection_factor × h, 긴 변 > split_factor × h
+    적합 분할, 짧은 변 < collapse_factor × h 평면 안 붕괴, 같은 평면(coplanar_deg) 안 Delaunay 뒤집기·접선 평활."""
+
+    enabled: bool = True
+    deflection_factor: float = Field(default=0.3, gt=0, le=1)       # 0.3 × 3 = 0.9 mm ≈ 3 mm CAD 메시 자체 현 편차
+    angular_deflection_deg: float = Field(default=45.0, gt=0, le=90)
+    merge_tol_mm: float = Field(default=0.01, gt=0)
+    split_factor: float = Field(default=1.333, gt=1, le=4)
+    max_split_iters: int = Field(default=24, ge=1, le=200)
+    max_tris: int = Field(default=2000000, ge=1)
+    coplanar_deg: float = Field(default=1.0, gt=0, le=30)
+    flip_passes: int = Field(default=6, ge=0, le=100)
+    collapse_factor: float = Field(default=0.6, ge=0, lt=1)
+    collapse_passes: int = Field(default=6, ge=0, le=100)
+    collapse_deg: float = Field(default=20.0, gt=0, le=60)   # 붕괴 허용 = 둘레 법선 산포 ≤ 이 값(매끈한 곡면 포함)
+    smooth_rounds: int = Field(default=4, ge=0, le=100)
+    smooth_iters: int = Field(default=5, ge=0, le=100)
+    allow_missing_faces: bool = True
+    timeout_s: float | None = Field(default=300, gt=0)
 
 
 class BeadDoeCompareDefeatureCfg(_M):
@@ -835,6 +900,8 @@ class BeadDoeCompareCfg(_M):
     remesh: BeadDoeCompareRemeshCfg = BeadDoeCompareRemeshCfg()               # v0.16.0 C2-D-11~14
     mesh_input: BeadDoeCompareMeshInputCfg = BeadDoeCompareMeshInputCfg()     # v0.16.0 C2-D-2~8
     refine: BeadDoeCompareRefineCfg = BeadDoeCompareRefineCfg()               # v0.16.0 C2-D-18~24
+    freeform: BeadDoeCompareFreeformCfg = BeadDoeCompareFreeformCfg()         # v0.16.3 C2-D-26
+    tria: BeadDoeCompareTriaCfg = BeadDoeCompareTriaCfg()                     # v0.16.3 C2-D-28
 
 
 class BeadDoeSelectWidthCfg(_M):

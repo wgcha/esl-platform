@@ -432,10 +432,10 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed }: {
         <div className="doe-adv-row">
           <span className="field-label">메시 방식</span>
           <div className="seg" role="radiogroup" aria-label="메시 방식">
-            {(["auto", "cad", "remesh"] as const).map((m) => {
-              const off = !allowed || (m === "remesh" && !remeshOk);
+            {(["auto", "cad", "remesh", "freeform"] as const).map((m) => {
+              const off = !allowed || ((m === "remesh" || m === "freeform") && !remeshOk);
               return (
-                <span key={m} title={m === "remesh" && remeshWhy ? remeshWhy : MESH_MODE_HINT[m]}>
+                <span key={m} title={(m === "remesh" || m === "freeform") && remeshWhy ? remeshWhy : MESH_MODE_HINT[m]}>
                   <button type="button" role="radio" aria-checked={mode === m} className={mode === m ? "on" : undefined} disabled={off} onClick={() => set(m)}>
                     {MESH_MODE_NAME[m]}
                     {m === def ? "(기본)" : ""}

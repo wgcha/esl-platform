@@ -24,7 +24,7 @@ import os
 
 from esl.errors import EslError
 
-STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh")   # v0.16.1 defeature(SR-D-16)
+STAGES = ("cad", "refine_local", "refine_global", "defeature", "remesh", "freeform", "tria")   # v0.16.1 defeature(SR-D-16), v0.16.3 tria(C2-D-28)
 REFINE_STAGES = ("refine_local", "refine_global")
 SKIP_INFO = "REFINE_SKIPPED_LIMIT"
 NO_FACE_INFO = "REFINE_LOCAL_NO_FACE"
@@ -46,8 +46,10 @@ def ladder(cfg: dict, mode: str | None = None) -> list[str]:
         return ["cad"]
     if m == "remesh":
         return ["remesh"]
+    if m == "freeform":                                     # v0.16.3 C2-D-26: cad 없이 freeform → (켜져 있으면) tria
+        return ["freeform"] + (["tria"] if _tcfg_enabled(cfg) else [])
     if m != "auto":
-        raise EslError("CONFIG_INVALID", f"compare.mesh.mode {m!r} (cad|remesh|auto)")
+        raise EslError("CONFIG_INVALID", f"compare.mesh.mode {m!r} (cad|remesh|freeform|auto)")
     lad = list(cm.get("ladder") or DEFAULTS["compare"]["mesh"]["ladder"])
     bad = [s for s in lad if s not in STAGES]
     if bad or len(set(lad)) != len(lad) or lad[0] != "cad":
@@ -122,6 +124,123 @@ def attempt_timeout(base_s: float, cfg: dict, elapsed_s: float | None) -> float:
     return max(0.0, min(float(base_s), remaining_s(cfg, elapsed_s)))
 
 
+# ---------------------------------------------------------------- v0.16.3 면 실패 판정·단계 시간 몫(C2-D-26·27·29)
+def _mcfg(cfg: dict) -> dict:
+    from esl.doe import DEFAULTS, _deep_merge
+    over = ((cfg.get("compare") or {}).get("mesh")) if isinstance(cfg, dict) else None
+    return _deep_merge(DEFAULTS["compare"]["mesh"], over if isinstance(over, dict) else {})
+
+
+def face_failure(meta: dict | None, cfg: dict) -> dict | None:
+    """C2-D-27 cad 실패가 '특정 CAD 면을 메시할 수 없음'(periodic·퇴화·닫히지 않는 경계 등 — 요소 크기를 줄여도 안 풀림)인가.
+    조건 = 실패 면 기록(face.key)이 있고 (면 종류 ∈ face_fail.types 또는 오류 문구에 face_fail.patterns 중 하나, 대소문자 무시).
+    시간 초과·크래시(면 기록 없음)는 None. 반환 {face, reason: type|pattern, match} | None."""
+    ff = _mcfg(cfg).get("face_fail") or {}
+    if not ff.get("enabled", True):
+        return None
+    m = meta or {}
+    f = m.get("face")
+    if not isinstance(f, dict) or f.get("key") is None:
+        return None
+    if f.get("type") and str(f["type"]) in [str(x) for x in ff.get("types") or []]:
+        return {"face": f, "reason": "type", "match": str(f["type"])}
+    msg = str(m.get("message") or "").lower()
+    for p in ff.get("patterns") or []:
+        if str(p).lower() in msg:
+            return {"face": f, "reason": "pattern", "match": str(p)}
+    return None
+
+
+def face_fail_skips(cfg: dict) -> tuple[str, ...]:
+    """면 실패일 때 건너뛸 사다리 단계(face_fail.skip, 기본 세분화 두 단계)."""
+    return tuple(str(x) for x in (_mcfg(cfg).get("face_fail") or {}).get("skip") or ())
+
+
+def _tcfg_enabled(cfg: dict) -> bool:
+    from esl.doe import DEFAULTS
+    t = (cfg.get("compare") or {}).get("tria") if isinstance(cfg, dict) else None
+    return bool((t or {}).get("enabled", DEFAULTS["compare"]["tria"]["enabled"]))
+
+
+def _tcfg_timeout(cfg: dict) -> float:
+    """tria 시도 제한 시간(compare.tria.timeout_s, null = mesh.timeout_s)."""
+    from esl.doe import DEFAULTS
+    t = ((cfg.get("compare") or {}).get("tria") or {}).get("timeout_s", DEFAULTS["compare"]["tria"]["timeout_s"])
+    return float(t) if t is not None else float(cfg["mesh"]["timeout_s"])
+
+
+def stage_share(cfg: dict, stage: str) -> float:
+    return float((_rcfg(cfg).get("stage_share") or {}).get(stage, 0.0))
+
+
+def stage_cap(stage: str, later: list[str], cfg: dict, elapsed_s: float) -> float:
+    """C2-D-29 단계 시간 상한 = 남은 예산 − Σ(뒤에 실제로 돌 단계의 몫 × total_timeout_s). 앞 단계가 몫을 덜 쓰면 남은 시간이
+    뒤로 넘어가고, 어느 단계도 뒤 단계 몫을 먹지 못함. 음수면 0."""
+    tot = float(_rcfg(cfg)["total_timeout_s"])
+    reserve = sum(stage_share(cfg, s) for s in later) * tot
+    return max(0.0, remaining_s(cfg, elapsed_s) - reserve)
+
+
+def min_attempt_s(cfg: dict) -> float:
+    return float(_rcfg(cfg).get("min_attempt_s") or 0.0)
+
+
+def timed_out(msg) -> bool:
+    """시도 실패 문구가 시간 초과인가(spawn '제한 시간 … 안에 끝나지 않음', 면 폴백 'timeout_s … 초과', 시험 주입 '시간 초과')."""
+    m = str(msg or "")
+    return "제한 시간" in m or "시간 초과" in m or "timeout_s" in m
+
+
+STAGE_OUTCOME = {"READY": "성공", "FAILED_MESH": "실패", "SKIPPED": "건너뜀"}
+SKIP_REASON_TEXT = {"face_fail": "면 실패 — 세분화로 풀리지 않음", "time": "전체 시간 예산 소진",
+                    "stage_time": "단계 시간 몫 소진", "elems": "요소 수 상한", "memory": "메모리 상한",
+                    "no_face": "실패 면 기록 없음", "no_feature": "억제할 형상 없음", "not_compound": "compound 실패 아님",
+                    "not_fidelity": "freeform 충실도 실패 아님",
+                    "unavailable": "사용 불가", "disabled": "설정에서 끔"}
+
+
+def stage_times(attempts: list[dict]) -> list[dict]:
+    """C2-D-30 단계별 요약 [{stage, outcome READY|FAILED_MESH|SKIPPED, seconds, tries, reason?, code?}] — 시도 순서대로
+    같은 단계를 묶음(성공 > 실패 > 건너뜀, 초는 실행 시도 합)."""
+    out: list[dict] = []
+    for a in attempts or []:
+        st = str(a.get("stage"))
+        if not out or out[-1]["stage"] != st:
+            out.append({"stage": st, "outcome": "SKIPPED", "seconds": 0.0, "tries": 0})
+        r = out[-1]
+        if a.get("skipped") or a.get("status") == "SKIPPED":
+            if r["outcome"] == "SKIPPED" and a.get("reason") and "reason" not in r:
+                r["reason"] = str(a["reason"])
+            continue
+        r["tries"] += 1
+        r["seconds"] = round(r["seconds"] + float(a.get("seconds") or 0.0), 3)
+        if a.get("status") == "READY":
+            r["outcome"] = "READY"
+            r.pop("reason", None)
+        elif r["outcome"] != "READY":
+            r["outcome"] = "FAILED_MESH"
+            r.pop("reason", None)
+            if a.get("code"):
+                r["code"] = str(a["code"])
+            if a.get("timed_out"):
+                r["timed_out"] = True
+    return out
+
+
+def stage_times_text(rows: list[dict]) -> str:
+    """'cad 실패 412.3 s → refine_local 건너뜀(면 실패 …) → … → tria 성공 41.2 s'."""
+    parts = []
+    for r in rows:
+        oc = STAGE_OUTCOME.get(r["outcome"], r["outcome"])
+        if r["outcome"] == "SKIPPED":
+            why = SKIP_REASON_TEXT.get(r.get("reason") or "", r.get("reason") or "-")
+            parts.append(f"{r['stage']} {oc}({why})")
+        else:
+            to = "(시간 초과)" if r.get("timed_out") else ""
+            parts.append(f"{r['stage']} {oc}{to} {float(r['seconds']):.1f} s")
+    return " → ".join(parts)
+
+
 # ---------------------------------------------------------------- 직전 시도
 def read_attempt(out_dir: str) -> dict:
     """시도 폴더 → mesh.json(성공·품질 실패) 또는 mesh_error.json(실패) 내용. 둘 다 없으면 {}."""
@@ -176,7 +295,7 @@ def plan(stage: str, prev_meta: dict | None, h: float, cfg: dict, avail_bytes: i
     h = float(h)
     base = {"stage": stage, "kind": None, "factor": None, "h_mm": h, "mesh_h": h, "base_h_mm": h, "n_est": None,
             "bytes_est": None, "skipped": False, "reason": None}
-    if stage in ("cad", "remesh"):
+    if stage in ("cad", "remesh", "tria"):
         return [base]
     if stage == "defeature":                                # v0.16.1 §5A.1: 기본 h 그대로, 형상만 단순화
         from esl.geom import defeature as gdf
@@ -186,6 +305,8 @@ def plan(stage: str, prev_meta: dict | None, h: float, cfg: dict, avail_bytes: i
         rc = _rcfg(cfg)
         n = estimate_elems(area, h, elem_per_h2=_calib(pm, rc)) if area else None
         a1 = dict(base, n_est=n, compound=bool(crit["compound"]))
+        if pm.get("face_fail"):                             # v0.16.3 C2-D-27 면 실패 → 실패 면 표적 억제
+            a1["targets"] = [list(f["key"]) for f in failed_faces(pm)]
         out = [a1]
         if crit["compound"] and ({"fillet", "narrow"} & set(crit["kinds"])):
             out.append(dict(base, n_est=n, compound=False, only_if="compound_failed"))
@@ -259,6 +380,8 @@ def attempt_cfg(cfg: dict, attempt: dict) -> dict:
         mc["defeature_stage"] = {"crit": gdf.criteria(((cfg.get("compare") or {}).get("defeature")) or {},
                                                       float(attempt.get("mesh_h") or attempt.get("h_mm"))),
                                  "compound": bool(attempt.get("compound", True))}
+        if attempt.get("targets"):                          # v0.16.3 C2-D-27(키 없으면 v0.16.1 그대로)
+            mc["defeature_stage"]["targets"] = [list(k) for k in attempt["targets"]]
     else:
         mc.pop("defeature_stage", None)
     if attempt.get("stage") in REFINE_STAGES:
@@ -325,6 +448,7 @@ def geom_summary(src: str, mc: dict, keys, rings: int) -> dict:
         gmsh.option.setNumber("Geometry.OCCSewFaces", int(mc.get("occ_sew_faces", 0)))
         for k, v in mg.geometry_options(mc).items():
             gmsh.option.setNumber(k, v)
+        mg.set_import_labels(gmsh, mc)
         gmsh.model.occ.importShapes(os.fspath(src))
         gmsh.model.occ.synchronize()
         ents = [int(t) for _d, t in gmsh.model.getEntities(2)]
