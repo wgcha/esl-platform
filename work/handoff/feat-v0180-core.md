@@ -29,7 +29,7 @@
 esl/doe/{__init__,bead_graph,bead_select,evaluate,scenario,stages,step_graph}.py, resources/doe_messages.json
 
 ## Test status
-- smoke E2E OK; tests/doe/test_step_graph_fixed.py 8 passed, test_step_graph_region.py 4 passed
+- tests: test_step_graph.py (6 fast pass, 4 slow H6 pending), _fixed 8, _region 4, test_bead_graph_cfg 7 pass
 - tests/doe/synth_step_graph.py: h6_step (STEP gen, slow), add_extra, LightEntry, tri_split
 
 ## Next commands
