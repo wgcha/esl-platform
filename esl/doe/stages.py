@@ -1243,7 +1243,7 @@ TRY_LOG_FILES = ("mesh.log", "mesh_error.json")
 
 
 def _keep_try_logs(c: Ctx, d: str, src_dir: str, label: str) -> None:
-    """시도 폴더(또는 cad 의 mesh/)의 mesh.log·mesh_error.json → mesh/try_logs/<label>.<파일>(지우기 전에)."""
+    """시도 폴더(또는 cad 의 mesh/)의 mesh.log·mesh_error.json → mesh/attempt_logs/<label>.<파일>(지우기 전에)."""
     if not os.path.isdir(src_dir):
         return
     for x in TRY_LOG_FILES:
@@ -1256,7 +1256,7 @@ def _keep_try_logs(c: Ctx, d: str, src_dir: str, label: str) -> None:
 
 def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
     """새 시도 폴더 try_<n>/ (keep_tries false 면 앞 시도 폴더를 먼저 지움 — 마지막 시도 기록만 남음).
-    v0.17.4: 지우기 전에 앞 시도의 로그·실패 기록을 try_logs/ 에 남김(실패 원인 추적)."""
+    v0.17.4: 지우기 전에 앞 시도의 로그·실패 기록을 attempt_logs/ 에 남김(실패 원인 추적)."""
     if not keep:
         for x in sorted(os.listdir(d)) if os.path.isdir(d) else []:
             if x.startswith(TRY_PREFIX) and os.path.isdir(os.path.join(d, x)):

@@ -257,3 +257,80 @@ def test_all_shapes_failed_fails_step(tmp_path):
     out2 = tmp_path / "_doe" / "NF2"
     r, _spec = tsc._run(out2, doe, stages=("bd_input", "bd_mesh0"))
     assert r["bd_mesh0"]["warnings"][0].startswith("COMPARE_SHAPES_FAILED: 비교 형상 1/1개") and "d001" in r["bd_mesh0"]["warnings"][0]
+
+
+# ---------------------------------------------------------------- v0.17.4 Verifier 수정
+def test_nofix_ambiguous_strict_no_grown_pick():
+    """엄격 대응 후보가 2개 이상(같은 bbox 구 2개, 63.50·63.70 mm² ↔ 63.55)이면 모호 → 고르지 않음. 키운 면 찾기
+    (_pick_grown_face)는 엄격 후보 0개일 때만 — 혼자 돌리면 63.50 을 골랐을 것."""
+    key = (29.23, 441.0, -4.25, 33.73, 445.5, 0.25)
+    cands = [(21, "Sphere", 63.50, key), (22, "Sphere", 63.70, key)]
+    assert mg._pick_grown_face(cands, key, "Sphere", 63.55, 1e-2, 1000.0) == 21     # 예전 경로의 잘못된 고르기
+    f, why = mg._pick_nofix_face(cands, key, "Sphere", 63.55, 1e-2, 1e-2, 1000.0)
+    assert f is None and "후보 2개" in why and "넓이가 줄어든" not in why
+    one = [(21, "Sphere", 63.50, key)]
+    assert mg._pick_nofix_face(one, key, "Sphere", 63.55, 1e-2, 1e-2, 1000.0) == (21, None)
+    grown = [(11, "Sphere", 0.08, (31.0, 443.0, -2.1, 31.6, 443.5, -1.9))]                # 엄격 0개 → 키운 면
+    assert mg._pick_nofix_face(grown, key, "Sphere", 63.53, 1e-2, 1e-2, 1000.0) == (11, None)
+    f, why = mg._pick_nofix_face(grown, key, "Sphere", 63.53, 1e-2, 1e-2, 0.0)          # grow 끔
+    assert f is None and "후보 0개" in why
+
+
+def test_relaxed_fidelity_reference_freeform_angle(monkeypatch):
+    """cad_relaxed 충실도 기준 삼각화 = compare.freeform.angular_deflection_deg(20°), 선 편차는 remesh 절대값 0.05 mm 그대로
+    (실측 102 면·구 96: 5° 247,500 삼각형 → 20° 38,988, cad_relaxed 23.2 s → 12.1 s)."""
+    import numpy as np
+
+    from esl.doe import mesh_remesh as mrm
+    from esl.geom import defeature as gdf
+    seen = []
+
+    class _G:
+        class option:
+            setNumber = staticmethod(lambda *a: None)
+        initialize = staticmethod(lambda *a, **k: None)
+        finalize = staticmethod(lambda: None)
+
+    def ref(_g, _src, _mc, rc):
+        seen.append(dict(rc))
+        return np.zeros((3, 3)), np.zeros((1, 3), dtype=int)
+    monkeypatch.setattr(gdf, "reference_tris", ref)
+    monkeypatch.setattr(mrm, "fidelity", lambda S_X, S_T, mesh, h, rc: {"hausdorff_mm": 0.1, "fail_mm": 1.5,
+                                                                         "angular_deflection_deg": rc["angular_deflection_deg"]})
+    cfg = _ccfg()
+    mg._relaxed_fidelity(_G, "x.step", cfg["mesh"], {}, 3.0, cfg)
+    assert seen[-1]["angular_deflection_deg"] == 20.0 and seen[-1]["linear_deflection_mm"] == 0.05
+    assert DEFAULTS["compare"]["remesh"]["angular_deflection_deg"] == 5.0                # remesh 자체는 그대로
+    cfg2 = sc.compare_cfg(settings({"bead_doe": {"enabled": True, "compare": {"mesh": {"size_mm": 3.0},
+                                                                              "freeform": {"angular_deflection_deg": 12.0}}}}))
+    mg._relaxed_fidelity(_G, "x.step", cfg2["mesh"], {}, 3.0, cfg2)
+    assert seen[-1]["angular_deflection_deg"] == 12.0 and seen[-1]["linear_deflection_mm"] == 0.05
+
+
+_WATCH = """
+import os, sys, time
+sys.path[:0] = [{root!r}]
+from esl.doe import mesh_gmsh as mg
+out = {out!r}
+mg._arm_deadline({{"child_timeout_s": 0.3, "out_dir": out}}, os.path.join(out, "mesh_error.json"))
+if {mark!r}:
+    mg.mark_success_write()
+time.sleep(1.5)
+print("alive")
+"""
+
+
+@pytest.mark.parametrize("mark", [True, False])
+def test_watchdog_quiet_after_success_write(tmp_path, mark):
+    """감시 타이머: 성공 결과 쓰기 시작(mark_success_write) 뒤에는 mesh_error.json 을 쓰지 않고 자식을 끝내지 않음.
+    표시가 없으면(대조) 예전처럼 기록 + 종료코드 3."""
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    r = subprocess.run([sys.executable, "-c", _WATCH.format(root=root, out=str(tmp_path), mark=mark)],
+                       capture_output=True, text=True, timeout=60, check=False)
+    err = tmp_path / "mesh_error.json"
+    if mark:
+        assert r.returncode == 0 and "alive" in r.stdout and not err.exists()
+    else:
+        assert r.returncode == 3 and "alive" not in r.stdout and err.exists()

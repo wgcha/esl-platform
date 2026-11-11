@@ -412,12 +412,17 @@ def _split_face(gmsh, s: int, n_planes: int) -> dict:
     return {"deviation_mm": 0.0, "new_ids": new_ids, "pieces": len(pieces)}
 
 
+def _same_face_hits(cands: list, key: tuple, typ: str, area: float, bbox_tol: float, area_rtol: float) -> list[int]:
+    """엄격 대응 후보: bbox(± bbox_tol)·면 종류·넓이(상대 area_rtol)가 모두 맞는 tag 목록."""
+    return [int(t) for t, ty, a, bb in cands
+            if _key_near(tuple(bb), key, bbox_tol) and str(ty) == str(typ)
+            and abs(float(a) - area) <= area_rtol * max(abs(area), 1e-12)]
+
+
 def _pick_same_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: float, area_rtol: float) -> int:
     """nofix(그 면만) 대체 면 고르기: cands = [(tag, 종류, 넓이, bbox)] 중 bbox(± bbox_tol)·면 종류·넓이(상대 area_rtol)가 모두
     맞는 면이 정확히 1개일 때만 그 tag. 0개·2개 이상(대칭 쌍처럼 bbox·종류·넓이가 같은 면) → _GeomSkip(엉뚱한 면 대체 방지)."""
-    hit = [int(t) for t, ty, a, bb in cands
-           if _key_near(tuple(bb), key, bbox_tol) and str(ty) == str(typ)
-           and abs(float(a) - area) <= area_rtol * max(abs(area), 1e-12)]
+    hit = _same_face_hits(cands, key, typ, area, bbox_tol, area_rtol)
     if len(hit) != 1:
         raise _GeomSkip(f"정리 없이 가져온 형상에 같은 면(bbox ±{bbox_tol:g}·종류 {typ}·넓이 ±{area_rtol:g}) 후보 "
                         f"{len(hit)}개{' — 하나로 정할 수 없음' if hit else ''}")
@@ -435,6 +440,22 @@ def _pick_grown_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: f
     if len(hit) != 1:
         raise _GeomSkip(f"넓이가 줄어든(정리 전 조각) 같은 종류 후보 {len(hit)}개")
     return hit[0]
+
+
+def _pick_nofix_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: float, area_rtol: float,
+                     grow: float) -> tuple[int | None, str | None]:
+    """nofix(그 면만) 대체 면 → (tag | None, 사유). 엄격 대응 정확히 1개 = 그 면. 엄격 후보 0개이고 grow > 1 일 때만
+    C2-D-38 정리가 키운 면(_pick_grown_face). 엄격 후보 2개 이상 = 모호 → 고르지 않음(키운 면 찾기도 안 함)."""
+    try:
+        return _pick_same_face(cands, key, typ, area, bbox_tol, area_rtol), None
+    except _GeomSkip as gs:
+        why = str(gs)
+    if grow > 1.0 and not _same_face_hits(cands, key, typ, area, bbox_tol, area_rtol):
+        try:
+            return _pick_grown_face(cands, key, typ, area, bbox_tol, grow), None
+        except _GeomSkip as gs2:
+            why = f"{why}; {gs2}"
+    return None, why
 
 
 def _nofix_face(gmsh, src: str, key: tuple, fb: dict | None = None) -> dict:
@@ -467,17 +488,8 @@ def _nofix_face(gmsh, src: str, key: tuple, fb: dict | None = None) -> dict:
             gmsh.option.setNumber(k, v)
     new = {d: sorted(int(t) for _x, t in occ.getEntities(d) if int(t) not in before[d]) for d in range(4)}
     cands = [(t, gmsh.model.getType(2, t), occ.getMass(2, t), _bbox_key(gmsh, 2, t)) for t in new[2]]
-    try:
-        f = _pick_same_face(cands, key, typ0, area0, bbox_tol, area_rtol)
-        why = None
-    except _GeomSkip as gs:
-        f, why = None, str(gs)
-        grow = float(nf.get("area_grow_max", dn.get("area_grow_max", 0.0)) or 0.0)
-        if grow > 1.0:                                       # v0.17.4 C2-D-38 정리가 면을 키운 경우(조각 → 완전한 구)
-            try:
-                f, why = _pick_grown_face(cands, key, typ0, area0, bbox_tol, grow), None
-            except _GeomSkip as gs2:
-                why = f"{why}; {gs2}"
+    grow = float(nf.get("area_grow_max", dn.get("area_grow_max", 0.0)) or 0.0)
+    f, why = _pick_nofix_face(cands, key, typ0, area0, bbox_tol, area_rtol, grow)
     if new[3]:
         occ.remove([(3, t) for t in new[3]])
     rest = [(2, t) for t in new[2] if t != f]
@@ -838,9 +850,13 @@ def _relaxed_try(gmsh, src: str, mc: dict, h: float, props: dict, cfg: dict, opt
 
 
 def _relaxed_fidelity(gmsh, src: str, mc_r: dict, mesh: dict, h: float, cfg: dict) -> dict:
-    """cad_relaxed 메시 ↔ 같은 가져오기 옵션의 원 STEP OCC 삼각화(remesh 충실도 함수·설정 그대로 — 코드 1곳)."""
+    """cad_relaxed 메시 ↔ 같은 가져오기 옵션의 원 STEP OCC 삼각화(remesh 충실도 함수 — 코드 1곳). 기준 삼각화 각 편차 =
+    compare.freeform.angular_deflection_deg(20°, C2-D-42 — 구면이 많으면 5° 는 삼각형 폭증), 선 편차는 remesh 절대값(0.05 mm) 그대로."""
     from esl.doe import mesh_remesh as mrm
     rc = mrm._rcfg(cfg)
+    ang = mrm._fcfg(cfg).get("angular_deflection_deg")
+    if ang is not None:
+        rc = dict(rc, angular_deflection_deg=float(ang))
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -1103,6 +1119,7 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             "message": f"면 {len(faces)}개(gmsh 면 id {ids})가 기본 2D 알고리즘으로 메시되지 않아 그 면만 {kinds}로 메시함 — "
                        + "; ".join(f"{_face_label(x | {'id': x['failed_id']})} → {fallback_label(x)}" for x in faces)}]
     if out_dir:
+        mark_success_write()
         os.makedirs(out_dir, exist_ok=True)
         save_npz_det(os.path.join(out_dir, MESH_NPZ), {k: mesh[k] for k in MESH_KEYS})
         from esl.library import _util as U
@@ -1237,15 +1254,20 @@ def _child(job_path: str) -> int:
     return 0
 
 
-_ERR_LOCK = None                                            # v0.17.4 감시 타이머·주 스레드 중 먼저 쓴 쪽만 mesh_error.json
+import threading as _threading
+
+_ERR_LOCK = _threading.Lock()                               # v0.17.4 감시 타이머·주 스레드 중 먼저 쓴 쪽만 mesh_error.json
 _ERR_DONE: dict = {}
+_OK_WRITE: dict = {}                                        # 성공 결과 쓰기 시작(done) — 이 뒤로 감시 타이머는 아무것도 안 함
+
+
+def mark_success_write() -> None:
+    """성공 메시(mesh.npz·mesh.json)를 쓰기 직전에 부름: 감시 타이머가 mesh_error.json 을 쓰거나 자식을 끝내지 않게."""
+    with _ERR_LOCK:
+        _OK_WRITE["done"] = True
 
 
 def _write_err(err: str, rec: dict) -> bool:
-    import threading
-    global _ERR_LOCK
-    if _ERR_LOCK is None:
-        _ERR_LOCK = threading.Lock()
     with _ERR_LOCK:
         if _ERR_DONE.get(err):
             return False
@@ -1268,6 +1290,8 @@ def _arm_deadline(job: dict, err: str) -> None:
     시간 초과 + 실패 면(첫 실패 면 → mesh.log 마지막 면) 기록 후 종료코드 3 — 부모 spawn 이 죽이기 전에(정상 종료면 아무것도 안 함)."""
     import threading
     t = float(job["child_timeout_s"])
+    with _ERR_LOCK:                                         # 이 작업의 성공 쓰기 표시만 봄(같은 프로세스 앞 작업 무관)
+        _OK_WRITE.clear()
 
     def fire() -> None:
         face = _RUN.get("face") or log_face(os.path.join(job["out_dir"], MESH_LOG), _RUN.get("faces"))
@@ -1282,11 +1306,15 @@ def _arm_deadline(job: dict, err: str) -> None:
                 rec["log_face"] = {"id": face.get("id"), "type": face.get("type")}
         rec["message"] = msg
         rec.update(_run_record())
-        try:
-            done = _write_err(err, rec)
-        except Exception:                                   # noqa: BLE001
-            done = False
-        if done:
+        with _ERR_LOCK:                                     # 잠금 안에서 종료 — 성공 쓰기(mark_success_write)와 겹치지 않음
+            if _OK_WRITE.get("done") or _ERR_DONE.get(err):
+                return
+            try:
+                with open(err, "w", encoding="utf-8") as fh:
+                    json.dump(rec, fh, ensure_ascii=False)
+            except Exception:                               # noqa: BLE001
+                return
+            _ERR_DONE[err] = True
             sys.stdout.flush()
             os._exit(3)
     th = threading.Timer(t, fire)

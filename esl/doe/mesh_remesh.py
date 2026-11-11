@@ -562,6 +562,7 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
         meta["defeature"] = dfi
     if out_dir:
         from esl.library import _util as U
+        mg.mark_success_write()
         os.makedirs(out_dir, exist_ok=True)
         mg.save_npz_det(os.path.join(out_dir, mg.MESH_NPZ), {k: mesh[k] for k in mg.MESH_KEYS})
         if rc.get("keep_stl"):
