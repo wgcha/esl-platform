@@ -39,3 +39,13 @@ def many_dimple_step(path, *, nx: int = 20, ny: int = 12, Lx: float = 400.0, Ly:
     finally:
         gmsh.finalize()
     return str(path)
+
+
+def many_dimple_solid_step(path, *, nx: int = 6, ny: int = 4, Lx: float = 200.0, Ly: float = 150.0, R: float = 8.0,
+                           d: float = 2.0, t: float = 2.0) -> str:
+    """v0.17.4 면을 공유하는 다딤플 판(두께 t 고체 − nx × ny 구 → 윗면 구면 딤플 = OCC Sphere 면, 극점이 면 안). 실제 gmsh 에서
+    OCC 정리(occ_fix_small 1)를 켜면 딤플 면 1D 고리가 깨져 2D 가 실패하고, 끄면(③ 옵션) 연결된 한 덩어리로 메시된다(재현 —
+    synth_compare.dimple_plate_step(solid) 격자판)."""
+    from synth_compare import dimple_plate_step
+    dd = [((i + 0.5) * Lx / nx, (j + 0.5) * Ly / ny, R, d) for i in range(nx) for j in range(ny)]
+    return dimple_plate_step(path, dd, Lx=Lx, Lz=Ly, solid=t)

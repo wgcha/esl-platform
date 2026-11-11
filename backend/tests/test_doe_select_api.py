@@ -458,7 +458,7 @@ GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.
                   "morph": {"ramp_k": 3.0, "outside_tol_mm": 1.0e-6, "achieved_tol_mm": 1.0e-6,
                             "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                             "w_smooth_iters": 3},                       # 통합 v0.17.0(§12 BG-X-5 — 코어 구현 키 거울)
-                  "sym_tol_mm": 0.5, "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}
+                  "sym_tol_mm": 0.5, "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}
 GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
              {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
              {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},

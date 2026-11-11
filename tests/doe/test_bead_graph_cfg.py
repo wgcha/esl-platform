@@ -13,8 +13,13 @@ def _strip(d):
 
 
 def test_defaults_match_package():
+    """ESL 기본 = 패키지 기본. 예외(v0.17.4): limits.max_elems 600,000(beadgraph 계약 성능 상한 600k/300 s, 패키지 기본
+    250,000 — 패키지 1.0.0 은 안 바꿈, 이슈 #63 현장 ① 메시 267,470 요소)."""
     import beadgraph
-    assert _strip(DEFAULTS["select"]["graph"]) == beadgraph.DEFAULTS
+    pkg = copy.deepcopy(beadgraph.DEFAULTS)
+    assert pkg["limits"]["max_elems"] == 250000 and DEFAULTS["select"]["graph"]["limits"]["max_elems"] == 600000
+    pkg["limits"]["max_elems"] = 600000
+    assert _strip(DEFAULTS["select"]["graph"]) == pkg
 
 
 def test_hash_view_default_excludes_graph():
