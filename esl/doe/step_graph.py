@@ -26,7 +26,8 @@ Files (all under the study folder, never SPDM / input folders):
   prep/base_mesh.npz  += "region" (bool per element; key absent when the region is the whole mesh)
   prep/base.json      scenario "select", extra {props, h, mesh_method, tri_frac, gmsh_version, region{…}}
   prep/input.json     += mesh{method, n_nodes, n_elems, tri_frac, stage_times}, region{mode, rule, n_in, n_out, out_bbox},
-                         fixed{source, n, xfer{method, matched, unmatched, frame_ok}}, warnings[{code…}], info[{code…}]
+                         fixed{source, n, xfer{method, matched, unmatched, frame_ok, reason?}}, warnings[{code…}],
+                         info[{code…}]   (reason only when method none: A_CASE_MISSING|A_SCAN_FAILED|NO_MATCH|DISABLED)
   prep/select/fixed_transfer.json   schema "esl/doe_fixed_transfer/2" (§3.3 SG-D-15, deterministic bytes: sorted keys,
       floats rounded 1e-3): {schema, method "xyz_nearest"|"ab_hole_snap"|"none", mode, reason?, frame_check{d_origin_mm,
       angle_deg[3], ok, origin_tol_mm, axis_tol_deg}, tol_mm, snap_mm, frame_a_sha, frame_b_sha,
@@ -536,9 +537,12 @@ def write_transfer(path: str, doc: dict, guard=None) -> str:
 def xfer_summary(doc: dict | None) -> dict:
     """prep/input.json fixed.xfer = {method, matched, unmatched, frame_ok}."""
     if doc is None:
-        return {"method": "none", "matched": 0, "unmatched": 0, "frame_ok": None}
-    return {"method": doc["method"], "matched": len(doc["matches"]), "unmatched": len(doc["unmatched"]),
-            "frame_ok": None if doc.get("frame_check") is None else bool(doc["frame_check"]["ok"])}
+        return {"method": "none", "matched": 0, "unmatched": 0, "frame_ok": None, "reason": "DISABLED"}
+    out = {"method": doc["method"], "matched": len(doc["matches"]), "unmatched": len(doc["unmatched"]),
+           "frame_ok": None if doc.get("frame_check") is None else bool(doc["frame_check"]["ok"])}
+    if doc.get("reason"):                                   # method none 일 때만(A_CASE_MISSING|A_SCAN_FAILED|NO_MATCH)
+        out["reason"] = doc["reason"]
+    return out
 
 
 # ====================================================================== 삼각형 메시 (SG-D-6)

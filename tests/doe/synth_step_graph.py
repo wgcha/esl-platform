@@ -19,6 +19,7 @@ if PKG not in sys.path:
 
 PLANE_TOL = 1e-6
 PLANE_SNAP = 0.05
+SEG_MM = 2.0
 
 
 def _key(c):
@@ -40,7 +41,7 @@ def h6_step(path: str, log=None) -> str:
     from beadgraph.testing import synth_h6 as s6
     root, _ = s6.build_tree()
     dom, L = s6.domain_and_creases(root)
-    faces = s6.faces_of(dom, L)
+    faces = [shapely.segmentize(f, SEG_MM) for f in s6.faces_of(dom, L)]   # 직선 주름선을 가로지르는 보스 사면(높이 비선형)
     allpts = np.unique(np.concatenate([np.asarray(r.coords)[:, :2] for f in faces
                                        for r in [f.exterior] + list(f.interiors)]), axis=0)
     z, *_ = s6.evaluate(root, allpts)
@@ -308,3 +309,63 @@ def h6_clusters(mesh, fx) -> list:
     hx = fx["exp_hole_xy"][fx["exp_hole_fixed"]]
     lab = np.argmin(np.linalg.norm(X[F, None, :2] - hx[None], axis=2), axis=1)
     return [F[lab == k] for k in range(hx.shape[0]) if (lab == k).any()]
+
+
+# ---------------------------------------------------------------- H5 STEP (Backend V-SG-7 워커 E2E 입력)
+def h5_step(path: str) -> str:
+    """H5 시트 STEP(400 × 300, ㅁ 링 비드 + 세로 비드 2 — beadgraph synth_h5 와 같은 OCC 형상, 윗면 셸만)."""
+    import gmsh
+    from beadgraph.testing import synth_h5 as s5
+    D0, B0, e, zb = s5.D0, s5.B0, 2.0, -30.0
+    LX, LY = s5.LX, s5.LY
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("General.NumThreads", 1)
+        occ = gmsh.model.occ
+        slab = occ.addBox(0, 0, zb, LX, LY, -zb)
+
+        def frustum(x0, y0, x1, y1, grow):
+            g = grow * (D0 + e)
+            pb = [occ.addPoint(x, y, -D0) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            pt = [occ.addPoint(x, y, e) for x, y in ((x0 - g, y0 - g), (x1 + g, y0 - g), (x1 + g, y1 + g), (x0 - g, y1 + g))]
+            lb = [occ.addLine(pb[i], pb[(i + 1) % 4]) for i in range(4)]
+            lt = [occ.addLine(pt[i], pt[(i + 1) % 4]) for i in range(4)]
+            lv = [occ.addLine(pb[i], pt[i]) for i in range(4)]
+            fs = [occ.addPlaneSurface([occ.addCurveLoop(lb)]), occ.addPlaneSurface([occ.addCurveLoop(lt)])]
+            for i in range(4):
+                j = (i + 1) % 4
+                fs.append(occ.addPlaneSurface([occ.addCurveLoop([lb[i], lv[j], -lt[i], -lv[i]])]))
+            return [(3, occ.addVolume([occ.addSurfaceLoop(fs)]))]
+        f0, f1 = s5.RING_FLOOR
+        ring, _ = occ.cut(frustum(f0, f0, LX - f0, LY - f0, 1), frustum(f1, f1, LX - f1, LY - f1, -1))
+        vs = []
+        for xc in s5.XC:
+            vs += frustum(xc - B0, s5.Y_FLOOR_BOT, xc + B0, s5.Y_ENTRY_TOP - D0, 1)
+        tools, _ = occ.fuse(ring, vs)
+        body, _ = occ.cut([(3, slab)], tools)
+        occ.synchronize()
+        vols = [t for d_, t in body if d_ == 3]
+        faces = gmsh.model.getBoundary([(3, v) for v in vols], oriented=False, combined=True)
+        drop = [abs(f) for _d, f in faces if gmsh.model.getBoundingBox(2, abs(f))[2] <= zb + 1e-6]
+        occ.remove([(3, v) for v in vols])
+        occ.remove([(2, f) for f in drop], recursive=True)
+        occ.synchronize()
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        gmsh.write(str(path))
+    finally:
+        gmsh.finalize()
+    return str(path)
+
+
+def h5_step_bytes() -> bytes:
+    """Backend V-SG-7 helper: H5 시트 STEP 바이트(세션 캐시 ESL_SG_CACHE 또는 임시 폴더 — gmsh 필요)."""
+    import tempfile
+    import gmsh
+    d = os.environ.get("ESL_SG_CACHE") or os.path.join(tempfile.gettempdir(), "esl_step_graph_cache")
+    p = os.path.join(d, f"h5_sheet_gmsh{gmsh.__version__}.step")
+    if not os.path.isfile(p):
+        tmp = h5_step(p + f".{os.getpid()}.tmp.step")
+        os.replace(tmp, p)
+    with open(p, "rb") as fh:
+        return fh.read()

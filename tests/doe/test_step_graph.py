@@ -121,7 +121,7 @@ def test_manual_seed_and_no_a_case(plate, tmp_path):
     run("bd_mesh0")
     r = run("bd_loads")
     assert r["fixed"] == {"source": "none", "n": 0, "xfer": {"method": "none", "matched": 0, "unmatched": 0,
-                                                              "frame_ok": True}}
+                                                              "frame_ok": True, "reason": "A_CASE_MISSING"}}
     assert any(s.startswith("FIXED_XFER_NONE") for s in r["info"])
     inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
     assert {"code": "FIXED_XFER_NONE", "reason": "A_CASE_MISSING"} in inp["info"]
@@ -340,3 +340,33 @@ def test_h6_step_loads_transfer(h6):
     print("H6-STEP-LOADS", r["graph"], r["fixed"])
     assert r["graph"]["ok"] and r["fixed"]["xfer"]["frame_ok"] and r["fixed"]["xfer"]["method"] == "xyz_nearest"
     assert r["fixed"]["xfer"]["unmatched"] == 0 and r["auto"]["n_beads"] > 0
+
+
+def test_h5_step_stages(tmp_path):
+    """H5 STEP(Backend V-SG-7 입력 ``synth_step_graph.h5_step_bytes``) → ④ 사다리 → 분류(V-BG-2 H5 기준) → auto seed."""
+    from beadgraph.testing import conformance as cf
+    from beadgraph.testing.evaluate import evaluate_h5
+    _ = cf
+    up = tmp_path / "up"
+    up.mkdir()
+    p = up / "h5_sheet.step"
+    p.write_bytes(ssg.h5_step_bytes())
+    a = ssg.esl_mesh(cf.load_fixture("h5")["x0"], cf.load_fixture("h5")["conn"])
+    a["thickness"] = np.full(a["elem_type"].size, 2.0)
+    doe = _study(tmp_path, str(p), a, bead_doe={"enabled": True, "mesh": {"occ_sew_faces": 1}})
+    out = tmp_path / "_doe" / "S1"
+    run = _runner(out, doe)
+    run("bd_input")
+    m0 = run("bd_mesh0")
+    assert m0["mesh"]["method"] == "cad" and m0["region"]["n_out"] == 0
+    r = run("bd_loads")
+    assert r["graph"]["ok"] and r["auto"]["source"] == "graph" and r["auto"]["n_beads"] >= 3
+    g, lab = bgr.load_graph(str(out / "prep"))
+    t, _ = sc.load_base(str(out / "prep"))
+    from beadgraph.testing import synth_h5 as s5
+    C = bgr._conn(t.mesh)
+    fx5 = s5.fixture_arrays({"x0": np.asarray(t.mesh["x0"]), "conn": C,
+                             "elem_type": np.where(C[:, 3] >= 0, 4, 3).astype(np.int8)})
+    res = evaluate_h5(g, lab, fx5)
+    print("H5-STEP", res)
+    assert not cf.check_h5(res), cf.check_h5(res)
