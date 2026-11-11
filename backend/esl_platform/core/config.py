@@ -485,6 +485,13 @@ class BeadDoePreviewCfg(_M):
     disp_range_mm: Literal["auto"] | list[float] = "auto"
 
 
+class BeadDoeGridCfg(_M):
+    """v0.17.2(이슈 #63, esl.doe.DEFAULTS["grid"] 거울): 미리보기 grid 셀 중 판정된 셀(READY·충돌·고정 스킵) 비율이
+    min_ok_frac 미만이거나 READY 0 이면 BD_GRID 실패(GRID_TOO_FEW_OK·GRID_ALL_FAILED)."""
+
+    min_ok_frac: float = Field(default=0.5, ge=0, le=1)
+
+
 class BeadDoeRunCfg(_M):
     parallel: int = Field(default=2, ge=1, le=64)
     memory_margin: float = Field(default=0.7, gt=0, le=1)
@@ -1144,6 +1151,7 @@ class BeadDoeCfg(_M):
     mesh: BeadDoeMeshCfg = BeadDoeMeshCfg()
     doe: BeadDoeDoeCfg = BeadDoeDoeCfg()
     preview: BeadDoePreviewCfg = BeadDoePreviewCfg()
+    grid: BeadDoeGridCfg = BeadDoeGridCfg()                  # v0.17.2 미리보기 grid 건강(이슈 #63)
     run: BeadDoeRunCfg = BeadDoeRunCfg()
     solve: BeadDoeSolveCfg = BeadDoeSolveCfg()
     boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()

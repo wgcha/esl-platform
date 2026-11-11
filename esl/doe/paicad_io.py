@@ -466,6 +466,47 @@ def read_grid(d: str, ids: list[str] | None = None, max_mb: float = 64) -> dict:
     return {"cells": rows, "counts": cnt, "missing": missing, "manifest": doc}
 
 
+# v0.17.2(이슈 #63): paicad grid 가 RESULT OK·종료 0 이어도 셀이 거의 다 실패할 수 있음(GEOM_CAD_FAILED 퇴화 엣지 등)
+GRID_SKIP_STATES = ("SKIPPED_COLLISION", "SKIPPED_FIXED")   # paicad 가 판정한 스킵(설계 결과) — 형상 실패가 아님
+
+
+def grid_health(rows: list[dict], ids: list[str], min_ok_frac: float, top_n: int = 3) -> dict:
+    """미리보기 셀(공칭 제외, ids) 건강 판정. 성공 = paicad 가 셀을 판정함(READY·충돌·고정 스킵), 실패 = SKIPPED_GEOM
+    (형상 실패·ERROR·셀 없음). verdict: ``ok`` | ``partial``(실패 있으나 성공 비율 ≥ min_ok_frac, READY ≥ 1) |
+    ``all_failed``(READY 0 — 실행할 안 없음) | ``too_few``(성공 비율 < min_ok_frac). ids 0 = ``ok``.
+    top_codes = 실패 셀(SKIPPED_GEOM) 코드별 수 상위 top_n [[code, n]] (READY 0 이면 READY 아닌 셀 전체 코드), codes = 같은 집계 전체."""
+    want = set(ids)
+    sel = [r for r in rows if r.get("id") in want]
+    total = len(ids)
+    ok = sum(r.get("state") == "READY" for r in sel)
+    failed = [r for r in sel if r.get("state") not in ("READY",) + GRID_SKIP_STATES]
+    judged = total - len(failed)
+    if total == 0:
+        verdict = "ok"
+    elif ok == 0:
+        verdict = "all_failed"
+    elif judged < float(min_ok_frac) * total - 1e-9:
+        verdict = "too_few"
+    else:
+        verdict = "partial" if failed else "ok"
+
+    def top(rs: list[dict], k_max: int) -> list[list]:
+        n: dict[str, int] = {}
+        for r in rs:
+            c = str(r.get("code") or r.get("state") or "UNKNOWN")
+            n[c] = n.get(c, 0) + 1
+        return [[c, k] for c, k in sorted(n.items(), key=lambda x: (-x[1], x[0]))[:k_max]]
+
+    src = failed if ok else [r for r in sel if r.get("state") != "READY"]
+    return {"verdict": verdict, "ok": ok, "total": total, "failed": len(failed), "judged": judged,
+            "min_ok_frac": float(min_ok_frac), "top_codes": top(src, top_n), "codes": top(src, len(src))}
+
+
+def codes_text(top_codes: list[list]) -> str:
+    """[[code, n]] → 'GEOM_CAD_FAILED 29 · GEOM_INTERNAL 1'."""
+    return " · ".join(f"{c} {n}" for c, n in top_codes)
+
+
 def run_out_files(check_dir: str, max_mb: float = 64) -> tuple[list[str], dict]:
     """shell run(PASS) → (out_files 상대경로 목록, shell_run.json)."""
     doc = read_json_limited(os.path.join(check_dir, RUN_JSON), max_mb)

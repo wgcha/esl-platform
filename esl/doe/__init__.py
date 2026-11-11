@@ -70,6 +70,8 @@ DEFAULTS: dict = {
     "doe": {"default_method": "lhs", "default_n": 30, "seed": 1, "levels_default": 3, "levels_max": 9,
             "round_mm": 0.01, "default_types": ["D", "W"]},
     "preview": {"w": 320, "h": 240, "view_dir": "auto", "tilt_deg": 20, "margin": 1.15, "disp_range_mm": "auto"},
+    # v0.17.2(이슈 #63) 미리보기 grid 건강: 판정된 셀(READY·충돌·고정) 비율 < min_ok_frac 또는 READY 0 → BD_GRID 실패
+    "grid": {"min_ok_frac": 0.5},
     "run": {"parallel": 2, "memory_margin": 0.7},
     "solve": {"reaction_warn": 0.01},
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},

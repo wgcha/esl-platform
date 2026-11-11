@@ -888,14 +888,20 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
     except EslError as exc:
         raise sel_error(exc) from None
     base = svc._read_json(os.path.join(_prep_dir(ctx, s), "plan.json"), svc._max_mb(c))
-    p = {**(base if isinstance(base, dict) else {}), **svc._jsonable(pd)}
+    base = base if isinstance(base, dict) else {}
+    p = {**base, **svc._jsonable(pd)}
     if "frame" not in p:
         raise conflict("PREP_NOT_READY", "평면도 자료가 없습니다")
     limit = int(ctx.settings.view3d.max_nodes)
     n = (p.get("elems") or {}).get("n_total")
     if isinstance(n, int) and n > limit:
         raise DomainError("PLAN_VIEW_TOO_LARGE", f"요소 {n} > 상한 {limit}", status=413)
-    p["links"] = svc._link_coords(p)
+    # v0.17.3 VU-D-7(AD-D-18 후속): 코어 plan_data 는 a_points·load_points·links 를 [] 로 둔다 — ② B 메시 기준은
+    # prep/plan.json(경계 매핑 결과)의 것을 그대로 넘긴다(추가만, 형식 같음). 링크 끝 좌표(to_ab)는 B 고정 클러스터 라벨로 찾는다.
+    for k in ("a_points", "load_points", "links"):
+        if not p.get(k) and base.get(k):
+            p[k] = base[k]
+    p["links"] = svc._link_coords({**p, "fixed": base.get("fixed") or p.get("fixed")})
     p["warnings"] = [w if isinstance(w, str) else str(_code(w) or w) for w in p.get("warnings") or []]
     return p
 

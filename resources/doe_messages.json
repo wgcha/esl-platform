@@ -1,5 +1,5 @@
 {
- "version": "2026-11-09.1",
+ "version": "2026-11-11.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -69,6 +69,9 @@
   "DOE_NO_PARAMS": "포함할 변수를 1개 이상 고르세요.",
   "RANGE_OUTSIDE_FEASIBLE": "범위가 추정 가능 범위(feasible) 밖입니다 — 미리보기에서 실패 안이 늘 수 있습니다.",
   "NO_FEASIBLE_DESIGNS": "실행 가능한 안이 없어 순위를 만들지 못했습니다.",
+  "GRID_ALL_FAILED": "미리보기에서 실행 가능한 안이 하나도 없습니다(형상 엔진 셀 실패) — 셀 실패 코드를 확인하세요.",
+  "GRID_TOO_FEW_OK": "미리보기 셀 대부분이 형상 엔진에서 실패했습니다(설정 grid.min_ok_frac 미만) — 셀 실패 코드를 확인하세요.",
+  "GRID_CELLS_FAILED": "미리보기 셀 일부가 형상 엔진에서 실패해 실행에서 빠집니다(코드별 수).",
   "SENSITIVITY_TOO_FEW": "성공한 안이 변수 수 + 2 보다 적어 민감도를 계산하지 않았습니다.",
   "REACTION_RESIDUAL": "3-2-1 반력이 하중 합의 기준 비율을 넘습니다(모핑 후 하중 평형이 조금 깨짐).",
   "SUPPORT_DEGENERATE": "3-2-1 지지가 강체 운동을 막지 못합니다.",

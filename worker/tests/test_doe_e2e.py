@@ -283,6 +283,9 @@ def test_step_scenario_e2e(client, engine, worker, esl_root, inputs_root, exe, t
     ups = calls(exe, "update")
     assert len(ups) == 8 and all("--fixed-dir" not in r["argv"] for r in ups)   # 안 7 + noise
     assert (d / "run" / "designs" / "noise" / "result.json").is_file()
+    # v0.17.2 D-0.17.2-AFIXED: A Case fixed-scan(prep/a_fixed)이 있어도 ③ grid·update 는 고정 없음(A 모델 좌표 ≠ B STEP)
+    assert (d / "prep" / "a_fixed" / "shell_scan.json").is_file()
+    assert all("--assem-dir" not in r["argv"] for r in calls(exe, "extract"))     # ③ 조립 없음
     assert out["result"].get("noise_floor") is not None
     assert (d / "prep" / "mesh0" / "mesh.npz").is_file()
 
@@ -502,3 +505,60 @@ def test_worker_side_file_locked_not_internal_error(client, engine, worker, esl_
     j = run_job(client, worker, s["job"]["id"], "FAILED")
     assert j["failure_code"] == "FILE_LOCKED" and "x.json ← .x.tmp" in j["failure_message"]
     assert str(esl_root) not in j["failure_message"] and os.sep + "x.json" not in j["failure_message"]
+
+
+# ---------------------------------------------------------------- v0.17.2 grid 셀 대부분 실패(이슈 #63)
+ALL_FAIL = [{"when": {"CHASSIS_REAR_BEAD_D_1": [0.0, 100.0]}, "code": "GEOM_CAD_FAILED"}]
+
+
+def _db_phase(engine, sid) -> str:
+    from esl_platform.core.repositories import doe as doe_repo
+    with engine.connect() as c:
+        return doe_repo.get_study(c, sid)["phase"]
+
+
+def test_grid_all_cells_failed_is_step_failure(client, engine, worker, esl_root, inputs_root, exe):
+    """paicad grid RESULT OK·종료 0 + 셀 전부 GEOM_CAD_FAILED → BD_GRID 실패 GRID_ALL_FAILED, PREVIEW_READY 아님."""
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    set_control(exe, rules=ALL_FAIL)
+    s = preview(client, study(client, s["id"]))
+    j = run_job(client, worker, s["job"]["id"], "FAILED")
+    assert j["failure_code"] == "GRID_ALL_FAILED", j["failure_message"]
+    assert "9개 중 실행 가능 0개" in j["failure_message"] and "GEOM_CAD_FAILED 9" in j["failure_message"]
+    assert {x["step_key"]: x["state"] for x in j["steps"]}["BD_PREVIEW_REGISTER"] != "SUCCEEDED"
+    gr = calls(exe, "grid")
+    assert gr and gr[-1]["argv"][gr[-1]["argv"].index("--fixed-dir") + 1] == str(sdir(esl_root, s["id"]) / "prep" / "fixed")
+    assert _db_phase(engine, s["id"]) != "PREVIEW_READY"
+
+
+def test_register_refuses_zero_ok_preview(client, engine, worker, esl_root, inputs_root, exe, monkeypatch):
+    """이중 안전: 워커 grid 판정을 건너뛰어도(이전 워커 흉내) READY 0 은 BD_PREVIEW_REGISTER 가 GRID_ALL_FAILED."""
+    from esl_worker import doe_jobs
+
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    set_control(exe, rules=ALL_FAIL)
+    monkeypatch.setattr(doe_jobs, "check_grid_health", lambda *a, **k: {"verdict": "ok"})
+    s = preview(client, study(client, s["id"]))
+    j = run_job(client, worker, s["job"]["id"], "FAILED")
+    assert j["failure_code"] == "GRID_ALL_FAILED", j["failure_message"]
+    st = {x["step_key"]: x["state"] for x in j["steps"]}
+    assert st["BD_GRID"] == "SUCCEEDED" and st["BD_PREVIEW_REGISTER"] == "FAILED"
+    assert _db_phase(engine, s["id"]) != "PREVIEW_READY"
+
+
+def test_grid_partial_failure_ready_with_warning(client, engine, worker, esl_root, inputs_root, exe):
+    """형상 실패 3/9(판정 6/9 ≥ 0.5) → PREVIEW_READY + 작업 경고 GRID_CELLS_FAILED(코드별 수)."""
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"])
+    run_job(client, worker, s["job"]["id"])
+    D1 = "CHASSIS_REAR_BEAD_D_1"
+    set_control(exe, rules=[{"when": {D1: [2.4, 2.6]}, "code": "GEOM_CAD_FAILED"}])
+    s = preview(client, study(client, s["id"]))
+    j = run_job(client, worker, s["job"]["id"])
+    assert any("GRID_CELLS_FAILED" in w and "GEOM_CAD_FAILED 3" in w for w in j["warnings"]), j["warnings"]
+    g = study(client, s["id"])
+    assert g["phase"] == "PREVIEW_READY" and g["doe"]["preview"]["ok"] == 6

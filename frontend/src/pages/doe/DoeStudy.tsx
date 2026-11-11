@@ -16,9 +16,13 @@ import {
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   type NewRadio,
   type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
-import { BeadSelectCards, SelectDesign3D, autoNoticeText, useBeadSelect, type AutoSeedView } from "../../components/BeadSelectCard";
+import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView } from "../../components/BeadSelectCard";
+import { PartView } from "../../view3d/part/PartView";
+import { legacyViewData, sceneLayers, selectScene, selectViewData } from "../../view3d/part/adapters";
+import type { PartMesh, PlanVar } from "../../view3d/part/types";
+import { fetchBinary, fileUrls } from "../../view3d/fetchFiles";
+import { parseGlb } from "../../view3d/glb";
 import { SectionMini } from "../../components/SectionMini";
-import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
 import { STEP_LABEL } from "../../api/history";
 import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
@@ -27,7 +31,6 @@ import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/u
 import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, rowSource, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
 import { DoeThumbGrid, previewSummary } from "../../components/DoeThumbGrid";
-import { BoundaryLegend, BoundaryPlan } from "../../components/BoundaryPlan";
 import { DoeRanking } from "../../components/DoeRanking";
 import { DoePerEslTable } from "../../components/DoePerEslTable";
 import { Sensitivity } from "../../components/Sensitivity";
@@ -682,8 +685,9 @@ function SelectVarsPlan(p: {
   ctrl: ReturnType<typeof useBeadSelect>;
   activeVar: string | null;
   setActiveVar: (v: string) => void;
-  nodesHidden: boolean;
-  setNodesHidden: (v: boolean) => void;
+  /** v0.16.2 ② B 메시 기준(경계 경고·A 체결·하중 층) */
+  meshBase: boolean;
+  nWarn: number | null;
   beadPngUrl: (b: string) => string;
   /** v0.17.1 접기 상태 키(스터디 id) */
   foldKey?: string;
@@ -702,6 +706,11 @@ function SelectVarsPlan(p: {
       [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
     ]),
   );
+  const mesh = useMemo(() => selectMesh(p.ctrl.data), [p.ctrl.data]);
+  const c = p.ctrl;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scene = useMemo(() => (mesh ? selectScene(c, mesh, null) : null), [mesh, c.tick, c.state, c.graph, c.editV, c.colorMode, c.islandMask, c.graphMode]);
+  const view = plan ? selectViewData({ plan, chips, active: planVar, meshBase: p.meshBase, st, nWarn: p.nWarn, scene, sceneLayers: sceneLayers(p.ctrl) }) : null;
   return (
     <div className="doe-grid">
       <Card title="④ 변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
@@ -728,39 +737,47 @@ function SelectVarsPlan(p: {
           <Empty>{p.planError ?? "불러오는 중…"}</Empty>
         )}
       </Card>
-      <Card
-        title="⑤ 평면도 · 단면"
-        right={
-          <label className="check-field small">
-            <input type="checkbox" checked={p.nodesHidden} onChange={(e) => p.setNodesHidden(e.target.checked)} data-testid="plan-nodes-toggle" />
-            <span>노드 점 숨김</span>
-          </label>
-        }
-      >
+      <Card title="⑤ 평면도 · 단면" right={p.meshBase ? <span className="small">경계 경고 {p.nWarn ?? 0}</span> : undefined}>
         {!p.ready ? (
           <Empty>비드 선택을 저장하면 평면도가 열립니다</Empty>
-        ) : plan ? (
-          <div className="doe-plan-grid">
-            <SelectPlan plan={plan} chips={chips} active={planVar} nodesHidden={p.nodesHidden} />
-            <div className="doe-plan-side">
-              {secBead && <SectionMini sec={plan.beads.find((b) => b.id === secBead)?.section} v={planVar && planVar.bead === secBead ? planVar : null} title={(pd?.beads.find((b) => b.id === secBead)?.name ?? secBead).toString()} />}
-              <div className="small muted">{av ? `${av.name} 범위를 그림에 표시(폭 = 최소·최대 윤곽 점선, 깊이 = 단면 점선)` : "변수 행을 고르면 범위를 그림에 표시합니다"}</div>
-              <div className="doe-legend small">
-                <span>
-                  <i className="lg-bead" /> 비드(단 = 파랑 명도)
-                </span>
-                <span>
-                  <i className="lg-fixed" /> 고정 노드
-                </span>
-              </div>
-            </div>
-          </div>
+        ) : view ? (
+          <PartView
+            data={view}
+            testId="pv-select"
+            side={
+              <>
+                {secBead && <SectionMini sec={plan!.beads.find((b) => b.id === secBead)?.section} v={planVar && planVar.bead === secBead ? planVar : null} title={(pd?.beads.find((b) => b.id === secBead)?.name ?? secBead).toString()} />}
+                <div className="small muted">{av ? `${av.name} 범위를 그림에 표시(폭 = 최소·최대 윤곽 점선, 깊이 = 단면 점선)` : "변수 행을 고르면 범위를 그림에 표시합니다"}</div>
+              </>
+            }
+          />
         ) : (
           <Empty>{p.planError ?? "불러오는 중…"}</Empty>
         )}
       </Card>
     </div>
   );
+}
+
+/** v0.17.3 이전 방식(same·mesh·step) 3D: 실행 뒤 결과 d000(기준 형상) — 준비 단계에는 3D 형상 파일이 없어 평면도만(VU-F-1) */
+function useD000Mesh(studyId: string, on: boolean): PartMesh | null {
+  const [mesh, setMesh] = useState<PartMesh | null>(null);
+  useEffect(() => {
+    setMesh(null);
+    if (!on) return;
+    let alive = true;
+    request<View3dOut>("GET", doe.view3dPath(studyId, "d000"))
+      .then((m) => fetchBinary(fileUrls(m).geometry))
+      .then((b) => {
+        const g = parseGlb(b);
+        if (alive) setMesh({ positions: g.positions, indices: g.indices });
+      })
+      .catch(() => undefined); // 3D 없음 = 평면도만(오류 아님)
+    return () => {
+      alive = false;
+    };
+  }, [studyId, on]);
+  return mesh;
 }
 
 // ================================================================ 상세
@@ -823,7 +840,6 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const [pick, setPick] = useState<string | null>(null);
   const [vdOpen, setVdOpen] = useState(false);
   const [activeVar, setActiveVar] = useState<string | null>(null);
-  const [nodesHidden, setNodesHidden] = useState(true);
   const [openDid, setOpenDid] = useState<string | null>(null);
   // 선택이 바뀌면(새 rev) 변수 이름·공칭이 바뀔 수 있어 표를 다시 만든다
   const prevSha = useRef(selSha);
@@ -1020,6 +1036,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const entries = all.data ?? [];
   const varNames = s?.doe?.spec.params.map((p) => p.name) ?? [];
   const showLinks = s?.scenario === "mesh" || s?.scenario === "step";
+  const d000Mesh = useD000Mesh(id, !!s && !isSelect && !isCompare && !!result.data?.view3d.includes("d000"));
   const prepAutoFailed = !!s?.prep?.warnings.some((w) => w.code === "AUTO_DETECT_FAILED");
   /** 준비 경고 목록 — GRAPH_FAILED 는 ② 비드 선택의 띠(bs-graph-failed)에만 1번(Verifier fix v0.17.0: 두 번 보이던 것) */
   const prepWarns = (s?.prep?.warnings ?? []).filter((w) => !(w.code === "GRAPH_FAILED" && ctrl.graphFailText));
@@ -1127,8 +1144,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           ctrl={ctrl}
           activeVar={activeVar}
           setActiveVar={setActiveVar}
-          nodesHidden={nodesHidden}
-          setNodesHidden={setNodesHidden}
+          meshBase={meshBaseSel}
+          nWarn={s?.prep?.boundary?.n_warn ?? null}
           beadPngUrl={(b) => doe.beadPngUrl(id, b)}
           foldKey={id}
         />
@@ -1147,10 +1164,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           </Card>
           <Card title={showLinks ? "③ 평면도 · 경계 매핑" : "③ 평면도"} right={showLinks && s?.prep ? <span className="small">경고 {s.prep.boundary?.n_warn ?? 0}</span> : undefined}>
             {plan.data && st ? (
-              <div className="doe-plan-grid">
-                <BoundaryPlan plan={plan.data} showLinks={showLinks} />
-                <BoundaryLegend plan={plan.data} st={st} showLinks={showLinks} nWarn={s?.prep?.boundary?.n_warn ?? null} />
-              </div>
+              <PartView data={legacyViewData({ plan: plan.data, showLinks, st, nWarn: s?.prep?.boundary?.n_warn ?? null, mesh: d000Mesh })} testId="pv-legacy" />
             ) : (
               <Empty>{plan.error ?? "불러오는 중…"}</Empty>
             )}

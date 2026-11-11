@@ -7,6 +7,7 @@ import type { KeepoutAuto, KeepoutRect, KeepoutSetOut, PlanViewOut, RectCorner, 
 import { usePolling } from "../lib/usePolling";
 import { dt } from "../lib/format";
 import { Empty } from "./ui";
+import { planGeom } from "../view3d/part/planGeom";
 
 export interface Frame {
   a_range: XY;
@@ -74,17 +75,10 @@ const frameDiff = (a: Frame, b: Frame) => Math.max(...[0, 1].flatMap((i) => [Mat
 // ---------------------------------------------------------------- 평면도
 export function KeepoutPlan({ plan, value, onChange, selected, onSelect, readOnly }: { plan: PlanViewOut; value: KeepoutValue; onChange: (v: KeepoutValue) => void; selected: number | null; onSelect: (i: number | null) => void; readOnly?: boolean }) {
   const f = plan.frame;
-  const [a0, a1] = f.a_range;
-  const [b0, b1] = f.b_range;
-  const L = a1 - a0;
-  const H = b1 - b0;
-  const pad = Math.max(L, H) * 0.035;
-  const vb = { x: -pad, y: -pad * 0.6, w: L + pad * 1.6, h: H + pad * 1.9 };
-  const X = (a: number) => a - a0;
-  const Y = (b: number) => b1 - b;
+  // v0.17.3 좌표·여백 = 공통 평면도(planGeom — PartPlan 과 같음, esl_view_unify.md VU-D-3)
+  const { Lx: L, Hy: H, pad, vb, X, Y, poly } = planGeom(f);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ i: number; sx: number; sy: number; start: [number, number] } | null>(null);
-  const poly = (pts: XY[]) => `M${pts.map(([a, b]) => `${X(a).toFixed(1)},${Y(b).toFixed(1)}`).join("L")}Z`;
   // 서버 kinds(구멍/가장자리, polygons 와 같은 길이). 없거나 길이가 다르면 구분 없이 한 경로로 칠함
   const k0 = plan.auto_keepout.kinds;
   const kinds = k0 && k0.length === plan.auto_keepout.polygons.length && k0.length > 0 ? k0 : null;
