@@ -369,6 +369,7 @@ def render_compare(ctx: dict) -> str:
 WARN_KO = {"FIXED_MOVED": "체결 위치 어긋남", "QUALITY_WARN": "품질 경고", "CROSS_BEAD_MOVE": "다른 비드 침범",
            "MORPH_EXTREME_ELEMENTS": "극단 요소"}           # v0.16.2 AD-D-8
 MESH_BASE_KO = "B 메시(다른 모델 — 하중 셀 매핑, 지지 자동 3-2-1)"   # v0.16.2 AD-D-20 select_base mesh 머리
+STEP_BASE_KO = "③ 그래프(기준 메시 기저 모핑, 메시 방식 {method})"   # v0.18.0 SG-D-11 select_base step 머리
 
 
 def _warn_ko(w) -> str:
@@ -459,7 +460,11 @@ def render(ctx: dict) -> str:
              ("paicad 버전", ver.get("paicad")), ("gmsh 버전", ver.get("gmsh"))]
     if ip.get("select_base") == "mesh":
         pairs.insert(1, ("기준", MESH_BASE_KO))
-    if ip.get("mesh"):
+    if ip.get("select_base") == "step":          # v0.18.0 SG-D-11 방법 1줄(기존 ③ 과 다른 방식)
+        mm = (ip.get("mesh") or {}).get("method") or "?"
+        pairs[1] = ("STEP", f"{(ip.get('step') or {}).get('file_name')} — 기준 메시 원천(산출물에 CAD 없음)")
+        pairs.insert(1, ("기준", STEP_BASE_KO.format(method=mm)))
+    if ip.get("mesh") and ip.get("select_base") != "step":
         pairs.append(("B 메시", ", ".join(f.get("rel", "") for f in ip["mesh"].get("files") or [])))
     if ip.get("props"):
         p = ip["props"]

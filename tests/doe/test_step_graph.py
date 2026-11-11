@@ -101,6 +101,8 @@ def test_stages_auto(plate, tmp_path):
         assert e["status"] in ("OK", "FAILED_SOLVE", "FAILED_MESH", "SKIPPED_FIXED")
     post = run("bd_post", rev=1)["result"]
     assert post.get("noise_floor") is None                                           # 같은 메시(SG-D-10 — ② 와 같음)
+    rep = (out / "report.html").read_text(encoding="utf-8")
+    assert "③ 그래프(기준 메시 기저 모핑, 메시 방식 cad)" in rep                    # SG-D-11 방법 1줄
     for did in os.listdir(out / "best"):
         names = set(os.listdir(out / "best" / did))
         assert {"ch_r.rad", "ch_r.fem", "values.json"} <= names

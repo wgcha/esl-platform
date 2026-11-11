@@ -939,7 +939,7 @@ def bd_post(spec: dict, echo=print) -> dict:
            "inputs": {"step": None if inp.get("step") is None else {"file_name": os.path.basename(inp["step"]["rel"]),
                                                                     "sha256": inp["step"]["sha256"]},
                       "mesh": inp.get("mesh"), "part_title": inp.get("part_title"), "inch": c.D.get("inch"),
-                      **({"select_base": "mesh"} if inp.get("select_base") == "mesh" else {}),
+                      **({"select_base": inp["select_base"]} if inp.get("select_base") in ("mesh", "step") else {}),
                       "props": bmeta.get("props"), "mesh_size_mm": bmeta.get("h"),
                       "entries": [{"entry_id": e["id"], "label": e.get("label"), "case": e.get("case")}
                                   for e in c.D["entries"]]},
