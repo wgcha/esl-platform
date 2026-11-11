@@ -32,6 +32,7 @@ def _cfg(**cmp):
     c = tsc._cfg(**cmp)
     c["bead_doe"]["compare"].setdefault("mesh", {})["fallback"] = {"enabled": False}   # 시험 속도(면 폴백은 v0.15.1 시험)
     c["bead_doe"]["compare"]["mesh"]["size_mm"] = 3.0      # 품질 기준(이슈 #53 criteria)은 3 mm 기준 절대값
+    c["bead_doe"]["compare"]["mesh"]["cad_relaxed"] = {"enabled": False}   # v0.17.4 사다리 시험(cad_relaxed 는 test_mesh_relaxed_v0174)
     return c
 
 

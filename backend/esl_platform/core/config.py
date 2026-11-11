@@ -485,6 +485,13 @@ class BeadDoePreviewCfg(_M):
     disp_range_mm: Literal["auto"] | list[float] = "auto"
 
 
+class BeadDoeGridCfg(_M):
+    """v0.17.2(이슈 #63, esl.doe.DEFAULTS["grid"] 거울): 미리보기 grid 셀 중 판정된 셀(READY·충돌·고정 스킵) 비율이
+    min_ok_frac 미만이거나 READY 0 이면 BD_GRID 실패(GRID_TOO_FEW_OK·GRID_ALL_FAILED)."""
+
+    min_ok_frac: float = Field(default=0.5, ge=0, le=1)
+
+
 class BeadDoeRunCfg(_M):
     parallel: int = Field(default=2, ge=1, le=64)
     memory_margin: float = Field(default=0.7, gt=0, le=1)
@@ -531,6 +538,8 @@ class BeadDoeFallbackNofixCfg(_M):
     # face 대체 면 = 정리 없이 가져온 면 중 bbox ± bbox_tol mm·같은 면 종류·넓이 ± area_rtol(상대)이 1개일 때만(0·2개 이상 → 건너뜀)
     bbox_tol: float = Field(default=1e-2, gt=0, le=1.0)
     area_rtol: float = Field(default=1e-2, gt=0, le=0.5)
+    # v0.17.4 C2-D-38 엄격 대응 0개면 정리가 키운 면(조각 → 완전한 구)을 bbox 안·넓이 ≥ area / area_grow_max 로 찾음(≤ 1 = 끔)
+    area_grow_max: float = Field(default=1000.0, ge=0)
 
     @field_validator("scopes")
     @classmethod
@@ -624,6 +633,25 @@ class BeadDoeCompareFaceFailCfg(_M):
         return v
 
 
+class BeadDoeCompareCadRelaxedCfg(_M):
+    """v0.17.4 cad_relaxed(C2-D-32): cad 첫 세션 면 실패 → 면 폴백 전에 모델 전체를 ③ 옵션으로 1세션(품질·충실도 통과면 채택)."""
+
+    enabled: bool = True
+    occ_fix_small: int = Field(default=0, ge=0, le=1)
+    curvature_n: int = Field(default=12, ge=0, le=1000)
+    min_size_factor: float = Field(default=0.2, gt=0, le=1)
+    defeature: bool = False    # false = 구멍 메움(compare.defeature) 끔(실측: 정리 끔 + 구멍 메움 끔이 1 성분)
+    fidelity: bool = True      # 원 STEP OCC 삼각화 대비 hausdorff ≤ remesh.fidelity.fail_mm 확인
+
+
+class BeadDoeCompareLargeCfg(_M):
+    """v0.17.4 대형 모델(C2-D-33): STEP 면 > mesh.large_faces 또는 periodic_types 면 있음 → 면 폴백 세션 상한·cad 몫 줄임."""
+
+    periodic_types: list[str] = Field(default_factory=lambda: ["Sphere"], max_length=16)
+    fallback_sessions: int = Field(default=3, ge=0, le=1000)   # 0 = 상한 없음
+    cad_share: float = Field(default=0.15, gt=0, le=1)         # cad 제한 ≤ cad_share × refine.total_timeout_s(auto)
+
+
 class BeadDoeCompareMeshCfg(_M):
     """v0.14.0 ④ 메시 프로필(esl_step_compare.md SC-D-5): bead_doe.mesh 를 키별 덮어씀. size_mm 범위는 BeadDoeCfg 가 확인."""
 
@@ -642,6 +670,11 @@ class BeadDoeCompareMeshCfg(_M):
     keep_tries: bool = False   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만 — 진단용)
     face_fail: BeadDoeCompareFaceFailCfg = BeadDoeCompareFaceFailCfg()   # v0.16.3 C2-D-27
     occ_import_labels: int = Field(default=0, ge=0, le=1)    # v0.16.3 C2-D-31 STEP 라벨 읽기(0 = 안 읽음 — 수천 면 가져오기 시간)
+    cad_relaxed: BeadDoeCompareCadRelaxedCfg = BeadDoeCompareCadRelaxedCfg()   # v0.17.4 C2-D-32
+    large_faces: int = Field(default=1000, ge=0)                                 # v0.17.4 C2-D-33 대형 모델 면 수 기준
+    large: BeadDoeCompareLargeCfg = BeadDoeCompareLargeCfg()
+    child_margin_s: float = Field(default=30.0, ge=0)        # v0.17.4 C2-D-34 cad 자식 제한 = spawn 제한 − 이 값(≤ 10 %)
+    heartbeat_s: float = Field(default=60.0, gt=0)           # v0.17.4 C2-D-39 메시 하위 프로세스 대기 중 진행 줄 간격
 
     @field_validator("ladder")
     @classmethod
@@ -797,6 +830,9 @@ class BeadDoeCompareFreeformCfg(_M):
     hole_fill: bool = False
     small_hole_factor: float = Field(default=1.0, gt=0, le=10)
     timeout_s: float | None = Field(default=None, gt=0)
+    # v0.17.4 C2-D-42 freeform 삼각화 편차(null = remesh 값) — 각 5° 는 곡면 많은 STEP 에서 삼각형 폭증
+    linear_deflection_mm: float | None = Field(default=None, gt=0)
+    angular_deflection_deg: float | None = Field(default=20.0, gt=0, le=90)
 
 
 class BeadDoeCompareTriaCfg(_M):
@@ -894,6 +930,7 @@ class BeadDoeCompareCfg(_M):
     total_max_mb: float = Field(default=1000, gt=0)
     align_tol: float = Field(default=0.05, ge=0, le=1)        # 형상 frame 원점의 기준 frame (ξ,η) 차 허용
     align_deg: float = Field(default=5.0, ge=0, le=90)        # 법선 각 허용(°)
+    min_ready_shapes: int = Field(default=1, ge=0, le=1000)   # v0.17.4 C2-D-41 비교 형상 READY 가 이보다 적으면 BD_MESH0 실패
     mesh: BeadDoeCompareMeshCfg = BeadDoeCompareMeshCfg()
     defeature: BeadDoeCompareDefeatureCfg = BeadDoeCompareDefeatureCfg()
     quality: BeadDoeCompareQualityCfg = BeadDoeCompareQualityCfg()
@@ -1033,7 +1070,7 @@ class BeadDoeSelectGraphMorphCfg(_M):
 class BeadDoeSelectGraphLimitsCfg(_M):
     """v0.17.0 분류 상한(§7): 요소 수 초과 = GRAPH_FAILED{TOO_LARGE}, 시간 초과 = GRAPH_FAILED{TIMEOUT}, 래스터 픽셀 상한."""
 
-    max_elems: int = Field(default=250000, ge=1, le=2_000_000)
+    max_elems: int = Field(default=600000, ge=1, le=2_000_000)
     timeout_s: float = Field(default=180, gt=0)
     max_raster_px: int = Field(default=4_000_000, ge=100_000)
 
@@ -1114,6 +1151,7 @@ class BeadDoeCfg(_M):
     mesh: BeadDoeMeshCfg = BeadDoeMeshCfg()
     doe: BeadDoeDoeCfg = BeadDoeDoeCfg()
     preview: BeadDoePreviewCfg = BeadDoePreviewCfg()
+    grid: BeadDoeGridCfg = BeadDoeGridCfg()                  # v0.17.2 미리보기 grid 건강(이슈 #63)
     run: BeadDoeRunCfg = BeadDoeRunCfg()
     solve: BeadDoeSolveCfg = BeadDoeSolveCfg()
     boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()

@@ -16,7 +16,7 @@ import { loadScene } from "./loadThree";
 import { readProjection, writeProjection, type Projection } from "./projection";
 import { selectionFromPick, sceneSelection } from "./selection";
 import type { SceneApi } from "./sceneApi";
-import { ViewToolbar } from "./ViewToolbar";
+import { PartStage } from "./part/PartStage";
 import { buildSupportSpecs } from "./supports";
 import type { LoadView } from "./useLoadView";
 import { colorField, decodeValues, type DecodedValues } from "./values";
@@ -262,21 +262,25 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
               <span>원근</span>
             </label>
           </div>
-          <div className="v3d-stage">
-            <div ref={host} className="v3d-host" data-testid="v3d-host" data-phase={phase} tabIndex={0} aria-label="3D 하중 보기" />
-            {phase === "ready" && <ViewToolbar scene={() => sceneRef.current} modelBbox={manifest.bbox} keyTarget={host} />}
-            {(phase === "nowebgl" || phase === "error") && (
-              <div className="v3d-msg" role="status" data-testid="v3d-unavailable">
-                {phase === "error" && phaseErr && phaseErr !== NO_3D_TEXT ? phaseErr : NO_3D_TEXT}
-              </div>
-            )}
-            {phase === "loading" && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
-            {info && (
-              <div className="v3d-info mono small" data-testid="v3d-info" aria-live="polite">
-                {info}
-              </div>
-            )}
-          </div>
+          {/* v0.17.3 칸·시점 툴바 = 공통 PartStage(esl_view_unify.md VU-D-2) — 장면·화살표·색은 이 카드가 그대로 맡음 */}
+          <PartStage
+            host={host}
+            scene={() => sceneRef.current}
+            phase={phase}
+            bbox={manifest.bbox}
+            testId="v3d-host"
+            ariaLabel="3D 하중 보기"
+            msg={phase === "nowebgl" || phase === "error" ? (phase === "error" && phaseErr && phaseErr !== NO_3D_TEXT ? phaseErr : NO_3D_TEXT) : null}
+            msgTestId="v3d-unavailable"
+            loading={phase === "loading"}
+            extra={
+              info ? (
+                <div className="v3d-info mono small" data-testid="v3d-info" aria-live="polite">
+                  {info}
+                </div>
+              ) : null
+            }
+          />
           <div className="v3d-foot">
             <span className="small muted" data-testid="v3d-note">
               화살표 최대 = {f3(fref)} N · 길이 ∝ |F| (최소 길이 제한)

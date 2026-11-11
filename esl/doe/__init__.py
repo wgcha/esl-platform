@@ -70,6 +70,8 @@ DEFAULTS: dict = {
     "doe": {"default_method": "lhs", "default_n": 30, "seed": 1, "levels_default": 3, "levels_max": 9,
             "round_mm": 0.01, "default_types": ["D", "W"]},
     "preview": {"w": 320, "h": 240, "view_dir": "auto", "tilt_deg": 20, "margin": 1.15, "disp_range_mm": "auto"},
+    # v0.17.2(이슈 #63) 미리보기 grid 건강: 판정된 셀(READY·충돌·고정) 비율 < min_ok_frac 또는 READY 0 → BD_GRID 실패
+    "grid": {"min_ok_frac": 0.5},
     "run": {"parallel": 2, "memory_margin": 0.7},
     "solve": {"reaction_warn": 0.01},
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},
@@ -83,6 +85,7 @@ DEFAULTS: dict = {
     # element_size 3 → size_mm, min length good 2.4 → min_size_factor 0.8, feature_angle 10(기록 — gmsh OCC 가져오기에 대응 옵션
     # 없음), holes table → defeature, criteria → quality(기준별 warn·fail, Fail 비율 상한 max_fail_ratio — 경고만).
     "compare": {"enabled": True, "max_shapes": 20, "total_max_mb": 1000, "align_tol": 0.05, "align_deg": 5.0,
+                "min_ready_shapes": 1,   # v0.17.4 C2-D-41 BD_MESH0 성공에 필요한 비교 형상 READY 수(0 = 안 막음)
                 "mesh": {"size_mm": 3.0, "curvature_n": 0, "min_size_factor": 0.8, "extend_from_boundary": 0,
                          "occ_fix_small": 1, "feature_angle": 10.0,
                          "occ_import_labels": 0,   # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기 초선형 시간 회피)
@@ -98,7 +101,8 @@ DEFAULTS: dict = {
                                       "order": ["algorithms", "relax", "split", "fill", "small"],
                                       "periodic_types": ["Sphere"],
                                       "periodic_order": ["nofix", "split", "fill", "small", "algorithms", "relax"],
-                                      "nofix": {"scopes": ["face", "all"], "bbox_tol": 1e-2, "area_rtol": 1e-2},
+                                      "nofix": {"scopes": ["face", "all"], "bbox_tol": 1e-2, "area_rtol": 1e-2,
+                                                "area_grow_max": 1000.0},   # v0.17.4 C2-D-38
                                       "split": {"planes": 2}, "fill": {"tol_factor": 0.5, "points": 8, "samples": 10},
                                       "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}},
                          # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤)
@@ -111,7 +115,20 @@ DEFAULTS: dict = {
                          # skip 단계(요소 크기를 줄여도 안 풀림)를 건너뜀
                          "face_fail": {"enabled": True, "types": ["Sphere"],
                                        "patterns": ["periodic surface", "closed loop", "degenerate"],
-                                       "skip": ["refine_local", "refine_global"]}},
+                                       "skip": ["refine_local", "refine_global"]},
+                         # v0.17.4 C2-D-32 cad_relaxed: cad 첫 세션이 면 실패면 면 폴백(세션마다 STEP 재가져오기) 전에 모델 전체를
+                         # ③ 옵션(OCC 정리 끔·곡률·최소 크기 = bead_doe.mesh 기본)으로 1세션 다시 — 품질 오류 없음·충실도(remesh.fidelity
+                         # fail_mm) 이내면 채택(MESH_CAD_RELAXED). cad 가 시간 초과로 끝났고 면 실패로 판정되면 부모가 같은 시도를 1회
+                         "cad_relaxed": {"enabled": True, "occ_fix_small": 0, "curvature_n": 12, "min_size_factor": 0.2,
+                                         "defeature": False, "fidelity": True},
+                         # v0.17.4 C2-D-33 대형 모델: STEP 면 > large_faces 또는 large.periodic_types 면 있음 → 면 폴백 세션 상한·
+                         # cad 몫(refine.total_timeout_s 비율) 줄임(뒤 freeform·tria 몫 확보)
+                         "large_faces": 1000,
+                         "large": {"periodic_types": ["Sphere"], "fallback_sessions": 3, "cad_share": 0.15},
+                         # v0.17.4 C2-D-34 cad 자식 제한 = spawn 제한 − child_margin_s(제한의 10 % 이하) — 자식이 먼저 끝나
+                         # mesh_error.json(실패 면 기록)을 씀
+                         "child_margin_s": 30.0,
+                         "heartbeat_s": 60.0},     # v0.17.4 C2-D-39 하위 프로세스 대기 중 단계 로그 진행 줄 간격
                 # v0.16.0 삼각형 재메시(C2-D-11~14 — esl.doe.mesh_remesh)
                 "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
                            "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
@@ -121,7 +138,10 @@ DEFAULTS: dict = {
                            "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}},
                 # v0.16.3 freeform(C2-D-26): remesh 설정(특징각·곡선각·편차·알고리즘·충실도)을 그대로 쓰되 CAD 단계 구멍 메움 없이
                 # (hole_fill false) — 크기 h × small_hole_factor 보다 작은 구멍은 '번질 수 있음'으로 셈(MESH_FREEFORM)
-                "freeform": {"enabled": True, "hole_fill": False, "small_hole_factor": 1.0, "timeout_s": None},
+                "freeform": {"enabled": True, "hole_fill": False, "small_hole_factor": 1.0, "timeout_s": None,
+                             # v0.17.4 C2-D-42 freeform 삼각화 편차(null = remesh 값): 각 5° 는 곡면이 많은 STEP 에서 삼각형이 폭증
+                             # (합성 105 면 26만 개·분류 36 s, 1915 면 메모리 초과) → 20°(3.8만 개·1.6 s), 선 편차는 remesh 값
+                             "linear_deflection_mm": None, "angular_deflection_deg": 20.0},
                 # v0.16.3 OCC 삼각형 폴백(C2-D-28 — esl.doe.mesh_tria): BRepMesh 편차 = deflection_factor × h, 긴 변 > split_factor × h
                 # 적합 분할, 같은 평면(coplanar_deg) 안 Delaunay 뒤집기 flip_passes 번
                 "tria": {"enabled": True, "deflection_factor": 0.3, "angular_deflection_deg": 45.0, "merge_tol_mm": 0.01,
@@ -193,7 +213,7 @@ DEFAULTS: dict = {
                                    "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                                    "w_smooth_iters": 3},       # W 바깥 방향장 완화(꺾임·연결부 연속 — 구현 키, 계약 외 추가)
                          "sym_tol_mm": 0.5,
-                         "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}},
+                         "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}},
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,
                "ranking_report_rows": 20, "min_disp_range_mm": 1.0},

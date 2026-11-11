@@ -458,7 +458,7 @@ GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.
                   "morph": {"ramp_k": 3.0, "outside_tol_mm": 1.0e-6, "achieved_tol_mm": 1.0e-6,
                             "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                             "w_smooth_iters": 3},                       # 통합 v0.17.0(§12 BG-X-5 — 코어 구현 키 거울)
-                  "sym_tol_mm": 0.5, "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}
+                  "sym_tol_mm": 0.5, "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}
 GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
              {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
              {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},
@@ -726,6 +726,29 @@ def test_params_table_and_plan_view(client, world, engine, esl_root):
     assert pv["frame"]["a_range"] == [0.0, 300.0] and [b["id"] for b in pv["beads"]] == ["b1", "b2", "b3"]
     assert pv["nodes_ab"] == [[0.0, 0.0], [25.0, 25.0]] and pv["fixed"] == [{"a": 10.0, "b": 20.0}]
     assert pv["beads"][0]["section"]["s"] == [0, 1] and pv["links"] == []
+
+
+def test_plan_view_keeps_boundary_links_v0173(client, world, engine, esl_root):
+    """v0.17.3 VU-D-7(AD-D-18 후속): ② B 메시 기준 select 의 plan-view 는 prep/plan.json 경계 매핑(A 체결·하중 집중·링크)을
+    지우지 않고 넘긴다(추가만). 링크 끝 좌표 to_ab = plan.json B 고정 클러스터 라벨, 응답 fixed 는 select 고정 노드 그대로."""
+    s = _saved(client, world, engine, esl_root, selection(bead("b1", tiers=((1, 4),))),
+               fixed=[int(world["mesh"]["node_id"][world["mesh"]["conn"][59][0]])])
+    sid = s["id"]
+    plan = {"frame": {"a_range": [0.0, 300.0], "b_range": [0.0, 200.0]}, "outline": [], "holes": [],
+            "elems": {"n_total": 2, "decimated": False, "points": []},
+            "fixed": [{"label": "B-RBE2-1", "kind": "RBE2", "a": 5.0, "b": 6.0}],
+            "a_points": [{"label": "A-RBE2-1", "a": 20.0, "b": 30.0}],
+            "load_points": [{"entry_id": "e1", "share": 0.4, "a": 100.0, "b": 50.0}],
+            "links": [{"from": "A-RBE2-1", "to": "B-RBE2-1", "d_mm": 28.7, "warn": True},
+                      {"from": "하중 e1", "to": "B-RBE2-1", "d_mm": 104.9, "warn": True}]}
+    (study_dir(esl_root, sid) / "prep" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    pv = api(client, "GET", f"/doe/studies/{sid}/plan-view", "tok-general").json()
+    assert pv["a_points"] == plan["a_points"] and pv["load_points"] == plan["load_points"]
+    assert pv["fixed"] == [{"a": 10.0, "b": 20.0}]                           # select 고정 노드(덮어쓰지 않음)
+    l0, l1 = pv["links"]
+    assert l0["kind"] == "fastener" and l0["from_ab"] == [20.0, 30.0] and l0["to_ab"] == [5.0, 6.0]
+    assert l1["kind"] == "load" and l1["from_ab"] == [100.0, 50.0] and l1["to_ab"] == [5.0, 6.0]
+    assert [b["id"] for b in pv["beads"]] == ["b1"] and "ring_ab" in pv["beads"][0]
 
 
 # ================================================================ 행렬·미리보기·실행(BS-D-3)

@@ -47,7 +47,8 @@ FEAT_SPEC = {"dimples": scmp.BEAD_FEATURES["dimples"] + [(120.0, 130.0, 10.0, 1.
 @pytest.fixture()
 def settings_dict(tmp_path, exe):  # noqa: F811
     d = doe_worker_settings(tmp_path, exe, mesh={"occ_sew_faces": 1})
-    d["bead_doe"]["compare"] = {"mesh": {"size_mm": 3.0, "ladder": ["cad", "defeature"], "fallback": dict(NO_SHAPE_FB)},
+    d["bead_doe"]["compare"] = {"mesh": {"size_mm": 3.0, "ladder": ["cad", "defeature"], "fallback": dict(NO_SHAPE_FB),
+                                         "cad_relaxed": {"enabled": False}},   # v0.17.4: 켜면 cad_relaxed 가 먼저 성공
                                 "defeature": {"min_bead_height_mm": 9.0}}
     return d
 

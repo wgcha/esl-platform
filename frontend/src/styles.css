@@ -3932,3 +3932,61 @@ details.card.fold > .fold-body {
   flex: 0 1 auto;
   min-width: 0;
 }
+
+/* ---------------------------------------------------------------- v0.17.3 공통 형상 보기 PartView(esl_view_unify.md) — [3D | 평면도] · 층 칩 · 같은 시점 툴바 */
+.pv {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.pv-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+}
+.pv-bar .seg {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+.pv-layers {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.7rem;
+}
+.pv-layer {
+  gap: 0.3rem;
+}
+.pv-sw {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.pv-sw-mesh { background: #8e97a6; border-radius: 50%; width: 0.5rem; height: 0.5rem; }
+.pv-sw-boundary { background: var(--surface-2); border: 1px solid var(--text-2); }
+.pv-sw-beads { background: rgba(29, 91, 191, 0.55); border: 1px solid #1d3f7a; }
+.pv-sw-graph { background: linear-gradient(90deg, #1d5bbf 0 33%, #f08c00 33% 66%, #2f9e44 66%); }
+.pv-sw-islands { background: #96c4ee; }
+.pv-sw-fixed { background: var(--accent); border-radius: 50%; }
+.pv-sw-apoints { background: none; border: 2px solid #e8590c; transform: rotate(45deg) scale(0.8); }
+.pv-sw-loads { background: rgba(184, 56, 44, 0.3); border: 1px solid var(--bad); border-radius: 50%; }
+.pv-sw-nodes { background: var(--text-2); border-radius: 50%; width: 0.35rem; height: 0.35rem; }
+.pv-main {
+  min-width: 0;
+}
+.pv-plan {
+  outline: none;
+}
+.pv-plan .keepout-svg {
+  cursor: grab;
+}
+.pv-plan .keepout-svg:active {
+  cursor: grabbing;
+}
+.pv-plan:focus-visible .keepout-svg {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

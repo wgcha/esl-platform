@@ -67,7 +67,7 @@ def test_perf_220k():
 def test_too_large():
     fx = cf.load_fixture("h5")
     mesh = esl_mesh(fx)
-    n = 250_001
+    n = int(CFG["select"]["graph"]["limits"]["max_elems"]) + 1   # v0.17.4 기본 600,000(이슈 #63 — 현장 267,470 요소)
     reps = n // mesh["elem_id"].size + 1
     big = {k: (np.tile(v, reps)[:n] if np.ndim(v) == 1 and v.size == mesh["elem_id"].size else v) for k, v in mesh.items()}
     big["conn"] = np.tile(mesh["conn"], (reps, 1))[:n]

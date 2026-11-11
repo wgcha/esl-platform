@@ -173,6 +173,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800, occ_sew_faces: 0}
   doe: {default_method: lhs, default_n: 30, seed: 1, levels_default: 3, levels_max: 9, round_mm: 0.01, default_types: [D, W]}
   preview: {w: 320, h: 240, view_dir: auto, tilt_deg: 20, margin: 1.15, disp_range_mm: auto}
+  grid: {min_ok_frac: 0.5}            # v0.17.2 미리보기 판정 셀(READY·충돌·고정) 비율 하한 — 미만·READY 0 이면 미리보기 실패
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
@@ -185,10 +186,11 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     total_max_mb: 1000                # STEP 합계 크기 상한(파일당 = step_max_mb)
     align_tol: 0.05                   # 형상 frame 원점의 기준 frame (ξ,η) 차 허용 — 넘으면 그 형상만 FAILED_SIZE
     align_deg: 5.0                    # 법선 각 허용(°)
+    min_ready_shapes: 1               # v0.17.4 비교 형상 메시 성공이 이보다 적으면 준비 실패(COMPARE_NO_SHAPES, 0 = 안 막음)
     mesh: {size_mm: 3.0, curvature_n: 0, min_size_factor: 0.8, extend_from_boundary: 0, occ_fix_small: 1,   # bead_doe.mesh 를 키별 덮어씀(모든 STEP 같은 설정)
            fallback: {enabled: true, algorithms: [6, 5, 1], relax: true, max_faces: 20,   # v0.14.1 메시 실패 면만 2D 알고리즘 6→5→1 재시도, 그다음 그 면 제약 해제
                       order: [algorithms, relax, split, fill, small], periodic_types: [Sphere],   # v0.15.1 형상 폴백 순서(빼면 끔) — Sphere 면은 periodic_order
-                      periodic_order: [nofix, split, fill, small, algorithms, relax], nofix: {scopes: [face, all], bbox_tol: 0.01, area_rtol: 0.01},   # nofix = OCC 정리 끔(그 면만 → 전체), 그 면 대체는 bbox·종류·넓이 같은 후보 1개일 때만
+                      periodic_order: [nofix, split, fill, small, algorithms, relax], nofix: {scopes: [face, all], bbox_tol: 0.01, area_rtol: 0.01, area_grow_max: 1000.0},   # nofix = OCC 정리 끔(그 면만 → 전체), 그 면 대체는 bbox·종류·넓이 같은 후보 1개일 때만
                       split: {planes: 2},   # 면 분할: bbox 중심 평면 1~2개
                       fill: {tol_factor: 0.5, points: 8, samples: 10},   # 채움 면 대체: 원 면 대비 편차 ≤ 0.5 × 요소 크기
                       small: {area_mm2: 50.27, tol_factor: 1.0, samples: 10}},   # 넓이 < 50.27 mm² 면은 경계만으로 채움
@@ -197,7 +199,12 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
            keep_tries: false,         # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
            face_fail: {enabled: true, types: [Sphere], patterns: [periodic surface, closed loop, degenerate],   # v0.16.3 C2-D-27 특정 CAD 면 실패 판정
                        skip: [refine_local, refine_global]},   # 면 실패면 건너뛸 단계(요소 크기를 줄여도 안 풀림)
-           occ_import_labels: 0}      # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기가 초선형으로 느려짐)
+           occ_import_labels: 0,      # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기가 초선형으로 느려짐)
+           cad_relaxed: {enabled: true, occ_fix_small: 0, curvature_n: 12, min_size_factor: 0.2, defeature: false, fidelity: true},   # v0.17.4 C2-D-32 cad 면 실패 → 면 폴백 전에 ③ 옵션 전체 1세션
+           large_faces: 1000,         # v0.17.4 C2-D-33 STEP 면 > 이 값 또는 large.periodic_types 면 있음 = 대형 모델
+           large: {periodic_types: [Sphere], fallback_sessions: 3, cad_share: 0.15},   # 면 폴백 세션 상한(0 = 없음)·cad 몫(auto)
+           child_margin_s: 30.0,   # v0.17.4 C2-D-34 cad 자식 제한 = spawn 제한 − 이 값(제한의 10 % 이하) — 실패 면 기록을 먼저 씀
+           heartbeat_s: 60.0}         # v0.17.4 C2-D-39 메시 하위 프로세스 대기 중 단계 로그 진행 줄 간격(초)
     remesh:                           # v0.16.0 삼각형 재메시(C2-D-11~14): OCC 삼각화 → 면 분류(특징각) → quad 우선 재메시
       enabled: true
       feature_angle_deg: 30.0         # classifySurfaces 특징각(0..90 미만)
@@ -217,6 +224,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       hole_fill: false                # true = 재메시 전 CAD 단계 작은 구멍 메움(remesh 와 같게)
       small_hole_factor: 1.0          # 지름 < 이 값 × h 구멍 수를 MESH_FREEFORM 경고에(번질 수 있음)
       timeout_s: null                 # null = remesh.timeout_s
+      linear_deflection_mm: null      # v0.17.4 C2-D-42 freeform 삼각화 선 편차(null = remesh 값)
+      angular_deflection_deg: 20.0    # 각 편차(°) — remesh 의 5° 는 곡면 많은 STEP 에서 삼각형 폭증(메모리·시간 초과)
     tria:                             # v0.16.3 OCC 삼각형 폴백(C2-D-28): BRepMesh 삼각화를 그대로 삼각형 쉘로(크기 맞춤만)
       enabled: true
       deflection_factor: 0.3          # BRepMesh 선형 편차 = 이 값 × h(0.9 mm ≈ 3 mm CAD 메시 자체 현 편차)
@@ -307,7 +316,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       bead: {max_width_mm: 80.0, prune_k: 2.2, bend_deg: 50.0, width_jump: 0.35, min_zone_mm: 12.0, open_ext_mm: 90.0, absorb_len_mm: 60.0}   # absorb_len_mm = D7 짧은 띠 흡수
       morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6, corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}, w_smooth_iters: 3}   # w_smooth_iters = W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔)
       sym_tol_mm: 0.5                 # 묶음 공칭 차·대칭 묶기 허용(BG-D-17·21)
-      limits: {max_elems: 250000, timeout_s: 180, max_raster_px: 4000000}   # 넘으면 GRAPH_FAILED{TOO_LARGE·TIMEOUT}(준비는 READY)
+      limits: {max_elems: 600000, timeout_s: 180, max_raster_px: 4000000}   # 넘으면 GRAPH_FAILED{TOO_LARGE·TIMEOUT}(준비는 READY)
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
     derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)

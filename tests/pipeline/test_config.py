@@ -217,7 +217,8 @@ def test_extract_dump_keys_optional():
 # 거울 규칙: esl.doe.DEFAULTS["compare"] = 플랫폼 pydantic(BeadDoeCompareCfg) 기본값 = config/esl_platform*.example.yaml.
 # 코어 DEFAULTS 에 새 키가 아직 없으면(Core 병합 전) 그 키의 코어 대조만 건너뜀(S2 방식) — pydantic·yaml 대조는 항상.
 _C2_KEYS = ("remesh", "mesh_input", "refine", "freeform", "tria")   # v0.16.3 += freeform·tria
-_C2_MESH_KEYS = ("mode", "ladder", "face_fail", "occ_import_labels")   # v0.16.3 += face_fail·occ_import_labels
+_C2_MESH_KEYS = ("mode", "ladder", "face_fail", "occ_import_labels",   # v0.16.3 += face_fail·occ_import_labels
+                 "cad_relaxed", "large_faces", "large", "child_margin_s", "heartbeat_s")   # v0.17.4 C2-D-32~34
 _PLATFORM_YAMLS = ("esl_platform.example.yaml", "esl_platform.prod.example.yaml")
 
 
@@ -240,6 +241,10 @@ def test_compare_mesh_options_mirror():
                                                                          "defeature", "tria"]   # v0.16.3 C2-D-26·28
     assert dump["refine"]["stage_share"]["tria"] == 0.15 and dump["mesh"]["occ_import_labels"] == 0   # v0.16.3 C2-D-29·31
     assert dump["mesh"]["face_fail"]["skip"] == ["refine_local", "refine_global"]
+    assert dump["mesh"]["cad_relaxed"] == {"enabled": True, "occ_fix_small": 0, "curvature_n": 12, "min_size_factor": 0.2,
+                                           "defeature": False, "fidelity": True}                               # v0.17.4 C2-D-32
+    assert dump["mesh"]["large"] == {"periodic_types": ["Sphere"], "fallback_sessions": 3, "cad_share": 0.15} and \
+        dump["mesh"]["large_faces"] == 1000 and dump["mesh"]["child_margin_s"] == 30.0   # C2-D-33·34
     assert dump["remesh"]["feature_angle_deg"] == 30.0 and dump["remesh"]["fidelity"] == {
         "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}     # v0.16.1 SR-D-27
     assert dump["mesh_input"] == {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
