@@ -1,0 +1,23 @@
+{
+ "h5": {
+  "graph_sha256": "83ed715bb8a90712c5200f1c8ad04b58cc8ee32a1d2fc2224e0aa43a967ff1c2",
+  "labels_sha256": "bf4fb4bc583f04208119914b3b9ecd877b039b3e6606886d23fb7f945a532142",
+  "n_holes": 0,
+  "n_islands": 0,
+  "n_junctions": 6,
+  "n_segments": 9,
+  "n_zones": 6
+ },
+ "h6": {
+  "graph_sha256": "5818b23dd416cf6cec4f8e98a4056ea5dd11b63d7d52d8013ec02d50f477f505",
+  "labels_sha256": "d1ea8b670e56a028d453e71b53cd75044ec7a8240fdb357818da312c4c2166df",
+  "n_holes": 78,
+  "n_islands": 97,
+  "n_junctions": 16,
+  "n_segments": 19,
+  "n_zones": 13
+ },
+ "morph_rules": 1,
+ "rules": 1,
+ "version": "1.0.0"
+}

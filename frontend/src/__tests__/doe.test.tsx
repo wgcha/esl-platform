@@ -120,7 +120,7 @@ describe("라이브러리 진입(§12.1)", () => {
     renderApp("/p/p-body/library?tab=doe");
     const t = await screen.findByRole("table", { name: "강성 평가 스터디 목록" });
     expect(screen.getByRole("tab", { name: "강성 평가 스터디" }).getAttribute("aria-selected")).toBe("true");
-    await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(10)); // 머리 + ①②④④(v0.14.0 목 doe-3·doe-4) + ④ 메시 옵션(v0.16.0 목 doe-7) + ①직접 선택 2(v0.15.0 목 doe-5·doe-6) + ① 자동 탐지 2(v0.16.2 목 doe-8·doe-9)
+    await waitFor(() => expect(within(t).getAllByRole("row")).toHaveLength(12)); // 머리 + ①②④④(v0.14.0 목 doe-3·doe-4) + ④ 메시 옵션(v0.16.0 목 doe-7) + ①직접 선택 2(v0.15.0 목 doe-5·doe-6) + ① 자동 탐지 2(v0.16.2 목 doe-8·doe-9) + 그래프 2(v0.17.0 목 doe-10·doe-11)
     expect(t.textContent).toMatch(/75형 Ch\/R 비드 1차/);
     expect(t.textContent).toMatch(/② 다른 모델\(메시 있음\)/);
     expect(t.textContent).toMatch(/LHS · 31안 · 변수 6/);
@@ -129,21 +129,24 @@ describe("라이브러리 진입(§12.1)", () => {
 });
 
 describe("새 비드 DOE(§3·§12.2)", () => {
-  it("v0.16.2 ① 자동 탐지: 솔버 칸 없음, STEP 없으면 사유, STEP 올리면 자동 검사 → 입력 준비 → select + bead_source auto → 준비 후 seed", async () => {
+  it("v0.17.0 ① 자동 탐지: 솔버 칸 없음, STEP 없이도 자동 검사(STEP 은 선택 힌트) → STEP 올리면 검사에 표시 → 입력 준비 → select + bead_source auto → 준비 후 seed", async () => {
     const { container, server } = renderApp("/p/p-body/doe/new?entries=le-1,le-2,le-3");
     await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
     noSolver();
     fireEvent.click(radio(/^자동 탐지$/));
     const p = primaries(container);
     expect(p.map((b) => b.textContent)).toEqual(["입력 준비"]);
-    await waitFor(() => expect(reasonOf(p[0])).toMatch(/STEP 을 올리세요/));
+    // v0.17.0(BG §5.3): STEP 필수 해제 — STEP 없이 입력 검사가 돈다
+    expect(await screen.findByTestId("doe-check", undefined, { timeout: 4000 })).toBeTruthy();
+    expect(reasonOf(primaries(container)[0]) ?? "").not.toMatch(/STEP/);
     expect(screen.queryByTestId("doe-mesh-drop")).toBeNull(); // ① 은 B 메시 칸 없음
     expect(screen.queryByRole("spinbutton", { name: "두께 t (mm)" })).toBeNull();
     // 잘못된 확장자
-    fireEvent.change(screen.getByLabelText("Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(10)], "a.igs")] } });
+    fireEvent.change(screen.getByLabelText("(선택) Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(10)], "a.igs")] } });
     expect(await screen.findByText(/\.step·\.stp 만 올릴 수 있습니다/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(4096)], "chassis_mid.step")] } });
-    const chk = await screen.findByTestId("doe-check", undefined, { timeout: 4000 });
+    fireEvent.change(screen.getByLabelText("(선택) Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(4096)], "chassis_mid.step")] } });
+    await waitFor(() => expect(screen.getByTestId("doe-check").textContent).toMatch(/STEP chassis_mid\.step/), { timeout: 4000 });
+    const chk = screen.getByTestId("doe-check");
     expect(chk.textContent).toMatch(/STEP chassis_mid\.step .*기준 Case .* 파트 chassis_rear/);
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.change(screen.getByRole("textbox", { name: "제목" }), { target: { value: "75형 Ch/R 2차" } });
@@ -204,7 +207,7 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     expect(rec.out.inputs).toMatchObject({ bead_source: "manual", select_base: "mesh", part_title: "chassis rear" });
   }, 10000);
 
-  it("비활성: paicad 없음 → ① 직접 선택은 가능·자동 탐지 비활성(사유), ③ 은 경고 띠, gmsh 없음 → ③ 라디오 비활성", async () => {
+  it("v0.17.0 비활성: paicad 없음 → ① 직접 선택·자동 탐지(메시 분류기) 모두 가능, 분류기 꺼짐이면 자동 탐지 비활성(사유), gmsh 없음 → ③ 라디오 비활성", async () => {
     const { container } = renderApp("/p/p-body/doe/new?entries=le-1,le-2", "power", (s) => {
       s.doe.settings.enabled = false;
       s.doe.settings.reason = "PAICAD_NOT_CONFIGURED";
@@ -212,13 +215,22 @@ describe("새 비드 DOE(§3·§12.2)", () => {
       s.doe.settings.scenarios.step = false;
     });
     await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
-    expect(radio(/^자동 탐지$/).disabled).toBe(true);
-    expect(radio(/^자동 탐지$/).closest("label")!.getAttribute("title")).toMatch(/paicad/);
+    expect(radio(/^자동 탐지$/).disabled).toBe(false); // BG §5.5: select_auto = select ∧ graph.enabled(paicad 무관)
     expect(radio(/^직접 선택$/).disabled).toBe(false);
     expect(screen.queryByTestId("doe-blocked")).toBeNull();
     await waitFor(() => expect(reasonOf(primaries(container)[0])).not.toMatch(/형상 엔진/));
     expect(radio(/③/).disabled).toBe(true);
     expect(radio(/③/).closest("label")!.getAttribute("title")).toMatch(/gmsh/);
+  });
+
+  it("v0.17.0 분류기 꺼짐(select.graph.enabled false) → 자동 탐지 비활성(사유)", async () => {
+    renderApp("/p/p-body/doe/new?entries=le-1,le-2", "power", (s) => {
+      s.doe.settings.select!.graph = { enabled: false, island: { max_mm: 60 }, sym_tol_mm: 0.5 };
+      s.doe.settings.scenarios.select_auto = false;
+    });
+    await waitFor(() => expect(radio(/① 같은 모델/).checked).toBe(true));
+    expect(radio(/^자동 탐지$/).disabled).toBe(true);
+    expect(radio(/^자동 탐지$/).closest("label")!.getAttribute("title")).toMatch(/자동 분류가 꺼져/);
   });
 
   it("조회 권한만: 주 버튼 사유 = 권한", async () => {

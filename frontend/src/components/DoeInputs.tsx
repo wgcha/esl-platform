@@ -209,7 +209,7 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
       )}
       {scenario === "select" && check.step && (
         <span>
-          STEP {check.step.file_name} <span className="ok-text">✓</span> (자동 탐지 입력) ·{" "}
+          STEP {check.step.file_name} <span className="ok-text">✓</span> (자동 탐지 참고 힌트) ·{" "}
         </span>
       )}
       {scenario === "step" && check.step && (
@@ -249,7 +249,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
   scenario: DoeScenario;
   /** v0.16.2 select 기준(① case · ② mesh — AD-D-13) */
   selectBase?: DoeSelectBase | null;
-  /** v0.16.2 select 하위 라디오(auto = STEP 칸 · manual = STEP 없음, AD-D-1·14) */
+  /** v0.16.2 select 하위 라디오(auto = STEP 칸 · manual = STEP 없음, AD-D-1·14). v0.17.0 auto 의 STEP 은 선택(BG §5.3) */
   beadSource?: DoeBeadSource | null;
   st: DoeSettingsOut;
   entries: EntryOut[];
@@ -313,8 +313,8 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
         {needStep && (
         <UploadDrop
           projectId={projectId}
-          label="Ch/R 중립면 STEP 끌어다 놓기"
-          hint={`시트(중립면) STEP · 최대 ${st.step_max_mb} MB`}
+          label={isSel ? "(선택) Ch/R 중립면 STEP 끌어다 놓기" : "Ch/R 중립면 STEP 끌어다 놓기"}
+          hint={isSel ? `없어도 됩니다 — 메시 분류기가 비드를 찾고, STEP 은 참고 힌트만 · 최대 ${st.step_max_mb} MB` : `시트(중립면) STEP · 최대 ${st.step_max_mb} MB`}
           ext={[".step", ".stp"]}
           validate={stepOnly}
           name={(fs) => `doe_step_${fs[0].name.replace(/\.[^.]+$/, "")}`}
@@ -376,7 +376,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
             메시: 모든 STEP 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm(서버 설정)
           </span>
         )}
-        <Field label="제목(선택)">
+        <Field label="제목(선택)" className="doe-title">
           <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
         </Field>
       </div>

@@ -447,3 +447,114 @@ def test_manuals_paicad_sections():
     a, b, c = chk.index("## R-③"), chk.index("## R-②"), chk.index("## R-①")
     assert chk.index("## 0. 설치") < a < b < c                                 # 실기 순서 ③ → ② → ①
     assert "paicad.exe' version --json" in chk and "import gmsh; print(gmsh.__version__)" in chk
+
+
+# ---------------------------------------------------------------- v0.17.0 BEADGRAPH 공통 패키지 설치(esl_beadgraph.md §8.3, 통합)
+def _lock_split(text: str) -> dict:
+    """install-common.ps1 Get-EslLockPackages 와 같은 분할(Core·BeadDoe·Local = 저장소 안 패키지)."""
+    out = {"Core": [], "BeadDoe": [], "Local": []}
+    opt = False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith(MARKER):
+            opt = True
+            continue
+        if not s or s.startswith("#"):
+            continue
+        if s.split("==", 1)[0].strip().lower() in ("beadgraph",):
+            out["Local"].append(s)
+            continue
+        out["BeadDoe" if opt else "Core"].append(s)
+    return out
+
+
+def test_beadgraph_lock_pin_matches_package_and_is_local():
+    import ast
+
+    src = (ROOT / "packages" / "beadgraph" / "src" / "beadgraph" / "__init__.py").read_text(encoding="utf-8")
+    ver = next(n.value.value for n in ast.parse(src).body if isinstance(n, ast.Assign)
+               and any(getattr(t, "id", None) == "__version__" for t in n.targets))
+    sp = _lock_split(_text(REQ))
+    assert sp["Local"] == [f"beadgraph=={ver}"]                              # 인덱스 설치 목록(Core·BeadDoe)에 없음
+    assert not any(x.startswith("beadgraph") for x in sp["Core"] + sp["BeadDoe"])
+    t = _text(DEPLOY / "install-common.ps1")
+    assert "$EslLockLocalPackages = @('beadgraph')" in t
+    g = _fn(t, "Get-EslLockPackages")
+    assert "$EslLockLocalPackages -contains" in g and "Local = [string[]]$loc.ToArray()" in g
+    assert "beadgraph" in (ROOT / "requirements-platform.txt").read_text(encoding="utf-8")
+
+
+def test_install_beadgraph_function():
+    f = _fn(_text(DEPLOY / "install-common.ps1"), "Install-EslBeadgraph")
+    for k in (".Local", "\"beadgraph-$ver-py3-none-any.whl\"", "'--no-index', '--no-deps', '--force-reinstall', $whl",
+              "(Join-Path $Repo 'packages') 'beadgraph'", "'--no-deps', '--force-reinstall', $pk",
+              "beadgraph.__version__ == '$ver'", "throw ("):
+        assert k in f, k
+    assert f.index("if ($Wheels)") < f.index("-and $Repo")                  # 묶음 휠 우선, 저장소 경로 다음
+    assert not re.search(r"[A-Za-z]:\\[A-Za-z]", f) and "RunAs" not in f and "Machine" not in f
+
+
+@pytest.mark.parametrize("script,arg", [("install.ps1", "-Wheels (Join-Path $pkg 'wheels')"),
+                                        ("update.ps1", "-Wheels (Join-Path $pkg 'wheels')"),
+                                        ("setup.ps1", "-Repo $repo"), ("update-repo.ps1", "-Repo $repo")])
+def test_scripts_install_beadgraph(script, arg):
+    """index 기반(setup·update-repo = 저장소 packages\\beadgraph)·오프라인 묶음(install·update = wheels 휠) 모두 beadgraph 설치,
+    순서 = 기본 의존성(numpy·scipy) 뒤 · 비드 DOE·코드 배치 전."""
+    t = _text(DEPLOY / script)
+    i = t.index("Install-EslBeadgraph -VenvPy $venvPy")
+    call = t[i:t.index("\n", i)]
+    assert arg in call and ("requirements.lock" in call or "$lock" in call), call
+    assert t.index("Install-EslPackages -VenvPy $venvPy") < i < t.index("Install-EslBeadDoe -VenvPy $venvPy")
+    assert i < t.index("Install-EslApp -Source")
+
+
+def test_beadgraph_wheel_builds_with_lock_name(tmp_path):
+    """오프라인 묶음 경로(collect-offline 의 pip wheel --no-deps packages/beadgraph)의 휠 이름 = lock 판, 픽스처 포함.
+    사본에서 빌드(저장소에 build/ 를 남기지 않음). 빌드 의존(setuptools)을 받을 인덱스가 없으면 skip."""
+    import shutil
+
+    ver = _lock_split(_text(REQ))["Local"][0].split("==")[1]
+    src = tmp_path / "beadgraph"
+    shutil.copytree(ROOT / "packages" / "beadgraph", src, ignore=shutil.ignore_patterns("build", "*.egg-info", "__pycache__"))
+    out = tmp_path / "wheels"
+    r = subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--disable-pip-version-check", str(src), "-w", str(out)],
+                       capture_output=True, text=True, timeout=300)
+    if r.returncode != 0 and re.search(r"(?i)NewConnectionError|Max retries|Could not find a version|No matching distribution|"
+                                       r"ProxyError|Temporary failure in name resolution", r.stdout + r.stderr):
+        pytest.skip("빌드 의존(setuptools)을 받을 패키지 인덱스 없음")
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+    whl = out / f"beadgraph-{ver}-py3-none-any.whl"
+    assert whl.is_file(), list(out.iterdir())
+    names = zipfile.ZipFile(whl).namelist()
+    assert "beadgraph/testing/fixtures/h6.npz" in names and "beadgraph/testing/expected.json" in names
+    for p in ("collect-offline.ps1", "collect-offline.sh"):
+        assert "packages/beadgraph" in _text(DEPLOY / p) or "packages\\beadgraph" in _text(DEPLOY / p)
+
+
+def test_demo_venv_installs_beadgraph_like_setup():
+    """Verifier fix v0.17.0(§12 BG-X-8): 시연 venv(deploy\\demo\\demo-python.ps1)도 lock 의 beadgraph==<ver> 를 인덱스 설치 목록에서 빼고
+    (Get-EslLockPackages 의 Core·BeadDoe 만) Install-EslBeadgraph 로 설치 — 저장소 = -Repo(packages\\beadgraph), 묶음 = -Wheels.
+    예전 `pip install -r requirements.lock` 은 인덱스에 없는 beadgraph==1.0.0 에서 저장소 시연 설치 전체가 실패했다."""
+    t = _text(DEPLOY / "demo" / "demo-python.ps1")
+    f = t[t.index("function Initialize-DemoVenv {"):]                          # 마지막 함수(파일 끝까지)
+    assert "'-r'" not in f and "-r $LockFile" not in f                       # lock 을 통째로 인덱스에 넘기지 않음
+    assert ". (Join-Path (Split-Path -Parent $PSScriptRoot) 'install-common.ps1')" in t
+    assert "Get-EslLockPackages -LockFile $LockFile" in f and "@($lp.Core) + @($lp.BeadDoe)" in f
+    assert "Install-EslBeadgraph -VenvPy $py -LockFile $LockFile -Wheels $Wheels" in f
+    assert "Install-EslBeadgraph -VenvPy $py -LockFile $LockFile -Repo $Repo" in f
+    assert "[string]$Repo = ''" in f
+    i_pip, i_bg, i_stamp = f.index("Invoke-DemoPip -Py $py -PipArgs $a"), f.index("Install-EslBeadgraph"), \
+        f.index("WriteAllText($stampFile")
+    assert i_pip < i_bg < i_stamp                                            # 기록은 beadgraph 까지 끝난 뒤
+    s = _text(DEPLOY / "demo" / "start-demo.ps1")
+    repo_call = next(ln for ln in s.splitlines() if "Initialize-DemoVenv" in ln and "-Wheels" not in ln)
+    assert "-Repo $pkg" in repo_call                                         # 저장소 모드 = 저장소 루트
+    wheel_call = next(ln for ln in s.splitlines() if "Initialize-DemoVenv" in ln and "-Wheels $wheels" in ln)
+    assert "-Repo" not in wheel_call
+    # 실제 lock: 인덱스로 가는 목록(Core + BeadDoe)에 beadgraph 없음, Local 에 정확히 1개
+    sp = _lock_split(_text(REQ))
+    idx = sp["Core"] + sp["BeadDoe"]
+    assert idx and not any(x.lower().startswith("beadgraph") for x in idx) and len(sp["Local"]) == 1
+    # install-common 의 함수가 시연 쪽에서 쓰는 이름 그대로(설치 스크립트와 같은 규칙)
+    ic = _text(DEPLOY / "install-common.ps1")
+    assert "function Get-EslLockPackages" in ic and "function Install-EslBeadgraph" in ic

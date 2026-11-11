@@ -194,3 +194,27 @@
 - (0.16.3 D-0.16.3-LADDER, 2026-11-09) 사용자 지시: 면 실패(periodic·퇴화 등 특정 CAD 면)면 세분화 생략 → freeform(이산 재메시) → (freeform 충실도 실패일 때만) 실패 면 표적 defeature → OCC 삼각형 폴백(gmsh 2D 를 전혀 안 씀). 단계마다 예산 몫(stage_share), 단계별 결과·초를 문구에. BatchMesher param 수치(eq_diam < 8·flanged 1.5)는 쓰지 않음 — 표적 defeature 는 실패 면 + 기존 compare.defeature 기준만(계약 C2-D-26~31)
 - (0.16.3 D-0.16.3-LABELS, 2026-11-09) gmsh 4.13 STEP 가져오기의 XCAF 라벨 처리가 면 수에 초선형(합성 1915 면: 라벨 읽음 234 s / 안 읽음 5.4 s, 266 면 2.1 s) → ④ 프로필 `compare.mesh.occ_import_labels: 0`. regress(mode 없음·cad·auto) 메시·하중·순위 바이트 동일(auto 이어하기 해시만 기본 사다리 변경으로 다름 — 스냅샷 mesh_ladder 가 있는 기존 스터디는 같음). 실서버 STEP 이 라벨이 적으면 효과가 작을 수 있음(미확인)
 - (0.16.3 D-0.16.3-BENCH, 2026-11-10) 합성 다딤플 판 1000 × 600(1915 면, 3 mm, 2 코어 클라우드): tria 58 s·234,721 삼각형·충실도 0.36 mm(≤ fail 1.5)·품질 Fail 11 %(경고만); freeform 378 s 뒤 REMESH_CLASSIFY_FAILED → 사다리는 tria 로 성공. 200 × 150 판(110 면, 지름 10 mm 딤플 108개): cad 는 주입 없이도 실패(면 20개 초과), freeform 36 s·6,820 요소·4각 87 %·충실도 0.58 mm·Fail 47 %(3 h 크기 딤플 밀집 — 어떤 방식도 1 % 기준 불가), tria 3 s·Fail 12 %. 깊은 딤플 1개 판: freeform Fail 2.3 %·충실도 0.19 mm. 품질은 차단하지 않음(SC-D-13)
+- (0.17.0 확정 D-0.17.0-RELDEPTH, 2026-11-09) D1 비드 깊이는 부모 바닥 대비 상대값(위계 플랜지 → 고리 띠 → 플래토 → 채널·포켓), 자식은 부모를 강체로 따라간다(근거: 사용자 확정 2026-11-09 — esl_beadgraph.md BG-D-15·23).
+- (0.17.0 확정 D-0.17.0-SHARED, 2026-11-09) D2 분류기·세그먼트 모핑 = esl-platform·physicsai-platform 공통 순수 numpy/scipy 패키지 `packages/beadgraph/`(입력 메시 노드·요소·고정 노드, 출력 JSON 그래프 `beadgraph/1`, 독립 semver 1.0.0, esl 경로 설치·physicsai 휠 정확 고정)(근거: 사용자 확정 — esl_beadgraph.md §8, BG-D-43).
+- (0.17.0 확정 D-0.17.0-SECTION, 2026-11-09) D3 단면 = 사면 45°·입구 폭 고정(깊어지면 바닥이 좁아짐), 바닥 코너는 코너 가드로 국부적으로 가팔라짐 허용(근거: 사용자 확정, H6 d_g 뒤집힘 0 — esl_beadgraph.md BG-D-25·26).
+- (0.17.0 확정 D-0.17.0-RAMP, 2026-11-09) D4 접합 램프 = smoothstep, 길이 max(3·ΔD, 3·h); 바뀐 세그먼트·자식 밖 이동은 0 이어야 하며 넘으면 FAILED_MESH `BG_OUTSIDE_MOVED`(근거: 사용자 확정, H5 — esl_beadgraph.md BG-D-24·34).
+- (0.17.0 확정 D-0.17.0-VCHAN, 2026-11-09) D5 세로 채널은 기본 각각 별도 변수, 대칭 묶기(`ties`)는 옵션(근거: 사용자 확정 — esl_beadgraph.md BG-D-20·21).
+- (0.17.0 확정 D-0.17.0-STRADDLE, 2026-11-09) D6 벽에 걸친 보스는 채널을 따라가고, 실제 체결·고정 노드만 기존 hold 블렌딩(ρ 3·블렌딩 8)으로 제자리 — 보스 전체 고정 폐지(근거: 사용자 확정, H6 (b) 미달 패치 — esl_beadgraph.md BG-D-27·28).
+- (0.17.0 확정 D-0.17.0-RINGSIDE, 2026-11-09) D7 고리 윗변 넓어진 코너·코너와 다리 사이 짧은 띠는 변수 없는 접합 구역으로 흡수, 고리 변수 = 4변(위·아래·왼쪽·오른쪽)(근거: 사용자 확정 — esl_beadgraph.md BG-D-13·19).
+- (0.17.0 확정 D-0.17.0-ISLAND60, 2026-11-09) D8 그래프 분류의 `island.max_mm` = 60, 화면에서 어떤 조각이든 섬 ↔ 비드 전환 가능(근거: 사용자 확정 — esl_beadgraph.md BG-D-9·37; schema 1 스터디 적용 여부는 O-BG-1).
+- (0.17.0 확정 D-0.17.0-SEEDSRC, 2026-11-09) D9 자동 탐지 seed 출처 = 메시 분류기(paicad B-rep 인식 대신), paicad flanks 는 힌트만 — paicad 가 고리 + ㅛ 네트워크를 BEAD_IRREGULAR 로 버림(근거: 사용자 확정·관찰 — esl_beadgraph.md BG-D-20·42, §5.3).
+- (0.17.0 확정 D-0.17.0-UIFLOW, 2026-11-09) D10 기존 화면 흐름 재사용(자동 seed → 같은 BeadSelectCard/BeadList 편집 + 세그먼트 트리 보기), 새 화면 없음(근거: 사용자 확정 — esl_beadgraph.md §6.2).
+- (0.17.0 통합 D-0.17.0-WCLAMP, 2026-11-10) schema 2 그래프 W 기본 범위 끝이 뒤집히면 range_check usable 로 줄이고 정보 `BG_RANGE_CLAMPED` — 기저·feasible·D·schema 1 불변(근거: H6 포켓 ±15 mm·채널 −20 % 끝 뒤집힘 — esl_beadgraph.md §12 BG-X-1).
+- (0.17.0 통합 D-0.17.0-BASEPLATE, 2026-11-10) 뿌리 수준이고 평면 크기 > `island.max_mm`(60) 인 둘러싸인 판은 뿌리(root_group)로 수용(근거: H5 고리 안 판 — §12 BG-X-2).
+- (0.17.0 통합 D-0.17.0-WBOTH, 2026-11-10) W 는 입구 선이 양쪽 모두 있는 세그먼트만, 안쪽에 플래토가 있는 고리 변은 D 만으로 수용(근거: 한쪽 입구 폭은 대칭 W 이동과 맞지 않음 — §12 BG-X-3).
+- (0.17.0 통합 D-0.17.0-ELEMS, 2026-11-10) beadgraph `basis`·`check`·`apply_edits`(split)는 `elems` 키워드 필수로 수용, §8.2 시그니처 확장(근거: 연결 없이 구역·분할을 못 정함 — §12 BG-X-4).
+- (0.17.0 통합 D-0.17.0-WSMOOTH, 2026-11-10) 코어 구현 키 `select.graph.morph.w_smooth_iters` = 3 을 pydantic·예시 yaml 2개에 거울, 해시는 다른 graph 키와 같은 규칙(근거: 설정 하드코딩 금지 — §12 BG-X-5).
+- (0.17.0 통합 D-0.17.0-GFAIL, 2026-11-10) `GRAPH_FAILED` 경고는 코어·워커·화면 모두 `{code, message, detail}` 하나(AUTO_DETECT_FAILED 와 같은 꼴), 옛 문자열·다른 키는 읽지 않음(근거: 세 층 형식 불일치 — §12 BG-X-6).
+- (0.17.0 통합 D-0.17.0-GBIN, 2026-11-10) graph.bin 배열 offset = 머리 끝(4 + L) 기준·채움 없음 하나로, 화면 파서 추정 제거(근거: 코어 출력은 4바이트 정렬이 아니어서 화면이 잘못 읽음 — §12 BG-X-7).
+- (0.17.0 통합 D-0.17.0-BGINSTALL, 2026-11-10) beadgraph 는 인덱스 설치에서 빼고 `Install-EslBeadgraph`(저장소 = packages\beadgraph, 묶음 = wheels 휠)로 설치·판 대조(근거: 사내 인덱스에 없음 — §12 BG-X-8).
+- (0.17.0 Verifier fix D-0.17.0-VF-OUTSIDE, 2026-11-10) 바깥 0 점검(BG_BASIS_LEAK·BG_OUTSIDE_MOVED)은 기저 구역이 아니라 그래프 라벨로 정한 허용 요소 집합으로, 바깥 요소와 공유하는 노드는 바깥으로 본다. 공유 자식 벽의 경계 노드는 J(근거: 같은 구역으로 만들고 점검하면 틀린 구역을 못 잡음 — H6 고리 변 0.13~0.15 mm READY, 계약 §12 BG-X-9).
+- (0.17.0 Verifier fix D-0.17.0-VF-MIXED, 2026-11-10) 그래프 + elems 혼합 선택의 바깥 판정 허용 집합에 elems 변수 기저 지지를 넣는다(근거: 혼합 안 가짜 FAILED_MESH, BG-X-10).
+- (0.17.0 Verifier fix D-0.17.0-VF-WCLAMP, 2026-11-10) W 기본 범위 줄임(BG-X-1)을 BD_LOADS 의 w_clamp.json 표로 미리 계산해 derive 에서 기본 범위·feasible 에 적용, 기저 램프는 원래 범위에 고정. API derive 에서 기저를 만들지 않는 이유 = derive ≤ 3 s(§7)(근거: 첫 행렬에 뒤집히는 W 안, BG-X-11).
+- (0.17.0 Verifier fix D-0.17.0-VF-ERR, 2026-11-10) beadgraph 공개 API 는 BeadgraphError(code, detail)만 던진다(INVALID_INPUT·ERROR, EditError 는 하위, KeyError 는 앵커 미해석만)(근거: §8.2, physicsai 소비자 처리 단순화, BG-X-12).
+- (0.17.0 Verifier fix D-0.17.0-VF-SPLIT, 2026-11-10) 화면 분할 좌표 = 코어 평면 식(frame.origin 포함)(근거: H6 에서 600 mm 어긋남, BG-X-13).
+- (0.17.0 Verifier fix D-0.17.0-VF-DEMO, 2026-11-10) 시연 venv 도 beadgraph 를 인덱스 목록에서 빼고 Install-EslBeadgraph 로 설치(근거: 저장소 시연 설치 실패, BG-X-8 과 같은 규칙).

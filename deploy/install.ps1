@@ -90,6 +90,8 @@ if (-not (Test-Path -LiteralPath $venvPy)) {
     Invoke-EslNative 'venv 생성' $basePy.Exe @('-m', 'venv', (Join-Path $root 'venv')) "설치 폴더 쓰기 권한과 Python($($basePy.Exe))의 venv 모듈을 확인하세요"
 }
 Install-EslPackages -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
+# v0.17.0 공통 패키지 beadgraph — 묶음 wheels 의 beadgraph-<ver>-py3-none-any.whl(collect-offline 빌드, lock 판 대조)
+$null = Install-EslBeadgraph -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -Wheels (Join-Path $pkg 'wheels')
 # ②' 비드 DOE 형상 엔진(paicad·OCP·gmsh) — 설정 파일 단계(⑤)보다 먼저: setup_config 가 <venv>\Scripts\paicad.exe 를 감지해 bead_doe.paicad.exe 를 채운다
 $doe = Install-EslBeadDoe -VenvPy $venvPy -LockFile (Join-Path $PSScriptRoot 'requirements.lock') -PaicadLock (Join-Path $PSScriptRoot 'paicad.lock') -Wheels (Join-Path $pkg 'wheels')
 # ②'' v0.11.0 SCX 릴레이 어댑터(simdash_adapters, 동봉 wheel → 묶음 wheels) — 실패해도 설치 계속(SCX 기능만 비활성)

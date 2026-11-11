@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 config/esl.yaml
 /out/
+# v0.17.0 beadgraph: pip wheel/install packages/beadgraph 이 소스 폴더에 남기는 빌드 폴더
+/packages/*/build/

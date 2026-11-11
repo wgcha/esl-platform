@@ -308,6 +308,22 @@ def test_compare_defeature_stage_mirror():
     assert all(k in s["defeature"] for k in _DEFEAT_KEYS_V0161) and "diag" in s["mesh_input"]
 
 
+def test_select_graph_mirror_v0170():
+    """v0.17.0 BEADGRAPH §5.5 거울: esl.doe.DEFAULTS select.graph = pydantic BeadDoeSelectGraphCfg = example yaml 2개
+    (통합: 코어 구현 키 morph.w_smooth_iters 3 포함)."""
+    pc = _platform_cfg()
+    from esl.doe import DEFAULTS
+
+    dump = pc.BeadDoeSelectGraphCfg().model_dump()
+    assert dump["morph"]["w_smooth_iters"] == 3
+    assert dump == DEFAULTS["select"]["graph"]
+    for name in _PLATFORM_YAMLS:
+        assert _bead_doe_yaml(name)["select"]["graph"] == dump, name
+    assert not pc.BeadDoeSelectGraphCfg.model_validate({"morph": {"w_smooth_iters": 0}}).morph.w_smooth_iters
+    with pytest.raises(Exception):
+        pc.BeadDoeSelectGraphCfg.model_validate({"morph": {"w_smooth_iters": -1}})
+
+
 @pytest.mark.parametrize("over, frag", [
     ({"compare": {"mesh": {"ladder": ["cad", "defeature", "defeature"]}}}, "ladder"),       # 중복
     ({"compare": {"mesh": {"ladder": ["defeature", "cad"]}}}, "ladder"),                    # cad 맨 앞

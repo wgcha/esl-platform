@@ -160,6 +160,15 @@ def select_base(c: Ctx) -> str:
     return "mesh" if v == "mesh" else "case"
 
 
+def select_schema(c: Ctx) -> int:
+    """v0.17.0 BG-D-35: select 선택 형식 1 | 2(그래프). 스펙 ``doe.select_schema``(백엔드가 ``inputs.select_schema`` 를
+    그대로 넣음), 없으면 준비 결과 prep/input.json 의 값, 그것도 없으면 1(키 없음 = 1 — 기존 스터디 불변)."""
+    v = c.D.get("select_schema")
+    if v is None and os.path.isfile(c.p("prep", "input.json")):
+        v = U.read_json(c.p("prep", "input.json")).get("select_schema")
+    return 2 if v == 2 else 1
+
+
 def _is_mesh_base(c: Ctx) -> bool:
     """② B 메시 기준(legacy ``mesh`` 시나리오 또는 select + select_base mesh — AD-D-18)."""
     return c.scn == "mesh" or (c.scn == "select" and select_base(c) == "mesh")
@@ -442,6 +451,10 @@ def bd_matrix(spec: dict, echo=print) -> dict:
                    basis_sha256=sel_doc["rev_doc"]["basis_sha256"])
         out["files"].append(f"{d}/{SEL_REV_JSON}")
         out["warnings"] += sel_doc["warnings"]
+        bj = U.read_json(os.path.join(_sel_dir(c, sel_doc["rev_doc"]["selection_sha256"]), "basis.json"))
+        if bj.get("graph_vars"):                 # v0.17.0 BG-D-24 사용자 범위 > 기본 범위 → BG_RAMP_SHORT(경고, 실행 계속)
+            rs = _bgr().ramp_short(bj["graph_vars"], m["spec"]["params"], c.cfg)
+            out["warnings"] += [_sel_warn_text(w) for w in rs]
     return out
 
 
@@ -517,6 +530,7 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
             info["morph_warnings"] = mw
         return m, list(t.supports), loads, info
     # TODO(SR-D-44): ③ STEP 모핑(보류) — 안 메시가 나오면 esl.morph.core(post_morph_warnings·피처 안전망)를 여기서 호출
+    # TODO(BG-D-45): ③ STEP 모핑(보류) — 기준 메시를 beadgraph.classify → bead_graph.basis_v2(세그먼트 기저)로 모핑할 호출 지점
     # ③: 안 BREP → gmsh(베이스라인과 같은 h·옵션) → frame 고정 매핑
     brep = os.path.join(dd, "update", pio.SAMPLE_BREP)
     if not os.path.isfile(brep):
@@ -2310,11 +2324,23 @@ def _sel_rev_doc(c: Ctx) -> dict:
     return U.read_json(p)
 
 
-def _sel_norm(c: Ctx) -> tuple[dict, str]:
+def _sel_norm(c: Ctx, mesh: dict | None = None) -> tuple[dict, str]:
     from esl.doe import bead_select as bsel
     s = c.D.get("selection") or {}
     if not isinstance(s, dict) or not s.get("input"):
         raise EslError("SELECTION_MISSING", "비드 선택이 저장되지 않음")
+    if isinstance(s["input"], dict) and s["input"].get("schema_version") == 2:   # v0.17.0 schema 2(그래프)
+        from esl.doe import bead_graph as bgr
+        if select_schema(c) != 2:
+            raise EslError("SELECT_SCHEMA_MISMATCH", "schema 1 스터디에 schema 2 선택")
+        graph, labels = _graph_or_none(c)                # GRAPH_FAILED: elems beads only
+        norm, sha = bgr.normalize_v2(s["input"], graph, c.cfg, labels=labels, mesh=mesh)
+        if mesh is not None:
+            bsel.check_elems(mesh, {"fixed_user": norm["fixed_user"], "exclude": norm["exclude"],
+                                    "beads": [b for b in norm["beads"] if b["src"] == "elems"]})
+        if s.get("sha256") and s["sha256"] != sha:
+            raise EslError("PREVIEW_STALE", f"선택 sha256 불일치(저장 {str(s['sha256'])[:12]}… ≠ 계산 {sha[:12]}…)")
+        return norm, sha
     norm, sha = bsel.normalize(s["input"], c.cfg)
     if s.get("sha256") and s["sha256"] != sha:
         raise EslError("PREVIEW_STALE", f"선택 sha256 불일치(저장 {str(s['sha256'])[:12]}… ≠ 계산 {sha[:12]}…)")
@@ -2352,6 +2378,8 @@ def _sel_input(c: Ctx, echo) -> dict:
     ents = c.entries(raw=True)
     c.progress(10)
     _sel_step(c, inp)
+    if select_schema(c) == 2:                    # v0.17.0: schema 1 스터디는 키 없음(input.json 바이트 불변)
+        inp["select_schema"] = 2
     if select_base(c) == "mesh":
         warns: list = []
         inp["select_base"] = "mesh"
@@ -2438,8 +2466,16 @@ def _sel_loads(c: Ctx, echo) -> dict:
     files = ["prep/loads.npz", "prep/params.json", "prep/plan.json", "prep/select/part.glb", "prep/select/select.bin",
              "prep/select/select_manifest.json"]
     auto = None
+    gst = None
+    if select_schema(c) == 2:                    # v0.17.0 BG-D-40: 분류 그래프(schema 2 만 — schema 1 은 건너뜀, 바이트 불변)
+        gst = _sel_graph(c, m, fids, sd, warns, echo)
+        if gst["ok"]:
+            files += [f"prep/select/{x}" for x in (bgr_files())]
+            wc = _sel_w_clamp(c, m, fids, sd, echo)     # Verifier fix(§12 BG-X-1): 첫 행렬 전에 W 기본 범위 줄임표
+            if wc:
+                files.append(wc)
     if bead_source(c) == "auto":                 # v0.16.2 AD-D-2·3·21: 자동 탐지 seed(실패해도 준비 계속)
-        auto = _sel_auto(c, m, bmeta, warns, echo)
+        auto = _sel_auto_v2(c, m, bmeta, gst, warns, echo) if gst is not None else _sel_auto(c, m, bmeta, warns, echo)
         if auto.get("file"):
             files.append(auto["file"])
     inp = U.read_json(c.p("prep", "input.json"))
@@ -2448,6 +2484,10 @@ def _sel_loads(c: Ctx, echo) -> dict:
     inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
     if auto is not None:
         inp["auto"] = {k: v for k, v in auto.items() if k != "file"}
+    if gst is not None:
+        inp["graph"] = {k: v for k, v in gst.items() if k != "warnings"}
+        if not gst["ok"]:                        # GRAPH_FAILED{code, message, detail} 1개(워커 준비 요약 그대로)
+            inp["warnings"] += [w for w in gst.get("warnings") or [] if w.get("code") == "GRAPH_FAILED"]
     c.write_json(os.path.join("prep", "input.json"), inp)
     echo(f"[bd_loads] select ESL {len(loads)}개 하중({linfo['method']}), 고정 노드 {int(fixed.sum())}"
          + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else "")
@@ -2457,7 +2497,101 @@ def _sel_loads(c: Ctx, echo) -> dict:
             "warnings": warns, "info": info,
             "boundary": None if res is None else {"n_warn": res["n_warn"], "n_info": res["n_info"]},
             "n_beads": 0, "n_params": 0, "fixed": {"source": "none" if fw else "scan", "n": int(fixed.sum())},
-            **({"auto": {k: v for k, v in auto.items() if k != "file"}} if auto is not None else {})}
+            **({"auto": {k: v for k, v in auto.items() if k != "file"}} if auto is not None else {}),
+            **({"graph": {k: v for k, v in gst.items() if k != "warnings"}} if gst is not None else {})}
+
+
+def bgr_files() -> tuple:
+    from esl.doe import bead_graph as bgr
+    return (bgr.GRAPH_JSON, bgr.GRAPH_LABELS, bgr.GRAPH_BIN)
+
+
+def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo) -> dict:
+    """v0.17.0 BD_LOADS 분류(BG-D-40): ``bead_graph.prep_graph`` → prep/select/graph.json·graph_labels.npz·graph.bin.
+    실패 = 준비 READY 유지 + 경고 GRAPH_FAILED{code}(수동은 src elems 비드로 계속)."""
+    from esl.doe import bead_graph as bgr
+    st = bgr.prep_graph(mesh, fids, c.cfg, sd, guard=c.writer.guard)
+    if not st["ok"]:                             # 구조화 경고 1개 {code, message, detail}(AUTO_DETECT_FAILED 와 같은 형식)
+        gw = graph_failed_warning(st["code"])
+        st["warnings"] = [gw]                    # inp.warnings 로(아래 bd_loads) — inp.graph 에는 code 만
+        warns.append(_sel_warn_text({"code": gw["code"], "detail": gw["detail"]}))
+        echo(f"[bd_loads] 자동 분류 실패({st['code']}) — 직접 칠하기(요소 비드)로 계속")
+    else:
+        for w in st.get("warnings") or []:
+            if w.get("level") != "info":
+                warns.append(_sel_warn_text(w))
+        echo(f"[bd_loads] 분류 그래프 세그먼트 {st['n_segments']} · 접합 구역 {st['n_junction_zones']} · 섬 "
+             f"{st['n_islands']} · {st['seconds']:.1f}s (beadgraph {st['beadgraph_version']} rules {st['rules']})")
+    return st
+
+
+def _sel_w_clamp(c: Ctx, mesh: dict, fids, sd: str, echo) -> str | None:
+    """v0.17.0 Verifier fix(§12 BG-X-1): 그래프 W 후보(세그먼트별 + 자동 seed W 묶음)의 기본 범위 끝 뒤집힘을 BD_LOADS 에서 미리
+    찾아 prep/select/w_clamp.json — derive(API·BD_MATRIX)가 이 표로 기본 범위·feasible 을 줄이므로 첫 행렬부터 뒤집히는 W 안이 없다.
+    실패해도 준비는 계속(BD_MATRIX clamp_w_ranges 가 그대로 받침)."""
+    from esl.doe import bead_graph as bgr
+    try:
+        graph, labels = bgr.load_graph(c.p("prep"))
+        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg)
+    except EslError as exc:
+        echo(f"[bd_loads] W 기본 범위 점검 건너뜀({exc.code})")
+        return None
+    bgr.write_w_clamp(os.path.join(sd, bgr.W_CLAMP_JSON), doc, guard=c.writer.guard)
+    echo(f"[bd_loads] W 기본 범위 끝 뒤집힘 미리 점검: 줄일 변수 {len(doc['entries'])}")
+    return f"prep/select/{bgr.W_CLAMP_JSON}"
+
+
+def graph_failed_warning(code: str | None) -> dict:
+    """v0.17.0 GRAPH_FAILED 준비 경고(BG-D-40·§6.4) — 코어·워커·화면 공통 형식 {code: "GRAPH_FAILED", message, detail}
+    (detail = 안쪽 사유 ERROR|TIMEOUT|TOO_LARGE|DISABLED|NO_FLOOR, AUTO_DETECT_FAILED{detail} 과 같은 규칙)."""
+    detail = str(code or "ERROR")
+    tmpl = _sel_msg("GRAPH_FAILED") or "GRAPH_FAILED"
+    try:
+        msg = tmpl.format(detail=detail, code=detail)
+    except (KeyError, IndexError, ValueError):
+        msg = tmpl
+    return {"code": "GRAPH_FAILED", "message": msg[:300], "detail": detail}
+
+
+def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list, echo) -> dict:
+    """v0.17.0 BG-D-20·42 자동 seed = 그래프(paicad 는 힌트만): prep/select/auto_selection.json(schema
+    esl/doe_auto_selection/2, source graph). 그래프 실패 = 파일 없음 + AUTO_DETECT_FAILED{step graph, code}."""
+    from esl.doe import bead_auto as ba
+    from esl.doe import bead_graph as bgr
+    out = {"ok": False, "step": "graph", "code": None, "n_beads": 0, "selection_sha256": None, "warnings": [],
+           "source": "graph"}
+    if not gst or not gst.get("ok"):
+        out["code"] = (gst or {}).get("code") or "GRAPH_FAILED"
+        out["warnings"].append({"code": "AUTO_DETECT_FAILED", "step": "graph", "detail": out["code"]})
+        warns.append(f"AUTO_DETECT_FAILED: step=graph code={out['code']}")
+        return out
+    graph, labels = bgr.load_graph(c.p("prep"))
+    sel, sym, aw = bgr.auto_seed(graph, labels, c.cfg)
+    hints = []
+    ad = pio.read_auto_detect(c.p("prep"), c.max_mb)
+    if ad and ad.get("ok"):
+        try:
+            hints = bgr.slope_hints(graph, pio.read_features(c.p("prep", "extract"), c.max_mb), mesh, labels)
+        except EslError as exc:
+            aw.append({"code": "AUTO_HINT_UNAVAILABLE", "level": "info", "step": "extract", "code_": exc.code})
+    else:
+        aw.append({"code": "AUTO_HINT_UNAVAILABLE", "level": "info", "step": (ad or {}).get("step"),
+                   "detail": (ad or {}).get("code")})
+    if not sel["beads"]:
+        out.update(code="AUTO_BEAD_UNMAPPED")
+        out["warnings"] += aw
+        warns.append("AUTO_DETECT_FAILED: step=graph code=AUTO_BEAD_UNMAPPED")
+        return out
+    norm, sha = bgr.normalize_v2(sel, graph, c.cfg, labels=labels, mesh=mesh)
+    doc = bgr.auto_doc_v2(norm, sha, sym, hints, aw, mesh_sha256=bmeta["mesh_sha256"], graph_sha=gst["sha256"])
+    bgr.write_auto_v2(c.p("prep", "select", ba.AUTO_SELECTION_JSON), doc, guard=c.writer.guard)
+    for w in aw:
+        if w.get("level") != "info":
+            warns.append(_sel_warn_text(w))
+    out.update(ok=True, step=None, n_beads=len(norm["beads"]), selection_sha256=sha, warnings=aw + hints,
+               file="prep/select/" + ba.AUTO_SELECTION_JSON)
+    echo(f"[bd_loads] 그래프 자동 seed 비드 {len(norm['beads'])} · 대칭 제안 {len(sym)} · sha {sha[:12]}…")
+    return out
 
 
 def _sel_auto(c: Ctx, mesh: dict, bmeta: dict, warns: list, echo) -> dict:
@@ -2503,7 +2637,8 @@ def _sel_auto(c: Ctx, mesh: dict, bmeta: dict, warns: list, echo) -> dict:
 def _sel_prepare(c: Ctx, t, echo) -> dict:
     """BD_MATRIX select: 선택 정규화·sha 확인 → derive → 기저 → select/<sha12>/ (같은 sha 면 재사용)."""
     from esl.doe import bead_select as bsel
-    norm, sha = _sel_norm(c)
+    norm, sha = _sel_norm(c, t.mesh)
+    v2 = norm.get("schema_version") == 2
     bmeta = U.read_json(c.p("prep", "base.json"))
     d = _sel_dir(c, sha)
     pb, pj, pp = os.path.join(d, "basis.npz"), os.path.join(d, "basis.json"), os.path.join(d, "params.json")
@@ -2511,7 +2646,9 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
         bj = U.read_json(pj)
         if bj.get("selection_sha256") == sha and bj.get("mesh_sha256") == bmeta["mesh_sha256"] and \
                 bj.get("basis_sha256") == U.sha256_file(pb) and bj.get("cfg_sha256") == _sel_cfg_sha(c) and \
-                bj.get("algo", 1) == bsel.ALGO:         # v0.16.1 SR-D-13c: 옛 규칙 기저는 1회 재계산
+                bj.get("algo", 1) == bsel.ALGO and \
+                (not v2 or (bj.get("graph_algo") == _bgr().GRAPH_ALGO and           # v0.17.0 BG-D-39 재사용 조건
+                            bj.get("morph_rules") == _bgr()._bg().MORPH_RULES)):     # 옛 규칙 기저는 1회 재계산
             echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
             return {"params": U.read_json(pp)["params"], "warnings": [],
                     "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
@@ -2519,12 +2656,20 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     ms = (c.D.get("selection") or {}).get("mesh_sha256")
     if ms and ms != bmeta["mesh_sha256"]:
         raise EslError("PREVIEW_STALE", "선택의 mesh_sha256 이 준비 기준 메시와 다름(SELECTION_DROPPED)")
-    D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
-                        with_section=False)
+    if v2:                                      # v0.17.0 schema 2: 그래프 비드(+ elems 비드는 schema 1 derive, 섬 60)
+        graph, labels = _graph_or_none(c)
+        D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
+                                 w_clamp=_bgr().load_w_clamp(c.p("prep")) if graph is not None else None)
+    else:
+        D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
+                            with_section=False)
     B = bsel.basis(t.mesh, D, c.cfg)
     rc_w = bsel.range_check(t.mesh, D, B, c.cfg)   # v0.16.1 SR-D-33: 기본 범위 끝 뒤집힘 → 비드 경고(범위·기저 불변)
+    if v2:                                      # 통합 v0.17.0(BG-X-1): 그래프 W 기본 범위 = usable 로 줄임 + 정보 BG_RANGE_CLAMPED
+        _bgr().clamp_w_ranges(D, rc_w)
     if rc_w:
         echo("[bd_matrix] 기본 범위 끝 뒤집힘: " + ", ".join(
+            f"{w['var']} 기본 범위 {w['from']} → {w['to']}(뒤집힘 없는 범위로 줄임)" if w["code"] == "BG_RANGE_CLAMPED" else
             f"{w['var']} 쓸 수 있는 범위 ≈ {w['usable']}" if "var" in w else
             f"조합(표본 {w['corners']} 중 뒤집힘 {w['inverted_n']}) 함께 쓸 범위 ≈ 공칭 ± {w['scale']} 배" for w in rc_w))
     tab = bsel.params_table(D, c.cfg)
@@ -2537,17 +2682,37 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     _sel_save_derived(c, os.path.join(d, "derived.npz"), D, B)
     c.write_json(os.path.relpath(os.path.join(d, "derived.json"), c.out), D.summary(with_figures=False))
     c.write_json(os.path.relpath(pp, c.out), {"beads": [{"id": b.id, "name": b.name, "kind": "select",
-                                                         "n_tiers": len(b.tiers), "W_nom": b.W_nom, "W_min": b.W_min,
-                                                         "W_max": b.W_max, "blend_mm": b.blend_mm,
+                                                         "n_tiers": len(b.tiers), "W_nom": b.W_nom,
+                                                         "W_min": getattr(b, "W_min", None),
+                                                         "W_max": getattr(b, "W_max", None), "blend_mm": b.blend_mm,
                                                          "warnings": b.warnings} for b in D.beads],
                                               "params": tab, "warnings": D.warnings})
     meta = bsel.basis_meta(B, bsha)
     import hashlib
     meta.update(sha256=hashlib.sha256(blob).hexdigest(), mesh_sha256=bmeta["mesh_sha256"], cfg_sha256=_sel_cfg_sha(c))
+    if v2:                                      # v0.17.0 BG-D-39: 그래프 경로 판·패키지 판 + 램프(BG_RAMP_SHORT 판단)
+        bg = _bgr()._bg()
+        meta.update(graph_algo=_bgr().GRAPH_ALGO, morph_rules=bg.MORPH_RULES, rules_graph=bg.RULES,
+                    beadgraph_version=bg.__version__,
+                    graph_vars=[{"name": v["name"], "kind": v["kind"], "nominal": float(v["nominal"]),
+                                 "ramp_mm": float(v["info"]["ramp_mm"])} for v in getattr(D, "graph_basis", [])])
     c.write_json(os.path.relpath(pj, c.out), meta)
     warns = [f"{w['code']}: {b.id}" for b in D.beads for w in b.warnings]
     echo(f"[bd_matrix] select {sha[:12]}… 비드 {len(D.beads)} · 변수 {len(B.vars)} · 기저 sha {bsha[:12]}…")
     return {"params": tab, "warnings": warns, "rev_doc": _sel_rev(c, sha, bsha)}
+
+
+def _bgr():
+    from esl.doe import bead_graph as bgr
+    return bgr
+
+
+def _graph_or_none(c: Ctx):
+    """(graph, labels) of prep/select or (None, None) after GRAPH_FAILED (schema 2 continues with elems beads)."""
+    try:
+        return _bgr().load_graph(c.p("prep"))
+    except EslError:
+        return None, None
 
 
 def _sel_cfg_sha(c: Ctx) -> str:
@@ -2681,12 +2846,13 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
            "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],
-           "basis_sha256": L["rev"]["basis_sha256"], "rules": bsel.RULES}
+           "basis_sha256": L["rev"]["basis_sha256"], "rules": bsel.RULES,
+           **({"graph_rules": _bgr().GRAPH_RULES} if L["checks"].get("outside") else {})}
     c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))
     cnt = {"ok": sum(x["status"] == "OK" for x in cells),
            "fixed": sum(x["code"] == "SELECT_FIXED_VIOLATION" for x in cells),
-           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED", "SELECT_FEATURE_DISTORTED")
-                       for x in cells),
+           "mesh": sum(x["code"] in ("SELECT_QUALITY_FAIL", "SELECT_MORPH_INVERTED", "SELECT_FEATURE_DISTORTED",
+                                     "BG_OUTSIDE_MOVED") for x in cells),
            "warn": sum(x["status"] == "OK" and bool(x.get("warnings")) for x in cells)}
     echo(f"[bd_select_grid] rev {rev} 안 {len(cells)} · OK {cnt['ok']}(경고 {cnt['warn']}) · 고정 침범 {cnt['fixed']} · "
          f"품질 실패 {cnt['mesh']} · V {V:.3g} mm")

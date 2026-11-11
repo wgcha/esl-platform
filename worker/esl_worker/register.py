@@ -693,12 +693,75 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
         fx = inp.get("fixed") if isinstance(inp.get("fixed"), dict) else {}
         prep.update(n_nodes=base.get("n_nodes"), n_elems=base.get("n_elems"),
                     fixed={"source": fx.get("source") or "none", "n": int(fx.get("n") or 0)})
+        prep.update(_select_graph_prep(s, inp, ddir, msgs, warns))
         prep.update(_select_auto_prep(s, inp, ddir, msgs, warns))
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
 
 
 AUTO_DETECT_MSG = "자동 탐지(paicad {step})가 실패했습니다({detail}) — 빈 선택에서 수동으로 선택하세요"
+GRAPH_FAILED_MSG = "자동 분류 실패({detail}) — 직접 칠하기(요소 비드)로 계속"
+GRAPH_JSON_MAX_MB = 64
+
+
+def _schema2(s: dict[str, Any]) -> bool:
+    """v0.17.0 선택 schema 2 스터디(inputs.select_schema — 키 없음 = 1, esl_beadgraph.md BG-D-35)."""
+    return (s.get("inputs") or {}).get("select_schema") == 2
+
+
+def _file_sha(p: str) -> str | None:
+    try:
+        if os.path.islink(p) or os.path.getsize(p) > GRAPH_JSON_MAX_MB * 1024 * 1024:
+            return None
+        with open(p, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _graph_failed_code(inp: dict[str, Any], core: dict[str, Any]) -> str:
+    """GRAPH_FAILED 안쪽 사유(detail): 코어 prep/input.json graph.code → 코어 구조화 경고 GRAPH_FAILED{code, message, detail}
+    (AUTO_DETECT_FAILED 와 같은 형식) → ERROR(코어가 그래프 파일도 실패 기록도 남기지 않음)."""
+    c = core.get("code")
+    if isinstance(c, str) and c:
+        return c
+    for w in inp.get("warnings") or []:
+        if isinstance(w, dict) and w.get("code") == "GRAPH_FAILED" and isinstance(w.get("detail"), str) and w["detail"]:
+            return w["detail"]
+    return "ERROR"
+
+
+def _select_graph_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: dict[str, str],
+                       warns: list[dict[str, Any]]) -> dict[str, Any]:
+    """v0.17.0 select 준비 요약 graph(esl_beadgraph.md BG-D-40·§6.4 — schema 2 만): 코어 BD_LOADS 가 prep/select/graph.json 을
+    남겼으면 {ok true, sha256(파일 바이트), beadgraph_version, rules, morph_rules, n_floors, n_segments, n_junction_zones,
+    n_islands, n_holes}, 아니면 {ok false, code} + 준비 경고 GRAPH_FAILED{detail} 1개(준비는 READY — 직접 칠하기로 계속).
+    schema 1 스터디 = 키 없음(요약 불변)."""
+    if not _schema2(s):
+        return {}
+    core = inp.get("graph") if isinstance(inp.get("graph"), dict) else {}
+    gp = os.path.join(ddir, "prep", "select", "graph.json")
+    g = _doe_json(gp) if os.path.isfile(gp) else None
+    ok = isinstance(g, dict) and str(g.get("schema") or "").startswith("beadgraph/") and core.get("ok", True) is not False
+    if ok:
+        def n(k: str) -> int:
+            return len(g.get(k) or []) if isinstance(g.get(k), list) else 0
+
+        graph = {"ok": True, "code": None, "sha256": _file_sha(gp), "beadgraph_version": g.get("version"),
+                 "rules": g.get("rules"), "morph_rules": g.get("morph_rules"), "n_floors": n("floors"),
+                 "n_segments": n("segments"), "n_junction_zones": n("junction_zones"), "n_islands": n("islands"),
+                 "n_holes": n("holes"), "n_networks": n("networks")}
+        warns[:] = [w for w in warns if w.get("code") != "GRAPH_FAILED"]
+        return {"graph": graph}
+    code = _graph_failed_code(inp, core)
+    warns[:] = [w for w in warns if w.get("code") != "GRAPH_FAILED"]      # _doe_warning 이 detail 을 버린 사본 → 아래 한 개
+    tmpl = msgs.get("GRAPH_FAILED") or GRAPH_FAILED_MSG
+    try:
+        msg = tmpl.format(detail=code, code=code)
+    except (KeyError, IndexError, ValueError):
+        msg = GRAPH_FAILED_MSG.format(detail=code)
+    warns.append({"code": "GRAPH_FAILED", "message": msg[:300], "detail": code})
+    return {"graph": {"ok": False, "code": code}}
 
 
 def _select_auto_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: dict[str, str],
@@ -713,6 +776,10 @@ def _select_auto_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: d
     if inputs.get("select_base") == "mesh" or inp.get("select_base") == "mesh":
         out["select_base"] = "mesh"
     if inputs.get("bead_source") != "auto" and inp.get("bead_source") != "auto":
+        return out
+    if _schema2(s):     # seed = 메시 분류기 — paicad 탐지 실패(AUTO_DETECT_FAILED)는 준비 경고가 아님(실패는 GRAPH_FAILED 한 곳)
+        warns[:] = [w for w in warns if w.get("code") != "AUTO_DETECT_FAILED"]
+        out["auto"] = _select_auto_prep_v2(inp, ddir)
         return out
     core = inp.get("auto") if isinstance(inp.get("auto"), dict) else None
     ad = _doe_json(os.path.join(ddir, "prep", "auto_detect.json"))
@@ -737,6 +804,29 @@ def _select_auto_prep(s: dict[str, Any], inp: dict[str, Any], ddir: str, msgs: d
         warns.append({"code": "AUTO_DETECT_FAILED", "message": msg[:300], "step": step, "detail": detail})
     out["auto"] = auto
     return out
+
+
+def _select_auto_prep_v2(inp: dict[str, Any], ddir: str) -> dict[str, Any]:
+    """v0.17.0 schema 2 자동 seed 요약(BG-D-20·42): seed 출처 = 메시 분류기 → {ok(= seed 파일 있음), source graph, available,
+    n_beads, selection_sha256, hint{ok, step, code, step_given}(paicad extract 힌트 — 워커 prep/auto_detect.json)}. 실패는
+    GRAPH_FAILED 한 곳(AUTO_DETECT_FAILED 경고 없음)."""
+    core = inp.get("auto") if isinstance(inp.get("auto"), dict) else {}
+    ap = os.path.join(ddir, "prep", "select", "auto_selection.json")
+    avail = os.path.isfile(ap) and not os.path.islink(ap)
+    n_beads = core.get("n_beads")
+    sha = core.get("selection_sha256")
+    if avail and (n_beads is None or sha is None):
+        doc = _doe_json(ap)
+        if isinstance(doc, dict):
+            sel = doc.get("selection") if isinstance(doc.get("selection"), dict) else {}
+            n_beads = len(sel.get("beads") or []) if n_beads is None else n_beads
+            sha = doc.get("sha256") if sha is None else sha
+    ad = _doe_json(os.path.join(ddir, "prep", "auto_detect.json"))
+    ad = ad if isinstance(ad, dict) else {}
+    hint = {"ok": bool(ad.get("ok")), "step": ad.get("step"), "code": ad.get("code"),
+            "step_given": bool(ad.get("step_given", False))}
+    return {"ok": avail, "source": "graph", "step": None, "code": None if avail else "GRAPH_FAILED", "available": avail,
+            "n_beads": int(n_beads or 0), "selection_sha256": sha if isinstance(sha, str) else None, "hint": hint}
 
 
 COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status", "code", "message", "n_nodes", "n_elems",

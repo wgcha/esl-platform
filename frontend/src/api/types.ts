@@ -2320,7 +2320,7 @@ export interface DoeSettingsOut {
   /** select 는 v0.15.0 이후 서버만(없으면 꺼짐) */
   scenarios: Record<Exclude<DoeScenario, "select">, boolean> & {
     select?: boolean;
-    /** v0.16.2 자동 탐지 가능(select 가능 ∧ paicad 준비됨, esl_bead_auto.md §3.2) — 옛 서버면 없음 */
+    /** v0.16.2 자동 탐지 가능. v0.17.0(esl_beadgraph.md §5.5) = select 가능 ∧ select.graph.enabled(paicad 무관) — 옛 서버면 없음 */
     select_auto?: boolean;
     /** v0.16.2 ② B 메시 기준 select 가능(= select 가능) — 옛 서버면 없음 */
     select_mesh?: boolean;
@@ -2371,6 +2371,8 @@ export interface DoeSelectCfg {
   island?: { max_mm: number; ring_frac: number } | null;
   /** v0.16.2 구멍 건너 잇기 상한(AD-D-7, 기본 20 mm) */
   hole?: { bridge_max_mm: number } | null;
+  /** v0.17.0 비드 네트워크 분류기(esl_beadgraph.md §5.5 — GET /doe/settings select.graph) — 옛 서버면 없음 */
+  graph?: { enabled: boolean; island: { max_mm: number }; sym_tol_mm: number } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2516,7 +2518,7 @@ export interface DoeCheckIn {
   mesh_mode?: DoeMeshMode | null;
   /** (보강, 계약 §3 미기재 — §8 '실패 시 세분화 허용' = ladder 에 refine_* 포함, C2-D-18) false 면 auto 사다리에서 refine_* 를 뺌. 없으면 설정값 */
   mesh_refine?: boolean | null;
-  /** v0.16.2 select 만: auto = STEP(step_upload_id) 필수, manual(기본) = STEP 금지(esl_bead_auto.md §3.3) */
+  /** v0.16.2 select 만: manual(기본) = STEP 금지. v0.17.0(esl_beadgraph.md §5.3) auto = STEP 선택(있으면 paicad 힌트만) */
   bead_source?: DoeBeadSource | null;
   /** v0.16.2 select 만: mesh = ② B 메시(mesh_upload_id 필수), case(기본) = ① Case 메시 */
   select_base?: DoeSelectBase | null;
@@ -2706,6 +2708,8 @@ export interface DoeStudyOut {
     bead_source?: DoeBeadSource | null;
     /** v0.16.2 select 기준 메시("mesh" 일 때만 — 없으면 case) */
     select_base?: DoeSelectBase | null;
+    /** v0.17.0 선택 schema(BG-D-35): 2 = 그래프 스터디(v0.17.0 이후 만든 select), 키 없음 = 1 */
+    select_schema?: 1 | 2 | null;
   };
   phase: DoePhase;
   version: number;
@@ -3185,15 +3189,69 @@ export interface SelectionIn {
   fixed_user?: SelectElemSet;
   exclude?: SelectElemSet;
 }
-/** POST …/select/derive 요청 */
+/** openapi GraphAnchorRef(v0.17.0 — 세그먼트 앵커) */
+export interface GraphAnchorRef {
+  anchor: number;
+}
+/** openapi GraphToggleIn(섬 ↔ 비드 전환, BG-D-37) */
+export interface GraphToggleIn {
+  anchor: number;
+  as: "bead" | "island";
+}
+/** openapi GraphSplitIn(분할 — at = 평면 좌표 [x, y]) */
+export interface GraphSplitIn {
+  anchor: number;
+  at: number[];
+}
+/** openapi GraphEditsIn(요청 — 키 생략 = []). 화면이 보내는 값은 BgEdits(키 모두) */
+export interface GraphEditsIn {
+  toggle?: GraphToggleIn[];
+  merge?: GraphAnchorRef[][];
+  split?: GraphSplitIn[];
+}
+/** openapi GraphRefIn(선택이 기준으로 삼은 분류 결과 — sha 다르면 409 BG_GRAPH_STALE) */
+export interface GraphRefIn {
+  sha256: string;
+  rules: number;
+  edits?: GraphEditsIn;
+}
+/** openapi GraphSegRef(요청 — anchor | network 정확히 하나). 화면 값은 BgSegRef */
+export interface GraphSegRef {
+  anchor?: number | null;
+  network?: number | null;
+}
+/** openapi SelectGraphBeadIn(요청). 화면이 보내는 값은 DoeBeadSelGraph(더 엄격) */
+export interface SelectGraphBeadIn {
+  id: string;
+  name?: string | null;
+  src: "graph";
+  segs: GraphSegRef[];
+  vars?: ("D" | "W")[] | null;
+  hold_fixed?: 0 | 1 | null;
+}
+/** openapi SelectElemsBeadIn(요청 — schema 1 비드 본문 + src elems). 화면 값은 DoeBeadSelElems */
+export interface SelectElemsBeadIn extends SelectBeadIn {
+  src: "elems";
+}
+/** openapi SelectionInV2(요청, BG-D-36). graph 생략·null = 분류 결과 없음(GRAPH_FAILED — elems 비드만). 화면 값은 DoeSelectionV2 */
+export interface SelectionInV2 {
+  schema_version: 2;
+  feature_angle_deg?: number | null;
+  graph?: GraphRefIn | null;
+  beads: (SelectGraphBeadIn | SelectElemsBeadIn)[];
+  ties?: string[][];
+  fixed_user?: SelectElemSet;
+  exclude?: SelectElemSet;
+}
+/** POST …/select/derive 요청(v0.17.0 schema 2 수용) */
 export interface DoeSelectDeriveIn {
-  selection: SelectionIn;
+  selection: SelectionIn | SelectionInV2;
   bead?: string | null;
 }
-/** PUT …/selection 요청 */
+/** PUT …/selection 요청(v0.17.0 schema 2 수용) */
 export interface DoeSelectionPutIn {
   version: number;
-  selection: SelectionIn;
+  selection: SelectionIn | SelectionInV2;
 }
 export interface DoeBeadSel {
   /** ^b[1-9][0-9]?$ */
@@ -3273,15 +3331,30 @@ export interface SelectionDerived {
   islands_suggested?: Record<string, DoeElemSet> | null;
   /** v0.16.1 계산 규칙 판(SR-D-13c) */
   algo?: number | null;
+  /** v0.17.0 그래프 기저 판(BG-D-39) */
+  graph_algo?: number | null;
+  /** v0.17.0 schema 2 선택의 그래프 요약 */
+  graph?: DoeDerivedGraph | null;
 }
 export type DoeSelectionDerived = SelectionDerived;
+/** v0.17.0 derive 응답 graph 칸(esl_beadgraph.md §6.1) — schema 2 선택만 */
+export interface DoeDerivedGraph {
+  sha256: string;
+  graph_algo: number;
+  edits_applied: { toggle: number; merge: number; split: number };
+  segments: { id: number; anchor: number; type: BgSegType; side: BgSide | null; tier: number; D: number; entry_width: number | null; length: number | null; network: number }[];
+  junction_zones: { id: number; anchor: number; reason: BgZoneReason }[];
+  beads: { id: string; src: "graph" | "elems"; segs: number[]; vars: ("D" | "W")[]; D_nom: number | null; W_nom: number | null; tier: number | null }[];
+  /** 대칭 묶기 제안(BG-D-21) — 세그먼트 앵커 쌍 */
+  sym_pairs: [number, number][];
+}
 /** POST …/select/derive 응답 */
 export type DoeDeriveOut = SelectionDerived;
 /** GET …/selection 응답(없으면 null) */
 export interface DoeSelectionOut {
   rev: number;
   sha256: string;
-  input: DoeSelectionIn;
+  input: DoeSelectionAny;
   derived: DoeSelectionDerived;
   updated_by_name: string;
   updated_at: string;
@@ -3304,7 +3377,12 @@ export interface DoeSelectAutoMap {
 }
 /** v0.16.2 GET /doe/studies/{id}/select/auto(esl_bead_auto.md §3.3) — 자동 탐지 seed. 404 AUTO_NOT_AVAILABLE · 409 PREP_NOT_READY */
 export interface DoeSelectAutoOut {
-  selection: DoeSelectionIn;
+  /** v0.17.0 schema 2 스터디 = 그래프 seed(schema 2) */
+  selection: DoeSelectionAny;
+  /** v0.17.0 seed 출처(schema 2 = "graph", 옛 = 없음/paicad) */
+  source?: "graph" | "paicad" | null;
+  /** v0.17.0 paicad 힌트(AUTO_SLOPE_DIFF 등 — 미리 채우지 않음). 서버 스키마 null 불가(없으면 키 없음·[]) */
+  hints?: DoeWarning[];
   /** 정규화 sha(수동 저장과 같은 식) — 서버 스키마 null 허용 */
   sha256: string | null;
   map: DoeSelectAutoMap[];
@@ -3363,3 +3441,179 @@ export interface DoeBasisMeta {
   n_nodes?: number;
   vars: DoeBasisVar[];
 }
+
+// ---------------------------------------------------------------- v0.17.0 BEADGRAPH(esl_beadgraph.md §2.5·§5.1·§6.1)
+export type BgSide = "top" | "bottom" | "left" | "right";
+export type BgSegType = "ring" | "leg" | "channel" | "pocket" | "flare" | "corner" | "tooth" | "spur" | "plateau" | "area" | "base";
+export type BgJunctionType = "T" | "X" | "L" | "W" | "Y" | "step" | "split";
+export type BgZoneReason = "junction" | "corner" | "short_strip" | "spur" | "step" | "split";
+export type BgFloorKind = "base" | "base_fragment" | "bead" | "area" | "island";
+export interface BgFloor {
+  id: number;
+  anchor: number;
+  level: number;
+  rel_height: number;
+  parent: number;
+  tier: number;
+  kind: BgFloorKind;
+  island: number;
+  area: number;
+  n_elems: number;
+  outer_free_frac: number;
+  network: number;
+}
+export interface BgTransition {
+  id: number;
+  upper: number;
+  lower: number;
+  type: "parent-child" | "junction" | "self" | "other";
+  child: number;
+  n_elems: number;
+  step_mm?: number;
+}
+export interface BgNetwork {
+  id: number;
+  floor: number;
+  segments: number[];
+  junction_zones: number[];
+}
+export interface BgSegment {
+  id: number;
+  anchor: number;
+  floor: number;
+  parent: number;
+  tier: number;
+  network: number;
+  type: BgSegType;
+  side: BgSide | null;
+  rel_depth: number;
+  D: number;
+  entry_width: number | null;
+  floor_width: number | null;
+  length: number | null;
+  open_end: boolean;
+  junctions: number[];
+  children: number[];
+  islands: number[];
+  fixed_n: number;
+  n_elems: number;
+  /** 평면 골격 [x, y](≤ 256 점) */
+  skeleton: [number, number][];
+}
+export interface BgJunction {
+  id: number;
+  type: BgJunctionType;
+  plan: [number, number];
+  pos: [number, number, number];
+  radius: number;
+  segments: number[];
+  floors: number[];
+  zone: number;
+  step_mm?: number;
+}
+export interface BgJunctionZone {
+  id: number;
+  anchor: number;
+  network: number;
+  reason: BgZoneReason;
+  junctions: number[];
+  adj_segments: number[];
+  n_elems: number;
+}
+export interface BgIsland {
+  id: number;
+  anchor: number;
+  floors: number[];
+  parent: number;
+  owner_segment: number;
+  size_mm: number;
+  rel_height: number;
+  lance: boolean;
+  straddle: boolean;
+  touch: { kind: string; ids: number[]; n: number }[];
+  fixed: boolean;
+  plan: [number, number];
+  n_elems: number;
+}
+export interface BgHole {
+  id: number;
+  plan: [number, number];
+  center: [number, number, number];
+  d_eq: number;
+  area: number;
+  circularity: number;
+  owner_floor: number;
+  owner_island: number;
+  lance_slot: boolean;
+  fixed: boolean;
+  n_nodes: number;
+}
+/** beadgraph/1 그래프(요소별 배열 없음 — 화면은 graph.bin) */
+export interface BeadGraph {
+  schema: string;
+  version: string;
+  rules: number;
+  morph_rules: number;
+  input: { n_nodes: number; n_elems: number; n_tri: number; n_fixed: number; sha256: string };
+  cfg?: Record<string, unknown>;
+  cfg_sha256?: string;
+  /** origin = 평면 좌표 원점(코어: 평면 좌표 = [X·e1, X·e2] − origin — 골격·split at 이 이 좌표). 옛 그래프는 없음 = [0, 0] */
+  frame: { n0: [number, number, number]; e1: [number, number, number]; e2: [number, number, number]; h_mm: number; origin?: [number, number]; bbox_center?: [number, number] };
+  root: number;
+  root_group: number[];
+  floors: BgFloor[];
+  transitions: BgTransition[];
+  networks: BgNetwork[];
+  segments: BgSegment[];
+  junctions: BgJunction[];
+  junction_zones: BgJunctionZone[];
+  islands: BgIsland[];
+  holes: BgHole[];
+  warnings: DoeWarning[];
+}
+/** GET /doe/studies/{sid}/select/graph — 404 GRAPH_NOT_AVAILABLE(schema 1·GRAPH_FAILED), 409 PREP_NOT_READY */
+export interface DoeSelectGraphOut {
+  graph: BeadGraph;
+  sha256: string;
+  edits_applied: null;
+  warnings: DoeWarning[];
+  /** 서버 스키마 null 허용(graph.json 에 판 기록이 없을 때) */
+  beadgraph_version: string | null;
+  rules: number | null;
+  morph_rules: number | null;
+}
+/** 세그먼트 참조(앵커 = 그 집합 최소 요소 index, BG-D-12) | 네트워크 묶기(BG-D-18) */
+export type BgSegRef = { anchor: number } | { network: number };
+/** 그래프 편집(BG-D-37) — 적용 순서 toggle → merge → split */
+export interface BgEdits {
+  toggle: { anchor: number; as: "bead" | "island" }[];
+  merge: { anchor: number }[][];
+  split: { anchor: number; at: [number, number] }[];
+}
+/** schema 2 그래프 비드(세그먼트 참조) */
+export interface DoeBeadSelGraph {
+  id: string;
+  name?: string;
+  src: "graph";
+  segs: BgSegRef[];
+  /** 기본 = 가능한 것 전부(키 생략) */
+  vars?: ("D" | "W")[];
+  /** 그래프 비드 기본 1 — 0 일 때만 키(BG-D-36) */
+  hold_fixed?: 0;
+}
+/** schema 2 요소 비드 = schema 1 비드 본문 그대로 + src */
+export type DoeBeadSelElems = DoeBeadSel & { src: "elems" };
+/** SelectionIn schema 2(BG-D-36) */
+export interface DoeSelectionV2 {
+  schema_version: 2;
+  feature_angle_deg: number;
+  /** 그래프 없음(GRAPH_FAILED) = 키 없음 — elems 비드만 */
+  graph?: { sha256: string; rules: number; edits: BgEdits };
+  beads: (DoeBeadSelGraph | DoeBeadSelElems)[];
+  /** 대칭 묶기(BG-D-21) */
+  ties: string[][];
+  fixed_user: DoeElemSet;
+  exclude: DoeElemSet;
+}
+/** 저장·seed 선택(schema 1 | 2) */
+export type DoeSelectionAny = DoeSelectionIn | DoeSelectionV2;

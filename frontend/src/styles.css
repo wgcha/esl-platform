@@ -1237,6 +1237,12 @@ details.card > .table-wrap {
 .form-grid.tight .field {
   align-content: start;
 }
+/* 강성 평가 스터디 제목: 10rem 칸 하나에 예시 문구(placeholder)가 잘리던 것 — 한 줄 전체, 읽기 좋은 폭까지(Verifier fix v0.17.0) */
+.form-grid.tight .field.doe-title {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 34rem;
+}
 
 /* 라이브러리 */
 .filters {
@@ -3642,4 +3648,141 @@ details.card.fold > .fold-body {
 }
 .bs-bead-actions {
   margin-top: 0.3rem;
+}
+
+/* v0.17.0 세그먼트 트리·그래프 비드(esl_beadgraph.md §6.2) */
+.bs-view-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.8rem;
+}
+.bs-view-row .seg {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+.bs-host.tool-split {
+  cursor: crosshair;
+}
+.bs-host.tool-pick {
+  cursor: pointer;
+}
+.sg-tree {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.sg-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+}
+.sg-pop {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 0.35rem 0.5rem;
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  list-style: none;
+}
+.sg-body {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.sg-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.12rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.sg-row:hover {
+  background: var(--surface-2);
+}
+.sg-row.hl {
+  background: #fff3cc;
+  box-shadow: inset 3px 0 0 #e0a800;
+}
+.sg-row.mine .sg-name {
+  font-weight: 600;
+}
+.sg-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.sg-kids {
+  display: grid;
+  gap: 0.05rem;
+  margin-left: 0.9rem;
+  border-left: 1px solid var(--line);
+  padding-left: 0.3rem;
+}
+.sg-fhead {
+  font-size: 0.9rem;
+}
+.sg-caret {
+  min-width: 1.4rem;
+  padding: 0 0.2rem;
+}
+.sg-sw {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+.sg-sw.zone {
+  background: repeating-linear-gradient(45deg, #969aa0 0 2px, #b2b6bc 2px 4px);
+}
+.sg-zone {
+  color: var(--muted);
+}
+.sg-icon {
+  width: 0.9rem;
+  text-align: center;
+  color: var(--muted);
+}
+.sg-islgrp {
+  justify-self: start;
+  font-size: 0.82rem;
+}
+.sg-menu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  min-width: 12rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  padding: 0.25rem;
+}
+.sg-menu .btn {
+  justify-content: flex-start;
+  text-align: left;
+}
+.sg-sym-row {
+  font-size: 0.85rem;
+}
+.bs-seg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.sg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
 }

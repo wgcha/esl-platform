@@ -2,9 +2,9 @@
 // 상태(층·실행 취소·derive)는 useBeadSelect 가 갖고, 페이지(DoeStudy)가 [선택 저장](주 버튼)·변수 표 블렌딩 편집에 같은 컨트롤러를 쓴다.
 // 3D 는 기존 장면(scene.ts — TrackballControls 회전 그대로)에 요소 모드만 더한다. 그리기 도구 중 왼쪽 끌기 = 도구, Ctrl+끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { BEAD_SOURCE_NAME, doe, isInfoWarn, warnText } from "../api/doe";
-import { errorText } from "../api/client";
-import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
+import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, warnText } from "../api/doe";
+import { ApiError, errorText } from "../api/client";
+import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
 import { loadScene } from "../view3d/loadThree";
@@ -16,9 +16,11 @@ import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
-  addBead, addTier, applyPatch, clearLayer, cloneState, deleteBead, deleteLastTier, resetAll, resetAllTo, resetBead, resetBeadTo, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionIn, toggleLink,
+  addBead, addTier, applyPatch, clearLayer, cloneState, deleteBead, deleteLastTier, resetAll, resetAllTo, resetBead, resetBeadTo, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionAny, toggleLink,
+  addGraphBead, toggleAnchorRef, beadOfSeg, beadSegs, groupNetwork, mergeSegs, removeEdit, reresolve, splitSeg, toggleIsland, toggleSeg, toggleTie,
   type Layer, type LayerName, type SelIslands, type SelState,
 } from "../view3d/select/layers";
+import { editView, graphColors, graphIndex, parseGraphBin, planXY, resolveRef, segsMask, targetMask, targetOfElem, COLOR_MODE_NAME, type EditView, type GraphColorMode, type GraphIndex, type GraphTarget } from "../view3d/select/graph";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
 import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
@@ -70,7 +72,54 @@ function useSelectData(studyId: string, on: boolean) {
   return { data, error };
 }
 
+/** v0.17.0 그래프 상태: none = schema 1 스터디, failed = GRAPH_FAILED·404(칠하기로 계속) */
+export type GraphPhase = "none" | "loading" | "ready" | "failed";
+
+/** GRAPH_FAILED 띠 문구 1줄(Verifier fix v0.17.0 — 준비 경고와 띠에 두 번 나오던 것을 띠 하나로): 준비 경고 {code GRAPH_FAILED, detail} 의
+ *  사유가 있으면 "자동 분류 실패(시간 초과) — …", 없으면 그래프 받기 오류를 괄호로 덧붙인 기본 문구 */
+export function graphFailBand(prepWarnings: DoeWarning[] | null | undefined, fetchFail: string | null): string {
+  const w = (prepWarnings ?? []).find((x) => x.code === "GRAPH_FAILED");
+  if (w) return warnText(w);
+  return fetchFail ? `${GRAPH_FAILED_TEXT} (${fetchFail})` : GRAPH_FAILED_TEXT;
+}
+
+/** v0.17.0 그래프(GET …/select/graph + graph.bin) — schema 2 스터디만. rev 를 올리면 다시 받음(BG_GRAPH_STALE) */
+function useGraphData(studyId: string, on: boolean, nElems: number | null, rev: number) {
+  const [gi, setGi] = useState<{ index: GraphIndex; sha256: string; rules: number; warnings: DoeWarning[] } | null>(null);
+  const [phase, setPhase] = useState<GraphPhase>("none");
+  const [fail, setFail] = useState<string | null>(null);
+  useEffect(() => {
+    if (!on || nElems == null) {
+      setPhase(on ? "loading" : "none");
+      return;
+    }
+    let alive = true;
+    setPhase("loading");
+    void (async () => {
+      try {
+        const [g, b] = await Promise.all([doe.selectGraph(studyId), fetchBinary(doe.selectViewUrl(studyId, "graph.bin"))]);
+        const labels = parseGraphBin(b, nElems);
+        if (!alive) return;
+        setGi({ index: graphIndex(g.graph, labels), sha256: g.sha256, rules: g.rules ?? g.graph.rules, warnings: g.warnings ?? [] });
+        setFail(null);
+        setPhase("ready");
+      } catch (e) {
+        if (!alive) return;
+        setGi(null);
+        setFail(e instanceof ApiError && e.code === "GRAPH_NOT_AVAILABLE" ? null : errorText(e));
+        setPhase("failed");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [studyId, on, nElems, rev]);
+  return { gi, phase, fail };
+}
+
 export type Tool = "click" | "brush" | "rect" | "lasso";
+/** v0.17.0 그래프 도구: 선택(클릭 = 세그먼트 더하기/빼기) · 분할(클릭 = 그 점에서 끊기) */
+export type GraphTool = "pick" | "split";
 
 export interface BeadSelectCtrl {
   data: SelectData | null;
@@ -91,7 +140,7 @@ export interface BeadSelectCtrl {
   dirty: boolean;
   /** 저장 전 화면 검사(빈 단·비드 없음·이름) — null = 통과 */
   problem: string | null;
-  input: () => DoeSelectionIn | null;
+  input: () => DoeSelectionAny | null;
   suggested: (b: number) => Uint8Array | null;
   paintElems: (elems: number[], layer: Layer, mode: "add" | "remove", merge?: boolean) => void;
   endStroke: () => void;
@@ -124,6 +173,50 @@ export interface BeadSelectCtrl {
   hold: { ring_mm: number; blend_mm: number };
   /** v0.16.2 자동 탐지 seed 가 기준 상태(되돌리기·비드별/전체 초기화 = seed, AD-D-4) */
   hasSeed: boolean;
+  // ---- v0.17.0 BEADGRAPH(esl_beadgraph.md §6.2)
+  /** 선택 schema(2 = 그래프 스터디) */
+  schema: 1 | 2;
+  graphPhase: GraphPhase;
+  /** GRAPH_FAILED 띠 문구(null = 없음) */
+  graphFailText: string | null;
+  graph: GraphIndex | null;
+  editV: EditView | null;
+  /** 트리 ↔ 3D 강조 */
+  highlight: GraphTarget | null;
+  setHighlight: (t: GraphTarget | null) => void;
+  colorMode: GraphColorMode;
+  setColorMode: (m: GraphColorMode) => void;
+  /** 그래프 모드(그래프 있음) */
+  graphMode: boolean;
+  /** 지금 비드가 그래프 비드 */
+  activeIsGraph: boolean;
+  addGraphBead: () => void;
+  /** 세그먼트 더하기/빼기(지금 비드) — 못 하면 사유를 notice 에 */
+  toggleSeg: (seg: number) => void;
+  /** 섬(→ 비드로 바꾼 섬) 더하기/빼기 */
+  toggleIslandRef: (island: number) => void;
+  groupNetwork: (seg: number) => void;
+  /** 섬 ↔ 비드 전환(anchor = 세그먼트·섬 앵커) */
+  convert: (t: GraphTarget, as: "bead" | "island") => void;
+  merge: (a: number, b: number) => void;
+  split: (seg: number, at: [number, number]) => void;
+  removeEdit: (kind: "toggle" | "merge" | "split", i: number) => void;
+  toggleTie: (ids: string[]) => void;
+  /** 세그먼트 → 비드 번호(−1 없음) */
+  segOwner: (seg: number) => number;
+  /** 비드(그래프) → 세그먼트 id 집합 */
+  beadSegSet: (bead: number) => Set<number>;
+  /** 비드로 바꾼 섬 → 비드 번호 */
+  islandOwner: (island: number) => number;
+  /** 대칭 묶기 제안(세그먼트 앵커 쌍 — derive) */
+  symPairs: [number, number][];
+  /** 한 줄 안내(못 한 동작 사유) */
+  notice: string | null;
+  /** BG_GRAPH_STALE 뒤 다시 해석 중·완료(띠) · 해석 실패 앵커 */
+  graphStale: boolean;
+  staleUnknown: number[];
+  /** 저장 오류 처리(409 BG_GRAPH_STALE 이면 그래프 다시 받기) — 처리했으면 true */
+  onSaveError: (e: unknown) => boolean;
 }
 
 /** 섬 크기 상한 기본값(설정 select.island.max_mm 거울 — 서버가 settings 에 주면 그 값) */
@@ -171,8 +264,27 @@ const CTRL = /[\u0000-\u001f\u007f]/;
  * v0.16.2 seed(자동 탐지, esl_bead_auto.md AD-D-4): 저장본이 없으면 seed 를 기본 상태로 불러옴(실행 취소 스택 비움).
  * 비드별·전체 초기화는 seed 로(수동 = 빈 선택). seed === undefined = 아직 불러오는 중(초기 상태를 만들지 않고 기다림), null = seed 없음
  */
-export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionOut | null, st: DoeSettingsOut | null, seed: DoeSelectionIn | null | undefined = null): BeadSelectCtrl {
+export function useBeadSelect(
+  studyId: string,
+  on: boolean,
+  saved: DoeSelectionOut | null,
+  st: DoeSettingsOut | null,
+  seed: DoeSelectionAny | null | undefined = null,
+  opts: { schema?: 1 | 2 | null; prepWarnings?: DoeWarning[] | null } = {},
+): BeadSelectCtrl {
   const { data, error } = useSelectData(studyId, on);
+  const schema: 1 | 2 = opts.schema === 2 || saved?.input.schema_version === 2 || seed?.schema_version === 2 ? 2 : 1;
+  const [graphRev, setGraphRev] = useState(0);
+  const gd = useGraphData(studyId, on && schema === 2, data?.manifest.n_elems ?? null, graphRev);
+  const gi = gd.gi?.index ?? null;
+  /** 그래프 준비 판단 전엔 초기 상태를 만들지 않음(schema 2 빈 상태에 graph sha 가 필요) */
+  const graphSettled = schema === 1 || gd.phase === "ready" || gd.phase === "failed";
+  const [highlight, setHighlight] = useState<GraphTarget | null>(null);
+  const [colorMode, setColorMode] = useState<GraphColorMode>("segment");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [graphStale, setGraphStale] = useState(false);
+  const [staleUnknown, setStaleUnknown] = useState<number[]>([]);
+  const stalePending = useRef(false);
   const stRef = useRef<SelState | null>(null);
   const hist = useRef(new History<LayerName>());
   const stroke = useRef<Patch<LayerName> | null>(null);
@@ -201,14 +313,22 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     setLocalIslands(s.beads.length ? enclosedIslands(data.topo, s, data.glb.positions, islandMax, ringFrac) : null);
   }, [data, islandMax, ringFrac]);
 
-  const input = useCallback((): DoeSelectionIn | null => {
+  const input = useCallback((): DoeSelectionAny | null => {
     const s = stRef.current;
     if (!s || !data) return null;
-    return toSelectionIn(s, data.bin.elemId, data.bin.elemType, featureAngle);
+    return toSelectionAny(s, data.bin.elemId, data.bin.elemType, featureAngle);
   }, [data, featureAngle]);
 
+  /** 409 BG_GRAPH_STALE(BG-D-38): 그래프를 다시 받고 앵커로 다시 해석(받은 뒤 아래 효과가 처리) */
+  const onStale = useCallback((e: unknown) => {
+    if (!(e instanceof ApiError) || e.code !== "BG_GRAPH_STALE") return false;
+    stalePending.current = true;
+    setGraphStale(true);
+    setGraphRev((r) => r + 1);
+    return true;
+  }, []);
   const doDerive = useCallback(
-    (sel: DoeSelectionIn | null) => {
+    (sel: DoeSelectionAny | null) => {
       if (!sel || !sel.beads.length) return;
       setDeriving(true);
       setDeriveError(null);
@@ -218,22 +338,22 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
           setDerive(d);
           setLocalIslands(null); // 서버 islands 가 표시를 대체(SR-D-14)
         })
-        .catch((e) => setDeriveError(errorText(e)))
+        .catch((e) => (onStale(e) ? setDeriveError(BG_STALE_TEXT) : setDeriveError(errorText(e))))
         .finally(() => setDeriving(false));
     },
-    [studyId],
+    [studyId, onStale],
   );
 
   // 저장본 → 화면 상태: 처음 1회 불러옴. 저장 직후(화면 = 새 저장본)는 기준만 바꾸고, 저장 안 한 편집이 있으면 덮지 않는다
   useEffect(() => {
-    if (!data || seed === undefined) return;
+    if (!data || seed === undefined || !graphSettled) return;
     const n = data.manifest.n_elems;
     seedRef.current = seed && seed.beads.length ? fromSelectionIn(seed, data.idx, n).state : null;
     const sha = saved?.sha256 ?? null;
     if (loadedSha.current === sha) return;
     loadedSha.current = sha;
     const fromSaved = saved ? fromSelectionIn(saved.input, data.idx, n).state : null;
-    const savedIn = fromSaved && saved ? toSelectionIn(fromSaved, data.bin.elemId, data.bin.elemType, saved.input.feature_angle_deg) : null;
+    const savedIn = fromSaved && saved ? toSelectionAny(fromSaved, data.bin.elemId, data.bin.elemType, saved.input.feature_angle_deg) : null;
     const savedJson = savedIn ? json(savedIn) : null;
     const cur = stRef.current ? input() : null;
     const curJ = cur ? json(cur) : null;
@@ -243,7 +363,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
       return;
     }
     const fromSeed = !fromSaved && seedRef.current ? cloneState(seedRef.current) : null;
-    stRef.current = fromSaved ?? fromSeed ?? emptyState(n);
+    stRef.current = fromSaved ?? fromSeed ?? emptyState(n, schema, gd.gi ? { sha256: gd.gi.sha256, rules: gd.gi.rules } : null);
     if (saved) setFeatureAngle(saved.input.feature_angle_deg);
     else if (fromSeed && seed) setFeatureAngle(seed.feature_angle_deg);
     setBaseJson(savedJson);
@@ -251,12 +371,23 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     setLocalIslands(null);
     hist.current.clear();
     if (savedIn) doDerive(savedIn);
-    else if (fromSeed && seed) doDerive(toSelectionIn(fromSeed, data.bin.elemId, data.bin.elemType, seed.feature_angle_deg));
+    else if (fromSeed && seed) doDerive(toSelectionAny(fromSeed, data.bin.elemId, data.bin.elemType, seed.feature_angle_deg));
     setActive(0);
-    setLayer(stRef.current.beads.length ? { kind: "tier", bead: 0, k: 1 } : null);
+    setLayer(stRef.current.beads.length && stRef.current.beads[0].src !== "graph" ? { kind: "tier", bead: 0, k: 1 } : null);
     bump();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, saved?.sha256, seed]);
+  }, [data, saved?.sha256, seed, graphSettled]);
+
+  // BG_GRAPH_STALE 뒤 새 그래프가 오면 앵커로 다시 해석(실행 취소 가능한 패치 1개). 실패 앵커는 띠에 표시
+  useEffect(() => {
+    if (!stalePending.current || gd.phase !== "ready" || !gd.gi || !stRef.current) return;
+    stalePending.current = false;
+    const r = reresolve(stRef.current, gd.gi.index, gd.gi.sha256, gd.gi.rules);
+    if (r.patch) hist.current.push(r.patch);
+    setStaleUnknown(r.unknown);
+    setDerive(null);
+    bump();
+  }, [gd.phase, gd.gi, bump]);
 
   const curJson = useMemo(() => {
     const x = input();
@@ -271,8 +402,12 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     if (!s.beads.length) return "[+ 비드] 로 비드를 만들고 바닥을 고르세요";
     const x = input();
     for (const b of x?.beads ?? []) {
-      const nm = b.name.trim();
+      const nm = (b.name ?? "").trim();
       if (!nm || nm.length > 32 || CTRL.test(nm)) return `${b.id.toUpperCase()}: 이름은 1~32자, 제어문자 없이`;
+      if ("src" in b && b.src === "graph") {
+        if (!b.segs.length) return `${nm}: 세그먼트가 없습니다 — 트리에서 체크하거나 3D 에서 클릭하세요`;
+        continue;
+      }
       const empty = b.tiers.find((t) => !t.floor.q.length && !t.floor.t.length);
       if (empty) return `${nm}: 단 ${empty.k} 바닥이 비었습니다 — 바닥 요소를 고르세요`;
     }
@@ -330,6 +465,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     setActive(a);
     setLayer((l) => {
       if (!n) return l && (l.kind === "fixed" || l.kind === "exclude") ? l : null;
+      if (s.beads[a]?.src === "graph" && l && l.kind !== "fixed" && l.kind !== "exclude") return null;
       if (!l || l.kind === "fixed" || l.kind === "exclude") return l ?? { kind: "tier", bead: a, k: 1 };
       if (l.bead >= n) return { kind: "tier", bead: a, k: 1 };
       if (l.kind === "tier" && l.k > s.beads[l.bead].nTiers) return { kind: "tier", bead: l.bead, k: s.beads[l.bead].nTiers };
@@ -363,6 +499,21 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [derive, data],
   );
+  // ---- v0.17.0 그래프 편집(모두 메타 패치 — 실행 취소 가능, 저장 전까지 서버 그대로)
+  const editV = useMemo(() => (gi && stRef.current ? editView(gi, stRef.current.edits) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [gi, tick]);
+  const pushMeta = (p: ReturnType<typeof toggleIsland>, reason?: string | null) => {
+    setNotice(reason ?? null);
+    if (!p) return false;
+    hist.current.push(p);
+    setDerive((d) => (d ? { ...d } : d));
+    bump();
+    return true;
+  };
+  const graphMode = schema === 2 && !!gi;
+  const curBead = stRef.current?.beads[active];
+  const activeIsGraph = graphMode && curBead?.src === "graph";
   const ctrl: BeadSelectCtrl = {
     data,
     error,
@@ -371,7 +522,7 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     active,
     setActive: (b) => {
       setActive(b);
-      setLayer({ kind: "tier", bead: b, k: 1 });
+      setLayer(stRef.current?.beads[b]?.src === "graph" ? null : { kind: "tier", bead: b, k: 1 });
     },
     layer,
     setLayer,
@@ -503,8 +654,94 @@ export function useBeadSelect(studyId: string, on: boolean, saved: DoeSelectionO
     },
     hold,
     hasSeed: !!seedRef.current,
+    schema,
+    graphPhase: gd.phase,
+    // GRAPH_FAILED 는 이 띠 한 곳에만(준비 경고 목록에서는 뺌 — DoeStudy). 사유 = 준비 경고 detail(있으면), 아니면 받기 오류
+    graphFailText: schema === 2 && gd.phase === "failed" ? graphFailBand(opts.prepWarnings, gd.fail) : null,
+    graph: gi,
+    editV,
+    highlight,
+    setHighlight,
+    colorMode,
+    setColorMode,
+    graphMode,
+    activeIsGraph,
+    addGraphBead: () => {
+      const s = stRef.current;
+      if (!s) return;
+      const r = addGraphBead(s, maxBeads);
+      if (!r) return;
+      hist.current.push(r.patch);
+      setActive(r.bead);
+      setLayer(null);
+      bump();
+    },
+    toggleSeg: (seg) => {
+      const s = stRef.current;
+      if (!s || !gi) return;
+      if (!s.beads[active] || s.beads[active].src !== "graph") return void setNotice("그래프 비드를 고르거나 [+ 비드]로 만드세요");
+      const r = toggleSeg(s, gi, active, seg);
+      pushMeta(r.patch, r.reason);
+    },
+    toggleIslandRef: (island) => {
+      const s = stRef.current;
+      const il = gi?.islandById.get(island);
+      if (!s || !il) return;
+      const r = toggleAnchorRef(s, active, il.anchor);
+      pushMeta(r.patch, r.reason);
+    },
+    groupNetwork: (seg) => {
+      const s = stRef.current;
+      if (!s || !gi) return;
+      if (!s.beads[active] || s.beads[active].src !== "graph") return void setNotice("그래프 비드를 고르거나 [+ 비드]로 만드세요");
+      const r = groupNetwork(s, gi, active, seg);
+      pushMeta(r.patch, r.reason);
+    },
+    convert: (t, as) => {
+      const s = stRef.current;
+      if (!s || !gi) return;
+      const anchor = t.kind === "seg" ? gi.segById.get(t.id)?.anchor : t.kind === "island" ? gi.islandById.get(t.id)?.anchor : undefined;
+      if (anchor == null) return;
+      pushMeta(toggleIsland(s, anchor, as, t.kind === "island" ? "island" : "bead"));
+    },
+    merge: (a, b) => {
+      const s = stRef.current;
+      if (!s || !gi) return;
+      pushMeta(mergeSegs(s, gi, a, b), null);
+    },
+    split: (seg, at) => {
+      const s = stRef.current;
+      const sg = gi?.segById.get(seg);
+      if (!s || !sg) return;
+      pushMeta(splitSeg(s, sg.anchor, at));
+    },
+    removeEdit: (kind, i) => {
+      const s = stRef.current;
+      if (s) pushMeta(removeEdit(s, kind, i));
+    },
+    toggleTie: (ids) => {
+      const s = stRef.current;
+      if (s) pushMeta(toggleTie(s, ids));
+    },
+    segOwner: (seg) => (stRef.current && gi ? beadOfSeg(stRef.current, gi, seg) : -1),
+    beadSegSet: (b) => (stRef.current && gi ? beadSegs(stRef.current, gi, b) : new Set()),
+    islandOwner: (island) => {
+      const il = gi?.islandById.get(island);
+      return il && stRef.current ? stRef.current.beads.findIndex((x) => x.segs?.some((r) => "anchor" in r && r.anchor === il.anchor)) : -1;
+    },
+    symPairs: derive?.graph?.sym_pairs ?? [],
+    notice,
+    graphStale,
+    staleUnknown,
+    onSaveError: (e) => onStale(e),
   };
   return ctrl;
+}
+
+/** 그래프 비드의 해석 안 되는 앵커(BG_SEG_UNKNOWN) — 표시용 */
+export function unknownRefs(gi: GraphIndex | null, segs: { anchor: number }[] | undefined): number[] {
+  if (!gi || !segs) return [];
+  return segs.filter((r) => "anchor" in r && !resolveRef(gi, r).length && !(gi.labels.island[r.anchor] >= 0)).map((r) => r.anchor);
 }
 
 // ================================================================ ② 3D 선택
@@ -526,7 +763,31 @@ function parseLayer(k: string): Layer | null {
   return null;
 }
 
-function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; brushPx: number; visibleOnly: boolean; eraser: boolean }) {
+/**
+ * v0.17.0 3D 클릭(그래프 모드): 요소 → 대상(섬 > 접합 구역 > 세그먼트 > 바닥)을 강조(트리 행도 같이). 편집 가능하면
+ * 선택 도구 = 세그먼트를 지금 비드에 더하기/빼기(비드로 바꾼 섬도), 분할 도구 = 그 점(평면 좌표)에서 끊기. 강조한 대상을 돌려줌
+ */
+export function graphClick(
+  ctrl: Pick<BeadSelectCtrl, "setHighlight" | "toggleSeg" | "toggleIslandRef" | "split" | "editV">,
+  gi: GraphIndex,
+  hit: { elem: number; point: ArrayLike<number> } | null,
+  gtool: GraphTool,
+  editable: boolean,
+): GraphTarget | null {
+  const t = hit ? targetOfElem(gi, hit.elem) : null;
+  ctrl.setHighlight(t);
+  if (!t || !hit || !editable) return t;
+  if (gtool === "split") {
+    if (t.kind === "seg") ctrl.split(t.id, planXY(gi, hit.point));
+  } else if (t.kind === "seg") ctrl.toggleSeg(t.id);
+  else if (t.kind === "island" && ctrl.editV?.islandAsBead.has(t.id)) ctrl.toggleIslandRef(t.id);
+  return t;
+}
+
+/** 그래프 클릭 모드: 그래프가 있고 지금 비드가 그래프 비드(또는 비드 없음) */
+const graphClickMode = (ctrl: BeadSelectCtrl) => ctrl.graphMode && (!ctrl.state?.beads[ctrl.active] || ctrl.activeIsGraph);
+
+function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; gtool: GraphTool; brushPx: number; visibleOnly: boolean; eraser: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<SceneApi | null>(null);
@@ -590,9 +851,30 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
 
   // 요소 색·경계선(상태가 바뀔 때마다)
   const s = ctrl.state;
+  const gi = ctrl.graph;
+  const hlMask = useMemo(() => (gi && ctrl.highlight ? targetMask(gi, ctrl.highlight, ctrl.editV) : null), [gi, ctrl.highlight, ctrl.editV]);
   useEffect(() => {
     const sc = sceneRef.current;
     if (!sc || !s || !data || phase !== "ready") return;
+    const pos = data.glb.positions;
+    const lines = (pred: (e: number) => boolean) => {
+      const pairs = boundaryEdges(data.topo, pred);
+      const segs = new Float32Array(pairs.length * 3);
+      for (let i = 0; i < pairs.length; i++) for (let c = 0; c < 3; c++) segs[i * 3 + c] = pos[pairs[i] * 3 + c];
+      return segs;
+    };
+    if (ctrl.graphMode && gi && ctrl.editV) {
+      // v0.17.0 그래프 색(세그먼트·tier·섬) + 요소 비드 칠한 곳은 기존 색. 경계선 = 강조 대상, 없으면 지금 비드
+      const ec = elemColors(s, ctrl.active, ctrl.suggested, null);
+      const active = ctrl.activeIsGraph ? ctrl.beadSegSet(ctrl.active) : new Set<number>();
+      const other = new Set<number>();
+      s.beads.forEach((b, i) => i !== ctrl.active && b.src === "graph" && ctrl.beadSegSet(i).forEach((x) => other.add(x)));
+      const elemsC = (e: number): [number, number, number] | null => (s.owner[e] >= 0 || s.fixed[e] || s.exclude[e] ? [ec[e * 4], ec[e * 4 + 1], ec[e * 4 + 2]] : null);
+      sc.setElemColors?.(graphColors(gi, ctrl.editV, ctrl.colorMode, { active, other, highlight: hlMask }, elemsC));
+      const am = hlMask ?? (active.size ? segsMask(gi, active) : null);
+      sc.setOverlayLines?.(am ? lines((e) => !!am[e]) : null);
+      return;
+    }
     sc.setElemColors?.(elemColors(s, ctrl.active, ctrl.suggested, ctrl.islandMask));
     if (s.beads[ctrl.active]) {
       const slope = effectiveSlope(s, ctrl.active, ctrl.suggested(ctrl.active));
@@ -602,7 +884,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
       for (let i = 0; i < pairs.length; i++) for (let c = 0; c < 3; c++) segs[i * 3 + c] = pos[pairs[i] * 3 + c];
       sc.setOverlayLines?.(segs);
     } else sc.setOverlayLines?.(null);
-  }, [ctrl.tick, ctrl.active, ctrl.suggested, ctrl.islandMask, phase, s, data]);
+  }, [ctrl.tick, ctrl.active, ctrl.suggested, ctrl.islandMask, phase, s, data, gi, ctrl.graphMode, ctrl.editV, ctrl.colorMode, hlMask]);
 
   // ---- 입력: 그리기 도구(왼쪽 끌기) · 클릭+확장 · 더블클릭 중심
   const strokeRef = useRef<{ mode: "add" | "remove"; start: Pt; pts: Pt[]; centroids: Float32Array | null } | null>(null);
@@ -661,7 +943,8 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
     const elems = elemsIn((x, y) => inCircle(x, y, p[0], p[1], r), { x: p[0] - r, y: p[1] - r, w: 2 * r + 1, h: 2 * r + 1 });
     ctrl.paintElems(elems, ctrl.layer, mode, true);
   };
-  const canDraw = editable && phase === "ready" && !!ctrl.layer;
+  const gClick = graphClickMode(ctrl);
+  const canDraw = editable && phase === "ready" && !!ctrl.layer && !gClick;
   const onDownCapture = (e: RPointerEvent<HTMLDivElement>) => {
     downRef.current = { x: e.clientX, y: e.clientY };
     if (!canDraw || tool === "click" || e.button !== 0 || e.ctrlKey || e.metaKey) return;
@@ -710,6 +993,12 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
       drawOverlay(tool === "brush" ? "brush" : "none", [], p);
       return;
     }
+    // v0.17.0 그래프 클릭: 대상 강조(트리와 같이) + 지금 그래프 비드에 세그먼트 더하기/빼기 · 분할 도구 = 그 점에서 끊기
+    if (gClick && gi && phase === "ready" && e.button === 0 && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= 4) {
+      const hit = sceneRef.current?.pickElem?.(e.clientX, e.clientY);
+      graphClick(ctrl, gi, hit ?? null, gtool, editable);
+      return;
+    }
     // 클릭+확장: 끌지 않은 왼쪽 클릭
     if (!canDraw || tool !== "click" || e.button !== 0 || !down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
     const sc = sceneRef.current;
@@ -742,7 +1031,7 @@ function Select3D({ ctrl, editable, tool, brushPx, visibleOnly, eraser }: { ctrl
     <div className="v3d-stage">
       <div
         ref={host}
-        className={`v3d-host bs-host tool-${tool}${eraser ? " erasing" : ""}`}
+        className={`v3d-host bs-host tool-${gClick ? (gtool === "split" ? "split" : "pick") : tool}${eraser && !gClick ? " erasing" : ""}`}
         data-testid="bs-host"
         data-phase={phase}
         tabIndex={0}
@@ -784,7 +1073,7 @@ export interface AutoSeedView {
 }
 export const AUTO_BADGE = "자동 탐지 결과 — 수정 후 저장";
 
-function AutoSeedBar({ auto }: { auto: AutoSeedView }) {
+function AutoSeedBar({ auto, graph }: { auto: AutoSeedView; graph?: boolean }) {
   const warns = auto.warnings.filter((w) => !isInfoWarn(w));
   const infos = auto.warnings.filter(isInfoWarn);
   if (!auto.unsaved && !auto.notice && !auto.warnings.length) return null;
@@ -792,7 +1081,7 @@ function AutoSeedBar({ auto }: { auto: AutoSeedView }) {
     <div className="bs-auto" data-testid="bs-auto" style={{ marginBottom: 8 }}>
       <div className="inline-actions" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       {auto.unsaved && (
-        <span className="badge info" data-testid="bs-auto-badge" title="자동 탐지(paicad)가 찾은 비드로 채웠습니다 — 고친 뒤 [선택 저장]. 되돌리기·초기화는 이 결과로 돌아갑니다">
+        <span className="badge info" data-testid="bs-auto-badge" title={`자동 탐지(${graph ? "메시 분류기" : "paicad"})가 찾은 비드로 채웠습니다 — 고친 뒤 [선택 저장]. 되돌리기·초기화는 이 결과로 돌아갑니다`}>
           {AUTO_BADGE}
         </span>
       )}
@@ -823,89 +1112,139 @@ function AutoSeedBar({ auto }: { auto: AutoSeedView }) {
 export const autoNoticeText = (code: string | null) =>
   code ? `${code === "AUTO_DETECT_FAILED" ? "비드 자동 탐지에 실패했습니다" : "자동 탐지 결과가 없습니다"} — ${BEAD_SOURCE_NAME.manual} 도구로 비드를 고르세요` : null;
 
+const GTOOL_NAME: Record<GraphTool, string> = { pick: "세그먼트 선택", split: "분할" };
+
 export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null }) {
   const [tool, setTool] = useState<Tool>("click");
+  const [gtool, setGtool] = useState<GraphTool>("pick");
   const [brushPx, setBrushPx] = useState(20);
   const [visibleOnly, setVisibleOnly] = useState(true);
   const [eraser, setEraser] = useState(false);
   const s = ctrl.state;
   const layers: Layer[] = s
-    ? [...s.beads.flatMap((b, bi) => [...Array.from({ length: b.nTiers }, (_, i): Layer => ({ kind: "tier", bead: bi, k: i + 1 })), { kind: "slope", bead: bi } as Layer]), { kind: "fixed" }, { kind: "exclude" }]
+    ? [...s.beads.flatMap((b, bi) => (b.src === "graph" ? [] : [...Array.from({ length: b.nTiers }, (_, i): Layer => ({ kind: "tier", bead: bi, k: i + 1 })), { kind: "slope", bead: bi } as Layer])), { kind: "fixed" }, { kind: "exclude" }]
     : [];
   const ro = !editable;
   const noBead = !s?.beads.length;
+  const gClick = graphClickMode(ctrl);
+  /** 칠하기 층이 고정·제외면 그래프 비드여도 칠하기 도구를 보임 */
+  const painting = !gClick || ctrl.layer?.kind === "fixed" || ctrl.layer?.kind === "exclude";
   return (
     <div className="bs-grid">
       <Card title="② 비드 선택" right={<span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
-        {auto && <AutoSeedBar auto={auto} />}
+        {auto && <AutoSeedBar auto={auto} graph={ctrl.schema === 2} />}
+        {ctrl.graphFailText && (
+          <div className="warn-box small" role="alert" data-testid="bs-graph-failed">
+            {ctrl.graphFailText}
+          </div>
+        )}
+        {ctrl.graphStale && (
+          <div className="warn-box small" role="alert" data-testid="bs-graph-stale">
+            {BG_STALE_TEXT}
+            {ctrl.staleUnknown.length > 0 && ` — 찾지 못한 세그먼트 ${ctrl.staleUnknown.length}개(앵커 ${ctrl.staleUnknown.slice(0, 5).join(", ")}${ctrl.staleUnknown.length > 5 ? " …" : ""})를 지우세요`}
+          </div>
+        )}
         {fixedMissing && (
           <div className="warn-box small" role="alert" data-testid="bs-fixed-missing">
             체결 정보 없음 — 체결부를 고정으로 칠하세요(③ [고정 칠하기])
           </div>
         )}
         <div className="bs-tools" role="toolbar" aria-label="선택 도구">
-          <span className="seg" role="radiogroup" aria-label="도구">
-            {(Object.keys(TOOL_NAME) as Tool[]).map((t) => (
-              <button key={t} type="button" role="radio" aria-checked={tool === t} className={`btn small ghost toggle${tool === t ? " on" : ""}`} onClick={() => setTool(t)} disabled={ro}>
-                {TOOL_NAME[t]}
-              </button>
-            ))}
-          </span>
-          {tool === "brush" && (
-            <label className="range-field">
-              <span>브러시</span>
-              <input type="range" min={4} max={80} step={1} value={brushPx} aria-label="브러시 크기(px)" onChange={(e) => setBrushPx(Number(e.target.value))} />
-              <span className="mono small range-val">{brushPx}px</span>
+          {ctrl.graphMode && (
+            <label className="field-inline" title="3D 색 기준(그래프 분류)">
+              <span>색</span>
+              <select aria-label="3D 색 기준" value={ctrl.colorMode} onChange={(e) => ctrl.setColorMode(e.target.value as GraphColorMode)} data-testid="bs-color-mode">
+                {(Object.keys(COLOR_MODE_NAME) as GraphColorMode[]).map((m) => (
+                  <option key={m} value={m}>
+                    {COLOR_MODE_NAME[m]}
+                  </option>
+                ))}
+              </select>
             </label>
           )}
-          <label className="field-inline">
-            <span>층</span>
-            <select aria-label="대상 층" value={layerKey(ctrl.layer)} disabled={ro || noBead} onChange={(e) => {
-              const l = parseLayer(e.target.value);
-              if (l) {
-                ctrl.setLayer(l);
-                if (l.kind === "tier" || l.kind === "slope") ctrl.setActive(l.bead), ctrl.setLayer(l);
-              }
-            }}>
-              {noBead && <option value="">비드 없음 — [+ 비드]</option>}
-              {s && layers.map((l) => (
-                <option key={layerKey(l)} value={layerKey(l)}>
-                  {layerLabel(s, l)}
-                </option>
+          {!painting ? (
+            <span className="seg" role="radiogroup" aria-label="그래프 도구">
+              {(Object.keys(GTOOL_NAME) as GraphTool[]).map((t) => (
+                <button key={t} type="button" role="radio" aria-checked={gtool === t} className={`btn small ghost toggle${gtool === t ? " on" : ""}`} onClick={() => setGtool(t)} disabled={ro} data-testid={`bs-gtool-${t}`}>
+                  {GTOOL_NAME[t]}
+                </button>
               ))}
-            </select>
-          </label>
-          <label className="check-field" title="체크 = 화면에 보이는 면만 고름(가려진 뒷면 제외), 해제 = 관통 선택">
-            <input type="checkbox" checked={visibleOnly} onChange={(e) => setVisibleOnly(e.target.checked)} />
-            <span>보이는 면만</span>
-          </label>
-          <label className="field-inline" title="클릭+확장·사면 자동의 같은 법선 판정 각">
-            <span>feature</span>
-            <input type="number" className="doe-num short" min={1} max={45} step={0.5} aria-label="feature angle(°)" value={ctrl.featureAngle} disabled={ro} onChange={(e) => {
-              const v = Number(e.target.value);
-              if (v >= 1 && v <= 45) ctrl.setFeatureAngle(v);
-            }} />
-            <span className="small muted">°</span>
-          </label>
+            </span>
+          ) : (
+            <>
+              <span className="seg" role="radiogroup" aria-label="도구">
+                {(Object.keys(TOOL_NAME) as Tool[]).map((t) => (
+                  <button key={t} type="button" role="radio" aria-checked={tool === t} className={`btn small ghost toggle${tool === t ? " on" : ""}`} onClick={() => setTool(t)} disabled={ro}>
+                    {TOOL_NAME[t]}
+                  </button>
+                ))}
+              </span>
+              {tool === "brush" && (
+                <label className="range-field">
+                  <span>브러시</span>
+                  <input type="range" min={4} max={80} step={1} value={brushPx} aria-label="브러시 크기(px)" onChange={(e) => setBrushPx(Number(e.target.value))} />
+                  <span className="mono small range-val">{brushPx}px</span>
+                </label>
+              )}
+              <label className="field-inline">
+                <span>층</span>
+                <select aria-label="대상 층" value={layerKey(ctrl.layer)} disabled={ro || (noBead && !ctrl.graphMode)} onChange={(e) => {
+                  const l = parseLayer(e.target.value);
+                  if (l) {
+                    ctrl.setLayer(l);
+                    if (l.kind === "tier" || l.kind === "slope") ctrl.setActive(l.bead), ctrl.setLayer(l);
+                  }
+                }}>
+                  {!ctrl.layer && <option value="">층 고르기</option>}
+                  {noBead && !ctrl.graphMode && <option value="">비드 없음 — [+ 비드]</option>}
+                  {s && layers.map((l) => (
+                    <option key={layerKey(l)} value={layerKey(l)}>
+                      {layerLabel(s, l)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="check-field" title="체크 = 화면에 보이는 면만 고름(가려진 뒷면 제외), 해제 = 관통 선택">
+                <input type="checkbox" checked={visibleOnly} onChange={(e) => setVisibleOnly(e.target.checked)} />
+                <span>보이는 면만</span>
+              </label>
+              <label className="field-inline" title="클릭+확장·사면 자동의 같은 법선 판정 각">
+                <span>feature</span>
+                <input type="number" className="doe-num short" min={1} max={45} step={0.5} aria-label="feature angle(°)" value={ctrl.featureAngle} disabled={ro} onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (v >= 1 && v <= 45) ctrl.setFeatureAngle(v);
+                }} />
+                <span className="small muted">°</span>
+              </label>
+            </>
+          )}
           <span className="bs-tool-group">
-            <button type="button" className={`btn small ghost icon toggle${eraser ? " on" : ""}`} aria-pressed={eraser} aria-label="지우개" onClick={() => setEraser((x) => !x)} disabled={ro || noBead && ctrl.layer?.kind !== "fixed"} title={ro ? RO_TIP : "지우개: 켜면 클릭·끌기가 지금 층에서 빼기(Alt 와 같음)"} data-testid="bs-eraser">
-              <EraserIcon />
+            {painting && (
+              <>
+                <button type="button" className={`btn small ghost icon toggle${eraser ? " on" : ""}`} aria-pressed={eraser} aria-label="지우개" onClick={() => setEraser((x) => !x)} disabled={ro || noBead && ctrl.layer?.kind !== "fixed"} title={ro ? RO_TIP : "지우개: 켜면 클릭·끌기가 지금 층에서 빼기(Alt 와 같음)"} data-testid="bs-eraser">
+                  <EraserIcon />
+                </button>
+                <button type="button" className="btn small ghost" onClick={() => {
+                  if (!s || !ctrl.layer) return;
+                  if (window.confirm(`'${layerLabel(s, ctrl.layer)}' 층의 요소를 모두 비웁니다. 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.`)) ctrl.clearLayer();
+                }} disabled={ro || !ctrl.layer} title={ro ? RO_TIP : "지금 층(단 바닥·사면·고정·제외)의 요소를 모두 비웁니다(실행 취소 가능)"}>
+                  층 비우기
+                </button>
+              </>
+            )}
+            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title={gClick ? "서버가 세그먼트 묶음·공칭 깊이·폭·대칭 제안을 계산합니다(저장 안 함)" : "서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)"}>
+              {ctrl.deriving ? "계산 중…" : gClick ? "다시 계산" : "사면·경계 자동"}
             </button>
-            <button type="button" className="btn small ghost" onClick={() => {
-              if (!s || !ctrl.layer) return;
-              if (window.confirm(`'${layerLabel(s, ctrl.layer)}' 층의 요소를 모두 비웁니다. 실행 취소(Ctrl+Z)로 되돌릴 수 있습니다.`)) ctrl.clearLayer();
-            }} disabled={ro || !ctrl.layer} title={ro ? RO_TIP : "지금 층(단 바닥·사면·고정·제외)의 요소를 모두 비웁니다(실행 취소 가능)"}>
-              층 비우기
-            </button>
-            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title="서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)">
-              {ctrl.deriving ? "계산 중…" : "사면·경계 자동"}
-            </button>
-            <button type="button" className="btn small ghost" onClick={() => ctrl.ring(1)} disabled={ro || noBead} title="경계 바깥 한 줄을 사면에 더합니다">
-              경계 +1줄
-            </button>
-            <button type="button" className="btn small ghost" onClick={() => ctrl.ring(-1)} disabled={ro || noBead} title="경계에 닿은 사면 한 줄을 뺍니다">
-              −1줄
-            </button>
+            {painting && (
+              <>
+                <button type="button" className="btn small ghost" onClick={() => ctrl.ring(1)} disabled={ro || noBead || ctrl.activeIsGraph} title="경계 바깥 한 줄을 사면에 더합니다">
+                  경계 +1줄
+                </button>
+                <button type="button" className="btn small ghost" onClick={() => ctrl.ring(-1)} disabled={ro || noBead || ctrl.activeIsGraph} title="경계에 닿은 사면 한 줄을 뺍니다">
+                  −1줄
+                </button>
+              </>
+            )}
             <button type="button" className="btn small ghost icon" onClick={ctrl.undo} disabled={ro || !ctrl.canUndo} aria-label="실행 취소" title={ctrl.hasSeed ? "실행 취소(Ctrl+Z) — 끝까지 되돌리면 자동 탐지 결과" : "실행 취소(Ctrl+Z)"}>
               ↶
             </button>
@@ -914,11 +1253,24 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ct
             </button>
           </span>
         </div>
-        <Select3D ctrl={ctrl} editable={editable} tool={tool} brushPx={brushPx} visibleOnly={visibleOnly} eraser={eraser} />
+        <Select3D ctrl={ctrl} editable={editable} tool={tool} gtool={gtool} brushPx={brushPx} visibleOnly={visibleOnly} eraser={eraser} />
         <div className="small muted bs-hint" data-testid="bs-hint">
-          {eraser ? "지우개 켜짐: 클릭·끌기 = 지금 층에서 빼기(다시 누르면 더하기) · " : ""}
-          {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 또는 지우개 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt 또는 지우개 = 빼기 · Ctrl+끌기 = 회전"} · 층 비우기·비드 ✕·단 삭제 · Ctrl+Z = 실행 취소 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열(밝은 단계 = 섬 — 바닥과 같이 이동), 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
+          {!painting
+            ? gtool === "split"
+              ? "분할: 세그먼트 위 한 점 클릭 = 그 자리에서 둘로 끊기(변수 없는 분할 구역) · 끌기 = 회전 · Ctrl+Z = 실행 취소 · 색: 세그먼트별 · 빗금 회색 = 접합 구역(변수 없음) · 하늘색 = 섬"
+              : "클릭 = 그 세그먼트를 지금 비드에 더하기/빼기(트리와 같이 강조) · 끌기 = 회전 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 색: 세그먼트별(지금 비드 = 진하게, 노랑 = 강조) · 빗금 회색 = 접합 구역(변수 없음) · 하늘색 = 섬"
+            : (
+              <>
+                {eraser ? "지우개 켜짐: 클릭·끌기 = 지금 층에서 빼기(다시 누르면 더하기) · " : ""}
+                {tool === "click" ? "클릭 = 같은 법선·연결 요소로 확장해 더하기 · Alt+클릭 또는 지우개 = 빼기 · 끌기 = 회전" : "끌기 = 칠하기 · Shift = 더하기 · Alt 또는 지우개 = 빼기 · Ctrl+끌기 = 회전"} · 층 비우기·비드 ✕·단 삭제 · Ctrl+Z = 실행 취소 · 오른쪽 끌기 = 이동 · 휠 = 확대 · 더블클릭 = 중심 · 색: 단 = 파랑 계열(밝은 단계 = 섬 — 바닥과 같이 이동), 사면 = 주황(연한 주황 = 자동 제안), 고정 = 진회색, 경계 = 검은 선
+              </>
+            )}
         </div>
+        {ctrl.notice && (
+          <div className="small warn-text" role="status" data-testid="bs-notice">
+            {ctrl.notice}
+          </div>
+        )}
         <ErrorLine text={ctrl.deriveError} />
       </Card>
       <Card title="③ 비드 목록·도구">

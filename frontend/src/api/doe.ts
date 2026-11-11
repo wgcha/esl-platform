@@ -1,7 +1,7 @@
 // v0.9.0 비드 형상 DOE API(계약 esl_bead_doe.md §10). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
-  DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionIn, DoeSelectionOut, DoeSelectViewManifest,
+  DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
@@ -261,13 +261,13 @@ export const doe = {
   view3dPath: (id: string, did: string, file = "manifest.json") => `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/${file}`,
   // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §9)
   /** 선택 보기 파일(part.glb · select.bin · select_manifest.json) */
-  selectViewUrl: (id: string, file: "part.glb" | "select.bin" | "select_manifest.json") => `${API_PREFIX}/doe/studies/${id}/select/view/${file}`,
+  selectViewUrl: (id: string, file: "part.glb" | "select.bin" | "select_manifest.json" | "graph.bin") => `${API_PREFIX}/doe/studies/${id}/select/view/${file}`,
   selectManifest: (id: string) => request<DoeSelectViewManifest>("GET", `/doe/studies/${id}/select/view/select_manifest.json`),
   /** 저장 없이 서버 재계산(사면·경계·공칭·경고). bead 주면 그 비드만 */
-  derive: (id: string, selection: DoeSelectionIn, bead?: string | null) =>
+  derive: (id: string, selection: DoeSelectionAny, bead?: string | null) =>
     request<DoeDeriveOut>("POST", `/doe/studies/${id}/select/derive`, { body: (bead ? { selection, bead } : { selection }) satisfies DoeSelectDeriveIn }),
   selection: (id: string) => request<DoeSelectionOut | null>("GET", `/doe/studies/${id}/selection`),
-  saveSelection: (id: string, version: number, selection: DoeSelectionIn) => request<DoeStudyOut>("PUT", `/doe/studies/${id}/selection`, { body: { version, selection } satisfies DoeSelectionPutIn }),
+  saveSelection: (id: string, version: number, selection: DoeSelectionAny) => request<DoeStudyOut>("PUT", `/doe/studies/${id}/selection`, { body: { version, selection } satisfies DoeSelectionPutIn }),
   /** 기저(rev = 저장 선택 rev — 미리보기한 선택과 다르면 404) */
   basisUrl: (id: string, rev: number) => `${API_PREFIX}/doe/studies/${id}/select/basis?rev=${rev}`,
   basisMeta: (id: string, rev: number) => request<DoeBasisMeta>("GET", `/doe/studies/${id}/select/basis`, { query: { meta: "1", rev: String(rev) } }),
@@ -275,7 +275,11 @@ export const doe = {
   shapeDefeature: (id: string, did: string) => request<DoeDefeatureList>("GET", `/doe/studies/${id}/shapes/${encodeURIComponent(did)}/defeature`).then(normalizeDefeatureList),
   // ---- v0.16.2 자동 탐지 seed(esl_bead_auto.md §3.3 — 404 AUTO_NOT_AVAILABLE · 409 PREP_NOT_READY)
   selectAuto: (id: string) => request<DoeSelectAutoOut>("GET", `/doe/studies/${id}/select/auto`),
+  // ---- v0.17.0 비드 네트워크 그래프(esl_beadgraph.md §6.1 — 404 GRAPH_NOT_AVAILABLE · 409 PREP_NOT_READY)
+  selectGraph: (id: string) => request<DoeSelectGraphOut>("GET", `/doe/studies/${id}/select/graph`),
 };
+/** 계약 이름(api/doe.ts getSelectGraph) */
+export const getSelectGraph = doe.selectGraph;
 /** 계약 이름(api/doe.ts getSelectAuto) */
 export const getSelectAuto = doe.selectAuto;
 /** seed 불러오기: 404 AUTO_NOT_AVAILABLE = seed 없음(null), 그 밖 오류는 그대로. 비드 0개 seed(자동 탐지 실패)도 null */
@@ -324,8 +328,8 @@ export function selectSubBlocked(st: DoeSettingsOut, base: DoeSelectBase, source
   const sb = scenarioBlocked(st, "select");
   if (sb) return sb;
   if (base === "mesh" && st.scenarios.select_mesh === false) return "서버에서 다른 모델(B 메시) 비드 선택이 꺼져 있습니다";
-  const paicadOff = !st.enabled && !!st.reason && st.reason.startsWith("PAICAD");
-  if (source === "auto" && (paicadOff || (st.scenarios.select_auto ?? st.paicad.ready) === false)) return "형상 엔진(paicad)이 준비되지 않아 자동 탐지를 쓸 수 없습니다 — 직접 선택을 쓰세요";
+  // v0.17.0(esl_beadgraph.md §5.5): 자동 탐지 = 메시 분류기(select 가능 ∧ select.graph.enabled) — paicad 무관
+  if (source === "auto" && (st.scenarios.select_auto === false || st.select?.graph?.enabled === false)) return "서버에서 비드 자동 분류가 꺼져 있습니다 — 직접 선택을 쓰세요";
   return null;
 }
 export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)", select: "같은 모델" };
@@ -440,14 +444,46 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   AUTO_NOT_AVAILABLE: "자동 탐지 결과가 없습니다",
   SELECT_BRIDGE_SKIPPED: "큰 구멍은 건너 잇지 않았습니다",
   MORPH_EXTREME_ELEMENTS: "모핑 후 극단 요소(넓이 비·법선 회전)가 있습니다",
+  // v0.17.0 비드 네트워크 분류기(esl_beadgraph.md §6.4)
+  GRAPH_FAILED: "자동 분류 실패 — 직접 칠하기(요소 비드)로 계속",
+  GRAPH_RASTER_COARSE: "큰 바닥은 골격 해상도를 낮춰 분류했습니다",
+  GRAPH_NOT_AVAILABLE: "비드 분류 결과가 없습니다",
+  AUTO_HINT_UNAVAILABLE: "STEP 비드 인식 힌트를 쓸 수 없습니다(자동 분류와 무관)",
+  BG_GROUP_NOT_CONNECTED: "한 비드의 세그먼트가 접합 구역으로 이어져 있지 않습니다",
+  BG_TIE_NOMINAL: "대칭으로 묶은 비드의 공칭 치수가 너무 다릅니다",
+  BG_SEG_UNKNOWN: "분류 결과에서 찾을 수 없는 세그먼트가 있습니다 — 지우고 다시 고르세요",
+  BG_EDIT_INVALID: "세그먼트 편집(전환·병합·분할)이 올바르지 않습니다",
+  SELECT_SCHEMA_MISMATCH: "이 스터디의 선택 형식과 다릅니다 — 새로 고친 뒤 저장하세요",
+  BG_GRAPH_STALE: "분류 결과가 바뀌었습니다 — 다시 확인 후 저장",
+  BG_GROUP_NOMINAL_SPREAD: "묶은 세그먼트의 공칭 깊이가 서로 달라 평균을 공칭으로 씁니다",
+  BG_SEGMENT_SHORT: "세그먼트가 접합 램프보다 짧아 기본 변수에서 뺐습니다",
+  BG_RAMP_SHORT: "범위가 기본보다 넓어 접합 램프가 짧습니다",
+  BG_SHARED_CHILD: "자식 바닥이 다른 변에도 닿아 제자리에 두고 벽이 높이 차를 흡수합니다",
+  BG_CORNER_GUARD: "바닥 코너가 좁아 그 곳 사면을 가파르게 했습니다",
+  BG_ISLAND_HELD: "섬 안 고정 노드를 제자리에 두었습니다",
+  BG_RANGE_CLAMPED: "기본 W 범위 끝에서 요소가 뒤집혀 뒤집힘 없는 범위로 줄였습니다",
+  BG_BASIS_LEAK: "기저가 허용 구역 밖을 움직입니다(구현 오류)",
+  BG_ACHIEVED_MISMATCH: "목표 깊이를 정확히 얻지 못했습니다(구현 오류)",
+  BG_OUTSIDE_MOVED: "바뀐 세그먼트 밖이 움직였습니다",
 };
+/** v0.17.0 GRAPH_FAILED 사유(code) */
+export const GRAPH_FAIL_REASON: Record<string, string> = { ERROR: "분류 오류", TIMEOUT: "시간 초과", TOO_LARGE: "요소 수 상한 초과", DISABLED: "서버에서 꺼짐", NO_FLOOR: "바닥을 찾지 못함" };
+/** v0.17.0 띠 문구(§6.2) */
+export const GRAPH_FAILED_TEXT = "자동 분류 실패 — 직접 칠하기(요소 비드)로 계속";
+export const BG_STALE_TEXT = "분류 결과가 바뀌었습니다 — 다시 확인 후 저장";
+/** GRAPH_FAILED 사유: 준비 경고 {code: "GRAPH_FAILED", message, detail} — 안쪽 사유는 detail 하나(AUTO_DETECT_FAILED 와 같은 형식) */
+export function graphFailText(w: Record<string, unknown> | null | undefined): string {
+  const c = typeof w?.detail === "string" && GRAPH_FAIL_REASON[w.detail] ? w.detail : undefined;
+  return `자동 분류 실패${c ? `(${GRAPH_FAIL_REASON[c]})` : ""}`;
+}
 /** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */
 const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
 /** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
-const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF"]);
+const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED"]);
 /** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
 function autoWarnText(w: Record<string, unknown>): string {
   const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
+  const B = (v: unknown) => String(v ?? "?").toUpperCase();
   switch (w.code) {
     case "AUTO_DETECT_FAILED":
       return `비드 자동 탐지 실패(${AUTO_STEP_NAME[String(w.step ?? "")] ?? String(w.step ?? "?")}${w.detail ? ` · ${String(w.detail)}` : ""}) — 직접 선택으로 진행하세요`;
@@ -459,6 +495,33 @@ function autoWarnText(w: Record<string, unknown>): string {
       return w.bead != null && typeof w.rel === "number" ? `${String(w.bead).toUpperCase()}: 자동 탐지 사면 폭이 계산값과 ${(w.rel * 100).toFixed(0)} % 다릅니다(참고)` : "";
     case "SELECT_BRIDGE_SKIPPED":
       return w.eq_d_mm != null ? `등가 지름 ${n(w.eq_d_mm)} mm 구멍은 건너 잇지 않았습니다${w.gap_mm != null ? `(틈 ${n(w.gap_mm)} mm)` : ""}` : "";
+    // v0.17.0 BG_*(esl_beadgraph.md §6.4)
+    case "GRAPH_FAILED":
+      return `${graphFailText(w)} — 직접 칠하기(요소 비드)로 계속`;
+    case "BG_GROUP_NOT_CONNECTED":
+      return w.bead != null ? `${B(w.bead)}: 세그먼트가 접합 구역으로 이어져 있지 않습니다 — 이웃 세그먼트만 한 비드로` : "";
+    case "BG_TIE_NOMINAL":
+      return Array.isArray(w.beads) ? `대칭 묶기 ${w.beads.map(B).join("·")}: 공칭 치수가 너무 다릅니다` : "";
+    case "BG_SEG_UNKNOWN":
+      return w.anchor != null ? `세그먼트(앵커 ${n(w.anchor)})를 분류 결과에서 찾지 못했습니다 — 지우고 다시 고르세요` : "";
+    case "BG_GROUP_NOMINAL_SPREAD":
+      return w.bead != null && w.min != null && w.max != null ? `${B(w.bead)}: 공칭 깊이 ${n(w.min)}~${n(w.max)} mm — 길이 가중 평균을 공칭으로` : "";
+    case "BG_SEGMENT_SHORT":
+      return w.bead != null && w.length_mm != null ? `${B(w.bead)}: 길이 ${n(w.length_mm)} mm < 램프 2×${n(w.ramp_mm)} mm — 기본 변수에서 뺐습니다` : "";
+    case "BG_RAMP_SHORT":
+      return w.var != null && w.L_mm != null ? `${String(w.var)}: 접합 램프 ${n(w.L_mm)} mm < 필요 ${n(w.need_mm)} mm(범위가 기본보다 넓음)` : "";
+    case "BG_SHARED_CHILD":
+      return w.bead != null ? `${B(w.bead)}: 자식 바닥 ${n(w.child)} 은 제자리 — 이 변의 벽이 높이 차를 흡수(${n(w.n_nodes)} 노드)` : "";
+    case "BG_CORNER_GUARD":
+      return w.bead != null ? `${B(w.bead)}: 바닥 코너 ${n(w.n_nodes)} 노드의 사면을 최대 ${n(w.flank_max_deg)}° 로 가파르게 했습니다` : "";
+    case "BG_RANGE_CLAMPED":
+      return w.var != null && Array.isArray(w.from) && Array.isArray(w.to)
+        ? `${String(w.var)}: 기본 범위 ${n(w.from[0])}~${n(w.from[1])} mm 끝에서 뒤집혀 ${n(w.to[0])}~${n(w.to[1])} mm 로 줄였습니다`
+        : "";
+    case "BG_ISLAND_HELD":
+      return w.island != null ? `섬 ${n(w.island)}: 고정 노드가 있어 제자리 블렌딩` : "";
+    case "BG_OUTSIDE_MOVED":
+      return w.n != null && w.max_mm != null ? `바뀐 세그먼트 밖 ${n(w.n)} 노드가 최대 ${n(w.max_mm)} mm 움직였습니다` : "";
     default:
       return "";
   }

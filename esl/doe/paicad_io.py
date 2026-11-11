@@ -422,7 +422,9 @@ def read_auto_detect(d: str, max_mb: float = 64) -> dict | None:
 SELECT_CELL_STATE = {"SELECT_FIXED_VIOLATION": "SKIPPED_FIXED", "SELECT_QUALITY_FAIL": "FAILED_MESH",
                      "SELECT_MORPH_INVERTED": "FAILED_MESH",
                      # v0.16.1 SR-D-37·38
-                     "SELECT_FEATURE_DISTORTED": "FAILED_MESH", "SELECT_CROSS_BEAD_VIOLATION": "SKIPPED_COLLISION"}
+                     "SELECT_FEATURE_DISTORTED": "FAILED_MESH", "SELECT_CROSS_BEAD_VIOLATION": "SKIPPED_COLLISION",
+                     # v0.17.0 BG-D-34 바깥 이동(그래프 기저)
+                     "BG_OUTSIDE_MOVED": "FAILED_MESH"}
 
 
 def cell_state(cell: dict) -> dict:

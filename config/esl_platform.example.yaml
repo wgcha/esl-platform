@@ -284,6 +284,18 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     hold: {ring_mm: 3.0, blend_mm: 8.0}   # v0.16.1 '체결 구멍 둘레 고정': 고정 노드에서 ring 제자리 + blend 블렌딩(보스)
     hole: {bridge_max_mm: 20.0}     # v0.16.2 구멍 건너 잇기 상한(등가 지름 mm) — 넘으면 건너 잇지 않음(SELECT_BRIDGE_SKIPPED)
     auto: {slope_diff_rel: 0.2}     # v0.16.2 자동 탐지 seed: paicad 사면 폭이 유도 사면과 이 비율 넘게 다르면 info AUTO_SLOPE_DIFF
+    graph:                            # v0.17.0 BEADGRAPH 메시 비드 네트워크 분류기·세그먼트 모핑(계약 esl_beadgraph.md §5.5) — 기본값이면 해시 제외
+      enabled: true                   # false = 새 스터디도 schema 2 이지만 그래프 계산 안 함(GRAPH_FAILED{code: DISABLED}, 요소 비드만)
+      feature_angle_deg: 10.0         # 바닥 판정 각(#53 param feature_angle) — 위 feature_angle_deg(칠하기 확장)와 별개
+      level_tol_mm: 0.3
+      min_floor_area_mm2: 12.0
+      root_free_frac: 0.2
+      raster_mm: 1.0
+      island: {max_mm: 60.0, straddle_frac: 0.15}   # D8 섬 상한(그래프 경로·schema 2 만 — schema 1 은 위 island.max_mm 40)
+      bead: {max_width_mm: 80.0, prune_k: 2.2, bend_deg: 50.0, width_jump: 0.35, min_zone_mm: 12.0, open_ext_mm: 90.0, absorb_len_mm: 60.0}   # absorb_len_mm = D7 짧은 띠 흡수
+      morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6, corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}, w_smooth_iters: 3}   # w_smooth_iters = W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔)
+      sym_tol_mm: 0.5                 # 묶음 공칭 차·대칭 묶기 허용(BG-D-17·21)
+      limits: {max_elems: 250000, timeout_s: 180, max_raster_px: 4000000}   # 넘으면 GRAPH_FAILED{TOO_LARGE·TIMEOUT}(준비는 READY)
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
     derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)

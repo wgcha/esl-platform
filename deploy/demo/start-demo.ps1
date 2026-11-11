@@ -66,7 +66,7 @@ if (Test-Path -LiteralPath $wheels) {
     $py = Initialize-DemoVenv -DemoRoot $DemoRoot -Candidates $cands -LockFile $lock -Wheels $wheels   # 오프라인 묶음
     $frontend = Join-Path $pkg 'frontend'
 } else {
-    $py = Initialize-DemoVenv -DemoRoot $DemoRoot -Candidates $cands -LockFile $lock                   # 저장소(인덱스)
+    $py = Initialize-DemoVenv -DemoRoot $DemoRoot -Candidates $cands -LockFile $lock -Repo $pkg        # 저장소(인덱스 + packages\beadgraph)
     $frontend = Join-Path $pkg 'frontend\dist'
     if (-not (Test-Path -LiteralPath (Join-Path $frontend 'index.html'))) {
         Write-Step '프런트 빌드(frontend\dist)가 없어 만듭니다: npm ci → npm run build (Node 22, 몇 분 걸림)'

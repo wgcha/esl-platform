@@ -1,5 +1,5 @@
 {
- "version": "2026-11-08.1",
+ "version": "2026-11-09.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -213,6 +213,26 @@
   "AUTO_SLOPE_DIFF": "(정보) 비드 {bead}: 유도 사면 폭이 paicad 사면(flank) 폭과 {rel} 만큼(상대) 다릅니다 — 사면 자동 탐색 결과를 확인하세요(값은 바꾸지 않음). (Info: bead {bead} derived slope width differs from the paicad flank by {rel} (relative); check the slope — nothing was changed.)",
   "SELECT_BRIDGE_SKIPPED": "경계를 끊는 큰 구멍(등가 지름 {eq_d_mm} mm > select.hole.bridge_max_mm)은 건너 잇지 않았습니다(끝점 간격 {gap_mm} mm) — 비드 경계가 열린 채로 남습니다. (A large opening (equivalent diameter {eq_d_mm} mm > select.hole.bridge_max_mm) was not bridged (gap {gap_mm} mm); the bead boundary stays open.)",
   "AUTO_NOT_AVAILABLE": "자동 탐지 초기 선택이 없습니다(수동 스터디이거나 자동 탐지 결과가 없음). (No auto-detected selection: manual study or no detection result.)",
-  "PREP_NOT_READY": "준비(DOE_PREP)가 끝나지 않았습니다. (Preparation is not ready.)"
+  "PREP_NOT_READY": "준비(DOE_PREP)가 끝나지 않았습니다. (Preparation is not ready.)",
+  "GRAPH_FAILED": "자동 분류 실패({detail}) — 직접 칠하기(요소 비드)로 계속하세요. (Automatic classification failed ({detail}) — continue with painted element beads.)",
+  "GRAPH_RASTER_COARSE": "(정보) 큰 바닥의 골격 해상도를 {raster_mm} mm 로 낮췄습니다. (Info: skeleton raster coarsened to {raster_mm} mm for a large floor.)",
+  "GRAPH_NOT_AVAILABLE": "분류 그래프가 없습니다(schema 1 스터디 또는 자동 분류 실패). (No classification graph for this study.)",
+  "AUTO_HINT_UNAVAILABLE": "(정보) paicad 사면 힌트를 만들지 못했습니다({step} {code}) — 자동 seed 와 무관합니다. (Info: paicad hints unavailable; the seed is unaffected.)",
+  "BG_GROUP_NOT_CONNECTED": "비드 {bead}: 묶은 세그먼트가 같은 네트워크에서 접합 구역으로 이어지지 않습니다. (Bead {bead}: grouped segments are not connected.)",
+  "BG_TIE_NOMINAL": "대칭 묶기 {beads}: 공칭 깊이·폭이 허용 차이보다 다릅니다. (Tie {beads}: nominal depth / width differ.)",
+  "BG_SEG_UNKNOWN": "세그먼트(앵커 {anchor})를 현재 분류 결과에서 찾을 수 없습니다. (Segment anchor {anchor} not found in the current graph.)",
+  "BG_EDIT_INVALID": "그래프 편집이 올바르지 않습니다: {edit}. (Invalid graph edit: {edit}.)",
+  "BG_GRAPH_STALE": "분류 결과가 바뀌었습니다 — 다시 확인 후 저장하세요. (The classification changed — review and save again.)",
+  "SELECT_SCHEMA_MISMATCH": "이 스터디의 선택 형식(schema)과 다른 선택입니다. (Selection schema does not match this study.)",
+  "BG_GROUP_NOMINAL_SPREAD": "비드 {bead}: 묶은 세그먼트의 공칭 깊이가 {min}~{max} mm 로 달라 길이 가중 평균을 공칭으로 씁니다(변화량은 같음). (Bead {bead}: nominal depth spread {min}..{max} mm.)",
+  "BG_SEGMENT_SHORT": "비드 {bead}: 세그먼트({length_mm} mm)가 접합 램프({ramp_mm} mm)보다 짧아 목표 깊이에 닿는 곳이 없습니다 — 기본 체크 해제. (Bead {bead}: segment shorter than the junction ramp.)",
+  "BG_RAMP_SHORT": "{var}: 사용자 범위가 기본 범위보다 넓어 접합 램프 {L_mm} mm 가 필요 길이 {need_mm} mm 보다 짧습니다(실행은 계속). (Ramp {L_mm} mm shorter than {need_mm} mm needed.)",
+  "BG_SHARED_CHILD": "(정보) 비드 {bead}: 공유 자식 바닥 {child} 은 제자리이고 그 벽 {n_nodes} 노드가 높이 차를 흡수합니다. (Info: shared child {child} stays; its wall absorbs the change.)",
+  "BG_CORNER_GUARD": "(정보) 비드 {bead}: 바닥 코너 {n_nodes} 노드에서 사면을 가파르게 해 뒤집힘을 막았습니다(최대 {flank_max_deg}°). (Info: corner guard on {n_nodes} nodes.)",
+  "BG_ISLAND_HELD": "(정보) 섬 {island} 에 고정 노드가 있어 강체 대신 고정 블렌딩을 적용했습니다. (Info: island {island} held by fixed nodes.)",
+  "BG_RANGE_CLAMPED": "(정보) {var} 기본 범위 {from} mm 끝에서 요소가 뒤집혀 뒤집힘 없는 범위 {to} mm 로 줄였습니다(기저·한계 범위는 그대로). (Info: default range of {var} clamped from {from} to {to} mm — its ends inverted elements.)",
+  "BG_BASIS_LEAK": "기저 오류: {var} 가 허용 구역 밖 {n} 노드를 움직입니다(최대 {max_mm} mm) — 구현 결함. (Basis error: {var} moves {n} nodes outside its zone.)",
+  "BG_ACHIEVED_MISMATCH": "기저 오류: {var} 달성 깊이·폭 오차 {err_mm} mm. (Basis error: {var} achieved error {err_mm} mm.)",
+  "BG_OUTSIDE_MOVED": "바뀐 세그먼트 밖 노드 {n} 개가 움직여(최대 {max_mm} mm) 이 안을 제외했습니다. (Nodes outside the changed segments moved — design excluded.)"
  }
 }

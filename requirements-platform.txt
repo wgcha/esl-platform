@@ -10,3 +10,5 @@ pyyaml>=6
 numpy
 scipy
 pytest>=8
+# v0.17.0 BEADGRAPH 공통 패키지(esl_beadgraph.md §8.3): 저장소 경로 설치(저장소 루트에서 pip install -r — 오프라인 묶음은 wheels/ 휠)
+./packages/beadgraph

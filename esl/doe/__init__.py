@@ -180,7 +180,20 @@ DEFAULTS: dict = {
                "auto": {"slope_diff_rel": 0.2},
                "thumb": {"w": 320, "h": 240, "supersample": 2, "view": "auto", "tilt_deg": 25.0, "margin": 1.15,
                          "ambient": 0.35},
-               "derive_cache_n": 8, "derive_timeout_s": 20},
+               "derive_cache_n": 8, "derive_timeout_s": 20,
+               # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5) 공통 분류기 beadgraph 설정 — 기본값이면 해시 제외(HASH_NEW_KEYS_V0170).
+               # 패키지 beadgraph.DEFAULTS 와 같은 값(V-BG-14), esl 은 항상 이 절 전체를 넘긴다. island.max_mm 60 = 그래프 경로·
+               # schema 2 elems 비드만(schema 1 은 위 island.max_mm 40 그대로 — O-BG-1).
+               "graph": {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.3, "min_floor_area_mm2": 12.0,
+                         "root_free_frac": 0.2, "raster_mm": 1.0,
+                         "island": {"max_mm": 60.0, "straddle_frac": 0.15},
+                         "bead": {"max_width_mm": 80.0, "prune_k": 2.2, "bend_deg": 50.0, "width_jump": 0.35,
+                                  "min_zone_mm": 12.0, "open_ext_mm": 90.0, "absorb_len_mm": 60.0},
+                         "morph": {"ramp_k": 3.0, "outside_tol_mm": 1.0e-6, "achieved_tol_mm": 1.0e-6,
+                                   "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
+                                   "w_smooth_iters": 3},       # W 바깥 방향장 완화(꺾임·연결부 연속 — 구현 키, 계약 외 추가)
+                         "sym_tol_mm": 0.5,
+                         "limits": {"max_elems": 250000, "timeout_s": 180, "max_raster_px": 4000000}}},
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,
                "ranking_report_rows": 20, "min_disp_range_mm": 1.0},

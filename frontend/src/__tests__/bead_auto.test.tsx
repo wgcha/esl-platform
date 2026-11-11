@@ -65,7 +65,7 @@ describe("seed 기준 초기화(layers)", () => {
     const st = makeDoeSettings();
     expect(selectSubBlocked(st, "case", "auto")).toBeNull();
     st.scenarios.select_auto = false;
-    expect(selectSubBlocked(st, "mesh", "auto")).toMatch(/paicad/);
+    expect(selectSubBlocked(st, "mesh", "auto")).toMatch(/자동 분류가 꺼져/); // v0.17.0: paicad 무관(BG §5.5)
     expect(selectSubBlocked(st, "mesh", "manual")).toBeNull();
     st.scenarios.select_mesh = false;
     expect(selectSubBlocked(st, "mesh", "manual")).toMatch(/B 메시/);
@@ -180,7 +180,7 @@ describe("AD-D-8 순위 ⚠ MORPH_EXTREME_ELEMENTS", () => {
 });
 
 describe("① ② 하위 라디오(bead_source) — ② 자동 탐지", () => {
-  it("② + 자동 탐지: STEP·B 메시 둘 다 필요 → select + select_base mesh + bead_source auto + STEP", async () => {
+  it("v0.17.0 ② + 자동 탐지: B 메시만 필요(STEP 은 선택 힌트) → select + select_base mesh + bead_source auto + STEP", async () => {
     const r = renderApp("/p/p-body/doe/new?entries=le-1,le-9", "power");
     await waitFor(() => expect(radio(/③/).checked).toBe(true));
     fireEvent.click(radio(/② 다른 모델\(B 메시\)/));
@@ -188,10 +188,14 @@ describe("① ② 하위 라디오(bead_source) — ② 자동 탐지", () => {
     fireEvent.click(radio("자동 탐지"));
     expect(screen.getByTestId("doe-step-drop")).toBeTruthy();
     expect(screen.getByTestId("doe-mesh-drop")).toBeTruthy();
+    await waitFor(() => expect(primaries(r.container)[0].closest(".primary-wrap")?.getAttribute("title")).toMatch(/B 메시/), { timeout: 4000 });
     fireEvent.change(screen.getByLabelText("B 메시(.rad + include 또는 .inc) 끌어다 놓기"), { target: { files: [new File([new Uint8Array(4096)], "QN80J_chr.rad")] } });
-    await waitFor(() => expect(primaries(r.container)[0].closest(".primary-wrap")?.getAttribute("title")).toMatch(/자동 탐지에 쓸 Ch\/R 중립면 STEP/), { timeout: 4000 });
-    fireEvent.change(screen.getByLabelText("Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(4096)], "QN80J_mid.stp")] } });
-    const chk = await screen.findByTestId("doe-check", undefined, { timeout: 4000 });
+    // STEP 없이도 입력 검사(BG §5.3)
+    expect(await screen.findByTestId("doe-check", undefined, { timeout: 4000 })).toBeTruthy();
+    expect(primaries(r.container)[0].closest(".primary-wrap")?.getAttribute("title") ?? "").not.toMatch(/STEP/);
+    fireEvent.change(screen.getByLabelText("(선택) Ch/R 중립면 STEP 끌어다 놓기"), { target: { files: [new File([new Uint8Array(4096)], "QN80J_mid.stp")] } });
+    await waitFor(() => expect(screen.getByTestId("doe-check").textContent).toMatch(/STEP QN80J_mid/), { timeout: 4000 });
+    const chk = screen.getByTestId("doe-check");
     expect(chk.textContent).toMatch(/STEP QN80J_mid\.stp .*B 메시 QN80J_chr\.rad/);
     await waitFor(() => expect(primaries(r.container)[0].disabled).toBe(false));
     fireEvent.click(primaries(r.container)[0]);
