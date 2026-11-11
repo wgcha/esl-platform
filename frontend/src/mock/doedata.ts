@@ -8,7 +8,7 @@ import type {
 } from "../api/types";
 import { mockView3d } from "./view3dmock";
 import type { DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
-import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate } from "./graphmock";
+import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
 import { selAutoSeed, selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
 
 interface MockResponse {
@@ -62,7 +62,7 @@ export function makeDoeSettings(): DoeSettingsOut {
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
     gmsh: { ready: true, version: "4.13.1" },
-    scenarios: { same: true, mesh: true, step: true, compare: true, select: true, select_auto: true, select_mesh: true },
+    scenarios: { same: true, mesh: true, step: true, compare: true, select: true, select_auto: true, select_mesh: true, select_step: true },
     max_entries: 50,
     max_designs: 200,
     doe: { methods: ["lhs", "halton", "fullfact"], default_method: "lhs", default_n: 30, seed: 1, levels_default: 3, levels_max: 9, default_types: ["D", "W"] },
@@ -95,6 +95,8 @@ export function makeDoeSettings(): DoeSettingsOut {
       hole: { bridge_max_mm: 20 },
       // v0.17.0 BEADGRAPH(§5.5)
       graph: { enabled: true, island: { max_mm: 60 }, sym_tol_mm: 0.5 },
+      // v0.18.0 STEP_GRAPH(esl_step_graph.md §4.2)
+      step_graph: { tria_policy: "warn" },
     },
   };
 }
@@ -1132,6 +1134,35 @@ export class DoeMock {
     this.recs.push(r);
   }
 
+  /** v0.18.0 시연·시험(?demoStepSel=1): ③ STEP 기준 select — doe-15 자동 분류(선택 저장됨 · 좌표 일치 이전 · 추가 형상 영역) · doe-16 직접 선택(삼각형 폴백 · 구멍 스냅 · 미저장 seed = 고정만) · doe-17 이전 방식 ③(paicad) */
+  demoStepSel() {
+    if (this.recs.some((r) => r.out.id === "doe-15")) return;
+    const s10 = this.recs.find((r) => r.out.id === "doe-10")!;
+    const step = { file_name: "QN80J_chassis_rear_mid.step", sha256: "d4".padEnd(64, "0") };
+    const mk = (id: string, title: string, at: string, src: "auto" | "manual", kind: "ok" | "tria"): Rec => {
+      const r: Rec = {
+        ...s10,
+        out: { ...s10.out, id, title, created_at: at, doe: null, phase: "READY", version: 2, inputs: { ...s10.out.inputs, step, mesh: null, part_title: null, inch: 75, props: { t: 1.0, E: 205000, nu: 0.3 }, mesh_mode: "auto", mesh_refine: true, bead_source: src, select_base: "step", select_schema: 2 }, prep: this.stepPrep(kind), selection: null },
+        jobIds: [],
+        cells: null,
+        result: null,
+        sel: null,
+        autoSel: stepAutoSeed(src === "auto"),
+      };
+      const j = doneJob(this.id("j-doe"), "p-body", id, "DOE_PREP", at.replace(":00Z", ":05Z"), at.replace(":00:00Z", ":03:00Z"));
+      this.seededJobs.push(j);
+      r.jobIds.push(j.id);
+      return r;
+    };
+    const r15 = mk("doe-15", "QN80J Ch/R 비드 — STEP 그래프(자동)", "2026-11-12T01:00:00Z", "auto", "ok");
+    this.saveSelection(r15, r15.autoSel!.selection, "차완기");
+    r15.out.version = 3;
+    const r16 = mk("doe-16", "QN80J Ch/R 비드 — STEP 그래프(직접·삼각형)", "2026-11-12T02:00:00Z", "manual", "tria");
+    const tmpl = this.recs.find((r) => r.out.id === "doe-2")!;
+    const r17: Rec = { ...tmpl, out: { ...tmpl.out, id: "doe-17", scenario: "step", title: "QN80J Ch/R 비드 — STEP만(이전 방식)", created_at: "2026-11-10T01:00:00Z", inputs: { ...tmpl.out.inputs, step, mesh: null, props: { t: 1.0, E: 205000, nu: 0.3 }, mesh_size_mm: 3 } }, jobIds: [...tmpl.jobIds] };
+    this.recs.push(r17, r15, r16);
+  }
+
   /** v0.17.1 시연·시험(?demoLadder=1): ③ 다른 모델(STEP만) 메싱 뒤 긴 사다리 경고 — doe-12 준비 완료(경고 접기) · doe-13 준비 실패(빨간 1줄) */
   demoLadder() {
     if (this.recs.some((r) => r.out.id === "doe-12")) return;
@@ -1217,8 +1248,9 @@ export class DoeMock {
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && isG(r)) {
       // v0.17.0 그래프 스터디: 분류 → 자동 = 그래프 seed(paicad 무관), 수동 = 빈 seed + 같은 트리
       r.out.phase = "READY";
-      r.out.prep = this.graphPrep(false);
-      if (r.out.inputs.bead_source === "auto") r.autoSel = graphAutoSeed();
+      r.out.prep = r.out.inputs.select_base === "step" ? this.stepPrep("ok") : this.graphPrep(false);
+      if (r.out.inputs.select_base === "step") r.autoSel = stepAutoSeed(r.out.inputs.bead_source === "auto");
+      else if (r.out.inputs.bead_source === "auto") r.autoSel = graphAutoSeed();
       r.out.version += 1;
     }
     if (r.out.phase === "PREP" && j.job_type === "DOE_PREP" && r.out.scenario === "select") {
@@ -1278,6 +1310,33 @@ export class DoeMock {
     };
   }
   /** v0.17.0 schema 2 준비 요약(H6 목 메시) — failed = GRAPH_FAILED{TIMEOUT} 경고 */
+  /** v0.18.0 ③ STEP 기준 준비 요약(목): ok = cad 메시·좌표 일치 이전·추가 형상, tria = 삼각형 폴백·B 구멍 스냅(못 옮김 1)·영역 = 전체 */
+  stepPrep(kind: "ok" | "tria"): NonNullable<DoeStudyOut["prep"]> {
+    const mf = graphManifest();
+    const tria = kind === "tria";
+    const nOut = tria ? 0 : Math.round(mf.n_elems * 0.18);
+    return {
+      n_beads: 0,
+      n_params: 0,
+      paicad_version: null,
+      select_base: "step",
+      n_nodes: mf.n_nodes,
+      n_elems: mf.n_elems,
+      mesh: { size_mm: 3, gmsh_version: "4.13.1", method: tria ? "tria" : "cad", tri_frac: tria ? 1 : 0.02, stage_times: [{ stage: "cad", outcome: tria ? "FAILED_MESH" : "READY", seconds: 41.2, tries: 1 }, ...(tria ? [{ stage: "freeform", outcome: "FAILED_MESH" as const, seconds: 63.5, tries: 1 }, { stage: "tria", outcome: "READY" as const, seconds: 8.1, tries: 1 }] : [])] },
+      fixed: { source: "a_transfer", n: mf.fixed.scan_n, xfer: tria ? { method: "ab_hole_snap", matched: 11, unmatched: 1, frame_ok: false } : { method: "xyz_nearest", matched: 12, unmatched: 0, frame_ok: true } },
+      region: { mode: "auto", n_in: mf.n_elems - nOut, n_out: nOut },
+      boundary: { n_warn: tria ? 1 : 0, n_info: 0 },
+      warnings: [
+        ...(tria
+          ? [
+              { code: "MESH_TRIA_FALLBACK", message: "CAD·freeform 메시가 실패해 OCC 삼각형 메시로 대신했습니다 [단계별: cad 실패 41.2 s · freeform 실패 63.5 s · tria 성공 8.1 s]" },
+              { code: "STEP_GRAPH_TRIA", mesh_method: "tria", tri_frac: 1 },
+              { code: "FIXED_XFER_UNMATCHED", label: "F07", d_mm: 14.2, level: "info" as const },
+            ]
+          : [{ code: "STEP_GRAPH_REGION", n_in: mf.n_elems - nOut, n_out: nOut, out_bbox: [[0, 0, 16.7], [800, 120, 29.6]], mode: "auto", level: "info" as const }]),
+      ],
+    };
+  }
   private graphPrep(failed: boolean): NonNullable<DoeStudyOut["prep"]> {
     const mf = graphManifest();
     return { n_beads: 0, n_params: 0, paicad_version: null, warnings: failed ? [{ code: "GRAPH_FAILED", detail: "TIMEOUT", message: "" }] : [], n_nodes: mf.n_nodes, n_elems: mf.n_elems, fixed: { source: "scan", n: mf.fixed.scan_n } };
@@ -1334,7 +1393,8 @@ export class DoeMock {
     }
     if (method === "GET" && sub === "/select/auto") {
       if (!prepReady) return notReady();
-      if (rec.out.inputs.bead_source !== "auto" || !rec.autoSel) return err(404, "AUTO_NOT_AVAILABLE", "자동 탐지 결과가 없습니다.");
+      // v0.18.0 SG-D-16: ③ STEP 기준은 bead_source 와 무관하게 seed(manual = 빈 비드 + fixed_user)
+      if ((rec.out.inputs.bead_source !== "auto" && rec.out.inputs.select_base !== "step") || !rec.autoSel) return err(404, "AUTO_NOT_AVAILABLE", "자동 탐지 결과가 없습니다.");
       return ok(rec.autoSel);
     }
     if (method === "GET" && sub === "/selection") {
@@ -1430,7 +1490,7 @@ export class DoeMock {
     }
     if (method === "GET" && (sub === "/params" || sub === "/plan-view") && rec.sel?.input.schema_version === 2) {
       if (!prepReady) return notReady();
-      return ok(sub === "/params" ? graphParams(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
+      return ok(sub === "/params" ? graphParams(rec.sel.input) : rec.out.inputs.select_base === "step" ? stepPlan(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
     }
     return null;
   }
@@ -1501,6 +1561,35 @@ export class DoeMock {
     return ok(out);
   }
 
+  /** v0.18.0 ③ STEP 기준 select check-inputs(esl_step_graph.md SG-D-3): STEP 필수, 금지 = mesh_upload_id·part_title·mesh_size_mm, 같은 모델 검사 없음 */
+  private checkSelectStep(b: Record<string, unknown>, pid: string, src: string): MockResponse {
+    if (this.settings.scenarios.select_step === false || !this.settings.gmsh.ready) return err(503, "GMSH_UNAVAILABLE", "메시 생성기(gmsh)가 없어 'STEP만' 시나리오를 쓸 수 없습니다.");
+    if (b.mesh_upload_id != null || b.part_title != null || b.mesh_size_mm != null) return err(422, "INVALID_PARAMS", "③ STEP 기준에는 B 메시·파트 제목·요소 크기를 쓰지 않습니다.");
+    if (src === "auto" && this.settings.scenarios.select_auto === false) return err(503, "SELECT_DISABLED", "서버에서 비드 자동 분류가 꺼져 있습니다.");
+    if (b.step_upload_id == null) return err(422, "INVALID_PARAMS", "STEP 이 필요합니다.");
+    const ids = (b.entry_ids as string[]) ?? [];
+    const es = this.ctx.entries();
+    const sel = ids.map((id) => es.find((e) => e.id === id && e.project_id === pid && e.status === "ACTIVE"));
+    if (!ids.length || sel.some((e) => !e)) return err(422, "ENTRY_NOT_FOUND", "선택한 ESL 중 이 프로젝트의 활성 항목이 아닌 것이 있습니다.");
+    const up = this.ctx.upload(String(b.step_upload_id));
+    if (!up) return err(404, "UPLOAD_NOT_FOUND", "STEP 업로드를 찾을 수 없습니다.");
+    if (!up.ready) return err(409, "UPLOAD_NOT_READY", "STEP 업로드가 아직 끝나지 않았습니다.");
+    const f = up.files.find((x) => /\.(step|stp)$/i.test(x));
+    if (!f) return err(422, "STEP_INVALID", "STEP(.step·.stp) 파일이 없습니다.");
+    this.ctx.markUploadCompleted(String(b.step_upload_id));
+    const out: DoeCheckOut = {
+      ok: true,
+      step: { file_name: f.split("/").pop()!, sha256: `sha-${b.step_upload_id}`.padEnd(64, "a"), size_mb: 3.4 },
+      entries: sel.map((e) => ({ entry_id: e!.id, ok: true, reason: null })),
+      size: null,
+      props_default: { t: 1.2, E: 205000, nu: 0.3 },
+      mesh_mode: (b.mesh_mode as DoeCheckOut["mesh_mode"]) ?? this.settings.compare?.mesh_mode ?? "auto",
+      remesh_available: this.settings.compare?.remesh_available ?? false,
+      warnings: [],
+    };
+    return ok(out);
+  }
+
   /** v0.15.0 select check-inputs: ① 과 같음(base), paicad 무관(BS-D-2).
    *  v0.16.2(esl_bead_auto.md §3.3): bead_source auto = STEP 필수·manual = STEP 금지, select_base mesh = B 메시 필수(② 검사 — 같은 모델 검사 없음) */
   private checkSelect(b: Record<string, unknown>, pid: string): MockResponse {
@@ -1508,7 +1597,8 @@ export class DoeMock {
     if (!sc?.enabled) return err(503, "SELECT_DISABLED", "비드 직접 선택이 서버에서 꺼져 있습니다.");
     const src = (b.bead_source ?? "manual") as string;
     const baseK = (b.select_base ?? "case") as string;
-    if (!["auto", "manual"].includes(src) || !["case", "mesh"].includes(baseK)) return err(422, "INVALID_PARAMS", "bead_source·select_base 가 올바르지 않습니다.");
+    if (!["auto", "manual"].includes(src) || !["case", "mesh", "step"].includes(baseK)) return err(422, "INVALID_PARAMS", "bead_source·select_base 가 올바르지 않습니다.");
+    if (baseK === "step") return this.checkSelectStep(b, pid, src);
     if (b.shapes != null) return err(422, "INVALID_PARAMS", "비드 선택에는 형상을 쓰지 않습니다.");
     if (src === "manual" && b.step_upload_id != null) return err(422, "INVALID_PARAMS", "직접 선택에는 STEP 을 쓰지 않습니다.");
     // v0.17.0(BG §5.3): auto 의 STEP 은 선택(힌트) — 자동 분류는 paicad 무관
@@ -1710,14 +1800,15 @@ export class DoeMock {
       const title = String(b.title ?? "").trim();
       if (title.length > 200) return err(422, "INVALID_PARAMS", "제목은 200자 이하입니다.");
       const props = b.props as DoeStudyOut["inputs"]["props"];
-      if (b.scenario === "step" && props && !(props.t > 0 && props.E > 0 && props.nu >= 0 && props.nu < 0.5)) return err(422, "INVALID_PARAMS", "쉘 물성이 올바르지 않습니다(t>0, E>0, 0≤ν<0.5).");
+      if ((b.scenario === "step" || b.select_base === "step") && props && !(props.t > 0 && props.E > 0 && props.nu >= 0 && props.nu < 0.5)) return err(422, "INVALID_PARAMS", "쉘 물성이 올바르지 않습니다(t>0, E>0, 0≤ν<0.5).");
+      if (b.select_base === "step" && !props) return err(422, "INVALID_PARAMS", "쉘 물성이 필요합니다.");
       const id = this.id("doe");
       const rec: Rec = {
         out: {
           id,
           project_id: String(b.project_id),
           scenario: b.scenario as DoeScenario,
-          title: title || (b.scenario === "select" ? "비드 직접 선택" : `강성 평가 ${co.step?.file_name ?? ""}`),
+          title: title || (b.scenario === "select" ? (b.select_base === "step" ? `STEP 비드 선택 ${co.step?.file_name ?? ""}` : "비드 직접 선택") : `강성 평가 ${co.step?.file_name ?? ""}`),
           entry_ids: b.entry_ids as string[],
           inputs: {
             step: co.step ? { file_name: co.step.file_name, sha256: co.step.sha256 } : null,
@@ -1729,6 +1820,8 @@ export class DoeMock {
             // v0.16.2 select: bead_source 항상, select_base 는 mesh 일 때만(AD-D-22)
             // v0.17.0 새 select 스터디 = schema 2(BG-D-35)
             ...(b.scenario === "select" ? { bead_source: (b.bead_source as "auto" | "manual" | undefined) ?? "manual", select_schema: 2 as const, ...(b.select_base === "mesh" ? { select_base: "mesh" as const } : {}) } : {}),
+            // v0.18.0 ③ STEP 기준: select_base step + 메시 방식(④ 와 같은 값)
+            ...(b.scenario === "select" && b.select_base === "step" ? { select_base: "step" as const, part_title: null, mesh_mode: co.mesh_mode ?? null, mesh_refine: b.mesh_refine === false ? false : true } : {}),
           },
           phase: "PREP",
           version: 1,

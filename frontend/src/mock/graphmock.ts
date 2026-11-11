@@ -8,7 +8,7 @@ import type {
 } from "../api/types";
 import { writeBasis } from "../view3d/select/basis";
 import { writeGraphBin, type GraphLabels } from "../view3d/select/graph";
-import { EMPTY_SET } from "../view3d/select/ranges";
+import { EMPTY_SET, compress } from "../view3d/select/ranges";
 import { writeSelectBin } from "../view3d/select/view";
 import fx from "./h6graph.json";
 import { writeGlb } from "./view3dmock";
@@ -357,4 +357,38 @@ export function graphValidate(sel: DoeSelectionV2 | undefined, graphAvailable: b
   if (!graphAvailable) return null;
   const r = resolve(sel);
   return "bad" in r ? r.bad : null;
+}
+
+// ---------------------------------------------------------------- v0.18.0 ③ STEP 기준 select(esl_step_graph.md SG-D-14·16·19)
+/** A 고정 이전 seed fixed_user(목): 고정 노드를 2개 이상 가진 요소(요소 ID) */
+export function stepFixedUser(): DoeSelectionV2["fixed_user"] {
+  const m = graphMesh();
+  const ids: number[] = [];
+  m.quads.forEach((q, e) => {
+    if (q.filter((v) => m.fixed[v]).length >= 2) ids.push(m.elemId[e]);
+  });
+  return { q: compress(ids), t: [] };
+}
+/** ③ seed: auto = 그래프 seed + fixed_user, manual = 빈 비드 + fixed_user(source fixed_transfer) */
+export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
+  const g = graphAutoSeed();
+  const fixed_user = stepFixedUser();
+  if (auto) {
+    const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), fixed_user };
+    return { ...g, selection, sha256: graphSelSha(selection), warnings: [] };
+  }
+  const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads: [], fixed_user };
+  return { selection, sha256: graphSelSha(selection), map: [], warnings: [], paicad_version: null, source: "graph", hints: [] };
+}
+/** ③ plan-view: 그래프 평면도 + 고정 = A 이전 표시(src) + 주 시트 영역 외곽(목: 판 위쪽 18 % 는 추가 형상) */
+export function stepPlan(sel: DoeSelectionV2): DoePlanOut & { region_ab: XY[][] } {
+  const p = graphPlan(sel);
+  const [a0, a1] = p.frame.a_range;
+  const [b0, b1] = p.frame.b_range;
+  const bt = b0 + (b1 - b0) * 0.82;
+  return {
+    ...p,
+    fixed: p.fixed.map((f) => ({ ...f, src: "a_transfer" as const })),
+    region_ab: [[[a0, b0], [a1, b0], [a1, bt], [a0, bt], [a0, b0]]],
+  };
 }
