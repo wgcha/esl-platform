@@ -695,8 +695,46 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
                     fixed={"source": fx.get("source") or "none", "n": int(fx.get("n") or 0)})
         prep.update(_select_graph_prep(s, inp, ddir, msgs, warns))
         prep.update(_select_auto_prep(s, inp, ddir, msgs, warns))
+        prep.update(_select_step_prep(s, inp, prep["fixed"]))
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _int0(v: Any) -> int:
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+
+def _select_step_prep(s: dict[str, Any], inp: dict[str, Any], fixed: dict[str, Any]) -> dict[str, Any]:
+    """v0.18.0 select_base step 준비 요약(esl_step_graph.md §4.1·§4.2 — 코어 prep/input.json 의 mesh·fixed·region):
+    select_base "step", mesh{method, n_nodes, n_elems, tri_frac, stage_times}, fixed += {xfer{method, matched, unmatched,
+    frame_ok}}(제자리), region{mode, n_in, n_out}. ①② 스터디 = 키 없음(요약 불변)."""
+    if (s.get("inputs") or {}).get("select_base") != "step" and inp.get("select_base") != "step":
+        return {}
+    out: dict[str, Any] = {"select_base": "step"}
+    m = inp.get("mesh") if isinstance(inp.get("mesh"), dict) else {}
+    st = m.get("stage_times") if isinstance(m.get("stage_times"), (dict, list)) else None
+    out["mesh"] = {"method": m.get("method") if isinstance(m.get("method"), str) else None,
+                   "n_nodes": m.get("n_nodes") if isinstance(m.get("n_nodes"), int) else None,
+                   "n_elems": m.get("n_elems") if isinstance(m.get("n_elems"), int) else None,
+                   "tri_frac": _num(m.get("tri_frac")), "stage_times": st}
+    fx = inp.get("fixed") if isinstance(inp.get("fixed"), dict) else {}
+    x = fx.get("xfer") if isinstance(fx.get("xfer"), dict) else None
+    if x is not None:
+        fixed["xfer"] = {"method": x.get("method") if x.get("method") in ("xyz_nearest", "ab_hole_snap", "none")
+                         else "none", "matched": _int0(x.get("matched")), "unmatched": _int0(x.get("unmatched")),
+                         "frame_ok": x.get("frame_ok") if isinstance(x.get("frame_ok"), bool) else None}
+        why = x.get("reason") if isinstance(x.get("reason"), str) else fx.get("reason")
+        if isinstance(why, str):        # FIXED_XFER_NONE{reason}(A_CASE_MISSING·A_SCAN_FAILED·NO_MATCH·DISABLED)
+            fixed["xfer"]["reason"] = why[:64]
+    rg = inp.get("region") if isinstance(inp.get("region"), dict) else None
+    if rg is not None:
+        out["region"] = {"mode": rg.get("mode") if isinstance(rg.get("mode"), str) else None,
+                         "n_in": _int0(rg.get("n_in")), "n_out": _int0(rg.get("n_out"))}
+    return out
 
 
 AUTO_DETECT_MSG = "자동 탐지(paicad {step})가 실패했습니다({detail}) — 빈 선택에서 수동으로 선택하세요"

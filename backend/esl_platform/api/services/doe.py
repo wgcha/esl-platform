@@ -204,7 +204,9 @@ def status(ctx: AppContext) -> dict[str, Any]:
                           "select": sr is None,
                           # v0.17.0(esl_beadgraph.md §5.5 D9): 자동 탐지 seed = 메시 분류기 → select 가능 ∧ graph.enabled
                           # (paicad 무관 — paicad extract 는 힌트만). ② B 메시 기준 select = select 가능
-                          "select_auto": sr is None and graph_on, "select_mesh": sr is None},
+                          "select_auto": sr is None and graph_on, "select_mesh": sr is None,
+                          # v0.18.0(esl_step_graph.md §4.2·SG-D-18): ③ 새 경로 = select 가능 ∧ gmsh ready(paicad 무관)
+                          "select_step": sr is None and gmsh["ready"]},
             "compare_reason": cr, "select_reason": sr}
 
 
@@ -318,7 +320,9 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
                        # v0.16.2 AD-D-7 구멍 건너 잇기 상한(브라우저 거울)
                        "hole": {"bridge_max_mm": float((sc.get("hole") or {}).get("bridge_max_mm", 20.0))},
                        # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5): 그래프 분류 사용·섬 상한(D8)·대칭 묶기 허용차(화면 거울)
-                       "graph": _graph_settings(sc)}}
+                       "graph": _graph_settings(sc),
+                       # v0.18.0 STEP_GRAPH(esl_step_graph.md §4.2): ③ select_base step 화면 안내(tria 정책·고정 이전·평가 영역)
+                       "step_graph": _step_graph_settings(c)}}
 
 
 def _graph_settings(sc: dict[str, Any]) -> dict[str, Any]:
@@ -326,6 +330,22 @@ def _graph_settings(sc: dict[str, Any]) -> dict[str, Any]:
 
     g = BeadDoeSelectGraphCfg.model_validate(sc.get("graph") or {})
     return {"enabled": bool(g.enabled), "island": {"max_mm": float(g.island.max_mm)}, "sym_tol_mm": float(g.sym_tol_mm)}
+
+
+def _step_graph_cfg(c: dict[str, Any]):
+    from ...core.config import BeadDoeSelectStepGraphCfg
+
+    return BeadDoeSelectStepGraphCfg.model_validate((c.get("select") or {}).get("step_graph") or {})
+
+
+def _step_graph_settings(c: dict[str, Any]) -> dict[str, Any]:
+    """v0.18.0 settings select.step_graph: {tria_policy, tria_warn_frac, max_elems, size_mm(④ 프로필 h — 요소 크기 칸 없음),
+    fixed_transfer{enabled, mode}, region{mode}}."""
+    g = _step_graph_cfg(c)
+    return {"tria_policy": g.tria_policy, "tria_warn_frac": float(g.tria_warn_frac), "max_elems": int(g.max_elems),
+            "size_mm": float(c["compare"]["mesh"]["size_mm"]),
+            "fixed_transfer": {"enabled": bool(g.fixed_transfer.enabled), "mode": g.fixed_transfer.mode},
+            "region": {"mode": g.region.mode}}
 
 
 # v0.17.0(esl_beadgraph.md BG-D-35): 이 판 이후 만든 select 스터디의 선택 schema(inputs.select_schema — 키 없음 = 1, v0.16.2 이전)
@@ -406,10 +426,13 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
         return r if _internal else r["out"]
     if body.shapes is not None:
         raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
-    if body.mesh_mode is not None or body.mesh_refine is not None:
-        raise unprocessable("INVALID_PARAMS", up_svc.doe_text("MESH_MODE_COMPARE_ONLY"))
     src, sbase = select_kind(body)
     is_sel = body.scenario == "select"
+    if is_sel and sbase == "step":      # v0.18.0 ③ 새 경로(esl_step_graph.md SG-D-1~4)
+        r = _select_step_check(ctx, principal, body, c)
+        return r if _internal else r["out"]
+    if body.mesh_mode is not None or body.mesh_refine is not None:
+        raise unprocessable("INVALID_PARAMS", up_svc.doe_text("MESH_MODE_COMPARE_ONLY"))
     if is_sel:
         # v0.16.2(esl_bead_auto.md §3.3·AD-D-1·13): 수동 = STEP 금지. v0.17.0(esl_beadgraph.md §5.3): 자동 탐지 seed = 메시
         # 분류기 → STEP 선택(있으면 paicad extract 힌트만 — AD-D-14 의 'auto + STEP 없음 422' 폐지, 새 스터디 = schema 2).
@@ -490,6 +513,55 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     return out
 
 
+# ---------------------------------------------------------------- v0.18.0 ③ select_base step(esl_step_graph.md §3.1·§4.2)
+def _select_step_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any]) -> dict[str, Any]:
+    """select + select_base step check-inputs(SG-D-3·4): gmsh 필요(503 GMSH_UNAVAILABLE — paicad 무관), STEP 필수(auto·manual),
+    mesh_upload_id·part_title·mesh_size_mm 금지(h = ④ 프로필), mesh_mode·mesh_refine = ④ 규칙, 크기 규칙은 ESL 끼리(B 크기는
+    준비에서 — size null), 물성 기본값 = 첫 ESL 메시(③ 그대로). 반환 {"out": DoeCheckOut, "mat": 작업 재료}."""
+    from ...core.opt_core import EslError
+    from ...core.opt_core import doe_scenario
+    from ...core.opt_core import size as osize
+
+    src = body.bead_source or "manual"
+    if body.mesh_upload_id or body.part_title or getattr(body, "mesh_size_mm", None) is not None:
+        raise unprocessable("INVALID_PARAMS", "mesh_upload_id·part_title·mesh_size_mm 은 '다른 모델(STEP만)'에서 쓰지 않습니다"
+                            "(요소 크기 = 형상 직접 비교 메시 설정 bead_doe.compare.mesh.size_mm)")
+    if not body.step_upload_id:
+        raise unprocessable("INVALID_PARAMS", "'다른 모델(STEP만)'에는 step_upload_id 가 필요합니다")
+    st = status(ctx)
+    if not st["scenarios"]["select_step"]:
+        raise DomainError("GMSH_UNAVAILABLE", "메시 생성기(gmsh)가 없어 '다른 모델(STEP만)'을 쓸 수 없습니다(관리자 문의)",
+                          status=503)
+    ra, mode, ladder, warns0 = _mesh_mode_ladder(ctx, c, body, st, True)
+    with ctx.engine.connect() as conn:
+        rows = entries_in_order(conn, body.project_id, list(body.entry_ids))
+    rows = backfill_opt_meta(ctx, rows)
+    step_out, step_p = _step_input(ctx, principal, body, c)
+    try:
+        osize.assert_ok([_size_row(e) for e in rows], opt_settings(ctx.settings)["size"])
+    except EslError as exc:
+        raise _esl_error(exc) from None
+    _mesh, _meta, raw = _entry_mesh(ctx, rows[0])
+    try:
+        pd = doe_scenario.props_default(raw)
+    except (EslError, KeyError, ValueError) as exc:
+        raise unprocessable("MESH_INVALID", f"기준 ESL 메시에서 물성 기본값을 얻지 못했습니다: {exc}") from None
+    props_default = {"t": float(pd["t"]), "E": float(pd["E"]), "nu": float(pd["nu"])}
+    g = _step_graph_cfg(c)
+    h = float(c["compare"]["mesh"]["size_mm"])
+    sg = {"size_mm": h, "ladder": list(ladder), "tria_policy": g.tria_policy,
+          "fixed_transfer": {"enabled": bool(g.fixed_transfer.enabled), "mode": g.fixed_transfer.mode},
+          "region": {"mode": g.region.mode}}
+    out = {"ok": True, "step": step_out, "base": None, "mesh": None,
+           "entries": [{"entry_id": e["id"], "ok": True, "reason": None} for e in rows], "size": None,
+           "props_default": props_default, "mesh_size_default_mm": h, "warnings": list(warns0),
+           "mesh_mode": mode, "remesh_available": ra, "step_graph": sg}
+    mat = {"rows": rows, "step": step_p, "base": None, "base_db": None, "mesh": None, "props_default": props_default,
+           "mesh_size_default_mm": h, "bead_source": src, "select_base": "step", "mesh_mode": mode,
+           "mesh_refine": body.mesh_refine, "mesh_ladder": list(ladder)}
+    return {"out": _jsonable(out), "mat": mat}
+
+
 # ---------------------------------------------------------------- ④ 형상 직접 비교 입력(esl_step_compare.md §3)
 def _shape_name(raw: str, index: int) -> str:
     import unicodedata
@@ -532,6 +604,27 @@ def _pick_mesh_part(info: dict[str, Any], part_id: int | None, index: int) -> tu
         warns.append({"code": "MESH_INPUT_PART_CARD_MISSING", "level": "info", "index": index,
                       "message": up_svc.doe_text("MESH_INPUT_PART_CARD_MISSING", part_id=p["id"])})
     return int(p["id"]), warns
+
+
+def _mesh_mode_ladder(ctx: AppContext, c: dict[str, Any], body, st: dict[str, Any],
+                      has_step: bool) -> tuple[bool, str, list[str], list[dict[str, Any]]]:
+    """④ 메시 방식·사다리(C2-D-9·16·26) — ④ check-inputs 와 v0.18.0 select step(SG-D-3·4)이 같은 규칙. 반환 (remesh_available,
+    mode, ladder, 경고). STEP 이 있고 재메시 불가: mode remesh·freeform = 422 REMESH_UNAVAILABLE, auto = 경고 1회."""
+    cc = c["compare"]
+    ra = remesh_available(ctx, c)
+    mode = body.mesh_mode or str(cc["mesh"]["mode"])
+    # 화면 '실패 시 세분화 허용'(§8): mesh_refine false → 사다리에서 refine_* 제외, 생략 → 설정 ladder 그대로
+    ladder = [x for x in cc["mesh"]["ladder"] if body.mesh_refine is not False or not x.startswith("refine_")]
+    warns0: list[dict[str, Any]] = []       # v0.16.0 경고(기존 경고 뒤에 붙임 — 기존 순서 불변)
+    if has_step and not ra:
+        ver = st["gmsh"].get("version") or "?"
+        if mode in ("remesh", "freeform"):           # v0.16.3 freeform 도 gmsh importStl 필요(C2-D-26)
+            raise unprocessable("REMESH_UNAVAILABLE", up_svc.doe_text(
+                "REMESH_UNAVAILABLE" if cc["remesh"]["enabled"] else "REMESH_DISABLED", ver=ver), mesh_mode=mode)
+        if mode == "auto" and ({"remesh", "freeform"} & set(ladder)):   # 사다리에서 remesh·freeform 만 빼고 진행(경고 1회)
+            warns0.append({"code": "REMESH_UNAVAILABLE",
+                           "message": up_svc.doe_text("REMESH_UNAVAILABLE_AUTO", ver=ver)})
+    return ra, mode, ladder, warns0
 
 
 def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any]) -> dict[str, Any]:
@@ -584,19 +677,7 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
     st = status(ctx)
     if step_idx and not st["gmsh"]["ready"]:        # C2-D-16: 메시 형상만 있는 비교는 gmsh 없이도 허용
         raise DomainError("GMSH_UNAVAILABLE", up_svc.doe_text("SHAPES_STEP_GMSH"), status=503, index=step_idx)
-    ra = remesh_available(ctx, c)
-    mode = body.mesh_mode or str(cc["mesh"]["mode"])
-    # 화면 '실패 시 세분화 허용'(§8): mesh_refine false → 사다리에서 refine_* 제외, 생략 → 설정 ladder 그대로
-    ladder = [x for x in cc["mesh"]["ladder"] if body.mesh_refine is not False or not x.startswith("refine_")]
-    warns0: list[dict[str, Any]] = []       # v0.16.0 경고(기존 경고 뒤에 붙임 — 기존 순서 불변)
-    if step_idx and not ra:
-        ver = st["gmsh"].get("version") or "?"
-        if mode in ("remesh", "freeform"):           # v0.16.3 freeform 도 gmsh importStl 필요(C2-D-26)
-            raise unprocessable("REMESH_UNAVAILABLE", up_svc.doe_text(
-                "REMESH_UNAVAILABLE" if cc["remesh"]["enabled"] else "REMESH_DISABLED", ver=ver), mesh_mode=mode)
-        if mode == "auto" and ({"remesh", "freeform"} & set(ladder)):   # 사다리에서 remesh·freeform 만 빼고 진행(경고 1회)
-            warns0.append({"code": "REMESH_UNAVAILABLE",
-                           "message": up_svc.doe_text("REMESH_UNAVAILABLE_AUTO", ver=ver)})
+    ra, mode, ladder, warns0 = _mesh_mode_ladder(ctx, c, body, st, bool(step_idx))
     out_shapes, mat_shapes, total = [], [], 0.0
     seen_path: dict[tuple, int] = {}
     for i, sh in enumerate(shapes):
@@ -861,8 +942,12 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
             prep.update({k: p0.get(k) for k in ("n_nodes", "n_elems", "fixed")})
             if isinstance(p0.get("auto"), dict):    # v0.16.2 자동 탐지 결과 {ok, step, code, available, n_beads}(auto 만)
                 prep["auto"] = p0["auto"]
-            if p0.get("select_base") == "mesh":     # v0.16.2 ② B 메시 기준(① 은 키 없음)
-                prep["select_base"] = "mesh"
+            if p0.get("select_base") in ("mesh", "step"):     # v0.16.2 ② B 메시·v0.18.0 ③ STEP 기준(① 은 키 없음)
+                prep["select_base"] = p0["select_base"]
+            if p0.get("select_base") == "step":     # v0.18.0 §4.2 준비 요약: 메시 방식·평가 영역(+ fixed.xfer 는 fixed 안)
+                for k in ("mesh", "region"):
+                    if isinstance(p0.get(k), dict):
+                        prep[k] = p0[k]
             if isinstance(p0.get("graph"), dict):   # v0.17.0 분류 결과 {ok, code, sha256, n_segments, …}(schema 2 만)
                 prep["graph"] = p0["graph"]
     if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
@@ -918,6 +1003,9 @@ def _validate_step_extras(body, c: dict[str, Any], mat: dict[str, Any]) -> tuple
     if body.scenario == "compare":
         if body.mesh_size_mm is not None:
             raise unprocessable("INVALID_PARAMS", "형상 직접 비교의 요소 크기는 설정(bead_doe.compare.mesh.size_mm)으로 고정입니다")
+        props = body.props.model_dump() if body.props is not None else dict(mat["props_default"])
+        return {k: float(props[k]) for k in ("t", "E", "nu")}, None
+    if mat.get("select_base") == "step":    # v0.18.0 select step: props(③ 기본값), 요소 크기 = ④ 프로필(SG-D-3·4)
         props = body.props.model_dump() if body.props is not None else dict(mat["props_default"])
         return {k: float(props[k]) for k in ("t", "E", "nu")}, None
     if body.scenario != "step":
@@ -1021,10 +1109,14 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)                    # 경로 안전성(실제 생성은 워커)
     sel_mesh = body.scenario == "select" and mat.get("select_base") == "mesh"
+    sel_step = body.scenario == "select" and mat.get("select_base") == "step"     # v0.18.0 ③ 새 경로
+    if sel_step and SELECT_SCHEMA_NEW != 2:     # SG-D-2: step 기준 = schema 2 고정
+        raise unprocessable("INVALID_PARAMS", "'다른 모델(STEP만)'은 선택 schema 2 에서만 씁니다")
     if body.scenario == "select":
         b0 = out.get("base") or {}
-        label = (mat["mesh"] or {}).get("file_name") if sel_mesh else (b0.get("case_title") or b0.get("part_title"))
-        kind = "비드 직접 선택 · B 메시" if sel_mesh else "비드 직접 선택"
+        label = (mat["mesh"] or {}).get("file_name") if sel_mesh else (
+            (mat["step"] or {}).get("file_name") if sel_step else (b0.get("case_title") or b0.get("part_title")))
+        kind = "비드 직접 선택 · B 메시" if sel_mesh else ("비드 직접 선택 · STEP" if sel_step else "비드 직접 선택")
         title = (body.title or "").strip() or f"강성 평가 스터디 {label or ''} ({kind})".replace("  ", " ")
     else:
         title = (body.title or "").strip() or f"강성 평가 스터디 {out['step']['file_name']}"
@@ -1041,6 +1133,11 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         inputs["bead_source"] = mat["bead_source"]
         if sel_mesh:
             inputs["select_base"] = "mesh"
+        if sel_step:        # v0.18.0 §4.1: select_base step + ④ 메시 방식(mesh_size_mm 없음 — h = ④ 프로필)
+            inputs["select_base"] = "step"
+            inputs["mesh_mode"] = mat["mesh_mode"]
+            inputs["mesh_refine"] = mat["mesh_refine"]
+            inputs.pop("mesh_size_mm", None)
         inputs["select_schema"] = SELECT_SCHEMA_NEW     # v0.17.0 BG-D-35(복제 = 원 스터디 값 유지)
     import datetime as _dt
 
@@ -1058,11 +1155,17 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         doe["mesh"] = dict(mat["mesh"])
     if props is not None:
         doe["props"] = props
-        doe["mesh_size_mm"] = h
-    if body.scenario == "select":       # 워커·코어 분기(BD_INPUT _sel_input·BD_GEOM plan) — select_base 는 mesh 일 때만
+        if not sel_step:
+            doe["mesh_size_mm"] = h
+    if body.scenario == "select":       # 워커·코어 분기(BD_INPUT _sel_input·BD_GEOM plan) — select_base 는 mesh·step 일 때만
         doe["bead_source"] = mat["bead_source"]
         if sel_mesh:
             doe["select_base"] = "mesh"
+        if sel_step:        # v0.18.0 §4.1 스냅샷: select_base step + ④ 메시 방식·사다리(같은 이름·의미)
+            doe["select_base"] = "step"
+            doe["mesh_mode"] = mat["mesh_mode"]
+            doe["mesh_refine"] = mat["mesh_refine"]
+            doe["mesh_ladder"] = list(mat["mesh_ladder"])
         doe["select_schema"] = SELECT_SCHEMA_NEW        # v0.17.0 BG-D-40: BD_LOADS 그래프 단계·BD_GEOM 힌트 plan(키 없음 = 1)
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
@@ -1412,6 +1515,13 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
                                   "같은 ESL 을 골라 STEP 을 새로 올려 새 강성 평가 스터디를 만드세요", status=403, input=k)
     require_config_ok(ctx)
     require_enabled(ctx, s["scenario"])
+    s_in = s.get("inputs") or {}
+    if s["scenario"] == "select" and s_in.get("select_base") == "step":     # v0.18.0 SG-D-2·18: gmsh 필요, schema 2 고정
+        if int(s_in.get("select_schema") or 1) != 2:
+            raise unprocessable("INVALID_PARAMS", "'다른 모델(STEP만)'은 선택 schema 2 에서만 씁니다")
+        if not status(ctx)["scenarios"]["select_step"]:
+            raise DomainError("GMSH_UNAVAILABLE", "메시 생성기(gmsh)가 없어 '다른 모델(STEP만)'을 쓸 수 없습니다(관리자 문의)",
+                              status=503)
     if prep_job is None or not isinstance((prep_job.get("params") or {}).get("doe"), dict):
         raise conflict("PREREQUISITE_MISSING", "원 연구의 입력 스냅샷이 없습니다", missing=["prep_job"])
     old = prep_job["params"]["doe"]

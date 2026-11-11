@@ -1706,12 +1706,14 @@ class DoeCheckIn(_Req):
     mesh_upload_id: str | None = Field(default=None, min_length=1, max_length=64)    # ② 만
     part_title: str | None = Field(default=None, min_length=1, max_length=200)     # ② 만(기본 bead_doe.part_title)
     inch: int | None = Field(default=None, ge=1, le=1000)
-    mesh_mode: Literal["cad", "remesh", "freeform", "auto"] | None = None    # v0.16.0 ④ 만(C2-D-9) — 없으면 bead_doe.compare.mesh.mode
-    mesh_refine: bool | None = None     # v0.16.0 ④ 만(§8 '실패 시 세분화 허용') — false 면 ladder 에서 refine_* 제외, 없으면 설정
+    mesh_mode: Literal["cad", "remesh", "freeform", "auto"] | None = None    # v0.16.0 ④·v0.18.0 select step 만(C2-D-9) — 없으면 bead_doe.compare.mesh.mode
+    mesh_refine: bool | None = None     # v0.16.0 ④·v0.18.0 select step 만(§8 '실패 시 세분화 허용') — false 면 ladder 에서 refine_* 제외, 없으면 설정
     # v0.16.2 select 만(esl_bead_auto.md §3.3): seed 출처 auto(paicad 자동 탐지 — step_upload_id 필수)|manual(기본 — STEP 금지),
     # 기준 메시 case(기본 — 같은 모델 Case 메시)|mesh(② B 메시 — mesh_upload_id 필수, part_title·inch 선택). 다른 시나리오 422
     bead_source: Literal["auto", "manual"] | None = None
-    select_base: Literal["case", "mesh"] | None = None
+    # v0.18.0(esl_step_graph.md SG-D-1·3): step = ③ 다른 모델(STEP만) — step_upload_id 필수(auto·manual), props·inch·mesh_mode·
+    # mesh_refine 선택, mesh_upload_id·part_title·mesh_size_mm 금지(h = ④ 프로필), schema 2 고정
+    select_base: Literal["case", "mesh", "step"] | None = None
 
 
 class DoeStudyIn(DoeCheckIn):
@@ -1779,8 +1781,11 @@ class DoeCheckOut(_Out):
     props_default: dict[str, Any] | None = None
     mesh_size_default_mm: float | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
-    mesh_mode: Literal["cad", "remesh", "freeform", "auto"] | None = None   # v0.16.0 ④ 적용 메시 방식(요청 또는 설정)
-    remesh_available: bool | None = None                        # v0.16.0 ④ 삼각형 재메시 가능(C2-D-16)
+    mesh_mode: Literal["cad", "remesh", "freeform", "auto"] | None = None   # v0.16.0 ④·v0.18.0 select step 적용 메시 방식(요청 또는 설정)
+    remesh_available: bool | None = None                        # v0.16.0 ④·v0.18.0 select step 삼각형 재메시 가능(C2-D-16)
+    # v0.18.0 select step(esl_step_graph.md §4.2·§6): 준비 전 미리 보는 정보 {size_mm(④ 프로필 h), ladder, tria_policy,
+    # fixed_transfer{enabled, mode}, region{mode}}
+    step_graph: dict[str, Any] | None = None
 
 
 class DoeStudyOut(_Out):
@@ -1789,9 +1794,11 @@ class DoeStudyOut(_Out):
     scenario: DoeScenarioLit
     title: str
     entry_ids: list[str]
-    inputs: dict[str, Any]                          # v0.16.2 select: + bead_source("auto"|"manual"), select_base?("mesh" — ② 만)
+    inputs: dict[str, Any]                          # v0.16.2 select: + bead_source("auto"|"manual"), select_base?("mesh"|"step")
     phase: DoePhaseLit
     version: int
+    # select: {n_nodes, n_elems, fixed, auto?, select_base?, graph?} + v0.18.0 step 기준(esl_step_graph.md §4.2):
+    # mesh{method, tri_frac, stage_times, …}, fixed{source, n, xfer{method, matched, unmatched, frame_ok}}, region{mode, n_in, n_out}
     prep: dict[str, Any] | None = None
     doe: dict[str, Any] | None = None
     job: JobOut | None = None
@@ -2092,7 +2099,8 @@ class DoeSelectAutoOut(_Out):
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     paicad_version: str | None = None
     # v0.17.0(esl_beadgraph.md BG-D-42·§6.1): schema 2 스터디 = source "graph"(메시 분류기 seed), hints = paicad flanks 비교(있으면)
-    source: Literal["paicad", "graph"] | None = None
+    # v0.18.0(esl_step_graph.md SG-D-16): select_base step manual seed = "fixed_transfer"(빈 비드 + 이전 고정 fixed_user)
+    source: Literal["paicad", "graph", "fixed_transfer"] | None = None
     hints: list[dict[str, Any]] = Field(default_factory=list)
 
 
