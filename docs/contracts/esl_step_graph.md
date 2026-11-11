@@ -296,6 +296,8 @@ bead_doe:
 - **설정 거울**: `DEFAULTS["select"]["step_graph"]` = `BeadDoeSelectStepGraphCfg` = yaml 2개 = §4.3(키 `size_mm` 없음 — h 는 ④ 프로필, settings 응답에만 `size_mm`) — `backend/tests/test_doe_select_api.py::test_select_defaults_mirror_contract` 가 생략 없이 직접 대조.
 - **V-SG-7**: 워커 E2E 가 건너뛰지 않고 실행 — A Case = H5 시트 메시(h 10 mm, B STEP 과 같은 형상), 선택 schema 2(`select_schema2` 표지), 준비 → seed 저장 → 미리보기 → 실행 → 받기(ch_r.rad·ch_r.fem·values.json, best 에 STEP/BREP 없음) → plan-view `fixed[].src`. `GRAPH_FAILED` 주입·paicad 없음 변형은 단위 시험(`_geom_select`)·코어 시험이 맡음.
 
+- **SG-X-5 (재검증 Med, 수용)**: ③ mesh0(gmsh/OCC)는 메모리 주소 의존 순서 때문에 재준비마다 요소 배열이 달라짐(④ main 에도 동일, ASLR 끄면 동일). 한 번의 준비 안에서는 저장된 base_mesh.npz 재사용으로 design_sha·재실행 결정적. 재준비·복제 시 요소 ID 선택은 다시 맞춰야 함(①② 그래프 바이트는 결정적). 정규 순서화는 후속.
+
 ### 12.3 Verifier v0.18.0 수정(2026-11-12)
 - **HIGH — SG-D-13 개정**: bbox 원점·축 frame 판정 → 구멍 특징 판정 + Kabsch 강체 맞춤(`xyz_fitted`) + 클러스터마다 검증(`resid_mm`·`feature`·`via`). 설정 `fixed_transfer.{frame_min_holes 5, frame_match_mm null = 2h, frame_resid_mm null = h/4}`(DEFAULTS·pydantic·yaml 2개 거울), `origin_tol_mm`·`axis_tol_deg` 삭제(v0.18.0 미배포 키). 화면 방법 문구 `xyz_fitted` = "구멍 맞춤 이동 — 최근접 노드", 워커 준비 요약 method 허용 목록에 추가. 구멍 없는 판(합성 판 STEP 단계 시험) = 판정 불가 → 패드 클러스터 UNMATCHED(조용한 고정 대신).
 - **MED**: V-SG-12 `tests/doe/test_step_graph_perf.py`(perf·slow), SG-X-2 ↔ V-SG-R1 연결 + `STEP_GRAPH_ISLAND_AS_WALL` 경고(§12.1).
