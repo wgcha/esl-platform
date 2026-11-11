@@ -9,7 +9,7 @@ import { autoScenario, buildSpec, defaultRows, doe, normalizeDoeSettings, normal
 import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel, summaryText, type HistoryItem } from "../api/history";
 import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix, makePlan } from "../mock/doedata";
 import { render } from "@testing-library/react";
-import { BoundaryLegend } from "../components/BoundaryPlan";
+import { BoundaryWarnList } from "../view3d/part/BoundaryWarnList";
 import { sortRanking } from "../api/doe";
 import { heatStyle } from "../components/DoePerEslTable";
 import type { DoeRankRow } from "../api/types";
@@ -97,7 +97,7 @@ describe("DOE 규칙(화면 쪽 함수)", () => {
 
   it("경계 경고 수: B 체결 후보 0 이면 선이 없어도 prep.boundary.n_warn 으로 표시", () => {
     const plan = { ...makePlan("step", ["e1"]), links: [] };
-    const { getByTestId } = render(<BoundaryLegend plan={plan} st={makeDoeSettings()} showLinks nWarn={14} />);
+    const { getByTestId } = render(<BoundaryWarnList w={{ links: plan.links, st: makeDoeSettings(), nWarn: 14 }} />);
     expect(getByTestId("boundary-warn-n").textContent).toBe("14");
     expect(getByTestId("boundary-no-cand").textContent).toMatch(/모두 경고/);
   });

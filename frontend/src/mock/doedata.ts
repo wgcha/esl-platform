@@ -517,6 +517,26 @@ export function makePlan(scenario: DoeScenario, entryIds: string[]): DoePlanOut 
   return { frame: { a_range: [0, L], b_range: [0, H] }, outline: [[0, 0], [L, 0], [L, H], [0, H]], holes: HOLES.map(([a, b]) => ring(a, b, 9, 9, 16)), elems: { n_total: points.length, decimated: false, points }, beads, fixed, a_points, load_points, links };
 }
 
+/** v0.17.3 VU-D-7: ② B 메시 기준 select plan-view = 경계 매핑(A 체결·하중 집중·링크)을 select 평면 크기로 옮겨 붙임(백엔드 doe_select.plan_view 와 같음) */
+export function withBoundary(rec: { out: { inputs: { select_base?: string | null }; entry_ids: string[] } }, p: DoePlanOut): DoePlanOut {
+  if (rec.out.inputs.select_base !== "mesh") return p;
+  const b = makePlan("mesh", rec.out.entry_ids);
+  const [a0, a1] = p.frame.a_range;
+  const [b0, b1] = p.frame.b_range;
+  const k: XY = [(a1 - a0) / L, (b1 - b0) / H];
+  const at = (x: XY): XY => [+(a0 + x[0] * k[0]).toFixed(1), +(b0 + x[1] * k[1]).toFixed(1)];
+  const ab = (a: number, bb: number) => {
+    const [x, y] = at([a, bb]);
+    return { a: x, b: y };
+  };
+  return {
+    ...p,
+    a_points: b.a_points.map((x) => ({ ...x, ...ab(x.a, x.b) })),
+    load_points: b.load_points.map((x) => ({ ...x, ...ab(x.a, x.b) })),
+    links: b.links.map((l) => ({ ...l, from_ab: l.from_ab ? at(l.from_ab) : undefined, to_ab: l.to_ab ? at(l.to_ab) : undefined })),
+  };
+}
+
 export function boundaryCount(scenario: DoeScenario, entryIds: string[]) {
   const links = makePlan(scenario, entryIds).links;
   return { n_warn: links.filter((l) => l.warn && l.kind !== "support").length, n_info: links.filter((l) => l.warn && l.kind === "support").length };
@@ -1100,6 +1120,18 @@ export class DoeMock {
     this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
   }
 
+  /** v0.17.3 시연·시험(?demoMeshSel=1): ② 다른 모델(B 메시) 비드 직접 선택 — doe-14 선택 저장됨(평면도 경계 매핑 층) */
+  demoMeshSel() {
+    if (this.recs.some((r) => r.out.id === "doe-14")) return;
+    const s5 = this.recs.find((r) => r.out.id === "doe-5")!;
+    const r: Rec = { ...s5, out: { ...s5.out, id: "doe-14", title: "QN80J Ch/R 비드 직접 선택 — B 메시", created_at: "2026-11-11T03:00:00Z", inputs: { ...s5.out.inputs, mesh: { file_name: "QN80J_chr.rad", sha256: "b2".padEnd(64, "0") }, part_title: "chassis rear", inch: 75, select_base: "mesh" } }, jobIds: [] };
+    r.out.prep = { ...s5.out.prep!, boundary: boundaryCount("mesh", r.out.entry_ids) };
+    const j = doneJob(this.id("j-doe"), "p-body", "doe-14", "DOE_PREP", "2026-11-11T03:00:05Z", "2026-11-11T03:02:00Z");
+    this.seededJobs.push(j);
+    r.jobIds.push(j.id);
+    this.recs.push(r);
+  }
+
   /** v0.17.1 시연·시험(?demoLadder=1): ③ 다른 모델(STEP만) 메싱 뒤 긴 사다리 경고 — doe-12 준비 완료(경고 접기) · doe-13 준비 실패(빨간 1줄) */
   demoLadder() {
     if (this.recs.some((r) => r.out.id === "doe-12")) return;
@@ -1335,7 +1367,7 @@ export class DoeMock {
     if (method === "GET" && (sub === "/params" || sub === "/plan-view")) {
       if (!prepReady) return notReady();
       if (!rec.sel || rec.selDropped) return err(409, "SELECTION_MISSING", rec.selDropped ? "비드 선택을 저장한 뒤에 하세요 — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다" : "비드 선택을 먼저 저장하세요.", rec.selDropped ? { reason: "SELECTION_DROPPED" } : {});
-      return ok(sub === "/params" ? selParams(rec.sel.input as DoeSelectionIn, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : selPlan(rec.sel.input as DoeSelectionIn, this.settings));
+      return ok(sub === "/params" ? selParams(rec.sel.input as DoeSelectionIn, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : withBoundary(rec, selPlan(rec.sel.input as DoeSelectionIn, this.settings)));
     }
     if (method === "POST" && (sub === "/matrix" || sub === "/preview") && !rec.sel) {
       if (!prepReady) return notReady();
@@ -1398,7 +1430,7 @@ export class DoeMock {
     }
     if (method === "GET" && (sub === "/params" || sub === "/plan-view") && rec.sel?.input.schema_version === 2) {
       if (!prepReady) return notReady();
-      return ok(sub === "/params" ? graphParams(rec.sel.input) : graphPlan(rec.sel.input));
+      return ok(sub === "/params" ? graphParams(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
     }
     return null;
   }

@@ -8,7 +8,7 @@ import { renderApp } from "../test/render";
 import { doeBlockedReason, isInfoWarn, normalizeDoeSettings, scenarioBlocked, warnText } from "../api/doe";
 import { makeDoeSettings } from "../mock/doedata";
 import { blendSmall } from "../components/DoeParamTable";
-import { offsetRing } from "../components/BoundaryPlan";
+import { offsetRing } from "../view3d/part/planGeom";
 import { sectionLine } from "../components/SectionMini";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
@@ -136,7 +136,7 @@ describe("상세(doe-5: 선택 저장됨, READY)", () => {
     await waitFor(() => expect(screen.getByTestId("plan-chip-b1")).toBeTruthy());
     expect(screen.getByTestId("plan-chip-b1").textContent).toMatch(/B1 · D1 22\.0 · D2 14\.0 · W 60\.0/);
     expect(screen.queryByTestId("plan-nodes")).toBeNull();
-    const tg = screen.getByTestId("plan-nodes-toggle") as HTMLInputElement;
+    const tg = screen.getByTestId("pv-layer-nodes") as HTMLInputElement;
     fireEvent.click(tg);
     await waitFor(() => expect(screen.getByTestId("plan-nodes")).toBeTruthy());
     fireEvent.click(screen.getByTestId("param-B1_W"));

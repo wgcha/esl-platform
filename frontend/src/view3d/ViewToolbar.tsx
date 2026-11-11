@@ -118,7 +118,7 @@ function IsoIcon() {
     </svg>
   );
 }
-function FitIcon() {
+export function FitIcon() {
   return (
     <svg {...svgProps}>
       <path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" />
@@ -126,7 +126,7 @@ function FitIcon() {
     </svg>
   );
 }
-function FitSelIcon() {
+export function FitSelIcon() {
   return (
     <svg {...svgProps}>
       <path d="M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5" />
