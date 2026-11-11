@@ -15,7 +15,7 @@ import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   type NewRadio,
-  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT } from "../../api/doe";
+  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, useBeadSelect, type AutoSeedView } from "../../components/BeadSelectCard";
 import { SectionMini } from "../../components/SectionMini";
 import { SelectPlan, type PlanVar } from "../../components/BoundaryPlan";
@@ -50,6 +50,7 @@ import { VerifyDropCard } from "../../components/VerifyDropCard";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { FixedViolNote } from "../../components/FixedViol";
 import { JobFailBanner, failedStep, isFailedJob, progressText } from "../../components/JobFailBanner";
+import { BlockErr, MsgFold } from "../../components/MsgFold";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -649,18 +650,11 @@ function useVerifyDrop(projectId: string, study: DoeStudyOut | null, result: Doe
 // ================================================================ v0.15.0 ④ 변수 · ⑤ 평면도 + 단면(select)
 /** v0.15.1 변수 표 옆 고정 경고(SELECT_FIXED_IN_BEAD·SELECT_FIXED_IN_BLEND — 전에는 비드 목록 ⚠ 툴팁에만) */
 const FIXED_WARN = ["SELECT_FIXED_IN_BEAD", "SELECT_FIXED_IN_BLEND"];
-function FixedWarnings({ pd }: { pd: { beads: { id: string; name?: string | null; warnings?: { code: string; message?: string | null }[] | null }[] } }) {
+function FixedWarnings({ pd, storeKey }: { pd: { beads: { id: string; name?: string | null; warnings?: { code: string; message?: string | null }[] | null }[] }; storeKey?: string }) {
   const ws = pd.beads.flatMap((b) => (b.warnings ?? []).filter((w) => FIXED_WARN.includes(w.code)).map((w) => ({ b, w })));
   if (!ws.length) return null;
-  return (
-    <ul className="reasons warn-text small" data-testid="vars-fixed-warn">
-      {ws.map(({ b, w }, i) => (
-        <li key={i}>
-          {b.name || b.id.toUpperCase()}: {warnText(w)}
-        </li>
-      ))}
-    </ul>
-  );
+  // v0.17.1 요약 1줄(기본 접힘)
+  return <MsgFold items={ws.map(({ b, w }) => ({ text: `${b.name || b.id.toUpperCase()}: ${warnText(w)}` }))} storeKey={storeKey} testId="vars-fixed-warn" />;
 }
 
 /** select 변수 0개 사유: 비드·전체 경고 문구(없으면 일반 안내) */
@@ -691,6 +685,8 @@ function SelectVarsPlan(p: {
   nodesHidden: boolean;
   setNodesHidden: (v: boolean) => void;
   beadPngUrl: (b: string) => string;
+  /** v0.17.1 접기 상태 키(스터디 id) */
+  foldKey?: string;
 }) {
   const { pd, rows, form, st, plan } = p;
   const params = pd?.params ?? [];
@@ -714,12 +710,10 @@ function SelectVarsPlan(p: {
             {p.ctrl.state?.beads.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
           </div>
         ) : pd && !pd.params.length ? (
-          <div className="warn-box small" role="alert" data-testid="vars-empty">
-            변수가 없습니다 — {noVarsReason(pd)}
-          </div>
+          <BlockErr title="변수가 없습니다" detail={noVarsReason(pd)} testId="vars-empty" />
         ) : pd && rows && form && st ? (
           <>
-            <FixedWarnings pd={pd} />
+            <FixedWarnings pd={pd} storeKey={p.foldKey ? `${p.foldKey}:fixed` : undefined} />
             <DoeParamTable
               data={pd}
               rows={rows}
@@ -1035,6 +1029,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         unsaved: ctrl.hasSeed && !selSha && !selFull.data?.v,
         notice: autoSeed.data && !autoSeed.data.seed && !selSha ? autoNoticeText(prepAutoFailed ? "AUTO_DETECT_FAILED" : autoSeed.data.code) : autoSeed.error && !selSha ? autoNoticeText("AUTO_NOT_AVAILABLE") : null,
         warnings: autoSeed.data?.seed?.warnings ?? [],
+        foldKey: id,
       }
     : null;
   const blocked = st ? doeBlockedReason(st, s?.scenario) : null;
@@ -1082,7 +1077,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         </div>
       )}
       {st?.paicad.warning && !isCompare && !isSelect && <div className="small warn-text">{st.paicad.warning}</div>}
-      <JobFailBanner job={s?.job} />
+      <JobFailBanner job={s?.job} compact />
       {error ? <ErrorLine text={error} onClose={() => setError(null)} /> : <ErrorLine text={study.error ?? stError} />}
       {s && (
         <Card
@@ -1103,16 +1098,10 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {(phase === "PREP" || (phase === "FAILED" && !s.prep)) && job && (
             <>
               <Steps job={job} />
-              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
+              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />
             </>
           )}
-          {prepWarns.length > 0 && (
-            <ul className="reasons small warn-text">
-              {prepWarns.map((w, i) => (
-                <li key={i}>{warnText(w)}</li>
-              ))}
-            </ul>
-          )}
+          <MsgFold items={prepWarns.map((w) => ({ text: warnText(w), info: isInfoWarn(w) }))} storeKey={`${id}:prep`} testId="prep-warn" />
         </Card>
       )}
       {beadPrep && isSelect && selDropped && (
@@ -1141,6 +1130,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           nodesHidden={nodesHidden}
           setNodesHidden={setNodesHidden}
           beadPngUrl={(b) => doe.beadPngUrl(id, b)}
+          foldKey={id}
         />
       )}
       {beadPrep && !isSelect && (
@@ -1189,7 +1179,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 미리보기 진행 중 · {progressText(job) ?? "대기 중"}
               </div>
               <Steps job={job} />
-              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
+              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />
             </>
           )}
           {pv && selStale && editable && (
@@ -1199,11 +1189,11 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           )}
           {pv && matrix && !fresh && !selStale && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
           {phase !== "PREVIEW" && isFailedJob(job) && job.job_type === "DOE_PREVIEW" && (
-            <div className="warn-box small" role="alert" data-testid="preview-failed">
-              미리보기가 끝나지 못했습니다 — 단계 {failedStep(job)?.step_no ?? "?"} {STEP_LABEL[failedStep(job)?.step_key ?? ""] ?? failedStep(job)?.step_key ?? ""}
-              {(failedStep(job)?.failure_code ?? job.failure_code) ? ` · ${failedStep(job)?.failure_code ?? job.failure_code}` : ""} · 위 배너의 [로그 보기]에서 원인을 확인하고 다시 [미리보기]
-              {pv ? " (아래는 이전 미리보기)" : ""}
-            </div>
+            <BlockErr
+              testId="preview-failed"
+              title={`미리보기가 끝나지 못했습니다 — 단계 ${failedStep(job)?.step_no ?? "?"} ${STEP_LABEL[failedStep(job)?.step_key ?? ""] ?? failedStep(job)?.step_key ?? ""}${(failedStep(job)?.failure_code ?? job.failure_code) ? ` · ${failedStep(job)?.failure_code ?? job.failure_code}` : ""}`}
+              detail={`위 실패 줄의 [자세히] → [로그 보기]에서 원인을 확인하고 다시 [미리보기]${pv ? " (아래는 이전 미리보기)" : ""}`}
+            />
           )}
           {phase !== "PREVIEW" && pv && pv.ok === 0 && (pv.cells?.length ?? 0) > 0 && (
             <div className="warn-box small" role="alert" data-testid="preview-zero-ok">

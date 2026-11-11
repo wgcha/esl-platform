@@ -10,11 +10,12 @@ import { CODE_TEXT, errorText } from "../api/client";
 import {
   BEAD_SOURCE_NAME, DEFEATURE_KIND_NAME, diagText, doe, featureSizeText,
   MESH_METHOD_SHORT, MESH_MODE_NAME, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf,
-  shapeNameProblem, warnText,
+  shapeNameProblem, warnText, isInfoWarn,
 } from "../api/doe";
 import type { DoeBeadSource, DoeSelectBase, DoeDefeatureList, DoeCheckOut, DoeDesignStatus, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeScenario, DoeSettingsOut, DoeStudyOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { Empty, ErrorLine, Field } from "./ui";
+import { MsgFold, msgHead } from "./MsgFold";
 import { Uploader, type UploadProgress } from "../lib/uploader";
 import { bytes } from "../lib/format";
 
@@ -233,13 +234,7 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
           · 크기 검사: ξ {relText(check.size.rel_xi)} η {relText(check.size.rel_eta)} <span className="ok-text">✓</span>
         </span>
       )}
-      {check.warnings.length > 0 && (
-        <ul className="reasons warn-text">
-          {check.warnings.map((w, i) => (
-            <li key={i}>{warnText(w)}</li>
-          ))}
-        </ul>
-      )}
+      <MsgFold items={check.warnings.map((w) => ({ text: warnText(w), info: isInfoWarn(w) }))} storeKey="new:check" testId="doe-check-warn" />
     </div>
   );
 }
@@ -654,6 +649,25 @@ export function CompareShapes({ projectId, st, form, setForm, allowed }: {
   );
 }
 
+/** v0.17.1 형상 실패 칸: 빨간 1줄(머리말 — 앞 "[단계별: …]" 은 뺌) + [자세히] → 전체 문구·시도 목록(높이 고정 스크롤) */
+function FailCell({ id, text, tip }: { id: string; text: string; tip: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <span className="fail-cell">
+        <span className="small error-text one-line" title={tip || undefined} data-testid={`prep-fail-${id}`}>
+          <span className="sr-only">{text}</span>
+          <span aria-hidden>{msgHead(text)}</span>
+        </span>
+        <button type="button" className="msg-fold-more link-btn small" aria-expanded={open} aria-label={`${id} 실패 ${open ? "접기" : "자세히"}`} onClick={() => setOpen((x) => !x)}>
+          {open ? "접기" : "자세히"}
+        </button>
+      </span>
+      {open && <div className="msg-fold-body" data-testid={`prep-fail-body-${id}`}>{tip || text}</div>}
+    </>
+  );
+}
+
 /** '메시 방식' 셀 내용(형상 표 열 = 긴 문구, 순위표·ESL별 표 = 짧은 배지) */
 export function MeshMethodBadge({ shape, partId, short, testId }: { shape: Parameters<typeof meshMethodLabel>[0]; partId?: number | null; short?: boolean; testId?: string }) {
   if (!shape.mesh_method) return null;
@@ -778,7 +792,7 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
         {prep?.mesh?.gmsh_version ? ` (gmsh ${prep.mesh.gmsh_version})` : ""}
       </div>
       {withQ.length > 0 && (
-        <div className={`small ${over.length ? "warn-text" : "muted"}`} data-testid="doe-quality-summary">
+        <div className={`small one-line ${over.length ? "warn-text" : "muted"}`} data-testid="doe-quality-summary" title={over.length ? over.map((r) => r.name).join(", ") : undefined}>
           메시 품질(이슈 #53 기준): Fail 비율 최대 {pct(Math.max(...withQ.map((r) => r.quality!.fail_ratio)))}
           {maxFail != null ? ` · 상한 ${pct(maxFail)}` : ""}
           {over.length
@@ -858,12 +872,7 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                   <span className={`badge ${statusKind(r.status)}`} title={r.code ?? undefined}>
                     {r.status === "READY" ? "준비됨" : r.status === "RUNNING" ? "준비 중" : STATUS_NAME[r.status]}
                   </span>
-                  {r.code && r.status !== "READY" && (
-                    <span className="small error-text" title={shapeFailTip(r) || undefined} data-testid={`prep-fail-${r.id}`}>
-                      {" "}
-                      {shapeFailText(r)}
-                    </span>
-                  )}
+                  {r.code && r.status !== "READY" && <FailCell id={r.id} text={shapeFailText(r)} tip={shapeFailTip(r)} />}
                 </td>
               </tr>
               {openDf === r.id && (
