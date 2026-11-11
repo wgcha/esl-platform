@@ -1,7 +1,7 @@
 // v0.15.1 회귀(esl_bead_select.md §3-3·§11): 저장 선택이 없는 select 스터디에서 [+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면
 // 변수 표(DoeParamTable B1 D1 …)가 열려야 한다. 원인(v0.15.0): 저장 직후 GET selection 응답이 오기 전 이전 값({v: null})을 보고
 // '기준 메시 바뀜(SELECTION_DROPPED)'으로 잘못 판정해 변수 표·평면도를 숨겼다. 저장 전에는 다음 단계 안내, 변수 0개면 사유를 보인다.
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LABEL, selMesh } from "../mock/selectmock";
 
@@ -74,7 +74,9 @@ describe("select: 저장 선택 없음 → 선택 저장 → 변수 표", () => 
       rec.sel!.derived.beads = rec.sel!.derived.beads.map((b) => ({ ...b, tiers: [], range_default: { D: {}, W: null } as never, warnings: [{ code: "SELECT_WIDTH_UNDEFINED" }] }));
     });
     await waitFor(() => expect(screen.getByTestId("vars-empty")).toBeTruthy());
-    expect(screen.getByTestId("vars-empty").textContent).toMatch(/변수가 없습니다 — .*국부 폭을 잴 수 없어/);
+    expect(screen.getByTestId("vars-empty").textContent).toMatch(/^✗ 변수가 없습니다/);
+    fireEvent.click(within(screen.getByTestId("vars-empty")).getByRole("button", { name: "자세히" }));
+    expect(screen.getByTestId("vars-empty").textContent).toMatch(/국부 폭을 잴 수 없어/);
   });
 
   it("지우개·층 비우기·비드 ✕·단 삭제(v0.15.1): 확인 후 지움, Ctrl+Z 로 되돌림, 저장 선택이 있으면 '선택 변경됨' + 미리보기 무효", async () => {

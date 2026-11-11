@@ -51,6 +51,8 @@ export function installMockFetch() {
     if (dra === "running") server.tick();
     else server.drain();
   }
+  // v0.17.1 경고 접기 시연: ?demoLadder=1 doe-12(③ STEP만 · 긴 사다리 경고) · doe-13(메시 실패 — 빨간 1줄)
+  if (params.get("demoLadder") === "1") server.doe.demoLadder();
   if (params.get("demoPc") === "1") {
     server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
     server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");

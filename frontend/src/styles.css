@@ -3786,3 +3786,149 @@ details.card.fold > .fold-body {
   gap: 0.25rem;
   cursor: pointer;
 }
+
+/* v0.17.1 경고·정보 접기(MsgFold) · 막는 오류 1줄(BlockErr) */
+.msg-fold {
+  margin: 0.3rem 0;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+.msg-fold-line,
+.msg-fold-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.2rem 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.msg-fold.warn > .msg-fold-line {
+  color: var(--wait);
+}
+.msg-fold.info > .msg-fold-line {
+  color: var(--muted);
+}
+.msg-fold-count {
+  flex: none;
+  font-weight: 600;
+}
+.msg-fold-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-fold-head.sep::before {
+  content: "· ";
+}
+.msg-fold-line .msg-fold-more::before {
+  content: "— ";
+  color: var(--muted);
+  text-decoration: none;
+  display: inline-block;
+  margin-right: 0.25rem;
+}
+.msg-fold-more {
+  flex: none;
+  color: var(--accent);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.msg-fold-list {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0.3rem 0.6rem;
+  border-left: 2px solid var(--wait-weak);
+  display: grid;
+  gap: 0.15rem;
+  color: var(--text-2);
+}
+.msg-fold-item.info {
+  color: var(--muted);
+}
+.msg-fold-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg-fold-body {
+  max-height: 10rem;
+  overflow: auto;
+  margin: 0.2rem 0 0.3rem 1.1rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+.block-err {
+  margin: 0.4rem 0;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+.page-title-row ~ .block-err {
+  margin: 0.5rem 1.25rem 0;
+}
+.workarea .block-err {
+  margin: 0.4rem 0;
+}
+.block-err-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  color: var(--bad);
+}
+.block-err-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.block-err-body {
+  display: grid;
+  gap: 0.3rem;
+}
+.block-err-body .msg-fold-body {
+  margin-left: 0;
+}
+.one-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.fail-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  max-width: 32rem;
+  min-width: 0;
+}
+.fail-cell .one-line {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.job-inline-row .job-fail-one {
+  flex: 0 1 auto;
+  min-width: 0;
+}

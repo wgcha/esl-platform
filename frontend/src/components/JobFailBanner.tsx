@@ -6,6 +6,7 @@ import { errorText, failureHint } from "../api/client";
 import { JOB_TYPE_LABEL, STEP_LABEL } from "../api/history";
 import { warnText } from "../api/doe";
 import type { JobOut } from "../api/types";
+import { BlockErr, msgHead } from "./MsgFold";
 
 const FAILED_STATES = ["FAILED", "CANCELED", "INTERRUPTED"];
 const STATE_NAME: Record<string, string> = { FAILED: "실패", CANCELED: "취소됨", INTERRUPTED: "중단됨" };
@@ -56,8 +57,8 @@ export function JobLogTail({ jobId, step }: { jobId: string; step: number | null
   );
 }
 
-/** 최신 작업 실패 배너(화면 위 고정) */
-export function JobFailBanner({ job }: { job: JobOut | null | undefined }) {
+/** 최신 작업 실패 배너(화면 위 고정). compact(v0.17.1 DOE) = 빨간 1줄(제목·단계·코드·머리말) + [자세히] → 문구·[로그 보기] */
+export function JobFailBanner({ job, compact }: { job: JobOut | null | undefined; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [job?.id]);
   if (!isFailedJob(job)) return null;
@@ -65,6 +66,31 @@ export function JobFailBanner({ job }: { job: JobOut | null | undefined }) {
   const code = st?.failure_code ?? job.failure_code;
   const msg = st?.failure_message ?? job.failure_message;
   const user = failureHint(code, msg) ?? (code ? warnText({ code, message: null }) : null);
+  if (compact) {
+    const head = user && user !== code ? user : msg;
+    const title = [
+      `${JOB_TYPE_LABEL[job.job_type] ?? job.job_type} ${STATE_NAME[job.state] ?? job.state}`,
+      st ? `단계 ${st.step_no} ${STEP_LABEL[st.step_key] ?? st.step_key}` : null,
+      code,
+      head ? msgHead(head) : null,
+    ].filter(Boolean).join(" · ");
+    return (
+      <BlockErr title={title} testId="job-fail-banner">
+        {(user && user !== code) || msg ? (
+          <div className="msg-fold-body" data-testid="job-fail-msg">
+            {user && user !== code ? user : null}
+            {msg && msg !== user ? `${user && user !== code ? "\n" : ""}${msg}` : null}
+          </div>
+        ) : null}
+        <div>
+          <button type="button" className="btn small ghost" aria-expanded={open} onClick={() => setOpen((x) => !x)}>
+            {open ? "로그 닫기" : "로그 보기"}
+          </button>
+        </div>
+        {open && <JobLogTail jobId={job.id} step={st?.step_no ?? null} />}
+      </BlockErr>
+    );
+  }
   return (
     <div className="warn-box job-fail-banner" role="alert" data-testid="job-fail-banner">
       <div className="job-fail-head">

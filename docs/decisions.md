@@ -218,3 +218,4 @@
 - (0.17.0 Verifier fix D-0.17.0-VF-ERR, 2026-11-10) beadgraph 공개 API 는 BeadgraphError(code, detail)만 던진다(INVALID_INPUT·ERROR, EditError 는 하위, KeyError 는 앵커 미해석만)(근거: §8.2, physicsai 소비자 처리 단순화, BG-X-12).
 - (0.17.0 Verifier fix D-0.17.0-VF-SPLIT, 2026-11-10) 화면 분할 좌표 = 코어 평면 식(frame.origin 포함)(근거: H6 에서 600 mm 어긋남, BG-X-13).
 - (0.17.0 Verifier fix D-0.17.0-VF-DEMO, 2026-11-10) 시연 venv 도 beadgraph 를 인덱스 목록에서 빼고 Install-EslBeadgraph 로 설치(근거: 저장소 시연 설치 실패, BG-X-8 과 같은 규칙).
+- (0.17.1 D-0.17.1-FOLD, 2026-11-11) 사용자 지시: DOE 입력·준비 화면의 경고·정보·로그는 기본 접힘 — 요약 1줄 "⚠ 경고 N건 · 정보 M건 — 자세히"(머리말 = 첫 경고, 앞의 `[단계별: …]` 묶음은 빼고 1줄로 자름), 펼치면 항목마다 접기·높이 고정(10rem) 스크롤 상자, 펼침 상태 = sessionStorage `esl.msgfold.<study>:<영역>`(try/catch). 막는 실패(FAILED)는 빨간 1줄 + [자세히]. 문구 맵(warnText)·백엔드 그대로, 결과 카드 경고는 범위 밖(근거: ③ STEP만 메싱 뒤 사다리 경고가 화면을 덮어 읽기 어려움)

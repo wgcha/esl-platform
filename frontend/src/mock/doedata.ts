@@ -137,6 +137,24 @@ const PARAM_WARNINGS: DoeWarning[] = [
   { code: "BEAD_NEAR_FIXED", bead: "B4", message: "B4 비드가 체결부에서 6.2 mm 떨어져 있습니다(넓히면 고정 침범 가능)." },
 ];
 
+/** v0.17.1 긴 사다리 경고(워커 문구 형식 — esl/doe/stages.py·mesh_remesh.py·mesh_tria.py) */
+const LADDER_STAGES = "cad 실패 412.3 s → refine_local 건너뜀(병합 면 실패 아님) → refine_global 실패(시간 초과) 600.0 s → defeature 건너뜀(억제 대상 없음) → remesh 실패 88.1 s → freeform 성공 131.7 s";
+export const LADDER_WARNINGS: DoeWarning[] = [
+  {
+    code: "MESH_FREEFORM",
+    message: `[단계별: ${LADDER_STAGES}] CAD 면 경계를 따르지 않는 freeform 재메시(특징각 40°·곡선각 30°)입니다 — 요소 변이 작은 CAD 특징선을 따르지 않을 수 있습니다. 원 형상 대비 최대 0.214 mm. 지름 4.5 mm 미만 구멍 17개는 번질 수 있습니다(메시에서 사라진 구멍 3개)`,
+  },
+  {
+    code: "MESH_TRIA_FALLBACK",
+    message: "CAD 면 메시·이산 재메시가 모두 실패해 OCC 삼각화(BRepMesh, 편차 0.05 mm)를 그대로 삼각형 쉘로 썼습니다(삼각형 48211개, 4각 0 %, 원 형상 대비 최대 0.031 mm). 삼각형 요소는 4각보다 굽힘 강성이 조금 높게 나올 수 있습니다",
+  },
+  { code: "AUTO_TOO_MANY_BEADS", n: 24, max: 20, message: "자동 탐지 비드 24개가 상한 20개(select.max_beads)를 넘어 앞에서부터 20개만 초기 선택에 넣었습니다." },
+  { code: "BG_GROUP_NOMINAL_SPREAD", message: "비드 B3: 묶은 세그먼트의 공칭 깊이가 3.8~5.1 mm 로 달라 길이 가중 평균을 공칭으로 씁니다(변화량은 같음)." },
+  { code: "AUTO_GROUP_DROPPED", level: "info", message: "(정보) paicad 대칭 묶음(group)은 초기 선택에 넣지 않았습니다 — 비드마다 따로 변수가 됩니다." },
+  { code: "BG_SHARED_CHILD", level: "info", message: "(정보) 비드 B2: 공유 자식 바닥 s14 은 제자리이고 그 벽 212 노드가 높이 차를 흡수합니다." },
+];
+export const LADDER_FAIL_TEXT = `[단계별: cad 실패 412.3 s → refine_local 건너뜀(병합 면 실패 아님) → refine_global 실패(시간 초과) 600.0 s → remesh 실패 88.1 s → freeform 실패 120.4 s → tria 실패 9.8 s] CAD 메시 실패: gmsh 메시 생성에 실패했습니다(면 37: 1D 메시 실패) → 세분화·재메시·freeform 재메시·삼각형 폴백도 실패: OCC 삼각화가 면 37·41·58 을 만들지 못했습니다`;
+
 // ---------------------------------------------------------------- 결정적 난수·행렬(BD-D-8 모양 — 목 구현)
 function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -1080,6 +1098,40 @@ export class DoeMock {
     this.seededJobs.push(j11);
     sel11.jobIds.push(j11.id);
     this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
+  }
+
+  /** v0.17.1 시연·시험(?demoLadder=1): ③ 다른 모델(STEP만) 메싱 뒤 긴 사다리 경고 — doe-12 준비 완료(경고 접기) · doe-13 준비 실패(빨간 1줄) */
+  demoLadder() {
+    if (this.recs.some((r) => r.out.id === "doe-12")) return;
+    const tmpl = this.recs.find((r) => r.out.id === "doe-2")!;
+    const mk = (id: string, title: string, at: string): Rec => ({
+      ...tmpl,
+      out: { ...tmpl.out, id, scenario: "step", title, created_at: at, doe: null, phase: "READY", version: 2, inputs: { ...tmpl.out.inputs, step: { file_name: "QN80J_chassis_rear_mid.step", sha256: "c3".padEnd(64, "0") }, mesh: null, props: { t: 1.0, E: 205000, nu: 0.3 }, mesh_size_mm: 3 } },
+      jobIds: [],
+      cells: null,
+      result: null,
+    });
+    const r12 = mk("doe-12", "QN80J Ch/R 비드 — STEP만(사다리 경고)", "2026-11-11T01:00:00Z");
+    r12.out.prep = { ...tmpl.out.prep!, warnings: [...LADDER_WARNINGS, ...PARAM_WARNINGS] };
+    const j12 = doneJob(this.id("j-doe"), "p-body", "doe-12", "DOE_PREP", "2026-11-11T01:00:05Z", "2026-11-11T01:31:00Z");
+    this.seededJobs.push(j12);
+    r12.jobIds.push(j12.id);
+    const r13 = mk("doe-13", "QN80J Ch/R 비드 — STEP만(메시 실패)", "2026-11-11T02:00:00Z");
+    r13.out.prep = null;
+    r13.out.phase = "FAILED";
+    const b13 = doneJob(this.id("j-doe"), "p-body", "doe-13", "DOE_PREP", "2026-11-11T02:00:05Z", "2026-11-11T02:22:00Z");
+    const j13: JobOut = {
+      ...b13,
+      state: "FAILED",
+      failure_code: "MESH_FAILED",
+      failure_message: LADDER_FAIL_TEXT,
+      steps: b13.steps!.map((x) =>
+        x.step_no === 2 ? { ...x, state: "FAILED", failure_code: "MESH_FAILED", failure_message: LADDER_FAIL_TEXT } : x.step_no > 2 ? { ...x, state: "PENDING", finished_at: null } : { ...x, state: "SUCCEEDED" },
+      ),
+    };
+    this.ctx.jobs().push(j13);
+    r13.jobIds.push(j13.id);
+    this.recs.push(r12, r13);
   }
 
   private previewOf(rev: number, m: DoeMatrixOut, cells: DoePreviewCell[], r?: Rec) {

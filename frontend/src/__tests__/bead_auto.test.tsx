@@ -78,7 +78,11 @@ describe("auto 스터디(doe-8): seed 불러오기·편집·seed 로 초기화·
     const r = renderApp("/p/p-body/doe/doe-8", "power");
     await waitFor(() => expect(screen.getByTestId("bead-b2")).toBeTruthy(), { timeout: 8000 });
     expect(screen.getByTestId("bs-auto-badge").textContent).toBe(AUTO_BADGE);
-    expect(screen.getByTestId("bs-auto-info").textContent).toMatch(/B2: 자동 탐지 사면 폭이 계산값과 27 % 다릅니다/);
+    // v0.17.1 경고·정보는 요약 1줄(기본 접힘) → 펼치면 목록
+    const fold = screen.getByTestId("bs-auto-warn");
+    expect(fold.textContent).not.toMatch(/B2: 자동 탐지 사면 폭이 계산값과 27 % 다릅니다/);
+    fireEvent.click(within(fold).getByRole("button", { name: /자세히/ }));
+    expect(fold.textContent).toMatch(/B2: 자동 탐지 사면 폭이 계산값과 27 % 다릅니다/);
     expect(screen.queryByTestId("bs-dirty")).toBeNull(); // 배지가 대신 알림
     const n0 = floorText("b1");
     expect(Number(n0.replace(/,/g, ""))).toBeGreaterThan(0);
@@ -160,6 +164,8 @@ describe("seed 없음 → 안내 1줄 + 직접 선택 도구", () => {
       rec.autoSel = { ...rec.autoSel!, warnings: [{ code: "AUTO_TOO_MANY_BEADS", n: 24, max: 20 }, { code: "AUTO_BEAD_UNMAPPED", bead: "b3" }] };
     });
     const w = await screen.findByTestId("bs-auto-warn");
+    expect(screen.getByTestId("bs-auto-warn-count").textContent).toBe("⚠ 경고 2건 · 정보 0건");
+    fireEvent.click(within(w).getByRole("button", { name: /자세히/ }));
     expect(w.textContent).toMatch(/자동 탐지 비드 24개 — 상한 20개/);
     expect(w.textContent).toMatch(/B3: 바닥 요소를 메시에서 찾지 못했습니다/);
   });

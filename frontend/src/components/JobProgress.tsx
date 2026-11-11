@@ -5,6 +5,7 @@ import type { JobOut, JobState } from "../api/types";
 import { usePolling } from "../lib/usePolling";
 import { STEP_LABEL as SHARED_STEP_LABEL } from "../api/history";
 import { JobStatusBadge } from "./ui";
+import { msgHead } from "./MsgFold";
 
 const TERMINAL: JobState[] = ["SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"];
 const RETRYABLE: JobState[] = ["FAILED", "CANCELED", "INTERRUPTED"];
@@ -20,8 +21,18 @@ const STEP_LABEL: Record<string, string> = {
 /** 작업 진행(2초 갱신) + 로그 tail + 취소·재시도. 종료되면 onDone 호출. */
 /** onRetried: 재시도는 새 작업을 만든다 — 호출 측이 새 작업 id 로 바꿔 붙일 때(v0.11.0 SCX 내려받기) */
 /** confirmCancel: 취소 전에 확인 창 문구(v0.12.0 검증 낙하 — SCX 잡도 종료). noRetry: 재시도 버튼 숨김(사람 확인이 먼저일 때) */
-export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmCancel, noRetry }: { jobId: string; onDone?: (j: JobOut) => void; allowed?: boolean; onRetried?: (j: JobOut) => void; confirmCancel?: string | null; noRetry?: boolean }) {
+export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmCancel, noRetry, compact }: {
+  jobId: string;
+  onDone?: (j: JobOut) => void;
+  allowed?: boolean;
+  onRetried?: (j: JobOut) => void;
+  confirmCancel?: string | null;
+  noRetry?: boolean;
+  /** v0.17.1 DOE 입력·준비: 실패 문구 1줄(머리말 — 전체는 툴팁·위 실패 줄 [자세히]), 로그는 [로그 보기]로 펼침(기본 접힘) */
+  compact?: boolean;
+}) {
   const job = usePolling(() => api.getJob(jobId), 2000, [jobId]);
+  const [showLog, setShowLog] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [actError, setActError] = useState<string | null>(null);
   const cursor = useRef<number | null>(null);
@@ -87,13 +98,24 @@ export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmC
             {j.progress_label}
           </span>
         )}
-        {j.failure_code && (
-          <span className="error-text small">
-            {j.failure_code}
-            {j.failure_message ? ` — ${j.failure_message}` : ""}
-          </span>
-        )}
+        {j.failure_code &&
+          (compact ? (
+            <span className="error-text small one-line job-fail-one" title={j.failure_message ?? undefined}>
+              {j.failure_code}
+              {j.failure_message ? ` — ${msgHead(j.failure_message)}` : ""}
+            </span>
+          ) : (
+            <span className="error-text small">
+              {j.failure_code}
+              {j.failure_message ? ` — ${j.failure_message}` : ""}
+            </span>
+          ))}
         <span className="spacer" />
+        {compact && (
+          <button type="button" className="btn small ghost" aria-expanded={showLog} onClick={() => setShowLog((x) => !x)}>
+            {showLog ? "로그 닫기" : "로그 보기"}
+          </button>
+        )}
         {allowed && !terminal && !j.cancel_requested && (
           <button type="button" className="btn small ghost" onClick={() => (!confirmCancel || window.confirm(confirmCancel)) && act(() => api.cancelJob(j.id))}>
             취소
@@ -136,9 +158,11 @@ export function JobProgress({ jobId, onDone, allowed = true, onRetried, confirmC
       <div className="progress" role="progressbar" aria-label="진행률" aria-valuenow={pctAll} aria-valuemin={0} aria-valuemax={100}>
         <div className="progress-fill" style={{ width: `${pctAll}%` }} />
       </div>
-      <div className="logview">
-        <pre aria-label="작업 로그">{lines.slice(-12).join("\n") || " "}</pre>
-      </div>
+      {(!compact || showLog) && (
+        <div className="logview">
+          <pre aria-label="작업 로그">{lines.slice(-12).join("\n") || " "}</pre>
+        </div>
+      )}
     </div>
   );
 }

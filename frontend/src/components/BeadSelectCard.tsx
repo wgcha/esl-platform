@@ -2,6 +2,7 @@
 // 상태(층·실행 취소·derive)는 useBeadSelect 가 갖고, 페이지(DoeStudy)가 [선택 저장](주 버튼)·변수 표 블렌딩 편집에 같은 컨트롤러를 쓴다.
 // 3D 는 기존 장면(scene.ts — TrackballControls 회전 그대로)에 요소 모드만 더한다. 그리기 도구 중 왼쪽 끌기 = 도구, Ctrl+끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { MsgFold } from "./MsgFold";
 import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, warnText } from "../api/doe";
 import { ApiError, errorText } from "../api/client";
 import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
@@ -1070,12 +1071,12 @@ export interface AutoSeedView {
   notice: string | null;
   /** GET …/select/auto warnings */
   warnings: DoeWarning[];
+  /** v0.17.1 접기 상태 키(스터디 id) */
+  foldKey?: string | null;
 }
 export const AUTO_BADGE = "자동 탐지 결과 — 수정 후 저장";
 
 function AutoSeedBar({ auto, graph }: { auto: AutoSeedView; graph?: boolean }) {
-  const warns = auto.warnings.filter((w) => !isInfoWarn(w));
-  const infos = auto.warnings.filter(isInfoWarn);
   if (!auto.unsaved && !auto.notice && !auto.warnings.length) return null;
   return (
     <div className="bs-auto" data-testid="bs-auto" style={{ marginBottom: 8 }}>
@@ -1091,20 +1092,8 @@ function AutoSeedBar({ auto, graph }: { auto: AutoSeedView; graph?: boolean }) {
         </span>
       )}
       </div>
-      {warns.length > 0 && (
-        <ul className="reasons small warn-text" data-testid="bs-auto-warn">
-          {warns.map((w, i) => (
-            <li key={i}>{warnText(w)}</li>
-          ))}
-        </ul>
-      )}
-      {infos.length > 0 && (
-        <ul className="reasons small muted" data-testid="bs-auto-info">
-          {infos.map((w, i) => (
-            <li key={i}>ⓘ {warnText(w)}</li>
-          ))}
-        </ul>
-      )}
+      {/* v0.17.1 AUTO_*·BG_* 경고·정보 = 요약 1줄(기본 접힘) */}
+      <MsgFold items={auto.warnings.map((w) => ({ text: warnText(w), info: isInfoWarn(w) }))} storeKey={auto.foldKey ? `${auto.foldKey}:auto` : null} testId="bs-auto-warn" />
     </div>
   );
 }

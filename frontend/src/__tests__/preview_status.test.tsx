@@ -38,6 +38,9 @@ describe("미리보기 상태 표시", () => {
     renderApp("/p/p-body/doe/doe-5", "power", failPreview);
     const b = await screen.findByTestId("job-fail-banner");
     expect(b.textContent).toMatch(/강성 평가 미리보기 실패 · 단계 2 썸네일 · SELECT_BASIS_FAILED/);
+    // v0.17.1 DOE 화면 실패 = 빨간 1줄 + [자세히](문구·[로그 보기]는 접힘)
+    expect(screen.queryByTestId("job-fail-msg")).toBeNull();
+    fireEvent.click(within(b).getByRole("button", { name: "자세히" }));
     expect(screen.getByTestId("job-fail-msg").textContent).toMatch(/경계 고리 없음/);
     expect(screen.getByTestId("preview-failed").textContent).toMatch(/단계 2 썸네일 · SELECT_BASIS_FAILED/);
     fireEvent.click(within(b).getByRole("button", { name: "로그 보기" }));
@@ -136,6 +139,7 @@ describe("고정 침범 원인(v0.15.1 — 스킵·경고 공통 표시)", () =>
       rec.sel!.derived.beads[0].warnings = [...(rec.sel!.derived.beads[0].warnings ?? []), { code: "SELECT_FIXED_IN_BLEND" }];
     });
     const w = await screen.findByTestId("vars-fixed-warn");
+    fireEvent.click(within(w).getByRole("button", { name: /자세히/ }));
     expect(w.textContent).toMatch(/좌 경로 비드: 블렌딩 범위 안에 고정 노드가 있어/);
     expect(screen.getByTestId("param-B1_W")).toBeTruthy();
   });
