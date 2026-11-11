@@ -41,7 +41,7 @@ def h6_step(path: str, log=None) -> str:
     from beadgraph.testing import synth_h6 as s6
     root, _ = s6.build_tree()
     dom, L = s6.domain_and_creases(root)
-    faces = [shapely.segmentize(f, SEG_MM) for f in s6.faces_of(dom, L)]   # 직선 주름선을 가로지르는 보스 사면(높이 비선형)
+    faces = _densify(root, s6.faces_of(dom, L))       # 직선 주름선을 가로지르는 보스 사면(높이가 선분을 따라 비선형)
     allpts = np.unique(np.concatenate([np.asarray(r.coords)[:, :2] for f in faces
                                        for r in [f.exterior] + list(f.interiors)]), axis=0)
     z, *_ = s6.evaluate(root, allpts)
@@ -127,6 +127,49 @@ def h6_step(path: str, log=None) -> str:
 
 
 INNER_TOL = 0.05
+
+
+def _densify(root, faces) -> list:
+    """고리 선분 중 가운데 높이가 양 끝 선형 보간과 > INNER_TOL 다른 선분만 SEG_MM 간격으로 나눔(선분 기하로만 정함 — 이웃
+    면에서도 같은 점)."""
+    import shapely
+    from beadgraph.testing import synth_h6 as s6
+    segs = {}
+    for f in faces:
+        for r in [f.exterior] + list(f.interiors):
+            c = np.asarray(r.coords)[:, :2]
+            for a, b in zip(c[:-1], c[1:]):
+                k = tuple(sorted((_key(a), _key(b))))
+                segs.setdefault(k, None)
+    keys = list(segs)
+    A = np.array([k[0] for k in keys])
+    B = np.array([k[1] for k in keys])
+    za = s6.evaluate(root, A)[0]
+    zb = s6.evaluate(root, B)[0]
+    zm = s6.evaluate(root, (A + B) / 2)[0]
+    z1 = s6.evaluate(root, A + (B - A) * 0.25)[0]
+    z3 = s6.evaluate(root, A + (B - A) * 0.75)[0]
+    bad = (np.abs(zm - (za + zb) / 2) > INNER_TOL) | (np.abs(z1 - (0.75 * za + 0.25 * zb)) > INNER_TOL) | \
+        (np.abs(z3 - (0.25 * za + 0.75 * zb)) > INNER_TOL)
+    sub = {}
+    for k, a, b, f in zip(keys, A, B, bad):
+        if f:
+            n = max(2, int(np.ceil(np.linalg.norm(b - a) / SEG_MM)))
+            sub[k] = [a + (b - a) * t for t in np.linspace(0, 1, n + 1)[1:-1]]
+    out = []
+    for f in faces:
+        rings = []
+        for r in [f.exterior] + list(f.interiors):
+            c = np.asarray(r.coords)[:, :2]
+            pts = []
+            for a, b in zip(c[:-1], c[1:]):
+                pts.append(a)
+                k = tuple(sorted((_key(a), _key(b))))
+                mid = sub.get(k) or []
+                pts += mid if _key(a) == k[0] else mid[::-1]
+            rings.append(pts)
+        out.append(shapely.Polygon(rings[0], rings[1:]))
+    return out
 
 
 def _inner_samples(f, step: float = 2.0) -> np.ndarray:
