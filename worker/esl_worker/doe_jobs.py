@@ -12,7 +12,9 @@
   prep/a_assem_full/), ② = input/mesh 사본. run 모핑 사본 중 정규화한 파일은 원본 + 모핑 /NODE 좌표로 복원.
 - BD_GRID(LOCAL): ``shell view grid``. 셀 = doe/<rev>/cells.json + 공칭 셀 ``nominal``(values {}) → doe/<rev>/grid_cells.json
   — paicad 0.14.0 grid 는 공칭 썸네일을 따로 만들지 않으므로(grid_manifest.nominal = {bbox, view_sha256}) 공칭을 셀로
-  넣어 ``grid/cells/nominal/thumb.png`` 를 얻는다(백엔드 d000 썸네일 탐색 순서에 있는 경로). ③ ``--fixed-dir ""``.
+  넣어 ``grid/cells/nominal/thumb.png`` 를 얻는다(백엔드 d000 썸네일 탐색 순서에 있는 경로). ③ ``--fixed-dir ""``(prep/a_fixed
+  = A 모델 좌표 — 쓰지 않음). v0.17.2(이슈 #63): RESULT OK 여도 READY 0 → GRID_ALL_FAILED, 판정 셀 비율 < grid.min_ok_frac →
+  GRID_TOO_FEW_OK(step 실패), 일부 형상 실패 → 경고 GRID_CELLS_FAILED.
 - BD_DESIGNS(LOCAL+INTERNAL): 미리보기 READY 안(+ ③ 잡음 바닥 ``noise`` = 공칭 값 update 왕복)을 id 순으로 스레드 풀
   (``evaluate.parallel_limit`` = run.parallel(기본 2) × 메모리 자동 축소). 안 1개 = [done.json 이 같은 input_sha256 이면
   재사용(paicad·해석 생략)] → paicad(①② ``shell run`` → run/designs/<id>/paicad/{update,morph,check,out_files} /
@@ -825,7 +827,10 @@ def _grid(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     opts = os.path.join(out, "prep", "paicad_options.json") if pc.get("options") else None
     if opts and not os.path.isfile(opts):
         _write_json(opts, pc["options"])
-    fixed = os.path.join(out, "prep", "fixed") if doe["scenario"] in ("same", "mesh") else ""
+    fixed = grid_fixed_dir(out, doe["scenario"])
+    if not fixed and os.path.isdir(os.path.join(out, "prep", "a_fixed")):
+        echo("[esl-worker] ③ 고정 노드 없음(BD-D-11): prep/a_fixed 는 A 모델(ESL 원 모델) 메시 좌표의 체결점이라 B STEP 에 "
+             "--fixed-dir 로 쓰지 않음(경계 경고 전용, D-0.17.2-AFIXED)")
     vals = {"cad": os.path.join(out, *str(inp["step"]["rel"]).split("/")),
             "features": os.path.join(out, "prep", "extract", pio.EXTRACT_JSON), "cells": gcells,
             "thumb": os.path.join(rd, "thumb_options.json"), "fixed_dir": fixed, "out_dir": gdir, "options": opts,
@@ -840,7 +845,40 @@ def _grid(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     cnt = count_states(rows)
     echo(f"[esl-worker] 미리보기 셀 {len(ids)}: OK {cnt['ok']} · 충돌 {cnt['collision']} · 고정 침범 {cnt['fixed']} · "
          f"형상 {cnt['geom']} · 썸네일 경고 {cnt['thumb_warn']}")
+    check_grid_health(ex, rows, ids, dcfg, echo)
     return {"cells": len(ids), **cnt}
+
+
+def grid_fixed_dir(out: str, scenario: str) -> str:
+    """paicad grid ``--fixed-dir``: ①② = B 자신의 fixed-scan prep/fixed(준비에서 실패 = 준비 실패라 늘 있음),
+    ③ = "" (BD-D-11). ③ 의 prep/a_fixed 는 A Case(ESL 원 모델) 메시 좌표 체결점 — B STEP 과 좌표계·형상이 달라
+    (A→B 는 정규화 (ξ,η) 로 경계 경고에만 옮김, §8.2) 모핑·미리보기 고정으로 쓰지 않는다(v0.17.2 D-0.17.2-AFIXED)."""
+    return os.path.join(out, "prep", "fixed") if scenario in ("same", "mesh") else ""
+
+
+def check_grid_health(ex, rows: list[dict[str, Any]], ids: list[str], dcfg: dict[str, Any], echo) -> dict[str, Any]:
+    """v0.17.2(이슈 #63): paicad grid RESULT OK·종료 0 이어도 셀이 거의 다 실패하면 BD_GRID 실패 —
+    READY 0 → ``GRID_ALL_FAILED``, 판정 셀 비율 < ``grid.min_ok_frac`` → ``GRID_TOO_FEW_OK``(PREVIEW_READY 등록 안 함).
+    실패 셀이 있으나 기준 이상 → 작업 경고 ``GRID_CELLS_FAILED``(코드별 수). 요약은 작업 result.bd_grid_health."""
+    pio = core_adapter.doe_paicad_io()
+    h = pio.grid_health(rows, ids, float((dcfg.get("grid") or {}).get("min_ok_frac", 0.5)))
+    if h["verdict"] == "ok":
+        return h
+    top = pio.codes_text(h["top_codes"]) or "-"
+    with ex._tx() as conn:
+        jobs_repo.patch_result(conn, ex.job["id"], ex.token, {"bd_grid_health": _jsonable(h)})
+    if h["verdict"] in ("all_failed", "too_few"):
+        code = "GRID_ALL_FAILED" if h["verdict"] == "all_failed" else "GRID_TOO_FEW_OK"
+        msg = (f"미리보기 셀 {h['total']}개 중 실행 가능 {h['ok']}개(판정 {h['judged']}개, 기준 "
+               f"{h['min_ok_frac']:.0%}) — {top}. 형상 엔진(paicad) 셀 실패 — 로그의 셀 코드를 확인하세요")
+        echo(f"[esl-worker] BD_GRID 실패 {code}: ok {h['ok']} / total {h['total']} · 실패 코드 "
+             + json.dumps(h["codes"], ensure_ascii=False))
+        raise _fail(code, msg)
+    msg = f"GRID_CELLS_FAILED: 미리보기 셀 {h['total']}개 중 {h['failed']}개 형상 실패(스킵) — {top}"
+    echo(f"[esl-worker] 경고 {msg}")
+    with ex._tx() as conn:
+        jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GRID] {msg[:300]}"])
+    return h
 
 
 def count_states(rows: list[dict[str, Any]]) -> dict[str, int]:

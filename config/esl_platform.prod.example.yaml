@@ -173,6 +173,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800, occ_sew_faces: 0}
   doe: {default_method: lhs, default_n: 30, seed: 1, levels_default: 3, levels_max: 9, round_mm: 0.01, default_types: [D, W]}
   preview: {w: 320, h: 240, view_dir: auto, tilt_deg: 20, margin: 1.15, disp_range_mm: auto}
+  grid: {min_ok_frac: 0.5}            # v0.17.2 미리보기 판정 셀(READY·충돌·고정) 비율 하한 — 미만·READY 0 이면 미리보기 실패
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}

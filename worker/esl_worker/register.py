@@ -891,6 +891,7 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
 def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
     """BD_PREVIEW_REGISTER: phase PREVIEW_READY, doe.preview = {rev, matrix_sha256, ok, skipped{collision, fixed, geom}}
     (doe 의 나머지 키 유지). 셀 상태 원본은 doe/<rev>/grid/grid_manifest.json(백엔드가 읽음).
+    v0.17.2: select 아닌 스터디는 READY 셀 0 → RegisterError GRID_ALL_FAILED(phase 불변).
     v0.15.0 select: + preview.selection_sha256(grid_manifest = 작업 params.doe.selection.sha256 — 다르면 PREVIEW_STALE),
     skipped.mesh(FAILED_MESH 셀 수). v0.16.1 select: + warn(경고 READY 수), rules(grid_manifest.rules — 있을 때만)."""
     from esl_platform.core.repositories import doe as doe_repo
@@ -913,6 +914,11 @@ def register_doe_preview(conn: Connection, job: dict[str, Any], case: Any, ddir:
         raise RegisterError("TOOL_OUTPUT_MISSING", f"미리보기 결과를 읽지 못했습니다: {getattr(exc, 'message', exc)}") from None
     want = set(ids)
     cnt = doe_jobs.count_states([r for r in g["cells"] if r["id"] in want])
+    if ids and cnt["ok"] == 0 and s.get("scenario") != "select":
+        # v0.17.2(이슈 #63) 이중 안전: paicad grid RESULT OK 라도 실행 가능 안 0 이면 PREVIEW_READY 로 올리지 않음
+        h = core_adapter.doe_paicad_io().grid_health(g["cells"], ids, 1.0)
+        raise RegisterError("GRID_ALL_FAILED", f"미리보기 셀 {len(ids)}개 중 실행 가능 0개 — "
+                            + (core_adapter.doe_paicad_io().codes_text(h["top_codes"]) or "-"))
     doe["preview"] = {"rev": rev, "matrix_sha256": m.get("matrix_sha256"), "ok": cnt["ok"],
                       "skipped": {k: cnt[k] for k in ("collision", "fixed", "geom")}}
     man = g.get("manifest") or {}
