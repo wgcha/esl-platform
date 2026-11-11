@@ -386,7 +386,7 @@ export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
   const fixed_user = stepFixedUser();
   if (auto) {
     const segs = new Map(graphMesh().graph.segments.map((s) => [s.anchor, s] as [number, BgSegment]));
-    const inside = (g.selection as DoeSelectionV2).beads.filter((b) => !b.segs.some((x) => { const s = segs.get(x.anchor); return s ? segOutOfRegion(s) : false; }));
+    const inside = (g.selection as DoeSelectionV2).beads.filter((b) => b.src !== "graph" || !b.segs.some((x) => { const s = "anchor" in x ? segs.get(x.anchor) : undefined; return s ? segOutOfRegion(s) : false; }));
     const beads = inside.map((b, i) => ({ ...b, id: `b${i + 1}` }));
     const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads, fixed_user };
     return { ...g, selection, sha256: graphSelSha(selection), warnings: [] };
