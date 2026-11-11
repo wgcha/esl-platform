@@ -50,8 +50,9 @@ def test_settings_select_step_and_step_graph_block(client, world, engine):
 
 @pytest.mark.parametrize("bad", [
     {"max_elems": 0}, {"max_elems": 2_000_001}, {"timeout_s": 0}, {"tria_warn_frac": 0}, {"tria_warn_frac": 1.01},
-    {"tria_policy": "stop"}, {"fixed_transfer": {"mode": "near"}}, {"fixed_transfer": {"origin_tol_mm": 0}},
-    {"fixed_transfer": {"axis_tol_deg": -1}}, {"fixed_transfer": {"tol_mm": 0}}, {"fixed_transfer": {"snap_mm": -2}},
+    {"tria_policy": "stop"}, {"fixed_transfer": {"mode": "near"}}, {"fixed_transfer": {"frame_min_holes": 0}},
+    {"fixed_transfer": {"frame_match_mm": 0}}, {"fixed_transfer": {"frame_resid_mm": -1}},
+    {"fixed_transfer": {"origin_tol_mm": 5}}, {"fixed_transfer": {"tol_mm": 0}}, {"fixed_transfer": {"snap_mm": -2}},
     {"region": {"mode": "biggest"}}, {"region": {"pad_mm": 0}}, {"region": {"min_frac": 0}}, {"region": {"min_frac": 1.5}},
     {"unknown": 1}, {"fixed_transfer": {"unknown": 1}}])
 def test_step_graph_cfg_rejects(bad):

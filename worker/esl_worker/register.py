@@ -724,7 +724,7 @@ def _select_step_prep(s: dict[str, Any], inp: dict[str, Any], fixed: dict[str, A
     fx = inp.get("fixed") if isinstance(inp.get("fixed"), dict) else {}
     x = fx.get("xfer") if isinstance(fx.get("xfer"), dict) else None
     if x is not None:
-        fixed["xfer"] = {"method": x.get("method") if x.get("method") in ("xyz_nearest", "ab_hole_snap", "none")
+        fixed["xfer"] = {"method": x.get("method") if x.get("method") in ("xyz_nearest", "xyz_fitted", "ab_hole_snap", "none")
                          else "none", "matched": _int0(x.get("matched")), "unmatched": _int0(x.get("unmatched")),
                          "frame_ok": x.get("frame_ok") if isinstance(x.get("frame_ok"), bool) else None}
         why = x.get("reason") if isinstance(x.get("reason"), str) else fx.get("reason")

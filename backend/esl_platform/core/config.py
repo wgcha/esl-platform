@@ -1094,14 +1094,17 @@ class BeadDoeSelectGraphCfg(_M):
 
 
 class BeadDoeSelectStepGraphFixedTransferCfg(_M):
-    """v0.18.0 STEP_GRAPH 고정점 이전(esl_step_graph.md SG-D-13·15): frame 일치(원점 ≤ origin_tol_mm ∧ 축 ≤ axis_tol_deg) =
-    xyz_nearest(≤ tol_mm, null = 기준 메시 h), 아니면 ab_hole_snap(≤ snap_mm, null = boundary.fastener_warn_mm), 둘 다 0 = none.
+    """v0.18.0 STEP_GRAPH 고정점 이전(esl_step_graph.md SG-D-13 개정 2026-11-12·15): 구멍 특징 frame 판정(A 구멍 ↔ B 구멍
+    대응 ≥ max(frame_min_holes, A 구멍 50 %) within frame_match_mm(null = 2h), 잔차 중앙값 ≤ frame_resid_mm(null = h/4),
+    1개 제외 최대 ≤ h/2) = xyz_nearest, 강체 맞춤 뒤 같은 기준 = xyz_fitted(≤ tol_mm, null = 기준 메시 h, 클러스터마다 검증),
+    아니면 ab_hole_snap(≤ snap_mm, null = boundary.fastener_warn_mm), 둘 다 0 = none.
     mode auto(xyz → hole → none) | xyz | hole 강제. enabled false = 파일 없음 + FIXED_XFER_NONE{DISABLED}."""
 
     enabled: bool = True
     mode: Literal["auto", "xyz", "hole"] = "auto"
-    origin_tol_mm: float = Field(default=5.0, gt=0)
-    axis_tol_deg: float = Field(default=2.0, gt=0)
+    frame_min_holes: int = Field(default=5, ge=1, le=10_000)
+    frame_match_mm: float | None = Field(default=None, gt=0)
+    frame_resid_mm: float | None = Field(default=None, gt=0)
     tol_mm: float | None = Field(default=None, gt=0)
     snap_mm: float | None = Field(default=None, gt=0)
 

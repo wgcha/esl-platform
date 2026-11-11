@@ -2796,7 +2796,8 @@ def _sel_fixed_transfer(c: Ctx, t, bmeta: dict, ents, region, sd: str) -> tuple[
     ad = c.p("prep", "a_fixed")
     a_fx, why = None, None
     if not os.path.isfile(os.path.join(ad, pio.SCAN_JSON)):
-        why = "A_CASE_MISSING"
+        # 워커가 A Case fixed-scan 을 시도한 흔적(prep/a_fixed 폴더 — 실패해 보고 없음, 또는 paicad 없음) = A_SCAN_FAILED
+        why = "A_SCAN_FAILED" if os.path.isdir(ad) else "A_CASE_MISSING"
     else:
         try:
             a_fx = pio.read_fixed(ad, c.max_mb)
@@ -2846,7 +2847,7 @@ def _sel_auto_step(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, xfer: dict
     graph = None
     if gst and gst.get("ok"):
         graph, _ = bgr.load_graph(c.p("prep"))
-    sel, sha = bgr.fixed_seed_v2(graph, fu)
+    sel, sha = bgr.fixed_seed_v2(graph, fu, c.cfg)
     doc = bgr.auto_doc_v2(sel, sha, [], [], list(out.get("warnings") or []), mesh_sha256=bmeta["mesh_sha256"],
                           graph_sha=(gst or {}).get("sha256") if gst and gst.get("ok") else None,
                           source="fixed_transfer", fixed=frec)

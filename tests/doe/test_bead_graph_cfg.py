@@ -94,7 +94,8 @@ def test_step_graph_cfg_checks():
     assert sg.cfg_of({"select": {}})["max_elems"] == 600000 and sg.cfg_of(None)["tria_policy"] == "warn"
     for bad in ({"tria_policy": "x"}, {"max_elems": 0}, {"tria_warn_frac": 0}, {"fixed_transfer": {"mode": "z"}},
                 {"fixed_transfer": {"tol_mm": -1}}, {"region": {"mode": "q"}}, {"region": {"min_frac": 1.5}},
-                {"timeout_s": 0}, {"fixed_transfer": {"axis_tol_deg": 0}}):
+                {"timeout_s": 0}, {"fixed_transfer": {"frame_min_holes": 0}},
+                {"fixed_transfer": {"frame_match_mm": 0}}, {"fixed_transfer": {"frame_resid_mm": -0.5}}):
         with pytest.raises(EslError) as ei:
             sg.cfg_of({"select": {"step_graph": bad}})
         assert ei.value.code == "CONFIG_INVALID"

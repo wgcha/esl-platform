@@ -509,7 +509,7 @@ export function meshMethodName(m: unknown): string {
   return k === "cad" ? "CAD" : k === "freeform" ? "폴백 freeform" : k === "tria" ? "삼각형 폴백" : k === "refine" || k.startsWith("refine") ? "CAD 세분화" : k === "defeature" ? "형상 단순화" : k || "?";
 }
 /** v0.18.0 고정 이전 방법 문구(SG-D-13) */
-export const XFER_METHOD_NAME: Record<DoeFixedXferMethod, string> = { xyz_nearest: "좌표 일치 — 최근접 노드", ab_hole_snap: "좌표 불일치 — B 구멍 스냅", none: "자동 설정 없음" };
+export const XFER_METHOD_NAME: Record<DoeFixedXferMethod, string> = { xyz_nearest: "좌표 일치 — 최근접 노드", xyz_fitted: "구멍 맞춤 이동 — 최근접 노드", ab_hole_snap: "좌표 불일치 — B 구멍 스냅", none: "자동 설정 없음" };
 /** v0.18.0 고정 이전 1줄: "A 고정 n개 중 m개를 옮김(좌표 일치 — 최근접 노드) — 고정 층에서 수정" */
 export function xferText(x: DoePrepFixedXfer): string {
   const total = x.matched + x.unmatched;

@@ -151,12 +151,20 @@ def test_geom_step_without_paicad_continues(monkeypatch, tmp_path, auto):
     assert res["_skipped"] is True and "PAICAD_NOT_FOUND" in res["skipped"] and rec["cmds"] == []
     assert not any("FIXED_INFO_MISSING" in w for w in rec["warnings"])
     assert rec["result"]["bd_geom"]["fixed"]["source"] == "none"
+    assert (out / "prep" / "a_fixed").is_dir()                    # A Case 있음 → 코어 FIXED_XFER_NONE{A_SCAN_FAILED}
     if auto:
         ad = json.loads((out / "prep" / "auto_detect.json").read_text())
         assert (ad["ok"], ad["step"]) == (False, "version")
         assert [w for w in rec["warnings"] if "AUTO_HINT_UNAVAILABLE" in w]
     else:
         assert not (out / "prep" / "auto_detect.json").exists() and not rec["warnings"]
+
+
+def test_geom_step_without_paicad_no_a_case(monkeypatch, tmp_path):
+    """paicad 없음 + A Case 없음 → prep/a_fixed 를 만들지 않음(코어 A_CASE_MISSING)."""
+    dj, ex, st, rec, out = _geom_env(monkeypatch, tmp_path, ready=False, a_case=False)
+    dj.run_step(ex, st, str(tmp_path / "geom.log"))
+    assert not (out / "prep" / "a_fixed").exists()
 
 
 def test_skipped_text_by_base():

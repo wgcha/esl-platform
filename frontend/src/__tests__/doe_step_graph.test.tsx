@@ -44,6 +44,7 @@ describe("③ select step — 순수 함수", () => {
 
   it("고정 이전 1줄: 좌표 일치(최근접) · 불일치(구멍 스냅, 못 옮김 수) · 없음", () => {
     expect(xferText({ method: "xyz_nearest", matched: 12, unmatched: 0, frame_ok: true })).toBe("A 고정 12개 중 12개를 옮김(좌표 일치 — 최근접 노드) — 고정 층에서 수정");
+    expect(xferText({ method: "xyz_fitted", matched: 8, unmatched: 0, frame_ok: false })).toBe("A 고정 8개 중 8개를 옮김(구멍 맞춤 이동 — 최근접 노드) — 고정 층에서 수정");
     expect(xferText({ method: "ab_hole_snap", matched: 11, unmatched: 1, frame_ok: false })).toBe("A 고정 12개 중 11개를 옮김(좌표 불일치 — B 구멍 스냅) — 고정 층에서 수정 · 못 옮김 1개");
     expect(xferText({ method: "none", matched: 0, unmatched: 3, frame_ok: false })).toMatch(/자동 설정 없음\(A 고정 3개 — 대응 없음\)/);
     expect(regionText({ n_out: 1234 })).toBe("주 시트 밖 형상 1,234 요소 — 평가·비드 후보 제외");

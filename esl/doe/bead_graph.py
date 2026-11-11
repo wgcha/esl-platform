@@ -1153,12 +1153,13 @@ def auto_doc_v2(selection_norm: dict, sha: str, sym: list, hints: list, warnings
     return doc
 
 
-def fixed_seed_v2(graph: dict | None, fixed_user: dict) -> tuple[dict, str]:
+def fixed_seed_v2(graph: dict | None, fixed_user: dict, cfg: dict | None = None) -> tuple[dict, str]:
     """v0.18.0 SG-D-14b·16 iii seed without beads (manual, or auto with no seedable bead): schema 2 selection
     {beads [], ties [], fixed_user, exclude {}} (+ graph block when classified). Not passed through ``normalize_v2``
-    (that needs ≥ 1 bead) — the frontend adds beads and saves through the normal path. sha = canonical selection sha."""
+    (that needs ≥ 1 bead) — the frontend adds beads and saves through the normal path. sha = canonical selection sha.
+    ``cfg`` = the study's bead_doe settings (feature_angle_deg = the study's select value, not the default)."""
     from esl.doe import bead_select as bs
-    sc = select_cfg(None)
+    sc = select_cfg(cfg)
     sel = {"schema_version": SCHEMA_VERSION, "feature_angle_deg": float(sc["feature_angle_deg"]), "beads": [],
            "ties": [], "fixed_user": bs._norm_set(fixed_user, "fixed_user", 10_000_000),
            "exclude": bs._norm_set(None, "exclude", 10_000_000)}

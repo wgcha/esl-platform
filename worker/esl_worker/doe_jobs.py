@@ -650,6 +650,8 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         if step_base:       # SG-D-18: 새 ③ 은 paicad 없이도 동작 — 힌트·A 고정 이전 없이(코어 FIXED_XFER_NONE{A_SCAN_FAILED})
             echo(f"[esl-worker] paicad 를 쓸 수 없음({code}) — STEP 기준: 힌트·A 고정점 없이 계속(FIXED_XFER_NONE)")
             outputs["fixed"] = {"source": "none", "reason": f"paicad 를 쓸 수 없음({code})"}
+            if (doe.get("entries") or [{}])[0].get("case"):    # A Case 는 있음 → 빈 prep/a_fixed = 코어 A_SCAN_FAILED(SG-D-12·18)
+                fresh(os.path.join("prep", "a_fixed"))
             auto_failed("version", code)
             finish()
             return {"_skipped": True, "skipped": f"paicad 없음({code}) — 힌트·A 고정점 없이 계속"}

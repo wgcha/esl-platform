@@ -322,7 +322,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       timeout_s: 300                  # 분류 시간 상한(s)
       tria_warn_frac: 0.5             # 삼각형 비율 > 이 값(또는 사다리 끝 tria) = 경고 STEP_GRAPH_TRIA
       tria_policy: warn               # warn = 경고만(분류·모핑 진행) | block = 준비 실패 STEP_GRAPH_TRIA_BLOCKED
-      fixed_transfer: {enabled: true, mode: auto, origin_tol_mm: 5, axis_tol_deg: 2, tol_mm: null, snap_mm: null}   # A 고정점 이전: auto(좌표 일치 → 최근접 노드 ≤ tol(null = h), 아니면 B 구멍 스냅 ≤ snap(null = boundary.fastener_warn_mm)) | xyz | hole
+      fixed_transfer: {enabled: true, mode: auto, frame_min_holes: 5, frame_match_mm: null, frame_resid_mm: null, tol_mm: null, snap_mm: null}   # A 고정점 이전: auto(구멍 특징 frame 판정 — A·B 구멍 대응 ≥ max(frame_min_holes, A 구멍 50 %) ≤ frame_match_mm(null = 2h), 잔차 중앙값 ≤ frame_resid_mm(null = h/4)·최대 ≤ h/2 → 최근접 노드 ≤ tol(null = h, 강체 맞춤 가능 = xyz_fitted, 클러스터마다 검증), 아니면 B 구멍 스냅 ≤ snap(null = boundary.fastener_warn_mm)) | xyz | hole
       region: {mode: auto, pad_mm: null, min_frac: 0.5}   # 평가 영역(주 시트): auto(A part bbox 겹침, A 없으면 최대 연결 성분) | a_bbox | largest | all · pad null = 2h · 영역 < min_frac = STEP_GRAPH_REGION_SMALL
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)

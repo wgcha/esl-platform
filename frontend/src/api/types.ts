@@ -2273,8 +2273,8 @@ export type DoeBeadSource = "auto" | "manual";
 /** v0.16.2 select 기준 메시(AD-D-13) — case = ① Case 메시(기본, 키 없음), mesh = ② B 메시.
  * v0.18.0(esl_step_graph.md SG-D-1) step = ③ B STEP → ④ 메시 사다리 기준 메시(schema 2 고정) */
 export type DoeSelectBase = "case" | "mesh" | "step";
-/** v0.18.0 ③ select 고정 이전 방법(SG-D-13·15): xyz_nearest = 좌표 일치 최근접 노드, ab_hole_snap = 정규화 frame + B 구멍 스냅, none = 자동 설정 없음 */
-export type DoeFixedXferMethod = "xyz_nearest" | "ab_hole_snap" | "none";
+/** v0.18.0 ③ select 고정 이전 방법(SG-D-13 개정 2026-11-12·15): xyz_nearest = 구멍 특징 좌표 일치 최근접 노드, xyz_fitted = 구멍 강체 맞춤 뒤 최근접 노드, ab_hole_snap = 정규화 frame + B 구멍 스냅, none = 자동 설정 없음 */
+export type DoeFixedXferMethod = "xyz_nearest" | "xyz_fitted" | "ab_hole_snap" | "none";
 /** v0.18.0 ③ select 평가 영역 규칙(SG-D-19) */
 export type DoeRegionMode = "auto" | "a_bbox" | "largest" | "all";
 export type DoeMethod = "lhs" | "halton" | "fullfact";

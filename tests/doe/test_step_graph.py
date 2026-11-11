@@ -76,19 +76,26 @@ def test_stages_auto(plate, tmp_path):
     assert sg.load_region(str(out / "prep")) is None                                # 영역 = 전체 → 키 없음
     sd.write_fixed(str(out / "prep" / "a_fixed"), a, groups)
     r = run("bd_loads")
-    assert r["fixed"]["source"] == "a_transfer" and r["fixed"]["xfer"]["method"] == "xyz_nearest"
-    assert r["fixed"]["xfer"]["frame_ok"] is True and r["graph"]["ok"] and r["auto"]["source"] == "graph"
+    # SG-D-13 개정(2026-11-12): 구멍 없는 판 = 구멍 특징 frame 판정 불가 → 패드 클러스터(모서리 묶음) 자동 이전 없음(조용한
+    # 엉뚱한 고정 대신 UNMATCHED 정보 — 사용자가 고정 층에 칠함). 이전 성공 경로는 slow H6-STEP·test_step_graph_fixed.
+    assert r["fixed"]["source"] == "none" and r["fixed"]["xfer"]["method"] == "none"
+    assert r["fixed"]["xfer"]["frame_ok"] is False and r["fixed"]["xfer"]["reason"] == "NO_MATCH"
+    assert r["graph"]["ok"] and r["auto"]["source"] == "graph"
     sdir = out / "prep" / "select"
     xb = (sdir / sg.XFER_JSON).read_bytes()
+    xd = json.loads(xb)
+    assert xd["frame_check"]["n_a_holes"] == 0 and not xd["frame_check"]["ok"]
+    assert [u["a_label"] for u in xd["unmatched"]] == ["RBE2#0", "RBE2#1"]
     auto = json.loads((sdir / ba.AUTO_SELECTION_JSON).read_bytes())
-    assert auto["fixed"] == {"source": "a_transfer", "method": "xyz_nearest", "n_nodes": 6}
-    assert auto["selection"]["fixed_user"]["q"]                                      # seed 고정 층(편집 가능)
+    assert auto["fixed"] == {"source": "none", "method": "none", "n_nodes": 0}
+    assert auto["selection"]["fixed_user"] == {"q": [], "t": []}
     man = json.loads((sdir / "select_manifest.json").read_text(encoding="utf-8"))
-    assert man["fixed"]["source"] == "a_transfer" and man["fixed"]["scan_n"] == 0 and man["fixed"]["xfer_n"] == 6
+    assert man["fixed"]["source"] == "none" and man["fixed"]["scan_n"] == 0 and man["fixed"]["xfer_n"] == 0
     run("bd_loads")                                                                  # 결정적·중복 없음
     assert (sdir / sg.XFER_JSON).read_bytes() == xb
     inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
-    assert inp["fixed"]["xfer"]["matched"] == 2 and inp["mesh"]["method"] == "cad"
+    assert inp["fixed"]["xfer"]["matched"] == 0 and inp["mesh"]["method"] == "cad"
+    assert sum(1 for i in inp["info"] if i.get("code") == "FIXED_XFER_UNMATCHED") == 2
     assert not any(isinstance(w, str) and w.startswith("FIXED_INFO_MISSING") for w in inp["warnings"])
     sel = auto["selection"]
     doe["selection"] = {"rev": 1, "sha256": auto["sha256"], "input": sel}
@@ -121,7 +128,7 @@ def test_manual_seed_and_no_a_case(plate, tmp_path):
     run("bd_mesh0")
     r = run("bd_loads")
     assert r["fixed"] == {"source": "none", "n": 0, "xfer": {"method": "none", "matched": 0, "unmatched": 0,
-                                                              "frame_ok": True, "reason": "A_CASE_MISSING"}}
+                                                              "frame_ok": False, "reason": "A_CASE_MISSING"}}
     assert any(s.startswith("FIXED_XFER_NONE") for s in r["info"])
     inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
     assert {"code": "FIXED_XFER_NONE", "reason": "A_CASE_MISSING"} in inp["info"]
@@ -129,6 +136,19 @@ def test_manual_seed_and_no_a_case(plate, tmp_path):
     assert auto["source"] == "fixed_transfer" and auto["selection"]["beads"] == []
     assert auto["selection"]["fixed_user"] == {"q": [], "t": []} and auto["graph_sha256"] == r["graph"]["sha256"]
     assert ba.read_auto_selection(str(out / "prep" / "select" / ba.AUTO_SELECTION_JSON)) == auto
+    assert auto["selection"]["feature_angle_deg"] == 15.0
+    (out / "prep" / "a_fixed").mkdir()                              # 워커가 fixed-scan 을 시도했으나 보고 없음(paicad 없음·실패)
+    r = run("bd_loads")
+    assert r["fixed"]["xfer"]["reason"] == "A_SCAN_FAILED"
+    inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
+    assert {"code": "FIXED_XFER_NONE", "reason": "A_SCAN_FAILED"} in inp["info"]
+    fa = _study(tmp_path / "fa", step, a, bead_source="manual", bead_doe=_bd(select={"feature_angle_deg": 22.0}))
+    run3 = _runner(tmp_path / "fa" / "o", fa)
+    run3("bd_input")
+    run3("bd_mesh0")
+    run3("bd_loads")
+    a3 = json.loads((tmp_path / "fa" / "o" / "prep" / "select" / ba.AUTO_SELECTION_JSON).read_bytes())
+    assert a3["selection"]["feature_angle_deg"] == 22.0              # 스터디 select 설정(기본 15 아님)
     off = _bd(select={"step_graph": {"fixed_transfer": {"enabled": False}}})
     doe2 = _study(tmp_path / "x", step, a, bead_source="manual", bead_doe=off)
     run2 = _runner(tmp_path / "x" / "o", doe2)

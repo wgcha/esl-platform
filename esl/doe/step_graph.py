@@ -29,10 +29,13 @@ Files (all under the study folder, never SPDM / input folders):
                          fixed{source, n, xfer{method, matched, unmatched, frame_ok, reason?}}, warnings[{code…}],
                          info[{code…}]   (reason only when method none: A_CASE_MISSING|A_SCAN_FAILED|NO_MATCH|DISABLED)
   prep/select/fixed_transfer.json   schema "esl/doe_fixed_transfer/2" (§3.3 SG-D-15, deterministic bytes: sorted keys,
-      floats rounded 1e-3): {schema, method "xyz_nearest"|"ab_hole_snap"|"none", mode, reason?, frame_check{d_origin_mm,
-      angle_deg[3], ok, origin_tol_mm, axis_tol_deg}, tol_mm, snap_mm, frame_a_sha, frame_b_sha,
-      matches[{a_label, kind, n_a, n_nodes, d_max_mm, hole, a_ab, b_ab, d_mm}], unmatched[{a_label, kind, d_mm}],
-      node_id[], elems{q, t}}  — absent when fixed_transfer.enabled false (FIXED_XFER_NONE{DISABLED}).
+      floats rounded 1e-3): {schema, method "xyz_nearest"|"xyz_fitted"|"ab_hole_snap"|"none", mode, reason?,
+      frame_check{method "holes", n_a_holes, n_b_holes, n_req, match_mm, resid_tol_mm, resid_max_tol_mm, n_matched,
+      resid_med_mm, resid_max_mm, ok, fit{ok, n_matched, resid_med_mm, resid_max_mm, rot_deg, shift_mm, R, t}|null,
+      d_origin_mm, angle_deg[3] (bbox — info only)}, tol_mm, snap_mm, frame_a_sha, frame_b_sha,
+      matches[{a_label, kind, feature hole|pad, via xyz|hole, n_a, n_nodes, d_max_mm, resid_mm, hole, a_ab, b_ab,
+      d_mm}], unmatched[{a_label, kind, d_mm, resid_mm}], node_id[], elems{q, t}}  — absent when fixed_transfer.enabled
+      false (FIXED_XFER_NONE{DISABLED}).
   prep/select/graph_region.json     {schema "esl/doe_graph_region/1", segments[id], islands[id], n_in, n_out} — graph
       ids more than 50 % outside the region (out_of_region: not seeded, grey in the tree, painting allowed). Only when
       the region is not the whole mesh and the graph exists.
@@ -44,7 +47,8 @@ Warning / info codes (resources/doe_messages.json): STEP_GRAPH_TRIA{mesh_method,
   STEP_GRAPH_REGION_SMALL{frac, min_frac} (warning) · FIXED_XFER_NONE{reason A_CASE_MISSING|A_SCAN_FAILED|NO_MATCH|
   DISABLED} (info) · FIXED_XFER_UNMATCHED{label, d_mm} (info).
 Functions (core-internal, stable names): mesh0(c, echo) · region_mask(mesh, a_xyz, cfg, h) · part_frame(x0, conn, et) ·
-  frame_check(a_mesh, b_mesh, region, cfg) · fixed_transfer(a_fixed, frame_a, t_b, cfg, *, a_mesh, region, h,
+  frame_check(a_mesh, b_mesh, region, cfg, *, h, hole_min_perimeter) · hole_rings(mesh, region, min_perimeter) ·
+  fixed_transfer(a_fixed, frame_a, t_b, cfg, *, a_mesh, region, h,
   hole_min_perimeter, snap_default) · seed_fixed_user(mesh, groups) · tria_check(mesh, method, cfg) ·
   region_loads(t, ents, region, …) · load_region(prep_dir).
 ----------------------------------------------------------------------------------------------------------------------
@@ -67,7 +71,7 @@ REGION_JSON = "graph_region.json"
 REGION_SCHEMA = "esl/doe_graph_region/1"
 REGION_KEY = "region"
 ROW_ID = "d000"
-METHODS_XFER = ("xyz_nearest", "ab_hole_snap", "none")
+METHODS_XFER = ("xyz_nearest", "xyz_fitted", "ab_hole_snap", "none")
 MODES_XFER = ("auto", "xyz", "hole")
 REGION_MODES = ("auto", "a_bbox", "largest", "all")
 TRIA_POLICIES = ("warn", "block")
@@ -95,11 +99,11 @@ def cfg_of(cfg: dict | None) -> dict:
     ft, rg = sg["fixed_transfer"], sg["region"]
     if ft["mode"] not in MODES_XFER:
         bad("fixed_transfer.mode auto|xyz|hole")
-    for k in ("origin_tol_mm", "axis_tol_deg"):
-        if not float(ft[k]) > 0:
-            bad(f"fixed_transfer.{k} > 0")
+    if not 1 <= int(ft["frame_min_holes"]) <= 10_000:
+        bad("fixed_transfer.frame_min_holes 1..10000")
     for k, v in (("fixed_transfer.tol_mm", ft["tol_mm"]), ("fixed_transfer.snap_mm", ft["snap_mm"]),
-                 ("region.pad_mm", rg["pad_mm"])):
+                 ("fixed_transfer.frame_match_mm", ft["frame_match_mm"]),
+                 ("fixed_transfer.frame_resid_mm", ft["frame_resid_mm"]), ("region.pad_mm", rg["pad_mm"])):
         if v is not None and not float(v) > 0:
             bad(f"{k} null 또는 > 0")
     if rg["mode"] not in REGION_MODES:
@@ -326,9 +330,9 @@ def region_loads(t, ents, region, mapping_opts, min_nodes_per_cell, grid) -> tup
     return out, info
 
 
-# ====================================================================== frame 판정 (SG-D-13 (0))
+# ====================================================================== frame 판정 (SG-D-13 (0) — 2026-11-12 개정: 구멍 특징)
 def part_frame(x0, conn, elem_type) -> dict:
-    """bbox 중심 + 면적 모멘트 주축(고윳값 내림차순 3개) — 날 좌표(변환 없음)."""
+    """bbox 중심 + 면적 모멘트 주축(고윳값 내림차순 3개) — 날 좌표(변환 없음). v0.18.0 개정 뒤에는 정보·sha 용."""
     from esl.library import normalize as nz
     X = np.asarray(x0, dtype=np.float64)
     _, _, C = nz.surface_moments(X, conn, elem_type)
@@ -342,19 +346,118 @@ def frame_sha(fr: dict) -> str:
     return hashlib.sha256(det_bytes(fr)).hexdigest()
 
 
-def frame_check(a_mesh: dict, b_mesh: dict, region, cfg: dict | None) -> dict:
-    """A part(첫 ESL A part 노드·요소) ↔ B 기준 메시 평가 영역의 frame 일치(원점 ≤ origin_tol_mm ∧ 세 축 ≤ axis_tol_deg,
-    축 부호 무시) → {d_origin_mm, angle_deg[3], ok, origin_tol_mm, axis_tol_deg, frame_a, frame_b}."""
+def hole_rings(mesh: dict, region, min_perimeter: float) -> list[dict]:
+    """(영역) 자유 모서리 고리 중 바깥 고리 제외·둘레 ≥ min_perimeter = 구멍 [{k(1부터), c(3D 중심), nodes(전체 노드 인덱스)}]."""
+    from esl.opt.keepout import boundary_loops
+    keys = ("x0", "conn", "elem_type")
+    bm = {k: mesh[k] for k in keys}
+    if region is not None:
+        sm = submesh(bm, region)
+        gidx = sm.pop("_node_index")
+    else:
+        sm, gidx = bm, np.arange(np.asarray(bm["x0"]).shape[0])
+    X = np.asarray(sm["x0"], dtype=np.float64)
+    out = []
+    for k, r in enumerate(boundary_loops(sm, min_perimeter)["holes"]):
+        r = np.asarray(r, dtype=np.int64)
+        out.append({"k": k + 1, "c": X[r].mean(axis=0), "nodes": gidx[r]})
+    return out
+
+
+def _centres(holes: list[dict]) -> np.ndarray:
+    return np.asarray([h["c"] for h in holes], dtype=np.float64).reshape(-1, 3)
+
+
+def _kabsch(P: np.ndarray, Q: np.ndarray):
+    """P → Q 강체 변환(R, t) 최소제곱(반사 제외). 점이 한 직선 위(특이값 2번째 ≈ 0)면 None."""
+    pc, qc = P.mean(axis=0), Q.mean(axis=0)
+    A, B = P - pc, Q - qc
+    if P.shape[0] < 3 or np.linalg.svd(A, compute_uv=False)[1] <= 1e-9 * max(1.0, float(np.abs(A).max())):
+        return None
+    U, _, Vt = np.linalg.svd(A.T @ B)
+    D = np.diag([1.0, 1.0, float(np.sign(np.linalg.det(Vt.T @ U.T))) or 1.0])
+    R = Vt.T @ D @ U.T
+    return R, qc - R @ pc
+
+
+def _resid_ok(r: np.ndarray, med_tol: float, max_tol: float) -> tuple[bool, float | None, float | None]:
+    """잔차 중앙값 ≤ med_tol ∧ (가장 큰 1개 제외) 최댓값 ≤ max_tol → (ok, 중앙값, 제외 뒤 최댓값)."""
+    if r.size == 0:
+        return False, None, None
+    s = np.sort(r)
+    med = float(np.median(s))
+    mx = float((s[:-1] if s.size > 1 else s).max())
+    return med <= med_tol and mx <= max_tol, med, mx
+
+
+def _match(Ac: np.ndarray, tree, match_mm: float):
+    d, j = tree.query(Ac, k=1)
+    d, j = np.atleast_1d(d), np.atleast_1d(j)
+    return d, j, d <= match_mm
+
+
+def frame_tols(cfg: dict | None, h: float) -> dict:
     ft = cfg_of(cfg)["fixed_transfer"]
+    return {"min_holes": int(ft["frame_min_holes"]),
+            "match_mm": float(ft["frame_match_mm"]) if ft["frame_match_mm"] is not None else 2.0 * float(h),
+            "resid_mm": float(ft["frame_resid_mm"]) if ft["frame_resid_mm"] is not None else float(h) / 4.0,
+            "max_mm": float(h) / 2.0}
+
+
+def frame_check(a_mesh: dict, b_mesh: dict, region, cfg: dict | None, *, h: float = 3.0,
+                hole_min_perimeter: float = 5.0, a_holes: list | None = None, b_holes: list | None = None) -> dict:
+    """SG-D-13 (0) 개정(2026-11-12) — **구멍 특징 frame 판정**: A part 구멍 중심(자유 모서리 고리) ↔ B 평가 영역 구멍 중심,
+    A 구멍마다 가장 가까운 B 구멍(3D). 일치(ok) = 대응 수 ≥ max(frame_min_holes, A 구멍 50 %)(거리 ≤ frame_match_mm, null =
+    2h) ∧ 잔차 중앙값 ≤ frame_resid_mm(null = h/4) ∧ 가장 큰 1개 제외 최대 잔차 ≤ h/2. 불일치이고 대응 ≥ 3 이면 Kabsch 강체
+    맞춤(대응 구멍 → 다시 대응, 2회) 뒤 같은 기준 = ``fit.ok``(method xyz_fitted). bbox 원점·축 차이는 정보만
+    (``d_origin_mm``·``angle_deg``). 반환 = 파일 키 + 내부 ``frame_a``·``frame_b``·``_R``·``_t``."""
+    tl = frame_tols(cfg, h)
     fa = part_frame(a_mesh["x0"], a_mesh["conn"], a_mesh["elem_type"])
     bm = b_mesh if region is None else submesh({k: b_mesh[k] for k in ("x0", "conn", "elem_type", "node_id")}, region)
     fb = part_frame(bm["x0"], bm["conn"], bm["elem_type"])
-    d = float(np.linalg.norm(np.asarray(fa["origin"]) - np.asarray(fb["origin"])))
+    d0 = float(np.linalg.norm(np.asarray(fa["origin"]) - np.asarray(fb["origin"])))
     ang = [float(np.degrees(np.arccos(min(1.0, abs(float(np.dot(a, b)))))))
            for a, b in zip(np.asarray(fa["axes"]), np.asarray(fb["axes"]))]
-    ok = d <= float(ft["origin_tol_mm"]) and all(x <= float(ft["axis_tol_deg"]) for x in ang)
-    return {"d_origin_mm": d, "angle_deg": ang, "ok": bool(ok), "origin_tol_mm": float(ft["origin_tol_mm"]),
-            "axis_tol_deg": float(ft["axis_tol_deg"]), "frame_a": fa, "frame_b": fb}
+    ah = a_holes if a_holes is not None else hole_rings(a_mesh, None, hole_min_perimeter)
+    bh = b_holes if b_holes is not None else hole_rings(b_mesh, region, hole_min_perimeter)
+    A, B = _centres(ah), _centres(bh)
+    n_req = max(tl["min_holes"], int(np.ceil(0.5 * A.shape[0])))
+    out = {"method": "holes", "n_a_holes": int(A.shape[0]), "n_b_holes": int(B.shape[0]), "n_req": n_req,
+           "match_mm": tl["match_mm"], "resid_tol_mm": tl["resid_mm"], "resid_max_tol_mm": tl["max_mm"],
+           "n_matched": 0, "resid_med_mm": None, "resid_max_mm": None, "ok": False, "fit": None,
+           "d_origin_mm": d0, "angle_deg": ang, "frame_a": fa, "frame_b": fb, "_R": None, "_t": None}
+    if A.shape[0] == 0 or B.shape[0] == 0:
+        return out
+    from scipy.spatial import cKDTree
+    tree = cKDTree(B)
+    d, j, m = _match(A, tree, tl["match_mm"])
+    ok, med, mx = _resid_ok(d[m], tl["resid_mm"], tl["max_mm"])
+    out.update(n_matched=int(m.sum()), resid_med_mm=med, resid_max_mm=mx, ok=bool(ok and m.sum() >= n_req))
+    if out["ok"] or m.sum() < 3:
+        return out
+    R, t, mm = np.eye(3), np.zeros(3), m                    # 강체 맞춤(대응 → 맞춤 → 다시 대응, 2회 — 결정적)
+    jj = j
+    for _ in range(2):
+        rt = _kabsch(A[mm], B[jj[mm]])
+        if rt is None:
+            break
+        R, t = rt
+        d2, jj, mm = _match(A @ R.T + t, tree, tl["match_mm"])
+        if mm.sum() < 3:
+            break
+    else:
+        fok, fmed, fmx = _resid_ok(d2[mm], tl["resid_mm"], tl["max_mm"])
+        rot = float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
+        out["fit"] = {"ok": bool(fok and mm.sum() >= n_req), "n_matched": int(mm.sum()), "resid_med_mm": fmed,
+                      "resid_max_mm": fmx, "rot_deg": rot, "shift_mm": float(np.linalg.norm(t)),
+                      "R": R.tolist(), "t": t.tolist()}
+        if out["fit"]["ok"]:
+            out["_R"], out["_t"] = R, t
+    return out
+
+
+FRAME_FILE_KEYS = ("method", "n_a_holes", "n_b_holes", "n_req", "match_mm", "resid_tol_mm", "resid_max_tol_mm",
+                   "n_matched", "resid_med_mm", "resid_max_mm", "ok", "fit", "d_origin_mm", "angle_deg")
 
 
 # ====================================================================== 고정점 이전 (SG-D-12~15)
@@ -370,45 +473,66 @@ def _clusters(a_fixed: dict) -> list[dict]:
     return out
 
 
-def _xyz_nearest(clusters: list[dict], b_mesh: dict, rnodes: np.ndarray, tol: float):
+def _feature(cl: dict, a_holes: list[dict], h: float) -> str:
+    """구멍형(A 구멍 중심이 클러스터 중심 h/2 안 — 구멍 둘레·RBE2 거미 고리) | 패드(구멍 없음)."""
+    if not a_holes:
+        return "pad"
+    d = np.linalg.norm(_centres(a_holes) - np.asarray(cl["center"]), axis=1)
+    return "hole" if float(d.min()) <= 0.5 * float(h) else "pad"
+
+
+def _xyz_nearest(clusters: list[dict], b_mesh: dict, rnodes: np.ndarray, tol: float, *, R=None, t=None,
+                 a_holes=(), b_holes=(), h: float = 3.0, pad_ok: bool = True, pad_resid: float | None = None):
+    """SG-D-13 (1) 개정: A 클러스터 노드(맞춤 변환 R·t 뒤) → B 최근접 노드 ≤ tol, 클러스터마다 검증(2026-11-12):
+    구멍형 = 가장 가까운 B 구멍 중심 ≤ h/2 ∧ 이전 노드가 그 구멍 고리에 닿음, 패드 = pad_ok(frame 판정 통과) ∧ 최근접 노드
+    중심 잔차 ≤ pad_resid. 실패 = ``rejected``(호출자가 구멍 스냅으로 넘김). 모든 대응에 resid_mm."""
     from scipy.spatial import cKDTree
     X = np.asarray(b_mesh["x0"], dtype=np.float64)
     nid = np.asarray(b_mesh["node_id"], dtype=np.int64)
     cand = np.flatnonzero(rnodes)
     tree = cKDTree(X[cand])
-    matches, unmatched, groups = [], [], []
+    R = np.eye(3) if R is None else np.asarray(R, dtype=np.float64)
+    t = np.zeros(3) if t is None else np.asarray(t, dtype=np.float64)
+    BC = _centres(list(b_holes))
+    pr = float(h) / 4.0 if pad_resid is None else float(pad_resid)
+    matches, rejected, groups = [], [], []
     for cl in clusters:
-        d, j = tree.query(cl["xyz"], k=1)
-        d = np.atleast_1d(d)
-        j = np.atleast_1d(j)
+        P = np.asarray(cl["xyz"], dtype=np.float64) @ R.T + t
+        c = np.asarray(cl["center"], dtype=np.float64) @ R.T + t
+        feat = _feature(cl, list(a_holes), h)
+        d, j = tree.query(P, k=1)
+        d, j = np.atleast_1d(d), np.atleast_1d(j)
         ok = d <= tol
-        if not ok.any():
-            unmatched.append({"a_label": cl["label"], "kind": cl["kind"], "d_mm": float(d.min()) if d.size else None})
+        bi = np.unique(cand[j[ok]]) if ok.any() else np.zeros(0, np.int64)
+        if feat == "hole":
+            if BC.shape[0]:
+                dh = np.linalg.norm(BC - c, axis=1)
+                kh = int(np.argmin(dh))
+                resid = float(dh[kh])
+                on_ring = bool(np.isin(bi, b_holes[kh]["nodes"]).any())
+            else:
+                resid, on_ring = None, False
+            good = bi.size > 0 and resid is not None and resid <= 0.5 * float(h) and on_ring
+        else:
+            resid = float(np.linalg.norm(X[cand[j[ok]]].mean(axis=0) - P[ok].mean(axis=0))) if ok.any() else None
+            good = bool(pad_ok) and bi.size > 0 and resid is not None and resid <= pr
+        rec = {"a_label": cl["label"], "kind": cl["kind"], "feature": feat, "resid_mm": resid,
+               "d_mm": float(d.min()) if d.size else None}
+        if not good:
+            rejected.append((cl, rec))
             continue
-        bi = np.unique(cand[j[ok]])
         groups.append(bi)
-        matches.append({"a_label": cl["label"], "kind": cl["kind"], "n_a": int(d.size), "n_nodes": int(bi.size),
-                        "d_max_mm": float(d[ok].max()), "hole": None, "a_ab": None, "b_ab": None, "d_mm": None})
-    return matches, unmatched, groups, nid
+        matches.append({"a_label": cl["label"], "kind": cl["kind"], "feature": feat, "via": "xyz", "n_a": int(d.size),
+                        "n_nodes": int(bi.size), "d_max_mm": float(d[ok].max()), "resid_mm": resid, "hole": None,
+                        "a_ab": None, "b_ab": None, "d_mm": None})
+    return matches, rejected, groups, nid
 
 
-def _holes(b_mesh: dict, region, frame_b: dict, min_perimeter: float) -> list[dict]:
-    """평가 영역 B 구멍(자유 모서리 고리, 둘레 ≥ min_perimeter) [{k(1부터), ab, nodes(B 노드 인덱스)}]."""
-    from esl.opt.keepout import boundary_loops, project_ab
-    keys = ("x0", "conn", "elem_type", "node_id")
-    bm = {k: b_mesh[k] for k in keys}
-    if region is not None:
-        sm = submesh(bm, region)
-        gidx = sm.pop("_node_index")
-    else:
-        sm, gidx = bm, np.arange(np.asarray(bm["x0"]).shape[0])
-    X = np.asarray(sm["x0"], dtype=np.float64)
-    lp = boundary_loops(sm, min_perimeter)
-    out = []
-    for k, r in enumerate(lp["holes"]):
-        r = np.asarray(r, dtype=np.int64)
-        out.append({"k": k + 1, "ab": project_ab(frame_b, X[r].mean(axis=0))[0], "nodes": gidx[r]})
-    return out
+def _holes(b_mesh: dict, region, frame_b: dict, min_perimeter: float, rings: list | None = None) -> list[dict]:
+    """평가 영역 B 구멍(자유 모서리 고리, 둘레 ≥ min_perimeter) [{k(1부터), ab, c, nodes(B 노드 인덱스)}]."""
+    from esl.opt.keepout import project_ab
+    rs = rings if rings is not None else hole_rings(b_mesh, region, min_perimeter)
+    return [{"k": r["k"], "ab": project_ab(frame_b, r["c"])[0], "c": r["c"], "nodes": r["nodes"]} for r in rs]
 
 
 def _hole_snap(clusters: list[dict], frame_a: dict, frame_b: dict, holes: list[dict], snap: float):
@@ -420,21 +544,22 @@ def _hole_snap(clusters: list[dict], frame_a: dict, frame_b: dict, holes: list[d
         a_ab = project_ab(frame_a, cl["center"])[0]
         b_ab = bnd.transfer(frame_a, frame_b, a_ab)[0]
         if not holes:
-            unmatched.append({"a_label": cl["label"], "kind": cl["kind"], "d_mm": None})
+            unmatched.append({"a_label": cl["label"], "kind": cl["kind"], "d_mm": None, "resid_mm": None})
             continue
         d = np.hypot(*(hab - b_ab).T)
         j = int(np.argmin(d))                               # 동률 = 작은 구멍 번호(argmin 첫 값)
         if d[j] > snap:
-            unmatched.append({"a_label": cl["label"], "kind": cl["kind"], "d_mm": float(d[j])})
+            unmatched.append({"a_label": cl["label"], "kind": cl["kind"], "d_mm": float(d[j]), "resid_mm": float(d[j])})
             continue
         h = holes[j]
         first = h["k"] not in used
         used.setdefault(h["k"], cl["label"])
         if first:
             groups.append(np.unique(h["nodes"]))
-        matches.append({"a_label": cl["label"], "kind": cl["kind"], "n_a": int(np.asarray(cl["xyz"]).shape[0]),
-                        "n_nodes": int(np.unique(h["nodes"]).size), "d_max_mm": None, "hole": int(h["k"]),
-                        "a_ab": a_ab.tolist(), "b_ab": b_ab.tolist(), "d_mm": float(d[j])})
+        matches.append({"a_label": cl["label"], "kind": cl["kind"], "feature": "hole", "via": "hole",
+                        "n_a": int(np.asarray(cl["xyz"]).shape[0]), "n_nodes": int(np.unique(h["nodes"]).size),
+                        "d_max_mm": None, "resid_mm": float(d[j]), "hole": int(h["k"]), "a_ab": a_ab.tolist(),
+                        "b_ab": b_ab.tolist(), "d_mm": float(d[j])})
     return matches, unmatched, groups
 
 
@@ -462,11 +587,14 @@ def seed_fixed_user(mesh: dict, groups: list) -> dict:
 
 def fixed_transfer(a_fixed: dict | None, frame_a: dict, t_b, cfg: dict | None, *, a_mesh: dict | None, region,
                    h: float, hole_min_perimeter: float, snap_default: float, reason: str | None = None) -> dict:
-    """SG-D-13 3단 이전 → fixed_transfer 문서(§3.3 SG-D-15) + 내부 키 ``_groups``(노드 인덱스 묶음, 파일에 안 씀).
+    """SG-D-13 개정(2026-11-12) 이전 → fixed_transfer 문서(§3.3 SG-D-15) + 내부 키 ``_groups``(노드 인덱스 묶음, 파일에 안 씀).
 
+    auto: 구멍 특징 frame 판정 ok → ``xyz_nearest`` | 강체 맞춤 ok → ``xyz_fitted``(A 점에 R·t 적용) | 둘 다 아님 →
+    ``ab_hole_snap``. xyz 경로는 클러스터마다 검증, 검증 실패 클러스터 = 구멍 스냅(그것도 실패 = UNMATCHED). mode xyz =
+    xyz 경로만(구멍 스냅 대체 없음, 패드는 판정 통과일 때만), hole = 구멍 스냅만.
     a_fixed = ``paicad_io.read_fixed(prep/a_fixed)`` (None = 없음, reason = A_CASE_MISSING | A_SCAN_FAILED);
     frame_a = 첫 ESL 의 정규화 frame(meta.frame), t_b = B 기준 Target(t.frame = B 정규화 frame); a_mesh = 첫 ESL A part
-    {x0, conn, elem_type} (frame 일치 판정용)."""
+    {x0, conn, elem_type} (구멍 특징 판정용)."""
     sg = cfg_of(cfg)
     ft = sg["fixed_transfer"]
     mode = str(ft["mode"])
@@ -477,9 +605,14 @@ def fixed_transfer(a_fixed: dict | None, frame_a: dict, t_b, cfg: dict | None, *
            "frame_a_sha": None, "frame_b_sha": None, "matches": [], "unmatched": [], "node_id": [],
            "elems": {"q": [], "t": []}}
     fc = None
+    a_holes: list = []
+    b_rings = None
     if a_mesh is not None:
-        fc = frame_check(a_mesh, mesh, region, cfg)
-        doc["frame_check"] = {k: fc[k] for k in ("d_origin_mm", "angle_deg", "ok", "origin_tol_mm", "axis_tol_deg")}
+        a_holes = hole_rings(a_mesh, None, hole_min_perimeter)
+        b_rings = hole_rings(mesh, region, hole_min_perimeter)
+        fc = frame_check(a_mesh, mesh, region, cfg, h=h, hole_min_perimeter=hole_min_perimeter, a_holes=a_holes,
+                         b_holes=b_rings)
+        doc["frame_check"] = {k: fc[k] for k in FRAME_FILE_KEYS}
         doc["frame_a_sha"], doc["frame_b_sha"] = frame_sha(fc["frame_a"]), frame_sha(fc["frame_b"])
     groups: list = []
     if a_fixed is None:
@@ -487,15 +620,43 @@ def fixed_transfer(a_fixed: dict | None, frame_a: dict, t_b, cfg: dict | None, *
         doc["_groups"] = groups
         return doc
     cls = _clusters(a_fixed)
-    order = {"auto": (["xyz"] if fc is not None and fc["ok"] else []) + ["hole"], "xyz": ["xyz"],
-             "hole": ["hole"]}[mode]
+    frame_ok = fc is not None and fc["ok"]
+    fit_ok = fc is not None and fc["_R"] is not None
+    if mode == "auto":
+        order = (["xyz"] if frame_ok or fit_ok else []) + ["hole"]
+    else:
+        order = [mode]
+    holes_ab = None
+
+    def holes():
+        nonlocal holes_ab, b_rings
+        if holes_ab is None:
+            if b_rings is None:
+                b_rings = hole_rings(mesh, region, hole_min_perimeter)
+            holes_ab = _holes(mesh, region, t_b.frame, hole_min_perimeter, rings=b_rings)
+        return holes_ab
     for step in order:
         if step == "xyz":
-            m, u, g, _ = _xyz_nearest(cls, mesh, region_nodes(mesh, region), tol)
-            meth = "xyz_nearest"
+            if b_rings is None:
+                b_rings = hole_rings(mesh, region, hole_min_perimeter)
+            R, t = (fc["_R"], fc["_t"]) if (fit_ok and not frame_ok) else (None, None)
+            m, rej, g, _ = _xyz_nearest(cls, mesh, region_nodes(mesh, region), tol, R=R, t=t, a_holes=a_holes,
+                                        b_holes=b_rings, h=h, pad_ok=frame_ok or fit_ok,
+                                        pad_resid=frame_tols(cfg, h)["resid_mm"])
+            meth = "xyz_fitted" if R is not None else "xyz_nearest"
+            u = []
+            if rej and mode == "auto":                      # 검증 실패 클러스터 → 구멍 스냅 대체
+                hm, hu, hg = _hole_snap([c for c, _ in rej], frame_a, t_b.frame, holes(), snap)
+                m, g = m + hm, g + hg
+                u = hu
+            else:
+                u = [{"a_label": r["a_label"], "kind": r["kind"], "d_mm": r["d_mm"], "resid_mm": r["resid_mm"]}
+                     for _, r in rej]
+            if g:                                           # 대응 순서 = A 클러스터 순서(결정적)
+                rank = {c["label"]: i for i, c in enumerate(cls)}
+                m = sorted(m, key=lambda r: rank[r["a_label"]])
         else:
-            holes = _holes(mesh, region, t_b.frame, hole_min_perimeter)
-            m, u, g = _hole_snap(cls, frame_a, t_b.frame, holes, snap)
+            m, u, g = _hole_snap(cls, frame_a, t_b.frame, holes(), snap)
             meth = "ab_hole_snap"
         if g:
             doc.update(method=meth, matches=m, unmatched=u)
