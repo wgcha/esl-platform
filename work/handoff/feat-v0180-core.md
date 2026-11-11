@@ -29,7 +29,7 @@
 esl/doe/{__init__,bead_graph,bead_select,evaluate,scenario,stages,step_graph}.py, resources/doe_messages.json
 
 ## Test status
-- tests: test_step_graph.py (6 fast pass, 4 slow H6 pending), _fixed 8, _region 4, test_bead_graph_cfg 7 pass
+- tests: test_step_graph.py 6 fast pass (4 slow H6 running), _fixed 8, _region 4, cfg 7; H6 STEP gen = planar faces + CDT triangles (18 s); regress none/cad identical-run done, auto pending
 - tests/doe/synth_step_graph.py: h6_step (STEP gen, slow), add_extra, LightEntry, tri_split
 
 ## Next commands

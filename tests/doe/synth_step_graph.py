@@ -17,7 +17,8 @@ PKG = os.path.join(ROOT, "packages", "beadgraph", "src")
 if PKG not in sys.path:
     sys.path.insert(0, PKG)
 
-PLANE_TOL = 1e-4
+PLANE_TOL = 1e-6
+PLANE_SNAP = 0.05
 
 
 def _key(c):
@@ -31,18 +32,17 @@ def _chains(L):
     return [np.asarray(g.coords)[:, :2] for g in geoms]
 
 
-def h6_step(path: str) -> str:
-    """H6 시트 STEP(1200 × 675 mm, 면 246 — 평면 + 경계 채움)."""
+def h6_step(path: str, log=None) -> str:
+    """H6 시트 STEP(1200 × 675 mm): 주름선으로 나뉜 평면 다각형(246) — 올린 꼭짓점이 한 평면이면 평면 면(구멍 포함), 아니면
+    (45° 사면의 둥근 모서리 등) 제약 Delaunay 삼각형마다 평면 면. 모서리 = 올린 꼭짓점 사이 직선(면끼리 태그 공유).
+    OCC 경계 채움(addSurfaceFilling)은 꼭짓점 많은 고리에서 비정상 종료해 쓰지 않는다."""
+    import shapely
     from beadgraph.testing import synth_h6 as s6
     root, _ = s6.build_tree()
     dom, L = s6.domain_and_creases(root)
     faces = s6.faces_of(dom, L)
-    chains = _chains(L)
-    nodes = {}
-    for ch in chains:
-        for c in (ch[0], ch[-1]):
-            nodes[_key(c)] = True
-    allpts = np.unique(np.concatenate(chains), axis=0)
+    allpts = np.unique(np.concatenate([np.asarray(r.coords)[:, :2] for f in faces
+                                       for r in [f.exterior] + list(f.interiors)]), axis=0)
     z, *_ = s6.evaluate(root, allpts)
     zmap = {_key(p): float(v) for p, v in zip(allpts, z)}
 
@@ -51,14 +51,15 @@ def h6_step(path: str) -> str:
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         occ = gmsh.model.occ
-        pid = {}
+        pid, lid = {}, {}
 
         def P(c):
             k = _key(c)
             if k not in pid:
-                pid[k] = occ.addPoint(k[0], k[1], zmap.get(k, 0.0))
+                if k not in zmap:
+                    zmap[k] = float(s6.evaluate(root, np.asarray([k], float))[0][0])
+                pid[k] = occ.addPoint(k[0], k[1], zmap[k])
             return pid[k]
-        lid = {}
 
         def line(a, b):
             k = (min(a, b), max(a, b))
@@ -66,27 +67,39 @@ def h6_step(path: str) -> str:
                 lid[k] = occ.addLine(k[0], k[1])
             return lid[k] if a == k[0] else -lid[k]
 
-        def loop(coords):
-            cs = [c for c in np.asarray(coords)[:-1, :2]]
+        def loop(cs):
             ids = [P(c) for c in cs]
-            segs = [line(a, b) for a, b in zip(ids, ids[1:] + ids[:1]) if a != b]
-            return occ.addCurveLoop(segs), cs
-        n_plane = n_fill = 0
-        for f in faces:
-            import shapely
-            f = shapely.geometry.polygon.orient(f, 1.0)
-            ext, cs = loop(f.exterior.coords)
-            p3 = np.array([[c[0], c[1], zmap.get(_key(c), 0.0)] for c in cs])
+            return occ.addCurveLoop([line(a, b) for a, b in zip(ids, ids[1:] + ids[:1]) if a != b])
+        # 평면 판정: 주름선이 0.02 mm 격자로 맞춰져 있어 바닥 꼭짓점 높이가 ≤ 0.02 mm 흔들림 → 넓은 면부터 그 면 평면으로 꼭짓점
+        # 높이를 맞춤(이미 다른 평면 면이 정한 꼭짓점은 그대로) → 맞춘 뒤 정확히 평면인 면만 평면 면
+        F = [shapely.geometry.polygon.orient(f, 1.0) for f in faces]
+        R = [[np.asarray(r.coords)[:-1, :2] for r in [f.exterior] + list(f.interiors)] for f in F]
+        fixed_z: set = set()
+        for i in sorted(range(len(F)), key=lambda i: -F[i].area):
+            pts = np.concatenate(R[i])
+            p3 = np.c_[pts, [zmap[_key(c)] for c in pts]]
+            A = np.c_[pts, np.ones(len(pts))]
+            coef = np.linalg.lstsq(A, p3[:, 2], rcond=None)[0]
+            if float(np.abs(A @ coef - p3[:, 2]).max()) < PLANE_SNAP:
+                for c, zz in zip(pts, A @ coef):
+                    if _key(c) not in fixed_z:
+                        zmap[_key(c)] = float(zz)
+                        fixed_z.add(_key(c))
+        n_plane = n_tri = 0
+        for f, rings in zip(F, R):
+            p3 = np.array([[c[0], c[1], zmap[_key(c)]] for r in rings for c in r])
             A = np.c_[p3[:, :2], np.ones(len(p3))]
             coef = np.linalg.lstsq(A, p3[:, 2], rcond=None)[0]
-            planar = float(np.abs(A @ coef - p3[:, 2]).max()) < PLANE_TOL
-            if planar:
-                inner = [loop(r.coords)[0] for r in f.interiors]
-                occ.addPlaneSurface([ext] + inner)
+            if float(np.abs(A @ coef - p3[:, 2]).max()) < PLANE_TOL:
+                occ.addPlaneSurface([loop(r) for r in rings])
                 n_plane += 1
-            else:
-                occ.addSurfaceFilling(ext)
-                n_fill += 1
+                continue
+            for t in shapely.constrained_delaunay_triangles(f).geoms:
+                cs = np.asarray(t.exterior.coords)[:-1, :2]
+                occ.addPlaneSurface([loop(cs)])
+                n_tri += 1
+        if log:
+            log(f"faces plane {n_plane} · triangles {n_tri}")
         occ.synchronize()
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         gmsh.write(str(path))
