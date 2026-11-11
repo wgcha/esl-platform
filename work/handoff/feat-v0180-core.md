@@ -16,9 +16,11 @@
   select_base "step", _is_step_base, bd_mesh0 step branch, _sel_input_step, _sel_fixed_ids step, hash step view,
   bd_eval region, _design_mesh TODO comment
 
+- stages._sel_loads step branch (region loads, _boundary region, fixed_transfer.json, graph limits, graph_region.json,
+  seeds auto/manual with fixed_user), _sel_auto_v2 kwargs, _sel_best/_sel_part_title/_sel_rad_files step
+- smoke E2E (plate STEP, scratchpad/smoke/run.py): input→mesh0→loads→matrix→eval→post→best OK
+
 ## Remaining
-- stages._sel_loads step branch (region loads, _boundary region, fixed transfer file, graph limits, graph_region.json,
-  seeds auto/manual with fixed_user), _sel_auto_v2 kwargs, _sel_best / _sel_part_title / _sel_rad_files step
 - tests: synth_step_graph.py (H6/H5 STEP), test_step_graph.py, test_step_graph_fixed.py, test_step_graph_region.py,
   test_bead_graph_cfg.py additions; regress.py (none/cad/auto) + sel_regress.py vs origin/main
 - final: remove this file, push, remove worktree
@@ -27,7 +29,7 @@
 esl/doe/{__init__,bead_graph,bead_select,evaluate,scenario,stages,step_graph}.py, resources/doe_messages.json
 
 ## Test status
-- imports OK; no tests run yet
+- smoke E2E OK; pytest not yet run (needs PYTHONPATH=packages/beadgraph/src outside tests)
 
 ## Next commands
 1. edit stages._sel_loads (see Remaining)

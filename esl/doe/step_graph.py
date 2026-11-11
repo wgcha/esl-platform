@@ -439,7 +439,7 @@ def _hole_snap(clusters: list[dict], frame_a: dict, frame_b: dict, holes: list[d
 
 def seed_fixed_user(mesh: dict, groups: list) -> dict:
     """SG-D-14b seed ``fixed_user`` ElemSet: 각 이전 노드 묶음(클러스터·구멍 고리)의 노드를 2개 이상 가진 요소, 묶음이 노드
-    1개면 그 노드를 가진 요소."""
+    1개면 그 노드를 가진 요소. 2개 공유 요소가 하나도 없는 묶음(성긴 A 클러스터)은 그 노드를 가진 요소."""
     from esl.doe import bead_select as bs
     ix = bs.mesh_index(mesh)
     C = np.asarray(mesh["conn"], dtype=np.int64)
@@ -452,7 +452,10 @@ def seed_fixed_user(mesh: dict, groups: list) -> dict:
         on = np.zeros(n + 1, bool)
         on[g] = True
         cnt = on[np.where(C >= 0, C, n)].sum(axis=1)
-        em |= cnt >= (1 if g.size == 1 else 2)
+        hit = cnt >= (1 if g.size == 1 else 2)
+        if not hit.any():                                   # 묶음 노드가 서로 떨어져 2개 공유 요소가 없음(A 가 B 보다 성김)
+            hit = cnt >= 1                                  # → 그 노드들을 가진 요소(구현 보강 — 고정이 빠지지 않게)
+        em |= hit
     return bs.elemset_of(ix, em)
 
 

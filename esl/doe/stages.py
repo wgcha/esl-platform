@@ -377,8 +377,9 @@ def bd_loads(spec: dict, echo=print) -> dict:
             "n_beads": len(params["beads"]), "n_params": len(params["params"])}
 
 
-def _boundary(c: Ctx, t, ents, info: list) -> dict:
-    """②③ 경계 매핑 경고(§8.2). A = 선택 ESL 기준 항목(첫 항목), B = 기준 메시."""
+def _boundary(c: Ctx, t, ents, info: list, region=None) -> dict:
+    """②③ 경계 매핑 경고(§8.2). A = 선택 ESL 기준 항목(첫 항목), B = 기준 메시. v0.18.0 region(새 ③) = B 구멍 후보를
+    평가 영역 부분 메시에서만(SG-D-20c) — None = 지금 동작."""
     bc = c.cfg
     a = ents[0]
     fa = a.meta["frame"]
@@ -401,7 +402,12 @@ def _boundary(c: Ctx, t, ents, info: list) -> dict:
         b_fx = pio.fixed_points(fx)
         if not b_fx:
             info.append("B_NO_FASTENERS")
-    cands = bnd.b_candidates(t.frame, t.mesh, b_fx, c.ocfg["keepout"]["hole_min_perimeter_mm"])
+    bmesh = t.mesh
+    if region is not None:
+        from esl.doe import step_graph as sg
+        bmesh = sg.submesh({k: t.mesh[k] for k in ("node_id", "x0", "conn", "elem_type")}, region)
+        bmesh.pop("_node_index")
+    cands = bnd.b_candidates(t.frame, bmesh, b_fx, c.ocfg["keepout"]["hole_min_perimeter_mm"])
     lps = []
     for e in ents:
         lps += bnd.load_points([(e.meta["entry_id"], e.raw["node_id"], e.raw["x0"], e.raw["f"])], e.meta["frame"],
@@ -2661,16 +2667,24 @@ def _sel_loads(c: Ctx, echo) -> dict:
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
     warns, info = [], []
-    loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
-                                  (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    step = _is_step_base(c)
+    region = None
+    if step:                                     # v0.18.0 SG-D-8·20b 하중 셀 매핑 1회, 대상 = 평가 영역 노드
+        from esl.doe import step_graph as sg
+        region = sg.load_region(c.p("prep"))
+        loads, linfo = sg.region_loads(t, ents, region, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                       (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    else:
+        loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                      (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
     warns += linfo["warnings"]
     loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], loads, c.writer)
     c.progress(50)
     params = {"beads": [], "params": [], "warnings": []}            # 변수 = 선택 저장 후(select/<sha>/params.json)
     c.write_json(os.path.join("prep", "params.json"), params)
     res = None
-    if _is_mesh_base(c):                         # v0.16.2 AD-D-18: ② B 메시 기준 = ② 경계 경고 그대로(BD-D-14)
-        res = _boundary(c, t, ents, info)
+    if _is_mesh_base(c) or step:                 # v0.16.2 AD-D-18: ② B 메시 기준 = ② 경계 경고 그대로(BD-D-14), ③ 도
+        res = _boundary(c, t, ents, info, region=region)
         warns += [f"{w['code']}: {w.get('label') or w.get('entry_id')} {w.get('d_mm')}" for w in res["warnings"]]
         c.write_json(os.path.join("prep", "boundary.json"), res)
     plan = bnd.plan(t.mesh, t.frame, c.ocfg["keepout"], int(c.ocfg["ui"]["max_preview_points"]), result=res)
@@ -2682,6 +2696,10 @@ def _sel_loads(c: Ctx, echo) -> dict:
     nid = np.asarray(m["node_id"], dtype=np.int64)
     fixed = np.isin(nid, fids)
     sd = c.fresh(os.path.join("prep", "select"))
+    xfer, xinfo, gfids = None, [], fids
+    if step:                                     # v0.18.0 SG-D-12~15 A 고정점 → B (seed fixed_user, 분류 fixed)
+        xfer, xinfo = _sel_fixed_transfer(c, t, bmeta, ents, region, sd)
+        gfids = np.asarray((xfer or {}).get("node_id") or [], dtype=np.int64)
     X = np.asarray(m["x0"], dtype=np.float64)
     tris = v3.triangulate(np.asarray(m["conn"]), np.asarray(m["elem_type"]))
     lo, hi = X.min(axis=0), X.max(axis=0)
@@ -2696,7 +2714,9 @@ def _sel_loads(c: Ctx, echo) -> dict:
     ix = bsel.mesh_index(m)
     man = {"schema": SEL_VIEW_SCHEMA, "n_nodes": t.n_nodes, "n_elems": t.n_elems, "n_tris": lay["n_tris"],
            "mesh_sha256": bmeta["mesh_sha256"], "h_med": float(ix.h_med), "plate_normal": v3.plate_normal(X).tolist(),
-           "fixed": {"scan_n": int(fixed.sum()), "source": "none" if fw else "scan"},
+           "fixed": ({"scan_n": 0, "source": _xfer_source(xfer), "xfer_n": len((xfer or {}).get("node_id") or []),
+                      "xfer_method": (xfer or {}).get("method") or "none"} if step else
+                     {"scan_n": int(fixed.sum()), "source": "none" if fw else "scan"}),
            "glb": {"name": "part.glb", "bytes": int(gbytes)}, "bin": {"name": "select.bin", "bytes": len(blob),
                                                                       "layout": lay["layout"]}}
     c.write_json(os.path.join("prep", "select", "select_manifest.json"), man)
@@ -2704,20 +2724,36 @@ def _sel_loads(c: Ctx, echo) -> dict:
              "prep/select/select_manifest.json"]
     auto = None
     gst = None
+    marks = None
     if select_schema(c) == 2:                    # v0.17.0 BG-D-40: 분류 그래프(schema 2 만 — schema 1 은 건너뜀, 바이트 불변)
-        gst = _sel_graph(c, m, fids, sd, warns, echo)
+        gst = _sel_graph(c, m, gfids, sd, warns, echo, step=step)
         if gst["ok"]:
             files += [f"prep/select/{x}" for x in (bgr_files())]
-            wc = _sel_w_clamp(c, m, fids, sd, echo)     # Verifier fix(§12 BG-X-1): 첫 행렬 전에 W 기본 범위 줄임표
+            wc = _sel_w_clamp(c, m, gfids, sd, echo)    # Verifier fix(§12 BG-X-1): 첫 행렬 전에 W 기본 범위 줄임표
             if wc:
                 files.append(wc)
-    if bead_source(c) == "auto":                 # v0.16.2 AD-D-2·3·21: 자동 탐지 seed(실패해도 준비 계속)
+            if step and region is not None:      # v0.18.0 SG-D-20d 영역 밖 세그먼트·섬 표지
+                marks = _sel_region_marks(c, region, sd)
+                files.append(f"prep/select/{sg.REGION_JSON}")
+    if step:                                     # v0.18.0 SG-D-16 iii: auto·manual 모두 seed(fixed_user 포함)
+        auto = _sel_auto_step(c, m, bmeta, gst, xfer, marks, warns, echo)
+        if auto.get("file"):
+            files.append(auto["file"])
+        if xfer is not None:
+            files.append(f"prep/select/{sg.XFER_JSON}")
+    elif bead_source(c) == "auto":               # v0.16.2 AD-D-2·3·21: 자동 탐지 seed(실패해도 준비 계속)
         auto = _sel_auto_v2(c, m, bmeta, gst, warns, echo) if gst is not None else _sel_auto(c, m, bmeta, warns, echo)
         if auto.get("file"):
             files.append(auto["file"])
     inp = U.read_json(c.p("prep", "input.json"))
-    inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0,
-               fixed={"source": "none" if fw else "scan", "n": int(fixed.sum())})
+    fixed_rec = {"source": "none" if fw else "scan", "n": int(fixed.sum())}
+    if step:
+        fixed_rec = {"source": _xfer_source(xfer), "n": len((xfer or {}).get("node_id") or []),
+                     "xfer": sg.xfer_summary(xfer)}
+        inp["info"] = [x for x in inp.get("info") or []          # 다시 돌려도 중복 없음
+                       if not (isinstance(x, dict) and str(x.get("code", "")).startswith("FIXED_XFER"))] + xinfo
+        info += [sg.text(x["code"], **{k: v for k, v in x.items() if k != "code"}) for x in xinfo]
+    inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0, fixed=fixed_rec)
     inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
     if auto is not None:
         inp["auto"] = {k: v for k, v in auto.items() if k != "file"}
@@ -2726,6 +2762,9 @@ def _sel_loads(c: Ctx, echo) -> dict:
         if not gst["ok"]:                        # GRAPH_FAILED{code, message, detail} 1개(워커 준비 요약 그대로)
             inp["warnings"] += [w for w in gst.get("warnings") or [] if w.get("code") == "GRAPH_FAILED"]
     c.write_json(os.path.join("prep", "input.json"), inp)
+    if step:
+        echo(f"[bd_loads] ③ 고정 이전 {fixed_rec['xfer']['method']} · 노드 {fixed_rec['n']} · 맞춤 "
+             f"{fixed_rec['xfer']['matched']} · 못 찾음 {fixed_rec['xfer']['unmatched']}")
     echo(f"[bd_loads] select ESL {len(loads)}개 하중({linfo['method']}), 고정 노드 {int(fixed.sum())}"
          + (" — 체결 정보 없음(FIXED_INFO_MISSING)" if fw else "")
          + (f", 경계 경고 {res['n_warn']} · 정보 {res['n_info']}" if res else ""))
@@ -2733,9 +2772,84 @@ def _sel_loads(c: Ctx, echo) -> dict:
     return {"files": files + (["prep/boundary.json"] if res else []),
             "warnings": warns, "info": info,
             "boundary": None if res is None else {"n_warn": res["n_warn"], "n_info": res["n_info"]},
-            "n_beads": 0, "n_params": 0, "fixed": {"source": "none" if fw else "scan", "n": int(fixed.sum())},
+            "n_beads": 0, "n_params": 0, "fixed": fixed_rec,
             **({"auto": {k: v for k, v in auto.items() if k != "file"}} if auto is not None else {}),
             **({"graph": {k: v for k, v in gst.items() if k != "warnings"}} if gst is not None else {})}
+
+
+def _xfer_source(xfer: dict | None) -> str:
+    return "a_transfer" if xfer and xfer.get("method") not in (None, "none") else "none"
+
+
+def _sel_fixed_transfer(c: Ctx, t, bmeta: dict, ents, region, sd: str) -> tuple[dict | None, list[dict]]:
+    """v0.18.0 SG-D-12~15: prep/a_fixed(워커 A Case fixed-scan) → step_graph.fixed_transfer → prep/select/fixed_transfer.json.
+    (문서 | None(꺼짐), 정보 dict 목록)."""
+    from esl.doe import step_graph as sg
+    sgc = sg.cfg_of(c.cfg)
+    if not sgc["fixed_transfer"]["enabled"]:
+        return None, sg.xfer_messages(None, disabled=True)
+    ad = c.p("prep", "a_fixed")
+    a_fx, why = None, None
+    if not os.path.isfile(os.path.join(ad, pio.SCAN_JSON)):
+        why = "A_CASE_MISSING"
+    else:
+        try:
+            a_fx = pio.read_fixed(ad, c.max_mb)
+        except EslError:
+            why = "A_SCAN_FAILED"
+    a = ents[0]
+    a_mesh = None
+    raw = getattr(a, "raw", None)
+    if raw is not None and all(k in raw for k in ("x0", "conn", "elem_type")):
+        a_mesh = {k: raw[k] for k in ("x0", "conn", "elem_type")}
+    doc = sg.fixed_transfer(a_fx, a.meta["frame"], t, c.cfg, a_mesh=a_mesh, region=region, h=float(bmeta.get("h") or 3.0),
+                            hole_min_perimeter=float(c.ocfg["keepout"]["hole_min_perimeter_mm"]),
+                            snap_default=float(c.cfg["boundary"]["fastener_warn_mm"]), reason=why)
+    sg.write_transfer(os.path.join(sd, sg.XFER_JSON), doc, guard=c.writer.guard)
+    return doc, sg.xfer_messages(doc)
+
+
+def _sel_region_marks(c: Ctx, region, sd: str) -> dict:
+    """v0.18.0 SG-D-20d prep/select/graph_region.json(영역 밖 > 50 % 세그먼트·섬)."""
+    from esl.doe import bead_graph as bgr
+    from esl.doe import step_graph as sg
+    graph, labels = bgr.load_graph(c.p("prep"))
+    mk = bgr.region_marks(graph, labels, region)
+    doc = {"schema": sg.REGION_SCHEMA, **mk, "n_in": int(np.asarray(region).sum()),
+           "n_out": int((~np.asarray(region, bool)).sum())}
+    with open(c.writer.guard(os.path.join(sd, sg.REGION_JSON)), "wb") as fh:
+        fh.write(sg.det_bytes(doc))
+    return mk
+
+
+def _sel_auto_step(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, xfer: dict | None, marks: dict | None, warns: list,
+                   echo) -> dict:
+    """v0.18.0 SG-D-14b·16: seed 파일은 auto·manual 모두. auto + 그래프 = 영역 안 그래프 seed + fixed_user(source graph);
+    manual·그래프 실패·seed 비드 0 = 빈 비드 + fixed_user(source fixed_transfer)."""
+    from esl.doe import bead_auto as ba
+    from esl.doe import bead_graph as bgr
+    fu = (xfer or {}).get("elems") or {"q": [], "t": []}
+    frec = {"source": _xfer_source(xfer), "method": (xfer or {}).get("method") or "none",
+            "n_nodes": len((xfer or {}).get("node_id") or [])}
+    if bead_source(c) == "auto":
+        out = _sel_auto_v2(c, mesh, bmeta, gst, warns, echo, fixed_user=fu,
+                           exclude_segs=(marks or {}).get("segments"), fixed_rec=frec)
+        if out.get("ok"):
+            return out
+    else:
+        out = {"ok": False, "step": None, "code": None, "n_beads": 0, "selection_sha256": None, "warnings": []}
+    graph = None
+    if gst and gst.get("ok"):
+        graph, _ = bgr.load_graph(c.p("prep"))
+    sel, sha = bgr.fixed_seed_v2(graph, fu)
+    doc = bgr.auto_doc_v2(sel, sha, [], [], list(out.get("warnings") or []), mesh_sha256=bmeta["mesh_sha256"],
+                          graph_sha=(gst or {}).get("sha256") if gst and gst.get("ok") else None,
+                          source="fixed_transfer", fixed=frec)
+    bgr.write_auto_v2(c.p("prep", "select", ba.AUTO_SELECTION_JSON), doc, guard=c.writer.guard)
+    out.update(ok=bead_source(c) != "auto" or out.get("ok", False), n_beads=0, selection_sha256=sha,
+               source="fixed_transfer", file="prep/select/" + ba.AUTO_SELECTION_JSON)
+    echo(f"[bd_loads] ③ seed(비드 없음 + 이전 고정 {frec['n_nodes']} 노드) sha {sha[:12]}…")
+    return out
 
 
 def bgr_files() -> tuple:
@@ -2743,11 +2857,17 @@ def bgr_files() -> tuple:
     return (bgr.GRAPH_JSON, bgr.GRAPH_LABELS, bgr.GRAPH_BIN)
 
 
-def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo) -> dict:
+def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo, step: bool = False) -> dict:
     """v0.17.0 BD_LOADS 분류(BG-D-40): ``bead_graph.prep_graph`` → prep/select/graph.json·graph_labels.npz·graph.bin.
     실패 = 준비 READY 유지 + 경고 GRAPH_FAILED{code}(수동은 src elems 비드로 계속)."""
     from esl.doe import bead_graph as bgr
-    st = bgr.prep_graph(mesh, fids, c.cfg, sd, guard=c.writer.guard)
+    if step:                                     # v0.18.0 SG-D-16 i: step 상한 = max(graph.limits, step_graph)
+        from esl.doe import step_graph as sg
+        sgc = sg.cfg_of(c.cfg)
+        st = bgr.prep_graph(mesh, fids, c.cfg, sd, guard=c.writer.guard,
+                            limits={"max_elems": sgc["max_elems"], "timeout_s": sgc["timeout_s"]})
+    else:
+        st = bgr.prep_graph(mesh, fids, c.cfg, sd, guard=c.writer.guard)
     if not st["ok"]:                             # 구조화 경고 1개 {code, message, detail}(AUTO_DETECT_FAILED 와 같은 형식)
         gw = graph_failed_warning(st["code"])
         st["warnings"] = [gw]                    # inp.warnings 로(아래 bd_loads) — inp.graph 에는 code 만
@@ -2790,7 +2910,8 @@ def graph_failed_warning(code: str | None) -> dict:
     return {"code": "GRAPH_FAILED", "message": msg[:300], "detail": detail}
 
 
-def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list, echo) -> dict:
+def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list, echo, *, fixed_user: dict | None = None,
+                 exclude_segs=None, fixed_rec: dict | None = None) -> dict:
     """v0.17.0 BG-D-20·42 자동 seed = 그래프(paicad 는 힌트만): prep/select/auto_selection.json(schema
     esl/doe_auto_selection/2, source graph). 그래프 실패 = 파일 없음 + AUTO_DETECT_FAILED{step graph, code}."""
     from esl.doe import bead_auto as ba
@@ -2803,7 +2924,12 @@ def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list,
         warns.append(f"AUTO_DETECT_FAILED: step=graph code={out['code']}")
         return out
     graph, labels = bgr.load_graph(c.p("prep"))
-    sel, sym, aw = bgr.auto_seed(graph, labels, c.cfg)
+    if exclude_segs is not None or fixed_user is not None:     # v0.18.0 step: 영역 밖 제외 + 이전 고정(SG-D-14b·20d)
+        sel, sym, aw = bgr.auto_seed(graph, labels, c.cfg, exclude_segs=exclude_segs)
+        if fixed_user is not None:
+            sel["fixed_user"] = fixed_user
+    else:
+        sel, sym, aw = bgr.auto_seed(graph, labels, c.cfg)
     hints = []
     ad = pio.read_auto_detect(c.p("prep"), c.max_mb)
     if ad and ad.get("ok"):
@@ -2820,7 +2946,8 @@ def _sel_auto_v2(c: Ctx, mesh: dict, bmeta: dict, gst: dict | None, warns: list,
         warns.append("AUTO_DETECT_FAILED: step=graph code=AUTO_BEAD_UNMAPPED")
         return out
     norm, sha = bgr.normalize_v2(sel, graph, c.cfg, labels=labels, mesh=mesh)
-    doc = bgr.auto_doc_v2(norm, sha, sym, hints, aw, mesh_sha256=bmeta["mesh_sha256"], graph_sha=gst["sha256"])
+    doc = bgr.auto_doc_v2(norm, sha, sym, hints, aw, mesh_sha256=bmeta["mesh_sha256"], graph_sha=gst["sha256"],
+                          **({"fixed": fixed_rec} if fixed_rec is not None else {}))
     bgr.write_auto_v2(c.p("prep", "select", ba.AUTO_SELECTION_JSON), doc, guard=c.writer.guard)
     for w in aw:
         if w.get("level") != "info":
@@ -3106,6 +3233,9 @@ def _sel_rad_files(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
     Case 기준 상대경로, 밖 = ``_ext/…``). Case 폴더의 관계없는 rad 는 보지 않고, Case 밖 include 도 원본을 읽는다(읽기만)."""
     if hasattr(c, "_sel_rad"):
         return c._sel_rad
+    if _is_step_base(c):                         # v0.18.0 SG-D-17: 원 rad 없음(받기 = export_mesh 만)
+        c._sel_rad, c._sel_rad_source = [], "step"
+        return []
     if select_base(c) == "mesh":                 # v0.16.2 AD-D-20: ② B 메시 기준 = input/mesh 사본(rel = 업로드 상대경로)
         return _sel_rad_files_mesh(c, nid)
     from esl.doe import assem_full as af
@@ -3169,6 +3299,9 @@ def _sel_rad_files_mesh(c: Ctx, nid: np.ndarray) -> list[tuple[str, str]]:
 def _sel_part_title(c: Ctx) -> str:
     """받기 ch_r.rad 파트 제목: ① = 기준 Case 파트, ② select_base mesh = B 파트(AD-D-20 — inputs.part_title, 없으면 B 메시에서
     읽은 제목·설정 기본)."""
+    if _is_step_base(c):                         # v0.18.0 SG-D-17: STEP 파일 이름 줄기
+        inp = U.read_json(c.p("prep", "input.json"))
+        return os.path.splitext(os.path.basename(inp["step"]["rel"]))[0]
     if select_base(c) == "mesh":
         inp = U.read_json(c.p("prep", "input.json"))
         return str((c.D.get("mesh") or {}).get("part_title") or c.D.get("part_title") or inp.get("part_title")
@@ -3250,7 +3383,8 @@ def _sel_best(c: Ctx, did: str, bd: str) -> list[str]:
     mesh = {k: t.mesh[k] for k in ("node_id", "elem_id", "elem_type", "conn", "elem_pid", "thickness", "E", "nu")}
     mesh["x0"] = dz["x"]
     files += export_mesh.write(bd, mesh, part_title=_sel_part_title(c),
-                               header=["esl bead DOE (scenario select)"], guard=c.writer.guard)
+                               header=["esl bead DOE (scenario select, base step)" if _is_step_base(c)
+                                       else "esl bead DOE (scenario select)"], guard=c.writer.guard)
     if cl:
         _insert_after_first_line(c, os.path.join(bd, export_mesh.RAD_NAME), cl)
     if sw:
