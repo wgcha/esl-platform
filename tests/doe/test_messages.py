@@ -224,3 +224,46 @@ def test_fixed_points(tmp_path):
     os.remove(tmp_path / "fixed_nodes.npz")
     with pytest.raises(EslError):
         pio.read_fixed(str(tmp_path))
+
+
+# ---------------------------------------------------------------- v0.17.2 grid 건강(이슈 #63)
+def _rows(spec):
+    out = []
+    for i, (state, code) in enumerate(spec):
+        out.append({"id": f"d{i + 1:03d}", "state": state, "code": code, "warning": None})
+    return out
+
+
+def test_grid_health_verdicts():
+    ids = [f"d{i + 1:03d}" for i in range(30)]
+    # 이슈 #63 현장: 29 GEOM_CAD_FAILED + 1 GEOM_INTERNAL, 공칭만 OK → READY 0
+    rows = _rows([("SKIPPED_GEOM", "GEOM_CAD_FAILED")] * 29 + [("SKIPPED_GEOM", "GEOM_INTERNAL")])
+    rows.append({"id": "nominal", "state": "READY", "code": None, "warning": None})      # 공칭 셀은 세지 않음
+    h = pio.grid_health(rows, ids, 0.5)
+    assert h["verdict"] == "all_failed" and h["ok"] == 0 and h["total"] == 30 and h["failed"] == 30
+    assert h["top_codes"] == [["GEOM_CAD_FAILED", 29], ["GEOM_INTERNAL", 1]]
+    assert pio.codes_text(h["top_codes"]) == "GEOM_CAD_FAILED 29 · GEOM_INTERNAL 1"
+    # 모두 충돌(형상 실패 아님)이어도 READY 0 → all_failed, 코드 = READY 아닌 셀 전체
+    h = pio.grid_health(_rows([("SKIPPED_COLLISION", "GEOM_FEATURE_COLLISION")] * 3), ids[:3], 0.5)
+    assert h["verdict"] == "all_failed" and h["failed"] == 0 and h["top_codes"] == [["GEOM_FEATURE_COLLISION", 3]]
+    # 기준 미만: 판정 4/10 < 0.5
+    rows = _rows([("READY", None)] * 2 + [("SKIPPED_COLLISION", "GEOM_FEATURE_COLLISION")] * 2
+                 + [("SKIPPED_GEOM", "GEOM_CAD_FAILED")] * 6)
+    h = pio.grid_health(rows, ids[:10], 0.5)
+    assert h["verdict"] == "too_few" and h["judged"] == 4 and h["top_codes"] == [["GEOM_CAD_FAILED", 6]]
+    # 경계: 판정 5/10 = 0.5 → partial(경고), 기준 0.6 → too_few
+    rows = _rows([("READY", None)] * 5 + [("SKIPPED_GEOM", "GEOM_CAD_FAILED")] * 4 + [("SKIPPED_GEOM", "GRID_CELL_MISSING")])
+    assert pio.grid_health(rows, ids[:10], 0.5)["verdict"] == "partial"
+    assert pio.grid_health(rows, ids[:10], 0.6)["verdict"] == "too_few"
+    assert pio.grid_health(rows, ids[:10], 0.0)["verdict"] == "partial"
+    # 실패 없음(충돌·고정 스킵만) → ok, 셀 0 → ok
+    rows = _rows([("READY", None), ("SKIPPED_FIXED", "SHELL_FIXED_REGION_VIOLATION")])
+    assert pio.grid_health(rows, ids[:2], 0.5)["verdict"] == "ok"
+    assert pio.grid_health([], [], 0.5)["verdict"] == "ok"
+
+
+def test_grid_min_ok_frac_default_and_message():
+    assert CFG["grid"]["min_ok_frac"] == 0.5
+    msgs = load_messages()["messages"]
+    for k in ("GRID_ALL_FAILED", "GRID_TOO_FEW_OK", "GRID_CELLS_FAILED"):
+        assert msgs[k]

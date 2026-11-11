@@ -65,3 +65,78 @@ def test_prep_warning_shape(w, want):
     from esl_worker.register import _doe_warning
 
     assert _doe_warning(w, {}) == want
+
+
+# ---------------------------------------------------------------- v0.17.2 grid 건강·fixed-dir(이슈 #63)
+class _Tx:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *a):
+        return False
+
+
+def _hex(monkeypatch, min_ok_frac=None):
+    from esl_worker import doe_jobs
+
+    got = {"warnings": [], "result": {}}
+    monkeypatch.setattr(doe_jobs.jobs_repo, "add_warnings", lambda _c, _j, _t, items: got["warnings"].extend(items))
+    monkeypatch.setattr(doe_jobs.jobs_repo, "patch_result", lambda _c, _j, _t, d: got["result"].update(d))
+    ex = SimpleNamespace(job={"id": "j1"}, token="t", _tx=_Tx)
+    from esl.doe import settings
+    dcfg = settings({"bead_doe": {"grid": {"min_ok_frac": min_ok_frac}} if min_ok_frac is not None else {}})
+    return ex, dcfg, got
+
+
+def _cells(spec):
+    return [{"id": f"d{i + 1:03d}", "state": s, "code": c, "warning": None} for i, (s, c) in enumerate(spec)]
+
+
+def test_grid_all_failed_raises(monkeypatch):
+    from esl_worker import doe_jobs
+    from esl_worker.executor import _StepFailed
+
+    ex, dcfg, got = _hex(monkeypatch)
+    rows = _cells([("SKIPPED_GEOM", "GEOM_CAD_FAILED")] * 29 + [("SKIPPED_GEOM", "GEOM_INTERNAL")])
+    ids = [r["id"] for r in rows]
+    lines = []
+    with pytest.raises(_StepFailed) as ei:
+        doe_jobs.check_grid_health(ex, rows, ids, dcfg, lines.append)
+    assert ei.value.code == "GRID_ALL_FAILED"
+    assert "30개 중 실행 가능 0개" in ei.value.message and "GEOM_CAD_FAILED 29 · GEOM_INTERNAL 1" in ei.value.message
+    h = got["result"]["bd_grid_health"]
+    assert (h["ok"], h["total"], h["top_codes"]) == (0, 30, [["GEOM_CAD_FAILED", 29], ["GEOM_INTERNAL", 1]])
+    assert any("GRID_ALL_FAILED" in x for x in lines)
+
+
+def test_grid_partial_warns_and_threshold_from_config(monkeypatch):
+    from esl_worker import doe_jobs
+    from esl_worker.executor import _StepFailed
+
+    rows = _cells([("READY", None)] * 6 + [("SKIPPED_COLLISION", "GEOM_FEATURE_COLLISION")]
+                  + [("SKIPPED_GEOM", "GEOM_CAD_FAILED")] * 2 + [("SKIPPED_GEOM", "GEOM_INTERNAL")])
+    ids = [r["id"] for r in rows]
+    ex, dcfg, got = _hex(monkeypatch)                               # 기본 0.5: 판정 7/10 → READY + 경고
+    h = doe_jobs.check_grid_health(ex, rows, ids, dcfg, lambda _m: None)
+    assert h["verdict"] == "partial"
+    assert got["warnings"] == ["[BD_GRID] GRID_CELLS_FAILED: 미리보기 셀 10개 중 3개 형상 실패(스킵) — "
+                               "GEOM_CAD_FAILED 2 · GEOM_INTERNAL 1"]
+    ex, dcfg, got = _hex(monkeypatch, 0.8)                          # 설정 0.8: 7/10 < 0.8 → 실패
+    with pytest.raises(_StepFailed) as ei:
+        doe_jobs.check_grid_health(ex, rows, ids, dcfg, lambda _m: None)
+    assert ei.value.code == "GRID_TOO_FEW_OK" and got["warnings"] == []
+    ex, dcfg, got = _hex(monkeypatch)                               # 실패 없음 → 경고·결과 없음
+    ok = _cells([("READY", None)] * 3)
+    assert doe_jobs.check_grid_health(ex, ok, [r["id"] for r in ok], dcfg, lambda _m: None)["verdict"] == "ok"
+    assert got == {"warnings": [], "result": {}}
+
+
+def test_grid_fixed_dir_by_scenario(tmp_path):
+    """①② = prep/fixed, ③ = "" — prep/a_fixed(A 모델 좌표)가 있어도 B STEP 고정으로 쓰지 않음(D-0.17.2-AFIXED)."""
+    from esl_worker.doe_jobs import grid_fixed_dir
+
+    (tmp_path / "prep" / "a_fixed").mkdir(parents=True)
+    (tmp_path / "prep" / "a_fixed" / "shell_scan.json").write_text("{}")
+    assert grid_fixed_dir(str(tmp_path), "same") == str(tmp_path / "prep" / "fixed")
+    assert grid_fixed_dir(str(tmp_path), "mesh") == str(tmp_path / "prep" / "fixed")
+    assert grid_fixed_dir(str(tmp_path), "step") == ""

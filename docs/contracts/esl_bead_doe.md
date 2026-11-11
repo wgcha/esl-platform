@@ -67,7 +67,7 @@ paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 | BD-D-8 | **DOE 생성**(`esl.doe.matrix`, API·워커 같은 함수): `lhs` = Python 표준 `random.Random(seed)`(층 순열·층 안 균일, 변수 순서 행 우선 소비), `halton` = `scipy.stats.qmc.Halton(d, scramble=True, seed=numpy.random.default_rng(seed))`, `fullfact` = 변수별 등간격 수준(기본 3, 2..9) 곱. 값 반올림 `round_mm`(0.01) → 중복·공칭 동일 안 제거(먼저 나온 것 유지) → `d001…` 번호. 공칭 = `d000`(항상 포함). 안 수 > `max_designs`(200) → 422 `DOE_TOO_LARGE`. 행렬 sha256 = 정렬 키 JSON. physicsai doe-methods.md DM-C3 와 같은 구현 규칙 | 결정성·재현, 사용자 확정 방식 3종 |
 | BD-D-9 | **미리보기 필수**: `DOE_RUN` 은 같은 `matrix_sha256` 의 미리보기가 성공한 뒤에만(409 `PREVIEW_STALE`). 미리보기 `FAIL` 셀 = `SKIPPED_COLLISION`(GEOM_FEATURE_COLLISION)·`SKIPPED_FIXED`(SHELL_FIXED_REGION_VIOLATION)·`SKIPPED_GEOM`(그 밖 update 실패)로 표시하고 실행에서 뺌 | 확정 4 "실행 전 미리보기, 스킵 표시" |
 | BD-D-10 | **① 형상 경로** = paicad `shell run`(update→morph→check, 고정 노드 = 조립의 tie·RBE2 등) → `out_files/<rel>` 에서 대상 파트 노드 좌표만 읽어 x_d(ID·연결·PID 불변). **②** 같음(조립 = B 메시 사본). **③** = `shell update`(고정 없음) → `sample.brep` 를 gmsh 로 메시(§7). 베이스라인 ①② = 원 메시 그대로(모핑 없음), ③ = 공칭 STEP 을 같은 gmsh 설정으로 | 확정 2 |
-| BD-D-11 | **③ 고정 노드 없음**: `shell view grid --fixed-dir ""`(paicad 0.14.0 `_fixed("")` = 없음 — V-BD-16 실검), `shell update` 는 `--fixed-dir` 생략 | 확정 2 "모핑 고정 노드 불필요" |
+| BD-D-11 | **③ 고정 노드 없음**: `shell view grid --fixed-dir ""`(paicad 0.14.0 `_fixed("")` = 없음 — V-BD-16 실검), `shell update` 는 `--fixed-dir` 생략. (v0.17.2 D-0.17.2-AFIXED) `prep/a_fixed`(A Case fixed-scan)는 A 모델 메시 좌표라 B STEP 고정으로 넘기지 않음 — 경계 경고(§8.2, 정규화 (ξ,η) 옮김) 전용. ③ extract 는 조립이 없어 `--assem-dir` 없음 → paicad 의 `FIXED_INFO_MISSING`·`fixed_precheck NOT_EVALUATED` 는 ③ 의 정상 상태 | 확정 2 "모핑 고정 노드 불필요" |
 | BD-D-12 | **② B 메시**: 업로드한 rad/inc 를 `_doe/<id>/input/mesh/` 로 복사(sha256, include 는 업로드 폴더 안만 — v0.7.0 템플릿 규칙), paicad `--assem-dir` = 이 사본. B 에 tie·RBE2 가 있으면 고정, 없으면 고정 0(정보 `B_NO_FASTENERS`) | 입력 폴더 읽기만 + paicad 가 폴더 전체를 읽음 |
 | BD-D-13 | **① 조립 폴더** = 기준 ESL Case 입력 폴더를 **제자리**(읽기만) `--assem-dir` 로. 시작 전 폴더 아래 `*.rad`·`*.inc` 합계 > `bead_doe.same.max_assem_mb`(설정, 기본 4096) 이면 422 `ASSEM_TOO_LARGE`(안내: ② 로 Ch/R 주변만 올리기). 상한은 설정 키(**Q1 A 확정**) | 확정 2(Case rad Ch/R = 기준), 대형 씬 비용(R-BD-1) |
 | BD-D-14 | **경계 매핑 경고**(②③, §8): A 체결점 = A Case 에 paicad `shell fixed-scan`(Ch/R 파트) 클러스터 중심 + A ESL 3-2-1 노드, A 하중 집중 = `view3d.clusters`(|F| 가중 k-means, 합력 비율 ≥ `load_share_min`). (ξ,η) 정규화로 B 평면 (a,b) mm 에 옮겨 B 체결 후보(B fixed-scan 클러스터 ∪ B 구멍 중심)까지 거리 비교. 차단 없음 | 확정 5 |
@@ -117,7 +117,11 @@ POST /doe/studies → bead_does + DOE_PREP
 POST /doe/studies/{id}/preview → bead_does.doe(rev, spec, matrix_sha) + DOE_PREVIEW
   1 BD_MATRIX (INTERNAL) doe/<rev>/matrix.json(API 와 같은 함수·같은 sha 확인), cells.json, thumb_options.json
   2 BD_GRID   (LOCAL) paicad shell view grid → doe/<rev>/grid/
-  3 BD_PREVIEW_REGISTER (DB) 셀 상태 요약
+              (v0.17.2 이슈 #63) paicad RESULT OK 여도 셀 건강 판정(esl.doe.paicad_io.grid_health, 공칭 셀 제외):
+              READY 0 → 실패 GRID_ALL_FAILED, 판정 셀(READY·충돌·고정 스킵) 비율 < bead_doe.grid.min_ok_frac(0.5)
+              → 실패 GRID_TOO_FEW_OK(문구 = 셀 수·실행 가능 수·상위 실패 코드 3개와 수, 작업 result.bd_grid_health),
+              형상 실패(SKIPPED_GEOM) 있으나 기준 이상 → 작업 경고 GRID_CELLS_FAILED(코드별 수)
+  3 BD_PREVIEW_REGISTER (DB) 셀 상태 요약 (v0.17.2: select 아닌 스터디 READY 0 → GRID_ALL_FAILED, phase 불변)
 POST /doe/studies/{id}/run → DOE_RUN
   1 BD_BASELINE (INTERNAL) d000 평가 → run/designs/d000/
   2 BD_DESIGNS  (LOCAL+INTERNAL) 미리보기 OK 안마다: [①② paicad shell run | ③ paicad shell update → gmsh] → design.npz → 선형 해석 → result.json
@@ -331,6 +335,7 @@ DoeResultOut  { C_ref, baseline:{id:"d000", score:1, umax, epsmax}, n_ok, n_skip
 | `PREP_NOT_READY`·`PREVIEW_STALE`·`ALREADY_RUN`·`RESULT_NOT_READY` | 409 | 순서 |
 | `SOLVER_UNSUPPORTED` | 422 | solver ≠ linear |
 | `BASELINE_FAILED`·`PAICAD_FAILED`·`PAICAD_TIMEOUT`·`PAICAD_INTERNAL` | 작업 | §6.2 |
+| `GRID_ALL_FAILED`·`GRID_TOO_FEW_OK` (경고 `GRID_CELLS_FAILED`) | 작업 / BD_GRID | v0.17.2 미리보기 셀 건강(§4 BD_GRID) |
 | `DOE_NOT_FOUND` | 404 | |
 | 재사용 | | `MODEL_MISMATCH`, `SIZE_MISMATCH`, `ENTRY_NOT_FOUND`, `PART_NOT_FOUND`, `PART_AMBIGUOUS`, `MESH_INVALID`, `UPLOAD_*`, `PREREQUISITE_MISSING`, `SUPPORT_DEGENERATE`, `MAPPING_DEGENERATE`, `SOLVER_OUT_OF_MEMORY`, `VERSION_CONFLICT`, `JOB_ACTIVE`, `CONFIG_INVALID`, `PATH_OUTSIDE_ROOT` |
 
@@ -432,6 +437,7 @@ bead_doe:                                # 섹션 없으면 enabled: false
   mesh: {size_min_mm: 1.0, size_max_mm: 20.0, min_size_factor: 0.2, curvature_n: 12, algorithm: 8, min_quad_frac: 0.8, max_elems: 500000, timeout_s: 1800, occ_sew_faces: 0}
   doe: {default_method: lhs, default_n: 30, seed: 1, levels_default: 3, levels_max: 9, round_mm: 0.01, default_types: [D, W]}
   preview: {w: 320, h: 240, view_dir: auto, tilt_deg: 20, margin: 1.15, disp_range_mm: auto}
+  grid: {min_ok_frac: 0.5}               # v0.17.2 미리보기 판정 셀 비율 하한(미만·READY 0 → BD_GRID 실패)
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}           # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
