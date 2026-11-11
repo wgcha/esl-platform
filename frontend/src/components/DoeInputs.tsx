@@ -373,7 +373,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
         )}
         {stepBase && (
           <span className="small muted doe-mesh-note" data-testid="step-mesh-note">
-            메시: ④ 형상 비교와 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm(④ 설정)
+            메시: ④ 와 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm
           </span>
         )}
         {scenario === "compare" && (

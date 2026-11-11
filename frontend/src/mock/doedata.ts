@@ -1329,7 +1329,7 @@ export class DoeMock {
       warnings: [
         ...(tria
           ? [
-              { code: "MESH_TRIA_FALLBACK", message: "" },
+              { code: "MESH_TRIA_FALLBACK", message: "CAD·freeform 메시가 실패해 OCC 삼각형 메시로 대신했습니다 [단계별: cad 실패 41.2 s · freeform 실패 63.5 s · tria 성공 8.1 s]" },
               { code: "STEP_GRAPH_TRIA", mesh_method: "tria", tri_frac: 1 },
               { code: "FIXED_XFER_UNMATCHED", label: "F07", d_mm: 14.2, level: "info" as const },
             ]

@@ -381,7 +381,7 @@ export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
   return { selection, sha256: graphSelSha(selection), map: [], warnings: [], paicad_version: null, source: "graph", hints: [] };
 }
 /** ③ plan-view: 그래프 평면도 + 고정 = A 이전 표시(src) + 주 시트 영역 외곽(목: 판 위쪽 18 % 는 추가 형상) */
-export function stepPlan(sel: DoeSelectionV2): DoePlanOut {
+export function stepPlan(sel: DoeSelectionV2): DoePlanOut & { region_ab: XY[][] } {
   const p = graphPlan(sel);
   const [a0, a1] = p.frame.a_range;
   const [b0, b1] = p.frame.b_range;

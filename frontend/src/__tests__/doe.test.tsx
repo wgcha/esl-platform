@@ -179,7 +179,7 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     expect((screen.getByRole("spinbutton", { name: "ν" }) as HTMLInputElement).value).toBe("0.3");
     // v0.18.0 ③ = select step: 요소 크기 칸 없음(④ 프로필 — 안내 1줄)
     expect(screen.queryByRole("spinbutton", { name: "요소 크기 (mm)" })).toBeNull();
-    expect(screen.getByTestId("step-mesh-note").textContent).toMatch(/요소 3 mm\(④ 설정\)/);
+    expect(screen.getByTestId("step-mesh-note").textContent).toMatch(/④ 와 같은 설정 · 요소 3 mm/);
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.change(screen.getByRole("spinbutton", { name: "ν" }), { target: { value: "0.5" } });
     expect(reasonOf(primaries(container)[0])).toMatch(/ν 는 0 이상 0.5 미만/);

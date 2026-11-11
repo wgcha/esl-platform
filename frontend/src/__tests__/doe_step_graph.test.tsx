@@ -79,14 +79,14 @@ describe("③ select step — 순수 함수", () => {
     const plan: DoePlanOut = {
       frame: { a_range: [0, 100], b_range: [0, 50] }, outline: [[0, 0], [100, 0], [100, 50], [0, 50]], holes: [], elems: { n_total: 0, decimated: true, points: [] },
       beads: [], fixed: [{ a: 1, b: 2, src: "a_transfer" }, { a: 3, b: 4, src: "user" }], a_points: [], load_points: [], links: [], region_ab: [[[0, 0], [100, 0], [100, 40], [0, 40]]],
-    } as unknown as DoePlanOut;
+    } as unknown as DoePlanOut & { region_ab: [number, number][][] };
     const p3 = selectPlan(plan, {}, false, true);
     expect(p3.region).toHaveLength(1);
     expect(p3.fixed).toEqual([{ a: 1, b: 2, xfer: true }, { a: 3, b: 4 }]);
     const p1 = selectPlan(plan, {}, false);
     expect(p1.region).toBeNull();
     expect(p1.fixed!.some((f) => f.xfer)).toBe(false);
-    const p3b = selectPlan({ ...plan, region_ab: undefined } as DoePlanOut, {}, false, true);
+    const p3b = selectPlan({ ...plan, region_ab: undefined }, {}, false, true);
     expect(p3b.region).toBeNull();
   });
 });

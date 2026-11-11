@@ -2822,8 +2822,6 @@ export interface DoePlanOut {
 
   /** select 는 {a, b} 만(§7.1). (보강 v0.18.0, 계약 §4.2 미기재) src = "a_transfer" 면 ③ A 고정 이전 노드(평면도 표시) — 없으면 구분 없음 */
   fixed: { label?: string; kind?: string; a: number; b: number; src?: "a_transfer" | "user" | "scan" | null }[];
-  /** (보강 v0.18.0, 계약 §4.2 미기재) ③ select 평가 영역(주 시트) 외곽 고리 — 있으면 평면도 '주 시트 영역' 층, 없으면 층 숨김 */
-  region_ab?: XY[][] | null;
   a_points: { label: string; a: number; b: number }[];
   load_points: { entry_id: string; share: number; a: number; b: number }[];
   links: DoePlanLink[];

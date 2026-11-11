@@ -7,7 +7,7 @@ import type { BeadSelectCtrl } from "../../components/BeadSelectCard";
 import { graphColors } from "../select/graph";
 import { elemColors } from "../select/layers";
 import type { Bbox } from "../viewFit";
-import type { LayerKey, Part3DData, PartMesh, PartPlanData, PartViewData, PartWarnings, PlanVar } from "./types";
+import type { DoePlanOutStep, LayerKey, Part3DData, PartMesh, PartPlanData, PartViewData, PartWarnings, PlanVar } from "./types";
 
 /** 평면도 자료가 가진 층 */
 export function planLayers(p: PartPlanData | null): LayerKey[] {
@@ -43,7 +43,7 @@ export function legacyPlan(plan: DoePlanOut, showLinks: boolean): PartPlanData {
 
 /** select plan-view → 평면도(단 색·라벨 칩·W 법선). ② B 메시 기준은 A 체결·하중·경고선(백엔드 v0.17.3 부터 넘김 — VU-D-7).
  * v0.18.0 ③ STEP 기준(stepBase): ② 와 같은 경계 층 + A 고정 이전 표시(fixed[].src "a_transfer") + 주 시트 영역 외곽(region_ab) — 자료가 있을 때만 */
-export function selectPlan(plan: DoePlanOut, chips: Record<string, string>, meshBase: boolean, stepBase = false): PartPlanData {
+export function selectPlan(plan: DoePlanOutStep, chips: Record<string, string>, meshBase: boolean, stepBase = false): PartPlanData {
   const links = meshBase || stepBase;
   return {
     ariaLabel: "비드 평면도",
