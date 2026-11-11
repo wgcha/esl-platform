@@ -29,6 +29,8 @@
 - v0.16.2(esl_bead_auto.md AD-D-2·17): select 자동 탐지(doe.bead_source auto)는 BD_GEOM 에 extract0 → extract → tag 를 더하고
   결과를 prep/auto_detect.json 에(실패 = AUTO_DETECT_FAILED 경고, 준비 계속). select_base mesh(② B 메시 기준) = assem
   input/mesh(사본 없음) + A Case a_fixed(② 그대로). 안 평가·받기는 코어(_sel_*) — 워커 분기 없음.
+- v0.18.0(esl_step_graph.md §2): select_base step(③ 새 경로) = BD_MESH0·BD_LOADS 코어(④ 사다리·step_graph), BD_GEOM plan =
+  [a_fixed(A Case 있으면)] + (auto) extract 힌트 — B 조립·fixed-scan·grid·update 없음, paicad 없음 = 힌트·이전 없이 계속.
 - 쓰기는 ``_doe/<id>/`` 아래만(코어 Writer 입력 목록 = 항목·Case 입력·업로드 거부), 작은 JSON 은 core/atomic.
 """
 
@@ -286,8 +288,7 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         res = {"core_stage": st["core_stage"]}
         if out.get("skipped"):
             res["_skipped"] = True
-            res["skipped"] = ("select 비드 직접 선택 — 기준 메시 = Case 메시(gmsh 없음)"
-                              if ex.lib["doe"].get("scenario") == "select" else "③ 이 아님 — 기준 메시 gmsh 없음")
+            res["skipped"] = skipped_text(ex.lib["doe"])
         return res
     if key == "BD_GEOM" and ex.lib["doe"].get("scenario") == "select":
         return _geom_select(ex, st, log_path)
@@ -320,6 +321,19 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
             fh.write(f"[esl-worker] {key}: bead_does 등록 완료 (phase {res.get('phase')})\n")
         return {"registered": True}
     raise _fail("INTERNAL_ERROR", f"알 수 없는 강성 평가 스터디 step: {key}")
+
+
+def skipped_text(doe: dict[str, Any]) -> str:
+    """BD_MESH0 SKIPPED 문구 — select 는 기준 출처별(v0.18.0 esl_step_graph.md: select_base step 은 ④ 사다리 BD_MESH0 를
+    실행하므로 SKIPPED 는 코어가 step 분기를 모를 때만)."""
+    if doe.get("scenario") != "select":
+        return "③ 이 아님 — 기준 메시 gmsh 없음"
+    base = doe.get("select_base")
+    if base == "step":
+        return "select STEP 기준 — 코어가 기준 메시 사다리를 건너뜀(코어 판 확인)"
+    if base == "mesh":
+        return "select 비드 직접 선택 — 기준 메시 = B 메시(gmsh 없음)"
+    return "select 비드 직접 선택 — 기준 메시 = Case 메시(gmsh 없음)"
 
 
 def _summary(out: dict[str, Any]) -> dict[str, Any]:
@@ -570,7 +584,10 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         info = {"select_base": inp.get("select_base"), "bead_source": inp.get("bead_source"),
                 "part_id": inp.get("part_id"), "step_rel": st0.get("rel")}
     auto, mesh_base = select_mode(doe, info)
-    v2 = select_schema(doe, info) == 2
+    # v0.18.0(esl_step_graph.md §2·SG-D-18): ③ STEP 기준 = B 조립 없음 → fixed-scan·grid·update 없음, plan = [a_fixed(A Case 있으면)]
+    # + (auto) extract(힌트만). 고정 = A 고정점 이전(코어 BD_LOADS step_graph.fixed_transfer) — paicad 없음·실패는 코어 FIXED_XFER_NONE
+    step_base = (doe.get("select_base") or info.get("select_base")) == "step"
+    v2 = select_schema(doe, info) == 2 or step_base
     cad = os.path.join(out, *str(info["step_rel"]).split("/")) if info.get("step_rel") else None
     outputs: dict[str, Any] = {"paicad_version": None, "commands": [], "fixed": None}
     state: dict[str, Any] = {"fixed": None, "auto": None}     # fixed = 고정 정보 없음 사유, auto = (step, code)
@@ -630,12 +647,19 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     v = paicad_proc.version_check(ex.settings, full)
     if not v.get("ready"):
         code = v.get("reason") or "PAICAD_CHECK_FAILED"
+        if step_base:       # SG-D-18: 새 ③ 은 paicad 없이도 동작 — 힌트·A 고정 이전 없이(코어 FIXED_XFER_NONE{A_SCAN_FAILED})
+            echo(f"[esl-worker] paicad 를 쓸 수 없음({code}) — STEP 기준: 힌트·A 고정점 없이 계속(FIXED_XFER_NONE)")
+            outputs["fixed"] = {"source": "none", "reason": f"paicad 를 쓸 수 없음({code})"}
+            auto_failed("version", code)
+            finish()
+            return {"_skipped": True, "skipped": f"paicad 없음({code}) — 힌트·A 고정점 없이 계속"}
         state["fixed"] = f"paicad 를 쓸 수 없음({code})"
         auto_failed("version", code)
         return finish()
     echo(f"[esl-worker] paicad version: {v.get('version')} (OCP {v.get('ocp')}, 고정 {v.get('pinned')})"
          + (f" — {v['warning']}" if v.get("warning") else "")
-         + f" · select {'자동 탐지' if auto else '수동'} · 기준 {'B 메시' if mesh_base else 'Case 메시'}")
+         + f" · select {'자동 탐지' if auto else '수동'} · 기준 "
+         + ("STEP" if step_base else "B 메시" if mesh_base else "Case 메시"))
     outputs["paicad_version"] = v.get("version")
     _write_json(os.path.join(prep, "paicad.json"), {k: v.get(k) for k in ("version", "ocp", "pinned", "warning",
                                                                           "checked_at")})
@@ -643,7 +667,9 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         with ex._tx() as conn:
             jobs_repo.add_warnings(conn, ex.job["id"], ex.token, [f"[BD_GEOM] {v['warning']}"])
     assem = man = None
-    if mesh_base:           # AD-D-17: ② 와 같음 — assem = input/mesh(사본 없음), 폴더 검사 상한 1e12
+    if step_base:           # SG-D-18: B 조립 없음(STEP 만) — 조립 검사·사본 없음
+        pass
+    elif mesh_base:           # AD-D-17: ② 와 같음 — assem = input/mesh(사본 없음), 폴더 검사 상한 1e12
         assem = os.path.join(out, "input", "mesh")
         try:
             inproc.call(ex, lambda: core_adapter.doe_assem_check(assem, 1e12), label="조립 폴더 검사(B 메시)")
@@ -669,8 +695,14 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         if man is not None:
             outputs["assem_full"] = core_adapter.doe_assem_summary(man)
     prog(20)
-    a_case = _a_case(ex, echo) if mesh_base else None       # ② 그대로: A 체결점은 경계 경고용(고정 노드에 넣지 않음, O-1)
-    if v2:          # BG §5.3: 힌트 = STEP 이 있을 때만 extract0 → extract(tag 제거)
+    # ② 그대로: A 체결점은 경계 경고용(고정 노드에 넣지 않음, O-1). ③ STEP 기준 = 경계 경고 + 고정점 이전(SG-D-12)
+    a_case = _a_case(ex, echo) if (mesh_base or step_base) else None
+    if step_base:   # SG-D-18: 힌트 = extract 만(③ 그대로 — 조립·body_map 없음, extract0 는 조립 파트 대응용)
+        if auto and (cad is None or not os.path.isfile(cad)):
+            auto_failed("extract", "PREREQUISITE_MISSING")      # 코어 BD_INPUT 이 STEP 사본(input/step)을 남기지 않음
+        ok_cad = cad is not None and os.path.isfile(cad)
+        plan = (["a_fixed"] if a_case else []) + (["extract"] if auto and ok_cad else [])
+    elif v2:          # BG §5.3: 힌트 = STEP 이 있을 때만 extract0 → extract(tag 제거)
         hint = list(HINT_STEPS) if auto and assem and cad is not None else []
         plan = (["a_fixed"] if a_case else []) + (["fixed"] if assem else []) + hint
     else:

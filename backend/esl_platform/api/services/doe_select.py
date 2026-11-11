@@ -971,7 +971,9 @@ def auto_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     svc = _svc()
     c = svc.cfg(ctx)
     s, _job = _load_viewable(ctx, principal, sid)
-    if (s.get("inputs") or {}).get("bead_source") != "auto":
+    inp = s.get("inputs") or {}
+    # v0.18.0 SG-D-16(iii): select_base step = bead_source 무관하게 seed(manual 도 빈 비드 + 이전 고정 fixed_user)
+    if inp.get("bead_source") != "auto" and inp.get("select_base") != "step":
         raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 스터디가 아닙니다(수동 선택)")
     if s.get("prep") is None:
         raise conflict("PREP_NOT_READY", "입력 준비가 끝나지 않았습니다")
@@ -1028,7 +1030,7 @@ def _auto_out_v2(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], p: str) 
     if not isinstance(sel, dict) or sel_schema(sel) != 2:
         raise not_found("AUTO_NOT_AVAILABLE", "자동 탐지 결과에 선택이 없습니다(직접 칠하기로 계속하세요)")
     sha = None
-    if sel.get("beads"):
+    if sel.get("beads") or sel.get("fixed_user"):     # v0.18.0 manual step seed = 빈 비드 + fixed_user
         try:
             from pydantic import TypeAdapter
 
@@ -1045,7 +1047,8 @@ def _auto_out_v2(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], p: str) 
     warns = [w if isinstance(w, dict) else {"code": str(w).split(":", 1)[0], "message": str(w)}
              for w in doc.get("warnings") or [] if w]
     pv = doc.get("paicad_version") or (s.get("prep") or {}).get("paicad_version") or s.get("paicad_version")
-    return svc._jsonable({"selection": sel, "sha256": sha, "source": "graph", "map": [],
+    src = doc.get("source") if doc.get("source") in ("graph", "fixed_transfer") else "graph"   # v0.18.0 manual step seed
+    return svc._jsonable({"selection": sel, "sha256": sha, "source": src, "map": [],
                           "hints": [x for x in doc.get("hints") or [] if isinstance(x, dict)], "warnings": warns,
                           "paicad_version": str(pv) if pv is not None else None})
 

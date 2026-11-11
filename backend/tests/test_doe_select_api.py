@@ -427,7 +427,9 @@ def test_select_defaults_mirror_contract():
             # v0.16.2(esl_bead_auto.md §3.2 — AD-D-7·12)
             "hole": {"bridge_max_mm": 20.0}, "auto": {"slope_diff_rel": 0.2},
             # v0.17.0(esl_beadgraph.md §5.5 — 계약 yaml 그대로)
-            "graph": GRAPH_DEFAULTS}
+            "graph": GRAPH_DEFAULTS,
+            # v0.18.0(esl_step_graph.md §4.3 — 계약 yaml 그대로)
+            "step_graph": STEP_GRAPH_DEFAULTS}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
         from doe_support import core_view_v0161
@@ -459,6 +461,10 @@ GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.
                             "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                             "w_smooth_iters": 3},                       # 통합 v0.17.0(§12 BG-X-5 — 코어 구현 키 거울)
                   "sym_tol_mm": 0.5, "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}
+STEP_GRAPH_DEFAULTS = {"max_elems": 600000, "timeout_s": 300, "tria_warn_frac": 0.5, "tria_policy": "warn",
+                       "fixed_transfer": {"enabled": True, "mode": "auto", "origin_tol_mm": 5, "axis_tol_deg": 2,
+                                          "tol_mm": None, "snap_mm": None},
+                       "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5}}
 GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
              {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
              {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},
