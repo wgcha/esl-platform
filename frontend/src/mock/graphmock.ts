@@ -369,12 +369,26 @@ export function stepFixedUser(): DoeSelectionV2["fixed_user"] {
   });
   return { q: compress(ids), t: [] };
 }
-/** ③ seed: auto = 그래프 seed + fixed_user, manual = 빈 비드 + fixed_user(source fixed_transfer) */
+/** ③ 목 평가 영역 위 끝 b(판 위쪽 18 % = 추가 형상 — stepPlan region_ab 와 같은 값) */
+function stepRegionTopB(): number {
+  const { ny, h, y0 } = fx.grid;
+  return y0 + ny * h * 0.82;
+}
+/** 세그먼트 골격점의 절반 넘게가 영역 밖(SG-D-20d out_of_region — 코어는 요소 50 % 초과 밖) */
+function segOutOfRegion(s: BgSegment): boolean {
+  const bt = stepRegionTopB();
+  const pts = s.skeleton ?? [];
+  return pts.length > 0 && pts.filter((p) => p[1] > bt).length * 2 > pts.length;
+}
+/** ③ seed: auto = 그래프 seed(영역 밖 세그먼트 비드 제외 — 코어 SG-D-20d) + fixed_user, manual = 빈 비드 + fixed_user(source fixed_transfer) */
 export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
   const g = graphAutoSeed();
   const fixed_user = stepFixedUser();
   if (auto) {
-    const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), fixed_user };
+    const segs = new Map(graphMesh().graph.segments.map((s) => [s.anchor, s] as [number, BgSegment]));
+    const inside = (g.selection as DoeSelectionV2).beads.filter((b) => !b.segs.some((x) => { const s = segs.get(x.anchor); return s ? segOutOfRegion(s) : false; }));
+    const beads = inside.map((b, i) => ({ ...b, id: `b${i + 1}` }));
+    const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads, fixed_user };
     return { ...g, selection, sha256: graphSelSha(selection), warnings: [] };
   }
   const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads: [], fixed_user };
@@ -384,8 +398,8 @@ export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
 export function stepPlan(sel: DoeSelectionV2): DoePlanOut & { region_ab: XY[][] } {
   const p = graphPlan(sel);
   const [a0, a1] = p.frame.a_range;
-  const [b0, b1] = p.frame.b_range;
-  const bt = b0 + (b1 - b0) * 0.82;
+  const [b0] = p.frame.b_range;
+  const bt = stepRegionTopB();
   return {
     ...p,
     fixed: p.fixed.map((f) => ({ ...f, src: "a_transfer" as const })),
