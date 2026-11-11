@@ -5,4 +5,6 @@ Done:
 - [2] openapi regen (0.18.0) + types.ts (DoeCheckOut.step_graph → DoeCheckStepGraph, DoePlanOut.region_ab, settings step_graph widened)
 - [3] doe_select._step_plan_extras: fixed[].src (fixed_transfer.json node_id) + region_ab (keepout.region_rings outer rings); DoePlanOut.region_ab; test test_step_plan_extras_fixed_src_and_region
 - [6] VERSION/CHANGELOG/test asserts 0.18.0
-TODO: [4] V-SG-7 worker E2E run-not-skip; [5] contract §12 + decisions.md; test-all; regress.py/sel_regress.py; screenshots; push; remove this file + worktree.
+- [4] V-SG-7 E2E now runs (fixtures exe/settings_dict/worker, select_schema2 marker, H5 A case) full flow prep→seed→preview→run→files, 9 passed
+TODO: [5] contract §12 + decisions.md; test-all; regress.py/sel_regress.py; screenshots; push; remove this file + worktree.
+- TEMP (not to commit): config/esl_platform*.example.yaml upload.min_free_gb 20→1 for test run (19 GB free); git checkout before commit

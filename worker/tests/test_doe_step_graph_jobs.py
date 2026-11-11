@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+# 통합 v0.18.0: E2E 는 가짜 paicad·업로드 저장 위치가 있는 select 워커 설정이 필요(이 픽스처 없이는 UPLOAD_DISABLED 로 실패)
+from test_doe_select_jobs import exe, settings_dict, worker  # noqa: F401 - 픽스처
 
 CORE_STEP_GRAPH = importlib.util.find_spec("esl.doe.step_graph") is not None
 needs_core = pytest.mark.skipif(not CORE_STEP_GRAPH, reason="코어 esl.doe.step_graph(v0.18.0 Impl-Core) 병합 후")
@@ -195,37 +197,84 @@ def test_register_step_prep_unit():
 
 
 # ================================================================ E2E(코어 병합 후 — V-SG-7)
+def _h5_case(engine, esl_root, inputs_root, cid: str = "c1") -> dict[str, Any]:
+    """A Case = H5 시트 메시(beadgraph synth_h5, h 10 mm — B STEP 과 같은 형상·좌표계) + 자기평형 ESL 2개(굽힘·뒤틀림).
+    (통합 v0.18.0: 합성 비드 판(602 mm)을 A 로 쓰면 B H5(400 × 300) 와 크기 규칙 SIZE_MISMATCH 로 BD_MESH0 실패)"""
+    from beadgraph.testing import synth_h5
+    from esl_platform.core.db.tables import cases
+    from sqlalchemy import insert
+    from synth_step_graph import esl_mesh
+    from test_opt_e2e import PART, seed_entry, write_case_rad
+
+    m0 = synth_h5.build(h=10.0)
+    mesh = esl_mesh(m0["x0"], m0["conn"])
+    mesh["thickness"] = mesh["thickness"] * 1.5
+    rad = inputs_root / f"{cid}_0000.rad"
+    write_case_rad(rad, mesh)
+    with engine.begin() as c:
+        c.execute(insert(cases).values(id=cid, project_id="p-1", folder_name=f"f_{cid}", title=f"Case {cid}",
+                                       rad_path=str(rad), results_dir=str(inputs_root),
+                                       input_fingerprint={"includes": []}, part_title=PART,
+                                       created_by="u-power", created_by_name="파워"))
+    ids = [seed_entry(engine, esl_root, cid, mesh, k, a, scene=i + 1) for i, (k, a) in enumerate((("bend", 2.0),
+                                                                                                   ("twist", 1.5)))]
+    return {"case_id": cid, "rad": rad, "entry_ids": ids, "mesh": mesh}
+
+
 @needs_core
+@pytest.mark.select_schema2
 @pytest.mark.skipif(os.name == "nt", reason="가짜 paicad 는 POSIX 실행 스크립트")
-def test_e2e_step_prep_ready_with_fake_paicad(client, engine, worker_factory, esl_root, inputs_root, tmp_path):
-    """V-SG-7(준비): STEP 기준 select → BD_INPUT·BD_MESH0(사다리)·BD_GEOM(a_fixed + 힌트)·BD_LOADS(그래프·이전) → READY,
-    준비 요약 select_base step·mesh.method, paicad 호출에 B fixed-scan·grid·update 없음."""
-    gmsh = pytest.importorskip("gmsh")
-    del gmsh
+def test_e2e_step_prep_ready_with_fake_paicad(client, engine, worker, esl_root, inputs_root, exe):
+    """V-SG-7: H5 STEP 기준 select(auto) → BD_INPUT·BD_MESH0(사다리)·BD_GEOM(a_fixed + 힌트)·BD_LOADS(그래프·seed·이전) → READY,
+    준비 요약 select_base step·mesh.method, paicad 호출에 B fixed-scan·grid·update 없음 → seed 저장 → 미리보기 → 실행 → 순위·
+    보고서·받기(ch_r.rad·ch_r.fem·values.json, sample.step/brep 없음)·plan-view(fixed[].src)."""
+    pytest.importorskip("gmsh")
     import sys
 
     from doe_support import api, upload_step
-    from doe_worker_support import calls, set_control, write_fake_paicad
+    from doe_worker_support import calls, set_control
     from esl_test_support import REPO
-    from test_doe_select_jobs import make_bead_case, run_job, study
+    from test_doe_select_jobs import preview, run_job, save_selection, start_run, study
 
     sys.path.insert(0, str(REPO / "tests" / "doe"))
     synth = pytest.importorskip("synth_step_graph")
-    exe = write_fake_paicad(tmp_path)
     set_control(exe, rules=[])
-    w = make_bead_case(engine, esl_root, inputs_root)
-    step = synth.h5_step_bytes() if hasattr(synth, "h5_step_bytes") else None
-    if step is None:
-        pytest.skip("합성 STEP 생성기 인터페이스(h5_step_bytes) 확인 후")
-    uid = upload_step(client, data=step, name="rad/b.step")
+    w = _h5_case(engine, esl_root, inputs_root)
+    uid = upload_step(client, data=synth.h5_step_bytes(), name="rad/b.step")
     r = api(client, "POST", "/doe/studies", json={"project_id": "p-1", "scenario": "select", "entry_ids": w["entry_ids"],
                                                   "select_base": "step", "step_upload_id": uid, "bead_source": "auto"})
     assert r.status_code == 201, r.text
     s = r.json()
-    wk = worker_factory()
-    wk.heartbeat_once()
-    run_job(client, wk, s["job"]["id"])
+    run_job(client, worker, s["job"]["id"])
     cmds = [c["cmd"] for c in calls(exe) if c["cmd"] != "version"]
-    assert "grid" not in cmds and "update" not in cmds and cmds.count("fixed-scan") <= 1
+    assert "grid" not in cmds and "update" not in cmds and "tag" not in cmds and cmds.count("fixed-scan") <= 1
     g = study(client, s["id"])
     assert g["phase"] == "READY" and g["prep"]["select_base"] == "step" and g["prep"]["mesh"]["method"]
+    assert g["prep"]["fixed"]["source"] in ("a_transfer", "none") and g["prep"]["region"]["mode"]
+    # seed(auto = 그래프 비드 + 이전 고정) → 저장 → 변수 표
+    a = api(client, "GET", f"/doe/studies/{s['id']}/select/auto", "tok-general")
+    assert a.status_code == 200, a.text
+    seed = a.json()["selection"]
+    assert seed["schema_version"] == 2 and seed["beads"], seed.get("beads")
+    s = save_selection(client, g, seed)
+    params = api(client, "GET", f"/doe/studies/{s['id']}/params").json()["params"]
+    d = next(x for x in params if x["type"] == "D" and x["use_default"])
+    lo, hi = d["default_range"]
+    p = preview(client, s, {"method": "fullfact", "levels": 2, "params": [{"name": d["name"], "lo": lo, "hi": hi}]})
+    run_job(client, worker, p["job"]["id"])
+    g = study(client, s["id"])
+    assert g["phase"] == "PREVIEW_READY" and g["doe"]["preview"]["ok"] >= 1, g["doe"]["preview"]
+    run_job(client, worker, start_run(client, g)["job"]["id"])
+    g = study(client, s["id"])
+    assert g["phase"] == "DONE", g["phase"]
+    res = api(client, "GET", f"/doe/studies/{s['id']}/results").json()
+    assert res["ranking"], res
+    best = res["ranking"][0]["id"]
+    rels = {f["rel"] for f in api(client, "GET", f"/doe/studies/{s['id']}/files").json()}
+    assert {f"best/{best}/ch_r.rad", f"best/{best}/ch_r.fem", "report.html"} <= rels, sorted(rels)
+    assert any(x.startswith(f"best/{best}/") and x.endswith("values.json") for x in rels), sorted(rels)
+    assert not [x for x in rels if x.startswith("best/") and x.endswith((".step", ".stp", ".brep"))], sorted(rels)
+    cmds = [c["cmd"] for c in calls(exe) if c["cmd"] != "version"]
+    assert "grid" not in cmds and "update" not in cmds and "run" not in cmds
+    pv = api(client, "GET", f"/doe/studies/{s['id']}/plan-view", "tok-general").json()
+    assert all(f.get("src") in ("a_transfer", "user") for f in pv["fixed"]) and "region_ab" in pv
