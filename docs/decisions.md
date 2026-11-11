@@ -219,3 +219,6 @@
 - (0.17.0 Verifier fix D-0.17.0-VF-SPLIT, 2026-11-10) 화면 분할 좌표 = 코어 평면 식(frame.origin 포함)(근거: H6 에서 600 mm 어긋남, BG-X-13).
 - (0.17.0 Verifier fix D-0.17.0-VF-DEMO, 2026-11-10) 시연 venv 도 beadgraph 를 인덱스 목록에서 빼고 Install-EslBeadgraph 로 설치(근거: 저장소 시연 설치 실패, BG-X-8 과 같은 규칙).
 - (0.17.1 D-0.17.1-FOLD, 2026-11-11) 사용자 지시: DOE 입력·준비 화면의 경고·정보·로그는 기본 접힘 — 요약 1줄 "⚠ 경고 N건 · 정보 M건 — 자세히"(머리말 = 첫 경고, 앞의 `[단계별: …]` 묶음은 빼고 1줄로 자름), 펼치면 항목마다 접기·높이 고정(10rem) 스크롤 상자, 펼침 상태 = sessionStorage `esl.msgfold.<study>:<영역>`(try/catch). 막는 실패(FAILED)는 빨간 1줄 + [자세히]. 문구 맵(warnText)·백엔드 그대로, 결과 카드 경고는 범위 밖(근거: ③ STEP만 메싱 뒤 사다리 경고가 화면을 덮어 읽기 어려움)
+
+## 2026-11-11 (v0.17.3)
+- (0.17.3 D-0.17.3-VIEW, 2026-11-11) 사용자 지시: 형상 3D·평면도는 공통 컴포넌트 `PartView`(frontend/src/view3d/part) 하나로 — [3D | 평면도] 한 칸, 같은 시점 툴바, 층 칩. 화면마다 어댑터(legacyViewData·selectViewData·designViewData)가 가진 자료만 넘기고 없는 층은 숨김(시나리오별 사본 금지). BoundaryPlan·SelectPlan(+BoundaryLegend 범례)·안 쓰는 PlaneScatter 삭제, 3D 칸·툴바는 PartStage 로 모아 비드 선택 3D·안 3D·3D 하중 보기가 같이 씀. KeepoutPlan 은 편집기라 좌표(planGeom)만 공유. ② B 메시 select plan-view 는 prep/plan.json 의 경계 매핑을 넘김(추가만, AD-D-18 후속). 이전 방식 준비 단계 3D·③④ 결과 평면도·평면도 섬/세그먼트 고리는 백엔드 자료가 없어 후속(계약 esl_view_unify.md VU-F-1~4)(근거: ① 만 새 3D·평면도이고 다른 시나리오는 예전 평면도만 보임)

@@ -8,9 +8,6 @@ import { ApiError, errorText } from "../api/client";
 import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
-import { loadScene } from "../view3d/loadThree";
-import type { SceneApi } from "../view3d/sceneApi";
-import { hasWebGL } from "../view3d/webgl";
 import { DIVERGING_GRADIENT } from "../view3d/colors";
 import { boundaryEdges, buildTopo, ringStep, type MeshTopo } from "../view3d/select/adjacency";
 import { grow } from "../view3d/select/grow";
@@ -25,16 +22,19 @@ import { editView, graphColors, graphIndex, parseGraphBin, planXY, resolveRef, s
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
 import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
-import { ViewToolbar } from "../view3d/ViewToolbar";
-import { elemsBbox, positionsBbox } from "../view3d/viewFit";
+import { elemsBbox } from "../view3d/viewFit";
+import { PartStage, usePartScene } from "../view3d/part/PartStage";
+import { PartView } from "../view3d/part/PartView";
+import { designViewData } from "../view3d/part/adapters";
+import type { PartMesh } from "../view3d/part/types";
 import { BeadList } from "./BeadList";
 import { FixedViolNote } from "./FixedViol";
 import { Card, ErrorLine } from "./ui";
 
-export const NO_3D = "이 브라우저에서 3D 보기를 쓸 수 없습니다";
+export { NO_3D } from "../view3d/part/PartStage";
+import { NO_3D } from "../view3d/part/PartStage";
 /** 편집 불가(실행 후·권한 없음) 버튼 툴팁 */
 export const RO_TIP = "실행 후에는 이 스터디의 선택을 바꿀 수 없습니다 — 복제해서 편집";
-const BACKGROUND = "#dfe3e8";
 
 export interface SelectData {
   manifest: DoeSelectViewManifest;
@@ -791,11 +791,10 @@ const graphClickMode = (ctrl: BeadSelectCtrl) => ctrl.graphMode && (!ctrl.state?
 function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }: { ctrl: BeadSelectCtrl; editable: boolean; tool: Tool; gtool: GraphTool; brushPx: number; visibleOnly: boolean; eraser: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
-  const sceneRef = useRef<SceneApi | null>(null);
-  const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "nowebgl" | "error">("idle");
-  const [msg, setMsg] = useState<string | null>(null);
   const data = ctrl.data;
-  const modelBbox = useMemo(() => (data ? positionsBbox(data.glb.positions) : null), [data]);
+  // v0.17.3 장면·칸·시점 툴바 = 공통 PartStage(esl_view_unify.md VU-D-2)
+  const mesh = useMemo(() => selectMesh(data), [data]);
+  const { sceneRef, phase, error: msg, bbox: modelBbox } = usePartScene(host, mesh);
   /** 선택 맞춤: 지금 비드(바닥 + 사면) 요소, 없으면 고른 모든 비드 요소 */
   const selectionBbox = () => {
     const st = ctrl.state;
@@ -809,46 +808,6 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
     }
     return elemsBbox(positions, indices, t2e, (e) => st.owner[e] >= 0);
   };
-
-  useEffect(() => {
-    if (!data) return;
-    if (!hasWebGL()) {
-      setPhase("nowebgl");
-      return;
-    }
-    let cancelled = false;
-    let scene: SceneApi | null = null;
-    let canvas: HTMLCanvasElement | null = null;
-    setPhase("loading");
-    void (async () => {
-      try {
-        const mod = await loadScene();
-        if (cancelled || !host.current) return;
-        canvas = document.createElement("canvas");
-        canvas.className = "v3d-canvas";
-        host.current.insertBefore(canvas, host.current.firstChild);
-        const { min: mn, max: mx } = modelBbox!;
-        const diag = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1;
-        scene = mod.createScene(canvas, { background: BACKGROUND, diag, bbox: { min: mn, max: mx }, projection: "ortho" });
-        if (!scene.setElements) throw new Error(NO_3D);
-        scene.setGeometry({ positions: data.glb.positions, indices: data.glb.indices, src: null }, null);
-        scene.setElements(data.bin.tri2elem, data.manifest.n_elems);
-        sceneRef.current = scene;
-        setPhase("ready");
-      } catch (e) {
-        if (!cancelled) {
-          setPhase("error");
-          setMsg(e instanceof Error && e.message === NO_3D ? NO_3D : errorText(e));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-      sceneRef.current = null;
-      scene?.dispose();
-      canvas?.remove();
-    };
-  }, [data]);
 
   // 요소 색·경계선(상태가 바뀔 때마다)
   const s = ctrl.state;
@@ -1029,37 +988,42 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
   };
 
   return (
-    <div className="v3d-stage">
-      <div
-        ref={host}
-        className={`v3d-host bs-host tool-${gClick ? (gtool === "split" ? "split" : "pick") : tool}${eraser && !gClick ? " erasing" : ""}`}
-        data-testid="bs-host"
-        data-phase={phase}
-        tabIndex={0}
-        onPointerDownCapture={onDownCapture}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerLeave={() => !strokeRef.current && drawOverlay("none", [])}
-        onDoubleClick={onDouble}
-        onKeyDown={onKey}
-        aria-label="비드 선택 3D"
-      >
-        <canvas ref={overlay} className="bs-overlay" aria-hidden="true" />
-      </div>
-      {phase === "ready" && modelBbox && <ViewToolbar scene={() => sceneRef.current} modelBbox={modelBbox} selectionBbox={selectionBbox} keyTarget={host} />}
-      {(phase === "nowebgl" || phase === "error") && (
-        <div className="v3d-msg" role="status" data-testid="bs-unavailable">
-          {phase === "error" && msg && msg !== NO_3D ? msg : NO_3D}
-        </div>
-      )}
-      {(phase === "loading" || (!data && !ctrl.error)) && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
-      {ctrl.error && !data && (
-        <div className="v3d-msg" role="alert">
-          {ctrl.error}
-        </div>
-      )}
-    </div>
+    <PartStage
+      host={host}
+      scene={() => sceneRef.current}
+      phase={phase}
+      bbox={modelBbox}
+      selectionBbox={selectionBbox}
+      testId="bs-host"
+      ariaLabel="비드 선택 3D"
+      className={`bs-host tool-${gClick ? (gtool === "split" ? "split" : "pick") : tool}${eraser && !gClick ? " erasing" : ""}`}
+      hostProps={{
+        onPointerDownCapture: onDownCapture,
+        onPointerMove: onMove,
+        onPointerUp: onUp,
+        onPointerLeave: () => !strokeRef.current && drawOverlay("none", []),
+        onDoubleClick: onDouble,
+        onKeyDown: onKey,
+      }}
+      msg={phase === "nowebgl" || phase === "error" ? (phase === "error" && msg && msg !== NO_3D ? msg : NO_3D) : null}
+      msgTestId="bs-unavailable"
+      loading={phase === "loading" || (!data && !ctrl.error)}
+      extra={
+        ctrl.error && !data ? (
+          <div className="v3d-msg" role="alert">
+            {ctrl.error}
+          </div>
+        ) : null
+      }
+    >
+      <canvas ref={overlay} className="bs-overlay" aria-hidden="true" />
+    </PartStage>
   );
+}
+
+/** 선택 보기 형상(요소 모드) — Select3D·PartView 3D 공용 */
+export function selectMesh(data: SelectData | null): PartMesh | null {
+  return data ? { positions: data.glb.positions, indices: data.glb.indices, tri2elem: data.bin.tri2elem, nElems: data.manifest.n_elems } : null;
 }
 
 /** ② 비드 선택 + ③ 비드 목록·도구(§11.1) */
@@ -1271,9 +1235,6 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ct
 
 // ================================================================ 미리보기 안 3D 보기(§7.3) — 썸네일 클릭
 export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixedViol }: { studyId: string; rev: number; did: string; values: Record<string, number>; vmax: number; onClose: () => void; fixedViol?: DoeFixedViol | null }) {
-  const host = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<SceneApi | null>(null);
-  const [phase, setPhase] = useState<"loading" | "ready" | "nowebgl" | "error">("loading");
   const [err, setErr] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ glb: ParsedGlb; vars: BasisVar[]; meta: DoeBasisMeta } | null>(null);
   const [showDesign, setShowDesign] = useState(true);
@@ -1290,10 +1251,7 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixed
         const glb = parseGlb(g);
         if (alive) setLoaded({ glb, vars: parseBasis(b, meta, meta.n_nodes ?? glb.positions.length / 3), meta });
       } catch (e) {
-        if (alive) {
-          setErr(errorText(e));
-          setPhase("error");
-        }
+        if (alive) setErr(errorText(e));
       }
     })();
     return () => {
@@ -1305,7 +1263,7 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixed
   const u = useMemo(() => (loaded ? morph(loaded.vars, values, n) : null), [loaded, values, n]);
   const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, n) : null), [loaded, values, n]);
   const V = vmax > 0 ? vmax : Math.max(1, c ? maxAbs(c) : 1);
-  const designBbox = useMemo(() => (loaded ? positionsBbox(loaded.glb.positions) : null), [loaded]);
+  const mesh = useMemo(() => (loaded ? { positions: loaded.glb.positions, indices: loaded.glb.indices } : null), [loaded]);
   /** 선택 맞춤 = 기저가 움직이는 노드(비드 + 블렌딩) bbox */
   const beadBbox = useMemo(() => {
     if (!loaded) return () => null;
@@ -1321,100 +1279,68 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixed
     const b = any ? { min: mn, max: mx } : null;
     return () => b;
   }, [loaded]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    if (!hasWebGL()) {
-      setPhase("nowebgl");
-      return;
-    }
-    let cancelled = false;
-    let scene: SceneApi | null = null;
-    let canvas: HTMLCanvasElement | null = null;
-    void (async () => {
-      try {
-        const mod = await loadScene();
-        if (cancelled || !host.current) return;
-        canvas = document.createElement("canvas");
-        canvas.className = "v3d-canvas";
-        host.current.appendChild(canvas);
-        const { min: mn, max: mx } = positionsBbox(loaded.glb.positions);
-        scene = mod.createScene(canvas, { background: BACKGROUND, diag: Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) || 1, bbox: { min: mn, max: mx }, projection: "ortho" });
-        scene.setGeometry({ positions: loaded.glb.positions, indices: loaded.glb.indices, src: null }, null);
-        scene.setColorMap?.("diverging");
-        sceneRef.current = scene;
-        setPhase("ready");
-      } catch (e) {
-        if (!cancelled) {
-          setErr(errorText(e));
-          setPhase("error");
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-      sceneRef.current = null;
-      scene?.dispose();
-      canvas?.remove();
-    };
-  }, [loaded]);
-
-  useEffect(() => {
-    const sc = sceneRef.current;
-    if (!sc || phase !== "ready" || !u || !c) return;
-    sc.setColors(showDesign ? c : new Float32Array(c.length), -V, V);
-    sc.setDeform(showDesign ? u : null, scale);
-    // v0.15.1 침범한 고정 노드 = 빨간 점(지금 보이는 형상 위치)
+  // v0.15.1 침범한 고정 노드 = 빨간 점(지금 보이는 형상 위치)
+  const markers = useMemo(() => {
     const ids = fixedViol?.node_idx ?? [];
-    if (sc.setMarkers) {
-      if (!ids.length || !loaded) sc.setMarkers(null);
-      else {
-        const p = loaded.glb.positions;
-        const pts = new Float32Array(ids.length * 3);
-        ids.forEach((i, k) => {
-          for (let d = 0; d < 3; d++) pts[k * 3 + d] = p[i * 3 + d] + (showDesign ? u[i * 3 + d] * scale : 0);
-        });
-        sc.setMarkers(pts);
-      }
-    }
-  }, [phase, u, c, showDesign, scale, V, fixedViol, loaded]);
+    if (!ids.length || !loaded || !u) return null;
+    const p = loaded.glb.positions;
+    const pts = new Float32Array(ids.length * 3);
+    ids.forEach((i, k) => {
+      for (let d = 0; d < 3; d++) pts[k * 3 + d] = p[i * 3 + d] + (showDesign ? u[i * 3 + d] * scale : 0);
+    });
+    return pts;
+  }, [fixedViol, loaded, u, showDesign, scale]);
+  // v0.17.3 공통 PartView(3D · 안 변위 층) — 어댑터 designViewData(esl_view_unify.md §4)
+  const view = useMemo(
+    () => (mesh && u && c ? designViewData({ did, mesh, u: showDesign ? u : null, c, vmax: V, scale, markers, selectionBbox: beadBbox }) : null),
+    [did, mesh, u, c, showDesign, V, scale, markers, beadBbox],
+  );
 
   return (
     <Card title={`안 ${did} 3D 보기`} right={<button type="button" className="btn small ghost" onClick={onClose}>닫기</button>}>
       <div className="v3d">
-        <div className="v3d-tools">
-          <span className="seg" role="radiogroup" aria-label="형상">
-            <button type="button" role="radio" aria-checked={!showDesign} className={`btn small ghost toggle${!showDesign ? " on" : ""}`} onClick={() => setShowDesign(false)}>
-              공칭
-            </button>
-            <button type="button" role="radio" aria-checked={showDesign} className={`btn small ghost toggle${showDesign ? " on" : ""}`} onClick={() => setShowDesign(true)}>
-              안 {did}
-            </button>
-          </span>
-          <label className="field-inline" title="화면 표시용 확대(값·판정 영향 없음)">
-            <span>크게 보기</span>
-            <select aria-label="변형 배율" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
-              {[1, 2, 5].map((k) => (
-                <option key={k} value={k}>
-                  ×{k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
-        </div>
         {fixedViol && fixedViol.n > 0 && (
           <div className="small warn-text" data-testid="design-fixed-viol">
             <span className="fixed-dot" aria-hidden="true" /> 빨간 점 = 움직인 고정 노드 {fixedViol.n.toLocaleString()}개(최대 {fixedViol.max_mm} mm)
             <FixedViolNote cells={[{ fixed_viol: fixedViol }]} testId="design-fixed-viol-row" />
           </div>
         )}
-        <div className="v3d-stage">
-          <div ref={host} className="v3d-host" data-testid="bs-design-host" data-phase={phase} tabIndex={0} aria-label={`안 ${did} 3D`} />
-          {phase === "ready" && designBbox && <ViewToolbar scene={() => sceneRef.current} modelBbox={designBbox} selectionBbox={beadBbox} keyTarget={host} />}
-          {(phase === "nowebgl" || phase === "error") && <div className="v3d-msg" role="status">{err ?? NO_3D}</div>}
-          {phase === "loading" && <div className="v3d-msg muted">3D 형상 불러오는 중…</div>}
-        </div>
+        {view ? (
+          <PartView
+            data={view}
+            testId="pv-design"
+            tools={
+              <>
+                <span className="seg" role="radiogroup" aria-label="형상">
+                  <button type="button" role="radio" aria-checked={!showDesign} className={`btn small ghost toggle${!showDesign ? " on" : ""}`} onClick={() => setShowDesign(false)}>
+                    공칭
+                  </button>
+                  <button type="button" role="radio" aria-checked={showDesign} className={`btn small ghost toggle${showDesign ? " on" : ""}`} onClick={() => setShowDesign(true)}>
+                    안 {did}
+                  </button>
+                </span>
+                <label className="field-inline" title="화면 표시용 확대(값·판정 영향 없음)">
+                  <span>크게 보기</span>
+                  <select aria-label="변형 배율" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
+                    {[1, 2, 5].map((k) => (
+                      <option key={k} value={k}>
+                        ×{k}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
+              </>
+            }
+          />
+        ) : (
+          <div className="v3d-stage">
+            <div className="v3d-host" data-testid="bs-design-host" data-phase={err ? "error" : "loading"} aria-label={`안 ${did} 3D`} />
+            <div className={`v3d-msg${err ? "" : " muted"}`} role="status">
+              {err ?? "3D 형상 불러오는 중…"}
+            </div>
+          </div>
+        )}
         <HeightLegend vmax={V} />
       </div>
     </Card>
