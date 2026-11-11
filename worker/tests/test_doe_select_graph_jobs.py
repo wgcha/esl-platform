@@ -98,7 +98,7 @@ def test_schema2_auto_with_step_hint_plan(client, engine, worker, esl_root, inpu
     inp = json.loads((d / "input.json").read_text())
     cmds = [c["cmd"] for c in calls(exe) if c["cmd"] != "version"]
     ad = json.loads((d / "auto_detect.json").read_text())
-    assert ad["role"] == "hint" and ad["step_given"] is True and ad["paicad_version"] == "0.14.1"
+    assert ad["role"] == "hint" and ad["step_given"] is True and ad["paicad_version"] == "0.15.4"
     if inp.get("step"):                 # 코어 BD_INPUT 이 STEP 사본을 남김(v0.16.2 코어)
         assert cmds == ["fixed-scan", "extract", "extract"] and ad["ok"] is True
     else:

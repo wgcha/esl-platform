@@ -486,7 +486,7 @@ def test_v0162_auto_prep_case_plan(client, engine, worker, esl_root, inputs_root
     inp = json.loads((d / "prep" / "input.json").read_text())
     cmds = [c for c in calls(exe) if c["cmd"] != "version"]
     ad = auto_doc(esl_root, s["id"])
-    assert ad["paicad_version"] == "0.14.1"
+    assert ad["paicad_version"] == "0.15.4"
     if inp.get("step"):
         assert [c["cmd"] for c in cmds] == ["fixed-scan"] + AUTO_CMDS
         assert ad["ok"] is True and ad["step"] is None and ad["code"] is None
@@ -497,7 +497,7 @@ def test_v0162_auto_prep_case_plan(client, engine, worker, esl_root, inputs_root
     else:
         assert [c["cmd"] for c in cmds] == ["fixed-scan"]
         assert ad == {"schema": "esl/doe_auto_detect/1", "ok": False, "step": "extract0", "code": "PREREQUISITE_MISSING",
-                      "paicad_version": "0.14.1"}
+                      "paicad_version": "0.15.4"}
     g = study(client, s["id"])
     assert g["phase"] == "READY" and g["prep"]["fixed"]["source"] == "scan"
     pa = g["prep"]["auto"]          # 준비 요약 = 코어 BD_LOADS 결과(탐지 OK 여도 seed 가 없으면 ok false — 가짜 tag 는 노드 tag 없음)

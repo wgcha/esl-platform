@@ -59,7 +59,7 @@ DEFAULTS: dict = {
                    "expand_subset": True, "expand_gene": True, "expand_solid": True,
                    "subset_format": "auto"},
     "paicad": {
-        "exe": None, "min_version": "0.14.1", "pinned_version": "0.14.1", "threads": 4,
+        "exe": None, "min_version": "0.15.4", "pinned_version": "0.15.4", "threads": 4,
         "timeout_s": {"version": 60, "fixed_scan": 3600, "extract": 3600, "tag": 3600, "grid": 7200, "run": 3600,
                       "update": 1800},
         "options": {}, "env": {}, "keep_files_top": 3, "check_interval_s": 600,

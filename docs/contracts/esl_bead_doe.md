@@ -30,7 +30,7 @@
 | 외부 실행 | `worker/esl_worker/localproc.py`(h3d·OptiStruct 공통) | argv 템플릿·shell=False·트리 종료 | paicad 도 여기로 |
 | 작업 | `core/job_types.py` | stage 1~10, OPT_RUN | stage 11 신규 3종 |
 | DB | migration HEAD **0010**(`down_revision 0008`), 0009 = MCP 예약(`down_revision 0010` 예정) | | **0011**(§13) |
-| paicad | physicsai `packages/paicad` 0.14.0(2026-10-26), 의존 `cadquery-ocp==7.8.1.1.post1`, numpy <3, scipy <2. **gmsh 는 paicad test extra 에만**(런타임 의존 아님), PyPI 미배포 | CLI 종료코드 0/2/3/10/11/12/13/14/15/20, stdout `PAICAD PROGRESS n msg`·`PAICAD RESULT status code report`, `paicad version --json` | §6 |
+| paicad | physicsai `packages/paicad` 0.14.0(2026-10-26) — 배포 고정 v0.12.4 0.14.1 → **v0.18.1 0.15.4**(§6.6), 의존 `cadquery-ocp==7.8.1.1.post1`, numpy <3, scipy <2. **gmsh 는 paicad test extra 에만**(런타임 의존 아님), PyPI 미배포 | CLI 종료코드 0/2/3/10/11/12/13/14/15/20, stdout `PAICAD PROGRESS n msg`·`PAICAD RESULT status code report`, `paicad version --json` | §6 |
 
 paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 - `shell extract --cad --out-dir [--assem-dir --body-map --options --no-png --threads]` → `shell_features.json`(`beads[]{id,k,body,shape(linear|circular),sense,center,axis,normal,nominal{depth,width,length,…},fixed_overlap,fixed_clearance_mm}`, `features[]{name,type ∈ BEAD_DEPTH|BEAD_WIDTH|BEAD_POS_U|BEAD_POS_V, bead, body, nominal, unit, range, feasible, op, ref, group, use_default}`, `groups[]`(MIRROR), `warnings[]`(`BEAD_FIXED_OVERLAP`·`BEAD_NEAR_FIXED`·`FIXED_INFO_MISSING`)), `parameter_extracted.xml`, 비드 PNG. 비드 0 → 종료 13 `GEOM_EXTRACT_EMPTY`. 값 파일 키 = 그룹 대표 + 비그룹 이름(`shell.common.param_keys`).
@@ -75,7 +75,7 @@ paicad 0.14.0 에서 확인한 사실(소스 읽기만):
 | BD-D-16 | **재시도·이어하기**: 안 폴더 `run/designs/<id>/done.json{input_sha256, status}` — input_sha256 = (values, 기준 메시 sha, 하중 sha, 설정 해시, paicad 버전) 같으면 SKIPPED(재사용). 스킵 상태(충돌·고정)는 결정적이라 재시도 안 함, `FAILED_*` 만 다시 | 수 시간 반복 방지(v0.7.0 OR-D-19 와 같은 취지) |
 | BD-D-17 | **결과 파일 정리**: paicad `morph/files/`·`out_files/`(대형 rad 사본일 수 있음)는 노드 좌표를 `design.npz` 로 옮긴 뒤 **순위 상위 `paicad.keep_files_top`(3) + 베이스라인만 남기고 지움**(BD_POST 끝). 워커가 실행 폴더 안에 스스로 만든 중간 파일이라 v0.7.0 `u_cand.npy` 결정과 같은 예외 | 디스크(R-BD-2) |
 | BD-D-18 | **산출물(최적 안 = 순위 1, 상위 k 도)**: ①② = paicad check 사본 include(`out_files/<rel>`, 원 ID·`/NODE` 좌표만 바뀐 파일) + `values.json` + `sample.brep` + `sample.step`(gmsh OCC 내보내기). ③ = 메시 `ch_r.rad`(/NODE·/SHELL·/SH3N·/PART·/PROP/TYPE1·/MAT/LAW1, ID 1부터 — `esl.export` id 규칙) + `ch_r.fem`(GRID·CQUAD4·CTRIA3·PSHELL·MAT1) + `sample.brep`·`sample.step` + `values.json` | 확정 7 |
-| BD-D-19 | **paicad 버전**: 배포 고정 = `deploy/paicad.lock`(version 0.14.0·physicsai 커밋·wheel sha256). 런타임 허용 = `paicad version --json` 의 paicad ≥ `paicad.min_version`(0.14.0) **그리고** `ocp` 가 null 아님. 고정과 다르면 경고(관리자 화면·결과에 기록), 낮거나 OCP 없음 → 기능 비활성(사유 §6.5) | 확정 1 |
+| BD-D-19 | **paicad 버전**: 배포 고정 = `deploy/paicad.lock`(version 0.14.0 — v0.18.1 부터 0.15.4·physicsai 커밋·wheel sha256). 런타임 허용 = `paicad version --json` 의 paicad ≥ `paicad.min_version`(0.14.0 — v0.18.1 부터 0.15.4) **그리고** `ocp` 가 null 아님. 고정과 다르면 경고(관리자 화면·결과에 기록), 낮거나 OCP 없음 → 기능 비활성(사유 §6.5) | 확정 1 |
 | BD-D-20 | **gmsh** = Python 모듈(`gmsh` wheel)로 **코어 하위 프로세스 안에서** 호출(외부 명령 아님 — 메시마다 `multiprocessing` **spawn** 자식으로 격리·타임아웃, §7.1). 없으면 ③ 만 비활성(`GMSH_UNAVAILABLE`), STEP 내보내기(BD-D-18)도 gmsh 로 — 없으면 BREP 만 + 경고 | paicad 런타임 의존에 gmsh 없음 |
 | BD-D-21 | migration **0011**(`down_revision "0010"`). MCP 예약 0009 는 구현 시점 HEAD 뒤에 붙인다(`revision "0009"`, `down_revision` = 그때 HEAD — 지금 기준 "0011"). esl_opt_run.md OR-D-22 의 "0009 → down 0010" 을 이 규칙으로 바꿈. **0010 수정**: 0010 이 CHECK 를 `tables.CK_JOBS_*`(현재 정의 — 0011 의 `bead_doe_id` 참조)로 다시 걸던 것을 0010 시점 고정 상수(`*_0010`)로 바꿔 0008 DB → 0011 업그레이드가 0010 단계에서 없는 열을 참조하지 않게 함(0004 와 같은 규칙, §21) | 단일 head 유지, 0008 운영 DB 업그레이드 가능 |
 | BD-D-22 | ① 기준 Case 가 누적 씬이면 정보 경고 `BD_BASE_CUMULATIVE`("형상 = rad /NODE 공칭, ESL 은 누적 변형 상태 기준") — 실행 허용 | paicad 는 `.str` 을 읽지 않음, v0.8.0 S1 경고와 같은 취지 |
@@ -184,20 +184,30 @@ POST /doe/studies/{id}/run → DOE_RUN
 | `SHELL_FIXED_REGION_VIOLATION` (10·11) | 미리보기·안 | 안 `SKIPPED_FIXED` | 비드가 체결 고정 영역을 침범해 건너뜁니다. |
 | `GEOM_CAD_FAILED`·`GEOM_TOPOLOGY_CHANGED` (10) | 미리보기·안 | 안 `SKIPPED_GEOM` | 이 값으로는 형상을 만들 수 없어 건너뜁니다. |
 | `GEOM_MORPH_FAILED`·`GEOM_QUALITY`·`GEOM_DEVIATION`·`GEOM_PARAM_MISMATCH`·`GEOM_INTERFERENCE`·`GEOM_TIE_PROJECTION` (11) | 안 | 안 `FAILED_MORPH` | 메시 모핑·품질 검사에 실패했습니다(코드 표시). |
+| `SHELL_FEATURE_DISTORTED` (11, paicad 0.15.x shell check 피처 강체성 — v0.18.1) | 안 | 안 `FAILED_MORPH` | 전용 문구(`messages.SHELL_FEATURE_DISTORTED`): 비드 바닥 안 피처(섬)가 바닥과 함께 강체로 움직이지 않아 형상이 찢어졌습니다. |
 | `VIEW_TOO_LARGE`·`VIEW_TESSELLATION_FAILED` (14) | 미리보기 | 경고 `THUMB_UNAVAILABLE` | 썸네일을 만들지 못했습니다(형상 변경은 성공). |
 | `GEOM_OUTPUT_EXISTS`·종료 2 | 전부 | `PAICAD_INTERNAL` | 내부 오류입니다(관리자 문의). |
 | `GEOM_INTERNAL`·종료 20 | 전부 | `PAICAD_FAILED` | 형상 엔진 내부 오류입니다. 로그를 관리자에게 보내 주세요. |
 | 타임아웃 | 전부 | `PAICAD_TIMEOUT` | 형상 엔진이 제한 시간(설정) 안에 끝나지 않았습니다. |
 
 - 모르는 paicad 코드 = 종료코드 범주(10 → SKIPPED_GEOM, 11 → FAILED_MORPH, 3·12·13 → PAICAD_INPUT, 그 밖 PAICAD_FAILED)로 분류하고 원 코드 병기.
+- (v0.18.1) 표에 있는 paicad 코드에 `messages.<paicad 코드>` 가 있으면 그 전용 문구를 쓴다(안 상태·플랫폼 코드는 표 그대로, 준비 단계는 `PAICAD_INPUT` 일반 문구). 0.14.1 까지의 코드에는 전용 문구가 없어 문구 불변.
 
 ### 6.4 버전 고정·설치 (BD-D-19)
-- `deploy/paicad.lock`: `{version: "0.14.0", source: "wgcha/physicsai-platform", commit: <40자>, wheel: "paicad-0.14.0-py3-none-any.whl", sha256: <64자>, branch, subdir, build_requires: ["setuptools==…"], console_script, runtime_requires}`. collect-offline 은 그 커밋의 `packages/paicad` 를 줄 끝 변환 없이 꺼내 `pip wheel --no-deps` → **정규화**(`deploy/paicad_wheel.py`: 같은 항목·내용을 무압축 ZIP_STORED·시각 1980-01-01·권한 0644·이름 순(.dist-info 끝, RECORD 맨 끝)으로 다시 씀, RECORD 불변) → 버전·**정규화 sha256** 대조(불일치 중단) → `wheels/` 에 넣음. 정규화로 빌드 OS·시각·umask·zlib 판과 무관하게 같은 바이트가 되어 lock 의 sha256 하나로 Windows·Linux 준비 PC 결과를 대조한다(lock 갱신 = `paicad_wheel.py digest`). `deploy/requirements.lock` 에 `cadquery-ocp==7.8.1.1.post1`(paicad 고정과 같음)·`gmsh==<고정>`(cp312 win_amd64 휠 있는 버전, lock 갱신 시 확인) 추가. install 은 같은 wheels 에서 `--no-index` 설치.
+- `deploy/paicad.lock`(값은 v0.18.1 기준 0.15.4 — 아래는 형식): `{version: "0.14.0", source: "wgcha/physicsai-platform", commit: <40자>, wheel: "paicad-0.14.0-py3-none-any.whl", sha256: <64자>, branch, subdir, build_requires: ["setuptools==…"], console_script, runtime_requires}`. collect-offline 은 그 커밋의 `packages/paicad` 를 줄 끝 변환 없이 꺼내 `pip wheel --no-deps` → **정규화**(`deploy/paicad_wheel.py`: 같은 항목·내용을 무압축 ZIP_STORED·시각 1980-01-01·권한 0644·이름 순(.dist-info 끝, RECORD 맨 끝)으로 다시 씀, RECORD 불변) → 버전·**정규화 sha256** 대조(불일치 중단) → `wheels/` 에 넣음. 정규화로 빌드 OS·시각·umask·zlib 판과 무관하게 같은 바이트가 되어 lock 의 sha256 하나로 Windows·Linux 준비 PC 결과를 대조한다(lock 갱신 = `paicad_wheel.py digest`). `deploy/requirements.lock` 에 `cadquery-ocp==7.8.1.1.post1`(paicad 고정과 같음)·`gmsh==<고정>`(cp312 win_amd64 휠 있는 버전, lock 갱신 시 확인) 추가. install 은 같은 wheels 에서 `--no-index` 설치.
 - `setup_config.py`: `bead_doe.paicad.exe` 가 비었고 `<런타임 venv>/Scripts/paicad.exe` 가 **실제 있을 때만** 채움(v0.8.0 OptiStruct 자동 감지와 같은 규칙, 기존 값 불변, `_backup`, 콘솔 1줄). `upload.allowed_ext` 에 `.step`·`.stp` 1회 보충.
 - 배포 코드 목록(`$EslAppItems`·collect-offline)에 `resources/doe_messages.json`·`resources/doe_method_sources.json` 추가(v0.7.2 누락 사고 재발 방지 — V-BD-18).
 
 ### 6.5 없을 때 비활성 사유 (`GET /doe/settings`)
 `enabled:false` 이유 코드: `DOE_DISABLED`(설정 꺼짐), `PAICAD_NOT_CONFIGURED`(exe 없음), `PAICAD_NOT_FOUND`(경로 없음), `PAICAD_VERSION_LOW`(< min), `PAICAD_OCP_MISSING`(version JSON `ocp` null), `PAICAD_CHECK_FAILED`(실행 실패). ③ 만: `GMSH_UNAVAILABLE`. 화면 상단 경고 띠 "형상 엔진(paicad)이 설치되지 않았습니다(관리자 문의)", 서버 경로·상세는 전역 관리자에게만. 점검 결과는 백엔드가 `bead_doe.settings_cache_s`(300) 캐시 — 백엔드는 paicad 를 **실행하지 않고** 워커가 주기(`bead_doe.paicad.check_interval_s`) 점검해 DB **`worker_heartbeats.info.paicad`**(`{ready, version, ocp, pinned, warning, reason, checked_at}`)·`info.gmsh`(`{ready, version}`)에 heartbeat 와 함께 기록한 값(가장 최근 heartbeat)을 읽는다(외부 명령은 워커만). 기록이 없으면 `PAICAD_CHECK_FAILED`.
+
+### 6.6 paicad 0.15.4 호환(v0.18.1, 2026-11-12)
+- 배포 고정 = physicsai `release/v0.2.17` `9b71cb7` paicad **0.15.4**(0.14.2 수정 포함: 3D 곡선 없는 degenerated edge(STEP 구면 극점) 쉘 재구성 — grid 셀 `GEOM_CAD_FAILED` "has no 3D curve" 이슈 #63, `common.replace_retry` WinError 5·32 백오프 — 셀 폴더 rename·보고 확정). `min_version`·`pinned_version` = 0.15.4(0.14.x 는 `PAICAD_VERSION_LOW`).
+- CLI(소스 대조 0.14.1 → 0.15.4): `shell fixed-scan·extract·tag·view grid·run·update`·`version --json` 인자 변경 없음(`shell/cli.py` 불변, 최상위 `cli.py` 는 FAIL 보고 쓰기 재시도만). `--fixed-dir ""`(③) 그대로. 종료코드 표 불변(새 코드 1개 추가).
+- options.json: 새 키(`tag.label_angle_deg`·`fixed.policy`·`quality.fail_policy`·`quality.distort_min_mm`·`quality.distort_rel`·`extract.islands`·`island_max_mm`·`island_ring_frac`·`bead.hold{beads,ring_mm,blend_mm}`)는 모두 **선택**(기본값 = 0.14.1 동작, 기본값이면 보고 `options`·sweep id 에서 생략). 모르는 키 거부(GE-C10) 그대로 — esl 은 `bead_doe.paicad.options`(기본 `{}`)를 그대로 넘길 뿐 자체 키를 넣지 않으므로 거부·필수 키 없음.
+- 보고: 추가 키만(`shell_features.json` `beads[].islands`·`hold_eligible`, `shell_update.json` `beads[].bottom·islands·island_shift`·`fixed_precheck.held`, `shell_check.json` `checks.feature`(섬 없음 = `SKIPPED`)·`checks.hold`, 경고 `TAG_ISLAND_MISMATCH`·`BEAD_ISLAND_TOO_LARGE`·`SHELL_FIXED_MOVED`·`SHELL_QUALITY_WARN`(warn 정책일 때만)). esl 이 읽는 키(§6.2 판정·`shell_features` beads/features/groups/warnings·`shell_scan`·`shell_tag` files.nodes·`grid_manifest` cells·`shell_run` status/out_files·`shell_morph` files[].moved_nodes)는 불변.
+- 새 실패 코드 `SHELL_FEATURE_DISTORTED`(category DEVIATION, 종료 11): `shell run` 의 check 단계에서만(움직인 섬 비드) → 안 `FAILED_MORPH` + 전용 문구(§6.3). grid(update 만)·③ `shell update` 에서는 나오지 않음.
+- 섬 인식 기본 켬(`extract.islands: true`): 바닥 안 딤플·보스·버링이 있는 비드는 0.14.1 과 비드 수·변수 이름이 다를 수 있다(기존 준비본은 paicad 가 섬 끈 인식으로 계속 실행). select ①② 자동 탐지 seed(`bead_auto` — `beads[].bottom`·`nominal`·tag 표 읽기만)·③ 스텝 그래프(v0.18.0, extract 힌트 `slope_hints` 만)·④ 형상 비교(paicad 미사용)는 읽는 키가 불변이라 코드 변경 없음(섬 있는 비드에서 seed 바닥이 섬을 뺀 바닥 조각이 되는 차이뿐).
 
 ## 7. gmsh 메싱 사양 (③, `esl/doe/mesh_gmsh.py`, BD-7)
 
@@ -426,8 +436,8 @@ bead_doe:                                # 섹션 없으면 enabled: false
   same: {max_assem_mb: 4096}            # ① Case 폴더 rad/inc 합계 상한(BD-D-13)
   paicad:
     exe: null                           # setup_config 자동 감지(<런타임 venv>/Scripts/paicad.exe 있을 때만)
-    min_version: "0.14.1"
-    pinned_version: "0.14.1"
+    min_version: "0.15.4"
+    pinned_version: "0.15.4"
     threads: 4
     timeout_s: {version: 60, fixed_scan: 3600, extract: 3600, tag: 3600, grid: 7200, run: 3600, update: 1800}
     options: {}                         # paicad shell options.json 내용(선택)

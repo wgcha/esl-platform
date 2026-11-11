@@ -147,6 +147,7 @@ def test_shell_false_env_minimal_and_progress(env, tmp_path, monkeypatch):
     ({"exit": 10, "code": "SHELL_FIXED_REGION_VIOLATION"}, "design", "SKIPPED_FIXED", "SKIPPED_FIXED"),
     ({"exit": 11, "code": "GEOM_QUALITY"}, "design", "FAILED_MORPH", "FAILED_MORPH"),
     ({"exit": 11, "code": "WEIRD_NEW_CODE"}, "design", "FAILED_MORPH", "FAILED_MORPH"),      # 모르는 코드 → 종료 범주
+    ({"exit": 11, "code": "SHELL_FEATURE_DISTORTED"}, "design", "FAILED_MORPH", "FAILED_MORPH"),  # v0.18.1 paicad 0.15.x
     ({"exit": 14, "code": "VIEW_TOO_LARGE"}, "prep", "PAICAD_INPUT", None),
     ({"exit": 0, "code": "NO_REPORT"}, "prep", "PAICAD_FAILED", None),                       # 종료 0 인데 보고 없음
 ])
@@ -157,6 +158,8 @@ def test_exit_codes_map(env, fail, stage, want_code, want_status):
     assert r["exit_code"] == fail["exit"]
     if fail["code"] == "WEIRD_NEW_CODE":
         assert r["paicad_code"] == "WEIRD_NEW_CODE" and "WEIRD_NEW_CODE" in r["message"]
+    if fail["code"] == "SHELL_FEATURE_DISTORTED":                                              # 전용 문구
+        assert r["paicad_code"] == "SHELL_FEATURE_DISTORTED" and "강체" in r["message"]
 
 
 def test_exit2_args_is_internal(env):
@@ -210,7 +213,8 @@ def test_cancel_stop_event_kills_tree(env):
     ({}, True, None, False),
     ({"version": "0.13.2"}, False, "PAICAD_VERSION_LOW", True),
     ({"ocp": None}, False, "PAICAD_OCP_MISSING", False),
-    ({"version": "0.15.0"}, True, None, True),
+    ({"version": "0.14.1"}, False, "PAICAD_VERSION_LOW", True),     # v0.18.1: #63 degenerated edge 판 거부
+    ({"version": "0.16.0"}, True, None, True),
 ])
 def test_version_check(env, ctl, ready, reason, warn):
     from esl_worker import paicad_proc as pp
@@ -218,7 +222,7 @@ def test_version_check(env, ctl, ready, reason, warn):
     set_control(env["exe"], **ctl)
     v = pp.version_check(env["s"])
     assert v["ready"] is ready and v["reason"] == reason and bool(v["warning"]) is warn, v
-    assert v["pinned"] == "0.14.1" and v["checked_at"].endswith("Z")
+    assert v["pinned"] == "0.15.4" and v["checked_at"].endswith("Z")
 
 
 def test_version_check_missing_exe(tmp_path, exe):

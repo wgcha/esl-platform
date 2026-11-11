@@ -140,7 +140,7 @@ def full_flow(client, engine, worker, esl_root, s, *, expect_ok: int, expect_ski
     assert j["progress_pct"] == 100.0
     g = study(client, sid)
     assert g["phase"] == "READY", g
-    assert g["prep"]["n_beads"] == 2 and g["prep"]["n_params"] == 8 and g["prep"]["paicad_version"] == "0.14.1"
+    assert g["prep"]["n_beads"] == 2 and g["prep"]["n_params"] == 8 and g["prep"]["paicad_version"] == "0.15.4"
     assert any(w["code"] == "BEAD_NEAR_FIXED" for w in g["prep"]["warnings"])
     assert api(client, "GET", f"/doe/studies/{sid}/params").status_code == 200
     for rel in ("prep/extract/shell_features.json", "prep/paicad.json", "prep/params.json", "prep/plan.json"):
@@ -244,6 +244,29 @@ def test_same_model_e2e(client, engine, worker, esl_root, inputs_root, exe, sett
     with engine.connect() as c:
         ev = [r.event for r in c.execute(select(notifications.c.event).where(notifications.c.job_id == out["jid"]))]
     assert "JOB_SUCCEEDED" in ev
+
+
+# ---------------------------------------------------------------- v0.18.1 paicad 0.15.x: check 피처 강체성 실패
+def test_same_model_feature_distorted(client, engine, worker, esl_root, inputs_root, exe):
+    """paicad 0.15.x shell run 의 check 단계 SHELL_FEATURE_DISTORTED(종료 11) → 안 FAILED_MORPH, result.json 에 원 코드·전용 문구.
+    가짜 paicad: RULES 의 morph 실패(GEOM_QUALITY) 자리를 check 실패로 바꿈 — 나머지 안 수·스킵은 같음."""
+    rules = [dict(r, code="SHELL_FEATURE_DISTORTED") if r["code"] == "GEOM_QUALITY" else r for r in RULES]
+    set_control(exe, rules=rules)
+    s1 = make_s1(engine, esl_root, inputs_root)
+    s = create(client, s1["entry_ids"], title="① 피처 강체성")
+    out = full_flow(client, engine, worker, esl_root, s, expect_ok=5,
+                    expect_skip={"collision": 1, "fixed": 1, "geom": 1}, expect_morph=1)
+    d = out["dir"]
+    morph = [k for k, v in out["designs"].items() if v["status"] == "FAILED_MORPH"]
+    assert len(morph) == 1 and out["designs"][morph[0]]["code"] == "FAILED_MORPH"
+    res = json.loads((d / "run" / "designs" / morph[0] / "result.json").read_text(encoding="utf-8"))
+    assert res["status"] == "FAILED_MORPH" and res["paicad"]["paicad_code"] == "SHELL_FEATURE_DISTORTED"
+    assert "강체" in (res.get("message") or ""), res
+    ck = json.loads((d / "run" / "designs" / morph[0] / "paicad" / "check" / "shell_check.json").read_text())
+    assert ck["status"] == "FAIL" and ck["code"] == "SHELL_FEATURE_DISTORTED" and ck["checks"]["feature"]["status"] == "FAIL"
+    ok = next(k for k, v in out["designs"].items() if v["status"] == "OK" and k != "d000")
+    ck = json.loads((d / "run" / "designs" / ok / "paicad" / "check" / "shell_check.json").read_text())
+    assert ck["status"] == "PASS" and ck["checks"]["feature"] == {"status": "SKIPPED"}       # 섬 없는 비드 = SKIPPED
 
 
 # ---------------------------------------------------------------- ② 다른 모델 + B 메시
@@ -369,7 +392,7 @@ def test_prep_failures_keep_phase(client, engine, worker, esl_root, inputs_root,
 def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
     from esl_platform.core.repositories import doe as doe_repo
 
-    set_control(exe, version="0.14.1", ocp=None)
+    set_control(exe, version="0.15.4", ocp=None)
     w = worker_factory()
     w.heartbeat_once()
     with engine.connect() as c:
@@ -378,12 +401,12 @@ def test_heartbeat_records_paicad_and_gmsh(client, engine, worker_factory, exe):
     assert rec["gmsh"]["ready"] is _gmsh_ok()
     s = api(client, "GET", "/doe/settings").json()
     assert s["enabled"] is False and s["reason"] == "PAICAD_OCP_MISSING"
-    set_control(exe, version="0.14.2")
+    set_control(exe, version="0.15.5")
     w.doe_status(force=True)
     w.heartbeat_once()
     with engine.connect() as c:
         rec = doe_repo.paicad_record(c)
-    assert rec["paicad"]["ready"] is True and rec["paicad"]["version"] == "0.14.2"
+    assert rec["paicad"]["ready"] is True and rec["paicad"]["version"] == "0.15.5"
     assert "PAICAD_VERSION_PINNED" in (rec["paicad"]["warning"] or "") and rec["paicad"]["checked_at"]
 
 

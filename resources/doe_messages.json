@@ -1,5 +1,5 @@
 {
- "version": "2026-11-11.1",
+ "version": "2026-11-12.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -21,6 +21,7 @@
   "GEOM_PARAM_MISMATCH": "FAILED_MORPH",
   "GEOM_INTERFERENCE": "FAILED_MORPH",
   "GEOM_TIE_PROJECTION": "FAILED_MORPH",
+  "SHELL_FEATURE_DISTORTED": "FAILED_MORPH",
   "VIEW_TOO_LARGE": "THUMB_UNAVAILABLE",
   "VIEW_TESSELLATION_FAILED": "THUMB_UNAVAILABLE",
   "GEOM_OUTPUT_EXISTS": "PAICAD_INTERNAL",
@@ -50,6 +51,7 @@
   "SKIPPED_FIXED": "비드가 체결 고정 영역을 침범해 건너뜁니다.",
   "SKIPPED_GEOM": "이 값으로는 형상을 만들 수 없어 건너뜁니다.",
   "FAILED_MORPH": "메시 모핑·품질 검사에 실패했습니다(코드 표시).",
+  "SHELL_FEATURE_DISTORTED": "비드 바닥 안 피처(딤플·보스·루버 등 섬)가 바닥과 함께 강체로 움직이지 않아 형상이 찢어졌습니다(형상 엔진 피처 강체성 검사). 이 안은 해석하지 않습니다.",
   "FAILED_MESH": "이 안의 쉘 메시를 만들지 못했습니다(gmsh·품질 검사).",
   "FAILED_SOLVE": "이 안의 선형 해석에 실패했습니다(지지 퇴화·특이 강성).",
   "CANCELED": "작업 취소로 이 안은 실행되지 않았습니다.",
