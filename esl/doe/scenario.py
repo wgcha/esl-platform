@@ -156,16 +156,37 @@ def same_base(rad_path: str, part_title: str, base_entry, others=(), *, coord_to
 
 
 def template_base(mesh: dict, entries, size_cfg: dict, *, inch=None, axis_ref: dict | None = None,
-                  source: dict | None = None) -> tuple[tg.Target, dict]:
-    """②③ 기준 메시: B 메시 → build_template(frame·법선 정렬·자동 3-2-1) → 크기 규칙(B = 템플릿). (Target, size 정보)."""
+                  source: dict | None = None, region=None) -> tuple[tg.Target, dict]:
+    """②③ 기준 메시: B 메시 → build_template(frame·법선 정렬·자동 3-2-1) → 크기 규칙(B = 템플릿). (Target, size 정보).
+    v0.18.0 SG-D-20a region(요소 bool, select_base step 만): frame·자동 3-2-1·크기 규칙 = 영역 요소로, Target 메시는 전체
+    (법선은 영역 frame n 쪽으로 정렬). region None = 지금 동작(바이트 불변)."""
     if axis_ref is None and entries:
         axis_ref = (entries[0].meta.get("frame") or {}).get("axis_ref")
-    arrays, meta = tg.build_template(mesh, axis_ref)
+    if region is not None:
+        arrays, meta = _template_region(mesh, axis_ref, region)
+    else:
+        arrays, meta = tg.build_template(mesh, axis_ref)
     fr = meta["frame"]
     info = sz.assert_ok(size_rows(entries), size_cfg, {"inch": inch, "L_xi": fr["L_xi"], "L_eta": fr["L_eta"]})
     t = tg.template_target(arrays, meta, None, source)
     t.warnings = list(info["warnings"])
     return t, U.jsonable(info)
+
+
+def _template_region(mesh: dict, axis_ref, region) -> tuple[dict, dict]:
+    """SG-D-20a: 영역 부분 메시로 build_template(frame·자동 3-2-1 — 노드 ID 그대로) → 전체 메시 배열(법선 정렬)·메타."""
+    from esl.doe.step_graph import submesh
+    sub = submesh({k: np.asarray(mesh[k]) for k in tg.MESH_KEYS}, np.asarray(region, bool))
+    sub.pop("_node_index")
+    _, smeta = tg.build_template(sub, axis_ref)
+    fr = smeta["frame"]
+    m = {k: np.asarray(mesh[k]) for k in tg.MESH_KEYS}
+    m["elem_mid"] = np.asarray(mesh.get("elem_mid", np.zeros(m["elem_id"].size, np.int64)))
+    conn, flip = tg.align_normals(m, fr["n"])
+    m["conn"] = conn
+    meta = dict(smeta, normals=tg._normal_info(m, fr, flip, "aligned"), topo_sha256=identity.topo_sha256(m),
+                n_nodes=int(m["node_id"].size), n_elems=int(m["elem_id"].size))
+    return m, U.jsonable(meta)
 
 
 def design_target(mesh: dict, base_frame: dict) -> tg.Target:

@@ -142,12 +142,20 @@ def read_graph_bin(blob: bytes) -> dict:
     return {a["name"]: np.frombuffer(blob, "<i4", count=n, offset=base + a["offset"]) for a in head["arrays"]}
 
 
-def prep_graph(mesh: dict, fixed_ids, cfg: dict | None, out_dir: str, guard=None) -> dict:
+def prep_graph(mesh: dict, fixed_ids, cfg: dict | None, out_dir: str, guard=None, *, limits: dict | None = None) -> dict:
     """BD_LOADS (select_schema 2): classify the base mesh -> prep/select/graph.json · graph_labels.npz · graph.bin.
-    fixed_ids = fixed node IDs (paicad fixed-scan); out_dir = prep/select. Never raises: failure -> {ok False, code}."""
+    fixed_ids = fixed node IDs (paicad fixed-scan; v0.18.0 select_base step = A fixed points transferred to B, SG-D-14a);
+    out_dir = prep/select. limits (v0.18.0 SG-D-16, step only) = {max_elems, timeout_s} raising the graph limits
+    (None = select.graph.limits as is — schema 2 ①② bytes unchanged). Never raises: failure -> {ok False, code}."""
     bg = _bg()
     sc = select_cfg(cfg)
     gc = graph_cfg(cfg)
+    if limits:                                         # SG-D-16 (i): max(graph.limits, step_graph) per key
+        gl = dict(gc["limits"])
+        for k in ("max_elems", "timeout_s"):
+            if limits.get(k) is not None:
+                gl[k] = type(gl[k])(max(float(gl[k]), float(limits[k])))
+        gc["limits"] = gl
     g = guard or (lambda p: p)
     st = {"ok": False, "code": None, "sha256": None, "rules": bg.RULES, "morph_rules": bg.MORPH_RULES,
           "beadgraph_version": bg.__version__, "n_segments": 0, "n_junction_zones": 0, "n_islands": 0,
@@ -1087,13 +1095,15 @@ def design_checks_v2(derived: GraphDerived, B) -> dict:
 
 
 # ====================================================================== auto seed (BG-D-20)
-def auto_seed(graph: dict, labels: dict, cfg: dict | None = None):
+def auto_seed(graph: dict, labels: dict, cfg: dict | None = None, *, exclude_segs=None):
     """-> (selection schema 2 normalized, sym_pairs [[anchor, anchor]], warnings). Beads: each ring side; each leg /
     comb / channel / pocket segment (vertical channels separately — D5); a flare goes with the channel of its floor
     (the Y zone between them included); area floors (plateaus) D only; islands, lances, junction zones, base: none.
-    Order (tier, anchor); beyond max_beads dropped with AUTO_TOO_MANY_BEADS. Ties are only suggested (sym_pairs)."""
+    Order (tier, anchor); beyond max_beads dropped with AUTO_TOO_MANY_BEADS. Ties are only suggested (sym_pairs).
+    exclude_segs (v0.18.0 SG-D-20d) = segment ids outside the evaluation region — never seeded (None = all, as before)."""
     sc = select_cfg(cfg)
-    segs = [s for s in graph["segments"] if s["type"] != "base"]
+    ex = set(int(x) for x in exclude_segs or ())
+    segs = [s for s in graph["segments"] if s["type"] != "base" and s["id"] not in ex]
     used = set()
     groups = []
     by_side = {}
@@ -1133,9 +1143,45 @@ def auto_seed(graph: dict, labels: dict, cfg: dict | None = None):
 
 
 def auto_doc_v2(selection_norm: dict, sha: str, sym: list, hints: list, warnings: list, *, mesh_sha256=None,
-                graph_sha=None) -> dict:
-    return {"schema": AUTO_SCHEMA_V2, "source": "graph", "selection": selection_norm, "sha256": sha, "sym_pairs": sym,
-            "hints": hints, "warnings": warnings, "mesh_sha256": mesh_sha256, "graph_sha256": graph_sha}
+                graph_sha=None, source: str = "graph", fixed: dict | None = None) -> dict:
+    """auto_selection.json (schema 2). v0.18.0 select_base step: source "graph" (auto) | "fixed_transfer" (manual seed =
+    no beads + fixed_user, SG-D-16 iii) and ``fixed`` = {source "a_transfer"|"none", method, n_nodes} — keys only for step."""
+    doc = {"schema": AUTO_SCHEMA_V2, "source": source, "selection": selection_norm, "sha256": sha, "sym_pairs": sym,
+           "hints": hints, "warnings": warnings, "mesh_sha256": mesh_sha256, "graph_sha256": graph_sha}
+    if fixed is not None:
+        doc["fixed"] = fixed
+    return doc
+
+
+def fixed_seed_v2(graph: dict | None, fixed_user: dict) -> tuple[dict, str]:
+    """v0.18.0 SG-D-14b·16 iii seed without beads (manual, or auto with no seedable bead): schema 2 selection
+    {beads [], ties [], fixed_user, exclude {}} (+ graph block when classified). Not passed through ``normalize_v2``
+    (that needs ≥ 1 bead) — the frontend adds beads and saves through the normal path. sha = canonical selection sha."""
+    from esl.doe import bead_select as bs
+    sc = select_cfg(None)
+    sel = {"schema_version": SCHEMA_VERSION, "feature_angle_deg": float(sc["feature_angle_deg"]), "beads": [],
+           "ties": [], "fixed_user": bs._norm_set(fixed_user, "fixed_user", 10_000_000),
+           "exclude": bs._norm_set(None, "exclude", 10_000_000)}
+    if graph is not None:
+        sel["graph"] = {"sha256": graph_sha_of(graph), "rules": int(graph["rules"]), "edits": {}}
+    return sel, bs.selection_sha256(sel)
+
+
+def region_marks(graph: dict, labels: dict, region, frac: float = 0.5) -> dict:
+    """v0.18.0 SG-D-20d: segments / islands (lances included) whose elements are more than ``frac`` outside the
+    evaluation region (bool per element) -> {segments[id], islands[id]} (sorted) — excluded from the auto seed and shown
+    grey in the tree; painting them by hand stays allowed."""
+    r = np.asarray(region, bool)
+    out = {}
+    for key, lab in (("segments", "segment"), ("islands", "island")):
+        L = np.asarray(labels[lab])
+        ids = []
+        for v in np.unique(L[L >= 0]):
+            m = L == v
+            if float((~r[m]).sum()) > float(frac) * float(m.sum()):
+                ids.append(int(v))
+        out[key] = sorted(ids)
+    return out
 
 
 def write_auto_v2(path: str, doc: dict, guard=None) -> str:

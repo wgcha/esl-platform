@@ -237,5 +237,12 @@
   "BG_BASIS_LEAK": "기저 오류: {var} 가 허용 구역 밖 {n} 노드를 움직입니다(최대 {max_mm} mm) — 구현 결함. (Basis error: {var} moves {n} nodes outside its zone.)",
   "BG_ACHIEVED_MISMATCH": "기저 오류: {var} 달성 깊이·폭 오차 {err_mm} mm. (Basis error: {var} achieved error {err_mm} mm.)",
   "BG_OUTSIDE_MOVED": "바뀐 세그먼트 밖 노드 {n} 개가 움직여(최대 {max_mm} mm) 이 안을 제외했습니다. (Nodes outside the changed segments moved — design excluded.)"
+,
+  "STEP_GRAPH_TRIA": "삼각형 메시({mesh_method}, 삼각형 비율 {tri_frac}) — 걸친 보스가 있는 채널의 D·W 안은 바깥 이동으로 실패할 수 있음. (Triangle mesh — D/W designs of channels with straddling bosses may fail.)",
+  "STEP_GRAPH_TRIA_BLOCKED": "삼각형 메시({mesh_method})로 끝나 준비를 멈췄습니다(select.step_graph.tria_policy block). (Triangle mesh blocked by tria_policy.)",
+  "STEP_GRAPH_REGION": "(정보) 주 시트 밖 형상 {n_out} 요소 — 평가·비드 후보에서 제외(영역 {mode}, 안 {n_in} 요소). (Info: {n_out} elements outside the main sheet excluded from evaluation and bead candidates.)",
+  "STEP_GRAPH_REGION_SMALL": "평가 영역이 전체 요소의 {frac} 뿐입니다(< {min_frac}) — 영역 설정(select.step_graph.region)을 확인하세요. (Evaluation region is only {frac} of the mesh.)",
+  "FIXED_XFER_NONE": "(정보) A 고정점을 옮기지 못했습니다({reason}) — 고정 층을 직접 칠하세요. (Info: A fixed points not transferred ({reason}) — paint the fixed layer.)",
+  "FIXED_XFER_UNMATCHED": "(정보) A 고정 {label} 을 B 에서 찾지 못함(최소 거리 {d_mm} mm) — 고정 층에서 확인하세요. (Info: A fixed {label} not matched on B.)"
  }
 }

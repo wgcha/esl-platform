@@ -55,3 +55,46 @@ def test_messages_for_codes():
 def test_cell_state_outside():
     from esl.doe import paicad_io as pio
     assert pio.cell_state({"id": "d001", "status": "FAIL", "code": "BG_OUTSIDE_MOVED"})["state"] == "FAILED_MESH"
+
+
+# ---------------------------------------------------------------- V-SG-10 (v0.18.0 STEP_GRAPH 해시)
+V0160_CFG_HASH = "760376b6612dbfd19306ae70ecc9b9eb03a6e746d4fd3df6d0ad56bbb75e2aa3"     # {"bead_doe": {"enabled": True}}
+V0160_SEL_CFG_SHA = "f418f00122265715f642cf6df2a91c1a4dbcf15184ac13294a333244b11f0d9d"
+
+
+def _ctx(tmp_path, bead_doe, **doe):
+    from esl.doe import stages as stg
+    return stg.Ctx({"stage": "bd_eval", "out": str(tmp_path),
+                    "doe": {"id": "R1", "scenario": "select", "cfg": {"bead_doe": bead_doe}, "entries": [], **doe}})
+
+
+def test_step_graph_hash_v0180(tmp_path):
+    """기본 설정 ①② 해시 = 상수, step_graph 를 바꿔도 ①② 불변, select_base step 스터디만 바뀜(기본값이면 같음)."""
+    from esl.doe import stages as stg
+    on = {"enabled": True}
+    alt = {"enabled": True, "select": {"step_graph": {"timeout_s": 400, "region": {"mode": "all"}}}}
+    for base in (None, "mesh"):
+        kw = {"select_base": base} if base else {}
+        for bd in (on, alt):
+            c = _ctx(tmp_path, bd, **kw)
+            assert stg._cfg_hash(c) == V0160_CFG_HASH and stg._sel_cfg_sha(c) == V0160_SEL_CFG_SHA
+    c0 = _ctx(tmp_path, on, select_base="step")
+    c1 = _ctx(tmp_path, alt, select_base="step")
+    assert stg._cfg_hash(c0) == V0160_CFG_HASH and stg._sel_cfg_sha(c0) == V0160_SEL_CFG_SHA
+    assert stg._cfg_hash(c1) != V0160_CFG_HASH and stg._sel_cfg_sha(c1) != V0160_SEL_CFG_SHA
+    assert "step_graph" not in bs.select_hash_view(copy.deepcopy(DEFAULTS["select"]), step=True)
+    assert bs.HASH_NEW_KEYS_V0180 == ("step_graph",)
+
+
+def test_step_graph_cfg_checks():
+    import pytest
+
+    from esl.doe import step_graph as sg
+    from esl.errors import EslError
+    assert sg.cfg_of({"select": {}})["max_elems"] == 600000 and sg.cfg_of(None)["tria_policy"] == "warn"
+    for bad in ({"tria_policy": "x"}, {"max_elems": 0}, {"tria_warn_frac": 0}, {"fixed_transfer": {"mode": "z"}},
+                {"fixed_transfer": {"tol_mm": -1}}, {"region": {"mode": "q"}}, {"region": {"min_frac": 1.5}},
+                {"timeout_s": 0}, {"fixed_transfer": {"axis_tol_deg": 0}}):
+        with pytest.raises(EslError) as ei:
+            sg.cfg_of({"select": {"step_graph": bad}})
+        assert ei.value.code == "CONFIG_INVALID"
