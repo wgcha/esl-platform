@@ -10,7 +10,11 @@ Worktree: /tmp/claude-0/-home-claude/b31e30b1-6347-515a-8f7b-a9260713e285/scratc
 - DoeInputs: step base fields (STEP 필수, 인치, t/E/ν, mesh note, advanced mesh mode), summary chip.
 - DoeStudy: ③ radio → select step, request body (no part_title — contract SG-D-3 forbids), detail summary, step info, legacy label.
 
-## Todo
+## Done (wip commit 2)
+- mocks: settings select_step/step_graph, checkSelectStep, create step inputs, sync stepPrep + stepAutoSeed, select/auto for step, stepPlan (region_ab + fixed src), demoStepSel (?demoStepSel=1: doe-15 auto saved, doe-16 manual tria, doe-17 legacy ③).
+- doe.test.tsx ③ test updated; new src/__tests__/doe_step_graph.test.tsx (11 pass).
+
+## Todo (old list below partly done)
 - mocks: settings select_step/step_graph, checkSelect step, create, sync prep (mesh/fixed.xfer/region/warnings), select/auto for step, plan-view region_ab + fixed src, demoStepSel (doe-15 auto saved, doe-16 manual).
 - fix doe.test.tsx ③ new-study test (now select step — props default from check), 1 other failing test.
 - new test src/__tests__/doe_step_graph.test.tsx; typecheck, build, screenshots → /home/claude/screens/v0180/ (script screenshots-v0180.mjs).

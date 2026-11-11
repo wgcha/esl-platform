@@ -337,8 +337,8 @@ export function selectSubBlocked(st: DoeSettingsOut, base: DoeSelectBase, source
   const sb = scenarioBlocked(st, "select");
   if (sb) return sb;
   if (base === "mesh" && st.scenarios.select_mesh === false) return "서버에서 다른 모델(B 메시) 비드 선택이 꺼져 있습니다";
-  // v0.18.0(esl_step_graph.md §4.2·§6): ③ = select 가능 ∧ gmsh ready(paicad 무관). 옛 서버(select_step 없음)는 gmsh 로 판정
-  if (base === "step" && (st.scenarios.select_step === false || (st.scenarios.select_step == null && !st.gmsh.ready))) return DISABLED_REASON.GMSH_UNAVAILABLE;
+  // v0.18.0(esl_step_graph.md §4.2·§6): ③ = select 가능 ∧ gmsh ready(paicad 무관) — select_step 또는 gmsh 로 판정
+  if (base === "step" && (st.scenarios.select_step === false || !st.gmsh.ready)) return DISABLED_REASON.GMSH_UNAVAILABLE;
   // v0.17.0(esl_beadgraph.md §5.5): 자동 탐지 = 메시 분류기(select 가능 ∧ select.graph.enabled) — paicad 무관
   if (source === "auto" && (st.scenarios.select_auto === false || st.select?.graph?.enabled === false)) return "서버에서 비드 자동 분류가 꺼져 있습니다 — 직접 선택을 쓰세요";
   return null;

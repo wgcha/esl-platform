@@ -165,7 +165,7 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["선택 저장"]));
   }, 15000);
 
-  it("다른 모델 섞임: 자동 ③(STEP만) → ①로 바꾸면 ✗ + [다른 모델 빼기], ③ 쉘 물성 3칸 기본값(서버)", async () => {
+  it("다른 모델 섞임: 자동 ③(STEP만) → ①로 바꾸면 ✗ + [다른 모델 빼기], ③ 쉘 물성 3칸 기본값(서버) — v0.18.0 요소 크기 칸 없음", async () => {
     const { container } = renderApp("/p/p-body/doe/new?entries=le-1,le-2,le-9");
     await waitFor(() => expect(radio(/③ 다른 모델\(STEP만\)/).checked).toBe(true));
     fireEvent.click(radio(/① 같은 모델/));
@@ -177,13 +177,12 @@ describe("새 비드 DOE(§3·§12.2)", () => {
     await waitFor(() => expect((screen.getByRole("spinbutton", { name: "두께 t (mm)" }) as HTMLInputElement).value).toBe("1.2"), { timeout: 4000 });
     expect((screen.getByRole("spinbutton", { name: "E (MPa)" }) as HTMLInputElement).value).toBe("205000");
     expect((screen.getByRole("spinbutton", { name: "ν" }) as HTMLInputElement).value).toBe("0.3");
-    expect((screen.getByRole("spinbutton", { name: "요소 크기 (mm)" }) as HTMLInputElement).value).toBe("5");
+    // v0.18.0 ③ = select step: 요소 크기 칸 없음(④ 프로필 — 안내 1줄)
+    expect(screen.queryByRole("spinbutton", { name: "요소 크기 (mm)" })).toBeNull();
+    expect(screen.getByTestId("step-mesh-note").textContent).toMatch(/요소 3 mm\(④ 설정\)/);
     await waitFor(() => expect(primaries(container)[0].disabled).toBe(false));
     fireEvent.change(screen.getByRole("spinbutton", { name: "ν" }), { target: { value: "0.5" } });
     expect(reasonOf(primaries(container)[0])).toMatch(/ν 는 0 이상 0.5 미만/);
-    fireEvent.change(screen.getByRole("spinbutton", { name: "ν" }), { target: { value: "0.3" } });
-    fireEvent.change(screen.getByRole("spinbutton", { name: "요소 크기 (mm)" }), { target: { value: "25" } });
-    expect(reasonOf(primaries(container)[0])).toMatch(/요소 크기는 1~20 mm/);
   }, 10000);
 
   it("v0.16.2 ② 직접 선택: B 메시 칸·파트 제목 기본(서버 part_title), STEP 칸 없음, 메시 없으면 사유 → select + select_base mesh", async () => {
