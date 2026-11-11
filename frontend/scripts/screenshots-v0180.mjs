@@ -38,8 +38,10 @@ const check = async (page, w, h, name, prim = 1) => {
   if (!ok) failed += 1;
   console.log(`${ok ? "OK  " : "FAIL"} ${w}×${h} ${name}: 가로 스크롤 ${r.hScroll ? "있음" : "없음"} · 잘린 카드 ${r.cut} · 표 잘림 ${r.wraps} · 주 버튼 ${r.prim}/${prim}`);
 };
+/** 파일 이름 앞붙이(통합 빌드 = SHOT_PREFIX=int_) */
+const prefix = process.env.SHOT_PREFIX ?? "";
 const shot = async (page, name) => {
-  const p = path.join(out, name);
+  const p = path.join(out, prefix + name);
   await page.screenshot({ path: p });
   console.log(p);
 };

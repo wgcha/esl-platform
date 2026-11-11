@@ -6,5 +6,7 @@ Done:
 - [3] doe_select._step_plan_extras: fixed[].src (fixed_transfer.json node_id) + region_ab (keepout.region_rings outer rings); DoePlanOut.region_ab; test test_step_plan_extras_fixed_src_and_region
 - [6] VERSION/CHANGELOG/test asserts 0.18.0
 - [4] V-SG-7 E2E now runs (fixtures exe/settings_dict/worker, select_schema2 marker, H5 A case) full flow prep→seed→preview→run→files, 9 passed
-TODO: [5] contract §12 + decisions.md; test-all; regress.py/sel_regress.py; screenshots; push; remove this file + worktree.
-- TEMP (not to commit): config/esl_platform*.example.yaml upload.min_free_gb 20→1 for test run (19 GB free); git checkout before commit
+- [5] contract §12 + decisions done
+- test-all EXIT 0: core 1047p/70s, beadgraph 49p/1s, backend 703p, worker 260p, deploy 156p/21s, vitest 572, typecheck/build/check:api ok; SCX 77+32 pass; H6-STEP slow 23 pass
+TODO: regress (running, scratchpad/reg180), screenshots, final commit, push, remove worktrees
+- temp min_free_gb yaml change reverted after test-all
