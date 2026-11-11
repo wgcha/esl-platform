@@ -1320,6 +1320,11 @@ def _bbox_str(k) -> str:
     return ",".join(f"{float(v):g}" for v in (k or []))
 
 
+def _md(mesh_dir: str | None) -> dict:
+    """v0.18.0 SG-D-5: mesh_dir 는 ③ step 일 때만 넘김 — ④ 호출 인자 그대로(대역 함수 시험 포함)."""
+    return {"mesh_dir": mesh_dir} if mesh_dir else {}
+
+
 def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: str, lad: list[str],
                     remesh_ok: bool, avail: int | None, mesh_dir: str | None = None) -> dict:
     """BD_MESH0 ④ 형상 1개 분기(§7): mesh → 메시 입력(in-process), cad → 기존 그대로, remesh → 재메시, auto → cad 를 기존
@@ -1337,7 +1342,7 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         return r
     if mode == "freeform":                              # v0.16.3 C2-D-26: cad 없이 freeform → tria
         c.writer.makedirs(d)
-        return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail, mesh_dir=mesh_dir)
+        return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail, **_md(mesh_dir))
     t0 = time.monotonic()
     auto = mode == "auto" and len(lad) > 1
     lg = mg.large_model(c.p(row["rel"]), ccfg["mesh"])   # v0.17.4 C2-D-33 대형 모델(STEP 본문 세기 — 결과와 무관)
@@ -1350,13 +1355,13 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
             if sh is not None:
                 to = min(to, float(sh) * float(mr._rcfg(ccfg)["total_timeout_s"]))
     r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
-                      timeout_s=to, **({"large": True} if lg["large"] else {}), mesh_dir=mesh_dir)
+                      timeout_s=to, **({"large": True} if lg["large"] else {}), **_md(mesh_dir))
     r["mesh_method"] = "cad"
     if r.get("cad_relaxed"):                            # v0.17.4 C2-D-32 cad 자식 안 ③ 옵션 재시도 성공
         _cmp_relaxed_row(r, time.monotonic() - t0, lg)
     if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
-    out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg, mesh_dir=mesh_dir)
+    out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg, **_md(mesh_dir))
     if lg["large"]:                                     # v0.17.4 C2-D-33 대형 판정(사다리 행에만 — 정상 형상 키 없음)
         out["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
     return out
@@ -1465,7 +1470,7 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     rxc = (ccfg.get("mesh") or {}).get("cad_relaxed") or {}
     if r0 is not None and ff and rxc.get("enabled") and not (pm.get("cad_relaxed") or {}).get("tried"):
         rr = _cmp_relaxed_parent(c, row, h, ccfg, props, lad, ff_skip, elapsed, attempts, infos, keep, n_try, cad_err,
-                                 lg or {}, mesh_dir=mesh_dir)
+                                 lg or {}, **_md(mesh_dir))
         n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
         if rr.get("status") == "READY":
             return rr
@@ -1529,7 +1534,7 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
             continue
         if stage == "defeature":                        # v0.16.1 §5A.1 형상 단순화(작은 형상 억제) 단계
             rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err,
-                                      cap=cap, mesh_dir=mesh_dir)
+                                      cap=cap, **_md(mesh_dir))
             n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
             if rr.get("status") == "READY":
                 return rr
