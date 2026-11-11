@@ -2676,6 +2676,8 @@ tbody th.doe-name-col {
 .doe-mesh-note {
   align-self: end;
   padding-bottom: 0.35rem;
+  white-space: nowrap;   /* v0.18.0 fix: '요소 3 mm' 가 낱말 가운데서 줄바꿈되지 않게(int_1) */
+  flex-shrink: 0;
 }
 /* v0.16.0 ④ 메시 옵션: 출처 토글 · 파트 ID · 고급 설정 · '메시 방식' 열/배지 */
 .doe-shape-table .doe-src-col {
@@ -2785,6 +2787,15 @@ tbody th.doe-name-col {
 }
 .doe-fixed {
   fill: var(--accent);
+}
+/* v0.18.0 ③ A 고정 이전 노드(테 두른 점) · 주 시트 영역 외곽(점선) */
+.doe-fixed.xfer {
+  stroke: #fff;
+  paint-order: stroke;
+}
+.pv-region path {
+  stroke: #2b8a3e;
+  stroke-opacity: 0.85;
 }
 .doe-load {
   fill: var(--bad);
@@ -3974,6 +3985,7 @@ details.card.fold > .fold-body {
 .pv-sw-apoints { background: none; border: 2px solid #e8590c; transform: rotate(45deg) scale(0.8); }
 .pv-sw-loads { background: rgba(184, 56, 44, 0.3); border: 1px solid var(--bad); border-radius: 50%; }
 .pv-sw-nodes { background: var(--text-2); border-radius: 50%; width: 0.35rem; height: 0.35rem; }
+.pv-sw-region { background: none; border: 2px dashed #2b8a3e; }
 .pv-main {
   min-width: 0;
 }

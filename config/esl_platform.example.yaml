@@ -305,6 +305,13 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       morph: {ramp_k: 3.0, outside_tol_mm: 1.0e-6, achieved_tol_mm: 1.0e-6, corner: {area_ratio_min: 0.35, shrink: 0.8, iters: 40}, w_smooth_iters: 3}   # w_smooth_iters = W 바깥 방향장 완화 반복(꺾임·연결부 연속, 0 = 끔)
       sym_tol_mm: 0.5                 # 묶음 공칭 차·대칭 묶기 허용(BG-D-17·21)
       limits: {max_elems: 600000, timeout_s: 180, max_raster_px: 4000000}   # 넘으면 GRAPH_FAILED{TOO_LARGE·TIMEOUT}(준비는 READY)
+    step_graph:                       # v0.18.0 ③ 다른 모델(STEP만) = select_base step 스터디만 읽음(계약 esl_step_graph.md §4.3) — 기본값이면 해시 제외
+      max_elems: 600000               # 분류 요소 상한(= graph.limits 와 큰 값) — 넘으면 GRAPH_FAILED{TOO_LARGE}(요소 비드로 계속)
+      timeout_s: 300                  # 분류 시간 상한(s)
+      tria_warn_frac: 0.5             # 삼각형 비율 > 이 값(또는 사다리 끝 tria) = 경고 STEP_GRAPH_TRIA
+      tria_policy: warn               # warn = 경고만(분류·모핑 진행) | block = 준비 실패 STEP_GRAPH_TRIA_BLOCKED
+      fixed_transfer: {enabled: true, mode: auto, frame_min_holes: 5, frame_match_mm: null, frame_resid_mm: null, tol_mm: null, snap_mm: null}   # A 고정점 이전: auto(구멍 특징 frame 판정 — A·B 구멍 대응 ≥ max(frame_min_holes, A 구멍 50 %) ≤ frame_match_mm(null = 2h), 잔차 중앙값 ≤ frame_resid_mm(null = h/4)·최대 ≤ h/2 → 최근접 노드 ≤ tol(null = h, 강체 맞춤 가능 = xyz_fitted, 클러스터마다 검증), 아니면 B 구멍 스냅 ≤ snap(null = boundary.fastener_warn_mm)) | xyz | hole
+      region: {mode: auto, pad_mm: null, min_frac: 0.5}   # 평가 영역(주 시트): auto(A part bbox 겹침, A 없으면 최대 연결 성분) | a_bbox | largest | all · pad null = 2h · 영역 < min_frac = STEP_GRAPH_REGION_SMALL
     thumb: {w: 320, h: 240, supersample: 2, view: auto, tilt_deg: 25.0, margin: 1.15, ambient: 0.35}
     derive_cache_n: 8                 # 백엔드 derive 결과 캐시(선택 sha256 키, 0 = 끔)
     derive_timeout_s: 20              # 백엔드 동기 derive 상한(넘으면 503 SELECT_DERIVE_TIMEOUT)

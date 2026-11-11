@@ -95,6 +95,20 @@
 
 결과 보고: 위 시간·메모리 값, 선택 소요 시간, 품질 실패 비율, feature 각 조정 필요 여부, 검증 낙하 결과 요약.
 
+## V-SG-R1 — ③ STEP 기준 select(v0.18.0, 이슈 #63 실제 B STEP)
+
+계약 esl_step_graph.md V-SG-R1(SG-D-13 개정·SG-X-2 확인 포함). v0.17.4 사다리 필수.
+
+| # | 항목 | 확인 | 메모 |
+|---|---|---|---|
+| SG-R1-1 | 메시·분류 | 메시 방식(cad 기대), 세그먼트·접합 수(beadgraph 단독 실측 111·101 과 비교), paicad 가 버린 230건 중 세그먼트로 잡은 수 | |
+| SG-R1-2 | 평가 영역 | `prep/input.json` region — 밖 ≈ 64k 노드, z 16.7~29.6 mm | |
+| SG-R1-3 | 고정 이전 판정 | `prep/select/fixed_transfer.json` `frame_check`: ok(기대 참), `n_matched`/`n_a_holes`, `resid_med_mm` ≤ h/4, `resid_max_mm` ≤ h/2, method `xyz_nearest`(`xyz_fitted` 면 `fit.rot_deg`·`shift_mm` 기록) | |
+| SG-R1-4 | 클러스터 잔차 | 모든 `matches[].resid_mm` 와 `via`(hole 대체 수), `unmatched[]` 라벨 — 평면도에서 이전 고정이 실제 체결 자리인지 눈으로 | |
+| SG-R1-5 | 걸친 보스 수(SG-X-2) | 형상에서 벽에 걸친 보스 수(사람이 셈) vs 그래프 걸침 섬(`graph.json` `islands[].straddle`) 수 vs 경고 `STEP_GRAPH_ISLAND_AS_WALL` 후보(층·세그먼트) | |
+| SG-R1-6 | 바깥 이동 판정 우회 없음(SG-X-2) | SG-R1-5 의 세그먼트마다 D·W 안 1개씩 미리보기·실행 → 걸친 보스가 벽과 함께 움직이는지, 그 밖이 움직이면 `BG_OUTSIDE_MOVED`(FAILED_MESH)로 제외되는지. 조용히 READY 로 새면 SG-X-2 를 결함으로 다시 엶 | |
+| SG-R1-7 | 자동 seed 안 | 뒤집힘 0·바깥 이동 0 | |
+
 ## 문제 해결 메모
 
 - `PAICAD_OCP_MISSING`: `paicad version --json` 의 `ocp` 가 null — `cadquery-ocp` 설치 실패 또는 VC++ 재배포 런타임 없음. `pip show cadquery-ocp`(설치 venv) 확인.

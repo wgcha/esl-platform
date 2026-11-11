@@ -213,7 +213,14 @@ DEFAULTS: dict = {
                                    "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                                    "w_smooth_iters": 3},       # W 바깥 방향장 완화(꺾임·연결부 연속 — 구현 키, 계약 외 추가)
                          "sym_tol_mm": 0.5,
-                         "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}},
+                         "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}},
+               # v0.18.0 STEP_GRAPH(esl_step_graph.md §4.3) — select_base step 스터디만 읽음. 해시: step 기준·기본값 아닐 때만
+               # (bead_select.HASH_NEW_KEYS_V0180). 백엔드 BeadDoeSelectStepGraphCfg·config/*.example.yaml 거울.
+               "step_graph": {"max_elems": 600000, "timeout_s": 300, "tria_warn_frac": 0.5, "tria_policy": "warn",
+                              "fixed_transfer": {"enabled": True, "mode": "auto", "frame_min_holes": 5,
+                                                 "frame_match_mm": None, "frame_resid_mm": None, "tol_mm": None,
+                                                 "snap_mm": None},
+                              "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5}}},
     # 계약에 숫자가 명시된 내부 상한(설정으로 바꿀 수 있게 키로 둠)
     "limits": {"max_json_mb": 64, "seed_max": 2 ** 32 - 1, "n_min": 2, "levels_min": 2, "cluster_k_max": 5,
                "ranking_report_rows": 20, "min_disp_range_mm": 1.0},

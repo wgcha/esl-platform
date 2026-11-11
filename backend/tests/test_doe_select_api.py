@@ -400,7 +400,11 @@ def test_settings_select_block(client, world):
                            "island": {"max_mm": 40.0, "ring_frac": 0.9},           # 브라우저 섬 판정 거울(SR-D-26)
                            "hole": {"bridge_max_mm": 20.0},                         # v0.16.2 AD-D-7
                            # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5) — 그래프 분류·섬 상한 60(D8)·대칭 묶기 허용차
-                           "graph": {"enabled": True, "island": {"max_mm": 60.0}, "sym_tol_mm": 0.5}}
+                           "graph": {"enabled": True, "island": {"max_mm": 60.0}, "sym_tol_mm": 0.5},
+                           # v0.18.0 STEP_GRAPH(esl_step_graph.md §4.2) — ③ select_base step 화면 안내
+                           "step_graph": {"tria_policy": "warn", "tria_warn_frac": 0.5, "max_elems": 600000,
+                                          "size_mm": 3.0, "fixed_transfer": {"enabled": True, "mode": "auto"},
+                                          "region": {"mode": "auto"}}}
 
 
 def test_select_defaults_mirror_contract():
@@ -427,12 +431,17 @@ def test_select_defaults_mirror_contract():
             # v0.16.2(esl_bead_auto.md §3.2 — AD-D-7·12)
             "hole": {"bridge_max_mm": 20.0}, "auto": {"slope_diff_rel": 0.2},
             # v0.17.0(esl_beadgraph.md §5.5 — 계약 yaml 그대로)
-            "graph": GRAPH_DEFAULTS}
+            "graph": GRAPH_DEFAULTS,
+            # v0.18.0(esl_step_graph.md §4.3 — 계약 yaml 그대로)
+            "step_graph": STEP_GRAPH_DEFAULTS}
     assert BeadDoeSelectCfg().model_dump() == want
     if "select" in DEFAULTS:
         from doe_support import core_view_v0161
 
         assert DEFAULTS["select"] == core_view_v0161({"select": want}, DEFAULTS)["select"]
+    # 통합 v0.18.0: 코어 병합 뒤 step_graph 는 생략 없이 직접 대조(키·값 = 계약 §4.3, size_mm 없음 — h 는 ④ 프로필)
+    assert DEFAULTS["select"]["step_graph"] == STEP_GRAPH_DEFAULTS == BeadDoeSelectCfg().step_graph.model_dump()
+    assert "size_mm" not in DEFAULTS["select"]["step_graph"]
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
         assert BeadDoeCfg.model_validate(y["bead_doe"]).select.model_dump() == want, p
@@ -459,6 +468,11 @@ GRAPH_DEFAULTS = {"enabled": True, "feature_angle_deg": 10.0, "level_tol_mm": 0.
                             "corner": {"area_ratio_min": 0.35, "shrink": 0.8, "iters": 40},
                             "w_smooth_iters": 3},                       # 통합 v0.17.0(§12 BG-X-5 — 코어 구현 키 거울)
                   "sym_tol_mm": 0.5, "limits": {"max_elems": 600000, "timeout_s": 180, "max_raster_px": 4000000}}
+STEP_GRAPH_DEFAULTS = {"max_elems": 600000, "timeout_s": 300, "tria_warn_frac": 0.5, "tria_policy": "warn",
+                       "fixed_transfer": {"enabled": True, "mode": "auto", "frame_min_holes": 5,
+                                          "frame_match_mm": None, "frame_resid_mm": None, "tol_mm": None,
+                                          "snap_mm": None},
+                       "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5}}
 GRAPH_BAD = ({"feature_angle_deg": 0}, {"feature_angle_deg": 46}, {"level_tol_mm": 0}, {"island": {"max_mm": 0}},
              {"island": {"straddle_frac": 1.0}}, {"island": {"straddle_frac": 0}}, {"bead": {"bend_deg": 180}},
              {"bead": {"bend_deg": 0}}, {"bead": {"width_jump": 0}}, {"morph": {"ramp_k": 0.5}},

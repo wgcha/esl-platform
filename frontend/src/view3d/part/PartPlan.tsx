@@ -117,6 +117,14 @@ export function PartPlan({ plan, on, active }: { plan: PartPlanData; on: (k: Lay
           </g>
         )}
         {on("boundary") && plan.holes.map((h, i) => <path key={i} d={poly(h)} className="ko-hole" />)}
+        {on("region") && (plan.region?.length ?? 0) > 0 && (
+          <g className="pv-region" data-testid="plan-region">
+            {plan.region!.map((r, i) => (
+              <path key={i} d={poly(r)} fill="none" strokeWidth={S / 380} strokeDasharray={`${S / 90} ${S / 160}`} />
+            ))}
+            <title>주 시트 영역(평가·비드 후보) — 밖 형상은 해석에만 포함</title>
+          </g>
+        )}
         {on("beads") &&
           beads.map((b) => {
             if (!b.tiers) {
@@ -154,7 +162,11 @@ export function PartPlan({ plan, on, active }: { plan: PartPlanData; on: (k: Lay
           })}
         {on("fixed") &&
           fixed.map((p, i) =>
-            p.label ? (
+            p.xfer ? (
+              <circle key={i} cx={X(p.a)} cy={Y(p.b)} r={S / 260} className="doe-fixed xfer" strokeWidth={S / 700} data-testid="plan-fixed-xfer">
+                <title>A 고정 이전</title>
+              </circle>
+            ) : p.label ? (
               <circle key={p.label ?? i} cx={X(p.a)} cy={Y(p.b)} r={S / 160} className="doe-fixed">
                 <title>{`${p.label} (${p.kind ?? "fixed"})`}</title>
               </circle>

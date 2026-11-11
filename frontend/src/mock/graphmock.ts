@@ -8,7 +8,7 @@ import type {
 } from "../api/types";
 import { writeBasis } from "../view3d/select/basis";
 import { writeGraphBin, type GraphLabels } from "../view3d/select/graph";
-import { EMPTY_SET } from "../view3d/select/ranges";
+import { EMPTY_SET, compress } from "../view3d/select/ranges";
 import { writeSelectBin } from "../view3d/select/view";
 import fx from "./h6graph.json";
 import { writeGlb } from "./view3dmock";
@@ -357,4 +357,52 @@ export function graphValidate(sel: DoeSelectionV2 | undefined, graphAvailable: b
   if (!graphAvailable) return null;
   const r = resolve(sel);
   return "bad" in r ? r.bad : null;
+}
+
+// ---------------------------------------------------------------- v0.18.0 ③ STEP 기준 select(esl_step_graph.md SG-D-14·16·19)
+/** A 고정 이전 seed fixed_user(목): 고정 노드를 2개 이상 가진 요소(요소 ID) */
+export function stepFixedUser(): DoeSelectionV2["fixed_user"] {
+  const m = graphMesh();
+  const ids: number[] = [];
+  m.quads.forEach((q, e) => {
+    if (q.filter((v) => m.fixed[v]).length >= 2) ids.push(m.elemId[e]);
+  });
+  return { q: compress(ids), t: [] };
+}
+/** ③ 목 평가 영역 위 끝 b(판 위쪽 18 % = 추가 형상 — stepPlan region_ab 와 같은 값) */
+function stepRegionTopB(): number {
+  const { ny, h, y0 } = fx.grid;
+  return y0 + ny * h * 0.82;
+}
+/** 세그먼트 골격점의 절반 넘게가 영역 밖(SG-D-20d out_of_region — 코어는 요소 50 % 초과 밖) */
+function segOutOfRegion(s: BgSegment): boolean {
+  const bt = stepRegionTopB();
+  const pts = s.skeleton ?? [];
+  return pts.length > 0 && pts.filter((p) => p[1] > bt).length * 2 > pts.length;
+}
+/** ③ seed: auto = 그래프 seed(영역 밖 세그먼트 비드 제외 — 코어 SG-D-20d) + fixed_user, manual = 빈 비드 + fixed_user(source fixed_transfer) */
+export function stepAutoSeed(auto: boolean): DoeSelectAutoOut {
+  const g = graphAutoSeed();
+  const fixed_user = stepFixedUser();
+  if (auto) {
+    const segs = new Map(graphMesh().graph.segments.map((s) => [s.anchor, s] as [number, BgSegment]));
+    const inside = (g.selection as DoeSelectionV2).beads.filter((b) => b.src !== "graph" || !b.segs.some((x) => { const s = "anchor" in x ? segs.get(x.anchor) : undefined; return s ? segOutOfRegion(s) : false; }));
+    const beads = inside.map((b, i) => ({ ...b, id: `b${i + 1}` }));
+    const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads, fixed_user };
+    return { ...g, selection, sha256: graphSelSha(selection), warnings: [] };
+  }
+  const selection: DoeSelectionV2 = { ...(g.selection as DoeSelectionV2), beads: [], fixed_user };
+  return { selection, sha256: graphSelSha(selection), map: [], warnings: [], paicad_version: null, source: "graph", hints: [] };
+}
+/** ③ plan-view: 그래프 평면도 + 고정 = A 이전 표시(src) + 주 시트 영역 외곽(목: 판 위쪽 18 % 는 추가 형상) */
+export function stepPlan(sel: DoeSelectionV2): DoePlanOut & { region_ab: XY[][] } {
+  const p = graphPlan(sel);
+  const [a0, a1] = p.frame.a_range;
+  const [b0] = p.frame.b_range;
+  const bt = stepRegionTopB();
+  return {
+    ...p,
+    fixed: p.fixed.map((f) => ({ ...f, src: "a_transfer" as const })),
+    region_ab: [[[a0, b0], [a1, b0], [a1, bt], [a0, bt], [a0, b0]]],
+  };
 }

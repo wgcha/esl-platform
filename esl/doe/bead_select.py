@@ -69,6 +69,8 @@ HASH_NEW_KEYS_V0162 = ("hole.bridge_max_mm",)
 HASH_NEW_SECTIONS_V0162 = ("hole",)                # 위 키를 빼고 비면 절째 제거
 # v0.17.0 BG-D-41: 새 절 select.graph — 기본값이면 해시 사본에서 빠짐(_cfg_hash·_sel_cfg_sha = v0.16.2 와 같음), 다르면 절 그대로
 HASH_NEW_KEYS_V0170 = ("graph",)
+# v0.18.0 SG §4.3: 새 절 select.step_graph — select_base step 스터디에서만, 기본값이 아닐 때만 해시 사본에 남음(①② 해시 불변)
+HASH_NEW_KEYS_V0180 = ("step_graph",)
 HASH_EXCLUDE_ALWAYS = ("auto",)
 POLICIES = ("warn", "skip")
 
@@ -90,10 +92,10 @@ def _qcfg(cfg: dict | None) -> dict:
     return DEFAULTS["compare"]["quality"]
 
 
-def select_hash_view(sel_cfg: dict) -> dict:
+def select_hash_view(sel_cfg: dict, *, step: bool = False) -> dict:
     """§7.2 이어하기 해시용 select 설정 사본: ``HASH_NEW_KEYS_V0161``·``HASH_NEW_KEYS_V0162`` 키가 기본값과 같으면 제거(그래서
     빈 절이 된 v0.16.2 절도 제거), ``HASH_EXCLUDE_ALWAYS`` 절은 항상 제거 → 기본 설정이면 v0.16.0 해시와 같음. 값을 바꾸면 그 키만
-    남아 해시가 바뀐다."""
+    남아 해시가 바뀐다. v0.18.0: ``HASH_NEW_KEYS_V0180``(step_graph) 절은 step=False(①②) 면 항상, step=True 면 기본값일 때 제거."""
     from esl.doe import DEFAULTS
     out = copy.deepcopy(sel_cfg)
     dflt = DEFAULTS["select"]
@@ -110,6 +112,9 @@ def select_hash_view(sel_cfg: dict) -> dict:
             del out[top]
     for k in HASH_NEW_KEYS_V0170:                      # v0.17.0 BG-D-41: 기본값과 같으면 절째 제거
         if k in out and out[k] == dflt.get(k):
+            del out[k]
+    for k in HASH_NEW_KEYS_V0180:                      # v0.18.0 SG §4.3: step 기준 스터디만, 기본값이 아닐 때만
+        if k in out and (not step or out[k] == dflt.get(k)):
             del out[k]
     for k in HASH_EXCLUDE_ALWAYS:
         out.pop(k, None)

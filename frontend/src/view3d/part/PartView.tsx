@@ -75,7 +75,7 @@ export function PartView({ data, tools, side, testId = "part-view" }: {
 
 /** 3D 에서 의미 있는 층(요소 색·형상) — 평면 전용 층(점·고리·기호)은 3D 칩에서 숨김 */
 const LAYER_3D = new Set<LayerKey>(["graph", "islands"]);
-const LAYER_PLAN = new Set<LayerKey>(["mesh", "boundary", "beads", "fixed", "loads", "apoints", "nodes"]);
+const LAYER_PLAN = new Set<LayerKey>(["mesh", "boundary", "region", "beads", "fixed", "loads", "apoints", "nodes"]);
 
 /** PartView 의 3D 칸(고정 형상 + 요소 색·안 변위·빨간 점) */
 export function Part3D({ scene: d, on, testId, ariaLabel }: { scene: Part3DData; on: (k: LayerKey) => boolean; testId: string; ariaLabel?: string }) {

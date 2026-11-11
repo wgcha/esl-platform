@@ -5,6 +5,7 @@ import type {
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
+  DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning,
 } from "./types";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -286,13 +287,17 @@ export const getSelectAuto = doe.selectAuto;
 export async function loadSelectAuto(id: string): Promise<{ seed: DoeSelectAutoOut | null; code: string | null }> {
   try {
     const r = await doe.selectAuto(id);
-    if (!r?.selection || !Array.isArray(r.selection.beads) || !r.selection.beads.length) return { seed: null, code: r?.warnings?.find((w) => w.code === "AUTO_DETECT_FAILED") ? "AUTO_DETECT_FAILED" : "AUTO_EMPTY" };
+    // v0.18.0(SG-D-16): ③ manual seed = 빈 비드 + fixed_user(A 고정 이전) — 고정만 있어도 seed
+    if (!r?.selection || !Array.isArray(r.selection.beads) || (!r.selection.beads.length && !seedHasFixed(r.selection))) return { seed: null, code: r?.warnings?.find((w) => w.code === "AUTO_DETECT_FAILED") ? "AUTO_DETECT_FAILED" : "AUTO_EMPTY" };
     return { seed: { ...r, warnings: Array.isArray(r.warnings) ? r.warnings : [], map: Array.isArray(r.map) ? r.map : [] }, code: null };
   } catch (e) {
     if (e instanceof ApiError && e.code === "AUTO_NOT_AVAILABLE") return { seed: null, code: "AUTO_NOT_AVAILABLE" };
     throw e;
   }
 }
+/** seed 에 고정(fixed_user) 요소가 있음 */
+export const seedHasFixed = (sel: { fixed_user?: { q: [number, number][]; t: [number, number][] } | null }): boolean =>
+  !!sel.fixed_user && (sel.fixed_user.q.length > 0 || sel.fixed_user.t.length > 0);
 /** 계약 R4 이름(api/doe.ts getShapeDefeature) */
 export const getShapeDefeature = doe.shapeDefeature;
 
@@ -315,12 +320,16 @@ export type NewRadio = "case" | "bmesh" | "step" | "compare";
 export const NEW_RADIOS: NewRadio[] = ["case", "bmesh", "step", "compare"];
 export const NEW_RADIO_NO: Record<NewRadio, string> = { case: "①", bmesh: "②", step: "③", compare: "④" };
 export const NEW_RADIO_NAME: Record<NewRadio, string> = { case: "같은 모델", bmesh: "다른 모델(B 메시)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)" };
-/** 라디오 → 요청 시나리오·기준 */
+/** 라디오 → 요청 시나리오·기준. v0.18.0(esl_step_graph.md §5.1) ③ = select + select_base "step" — 새 ③ 은 scenario step 을 만들지 않음 */
 export const radioRequest = (r: NewRadio): { scenario: DoeScenario; selectBase: DoeSelectBase | null } =>
-  r === "case" ? { scenario: "select", selectBase: "case" } : r === "bmesh" ? { scenario: "select", selectBase: "mesh" } : { scenario: r, selectBase: null };
-/** 기존 스터디 → 라디오 위치(same = ①, mesh = ②, select = select_base) */
+  r === "case" ? { scenario: "select", selectBase: "case" } : r === "bmesh" ? { scenario: "select", selectBase: "mesh" } : r === "step" ? { scenario: "select", selectBase: "step" } : { scenario: r, selectBase: null };
+/** 기존 스터디 → 라디오 위치(same = ①, mesh = ②, step(이전 방식)·select step = ③, select = select_base) */
 export const studyRadio = (s: DoeScenario, base?: DoeSelectBase | null): NewRadio =>
-  s === "same" ? "case" : s === "mesh" ? "bmesh" : s === "select" ? (base === "mesh" ? "bmesh" : "case") : s;
+  s === "same" ? "case" : s === "mesh" ? "bmesh" : s === "select" ? (base === "mesh" ? "bmesh" : base === "step" ? "step" : "case") : s;
+/** 라디오 → select 기준(①②③ 만, ④ = null) */
+export const radioBase = (r: NewRadio): DoeSelectBase | null => (r === "case" ? "case" : r === "bmesh" ? "mesh" : r === "step" ? "step" : null);
+/** v0.18.0 기존 ③(scenario step, paicad) 스터디 표시(§5.3) */
+export const LEGACY_STEP_LABEL = "이전 방식(paicad)";
 /** ①② 하위 라디오(AD-D-1) */
 export const BEAD_SOURCE_NAME: Record<DoeBeadSource, string> = { auto: "자동 탐지", manual: "직접 선택" };
 /** v0.16.2 ①② 하위 선택 비활성 사유(null = 가능). 옛 서버(select_auto·select_mesh 없음)는 paicad 준비·select 가능으로 판정 */
@@ -328,15 +337,24 @@ export function selectSubBlocked(st: DoeSettingsOut, base: DoeSelectBase, source
   const sb = scenarioBlocked(st, "select");
   if (sb) return sb;
   if (base === "mesh" && st.scenarios.select_mesh === false) return "서버에서 다른 모델(B 메시) 비드 선택이 꺼져 있습니다";
+  // v0.18.0(esl_step_graph.md §4.2·§6): ③ = select 가능 ∧ gmsh ready(paicad 무관) — select_step 또는 gmsh 로 판정
+  if (base === "step" && (st.scenarios.select_step === false || !st.gmsh.ready)) return DISABLED_REASON.GMSH_UNAVAILABLE;
   // v0.17.0(esl_beadgraph.md §5.5): 자동 탐지 = 메시 분류기(select 가능 ∧ select.graph.enabled) — paicad 무관
   if (source === "auto" && (st.scenarios.select_auto === false || st.select?.graph?.enabled === false)) return "서버에서 비드 자동 분류가 꺼져 있습니다 — 직접 선택을 쓰세요";
   return null;
 }
 export const SCENARIO_NAME: Record<DoeScenario, string> = { same: "같은 모델", mesh: "다른 모델(메시 있음)", step: "다른 모델(STEP만)", compare: "형상 직접 비교(STEP 여러 개)", select: "같은 모델" };
 export const SCENARIO_NO: Record<DoeScenario, string> = { same: "①", mesh: "②", step: "③", compare: "④", select: "①" };
-/** v0.16.2 스터디 목록 시나리오 표기: ② B 메시 기준 select(inputs.select_base "mesh") = "② 다른 모델(B 메시)", 그 밖 = SCENARIO_NO·NAME */
+/** v0.16.2 스터디 목록 시나리오 표기: ② B 메시 기준 select(inputs.select_base "mesh") = "② 다른 모델(B 메시)", 그 밖 = SCENARIO_NO·NAME.
+ * v0.18.0: ③ STEP 기준 select = "③ 다른 모델(STEP만)", 기존 ③(scenario step) = "③ 다른 모델(STEP만) — 이전 방식(paicad)" */
 export const studyScenarioLabel = (s: DoeScenario, base?: DoeSelectBase | null): string =>
-  s === "select" && base === "mesh" ? `${NEW_RADIO_NO.bmesh} ${NEW_RADIO_NAME.bmesh}` : `${SCENARIO_NO[s]} ${SCENARIO_NAME[s]}`;
+  s === "select" && base === "mesh"
+    ? `${NEW_RADIO_NO.bmesh} ${NEW_RADIO_NAME.bmesh}`
+    : s === "select" && base === "step"
+      ? `${NEW_RADIO_NO.step} ${NEW_RADIO_NAME.step}`
+      : s === "step"
+        ? `${SCENARIO_NO.step} ${SCENARIO_NAME.step} — ${LEGACY_STEP_LABEL}`
+        : `${SCENARIO_NO[s]} ${SCENARIO_NAME[s]}`;
 /** ① 하위 선택 "비드 정의"(BS-D-1) */
 export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선택(메시)" } as const;
 /** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
@@ -373,7 +391,7 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
-export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown }) =>
+export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown; [k: string]: unknown }) =>
   w.message ||
   (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||
   (w.code === "SELECT_RANGE_INVERTS" && Array.isArray(w.usable) && w.usable.length === 2
@@ -465,6 +483,14 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   BG_BASIS_LEAK: "기저가 허용 구역 밖을 움직입니다(구현 오류)",
   BG_ACHIEVED_MISMATCH: "목표 깊이를 정확히 얻지 못했습니다(구현 오류)",
   BG_OUTSIDE_MOVED: "바뀐 세그먼트 밖이 움직였습니다",
+  // v0.18.0 ③ STEP 기준 select(esl_step_graph.md §4.2 — 원본 resources/doe_messages.json)
+  STEP_GRAPH_TRIA: "삼각형 메시 — 걸친 보스가 있는 채널의 D·W 안은 바깥 이동으로 실패할 수 있음",
+  STEP_GRAPH_TRIA_BLOCKED: "삼각형 메시로 끝나 준비를 멈췄습니다(서버 설정 tria_policy: block)",
+  FIXED_XFER_NONE: "A 고정점을 옮기지 못했습니다 — 고정 층에 직접 칠하세요",
+  FIXED_XFER_UNMATCHED: "옮기지 못한 A 고정 클러스터가 있습니다",
+  STEP_GRAPH_REGION: "주 시트 밖 형상 — 평가·비드 후보 제외",
+  STEP_GRAPH_REGION_SMALL: "평가 영역(주 시트)이 메시의 절반보다 작습니다 — 영역 설정을 확인하세요",
+  STEP_GRAPH_ISLAND_AS_WALL: "벽으로 분류된 걸침 보스 후보 — 그 세그먼트의 D·W 안은 보스를 벽과 함께 움직임(트리에서 확인)",
 };
 /** v0.17.0 GRAPH_FAILED 사유(code) */
 export const GRAPH_FAIL_REASON: Record<string, string> = { ERROR: "분류 오류", TIMEOUT: "시간 초과", TOO_LARGE: "요소 수 상한 초과", DISABLED: "서버에서 꺼짐", NO_FLOOR: "바닥을 찾지 못함" };
@@ -476,10 +502,62 @@ export function graphFailText(w: Record<string, unknown> | null | undefined): st
   const c = typeof w?.detail === "string" && GRAPH_FAIL_REASON[w.detail] ? w.detail : undefined;
   return `자동 분류 실패${c ? `(${GRAPH_FAIL_REASON[c]})` : ""}`;
 }
+/** v0.18.0 FIXED_XFER_NONE 사유 */
+export const XFER_NONE_REASON: Record<string, string> = { A_CASE_MISSING: "A Case 없음", A_SCAN_FAILED: "A 체결 스캔 실패", NO_MATCH: "대응 없음", DISABLED: "서버에서 꺼짐" };
+/** v0.18.0 ③ 기준 메시 방식 칩(cad / 폴백 freeform / 삼각형 폴백 — esl_step_graph.md §6) */
+export function meshMethodName(m: unknown): string {
+  const k = String(m ?? "");
+  return k === "cad" ? "CAD" : k === "freeform" ? "폴백 freeform" : k === "tria" ? "삼각형 폴백" : k === "refine" || k.startsWith("refine") ? "CAD 세분화" : k === "defeature" ? "형상 단순화" : k || "?";
+}
+/** v0.18.0 고정 이전 방법 문구(SG-D-13) */
+export const XFER_METHOD_NAME: Record<DoeFixedXferMethod, string> = { xyz_nearest: "좌표 일치 — 최근접 노드", xyz_fitted: "구멍 맞춤 이동 — 최근접 노드", ab_hole_snap: "좌표 불일치 — B 구멍 스냅", none: "자동 설정 없음" };
+/** v0.18.0 고정 이전 1줄: "A 고정 n개 중 m개를 옮김(좌표 일치 — 최근접 노드) — 고정 층에서 수정" */
+export function xferText(x: DoePrepFixedXfer): string {
+  const total = x.matched + x.unmatched;
+  if (x.method === "none" || x.matched <= 0) return `A 고정점 자동 설정 없음${total ? `(A 고정 ${total}개 — 대응 없음)` : ""} — 고정 층에 직접 칠하세요`;
+  return `A 고정 ${total}개 중 ${x.matched}개를 옮김(${XFER_METHOD_NAME[x.method]}) — 고정 층에서 수정${x.unmatched ? ` · 못 옮김 ${x.unmatched}개` : ""}`;
+}
+/** v0.18.0 평가 영역 1줄(SG-D-19) */
+export const regionText = (r: { n_out: number }) => `주 시트 밖 형상 ${r.n_out.toLocaleString()} 요소 — 평가·비드 후보 제외`;
+/** v0.18.0 ③ 선택 화면 요약에 모으는 준비 코드(① 입력 카드 목록에서는 뺌 — 한 번만 보이게) */
+export const STEP_PREP_CODES = new Set(["STEP_GRAPH_TRIA", "STEP_GRAPH_TRIA_BLOCKED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION", "STEP_GRAPH_REGION_SMALL", "STEP_GRAPH_ISLAND_AS_WALL"]);
+type StepPrep = {
+  fixed?: { source: string; n: number; xfer?: DoePrepFixedXfer | null } | null;
+  region?: { n_out: number } | null;
+  mesh?: { method?: string | null; tri_frac?: number | null } | null;
+  warnings: DoeWarning[];
+};
+type FoldLine = { text: string; info: boolean; code: string };
+/** v0.18.0 ③ select(step) 선택 화면 요약 — 주제마다 MsgFold 1줄(D-0.17.1-FOLD):
+ *  fixed = 고정 이전 1줄(정보) + 못 옮긴 A 고정 목록, region = 평가 영역 1줄(정보) + 영역 작음 경고, mesh = 삼각형 메시 경고.
+ *  요약 줄이 이미 말한 코드(FIXED_XFER_NONE·STEP_GRAPH_REGION)는 한 번만. 삼각형 경고는 서버 경고가 없으면 prep.mesh(방법 tria 또는 삼각 비율 > 기준)로 */
+export function stepPrepGroups(prep: StepPrep | null | undefined, triaWarnFrac = 0.5): { fixed: FoldLine[]; region: FoldLine[]; mesh: FoldLine[] } {
+  const g = { fixed: [] as FoldLine[], region: [] as FoldLine[], mesh: [] as FoldLine[] };
+  if (!prep) return g;
+  const ws = prep.warnings.filter((w) => STEP_PREP_CODES.has(w.code));
+  const line = (w: DoeWarning): FoldLine => ({ text: warnText(w), info: isInfoWarn(w), code: w.code });
+  const xfer = prep.fixed?.xfer ?? null;
+  const noneW = ws.find((w) => w.code === "FIXED_XFER_NONE");
+  if (xfer) g.fixed.push({ text: xferText(xfer), info: true, code: "FIXED_XFER" });
+  else if (noneW) g.fixed.push(line(noneW));
+  else if (prep.fixed?.source === "none") g.fixed.push({ text: "A 고정점 자동 설정 없음 — 고정 층에 직접 칠하세요", info: true, code: "FIXED_XFER_NONE" });
+  g.fixed.push(...ws.filter((w) => w.code === "FIXED_XFER_UNMATCHED").map(line));
+  const regionW = ws.find((w) => w.code === "STEP_GRAPH_REGION");
+  if (prep.region && prep.region.n_out > 0) g.region.push({ text: regionText(prep.region), info: true, code: "STEP_GRAPH_REGION" });
+  else if (regionW) g.region.push(line(regionW));
+  g.region.push(...ws.filter((w) => w.code === "STEP_GRAPH_REGION_SMALL").map(line));
+  const m = prep.mesh;
+  const triaW = ws.filter((w) => w.code === "STEP_GRAPH_TRIA" || w.code === "STEP_GRAPH_TRIA_BLOCKED");
+  if (triaW.length) g.mesh.push(...triaW.map(line));
+  else if (m && (m.method === "tria" || (typeof m.tri_frac === "number" && m.tri_frac > triaWarnFrac)))
+    g.mesh.push({ text: warnText({ code: "STEP_GRAPH_TRIA", mesh_method: m.method, tri_frac: m.tri_frac }), info: false, code: "STEP_GRAPH_TRIA" });
+  g.mesh.push(...ws.filter((w) => w.code === "STEP_GRAPH_ISLAND_AS_WALL").map(line));  // SG-X-2(분류 — 메시 출처 문제)
+  return g;
+}
 /** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */
 const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
 /** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
-const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED"]);
+const AUTO_INFO = new Set(["AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION"]);
 /** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
 function autoWarnText(w: Record<string, unknown>): string {
   const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
@@ -514,6 +592,15 @@ function autoWarnText(w: Record<string, unknown>): string {
       return w.bead != null ? `${B(w.bead)}: 자식 바닥 ${n(w.child)} 은 제자리 — 이 변의 벽이 높이 차를 흡수(${n(w.n_nodes)} 노드)` : "";
     case "BG_CORNER_GUARD":
       return w.bead != null ? `${B(w.bead)}: 바닥 코너 ${n(w.n_nodes)} 노드의 사면을 최대 ${n(w.flank_max_deg)}° 로 가파르게 했습니다` : "";
+    // v0.18.0 ③ STEP 기준(esl_step_graph.md §4.2)
+    case "STEP_GRAPH_TRIA":
+      return `삼각형 메시(${meshMethodName(w.mesh_method)}${typeof w.tri_frac === "number" ? ` · 삼각 ${Math.round(w.tri_frac * 100)} %` : ""}) — 걸친 보스가 있는 채널의 D·W 안은 바깥 이동으로 실패할 수 있음`;
+    case "FIXED_XFER_NONE":
+      return `A 고정점 자동 설정 없음(${XFER_NONE_REASON[String(w.reason ?? "")] ?? String(w.reason ?? "?")}) — 고정 층에 직접 칠하세요`;
+    case "FIXED_XFER_UNMATCHED":
+      return w.label != null ? `A 고정 ${String(w.label)}: B 에서 대응을 못 찾음${typeof w.d_mm === "number" ? `(최소 ${n(w.d_mm)} mm)` : ""} — 필요하면 고정 층에 칠하세요` : "";
+    case "STEP_GRAPH_REGION":
+      return typeof w.n_out === "number" ? regionText({ n_out: w.n_out }) : "";
     case "BG_RANGE_CLAMPED":
       return w.var != null && Array.isArray(w.from) && Array.isArray(w.to)
         ? `${String(w.var)}: 기본 범위 ${n(w.from[0])}~${n(w.from[1])} mm 끝에서 뒤집혀 ${n(w.to[0])}~${n(w.to[1])} mm 로 줄였습니다`

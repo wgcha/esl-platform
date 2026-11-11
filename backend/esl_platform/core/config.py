@@ -1093,6 +1093,44 @@ class BeadDoeSelectGraphCfg(_M):
     limits: BeadDoeSelectGraphLimitsCfg = BeadDoeSelectGraphLimitsCfg()
 
 
+class BeadDoeSelectStepGraphFixedTransferCfg(_M):
+    """v0.18.0 STEP_GRAPH 고정점 이전(esl_step_graph.md SG-D-13 개정 2026-11-12·15): 구멍 특징 frame 판정(A 구멍 ↔ B 구멍
+    대응 ≥ max(frame_min_holes, A 구멍 50 %) within frame_match_mm(null = 2h), 잔차 중앙값 ≤ frame_resid_mm(null = h/4),
+    1개 제외 최대 ≤ h/2) = xyz_nearest, 강체 맞춤 뒤 같은 기준 = xyz_fitted(≤ tol_mm, null = 기준 메시 h, 클러스터마다 검증),
+    아니면 ab_hole_snap(≤ snap_mm, null = boundary.fastener_warn_mm), 둘 다 0 = none.
+    mode auto(xyz → hole → none) | xyz | hole 강제. enabled false = 파일 없음 + FIXED_XFER_NONE{DISABLED}."""
+
+    enabled: bool = True
+    mode: Literal["auto", "xyz", "hole"] = "auto"
+    frame_min_holes: int = Field(default=5, ge=1, le=10_000)
+    frame_match_mm: float | None = Field(default=None, gt=0)
+    frame_resid_mm: float | None = Field(default=None, gt=0)
+    tol_mm: float | None = Field(default=None, gt=0)
+    snap_mm: float | None = Field(default=None, gt=0)
+
+
+class BeadDoeSelectStepGraphRegionCfg(_M):
+    """v0.18.0 평가 영역(SG-D-19·20): auto(A part bbox 겹침 최대 성분, A 없으면 최대 연결 성분) | a_bbox | largest | all(제한
+    없음). pad_mm null = 2h, 영역 비율 < min_frac = 경고 STEP_GRAPH_REGION_SMALL."""
+
+    mode: Literal["auto", "a_bbox", "largest", "all"] = "auto"
+    pad_mm: float | None = Field(default=None, gt=0)
+    min_frac: float = Field(default=0.5, gt=0, le=1)
+
+
+class BeadDoeSelectStepGraphCfg(_M):
+    """v0.18.0 STEP_GRAPH(esl_step_graph.md §4.3): select_base step 스터디만 읽음 — esl.doe.DEFAULTS["select"]["step_graph"] 거울.
+    코어 HASH_NEW_KEYS_V0180 — step 기준 스터디에서 기본값이 아닐 때만 select 해시에 들어감(V-SG-10). 분류 상한 = max(graph.limits,
+    이 값), tria 로 끝난 사다리 메시 = 경고(warn) | 준비 실패 STEP_GRAPH_TRIA_BLOCKED(block)."""
+
+    max_elems: int = Field(default=600000, ge=1, le=2_000_000)
+    timeout_s: float = Field(default=300, gt=0)
+    tria_warn_frac: float = Field(default=0.5, gt=0, le=1)
+    tria_policy: Literal["warn", "block"] = "warn"
+    fixed_transfer: BeadDoeSelectStepGraphFixedTransferCfg = BeadDoeSelectStepGraphFixedTransferCfg()
+    region: BeadDoeSelectStepGraphRegionCfg = BeadDoeSelectStepGraphRegionCfg()
+
+
 class BeadDoeSelectThumbCfg(_M):
     w: int = Field(default=320, ge=16, le=4096)
     h: int = Field(default=240, ge=16, le=4096)
@@ -1133,6 +1171,7 @@ class BeadDoeSelectCfg(_M):
     hole: BeadDoeSelectHoleCfg = BeadDoeSelectHoleCfg()        # v0.16.2 AD-D-7 구멍 건너 잇기 상한
     auto: BeadDoeSelectAutoCfg = BeadDoeSelectAutoCfg()        # v0.16.2 AD-D-12 자동 탐지 사면 힌트 기준
     graph: BeadDoeSelectGraphCfg = BeadDoeSelectGraphCfg()     # v0.17.0 BEADGRAPH 분류기·세그먼트 모핑(esl_beadgraph.md §5.5)
+    step_graph: BeadDoeSelectStepGraphCfg = BeadDoeSelectStepGraphCfg()     # v0.18.0 ③ select_base step(esl_step_graph.md §4.3)
     derive_cache_n: int = Field(default=8, ge=0, le=1000)      # 백엔드 derive 결과 LRU(키 = 선택 sha256), 0 = 끔
     derive_timeout_s: float = Field(default=20, gt=0, le=600)
 
