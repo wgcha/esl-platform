@@ -322,6 +322,18 @@ def test_h6_step_classify(h6):
     assert i["straddle_found"] == i["straddle_expected"]
     assert hh["found"] == hh["expected"] and hh["fixed_flag_ok"] == hh["expected"]
     assert r["segments"]["found_iou50"] >= 19
+    # SG-X-2: 벽으로 분류된 걸침 보스 2개 = STEP_GRAPH_ISLAND_AS_WALL 후보(보스 자리 x 448·752, y 175 쪽)
+    wi = bgr.wall_islands(g, lab, mesh, 60.0)
+    assert len(wi) == 2 and all(w["segments"] for w in wi)
+    assert sorted(round(w["plan"][0]) for w in wi) == [448, 752]
+
+
+def test_wall_islands_none_on_fixture():
+    """SG-X-2 경고 거짓 양성 없음: 정답 분류되는 H6·H5 픽스처 = 후보 0."""
+    from _bg_util import prepared
+    for name in ("h6", "h5"):
+        mesh, g, lab, _fixed, _d = prepared(name)
+        assert bgr.wall_islands(g, lab, mesh, 60.0) == []
 
 
 def _recipes(mesh):
@@ -375,6 +387,13 @@ def test_h6_step_loads_transfer(h6):
     print("H6-STEP-LOADS", r["graph"], r["fixed"])
     assert r["graph"]["ok"] and r["fixed"]["xfer"]["frame_ok"] and r["fixed"]["xfer"]["method"] == "xyz_nearest"
     assert r["fixed"]["xfer"]["unmatched"] == 0 and r["auto"]["n_beads"] > 0
+    inp = json.loads((out / "prep" / "input.json").read_text(encoding="utf-8"))
+    wi = [w for w in inp["warnings"] if isinstance(w, dict) and w.get("code") == "STEP_GRAPH_ISLAND_AS_WALL"]
+    assert len(wi) == 1 and wi[0]["n"] == 2 and wi[0]["segments"]                  # SG-X-2 경고(V-SG-R1 점검 항목)
+    assert any(s.startswith("STEP_GRAPH_ISLAND_AS_WALL") for s in r["warnings"])
+    xd = json.loads((out / "prep" / "select" / sg.XFER_JSON).read_bytes())
+    print("H6-STEP-FRAME", {k: xd["frame_check"][k] for k in ("n_matched", "n_req", "resid_med_mm", "resid_max_mm")})
+    assert xd["frame_check"]["ok"] and all(m["resid_mm"] <= 1.5 for m in xd["matches"])
 
 
 def test_h5_step_stages(tmp_path):

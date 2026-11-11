@@ -490,6 +490,7 @@ export const SELECT_CODE_TEXT: Record<string, string> = {
   FIXED_XFER_UNMATCHED: "옮기지 못한 A 고정 클러스터가 있습니다",
   STEP_GRAPH_REGION: "주 시트 밖 형상 — 평가·비드 후보 제외",
   STEP_GRAPH_REGION_SMALL: "평가 영역(주 시트)이 메시의 절반보다 작습니다 — 영역 설정을 확인하세요",
+  STEP_GRAPH_ISLAND_AS_WALL: "벽으로 분류된 걸침 보스 후보 — 그 세그먼트의 D·W 안은 보스를 벽과 함께 움직임(트리에서 확인)",
 };
 /** v0.17.0 GRAPH_FAILED 사유(code) */
 export const GRAPH_FAIL_REASON: Record<string, string> = { ERROR: "분류 오류", TIMEOUT: "시간 초과", TOO_LARGE: "요소 수 상한 초과", DISABLED: "서버에서 꺼짐", NO_FLOOR: "바닥을 찾지 못함" };
@@ -519,7 +520,7 @@ export function xferText(x: DoePrepFixedXfer): string {
 /** v0.18.0 평가 영역 1줄(SG-D-19) */
 export const regionText = (r: { n_out: number }) => `주 시트 밖 형상 ${r.n_out.toLocaleString()} 요소 — 평가·비드 후보 제외`;
 /** v0.18.0 ③ 선택 화면 요약에 모으는 준비 코드(① 입력 카드 목록에서는 뺌 — 한 번만 보이게) */
-export const STEP_PREP_CODES = new Set(["STEP_GRAPH_TRIA", "STEP_GRAPH_TRIA_BLOCKED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION", "STEP_GRAPH_REGION_SMALL"]);
+export const STEP_PREP_CODES = new Set(["STEP_GRAPH_TRIA", "STEP_GRAPH_TRIA_BLOCKED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION", "STEP_GRAPH_REGION_SMALL", "STEP_GRAPH_ISLAND_AS_WALL"]);
 type StepPrep = {
   fixed?: { source: string; n: number; xfer?: DoePrepFixedXfer | null } | null;
   region?: { n_out: number } | null;
@@ -550,6 +551,7 @@ export function stepPrepGroups(prep: StepPrep | null | undefined, triaWarnFrac =
   if (triaW.length) g.mesh.push(...triaW.map(line));
   else if (m && (m.method === "tria" || (typeof m.tri_frac === "number" && m.tri_frac > triaWarnFrac)))
     g.mesh.push({ text: warnText({ code: "STEP_GRAPH_TRIA", mesh_method: m.method, tri_frac: m.tri_frac }), info: false, code: "STEP_GRAPH_TRIA" });
+  g.mesh.push(...ws.filter((w) => w.code === "STEP_GRAPH_ISLAND_AS_WALL").map(line));  // SG-X-2(분류 — 메시 출처 문제)
   return g;
 }
 /** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */

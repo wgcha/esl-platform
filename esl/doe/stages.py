@@ -2730,6 +2730,7 @@ def _sel_loads(c: Ctx, echo) -> dict:
     auto = None
     gst = None
     marks = None
+    wall_isl = None
     if select_schema(c) == 2:                    # v0.17.0 BG-D-40: 분류 그래프(schema 2 만 — schema 1 은 건너뜀, 바이트 불변)
         gst = _sel_graph(c, m, gfids, sd, warns, echo, step=step)
         if gst["ok"]:
@@ -2740,6 +2741,15 @@ def _sel_loads(c: Ctx, echo) -> dict:
             if step and region is not None:      # v0.18.0 SG-D-20d 영역 밖 세그먼트·섬 표지
                 marks = _sel_region_marks(c, region, sd)
                 files.append(f"prep/select/{sg.REGION_JSON}")
+            if step:                             # v0.18.0 SG-X-2: 벽으로 분류된 걸침 보스(BG_OUTSIDE_MOVED 가 못 봄) = 경고
+                wisl = _sel_wall_islands(c, m)
+                if wisl:
+                    wall_isl = {"code": "STEP_GRAPH_ISLAND_AS_WALL", "n": len(wisl),
+                                "floors": [x["floor"] for x in wisl],
+                                "segments": sorted({s for x in wisl for s in x["segments"]}),
+                                "plan": [x["plan"] for x in wisl]}
+                    warns.append(sg.text("STEP_GRAPH_ISLAND_AS_WALL", n=wall_isl["n"],
+                                         segments=wall_isl["segments"]))
     if step:                                     # v0.18.0 SG-D-16 iii: auto·manual 모두 seed(fixed_user 포함)
         auto = _sel_auto_step(c, m, bmeta, gst, xfer, marks, warns, echo)
         if auto.get("file"):
@@ -2760,6 +2770,9 @@ def _sel_loads(c: Ctx, echo) -> dict:
         info += [sg.text(x["code"], **{k: v for k, v in x.items() if k != "code"}) for x in xinfo]
     inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0, fixed=fixed_rec)
     inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
+    if step:                                     # 다시 돌려도 중복 없음
+        inp["warnings"] = [x for x in inp["warnings"] if not (isinstance(x, dict) and x.get("code") ==
+                                                               "STEP_GRAPH_ISLAND_AS_WALL")] + ([wall_isl] if wall_isl else [])
     if auto is not None:
         inp["auto"] = {k: v for k, v in auto.items() if k != "file"}
     if gst is not None:
@@ -2813,6 +2826,13 @@ def _sel_fixed_transfer(c: Ctx, t, bmeta: dict, ents, region, sd: str) -> tuple[
                             snap_default=float(c.cfg["boundary"]["fastener_warn_mm"]), reason=why)
     sg.write_transfer(os.path.join(sd, sg.XFER_JSON), doc, guard=c.writer.guard)
     return doc, sg.xfer_messages(doc)
+
+
+def _sel_wall_islands(c: Ctx, mesh: dict) -> list[dict]:
+    """v0.18.0 SG-X-2: ``bead_graph.wall_islands`` on the saved graph (island.max_mm of the study's graph settings)."""
+    from esl.doe import bead_graph as bgr
+    graph, labels = bgr.load_graph(c.p("prep"))
+    return bgr.wall_islands(graph, labels, mesh, float(bgr.select_cfg(c.cfg)["graph"]["island"]["max_mm"]))
 
 
 def _sel_region_marks(c: Ctx, region, sd: str) -> dict:

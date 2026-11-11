@@ -1168,6 +1168,37 @@ def fixed_seed_v2(graph: dict | None, fixed_user: dict, cfg: dict | None = None)
     return sel, bs.selection_sha256(sel)
 
 
+def wall_islands(graph: dict, labels: dict, mesh: dict, max_mm: float) -> list[dict]:
+    """v0.18.0 SG-X-2 (V-SG-R1): island-sized raised floor pieces that the classifier did NOT make islands (kind "area",
+    island -1, area ≤ max_mm²) and whose neighbours are wall elements owned by a segment — a boss straddling a channel
+    wall swallowed into the wall. Morphing that segment moves the boss with the wall, so ``BG_OUTSIDE_MOVED`` cannot see
+    it. -> [{floor, segments[], plan[2]}] (sorted by floor id). Cheap: only the few small "area" pieces are examined."""
+    cand = [f for f in graph.get("floors") or [] if f.get("kind") == "area" and int(f.get("island", -1)) < 0
+            and float(f.get("area") or 0.0) <= float(max_mm) ** 2]
+    if not cand:
+        return []
+    C = np.asarray(_conn(mesh), dtype=np.int64)
+    cls, fl, seg = (np.asarray(labels[k]) for k in ("cls", "floor", "segment"))
+    n = np.asarray(mesh["x0"]).shape[0]
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    out = []
+    for f in cand:
+        e = fl == int(f["id"])
+        if not e.any():
+            continue
+        on = np.zeros(n + 1, bool)
+        Ce = C[e]
+        on[Ce[Ce >= 0]] = True
+        nb = on[np.where(C >= 0, C, n)].any(axis=1) & ~e
+        w = nb & (cls == 1) & (seg >= 0)                    # CLS wall = 1, owned by a segment
+        if not w.any() or w.sum() < 0.5 * nb.sum():
+            continue
+        p = X[Ce[Ce >= 0]].mean(axis=0)
+        out.append({"floor": int(f["id"]), "segments": sorted({int(s) for s in seg[w]}),
+                    "plan": [round(float(p[0]), 3), round(float(p[1]), 3)]})
+    return out
+
+
 def region_marks(graph: dict, labels: dict, region, frac: float = 0.5) -> dict:
     """v0.18.0 SG-D-20d: segments / islands (lances included) whose elements are more than ``frac`` outside the
     evaluation region (bool per element) -> {segments[id], islands[id]} (sorted) — excluded from the auto seed and shown
