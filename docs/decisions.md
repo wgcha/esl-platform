@@ -245,3 +245,10 @@
 - (0.18.0 확정 D-0.18.0-TRIAWARN, 2026-11-11) 새 ③ 사다리가 tria 로 끝나면 경고(`tria_policy: warn` 기본), block 은 설정으로만(근거: 사용자 "18.0은 권장대로" 2026-11-11 — esl_step_graph.md SG-D-6·O-SG-2 해소).
 - (0.18.0 확정 D-0.18.0-BG100, 2026-11-11) v0.18.0 은 beadgraph 1.0.0 그대로, 삼각형 메시 걸친 보스 접촉 띠 수정은 beadgraph 1.1.0(MORPH_RULES 2)으로 이후 판(근거: 사용자 "18.0은 권장대로" 2026-11-11 + 이슈 #63 [3] 실부품 1.0.0 분류 267 470 요소 16 s·396 MB·tier 12·세그먼트 111·접합 101·경고 0 — esl_step_graph.md O-SG-3 해소).
 - (0.18.0 확정 D-0.18.0-REBASE, 2026-11-11) v0.18.0 구현은 v0.17.2·v0.17.3·v0.17.4 위로 rebase, 새 ③ BD_MESH0 는 v0.17.4 사다리(OCCFix 가 구 조각을 완전한 구로 만들던 결함 수정) 사용, 그래프 `max_elems` 600k 는 v0.17.4 에서(근거: 이슈 #63 [3] — 실 STEP 면 4 832(Plane 1028/Cylinder 1504/Cone 376/Sphere 99/Torus 640/BSpline 1185)·퇴화 모서리 187·shell 1·자유 모서리 0, ④ 사다리 근본 원인 — esl_step_graph.md SG-D-4·§11).
+
+## 2026-11-12 (v0.18.0 통합)
+- (0.18.0 통합 D-0.18.0-X-HINT, 2026-11-12) ③ select_base step 의 paicad 힌트 plan = extract 만(extract0 없음) — 조립·part_id 가 없어 extract0(조립 파트 대응 1차 추출)이 할 일이 없음, 기존 ③(paicad) 과 같음(근거: esl_step_graph.md §12 SG-X-1, D-0.17.2-AFIXED).
+- (0.18.0 통합 D-0.18.0-X-H6STEP, 2026-11-12) 합성 H6-STEP 은 엄격 V-BG-1 미달(class 97.3 % vs 99 %, 세그먼트 19/23 — 벽 걸친 큰 보스 2개가 벽으로 분류) — 원인은 합성 STEP 의 경사면 facet(OCC 경계 채움 segfault 회피)이라 측정 상태를 시험에 고정하고 엄격 확인은 실부품 V-SG-R1(이슈 #63)에서(근거: esl_step_graph.md §12 SG-X-2).
+- (0.18.0 통합 D-0.18.0-X-COREFILES, 2026-11-12) Core 가 scenario.py(`template_base` region 선택 인자)·evaluate.py(`evaluate` region 선택 인자 — 인자 없음 = 바이트 동일)·report_doe.py(방법 줄)를 고친 것을 수용(근거: §11 Impl-Core 범위 안, V-SG-4b (g)·V-SG-9 regress 바이트 동일 — esl_step_graph.md §12 SG-X-3).
+- (0.18.0 통합 D-0.18.0-X-NOTITLE, 2026-11-12) 새 ③ 입력 화면에 part-title 칸 없음(근거: SG-D-3 part_title 금지 — esl_step_graph.md §12 SG-X-4).
+- (0.18.0 통합 D-0.18.0-X-PLAN, 2026-11-12) select_base step plan-view 에 `fixed[].src`(a_transfer|user — fixed_transfer.json node_id)·`region_ab`(평가 영역 바깥 고리, 영역 = 전체이면 null)를 추가만 — DoePlanOut.region_ab 를 openapi 에(①② = null)(근거: 화면 PartView 가 기대하나 백엔드 출처가 없던 필드 — esl_step_graph.md §12.2).

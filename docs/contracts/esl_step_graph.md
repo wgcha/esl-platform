@@ -277,3 +277,20 @@ bead_doe:
 
 - 순서: Core(`step_graph` 시그니처·`fixed_transfer.json` 형식 §3.3 고정) ∥ Backend(스키마 §4 고정, v0.17.2 rebase 후) ∥ Frontend(mock) → 통합 E2E(V-SG-7) → 실기(V-SG-R1).
 - 공동 수정 금지: `stages.py`·`bead_graph.py`·`bead_select.py` = Core 단독, `packages/beadgraph/**` = 변경 없음(O-SG-3 이 다르게 정해지면 Core 단독), `schemas.py`·`config.py`·`config/*.yaml`·`worker/**` = Backend 단독, `types.ts` = Frontend(Backend 스키마 거울). `VERSION`·`CHANGELOG.md`·`docs/**` = 통합 담당.
+
+## 12. 통합 v0.18.0 (2026-11-12) — 수용한 편차 · 통합 보강
+
+### 12.1 수용한 편차(accepted deviations)
+
+| ID | 편차 | 근거 · 처리 |
+|---|---|---|
+| SG-X-1 | **step 기준 paicad 힌트 plan = extract 만**(extract0 없음). §2·V-SG-7 의 "BD_GEOM(a_fixed + 힌트)" 중 힌트는 B STEP 사본에 `extract` 1회 | extract0 는 조립 파트 대응(`--assem-dir`·body_map·part_id)용 1차 추출인데 step 기준에는 B 조립·part_id 가 없다 — 기존 ③(legacy, paicad) 과 같음(D-0.17.2-AFIXED). 힌트 실패·paicad 없음 = 정보 `AUTO_HINT_UNAVAILABLE`(seed 무관) |
+| SG-X-2 | **합성 H6-STEP 은 엄격 V-BG-1(V-SG-1)을 만족하지 않음**: class 정확도 97.3 %(기준 99.0 %), 세그먼트 19/23 — 벽에 걸친 큰 보스 2개(`wboss_448_175`·`wboss_752_175`)가 벽으로 분류됨. 그 밖 기준(바닥·tier ≥ 99.5 %, 벽 소유·세그먼트 라벨 ≥ 98.5 %, 접합 16/16, 랜스 16, 걸침, 구멍)은 통과 | 원인 = 합성 STEP 생성기: 경사면을 OCC 경계 채움(`addSurfaceFilling`)으로 만들면 꼭짓점 많은 고리에서 비정상 종료(segfault)해 평면 삼각형 조각(facet)으로 만듦 → 사다리 cad 메시가 조각마다 작은 삼각형(≈ 11 %)을 가짐. 시험(`tests/doe/test_step_graph.py::test_h6_step_classify`, `H6_STEP_KNOWN_MISS`)은 **측정 상태를 고정**(class ≥ 97 %, 세그먼트 ≥ 19, 놓친 섬 ⊆ 2 보스). 엄격 기준 확인은 실부품 V-SG-R1(이슈 #63)으로 넘김 |
+| SG-X-3 | Core 가 §11 소유 목록 밖 파일을 고침: `esl/doe/scenario.py`(`template_base` 선택 인자 `region`), `esl/doe/evaluate.py`(`evaluate` 선택 인자 `region` — umax·epsmax), `esl/doe/report_doe.py`(방법 줄) | §11 표의 Impl-Core 행에 이미 적힌 범위(선택 인자·방법 줄)와 같고, **`region` 인자 없음 = 바이트 동일**(V-SG-4b (g), V-SG-9 regress) |
+| SG-X-4 | 화면에 part-title 칸 없음 | SG-D-3: step 기준은 `part_title` 금지(422) — B STEP 은 파트가 하나라 고를 것이 없음 |
+
+### 12.2 통합 보강(추가만)
+- **plan-view(`GET …/plan-view`, select_base step)**: `fixed[].src` = `"a_transfer"`(`prep/select/fixed_transfer.json` `node_id` 의 B 노드) | `"user"`(그 밖 — 화면에서 칠한 고정), `region_ab` = 평가 영역(`base_mesh.npz` `region`) 바깥 고리 (a,b) mm(코어 `keepout.region_rings` — 구멍 고리 제외, 영역 = 전체이면 null). `DoePlanOut.region_ab` 를 openapi 에 넣음(①② 응답 = null, 다른 필드 불변). 화면 PartView 의 "주 시트 영역" 층·A 이전 고정 표시가 이 값을 씀.
+- **openapi**: `DoeCheckOut.step_graph`(dict — 화면 types `DoeCheckStepGraph{size_mm, ladder, tria_policy, fixed_transfer{enabled, mode}, region{mode}}`), info.version 0.18.0.
+- **설정 거울**: `DEFAULTS["select"]["step_graph"]` = `BeadDoeSelectStepGraphCfg` = yaml 2개 = §4.3(키 `size_mm` 없음 — h 는 ④ 프로필, settings 응답에만 `size_mm`) — `backend/tests/test_doe_select_api.py::test_select_defaults_mirror_contract` 가 생략 없이 직접 대조.
+- **V-SG-7**: 워커 E2E 가 건너뛰지 않고 실행 — A Case = H5 시트 메시(h 10 mm, B STEP 과 같은 형상), 선택 schema 2(`select_schema2` 표지), 준비 → seed 저장 → 미리보기 → 실행 → 받기(ch_r.rad·ch_r.fem·values.json, best 에 STEP/BREP 없음) → plan-view `fixed[].src`. `GRAPH_FAILED` 주입·paicad 없음 변형은 단위 시험(`_geom_select`)·코어 시험이 맡음.
