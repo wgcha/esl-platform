@@ -18,7 +18,7 @@ select.step_graph, settings scenarios.select_step, worker _geom_select/run_step 
   Updated test_doe_api scenarios dicts, test_doe_select_api defaults, doe_support SELECT_KEYS (step_graph).
 
 ## Remaining
-- Full backend + worker suites (sequential), openapi regen (scripts/dump_openapi.py), final commit removing this file.
+- Backend suite done (631 pass; backend/tests/scx 13 fail = env: simdash_adapters missing). openapi regenerated. Remaining: worker suite, final commit removing this file.
 
 ## Next commands
 - Temporarily set config/esl_platform.example.yaml line 59 min_free_gb 0 for runs, restore after.

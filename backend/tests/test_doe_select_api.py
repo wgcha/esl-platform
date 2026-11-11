@@ -400,7 +400,11 @@ def test_settings_select_block(client, world):
                            "island": {"max_mm": 40.0, "ring_frac": 0.9},           # 브라우저 섬 판정 거울(SR-D-26)
                            "hole": {"bridge_max_mm": 20.0},                         # v0.16.2 AD-D-7
                            # v0.17.0 BEADGRAPH(esl_beadgraph.md §5.5) — 그래프 분류·섬 상한 60(D8)·대칭 묶기 허용차
-                           "graph": {"enabled": True, "island": {"max_mm": 60.0}, "sym_tol_mm": 0.5}}
+                           "graph": {"enabled": True, "island": {"max_mm": 60.0}, "sym_tol_mm": 0.5},
+                           # v0.18.0 STEP_GRAPH(esl_step_graph.md §4.2) — ③ select_base step 화면 안내
+                           "step_graph": {"tria_policy": "warn", "tria_warn_frac": 0.5, "max_elems": 600000,
+                                          "size_mm": 3.0, "fixed_transfer": {"enabled": True, "mode": "auto"},
+                                          "region": {"mode": "auto"}}}
 
 
 def test_select_defaults_mirror_contract():

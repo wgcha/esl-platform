@@ -2331,7 +2331,8 @@
               {
                 "enum": [
                   "case",
-                  "mesh"
+                  "mesh",
+                  "step"
                 ],
                 "type": "string"
               },
@@ -2518,6 +2519,18 @@
               }
             ],
             "title": "Step"
+          },
+          "step_graph": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Graph"
           },
           "warnings": {
             "items": {
@@ -3141,7 +3154,8 @@
               {
                 "enum": [
                   "paicad",
-                  "graph"
+                  "graph",
+                  "fixed_transfer"
                 ],
                 "type": "string"
               },
@@ -3704,7 +3718,8 @@
               {
                 "enum": [
                   "case",
-                  "mesh"
+                  "mesh",
+                  "step"
                 ],
                 "type": "string"
               },
