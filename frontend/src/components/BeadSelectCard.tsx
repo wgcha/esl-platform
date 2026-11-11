@@ -75,6 +75,14 @@ function useSelectData(studyId: string, on: boolean) {
 /** v0.17.0 그래프 상태: none = schema 1 스터디, failed = GRAPH_FAILED·404(칠하기로 계속) */
 export type GraphPhase = "none" | "loading" | "ready" | "failed";
 
+/** GRAPH_FAILED 띠 문구 1줄(Verifier fix v0.17.0 — 준비 경고와 띠에 두 번 나오던 것을 띠 하나로): 준비 경고 {code GRAPH_FAILED, detail} 의
+ *  사유가 있으면 "자동 분류 실패(시간 초과) — …", 없으면 그래프 받기 오류를 괄호로 덧붙인 기본 문구 */
+export function graphFailBand(prepWarnings: DoeWarning[] | null | undefined, fetchFail: string | null): string {
+  const w = (prepWarnings ?? []).find((x) => x.code === "GRAPH_FAILED");
+  if (w) return warnText(w);
+  return fetchFail ? `${GRAPH_FAILED_TEXT} (${fetchFail})` : GRAPH_FAILED_TEXT;
+}
+
 /** v0.17.0 그래프(GET …/select/graph + graph.bin) — schema 2 스터디만. rev 를 올리면 다시 받음(BG_GRAPH_STALE) */
 function useGraphData(studyId: string, on: boolean, nElems: number | null, rev: number) {
   const [gi, setGi] = useState<{ index: GraphIndex; sha256: string; rules: number; warnings: DoeWarning[] } | null>(null);
@@ -262,7 +270,7 @@ export function useBeadSelect(
   saved: DoeSelectionOut | null,
   st: DoeSettingsOut | null,
   seed: DoeSelectionAny | null | undefined = null,
-  opts: { schema?: 1 | 2 | null } = {},
+  opts: { schema?: 1 | 2 | null; prepWarnings?: DoeWarning[] | null } = {},
 ): BeadSelectCtrl {
   const { data, error } = useSelectData(studyId, on);
   const schema: 1 | 2 = opts.schema === 2 || saved?.input.schema_version === 2 || seed?.schema_version === 2 ? 2 : 1;
@@ -648,7 +656,8 @@ export function useBeadSelect(
     hasSeed: !!seedRef.current,
     schema,
     graphPhase: gd.phase,
-    graphFailText: schema === 2 && gd.phase === "failed" ? (gd.fail ? `${GRAPH_FAILED_TEXT} (${gd.fail})` : GRAPH_FAILED_TEXT) : null,
+    // GRAPH_FAILED 는 이 띠 한 곳에만(준비 경고 목록에서는 뺌 — DoeStudy). 사유 = 준비 경고 detail(있으면), 아니면 받기 오류
+    graphFailText: schema === 2 && gd.phase === "failed" ? graphFailBand(opts.prepWarnings, gd.fail) : null,
     graph: gi,
     editV,
     highlight,

@@ -24,11 +24,15 @@ LABEL_KEYS = ("cls", "floor", "segment", "transition", "island", "junction_zone"
 
 
 class BeadgraphError(ValueError):
-    """classification refused / failed: code in TOO_LARGE | TIMEOUT | NO_FLOOR | ERROR (esl: GRAPH_FAILED{code})."""
+    """public-API error ``BeadgraphError(code, detail)`` (contract §8.2): code in TOO_LARGE | TIMEOUT | NO_FLOOR |
+    INVALID_INPUT (empty / non-finite / bad-index mesh, bad arguments) | ERROR (any other failure inside the package —
+    the original exception is chained as ``__cause__``) | BG_EDIT_INVALID (``edits.EditError``). esl: GRAPH_FAILED{code}
+    (codes outside its list -> ERROR). Subclass of ValueError (callers catching ValueError keep working)."""
 
-    def __init__(self, code: str, msg: str):
-        super().__init__(f"{code}: {msg}")
+    def __init__(self, code: str, detail=""):
+        super().__init__(f"{code}: {detail}")
         self.code = code
+        self.detail = detail
 
 
 class _Clock:

@@ -30,9 +30,9 @@ export function Card({ title, children, right }: { title?: string; children: Rea
   );
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+export function Field({ label, children, hint, className }: { label: string; children: ReactNode; hint?: ReactNode; className?: string }) {
   return (
-    <label className="field">
+    <label className={className ? `field ${className}` : "field"}>
       <span className="field-label">{label}</span>
       {children}
       {hint && <span className="field-hint">{hint}</span>}

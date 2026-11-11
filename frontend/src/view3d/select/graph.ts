@@ -340,9 +340,14 @@ export function adjacentSegs(gi: GraphIndex, seg: number): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-/** 평면 좌표(분할 at) = (p·e1, p·e2), 1e-3 반올림 */
+/**
+ * 평면 좌표(분할 at) = (p·e1 − origin[0], p·e2 − origin[1]), 1e-3 반올림 — 코어 beadgraph 평면(골격·split at)과 정확히 같은 식
+ * (zones.Mesh.P = [X·e1, X·e2] − frame.origin, edits._split). origin 이 없는 옛 그래프는 [0, 0].
+ * Verifier fix v0.17.0: origin 을 빼지 않아 H6 에서 (434.8, 491.1)을 보냈음(코어 기대 (−164.9, 150.3)).
+ */
 export function planXY(gi: GraphIndex, p: ArrayLike<number>): [number, number] {
   const { e1, e2 } = gi.graph.frame;
+  const o = gi.graph.frame.origin ?? [0, 0];
   const r = (v: number) => Math.round(v * 1000) / 1000;
-  return [r(p[0] * e1[0] + p[1] * e1[1] + p[2] * e1[2]), r(p[0] * e2[0] + p[1] * e2[1] + p[2] * e2[2])];
+  return [r(p[0] * e1[0] + p[1] * e1[1] + p[2] * e1[2] - o[0]), r(p[0] * e2[0] + p[1] * e2[1] + p[2] * e2[2] - o[1])];
 }

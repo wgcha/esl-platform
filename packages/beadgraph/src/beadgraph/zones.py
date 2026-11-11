@@ -177,6 +177,19 @@ def bead_zones(M: Mesh, segs: list[int], zones_extra: list[int] = (), kind: str 
     if kind == "W":
         outside &= ~ZC                             # children stay: their entry nodes are Dirichlet 0, not a ramp source
     J = (nF | nW) & M.nmask(outside)
+    if kind == "D" and shared:
+        # Verifier fix (v0.17.0): shared-child wall nodes (Z_SC) that also belong to an outside element — the rest of
+        # the shared child's wall (owned by a neighbouring segment / junction zone) or a foreign floor — are Dirichlet 0
+        # (J) so the ramp zeros them. The shared child's own subtree (its floor, which stays put) is not a trigger: its
+        # edge nodes are already 0 by the height rule (t = 1), and treating it as J would ramp the whole bead floor.
+        ssub = set()
+        for c in shared:
+            ssub |= {c, *M.descendants(c)}
+        sub_el = (floor_el & np.isin(fl, sorted(ssub))) | (
+            np.isin(isl, [i["id"] for i in M.graph["islands"] if i["parent"] in ssub]) & (isl >= 0))
+        tin = [t["id"] for t in M.graph["transitions"] if t["upper"] in ssub and t["lower"] in ssub]
+        sub_el |= np.isin(tr, tin) & (cls == CLS["wall"])
+        J |= M.nmask(ZSC) & M.nmask(outside & ~ZSC & ~sub_el)
     return {"S": S, "floor": F, "parent": p, "zones_in": zin, "ZF": ZF, "ZW": ZW, "ZC": ZC, "ZSC": ZSC, "ZI": ZI,
             "parent_floor": parent_floor, "shared": shared, "exclusive": exclusive, "straddle": straddle,
             "islands": isl_ids, "E": E, "J": J, "nF": nF, "nW": nW, "allowed_el": allowed_el}

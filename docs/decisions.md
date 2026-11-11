@@ -208,3 +208,9 @@
 - (0.17.0 통합 D-0.17.0-GFAIL, 2026-11-10) `GRAPH_FAILED` 경고는 코어·워커·화면 모두 `{code, message, detail}` 하나(AUTO_DETECT_FAILED 와 같은 꼴), 옛 문자열·다른 키는 읽지 않음(근거: 세 층 형식 불일치 — §12 BG-X-6).
 - (0.17.0 통합 D-0.17.0-GBIN, 2026-11-10) graph.bin 배열 offset = 머리 끝(4 + L) 기준·채움 없음 하나로, 화면 파서 추정 제거(근거: 코어 출력은 4바이트 정렬이 아니어서 화면이 잘못 읽음 — §12 BG-X-7).
 - (0.17.0 통합 D-0.17.0-BGINSTALL, 2026-11-10) beadgraph 는 인덱스 설치에서 빼고 `Install-EslBeadgraph`(저장소 = packages\beadgraph, 묶음 = wheels 휠)로 설치·판 대조(근거: 사내 인덱스에 없음 — §12 BG-X-8).
+- (0.17.0 Verifier fix D-0.17.0-VF-OUTSIDE, 2026-11-10) 바깥 0 점검(BG_BASIS_LEAK·BG_OUTSIDE_MOVED)은 기저 구역이 아니라 그래프 라벨로 정한 허용 요소 집합으로, 바깥 요소와 공유하는 노드는 바깥으로 본다. 공유 자식 벽의 경계 노드는 J(근거: 같은 구역으로 만들고 점검하면 틀린 구역을 못 잡음 — H6 고리 변 0.13~0.15 mm READY, 계약 §12 BG-X-9).
+- (0.17.0 Verifier fix D-0.17.0-VF-MIXED, 2026-11-10) 그래프 + elems 혼합 선택의 바깥 판정 허용 집합에 elems 변수 기저 지지를 넣는다(근거: 혼합 안 가짜 FAILED_MESH, BG-X-10).
+- (0.17.0 Verifier fix D-0.17.0-VF-WCLAMP, 2026-11-10) W 기본 범위 줄임(BG-X-1)을 BD_LOADS 의 w_clamp.json 표로 미리 계산해 derive 에서 기본 범위·feasible 에 적용, 기저 램프는 원래 범위에 고정. API derive 에서 기저를 만들지 않는 이유 = derive ≤ 3 s(§7)(근거: 첫 행렬에 뒤집히는 W 안, BG-X-11).
+- (0.17.0 Verifier fix D-0.17.0-VF-ERR, 2026-11-10) beadgraph 공개 API 는 BeadgraphError(code, detail)만 던진다(INVALID_INPUT·ERROR, EditError 는 하위, KeyError 는 앵커 미해석만)(근거: §8.2, physicsai 소비자 처리 단순화, BG-X-12).
+- (0.17.0 Verifier fix D-0.17.0-VF-SPLIT, 2026-11-10) 화면 분할 좌표 = 코어 평면 식(frame.origin 포함)(근거: H6 에서 600 mm 어긋남, BG-X-13).
+- (0.17.0 Verifier fix D-0.17.0-VF-DEMO, 2026-11-10) 시연 venv 도 beadgraph 를 인덱스 목록에서 빼고 Install-EslBeadgraph 로 설치(근거: 저장소 시연 설치 실패, BG-X-8 과 같은 규칙).

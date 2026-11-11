@@ -169,6 +169,8 @@ def prep_mesh_sha(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> str 
 # ---------------------------------------------------------------- v0.17.0 BEADGRAPH(esl_beadgraph.md §5·§6.1)
 GRAPH_JSON = ("select", "graph.json")                       # prep/select/graph.json(코어 BD_LOADS prep_graph — 결정적 바이트)
 GRAPH_LABELS = ("select", "graph_labels.npz")               # 요소별 int32 라벨(allow_pickle=False)
+W_CLAMP = ("select", "w_clamp.json")                         # Verifier fix v0.17.0(§12 BG-X-1): BD_LOADS W 기본 범위 줄임표
+W_CLAMP_SCHEMA = "esl/bg_w_clamp/1"
 GRAPH_SCHEMA_MAJOR = "beadgraph/1"
 _GRAPH_CACHE: "collections.OrderedDict[tuple, dict[str, Any]]" = collections.OrderedDict()
 _GRAPH_LOCK = threading.Lock()
@@ -239,14 +241,17 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
     if study_schema(s) != 2 or s.get("prep") is None:
         return None
     gp, lp = _graph_paths(ctx, s)
+    wp = os.path.join(_prep_dir(ctx, s), *W_CLAMP)
     if not _plain_file(gp):
         return None
     try:
         st = os.stat(gp)
         lst = os.stat(lp) if _plain_file(lp) else None
+        wst = os.stat(wp) if _plain_file(wp) else None
     except OSError:
         return None
-    key = (os.path.realpath(gp), st.st_mtime_ns, st.st_size, (lst.st_mtime_ns, lst.st_size) if lst else None)
+    key = (os.path.realpath(gp), st.st_mtime_ns, st.st_size, (lst.st_mtime_ns, lst.st_size) if lst else None,
+           (wst.st_mtime_ns, wst.st_size) if wst else None)
     with _GRAPH_LOCK:
         hit = _GRAPH_CACHE.get(key)
         if hit is not None and (hit["labels"] is not None or not labels or lst is None):
@@ -269,7 +274,18 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
                 lab = {k: np.asarray(z[k]) for k in z.files}
         except (OSError, ValueError, KeyError):
             lab = None
-    out = {"graph": graph, "labels": lab, "sha256": hashlib.sha256(raw).hexdigest()}
+    wc, wc_sha = None, None
+    if wst is not None and wst.st_size <= _svc()._max_mb(c) * 1024 * 1024:
+        try:
+            with open(wp, "rb") as fh:
+                wraw = fh.read()
+            d = json.loads(wraw.decode("utf-8"))
+            if isinstance(d, dict) and d.get("schema") == W_CLAMP_SCHEMA:
+                wc, wc_sha = d, hashlib.sha256(wraw).hexdigest()
+        except (OSError, ValueError, UnicodeDecodeError):
+            wc = None
+    out = {"graph": graph, "labels": lab, "sha256": hashlib.sha256(raw).hexdigest(), "w_clamp": wc,
+           "w_clamp_sha256": wc_sha}
     with _GRAPH_LOCK:
         _GRAPH_CACHE[key] = out
         while len(_GRAPH_CACHE) > _LOAD_N:
@@ -391,7 +407,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
 
     sc = scfg(c)
     n = int(sc["derive_cache_n"])
-    key = (sha, inputs.get("mesh_sha256"), bead, (inputs.get("graph") or {}).get("sha256"))
+    key = (sha, inputs.get("mesh_sha256"), bead, (inputs.get("graph") or {}).get("sha256"),
+           (inputs.get("graph") or {}).get("w_clamp_sha256"))
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
@@ -401,7 +418,7 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
     if sel_schema(norm) == 2:
         g = inputs.get("graph") or {}
         fut = _POOL.submit(_graph_call, "derive_v2", inputs["mesh"], norm, c, g.get("graph"), g.get("labels"),
-                           frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead)
+                           frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead, w_clamp=g.get("w_clamp"))
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],

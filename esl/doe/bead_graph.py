@@ -66,6 +66,8 @@ from esl.errors import EslError
 GRAPH_JSON = "graph.json"
 GRAPH_LABELS = "graph_labels.npz"
 GRAPH_BIN = "graph.bin"
+W_CLAMP_JSON = "w_clamp.json"            # Verifier fix v0.17.0 (BG-X-1): W default-range clamp computed in BD_LOADS
+W_CLAMP_SCHEMA = "esl/bg_w_clamp/1"
 GRAPH_BIN_ARRAYS = ("cls", "segment", "junction_zone", "island", "floor", "tier")
 GRAPH_ALGO = 1                          # esl graph-path basis rules (basis.json.graph_algo — BG-D-39)
 GRAPH_RULES = 1                         # graph-path design-check rules (grid_manifest.graph_rules)
@@ -167,6 +169,8 @@ def prep_graph(mesh: dict, fixed_ids, cfg: dict | None, out_dir: str, guard=None
         graph, labels = bg.classify(X, C, fx, gc)
     except bg.BeadgraphError as exc:
         st["code"] = exc.code if exc.code in FAIL_CODES else "ERROR"
+        if st["code"] != exc.code:                     # INVALID_INPUT etc. -> ERROR + the package detail (§8.2)
+            st["error"] = str(exc)[:300]
         st["seconds"] = round(time.perf_counter() - t0, 3)
         return st
     except Exception as exc:  # noqa: BLE001 — classification failure never blocks the preparation (BG-D-40)
@@ -204,6 +208,179 @@ def load_graph(prep_dir: str) -> tuple[dict, dict]:
     with np.load(pl, allow_pickle=False) as z:
         labels = {k: np.asarray(z[k], dtype=np.int32) for k in z.files}
     return graph, labels
+
+
+def load_w_clamp(prep_dir: str) -> dict | None:
+    """prep/ (or prep/select/) -> the BD_LOADS W clamp table (``w_clamp_table``) or None (missing / other schema)."""
+    d = prep_dir if os.path.isfile(os.path.join(prep_dir, GRAPH_JSON)) else os.path.join(prep_dir, "select")
+    p = os.path.join(d, W_CLAMP_JSON)
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, "rb") as fh:
+            doc = json.loads(fh.read().decode("ascii"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) and doc.get("schema") == W_CLAMP_SCHEMA else None
+
+
+def _cfg_key(cfg) -> str:
+    """sha of the select settings the W basis and the inversion judgement read (range · quality · graph · hold · blend),
+    numbers as floats (API and worker settings dicts may spell 1 / 1.0 differently): a table made under another setting
+    is not applied."""
+    sc = select_cfg(cfg)
+
+    def canon(v):
+        if isinstance(v, dict):
+            return {str(k): canon(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [canon(x) for x in v]
+        if isinstance(v, bool) or v is None or isinstance(v, str):
+            return v
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            return float(v)
+        return str(v)
+    view = canon({k: sc.get(k) for k in ("range", "quality", "graph", "hold", "blend")})
+    return hashlib.sha256(json.dumps(view, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _seg_keys(g: dict, ids) -> list:
+    return [[int(g["segments"][s]["anchor"]), int(g["segments"][s]["n_elems"])] for s in ids]
+
+
+def _inward(v: float, nom: float) -> float:
+    """round a usable end to 1e-4 toward the nominal (a rounded end never lands on the inverting side)."""
+    q = v * 1e4
+    return float((np.ceil(q - 1e-9) if v < nom else np.floor(q + 1e-9)) / 1e4)
+
+
+def w_clamp_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | None) -> dict:
+    """Verifier fix v0.17.0 (§12 BG-X-1): before any matrix exists, find for every W-capable graph bead candidate — each
+    segment with an entry width + each auto-seed W group (channel + flare) — the non-inverting part of its default W
+    range, exactly as BD_MATRIX ``range_check`` would (same basis: package ``basis`` through ``basis_v2``, ramp frozen
+    at the original default range; same inversion rule ``design_state``; ``range.check_steps`` bisections). Only
+    candidates whose default range inverts get an entry. Deterministic."""
+    from esl.doe import bead_select as bs
+    sc = select_cfg(cfg)
+    doc = {"schema": W_CLAMP_SCHEMA, "graph_sha256": graph_sha_of(graph), "cfg_sha256": _cfg_key(cfg),
+           "hold": 1, "entries": []}
+    steps = int(sc["range"]["check_steps"] or 0)
+    if steps <= 0:
+        return doc
+    cands, seen = [], set()
+    for s in graph["segments"]:
+        if s["type"] != "base" and s.get("entry_width") is not None:
+            cands.append([s["id"]])
+    sel, _sym, _aw = auto_seed(graph, labels, cfg)
+    for b in sel["beads"]:
+        ids, _z, net = _resolve_segs(graph, labels, b["segs"], b["id"])
+        if not net and len(ids) > 1 and all(graph["segments"][x]["entry_width"] is not None for x in ids):
+            cands.append(sorted(ids))
+    out = []
+    for grp in cands:
+        k = tuple(grp)
+        if k not in seen:
+            seen.add(k)
+            out.append(grp)
+    if not out:
+        return doc
+    beads = [{"id": f"b{i + 1}", "name": f"W{i + 1}", "src": "graph", "vars": ["W"],
+              "segs": [{"anchor": int(graph["segments"][x]["anchor"])} for x in grp]} for i, grp in enumerate(out)]
+    sc_fa = float(sc["feature_angle_deg"])
+    norm = {"schema_version": SCHEMA_VERSION, "feature_angle_deg": sc_fa, "beads": beads, "ties": [],
+            "fixed_user": bs._norm_set(None, "fixed_user", 10_000_000), "exclude": bs._norm_set(None, "exclude", 10_000_000),
+            "graph": {"sha256": doc["graph_sha256"], "rules": int(graph["rules"]), "edits": {}}}
+    D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_ids)
+    B = bs.basis(mesh, D, cfg)
+    x0 = np.asarray(mesh["x0"], dtype=np.float64)
+
+    def inv(name, v):
+        st = bs.design_state(mesh, x0, bs.morph(x0, B, {name: float(v)}), D.fixed_mask, cfg)
+        return int(st["quality"]["inverted"]) if st["code"] == "SELECT_MORPH_INVERTED" else 0
+    by = {b.id: b for b in D.beads}
+    for row in params_rows_v2(D, cfg):
+        if row["type"] != "W":
+            continue
+        lo, hi = (float(v) for v in row["default_range"])
+        nom = float(row["nominal"])
+        res = []
+        for end in (lo, hi):
+            k = inv(row["name"], end)
+            good = end
+            if k:
+                a, b2 = nom, end
+                for _ in range(steps):
+                    m = 0.5 * (a + b2)
+                    if inv(row["name"], m):
+                        b2 = m
+                    else:
+                        a = m
+                good = _inward(a, nom)
+            res.append((k, good))
+        if res[0][0] or res[1][0]:
+            b = by[row["bead"]]
+            doc["entries"].append({"segs": _seg_keys(graph, b.seg_ids), "from": [_r(lo), _r(hi)],
+                                   "usable": [res[0][1], res[1][1]], "inverted": [res[0][0], res[1][0]]})
+    doc["entries"].sort(key=lambda e: e["segs"])
+    return doc
+
+
+def write_w_clamp(path: str, doc: dict, guard=None) -> str:
+    g = guard or (lambda p: p)
+    blob = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    with open(g(path), "wb") as fh:
+        fh.write(blob)
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _apply_w_clamp(D, norm: dict, w_clamp: dict | None, cfg, user_free: bool) -> None:
+    """derive: graph beads whose W default range was found to invert in BD_LOADS (``w_clamp_table``) get the usable
+    range as default and the inverting side of ``feasible`` clamped, + info BG_RANGE_CLAMPED (§12 BG-X-1) — so the
+    first matrix never carries an inverting W design. Applied only when the table matches (same graph sha, same select
+    settings, no toggle edit, no fixed_user / exclude, bead hold 1, same segments and default range); otherwise the
+    BD_MATRIX clamp (``clamp_w_ranges``) still applies. Tied beads: the carrier's range = the members' common Δ."""
+    if not w_clamp or not w_clamp.get("entries") or not user_free:
+        return
+    ng = norm.get("graph") or {}
+    if (ng.get("edits") or {}).get("toggle") or w_clamp.get("graph_sha256") != ng.get("sha256") or \
+            w_clamp.get("cfg_sha256") != _cfg_key(cfg):
+        return
+    table = {json.dumps(e["segs"]): e for e in w_clamp["entries"]}
+    hit = {}
+    for b in D.beads:
+        if getattr(b, "src", None) != "graph" or "W" not in (b.vars or []) or b.W_nom is None:
+            continue
+        e = table.get(json.dumps(_seg_keys(D.graph, b.seg_ids)))
+        if e is None or int(b.hold_fixed) != int(w_clamp.get("hold", 1)) or \
+                [float(x) for x in e["from"]] != [float(x) for x in b.range_default["W"]]:
+            continue
+        u = [float(x) for x in e["usable"]]
+        if not (u[0] < float(b.W_nom) < u[1]):
+            continue                                    # degenerate: keep SELECT_RANGE_INVERTS (BD_MATRIX)
+        old = list(b.range_default["W"])
+        b.range_default["W"] = [_r(u[0]), _r(u[1])]
+        fe = list(b.range_feasible["W"])
+        if e["inverted"][0]:
+            fe[0] = max(fe[0], _r(u[0]))
+        if e["inverted"][1]:
+            fe[1] = min(fe[1], _r(u[1]))
+        b.range_feasible["W"] = fe
+        b.warnings.append({"code": "BG_RANGE_CLAMPED", "level": "info", "bead": b.id, "var": var_name(b.id, "W"),
+                           "from": old, "to": list(b.range_default["W"]), "inverted": list(e["inverted"])})
+        hit[b.id] = True
+    by = {b.id: b for b in D.beads}
+    for grp in norm.get("ties") or []:
+        mem = [by[x] for x in grp if x in by and "W" in (by[x].vars or []) and by[x].W_nom is not None]
+        if len(mem) < 2 or not any(m.id in hit for m in mem):
+            continue
+        car = by[grp[0]]
+        dlo = max(float(m.range_default["W"][0]) - float(m.W_nom) for m in mem)
+        dhi = min(float(m.range_default["W"][1]) - float(m.W_nom) for m in mem)
+        if dlo < 0.0 < dhi:
+            car.range_default["W"] = [_inward(float(car.W_nom) + dlo, float(car.W_nom)),
+                                      _inward(float(car.W_nom) + dhi, float(car.W_nom))]
+            car.range_feasible["W"] = [max(car.range_feasible["W"][0], car.range_default["W"][0]),
+                                       min(car.range_feasible["W"][1], car.range_default["W"][1])]
 
 
 def graph_sha256(prep_dir: str) -> str | None:
@@ -536,12 +713,12 @@ def sym_pairs(graph, tol):
 
 
 def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *, frame=None,
-              fixed_scan=(), bead: str | None = None, index=None) -> dict:
+              fixed_scan=(), bead: str | None = None, index=None, w_clamp: dict | None = None) -> dict:
     """(Backend API) normalized schema 2 selection -> SelectionDerived dict: beads, fixed, warnings, graph block
     (§6.1), graph_algo, slope_suggested, islands_suggested, fixed_ab, params (DoeParamsOut rows) + param_beads.
     ``bead`` is accepted for signature parity (the whole selection is derived — graph beads are cheap)."""
     from esl.doe import bead_select as bs
-    D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_scan, index=index)
+    D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_scan, index=index, w_clamp=w_clamp)
     doc = D.summary(frame)
     for k in ("rev", "sha256", "mesh_sha256"):
         doc.pop(k, None)
@@ -562,7 +739,8 @@ def param_beads(D) -> list[dict]:
 
 
 def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *,
-                  fixed_node_ids=(), index=None, mesh_sha256: str | None = None) -> GraphDerived:
+                  fixed_node_ids=(), index=None, mesh_sha256: str | None = None,
+                  w_clamp: dict | None = None) -> GraphDerived:
     """normalized schema 2 selection -> GraphDerived (arrays — worker basis / tests)."""
     from esl.doe import bead_select as bs
     from esl.mesh import features
@@ -632,6 +810,7 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
             gb.range_default["W"] = [_r(Wn * (1.0 - float(rg["width_rel"]))), _r(Wn * (1.0 + float(rg["width_rel"])))]
             gb.range_feasible["W"] = [_r(min(2.0 * D + wfl, Wn * (1.0 - float(rg["width_rel"])))),
                                       _r(max(Wn * (1.0 + float(rg["width_rel"])), Wn * (1.0 + float(rg["width_max_rel"]))))]
+        gb.range_basis = copy.deepcopy(gb.range_default)   # ramp / corner guard frozen here (BG-D-24), even if clamped
         sm = np.isin(l2["segment"], ids) | (np.isin(l2["junction_zone"], zones) & (l2["junction_zone"] >= 0))
         sm &= ~excl
         gb.bead_mask = sm
@@ -646,6 +825,8 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
         gb.boundary_nodes = np.unique(np.concatenate([lp["nodes"] for lp in loops])) if loops else np.zeros(0, np.int64)
         beads.append(gb)
     D = GraphDerived(norm, bs.selection_sha256(norm), beads, fixed, warns, ix, mesh_sha256, g2, l2, d1)
+    fu_nodes = ix.elem_nodes(bs.elems_of(ix, norm["fixed_user"], where="fixed_user"))
+    _apply_w_clamp(D, norm, w_clamp, cfg, user_free=not excl.any() and np.asarray(fu_nodes).size == 0)
     D.fixed_mask = fixed_mask
     D.exclude_mask = excl
     D.norm_cfg_tol = float(sc["graph"]["sym_tol_mm"])
@@ -714,7 +895,7 @@ def params_rows_v2(derived: GraphDerived, cfg: dict | None = None) -> list[dict]
 def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
     """-> bead_select.Basis (same npz / bin formats). Graph variables carry ``zone`` (allowed nodes, BG-D-34) and
     ``graph_info``; BD_MATRIX errors BG_BASIS_LEAK / BG_ACHIEVED_MISMATCH raise EslError."""
-    from beadgraph.checks import achieved, basis_leak
+    from beadgraph.checks import achieved, basis_leak, strict_allowed_nodes
 
     from esl.doe import bead_select as bs
     bg = _bg()
@@ -745,11 +926,15 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         carrier = (tie.get(b0.id) or [b0.id])[0]
         r = rows[var_name(carrier, p["kind"])]
         nom = b0.D_nom if p["kind"] == "D" else b0.W_nom
-        lo, hi = (float(v) for v in r["default_range"])
+        rb = (getattr(by.get(carrier), "range_basis", None) or {}).get(p["kind"])
+        lo, hi = (float(v) for v in (rb or r["default_range"]))   # original default range (BD_LOADS clamp keeps L)
         ext = max(abs(hi - float(r["nominal"])), abs(lo - float(r["nominal"])))
         ranges[p["name"]] = [nom - ext, nom + ext]
     gB = bg.basis(g, lx, X, pk_list, ranges, cfg=mc, fixed=fx, elems=C) if pk_list else []
-    leak = basis_leak(gB)
+    # Verifier fix v0.17.0: allowed nodes from the graph labels (not the basis zone) — a node of an element outside A_v
+    # is outside (BG-D-32 leak check here, BG-D-34 design check via design_checks_v2)
+    strict = strict_allowed_nodes(g, lx, X, C, gB) if gB else {}
+    leak = basis_leak(gB, g, lx, X, C) if gB else []
     if leak:
         w = leak[0]
         _bad("BG_BASIS_LEAK", f"{w['var']}: 허용 구역 밖 기저 {w['n']}개(최대 {w['max_mm']:.3g})", var=w["var"], n=w["n"],
@@ -785,18 +970,21 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         members = row["group_members"]
         full = np.zeros((n, 3))
         zone = np.zeros(n, bool)
+        allowed = np.zeros(n, bool)
         for m in members:
             v = by_name.get(m)
             if v is None:
                 continue
             full[v["idx"]] += v["vec"]
             zone[v["zone"]] = True
+            allowed |= strict[m]
         idx = np.flatnonzero(np.any(full != 0.0, axis=1))
         b0 = by[row["bead"]]
         vars_.append({"name": name, "type": row["type"], "bead": row["bead"], "tier": row["tier"],
                       "members": members, "nominal": float(row["nominal"]), "n_hat": b0.n_hat,
                       "R": (by_name[name]["info"].get("blend_mm") if name in by_name else None),
-                      "idx": idx.astype(np.int32), "vec": full[idx], "zone": np.flatnonzero(zone).astype(np.int64)})
+                      "idx": idx.astype(np.int32), "vec": full[idx], "zone": np.flatnonzero(zone).astype(np.int64),
+                      "allowed": np.flatnonzero(allowed).astype(np.int64)})
     vars_.sort(key=lambda v: v["name"])
     B = bs.Basis(vars_, n, derived.sha256)
     B.graph_algo = GRAPH_ALGO
@@ -880,8 +1068,18 @@ def design_checks_v2(derived: GraphDerived, B) -> dict:
         cross = mc.cross_footprint(B.vars, reg)
         if cross:
             out["cross"] = cross
-    o = [{"var": v["name"], "nominal": float(v["nominal"]), "zone": np.asarray(v["zone"], np.int64), "n": B.n_nodes}
-         for v in B.vars if "zone" in v]
+    # BG-D-34 allowed nodes per variable (Verifier fix v0.17.0): graph variables = the label-based strict set
+    # (``allowed`` — independent of the basis zone; ``zone`` only for a basis built before the fix); elems variables
+    # (schema 1 derive inside schema 2) = their own basis support, so a design that changes both kinds is judged on the
+    # union (no spurious BG_OUTSIDE_MOVED on the elems bead's nodes).
+    o = []
+    graph_vars = any("allowed" in v or "zone" in v for v in B.vars)
+    for v in B.vars if graph_vars else ():          # elems beads only: no outside check (chk_o* bytes as before)
+        if "allowed" in v or "zone" in v:
+            z = np.asarray(v["allowed"] if "allowed" in v else v["zone"], np.int64)
+        else:
+            z = np.unique(np.asarray(v["idx"], np.int64))
+        o.append({"var": v["name"], "nominal": float(v["nominal"]), "zone": z, "n": B.n_nodes})
     if o:
         out["outside"] = o
     _ = bs

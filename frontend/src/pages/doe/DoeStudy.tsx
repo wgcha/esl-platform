@@ -800,7 +800,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const meshBaseSel = !!isSelect && s?.inputs.select_base === "mesh";
   const autoSeed = usePolling(() => (isAuto && prepDone ? loadSelectAuto(id) : Promise.resolve(null)), 0, [id, isAuto, prepDone]);
   const seedSel = !isAuto ? null : autoSeed.data ? autoSeed.data.seed?.selection ?? null : autoSeed.error ? null : undefined;
-  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null });
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null, prepWarnings: s?.prep?.warnings ?? null });
   const varsReady = beadPrep && (!isSelect || !!selSha);
   /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
   const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>
@@ -1027,6 +1027,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const varNames = s?.doe?.spec.params.map((p) => p.name) ?? [];
   const showLinks = s?.scenario === "mesh" || s?.scenario === "step";
   const prepAutoFailed = !!s?.prep?.warnings.some((w) => w.code === "AUTO_DETECT_FAILED");
+  /** 준비 경고 목록 — GRAPH_FAILED 는 ② 비드 선택의 띠(bs-graph-failed)에만 1번(Verifier fix v0.17.0: 두 번 보이던 것) */
+  const prepWarns = (s?.prep?.warnings ?? []).filter((w) => !(w.code === "GRAPH_FAILED" && ctrl.graphFailText));
   /** v0.16.2 자동 탐지 표시: 미저장 배지(seed 를 불러왔고 저장 선택 없음) · seed 없음 안내 1줄 · AUTO_* 경고 */
   const autoView: AutoSeedView | null = isAuto
     ? {
@@ -1104,9 +1106,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />
             </>
           )}
-          {s.prep && s.prep.warnings.length > 0 && (
+          {prepWarns.length > 0 && (
             <ul className="reasons small warn-text">
-              {s.prep.warnings.map((w, i) => (
+              {prepWarns.map((w, i) => (
                 <li key={i}>{warnText(w)}</li>
               ))}
             </ul>

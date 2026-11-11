@@ -534,7 +534,7 @@ def _dist_from(G: sparse.csr_matrix, sub: np.ndarray, src: np.ndarray) -> np.nda
 
 def derive(mesh: dict, selection: dict, cfg: dict | None = None, *, frame: dict | None = None, fixed_scan=(),
            bead: str | None = None, index: MeshIndex | None = None, graph: dict | None = None,
-           labels: dict | None = None) -> dict:
+           labels: dict | None = None, w_clamp: dict | None = None) -> dict:
     """(백엔드 API) 정규화 선택 → {beads: [BeadDerived §4.2 — section·plan 포함], fixed{scan_n, user_n, source},
     warnings, slope_suggested{bead: ElemSet}, fixed_ab[{a, b}]}. rev·sha256·mesh_sha256 은 호출자가 붙인다.
     bead 를 주면 그 비드만 계산(다른 비드 층은 침범 금지로만 씀). 결정적.
@@ -545,7 +545,7 @@ def derive(mesh: dict, selection: dict, cfg: dict | None = None, *, frame: dict 
         if graph is None or labels is None:
             raise EslError("GRAPH_NOT_AVAILABLE", "schema 2 선택은 분류 그래프가 필요")
         return bgr.derive_v2(mesh, selection, cfg, graph, labels, frame=frame, fixed_scan=fixed_scan, bead=bead,
-                             index=index)
+                             index=index, w_clamp=w_clamp)
     if isinstance(selection, dict) and "schema_version" not in selection:
         selection = normalize_input(selection, cfg)
     D = derive_obj(mesh, selection, cfg, fixed_node_ids=fixed_scan, index=index, only=bead)

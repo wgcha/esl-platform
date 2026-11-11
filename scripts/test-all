@@ -49,6 +49,8 @@ fi
 
 echo "== 코어 pytest (tests/) =="
 "$PYTHON" -m pytest -q -p no:cacheprovider tests --ignore=tests/deploy "$@"
+echo "== 공통 패키지 beadgraph pytest (packages/beadgraph/tests) =="
+"$PYTHON" -m pytest -q -p no:cacheprovider packages/beadgraph/tests "$@"
 echo "== 플랫폼 backend pytest =="
 "$PYTHON" -m pytest -q -p no:cacheprovider backend/tests "$@"
 echo "== 워커 pytest =="

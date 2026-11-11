@@ -376,7 +376,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
             메시: 모든 STEP 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm(서버 설정)
           </span>
         )}
-        <Field label="제목(선택)">
+        <Field label="제목(선택)" className="doe-title">
           <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
         </Field>
       </div>

@@ -426,7 +426,8 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
     info["band_n"] = int(band.sum())
     nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
     return {"name": b["name"], "kind": kind, "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
-            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S)}
+            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
+            "zones": sorted(int(z) for z in (b.get("zones") or ()))}
 
 
 def _flank_max_deg(M: Mesh, ZW, Uv, ext):

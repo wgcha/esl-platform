@@ -3554,7 +3554,8 @@ export interface BeadGraph {
   input: { n_nodes: number; n_elems: number; n_tri: number; n_fixed: number; sha256: string };
   cfg?: Record<string, unknown>;
   cfg_sha256?: string;
-  frame: { n0: [number, number, number]; e1: [number, number, number]; e2: [number, number, number]; h_mm: number };
+  /** origin = 평면 좌표 원점(코어: 평면 좌표 = [X·e1, X·e2] − origin — 골격·split at 이 이 좌표). 옛 그래프는 없음 = [0, 0] */
+  frame: { n0: [number, number, number]; e1: [number, number, number]; e2: [number, number, number]; h_mm: number; origin?: [number, number]; bbox_center?: [number, number] };
   root: number;
   root_group: number[];
   floors: BgFloor[];

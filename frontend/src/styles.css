@@ -1237,6 +1237,12 @@ details.card > .table-wrap {
 .form-grid.tight .field {
   align-content: start;
 }
+/* 강성 평가 스터디 제목: 10rem 칸 하나에 예시 문구(placeholder)가 잘리던 것 — 한 줄 전체, 읽기 좋은 폭까지(Verifier fix v0.17.0) */
+.form-grid.tight .field.doe-title {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: 34rem;
+}
 
 /* 라이브러리 */
 .filters {

@@ -5,9 +5,13 @@
   Python 선택(deploy\python-select.ps1 공용) 순서: -PythonExe > 대시보드 고정 Python 3.12(dashboard-env) > `py -3.12` > PATH의 python.
   패키지는 대시보드 런타임이나 시스템 Python에 설치하지 않는다 — 항상 <시연 폴더>\venv에 deploy\requirements.lock을 설치한다
   (묶음: --no-index --find-links wheels, 저장소: 인덱스 — 기록 해시가 같으면 건너뜀). 플랫폼 코드는 설치하지 않는다(실행기가 sys.path로 찾음).
+  v0.17.0(Verifier fix, 계약 esl_beadgraph.md §12 BG-X-8): lock 의 저장소 안 패키지(beadgraph==<ver> — 인덱스에 없음)는 인덱스 설치 목록에서
+  빼고(install-common.ps1 Get-EslLockPackages 의 Core·BeadDoe 만 pip install) Install-EslBeadgraph 로 설치한다 — 저장소 = -Repo(packages\beadgraph),
+  묶음 = -Wheels(wheels\beadgraph-<ver>-py3-none-any.whl). setup.ps1·update-repo.ps1·install.ps1·update.ps1 과 같은 규칙.
 #>
 
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'python-select.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'install-common.ps1')   # Get-EslLockPackages·Install-EslBeadgraph(설치 스크립트와 공용)
 
 function Get-DemoDepsStamp {
     <# 의존성 기록값: requirements.lock 내용 해시(바뀌면 다시 설치). #>
@@ -41,7 +45,7 @@ function Initialize-DemoVenv {
     <# <시연 폴더>\venv를 준비하고 그 python.exe 경로를 돌려준다. -Wheels가 있으면 오프라인 설치. #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$DemoRoot, [Parameter(Mandatory = $true)][object[]]$Candidates,
-          [Parameter(Mandatory = $true)][string]$LockFile, [string]$Wheels = '')
+          [Parameter(Mandatory = $true)][string]$LockFile, [string]$Wheels = '', [string]$Repo = '')
     $venv = Join-Path $DemoRoot 'venv'
     $py = Join-Path $venv 'Scripts\python.exe'
     if (Test-Path -LiteralPath $py) {
@@ -68,9 +72,13 @@ function Initialize-DemoVenv {
         Write-Host '[ESL 시연] 시연 venv 의존성: 설치되어 있음(requirements.lock 변경 없음 — 건너뜀)'
     } else {
         Write-Host '[ESL 시연] 시연 venv에 의존성 설치: deploy\requirements.lock (처음 한 번, 몇 분 걸림)'
-        $a = @('install', '-r', $LockFile)
-        if ($Wheels) { $a = @('install', '--no-index', '--find-links', $Wheels, '-r', $LockFile) }
+        $lp = Get-EslLockPackages -LockFile $LockFile        # Core + BeadDoe = 인덱스(또는 묶음 wheels) 설치, Local(beadgraph) 제외
+        $pkgs = @($lp.Core) + @($lp.BeadDoe)
+        $a = @('install') + $pkgs
+        if ($Wheels) { $a = @('install', '--no-index', '--find-links', $Wheels) + $pkgs }
         Invoke-DemoPip -Py $py -PipArgs $a -What '의존성(deploy\requirements.lock) 설치'
+        if ($Wheels) { $null = Install-EslBeadgraph -VenvPy $py -LockFile $LockFile -Wheels $Wheels }   # 묶음 wheels 휠
+        else { $null = Install-EslBeadgraph -VenvPy $py -LockFile $LockFile -Repo $Repo }               # 저장소 packages\beadgraph
         [IO.File]::WriteAllText($stampFile, $want)
     }
     return $py

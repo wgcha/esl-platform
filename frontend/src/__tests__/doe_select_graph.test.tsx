@@ -178,7 +178,9 @@ describe("GRAPH_FAILED(doe-11)", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const r = renderApp("/p/p-body/doe/doe-11", "power");
     expect(await screen.findByTestId("bs-graph-failed", undefined, { timeout: 10000 })).toBeTruthy();
-    expect(screen.getByTestId("bs-graph-failed").textContent).toMatch(/자동 분류 실패 — 직접 칠하기\(요소 비드\)로 계속/);
+    // Verifier fix v0.17.0: 띠 한 곳에만(준비 경고 목록에서 빠짐), 사유 = 준비 경고 detail(TIMEOUT → 시간 초과)
+    expect(screen.getByTestId("bs-graph-failed").textContent).toBe("자동 분류 실패(시간 초과) — 직접 칠하기(요소 비드)로 계속");
+    expect(r.container.textContent?.match(/자동 분류 실패/g) ?? []).toHaveLength(1);
     expect(screen.queryByTestId("bs-view-tree")).toBeNull();
     expect(screen.queryByTestId("bs-add-elems")).toBeNull();
     fireEvent.click(screen.getByTestId("bs-add-bead"));
@@ -206,4 +208,22 @@ describe("BG_RANGE_CLAMPED(통합 v0.17.0 — 기본 W 범위를 뒤집힘 없�
     expect(isInfoWarn({ ...w, level: "info" })).toBe(true);
     expect(warnText(w as never)).toBe("B10_W: 기본 범위 60~90 mm 끝에서 뒤집혀 60~76.9 mm 로 줄였습니다");
   });
+});
+
+describe("GRAPH_FAILED 띠 문구 1줄(Verifier fix v0.17.0)", () => {
+  it("준비 경고 detail 이 있으면 그 사유, 없으면 받기 오류를 괄호로", async () => {
+    const { graphFailBand } = await import("../components/BeadSelectCard");
+    expect(graphFailBand([{ code: "FIXED_INFO_MISSING" }, { code: "GRAPH_FAILED", detail: "NO_FLOOR" }] as never, "404")).toBe("자동 분류 실패(바닥을 찾지 못함) — 직접 칠하기(요소 비드)로 계속");
+    expect(graphFailBand([], "네트워크 오류")).toBe("자동 분류 실패 — 직접 칠하기(요소 비드)로 계속 (네트워크 오류)");
+    expect(graphFailBand(null, null)).toBe("자동 분류 실패 — 직접 칠하기(요소 비드)로 계속");
+  });
+});
+
+describe("새 스터디 제목 칸(Verifier fix v0.17.0)", () => {
+  it("제목 칸 = 한 줄 전체(doe-title) — 예시 문구가 10rem 칸에 잘리지 않게", async () => {
+    renderApp("/p/p-body/doe/new?entries=le-1,le-2,le-3", "power");
+    const t = (await screen.findByRole("textbox", { name: "제목" }, { timeout: 10000 })) as HTMLInputElement;
+    expect(t.closest(".field")?.classList.contains("doe-title")).toBe(true);
+    expect(t.placeholder).toMatch(/^예: 75형 Ch\/R /);
+  }, 20000);
 });

@@ -8,12 +8,12 @@ import copy
 import numpy as np
 
 from . import _util as U
-from .classify import CLS
+from .classify import CLS, BeadgraphError
 
 
-class EditError(ValueError):
+class EditError(BeadgraphError):
     def __init__(self, code: str, msg: str, **detail):
-        super().__init__(f"{code}: {msg}")
+        ValueError.__init__(self, f"{code}: {msg}")
         self.code = code
         self.detail = detail
 

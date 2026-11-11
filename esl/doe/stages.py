@@ -2374,6 +2374,9 @@ def _sel_loads(c: Ctx, echo) -> dict:
         gst = _sel_graph(c, m, fids, sd, warns, echo)
         if gst["ok"]:
             files += [f"prep/select/{x}" for x in (bgr_files())]
+            wc = _sel_w_clamp(c, m, fids, sd, echo)     # Verifier fix(§12 BG-X-1): 첫 행렬 전에 W 기본 범위 줄임표
+            if wc:
+                files.append(wc)
     if bead_source(c) == "auto":                 # v0.16.2 AD-D-2·3·21: 자동 탐지 seed(실패해도 준비 계속)
         auto = _sel_auto_v2(c, m, bmeta, gst, warns, echo) if gst is not None else _sel_auto(c, m, bmeta, warns, echo)
         if auto.get("file"):
@@ -2423,6 +2426,22 @@ def _sel_graph(c: Ctx, mesh: dict, fids, sd: str, warns: list, echo) -> dict:
         echo(f"[bd_loads] 분류 그래프 세그먼트 {st['n_segments']} · 접합 구역 {st['n_junction_zones']} · 섬 "
              f"{st['n_islands']} · {st['seconds']:.1f}s (beadgraph {st['beadgraph_version']} rules {st['rules']})")
     return st
+
+
+def _sel_w_clamp(c: Ctx, mesh: dict, fids, sd: str, echo) -> str | None:
+    """v0.17.0 Verifier fix(§12 BG-X-1): 그래프 W 후보(세그먼트별 + 자동 seed W 묶음)의 기본 범위 끝 뒤집힘을 BD_LOADS 에서 미리
+    찾아 prep/select/w_clamp.json — derive(API·BD_MATRIX)가 이 표로 기본 범위·feasible 을 줄이므로 첫 행렬부터 뒤집히는 W 안이 없다.
+    실패해도 준비는 계속(BD_MATRIX clamp_w_ranges 가 그대로 받침)."""
+    from esl.doe import bead_graph as bgr
+    try:
+        graph, labels = bgr.load_graph(c.p("prep"))
+        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg)
+    except EslError as exc:
+        echo(f"[bd_loads] W 기본 범위 점검 건너뜀({exc.code})")
+        return None
+    bgr.write_w_clamp(os.path.join(sd, bgr.W_CLAMP_JSON), doc, guard=c.writer.guard)
+    echo(f"[bd_loads] W 기본 범위 끝 뒤집힘 미리 점검: 줄일 변수 {len(doc['entries'])}")
+    return f"prep/select/{bgr.W_CLAMP_JSON}"
 
 
 def graph_failed_warning(code: str | None) -> dict:
@@ -2542,7 +2561,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
         raise EslError("PREVIEW_STALE", "선택의 mesh_sha256 이 준비 기준 메시와 다름(SELECTION_DROPPED)")
     if v2:                                      # v0.17.0 schema 2: 그래프 비드(+ elems 비드는 schema 1 derive, 섬 60)
         graph, labels = _graph_or_none(c)
-        D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"])
+        D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
+                                 w_clamp=_bgr().load_w_clamp(c.p("prep")) if graph is not None else None)
     else:
         D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
                             with_section=False)

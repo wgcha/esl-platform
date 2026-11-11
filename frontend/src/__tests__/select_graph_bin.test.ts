@@ -293,3 +293,48 @@ describe("그래프 편집(layers, 실행 취소 가능)", () => {
     expect(s.beads[0].segs).toContainEqual({ anchor: ch.anchor });
   });
 });
+
+describe("분할 평면 좌표 = 코어 평면(frame.origin 포함) — Verifier fix v0.17.0", () => {
+  // 코어 beadgraph(H6 픽스처) frame 그대로 + 노드 44235 의 3D 좌표 → 코어 zones.Mesh.P[44235] = [X·e1, X·e2] − origin
+  // (tests/doe/test_bead_graph_verifier.py 가 같은 값을 코어에서 다시 계산해 이 숫자를 고정한다)
+  const H6_FRAME = {
+    n0: [-4.07591028e-7, -1.41571311e-6, 0.999999999998915] as [number, number, number],
+    e1: [0.999999904843758, -0.000436247991176, 4.06973387e-7] as [number, number, number],
+    e2: [0.000436247990599, 0.999999904842839, 1.415890786e-6] as [number, number, number],
+    origin: [599.748, 340.874] as [number, number],
+    h_mm: 2.963,
+  };
+  const P44235: [number, number, number] = [86.88303626845632, 71.14027068407145, 8.608942632752619];
+  const CORE_PLAN: [number, number] = [-512.896, -269.696];
+  const m = graphMesh();
+  const giO = graphIndex({ ...m.graph, frame: H6_FRAME }, m.labels);
+
+  it("planXY = 코어 평면 좌표(origin 을 뺌), origin 없는 옛 그래프 = [0, 0]", () => {
+    expect(planXY(giO, P44235)).toEqual(CORE_PLAN);
+    const { origin: _o, ...noOrigin } = H6_FRAME;
+    const gi0 = graphIndex({ ...m.graph, frame: noOrigin }, m.labels);
+    expect(planXY(gi0, P44235)).toEqual([CORE_PLAN[0] + 599.748, CORE_PLAN[1] + 340.874].map((v) => Math.round(v * 1000) / 1000));
+  });
+
+  it("분할 도구 클릭 → split{anchor, at} 의 at = 코어가 기대하는 평면 좌표", () => {
+    const calls: string[] = [];
+    const ctrl = {
+      setHighlight: () => undefined,
+      toggleSeg: () => undefined,
+      toggleIslandRef: () => undefined,
+      split: (id: number, at: [number, number]) => calls.push(`split:${id}:${at.join(",")}`),
+      editV: editView(giO, null),
+    };
+    const s = m.graph.segments.find((x) => x.type === "channel")!;
+    graphClick(ctrl, giO, { elem: s.anchor, point: P44235 }, "split", true);
+    expect(calls).toEqual([`split:${s.id}:${CORE_PLAN.join(",")}`]);
+  });
+
+  it("평면 좌표 → 3D 역변환(코어 식 X·e = P + origin)이 클릭 점의 평면 성분을 되돌림", () => {
+    const [px, py] = planXY(giO, P44235);
+    const { e1, e2, origin } = H6_FRAME;
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    expect(Math.abs(px + origin[0] - dot(P44235, e1))).toBeLessThan(1e-3);
+    expect(Math.abs(py + origin[1] - dot(P44235, e2))).toBeLessThan(1e-3);
+  });
+});

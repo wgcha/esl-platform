@@ -23,7 +23,8 @@ import pytest
 from doe_support import api
 from doe_worker_support import calls, doe_worker_settings, set_control, write_fake_paicad
 from esl_test_support import REPO
-from test_doe_select_jobs import create_select, make_bead_case, preview, run_job, save_selection, start_run, study
+from test_doe_select_jobs import (b_mesh_upload, create_select, make_bead_case, preview, run_job, save_selection, start_run,
+                                  study)
 
 sys.path.insert(0, str(REPO / "tests" / "doe"))
 import synth_bead as sb  # noqa: E402
@@ -302,3 +303,93 @@ def test_e2e_auto_seed_save_preview_run_equals_manual(client, engine, worker, es
         res = api(client, "GET", f"/doe/studies/{s['id']}/results").json()
         out[auto] = [(x["id"], x.get("score")) for x in res["ranking"]]
     assert out[True] == out[False]
+
+
+def _edited_seed(client, sid: str, seed: dict[str, Any]) -> dict[str, Any]:
+    """자동 seed → 사용자 편집(V-BG-16): 첫·셋째 비드 = 네트워크 묶기({network}), 그 둘을 대칭 묶기(ties — D 공칭 같음),
+    둘째 비드 세그먼트를 골격 중점에서 분할(split — 평면 좌표 = 그래프 골격, 화면 planXY 와 같은 좌표계), 섬이 있으면 비드로 전환(toggle)."""
+    gr = api(client, "GET", f"/doe/studies/{sid}/select/graph").json()["graph"]
+    by_anchor = {s["anchor"]: s for s in gr["segments"]}
+    beads = [dict(b) for b in seed["beads"]]
+    segs = [by_anchor[b["segs"][0]["anchor"]] for b in beads]
+    pair = None
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            if abs(segs[i]["D"] - segs[j]["D"]) <= 0.5:
+                pair = (i, j)
+                break
+        if pair:
+            break
+    assert pair, [s["D"] for s in segs]
+    for k in pair:
+        beads[k] = {"id": beads[k]["id"], "src": "graph", "segs": [{"network": segs[k]["anchor"]}]}
+    other = next(k for k in range(len(beads)) if k not in pair and len(segs[k]["skeleton"] or []) >= 9)
+    sk = segs[other]["skeleton"]
+    edits: dict[str, Any] = {"split": [{"anchor": segs[other]["anchor"], "at": sk[len(sk) // 2]}]}
+    if gr["islands"]:
+        edits["toggle"] = [{"anchor": gr["islands"][0]["anchor"], "as": "bead"}]
+    return {**seed, "beads": beads, "ties": [sorted([beads[pair[0]]["id"], beads[pair[1]]["id"]], key=lambda x: int(x[1:]))],
+            "graph": {**seed["graph"], "edits": edits}}
+
+
+def _preview_run(client, worker, esl_root, s, names: list[str]) -> list[Any]:
+    """기본 범위 2 수준 미리보기 → 격자 BG_OUTSIDE_MOVED·뒤집힘 없음 → 실행 → 순위."""
+    params = {p["name"]: p for p in api(client, "GET", f"/doe/studies/{s['id']}/params").json()["params"]}
+    spec = {"method": "fullfact", "levels": 2, "params": [{"name": n, "lo": params[n]["default_range"][0],
+                                                          "hi": params[n]["default_range"][1]} for n in names]}
+    p = preview(client, s, spec)
+    run_job(client, worker, p["job"]["id"])
+    gm = esl_root / "_doe" / s["id"] / "doe" / "1" / "grid" / "grid_manifest.json"
+    cells = json.loads(gm.read_text())["cells"]
+    assert cells and not [c for c in cells if c.get("code") in ("BG_OUTSIDE_MOVED", "SELECT_MORPH_INVERTED")], cells
+    r = start_run(client, study(client, s["id"]))
+    run_job(client, worker, r["job"]["id"])
+    g = study(client, s["id"])
+    assert g["phase"] == "DONE" and g["result_ready"] is True
+    return [(x["id"], x.get("score")) for x in api(client, "GET", f"/doe/studies/{s['id']}/results").json()["ranking"]]
+
+
+@needs_core_graph
+def test_e2e_case_edits_ties_and_mesh_base(client, engine, worker, esl_root, inputs_root, exe, tmp_path):
+    """V-BG-16(Verifier fix v0.17.0): ① case auto → seed 편집(네트워크 묶기·분할·전환) + 대칭 묶기(ties) → 저장 → 미리보기(묶인 D +
+    분할된 비드 W) → 실행 = 같은 선택을 수동 스터디에 저장·실행한 순위와 같음. ② mesh(select_base mesh, B 메시 업로드) 스터디도 그래프
+    분류 → 같은 선택 저장 → 미리보기 → 실행(BG_OUTSIDE_MOVED 없음)."""
+    w = make_bead_case(engine, esl_root, inputs_root)
+    s = create_select(client, w["entry_ids"], auto=True)
+    run_job(client, worker, s["job"]["id"])
+    g = study(client, s["id"])
+    if not g["prep"]["graph"]["ok"]:
+        pytest.skip(f"합성 메시 분류 실패({g['prep']['graph']['code']})")
+    seed = api(client, "GET", f"/doe/studies/{s['id']}/select/auto").json()["selection"]
+    if len(seed["beads"]) < 3:
+        pytest.skip("합성 메시 자동 seed 비드 < 3")
+    sel = _edited_seed(client, s["id"], seed)
+    s = save_selection(client, g, sel)
+    cur = api(client, "GET", f"/doe/studies/{s['id']}/selection").json()
+    assert cur["input"]["ties"] == sel["ties"]
+    params = {p["name"]: p for p in api(client, "GET", f"/doe/studies/{s['id']}/params").json()["params"]}
+    tie_var = f"{sel['ties'][0][0].upper()}_D"
+    assert params[tie_var]["group_members"] == [f"{x.upper()}_D" for x in sel["ties"][0]]
+    assert f"{sel['ties'][0][1].upper()}_D" not in params                    # 묶인 비드 = 변수 1개
+    w_var = next(n for n, p in params.items() if p["type"] == "W")
+    der = cur["derived"]
+    assert der["graph"]["edits_applied"]["split"] == 1
+    assert der["graph"]["edits_applied"]["toggle"] == len(sel["graph"]["edits"].get("toggle") or [])
+    rank_auto = _preview_run(client, worker, esl_root, s, [tie_var, w_var])
+    # 같은 선택(편집·묶기 포함)을 수동 스터디에 → 같은 순위
+    m = create_select(client, w["entry_ids"])
+    run_job(client, worker, m["job"]["id"])
+    gm = study(client, m["id"])
+    assert gm["prep"]["graph"]["sha256"] == g["prep"]["graph"]["sha256"]
+    m = save_selection(client, gm, sel)
+    assert m["selection"]["sha256"] == s["selection"]["sha256"]
+    assert _preview_run(client, worker, esl_root, m, [tie_var, w_var]) == rank_auto
+    # ② mesh: B 메시(노드 ID 만 다른 같은 형상) — 분류 그래프 동일(메시 출처 무관, SR-D-44), 같은 선택으로 실행
+    b = create_select(client, w["entry_ids"], mesh_uid=b_mesh_upload(client, tmp_path, w["mesh"]))
+    run_job(client, worker, b["job"]["id"])
+    gb = study(client, b["id"])
+    assert gb["phase"] == "READY" and gb["prep"]["select_base"] == "mesh" and gb["prep"]["graph"]["ok"] is True
+    assert gb["prep"]["graph"]["n_segments"] == g["prep"]["graph"]["n_segments"]
+    sel_b = {**sel, "graph": {**sel["graph"], "sha256": gb["prep"]["graph"]["sha256"]}}
+    b = save_selection(client, gb, sel_b)
+    assert _preview_run(client, worker, esl_root, b, [tie_var, w_var])
