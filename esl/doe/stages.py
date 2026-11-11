@@ -1095,23 +1095,45 @@ def _cmp_text(code: str, **kw) -> str:
 
 
 def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_info: bool = False,
-                  timeout_s: float | None = None) -> dict:
+                  timeout_s: float | None = None, large: bool = False) -> dict:
     """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}.
     fail_info(v0.16.0 auto 사다리) = 실패 시 mesh_error.json 에 실패 면·넓이(세분화 입력) — 성공 결과는 같음."""
     did = row["id"]
     d = _cmp_mesh_dir(c, did)
     c.writer.makedirs(d)
+    kw = {"large": True} if large else {}                  # v0.17.4 C2-D-33(대형 모델만)
+    kw.update(_cmp_beat(c, row, "cad"))
     try:
         if fail_info:
             mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, fail_info=True,
-                                         timeout_s=timeout_s)
+                                         timeout_s=timeout_s, **kw)
         else:
-            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, timeout_s=timeout_s)
+            mesh, meta = mg.run_isolated(c.p(row["rel"]), d, h, ccfg, props, opt_cfg=c.ocfg, timeout_s=timeout_s, **kw)
     except EslError as exc:
         if exc.code == "GMSH_UNAVAILABLE":
             raise
         return {"id": did, "status": "FAILED_MESH", "code": _cad_code(d), "message": exc.message}
     return _cmp_ready(c, did, mesh, meta)
+
+
+def _cmp_say(c: Ctx, text: str) -> None:
+    """v0.17.4 C2-D-39 단계 로그 진행 줄(_cmp_mesh0 이 echo 를 걸어 둔 때만)."""
+    echo = getattr(c, "_cmp_echo", None)
+    if echo is not None:
+        try:
+            echo(text)
+        except Exception:                                   # noqa: BLE001
+            pass
+
+
+def _cmp_beat(c: Ctx, row: dict, stage: str) -> dict:
+    """run_isolated 진행 줄 인자: 하위 프로세스 대기 중 heartbeat_s 마다 '[d001 이름] cad 진행 중 120 s — 마지막 폴백 줄'."""
+    if getattr(c, "_cmp_echo", None) is None:
+        return {}
+
+    def beat(sec: float, step: str | None) -> None:
+        _cmp_say(c, f"[{row['id']} {row.get('name')}] {stage} 진행 중 {sec:.0f} s" + (f" — {step}" if step else ""))
+    return {"beat": beat}
 
 
 def _cad_code(d: str) -> str:
@@ -1134,6 +1156,11 @@ def _cmp_ready(c: Ctx, did: str, mesh: dict, meta: dict) -> dict:
         qy.update(fallback_faces=len(ids), fallback_face_ids=ids,
                   fallback_stages=[mg.fallback_label(f) for f in fb["faces"]])   # v0.15.1 면마다 쓰인 단계(편차)
         out["mesh_fallback"] = fb
+    rx = meta.get("cad_relaxed")
+    if rx:                                               # v0.17.4 C2-D-32(정상 형상은 키 없음 — 결과 바이트 불변)
+        out["cad_relaxed"] = {k: rx.get(k) for k in ("overrides", "face", "first_error", "fidelity", "seconds",
+                                                     "cad_seconds") if rx.get(k) is not None}
+        out["mesh_path"] = "cad_relaxed"
     return out
 
 
@@ -1211,9 +1238,29 @@ def _promote(c: Ctx, td: str, d: str, extra: dict | None = None) -> None:
     shutil.rmtree(c.writer.guard(td), ignore_errors=True)
 
 
+TRY_LOGS = "attempt_logs"                                    # v0.17.4 C2-D-40 지운 시도의 로그·실패 기록 보관(keep_tries 무관)
+TRY_LOG_FILES = ("mesh.log", "mesh_error.json")
+
+
+def _keep_try_logs(c: Ctx, d: str, src_dir: str, label: str) -> None:
+    """시도 폴더(또는 cad 의 mesh/)의 mesh.log·mesh_error.json → mesh/try_logs/<label>.<파일>(지우기 전에)."""
+    if not os.path.isdir(src_dir):
+        return
+    for x in TRY_LOG_FILES:
+        p = os.path.join(src_dir, x)
+        if os.path.isfile(p) and not os.path.islink(p):
+            dst = os.path.join(d, TRY_LOGS)
+            c.writer.makedirs(dst)
+            shutil.copyfile(p, c.writer.guard(os.path.join(dst, f"{label}.{x}")))
+
+
 def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
-    """새 시도 폴더 try_<n>/ (keep_tries false 면 앞 시도 폴더를 먼저 지움 — 마지막 시도 기록만 남음)."""
+    """새 시도 폴더 try_<n>/ (keep_tries false 면 앞 시도 폴더를 먼저 지움 — 마지막 시도 기록만 남음).
+    v0.17.4: 지우기 전에 앞 시도의 로그·실패 기록을 try_logs/ 에 남김(실패 원인 추적)."""
     if not keep:
+        for x in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if x.startswith(TRY_PREFIX) and os.path.isdir(os.path.join(d, x)):
+                _keep_try_logs(c, d, os.path.join(d, x), x)
         _clear_tries(c, d)
     td = os.path.join(d, f"{TRY_PREFIX}{n_try}")
     c.writer.fresh_dir(td, c.out)
@@ -1259,6 +1306,8 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         return _cmp_mesh_input_one(c, row, ccfg, props)
     d = _cmp_mesh_dir(c, row["id"])
     _clear_tries(c, d)
+    if os.path.isdir(os.path.join(d, TRY_LOGS)):          # v0.17.4 이전 실행의 시도 로그
+        shutil.rmtree(c.writer.guard(os.path.join(d, TRY_LOGS)))
     if mode == "remesh":
         c.writer.makedirs(d)
         r = _cmp_remesh_one(c, row, h, ccfg, props, d)
@@ -1269,20 +1318,47 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail)
     t0 = time.monotonic()
     auto = mode == "auto" and len(lad) > 1
+    lg = mg.large_model(c.p(row["rel"]), ccfg["mesh"])   # v0.17.4 C2-D-33 대형 모델(STEP 본문 세기 — 결과와 무관)
     to = None
     if auto:                                            # 사다리 시간 예산(refine.total_timeout_s)은 cad 시도부터 셈
         from esl.doe import mesh_refine as mr           # v0.16.3 C2-D-29: cad 도 자기 몫까지만(뒤 단계 몫 예약)
         to = mr.attempt_timeout(min(float(ccfg["mesh"]["timeout_s"]), mr.stage_cap("cad", lad[1:], ccfg, 0.0)), ccfg, 0.0)
+        if lg["large"]:                                 # 대형 모델: cad 몫 = large.cad_share × 예산(뒤 단계로 시간 넘김)
+            sh = (ccfg["mesh"].get("large") or {}).get("cad_share")
+            if sh is not None:
+                to = min(to, float(sh) * float(mr._rcfg(ccfg)["total_timeout_s"]))
     r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
-                      timeout_s=to)
+                      timeout_s=to, **({"large": True} if lg["large"] else {}))
     r["mesh_method"] = "cad"
+    if r.get("cad_relaxed"):                            # v0.17.4 C2-D-32 cad 자식 안 ③ 옵션 재시도 성공
+        _cmp_relaxed_row(r, time.monotonic() - t0, lg)
     if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
-    return _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail)
+    out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg)
+    if lg["large"]:                                     # v0.17.4 C2-D-33 대형 판정(사다리 행에만 — 정상 형상 키 없음)
+        out["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
+    return out
+
+
+def _cmp_relaxed_row(r: dict, total_s: float, lg: dict, attempts: list | None = None) -> None:
+    """v0.17.4 cad_relaxed 성공 행: stage_times(cad 실패 → cad_relaxed 성공 초)·attempts·large(대형 판정) 기록."""
+    from esl.doe import mesh_refine as mr
+    rx = r["cad_relaxed"]
+    if attempts is None:
+        t_rx = float(rx.get("seconds") or 0.0)
+        t_cad = float(rx.get("cad_seconds") if rx.get("cad_seconds") is not None else max(0.0, total_s - t_rx))
+        attempts = [{"stage": "cad", "factor": None, "h_mm": None, "status": "FAILED_MESH", "code": "MESH_FAILED",
+                     "seconds": round(t_cad, 3)},
+                    {"stage": "cad_relaxed", "factor": None, "h_mm": None, "status": "READY", "code": None,
+                     "seconds": round(t_rx, 3)}]
+    r["attempts"] = attempts
+    r["stage_times"] = mr.stage_times(attempts)
+    if lg.get("large"):
+        r["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
 
 
 def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], r0: dict, t_cad: float,
-                remesh_ok: bool, avail: int | None) -> dict:
+                remesh_ok: bool, avail: int | None, lg: dict | None = None) -> dict:
     """C2-D-18~22 사다리 실행기(cad 실패 뒤). 단계마다 ``mesh_refine.plan`` → 시도 직전 ``check_limits`` 재판정 →
     ``run_isolated(kind cad, size_fields·max_elems)`` 또는 재메시. 첫 성공에서 멈춤."""
     from esl.doe import mesh_refine as mr
@@ -1297,11 +1373,20 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
         pm: dict = {}
     else:
         cad_err = {"code": r0["code"], "message": r0["message"]}
-        attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
-                     "seconds": round(t_cad, 3), **({"timed_out": True} if mr.timed_out(str(r0.get("message"))) else {})}]
+        _keep_try_logs(c, d, d, "cad")                    # v0.17.4 C2-D-40 cad 로그(성공 시도가 mesh/ 로 덮기 전)
         pm = mr.read_attempt(d)
+        rx0 = pm.get("cad_relaxed") or {}                  # v0.17.4 cad 자식 안 cad_relaxed(실패) — 초를 따로
+        t_rx0 = float(rx0.get("seconds") or 0.0) if rx0.get("tried") else 0.0
+        attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
+                     "seconds": round(max(0.0, t_cad - t_rx0), 3),
+                     **({"timed_out": True} if mr.timed_out(str(r0.get("message"))) else {})}]
+        if rx0.get("tried"):
+            attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "FAILED_MESH",
+                             "code": "MESH_FAILED", "seconds": round(t_rx0, 3)})
     pm["wall_seconds"] = round(t_cad, 3)
     ff = mr.face_failure(dict(pm, message=pm.get("message") or (r0 or {}).get("message")), ccfg) if r0 else None
+    if ff is None and r0 is not None and mr.timed_out(str(r0.get("message"))):
+        ff = _cmp_timeout_face(d, pm, ccfg)            # v0.17.4 C2-D-35 시간 초과 + 로그·부분 기록이 periodic 면
     ff_skip = mr.face_fail_skips(ccfg) if ff else ()
     if ff:                                              # v0.16.3 C2-D-27 결정 기록
         pm["face_fail"] = True
@@ -1355,9 +1440,18 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
         attempts.append({"stage": stage, "factor": None, "h_mm": h, "status": "SKIPPED", "code": code, "seconds": None,
                          "skipped": True, "reason": reason})
 
+    rxc = (ccfg.get("mesh") or {}).get("cad_relaxed") or {}
+    if r0 is not None and ff and rxc.get("enabled") and not (pm.get("cad_relaxed") or {}).get("tried"):
+        rr = _cmp_relaxed_parent(c, row, h, ccfg, props, lad, ff_skip, elapsed, attempts, infos, keep, n_try, cad_err,
+                                 lg or {})
+        n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
+        if rr.get("status") == "READY":
+            return rr
     for si, stage in enumerate(lad):
         if stage == "cad":
             continue
+        _cmp_say(c, f"[{did} {row['name']}] 사다리 {stage}" + (" 건너뜀(면 실패)" if stage in ff_skip else " 시작")
+                 + f" · 누적 {elapsed:.0f} s")
         if stage in ff_skip:                            # v0.16.3 C2-D-27 면 실패 → 세분화로 안 풀림
             skip(stage, "face_fail")
             continue
@@ -1446,7 +1540,8 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
             try:
                 mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
                                              max_elems=a.get("max_elems"), fail_info=True,
-                                             timeout_s=min(mr.attempt_timeout(to_cad, ccfg, elapsed), left))
+                                             timeout_s=min(mr.attempt_timeout(to_cad, ccfg, elapsed), left),
+                                             **_cmp_beat(c, row, stage))
             except EslError as exc:
                 if exc.code == "GMSH_UNAVAILABLE":
                     raise
@@ -1494,6 +1589,75 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     if cad_err is None:                                 # mode freeform 실패: 문구는 마지막 오류 + 단계별
         last["message"] = f"[단계별: {mr.stage_times_text(last['stage_times'])}] {last.get('message')}"
     return last
+
+
+def _cmp_timeout_face(d: str, pm: dict, ccfg: dict) -> dict | None:
+    """v0.17.4 C2-D-35 cad 시간 초과를 면 실패로 셈: 부분 기록(mesh_error.json face·log_face) 또는 mesh.log 마지막 면의 종류가
+    face_fail.types ∪ fallback.periodic_types 이거나 로그에 face_fail.patterns 문구('periodic surface' 등) → {face, reason
+    timeout, match}. face_fail 이 꺼져 있거나 근거가 없으면 None(예전처럼 세분화)."""
+    m = ccfg.get("mesh") or {}
+    ffc = m.get("face_fail") or {}
+    if not ffc.get("enabled", True):
+        return None
+    f = pm.get("face") or pm.get("log_face") or mg.log_face(os.path.join(d, mg.MESH_LOG))
+    if not f:
+        return None
+    types = [str(x) for x in (ffc.get("types") or [])] + [str(x) for x in ((m.get("fallback") or {}).get("periodic_types")
+                                                                          or [])]
+    if f.get("type") and str(f["type"]) in types:
+        return {"face": f, "reason": "timeout", "match": str(f["type"])}
+    txt = f"{f.get('error') or ''} {pm.get('message') or ''}".lower()
+    for p in ffc.get("patterns") or []:
+        if str(p).lower() in txt:
+            return {"face": f, "reason": "timeout", "match": str(p)}
+    return None
+
+
+def _cmp_relaxed_parent(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], ff_skip, elapsed: float,
+                        attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, lg: dict) -> dict:
+    """v0.17.4 C2-D-32 cad 가 시간 초과(자식 안 cad_relaxed 못 감) ∧ 면 실패 → 부모가 cad_relaxed 1회(direct — 그 세션만, 면 폴백
+    없음). 제한 = min(mesh.timeout_s, 남은 예산 − 뒤 단계(면 실패로 건너뛸 단계 제외) 몫). 성공 → mesh_method cad 행."""
+    from esl.doe import mesh_refine as mr
+    did = row["id"]
+    d = _cmp_mesh_dir(c, did)
+    later = [x for x in lad[1:] if x not in ff_skip]
+    cap = mr.stage_cap("cad_relaxed", later, ccfg, elapsed)
+    tmo = min(mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, elapsed), cap)
+    if tmo < mr.min_attempt_s(ccfg):
+        attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "SKIPPED", "code": mr.SKIP_INFO,
+                         "seconds": None, "skipped": True, "reason": "stage_time"})
+        return {"status": "SKIPPED", "_n_try": n_try, "_elapsed": elapsed}
+    rx = dict(ccfg["mesh"]["cad_relaxed"], direct=True)
+    cfg_r = dict(ccfg)
+    cfg_r["mesh"] = dict(ccfg["mesh"], cad_relaxed=rx)
+    _cmp_say(c, f"[{did} {row['name']}] cad_relaxed(③ 옵션 전체) 시작 · 누적 {elapsed:.0f} s")
+    n_try += 1
+    td = _next_try(c, d, n_try, keep)
+    t1 = time.monotonic()
+    kw = {"large": True} if lg.get("large") else {}
+    try:
+        mesh, meta = mg.run_isolated(c.p(row["rel"]), td, h, cfg_r, props, opt_cfg=c.ocfg, timeout_s=tmo, **kw,
+                                     **_cmp_beat(c, row, "cad_relaxed"))
+    except EslError as exc:
+        if exc.code == "GMSH_UNAVAILABLE":
+            raise
+        dt = time.monotonic() - t1
+        attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": _cad_code(td),
+                         "seconds": round(dt, 3), **({"timed_out": True} if mr.timed_out(exc.message) else {})})
+        infos.append(f"MESH_CAD_RELAXED_FAILED: {did} {row['name']} — {exc.message[:300]}")
+        return {"status": "FAILED_MESH", "_n_try": n_try, "_elapsed": elapsed + dt}
+    dt = time.monotonic() - t1
+    attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "READY", "code": None,
+                     "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
+    out = _cmp_ready(c, did, mesh, meta)
+    out.update(mesh_method="cad", info=infos, cad_relaxed=dict(out.get("cad_relaxed") or {}, after_timeout=True,
+                                                                cad_error=cad_err))
+    _cmp_relaxed_row(out, elapsed + dt, lg, attempts=attempts)
+    out["seconds"] = round(elapsed + dt, 3)
+    _promote(c, td, d, {"cad_relaxed": out["cad_relaxed"], "stage_times": out["stage_times"]})
+    if not keep:
+        _clear_tries(c, d)
+    return dict(out, _n_try=n_try, _elapsed=elapsed + dt)
 
 
 def _ladder_warns(td: str) -> list[dict]:
@@ -1777,6 +1941,27 @@ def mixed_methods(kinds) -> bool:
     return len(ks) > 1 and bool(ks & set(MIXED_TRIGGER))
 
 
+def _cmp_path_warn(r: dict, x: dict) -> str:
+    """v0.17.4 C2-D-36 경고 1줄: cad_relaxed 채택(MESH_CAD_RELAXED) 또는 대형 모델 경로(MESH_LARGE_MODEL) + [단계별: …]."""
+    from esl.doe import mesh_refine as mr
+    nm = f"{r['id']} {r['name']}"
+    st = f" [단계별: {mr.stage_times_text(x['stage_times'])}]" if x.get("stage_times") else ""
+    lg = x.get("large") or {}
+    lgt = (f" · 대형 모델(면 {lg.get('n_faces')}" + "".join(f", {k} {v}" for k, v in (lg.get("periodic") or {}).items())
+           + ")") if lg else ""
+    rx = x.get("cad_relaxed")
+    if rx and x.get("status") == "READY":
+        f = rx.get("face") or {}
+        fd = rx.get("fidelity") or {}
+        return (f"MESH_CAD_RELAXED: {nm} cad 메시가 " + (f"면 {f.get('id')}({f.get('type')})" if f else "면")
+                + "에서 실패해 면 폴백 전에 모델 전체를 ③ 옵션(" + ", ".join(f"{k} {v}" for k, v in
+                                                             (rx.get("overrides") or {}).items())
+                + ")으로 다시 메시함" + (f" — 원 STEP 대비 최대 {float(fd['hausdorff_mm']):.3f} mm" if fd.get("hausdorff_mm")
+                                       is not None else "") + lgt + st)
+    path = x.get("fallback_stage") or x.get("mesh_method") or "실패"
+    return f"MESH_LARGE_MODEL: {nm} 경로 {path}{lgt} — 면 폴백 세션 상한·cad 몫 줄임 적용{st}"
+
+
 def _cmp_mesh0(c: Ctx, echo) -> dict:
     """BD_MESH0 ④: 모든 STEP 같은 gmsh 프로필(SC-D-5)·형상별 병렬(run.parallel, SC-D-9). 기준 실패 → 작업 실패
     (MESH_FAILED·MESH_TOO_LARGE), 기준 크기(SC-D-7a) 불일치 → SIZE_MISMATCH. 그 밖 형상 실패 → FAILED_MESH(진행)."""
@@ -1808,6 +1993,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
              + ("" if remesh_ok or not ({"remesh", "freeform"} & set(lad)) else " (재메시 사용 불가 — 건너뜀)"))
     res: dict[str, dict] = {}
     done = [0]
+    c._cmp_echo = echo                                  # v0.17.4 C2-D-39 사다리 단계·하위 프로세스 진행 줄
     if steps:
         with ThreadPoolExecutor(max_workers=par, thread_name_prefix="esl-cmp-mesh") as pool:
             futs = {pool.submit(_cmp_mesh_shape, c, r, h, ccfg, props, mode, lad, remesh_ok, avail): r["id"]
@@ -1868,6 +2054,8 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
         if qy and qy["over_limit"]:
             warns.append(f"SHAPE_QUALITY_FAIL: {r['id']} {r['name']} 품질 Fail 요소 {qy['fail_elems']}개 "
                          f"({qy['fail_ratio'] * 100:.2f} % > {qy['max_fail_ratio'] * 100:g} %) — 차단 아님")
+        if x.get("cad_relaxed") or x.get("large"):        # v0.17.4 C2-D-32·33·36 고른 경로 + 단계별 초
+            warns.append(_cmp_path_warn(r, x))
         if qy and qy.get("fallback_faces"):
             warns.append(f"MESH_FACE_FALLBACK: {r['id']} {r['name']} 면 {qy['fallback_faces']}개(gmsh 면 id "
                          f"{', '.join(map(str, qy['fallback_face_ids']))})를 면 폴백("
@@ -1877,6 +2065,10 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
            "gmsh_version": ver, "frame_sha256": ev.config_hash(t.frame),
            "shapes": [{"id": r["id"], "name": r["name"], "file_name": r.get("file_name"), "reference": r["reference"],
                        "source": r["source"], **{k: v for k, v in res[r["id"]].items() if k != "id"}} for r in shapes]}
+    bad = [r for r in shapes if r["id"] != BASELINE and res[r["id"]].get("status") != "READY"]
+    if bad:                                             # v0.17.4 C2-D-41 형상 메시 실패 = 맨 앞 경고(차단 수준 표시)
+        warns.insert(0, "COMPARE_SHAPES_FAILED: 비교 형상 " + f"{len(bad)}/{len(shapes) - 1}개 메시 실패 — 비교에서 빠짐: "
+                     + "; ".join(f"{r['id']} {r['name']} {res[r['id']].get('code')}" for r in bad))
     doc["warnings"] = warns
     if mode != "cad":                                   # v0.16.0(cad = 키 없음 — v0.15.x 와 같은 문서)
         doc["mesh_mode"] = mode
@@ -1890,6 +2082,11 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
     c.write_json(os.path.join("prep", "input.json"), inp)
     nf = sum(1 for r in doc["shapes"] if r["status"] != "READY")
     echo(f"[bd_mesh0] 기준 d000 노드 {bm['n_nodes']} · 요소 {bm['n_elems']}, 형상 메시 실패 {nf}개")
+    n_cmp = len(shapes) - 1
+    need = int((c.cfg.get("compare") or {}).get("min_ready_shapes", 1) or 0)
+    if n_cmp > 0 and need > 0 and n_cmp - len(bad) < min(need, n_cmp):   # C2-D-41 비교할 형상이 없음 → 단계 실패
+        raise EslError("COMPARE_NO_SHAPES", f"비교 형상 메시 성공 {n_cmp - len(bad)}/{n_cmp}개 < 필요 {min(need, n_cmp)}개"
+                                            f"(bead_doe.compare.min_ready_shapes) — " + _ladder_fail_text(res[bad[0]['id']])[:300])
     c.progress(100)
     out = {"files": [f"prep/{sc.COMPARE_JSON}", "prep/base_mesh.npz", "prep/base.json"], "warnings": warns,
            "h": h, "n_failed": nf}

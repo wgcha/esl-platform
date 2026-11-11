@@ -2,6 +2,7 @@
 
 - **v0.16.1 변경 = `esl_select_relax.md`**(SELECT_RELAX — 이 문서와 충돌하면 그 문서가 우선).
 - **v0.16.3 변경(2026-11-10, 이슈 #53 실서버 보고)**: C2-D-26~31(freeform·면 실패 판정·OCC 삼각형 폴백·단계 시간 몫·단계별 문구·STEP 라벨), 설정 §5 끝, 시험 V-C2-26~31. 기본 사다리 `cad → refine_local → refine_global → freeform → defeature → tria`(remesh 단계는 예전 스터디 스냅샷용으로 남음).
+- **v0.17.4 변경(2026-11-11, 실 STEP 약 2800 면 — ③ 은 되고 ④ 는 실패·지연)**: C2-D-32~42(cad_relaxed·대형 모델·자식 제한·시간 초과 면 실패·경로 기록 + 이슈 #63 현장 진단: 구멍 메움 되돌림·nofix 대응·진행 줄·시도 로그·형상 실패 차단·freeform 삼각화 편차), 설정 §5 끝, 시험 V-C2-32~42. `bead_doe.select.graph.limits.max_elems` 250,000 → 600,000. CAD 가 성공하는 정상 STEP 은 결과 바이트 불변(실패 경로만 바뀜).
 - 상태: **확정** (2026-11-04 사용자, 20:33). 사용자 확정 방향(아래)과 §13 결정 Q1~Q3 을 반영했습니다. 세분화 폴백(확정 5, C2-D-18~25, §4A)을 포함합니다.
 - 버전: **v0.16.0** (기준 main d01ab2f = v0.15.0). **착수 조건 = `fix/mesh-sphere`·`fix/winerror32` 가 main 에 병합된 뒤(v0.15.1)**. 같은 파일·블록(`mesh_gmsh.py`, `compare.mesh` 설정 블록, `stages._cmp_mesh*`, `atomic_replace`)을 고치기 때문입니다(§11). migration **불필요**(§6).
 - 관계: `esl_step_compare.md`(④, SC-D-*)를 **확장**합니다. 업로드·검사·정렬/크기(SC-D-7)·기준 frame 고정 셀 매핑과 `auto_supports`(SC-D-6)·물성(SC-D-8)·병렬(SC-D-9)·품질(SC-D-13 `mesh_quality.summarize`)·순위·보고서는 그대로 재사용합니다. ② B 메시 읽기 규칙(`scenario.copy_mesh_upload`, purpose `doe_mesh`)과 rad 파서(`esl/rad/parser.py`)도 재사용합니다. 이 문서에 없는 규칙은 STEP_COMPARE 를 따르고, 충돌하면 이 문서가 우선합니다.
@@ -75,6 +76,17 @@
 | C2-D-29 | **(v0.16.3) 단계 시간 몫**: 단계 상한 = 남은 예산(`refine.total_timeout_s` − 누적) − Σ(뒤에 실제로 돌 단계의 `refine.stage_share` × 예산). 앞 단계가 몫을 덜 쓰면 뒤로 넘어가고, 어떤 단계도 뒤 단계 몫을 먹지 못함. 시도 제한 시간 = min(단계 제한 시간, 단계 상한 − 그 단계에서 쓴 시간). 남은 단계 몫 < `min_attempt_s` 면 그 시도·단계는 `SKIPPED reason stage_time`. cad 시도도 자기 몫(기본 0.3 × 3600 = 1080 s, 이전 1800 s)까지만. tria 는 단계 몫 판정 없이 남은 예산 전체(시간 초과 = 예산 소진 시만). 새 키 `stage_share`·`min_attempt_s` 는 이어하기 해시에서 뺌 | v0.16.2 실측: 세분화가 3003 s 를 써 마지막 재메시가 596.563 s 에서 끊김 |
 | C2-D-30 | **(v0.16.3) 단계별 기록·문구**: 형상 행·mesh.json `stage_times = [{stage, outcome READY|FAILED_MESH|SKIPPED, seconds, tries, reason?, code?, timed_out?}]`(시도 순서, 같은 단계 묶음). 사다리 실패 문구 = `[단계별: cad 실패 412.3 s → refine_local 건너뜀(면 실패 — 세분화로 풀리지 않음) → freeform 실패(시간 초과) 720.0 s → tria 실패 58.1 s]` + 기존 `MESH_LADDER_FAILED`(작업 실패 문구 500자 상한에 잘리지 않도록 앞에) | 어디서 멈췄는지 사용자가 바로 봄 |
 | C2-D-31 | **(v0.16.3) STEP 라벨 안 읽음** `compare.mesh.occ_import_labels: 0`(④ 프로필만, gmsh `Geometry.OCCImportLabels`): gmsh 4.13 의 STEP XCAF 라벨 처리가 면 수에 초선형(합성 1915 면 234 s → 5.4 s, 266 면 2.1 s). 세션·면 폴백·사다리 시도마다 STEP 을 다시 읽으므로 큰 형상에서 누적됨. 형상·태그·mesh.npz 는 같음(regress 바이트 동일), mesh.json `options` 에 기록하지 않음(③ 은 키 없음 → 그대로) | 실측 |
+| C2-D-32 | **(v0.17.4) cad_relaxed** = cad 첫 gmsh 세션이 면 실패(_FaceFail)면 **면 폴백(면마다 최대 12단계, 단계마다 STEP 재가져오기) 전에** 모델 전체를 ③ 옵션으로 **1세션** 다시: `compare.mesh.cad_relaxed` 의 `occ_fix_small 0`·`curvature_n 12`·`min_size_factor 0.2`(= `bead_doe.mesh` 기본) + **구멍 메움 끔**(`defeature: false` — 이슈 #63 실측: 정리 끔 + 구멍 메움 끔 = 228,857 요소 1 성분 120 s, 구멍 메움 켬 = 4 성분). 나머지 ④ 프로필 키는 그대로, 면 폴백 없음. 채택 = 품질 오류 없음(`MESH_DISCONNECTED` 포함) ∧ (`fidelity` true 면) 같은 가져오기 옵션의 원 STEP OCC 삼각화 대비 hausdorff ≤ `remesh.fidelity.fail_mm`. 채택 → 형상 행 `mesh_method cad`·`mesh_path cad_relaxed`·`cad_relaxed{overrides, face, first_error, fidelity, seconds, cad_seconds}`·`stage_times [cad 실패, cad_relaxed 성공]`, mesh.json `cad_relaxed`·`options` = 실제 쓴 옵션, 경고 `MESH_CAD_RELAXED`. 실패 → 기존 면 폴백·사다리 그대로(`stage_times` 에 cad_relaxed 실패 줄). cad 가 **시간 초과**로 끝났고(자식이 cad_relaxed 에 못 감) C2-D-35 로 면 실패면 부모가 같은 시도를 1회(`direct` — 그 세션만, 제한 = min(mesh.timeout_s, 남은 예산 − 뒤에 실제로 돌 단계 몫), `cad_relaxed.after_timeout`). | 실 STEP: ③(정리 끔·곡률 12·최소 0.2 h) 단일 세션은 성공, ④ 의 OCCFix 가 Sphere 극점 퇴화 모서리를 지움 |
+| C2-D-33 | **(v0.17.4) 대형 모델** = STEP 본문의 `ADVANCED_FACE`·`FACE_SURFACE` 수 > `compare.mesh.large_faces`(1000) 또는 `large.periodic_types`(Sphere → `SPHERICAL_SURFACE`) 면이 있음(gmsh 없이 셈 — 결정적, BREP 은 판정 안 함). 대형이면 (1) cad 자식의 면 폴백 세션 수 ≤ `large.fallback_sessions`(3, 0 = 상한 없음) — 넘으면 FAILED_MESH(실패 면 기록 → face_fail), (2) auto cad 제한 ≤ `large.cad_share`(0.15) × `refine.total_timeout_s`(남은 시간은 C2-D-29 대로 freeform·tria 로). **세션 재사용(재가져오기 없이 면만 다시 메시)은 하지 않음**: periodic 순서의 앞 단계(nofix·split·fill·small)와 relax 는 모두 메싱 전에 OCC 모델(정리·작은 형상 처리·면 대체)을 바꾸고 gmsh 에는 되돌리기가 없어 재가져오기만이 원 모델을 돌려줌; 재가져오기 없이 되는 알고리즘 단계는 periodic 순서의 맨 뒤라 줄일 시간이 거의 없음; 새 세션은 태그·노드 번호가 결정적이라 v0.14.1~ 면 폴백 결과 바이트를 지킴 → 상한으로 대신함. 행 `large{reason, n_faces, periodic}`·경고 `MESH_LARGE_MODEL`(사다리·cad_relaxed 행에만). | 실측 최악 47~60 분/형상 |
+| C2-D-34 | **(v0.17.4) 자식 제한**: kind cad ∧ `compare.mesh.child_margin_s`(30, ④ 프로필) → job `child_timeout_s` = spawn 제한 − min(여유, 10 %), `loop_timeout_s` = spawn 제한 − 2 × 여유(면 폴백 반복 상한, mesh.timeout_s 보다 작으면 그 값). 자식 감시 타이머가 `child_timeout_s` 에 mesh_error.json(시간 초과 문구, 실패 면 = 첫 실패 면 → mesh.log 마지막 gmsh 'Meshing surface N (종류' — 첫 가져오기 면 목록으로 bbox key) + `progress{sessions, n_faces}`·`cad_relaxed` 를 쓰고 종료코드 3 — gmsh 2D 가 한 면에서 멈춰도 부모 spawn 이 죽이기 전에 기록. 감시 자식만 gmsh Terminal 1(mesh.log). 정상 결과 무관 | 이전: spawn 1080 s < 자식 1800 s → 기록 없이 죽어 face_fail 이 안 켜지고 refine_global 이 720 s 몫을 다 씀 |
+| C2-D-35 | **(v0.17.4) 시간 초과도 면 실패**: cad 실패가 시간 초과이고 C2-D-27 이 못 정하면, 부분 기록(`face`·`log_face`) 또는 mesh.log 마지막 면의 종류 ∈ `face_fail.types` ∪ `fallback.periodic_types` 이거나 로그·문구에 `face_fail.patterns` → 면 실패(`reason timeout`) → 세분화 건너뜀. 근거 없음 → 예전처럼 세분화 | 같은 실측 |
+| C2-D-36 | **(v0.17.4) 경로 기록**: `stage_times` 에 단계 `cad_relaxed`(자식 안 실패 = cad 초에서 뺀 별도 줄), 경고 1줄 `MESH_CAD_RELAXED`/`MESH_LARGE_MODEL` 끝에 `[단계별: …]`. 워커 `COMPARE_SHAPE_KEYS` 는 이 판에서 안 바꿈(v0.17.2 소유) — API 는 `stage_times`·경고로 경로를 봄, 새 행 키(`mesh_path`·`cad_relaxed`·`large`)는 compare.json 에만 | 소유권 |
+| C2-D-37 | **(v0.17.4, 이슈 #63) 구멍 메움 트랜잭션**: `_session` 이 구멍 메움 전 OCC 서명(차원별 개수 + 면 bbox 키)을 잡고, `DEFEATURE_SKIPPED`(처리 중 예외)인데 서명이 바뀌었으면 STEP 을 다시 가져와(nofix_face 다시 적용) 구멍 메움 없이 메시 — `defeature.reverted`·`DEFEATURE_REVERTED`. 예외 전 변경이 없으면 그대로(정상 경로 바이트 불변). **nofix_all 은 구멍 메움 없이**. `MESH_DISCONNECTED` 안내 = 원인별(구멍 메움 실패·되돌림 → `compare.defeature.enabled false`, OCC 정리 켬 → `occ_fix_small 0`, 그 밖 = 예전 `occ_sew_faces 1`) | 실측: "Curve loop is not closed" 로 실패하며 4 성분, 안내가 원인과 다름 |
+| C2-D-38 | **(v0.17.4, 이슈 #63) nofix_face 대응**: 정리 뒤 bbox·넓이 엄격 대응 후보 0개면, 같은 종류 ∧ 정리 뒤 bbox(± bbox_tol) 안 ∧ 넓이 ∈ [넓이 / `nofix.area_grow_max`(1000), 넓이] 후보가 정확히 1개일 때 그 면(정리가 키운 조각) | 실측: 면 2824 0.08 mm² → 63.53 mm²(완전한 구) — 후보 0개 |
+| C2-D-39 | **(v0.17.4) 진행 줄**: BD_MESH0 단계 로그에 사다리 단계마다 `[d001 이름] 사다리 <단계> 시작|건너뜀(면 실패) · 누적 N s`, 하위 프로세스(cad·세분화·cad_relaxed) 대기 중 `compare.mesh.heartbeat_s`(60) 마다 `… <단계> 진행 중 N s — <mesh.log 마지막 [mesh_fallback]·[cad_relaxed] 줄>` | 실측: 44 분 무출력 |
+| C2-D-40 | **(v0.17.4) 시도 로그 보관**: keep_tries false 라도 지우는 시도 폴더의 `mesh.log`·`mesh_error.json` 과 cad 의 것을 `mesh/attempt_logs/<try_n|cad>.<파일>` 에 남김(형상 시작 때 이전 실행분 삭제) | 실측: freeform 1504 s 시간 초과 기록이 지워짐 |
+| C2-D-41 | **(v0.17.4) 형상 실패 차단**: 비교 형상(기준 제외) 중 READY 가 `compare.min_ready_shapes`(1, 0 = 안 막음)보다 적으면 compare.json·input.json 을 쓴 뒤 BD_MESH0 실패 `COMPARE_NO_SHAPES`(첫 실패 형상 단계별 문구). 일부만 실패면 READY + 경고 맨 앞 `COMPARE_SHAPES_FAILED: 비교 형상 k/n개 메시 실패 — 비교에서 빠짐: <id 이름 코드>…` | 실측: n_failed 1 인데 ok — 비교 대상 1/2 로 READY |
+| C2-D-42 | **(v0.17.4) freeform 삼각화 편차** `compare.freeform.angular_deflection_deg`(20, null = remesh 값)·`linear_deflection_mm`(null = remesh 0.05). remesh 의 각 5° 는 곡면(구·원통·토러스·BSpline)이 많은 STEP 에서 BRepMesh 삼각형이 폭증하고 `classifySurfaces` 가 초선형 — 합성 105 면 판: 5° = 26.4만 개·분류 36 s·freeform 70.5 s·hausdorff 0.550 mm·패치 179 / 20° = 3.8만 개·1.6 s·16.7 s·0.389 mm·94·quad 1.0. 합성 1915 면 판 5° = 메모리 초과(2.3 GB 에서 강제 종료). 현장(4,832 면, Sphere 99·Cylinder 1,504·Torus 640·BSpline 1,185)의 freeform 1,504 s 시간 초과와 같은 원인으로 판단. 충실도 기준 S 도 같은 삼각화(선 편차 0.05 mm 유지) | 이슈 #63 ⑤ |
 
 ## 3. 데이터 모델
 
@@ -187,6 +199,27 @@ bead_doe:
 ```
 - 시험 전용 고장 주입 = 환경 변수 `ESL_TEST_MESH_FAIL`(cad·defeature·remesh·fidelity, spawn 자식에서만 — 설정 키 아님).
 
+**v0.17.4 추가 키**(C2-D-32~34, DEFAULTS·pydantic·yaml 2개 거울, 이어하기 해시·base.json profile 밖 — 정상 결과 무관):
+
+```yaml
+bead_doe:
+  compare:
+    mesh:
+      cad_relaxed: {enabled: true, occ_fix_small: 0, curvature_n: 12, min_size_factor: 0.2, fidelity: true}
+      large_faces: 1000
+      large: {periodic_types: [Sphere], fallback_sessions: 3, cad_share: 0.15}
+      child_margin_s: 30.0
+      heartbeat_s: 60.0          # C2-D-39
+      cad_relaxed.defeature: false
+      fallback.nofix.area_grow_max: 1000.0   # C2-D-38
+    freeform: {linear_deflection_mm: null, angular_deflection_deg: 20.0}   # C2-D-42
+    min_ready_shapes: 1          # C2-D-41
+  select:
+    graph:
+      limits: {max_elems: 600000}   # 250,000 → 600,000(beadgraph 계약 성능 상한 600k/300 s — 현장 ① 메시 267,470 요소가 TOO_LARGE, 분류 16 s·396 MB 실측). timeout_s 180 유지
+```
+- 시험 주입 += `hang`(cad 시도에서 OCCFixDegenerated 1 이면 첫 Sphere 면에서 gmsh 형식 한 줄을 찍고 멈춤).
+
 ## 6. API · 스키마 · DB
 
 - 업로드: 메시 형상 = 기존 청크 업로드, 같은 세션에 주 + include. 다중 STEP 세션 규칙(rel)을 메시에도 적용: `doe_source(kind="mesh", rel=…)` 는 rel 이 세션의 살아 있는 `.rad/.inc` 와 정확히 같아야 합니다. 확장자 검사 = `mesh_input.formats`, 크기 = 주 + include 합계 ≤ `max_mb`(422 `MESH_INPUT_TOO_LARGE`). 결과는 `save_doe_check(purpose doe_mesh)`.
@@ -254,6 +287,16 @@ BD_LOADS·BD_*·BD_POST  변경 없음(메시 dict 형식 같음). ranking.csv �
 | V-C2-29 | (v0.16.3) 단계 몫: 모든 시도 시간 초과 주입 → cad 제한 = 예산 × (1 − 뒤 몫 합), tria 몫 보장, 총 ≤ 예산, 문구 단계별 초 | 같은 파일, `test_step_compare.py`(v0.16.2 사다리 = 몫 0 이면 이전과 같음) |
 | V-C2-30 | (v0.16.3) 정상 경로 바이트 불변: regress(mode 없음·cad·auto) 메시·하중·순위 동일 — auto 의 이어하기 해시만 기본 사다리 변경으로 다름(스냅샷 `mesh_ladder` 가 있는 기존 스터디는 같음) | `scripts/regress.py`(작업 폴더) |
 | V-C2-31 | (v0.16.3, 수동 `ESL_TEST_BIG=1`) 약 1900 면 판: tria < 120 s·충실도 | 같은 파일 |
+| V-C2-32 | (v0.17.4) 면 공유 다딤플 판(실제 gmsh — OCCFix 1 이면 Sphere 면 실패): cad_relaxed 1세션 성공·품질·충실도·`MESH_CAD_RELAXED`, 끄면 FAILED; 면 공유 없는 판은 `MESH_DISCONNECTED` 로 채택 안 함; 파이프라인 행 `mesh_path`·`stage_times` | `tests/doe/test_mesh_relaxed_v0174.py` |
+| V-C2-33 | (v0.17.4) STEP 세기·대형 판정, 면 폴백 세션 상한, 대형 cad 제한 = cad_share × 예산 | 같은 파일 |
+| V-C2-34 | (v0.17.4) 2D 멈춤 주입(hang): 자식이 spawn 전에 mesh_error.json(시간 초과 + 로그 면 Sphere) → 면 실패 → 세분화 건너뜀, 부모 cad_relaxed 성공 | 같은 파일 |
+| V-C2-35 | (v0.17.4) 정상 경로 바이트 불변: regress(mode 없음·cad·auto) main 과 동일 | `scripts/regress.py`(작업 폴더) |
+| V-C2-36 | (v0.17.4, 수동) 합성 1915 면 판(synth_many) 첫 성공 메시까지 시간 main 대비 | decisions.md |
+| V-C2-37 | (v0.17.4) 구멍 메움이 형상을 바꾼 뒤 실패(주입) → 되돌림·1 성분·DEFEATURE_REVERTED, MESH_DISCONNECTED 원인별 안내 | `tests/doe/test_mesh_relaxed_v0174.py` |
+| V-C2-38 | (v0.17.4) nofix_face 키운 면 대응(조각 0.08 → 구 63.53 mm²) | 같은 파일 |
+| V-C2-39·40 | (v0.17.4) heartbeat·사다리 단계 줄, attempt_logs/cad.mesh_error.json | 같은 파일 |
+| V-C2-42 | (v0.17.4) freeform 편차 설정 거울(DEFAULTS·pydantic·yaml) | `tests/pipeline/test_config.py`(_C2_KEYS freeform) |
+| V-C2-41 | (v0.17.4) 비교 형상 전부 실패 → COMPARE_NO_SHAPES, min_ready_shapes 0 → 경고 맨 앞 COMPARE_SHAPES_FAILED | 같은 파일 |
 
 ## 11. 파일 소유권과 작업 단계
 

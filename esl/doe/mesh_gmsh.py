@@ -424,6 +424,19 @@ def _pick_same_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: fl
     return hit[0]
 
 
+def _pick_grown_face(cands: list, key: tuple, typ: str, area: float, bbox_tol: float, grow: float) -> int:
+    """C2-D-38 엄격 대응(bbox·넓이 같음) 후보 0개일 때: OCC 정리가 작은 조각을 키운 면(실측: 0.08 mm² 구 조각 → 63.53 mm² 완전한
+    구)을 찾음 — 같은 종류 ∧ bbox 가 정리 뒤 bbox(± bbox_tol) 안 ∧ 넓이 ∈ [area / grow, area]. 정확히 1개일 때만."""
+    lo = [float(v) - bbox_tol for v in key[:3]]
+    hi = [float(v) + bbox_tol for v in key[3:]]
+    hit = [int(t) for t, ty, a, bb in cands
+           if str(ty) == str(typ) and all(lo[i] <= float(bb[i]) and float(bb[i + 3]) <= hi[i] for i in range(3))
+           and area / grow <= float(a) <= area * (1.0 + 1e-6)]
+    if len(hit) != 1:
+        raise _GeomSkip(f"넓이가 줄어든(정리 전 조각) 같은 종류 후보 {len(hit)}개")
+    return hit[0]
+
+
 def _nofix_face(gmsh, src: str, key: tuple, fb: dict | None = None) -> dict:
     """nofix(그 면만): 같은 STEP 을 OCC 정리(OCCFix*·OCCSewFaces) 없이 한 번 더 가져와 bbox·면 종류·넓이가 같은 면 하나만 남기고,
     정리된 원 면을 그 면으로 바꾼 뒤 원 면 이웃과만 fragment(공유 경계 복원). 극점 퇴화 모서리가 남아 Sphere 면이 메시된다.
@@ -453,12 +466,18 @@ def _nofix_face(gmsh, src: str, key: tuple, fb: dict | None = None) -> dict:
         for k, v in keep.items():
             gmsh.option.setNumber(k, v)
     new = {d: sorted(int(t) for _x, t in occ.getEntities(d) if int(t) not in before[d]) for d in range(4)}
+    cands = [(t, gmsh.model.getType(2, t), occ.getMass(2, t), _bbox_key(gmsh, 2, t)) for t in new[2]]
     try:
-        f = _pick_same_face([(t, gmsh.model.getType(2, t), occ.getMass(2, t), _bbox_key(gmsh, 2, t)) for t in new[2]],
-                            key, typ0, area0, bbox_tol, area_rtol)
+        f = _pick_same_face(cands, key, typ0, area0, bbox_tol, area_rtol)
         why = None
     except _GeomSkip as gs:
         f, why = None, str(gs)
+        grow = float(nf.get("area_grow_max", dn.get("area_grow_max", 0.0)) or 0.0)
+        if grow > 1.0:                                       # v0.17.4 C2-D-38 정리가 면을 키운 경우(조각 → 완전한 구)
+            try:
+                f, why = _pick_grown_face(cands, key, typ0, area0, bbox_tol, grow), None
+            except _GeomSkip as gs2:
+                why = f"{why}; {gs2}"
     if new[3]:
         occ.remove([(3, t) for t in new[3]])
     rest = [(2, t) for t in new[2] if t != f]
@@ -583,17 +602,17 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
     반환 (X, conn, et, ver, dfi, step_done, applied{키: 태그}, geom{키: 기록})."""
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
-        gmsh.option.setNumber("General.Terminal", 0)
+        # v0.17.4 C2-D-34 감시 자식(_RUN track)만 gmsh 문구를 mesh.log 로(시간 초과 때 마지막 'Meshing surface N (종류' → 실패 면)
+        gmsh.option.setNumber("General.Terminal", 1 if _RUN.get("track") else 0)
         gmsh.option.setNumber("General.NumThreads", 1)
         gmsh.option.setNumber("Geometry.OCCSewFaces", 0 if nofix_all else int(mc.get("occ_sew_faces", 0)))
         for k, v in gopts.items():
             gmsh.option.setNumber(k, 0 if nofix_all and k in OCC_FIX_KEYS else v)
         set_import_labels(gmsh, mc)
-        try:
-            gmsh.model.occ.importShapes(os.fspath(src))
-            gmsh.model.occ.synchronize()
-        except Exception as exc:                            # noqa: BLE001
-            raise EslError("FAILED_MESH", f"형상 파일을 읽지 못함: {exc}") from None
+        _import(gmsh, src)
+        if _RUN.get("track") and "faces" not in _RUN:       # v0.17.4 첫 가져오기 면 목록(감시 타이머가 로그 면 번호 → 기록)
+            _RUN["faces"] = {int(t): {"type": str(gmsh.model.getType(2, t)), "key": _bbox_key(gmsh, 2, t)}
+                             for _d, t in gmsh.model.getEntities(2)}
         step_done = None
         if step_out:
             gmsh.write(os.fspath(step_out))
@@ -602,26 +621,40 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
             gmsh.option.setNumber(k, v)
         applied: dict = {}
         geom: dict = {}
-        for gk, stage in (face_geom or {}).items():          # v0.15.1 nofix(그 면만) — 작은 형상 처리 전
-            if stage != "nofix_face":
-                continue
-            try:
-                geom[gk] = {"stage": stage, **_nofix_face(gmsh, src, gk, fb)}
-            except _GeomSkip as gs:
-                bb = list(gk)
-                raise _FaceFail(f"{STAGE_NAMES[stage]} 적용 안 됨: {gs}",
-                                {"id": None, "type": None, "key": gk,
-                                 "center": [round(0.5 * (bb[i] + bb[i + 3]), 3) for i in range(3)]}, key=gk) from None
-            applied[gk] = int(geom[gk]["new_ids"][0])
+
+        def nofix_faces() -> None:
+            for gk, stage in (face_geom or {}).items():      # v0.15.1 nofix(그 면만) — 작은 형상 처리 전
+                if stage != "nofix_face":
+                    continue
+                try:
+                    geom[gk] = {"stage": stage, **_nofix_face(gmsh, src, gk, fb)}
+                except _GeomSkip as gs:
+                    bb = list(gk)
+                    raise _FaceFail(f"{STAGE_NAMES[stage]} 적용 안 됨: {gs}",
+                                    {"id": None, "type": None, "key": gk,
+                                     "center": [round(0.5 * (bb[i] + bb[i + 3]), 3) for i in range(3)]}, key=gk) from None
+                applied[gk] = int(geom[gk]["new_ids"][0])
+        nofix_faces()
         dfi = None
         df = mc.get("defeature")
         ds = mc.get("defeature_stage")                       # v0.16.1 ④ 사다리 defeature 단계(키 없으면 v0.16.0 그대로)
         feats: list = []
-        if isinstance(df, dict) and df.get("enabled"):       # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
+        if isinstance(df, dict) and df.get("enabled") and not nofix_all:   # v0.14.0 ④ 선택 키(없으면 ③ 그대로)
+            sig0 = _occ_sig(gmsh)                            # v0.17.4 C2-D-37 실패한 구멍 메움은 되돌림(재가져오기)
             if isinstance(ds, dict):
                 dfi = gdf.holes(gmsh, df, h, relax, collect=feats)
             else:
                 dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
+            if any(str(w).startswith("DEFEATURE_SKIPPED") for w in dfi.get("warnings") or []) and _occ_sig(gmsh) != sig0:
+                gmsh.clear()
+                _import(gmsh, src)
+                geom.clear()
+                applied.clear()
+                feats.clear()
+                nofix_faces()
+                dfi = dict(dfi, filled=0, hole_sized=0, reverted=True,
+                           warnings=list(dfi["warnings"]) + ["DEFEATURE_REVERTED: 작은 형상 처리가 실패하며 형상을 바꿔 원 형상으로 "
+                                                             "되돌림(다시 가져옴) — 구멍 메움 없이 메시"])
         if isinstance(ds, dict):
             crit = ds["crit"]
             found = gdf.find_features(gmsh, crit, targets=ds["targets"]) if ds.get("targets") else \
@@ -666,6 +699,40 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
     finally:
         gmsh.finalize()
     return X, conn, et, ver, dfi, step_done, applied, geom
+
+
+def _import(gmsh, src: str) -> None:
+    try:
+        gmsh.model.occ.importShapes(os.fspath(src))
+        gmsh.model.occ.synchronize()
+    except Exception as exc:                                # noqa: BLE001
+        raise EslError("FAILED_MESH", f"형상 파일을 읽지 못함: {exc}") from None
+
+
+def _occ_sig(gmsh) -> tuple:
+    """OCC 모델 서명(차원별 개수 + 면 bbox 키) — 구멍 메움이 모델을 바꿨는지(C2-D-37)."""
+    occ = gmsh.model.occ
+    return (tuple(len(occ.getEntities(d)) for d in range(4)),
+            tuple(sorted(_bbox_key(gmsh, 2, t) for _d, t in gmsh.model.getEntities(2))))
+
+
+def disconnected_hint(errs: list, dfi: dict | None, mc: dict) -> list:
+    """v0.17.4 C2-D-37 MESH_DISCONNECTED 안내를 실제 원인에 맞춤: 구멍 메움 실패·되돌림 → compare.defeature, OCC 정리 켬 →
+    occ_fix_small 0, 그 밖(정리 끔·봉합 끔) = 예전 occ_sew_faces 안내. 다른 오류는 그대로."""
+    out = []
+    for e in errs or []:
+        if e.get("code") != "MESH_DISCONNECTED":
+            out.append(e)
+            continue
+        head = str(e.get("message") or "").split(" — ")[0]
+        if any(str(w).startswith(("DEFEATURE_SKIPPED", "DEFEATURE_REVERTED")) for w in (dfi or {}).get("warnings") or []):
+            why = "작은 구멍 메움(defeature)이 실패하며 형상을 끊음(설정 bead_doe.compare.defeature.enabled false 검토)"
+        elif geometry_options(mc):
+            why = "OCC 작은 모서리·면 정리가 면을 바꿈(설정 bead_doe.compare.mesh.occ_fix_small 0 검토)"
+        else:
+            why = str(e.get("message") or "").split(" — ", 1)[1] if " — " in str(e.get("message") or "") else ""
+        out.append(dict(e, message=f"{head} — {why}" if why else head))
+    return out
 
 
 ALG_NAMES = {1: "MeshAdapt", 2: "Automatic", 5: "Delaunay", 6: "Frontal-Delaunay", 7: "BAMG",
@@ -723,8 +790,140 @@ def _face_label(f: dict) -> str:
         f"면 {f.get('id')}({f.get('type')})"
 
 
+# ---------------------------------------------------------------- v0.17.4 cad_relaxed·대형 모델·자식 제한(C2-D-32~35)
+RELAXED_KEYS = ("occ_fix_small", "curvature_n", "min_size_factor")   # cad_relaxed 가 ④ 프로필에서 덮어쓰는 키
+_RUN: dict = {}                                             # 자식 1작업 진행 기록(track·faces·face·sessions·relaxed)
+
+
+def _relaxed_try(gmsh, src: str, mc: dict, h: float, props: dict, cfg: dict, opt_cfg, normal_ref, fb: dict, rx: dict,
+                 ff, step_out: str | None) -> tuple[dict, tuple | None]:
+    """C2-D-32 cad_relaxed: 모델 전체를 RELAXED_KEYS 만 바꾼 옵션으로 1세션(면 폴백 없음) → 품질 오류 없음 ∧ (rx.fidelity 면) 원
+    STEP OCC 삼각화 대비 hausdorff ≤ remesh.fidelity.fail_mm 일 때만 채택. 반환 (기록, _session 결과 | None)."""
+    from esl.doe import opt_settings
+    over = {k: rx[k] for k in RELAXED_KEYS if rx.get(k) is not None}
+    mc_r = dict(mc, **over)
+    if not rx.get("defeature", False) and isinstance(mc.get("defeature"), dict):   # 실측: 정리 끔 + 구멍 메움 끔이 통함
+        mc_r["defeature"] = dict(mc["defeature"], enabled=False)
+        over = dict(over, defeature=False)
+    opts_r, gopts_r = gmsh_options(h, mc_r), geometry_options(mc_r)
+    rec: dict = {"tried": True, "ok": False, "overrides": over}
+    if ff is not None:
+        rec["first_error"] = ff.msg
+        if ff.face is not None:
+            rec["face"] = {k: ff.face.get(k) for k in ("id", "type", "center")}
+    _RUN["relaxed"] = rec
+    t1 = time.monotonic()
+    try:
+        got = _session(gmsh, src, mc_r, h, opts_r, gopts_r, step_out=step_out, face_alg={}, relax=(), fb=fb)
+    except _FaceFail as e:
+        rec.update(error=e.msg, seconds=round(time.monotonic() - t1, 3))
+        return rec, None
+    except EslError as e:
+        rec.update(error=e.message, seconds=round(time.monotonic() - t1, 3))
+        return rec, None
+    mesh = build_mesh(got[0], got[1], got[2], props, normal_ref)[0]
+    qe = disconnected_hint(quality(mesh, cfg, opt_cfg or opt_settings(None))["errors"], got[4], mc_r)
+    if qe:
+        rec.update(error=f"품질 오류 {qe[0]['code']}: {qe[0]['message']}", seconds=round(time.monotonic() - t1, 3))
+        return rec, None
+    if rx.get("fidelity", True):
+        fd = _relaxed_fidelity(gmsh, src, mc_r, mesh, h, cfg)
+        rec["fidelity"] = fd
+        if fd.get("fail_mm") is not None and float(fd["hausdorff_mm"]) > float(fd["fail_mm"]):
+            rec.update(error=f"원 STEP 대비 최대 {float(fd['hausdorff_mm']):.3f} mm(> {float(fd['fail_mm']):g} mm)",
+                       seconds=round(time.monotonic() - t1, 3))
+            return rec, None
+    rec.update(ok=True, seconds=round(time.monotonic() - t1, 3), _opts=opts_r, _gopts=gopts_r)
+    return rec, got
+
+
+def _relaxed_fidelity(gmsh, src: str, mc_r: dict, mesh: dict, h: float, cfg: dict) -> dict:
+    """cad_relaxed 메시 ↔ 같은 가져오기 옵션의 원 STEP OCC 삼각화(remesh 충실도 함수·설정 그대로 — 코드 1곳)."""
+    from esl.doe import mesh_remesh as mrm
+    rc = mrm._rcfg(cfg)
+    gmsh.initialize(["-noenv"], readConfigFiles=False)
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("General.NumThreads", 1)
+        S_X, S_T = gdf.reference_tris(gmsh, src, mc_r, rc)
+    finally:
+        gmsh.finalize()
+    fd = mrm.fidelity(S_X, S_T, mesh, h, rc)
+    return {k: fd.get(k) for k in ("hausdorff_mm", "p95_mm", "area_ratio", "warn_mm", "fail_mm", "over_warn")}
+
+
+STEP_SURF = {"Sphere": "SPHERICAL_SURFACE", "Torus": "TOROIDAL_SURFACE", "Cylinder": "CYLINDRICAL_SURFACE",
+             "Cone": "CONICAL_SURFACE", "BSpline surface": "B_SPLINE_SURFACE"}   # gmsh 면 종류 → STEP 엔터티
+
+
+def step_scan(src: str, types=("Sphere",)) -> dict:
+    """C2-D-33 STEP 본문 세기(gmsh 없이, 결정적): {n_faces, periodic:{종류: 개수}}. STEP 이 아니면(BREP 등) n_faces None."""
+    import re
+    out: dict = {"n_faces": None, "periodic": {}}
+    if os.path.splitext(str(src))[1].lower() not in (".step", ".stp"):
+        return out
+    with open(src, "rb") as fh:
+        b = fh.read()
+    out["n_faces"] = len(re.findall(rb"=\s*(?:ADVANCED_FACE|FACE_SURFACE)\s*\(", b))
+    for t in types or ():
+        e = STEP_SURF.get(str(t))
+        if e:
+            n = len(re.findall(rb"[=,(]\s*" + e.encode() + rb"\s*\(", b))
+            if n:
+                out["periodic"][str(t)] = n
+    return out
+
+
+def large_model(src: str, mc: dict) -> dict:
+    """C2-D-33 대형 모델 판정: STEP 면 > mesh.large_faces 또는 large.periodic_types 면이 있음. 키 없으면(③) large False."""
+    lg = mc.get("large") if isinstance(mc.get("large"), dict) else None
+    if lg is None or mc.get("large_faces") is None:
+        return {"large": False}
+    sc = step_scan(src, lg.get("periodic_types") or ())
+    why = []
+    if sc["n_faces"] is not None and sc["n_faces"] > int(mc["large_faces"]):
+        why.append("faces")
+    if sc["periodic"]:
+        why.append("periodic")
+    return {"large": bool(why), "reason": why, **sc}
+
+
+def log_face(log_path: str, faces: dict | None = None, tail: int = 1 << 19) -> dict | None:
+    """C2-D-35 mesh.log 끝(tail 바이트)에서 마지막으로 메시하던 면: 'periodic surface N' → '[mesh_fallback] 면 N(종류' →
+    gmsh 'Meshing surface N (종류'. faces(_RUN 면 목록)가 있으면 key 를 붙임. 없으면 None."""
+    import re
+    try:
+        with open(log_path, "rb") as fh:
+            fh.seek(0, 2)
+            n = fh.tell()
+            fh.seek(max(0, n - tail))
+            txt = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    tag = typ = None
+    m = list(re.finditer(r"periodic surface (\d+)", txt))
+    if m:
+        tag = int(m[-1].group(1))
+    for pat in (r"\[mesh_fallback\] 면 (\d+)\(([^,)]+)", r"Meshing surface (\d+) \(([^,)]+)"):
+        mm = list(re.finditer(pat, txt))
+        if mm and (tag is None or int(mm[-1].group(1)) == tag):
+            tag, typ = int(mm[-1].group(1)), mm[-1].group(2).strip()
+            break
+    if tag is None:
+        return None
+    f = (faces or {}).get(tag) or (faces or {}).get(str(tag)) or {}
+    out = {"id": tag, "type": f.get("type") or typ}
+    if f.get("key") is not None:
+        k = [float(v) for v in f["key"]]
+        out.update(key=k, center=[round(0.5 * (k[i] + k[i + 3]), 3) for i in range(3)])
+    if m:
+        out["error"] = f"Impossible to mesh periodic surface {tag}"
+    return out
+
+
 def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None, normal_ref=None,
-              out_dir: str | None = None, step_out: str | None = None) -> tuple[dict, dict]:
+              out_dir: str | None = None, step_out: str | None = None, t_lim_s: float | None = None,
+              large: bool = False) -> tuple[dict, dict]:
     """BREP/STEP → (mesh dict, mesh.json dict). out_dir 이 있으면 mesh.npz·mesh.json 을 쓴다. 이 프로세스 안에서 실행.
 
     v0.14.1 면 단위 폴백(선택 키 ``mesh.fallback`` — ④ 프로필만, ③ 은 키 없음 → 예전 그대로): 2D 메싱이 한 면에서 실패하면
@@ -734,7 +933,11 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     나누거나(split), 경계 고리의 BSpline 채움 면으로 바꾸거나(fill, 원 면 대비 편차 ≤ ``fill.tol_factor`` × h), 작은 면이면
     경계만으로 채움(small) — 이 세션 OCC 모델만 바꿈(원본 STEP 불변). 나뉜 조각의 실패는 원 면의 다음 단계로.
     폴백이 쓰인 면 → meta.mesh_fallback(stage·deviation_mm) + 경고 MESH_FACE_FALLBACK. 끝내 실패 → FAILED_MESH(면 id·종류·bbox
-    중심·시도한 단계)."""
+    중심·시도한 단계).
+
+    v0.17.4(선택 인자·키 — 없으면 예전 그대로): ``t_lim_s`` = 면 폴백 시간 상한을 mesh.timeout_s 보다 줄임(C2-D-34 — spawn 제한보다
+    먼저 끝나 실패 면 기록을 남김), ``mesh.cad_relaxed``(C2-D-32 — 첫 세션 면 실패 → 면 폴백 전에 모델 전체를 ③ 옵션으로 1세션,
+    ``direct`` 면 처음부터 그 세션만), ``large``(C2-D-33 — 면 폴백 세션 수 ≤ ``mesh.large.fallback_sessions``)."""
     from esl.doe import opt_settings
     try:
         import gmsh
@@ -748,16 +951,34 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     on = bool(fb.get("enabled"))
     max_faces = max(1, int(fb.get("max_faces") or 20))
     t_lim = float(mc.get("timeout_s") or 0.0)
+    if t_lim_s is not None:                                 # v0.17.4 C2-D-34 자식 제한(spawn 제한 − 여유)
+        t_lim = min(t_lim, float(t_lim_s)) if t_lim else float(t_lim_s)
+    rx = mc.get("cad_relaxed") if isinstance(mc.get("cad_relaxed"), dict) else {}
+    lg = mc.get("large") if isinstance(mc.get("large"), dict) else {}
+    max_sess = int(lg.get("fallback_sessions") or 0) if large else 0
+    for k in ("relaxed", "face", "sessions"):
+        _RUN.pop(k, None)
     t0 = time.monotonic()
     state: dict = {}                                        # bbox 키 → {face, ladder, step(ladder 위치), errors[]}
     step_done = None
     first = True
-    while True:
+    rx_rec: dict | None = None
+    n_sess = 0
+    if rx.get("direct"):                                    # v0.17.4 부모의 cad_relaxed 시도(cad 시간 초과 뒤): 이 세션만
+        rx_rec, got = _relaxed_try(gmsh, src, mc, h, props, cfg, opt_cfg, normal_ref, fb, rx, None, step_out)
+        if got is None:
+            raise EslError("FAILED_MESH", f"gmsh 메싱 실패: cad_relaxed(③ 옵션 전체 재시도) 실패 — {rx_rec.get('error')}")
+        X, conn, et, ver, dfi, step_done, applied, geom = got
+        opts, gopts = rx_rec.pop("_opts"), rx_rec.pop("_gopts")
+        first = False
+    while rx_rec is None or not rx_rec.get("ok"):
         cur = {k: v["ladder"][v["step"]] for k, v in state.items()}
         face_alg = {k: st[0] for k, st in cur.items() if st[2] is None}
         relax = tuple(k for k, st in cur.items() if st[1])
         face_geom = {k: st[2] for k, st in cur.items() if st[2]}
         k_all = next((k for k, st in cur.items() if st[2] == "nofix_all"), None)
+        n_sess += 1
+        _RUN["sessions"] = n_sess
         try:
             X, conn, et, ver, dfi, sd, applied, geom = _session(gmsh, src, mc, h, opts, gopts,
                                                                 step_out=step_out if first else None,
@@ -769,7 +990,8 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
                 geom[k_all] = {"stage": "nofix_all", "deviation_mm": 0.0, "new_ids": [], "scope": "all"}
             k_nf = k_all if k_all is not None else next((k for k, st in cur.items() if st[2] == "nofix_face"), None)
             if k_nf is not None:                            # 정리 끔(전체·그 면만): 다른 면 작은 모서리·틈·대체 면 연결 끊김
-                qe = quality(build_mesh(X, conn, et, props, normal_ref)[0], cfg, opt_cfg or opt_settings(None))["errors"]
+                qe = disconnected_hint(quality(build_mesh(X, conn, et, props, normal_ref)[0], cfg,
+                                               opt_cfg or opt_settings(None))["errors"], dfi, mc)
                 if qe:                                      # → 품질 오류면 쓰지 않음(원 세션 기준 다음 단계)
                     g_nf = cur[k_nf][2]
                     raise _FaceFail(f"{STAGE_NAMES[g_nf]} 뒤 품질 오류 {qe[0]['code']}: {qe[0]['message']}",
@@ -778,7 +1000,19 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         except _FaceFail as ff:
             if first and step_out:
                 step_done = os.path.basename(step_out)
+            was_first = first
             first = False
+            if was_first and ff.face is not None:           # v0.17.4 감시 기록용 첫 실패 면
+                _RUN["face"] = dict(ff.face, error=ff.msg)
+            if was_first and rx.get("enabled"):             # v0.17.4 C2-D-32 면 폴백 전에 ③ 옵션 전체 1세션
+                t_first = round(time.monotonic() - t0, 3)
+                rx_rec, got = _relaxed_try(gmsh, src, mc, h, props, cfg, opt_cfg, normal_ref, fb, rx, ff, None)
+                rx_rec["cad_seconds"] = t_first
+                if got is not None:
+                    X, conn, et, ver, dfi, _sd, applied, geom = got
+                    opts, gopts = rx_rec.pop("_opts"), rx_rec.pop("_gopts")
+                    break
+                print(f"[cad_relaxed] ③ 옵션 전체 재시도 실패: {rx_rec.get('error')} → 면 폴백", flush=True)
             f = ff.face
             lad = _ladder(mc, fb, f.get("type")) if (on and f is not None) else []
             if f is None or (not lad and ff.key is None):
@@ -814,6 +1048,9 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             if t_lim and time.monotonic() - t0 > t_lim:
                 raise EslError("FAILED_MESH", f"gmsh 메싱 실패: 면 폴백 중 mesh.timeout_s {t_lim:g} s 초과 — "
                                f"{_face_label(state[k]['face'])}: {ff.msg}") from None
+            if max_sess and n_sess - 1 >= max_sess:         # v0.17.4 C2-D-33 대형 모델: 면 폴백 세션(재가져오기) 상한
+                raise EslError("FAILED_MESH", f"gmsh 메싱 실패: 대형 모델 면 폴백 세션 {max_sess}회 상한"
+                               f"(compare.mesh.large.fallback_sessions) — {_face_label(state[k]['face'])}: {ff.msg}") from None
             a, r, g = state[k]["ladder"][state[k]["step"]]
             nxt = (f"{STAGE_NAMES[g]}(형상 바꾼 뒤 {ALG_NAMES.get(a, a)})" if g else
                    f"{ALG_NAMES.get(a, a)}{' + 제약 해제(작은 형상 처리·구멍 둘레 분할 끔)' if r else ''}")
@@ -827,6 +1064,16 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             "step": step_done, "seconds": round(time.monotonic() - t0, 3)}
     if dfi is not None:
         meta["defeature"] = dfi
+    if rx_rec is not None and rx_rec.get("ok"):           # v0.17.4 C2-D-32 cad_relaxed 채택(정상 STEP 은 키 없음 — 바이트 불변)
+        meta["cad_relaxed"] = rx_rec
+        fd = rx_rec.get("fidelity") or {}
+        meta["warnings"] = list(meta["warnings"]) + [{
+            "code": "MESH_CAD_RELAXED",
+            "message": "cad 메시가 " + (f"{_face_label(rx_rec['face'])}에서 실패해" if rx_rec.get("face") else "실패해")
+                       + " 면 폴백 전에 모델 전체를 ③ 옵션(" + ", ".join(f"{k} {v}" for k, v in rx_rec["overrides"].items())
+                       + ")으로 다시 메시함"
+                       + (f" — 원 STEP 대비 최대 {float(fd['hausdorff_mm']):.3f} mm" if fd.get("hausdorff_mm") is not None
+                          else "")}]
     if mc.get("size_fields"):                               # v0.16.0 세분화 기록(키 없으면 mesh.json 바이트 불변)
         meta["size_fields"] = geom.get(SIZE_FIELDS_KEY)
     dlist = None
@@ -868,7 +1115,7 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
         raise EslError("DEFEATURE_FIDELITY", f"작은 형상 억제 뒤 메시가 억제 영역 밖에서 원 STEP 과 최대 {o['hausdorff_mm']:.3f} mm "
                                              f"다름(> {o['fail_mm']:g} mm)")
     if qual["errors"]:
-        e = qual["errors"][0]
+        e = disconnected_hint(qual["errors"], dfi, mc)[0]            # v0.17.4 안내를 원인에 맞춤(실패 문구만)
         raise EslError("FAILED_MESH", f"메시 품질 오류 {e['code']}: {e['message']}")
     return mesh, meta
 
@@ -949,6 +1196,9 @@ def _child(job_path: str) -> int:
         job = json.load(fh)
     out = job["out_dir"]
     err = os.path.join(out, "mesh_error.json")
+    if job.get("child_timeout_s"):                          # v0.17.4 C2-D-34
+        _RUN["track"] = True
+        _arm_deadline(job, err)
     try:
         if job.get("step_only"):
             write_step(job["src"], job["step_out"])
@@ -966,8 +1216,13 @@ def _child(job_path: str) -> int:
             mesh_tria.tria_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
                                 normal_ref=job.get("normal_ref"), out_dir=out)
             return 0
+        kw = {}
+        if job.get("child_timeout_s"):                      # v0.17.4 C2-D-34(키 없으면 예전 호출 그대로)
+            kw["t_lim_s"] = float(job["loop_timeout_s"])
+        if job.get("large"):                                # v0.17.4 C2-D-33
+            kw["large"] = True
         mesh_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
-                  normal_ref=job.get("normal_ref"), out_dir=out, step_out=job.get("step_out"))
+                  normal_ref=job.get("normal_ref"), out_dir=out, step_out=job.get("step_out"), **kw)
     except EslError as exc:
         rec = {"code": exc.code, "message": exc.message}
         if job.get("fail_info") and exc.code == "FAILED_MESH":          # v0.16.0 세분화 입력(실패 면·면적, C2-D-19·21)
@@ -975,10 +1230,68 @@ def _child(job_path: str) -> int:
         if isinstance((job.get("cfg") or {}).get("mesh", {}).get("defeature_stage"), dict) and \
                 _LAST_DEFEAT.get("compound_keys"):                     # v0.16.1 compound 면 실패 판정(2번째 시도)
             rec["compound_keys"] = _LAST_DEFEAT["compound_keys"]
-        with open(err, "w", encoding="utf-8") as fh:
-            json.dump(rec, fh, ensure_ascii=False)
+        if _RUN.get("track"):                               # v0.17.4 cad_relaxed 결과·세션 수(실패 기록에만)
+            rec.update(_run_record())
+        _write_err(err, rec)
         return 3
     return 0
+
+
+_ERR_LOCK = None                                            # v0.17.4 감시 타이머·주 스레드 중 먼저 쓴 쪽만 mesh_error.json
+_ERR_DONE: dict = {}
+
+
+def _write_err(err: str, rec: dict) -> bool:
+    import threading
+    global _ERR_LOCK
+    if _ERR_LOCK is None:
+        _ERR_LOCK = threading.Lock()
+    with _ERR_LOCK:
+        if _ERR_DONE.get(err):
+            return False
+        with open(err, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh, ensure_ascii=False)
+        _ERR_DONE[err] = True
+        return True
+
+
+def _run_record() -> dict:
+    out: dict = {"progress": {"sessions": _RUN.get("sessions"), "n_faces": len(_RUN.get("faces") or {}) or None}}
+    rr = _RUN.get("relaxed")
+    if rr:
+        out["cad_relaxed"] = {k: v for k, v in rr.items() if not k.startswith("_")}
+    return out
+
+
+def _arm_deadline(job: dict, err: str) -> None:
+    """C2-D-34 자식 감시 타이머: job.child_timeout_s 에 아직 끝나지 않았으면(gmsh 2D 가 한 면에서 멈춤 등) mesh_error.json 에
+    시간 초과 + 실패 면(첫 실패 면 → mesh.log 마지막 면) 기록 후 종료코드 3 — 부모 spawn 이 죽이기 전에(정상 종료면 아무것도 안 함)."""
+    import threading
+    t = float(job["child_timeout_s"])
+
+    def fire() -> None:
+        face = _RUN.get("face") or log_face(os.path.join(job["out_dir"], MESH_LOG), _RUN.get("faces"))
+        msg = f"gmsh 메싱 실패: 자식 제한 시간 {t:g} s 초과(시간 초과)"
+        rec: dict = {"code": "FAILED_MESH", "timed_out": True}
+        if face:
+            msg += f" — {_face_label(face)}" + (f" (gmsh: {face['error']})" if face.get("error") else "")
+            if face.get("key") is not None:
+                rec["face"] = {"id": face.get("id"), "type": face.get("type"), "center": face.get("center"),
+                               "key": [float(v) for v in face["key"]]}
+            else:
+                rec["log_face"] = {"id": face.get("id"), "type": face.get("type")}
+        rec["message"] = msg
+        rec.update(_run_record())
+        try:
+            done = _write_err(err, rec)
+        except Exception:                                   # noqa: BLE001
+            done = False
+        if done:
+            sys.stdout.flush()
+            os._exit(3)
+    th = threading.Timer(t, fire)
+    th.daemon = True
+    th.start()
 
 
 TEST_FAIL_ENV = "ESL_TEST_MESH_FAIL"
@@ -988,6 +1301,8 @@ def _test_fail_hook(job: dict, spec: str) -> None:
     """시험 전용(V-C2-26~29): 환경 변수 ESL_TEST_MESH_FAIL = 쉼표 목록 —
     ``cad`` = cad 시도의 gmsh 2D 가 곡면(Sphere·BSpline·Bezier) 면이 남아 있으면 'Impossible to mesh periodic surface N'
     (면 폴백 nofix·split·fill 로도 못 피함, defeature 가 평면으로 바꾸면 통과), ``defeature`` = defeature 단계 2D 항상 실패,
+    ``hang``(v0.17.4) = cad 시도에서 OCC 정리(OCCFixDegenerated 1)가 켜져 있으면 첫 Sphere 면에서 gmsh 형식 'Meshing surface N
+    (Sphere, …)' 한 줄을 찍고 멈춤(자식 감시 타이머 시험 — 정리 끔 cad_relaxed 는 실제 2D),
     ``remesh`` = remesh·freeform 의 2D 항상 실패, ``fidelity`` = freeform·remesh 충실도 fail_mm 을 아주 작게. 운영에서는 이 변수가 없다."""
     import gmsh
     kinds = {x.strip() for x in spec.split(",") if x.strip()}
@@ -1003,7 +1318,17 @@ def _test_fail_hook(job: dict, spec: str) -> None:
 
     def gen_fail(dim=3):
         raise RuntimeError("test: 2D meshing failed")
-    if kind == "cad" and not isinstance(ds, dict) and "cad" in kinds:
+
+    def gen_hang(dim=3):
+        if gmsh.option.getNumber("Geometry.OCCFixDegenerated") == 1:
+            for _d, t in gmsh.model.getEntities(2):
+                if str(gmsh.model.getType(2, t)) == "Sphere":
+                    print(f"Info    : [ 50%] Meshing surface {t} (Sphere, Frontal-Delaunay for Quads)", flush=True)
+                    time.sleep(3600)
+        return real(dim)
+    if kind == "cad" and not isinstance(ds, dict) and "hang" in kinds:
+        gmsh.model.mesh.generate = gen_hang
+    elif kind == "cad" and not isinstance(ds, dict) and "cad" in kinds:
         gmsh.model.mesh.generate = gen_cad
     elif kind == "cad" and isinstance(ds, dict) and "defeature" in kinds:
         gmsh.model.mesh.generate = gen_fail
@@ -1067,14 +1392,24 @@ def _child_entry(job_path: str, log_path: str, ppid: int | None = None) -> None:
     sys.exit(_child(job_path))
 
 
-def _spawn(job: dict, out_dir: str, to: float) -> int:
+def _spawn(job: dict, out_dir: str, to: float, beat=None, beat_s: float = 60.0) -> int:
     from esl.library import _util as U
     jp = os.path.join(out_dir, "mesh_job.json")
     U.write_json(jp, job)
     ctx = multiprocessing.get_context("spawn")
     p = ctx.Process(target=_child_entry, args=(jp, os.path.join(out_dir, MESH_LOG), os.getpid()), daemon=True)
     p.start()
-    p.join(to)
+    if beat is None:
+        p.join(to)
+    else:                                                   # v0.17.4 C2-D-39 진행 줄(결과 무관 — join 을 나눠 기다림)
+        t0 = time.monotonic()
+        while p.is_alive() and time.monotonic() - t0 < to:
+            p.join(min(float(beat_s), max(0.0, to - (time.monotonic() - t0))))
+            if p.is_alive() and time.monotonic() - t0 < to:
+                try:
+                    beat(round(time.monotonic() - t0, 1), last_step(os.path.join(out_dir, MESH_LOG)))
+                except Exception:                           # noqa: BLE001 - 진행 줄 실패는 메싱과 무관
+                    pass
     if p.is_alive():
         p.terminate()
         p.join(5)
@@ -1112,15 +1447,33 @@ MESH_ERROR = "mesh_error.json"
 RUN_KINDS = ("cad", "remesh", "freeform", "tria")   # v0.16.3 += freeform·tria(C2-D-26·28)
 
 
+def last_step(log_path: str, tail: int = 1 << 16) -> str | None:
+    """mesh.log 끝의 마지막 폴백 진행 줄([mesh_fallback]·[cad_relaxed]) — 진행 줄용(C2-D-39)."""
+    try:
+        with open(log_path, "rb") as fh:
+            fh.seek(0, 2)
+            n = fh.tell()
+            fh.seek(max(0, n - tail))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for ln in reversed(lines):
+        if ln.startswith(("[mesh_fallback]", "[cad_relaxed]")):
+            return ln[:240]
+    return None
+
+
 def run_isolated(src: str, out_dir: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None,
                  normal_ref=None, step_out: str | None = None, timeout_s: float | None = None,
-                 kind: str = "cad", max_elems: int | None = None, fail_info: bool = False) -> tuple[dict, dict]:
+                 kind: str = "cad", max_elems: int | None = None, fail_info: bool = False,
+                 large: bool = False, beat=None) -> tuple[dict, dict]:
     """하위 프로세스에서 ``mesh_file``(kind cad) 또는 ``mesh_remesh.remesh_file``(kind remesh, v0.16.0 C2-D-11) →
     (mesh, mesh.json). 타임아웃·크래시 → FAILED_MESH, gmsh 없음 → GMSH_UNAVAILABLE.
 
     v0.16.0 선택 인자(기본값이면 job·결과가 v0.15.x 와 같음): ``max_elems`` = 품질 요소 상한 덮어쓰기(세분화 시도 =
     refine.max_elems, C2-D-21 — cfg 사본의 mesh.max_elems), ``fail_info`` = cad 실패 시 mesh_error.json 에 실패 면·넓이
-    (``face``·``geom`` — ``mesh_refine.plan`` 입력). kind remesh 의 제한 시간 = remesh.timeout_s(null 이면 mesh.timeout_s)."""
+    (``face``·``geom`` — ``mesh_refine.plan`` 입력). kind remesh 의 제한 시간 = remesh.timeout_s(null 이면 mesh.timeout_s).
+    v0.17.4: kind cad ∧ ``mesh.child_margin_s``(④ 프로필) → 자식 제한 = spawn 제한 − 여유(C2-D-34), ``large`` → 면 폴백 세션 상한."""
     from esl.doe import opt_settings
     from esl.library import _util as U
     if kind not in RUN_KINDS:
@@ -1147,8 +1500,17 @@ def run_isolated(src: str, out_dir: str, h: float, cfg: dict, props: dict, *, op
             rt = ((cfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
         timeout_s = float(rt) if rt is not None else None
     to = float(timeout_s if timeout_s is not None else cfg["mesh"]["timeout_s"])
+    if kind == "cad" and cfg["mesh"].get("child_margin_s") is not None:
+        mg_s = min(float(cfg["mesh"]["child_margin_s"]), 0.1 * to)
+        job["child_timeout_s"] = round(max(0.5 * to, to - mg_s), 3)     # 감시 타이머(spawn 보다 먼저)
+        job["loop_timeout_s"] = round(max(0.4 * to, to - 2.0 * mg_s), 3)   # 면 폴백 반복 상한(실패 면·넓이 기록 시간)
+    if large and kind == "cad":
+        job["large"] = True
     t0 = time.monotonic()
-    _spawn(job, out_dir, to)
+    if beat is None:
+        _spawn(job, out_dir, to)
+    else:
+        _spawn(job, out_dir, to, beat=beat, beat_s=float(cfg["mesh"].get("heartbeat_s") or 60.0))
     meta = U.read_json(os.path.join(out_dir, MESH_JSON))
     meta["wall_seconds"] = round(time.monotonic() - t0, 3)
     return load_mesh(out_dir), meta

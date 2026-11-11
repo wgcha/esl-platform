@@ -405,6 +405,9 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
         raise _fail("REMESH_UNAVAILABLE", f"gmsh {getattr(gmsh, '__version__', '?')} 에 model.mesh.importStl 이 없음")
     mc = cfg["mesh"]
     rc = _rcfg(cfg)
+    if freeform:                                            # v0.17.4 C2-D-42 freeform 전용 삼각화 편차(null = remesh 값)
+        fz = _fcfg(cfg)
+        rc = dict(rc, **{k: fz[k] for k in ("linear_deflection_mm", "angular_deflection_deg") if fz.get(k) is not None})
     h = mg.check_h(h, mc)
     opts = mg.gmsh_options(h, mc)
     gopts = mg.geometry_options(mc)

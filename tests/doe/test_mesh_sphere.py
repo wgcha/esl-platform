@@ -203,9 +203,11 @@ def test_nofix_all_scope(tmp_path):
     src = scmp.dimple_plate_step(tmp_path / "solid.step", DIMPLES, solid=10.0)
     old = _ccfg(occ_sew_faces=0)
     old["mesh"]["fallback"] = dict(LEGACY_FB)
+    old["mesh"]["cad_relaxed"] = {"enabled": False}           # v0.17.4: 켜면 cad_relaxed 가 먼저 성공(test_mesh_relaxed_v0174)
     with pytest.raises(EslError):
         mg.mesh_file(src, 3.0, old, PROPS)
-    _m, meta = mg.mesh_file(src, 3.0, _ccfg(occ_sew_faces=0, fallback={"nofix": {"scopes": ["all"]}}), PROPS)
+    _m, meta = mg.mesh_file(src, 3.0, _ccfg(occ_sew_faces=0, fallback={"nofix": {"scopes": ["all"]}},
+                                            cad_relaxed={"enabled": False}), PROPS)
     _nofix_ok(meta, "all")
     src2 = scmp.dimple_plate_step(tmp_path / "shell.step", DIMPLES)
     _m, meta = mg.mesh_file(src2, 3.0, _ccfg(fallback={"nofix": {"scopes": ["all"]},

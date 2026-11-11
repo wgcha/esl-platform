@@ -33,7 +33,8 @@ LX, LZ = 200.0, 150.0
 
 
 def _cfg(**cmp):
-    c = {"mesh": {"size_mm": H}, **cmp}
+    # v0.17.4 C2-D-41: 이 파일의 형상 실패 시험은 예전처럼 진행(비교 형상 전부 실패 → 단계 실패는 test_mesh_relaxed_v0174)
+    c = {"mesh": {"size_mm": H}, "min_ready_shapes": 0, **cmp}
     return {"bead_doe": {"enabled": True, "mesh": {"occ_sew_faces": 1}, "compare": c},
             "opt_run": {"solver": {"backend": "superlu"}}}
 
@@ -391,14 +392,14 @@ def _inject_cad_fail(monkeypatch, ids, code="MESH_FAILED", err=None):
     """cad 시도(stages._cmp_mesh_one)만 실패 주입 — 사다리 다음 단계는 실제 gmsh(시험용 monkeypatch, 설정 키 아님)."""
     real = stg._cmp_mesh_one
 
-    def fake(c, row, h, ccfg, props, *, fail_info=False, timeout_s=None):
+    def fake(c, row, h, ccfg, props, *, fail_info=False, timeout_s=None, **kw):   # v0.17.4 += large
         if row["id"] in ids:
             d = stg._cmp_mesh_dir(c, row["id"])
             c.writer.makedirs(d)
             if err is not None:
                 U.write_json(os.path.join(d, mg.MESH_ERROR), err)
             return {"id": row["id"], "status": "FAILED_MESH", "code": code, "message": "주입된 CAD 실패"}
-        return real(c, row, h, ccfg, props, fail_info=fail_info, timeout_s=timeout_s)
+        return real(c, row, h, ccfg, props, fail_info=fail_info, timeout_s=timeout_s, **kw)
     monkeypatch.setattr(stg, "_cmp_mesh_one", fake)
 
 
