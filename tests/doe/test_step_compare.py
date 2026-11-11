@@ -539,8 +539,8 @@ def test_mesh_refine_local_then_global(tmp_path, monkeypatch):
     out3 = tmp_path / "_doe" / "R3"
     r3, _ = _run(out3, {**doe, "id": "R3", "cfg": cfg3}, stages=("bd_input", "bd_mesh0"))
     s3 = _shape(out3, "d001")
-    assert s3["mesh_method"] == "fallback", s3["attempts"]
-    assert {a["reason"] for a in s3["attempts"] if a.get("skipped")} == {"elems", "not_compound"}   # v0.16.1 defeature 2번째
+    assert s3["mesh_method"] == "fallback" and s3["fallback_stage"] == "freeform", s3["attempts"]   # v0.16.3 C2-D-26
+    assert {a["reason"] for a in s3["attempts"] if a.get("skipped")} == {"elems"}
     assert any(i.startswith("REFINE_SKIPPED_LIMIT") and "elems" in i for i in r3["bd_mesh0"]["info"])
 
 
@@ -572,8 +572,11 @@ def test_ladder_time_budget_without_area(tmp_path, monkeypatch):
     budget, to = 1.0, 0.4
     cfg = _cfg()
     cfg["bead_doe"]["mesh"]["timeout_s"] = to
-    cfg["bead_doe"]["compare"]["refine"] = {"total_timeout_s": budget}
-    doe, _up = _two(tmp_path, "T1", mesh_mode="auto", cfg=cfg)
+    zero = {k: 0.0 for k in ("cad", "refine_local", "refine_global", "freeform", "defeature", "remesh", "tria")}
+    cfg["bead_doe"]["compare"]["refine"] = {"total_timeout_s": budget, "stage_share": zero, "min_attempt_s": 0.0}
+    # v0.16.1 사다리 그대로(몫 0 = 예약 없음 → v0.16.2 동작과 같음)
+    doe, _up = _two(tmp_path, "T1", mesh_mode="auto", cfg=cfg,
+                    mesh_ladder=["cad", "refine_local", "refine_global", "defeature", "remesh"])
     calls = _fake_iso(monkeypatch, "d001", hang=True, other_timeout=600)
     out = tmp_path / "_doe" / "T1"
     r, _ = _run(out, doe, stages=("bd_input", "bd_mesh0"))
@@ -606,8 +609,13 @@ def test_ladder_all_fail_reference_message_and_tries(tmp_path, monkeypatch):
     _fake_iso(monkeypatch, "d000")
     with pytest.raises(EslError) as ei:
         _run(tmp_path / "_doe" / "F1", doe, stages=("bd_input", "bd_mesh0"))
-    assert ei.value.code == "REMESH_FAILED"
-    assert ei.value.message == "기준 형상 메시 실패: CAD 메시 실패: cad 주입 크래시 → 세분화·형상 단순화·재메시도 실패: remesh 주입 크래시"
+    assert ei.value.code == "TRIA_FAILED"                                # v0.16.3 마지막 단계 = tria(C2-D-28)
+    msg = ei.value.message
+    assert msg.startswith("기준 형상 메시 실패: [단계별: cad 실패 ") and msg.endswith(
+        "] CAD 메시 실패: cad 주입 크래시 → 세분화·freeform 재메시·삼각형 폴백도 실패: tria 주입 크래시"), msg
+    for part in ("refine_local 건너뜀(실패 면 기록 없음)", "refine_global 실패 ", "freeform 실패 ",   # C2-D-30 단계 → 결과 → 초
+                 "defeature 건너뜀(freeform 충실도 실패 아님)", "tria 실패 "):
+        assert part in msg, (part, msg)
     md = tmp_path / "_doe" / "F1" / "prep" / "shapes" / "d000" / "mesh"
     assert sorted(p for p in os.listdir(md) if p.startswith("try_")) == ["try_4"]      # 전역 ×0.8·×0.667·defeature·remesh 중 마지막
     cfg = _cfg()
@@ -774,7 +782,9 @@ def test_ladder_defeature_compound_retry_and_skips(tmp_path, monkeypatch):
         if name == "retry":
             assert calls == [True, False]
             assert att[1:] == [("defeature", "FAILED_MESH", True, None), ("defeature", "FAILED_MESH", False, None)]
-            assert stg._ladder_fail_text(s) == "CAD 메시 실패: 주입된 CAD 실패 → 형상 단순화도 실패: defeature 주입 2"
+            t = stg._ladder_fail_text(s)
+            assert t.startswith("[단계별: cad 실패 0.0 s → defeature 실패 ") and t.endswith(
+                "] CAD 메시 실패: 주입된 CAD 실패 → 형상 단순화도 실패: defeature 주입 2"), t
         elif name == "other":
             assert calls == [True]
             assert att[1:] == [("defeature", "FAILED_MESH", True, None), ("defeature", "SKIPPED", False, "not_compound")]

@@ -81,6 +81,14 @@ def gmsh_options(h: float, mcfg: dict) -> dict:
 OCC_FIX_KEYS = ("Geometry.OCCFixDegenerated", "Geometry.OCCFixSmallEdges", "Geometry.OCCFixSmallFaces")
 
 
+def set_import_labels(gmsh, mcfg: dict) -> None:
+    """v0.16.3 C2-D-31 선택 키 ``mesh.occ_import_labels``(④ 프로필만, 기본 0): STEP 가져오기 때 XCAF 이름표(라벨)를 읽지 않음 —
+    면이 수천 개인 STEP 에서 gmsh 4.13 라벨 처리가 면 수에 초선형(합성 1915 면: 234 s → 5 s). 형상·태그는 같고 mesh.json
+    options 에는 기록하지 않음(키가 없으면 아무것도 안 함 — ③ 그대로)."""
+    if "occ_import_labels" in mcfg:
+        gmsh.option.setNumber("Geometry.OCCImportLabels", int(mcfg["occ_import_labels"]))
+
+
 def geometry_options(mcfg: dict) -> dict:
     """가져오기 전 OCC 옵션(선택 키 ``occ_fix_small`` — 1 이면 작은 모서리·면·퇴화 정리 = 1). 키 없음·0 → {}(gmsh 기본, ③ 불변)."""
     v = mcfg.get("occ_fix_small")
@@ -580,6 +588,7 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
         gmsh.option.setNumber("Geometry.OCCSewFaces", 0 if nofix_all else int(mc.get("occ_sew_faces", 0)))
         for k, v in gopts.items():
             gmsh.option.setNumber(k, 0 if nofix_all and k in OCC_FIX_KEYS else v)
+        set_import_labels(gmsh, mc)
         try:
             gmsh.model.occ.importShapes(os.fspath(src))
             gmsh.model.occ.synchronize()
@@ -615,7 +624,8 @@ def _session(gmsh, src: str, mc: dict, h: float, opts: dict, gopts: dict, *, ste
                 dfi = defeature(gmsh, df, h, skip_keys=relax) if relax else defeature(gmsh, df, h)
         if isinstance(ds, dict):
             crit = ds["crit"]
-            found = gdf.find_features(gmsh, crit)
+            found = gdf.find_features(gmsh, crit, targets=ds["targets"]) if ds.get("targets") else \
+                gdf.find_features(gmsh, crit)
             sup = gdf.suppress(gmsh, found, crit, h, compound=bool(ds.get("compound", True)))
             _LAST_DEFEAT.clear()
             _LAST_DEFEAT.update(compound_keys=sup["compound_keys"])
@@ -943,10 +953,18 @@ def _child(job_path: str) -> int:
         if job.get("step_only"):
             write_step(job["src"], job["step_out"])
             return 0
-        if job.get("kind") == "remesh":                     # v0.16.0 삼각형 재메시(C2-D-11)
+        if os.environ.get(TEST_FAIL_ENV):                   # v0.16.3 시험 전용 고장 주입(설정 키 아님 — 환경 변수만)
+            _test_fail_hook(job, os.environ[TEST_FAIL_ENV])
+        if job.get("kind") in ("remesh", "freeform"):       # v0.16.0 삼각형 재메시(C2-D-11), v0.16.3 freeform(C2-D-26)
             from esl.doe import mesh_remesh
+            kw = {"freeform": True} if job["kind"] == "freeform" else {}
             mesh_remesh.remesh_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
-                                    normal_ref=job.get("normal_ref"), out_dir=out)
+                                    normal_ref=job.get("normal_ref"), out_dir=out, **kw)
+            return 0
+        if job.get("kind") == "tria":                       # v0.16.3 OCC 삼각형 폴백(C2-D-28)
+            from esl.doe import mesh_tria
+            mesh_tria.tria_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
+                                normal_ref=job.get("normal_ref"), out_dir=out)
             return 0
         mesh_file(job["src"], job["h"], job["cfg"], job["props"], opt_cfg=job.get("opt_cfg"),
                   normal_ref=job.get("normal_ref"), out_dir=out, step_out=job.get("step_out"))
@@ -961,6 +979,43 @@ def _child(job_path: str) -> int:
             json.dump(rec, fh, ensure_ascii=False)
         return 3
     return 0
+
+
+TEST_FAIL_ENV = "ESL_TEST_MESH_FAIL"
+
+
+def _test_fail_hook(job: dict, spec: str) -> None:
+    """시험 전용(V-C2-26~29): 환경 변수 ESL_TEST_MESH_FAIL = 쉼표 목록 —
+    ``cad`` = cad 시도의 gmsh 2D 가 곡면(Sphere·BSpline·Bezier) 면이 남아 있으면 'Impossible to mesh periodic surface N'
+    (면 폴백 nofix·split·fill 로도 못 피함, defeature 가 평면으로 바꾸면 통과), ``defeature`` = defeature 단계 2D 항상 실패,
+    ``remesh`` = remesh·freeform 의 2D 항상 실패, ``fidelity`` = freeform·remesh 충실도 fail_mm 을 아주 작게. 운영에서는 이 변수가 없다."""
+    import gmsh
+    kinds = {x.strip() for x in spec.split(",") if x.strip()}
+    kind = job.get("kind") or "cad"
+    ds = (job.get("cfg") or {}).get("mesh", {}).get("defeature_stage")
+    real = gmsh.model.mesh.generate
+
+    def gen_cad(dim=3):
+        for _d, t in gmsh.model.getEntities(2):
+            if str(gmsh.model.getType(2, t)) in ("Sphere", "BSpline surface", "Bezier surface"):
+                raise RuntimeError(f"Impossible to mesh periodic surface {t}")
+        return real(dim)
+
+    def gen_fail(dim=3):
+        raise RuntimeError("test: 2D meshing failed")
+    if kind == "cad" and not isinstance(ds, dict) and "cad" in kinds:
+        gmsh.model.mesh.generate = gen_cad
+    elif kind == "cad" and isinstance(ds, dict) and "defeature" in kinds:
+        gmsh.model.mesh.generate = gen_fail
+    elif kind == "cad" and isinstance(ds, dict) and "cad" in kinds:
+        gmsh.model.mesh.generate = gen_cad
+    elif kind in ("remesh", "freeform") and "remesh" in kinds:
+        gmsh.model.mesh.generate = gen_fail
+    if kind in ("remesh", "freeform") and "fidelity" in kinds:
+        cm = job["cfg"].setdefault("compare", {})
+        rm = dict(cm.get("remesh") or {})
+        rm["fidelity"] = dict(rm.get("fidelity") or {}, warn_mm=1e-9, fail_mm=1e-9)
+        cm["remesh"] = rm
 
 
 def _fail_info(exc: BaseException, job: dict) -> dict:
@@ -1054,7 +1109,7 @@ def export_step_isolated(src: str, dst: str, cfg: dict, timeout_s: float | None 
 
 
 MESH_ERROR = "mesh_error.json"
-RUN_KINDS = ("cad", "remesh")
+RUN_KINDS = ("cad", "remesh", "freeform", "tria")   # v0.16.3 += freeform·tria(C2-D-26·28)
 
 
 def run_isolated(src: str, out_dir: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | None = None,
@@ -1086,8 +1141,10 @@ def run_isolated(src: str, out_dir: str, h: float, cfg: dict, props: dict, *, op
         p = os.path.join(out_dir, name)
         if os.path.exists(p):
             os.remove(p)
-    if timeout_s is None and kind == "remesh":
-        rt = ((cfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
+    if timeout_s is None and kind in ("remesh", "freeform", "tria"):
+        rt = ((cfg.get("compare") or {}).get(kind) or {}).get("timeout_s")
+        if rt is None and kind == "freeform":
+            rt = ((cfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
         timeout_s = float(rt) if rt is not None else None
     to = float(timeout_s if timeout_s is not None else cfg["mesh"]["timeout_s"])
     t0 = time.monotonic()

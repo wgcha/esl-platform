@@ -2261,6 +2261,7 @@
                 "enum": [
                   "cad",
                   "remesh",
+                  "freeform",
                   "auto"
                 ],
                 "type": "string"
@@ -2415,6 +2416,7 @@
                 "enum": [
                   "cad",
                   "remesh",
+                  "freeform",
                   "auto"
                 ],
                 "type": "string"
@@ -3498,6 +3500,7 @@
                 "enum": [
                   "cad",
                   "remesh",
+                  "freeform",
                   "auto"
                 ],
                 "type": "string"
@@ -13554,7 +13557,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.16.2"
+    "version": "0.16.3"
   },
   "openapi": "3.1.0",
   "paths": {

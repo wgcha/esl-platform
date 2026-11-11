@@ -99,7 +99,7 @@ def test_settings_compare_block(client, world):
         "mesh_mode": "auto", "remesh_available": True,
         "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500.0}, "step_ready": True,
         # v0.16.1 §4.4(esl_select_relax.md): 사다리(defeature 포함)·작은 형상 억제 기준
-        "mesh": {"ladder": ["cad", "refine_local", "refine_global", "defeature", "remesh"]},
+        "mesh": {"ladder": ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"]},   # v0.16.3
         "defeature": {"hole_max_d_mm": 8.0, "min_bead_height_mm": 2.0, "fillet_max_r_mm": 1.5,
                       "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"]}}
 
@@ -605,13 +605,13 @@ def test_mesh_shape_study_and_clone(client, world, engine):
     assert Path(m["path"]).is_file() and Path(m["upload_root"]).is_dir()
     assert [f["rel"] for f in m["files"]] == ["rad/model.rad", "rad/part3.inc"]
     assert dd["shapes"][0]["source"] == "step"
-    assert dd["mesh_refine"] is None and dd["mesh_ladder"] == ["cad", "refine_local", "refine_global", "defeature",
-                                                               "remesh"]           # v0.16.1 SR-D-16
+    assert dd["mesh_refine"] is None and dd["mesh_ladder"] == ["cad", "refine_local", "refine_global", "freeform",
+                                                               "defeature", "tria"]   # v0.16.3 C2-D-26·28
     r = api(client, "POST", "/doe/studies", json={**body, "mesh_mode": None, "mesh_refine": False})   # 생략 → 설정(auto)
     assert r.status_code == 201 and r.json()["inputs"]["mesh_mode"] == "auto", r.text
     assert r.json()["inputs"]["mesh_refine"] is False
     # V-SR-20(백엔드): '실패 시 세분화 허용' 끔 = refine_* 만 뺌 — defeature 는 남음
-    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_ladder"] == ["cad", "defeature", "remesh"]
+    assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["mesh_ladder"] == ["cad", "freeform", "defeature", "tria"]
     r = api(client, "POST", "/doe/check-inputs", json={"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]],
                                                        "step_upload_id": sh[0]["upload_id"], "mesh_refine": True})
     assert r.status_code == 422 and code(r) == "INVALID_PARAMS"                # ④ 전용

@@ -1136,6 +1136,7 @@ DEFEAT_NEW_KEYS_V0161 = ("kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_
                          "narrow_w_factor", "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor",
                          "max_features", "list_max")
 TRY_PREFIX = "try_"
+REFINE_NEW_KEYS_V0163 = ("stage_share", "min_attempt_s")   # C2-D-29 — 이어하기 해시에서 뺌(시간 배분만 바꿈)
 
 
 def _cmp_mode(c: Ctx) -> tuple[str, list[str]]:
@@ -1205,7 +1206,8 @@ def _next_try(c: Ctx, d: str, n_try: int, keep: bool) -> str:
     return td
 
 
-LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "defeature": "형상 단순화", "remesh": "재메시"}
+LADDER_STAGE_LABEL = {"refine_local": "세분화", "refine_global": "세분화", "defeature": "형상 단순화", "remesh": "재메시",
+                      "freeform": "freeform 재메시", "tria": "삼각형 폴백"}   # v0.16.3 += freeform·tria
 
 
 def _ladder_fail_text(r: dict) -> str:
@@ -1224,7 +1226,11 @@ def _ladder_fail_text(r: dict) -> str:
         why = sorted({str(a.get("reason")) for a in r.get("attempts") or [] if a.get("skipped") and a.get("reason")})
         return _cmp_text("MESH_LADDER_SKIPPED", cad=cad, reasons=", ".join(why) or "-").split(": ", 1)[1]
     last = r.get("message") or r.get("code") or "?"
-    return _cmp_text("MESH_LADDER_FAILED", cad=cad, stages="·".join(tried), last=last).split(": ", 1)[1]
+    out = _cmp_text("MESH_LADDER_FAILED", cad=cad, stages="·".join(tried), last=last).split(": ", 1)[1]
+    if r.get("stage_times"):                                # v0.16.3 C2-D-30 단계 → 결과 → 초(작업 실패 문구 500자 상한 → 앞에)
+        from esl.doe import mesh_refine as mr
+        out = "[단계별: " + mr.stage_times_text(r["stage_times"]) + "] " + out
+    return out
 
 
 def _bbox_str(k) -> str:
@@ -1244,13 +1250,17 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         r = _cmp_remesh_one(c, row, h, ccfg, props, d)
         r["mesh_method"] = "remesh"
         return r
+    if mode == "freeform":                              # v0.16.3 C2-D-26: cad 없이 freeform → tria
+        c.writer.makedirs(d)
+        return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail)
     t0 = time.monotonic()
     auto = mode == "auto" and len(lad) > 1
     to = None
     if auto:                                            # 사다리 시간 예산(refine.total_timeout_s)은 cad 시도부터 셈
-        from esl.doe import mesh_refine as mr
-        to = mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, 0.0)
-    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and "refine_local" in lad, timeout_s=to)
+        from esl.doe import mesh_refine as mr           # v0.16.3 C2-D-29: cad 도 자기 몫까지만(뒤 단계 몫 예약)
+        to = mr.attempt_timeout(min(float(ccfg["mesh"]["timeout_s"]), mr.stage_cap("cad", lad[1:], ccfg, 0.0)), ccfg, 0.0)
+    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
+                      timeout_s=to)
     r["mesh_method"] = "cad"
     if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
@@ -1266,12 +1276,24 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     d = _cmp_mesh_dir(c, did)
     src = c.p(row["rel"])
     rc = mr._rcfg(ccfg)
-    cad_err = {"code": r0["code"], "message": r0["message"]}
-    attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
-                 "seconds": round(t_cad, 3)}]
     infos: list[str] = []
-    pm = mr.read_attempt(d)
+    if r0 is None:                                      # v0.16.3 mode freeform: cad 시도 없음
+        cad_err = None
+        attempts: list[dict] = []
+        pm: dict = {}
+    else:
+        cad_err = {"code": r0["code"], "message": r0["message"]}
+        attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
+                     "seconds": round(t_cad, 3), **({"timed_out": True} if mr.timed_out(str(r0.get("message"))) else {})}]
+        pm = mr.read_attempt(d)
     pm["wall_seconds"] = round(t_cad, 3)
+    ff = mr.face_failure(dict(pm, message=pm.get("message") or (r0 or {}).get("message")), ccfg) if r0 else None
+    ff_skip = mr.face_fail_skips(ccfg) if ff else ()
+    if ff:                                              # v0.16.3 C2-D-27 결정 기록
+        pm["face_fail"] = True
+        f0 = ff["face"]
+        infos.append(_cmp_text("MESH_FACE_FAIL", face=f0.get("id"), type=f0.get("type"), why=ff["match"],
+                               skip="·".join(ff_skip) or "-") + f" — {did} {row['name']}")
     geom0 = pm.get("geom") or {}
     area = geom0.get("area_mm2")
     e_h2 = float(rc["elem_per_h2"])
@@ -1293,12 +1315,17 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     acc(pm)
     pm["faces"] = list(faces)
     elapsed = float(t_cad)
-    last = dict(r0)
+    last = dict(r0 or {"id": did, "status": "FAILED_MESH", "code": None, "message": None})
     n_try = 0
     keep = _keep_tries(ccfg)
     to_cad = float(ccfg["mesh"]["timeout_s"])
     rt = ((ccfg.get("compare") or {}).get("remesh") or {}).get("timeout_s")
     to_remesh = float(rt) if rt is not None else to_cad
+    cmp_ = ccfg.get("compare") or {}
+    ft = (cmp_.get("freeform") or {}).get("timeout_s")
+    tt = mr._tcfg_timeout(ccfg)
+    to_disc = {"remesh": to_remesh, "freeform": float(ft) if ft is not None else to_remesh, "tria": tt}
+    last_disc: dict = {}
 
     def info_skip(a: dict) -> None:
         if a.get("reason") == "no_face":
@@ -1310,37 +1337,69 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                                n_est="—" if a.get("n_est") is None else a.get("n_est"), bytes_est=_gb(a.get("bytes_est")),
                                reason=a.get("reason")) + f" — {did} {row['name']}")
 
+    def skip(stage: str, reason: str, code=None) -> None:
+        attempts.append({"stage": stage, "factor": None, "h_mm": h, "status": "SKIPPED", "code": code, "seconds": None,
+                         "skipped": True, "reason": reason})
+
     for si, stage in enumerate(lad):
         if stage == "cad":
             continue
-        if stage == "remesh":
-            if not remesh_ok:
-                attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": None,
-                                 "seconds": None, "skipped": True, "reason": "unavailable"})
+        if stage in ff_skip:                            # v0.16.3 C2-D-27 면 실패 → 세분화로 안 풀림
+            skip(stage, "face_fail")
+            continue
+        later = [x for x in lad[si + 1:] if x not in ff_skip]
+        cap = mr.stage_cap(stage, later, ccfg, elapsed)  # v0.16.3 C2-D-29 단계 몫
+        e_start = elapsed
+        if stage == "defeature" and "freeform" in lad[:si] and last_disc.get("freeform") != "REMESH_FIDELITY":
+            skip(stage, "not_fidelity")                 # v0.16.3 C2-D-26: freeform 이 충실도로 실패했을 때만
+            continue
+        if stage != "tria" and cap < mr.min_attempt_s(ccfg) and mr.remaining_s(ccfg, elapsed) > 0:
+            info_skip({"stage": stage, "factor": None, "n_est": None, "bytes_est": None, "reason": "stage_time"})
+            skip(stage, "stage_time", mr.SKIP_INFO)
+            continue
+        if stage in ("remesh", "freeform", "tria"):     # 이산 단계(gmsh OCC 면 메싱 안 씀)
+            if stage == "tria" and not mr._tcfg_enabled(ccfg):
+                skip(stage, "disabled")
+                continue
+            if stage == "freeform" and not ((ccfg.get("compare") or {}).get("freeform") or {}).get("enabled", True):
+                skip(stage, "disabled")
+                continue
+            if stage != "tria" and not remesh_ok:
+                skip(stage, "unavailable")
                 continue
             if mr.remaining_s(ccfg, elapsed) <= 0:          # 같은 형상 누적 예산(refine.total_timeout_s) 소진
-                info_skip({"stage": "remesh", "factor": None, "n_est": None, "bytes_est": None, "reason": "time"})
-                attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": "SKIPPED", "code": mr.SKIP_INFO,
-                                 "seconds": None, "skipped": True, "reason": "time"})
+                info_skip({"stage": stage, "factor": None, "n_est": None, "bytes_est": None, "reason": "time"})
+                skip(stage, "time", mr.SKIP_INFO)
                 continue
             n_try += 1
             td = _next_try(c, d, n_try, keep)
             t1 = time.monotonic()
-            rr = _cmp_remesh_one(c, row, h, ccfg, props, td, timeout_s=mr.attempt_timeout(to_remesh, ccfg, elapsed))
+            tmo = min(mr.attempt_timeout(to_disc[stage], ccfg, elapsed), cap) if stage != "tria" else \
+                mr.attempt_timeout(to_disc[stage], ccfg, elapsed)
+            rr = _cmp_remesh_one(c, row, h, ccfg, props, td, timeout_s=tmo, kind=stage)
             dt = time.monotonic() - t1
             elapsed += dt
-            attempts.append({"stage": "remesh", "factor": None, "h_mm": h, "status": rr["status"], "code": rr["code"],
-                             "seconds": round(dt, 3), **({"n_elems": rr["n_elems"]} if rr.get("n_elems") else {})})
+            last_disc[stage] = rr.get("code")
+            attempts.append({"stage": stage, "factor": None, "h_mm": h, "status": rr["status"], "code": rr["code"],
+                             "seconds": round(dt, 3), **({"n_elems": rr["n_elems"]} if rr.get("n_elems") else {}),
+                             **({"timed_out": True} if mr.timed_out(str(rr.get("message"))) else {})})
             if rr["status"] == "READY":
-                _promote(c, td, d, {"mesh_method": "fallback", "cad_error": cad_err, "attempts": attempts})
+                meth = "fallback" if cad_err else "remesh"
+                lw = _ladder_warns(td)
+                extra = {"mesh_method": meth, "cad_error": cad_err, "attempts": attempts,
+                         "stage_times": mr.stage_times(attempts)}
+                _promote(c, td, d, extra)
                 if not keep:
                     _clear_tries(c, d)
-                rr.update(mesh_method="fallback", cad_error=cad_err, attempts=attempts, info=infos)
+                rr.update(mesh_method=meth, cad_error=cad_err, attempts=attempts, info=infos, fallback_stage=stage,
+                          stage_times=mr.stage_times(attempts), warn_codes=lw)
+                rr["seconds"] = round(elapsed, 3)
                 return rr
             last = rr
             continue
         if stage == "defeature":                        # v0.16.1 §5A.1 형상 단순화(작은 형상 억제) 단계
-            rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err)
+            rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err,
+                                      cap=cap)
             n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
             if rr.get("status") == "READY":
                 return rr
@@ -1362,13 +1421,18 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                 attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "SKIPPED",
                                  "code": mr.SKIP_INFO, "seconds": None, "skipped": True, "reason": why})
                 continue
+            left = cap - (elapsed - e_start)            # v0.16.3 C2-D-29 단계 몫 안에서만
+            if left < mr.min_attempt_s(ccfg):
+                attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "SKIPPED",
+                                 "code": mr.SKIP_INFO, "seconds": None, "skipped": True, "reason": "stage_time"})
+                continue
             n_try += 1
             td = _next_try(c, d, n_try, keep)
             t1 = time.monotonic()
             try:
                 mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
                                              max_elems=a.get("max_elems"), fail_info=True,
-                                             timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
+                                             timeout_s=min(mr.attempt_timeout(to_cad, ccfg, elapsed), left))
             except EslError as exc:
                 if exc.code == "GMSH_UNAVAILABLE":
                     raise
@@ -1376,7 +1440,8 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                 elapsed += dt
                 code = _cad_code(td)
                 attempts.append({"stage": stage, "factor": a.get("factor"), "h_mm": a.get("h_mm"), "status": "FAILED_MESH",
-                                 "code": code, "seconds": round(dt, 3)})
+                                 "code": code, "seconds": round(dt, 3),
+                                 **({"timed_out": True} if mr.timed_out(exc.message) else {})})
                 last = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
                 nm = mr.read_attempt(td)
                 nm["wall_seconds"] = round(dt, 3)
@@ -1402,15 +1467,28 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                    "base_h_mm": h, "faces": fr, "n_elems": int(meta["n_elems"]), "n_est": a.get("n_est"),
                    "elem_ratio_h": round(int(meta["n_elems"]) / n_h, 4) if n_h else None, "elem_ratio_ref": None,
                    "attempts": attempts}
-            out.update(mesh_method="refine", cad_error=cad_err, refine=ref, attempts=attempts, info=infos)
+            out.update(mesh_method="refine", cad_error=cad_err, refine=ref, attempts=attempts, info=infos,
+                       stage_times=mr.stage_times(attempts))
             out["seconds"] = round(elapsed + dt, 3)
             _promote(c, td, d, {"mesh_method": "refine", "cad_error": cad_err, "refine": ref})
             if not keep:
                 _clear_tries(c, d)
             return out
     last = {k: v for k, v in last.items() if k in ("id", "status", "code", "message", "fidelity")}
-    last.update(status="FAILED_MESH", mesh_method=None, cad_error=cad_err, attempts=attempts, info=infos)
+    last.update(status="FAILED_MESH", mesh_method=None, cad_error=cad_err, attempts=attempts, info=infos,
+                stage_times=mr.stage_times(attempts))
+    if cad_err is None:                                 # mode freeform 실패: 문구는 마지막 오류 + 단계별
+        last["message"] = f"[단계별: {mr.stage_times_text(last['stage_times'])}] {last.get('message')}"
     return last
+
+
+def _ladder_warns(td: str) -> list[dict]:
+    """v0.16.3 이산 단계 성공 시도 mesh.json 의 MESH_FREEFORM·MESH_TRIA_FALLBACK·MESH_TRIA_HOLES 경고(형상 경고로 올림)."""
+    p = os.path.join(td, mg.MESH_JSON)
+    if not os.path.isfile(p):
+        return []
+    return [{"code": w["code"], "message": w.get("message")} for w in U.read_json(p).get("warnings") or []
+            if isinstance(w, dict) and w.get("code") in ("MESH_FREEFORM", "MESH_TRIA_FALLBACK", "MESH_TRIA_HOLES")]
 
 
 def _defeat_summary(meta: dict) -> dict | None:
@@ -1425,7 +1503,7 @@ def _defeat_summary(meta: dict) -> dict | None:
 
 
 def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, pm: dict, avail, elapsed: float,
-                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict) -> dict:
+                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, cap: float | None = None) -> dict:
     """사다리 defeature 단계 시도(최대 2 — compound 켬 → compound 면 실패 때만 끔). 반환 성공 형상 행 | {status FAILED_MESH…}
     | {status SKIPPED} (+ _n_try·_elapsed). 억제 대상 0 = DEFEATURE_NO_FEATURE(메싱 안 함, 2번째 시도도 건너뜀)."""
     from esl.doe import mesh_refine as mr
@@ -1435,6 +1513,7 @@ def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, p
     to_cad = float(ccfg["mesh"]["timeout_s"])
     first = None
     out: dict = {"status": "SKIPPED"}
+    e0 = elapsed
     for a in mr.plan("defeature", pm, h, ccfg, avail, elapsed_s=elapsed):
         rec = {"stage": "defeature", "factor": None, "h_mm": h, "compound": bool(a.get("compound"))}
         if a.get("only_if") == "compound_failed" and not mr.compound_failed(first):   # 조건 먼저(한도 판정보다 앞)
@@ -1452,12 +1531,19 @@ def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, p
             attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
                              "reason": why})
             continue
+        tmo = mr.attempt_timeout(to_cad, ccfg, elapsed)
+        if cap is not None:                             # v0.16.3 C2-D-29 단계 몫
+            tmo = min(tmo, cap - (elapsed - e0))
+            if tmo < mr.min_attempt_s(ccfg):
+                attempts.append({**rec, "status": "SKIPPED", "code": mr.SKIP_INFO, "seconds": None, "skipped": True,
+                                 "reason": "stage_time"})
+                continue
         n_try += 1
         td = _next_try(c, d, n_try, keep)
         t1 = time.monotonic()
         try:
             mesh, meta = mg.run_isolated(src, td, float(a["mesh_h"]), mr.attempt_cfg(ccfg, a), props, opt_cfg=c.ocfg,
-                                         fail_info=True, timeout_s=mr.attempt_timeout(to_cad, ccfg, elapsed))
+                                         fail_info=True, timeout_s=tmo)
         except EslError as exc:
             if exc.code == "GMSH_UNAVAILABLE":
                 raise
@@ -1469,7 +1555,8 @@ def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, p
                 infos.append(_cmp_text("DEFEATURE_NO_FEATURE") + f" — {did} {row['name']}")
                 break
             code = exc.code if exc.code == "DEFEATURE_FIDELITY" else _cad_code(td)
-            attempts.append({**rec, "status": "FAILED_MESH", "code": code, "seconds": round(dt, 3)})
+            attempts.append({**rec, "status": "FAILED_MESH", "code": code, "seconds": round(dt, 3),
+                             **({"timed_out": True} if mr.timed_out(exc.message) else {})})
             first = mr.read_attempt(td) if first is None else first
             out = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
             continue
@@ -1478,7 +1565,7 @@ def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, p
         attempts.append({**rec, "status": "READY", "code": None, "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
         res = _cmp_ready(c, did, mesh, meta)
         res.update(mesh_method="defeature", cad_error=cad_err, attempts=attempts, info=infos,
-                   defeature=_defeat_summary(meta))     # §5A.5 형상 행 defeature = 단계 요약(cad 단계 holes 기록 대신)
+                   defeature=_defeat_summary(meta), stage_times=mr.stage_times(attempts))     # §5A.5 형상 행 defeature = 단계 요약(cad 단계 holes 기록 대신)
         res["seconds"] = round(elapsed, 3)
         _promote(c, td, d, {"mesh_method": "defeature", "cad_error": cad_err, "attempts": attempts})
         if not keep:
@@ -1510,17 +1597,20 @@ def _patch_mesh_json(c: Ctx, d: str, extra: dict) -> None:
 
 
 def _cmp_remesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, out_dir: str,
-                    timeout_s: float | None = None) -> dict:
+                    timeout_s: float | None = None, kind: str = "remesh") -> dict:
     """삼각형 재메시 1회(C2-D-11, spawn 격리 run_isolated kind remesh) → 형상 행 + fidelity. 실패 = REMESH_* 코드.
     timeout_s None = remesh.timeout_s(null 이면 mesh.timeout_s), auto 사다리는 남은 예산으로 줄여 넘김."""
     did = row["id"]
     try:
-        mesh, meta = mg.run_isolated(c.p(row["rel"]), out_dir, h, ccfg, props, opt_cfg=c.ocfg, kind="remesh",
-                                     timeout_s=timeout_s)
+        mesh, meta = mg.run_isolated(c.p(row["rel"]), out_dir, h, ccfg, props, opt_cfg=c.ocfg, kind=kind,
+                                     timeout_s=timeout_s,
+                                     **({"max_elems": int(mr_max_elems(ccfg))} if kind == "tria" else {}))
     except EslError as exc:
         if exc.code == "GMSH_UNAVAILABLE":
             raise
-        code = exc.code if exc.code.startswith("REMESH_") or exc.code == "MESH_TOO_LARGE" else "REMESH_FAILED"
+        keep_codes = ("MESH_TOO_LARGE", "CAD_INVALID", "TRIA_FAILED")
+        code = exc.code if exc.code.startswith("REMESH_") or exc.code in keep_codes else \
+            ("TRIA_FAILED" if kind == "tria" else "REMESH_FAILED")
         out = {"id": did, "status": "FAILED_MESH", "code": code, "message": exc.message}
         mj = os.path.join(out_dir, mg.MESH_JSON)
         if os.path.isfile(mj) and U.read_json(mj).get("fidelity"):
@@ -1530,6 +1620,12 @@ def _cmp_remesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, out_di
     if meta.get("fidelity"):
         out["fidelity"] = dict(meta["fidelity"])
     return out
+
+
+def mr_max_elems(ccfg: dict) -> int:
+    """v0.16.3 tria 시도 요소 상한 = refine.max_elems(삼각형이라 같은 h 에서 4각의 약 2배)."""
+    from esl.doe import mesh_refine as mr
+    return int(mr._rcfg(ccfg)["max_elems"])
 
 
 def _cmp_mesh_input_one(c: Ctx, row: dict, ccfg: dict, props: dict) -> dict:
@@ -1684,7 +1780,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
     ccfg = sc.compare_cfg(c.cfg)
     h = mg.check_h(float(prof["size_mm"]), prof)
     mode, lad = _cmp_mode(c)
-    remesh_ok = gm_ok and ("remesh" in lad) and _remesh_ready(c)
+    remesh_ok = gm_ok and bool({"remesh", "freeform"} & set(lad)) and _remesh_ready(c)   # v0.16.3 freeform 도 importStl
     avail = None
     if mode == "auto" and any(s.startswith("refine_") for s in lad):
         from esl.mech.shell import available_memory_bytes
@@ -1695,7 +1791,7 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
          f"형상 {len(steps)}개 동시 {par}")
     if mode != "cad":
         echo(f"[bd_mesh0] 메시 방식 {mode}" + (f" · 사다리 {' → '.join(lad)}" if mode == "auto" else "")
-             + ("" if remesh_ok or "remesh" not in lad else " (재메시 사용 불가 — 건너뜀)"))
+             + ("" if remesh_ok or not ({"remesh", "freeform"} & set(lad)) else " (재메시 사용 불가 — 건너뜀)"))
     res: dict[str, dict] = {}
     done = [0]
     if steps:
@@ -1842,7 +1938,8 @@ def _cmp_sha(c: Ctx, did: str) -> str:
         keep["mesh_mode"] = mode
         keep["remesh"] = ev.config_hash(_remesh_hash_view(cc.get("remesh") or {}))
         keep["ladder"] = list(_cmp_mode(c)[1])
-        keep["refine"] = ev.config_hash(cc.get("refine") or {})
+        keep["refine"] = ev.config_hash({k: v for k, v in (cc.get("refine") or {}).items()
+                                         if k not in REFINE_NEW_KEYS_V0163})   # v0.16.3 시간 몫 키 제외(메시 결과와 무관)
     if sh.get("source") == "mesh":          # 메시 형상 = (주·include sha256 목록, part_id, mesh_input 설정 해시)
         from esl.doe import mesh_input as mi
         keep["mesh_files"] = [f.get("sha256") for f in sh.get("files") or []]

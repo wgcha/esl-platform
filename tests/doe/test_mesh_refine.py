@@ -98,8 +98,9 @@ def test_refine_local_no_face_and_ladder():
     assert mr.plan("cad", None, H, _cfg(), None)[0]["mesh_h"] == H
     assert mr.plan("refine_global", None, H, _cfg(refine={"enabled": False}), None) == []
     c = _cfg()
-    assert mr.ladder(c) == ["cad", "refine_local", "refine_global", "defeature", "remesh"]   # v0.16.1 SR-D-16
+    assert mr.ladder(c) == ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"]   # v0.16.3 C2-D-26·28
     assert mr.ladder(c, "cad") == ["cad"] and mr.ladder(c, "remesh") == ["remesh"]
+    assert mr.ladder(c, "freeform") == ["freeform", "tria"]
     c["compare"] = dict(c["compare"], mesh=dict(c["compare"]["mesh"], ladder=["cad", "cad"]))
     with pytest.raises(EslError):
         mr.ladder(c)

@@ -1,6 +1,7 @@
 # 계약: 시나리오 ④ 형상 직접 비교 — 메시 성공률 향상 옵션 (COMPARE_MESH, v0.16.0)
 
 - **v0.16.1 변경 = `esl_select_relax.md`**(SELECT_RELAX — 이 문서와 충돌하면 그 문서가 우선).
+- **v0.16.3 변경(2026-11-10, 이슈 #53 실서버 보고)**: C2-D-26~31(freeform·면 실패 판정·OCC 삼각형 폴백·단계 시간 몫·단계별 문구·STEP 라벨), 설정 §5 끝, 시험 V-C2-26~31. 기본 사다리 `cad → refine_local → refine_global → freeform → defeature → tria`(remesh 단계는 예전 스터디 스냅샷용으로 남음).
 - 상태: **확정** (2026-11-04 사용자, 20:33). 사용자 확정 방향(아래)과 §13 결정 Q1~Q3 을 반영했습니다. 세분화 폴백(확정 5, C2-D-18~25, §4A)을 포함합니다.
 - 버전: **v0.16.0** (기준 main d01ab2f = v0.15.0). **착수 조건 = `fix/mesh-sphere`·`fix/winerror32` 가 main 에 병합된 뒤(v0.15.1)**. 같은 파일·블록(`mesh_gmsh.py`, `compare.mesh` 설정 블록, `stages._cmp_mesh*`, `atomic_replace`)을 고치기 때문입니다(§11). migration **불필요**(§6).
 - 관계: `esl_step_compare.md`(④, SC-D-*)를 **확장**합니다. 업로드·검사·정렬/크기(SC-D-7)·기준 frame 고정 셀 매핑과 `auto_supports`(SC-D-6)·물성(SC-D-8)·병렬(SC-D-9)·품질(SC-D-13 `mesh_quality.summarize`)·순위·보고서는 그대로 재사용합니다. ② B 메시 읽기 규칙(`scenario.copy_mesh_upload`, purpose `doe_mesh`)과 rad 파서(`esl/rad/parser.py`)도 재사용합니다. 이 문서에 없는 규칙은 STEP_COMPARE 를 따르고, 충돌하면 이 문서가 우선합니다.
@@ -68,6 +69,12 @@
 | C2-D-23 | **경고 `MESH_REFINED`**: "<이름>: 기본 3 mm 메시에 실패해 {국부|전역} 세분화(h {h} mm{, 면 n개})로 메시했습니다. 요소 수 기준 대비 ×{r}. 요소 크기가 기준 메시와 달라 컴플라이언스에 메시 의존 오차가 섞입니다(작은 개선율은 해석 차이일 수 있음)" — prep·결과 머리·보고서 | 사용자 요구 6 |
 | C2-D-24 | **수렴 점검(권장안, `refine.convergence.enabled: true`)**: 세분화 형상이 하나라도 있으면 그 형상들이 쓴 h_r 마다(국부는 최솟값 대신 **같은 면에 같은 Field 를 줄 수 없으므로 전역 h = h_l 의 대표값 = 세분화 형상의 평균 요소 크기**) 기준 d000 을 h_r 로 다시 메시·해석합니다(같은 하중·지지 규칙, 결과 캐시 `run/designs/d000_h<h>/` — 캐시 키에 gmsh·OCC 버전 포함(버전이 바뀌면 다시 메시·해석)). δ_e = C_ref(h_r)/C_ref(h) − 1 (ESL별)를 그 형상의 **메시 편향 추정**으로 결과·보고서에 표시하고, max|δ_e| > `convergence.tol`(null = `rank.ratio_tol`)이면 경고 `MESH_REFINE_BIAS` 를 냅니다. 선택 옵션 `convergence.same_h_baseline: false` — true 면 그 형상의 개선율을 C_ref(h_r) 기준으로 계산하고 원래 값도 함께 표시합니다. d000 이 Case 메시 기준(`source: case`)이거나 메시 입력이면 다시 메시할 수 없으므로 점검을 생략하고 info `REFINE_CONVERGENCE_SKIPPED` | 같은 형상을 두 크기로 풀 수는 없어서(기본 h 에서 실패) 기준 형상으로 민감도를 잼 |
 | C2-D-25 | **결정성·불변**: 세분화 시도도 같은 입력·버전이면 바이트가 같습니다(C2-D-14 같은 조건). 사다리에 들어가지 않은 형상은 코드 경로가 기존과 같고 `size_fields` 키도 없으므로 v0.15.x 와 바이트가 같습니다. 이어하기 해시는 `ladder`·`refine` 설정 해시를 mode ≠ cad 일 때만 포함합니다(C2-D-15) | V-C2-8 유지 |
+| C2-D-26 | **(v0.16.3) freeform** = CAD 면 경계를 따르지 않는 이산 재메시: OCC BRepMesh 삼각화(`remesh.linear_deflection_mm`) → `classifySurfaces`(`remesh.feature_angle_deg`·`curve_angle_deg` 60 — 날카로운 모서리·비드 접힘 유지) → `createGeometry` → 4각 우세 재메시(h). **gmsh OCC 면 메싱(면 매개변수화)을 쓰지 않음** — periodic·퇴화 면이 막지 못함. `remesh_file(freeform=True)` = 재메시 R2(CAD 단계 구멍 메움)를 끔(`compare.freeform.hole_fill` false). 경고 `MESH_FREEFORM`(원 형상 대비 최대 편차, 지름 < `small_hole_factor` × h 구멍 수, 메시에서 사라진 구멍 수 = 경계 고리 수 차이). 모드 `compare.mesh.mode: freeform`(요청 `mesh_mode`) = cad 없이 `[freeform, tria]`, 성공 `mesh_method = remesh`. auto 사다리에서 성공 = `fallback`(+ `fallback_stage`) | 사용자 2026-11-09 지시 |
+| C2-D-27 | **(v0.16.3) 면 실패 판정**: cad 실패 기록에 실패 면(`face.key`)이 있고 (면 종류 ∈ `compare.mesh.face_fail.types` [Sphere] 또는 오류 문구에 `patterns` [periodic surface, closed loop, degenerate]) 이면 **면 실패** — 요소를 잘게 해도 같은 면 매개변수화가 실패하므로 `face_fail.skip`(refine_local·refine_global)을 건너뜀(`SKIPPED reason face_fail`, info `MESH_FACE_FAIL`). 시간 초과·크래시(면 기록 없음)·면 기록은 있으나 종류·문구가 안 맞는 실패(크기·품질 문제)는 예전대로 세분화. defeature 단계는 면 실패일 때 **실패 면 표적**(`defeature_stage.targets` = 실패 면 bbox 키)을 추가: 실패 면을 품은 닫힌 묶음(딤플·구 캡, bbox 대각 ≤ `feature_max_mm`)은 기존 기준과 무관하게 평탄화(`target: true`). 그 밖은 기존 `compare.defeature` 기준 그대로. **이슈 #53 BatchMesher param 의 수치(eq_diam < 8·flanged 1.5 등)는 쓰지 않음**(사용자 2026-11-09) | 실측: v0.16.2 는 같은 면 실패를 세분화 5회로 되풀이 |
+| C2-D-28 | **(v0.16.3) tria = OCC 삼각형 폴백(사다리 마지막)** `esl/doe/mesh_tria.py tria_file`: BRepMesh 삼각화(편차 `tria.deflection_factor` × h = 0.9 mm ≈ 3 mm CAD 메시 자체 현 편차, 각 45°) → 노드 병합(`merge_tol_mm`) → 적합 최장 변 분할(변 ≤ `split_factor` × h) ↔ 같은 평면 안 Delaunay 뒤집기 → 짧은 변 붕괴(< `collapse_factor` × h, 둘레 법선 산포 ≤ `collapse_deg` 인 매끈한 면 안 노드만) → 평면 안 접선 평활 → 재분할. gmsh 2D 메싱·이산 재메시 **모두 쓰지 않음**. 충실도 = C2-D-13 지표(S = 같은 BRepMesh). 경고 `MESH_TRIA_FALLBACK` 항상. 삼각화 없는 면 = 정리 끄고 재시도 → `allow_missing_faces` 면 경고 `MESH_TRIA_HOLES`(면 id) 후 계속, 그 때문에 메시가 끊기거나 끄면 `CAD_INVALID`(면 id). 요소 상한 = `refine.max_elems`. 기본 순서: 면 실패 → `cad → freeform → (freeform 이 REMESH_FIDELITY 일 때만) defeature → tria` | 사용자 2026-11-09 "마지막 단계는 사실상 실패하지 않게" |
+| C2-D-29 | **(v0.16.3) 단계 시간 몫**: 단계 상한 = 남은 예산(`refine.total_timeout_s` − 누적) − Σ(뒤에 실제로 돌 단계의 `refine.stage_share` × 예산). 앞 단계가 몫을 덜 쓰면 뒤로 넘어가고, 어떤 단계도 뒤 단계 몫을 먹지 못함. 시도 제한 시간 = min(단계 제한 시간, 단계 상한 − 그 단계에서 쓴 시간). 남은 단계 몫 < `min_attempt_s` 면 그 시도·단계는 `SKIPPED reason stage_time`. cad 시도도 자기 몫(기본 0.3 × 3600 = 1080 s, 이전 1800 s)까지만. tria 는 단계 몫 판정 없이 남은 예산 전체(시간 초과 = 예산 소진 시만). 새 키 `stage_share`·`min_attempt_s` 는 이어하기 해시에서 뺌 | v0.16.2 실측: 세분화가 3003 s 를 써 마지막 재메시가 596.563 s 에서 끊김 |
+| C2-D-30 | **(v0.16.3) 단계별 기록·문구**: 형상 행·mesh.json `stage_times = [{stage, outcome READY|FAILED_MESH|SKIPPED, seconds, tries, reason?, code?, timed_out?}]`(시도 순서, 같은 단계 묶음). 사다리 실패 문구 = `[단계별: cad 실패 412.3 s → refine_local 건너뜀(면 실패 — 세분화로 풀리지 않음) → freeform 실패(시간 초과) 720.0 s → tria 실패 58.1 s]` + 기존 `MESH_LADDER_FAILED`(작업 실패 문구 500자 상한에 잘리지 않도록 앞에) | 어디서 멈췄는지 사용자가 바로 봄 |
+| C2-D-31 | **(v0.16.3) STEP 라벨 안 읽음** `compare.mesh.occ_import_labels: 0`(④ 프로필만, gmsh `Geometry.OCCImportLabels`): gmsh 4.13 의 STEP XCAF 라벨 처리가 면 수에 초선형(합성 1915 면 234 s → 5.4 s, 266 면 2.1 s). 세션·면 폴백·사다리 시도마다 STEP 을 다시 읽으므로 큰 형상에서 누적됨. 형상·태그·mesh.npz 는 같음(regress 바이트 동일), mesh.json `options` 에 기록하지 않음(③ 은 키 없음 → 그대로) | 실측 |
 
 ## 3. 데이터 모델
 
@@ -160,6 +167,26 @@ bead_doe:
 ```
 - pydantic: factors 는 (0,1) 범위에서 내림차순, `min_size_mm` > 0, `max_elems` ≥ `mesh.max_elems`, ladder ⊆ {cad, refine_local, refine_global, remesh} 이고 cad 가 맨 앞. `mesh.size_min_mm` 과 `min_size_mm` 의 대소 검증은 하지 않습니다(기본값 1.0 > 0.5 와 충돌) — 세분화 시도만 하한을 `refine.min_size_mm` 으로 낮춥니다(attempt_cfg — `mesh_refine.attempt_cfg` 가 `check_h` 하한을 내림, 통합 2026-11-04).
 
+**v0.16.3 추가 키**(C2-D-26~31, DEFAULTS·pydantic·yaml 2개 거울):
+
+```yaml
+bead_doe:
+  compare:
+    mesh:
+      mode: auto                 # += freeform
+      ladder: [cad, refine_local, refine_global, freeform, defeature, tria]
+      face_fail: {enabled: true, types: [Sphere], patterns: [periodic surface, closed loop, degenerate], skip: [refine_local, refine_global]}
+      occ_import_labels: 0
+    refine:
+      stage_share: {cad: 0.3, refine_local: 0.1, refine_global: 0.1, freeform: 0.2, defeature: 0.15, remesh: 0.2, tria: 0.15}
+      min_attempt_s: 5.0
+    freeform: {enabled: true, hole_fill: false, small_hole_factor: 1.0, timeout_s: null}
+    tria: {enabled: true, deflection_factor: 0.3, angular_deflection_deg: 45.0, merge_tol_mm: 0.01, split_factor: 1.333,
+           max_split_iters: 24, max_tris: 2000000, coplanar_deg: 1.0, flip_passes: 6, collapse_factor: 0.6, collapse_passes: 6,
+           collapse_deg: 20.0, smooth_rounds: 4, smooth_iters: 5, allow_missing_faces: true, timeout_s: 300}
+```
+- 시험 전용 고장 주입 = 환경 변수 `ESL_TEST_MESH_FAIL`(cad·defeature·remesh·fidelity, spawn 자식에서만 — 설정 키 아님).
+
 ## 6. API · 스키마 · DB
 
 - 업로드: 메시 형상 = 기존 청크 업로드, 같은 세션에 주 + include. 다중 STEP 세션 규칙(rel)을 메시에도 적용: `doe_source(kind="mesh", rel=…)` 는 rel 이 세션의 살아 있는 `.rad/.inc` 와 정확히 같아야 합니다. 확장자 검사 = `mesh_input.formats`, 크기 = 주 + include 합계 ≤ `max_mb`(422 `MESH_INPUT_TOO_LARGE`). 결과는 `save_doe_check(purpose doe_mesh)`.
@@ -221,6 +248,12 @@ BD_LOADS·BD_*·BD_POST  변경 없음(메시 dict 형식 같음). ranking.csv �
 | V-C2-15 | 정상 형상: 사다리 미진입, `size_fields` 없음 → gmsh 옵션 dict·`mesh.npz` 바이트가 v0.15.x 와 동일(V-C2-8 확장). 세분화 시도 2회 실행 → 바이트 동일 | `tests/doe/test_mesh_gmsh.py` |
 | V-C2-16 | 수렴 점검: 합성 평판 d000 을 h 와 h_r 로 풀어 δ 기록, tol 경계에서 `MESH_REFINE_BIAS`, same_h_baseline 개선율, Case 기준이면 생략 info, 캐시 재사용 | `tests/doe/test_step_compare.py`(통합 2026-11-04: 세분화 형상을 만들려면 cad 시도 실패 주입이 필요한데 워커 E2E 는 코어 단계를 spawn 자식에서 돌려 monkeypatch 가 닿지 않음 — 코어 단계 직접 실행으로 이동) |
 | V-C2-17 | 설정 거울·검증(ladder 순서·factors·상한 관계) | `tests/pipeline/test_config.py` |
+| V-C2-26 | (v0.16.3) 면 실패 → 세분화 건너뜀 → freeform 성공(합성 다딤플 판, 실패 주입 `ESL_TEST_MESH_FAIL=cad` — 그 판은 주입 없이도 cad 가 실패), `MESH_FREEFORM`·충실도·품질 지표; mode freeform(cad 없음) | `tests/doe/test_mesh_ladder_v0163.py` |
+| V-C2-27 | (v0.16.3) 면 실패 판정 단위, freeform 충실도 실패(주입) → 실패 면 표적 defeature 성공 | 같은 파일 |
+| V-C2-28 | (v0.16.3) gmsh 면 메싱·이산 재메시 모두 실패(주입) → tria 가 메시(READY, `MESH_TRIA_FALLBACK`), tria 적합·연결·충실도 | 같은 파일 |
+| V-C2-29 | (v0.16.3) 단계 몫: 모든 시도 시간 초과 주입 → cad 제한 = 예산 × (1 − 뒤 몫 합), tria 몫 보장, 총 ≤ 예산, 문구 단계별 초 | 같은 파일, `test_step_compare.py`(v0.16.2 사다리 = 몫 0 이면 이전과 같음) |
+| V-C2-30 | (v0.16.3) 정상 경로 바이트 불변: regress(mode 없음·cad·auto) 메시·하중·순위 동일 — auto 의 이어하기 해시만 기본 사다리 변경으로 다름(스냅샷 `mesh_ladder` 가 있는 기존 스터디는 같음) | `scripts/regress.py`(작업 폴더) |
+| V-C2-31 | (v0.16.3, 수동 `ESL_TEST_BIG=1`) 약 1900 면 판: tria < 120 s·충실도 | 같은 파일 |
 
 ## 11. 파일 소유권과 작업 단계
 
