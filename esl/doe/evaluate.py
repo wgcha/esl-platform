@@ -33,10 +33,11 @@ def spc_of(mesh: dict, supports) -> list[tuple[int, str]]:
     return out
 
 
-def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=()) -> dict:
+def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), region=None) -> dict:
     """mesh(x0 = 안 좌표) + 지지 + [(entry_id, F)] → {per_esl[{entry_id, C, umax, epsmax}], warnings, stats, u{eid: u3}}.
 
-    keep_u = 변위 (N,3) 를 돌려줄 entry_id 목록(view3d 용)."""
+    keep_u = 변위 (N,3) 를 돌려줄 entry_id 목록(view3d 용). region(v0.18.0 SG-D-20e, 요소 bool — select_base step 만) =
+    umax·epsmax 를 영역 노드·요소만으로(C = F·u 는 전체 — 하중이 영역에만 있음). None = 지금 동작(바이트 불변)."""
     from esl.mech.shell import ShellModel, solver_check_kwargs
     from esl.mech.strain import eps_eq_max_layer
     from esl.mech import supports as msup
@@ -56,8 +57,16 @@ def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: fl
         u, R = h.solve(F)
         ut = u[:, :3]
         C = float(np.sum(F * ut))
-        umax = float(np.max(np.linalg.norm(ut, axis=1))) if ut.size else 0.0
+        if region is not None:
+            rn = np.zeros(ut.shape[0], bool)
+            rc = np.asarray(mesh["conn"], dtype=np.int64)[np.asarray(region, bool)]
+            rn[rc[rc >= 0]] = True
+            umax = float(np.max(np.linalg.norm(ut[rn], axis=1))) if rn.any() else 0.0
+        else:
+            umax = float(np.max(np.linalg.norm(ut, axis=1))) if ut.size else 0.0
         eps = eps_eq_max_layer(sm.strains(u))
+        if region is not None:
+            eps = eps[np.asarray(region, bool)]
         epsmax = float(np.max(eps)) if eps.size else 0.0
         sabs = float(np.linalg.norm(F, axis=1).sum())
         rr = float(np.linalg.norm(R.sum(axis=0)) / sabs) if sabs > 0 else 0.0

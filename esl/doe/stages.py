@@ -152,12 +152,18 @@ def _copy_verified(src: str, dst: str, writer: U.Writer, sha: str | None = None)
 
 # ---------------------------------------------------------------- 1 BD_INPUT
 def select_base(c: Ctx) -> str:
-    """v0.16.2 AD-D-13: select 기준 메시 출처 ``case``(① Case 제자리, 기본) | ``mesh``(② B 메시 업로드). 스펙 ``doe.select_base``
-    (백엔드가 ``inputs.select_base`` 를 그대로 넣음), 없으면 준비 결과 ``prep/input.json`` 의 값, 그것도 없으면 case."""
+    """v0.16.2 AD-D-13: select 기준 메시 출처 ``case``(① Case 제자리, 기본) | ``mesh``(② B 메시 업로드) | v0.18.0 SG-D-1
+    ``step``(③ STEP → ④ 사다리 메시). 스펙 ``doe.select_base``(백엔드가 ``inputs.select_base`` 를 그대로 넣음), 없으면 준비 결과
+    ``prep/input.json`` 의 값, 그것도 없으면 case."""
     v = c.D.get("select_base")
     if v is None and os.path.isfile(c.p("prep", "input.json")):
         v = U.read_json(c.p("prep", "input.json")).get("select_base")
-    return "mesh" if v == "mesh" else "case"
+    return v if v in ("mesh", "step") else "case"
+
+
+def _is_step_base(c: Ctx) -> bool:
+    """v0.18.0 새 ③(select + select_base step — esl_step_graph.md). legacy ``scenario step`` 은 아님."""
+    return c.scn == "select" and select_base(c) == "step"
 
 
 def select_schema(c: Ctx) -> int:
@@ -285,6 +291,9 @@ def bd_mesh0(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
     if c.scn == "compare":
         return _cmp_mesh0(c, echo)
+    if _is_step_base(c):                         # v0.18.0 SG-D-4 새 ③ = ④ 사다리 기준 메시
+        from esl.doe import step_graph as sg
+        return sg.mesh0(c, echo)
     if c.scn != "step":
         return {"skipped": True, "files": [], "warnings": []}
     c.progress(0)
@@ -477,7 +486,8 @@ def _cfg_hash(c: Ctx) -> str:
             "mapping": c.mapping_opts(), "paicad_options": c.cfg["paicad"].get("options") or {}}
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
-        keep.update(select=bsel.select_hash_view(c.cfg["select"]), quality=c.cfg["compare"]["quality"])
+        keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
+                    quality=c.cfg["compare"]["quality"])
     return ev.config_hash(keep)
 
 
@@ -529,8 +539,8 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
         if mw:
             info["morph_warnings"] = mw
         return m, list(t.supports), loads, info
-    # TODO(SR-D-44): ③ STEP 모핑(보류) — 안 메시가 나오면 esl.morph.core(post_morph_warnings·피처 안전망)를 여기서 호출
-    # TODO(BG-D-45): ③ STEP 모핑(보류) — 기준 메시를 beadgraph.classify → bead_graph.basis_v2(세그먼트 기저)로 모핑할 호출 지점
+    # SR-D-44·BG-D-45(③ STEP 모핑): 새 ③ = select_base step 으로 해소(v0.18.0 esl_step_graph.md — 위 select 분기, 기준 메시
+    # 기저 모핑). 아래는 legacy scenario step(paicad update → 안 BREP 재메시) 그대로.
     # ③: 안 BREP → gmsh(베이스라인과 같은 h·옵션) → frame 고정 매핑
     brep = os.path.join(dd, "update", pio.SAMPLE_BREP)
     if not os.path.isfile(brep):
@@ -596,7 +606,13 @@ def bd_eval(spec: dict, echo=print) -> dict:
         else:
             mesh, sup, loads, mesh_info = _design_mesh(c, t, did, inp, bmeta, fresh=True)
         c.progress(40)
-        r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"])
+        rkw = {}
+        if _is_step_base(c):                     # v0.18.0 SG-D-20e umax·epsmax = 평가 영역(영역 = 전체면 인자 없음)
+            from esl.doe import step_graph as sg
+            reg = sg.load_region(c.p("prep"))
+            if reg is not None:
+                rkw["region"] = reg
+        r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
         keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
         ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if keep_mesh else None, c.writer)
@@ -1095,11 +1111,11 @@ def _cmp_text(code: str, **kw) -> str:
 
 
 def _cmp_mesh_one(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, *, fail_info: bool = False,
-                  timeout_s: float | None = None, large: bool = False) -> dict:
+                  timeout_s: float | None = None, large: bool = False, mesh_dir: str | None = None) -> dict:
     """형상 1개 gmsh(spawn 격리, ④ 프로필). 반환 {id, status READY|FAILED_MESH, code, message, n_nodes, n_elems, …}.
     fail_info(v0.16.0 auto 사다리) = 실패 시 mesh_error.json 에 실패 면·넓이(세분화 입력) — 성공 결과는 같음."""
     did = row["id"]
-    d = _cmp_mesh_dir(c, did)
+    d = mesh_dir or _cmp_mesh_dir(c, did)                  # v0.18.0 SG-D-5 mesh_dir(③ step = prep/mesh0, ④ = None)
     c.writer.makedirs(d)
     kw = {"large": True} if large else {}                  # v0.17.4 C2-D-33(대형 모델만)
     kw.update(_cmp_beat(c, row, "cad"))
@@ -1299,12 +1315,12 @@ def _bbox_str(k) -> str:
 
 
 def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: str, lad: list[str],
-                    remesh_ok: bool, avail: int | None) -> dict:
+                    remesh_ok: bool, avail: int | None, mesh_dir: str | None = None) -> dict:
     """BD_MESH0 ④ 형상 1개 분기(§7): mesh → 메시 입력(in-process), cad → 기존 그대로, remesh → 재메시, auto → cad 를 기존
     경로로 먼저(성공이면 v0.15.x 와 바이트 동일) 실패하면 사다리(C2-D-18) — 시도 폴더 mesh/try_<n>/, 성공본을 mesh/ 로."""
     if row.get("source") == "mesh":
         return _cmp_mesh_input_one(c, row, ccfg, props)
-    d = _cmp_mesh_dir(c, row["id"])
+    d = mesh_dir or _cmp_mesh_dir(c, row["id"])           # v0.18.0 SG-D-5(③ step = prep/mesh0)
     _clear_tries(c, d)
     if os.path.isdir(os.path.join(d, TRY_LOGS)):          # v0.17.4 이전 실행의 시도 로그
         shutil.rmtree(c.writer.guard(os.path.join(d, TRY_LOGS)))
@@ -1315,7 +1331,7 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
         return r
     if mode == "freeform":                              # v0.16.3 C2-D-26: cad 없이 freeform → tria
         c.writer.makedirs(d)
-        return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail)
+        return _cmp_ladder(c, row, h, ccfg, props, lad, None, 0.0, remesh_ok, avail, mesh_dir=mesh_dir)
     t0 = time.monotonic()
     auto = mode == "auto" and len(lad) > 1
     lg = mg.large_model(c.p(row["rel"]), ccfg["mesh"])   # v0.17.4 C2-D-33 대형 모델(STEP 본문 세기 — 결과와 무관)
@@ -1328,13 +1344,13 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
             if sh is not None:
                 to = min(to, float(sh) * float(mr._rcfg(ccfg)["total_timeout_s"]))
     r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
-                      timeout_s=to, **({"large": True} if lg["large"] else {}))
+                      timeout_s=to, **({"large": True} if lg["large"] else {}), mesh_dir=mesh_dir)
     r["mesh_method"] = "cad"
     if r.get("cad_relaxed"):                            # v0.17.4 C2-D-32 cad 자식 안 ③ 옵션 재시도 성공
         _cmp_relaxed_row(r, time.monotonic() - t0, lg)
     if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
-    out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg)
+    out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg, mesh_dir=mesh_dir)
     if lg["large"]:                                     # v0.17.4 C2-D-33 대형 판정(사다리 행에만 — 정상 형상 키 없음)
         out["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
     return out
@@ -1358,12 +1374,12 @@ def _cmp_relaxed_row(r: dict, total_s: float, lg: dict, attempts: list | None = 
 
 
 def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], r0: dict, t_cad: float,
-                remesh_ok: bool, avail: int | None, lg: dict | None = None) -> dict:
+                remesh_ok: bool, avail: int | None, lg: dict | None = None, mesh_dir: str | None = None) -> dict:
     """C2-D-18~22 사다리 실행기(cad 실패 뒤). 단계마다 ``mesh_refine.plan`` → 시도 직전 ``check_limits`` 재판정 →
     ``run_isolated(kind cad, size_fields·max_elems)`` 또는 재메시. 첫 성공에서 멈춤."""
     from esl.doe import mesh_refine as mr
     did = row["id"]
-    d = _cmp_mesh_dir(c, did)
+    d = mesh_dir or _cmp_mesh_dir(c, did)
     src = c.p(row["rel"])
     rc = mr._rcfg(ccfg)
     infos: list[str] = []
@@ -1443,7 +1459,7 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     rxc = (ccfg.get("mesh") or {}).get("cad_relaxed") or {}
     if r0 is not None and ff and rxc.get("enabled") and not (pm.get("cad_relaxed") or {}).get("tried"):
         rr = _cmp_relaxed_parent(c, row, h, ccfg, props, lad, ff_skip, elapsed, attempts, infos, keep, n_try, cad_err,
-                                 lg or {})
+                                 lg or {}, mesh_dir=mesh_dir)
         n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
         if rr.get("status") == "READY":
             return rr
@@ -1507,7 +1523,7 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
             continue
         if stage == "defeature":                        # v0.16.1 §5A.1 형상 단순화(작은 형상 억제) 단계
             rr = _cmp_defeature_stage(c, row, h, ccfg, props, pm, avail, elapsed, attempts, infos, keep, n_try, cad_err,
-                                      cap=cap)
+                                      cap=cap, mesh_dir=mesh_dir)
             n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
             if rr.get("status") == "READY":
                 return rr
@@ -1614,12 +1630,13 @@ def _cmp_timeout_face(d: str, pm: dict, ccfg: dict) -> dict | None:
 
 
 def _cmp_relaxed_parent(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], ff_skip, elapsed: float,
-                        attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, lg: dict) -> dict:
+                        attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, lg: dict,
+                        mesh_dir: str | None = None) -> dict:
     """v0.17.4 C2-D-32 cad 가 시간 초과(자식 안 cad_relaxed 못 감) ∧ 면 실패 → 부모가 cad_relaxed 1회(direct — 그 세션만, 면 폴백
     없음). 제한 = min(mesh.timeout_s, 남은 예산 − 뒤 단계(면 실패로 건너뛸 단계 제외) 몫). 성공 → mesh_method cad 행."""
     from esl.doe import mesh_refine as mr
     did = row["id"]
-    d = _cmp_mesh_dir(c, did)
+    d = mesh_dir or _cmp_mesh_dir(c, did)
     later = [x for x in lad[1:] if x not in ff_skip]
     cap = mr.stage_cap("cad_relaxed", later, ccfg, elapsed)
     tmo = min(mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, elapsed), cap)
@@ -1681,12 +1698,13 @@ def _defeat_summary(meta: dict) -> dict | None:
 
 
 def _cmp_defeature_stage(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, pm: dict, avail, elapsed: float,
-                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, cap: float | None = None) -> dict:
+                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, cap: float | None = None,
+                         mesh_dir: str | None = None) -> dict:
     """사다리 defeature 단계 시도(최대 2 — compound 켬 → compound 면 실패 때만 끔). 반환 성공 형상 행 | {status FAILED_MESH…}
     | {status SKIPPED} (+ _n_try·_elapsed). 억제 대상 0 = DEFEATURE_NO_FEATURE(메싱 안 함, 2번째 시도도 건너뜀)."""
     from esl.doe import mesh_refine as mr
     did = row["id"]
-    d = _cmp_mesh_dir(c, did)
+    d = mesh_dir or _cmp_mesh_dir(c, did)
     src = c.p(row["rel"])
     to_cad = float(ccfg["mesh"]["timeout_s"])
     first = None
@@ -2545,7 +2563,10 @@ def _sel_norm(c: Ctx, mesh: dict | None = None) -> tuple[dict, str]:
 
 
 def _sel_fixed_ids(c: Ctx) -> tuple[np.ndarray, str | None]:
-    """paicad fixed-scan(prep/fixed — 워커 BD_GEOM, 있으면) 노드 ID. 없음/실패 → (빈, 경고 코드)."""
+    """paicad fixed-scan(prep/fixed — 워커 BD_GEOM, 있으면) 노드 ID. 없음/실패 → (빈, 경고 코드).
+    v0.18.0 select_base step: B fixed-scan 없음 → (빈, None) — 고정은 A 이전 seed fixed_user(SG-D-14)."""
+    if _is_step_base(c):
+        return np.zeros(0, np.int64), None
     d = c.p("prep", "fixed")
     if not os.path.isfile(os.path.join(d, pio.SCAN_JSON)):
         return np.zeros(0, np.int64), "FIXED_INFO_MISSING"
@@ -2577,6 +2598,8 @@ def _sel_input(c: Ctx, echo) -> dict:
     _sel_step(c, inp)
     if select_schema(c) == 2:                    # v0.17.0: schema 1 스터디는 키 없음(input.json 바이트 불변)
         inp["select_schema"] = 2
+    if select_base(c) == "step":                 # v0.18.0 SG-D-1~3: STEP 사본(_sel_step)·물성 — 메시는 BD_MESH0
+        return _sel_input_step(c, ents, inp, echo)
     if select_base(c) == "mesh":
         warns: list = []
         inp["select_base"] = "mesh"
@@ -2611,6 +2634,23 @@ def _sel_input(c: Ctx, echo) -> dict:
     c.progress(100)
     return {"files": ["prep/input.json", "prep/base_mesh.npz", "prep/base.json"], "warnings": [], "info": info,
             "part_id": inp["part_id"]}
+
+
+def _sel_input_step(c: Ctx, ents, inp: dict, echo) -> dict:
+    """BD_INPUT select_base step(SG-D-2·3): schema 2 고정, STEP 사본·sha(``_sel_step``), props(없으면 A Case 기본)·inch."""
+    if select_schema(c) != 2:
+        raise EslError("INVALID_PARAMS", "select_base step 은 select_schema 2 만(SG-D-2)")
+    if not inp.get("step"):
+        raise EslError("INPUT_INVALID", "③ STEP 입력(step)이 없음")
+    props = c.D.get("props") or sc.props_default(ents[0].raw)
+    props = {"t": float(props["t"]), "E": float(props["E"]), "nu": float(props["nu"])}
+    inp.update(select_base="step", assem=None, part_id=None, part_title=None, props=props, inch=c.D.get("inch"),
+               warnings=[], info=[])
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    echo(f"[bd_input] select 기준 B STEP 사본 {inp['step']['rel']} · sha {inp['step']['sha256'][:12]}… · 물성 t {props['t']:g}"
+         " — 기준 메시는 BD_MESH0(④ 사다리)")
+    c.progress(100)
+    return {"files": ["prep/input.json", inp["step"]["rel"]], "warnings": [], "info": [], "part_id": None}
 
 
 def _sel_loads(c: Ctx, echo) -> dict:
@@ -2917,8 +2957,8 @@ def _sel_cfg_sha(c: Ctx) -> str:
     import json
 
     from esl.doe import bead_select as bsel
-    s = json.dumps({"select": bsel.select_hash_view(c.cfg["select"]), "quality": c.cfg["compare"]["quality"]},
-                   sort_keys=True, separators=(",", ":"))
+    s = json.dumps({"select": bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
+                    "quality": c.cfg["compare"]["quality"]}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
