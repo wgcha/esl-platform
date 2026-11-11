@@ -84,7 +84,7 @@ export function makeDoeSettings(): DoeSettingsOut {
       mesh_input: { enabled: true, formats: [".rad", ".inc"], max_mb: 500 },
       step_ready: true,
       // v0.16.1(esl_select_relax.md §4.4)
-      mesh: { ladder: ["cad", "refine_local", "refine_global", "defeature", "remesh"] },
+      mesh: { ladder: ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"] },
       defeature: { hole_max_d_mm: 8, min_bead_height_mm: 2, fillet_max_r_mm: 1.5, kinds: ["flange", "hole", "slot", "bead", "fillet", "narrow"] },
     },
     select: {
@@ -1510,8 +1510,8 @@ export class DoeMock {
     // v0.16.0 메시 방식·출처 검사(§6 순서)
     const cc = st.compare;
     const mode = b.mesh_mode;
-    if (mode != null && mode !== "cad" && mode !== "remesh" && mode !== "auto") return err(422, "INVALID_PARAMS", "메시 방식이 올바르지 않습니다.");
-    if (mode === "remesh" && !cc?.remesh_available) return err(422, "REMESH_UNAVAILABLE", `이 gmsh 버전(${st.gmsh.version ?? "?"})은 삼각형 재메시를 지원하지 않습니다`);
+    if (mode != null && mode !== "cad" && mode !== "remesh" && mode !== "freeform" && mode !== "auto") return err(422, "INVALID_PARAMS", "메시 방식이 올바르지 않습니다.");
+    if ((mode === "remesh" || mode === "freeform") && !cc?.remesh_available) return err(422, "REMESH_UNAVAILABLE", `이 gmsh 버전(${st.gmsh.version ?? "?"})은 삼각형 재메시를 지원하지 않습니다`);
     const rows: DoeCheckShape[] = [];
     for (let i = 0; i < shapes.length; i++) {
       const src = shapes[i].source ?? "step";

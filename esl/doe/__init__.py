@@ -85,6 +85,7 @@ DEFAULTS: dict = {
     "compare": {"enabled": True, "max_shapes": 20, "total_max_mb": 1000, "align_tol": 0.05, "align_deg": 5.0,
                 "mesh": {"size_mm": 3.0, "curvature_n": 0, "min_size_factor": 0.8, "extend_from_boundary": 0,
                          "occ_fix_small": 1, "feature_angle": 10.0,
+                         "occ_import_labels": 0,   # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기 초선형 시간 회피)
                          # v0.14.1 면 단위 폴백: 2D 메싱이 실패한 면만 algorithms 순서(6 Frontal-Delaunay → 5 Delaunay →
                          # 1 MeshAdapt)로 재시도, relax 면 그 면의 작은 형상 처리·구멍 둘레 분할을 풀고 다시. 면 max_faces 개 초과 → 실패
                          # v0.15.1 형상 폴백(이슈 #53 Sphere 면 — 극점 퇴화 모서리를 OCC 정리가 지워 2D 알고리즘으로는 안 됨):
@@ -102,8 +103,15 @@ DEFAULTS: dict = {
                                       "small": {"area_mm2": 50.27, "tol_factor": 1.0, "samples": 10}},
                          # v0.16.0 메시 방식(esl_compare_mesh_options.md C2-D-9·18): auto = ladder 를 차례로(첫 성공에서 멈춤)
                          # v0.16.1 defeature = 작은 형상 억제 단계(esl_select_relax.md SR-D-16 — 세분화 뒤·재메시 앞)
-                         "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "defeature", "remesh"],
-                         "keep_tries": False},   # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
+                         # v0.16.3(C2-D-26~28): mode += freeform(cad 없이 freeform → tria), 사다리 기본 = 세분화 뒤 freeform(CAD 면
+                         # 경계 무시 이산 재메시) → defeature(freeform 충실도 실패 때만) → tria(OCC 삼각형 폴백). remesh 는 예전 사다리용
+                         "mode": "auto", "ladder": ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"],
+                         "keep_tries": False,    # true = 사다리 시도 폴더 try_<n>/ 모두 남김(false = 실패 시 마지막 시도만)
+                         # v0.16.3 C2-D-27 면 실패(특정 CAD 면을 못 메시함) 판정: 실패 면 종류 ∈ types 또는 gmsh 문구에 patterns →
+                         # skip 단계(요소 크기를 줄여도 안 풀림)를 건너뜀
+                         "face_fail": {"enabled": True, "types": ["Sphere"],
+                                       "patterns": ["periodic surface", "closed loop", "degenerate"],
+                                       "skip": ["refine_local", "refine_global"]}},
                 # v0.16.0 삼각형 재메시(C2-D-11~14 — esl.doe.mesh_remesh)
                 "remesh": {"enabled": True, "feature_angle_deg": 30.0, "curve_angle_deg": 60.0,
                            "linear_deflection_mm": 0.05, "angular_deflection_deg": 5.0, "merge_tol_mm": 0.001,
@@ -111,12 +119,25 @@ DEFAULTS: dict = {
                            "timeout_s": None,
                            # warn_rel_cad(v0.16.1 SR-D-27): 경고 = max(warn_mm, warn_rel_cad × cad 메시 현 편차 추정), 0 = 절대만
                            "fidelity": {"warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}},
+                # v0.16.3 freeform(C2-D-26): remesh 설정(특징각·곡선각·편차·알고리즘·충실도)을 그대로 쓰되 CAD 단계 구멍 메움 없이
+                # (hole_fill false) — 크기 h × small_hole_factor 보다 작은 구멍은 '번질 수 있음'으로 셈(MESH_FREEFORM)
+                "freeform": {"enabled": True, "hole_fill": False, "small_hole_factor": 1.0, "timeout_s": None},
+                # v0.16.3 OCC 삼각형 폴백(C2-D-28 — esl.doe.mesh_tria): BRepMesh 편차 = deflection_factor × h, 긴 변 > split_factor × h
+                # 적합 분할, 같은 평면(coplanar_deg) 안 Delaunay 뒤집기 flip_passes 번
+                "tria": {"enabled": True, "deflection_factor": 0.3, "angular_deflection_deg": 45.0, "merge_tol_mm": 0.01,
+                         "split_factor": 1.333, "max_split_iters": 24, "max_tris": 2000000, "coplanar_deg": 1.0,
+                         "flip_passes": 6, "collapse_factor": 0.6, "collapse_passes": 6, "collapse_deg": 20.0, "smooth_rounds": 4, "smooth_iters": 5, "allow_missing_faces": True, "timeout_s": 300},
                 # v0.16.0 메시 입력(C2-D-2~8 — esl.doe.mesh_input)
                 "mesh_input": {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,
                                "max_include_depth": 8, "size_warn_ratio": 1.5,
                                "diag": {"enabled": True, "feature_angle_deg": 30.0}},   # v0.16.1 SR-D-24(보고만, 해시 제외)
                 # v0.16.0 세분화 폴백(C2-D-18~24 — esl.doe.mesh_refine)
+                # v0.16.3 C2-D-29 stage_share = 단계마다 total_timeout_s 의 몫(뒤 단계 몫은 앞 단계가 못 씀), min_attempt_s = 남은 몫이
+                # 이보다 작으면 시도하지 않음(stage_time)
                 "refine": {"enabled": True, "min_size_mm": 0.5, "max_elems": 600000, "total_timeout_s": 3600,
+                           "stage_share": {"cad": 0.3, "refine_local": 0.1, "refine_global": 0.1, "freeform": 0.2,
+                                           "defeature": 0.15, "remesh": 0.2, "tria": 0.15},
+                           "min_attempt_s": 5.0,
                            "elem_per_h2": 1.0, "local": {"factors": [0.75, 0.5, 0.33], "neighbor_rings": 1, "max_faces": 20},
                            "global": {"factors": [0.8, 0.667]},
                            "convergence": {"enabled": True, "tol": None, "same_h_baseline": False}},

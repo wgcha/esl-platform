@@ -216,8 +216,8 @@ def test_extract_dump_keys_optional():
 # ---------------------------------------------------------------- v0.16.0 ④ 메시 옵션 설정 거울(esl_compare_mesh_options.md §5)
 # 거울 규칙: esl.doe.DEFAULTS["compare"] = 플랫폼 pydantic(BeadDoeCompareCfg) 기본값 = config/esl_platform*.example.yaml.
 # 코어 DEFAULTS 에 새 키가 아직 없으면(Core 병합 전) 그 키의 코어 대조만 건너뜀(S2 방식) — pydantic·yaml 대조는 항상.
-_C2_KEYS = ("remesh", "mesh_input", "refine")
-_C2_MESH_KEYS = ("mode", "ladder")
+_C2_KEYS = ("remesh", "mesh_input", "refine", "freeform", "tria")   # v0.16.3 += freeform·tria
+_C2_MESH_KEYS = ("mode", "ladder", "face_fail", "occ_import_labels")   # v0.16.3 += face_fail·occ_import_labels
 _PLATFORM_YAMLS = ("esl_platform.example.yaml", "esl_platform.prod.example.yaml")
 
 
@@ -236,8 +236,10 @@ def test_compare_mesh_options_mirror():
     from esl.doe import DEFAULTS
 
     dump = pc.BeadDoeCfg().model_dump()["compare"]
-    assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "defeature",
-                                                                         "remesh"]      # v0.16.1 += defeature(SR-D-16)
+    assert dump["mesh"]["mode"] == "auto" and dump["mesh"]["ladder"] == ["cad", "refine_local", "refine_global", "freeform",
+                                                                         "defeature", "tria"]   # v0.16.3 C2-D-26·28
+    assert dump["refine"]["stage_share"]["tria"] == 0.15 and dump["mesh"]["occ_import_labels"] == 0   # v0.16.3 C2-D-29·31
+    assert dump["mesh"]["face_fail"]["skip"] == ["refine_local", "refine_global"]
     assert dump["remesh"]["feature_angle_deg"] == 30.0 and dump["remesh"]["fidelity"] == {
         "warn_mm": 0.3, "fail_mm": 1.5, "samples_max": 200000, "warn_rel_cad": 2.0}     # v0.16.1 SR-D-27
     assert dump["mesh_input"] == {"enabled": True, "formats": [".rad", ".inc"], "max_mb": 500, "include": True,

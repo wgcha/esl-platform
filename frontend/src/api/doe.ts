@@ -125,7 +125,7 @@ function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCom
     total_max_mb: num(v.total_max_mb, d.total_max_mb),
     mesh_size_mm: num(v.mesh_size_mm, d.mesh_size_mm),
     // v0.16.0 메시 옵션 칸 — 서버가 줄 때만(옛 서버 = 없음 → 고급 설정 숨김, 메시 입력 안 받음)
-    ...(v.mesh_mode === "cad" || v.mesh_mode === "remesh" || v.mesh_mode === "auto" ? { mesh_mode: v.mesh_mode as DoeMeshMode } : {}),
+    ...(v.mesh_mode === "cad" || v.mesh_mode === "remesh" || v.mesh_mode === "freeform" || v.mesh_mode === "auto" ? { mesh_mode: v.mesh_mode as DoeMeshMode } : {}),
     ...(typeof v.remesh_available === "boolean" ? { remesh_available: v.remesh_available } : {}),
     ...(isObj(v.mesh_input)
       ? {
@@ -634,11 +634,12 @@ export function partsFromError(e: unknown): { index: number; parts: DoeMeshPart[
   if (!(e instanceof ApiError) || typeof e.detail.index !== "number" || !Array.isArray(e.detail.parts)) return null;
   return { index: e.detail.index, parts: (e.detail.parts as unknown[]).filter((p): p is DoeMeshPart => isObj(p) && typeof p.id === "number") as DoeMeshPart[] };
 }
-export const MESH_MODE_NAME: Record<DoeMeshMode, string> = { auto: "자동", cad: "CAD", remesh: "재메시" };
+export const MESH_MODE_NAME: Record<DoeMeshMode, string> = { auto: "자동", cad: "CAD", remesh: "재메시", freeform: "freeform" };
 export const MESH_MODE_HINT: Record<DoeMeshMode, string> = {
-  auto: "CAD 메시가 실패한 형상만 세분화 → 형상 단순화(작은 형상 억제) → 삼각형 재메시 순서로 다시 시도(성공한 형상은 그대로)",
+  auto: "CAD 메시가 실패한 형상만 다시 시도(성공한 형상은 그대로): 크기 문제면 세분화, 특정 면 실패면 바로 freeform 재메시 → OCC 삼각형 폴백",
   cad: "CAD 면 구조 그대로 gmsh 메시(v0.15 방식)",
   remesh: "모든 STEP 을 삼각형 재메시(CAD 면 구조를 버림 — 원 형상과 편차 표시)",
+  freeform: "CAD 면 경계를 따르지 않는 이산 재메시를 바로(CAD 메시 생략, 실패하면 OCC 삼각형 폴백) — 작은 특징선·구멍이 번질 수 있음",
 };
 /** remesh_available false 사유(REMESH_UNAVAILABLE 문구) */
 export const remeshUnavailableText = (ver: string | null | undefined) => `이 gmsh 버전(${ver ?? "?"})은 삼각형 재메시를 지원하지 않습니다`;
@@ -688,7 +689,7 @@ export function meshMethodLabel(s: MeshShape): string {
   return `세분화(${parts.join(" · ")})`;
 }
 const SKIP_REASON: Record<string, string> = { elems: "요소 상한", memory: "메모리", time: "시간 예산", no_feature: "억제 대상 없음", not_compound: "병합 면 실패 아님" };
-const STAGE_NAME: Record<string, string> = { cad: "CAD", refine_local: "국부 세분화", refine_global: "전역 세분화", defeature: "형상 단순화", remesh: "재메시" };
+const STAGE_NAME: Record<string, string> = { cad: "CAD", refine_local: "국부 세분화", refine_global: "전역 세분화", defeature: "형상 단순화", remesh: "재메시", freeform: "freeform 재메시", tria: "삼각형 폴백" };
 function attemptText(a: DoeMeshAttempt): string {
   const head = [STAGE_NAME[a.stage] ?? a.stage, a.factor != null && a.stage.startsWith("refine") ? x1(a.factor) : null, a.h_mm != null ? mm(a.h_mm) : null].filter(Boolean).join(" ");
   if (a.skipped) return `${head} — 건너뜀(${SKIP_REASON[a.reason ?? ""] ?? a.reason ?? a.code ?? "상한"})`;
@@ -720,7 +721,7 @@ export function meshMethodTip(s: MeshShape, partId?: number | null): string {
   }
   return out.join("\n");
 }
-const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", defeature: "형상 단순화", remesh: "재메시" };
+const LADDER_LABEL: Record<string, string> = { refine_local: "세분화", refine_global: "세분화", defeature: "형상 단순화", remesh: "재메시", freeform: "freeform 재메시", tria: "삼각형 폴백" };
 type FailShape = Pick<DoePrepShape, "status" | "code" | "message" | "cad_error" | "attempts">;
 /** auto 사다리가 모두 실패한 형상 문구(워커 _ladder_fail_text 와 같은 틀): "CAD 메시 실패: … → 세분화·재메시도 실패: …".
  *  cad_error 가 없으면 원 message(없으면 코드 문구) */

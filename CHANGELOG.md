@@ -17,6 +17,15 @@
 - W 기본 범위 줄임을 준비 직후부터 적용(첫 행렬부터 뒤집히는 W 안 없음), 시연 모드 저장소 설치에서 beadgraph 설치 실패, `beadgraph` API 오류 형식 `BeadgraphError(code, detail)`
 - 새 스터디 제목 칸 폭, 분류 실패 문구가 두 번 보이던 것
 
+## [0.16.3] - 2026-11-10
+### 수정
+- **④ 특정 CAD 면에서 메시가 실패하는 형상(이슈 #53: 면 2824 Sphere, "Impossible to mesh periodic surface")**: 요소를 잘게 해도 풀리지 않는 면 실패면 세분화를 건너뛰고(`MESH_FACE_FAIL`) 곧바로 **freeform 재메시**(OCC 삼각화 → 면 분류 → 4각 우세 재메시, CAD 면 경계를 따르지 않음 — `MESH_FREEFORM` 에 원 형상 대비 최대 편차·작은 구멍 수) → 그래도 실패하면 **OCC 삼각형 폴백**(BRepMesh 삼각화를 크기만 맞춰 삼각형 쉘로 — `MESH_TRIA_FALLBACK`). freeform 이 충실도로만 실패하면 그 사이에 실패 면만 평탄화하는 형상 단순화를 시도. 기본 사다리 `CAD → 국부 세분화 → 전역 세분화 → freeform → 형상 단순화 → 삼각형 폴백`
+- **사다리 시간 배분**: 단계마다 형상 예산(3600 s)의 몫(`compare.refine.stage_share`)을 두어 앞 단계가 뒤 단계 몫을 먹지 못함(v0.16.2 는 세분화가 예산을 다 써 마지막 재메시가 남은 596 s 에서 끊김). 실패 문구 맨 앞·형상 행에 단계별 결과와 초(`[단계별: cad 실패 412.3 s → refine_local 건너뜀(면 실패 …) → …]`)
+- 면이 수천 개인 STEP 의 가져오기 시간: ④ 는 STEP 이름표(라벨)를 읽지 않음(`compare.mesh.occ_import_labels: 0` — 합성 1915 면 234 s → 5 s). 메시 결과는 같음
+### 추가
+- 메시 방식 **freeform**(`compare.mesh.mode: freeform`, 화면 고급 설정): CAD 메시를 생략하고 모든 STEP 을 freeform 재메시(실패하면 삼각형 폴백)
+- 설정 `compare.mesh.face_fail`·`compare.freeform`·`compare.tria`·`compare.refine.stage_share`·`min_attempt_s`. CAD 메시가 성공하는 형상은 결과 그대로
+
 ## [0.16.2] - 2026-11-08
 ### 추가
 - **비드 자동 탐지 → 직접 선택 초기 선택**: ①② 스터디 아래 하위 라디오 "자동 탐지 / 직접 선택". 자동 탐지는 STEP 에서 비드를 찾아 선택 화면에 미리 채움(배지 "자동 탐지 결과 — 수정 후 저장", 되돌리기·초기화 = 자동 탐지 결과). 탐지가 실패해도 준비는 끝나고 빈 선택에서 직접 고름(`AUTO_DETECT_FAILED`)

@@ -2395,7 +2395,7 @@ export interface DoeCompareCfg {
   defeature?: { hole_max_d_mm: number; min_bead_height_mm: number; fillet_max_r_mm: number; kinds: DoeDefeatureKind[] } | null;
 }
 /** v0.16.1 ④ 사다리 단계(SR-D-16) */
-export type DoeLadderStage = "cad" | "refine_local" | "refine_global" | "defeature" | "remesh";
+export type DoeLadderStage = "cad" | "refine_local" | "refine_global" | "defeature" | "remesh" | "freeform" | "tria";
 /** v0.16.1 억제 특징 종류(SR-D-17) */
 export type DoeDefeatureKind = "hole" | "slot" | "flange" | "bead" | "fillet" | "narrow";
 /** v0.16.1 형상 행 억제 요약(§5A.5 — defeature 형상만) */
@@ -2435,7 +2435,7 @@ export interface DoeDefeatureList {
   counts?: Partial<Record<DoeDefeatureKind, number>> | null;
 }
 /** v0.16.0 ④ 메시 방식 모드(esl_compare_mesh_options.md C2-D-9) */
-export type DoeMeshMode = "cad" | "remesh" | "auto";
+export type DoeMeshMode = "cad" | "remesh" | "freeform" | "auto";
 /** v0.16.0 ④ 형상 출처(C2-D-1) — case = 기준 Case 메시 */
 export type DoeShapeSource = "step" | "mesh" | "case";
 /** v0.16.0 ④ 결과 메시 방식(C2-D-10·22) */
@@ -2594,6 +2594,9 @@ export interface DoePrepShape {
   refine?: DoeShapeRefine | null;
   /** auto 사다리 시도 목록(cad 실패 뒤 — 모두 실패한 형상의 문구·툴팁) */
   attempts?: DoeMeshAttempt[] | null;
+  /** v0.16.3 C2-D-28·30: 성공한 이산 단계, 단계별 결과·초 */
+  fallback_stage?: "freeform" | "tria" | "remesh" | null;
+  stage_times?: { stage: string; outcome: "READY" | "FAILED_MESH" | "SKIPPED"; seconds: number; tries: number; reason?: string; code?: string; timed_out?: boolean }[] | null;
   /** v0.16.1 작은 형상 억제 요약(defeature 형상만, §5A.5)·메시 입력 진단(SR-D-24) */
   defeature?: DoeShapeDefeature | null;
   diag?: DoeShapeDiag | null;

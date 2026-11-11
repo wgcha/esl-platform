@@ -591,10 +591,10 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
     warns0: list[dict[str, Any]] = []       # v0.16.0 경고(기존 경고 뒤에 붙임 — 기존 순서 불변)
     if step_idx and not ra:
         ver = st["gmsh"].get("version") or "?"
-        if mode == "remesh":
+        if mode in ("remesh", "freeform"):           # v0.16.3 freeform 도 gmsh importStl 필요(C2-D-26)
             raise unprocessable("REMESH_UNAVAILABLE", up_svc.doe_text(
                 "REMESH_UNAVAILABLE" if cc["remesh"]["enabled"] else "REMESH_DISABLED", ver=ver), mesh_mode=mode)
-        if mode == "auto" and "remesh" in ladder:      # 사다리에서 remesh 만 빼고 진행(경고 1회)
+        if mode == "auto" and ({"remesh", "freeform"} & set(ladder)):   # 사다리에서 remesh·freeform 만 빼고 진행(경고 1회)
             warns0.append({"code": "REMESH_UNAVAILABLE",
                            "message": up_svc.doe_text("REMESH_UNAVAILABLE_AUTO", ver=ver)})
     out_shapes, mat_shapes, total = [], [], 0.0

@@ -158,8 +158,9 @@ def test_compare_failures_and_case_reference(client, engine, worker, esl_root, i
     g = study(client, s["id"])
     st = {x["id"]: x for x in g["prep"]["shapes"]}
     assert g["prep"]["reference_source"] == "case" and st["d000"]["name"] == "Case 메시" and st["d000"]["status"] == "READY"
-    # v0.16.0 기본 auto(C2-D-9·18): cad 실패 → 사다리(세분화·재메시)까지 실패 → code = 재메시 코드 + cad_error(§4)
-    assert st["d002"]["status"] == "FAILED_MESH" and st["d002"]["code"].startswith("REMESH_"), st["d002"]
+    # v0.16.3 기본 auto(C2-D-28): cad 실패 → 사다리(세분화·freeform·삼각형 폴백)까지 실패 → 면 없는 STEP = CAD_INVALID + cad_error
+    assert st["d002"]["status"] == "FAILED_MESH" and st["d002"]["code"] == "CAD_INVALID", st["d002"]
+    assert "[단계별: cad 실패 " in st["d002"]["message"] or st["d002"].get("stage_times"), st["d002"]
     assert st["d002"]["cad_error"]["code"] == "MESH_FAILED" and st["d002"]["attempts"][0]["stage"] == "cad"
     assert g["prep"]["failed"] == [{"id": "d002", "status": "FAILED_MESH", "code": st["d002"]["code"]}]
     assert st["d001"]["mesh_method"] == "cad" and st["d000"]["mesh_method"] == "mesh_input"
@@ -175,7 +176,8 @@ def test_compare_failures_and_case_reference(client, engine, worker, esl_root, i
     s2 = create(client, s1["entry_ids"], [{"upload_id": uid, "rel": "rad/junk.step", "name": "기준(망가짐)", "reference": True},
                                           {"upload_id": uid, "rel": "rad/bead1.step", "name": "B1"}])
     j = run_job(client, worker, s2["job"]["id"], expect="FAILED")
-    assert j["failure_code"].startswith("REMESH_") and study(client, s2["id"])["phase"] == "FAILED"
+    assert j["failure_code"] == "CAD_INVALID" and study(client, s2["id"])["phase"] == "FAILED"     # v0.16.3 마지막 = tria
+    assert "[단계별: cad 실패 " in (j.get("failure_message") or j.get("error") or str(j))
     assert [x["state"] for x in j["steps"]][:2] == ["SUCCEEDED", "FAILED"]
     assert len([c for c in calls(exe) if c["cmd"] != "version"]) == 0
 

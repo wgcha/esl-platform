@@ -449,7 +449,7 @@ def _on_planes(gmsh, topo: dict, loop: list[int]) -> bool:
     return bool(fs) and all(str(gmsh.model.getType(2, int(g))) == "Plane" for g in fs)
 
 
-def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None) -> list[dict]:
+def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None, targets=None) -> list[dict]:
     """§5A.3 인식만(형상 불변). 특징 = {id, kind, faces, curves, base_face, key(bbox6), bbox, center[3],
     size{d_mm | w_mm,l_mm | h_mm | r_mm}, area_mm2}. 순서 결정적(kind 순서 → 중심 좌표 1e-3 반올림 사전순).
     인식 수 > max_features → 앞에서 자르고 마지막 특징에 표지(호출자가 DEFEATURE_TOO_MANY)."""
@@ -481,6 +481,7 @@ def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None) -> 
             hC = _height(gmsh, C, _loop_points(gmsh, L))
             cands.append((B, L, C, fl, hC))
     cands.sort(key=lambda x: -len(x[2]))
+    tkeys = [tuple(float(v) for v in k) for k in (targets or [])]   # v0.16.3 C2-D-27 메시 실패 면(bbox 키)
     taken: list[set] = []
     for B, L, C, fl, hC in cands:
         sC = set(C)
@@ -488,6 +489,10 @@ def find_features(gmsh, crit: dict, *, kinds: tuple[str, ...] | None = None) -> 
             continue
         taken.append(sC)
         area = float(sum(occ.getMass(2, f) for f in C))
+        if tkeys and not fl and any(key_near(bbox_key(gmsh, 2, f), t, 1e-3) for f in C for t in tkeys):
+            # 표적: 실패 면을 품은 닫힌 묶음(딤플·구 캡 등, bbox 대각 ≤ feature_max — _attached) = 기준과 무관하게 평탄화
+            feats.append(_feat(gmsh, "bead", C, L, B, {"h_mm": hC}, area) | {"target": True})
+            continue
         if hC <= crit["plane_tol"] and len(fl) <= 1:      # SR-D-41: 높이 0 묶음(바탕 면과 한 평면 — 경계에 걸친 보스의 평평한
             continue                                      # 조각)은 억제해도 형상이 안 바뀜 → 목록 제외(그 안 구멍은 아래 hole 규칙)
         if len(fl) == 1 and "flange" in kinds and hC <= crit["flange_max_h"] + LE_TOL:
@@ -664,6 +669,7 @@ def reference_tris(gmsh, src: str, mc: dict, rc: dict) -> tuple[np.ndarray, np.n
     gmsh.option.setNumber("Geometry.OCCSewFaces", int(mc.get("occ_sew_faces", 0)))
     for k, v in mg.geometry_options(mc).items():
         gmsh.option.setNumber(k, v)
+    mg.set_import_labels(gmsh, mc)
     gmsh.model.occ.importShapes(os.fspath(src))
     gmsh.model.occ.synchronize()
     X0, T0 = mrm.occ_triangulate(gmsh, rc)
@@ -733,6 +739,8 @@ def list_doc(feats: list[dict], list_max: int) -> dict:
              "action": f.get("action", "suppressed"), "method": f.get("method"), "dev_mm": f.get("dev_mm")}
         if f.get("reason"):
             r["reason"] = f["reason"]
+        if f.get("target"):                                   # v0.16.3 C2-D-27 메시 실패 면 표적(키 없으면 v0.16.1 그대로)
+            r["target"] = True
         rows.append(r)
     rows.sort(key=lambda r: (r["kind"], tuple(round(float(v), 3) for v in (r["center"] or [0, 0, 0]))))
     counts: dict = {}
