@@ -50,6 +50,8 @@ def h6_step(path: str, log=None) -> str:
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
+        model = "h6_sheet"
+        gmsh.model.add(model)
         occ = gmsh.model.occ
         pid, lid = {}, {}
 
@@ -85,18 +87,33 @@ def h6_step(path: str, log=None) -> str:
                     if _key(c) not in fixed_z:
                         zmap[_key(c)] = float(zz)
                         fixed_z.add(_key(c))
-        n_plane = n_tri = 0
+        planar = []
         for f, rings in zip(F, R):
             p3 = np.array([[c[0], c[1], zmap[_key(c)]] for r in rings for c in r])
             A = np.c_[p3[:, :2], np.ones(len(p3))]
             coef = np.linalg.lstsq(A, p3[:, 2], rcond=None)[0]
-            if float(np.abs(A @ coef - p3[:, 2]).max()) < PLANE_TOL:
+            ok = float(np.abs(A @ coef - p3[:, 2]).max()) < PLANE_TOL
+            if ok:                                         # 안쪽 표본(경계 밖으로 뻗는 보스 사면 — 꼭짓점만으로는 못 봄)
+                q = _inner_samples(f)
+                if q.size:
+                    zq = s6.evaluate(root, q)[0]
+                    ok = float(np.abs(np.c_[q, np.ones(len(q))] @ coef - zq).max()) < INNER_TOL
+            planar.append(ok)
+        tris = _triangulate([f for f, ok in zip(F, planar) if not ok])
+        gmsh.model.setCurrent(model)
+        n_plane = n_tri = 0
+        it = iter(tris)
+        for f, rings, ok in zip(F, R, planar):
+            if ok:
                 occ.addPlaneSurface([loop(r) for r in rings])
                 n_plane += 1
                 continue
-            for t in shapely.constrained_delaunay_triangles(f).geoms:
-                cs = np.asarray(t.exterior.coords)[:-1, :2]
-                occ.addPlaneSurface([loop(cs)])
+            X2, T = next(it)
+            z2 = s6.evaluate(root, X2)[0]
+            for k, c in enumerate(X2):                      # 경계 꼭짓점은 이미 맞춘 높이, 안쪽 노드 = 형상 높이
+                zmap.setdefault(_key(c), float(z2[k]))
+            for t in T:
+                occ.addPlaneSurface([loop(X2[t])])
                 n_tri += 1
         if log:
             log(f"faces plane {n_plane} · triangles {n_tri}")
@@ -106,6 +123,61 @@ def h6_step(path: str, log=None) -> str:
     finally:
         gmsh.finalize()
     return str(path)
+
+
+INNER_TOL = 0.05
+
+
+def _inner_samples(f, step: float = 2.0) -> np.ndarray:
+    import shapely
+    x0, y0, x1, y1 = f.bounds
+    gx, gy = np.meshgrid(np.arange(x0 + step / 2, x1, step), np.arange(y0 + step / 2, y1, step))
+    q = np.c_[gx.ravel(), gy.ravel()]
+    if not q.size:
+        return q.reshape(0, 2)
+    inner = f.buffer(-0.1)
+    return q[shapely.contains_xy(inner, q[:, 0], q[:, 1])]
+
+
+def _triangulate(faces, h: float = 3.0) -> list:
+    """평면이 아닌 다각형 → gmsh geo 2D 삼각형(경계 선분은 나누지 않음 — 이웃 면과 꼭짓점 공유) [(X2 (n,2), tris (m,3))]."""
+    import gmsh
+    import shapely
+    out = []
+    gmsh.model.add("tri")
+    geo = gmsh.model.geo
+    for f in faces:
+        gmsh.model.remove()
+        gmsh.model.add("tri")
+        pid, lines = {}, []
+
+        def P(c):
+            k = _key(c)
+            if k not in pid:
+                pid[k] = geo.addPoint(k[0], k[1], 0.0, h)
+            return pid[k]
+
+        def loop(coords):
+            ids = [P(c) for c in np.asarray(coords)[:-1, :2]]
+            ls = [geo.addLine(a, b) for a, b in zip(ids, ids[1:] + ids[:1]) if a != b]
+            lines.extend(ls)
+            return geo.addCurveLoop(ls)
+        f = shapely.geometry.polygon.orient(f, 1.0)
+        geo.addPlaneSurface([loop(f.exterior.coords)] + [loop(r.coords) for r in f.interiors])
+        geo.synchronize()
+        for ln in lines:
+            gmsh.model.mesh.setTransfiniteCurve(ln, 2)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", h)
+        gmsh.option.setNumber("Mesh.Algorithm", 6)
+        gmsh.model.mesh.generate(2)
+        tags, xyz, _ = gmsh.model.mesh.getNodes()
+        X = xyz.reshape(-1, 3)[:, :2]
+        pos = {int(t): i for i, t in enumerate(tags)}
+        _, _, en = gmsh.model.mesh.getElements(2)
+        T = np.array([pos[int(t)] for t in en[0]]).reshape(-1, 3)
+        out.append((X, T))
+    gmsh.model.remove()
+    return out
 
 
 def h6_truth(mesh: dict) -> dict:
