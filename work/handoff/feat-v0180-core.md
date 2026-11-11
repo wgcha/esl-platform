@@ -29,7 +29,8 @@
 esl/doe/{__init__,bead_graph,bead_select,evaluate,scenario,stages,step_graph}.py, resources/doe_messages.json
 
 ## Test status
-- smoke E2E OK; pytest not yet run (needs PYTHONPATH=packages/beadgraph/src outside tests)
+- smoke E2E OK; tests/doe/test_step_graph_fixed.py 8 passed, test_step_graph_region.py 4 passed
+- tests/doe/synth_step_graph.py: h6_step (STEP gen, slow), add_extra, LightEntry, tri_split
 
 ## Next commands
 1. edit stages._sel_loads (see Remaining)
