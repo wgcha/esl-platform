@@ -1825,6 +1825,9 @@ class DoePlanOut(_Out):
     load_points: list[dict[str, Any]] = Field(default_factory=list)
     links: list[dict[str, Any]] = Field(default_factory=list)
     nodes_ab: list[list[float]] | None = None      # v0.15.0 select 노드 점(표시 토글 — 기본 숨김)
+    # v0.18.0 ③ select_base step(통합 §12): 평가 영역(주 시트) 바깥 고리 (a,b) mm — 영역 = 전체이거나 다른 기준이면 null.
+    # fixed[] 에는 step 기준일 때 src "a_transfer"|"user" 가 더해짐(추가만)
+    region_ab: list[list[list[float]]] | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

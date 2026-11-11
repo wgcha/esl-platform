@@ -439,6 +439,9 @@ def test_select_defaults_mirror_contract():
         from doe_support import core_view_v0161
 
         assert DEFAULTS["select"] == core_view_v0161({"select": want}, DEFAULTS)["select"]
+    # 통합 v0.18.0: 코어 병합 뒤 step_graph 는 생략 없이 직접 대조(키·값 = 계약 §4.3, size_mm 없음 — h 는 ④ 프로필)
+    assert DEFAULTS["select"]["step_graph"] == STEP_GRAPH_DEFAULTS == BeadDoeSelectCfg().step_graph.model_dump()
+    assert "size_mm" not in DEFAULTS["select"]["step_graph"]
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
         assert BeadDoeCfg.model_validate(y["bead_doe"]).select.model_dump() == want, p

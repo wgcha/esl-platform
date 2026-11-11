@@ -234,3 +234,44 @@ def test_prep_summary_step_passthrough(client, world, engine, esl_root):
     update_study(engine, m["id"], prep={**pm, "mesh": mesh, "region": region})
     p = api(client, "GET", f"/doe/studies/{m['id']}").json()["prep"]
     assert "mesh" not in p and "region" not in p and "select_base" not in p
+
+
+# ================================================================ 통합 v0.18.0 §12: plan-view 보강(fixed[].src·region_ab)
+def test_step_plan_extras_fixed_src_and_region(tmp_path, monkeypatch):
+    """select_base step plan-view: fixed[].src = fixed_transfer.json node_id 의 노드면 "a_transfer", 아니면 "user"; region_ab =
+    base_mesh.npz region(요소 bool)의 바깥 고리(구멍 고리 제외, (a,b) mm). region 없음 = None. DoePlanOut 이 두 필드를 지킴."""
+    import numpy as np
+    from esl.opt.keepout import project_ab
+    from esl_platform.api.schemas import DoePlanOut
+    from esl_platform.api.services import doe_select
+    from opt_support import plate
+
+    m = plate()                                       # 12 × 8 사각형, x 0..300 · z 0..200
+    frame = {"origin": [0.0, 0.0, 0.0], "e_xi": [1.0, 0.0, 0.0], "e_eta": [0.0, 0.0, 1.0]}
+    pd = tmp_path / "prep"
+    (pd / "select").mkdir(parents=True)
+    monkeypatch.setattr(doe_select, "_prep_dir", lambda ctx, s: str(pd))
+    c = {"limits": {"max_json_mb": 64}}
+    moved = [int(m["node_id"][0]), int(m["node_id"][10])]
+    (pd / "select" / "fixed_transfer.json").write_text(json.dumps({"schema": "esl/doe_fixed_transfer/2",
+                                                                   "method": "xyz_nearest", "node_id": moved}))
+    fx = project_ab(frame, m["x0"][[0, 10, 20]]).round(3).tolist()
+    region = np.zeros(m["conn"].shape[0], bool)
+    region[: 6 * 8] = True                            # x 0..150 열(왼쪽 절반)
+    region[2 * 8 + 3] = False                         # 영역 안 구멍 1개(고리는 바깥만 남아야 함)
+    np.savez(pd / "base_mesh.npz", region=region)
+    p = {"fixed": [{"a": a, "b": b} for a, b in fx]}
+    doe_select._step_plan_extras(None, {}, c, {"mesh": m, "frame": frame}, p)
+    assert [f["src"] for f in p["fixed"]] == ["a_transfer", "a_transfer", "user"]
+    assert len(p["region_ab"]) == 1
+    ring = np.asarray(p["region_ab"][0])
+    assert ring[:, 0].min() == 0.0 and ring[:, 0].max() == 150.0 and ring[:, 1].min() == 0.0 and ring[:, 1].max() == 200.0
+    out = DoePlanOut.model_validate({"frame": {"a_range": [0, 300], "b_range": [0, 200]}, "outline": [], "holes": [],
+                                     "elems": {"n_total": 0, "decimated": False, "points": []}, **p}).model_dump()
+    assert out["region_ab"] == p["region_ab"] and out["fixed"][0]["src"] == "a_transfer"
+    # region 키 없음(영역 = 전체)·이전 파일 없음 → region_ab None, 모든 고정 = user
+    np.savez(pd / "base_mesh.npz", other=np.zeros(1))
+    (pd / "select" / "fixed_transfer.json").unlink()
+    p = {"fixed": [{"a": a, "b": b} for a, b in fx]}
+    doe_select._step_plan_extras(None, {}, c, {"mesh": m, "frame": frame}, p)
+    assert p["region_ab"] is None and {f["src"] for f in p["fixed"]} == {"user"}

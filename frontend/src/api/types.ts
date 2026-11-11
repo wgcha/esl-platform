@@ -2380,8 +2380,16 @@ export interface DoeSelectCfg {
   hole?: { bridge_max_mm: number } | null;
   /** v0.17.0 비드 네트워크 분류기(esl_beadgraph.md §5.5 — GET /doe/settings select.graph) — 옛 서버면 없음 */
   graph?: { enabled: boolean; island: { max_mm: number }; sym_tol_mm: number } | null;
-  /** v0.18.0 ③ STEP 기준 select(esl_step_graph.md §4.2 — settings select.step_graph{tria_policy}) — 옛 서버면 없음 */
-  step_graph?: { tria_policy: "warn" | "block" } | null;
+  /** v0.18.0 ③ STEP 기준 select(esl_step_graph.md §4.2 — settings select.step_graph) — 옛 서버면 없음 */
+  step_graph?: {
+    tria_policy: "warn" | "block";
+    tria_warn_frac?: number;
+    max_elems?: number;
+    /** ④ 프로필 h(요소 크기 칸 없음) */
+    size_mm?: number;
+    fixed_transfer?: { enabled: boolean; mode: "auto" | "xyz" | "hole" };
+    region?: { mode: DoeRegionMode };
+  } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2632,7 +2640,17 @@ export interface DoeCheckOut {
   /** v0.16.0 ④ 적용 메시 방식·재메시 가능 */
   mesh_mode?: DoeMeshMode | null;
   remesh_available?: boolean | null;
+  /** v0.18.0 select_base step(esl_step_graph.md §4.2·§6): 준비 전 안내 — h(④ 프로필)·사다리·tria 정책·고정 이전·평가 영역 */
+  step_graph?: DoeCheckStepGraph | null;
   warnings: DoeWarning[];
+}
+/** v0.18.0 DoeCheckOut.step_graph(openapi 는 dict — 백엔드 _select_step_check 의 키) */
+export interface DoeCheckStepGraph {
+  size_mm: number;
+  ladder: string[];
+  tria_policy: "warn" | "block";
+  fixed_transfer: { enabled: boolean; mode: "auto" | "xyz" | "hole" };
+  region: { mode: DoeRegionMode };
 }
 export interface DoeStudyIn extends DoeCheckIn {
   title?: string | null;
@@ -2820,11 +2838,13 @@ export interface DoePlanOut {
   /** v0.15.0 select: 노드 점(표시 토글, 기본 숨김) */
   nodes_ab?: XY[] | null;
 
-  /** select 는 {a, b} 만(§7.1). (보강 v0.18.0, 계약 §4.2 미기재) src = "a_transfer" 면 ③ A 고정 이전 노드(평면도 표시) — 없으면 구분 없음 */
+  /** select 는 {a, b} 만(§7.1). (v0.18.0 통합 §12 — 백엔드 plan_view 추가 필드) src = "a_transfer" 면 ③ A 고정 이전 노드, "user" = 화면에서 칠한 고정(step 기준만 — 평면도 표시), 없으면 구분 없음 */
   fixed: { label?: string; kind?: string; a: number; b: number; src?: "a_transfer" | "user" | "scan" | null }[];
   a_points: { label: string; a: number; b: number }[];
   load_points: { entry_id: string; share: number; a: number; b: number }[];
   links: DoePlanLink[];
+  /** v0.18.0 ③ select_base step: 평가 영역(주 시트) 바깥 고리 (a,b) mm — 영역 = 전체이거나 다른 기준이면 null/없음 */
+  region_ab?: XY[][] | null;
   warnings?: string[];
 }
 export interface DoeMatrixIn {

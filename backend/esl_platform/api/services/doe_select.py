@@ -903,7 +903,74 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
             p[k] = base[k]
     p["links"] = svc._link_coords({**p, "fixed": base.get("fixed") or p.get("fixed")})
     p["warnings"] = [w if isinstance(w, str) else str(_code(w) or w) for w in p.get("warnings") or []]
+    if (s.get("inputs") or {}).get("select_base") == "step":
+        _step_plan_extras(ctx, s, c, inputs, p)
     return p
+
+
+XFER_REL = ("select", "fixed_transfer.json")                 # v0.18.0 prep/select/fixed_transfer.json(코어 BD_LOADS — SG-D-15)
+
+
+def _outer_rings(rings: list) -> list:
+    """region_rings(자유 모서리 고리 전부 — 구멍 포함) → 다른 고리 안에 있지 않은 바깥 고리만(넓이 큰 순, 결정적)."""
+    import numpy as np
+
+    def area(r):
+        a = np.asarray(r, dtype=np.float64)
+        return 0.5 * abs(float(np.dot(a[:, 0], np.roll(a[:, 1], -1)) - np.dot(a[:, 1], np.roll(a[:, 0], -1))))
+
+    def inside(pt, r):
+        x, y = pt
+        a = np.asarray(r, dtype=np.float64)
+        xi, yi, xj, yj = a[:, 0], a[:, 1], np.roll(a[:, 0], 1), np.roll(a[:, 1], 1)
+        cross = (yi > y) != (yj > y)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xs = (xj - xi) * (y - yi) / (yj - yi) + xi
+        return bool(np.count_nonzero(cross & (x < xs)) % 2)
+
+    out: list = []
+    for r in sorted(rings, key=area, reverse=True):
+        if not any(inside(r[0], o) for o in out):
+            out.append(r)
+    return out
+
+
+def _step_plan_extras(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], inputs: dict[str, Any],
+                      p: dict[str, Any]) -> None:
+    """v0.18.0 ③ select_base step plan-view 보강(추가만 — 통합 v0.18.0 §12): fixed[].src = "a_transfer"(fixed_transfer.json
+    node_id 의 B 노드) | "user"(그 밖 — 화면에서 칠한 고정), region_ab = 평가 영역(base_mesh.npz region) 바깥 고리(평면 (a,b)
+    mm, 코어 keepout.region_rings — 구멍 고리 제외). region 없음(영역 = 전체)·파일 없음 = 키 없음/None."""
+    import numpy as np
+
+    from ...core.opt_core import EslError, keepout
+
+    pd = _prep_dir(ctx, s)
+    mesh, frame = inputs["mesh"], inputs["frame"]
+    xdoc = _svc()._read_json(os.path.join(pd, *XFER_REL), _svc()._max_mb(c))
+    ids = xdoc.get("node_id") if isinstance(xdoc, dict) else None
+    if isinstance(p.get("fixed"), list) and p["fixed"]:
+        moved: set = set()
+        if isinstance(ids, list) and ids:
+            nid = np.asarray(mesh["node_id"], dtype=np.int64)
+            sel = np.isin(nid, np.asarray(ids, dtype=np.int64))
+            if sel.any():
+                ab = keepout.project_ab(frame, np.asarray(mesh["x0"], dtype=np.float64)[sel]).round(3)
+                moved = {(float(a), float(b)) for a, b in ab.tolist()}
+        p["fixed"] = [{**f, "src": "a_transfer" if (float(f.get("a")), float(f.get("b"))) in moved else "user"}
+                      if isinstance(f, dict) and "a" in f and "b" in f else f for f in p["fixed"]]
+    npz = os.path.join(pd, "base_mesh.npz")
+    try:
+        with np.load(npz, allow_pickle=False) as z:
+            reg = np.asarray(z["region"], bool) if "region" in z.files else None
+    except (OSError, ValueError, KeyError):
+        reg = None
+    if reg is None or reg.shape[0] != np.asarray(mesh["conn"]).shape[0] or reg.all() or not reg.any():
+        p["region_ab"] = None
+        return
+    try:
+        p["region_ab"] = _outer_rings(keepout.region_rings(mesh, reg, frame))
+    except (EslError, ValueError, IndexError):
+        p["region_ab"] = None
 
 
 def basis_file(ctx: AppContext, principal: Principal, sid: str, rev: int | None, meta: bool) -> tuple[str, str, dict]:

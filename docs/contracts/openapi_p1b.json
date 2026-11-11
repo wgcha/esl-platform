@@ -2827,6 +2827,26 @@
             "title": "Outline",
             "type": "array"
           },
+          "region_ab": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Ab"
+          },
           "warnings": {
             "items": {
               "type": "string"
@@ -14129,7 +14149,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.17.4"
+    "version": "0.18.0"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -104,8 +104,8 @@ export interface PartWarnings {
   st: DoeSettingsOut | null;
 }
 
-/** v0.18.0 ③ select plan-view 보강(계약 §4.2·openapi 미기재 — 백엔드가 주면 씀): region_ab = 평가 영역(주 시트) 외곽 고리 */
-export type DoePlanOutStep = import("../../api/types").DoePlanOut & { region_ab?: XY[][] | null };
+/** v0.18.0 ③ select plan-view(통합 §12 — DoePlanOut.region_ab·fixed[].src 가 openapi 에 들어감): 이름만 유지 */
+export type DoePlanOutStep = import("../../api/types").DoePlanOut;
 
 export interface PartViewData {
   plan: PartPlanData | null;
