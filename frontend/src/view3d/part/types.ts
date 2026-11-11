@@ -4,12 +4,14 @@ import type { DoePlanLink, DoeSettingsOut, PlanViewFrame, XY } from "../../api/t
 import type { Bbox } from "../viewFit";
 
 /** 켜고 끌 수 있는 층 */
-export type LayerKey = "mesh" | "boundary" | "beads" | "fixed" | "loads" | "apoints" | "graph" | "islands" | "nodes";
+/** v0.18.0 region = ③ STEP 기준 select 평가 영역(주 시트) 외곽 */
+export type LayerKey = "mesh" | "boundary" | "region" | "beads" | "fixed" | "loads" | "apoints" | "graph" | "islands" | "nodes";
 
-export const LAYER_ORDER: LayerKey[] = ["mesh", "boundary", "beads", "graph", "islands", "fixed", "apoints", "loads", "nodes"];
+export const LAYER_ORDER: LayerKey[] = ["mesh", "boundary", "region", "beads", "graph", "islands", "fixed", "apoints", "loads", "nodes"];
 export const LAYER_NAME: Record<LayerKey, string> = {
   mesh: "메시",
   boundary: "외곽·구멍",
+  region: "주 시트 영역",
   beads: "비드",
   graph: "세그먼트 색",
   islands: "섬",
@@ -58,8 +60,10 @@ export interface PartPlanData {
   /** 노드 층 */
   nodes?: XY[] | null;
   beads?: PlanBead[] | null;
-  /** label 이 있으면 B 고정 클러스터(큰 점 + 툴팁), 없으면 고정 노드(작은 점) */
-  fixed?: { label?: string; kind?: string; a: number; b: number }[] | null;
+  /** label 이 있으면 B 고정 클러스터(큰 점 + 툴팁), 없으면 고정 노드(작은 점). xfer = v0.18.0 ③ A 고정 이전 노드(테 두른 점) */
+  fixed?: { label?: string; kind?: string; a: number; b: number; xfer?: boolean }[] | null;
+  /** v0.18.0 ③ 평가 영역(주 시트) 외곽 고리 — 자료가 있을 때만 */
+  region?: XY[][] | null;
   loads?: { entry_id: string; share: number; a: number; b: number }[] | null;
   apoints?: { label: string; a: number; b: number }[] | null;
   /** 경고 연결선(apoints 층과 함께 켜고 끔) */

@@ -196,7 +196,7 @@ export function propsProblem(f: InputsForm, st: DoeSettingsOut, meshSize = true)
 const relText = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)} %`;
 
 /** 입력 검사 결과 한 줄 */
-function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScenario }) {
+function CheckLine({ check, scenario, stepBase }: { check: DoeCheckOut; scenario: DoeScenario; stepBase?: boolean }) {
   return (
     <div className="small" data-testid="doe-check">
       {scenario === "compare" && check.shapes && (
@@ -210,7 +210,8 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
       )}
       {scenario === "select" && check.step && (
         <span>
-          STEP {check.step.file_name} <span className="ok-text">✓</span> (자동 탐지 참고 힌트) ·{" "}
+          STEP {check.step.file_name}
+          {stepBase ? ` · ${check.step.size_mb.toFixed(2)} MB` : ""} <span className="ok-text">✓</span> {stepBase ? "(메시·크기 검사는 입력 준비에서)" : "(자동 탐지 참고 힌트) ·"}{" "}
         </span>
       )}
       {scenario === "step" && check.step && (
@@ -218,7 +219,7 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
           STEP {check.step.file_name} · {check.step.size_mb.toFixed(2)} MB <span className="ok-text">✓</span> (크기 검사는 입력 준비에서)
         </span>
       )}
-      {check.base && (scenario === "same" || (scenario === "select" && !check.mesh)) && (
+      {check.base && (scenario === "same" || (scenario === "select" && !check.mesh && !stepBase)) && (
         <span>
           기준 Case {check.base.case_title ?? check.base.case_id} · 파트 {check.base.part_title} · 노드 {check.base.n_nodes.toLocaleString()} · 요소 {check.base.n_elems.toLocaleString()}
         </span>
@@ -242,7 +243,7 @@ function CheckLine({ check, scenario }: { check: DoeCheckOut; scenario: DoeScena
 export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, entries, ids, onIds, mismatched, form, setForm, check, checkError, checking, allowed, advanced }: {
   projectId: string;
   scenario: DoeScenario;
-  /** v0.16.2 select 기준(① case · ② mesh — AD-D-13) */
+  /** v0.16.2 select 기준(① case · ② mesh — AD-D-13). v0.18.0 ③ step = STEP 필수 · 인치 · 쉘 물성 · 메시 방식(고급) — 요소 크기 칸 없음(④ 프로필) */
   selectBase?: DoeSelectBase | null;
   /** v0.16.2 select 하위 라디오(auto = STEP 칸 · manual = STEP 없음, AD-D-1·14). v0.17.0 auto 의 STEP 은 선택(BG §5.3) */
   beadSource?: DoeBeadSource | null;
@@ -266,12 +267,16 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
   const stepOnly = (fs: File[]) => (fs.length !== 1 ? "STEP 파일 1개를 고르세요" : fs[0].size > st.step_max_mb * 1024 ** 2 ? `STEP 은 최대 ${st.step_max_mb} MB 입니다` : null);
   const meshOk = (fs: File[]) => (fs.some((f) => /\.(rad|inc)$/i.test(f.name)) ? null : ".rad(+ include) 또는 .inc 파일이 있어야 합니다");
   const isSel = scenario === "select";
+  /** v0.18.0 ③ STEP 기준 select */
+  const stepBase = isSel && selectBase === "step";
   /** 같은 모델 검사(✓/✗·다른 모델 빼기): ① same·select(case) */
-  const sameModel = scenario === "same" || (isSel && selectBase !== "mesh");
+  const sameModel = scenario === "same" || (isSel && selectBase !== "mesh" && !stepBase);
   /** B 메시 칸(② mesh·select(mesh)) */
   const needMesh = scenario === "mesh" || (isSel && selectBase === "mesh");
   /** STEP 칸(same·mesh·step, select 는 자동 탐지만) */
-  const needStep = isSel ? beadSource === "auto" : scenario !== "compare";
+  const needStep = isSel ? beadSource === "auto" || stepBase : scenario !== "compare";
+  /** STEP 이 참고 힌트일 뿐(① 자동 탐지) */
+  const stepHint = isSel && !stepBase;
   return (
     <div className="doe-inputs">
       <div className="doe-esl" aria-label="선택한 ESL">
@@ -308,8 +313,8 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
         {needStep && (
         <UploadDrop
           projectId={projectId}
-          label={isSel ? "(선택) Ch/R 중립면 STEP 끌어다 놓기" : "Ch/R 중립면 STEP 끌어다 놓기"}
-          hint={isSel ? `없어도 됩니다 — 메시 분류기가 비드를 찾고, STEP 은 참고 힌트만 · 최대 ${st.step_max_mb} MB` : `시트(중립면) STEP · 최대 ${st.step_max_mb} MB`}
+          label={stepHint ? "(선택) Ch/R 중립면 STEP 끌어다 놓기" : "Ch/R 중립면 STEP 끌어다 놓기"}
+          hint={stepHint ? `없어도 됩니다 — 메시 분류기가 비드를 찾고, STEP 은 참고 힌트만 · 최대 ${st.step_max_mb} MB` : stepBase ? `시트(중립면) STEP · ④ 와 같은 설정으로 메시 · 최대 ${st.step_max_mb} MB` : `시트(중립면) STEP · 최대 ${st.step_max_mb} MB`}
           ext={[".step", ".stp"]}
           validate={stepOnly}
           name={(fs) => `doe_step_${fs[0].name.replace(/\.[^.]+$/, "")}`}
@@ -348,7 +353,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
             <input type="number" aria-label="인치" min={1} value={form.inch} onChange={(e) => set("inch", e.target.value)} />
           </Field>
         )}
-        {(scenario === "step" || scenario === "compare") && (
+        {(scenario === "step" || scenario === "compare" || stepBase) && (
           <>
             <Field label="두께 t (mm)">
               <input type="number" aria-label="두께 t (mm)" step="0.1" min={0} value={form.t} onChange={(e) => set("t", e.target.value)} />
@@ -366,19 +371,24 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
             )}
           </>
         )}
+        {stepBase && (
+          <span className="small muted doe-mesh-note" data-testid="step-mesh-note">
+            메시: ④ 형상 비교와 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm(④ 설정)
+          </span>
+        )}
         {scenario === "compare" && (
           <span className="small muted doe-mesh-note" data-testid="compare-mesh-note">
             메시: 모든 STEP 같은 설정 · 요소 {st.compare?.mesh_size_mm ?? 3} mm(서버 설정)
           </span>
         )}
         <Field label="제목(선택)" className="doe-title">
-          <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
+          <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : stepBase ? "STEP 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
         </Field>
       </div>
-      {scenario === "compare" && advanced}
+      {(scenario === "compare" || stepBase) && advanced}
       {checking && <div className="small muted">입력 검사 중…</div>}
       <ErrorLine text={checkError} />
-      {check && <CheckLine check={check} scenario={scenario} />}
+      {check && <CheckLine check={check} scenario={scenario} stepBase={stepBase} />}
     </div>
   );
 }
@@ -412,10 +422,20 @@ export function DoeInputsSummary({ study, entries }: { study: DoeStudyOut; entri
               </span>
             </>
           )}
+          {i.select_base === "step" && (
+            <>
+              {" "}
+              <span className="badge info" data-testid="doe-base-chip" title="STEP → ④ 메시 사다리 → 비드 분류 — 하중은 셀 매핑, 지지는 자동 3-2-1, 결과는 메시만">
+                기준 STEP 메시 · 셀 매핑
+              </span>
+            </>
+          )}
           {i.select_base === "mesh" && i.mesh ? ` · B 메시 ${i.mesh.file_name}` : ""}
-          {i.bead_source === "auto" && i.step ? ` · STEP ${i.step.file_name}` : ""}
+          {(i.bead_source === "auto" || i.select_base === "step") && i.step ? ` · STEP ${i.step.file_name}` : ""}
           {i.part_title ? ` · 파트 ${i.part_title}` : ""}
-          {i.select_base === "mesh" && i.inch ? ` · ${i.inch}형` : ""}
+          {(i.select_base === "mesh" || i.select_base === "step") && i.inch ? ` · ${i.inch}형` : ""}
+          {i.select_base === "step" && i.props ? ` · t ${i.props.t} mm · E ${i.props.E.toLocaleString()} MPa · ν ${i.props.nu}` : ""}
+          {i.select_base === "step" && i.mesh_mode ? ` · 메시 방식 ${MESH_MODE_NAME[i.mesh_mode]}` : ""}
           {study.prep?.n_elems ? ` · 요소 ${study.prep.n_elems.toLocaleString()} · 노드 ${(study.prep.n_nodes ?? 0).toLocaleString()}` : ""}
           {study.selection ? ` · 선택 rev ${study.selection.rev}` : " · 선택 미저장"}
         </div>

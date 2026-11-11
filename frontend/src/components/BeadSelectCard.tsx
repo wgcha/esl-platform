@@ -2,8 +2,8 @@
 // 상태(층·실행 취소·derive)는 useBeadSelect 가 갖고, 페이지(DoeStudy)가 [선택 저장](주 버튼)·변수 표 블렌딩 편집에 같은 컨트롤러를 쓴다.
 // 3D 는 기존 장면(scene.ts — TrackballControls 회전 그대로)에 요소 모드만 더한다. 그리기 도구 중 왼쪽 끌기 = 도구, Ctrl+끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
-import { MsgFold } from "./MsgFold";
-import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, warnText } from "../api/doe";
+import { MsgFold, type FoldItem } from "./MsgFold";
+import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, seedHasFixed, warnText } from "../api/doe";
 import { ApiError, errorText } from "../api/client";
 import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
@@ -349,7 +349,8 @@ export function useBeadSelect(
   useEffect(() => {
     if (!data || seed === undefined || !graphSettled) return;
     const n = data.manifest.n_elems;
-    seedRef.current = seed && seed.beads.length ? fromSelectionIn(seed, data.idx, n).state : null;
+    // v0.18.0(SG-D-14·16): ③ seed 는 비드 없이 고정(fixed_user — A 고정 이전)만 있을 수 있음 → 고정 층이 미리 칠해지고 되돌리기·초기화 = seed
+    seedRef.current = seed && (seed.beads.length || seedHasFixed(seed)) ? fromSelectionIn(seed, data.idx, n).state : null;
     const sha = saved?.sha256 ?? null;
     if (loadedSha.current === sha) return;
     loadedSha.current = sha;
@@ -1067,7 +1068,26 @@ export const autoNoticeText = (code: string | null) =>
 
 const GTOOL_NAME: Record<GraphTool, string> = { pick: "세그먼트 선택", split: "분할" };
 
-export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null }) {
+/** v0.18.0 ③ STEP 기준 select 요약(esl_step_graph.md §6): 주제마다 MsgFold 1줄 — 고정 이전 · 평가 영역 · 삼각형 메시 */
+export interface StepInfoView {
+  fixed: FoldItem[];
+  region: FoldItem[];
+  mesh: FoldItem[];
+  foldKey?: string | null;
+}
+function StepInfoBar({ info }: { info: StepInfoView }) {
+  if (!info.fixed.length && !info.region.length && !info.mesh.length) return null;
+  const k = (s: string) => (info.foldKey ? `${info.foldKey}:${s}` : null);
+  return (
+    <div className="bs-step-info" data-testid="bs-step-info" style={{ marginBottom: 8, display: "grid", gap: 4 }}>
+      <MsgFold items={info.mesh} storeKey={k("step-mesh")} testId="bs-step-tria" />
+      <MsgFold items={info.fixed} storeKey={k("step-fixed")} testId="bs-step-xfer" />
+      <MsgFold items={info.region} storeKey={k("step-region")} testId="bs-step-region" />
+    </div>
+  );
+}
+
+export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepInfo }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null; stepInfo?: StepInfoView | null }) {
   const [tool, setTool] = useState<Tool>("click");
   const [gtool, setGtool] = useState<GraphTool>("pick");
   const [brushPx, setBrushPx] = useState(20);
@@ -1086,6 +1106,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto }: { ct
     <div className="bs-grid">
       <Card title="② 비드 선택" right={<span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
         {auto && <AutoSeedBar auto={auto} graph={ctrl.schema === 2} />}
+        {stepInfo && <StepInfoBar info={stepInfo} />}
         {ctrl.graphFailText && (
           <div className="warn-box small" role="alert" data-testid="bs-graph-failed">
             {ctrl.graphFailText}

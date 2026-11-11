@@ -14,6 +14,7 @@ export function planLayers(p: PartPlanData | null): LayerKey[] {
   if (!p) return [];
   const out: LayerKey[] = [];
   if (p.outline.length || p.holes.length) out.push("boundary");
+  if (p.region?.length) out.push("region");
   if (p.points?.length) out.push("mesh");
   if (p.beads?.length) out.push("beads");
   if (p.fixed?.length) out.push("fixed");
@@ -40,8 +41,10 @@ export function legacyPlan(plan: DoePlanOut, showLinks: boolean): PartPlanData {
   };
 }
 
-/** select plan-view → 평면도(단 색·라벨 칩·W 법선). ② B 메시 기준은 A 체결·하중·경고선(백엔드 v0.17.3 부터 넘김 — VU-D-7) */
-export function selectPlan(plan: DoePlanOut, chips: Record<string, string>, meshBase: boolean): PartPlanData {
+/** select plan-view → 평면도(단 색·라벨 칩·W 법선). ② B 메시 기준은 A 체결·하중·경고선(백엔드 v0.17.3 부터 넘김 — VU-D-7).
+ * v0.18.0 ③ STEP 기준(stepBase): ② 와 같은 경계 층 + A 고정 이전 표시(fixed[].src "a_transfer") + 주 시트 영역 외곽(region_ab) — 자료가 있을 때만 */
+export function selectPlan(plan: DoePlanOut, chips: Record<string, string>, meshBase: boolean, stepBase = false): PartPlanData {
+  const links = meshBase || stepBase;
   return {
     ariaLabel: "비드 평면도",
     style: "select",
@@ -51,10 +54,11 @@ export function selectPlan(plan: DoePlanOut, chips: Record<string, string>, mesh
     points: plan.elems.points,
     nodes: plan.nodes_ab ?? null,
     beads: plan.beads.map((b) => ({ id: b.id, rings: b.ring_ab ?? [b.ring], e: b.e_ab, tiers: b.tiers ?? [], label: b.label_ab, chip: chips[b.id] ?? null })),
-    fixed: plan.fixed.map((f) => ({ a: f.a, b: f.b })),
-    apoints: meshBase ? plan.a_points : null,
-    loads: meshBase ? plan.load_points : null,
-    links: meshBase ? plan.links : null,
+    fixed: plan.fixed.map((f) => (stepBase && f.src === "a_transfer" ? { a: f.a, b: f.b, xfer: true } : { a: f.a, b: f.b })),
+    region: stepBase ? plan.region_ab ?? null : null,
+    apoints: links ? plan.a_points : null,
+    loads: links ? plan.load_points : null,
+    links: links ? plan.links : null,
   };
 }
 
@@ -102,17 +106,19 @@ export function selectViewData(o: {
   chips: Record<string, string>;
   active: PlanVar | null;
   meshBase: boolean;
+  /** v0.18.0 ③ STEP 기준 select */
+  stepBase?: boolean;
   st: DoeSettingsOut | null;
   nWarn: number | null | undefined;
   scene: Part3DData | null;
   sceneLayers: LayerKey[];
 }): PartViewData {
-  const plan = selectPlan(o.plan, o.chips, o.meshBase);
+  const plan = selectPlan(o.plan, o.chips, o.meshBase, !!o.stepBase);
   return {
     plan,
     scene: o.scene,
     layers: [...planLayers(plan), ...(o.scene ? o.sceneLayers : [])],
-    warnings: o.meshBase ? boundaryWarnings(o.plan, o.st, o.nWarn) : null,
+    warnings: o.meshBase || o.stepBase ? boundaryWarnings(o.plan, o.st, o.nWarn) : null,
     active: o.active,
     initialMode: "plan",
   };

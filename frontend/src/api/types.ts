@@ -2270,8 +2270,13 @@ export interface OptFileOut {
 export type DoeScenario = "same" | "mesh" | "step" | "compare" | "select";
 /** v0.16.2 select 초기 선택 출처(esl_bead_auto.md AD-D-1) — auto = 자동 탐지 seed, manual = 빈 선택(기본) */
 export type DoeBeadSource = "auto" | "manual";
-/** v0.16.2 select 기준 메시(AD-D-13) — case = ① Case 메시(기본, 키 없음), mesh = ② B 메시 */
-export type DoeSelectBase = "case" | "mesh";
+/** v0.16.2 select 기준 메시(AD-D-13) — case = ① Case 메시(기본, 키 없음), mesh = ② B 메시.
+ * v0.18.0(esl_step_graph.md SG-D-1) step = ③ B STEP → ④ 메시 사다리 기준 메시(schema 2 고정) */
+export type DoeSelectBase = "case" | "mesh" | "step";
+/** v0.18.0 ③ select 고정 이전 방법(SG-D-13·15): xyz_nearest = 좌표 일치 최근접 노드, ab_hole_snap = 정규화 frame + B 구멍 스냅, none = 자동 설정 없음 */
+export type DoeFixedXferMethod = "xyz_nearest" | "ab_hole_snap" | "none";
+/** v0.18.0 ③ select 평가 영역 규칙(SG-D-19) */
+export type DoeRegionMode = "auto" | "a_bbox" | "largest" | "all";
 export type DoeMethod = "lhs" | "halton" | "fullfact";
 export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
 export type DoeParamType = "D" | "W" | "U" | "V";
@@ -2324,6 +2329,8 @@ export interface DoeSettingsOut {
     select_auto?: boolean;
     /** v0.16.2 ② B 메시 기준 select 가능(= select 가능) — 옛 서버면 없음 */
     select_mesh?: boolean;
+    /** v0.18.0 ③ STEP 기준 select 가능(= select 가능 ∧ gmsh ready, paicad 무관 — esl_step_graph.md §4.2). 옛 서버면 없음 */
+    select_step?: boolean;
   };
   max_entries: number;
   max_designs: number;
@@ -2373,6 +2380,8 @@ export interface DoeSelectCfg {
   hole?: { bridge_max_mm: number } | null;
   /** v0.17.0 비드 네트워크 분류기(esl_beadgraph.md §5.5 — GET /doe/settings select.graph) — 옛 서버면 없음 */
   graph?: { enabled: boolean; island: { max_mm: number }; sym_tol_mm: number } | null;
+  /** v0.18.0 ③ STEP 기준 select(esl_step_graph.md §4.2 — settings select.step_graph{tria_policy}) — 옛 서버면 없음 */
+  step_graph?: { tria_policy: "warn" | "block" } | null;
 }
 /** v0.14.0 ④ GET /doe/settings compare 칸 */
 export interface DoeCompareCfg {
@@ -2520,7 +2529,8 @@ export interface DoeCheckIn {
   mesh_refine?: boolean | null;
   /** v0.16.2 select 만: manual(기본) = STEP 금지. v0.17.0(esl_beadgraph.md §5.3) auto = STEP 선택(있으면 paicad 힌트만) */
   bead_source?: DoeBeadSource | null;
-  /** v0.16.2 select 만: mesh = ② B 메시(mesh_upload_id 필수), case(기본) = ① Case 메시 */
+  /** v0.16.2 select 만: mesh = ② B 메시(mesh_upload_id 필수), case(기본) = ① Case 메시.
+   *  v0.18.0 step = ③ STEP 기준(SG-D-3): step_upload_id·props 필수, inch·mesh_mode·mesh_refine 선택, mesh_upload_id·part_title·mesh_size_mm 금지(422) */
   select_base?: DoeSelectBase | null;
 }
 /** ④ check-inputs 형상 1행 */
@@ -2706,7 +2716,7 @@ export interface DoeStudyOut {
     mesh_refine?: boolean | null;
     /** v0.16.2 select 초기 선택 출처(없으면 manual) */
     bead_source?: DoeBeadSource | null;
-    /** v0.16.2 select 기준 메시("mesh" 일 때만 — 없으면 case) */
+    /** v0.16.2 select 기준 메시("mesh"·v0.18.0 "step" 일 때만 — 없으면 case) */
     select_base?: DoeSelectBase | null;
     /** v0.17.0 선택 schema(BG-D-35): 2 = 그래프 스터디(v0.17.0 이후 만든 select), 키 없음 = 1 */
     select_schema?: 1 | 2 | null;
@@ -2724,8 +2734,8 @@ export interface DoeStudyOut {
     n_ready?: number;
     failed?: { id: string; status: DoeDesignStatus; code: string | null }[];
     reference_source?: "step" | "case" | null;
-    /** ④ 메시 프로필(모든 형상 같음) */
-    mesh?: { size_mm: number | null; gmsh_version: string | null } | null;
+    /** ④ 메시 프로필(모든 형상 같음). v0.18.0 ③ select(step) = 기준 메시 방식·삼각형 비율·단계 시간(§4.2 DoeStudyOut.prep.mesh) */
+    mesh?: DoePrepMesh | null;
     /** ④ 형상별 메시·상태·품질 */
     shapes?: DoePrepShape[];
     /** v0.16.1 작은 형상 억제(defeature) 단계로 메시한 형상 수 */
@@ -2733,11 +2743,14 @@ export interface DoeStudyOut {
     /** v0.15.0 select 준비 요약(§8.1 BD_PREP_REGISTER) */
     n_nodes?: number;
     n_elems?: number;
-    fixed?: { source: DoeFixedSource; n: number } | null;
+    /** v0.18.0 ③ select(step): source a_transfer|none + xfer{method, matched, unmatched, frame_ok}(SG-D-14) */
+    fixed?: { source: DoeFixedSource; n: number; xfer?: DoePrepFixedXfer | null } | null;
+    /** v0.18.0 ③ select(step) 평가 영역(SG-D-19) — n_out 0 = 영역 = 전체 */
+    region?: DoePrepRegion | null;
     /** v0.16.2 자동 탐지 결과(bead_source auto 만, esl_bead_auto.md §3.4) */
     auto?: DoePrepAuto | null;
-    /** v0.16.2 ② B 메시 기준 select 만 "mesh"(① 은 키 없음) */
-    select_base?: "mesh" | null;
+    /** v0.16.2 ② B 메시 기준 select 만 "mesh"(① 은 키 없음), v0.18.0 ③ = "step" */
+    select_base?: "mesh" | "step" | null;
   } | null;
   doe: { rev: number; spec: DoeSpec; matrix_sha256: string; n_designs: number; preview: DoePreviewOut | null } | null;
   /** v0.15.0 select: 저장된 선택 요약(PUT …/selection 응답) — 없으면 미저장 */
@@ -2807,8 +2820,10 @@ export interface DoePlanOut {
   /** v0.15.0 select: 노드 점(표시 토글, 기본 숨김) */
   nodes_ab?: XY[] | null;
 
-  /** select 는 {a, b} 만(§7.1) */
-  fixed: { label?: string; kind?: string; a: number; b: number }[];
+  /** select 는 {a, b} 만(§7.1). (보강 v0.18.0, 계약 §4.2 미기재) src = "a_transfer" 면 ③ A 고정 이전 노드(평면도 표시) — 없으면 구분 없음 */
+  fixed: { label?: string; kind?: string; a: number; b: number; src?: "a_transfer" | "user" | "scan" | null }[];
+  /** (보강 v0.18.0, 계약 §4.2 미기재) ③ select 평가 영역(주 시트) 외곽 고리 — 있으면 평면도 '주 시트 영역' 층, 없으면 층 숨김 */
+  region_ab?: XY[][] | null;
   a_points: { label: string; a: number; b: number }[];
   load_points: { entry_id: string; share: number; a: number; b: number }[];
   links: DoePlanLink[];
@@ -3317,7 +3332,35 @@ export interface DoeIslandDerived {
   size_mm: number;
   free_loops: number;
 }
-export type DoeFixedSource = "scan" | "user" | "scan+user" | "none";
+export type DoeFixedSource = "scan" | "user" | "scan+user" | "none" | "a_transfer";
+/** v0.18.0 DoeStudyOut.prep.mesh(④ 프로필 + ③ select step 기준 메시 — esl_step_graph.md §4.2) */
+export interface DoePrepMesh {
+  /** ④ 프로필 */
+  size_mm?: number | null;
+  gmsh_version?: string | null;
+  /** ③ select step: 사다리가 성공한 메시 방식(cad·freeform·tria …) */
+  method?: string | null;
+  /** 삼각형 요소 비율(0..1) */
+  tri_frac?: number | null;
+  /** ④ 단계별 결과·초(C2-D-30 형식) */
+  stage_times?: { stage: string; outcome: "READY" | "FAILED_MESH" | "SKIPPED"; seconds: number; tries?: number; reason?: string; code?: string; timed_out?: boolean }[] | null;
+}
+/** v0.18.0 prep.fixed.xfer(SG-D-13~15 요약) */
+export interface DoePrepFixedXfer {
+  method: DoeFixedXferMethod;
+  /** 옮긴 A 고정 클러스터 수 */
+  matched: number;
+  /** 못 옮긴 A 클러스터 수(목록은 prep.warnings FIXED_XFER_UNMATCHED) */
+  unmatched: number;
+  /** A·B frame 일치(원점·축) */
+  frame_ok: boolean | null;
+}
+/** v0.18.0 prep.region(SG-D-19) */
+export interface DoePrepRegion {
+  mode: DoeRegionMode;
+  n_in: number;
+  n_out: number;
+}
 /** openapi SelectionDerived(derive 응답·GET selection.derived — 저장 요약은 section·plan·slope_suggested 없음) */
 export interface SelectionDerived {
   rev?: number | null;
