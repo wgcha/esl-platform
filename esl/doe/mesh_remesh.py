@@ -199,14 +199,33 @@ def _dist_to_tris(P: np.ndarray, X: np.ndarray, T: np.ndarray, chunk: int = 5000
         tri = T[idx]                                        # (n,k,3)
         d = point_tri_dist(p[:, None, :], X[tri[..., 0]], X[tri[..., 1]], X[tri[..., 2]])
         out[s:s + chunk] = d.min(axis=1)
-    # 정확화: k 후보 최솟값 D 는 상한 — 진짜 최근접 삼각형의 중심은 D + rc(중심-꼭짓점 최대 거리) 안에 있다. D > 0 인 점만
-    # 그 반경 안 삼각형 전부로 다시 계산(가는 띠 면 근처처럼 가까운 중심 k 개가 모두 다른 삼각형인 경우).
-    rc = float(np.max(np.linalg.norm(X[T] - cen[:, None, :], axis=2)))
-    for i in np.flatnonzero(out > DIST_EPS_MM).tolist():
-        cand = tree.query_ball_point(P[i], out[i] + rc)
-        if len(cand) > k:
-            tri = T[np.asarray(cand, dtype=np.int64)]
-            out[i] = min(out[i], float(point_tri_dist(P[i][None, :], X[tri[:, 0]], X[tri[:, 1]], X[tri[:, 2]]).min()))
+    # 정확화: k 후보 최솟값 D 는 상한 — 진짜 최근접 삼각형 t 의 중심은 D + r_t(그 삼각형 중심-꼭짓점 최대 거리) 안에 있다. D > 0 인
+    # 점만 그 반경 안 삼각형 전부로 다시 계산(가는 띠 면 근처처럼 가까운 중심 k 개가 모두 다른 삼각형인 경우).
+    # v0.18.2 C2-D-46: 반경을 전체 최대 r 하나로 잡으면 덜 나뉜 큰 삼각형(넓은 평면) 하나 때문에 모든 점이 거의 모든 삼각형을 후보로
+    # 받아 점마다 Python 반복이 O(M)(합성 390 면 고체 cad_relaxed 충실도 1,045 s). r_t 크기 묶음(중앙값 × 2^j)마다 따로 찾아 같은 후보
+    # 상위 집합(진짜 최근접 포함)을 만들고 묶어서 계산 — 결과는 같은 최솟값(같은 식, 같은 삼각형).
+    ref = np.flatnonzero(out > DIST_EPS_MM)
+    if ref.size:
+        rt = np.max(np.linalg.norm(X[T] - cen[:, None, :], axis=2), axis=1)
+        med = max(float(np.median(rt)), 1e-12)
+        grp = np.maximum(0, np.ceil(np.log2(np.maximum(rt, 1e-300) / med))).astype(np.int64)
+        pi_l, ti_l = [], []
+        for gval in np.unique(grp).tolist():
+            ids = np.flatnonzero(grp == gval)
+            rmax = float(rt[ids].max())
+            sub = tree if ids.size == T.shape[0] else cKDTree(cen[ids])
+            res = sub.query_ball_point(P[ref], out[ref] + rmax)
+            ln = np.fromiter((len(r) for r in res), dtype=np.int64, count=ref.size)
+            if not ln.sum():
+                continue
+            pi_l.append(np.repeat(ref, ln))
+            ti_l.append(ids[np.concatenate([np.asarray(r, dtype=np.int64) for r in res if len(r)])])
+        if pi_l:
+            pi, ti = np.concatenate(pi_l), np.concatenate(ti_l)
+            for s0 in range(0, pi.size, chunk):
+                a, b = pi[s0:s0 + chunk], T[ti[s0:s0 + chunk]]
+                d = point_tri_dist(P[a], X[b[:, 0]], X[b[:, 1]], X[b[:, 2]])
+                np.minimum.at(out, a, d)
     return out
 
 
@@ -294,9 +313,26 @@ def fidelity(S_X: np.ndarray, S_T: np.ndarray, mesh: dict, h: float, rc: dict) -
 def merge_nodes(X: np.ndarray, T: np.ndarray, tol: float) -> tuple[np.ndarray, np.ndarray, int]:
     """거리 ≤ tol 노드를 가장 작은 번호로 합치고(합집합-찾기, 결정적) 퇴화·중복 삼각형·미사용 노드 제거.
     반환 (X', T', 합친 노드 수)."""
-    from scipy.spatial import cKDTree
     X = np.asarray(X, dtype=np.float64)
     T = np.asarray(T, dtype=np.int64).reshape(-1, 3)
+    n = X.shape[0]
+    rep = merge_rep(X, tol)
+    n_merged = int(np.sum(rep != np.arange(n)))
+    T = rep[T]
+    ok = (T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])
+    T = T[ok]
+    _u, first = np.unique(np.sort(T, axis=1), axis=0, return_index=True)
+    T = T[np.sort(first)]
+    used = np.unique(T)
+    remap = -np.ones(n, dtype=np.int64)
+    remap[used] = np.arange(used.size)
+    return X[used], remap[T], n_merged
+
+
+def merge_rep(X: np.ndarray, tol: float) -> np.ndarray:
+    """merge_nodes 의 노드 대표 번호(거리 ≤ tol 묶음의 가장 작은 번호 — 합집합-찾기, 결정적). v0.18.2 freeform 면별 모델도 같은 함수."""
+    from scipy.spatial import cKDTree
+    X = np.asarray(X, dtype=np.float64)
     n = X.shape[0]
     rep = np.arange(n)
     if n and tol > 0:
@@ -316,16 +352,7 @@ def merge_nodes(X: np.ndarray, T: np.ndarray, tol: float) -> tuple[np.ndarray, n
                     rep[max(ra, rb)] = min(ra, rb)
             for i in range(n):
                 rep[i] = find(i)
-    n_merged = int(np.sum(rep != np.arange(n)))
-    T = rep[T]
-    ok = (T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])
-    T = T[ok]
-    _u, first = np.unique(np.sort(T, axis=1), axis=0, return_index=True)
-    T = T[np.sort(first)]
-    used = np.unique(T)
-    remap = -np.ones(n, dtype=np.int64)
-    remap[used] = np.arange(used.size)
-    return X[used], remap[T], n_merged
+    return rep
 
 
 # ---------------------------------------------------------------- 본체
@@ -356,6 +383,204 @@ def occ_triangulate(gmsh, rc: dict) -> tuple[np.ndarray, np.ndarray]:
     o = np.argsort(tags, kind="stable")
     tags, X0 = tags[o], X0[o]
     return X0, np.searchsorted(tags, T0)
+
+
+# ---------------------------------------------------------------- v0.18.2 freeform 면별 이산 모델(C2-D-44)
+FACES_MODES = ("occ_faces", "classify")                     # compare.freeform.surfaces 허용 값
+
+
+def occ_parts(gmsh) -> dict:
+    """importStl 뒤(gmsh.clear 전) OCC 면·모서리 이산 자료(노드 인덱스 = 태그 정렬 순 — occ_triangulate X0 와 같음):
+    {faces: [(f, T(n,3))], fbnd: {f: [e…]}, edges: [(e, L(m,2), (v0, v1))], verts: {v: xyz}}. 면 순서 = 엔터티 순(T 이어붙임 = T0)."""
+    tags, _xyz, _ = gmsh.model.mesh.getNodes()
+    tags = np.sort(np.asarray(tags, dtype=np.int64), kind="stable")
+    faces, fbnd, edges, verts = [], {}, [], {}
+    for _d, f in gmsh.model.getEntities(2):
+        types, _et, nd = gmsh.model.mesh.getElements(2, f)
+        tri = [np.asarray(x, dtype=np.int64).reshape(-1, 3) for t, x in zip(types, nd) if int(t) == 2]
+        if tri:
+            faces.append((int(f), np.searchsorted(tags, np.concatenate(tri))))
+        _up, dn = gmsh.model.getAdjacencies(2, f)
+        fbnd[int(f)] = [int(e) for e in dn]
+    for _d, e in gmsh.model.getEntities(1):
+        types, _et, nd = gmsh.model.mesh.getElements(1, e)
+        seg = [np.asarray(x, dtype=np.int64).reshape(-1, 2) for t, x in zip(types, nd) if int(t) == 1]
+        _up, dn = gmsh.model.getAdjacencies(1, e)
+        L = np.searchsorted(tags, np.concatenate(seg)) if seg else np.zeros((0, 2), np.int64)
+        edges.append((int(e), L, tuple(int(v) for v in dn)))
+    for _d, v in gmsh.model.getEntities(0):
+        verts[int(v)] = np.asarray(gmsh.model.getValue(0, v, []), dtype=np.float64)
+    return {"faces": faces, "fbnd": fbnd, "edges": edges, "verts": verts}
+
+
+def _chain(segs: np.ndarray) -> list[int] | None:
+    """모서리 선분 → 순서 노드 사슬(열린 사슬 = 작은 번호 끝에서, 닫힌 고리 = 가장 작은 노드에서 시작·끝 반복). 갈래·여러 조각 → None."""
+    adj: dict[int, list[int]] = {}
+    for a, b in segs.tolist():
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    if any(len(v) > 2 for v in adj.values()):
+        return None
+    ends = sorted(k for k, v in adj.items() if len(v) == 1)
+    if len(ends) not in (0, 2):
+        return None
+    start = ends[0] if ends else min(adj)
+    out, prev, cur = [start], None, start
+    while True:
+        nxt = [x for x in sorted(adj[cur]) if x != prev]
+        if not nxt or (not ends and nxt[0] == start and len(out) > 2):
+            if not ends:
+                out.append(start)
+            break
+        prev, cur = cur, nxt[0]
+        if cur in out[1:]:
+            return None
+        out.append(cur)
+    return out if len(out) - 1 == segs.shape[0] else None
+
+
+def face_model(parts: dict, X0: np.ndarray, tol: float) -> dict:
+    """C2-D-44 OCC 면별 이산 모델: 노드 병합(merge_rep — merge_nodes 와 같은 대표·같은 S_X) → 면마다 삼각형(퇴화·앞 면과 중복 제거),
+    OCC 모서리마다 선분 사슬(공유 경계). 반환 {X, faces:[(f, T)], curves:[(e, chain)], fcurves:{f:[e]}, points:{node: tag},
+    topology: occ_edges | mesh}. 모서리 자료가 삼각화 경계와 맞지 않으면(선분 노드가 삼각형에 없음·한 선분이 다른 두 모서리·사슬
+    갈래·모서리 안 노드가 다른 모서리 끝·면 경계 선분이 어느 모서리에도 없음) topology mesh(곡선은 gmsh createTopology 가 면 인접에서)."""
+    rep = merge_rep(X0, tol)
+    Tc = np.concatenate([t for _f, t in parts["faces"]]) if parts["faces"] else np.zeros((0, 3), np.int64)
+    Fc = np.concatenate([np.full(t.shape[0], f, np.int64) for f, t in parts["faces"]]) if parts["faces"] else \
+        np.zeros(0, np.int64)
+    T = rep[Tc]
+    ok = (T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])
+    T, F = T[ok], Fc[ok]
+    _u, first = np.unique(np.sort(T, axis=1), axis=0, return_index=True)
+    keep = np.sort(first)
+    T, F = T[keep], F[keep]
+    used = np.unique(T)
+    remap = -np.ones(X0.shape[0], dtype=np.int64)
+    remap[used] = np.arange(used.size)
+    T = remap[T]
+    out = {"X": np.asarray(X0, dtype=np.float64)[used], "faces": [], "curves": [], "fcurves": {}, "points": {},
+           "topology": "mesh"}
+    fids = [f for f, _t in parts["faces"] if np.any(F == f)]
+    out["faces"] = [(f, T[F == f]) for f in fids]
+    why = _occ_curves(parts, rep, remap, out)
+    out["topology"] = "occ_edges" if why is None else "mesh"
+    if why is not None:
+        out.update(curves=[], fcurves={}, points={}, why=why)
+    return out
+
+
+def _occ_curves(parts: dict, rep: np.ndarray, remap: np.ndarray, out: dict) -> str | None:
+    """face_model 의 OCC 모서리 곡선·꼭짓점(성공 → None, 실패 → 사유 문자열)."""
+    seg_owner: dict[tuple, int] = {}
+    alias: dict[int, int] = {}
+    curves: list[tuple[int, list[int]]] = []
+    seen: dict[frozenset, int] = {}
+    for e, L, _vs in parts["edges"]:
+        if not L.shape[0]:
+            continue
+        S = remap[rep[L]]
+        S = S[S[:, 0] != S[:, 1]]
+        if not S.shape[0]:
+            continue
+        if np.any(S < 0):
+            return "edge_off_mesh"
+        S = np.unique(np.sort(S, axis=1), axis=0)
+        key = frozenset(map(tuple, S.tolist()))
+        if key in seen:                                     # 봉합 전 같은 모서리 둘(병합 뒤 같은 사슬) → 하나로
+            alias[e] = seen[key]
+            continue
+        for sg in key:
+            if sg in seg_owner:
+                return "edge_overlap"
+            seg_owner[sg] = e
+        ch = _chain(S)
+        if ch is None:
+            return "edge_branch"
+        seen[key] = e
+        curves.append((e, ch))
+    ends0 = set()
+    for _e, ch in curves:
+        ends0.update((ch[0], ch[-1]))
+    for _e, ch in curves:
+        if any(n in ends0 for n in ch[1:-1]):
+            return "edge_t_junction"
+    # 곡선 사용처: 면 삼각화의 경계 선분(그 면에서 삼각형 1개) 또는 면 사이 선분(여러 면). 한 면 안쪽에만 있는 곡선(원통 이음선 —
+    # 병합 뒤 양쪽 삼각형이 같은 면) = 경계 아님 → 뺌(그 끝 꼭짓점도 다른 곡선이 안 쓰면 뺌)
+    seg_faces: dict[tuple, set] = {}
+    bnd_by_face: dict[int, set] = {}
+    for f, T in out["faces"]:
+        E = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+        Eu, cnt = np.unique(E, axis=0, return_counts=True)
+        b = set(map(tuple, Eu[cnt == 1].tolist()))
+        bnd_by_face[f] = b
+        for sg in map(tuple, Eu.tolist()):
+            if sg in seg_owner:
+                seg_faces.setdefault(sg, set()).add(f)
+        for sg in b:
+            if sg not in seg_owner:
+                return "face_boundary_unmatched"
+    cmap = dict(curves)
+    live = []
+    for e, ch in curves:
+        sgs = [tuple(sorted(x)) for x in zip(ch[:-1], ch[1:])]
+        fs = set().union(*[seg_faces.get(sg, set()) for sg in sgs])
+        if len(fs) == 1 and not any(sg in bnd_by_face[next(iter(fs))] for sg in sgs):
+            continue                                        # 한 면 안쪽(이음선)
+        live.append(e)
+    curves = [(e, cmap[e]) for e in live]
+    ends = set()
+    for _e, ch in curves:
+        ends.update((ch[0], ch[-1]))
+    fcur: dict[int, list[int]] = {}
+    for f, _T in out["faces"]:
+        lst = []
+        for e in parts["fbnd"].get(f, []):
+            e2 = alias.get(e, e)
+            if e2 in live and e2 not in lst:
+                lst.append(e2)
+        for sg in sorted(bnd_by_face[f]):
+            e = seg_owner[sg]
+            if e not in live:
+                return "face_boundary_unmatched"
+            if e not in lst:
+                lst.append(e)
+        for e in live:                                      # 면을 가로지르는 공유 곡선(면 안 선분이 다른 면과 공유)
+            if e not in lst and any(f in seg_faces.get(tuple(sorted(x)), ()) for x in zip(cmap[e][:-1], cmap[e][1:])):
+                lst.append(e)
+        fcur[f] = lst
+    out["curves"] = curves
+    out["fcurves"] = fcur
+    out["points"] = {n: i + 1 for i, n in enumerate(sorted(ends))}
+    return None
+
+
+def add_face_model(gmsh, fm: dict) -> None:
+    """face_model → 현재(빈) gmsh 모델에 이산 꼭짓점·곡선·면(노드는 낮은 차원 엔터티가 먼저 가짐) → createTopology(mesh 일 때) →
+    createGeometry. 면 분류(classifySurfaces) 없음 — 면 하나 = OCC 면 하나."""
+    X = fm["X"]
+    owner = np.zeros(X.shape[0], dtype=bool)
+
+    def put(dim: int, tag: int, nodes) -> None:
+        nn = np.asarray(sorted(set(int(n) for n in nodes)), dtype=np.int64)
+        nn = nn[~owner[nn]] if nn.size else nn
+        if nn.size:
+            owner[nn] = True
+            gmsh.model.mesh.addNodes(dim, tag, (nn + 1).tolist(), X[nn].ravel().tolist())
+    for n, p in sorted(fm["points"].items(), key=lambda x: x[1]):
+        gmsh.model.addDiscreteEntity(0, p)
+        put(0, p, [n])
+    for e, ch in fm["curves"]:
+        gmsh.model.addDiscreteEntity(1, e, [fm["points"][ch[0]], fm["points"][ch[-1]]])
+        put(1, e, ch)
+        seg = np.asarray([ch[:-1], ch[1:]], dtype=np.int64).T
+        gmsh.model.mesh.addElementsByType(e, 1, [], (seg + 1).ravel().tolist())
+    for f, T in fm["faces"]:
+        gmsh.model.addDiscreteEntity(2, f, fm["fcurves"].get(f, []))
+        put(2, f, T.ravel())
+        gmsh.model.mesh.addElementsByType(f, 2, [], (T + 1).ravel().tolist())
+    if fm["topology"] != "occ_edges":
+        gmsh.model.mesh.createTopology()
+    gmsh.model.mesh.createGeometry()
 
 
 def boundary_loops(X: np.ndarray, T: np.ndarray) -> list[float]:
@@ -467,30 +692,48 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
                     raise _fail("REMESH_FAILED", f"작은 구멍 메움 뒤 형상 봉합 실패: {exc}") from None
         # R3 OCC 삼각화(v0.16.1 함수로 분리 — esl.geom.defeature.reference_tris 와 같은 코드)
         X0, T0 = occ_triangulate(gmsh, rc)
+        surf = str(fcfg.get("surfaces") or "classify") if fcfg is not None else "classify"
+        if surf not in FACES_MODES:
+            raise _fail("REMESH_FAILED", f"compare.freeform.surfaces {surf!r} ({'|'.join(FACES_MODES)})")
+        parts = occ_parts(gmsh) if surf == "occ_faces" else None   # v0.18.2 C2-D-44(gmsh.clear 전)
         # R4 이산 면 1개로 병합
         S_X, S_T, n_merged = merge_nodes(X0, T0, float(rc["merge_tol_mm"]))
         rec.update(n_stl_tris=int(T0.shape[0]), n_stl_nodes=int(X0.shape[0]), n_merged=n_merged,
                    n_tris=int(S_T.shape[0]), n_nodes_stl=int(S_X.shape[0]))
         if not S_T.shape[0]:
             raise _fail("REMESH_STL_EMPTY", "병합 뒤 삼각형이 없음")
-        try:
-            # 노드 병합은 merge_nodes(절대 거리 merge_tol_mm) 로 끝냄 — gmsh removeDuplicateNodes 는 Geometry.Tolerance 를
-            # 모델 크기에 비례해 써서(4.13.1 실측: 0.001 → 21067 노드가 1435 로 뭉개짐) 쓰지 않음
-            gmsh.clear()
-            s = gmsh.model.addDiscreteEntity(2)
-            gmsh.model.mesh.addNodes(2, s, list(range(1, S_X.shape[0] + 1)), S_X.ravel().tolist())
-            gmsh.model.mesh.addElementsByType(s, 2, [], (S_T + 1).ravel().tolist())
-        except Exception as exc:                            # noqa: BLE001
-            raise _fail("REMESH_FAILED", f"삼각화 병합 실패: {exc}") from None
-        # R5 면 분류 → 기하
-        try:
-            gmsh.model.mesh.classifySurfaces(math.radians(float(rc["feature_angle_deg"])), True, True,
-                                             math.radians(float(rc["curve_angle_deg"])))
-            gmsh.model.mesh.createGeometry()
-            rec["n_patches"] = len(gmsh.model.getEntities(2))
-        except Exception as exc:                            # noqa: BLE001
-            raise _fail("REMESH_CLASSIFY_FAILED",
-                        f"면 분류(특징각 {rc['feature_angle_deg']}°)에 실패: {exc}") from None
+        fm_err = None
+        if parts is not None:                               # v0.18.2 C2-D-44 OCC 면마다 이산 면(면 분류 없음 — 비다양체 모서리 허용)
+            try:
+                fm = face_model(parts, X0, float(rc["merge_tol_mm"]))
+                gmsh.clear()
+                add_face_model(gmsh, fm)
+                rec.update(surfaces="occ_faces", topology=fm["topology"], n_patches=len(gmsh.model.getEntities(2)),
+                           n_curves=len(gmsh.model.getEntities(1)), **({"topology_why": fm["why"]} if fm.get("why") else {}))
+            except Exception as exc:                        # noqa: BLE001 - 면별 모델 실패 → 면 분류(v0.18.1)로
+                fm_err = str(exc)
+                rec.update(surfaces="classify", occ_faces_error=fm_err[:300])
+                print(f"[freeform] 면별 이산 모델 실패 → 면 분류: {fm_err[:300]}", flush=True)
+        if parts is None or fm_err is not None:
+            try:
+                # 노드 병합은 merge_nodes(절대 거리 merge_tol_mm) 로 끝냄 — gmsh removeDuplicateNodes 는 Geometry.Tolerance 를
+                # 모델 크기에 비례해 써서(4.13.1 실측: 0.001 → 21067 노드가 1435 로 뭉개짐) 쓰지 않음
+                gmsh.clear()
+                s = gmsh.model.addDiscreteEntity(2)
+                gmsh.model.mesh.addNodes(2, s, list(range(1, S_X.shape[0] + 1)), S_X.ravel().tolist())
+                gmsh.model.mesh.addElementsByType(s, 2, [], (S_T + 1).ravel().tolist())
+            except Exception as exc:                        # noqa: BLE001
+                raise _fail("REMESH_FAILED", f"삼각화 병합 실패: {exc}") from None
+            # R5 면 분류 → 기하
+            try:
+                gmsh.model.mesh.classifySurfaces(math.radians(float(rc["feature_angle_deg"])), True, True,
+                                                 math.radians(float(rc["curve_angle_deg"])))
+                gmsh.model.mesh.createGeometry()
+                rec["n_patches"] = len(gmsh.model.getEntities(2))
+            except Exception as exc:                        # noqa: BLE001
+                raise _fail("REMESH_CLASSIFY_FAILED",
+                            f"면 분류(특징각 {rc['feature_angle_deg']}°)에 실패: {exc}"
+                            + (f" (앞서 OCC 면별 이산 모델도 실패: {fm_err[:200]})" if fm_err else "")) from None
         # R6 재메시(모델 전체, algorithms 차례로 — 면 폴백 없음)
         for k, v in opts.items():
             gmsh.option.setNumber(k, v)
@@ -541,9 +784,12 @@ def remesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | N
         holes = freeform_holes(S_X, S_T, mesh, h, float(fcfg["small_hole_factor"]))
         rec["holes"] = holes
         hz = "—" if fid is None else f"{fid['hausdorff_mm']:.3f}"
+        head = ("CAD 면 경계를 따르는 freeform 재메시(OCC 면별 삼각화를 이산 면으로 — 면 분류 없음)입니다 — 작은 CAD 면은 요소가 "
+                "찌그러질 수 있습니다. 원 형상 " if rec.get("surfaces") == "occ_faces" else
+                f"CAD 면 경계를 따르지 않는 freeform 재메시(특징각 {rc['feature_angle_deg']:g}°·곡선각 "
+                f"{rc['curve_angle_deg']:g}°)입니다 — 요소 변이 작은 CAD 특징선을 따르지 않을 수 있습니다. 원 형상 ")
         warns.insert(0, {"code": "MESH_FREEFORM",
-                         "message": f"CAD 면 경계를 따르지 않는 freeform 재메시(특징각 {rc['feature_angle_deg']:g}°·곡선각 "
-                                    f"{rc['curve_angle_deg']:g}°)입니다 — 요소 변이 작은 CAD 특징선을 따르지 않을 수 있습니다. 원 형상 "
+                         "message": head + ""
                                     f"대비 최대 {hz} mm. 지름 {holes['small_d_mm']:g} mm 미만 구멍 {holes['small_holes']}개는 번질 수 "
                                     f"있습니다(메시에서 사라진 구멍 {holes['lost']}개)"})
         meta_extra = {"method": "freeform"}

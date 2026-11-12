@@ -1354,16 +1354,94 @@ def _cmp_mesh_shape(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, mode: 
             sh = (ccfg["mesh"].get("large") or {}).get("cad_share")
             if sh is not None:
                 to = min(to, float(sh) * float(mr._rcfg(ccfg)["total_timeout_s"]))
-    r = _cmp_mesh_one(c, row, h, ccfg, props, fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
+    r = _cmp_mesh_one(c, row, h, _relaxed_defer_cfg(ccfg), props,
+                      fail_info=auto and bool({"refine_local", "defeature"} & set(lad)),
                       timeout_s=to, **({"large": True} if lg["large"] else {}), **_md(mesh_dir))
     r["mesh_method"] = "cad"
     if r.get("cad_relaxed"):                            # v0.17.4 C2-D-32 cad 자식 안 ③ 옵션 재시도 성공
         _cmp_relaxed_row(r, time.monotonic() - t0, lg)
-    if r["status"] == "READY" or not auto or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
+    if r["status"] == "READY" or r["code"] == "MESH_TOO_LARGE":     # cad 의 사용자 상한 초과는 폴백 없음
         return r
+    if not auto:                                        # v0.18.2 C2-D-45 mode cad: 부모 cad_relaxed(자기 세션·예산)만
+        return _cmp_relaxed_only(c, row, h, ccfg, props, r, time.monotonic() - t0, lg, mesh_dir)
     out = _cmp_ladder(c, row, h, ccfg, props, lad, r, time.monotonic() - t0, remesh_ok, avail, lg=lg, **_md(mesh_dir))
     if lg["large"]:                                     # v0.17.4 C2-D-33 대형 판정(사다리 행에만 — 정상 형상 키 없음)
         out["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
+    return out
+
+
+def _relaxed_defer_cfg(ccfg: dict) -> dict:
+    """v0.18.2 C2-D-45 cad 첫 시도 설정: cad_relaxed.enabled ∧ isolate 면 사본의 cad_relaxed.defer = true(자식은 cad_relaxed 를 돌리지
+    않고 첫 실패 면만 기록 → 부모가 자기 세션·cad_relaxed.timeout_s 로). 아니면 그대로(v0.18.1)."""
+    rx = (ccfg.get("mesh") or {}).get("cad_relaxed")
+    if not isinstance(rx, dict) or not rx.get("enabled") or not rx.get("isolate"):
+        return ccfg
+    out = dict(ccfg)
+    out["mesh"] = dict(ccfg["mesh"], cad_relaxed=dict(rx, defer=True))
+    return out
+
+
+def _relaxed_state(pm: dict) -> str | None:
+    """cad 자식의 cad_relaxed 기록 → deferred(부모 몫) | interrupted(자식 안에서 끝나기 전에 끊김) | done(자식이 끝까지) | None."""
+    rx = pm.get("cad_relaxed") or {}
+    if rx.get("deferred"):
+        return "deferred"
+    if not rx.get("tried"):
+        return None
+    if rx.get("interrupted") or (rx.get("seconds") is None and rx.get("error") is None):
+        return "interrupted"
+    return "done"
+
+
+def _cmp_relaxed_only(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, r0: dict, t_cad: float, lg: dict,
+                      mesh_dir: str | None) -> dict:
+    """v0.18.2 C2-D-45 mode cad(사다리 없음): cad 자식이 cad_relaxed 를 부모 몫으로 남겼거나(deferred) 끝내지 못했으면(interrupted)
+    부모가 1회. 성공 → READY 행(mesh_method cad), 실패 → cad 실패 행(attempts·stage_times 기록)."""
+    from esl.doe import mesh_refine as mr
+    d = mesh_dir or _cmp_mesh_dir(c, row["id"])
+    pm = mr.read_attempt(d)
+    st = _relaxed_state(pm)
+    if st not in ("deferred", "interrupted") or not ((ccfg.get("mesh") or {}).get("cad_relaxed") or {}).get("enabled"):
+        return r0
+    _keep_try_logs(c, d, d, "cad")
+    attempts = _relaxed_cad_attempts(pm, r0, h, t_cad)
+    infos: list[str] = []
+    cad_err = {"code": r0["code"], "message": r0["message"]}
+    rr = _cmp_relaxed_parent(c, row, h, ccfg, props, ["cad"], (), t_cad, attempts, infos, _keep_tries(ccfg), 0, cad_err,
+                             lg or {}, **_md(mesh_dir), first=pm.get("cad_relaxed") or {})
+    rr.pop("_n_try", None)
+    el = rr.pop("_elapsed", t_cad)
+    if rr.get("status") == "READY":
+        return rr
+    out = dict(r0, attempts=attempts, stage_times=mr.stage_times(attempts), info=infos, seconds=round(el, 3))
+    if lg.get("large"):
+        out["large"] = {k: lg.get(k) for k in ("reason", "n_faces", "periodic")}
+    return out
+
+
+def _relaxed_cad_attempts(pm: dict, r0: dict, h: float, t_cad: float) -> list[dict]:
+    """cad 시도 행(+ 자식 안 cad_relaxed 행). interrupted = 자식 감시 타이머가 cad_relaxed 후처리 중 끊음 → 시간 초과 실패(초 =
+    자식 기록, 없으면 cad 초 − 첫 세션 초) — v0.18.1 의 '0.0 s 실패' 오기록 대신(C2-D-45)."""
+    from esl.doe import mesh_refine as mr
+    rx0 = pm.get("cad_relaxed") or {}
+    st = _relaxed_state(pm)
+    t_rx0 = 0.0
+    if st == "done":
+        t_rx0 = float(rx0.get("seconds") or 0.0)
+    elif st == "interrupted":
+        if rx0.get("seconds") is not None:
+            t_rx0 = float(rx0["seconds"])
+        elif rx0.get("cad_seconds") is not None:
+            t_rx0 = max(0.0, float(t_cad) - float(rx0["cad_seconds"]))
+    out = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
+            "seconds": round(max(0.0, t_cad - t_rx0), 3),
+            **({"timed_out": True} if mr.timed_out(str(r0.get("message"))) and st != "interrupted" else {})}]
+    if st == "done":
+        out.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": "MESH_FAILED",
+                    "seconds": round(t_rx0, 3)})
+    elif st == "interrupted":
+        out.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": "MESH_FAILED",
+                    "seconds": round(t_rx0, 3), "timed_out": True, "interrupted": True})
     return out
 
 
@@ -1402,14 +1480,7 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
         cad_err = {"code": r0["code"], "message": r0["message"]}
         _keep_try_logs(c, d, d, "cad")                    # v0.17.4 C2-D-40 cad 로그(성공 시도가 mesh/ 로 덮기 전)
         pm = mr.read_attempt(d)
-        rx0 = pm.get("cad_relaxed") or {}                  # v0.17.4 cad 자식 안 cad_relaxed(실패) — 초를 따로
-        t_rx0 = float(rx0.get("seconds") or 0.0) if rx0.get("tried") else 0.0
-        attempts = [{"stage": "cad", "factor": None, "h_mm": h, "status": "FAILED_MESH", "code": r0["code"],
-                     "seconds": round(max(0.0, t_cad - t_rx0), 3),
-                     **({"timed_out": True} if mr.timed_out(str(r0.get("message"))) else {})}]
-        if rx0.get("tried"):
-            attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "FAILED_MESH",
-                             "code": "MESH_FAILED", "seconds": round(t_rx0, 3)})
+        attempts = _relaxed_cad_attempts(pm, r0, h, t_cad)  # v0.17.4 cad 자식 안 cad_relaxed — 초를 따로(v0.18.2 끊김 기록)
     pm["wall_seconds"] = round(t_cad, 3)
     ff = mr.face_failure(dict(pm, message=pm.get("message") or (r0 or {}).get("message")), ccfg) if r0 else None
     if ff is None and r0 is not None and mr.timed_out(str(r0.get("message"))):
@@ -1450,6 +1521,9 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     cmp_ = ccfg.get("compare") or {}
     ft = (cmp_.get("freeform") or {}).get("timeout_s")
     tt = mr._tcfg_timeout(ccfg)
+    lgt = ((ccfg["mesh"].get("large") or {}).get("tria_timeout_s")) if (lg or {}).get("large") else None
+    if lgt is not None:                                 # v0.18.2 C2-D-46 대형 모델 tria(남은 예산 안 — attempt_timeout)
+        tt = max(float(tt), float(lgt))
     to_disc = {"remesh": to_remesh, "freeform": float(ft) if ft is not None else to_remesh, "tria": tt}
     last_disc: dict = {}
 
@@ -1468,9 +1542,11 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
                          "skipped": True, "reason": reason})
 
     rxc = (ccfg.get("mesh") or {}).get("cad_relaxed") or {}
-    if r0 is not None and ff and rxc.get("enabled") and not (pm.get("cad_relaxed") or {}).get("tried"):
+    rst = _relaxed_state(pm) if r0 is not None else None
+    # v0.17.4 cad 시간 초과 ∧ 면 실패 → 부모 1회 / v0.18.2 C2-D-45 deferred(isolate)·interrupted(자식이 후처리 중 끊김) → 부모 1회
+    if r0 is not None and rxc.get("enabled") and (rst in ("deferred", "interrupted") or (ff and rst is None)):
         rr = _cmp_relaxed_parent(c, row, h, ccfg, props, lad, ff_skip, elapsed, attempts, infos, keep, n_try, cad_err,
-                                 lg or {}, **_md(mesh_dir))
+                                 lg or {}, **_md(mesh_dir), first=pm.get("cad_relaxed") or {})
         n_try, elapsed = rr.pop("_n_try"), rr.pop("_elapsed")
         if rr.get("status") == "READY":
             return rr
@@ -1642,20 +1718,27 @@ def _cmp_timeout_face(d: str, pm: dict, ccfg: dict) -> dict | None:
 
 def _cmp_relaxed_parent(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[str], ff_skip, elapsed: float,
                         attempts: list, infos: list, keep: bool, n_try: int, cad_err: dict, lg: dict,
-                        mesh_dir: str | None = None) -> dict:
+                        mesh_dir: str | None = None, first: dict | None = None) -> dict:
     """v0.17.4 C2-D-32 cad 가 시간 초과(자식 안 cad_relaxed 못 감) ∧ 면 실패 → 부모가 cad_relaxed 1회(direct — 그 세션만, 면 폴백
-    없음). 제한 = min(mesh.timeout_s, 남은 예산 − 뒤 단계(면 실패로 건너뛸 단계 제외) 몫). 성공 → mesh_method cad 행."""
+    없음). v0.18.2 C2-D-45: isolate(기본)면 cad 자식은 cad_relaxed 를 돌리지 않고(deferred) 늘 이 경로 — 자기 하위 프로세스·자기 제한
+    = min(cad_relaxed.timeout_s(null = mesh.timeout_s), 남은 예산, 남은 예산 − 뒤 단계(면 실패로 건너뛸 단계 제외) 몫).
+    first = cad 자식의 첫 실패 면 기록(first_error·face — mesh.json cad_relaxed 에 그대로). 성공 → mesh_method cad 행."""
     from esl.doe import mesh_refine as mr
     did = row["id"]
     d = mesh_dir or _cmp_mesh_dir(c, did)
     later = [x for x in lad[1:] if x not in ff_skip]
     cap = mr.stage_cap("cad_relaxed", later, ccfg, elapsed)
-    tmo = min(mr.attempt_timeout(float(ccfg["mesh"]["timeout_s"]), ccfg, elapsed), cap)
+    rxt = ccfg["mesh"]["cad_relaxed"].get("timeout_s")
+    tmo = min(mr.attempt_timeout(float(rxt if rxt is not None else ccfg["mesh"]["timeout_s"]), ccfg, elapsed), cap)
     if tmo < mr.min_attempt_s(ccfg):
         attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "SKIPPED", "code": mr.SKIP_INFO,
                          "seconds": None, "skipped": True, "reason": "stage_time"})
         return {"status": "SKIPPED", "_n_try": n_try, "_elapsed": elapsed}
     rx = dict(ccfg["mesh"]["cad_relaxed"], direct=True)
+    rx.pop("defer", None)
+    fr = {k: (first or {}).get(k) for k in ("first_error", "face") if (first or {}).get(k) is not None}
+    if fr:
+        rx["first"] = fr
     cfg_r = dict(ccfg)
     cfg_r["mesh"] = dict(ccfg["mesh"], cad_relaxed=rx)
     _cmp_say(c, f"[{did} {row['name']}] cad_relaxed(③ 옵션 전체) 시작 · 누적 {elapsed:.0f} s")
@@ -1678,11 +1761,13 @@ def _cmp_relaxed_parent(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, la
     attempts.append({"stage": "cad_relaxed", "factor": None, "h_mm": h, "status": "READY", "code": None,
                      "seconds": round(dt, 3), "n_elems": int(meta["n_elems"])})
     out = _cmp_ready(c, did, mesh, meta)
-    out.update(mesh_method="cad", info=infos, cad_relaxed=dict(out.get("cad_relaxed") or {}, after_timeout=True,
-                                                                cad_error=cad_err))
+    out.update(mesh_method="cad", info=infos, cad_relaxed=dict(out.get("cad_relaxed") or {},
+                                                                after_timeout=bool(mr.timed_out(cad_err.get("message"))),
+                                                                isolated=True, cad_error=cad_err))
     _cmp_relaxed_row(out, elapsed + dt, lg, attempts=attempts)
     out["seconds"] = round(elapsed + dt, 3)
-    _promote(c, td, d, {"cad_relaxed": out["cad_relaxed"], "stage_times": out["stage_times"]})
+    _promote(c, td, d, {"cad_relaxed": dict(meta.get("cad_relaxed") or {}, **out["cad_relaxed"]),   # v0.18.2 자식 기록(ok·
+             "stage_times": out["stage_times"]})                                                      # overrides …) 유지
     if not keep:
         _clear_tries(c, d)
     return dict(out, _n_try=n_try, _elapsed=elapsed + dt)
