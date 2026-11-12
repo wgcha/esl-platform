@@ -1,13 +1,14 @@
 // 비드 최적화 상세(esl_opt_run.md §3.3·§10.4): 진행 6단계 · 하중 선정 표(ⓘ) · 결과(비드 맵·수렴·케이스별 C⁰→C·받기).
 // 주 버튼 = "보고서 보기"(완료 후). 로그·취소·재시도는 JobProgress(기존 /jobs API, OPT_RUN 에도 적용).
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, downloadFile, errorText } from "../../api/client";
 import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, sci } from "../../api/opt";
 import { STEP_LABEL } from "../../api/history";
 import { isFullResult, type JobOut, type OptFileOut, type OptResult, type OptRunOut } from "../../api/types";
 import { canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
+import { goneToList } from "../../components/ItemDeleteButton";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, PrimaryButton, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { LoadSelectionTable, selectionSummary } from "../../components/LoadSelectionTable";
@@ -229,7 +230,8 @@ export function OptDetail() {
   const project = projects.find((p) => p.id === projectId);
   const allowed = canRun(me, projectId);
   const [poll, setPoll] = useState(3000);
-  const run = usePolling(() => opt.run(optId), poll, [optId]);
+  const nav = useNavigate();
+  const run = usePolling(() => opt.run(optId).catch(goneToList(nav, `${libPath(projectId)}?tab=opt`)), poll, [optId]);
   const settings = usePolling(() => opt.settings(), 0, []);
   const r = run.data;
   const done = r?.state === "SUCCEEDED";

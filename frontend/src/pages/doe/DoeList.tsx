@@ -1,7 +1,9 @@
 // 비드 DOE 목록(esl_bead_doe.md §12.1 라이브러리 탭 [비드 DOE]): 연구별 시나리오·ESL·DOE·상태·최적 개선율. 결과는 라이브러리에 넣지 않는다.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { METHOD_NAME, PHASE_NAME, doe, doePath, studyScenarioLabel } from "../../api/doe";
 import type { DoePhase } from "../../api/types";
+import { ItemDeleteButton } from "../../components/ItemDeleteButton";
 import { Badge, Card, Empty } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt } from "../../lib/format";
@@ -10,8 +12,19 @@ const KIND: Record<DoePhase, "ok" | "bad" | "warn" | "info"> = { PREP: "info", R
 
 export function DoeList({ projectId }: { projectId: string }) {
   const list = usePolling(() => doe.studies({ project_id: projectId }), 10000, [projectId]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const onDeleted = (m: string) => {
+    setMsg(m);
+    void list.reload();
+  };
   return (
     <Card title="강성 평가 스터디">
+      {msg && (
+        <div className="small ok-text" role="status">
+          {msg}
+        </div>
+      )}
+
       {!list.data ? (
         <Empty>{list.error ?? "불러오는 중…"}</Empty>
       ) : list.data.length === 0 ? (
@@ -28,6 +41,7 @@ export function DoeList({ projectId }: { projectId: string }) {
                 <th>DOE</th>
                 <th>미리보기</th>
                 <th>상태</th>
+                <th />
                 <th />
               </tr>
             </thead>
@@ -48,6 +62,9 @@ export function DoeList({ projectId }: { projectId: string }) {
                   </td>
                   <td>
                     <Link to={doePath(projectId, s.id)}>열기</Link>
+                  </td>
+                  <td>
+                    <ItemDeleteButton kind="DOE" id={s.id} title={s.title} canDelete={s.can_delete} deleteBlocked={s.delete_blocked} onDeleted={onDeleted} />
                   </td>
                 </tr>
               ))}

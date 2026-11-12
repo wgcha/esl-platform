@@ -1,7 +1,7 @@
 // v0.7.0 비드 최적화 서버 실행 API(계약 esl_opt_run.md §5). check:api 대상 — 백엔드 openapi 가 나오면 경로·스키마 대조.
 import { API_PREFIX, request } from "./client";
 import type {
-  DeformMode, EntryOut, KeepoutSetIn, KeepoutSetOut, LoadRowStatus, LoadStrategy, MeshCheckOut, ObjectiveNorm, OptFileOut, OptMethodSources, OptRunIn, OptRunOut, OptScenario,
+  DeformMode, DeleteCheckOut, DeleteOut, EntryOut, KeepoutSetIn, KeepoutSetOut, LoadRowStatus, LoadStrategy, MeshCheckOut, ObjectiveNorm, OptFileOut, OptMethodSources, OptRunIn, OptRunOut, OptScenario,
   OptSettingsOut, PlanViewOut, S1CheckIn, S1CheckOut, TemplateCheckIn, TemplateDeleteOut, TemplateIn, TemplateOut, TemplateStatus,
 } from "./types";
 
@@ -92,6 +92,8 @@ export const opt = {
   createRun: (body: OptRunIn) => request<OptRunOut>("POST", "/opt/runs", { body }),
   runs: (q: { project_id: string; scenario?: OptScenario }) => request<OptRunOut[]>("GET", "/opt/runs", { query: { ...q } }),
   run: (id: string) => request<OptRunOut>("GET", `/opt/runs/${id}`),
+  deleteCheck: (id: string) => request<DeleteCheckOut>("GET", `/opt/runs/${id}/delete-check`),
+  remove: (id: string) => request<DeleteOut>("DELETE", `/opt/runs/${id}`),
   runFiles: (id: string) => request<OptFileOut[]>("GET", `/opt/runs/${id}/files`),
   downloadUrl: (id: string, rel: string) => `${API_PREFIX}/opt/runs/${id}/download` + `?rel=${encodeURIComponent(rel)}`,
   /** 결과 zip. parts(서버 OPT_PARTS) = report·result(opt.json·post·load)·deck(기본 셋) [+solve = OptiStruct 원본, raw = npz·대상] */

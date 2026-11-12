@@ -1,12 +1,13 @@
 // 종합분석 상세(계약 §11 UI): 진행 상태 · 보고서 화면 안 보기(ReportViewer, 주 버튼 = 보고서 받기) · 위 접힘 영역 = 요약(대표 케이스 표, 포락 미니맵)·덱 파일.
 // 요약 = AnalysisOut.result(워커 _analysis_summary). 포락 격자는 result 에 없어 envelope.csv(다운로드 API)를 읽는다.
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, warnText } from "../../api/client";
 import type { AnalysisFileOut, AnalysisResult, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
+import { goneToList } from "../../components/ItemDeleteButton";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { ReportViewer } from "../../components/ReportViewer";
@@ -111,7 +112,8 @@ export function AnalysisDetail() {
   const { projectId = "", analysisId = "" } = useParams();
   const { projects } = useApp();
   const project = projects.find((p) => p.id === projectId);
-  const an = usePolling(() => api.analysis(analysisId), 0, [analysisId]);
+  const nav = useNavigate();
+  const an = usePolling(() => api.analysis(analysisId).catch(goneToList(nav, `${libPath(projectId)}?tab=analyses`)), 0, [analysisId]);
   const a = an.data;
   const done = a?.status === "SUCCEEDED";
   const files = usePolling(() => (done ? api.analysisFiles(analysisId) : Promise.resolve([] as AnalysisFileOut[])), 0, [analysisId, done]);

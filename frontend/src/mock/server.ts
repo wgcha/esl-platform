@@ -22,6 +22,7 @@ import { OptMock, enrichEntries } from "./optdata";
 import { DoeMock } from "./doedata";
 import { ScxMock } from "./scxmock";
 import { VerifyMock } from "./verifymock";
+import { ItemDeleteMock } from "./deletemock";
 import { stopCodeText } from "../api/client";
 
 interface MockResponse {
@@ -121,8 +122,12 @@ export class MockServer {
   /** P3-이력: 실행 이력 목록·작업 상세·과거 run/검증(읽기 전용 열람용, 현재 Case 목록에는 섞이지 않음) */
   history = new HistoryMock({ userId: () => this.me.user_id, isAdmin: () => this.me.is_global_admin, canRun: (pid) => this.canRun(pid) });
 
+  /** v0.19.0 목록 항목 삭제(esl_item_delete.md §1) — delete-check·DELETE 4종, 행의 can_delete·delete_blocked */
+  del = new ItemDeleteMock(this);
+
   /** v0.7.0 비드 최적화(esl_opt_run.md §5) */
   opt = new OptMock({
+    deleteFlags: (kind, id) => this.del.flags(kind, id),
     entries: () => this.entries,
     me: () => this.me,
     canRun: (pid) => this.canRun(pid),
@@ -170,6 +175,7 @@ export class MockServer {
 
   /** v0.9.0 비드 형상 DOE(esl_bead_doe.md §10) */
   doe = new DoeMock({
+    deleteFlags: (kind, id) => this.del.flags(kind, id),
     entries: () => this.entries,
     me: () => this.me,
     canRun: (pid) => this.canRun(pid),
@@ -287,6 +293,8 @@ export class MockServer {
       created_by_name: this.me.display_name,
       created_at: this.now(),
       updated_at: this.now(),
+      can_delete: true,
+      delete_blocked: null,
     };
   }
 
@@ -301,7 +309,7 @@ export class MockServer {
 
   private comparisonOut(c: ComparisonOut): ComparisonOut {
     const j = c.job_id ? this.jobs.find((x) => x.id === c.job_id) : undefined;
-    return { ...c, status: j ? j.state : c.status, job: j ?? null };
+    return { ...c, ...this.del.flags("COMPARE", c.id), status: j ? j.state : c.status, job: j ?? null };
   }
 
   private makeAnalysis(id: string, body: AnalysisCreate, hit: EntryOut[]): AnalysisOut {
@@ -328,6 +336,8 @@ export class MockServer {
       created_by_name: this.me.display_name,
       created_at: this.now(),
       updated_at: this.now(),
+      can_delete: true,
+      delete_blocked: null,
     };
   }
 
@@ -533,6 +543,8 @@ export class MockServer {
     const m = (re: RegExp) => path.match(re);
     let r: RegExpMatchArray | null;
     this.queuePositions();
+    const dl = this.del.handle(method, path);
+    if (dl) return dl;
     const p3r = this.p3.handle(method, path, query, b, bodySize);
     if (p3r) return p3r;
     const hr = this.history.handle(method, path, query);
@@ -1003,7 +1015,7 @@ export class MockServer {
 
   private analysisOut(a: AnalysisOut): AnalysisOut {
     const j = a.job_id ? this.jobs.find((x) => x.id === a.job_id) : undefined;
-    return { ...a, status: j ? j.state : a.status, job: j ?? null };
+    return { ...a, ...this.del.flags("ANALYSIS", a.id), status: j ? j.state : a.status, job: j ?? null };
   }
 
   private newJob(c: { id: string | null; project_id: string }, jt: JobType, params: Record<string, unknown>): JobOut {

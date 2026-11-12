@@ -19,6 +19,8 @@ const err = (status: number, code: string, message: string, extra: Record<string
 const ok = (body: unknown, status = 200): MockResponse => ({ status, body });
 
 export interface DoeCtx {
+  /** v0.19.0 목록 행의 can_delete·delete_blocked(ItemDeleteMock) */
+  deleteFlags: (kind: "DOE", id: string) => { can_delete: boolean; delete_blocked: string | null };
   entries: () => EntryOut[];
   me: () => Me;
   canRun: (projectId: string) => boolean;
@@ -859,7 +861,7 @@ export function mockMeshParts(mainFile: string): DoeMeshPart[] {
 
 // ---------------------------------------------------------------- 상태
 interface Rec {
-  out: Omit<DoeStudyOut, "job" | "result_ready">;
+  out: Omit<DoeStudyOut, "job" | "result_ready" | "can_delete" | "delete_blocked">;
   jobIds: string[];
   /** 진행 중 미리보기의 행렬(끝나면 preview 로) */
   pending: DoeMatrixOut | null;
@@ -1292,7 +1294,7 @@ export class DoeMock {
   private studyOut(r: Rec): DoeStudyOut {
     this.sync(r);
     const selection = r.out.scenario === "select" ? (r.sel ? { rev: r.sel.rev, sha256: r.sel.sha256, mesh_sha256: r.sel.derived.mesh_sha256 ?? null, n_beads: r.sel.input.beads.length, n_warnings: r.sel.derived.warnings?.length ?? 0, updated_by_name: r.sel.updated_by_name, updated_at: r.sel.updated_at } : null) : undefined;
-    return { ...r.out, ...(selection !== undefined ? { selection } : {}), job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
+    return { ...r.out, ...this.ctx.deleteFlags("DOE", r.out.id), ...(selection !== undefined ? { selection } : {}), job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
   }
 
   // ---------------------------------------------------------------- v0.15.0 select
