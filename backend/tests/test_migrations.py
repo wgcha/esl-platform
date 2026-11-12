@@ -22,7 +22,7 @@ SCX_TABLES = {"verify_drops", "scx_submissions"}
 SCX_INDEXES = {"ix_verify_drops_doe", "ix_verify_drops_batch", "ux_verify_drops_active", "ix_jobs_upload", "ux_jobs_upload_active",
                "ix_jobs_verify_drop", "ux_jobs_verify_drop_active"}
 RUN_ALL_INDEXES = {"ux_run_alls_case_running", "ix_run_alls_case_created", "ix_jobs_run_all"}
-HEAD = "0015"
+HEAD = "0016"
 
 
 def _cfg(db_url, script_location: str | None = None):
@@ -446,7 +446,7 @@ def test_upgrade_from_0013_db_step_compare(engine, db_url):
     assert col_len() == 4 and _state(engine)[4] == "0013"
     command.upgrade(_cfg(db_url), "head")
     after = _state(engine)
-    assert after[4] == HEAD == "0015" and after[2]["ck_bead_does_scenario"] == full[2]["ck_bead_does_scenario"]
+    assert after[4] == HEAD == "0016" and after[2]["ck_bead_does_scenario"] == full[2]["ck_bead_does_scenario"]
     assert col_len() == 8 == tables.bead_does.c.scenario.type.length and after[0] == full[0] and after[1] == full[1]
     assert "compare" in tables.DOE_SCENARIOS
     with engine.begin() as c:
@@ -566,6 +566,7 @@ def test_chain_without_0009():
 
     sd = ScriptDirectory(str(REPO / "migrations"))
     assert sd.get_current_head() == HEAD
+    assert sd.get_revision("0016").down_revision == "0015"
     assert sd.get_revision("0015").down_revision == "0014"
     assert sd.get_revision("0014").down_revision == "0013"
     assert sd.get_revision("0013").down_revision == "0012"
@@ -575,12 +576,12 @@ def test_chain_without_0009():
     assert "0009" not in {r.revision for r in sd.walk_revisions()}
 
 
-MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0015(SR-D-17 — 구현 시점 HEAD 뒤)."""
+MCP_0009 = '''"""MCP 예약 migration 대역(시험): revision 0009, down_revision 0016(SR-D-17 — 구현 시점 HEAD 뒤)."""
 from alembic import op
 from sqlalchemy import text
 
 revision = "0009"
-down_revision = "0015"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
@@ -595,7 +596,7 @@ def downgrade() -> None:
 
 
 def test_chain_with_0009_after_0015(pg_server, tmp_path):
-    """0009(MCP)가 나중에 revision 0009·down_revision 0015(HEAD) 으로 붙어도 0008 DB → 0010 → … → 0014 → 0015 → 0009 순서로
+    """0009(MCP)가 나중에 revision 0009·down_revision 0016(HEAD) 으로 붙어도 0008 DB → 0010 → … → 0014 → 0015 → 0016 → 0009 순서로
     올라간다(단일 head)."""
     from alembic import command
     from alembic.script import ScriptDirectory
@@ -605,7 +606,7 @@ def test_chain_with_0009_after_0015(pg_server, tmp_path):
     (mig / "versions" / "0009_mcp_probe.py").write_text(MCP_0009, encoding="utf-8")
     sd = ScriptDirectory(str(mig))
     assert sd.get_current_head() == "0009" and len(sd.get_heads()) == 1
-    assert [r.revision for r in sd.walk_revisions()][:8] == ["0009", "0015", "0014", "0013", "0012", "0011", "0010", "0008"]
+    assert [r.revision for r in sd.walk_revisions()][:9] == ["0009", "0016", "0015", "0014", "0013", "0012", "0011", "0010", "0008"]
     name = f"esl_chain_{uuid.uuid4().hex[:8]}"
     with pg_server["admin"].connect() as c:
         c.execute(text(f'CREATE DATABASE "{name}"'))
