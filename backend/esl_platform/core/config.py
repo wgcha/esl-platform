@@ -1513,6 +1513,11 @@ def overlaps(a: str, b: str) -> bool:
     return is_within(a, b) or is_within(b, a)
 
 
+def overlaps_real(a: str, b: str) -> bool:
+    """문자열 겹침 또는 realpath(심링크·junction 해석) 끼리 겹침 — 보호 루트가 링크로 작업 폴더를 가리키는 경우까지."""
+    return overlaps(a, b) or overlaps(os.path.realpath(a), os.path.realpath(b))
+
+
 WIN_ABS = re.compile(r"^[A-Za-z]:[/\\\\]")
 WIN_UNC = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 
@@ -1786,16 +1791,16 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
             issues.append(iss)
     if not issues:
         if st.upload_root is not None:
-            if overlaps(st.upload_root, st.esl_root):
+            if overlaps_real(st.upload_root, st.esl_root):
                 issues.append(Issue("storage.upload_root", "esl_root 와 겹칩니다"))
             for r in st.spdm_roots:
-                if overlaps(st.upload_root, r):
+                if overlaps_real(st.upload_root, r):
                     issues.append(Issue("storage.upload_root", f"SPDM 루트({r})와 겹칩니다"))
         for i, r in enumerate(st.input_roots):
-            if overlaps(r, st.esl_root):
+            if overlaps_real(r, st.esl_root):
                 issues.append(Issue(f"storage.input_roots[{i}]", "esl_root 와 겹칩니다"))
         for i, r in enumerate(st.spdm_roots):
-            if overlaps(r, st.esl_root):
+            if overlaps_real(r, st.esl_root):
                 issues.append(Issue(f"storage.spdm_roots[{i}]", "esl_root 와 겹칩니다"))
     if s.auth.mode == "dev_static":
         if s.profile != "dev":

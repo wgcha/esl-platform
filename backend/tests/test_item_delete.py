@@ -880,3 +880,31 @@ def test_plus_check_cli_includes_storage_orphans(tmp_path, settings_dict, engine
     assert by["storage.orphans"].status == check.WARN and by["storage.trash"].status == check.OK
     items = check.run_checks(str(cfgp), environ={"ESL_DATABASE_URL": db_url}, min_free_gb=0, use_db=False)
     assert "storage.orphans" not in {i.key for i in items}
+
+
+# ---------------------------------------------------------------- 보호 루트가 링크로 작업 폴더를 가리킴(realpath 겹침)
+@pytest.mark.parametrize("root", ["spdm_roots", "input_roots", "upload_root"])
+def test_plus_protected_root_symlink_into_item_rejected(client, engine, esl_root, app_ctx, tmp_path, root):
+    iid = seed_item(engine, esl_root, "OPT")
+    link = tmp_path / "prot_link"
+    os.symlink(esl_root / "_opt" / iid, link, target_is_directory=True)
+    s = app_ctx.config.settings
+    st = s.storage
+    upd = {"spdm_roots": {"spdm_roots": [*st.spdm_roots, str(link)]}, "input_roots": {"input_roots": [*st.input_roots, str(link)]},
+           "upload_root": {"upload_root": str(link)}}[root]
+    app_ctx.config.settings = s.model_copy(update={"storage": st.model_copy(update=upd)})
+    r = delete(client, "OPT", iid)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PATH_UNSAFE", r.text
+    assert (esl_root / "_opt" / iid / "report.html").is_file() and count(engine, "opt_runs", "id=:i", i=iid) == 1
+    assert not trash_names(esl_root)
+
+
+def test_plus_config_rejects_protected_root_symlink_into_esl_root(settings_dict, tmp_path, esl_root):
+    from esl_platform.core.config import load_config_dict
+
+    (esl_root / "_opt").mkdir()
+    link = tmp_path / "spdm_link"
+    os.symlink(esl_root / "_opt", link, target_is_directory=True)
+    settings_dict["storage"]["spdm_roots"] = [str(link)]
+    lc = load_config_dict(settings_dict, environ={})
+    assert not lc.ok and any(k.startswith("storage.spdm_roots") for k in lc.error_keys())
