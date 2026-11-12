@@ -735,7 +735,159 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     doc["fixed_ab"] = bs._fixed_ab(D, frame) if frame is not None else []
     doc["params"] = params_rows_v2(D, cfg)
     doc["param_beads"] = param_beads(D)
+    _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-40 그래프 비드 평면도·단면 자료
     return doc
+
+
+# ====================================================================== v0.18.2 평면도·단면 자료(BG-D-40)
+def _graph_figures(mesh: dict, D, cfg: dict | None, doc: dict, frame) -> None:
+    """derive_v2 문서의 그래프 비드 행에 schema 1 과 같은 그림 자료를 붙임: plan{ring_ab, e_ab, label_ab, tiers}(frame 이 있을 때)·
+    section{s, z, dz_dD, ds_dW, dz_dW}(코어 plan_data 가 읽는 키 — esl_beadgraph.md BG-D-40). 단면 미분은 기하 근사(그래프 기저를
+    풀지 않음 — 실측 h6 104k 요소 기저 3.9 s 가 derive 시간 제한을 먹음). 그림 자료 실패는 선택 저장·평면도를 막지 않음(비드별 None)."""
+    from types import SimpleNamespace
+
+    from esl.doe import bead_select as bs
+    ix = D.index
+    rows = {r["id"]: r for r in doc.get("beads") or []}
+    gbs = [b for b in D.beads if b.src == "graph"]
+    if not gbs:
+        return
+    for b in gbs:
+        r = rows.get(b.id)
+        if r is None:
+            continue
+        if frame is not None:
+            try:
+                r["plan"] = bs._plan_bead(ix, frame, SimpleNamespace(loops=b.loops, bead_mask=b.bead_mask,
+                                                                     tiers=[{"k": int(b.tier), "mask": b.floor_mask}]))
+            except Exception:                               # noqa: BLE001 - 그림 자료 실패 = 빈 자료
+                r["plan"] = {"ring_ab": [], "e_ab": [], "label_ab": None, "tiers": []}
+        try:
+            r["section"] = graph_section(ix, b, D.graph)
+        except Exception:                                   # noqa: BLE001
+            r["section"] = None
+
+
+def _seg_frame(graph: dict, b, ix):
+    """단면 기준(BG-D-40): 비드 대표 세그먼트(길이 가장 긴 것, 같으면 작은 id)의 skeleton(그래프 평면 좌표 — p2 = [X·e1, X·e2] − origin)
+    호 길이 중점 → (x0 = 그 점에 가장 가까운 비드 바닥 요소 중심, ê_L = 중점 접선(±2 h 구간) 3D). skeleton 이 없으면(plateau 등)
+    비드 요소 중심의 평면 주축. 반환 (x0, ê_L, 대표 세그먼트 dict)."""
+    fr = graph["frame"]
+    n = np.asarray(fr["n0"], dtype=np.float64)
+    n = n / max(np.linalg.norm(n), 1e-300)
+    e1, e2 = np.asarray(fr["e1"], float), np.asarray(fr["e2"], float)
+    org = np.asarray(fr.get("origin", [0.0, 0.0]), float)
+    segs = [graph["segments"][i] for i in b.seg_ids]
+    rep = sorted(segs, key=lambda sg: (-float(sg.get("length") or 0.0), int(sg["id"])))[0]
+    m = np.asarray(b.bead_mask, bool)
+    fl = np.asarray(b.floor_mask, bool) if np.asarray(b.floor_mask, bool).any() else m
+    Fc = ix.centroid[fl]
+    sk = np.asarray(rep.get("skeleton") or [], dtype=np.float64).reshape(-1, 2)
+    if sk.shape[0] >= 2:
+        d = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(sk, axis=0), axis=1))]
+        mid = 0.5 * d[-1]
+        pm = np.array([np.interp(mid, d, sk[:, 0]), np.interp(mid, d, sk[:, 1])])
+        h = float(fr.get("h_mm") or ix.h_med)
+        a = np.array([np.interp(max(0.0, mid - 2 * h), d, sk[:, k]) for k in (0, 1)])
+        c = np.array([np.interp(min(d[-1], mid + 2 * h), d, sk[:, k]) for k in (0, 1)])
+        t2 = c - a
+        if np.linalg.norm(t2) > 1e-9:
+            eL = t2[0] * e1 + t2[1] * e2
+            eL = eL - (eL @ n) * n
+            eL /= max(np.linalg.norm(eL), 1e-300)
+            P2 = np.c_[Fc @ e1, Fc @ e2] - org
+            k = int(np.argmin(np.linalg.norm(P2 - pm, axis=1) + 1e-12 * np.arange(P2.shape[0])))
+            return Fc[k], eL, rep, n
+    C = ix.centroid[m]
+    c_mean = C.mean(axis=0)
+    P = C - c_mean
+    P = P - np.outer(P @ n, n)
+    _w, V = np.linalg.eigh(P.T @ P)
+    eL = V[:, 2] - (V[:, 2] @ n) * n
+    eL /= max(np.linalg.norm(eL), 1e-300)
+    if eL[int(np.argmax(np.abs(eL)))] < 0:
+        eL = -eL
+    t = (Fc - c_mean) @ eL
+    k = int(np.argmin(np.abs(t - np.median(t)) + 1e-9 * np.arange(t.size)))
+    return Fc[k], eL, rep, n
+
+
+def graph_section(ix, b, graph: dict | None = None) -> dict | None:
+    """그래프 비드 단면(schema 1 ``bead_select._section`` 과 같은 키 — BG-D-40): ``_seg_frame`` 의 점 x0 를 지나고 ê_L 에 수직인
+    평면과 메시의 교선 → s(mm, ê_W = n̂ × ê_L, x0 = 0) · z(mm, 깊어짐 + = 대표 세그먼트 부모 바닥 level 에서 비드 바닥 level 쪽으로).
+    범위 = x0 를 지나는 비드 요소 교선 연속 구간(틈 ≤ 3 h) ± 3 h, |z| ≤ 3 D + 10 h. 미분 = 그림용 기하 근사(기저 아님): 비드 구간
+    안 점 dz_dD[tier] = clip(z / D_nom, 0, 1)(바닥 1·사면 비례·판 0), W 가 변수면 ds_dW = 비드 구간 안 점 ½·clip((s − s_c)/(½ 바닥 폭),
+    −1, 1)(바닥 폭 = 바닥 깊이 점 구간, s_c = 그 중앙)·dz_dW = 0. 비드 요소가 없으면 None."""
+    m = np.asarray(b.bead_mask, bool)
+    if not m.any() or graph is None:
+        return None
+    x0, eL, rep, n = _seg_frame(graph, b, ix)
+    eW = np.cross(n, eL)
+    fls = {int(f["id"]): f for f in graph.get("floors") or []}
+    lv_b = float((fls.get(int(rep["floor"])) or {}).get("level", x0 @ n))
+    par = int(rep.get("parent", -1))
+    lv_p = float((fls.get(int(graph["segments"][par]["floor"])) or {}).get("level", lv_b)) if par >= 0 else lv_b
+    sign = 1.0 if lv_b >= lv_p else -1.0
+    nd = sign * n
+    from esl.view3d import triangulate
+    tris = triangulate(ix.conn, np.where(ix.is_quad, 4, 3)).astype(np.int64)
+    X = ix.X
+    sd = (X - x0) @ eL
+    a, bb, c = sd[tris[:, 0]], sd[tris[:, 1]], sd[tris[:, 2]]
+    cross = (np.minimum(np.minimum(a, bb), c) < 0) & (np.maximum(np.maximum(a, bb), c) > 0)
+    tri_e = np.repeat(np.arange(ix.conn.shape[0]), np.where(ix.is_quad, 2, 1))
+    tt, te = tris[cross], tri_e[cross]
+    pts, wts, inb = [], [], []
+    for (i0, i1) in ((0, 1), (1, 2), (2, 0)):
+        u, v = tt[:, i0], tt[:, i1]
+        su, sv = sd[u], sd[v]
+        mm = (su < 0) != (sv < 0)
+        pts.append(np.column_stack([u[mm], v[mm]]))
+        wts.append(su[mm] / (su[mm] - sv[mm]))
+        inb.append(m[te[mm]])
+    E = np.vstack(pts)
+    L = np.concatenate(wts)
+    IB = np.concatenate(inb)
+    if not E.shape[0]:
+        return None
+    key = np.minimum(E[:, 0], E[:, 1]) * (1 << 32) + np.maximum(E[:, 0], E[:, 1])
+    order = np.lexsort((~IB, key))                          # 같은 모서리 = 비드 요소 쪽 우선
+    key, E, L, IB = key[order], E[order], L[order], IB[order]
+    _u, first = np.unique(key, return_index=True)
+    E, L, IB = E[first], L[first], IB[first]
+    Q = X[E[:, 0]] * (1 - L[:, None]) + X[E[:, 1]] * L[:, None]
+    s = (Q - x0) @ eW
+    h = float(ix.h_med)
+    sb = np.sort(s[IB])
+    if not sb.size:
+        return None
+    i0 = int(np.argmin(np.abs(sb)))                         # x0 를 지나는 비드 연속 구간(틈 ≤ 3 h)
+    lo = hi = i0
+    while lo > 0 and sb[lo] - sb[lo - 1] <= 3.0 * h:
+        lo -= 1
+    while hi < sb.size - 1 and sb[hi + 1] - sb[hi] <= 3.0 * h:
+        hi += 1
+    smin, smax = float(sb[lo]) - 3.0 * h, float(sb[hi]) + 3.0 * h
+    z = sign * (Q @ n - lv_p)
+    lim = 3.0 * float(b.D_nom or 0.0) + 10.0 * h
+    keep = (s >= smin) & (s <= smax) & (np.abs(z) <= lim)
+    E, L, s, z = E[keep], L[keep], s[keep], z[keep]
+    o = np.lexsort((z, s))
+    E, L, s, z = E[o], L[o], s[o], z[o]
+    out = {"s": [_r(v, 3) for v in s], "z": [_r(v, 3) for v in z], "at_node_id": None, "at_ab": None, "dz_dD": {},
+           "ds_dW": [], "dz_dW": []}
+    Dn = float(b.D_nom or 0.0)
+    inb = (s >= smin + 3.0 * h - 1e-9) & (s <= smax - 3.0 * h + 1e-9)
+    if Dn > 0 and "D" in (b.vars or []):
+        out["dz_dD"][str(int(b.tier))] = [_r(x, 4) for x in np.where(inb, np.clip(z / Dn, 0.0, 1.0), 0.0)]
+    if "W" in (b.vars or []) and Dn > 0:
+        fl = inb & (z >= Dn - 0.25 * h)
+        if fl.any():
+            a0, a1 = float(s[fl].min()), float(s[fl].max())
+            sc, hw = 0.5 * (a0 + a1), max(0.5 * (a1 - a0), 1e-9)
+            out["ds_dW"] = [_r(x, 4) for x in np.where(inb, 0.5 * np.clip((s - sc) / hw, -1.0, 1.0), 0.0)]
+            out["dz_dW"] = [0.0] * int(s.size)
+    return out
 
 
 def param_beads(D) -> list[dict]:
