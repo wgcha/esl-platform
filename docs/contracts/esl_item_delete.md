@@ -1,7 +1,7 @@
 # 계약: 목록 항목 삭제 — 강성 평가 스터디·비드 최적화·종합 분석·버전 비교 (ITEM_DELETE, v0.19.0)
 
 - 상태: **확정** (2026-11-12). 사용자 확정 결정(아래) 반영, 결정 질문 2개(§10) 확정.
-- 버전: **v0.19.0** (main d5ee4cb = v0.18.2 기준 작성). migration **필요**(§6 — `0016_deletions`, 직전 HEAD = `0015_bead_select`).
+- 버전: **v0.19.0** (main d5ee4cb = v0.18.2 기준 작성). migration **필요**(§6 — `0016_deletions`, 직전 HEAD = revision id `0015`(파일 `0015_bead_select`) — 구현: `revision = "0016"`, `down_revision = "0015"`).
 - 관계: 기존 삭제 선례는 `DELETE /opt/templates/{tid}`(`api/services/opt_templates.py` — 등록자·전역 관리자, 참조되면 보관, 아니면 행 삭제 + `_templates/_backup` 이동) 하나뿐. 이 계약은 권한 규칙(`NOT_TEMPLATE_OWNER` 와 같은 판정)과 `can_delete` 칸 모양을 따르되, 폴더는 백업이 아니라 **휴지통 → 워커 영구 삭제**로 처리한다.
 - ID 규칙: 결정 `D-0.19.0-DEL-n`(decisions.md), 시험 `V-DEL-n`, 리스크 `R-DEL-n`.
 
@@ -52,9 +52,9 @@
 |---|---|
 | 404 `DOE_NOT_FOUND`/`OPT_RUN_NOT_FOUND`/`ANALYSIS_NOT_FOUND`/`COMPARISON_NOT_FOUND` | 없음 (기존 코드 재사용) |
 | 404 `ITEM_DELETED` | `deletions` 에 (kind, id) 기록이 있음. 프런트는 성공으로 처리(멱등) |
-| 403 `NOT_ITEM_OWNER` | 등록자도 전역 관리자도 아님 (`require_execute` 실패는 기존 403 그대로) |
-| 409 `ITEM_BUSY` | 비종료 job·verify_drop·SCX 제출이 있음, 또는 동시 생성과 경합(FK 위반·40P01). `details.blocked[]` = `DeleteBlockOut[]` |
-| 409 `FILE_LOCKED` | 폴더 이동이 재시도 끝까지 잠금에 막힘. `details.path` 는 마스킹한 표시 경로 |
+| 403 `NOT_ITEM_OWNER` | 등록자도 전역 관리자도 아님 — **DELETE 와 delete-check 모두**(비권한자는 delete-check 도 403, 구현에서 확정). `require_execute` 실패는 기존 403 그대로 |
+| 409 `ITEM_BUSY` | 비종료 job·verify_drop·SCX 제출이 있음, 또는 동시 생성과 경합(FK 위반·40P01). `DeleteBlockOut[]` 가 `detail.blocked[]` 와 `detail.details.blocked[]` **양쪽**에 있음(구현에서 확정) |
+| 409 `FILE_LOCKED` | 폴더 이동이 재시도 끝까지 잠금에 막힘. 경로는 `detail.path` 와 `detail.details.path` **양쪽**(마스킹한 표시 경로) |
 | 422 `PATH_UNSAFE` | 링크·junction, 루트 탈출, 보호 루트와 겹침, 형식이 다른 id, `dir_rel` 불일치 |
 | 503 `CONFIG_INVALID` | `require_config_ok` |
 | 503 `ITEM_DELETE_DISABLED` | `item_delete.enabled = false` (§11) |
@@ -109,6 +109,7 @@ def parse_trash_name(name: str) -> tuple[str, str, str] | None   # (stamp, kind,
 - **순서 근거**: "같은 트랜잭션 안에서 휴지통 이동 → 커밋". DB 먼저 지우면 행 없는 고아 폴더, 폴더 먼저 지우면 반쯤 지워진 폴더 + 살아 있는 행이 남는다. 이동은 원자적이고 영구 삭제는 커밋 뒤에만 일어난다.
 - **영구 삭제** (워커 리퍼 `worker/esl_worker/trash_purge.py`, `item_delete.purge_interval_s` 주기):
   - `_trash/*` 를 본다(한 주기 최대 `item_delete.purge_batch` 개). `parse_trash_name` 실패 = 건드리지 않고 경고.
+  - 항목 행을 `FOR UPDATE NOWAIT` 로 확인한다(구현에서 확정): 잠겨 있으면(삭제 트랜잭션 진행 중) 이번 주기에 건드리지 않는다.
   - 해당 kind·id 의 DB 항목 행이 **있으면** 지우지 않는다(롤백 잔여): 원래 자리가 비었으면 `os.replace` 로 되돌리고, 아니면 경고.
   - 행이 없으면 `purge_entry`: 자체 순회(`os.scandir`), 링크·junction 은 링크 객체만 지우고 대상은 따라가지 않음(경고). 파일 단위 PermissionError 는 `chmod(S_IWRITE)` 후 `fs_retry` 백오프로 재시도.
   - 결과는 `deletions.purge_state` = PURGED 또는 FAILED(`purge_attempts`+1, `purge_error` 200자 마스킹). FAILED 는 다음 주기 재시도. `purge_attempts ≥ item_delete.purge_max_attempts` 이면 재시도를 멈추고 `check.py` 가 WARN.
@@ -129,12 +130,12 @@ def parse_trash_name(name: str) -> tuple[str, str, str] | None   # (stamp, kind,
   - 분석에는 "이 분석으로 만든 비드 최적화 {n_opt_unlinked}건은 남고 연결만 끊깁니다"를 덧붙인다.
   - delete-check 의 `blocked` 가 비어 있지 않으면 확인 버튼 없이 사유와 job 링크만.
 - 결과: 성공 또는 404 `ITEM_DELETED` → 목록 다시 불러오기 + 토스트 "'{title}' 삭제됨". 409 `FILE_LOCKED` → "파일이 열려 있습니다(보고서·3D 보기 창을 닫고 다시)". 409 `ITEM_BUSY` → 사유 목록.
-- 상세 페이지(DoeStudy·OptDetail·AnalysisDetail·ComparisonDetail)에서 404 가 나면 해당 목록 탭으로 이동. v1 에서는 상세 페이지에 삭제 버튼을 두지 않는다.
+- 상세 페이지(DoeStudy·OptDetail·AnalysisDetail·ComparisonDetail)에서 404 가 나면 해당 목록 탭으로 이동. **상세 화면 삭제 버튼 없음, 목록에서만 삭제(사용자 확정 2026-11-12)**.
 - **다중 선택 없음(v1).** 후속 판에서 넣는다면 `POST /items/delete {kind, ids[]}` 로 항목별 결과를 돌려주는 방식.
 
 ## 6. 감사·기록
 
-- migration `migrations/versions/0016_deletions.py`(down_revision `0015_bead_select`) — `deletions` 테이블:
+- migration `migrations/versions/0016_deletions.py`(`revision = "0016"`, `down_revision = "0015"` — revision id 이지 파일 이름이 아님) — `deletions` 테이블:
   - `id`(UUID PK), `kind`(CHECK `DOE|OPT|ANALYSIS|COMPARE`), `item_id`, `project_id`, `title`
   - `item_created_by_name`, `deleted_by`, `deleted_by_name`, `deleted_at`
   - `summary` JSONB `{scenario?, phase?, n_jobs, n_verify_drops, n_opt_unlinked, job_ids[≤ item_delete.summary_job_ids_max]}`
@@ -188,8 +189,9 @@ def parse_trash_name(name: str) -> tuple[str, str, str] | None   # (stamp, kind,
 | D-0.19.0-DEL-1 | 영구 삭제 범위 = DB 행과 esl 작업 폴더만. 입력·SPDM·SCX 드라이브 제외. 범위 4종에 버전 비교 포함 | 사용자 확정 1·5, 같은 탭 일관성 |
 | D-0.19.0-DEL-2 | 비종료 job·검증 낙하·SCX 제출이 있으면 409 ITEM_BUSY 로 차단 | 원격 잡 고아 방지, 워커가 쓰는 폴더 보호 |
 | D-0.19.0-DEL-3 | 종합 분석 삭제 시 `opt_runs.analysis_id` SET NULL(확정 A) — 차단·연쇄 삭제 없음 | 사용자 확정 2, 최적화 실행은 분석 파일을 읽지 않음 |
-| D-0.19.0-DEL-4 | 트랜잭션 안 휴지통 이동(`os.replace`) 후 커밋, 실패 시 restore. 영구 삭제는 워커 리퍼(DB 행 없을 때만, 링크 미추적) | 사용자 확정 4, 원자성 |
+| D-0.19.0-DEL-4 | 트랜잭션 안 휴지통 이동(`os.replace`) 후 커밋, 실패 시 restore. 영구 삭제는 워커 리퍼(DB 행 없을 때만, 링크 미추적, `FOR UPDATE NOWAIT` 로 삭제 진행 중 항목 보호) | 사용자 확정 4, 원자성 |
 | D-0.19.0-DEL-5 | 권한 = 실행 권한 + (등록자 또는 전역 관리자) | 템플릿 삭제·job 취소와 같은 규칙 |
+| D-0.19.0-DEL-NODETAIL | 상세 화면에 삭제 버튼 없음, 목록에서만 삭제 | 사용자 확정 2026-11-12 |
 | D-0.19.0-DEL-6 | 다중 선택 v1 제외(행마다 버튼 1개), 이전 버전 고아 폴더는 보고만 | 사용자 확정 3, 부분 실패 표시 복잡도 |
 
 ## 11. 설정 (`item_delete:` — 섹션 없으면 기본값)

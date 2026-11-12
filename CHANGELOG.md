@@ -2,6 +2,17 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.19.0] - 2026-11-12
+### 추가
+- **목록에서 항목 삭제**: 강성 평가 스터디·비드 최적화·종합 분석·버전 비교 목록의 각 행에 "삭제" 버튼(행 안 확인). 삭제하면 DB 기록과 이 서버의 작업 폴더(`_doe`·`_opt`·`_analysis`·`_compare` 아래 그 항목)가 **영구 삭제**되어 되돌릴 수 없다. 입력 폴더·SPDM·SCX 드라이브(원격)는 건드리지 않는다
+- 진행 중인 작업(대기·실행 job, 검증 낙하, SCX 제출)이 있으면 삭제할 수 없고(버튼 비활성 + 사유, 409 `ITEM_BUSY`) 끝난 뒤 다시 한다. 등록자 또는 전역 관리자만 삭제할 수 있다(그 밖은 403 `NOT_ITEM_OWNER`). 보고서·3D 보기 창이 폴더를 잡고 있으면 409 `FILE_LOCKED` — 창을 닫고 다시
+- 종합 분석을 삭제하면 그 분석으로 만든 비드 최적화는 **그대로 두고 연결만 끊긴다**(`opt_runs.analysis_id` 비움). 스터디를 삭제하면 딸린 검증 낙하(`_verify`)와 SCX 제출 기록도 함께 지워진다
+- API `GET …/delete-check`·`DELETE …` 4종(`/doe/studies/{id}`·`/opt/runs/{id}`·`/library/analyses/{id}`·`/library/comparisons/{id}`), 목록·상세 응답에 `can_delete`·`delete_blocked`. 설정 `item_delete`(`enabled`·`purge_interval_s` 60·`purge_batch` 20·`purge_max_attempts` 20·`summary_job_ids_max` 50 — 섹션이 없으면 기본값, `enabled: false` 면 503 `ITEM_DELETE_DISABLED`)
+### 변경
+- 폴더는 먼저 `_trash` 로 옮긴 뒤 워커가 영구 삭제한다(디스크 공간은 그 뒤에 회수). 삭제 진행 중인 항목은 워커가 건드리지 않는다. `esl check` 에 `storage.orphans`(이전 버전 고아 폴더 보고만, 자동 정리 없음)·영구 삭제 반복 실패 경고 추가
+- 상세 화면에는 삭제 버튼이 없다(목록에서만). 상세 화면이 열린 채 항목이 삭제되면 해당 목록 탭으로 돌아간다
+- DB migration **0016**(`deletions` 테이블) — 업데이트 시 자동 적용
+
 ## [0.18.2] - 2026-11-12
 ### 수정
 - **④·③ STEP 메시 사다리(이슈 #63)**: CAD 메시가 면에서 실패한 뒤의 '③ 옵션 전체 재시도'(cad_relaxed)가 CAD 시간 몫 안에서 돌다가 메시를 다 만들고 품질·원 형상 비교 중에 끊기고, 다시 시도되지 않은 채 "cad_relaxed 실패 0.0 s" 로 기록되던 문제. 이제 cad_relaxed 는 **자기 하위 프로세스·자기 시간 제한**(`bead_doe.compare.mesh.cad_relaxed.timeout_s` 900 s, `isolate: true`)으로 돌고, 원 형상 비교는 표본(`fidelity_samples` 20,000점)으로 빨라졌다. 예전 방식(`isolate: false`)에서 끊긴 경우도 '시간 초과'와 실제 초를 적고 한 번 다시 시도한다
