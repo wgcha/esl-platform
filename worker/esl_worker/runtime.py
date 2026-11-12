@@ -116,6 +116,10 @@ class Worker:
             log.exception("휴지통 영구 삭제 오류")
             return None
 
+    def _purge_tick(self) -> None:
+        """상주 루프용(반환값 없음 = 항상 interval 만큼 쉼 — _loop 는 truthy 반환을 '바빴음'으로 본다)."""
+        self.purge_trash()
+
     def claim(self, lane: str) -> dict[str, Any] | None:
         if self.claims_paused:
             return None
@@ -158,7 +162,7 @@ class Worker:
         specs += [(lambda: self.run_once("SLOT"), w.claim_interval_s) for _ in range(int(w.slots))]
         specs += [(lambda: self.run_once("LIGHT"), w.claim_interval_s)]
         specs += [(lambda: self.run_once("XFER"), w.claim_interval_s) for _ in range(int(w.xfer_lanes))]
-        specs += [(self.purge_trash, self.settings.item_delete.purge_interval_s)]
+        specs += [(self._purge_tick, self.settings.item_delete.purge_interval_s)]
         for fn, iv in specs:
             t = threading.Thread(target=self._loop, args=(fn, iv), daemon=True)
             t.start()
