@@ -119,8 +119,11 @@ DEFAULTS: dict = {
                          # v0.17.4 C2-D-32 cad_relaxed: cad 첫 세션이 면 실패면 면 폴백(세션마다 STEP 재가져오기) 전에 모델 전체를
                          # ③ 옵션(OCC 정리 끔·곡률·최소 크기 = bead_doe.mesh 기본)으로 1세션 다시 — 품질 오류 없음·충실도(remesh.fidelity
                          # fail_mm) 이내면 채택(MESH_CAD_RELAXED). cad 가 시간 초과로 끝났고 면 실패로 판정되면 부모가 같은 시도를 1회
+                         # v0.18.2 C2-D-45 isolate = cad 자식 안에서 돌리지 않고 부모가 자기 하위 프로세스·자기 제한(timeout_s, null =
+                         # mesh.timeout_s)으로(cad 몫의 감시 타이머가 후처리를 끊던 문제), fidelity_samples = 충실도 표본 상한(양방향 각각)
                          "cad_relaxed": {"enabled": True, "occ_fix_small": 0, "curvature_n": 12, "min_size_factor": 0.2,
-                                         "defeature": False, "fidelity": True},
+                                         "defeature": False, "fidelity": True, "isolate": True, "timeout_s": 900.0,
+                                         "fidelity_samples": 20000},
                          # v0.17.4 C2-D-33 대형 모델: STEP 면 > large_faces 또는 large.periodic_types 면 있음 → 면 폴백 세션 상한·
                          # cad 몫(refine.total_timeout_s 비율) 줄임(뒤 freeform·tria 몫 확보)
                          "large_faces": 1000,
@@ -141,7 +144,10 @@ DEFAULTS: dict = {
                 "freeform": {"enabled": True, "hole_fill": False, "small_hole_factor": 1.0, "timeout_s": None,
                              # v0.17.4 C2-D-42 freeform 삼각화 편차(null = remesh 값): 각 5° 는 곡면이 많은 STEP 에서 삼각형이 폭증
                              # (합성 105 면 26만 개·분류 36 s, 1915 면 메모리 초과) → 20°(3.8만 개·1.6 s), 선 편차는 remesh 값
-                             "linear_deflection_mm": None, "angular_deflection_deg": 20.0},
+                             "linear_deflection_mm": None, "angular_deflection_deg": 20.0,
+                             # v0.18.2 C2-D-44 이산 면 구성: occ_faces = OCC 면마다 이산 면(공유 경계 = OCC 모서리, 면 분류 없음 —
+                             # 비다양체 모서리 허용, 실패 시 classify 로), classify = v0.18.1(삼각화 1개 → classifySurfaces 특징각 분류)
+                             "surfaces": "occ_faces"},
                 # v0.16.3 OCC 삼각형 폴백(C2-D-28 — esl.doe.mesh_tria): BRepMesh 편차 = deflection_factor × h, 긴 변 > split_factor × h
                 # 적합 분할, 같은 평면(coplanar_deg) 안 Delaunay 뒤집기 flip_passes 번
                 "tria": {"enabled": True, "deflection_factor": 0.3, "angular_deflection_deg": 45.0, "merge_tol_mm": 0.01,

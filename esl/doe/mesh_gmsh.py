@@ -825,6 +825,7 @@ def _relaxed_try(gmsh, src: str, mc: dict, h: float, props: dict, cfg: dict, opt
             rec["face"] = {k: ff.face.get(k) for k in ("id", "type", "center")}
     _RUN["relaxed"] = rec
     t1 = time.monotonic()
+    _RUN["relaxed_t1"] = t1                                 # v0.18.2 C2-D-45 감시 타이머가 끊으면 이 시각부터 초(interrupted)
     try:
         got = _session(gmsh, src, mc_r, h, opts_r, gopts_r, step_out=step_out, face_alg={}, relax=(), fb=fb)
     except _FaceFail as e:
@@ -864,8 +865,14 @@ def _relaxed_fidelity(gmsh, src: str, mc_r: dict, mesh: dict, h: float, cfg: dic
         S_X, S_T = gdf.reference_tris(gmsh, src, mc_r, rc)
     finally:
         gmsh.finalize()
+    ns = (mc_r.get("cad_relaxed") or {}).get("fidelity_samples") if isinstance(mc_r.get("cad_relaxed"), dict) else None
+    if ns:                                                  # v0.18.2 C2-D-45 표본 상한(고정 간격 — 양방향 각각 ≤ ns 점)
+        rc = dict(rc, fidelity=dict(rc["fidelity"], samples_max=min(int(rc["fidelity"]["samples_max"]), int(ns))))
     fd = mrm.fidelity(S_X, S_T, mesh, h, rc)
-    return {k: fd.get(k) for k in ("hausdorff_mm", "p95_mm", "area_ratio", "warn_mm", "fail_mm", "over_warn")}
+    out = {k: fd.get(k) for k in ("hausdorff_mm", "p95_mm", "area_ratio", "warn_mm", "fail_mm", "over_warn")}
+    if ns:
+        out["samples"] = fd.get("samples")
+    return out
 
 
 STEP_SURF = {"Sphere": "SPHERICAL_SURFACE", "Torus": "TOROIDAL_SURFACE", "Cylinder": "CYLINDRICAL_SURFACE",
@@ -972,7 +979,7 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     rx = mc.get("cad_relaxed") if isinstance(mc.get("cad_relaxed"), dict) else {}
     lg = mc.get("large") if isinstance(mc.get("large"), dict) else {}
     max_sess = int(lg.get("fallback_sessions") or 0) if large else 0
-    for k in ("relaxed", "face", "sessions"):
+    for k in ("relaxed", "face", "sessions", "relaxed_t1", "relaxed_cad_s"):
         _RUN.pop(k, None)
     t0 = time.monotonic()
     state: dict = {}                                        # bbox 키 → {face, ladder, step(ladder 위치), errors[]}
@@ -982,6 +989,9 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
     n_sess = 0
     if rx.get("direct"):                                    # v0.17.4 부모의 cad_relaxed 시도(cad 시간 초과 뒤): 이 세션만
         rx_rec, got = _relaxed_try(gmsh, src, mc, h, props, cfg, opt_cfg, normal_ref, fb, rx, None, step_out)
+        for k in ("first_error", "face"):                   # v0.18.2 C2-D-45 cad 자식의 첫 실패 면(부모가 넘김)
+            if (rx.get("first") or {}).get(k) is not None:
+                rx_rec[k] = rx["first"][k]
         if got is None:
             raise EslError("FAILED_MESH", f"gmsh 메싱 실패: cad_relaxed(③ 옵션 전체 재시도) 실패 — {rx_rec.get('error')}")
         X, conn, et, ver, dfi, step_done, applied, geom = got
@@ -1020,8 +1030,15 @@ def mesh_file(src: str, h: float, cfg: dict, props: dict, *, opt_cfg: dict | Non
             first = False
             if was_first and ff.face is not None:           # v0.17.4 감시 기록용 첫 실패 면
                 _RUN["face"] = dict(ff.face, error=ff.msg)
-            if was_first and rx.get("enabled"):             # v0.17.4 C2-D-32 면 폴백 전에 ③ 옵션 전체 1세션
+            if was_first and rx.get("enabled") and rx.get("defer"):   # v0.18.2 C2-D-45 부모가 자기 세션·예산으로(이 자식은 면 폴백만)
+                rec_d: dict = {"deferred": True, "first_error": ff.msg, "cad_seconds": round(time.monotonic() - t0, 3)}
+                if ff.face is not None:
+                    rec_d["face"] = {k: ff.face.get(k) for k in ("id", "type", "center")}
+                _RUN["relaxed"] = rec_d
+                print("[cad_relaxed] 부모 프로세스가 따로 시도(cad_relaxed.isolate) → 이 자식은 면 폴백", flush=True)
+            elif was_first and rx.get("enabled"):           # v0.17.4 C2-D-32 면 폴백 전에 ③ 옵션 전체 1세션
                 t_first = round(time.monotonic() - t0, 3)
+                _RUN["relaxed_cad_s"] = t_first
                 rx_rec, got = _relaxed_try(gmsh, src, mc, h, props, cfg, opt_cfg, normal_ref, fb, rx, ff, None)
                 rx_rec["cad_seconds"] = t_first
                 if got is not None:
@@ -1282,6 +1299,13 @@ def _run_record() -> dict:
     rr = _RUN.get("relaxed")
     if rr:
         out["cad_relaxed"] = {k: v for k, v in rr.items() if not k.startswith("_")}
+        x = out["cad_relaxed"]
+        if x.get("tried") and x.get("seconds") is None and x.get("error") is None:   # v0.18.2 C2-D-45 끝나기 전에 끊김
+            x["interrupted"] = True
+            if _RUN.get("relaxed_t1") is not None:
+                x["seconds"] = round(time.monotonic() - float(_RUN["relaxed_t1"]), 3)
+            if x.get("cad_seconds") is None and _RUN.get("relaxed_cad_s") is not None:
+                x["cad_seconds"] = _RUN["relaxed_cad_s"]
     return out
 
 
