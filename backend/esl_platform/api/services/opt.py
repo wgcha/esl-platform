@@ -35,6 +35,7 @@ from ...core.repositories import library as lib_repo
 from ...core.repositories import opt as opt_repo
 from ..context import AppContext
 from . import bundle as bundle_svc
+from . import item_delete
 from .common import job_out, require_config_ok, require_execute, require_library_config
 from .library import backfill_opt_meta, entry_folder, entry_size, require_eligible, require_eligible_ids
 from .opt_keepouts import validate_keepout
@@ -261,7 +262,9 @@ def run_dir(ctx: AppContext, r: dict[str, Any]) -> str:
     return opt_run_dir(ctx.settings, r["id"])
 
 
-def run_out(ctx: AppContext, conn, r: dict[str, Any]) -> dict[str, Any]:
+def run_out(ctx: AppContext, conn, r: dict[str, Any], principal: Principal | None = None,
+            fl: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
     d = dict(r)
     job = jobs_repo.get_job(conn, r["job_id"]) if r.get("job_id") else None
     d["job"] = job_out(conn, job, with_steps=True) if job else None
@@ -281,6 +284,7 @@ def run_out(ctx: AppContext, conn, r: dict[str, Any]) -> dict[str, Any]:
     rep = r.get("report_rel") or "report.html"
     p = os.path.join(folder, *rep.split("/"))
     d["report_ready"] = bool(r.get("report_rel")) and os.path.isfile(p) and not os.path.islink(p)
+    item_delete.apply_flags(d, fl if fl is not None else item_delete.flags(ctx, conn, principal, "OPT", [r]), r["id"])
     return d
 
 
@@ -300,14 +304,15 @@ def list_runs(ctx: AppContext, principal: Principal, project_id: str | None, sce
             rows = opt_repo.list_runs(conn, scenario=scenario)
         else:
             rows = opt_repo.list_runs(conn, project_ids=list(principal.roles), scenario=scenario)
-        return [run_out(ctx, conn, r) for r in rows]
+        fl = item_delete.flags(ctx, conn, principal, "OPT", rows)
+        return [run_out(ctx, conn, r, principal, fl) for r in rows]
 
 
 def get_run(ctx: AppContext, principal: Principal, rid: str) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         r = load_run(conn, rid)
         require_view(principal, r["project_id"])
-        return run_out(ctx, conn, r)
+        return run_out(ctx, conn, r, principal)
 
 
 # ---------------------------------------------------------------- POST /opt/runs
@@ -441,7 +446,7 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
 
             conn.execute(update(jobs).where(jobs.c.id == job["id"]).values(warnings=warns))
         r = opt_repo.update_run(conn, rid, job_id=job["id"])
-        return run_out(ctx, conn, r)
+        return run_out(ctx, conn, r, principal)
 
 
 def _jsonable(o: Any) -> Any:

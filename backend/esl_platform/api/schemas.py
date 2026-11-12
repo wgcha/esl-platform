@@ -953,6 +953,8 @@ class AnalysisOut(_Out):
     created_by_name: str
     created_at: datetime
     updated_at: datetime
+    can_delete: bool                      # v0.19.0 삭제 권한만 반영(등록자·전역 관리자 + 실행 권한, item_delete.enabled)
+    delete_blocked: str | None = None     # v0.19.0 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null)
     excluded_ineligible: int | None = None   # v0.10.0: 필터 분석에서 뺀 부적격(LEGACY·FAIL·판정 불가) 항목 수(생성 응답만)
 
 
@@ -1005,6 +1007,8 @@ class ComparisonOut(_Out):
     created_by_name: str
     created_at: datetime
     updated_at: datetime
+    can_delete: bool                      # v0.19.0 삭제 권한만 반영(등록자·전역 관리자 + 실행 권한, item_delete.enabled)
+    delete_blocked: str | None = None     # v0.19.0 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null)
 
 
 class AnalysisFileOut(_Out):
@@ -1662,6 +1666,8 @@ class OptRunOut(_Out):
     created_by_name: str
     created_at: datetime
     updated_at: datetime
+    can_delete: bool                      # v0.19.0 삭제 권한만 반영(등록자·전역 관리자 + 실행 권한, item_delete.enabled)
+    delete_blocked: str | None = None     # v0.19.0 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null)
 
 
 class OptFileOut(_Out):
@@ -1805,6 +1811,8 @@ class DoeStudyOut(_Out):
     result_ready: bool
     created_by_name: str
     created_at: datetime
+    can_delete: bool                      # v0.19.0 삭제 권한만 반영(등록자·전역 관리자 + 실행 권한, item_delete.enabled)
+    delete_blocked: str | None = None     # v0.19.0 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null)
     selection: dict[str, Any] | None = None        # v0.15.0 select 요약 {rev, sha256, mesh_sha256, n_beads, n_warnings, updated_by_name, updated_at}
 
 
@@ -2324,3 +2332,44 @@ class VerifyResolveIn(_Req):
     @classmethod
     def _norm_action(cls, v: str) -> str:
         return "attach" if v == "link" else v
+
+
+# ---------------------------------------------------------------- v0.19.0 목록 항목 삭제(계약 esl_item_delete.md §1 — 필드명은 types.ts 와 고정 접점)
+DeleteKind = Literal["DOE", "OPT", "ANALYSIS", "COMPARE"]
+
+
+class DeleteBlockOut(_Out):
+    code: str
+    message: str
+    job_id: str | None = None
+    job_type: str | None = None
+    state: str | None = None
+    verify_drop_id: str | None = None
+
+
+class DeleteFolderOut(_Out):
+    rel: str
+    exists: bool
+
+
+class DeleteCheckOut(_Out):
+    kind: DeleteKind
+    id: str
+    title: str
+    can_delete: bool
+    blocked: list[DeleteBlockOut]
+    n_jobs: int
+    n_verify_drops: int
+    n_opt_unlinked: int
+    folders: list[DeleteFolderOut]
+
+
+class DeleteOut(_Out):
+    deleted: bool
+    kind: DeleteKind
+    id: str
+    purge: Literal["PENDING", "ABSENT"]
+    deletion_id: str
+    n_jobs: int
+    n_verify_drops: int
+    n_opt_unlinked: int

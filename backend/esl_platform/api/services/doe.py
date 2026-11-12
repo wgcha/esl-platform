@@ -55,6 +55,7 @@ from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.cases import VersionConflict
 from ..context import AppContext
 from . import bundle as bundle_svc
+from . import item_delete
 from . import uploads as up_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
 from .library import backfill_opt_meta, entry_folder, require_eligible, require_eligible_ids
@@ -918,7 +919,9 @@ def _doe_out(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str,
 
 
 def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | None = None, *,
-              c: dict[str, Any] | None = None, with_job_lookup: bool = True) -> dict[str, Any]:
+              c: dict[str, Any] | None = None, with_job_lookup: bool = True, principal: Principal | None = None,
+              fl: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
     c = c or cfg(ctx)
     if job is None and with_job_lookup:
         job = doe_repo.latest_job(conn, s["id"])
@@ -952,11 +955,13 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
                 prep["graph"] = p0["graph"]
     if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
         inputs.setdefault("bead_source", "manual")
-    return {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
-            "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
-            "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
-            "result_ready": rr, "created_by_name": s["created_by_name"], "created_at": s["created_at"],
-            "selection": _select().selection_summary(s)}
+    out = {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
+           "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
+           "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
+           "result_ready": rr, "created_by_name": s["created_by_name"], "created_at": s["created_at"],
+           "selection": _select().selection_summary(s)}
+    item_delete.apply_flags(out, fl if fl is not None else item_delete.flags(ctx, conn, principal, "DOE", [s]), s["id"])
+    return out
 
 
 def list_studies(ctx: AppContext, principal: Principal, project_id: str | None) -> list[dict[str, Any]]:
@@ -970,14 +975,16 @@ def list_studies(ctx: AppContext, principal: Principal, project_id: str | None) 
         else:
             rows = doe_repo.list_studies(conn, project_ids=list(principal.roles))
         jobs = doe_repo.latest_jobs(conn, [r["id"] for r in rows])
-        return [study_out(ctx, conn, r, jobs.get(r["id"]), c=c, with_job_lookup=False) for r in rows]
+        fl = item_delete.flags(ctx, conn, principal, "DOE", rows)
+        return [study_out(ctx, conn, r, jobs.get(r["id"]), c=c, with_job_lookup=False, principal=principal, fl=fl)
+                for r in rows]
 
 
 def get_study(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
         s = load_study(conn, sid)
         require_view(principal, s["project_id"])
-        return study_out(ctx, conn, s)
+        return study_out(ctx, conn, s, principal=principal)
 
 
 def _viewable(ctx: AppContext, principal: Principal, sid: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1030,7 +1037,7 @@ def _insert_study_job(ctx: AppContext, principal: Principal, *, sid: str, projec
                                   created_by=principal.user_id, created_by_name=principal.display_name,
                                   **({"selection": _jsonable(selection)} if selection is not None else {}))
         job = _insert_job(conn, principal, s, "DOE_PREP", params, warns=warns)
-        return study_out(ctx, conn, s, job)
+        return study_out(ctx, conn, s, job, principal=principal)
 
 
 def _insert_job(conn, principal: Principal, s: dict[str, Any], job_type: str, params: dict[str, Any], *,
@@ -1409,7 +1416,7 @@ def preview(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, 
                   "warnings": [w for w in m["warnings"]]}
         s = doe_repo.update_study(conn, sid, phase="PREVIEW", doe=_jsonable(new_doe))
         job = _insert_job(conn, principal, s, "DOE_PREVIEW", params, warns=m["warnings"])
-        return study_out(ctx, conn, s, job, c=c)
+        return study_out(ctx, conn, s, job, c=c, principal=principal)
 
 
 def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]:
@@ -1437,7 +1444,7 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
             params = {"bead_doe_id": sid, "kind": "RUN", "out_rel": s["dir_rel"], "doe": d, "warnings": []}
             s = doe_repo.update_study(conn, sid, phase="RUN", run=run_opts)
             job = _insert_job(conn, principal, s, "DOE_RUN", params)
-            return study_out(ctx, conn, s, job, c=c)
+            return study_out(ctx, conn, s, job, c=c, principal=principal)
         doe = s.get("doe") or {}
         pv = doe.get("preview") or {}
         if (_derived_phase(s, job) != "PREVIEW_READY" or not pv or pv.get("matrix_sha256") != doe.get("matrix_sha256")
@@ -1462,7 +1469,7 @@ def run(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]
                   "preview": {"rev": pv.get("rev"), "ok": pv.get("ok")}, "warnings": []}
         s = doe_repo.update_study(conn, sid, phase="RUN", run=run_opts)
         job = _insert_job(conn, principal, s, "DOE_RUN", params)
-        return study_out(ctx, conn, s, job, c=c)
+        return study_out(ctx, conn, s, job, c=c, principal=principal)
 
 
 def _clone_shape_present(x: dict[str, Any]) -> bool:

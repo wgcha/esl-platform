@@ -22,6 +22,7 @@ from ...core.paths import COMPARE_DIR, esl_subdir, safe_case_file
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
 from ..context import AppContext
+from . import item_delete
 from .common import job_out, require_execute, require_library_config
 from .library import _overlay
 
@@ -38,12 +39,15 @@ def _version(e: dict[str, Any]) -> str | None:
     return None if v is None or not str(v).strip() else str(v)
 
 
-def comparison_out(ctx: AppContext, conn, c: dict[str, Any]) -> dict[str, Any]:
+def comparison_out(ctx: AppContext, conn, c: dict[str, Any], principal: Principal | None = None,
+                   fl: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
     d = dict(c)
     job = jobs_repo.get_job(conn, c["job_id"]) if c.get("job_id") else None
     d["job"] = job_out(conn, job, with_steps=True) if job else None
     d["status"] = job["state"] if job else "NONE"
     d["folder_path"] = os.path.join(ctx.settings.storage.esl_root, *c["dir_rel"].split("/"))
+    item_delete.apply_flags(d, fl if fl is not None else item_delete.flags(ctx, conn, principal, "COMPARE", [c]), c["id"])
     return d
 
 
@@ -104,17 +108,20 @@ def create_comparison(ctx: AppContext, principal: Principal, body) -> dict[str, 
                                    job_type="LIB_COMPARE", params=json.loads(json.dumps(params, default=str)),
                                    created_by=principal.user_id, created_by_name=principal.display_name)
         c = lib_repo.update_comparison(conn, cid, job_id=job["id"])
-        return comparison_out(ctx, conn, c)
+        return comparison_out(ctx, conn, c, principal)
 
 
-def list_comparisons(ctx: AppContext, project_id: str | None, model: str | None) -> list[dict[str, Any]]:
+def list_comparisons(ctx: AppContext, project_id: str | None, model: str | None,
+                     principal: Principal | None = None) -> list[dict[str, Any]]:
     with ctx.engine.connect() as conn:
-        return [comparison_out(ctx, conn, c) for c in lib_repo.list_comparisons(conn, project_id, model)]
+        rows = lib_repo.list_comparisons(conn, project_id, model)
+        fl = item_delete.flags(ctx, conn, principal, "COMPARE", rows)
+        return [comparison_out(ctx, conn, c, principal, fl) for c in rows]
 
 
-def get_comparison(ctx: AppContext, cid: str) -> dict[str, Any]:
+def get_comparison(ctx: AppContext, cid: str, principal: Principal | None = None) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
-        return comparison_out(ctx, conn, _load(conn, cid))
+        return comparison_out(ctx, conn, _load(conn, cid), principal)
 
 
 def comparison_report(ctx: AppContext, cid: str) -> str:

@@ -867,7 +867,7 @@ def selection_put(ctx: AppContext, principal: Principal, sid: str, body) -> dict
                "updated_by_name": principal.display_name,
                "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
         s = doe_repo.update_study(conn, sid, selection=svc._jsonable(doc))
-        return svc.study_out(ctx, conn, s, job, c=c)
+        return svc.study_out(ctx, conn, s, job, c=c, principal=principal)
 
 
 def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
