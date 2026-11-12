@@ -23,6 +23,12 @@ def get_by_item(conn: Connection, kind: str, item_id: str) -> dict[str, Any] | N
                                                               deletions.c.item_id == item_id))).first())
 
 
+def find_by_trash_name(conn: Connection, trash_name: str) -> dict[str, Any] | None:
+    """dirs[].trash_name 으로 삭제 기록 찾기(워커 리퍼가 휴지통 항목의 주인을 확인)."""
+    return row_dict(conn.execute(select(deletions).where(deletions.c.dirs.contains([{"trash_name": trash_name}]))
+                                 .limit(1)).first())
+
+
 def get(conn: Connection, did: str) -> dict[str, Any] | None:
     return row_dict(conn.execute(select(deletions).where(deletions.c.id == did)).first())
 
