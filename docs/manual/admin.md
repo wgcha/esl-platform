@@ -248,12 +248,12 @@ handle /esl/* {
 
 | 무엇 | 고정 위치 | 설치 |
 |---|---|---|
-| paicad 0.14.1 | `deploy\paicad.lock` — physicsai 커밋(브랜치 `release/v0.2.15`)·버전·**정규화 wheel sha256**·빌드 도구 고정(`setuptools==80.9.0`). wheel 자체는 **저장소에 동봉**(v0.10.1): `deploy\wheels\paicad-0.14.1-py3-none-any.whl` | wheel 대조(`deploy\paicad_wheel.py verify`) 후 `pip install --no-index --no-deps` → `<런타임>\venv\Scripts\paicad.exe` |
+| paicad 0.15.4 | `deploy\paicad.lock` — physicsai 커밋(브랜치 `release/v0.2.17`)·버전·**정규화 wheel sha256**·빌드 도구 고정(`setuptools==80.9.0`). wheel 자체는 **저장소에 동봉**(v0.10.1): `deploy\wheels\paicad-0.15.4-py3-none-any.whl` | wheel 대조(`deploy\paicad_wheel.py verify`) 후 `pip install --no-index --no-deps` → `<런타임>\venv\Scripts\paicad.exe` |
 | cadquery-ocp 7.8.1.1.post1(+vtk·matplotlib 계열), gmsh 4.15.2 | `deploy\requirements.lock` 의 `# ==== bead_doe` 절 | 묶음 wheels(`--no-index`) 또는 사내 pip 인덱스 |
 
 - **paicad wheel 설치 우선순위(v0.10.1 — esl 단독 설치)**: `setup.ps1`·`update-repo.ps1`·`install.ps1`·`update.ps1` 모두 같은 순서로 찾는다
   (`Install-EslBeadDoe`, 설치 콘솔 끝 `… — <venv>\Scripts\paicad.exe (wheel: vendored)` 처럼 어느 것을 썼는지 표시).
-  1. **저장소 동봉** `deploy\wheels\paicad-0.14.1-py3-none-any.whl`(git 폴더 = `<git>\deploy\wheels`, 묶음 = 묶음 `deploy\wheels`) — 설치 전
+  1. **저장소 동봉** `deploy\wheels\paicad-0.15.4-py3-none-any.whl`(git 폴더 = `<git>\deploy\wheels`, 묶음 = 묶음 `deploy\wheels`) — 설치 전
      lock 의 버전·sha256 과 대조하고 **불일치면 2·3 으로 넘어가지 않고 중단**(강성 평가 스터디 만 비활성, 사유 = 파일 손상·부분 갱신 →
      `git status` 확인 후 `git checkout -- deploy/wheels`. lock 은 고치지 않는다)
   2. 오프라인 묶음 `wheels\` · `deploy.json` 의 `paicad_wheels` 폴더
@@ -263,12 +263,12 @@ handle /esl/* {
   없을 때만 쓰는 예비 경로다(지워도 됨). OCP·gmsh 등 런타임 의존은 그대로 `requirements.lock` bead_doe 절(사내 pip 인덱스 또는 묶음 wheels)이다.
 - **오프라인 묶음(§2.2)**: v0.10.1 부터 `collect-offline.ps1`(`.sh`)은 동봉 wheel 을 **빌드 없이** 대조만 해서 묶음 `wheels\` 에 넣는다(GitHub·git 불필요,
   `.sh` 는 `--no-download` 여도 넣음). `-PhysicsaiRepo`·`-PaicadWheel` 을 주면 그쪽을 쓴다. 동봉 wheel 이 없을 때(예전 방식)는 `collect-offline.ps1` 이 lock 커밋의 `packages/paicad` 를 GitHub 에서 그 커밋만 받아(또는 `-PhysicsaiRepo <로컬 physicsai 저장소>`, 읽기만)
-  빌드·정규화하고 버전·sha256 을 lock 과 대조해 `wheels\paicad-0.14.1-py3-none-any.whl` 로 넣는다. **불일치면 묶음을 만들지 않고 중단**한다.
+  빌드·정규화하고 버전·sha256 을 lock 과 대조해 `wheels\paicad-0.15.4-py3-none-any.whl` 로 넣는다. **불일치면 묶음을 만들지 않고 중단**한다.
   이미 빌드된 wheel 은 `-PaicadWheel <파일>`(대조만), 강성 평가 스터디 없이 묶으려면 `-NoPaicad`. 준비 PC 에 git 이 있어야 한다(빌드 시).
   `install.ps1`·`update.ps1` 은 묶음의 `wheels` 에서 설치한다(추가 매개변수 없음).
 - **git 폴더 설치(§2.0·§3.0)**: paicad 는 PyPI 에 없다 — v0.10.1 부터 동봉 wheel 로 설치되므로 아래 값은 **필요 없다**. 동봉 wheel 이 없는 예전 판에서만
   `<git>\.runtime\deploy.json` 에 둘 중 하나를 적는다(없으면 이미 설치된 paicad 확인만, 없으면 DOE 비활성).
-  - `"paicad_wheels": "E:/.../wheels"` — 위 묶음의 `wheels` 폴더처럼 `paicad-0.14.1-py3-none-any.whl` 이 있는 폴더(대조 후 설치)
+  - `"paicad_wheels": "E:/.../wheels"` — 위 묶음의 `wheels` 폴더처럼 `paicad-0.15.4-py3-none-any.whl` 이 있는 폴더(대조 후 설치)
   - `"physicsai_root": "E:/.../physicsai-platform"` — lock 커밋이 들어 있는 physicsai 저장소(읽기만 — 커밋이 없으면 그 저장소에서 `git fetch` 후 다시 실행).
     `<런타임>\paicad-wheel` 에 빌드한다(사내 pip 설정으로 setuptools 를 받음)
 - 설정: 설치 venv 에 `paicad.exe` 가 **실제 있을 때만** `setup_config.py` 가 `bead_doe.paicad.exe`(비었을 때만)·`bead_doe.enabled: true`(키가 없을 때만 —
@@ -277,21 +277,27 @@ handle /esl/* {
 - **확인 명령**(설치 후, 일반 PowerShell):
 
 ```powershell
-& '<런타임>\venv\Scripts\paicad.exe' version --json          # {"paicad": "0.14.1", "ocp": "7.8.1…", "numpy": …} — paicad ≥ 0.14.1, ocp 가 null 이 아니어야 함
+& '<런타임>\venv\Scripts\paicad.exe' version --json          # {"paicad": "0.15.4", "ocp": "7.8.1…", "numpy": …} — paicad ≥ 0.15.4, ocp 가 null 이 아니어야 함
 & '<런타임>\venv\Scripts\python.exe' -c "import gmsh; print(gmsh.__version__)"   # 4.15.2 — 실패하면 ③(STEP 만)·STEP 내보내기만 비활성
 & '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe'
 # v0.10.1: 동봉 wheel 도 함께 대조 — 결과 "wheel": {"ok": true, "sha256": "<lock 과 같음>"}
-& '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe' --wheel '<deploy>\wheels\paicad-0.14.1-py3-none-any.whl'
+& '<런타임>\venv\Scripts\python.exe' '<deploy>\paicad_wheel.py' check --lock '<deploy>\paicad.lock' --exe '<런타임>\venv\Scripts\paicad.exe' --wheel '<deploy>\wheels\paicad-0.15.4-py3-none-any.whl'
 ```
 
   (git 폴더 설치의 `<deploy>` = `<git>\deploy`, 묶음은 묶음을 푼 폴더의 `deploy`.) `check` 결과 JSON 의 `problems` 코드는 화면 비활성 사유와 같다:
-  `PAICAD_NOT_FOUND`(실행 파일 없음) · `PAICAD_VERSION_LOW`(< 0.14.1) · `PAICAD_OCP_MISSING`(OCP 로드 실패 — VC++ 런타임·`cadquery-ocp` 설치 확인) · `PAICAD_CHECK_FAILED`(실행 실패)
+  `PAICAD_NOT_FOUND`(실행 파일 없음) · `PAICAD_VERSION_LOW`(< 0.15.4) · `PAICAD_OCP_MISSING`(OCP 로드 실패 — VC++ 런타임·`cadquery-ocp` 설치 확인) · `PAICAD_CHECK_FAILED`(실행 실패)
   · `PAICAD_WHEEL_NOT_FOUND`·`PAICAD_WHEEL_MISMATCH`(`--wheel` 로 준 동봉 wheel 이 없음·lock 과 다름).
-  고정 버전과 다른 paicad(예 0.15.x)는 **경고만**(관리자 화면·결과에 기록). 워커가 `bead_doe.paicad.check_interval_s`(600 s)마다 같은 점검을 해 `GET /doe/settings` 에 반영한다.
+  고정 버전과 다른 paicad(예 0.16.x)는 **경고만**(관리자 화면·결과에 기록). 워커가 `bead_doe.paicad.check_interval_s`(600 s)마다 같은 점검을 해 `GET /doe/settings` 에 반영한다.
 - **lock 갱신**(paicad 새 버전): physicsai 의 새 커밋으로 `deploy\paicad.lock` 의 `version`·`branch`·`commit`·`wheel` 을 바꾸고,
   `python deploy\paicad_wheel.py collect --lock deploy\paicad.lock --out-dir <임시>` 가 출력하는 `sha256` 을 확인해 lock 에 적은 뒤 다시 실행해 `ok: true` 를 확인한다.
   그다음 `--out-dir deploy\wheels` 로 한 번 더 실행해 동봉 wheel 을 새 버전으로 바꾸고(옛 wheel 파일은 지움) lock 과 함께 커밋한다
   (`tests/deploy` 가 동봉 wheel sha256 = lock 을 확인).
+- **v0.18.1 paicad 0.15.4**(physicsai `release/v0.2.17` `9b71cb7` — 0.14.2 수정 포함: STEP 구면 딤플 극점처럼 3D 곡선 없는 모서리가 있으면
+  미리보기 grid 셀이 거의 다 `GEOM_CAD_FAILED`("has no 3D curve")로 실패하던 문제(이슈 #63), Windows 백신·색인기 파일 잠금(WinError 5·32) rename 재시도.
+  0.15.x 는 비드 바닥 안 섬(딤플·보스·루버) 인식과 shell check 피처 강체성 검사(`SHELL_FEATURE_DISTORTED` → 안 `FAILED_MORPH`)도 추가):
+  `min_version`·`pinned_version` 기본값 = `0.15.4`. **설정 파일(`config\esl_platform.yaml`)에 `bead_doe.paicad.min_version`·`pinned_version` 을 `0.14.1` 로
+  직접 적어 두었다면 `0.15.4` 로 바꾼다** — 그대로 두면 0.14.x 도 허용되고(이슈 #63 재발 가능) 0.15.4 설치 시 고정 버전 경고(`PAICAD_VERSION_PINNED`)가 남는다.
+  lock sha256(`3c4cd456…`)은 esl 정규화 빌드 값(Python 3.13·3.12 빌드 동일). 묶음(`collect-offline`)은 동봉 wheel 을 그대로 쓰므로 새로 묶어야 0.15.4 가 들어간다.
 - **v0.12.4 paicad 0.14.1**(physicsai `release/v0.2.15` `be21319`, `paicad tag` 꼭짓점 분류 메모리 O(n+V) — 큰 모델에서 강성 평가 스터디 준비가 메모리 폭증으로 멈추던 문제):
   `min_version`·`pinned_version` 기본값 = `0.14.1`(설정에 `0.14.0` 을 직접 적었다면 `0.14.1` 로 바꾼다 — 그대로 두면 고정 버전 경고만).
   lock sha256(`fbb2bd6a…`)은 esl 정규화 빌드 값이다. physicsai 쪽이 배포한 wheel(`36244b75…`)은 같은 커밋을 타임스탬프 고정 없이 빌드한 것이라

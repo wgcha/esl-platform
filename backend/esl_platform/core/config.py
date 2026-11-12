@@ -432,8 +432,8 @@ class BeadDoeTimeoutCfg(_M):
 
 class BeadDoePaicadCfg(_M):
     exe: str | None = None                                   # setup_config 자동 감지(<런타임 venv>/Scripts/paicad 실행 파일)
-    min_version: str = Field(default="0.14.1", pattern=r"^\d+(\.\d+){0,3}$")
-    pinned_version: str | None = Field(default="0.14.1", pattern=r"^\d+(\.\d+){0,3}$")
+    min_version: str = Field(default="0.15.4", pattern=r"^\d+(\.\d+){0,3}$")
+    pinned_version: str | None = Field(default="0.15.4", pattern=r"^\d+(\.\d+){0,3}$")
     threads: int = Field(default=4, ge=1, le=1024)
     timeout_s: BeadDoeTimeoutCfg = BeadDoeTimeoutCfg()
     options: dict[str, Any] = Field(default_factory=dict)    # paicad shell options.json 내용(선택)

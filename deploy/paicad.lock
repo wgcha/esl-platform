@@ -1,14 +1,14 @@
 {
-  "version": "0.14.1",
+  "version": "0.15.4",
   "source": "wgcha/physicsai-platform",
-  "branch": "release/v0.2.15",
-  "commit": "be21319009d4f1c426e0aa068180a5a99dd9ec82",
+  "branch": "release/v0.2.17",
+  "commit": "9b71cb7554cab3bec62a8102f283863441d5f6bd",
   "subdir": "packages/paicad",
-  "wheel": "paicad-0.14.1-py3-none-any.whl",
-  "sha256": "fbb2bd6abfa0c84196aeb4952e6608431ff5b00eaa7ec8b88644946b66014513",
+  "wheel": "paicad-0.15.4-py3-none-any.whl",
+  "sha256": "3c4cd456355a9633d29da3344adfff39e69d76d2ad886fa6a0f6547f9a9ab61c",
   "build_requires": ["setuptools==80.9.0"],
   "console_script": "paicad",
   "runtime_requires": ["cadquery-ocp==7.8.1.1.post1", "numpy>=2,<3", "scipy>=1.13,<2"],
   "build": "deploy/paicad_wheel.py collect (git archive + pip wheel --no-deps + 정규화: 무압축·1980-01-01·0644·이름 순)",
-  "note": "physicsai 배포 wheel(sha256 36244b75be7279bbdae85f4438460088804665b9e5a4b88675a1923f6bfca1df)은 같은 커밋 be21319 를 타임스탬프 고정 없이 빌드한 것(파일 75개 내용 해시 동일) — 이 lock 은 esl 정규화 빌드 값"
+  "note": "esl 정규화 빌드 값(physicsai release/v0.2.17 9b71cb7, paicad 0.15.4 — 0.14.2 수정 포함: degenerated edge 쉘 재구성·replace_retry). Python 3.13·3.12 빌드 sha256 동일. physicsai 쪽 배포 wheel 은 쓰지 않음(설치는 동봉 wheel)"
 }

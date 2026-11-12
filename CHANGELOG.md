@@ -2,6 +2,13 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.18.1] - 2026-11-12
+### 수정
+- **형상 엔진 paicad 0.15.4 로 교체(이슈 #63)**: STEP 에 구면 딤플 극점처럼 3D 곡선이 없는 모서리가 있으면 강성 평가 스터디(①② 같은·다른 모델, 기존 ③ STEP 만) 미리보기 grid 셀이 거의 다 `GEOM_CAD_FAILED`("has no 3D curve")로 실패하던 문제, Windows 백신·색인기가 파일을 잠깐 잡을 때 셀 폴더·보고 파일 이름 바꾸기가 실패하던 문제 — physicsai `release/v0.2.17`(9b71cb7) paicad 0.15.4(0.14.2 수정 포함). 동봉 wheel·`deploy/paicad.lock`(sha256 `3c4cd456…`)·`bead_doe.paicad.min_version`·`pinned_version` 기본값 0.15.4(0.14.x 는 `PAICAD_VERSION_LOW`)
+### 변경
+- paicad 0.15.x 는 비드 바닥 안 딤플·보스·루버를 '섬'으로 인식하고, 모핑 뒤 섬이 바닥과 함께 강체로 움직였는지 검사한다. 이 검사 실패(`SHELL_FEATURE_DISTORTED`)는 안 상태 '모핑 실패'로 표시하고 전용 문구로 이유를 보여 준다
+- 설정 파일에 `bead_doe.paicad.min_version`·`pinned_version` 을 `0.14.1` 로 직접 적었다면 `0.15.4` 로 바꾼다(관리자 매뉴얼 §2.7.1)
+
 ## [0.18.0] - 2026-11-12
 ### 추가
 - **③ 다른 모델(STEP만)을 비드 네트워크 분류 경로로**: 새 ③ 스터디는 B STEP 을 ④ 와 같은 메시 사다리(cad → 폴백 freeform → 삼각형)로 쉘 메시로 만들고, ①② 와 같은 비드 네트워크 분류·트리·자동 seed·편집·미리보기·기저 모핑 실행으로 진행한다(요청 = `scenario: select` + `inputs.select_base: "step"`). 형상 엔진(paicad) 인식 실패·퇴화 모서리로 grid 가 실패하던 STEP 도 메시가 되면 진행

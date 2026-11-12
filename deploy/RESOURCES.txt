@@ -17,7 +17,7 @@ altair.max_concurrent_hw(동시 hw 수 — 라이선스 한도), worker.slots·p
                             collect-offline 은 이것을 먼저 쓴다(설치 전 lock sha256 대조, physicsai 저장소·paicad_wheels 폴더 불필요).
                             설치 venv 에 <런타임>\venv\Scripts\paicad.exe 가 생기고 setup_config 가 bead_doe.paicad.exe 를 채운다(있을 때만).
                             설치 실패해도 다른 기능은 동작(비드 DOE 만 비활성). gmsh 는 GPL(+예외) — 사내 설치 용도, 묶음 크기 수백 MB 증가.
-                            확인: <런타임>\venv\Scripts\paicad.exe version --json (paicad ≥ 0.14.1, ocp 값 있음),
+                            확인: <런타임>\venv\Scripts\paicad.exe version --json (paicad ≥ 0.15.4, ocp 값 있음),
                                   <런타임>\venv\Scripts\python.exe -c "import gmsh; print(gmsh.__version__)"
 
 입력 데이터(rad + 결과 CSV 폴더)는 사용자 PC에서 HyperView TCL로 만든다(저장소 루트 update.bat — 사용자 PC용, 서버 설치와 무관).

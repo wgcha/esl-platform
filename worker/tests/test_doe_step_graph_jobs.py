@@ -81,7 +81,7 @@ def _geom_env(monkeypatch, tmp_path: Path, *, a_case: bool = True, ready: bool =
     monkeypatch.setattr(dj, "set_progress", lambda ex, st, pct, **kw: None)
     monkeypatch.setattr(dj, "_a_case", lambda ex, echo: {"case_dir": "/a", "part_id": 21, "man": None} if a_case else None)
     monkeypatch.setattr(dj.paicad_proc, "version_check", lambda s, full: (
-        {"ready": True, "version": "0.14.1", "ocp": "7.8.1", "pinned": "0.14.1"} if ready
+        {"ready": True, "version": "0.15.4", "ocp": "7.8.1", "pinned": "0.15.4"} if ready
         else {"ready": False, "reason": "PAICAD_NOT_FOUND"}))
     monkeypatch.setattr(dj.core_adapter, "doe_select_prep_info", lambda o: {})
     monkeypatch.setattr(dj.core_adapter, "doe_fresh_dir", fresh)

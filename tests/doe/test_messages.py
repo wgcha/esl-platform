@@ -118,6 +118,20 @@ def test_code_table(code, ex, stage, pc, status):
     assert c["message"] == message(pc) and c["message"] != pc
 
 
+def test_paicad_015_feature_distorted():
+    """v0.18.1 paicad 0.15.x shell check (g) 피처 강체성 SHELL_FEATURE_DISTORTED(종료 11): 안 상태 FAILED_MORPH,
+    문구 = 전용 문구(원 코드 병기 없음). 준비 단계면 PAICAD_INPUT(일반 문구). 0.14.1 코드표의 문구는 그대로."""
+    m = load_messages()
+    c = pio.classify("design", 11, "SHELL_FEATURE_DISTORTED")
+    assert c["code"] == "FAILED_MORPH" and c["status"] == "FAILED_MORPH" and c["paicad_code"] == "SHELL_FEATURE_DISTORTED"
+    assert c["message"] == m["messages"]["SHELL_FEATURE_DISTORTED"] != message("FAILED_MORPH")
+    assert "(paicad" not in c["message"]
+    p = pio.classify("prep", 11, "SHELL_FEATURE_DISTORTED")
+    assert p["code"] == "PAICAD_INPUT" and p["message"] == message("PAICAD_INPUT")
+    for code, *_ in TABLE:                                                       # 기존 paicad 코드에 전용 문구 없음
+        assert code not in m["messages"]
+
+
 def test_unknown_codes_by_exit_category():
     assert pio.classify("design", 10, "GEOM_NEW_THING")["code"] == "SKIPPED_GEOM"
     c = pio.classify("design", 11, "GEOM_NEW_THING")
@@ -146,16 +160,18 @@ def test_messages_schema():
 
 # ---------------------------------------------------------------- 버전
 def test_version_check():
-    v = pio.parse_version_json('{"paicad": "0.14.1", "ocp": "7.8.1", "numpy": "2"}')
+    v = pio.parse_version_json('{"paicad": "0.15.4", "ocp": "7.8.1", "numpy": "2"}')
     r = pio.check_version(v, CFG)
     assert r["ready"] and r["warning"] is None and r["reason"] is None
     r = pio.check_version({"paicad": "0.13.9", "ocp": "7.8"}, CFG)
     assert not r["ready"] and r["reason"] == "PAICAD_VERSION_LOW"
     r = pio.check_version({"paicad": "0.14.0", "ocp": "7.8"}, CFG)              # v0.12.4: 0.14.0(tag 메모리 폭증) 미만 처리
     assert not r["ready"] and r["reason"] == "PAICAD_VERSION_LOW"
-    r = pio.check_version({"paicad": "0.14.1", "ocp": None}, CFG)
+    r = pio.check_version({"paicad": "0.14.1", "ocp": "7.8"}, CFG)              # v0.18.1: 0.14.1(#63 degenerated edge·파일 잠금) 미만 처리
+    assert not r["ready"] and r["reason"] == "PAICAD_VERSION_LOW"
+    r = pio.check_version({"paicad": "0.15.4", "ocp": None}, CFG)
     assert not r["ready"] and r["reason"] == "PAICAD_OCP_MISSING"
-    r = pio.check_version({"paicad": "0.15.2", "ocp": "7.8"}, CFG)
+    r = pio.check_version({"paicad": "0.15.5", "ocp": "7.8"}, CFG)
     assert r["ready"] and "PAICAD_VERSION_PINNED" in r["warning"]
     assert pio.check_version(None, CFG)["reason"] == "PAICAD_CHECK_FAILED"
     with pytest.raises(EslError) as ei:

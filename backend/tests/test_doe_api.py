@@ -88,7 +88,7 @@ def test_settings_enabled_and_method_sources(client, world):
 
     s = api(client, "GET", "/doe/settings").json()
     assert s["enabled"] is True and s["reason"] is None
-    assert s["paicad"] == {"ready": True, "version": "0.14.1", "pinned": "0.14.1", "warning": None}
+    assert s["paicad"] == {"ready": True, "version": "0.15.4", "pinned": "0.15.4", "warning": None}
     assert s["gmsh"] == {"ready": True, "version": "4.13.1"} and s["scenarios"] == {"same": True, "mesh": True, "step": True, "compare": True,
                                                                            "select": True, "select_auto": True,
                                                                            "select_mesh": True, "select_step": True}
@@ -356,7 +356,7 @@ def test_preview_run_flow(client, world, engine, esl_root, inputs_root):
     sha = p["doe"]["matrix_sha256"]
     jp = _job(engine, p["job"]["id"])["params"]
     assert jp["kind"] == "PREVIEW" and jp["doe"]["rev"] == 1 and jp["doe"]["matrix_sha256"] == sha
-    assert jp["doe"]["spec"]["params"][0]["name"] == "CHR_BEAD_D_1" and jp["doe"]["paicad_version"] == "0.14.1"
+    assert jp["doe"]["spec"]["params"][0]["name"] == "CHR_BEAD_D_1" and jp["doe"]["paicad_version"] == "0.15.4"
     r = api(client, "POST", f"/doe/studies/{sid}/preview", json={"version": p["version"], "spec": SPEC})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "JOB_ACTIVE"
     m = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": 1, "spec": SPEC}).json()

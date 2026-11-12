@@ -20,7 +20,7 @@ import numpy as np
 from esl.doe import FAILED, SKIPPED, commands, load_messages
 from esl.errors import EslError
 
-# paicad 보고 파일 이름(0.14.0 소스 확인값)
+# paicad 보고 파일 이름(0.14.0 소스 확인값 — 0.15.4 동일)
 EXTRACT_JSON = "shell_features.json"
 SCAN_JSON = "shell_scan.json"
 FIXED_NPZ = "fixed_nodes.npz"
@@ -149,7 +149,10 @@ def classify(stage: str, exit_code: int | None, code: str | None = None, *, time
         status = pc if (pc in SKIPPED or pc in FAILED) else None
         if status is None and pc != "THUMB_UNAVAILABLE":
             status = "SKIPPED_GEOM" if stage == "preview" else "FAILED_MORPH"
-    msg = M["messages"].get(pc, pc)
+    # v0.18.1(paicad 0.15.x): 표에 있는 paicad 코드에 전용 문구(messages[<paicad 코드>])가 있으면 그것 — 예 SHELL_FEATURE_DISTORTED
+    # (안 상태는 플랫폼 코드 FAILED_MORPH 그대로). 0.14.1 코드에는 전용 문구가 없어 문구 불변.
+    own = M["messages"].get(code) if code and pc == M["paicad_codes"].get(code) else None
+    msg = own or M["messages"].get(pc, pc)
     if code and code not in M["paicad_codes"]:
         msg = f"{msg} (paicad {code})"
     return {"code": pc, "paicad_code": code, "exit_code": exit_code, "message": msg, "status": status}

@@ -1,6 +1,7 @@
-"""가짜 paicad 0.14.1 CLI(워커 시험용, 계약 esl_bead_doe.md §6 — V-BD-3·11·14·15).
+"""가짜 paicad 0.15.4 CLI(워커 시험용, 계약 esl_bead_doe.md §6 — V-BD-3·11·14·15).
 
-실제 paicad 의 인자·출력 규약을 흉내 낸다(physicsai release/v0.2.14 ``packages/paicad`` 소스 기준, 읽기만):
+실제 paicad 의 인자·출력 규약을 흉내 낸다(physicsai release/v0.2.14 ``packages/paicad`` 소스 기준, 읽기만 —
+v0.18.1: release/v0.2.17 0.15.4 의 shell check `checks.feature`(섬 없음 = SKIPPED)·`SHELL_FEATURE_DISTORTED`(11, check 단계)도 흉내):
 - ``version --json`` → {paicad, ocp, numpy, scipy, python}.
 - ``shell fixed-scan --assem-dir --parts --out-dir [--options] [--threads]`` → shell_scan.json·fixed_nodes.npz
   (조립 폴더 아래 rad/inc 를 esl.rad 로 읽어 대상 파트 꼭짓점 근처 노드를 RBE2 클러스터로).
@@ -16,7 +17,7 @@
 제어 파일(실행 파일 옆 ``fake_paicad_control.json``, 없으면 기본):
   version·ocp, plate{lo, hi}, n_beads, rules[{when:{name:[lo, hi]}, code}] (값이 모두 범위 안이면 그 코드로 실패 —
   GEOM_FEATURE_COLLISION·GEOM_CAD_FAILED(10), SHELL_FIXED_REGION_VIOLATION(10, 고정 폴더 있을 때만),
-  GEOM_QUALITY·GEOM_MORPH_FAILED(11, shell run morph 에서만)), fail{명령: {exit, code, report}} (강제 실패),
+  GEOM_QUALITY·GEOM_MORPH_FAILED(11, shell run morph 에서만), SHELL_FEATURE_DISTORTED(11, shell run check 에서만 — 0.15.x)), fail{명령: {exit, code, report}} (강제 실패),
   sleep{명령: 초}, view_error[셀 id], fixed_none, brep("gmsh" = 실제 판 BREP — ③), no_result[명령].
 호출 기록: 같은 폴더 ``fake_paicad_calls.jsonl`` {cmd, argv, cwd, env, t0, t1, pid}.
 """
@@ -41,11 +42,13 @@ import numpy as np  # noqa: E402
 
 SELF = os.environ.get("FAKE_PAICAD_SELF") or os.path.abspath(sys.argv[0])
 DIR = os.path.dirname(SELF)
-VERSION = "0.14.1"
+VERSION = "0.15.4"
 EXIT = {"OK": 0, "ARGS": 2, "INPUT": 3, "UPDATE": 10, "MORPH": 11, "GEOM": 12, "EMPTY": 13, "VIEW": 14, "INTERNAL": 20}
 CODE_EXIT = {"GEOM_FEATURE_COLLISION": 10, "SHELL_FIXED_REGION_VIOLATION": 10, "GEOM_CAD_FAILED": 10,
-             "GEOM_TOPOLOGY_CHANGED": 10, "GEOM_QUALITY": 11, "GEOM_MORPH_FAILED": 11, "GEOM_DEVIATION": 11}
+             "GEOM_TOPOLOGY_CHANGED": 10, "GEOM_QUALITY": 11, "GEOM_MORPH_FAILED": 11, "GEOM_DEVIATION": 11,
+             "SHELL_FEATURE_DISTORTED": 11}
 MORPH_CODES = ("GEOM_QUALITY", "GEOM_MORPH_FAILED", "GEOM_DEVIATION")
+CHECK_CODES = ("SHELL_FEATURE_DISTORTED",)          # 0.15.x shell check (g) 피처 강체성(SM-C4)
 COMP = "CHASSIS_REAR"
 
 
@@ -205,7 +208,7 @@ def full_values(feats: dict, vals: dict) -> dict:
 
 
 def rule_code(values: dict, *, fixed: bool, stage: str) -> str | None:
-    """stage = update|morph. 첫 일치 규칙의 코드."""
+    """stage = update|morph|check. 첫 일치 규칙의 코드."""
     for r in CTL.get("rules") or []:
         ok = all(lo - 1e-9 <= float(values.get(n, float("nan"))) <= hi + 1e-9 for n, (lo, hi) in r["when"].items())
         if not ok:
@@ -213,7 +216,7 @@ def rule_code(values: dict, *, fixed: bool, stage: str) -> str | None:
         code = r["code"]
         if code == "SHELL_FIXED_REGION_VIOLATION" and not fixed:
             continue
-        if (code in MORPH_CODES) != (stage == "morph"):
+        if ("morph" if code in MORPH_CODES else "check" if code in CHECK_CODES else "update") != stage:
             continue
         return code
     return None
@@ -431,6 +434,12 @@ def cmd_run(a, rep) -> int:
         dump(os.path.join(a.morph_dir, "shell_morph.json"), env(status="OK", code=None, files=files))
         stages.append({"step": "morph", "exit_code": 0, "status": "OK"})
         rep.progress(70, "check")
+        code = rule_code(vals, fixed=True, stage="check")
+        if code:
+            dump(os.path.join(a.check_dir, "shell_check.json"),
+                 env(status="FAIL", code=code, out_files=[], warnings=[],
+                     checks={"feature": {"status": "FAIL", "features": [], "worst": None, "mixed_elems": 0}}))
+            raise Fail(code, CODE_EXIT.get(code, 11), f"fake {code}")
         for f in files:
             src = os.path.join(a.morph_dir, "files", *f["rel"].split("/"))
             dst = os.path.join(a.out_files_dir, *f["rel"].split("/"))
@@ -438,7 +447,8 @@ def cmd_run(a, rep) -> int:
             with open(src, "rb") as s, open(dst, "wb") as d:
                 d.write(s.read())
             rels.append(f["rel"])
-        dump(os.path.join(a.check_dir, "shell_check.json"), env(status="PASS", code=None, out_files=rels, warnings=[]))
+        dump(os.path.join(a.check_dir, "shell_check.json"), env(status="PASS", code=None, out_files=rels, warnings=[],
+                                                              checks={"feature": {"status": "SKIPPED"}}))
         stages.append({"step": "check", "exit_code": 0, "status": "PASS"})
     except Fail as e:
         fail = e

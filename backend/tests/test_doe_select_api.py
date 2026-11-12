@@ -1078,7 +1078,7 @@ def test_results_best_clean_and_warn_rows(client, world, engine, esl_root):
 
 
 # ================================================================ v0.16.2 자동 탐지 seed · ② B 메시 기준 select(esl_bead_auto.md §3, V-AD-13·14)
-def _auto_files(engine, esl_root, sid, *, ok=True, step=None, code_=None, sel=None, version="0.14.1"):
+def _auto_files(engine, esl_root, sid, *, ok=True, step=None, code_=None, sel=None, version="0.15.4"):
     """워커 BD_GEOM(prep/auto_detect.json) + 코어 BD_LOADS(prep/select/auto_selection.json) 흉내."""
     d = study_dir(esl_root, sid) / "prep"
     (d / "auto_detect.json").write_text(json.dumps({"schema": "esl/doe_auto_detect/1", "ok": ok, "step": step,
