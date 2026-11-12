@@ -735,14 +735,14 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     doc["fixed_ab"] = bs._fixed_ab(D, frame) if frame is not None else []
     doc["params"] = params_rows_v2(D, cfg)
     doc["param_beads"] = param_beads(D)
-    _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-40 그래프 비드 평면도·단면 자료
+    _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-46 그래프 비드 평면도·단면 자료
     return doc
 
 
-# ====================================================================== v0.18.2 평면도·단면 자료(BG-D-40)
+# ====================================================================== v0.18.2 평면도·단면 자료(BG-D-46)
 def _graph_figures(mesh: dict, D, cfg: dict | None, doc: dict, frame) -> None:
     """derive_v2 문서의 그래프 비드 행에 schema 1 과 같은 그림 자료를 붙임: plan{ring_ab, e_ab, label_ab, tiers}(frame 이 있을 때)·
-    section{s, z, dz_dD, ds_dW, dz_dW}(코어 plan_data 가 읽는 키 — esl_beadgraph.md BG-D-40). 단면 미분은 기하 근사(그래프 기저를
+    section{s, z, dz_dD, ds_dW, dz_dW}(코어 plan_data 가 읽는 키 — esl_beadgraph.md BG-D-46). 단면 미분은 기하 근사(그래프 기저를
     풀지 않음 — 실측 h6 104k 요소 기저 3.9 s 가 derive 시간 제한을 먹음). 그림 자료 실패는 선택 저장·평면도를 막지 않음(비드별 None)."""
     from types import SimpleNamespace
 
@@ -769,7 +769,7 @@ def _graph_figures(mesh: dict, D, cfg: dict | None, doc: dict, frame) -> None:
 
 
 def _seg_frame(graph: dict, b, ix):
-    """단면 기준(BG-D-40): 비드 대표 세그먼트(길이 가장 긴 것, 같으면 작은 id)의 skeleton(그래프 평면 좌표 — p2 = [X·e1, X·e2] − origin)
+    """단면 기준(BG-D-46): 비드 대표 세그먼트(길이 가장 긴 것, 같으면 작은 id)의 skeleton(그래프 평면 좌표 — p2 = [X·e1, X·e2] − origin)
     호 길이 중점 → (x0 = 그 점에 가장 가까운 비드 바닥 요소 중심, ê_L = 중점 접선(±2 h 구간) 3D). skeleton 이 없으면(plateau 등)
     비드 요소 중심의 평면 주축. 반환 (x0, ê_L, 대표 세그먼트 dict)."""
     fr = graph["frame"]
@@ -813,7 +813,7 @@ def _seg_frame(graph: dict, b, ix):
 
 
 def graph_section(ix, b, graph: dict | None = None) -> dict | None:
-    """그래프 비드 단면(schema 1 ``bead_select._section`` 과 같은 키 — BG-D-40): ``_seg_frame`` 의 점 x0 를 지나고 ê_L 에 수직인
+    """그래프 비드 단면(schema 1 ``bead_select._section`` 과 같은 키 — BG-D-46): ``_seg_frame`` 의 점 x0 를 지나고 ê_L 에 수직인
     평면과 메시의 교선 → s(mm, ê_W = n̂ × ê_L, x0 = 0) · z(mm, 깊어짐 + = 대표 세그먼트 부모 바닥 level 에서 비드 바닥 level 쪽으로).
     범위 = x0 를 지나는 비드 요소 교선 연속 구간(틈 ≤ 3 h) ± 3 h, |z| ≤ 3 D + 10 h. 미분 = 그림용 기하 근사(기저 아님): 비드 구간
     안 점 dz_dD[tier] = clip(z / D_nom, 0, 1)(바닥 1·사면 비례·판 0), W 가 변수면 ds_dW = 비드 구간 안 점 ½·clip((s − s_c)/(½ 바닥 폭),

@@ -1355,7 +1355,9 @@ def _test_fail_hook(job: dict, spec: str) -> None:
     (면 폴백 nofix·split·fill 로도 못 피함, defeature 가 평면으로 바꾸면 통과), ``defeature`` = defeature 단계 2D 항상 실패,
     ``hang``(v0.17.4) = cad 시도에서 OCC 정리(OCCFixDegenerated 1)가 켜져 있으면 첫 Sphere 면에서 gmsh 형식 'Meshing surface N
     (Sphere, …)' 한 줄을 찍고 멈춤(자식 감시 타이머 시험 — 정리 끔 cad_relaxed 는 실제 2D),
-    ``remesh`` = remesh·freeform 의 2D 항상 실패, ``fidelity`` = freeform·remesh 충실도 fail_mm 을 아주 작게. 운영에서는 이 변수가 없다."""
+    ``remesh`` = remesh·freeform 의 2D 항상 실패, ``fidelity`` = freeform·remesh 충실도 fail_mm 을 아주 작게,
+    ``relaxed_slow``(v0.18.2) = cad 자식 안 cad_relaxed(direct 아님)의 충실도 비교에서 멈춤(감시 타이머가 후처리를 끊는 재현).
+    운영에서는 이 변수가 없다."""
     import gmsh
     kinds = {x.strip() for x in spec.split(",") if x.strip()}
     kind = job.get("kind") or "cad"
@@ -1378,6 +1380,11 @@ def _test_fail_hook(job: dict, spec: str) -> None:
                     print(f"Info    : [ 50%] Meshing surface {t} (Sphere, Frontal-Delaunay for Quads)", flush=True)
                     time.sleep(3600)
         return real(dim)
+    rxj = ((job.get("cfg") or {}).get("mesh") or {}).get("cad_relaxed") or {}
+    if kind == "cad" and "relaxed_slow" in kinds and not rxj.get("direct"):
+        def slow_fid(*_a, **_k):
+            time.sleep(3600)
+        globals()["_relaxed_fidelity"] = slow_fid
     if kind == "cad" and not isinstance(ds, dict) and "hang" in kinds:
         gmsh.model.mesh.generate = gen_hang
     elif kind == "cad" and not isinstance(ds, dict) and "cad" in kinds:

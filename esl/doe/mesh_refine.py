@@ -217,6 +217,7 @@ def stage_times(attempts: list[dict]) -> list[dict]:
         if a.get("status") == "READY":
             r["outcome"] = "READY"
             r.pop("reason", None)
+            r.pop("timed_out", None)                        # v0.18.2 앞 시도 시간 초과 표시는 성공 줄에 남기지 않음(attempts 에 있음)
         elif r["outcome"] != "READY":
             r["outcome"] = "FAILED_MESH"
             r.pop("reason", None)

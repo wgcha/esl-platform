@@ -642,6 +642,11 @@ class BeadDoeCompareCadRelaxedCfg(_M):
     min_size_factor: float = Field(default=0.2, gt=0, le=1)
     defeature: bool = False    # false = 구멍 메움(compare.defeature) 끔(실측: 정리 끔 + 구멍 메움 끔이 1 성분)
     fidelity: bool = True      # 원 STEP OCC 삼각화 대비 hausdorff ≤ remesh.fidelity.fail_mm 확인
+    # v0.18.2 C2-D-45: isolate = cad 자식 안이 아니라 부모가 자기 하위 프로세스·자기 제한(timeout_s, null = mesh.timeout_s)으로,
+    # fidelity_samples = 충실도 비교 표본 상한(양방향 각각, 고정 간격 — remesh.fidelity.samples_max 보다 크면 그 값)
+    isolate: bool = True
+    timeout_s: float | None = Field(default=900.0, gt=0)
+    fidelity_samples: int = Field(default=20000, ge=1000)
 
 
 class BeadDoeCompareLargeCfg(_M):
@@ -833,6 +838,8 @@ class BeadDoeCompareFreeformCfg(_M):
     # v0.17.4 C2-D-42 freeform 삼각화 편차(null = remesh 값) — 각 5° 는 곡면 많은 STEP 에서 삼각형 폭증
     linear_deflection_mm: float | None = Field(default=None, gt=0)
     angular_deflection_deg: float | None = Field(default=20.0, gt=0, le=90)
+    # v0.18.2 C2-D-44 이산 면 구성: occ_faces = OCC 면마다 이산 면(공유 경계 = OCC 모서리, 면 분류 없음), classify = v0.18.1
+    surfaces: Literal["occ_faces", "classify"] = "occ_faces"
 
 
 class BeadDoeCompareTriaCfg(_M):
