@@ -205,6 +205,7 @@ def restore(settings: Settings, mv: TrashMove) -> bool:
         if os.path.lexists(dest):
             log.warning("휴지통 되돌리기 보류: 원래 자리가 이미 있음 %s", mv.trash_name)
             return False
+        os.makedirs(os.path.dirname(dest), exist_ok=True)      # 종류 폴더가 사라졌어도(링크 검사는 item_dir 에서 끝남)
         atomic_replace(src, dest)
         return True
     except (PathUnsafe, OSError, _AtomicLocked) as exc:
@@ -267,7 +268,7 @@ def purge_entry(settings: Settings, trash_name: str) -> PurgeResult:
     try:
         _check_dir_not_link(t, "휴지통 폴더")
         _check_not_protected(settings, top)
-        if _norm(os.path.dirname(os.path.realpath(top))) != _norm(os.path.join(os.path.realpath(root), TRASH_DIR)):
+        if _norm(os.path.realpath(t)) != _norm(os.path.join(os.path.realpath(root), TRASH_DIR)):     # top 자체는 링크일 수 있어 풀지 않음
             raise PathUnsafe("휴지통 항목의 실제 경로가 휴지통 밖입니다")
     except PathUnsafe as exc:
         return PurgeResult(False, 0, 0, str(exc)[:_ERR_MAX])

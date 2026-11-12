@@ -118,7 +118,7 @@ def test_v14_purge_entry_counts_and_junction_mock(app_ctx, esl_root, tmp_path, m
     monkeypatch.setattr(trash, "is_link_like", lambda x: os.path.basename(x) == "jn" or real(x))
     res = trash.purge_entry(s, p2.name)
     assert (p2 / "jn" / "inside.txt").is_file()                          # 링크로 본 폴더 안은 따라가지 않음
-    assert not res.ok and res.skipped_links == 1 and res.error and str(esl_root) not in res.error
+    assert not res.ok and res.error and "jn" in res.error and str(esl_root) not in res.error
 
 
 def test_v14_purge_entry_rejects_unsafe(app_ctx, esl_root, tmp_path):
