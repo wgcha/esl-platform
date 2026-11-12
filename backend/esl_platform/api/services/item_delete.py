@@ -288,7 +288,8 @@ def _busy_details(ctx: AppContext, kind: str, item_id: str) -> list[dict[str, An
 
 
 def _busy(blocks: list[dict[str, Any]], message: str = "삭제할 수 없습니다 — 진행 중인 작업이 있습니다") -> DomainError:
-    return conflict("ITEM_BUSY", blocks[0]["message"] if blocks else message, blocked=blocks)
+    # blocked 는 detail 바로 아래(기존 봉투의 extra 규칙)와 계약 §1 의 detail.details.blocked 두 곳 모두에 둔다
+    return conflict("ITEM_BUSY", blocks[0]["message"] if blocks else message, blocked=blocks, details={"blocked": blocks})
 
 
 def delete_item(ctx: AppContext, principal: Principal, kind: str, item_id: str) -> dict[str, Any]:
@@ -315,7 +316,7 @@ def delete_item(ctx: AppContext, principal: Principal, kind: str, item_id: str) 
                 except trash.FileLocked as exc:
                     log.warning("삭제 중 폴더 잠김 kind=%s id=%s", kind, item_id)
                     raise conflict("FILE_LOCKED", "폴더가 열려 있어 옮기지 못했습니다(보고서·3D 보기 창을 닫고 다시 시도하세요)",
-                                   path=exc.path) from None
+                                   path=exc.path, details={"path": exc.path}) from None
                 if mv is not None:
                     moves.append(mv)
             job_ids = _job_ids(conn, kind, item_id, drops)                            # ⑥ 자식 삭제

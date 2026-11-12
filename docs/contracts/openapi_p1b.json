@@ -2213,14 +2213,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "DOE",
-              "OPT",
-              "ANALYSIS",
-              "COMPARE"
-            ],
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/DeleteKind"
           },
           "n_jobs": {
             "title": "N Jobs",
@@ -2271,6 +2264,16 @@
         "title": "DeleteFolderOut",
         "type": "object"
       },
+      "DeleteKind": {
+        "enum": [
+          "DOE",
+          "OPT",
+          "ANALYSIS",
+          "COMPARE"
+        ],
+        "title": "DeleteKind",
+        "type": "string"
+      },
       "DeleteOut": {
         "properties": {
           "deleted": {
@@ -2286,14 +2289,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "DOE",
-              "OPT",
-              "ANALYSIS",
-              "COMPARE"
-            ],
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/DeleteKind"
           },
           "n_jobs": {
             "title": "N Jobs",

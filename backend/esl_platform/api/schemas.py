@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
@@ -2335,7 +2337,11 @@ class VerifyResolveIn(_Req):
 
 
 # ---------------------------------------------------------------- v0.19.0 목록 항목 삭제(계약 esl_item_delete.md §1 — 필드명은 types.ts 와 고정 접점)
-DeleteKind = Literal["DOE", "OPT", "ANALYSIS", "COMPARE"]
+class DeleteKind(str, Enum):      # components.schemas.DeleteKind (check:api 가 이름으로 대조)
+    DOE = "DOE"
+    OPT = "OPT"
+    ANALYSIS = "ANALYSIS"
+    COMPARE = "COMPARE"
 
 
 class DeleteBlockOut(_Out):

@@ -86,9 +86,10 @@ def seed_job(engine, kind: str, item_id: str, state: str = "SUCCEEDED", *, with_
         job = jobs_repo.insert_job(c, case_id=None, project_id=project, job_type=JOB_TYPE[kind], params={},
                                    created_by="u-power", created_by_name="파워", **{SUBJ_COL[kind]: item_id})
         if state != "QUEUED":
-            c.execute(text("UPDATE jobs SET state=:s, queue_seq=NULL, holds_slot=(:s='RUNNING' AND lane='SLOT'),"
-                           " started_at=now(), finished_at=CASE WHEN :s='RUNNING' THEN NULL ELSE now() END,"
-                           " failure_code=CASE WHEN :s IN ('FAILED','INTERRUPTED') THEN 'X' END WHERE id=:i"),
+            c.execute(text("UPDATE jobs SET state=CAST(:s AS varchar), queue_seq=NULL,"
+                           " holds_slot=(CAST(:s AS varchar)='RUNNING' AND lane='SLOT'),"
+                           " started_at=now(), finished_at=CASE WHEN CAST(:s AS varchar)='RUNNING' THEN NULL ELSE now() END,"
+                           " failure_code=CASE WHEN CAST(:s AS varchar) IN ('FAILED','INTERRUPTED') THEN 'X' END WHERE id=:i"),
                       {"s": state, "i": job["id"]})
         if with_note:
             jobs_repo.notify(c, job, "JOB_SUCCEEDED")
@@ -250,6 +251,7 @@ def test_v3_active_job_blocks(client, engine, esl_root, kind, state):
     r = delete(client, kind, iid)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ITEM_BUSY", r.text
     blk = r.json()["detail"]["blocked"]
+    assert r.json()["detail"]["details"]["blocked"] == blk                      # 계약 §1 details.blocked[] 도 같은 값
     assert len(blk) == 1 and blk[0]["code"] == "JOB_ACTIVE" and blk[0]["job_id"] == jid
     assert blk[0]["state"] == state and blk[0]["job_type"] == JOB_TYPE[kind] and blk[0]["verify_drop_id"] is None
     assert _snapshot(engine, esl_root, kind, iid) == before and deletion_row(engine, kind, iid) is None
@@ -456,6 +458,7 @@ def test_v9_item_folder_symlink_rejected(client, engine, esl_root, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "precious.txt").write_text("p")
+    (esl_root / "_opt").mkdir(exist_ok=True)
     os.symlink(outside, esl_root / "_opt" / iid, target_is_directory=True)
     r = delete(client, "OPT", iid)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PATH_UNSAFE"
@@ -572,7 +575,7 @@ def test_v11_lock_exhausted_is_file_locked_and_rolls_back(client, engine, esl_ro
     r = delete(client, "OPT", iid)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "FILE_LOCKED", r.text
     d = r.json()["detail"]
-    assert d["path"] == f"_opt/{iid}" and str(esl_root) not in r.text          # 마스킹한 표시 경로
+    assert d["path"] == d["details"]["path"] == f"_opt/{iid}" and str(esl_root) not in r.text          # 마스킹한 표시 경로
     assert calls["n"] == 3
     assert count(engine, "opt_runs", "id=:i", i=iid) == 1 and count(engine, "jobs", "opt_run_id=:i", i=iid) == 1
     assert (esl_root / "_opt" / iid / "report.html").is_file() and trash_names(esl_root) == []
@@ -689,8 +692,7 @@ def test_plus_history_notifications_and_job_gone(client, engine, esl_root):
     after = client.get(f"{API}/history?project_id=p-1", headers=R)
     assert after.status_code == 200 and j not in str(after.json()) and j2 in str(after.json())
     assert client.get(f"{API}/jobs/{j}", headers=R).json()["detail"]["code"] == "JOB_NOT_FOUND"
-    n = client.get(f"{API}/notifications", headers=R)
-    assert n.status_code == 200 and j not in str(n.json())
+    assert count(engine, "notifications", "job_id=:i", i=j) == 0 and count(engine, "notifications", "job_id=:i", i=j2) == 1
 
 
 def test_plus_item_delete_cfg_defaults_equal_trash_defaults_and_yaml():
