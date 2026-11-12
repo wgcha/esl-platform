@@ -25,6 +25,7 @@ import { Templates } from "../opt/Templates";
 import { DoeList } from "../doe/DoeList";
 import { doePath } from "../../api/doe";
 import { ExportDialog } from "../../components/ExportDialog";
+import { ItemDeleteButton } from "../../components/ItemDeleteButton";
 
 export type LibTab = "items" | "study" | "opt" | "analyses" | "templates";
 export const LIB_TABS: { id: LibTab; label: string }[] = [
@@ -433,10 +434,21 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
 function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entries: EntryOut[]; allowed: boolean }) {
   const analyses = usePolling(() => api.analyses(projectId), 10000, [projectId]);
   const comparisons = usePolling(() => api.comparisons(projectId), 10000, [projectId]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const onDeleted = (m: string) => {
+    setMsg(m);
+    void analyses.reload();
+    void comparisons.reload();
+  };
   const byId = new Map(entries.map((e) => [e.id, e]));
   const noVersions = entries.length > 0 && !modelVersions(entries).some((m) => m.versions.length > 1);
   return (
     <>
+      {msg && (
+        <div className="small ok-text" role="status">
+          {msg}
+        </div>
+      )}
       <Card title="종합분석">
         {!analyses.data ? (
           <Empty>{analyses.error ?? "불러오는 중…"}</Empty>
@@ -453,6 +465,7 @@ function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entri
                   <th className="num">항목</th>
                   <th className="num">대표 수</th>
                   <th>상태</th>
+                  <th />
                   <th />
                 </tr>
               </thead>
@@ -472,6 +485,9 @@ function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entri
                       <td>{a.status === "NONE" ? <span className="muted">–</span> : <JobStatusBadge state={a.status} />}</td>
                       <td>
                         <Link to={`/p/${projectId}/library/analyses/${a.id}`}>열기</Link>
+                      </td>
+                      <td>
+                        <ItemDeleteButton kind="ANALYSIS" id={a.id} title={a.title ?? (t ? entryLabel(t) : a.id.slice(0, 8))} canDelete={a.can_delete} deleteBlocked={a.delete_blocked} onDeleted={onDeleted} />
                       </td>
                     </tr>
                   );
@@ -507,6 +523,7 @@ function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entri
                     <th>판정</th>
                     <th>상태</th>
                     <th />
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -524,6 +541,9 @@ function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entri
                       <td>{c.status === "NONE" ? <span className="muted">–</span> : <JobStatusBadge state={c.status} />}</td>
                       <td>
                         <Link to={`/p/${projectId}/library/comparisons/${c.id}`}>열기</Link>
+                      </td>
+                      <td>
+                        <ItemDeleteButton kind="COMPARE" id={c.id} title={c.title ?? `${c.model} ${c.base_version} → ${c.new_version}`} canDelete={c.can_delete} deleteBlocked={c.delete_blocked} onDeleted={onDeleted} />
                       </td>
                     </tr>
                   ))}

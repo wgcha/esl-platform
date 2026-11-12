@@ -8,6 +8,7 @@
 // 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
 import type { CompareShapeIn, DoeBeadSource, DoeMeshMode, DoeMeshPart } from "../../api/types";
@@ -799,7 +800,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const { me } = useApp();
   const allowed = canRun(me, projectId);
   const [poll, setPoll] = useState(3000);
-  const study = usePolling(() => doe.study(id), poll, [id]);
+  const study = usePolling(() => doe.study(id).catch(goneToList(nav, `/p/${projectId}/library?tab=study`)), poll, [id]);
   const s = study.data;
   const phase = s?.phase ?? null;
   const prepDone = !!s?.prep && phase !== "PREP";
