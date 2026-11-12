@@ -199,14 +199,33 @@ def _dist_to_tris(P: np.ndarray, X: np.ndarray, T: np.ndarray, chunk: int = 5000
         tri = T[idx]                                        # (n,k,3)
         d = point_tri_dist(p[:, None, :], X[tri[..., 0]], X[tri[..., 1]], X[tri[..., 2]])
         out[s:s + chunk] = d.min(axis=1)
-    # 정확화: k 후보 최솟값 D 는 상한 — 진짜 최근접 삼각형의 중심은 D + rc(중심-꼭짓점 최대 거리) 안에 있다. D > 0 인 점만
-    # 그 반경 안 삼각형 전부로 다시 계산(가는 띠 면 근처처럼 가까운 중심 k 개가 모두 다른 삼각형인 경우).
-    rc = float(np.max(np.linalg.norm(X[T] - cen[:, None, :], axis=2)))
-    for i in np.flatnonzero(out > DIST_EPS_MM).tolist():
-        cand = tree.query_ball_point(P[i], out[i] + rc)
-        if len(cand) > k:
-            tri = T[np.asarray(cand, dtype=np.int64)]
-            out[i] = min(out[i], float(point_tri_dist(P[i][None, :], X[tri[:, 0]], X[tri[:, 1]], X[tri[:, 2]]).min()))
+    # 정확화: k 후보 최솟값 D 는 상한 — 진짜 최근접 삼각형 t 의 중심은 D + r_t(그 삼각형 중심-꼭짓점 최대 거리) 안에 있다. D > 0 인
+    # 점만 그 반경 안 삼각형 전부로 다시 계산(가는 띠 면 근처처럼 가까운 중심 k 개가 모두 다른 삼각형인 경우).
+    # v0.18.2 C2-D-46: 반경을 전체 최대 r 하나로 잡으면 덜 나뉜 큰 삼각형(넓은 평면) 하나 때문에 모든 점이 거의 모든 삼각형을 후보로
+    # 받아 점마다 Python 반복이 O(M)(합성 390 면 고체 cad_relaxed 충실도 1,045 s). r_t 크기 묶음(중앙값 × 2^j)마다 따로 찾아 같은 후보
+    # 상위 집합(진짜 최근접 포함)을 만들고 묶어서 계산 — 결과는 같은 최솟값(같은 식, 같은 삼각형).
+    ref = np.flatnonzero(out > DIST_EPS_MM)
+    if ref.size:
+        rt = np.max(np.linalg.norm(X[T] - cen[:, None, :], axis=2), axis=1)
+        med = max(float(np.median(rt)), 1e-12)
+        grp = np.maximum(0, np.ceil(np.log2(np.maximum(rt, 1e-300) / med))).astype(np.int64)
+        pi_l, ti_l = [], []
+        for gval in np.unique(grp).tolist():
+            ids = np.flatnonzero(grp == gval)
+            rmax = float(rt[ids].max())
+            sub = tree if ids.size == T.shape[0] else cKDTree(cen[ids])
+            res = sub.query_ball_point(P[ref], out[ref] + rmax)
+            ln = np.fromiter((len(r) for r in res), dtype=np.int64, count=ref.size)
+            if not ln.sum():
+                continue
+            pi_l.append(np.repeat(ref, ln))
+            ti_l.append(ids[np.concatenate([np.asarray(r, dtype=np.int64) for r in res if len(r)])])
+        if pi_l:
+            pi, ti = np.concatenate(pi_l), np.concatenate(ti_l)
+            for s0 in range(0, pi.size, chunk):
+                a, b = pi[s0:s0 + chunk], T[ti[s0:s0 + chunk]]
+                d = point_tri_dist(P[a], X[b[:, 0]], X[b[:, 1]], X[b[:, 2]])
+                np.minimum.at(out, a, d)
     return out
 
 
