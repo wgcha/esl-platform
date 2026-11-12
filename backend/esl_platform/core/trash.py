@@ -24,7 +24,7 @@ from typing import Any
 
 from .atomic import FileLocked as _AtomicLocked
 from .atomic import atomic_replace, user_path
-from .config import Settings, overlaps
+from .config import Settings, overlaps_real
 from .errors import DomainError
 from .paths import esl_subdir
 from .uploads import is_link_like
@@ -110,7 +110,7 @@ def _norm(p: str) -> str:
 
 def _check_not_protected(settings: Settings, path: str) -> None:
     for r in _protected_roots(settings):
-        if overlaps(path, r):
+        if overlaps_real(path, r):
             raise PathUnsafe("입력·SPDM 루트와 겹치는 경로는 지우거나 옮기지 않습니다")
 
 
