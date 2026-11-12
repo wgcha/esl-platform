@@ -62,17 +62,17 @@ try {
   ]) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h } });
     const page = await ctx.newPage();
-    // mock 은 fetch 래퍼(src/mock) — 화면의 fetch 를 덮어 plan-view 만 코어 결과로
-    await page.addInitScript((body) => {
-      const real = window.fetch.bind(window);
+    await page.goto(`${base}/p/p-body/doe/doe-10?${Q}`);
+    await page.getByTestId("bead-b1").waitFor({ timeout: 30000 });
+    // mock 은 시작 때 window.fetch 를 목 래퍼로 바꿈(src/mock/install.ts) — 그 위에 plan-view 만 코어 결과로 덮음
+    await page.evaluate((body) => {
+      const m = window.fetch;
       window.fetch = async (input, init) => {
         const u = typeof input === "string" ? input : input.url;
         if (/\/doe\/studies\/[^/]+\/plan-view(\?|$)/.test(u)) return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
-        return real(input, init);
+        return m(input, init);
       };
     }, plan);
-    await page.goto(`${base}/p/p-body/doe/doe-10?${Q}`);
-    await page.getByTestId("bead-b1").waitFor({ timeout: 30000 });
     await page.locator("button[data-primary]", { hasText: "선택 저장" }).click();
     const pv = page.getByTestId("pv-select");
     await pv.waitFor({ timeout: 30000 });

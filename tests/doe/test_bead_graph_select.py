@@ -227,3 +227,37 @@ def test_toggle_by_ui_anchor(h6):
     new = [s for s in g3["segments"] if s.get("toggled") == "bead"]
     root = sorted(isl["floors"], key=lambda x: (g["floors"][x]["tier"], x))[0]
     assert len(new) == 1 and new[0]["floor"] == root
+
+
+def test_graph_plan_view_fields_filled(h6):
+    """v0.18.2 BG-D-46(이슈 #63 ① 진단): 그래프 방식(schema 2) 평면도 응답의 비드마다 ring_ab·label_ab·tiers·section 이 비어 있지
+    않음 — derive_v2 가 코어 plan_data 가 읽는 비드별 plan·section 을 만든다. 단면 키 = schema 1 과 같음(DoeSection), 깊이 미분
+    키 = 비드 tier, 바닥 z ≈ D_nom. DB 요약(with_figures False)·sel 회귀 요약은 그대로(plan·section 없음). DoePlanOut 검증."""
+    import json
+
+    from esl.library import normalize as nz
+    mesh, g, lab, fixed, _d = h6
+    sel, _sym, _w = bgr.auto_seed(g, lab, CFG)
+    norm, _ = bs.normalize(sel, CFG, mesh=mesh, graph=g, labels=lab)
+    frame = nz.frame(mesh["x0"], None, mesh["conn"], mesh["elem_type"])
+    d = bs.derive(mesh, norm, CFG, frame=frame, fixed_scan=fixed, graph=g, labels=lab)
+    pd = bs.plan_data(mesh, norm, d, CFG, frame=frame)
+    rows = {b["id"]: b for b in d["beads"]}
+    assert len(pd["beads"]) == len(norm["beads"]) >= 10
+    for b in pd["beads"]:
+        assert b["ring_ab"] and all(len(r) >= 3 for r in b["ring_ab"]), b["id"]
+        assert b["label_ab"] is not None and b["tiers"] and b["tiers"][0]["k"] == rows[b["id"]]["tier"]
+        sec = b["section"]
+        assert sec and len(sec["s"]) == len(sec["z"]) >= 5 and set(sec) >= {"s", "z", "dz_dD", "ds_dW", "dz_dW"}, b["id"]
+        D = rows[b["id"]]["D_nom"]
+        assert abs(max(sec["z"]) - D) <= 0.05 * D + 0.5 or max(sec["z"]) > D, (b["id"], max(sec["z"]), D)
+        dz = sec["dz_dD"][str(rows[b["id"]]["tier"])]
+        assert len(dz) == len(sec["s"]) and max(dz) >= 0.99 and min(dz) >= 0.0
+        if "W" in rows[b["id"]]["vars"]:
+            assert len(sec["ds_dW"]) == len(sec["s"]) and max(sec["ds_dW"]) == 0.5
+    json.dumps(pd, allow_nan=False)
+    D2 = bgr.derive_obj_v2(mesh, norm, CFG, g, lab, fixed_node_ids=fixed)
+    assert not {"plan", "section"} & set(D2.summary(frame, with_figures=False)["beads"][0])
+    schemas = pytest.importorskip("esl_platform.api.schemas")
+    out = schemas.DoePlanOut.model_validate({**pd, "warnings": [str(w) for w in pd["warnings"]]}).model_dump()
+    assert all(b["ring_ab"] and b["section"] and b["section"]["s"] for b in out["beads"])

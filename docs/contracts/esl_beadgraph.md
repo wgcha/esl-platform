@@ -385,6 +385,7 @@ validate(graph) -> None                                                         
 | BG-D-43 | 패키지 = **`packages/beadgraph/` 이 저장소 안, 독립 semver, 순수 파이썬 휠** — esl 은 경로 설치, physicsai 는 휠 고정(위) | 원본 1곳 + 소비자 고정 |
 | BG-D-44 | 합성 생성기(H5·H6)와 고정 픽스처는 **패키지 `testing/` 에**(휠 포함) — esl `tests/doe` 는 그것을 import | 두 플랫폼이 같은 시험 자료 |
 | BG-D-45 | ③ STEP 모핑은 이번 범위 밖, 같은 모듈 사용 예약(SR-D-44 TODO 확장) | 사용자 범위 |
+| BG-D-46 | **(v0.18.2, 이슈 #63 ① 진단) 그래프 비드 평면도·단면 자료**: `derive_v2` 문서의 그래프 비드 행에 코어 `plan_data` 가 읽는 `plan{ring_ab, e_ab, label_ab, tiers}`(frame 이 있을 때 — schema 1 `_plan_bead` 와 같은 함수: 윤곽 = 비드 요소 경계 고리, 라벨 = 비드 요소 중심 평균, 단 = `[{k: tier, ring_ab: 바닥(cls 0) 요소 고리}]`)과 `section{s, z, dz_dD, ds_dW, dz_dW, at_node_id: null, at_ab: null}` 를 붙임(`bead_graph._graph_figures`). 단면 = 대표 세그먼트(길이 최대, 같으면 작은 id)의 skeleton 호 길이 중점 접선 ê_L 에 수직인 평면(점 = 그 중점에 가장 가까운 비드 바닥 요소 중심, skeleton 없음 = 비드 요소 중심 평면 주축)과 메시 교선, s = ê_W = n̂0 × ê_L 방향, z = 부모 바닥 level 기준 비드 바닥 쪽 +(깊어짐 +), 범위 = 그 점을 지나는 비드 요소 교선 연속 구간(틈 ≤ 3 h) ± 3 h. **미분은 그림용 기하 근사**(그래프 기저를 풀지 않음 — 실측 H6 104k 요소 `bg.basis` 3.9 s 가 derive 를 0.3 → 4.3 s 로, 현장 267k 요소면 `derive_timeout_s` 20 s 에 가까움): 비드 구간 안 `dz_dD[tier] = clip(z/D_nom, 0, 1)`, W 변수면 `ds_dW = ½·clip((s − s_c)/(½ 바닥 폭), −1, 1)`·`dz_dW = 0`. 그림 자료 계산 실패 = 그 비드 `plan` 빈 값·`section` null(저장·평면도를 막지 않음). DB 요약(`summary(with_figures=False)`, 백엔드 `SUMMARY_DROP`)·기저·판정·`GRAPH_ALGO`·sel 회귀 요약은 그대로 | 평면도 응답 비드 13개 모두 `ring_ab`·`label_ab`·`tiers`·`section` 비어 있음(코어 `plan_data` 는 비드별 plan 을 기대 — `bead_select.py` plan_data, `derive_v2` 가 만들지 않음) |
 
 ## 9. 시험 (V-BG-*)
 
@@ -409,6 +410,7 @@ validate(graph) -> None                                                         
 | V-BG-15 | **API**: graph·graph.bin(머리·배열 길이·요소 순서 = select.bin), 404 `GRAPH_NOT_AVAILABLE`·409 `PREP_NOT_READY`·`BG_GRAPH_STALE`, 422 코드 5종, schema 혼용 422, auto + STEP 없음 허용(schema 2), settings `select.graph`·`select_auto`(paicad 무관), 설정 pydantic 검사 | `backend/tests/test_doe_select_graph_api.py` |
 | V-BG-16 | **워커 E2E**: ① case·② mesh 각각 schema 2 auto → seed 편집(병합·전환·tie) → 저장 → 미리보기 → 실행 — `BG_OUTSIDE_MOVED` 없음, 결과·순위·보고서 생성, 같은 선택 수동 스터디와 결과 바이트 동일(AD-X-2 예외 동일 적용), `GRAPH_FAILED` 주입 시 준비 READY + elems 비드로 실행 | `worker/tests/test_doe_select_graph_e2e.py` |
 | V-BG-17 | **화면**: 목록/트리 토글, 트리 노드 종류 표시, 섬↔비드·병합·분할·대칭 묶기 → 요청 본문, 3D 세그먼트 클릭 선택, `GRAPH_FAILED`·`BG_GRAPH_STALE` 띠, 2560·1920 잘림 없음, 220k graph.bin 디코드 ≤ 200 ms | `frontend/src/__tests__/doe_select_graph.test.tsx`, `src/__tests__/select_graph_bin.test.ts`, mock |
+| V-BG-18 | (v0.18.2 BG-D-46) 그래프 방식 plan-view: H6 auto seed 비드마다 `ring_ab`(고리 ≥ 3 점)·`label_ab`·`tiers[0].k = tier`·`section`(s·z ≥ 5 점, 바닥 z ≈ D_nom, `dz_dD[tier]` 0..1, W 변수면 `ds_dW` ±½) 비어 있지 않음, `DoePlanOut` 검증, DB 요약에 plan·section 없음 | `tests/doe/test_bead_graph_select.py::test_graph_plan_view_fields_filled`, 화면 `frontend/scripts/screenshots-v0182.mjs`(1920·2560) |
 | V-BG-R1 | **실기**: 실 Ch/R 와 이슈 #63 실제 부품 메시 — 세그먼트·접합 수, 자동 seed 비드 수, paicad 가 버리던 네트워크 인식 여부, 변수별 기본 범위 끝 안 판정(뒤집힘·바깥 이동 0), 분류 시간·메모리 | `docs/manual/bead_doe_check.md` 절 추가 |
 
 ## 10. 열린 항목 · 리스크
