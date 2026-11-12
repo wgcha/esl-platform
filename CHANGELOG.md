@@ -7,6 +7,7 @@
 - **④·③ STEP 메시 사다리(이슈 #63)**: CAD 메시가 면에서 실패한 뒤의 '③ 옵션 전체 재시도'(cad_relaxed)가 CAD 시간 몫 안에서 돌다가 메시를 다 만들고 품질·원 형상 비교 중에 끊기고, 다시 시도되지 않은 채 "cad_relaxed 실패 0.0 s" 로 기록되던 문제. 이제 cad_relaxed 는 **자기 하위 프로세스·자기 시간 제한**(`bead_doe.compare.mesh.cad_relaxed.timeout_s` 900 s, `isolate: true`)으로 돌고, 원 형상 비교는 표본(`fidelity_samples` 20,000점)으로 빨라졌다. 예전 방식(`isolate: false`)에서 끊긴 경우도 '시간 초과'와 실제 초를 적고 한 번 다시 시도한다
 - **freeform 재메시가 "one edge is incident to 3 triangles" 로 실패하던 문제**: 한 모서리를 세 면이 공유하는(비다양체) STEP 에서 면 분류가 실패했다. 이제 OCC 면마다 삼각화를 따로 이산 면으로 넘기고 공유 경계는 OCC 모서리를 따른다(면 분류 없음, `bead_doe.compare.freeform.surfaces: occ_faces` — 실패하면 예전 면 분류로). freeform 결과는 CAD 면 경계를 따르므로 예전과 요소 배치가 다를 수 있다
 - **① 그래프 방식(비드 네트워크) 선택의 평면도에 비드가 안 그려지고 단면 칸이 비던 문제**: 평면도 응답에 비드 윤곽·라벨·단·단면 자료를 채운다(단면의 범위 점선은 그림용 근사)
+- 큰 형상(면 > 1000 또는 구면 면): 삼각형 폴백 시도 제한 300 → 900 s(`bead_doe.compare.mesh.large.tria_timeout_s`, 형상 시간 예산 안). cad_relaxed·freeform·삼각형 폴백의 원 형상 비교가 큰 평면 삼각형이 있을 때 수십 분 걸리던 계산을 같은 결과로 수 초로 줄임
 ### 변경
 - 단계별 시간 문구에서 같은 단계가 재시도 끝에 성공하면 '(시간 초과)' 표시를 성공 줄에 남기지 않음(시도 기록에는 남음)
 

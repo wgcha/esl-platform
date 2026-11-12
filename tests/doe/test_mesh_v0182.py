@@ -5,7 +5,6 @@
 - freeform OCC 면별 이산 면(면 분류 없음): 비다양체 모서리(한 모서리를 세 면이 공유) 형상
 gmsh 가 없으면 skip."""
 import json
-import math
 import os
 import subprocess
 import sys
@@ -215,7 +214,24 @@ def test_face_model_shared_curve_three_faces(tmp_path):
     assert sorted(len(v) for v in by_curve.values()).count(3) == 2, by_curve      # 아치 양끝 = 세 면
 
 
-def test_tria_timeout_default_unchanged():
-    """C2-D-46 tria 상한 검토: 기본 300 s 유지(대형 모델 tria 는 단계 몫이 아니라 남은 예산으로 제한 — 계약 근거)."""
-    assert DEFAULTS["compare"]["tria"]["timeout_s"] == 300
-    assert math.isclose(DEFAULTS["compare"]["refine"]["stage_share"]["tria"], 0.15)
+@needs_gmsh
+@pytest.mark.parametrize("large", [True, False])
+def test_tria_timeout_large_model(tmp_path, monkeypatch, large):
+    """C2-D-46 tria 상한: 대형 모델이면 tria 시도 제한 = max(tria.timeout_s 300, large.tria_timeout_s 900)(남은 예산 안),
+    대형 아니면 예전 300 s 그대로. cad 실패 주입 → 사다리 [cad, tria]."""
+    seen = []
+    real = stg._cmp_remesh_one
+
+    def spy(c, row, h, ccfg, props, out_dir, timeout_s=None, kind="remesh"):
+        seen.append((kind, timeout_s))
+        return real(c, row, h, ccfg, props, out_dir, timeout_s=timeout_s, kind=kind)
+    monkeypatch.setattr(stg, "_cmp_remesh_one", spy)
+    tsc._inject_cad_fail(monkeypatch, {"d001"})
+    doe, _up = tsc._two(tmp_path, "TT", mesh_mode="auto", mesh_ladder=["cad", "tria"])
+    if large:
+        doe["cfg"]["bead_doe"]["compare"].setdefault("mesh", {})["large_faces"] = 0
+    out = tmp_path / "_doe" / "TT"
+    tsc._run(out, doe, stages=("bd_input", "bd_mesh0"))
+    assert seen and seen[-1][0] == "tria"
+    assert seen[-1][1] == pytest.approx(900.0 if large else 300.0)
+    assert DEFAULTS["compare"]["tria"]["timeout_s"] == 300 and DEFAULTS["compare"]["mesh"]["large"]["tria_timeout_s"] == 900.0

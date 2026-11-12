@@ -127,7 +127,9 @@ DEFAULTS: dict = {
                          # v0.17.4 C2-D-33 대형 모델: STEP 면 > large_faces 또는 large.periodic_types 면 있음 → 면 폴백 세션 상한·
                          # cad 몫(refine.total_timeout_s 비율) 줄임(뒤 freeform·tria 몫 확보)
                          "large_faces": 1000,
-                         "large": {"periodic_types": ["Sphere"], "fallback_sessions": 3, "cad_share": 0.15},
+                         "large": {"periodic_types": ["Sphere"], "fallback_sessions": 3, "cad_share": 0.15,
+                                   # v0.18.2 C2-D-46 대형 모델 tria 시도 제한(null = compare.tria.timeout_s) — 남은 예산 안에서
+                                   "tria_timeout_s": 900.0},
                          # v0.17.4 C2-D-34 cad 자식 제한 = spawn 제한 − child_margin_s(제한의 10 % 이하) — 자식이 먼저 끝나
                          # mesh_error.json(실패 면 기록)을 씀
                          "child_margin_s": 30.0,

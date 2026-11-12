@@ -87,6 +87,10 @@
 | C2-D-40 | **(v0.17.4) 시도 로그 보관**: keep_tries false 라도 지우는 시도 폴더의 `mesh.log`·`mesh_error.json` 과 cad 의 것을 `mesh/attempt_logs/<try_n|cad>.<파일>` 에 남김(형상 시작 때 이전 실행분 삭제) | 실측: freeform 1504 s 시간 초과 기록이 지워짐 |
 | C2-D-41 | **(v0.17.4) 형상 실패 차단**: 비교 형상(기준 제외) 중 READY 가 `compare.min_ready_shapes`(1, 0 = 안 막음)보다 적으면 compare.json·input.json 을 쓴 뒤 BD_MESH0 실패 `COMPARE_NO_SHAPES`(첫 실패 형상 단계별 문구). 일부만 실패면 READY + 경고 맨 앞 `COMPARE_SHAPES_FAILED: 비교 형상 k/n개 메시 실패 — 비교에서 빠짐: <id 이름 코드>…` | 실측: n_failed 1 인데 ok — 비교 대상 1/2 로 READY |
 | C2-D-42 | **(v0.17.4) freeform 삼각화 편차** `compare.freeform.angular_deflection_deg`(20, null = remesh 값)·`linear_deflection_mm`(null = remesh 0.05). remesh 의 각 5° 는 곡면(구·원통·토러스·BSpline)이 많은 STEP 에서 BRepMesh 삼각형이 폭증하고 `classifySurfaces` 가 초선형 — 합성 105 면 판: 5° = 26.4만 개·분류 36 s·freeform 70.5 s·hausdorff 0.550 mm·패치 179 / 20° = 3.8만 개·1.6 s·16.7 s·0.389 mm·94·quad 1.0. 합성 1915 면 판 5° = 메모리 초과(2.3 GB 에서 강제 종료). 현장(4,832 면, Sphere 99·Cylinder 1,504·Torus 640·BSpline 1,185)의 freeform 1,504 s 시간 초과와 같은 원인으로 판단. 충실도 기준 S 도 같은 삼각화(선 편차 0.05 mm 유지) | 이슈 #63 ⑤ |
+| C2-D-43 | **(v0.18.2, 이슈 #63 2026-11-12 진단) cad_relaxed 파라미터 재검토 — 기본값 유지**(`occ_fix_small 0`·`curvature_n 12`·`min_size_factor 0.2`·`defeature false`): 현장 요소 552,349 개(h 3 mm 예상 ~20만의 2.7배)는 곡률 세분(12/2π)이 작은 반경 필렛·원통(Cylinder 1,504·Torus 640)에서 최소 0.2 h(0.6 mm)까지 내려간 결과로 보이나, 그 경로가 현장에서 2D 를 끝낸 **유일한 성공 후보**(201 s)였고 실 STEP 없이 바꾸면 그 성공을 잃을 수 있음. 합성 면 공유 다딤플 고체(390 면, 구 384, R 8)에서는 0.2/12 = 57,633 요소(면적/h² 추정 ≈ 53.8k 의 1.07배), 0.5 = 57,633, 곡률 6 = 57,551, 곡률 0·0.8 = 57,551 — 차이 없음(작은 반경이 없음). 실제 병목은 요소 수가 아니라 후처리(충실도) 비용이었음(C2-D-45·46: 1,094.7 s → 22.1 s). 현장 요소가 계속 문제면 설정으로 `min_size_factor 0.5` 를 먼저 시험(키는 그대로 거울) | 실측(scratchpad rxparam) |
+| C2-D-44 | **(v0.18.2) freeform 면별 이산 면** `compare.freeform.surfaces`: `occ_faces`(기본) = OCC 삼각화(importStl)를 **OCC 면마다 별도 이산 면**으로, OCC 모서리 선분(importStl 1D)을 **이산 곡선**(공유 경계)으로, 곡선 끝 노드를 이산 꼭짓점으로 넣고 `createGeometry` — `classifySurfaces` 를 부르지 않음(비다양체 모서리 'one edge is incident to 3 triangles' 없음). 노드 병합 = `merge_rep`(merge_nodes 와 같은 대표 — 충실도 기준 S_X 와 같은 노드 순서). 한 면 안쪽에만 있는 곡선(원통 이음선)은 경계에서 뺌. 모서리 자료가 삼각화와 안 맞으면(선분 노드가 삼각형에 없음·한 선분이 다른 두 모서리·사슬 갈래·모서리 안 노드가 다른 모서리 끝·면 경계 선분이 어느 모서리에도 없음) `topology mesh`(gmsh `createTopology` 가 면 인접으로 곡선), 면별 모델 자체가 실패하면 `[freeform] … → 면 분류` 로그 뒤 v0.18.1 면 분류(`remesh.surfaces classify`, `occ_faces_error`). `classify` = v0.18.1 그대로. mesh.json `remesh` += `surfaces`·`topology`(·`topology_why`)·`n_curves`, `n_patches` = OCC 면 수. 경고 `MESH_FREEFORM` 문구는 'CAD 면 경계를 따르는 freeform …'. **성공 사례 출력 변경 근거**: 면 경계를 따르므로 요소 배치가 예전(특징각 30° 패치)과 다름 — 합성 아치 판(비다양체): 예전 5 패치·5,582 요소·hausdorff 0.044 mm → 4 면·5,595·0.046, T 판 4,514 → 4,491, 기존 사다리 시험(test_mesh_ladder_v0163·test_mesh_remesh) 그대로 통과. 합성 1915 면 판: 예전 freeform `REMESH_CLASSIFY_FAILED`(72.9 s) → 성공 225.8 s·97,817 요소·quad 1.0·hausdorff 0.427 mm·1 성분(tria 234,721 삼각형 대신 4각) | 이슈 #63 진단 ③ |
+| C2-D-45 | **(v0.18.2) cad_relaxed 분리** `compare.mesh.cad_relaxed.isolate`(true)·`timeout_s`(900, null = mesh.timeout_s)·`fidelity_samples`(20000): 첫 cad 시도(사본 설정 `cad_relaxed.defer`)의 자식은 첫 면 실패에서 cad_relaxed 를 돌리지 않고 `mesh_error.json` `cad_relaxed: {deferred, first_error, face, cad_seconds}` 만 남긴 뒤 면 폴백을 계속 → cad 가 실패하면 **부모가 자기 하위 프로세스·자기 시도 폴더**로 1회(direct, 제한 = min(timeout_s, 남은 예산, 남은 예산 − 뒤 단계 몫)) — auto 사다리와 mode cad 모두. 성공 행 `cad_relaxed.isolated` true, `after_timeout` = cad 가 시간 초과였는가, mesh.json `cad_relaxed` 는 자식 기록(ok·overrides·first_error·face·fidelity…) 유지. 세분화·defeature 시도의 cad 자식은 예전처럼(정의 안 바뀜). **끊김 기록**: isolate false(예전 경로)에서 감시 타이머가 cad_relaxed 후처리 중 자식을 끝내면 `_run_record` 가 `interrupted`·`seconds`(시작부터)·`cad_seconds` 를 적고, 부모는 cad_relaxed 행을 `FAILED_MESH`·`timed_out`·`interrupted`·실제 초(없으면 cad 초 − 첫 세션 초)로 적은 뒤 **부모에서 다시 1회** — v0.18.1 의 '0.0 s 실패'(tried 만 보고 재시도 안 함) 없음. 같은 단계가 재시도 끝에 성공하면 `stage_times` 성공 줄에 `timed_out` 을 남기지 않음(attempts 에 있음). **충실도 표본**: cad_relaxed 충실도의 양방향 표본 = min(remesh.fidelity.samples_max, fidelity_samples) 고정 간격 — 정확도 기준: 표본 최대 거리는 전체 최대의 하한이므로 채택 판정(hausdorff ≤ fail_mm 1.5)은 표본 간격 안 국소 돌출을 놓칠 수 있음; 합성 390 면 고체에서 20,000(×2) 표본 hausdorff 0.538932 mm = 전체(257,156 점) 0.538932 mm(같음), p95 0.37 vs 0.19(표본이 성김 — 판정에 안 씀) | 이슈 #63 진단 ② |
+| C2-D-46 | **(v0.18.2) 충실도 정확화·tria 상한**: (1) `mesh_remesh._dist_to_tris` 정확화 반경을 전체 최대 r 하나 대신 삼각형 r_t 크기 묶음(중앙값 × 2^j)마다 따로 찾아 묶어서 계산 — 같은 후보 상위 집합(진짜 최근접 포함)·같은 식이라 **결과 비트 동일**(아치·T·390 면 고체 × 분할 상한 2종 `np.array_equal`), 덜 나뉜 큰 삼각형(표본 상한이 분할 상한 4 × 표본을 낮춤)이 있을 때 점마다 O(M) Python 반복이 사라짐: 390 면 고체 1,013.9 s → 1.1 s(cad_relaxed 전체 1,094.7 → 22.1 s) — 현장 cad_relaxed 후처리 지연의 원인으로 판단. (2) tria 300 s: 합성 1915 면 판 tria 73~91 s 중 `collapse_short` 43 s·`flip_planar` 19 s(Python 반복, 출력 바이트를 바꾸지 않고 줄이기 어려움), 충실도 4.5 s — 현장(4,832 면)은 누적 ~550 s 에서 tria 고정 상한 300 s 에 끊겼고 예산은 ~3,000 s 남아 있었음 → **대형 모델(C2-D-33)만** `compare.mesh.large.tria_timeout_s`(900, null = tria.timeout_s) 로 tria 제한 = max(tria.timeout_s, 이 값)(여전히 남은 예산 안). 대형 아님 = 300 s 그대로 | 이슈 #63 진단 표(tria 300.1 s) |
 
 ## 3. 데이터 모델
 
@@ -112,6 +116,7 @@ DoeResultOut.ranking[].shape / baseline.shape / excluded[].shape += { source, me
 | R2 | `defeature.enabled` 면 `mg.defeature(gmsh, df, h)`(C2-D-12) | 경고 `DEFEATURE_SKIPPED` |
 | R3 | `Mesh.StlLinearDeflection = linear_deflection_mm`, `…Relative 0`, `Mesh.StlAngularDeflection = radians(angular_deflection_deg)`, `gmsh.model.mesh.importStl()` → 노드·삼각형 추출. 0개 → 실패, > `stl_max_tris` → 실패 | `REMESH_STL_EMPTY`, `REMESH_FAILED` |
 | R4 | `gmsh.clear()`, 이산 면 1개 `addDiscreteEntity(2)` + 삼각형, `Geometry.Tolerance = merge_tol_mm`, `removeDuplicateNodes()` | `REMESH_FAILED` |
+| R5′ | (v0.18.2 C2-D-44, freeform `surfaces occ_faces`) R5 대신 OCC 면별 이산 면·OCC 모서리 이산 곡선 → `createGeometry`(실패 시 R5) | `REMESH_CLASSIFY_FAILED` |
 | R5 | `classifySurfaces(radians(feature_angle_deg), boundary=True, forReparametrization=True, curveAngle=radians(curve_angle_deg))` → `createGeometry()` → synchronize. 패치 수 기록 | `REMESH_CLASSIFY_FAILED` |
 | R6 | `gmsh_options(h, profile)` 그대로(3 mm·Min 2.4·곡률 0·ExtendFromBoundary 0), `Mesh.RecombineAll = recombine`, `Mesh.Algorithm` = `algorithms` 를 차례로 **모델 전체** 재시도(면 폴백 없음) → `generate(2)` | `REMESH_FAILED`(마지막 오류 문구) |
 | R7 | `mg._extract` → `mg.build_mesh` → `mq.summarize` | – |
@@ -211,14 +216,18 @@ bead_doe:
       child_margin_s: 30.0
       heartbeat_s: 60.0          # C2-D-39
       cad_relaxed.defeature: false
+      cad_relaxed: {isolate: true, timeout_s: 900.0, fidelity_samples: 20000}   # v0.18.2 C2-D-45
+      large.tria_timeout_s: 900.0                # v0.18.2 C2-D-46
       fallback.nofix.area_grow_max: 1000.0   # C2-D-38
     freeform: {linear_deflection_mm: null, angular_deflection_deg: 20.0}   # C2-D-42
+    freeform.surfaces: occ_faces   # v0.18.2 C2-D-44 (occ_faces | classify)
     min_ready_shapes: 1          # C2-D-41
   select:
     graph:
       limits: {max_elems: 600000}   # 250,000 → 600,000(beadgraph 계약 성능 상한 600k/300 s — 현장 ① 메시 267,470 요소가 TOO_LARGE, 분류 16 s·396 MB 실측). timeout_s 180 유지
 ```
 - 시험 주입 += `hang`(cad 시도에서 OCCFixDegenerated 1 이면 첫 Sphere 면에서 gmsh 형식 한 줄을 찍고 멈춤).
+- 시험 주입 += `relaxed_slow`(v0.18.2 — cad 자식 안 cad_relaxed(direct 아님)의 충실도 비교에서 멈춤).
 
 ## 6. API · 스키마 · DB
 
@@ -297,6 +306,11 @@ BD_LOADS·BD_*·BD_POST  변경 없음(메시 dict 형식 같음). ranking.csv �
 | V-C2-39·40 | (v0.17.4) heartbeat·사다리 단계 줄, attempt_logs/cad.mesh_error.json | 같은 파일 |
 | V-C2-42 | (v0.17.4) freeform 편차 설정 거울(DEFAULTS·pydantic·yaml) | `tests/pipeline/test_config.py`(_C2_KEYS freeform) |
 | V-C2-41 | (v0.17.4) 비교 형상 전부 실패 → COMPARE_NO_SHAPES, min_ready_shapes 0 → 경고 맨 앞 COMPARE_SHAPES_FAILED | 같은 파일 |
+| V-C2-43 | (v0.18.2 C2-D-45) 새 키 DEFAULTS·사본 defer, 끊긴 cad_relaxed 기록 → 시간 초과·실제 초(0.0 s 아님), 감시 타이머 모의 → mesh_error.json interrupted·seconds·cad_seconds | `tests/doe/test_mesh_v0182.py` |
+| V-C2-44 | (v0.18.2 C2-D-45) isolate 파이프라인: cad 자식 deferred → 부모 cad_relaxed 성공(isolated, mesh.json 자식 기록 유지), mode cad 도 부모 1회, isolate false + 후처리 멈춤 주입(`relaxed_slow`) → 끊김 기록 + 부모 재실행 성공 | 같은 파일 |
+| V-C2-45 | (v0.18.2 C2-D-44) 비다양체 모서리(아치 끝 세 면 공유) freeform: classifySurfaces 실패 모의에도 occ_faces 성공(4 면·OCC 모서리 곡선·품질 오류 없음), classify = REMESH_CLASSIFY_FAILED; face_model 공유 곡선 세 면·S_X 같음 | 같은 파일 |
+| V-C2-46 | (v0.18.2 C2-D-46) 대형 모델 tria 제한 900 s, 대형 아님 300 s / 정확화 묶음 결과 비트 동일(수동 — decisions) | 같은 파일 |
+| V-C2-47 | (v0.18.2, 수동) 합성 1915 면 판 사다리 시간 main 대비, regress(mode 없음·cad·auto)·sel_regress 바이트 동일 | decisions.md |
 
 ## 11. 파일 소유권과 작업 단계
 

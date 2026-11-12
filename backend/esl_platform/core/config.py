@@ -655,6 +655,7 @@ class BeadDoeCompareLargeCfg(_M):
     periodic_types: list[str] = Field(default_factory=lambda: ["Sphere"], max_length=16)
     fallback_sessions: int = Field(default=3, ge=0, le=1000)   # 0 = 상한 없음
     cad_share: float = Field(default=0.15, gt=0, le=1)         # cad 제한 ≤ cad_share × refine.total_timeout_s(auto)
+    tria_timeout_s: float | None = Field(default=900.0, gt=0)   # v0.18.2 C2-D-46 대형 tria 시도 제한(null = tria.timeout_s)
 
 
 class BeadDoeCompareMeshCfg(_M):

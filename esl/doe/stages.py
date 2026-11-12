@@ -1521,6 +1521,9 @@ def _cmp_ladder(c: Ctx, row: dict, h: float, ccfg: dict, props: dict, lad: list[
     cmp_ = ccfg.get("compare") or {}
     ft = (cmp_.get("freeform") or {}).get("timeout_s")
     tt = mr._tcfg_timeout(ccfg)
+    lgt = ((ccfg["mesh"].get("large") or {}).get("tria_timeout_s")) if (lg or {}).get("large") else None
+    if lgt is not None:                                 # v0.18.2 C2-D-46 대형 모델 tria(남은 예산 안 — attempt_timeout)
+        tt = max(float(tt), float(lgt))
     to_disc = {"remesh": to_remesh, "freeform": float(ft) if ft is not None else to_remesh, "tria": tt}
     last_disc: dict = {}
 

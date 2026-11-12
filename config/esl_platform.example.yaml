@@ -190,7 +190,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
            occ_import_labels: 0,      # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기가 초선형으로 느려짐)
            cad_relaxed: {enabled: true, occ_fix_small: 0, curvature_n: 12, min_size_factor: 0.2, defeature: false, fidelity: true, isolate: true, timeout_s: 900.0, fidelity_samples: 20000},   # v0.17.4 C2-D-32 cad 면 실패 → ③ 옵션 전체 1세션, v0.18.2 C2-D-45 isolate = 부모가 자기 하위 프로세스·timeout_s 로(null = mesh.timeout_s), 충실도 표본 상한
            large_faces: 1000,         # v0.17.4 C2-D-33 STEP 면 > 이 값 또는 large.periodic_types 면 있음 = 대형 모델
-           large: {periodic_types: [Sphere], fallback_sessions: 3, cad_share: 0.15},   # 면 폴백 세션 상한(0 = 없음)·cad 몫(auto)
+           large: {periodic_types: [Sphere], fallback_sessions: 3, cad_share: 0.15, tria_timeout_s: 900.0},   # 면 폴백 세션 상한(0 = 없음)·cad 몫(auto)·v0.18.2 C2-D-46 대형 tria 제한(null = tria.timeout_s)
            child_margin_s: 30.0,   # v0.17.4 C2-D-34 cad 자식 제한 = spawn 제한 − 이 값(제한의 10 % 이하) — 실패 면 기록을 먼저 씀
            heartbeat_s: 60.0}         # v0.17.4 C2-D-39 메시 하위 프로세스 대기 중 단계 로그 진행 줄 간격(초)
     remesh:                           # v0.16.0 삼각형 재메시(C2-D-11~14): OCC 삼각화 → 면 분류(특징각) → quad 우선 재메시
