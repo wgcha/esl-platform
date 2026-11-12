@@ -813,6 +813,37 @@ worker_heartbeats = Table(
     Column("info", JSONB, nullable=True),
 )
 
+# ---------------------------------------------------------------- 0016: 목록 항목 삭제 기록(계약 esl_item_delete.md §6, v0.19.0)
+# 삭제된 항목 1건 = 1행(감사·휴지통 리퍼 상태). 항목 본문은 남기지 않는다(제목·요약·폴더 이름만).
+DELETION_KINDS = ("DOE", "OPT", "ANALYSIS", "COMPARE")
+PURGE_STATES = ("ABSENT", "PENDING", "PURGED", "FAILED")
+deletions = Table(
+    "deletions",
+    metadata,
+    Column("id", ID, primary_key=True),
+    Column("kind", String(8), nullable=False),
+    Column("item_id", ID, nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("title", String(200), nullable=True),
+    Column("item_created_by_name", String, nullable=True),
+    Column("deleted_by", String, nullable=False),
+    Column("deleted_by_name", String, nullable=False),
+    Column("deleted_at", TS, nullable=False, server_default=func.now()),
+    Column("summary", JSONB, nullable=False, server_default=text("'{}'::jsonb")),   # {scenario?, phase?, n_jobs, n_verify_drops, n_opt_unlinked, job_ids[]}
+    Column("dirs", JSONB, nullable=False, server_default=text("'[]'::jsonb")),      # [{rel, trash_name}]
+    Column("purge_state", String(8), nullable=False),
+    Column("purge_attempts", Integer, nullable=False, server_default="0"),
+    Column("purge_error", String(200), nullable=True),                              # 마스킹
+    Column("purged_at", TS, nullable=True),
+    CheckConstraint("kind IN (" + ",".join(f"'{x}'" for x in DELETION_KINDS) + ")", name="ck_deletions_kind"),
+    CheckConstraint("purge_state IN (" + ",".join(f"'{x}'" for x in PURGE_STATES) + ")", name="ck_deletions_purge_state"),
+    CheckConstraint("purge_attempts >= 0", name="ck_deletions_purge_attempts"),
+    CheckConstraint("jsonb_typeof(dirs) = 'array'", name="ck_deletions_dirs"),
+)
+Index("ix_deletions_project", deletions.c.project_id, deletions.c.deleted_at.desc())
+Index("ux_deletions_kind_item", deletions.c.kind, deletions.c.item_id, unique=True)
+Index("ix_deletions_purge", deletions.c.purge_state, deletions.c.deleted_at)
+
 __all__ = [
     "metadata", "job_queue_seq", "cases", "jobs", "job_steps", "support_sets", "esl_runs", "validations",
     "artifacts", "notifications", "worker_slot", "worker_heartbeats", "library_entries", "analysis_runs",
@@ -820,4 +851,5 @@ __all__ = [
     "DOE_PHASES", "DOE_JOB_TYPES", "UPLOAD_STATES", "verify_drops", "scx_submissions", "VERIFY_PHASES",
     "SUBMISSION_STATES", "VERIFY_JOB_TYPES", "LANES", "CK_JOBS_LANE", "client_codes", "client_tokens", "client_code_failures",
     "TERMINAL_STATES", "JOB_TYPES", "ARTIFACT_KINDS", "run_alls", "RUN_ALL_STATUSES", "RUN_ALL_STEPS",
+    "deletions", "DELETION_KINDS", "PURGE_STATES",
 ]

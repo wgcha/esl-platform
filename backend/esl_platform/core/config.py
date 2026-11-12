@@ -1424,6 +1424,16 @@ class VerifyDropCfg(_M):
     compare: VerifyDropCompareCfg = VerifyDropCompareCfg()
 
 
+class ItemDeleteCfg(_M):
+    """v0.19.0 목록 항목 삭제(esl_item_delete.md §11). 기본값 단일 출처 = core/trash.DEFAULTS(시험 test_item_delete 가 확인)."""
+
+    enabled: bool = True                                       # false → DELETE·delete-check 503 ITEM_DELETE_DISABLED, can_delete 항상 false
+    purge_interval_s: float = Field(default=60, gt=0, le=86400)   # 워커 리퍼(휴지통 영구 삭제) 주기
+    purge_batch: int = Field(default=20, ge=1, le=10000)        # 한 주기 최대 휴지통 항목 수
+    purge_max_attempts: int = Field(default=20, ge=1, le=10000)   # 영구 삭제 재시도 상한(넘으면 중지 + check WARN)
+    summary_job_ids_max: int = Field(default=50, ge=0, le=100000)   # deletions.summary.job_ids 최대 개수
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -1449,6 +1459,7 @@ class Settings(_M):
     hpc: HpcCfg | None = None                               # v0.11.0 SCX 릴레이(hpc.scx). 없으면 SCX 기능 비활성
     scx_drive: ScxDriveCfg = ScxDriveCfg()                  # v0.11.0 기능 A
     verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.12.0 기능 B — Radioss 검증 낙하
+    item_delete: ItemDeleteCfg = ItemDeleteCfg()            # v0.19.0 목록 항목 삭제(섹션 없으면 기본값)
 
     @property
     def api_prefix(self) -> str:
