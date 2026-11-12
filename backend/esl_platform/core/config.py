@@ -1424,6 +1424,16 @@ class VerifyDropCfg(_M):
     compare: VerifyDropCompareCfg = VerifyDropCompareCfg()
 
 
+class ItemDeleteCfg(_M):
+    """v0.19.0 목록 항목 삭제(esl_item_delete.md §11). 기본값 단일 출처 = core/trash.DEFAULTS(시험 test_item_delete 가 확인)."""
+
+    enabled: bool = True                                       # false → DELETE·delete-check 503 ITEM_DELETE_DISABLED, can_delete 항상 false
+    purge_interval_s: float = Field(default=60, gt=0, le=86400)   # 워커 리퍼(휴지통 영구 삭제) 주기
+    purge_batch: int = Field(default=20, ge=1, le=10000)        # 한 주기 최대 휴지통 항목 수
+    purge_max_attempts: int = Field(default=20, ge=1, le=10000)   # 영구 삭제 재시도 상한(넘으면 중지 + check WARN)
+    summary_job_ids_max: int = Field(default=50, ge=0, le=100000)   # deletions.summary.job_ids 최대 개수
+
+
 class Settings(_M):
     schema_version: Literal[1]
     profile: Literal["dev", "prod"]
@@ -1449,6 +1459,7 @@ class Settings(_M):
     hpc: HpcCfg | None = None                               # v0.11.0 SCX 릴레이(hpc.scx). 없으면 SCX 기능 비활성
     scx_drive: ScxDriveCfg = ScxDriveCfg()                  # v0.11.0 기능 A
     verify_drop: VerifyDropCfg = VerifyDropCfg()            # v0.12.0 기능 B — Radioss 검증 낙하
+    item_delete: ItemDeleteCfg = ItemDeleteCfg()            # v0.19.0 목록 항목 삭제(섹션 없으면 기본값)
 
     @property
     def api_prefix(self) -> str:
@@ -1500,6 +1511,11 @@ def is_within(child: str, parent: str) -> bool:
 
 def overlaps(a: str, b: str) -> bool:
     return is_within(a, b) or is_within(b, a)
+
+
+def overlaps_real(a: str, b: str) -> bool:
+    """문자열 겹침 또는 realpath(심링크·junction 해석) 끼리 겹침 — 보호 루트가 링크로 작업 폴더를 가리키는 경우까지."""
+    return overlaps(a, b) or overlaps(os.path.realpath(a), os.path.realpath(b))
 
 
 WIN_ABS = re.compile(r"^[A-Za-z]:[/\\\\]")
@@ -1775,16 +1791,16 @@ def _semantic(s: Settings, base_dir: str | None) -> tuple[list[Issue], dict[str,
             issues.append(iss)
     if not issues:
         if st.upload_root is not None:
-            if overlaps(st.upload_root, st.esl_root):
+            if overlaps_real(st.upload_root, st.esl_root):
                 issues.append(Issue("storage.upload_root", "esl_root 와 겹칩니다"))
             for r in st.spdm_roots:
-                if overlaps(st.upload_root, r):
+                if overlaps_real(st.upload_root, r):
                     issues.append(Issue("storage.upload_root", f"SPDM 루트({r})와 겹칩니다"))
         for i, r in enumerate(st.input_roots):
-            if overlaps(r, st.esl_root):
+            if overlaps_real(r, st.esl_root):
                 issues.append(Issue(f"storage.input_roots[{i}]", "esl_root 와 겹칩니다"))
         for i, r in enumerate(st.spdm_roots):
-            if overlaps(r, st.esl_root):
+            if overlaps_real(r, st.esl_root):
                 issues.append(Issue(f"storage.spdm_roots[{i}]", "esl_root 와 겹칩니다"))
     if s.auth.mode == "dev_static":
         if s.profile != "dev":

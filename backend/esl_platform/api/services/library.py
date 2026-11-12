@@ -44,6 +44,7 @@ from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
 from ...core.repositories.cases import VersionConflict
 from ..context import AppContext
+from . import item_delete
 from .common import (
     analysis_dir,
     case_dir,
@@ -579,13 +580,16 @@ def _norm_check(mode: str | None, rows: list[dict], target: dict | None, opts) -
                             entry_ids=miss, target_missing=tval in (None, 0))
 
 
-def analysis_out(ctx: AppContext, conn, a: dict[str, Any]) -> dict[str, Any]:
+def analysis_out(ctx: AppContext, conn, a: dict[str, Any], principal: Principal | None = None,
+                 fl: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
     d = dict(a)
     job = jobs_repo.get_job(conn, a["job_id"]) if a.get("job_id") else None
     d["job"] = job_out(conn, job, with_steps=True) if job else None
     d["status"] = job["state"] if job else "NONE"
     d["n_entries"] = len(a.get("entry_ids") or [])
     d["folder_path"] = analysis_dir(ctx, a)
+    item_delete.apply_flags(d, fl if fl is not None else item_delete.flags(ctx, conn, principal, "ANALYSIS", [a]), a["id"])
     return d
 
 
@@ -651,7 +655,7 @@ def create_analysis(ctx: AppContext, principal: Principal, body) -> dict[str, An
                                    job_type="LIB_ANALYZE", params=_jsonable(params), created_by=principal.user_id,
                                    created_by_name=principal.display_name)
         a = lib_repo.update_analysis(conn, aid, job_id=job["id"])
-        out = analysis_out(ctx, conn, a)
+        out = analysis_out(ctx, conn, a, principal)
         if excluded:
             out["excluded_ineligible"] = excluded
         return out
@@ -699,14 +703,16 @@ def _jsonable(o: Any) -> Any:
     return json.loads(json.dumps(o, default=str))
 
 
-def list_analyses(ctx: AppContext, project_id: str | None) -> list[dict[str, Any]]:
+def list_analyses(ctx: AppContext, project_id: str | None, principal: Principal | None = None) -> list[dict[str, Any]]:
     with ctx.engine.connect() as conn:
-        return [analysis_out(ctx, conn, a) for a in lib_repo.list_analyses(conn, project_id)]
+        rows = lib_repo.list_analyses(conn, project_id)
+        fl = item_delete.flags(ctx, conn, principal, "ANALYSIS", rows)
+        return [analysis_out(ctx, conn, a, principal, fl) for a in rows]
 
 
-def get_analysis(ctx: AppContext, aid: str) -> dict[str, Any]:
+def get_analysis(ctx: AppContext, aid: str, principal: Principal | None = None) -> dict[str, Any]:
     with ctx.engine.connect() as conn:
-        return analysis_out(ctx, conn, _load_analysis(conn, aid))
+        return analysis_out(ctx, conn, _load_analysis(conn, aid), principal)
 
 
 def _adir(ctx: AppContext, a: dict[str, Any]) -> str:

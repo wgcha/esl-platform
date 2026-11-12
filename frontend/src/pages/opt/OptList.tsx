@@ -1,6 +1,8 @@
 // 비드 최적화 목록(v0.10.0 탭 이름 — 이전 esl_opt_run.md §10.1 "최적화 실행" 탭, OR-D-21): 결과는 라이브러리에 넣지 않고 여기 남는다.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { NORM_NAME, SCENARIO_LABEL, STRATEGY_NAME, opt, optPath } from "../../api/opt";
+import { ItemDeleteButton } from "../../components/ItemDeleteButton";
 import { Card, Empty, JobStatusBadge } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt } from "../../lib/format";
@@ -8,8 +10,19 @@ import { isFullResult } from "../../api/types";
 
 export function OptList({ projectId }: { projectId: string }) {
   const runs = usePolling(() => opt.runs({ project_id: projectId }), 10000, [projectId]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const onDeleted = (m: string) => {
+    setMsg(m);
+    void runs.reload();
+  };
   return (
     <Card title="비드 최적화">
+      {msg && (
+        <div className="small ok-text" role="status">
+          {msg}
+        </div>
+      )}
+
       {!runs.data ? (
         <Empty>{runs.error ?? "불러오는 중…"}</Empty>
       ) : runs.data.length === 0 ? (
@@ -26,6 +39,7 @@ export function OptList({ projectId }: { projectId: string }) {
                 <th>하중 선정 · 목표</th>
                 <th>결과</th>
                 <th>상태</th>
+                <th />
                 <th />
               </tr>
             </thead>
@@ -53,6 +67,9 @@ export function OptList({ projectId }: { projectId: string }) {
                     </td>
                     <td>
                       <Link to={optPath(projectId, r.id)}>열기</Link>
+                    </td>
+                    <td>
+                      <ItemDeleteButton kind="OPT" id={r.id} title={r.title ?? r.template?.title ?? r.base?.case_title ?? r.id.slice(0, 8)} canDelete={r.can_delete} deleteBlocked={r.delete_blocked} onDeleted={onDeleted} />
                     </td>
                   </tr>
                 );

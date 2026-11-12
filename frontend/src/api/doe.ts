@@ -5,7 +5,7 @@ import type {
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
-  DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning,
+  DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
 } from "./types";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -247,6 +247,8 @@ export const doe = {
   run: (id: string, version: number, matrix_sha256: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version, matrix_sha256 } }),
   /** ④ 비교 실행(matrix_sha256 없음, SC-D-1) */
   runCompare: (id: string, version: number) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version } }),
+  deleteCheck: (id: string) => request<DeleteCheckOut>("GET", `/doe/studies/${id}/delete-check`),
+  remove: (id: string) => request<DeleteOut>("DELETE", `/doe/studies/${id}`),
   clone: (id: string, title?: string | null) => request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: title ? { title } : {} }),
   results: (id: string) => request<DoeResultOut>("GET", `/doe/studies/${id}/results`).then(normalizeResult),
   /** §11.4 ESL별 지표(순위 행에 per_esl 이 없을 때) */

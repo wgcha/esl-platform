@@ -9,7 +9,8 @@ worker.state_dir 쓰기, worker.slots(작업별 메모리·코어), 서버 h3d �
 않음), 워커가 heartbeat 에 기록한 paicad 버전·OCP·gmsh(§6.5), gmsh 모듈 설치 여부(find_spec — import 하지 않음),
 resources/doe_*.json, _doe 쓰기), SCX 릴레이(v0.11.0 esl_scx_relay.md §13: simdash_adapters import·lock 일치, hpc.scx 검증,
 비밀 파일 형식·권한(값은 출력 안 함), 릴레이 health·max_download_bytes·drive_base, worker.xfer_lanes),
-워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
+목록 항목 삭제(v0.19.0 esl_item_delete.md §3: storage.orphans — DB 행이 없는 항목 폴더 개수·크기만 보고, storage.trash —
+휴지통 영구 삭제 상태·재시도 상한 WARN), 워커 자원 제한기(worker.limiter — Windows 는 Job Object 생성·한도 설정 시험), DB 접속·migration head·워커 heartbeat, 솔버 백엔드(설정값 해석·사용 가능 목록)·pypardiso(MKL)·
 scikit-sparse(Windows 제외)·pyamg·psutil.
 
 - DB URL: 환경변수(설정 `database.url_env`, 기본 ESL_DATABASE_URL) → 없으면 `--runtime`의 `secrets/database_url`.
@@ -26,6 +27,7 @@ import argparse
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -41,6 +43,7 @@ for _p in (os.path.join(_ROOT, "backend"), os.path.join(_ROOT, "worker"), _ROOT)
 OK, WARN, FAIL, SKIP = "OK", "WARN", "FAIL", "SKIP"
 CONFIG_NAME = "esl_platform.yaml"
 SECRET_REL = ("secrets", "database_url")
+_UUID_NAME = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 PY_WANT = (3, 12)          # 대시보드(simulation_workbench)와 같은 Python 3.12(3.12.13)
 
 
@@ -508,7 +511,94 @@ def _paicad_record(conn) -> Item:
     return Item("bead_doe.paicad", WARN, f"사용 불가 {pc.get('reason') or 'PAICAD_CHECK_FAILED'} (paicad {pc.get('version')}{g})")
 
 
-def check_db(url: str, heartbeat_interval_s: float | None, *, bead_doe: bool = False) -> list[Item]:
+def _tree_size(path: str) -> int:
+    """폴더 총 크기(바이트). 링크·junction 은 따라가지 않고 링크 자체만 센다(읽기 전용)."""
+    total = 0
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for e in it:
+                    try:
+                        if e.is_symlink():
+                            continue
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        else:
+                            total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+def _fmt_bytes(n: int) -> str:
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if v < 1024 or unit == "GB":
+            return f"{v:.0f} {unit}" if unit == "B" else f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{n} B"
+
+
+def check_deletions(conn, s) -> list[Item]:
+    """v0.19.0 목록 항목 삭제(esl_item_delete.md §3·§6): `storage.orphans`(DB 행 없는 항목 폴더 — 개수·크기만 보고, 자동 삭제 안 함),
+    `storage.trash`(휴지통 영구 삭제 상태 — 재시도 상한에 닿은 FAILED 가 있으면 WARN). 읽기 전용."""
+    from sqlalchemy import select
+
+    from esl_platform.core import trash
+    from esl_platform.core.db import tables
+    from esl_platform.core.repositories import deletions as del_repo
+    from esl_platform.core.uploads import is_link_like
+
+    out: list[Item] = []
+    root = os.path.normpath(s.storage.esl_root)
+    tbl = {"DOE": tables.bead_does, "OPT": tables.opt_runs, "ANALYSIS": tables.analysis_runs,
+           "COMPARE": tables.comparisons, "VERIFY": tables.verify_drops}
+    n_orphans, size = 0, 0
+    per_kind: list[str] = []
+    try:
+        for kind, kdir in trash.KIND_DIR.items():
+            base = os.path.join(root, kdir)
+            if not os.path.isdir(base) or is_link_like(base):
+                continue
+            with os.scandir(base) as it:
+                names = [e.name for e in it if _UUID_NAME.match(e.name) and e.is_dir(follow_symlinks=False)
+                         and not is_link_like(e.path)]
+            if not names:
+                continue
+            found = {r[0] for r in conn.execute(select(tbl[kind].c.id).where(tbl[kind].c.id.in_(names))).all()}
+            orphan = [n for n in names if n not in found]
+            if orphan:
+                n_orphans += len(orphan)
+                per_kind.append(f"{kdir} {len(orphan)}")
+                size += sum(_tree_size(os.path.join(base, n)) for n in orphan)
+    except Exception as exc:  # noqa: BLE001 - 보고용 점검이라 실패해도 다른 항목에 영향 없음
+        out.append(Item("storage.orphans", SKIP, f"점검 실패({exc.__class__.__name__})"))
+    else:
+        if n_orphans:
+            out.append(Item("storage.orphans", WARN, f"DB 행이 없는 항목 폴더 {n_orphans}개, {_fmt_bytes(size)}"
+                                                    f"({', '.join(per_kind)}) — 이전 버전 고아 폴더, 자동으로 지우지 않음(확인 후 직접 정리)"))
+        else:
+            out.append(Item("storage.orphans", OK, "DB 행이 없는 항목 폴더 없음"))
+    try:
+        cfg = s.item_delete
+        counts = del_repo.count_by_state(conn)
+        stuck = del_repo.count_stuck(conn, max_attempts=cfg.purge_max_attempts)
+        msg = f"휴지통 {os.path.join(root, trash.TRASH_DIR)} — PENDING {counts.get('PENDING', 0)}, FAILED {counts.get('FAILED', 0)}, "               f"PURGED {counts.get('PURGED', 0)}"
+        if stuck:
+            out.append(Item("storage.trash", WARN, f"{msg} — 영구 삭제 재시도 상한(item_delete.purge_max_attempts {cfg.purge_max_attempts}) "
+                                                   f"에 닿아 멈춘 항목 {stuck}건(deletions.purge_error 확인)"))
+        else:
+            out.append(Item("storage.trash", OK, msg))
+    except Exception as exc:  # noqa: BLE001
+        out.append(Item("storage.trash", SKIP, f"조회 실패({exc.__class__.__name__})"))
+    return out
+
+
+def check_db(url: str, heartbeat_interval_s: float | None, *, bead_doe: bool = False, settings=None) -> list[Item]:
     from sqlalchemy import create_engine, text
 
     from esl_platform.core.db.engine import normalize_url
@@ -542,6 +632,8 @@ def check_db(url: str, heartbeat_interval_s: float | None, *, bead_doe: bool = F
                 out.append(_heartbeat(conn, heartbeat_interval_s))
                 if bead_doe:
                     out.append(_paicad_record(conn))
+                if settings is not None:
+                    out += check_deletions(conn, settings)
     except Exception as exc:  # noqa: BLE001 - 접속 실패 메시지에 비밀값이 섞이지 않게 종류만
         out.append(Item("db.connection", FAIL, f"{where} 접속 실패({exc.__class__.__name__}) — 서버·역할·비밀번호 확인"))
     finally:
@@ -654,7 +746,7 @@ def run_checks(config_path: str | None, *, runtime: str | None = None, environ: 
             items.append(Item("db.connection", FAIL, f"DB 접속 정보 없음({src})"))
         else:
             items += check_db(url, s.worker.heartbeat_interval_s,
-                              bead_doe=bool(s.bead_doe is not None and s.bead_doe.enabled))
+                              bead_doe=bool(s.bead_doe is not None and s.bead_doe.enabled), settings=s)
     else:
         items.append(Item("db.connection", SKIP, "--no-db"))
     return items

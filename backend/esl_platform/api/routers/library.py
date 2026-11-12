@@ -18,6 +18,8 @@ from ..schemas import (
     AnalysisOut,
     ComparisonCreate,
     ComparisonOut,
+    DeleteCheckOut,
+    DeleteOut,
     EntryCreate,
     EntryOut,
     EntryPatch,
@@ -29,6 +31,7 @@ from ..schemas import (
 )
 from ..services import bundle as bundle_svc
 from ..services import comparisons as cmp_svc
+from ..services import item_delete as del_svc
 from ..services import library as svc
 from ..services import library_export as export_svc
 
@@ -109,12 +112,24 @@ def create_analysis(body: AnalysisCreate, request: Request,
 @router.get("/library/analyses", response_model=list[AnalysisOut])
 def list_analyses(request: Request, project_id: str | None = None,
                   principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
-    return svc.list_analyses(get_ctx(request), project_id)
+    return svc.list_analyses(get_ctx(request), project_id, principal)
 
 
 @router.get("/library/analyses/{aid}", response_model=AnalysisOut)
 def get_analysis(aid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.get_analysis(get_ctx(request), aid)
+    return svc.get_analysis(get_ctx(request), aid, principal)
+
+
+@router.get("/library/analyses/{aid}/delete-check", response_model=DeleteCheckOut)
+def analysis_delete_check(aid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 삭제 전 확인(참조하던 비드 최적화 수 n_opt_unlinked 포함)."""
+    return del_svc.delete_check(get_ctx(request), principal, "ANALYSIS", aid)
+
+
+@router.delete("/library/analyses/{aid}", response_model=DeleteOut)
+def analysis_delete(aid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 영구 삭제: 이 분석을 참조하던 opt_runs.analysis_id 는 NULL(최적화는 유지) + 폴더 _trash 이동."""
+    return del_svc.delete_item(get_ctx(request), principal, "ANALYSIS", aid)
 
 
 @router.get("/library/analyses/{aid}/report", response_class=HTMLResponse)
@@ -152,12 +167,24 @@ def create_comparison(body: ComparisonCreate, request: Request,
 @router.get("/library/comparisons", response_model=list[ComparisonOut])
 def list_comparisons(request: Request, project_id: str | None = None, model: str | None = None,
                      principal: Principal = Depends(get_principal)) -> list[dict[str, Any]]:
-    return cmp_svc.list_comparisons(get_ctx(request), project_id, model)
+    return cmp_svc.list_comparisons(get_ctx(request), project_id, model, principal)
 
 
 @router.get("/library/comparisons/{cid}", response_model=ComparisonOut)
 def get_comparison(cid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return cmp_svc.get_comparison(get_ctx(request), cid)
+    return cmp_svc.get_comparison(get_ctx(request), cid, principal)
+
+
+@router.get("/library/comparisons/{cid}/delete-check", response_model=DeleteCheckOut)
+def comparison_delete_check(cid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 삭제 전 확인."""
+    return del_svc.delete_check(get_ctx(request), principal, "COMPARE", cid)
+
+
+@router.delete("/library/comparisons/{cid}", response_model=DeleteOut)
+def comparison_delete(cid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 영구 삭제(DB 행 + 폴더 _trash 이동). 등록자·전역 관리자만."""
+    return del_svc.delete_item(get_ctx(request), principal, "COMPARE", cid)
 
 
 @router.get("/library/comparisons/{cid}/report", response_class=HTMLResponse)

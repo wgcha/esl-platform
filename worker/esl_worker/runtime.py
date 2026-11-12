@@ -6,6 +6,7 @@ v0.11.0(esl_scx_relay.md SR-D-9): XFER 레인 루프 `worker.xfer_lanes` 개(HTT
 v0.12.0 실행 중 VERIFY_DROP ≤ verify_drop.max_running). 슬롯·자원 제한기 없음,
 SLOT·LIGHT 와 독립 claim. heartbeat info.scx = 어댑터 확인 {ok, version, commit, reason}.
 v0.13.0(esl_run_all.md §5): 리퍼 주기마다 일괄 실행 끊김 복구(`recover_run_alls`).
+v0.19.0(esl_item_delete.md §3): 휴지통 영구 삭제 리퍼 루프 `purge_trash`(`item_delete.purge_interval_s` 마다, trash_purge.py).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from esl_platform.core.repositories import workers as workers_repo
 
 from . import limiter as limiter_mod
 from . import paicad_proc
+from . import trash_purge
 from .executor import Executor
 
 log = logging.getLogger("esl_worker")
@@ -106,6 +108,18 @@ class Worker:
             log.exception("일괄 실행 끊김 복구 오류")
             return []
 
+    def purge_trash(self) -> trash_purge.PurgeSummary | None:
+        """v0.19.0 휴지통 영구 삭제 1주기(esl_item_delete.md §3). 오류는 로그만(루프 유지)."""
+        try:
+            return trash_purge.purge_once(self.settings, self.engine)
+        except Exception:  # noqa: BLE001 - 리퍼 루프 유지
+            log.exception("휴지통 영구 삭제 오류")
+            return None
+
+    def _purge_tick(self) -> None:
+        """상주 루프용(반환값 없음 = 항상 interval 만큼 쉼 — _loop 는 truthy 반환을 '바빴음'으로 본다)."""
+        self.purge_trash()
+
     def claim(self, lane: str) -> dict[str, Any] | None:
         if self.claims_paused:
             return None
@@ -148,6 +162,7 @@ class Worker:
         specs += [(lambda: self.run_once("SLOT"), w.claim_interval_s) for _ in range(int(w.slots))]
         specs += [(lambda: self.run_once("LIGHT"), w.claim_interval_s)]
         specs += [(lambda: self.run_once("XFER"), w.claim_interval_s) for _ in range(int(w.xfer_lanes))]
+        specs += [(self._purge_tick, self.settings.item_delete.purge_interval_s)]
         for fn, iv in specs:
             t = threading.Thread(target=self._loop, args=(fn, iv), daemon=True)
             t.start()

@@ -1335,6 +1335,10 @@ export interface AnalysisOut {
   created_by_name: string;
   created_at: string;
   updated_at: string;
+  /** v0.19.0 ITEM_DELETE §1: 삭제 권한(등록자·전역 관리자)만 반영 */
+  can_delete: boolean;
+  /** 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null) */
+  delete_blocked: string | null;
 }
 export type Analysis = AnalysisOut;
 
@@ -1496,6 +1500,10 @@ export interface ComparisonOut {
   created_by_name: string;
   created_at: string;
   updated_at: string;
+  /** v0.19.0 ITEM_DELETE §1: 삭제 권한(등록자·전역 관리자)만 반영 */
+  can_delete: boolean;
+  /** 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null) */
+  delete_blocked: string | null;
 }
 
 // ---------------------------------------------------------------- P3-UX (계약 esl_p3_ux.md §1~§3)
@@ -2007,6 +2015,41 @@ export interface TemplateOut {
   archived_at?: string | null;
   can_delete: boolean;
 }
+/** v0.19.0 ITEM_DELETE §1 (schemas.py 와 필드명 동일 — 바꾸지 말 것) */
+export type DeleteKind = "DOE" | "OPT" | "ANALYSIS" | "COMPARE";
+export interface DeleteBlockOut {
+  code: string;
+  message: string;
+  job_id: string | null;
+  job_type: string | null;
+  state: string | null;
+  verify_drop_id: string | null;
+}
+export interface DeleteFolderOut {
+  rel: string;
+  exists: boolean;
+}
+export interface DeleteCheckOut {
+  kind: DeleteKind;
+  id: string;
+  title: string;
+  can_delete: boolean;
+  blocked: DeleteBlockOut[];
+  n_jobs: number;
+  n_verify_drops: number;
+  n_opt_unlinked: number;
+  folders: DeleteFolderOut[];
+}
+export interface DeleteOut {
+  deleted: boolean;
+  kind: DeleteKind;
+  id: string;
+  purge: "PENDING" | "ABSENT";
+  deletion_id: string;
+  n_jobs: number;
+  n_verify_drops: number;
+  n_opt_unlinked: number;
+}
 export interface TemplateDeleteOut {
   deleted: boolean;
   archived: boolean;
@@ -2254,6 +2297,10 @@ export interface OptRunOut {
   created_by_name: string;
   created_at: string;
   updated_at: string;
+  /** v0.19.0 ITEM_DELETE §1: 삭제 권한(등록자·전역 관리자)만 반영 */
+  can_delete: boolean;
+  /** 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null) */
+  delete_blocked: string | null;
 }
 export type OptFileKind = "report" | "result" | "selection" | "deck" | "solve" | "target" | "log" | "other";
 export interface OptFileOut {
@@ -2777,6 +2824,10 @@ export interface DoeStudyOut {
   result_ready: boolean;
   created_by_name: string;
   created_at: string;
+  /** v0.19.0 ITEM_DELETE §1: 삭제 권한(등록자·전역 관리자)만 반영 */
+  can_delete: boolean;
+  /** 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null) */
+  delete_blocked: string | null;
 }
 export interface DoeBead {
   id: string;

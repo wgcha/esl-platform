@@ -12,6 +12,8 @@ from ...core.auth import Principal
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
 from ..schemas import (
+    DeleteCheckOut,
+    DeleteOut,
     DoeCheckIn,
     DoeCheckOut,
     DoeFileOut,
@@ -34,6 +36,7 @@ from ..schemas import (
     View3dOut,
 )
 from ..services import doe as svc
+from ..services import item_delete as del_svc
 from ..services import doe_select as sel_svc
 from .results import ZIP_RESPONSE, _etag_headers, _not_modified, zip_response
 
@@ -69,6 +72,18 @@ def doe_study_list(request: Request, project_id: str | None = Query(default=None
 @router.get("/doe/studies/{sid}", response_model=DoeStudyOut)
 def doe_study_get(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     return svc.get_study(get_ctx(request), principal, sid)
+
+
+@router.get("/doe/studies/{sid}/delete-check", response_model=DeleteCheckOut)
+def doe_delete_check(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 삭제 전 확인: 차단 사유(blocked[])·지울 job·검증 낙하 수·폴더 목록(크기 계산 없음)."""
+    return del_svc.delete_check(get_ctx(request), principal, "DOE", sid)
+
+
+@router.delete("/doe/studies/{sid}", response_model=DeleteOut)
+def doe_study_delete(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 영구 삭제: DB 행(실행 이력·검증 낙하 포함) 삭제 + 폴더 _trash 이동(영구 삭제는 워커 리퍼). 등록자·전역 관리자만."""
+    return del_svc.delete_item(get_ctx(request), principal, "DOE", sid)
 
 
 @router.get("/doe/studies/{sid}/params", response_model=DoeParamsOut)

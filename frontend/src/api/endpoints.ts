@@ -1,6 +1,6 @@
 import { request, API_PREFIX } from "./client";
 import type {
-  AnalysisCreate, AnalysisFileOut, AnalysisOut, ComparisonCreate, DispFieldOut, DispLayer, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
+  AnalysisCreate, AnalysisFileOut, DeleteCheckOut, DeleteOut, AnalysisOut, ComparisonCreate, DispFieldOut, DispLayer, ComparisonOut, EntryCreate, EntryOut, EntryPatch, EntryQuery, FieldLayer, FieldOut, SectionAxis,
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
@@ -70,6 +70,8 @@ export const api = {
   analyses: (projectId: string) => request<AnalysisOut[]>("GET", "/library/analyses", { query: { project_id: projectId } }),
   createAnalysis: (body: AnalysisCreate) => request<AnalysisOut>("POST", "/library/analyses", { body }),
   analysis: (id: string) => request<AnalysisOut>("GET", `/library/analyses/${id}`),
+  analysisDeleteCheck: (id: string) => request<DeleteCheckOut>("GET", `/library/analyses/${id}/delete-check`),
+  deleteAnalysis: (id: string) => request<DeleteOut>("DELETE", `/library/analyses/${id}`),
   analysisFiles: (id: string) => request<AnalysisFileOut[]>("GET", `/library/analyses/${id}/files`),
   analysisReportUrl: (id: string) => `${API_PREFIX}/library/analyses/${id}/report`,
   analysisDownloadUrl: (id: string, rel: string) => `${API_PREFIX}/library/analyses/${id}/download` + `?rel=${encodeURIComponent(rel)}`,
@@ -77,5 +79,7 @@ export const api = {
   comparisons: (projectId: string) => request<ComparisonOut[]>("GET", "/library/comparisons", { query: { project_id: projectId } }),
   createComparison: (body: ComparisonCreate) => request<ComparisonOut>("POST", "/library/comparisons", { body }),
   comparison: (id: string) => request<ComparisonOut>("GET", `/library/comparisons/${id}`),
+  comparisonDeleteCheck: (id: string) => request<DeleteCheckOut>("GET", `/library/comparisons/${id}/delete-check`),
+  deleteComparison: (id: string) => request<DeleteOut>("DELETE", `/library/comparisons/${id}`),
   comparisonReportUrl: (id: string) => `${API_PREFIX}/library/comparisons/${id}/report`,
 };

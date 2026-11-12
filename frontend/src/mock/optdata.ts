@@ -13,6 +13,8 @@ const err = (status: number, code: string, message: string, extra: Record<string
 const ok = (body: unknown, status = 200): MockResponse => ({ status, body });
 
 export interface OptCtx {
+  /** v0.19.0 목록 행의 can_delete·delete_blocked(ItemDeleteMock) */
+  deleteFlags: (kind: "OPT", id: string) => { can_delete: boolean; delete_blocked: string | null };
   entries: () => EntryOut[];
   me: () => Me;
   canRun: (projectId: string) => boolean;
@@ -461,6 +463,7 @@ export class OptMock {
       report_ready: done,
       dir_rel: `_opt/${r.id}`,
       folder_path: `E:\\ESL_ROOT\\_opt\\${r.id}`,
+      ...this.ctx.deleteFlags("OPT", r.id),
     };
   }
 

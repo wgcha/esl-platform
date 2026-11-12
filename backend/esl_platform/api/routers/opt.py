@@ -12,6 +12,8 @@ from ...core.auth import Principal
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
 from ..schemas import (
+    DeleteCheckOut,
+    DeleteOut,
     KeepoutSetIn,
     KeepoutSetOut,
     MeshCheckOut,
@@ -27,6 +29,7 @@ from ..schemas import (
     TemplateIn,
     TemplateOut,
 )
+from ..services import item_delete as del_svc
 from ..services import opt as svc
 from ..services import opt_keepouts as ko_svc
 from ..services import opt_templates as tpl_svc
@@ -114,6 +117,18 @@ def run_list(request: Request, project_id: str | None = Query(default=None, max_
 @router.get("/opt/runs/{rid}", response_model=OptRunOut)
 def run_get(rid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     return svc.get_run(get_ctx(request), principal, rid)
+
+
+@router.get("/opt/runs/{rid}/delete-check", response_model=DeleteCheckOut)
+def run_delete_check(rid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 삭제 전 확인."""
+    return del_svc.delete_check(get_ctx(request), principal, "OPT", rid)
+
+
+@router.delete("/opt/runs/{rid}", response_model=DeleteOut)
+def run_delete(rid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.19.0 영구 삭제(DB 행 + 폴더 _trash 이동). 등록자·전역 관리자만."""
+    return del_svc.delete_item(get_ctx(request), principal, "OPT", rid)
 
 
 @router.get("/opt/runs/{rid}/files", response_model=list[OptFileOut])

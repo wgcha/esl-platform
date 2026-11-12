@@ -1,10 +1,11 @@
 // 설계 버전 비교 상세(계약 §12.2): 진행 · 판정 배지(수렴/추가 반복 권장)·사유 · 위 접힘 영역 = 집계·씬 표·설정 · 보고서 화면 안 보기(ReportViewer, 주 버튼 = 보고서 받기).
 // 요약 = ComparisonOut.result(워커 _compare_summary).
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/endpoints";
 import type { ComparisonResolution, ComparisonResult, ComparisonVerdict, JobState } from "../../api/types";
 import { useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
+import { goneToList } from "../../components/ItemDeleteButton";
 import { Badge, Card, Empty, ErrorLine, JobStatusBadge, Stat } from "../../components/ui";
 import { JobProgress } from "../../components/JobProgress";
 import { ReportViewer } from "../../components/ReportViewer";
@@ -78,7 +79,8 @@ export function ComparisonDetail() {
   const { projectId = "", comparisonId = "" } = useParams();
   const { projects } = useApp();
   const project = projects.find((p) => p.id === projectId);
-  const cp = usePolling(() => api.comparison(comparisonId), 0, [comparisonId]);
+  const nav = useNavigate();
+  const cp = usePolling(() => api.comparison(comparisonId).catch(goneToList(nav, `${libPath(projectId)}?tab=analyses#comparisons`)), 0, [comparisonId]);
   const c = cp.data;
   const done = c?.status === "SUCCEEDED";
   const r = c?.result;
