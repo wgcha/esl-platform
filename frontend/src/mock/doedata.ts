@@ -60,6 +60,8 @@ export const DOE_METHOD_SOURCES: DoeMethodSources = {
 
 export function makeDoeSettings(): DoeSettingsOut {
   return {
+    // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
+    load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 5, 3], cell_min_mm: 3 },
     enabled: true,
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
@@ -85,8 +87,6 @@ export function makeDoeSettings(): DoeSettingsOut {
       remesh_available: true,
       mesh_input: { enabled: true, formats: [".rad", ".inc"], max_mb: 500 },
       step_ready: true,
-      // v0.20.0 하중 전달(esl_load_transfer.md §4.1·§4.2) — 새 스터디 기본 work
-      load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 5, 3], cell_min_mm: 3 },
       // v0.16.1(esl_select_relax.md §4.4)
       mesh: { ladder: ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"] },
       defeature: { hole_max_d_mm: 8, min_bead_height_mm: 2, fillet_max_r_mm: 1.5, kinds: ["flange", "hole", "slot", "bead", "fillet", "narrow"] },
@@ -777,8 +777,20 @@ export function ltVariants(lt: DoeLoadTransferResolved): string[] {
   const alt = lt.method === "work" ? "cell:3" : "work";
   return [...new Set([prim, alt, "cell:legacy", "cell:10", "cell:5", "cell:3"])].filter((v) => v in LT_SWEEP);
 }
-export function makeLtDiag(result: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved): DoeLoadTransferDiag {
-  const identity = result.reference_source === "case";
+/** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
+export type LtKind = "case" | "bmesh" | "step" | "compare";
+export function ltKind(o: { scenario: DoeScenario; inputs: { select_base?: string | null } }): LtKind {
+  if (o.scenario === "compare") return "compare";
+  if (o.scenario === "mesh" || (o.scenario === "select" && o.inputs.select_base === "mesh")) return "bmesh";
+  if (o.scenario === "step" || (o.scenario === "select" && o.inputs.select_base === "step")) return "step";
+  return "case";
+}
+const LT_PLAN: Record<LtKind, string> = { case: "case_once", bmesh: "bmesh_once", step: "step_once", compare: "compare_per_shape" };
+export function makeLtDiag(result: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved, kind: LtKind = "compare"): DoeLoadTransferDiag {
+  // Q-LT-4: identity(하중·MAC 비교)는 work + 같은 메시일 때만 — ① 은 Case 메시 자신, ④ 는 기준이 Case 메시
+  const sameMesh = kind === "case" || (kind === "compare" && result.reference_source === "case");
+  const identity = lt.method === "work" && sameMesh;
+  const truth = sameMesh ? ("direct_nodal" as const) : ("a_direct" as const);
   const vars = ltVariants(lt);
   const prim = vars[0];
   const label = (e: string) => e.slice(0, 8);
@@ -798,24 +810,29 @@ export function makeLtDiag(result: DoeResultOut, entryIds: string[], lt: DoeLoad
     method: lt.method,
     cell_size_mm: lt.cell_size_mm,
     alt: { method: vars[1] === "work" ? "work" : "cell", cell_size_mm: vars[1] === "work" ? null : 3 },
-    reference: { did: "d000", source: identity ? "case" : "step", identity, truth: identity ? "direct_nodal" : "a_direct" },
-    shapes: result.ranking.map((r, i) => ({
+    reference: { did: "d000", source: sameMesh ? "case" : "step", identity, truth },
+    plan: { id: LT_PLAN[kind], reuse: kind === "compare" ? "per_target" : "once", placement: { kind: kind === "compare" || kind === "case" ? "global" : "rigid", ...(kind === "bmesh" || kind === "step" ? { resid_med_mm: 0.4 } : {}) }, alt_designs: kind === "compare" ? "on" : "off" },
+    shapes: (kind === "compare" ? result.ranking : [{ id: "d000", score: 1 }]).map((r, i) => ({
       id: r.id,
       status: "OK",
-      supports: { mode: i === 2 ? ("fallback" as const) : ("transfer" as const), max_dist_mm: 1.1 + 0.2 * i, ...(i === 2 ? { reason: "LT_SUPPORT_FALLBACK" } : {}) },
-      region: { mode: "auto", n_in: 21_000 - 300 * i, n_out: 300 * i },
+      ...(kind === "compare"
+        ? {
+            supports: { mode: i === 2 ? ("fallback" as const) : ("transfer" as const), max_dist_mm: 1.1 + 0.2 * i, ...(i === 2 ? { reason: "LT_SUPPORT_FALLBACK" } : {}) },
+            region: { mode: "auto", n_in: 21_000 - 300 * i, n_out: 300 * i },
+          }
+        : {}),
       transfer: { max_dist_mm: 0.9 + 0.3 * i, far_n: i, newton_fallback_n: 0, seconds: 4.2 },
       per_esl: entryIds.map((e, k) => ({ entry_id: e, label: label(e), primary: metrics(prim, k), alt: { ...metrics(vars[1], k), C: 4.8e5, umax: 3.9 } })),
       score_alt: +(r.score * (lt.method === "work" ? 1.07 : 0.96)).toFixed(4),
     })),
-    d000: { truth: identity ? "direct_nodal" : "a_direct", rows },
+    d000: { truth, rows },
     warnings: [],
     seconds: 61.4,
   };
 }
 /** 결과에 하중 전달 요약·view3d_ref·view3d_esl 을 붙임(새 스냅샷만 — LT-13) */
-export function withLoadTransfer(res: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved): DoeResultOut {
-  const diag = makeLtDiag(res, entryIds, lt);
+export function withLoadTransfer(res: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved, kind: LtKind = "compare"): DoeResultOut {
+  const diag = makeLtDiag(res, entryIds, lt, kind);
   const vars = ltVariants(lt);
   const summary: DoeLoadTransferSummary["summary"] = vars.map((v) => {
     const rs = diag.d000.rows.filter((r) => r.variant === v);
@@ -835,9 +852,8 @@ export function withLoadTransfer(res: DoeResultOut, entryIds: string[], lt: DoeL
   for (const e of Object.values(view3d_esl)) view3d_ref[e] = kk(e);
   return {
     ...res,
-    load_transfer: { method: lt.method, cell_size_mm: lt.cell_size_mm, support: lt.support, region_mode: lt.region_mode, alt: diag.alt, truth: diag.d000.truth, summary, rank_alt_same: true, warnings_n: 0 },
-    view3d_ref,
-    view3d_esl,
+    load_transfer: { method: lt.method, cell_size_mm: lt.cell_size_mm, ...(lt.support ? { support: lt.support } : {}), ...(lt.region_mode ? { region_mode: lt.region_mode } : {}), alt: diag.alt, truth: diag.d000.truth, summary, rank_alt_same: kind === "compare" ? true : null, warnings_n: 0 },
+    ...(kind === "compare" ? { view3d_ref, view3d_esl } : {}),
   };
 }
 
@@ -1111,7 +1127,7 @@ export class DoeMock {
     const lt20: DoeLoadTransferResolved = { method: "work", cell_size_mm: null, support: "transfer", region_mode: "auto" };
     const c20 = cmp("doe-20", "Ch/R 형상 비교 — 하중 전달 work(v0.20)", "2026-11-13T02:00:00Z", mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B_rough.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"]], 0), "step");
     c20.out.inputs = { ...c20.out.inputs, load_transfer: lt20 };
-    c20.result = withLoadTransfer(makeCompareResult(c20.out.prep!, c20.out.entry_ids), c20.out.entry_ids, lt20);
+    c20.result = withLoadTransfer(makeCompareResult(c20.out.prep!, c20.out.entry_ids), c20.out.entry_ids, lt20, "compare");
     c20.out.phase = "DONE";
     c20.out.version = 4;
     for (const [jt, t0, t1] of [
@@ -1215,7 +1231,21 @@ export class DoeMock {
     const j11 = doneJob(this.id("j-doe"), "p-body", sel11.out.id, "DOE_PREP", "2026-11-09T03:00:05Z", "2026-11-09T03:01:00Z");
     this.seededJobs.push(j11);
     sel11.jobIds.push(j11.id);
-    this.recs.push(a, b, c, c20, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
+    // 3c) v0.20.0 ② B 메시 비드 선택 완료(하중 전달 work, plan once — 요약 줄 + 베이스라인 표만, "모델 차 포함")
+    const s21: Rec = {
+      ...a,
+      out: {
+        ...a.out,
+        id: "doe-21",
+        title: "QN80J Ch/R 비드 — B 메시 하중 전달(v0.20)",
+        scenario: "select",
+        created_at: "2026-11-13T04:00:00Z",
+        inputs: { ...a.out.inputs, mesh: { file_name: "QN80J_chr.rad", sha256: "b2".padEnd(64, "0") }, part_title: "chassis rear", inch: 75, select_base: "mesh", bead_source: "manual", select_schema: 2, load_transfer: { method: "work", cell_size_mm: null } },
+      },
+      jobIds: [...a.jobIds],
+    };
+    s21.result = a.result ? { ...a.result, scenario: "select" } : null;
+    this.recs.push(a, b, c, c20, s21, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
   }
 
   /** v0.17.3 시연·시험(?demoMeshSel=1): ② 다른 모델(B 메시) 비드 직접 선택 — doe-14 선택 저장됨(평면도 경계 매핑 층) */
@@ -1338,7 +1368,7 @@ export class DoeMock {
     }
     if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.scenario === "compare" && r.out.prep) {
       r.result = makeCompareResult(r.out.prep, r.out.entry_ids);
-      if (r.out.inputs.load_transfer) r.result = withLoadTransfer(r.result, r.out.entry_ids, r.out.inputs.load_transfer);
+      if (r.out.inputs.load_transfer) r.result = withLoadTransfer(r.result, r.out.entry_ids, r.out.inputs.load_transfer, "compare");
       r.out.phase = "DONE";
       r.out.version += 1;
     }
@@ -1614,11 +1644,26 @@ export class DoeMock {
   }
 
   /** v0.20.0 요청 → 해석된 하중 전달 값(요청 없으면 설정값, work 는 셀 크기 없음) */
-  private resolveLt(b: Record<string, unknown>): DoeLoadTransferResolved {
-    const c = this.settings.compare!.load_transfer!;
+  private resolveLt(b: Record<string, unknown>, compare = false): DoeLoadTransferResolved {
+    const c = this.settings.load_transfer!;
     const method = (b.load_transfer as "work" | "cell" | null | undefined) ?? c.method;
     const size = method === "work" ? null : b.cell_size_mm !== undefined ? (b.cell_size_mm as number | null) : c.cell_size_mm;
-    return { method, cell_size_mm: size, support: "transfer", region_mode: "auto" };
+    return compare ? { method, cell_size_mm: size, support: "transfer", region_mode: "auto" } : { method, cell_size_mm: size };
+  }
+
+  /** v0.20.0 요청 검사(§4.2 — 모든 시나리오): 값 → work + 셀 크기 값 → 범위 */
+  private ltCheck(b: Record<string, unknown>): MockResponse | null {
+    const ltc = this.settings.load_transfer;
+    if (b.load_transfer != null && b.load_transfer !== "work" && b.load_transfer !== "cell") return err(422, "INVALID_PARAMS", "하중 전달 방식이 올바르지 않습니다.");
+    if (b.load_transfer === "work" && b.cell_size_mm != null) return err(422, "LOAD_TRANSFER_INVALID", "일 등가에는 셀 크기를 쓸 수 없습니다.");
+    if (typeof b.cell_size_mm === "number" && (b.cell_size_mm < (ltc?.cell_min_mm ?? 3) || b.cell_size_mm > 200)) return err(422, "LOAD_TRANSFER_INVALID", "셀 크기가 범위 밖입니다.", { min: ltc?.cell_min_mm ?? 3, max: 200 });
+    return null;
+  }
+
+  /** 새 스냅샷의 결과에 하중 전달 요약·진단 키를 한 번 붙임(옛 스터디 = inputs.load_transfer 없음 → 그대로) */
+  private ensureLt(rec: Rec) {
+    const lt = rec.out.inputs.load_transfer;
+    if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
   }
 
   private check(b: Record<string, unknown>): MockResponse {
@@ -1626,8 +1671,16 @@ export class DoeMock {
     const pid = String(b.project_id ?? "");
     if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
     const scenario = b.scenario as DoeScenario;
-    if (scenario !== "compare" && (b.load_transfer != null || b.cell_size_mm != null)) return err(422, "INVALID_PARAMS", "하중 전달은 형상 직접 비교에만 쓸 수 있습니다.");
-    if (scenario === "compare") return this.checkCompare(b, pid);
+    const bad = this.ltCheck(b);
+    if (bad) return bad;
+    const out = scenario === "compare" ? this.checkCompare(b, pid) : this.checkOther(b, pid);
+    // v0.20.0 해석된 하중 전달 값(모든 모드, 설정이 있을 때만)
+    if (out.status === 200 && this.settings.load_transfer && scenario !== "compare") (out.body as DoeCheckOut).load_transfer = this.resolveLt(b);
+    return out;
+  }
+
+  private checkOther(b: Record<string, unknown>, pid: string): MockResponse {
+    const scenario = b.scenario as DoeScenario;
     if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
     if (!["same", "mesh", "step", "select"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
     if (scenario === "select") return this.checkSelect(b, pid);
@@ -1791,11 +1844,6 @@ export class DoeMock {
     const cc = st.compare;
     const mode = b.mesh_mode;
     if (mode != null && mode !== "cad" && mode !== "remesh" && mode !== "freeform" && mode !== "auto") return err(422, "INVALID_PARAMS", "메시 방식이 올바르지 않습니다.");
-    // v0.20.0 하중 전달 검사(§4.2): 값 → work + 셀 크기 값 → 범위
-    const ltc = cc?.load_transfer;
-    if (b.load_transfer != null && b.load_transfer !== "work" && b.load_transfer !== "cell") return err(422, "INVALID_PARAMS", "하중 전달 방식이 올바르지 않습니다.");
-    if (b.load_transfer === "work" && b.cell_size_mm != null) return err(422, "LOAD_TRANSFER_INVALID", "일 등가에는 셀 크기를 쓸 수 없습니다.");
-    if (typeof b.cell_size_mm === "number" && (b.cell_size_mm < (ltc?.cell_min_mm ?? 3) || b.cell_size_mm > 200)) return err(422, "LOAD_TRANSFER_INVALID", "셀 크기가 범위 밖입니다.", { min: ltc?.cell_min_mm ?? 3, max: 200 });
     if ((mode === "remesh" || mode === "freeform") && !cc?.remesh_available) return err(422, "REMESH_UNAVAILABLE", `이 gmsh 버전(${st.gmsh.version ?? "?"})은 삼각형 재메시를 지원하지 않습니다`);
     const rows: DoeCheckShape[] = [];
     for (let i = 0; i < shapes.length; i++) {
@@ -1844,7 +1892,7 @@ export class DoeMock {
       size: null,
       props_default: { t: 1.2, E: 205000, nu: 0.3 },
       ...(cc?.mesh_mode ? { mesh_mode: (mode as DoeMeshMode | undefined) ?? cc.mesh_mode, remesh_available: !!cc.remesh_available } : {}),
-      ...(ltc ? { load_transfer: this.resolveLt(b) } : {}),
+      ...(this.settings.load_transfer ? { load_transfer: this.resolveLt(b, true) } : {}),
       warnings,
     };
     if (!nRef) {
@@ -1856,6 +1904,20 @@ export class DoeMock {
   }
 
   handle(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
+    const n0 = this.recs.length;
+    const res = this.handle0(method, path, query, b);
+    // v0.20.0 새로 만든 스터디(모든 모드)의 스냅샷에 해석된 하중 전달 값(compare 는 handle0 에서 이미)
+    if (method === "POST" && path === "/doe/studies" && res?.status === 201 && this.recs.length > n0 && this.settings.load_transfer) {
+      const rec = this.recs[this.recs.length - 1];
+      if (!rec.out.inputs.load_transfer) {
+        rec.out.inputs.load_transfer = this.resolveLt(b);
+        return ok(this.studyOut(rec), 201);
+      }
+    }
+    return res;
+  }
+
+  private handle0(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
     if (!path.startsWith("/doe/")) return null;
     let r: RegExpMatchArray | null;
     if (method === "GET" && path === "/doe/settings") return ok(this.settings);
@@ -2051,7 +2113,8 @@ export class DoeMock {
       }
       if (method === "GET" && sub === "/results") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
-        return ok(rec.result);
+        this.ensureLt(rec);
+        return ok(rec.result!);
       }
       if (method === "GET" && sub === "/results/per-esl") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
@@ -2063,8 +2126,8 @@ export class DoeMock {
         const files: DoeFileOut[] = [{ rel: "report.html", size: 512_331, downloadable: true }, { rel: "post/ranking.csv", size: 8_204, downloadable: true }, ...(rec.result?.best?.files ?? [])];
         return ok(files);
       }
-      if (method === "GET" && sub === "/download" && query.get("rel") === "post/load_transfer_diag.json" && rec.result?.load_transfer && rec.out.inputs.load_transfer)
-        return ok(makeLtDiag(rec.result, rec.out.entry_ids, rec.out.inputs.load_transfer));
+      if (method === "GET" && sub === "/download" && query.get("rel") === "post/load_transfer_diag.json" && rec.result && rec.out.inputs.load_transfer)
+        return ok(makeLtDiag(rec.result, rec.out.entry_ids, rec.out.inputs.load_transfer, ltKind(rec.out)));
       if (method === "GET" && (sub === "/download" || sub === "/bundle")) return rec.result ? { status: 200, body: sub === "/bundle" ? "PK mock zip\n" : "mock file\n" } : err(404, "NOT_READY", "결과가 아직 없습니다.");
       if (method === "GET" && sub === "/report") return rec.result ? { status: 200, body: "<html><body>mock DOE report</body></html>" } : err(404, "NOT_READY", "보고서가 아직 없습니다.");
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {

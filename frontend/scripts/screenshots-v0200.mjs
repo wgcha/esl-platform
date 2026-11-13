@@ -76,6 +76,27 @@ try {
     const hint = (await page.getByTestId("lt-hint").textContent()) ?? "";
     await check(page, w, h, "④ 고급 설정 하중 전달", { ok: (await page.getByTestId("lt-select").inputValue()) === "cell:3", text: hint });
     await shot(page, `1_advanced_${w}.png`);
+    // 1b) ①②③ 고급 설정(§13.8) — ① 은 셀을 골라 안내 줄까지
+    for (const [tag, name] of [["case", /① 같은 모델/], ["bmesh", /② 다른 모델\(B 메시\)/], ["step", /③ 다른 모델\(STEP만\)/]]) {
+      await page.goto(`${base}/p/p-body/doe/new?entries=le-1,le-2,le-9&${Q}`);
+      await page.getByRole("radio", { name }).click();
+      const a2 = page.getByTestId("compare-adv");
+      await a2.locator("summary").click();
+      if (tag === "case") await page.getByTestId("lt-select").selectOption("cell:5");
+      await top(page, a2);
+      const note = tag === "case" ? await page.getByTestId("lt-same-note").count() : 0;
+      await check(page, w, h, `${tag} 고급 설정`, { ok: tag !== "case" || note === 1, text: `select ${(await page.getByTestId("lt-select").inputValue())} · 안내 ${note}` });
+      await shot(page, `1b_adv_${tag}_${w}.png`);
+    }
+    // 2b) ② 결과 진단(plan once — 형상 표 없음)
+    await page.goto(`${base}/p/p-body/doe/doe-21?${Q}`);
+    const s2 = page.getByTestId("lt-summary");
+    await s2.waitFor({ timeout: 30000 });
+    await page.getByTestId("lt-details").locator("summary").click();
+    await page.getByRole("table", { name: "하중 전달 베이스라인 참값 대비" }).waitFor({ timeout: 10000 });
+    await top(page, page.getByTestId("lt-block"));
+    await check(page, w, h, "② 결과 진단", { ok: (await page.getByRole("table", { name: "하중 전달 형상별" }).count()) === 0, text: ((await s2.textContent()) ?? "").slice(-30) });
+    await shot(page, `2b_diag_bmesh_${w}.png`);
     // 2) 결과 진단
     await page.goto(`${base}/p/p-body/doe/doe-20?${Q}`);
     const sum = page.getByTestId("lt-summary");

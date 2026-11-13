@@ -46,9 +46,11 @@ describe("하중 전달 규칙(화면 쪽 함수)", () => {
   });
 
   it("settings 보정: 옛 서버 = 키 없음, 새 서버 = 그대로", () => {
-    expect(normalizeDoeSettings({}).compare).not.toHaveProperty("load_transfer");
-    const n = normalizeDoeSettings({ compare: { load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 3], cell_min_mm: 3 } } });
-    expect(n.compare!.load_transfer).toEqual({ method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 3], cell_min_mm: 3 });
+    expect(normalizeDoeSettings({})).not.toHaveProperty("load_transfer");
+    // §13.6 최상위 칸(compare.load_transfer 는 이동되어 읽지 않음)
+    expect(normalizeDoeSettings({ compare: { load_transfer: { method: "work" } } })).not.toHaveProperty("load_transfer");
+    const n = normalizeDoeSettings({ load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 3], cell_min_mm: 3 } });
+    expect(n.load_transfer).toEqual({ method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 3], cell_min_mm: 3 });
   });
 
   it("요약 줄: 주 방식 + 다른 방식 최대 2개", () => {
@@ -106,7 +108,7 @@ describe("④ 새 연구 — 고급 설정 하중 전달 select", () => {
 
   it("옛 서버: settings 에 load_transfer 없음 → select 없음", async () => {
     await openCompare((s) => {
-      delete s.doe.settings.compare!.load_transfer;
+      delete s.doe.settings.load_transfer;
     });
     expect(screen.queryByTestId("lt-select")).toBeNull();
     expect(within(screen.getByTestId("compare-adv")).getByRole("radiogroup", { name: "메시 방식" })).toBeTruthy();
@@ -124,7 +126,7 @@ describe("④ 결과 — doe-20(하중 전달 work, 새 결과)", () => {
     expect(det.open).toBe(false);
     det.open = true;
     fireEvent(det, new Event("toggle"));
-    const t1 = await screen.findByRole("table", { name: "하중 전달 d000 참값 대비" });
+    const t1 = await screen.findByRole("table", { name: "하중 전달 베이스라인 참값 대비" });
     // 기준이 STEP → 참값 = A 직접, 상관·MAC = –
     const first = within(t1).getAllByRole("row")[1];
     expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual(["일 등가", "le-1", "–", "1.03", "1.02", "–"]);
@@ -153,6 +155,51 @@ describe("④ 결과 — doe-20(하중 전달 work, 새 결과)", () => {
     // 좌측 manifest = view3d_ref(d000_e<kk>) — 기본 d000 이 아님
     await waitFor(() => expect(urls.some((u) => new RegExp(`/view3d/${res.view3d_ref![esl]}/manifest\\.json`).test(u))).toBe(true));
     expect(urls.some((u) => /\/view3d\/d000\/manifest\.json/.test(u))).toBe(false);
+  }, 15000);
+});
+
+describe("①②③ 공통 — 고급 설정 하중 전달(§13.8)", () => {
+  async function openRadio(r: RegExp) {
+    renderApp("/p/p-body/doe/new?entries=le-1,le-2,le-9");
+    await waitFor(() => expect(radio(/① 같은 모델/)).toBeTruthy());
+    fireEvent.click(radio(r));
+  }
+  it("①②③ 모두 고급 설정 칸에 같은 select, 메시 방식 줄은 ③ 만", async () => {
+    await openRadio(/① 같은 모델/);
+    let adv = screen.getByTestId("compare-adv");
+    expect((within(adv).getByTestId("lt-select") as HTMLSelectElement).value).toBe("work");
+    expect(within(adv).queryByRole("radiogroup", { name: "메시 방식" })).toBeNull();
+    fireEvent.click(radio(/② 다른 모델\(B 메시\)/));
+    adv = screen.getByTestId("compare-adv");
+    expect(within(adv).getByTestId("lt-select")).toBeTruthy();
+    expect(within(adv).queryByRole("radiogroup", { name: "메시 방식" })).toBeNull();
+    fireEvent.click(radio(/③ 다른 모델\(STEP만\)/));
+    adv = screen.getByTestId("compare-adv");
+    expect(within(adv).getByTestId("lt-select")).toBeTruthy();
+    expect(within(adv).getByRole("radiogroup", { name: "메시 방식" })).toBeTruthy();
+  }, 15000);
+
+  it("① 에서 셀 선택 → 안내 줄(비교용), ② 에서는 안내 없음", async () => {
+    await openRadio(/① 같은 모델/);
+    expect(screen.queryByTestId("lt-same-note")).toBeNull();
+    fireEvent.change(screen.getByTestId("lt-select"), { target: { value: "cell:5" } });
+    expect(screen.getByTestId("lt-same-note").textContent).toBe("같은 모델 — 일 등가 = 노드 직접. 셀은 비교용");
+    fireEvent.click(radio(/② 다른 모델\(B 메시\)/));
+    expect(screen.queryByTestId("lt-same-note")).toBeNull();
+  }, 15000);
+});
+
+describe("② 결과 — doe-21(plan once)", () => {
+  it("요약 줄 끝 '(모델 차 포함)', 베이스라인 표만(형상 표 생략), 3D 안내 불변", async () => {
+    renderApp("/p/p-body/doe/doe-21");
+    const line = await screen.findByTestId("lt-summary");
+    expect(line.textContent).toMatch(/^하중 전달: 일 등가 · 기준 대비 A 메시 직접 풀이:/);
+    expect(line.textContent).toMatch(/\(모델 차 포함\)$/);
+    const det = screen.getByTestId("lt-details") as HTMLDetailsElement;
+    det.open = true;
+    fireEvent(det, new Event("toggle"));
+    await screen.findByRole("table", { name: "하중 전달 베이스라인 참값 대비" });
+    expect(screen.queryByRole("table", { name: "하중 전달 형상별" })).toBeNull();
   }, 15000);
 });
 

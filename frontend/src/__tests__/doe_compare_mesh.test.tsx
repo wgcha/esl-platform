@@ -153,6 +153,7 @@ describe("④ 새 연구 — 형상 표 메시 행", () => {
   it("메시 입력 꺼짐(옛 서버) → STEP 만 받음·출처 열 없음·고급 설정 없음", async () => {
     await openCompare((s) => {
       s.doe.settings.compare = { enabled: true, reason: null, max_shapes: 20, total_max_mb: 1000, mesh_size_mm: 3 };
+      delete s.doe.settings.load_transfer; // 옛 서버: 고급 설정 칸 자체가 없음(v0.20.0 하중 전달 select 도 없음)
     });
     const input = screen.getByLabelText("비교할 STEP 끌어다 놓기(여러 개)");
     fireEvent.change(input, { target: { files: [file("a.step"), file("m.rad")] } });

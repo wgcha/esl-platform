@@ -60,7 +60,9 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     const d = DEFAULT_SETTINGS[k] as unknown as Record<string, unknown>;
     return Object.fromEntries(Object.keys(d).map((x) => [x, v[x] ?? d[x]])) as unknown as DoeSettingsOut[K];
   };
+  const lt = normalizeLoadTransferCfg(r.load_transfer);
   return {
+    ...(lt ? { load_transfer: lt } : {}),
     enabled: r.enabled === true,
     reason: typeof r.reason === "string" ? r.reason : null,
     paicad: sub("paicad"),
@@ -113,6 +115,18 @@ function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSele
   };
 }
 
+
+/** v0.20.0 최상위 settings.load_transfer(모든 모드 공통, §13.6) 보정 — 없거나 모양이 다르면 키 없음 */
+function normalizeLoadTransferCfg(lt: unknown): DoeLoadTransferCfg | null {
+  if (!isObj(lt) || (lt.method !== "work" && lt.method !== "cell")) return null;
+  return {
+    method: lt.method as DoeLoadTransferMethod,
+    cell_size_mm: typeof lt.cell_size_mm === "number" ? lt.cell_size_mm : null,
+    cell_choices_mm: Array.isArray(lt.cell_choices_mm) ? lt.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number") : [null, 10, 5, 3],
+    cell_min_mm: num(lt.cell_min_mm, 3),
+  };
+}
+
 /** ④ compare 설정 보정(빠진 칸 = 계약 기본값). enabled·reason 이 없으면 scenarios.compare·compare_reason 에서 */
 function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCompareCfg {
   const v = isObj(raw) ? raw : {};
@@ -138,16 +152,6 @@ function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCom
         }
       : {}),
     ...(typeof v.step_ready === "boolean" ? { step_ready: v.step_ready } : {}),
-    ...(isObj(v.load_transfer) && (v.load_transfer.method === "work" || v.load_transfer.method === "cell")
-      ? {
-          load_transfer: {
-            method: v.load_transfer.method as DoeLoadTransferMethod,
-            cell_size_mm: typeof v.load_transfer.cell_size_mm === "number" ? v.load_transfer.cell_size_mm : null,
-            cell_choices_mm: Array.isArray(v.load_transfer.cell_choices_mm) ? v.load_transfer.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number") : [null, 10, 5, 3],
-            cell_min_mm: num(v.load_transfer.cell_min_mm, 3),
-          },
-        }
-      : {}),
     ...(isObj(v.mesh) ? { mesh: v.mesh as DoeCompareCfg["mesh"] } : {}),
     ...(isObj(v.defeature) ? { defeature: v.defeature as DoeCompareCfg["defeature"] } : {}),
   };

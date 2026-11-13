@@ -387,7 +387,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
           <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : stepBase ? "STEP 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
         </Field>
       </div>
-      {(scenario === "compare" || stepBase) && advanced}
+      {advanced}
       {checking && <div className="small muted">입력 검사 중…</div>}
       <ErrorLine text={checkError} />
       {check && <CheckLine check={check} scenario={scenario} stepBase={stepBase} />}

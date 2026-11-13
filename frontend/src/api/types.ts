@@ -2364,6 +2364,8 @@ export interface DoeMethodSources {
   error?: string;
 }
 export interface DoeSettingsOut {
+  /** v0.20.0 하중 전달 설정 — 모든 모드 공통 최상위 칸(esl_load_transfer.md §13.6, 옛 서버면 없음 = select 숨김) */
+  load_transfer?: DoeLoadTransferCfg | null;
   enabled: boolean;
   /** 비활성 사유 코드(§6.5) */
   reason: string | null;
@@ -2457,8 +2459,6 @@ export interface DoeCompareCfg {
   mesh?: { ladder?: DoeLadderStage[] | null } | null;
   /** v0.16.1 작은 형상 억제 기준(§4.4) */
   defeature?: { hole_max_d_mm: number; min_bead_height_mm: number; fillet_max_r_mm: number; kinds: DoeDefeatureKind[] } | null;
-  /** v0.20.0 하중 전달 설정(esl_load_transfer.md §4.1 — 옛 서버면 없음 = select 숨김) */
-  load_transfer?: DoeLoadTransferCfg | null;
 }
 /** v0.16.1 ④ 사다리 단계(SR-D-16) */
 export type DoeLadderStage = "cad" | "refine_local" | "refine_global" | "defeature" | "remesh" | "freeform" | "tria";
@@ -2582,8 +2582,9 @@ export interface DoeLoadTransferCfg {
 export interface DoeLoadTransferResolved {
   method: DoeLoadTransferMethod;
   cell_size_mm: number | null;
-  support: "transfer" | "auto";
-  region_mode: "auto" | "a_bbox" | "largest" | "all";
+  /** ④ 만(§13.6) */
+  support?: "transfer" | "auto";
+  region_mode?: "auto" | "a_bbox" | "largest" | "all";
 }
 export interface DoeCheckIn {
   project_id: string;
@@ -3054,8 +3055,8 @@ export interface DoeResultOut {
 export interface DoeLoadTransferSummary {
   method: DoeLoadTransferMethod;
   cell_size_mm: number | null;
-  support: "transfer" | "auto";
-  region_mode: string;
+  support?: "transfer" | "auto";
+  region_mode?: string;
   alt: { method: DoeLoadTransferMethod; cell_size_mm: number | null } | null;
   truth: "direct_nodal" | "a_direct" | null;
   summary: { variant: string; umax_ratio: [number, number]; C_ratio: [number, number]; mac_min: number | null; load_corr_min: number | null }[];
@@ -3082,11 +3083,14 @@ export interface DoeLoadTransferDiag {
   cell_size_mm: number | null;
   alt: { method: DoeLoadTransferMethod; cell_size_mm: number | null } | null;
   reference: { did: string; source: "case" | "step"; identity: boolean; truth: "direct_nodal" | "a_direct" | null };
+  /** §13.7 전달 계획(모든 모드) */
+  plan?: { id: string; reuse: "once" | "per_target"; placement?: { kind: string; resid_med_mm?: number | null } | null; alt_designs?: string } | null;
   shapes: {
     id: string;
     status: string;
-    supports: { mode: "transfer" | "auto" | "fallback"; max_dist_mm: number | null; reason?: string | null };
-    region: { mode: string; n_in: number; n_out: number };
+    /** ④ 행에만(§13.7) */
+    supports?: { mode: "transfer" | "auto" | "fallback"; max_dist_mm: number | null; reason?: string | null } | null;
+    region?: { mode: string; n_in: number; n_out: number } | null;
     transfer: { max_dist_mm: number; far_n: number; newton_fallback_n: number; seconds: number };
     per_esl: { entry_id: string; label?: string | null; primary: DoeLtMetrics; alt?: DoeLtMetrics | null }[];
     score_alt?: number | null;

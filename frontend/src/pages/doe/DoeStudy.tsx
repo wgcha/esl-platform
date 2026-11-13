@@ -11,7 +11,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
-import type { CompareShapeIn, DoeBeadSource, DoeLoadTransferDiag, DoeMeshMode, DoeMeshPart } from "../../api/types";
+import type { CompareShapeIn, DoeBeadSource, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
@@ -200,7 +200,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const hasStep = form.shapes.some((x) => rowSource(x) === "step");
   const meshOpts = (isCompare && hasStep) || stepBase ? { ...(form.meshMode ? { mesh_mode: form.meshMode } : {}), ...(form.meshRefine != null ? { mesh_refine: form.meshRefine } : {}) } : {};
   /** v0.20.0 하중 전달(사용자가 기본과 다르게 고른 경우만 요청에 넣음 — LT-11) */
-  const ltOpts = isCompare ? ltRequest(st?.compare?.load_transfer, form.ltChoice) : {};
+  const ltOpts = ltRequest(st?.load_transfer, form.ltChoice);
   const shapesKey = isCompare ? JSON.stringify([compareShapes, meshOpts, ltOpts]) : "";
   const partBad = isCompare
     ? form.shapes.map((x, i) => (rowSource(x) === "mesh" && partIdProblem(x.partId ?? "") ? `형상 ${i + 1}: ${partIdProblem(x.partId ?? "")}` : null)).find(Boolean) ?? null
@@ -219,6 +219,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     ...(meshBase ? { select_base: "mesh" as const, mesh_upload_id: meshId } : {}),
     ...(stepBase ? { select_base: "step" as const, step_upload_id: stepId, inch: inchVal, ...meshOpts } : {}),
     ...(isAuto && !stepBase && stepId ? { step_upload_id: stepId } : {}),
+    ...ltOpts,
   });
   useEffect(() => {
     setCheck(null);
@@ -235,7 +236,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
             ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, ...ltOpts }
             : isSelect
               ? { project_id: projectId, scenario, entry_ids: ids, ...selectBody() }
-              : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId },
+              : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId, ...ltOpts },
         )
         .then((c) => {
           if (!alive) return;
@@ -256,7 +257,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       alive = false;
       if (t) clearTimeout(t);
     };
-  }, [projectId, scenario, selectBase, source, idsKey, stepId, meshId, blocked, shapesKey, shapesBad, stepBase ? `${inchVal}:${JSON.stringify(meshOpts)}` : ""]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, scenario, selectBase, source, idsKey, stepId, meshId, blocked, shapesKey, shapesBad, (stepBase ? `${inchVal}:${JSON.stringify(meshOpts)}` : "") + JSON.stringify(ltOpts)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** v0.16.0 check-inputs parts[] → 메시 행 datalist, 파트가 하나면 빈 칸 자동 채움(C2-D-4·§8) */
   function applyParts(list: readonly (readonly [number, DoeMeshPart[] | null])[]) {
@@ -356,6 +357,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
               entry_ids: ids,
               step_upload_id: stepId,
               inch: inchVal,
+              ...ltOpts,
               title,
               props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
               mesh_size_mm: Number(form.meshSize),
@@ -399,13 +401,11 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
             checkError={checkError}
             checking={checking}
             allowed={allowed}
-            advanced={
-              isCompare && st.compare?.load_transfer ? (
-                <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} showMesh={!!st.compare.mesh_mode && (hasStep || !form.shapes.length)} />
-              ) : (isCompare && (hasStep || !form.shapes.length)) || stepBase ? (
-                st.compare?.mesh_mode ? <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} showMesh /> : null
-              ) : null
-            }
+            advanced={(() => {
+              // 메시 방식 줄은 ④(STEP 형상이 있거나 아직 없음)·③(STEP 기준)만, 하중 전달 select 는 ①②③④ 공통(§13.8)
+              const showMesh = !!st.compare?.mesh_mode && ((isCompare && (hasStep || !form.shapes.length)) || stepBase);
+              return showMesh || st.load_transfer ? <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} showMesh={showMesh} sameModel={isSelect && selectBase === "case"} /> : null;
+            })()}
           />
         ) : (
           <Empty>불러오는 중…</Empty>
@@ -435,7 +435,43 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
 
 // ================================================================ v0.16.0 ④ 고급 설정(메시 방식)
 /** 물성 칸 아래 접힘 칸: 메시 방식 [자동(기본) | CAD | 재메시] + '실패 시 세분화 허용'(자동일 때만). 재메시 미지원이면 비활성·사유 툴팁 */
-function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh }: {
+/** v0.20.0 하중 전달 select 1개(모든 모드 공용, §13.8): 일 등가(권장) | 셀 … — 기본과 같으면 요청 생략(form.ltChoice = null). ① 에서 셀 = 비교용 안내 */
+function LoadTransferField({ cfg, form, setForm, allowed, sameModel }: {
+  cfg: DoeLoadTransferCfg;
+  form: InputsForm;
+  setForm: (f: InputsForm | ((p: InputsForm) => InputsForm)) => void;
+  allowed: boolean;
+  sameModel?: boolean;
+}) {
+  const def = ltKey(cfg.method, cfg.cell_size_mm);
+  const cur = form.ltChoice ?? def;
+  const sizeOf = (k: string) => (k === "work" || k === "cell:legacy" ? null : Number(k.slice(5)));
+  const opts = ["work", ...cfg.cell_choices_mm.map((c) => ltKey("cell", c))];
+  // 기본이 선택지에 없으면(설정 불일치) 맨 앞에 추가
+  if (!opts.includes(def)) opts.unshift(def);
+  return (
+    <div className="doe-adv-row">
+      <label className="field-label" htmlFor="lt-select">하중 전달</label>
+      <select id="lt-select" aria-label="하중 전달" data-testid="lt-select" value={cur} disabled={!allowed} onChange={(e) => setForm((f) => ({ ...f, ltChoice: e.target.value === def ? null : e.target.value }))}>
+        {opts.map((k) => (
+          <option key={k} value={k}>
+            {ltChoiceLabel(k === "work" ? "work" : "cell", sizeOf(k), { def: k === def })}
+          </option>
+        ))}
+      </select>
+      <span className="small muted" data-testid="lt-hint">
+        {cur === "work" ? "ESL 하중을 일 등가로 대상 메시에 옮깁니다(같은 규칙을 모든 안에)" : "ESL 하중을 셀 합력으로 나눠 옮깁니다(셀이 작을수록 원본에 가까움)"}
+      </span>
+      {sameModel && cur !== "work" && (
+        <span className="small warn-text" data-testid="lt-same-note">
+          같은 모델 — 일 등가 = 노드 직접. 셀은 비교용
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh, sameModel }: {
   st: DoeSettingsOut;
   check: DoeCheckOut | null;
   form: InputsForm;
@@ -443,19 +479,11 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh }: {
   allowed: boolean;
   /** 메시 방식 줄(STEP 형상이 없으면 숨김 — 하중 전달 select 는 형상 출처와 무관) */
   showMesh: boolean;
+  /** ① 같은 모델(select_base case) — 셀 선택 안내용 */
+  sameModel?: boolean;
 }) {
-  const lt = st.compare?.load_transfer ?? null;
-  const ltDef = lt ? ltKey(lt.method, lt.cell_size_mm) : null;
-  const ltCur = form.ltChoice ?? ltDef;
-  const ltOptions: { key: string; label: string }[] = lt
-    ? [{ key: "work", label: "work" }, ...lt.cell_choices_mm.map((c) => ({ key: ltKey("cell", c), label: "cell" }))].map((o) => {
-        const size = o.key === "work" ? null : o.key === "cell:legacy" ? null : Number(o.key.slice(5));
-        return { key: o.key, label: ltChoiceLabel(o.key === "work" ? "work" : "cell", size, { def: o.key === ltDef }) };
-      })
-    : [];
-  // 기본이 선택지에 없으면(설정 불일치) 맨 앞에 추가
-  if (lt && ltDef && !ltOptions.some((o) => o.key === ltDef)) ltOptions.unshift({ key: ltDef, label: ltChoiceLabel(lt.method, lt.cell_size_mm, { def: true }) });
-  const ltName = ltCur ? ltVariantLabel(ltCur) : "";
+  const lt = st.load_transfer ?? null;
+  const ltName = lt ? ltVariantLabel(form.ltChoice ?? ltKey(lt.method, lt.cell_size_mm)) : "";
   const def: DoeMeshMode = st.compare?.mesh_mode ?? "auto";
   const mode: DoeMeshMode = form.meshMode ?? def;
   const remeshOk = check?.remesh_available ?? st.compare?.remesh_available ?? false;
@@ -468,21 +496,7 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh }: {
         고급 설정 <span className="muted small">{showMesh ? <>· 메시 방식 {MESH_MODE_NAME[mode]}{mode === "auto" && !refine ? "(세분화 끔)" : ""}</> : null}{lt ? <>{showMesh ? " " : ""}· 하중 {ltName}</> : null}</span>
       </summary>
       <div className="adv-body doe-adv-body">
-        {lt && (
-          <div className="doe-adv-row">
-            <label className="field-label" htmlFor="lt-select">하중 전달</label>
-            <select id="lt-select" aria-label="하중 전달" data-testid="lt-select" value={ltCur ?? ""} disabled={!allowed} onChange={(e) => setForm((f) => ({ ...f, ltChoice: e.target.value === ltDef ? null : e.target.value }))}>
-              {ltOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <span className="small muted" data-testid="lt-hint">
-              {ltCur === "work" ? "ESL 하중을 일 등가로 형상 메시에 옮깁니다(기준·비교 형상 같은 규칙)" : "ESL 하중을 셀 합력으로 나눠 옮깁니다(셀이 작을수록 원본에 가까움)"}
-            </span>
-          </div>
-        )}
+        {lt && <LoadTransferField cfg={lt} form={form} setForm={setForm} allowed={allowed} sameModel={sameModel} />}
         {showMesh && (<>
         <div className="doe-adv-row">
           <span className="field-label">메시 방식</span>
@@ -595,6 +609,7 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
     <div className="doe-lt" data-testid="lt-block">
       <div className="small" data-testid="lt-summary">
         {ltSummaryLine(lt)}
+        {result.scenario !== "compare" && lt.truth === "a_direct" ? " (모델 차 포함)" : ""}
         {lt.rank_alt_same != null ? ` · 다른 방식 순위 ${lt.rank_alt_same ? "같음" : "다름"}` : ""}
         {lt.warnings_n ? ` · 경고 ${lt.warnings_n}` : ""}
       </div>
@@ -605,11 +620,11 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
         {diag && (
           <>
             <div className="small muted">
-              기준 d000 참값 대비 — 참값 = {diag.d000.truth === "direct_nodal" ? "① 직접 하중" : diag.d000.truth === "a_direct" ? "A 메시 직접 풀이" : "없음"}
+              베이스라인(d000) 참값 대비 — 참값 = {diag.d000.truth === "direct_nodal" ? "① 직접 하중" : diag.d000.truth === "a_direct" ? "A 메시 직접 풀이" : "없음"}
               {diag.reference.identity ? "" : " (상관·MAC 은 같은 메시일 때만)"}
             </div>
             <div className="table-wrap scroll">
-              <table className="table compact" aria-label="하중 전달 d000 참값 대비">
+              <table className="table compact" aria-label="하중 전달 베이스라인 참값 대비">
                 <thead>
                   <tr><th>방식</th><th>ESL</th><th>하중 상관</th><th>umax ×</th><th>C ×</th><th>MAC</th></tr>
                 </thead>
@@ -627,6 +642,7 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
                 </tbody>
               </table>
             </div>
+            {diag.shapes.length >= 2 && (
             <div className="table-wrap scroll" style={{ marginTop: "0.75rem" }}>
               <table className="table compact" aria-label="하중 전달 형상별">
                 <thead>
@@ -642,13 +658,14 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
                         <td>{fx(row?.score, 3)}</td>
                         <td>{fx(sh.score_alt, 3)}</td>
                         <td>{pct(far)}</td>
-                        <td>{sh.supports.mode === "transfer" ? "이전" : sh.supports.mode === "fallback" ? "자동(이전 실패)" : "자동"}</td>
+                        <td>{!sh.supports ? "–" : sh.supports.mode === "transfer" ? "이전" : sh.supports.mode === "fallback" ? "자동(이전 실패)" : "자동"}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            )}
           </>
         )}
       </details>
