@@ -1722,6 +1722,9 @@ class DoeCheckIn(_Req):
     # v0.18.0(esl_step_graph.md SG-D-1·3): step = ③ 다른 모델(STEP만) — step_upload_id 필수(auto·manual), props·inch·mesh_mode·
     # mesh_refine 선택, mesh_upload_id·part_title·mesh_size_mm 금지(h = ④ 프로필), schema 2 고정
     select_base: Literal["case", "mesh", "step"] | None = None
+    # v0.20.0 하중 전달(esl_load_transfer.md §4.2·§13.6, 모든 시나리오 ①②③④ 공통): 없으면 bead_doe.load_transfer(최상위) 설정값. work + cell_size_mm 값 → 422 LOAD_TRANSFER_INVALID, cell + cell_size_mm 생략 = 설정값(명시적 null = 기존 24×14 격자)
+    load_transfer: Literal["work", "cell"] | None = None
+    cell_size_mm: float | None = None
 
 
 class DoeStudyIn(DoeCheckIn):
@@ -1772,6 +1775,10 @@ class DoeSettingsOut(_Out):
     compare_reason: str | None = None               # v0.14.0 ④ 비활성 사유(DOE_DISABLED·COMPARE_DISABLED·GMSH_UNAVAILABLE), null = 사용 가능
     compare: dict[str, Any] | None = None          # v0.14.0 ④ {enabled, reason, max_shapes, total_max_mb, mesh_size_mm} + v0.16.0
     #                                                 {mesh_mode, remesh_available, mesh_input{enabled, formats, max_mb}, step_ready}
+    # v0.20.0 하중 전달 설정(모든 모드 공통, §13.6): {method, cell_size_mm, cell_choices_mm, cell_min_mm} — 없으면 화면이 select 를 숨김
+    load_transfer: dict[str, Any] | None = None
+    # v0.20.0 강성 지표 설정 {metric, lin_form, lin_valid, imbalance_warn}(새 스터디 기본·경고 문턱)
+    rank: dict[str, Any] | None = None
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
 
@@ -1794,6 +1801,8 @@ class DoeCheckOut(_Out):
     # v0.18.0 select step(esl_step_graph.md §4.2·§6): 준비 전 미리 보는 정보 {size_mm(④ 프로필 h), ladder, tria_policy,
     # fixed_transfer{enabled, mode}, region{mode}}
     step_graph: dict[str, Any] | None = None
+    # v0.20.0 해석된 하중 전달 {method, cell_size_mm} + compare 만 {support, region_mode}(요청 덮어쓰기 반영 — inputs.load_transfer 와 같은 값)
+    load_transfer: dict[str, Any] | None = None
 
 
 class DoeStudyOut(_Out):
@@ -1875,6 +1884,20 @@ class DoeResultOut(_Out):
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     # v0.16.1 select(esl_select_relax.md SR-D-11): {best_clean: 경고 없는 최상위 안 id | null}. ranking 행 warn[] 은 행 dict 안
     summary: dict[str, Any] | None = None
+    # v0.20.0 하중 전달 진단 요약(esl_load_transfer.md §5·§13.7, 모든 시나리오): {method, cell_size_mm, support?, region_mode?, alt{method, cell_size_mm}|null,
+    # truth, summary[{variant, umax_ratio[min,max], C_ratio[min,max], mac_min, load_corr_min}], rank_alt_same, warnings_n}.
+    # 옛 스터디(legacy) = 세 키 모두 null. view3d_ref{entry_id: "d000_e<kk>"}·view3d_esl{did: entry_id} = 3D 비교 좌우 같은 ESL(LT-9)
+    load_transfer: dict[str, Any] | None = None
+    # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric(lin|solve)·lin_form(ritz|taylor) — 옛 스터디 = null(solve).
+    # ranking 행(dict) += score_solve·imbalance_max·rho_min·rho_max·umax_def, per_esl 행 += C_lin·C_ritz·rho·imbalance_rel·umax_def·ts_err?
+    # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
+    metric: Literal["lin", "solve"] | None = None
+    lin_form: Literal["ritz", "taylor"] | None = None
+    # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
+    rank: dict[str, Any] | None = None
+    C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
+    view3d_ref: dict[str, str] | None = None
+    view3d_esl: dict[str, str] | None = None
 
 
 class DoePerEslDesign(_Out):
