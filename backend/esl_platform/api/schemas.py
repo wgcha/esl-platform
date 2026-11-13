@@ -1886,6 +1886,11 @@ class DoeResultOut(_Out):
     # truth, summary[{variant, umax_ratio[min,max], C_ratio[min,max], mac_min, load_corr_min}], rank_alt_same, warnings_n}.
     # 옛 스터디(legacy) = 세 키 모두 null. view3d_ref{entry_id: "d000_e<kk>"}·view3d_esl{did: entry_id} = 3D 비교 좌우 같은 ESL(LT-9)
     load_transfer: dict[str, Any] | None = None
+    # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric(lin|solve)·lin_form(ritz|taylor) — 옛 스터디 = null(solve).
+    # ranking 행(dict) += score_solve·imbalance_max·rho_min·rho_max·umax_def, per_esl 행 += C_lin·C_ritz·rho·imbalance_rel·umax_def·ts_err?
+    # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
+    metric: Literal["lin", "solve"] | None = None
+    lin_form: Literal["ritz", "taylor"] | None = None
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None
 

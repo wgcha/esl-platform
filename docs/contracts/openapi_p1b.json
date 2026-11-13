@@ -3204,6 +3204,21 @@
             "title": "Excluded",
             "type": "array"
           },
+          "lin_form": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ritz",
+                  "taylor"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lin Form"
+          },
           "load_transfer": {
             "anyOf": [
               {
@@ -3215,6 +3230,21 @@
               }
             ],
             "title": "Load Transfer"
+          },
+          "metric": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lin",
+                  "solve"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric"
           },
           "n_failed": {
             "additionalProperties": {

@@ -284,6 +284,15 @@ def _lt_settings(c: dict[str, Any]) -> dict[str, Any]:
 
 
 LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
+RANK_SCHEMA = 1     # 작업 spec params.doe.rank.schema(esl_stiffness_metric.md §6)
+
+
+def rank_snapshot(c: dict[str, Any]) -> dict[str, Any]:
+    """v0.20.0 SM-2: 새 스터디의 순위 지표 설정 고정 {metric, lin_form, lin_valid, imbalance_warn, schema}(요청 키 없음 — 설정만).
+    옛 스터디 = 이 키 없음 = solve. rank.metric 은 이어하기 해시 밖(코어)이라 값은 스냅샷에만 남김."""
+    r = c["rank"]
+    return {"metric": r["metric"], "lin_form": r["lin_form"], "lin_valid": float(r["lin_valid"]),
+            "imbalance_warn": float(r["imbalance_warn"]), "schema": RANK_SCHEMA}
 
 
 def _lt_invalid(msg: str, **extra: Any):
@@ -1132,6 +1141,7 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
 
     lib_cfg = require_library_config(ctx)
     rows = mat["rows"]
+    rank = rank_snapshot(cfg(ctx))
     sid = str(uuid.uuid4())
     doe_dir(ctx.settings, sid)
     first = next((x for x in mat["shapes"] if not x["reference"]), mat["shapes"][0])
@@ -1143,7 +1153,8 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
     inputs = {"shapes": shapes_db, "reference_source": mat["reference_source"], "inch": body.inch, "props": props,
               "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"],
               # v0.20.0 LT-11: 해석된 값 고정(옛 스터디 = 키 없음 = legacy)
-              "load_transfer": lt_summary(mat["load_transfer"], "compare")}
+              "load_transfer": lt_summary(mat["load_transfer"], "compare"),
+              "rank_metric": rank["metric"]}                   # v0.20.0 SM-2: 새 스터디 순위 지표(옛 스터디 = 키 없음 = solve)
     doe = {"id": sid, "scenario": "compare", "title": title,
            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "cfg": _snapshot_cfg(ctx),
            "core": copy.deepcopy(ctx.config.core or {}), "mapping": (lib_cfg or {}).get("mapping"),
@@ -1151,7 +1162,8 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
                        for e in rows],
            "shapes": [dict(x) for x in mat["shapes"]], "reference_source": mat["reference_source"],
            "inch": body.inch, "props": props, "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"],
-           "mesh_ladder": list(mat["mesh_ladder"]), "load_transfer": copy.deepcopy(mat["load_transfer"])}
+           "mesh_ladder": list(mat["mesh_ladder"]), "load_transfer": copy.deepcopy(mat["load_transfer"]),
+           "rank": rank}
     if mat["base"]:
         doe["base"] = dict(mat["base"])
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
@@ -1210,6 +1222,8 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
             inputs.pop("mesh_size_mm", None)
         inputs["select_schema"] = SELECT_SCHEMA_NEW     # v0.17.0 BG-D-35(복제 = 원 스터디 값 유지)
     inputs["load_transfer"] = lt_summary(mat["load_transfer"], body.scenario)     # v0.20.0 LT-11·19: 해석된 값 고정
+    rank = rank_snapshot(c)
+    inputs["rank_metric"] = rank["metric"]                                        # v0.20.0 SM-2
     import datetime as _dt
 
     created = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -1239,6 +1253,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
             doe["mesh_ladder"] = list(mat["mesh_ladder"])
         doe["select_schema"] = SELECT_SCHEMA_NEW        # v0.17.0 BG-D-40: BD_LOADS 그래프 단계·BD_GEOM 힌트 plan(키 없음 = 1)
     doe["load_transfer"] = copy.deepcopy(mat["load_transfer"])      # v0.20.0 §13.6: 공통 블록 + schema(옛 스터디 = 키 없음)
+    doe["rank"] = rank                                              # v0.20.0 SM-2
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,
@@ -1762,6 +1777,11 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     # v0.20.0 ④ 하중 전달 진단 요약·3D 같은 ESL 대응표(esl_load_transfer.md §5·LT-9) — 새 스냅샷만(legacy = 결과에 키 없음 → null)
     if isinstance(r.get("load_transfer"), dict):
         out["load_transfer"] = r["load_transfer"]
+    # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric·lin_form(새 스냅샷만 — legacy = null). 순위 행의 score_solve·
+    # imbalance_max·rho_min·rho_max·umax_def 와 SM_LIN_RANGE·SM_IMBALANCE 경고는 행·warnings 그대로 통과
+    for k in ("metric", "lin_form"):
+        if isinstance(r.get(k), str):
+            out[k] = r[k]
     for k in ("view3d_ref", "view3d_esl"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}

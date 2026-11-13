@@ -517,6 +517,13 @@ class BeadDoeRankCfg(_M):
 
     ratio_tol: float = Field(default=1e-6, ge=0, lt=1)
     per_esl_inline_max: int = Field(default=2000, ge=0)
+    # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 지표 metric lin(재풀이 없는 1차 섭동 C_lin, 새 스터디 기본)|solve(재풀이 C — 옛 동작),
+    # lin_form ritz(C_ref/ρ — 사용자 확정 기본)|taylor(C_ref(2−ρ)), lin_valid = |ρ−1| 초과 → SM_LIN_RANGE, imbalance_warn = 불평형
+    # imbalance_rel 초과 → SM_IMBALANCE. 새 스냅샷에만 doe.rank 로 고정(옛 스냅샷 = 키 없음 = solve)
+    metric: Literal["lin", "solve"] = "lin"
+    lin_form: Literal["ritz", "taylor"] = "ritz"
+    lin_valid: float = Field(default=0.3, gt=0)
+    imbalance_warn: float = Field(default=0.02, gt=0, le=1)
 
 
 class BeadDoeLimitsCfg(_M):
@@ -1740,6 +1747,7 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("select", {}), BeadDoeSelectCfg().model_dump())
     _fill_missing(d.setdefault("compare", {}), BeadDoeCompareCfg().model_dump())
     _fill_missing(d.setdefault("load_transfer", {}), BeadDoeLoadTransferCfg().model_dump())
+    _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
     return d
 
 
