@@ -688,7 +688,7 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
-  const linMode = isLinResult(result) || isCrossMesh(result); // 새 스냅샷 3D = 강체 제거(다른 메시 비교 포함)
+  const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
   const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(linMode ? { dispLabel: "변위 |u| (mm) — 강체 제거" } : {}) });
   if (!others.length) return <Empty>3D 비교 자료가 없습니다</Empty>;
   return (

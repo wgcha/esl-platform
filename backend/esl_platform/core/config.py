@@ -520,7 +520,7 @@ class BeadDoeRankCfg(_M):
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 지표 metric lin(재풀이 없는 1차 섭동 C_lin, 새 스터디 기본)|solve(재풀이 C — 옛 동작),
     # lin_form ritz(C_ref/ρ — 사용자 확정 기본)|taylor(C_ref(2−ρ)), lin_valid = |ρ−1| 초과 → SM_LIN_RANGE, imbalance_warn = 불평형
     # imbalance_rel 초과 → SM_IMBALANCE. 새 스냅샷에만 doe.rank 로 고정(옛 스냅샷 = 키 없음 = solve)
-    metric: Literal["lin", "solve"] = "lin"
+    metric: Literal["lin", "solve"] = "solve"            # 기본 재풀이 C(D-0.20.0-SM-11), lin = 선택(1차 지표 순위)
     lin_form: Literal["ritz", "taylor"] = "ritz"
     lin_valid: float = Field(default=0.3, gt=0)
     imbalance_warn: float = Field(default=0.02, gt=0, le=1)

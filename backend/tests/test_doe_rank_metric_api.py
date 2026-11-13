@@ -24,17 +24,17 @@ from test_doe_compare_api import (  # noqa: F401  (픽스처·도우미 재사�
     world,
 )
 
-RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "lin", "lin_form": "ritz", "lin_valid": 0.3,
+RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "solve", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02}
-SNAP = {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1}
+SNAP = {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1}
 
 
 # ================================================================ 설정 거울·검사
 def test_rank_defaults_mirror():
     from esl_platform.core.config import BeadDoeCfg, bead_doe_settings
 
-    assert BeadDoeCfg().model_dump()["rank"] == RANK_DEFAULT                  # 새 스터디 기본 lin·ritz(사용자 확정)
-    assert bead_doe_settings(None)["rank"]["metric"] == "lin"
+    assert BeadDoeCfg().model_dump()["rank"] == RANK_DEFAULT                  # 새 스터디 기본 solve(SM-11)·lin_form ritz
+    assert bead_doe_settings(None)["rank"]["metric"] == "solve"
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
         assert y["bead_doe"]["rank"] == RANK_DEFAULT, p
@@ -74,13 +74,13 @@ def test_snapshot_all_scenarios(client, world, engine):
     r = api(client, "POST", "/doe/studies", json=body([world["a"], world["b"]], upload_step(client)))
     assert r.status_code == 201, r.text
     s = r.json()
-    assert s["inputs"]["rank_metric"] == "lin"
+    assert s["inputs"]["rank_metric"] == "solve"
     p = _job(engine, s["job"]["id"])["params"]["doe"]
-    assert p["rank"] == SNAP and p["cfg"]["bead_doe"]["rank"]["metric"] == "lin"
+    assert p["rank"] == SNAP and p["cfg"]["bead_doe"]["rank"]["metric"] == "solve"
     r = api(client, "POST", "/doe/studies", json=cbody(world, shapes3(client)))
     assert r.status_code == 201, r.text
     c = r.json()
-    assert c["inputs"]["rank_metric"] == "lin"
+    assert c["inputs"]["rank_metric"] == "solve"
     assert _job(engine, c["job"]["id"])["params"]["doe"]["rank"] == SNAP
 
 
@@ -167,7 +167,7 @@ def test_results_pass_metric_fields(client, world, engine, esl_root):
                                                     "n_failed": {"sm": 2}}, [row])
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] == "lin" and o["lin_form"] == "ritz" and warn in o["warnings"]
-    assert o["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}   # 스터디 스냅샷
+    assert o["rank"] == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}   # 스터디 스냅샷
     assert o["C_ref_solve"] == 10.0 and o["n_failed"] == {"sm": 2} and o["ranking"][0]["C_solve"] == {"e1": 12.0}
     r0 = o["ranking"][0]
     assert {k: r0[k] for k in ("score_solve", "imbalance_max", "rho_min", "rho_max", "umax_def")} == {
@@ -188,7 +188,7 @@ def test_results_cross_mesh_metric_effective(client, world, engine, esl_root):
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] == "solve" and o["metric_effective"] == "solve" and o["cross_mesh"] is True and warn in o["warnings"]
     assert o["baseline"]["umax_def"] == 0.4                    # 강체 제거 umax(새 스냅샷) 통과
-    assert o["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02,
+    assert o["rank"] == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02,
                          "metric_effective": "solve", "cross_mesh": True}
     assert "n_fallback" not in o["rank"]                                     # ④ 불변(대체 없음)
     row = {"id": "d001", "values": {}, "score": 1.1, "improvement": -0.1, "worst_entry_id": "e1", "umax": 3.0,
@@ -211,7 +211,7 @@ def test_results_legacy_null_metric(client, world, engine, esl_root):
 
 def test_settings_rank_block(client, world):
     s = api(client, "GET", "/doe/settings").json()
-    assert s["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}
+    assert s["rank"] == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}
 
 
 def test_openapi_rank_keys():

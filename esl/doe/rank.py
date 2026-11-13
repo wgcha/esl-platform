@@ -143,6 +143,10 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     base_C = {p["entry_id"]: float(p[key]) for p in b.get("per_esl") or []}
     base_S = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
     fb_on = key != "C" and lin_valid is not None
+    lin_key = sm.metric_key("lin", lin_form)
+    lin_ref = (_agg(b, lin_key)["C"] if new and all(p.get(lin_key) is not None for p in b.get("per_esl") or [])
+               else None)
+    lin_ref = lin_ref if lin_ref is not None and lin_ref > 0 else None
     order = [p["entry_id"] for p in b.get("per_esl") or [] if float(p[key]) > 0]
     warns_extra = [{"code": "BASELINE_ESL_ZERO", "entry_ids": [e for e, c in base_C.items() if not c > 0]}] \
         if any(not c > 0 for c in base_C.values()) else []
@@ -186,6 +190,9 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
             row["basis"] = "solve" if fb else "lin"
             if fb:
                 row["sm_warn"] = ["SM_LIN_RANGE"]
+        if new and lin_ref:                     # 보조 열: 1차 지표 비(lin_form 식, metric 과 무관 — solve 주 열일 때 비교용)
+            row["score_lin"] = (_agg(r, lin_key)["C"] / lin_ref
+                                if all(p.get(lin_key) is not None for p in r.get("per_esl") or []) else None)
         if new:
             row.update(_sm_aux(r, a, C_ref_solve), C_solve={p["entry_id"]: float(p["C"]) for p in r.get("per_esl") or []})
         rows.append(row)

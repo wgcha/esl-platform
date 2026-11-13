@@ -169,7 +169,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
     ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
     per_esl_inline_max: 2000          # 순위 행 per_esl 상한(안 수 × ESL 수)
-    metric: lin                       # lin(재풀이 없는 1차 섭동 C_lin, 새 스터디 기본) | solve(재풀이 C — 옛 동작). 옛 스터디(스냅샷에 없음)는 solve
+    metric: solve                     # solve(재풀이 C, 새 스터디 기본 — SM-11) | lin(재풀이 없는 1차 지표 순위, lin_form 식 — 선택). 옛 스터디(스냅샷에 없음)는 solve
     lin_form: ritz                    # ritz(C_ref/ρ, 사용자 확정 기본) | taylor(C_ref(2−ρ))
     lin_valid: 0.3                    # |ρ−1| 초과 → 경고 SM_LIN_RANGE(1차 근사 밖)
     imbalance_warn: 0.02              # 불평형 imbalance_rel 초과 → 경고 SM_IMBALANCE(보조 값 흐림)

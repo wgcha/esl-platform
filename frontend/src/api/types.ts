@@ -2993,6 +2993,8 @@ export interface DoeRankRow {
   rho_min?: number | null;
   rho_max?: number | null;
   umax_def?: number | null;
+  /** SM-11 보조 열(새 스냅샷, 주 열 = 재풀이 C 일 때): 1차 강성 지표 비(lin_form 식) — 값 없으면 null */
+  score_lin?: number | null;
   /** R-SM-1 결정(lin 결과만): 순위 값 기준 — lin(1차 지표) | solve(|ρ−1| > lin_valid 라 재풀이 C 로 대체), 대체 안 sm_warn ["SM_LIN_RANGE"] */
   basis?: "lin" | "solve" | null;
   sm_warn?: string[] | null;

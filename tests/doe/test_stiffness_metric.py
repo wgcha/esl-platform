@@ -289,7 +289,7 @@ def bmesh_amp():
     return ref, C0, base, rows
 
 
-def test_v_sm_11_bmesh_baseline_reference(bmesh_amp):
+def test_v_sm_11_bmesh_baseline_reference(bmesh_amp):  # 지표 함수 직접(metric = lin 경로의 값 — 설정 기본 solve 와 무관)
     """결정 A ②: 베이스라인 자체 ρ = 1·C_ritz = C_ref = C_solve(같은 하중·같은 K), 안의 #63 꼴 재풀이 증폭(C ×3~130,
     umax ×10³~10⁴, 불평형 1.7~14 %)이 지표(ritz)에서는 ≤ 9 % 로 억제."""
     ref, C0, base, rows = bmesh_amp

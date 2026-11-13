@@ -78,8 +78,9 @@ DEFAULTS: dict = {
     "view3d": {"top_k": 3},
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
-    # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일)
-    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "lin", "lin_form": "ritz", "lin_valid": 0.3,
+    # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
+    # metric 기본 solve(재풀이 C — 2026-11-13 사용자 결정 D-0.20.0-SM-11), lin(ritz|taylor) 은 선택·보조 열
+    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "solve", "lin_form": "ritz", "lin_valid": 0.3,
              "imbalance_warn": 0.02},
     "settings_cache_s": 300,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,

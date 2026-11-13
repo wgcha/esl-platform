@@ -13,6 +13,11 @@
 4. 실제 낙하 재검증은 상위 k 안 확인용 안내만.
 5. 코드 구조 원칙 유지: 모드 무관 독립 모듈, 모드 차이는 계획 표, 진단 스키마 1개.
 
+### SM-11 기본 순위 지표 = 재풀이 C (2026-11-13 사용자 결정, 변경 금지)
+- `rank.metric` 기본 **solve**(재풀이 C, 새 스터디·DEFAULTS·pydantic·yaml 2·목업). lin(ritz | taylor)은 사용자가 고르는 선택이고, 기본에서는 보조 열(순위 행 `score_lin`·ρ·불평형)로만 본다. lin 을 고르면 R-SM-1 안별 재풀이 대체(SM-10)가 그대로 적용된다. 옛 스냅샷 재시도는 스냅샷 값 우선, `doe.rank` 에 metric 키가 없으면 새 DEFAULTS(solve).
+- 근거: **1-벡터 Ritz 하한은 항상 강성 과대 쪽으로 치우치며(C_ritz ≤ C_solve), 하한을 조이면 C_solve 로 수렴 → 근본 대책 아님**(select E2E: 깊이 ±4 mm 양쪽 ρ > 1 거짓 개선, 범위 안 안 ρ 1.23~1.24 도 남음).
+- 화면: 주 열 이름·보조 토글은 `result.rank.metric_effective` 를 따름(solve = "재풀이 C", 1차 지표 값이 있으면 보조 토글에 "강성 지표 비"·불평형·ρ). 위 본문(§2~§7)의 "lin = 새 기본" 서술은 SM-11 로 대체된다.
+
 ### 결정 A (2026-11-13, 변경 금지) — 강성 지표(lin·ritz)는 같은 메시(같은 위상) 안에서만
 - **근거(코어 측정)**: 다른 메시 사이 변위 보간 S_t(LT-2 사영의 쌍대, C0 병진 보간)는 **같은 기하에서도 ρ 를 왜곡**한다 — A 요소 경계의 꺾임(C0 연속, 기울기 불연속)이 대상 메시에 가짜 굽힘·전단 변형에너지를 넣는다. 같은 판을 A 와 다른 메시로 옮긴 ρ(참값 1): 성긴 대상 **1.62**, 2배 촘촘한 대상 **12.3**, 회전을 응축(K̂)해도 **11.9**(회전 carry 문제가 아님). 같은 메시(①·④ 의 d000 = A)는 정확(ρ = 1, 비트 동일).
 - ①: 그대로 — u_ref = 베이스라인 d000 해(원본 하중), S = I.
@@ -103,6 +108,7 @@ umax_def = max_{n∈Ω} ‖u_def,n‖        εmax 는 강체 불변(요소가 �
 | D-0.20.0-SM-6 | 지표는 새 스냅샷의 모든 안에서 항상 계산(metric 과 무관 — 비용 = 조립 1회 + K 회 SpMV), metric 은 BD_POST 순위만 바꿈 → `rank.metric` 은 이어하기 해시 밖(설정만 바꿔 후처리 재실행 가능). `stiffness` 스키마 번호는 해시 안(스냅샷에 키 있을 때만 — legacy 해시 불변) | 비교·재현성 |
 | D-0.20.0-SM-8 | **결정 A**: 지표는 같은 메시(같은 위상) 안에서만 — ① u_ref = d000 해, ②·새 ③ u_ref = 기준 메시 B 의 work 하중 해(Q-SM-2 변경), 안 S = I; ④·옛 ③ = 지표 미적용, 순위 = work 하중 재풀이 C(`metric_effective` solve·`cross_mesh`·`SM_CROSS_MESH`). 계획 표 열 `sm_rank`. `build_disp` 비활성 | 사용자 결정 A(2026-11-13), 보간 편향 ρ 1.62·12.3·11.9(같은 기하) |
 | D-0.20.0-SM-9 | **lin_form 기본 = ritz**(C_ref/ρ — Q-SM-1 사용자 확정). `stiffness_metric.LIN_FORM_DEFAULT` 한 곳 + DEFAULTS·pydantic·yaml 2 | 항상 양수, solve 에 더 가까운 하한, 한 ESL 안 순위는 taylor 와 같음 |
+| D-0.20.0-SM-11 | **기본 순위 지표 = 재풀이 C**(rank.metric 기본 solve), ritz·taylor 는 선택·보조 열(score_lin), lin 선택 시 SM-10 유지 | 1-벡터 Ritz 하한은 항상 강성 과대 쪽, 조이면 C_solve 로 수렴 → 근본 대책 아님 |
 | D-0.20.0-SM-10 | **1차 범위 밖 안별 재풀이 대체**(R-SM-1 결정): |ρ−1| > `rank.lin_valid` 인 ESL 이 있는 안 = 순위 값 재풀이 C(basis solve, SM_LIN_RANGE), 나머지 basis lin, `rank.n_fallback` | 1-벡터 Ritz 하한 C_ritz ≤ C_solve 가 큰 형상 변화에서 느슨 → 양방향 ρ > 1 거짓 개선(select E2E 실측) |
 | D-0.20.0-SM-7 | 실제 낙하 재검증: **코드 변경 없음**. 결과 화면 순위 아래 안내 1줄 + report 한계 절 + 사용자 설명서: "1차 강성 지표 순위 — 상위 k 안은 산출물(BD-D-18)로 Radioss 검증 낙하(`esl_scx_relay.md` B)를 돌려 확인" | 사용자 결정 4 |
 
@@ -153,7 +159,7 @@ esl/doe/stages.py              eval: evaluate(keep_u = 모든 ESL) → u_def·um
   rank:
     ratio_tol: 1.0e-6
     per_esl_inline_max: 2000
-    metric: lin            # lin(1차 섭동 C_lin, 새 스터디 기본) | solve(재풀이 C — 옛 동작)
+    metric: solve          # solve(재풀이 C, 새 스터디 기본 — SM-11) | lin(1차 지표 순위 — 선택)
     lin_form: ritz         # ritz(C_ref/ρ, 확정 기본 — SM-9) | taylor(C_ref(2−ρ))
     lin_valid: 0.3         # |ρ−1| 초과 → SM_LIN_RANGE
     imbalance_warn: 0.02   # imbalance_rel 초과 → SM_IMBALANCE(표시 흐림). #63 최소 4.5 % 에서 이미 umax ×65
@@ -201,7 +207,7 @@ esl/doe/stages.py              eval: evaluate(keep_u = 모든 ESL) → u_def·um
 
 | ID | 리스크 | 대응 |
 |---|---|---|
-| R-SM-1 | 1차 근사 밖(큰 모핑 ρ ≪ 1 또는 ≫ 1)에서 순위가 실제와 어긋남. **통합 시험 실측(2026-11-13, worker `test_select_e2e_depth_ranking` — ① select 합성 비드 h 10, 깊이 18/20.7/23.3/26 mm, 공칭 22)**: ρ_max 3.66/1.24/1.23/2.79(회전 응축해도 3.02/1.17/—/2.20) — 고정 변형을 바뀐 비드 벽에 주면 얕게·깊게 **양쪽 모두** 막 에너지가 커져 ρ > 1, ritz score 0.53/0.93/0.93/0.64(비단조, 양 끝이 "개선"), 재풀이 score 1.014/1.004/0.997/0.992(단조, 불평형은 크게 나오나 무른 모드 증폭 없음). 시험: 재풀이 score 단조·양 끝 basis solve 단언, 대체 후 최종 순위 단조는 xfail(아래 남은 문제) | **결정(D-0.20.0-SM-10, 2026-11-13 사용자)**: metric lin 에서 어느 ESL 이든 |ρ−1| > `rank.lin_valid` 인 **안은 그 안의 순위 값을 재풀이 C 로 대체**(score = max_i C_solve / C_ref_solve, ESL별 비 = C_solve / 베이스라인 C_solve), 행 `basis: "solve"`·`sm_warn: ["SM_LIN_RANGE"]`, 범위 안 안은 `basis: "lin"`(지표 그대로), 결과·API `rank.n_fallback`. 공용 경로 한 곳 `rank.rank(lin_valid=…)` + `stiffness_metric.out_of_range`, 모드 분기 없음(④·옛 ③ = 이미 solve → 불변). 화면: 주 열 값 옆 "재풀이" 표시·툴팁 "1차 근사 범위 밖(\|ρ−1\|>lin_valid) — 재풀이 C로 순위". **남은 문제(측정)**: 위 E2E 에서 양 끝(ρ 3.66·2.79)은 재풀이로 바뀌나 가운데 두 안(ρ_max 1.24·1.23 ≤ 0.3)은 여전히 양방향 ρ > 1 거짓 개선(ritz 0.927·0.932 vs 재풀이 1.004·0.997) → 최종 순위 1.014/0.927/0.932/0.991 비단조. lin_valid 0.2 면 단조가 되지만 기본값 변경은 사용자 판단. **후속(v0.20.1 후보)**: 2-벡터 Ritz(잔차 보정 — u_ref 와 K_t 잔차 방향 1개로 2×2 Rayleigh–Ritz) 하한 개선 |
+| R-SM-1 | 1차 근사 밖(큰 모핑 ρ ≪ 1 또는 ≫ 1)에서 순위가 실제와 어긋남. **통합 시험 실측(2026-11-13, worker `test_select_e2e_depth_ranking` — ① select 합성 비드 h 10, 깊이 18/20.7/23.3/26 mm, 공칭 22)**: ρ_max 3.66/1.24/1.23/2.79(회전 응축해도 3.02/1.17/—/2.20) — 고정 변형을 바뀐 비드 벽에 주면 얕게·깊게 **양쪽 모두** 막 에너지가 커져 ρ > 1, ritz score 0.53/0.93/0.93/0.64(비단조, 양 끝이 "개선"), 재풀이 score 1.014/1.004/0.997/0.992(단조, 불평형은 크게 나오나 무른 모드 증폭 없음). 시험: 재풀이 score 단조·양 끝 basis solve 단언, 대체 후 최종 순위 단조는 xfail(아래 남은 문제) | **결정(D-0.20.0-SM-10, 2026-11-13 사용자)**: metric lin 에서 어느 ESL 이든 |ρ−1| > `rank.lin_valid` 인 **안은 그 안의 순위 값을 재풀이 C 로 대체**(score = max_i C_solve / C_ref_solve, ESL별 비 = C_solve / 베이스라인 C_solve), 행 `basis: "solve"`·`sm_warn: ["SM_LIN_RANGE"]`, 범위 안 안은 `basis: "lin"`(지표 그대로), 결과·API `rank.n_fallback`. 공용 경로 한 곳 `rank.rank(lin_valid=…)` + `stiffness_metric.out_of_range`, 모드 분기 없음(④·옛 ③ = 이미 solve → 불변). 화면: 주 열 값 옆 "재풀이" 표시·툴팁 "1차 근사 범위 밖(\|ρ−1\|>lin_valid) — 재풀이 C로 순위". **남은 문제(측정)**: 위 E2E 에서 양 끝(ρ 3.66·2.79)은 재풀이로 바뀌나 가운데 두 안(ρ_max 1.24·1.23 ≤ 0.3)은 여전히 양방향 ρ > 1 거짓 개선(ritz 0.927·0.932 vs 재풀이 1.004·0.997) → 최종 순위 1.014/0.927/0.932/0.991 비단조. lin_valid 0.2 면 단조가 되지만 기본값 변경은 사용자 판단. **후속(v0.20.1 후보)**: 재풀이 해를 보정해 K₁⁻¹r(불평형 r 의 응답)의 무른 모드 성분을 거르는 필터 — 서버 이슈 #63 ① 기준으로 검증(2-벡터 Ritz 안은 SM-11 근거로 철회) |
 | R-SM-2 | 대상 K_t 조립이 solve 와 별도로 1번 더(380k 요소) | 조립은 분해 대비 작음 — `stage_times` 에 `sm_s` 기록. 후속: evaluate 와 조립 공유 |
 | R-SM-3 | interp 의 사영 오차(얇은 이중 벽 등)가 U2 에 가짜 변형에너지 | `ts_err`·`sm_far_frac` 진단, LT R-LT-2 와 같은 대응 |
 | R-SM-4 | lin 은 "ESL 원본 변형을 강제" 하는 관점 — 하중 재분배·국부 좌굴은 못 봄 | 한계 절 문구 + 검증 낙하 안내 |

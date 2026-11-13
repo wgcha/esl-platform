@@ -105,7 +105,7 @@ def test_plan_sm_columns():
         assert ei.value.code == "CONFIG_INVALID"
     finally:
         tp.PLANS["bmesh_once"] = saved
-    assert DEFAULTS["rank"]["metric"] == "lin" and DEFAULTS["rank"]["lin_form"] == "ritz"
+    assert DEFAULTS["rank"]["metric"] == "solve" and DEFAULTS["rank"]["lin_form"] == "ritz"   # SM-11 기본 재풀이 C
     assert DEFAULTS["rank"]["lin_valid"] == 0.3 and DEFAULTS["rank"]["imbalance_warn"] == 0.02
     w = DEFAULTS["load_transfer"]["work"]
     assert (w["fail_dist_mm"], w["fail_frac"]) == (20.0, 0.2)

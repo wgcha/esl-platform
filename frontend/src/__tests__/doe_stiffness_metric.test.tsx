@@ -4,7 +4,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
 import { isCrossMesh, isLinResult, rankThresholds } from "../api/doe";
-import { makeCompareResult, compareIds, makeComparePrep, withCrossMesh, withMetric } from "../mock/doedata";
+import { makeCompareResult, compareIds, makeComparePrep, withCrossMesh, withMetric, withSolveMetric } from "../mock/doedata";
 
 describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
   it("isLinResult: lin 만 새 표시, 키 없음·solve = 옛 표시", () => {
@@ -97,6 +97,38 @@ describe("② 결과 — doe-21(metric lin, 같은 메시)", () => {
     expect(rows.length - fb.length).toBeGreaterThan(0);
   }, 20000);
 
+});
+
+describe("② 결과 — 기본 순위 지표 solve(SM-11, rank.metric_effective)", () => {
+  it("주 열 '재풀이 C', umax·εmax(강체 제거) 열, 보조 토글로 강성 지표 비·불평형·ρ, 1차 안내·재풀이 표시 없음", async () => {
+    renderApp("/p/p-body/doe/doe-21", "power", (srv) => {
+      const rec = srv.doe.recs.find((r) => r.out.id === "doe-21")!;
+      rec.out.inputs.rank_metric = "solve";
+      rec.result = withSolveMetric(rec.result!);
+    });
+    const t = await screen.findByRole("table", { name: "순위표" });
+    const heads = () => within(t).getAllByRole("columnheader").map((c) => c.textContent);
+    await waitFor(() => expect(heads()).toContain("재풀이 C"));
+    expect(heads()).not.toContain("강성 지표");
+    expect(heads()).toEqual(expect.arrayContaining(["umax", "εmax"]));
+    expect(heads()).not.toContain("강성 지표 비");
+    fireEvent.click(screen.getByTestId("rank-aux-toggle"));
+    await waitFor(() => expect(heads()).toContain("강성 지표 비"));
+    expect(heads()).toEqual(expect.arrayContaining(["불평형", "ρ"]));
+    expect(within(t).getAllByTestId(/^aux-lin-/).length).toBeGreaterThan(0);
+    expect(within(t).queryAllByTestId(/^basis-solve-/).length).toBe(0);
+    expect(screen.queryByTestId("sm-verify-note")).toBeNull();
+    expect(screen.queryByTestId("sm-cross-note")).toBeNull();
+  }, 20000);
+  it("withSolveMetric: score = 재풀이 비(오름차순), metric_effective solve, score_lin 보조", () => {
+    const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
+    const base = makeCompareResult(makeComparePrep(compareIds([sh("a", true), sh("b"), sh("c"), sh("d")]), "step"), ["le-1", "le-2"]);
+    const r = withSolveMetric(base);
+    expect(isLinResult(r)).toBe(false);
+    expect(r.rank?.metric_effective).toBe("solve");
+    expect(r.ranking.map((x) => x.score)).toEqual([...base.ranking.map((x) => x.score)].sort((a, b) => a - b));
+    expect(r.ranking.some((x) => x.score_lin != null)).toBe(true);
+  });
 });
 
 describe("④ 결과 — doe-20(결정 A: 다른 메시 비교)", () => {

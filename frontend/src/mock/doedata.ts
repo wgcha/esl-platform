@@ -829,6 +829,17 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
 }
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";
+/** SM-11(2026-11-13): 새 스냅샷 기본 = 재풀이 C 주 열(metric_effective solve), 1차 지표(ritz)는 보조 열 score_lin·ρ·불평형 */
+export function withSolveMetric(res: DoeResultOut): DoeResultOut {
+  const r = withMetric(res);
+  const ranking = r.ranking
+    .map(({ basis, sm_warn: _w, ...x }) => ({ ...x, score_lin: basis === "solve" ? null : x.score, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4),
+      per_esl: x.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C })) }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const st = makeDoeSettings().rank!;
+  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: false, rank: { ...st, metric: "solve", metric_effective: "solve", cross_mesh: false } };
+}
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
  *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
 export function withCrossMesh(res: DoeResultOut): DoeResultOut {
@@ -1725,8 +1736,8 @@ export class DoeMock {
   /** 새 스냅샷의 결과에 하중 전달 요약·진단 키를 한 번 붙임(옛 스터디 = inputs.load_transfer 없음 → 그대로) */
   private ensureLt(rec: Rec) {
     // 결정 A: 같은 메시(①②·새 ③)만 1차 강성 지표, 형상·안마다 메시가 다른 ④·옛 ③ = 재풀이 C(다른 메시 비교)
-    if (rec.result && rec.out.inputs.rank_metric === "lin" && !rec.result.metric)
-      rec.result = rec.out.scenario === "compare" || rec.out.scenario === "step" ? withCrossMesh(rec.result) : withMetric(rec.result);
+    if (rec.result && rec.out.inputs.rank_metric && !rec.result.metric)
+      rec.result = rec.out.scenario === "compare" || rec.out.scenario === "step" ? withCrossMesh(rec.result) : rec.out.inputs.rank_metric === "lin" ? withMetric(rec.result) : withSolveMetric(rec.result);
     const lt = rec.out.inputs.load_transfer;
     if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
   }
@@ -1974,7 +1985,7 @@ export class DoeMock {
     // v0.20.0 새로 만든 스터디(모든 모드)의 스냅샷에 해석된 하중 전달 값(compare 는 handle0 에서 이미)
     if (method === "POST" && path === "/doe/studies" && res?.status === 201 && this.recs.length > n0) {
       const rec = this.recs[this.recs.length - 1];
-      rec.out.inputs.rank_metric = "lin"; // v0.20.0 새 스터디 기본 순위 지표
+      rec.out.inputs.rank_metric = this.settings.rank?.metric ?? undefined; // v0.20.0 새 스터디 순위 지표 = 설정(기본 solve — SM-11)
       if (!this.settings.load_transfer) return ok(this.studyOut(rec), 201);
       if (!rec.out.inputs.load_transfer) {
         rec.out.inputs.load_transfer = this.resolveLt(b);
