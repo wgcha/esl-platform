@@ -3291,6 +3291,18 @@
             "title": "Per Esl Inline",
             "type": "boolean"
           },
+          "rank": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
           "ranking": {
             "items": {
               "additionalProperties": true,
@@ -3812,6 +3824,18 @@
               }
             ],
             "title": "Part Title"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
           },
           "reason": {
             "anyOf": [
