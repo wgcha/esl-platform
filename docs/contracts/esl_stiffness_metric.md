@@ -200,7 +200,7 @@ esl/doe/stages.py              eval: evaluate(keep_u = 모든 ESL) → u_def·um
 
 | ID | 리스크 | 대응 |
 |---|---|---|
-| R-SM-1 | 1차 근사 밖(큰 모핑 ρ ≪ 1 또는 ≫ 1)에서 순위가 실제와 어긋남 | `SM_LIN_RANGE`, lin_form ritz 선택지, solve 보조 열·Spearman, 상위 k 검증 낙하(SM-7) |
+| R-SM-1 | 1차 근사 밖(큰 모핑 ρ ≪ 1 또는 ≫ 1)에서 순위가 실제와 어긋남. **통합 시험 실측(2026-11-13, worker `test_select_e2e_depth_ranking` — ① select 합성 비드 h 10, 깊이 18/20.7/23.3/26 mm, 공칭 22)**: ρ_max 3.66/1.24/1.23/2.79(회전 응축해도 3.02/1.17/—/2.20) — 고정 변형을 바뀐 비드 벽에 주면 얕게·깊게 **양쪽 모두** 막 에너지가 커져 ρ > 1, ritz score 0.53/0.93/0.93/0.64(비단조, 양 끝이 "개선"), 재풀이 score 1.014/1.004/0.997/0.992(단조, 불평형은 크게 나오나 무른 모드 증폭 없음). 시험은 단조 검사를 score_solve 로 바꾸고 양 끝 |ρ−1| > lin_valid 를 단언 | `SM_LIN_RANGE`, lin_form ritz 선택지, solve 보조 열·Spearman, 상위 k 검증 낙하(SM-7). **미해결 — 사용자 판단 필요**: 이 범위(|ρ−1| > lin_valid)에서 순위 지표를 solve 로 되돌릴지 등 |
 | R-SM-2 | 대상 K_t 조립이 solve 와 별도로 1번 더(380k 요소) | 조립은 분해 대비 작음 — `stage_times` 에 `sm_s` 기록. 후속: evaluate 와 조립 공유 |
 | R-SM-3 | interp 의 사영 오차(얇은 이중 벽 등)가 U2 에 가짜 변형에너지 | `ts_err`·`sm_far_frac` 진단, LT R-LT-2 와 같은 대응 |
 | R-SM-4 | lin 은 "ESL 원본 변형을 강제" 하는 관점 — 하중 재분배·국부 좌굴은 못 봄 | 한계 절 문구 + 검증 낙하 안내 |

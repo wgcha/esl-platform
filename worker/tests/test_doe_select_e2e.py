@@ -97,8 +97,13 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
     rk = sorted(res["ranking"], key=lambda x: x["values"]["B1_D1"])
     d1 = [x["values"]["B1_D1"] for x in rk]
     assert len(rk) == 4 and d1[0] == 18.0 and d1[-1] == 26.0
-    scores = [x["score"] for x in rk]
-    assert all(a > b for a, b in zip(scores, scores[1:])), scores        # 깊어질수록 강성 ↑ → score ↓
+    # v0.20.0: 새 스터디 순위 = 1차 강성 지표(lin·ritz). 깊이 ±4 mm(공칭 22)는 1차 근사 범위 밖(|ρ−1| ≫ lin_valid — 고정 변형을
+    # 바뀐 비드 벽에 주면 양쪽 모두 막 변형에너지가 커져 ρ > 1)이라 단조 검사는 재풀이 C(score_solve)로 한다(미해결 R-SM-1 기록).
+    assert res["metric"] == "lin" and all(x.get("score_solve") is not None for x in rk)
+    lv = res["rank"]["lin_valid"]
+    assert max(abs(x["rho_max"] - 1.0) for x in (rk[0], rk[-1])) > lv          # 양 끝 안 = SM_LIN_RANGE 범위 밖
+    scores = [x["score_solve"] for x in rk]
+    assert all(a > b for a, b in zip(scores, scores[1:])), scores        # 깊어질수록 강성 ↑ → 재풀이 score ↓
     assert scores[0] > 1.0 > scores[-1]                                  # 공칭(22) = 베이스라인 사이
     rels = {f["rel"] for f in api(client, "GET", f"/doe/studies/{sid}/files").json()}
     best = rk[-1]["id"]
