@@ -2363,7 +2363,16 @@ export interface DoeMethodSources {
   sources: OptMethodSource[];
   error?: string;
 }
+/** v0.20.0 순위 지표 설정 묶음(스냅샷 = 결과 응답 rank, 없으면 settings.rank) — 임계값은 여기서만 읽고 화면에 상수를 두지 않음 */
+export interface DoeRankCfg {
+  metric?: DoeRankMetric | null;
+  lin_form?: "taylor" | "ritz" | null;
+  lin_valid?: number | null;
+  imbalance_warn?: number | null;
+}
 export interface DoeSettingsOut {
+  /** v0.20.0 순위 지표 설정(옛 서버면 없음) */
+  rank?: DoeRankCfg | null;
   /** v0.20.0 하중 전달 설정 — 모든 모드 공통 최상위 칸(esl_load_transfer.md §13.6, 옛 서버면 없음 = select 숨김) */
   load_transfer?: DoeLoadTransferCfg | null;
   enabled: boolean;
@@ -3067,6 +3076,8 @@ export interface DoeResultOut {
   /** v0.20.0 순위 지표(esl_stiffness_metric.md §6 — 옛 결과 = 키 없음 = solve 표시 그대로). lin = 재풀이 없는 1차 섭동 지표 */
   metric?: DoeRankMetric | null;
   lin_form?: "taylor" | "ritz" | null;
+  /** v0.20.0 이 스터디 스냅샷의 순위 지표 설정(임계값 출처 1순위) */
+  rank?: DoeRankCfg | null;
   /** v0.20.0 d000 재풀이 C 기준(max_i C_solve) */
   C_ref_solve?: number | null;
   /** v0.20.0 하중 전달 요약(LT-13 — legacy = 키 없음) */

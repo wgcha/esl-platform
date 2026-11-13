@@ -62,6 +62,7 @@ export function makeDoeSettings(): DoeSettingsOut {
   return {
     // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
     load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 5, 3], cell_min_mm: 3 },
+    rank: { metric: "lin", lin_form: "ritz", lin_valid: 0.3, imbalance_warn: 0.02 },
     enabled: true,
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
@@ -799,7 +800,7 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
   });
   const warnings = [...res.warnings];
   if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > 0.3)) warnings.push({ code: "SM_LIN_RANGE", message: "ρ 가 lin_valid(0.3) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요" });
-  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", C_ref_solve: res.C_ref, warnings };
+  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { metric: "lin", lin_form: "ritz", lin_valid: 0.3, imbalance_warn: 0.02 }, C_ref_solve: res.C_ref, warnings };
 }
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";

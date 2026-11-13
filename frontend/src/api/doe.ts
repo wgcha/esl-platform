@@ -420,11 +420,12 @@ export const SM_CODE_TEXT: Record<string, string> = {
   SM_IMBALANCE: "하중 불평형이 큽니다(|F − K·u| / Σ|F|) — 재풀이 C·umax 는 무른 모드가 증폭된 값일 수 있습니다",
   SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
 };
-/** v0.20.0 보조 열 기준(설정 rank.lin_valid·imbalance_warn 기본값 — 서버가 행 경고를 주면 그쪽이 우선) */
-export const SM_LIN_VALID = 0.3;
-export const SM_IMBALANCE_WARN = 0.02;
 /** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
-export const isLinResult = (r: { metric?: string | null }) => r.metric === "lin";
+export const isLinResult = (r: { metric?: string | null; rank?: { metric?: string | null } | null }) => (r.metric ?? r.rank?.metric) === "lin";
+/** 보조 열 경고 임계값: 결과 스냅샷 rank 값 → settings.rank 값 순. 둘 다 없으면 null(그 경고는 표시하지 않음 — 상수 대체 없음) */
+export function rankThresholds(result: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null }, settings?: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null } | null): { linValid: number | null; imbalanceWarn: number | null } {
+  return { linValid: result.rank?.lin_valid ?? settings?.rank?.lin_valid ?? null, imbalanceWarn: result.rank?.imbalance_warn ?? settings?.rank?.imbalance_warn ?? null };
+}
 export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown; [k: string]: unknown }) =>
   w.message ||
   (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||

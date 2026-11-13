@@ -11,10 +11,12 @@ import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { SM_CODE_TEXT, SM_IMBALANCE_WARN, SM_LIN_VALID, isLinResult } from "../api/doe";
+import { SM_CODE_TEXT, isLinResult, rankThresholds } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
-export function DoeRanking({ result, params, entries, selected, onSelect, varNames }: {
+export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg }: {
+  /** settings.rank — 결과 스냅샷에 임계값이 없을 때만 쓰는 대체 출처 */
+  rankCfg?: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null } | null;
   result: DoeResultOut;
   params: DoeParam[];
   entries: EntryOut[];
@@ -37,8 +39,10 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   /** v0.20.0 새 지표(lin): 주 열 교체 · umax·εmax 는 보조 열(토글)로 이동 */
   const lin = isLinResult(result);
   const [aux, setAux] = useState(false);
-  const fade = (r: { imbalance_max?: number | null }) => lin && (r.imbalance_max ?? 0) > SM_IMBALANCE_WARN;
-  const rhoOut = (r: { rho_min?: number | null; rho_max?: number | null }) => r.rho_min != null && (Math.abs(r.rho_min - 1) > SM_LIN_VALID || Math.abs((r.rho_max ?? 1) - 1) > SM_LIN_VALID);
+  const th = rankThresholds(result, rankCfg);
+  const fade = (r: { imbalance_max?: number | null }) => lin && th.imbalanceWarn != null && (r.imbalance_max ?? 0) > th.imbalanceWarn;
+  const rhoOut = (r: { rho_min?: number | null; rho_max?: number | null }) =>
+    th.linValid != null && r.rho_min != null && (Math.abs(r.rho_min - 1) > th.linValid || Math.abs((r.rho_max ?? 1) - 1) > th.linValid);
   /** ④ 형상 비교(이름 열) */
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const cols = 14 + varNames.length + (named ? 1 : 0) + (lin ? (aux ? 3 : -2) : 0);

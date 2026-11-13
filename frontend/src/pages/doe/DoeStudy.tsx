@@ -1438,7 +1438,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                     ))}
                 </ul>
               )}
-              <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} />
+              <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} rankCfg={st} />
               {isLinResult(result.data) && (
                 <div className="small muted" data-testid="sm-verify-note">
                   1차 강성 지표 순위입니다(재풀이 없음) — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요.

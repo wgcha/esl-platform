@@ -3,7 +3,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { isLinResult } from "../api/doe";
+import { isLinResult, rankThresholds } from "../api/doe";
 import { makeCompareResult, compareIds, makeComparePrep, withMetric } from "../mock/doedata";
 
 describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
@@ -21,6 +21,30 @@ describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
     expect(r.ranking[0].score_solve).toBe(base.ranking[0].score);
     expect(r.ranking[0].umax_def).toBeLessThan(r.ranking[0].umax);
   });
+});
+
+describe("임계값 출처(하드코딩 없음)", () => {
+  it("결과 스냅샷 rank → settings.rank → 없으면 null", () => {
+    expect(rankThresholds({ rank: { lin_valid: 0.2, imbalance_warn: 0.05 } }, { rank: { lin_valid: 0.3, imbalance_warn: 0.02 } })).toEqual({ linValid: 0.2, imbalanceWarn: 0.05 });
+    expect(rankThresholds({}, { rank: { lin_valid: 0.3, imbalance_warn: 0.02 } })).toEqual({ linValid: 0.3, imbalanceWarn: 0.02 });
+    expect(rankThresholds({}, null)).toEqual({ linValid: null, imbalanceWarn: null });
+  });
+  it("둘 다 없으면 흐림·ρ 경고 없음", async () => {
+    renderApp("/p/p-body/doe/doe-20", "power", (srv) => {
+      delete srv.doe.settings.rank;
+      const rec = srv.doe.recs.find((r) => r.out.id === "doe-20")!;
+      const res = withMetric(rec.result!);
+      delete res.rank;
+      rec.result = res;
+    });
+    const t = await screen.findByRole("table", { name: "순위표" });
+    await waitFor(() => expect(screen.getByTestId("rank-aux-toggle")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("rank-aux-toggle"));
+    await waitFor(() => expect(within(t).getAllByTestId(/^aux-imb-/).length).toBeGreaterThan(0));
+    expect(t.querySelectorAll(".sm-faded").length).toBe(0);
+    expect(within(t).getAllByTestId(/^aux-imb-/).every((c) => !/⚠/.test(c.textContent ?? ""))).toBe(true);
+    expect(within(t).getAllByTestId(/^aux-rho-/).every((c) => !/⚠/.test(c.textContent ?? ""))).toBe(true);
+  }, 20000);
 });
 
 describe("④ 결과 — doe-20(metric lin)", () => {
