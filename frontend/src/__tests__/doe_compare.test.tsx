@@ -199,7 +199,7 @@ describe("④ 흐름 — 입력 준비 → 준비 결과 → 비교 실행 → �
     expect(run).toBeTruthy();
     server.drain();
     const t = await screen.findByRole("table", { name: "순위표" }, { timeout: 6000 });
-    expect(within(t).getAllByRole("columnheader").map((h) => h.textContent).slice(0, 4)).toEqual(["순위", "안", "이름", "강성 지표"]);
+    expect(within(t).getAllByRole("columnheader").map((h) => h.textContent).slice(0, 4)).toEqual(["순위", "안", "이름", "재풀이 C"]); // 결정 A: ④ = 다른 메시 비교(재풀이 C)
     expect(within(t).getByTestId("rank-d001").textContent).toMatch(/chr_rib_A/);
     expect(within(t).getByTestId("excluded-d002").textContent).toMatch(/chr_D_shift.*실패 · 크기·정렬 불일치/);
   }, 20000);
