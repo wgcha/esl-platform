@@ -684,6 +684,7 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
         x = _doe_warning(w, msgs)
         if x is not None and x not in warns:
             warns.append(x)
+    _compare_lt_prep(ddir, [], warns, msgs)         # v0.20.0 ①②③ 하중 전달 경고(LT_PLACEMENT 등, 새 스냅샷만 파일 있음)
     prep = {"n_beads": len(params.get("beads") or []), "n_params": len(params.get("params") or []),
             "paicad_version": pv.get("version"), "warnings": warns,
             "boundary": None if not isinstance(bnd, dict) else {"n_warn": int(bnd.get("n_warn") or 0),
@@ -696,6 +697,9 @@ def register_doe_prep(conn: Connection, job: dict[str, Any], case: Any, ddir: st
         prep.update(_select_graph_prep(s, inp, ddir, msgs, warns))
         prep.update(_select_auto_prep(s, inp, ddir, msgs, warns))
         prep.update(_select_step_prep(s, inp, prep["fixed"]))
+    plan_info = _lt_plan_info(inp)
+    if plan_info is not None:
+        prep["load_transfer"] = plan_info
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep), paicad_version=pv.get("version"))
     return {"bead_doe_id": s["id"], "phase": "READY", **{k: prep[k] for k in ("n_beads", "n_params", "paicad_version")}}
 
@@ -884,10 +888,20 @@ COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status"
 LT_SHAPE_KEYS = ("supports", "region", "transfer")     # prep/load_transfer.json 형상 행 중 준비 요약에 싣는 키(계약 §5 형식)
 
 
+def _lt_plan_info(inp: Any) -> dict[str, Any] | None:
+    """prep/input.json.load_transfer{plan, placement, fast_path}(코어 §13.6 — 새 스냅샷만)을 준비 요약 prep.load_transfer 로.
+    없으면 None(옛 스터디 = 키 안 넣음)."""
+    lt = inp.get("load_transfer") if isinstance(inp, dict) else None
+    if not isinstance(lt, dict):
+        return None
+    return {k: lt[k] for k in ("plan", "placement", "fast_path") if k in lt}
+
+
 def _compare_lt_prep(ddir: str, shapes: list[dict[str, Any]], warns: list[dict[str, Any]], msgs: dict[str, str]) -> None:
-    """v0.20.0 ④ 하중 전달(esl_load_transfer.md §2 ⑤·§6): 코어가 쓴 prep/load_transfer.json(새 스냅샷만 — 옛 스터디는 파일 없음 =
-    아무것도 안 함) 의 경고(LT_FAR_NODES·LT_SUPPORT_FALLBACK·LT_ESL_UNBALANCED·COMPARE_REGION*)를 준비 경고에 합치고, 형상 행에
-    ``lt`` = {supports, region, transfer, warnings[{code, message}]} 를 붙인다(화면 상태 배지 칸 — 기존 형상 키는 불변)."""
+    """v0.20.0 하중 전달(esl_load_transfer.md §2 ⑤·§6·§13): 코어가 쓴 prep/load_transfer.json(새 스냅샷만 — 옛 스터디는 파일 없음 =
+    아무것도 안 함, 모든 시나리오 공통) 의 경고(LT_FAR_NODES·LT_SUPPORT_FALLBACK·LT_ESL_UNBALANCED·LT_PLACEMENT·COMPARE_REGION*)를
+    준비 경고에 합치고, 형상 행(④)에 ``lt`` = {supports, region, transfer, warnings[{code, message}]} 를 붙인다(화면 상태 배지
+    칸 — 기존 형상 키는 불변)."""
     doc = _doe_json(os.path.join(ddir, "prep", "load_transfer.json"))
     if not isinstance(doc, dict):
         return
@@ -945,12 +959,15 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
         if not isinstance(x.get("diag"), dict):
             x.pop("diag", None)
     _compare_lt_prep(ddir, shapes, warns, msgs)
+    plan_info = _lt_plan_info(inp)
     prep = {"n_beads": 0, "n_params": 0, "paicad_version": None, "warnings": warns, "boundary": None,
             "n_shapes": len(shapes), "n_ready": len(shapes) - len(failed), "failed": failed,
             # v0.16.1 R3: 작은 형상 억제(defeature) 단계로 메시한 형상 수
             "n_defeature": sum(r.get("mesh_method") == "defeature" for r in shapes),
             "reference_source": cmp.get("reference_source"), "shapes": shapes,
             "mesh": {"size_mm": (cmp.get("profile") or {}).get("size_mm"), "gmsh_version": cmp.get("gmsh_version")}}
+    if plan_info is not None:
+        prep["load_transfer"] = plan_info
     doe_repo.update_study(conn, s["id"], phase="READY", prep=_jsonable(prep))
     return {"bead_doe_id": s["id"], "phase": "READY", "n_shapes": prep["n_shapes"], "n_ready": prep["n_ready"]}
 

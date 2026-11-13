@@ -3726,6 +3726,18 @@
             "title": "Gmsh",
             "type": "object"
           },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
+          },
           "max_designs": {
             "title": "Max Designs",
             "type": "integer"

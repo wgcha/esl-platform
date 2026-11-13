@@ -263,6 +263,8 @@ def core_view_v0161(dump: dict[str, Any], core: dict[str, Any]) -> dict[str, Any
         for path in keys:
             if not _has(core.get(sect), path):
                 _drop(out[sect], path)
+    if "load_transfer" not in core:        # v0.20.0 §13.6 최상위 하중 전달 — 코어 병합 전 대조 생략
+        out.pop("load_transfer", None)
     lad = (((out.get("compare") or {}).get("mesh")) or {}).get("ladder")
     core_lad = (((core.get("compare") or {}).get("mesh")) or {}).get("ladder")
     if isinstance(lad, list) and isinstance(core_lad, list) and "defeature" not in core_lad:

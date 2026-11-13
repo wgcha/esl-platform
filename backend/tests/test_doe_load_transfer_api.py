@@ -1,6 +1,7 @@
-"""v0.20.0 ④ 하중 전달 API·설정(계약 esl_load_transfer.md §4·§5, V-LT-10): 설정 검사(경계값)·거울, 요청 검사 순서·코드,
-해석된 스냅샷 `params.doe.load_transfer`·`inputs.load_transfer`, 옛 스터디 응답(키 없음), 복제 규칙(LT-11), settings 블록,
-결과 진단 요약·view3d_ref 통과."""
+"""v0.20.0 하중 전달 API·설정(계약 esl_load_transfer.md §4·§5·§13.6, V-LT-10·19): 최상위 bead_doe.load_transfer 설정 검사(경계값)·
+거울(compare.load_transfer = ④ 전용 support·region), 요청 두 키 모든 시나리오 허용·검사 순서·코드, 해석된 스냅샷
+`params.doe.load_transfer`(compare 만 ④ 키 평면 합침)·`inputs.load_transfer`(모드별 키), 옛 스터디 응답(키 없음), 복제 규칙(LT-11),
+settings 최상위 블록, 결과 진단 요약·view3d_ref 통과."""
 
 from __future__ import annotations
 
@@ -27,41 +28,51 @@ from test_doe_compare_api import (  # noqa: F401  (픽스처·도우미 재사�
     world,
 )
 
-LT_DEFAULT = {"method": "work", "cell_size_mm": None, "support": "transfer", "region_mode": "auto"}
+LT_COMMON = {"method": "work", "cell_size_mm": None}                                          # ①②③ 요약
+LT_DEFAULT = {**LT_COMMON, "support": "transfer", "region_mode": "auto"}                      # ④ 요약
 
 
-# ================================================================ 설정(§4.1)
+# ================================================================ 설정(§4.1·§13.6)
 def _cfg(**over):
-    from esl_platform.core.config import BeadDoeCompareLoadTransferCfg
+    from esl_platform.core.config import BeadDoeLoadTransferCfg
 
-    return BeadDoeCompareLoadTransferCfg(**over)
+    return BeadDoeLoadTransferCfg(**over)
+
+
+CMP_DEFAULT = {"support": "transfer", "support_tol_mm": None, "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5}}
 
 
 def test_defaults_and_mirror():
-    """새 스터디 기본 = work·transfer·auto·진단 켬(사용자 확정 2026-11-13), 예시 yaml 2개 = pydantic 기본(거울)."""
+    """새 스터디 기본 = work·진단 켬(사용자 확정 2026-11-13), 지지 이전·영역 auto 는 ④ 전용(compare.load_transfer).
+    예시 yaml 2개 = pydantic 기본(거울)."""
     from esl_platform.core.config import BeadDoeCfg
 
     d = _cfg().model_dump()
     assert d == {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0], "cell_min_mm": 3.0,
                  "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01, "far_fail_frac": 0.2},
-                 "support": "transfer", "support_tol_mm": None,
-                 "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5},
-                 "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0, "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}}
-    assert BeadDoeCfg().model_dump()["compare"]["load_transfer"] == d
+                 "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0, "alt_designs": "auto",
+                          "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}}
+    dump = BeadDoeCfg().model_dump()
+    assert dump["load_transfer"] == d and dump["compare"]["load_transfer"] == CMP_DEFAULT
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
-        y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
-        assert y["bead_doe"]["compare"]["load_transfer"] == d, p
+        y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]
+        assert y["load_transfer"] == d, p
+        assert y["compare"]["load_transfer"] == CMP_DEFAULT, p
     from esl.doe import DEFAULTS
 
-    if "load_transfer" in (DEFAULTS.get("compare") or {}):           # 코어 병합 후 — 키 이름·값 거울
-        assert DEFAULTS["compare"]["load_transfer"] == d
+    if "load_transfer" in DEFAULTS:                                   # 코어 병합 후 — 키 이름·값 거울
+        assert DEFAULTS["load_transfer"] == d
+    if "load_transfer" in (DEFAULTS.get("compare") or {}):
+        assert DEFAULTS["compare"]["load_transfer"] == CMP_DEFAULT
 
 
 def test_settings_mirror_into_core_view():
     """bead_doe_settings 가 코어 DEFAULTS 에 아직 없어도 load_transfer 를 pydantic 기본으로 채움(워커 스냅샷 cfg)."""
     from esl_platform.core.config import bead_doe_settings
 
-    assert bead_doe_settings(None)["compare"]["load_transfer"]["method"] == "work"
+    s = bead_doe_settings(None)
+    assert s["load_transfer"]["method"] == "work" and s["compare"]["load_transfer"]["support"] == "transfer"
+    assert "method" not in s["compare"]["load_transfer"]
 
 
 @pytest.mark.parametrize("bad", [
@@ -71,14 +82,28 @@ def test_settings_mirror_into_core_view():
     {"cell_choices_mm": [None] + [float(x) for x in range(10, 18)]},                       # 길이 9 > 8
     {"cell_choices_mm": [201.0]},
     {"diag": {"cell_sweep_mm": [5.0, 5.0]}}, {"diag": {"cell_sweep_mm": [1.0]}}, {"diag": {"alt_cell_size_mm": 1.0}},
-    {"diag": {"cell_sweep_mm": [float(x) for x in range(10, 19)]}},
+    {"diag": {"cell_sweep_mm": [float(x) for x in range(10, 19)]}}, {"diag": {"alt_designs": "yes"}},
     {"work": {"knn": 0}}, {"work": {"knn": 65}}, {"work": {"proj_tol_mm": 0}}, {"work": {"newton_iter": 0}},
     {"work": {"newton_iter": 51}}, {"work": {"far_warn_frac": 0.3}}, {"work": {"far_fail_frac": 1.1}},
-    {"work": {"far_warn_frac": -0.1}}, {"support": "nearest"}, {"support_tol_mm": 0},
-    {"region": {"mode": "bbox"}}, {"region": {"pad_mm": 0}}, {"region": {"min_frac": 0}}, {"region": {"min_frac": 1.01}},
-    {"unknown": 1},
+    {"work": {"far_warn_frac": -0.1}}, {"unknown": 1},
+    {"support": "transfer"}, {"region": {"mode": "all"}},                 # 최상위에서는 ④ 전용 키 금지(별칭 없음)
 ])
 def test_config_rejects(tmp_path, bad):
+    from esl_platform.core.config import load_config_dict
+
+    d = make_settings_dict(tmp_path)
+    d["bead_doe"] = {"enabled": True, "load_transfer": bad}
+    lc = load_config_dict(d, environ={})
+    assert not lc.ok
+    assert any(k.startswith("bead_doe.load_transfer") for k in lc.error_keys()), lc.errors()
+
+
+@pytest.mark.parametrize("bad", [
+    {"support": "nearest"}, {"support_tol_mm": 0}, {"region": {"mode": "bbox"}}, {"region": {"pad_mm": 0}},
+    {"region": {"min_frac": 0}}, {"region": {"min_frac": 1.01}}, {"unknown": 1},
+    {"method": "work"}, {"cell_size_mm": 5.0}, {"diag": {"enabled": False}},   # compare 쪽에는 방식·셀·진단 없음(이동)
+])
+def test_config_rejects_compare(tmp_path, bad):
     from esl_platform.core.config import load_config_dict
 
     d = make_settings_dict(tmp_path)
@@ -91,12 +116,24 @@ def test_config_rejects(tmp_path, bad):
 @pytest.mark.parametrize("good", [
     {"method": "cell"}, {"cell_size_mm": 3.0}, {"cell_size_mm": 200.0}, {"cell_min_mm": 1.0, "cell_choices_mm": [1.0]},
     {"cell_choices_mm": [None]}, {"diag": {"cell_sweep_mm": []}}, {"diag": {"alt_cell_size_mm": None}},
+    {"diag": {"alt_designs": "on"}}, {"diag": {"alt_designs": "off"}},
     {"work": {"proj_tol_mm": None, "far_warn_frac": 0.0, "far_fail_frac": 0.0}},
-    {"work": {"far_warn_frac": 1.0, "far_fail_frac": 1.0}}, {"support": "auto", "support_tol_mm": 5.0},
-    {"region": {"mode": "all", "pad_mm": 2.0, "min_frac": 1.0}},
+    {"work": {"far_warn_frac": 1.0, "far_fail_frac": 1.0}},
     {"cell_choices_mm": [None] + [float(x) for x in range(10, 17)]},                      # 길이 8
 ])
 def test_config_accepts(tmp_path, good):
+    from esl_platform.core.config import load_config_dict
+
+    d = make_settings_dict(tmp_path)
+    d["bead_doe"] = {"enabled": True, "load_transfer": good}
+    lc = load_config_dict(d, environ={})
+    assert lc.ok, lc.errors()
+
+
+@pytest.mark.parametrize("good", [
+    {"support": "auto", "support_tol_mm": 5.0}, {"region": {"mode": "all", "pad_mm": 2.0, "min_frac": 1.0}},
+])
+def test_config_accepts_compare(tmp_path, good):
     from esl_platform.core.config import load_config_dict
 
     d = make_settings_dict(tmp_path)
@@ -108,8 +145,9 @@ def test_config_accepts(tmp_path, good):
 # ================================================================ settings 블록
 def test_settings_block(client, world):
     s = api(client, "GET", "/doe/settings").json()
-    assert s["compare"]["load_transfer"] == {"method": "work", "cell_size_mm": None,
-                                             "cell_choices_mm": [None, 10.0, 5.0, 3.0], "cell_min_mm": 3.0}
+    assert s["load_transfer"] == {"method": "work", "cell_size_mm": None,
+                                  "cell_choices_mm": [None, 10.0, 5.0, 3.0], "cell_min_mm": 3.0}
+    assert "load_transfer" not in s["compare"]                      # 미출시라 별칭 없이 최상위로 이동
 
 
 # ================================================================ 요청 검사(§4.2)
@@ -159,18 +197,61 @@ def test_check_invalid_value_and_scenarios(client, world):
     assert r.status_code == 422
     r = check(client, world, sh, cell_size_mm="x")
     assert r.status_code == 422
-    # compare 아닌 시나리오에 두 키 → 422 INVALID_PARAMS(명시적 null 포함)
-    from doe_support import upload_step
 
-    uid = upload_step(client)
-    base = {"project_id": "p-1", "scenario": "same", "entry_ids": [world["a"]], "step_upload_id": uid}
-    for extra in ({"load_transfer": "work"}, {"load_transfer": "cell"}, {"cell_size_mm": 5.0}, {"cell_size_mm": None}):
-        r = api(client, "POST", "/doe/check-inputs", json={**base, **extra})
-        assert r.status_code == 422 and code(r) == "INVALID_PARAMS", (extra, r.text)
-        r = api(client, "POST", "/doe/studies", json={**base, **extra})
-        assert r.status_code == 422 and code(r) == "INVALID_PARAMS", (extra, r.text)
-    r = api(client, "POST", "/doe/check-inputs", json={**base, "scenario": "select", "load_transfer": "work"})
-    assert r.status_code == 422 and code(r) == "INVALID_PARAMS"
+
+def _same(client, world, **kw):
+    from doe_support import body, upload_step
+
+    return body([world["a"], world["b"]], upload_step(client), **kw)
+
+
+def test_other_scenarios_accept_keys(client, world, engine):
+    """§13.6: 두 키는 모든 시나리오에서 허용(compare 전용 422 폐지) — ①(same)·select(case)·select(manual) 요약 = {method, cell_size_mm}."""
+    for extra, want in (({}, LT_COMMON), ({"load_transfer": "work"}, LT_COMMON),
+                        ({"load_transfer": "cell"}, {**LT_COMMON, "method": "cell"}),
+                        ({"load_transfer": "cell", "cell_size_mm": 5.0}, {"method": "cell", "cell_size_mm": 5.0}),
+                        ({"load_transfer": "cell", "cell_size_mm": None}, {"method": "cell", "cell_size_mm": None}),
+                        ({"cell_size_mm": None}, LT_COMMON)):
+        r = api(client, "POST", "/doe/check-inputs", json=_same(client, world, **extra))
+        assert r.status_code == 200, (extra, r.text)
+        assert r.json()["load_transfer"] == want, extra
+    # 검사 코드·범위는 ④ 와 같음
+    for extra, ex in (({"load_transfer": "work", "cell_size_mm": 5.0}, {}),
+                      ({"cell_size_mm": 5.0}, {}),
+                      ({"load_transfer": "cell", "cell_size_mm": 2.99}, {"min": 3.0, "max": 200.0}),
+                      ({"load_transfer": "cell", "cell_size_mm": 200.5}, {"min": 3.0, "max": 200.0})):
+        for path in ("/doe/check-inputs", "/doe/studies"):
+            r = api(client, "POST", path, json=_same(client, world, **extra))
+            assert r.status_code == 422 and code(r) == "LOAD_TRANSFER_INVALID", (extra, r.text)
+            for k, v in ex.items():
+                assert r.json()["detail"][k] == v
+    r = api(client, "POST", "/doe/check-inputs", json=_same(client, world, load_transfer="morph"))
+    assert r.status_code == 422
+    # select(case) 도 같은 규칙
+    sel = {"project_id": "p-1", "scenario": "select", "entry_ids": [world["a"], world["b"]], "load_transfer": "cell",
+           "cell_size_mm": 10.0}
+    r = api(client, "POST", "/doe/check-inputs", json=sel)
+    assert r.status_code == 200, r.text
+    assert r.json()["load_transfer"] == {"method": "cell", "cell_size_mm": 10.0}
+
+
+def test_other_scenario_snapshot_and_clone(client, world, engine):
+    r = api(client, "POST", "/doe/studies", json=_same(client, world, load_transfer="cell", cell_size_mm=5.0))
+    assert r.status_code == 201, r.text
+    s = r.json()
+    assert s["inputs"]["load_transfer"] == {"method": "cell", "cell_size_mm": 5.0}     # compare 키(support·region_mode) 없음
+    spec = _job(engine, s["job"]["id"])["params"]["doe"]["load_transfer"]
+    assert spec == {**_cfg().model_dump(), "schema": 1, "method": "cell", "cell_size_mm": 5.0}   # ④ 키 합치지 않음
+    assert "support" not in spec and "region" not in spec
+    finish_job(engine, s["job"]["id"])
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
+    assert r.status_code == 201, r.text
+    assert r.json()["inputs"]["load_transfer"] == {"method": "cell", "cell_size_mm": 5.0}
+    lt = _job(engine, r.json()["job"]["id"])["params"]["doe"]["load_transfer"]
+    assert lt["method"] == "cell" and lt["cell_size_mm"] == 5.0 and "support" not in lt
+    # 기본 요청 = work
+    r = api(client, "POST", "/doe/studies", json=_same(client, world))
+    assert r.json()["inputs"]["load_transfer"] == LT_COMMON
 
 
 def test_check_order_after_existing(client, world):
@@ -187,7 +268,7 @@ def test_study_snapshot_default(client, world, engine):
     s = r.json()
     assert s["inputs"]["load_transfer"] == LT_DEFAULT
     spec = _job(engine, s["job"]["id"])["params"]["doe"]["load_transfer"]
-    assert spec == {**_cfg().model_dump(), "schema": 1}
+    assert spec == {**_cfg().model_dump(), **CMP_DEFAULT, "schema": 1}        # compare 만 ④ 키(support·region)를 평면으로 합침
     assert [x["step_key"] for x in s["job"]["steps"]] == ["BD_INPUT", "BD_MESH0", "BD_GEOM", "BD_LOADS", "BD_PREP_REGISTER"]
     g = api(client, "GET", f"/doe/studies/{s['id']}").json()
     assert g["inputs"]["load_transfer"] == LT_DEFAULT
@@ -199,7 +280,7 @@ def test_study_snapshot_override_cell(client, world, engine):
     s = r.json()
     assert s["inputs"]["load_transfer"] == {**LT_DEFAULT, "method": "cell", "cell_size_mm": 5.0}
     spec = _job(engine, s["job"]["id"])["params"]["doe"]["load_transfer"]
-    want = {**_cfg().model_dump(), "schema": 1, "method": "cell", "cell_size_mm": 5.0}
+    want = {**_cfg().model_dump(), **CMP_DEFAULT, "schema": 1, "method": "cell", "cell_size_mm": 5.0}
     assert spec == want                                  # 덮어쓰기는 method·cell_size_mm 두 개뿐
     r = api(client, "POST", "/doe/studies", json=cbody(world, shapes3(client), load_transfer="cell", cell_size_mm=2.0))
     assert r.status_code == 422 and code(r) == "LOAD_TRANSFER_INVALID"
@@ -210,10 +291,10 @@ def test_snapshot_uses_configured_values(tmp_path, engine, fake_dashboard, clock
     method·cell_size_mm 만. 스냅샷 이후 설정 변경은 기존 스터디에 영향 없음(작업 spec 고정)."""
     from test_doe_compare_api import record_paicad
 
-    lt = {"method": "cell", "cell_size_mm": 10.0, "support": "auto", "support_tol_mm": 4.0,
-          "region": {"mode": "all"}, "work": {"knn": 4}, "diag": {"enabled": False, "cell_sweep_mm": []}}
+    lt = {"method": "cell", "cell_size_mm": 10.0, "work": {"knn": 4}, "diag": {"enabled": False, "cell_sweep_mm": []}}
     d = doe_settings_dict(tmp_path)
-    d["bead_doe"]["compare"] = {"load_transfer": lt}
+    d["bead_doe"]["load_transfer"] = lt
+    d["bead_doe"]["compare"] = {"load_transfer": {"support": "auto", "support_tol_mm": 4.0, "region": {"mode": "all"}}}
     record_paicad(engine)
     with _app(tmp_path, engine, fake_dashboard, clock, d) as c:
         make_case(engine, Path(d["storage"]["input_roots"][0]), "c1")
@@ -287,7 +368,8 @@ def test_clone_keeps_method_refreshes_diag(tmp_path, engine, fake_dashboard, clo
         assert _job(engine, s["job"]["id"])["params"]["doe"]["load_transfer"]["diag"]["enabled"] is True
         finish_job(engine, s["job"]["id"])
     d2 = copy.deepcopy(d)
-    d2["bead_doe"]["compare"] = {"load_transfer": {"method": "work", "support": "auto", "diag": {"enabled": False}}}
+    d2["bead_doe"]["load_transfer"] = {"method": "work", "diag": {"enabled": False}}
+    d2["bead_doe"]["compare"] = {"load_transfer": {"support": "auto"}}
     with _app(tmp_path, engine, fake_dashboard, clock, d2) as c:
         r = c.post(f"{API}/doe/studies/{s['id']}/clone", json={}, headers=W)
         assert r.status_code == 201, r.text
