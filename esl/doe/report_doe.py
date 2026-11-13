@@ -342,6 +342,9 @@ def load_transfer_html(lt: dict | None) -> str:
 
 SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스"}
 SM_FORM_KO = {"ritz": "C_ref / ρ (Ritz)", "taylor": "C_ref (2 − ρ) (Taylor)"}
+SM_CROSS_KO = ("다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 "
+               "순위를 매깁니다")
+SM_VERIFY_CROSS = "순위는 재풀이 C(다른 메시 비교)입니다 — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요."
 SM_VERIFY = ("순위는 1차 강성 지표입니다 — 상위 안은 산출물(ch_r.rad·ch_r.fem)로 Radioss 검증 낙하를 돌려 확인하세요"
              "(ESL 원본 변형을 강제하는 관점이라 하중 재분배·국부 좌굴은 보지 못함).")
 
@@ -353,10 +356,15 @@ def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> 
         return ""
     rk = res.get("ranking") or []
     warn = float(sm.get("imbalance_warn") or 0.02)
-    inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(sm.get("metric"), sm.get("metric"))),
-                        ("식", SM_FORM_KO.get(sm.get("lin_form"), sm.get("lin_form"))),
-                        ("정의", "ρ = U_안 / U_ref(ESL 원본 변형 u_ref 를 안에 줄 때 변형에너지 비), C_ref = 참조 컴플라이언스"),
-                        ("불평형 경고", f"imbalance_rel > {warn:g}")])
+    met = sm.get("metric_effective") or sm.get("metric")
+    if sm.get("cross_mesh"):                     # 결정 A: 다른 메시 비교 — 지표 미적용, 순위 = 재풀이 C
+        inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(met, met)), ("비교", SM_CROSS_KO)])
+    else:
+        inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(met, met)),
+                            ("식", SM_FORM_KO.get(sm.get("lin_form"), sm.get("lin_form"))),
+                            ("정의", "ρ = U_안 / U_ref(베이스라인 변형 u_ref 를 같은 메시의 안에 줄 때 변형에너지 비), "
+                                    "C_ref = 베이스라인 컴플라이언스"),
+                            ("불평형 경고", f"imbalance_rel > {warn:g}")])
     trs = []
     for x in rk[:top_n]:
         imb = x.get("imbalance_max")
@@ -369,7 +377,8 @@ def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> 
         inner += "<h3>보조 열(재풀이·변위 — 순위와 무관)</h3>" + H.table(
             ["순위", "id", "이름", "score(지표)", "score(재풀이)", "불평형 max", "ρ 범위", "umax 강체 제거", "εmax"], trs,
             num=(0, 3, 4, 7, 8))
-    inner += f"<p class='small muted'>{H.esc(SM_VERIFY)} 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.</p>"
+    verify = SM_VERIFY_CROSS if sm.get("cross_mesh") else SM_VERIFY
+    inner += f"<p class='small muted'>{H.esc(verify)} 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.</p>"
     return inner
 
 

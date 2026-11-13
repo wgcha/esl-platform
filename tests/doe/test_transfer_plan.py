@@ -84,14 +84,19 @@ def test_stages_single_load_site():
 
 
 def test_plan_sm_columns():
-    """V-SM-6: 계획 열 sm_ref·sm_disp·sm_omega = esl_stiffness_metric.md §4 표, 빈 칸 = CONFIG_INVALID."""
-    want = {"case_once": ("base", ("I", "I"), "all"), "bmesh_once": ("a_direct", ("interp", "I"), "all"),
-            "step_once": ("a_direct", ("interp", "I"), "step_region"),
-            "step_per_design": ("a_direct", ("interp", "interp"), "all"),
-            "compare_per_shape": ("base_or_a_direct", ("interp", "interp"), "compare_region")}
+    """V-SM-6(결정 A): 계획 열 sm_ref·sm_disp·sm_omega·sm_rank = esl_stiffness_metric.md §4 표 — 같은 메시(once)만 지표,
+    다른 메시(per_target)는 지표 없음·순위 solve. interp(build_disp)는 어느 계획에도 없음. 빈 칸 = CONFIG_INVALID."""
+    want = {"case_once": ("base", ("I", "I"), "all", "metric"), "bmesh_once": ("base", ("I", "I"), "all", "metric"),
+            "step_once": ("base", ("I", "I"), "step_region", "metric"),
+            "step_per_design": ("none", ("none", "none"), "all", "solve"),
+            "compare_per_shape": ("none", ("none", "none"), "compare_region", "solve")}
     for pid, row in want.items():
         p = tp.PLANS[pid]
-        assert (p["sm_ref"], p["sm_disp"], p["sm_omega"]) == row, pid
+        assert (p["sm_ref"], p["sm_disp"], p["sm_omega"], p["sm_rank"]) == row, pid
+        assert "interp" not in p["sm_disp"]
+        assert (p["sm_rank"] == "metric") == (p["reuse"] == "once")       # 같은 위상 = 베이스라인 모핑(once)
+        assert tp.metric_effective(p, "lin") == ("lin" if p["sm_rank"] == "metric" else "solve")
+        assert tp.metric_effective(p, "solve") == "solve" and tp.cross_mesh(p) == (p["sm_rank"] == "solve")
     saved = dict(tp.PLANS["bmesh_once"])
     try:
         tp.PLANS["bmesh_once"]["sm_ref"] = ""

@@ -1,7 +1,7 @@
 """V-SM-1~5(모듈 단위, 모드 무관 합성) — 계약 esl_stiffness_metric.md §8.
 
 V-SM-1 K₁ = K₀ → lin = ritz = solve, V-SM-2 작은 ΔK 1차 일치·하한, V-SM-3 무른 모드 증폭 재현(solve 폭주·lin 안정),
-V-SM-4 강체·전달·회전 carry, V-SM-5 순수 모듈(AST·결정성)."""
+V-SM-4 강체·전달·회전 carry, V-SM-5 순수 모듈(AST·결정성), V-SM-11 결정 A ②(다른 A 메시 → work 하중 → 기준 B 해 참조)."""
 import ast
 import itertools
 import os
@@ -262,3 +262,42 @@ def test_stiffness_region_mask(small_dk):
     sc = smm.score([{"entry_id": "E1", "C": 2.0, "C_ritz": 3.0, "C_lin": 1.0},
                     {"entry_id": "E2", "C": 5.0, "C_ritz": None, "C_lin": 4.0}], "lin")
     assert sc["worst"] == "E1" and sc["missing"] == ["E2"] and sc["M_max"] == 3.0
+
+
+# ---------------------------------------------------------------- V-SM-11 결정 A(2026-11-13) ② 합성
+@pytest.fixture(scope="module")
+def bmesh_amp():
+    """② 꼴: ESL 원본 A(600×100, t 0.8, F = K₀u_drop) → 다른 메시 B(같은 기하, 성긴 45×8)에 work 하중(W, LT-2) →
+    참조 u_ref = B 에서 그 하중으로 직접 푼 해(강체 제거), 안 = B 모핑(같은 노드 S = I)."""
+    from esl.doe import DEFAULTS
+    from esl.doe import load_transfer as ltm
+    a = ss.plate(nx=60, ny=10, Lx=600.0, Lz=100.0, t=0.8, bow=0.0, n_tria_cols=6)
+    ud = ss.drop_u(a, amp=5.0, dent=(0.0, 0.0), w=0.05)
+    ud[:, 1] = 0.0
+    b = ss.plate(nx=45, ny=8, Lx=600.0, Lz=100.0, t=0.8, bow=0.0, n_tria_cols=6)
+    W = ltm.build_work(a["x0"], b, None, DEFAULTS["load_transfer"]["work"], 10.0)
+    FB = ltm.apply_work(W, ss.esl_force(a, ud), b["x0"].shape[0])
+    uref, ref, C0, um0 = _ref(b, FB)
+    base = _target(b, b["x0"], uref, FB, ref["C_ref"])
+    rows = []
+    for al in (0.1, 0.5, 1.0):
+        x = ss.bead_x(b, al, depth=10.0, center=(0.1, 0.0), r=0.15)
+        r = _target(b, x, uref, FB, ref["C_ref"])
+        u1, C1, um1, _ = ss.solve(b, FB, x)
+        rows.append({"alpha": al, "ritz": r["C_ritz"] / ref["C_ref"], "solve": C1 / C0, "umax": um1 / um0,
+                     "imb": r["imbalance_rel"]})
+    return ref, C0, base, rows
+
+
+def test_v_sm_11_bmesh_baseline_reference(bmesh_amp):
+    """결정 A ②: 베이스라인 자체 ρ = 1·C_ritz = C_ref = C_solve(같은 하중·같은 K), 안의 #63 꼴 재풀이 증폭(C ×3~130,
+    umax ×10³~10⁴, 불평형 1.7~14 %)이 지표(ritz)에서는 ≤ 9 % 로 억제."""
+    ref, C0, base, rows = bmesh_amp
+    assert base["rho"] == pytest.approx(1.0, abs=1e-10) and ref["C_ref"] == pytest.approx(C0, rel=1e-10)
+    assert base["C_ritz"] == pytest.approx(C0, rel=1e-10) and base["imbalance_rel"] <= 1e-9
+    for r in rows:
+        assert r["solve"] >= 3.0 and r["umax"] >= 1e3                    # 재풀이: #63 꼴 증폭
+        assert abs(r["ritz"] - 1.0) <= 0.1 * r["alpha"]                  # 지표: 억제
+        assert abs(r["solve"] - 1.0) > 20 * abs(r["ritz"] - 1.0)
+    for p, q in itertools.pairwise(rows):
+        assert q["ritz"] >= p["ritz"] and q["solve"] > p["solve"] and q["imb"] > p["imb"]

@@ -21,26 +21,33 @@ CELL_MAX_MM = 200.0
 # reuse: once(베이스라인 1회 → 모든 안 같은 노드 하중, BD-D-3) | per_target(베이스라인 포함 대상마다 같은 규칙).
 # identity: 같은 메시 판정 키(work 일 때만 — LT-22). placement: global | auto(②③ frame 판정 — LT-23).
 # mask: 대상 활성 요소(none | step_region = ③ 평가 영역 | compare_region = ④ LT-8). truth: 베이스라인 참값.
-# sm_ref·sm_disp·sm_omega(esl_stiffness_metric.md §4): 참조 변위(base = d000 해 | a_direct = A 원본 풀이 | base_or_a_direct =
-# 같은 메시면 base), 변위 전달(베이스라인, 안) I | interp, 강체 제거·에너지 범위(all | step_region | compare_region).
+# sm_ref·sm_disp·sm_omega·sm_rank(esl_stiffness_metric.md §4, 결정 A 2026-11-13 — 강성 지표는 같은 메시(같은 위상) 안에서만):
+#   sm_ref  = 참조 변위 base(베이스라인 d000 해 — ① 원본 하중, ②·새 ③ work 하중으로 기준 메시에서 직접 푼 해) | none(지표 미적용)
+#   sm_disp = 변위 전달(베이스라인, 안) I(같은 노드) | none. interp(load_transfer.build_disp, A → 대상 C0 병진 보간)는 지표 경로에서
+#             쓰지 않음: 같은 기하에서도 A 요소 경계 꺾임이 대상 메시에 가짜 굽힘·전단 에너지를 넣어 ρ 를 왜곡(성긴 대상 1.62,
+#             2배 촘촘 12.3, 회전 응축 11.9 — esl_stiffness_metric.md §2.1). 코드·시험은 남김(계획 표에서 비활성).
+#   sm_omega = 강체 제거·에너지 범위(all | step_region | compare_region), sm_rank = 순위 지표 metric(스냅샷 rank.metric) |
+#   solve(다른 메시 비교 — 형상·안마다 work 하중 재풀이 C, 경고 SM_CROSS_MESH, 결과 metric_effective = solve).
 PLANS = {
     "case_once": {"dst": "baseline", "reuse": "once", "identity": "topo", "placement": "global", "mask": "none",
                   "truth": "self_direct", "alt_designs": False,
-                  "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all"},
+                  "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric"},
     "bmesh_once": {"dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "none",
                    "truth": "a_direct", "alt_designs": False,
-                   "sm_ref": "a_direct", "sm_disp": ("interp", "I"), "sm_omega": "all"},
+                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric"},
     "step_once": {"dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "step_region",
                   "truth": "a_direct", "alt_designs": False,
-                  "sm_ref": "a_direct", "sm_disp": ("interp", "I"), "sm_omega": "step_region"},
+                  "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "step_region", "sm_rank": "metric"},
     "step_per_design": {"dst": "design", "reuse": "per_target", "identity": "none", "placement": "auto", "mask": "none",
                         "truth": "a_direct", "alt_designs": False,
-                        "sm_ref": "a_direct", "sm_disp": ("interp", "interp"), "sm_omega": "all"},
+                        "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "all", "sm_rank": "solve"},
     "compare_per_shape": {"dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
                           "mask": "compare_region", "truth": "compare", "alt_designs": True,
-                          "sm_ref": "base_or_a_direct", "sm_disp": ("interp", "interp"), "sm_omega": "compare_region"},
+                          "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "compare_region",
+                          "sm_rank": "solve"},
 }
-PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega")
+PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
+            "sm_rank")
 PLAN_OF = {("same", None): "case_once", ("select", "case"): "case_once", ("mesh", None): "bmesh_once",
            ("select", "mesh"): "bmesh_once", ("select", "step"): "step_once", ("step", None): "step_per_design",
            ("compare", None): "compare_per_shape"}
@@ -105,6 +112,16 @@ def resolve(spec_lt: dict | None, scenario: str, defaults: dict | None = None) -
     if not float(w.get("fail_dist_mm", 20.0)) > 0 or not 0.0 <= float(w.get("fail_frac", 0.2)) <= 1.0:
         bad("work.fail_dist_mm > 0, 0 ≤ fail_frac ≤ 1")
     return lt
+
+
+def metric_effective(plan: dict, metric: str) -> str:
+    """순위에 실제로 쓰는 지표(결정 A): 계획 열 sm_rank = metric 이면 스냅샷 metric 그대로, solve 면 solve(다른 메시 비교)."""
+    return str(metric) if plan["sm_rank"] == "metric" else "solve"
+
+
+def cross_mesh(plan: dict) -> bool:
+    """다른 메시 비교(강성 지표 미적용 — 경고 SM_CROSS_MESH) 계획인가."""
+    return plan["sm_rank"] != "metric"
 
 
 def method_of(lt: dict, variant: tuple | None = None, mapping_opts: dict | None = None) -> dict:

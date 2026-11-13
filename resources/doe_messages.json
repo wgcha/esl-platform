@@ -259,6 +259,7 @@
   "LT_TRUTH_AUTO_SUPPORT": "(정보) 진단 참값(ESL 원본 메시 직접 풀이)의 ESL 자기 지지가 강체 6모드를 구속하지 못해 자동 3-2-1 로 풀었습니다(메시 {sha}). (Info: truth solved with auto 3-2-1 supports.)",
   "SM_LIN_RANGE": "ESL {entry_id} 의 변형에너지 비 ρ = {rho} — 1차 강성 지표의 근사 범위(|ρ−1| ≤ {lin_valid}) 밖입니다. 순서는 유지되지만 값은 참고로만 보세요. (Stiffness metric outside first-order range.)",
   "SM_IMBALANCE": "ESL {entry_id} 의 고정 하중 불평형 {imbalance_rel}(> {imbalance_warn}) — 재풀이 변위(umax·εmax)가 무른 모드로 부풀 수 있어 보조 값으로만 표시합니다. (Load imbalance on modified stiffness; displacement shown as auxiliary only.)",
-  "SM_SKIPPED": "강성 지표를 계산하지 못했습니다({stage} {err}) — 이 안은 1차 지표 순위에서 빠집니다. (Stiffness metric skipped.)"
+  "SM_SKIPPED": "강성 지표를 계산하지 못했습니다({stage} {err}) — 이 안은 1차 지표 순위에서 빠집니다. (Stiffness metric skipped.)",
+  "SM_CROSS_MESH": "다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 순위를 매겼습니다(결과 metric_effective = solve). (Cross-mesh comparison: ranked by re-solved compliance, lower precision.)"
  }
 }

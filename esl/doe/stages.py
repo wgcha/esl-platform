@@ -916,9 +916,9 @@ def bd_post(spec: dict, echo=print) -> dict:
         b = next(r for r in results if r["id"] == BASELINE)
         if nr.get("status") == "OK" and b.get("status") == "OK":
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
-    S_ = _sm(c)
+    S_ = _sm_post(c)
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]),
-                **({"metric": S_["metric"], "lin_form": S_["lin_form"]} if S_ else {}))
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"]} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     for x in R["ranking"]:
         for p in x["per_esl"]:
@@ -964,11 +964,11 @@ def bd_post(spec: dict, echo=print) -> dict:
             lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_ranking_csv(R, results, names, [e["id"] for e in c.D["entries"]], lt_cols,
-                              smm.metric_key(S_["metric"], S_["lin_form"]) if S_ else None))
+                              smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None))
     c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
                                                                     "code": r.get("code"), "score": r.get("score")}
                                                                    for r in results]})
-    warns = [w["code"] for w in R["warnings"]] + lt_w
+    warns = [w["code"] for w in R["warnings"]] + lt_w + _sm_post_warn(S_)
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -1036,7 +1036,8 @@ def bd_post(spec: dict, echo=print) -> dict:
         ctx["selection"]["best_clean"] = best_clean
     if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절·한계 안내, §6 최상위 metric·lin_form
         ctx["stiffness"] = dict(S_)
-        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"))
+        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"])
     if L is not None:
         out["load_transfer"] = lt_res
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
@@ -3101,6 +3102,20 @@ def _sm(c: Ctx) -> dict | None:
     return out
 
 
+def _sm_post(c: Ctx) -> dict | None:
+    """BD_POST 순위 지표(결정 A): 스냅샷 rank + metric_effective(계획 열 sm_rank — 다른 메시 = solve)·cross_mesh. 옛 = None."""
+    S_ = _sm(c)
+    if S_ is None:
+        return None
+    plan = _lt_plan(c)
+    return {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"]), "cross_mesh": tp.cross_mesh(plan)}
+
+
+def _sm_post_warn(S_: dict | None) -> list:
+    """다른 메시 비교 경고 SM_CROSS_MESH(결과 1개) — 같은 메시 계획·옛 스냅샷 = 없음."""
+    return [_cmp_text("SM_CROSS_MESH")] if S_ and S_["cross_mesh"] else []
+
+
 def _solve6(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), keep6=(),
             region=None) -> dict:
     """``evaluate.evaluate`` 와 같은 계산(같은 식·같은 순서 — per_esl·warnings·stats 비트 동일) + keep6 ESL 의 6 dof 해
@@ -3208,12 +3223,16 @@ def _sm_omega(plan: dict, region):
 def _sm_eval(c: Ctx, t, did: str, mesh: dict, loads: list, region, h: float, u3: dict, u6: dict) -> tuple[dict, list]:
     """안(베이스라인 포함) 강성 지표(§2): K_t 조립(Ω 요소) · u_t = S u_ref(계획 sm_disp) · metrics · umax_def.
     베이스라인에서 참조 변위(sm_ref: base | a_direct)·C_ref 를 만들어 prep/sm_ref.npz 에 1회 저장(안은 읽기만).
+    결정 A(2026-11-13): 계획 sm_ref = none(다른 메시 — 옛 ③·④) 이면 지표 없이 umax_def 만(순위 = 재풀이 C, post 의 sm_rank).
     반환 ({entry_id: per_esl 추가 키}, 경고 문자열)."""
     S, plan, L = _sm(c), _lt_plan(c), _lt(c)
     wcfg = (L or settings()["load_transfer"])["work"]
     om = _sm_omega(plan, region)
     om_nodes = None if om is None else ltm.active_nodes(mesh, om)
     X = np.asarray(mesh["x0"], dtype=np.float64)
+    if plan["sm_ref"] == "none":
+        return {eid: {"C_lin": None, "C_ritz": None, "rho": None, "imbalance_rel": None,
+                      "umax_def": smm.umax_def(X, u3[eid], om_nodes) if eid in u3 else None} for eid, _F in loads}, []
     ents = {e.meta["entry_id"]: e for e in _lt_ents(c)}
     idn = {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}
     disp_b, disp_d = plan["sm_disp"]
@@ -3246,8 +3265,8 @@ def _sm_eval(c: Ctx, t, did: str, mesh: dict, loads: list, region, h: float, u3:
         S_cache: dict = {}
         for eid, F in loads:
             rf = ref[eid]
-            if rf["kind"] == "base":
-                K_A = K_t if om is None else smm.stiffness(mesh, c.solver_cfg())
+            if rf["kind"] == "base":              # 같은 K_t(같은 Ω) → 베이스라인 ρ = 1 정확(결정 A)
+                K_A = K_t
                 ut6, sinfo = rf["u_ref"], {"kind": "I", "far_frac": 0.0}
             else:
                 am = rf["mesh"]
@@ -3552,9 +3571,9 @@ def _cmp_post(c: Ctx, echo) -> dict:
             results.append(ev.result_doc(r["id"], "CANCELED", {}))
         else:
             results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
-    S_ = _sm(c)
+    S_ = _sm_post(c)
     R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
-                **({"metric": S_["metric"], "lin_form": S_["lin_form"]} if S_ else {}))
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"]} if S_ else {}))
     rk.attach_shapes(R, shapes)
     bias, bias_w, bias_i = _cmp_refine_bias(c, t, doc, results, float(R["ratio_tol"]), echo)     # v0.16.0 C2-D-24
     for x in R["ranking"]:
@@ -3590,7 +3609,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
             lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols,
-                                  smm.metric_key(S_["metric"], S_["lin_form"]) if S_ else None))
+                                  smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None))
 
     def shp(did):
         s = shapes.get(did) or {}
@@ -3603,7 +3622,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     inp = U.read_json(c.p("prep", "input.json"))
     if doc["reference_source"] == "case":
         warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
-    warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w + lt_w
+    warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w + lt_w \
+        + _sm_post_warn(S_)
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -3653,7 +3673,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
     if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절, §6 최상위 metric·lin_form
         ctx["stiffness"] = dict(S_)
-        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"))
+        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"])
     if L is not None:
         out.update(load_transfer=lt_res, view3d_ref=v3_ref or {}, view3d_esl=v3_esl or {})
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}

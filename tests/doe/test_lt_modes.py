@@ -38,6 +38,16 @@ LX, LZ, H0 = 240.0, 180.0, 3.0
 CFG_FULL = {"bead_doe": {"enabled": True}, "opt_run": {"solver": {"backend": "superlu"}}}
 
 
+def _txt(path) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _loads_bytes(out) -> bytes:
+    with open(os.path.join(out, "prep", "loads.npz"), "rb") as fh:
+        return fh.read()
+
+
 def _entry(root, mesh, f, eid="E0"):
     return en.load(scmp.lt_save_entry(root, eid, mesh, f), raw=True)
 
@@ -225,17 +235,17 @@ def test_pipeline_case_reference_work(tmp_path, monkeypatch):
     assert set(res["view3d_esl"]) == set(res["view3d"])
     for eid, name in res["view3d_ref"].items():                                     # LT-9 d000_e<kk>
         assert re.fullmatch(r"d000_e\d\d", name) and name not in res["view3d"]
-        man = json.load(open(P("post", "view3d", name, "manifest.json"), encoding="utf-8"))
+        man = U.read_json(P("post", "view3d", name, "manifest.json"))
         assert man["esl_run_id"] == eid
     diag = U.read_json(P("post", "load_transfer_diag.json"))
     assert diag["schema"] == ltm.DIAG_SCHEMA and diag["reference"]["identity"] is True
     ds = {x["id"]: x for x in diag["shapes"]}
     assert ds["d002"]["score_alt"] > 0 and ds["d000"]["score_alt"] == pytest.approx(1.0)
-    head = open(P("post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
+    head = _txt(P("post", "ranking.csv")).splitlines()[0].strip().split(",")
     assert head[-4:] == ltm_cols()
-    rows_csv = [ln.split(",") for ln in open(P("post", "ranking.csv"), encoding="utf-8").read().splitlines()[1:]]
+    rows_csv = [ln.split(",") for ln in _txt(P("post", "ranking.csv")).splitlines()[1:]]
     assert {r[0]: r[-4] for r in rows_csv}["d002"] == "work"
-    assert "하중 전달" in open(P("report.html"), encoding="utf-8").read()
+    assert "하중 전달" in _txt(P("report.html"))
     # (V-LT-7) 진단 단계 예외 → LT_DIAG_SKIPPED, 주 결과(per_esl) 불변
     before = U.read_json(P("run", "designs", "d002", "result.json"))["per_esl"]
     os.remove(P("run", "designs", "d002", "done.json"))
@@ -270,7 +280,7 @@ def test_pipeline_step_reference_cell_no_alt(tmp_path):
     assert res["load_transfer"]["alt"] is None and res["load_transfer"]["rank_alt_same"] is None
     diag = U.read_json(os.path.join(out, "post", "load_transfer_diag.json"))
     assert all("score_alt" not in x for x in diag["shapes"])
-    rows = [ln.split(",") for ln in open(os.path.join(out, "post", "ranking.csv"), encoding="utf-8").read().splitlines()]
+    rows = [ln.split(",") for ln in _txt(os.path.join(out, "post", "ranking.csv")).splitlines()]
     assert rows[0][-4:] == ltm_cols() and {r[0]: r[-4] for r in rows[1:]}["d001"] == "cell:10"
     assert {r[0]: r[-1] for r in rows[1:]}["d001"] == ""
 
@@ -284,10 +294,10 @@ def test_pipeline_legacy_snapshot_unchanged(tmp_path):
     assert not os.path.exists(os.path.join(out, "run", "designs", "d000", "load_transfer.json"))
     res = post["result"]
     assert "load_transfer" not in res and "view3d_ref" not in res and "view3d_esl" not in res
-    head = open(os.path.join(out, "post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
+    head = _txt(os.path.join(out, "post", "ranking.csv")).splitlines()[0].strip().split(",")
     assert head[-1] == "elem_ratio_ref"
     assert U.read_json(os.path.join(out, "prep", "compare.json"))["loads"]["method"] == "cell_mapping"
-    assert "하중 전달" not in open(os.path.join(out, "report.html"), encoding="utf-8").read()
+    assert "하중 전달" not in _txt(os.path.join(out, "report.html"))
 
 
 
@@ -361,7 +371,7 @@ def test_case_once_work_identity_same_as_legacy(tmp_path, monkeypatch):
     calls = _count_runs(monkeypatch)
     oW, pW, _, n_des = _scn_run(str(tmp_path / "W"), doe, mesh, lt={"schema": 1, "method": "work"}, counter=calls)
     assert n_des == 0                                                              # once: 안마다 전달 0
-    pf = lambda o: open(os.path.join(o, "prep", "loads.npz"), "rb").read()        # noqa: E731
+    pf = _loads_bytes
     assert pf(oL) == pf(oW)                                                        # (a) 하중 바이트 동일
     for did in ids:
         assert _per(oL, did) == _per(oW, did), did
@@ -377,8 +387,8 @@ def test_case_once_work_identity_same_as_legacy(tmp_path, monkeypatch):
     diag = U.read_json(os.path.join(oW, "post", "load_transfer_diag.json"))
     assert diag["plan"]["id"] == "case_once" and [s["id"] for s in diag["shapes"]] == ["d000"]
     assert pW["load_transfer"]["plan"] == "case_once" and "load_transfer" not in pL           # (b) legacy 키 없음
-    hW = open(os.path.join(oW, "post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
-    hL = open(os.path.join(oL, "post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
+    hW = _txt(os.path.join(oW, "post", "ranking.csv")).splitlines()[0].strip().split(",")
+    hL = _txt(os.path.join(oL, "post", "ranking.csv")).splitlines()[0].strip().split(",")
     assert hW == hL + ["lt_method", "lt_far_frac", "lt_dM_rel", "score_alt"]
     assert not os.path.exists(os.path.join(oL, "prep", "load_transfer.json"))
     # (c) cell null = Case 메시 자신에 to_target(셀 매핑) 비트 동일
@@ -413,7 +423,7 @@ def test_bmesh_once_work_placement_and_cell_legacy(tmp_path, monkeypatch):
     a, dirs, doe = _mesh_doe(tmp_path, b)
     oL, pL, ids, _ = _scn_run(str(tmp_path / "L"), doe, b, rel="b.rad")
     oC, _, _, _ = _scn_run(str(tmp_path / "C"), doe, b, rel="b.rad", lt={"schema": 1, "method": "cell"})
-    pf = lambda o: open(os.path.join(o, "prep", "loads.npz"), "rb").read()        # noqa: E731
+    pf = _loads_bytes
     assert pf(oL) == pf(oC)                                                        # (c) cell null = 옛 ② 비트 동일
     calls = _count_runs(monkeypatch)
     oW, pW, _, n_des = _scn_run(str(tmp_path / "W"), doe, b, rel="b.rad", lt={"schema": 1, "method": "work"},
@@ -432,7 +442,7 @@ def test_bmesh_once_work_placement_and_cell_legacy(tmp_path, monkeypatch):
     assert d0["d000"]["truth"] == "a_direct" and all(r["load_corr"] is None and r["mac"] is None
                                                      for r in d0["d000"]["rows"])
     assert pW["load_transfer"]["truth"] == "a_direct"
-    assert "모델 차" in open(os.path.join(oW, "report.html"), encoding="utf-8").read()
+    assert "모델 차" in _txt(os.path.join(oW, "report.html"))
     # (e) 먼 노드 > far_fail → BASELINE_FAILED LT_TRANSFER_FAILED
     bh = sd.plate(nx=24, ny=14, Lx=480.0, Lz=280.0, holes=[(8, 16, 4, 10)])
     _a, _d, doe_h = _mesh_doe(tmp_path / "H", bh)
@@ -548,9 +558,12 @@ def test_step_per_design_same_rule(tmp_path, monkeypatch):
     assert dids[0] == "d000" and set(dids[1:]) >= {d["id"] for d in m["designs"][1:]}    # 베이스라인 + 안마다
     inp = U.read_json(os.path.join(out, "prep", "input.json"))["load_transfer"]
     assert inp["plan"] == "step_per_design"
-    rd = U.read_json(os.path.join(out, "run", "designs", m["designs"][1]["id"], "result.json"))   # SM: 안마다 interp
+    rd = U.read_json(os.path.join(out, "run", "designs", m["designs"][1]["id"], "result.json"))   # 결정 A: 다른 메시 = 지표 없음
     r0 = U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))
-    assert rd["sm"]["disp"] == "interp" and all(abs(p["rho"] - q["rho"]) <= 1e-9 * q["rho"] for p, q in zip(rd["per_esl"], r0["per_esl"]))
+    for r_ in (r0, rd):
+        assert r_["sm"]["ref"] == "none" and r_["sm"]["disp"] == "none"
+        assert all(p["rho"] is None and p["C_ritz"] is None and p["umax_def"] is not None for p in r_["per_esl"])
+    assert not os.path.exists(os.path.join(out, "prep", "sm_ref.npz"))
     _, l0 = sc.load_loads(os.path.join(out, "prep"))                                 # 안 메시 = 베이스라인 → 같은 하중(1e-12)
     t0, _ = sc.load_base(os.path.join(out, "prep"))
     dt = sc.design_target(mg.load_mesh(os.path.join(out, "run", "designs", m["designs"][1]["id"], "mesh")), t0.frame)
@@ -597,15 +610,16 @@ def test_sm_case_once(tmp_path, monkeypatch):
     assert [(x["id"], x["score"]) for x in pL["ranking"]] == [(x["id"], x["score_solve"]) for x in pS["ranking"]]
     z = U.load_npz(os.path.join(oS, "prep", "sm_ref.npz"))
     assert str(z["schema"].ravel()[0]) == "esl/doe_sm_ref/1" and z["u"].shape[2] == 6
-    head = open(os.path.join(oS, "post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
+    head = _txt(os.path.join(oS, "post", "ranking.csv")).splitlines()[0].strip().split(",")
     i = head.index("score")
     assert head[i:i + 10] == stg.SM_CSV_MID and "C_solve_E0" in head and head[-4:] == stg.LT_CSV_COLS
-    assert "강성 지표" in open(os.path.join(oS, "report.html"), encoding="utf-8").read()
+    assert "강성 지표" in _txt(os.path.join(oS, "report.html"))
     assert "metric" not in pL and "score_solve" not in pL["ranking"][0]
 
 
-def test_sm_bmesh_once_a_direct(tmp_path, monkeypatch):
-    """② bmesh_once: 참조 = A 원본 풀이(LT 참값과 같은 인수분해), 베이스라인 1회 interp → 안 = I(build_disp 1회)."""
+def test_sm_bmesh_once_base(tmp_path, monkeypatch):
+    """② bmesh_once(결정 A): 참조 = 베이스라인 B 메시에서 work 하중으로 푼 해(base), 베이스라인 ρ = 1·C_lin = C_ritz = C,
+    안 = 같은 노드 S = I(build_disp 0, sm_ref.npz ref_kind base), 순위 = metric(lin). A 원본 풀이는 LT 진단 참값에만."""
     b = sd.plate(nx=30, ny=17, Lx=480.0, Lz=280.0)
     a, dirs, doe = _mesh_doe(tmp_path, b)
     n_fact = []
@@ -621,29 +635,45 @@ def test_sm_bmesh_once_a_direct(tmp_path, monkeypatch):
     monkeypatch.setattr(ltm, "build_disp", lambda *a_, **k: (calls.append(1), realb(*a_, **k))[1])
     oS, pS, ids, _ = _scn_run(str(tmp_path / "S"), {**doe, "rank": RANK}, b, rel="b.rad",
                               lt={"schema": 1, "method": "work"})
-    assert len(calls) == 1                                                          # 베이스라인 1회(같은 A 메시)
+    assert not calls                                                                # S_t 보간 없음(같은 메시만)
     r0 = U.read_json(os.path.join(oS, "run", "designs", "d000", "result.json"))
-    assert r0["sm"]["ref"] == "a_direct" and all(p["C_lin"] is not None and p["rho"] > 0 for p in r0["per_esl"])
-    # A 원본 풀이 1회(LT 참값·SM 참조 공유) + 베이스라인·안 해석
+    assert r0["sm"]["ref"] == "base" and r0["sm"]["disp"] == "I"
+    for p in r0["per_esl"]:                                                         # 베이스라인 자체 ρ = 1
+        assert p["rho"] == pytest.approx(1.0, abs=1e-9) and p["C_ritz"] == pytest.approx(p["C"], rel=1e-9)
+        assert p["C_lin"] == pytest.approx(p["C"], rel=1e-9) and p["imbalance_rel"] <= 1e-8
+    for did in ids[1:]:                                                             # 안 = S = I(노드 그대로)
+        rd = U.read_json(os.path.join(oS, "run", "designs", did, "result.json"))
+        assert rd["sm"]["disp"] == "I" and all(p["rho"] is not None for p in rd["per_esl"])
+    z = U.load_npz(os.path.join(oS, "prep", "sm_ref.npz"))
+    assert [str(k) for k in z["ref_kind"].tolist()] == ["base"] * len(z["entry_ids"]) and "u_a_0" not in z
+    # A 원본 풀이 1회(LT 진단 참값만) + 베이스라인·안 해석
     assert len(n_fact) == 1 + len(ids)
     d0 = U.read_json(os.path.join(oS, "run", "designs", "d000", "load_transfer.json"))
     assert d0["d000"]["truth"] == "a_direct"
-    assert pS["metric"] == "lin" and len(pS["ranking"]) == len(ids) - 1
+    assert pS["metric"] == "lin" and pS["metric_effective"] == "lin" and pS["cross_mesh"] is False
+    assert len(pS["ranking"]) == len(ids) - 1 and not any("SM_CROSS_MESH" in str(w) for w in pS["warnings"])
 
 
 @needs_gmsh
 def test_sm_compare_case_and_step(tmp_path):
-    """④ compare_per_shape: d000 = A(identity) → 참조 base(ρ = 1), 형상 = interp(재메시) ρ·C_lin, view3d 색 = 강체 제거;
-    기준 STEP → a_direct(스터디 물성, LT 참값 공유)."""
+    """④ compare_per_shape(결정 A): 형상마다 메시가 달라 지표 미적용 — 순위 = work 하중 재풀이 C(metric_effective solve),
+    경고 SM_CROSS_MESH 1개, per_esl 지표 키 null·umax_def 만, CSV metric 열 solve, 보고서 '다른 메시 비교'. 기준 STEP 도 같음."""
     out, post, spec, A, ents = _study(str(tmp_path / "c"), "case", {"schema": 1, "method": "work"}, rank=RANK)
-    r0 = U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))
-    assert r0["sm"]["ref"] == "base_or_a_direct" and all(p["rho"] == pytest.approx(1.0, abs=1e-9) for p in r0["per_esl"])
-    r2 = U.read_json(os.path.join(out, "run", "designs", "d002", "result.json"))
-    assert r2["sm"]["disp"] == "interp" and all(p["rho"] > 1.0 and p.get("sm_far_frac") is not None
-                                                for p in r2["per_esl"])            # 비드 2개 = 더 강함(ρ > 1)
+    for did in ("d000", "d002"):
+        r_ = U.read_json(os.path.join(out, "run", "designs", did, "result.json"))
+        assert r_["sm"]["ref"] == "none" and r_["sm"]["metric"] == "lin"
+        assert all(p["rho"] is None and p["C_lin"] is None and p["umax_def"] is not None for p in r_["per_esl"])
+    assert not os.path.exists(os.path.join(out, "prep", "sm_ref.npz"))
     res = post["result"]
-    assert res["metric"] == "lin" and res["ranking"][0]["score"] < 1.0 and "score_solve" in res["ranking"][0]
+    assert res["metric"] == "solve" and res["metric_effective"] == "solve" and res["cross_mesh"] is True
+    assert res["ranking"][0]["score"] < 1.0
+    x0 = res["ranking"][0]
+    assert x0["score_solve"] == pytest.approx(x0["score"], rel=1e-12) and x0["rho_min"] is None
+    assert sum(str(w).startswith("SM_CROSS_MESH") for w in res["warnings"]) == 1
+    rows = _txt(os.path.join(out, "post", "ranking.csv")).splitlines()
+    head = rows[0].split(",")
+    assert {r.split(",")[head.index("metric")] for r in rows[1:] if r.split(",")[1]} == {"solve"}
+    assert "다른 메시 비교" in _txt(os.path.join(out, "report.html"))
     out2, post2, *_ = _study(str(tmp_path / "s"), "step", {"schema": 1, "method": "work"}, n_shapes=2, rank=RANK)
-    z = U.load_npz(os.path.join(out2, "prep", "sm_ref.npz"))
-    assert [str(k) for k in z["ref_kind"].tolist()] == ["a_direct", "a_direct"] and "u_a_0" in z
-    assert post2["result"]["metric"] == "lin"
+    assert not os.path.exists(os.path.join(out2, "prep", "sm_ref.npz"))
+    assert post2["result"]["metric_effective"] == "solve" and post2["result"]["cross_mesh"] is True
