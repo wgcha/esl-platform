@@ -3,7 +3,7 @@ import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
-  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
 } from "./types";
@@ -138,6 +138,16 @@ function normalizeCompareCfg(raw: unknown, top: Record<string, unknown>): DoeCom
         }
       : {}),
     ...(typeof v.step_ready === "boolean" ? { step_ready: v.step_ready } : {}),
+    ...(isObj(v.load_transfer) && (v.load_transfer.method === "work" || v.load_transfer.method === "cell")
+      ? {
+          load_transfer: {
+            method: v.load_transfer.method as DoeLoadTransferMethod,
+            cell_size_mm: typeof v.load_transfer.cell_size_mm === "number" ? v.load_transfer.cell_size_mm : null,
+            cell_choices_mm: Array.isArray(v.load_transfer.cell_choices_mm) ? v.load_transfer.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number") : [null, 10, 5, 3],
+            cell_min_mm: num(v.load_transfer.cell_min_mm, 3),
+          },
+        }
+      : {}),
     ...(isObj(v.mesh) ? { mesh: v.mesh as DoeCompareCfg["mesh"] } : {}),
     ...(isObj(v.defeature) ? { defeature: v.defeature as DoeCompareCfg["defeature"] } : {}),
   };
@@ -255,6 +265,13 @@ export const doe = {
   perEsl: (id: string, designs: string[]) =>
     request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(",") } }),
   files: (id: string) => request<DoeFileOut[]>("GET", `/doe/studies/${id}/files`),
+  /** v0.20.0 하중 전달 진단(post/load_transfer_diag.json — 다운로드 경로, 없으면 null: legacy·진단 끔·진단 실패) */
+  loadTransferDiag: (id: string) =>
+    fetch(doe.downloadUrl(id, "post/load_transfer_diag.json"), { credentials: "same-origin" }).then(async (r) => {
+      if (!r.ok) return null;
+      const j = (await r.json()) as DoeLoadTransferDiag;
+      return j && Array.isArray(j.shapes) && j.d000 ? j : null;
+    }),
   beadPngUrl: (id: string, bead: string) => `${API_PREFIX}/doe/studies/${id}/beads/${encodeURIComponent(bead)}.png`,
   thumbUrl: (id: string, did: string) => `${API_PREFIX}/doe/studies/${id}/preview/thumb/${encodeURIComponent(did)}`,
   downloadUrl: (id: string, rel: string) => `${API_PREFIX}/doe/studies/${id}/download?rel=${encodeURIComponent(rel)}`,
@@ -929,3 +946,44 @@ export function buildSpec(form: SpecForm, params: DoeParam[], rows: ParamRow[], 
 
 /** 개선율 표기: +19 % */
 export const pctText = (v: number | null | undefined, digits = 0) => (v == null || !Number.isFinite(v) ? "–" : `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(digits)} %`);
+
+// ---------------------------------------------------------------- v0.20.0 ④ 하중 전달(esl_load_transfer.md §7)
+export const LT_METHOD_NAME: Record<DoeLoadTransferMethod, string> = { work: "일 등가", cell: "셀" };
+/** select 값 = "work" | "cell:legacy"(기존 24×14) | "cell:<mm>" */
+export function ltKey(method: DoeLoadTransferMethod, size: number | null): string {
+  return method === "work" ? "work" : `cell:${size == null ? "legacy" : size}`;
+}
+/** 진단 variant 키(`work`·`cell:legacy`·`cell:3`)의 표시 문구 */
+export function ltVariantLabel(v: string): string {
+  if (v === "work") return "일 등가";
+  if (v === "cell:legacy") return "셀 기존 24×14";
+  return v.startsWith("cell:") ? `셀 ${v.slice(5)} mm` : v;
+}
+export function ltChoiceLabel(method: DoeLoadTransferMethod, size: number | null, opts: { def?: boolean } = {}): string {
+  const base = method === "work" ? "일 등가(권장)" : ltVariantLabel(ltKey(method, size));
+  return `${base}${opts.def ? " (기본)" : ""}`;
+}
+/** select 선택 → 요청 키(기본과 같으면 둘 다 생략). work 에는 cell_size_mm 을 붙이지 않음(422) */
+export function ltRequest(cfg: DoeLoadTransferCfg | null | undefined, key: string | null | undefined): { load_transfer?: DoeLoadTransferMethod; cell_size_mm?: number | null } {
+  if (!cfg || !key || key === ltKey(cfg.method, cfg.cell_size_mm)) return {};
+  if (key === "work") return { load_transfer: "work" };
+  const size = key === "cell:legacy" ? null : Number(key.slice(5));
+  return { load_transfer: "cell", cell_size_mm: size };
+}
+const rng = (r: [number, number], d = 2) => {
+  const f = (x: number) => (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(d));
+  return r[0] === r[1] ? f(r[0]) : `${f(r[0])}~${f(r[1])}`;
+};
+function ltVariantText(row: DoeLoadTransferSummary["summary"][number]): string {
+  return `umax ×${rng(row.umax_ratio)} · C ×${rng(row.C_ratio)}${row.mac_min != null ? ` · MAC ≥ ${row.mac_min.toFixed(2)}` : ""}`;
+}
+/** 결과 카드 요약 1줄: 주 방식 + 다른 방식 최대 2개(summary 순서) */
+export function ltSummaryLine(lt: DoeLoadTransferSummary): string {
+  const prim = ltKey(lt.method, lt.cell_size_mm);
+  const rows = Array.isArray(lt.summary) ? lt.summary : [];
+  const p = rows.find((r) => r.variant === prim);
+  const others = rows.filter((r) => r.variant !== prim).slice(0, 2);
+  const ref = lt.truth === "a_direct" ? "A 메시 직접 풀이" : "①";
+  const head = `하중 전달: ${ltVariantLabel(prim)}${p ? ` · 기준 대비 ${ref}: ${ltVariantText(p)}` : ""}`;
+  return [head, ...others.map((o) => `${ltVariantLabel(o.variant)}: ${ltVariantText(o)}`)].join("  |  ");
+}

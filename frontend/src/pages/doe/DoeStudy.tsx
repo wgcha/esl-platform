@@ -11,11 +11,12 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
-import type { CompareShapeIn, DoeBeadSource, DoeMeshMode, DoeMeshPart } from "../../api/types";
+import type { CompareShapeIn, DoeBeadSource, DoeLoadTransferDiag, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   LEGACY_STEP_LABEL, STEP_PREP_CODES, meshMethodName, radioBase, stepPrepGroups,
+  ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
   type NewRadio,
   type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView, type StepInfoView } from "../../components/BeadSelectCard";
@@ -198,7 +199,9 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   /** v0.16.0 메시 방식(사용자가 바꾼 경우만 — 없으면 서버 설정값). STEP 형상이 없으면 보내지 않음 */
   const hasStep = form.shapes.some((x) => rowSource(x) === "step");
   const meshOpts = (isCompare && hasStep) || stepBase ? { ...(form.meshMode ? { mesh_mode: form.meshMode } : {}), ...(form.meshRefine != null ? { mesh_refine: form.meshRefine } : {}) } : {};
-  const shapesKey = isCompare ? JSON.stringify([compareShapes, meshOpts]) : "";
+  /** v0.20.0 하중 전달(사용자가 기본과 다르게 고른 경우만 요청에 넣음 — LT-11) */
+  const ltOpts = isCompare ? ltRequest(st?.compare?.load_transfer, form.ltChoice) : {};
+  const shapesKey = isCompare ? JSON.stringify([compareShapes, meshOpts, ltOpts]) : "";
   const partBad = isCompare
     ? form.shapes.map((x, i) => (rowSource(x) === "mesh" && partIdProblem(x.partId ?? "") ? `형상 ${i + 1}: ${partIdProblem(x.partId ?? "")}` : null)).find(Boolean) ?? null
     : null;
@@ -229,7 +232,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
       doe
         .checkInputs(
           isCompare
-            ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts }
+            ? { project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, ...ltOpts }
             : isSelect
               ? { project_id: projectId, scenario, entry_ids: ids, ...selectBody() }
               : { project_id: projectId, scenario, entry_ids: ids, step_upload_id: stepId },
@@ -336,7 +339,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     try {
       const title = form.title.trim() || null;
       const r = isCompare
-        ? await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, title, props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } })
+        ? await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, ...ltOpts, title, props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } })
         : isSelect
           ? await doe.createStudy({
               project_id: projectId,
@@ -396,7 +399,13 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
             checkError={checkError}
             checking={checking}
             allowed={allowed}
-            advanced={(isCompare && (hasStep || !form.shapes.length)) || stepBase ? (st.compare?.mesh_mode ? <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} /> : null) : null}
+            advanced={
+              isCompare && st.compare?.load_transfer ? (
+                <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} showMesh={!!st.compare.mesh_mode && (hasStep || !form.shapes.length)} />
+              ) : (isCompare && (hasStep || !form.shapes.length)) || stepBase ? (
+                st.compare?.mesh_mode ? <CompareMeshAdvanced st={st} check={check} form={form} setForm={setForm} allowed={allowed} showMesh /> : null
+              ) : null
+            }
           />
         ) : (
           <Empty>불러오는 중…</Empty>
@@ -426,13 +435,27 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
 
 // ================================================================ v0.16.0 ④ 고급 설정(메시 방식)
 /** 물성 칸 아래 접힘 칸: 메시 방식 [자동(기본) | CAD | 재메시] + '실패 시 세분화 허용'(자동일 때만). 재메시 미지원이면 비활성·사유 툴팁 */
-function CompareMeshAdvanced({ st, check, form, setForm, allowed }: {
+function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh }: {
   st: DoeSettingsOut;
   check: DoeCheckOut | null;
   form: InputsForm;
   setForm: (f: InputsForm | ((p: InputsForm) => InputsForm)) => void;
   allowed: boolean;
+  /** 메시 방식 줄(STEP 형상이 없으면 숨김 — 하중 전달 select 는 형상 출처와 무관) */
+  showMesh: boolean;
 }) {
+  const lt = st.compare?.load_transfer ?? null;
+  const ltDef = lt ? ltKey(lt.method, lt.cell_size_mm) : null;
+  const ltCur = form.ltChoice ?? ltDef;
+  const ltOptions: { key: string; label: string }[] = lt
+    ? [{ key: "work", label: "work" }, ...lt.cell_choices_mm.map((c) => ({ key: ltKey("cell", c), label: "cell" }))].map((o) => {
+        const size = o.key === "work" ? null : o.key === "cell:legacy" ? null : Number(o.key.slice(5));
+        return { key: o.key, label: ltChoiceLabel(o.key === "work" ? "work" : "cell", size, { def: o.key === ltDef }) };
+      })
+    : [];
+  // 기본이 선택지에 없으면(설정 불일치) 맨 앞에 추가
+  if (lt && ltDef && !ltOptions.some((o) => o.key === ltDef)) ltOptions.unshift({ key: ltDef, label: ltChoiceLabel(lt.method, lt.cell_size_mm, { def: true }) });
+  const ltName = ltCur ? ltVariantLabel(ltCur) : "";
   const def: DoeMeshMode = st.compare?.mesh_mode ?? "auto";
   const mode: DoeMeshMode = form.meshMode ?? def;
   const remeshOk = check?.remesh_available ?? st.compare?.remesh_available ?? false;
@@ -442,9 +465,25 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed }: {
   return (
     <details className="adv-input doe-adv" data-testid="compare-adv">
       <summary>
-        고급 설정 <span className="muted small">· 메시 방식 {MESH_MODE_NAME[mode]}{mode === "auto" && !refine ? "(세분화 끔)" : ""}</span>
+        고급 설정 <span className="muted small">{showMesh ? <>· 메시 방식 {MESH_MODE_NAME[mode]}{mode === "auto" && !refine ? "(세분화 끔)" : ""}</> : null}{lt ? <>{showMesh ? " " : ""}· 하중 {ltName}</> : null}</span>
       </summary>
       <div className="adv-body doe-adv-body">
+        {lt && (
+          <div className="doe-adv-row">
+            <label className="field-label" htmlFor="lt-select">하중 전달</label>
+            <select id="lt-select" aria-label="하중 전달" data-testid="lt-select" value={ltCur ?? ""} disabled={!allowed} onChange={(e) => setForm((f) => ({ ...f, ltChoice: e.target.value === ltDef ? null : e.target.value }))}>
+              {ltOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <span className="small muted" data-testid="lt-hint">
+              {ltCur === "work" ? "ESL 하중을 일 등가로 형상 메시에 옮깁니다(기준·비교 형상 같은 규칙)" : "ESL 하중을 셀 합력으로 나눠 옮깁니다(셀이 작을수록 원본에 가까움)"}
+            </span>
+          </div>
+        )}
+        {showMesh && (<>
         <div className="doe-adv-row">
           <span className="field-label">메시 방식</span>
           <div className="seg" role="radiogroup" aria-label="메시 방식">
@@ -475,6 +514,7 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed }: {
           {MESH_MODE_HINT[mode]}
           {remeshWhy ? ` · 재메시 불가: ${remeshWhy}` : ""}
         </div>
+        </>)}
       </div>
     </details>
   );
@@ -531,13 +571,102 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
   );
 }
 
+// ================================================================ v0.20.0 ④ 하중 전달 진단(esl_load_transfer.md §7)
+const fx = (x: number | null | undefined, d = 2) => (x == null || !Number.isFinite(x) ? "–" : x.toFixed(d));
+const pct = (x: number) => `${(x * 100).toFixed(x > 0 && x < 0.001 ? 2 : 1)} %`;
+/** 순위 아래 요약 1줄 + 접힘 표 2개(d000 참값 대비 · 형상별). 새 결과(load_transfer 있음)만 */
+function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeResultOut }) {
+  const lt = result.load_transfer;
+  const [diag, setDiag] = useState<DoeLoadTransferDiag | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  if (!lt) return null;
+  const load = () => {
+    if (state !== "idle") return;
+    setState("loading");
+    doe
+      .loadTransferDiag(studyId)
+      .then(setDiag)
+      .catch(() => setDiag(null))
+      .finally(() => setState("done"));
+  };
+  const eslLabel = (id: string, label?: string | null) => label ?? result.esl?.find((e) => e.entry_id === id)?.label ?? id.slice(0, 8);
+  const nameOf = (id: string) => result.ranking.find((r) => r.id === id)?.shape?.name ?? "";
+  return (
+    <div className="doe-lt" data-testid="lt-block">
+      <div className="small" data-testid="lt-summary">
+        {ltSummaryLine(lt)}
+        {lt.rank_alt_same != null ? ` · 다른 방식 순위 ${lt.rank_alt_same ? "같음" : "다름"}` : ""}
+        {lt.warnings_n ? ` · 경고 ${lt.warnings_n}` : ""}
+      </div>
+      <details data-testid="lt-details" onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && load()}>
+        <summary className="small">하중 전달 진단 표</summary>
+        {state === "loading" && <div className="small muted">불러오는 중…</div>}
+        {state === "done" && !diag && <div className="small muted" data-testid="lt-nodiag">진단 자료가 없습니다(진단 끔 또는 진단 단계 건너뜀)</div>}
+        {diag && (
+          <>
+            <div className="small muted">
+              기준 d000 참값 대비 — 참값 = {diag.d000.truth === "direct_nodal" ? "① 직접 하중" : diag.d000.truth === "a_direct" ? "A 메시 직접 풀이" : "없음"}
+              {diag.reference.identity ? "" : " (상관·MAC 은 같은 메시일 때만)"}
+            </div>
+            <div className="table-wrap scroll">
+              <table className="table compact" aria-label="하중 전달 d000 참값 대비">
+                <thead>
+                  <tr><th>방식</th><th>ESL</th><th>하중 상관</th><th>umax ×</th><th>C ×</th><th>MAC</th></tr>
+                </thead>
+                <tbody>
+                  {diag.d000.rows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{ltVariantLabel(r.variant)}</td>
+                      <td>{eslLabel(r.entry_id, r.label)}</td>
+                      <td>{fx(r.load_corr, 3)}</td>
+                      <td>{fx(r.umax_ratio)}</td>
+                      <td>{fx(r.C_ratio)}</td>
+                      <td>{fx(r.mac, 3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="table-wrap scroll" style={{ marginTop: "0.75rem" }}>
+              <table className="table compact" aria-label="하중 전달 형상별">
+                <thead>
+                  <tr><th>형상</th><th>점수</th><th>점수(다른 방식)</th><th>먼 노드 최대</th><th>지지</th></tr>
+                </thead>
+                <tbody>
+                  {diag.shapes.map((sh) => {
+                    const row = result.ranking.find((r) => r.id === sh.id);
+                    const far = Math.max(0, ...sh.per_esl.map((p) => p.primary.far_frac ?? 0));
+                    return (
+                      <tr key={sh.id}>
+                        <td>{sh.id} {nameOf(sh.id)}</td>
+                        <td>{fx(row?.score, 3)}</td>
+                        <td>{fx(sh.score_alt, 3)}</td>
+                        <td>{pct(far)}</td>
+                        <td>{sh.supports.mode === "transfer" ? "이전" : sh.supports.mode === "fallback" ? "자동(이전 실패)" : "자동"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </details>
+    </div>
+  );
+}
+
 function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const nameOf = (d: string) => result.ranking.find((r) => r.id === d)?.shape?.name ?? null;
   const did = pick && others.includes(pick) ? pick : others[0] ?? null;
-  const base = useDoeView(studyId, result.view3d.includes("d000") ? "d000" : null);
+  // v0.20.0(LT-9): 좌측 = 선택 형상 최악 ESL 의 기준 view3d_ref, 없으면(legacy) d000
+  const eslId = did ? result.view3d_esl?.[did] ?? null : null;
+  const refId = eslId ? result.view3d_ref?.[eslId] ?? null : null;
+  const eslLabel = refId && eslId ? result.esl?.find((e) => e.entry_id === eslId)?.label ?? eslId.slice(0, 8) : null;
+  const base = useDoeView(studyId, refId ?? (result.view3d.includes("d000") ? "d000" : null));
   const cand = useDoeView(studyId, did);
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
@@ -557,11 +686,11 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
             </option>
           ))}
         </select>
-        <span className="small muted">색 = 변위 |u|(최악 ESL), 두 그림 같은 범위</span>
+        <span className="small muted">{eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위"}</span>
       </div>
       <div className="doe-compare-grid">
-        {base && <View3DCard view={base} options={opts(named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000")} />}
-        {cand && <View3DCard view={cand} options={opts(named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`)} />}
+        {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
+        {cand && <View3DCard view={cand} options={opts(`${named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
       </div>
     </div>
   );
@@ -1289,6 +1418,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 </ul>
               )}
               <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} />
+              <LoadTransferDiag studyId={id} result={result.data} />
               <div className="sub-title">ESL별 개선율</div>
               <DoePerEslTable studyId={id} result={result.data} entries={entries} pick={pick} />
               {isCompare || result.data.sensitivity_reason ? (

@@ -200,9 +200,9 @@ describe("④ 새 연구 — 고급 설정(메시 방식)", () => {
     expect(rm.disabled).toBe(true);
     expect(rm.parentElement!.getAttribute("title")).toBe("이 gmsh 버전(4.13.1)은 삼각형 재메시를 지원하지 않습니다");
     expect(screen.getByTestId("compare-adv-hint").textContent).toMatch(/재메시 불가/);
-    // 메시 형상만 → 고급 설정 숨김
+    // 메시 형상만 → 메시 방식 줄 숨김(v0.20.0: 하중 전달 select 때문에 고급 설정 칸 자체는 남음)
     await drop(["only_0000.rad", "x.inc"], 1);
-    expect(screen.queryByTestId("compare-adv")).toBeNull();
+    expect(within(screen.getByTestId("compare-adv")).queryByRole("radiogroup", { name: "메시 방식" })).toBeNull();
   }, 10000);
 });
 
