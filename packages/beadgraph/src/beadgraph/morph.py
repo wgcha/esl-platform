@@ -23,7 +23,7 @@ from . import _util as U
 from .absorb import interior_mask, polyline_dist
 from .classify import CLS
 from .defaults import MORPH_EXTRA
-from .zones import Mesh, bead_zones
+from .zones import Mesh, bead_zones, movable_nodes
 
 
 def _cfg(cfg):
@@ -314,6 +314,11 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
     allowed_n = M.nmask(Z["allowed_el"]) | band
     if kind == "W" and info.get("band_islands"):
         allowed_n |= M.nmask(np.isin(lab["island"], info["band_islands"]))
+    # BG-D-47: one node rule with the outside checks — a node shared with an element outside the allowed set stays
+    A_el = Z["allowed_el"]
+    if kind == "W":                                    # + parent floor and its non-straddling islands (blend band)
+        A_el = A_el | Z["parent_floor"] | (np.isin(lab["island"], on_par) & (lab["island"] >= 0))
+    mov = movable_nodes(M, A_el)
     psi, n_hold = (_hold(M, allowed_n, fixed_mask, cfg) if int(b.get("hold", 1)) else (np.ones(M.n), 0))
     phi = _ramp(M, J, np.flatnonzero(allowed_n), L)
     if kind == "D":
@@ -378,7 +383,7 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
             if iid not in info["straddle"]:
                 info["straddle"] = sorted(set(info["straddle"]) | {iid})
             foreign_floor = (cls == CLS["floor"]) & ~ZF & ~ZC & ~e
-            fn = M.nmask(foreign_floor)
+            fn = M.nmask(foreign_floor) | ~mov          # BG-D-47: + rim nodes on a foreign wall (junction-zone step)
             contact = nd[fn[nd]]
             band_el = e & (cls != CLS["floor"]) & M.emask_of_nodes(fn)
             bn = np.flatnonzero(M.nmask(band_el))
@@ -400,8 +405,8 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
             Uv[nd] = t_                                  # fully rigid (rim included — SR-D-5, residual 0)
     for iid in held:
         info["warnings"].append({"code": "BG_ISLAND_HELD", "level": "info", "island": int(iid)})
-    # exact zero outside A_v (structural — BG-D-32 checks the same)
-    Uv[~allowed_n] = 0.0
+    # exact zero outside A_v (structural — BG-D-32 checks the same node rule, BG-D-47)
+    Uv[~(allowed_n & mov)] = 0.0
     # achieved nodes (BG-D-33)
     island_nodes = M.nmask((isl >= 0))
     if kind == "D":

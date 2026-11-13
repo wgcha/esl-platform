@@ -6,6 +6,7 @@ import numpy as np
 
 from . import _util as U
 from .morph import _skeleton_dist
+from .zones import movable_nodes
 
 
 def changed(basis, values) -> list:
@@ -125,7 +126,7 @@ def strict_allowed_nodes(graph, labels, nodes, elems, basis, conn=None) -> dict:
     out = {}
     for v in basis:
         A = allowed_elements(graph, labels, nodes, elems, v["segs"], v.get("zones") or (), v["kind"], conn=K)
-        out[v["name"]] = ~K.nmask(~A)
+        out[v["name"]] = movable_nodes(K, A)          # BG-D-47: same node rule as the basis
     return out
 
 

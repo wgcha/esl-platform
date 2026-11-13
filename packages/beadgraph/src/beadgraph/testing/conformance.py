@@ -379,6 +379,65 @@ def h5_morph() -> dict:
     return out
 
 
+def stepboss_morph() -> dict:
+    """V-BG-19 (BG-D-47, issue #63 B10_D·B11_D): bosses straddling the step where a channel bead ends in a shallower
+    area (step walls = junction-zone walls between the two segments, outside a single-segment bead's A_v). For every
+    single-segment D variable (+ the channel W) at the default-range ends (±30 %): no ``BG_BASIS_LEAK`` (label-based
+    check), outside max 0, the step junction-zone wall nodes do not move, the boss tops stay rigid (deviation ≤ 1e-9)
+    and the channel's two straddling bosses are in its Z_I."""
+    from .. import basis as _basis
+    from .. import check as _check
+    from .. import morph as _morph
+    from ..checks import basis_leak
+    g, lab, _aux = classified("stepboss")
+    fx = load_fixture("stepboss")
+    X, C, F = fx["x0"], fx["conn"], fx["fixed"]
+    jz, cls, isl = (np.asarray(lab[k]) for k in ("junction_zone", "cls", "island"))
+    zw = (jz >= 0) & (cls == 1)
+    zw_nodes = np.unique(C[zw][C[zw] >= 0])
+    floors = {f["id"]: f for f in g["floors"]}
+    segs = [s for s in g["segments"] if s["type"] != "base"]
+    ch = max(segs, key=lambda s: (float(floors[s["floor"]]["rel_height"]), -s["id"]))
+    tops = []
+    for i in g["islands"]:
+        nd = np.unique(C[isl == i["id"]][C[isl == i["id"]] >= 0])
+        tops.append(nd[X[nd, 2] >= X[nd, 2].max() - 1e-3])
+    out, bad = {"vars": 0, "outside_mm": 0.0, "zone_wall_mm": 0.0, "top_dev_mm": 0.0, "inverted_max_D": 0}, []
+    beads = [(s, "D") for s in segs] + [(ch, "W")]
+    for s, kind in beads:
+        nom = float(s["D"]) if kind == "D" else float(s["entry_width"])
+        ext = 0.3 * nom
+        b = [{"name": "v", "kind": kind, "segs": [s["id"]], "hold": 1}]
+        B = _basis(g, lab, X, b, {"v": [nom - ext, nom + ext]}, fixed=F, elems=C)
+        out["vars"] += 1
+        key = f"seg {s['id']} {kind}"
+        leak = basis_leak(B, g, lab, X, C)
+        if leak:
+            bad.append(f"{key}: {leak}")
+        if s is ch and kind == "D" and len(B[0]["info"]["straddle"]) != 2:
+            bad.append(f"{key}: straddling bosses {B[0]['info']['straddle']} (expected 2)")
+        for v in (nom - ext, nom + ext):
+            x = _morph(X, B, {"v": v})
+            r = _check(g, lab, X, x, B, {"v": v}, elems=C)
+            u = x - X
+            zwm = float(np.linalg.norm(u[zw_nodes], axis=1).max()) if zw_nodes.size else 0.0
+            td = max((float(np.linalg.norm(u[t] - u[t].mean(axis=0), axis=1).max()) for t in tops if t.size),
+                     default=0.0)
+            out["outside_mm"] = max(out["outside_mm"], float(r["outside"]["max_mm"]) if r["outside_failed"] else 0.0)
+            out["zone_wall_mm"] = max(out["zone_wall_mm"], zwm)
+            out["top_dev_mm"] = max(out["top_dev_mm"], td)
+            if kind == "D":                             # report only (range ends — esl range_check clamps W)
+                out["inverted_max_D"] = max(out["inverted_max_D"], int(r["inverted"] or 0))
+            if r["outside_failed"]:
+                bad.append(f"{key} v={v:.3f}: outside {r['outside']}")
+            if zwm > 1e-9:
+                bad.append(f"{key} v={v:.3f}: junction-zone step wall moved {zwm:.3g} mm")
+            if td > 1e-9:
+                bad.append(f"{key} v={v:.3f}: boss top not rigid {td:.3g} mm")
+    out["bad"] = bad
+    return out
+
+
 def _aspect(X, C):
     q = C[:, 3] >= 0
     P = [X[C[:, i]] for i in range(3)] + [X[np.where(q, C[:, 3], C[:, 0])]]
@@ -407,8 +466,8 @@ def purity() -> list[str]:
                 continue
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, root)
-            if rel.startswith("testing" + os.sep) and fn in ("synth_h5.py", "synth_h6.py", "_gmsh.py",
-                                                            "test_conformance.py"):
+            if rel.startswith("testing" + os.sep) and fn in ("synth_h5.py", "synth_h6.py", "synth_stepboss.py",
+                                                            "_gmsh.py", "test_conformance.py"):
                 continue                               # [synth] extra (gmsh, shapely) generators / pytest cases
             with open(p, "r", encoding="utf-8") as fh:
                 tree = ast.parse(fh.read())
@@ -468,6 +527,8 @@ def selftest(full: bool = True) -> dict:
         put("V-BG-5 h6 morph", bad)
         m5 = h5_morph()
         put("V-BG-6 h5 morph", m5.pop("bad"), metrics=m5)
+        sb = stepboss_morph()
+        put("V-BG-19 step-straddling bosses (BG-D-47)", sb.pop("bad"), metrics=sb)
         bad = purity()
         try:
             validate(g)

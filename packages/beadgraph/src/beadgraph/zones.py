@@ -85,6 +85,15 @@ class Mesh:
         return (sparse.diags(np.asarray(W.sum(axis=1)).ravel()) - W).tocsr()
 
 
+def movable_nodes(conn, allowed_el) -> np.ndarray:
+    """BG-D-47: the one node rule of a variable — a node may move only when **every** element it belongs to is in the
+    allowed element set A_v (a node shared with an element outside A_v stays at 0). ``conn`` = any object with
+    ``nmask(emask)`` (``Mesh`` here, ``checks._Conn`` in the checks). The basis (``morph``: straddling-island hold +
+    final zero) and the outside checks (``checks.strict_allowed_nodes`` — BG-D-32·34) both use this function; the
+    element sets themselves stay computed independently (BG-X-9). Free nodes (no element) are movable."""
+    return ~np.asarray(conn.nmask(~np.asarray(allowed_el, bool)), bool)
+
+
 def bead_zones(M: Mesh, segs: list[int], zones_extra: list[int] = (), kind: str = "D") -> dict:
     """element masks of one bead (variable) — §4.1."""
     lab = M.lab
