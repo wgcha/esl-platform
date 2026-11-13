@@ -60,7 +60,7 @@ def test_schema2_stages(tmp_path):
     r1 = run("bd_matrix", rev=1, spec=spec)
     sdir = out / "select" / sha[:12]
     bj = json.loads((sdir / "basis.json").read_text(encoding="utf-8"))
-    assert bj["graph_algo"] == bgr.GRAPH_ALGO and bj["morph_rules"] == 1 and bj["algo"] == bs.ALGO
+    assert bj["graph_algo"] == bgr.GRAPH_ALGO and bj["morph_rules"] == bgr._bg().MORPH_RULES == 2 and bj["algo"] == bs.ALGO
     z = np.load(sdir / "derived.npz", allow_pickle=False)
     assert any(k.startswith("chk_o") for k in z.files)
     assert r1["selection_sha256"] == sha

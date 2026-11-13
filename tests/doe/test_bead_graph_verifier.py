@@ -305,3 +305,36 @@ def test_w_clamp_not_applied_when_it_does_not_match(h6):
     other["select"]["range"]["width_rel"] = 0.25
     D = bgr.derive_obj_v2(mesh, norm, other, g, lab, fixed_node_ids=fixed, w_clamp=wc)
     assert not any(w["code"] == "BG_RANGE_CLAMPED" for w in D.beads[0].warnings)
+
+
+# ---------------------------------------------------------------- v0.19.1 BG-D-47 (issue #63 B10_D·B11_D)
+def test_step_straddling_boss_no_leak(monkeypatch):
+    """a single-segment channel D bead whose end step (junction-zone walls) carries two straddling bosses: BD_MATRIX
+    basis passes the label-based BG_BASIS_LEAK check (pre-fix node rule -> BG_BASIS_LEAK), designs at nominal ± 1 mm are
+    READY and the step walls do not move."""
+    import importlib
+    mesh, g, lab, fixed, _d = prepared("stepboss")
+    floors = {f["id"]: f for f in g["floors"]}
+    ch = max((s for s in g["segments"] if s["type"] != "base"),
+             key=lambda s: (float(floors[s["floor"]]["rel_height"]), -s["id"]))
+    norm, _ = bs.normalize(_sel(g, [{"id": "b1", "src": "graph", "segs": [{"anchor": ch["anchor"]}]}]), CFG,
+                           mesh=mesh, graph=g, labels=lab)
+    D = bgr.derive_obj_v2(mesh, norm, CFG, g, lab, fixed_node_ids=fixed)
+    B = bs.basis(mesh, D, CFG)
+    chk = bs.design_checks(D, B)
+    x0, C = mesh["x0"], mesh["conn"]
+    jz, cls = np.asarray(lab["junction_zone"]), np.asarray(lab["cls"])
+    zw = np.unique(C[(jz >= 0) & (cls == 1)])
+    zw = zw[zw >= 0]
+    row = next(r for r in bs.params_table(D, CFG) if r["name"] == "B1_D")
+    for v in (row["nominal"] - 1.0, row["nominal"] + 1.0):
+        vals = {"B1_D": float(v)}
+        x = bs.morph(x0, B, vals)
+        assert float(np.abs(x[zw] - x0[zw]).max()) == 0.0
+        st = bs.design_state(mesh, x0, x, D.fixed_mask, CFG, checks=chk, values=vals)
+        assert st["state"] == "READY", (v, st["code"], st["warnings"])
+    mo = importlib.import_module("beadgraph.morph")
+    monkeypatch.setattr(mo, "movable_nodes", lambda conn, allowed_el: np.ones(conn.n, bool))
+    with pytest.raises(EslError) as e:
+        bs.basis(mesh, D, CFG)
+    assert e.value.code == "BG_BASIS_LEAK"

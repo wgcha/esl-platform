@@ -353,6 +353,7 @@ validate(graph) -> None                                                         
 | 모핑 기저 수치 변경 | **MINOR** + `MORPH_RULES` +1 | esl 기저 재계산(BG-D-39) |
 | 필드 추가(선택)·새 함수 | MINOR | 소비자는 모르는 필드 무시 |
 | 출력 불변 수정(성능·리팩터) | PATCH | 픽스처 sha 바이트 동일 필수 |
+- 1.1.0(v0.19.1) = RULES 1·MORPH_RULES 2 — BG-D-47(걸친 섬 바깥 벽 접촉 hold). 분류 출력 불변(labels sha 같음, graph.json 은 머리의 `version`·`morph_rules` 만 바뀜).
 - 버전 원본 = `packages/beadgraph/src/beadgraph/__init__.py` `__version__`. v0.17.0 출시 = **beadgraph 1.0.0**(RULES 1, MORPH_RULES 1).
 - 배포물: esl-platform 릴리스 때 `beadgraph-<ver>-py3-none-any.whl`(순수 파이썬)을 빌드해 GitHub 릴리스 자산 + 태그 `beadgraph-v<ver>` 로 올리고 sha256 을 릴리스 노트에 적는다.
 - **esl 소비**: 저장소 안 경로 설치(루트 `pyproject.toml` dependencies += `beadgraph`(== 같은 판), 개발 = `pip install -e packages/beadgraph`, pytest `pythonpath` += `packages/beadgraph/src`), 오프라인 묶음 = `collect-offline` 이 같은 휠을 빌드해 `wheels/` 에 넣고 `deploy/requirements.lock` 에 `beadgraph==<ver>`.
@@ -360,7 +361,7 @@ validate(graph) -> None                                                         
 - 두 플랫폼은 산출물(esl: `graph.json`·`basis.json`, physicsai: 자기 결과)에 `beadgraph_version`·`rules`·`morph_rules` 를 기록.
 
 ### 8.4 physicsai 가 돌릴 수 있는 시험
-- `python -m beadgraph selftest --json` = 픽스처 H5·H6 분류 정확도(V-BG-1·2 기준), 결정성(V-BG-3), 순열·강체 변환 불변(V-BG-4 의 패키지 부분), 모핑 지표(V-BG-5·6), import 순수성(V-BG-14). gmsh 불필요. Windows·Linux, Python 3.11/3.12.
+- `python -m beadgraph selftest --json` = 픽스처 H5·H6 분류 정확도(V-BG-1·2 기준), 결정성(V-BG-3), 순열·강체 변환 불변(V-BG-4 의 패키지 부분), 모핑 지표(V-BG-5·6), 단차에 걸친 보스(V-BG-19, 1.1.0), import 순수성(V-BG-14). gmsh 불필요. Windows·Linux, Python 3.11/3.12.
 - `pytest --pyargs beadgraph.testing`(같은 내용, CI 용).
 
 ### 8.5 physicsai 팀 인계 (그대로 전달)
@@ -386,10 +387,11 @@ validate(graph) -> None                                                         
 | BG-D-44 | 합성 생성기(H5·H6)와 고정 픽스처는 **패키지 `testing/` 에**(휠 포함) — esl `tests/doe` 는 그것을 import | 두 플랫폼이 같은 시험 자료 |
 | BG-D-45 | ③ STEP 모핑은 이번 범위 밖, 같은 모듈 사용 예약(SR-D-44 TODO 확장) | 사용자 범위 |
 | BG-D-46 | **(v0.18.2, 이슈 #63 ① 진단) 그래프 비드 평면도·단면 자료**: `derive_v2` 문서의 그래프 비드 행에 코어 `plan_data` 가 읽는 `plan{ring_ab, e_ab, label_ab, tiers}`(frame 이 있을 때 — schema 1 `_plan_bead` 와 같은 함수: 윤곽 = 비드 요소 경계 고리, 라벨 = 비드 요소 중심 평균, 단 = `[{k: tier, ring_ab: 바닥(cls 0) 요소 고리}]`)과 `section{s, z, dz_dD, ds_dW, dz_dW, at_node_id: null, at_ab: null}` 를 붙임(`bead_graph._graph_figures`). 단면 = 대표 세그먼트(길이 최대, 같으면 작은 id)의 skeleton 호 길이 중점 접선 ê_L 에 수직인 평면(점 = 그 중점에 가장 가까운 비드 바닥 요소 중심, skeleton 없음 = 비드 요소 중심 평면 주축)과 메시 교선, s = ê_W = n̂0 × ê_L 방향, z = 부모 바닥 level 기준 비드 바닥 쪽 +(깊어짐 +), 범위 = 그 점을 지나는 비드 요소 교선 연속 구간(틈 ≤ 3 h) ± 3 h. **미분은 그림용 기하 근사**(그래프 기저를 풀지 않음 — 실측 H6 104k 요소 `bg.basis` 3.9 s 가 derive 를 0.3 → 4.3 s 로, 현장 267k 요소면 `derive_timeout_s` 20 s 에 가까움): 비드 구간 안 `dz_dD[tier] = clip(z/D_nom, 0, 1)`, W 변수면 `ds_dW = ½·clip((s − s_c)/(½ 바닥 폭), −1, 1)`·`dz_dW = 0`. 그림 자료 계산 실패 = 그 비드 `plan` 빈 값·`section` null(저장·평면도를 막지 않음). DB 요약(`summary(with_figures=False)`, 백엔드 `SUMMARY_DROP`)·기저·판정·`GRAPH_ALGO`·sel 회귀 요약은 그대로 | 평면도 응답 비드 13개 모두 `ring_ab`·`label_ab`·`tiers`·`section` 비어 있음(코어 `plan_data` 는 비드별 plan 을 기대 — `bead_select.py` plan_data, `derive_v2` 가 만들지 않음) |
+| BG-D-47 | **(v0.19.1, 이슈 #63 B10_D·B11_D `BG_BASIS_LEAK`) 걸친 섬의 바깥 벽 접촉 노드 hold + 기저 = 검사 단일 노드 규칙**: (1) **노드 규칙 1개** — 변수가 움직여도 되는 노드 = 그 노드를 가진 요소가 **모두** 허용 요소 집합 A_v 안인 노드(바깥 요소와 공유하는 노드 = 0). `beadgraph.zones.movable_nodes(conn, A_v)` 한 함수를 기저(`morph`)와 검사(`checks.strict_allowed_nodes` → BG-D-32 `BG_BASIS_LEAK`·BG-D-34 `BG_OUTSIDE_MOVED`)가 함께 쓴다. A_v 요소 집합은 BG-X-9 대로 두 곳에서 따로 계산(기저 = `bead_zones.allowed_el`, W 는 + 부모 바닥·그 위 비걸침 섬; 검사 = `checks.allowed_elements` 라벨 기반) — 검증 독립성 유지, 픽스처 H5·stepboss 모든 단일 세그먼트 D·W 에서 두 집합 같음(시험). (2) **걸친 섬(BG-D-27) 접촉 = 바닥이든 벽이든 바깥 요소**: 섬 노드 중 `movable_nodes` 밖(남의 바닥 + 접합 구역 단차 벽 등 A_v 밖 벽)인 노드 u = 0, 그 노드를 가진 섬 요소의 노드 = 기존 접촉 띠 smoothstep(d_f/b_s)·u_island(BG-D-27 식 그대로, d_f = 접촉 노드까지 평면 거리). 섬 핵심 강체·채널 쪽 둘레 평균·고정 노드 hold(BG-D-28)는 그대로. (3) 마지막 바깥 0 = `allowed_n ∧ movable_nodes`(구조적 — 노드 규칙이 어긋나는 기저는 만들어지지 않음, A_v 요소 집합이 어긋날 때만 BG-D-32 가 잡음). **접합 구역 자동 포함(후보 B)은 하지 않음**: 단차 벽이 비드와 함께 움직여 의도하지 않은 형상 변화(합성 stepboss 채널 D ±30 %: 단차 벽 최대 3.90 mm 이동, 뒤집힘 22, 단일 세그먼트 포켓 D 는 여전히 누출). 출력 변화 = 걸친 섬이 A_v 밖 벽에 닿는 변수만(그 밖 H5·H6 모든 단일 세그먼트 D·W 기저·레시피 (a)~(g) 결과 바이트 동일) — 패키지 **1.1.0·`MORPH_RULES` 2**(§8.3, esl 기저 1회 재계산). 새 설정 키 없음 | 현장: B10(단일 channel seg 21, D 9.548) 끝 단차에 걸친 보스 섬 26·50 의 테두리 노드 30개가 접합 구역 30·36·50 벽과만 공유 — 검사는 바깥, 기저는 강체 이동(최대 0.762), B11_D 28개·0.773. 기저(바닥 접촉만 hold)와 검사(모든 바깥 요소)가 따로 판정하던 구조 결함 |
 
 ## 9. 시험 (V-BG-*)
 
-**합성 자료**: `beadgraph.testing.synth_h5`(고리 ㅁ + 고리 아래에 T 로 붙은 세로 비드 2개, gmsh OCC, h 3, 15 280 요소)·`synth_h6`(이슈 #63 근사 샤시, 104 439 요소, 정답 라벨). 생성 결과는 `fixtures/*.npz` 로 고정. 생성기 재현 시험(gmsh 가 lock 판과 같을 때만, 아니면 skip) = 재생성 메시 sha = 픽스처 sha.
+**합성 자료**: `beadgraph.testing.synth_h5`(고리 ㅁ + 고리 아래에 T 로 붙은 세로 비드 2개, gmsh OCC, h 3, 15 280 요소)·`synth_h6`(이슈 #63 근사 샤시, 104 439 요소, 정답 라벨)·`synth_stepboss`(v0.19.1 BG-D-47: 300×200 판, 깊이 12 채널이 깊이 6 영역으로 끝나는 6 mm 단차(접합 구역 벽)에 걸친 보스 2개, 7 949 요소). 생성 결과는 `fixtures/*.npz` 로 고정. 생성기 재현 시험(gmsh 가 lock 판과 같을 때만, 아니면 skip) = 재생성 메시 sha = 픽스처 sha.
 
 | ID | 시험 | 위치 |
 |---|---|---|
@@ -411,6 +413,7 @@ validate(graph) -> None                                                         
 | V-BG-16 | **워커 E2E**: ① case·② mesh 각각 schema 2 auto → seed 편집(병합·전환·tie) → 저장 → 미리보기 → 실행 — `BG_OUTSIDE_MOVED` 없음, 결과·순위·보고서 생성, 같은 선택 수동 스터디와 결과 바이트 동일(AD-X-2 예외 동일 적용), `GRAPH_FAILED` 주입 시 준비 READY + elems 비드로 실행 | `worker/tests/test_doe_select_graph_e2e.py` |
 | V-BG-17 | **화면**: 목록/트리 토글, 트리 노드 종류 표시, 섬↔비드·병합·분할·대칭 묶기 → 요청 본문, 3D 세그먼트 클릭 선택, `GRAPH_FAILED`·`BG_GRAPH_STALE` 띠, 2560·1920 잘림 없음, 220k graph.bin 디코드 ≤ 200 ms | `frontend/src/__tests__/doe_select_graph.test.tsx`, `src/__tests__/select_graph_bin.test.ts`, mock |
 | V-BG-18 | (v0.18.2 BG-D-46) 그래프 방식 plan-view: H6 auto seed 비드마다 `ring_ab`(고리 ≥ 3 점)·`label_ab`·`tiers[0].k = tier`·`section`(s·z ≥ 5 점, 바닥 z ≈ D_nom, `dz_dD[tier]` 0..1, W 변수면 `ds_dW` ±½) 비어 있지 않음, `DoePlanOut` 검증, DB 요약에 plan·section 없음 | `tests/doe/test_bead_graph_select.py::test_graph_plan_view_fields_filled`, 화면 `frontend/scripts/screenshots-v0182.mjs`(1920·2560) |
+| V-BG-19 | (v0.19.1 BG-D-47) **단차에 걸친 보스**(stepboss): 수정 전 규칙(기저 노드 규칙 끔)으로 단일 세그먼트 D 4개 모두 `BG_BASIS_LEAK` 재현(채널 13노드·0.559 mm), 수정 후 모든 단일 세그먼트 D + 채널 W 기본 범위 끝(±30 %) 누출 0·바깥 0·접합 구역 단차 벽 이동 0·보스 윗면 강체(편차 ≤ 1e-9); 기저·검사 공용 `movable_nodes` 와 A_v 요소 집합 일치(H5·stepboss); 생성기 재현(gmsh 4.15.2, 요소 순서 무관) | `packages/beadgraph/tests/test_stepboss.py`, selftest `V-BG-19`, `tests/doe/test_bead_graph_verifier.py::test_step_straddling_boss_no_leak` |
 | V-BG-R1 | **실기**: 실 Ch/R 와 이슈 #63 실제 부품 메시 — 세그먼트·접합 수, 자동 seed 비드 수, paicad 가 버리던 네트워크 인식 여부, 변수별 기본 범위 끝 안 판정(뒤집힘·바깥 이동 0), 분류 시간·메모리 | `docs/manual/bead_doe_check.md` 절 추가 |
 
 ## 10. 열린 항목 · 리스크

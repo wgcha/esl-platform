@@ -6,11 +6,12 @@ ends and frozen in the basis (BG-D-24·26), so the morph stays linear.
 D (relative depth, D1/D3): walls + floor edge = 3D homothety about the nearest entry node (45° flank kept, entry fixed,
 the floor narrows by ΔD per side); floor interior = s·ΔD·n0 with an in-plane harmonic extension; exclusive children
 (Z_C) follow rigidly; shared children stay and their walls on the bead side absorb the height change (BG_SHARED_CHILD);
-owned / straddling islands rigid (straddling: contact band to a foreign floor smoothed to 0 — D6).
+owned / straddling islands rigid (straddling: contact band to a foreign floor or wall smoothed to 0 — D6, BG-D-47).
 W (entry width): walls + floor edge + entry translate ΔW/2 along the outward skeleton normal; floor interior harmonic
 (children stay); parent-floor blend band R_w.
 All displacements × junction ramp φ = smoothstep(d_J / L), L = max(ramp_k·ΔD_ext, ramp_k·h) (D4) × fixed-node hold ψ
-(SR-D-9 ring + Wendland blend, D6). Outside the allowed zone A_v the basis is exactly 0 (BG-D-32·34).
+(SR-D-9 ring + Wendland blend, D6). Outside the allowed zone A_v the basis is exactly 0 (BG-D-32·34), with the checks' node rule ``zones.movable_nodes``
+(BG-D-47).
 """
 from __future__ import annotations
 

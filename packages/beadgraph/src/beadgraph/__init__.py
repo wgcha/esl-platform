@@ -14,10 +14,10 @@ Stable API (changing a signature or the schema major number = MAJOR):
 """
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 SCHEMA = "beadgraph/1"
 RULES = 1                 # classification output rules (graph.json bytes) — bump = MINOR + expected.json update
-MORPH_RULES = 1           # morph basis numerics — bump = MINOR, esl recomputes bases
+MORPH_RULES = 2           # morph basis numerics — bump = MINOR, esl recomputes bases
 
 # submodules first: the API functions below share names with two submodules (classify, morph) and must win the
 # package attribute (a later ``from .morph import x`` does not rebind it once the module is loaded)
