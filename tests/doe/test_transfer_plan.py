@@ -81,3 +81,28 @@ def test_stages_single_load_site():
             name == "_cmp_design_mesh" and "_lt_design(" in s, name
     calls_lt = re.findall(r"_plan_loads\(([^)]*)\)", whole)
     assert all("c.scn" not in a for a in calls_lt)
+
+
+def test_plan_sm_columns():
+    """V-SM-6: 계획 열 sm_ref·sm_disp·sm_omega = esl_stiffness_metric.md §4 표, 빈 칸 = CONFIG_INVALID."""
+    want = {"case_once": ("base", ("I", "I"), "all"), "bmesh_once": ("a_direct", ("interp", "I"), "all"),
+            "step_once": ("a_direct", ("interp", "I"), "step_region"),
+            "step_per_design": ("a_direct", ("interp", "interp"), "all"),
+            "compare_per_shape": ("base_or_a_direct", ("interp", "interp"), "compare_region")}
+    for pid, row in want.items():
+        p = tp.PLANS[pid]
+        assert (p["sm_ref"], p["sm_disp"], p["sm_omega"]) == row, pid
+    saved = dict(tp.PLANS["bmesh_once"])
+    try:
+        tp.PLANS["bmesh_once"]["sm_ref"] = ""
+        with pytest.raises(EslError) as ei:
+            tp.plan_for("mesh")
+        assert ei.value.code == "CONFIG_INVALID"
+    finally:
+        tp.PLANS["bmesh_once"] = saved
+    assert DEFAULTS["rank"]["metric"] == "lin" and DEFAULTS["rank"]["lin_form"] == "ritz"
+    assert DEFAULTS["rank"]["lin_valid"] == 0.3 and DEFAULTS["rank"]["imbalance_warn"] == 0.02
+    w = DEFAULTS["load_transfer"]["work"]
+    assert (w["fail_dist_mm"], w["fail_frac"]) == (20.0, 0.2)
+    src = inspect.getsource(stg._sm_eval)
+    assert "c.scn" not in src and "BASELINE" in src                                # 계획 열만 — did 분기는 참조 생성 1회뿐

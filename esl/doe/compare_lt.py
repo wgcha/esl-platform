@@ -112,7 +112,7 @@ def load_work(path: str, key: str) -> dict:
     if not os.path.isfile(path):
         return {}
     with np.load(path, allow_pickle=False) as z:
-        if "key" not in z.files or str(z["key"]) != key:
+        if "key" not in z.files or str(np.asarray(z["key"]).ravel()[0]) != key:
             return {}
         out = {}
         for k in z.files:

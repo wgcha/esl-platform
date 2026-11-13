@@ -340,6 +340,39 @@ def load_transfer_html(lt: dict | None) -> str:
     return inner
 
 
+SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스"}
+SM_FORM_KO = {"ritz": "C_ref / ρ (Ritz)", "taylor": "C_ref (2 − ρ) (Taylor)"}
+SM_VERIFY = ("순위는 1차 강성 지표입니다 — 상위 안은 산출물(ch_r.rad·ch_r.fem)로 Radioss 검증 낙하를 돌려 확인하세요"
+             "(ESL 원본 변형을 강제하는 관점이라 하중 재분배·국부 좌굴은 보지 못함).")
+
+
+def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> str:
+    """v0.20.0 강성 지표 절(esl_stiffness_metric.md §7·SM-7): 지표 정의·보조 열 표(score_solve·불평형·ρ·umax 강체 제거·εmax)·
+    검증 낙하 안내. sm = {metric, lin_form, imbalance_warn} — 없으면 빈 문자열(옛 스냅샷)."""
+    if not sm:
+        return ""
+    rk = res.get("ranking") or []
+    warn = float(sm.get("imbalance_warn") or 0.02)
+    inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(sm.get("metric"), sm.get("metric"))),
+                        ("식", SM_FORM_KO.get(sm.get("lin_form"), sm.get("lin_form"))),
+                        ("정의", "ρ = U_안 / U_ref(ESL 원본 변형 u_ref 를 안에 줄 때 변형에너지 비), C_ref = 참조 컴플라이언스"),
+                        ("불평형 경고", f"imbalance_rel > {warn:g}")])
+    trs = []
+    for x in rk[:top_n]:
+        imb = x.get("imbalance_max")
+        dim = imb is not None and float(imb) > warn
+        trs.append([x["rank"], x["id"], names.get(x["id"], x["id"]), x["score"], x.get("score_solve"),
+                    "—" if imb is None else (f"{float(imb) * 100:.1f} %" + (" ⚠" if dim else "")),
+                    "—" if x.get("rho_min") is None else f"{_f(x['rho_min'])}~{_f(x['rho_max'])}",
+                    x.get("umax_def"), x.get("epsmax")])
+    if trs:
+        inner += "<h3>보조 열(재풀이·변위 — 순위와 무관)</h3>" + H.table(
+            ["순위", "id", "이름", "score(지표)", "score(재풀이)", "불평형 max", "ρ 범위", "umax 강체 제거", "εmax"], trs,
+            num=(0, 3, 4, 7, 8))
+    inner += f"<p class='small muted'>{H.esc(SM_VERIFY)} 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.</p>"
+    return inner
+
+
 def render_compare(ctx: dict) -> str:
     """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
     ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만·필렛 제거 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
@@ -427,6 +460,9 @@ def render_compare(ctx: dict) -> str:
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
               f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
+    sm_html = stiffness_html(ctx.get("stiffness"), res, names)
+    if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
+        S.append(H.section("stiffness", "강성 지표", sm_html))
     lt_html = load_transfer_html(ctx.get("load_transfer"))
     if lt_html:                                             # v0.20.0 LT-13(새 스냅샷만 — legacy 보고서 바이트 불변)
         S.append(H.section("load_transfer", "하중 전달", lt_html))
@@ -614,6 +650,9 @@ def render(ctx: dict) -> str:
               f"{H.esc(ns.get('fixed', 0))}·형상 {H.esc(ns.get('geom', 0))} · 실패 모핑 {H.esc(nf.get('morph', 0))}·메시 "
               f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "4. 순위", inner))
+    sm_html = stiffness_html(ctx.get("stiffness"), res, {})
+    if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
+        S.append(H.section("stiffness", "강성 지표", sm_html))
     lt_html = load_transfer_html(ctx.get("load_transfer"))
     if lt_html:                                             # v0.20.0 LT-13·20(새 스냅샷만 — legacy 보고서 바이트 불변)
         S.append(H.section("load_transfer", "하중 전달", lt_html))

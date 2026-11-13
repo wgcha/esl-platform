@@ -141,7 +141,7 @@ def test_region_main_sheet(tmp_path):
 
 
 # ---------------------------------------------------------------- 파이프라인 (V-LT-1c·4c·5·7·8 코어·12)
-def _study(root, ref="case", lt=None, n_shapes=3):
+def _study(root, ref="case", lt=None, n_shapes=3, rank=None):
     A = scmp.lt_plate_mesh(Lx=200.0, Lz=150.0, h=5.0, bead=None, n_tria_cols=2,
                            props={"t": 2.0, "E": 205000.0, "nu": 0.3})
     ents = []
@@ -169,6 +169,8 @@ def _study(root, ref="case", lt=None, n_shapes=3):
            "reference_source": ref, "inch": 75, "props": {"t": 2.0, "E": 205000.0, "nu": 0.3}, **extra}
     if lt is not None:
         doe["load_transfer"] = lt
+    if rank is not None:
+        doe["rank"] = rank
     out = os.path.join(root, "run")
 
     def spec(stage, **kw):
@@ -515,7 +517,7 @@ def test_step_per_design_same_rule(tmp_path, monkeypatch):
                                                   "opt_run": {"solver": {"backend": "superlu"}}},
            "entries": [{"id": f"E{k}", "dir": d} for k, d in enumerate(dirs)], "step": {"path": step},
            "inch": 75, "props": {"t": 1.2, "E": 205000.0, "nu": 0.3}, "mesh_size_mm": 6.0,
-           "load_transfer": {"schema": 1, "method": "work", "diag": {"enabled": False}}}
+           "load_transfer": {"schema": 1, "method": "work", "diag": {"enabled": False}}, "rank": RANK}
     out = str(tmp_path / "_doe")
     rec = []
     real = stg._plan_loads
@@ -546,6 +548,9 @@ def test_step_per_design_same_rule(tmp_path, monkeypatch):
     assert dids[0] == "d000" and set(dids[1:]) >= {d["id"] for d in m["designs"][1:]}    # 베이스라인 + 안마다
     inp = U.read_json(os.path.join(out, "prep", "input.json"))["load_transfer"]
     assert inp["plan"] == "step_per_design"
+    rd = U.read_json(os.path.join(out, "run", "designs", m["designs"][1]["id"], "result.json"))   # SM: 안마다 interp
+    r0 = U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))
+    assert rd["sm"]["disp"] == "interp" and all(abs(p["rho"] - q["rho"]) <= 1e-9 * q["rho"] for p, q in zip(rd["per_esl"], r0["per_esl"]))
     _, l0 = sc.load_loads(os.path.join(out, "prep"))                                 # 안 메시 = 베이스라인 → 같은 하중(1e-12)
     t0, _ = sc.load_base(os.path.join(out, "prep"))
     dt = sc.design_target(mg.load_mesh(os.path.join(out, "run", "designs", m["designs"][1]["id"], "mesh")), t0.frame)
@@ -553,3 +558,92 @@ def test_step_per_design_same_rule(tmp_path, monkeypatch):
     l1 = stg._lt_target_loads(c, m["designs"][1]["id"], dt, None, 6.0)
     for (e0, f0), (e1, f1) in zip(l0, l1):
         assert e0 == e1 and np.abs(f0 - f1).max() <= 1e-12 * np.abs(f0).max()
+
+
+# ---------------------------------------------------------------- V-SM-6·7·10 강성 지표(코어 통합)
+RANK = {"schema": 1, "metric": "lin", "lin_form": "ritz"}
+
+
+def test_solve6_equals_evaluate():
+    """_solve6 = evaluate.evaluate(같은 per_esl·warnings, 비트 동일) + 6 dof 해(병진 = keep_u)."""
+    a = sd.plate()
+    sup = tg.auto_supports(a)
+    loads = [("E0", sd.so.load(a, "bend", 1.0)), ("E1", sd.so.load(a, "dent", 2.0))]
+    r0 = ev.evaluate(a, sup, loads, SC, reaction_warn=1e-9, keep_u=["E0"])
+    r1 = stg._solve6(a, sup, loads, SC, reaction_warn=1e-9, keep_u=["E0"], keep6=["E0", "E1"])
+    assert r0["per_esl"] == r1["per_esl"] and r0["warnings"] == r1["warnings"]
+    assert np.array_equal(r0["u"]["E0"], r1["u"]["E0"]) and np.array_equal(r1["u6"]["E0"][:, :3], r0["u"]["E0"])
+    assert r1["u6"]["E1"].shape == (a["x0"].shape[0], 6)
+
+
+def test_sm_case_once(tmp_path, monkeypatch):
+    """① case_once + doe.rank: d000 C_lin = C_ritz = C_ref(ρ = 1), 재풀이 C·umax·εmax = 옛 값, 순위 = metric,
+    sm_ref.npz 1회(안마다 build_disp 0), CSV 가운데 열(§6), 옛 스냅샷(rank 없음) = solve 그대로."""
+    mesh, doe, dirs = _same_doe(tmp_path)
+    oL, pL, ids, _ = _scn_run(str(tmp_path / "L"), doe, mesh)
+    calls = []
+    real = ltm.build_disp
+    monkeypatch.setattr(ltm, "build_disp", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    oS, pS, _, _ = _scn_run(str(tmp_path / "S"), {**doe, "rank": RANK}, mesh, lt={"schema": 1, "method": "work"})
+    assert not calls                                                                # ① S = I(베이스라인·안 모두)
+    r0 = U.read_json(os.path.join(oS, "run", "designs", "d000", "result.json"))
+    for p in r0["per_esl"]:
+        assert p["rho"] == pytest.approx(1.0, abs=1e-9) and p["C_lin"] == pytest.approx(p["C"], rel=1e-9)
+        assert p["C_ritz"] == pytest.approx(p["C"], rel=1e-9) and p["imbalance_rel"] <= 1e-8
+    assert r0["sm"]["ref"] == "base" and r0["sm"]["disp"] == "I" and r0["sm"]["metric"] == "lin"
+    for did in ids:                                                                 # V-SM-10 재풀이 값 = 옛 값
+        assert [x[:4] for x in _per(oL, did)] == [x[:4] for x in _per(oS, did)], did
+    assert pS["metric"] == "lin" and pS["lin_form"] == "ritz"
+    assert [(x["id"], x["score"]) for x in pL["ranking"]] == [(x["id"], x["score_solve"]) for x in pS["ranking"]]
+    z = U.load_npz(os.path.join(oS, "prep", "sm_ref.npz"))
+    assert str(z["schema"].ravel()[0]) == "esl/doe_sm_ref/1" and z["u"].shape[2] == 6
+    head = open(os.path.join(oS, "post", "ranking.csv"), encoding="utf-8").readline().strip().split(",")
+    i = head.index("score")
+    assert head[i:i + 10] == stg.SM_CSV_MID and "C_solve_E0" in head and head[-4:] == stg.LT_CSV_COLS
+    assert "강성 지표" in open(os.path.join(oS, "report.html"), encoding="utf-8").read()
+    assert "metric" not in pL and "score_solve" not in pL["ranking"][0]
+
+
+def test_sm_bmesh_once_a_direct(tmp_path, monkeypatch):
+    """② bmesh_once: 참조 = A 원본 풀이(LT 참값과 같은 인수분해), 베이스라인 1회 interp → 안 = I(build_disp 1회)."""
+    b = sd.plate(nx=30, ny=17, Lx=480.0, Lz=280.0)
+    a, dirs, doe = _mesh_doe(tmp_path, b)
+    n_fact = []
+    real6 = stg._solve6
+
+    def s6(*a_, **k):
+        r = real6(*a_, **k)
+        n_fact.append(r["stats"]["n_factorizations"])
+        return r
+    monkeypatch.setattr(stg, "_solve6", s6)
+    calls = []
+    realb = ltm.build_disp
+    monkeypatch.setattr(ltm, "build_disp", lambda *a_, **k: (calls.append(1), realb(*a_, **k))[1])
+    oS, pS, ids, _ = _scn_run(str(tmp_path / "S"), {**doe, "rank": RANK}, b, rel="b.rad",
+                              lt={"schema": 1, "method": "work"})
+    assert len(calls) == 1                                                          # 베이스라인 1회(같은 A 메시)
+    r0 = U.read_json(os.path.join(oS, "run", "designs", "d000", "result.json"))
+    assert r0["sm"]["ref"] == "a_direct" and all(p["C_lin"] is not None and p["rho"] > 0 for p in r0["per_esl"])
+    # A 원본 풀이 1회(LT 참값·SM 참조 공유) + 베이스라인·안 해석
+    assert len(n_fact) == 1 + len(ids)
+    d0 = U.read_json(os.path.join(oS, "run", "designs", "d000", "load_transfer.json"))
+    assert d0["d000"]["truth"] == "a_direct"
+    assert pS["metric"] == "lin" and len(pS["ranking"]) == len(ids) - 1
+
+
+@needs_gmsh
+def test_sm_compare_case_and_step(tmp_path):
+    """④ compare_per_shape: d000 = A(identity) → 참조 base(ρ = 1), 형상 = interp(재메시) ρ·C_lin, view3d 색 = 강체 제거;
+    기준 STEP → a_direct(스터디 물성, LT 참값 공유)."""
+    out, post, spec, A, ents = _study(str(tmp_path / "c"), "case", {"schema": 1, "method": "work"}, rank=RANK)
+    r0 = U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))
+    assert r0["sm"]["ref"] == "base_or_a_direct" and all(p["rho"] == pytest.approx(1.0, abs=1e-9) for p in r0["per_esl"])
+    r2 = U.read_json(os.path.join(out, "run", "designs", "d002", "result.json"))
+    assert r2["sm"]["disp"] == "interp" and all(p["rho"] > 1.0 and p.get("sm_far_frac") is not None
+                                                for p in r2["per_esl"])            # 비드 2개 = 더 강함(ρ > 1)
+    res = post["result"]
+    assert res["metric"] == "lin" and res["ranking"][0]["score"] < 1.0 and "score_solve" in res["ranking"][0]
+    out2, post2, *_ = _study(str(tmp_path / "s"), "step", {"schema": 1, "method": "work"}, n_shapes=2, rank=RANK)
+    z = U.load_npz(os.path.join(out2, "prep", "sm_ref.npz"))
+    assert [str(k) for k in z["ref_kind"].tolist()] == ["a_direct", "a_direct"] and "u_a_0" in z
+    assert post2["result"]["metric"] == "lin"
