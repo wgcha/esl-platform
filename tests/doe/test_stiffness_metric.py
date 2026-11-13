@@ -3,13 +3,14 @@
 V-SM-1 K₁ = K₀ → lin = ritz = solve, V-SM-2 작은 ΔK 1차 일치·하한, V-SM-3 무른 모드 증폭 재현(solve 폭주·lin 안정),
 V-SM-4 강체·전달·회전 carry, V-SM-5 순수 모듈(AST·결정성)."""
 import ast
+import itertools
 import os
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
-
 import synth_sm as ss
+
 from esl.doe import stiffness_metric as smm
 from esl.errors import EslError
 
@@ -63,7 +64,7 @@ def small_dk():
 
 
 def test_v_sm_2_first_order_and_bounds(small_dk):
-    m, F, uref, ref, out = small_dk
+    _, _, _, ref, out = small_dk
     d = {a: out[a]["C_solve"] - out[a]["C_lin"] for a in (1e-4, 1e-3, 1e-2)}
     assert all(v > 0 for v in d.values())
     for a, b in ((1e-4, 1e-3), (1e-3, 1e-2)):                    # (a) 차 = O(α²): 기울기 2 ± 0.2
@@ -110,7 +111,7 @@ def test_v_sm_3_soft_mode_amplification(soft_amp):
         assert abs(r["taylor"] - 1.0) <= 0.2 * a and abs(r["ritz"] - 1.0) <= 0.2 * a   # lin 안정
         assert r["umax_def"] < r["umax"] and r["umax_def"] >= 10.0     # 강체 제거 한계(무른 굽힘은 남음)
         assert abs(r["solve"] - 1.0) > 10 * abs(r["ritz"] - 1.0)
-    for p, q in zip(rows, rows[1:]):                            # α 에 단조(연속)
+    for p, q in itertools.pairwise(rows):                            # α 에 단조(연속)
         assert q["umax"] > p["umax"] and q["imb"] > p["imb"] and q["solve"] > p["solve"]
         assert q["taylor"] >= p["taylor"] and q["ritz"] >= p["ritz"]
     assert rows[-1]["imb"] >= 0.05 and "SM_IMBALANCE" in rows[-1]["warn"]
@@ -181,7 +182,7 @@ def test_v_sm_4c_apply_disp():
     S = _bilinear_S(6, 4, 300.0, 200.0, pts)
     G = rng.normal(size=(3, 6))
     c = rng.normal(size=6)
-    lin = lambda X: c + X @ G                                    # noqa: E731  선형장 6 성분
+    lin = lambda X: c + X @ G
     ut = smm.apply_disp(S, lin(A["x0"]))
     assert np.abs(ut - lin(pts)).max() <= 1e-12 * np.abs(lin(pts)).max()
     u = rng.normal(size=(A["x0"].shape[0], 6))
@@ -212,7 +213,8 @@ def test_v_sm_4d_rotation_carry_vs_condense(small_dk):
 
 # ---------------------------------------------------------------- V-SM-5 (모듈)
 def test_v_sm_5_pure_module_ast():
-    src = open(os.path.join(os.path.dirname(smm.__file__), "stiffness_metric.py"), encoding="utf-8").read()
+    with open(os.path.join(os.path.dirname(smm.__file__), "stiffness_metric.py"), encoding="utf-8") as fh:
+        src = fh.read()
     tree = ast.parse(src)
     banned_calls = {"factorize", "solve", "solve_many", "condensed_forces", "rotations_for", "spsolve", "splu",
                     "factorized", "open", "cholesky", "inv"}
