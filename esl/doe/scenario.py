@@ -373,9 +373,14 @@ def align_check(ref_frame: dict, fr: dict, tol: float, deg: float) -> dict:
     return {"dxi": dxi, "deta": deta, "angle_deg": ang, "ok": bool(ok)}
 
 
-def shape_check(mesh: dict, ref_frame: dict, entries, size_cfg: dict, ccfg: dict, *, inch=None) -> dict:
+def shape_check(mesh: dict, ref_frame: dict, entries, size_cfg: dict, ccfg: dict, *, inch=None, region=None) -> dict:
     """SC-D-7b 형상 1개: 크기(형상 자신의 frame 을 템플릿 자리로 ``size.assert_ok``) + 정렬(기준 frame 대비).
-    반환 {ok, code(SHAPE_SIZE_MISMATCH|SHAPE_MISALIGNED|None), message, size{L_xi, L_eta}, align{…}|None, warnings}."""
+    반환 {ok, code(SHAPE_SIZE_MISMATCH|SHAPE_MISALIGNED|None), message, size{L_xi, L_eta}, align{…}|None, warnings}.
+    v0.20.0 LT-8 region(요소 bool) = 형상 frame 을 평가 영역 요소로(None = 지금 동작, 바이트 불변)."""
+    if region is not None:
+        from esl.doe.step_graph import submesh
+        mesh = submesh({k: np.asarray(mesh[k]) for k in ("node_id", "x0", "conn", "elem_type")}, np.asarray(region, bool))
+        mesh.pop("_node_index")
     fr = shape_frame(mesh, ref_frame.get("axis_ref"))
     out = {"ok": True, "code": None, "message": None, "size": {"L_xi": float(fr["L_xi"]), "L_eta": float(fr["L_eta"])},
            "align": None, "warnings": []}
@@ -394,12 +399,26 @@ def shape_check(mesh: dict, ref_frame: dict, entries, size_cfg: dict, ccfg: dict
     return out
 
 
-def compare_target(mesh: dict, ref_frame: dict) -> tg.Target:
+def compare_target(mesh: dict, ref_frame: dict, supports=None, region=None) -> tg.Target:
     """SC-D-6 형상 대상(기준 d000 포함 같은 함수): 법선을 기준 frame n 쪽으로 정렬, frame = 기준 고정(바이트 동일),
-    지지 = 형상 메시 auto_supports(rank < 6 → SUPPORT_DEGENERATE)."""
+    지지 = 형상 메시 auto_supports(rank < 6 → SUPPORT_DEGENERATE).
+    v0.20.0(esl_load_transfer.md LT-7·8): supports = 주어진 지지(이전 지지), region(요소 bool) = auto 3-2-1 을 영역 노드로.
+    둘 다 None = 지금 동작(바이트 불변)."""
     m = {k: np.asarray(mesh[k]) for k in tg.MESH_KEYS}
     m["conn"], _ = tg.align_normals(m, ref_frame["n"])
-    return design_target(m, ref_frame)
+    if supports is None and region is None:
+        return design_target(m, ref_frame)
+    if supports is None:
+        from esl.doe import step_graph as sg
+        rn = sg.region_nodes(m, region)
+        sup = tg.auto_supports({"x0": m["x0"][rn], "node_id": m["node_id"][rn]})
+    else:
+        sup = [(int(n), str(d)) for n, d in supports]
+    sr = tg.support_check(m, sup)
+    from esl.mech import supports as msup
+    if sr["rank"] < 6 or sr["sigma_ratio"] < msup.DEGENERATE_RATIO:
+        raise EslError("SUPPORT_DEGENERATE", f"3-2-1 지지가 강체 6모드를 구속하지 못함: {sup}")
+    return tg.Target("S2", m, ref_frame, sup, {}, {}, [], identity.topo_sha256(m))
 
 
 def mapping_resolution(mesh: dict, frame: dict, grid: tuple, min_nodes_per_cell: int) -> str | None:

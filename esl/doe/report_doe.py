@@ -267,6 +267,74 @@ def convergence_html(shapes: list, bias: dict, esl: list) -> str:
                       num=(2, 3, 4)))
 
 
+LT_METHOD_KO = {"work": "일 등가(원본 절점력 → 형상 면 최근접점 형상함수)", "cell": "셀 매핑"}
+LT_SUPPORT_KO = {"transfer": "기준 지지 → 형상 최근접 노드", "auto": "형상마다 자동 3-2-1", "fallback": "이전 실패 → 자동 3-2-1"}
+LT_TRUTH_KO = {"direct_nodal": "① 원본 절점력 직접(기준 = ESL 메시)", "a_direct": "ESL 원본 메시 직접 풀이(같은 물성)",
+               "mixed": "ESL 마다 다름"}
+
+
+def _rng(v) -> str:
+    return "—" if not v else (f"×{_f(v[0])}" if v[0] == v[1] else f"×{_f(v[0])}~{_f(v[1])}")
+
+
+def lt_variant_ko(v: str | None) -> str:
+    if not v:
+        return "—"
+    if v == "work":
+        return "일 등가"
+    if v == "cell:legacy":
+        return "셀 기존 24×14"
+    return f"셀 {v.split(':', 1)[1]} mm" if v.startswith("cell:") else v
+
+
+def load_transfer_html(lt: dict | None) -> str:
+    """v0.20.0 ④ 하중 전달 절(esl_load_transfer.md LT-13): 방식·지지·영역·참값, 기준 d000 참값 대비 variant 요약·표, 형상 표.
+    lt = {result: result.json.load_transfer, diag: post/load_transfer_diag.json} — 없으면 빈 문자열(legacy)."""
+    if not lt or not lt.get("result"):
+        return ""
+    res = lt["result"]
+    diag = lt.get("diag") or {}
+    cs = res.get("cell_size_mm")
+    alt = res.get("alt") or None
+    pairs = [("하중 전달", LT_METHOD_KO.get(res.get("method"), res.get("method"))
+              + ("" if res.get("method") != "cell" else (" 기존 24×14" if cs is None else f" {_f(cs)} mm"))),
+             ("지지", LT_SUPPORT_KO.get(res.get("support"), res.get("support"))),
+             ("평가 영역", res.get("region_mode")),
+             ("다른 방식(진단)", "—" if not alt else lt_variant_ko("work" if alt.get("method") == "work" else (
+                 "cell:legacy" if alt.get("cell_size_mm") is None else f"cell:{float(alt['cell_size_mm']):g}"))),
+             ("기준 참값", LT_TRUTH_KO.get(res.get("truth"), res.get("truth") or "—")),
+             ("다른 방식 순위 같음", "—" if res.get("rank_alt_same") is None else ("예" if res["rank_alt_same"] else "아니오"))]
+    inner = H.kv_table(pairs)
+    sm = res.get("summary") or []
+    if sm:
+        inner += "<h3>기준 d000 — 참값 대비</h3>" + H.table(
+            ["variant", "umax 배율", "C 배율", "MAC 최소", "하중 상관 최소"],
+            [[lt_variant_ko(x["variant"]), _rng(x.get("umax_ratio")), _rng(x.get("C_ratio")), x.get("mac_min"),
+              x.get("load_corr_min")] for x in sm], num=(3, 4))
+    rows = (diag.get("d000") or {}).get("rows") or []
+    if rows:
+        inner += H.table(["variant", "ESL", "하중 상관", "Σ|F| 배율", "max|F| 배율", "umax 배율", "C 배율", "MAC"],
+                         [[lt_variant_ko(r["variant"]), r.get("label") or r.get("entry_id"), r.get("load_corr"),
+                           r.get("sum_abs_ratio"), r.get("max_abs_ratio"), r.get("umax_ratio"), r.get("C_ratio"),
+                           r.get("mac")] for r in rows], num=(2, 3, 4, 5, 6, 7))
+    shp = diag.get("shapes") or []
+    if shp:
+        trs = []
+        for x in shp:
+            prim = [p.get("primary") or {} for p in x.get("per_esl") or []]
+            ff = [float(p["far_frac"]) for p in prim if p.get("far_frac") is not None]
+            dm = [float(p["dM_rel_before"]) for p in prim if p.get("dM_rel_before") is not None]
+            sp = x.get("supports") or {}
+            trs.append([x["id"], x.get("status") or "", x.get("score_alt"), max(ff) if ff else None,
+                        max(dm) if dm else None, LT_SUPPORT_KO.get(sp.get("mode"), sp.get("mode") or "—"),
+                        sp.get("max_dist_mm"), (x.get("region") or {}).get("n_out")])
+        inner += "<h3>형상별</h3>" + H.table(["id", "상태", "score(다른 방식)", "먼 노드 하중 비", "모멘트 오차(보정 전)",
+                                              "지지", "지지 이전 거리 mm", "영역 밖 요소"], trs, num=(2, 3, 4, 6, 7))
+    inner += ("<p class='small muted'>배율 = variant ÷ 참값(같은 d000 지지·물성·영역). 하중 상관 = 3N 성분 코사인, MAC = "
+              "(u·u_ref)²/((u·u)(u_ref·u_ref)) — 기준이 ESL 메시와 같을 때만. 전체는 post/load_transfer_diag.json</p>")
+    return inner
+
+
 def render_compare(ctx: dict) -> str:
     """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
     ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만·필렛 제거 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
@@ -354,6 +422,9 @@ def render_compare(ctx: dict) -> str:
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
               f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
+    lt_html = load_transfer_html(ctx.get("load_transfer"))
+    if lt_html:                                             # v0.20.0 LT-13(새 스냅샷만 — legacy 보고서 바이트 불변)
+        S.append(H.section("load_transfer", "하중 전달", lt_html))
     best = ctx.get("best")
     if best:
         S.append(H.section("best", f"4. 최적 형상 {best.get('id')} {names.get(best.get('id'), '')}",

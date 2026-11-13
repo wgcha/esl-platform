@@ -184,7 +184,17 @@ DEFAULTS: dict = {
                             "skew": {"warn": 34.0, "fail": 40.0}, "jacobian": {"warn": 0.7, "fail": 0.6},
                             "quad_min_angle": {"warn": 46.0, "fail": 40.0}, "quad_max_angle": {"warn": 134.0, "fail": 140.0},
                             "tria_min_angle": {"warn": 34.0, "fail": 30.0}, "tria_max_angle": {"warn": 112.0, "fail": 120.0},
-                            "tria_pct": {"warn": 10.0, "fail": 15.0}}},
+                            "tria_pct": {"warn": 10.0, "fail": 15.0}},
+                # v0.20.0 ④ 하중 전달(esl_load_transfer.md §4.1 — pydantic BeadDoeCompareLoadTransferCfg·두 yaml 거울). 새 스터디
+                # 스냅샷(doe.load_transfer)에만 쓰임 — 스냅샷에 키 없는 옛 스터디 = legacy(셀 24×14·auto 지지·영역 all·진단 끔)
+                "load_transfer": {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0],
+                                  "cell_min_mm": 3.0,
+                                  "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01,
+                                           "far_fail_frac": 0.2},
+                                  "support": "transfer", "support_tol_mm": None,
+                                  "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5},
+                                  "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0,
+                                           "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}}},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
     # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 계약 없이 키 추가 금지).
     # v0.16.1(esl_select_relax.md §4.4): fixed_policy·quality.fail_policy = warn(경고만, 뒤집힘만 제외) | skip(v0.16.0 동작),
