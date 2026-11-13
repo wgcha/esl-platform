@@ -2,6 +2,18 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.20.0] - 2026-11-13
+### 추가
+- **하중 전달 방식 선택(①②③④ 모든 모드)**: 새 스터디의 고급 설정 "하중 전달" — **일 등가(work, 기본)** = ESL 원본 절점력을 대상 메시 면의 가장 가까운 점 형상함수로 나눠 옮김(같은 메시면 원본 그대로, 합력·합모멘트 보존) | **셀(cell)** = 셀 합력 분배(셀 크기 기존 24×14 격자·10·5·3 mm). 이슈 #63 에서 셀 매핑이 기준 형상에서도 umax ×18~58 로 부풀던 문제의 대책. 기준·형상(안) 모두 같은 규칙. 결과 화면 "하중 전달" 줄·접힘 진단 표(기준 대비 umax·C 배율, 하중 상관, MAC — `post/load_transfer_diag.json`), ranking.csv 끝 열 `lt_method·lt_far_frac·lt_dM_rel·score_alt`. ④ 는 기준 지지 이전·평가 영역(주 시트)·3D 비교 같은 ESL 맞춤
+- **순위 지표 = 재풀이 없는 1차 강성 지표(같은 메시 — ①②·새 ③)**: 고정 ESL 하중을 강성이 바뀐 안에 다시 풀면 불평형으로 무른 모드가 부풀어(umax ×50~270, C ×1.0~1.9 — 이슈 #63) 순위가 흔들렸다. 새 스터디는 베이스라인 변형을 같은 메시의 안에 줄 때의 변형에너지 비 ρ 로 C = C_ref/ρ(Ritz, 작을수록 좋음)를 순위에 쓴다. 재풀이 C 비·불평형 |F − K·u|/Σ|F|·ρ 범위·umax(강체 제거)·εmax 는 "보조 열 보기"(순위에 안 씀), 불평형이 큰 행은 흐림·⚠ `SM_IMBALANCE`, |ρ − 1| > 0.3 은 `SM_LIN_RANGE`. 순위 아래 "상위 안은 Radioss 검증 낙하로 확인" 안내
+- **다른 메시 비교(④·옛 ③)**: 형상·안마다 메시가 달라 1차 지표를 쓰지 않고(메시 간 변위 보간이 같은 형상에서도 지표를 1.6~12배 왜곡) 형상마다 work 하중을 옮겨 재풀이한 C 로 순위 — 주 열 "재풀이 C" + 안내 "다른 메시 비교(정밀도 낮음)", 경고 `SM_CROSS_MESH`, API `metric_effective: "solve"`·`cross_mesh: true`
+- 설정 `bead_doe.load_transfer`(모든 모드 공통 — method·cell_size_mm·cell_choices_mm·cell_min_mm·work{knn, proj_tol_mm, newton_iter, far_warn_frac, far_fail_frac, fail_dist_mm, fail_frac}·diag), `bead_doe.compare.load_transfer`(④ support·support_tol_mm·region), `bead_doe.rank`(metric lin|solve·lin_form ritz|taylor·lin_valid 0.3·imbalance_warn 0.02). 새 스터디 요청 `load_transfer`·`cell_size_mm`, 응답 `inputs.load_transfer`·`inputs.rank_metric`, 결과 `load_transfer`·`metric`·`lin_form`·`rank`·`metric_effective`·`cross_mesh`·`C_ref_solve`·순위 행 `score_solve·imbalance_max·rho_min·rho_max·umax_def`
+### 변경
+- umax·εmax 는 순위·대표 카드에서 빠지고, 표시값·3D 색은 최소제곱 강체 6자유도를 뺀 변위(범례 "강체 제거, 해석값(순위와 무관)")
+- ESL 노드가 형상 면에서 3 mm(`proj_tol_mm`) 넘게 떨어지면 경고 `LT_FAR_NODES` 만 — 실패(`LT_TRANSFER_FAILED`, 형상 FAILED_SIZE·기준이면 준비 실패)는 20 mm(`fail_dist_mm`) 넘게 떨어진 노드의 하중이 20 %(`fail_frac`)를 넘을 때(좌표계·배치 오류)만
+- 이미 만든 스터디(설정 스냅샷에 새 키 없음)는 예전 하중·순위·화면 그대로. 복제하면 원 스터디 값 유지
+- DB migration 없음
+
 ## [0.19.1] - 2026-11-13
 ### 수정
 - **① 그래프 방식(비드 네트워크) 선택 행렬 생성이 `BG_BASIS_LEAK` 로 실패하던 문제(이슈 #63 B10_D·B11_D)**: 채널 비드가 끝나는 단차(다음 영역과의 접합 구역 벽)에 걸친 보스가 있으면, 보스 테두리 중 그 단차 벽에만 닿은 노드가 보스와 함께 움직여 "허용 구역 밖 기저" 로 막혔다. 이제 보스는 채널을 따라가되 비드 밖 벽·바닥에 닿은 테두리는 제자리에 두고(기존 접촉 띠와 같은 방식으로 부드럽게 이음) 단차 벽은 움직이지 않는다. 기저를 만드는 규칙과 검사하는 규칙을 한 함수로 합쳐 같은 종류의 어긋남이 다시 생기지 않게 했다

@@ -10,4 +10,4 @@
 - build_disp·a_direct 지표 경로: 계획 표에서 비활성(코드·시험 유지).
 
 ## 진행
-- [ ] 코어  - [ ] 코어 시험  - [ ] backend  - [ ] frontend  - [ ] 문서·버전  - [ ] test-all  - [ ] regress  - [ ] 최종 커밋·push
+- [x] 코어  - [x] 코어 시험  - [x] backend  - [x] frontend  - [x] 문서·버전(AGENTS.md 신규)  - [ ] test-all  - [ ] regress  - [ ] 최종 커밋·push

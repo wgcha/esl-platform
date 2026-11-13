@@ -1,6 +1,6 @@
 # 계약: 강성평가 하중 전달 — 일 등가(W) · 셀(C) · 진단, 모든 모드 ①②③④ (LOAD_TRANSFER, v0.20.0)
 
-- 상태: **초안(Plan)** — 2026-11-13. 사용자 결정(아래 "사용자 결정")은 확정, §12 의 3개 항목은 권고안으로 진행하되 사용자 답에 따라 기본값만 바뀐다(구조 불변).
+- 상태: **확정(v0.20.0 릴리스)** — 2026-11-13. 먼 노드 규칙 개정(LT-5, 2026-11-13 메인 결정)·강성 지표 결정 A(§14) 반영. 이하 초안 문구: 사용자 결정(아래 "사용자 결정")은 확정, §12 의 3개 항목은 권고안으로 진행하되 사용자 답에 따라 기본값만 바뀐다(구조 불변).
 - **개정 2026-11-13 17:10 (전 모드 확장, §13 — D-0.20.0-LT-15~24)**: 하중 전달 방식(work·cell)을 ①②③④ 모든 모드의 독립 계산 옵션으로. 공용 모듈 `esl/doe/load_transfer.py` 는 모드 무관 순수 모듈(전략 등록 identity·work·cell), 모드 차이는 선언형 **전달 계획 표**(§13.3) 한 곳. §0~§12 의 ④ 규칙은 그대로 유효하되 **모듈 경계·설정 위치·요청 검사·진단 범위는 §13 이 우선**(충돌 시 §13).
 - 버전: **v0.20.0** (origin/main 40dcc6d = v0.19.1 기준). migration **불필요**(새 값은 `bead_does.inputs`·`prep`·`result` JSONB 와 작업 폴더 파일에만).
 - 관계: `esl_step_compare.md`(STEP_COMPARE ④)의 **SC-D-2·SC-D-6(하중·지지)·확정 4 를 새 스터디에 한해 대체**한다. §13: `esl_bead_doe.md` **BD-D-3(①②③ 하중)을 새 스냅샷에 한해 대체**(BD-D-4 지지는 그대로), `esl_step_graph.md` SG-D-20b(③ 영역 셀 매핑)도 새 스냅샷은 계획 실행기로. 메시(`esl_compare_mesh_options.md`)·순위·결과 화면 규칙은 그대로. 평가 영역은 ③ `esl_step_graph.md` SG-D-19·20 의 함수를 재사용. 충돌 시 ④ 하중·지지·영역·3D 비교 범위에서 이 문서가 우선.
@@ -64,7 +64,7 @@ DOE_RUN
 | D-0.20.0-LT-2 | **방식 W(일 등가)**: f_t = T_tᵀ f_A. T_t(3N_A × 3N_t) = "대상 메시 t 변위 → A 노드 위치 변위" 보간. A 노드 x_a 마다 (1) 후보 = 대상 요소(영역 요소만, LT-8) 중심 cKDTree k = `work.knn`(8) 개, (2) 요소별 최근접점: TRIA = 점-삼각형 최근접(Ericson, 경계 clamp), QUAD = 두 삼각형(0,1,2)(0,2,3) 최근접점 → 쌍선형 자연좌표 (r,s) Newton 역사상(≤ `work.newton_iter` 10회, 잔차 ≤ 1e-10·h, [-1,1]² clamp; 수렴 실패 = 그 삼각형의 선형 형상함수, 횟수 기록), (3) 거리 최소 요소(동률 ≤ 1e-12·h 는 작은 요소 번호 — 결정적), (4) 행 = 형상함수 N_i(Σ N_i = 1) × I₃. **좌표 = 전역 원좌표**(정규화 frame 변환 없음 — ④ 는 같은 좌표계 STEP 이 전제, SC-D-7b 정렬 검사가 관문). **동일 메시 빠른 경로**: 대상 node_id 집합 = A node_id 집합이고 좌표 차 ≤ `core.coord_check.max_rel` 이면 T = 순열(= `target.entry_load` S1 재배열과 같은 코드) → **① 과 비트 동일**. ESL 들의 원본 메시가 여러 개면 원본 메시 sha 별로 T 를 따로 만듦(`transfer.npz` 키 = sha 앞 16자) | 일 등가(가상일 Σ f_A·u(x_a) = Σ f_t·u_t)라 K_A u_drop 의 이웃 간 상쇄 구조가 대상 노드로 그대로 넘어감. 같은 메시면 T = I(사용자 검증 기준) |
 | D-0.20.0-LT-3 | **회전 자유도**: ESL 은 절점력만(`RAW_KEYS` 에 모멘트 없음), 솔버 하중은 병진 3자유도만(`shell.py:842`) → **T 는 병진만 보간, 대상 회전 자유도 하중 0**. A 노드가 대상 면에서 법선 거리 d 떨어진 만큼의 오프셋 모멘트 Σ d·n×f 는 회전 자유도로 옮기지 않고 LT-4 합력·합모멘트 보정으로 되돌리며 보정 전 값을 `dM_rel_before` 로 기록. 오프셋 강체 연결(u_a = N(u + θ×d n))은 솔버 모멘트 하중·드릴링 강성 민감도 때문에 기각(후속) | 코드 사실(모멘트 없음). d ≤ `proj_tol_mm` 라 오프셋 모멘트는 작음 — 진단으로 확인 |
 | D-0.20.0-LT-4 | **합력·합모멘트 보존(W·새 C 공통)**: 전달 후 f_t 의 합력·합모멘트(A 노드 중심 기준)를 **원본 f_A 의 값**으로 맞추는 전 노드 최소노름 보정(`mapping.min_norm_forces(X_t, F_A − F_t, M_A − M_t, c)`, 영역 노드만). 합 0 강제 아님 — ESL 이 자기평형이 아니면 그 불평형을 그대로 넘겨 ① 과 같게 함(T = I 이면 보정 0 → 비트 동일). ESL 자체 불평형 ‖ΣF_A‖/Σ|F_A| > 1e-6 이면 경고 `LT_ESL_UNBALANCED`(진행). legacy C 는 지금 보정(합 0) 그대로 | W 는 분할 1(Σ N = 1)이라 합력은 정확히 보존, 모멘트만 오프셋만큼 어긋남 |
-| D-0.20.0-LT-5 | **먼 노드(사영 실패) 규칙**: 거리 > `work.proj_tol_mm`(기본 3.0 = 요소 1개, null = 1.0 × h) 인 A 노드도 **버리지 않고** clamp 된 최근접점으로 그대로 전달(합력 보존), `far_n`·`far_frac` = 먼 노드 Σ|f| / 전체 Σ|f| 기록. `far_frac > work.far_warn_frac`(0.01) → 형상 경고 `LT_FAR_NODES`(최대 거리·개수·bbox), `> work.far_fail_frac`(0.2) → 준비에서 그 형상 `FAILED_SIZE` 코드 `LT_TRANSFER_FAILED`(d000 이면 준비 실패 `BASELINE_FAILED`). 최대 거리는 ESL 마다가 아니라 원본 메시 마다 1개 | 형상에 없는 국부 형상(지운 보스 등)의 하중도 총량 보존. 실패 상태를 새로 만들지 않고 기존 FAILED_SIZE(순위 `extra_failed` 이미 있음) 재사용 |
+| D-0.20.0-LT-5 | **먼 노드(사영 실패) 규칙 — 2026-11-13 개정**: 거리 > `work.proj_tol_mm`(기본 3.0 = 요소 1개, null = 1.0 × h) 인 A 노드도 **버리지 않고** clamp 된 최근접점으로 그대로 전달(합력 보존), `far_n`·`far_frac` = proj_tol 초과 노드 Σ|f| / 전체 Σ|f| 기록. **proj_tol 초과는 진단·경고만**: `far_frac > work.far_warn_frac`(0.01) → 형상 경고 `LT_FAR_NODES`(최대 거리·개수). **실패는 배치 오류만**: 거리 > `work.fail_dist_mm`(20) 인 노드의 하중 비 `fail_frac` > `work.fail_frac`(0.2) → 준비에서 그 형상 `FAILED_SIZE` 코드 `LT_TRANSFER_FAILED`(d000·`once` 베이스라인이면 `BASELINE_FAILED`). `far_fail_frac` 은 **판정에 쓰지 않음**(설정·pydantic 거울 호환용으로만 남김 — `far_warn_frac ≤ far_fail_frac` 검사 유지). 최대 거리는 원본 메시마다 1개 | 형상에 없는 국부 형상(지운 보스 등)의 하중도 총량 보존. 개정 근거: 비드 깊이 차 수 mm(proj_tol 3 mm 초과)는 정상 형상 차이인데 옛 규칙(far_frac > 0.2 실패)이 비드가 많은 안을 실패로 만들었음 — 20 mm 넘게 떨어진 하중이 20 % 를 넘는 경우만 배치(좌표계·원점) 오류. 실패 상태를 새로 만들지 않고 기존 FAILED_SIZE 재사용 |
 | D-0.20.0-LT-6 | **방식 C(셀)**: `cell_size_mm` = null → **legacy 격자**(ESL 저장 요약 24×14, 지금 `to_target` 병합 규칙 그대로 — 바이트 동일). 값 s(`cell_min_mm` 3.0 ≤ s ≤ 200) → ESL raw 로 **새 요약**: ESL 자기 frame(`entry.meta.frame`)에서 nx = max(1, round(L_ξ/s)), ny = max(1, round(L_η/s)), `normalize.grid_summary(raw.x0, raw.f, nx, ny, fr=ESL frame)`; 대상 노드는 기준 frame(t.frame) 같은 (i,j) 셀로. 셀(병합 없음)별: 대상 노드 ≥ 3 이고 `_rank_ok(min_spread 0.2)` → 지금과 같은 최소노름 6 제약 분배, **아니면(노드 0~2 개·공선) 그 셀에 든 A 원본 노드 힘을 W 연산자(LT-2)로 전달**(일 등가 분배 — 셀 합력·합모멘트는 오프셋만큼만 어긋남). 끝에 LT-4 보정. 정보 `n_cells_loaded`·`n_cells_small`·`small_frac`(작은 셀 Σ|F| 비). 셀 1만 개 이상은 6×6 정규방정식 일괄 풀이(`np.linalg.solve` batched) — 결과는 lstsq 와 1e-10 안 | 셀 크기를 줄이면 C → W 로 연속 수렴(작은 셀은 W), 키우면 legacy 에 가까움 — "셀을 얼마나 줄이면 되나" 를 같은 규칙 위에서 비교. 병합은 셀이 작을수록 거의 모든 셀에서 일어나 의미가 없어 새 C 에서 뺌 |
 | D-0.20.0-LT-7 | **지지(공정 비교 필수 범위로 포함)** `support ∈ {transfer, auto}`: d000 = `auto_supports`(영역 노드, LT-8) 그대로. `transfer` = 형상마다 d000 지지 노드 좌표 3점의 **최근접 형상 노드**(영역 노드, 결정적 동률 = 작은 번호)에 같은 dof. 거리 > `support_tol_mm`(null = 2h) 또는 `support_check` rank < 6 → 그 형상만 `auto_supports` + 경고 `LT_SUPPORT_FALLBACK`(거리·이유). `auto` = 지금 규칙. 하중이 자기평형이면 3-2-1 정정 지지는 강체 운동만 바꾸므로 **C(컴플라이언스)·점수는 지지와 무관**, umax·3D 변형 그림이 같은 기준점에서 측정되게 하는 것이 목적 | #63 진단 3: 형상마다 다른 기준점이라 변형 그림 비교가 어려움. 비용 ≈ 0 |
 | D-0.20.0-LT-8 | **평가 영역(포함 — 기존 함수 재사용, 범위 작음)** `region.mode ∈ {auto, a_bbox, largest, all}`(③ SG-D-19 와 같은 값·뜻): 형상마다 `step_graph.region_mask(mesh, a_xyz = 첫 ESL raw x0, {region: …}, h)`. 쓰임 = (a) 기준 frame·형상 크기·정렬 검사(`shape_check`)를 영역 요소 submesh 로, (b) 지지 후보 노드, (c) W 사영 후보 요소·C 대상 노드(영역 밖 하중 0 — `region_loads` 와 같은 결과 형식), (d) `evaluate(…, region=mask)` 로 umax·epsmax 영역만(C = F·u 는 하중이 영역에만 있어 자동). 해석 메시는 전체(③ SG-D-20e 와 같음). 영역 ≠ 전체 = 정보 `COMPARE_REGION{n_in, n_out, out_bbox}`, 영역 < `min_frac` = 경고 `COMPARE_REGION_SMALL`. d000 = A 메시이면 a_bbox = 전체 → 영역 = 전체(지금과 같음) | #63 d001 의 주 시트 밖 ≈ 7만 요소(z 16.9~29.6)가 umax·지지·frame 을 오염. ③ 은 이미 같은 함수로 뺌 |
@@ -89,7 +89,7 @@ bead_doe:
       cell_size_mm: null           # cell 셀 크기(null = 기존 ESL 요약 24×14 격자·병합 규칙 그대로)
       cell_choices_mm: [null, 10.0, 5.0, 3.0]   # 화면 select 의 셀 선택지(null = 기존 격자)
       cell_min_mm: 3.0             # 셀 크기 하한(요청 검사)
-      work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2}
+      work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2, fail_dist_mm: 20.0, fail_frac: 0.2}   # far_fail_frac = 호환용(판정 미사용, LT-5 개정)
       support: transfer            # transfer(기준 d000 지지 → 형상 최근접 노드) | auto(형상마다 PCA 3-2-1, 예전)
       support_tol_mm: null         # 이전 거리 허용(null = 2h) — 넘거나 rank < 6 이면 그 형상만 auto + LT_SUPPORT_FALLBACK
       region: {mode: auto, pad_mm: null, min_frac: 0.5}   # 평가 영역(③ SG-D-19 와 같은 규칙) auto | a_bbox | largest | all
@@ -99,7 +99,7 @@ bead_doe:
         alt_cell_size_mm: 3.0      # 주 방식이 work 일 때 alt cell 의 셀 크기(null = 기존 격자)
         cell_sweep_mm: [null, 10.0, 5.0, 3.0]   # d000 셀 크기 훑기(참값 대비 변형만, 0 개 = 끔)
 ```
-- pydantic 검사: `method` Literal; `cell_size_mm`·`alt_cell_size_mm` null 또는 `cell_min_mm`..200; `cell_min_mm` 1..200; `cell_choices_mm`·`cell_sweep_mm` 원소 null 또는 ≥ `cell_min_mm`, 길이 ≤ 8, 중복 금지; `knn` 1..64; `proj_tol_mm` null 또는 > 0; `newton_iter` 1..50; `0 ≤ far_warn_frac ≤ far_fail_frac ≤ 1`; `support` ∈ {transfer, auto}; `support_tol_mm` null 또는 > 0; `region.mode` ∈ {auto, a_bbox, largest, all}, `pad_mm` null 또는 > 0, `min_frac` (0,1].
+- pydantic 검사: `method` Literal; `cell_size_mm`·`alt_cell_size_mm` null 또는 `cell_min_mm`..200; `cell_min_mm` 1..200; `cell_choices_mm`·`cell_sweep_mm` 원소 null 또는 ≥ `cell_min_mm`, 길이 ≤ 8, 중복 금지; `knn` 1..64; `proj_tol_mm` null 또는 > 0; `newton_iter` 1..50; `0 ≤ far_warn_frac ≤ far_fail_frac ≤ 1`; `fail_dist_mm` > 0, `0 ≤ fail_frac ≤ 1`; `support` ∈ {transfer, auto}; `support_tol_mm` null 또는 > 0; `region.mode` ∈ {auto, a_bbox, largest, all}, `pad_mm` null 또는 > 0, `min_frac` (0,1].
 - `GET /doe/settings` `compare` += `load_transfer{method, cell_size_mm, cell_choices_mm, cell_min_mm}`.
 
 ### 4.2 요청 (`DoeCheckIn`·`DoeStudyIn`, compare 만)
@@ -138,8 +138,8 @@ DoeStudyOut.inputs(compare) += { load_transfer:{method, cell_size_mm, support, r
 | 코드 | 위치 | 의미 |
 |---|---|---|
 | `LOAD_TRANSFER_INVALID` | 422 | work + cell_size_mm, 셀 크기 범위 밖 |
-| `LT_TRANSFER_FAILED` | 형상 `FAILED_SIZE`(d000 = 준비 실패 `BASELINE_FAILED`) | 먼 노드 Σ|f| 비 > far_fail_frac — "ESL 원본 메시를 이 형상에 옮길 수 없음(최대 거리 x mm)" |
-| 경고 `LT_FAR_NODES` | prep·결과 형상 행 | far_frac > far_warn_frac |
+| `LT_TRANSFER_FAILED` | 형상 `FAILED_SIZE`(d000 = 준비 실패 `BASELINE_FAILED`) | 배치 오류: 거리 > fail_dist_mm(20) 노드의 Σ|f| 비 > fail_frac(0.2) — "ESL 원본 메시를 이 형상에 옮길 수 없음(배치 오류, 최대 거리 x mm)" (LT-5 개정, far_fail_frac 미사용) |
+| 경고 `LT_FAR_NODES` | prep·결과 형상 행 | proj_tol 초과 하중 비 far_frac > far_warn_frac(진단·경고만 — 실패 아님) |
 | 경고 `LT_SUPPORT_FALLBACK` | prep·결과 형상 행 | 지지 이전 실패 → 그 형상 auto 3-2-1(공정성 예외 표시) |
 | 경고 `LT_ESL_UNBALANCED` | prep | ESL 자체 불평형 > 1e-6 |
 | 경고 `LT_DIAG_SKIPPED` | 결과 | 진단 단계 실패(주 결과 영향 없음) |
@@ -161,7 +161,7 @@ DoeStudyOut.inputs(compare) += { load_transfer:{method, cell_size_mm, support, r
 | V-LT-2 | **재메시에서 W 가 C 보다 ① 에 가까움**: 같은 판 STEP 을 gmsh h 2.5·3.5 mm 로 메시(d001·d002) + 기준 = A Case 메시 → 시험이 형상마다 A direct(같은 물성·영역 지지) 대비 직접 계산: W 의 umax_ratio·C_ratio ∈ [0.7, 1.3], `cell:legacy` 는 둘 다 > 3, `cell:3` 은 W 와 legacy 사이; d000(=A) 진단에서 MAC_W ≥ 0.999, MAC_legacy < 0.5(이슈 #63 증상 재현) | `tests/doe/test_load_transfer.py`(gmsh 없으면 skip) |
 | V-LT-3 | **평형·합력 보존**: 임의 사영(대상 = A 를 법선 0.5 mm·면내 1 mm 이동 + 재메시) → W: ΣF_t = ΣF_A(1e-12 상대, 보정 전), `dM_rel_before` = 해석값 ‖Σ d n×f‖ 과 1e-9 일치, 보정 후 dF·dM ≤ 1e-10; 새 C(s = 10·3): 같은 기준, 셀 노드 0~2 개 셀은 W 경로(`n_cells_small` > 0)·셀 합력 보존 1e-9; legacy C = 지금 `to_target` 결과와 비트 동일 | 같은 파일 |
 | V-LT-4 | **공정성**: (a) d000 과 d001 = 같은 STEP 같은 메시 → 두 방식 모두 score = 1(1e-12)·지지 이전 거리 0, (b) d000 만 다른 규칙을 쓰는 경로가 없음 — `shape_loads` 호출 인자에 did 분기 없음(코드 검사: d000·형상이 같은 spec), (c) d000 = Case 메시여도 하중 method 기록 = 스터디 method(direct_nodal 은 빠른 경로 표기 `fast_path: identity` 로만), (d) 지지 이전: d001 = d000 을 0.4 mm 평행 이동 → 이전 노드 = 최근접, C 상대차 ≤ 1e-9(자기평형 → 지지 무관), umax 는 auto 보다 d000 에 가까움, 이전 거리 > tol → `LT_SUPPORT_FALLBACK` | 같은 파일 |
-| V-LT-5 | **먼 노드**: A 에 보스 1개가 있고 d001 에 없음 → 보스 노드 far, 합력 보존, `far_frac` 경계(0.0099/0.0101 → 경고 없음/`LT_FAR_NODES`, 0.199/0.201 → 진행/`FAILED_SIZE LT_TRANSFER_FAILED`), d000 이면 `BASELINE_FAILED` | 같은 파일 |
+| V-LT-5 | **먼 노드**: A 에 보스 1개가 있고 d001 에 없음 → 보스 노드 far, 합력 보존, `far_frac` 경계(0.0099/0.0101 → 경고 없음/`LT_FAR_NODES`), proj_tol 초과가 많아도(> 0.2) fail_dist_mm 이하면 진행 + 경고만, `fail_frac`(fail_dist_mm 초과 하중 비) 0.199/0.201 → 진행/`FAILED_SIZE LT_TRANSFER_FAILED`(LT-5 개정), d000 이면 `BASELINE_FAILED` | 같은 파일 |
 | V-LT-6 | **영역**: ③ 합성 H6 + 주 시트와 이어진 추가 형상(`synth_step_graph`) → auto 영역 = 주 시트, 영역 밖 노드 하중 0(W·C), umax·epsmax 영역만, 지지 노드 영역 안, frame·정렬 = 추가 형상 없는 STEP 과 1e-9, `COMPARE_REGION` 정보; mode all = 지금과 같은 값 | 같은 파일 |
 | V-LT-7 | **진단 파일**: §5 키·정의(상관·MAC 수식 단위 시험), d000 이 STEP 이면 truth = a_direct·상관·MAC null, `cell_sweep_mm` 0개 = 훑기 없음, alt 끔 = score_alt 없음, 진단 단계 예외 → `LT_DIAG_SKIPPED` 이고 순위 불변 | 같은 파일 + `worker/tests/test_doe_compare_lt_jobs.py` |
 | V-LT-8 | **3D 같은 ESL**: 형상 2개의 최악 ESL 이 다를 때 `view3d_ref` 에 ESL 2개(`d000_e00`·`d000_e02`), 각 manifest `esl_run_id` = 그 ESL, `result.view3d` 목록 불변, d000 인수분해 1회(stats) | `worker/tests/test_doe_compare_lt_jobs.py` |
@@ -236,7 +236,7 @@ esl/doe/load_transfer.py   (모드 무관 순수 모듈 — 이 파일만 "하�
      SrcLoad  {key, mesh{node_id, x0, conn, elem_type}, f (N_A,3), frame(ESL meta.frame), summary(24×14 — cell:legacy 용), mesh_sha}
      DstMesh  {mesh{node_id, x0, conn, elem_type}, frame, elem_mask|None, h}
      Placement{kind: "global" | "rigid"(R, t) | "frame"(src_frame → dst_frame 정규화 사상)}   # 계산은 모듈 밖에서 정해 넘김
-     Method   {name: "work"|"cell"|<등록 이름>, cell_size_mm, work{knn, proj_tol_mm, newton_iter, far_warn_frac, far_fail_frac}, mapping_opts, cell_min_mm}
+     Method   {name: "work"|"cell"|<등록 이름>, cell_size_mm, work{knn, proj_tol_mm, newton_iter, far_warn_frac, far_fail_frac(호환·미사용), fail_dist_mm, fail_frac}, mapping_opts, cell_min_mm}
      Identity {key: "topo"|"topo+coords"|"none", coord_tol_rel}
   ── 공개 함수
      transfer(src, dst, method, placement, identity, cache) -> (f_dst (N_t,3), row)       # row = §5 per_esl.primary 키
@@ -280,7 +280,7 @@ esl/doe/stages.py          plan = tp.plan_for(c.scn, select_base(c)) → _plan_l
 | ④ | §0~§12 그대로 | §0~§12 그대로 |
 
 - **placement `auto`(②③)**: ③ 은 `prep/select/fixed_transfer.json.frame_check`(SG-D-13 (0) 구멍 특징 판정)를 그대로 읽음, ②·③(옛)은 같은 판정 함수(`step_graph` 의 frame 판정 — A part 메시 vs B 베이스라인 메시, 영역 있으면 영역)를 BD_LOADS 에서 1회 호출(core-geom, 변경 없이 가져다 씀). `ok` → `global`, `fit.ok` → `rigid`(R·t), 아니면 → `frame`(정규화 사상 — 셀 매핑과 같은 가정) + 정보 `LT_PLACEMENT{kind, resid_med_mm}`. 근거: #63 실 사례 A·B 원점·X 축 일치, bbox 차는 추가 형상(SG E1) — bbox 정규화로 옮기면 수 mm 어긋남. 결과는 `prep/input.json.load_transfer.placement`·진단 `plan.placement` 에 기록.
-- **먼 노드(LT-5)**: 모든 모드 같은 문턱. `once` 는 베이스라인에서만 판정 → `far_frac > far_fail_frac` = 준비 실패 `BASELINE_FAILED`(code `LT_TRANSFER_FAILED`, 안내 "ESL 원본 메시를 기준 메시에 옮길 수 없음(최대 거리 x mm) — 셀 방식을 고르거나 기준 모델 확인"). ①(identity)은 해당 없음.
+- **먼 노드(LT-5)**: 모든 모드 같은 문턱. `once` 는 베이스라인에서만 판정 → `fail_frac`(거리 > `fail_dist_mm` 노드 하중 비) > `work.fail_frac` = 준비 실패 `BASELINE_FAILED`(code `LT_TRANSFER_FAILED`, 안내 "ESL 원본 메시를 기준 메시에 옮길 수 없음(배치 오류, 최대 거리 x mm) — 셀 방식을 고르거나 기준 모델·좌표계 확인"), proj_tol 초과(`far_frac > far_warn_frac`)는 경고 `LT_FAR_NODES` 만(2026-11-13 개정). ①(identity)은 해당 없음.
 - 하중 지표의 기준 모멘트 중심·L_b 는 배치된 A(§5 정의 그대로, x' 사용).
 
 ### 13.5 기본값 · 호환 · 지지 · 영역 (D-0.20.0-LT-18)
@@ -298,7 +298,7 @@ bead_doe:
     cell_size_mm: null
     cell_choices_mm: [null, 10.0, 5.0, 3.0]
     cell_min_mm: 3.0
-    work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2}
+    work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2, fail_dist_mm: 20.0, fail_frac: 0.2}   # LT-5 개정: 실패 = fail_dist_mm 초과 하중 비 > fail_frac
     diag:
       enabled: true
       alt: true                   # 다른 방식 변이를 베이스라인 진단에 포함
@@ -388,3 +388,4 @@ bead_doe:
 - 이슈 #63 ① 진단(고정 ESL F = K₀u_drop × 바뀐 K₁ → 불평형 r = F − K₁u₀ 가 무른 전역 모드 증폭, umax ×50~270·C ×1.0~1.9 오염) 대책. 정의·순위·표시·시험·소유권은 그 문서(D-0.20.0-SM-1~7, V-SM-1~10)가 원본.
 - 이 문서와의 접점(구조 원칙 같음): (1) §13.3 전달 계획 표에 열 2개 `sm.ref`(base | a_direct)·`sm.disp`(I | interp) + 강체 제거·에너지 범위 Ω — 같은 `transfer_plan.py`, (2) `load_transfer.py` += `build_disp`(LT-2 사영의 역할을 바꾼 변위 보간 S_t — work 하중 전달 Tᵀ 의 쌍대), (3) 참조 변위 `a_direct` = LT-10/§13.7 참값과 같은 인수분해·같은 해 공유, (4) 진단 스키마 1개 — §5 `per_esl[]` 에 `sm{C_lin, rho, imbalance_rel, ts_err}` 선택 키.
 - 1차 지표 C_lin 은 해석 하중 F_t 를 쓰지 않으므로 **하중 전달 방식(work·cell)과 무관**하다. 하중 전달은 재풀이 C(보조 열)·불평형 진단·변위 표시에 쓰인다.
+- **결정 A(2026-11-13) 개정 — 위 (1)~(3)·마지막 문장 대체**: 강성 지표는 같은 메시(같은 위상) 안에서만. 계획 표 열은 `sm_ref`(base | none)·`sm_disp`(I | none)·`sm_omega`·`sm_rank`(metric | solve). ①②·새 ③(`once`) = 베이스라인 해(②③ 은 work 하중으로 기준 메시에서 직접 푼 해)를 같은 노드로(S = I) — 지표의 참조 변위는 **work 하중으로 정해진다**(하중 전달 방식과 무관하지 않음, 하중과 강성이 같은 메시라 베이스라인 불평형 0). ④·옛 ③(`per_target`) = 지표 미적용, 순위 = 형상마다 work 하중 재풀이 C(`metric_effective` solve, 경고 `SM_CROSS_MESH`). `build_disp` 는 같은 기하에서도 ρ 1.62~12.3 편향이라 계획 표에서 비활성(코드·시험 유지), `a_direct` 는 하중 전달 진단 참값(LT-10)에만 쓰임. 상세 `esl_stiffness_metric.md` 결정 A·D-0.20.0-SM-8.
