@@ -38,6 +38,10 @@ def test_h5_morph():
     assert c.h5_morph()["bad"] == []
 
 
+def test_stepboss_morph():
+    assert c.stepboss_morph()["bad"] == []
+
+
 def test_purity():
     assert c.purity() == []
     assert c.fixtures_size() <= c.MAX_FIXTURE_BYTES

@@ -40,13 +40,14 @@ graph_bytes(graph) -> bytes                                                # can
 | new optional field / function | MINOR |
 | output-preserving fix (performance, refactor) | PATCH — fixture sha must stay byte-identical |
 
-1.0.0 = RULES 1, MORPH_RULES 1. Record `beadgraph_version`, `rules`, `morph_rules` with every product.
+1.0.0 = RULES 1, MORPH_RULES 1. 1.1.0 (esl v0.19.1) = RULES 1, MORPH_RULES 2 — a straddling island's rim nodes on a
+foreign wall are held like its foreign-floor contact; basis and checks share `zones.movable_nodes` (BG-D-47). Record `beadgraph_version`, `rules`, `morph_rules` with every product.
 
 ## Checks
 
 `python -m beadgraph selftest [--json]` (exit 0 = pass) or `pytest --pyargs beadgraph.testing`: H6 / H5 classification
 accuracy, determinism against `expected.json`, numbering / orientation / rigid-transform invariance, morph metrics,
-import purity. No gmsh needed. The generators `testing/synth_h5.py`, `testing/synth_h6.py` need the `[synth]` extra.
+import purity. No gmsh needed. The generators `testing/synth_h5.py`, `testing/synth_h6.py`, `testing/synth_stepboss.py` need the `[synth]` extra.
 
 ## physicsai-platform
 

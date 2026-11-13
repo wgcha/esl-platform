@@ -3,7 +3,7 @@ name = "esl"
 version = "0.1.0"
 requires-python = ">=3.11"
 # beadgraph = in-repo shared package (packages/beadgraph, same release — esl_beadgraph.md §8.3); dev: pip install -e packages/beadgraph
-dependencies = ["numpy", "scipy", "pyyaml", "beadgraph==1.0.0"]
+dependencies = ["numpy", "scipy", "pyyaml", "beadgraph==1.1.0"]
 
 [project.optional-dependencies]
 test = ["pytest"]
