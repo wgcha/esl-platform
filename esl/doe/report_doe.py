@@ -373,12 +373,13 @@ def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> 
                     "—" if imb is None else (f"{float(imb) * 100:.1f} %" + (" ⚠" if dim else "")),
                     "—" if x.get("rho_min") is None else f"{_f(x['rho_min'])}~{_f(x['rho_max'])}",
                     x.get("umax_def"), x.get("epsmax")])
-    if trs:
+    if trs and not sm.get("cross_mesh"):        # 다른 메시 비교는 지표 보조 열 없음(순위 = 재풀이 C)
         inner += "<h3>보조 열(재풀이·변위 — 순위와 무관)</h3>" + H.table(
             ["순위", "id", "이름", "score(지표)", "score(재풀이)", "불평형 max", "ρ 범위", "umax 강체 제거", "εmax"], trs,
             num=(0, 3, 4, 7, 8))
     verify = SM_VERIFY_CROSS if sm.get("cross_mesh") else SM_VERIFY
-    inner += f"<p class='small muted'>{H.esc(verify)} 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.</p>"
+    inner += f"<p class='small muted'>{H.esc(verify)}" + ("" if sm.get("cross_mesh") else
+                                                         " 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.") + "</p>"
     return inner
 
 
