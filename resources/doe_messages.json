@@ -252,7 +252,7 @@
   "LT_FAR_NODES": "형상 면에서 먼 ESL 노드 {far_n} 개(하중 비 {far_frac}, 최대 거리 {max_mm} mm) — 그 하중은 가장 가까운 면 위치로 옮겼습니다. (ESL nodes far from the shape surface; their load was moved to the nearest point.)",
   "LT_SUPPORT_FALLBACK": "기준 지지점을 이 형상에 옮기지 못해({reason}) 형상 자체 3-2-1 지지로 풀었습니다(공정성 예외). (Support transfer failed; auto 3-2-1 used for this shape.)",
   "LT_ESL_UNBALANCED": "ESL {entry_id} 자체 합력이 0 이 아닙니다(‖ΣF‖/Σ|F| {rel}) — 불평형을 그대로 옮깁니다. (ESL is not self-balanced.)",
-  "LT_DIAG_SKIPPED": "하중 전달 진단 일부를 건너뛰었습니다({stage} {code}) — 순위·점수에는 영향 없음. (Load transfer diagnostics skipped; ranking unaffected.)",
+  "LT_DIAG_SKIPPED": "하중 전달 진단 일부를 건너뛰었습니다({stage} {err}) — 순위·점수에는 영향 없음. (Load transfer diagnostics skipped; ranking unaffected.)",
   "COMPARE_REGION": "(정보) 주 시트 밖 형상 {n_out} 요소 — 하중·지지·umax 평가에서 제외(영역 {mode}, 안 {n_in} 요소, 해석은 전체 메시). (Info: {n_out} elements outside the main sheet excluded from loads, supports and umax.)",
   "COMPARE_REGION_SMALL": "평가 영역이 전체 요소의 {frac} 뿐입니다(< {min_frac}) — 영역 설정(compare.load_transfer.region)을 확인하세요. (Evaluation region is only {frac} of the mesh.)"
  }

@@ -57,8 +57,8 @@ def resolve(spec_lt: dict | None) -> dict | None:
     for k, v in (("cell_size_mm", lt["cell_size_mm"]), ("diag.alt_cell_size_mm", lt["diag"]["alt_cell_size_mm"])):
         if v is not None and not cmin <= float(v) <= CELL_MAX_MM:
             raise EslError("LOAD_TRANSFER_INVALID", f"load_transfer.{k} {v} 는 {cmin:g}..{CELL_MAX_MM:g} mm")
-    if lt["method"] == "work" and spec_lt.get("cell_size_mm") is not None:
-        raise EslError("LOAD_TRANSFER_INVALID", "load_transfer: work 에는 cell_size_mm 를 줄 수 없음")
+    if lt["method"] == "work":                   # work 의 해석값 cell_size_mm = null(요청 검사는 backend 422)
+        lt["cell_size_mm"] = None
     w = lt["work"]
     if not 1 <= int(w["knn"]) <= 64 or not 1 <= int(w["newton_iter"]) <= 50:
         bad("work.knn 1..64, newton_iter 1..50")

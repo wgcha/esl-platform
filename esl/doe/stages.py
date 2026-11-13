@@ -2476,11 +2476,14 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
         reg, ri = (reg0, ri0) if did == BASELINE else ltm.region_of(mesh, a_xyz, rc, h)
         _lt_save_region(c, did, reg)
         rw, rinf = ltm.region_messages(ri, rc)
-        lrow = {"id": did, "status": "READY", "region": {k_: ri.get(k_) for k_ in ("mode", "rule", "n_in", "n_out")}}
+        lrow = {"id": did, "status": "READY", "region": {k_: ri.get(k_) for k_ in ("mode", "rule", "n_in", "n_out")},
+                "warnings": []}
         for x in rinf:
             infos.append(f"{_lt_warn_text(x)} — {did}")
+            lrow["warnings"].append(infos[-1])
         for x in rw:
             warns.append(f"{_lt_warn_text(x)} — {did}")
+            lrow["warnings"].append(warns[-1])
             r.setdefault("warnings", []).append(x["code"])
         if did != BASELINE:
             chk = sc.shape_check(mesh, t.frame, ents, c.ocfg["size"], ccfg, inch=c.D.get("inch"), region=reg)
@@ -2511,11 +2514,12 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
         if sinfo["mode"] == "fallback":
             w = _cmp_text("LT_SUPPORT_FALLBACK", reason=sinfo.get("reason"))
             warns.append(f"{w} — {did}")
+            lrow["warnings"].append(warns[-1])
             r.setdefault("warnings", []).append("LT_SUPPORT_FALLBACK")
         for x in info["warnings"]:
-            if did == BASELINE:
-                ldoc["warnings"].append(x)
-                warns.append(_lt_warn_text(x))
+            if did == BASELINE:                  # ESL 자체 불평형 = 형상 무관(준비 전체 경고 1회)
+                ldoc["warnings"].append(_lt_warn_text(x))
+                warns.append(ldoc["warnings"][-1])
         labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
         lrow.update(supports=sup_rec, transfer=info["transfer"], fast_path=info["fast_path"],
                     per_esl=[{"entry_id": p["entry_id"], "label": labels.get(p["entry_id"], str(p["entry_id"])[:8]),
@@ -2529,10 +2533,12 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
                 raise EslError("BASELINE_FAILED", f"기준 형상 {msg}")
             r.update(status="FAILED_SIZE", code=state, message=msg.split(": ", 1)[-1])
             lrow.update(status="FAILED_SIZE", code=state)
+            lrow["warnings"].append(f"{msg} — {did}")
             echo(f"[{did} {r['name']}] FAILED_SIZE {msg}")
         elif state == "LT_FAR_NODES":
             w = _cmp_text(state, far_n=tr["far_n"], far_frac=f"{ff:.3g}", max_mm=f"{tr['max_dist_mm']:.3g}")
             warns.append(f"{w} — {did}")
+            lrow["warnings"].append(warns[-1])
             r.setdefault("warnings", []).append(state)
         if L["method"] == "cell" and L.get("cell_size_mm") is None and did != BASELINE:
             gw = sc.mapping_resolution(mesh, t.frame, (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]),
@@ -2679,13 +2685,13 @@ def _cmp_eval_lt(c: Ctx, t, did: str, dd: str) -> tuple[dict, dict, dict]:
             ddoc["d000"] = {"truth": (next(iter(kinds)) if len(kinds) == 1 else ("mixed" if kinds else None)),
                             "identity": bool(ident_ids) and len(ident_ids) == len(prim_ids), "rows": rows}
             del vrows
-        ddoc["warnings"] = [_cmp_text("LT_DIAG_SKIPPED", stage=w["stage"], code=w["err"]) for w in dwarn]
+        ddoc["warnings"] = [_cmp_text("LT_DIAG_SKIPPED", stage=w["stage"], err=w["err"]) for w in dwarn]
         U.write_json(c.writer.guard(os.path.join(dd, LT_JSON)), U.jsonable(ddoc))
     except (EslError, KeyError, ValueError, FloatingPointError) as exc:       # 진단 실패는 결과를 막지 않음(LT-10)
         code = getattr(exc, "code", type(exc).__name__)
         U.write_json(c.writer.guard(os.path.join(dd, LT_JSON)),
                      {"id": did, "status": "OK", "variant": info["variant"],
-                      "warnings": [_cmp_text("LT_DIAG_SKIPPED", stage="diag", code=code)]})
+                      "warnings": [_cmp_text("LT_DIAG_SKIPPED", stage="diag", err=code)]})
     r.clear()
     et = np.asarray(tgt.mesh["elem_type"]).astype(int)
     mi = {"n_nodes": tgt.n_nodes, "n_elems": tgt.n_elems, "quad_frac": float(np.sum(et == 4)) / max(et.size, 1)}
@@ -3022,7 +3028,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
         try:
             lt_res, lt_cols, lt_diag, lt_w = _lt_post(c, R, results)
         except (EslError, OSError, ValueError, KeyError) as exc:
-            lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", code=getattr(exc, "code", type(exc).__name__))]
+            lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", err=getattr(exc, "code", type(exc).__name__))]
             lt_res, lt_cols = {**ltm.public(L), "summary": [], "warnings_n": 1}, {}
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols))

@@ -336,3 +336,34 @@ def lt_save_entry(root, eid: str, mesh: dict, f, inch: int = 75):
     d = os.path.join(str(root), eid)
     en.save(en.LibraryEntry(meta=meta, summary={k: gs[k] for k in en.SUMMARY_KEYS if k in gs}, raw=raw), d)
     return d
+
+
+LT_REGIMES = {"smooth": (6.0, 0.01), "node": (None, 0.003)}   # 잡음 상관 길이 mm(None = 노드 단위), 진폭(× max|u|)
+
+
+def lt_esl_case(mesh: dict, regime: str = "smooth", seed: int = 0) -> "np.ndarray":
+    """낙하 ESL 근사 f_A = K_A u: u = 매끈한 굽힘·국부 눌림 압력의 정적 응답 + 법선 잡음(smooth = 상관 길이 6 mm 1 % —
+    재메시로 옮길 수 있는 이웃 상쇄, node = 노드 단위 0.3 % — 이슈 #63 처럼 셀 매핑이 d000 에서도 무너지는 이웃 상쇄)."""
+    import numpy as np
+
+    import synth_doe as sd
+    from esl.library import normalize as nz
+    from esl.mech.shell import ShellModel
+    so = sd.so
+    X = np.asarray(mesh["x0"], dtype=float)
+    sm = ShellModel(X, mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"], backend="superlu")
+    nid = np.asarray(mesh["node_id"])
+    spc = [(int(np.searchsorted(nid, n)), d) for n, d in so.supports_321(mesh)]
+    u, _ = sm.solve(so.load(mesh, "bend", 1.0) + so.load(mesh, "dent", 3.0), spc)
+    u = u[:, :3]
+    fr = nz.frame(X, None, mesh["conn"], mesh["elem_type"])
+    ell, amp = LT_REGIMES[regime]
+    g = np.random.default_rng(seed).normal(size=X.shape[0])
+    if ell is not None:
+        from scipy import sparse
+        from scipy.spatial import cKDTree
+        tr = cKDTree(X)
+        D = tr.sparse_distance_matrix(tr, 3 * ell, output_type="coo_matrix")
+        g = sparse.coo_matrix((np.exp(-D.data ** 2 / (2 * ell ** 2)), (D.row, D.col)), shape=D.shape).tocsr() @ g
+    g = g / np.abs(g).max()
+    return sm.condensed_forces(u + amp * np.abs(u).max() * g[:, None] * np.asarray(fr["n"])[None, :])
