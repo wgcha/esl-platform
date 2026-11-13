@@ -643,7 +643,7 @@ def transfer(src: dict, dst: dict, method: dict, placement: dict | None = None, 
         fm = far_mask(W, method["work"], dst["h"])
         fa = np.linalg.norm(sp["f"], axis=1)
         far_frac = float(fa[fm].sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
-        fx = np.asarray(W["dist"]) > float(method["work"].get("fail_dist_mm", 20.0))
+        fx = np.asarray(W["dist"]) > float(method["work"]["fail_dist_mm"])
         fail_frac = float(fa[fx].sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
         extra["_far"] = (int(fm.sum()), float(W["max_dist_mm"]), int(W["newton_fallback_n"]), float(W["seconds"]),
                          sp["mesh_sha"])
@@ -691,7 +691,7 @@ def far_state(info: dict, wcfg: dict) -> tuple[str | None, float]:
     """먼 노드 판정(LT-5, 2026-11-13 개정): 실패 = 배치 오류 — fail_dist_mm 초과 노드 하중 비(fail_frac) > work.fail_frac
     → LT_TRANSFER_FAILED(값 = 그 비), 아니면 proj_tol 초과 하중 비(far_frac) > far_warn_frac → LT_FAR_NODES(진단·경고만)."""
     fl = max([float(p.get("fail_frac") or 0.0) for p in info["per_esl"]] or [0.0])
-    if fl > float(wcfg.get("fail_frac", 0.2)):
+    if fl > float(wcfg["fail_frac"]):
         return "LT_TRANSFER_FAILED", fl
     ff = max([float(p.get("far_frac") or 0.0) for p in info["per_esl"]] or [0.0])
     if ff > float(wcfg["far_warn_frac"]):

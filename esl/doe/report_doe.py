@@ -355,7 +355,7 @@ def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> 
     if not sm:
         return ""
     rk = res.get("ranking") or []
-    warn = float(sm.get("imbalance_warn") or 0.02)
+    warn = float(sm["imbalance_warn"])          # 스냅샷 rank.imbalance_warn(_sm — DEFAULTS 병합)
     met = sm.get("metric_effective") or sm.get("metric")
     if sm.get("cross_mesh"):                     # 결정 A: 다른 메시 비교 — 지표 미적용, 순위 = 재풀이 C
         inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(met, met)), ("비교", SM_CROSS_KO)])

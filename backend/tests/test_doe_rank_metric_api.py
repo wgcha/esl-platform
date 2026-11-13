@@ -190,10 +190,16 @@ def test_results_cross_mesh_metric_effective(client, world, engine, esl_root):
     assert o["baseline"]["umax_def"] == 0.4                    # 강체 제거 umax(새 스냅샷) 통과
     assert o["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02,
                          "metric_effective": "solve", "cross_mesh": True}
+    assert "n_fallback" not in o["rank"]                                     # ④ 불변(대체 없음)
+    row = {"id": "d001", "values": {}, "score": 1.1, "improvement": -0.1, "worst_entry_id": "e1", "umax": 3.0,
+           "epsmax": 1e-3, "rank": 1, "score_solve": 1.1, "basis": "solve", "sm_warn": ["SM_LIN_RANGE"]}
     sid2 = _done(client, world, engine, esl_root, {"metric": "lin", "lin_form": "ritz", "C_ref_solve": 10.0,
-                                                     "metric_effective": "lin", "cross_mesh": False})
+                                                     "metric_effective": "lin", "cross_mesh": False, "n_fallback": 1},
+                 [row])
     o2 = api(client, "GET", f"/doe/studies/{sid2}/results").json()
     assert o2["metric_effective"] == "lin" and o2["cross_mesh"] is False and o2["rank"]["metric_effective"] == "lin"
+    assert o2["rank"]["n_fallback"] == 1                                    # R-SM-1 결정: 재풀이 대체 안 수
+    assert o2["ranking"][0]["basis"] == "solve" and o2["ranking"][0]["sm_warn"] == ["SM_LIN_RANGE"]
 
 
 def test_results_legacy_null_metric(client, world, engine, esl_root):

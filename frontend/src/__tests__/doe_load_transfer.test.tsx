@@ -6,6 +6,7 @@ import { renderApp } from "../test/render";
 import { ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel, normalizeDoeSettings } from "../api/doe";
 import type { DoeLoadTransferCfg } from "../api/types";
 import { MockServer } from "../mock/server";
+import { makeDoeSettings } from "../mock/doedata";
 
 const primaries = (c: HTMLElement) => [...c.querySelectorAll("button[data-primary]")] as HTMLButtonElement[];
 const radio = (name: RegExp | string) => screen.getByRole("radio", { name }) as HTMLInputElement;
@@ -23,7 +24,7 @@ async function drop(names: string[], rows: number) {
   await waitFor(() => expect(screen.getByTestId(`shape-row-${rows}`)).toBeTruthy(), { timeout: 5000 });
 }
 
-const CFG: DoeLoadTransferCfg = { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 5, 3], cell_min_mm: 3 };
+const CFG: DoeLoadTransferCfg = makeDoeSettings().load_transfer!; // 목 서버 설정(한 곳)
 
 describe("하중 전달 규칙(화면 쪽 함수)", () => {
   it("키·문구·요청 생략 규칙", () => {

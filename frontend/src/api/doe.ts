@@ -118,12 +118,13 @@ function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSele
 
 /** v0.20.0 최상위 settings.load_transfer(모든 모드 공통, §13.6) 보정 — 없거나 모양이 다르면 키 없음 */
 function normalizeLoadTransferCfg(lt: unknown): DoeLoadTransferCfg | null {
-  if (!isObj(lt) || (lt.method !== "work" && lt.method !== "cell")) return null;
+  // 선택지·하한은 서버 설정 값만(대체 리터럴 없음) — 없으면 null = 하중 전달 select 숨김
+  if (!isObj(lt) || (lt.method !== "work" && lt.method !== "cell") || !Array.isArray(lt.cell_choices_mm) || typeof lt.cell_min_mm !== "number") return null;
   return {
     method: lt.method as DoeLoadTransferMethod,
     cell_size_mm: typeof lt.cell_size_mm === "number" ? lt.cell_size_mm : null,
-    cell_choices_mm: Array.isArray(lt.cell_choices_mm) ? lt.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number") : [null, 10, 5, 3],
-    cell_min_mm: num(lt.cell_min_mm, 3),
+    cell_choices_mm: lt.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number"),
+    cell_min_mm: lt.cell_min_mm,
   };
 }
 
@@ -416,13 +417,17 @@ export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
 /** v0.20.0 강성 지표 경고(서버 message 가 없을 때) */
 export const SM_CODE_TEXT: Record<string, string> = {
-  SM_LIN_RANGE: "ρ 가 lin_valid(0.3) 범위 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요",
+  SM_LIN_RANGE: "ρ 가 1차 근사 범위(lin_valid) 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요",
   SM_IMBALANCE: "하중 불평형이 큽니다(|F − K·u| / Σ|F|) — 재풀이 C·umax 는 무른 모드가 증폭된 값일 수 있습니다",
   SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
   SM_CROSS_MESH: "다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 work 하중을 옮겨 재풀이한 C 로 순위를 매깁니다",
 };
 /** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
 export const isLinResult = (r: { metric?: string | null; rank?: { metric?: string | null } | null }) => (r.metric ?? r.rank?.metric) === "lin";
+/** SM_LIN_RANGE 문구·'재풀이' 표시 툴팁 — 임계값은 rankThresholds() 의 실제 lin_valid(없으면 이름만) */
+export const smLinRangeText = (linValid: number | null) =>
+  `ρ 가 1차 근사 범위(|ρ−1| ≤ ${linValid ?? "lin_valid"}) 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요`;
+export const smFallbackText = (linValid: number | null) => `1차 근사 범위 밖(|ρ−1|>${linValid ?? "lin_valid"}) — 재풀이 C로 순위`;
 /** 결정 A: 다른 메시 비교 결과(옛 ③·④ 새 스냅샷) — 주 열 = 재풀이 C, 지표 보조 열 없음 */
 export const isCrossMesh = (r: { cross_mesh?: boolean | null; rank?: { cross_mesh?: boolean | null } | null }) => !!(r.cross_mesh ?? r.rank?.cross_mesh);
 /** 보조 열 경고 임계값: 결과 스냅샷 rank 값 → settings.rank 값 순. 둘 다 없으면 null(그 경고는 표시하지 않음 — 상수 대체 없음) */

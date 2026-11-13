@@ -4,8 +4,9 @@
 import type {
   DoeDefeatureFeature, DoeDefeatureList, DoeRankWarn,
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoeLoadTransferDiag, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
+import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
 import type { DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
 import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
@@ -58,11 +59,27 @@ export const DOE_METHOD_SOURCES: DoeMethodSources = {
   ],
 };
 
+/** 목 서버 설정 = 저장소 config/esl_platform.example.yaml 의 bead_doe 값(하드코딩 없음 — p3mock 의 CHANGELOG?raw 와 같은 방식).
+ *  bead_doe 아래 2칸 들여쓴 섹션(load_transfer·rank)의 4칸 들여쓴 스칼라·흐름 배열만 읽는다(주석 제거, null·숫자·문자열). */
+function exampleYaml(section: string, key: string): unknown {
+  const lines = EXAMPLE_YAML.split(/\r?\n/);
+  const top = lines.findIndex((l) => /^bead_doe:/.test(l));
+  const start = lines.findIndex((l, i) => i > top && l.startsWith(`  ${section}:`));
+  for (let i = start + 1; i < lines.length && /^ {4}|^\s*$/.test(lines[i]); i++) {
+    const m = lines[i].match(new RegExp(`^ {4}${key}:\\s*([^#]*?)\\s*(#.*)?$`));
+    if (!m) continue;
+    const v = m[1];
+    const one = (t: string): unknown => (t === "null" ? null : /^-?[0-9.]+(e-?[0-9]+)?$/i.test(t) ? Number(t) : t);
+    return v.startsWith("[") ? v.slice(1, -1).split(",").map((t) => one(t.trim())) : one(v);
+  }
+  return undefined;
+}
+
 export function makeDoeSettings(): DoeSettingsOut {
   return {
     // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
-    load_transfer: { method: "work", cell_size_mm: null, cell_choices_mm: [null, 10, 5, 3], cell_min_mm: 3 },
-    rank: { metric: "lin", lin_form: "ritz", lin_valid: 0.3, imbalance_warn: 0.02 },
+    load_transfer: { method: exampleYaml("load_transfer", "method") as DoeLoadTransferMethod, cell_size_mm: exampleYaml("load_transfer", "cell_size_mm") as number | null, cell_choices_mm: exampleYaml("load_transfer", "cell_choices_mm") as (number | null)[], cell_min_mm: exampleYaml("load_transfer", "cell_min_mm") as number },
+    rank: { metric: exampleYaml("rank", "metric") as DoeRankMetric, lin_form: exampleYaml("rank", "lin_form") as "ritz" | "taylor", lin_valid: exampleYaml("rank", "lin_valid") as number, imbalance_warn: exampleYaml("rank", "imbalance_warn") as number },
     enabled: true,
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
@@ -799,7 +816,7 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
     };
   });
   // R-SM-1 결정: |ρ−1| > lin_valid 인 안은 순위 값 = 재풀이 C(basis solve·SM_LIN_RANGE) — 범위 안은 지표 그대로, 그 뒤 다시 정렬
-  const lv = 0.3;
+  const lv = makeDoeSettings().rank!.lin_valid!;   // 목 서버 설정 값(하드코딩 없음)
   const out = (r: { rho_min?: number | null; rho_max?: number | null }) => Math.abs((r.rho_min ?? 1) - 1) > lv || Math.abs((r.rho_max ?? 1) - 1) > lv;
   const ranked = ranking
     .map((r) => (out(r) ? { ...r, score: r.score_solve ?? r.score, improvement: +(1 - (r.score_solve ?? r.score)).toFixed(4), basis: "solve" as const, sm_warn: ["SM_LIN_RANGE"] } : { ...r, basis: "lin" as const }))
@@ -807,8 +824,8 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
     .map((r, i) => ({ ...r, rank: i + 1 }));
   const n_fallback = ranked.filter((r) => r.basis === "solve").length;
   const warnings = [...res.warnings];
-  if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > 0.3)) warnings.push({ code: "SM_LIN_RANGE", message: "ρ 가 lin_valid(0.3) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요" });
-  return { ...res, ranking: ranked, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { metric: "lin", lin_form: "ritz", lin_valid: lv, imbalance_warn: 0.02, n_fallback }, C_ref_solve: res.C_ref, warnings };
+  if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > lv)) warnings.push({ code: "SM_LIN_RANGE", message: `ρ 가 lin_valid(${lv}) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요` });
+  return { ...res, ranking: ranked, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { ...makeDoeSettings().rank!, n_fallback }, C_ref_solve: res.C_ref, warnings };
 }
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";

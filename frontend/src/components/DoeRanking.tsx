@@ -11,7 +11,7 @@ import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { SM_CODE_TEXT, isCrossMesh, isLinResult, rankThresholds } from "../api/doe";
+import { SM_CODE_TEXT, isCrossMesh, isLinResult, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg }: {
@@ -180,7 +180,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 <td className="num mono">
                   {r.score.toFixed(2)}
                   {lin && r.basis === "solve" && (
-                    <span className="badge neutral small" data-testid={`basis-solve-${r.id}`} title={`1차 근사 범위 밖(|ρ−1|>${th.linValid ?? "lin_valid"}) — 재풀이 C로 순위`}>
+                    <span className="badge neutral small" data-testid={`basis-solve-${r.id}`} title={smFallbackText(th.linValid)}>
                       재풀이
                     </span>
                   )}
@@ -212,7 +212,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                   </td>
                 )}
                 {lin && aux && (
-                  <td className="num mono" data-testid={`aux-rho-${r.id}`} title={rhoOut(r) ? SM_CODE_TEXT.SM_LIN_RANGE : undefined}>
+                  <td className="num mono" data-testid={`aux-rho-${r.id}`} title={rhoOut(r) ? smLinRangeText(th.linValid) : undefined}>
                     {r.rho_min != null && r.rho_max != null ? `${r.rho_min.toFixed(2)}~${r.rho_max.toFixed(2)}` : "–"}
                     {rhoOut(r) ? " ⚠" : ""}
                   </td>

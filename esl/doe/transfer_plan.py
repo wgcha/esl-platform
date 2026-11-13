@@ -15,7 +15,7 @@ METHODS = ("work", "cell")
 SUPPORTS = ("transfer", "auto")
 REGION_MODES = ("auto", "a_bbox", "largest", "all")
 ALT_DESIGNS = ("auto", "on", "off")
-CELL_MAX_MM = 200.0
+CELL_MAX_MM = 200.0          # 셀 크기 상한 — 한 곳(backend core.config.LT_CELL_MAX_MM 가 이 값을 import)
 
 # id: (시나리오, select_base) 열쇠 → 계획. dst: baseline(기준 메시) | design(안마다 메시) | shape(형상마다 메시).
 # reuse: once(베이스라인 1회 → 모든 안 같은 노드 하중, BD-D-3) | per_target(베이스라인 포함 대상마다 같은 규칙).
@@ -109,7 +109,7 @@ def resolve(spec_lt: dict | None, scenario: str, defaults: dict | None = None) -
         bad("work.knn 1..64, newton_iter 1..50")
     if not 0.0 <= float(w["far_warn_frac"]) <= float(w["far_fail_frac"]) <= 1.0:
         bad("work 0 ≤ far_warn_frac ≤ far_fail_frac ≤ 1")
-    if not float(w.get("fail_dist_mm", 20.0)) > 0 or not 0.0 <= float(w.get("fail_frac", 0.2)) <= 1.0:
+    if not float(w["fail_dist_mm"]) > 0 or not 0.0 <= float(w["fail_frac"]) <= 1.0:
         bad("work.fail_dist_mm > 0, 0 ≤ fail_frac ≤ 1")
     return lt
 

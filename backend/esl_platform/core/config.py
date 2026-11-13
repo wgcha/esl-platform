@@ -937,7 +937,7 @@ class BeadDoeCompareQualityCfg(_M):
     tria_pct: QualityLimitCfg = _ql(10.0, 15.0)
 
 
-LT_CELL_MAX_MM = 200.0                      # v0.20.0 LT 셀 크기 상한(계약 esl_load_transfer.md §4.1·§13.6) — 요청 검사(서비스)도 이 값
+from esl.doe.transfer_plan import CELL_MAX_MM as LT_CELL_MAX_MM  # noqa: E402  v0.20.0 LT 셀 크기 상한 — 코어 한 곳(요청 검사도 이 값)
 LT_LIST_MAX = 8                             # cell_choices_mm·cell_sweep_mm 길이 상한
 
 

@@ -635,7 +635,8 @@ def bd_eval(spec: dict, echo=print) -> dict:
             reg = sg.load_region(c.p("prep"))
             if reg is not None:
                 rkw["region"] = reg
-        reg_e = (getattr(c, "_lt_last", None) or {}).get("region") if c.scn == "compare" else rkw.get("region")
+        reg_e = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" \
+            else rkw.get("region")                # 평가 영역: 계획 열 mask(④ = LT-8 영역, 그 밖 = ③ 영역 또는 없음)
         if _lt(c) is not None:                   # v0.20.0 LT-10·20: 주 방식 + 진단 풀이(인수분해 1회, 모든 모드)
             r = _lt_eval(c, t, did, mesh, sup, loads, reg_e, dd, _lt_h(c, bmeta, mesh))
         elif _sm(c) is not None:
@@ -2453,7 +2454,7 @@ def _lt_h(c: Ctx, bmeta: dict, mesh: dict | None = None) -> float:
     """사영 길이 척도 h: 기준 메타 h(③④ 메시 크기) → ④ 프로필 → 대상 메시 모서리 길이 중앙값(①②)."""
     if bmeta.get("h"):
         return float(bmeta["h"])
-    if c.scn == "compare" or mesh is None:
+    if _lt_plan(c)["dst"] == "shape" or mesh is None:   # 계획 열 dst shape(형상마다 메시 = ④) → 프로필 크기
         return float(sc.compare_profile(c.cfg)["size_mm"])
     from esl.opt.mesh_check import _edge_lengths
     L = _edge_lengths(np.asarray(mesh["x0"], dtype=np.float64), np.asarray(mesh["conn"], dtype=np.int64),
@@ -2543,8 +2544,8 @@ def _lt_far_text(L: dict, info: dict) -> tuple[str | None, str | None]:
     state, ff = ltm.far_state(info, L["work"])
     tr = info["transfer"]
     if state == "LT_TRANSFER_FAILED":
-        return state, _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work'].get('fail_frac', 0.2)):g}",
-                                dist=f"{float(L['work'].get('fail_dist_mm', 20.0)):g}",
+        return state, _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work']['fail_frac']):g}",
+                                dist=f"{float(L['work']['fail_dist_mm']):g}",
                                 max_mm=f"{tr['max_dist_mm']:.3g}")
     if state == "LT_FAR_NODES":
         return state, _cmp_text(state, far_n=tr["far_n"], far_frac=f"{ff:.3g}", max_mm=f"{tr['max_dist_mm']:.3g}")
@@ -3042,7 +3043,7 @@ def _lt_post(c: Ctx, R: dict, results: list[dict]) -> tuple[dict, dict, dict, li
     diag = {"schema": ltm.DIAG_SCHEMA, "scenario": c.scn, "method": L["method"], "cell_size_mm": L.get("cell_size_mm"),
             "alt": None if alt is None else {"method": alt[0], "cell_size_mm": alt[1]},
             "plan": pdoc.get("plan") or {"id": plan["id"], "reuse": plan["reuse"]},
-            "reference": {"did": BASELINE, "source": (_cmp_doc(c).get("reference_source") if c.scn == "compare" else
+            "reference": {"did": BASELINE, "source": (_cmp_doc(c).get("reference_source") if plan["truth"] == "compare" else
                                                       plan["truth"]),
                           "identity": bool(ref.get("identity")), "truth": ref.get("truth")},
             "shapes": shapes, "d000": {"truth": ref.get("truth"), "rows": rows},
