@@ -352,3 +352,13 @@ def test_openapi_has_keys():
                        ("DoeCheckOut", ("load_transfer",)), ("DoeResultOut", ("load_transfer", "view3d_ref", "view3d_esl"))):
         for k in keys:
             assert k in sc[name]["properties"], (name, k)
+
+
+def test_diag_file_download(client, world, engine, esl_root):
+    """post/load_transfer_diag.json 은 기존 download 규칙(스터디 폴더 안 실파일·링크 아님)으로 읽힘 — 화이트리스트 변경 없음."""
+    sid, base = _done_study(client, world, engine, esl_root, {"load_transfer": DIAG})
+    (base / "post" / "load_transfer_diag.json").write_text(json.dumps({"schema": "esl/doe_load_transfer_diag/1"}), encoding="utf-8")
+    r = api(client, "GET", f"/doe/studies/{sid}/download", params={"rel": "post/load_transfer_diag.json"})
+    assert r.status_code == 200 and r.json()["schema"] == "esl/doe_load_transfer_diag/1"
+    r = api(client, "GET", f"/doe/studies/{sid}/download", params={"rel": "post/../../x.json"})
+    assert r.status_code in (400, 404, 422)
