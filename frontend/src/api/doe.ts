@@ -3,7 +3,7 @@ import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
-  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
 } from "./types";
@@ -60,7 +60,9 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     const d = DEFAULT_SETTINGS[k] as unknown as Record<string, unknown>;
     return Object.fromEntries(Object.keys(d).map((x) => [x, v[x] ?? d[x]])) as unknown as DoeSettingsOut[K];
   };
+  const lt = normalizeLoadTransferCfg(r.load_transfer);
   return {
+    ...(lt ? { load_transfer: lt } : {}),
     enabled: r.enabled === true,
     reason: typeof r.reason === "string" ? r.reason : null,
     paicad: sub("paicad"),
@@ -110,6 +112,18 @@ function normalizeSelectCfg(raw: unknown, top: Record<string, unknown>): DoeSele
     ...(isObj(v.hold) ? { hold: { ring_mm: num(v.hold.ring_mm, 3), blend_mm: num(v.hold.blend_mm, 8) } } : {}),
     // v0.16.2 AD-D-7
     ...(isObj(v.hole) ? { hole: { bridge_max_mm: num(v.hole.bridge_max_mm, 20) } } : {}),
+  };
+}
+
+
+/** v0.20.0 최상위 settings.load_transfer(모든 모드 공통, §13.6) 보정 — 없거나 모양이 다르면 키 없음 */
+function normalizeLoadTransferCfg(lt: unknown): DoeLoadTransferCfg | null {
+  if (!isObj(lt) || (lt.method !== "work" && lt.method !== "cell")) return null;
+  return {
+    method: lt.method as DoeLoadTransferMethod,
+    cell_size_mm: typeof lt.cell_size_mm === "number" ? lt.cell_size_mm : null,
+    cell_choices_mm: Array.isArray(lt.cell_choices_mm) ? lt.cell_choices_mm.filter((x): x is number | null => x === null || typeof x === "number") : [null, 10, 5, 3],
+    cell_min_mm: num(lt.cell_min_mm, 3),
   };
 }
 
@@ -255,6 +269,13 @@ export const doe = {
   perEsl: (id: string, designs: string[]) =>
     request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(",") } }),
   files: (id: string) => request<DoeFileOut[]>("GET", `/doe/studies/${id}/files`),
+  /** v0.20.0 하중 전달 진단(post/load_transfer_diag.json — 다운로드 경로, 없으면 null: legacy·진단 끔·진단 실패) */
+  loadTransferDiag: (id: string) =>
+    fetch(doe.downloadUrl(id, "post/load_transfer_diag.json"), { credentials: "same-origin" }).then(async (r) => {
+      if (!r.ok) return null;
+      const j = (await r.json()) as DoeLoadTransferDiag;
+      return j && Array.isArray(j.shapes) && j.d000 ? j : null;
+    }),
   beadPngUrl: (id: string, bead: string) => `${API_PREFIX}/doe/studies/${id}/beads/${encodeURIComponent(bead)}.png`,
   thumbUrl: (id: string, did: string) => `${API_PREFIX}/doe/studies/${id}/preview/thumb/${encodeURIComponent(did)}`,
   downloadUrl: (id: string, rel: string) => `${API_PREFIX}/doe/studies/${id}/download?rel=${encodeURIComponent(rel)}`,
@@ -393,6 +414,18 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
+/** v0.20.0 강성 지표 경고(서버 message 가 없을 때) */
+export const SM_CODE_TEXT: Record<string, string> = {
+  SM_LIN_RANGE: "ρ 가 lin_valid(0.3) 범위 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요",
+  SM_IMBALANCE: "하중 불평형이 큽니다(|F − K·u| / Σ|F|) — 재풀이 C·umax 는 무른 모드가 증폭된 값일 수 있습니다",
+  SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
+};
+/** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
+export const isLinResult = (r: { metric?: string | null; rank?: { metric?: string | null } | null }) => (r.metric ?? r.rank?.metric) === "lin";
+/** 보조 열 경고 임계값: 결과 스냅샷 rank 값 → settings.rank 값 순. 둘 다 없으면 null(그 경고는 표시하지 않음 — 상수 대체 없음) */
+export function rankThresholds(result: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null }, settings?: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null } | null): { linValid: number | null; imbalanceWarn: number | null } {
+  return { linValid: result.rank?.lin_valid ?? settings?.rank?.lin_valid ?? null, imbalanceWarn: result.rank?.imbalance_warn ?? settings?.rank?.imbalance_warn ?? null };
+}
 export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown; [k: string]: unknown }) =>
   w.message ||
   (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||
@@ -400,7 +433,7 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
     ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
     : "") ||
   autoWarnText(w) ||
-  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || w.code;
 /** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
 export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && AUTO_INFO.has(w.code));
 
@@ -929,3 +962,44 @@ export function buildSpec(form: SpecForm, params: DoeParam[], rows: ParamRow[], 
 
 /** 개선율 표기: +19 % */
 export const pctText = (v: number | null | undefined, digits = 0) => (v == null || !Number.isFinite(v) ? "–" : `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(digits)} %`);
+
+// ---------------------------------------------------------------- v0.20.0 ④ 하중 전달(esl_load_transfer.md §7)
+export const LT_METHOD_NAME: Record<DoeLoadTransferMethod, string> = { work: "일 등가", cell: "셀" };
+/** select 값 = "work" | "cell:legacy"(기존 24×14) | "cell:<mm>" */
+export function ltKey(method: DoeLoadTransferMethod, size: number | null): string {
+  return method === "work" ? "work" : `cell:${size == null ? "legacy" : size}`;
+}
+/** 진단 variant 키(`work`·`cell:legacy`·`cell:3`)의 표시 문구 */
+export function ltVariantLabel(v: string): string {
+  if (v === "work") return "일 등가";
+  if (v === "cell:legacy") return "셀 기존 24×14";
+  return v.startsWith("cell:") ? `셀 ${v.slice(5)} mm` : v;
+}
+export function ltChoiceLabel(method: DoeLoadTransferMethod, size: number | null, opts: { def?: boolean } = {}): string {
+  const base = method === "work" ? "일 등가(권장)" : ltVariantLabel(ltKey(method, size));
+  return `${base}${opts.def ? " (기본)" : ""}`;
+}
+/** select 선택 → 요청 키(기본과 같으면 둘 다 생략). work 에는 cell_size_mm 을 붙이지 않음(422) */
+export function ltRequest(cfg: DoeLoadTransferCfg | null | undefined, key: string | null | undefined): { load_transfer?: DoeLoadTransferMethod; cell_size_mm?: number | null } {
+  if (!cfg || !key || key === ltKey(cfg.method, cfg.cell_size_mm)) return {};
+  if (key === "work") return { load_transfer: "work" };
+  const size = key === "cell:legacy" ? null : Number(key.slice(5));
+  return { load_transfer: "cell", cell_size_mm: size };
+}
+const rng = (r: [number, number], d = 2) => {
+  const f = (x: number) => (Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(d));
+  return r[0] === r[1] ? f(r[0]) : `${f(r[0])}~${f(r[1])}`;
+};
+function ltVariantText(row: DoeLoadTransferSummary["summary"][number]): string {
+  return `umax ×${rng(row.umax_ratio)} · C ×${rng(row.C_ratio)}${row.mac_min != null ? ` · MAC ≥ ${row.mac_min.toFixed(2)}` : ""}`;
+}
+/** 결과 카드 요약 1줄: 주 방식 + 다른 방식 최대 2개(summary 순서) */
+export function ltSummaryLine(lt: DoeLoadTransferSummary): string {
+  const prim = ltKey(lt.method, lt.cell_size_mm);
+  const rows = Array.isArray(lt.summary) ? lt.summary : [];
+  const p = rows.find((r) => r.variant === prim);
+  const others = rows.filter((r) => r.variant !== prim).slice(0, 2);
+  const ref = lt.truth === "a_direct" ? "A 메시 직접 풀이" : "①";
+  const head = `하중 전달: ${ltVariantLabel(prim)}${p ? ` · 기준 대비 ${ref}: ${ltVariantText(p)}` : ""}`;
+  return [head, ...others.map((o) => `${ltVariantLabel(o.variant)}: ${ltVariantText(o)}`)].join("  |  ");
+}

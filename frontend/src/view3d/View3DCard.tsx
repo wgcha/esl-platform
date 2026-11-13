@@ -39,6 +39,8 @@ export interface View3DOptions {
   /** 색 범위 고정(카드 여럿을 같은 범위로). 주면 이 값을 쓰고, 범위 입력·'자동'은 onRangeChange 로 알린다(null = 자동) */
   range?: Range | null;
   rangeManual?: boolean;
+  /** 변위 색 범례 문구(기본 "변위 |u| (mm)") — v0.20.0 강체 제거 표기 */
+  dispLabel?: string;
   onRangeChange?: (r: Range | null) => void;
 }
 
@@ -289,7 +291,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
             {field && (
               <ColorLegend
                 kind="zero"
-                label={unit === "mm" ? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
+                label={unit === "mm" ? options?.dispLabel ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
                 range={legend.range}
                 manual={legend.manual}
                 gradient={BLUES_GRADIENT}

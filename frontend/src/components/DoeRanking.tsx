@@ -11,9 +11,12 @@ import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
+import { SM_CODE_TEXT, isLinResult, rankThresholds } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
-export function DoeRanking({ result, params, entries, selected, onSelect, varNames }: {
+export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg }: {
+  /** settings.rank — 결과 스냅샷에 임계값이 없을 때만 쓰는 대체 출처 */
+  rankCfg?: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null } | null;
   result: DoeResultOut;
   params: DoeParam[];
   entries: EntryOut[];
@@ -33,9 +36,16 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       return n;
     });
   const [sortKey, setSortKey] = useState<RankSortKey>("score");
+  /** v0.20.0 새 지표(lin): 주 열 교체 · umax·εmax 는 보조 열(토글)로 이동 */
+  const lin = isLinResult(result);
+  const [aux, setAux] = useState(false);
+  const th = rankThresholds(result, rankCfg);
+  const fade = (r: { imbalance_max?: number | null }) => lin && th.imbalanceWarn != null && (r.imbalance_max ?? 0) > th.imbalanceWarn;
+  const rhoOut = (r: { rho_min?: number | null; rho_max?: number | null }) =>
+    th.linValid != null && r.rho_min != null && (Math.abs(r.rho_min - 1) > th.linValid || Math.abs((r.rho_max ?? 1) - 1) > th.linValid);
   /** ④ 형상 비교(이름 열) */
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
-  const cols = 14 + varNames.length + (named ? 1 : 0);
+  const cols = 14 + varNames.length + (named ? 1 : 0) + (lin ? (aux ? 3 : -2) : 0);
   const b = result.baseline;
   if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>순위가 없습니다</Empty>;
   const rows = sortRanking(result.ranking, sortKey);
@@ -62,11 +72,22 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       );
     })()}
     <div className="doe-metric-bar small">
-      <span className="muted">정렬: {sortKey === "score" ? "score(최악 ESL 절대값)" : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
+      <span className="muted">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
+      {lin && (
+        <label className="check" title="재풀이 C 비·불평형·ρ·강체 제거 umax·εmax — 순위에 쓰지 않는 값">
+          <input type="checkbox" data-testid="rank-aux-toggle" aria-label="보조 열 보기" checked={aux} onChange={(e) => setAux(e.target.checked)} /> 보조 열 보기
+        </label>
+      )}
       <details className="doe-metric-help">
         <summary aria-label="지표 정의">ⓘ 지표 정의</summary>
         <ul data-testid="metric-defs">
-          <li>score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)</li>
+          <li>
+            {lin
+              ? `score: max(C_안) / max(C_베이스라인) — C = 재풀이 없는 1차 강성 지표(${result.lin_form === "taylor" ? "C_ref(2−ρ)" : "C_ref/ρ"}, ρ = 변형에너지 비). 작을수록 좋음`
+              : "score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)"}
+          </li>
+          {lin && <li>재풀이 C 비: 같은 식에 안마다 해석한 컴플라이언스(고정 하중이라 불평형·무른 모드의 영향을 받음)</li>}
+          {lin && <li>umax·εmax: 순위에 쓰지 않는 해석값 — umax 는 강체 6자유도를 뺀 값(불평형이 만든 굽힘은 남음)</li>}
           {METRIC_DEFS.map((d) => (
             <li key={d.key}>
               {d.label}: {d.text}
@@ -83,11 +104,16 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <th className="num">순위</th>
             <th>안</th>
             {named && <th className="doe-name-col">이름</th>}
-            {sortTh("score", "score", "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
+            {sortTh("score", lin ? "강성 지표" : "score", lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
-            <th className="num" title="최악 ESL 기준(전 ESL 최대는 툴팁)">umax</th>
-            <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>
+            {!lin && <th className="num" title="최악 ESL 기준(전 ESL 최대는 툴팁)">umax</th>}
+            {!lin && <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>}
+            {lin && aux && <th className="num" title="안마다 재풀이한 C 로 같은 식(최악 ESL 비) — 보조">재풀이 C 비</th>}
+            {lin && aux && <th className="num" title="max_i |F − K·u| / Σ|F| — 클수록 재풀이 값이 무른 모드에 오염">불평형</th>}
+            {lin && aux && <th className="num" title="변형에너지 비 ρ 범위(1 에서 멀수록 1차 근사 밖)">ρ</th>}
+            {lin && aux && <th className="num" title="최악 ESL, 강체 6자유도 제거 · 해석값(순위와 무관)">umax(강체 제거)</th>}
+            {lin && aux && <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형) — 순위와 무관">εmax</th>}
             <th title={def("all_improved")}>전 씬 개선</th>
             {sortTh("min_improvement", "최소 개선율", def("min_improvement"))}
             {sortTh("n_worsened", "개선/악화", def("n_worsened"))}
@@ -114,8 +140,13 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <td className="num mono">{b.score.toFixed(2)}</td>
             <td className="num">기준</td>
             <td className="small muted">{named ? "기준 형상" : "공칭"}</td>
-            <td className="num mono">{b.umax.toFixed(2)} mm</td>
-            <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>
+            {!lin && <td className="num mono">{b.umax.toFixed(2)} mm</td>}
+            {!lin && <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>}
+            {lin && aux && <td className="num mono">1.00</td>}
+            {lin && aux && <td className="num muted">–</td>}
+            {lin && aux && <td className="num muted">–</td>}
+            {lin && aux && <td className="num mono muted">{b.umax_def != null ? `${b.umax_def.toFixed(2)} mm` : "–"}</td>}
+            {lin && aux && <td className="num mono muted">{(b.epsmax * 100).toFixed(2)} %</td>}
             <td />
             <td className="num muted">기준</td>
             <td />
@@ -133,7 +164,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
           </tr>
           {rows.map((r) => (
             <Fragment key={r.id}>
-              <tr className={`pickable${selected === r.id ? " hl" : ""}`} onClick={() => onSelect(r.id)} data-testid={`rank-${r.id}`}>
+              <tr className={`pickable${selected === r.id ? " hl" : ""}${fade(r) ? " sm-faded" : ""}`} style={fade(r) ? { opacity: 0.8 } : undefined} onClick={() => onSelect(r.id)} data-testid={`rank-${r.id}`}>
                 <td className="num">{r.rank}</td>
                 <td className="mono">{r.id}</td>
                 {named && (
@@ -151,12 +182,31 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                   )}
                 </td>
                 <td className="small">{esl(r.worst_entry_id)}</td>
-                <td className="num mono" title={`전 ESL 최대 ${r.umax_all.toFixed(2)} mm`}>
-                  {r.umax.toFixed(2)} mm
-                </td>
-                <td className="num mono" title={`전 ESL 최대 ${(r.epsmax_all * 100).toFixed(2)} %`}>
-                  {(r.epsmax * 100).toFixed(2)} %
-                </td>
+                {!lin && (
+                  <td className="num mono" title={`전 ESL 최대 ${r.umax_all.toFixed(2)} mm`}>
+                    {r.umax.toFixed(2)} mm
+                  </td>
+                )}
+                {!lin && (
+                  <td className="num mono" title={`전 ESL 최대 ${(r.epsmax_all * 100).toFixed(2)} %`}>
+                    {(r.epsmax * 100).toFixed(2)} %
+                  </td>
+                )}
+                {lin && aux && <td className="num mono" data-testid={`aux-solve-${r.id}`}>{r.score_solve != null ? r.score_solve.toFixed(2) : "–"}</td>}
+                {lin && aux && (
+                  <td className={`num mono ${fade(r) ? "warn-text" : ""}`} data-testid={`aux-imb-${r.id}`} title={fade(r) ? SM_CODE_TEXT.SM_IMBALANCE : undefined}>
+                    {r.imbalance_max != null ? `${(r.imbalance_max * 100).toFixed(1)} %` : "–"}
+                    {fade(r) ? " ⚠" : ""}
+                  </td>
+                )}
+                {lin && aux && (
+                  <td className="num mono" data-testid={`aux-rho-${r.id}`} title={rhoOut(r) ? SM_CODE_TEXT.SM_LIN_RANGE : undefined}>
+                    {r.rho_min != null && r.rho_max != null ? `${r.rho_min.toFixed(2)}~${r.rho_max.toFixed(2)}` : "–"}
+                    {rhoOut(r) ? " ⚠" : ""}
+                  </td>
+                )}
+                {lin && aux && <td className="num mono muted" title="강체 6자유도 제거 · 해석값(순위와 무관)">{r.umax_def != null ? `${r.umax_def.toFixed(2)} mm` : "–"}</td>}
+                {lin && aux && <td className="num mono muted">{(r.epsmax * 100).toFixed(2)} %</td>}
                 <td data-testid={`allimp-${r.id}`}>
                   {r.all_improved == null ? (
                     <span className="muted">–</span>
@@ -231,14 +281,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               )}
               <td className="num muted">–</td>
               <td className="num muted">–</td>
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
-              <td />
+              {Array.from({ length: lin ? (aux ? 11 : 6) : 8 }, (_, k) => <td key={k} />)}
               {varNames.map((n) => (
                 <td key={n} className="num mono doe-vcol muted">
                   {x.values?.[n] ?? "–"}

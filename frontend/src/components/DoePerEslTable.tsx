@@ -99,7 +99,7 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
                     const p = m.get(c.id);
                     const imp = p ? 1 - p.ratio : null;
                     return (
-                      <td key={c.id} className="num mono heat" style={heatStyle(imp)} title={p ? `C ${p.C.toPrecision(4)} · 비율 ${p.ratio.toFixed(3)} · umax ${p.umax.toFixed(2)} mm` : undefined}>
+                      <td key={c.id} className="num mono heat" style={heatStyle(imp)} title={p ? (result.metric === "lin" ? `C(지표) ${p.C.toPrecision(4)} · 비율 ${p.ratio.toFixed(3)}${p.C_solve != null ? ` · 재풀이 C ${p.C_solve.toPrecision(4)}` : ""}${p.rho != null ? ` · ρ ${p.rho.toFixed(2)}` : ""}` : `C ${p.C.toPrecision(4)} · 비율 ${p.ratio.toFixed(3)} · umax ${p.umax.toFixed(2)} mm`) : undefined}>
                         {per ? pctText(imp, 1) : "…"}
                       </td>
                     );
