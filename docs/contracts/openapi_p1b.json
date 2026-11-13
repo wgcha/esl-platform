@@ -3199,6 +3199,17 @@
             "title": "Boundary Warnings N",
             "type": "integer"
           },
+          "cross_mesh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cross Mesh"
+          },
           "esl": {
             "items": {
               "additionalProperties": true,
@@ -3256,6 +3267,21 @@
               }
             ],
             "title": "Metric"
+          },
+          "metric_effective": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lin",
+                  "solve"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric Effective"
           },
           "n_failed": {
             "additionalProperties": {

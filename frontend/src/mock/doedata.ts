@@ -804,6 +804,18 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
 }
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";
+/** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
+ *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
+export function withCrossMesh(res: DoeResultOut): DoeResultOut {
+  const r = res.metric === "lin" ? res : withMetric(res);
+  const ranking = r.ranking
+    .map((x) => ({ ...x, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4), imbalance_max: null, rho_min: null, rho_max: null,
+      per_esl: x.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C, rho: null, imbalance_rel: null })) }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const warnings = [...r.warnings.filter((w) => w.code !== "SM_LIN_RANGE"), { code: "SM_CROSS_MESH", message: "다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 순위를 매겼습니다" }];
+  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: true, rank: { ...(r.rank ?? {}), metric_effective: "solve", cross_mesh: true }, warnings };
+}
 export function ltKind(o: { scenario: DoeScenario; inputs: { select_base?: string | null } }): LtKind {
   if (o.scenario === "compare") return "compare";
   if (o.scenario === "mesh" || (o.scenario === "select" && o.inputs.select_base === "mesh")) return "bmesh";
@@ -1687,7 +1699,9 @@ export class DoeMock {
 
   /** 새 스냅샷의 결과에 하중 전달 요약·진단 키를 한 번 붙임(옛 스터디 = inputs.load_transfer 없음 → 그대로) */
   private ensureLt(rec: Rec) {
-    if (rec.result && rec.out.inputs.rank_metric === "lin" && !rec.result.metric) rec.result = withMetric(rec.result);
+    // 결정 A: 같은 메시(①②·새 ③)만 1차 강성 지표, 형상·안마다 메시가 다른 ④·옛 ③ = 재풀이 C(다른 메시 비교)
+    if (rec.result && rec.out.inputs.rank_metric === "lin" && !rec.result.metric)
+      rec.result = rec.out.scenario === "compare" || rec.out.scenario === "step" ? withCrossMesh(rec.result) : withMetric(rec.result);
     const lt = rec.out.inputs.load_transfer;
     if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
   }

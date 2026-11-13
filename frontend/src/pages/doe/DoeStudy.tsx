@@ -16,7 +16,7 @@ import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   LEGACY_STEP_LABEL, STEP_PREP_CODES, meshMethodName, radioBase, stepPrepGroups,
-  isLinResult, ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
+  isCrossMesh, isLinResult, ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
   type NewRadio,
   type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView, type StepInfoView } from "../../components/BeadSelectCard";
@@ -688,7 +688,7 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
-  const linMode = isLinResult(result);
+  const linMode = isLinResult(result) || isCrossMesh(result); // 새 스냅샷 3D = 강체 제거(다른 메시 비교 포함)
   const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(linMode ? { dispLabel: "변위 |u| (mm) — 강체 제거" } : {}) });
   if (!others.length) return <Empty>3D 비교 자료가 없습니다</Empty>;
   return (
@@ -1429,10 +1429,10 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           <ErrorLine text={result.error} />
           {result.data && (
             <>
-              {result.data.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW").length > 0 && (
+              {result.data.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH").length > 0 && (
                 <ul className="reasons small warn-text">
                   {result.data.warnings
-                    .filter((w) => w.code !== "SENSITIVITY_TOO_FEW")
+                    .filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH")
                     .map((w, i) => (
                       <li key={i}>{warnText(w)}</li>
                     ))}
@@ -1442,6 +1442,11 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               {isLinResult(result.data) && (
                 <div className="small muted" data-testid="sm-verify-note">
                   1차 강성 지표 순위입니다(재풀이 없음) — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요.
+                </div>
+              )}
+              {!isLinResult(result.data) && isCrossMesh(result.data) && (
+                <div className="small warn-text" data-testid="sm-cross-note">
+                  다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 재풀이 C 로 순위를 매겼습니다. 상위 안은 Radioss 검증 낙하로 확인하세요.
                 </div>
               )}
               <LoadTransferDiag studyId={id} result={result.data} />

@@ -419,9 +419,12 @@ export const SM_CODE_TEXT: Record<string, string> = {
   SM_LIN_RANGE: "ρ 가 lin_valid(0.3) 범위 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요",
   SM_IMBALANCE: "하중 불평형이 큽니다(|F − K·u| / Σ|F|) — 재풀이 C·umax 는 무른 모드가 증폭된 값일 수 있습니다",
   SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
+  SM_CROSS_MESH: "다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 work 하중을 옮겨 재풀이한 C 로 순위를 매깁니다",
 };
 /** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
 export const isLinResult = (r: { metric?: string | null; rank?: { metric?: string | null } | null }) => (r.metric ?? r.rank?.metric) === "lin";
+/** 결정 A: 다른 메시 비교 결과(옛 ③·④ 새 스냅샷) — 주 열 = 재풀이 C, 지표 보조 열 없음 */
+export const isCrossMesh = (r: { cross_mesh?: boolean | null; rank?: { cross_mesh?: boolean | null } | null }) => !!(r.cross_mesh ?? r.rank?.cross_mesh);
 /** 보조 열 경고 임계값: 결과 스냅샷 rank 값 → settings.rank 값 순. 둘 다 없으면 null(그 경고는 표시하지 않음 — 상수 대체 없음) */
 export function rankThresholds(result: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null }, settings?: { rank?: { lin_valid?: number | null; imbalance_warn?: number | null } | null } | null): { linValid: number | null; imbalanceWarn: number | null } {
   return { linValid: result.rank?.lin_valid ?? settings?.rank?.lin_valid ?? null, imbalanceWarn: result.rank?.imbalance_warn ?? settings?.rank?.imbalance_warn ?? null };

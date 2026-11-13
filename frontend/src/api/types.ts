@@ -2369,6 +2369,9 @@ export interface DoeRankCfg {
   lin_form?: "taylor" | "ritz" | null;
   lin_valid?: number | null;
   imbalance_warn?: number | null;
+  /** 결정 A(결과의 rank 에만): 순위에 실제로 쓴 지표·다른 메시 비교 여부 */
+  metric_effective?: DoeRankMetric | null;
+  cross_mesh?: boolean | null;
 }
 export interface DoeSettingsOut {
   /** v0.20.0 순위 지표 설정(옛 서버면 없음) */
@@ -3078,6 +3081,9 @@ export interface DoeResultOut {
   lin_form?: "taylor" | "ritz" | null;
   /** v0.20.0 이 스터디 스냅샷의 순위 지표 설정(임계값 출처 1순위) */
   rank?: DoeRankCfg | null;
+  /** 결정 A(2026-11-13): 순위에 실제로 쓴 지표 — 다른 메시 비교(옛 ③·④)는 solve(work 하중 재풀이 C)·cross_mesh true(SM_CROSS_MESH) */
+  metric_effective?: DoeRankMetric | null;
+  cross_mesh?: boolean | null;
   /** v0.20.0 d000 재풀이 C 기준(max_i C_solve) */
   C_ref_solve?: number | null;
   /** v0.20.0 하중 전달 요약(LT-13 — legacy = 키 없음) */

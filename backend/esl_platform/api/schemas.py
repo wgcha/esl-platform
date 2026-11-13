@@ -1895,6 +1895,10 @@ class DoeResultOut(_Out):
     lin_form: Literal["ritz", "taylor"] | None = None
     # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
     rank: dict[str, Any] | None = None
+    # 결정 A(2026-11-13): 순위에 실제로 쓴 지표(lin = 같은 메시 1차 강성 지표 | solve) — 다른 메시 비교(옛 ③·④)는 solve·cross_mesh true
+    # (경고 SM_CROSS_MESH, 정밀도 낮음). rank{…} 에도 같은 두 키. 옛 스터디 = null
+    metric_effective: Literal["lin", "solve"] | None = None
+    cross_mesh: bool | None = None
     C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None

@@ -3,8 +3,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { isLinResult, rankThresholds } from "../api/doe";
-import { makeCompareResult, compareIds, makeComparePrep, withMetric } from "../mock/doedata";
+import { isCrossMesh, isLinResult, rankThresholds } from "../api/doe";
+import { makeCompareResult, compareIds, makeComparePrep, withCrossMesh, withMetric } from "../mock/doedata";
 
 describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
   it("isLinResult: lin 만 새 표시, 키 없음·solve = 옛 표시", () => {
@@ -21,6 +21,18 @@ describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
     expect(r.ranking[0].score_solve).toBe(base.ranking[0].score);
     expect(r.ranking[0].umax_def).toBeLessThan(r.ranking[0].umax);
   });
+  it("결정 A withCrossMesh: score = 재풀이 비, ρ·불평형 없음, metric_effective solve·cross_mesh·SM_CROSS_MESH", () => {
+    const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
+    const base = makeCompareResult(makeComparePrep(compareIds([sh("a", true), sh("b"), sh("c"), sh("d")]), "step"), ["le-1", "le-2"]);
+    const r = withCrossMesh(base);
+    expect(isLinResult(r)).toBe(false);
+    expect(isCrossMesh(r)).toBe(true);
+    expect(r.metric_effective).toBe("solve");
+    expect(r.ranking.map((x) => [x.id, x.score])).toEqual(base.ranking.map((x) => [x.id, x.score]));
+    expect(r.ranking.every((x) => x.rho_min == null && x.imbalance_max == null && x.umax_def != null)).toBe(true);
+    expect(r.warnings.map((w) => w.code)).toContain("SM_CROSS_MESH");
+    expect(isCrossMesh({})).toBe(false);
+  });
 });
 
 describe("임계값 출처(하드코딩 없음)", () => {
@@ -30,9 +42,9 @@ describe("임계값 출처(하드코딩 없음)", () => {
     expect(rankThresholds({}, null)).toEqual({ linValid: null, imbalanceWarn: null });
   });
   it("둘 다 없으면 흐림·ρ 경고 없음", async () => {
-    renderApp("/p/p-body/doe/doe-20", "power", (srv) => {
+    renderApp("/p/p-body/doe/doe-21", "power", (srv) => {
       delete srv.doe.settings.rank;
-      const rec = srv.doe.recs.find((r) => r.out.id === "doe-20")!;
+      const rec = srv.doe.recs.find((r) => r.out.id === "doe-21")!;
       const res = withMetric(rec.result!);
       delete res.rank;
       rec.result = res;
@@ -47,9 +59,9 @@ describe("임계값 출처(하드코딩 없음)", () => {
   }, 20000);
 });
 
-describe("④ 결과 — doe-20(metric lin)", () => {
+describe("② 결과 — doe-21(metric lin, 같은 메시)", () => {
   it("주 열 '강성 지표', umax·εmax 열 없음, 보조 열 토글로 5열, 불평형 큰 행 흐림·⚠, 안내 1줄", async () => {
-    renderApp("/p/p-body/doe/doe-20");
+    renderApp("/p/p-body/doe/doe-21");
     const t = await screen.findByRole("table", { name: "순위표" });
     await waitFor(() => expect(screen.getByTestId("sm-verify-note")).toBeTruthy());
     expect(screen.getByTestId("sm-verify-note").textContent).toMatch(/Radioss 검증 낙하/);
@@ -69,6 +81,23 @@ describe("④ 결과 — doe-20(metric lin)", () => {
     expect(rows.some((r) => !r.classList.contains("sm-faded"))).toBe(true);
     // 경고 목록: SM_LIN_RANGE
     expect(screen.getByText(/1차 근사가 개선을 과장/)).toBeTruthy();
+  }, 20000);
+
+});
+
+describe("④ 결과 — doe-20(결정 A: 다른 메시 비교)", () => {
+  it("주 열 '재풀이 C', 안내 1줄(정밀도 낮음), 지표 보조 토글·1차 안내 없음, umax·εmax 열(강체 제거), 경고 목록에 중복 없음", async () => {
+    renderApp("/p/p-body/doe/doe-20");
+    const t = await screen.findByRole("table", { name: "순위표" });
+    await waitFor(() => expect(screen.getByTestId("sm-cross-note")).toBeTruthy());
+    expect(screen.getByTestId("sm-cross-note").textContent).toMatch(/다른 메시 비교\(정밀도 낮음\)/);
+    const heads = within(t).getAllByRole("columnheader").map((c) => c.textContent);
+    expect(heads).toContain("재풀이 C");
+    expect(heads).not.toContain("강성 지표");
+    expect(heads).toEqual(expect.arrayContaining(["umax", "εmax"]));
+    expect(screen.queryByTestId("rank-aux-toggle")).toBeNull();
+    expect(screen.queryByTestId("sm-verify-note")).toBeNull();
+    expect(screen.queryAllByText(/1차 강성 지표를 쓰지 않고/).length).toBe(0); // 서버 경고 문구는 안내 1줄로 대신
   }, 20000);
 
   it("3D 안내·범례: 강체 제거 · 해석값(순위와 무관)", async () => {

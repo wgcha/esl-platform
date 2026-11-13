@@ -1776,7 +1776,8 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
              for w in r.get("warnings") or []]
     if r.get("sensitivity") is None and r.get("sensitivity_reason") and r.get("sensitivity_reason") != "COMPARE_NO_PARAMS":
         warns.append({"code": "SENSITIVITY_TOO_FEW", "message": str(r.get("sensitivity_reason"))})
-    keep_b = ("id", "score", "umax", "epsmax") + (("shape",) if s["scenario"] == "compare" else ())
+    keep_b = ("id", "score", "umax", "epsmax") + (("shape",) if s["scenario"] == "compare" else ()) \
+        + (("umax_def",) if "umax_def" in b else ())        # v0.20.0 강체 제거 umax(새 스냅샷만 — 옛 결과 키 불변)
     out = {"scenario": s["scenario"], "reference_source": r.get("reference_source"),
            "sensitivity_reason": r.get("sensitivity_reason"),
            "C_ref": r.get("C_ref"), "baseline": {k: b.get(k) for k in keep_b} | {"id": "d000"},
@@ -1800,6 +1801,12 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         if isinstance(r.get(k), str):
             out[k] = r[k]
     out["rank"] = _rank_snapshot_out(ctx, sid)       # 스터디 스냅샷 doe.rank(경고 문턱 — 화면이 상수 대신 사용), 옛 스터디 = null
+    # 결정 A(2026-11-13): 순위에 실제로 쓴 지표 metric_effective(다른 메시 비교 = solve)·cross_mesh(경고 SM_CROSS_MESH) — 코어 값
+    if isinstance(r.get("metric_effective"), str):
+        out["metric_effective"] = r["metric_effective"]
+        out["cross_mesh"] = bool(r.get("cross_mesh"))
+        if isinstance(out["rank"], dict):
+            out["rank"] = {**out["rank"], "metric_effective": out["metric_effective"], "cross_mesh": out["cross_mesh"]}
     if isinstance(r.get("C_ref_solve"), (int, float)) and not isinstance(r.get("C_ref_solve"), bool):
         out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
     for k in ("view3d_ref", "view3d_esl"):

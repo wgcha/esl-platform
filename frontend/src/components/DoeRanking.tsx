@@ -11,7 +11,7 @@ import type { DoeParam, DoeResultOut, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { SM_CODE_TEXT, isLinResult, rankThresholds } from "../api/doe";
+import { SM_CODE_TEXT, isCrossMesh, isLinResult, rankThresholds } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg }: {
@@ -38,6 +38,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   const [sortKey, setSortKey] = useState<RankSortKey>("score");
   /** v0.20.0 새 지표(lin): 주 열 교체 · umax·εmax 는 보조 열(토글)로 이동 */
   const lin = isLinResult(result);
+  /** 결정 A: 다른 메시 비교 — 주 열 = 재풀이 C, umax = 강체 제거 값(있으면), 지표 보조 열 없음 */
+  const cross = !lin && isCrossMesh(result);
+  const um = (r: { umax: number; umax_def?: number | null }) => (cross && r.umax_def != null ? r.umax_def : r.umax);
   const [aux, setAux] = useState(false);
   const th = rankThresholds(result, rankCfg);
   const fade = (r: { imbalance_max?: number | null }) => lin && th.imbalanceWarn != null && (r.imbalance_max ?? 0) > th.imbalanceWarn;
@@ -72,7 +75,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       );
     })()}
     <div className="doe-metric-bar small">
-      <span className="muted">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
+      <span className="muted">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : cross ? "score(재풀이 C — 다른 메시 비교)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
       {lin && (
         <label className="check" title="재풀이 C 비·불평형·ρ·강체 제거 umax·εmax — 순위에 쓰지 않는 값">
           <input type="checkbox" data-testid="rank-aux-toggle" aria-label="보조 열 보기" checked={aux} onChange={(e) => setAux(e.target.checked)} /> 보조 열 보기
@@ -84,7 +87,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
           <li>
             {lin
               ? `score: max(C_안) / max(C_베이스라인) — C = 재풀이 없는 1차 강성 지표(${result.lin_form === "taylor" ? "C_ref(2−ρ)" : "C_ref/ρ"}, ρ = 변형에너지 비). 작을수록 좋음`
-              : "score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)"}
+              : cross
+                ? "score: max(C_안) / max(C_기준) — C = 형상마다 work 하중을 옮겨 재풀이한 컴플라이언스(다른 메시 비교 — 1차 강성 지표 미적용, 정밀도 낮음)"
+                : "score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)"}
           </li>
           {lin && <li>재풀이 C 비: 같은 식에 안마다 해석한 컴플라이언스(고정 하중이라 불평형·무른 모드의 영향을 받음)</li>}
           {lin && <li>umax·εmax: 순위에 쓰지 않는 해석값 — umax 는 강체 6자유도를 뺀 값(불평형이 만든 굽힘은 남음)</li>}
@@ -104,10 +109,10 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <th className="num">순위</th>
             <th>안</th>
             {named && <th className="doe-name-col">이름</th>}
-            {sortTh("score", lin ? "강성 지표" : "score", lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
+            {sortTh("score", lin ? "강성 지표" : cross ? "재풀이 C" : "score", lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
-            {!lin && <th className="num" title="최악 ESL 기준(전 ESL 최대는 툴팁)">umax</th>}
+            {!lin && <th className="num" title={cross ? "최악 ESL 기준, 강체 6자유도 제거 · 해석값(순위와 무관)" : "최악 ESL 기준(전 ESL 최대는 툴팁)"}>umax</th>}
             {!lin && <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>}
             {lin && aux && <th className="num" title="안마다 재풀이한 C 로 같은 식(최악 ESL 비) — 보조">재풀이 C 비</th>}
             {lin && aux && <th className="num" title="max_i |F − K·u| / Σ|F| — 클수록 재풀이 값이 무른 모드에 오염">불평형</th>}
@@ -140,7 +145,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <td className="num mono">{b.score.toFixed(2)}</td>
             <td className="num">기준</td>
             <td className="small muted">{named ? "기준 형상" : "공칭"}</td>
-            {!lin && <td className="num mono">{b.umax.toFixed(2)} mm</td>}
+            {!lin && <td className="num mono">{um(b).toFixed(2)} mm</td>}
             {!lin && <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>}
             {lin && aux && <td className="num mono">1.00</td>}
             {lin && aux && <td className="num muted">–</td>}
@@ -184,7 +189,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 <td className="small">{esl(r.worst_entry_id)}</td>
                 {!lin && (
                   <td className="num mono" title={`전 ESL 최대 ${r.umax_all.toFixed(2)} mm`}>
-                    {r.umax.toFixed(2)} mm
+                    {um(r).toFixed(2)} mm
                   </td>
                 )}
                 {!lin && (

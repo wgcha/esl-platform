@@ -177,10 +177,30 @@ def test_results_pass_metric_fields(client, world, engine, esl_root):
     assert pe["umax_def"] == 2.5 and pe["C_solve"] == 1.2
 
 
+def test_results_cross_mesh_metric_effective(client, world, engine, esl_root):
+    """결정 A(2026-11-13): ④·옛 ③ = 다른 메시 비교 — 코어 metric_effective solve·cross_mesh true 가 최상위와 rank{…} 에,
+    경고 SM_CROSS_MESH 는 warnings 그대로. 같은 메시(① ②·새 ③) = metric_effective lin·cross_mesh false."""
+    warn = {"code": "SM_CROSS_MESH", "message": "다른 메시 비교(정밀도 낮음)"}
+    sid = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz", "C_ref_solve": 10.0,
+                                                    "metric_effective": "solve", "cross_mesh": True, "warnings": [warn],
+                                                    "baseline": {"id": "d000", "score": 1.0, "umax": 1.0, "epsmax": 1e-3,
+                                                                 "umax_def": 0.4}})
+    o = api(client, "GET", f"/doe/studies/{sid}/results").json()
+    assert o["metric"] == "solve" and o["metric_effective"] == "solve" and o["cross_mesh"] is True and warn in o["warnings"]
+    assert o["baseline"]["umax_def"] == 0.4                    # 강체 제거 umax(새 스냅샷) 통과
+    assert o["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02,
+                         "metric_effective": "solve", "cross_mesh": True}
+    sid2 = _done(client, world, engine, esl_root, {"metric": "lin", "lin_form": "ritz", "C_ref_solve": 10.0,
+                                                     "metric_effective": "lin", "cross_mesh": False})
+    o2 = api(client, "GET", f"/doe/studies/{sid2}/results").json()
+    assert o2["metric_effective"] == "lin" and o2["cross_mesh"] is False and o2["rank"]["metric_effective"] == "lin"
+
+
 def test_results_legacy_null_metric(client, world, engine, esl_root):
     sid = _done(client, world, engine, esl_root, {})
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] is None and o["lin_form"] is None and o["C_ref_solve"] is None
+    assert o["metric_effective"] is None and o["cross_mesh"] is None and "umax_def" not in o["baseline"]
 
 
 def test_settings_rank_block(client, world):
@@ -191,4 +211,4 @@ def test_settings_rank_block(client, world):
 def test_openapi_rank_keys():
     spec = json.loads((Path(REPO) / "docs" / "contracts" / "openapi_p1b.json").read_text(encoding="utf-8"))
     props = spec["components"]["schemas"]["DoeResultOut"]["properties"]
-    assert "metric" in props and "lin_form" in props
+    assert "metric" in props and "lin_form" in props and "metric_effective" in props and "cross_mesh" in props
