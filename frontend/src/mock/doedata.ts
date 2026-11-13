@@ -777,6 +777,30 @@ export function ltVariants(lt: DoeLoadTransferResolved): string[] {
   const alt = lt.method === "work" ? "cell:3" : "work";
   return [...new Set([prim, alt, "cell:legacy", "cell:10", "cell:5", "cell:3"])].filter((v) => v in LT_SWEEP);
 }
+/** v0.20.0 새 스냅샷 결과: 순위 지표 lin(ritz) — score = 1차 지표, score_solve = 재풀이 C 기준(옛 score), 불평형·ρ·강체 제거 umax(esl_stiffness_metric.md §6).
+ *  순위 순서는 그대로 두고 값만 바꾼다(결정적). 3번째 안부터 불평형이 큼(#63 재현 — 흐림·경고) */
+export function withMetric(res: DoeResultOut): DoeResultOut {
+  const ranking = res.ranking.map((r, i) => {
+    const score = +(1 - (1 - r.score) * 0.85).toFixed(4);
+    const imb = [0.011, 0.043, 0.18, 0.27][i % 4];
+    const rho = +(1 + 0.12 * (i + 1) * (i % 2 ? -1 : 1)).toFixed(3);
+    return {
+      ...r,
+      score,
+      improvement: +(1 - score).toFixed(4),
+      score_solve: r.score,
+      imbalance_max: imb,
+      rho_min: +(Math.min(rho, 1 - 0.05 * (i + 1))).toFixed(3),
+      rho_max: +(Math.max(rho, 1 + 0.05 * (i + 1))).toFixed(3),
+      umax_def: +(r.umax * 0.35).toFixed(3),
+      C_solve: Object.fromEntries((r.per_esl ?? []).map((p) => [p.entry_id, p.C])),
+      per_esl: r.per_esl?.map((p, k) => ({ ...p, C: +(p.C * 0.98).toFixed(1), C_solve: p.C, rho: +(rho + 0.01 * k).toFixed(3), imbalance_rel: +(imb * (1 - 0.1 * k)).toFixed(4), umax_def: +(p.umax * 0.35).toFixed(3) })),
+    };
+  });
+  const warnings = [...res.warnings];
+  if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > 0.3)) warnings.push({ code: "SM_LIN_RANGE", message: "ρ 가 lin_valid(0.3) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요" });
+  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", C_ref_solve: res.C_ref, warnings };
+}
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";
 export function ltKind(o: { scenario: DoeScenario; inputs: { select_base?: string | null } }): LtKind {
@@ -1126,7 +1150,7 @@ export class DoeMock {
     // 3b) v0.20.0 ④ 하중 전달(work 기본) 완료 — 요약 줄·진단 표·3D 같은 ESL
     const lt20: DoeLoadTransferResolved = { method: "work", cell_size_mm: null, support: "transfer", region_mode: "auto" };
     const c20 = cmp("doe-20", "Ch/R 형상 비교 — 하중 전달 work(v0.20)", "2026-11-13T02:00:00Z", mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B_rough.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"]], 0), "step");
-    c20.out.inputs = { ...c20.out.inputs, load_transfer: lt20 };
+    c20.out.inputs = { ...c20.out.inputs, load_transfer: lt20, rank_metric: "lin" };
     c20.result = withLoadTransfer(makeCompareResult(c20.out.prep!, c20.out.entry_ids), c20.out.entry_ids, lt20, "compare");
     c20.out.phase = "DONE";
     c20.out.version = 4;
@@ -1240,7 +1264,7 @@ export class DoeMock {
         title: "QN80J Ch/R 비드 — B 메시 하중 전달(v0.20)",
         scenario: "select",
         created_at: "2026-11-13T04:00:00Z",
-        inputs: { ...a.out.inputs, mesh: { file_name: "QN80J_chr.rad", sha256: "b2".padEnd(64, "0") }, part_title: "chassis rear", inch: 75, select_base: "mesh", bead_source: "manual", select_schema: 2, load_transfer: { method: "work", cell_size_mm: null } },
+        inputs: { ...a.out.inputs, mesh: { file_name: "QN80J_chr.rad", sha256: "b2".padEnd(64, "0") }, part_title: "chassis rear", inch: 75, select_base: "mesh", bead_source: "manual", select_schema: 2, load_transfer: { method: "work", cell_size_mm: null }, rank_metric: "lin" },
       },
       jobIds: [...a.jobIds],
     };
@@ -1662,6 +1686,7 @@ export class DoeMock {
 
   /** 새 스냅샷의 결과에 하중 전달 요약·진단 키를 한 번 붙임(옛 스터디 = inputs.load_transfer 없음 → 그대로) */
   private ensureLt(rec: Rec) {
+    if (rec.result && rec.out.inputs.rank_metric === "lin" && !rec.result.metric) rec.result = withMetric(rec.result);
     const lt = rec.out.inputs.load_transfer;
     if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
   }
@@ -1907,8 +1932,10 @@ export class DoeMock {
     const n0 = this.recs.length;
     const res = this.handle0(method, path, query, b);
     // v0.20.0 새로 만든 스터디(모든 모드)의 스냅샷에 해석된 하중 전달 값(compare 는 handle0 에서 이미)
-    if (method === "POST" && path === "/doe/studies" && res?.status === 201 && this.recs.length > n0 && this.settings.load_transfer) {
+    if (method === "POST" && path === "/doe/studies" && res?.status === 201 && this.recs.length > n0) {
       const rec = this.recs[this.recs.length - 1];
+      rec.out.inputs.rank_metric = "lin"; // v0.20.0 새 스터디 기본 순위 지표
+      if (!this.settings.load_transfer) return ok(this.studyOut(rec), 201);
       if (!rec.out.inputs.load_transfer) {
         rec.out.inputs.load_transfer = this.resolveLt(b);
         return ok(this.studyOut(rec), 201);

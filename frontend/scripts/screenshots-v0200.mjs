@@ -106,6 +106,13 @@ try {
     await top(page, page.getByTestId("lt-block"));
     await check(page, w, h, "결과 진단", { ok: true, text: ((await sum.textContent()) ?? "").slice(0, 80) });
     await shot(page, `2_diag_${w}.png`);
+    // 2c) 순위표(새 지표 lin, 보조 열 켬) — doe-20
+    await page.getByTestId("rank-aux-toggle").check();
+    const rt = page.getByRole("table", { name: "순위표" });
+    await top(page, rt);
+    const heads = await rt.locator("th").allTextContents();
+    await check(page, w, h, "순위표(보조 열)", { ok: heads.includes("강성 지표") && heads.includes("불평형") && !heads.includes("umax"), text: `열 ${heads.length}` });
+    await shot(page, `4_rank_${w}.png`);
     // 3) 3D 비교(같은 ESL)
     const grid = page.locator(".doe-compare");
     await grid.waitFor({ timeout: 30000 });
@@ -113,6 +120,8 @@ try {
     await top(page, grid);
     const hdr = (await grid.textContent()) ?? "";
     await check(page, w, h, "3D 비교", { ok: /ESL le-\d/.test(hdr), text: (hdr.match(/ESL [^ (]+/g) ?? []).join(" / ") });
+    const leg = (await page.locator(".doe-compare").textContent()) ?? "";
+    await check(page, w, h, "3D 범례", { ok: /강체 제거/.test(leg), text: (leg.match(/변위 \|u\| \(mm\) — 강체 제거/) ?? ["없음"])[0] });
     await shot(page, `3_compare3d_${w}.png`);
     await ctx.close();
   }

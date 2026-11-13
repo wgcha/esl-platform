@@ -414,6 +414,17 @@ export const isFailed = (s: DoeDesignStatus) => s.startsWith("FAILED_") || s ===
 export const doePath = (projectId: string, id?: string) => `/p/${projectId}/doe/${id ?? "new"}`;
 
 /** 경고 1줄(서버 문구 우선, 없으면 화면 문구 맵, 없으면 코드) */
+/** v0.20.0 강성 지표 경고(서버 message 가 없을 때) */
+export const SM_CODE_TEXT: Record<string, string> = {
+  SM_LIN_RANGE: "ρ 가 lin_valid(0.3) 범위 밖 — 1차 근사가 개선을 과장할 수 있습니다. 재풀이 C(보조 열)와 비교하세요",
+  SM_IMBALANCE: "하중 불평형이 큽니다(|F − K·u| / Σ|F|) — 재풀이 C·umax 는 무른 모드가 증폭된 값일 수 있습니다",
+  SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
+};
+/** v0.20.0 보조 열 기준(설정 rank.lin_valid·imbalance_warn 기본값 — 서버가 행 경고를 주면 그쪽이 우선) */
+export const SM_LIN_VALID = 0.3;
+export const SM_IMBALANCE_WARN = 0.02;
+/** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
+export const isLinResult = (r: { metric?: string | null }) => r.metric === "lin";
 export const warnText = (w: { code: string; message?: string | null; level?: unknown; var?: unknown; usable?: unknown; [k: string]: unknown }) =>
   w.message ||
   (w.code === "SELECT_INNER_LOOP" && w.level === "info" ? SELECT_CODE_TEXT.SELECT_INNER_LOOP_RING : "") ||
@@ -421,7 +432,7 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
     ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
     : "") ||
   autoWarnText(w) ||
-  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || w.code;
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || w.code;
 /** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
 export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && AUTO_INFO.has(w.code));
 

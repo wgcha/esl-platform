@@ -2806,6 +2806,8 @@ export interface DoeStudyOut {
     mesh_refine?: boolean | null;
     /** v0.20.0 ④ 하중 전달(옛 스터디 = 키 없음 = legacy) */
     load_transfer?: DoeLoadTransferResolved | null;
+    /** v0.20.0 순위 지표(esl_stiffness_metric.md SM-2 — 옛 스터디 = 키 없음 = solve) */
+    rank_metric?: DoeRankMetric | null;
     /** v0.16.2 select 초기 선택 출처(없으면 manual) */
     bead_source?: DoeBeadSource | null;
     /** v0.16.2 select 기준 메시("mesh"·v0.18.0 "step" 일 때만 — 없으면 case) */
@@ -2971,7 +2973,17 @@ export interface DoeRankRow {
   shape?: DoeShapeRef | null;
   /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
   warn?: DoeRankWarn[] | null;
+  /** v0.20.0 보조 열(SM §6 — 새 스냅샷만): 재풀이 C 기준 score, 불평형 최대, ρ 범위, 강체 제거 umax(최악 ESL) */
+  score_solve?: number | null;
+  imbalance_max?: number | null;
+  rho_min?: number | null;
+  rho_max?: number | null;
+  umax_def?: number | null;
+  /** v0.20.0 ESL별 재풀이 C(entry_id → C) — 새 스냅샷만 */
+  C_solve?: Record<string, number> | null;
 }
+/** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
+export type DoeRankMetric = "lin" | "solve";
 /** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
 export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
@@ -2982,6 +2994,14 @@ export interface DoePerEsl {
   ratio: number;
   umax: number;
   epsmax: number;
+  /** v0.20.0(SM §6, 새 스냅샷만) */
+  /** 재풀이 C(보조 — lin 일 때 C·ratio 는 순위 지표 값) */
+  C_solve?: number | null;
+  C_lin?: number | null;
+  C_ritz?: number | null;
+  rho?: number | null;
+  imbalance_rel?: number | null;
+  umax_def?: number | null;
 }
 export interface DoePerEslDesign {
   id: string;
@@ -3018,7 +3038,7 @@ export interface DoeFileOut {
 }
 export interface DoeResultOut {
   C_ref: number;
-  baseline: { id: "d000"; score: number; umax: number; epsmax: number; shape?: DoeShapeRef | null };
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null };
   n_ok: number;
   n_skipped: Record<string, number>;
   n_failed: Record<string, number>;
@@ -3044,6 +3064,11 @@ export interface DoeResultOut {
   sort?: string;
   /** v0.16.1 결과 요약 — best_clean = 경고 없는 최상위 안 id(없으면 null, Q1 = A) */
   summary?: { best_clean?: string | null } | null;
+  /** v0.20.0 순위 지표(esl_stiffness_metric.md §6 — 옛 결과 = 키 없음 = solve 표시 그대로). lin = 재풀이 없는 1차 섭동 지표 */
+  metric?: DoeRankMetric | null;
+  lin_form?: "taylor" | "ritz" | null;
+  /** v0.20.0 d000 재풀이 C 기준(max_i C_solve) */
+  C_ref_solve?: number | null;
   /** v0.20.0 하중 전달 요약(LT-13 — legacy = 키 없음) */
   load_transfer?: DoeLoadTransferSummary | null;
   /** v0.20.0 3D 같은 ESL: entry_id → 기준 view3d id(`d000_e<kk>`), did → 그 형상 최악 ESL entry_id. result.view3d 목록에는 안 들어감(LT-9) */

@@ -16,7 +16,7 @@ import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   LEGACY_STEP_LABEL, STEP_PREP_CODES, meshMethodName, radioBase, stepPrepGroups,
-  ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
+  isLinResult, ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
   type NewRadio,
   type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView, type StepInfoView } from "../../components/BeadSelectCard";
@@ -688,7 +688,8 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
-  const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual });
+  const linMode = isLinResult(result);
+  const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(linMode ? { dispLabel: "변위 |u| (mm) — 강체 제거" } : {}) });
   if (!others.length) return <Empty>3D 비교 자료가 없습니다</Empty>;
   return (
     <div className="doe-compare">
@@ -703,7 +704,10 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
             </option>
           ))}
         </select>
-        <span className="small muted">{eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위"}</span>
+        <span className="small muted">{(() => {
+          const base = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
+          return linMode ? `${base} · 강체 제거, 해석값(순위와 무관)` : base;
+        })()}</span>
       </div>
       <div className="doe-compare-grid">
         {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
@@ -1435,6 +1439,11 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 </ul>
               )}
               <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} />
+              {isLinResult(result.data) && (
+                <div className="small muted" data-testid="sm-verify-note">
+                  1차 강성 지표 순위입니다(재풀이 없음) — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요.
+                </div>
+              )}
               <LoadTransferDiag studyId={id} result={result.data} />
               <div className="sub-title">ESL별 개선율</div>
               <DoePerEslTable studyId={id} result={result.data} entries={entries} pick={pick} />
