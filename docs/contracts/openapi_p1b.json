@@ -2464,6 +2464,17 @@
             ],
             "title": "Bead Source"
           },
+          "cell_size_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell Size Mm"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -2485,6 +2496,21 @@
               }
             ],
             "title": "Inch"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "cell"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh_mode": {
             "anyOf": [
@@ -2631,6 +2657,18 @@
             },
             "title": "Entries",
             "type": "array"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh": {
             "anyOf": [
@@ -3129,6 +3167,17 @@
             "title": "C Ref",
             "type": "number"
           },
+          "C_ref_solve": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "C Ref Solve"
+          },
           "baseline": {
             "additionalProperties": true,
             "title": "Baseline",
@@ -3150,6 +3199,17 @@
             "title": "Boundary Warnings N",
             "type": "integer"
           },
+          "cross_mesh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cross Mesh"
+          },
           "esl": {
             "items": {
               "additionalProperties": true,
@@ -3165,6 +3225,63 @@
             },
             "title": "Excluded",
             "type": "array"
+          },
+          "lin_form": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ritz",
+                  "taylor"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lin Form"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
+          },
+          "metric": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lin",
+                  "solve"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric"
+          },
+          "metric_effective": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lin",
+                  "solve"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric Effective"
           },
           "n_failed": {
             "additionalProperties": {
@@ -3199,6 +3316,18 @@
             "default": false,
             "title": "Per Esl Inline",
             "type": "boolean"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
           },
           "ranking": {
             "items": {
@@ -3298,6 +3427,34 @@
             },
             "title": "View3D",
             "type": "array"
+          },
+          "view3d_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Esl"
+          },
+          "view3d_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Ref"
           },
           "warnings": {
             "items": {
@@ -3648,6 +3805,18 @@
             "title": "Gmsh",
             "type": "object"
           },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
+          },
           "max_designs": {
             "title": "Max Designs",
             "type": "integer"
@@ -3681,6 +3850,18 @@
               }
             ],
             "title": "Part Title"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
           },
           "reason": {
             "anyOf": [
@@ -3849,6 +4030,17 @@
             ],
             "title": "Bead Source"
           },
+          "cell_size_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell Size Mm"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -3870,6 +4062,21 @@
               }
             ],
             "title": "Inch"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "cell"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh_mode": {
             "anyOf": [
@@ -14412,7 +14619,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.19.1"
+    "version": "0.20.0"
   },
   "openapi": "3.1.0",
   "paths": {

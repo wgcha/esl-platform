@@ -102,6 +102,9 @@ def test_settings_compare_block(client, world):
         "mesh": {"ladder": ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"]},   # v0.16.3
         "defeature": {"hole_max_d_mm": 8.0, "min_bead_height_mm": 2.0, "fillet_max_r_mm": 1.5,
                       "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"]}}
+    # v0.20.0 하중 전달(esl_load_transfer.md §13.6): 모든 모드 공통 — settings 최상위(기본 method·셀 크기·선택지·하한)
+    assert s["load_transfer"] == {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0],
+                                  "cell_min_mm": 3.0}
 
 
 @pytest.mark.parametrize("case", ["paicad_low", "paicad_missing", "no_gmsh", "no_gmsh_no_mesh_input", "compare_off",

@@ -246,3 +246,124 @@ def bead_with_features_step(path, spec: dict | None = None) -> str:
     finally:
         gmsh.finalize()
     return str(path)
+
+
+# ---------------------------------------------------------------- v0.20.0 ④ 하중 전달 시험(esl_load_transfer.md V-LT-*)
+LT_PROPS = {"t": 0.8, "E": 167477.0, "nu": 0.33}        # 이슈 #63 d000 물성
+
+
+def lt_plate_mesh(Lx: float = 400.0, Lz: float = 300.0, h: float = 3.0, *, bead=(130.0, 170.0, 6.0), n_tria_cols: int = 4,
+                  offset=(0.0, 0.0, 0.0), boss=None, node_base: int = 1, props: dict | None = None) -> dict:
+    """XZ 판(y = 0) + z 방향 띠 비드(bead = (z0, z1, 깊이) — y 로 코사인 융기) 구조 메시, 앞 n_tria_cols 열은 삼각형.
+    offset = 전체 평행 이동(mm). boss = (x, z, r, 높이) 원뿔 융기(국부 형상 — 없으면 None)."""
+    import numpy as np
+    pr = props or LT_PROPS
+    nx, nz = max(1, round(Lx / h)), max(1, round(Lz / h))
+    xs, zs = np.linspace(0.0, Lx, nx + 1), np.linspace(0.0, Lz, nz + 1)
+    XX, ZZ = np.meshgrid(xs, zs, indexing="ij")
+    Y = np.zeros_like(XX)
+    if bead is not None:
+        z0, z1, d = bead
+        m = (ZZ >= z0) & (ZZ <= z1)
+        Y[m] = d * 0.5 * (1.0 - np.cos(2 * np.pi * (ZZ[m] - z0) / (z1 - z0)))
+    if boss is not None:
+        bx, bz, br, bh = boss
+        rr = np.hypot(XX - bx, ZZ - bz)
+        Y = Y + np.where(rr < br, bh * (1.0 - rr / br), 0.0)
+    X = np.stack([XX.ravel(), Y.ravel(), ZZ.ravel()], axis=1) + np.asarray(offset, dtype=float)
+    nid = lambda i, j: i * (nz + 1) + j
+    conn, et = [], []
+    for i in range(nx):
+        for j in range(nz):
+            a, b, c, d_ = nid(i, j), nid(i + 1, j), nid(i + 1, j + 1), nid(i, j + 1)
+            if i < n_tria_cols:
+                conn += [[a, b, c, -1], [a, c, d_, -1]]
+                et += [3, 3]
+            else:
+                conn.append([a, b, c, d_])
+                et.append(4)
+    conn = np.asarray(conn, dtype=np.int64)
+    ne = conn.shape[0]
+    return {"node_id": node_base + np.arange(X.shape[0], dtype=np.int64), "x0": X,
+            "elem_id": 1 + np.arange(ne, dtype=np.int64), "elem_type": np.asarray(et, dtype=np.int8), "conn": conn,
+            "elem_pid": np.full(ne, 10, dtype=np.int64), "elem_mid": np.full(ne, 1, dtype=np.int64),
+            "thickness": np.full(ne, float(pr["t"])), "E": np.full(ne, float(pr["E"])), "nu": np.full(ne, float(pr["nu"]))}
+
+
+def lt_u_drop(mesh: dict, bend: float = 1.0, local: float = 0.4, sigma: float = 4.0, at=(0.62, 0.35)):
+    """낙하 변위 근사(병진 (N,3)): 법선 방향 굽힘 P2(ξ) + 국부 가우스 융기(반지름 sigma mm — 이웃 상쇄가 큰 하중)."""
+    import numpy as np
+
+    from esl.library import normalize as nz
+    X = np.asarray(mesh["x0"], dtype=float)
+    fr = nz.frame(X, None, mesh["conn"], mesh["elem_type"])
+    loc = nz.local_coords(fr, X)
+    s = 2 * loc[:, 0] - 1
+    o = nz.to_global(fr, np.asarray(at[0]), np.asarray(at[1]))
+    r2 = np.sum((X - np.asarray(o).reshape(1, 3)) ** 2, axis=1)
+    q = bend * 0.5 * (3 * s ** 2 - 1) + local * np.exp(-r2 / (2 * sigma ** 2))
+    return q[:, None] * np.asarray(fr["n"])[None, :]
+
+
+def lt_esl_forces(mesh: dict, u):
+    """ESL f_A = K_A u_drop(자유-자유 응축 강성 — 병진만, 자기평형)."""
+    from esl.mech.shell import ShellModel
+    sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
+                    backend="superlu")
+    return sm.condensed_forces(u)
+
+
+def lt_save_entry(root, eid: str, mesh: dict, f, inch: int = 75):
+    """주어진 절점력 f 로 라이브러리 항목 폴더(raw·요약 24×14) — synth_doe.save_entry 와 같은 형식."""
+    import numpy as np
+    import synth_doe as sd
+
+    from esl.library import entry as en
+    from esl.library import normalize as nz
+    X = np.asarray(mesh["x0"], dtype=float)
+    fr = nz.frame(X, None, mesh["conn"], mesh["elem_type"])
+    sup = sd.so.supports_321(mesh)
+    n = X.shape[0]
+    raw = {**{k: np.asarray(mesh[k]) for k in ("node_id", "x0", "elem_id", "elem_type", "conn", "elem_pid", "elem_mid",
+                                               "thickness", "E", "nu")},
+           "f": np.asarray(f, dtype=float), "u_rel": np.zeros((n, 3)), "is_bc": np.zeros(n, dtype=bool),
+           "support_node_id": np.array([s for s, _ in sup], dtype=np.int64), "support_dof": np.array([d for _, d in sup])}
+    gs = nz.grid_summary(X, raw["f"], 24, 14, fr, top_n=5, node_id=raw["node_id"])
+    meta = {"entry_id": eid, "frame": fr, "grid": {"nx": 24, "ny": 14},
+            "esl": {"supports": [{"node_id": int(a), "dof": d} for a, d in sup]},
+            "model": {"inch": inch, "part_id": sd.PART_ID, "part_title": sd.PART_TITLE, "max_ids": {}},
+            "scene": {"scene": None}, "mode": None}
+    d = os.path.join(str(root), eid)
+    en.save(en.LibraryEntry(meta=meta, summary={k: gs[k] for k in en.SUMMARY_KEYS if k in gs}, raw=raw), d)
+    return d
+
+
+LT_REGIMES = {"smooth": (6.0, 0.01), "node": (None, 0.003)}   # 잡음 상관 길이 mm(None = 노드 단위), 진폭(× max|u|)
+
+
+def lt_esl_case(mesh: dict, regime: str = "smooth", seed: int = 0):
+    """낙하 ESL 근사 f_A = K_A u: u = 매끈한 굽힘·국부 눌림 압력의 정적 응답 + 법선 잡음(smooth = 상관 길이 6 mm 1 % —
+    재메시로 옮길 수 있는 이웃 상쇄, node = 노드 단위 0.3 % — 이슈 #63 처럼 셀 매핑이 d000 에서도 무너지는 이웃 상쇄)."""
+    import numpy as np
+    import synth_doe as sd
+
+    from esl.library import normalize as nz
+    from esl.mech.shell import ShellModel
+    so = sd.so
+    X = np.asarray(mesh["x0"], dtype=float)
+    sm = ShellModel(X, mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"], backend="superlu")
+    nid = np.asarray(mesh["node_id"])
+    spc = [(int(np.searchsorted(nid, n)), d) for n, d in so.supports_321(mesh)]
+    u, _ = sm.solve(so.load(mesh, "bend", 1.0) + so.load(mesh, "dent", 3.0), spc)
+    u = u[:, :3]
+    fr = nz.frame(X, None, mesh["conn"], mesh["elem_type"])
+    ell, amp = LT_REGIMES[regime]
+    g = np.random.default_rng(seed).normal(size=X.shape[0])
+    if ell is not None:
+        from scipy import sparse
+        from scipy.spatial import cKDTree
+        tr = cKDTree(X)
+        D = tr.sparse_distance_matrix(tr, 3 * ell, output_type="coo_matrix")
+        g = sparse.coo_matrix((np.exp(-D.data ** 2 / (2 * ell ** 2)), (D.row, D.col)), shape=D.shape).tocsr() @ g
+    g = g / np.abs(g).max()
+    return sm.condensed_forces(u + amp * np.abs(u).max() * g[:, None] * np.asarray(fr["n"])[None, :])

@@ -267,6 +267,122 @@ def convergence_html(shapes: list, bias: dict, esl: list) -> str:
                       num=(2, 3, 4)))
 
 
+LT_METHOD_KO = {"work": "일 등가(원본 절점력 → 형상 면 최근접점 형상함수)", "cell": "셀 매핑"}
+LT_SUPPORT_KO = {"transfer": "기준 지지 → 형상 최근접 노드", "auto": "형상마다 자동 3-2-1", "fallback": "이전 실패 → 자동 3-2-1"}
+LT_TRUTH_KO = {"direct_nodal": "① 원본 절점력 직접(기준 = ESL 메시)", "a_direct": "ESL 원본 메시 직접 풀이",
+               "mixed": "ESL 마다 다름"}
+
+
+def _rng(v) -> str:
+    return "—" if not v else (f"×{_f(v[0])}" if v[0] == v[1] else f"×{_f(v[0])}~{_f(v[1])}")
+
+
+def lt_variant_ko(v: str | None) -> str:
+    if not v:
+        return "—"
+    if v == "work":
+        return "일 등가"
+    if v == "cell:legacy":
+        return "셀 기존 24×14"
+    return f"셀 {v.split(':', 1)[1]} mm" if v.startswith("cell:") else v
+
+
+def load_transfer_html(lt: dict | None) -> str:
+    """v0.20.0 ④ 하중 전달 절(esl_load_transfer.md LT-13): 방식·지지·영역·참값, 기준 d000 참값 대비 variant 요약·표, 형상 표.
+    lt = {result: result.json.load_transfer, diag: post/load_transfer_diag.json} — 없으면 빈 문자열(legacy)."""
+    if not lt or not lt.get("result"):
+        return ""
+    res = lt["result"]
+    diag = lt.get("diag") or {}
+    cs = res.get("cell_size_mm")
+    alt = res.get("alt") or None
+    pairs = [("전달 계획", res.get("plan") or "—"),
+             ("하중 전달", LT_METHOD_KO.get(res.get("method"), res.get("method"))
+              + ("" if res.get("method") != "cell" else (" 기존 24×14" if cs is None else f" {_f(cs)} mm"))),
+             ("지지", LT_SUPPORT_KO.get(res.get("support"), res.get("support") or "—")),
+             ("평가 영역", res.get("region_mode") or "—"),
+             ("다른 방식(진단)", "—" if not alt else lt_variant_ko("work" if alt.get("method") == "work" else (
+                 "cell:legacy" if alt.get("cell_size_mm") is None else f"cell:{float(alt['cell_size_mm']):g}"))),
+             ("기준 참값", LT_TRUTH_KO.get(res.get("truth"), res.get("truth") or "—")),
+             ("다른 방식 순위 같음", "—" if res.get("rank_alt_same") is None else ("예" if res["rank_alt_same"] else "아니오"))]
+    inner = H.kv_table(pairs)
+    sm = res.get("summary") or []
+    if sm:
+        inner += "<h3>베이스라인(d000) — 참값 대비</h3>" + H.table(
+            ["variant", "umax 배율", "C 배율", "MAC 최소", "하중 상관 최소"],
+            [[lt_variant_ko(x["variant"]), _rng(x.get("umax_ratio")), _rng(x.get("C_ratio")), x.get("mac_min"),
+              x.get("load_corr_min")] for x in sm], num=(3, 4))
+    rows = (diag.get("d000") or {}).get("rows") or []
+    if rows:
+        inner += H.table(["variant", "ESL", "하중 상관", "Σ|F| 배율", "max|F| 배율", "umax 배율", "C 배율", "MAC"],
+                         [[lt_variant_ko(r["variant"]), r.get("label") or r.get("entry_id"), r.get("load_corr"),
+                           r.get("sum_abs_ratio"), r.get("max_abs_ratio"), r.get("umax_ratio"), r.get("C_ratio"),
+                           r.get("mac")] for r in rows], num=(2, 3, 4, 5, 6, 7))
+    shp = diag.get("shapes") or []
+    if len(shp) > 1:                                        # once 계획 = 베이스라인 1행 → 형상 표 생략
+        trs = []
+        for x in shp:
+            prim = [p.get("primary") or {} for p in x.get("per_esl") or []]
+            ff = [float(p["far_frac"]) for p in prim if p.get("far_frac") is not None]
+            dm = [float(p["dM_rel_before"]) for p in prim if p.get("dM_rel_before") is not None]
+            sp = x.get("supports") or {}
+            trs.append([x["id"], x.get("status") or "", x.get("score_alt"), max(ff) if ff else None,
+                        max(dm) if dm else None, LT_SUPPORT_KO.get(sp.get("mode"), sp.get("mode") or "—"),
+                        sp.get("max_dist_mm"), (x.get("region") or {}).get("n_out")])
+        inner += "<h3>형상별</h3>" + H.table(["id", "상태", "score(다른 방식)", "먼 노드 하중 비", "모멘트 오차(보정 전)",
+                                              "지지", "지지 이전 거리 mm", "영역 밖 요소"], trs, num=(2, 3, 4, 6, 7))
+    model_diff = res.get("truth") == "a_direct" and (res.get("plan") or "") in ("bmesh_once", "step_once",
+                                                                                 "step_per_design")
+    inner += ("<p class='small muted'>배율 = variant ÷ 참값(같은 베이스라인(d000) 지지·물성·영역). 하중 상관 = 3N 성분 코사인, MAC = "
+              "(u·u_ref)²/((u·u)(u_ref·u_ref)) — 기준이 ESL 메시와 같을 때만. "
+              + ("②③ 참값 = ESL 원본 메시 직접 풀이라 배율에 모델 차(A ≠ B)가 포함됩니다 — 방식 간 상대 비교용. "
+                 if model_diff else "") + "전체는 post/load_transfer_diag.json</p>")
+    return inner
+
+
+SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스"}
+SM_FORM_KO = {"ritz": "C_ref / ρ (Ritz)", "taylor": "C_ref (2 − ρ) (Taylor)"}
+SM_CROSS_KO = ("다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 "
+               "순위를 매깁니다")
+SM_VERIFY_CROSS = "순위는 재풀이 C(다른 메시 비교)입니다 — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요."
+SM_VERIFY = ("순위는 1차 강성 지표입니다 — 상위 안은 산출물(ch_r.rad·ch_r.fem)로 Radioss 검증 낙하를 돌려 확인하세요"
+             "(ESL 원본 변형을 강제하는 관점이라 하중 재분배·국부 좌굴은 보지 못함).")
+
+
+def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> str:
+    """v0.20.0 강성 지표 절(esl_stiffness_metric.md §7·SM-7): 지표 정의·보조 열 표(score_solve·불평형·ρ·umax 강체 제거·εmax)·
+    검증 낙하 안내. sm = {metric, lin_form, imbalance_warn} — 없으면 빈 문자열(옛 스냅샷)."""
+    if not sm:
+        return ""
+    rk = res.get("ranking") or []
+    warn = float(sm["imbalance_warn"])          # 스냅샷 rank.imbalance_warn(_sm — DEFAULTS 병합)
+    met = sm.get("metric_effective") or sm.get("metric")
+    if sm.get("cross_mesh"):                     # 결정 A: 다른 메시 비교 — 지표 미적용, 순위 = 재풀이 C
+        inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(met, met)), ("비교", SM_CROSS_KO)])
+    else:
+        inner = H.kv_table([("순위 지표", SM_METRIC_KO.get(met, met)),
+                            ("식", SM_FORM_KO.get(sm.get("lin_form"), sm.get("lin_form"))),
+                            ("정의", "ρ = U_안 / U_ref(베이스라인 변형 u_ref 를 같은 메시의 안에 줄 때 변형에너지 비), "
+                                    "C_ref = 베이스라인 컴플라이언스"),
+                            ("불평형 경고", f"imbalance_rel > {warn:g}")])
+    trs = []
+    for x in rk[:top_n]:
+        imb = x.get("imbalance_max")
+        dim = imb is not None and float(imb) > warn
+        trs.append([x["rank"], x["id"], names.get(x["id"], x["id"]), x["score"], x.get("score_solve"),
+                    "—" if imb is None else (f"{float(imb) * 100:.1f} %" + (" ⚠" if dim else "")),
+                    "—" if x.get("rho_min") is None else f"{_f(x['rho_min'])}~{_f(x['rho_max'])}",
+                    x.get("umax_def"), x.get("epsmax")])
+    if trs and not sm.get("cross_mesh"):        # 다른 메시 비교는 지표 보조 열 없음(순위 = 재풀이 C)
+        inner += "<h3>보조 열(재풀이·변위 — 순위와 무관)</h3>" + H.table(
+            ["순위", "id", "이름", "score(지표)", "score(재풀이)", "불평형 max", "ρ 범위", "umax 강체 제거", "εmax"], trs,
+            num=(0, 3, 4, 7, 8))
+    verify = SM_VERIFY_CROSS if sm.get("cross_mesh") else SM_VERIFY
+    inner += f"<p class='small muted'>{H.esc(verify)}" + ("" if sm.get("cross_mesh") else
+                                                         " 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.") + "</p>"
+    return inner
+
+
 def render_compare(ctx: dict) -> str:
     """④ 형상 직접 비교 보고서(esl_step_compare.md §6): 형상 표·메시 프로필·기준 출처(+ COMPARE_REF_CASE_MESH)·순위·
     ESL별 개선율·한계(+ 메시 차이·같은 좌표계 전제·작은 구멍 메움만·필렛 제거 없음). 변수·DOE·미리보기·민감도·경계 절 없음."""
@@ -354,6 +470,12 @@ def render_compare(ctx: dict) -> str:
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
               f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
+    sm_html = stiffness_html(ctx.get("stiffness"), res, names)
+    if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
+        S.append(H.section("stiffness", "강성 지표", sm_html))
+    lt_html = load_transfer_html(ctx.get("load_transfer"))
+    if lt_html:                                             # v0.20.0 LT-13(새 스냅샷만 — legacy 보고서 바이트 불변)
+        S.append(H.section("load_transfer", "하중 전달", lt_html))
     best = ctx.get("best")
     if best:
         S.append(H.section("best", f"4. 최적 형상 {best.get('id')} {names.get(best.get('id'), '')}",
@@ -538,6 +660,12 @@ def render(ctx: dict) -> str:
               f"{H.esc(ns.get('fixed', 0))}·형상 {H.esc(ns.get('geom', 0))} · 실패 모핑 {H.esc(nf.get('morph', 0))}·메시 "
               f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "4. 순위", inner))
+    sm_html = stiffness_html(ctx.get("stiffness"), res, {})
+    if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
+        S.append(H.section("stiffness", "강성 지표", sm_html))
+    lt_html = load_transfer_html(ctx.get("load_transfer"))
+    if lt_html:                                             # v0.20.0 LT-13·20(새 스냅샷만 — legacy 보고서 바이트 불변)
+        S.append(H.section("load_transfer", "하중 전달", lt_html))
     # 5. 민감도
     S.append(H.section("sensitivity", "5. 파라미터 민감도", sensitivity_svg(res.get("sensitivity"))))
     # 6. 경계 경고

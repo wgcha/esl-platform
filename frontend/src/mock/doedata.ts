@@ -4,8 +4,9 @@
 import type {
   DoeDefeatureFeature, DoeDefeatureList, DoeRankWarn,
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
+import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
 import type { DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
 import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
@@ -58,8 +59,27 @@ export const DOE_METHOD_SOURCES: DoeMethodSources = {
   ],
 };
 
+/** 목 서버 설정 = 저장소 config/esl_platform.example.yaml 의 bead_doe 값(하드코딩 없음 — p3mock 의 CHANGELOG?raw 와 같은 방식).
+ *  bead_doe 아래 2칸 들여쓴 섹션(load_transfer·rank)의 4칸 들여쓴 스칼라·흐름 배열만 읽는다(주석 제거, null·숫자·문자열). */
+function exampleYaml(section: string, key: string): unknown {
+  const lines = EXAMPLE_YAML.split(/\r?\n/);
+  const top = lines.findIndex((l) => /^bead_doe:/.test(l));
+  const start = lines.findIndex((l, i) => i > top && l.startsWith(`  ${section}:`));
+  for (let i = start + 1; i < lines.length && /^ {4}|^\s*$/.test(lines[i]); i++) {
+    const m = lines[i].match(new RegExp(`^ {4}${key}:\\s*([^#]*?)\\s*(#.*)?$`));
+    if (!m) continue;
+    const v = m[1];
+    const one = (t: string): unknown => (t === "null" ? null : /^-?[0-9.]+(e-?[0-9]+)?$/i.test(t) ? Number(t) : t);
+    return v.startsWith("[") ? v.slice(1, -1).split(",").map((t) => one(t.trim())) : one(v);
+  }
+  return undefined;
+}
+
 export function makeDoeSettings(): DoeSettingsOut {
   return {
+    // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
+    load_transfer: { method: exampleYaml("load_transfer", "method") as DoeLoadTransferMethod, cell_size_mm: exampleYaml("load_transfer", "cell_size_mm") as number | null, cell_choices_mm: exampleYaml("load_transfer", "cell_choices_mm") as (number | null)[], cell_min_mm: exampleYaml("load_transfer", "cell_min_mm") as number },
+    rank: { metric: exampleYaml("rank", "metric") as DoeRankMetric, lin_form: exampleYaml("rank", "lin_form") as "ritz" | "taylor", lin_valid: exampleYaml("rank", "lin_valid") as number, imbalance_warn: exampleYaml("rank", "imbalance_warn") as number },
     enabled: true,
     reason: null,
     paicad: { ready: true, version: "0.14.0", pinned: "0.14.0", warning: null },
@@ -762,6 +782,154 @@ export function makeComparePrep(shapes: CompareInputShape[], refSource: "step" |
 }
 
 /** 비교 결과(결정적): READY 형상마다 score(형상 해시), 실패 형상은 excluded, 민감도 없음(COMPARE_NO_PARAMS) */
+/** v0.20.0 하중 전달 진단(esl/doe_load_transfer_diag/1 — 결정적 목). 기준이 Case 메시면 identity(상관·MAC 있음), STEP 이면 A 직접 풀이 참값 */
+const LT_SWEEP: Record<string, { corr: number; sum: number; max: number; umax: number; C: number; mac: number }> = {
+  work: { corr: 0.991, sum: 1.02, max: 1.05, umax: 1.03, C: 1.02, mac: 0.998 },
+  "cell:legacy": { corr: 0.03, sum: 0.02, max: 0.005, umax: 41.2, C: 33.5, mac: 0.02 },
+  "cell:10": { corr: 0.21, sum: 0.11, max: 0.04, umax: 9.4, C: 7.9, mac: 0.19 },
+  "cell:5": { corr: 0.55, sum: 0.42, max: 0.2, umax: 3.3, C: 2.8, mac: 0.61 },
+  "cell:3": { corr: 0.83, sum: 0.7, max: 0.46, umax: 1.62, C: 1.45, mac: 0.88 },
+};
+export function ltVariants(lt: DoeLoadTransferResolved): string[] {
+  const prim = lt.method === "work" ? "work" : `cell:${lt.cell_size_mm == null ? "legacy" : lt.cell_size_mm}`;
+  const alt = lt.method === "work" ? "cell:3" : "work";
+  return [...new Set([prim, alt, "cell:legacy", "cell:10", "cell:5", "cell:3"])].filter((v) => v in LT_SWEEP);
+}
+/** v0.20.0 새 스냅샷 결과: 순위 지표 lin(ritz) — score = 1차 지표, score_solve = 재풀이 C 기준(옛 score), 불평형·ρ·강체 제거 umax(esl_stiffness_metric.md §6).
+ *  순위 순서는 그대로 두고 값만 바꾼다(결정적). 3번째 안부터 불평형이 큼(#63 재현 — 흐림·경고) */
+export function withMetric(res: DoeResultOut): DoeResultOut {
+  const ranking = res.ranking.map((r, i) => {
+    const score = +(1 - (1 - r.score) * 0.85).toFixed(4);
+    const imb = [0.011, 0.043, 0.18, 0.27][i % 4];
+    const rho = +(1 + 0.12 * (i + 1) * (i % 2 ? -1 : 1)).toFixed(3);
+    return {
+      ...r,
+      score,
+      improvement: +(1 - score).toFixed(4),
+      score_solve: r.score,
+      imbalance_max: imb,
+      rho_min: +(Math.min(rho, 1 - 0.05 * (i + 1))).toFixed(3),
+      rho_max: +(Math.max(rho, 1 + 0.05 * (i + 1))).toFixed(3),
+      umax_def: +(r.umax * 0.35).toFixed(3),
+      C_solve: Object.fromEntries((r.per_esl ?? []).map((p) => [p.entry_id, p.C])),
+      per_esl: r.per_esl?.map((p, k) => ({ ...p, C: +(p.C * 0.98).toFixed(1), C_solve: p.C, rho: +(rho + 0.01 * k).toFixed(3), imbalance_rel: +(imb * (1 - 0.1 * k)).toFixed(4), umax_def: +(p.umax * 0.35).toFixed(3) })),
+    };
+  });
+  // R-SM-1 결정: |ρ−1| > lin_valid 인 안은 순위 값 = 재풀이 C(basis solve·SM_LIN_RANGE) — 범위 안은 지표 그대로, 그 뒤 다시 정렬
+  const lv = makeDoeSettings().rank!.lin_valid!;   // 목 서버 설정 값(하드코딩 없음)
+  const out = (r: { rho_min?: number | null; rho_max?: number | null }) => Math.abs((r.rho_min ?? 1) - 1) > lv || Math.abs((r.rho_max ?? 1) - 1) > lv;
+  const ranked = ranking
+    .map((r) => (out(r) ? { ...r, score: r.score_solve ?? r.score, improvement: +(1 - (r.score_solve ?? r.score)).toFixed(4), basis: "solve" as const, sm_warn: ["SM_LIN_RANGE"] } : { ...r, basis: "lin" as const }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+  const n_fallback = ranked.filter((r) => r.basis === "solve").length;
+  const warnings = [...res.warnings];
+  if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > lv)) warnings.push({ code: "SM_LIN_RANGE", message: `ρ 가 lin_valid(${lv}) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요` });
+  return { ...res, ranking: ranked, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { ...makeDoeSettings().rank!, n_fallback }, C_ref_solve: res.C_ref, warnings };
+}
+/** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
+export type LtKind = "case" | "bmesh" | "step" | "compare";
+/** SM-11(2026-11-13): 새 스냅샷 기본 = 재풀이 C 주 열(metric_effective solve), 1차 지표(ritz)는 보조 열 score_lin·ρ·불평형 */
+export function withSolveMetric(res: DoeResultOut): DoeResultOut {
+  const r = withMetric(res);
+  const ranking = r.ranking
+    .map(({ basis, sm_warn: _w, ...x }) => ({ ...x, score_lin: basis === "solve" ? null : x.score, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4),
+      per_esl: x.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C })) }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const st = makeDoeSettings().rank!;
+  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: false, rank: { ...st, metric: "solve", metric_effective: "solve", cross_mesh: false } };
+}
+/** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
+ *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
+export function withCrossMesh(res: DoeResultOut): DoeResultOut {
+  const r = res.metric === "lin" ? res : withMetric(res);
+  const ranking = r.ranking
+    .map(({ basis: _b, sm_warn: _w, ...x }) => ({ ...x, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4), imbalance_max: null, rho_min: null, rho_max: null,
+      per_esl: x.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C, rho: null, imbalance_rel: null })) }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const warnings = [...r.warnings.filter((w) => w.code !== "SM_LIN_RANGE"), { code: "SM_CROSS_MESH", message: "다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 순위를 매겼습니다" }];
+  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: true, rank: { ...(r.rank ?? {}), n_fallback: undefined, metric_effective: "solve", cross_mesh: true }, warnings };
+}
+export function ltKind(o: { scenario: DoeScenario; inputs: { select_base?: string | null } }): LtKind {
+  if (o.scenario === "compare") return "compare";
+  if (o.scenario === "mesh" || (o.scenario === "select" && o.inputs.select_base === "mesh")) return "bmesh";
+  if (o.scenario === "step" || (o.scenario === "select" && o.inputs.select_base === "step")) return "step";
+  return "case";
+}
+const LT_PLAN: Record<LtKind, string> = { case: "case_once", bmesh: "bmesh_once", step: "step_once", compare: "compare_per_shape" };
+export function makeLtDiag(result: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved, kind: LtKind = "compare"): DoeLoadTransferDiag {
+  // Q-LT-4: identity(하중·MAC 비교)는 work + 같은 메시일 때만 — ① 은 Case 메시 자신, ④ 는 기준이 Case 메시
+  const sameMesh = kind === "case" || (kind === "compare" && result.reference_source === "case");
+  const identity = lt.method === "work" && sameMesh;
+  const truth = sameMesh ? ("direct_nodal" as const) : ("a_direct" as const);
+  const vars = ltVariants(lt);
+  const prim = vars[0];
+  const label = (e: string) => e.slice(0, 8);
+  const rows = vars.flatMap((v) =>
+    entryIds.map((e, k) => {
+      const m = LT_SWEEP[v];
+      const j = 1 + 0.03 * k;
+      return { entry_id: e, label: label(e), variant: v, load_corr: identity ? +(m.corr / j).toFixed(3) : null, sum_abs_ratio: m.sum, max_abs_ratio: m.max, umax_ratio: +(m.umax * j).toFixed(2), C_ratio: +(m.C * j).toFixed(2), mac: identity ? +(m.mac / j).toFixed(3) : null };
+    }),
+  );
+  const metrics = (v: string, k: number) => {
+    const m = LT_SWEEP[v];
+    return { sum_abs_f: +(1.8e5 * m.sum).toFixed(0), max_abs_f: +(4.5e4 * m.max).toFixed(0), dF_rel: 1e-9, dM_rel_before: v === "work" ? 2e-3 * (k + 1) : 0.05, dM_rel: 1e-9, corr_rel: v === "work" ? 0.01 * (k + 1) : 0.2, far_frac: v === "work" ? 0.0004 * (k + 1) : 0, small_frac: null };
+  };
+  return {
+    schema: "esl/doe_load_transfer_diag/1",
+    method: lt.method,
+    cell_size_mm: lt.cell_size_mm,
+    alt: { method: vars[1] === "work" ? "work" : "cell", cell_size_mm: vars[1] === "work" ? null : 3 },
+    reference: { did: "d000", source: sameMesh ? "case" : "step", identity, truth },
+    plan: { id: LT_PLAN[kind], reuse: kind === "compare" ? "per_target" : "once", placement: { kind: kind === "compare" || kind === "case" ? "global" : "rigid", ...(kind === "bmesh" || kind === "step" ? { resid_med_mm: 0.4 } : {}) }, alt_designs: kind === "compare" ? "on" : "off" },
+    shapes: (kind === "compare" ? result.ranking : [{ id: "d000", score: 1 }]).map((r, i) => ({
+      id: r.id,
+      status: "OK",
+      ...(kind === "compare"
+        ? {
+            supports: { mode: i === 2 ? ("fallback" as const) : ("transfer" as const), max_dist_mm: 1.1 + 0.2 * i, ...(i === 2 ? { reason: "LT_SUPPORT_FALLBACK" } : {}) },
+            region: { mode: "auto", n_in: 21_000 - 300 * i, n_out: 300 * i },
+          }
+        : {}),
+      transfer: { max_dist_mm: 0.9 + 0.3 * i, far_n: i, newton_fallback_n: 0, seconds: 4.2 },
+      per_esl: entryIds.map((e, k) => ({ entry_id: e, label: label(e), primary: metrics(prim, k), alt: { ...metrics(vars[1], k), C: 4.8e5, umax: 3.9 } })),
+      score_alt: +(r.score * (lt.method === "work" ? 1.07 : 0.96)).toFixed(4),
+    })),
+    d000: { truth, rows },
+    warnings: [],
+    seconds: 61.4,
+  };
+}
+/** 결과에 하중 전달 요약·view3d_ref·view3d_esl 을 붙임(새 스냅샷만 — LT-13) */
+export function withLoadTransfer(res: DoeResultOut, entryIds: string[], lt: DoeLoadTransferResolved, kind: LtKind = "compare"): DoeResultOut {
+  const diag = makeLtDiag(res, entryIds, lt, kind);
+  const vars = ltVariants(lt);
+  const summary: DoeLoadTransferSummary["summary"] = vars.map((v) => {
+    const rs = diag.d000.rows.filter((r) => r.variant === v);
+    const mm = (xs: number[]): [number, number] => [Math.min(...xs), Math.max(...xs)];
+    const macs = rs.map((r) => r.mac).filter((x): x is number => x != null);
+    const cors = rs.map((r) => r.load_corr).filter((x): x is number => x != null);
+    return { variant: v, umax_ratio: mm(rs.map((r) => r.umax_ratio)), C_ratio: mm(rs.map((r) => r.C_ratio)), mac_min: macs.length ? Math.min(...macs) : null, load_corr_min: cors.length ? Math.min(...cors) : null };
+  });
+  const kk = (e: string) => `d000_e${String(entryIds.indexOf(e)).padStart(2, "0")}`;
+  const shown = res.view3d.filter((d) => d !== "d000");
+  const view3d_esl: Record<string, string> = {};
+  for (const d of shown) {
+    const r = res.ranking.find((x) => x.id === d);
+    if (r?.worst_entry_id) view3d_esl[d] = r.worst_entry_id;
+  }
+  const view3d_ref: Record<string, string> = {};
+  for (const e of Object.values(view3d_esl)) view3d_ref[e] = kk(e);
+  return {
+    ...res,
+    load_transfer: { method: lt.method, cell_size_mm: lt.cell_size_mm, ...(lt.support ? { support: lt.support } : {}), ...(lt.region_mode ? { region_mode: lt.region_mode } : {}), alt: diag.alt, truth: diag.d000.truth, summary, rank_alt_same: kind === "compare" ? true : null, warnings_n: 0 },
+    ...(kind === "compare" ? { view3d_ref, view3d_esl } : {}),
+  };
+}
+
 export function makeCompareResult(prep: NonNullable<DoeStudyOut["prep"]>, entryIds: string[]): DoeResultOut {
   const rows = prep.shapes ?? [];
   const ref = rows.find((r) => r.reference) ?? rows[0];
@@ -1028,6 +1196,21 @@ export class DoeMock {
       this.seededJobs.push(j);
       c.jobIds.push(j.id);
     }
+    // 3b) v0.20.0 ④ 하중 전달(work 기본) 완료 — 요약 줄·진단 표·3D 같은 ESL
+    const lt20: DoeLoadTransferResolved = { method: "work", cell_size_mm: null, support: "transfer", region_mode: "auto" };
+    const c20 = cmp("doe-20", "Ch/R 형상 비교 — 하중 전달 work(v0.20)", "2026-11-13T02:00:00Z", mk([["chr_base.step", "현행"], ["chr_rib_A.step", "리브 A안"], ["chr_rib_B_rough.step", "리브 B안"], ["chr_bead_C.step", "비드 C안"]], 0), "step");
+    c20.out.inputs = { ...c20.out.inputs, load_transfer: lt20, rank_metric: "lin" };
+    c20.result = withLoadTransfer(makeCompareResult(c20.out.prep!, c20.out.entry_ids), c20.out.entry_ids, lt20, "compare");
+    c20.out.phase = "DONE";
+    c20.out.version = 4;
+    for (const [jt, t0, t1] of [
+      ["DOE_PREP", "2026-11-13T02:00:05Z", "2026-11-13T02:06:00Z"],
+      ["DOE_RUN", "2026-11-13T02:10:00Z", "2026-11-13T02:21:00Z"],
+    ] as [JobType, string, string][]) {
+      const j = doneJob(this.id("j-doe"), "p-body", c20.out.id, jt, t0, t1, true);
+      this.seededJobs.push(j);
+      c20.jobIds.push(j.id);
+    }
     // 4) ④ 준비 완료(기준 없음 = Case 메시, 1개 크기 불일치) — 비교 실행 대기
     const d = cmp("doe-4", "Ch/R 형상 비교 — Case 기준", "2026-11-04T01:00:00Z", mk([["chr_rib_A.step", "리브 A안"], ["chr_rib_B.step", "리브 B안"], ["chr_big_E.step", "E안(큰 판)"]], null), "case");
     d.out.version = 2;
@@ -1121,7 +1304,21 @@ export class DoeMock {
     const j11 = doneJob(this.id("j-doe"), "p-body", sel11.out.id, "DOE_PREP", "2026-11-09T03:00:05Z", "2026-11-09T03:01:00Z");
     this.seededJobs.push(j11);
     sel11.jobIds.push(j11.id);
-    this.recs.push(a, b, c, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
+    // 3c) v0.20.0 ② B 메시 비드 선택 완료(하중 전달 work, plan once — 요약 줄 + 베이스라인 표만, "모델 차 포함")
+    const s21: Rec = {
+      ...a,
+      out: {
+        ...a.out,
+        id: "doe-21",
+        title: "QN80J Ch/R 비드 — B 메시 하중 전달(v0.20)",
+        scenario: "select",
+        created_at: "2026-11-13T04:00:00Z",
+        inputs: { ...a.out.inputs, mesh: { file_name: "QN80J_chr.rad", sha256: "b2".padEnd(64, "0") }, part_title: "chassis rear", inch: 75, select_base: "mesh", bead_source: "manual", select_schema: 2, load_transfer: { method: "work", cell_size_mm: null }, rank_metric: "lin" },
+      },
+      jobIds: [...a.jobIds],
+    };
+    s21.result = a.result ? { ...a.result, scenario: "select" } : null;
+    this.recs.push(a, b, c, c20, s21, d, g, sel5, sel6, sel8, sel9, sel10, sel11);
   }
 
   /** v0.17.3 시연·시험(?demoMeshSel=1): ② 다른 모델(B 메시) 비드 직접 선택 — doe-14 선택 저장됨(평면도 경계 매핑 층) */
@@ -1244,6 +1441,7 @@ export class DoeMock {
     }
     if (r.out.phase === "RUN" && j.job_type === "DOE_RUN" && r.out.scenario === "compare" && r.out.prep) {
       r.result = makeCompareResult(r.out.prep, r.out.entry_ids);
+      if (r.out.inputs.load_transfer) r.result = withLoadTransfer(r.result, r.out.entry_ids, r.out.inputs.load_transfer, "compare");
       r.out.phase = "DONE";
       r.out.version += 1;
     }
@@ -1518,12 +1716,47 @@ export class DoeMock {
     } as unknown as MeshCheckOut;
   }
 
+  /** v0.20.0 요청 → 해석된 하중 전달 값(요청 없으면 설정값, work 는 셀 크기 없음) */
+  private resolveLt(b: Record<string, unknown>, compare = false): DoeLoadTransferResolved {
+    const c = this.settings.load_transfer!;
+    const method = (b.load_transfer as "work" | "cell" | null | undefined) ?? c.method;
+    const size = method === "work" ? null : b.cell_size_mm !== undefined ? (b.cell_size_mm as number | null) : c.cell_size_mm;
+    return compare ? { method, cell_size_mm: size, support: "transfer", region_mode: "auto" } : { method, cell_size_mm: size };
+  }
+
+  /** v0.20.0 요청 검사(§4.2 — 모든 시나리오): 값 → work + 셀 크기 값 → 범위 */
+  private ltCheck(b: Record<string, unknown>): MockResponse | null {
+    const ltc = this.settings.load_transfer;
+    if (b.load_transfer != null && b.load_transfer !== "work" && b.load_transfer !== "cell") return err(422, "INVALID_PARAMS", "하중 전달 방식이 올바르지 않습니다.");
+    if (b.load_transfer === "work" && b.cell_size_mm != null) return err(422, "LOAD_TRANSFER_INVALID", "일 등가에는 셀 크기를 쓸 수 없습니다.");
+    if (typeof b.cell_size_mm === "number" && (b.cell_size_mm < (ltc?.cell_min_mm ?? 3) || b.cell_size_mm > 200)) return err(422, "LOAD_TRANSFER_INVALID", "셀 크기가 범위 밖입니다.", { min: ltc?.cell_min_mm ?? 3, max: 200 });
+    return null;
+  }
+
+  /** 새 스냅샷의 결과에 하중 전달 요약·진단 키를 한 번 붙임(옛 스터디 = inputs.load_transfer 없음 → 그대로) */
+  private ensureLt(rec: Rec) {
+    // 결정 A: 같은 메시(①②·새 ③)만 1차 강성 지표, 형상·안마다 메시가 다른 ④·옛 ③ = 재풀이 C(다른 메시 비교)
+    if (rec.result && rec.out.inputs.rank_metric && !rec.result.metric)
+      rec.result = rec.out.scenario === "compare" || rec.out.scenario === "step" ? withCrossMesh(rec.result) : rec.out.inputs.rank_metric === "lin" ? withMetric(rec.result) : withSolveMetric(rec.result);
+    const lt = rec.out.inputs.load_transfer;
+    if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
+  }
+
   private check(b: Record<string, unknown>): MockResponse {
     if (this.checkError) return this.checkError;
     const pid = String(b.project_id ?? "");
     if (!this.ctx.canRun(pid)) return err(403, "FORBIDDEN", "이 프로젝트에서 실행 권한이 없습니다.");
     const scenario = b.scenario as DoeScenario;
-    if (scenario === "compare") return this.checkCompare(b, pid);
+    const bad = this.ltCheck(b);
+    if (bad) return bad;
+    const out = scenario === "compare" ? this.checkCompare(b, pid) : this.checkOther(b, pid);
+    // v0.20.0 해석된 하중 전달 값(모든 모드, 설정이 있을 때만)
+    if (out.status === 200 && this.settings.load_transfer && scenario !== "compare") (out.body as DoeCheckOut).load_transfer = this.resolveLt(b);
+    return out;
+  }
+
+  private checkOther(b: Record<string, unknown>, pid: string): MockResponse {
+    const scenario = b.scenario as DoeScenario;
     if (!this.settings.enabled) return err(503, this.settings.reason ?? "DOE_DISABLED", "강성 평가 스터디를 쓸 수 없습니다.");
     if (!["same", "mesh", "step", "select"].includes(scenario)) return err(422, "INVALID_PARAMS", "시나리오가 올바르지 않습니다.");
     if (scenario === "select") return this.checkSelect(b, pid);
@@ -1735,6 +1968,7 @@ export class DoeMock {
       size: null,
       props_default: { t: 1.2, E: 205000, nu: 0.3 },
       ...(cc?.mesh_mode ? { mesh_mode: (mode as DoeMeshMode | undefined) ?? cc.mesh_mode, remesh_available: !!cc.remesh_available } : {}),
+      ...(this.settings.load_transfer ? { load_transfer: this.resolveLt(b, true) } : {}),
       warnings,
     };
     if (!nRef) {
@@ -1746,6 +1980,22 @@ export class DoeMock {
   }
 
   handle(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
+    const n0 = this.recs.length;
+    const res = this.handle0(method, path, query, b);
+    // v0.20.0 새로 만든 스터디(모든 모드)의 스냅샷에 해석된 하중 전달 값(compare 는 handle0 에서 이미)
+    if (method === "POST" && path === "/doe/studies" && res?.status === 201 && this.recs.length > n0) {
+      const rec = this.recs[this.recs.length - 1];
+      rec.out.inputs.rank_metric = this.settings.rank?.metric ?? undefined; // v0.20.0 새 스터디 순위 지표 = 설정(기본 solve — SM-11)
+      if (!this.settings.load_transfer) return ok(this.studyOut(rec), 201);
+      if (!rec.out.inputs.load_transfer) {
+        rec.out.inputs.load_transfer = this.resolveLt(b);
+        return ok(this.studyOut(rec), 201);
+      }
+    }
+    return res;
+  }
+
+  private handle0(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse | null {
     if (!path.startsWith("/doe/")) return null;
     let r: RegExpMatchArray | null;
     if (method === "GET" && path === "/doe/settings") return ok(this.settings);
@@ -1780,6 +2030,7 @@ export class DoeMock {
               reference_source: co.reference_source ?? "step",
               // v0.16.0 적용 메시 방식(요청 없으면 설정값) — 메시 형상만이면 해당 없음이지만 값은 기록
               ...(co.mesh_mode ? { mesh_mode: co.mesh_mode, mesh_refine: b.mesh_refine === false ? false : true } : {}),
+              ...(co.load_transfer ? { load_transfer: co.load_transfer } : {}),
             },
             phase: "PREP",
             version: 1,
@@ -1940,7 +2191,8 @@ export class DoeMock {
       }
       if (method === "GET" && sub === "/results") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
-        return ok(rec.result);
+        this.ensureLt(rec);
+        return ok(rec.result!);
       }
       if (method === "GET" && sub === "/results/per-esl") {
         if (rec.out.phase !== "DONE" || !rec.result) return err(409, "RESULT_NOT_READY", "결과가 아직 없습니다.");
@@ -1952,14 +2204,17 @@ export class DoeMock {
         const files: DoeFileOut[] = [{ rel: "report.html", size: 512_331, downloadable: true }, { rel: "post/ranking.csv", size: 8_204, downloadable: true }, ...(rec.result?.best?.files ?? [])];
         return ok(files);
       }
+      if (method === "GET" && sub === "/download" && query.get("rel") === "post/load_transfer_diag.json" && rec.result && rec.out.inputs.load_transfer)
+        return ok(makeLtDiag(rec.result, rec.out.entry_ids, rec.out.inputs.load_transfer, ltKind(rec.out)));
       if (method === "GET" && (sub === "/download" || sub === "/bundle")) return rec.result ? { status: 200, body: sub === "/bundle" ? "PK mock zip\n" : "mock file\n" } : err(404, "NOT_READY", "결과가 아직 없습니다.");
       if (method === "GET" && sub === "/report") return rec.result ? { status: 200, body: "<html><body>mock DOE report</body></html>" } : err(404, "NOT_READY", "보고서가 아직 없습니다.");
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {
         const did = decodeURIComponent(r[1]);
-        if (!rec.result?.view3d.includes(did)) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");
+        const isRef = Object.values(rec.result?.view3d_ref ?? {}).includes(did);
+        if (!rec.result?.view3d.includes(did) && !isRef) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");
         const m = mockView3d().manifest(`doe-${rec.out.id}-${did}`);
-        const row = rec.result.ranking.find((x) => x.id === did);
-        const ratio = row ? row.umax / rec.result.baseline.umax : 1;
+        const row = rec.result!.ranking.find((x) => x.id === did);
+        const ratio = row ? row.umax / rec.result!.baseline.umax : 1;
         return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
       }
       return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);

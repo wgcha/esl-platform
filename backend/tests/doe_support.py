@@ -232,7 +232,8 @@ SELECT_KEYS_V0161 = (("fixed_policy",), ("island",), ("hold",), ("quality", "fai
                      ("step_graph",))
 COMPARE_KEYS_V0161 = tuple(("defeature", k) for k in (
     "kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm", "narrow_w_factor",
-    "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),)
+    "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),
+                                                                                                    ("load_transfer",))   # v0.20.0 LT — 코어 병합 전 대조 생략
 
 
 def _has(d: Any, path: tuple) -> bool:
@@ -262,6 +263,11 @@ def core_view_v0161(dump: dict[str, Any], core: dict[str, Any]) -> dict[str, Any
         for path in keys:
             if not _has(core.get(sect), path):
                 _drop(out[sect], path)
+    for k in ("metric", "lin_form", "lin_valid", "imbalance_warn"):     # v0.20.0 SM 강성 지표 rank 키 — 코어 병합 전 대조 생략
+        if k not in (core.get("rank") or {}):
+            (out.get("rank") or {}).pop(k, None)
+    if "load_transfer" not in core:        # v0.20.0 §13.6 최상위 하중 전달 — 코어 병합 전 대조 생략
+        out.pop("load_transfer", None)
     lad = (((out.get("compare") or {}).get("mesh")) or {}).get("ladder")
     core_lad = (((core.get("compare") or {}).get("mesh")) or {}).get("ladder")
     if isinstance(lad, list) and isinstance(core_lad, list) and "defeature" not in core_lad:

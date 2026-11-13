@@ -9,7 +9,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { CODE_TEXT, errorText } from "../api/client";
 import {
   BEAD_SOURCE_NAME, DEFEATURE_KIND_NAME, diagText, doe, featureSizeText,
-  MESH_METHOD_SHORT, MESH_MODE_NAME, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf,
+  MESH_METHOD_SHORT, MESH_MODE_NAME, ltKey, ltVariantLabel, SCENARIO_NAME, STATUS_NAME, STEP_EXT, defaultShapeName, meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf,
   shapeNameProblem, warnText, isInfoWarn,
 } from "../api/doe";
 import type { DoeBeadSource, DoeSelectBase, DoeDefeatureList, DoeCheckOut, DoeDesignStatus, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeScenario, DoeSettingsOut, DoeStudyOut, EntryOut } from "../api/types";
@@ -175,9 +175,11 @@ export interface InputsForm {
   meshMode?: DoeMeshMode | null;
   /** v0.16.0 ④ 실패 시 세분화 허용(null = 설정값, 기본 켬) */
   meshRefine?: boolean | null;
+  /** v0.20.0 ④ 고급 설정 하중 전달 select 값(`work`·`cell:legacy`·`cell:<mm>`, null = 서버 설정값 — 요청에 안 넣음) */
+  ltChoice?: string | null;
 }
 
-export const EMPTY_INPUTS: InputsForm = { step: null, mesh: null, partTitle: "", inch: "", t: "", E: "", nu: "", meshSize: "", title: "", shapes: [], refId: null, meshMode: null, meshRefine: null };
+export const EMPTY_INPUTS: InputsForm = { step: null, mesh: null, partTitle: "", inch: "", t: "", E: "", nu: "", meshSize: "", title: "", shapes: [], refId: null, meshMode: null, meshRefine: null, ltChoice: null };
 
 /** ③ 물성·요소 크기 검사(t>0, E>0, 0≤ν<0.5, 크기 설정 범위). ④ 는 meshSize=false(크기 설정 고정) */
 export function propsProblem(f: InputsForm, st: DoeSettingsOut, meshSize = true): string | null {
@@ -385,7 +387,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
           <input aria-label="제목" maxLength={200} value={form.title} placeholder={`예: 75형 Ch/R ${isSel ? (selectBase === "mesh" ? "다른 모델 비드 선택" : stepBase ? "STEP 비드 선택" : "비드 선택") : SCENARIO_NAME[scenario]} 1차`} onChange={(e) => set("title", e.target.value)} />
         </Field>
       </div>
-      {(scenario === "compare" || stepBase) && advanced}
+      {advanced}
       {checking && <div className="small muted">입력 검사 중…</div>}
       <ErrorLine text={checkError} />
       {check && <CheckLine check={check} scenario={scenario} stepBase={stepBase} />}
@@ -810,6 +812,7 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
         {prep?.mesh?.size_mm != null ? ` · 메시 ${prep.mesh.size_mm} mm` : ""}
         {i.mesh_mode ? ` · 메시 방식 ${MESH_MODE_NAME[i.mesh_mode]}${i.mesh_mode === "auto" && i.mesh_refine === false ? "(세분화 끔)" : ""}` : ""}
         {prep?.mesh?.gmsh_version ? ` (gmsh ${prep.mesh.gmsh_version})` : ""}
+        {i.load_transfer ? ` · 하중 ${ltVariantLabel(ltKey(i.load_transfer.method, i.load_transfer.cell_size_mm))}` : ""}
       </div>
       {withQ.length > 0 && (
         <div className={`small one-line ${over.length ? "warn-text" : "muted"}`} data-testid="doe-quality-summary" title={over.length ? over.map((r) => r.name).join(", ") : undefined}>

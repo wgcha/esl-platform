@@ -77,7 +77,11 @@ DEFAULTS: dict = {
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},
     "view3d": {"top_k": 3},
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
-    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000},
+    # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
+    # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
+    # metric 기본 solve(재풀이 C — 2026-11-13 사용자 결정 D-0.20.0-SM-11), lin(ritz|taylor) 은 선택·보조 열
+    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "solve", "lin_form": "ritz", "lin_valid": 0.3,
+             "imbalance_warn": 0.02},
     "settings_cache_s": 300,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
     # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).
@@ -184,7 +188,22 @@ DEFAULTS: dict = {
                             "skew": {"warn": 34.0, "fail": 40.0}, "jacobian": {"warn": 0.7, "fail": 0.6},
                             "quad_min_angle": {"warn": 46.0, "fail": 40.0}, "quad_max_angle": {"warn": 134.0, "fail": 140.0},
                             "tria_min_angle": {"warn": 34.0, "fail": 30.0}, "tria_max_angle": {"warn": 112.0, "fail": 120.0},
-                            "tria_pct": {"warn": 10.0, "fail": 15.0}}},
+                            "tria_pct": {"warn": 10.0, "fail": 15.0}},
+                # v0.20.0 ④ 전용 하중 전달 키(esl_load_transfer.md §13.6 — 지지 이전 LT-7·평가 영역 LT-8, pydantic
+                # BeadDoeCompareLoadTransferCfg·두 yaml 거울). 공통 키(method·work·diag …)는 최상위 load_transfer
+                "load_transfer": {"support": "transfer", "support_tol_mm": None,
+                                  "region": {"mode": "auto", "pad_mm": None, "min_frac": 0.5}}},
+    # v0.20.0 하중 전달 — 모든 모드 ①②③④ 공통(esl_load_transfer.md §13.6 LT-19, pydantic BeadDoeLoadTransferCfg·두 yaml
+    # 거울). 새 스터디 스냅샷(doe.load_transfer)에만 쓰임 — 스냅샷에 키 없는 옛 스터디 = 각 모드 지금 경로(legacy)
+    "load_transfer": {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0],
+                      "cell_min_mm": 3.0,
+                      # far_*: proj_tol 초과(먼 노드) 하중 비 — 진단·경고(LT_FAR_NODES)만(far_fail_frac 는 거울 호환용, 판정에
+                      # 안 씀). 실패(FAILED_SIZE·BASELINE_FAILED LT_TRANSFER_FAILED) = 배치 오류 판정: fail_dist_mm 초과 노드의
+                      # 하중 비 > fail_frac(2026-11-13 메인 결정 — 비드 깊이 차 수 mm 는 정상)
+                      "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01,
+                               "far_fail_frac": 0.2, "fail_dist_mm": 20.0, "fail_frac": 0.2},
+                      "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0, "alt_designs": "auto",
+                               "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
     # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 계약 없이 키 추가 금지).
     # v0.16.1(esl_select_relax.md §4.4): fixed_policy·quality.fail_policy = warn(경고만, 뒤집힘만 제외) | skip(v0.16.0 동작),

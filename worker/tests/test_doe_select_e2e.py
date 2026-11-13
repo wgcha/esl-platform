@@ -47,18 +47,23 @@ def fake_relay(tmp_path):
 
 
 @pytest.fixture()
-def settings_dict(tmp_path, exe, fake_relay):  # noqa: F811
-    """DOE(가짜 paicad) + 검증 낙하(가짜 SCX 릴레이) — 검증 낙하 계획 진입(§8.4)만 본다."""
+def settings_dict(tmp_path, exe, fake_relay, request):  # noqa: F811
+    """DOE(가짜 paicad) + 검증 낙하(가짜 SCX 릴레이) — 검증 낙하 계획 진입(§8.4)만 본다. 시험 인자 rank_metric = lin 이면
+    bead_doe.rank.metric 강제(없으면 설정 기본 = solve)."""
     from verify_support import verify_settings
 
     d = doe_worker_settings(tmp_path, exe)
     v = verify_settings(tmp_path, fake_relay)
     for k in ("hpc", "scx_drive", "verify_drop"):
         d[k] = v[k]
+    m = getattr(getattr(request.node, "callspec", None), "params", {}).get("rank_metric")
+    if m is not None:
+        d["bead_doe"].setdefault("rank", {})["metric"] = m
     return d
 
 
-def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root, exe):  # noqa: F811
+@pytest.mark.parametrize("rank_metric", [None, "lin"])
+def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root, exe, rank_metric):  # noqa: F811
     w = make_bead_case(engine, esl_root, inputs_root)
     in_before = tree(inputs_root)
     s = create(client, w["entry_ids"])
@@ -97,11 +102,23 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
     rk = sorted(res["ranking"], key=lambda x: x["values"]["B1_D1"])
     d1 = [x["values"]["B1_D1"] for x in rk]
     assert len(rk) == 4 and d1[0] == 18.0 and d1[-1] == 26.0
-    scores = [x["score"] for x in rk]
-    assert all(a > b for a, b in zip(scores, scores[1:])), scores        # 깊어질수록 강성 ↑ → score ↓
-    assert scores[0] > 1.0 > scores[-1]                                  # 공칭(22) = 베이스라인 사이
+    solve = [x["score_solve"] for x in rk]
+    assert all(a > b for a, b in zip(solve, solve[1:])), solve          # 재풀이 C 는 깊어질수록 강성 ↑ → ↓
+    assert solve[0] > 1.0 > solve[-1]                                    # 공칭(22) = 베이스라인 사이
+    if rank_metric is None:
+        # v0.20.0 SM-11(2026-11-13 사용자 결정): 기본 순위 = 재풀이 C — 깊이에 단조, 1차 지표(ritz)는 보조 열 score_lin
+        assert res["metric"] == "solve" and res["rank"]["metric"] == "solve" and res["rank"]["metric_effective"] == "solve"
+        assert "n_fallback" not in res["rank"] and all("basis" not in x for x in rk)
+        assert [x["score"] for x in rk] == solve and all(x.get("score_lin") is not None for x in rk)
+    else:
+        # metric lin 강제(R-SM-1 실측 기록): 범위 밖(|ρ−1| > lin_valid) 양 끝 안만 재풀이 C 로 대체 — 가운데 두 안(ρ 1.23~1.24)은
+        # 1-벡터 Ritz 거짓 개선이 남아 최종 순위가 비단조(계약 R-SM-1, 단언하지 않음)
+        assert res["metric"] == "lin" and res["rank"]["n_fallback"] >= 2
+        assert rk[0]["basis"] == "solve" and rk[-1]["basis"] == "solve"
+        assert all(x["basis"] in ("lin", "solve") for x in rk)
+        assert all(x["score"] == x["score_solve"] for x in rk if x["basis"] == "solve")
     rels = {f["rel"] for f in api(client, "GET", f"/doe/studies/{sid}/files").json()}
-    best = rk[-1]["id"]
+    best = next(x["id"] for x in res["ranking"] if x["rank"] == 1)
     assert {f"best/{best}/ch_r.rad", f"best/{best}/ch_r.fem", f"best/{best}/selection.json",
             f"best/{best}/include/{w['rad'].name}", "report.html"} <= rels
     rep = client.get(f"{API}/doe/studies/{sid}/report", headers=R)

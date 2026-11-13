@@ -22,6 +22,7 @@ import importlib
 from typing import Any
 
 from esl.errors import EslError  # noqa: F401 - 서비스가 여기서 import
+from esl.doe.transfer_plan import CELL_MAX_MM as LT_CELL_MAX_MM  # noqa: F401 - v0.20.0 셀 크기 상한 한 곳(core.config 가 여기서)
 
 _MODULES = {
     "size": "esl.opt.size", "identity": "esl.opt.identity", "mesh_check": "esl.opt.mesh_check",

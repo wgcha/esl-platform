@@ -2363,7 +2363,23 @@ export interface DoeMethodSources {
   sources: OptMethodSource[];
   error?: string;
 }
+/** v0.20.0 순위 지표 설정 묶음(스냅샷 = 결과 응답 rank, 없으면 settings.rank) — 임계값은 여기서만 읽고 화면에 상수를 두지 않음 */
+export interface DoeRankCfg {
+  metric?: DoeRankMetric | null;
+  lin_form?: "taylor" | "ritz" | null;
+  lin_valid?: number | null;
+  imbalance_warn?: number | null;
+  /** 결정 A(결과의 rank 에만): 순위에 실제로 쓴 지표·다른 메시 비교 여부 */
+  metric_effective?: DoeRankMetric | null;
+  cross_mesh?: boolean | null;
+  /** R-SM-1 결정: 1차 범위 밖이라 재풀이 C 로 대체한 안 수(lin 결과만) */
+  n_fallback?: number | null;
+}
 export interface DoeSettingsOut {
+  /** v0.20.0 순위 지표 설정(옛 서버면 없음) */
+  rank?: DoeRankCfg | null;
+  /** v0.20.0 하중 전달 설정 — 모든 모드 공통 최상위 칸(esl_load_transfer.md §13.6, 옛 서버면 없음 = select 숨김) */
+  load_transfer?: DoeLoadTransferCfg | null;
   enabled: boolean;
   /** 비활성 사유 코드(§6.5) */
   reason: string | null;
@@ -2567,6 +2583,23 @@ export interface CompareShapeIn {
   /** v0.16.0 메시 형상 파트 ID(쉘 파트가 하나면 생략 가능, C2-D-4) */
   part_id?: number | null;
 }
+/** v0.20.0 ④ 하중 전달: work = 일 등가, cell = 셀 매핑 */
+export type DoeLoadTransferMethod = "work" | "cell";
+/** GET /doe/settings compare.load_transfer(LT-11) — cell_choices_mm 의 null = 기존 ESL 요약 24×14 격자 */
+export interface DoeLoadTransferCfg {
+  method: DoeLoadTransferMethod;
+  cell_size_mm: number | null;
+  cell_choices_mm: (number | null)[];
+  cell_min_mm: number;
+}
+/** 해석된 하중 전달 값(DoeCheckOut·DoeStudyOut.inputs — 옛 스터디 = 키 없음) */
+export interface DoeLoadTransferResolved {
+  method: DoeLoadTransferMethod;
+  cell_size_mm: number | null;
+  /** ④ 만(§13.6) */
+  support?: "transfer" | "auto";
+  region_mode?: "auto" | "a_bbox" | "largest" | "all";
+}
 export interface DoeCheckIn {
   project_id: string;
   scenario: DoeScenario;
@@ -2582,6 +2615,10 @@ export interface DoeCheckIn {
   mesh_mode?: DoeMeshMode | null;
   /** (보강, 계약 §3 미기재 — §8 '실패 시 세분화 허용' = ladder 에 refine_* 포함, C2-D-18) false 면 auto 사다리에서 refine_* 를 뺌. 없으면 설정값 */
   mesh_refine?: boolean | null;
+  /** v0.20.0 ④ 만: 하중 전달 방식(없으면 설정값, 기본과 같으면 보내지 않음) */
+  load_transfer?: DoeLoadTransferMethod | null;
+  /** v0.20.0 ④ 만: 셀 크기(cell 일 때만, work + 값 = 422 LOAD_TRANSFER_INVALID). null = 기존 24×14 격자 */
+  cell_size_mm?: number | null;
   /** v0.16.2 select 만: manual(기본) = STEP 금지. v0.17.0(esl_beadgraph.md §5.3) auto = STEP 선택(있으면 paicad 힌트만) */
   bead_source?: DoeBeadSource | null;
   /** v0.16.2 select 만: mesh = ② B 메시(mesh_upload_id 필수), case(기본) = ① Case 메시.
@@ -2687,6 +2724,8 @@ export interface DoeCheckOut {
   /** v0.16.0 ④ 적용 메시 방식·재메시 가능 */
   mesh_mode?: DoeMeshMode | null;
   remesh_available?: boolean | null;
+  /** v0.20.0 ④ 해석된 하중 전달 값 */
+  load_transfer?: DoeLoadTransferResolved | null;
   /** v0.18.0 select_base step(esl_step_graph.md §4.2·§6): 준비 전 안내 — h(④ 프로필)·사다리·tria 정책·고정 이전·평가 영역 */
   step_graph?: DoeCheckStepGraph | null;
   warnings: DoeWarning[];
@@ -2779,6 +2818,10 @@ export interface DoeStudyOut {
     mesh_mode?: DoeMeshMode | null;
     /** (보강) 세분화 허용 */
     mesh_refine?: boolean | null;
+    /** v0.20.0 ④ 하중 전달(옛 스터디 = 키 없음 = legacy) */
+    load_transfer?: DoeLoadTransferResolved | null;
+    /** v0.20.0 순위 지표(esl_stiffness_metric.md SM-2 — 옛 스터디 = 키 없음 = solve) */
+    rank_metric?: DoeRankMetric | null;
     /** v0.16.2 select 초기 선택 출처(없으면 manual) */
     bead_source?: DoeBeadSource | null;
     /** v0.16.2 select 기준 메시("mesh"·v0.18.0 "step" 일 때만 — 없으면 case) */
@@ -2944,7 +2987,22 @@ export interface DoeRankRow {
   shape?: DoeShapeRef | null;
   /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
   warn?: DoeRankWarn[] | null;
+  /** v0.20.0 보조 열(SM §6 — 새 스냅샷만): 재풀이 C 기준 score, 불평형 최대, ρ 범위, 강체 제거 umax(최악 ESL) */
+  score_solve?: number | null;
+  imbalance_max?: number | null;
+  rho_min?: number | null;
+  rho_max?: number | null;
+  umax_def?: number | null;
+  /** SM-11 보조 열(새 스냅샷, 주 열 = 재풀이 C 일 때): 1차 강성 지표 비(lin_form 식) — 값 없으면 null */
+  score_lin?: number | null;
+  /** R-SM-1 결정(lin 결과만): 순위 값 기준 — lin(1차 지표) | solve(|ρ−1| > lin_valid 라 재풀이 C 로 대체), 대체 안 sm_warn ["SM_LIN_RANGE"] */
+  basis?: "lin" | "solve" | null;
+  sm_warn?: string[] | null;
+  /** v0.20.0 ESL별 재풀이 C(entry_id → C) — 새 스냅샷만 */
+  C_solve?: Record<string, number> | null;
 }
+/** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
+export type DoeRankMetric = "lin" | "solve";
 /** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
 export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
@@ -2955,6 +3013,14 @@ export interface DoePerEsl {
   ratio: number;
   umax: number;
   epsmax: number;
+  /** v0.20.0(SM §6, 새 스냅샷만) */
+  /** 재풀이 C(보조 — lin 일 때 C·ratio 는 순위 지표 값) */
+  C_solve?: number | null;
+  C_lin?: number | null;
+  C_ritz?: number | null;
+  rho?: number | null;
+  imbalance_rel?: number | null;
+  umax_def?: number | null;
 }
 export interface DoePerEslDesign {
   id: string;
@@ -2991,7 +3057,7 @@ export interface DoeFileOut {
 }
 export interface DoeResultOut {
   C_ref: number;
-  baseline: { id: "d000"; score: number; umax: number; epsmax: number; shape?: DoeShapeRef | null };
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null };
   n_ok: number;
   n_skipped: Record<string, number>;
   n_failed: Record<string, number>;
@@ -3017,7 +3083,73 @@ export interface DoeResultOut {
   sort?: string;
   /** v0.16.1 결과 요약 — best_clean = 경고 없는 최상위 안 id(없으면 null, Q1 = A) */
   summary?: { best_clean?: string | null } | null;
+  /** v0.20.0 순위 지표(esl_stiffness_metric.md §6 — 옛 결과 = 키 없음 = solve 표시 그대로). lin = 재풀이 없는 1차 섭동 지표 */
+  metric?: DoeRankMetric | null;
+  lin_form?: "taylor" | "ritz" | null;
+  /** v0.20.0 이 스터디 스냅샷의 순위 지표 설정(임계값 출처 1순위) */
+  rank?: DoeRankCfg | null;
+  /** 결정 A(2026-11-13): 순위에 실제로 쓴 지표 — 다른 메시 비교(옛 ③·④)는 solve(work 하중 재풀이 C)·cross_mesh true(SM_CROSS_MESH) */
+  metric_effective?: DoeRankMetric | null;
+  cross_mesh?: boolean | null;
+  /** v0.20.0 d000 재풀이 C 기준(max_i C_solve) */
+  C_ref_solve?: number | null;
+  /** v0.20.0 하중 전달 요약(LT-13 — legacy = 키 없음) */
+  load_transfer?: DoeLoadTransferSummary | null;
+  /** v0.20.0 3D 같은 ESL: entry_id → 기준 view3d id(`d000_e<kk>`), did → 그 형상 최악 ESL entry_id. result.view3d 목록에는 안 들어감(LT-9) */
+  view3d_ref?: Record<string, string> | null;
+  view3d_esl?: Record<string, string> | null;
   warnings: DoeWarning[];
+}
+/** post/result.json.load_transfer(esl_load_transfer.md §5) */
+export interface DoeLoadTransferSummary {
+  method: DoeLoadTransferMethod;
+  cell_size_mm: number | null;
+  support?: "transfer" | "auto";
+  region_mode?: string;
+  alt: { method: DoeLoadTransferMethod; cell_size_mm: number | null } | null;
+  truth: "direct_nodal" | "a_direct" | null;
+  summary: { variant: string; umax_ratio: [number, number]; C_ratio: [number, number]; mac_min: number | null; load_corr_min: number | null }[];
+  rank_alt_same: boolean | null;
+  warnings_n: number;
+}
+/** post/load_transfer_diag.json 의 지표 묶음(primary·alt) */
+export interface DoeLtMetrics {
+  sum_abs_f: number;
+  max_abs_f: number;
+  dF_rel: number;
+  dM_rel_before: number;
+  dM_rel: number;
+  corr_rel: number;
+  far_frac: number;
+  small_frac?: number | null;
+  C?: number;
+  umax?: number;
+}
+/** post/load_transfer_diag.json(esl/doe_load_transfer_diag/1) */
+export interface DoeLoadTransferDiag {
+  schema: string;
+  method: DoeLoadTransferMethod;
+  cell_size_mm: number | null;
+  alt: { method: DoeLoadTransferMethod; cell_size_mm: number | null } | null;
+  reference: { did: string; source: "case" | "step"; identity: boolean; truth: "direct_nodal" | "a_direct" | null };
+  /** §13.7 전달 계획(모든 모드) */
+  plan?: { id: string; reuse: "once" | "per_target"; placement?: { kind: string; resid_med_mm?: number | null } | null; alt_designs?: string } | null;
+  shapes: {
+    id: string;
+    status: string;
+    /** ④ 행에만(§13.7) */
+    supports?: { mode: "transfer" | "auto" | "fallback"; max_dist_mm: number | null; reason?: string | null } | null;
+    region?: { mode: string; n_in: number; n_out: number } | null;
+    transfer: { max_dist_mm: number; far_n: number; newton_fallback_n: number; seconds: number };
+    per_esl: { entry_id: string; label?: string | null; primary: DoeLtMetrics; alt?: DoeLtMetrics | null }[];
+    score_alt?: number | null;
+  }[];
+  d000: {
+    truth: "direct_nodal" | "a_direct" | null;
+    rows: { entry_id: string; label?: string | null; variant: string; load_corr: number | null; sum_abs_ratio: number; max_abs_ratio: number; umax_ratio: number; C_ratio: number; mac: number | null }[];
+  };
+  warnings: unknown[];
+  seconds?: number;
 }
 
 // ---------------------------------------------------------------- v0.11.0 SCX 드라이브에서 고르기(계약 esl_scx_relay.md §7·§7.1 — 기능 A)

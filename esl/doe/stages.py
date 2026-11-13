@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import shutil
 import time
@@ -31,12 +32,16 @@ import numpy as np
 from esl.doe import FAILED, SKIPPED, load_method_sources, opt_settings, settings
 from esl.doe import boundary as bnd
 from esl.doe import evaluate as ev
+from esl.doe import compare_lt as clt
+from esl.doe import load_transfer as ltm
 from esl.doe import matrix as mx
 from esl.doe import mesh_gmsh as mg
 from esl.doe import nodes as nd
 from esl.doe import paicad_io as pio
 from esl.doe import rank as rk
 from esl.doe import scenario as sc
+from esl.doe import stiffness_metric as smm
+from esl.doe import transfer_plan as tp
 from esl.errors import EslError
 from esl.fsutil import atomic_replace
 from esl.library import _util as U
@@ -349,8 +354,11 @@ def bd_loads(spec: dict, echo=print) -> dict:
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
     warns, info = [], []
-    loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
-                                  (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    if _lt(c) is not None:                       # v0.20.0 하중 전달 계획(①②③ 베이스라인 — 공용 실행기)
+        loads, linfo = _lt_base_loads(c, t, bmeta, ents)
+    else:
+        loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                      (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
     warns += linfo["warnings"]
     loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], loads, c.writer)
     c.progress(80)
@@ -367,6 +375,8 @@ def bd_loads(spec: dict, echo=print) -> dict:
     c.write_json(os.path.join("prep", "plan.json"), plan)
     inp = U.read_json(c.p("prep", "input.json"))
     inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=len(params["beads"]), n_params=len(params["params"]))
+    if getattr(c, "_lt_inp_rec", None):          # v0.20.0 LT-19 계획 id·배치·fast_path
+        inp["load_transfer"] = c._lt_inp_rec
     c.write_json(os.path.join("prep", "input.json"), inp)
     echo(f"[bd_loads] ESL {len(loads)}개 하중({linfo['method']}), 비드 {len(params['beads'])} · 변수 {len(params['params'])}"
          + (f", 경계 경고 {res['n_warn']} · 정보 {res['n_info']}" if res else ""))
@@ -490,6 +500,10 @@ def _design_values(c: Ctx, did: str) -> dict:
 def _cfg_hash(c: Ctx) -> str:
     keep = {"solver": c.solver_cfg(), "mesh": c.cfg["mesh"], "solve": c.cfg["solve"], "grid": c.ocfg["grid"],
             "mapping": c.mapping_opts(), "paicad_options": c.cfg["paicad"].get("options") or {}}
+    if c.scn != "compare" and _lt(c) is not None:   # v0.20.0 하중 전달 스냅샷만(legacy 해시 불변 — ①②③ select 포함)
+        keep["load_transfer"] = ev.config_hash(tp.hash_view(_lt(c)))
+    if c.scn != "compare" and _sm(c) is not None:   # v0.20.0 SM-6 강성 지표 스키마(스냅샷에 키 있을 때만, metric 은 해시 밖)
+        keep["stiffness"] = SM_SCHEMA
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
         keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
@@ -557,7 +571,10 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
     mesh, meta = mg.run_isolated(brep, md, float(bmeta["h"]), c.cfg, bmeta["props"], opt_cfg=c.ocfg,
                                  normal_ref=t.frame["n"])
     dt = sc.design_target(mesh, t.frame)
-    loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+    if _lt(c) is not None:                       # v0.20.0 ③ 계획 per_target: A → 안 메시
+        loads = _lt_target_loads(c, did, dt, None, _lt_h(c, bmeta, dt.mesh))
+    else:
+        loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
     return dt.mesh, list(dt.supports), loads, {"n_nodes": meta["n_nodes"], "n_elems": meta["n_elems"],
                                                 "quad_frac": meta["quad_frac"], "quality": meta["quality"],
                                                 "seconds": meta.get("seconds")}
@@ -618,7 +635,17 @@ def bd_eval(spec: dict, echo=print) -> dict:
             reg = sg.load_region(c.p("prep"))
             if reg is not None:
                 rkw["region"] = reg
-        r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
+        reg_e = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" \
+            else rkw.get("region")                # 평가 영역: 계획 열 mask(④ = LT-8 영역, 그 밖 = ③ 영역 또는 없음)
+        if _lt(c) is not None:                   # v0.20.0 LT-10·20: 주 방식 + 진단 풀이(인수분해 1회, 모든 모드)
+            r = _lt_eval(c, t, did, mesh, sup, loads, reg_e, dd, _lt_h(c, bmeta, mesh))
+        elif _sm(c) is not None:
+            r = _ev(c, mesh, sup, loads, rkw.get("region"), six=did == BASELINE)
+        else:
+            r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
+        if _sm(c) is not None:                   # v0.20.0 SM-1·6: 강성 지표(재풀이 없음) — per_esl 키 추가
+            sm_w = _sm_apply(c, t, did, mesh, loads, reg_e, _lt_h(c, bmeta, mesh), r)
+            r["warnings"] = list(r["warnings"]) + sm_w
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
         keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
         ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if keep_mesh else None, c.writer)
@@ -641,6 +668,11 @@ def bd_eval(spec: dict, echo=print) -> dict:
         warns = list(warns) + [_sel_warn_text(w) for w in sw]
     doc = ev.result_doc(did, status, values, paicad=paicad, mesh=mesh_info, solve=solve, per_esl=per, warnings=warns,
                         code=code, message=msg)
+    S_ = _sm(c)
+    if S_ is not None and status == "OK":       # v0.20.0 §6 행 밖 sm{metric, lin_form, ref, disp, C_ref}
+        p_ = _lt_plan(c)
+        doc["sm"] = {"metric": S_["metric"], "lin_form": S_["lin_form"], "ref": p_["sm_ref"],
+                     "disp": p_["sm_disp"][0 if did == BASELINE else 1], "C_ref": getattr(c, "_sm_cref", None)}
     if mw:
         doc["morph_warnings"] = mw
     if sw:
@@ -692,11 +724,39 @@ PER_ESL_COLS = ["worst_ratio", "min_improvement", "all_improved", "n_improved", 
                 "pareto"]
 
 
-def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: list[str]) -> str:
+SM_CSV_MID = ["score", "improvement", "worst", "metric", "score_solve", "imbalance_max", "rho_min", "rho_max", "umax_def",
+              "epsmax"]
+
+
+def _sm_csv(rank: dict, r: dict, x: dict | None, entry_ids: list[str], sm_key: str) -> list:
+    """강성 지표 스냅샷 CSV 가운데 열(§6): SM_CSV_MID + C_<i>(metric 값) + C_solve_<i>(재풀이 C)."""
+    pe = {p["entry_id"]: p for p in r.get("per_esl") or []}
+    met = rank.get("metric") or "lin"
+    if r["id"] == BASELINE:
+        b = rank["baseline"]
+        mid = [1.0, 0.0, b.get("worst_entry_id"), met, b.get("score_solve"), b.get("imbalance_max"), b.get("rho_min"),
+               b.get("rho_max"), b.get("umax_def"), b.get("epsmax")]
+    elif x is not None:
+        mid = [x["score"], x["improvement"], x["worst_entry_id"], met, x.get("score_solve"), x.get("imbalance_max"),
+               x.get("rho_min"), x.get("rho_max"), x.get("umax_def"), x["epsmax"]]
+    else:
+        mid = [""] * len(SM_CSV_MID)
+    mid = ["" if v is None else v for v in mid]
+    cm = [("" if (pe.get(e) or {}).get(sm_key) is None else pe[e][sm_key]) for e in entry_ids]
+    cs = [(pe.get(e) or {}).get("C", "") for e in entry_ids]
+    return mid + cm + cs
+
+
+def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: list[str],
+                 lt_cols: dict | None = None, sm_key: str | None = None) -> str:
+    """①②③ ranking.csv. v0.20.0 LT-13·20 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt.
+    sm_key(강성 지표 스냅샷 — per_esl 의 metric 키) = 가운데 열 SM_CSV_MID·C_<i>(metric)·C_solve_<i>(§6)."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["id", "rank", "status"] + names + ["score", "improvement", "worst", "umax", "epsmax"]
-               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids])
+    mid_h = (SM_CSV_MID + [f"C_{e}" for e in entry_ids] + [f"C_solve_{e}" for e in entry_ids]) if sm_key else \
+        (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
+    w.writerow(["id", "rank", "status"] + names + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
+               + (LT_CSV_COLS if lt_cols is not None else []))
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
@@ -714,7 +774,11 @@ def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: l
                                                                                        for e in entry_ids]
         else:
             row = [r["id"], "", r["status"]] + [r["values"].get(n, "") for n in names] + ["", "", "", "", ""]
-        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra)
+        if sm_key:
+            row = row[:3 + len(names)] + _sm_csv(rank, r, x, entry_ids, sm_key)
+        else:
+            row = row + [C.get(e, "") for e in entry_ids]
+        w.writerow(row + extra + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else []))
     return buf.getvalue()
 
 
@@ -726,8 +790,10 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
         mesh, sup = dict(t.mesh), list(t.supports)
         _, loads = sc.load_loads(c.p("prep"))
     else:
-        dz = ev.load_design(dd)
-        if c.scn in ("step", "compare"):
+        dz = ev.load_design(dd) if not (c.scn == "compare" and _lt(c) is not None) else None
+        if dz is None:                           # v0.20.0 LT-1: 실행과 같은 함수(하중·지지 바이트 같음)
+            mesh, sup, loads, _ = _cmp_design_mesh(c, t, did)
+        elif c.scn in ("step", "compare"):
             mesh = {"node_id": dz["node_id"], "x0": dz["x"], "conn": dz["conn"], "elem_type": dz["type"],
                     "elem_pid": dz["pid"], "elem_id": np.arange(1, dz["conn"].shape[0] + 1, dtype=np.int64)}
             ne = mesh["conn"].shape[0]
@@ -736,7 +802,10 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
                         nu=np.full(ne, float(pr["nu"])))
             dt = sc.design_target(mesh, t.frame)
             mesh, sup = dt.mesh, list(dt.supports)
-            loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+            if _lt(c) is not None:               # v0.20.0 ③ 실행과 같은 공용 실행기
+                loads = _lt_target_loads(c, did, dt, None, _lt_h(c, bmeta, dt.mesh))
+            else:
+                loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
         else:
             mesh = dict(t.mesh)
             mesh["x0"] = dz["x"]
@@ -747,8 +816,8 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
     r = ev.evaluate(mesh, sup, sel, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], keep_u=[sel[0][0]])
     od = c.writer.fresh_dir(c.p("post", "view3d", did), c.out)
     build_view(od, node_id=mesh["node_id"], x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=sel[0][1],
-               u_rel=r["u"][sel[0][0]], supports=[{"node_id": n, "dof": d} for n, d in sup], key=f"doe/{did}",
-               esl_run_id=str(sel[0][0]))
+               u_rel=_sm_view_u(c, did, mesh, r["u"][sel[0][0]]), supports=[{"node_id": n, "dof": d} for n, d in sup],
+               key=f"doe/{did}", esl_run_id=str(sel[0][0]))
     return did
 
 
@@ -848,7 +917,10 @@ def bd_post(spec: dict, echo=print) -> dict:
         b = next(r for r in results if r["id"] == BASELINE)
         if nr.get("status") == "OK" and b.get("status") == "OK":
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
-    R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]))
+    S_ = _sm_post(c)
+    R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]),
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
+                    "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     for x in R["ranking"]:
         for p in x["per_esl"]:
@@ -883,12 +955,22 @@ def bd_post(spec: dict, echo=print) -> dict:
     c.progress(20)
     c.writer.makedirs(c.p("post"))
     names = [p["name"] for p in sp["params"]]
+    L = _lt(c)
+    lt_res = lt_cols = lt_diag = None
+    lt_w: list = []
+    if L is not None:                            # v0.20.0 LT-13·20 진단 모음·요약·CSV 끝 열(모든 모드)
+        try:
+            lt_res, lt_cols, lt_diag, lt_w = _lt_post(c, R, results)
+        except (EslError, OSError, ValueError, KeyError) as exc:
+            lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", err=getattr(exc, "code", type(exc).__name__))]
+            lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(_ranking_csv(R, results, names, [e["id"] for e in c.D["entries"]]))
+        fh.write(_ranking_csv(R, results, names, [e["id"] for e in c.D["entries"]], lt_cols,
+                              smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None))
     c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
                                                                     "code": r.get("code"), "score": r.get("score")}
                                                                    for r in results]})
-    warns = [w["code"] for w in R["warnings"]]
+    warns = [w["code"] for w in R["warnings"]] + lt_w + _sm_post_warn(S_)
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -954,6 +1036,16 @@ def bd_post(spec: dict, echo=print) -> dict:
     if c.scn == "select":
         ctx["selection"] = _sel_report(c, results)
         ctx["selection"]["best_clean"] = best_clean
+    if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절·한계 안내, §6 최상위 metric·lin_form
+        ctx["stiffness"] = dict(S_)
+        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"],
+                   **({"n_fallback": R["n_fallback"]} if "n_fallback" in R else {}))
+    if L is not None:
+        out["load_transfer"] = lt_res
+        ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
+        if lt_diag is not None:
+            c.write_json(os.path.join("post", LT_DIAG_JSON), U.jsonable(lt_diag))
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
@@ -971,6 +1063,8 @@ def bd_post(spec: dict, echo=print) -> dict:
 # 폴더: input/shapes/<did>.step · prep/{shapes.json, shapes/<did>/mesh/, base.json, base_mesh.npz, loads.npz, compare.json}
 # · run/designs/<did>/ · post/ · best/<did>/(형상 메시 ch_r.rad·ch_r.fem) · report.html. paicad 단계 없음(BD_GEOM SKIPPED).
 REF_CASE_MSG = "기준이 낙하 메시(다른 메싱 방식)라 개선율에 메시 차이가 섞입니다"
+LT_LIMIT_MSG = ("하중은 ESL 원본 절점력을 모든 형상(기준 포함)에 같은 규칙으로 옮긴 것입니다(일 등가 = 형상 면 최근접점 형상함수, 셀 = "
+                "셀 합력·합모멘트 최소노름 분배) — 하중 전달 방식·진단 요약(기준 대비 umax·C 배율, MAC)은 '하중 전달' 절")
 LIMIT_MSG = ("형상마다 새 메시 — 작은 차이는 메시 차이일 수 있음(잡음 바닥 미측정)", "모든 STEP 이 같은 좌표계·같은 위치라는 전제"
              "(어긋난 형상은 정렬 검사로 제외)", "형상 단순화는 작은 구멍 메움만(면적 < compare.defeature.min_hole_area_mm2, "
              "enabled: false 면 없음) — 필렛 제거·비드 억제(min_bead_height_mm, 기록만) 없음, 그 외는 gmsh 설정만 같게")
@@ -2211,7 +2305,10 @@ def _cmp_mesh0(c: Ctx, echo) -> dict:
 
 def _cmp_loads(c: Ctx, echo) -> dict:
     """BD_LOADS ④: 기준 frame 고정(prep/base.json), d000 하중(셀 매핑) → loads.npz, 형상별 크기·정렬(SC-D-7b) →
-    FAILED_SIZE(그 형상만), 셀당 노드 경고 → prep/compare.json."""
+    FAILED_SIZE(그 형상만), 셀당 노드 경고 → prep/compare.json. v0.20.0 스냅샷 load_transfer 있음 = ``_cmp_loads_lt``."""
+    L = _lt(c)
+    if L is not None:
+        return _cmp_loads_lt(c, echo, L)
     c.progress(0)
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
@@ -2270,6 +2367,11 @@ def _cmp_sha(c: Ctx, did: str) -> str:
         keep["mesh_files"] = [f.get("sha256") for f in sh.get("files") or []]
         keep["part_id"] = sh.get("part_id")
         keep["mesh_input"] = ev.config_hash(mi.hash_view(c.cfg))      # v0.16.1: diag 절 제외(SR-D-24)
+    L = _lt(c)
+    if L is not None:                       # v0.20.0 LT-12: 스냅샷에 load_transfer 가 있을 때만(diag 제외 — legacy 해시 불변)
+        keep["load_transfer"] = ev.config_hash(tp.hash_view(L))
+    if _sm(c) is not None:                  # v0.20.0 SM-6(스냅샷 doe.rank 있을 때만 — metric 은 해시 밖)
+        keep["stiffness"] = SM_SCHEMA
     if _cmp_row_method(c, did) == "defeature":   # v0.16.1 SR-D-21b: defeature 형상만 설정 해시(기준 d000 포함)
         df = (c.cfg.get("compare") or {}).get("defeature") or {}
         keep["defeature_cfg"] = ev.config_hash({k: df.get(k) for k in DEFEAT_NEW_KEYS_V0161 + ("min_bead_height_mm",)})
@@ -2297,7 +2399,13 @@ def _cmp_row_method(c: Ctx, did: str) -> str | None:
 
 
 def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
-    """④ 형상(기준 d000 포함 같은 규칙): 메시 → compare_target(frame 고정·auto_supports) → 셀 매핑 하중."""
+    """④ 형상(기준 d000 포함 같은 규칙): 메시 → compare_target(frame 고정·auto_supports) → 셀 매핑 하중.
+    v0.20.0 load_transfer 스냅샷 = 영역·이전 지지·``load_transfer.shape_loads``(실행·view3d·이어하기 같은 함수)."""
+    if _lt(c) is not None:
+        tgt, _reg, loads, _info = _lt_design(c, t, did)
+        et = np.asarray(tgt.mesh["elem_type"]).astype(int)
+        return tgt.mesh, list(tgt.supports), loads, {"n_nodes": tgt.n_nodes, "n_elems": tgt.n_elems,
+                                                     "quad_frac": float(np.sum(et == 4)) / max(et.size, 1)}
     mesh = dict(t.mesh) if did == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, did))
     dt = sc.compare_target(mesh, t.frame)
     loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
@@ -2306,13 +2414,972 @@ def _cmp_design_mesh(c: Ctx, t, did: str) -> tuple[dict, list, list, dict]:
                                                "quad_frac": float(np.sum(et == 4)) / max(et.size, 1)}
 
 
-def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str]) -> str:
+# ---------------------------------------------------------------- v0.20.0 하중 전달 (esl_load_transfer.md — 계획 표 §13.3)
+# 공용 모듈 load_transfer(모드 무관) + 계획 표 transfer_plan + ④ 전용 compare_lt. 하중 자리는 ``_plan_loads`` 하나 —
+# 시나리오 이름으로 분기하지 않고 계획 필드(reuse·identity·placement·mask)만 읽는다.
+LT_JSON = "load_transfer.json"
+LT_DIAG_JSON = "load_transfer_diag.json"
+LT_REGION_NPZ = "region.npz"
+LT_TRANSFER_NPZ = "transfer.npz"
+LT_LOADS_ALT = "loads_alt.npz"
+LT_CSV_COLS = ["lt_method", "lt_far_frac", "lt_dM_rel", "score_alt"]
+LT_SEP = "\x1f"                                 # 진단 풀이 하중 id = entry_id + LT_SEP + variant(결과 per_esl 에는 안 들어감)
+
+
+def _lt(c: Ctx) -> dict | None:
+    """스냅샷 doe.load_transfer(해석된 설정) — 없으면 None(legacy, 각 모드 지금 경로 그대로 LT-11·18)."""
+    if c.scn not in ("same", "mesh", "step", "compare", "select"):
+        return None
+    if not hasattr(c, "_lt_cache"):
+        c._lt_cache = tp.resolve(c.D.get("load_transfer"), c.scn)
+    return c._lt_cache
+
+
+def _lt_plan(c: Ctx) -> dict:
+    return tp.plan_for(c.scn, select_base(c) if c.scn == "select" else None)
+
+
+def _lt_ents(c: Ctx):
+    if not hasattr(c, "_lt_ents_cache"):
+        c._lt_ents_cache = c.entries(raw=True)
+    return c._lt_ents_cache
+
+
+def _lt_srcs(ents) -> list[dict]:
+    return [ltm.src_load(e.meta.get("entry_id"), e.raw, e.raw["f"], e.meta.get("frame"), e.summary_for_mapping())
+            for e in ents]
+
+
+def _lt_h(c: Ctx, bmeta: dict, mesh: dict | None = None) -> float:
+    """사영 길이 척도 h: 기준 메타 h(③④ 메시 크기) → ④ 프로필 → 대상 메시 모서리 길이 중앙값(①②)."""
+    if bmeta.get("h"):
+        return float(bmeta["h"])
+    if _lt_plan(c)["dst"] == "shape" or mesh is None:   # 계획 열 dst shape(형상마다 메시 = ④) → 프로필 크기
+        return float(sc.compare_profile(c.cfg)["size_mm"])
+    from esl.opt.mesh_check import _edge_lengths
+    L = _edge_lengths(np.asarray(mesh["x0"], dtype=np.float64), np.asarray(mesh["conn"], dtype=np.int64),
+                      np.asarray(mesh["elem_type"]).astype(int))
+    return float(np.nanmedian(L))
+
+
+def _lt_inp(c: Ctx) -> dict:
+    p = c.p("prep", "input.json")
+    return (U.read_json(p).get("load_transfer") or {}) if os.path.isfile(p) else {}
+
+
+def _lt_placement(c: Ctx, plan: dict) -> dict:
+    """배치(LT-23): 계획 global = 그대로, auto = 준비(BD_LOADS)에서 베이스라인으로 1회 정한 값(prep/input.json)."""
+    if plan["placement"] != "auto":
+        return {"kind": "global"}
+    pl = getattr(c, "_lt_place", None) or _lt_inp(c).get("placement") or {"kind": "global"}
+    return {k: v for k, v in pl.items() if k in ("kind", "R", "t")}
+
+
+def _lt_decide_placement(c: Ctx, plan: dict, t, region, h: float, fc: dict | None = None) -> tuple[dict, list]:
+    """②③ placement auto: 구멍 특징 frame 판정(``step_graph.frame_check`` — ③ select 는 fixed_transfer 결과 재사용) ok →
+    global, 강체 맞춤 ok → rigid(R, t), 아니면 frame(정규화 사상) + 정보 LT_PLACEMENT."""
+    if plan["placement"] != "auto":
+        return {"kind": "global"}, []
+    if fc is None:
+        from esl.doe import step_graph as sg
+        raw = _lt_ents(c)[0].raw
+        fc = sg.frame_check({k: raw[k] for k in ("x0", "conn", "elem_type", "node_id")}, t.mesh, region, c.cfg, h=h,
+                            hole_min_perimeter=float(c.ocfg["keepout"]["hole_min_perimeter_mm"]))
+    fit = fc.get("fit") or {}
+    if fc.get("ok"):
+        pl = {"kind": "global", "resid_med_mm": fc.get("resid_med_mm")}
+    elif fit.get("ok"):
+        pl = {"kind": "rigid", "R": fit["R"], "t": fit["t"], "resid_med_mm": fit.get("resid_med_mm")}
+    else:
+        pl = {"kind": "frame", "resid_med_mm": fc.get("resid_med_mm")}
+    info = [] if pl["kind"] == "global" else [_cmp_text("LT_PLACEMENT", kind=pl["kind"],
+                                                         resid_med_mm=pl.get("resid_med_mm"))]
+    return U.jsonable(pl), info
+
+
+def _lt_method(c: Ctx, variant=None) -> dict:
+    return tp.method_of(_lt(c), variant, c.mapping_opts())
+
+
+def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None) -> tuple[list, dict | None]:
+    """하중 자리 하나(§13.3): reuse once 이고 안(did ≠ d000) = 베이스라인 노드 하중(prep/loads.npz) 그대로, 그 밖 = 공용 실행기
+    ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식."""
+    if plan["reuse"] == "once" and did != BASELINE and variant is None:
+        _, loads = sc.load_loads(c.p("prep"))
+        return loads, None
+    rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}, "placement": _lt_placement(c, plan)}
+    return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)), dst, _lt_method(c, variant), cache if cache is not None else {})
+
+
+def _lt_target_loads(c: Ctx, did: str, tgt, region, h: float) -> list:
+    """per_target 대상(옛 ③ 안·view3d) 하중 — 계획 그대로 ``_plan_loads``, 진단 풀이용 문맥(c._lt_last) 기록."""
+    plan = _lt_plan(c)
+    dst = ltm.dst_mesh(tgt.mesh, tgt.frame, region if plan["mask"] != "none" else None, h)
+    cache: dict = {}
+    loads, info = _plan_loads(c, plan, did, dst, None, cache)
+    c._lt_last = {"did": did, "dst": dst, "cache": cache, "info": info, "region": region}
+    return loads
+
+
+def _lt_warn_text(w: dict) -> str:
+    kw = {k: (f"{v:.3g}" if isinstance(v, float) else v) for k, v in w.items() if k != "code"}
+    return _cmp_text(w["code"], **kw)
+
+
+def _lt_labels(c: Ctx) -> dict:
+    return {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+
+
+def _lt_row(c: Ctx, did: str, info: dict, **extra) -> dict:
+    """prep/load_transfer.json 형상(대상) 행(§5 형식 — register 가 lt{} 로 붙임)."""
+    lab = _lt_labels(c)
+    return U.jsonable({"id": did, "status": "READY", "warnings": [], **extra, "transfer": info["transfer"],
+                       "fast_path": info["fast_path"],
+                       "per_esl": [{"entry_id": p["entry_id"], "label": lab.get(p["entry_id"], str(p["entry_id"])[:8]),
+                                    "primary": {k: v for k, v in p.items() if k != "entry_id"}}
+                                   for p in info["per_esl"]]})
+
+
+def _lt_far_text(L: dict, info: dict) -> tuple[str | None, str | None]:
+    state, ff = ltm.far_state(info, L["work"])
+    tr = info["transfer"]
+    if state == "LT_TRANSFER_FAILED":
+        return state, _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work']['fail_frac']):g}",
+                                dist=f"{float(L['work']['fail_dist_mm']):g}",
+                                max_mm=f"{tr['max_dist_mm']:.3g}")
+    if state == "LT_FAR_NODES":
+        return state, _cmp_text(state, far_n=tr["far_n"], far_frac=f"{ff:.3g}", max_mm=f"{tr['max_dist_mm']:.3g}")
+    return None, None
+
+
+def _lt_ldoc(c: Ctx, plan: dict, placement: dict) -> dict:
+    L = _lt(c)
+    alt = tp.alt_variant(L)
+    d = {"schema": tp.SCHEMA, "scenario": c.scn, "method": L["method"], "cell_size_mm": L.get("cell_size_mm"),
+         "variant": tp.variant_label(*tp.primary_variant(L)),
+         "alt": None if alt is None else {"method": alt[0], "cell_size_mm": alt[1]},
+         "plan": {"id": plan["id"], "reuse": plan["reuse"], "placement": placement,
+                  "alt_designs": tp.alt_designs(L, plan), "version": tp.PLAN_VERSION},
+         "shapes": [], "warnings": []}
+    if "support" in L:
+        d.update(support=L["support"], region_mode=(L.get("region") or {}).get("mode"))
+    return d
+
+
+def _lt_base_loads(c: Ctx, t, bmeta: dict, ents, region=None, fc: dict | None = None) -> tuple[list, dict]:
+    """①②③ 베이스라인 전달(계획 dst = baseline·design 의 베이스라인): 배치 1회 결정 → ``_plan_loads(d000)`` → 먼 노드 판정
+    (BASELINE_FAILED LT_TRANSFER_FAILED) → prep/load_transfer.json(베이스라인 1행) · (alt_designs ∧ once) prep/loads_alt.npz.
+    반환 (loads, linfo) — linfo 는 input.json.loads 형식, c._lt_inp_rec = input.json.load_transfer."""
+    L, plan = _lt(c), _lt_plan(c)
+    h = _lt_h(c, bmeta, t.mesh)
+    pl, pinfo = _lt_decide_placement(c, plan, t, region, h, fc)
+    c._lt_place = pl
+    dst = ltm.dst_mesh(t.mesh, t.frame, region if plan["mask"] != "none" else None, h)
+    cache: dict = {}
+    loads, info = _plan_loads(c, plan, BASELINE, dst, None, cache)
+    state, msg = _lt_far_text(L, info)
+    if state == "LT_TRANSFER_FAILED":
+        raise EslError("BASELINE_FAILED", f"{msg} — 셀 방식을 고르거나 기준 모델을 확인하세요")
+    warns = [_lt_warn_text(w) for w in info["warnings"]] + ([msg] if msg else [])
+    ldoc = _lt_ldoc(c, plan, pl)
+    ldoc["warnings"] = warns + pinfo
+    ldoc["shapes"].append(_lt_row(c, BASELINE, info, region=None if region is None else
+                                  {"n_in": int(np.sum(region)), "n_out": int(np.size(region) - np.sum(region))}))
+    if plan["reuse"] == "once" and tp.alt_designs(L, plan):          # LT-20: alt 하중도 베이스라인 1회
+        al, _ = _plan_loads(c, plan, BASELINE, dst, tp.alt_variant(L), cache)
+        mg.save_npz_det(c.writer.guard(c.p("prep", LT_LOADS_ALT)),
+                        {"node_id": np.asarray(t.mesh["node_id"], dtype=np.int64),
+                         "entry_ids": np.asarray([str(e) for e, _ in al]), "F": np.stack([f for _, f in al])})
+    c.write_json(os.path.join("prep", LT_JSON), U.jsonable(ldoc))
+    c._lt_inp_rec = U.jsonable({**tp.public(L), "plan": plan["id"], "placement": pl, "fast_path": info["fast_path"]})
+    linfo = {"method": info["variant"], "fast_path": info["fast_path"],
+             "per_entry": U.jsonable([{"entry_id": p["entry_id"], "strategy": p["strategy"], "dF_rel": p.get("dF_rel"),
+                                       "dM_rel": p.get("dM_rel"), "far_frac": p.get("far_frac")}
+                                      for p in info["per_esl"]]),
+             "warnings": warns}
+    return loads, linfo
+
+
+# ---------------------------------------------------------------- ④ 전용(지지 이전·영역 — compare_lt)
+def _lt_shape_dir(c: Ctx, did: str) -> str:
+    return c.p("prep", "shapes", did)
+
+
+def _lt_load_region(c: Ctx, did: str):
+    p = os.path.join(_lt_shape_dir(c, did), LT_REGION_NPZ)
+    if not os.path.isfile(p):
+        return None
+    return np.asarray(U.load_npz(p)["region"], bool)
+
+
+def _lt_save_region(c: Ctx, did: str, region) -> None:
+    d = _lt_shape_dir(c, did)
+    p = os.path.join(d, LT_REGION_NPZ)
+    if region is None:
+        if os.path.isfile(p):
+            os.remove(c.writer.guard(p))
+        return
+    c.writer.makedirs(d)
+    mg.save_npz_det(c.writer.guard(p), {"region": np.asarray(region, bool)})
+
+
+def _lt_prep_doc(c: Ctx) -> dict:
+    p = c.p("prep", LT_JSON)
+    return U.read_json(p) if os.path.isfile(p) else {}
+
+
+def _lt_dst(c: Ctx, tgt, region, h: float) -> dict:
+    return ltm.dst_mesh(tgt.mesh, tgt.frame, region, h)
+
+
+def _lt_file_cache(c: Ctx, dst: dict, did: str | None) -> tuple[dict, str | None, str]:
+    """④ W 파일 캐시(prep/shapes/<did>/transfer.npz, 키 = 대상 sha·work 설정) → run_transfer_plan cache dict."""
+    L = _lt(c)
+    key = clt.work_key(dst["mesh"], dst["elem_mask"], L["work"], dst["h"])
+    path = None if did is None else os.path.join(_lt_shape_dir(c, did), LT_TRANSFER_NPZ)
+    W = clt.load_work(path, key) if path else {}
+    m = _lt_method(c)
+    return {ltm.cache_key(sha, dst, None, m): w for sha, w in W.items()}, path, key
+
+
+def _lt_save_cache(c: Ctx, cache: dict, path: str | None, key: str) -> None:
+    if cache and path:
+        c.writer.makedirs(os.path.dirname(path))
+        clt.save_work(path, {k[0]: w for k, w in cache.items()}, key, c.writer)
+
+
+def _lt_supports(c: Ctx, t, mesh: dict, did: str, region, h: float, ref_sup: list | None) -> tuple:
+    """LT-7 지지 → (compare_target, 지지 정보). d000 = 영역 auto, 형상 = transfer(실패 → 영역 auto + fallback)."""
+    L = _lt(c)
+    if did == BASELINE or L["support"] == "auto" or not ref_sup:
+        tgt = sc.compare_target(mesh, t.frame, region=region)
+        return tgt, {"mode": "auto", "max_dist_mm": None}
+    tol = float(L["support_tol_mm"]) if L.get("support_tol_mm") is not None else 2.0 * float(h)
+    sup, info = clt.transfer_supports(ref_sup, mesh, region, tol)
+    tgt = sc.compare_target(mesh, t.frame, supports=sup)
+    return tgt, info
+
+
+def _lt_design(c: Ctx, t, did: str, variant=None):
+    """④ BD_EVAL·view3d: 형상 메시·영역(prep)·지지(prep 기록, 없으면 다시)·하중 → (Target, 영역, loads, info)."""
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    h = _lt_h(c, bmeta)
+    mesh = dict(t.mesh) if did == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, did))
+    reg = _lt_load_region(c, did)
+    pdoc = _lt_prep_doc(c)
+    row = next((x for x in pdoc.get("shapes") or [] if x.get("id") == did), None)
+    nodes = ((row or {}).get("supports") or {}).get("nodes")
+    if nodes:
+        tgt = sc.compare_target(mesh, t.frame, supports=[(int(s["node_id"]), str(s["dof"])) for s in nodes])
+    else:
+        ref = next((x for x in pdoc.get("shapes") or [] if x.get("id") == BASELINE), None)
+        tgt, _ = _lt_supports(c, t, mesh, did, reg, h, ((ref or {}).get("supports") or {}).get("nodes"))
+    dst = _lt_dst(c, tgt, reg, h)
+    cache, _p, _k = _lt_file_cache(c, dst, did)
+    loads, info = _plan_loads(c, _lt_plan(c), did, dst, variant, cache)
+    c._lt_last = {"did": did, "dst": dst, "cache": cache, "info": info, "region": reg}
+    return tgt, reg, loads, info
+
+
+def _lt_mesh_loads(c: Ctx, t, mesh: dict) -> tuple:
+    """수렴 점검(C2-D-24) d000_h<h> 다시 메시: 같은 규칙(영역·d000 지지 이전·같은 계획) → (Target, 영역, loads)."""
+    L = _lt(c)
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    h = _lt_h(c, bmeta)
+    ents = _lt_ents(c)
+    reg, _ = clt.region_of(mesh, np.asarray(ents[0].raw["x0"], dtype=np.float64), L["region"], h)
+    ref = next((x for x in _lt_prep_doc(c).get("shapes") or [] if x.get("id") == BASELINE), None)
+    tgt, _ = _lt_supports(c, t, mesh, "refine", reg, h, ((ref or {}).get("supports") or {}).get("nodes"))
+    loads, _ = _plan_loads(c, _lt_plan(c), "refine", _lt_dst(c, tgt, reg, h))
+    return tgt, reg, loads
+
+
+def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
+    """BD_LOADS ④ v0.20.0(§2 ①~⑥): 형상마다 영역(region.npz) → 기준 frame(d000 영역) → 지지(d000 auto / 형상 이전) →
+    W 연산자(transfer.npz) → 하중 지표(prep/load_transfer.json, 먼 노드 과다 → FAILED_SIZE LT_TRANSFER_FAILED) →
+    d000 하중(prep/loads.npz, 스터디 방식)."""
+    c.progress(0)
+    t, bmeta = sc.load_base(c.p("prep"))
+    ents = _lt_ents(c)
+    plan = _lt_plan(c)
+    h = _lt_h(c, bmeta)
+    rc = L["region"]
+    a_xyz = np.asarray(ents[0].raw["x0"], dtype=np.float64)
+    doc = _cmp_doc(c)
+    ccfg = c.cfg["compare"]
+    warns, infos = [], []
+    ref_mesh = mg.load_mesh(_cmp_mesh_dir(c, BASELINE))
+    reg0, ri0 = clt.region_of(ref_mesh, a_xyz, rc, h)
+    if reg0 is not None:                         # LT-8 ② 기준 frame·크기 = d000 영역 요소(영역 = 전체면 base 그대로)
+        base_keys = {"schema", "scenario", "target", "frame", "supports", "normals", "source", "warnings",
+                     "topo_sha256", "n_nodes", "n_elems", "mesh_sha256"}
+        t2, _ = sc.template_base(ref_mesh, c.entries(raw=False), c.ocfg["size"], inch=c.D.get("inch"),
+                                 source=t.source, region=reg0)
+        sc.save_base(t2, c.p("prep"), "compare", c.writer, extra={k: v for k, v in bmeta.items() if k not in base_keys})
+        t, bmeta = sc.load_base(c.p("prep"))
+        doc["frame_sha256"] = ev.config_hash(t.frame)
+    pl = {"kind": "global"}
+    ldoc = _lt_ldoc(c, plan, pl)
+    order = [r for r in doc["shapes"] if r["id"] == BASELINE] + [r for r in doc["shapes"] if r["id"] != BASELINE]
+    n = len(order)
+    ref_sup = None
+    d0_loads, d0_info = None, None
+    t_start = time.monotonic()
+    for k, r in enumerate(order):
+        did = r["id"]
+        if did != BASELINE and r["status"] != "READY":
+            continue
+        mesh = dict(t.mesh) if did == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, did))
+        reg, ri = (reg0, ri0) if did == BASELINE else clt.region_of(mesh, a_xyz, rc, h)
+        _lt_save_region(c, did, reg)
+        rw, rinf = clt.region_messages(ri, rc)
+        lrow = {"id": did, "status": "READY", "region": {k_: ri.get(k_) for k_ in ("mode", "rule", "n_in", "n_out")},
+                "warnings": []}
+        for x in rinf:
+            infos.append(f"{_lt_warn_text(x)} — {did}")
+            lrow["warnings"].append(infos[-1])
+        for x in rw:
+            warns.append(f"{_lt_warn_text(x)} — {did}")
+            lrow["warnings"].append(warns[-1])
+            r.setdefault("warnings", []).append(x["code"])
+        if did != BASELINE:
+            chk = sc.shape_check(mesh, t.frame, ents, c.ocfg["size"], ccfg, inch=c.D.get("inch"), region=reg)
+            r.update(size=chk["size"], align=chk["align"])
+            if not chk["ok"]:
+                r.update(status="FAILED_SIZE", code=chk["code"], message=chk["message"])
+                lrow.update(status="FAILED_SIZE", code=chk["code"])
+                ldoc["shapes"].append(lrow)
+                echo(f"[{did} {r['name']}] FAILED_SIZE {chk['code']}: {chk['message']}")
+                continue
+        try:
+            tgt, sinfo = _lt_supports(c, t, mesh, did, reg, h, ref_sup)
+            dst = _lt_dst(c, tgt, reg, h)
+            cache, path, key = _lt_file_cache(c, dst, did)
+            loads, info = _plan_loads(c, plan, did, dst, None, cache)
+        except EslError as exc:
+            if did == BASELINE:
+                raise EslError("BASELINE_FAILED", f"기준 형상 하중 전달 실패 {exc.code}: {exc.message}") from None
+            lrow.update(status="ERROR", code=exc.code, message=exc.message)      # 실행에서 같은 오류 → FAILED_SOLVE
+            ldoc["shapes"].append(lrow)
+            echo(f"[{did} {r['name']}] 하중 전달 준비 오류 {exc.code}: {exc.message}")
+            continue
+        _lt_save_cache(c, cache, path, key)
+        sup_rec = {**sinfo, "nodes": clt.support_xyz(tgt.mesh, tgt.supports)}
+        if did == BASELINE:
+            ref_sup = sup_rec["nodes"]
+        if sinfo["mode"] == "fallback":
+            w = _cmp_text("LT_SUPPORT_FALLBACK", reason=sinfo.get("reason"))
+            warns.append(f"{w} — {did}")
+            lrow["warnings"].append(warns[-1])
+            r.setdefault("warnings", []).append("LT_SUPPORT_FALLBACK")
+        for x in info["warnings"]:
+            if did == BASELINE:                  # ESL 자체 불평형 = 형상 무관(준비 전체 경고 1회)
+                ldoc["warnings"].append(_lt_warn_text(x))
+                warns.append(ldoc["warnings"][-1])
+        row = _lt_row(c, did, info)
+        lrow.update(supports=sup_rec, transfer=row["transfer"], fast_path=row["fast_path"], per_esl=row["per_esl"])
+        state, msg = _lt_far_text(L, info)
+        if state == "LT_TRANSFER_FAILED":
+            if did == BASELINE:
+                raise EslError("BASELINE_FAILED", f"기준 형상 {msg}")
+            r.update(status="FAILED_SIZE", code=state, message=msg.split(": ", 1)[-1])
+            lrow.update(status="FAILED_SIZE", code=state)
+            lrow["warnings"].append(f"{msg} — {did}")
+            echo(f"[{did} {r['name']}] FAILED_SIZE {msg}")
+        elif state == "LT_FAR_NODES":
+            warns.append(f"{msg} — {did}")
+            lrow["warnings"].append(warns[-1])
+            r.setdefault("warnings", []).append(state)
+        if L["method"] == "cell" and L.get("cell_size_mm") is None and did != BASELINE:
+            gw = sc.mapping_resolution(mesh, t.frame, (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]),
+                                       c.ocfg["check"]["min_nodes_per_cell"])
+            if gw:
+                r.setdefault("warnings", []).append(gw)
+                warns.append(f"{gw} — {did}")
+        ldoc["shapes"].append(lrow)
+        if did == BASELINE:
+            d0_loads, d0_info = loads, info
+        c.progress(5 + 85 * (k + 1) / max(n, 1))
+    loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], d0_loads, c.writer)
+    linfo = {"method": d0_info["variant"], "fast_path": d0_info["fast_path"],
+             "per_entry": U.jsonable([{"entry_id": p["entry_id"], "dF_rel": p.get("dF_rel"), "dM_rel": p.get("dM_rel")}
+                                      for p in d0_info["per_esl"]]), "warnings": []}
+    ldoc["seconds"] = round(time.monotonic() - t_start, 3)
+    c.write_json(os.path.join("prep", LT_JSON), U.jsonable(ldoc))
+    doc["loads"] = {"sha256": loads_sha, **linfo}
+    c.write_json(os.path.join("prep", sc.COMPARE_JSON), doc)
+    inp = U.read_json(c.p("prep", "input.json"))
+    inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0,
+               load_transfer={**tp.public(L), "plan": plan["id"], "placement": pl, "fast_path": d0_info["fast_path"]})
+    c.write_json(os.path.join("prep", "input.json"), inp)
+    ready = [r["id"] for r in doc["shapes"] if r["status"] == "READY"]
+    echo(f"[bd_loads] ④ 기준 frame 고정 · ESL {len(d0_loads)}개 하중 전달 {d0_info['variant']}"
+         + (" (기준 = ESL 메시 — ① 과 같은 하중)" if d0_info["fast_path"] else "")
+         + f" · 지지 {L['support']} · 영역 {rc['mode']} · 실행 대상 형상 {len(ready)}/{n}")
+    c.progress(100)
+    return {"files": ["prep/loads.npz", f"prep/{sc.COMPARE_JSON}", f"prep/{LT_JSON}"], "warnings": warns,
+            "info": infos, "n_ready": len(ready), "n_shapes": n}
+
+
+# ---------------------------------------------------------------- 진단 풀이(모드 무관, LT-10·20)
+def _lt_truth_compare(c: Ctx, ents, props: dict, h: float, rc: dict, skip: set, warns: list) -> dict:
+    """④ 참값 a_direct(LT-10): A 메시(스터디 물성)·A 영역 auto 3-2-1 직접 풀이 — ``_a_direct``(강성 지표 참조와 같은 인수분해)."""
+    ad = _a_direct(c, "study", rc, h, warns, [])
+    return {e: _truth_row("a_direct", a, a["f"]) for e, a in ad.items() if e not in skip}
+
+
+def _truth_row(kind: str, p: dict, f) -> dict:
+    a = np.linalg.norm(np.asarray(f, dtype=np.float64), axis=1)
+    return {"kind": kind, "C": p["C"], "umax": p["umax"], "f": None, "u": None, "sum_abs_f": float(a.sum()),
+            "max_abs_f": float(a.max()) if a.size else 0.0}
+
+
+def _lt_truth_raw(c: Ctx, ents, skip: set, warns: list, infos: list) -> dict:
+    """②③ 참값 a_direct(LT-20): A 메시·ESL raw 자기 물성·자기 지지(rank < 6 → A auto + LT_TRUTH_AUTO_SUPPORT) 직접 풀이 —
+    ``_a_direct``(강성 지표 참조 u_ref 와 같은 인수분해·같은 해). 배율은 전달 오차 + 모델 차(A ≠ B)."""
+    ad = _a_direct(c, "raw", None, 0.0, warns, infos)
+    return {e: _truth_row("a_direct", a, a["f"]) for e, a in ad.items() if e not in skip}
+
+
+def _ev(c: Ctx, mesh: dict, sup, loads, region=None, keep_u=(), six=False) -> dict:
+    """해석 1회: 옛 스냅샷 = ``evaluate.evaluate`` 그대로, 강성 지표 스냅샷 = ``_solve6``(같은 값 + 주 하중 변위 keep_u 전체,
+    six = 6 dof 해 보관 — 베이스라인 참조 변위)."""
+    rkw = {"region": region} if region is not None else {}
+    if _sm(c) is None:
+        return ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
+                           keep_u=list(keep_u), **rkw)
+    prim = [e for e, _ in loads if LT_SEP not in str(e)]
+    return _solve6(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
+                   keep_u=list(dict.fromkeys(list(keep_u) + prim)), keep6=prim if six else (), **rkw)
+
+
+def _lt_eval(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, dd: str, h: float) -> dict:
+    """BD_EVAL 하중 전달 스냅샷(모든 모드): 주 방식 하중 + 진단 variant(베이스라인 = 참값·alt·셀 훑기, 안 = alt_designs 일 때
+    alt)를 인수분해 1회로 풀고 run/designs/<did>/load_transfer.json(진단)을 쓴다. 반환 = 주 방식 evaluate 결과 형식."""
+    from esl.opt import target as tg
+    L, plan = _lt(c), _lt_plan(c)
+    ents = _lt_ents(c)
+    labels = _lt_labels(c)
+    dg = L.get("diag") or {}
+    last = getattr(c, "_lt_last", None)
+    if last is not None and last.get("did") == did:
+        dst, cache, info = last["dst"], last["cache"], last["info"]
+    else:
+        dst, cache, info = ltm.dst_mesh(mesh, t.frame, region if plan["mask"] != "none" else None, h), {}, None
+    if info is None:                             # once 의 안 = 베이스라인 하중 그대로 → 베이스라인 행
+        prow = next((x for x in _lt_prep_doc(c).get("shapes") or [] if x.get("id") == BASELINE), {}) or {}
+        info = {"variant": _lt_prep_doc(c).get("variant"), "fast_path": prow.get("fast_path"),
+                "transfer": prow.get("transfer"),
+                "per_esl": [{"entry_id": p["entry_id"], **(p.get("primary") or {})} for p in prow.get("per_esl") or []]}
+    dwarn: list = []
+    dinfo: list = []
+    alt = tp.alt_variant(L)
+    alt_label = None if alt is None else tp.variant_label(*alt)
+    variants = []                                # [(label, loads, info|None)]
+    if dg.get("enabled"):
+        if did == BASELINE:
+            vlist = tp.sweep_variants(L)[1:]
+        else:
+            vlist = [alt] if tp.alt_designs(L, plan) else []
+        for v in vlist:
+            try:
+                if plan["reuse"] == "once" and did != BASELINE:
+                    a = U.load_npz(c.p("prep", LT_LOADS_ALT))
+                    vl = [(str(e), a["F"][k]) for k, e in enumerate(a["entry_ids"].tolist())]
+                    vi = None
+                else:
+                    vl, vi = _plan_loads(c, plan, BASELINE if did == BASELINE else did, dst, v, cache)
+                variants.append((tp.variant_label(*v), vl, vi))
+            except (EslError, OSError, KeyError) as exc:
+                dwarn.append({"stage": tp.variant_label(*v), "err": getattr(exc, "code", type(exc).__name__)})
+    if plan["reuse"] == "once" and did != BASELINE and not variants:   # once 의 안 = 베이스라인 하중 그대로 — 진단 문서 없음
+        return _ev(c, mesh, sup, loads, region)
+    truth: dict = {}
+    ident_ids: set = set()
+    if did == BASELINE and dg.get("enabled") and plan["truth"] in ("self_direct", "compare"):
+        for e in ents:                           # 같은 메시 = 원본 절점력 직접(같은 인수분해)
+            key = "topo" if plan["truth"] == "self_direct" else "topo+coords"
+            if dst["elem_mask"] is None and ltm.same_mesh(e.raw, mesh, key, c.coord_tol()):
+                f, _ = tg.entry_load(tg.Target("S1", mesh, t.frame, []), e.raw)
+                truth[e.meta["entry_id"]] = {"kind": "direct_nodal", "f": np.asarray(f, dtype=np.float64)}
+                ident_ids.add(e.meta["entry_id"])
+    all_loads = list(loads)
+    for vname, vl, _vi in variants:
+        all_loads += [(f"{eid}{LT_SEP}{vname}", f) for eid, f in vl]
+    for eid, tv in truth.items():
+        all_loads.append((f"{eid}{LT_SEP}truth", tv["f"]))
+    keep = []
+    if ident_ids:
+        keep = [eid for eid, _ in loads if eid in ident_ids]
+        keep += [f"{eid}{LT_SEP}{vname}" for vname, vl, _ in variants for eid, _ in vl if eid in ident_ids]
+        keep += [f"{eid}{LT_SEP}truth" for eid in ident_ids]
+    r = _ev(c, mesh, sup, all_loads, region, keep, six=did == BASELINE)
+    prim_ids = [eid for eid, _ in loads]
+    by = {p["entry_id"]: p for p in r["per_esl"]}
+    rp = {"per_esl": [by[e] for e in prim_ids], "warnings": [w for w in r["warnings"] if w.get("entry_id") in prim_ids],
+          "stats": r["stats"], "u": {e: r["u"][e] for e in prim_ids if e in r.get("u", {})},
+          "u6": {e: r["u6"][e] for e in prim_ids if e in (r.get("u6") or {})}}
+    try:
+        pv = {p["entry_id"]: p for p in info["per_esl"]}
+        per = []
+        for eid in prim_ids:
+            row = {"entry_id": eid, "label": labels.get(eid, str(eid)[:8]),
+                   "primary": {**{k: v for k, v in (pv.get(eid) or {}).items() if k != "entry_id"},
+                               "C": by[eid]["C"], "umax": by[eid]["umax"]}}
+            for vname, vl, vi in variants:
+                if vname != alt_label:
+                    continue
+                q = next((x for x in (vi or {}).get("per_esl") or [] if x["entry_id"] == eid), {})
+                rr = by.get(f"{eid}{LT_SEP}{vname}")
+                if rr is not None:
+                    row["alt"] = {**{k: v for k, v in q.items() if k != "entry_id"}, "variant": vname, "C": rr["C"],
+                                  "umax": rr["umax"]}
+            per.append(row)
+        prow = next((x for x in _lt_prep_doc(c).get("shapes") or [] if x.get("id") == did), {}) or {}
+        ddoc = {"id": did, "status": "OK", "variant": info.get("variant"), "fast_path": info.get("fast_path"),
+                "transfer": info.get("transfer"), "per_esl": per}
+        if prow.get("supports") is not None:
+            ddoc["supports"] = {k: v for k, v in prow["supports"].items() if k != "nodes"}
+        if prow.get("region") is not None:
+            ddoc["region"] = prow["region"]
+        if did == BASELINE and dg.get("enabled"):
+            if plan["truth"] == "compare":
+                truth.update(_lt_truth_compare(c, ents, U.read_json(c.p("prep", "base.json"))["props"], h, L["region"],
+                                               set(truth), dwarn))
+            elif plan["truth"] == "a_direct":
+                truth.update(_lt_truth_raw(c, ents, set(truth), dwarn, dinfo))
+            for eid in ident_ids:
+                q = by[f"{eid}{LT_SEP}truth"]
+                truth[eid].update(C=q["C"], umax=q["umax"], u=r["u"].get(f"{eid}{LT_SEP}truth"))
+            vrows = [{"variant": info.get("variant"), "entry_id": eid, "f": f, "C": by[eid]["C"],
+                      "umax": by[eid]["umax"], "u": r["u"].get(eid)} for eid, f in loads]
+            for vname, vl, _vi in variants:
+                for eid, f in vl:
+                    q = by[f"{eid}{LT_SEP}{vname}"]
+                    vrows.append({"variant": vname, "entry_id": eid, "f": f, "C": q["C"], "umax": q["umax"],
+                                  "u": r["u"].get(f"{eid}{LT_SEP}{vname}")})
+            rows = ltm.diag_rows(vrows, truth, labels)
+            kinds = {v["kind"] for v in truth.values()}
+            ddoc["d000"] = {"truth": (next(iter(kinds)) if len(kinds) == 1 else ("mixed" if kinds else None)),
+                            "identity": bool(ident_ids) and len(ident_ids) == len(prim_ids), "rows": rows,
+                            "n_factorizations": int(r["stats"].get("n_factorizations", 0))}
+            del vrows
+        ddoc["warnings"] = [_cmp_text("LT_DIAG_SKIPPED", stage=w["stage"], err=w["err"]) for w in dwarn] + dinfo
+        U.write_json(c.writer.guard(os.path.join(dd, LT_JSON)), U.jsonable(ddoc))
+    except (EslError, KeyError, ValueError, TypeError, FloatingPointError) as exc:   # 진단 실패는 결과를 막지 않음
+        code = getattr(exc, "code", type(exc).__name__)
+        U.write_json(c.writer.guard(os.path.join(dd, LT_JSON)),
+                     {"id": did, "status": "OK", "variant": info.get("variant"),
+                      "warnings": [_cmp_text("LT_DIAG_SKIPPED", stage="diag", err=code)]})
+    r.clear()
+    return rp
+
+
+# ---------------------------------------------------------------- 결과 모음(모드 무관, LT-13·20)
+def _lt_post(c: Ctx, R: dict, results: list[dict]) -> tuple[dict, dict, dict, list]:
+    """BD_POST 진단 모음(post/load_transfer_diag.json) · result 요약 · ranking.csv 끝 열 값 · 경고(모든 모드).
+    반환 (result.load_transfer, csv 열 {did: [...]}, diag 문서, 경고)."""
+    L, plan = _lt(c), _lt_plan(c)
+    pdoc = _lt_prep_doc(c)
+    prow = {x["id"]: x for x in pdoc.get("shapes") or []}
+    warns: list = []
+    ddocs = {}
+    for r in results:
+        p = os.path.join(design_dir(c, r["id"]), LT_JSON)
+        if os.path.isfile(p):
+            try:
+                ddocs[r["id"]] = U.read_json(p)
+            except (OSError, ValueError):
+                pass
+    d0 = ddocs.get(BASELINE) or {}
+
+    def worst_alt(dd):
+        v = [float(x["alt"]["C"]) for x in dd.get("per_esl") or [] if x.get("alt") and x["alt"].get("C") is not None]
+        return max(v) if v else None
+    c0 = worst_alt(d0)
+    alt = tp.alt_variant(L)
+    once = plan["reuse"] == "once"
+    csv_cols: dict = {}
+    score_alt: dict = {}
+    shapes = []
+    base_prim = [x.get("primary") or {} for x in (prow.get(BASELINE) or {}).get("per_esl") or []]
+    for r in results:
+        did = r["id"]
+        dd = ddocs.get(did) or {}
+        pr = prow.get(did) or {}
+        sa = None
+        if alt is not None and r.get("status") == "OK":
+            ca = worst_alt(dd)
+            sa = None if ca is None or not c0 else ca / c0
+        if sa is not None:
+            score_alt[did] = sa
+        if not once or did == BASELINE:          # once = 베이스라인 1행(모든 안 같은 하중), per_target = 대상마다
+            per = dd.get("per_esl") or [{"entry_id": x["entry_id"], "label": x.get("label"), "primary": x.get("primary")}
+                                        for x in pr.get("per_esl") or []]
+            row = {"id": did, "status": r.get("status"), "transfer": pr.get("transfer") or dd.get("transfer"),
+                   "per_esl": per}
+            for k in ("supports", "region"):
+                if pr.get(k) is not None:
+                    row[k] = {kk: v for kk, v in pr[k].items() if kk != "nodes"}
+            if sa is not None:
+                row["score_alt"] = sa
+            shapes.append(row)
+        prim = base_prim if once else [x.get("primary") or {} for x in (dd.get("per_esl") or pr.get("per_esl") or [])]
+        ff = [float(x["far_frac"]) for x in prim if x.get("far_frac") is not None]
+        dm = [float(x["dM_rel_before"]) for x in prim if x.get("dM_rel_before") is not None]
+        csv_cols[did] = [dd.get("variant") or pdoc.get("variant") or "", max(ff) if ff else "", max(dm) if dm else "",
+                         "" if sa is None else sa]
+        for w in dd.get("warnings") or []:
+            warns.append(f"{w} — {did}")
+    rows = (d0.get("d000") or {}).get("rows") or []
+    order = [tp.variant_label(*v) for v in tp.sweep_variants(L)]
+    summ = ltm.summary(rows, order)
+    rank_same = None
+    if alt is not None and score_alt:
+        ids = [x["id"] for x in R["ranking"] if x["id"] in score_alt]
+        if ids and len(ids) == len(R["ranking"]):
+            rank_same = ids == sorted(ids, key=lambda i: (score_alt[i], ids.index(i)))
+    ref = d0.get("d000") or {}
+    diag = {"schema": ltm.DIAG_SCHEMA, "scenario": c.scn, "method": L["method"], "cell_size_mm": L.get("cell_size_mm"),
+            "alt": None if alt is None else {"method": alt[0], "cell_size_mm": alt[1]},
+            "plan": pdoc.get("plan") or {"id": plan["id"], "reuse": plan["reuse"]},
+            "reference": {"did": BASELINE, "source": (_cmp_doc(c).get("reference_source") if plan["truth"] == "compare" else
+                                                      plan["truth"]),
+                          "identity": bool(ref.get("identity")), "truth": ref.get("truth")},
+            "shapes": shapes, "d000": {"truth": ref.get("truth"), "rows": rows},
+            "warnings": [*(pdoc.get("warnings") or []), *warns], "seconds": pdoc.get("seconds")}
+    if once and score_alt:
+        diag["score_alt"] = score_alt
+    out = {**tp.public(L), "plan": plan["id"], "alt": diag["alt"], "truth": ref.get("truth"), "summary": summ,
+           "rank_alt_same": rank_same, "warnings_n": len(diag["warnings"])}
+    if "support" not in L:                       # ①②③ 결과 요약 키도 같은 모양(지지·영역 = 해당 없음)
+        out.update(support=None, region_mode=None)
+    return out, csv_cols, diag, warns
+
+
+def _lt_view3d_ref(c: Ctx, t, results: list[dict], shown: list[str]) -> tuple[dict, dict, list]:
+    """LT-9(④ 전용): 표시 형상(상위 k)의 최악 ESL 마다 d000 view3d post/view3d/d000_e<kk>/(인수분해 1회 + keep_u).
+    반환 (view3d_ref{entry_id: dir}, view3d_esl{did: entry_id}, 경고)."""
+    from esl.view3d import build_view
+    by = {r["id"]: r for r in results}
+    v_esl = {d: by[d].get("worst_entry_id") for d in [BASELINE] + shown if by.get(d) and by[d].get("worst_entry_id")}
+    eids = [e["id"] for e in c.D["entries"]]
+    want = sorted({v_esl[d] for d in shown if d in v_esl and v_esl[d] in eids}, key=eids.index)
+    if not want:
+        return {}, v_esl, []
+    try:
+        tgt, _reg, loads, _ = _lt_design(c, t, BASELINE)
+        sel = [(e, f) for e, f in loads if e in want]
+        r = ev.evaluate(tgt.mesh, list(tgt.supports), sel, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
+                        keep_u=[e for e, _ in sel])
+        ref = {}
+        for e, f in sel:
+            name = f"{BASELINE}_e{eids.index(e):02d}"
+            od = c.writer.fresh_dir(c.p("post", "view3d", name), c.out)
+            build_view(od, node_id=tgt.mesh["node_id"], x0=tgt.mesh["x0"], conn=tgt.mesh["conn"],
+                       elem_type=tgt.mesh["elem_type"], f=f, u_rel=_sm_view_u(c, BASELINE, tgt.mesh, r["u"][e]),
+                       supports=[{"node_id": n, "dof": d} for n, d in tgt.supports], key=f"doe/{name}", esl_run_id=str(e))
+            ref[e] = name
+        return ref, v_esl, []
+    except EslError as exc:
+        return {}, v_esl, [f"VIEW3D_FAILED: {BASELINE}_e {exc.code}"]
+
+
+# ---------------------------------------------------------------- v0.20.0 강성 지표 1차 섭동 (esl_stiffness_metric.md)
+# 순수 모듈 stiffness_metric(지표·강체 제거) + load_transfer.build_disp(변위 보간 S_t) + 계획 표 열 sm_ref·sm_disp·sm_omega.
+SM_REF_NPZ = "sm_ref.npz"
+SM_REF_SCHEMA = "esl/doe_sm_ref/1"
+SM_SCHEMA = 1
+SM_ROW_KEYS = ("C_lin", "C_ritz", "rho", "imbalance_rel", "umax_def")
+
+
+def _sm(c: Ctx) -> dict | None:
+    """스냅샷 doe.rank(새 스터디) → {metric, lin_form, lin_valid, imbalance_warn}. 없으면 None(옛 = solve, 지표 계산 없음)."""
+    r = c.D.get("rank")
+    if not isinstance(r, dict) or c.scn not in ("same", "mesh", "step", "compare", "select"):
+        return None
+    base = settings()["rank"]
+    out = {k: r.get(k, base[k]) for k in ("metric", "lin_form", "lin_valid", "imbalance_warn")}
+    if out["metric"] not in smm.METRICS or out["lin_form"] not in smm.LIN_FORMS:
+        raise EslError("CONFIG_INVALID", f"rank.metric {out['metric']} / lin_form {out['lin_form']}")
+    return out
+
+
+def _sm_post(c: Ctx) -> dict | None:
+    """BD_POST 순위 지표(결정 A): 스냅샷 rank + metric_effective(계획 열 sm_rank — 다른 메시 = solve)·cross_mesh. 옛 = None."""
+    S_ = _sm(c)
+    if S_ is None:
+        return None
+    plan = _lt_plan(c)
+    return {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"]), "cross_mesh": tp.cross_mesh(plan)}
+
+
+def _sm_post_warn(S_: dict | None) -> list:
+    """다른 메시 비교 경고 SM_CROSS_MESH(결과 1개) — 같은 메시 계획·옛 스냅샷 = 없음."""
+    return [_cmp_text("SM_CROSS_MESH")] if S_ and S_["cross_mesh"] else []
+
+
+def _solve6(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), keep6=(),
+            region=None) -> dict:
+    """``evaluate.evaluate`` 와 같은 계산(같은 식·같은 순서 — per_esl·warnings·stats 비트 동일) + keep6 ESL 의 6 dof 해
+    (회전 포함, 강성 지표 참조 변위용). evaluate.py 는 변경하지 않는다(회전을 돌려주는 인자가 없어 여기서 같은 흐름)."""
+    from esl.mech import supports as msup
+    from esl.mech.shell import ShellModel, solver_check_kwargs
+    from esl.mech.strain import eps_eq_max_layer
+    from esl.opt.target import support_check
+    sr = support_check(mesh, supports)
+    if sr["rank"] < 6 or sr["sigma_ratio"] < msup.DEGENERATE_RATIO:
+        raise EslError("SUPPORT_DEGENERATE", f"3-2-1 지지가 강체 6모드를 구속하지 못함: {list(supports)}")
+    t0 = time.monotonic()
+    sm_ = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
+                     drill_factor=float(solver_cfg["drill_factor"]), backend=str(solver_cfg["backend"]),
+                     **solver_check_kwargs(solver_cfg))
+    h = sm_.factorize(ev.spc_of(mesh, supports))
+    per, warns, keep, keep_6 = [], [], {}, {}
+    want, want6 = set(keep_u or ()), set(keep6 or ())
+    for eid, F in loads:
+        F = np.asarray(F, dtype=np.float64)
+        u, R = h.solve(F)
+        ut = u[:, :3]
+        C = float(np.sum(F * ut))
+        if region is not None:
+            rn = np.zeros(ut.shape[0], bool)
+            rc = np.asarray(mesh["conn"], dtype=np.int64)[np.asarray(region, bool)]
+            rn[rc[rc >= 0]] = True
+            umax = float(np.max(np.linalg.norm(ut[rn], axis=1))) if rn.any() else 0.0
+        else:
+            umax = float(np.max(np.linalg.norm(ut, axis=1))) if ut.size else 0.0
+        eps = eps_eq_max_layer(sm_.strains(u))
+        if region is not None:
+            eps = eps[np.asarray(region, bool)]
+        epsmax = float(np.max(eps)) if eps.size else 0.0
+        sabs = float(np.linalg.norm(F, axis=1).sum())
+        rr = float(np.linalg.norm(R.sum(axis=0)) / sabs) if sabs > 0 else 0.0
+        if rr > float(reaction_warn):
+            warns.append({"code": "REACTION_RESIDUAL", "entry_id": eid, "ratio": rr})
+        per.append({"entry_id": eid, "C": C, "umax": umax, "epsmax": epsmax, "reaction_rel": rr})
+        if eid in want:
+            keep[eid] = ut.copy()
+        if eid in want6:
+            keep_6[eid] = np.array(u[:, :6], dtype=np.float64, copy=True)
+    return {"per_esl": per, "warnings": warns, "u": keep, "u6": keep_6,
+            "stats": {"n_factorizations": int(sm_.stats.get("n_factorizations", 0)), "n_solves": h.n_solves,
+                      "backend": sm_.stats.get("backend"), "seconds": round(time.monotonic() - t0, 3)}}
+
+
+def _a_direct(c: Ctx, kind: str, rc: dict | None, h: float, warns: list, infos: list) -> dict:
+    """참값·참조 변위 a_direct(LT-10/§13.7 = SM-1 같은 인수분해 — c 에 1회 캐시): A 메시(원본 메시 sha 별) 직접 풀이.
+    kind = raw(②③ — ESL raw 물성·자기 지지, rank < 6 → A auto + LT_TRUTH_AUTO_SUPPORT) | study(④ — 스터디 물성·A 영역 auto).
+    반환 {entry_id: {C, umax, u6, mesh, sha}}."""
+    key = ("a_direct", kind)
+    cache = getattr(c, "_adirect", {})
+    if key in cache:
+        return cache[key]
+    out: dict = {}
+    groups: dict = {}
+    for e in _lt_ents(c):
+        groups.setdefault(ltm.mesh_sha(e.raw), []).append(e)
+    for sha, es in groups.items():
+        raw = es[0].raw
+        try:
+            ne = int(np.asarray(raw["elem_type"]).size)
+            if kind == "study":
+                am = clt.a_direct_mesh(raw, U.read_json(c.p("prep", "base.json"))["props"])
+                reg, _ = clt.region_of(am, np.asarray(raw["x0"]), rc or {"mode": "all", "pad_mm": None, "min_frac": 0.5}, h)
+                sup = clt.auto_supports(am, reg)
+            else:
+                am = {k: np.asarray(raw[k]) for k in ("node_id", "x0", "elem_id", "elem_type", "conn")}
+                am["elem_pid"] = np.asarray(raw.get("elem_pid", np.zeros(ne, np.int64)))
+                for k in ("thickness", "E", "nu"):
+                    am[k] = np.broadcast_to(np.asarray(raw[k], dtype=np.float64), (ne,)).copy()
+                reg = None
+                sup = [(int(n), str(d)) for n, d in zip(np.asarray(raw.get("support_node_id", [])).tolist(),
+                                                        np.asarray(raw.get("support_dof", [])).tolist())]
+                if not sup or not clt._support_ok(am, sup):
+                    from esl.opt import target as tg
+                    sup = tg.auto_supports(am)
+                    infos.append(_cmp_text("LT_TRUTH_AUTO_SUPPORT", sha=sha))
+            ids = [e.meta["entry_id"] for e in es]
+            r = _solve6(am, sup, [(e.meta["entry_id"], np.asarray(e.raw["f"], dtype=np.float64)) for e in es],
+                        c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], keep6=ids, region=reg)
+            for e, p in zip(es, r["per_esl"]):
+                out[e.meta["entry_id"]] = {"C": p["C"], "umax": p["umax"], "u6": r["u6"][e.meta["entry_id"]],
+                                           "mesh": am, "sha": sha, "f": np.asarray(e.raw["f"], dtype=np.float64)}
+        except EslError as exc:
+            warns.append({"stage": f"a_direct {sha}", "err": exc.code})
+    cache[key] = out
+    c._adirect = cache
+    return out
+
+
+def _sm_placement(c: Ctx, plan: dict, e, frame: dict) -> dict:
+    pl = dict(_lt_placement(c, plan))
+    if pl.get("kind") == "frame":
+        pl.update(src_frame=e.meta.get("frame"), dst_frame=frame)
+    return pl
+
+
+def _sm_omega(plan: dict, region):
+    return region if plan["sm_omega"] != "all" else None
+
+
+def _sm_eval(c: Ctx, t, did: str, mesh: dict, loads: list, region, h: float, u3: dict, u6: dict) -> tuple[dict, list]:
+    """안(베이스라인 포함) 강성 지표(§2): K_t 조립(Ω 요소) · u_t = S u_ref(계획 sm_disp) · metrics · umax_def.
+    베이스라인에서 참조 변위(sm_ref: base | a_direct)·C_ref 를 만들어 prep/sm_ref.npz 에 1회 저장(안은 읽기만).
+    결정 A(2026-11-13): 계획 sm_ref = none(다른 메시 — 옛 ③·④) 이면 지표 없이 umax_def 만(순위 = 재풀이 C, post 의 sm_rank).
+    반환 ({entry_id: per_esl 추가 키}, 경고 문자열)."""
+    S, plan, L = _sm(c), _lt_plan(c), _lt(c)
+    wcfg = (L or settings()["load_transfer"])["work"]
+    om = _sm_omega(plan, region)
+    om_nodes = None if om is None else ltm.active_nodes(mesh, om)
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    if plan["sm_ref"] == "none":
+        return {eid: {"C_lin": None, "C_ritz": None, "rho": None, "imbalance_rel": None,
+                      "umax_def": smm.umax_def(X, u3[eid], om_nodes) if eid in u3 else None} for eid, _F in loads}, []
+    ents = {e.meta["entry_id"]: e for e in _lt_ents(c)}
+    idn = {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}
+    disp_b, disp_d = plan["sm_disp"]
+    warns: list = []
+    path = c.p("prep", SM_REF_NPZ)
+    if did == BASELINE:
+        ref = {}
+        dw, di = [], []
+        ad = None
+        for eid, F in loads:
+            kind = plan["sm_ref"]
+            if kind == "base_or_a_direct":
+                kind = "base" if om is None and ltm.same_mesh(ents[eid].raw, mesh, "topo+coords", c.coord_tol()) \
+                    else "a_direct"
+            if kind == "base":
+                u_ref = smm.remove_rigid(X, u6[eid])
+                ref[eid] = {"kind": "base", "u_ref": u_ref, "K_A": None, "F_A": np.asarray(F, dtype=np.float64)}
+            else:
+                if ad is None:
+                    ad = _a_direct(c, "study" if plan["truth"] == "compare" else "raw",
+                                   (L or {}).get("region"), h, dw, di)
+                a = ad.get(eid)
+                if a is None:
+                    raise EslError("SM_SKIPPED", f"a_direct 풀이 없음 {eid}")
+                ref[eid] = {"kind": "a_direct", "u_ref": smm.remove_rigid(a["mesh"]["x0"], a["u6"]),
+                            "mesh": a["mesh"], "F_A": a["f"]}
+        K_t = smm.stiffness(mesh, c.solver_cfg(), elem_mask=om)
+        Ks: dict = {}
+        out, u_base, C_ref = {}, [], {}
+        S_cache: dict = {}
+        for eid, F in loads:
+            rf = ref[eid]
+            if rf["kind"] == "base":              # 같은 K_t(같은 Ω) → 베이스라인 ρ = 1 정확(결정 A)
+                K_A = K_t
+                ut6, sinfo = rf["u_ref"], {"kind": "I", "far_frac": 0.0}
+            else:
+                am = rf["mesh"]
+                sha = ltm.mesh_sha(am)
+                if sha not in Ks:
+                    Ks[sha] = smm.stiffness(am, c.solver_cfg())
+                K_A = Ks[sha]
+                pl = _sm_placement(c, plan, ents[eid], t.frame)
+                skey = (sha, json.dumps(U.jsonable({k: v for k, v in pl.items() if k in ("kind", "R", "t")}),
+                                        sort_keys=True))
+                if skey not in S_cache:
+                    S_cache[skey] = ltm.build_disp(am, mesh, pl, wcfg, h, idn)
+                Sm, sinfo = S_cache[skey]
+                ut6 = smm.apply_disp(Sm, rf["u_ref"], sinfo.get("R"))
+            C_ref[eid] = smm.reference(K_A, rf["u_ref"], rf["F_A"])["C_ref"]
+            out[eid] = _sm_row(c, S, K_t, ut6, F, C_ref[eid], eid, X, u3, om_nodes, sinfo, warns)
+            u_base.append(ut6)
+        doc = {"schema": np.asarray(SM_REF_SCHEMA), "entry_ids": np.asarray([e for e, _ in loads]),
+               "C_ref": np.asarray([C_ref[e] for e, _ in loads], dtype=np.float64),
+               "ref_kind": np.asarray([ref[e]["kind"] for e, _ in loads])}
+        if disp_d == "I":                         # once: 베이스라인 u_t 1회 → 모든 안 같은 노드
+            doc.update(node_id=np.asarray(mesh["node_id"], dtype=np.int64), u=np.stack(u_base))
+        else:                                     # per_target: 원본 공간 u_ref(강체 제거) — 안마다 S_t
+            for k, (eid, _F) in enumerate(loads):
+                doc[f"u_a_{k}"] = ref[eid]["u_ref"]
+        mg.save_npz_det(c.writer.guard(path), doc)
+        warns += [_cmp_text("LT_DIAG_SKIPPED", stage=w["stage"], err=w["err"]) for w in dw] + di
+        return out, warns
+    z = U.load_npz(path)
+    eids = [str(e) for e in z["entry_ids"].tolist()]
+    K_t = smm.stiffness(mesh, c.solver_cfg(), elem_mask=om)
+    out = {}
+    S_cache = {}
+    for eid, F in loads:
+        k = eids.index(eid)
+        if disp_d == "I":
+            nb = np.asarray(z["node_id"], dtype=np.int64)
+            nm = np.asarray(mesh["node_id"], dtype=np.int64)
+            ut6 = z["u"][k] if np.array_equal(nb, nm) else z["u"][k][np.searchsorted(nb, nm, sorter=np.argsort(nb))
+                                                                   .clip(0, nb.size - 1)]
+            sinfo = {"kind": "I", "far_frac": 0.0}
+        else:
+            e = ents[eid]
+            am = e.raw
+            pl = _sm_placement(c, plan, e, t.frame)
+            skey = (ltm.mesh_sha(am), json.dumps(U.jsonable({kk: v for kk, v in pl.items() if kk in ("kind", "R", "t")}),
+                                                 sort_keys=True))
+            if skey not in S_cache:
+                S_cache[skey] = ltm.build_disp(am, mesh, pl, wcfg, h, idn)
+            Sm, sinfo = S_cache[skey]
+            ut6 = smm.apply_disp(Sm, z[f"u_a_{k}"], sinfo.get("R"))
+        out[eid] = _sm_row(c, S, K_t, ut6, F, float(z["C_ref"][k]), eid, X, u3, om_nodes, sinfo, warns)
+    return out, warns
+
+
+def _sm_row(c: Ctx, S: dict, K_t, ut6, F, C_ref: float, eid, X, u3: dict, om_nodes, sinfo: dict, warns: list) -> dict:
+    m = smm.metrics(K_t, ut6, F, C_ref, lin_valid=float(S["lin_valid"]), imbalance_warn=float(S["imbalance_warn"]),
+                    node_mask=om_nodes, entry_id=eid)
+    for w in m["warnings"]:
+        kw = {k: (f"{v:.3g}" if isinstance(v, float) else v) for k, v in w.items() if k != "code"}
+        warns.append(_cmp_text(w["code"], lin_valid=S["lin_valid"], imbalance_warn=S["imbalance_warn"], **kw))
+    row = {"C_lin": m["C_lin"], "C_ritz": m["C_ritz"], "rho": m["rho"], "imbalance_rel": m["imbalance_rel"],
+           "umax_def": smm.umax_def(X, u3[eid], om_nodes) if eid in u3 else None, "C_ref": C_ref}
+    if sinfo.get("kind") == "interp":
+        row["sm_far_frac"] = sinfo.get("far_frac")
+    return row
+
+
+def _sm_view_u(c: Ctx, did: str, mesh: dict, u3):
+    """3D 색·변형(SM-3): 강도 지표 스냅샷 = 강체 제거 u_def(Ω = 계획 sm_omega 영역 노드), 옛 = 해석값 그대로."""
+    if _sm(c) is None:
+        return u3
+    plan = _lt_plan(c)
+    reg = None
+    if plan["sm_omega"] == "compare_region":
+        reg = _lt_load_region(c, did)
+    elif plan["sm_omega"] == "step_region":
+        from esl.doe import step_graph as sg
+        reg = sg.load_region(c.p("prep"))
+    om = None if reg is None else ltm.active_nodes(mesh, reg)
+    try:
+        return smm.remove_rigid(np.asarray(mesh["x0"], dtype=np.float64), np.asarray(u3, dtype=np.float64), om)[:, :3]
+    except EslError:
+        return u3
+
+
+def _sm_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, h: float, r: dict) -> list:
+    """bd_eval 훅: per_esl 행에 SM 키(C_lin·C_ritz·rho·imbalance_rel·umax_def …)를 넣고 경고 문자열을 돌려줌. 실패 = 키 None +
+    SM_SKIPPED(그 안은 lin 순위 밖 — rank)."""
+    try:
+        rows, warns = _sm_eval(c, t, did, mesh, loads, region, h, r.get("u") or {}, r.get("u6") or {})
+    except (EslError, KeyError, ValueError, OSError) as exc:
+        rows, warns = {}, [_cmp_text("SM_SKIPPED", stage="eval", err=getattr(exc, "code", type(exc).__name__))]
+    for p in r["per_esl"]:
+        add = rows.get(p["entry_id"]) or {k: None for k in SM_ROW_KEYS}
+        p.update({k: v for k, v in add.items() if k != "C_ref"})
+    c._sm_cref = {e: v.get("C_ref") for e, v in rows.items()}
+    return warns
+
+
+def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str], lt_cols: dict | None = None,
+                     sm_key: str | None = None) -> str:
     """④ ranking.csv: 변수 열 대신 name·file_name. v0.16.0 끝 열(§7·C2-D-22) = source·mesh_method·hausdorff_mm·refine_h_mm·
-    elem_ratio_ref(기존 열 위치 불변)."""
+    elem_ratio_ref(기존 열 위치 불변). v0.20.0 LT-13 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["id", "rank", "status", "name", "file_name", "score", "improvement", "worst", "umax", "epsmax"]
-               + [f"C_{e}" for e in entry_ids] + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids] + MESH_CSV_COLS)
+    mid_h = (SM_CSV_MID + [f"C_{e}" for e in entry_ids] + [f"C_solve_{e}" for e in entry_ids]) if sm_key else \
+        (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
+    w.writerow(["id", "rank", "status", "name", "file_name"] + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
+               + MESH_CSV_COLS + (LT_CSV_COLS if lt_cols is not None else []))
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
@@ -2331,7 +3398,9 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
                                                                                        for e in entry_ids]
         else:
             row = head + ["", "", "", "", ""]
-        w.writerow(row + [C.get(e, "") for e in entry_ids] + extra + _mesh_csv(sh))
+        row = (row[:5] + _sm_csv(rank, r, x, entry_ids, sm_key)) if sm_key else (row + [C.get(e, "") for e in entry_ids])
+        w.writerow(row + extra + _mesh_csv(sh)
+                   + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else []))
     return buf.getvalue()
 
 
@@ -2412,7 +3481,8 @@ def _cmp_refine_bias(c: Ctx, t, doc: dict, results: list[dict], tol_rank: float,
                               "profile": bmeta.get("profile"), "frame": ev.config_hash(bmeta["frame"]),
                               "refine": ev.config_hash({k: v for k, v in rc.items() if k != "convergence"}),
                               "entries": [e["id"] for e in c.D["entries"]],
-                              "tools": tools})     # 판정(tol·same_h)은 캐시 키 아님, gmsh·occ 버전은 키(메시가 바뀜)
+                              "tools": tools,      # 판정(tol·same_h)은 캐시 키 아님, gmsh·occ 버전은 키(메시가 바뀜)
+                              **({"load_transfer": ev.config_hash(tp.hash_view(_lt(c)))} if _lt(c) else {})})
         prev = ev.reusable(dd, sha)
         if prev is not None and prev.get("status") == "OK":
             C_hr[hr] = {p["entry_id"]: float(p["C"]) for p in U.read_json(os.path.join(dd, ev.RESULT_JSON))["per_esl"]}
@@ -2422,9 +3492,15 @@ def _cmp_refine_bias(c: Ctx, t, doc: dict, results: list[dict], tol_rank: float,
             a = {"stage": "refine_global", "max_elems": int(rc["max_elems"])}
             mesh, meta = mg.run_isolated(src, os.path.join(dd, "mesh"), hr, mr.attempt_cfg(ccfg, a), props,
                                          opt_cfg=c.ocfg, max_elems=int(rc["max_elems"]))
-            dt = sc.compare_target(mesh, t.frame)
-            loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
-            r = ev.evaluate(dt.mesh, list(dt.supports), loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"])
+            if _lt(c) is not None:              # v0.20.0 LT-1 같은 규칙(영역·지지 이전·하중 전달)
+                dt, reg_r, loads = _lt_mesh_loads(c, t, mesh)
+                rkw_r = {"region": reg_r} if reg_r is not None else {}
+            else:
+                dt = sc.compare_target(mesh, t.frame)
+                loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+                rkw_r = {}
+            r = ev.evaluate(dt.mesh, list(dt.supports), loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
+                            **rkw_r)
             rd = ev.result_doc(f"{BASELINE}_h{hr:g}", "OK", {}, mesh={"n_nodes": dt.n_nodes, "n_elems": dt.n_elems, "h": hr},
                                solve=r["stats"], per_esl=r["per_esl"], warnings=r["warnings"])
             U.write_json(c.writer.guard(os.path.join(dd, ev.RESULT_JSON)), rd)
@@ -2498,7 +3574,10 @@ def _cmp_post(c: Ctx, echo) -> dict:
             results.append(ev.result_doc(r["id"], "CANCELED", {}))
         else:
             results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
-    R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"})
+    S_ = _sm_post(c)
+    R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
+                    "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     rk.attach_shapes(R, shapes)
     bias, bias_w, bias_i = _cmp_refine_bias(c, t, doc, results, float(R["ratio_tol"]), echo)     # v0.16.0 C2-D-24
     for x in R["ranking"]:
@@ -2523,8 +3602,18 @@ def _cmp_post(c: Ctx, echo) -> dict:
     c.progress(20)
     c.writer.makedirs(c.p("post"))
     eids = [e["id"] for e in c.D["entries"]]
+    L = _lt(c)
+    lt_res = lt_cols = lt_diag = None
+    lt_w: list = []
+    if L is not None:                            # v0.20.0 LT-10·13 진단 모음·요약·CSV 끝 열
+        try:
+            lt_res, lt_cols, lt_diag, lt_w = _lt_post(c, R, results)
+        except (EslError, OSError, ValueError, KeyError) as exc:
+            lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", err=getattr(exc, "code", type(exc).__name__))]
+            lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(_cmp_ranking_csv(R, results, shapes, eids))
+        fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols,
+                                  smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None))
 
     def shp(did):
         s = shapes.get(did) or {}
@@ -2537,7 +3626,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     inp = U.read_json(c.p("prep", "input.json"))
     if doc["reference_source"] == "case":
         warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
-    warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w
+    warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w + lt_w \
+        + _sm_post_warn(S_)
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -2547,6 +3637,10 @@ def _cmp_post(c: Ctx, echo) -> dict:
             v3.append(_view3d(c, t, bmeta, did, inp, res))
         except EslError as exc:
             warns.append(f"VIEW3D_FAILED: {did} {exc.code}")
+    v3_ref = v3_esl = None
+    if L is not None:                            # LT-9 3D 비교 같은 ESL(result.view3d 목록 불변)
+        v3_ref, v3_esl, vw = _lt_view3d_ref(c, t, results, top)
+        warns += vw
     c.progress(60)
     props = bmeta["props"]
     best_files: dict[str, list[str]] = {}
@@ -2581,6 +3675,17 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "esl": esl, "limits_extra": list(LIMIT_MSG) + _mesh_limits(doc["shapes"]), "warnings": warns,
            "refine_bias": bias, "mesh_mode": doc.get("mesh_mode"),
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])}}
+    if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절, §6 최상위 metric·lin_form
+        ctx["stiffness"] = dict(S_)
+        out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"],
+                   **({"n_fallback": R["n_fallback"]} if "n_fallback" in R else {}))
+    if L is not None:
+        out.update(load_transfer=lt_res, view3d_ref=v3_ref or {}, view3d_esl=v3_esl or {})
+        ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
+        ctx["limits_extra"] = ctx["limits_extra"] + [LT_LIMIT_MSG]
+        if lt_diag is not None:
+            c.write_json(os.path.join("post", LT_DIAG_JSON), U.jsonable(lt_diag))
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     out["cleanup_bytes"] = 0
@@ -2590,7 +3695,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     echo(f"[bd_post] ④ 성공 {R['n_ok']} · 최적 {best_id or '-'}"
          + (f" ({_cmp_name(c, best_id)}) score {R['ranking'][0]['score']:.4f}" if best_id else ""))
     c.progress(100)
-    ret = {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"],
+    ret = {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"]
+           + ([f"post/{LT_DIAG_JSON}"] if L is not None and lt_diag is not None else []),
            "warnings": warns, "result": out}
     if bias_i:
         ret["info"] = bias_i
@@ -2759,9 +3865,18 @@ def _sel_loads(c: Ctx, echo) -> dict:
     warns, info = [], []
     step = _is_step_base(c)
     region = None
-    if step:                                     # v0.18.0 SG-D-8·20b 하중 셀 매핑 1회, 대상 = 평가 영역 노드
+    pre_sd = pre_xfer = None
+    if step:
         from esl.doe import step_graph as sg
         region = sg.load_region(c.p("prep"))
+    if _lt(c) is not None:                       # v0.20.0 하중 전달 계획(①②③ select — 베이스라인 1회, 공용 실행기)
+        fc = None
+        if step:                                 # ③ 배치 = fixed_transfer 의 frame 판정 재사용(추가 판정 0)
+            pre_sd = c.fresh(os.path.join("prep", "select"))
+            pre_xfer = _sel_fixed_transfer(c, t, bmeta, ents, region, pre_sd)
+            fc = (pre_xfer[0] or {}).get("frame_check")
+        loads, linfo = _lt_base_loads(c, t, bmeta, ents, region, fc)
+    elif step:                                   # v0.18.0 SG-D-8·20b 하중 셀 매핑 1회, 대상 = 평가 영역 노드
         loads, linfo = sg.region_loads(t, ents, region, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
                                        (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
     else:
@@ -2785,10 +3900,10 @@ def _sel_loads(c: Ctx, echo) -> dict:
     m = t.mesh
     nid = np.asarray(m["node_id"], dtype=np.int64)
     fixed = np.isin(nid, fids)
-    sd = c.fresh(os.path.join("prep", "select"))
+    sd = pre_sd if pre_sd is not None else c.fresh(os.path.join("prep", "select"))
     xfer, xinfo, gfids = None, [], fids
     if step:                                     # v0.18.0 SG-D-12~15 A 고정점 → B (seed fixed_user, 분류 fixed)
-        xfer, xinfo = _sel_fixed_transfer(c, t, bmeta, ents, region, sd)
+        xfer, xinfo = pre_xfer if pre_xfer is not None else _sel_fixed_transfer(c, t, bmeta, ents, region, sd)
         gfids = np.asarray((xfer or {}).get("node_id") or [], dtype=np.int64)
     X = np.asarray(m["x0"], dtype=np.float64)
     tris = v3.triangulate(np.asarray(m["conn"]), np.asarray(m["elem_type"]))
@@ -2854,6 +3969,8 @@ def _sel_loads(c: Ctx, echo) -> dict:
                        if not (isinstance(x, dict) and str(x.get("code", "")).startswith("FIXED_XFER"))] + xinfo
         info += [sg.text(x["code"], **{k: v for k, v in x.items() if k != "code"}) for x in xinfo]
     inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0, fixed=fixed_rec)
+    if getattr(c, "_lt_inp_rec", None):          # v0.20.0 LT-19 계획 id·배치·fast_path
+        inp["load_transfer"] = c._lt_inp_rec
     inp["warnings"] = list(inp.get("warnings") or []) + ([fw] if fw else [])
     if step:                                     # 다시 돌려도 중복 없음
         inp["warnings"] = [x for x in inp["warnings"] if not (isinstance(x, dict) and x.get("code") ==

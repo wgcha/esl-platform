@@ -178,7 +178,13 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
   view3d: {top_k: 3}
-  rank: {ratio_tol: 1.0e-6, per_esl_inline_max: 2000}   # v0.10.0 ESL별 개선 지표('변화 없음' 허용치 — ③ 은 noise_floor 반영, 순위 행 per_esl 상한)
+  rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
+    ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
+    per_esl_inline_max: 2000          # 순위 행 per_esl 상한(안 수 × ESL 수)
+    metric: solve                     # solve(재풀이 C, 새 스터디 기본 — SM-11) | lin(재풀이 없는 1차 지표 순위, lin_form 식 — 선택). 옛 스터디(스냅샷에 없음)는 solve
+    lin_form: ritz                    # ritz(C_ref/ρ, 사용자 확정 기본) | taylor(C_ref(2−ρ))
+    lin_valid: 0.3                    # |ρ−1| 초과 → 경고 SM_LIN_RANGE(1차 근사 밖)
+    imbalance_warn: 0.02              # 불평형 imbalance_rel 초과 → 경고 SM_IMBALANCE(보조 값 흐림)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true
@@ -283,6 +289,22 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       local: {factors: [0.75, 0.5, 0.33], neighbor_rings: 1, max_faces: 20}   # 실패 면 + 이웃 고리 크기 = h × factor
       global: {factors: [0.8, 0.667]}   # 3 → 2.4 → 2.0 mm
       convergence: {enabled: true, tol: null, same_h_baseline: false}   # 기준 d000 을 세분화 h 로 다시 풀어 메시 편향 δ 표시(tol null = rank.ratio_tol)
+    load_transfer:                    # v0.20.0 ④ 전용(계약 esl_load_transfer.md §13.6) — 방식·셀·진단은 위 bead_doe.load_transfer(최상위)
+      support: transfer               # transfer(기준 d000 지지 → 형상 최근접 노드) | auto(형상마다 PCA 3-2-1, 예전)
+      support_tol_mm: null            # 이전 거리 허용(null = 2h) — 넘거나 rank < 6 이면 그 형상만 auto + LT_SUPPORT_FALLBACK
+      region: {mode: auto, pad_mm: null, min_frac: 0.5}   # 평가 영역(③ SG-D-19 와 같은 규칙) auto | a_bbox | largest | all
+  load_transfer:                      # v0.20.0 하중 전달 — 강성 평가 모든 모드 ①②③④ 공통(계약 esl_load_transfer.md §13.6) — 섹션 없으면 아래 기본. 옛 스터디(스냅샷에 없음)는 영향 없음
+    method: work                      # work(일 등가 f_t = Tᵀ f_A) | cell(셀 매핑) — 새 스터디 기본(요청 load_transfer 로 덮어씀)
+    cell_size_mm: null                # cell 셀 크기(null = 기존 ESL 요약 24×14 격자, 요청 cell_size_mm 로 덮어씀)
+    cell_choices_mm: [null, 10.0, 5.0, 3.0]   # 화면 select 의 셀 선택지(null = 기존 격자, 길이 ≤ 8)
+    cell_min_mm: 3.0                  # 셀 크기 하한(요청 검사, 상한 200)
+    work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2, fail_dist_mm: 20.0, fail_frac: 0.2}   # proj_tol_mm null = 1.0 × h(초과 = 경고 LT_FAR), fail_dist_mm 초과 하중 비 > fail_frac = 실패
+    diag:                             # 하중 전달 진단(LT-10·20) — 해시 밖(진단 설정만 바꿔도 주 결과 재사용)
+      enabled: true
+      alt: true                       # 다른 방식 변이를 베이스라인 진단에 포함(work ↔ cell)
+      alt_cell_size_mm: 3.0           # 주 방식이 work 일 때 alt cell 의 셀 크기(null = 기존 격자)
+      alt_designs: auto               # 안마다 다른 방식 점수 score_alt: auto(④ 켬·①②③ 끔) | on | off
+      cell_sweep_mm: [null, 10.0, 5.0, 3.0]   # 베이스라인 셀 크기 훑기(참값 대비 변형만, 0 개 = 끔)
   select:                             # v0.15.0 비드 직접 선택·규칙 모핑(계약 esl_bead_select.md §10) — paicad 불필요(있으면 fixed-scan 만)
     enabled: true
     feature_angle_deg: 15.0           # 브라우저 확장·사면 BFS 평행 판정 기본(°, 1..45)
