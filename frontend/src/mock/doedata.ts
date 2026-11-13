@@ -798,9 +798,17 @@ export function withMetric(res: DoeResultOut): DoeResultOut {
       per_esl: r.per_esl?.map((p, k) => ({ ...p, C: +(p.C * 0.98).toFixed(1), C_solve: p.C, rho: +(rho + 0.01 * k).toFixed(3), imbalance_rel: +(imb * (1 - 0.1 * k)).toFixed(4), umax_def: +(p.umax * 0.35).toFixed(3) })),
     };
   });
+  // R-SM-1 결정: |ρ−1| > lin_valid 인 안은 순위 값 = 재풀이 C(basis solve·SM_LIN_RANGE) — 범위 안은 지표 그대로, 그 뒤 다시 정렬
+  const lv = 0.3;
+  const out = (r: { rho_min?: number | null; rho_max?: number | null }) => Math.abs((r.rho_min ?? 1) - 1) > lv || Math.abs((r.rho_max ?? 1) - 1) > lv;
+  const ranked = ranking
+    .map((r) => (out(r) ? { ...r, score: r.score_solve ?? r.score, improvement: +(1 - (r.score_solve ?? r.score)).toFixed(4), basis: "solve" as const, sm_warn: ["SM_LIN_RANGE"] } : { ...r, basis: "lin" as const }))
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+  const n_fallback = ranked.filter((r) => r.basis === "solve").length;
   const warnings = [...res.warnings];
   if (ranking.some((r) => Math.abs((r.rho_max ?? 1) - 1) > 0.3)) warnings.push({ code: "SM_LIN_RANGE", message: "ρ 가 lin_valid(0.3) 범위 밖인 안이 있습니다 — 1차 근사가 개선을 과장할 수 있으니 재풀이 C(보조 열)와 비교하세요" });
-  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { metric: "lin", lin_form: "ritz", lin_valid: 0.3, imbalance_warn: 0.02 }, C_ref_solve: res.C_ref, warnings };
+  return { ...res, ranking: ranked, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "lin", lin_form: "ritz", rank: { metric: "lin", lin_form: "ritz", lin_valid: lv, imbalance_warn: 0.02, n_fallback }, C_ref_solve: res.C_ref, warnings };
 }
 /** 전달 계획 종류(§13.3): ① case_once · ② bmesh_once · ③ step_once · ④ compare_per_shape */
 export type LtKind = "case" | "bmesh" | "step" | "compare";
@@ -809,12 +817,12 @@ export type LtKind = "case" | "bmesh" | "step" | "compare";
 export function withCrossMesh(res: DoeResultOut): DoeResultOut {
   const r = res.metric === "lin" ? res : withMetric(res);
   const ranking = r.ranking
-    .map((x) => ({ ...x, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4), imbalance_max: null, rho_min: null, rho_max: null,
+    .map(({ basis: _b, sm_warn: _w, ...x }) => ({ ...x, score: x.score_solve ?? x.score, improvement: +(1 - (x.score_solve ?? x.score)).toFixed(4), imbalance_max: null, rho_min: null, rho_max: null,
       per_esl: x.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C, rho: null, imbalance_rel: null })) }))
     .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
     .map((x, i) => ({ ...x, rank: i + 1 }));
   const warnings = [...r.warnings.filter((w) => w.code !== "SM_LIN_RANGE"), { code: "SM_CROSS_MESH", message: "다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 순위를 매겼습니다" }];
-  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: true, rank: { ...(r.rank ?? {}), metric_effective: "solve", cross_mesh: true }, warnings };
+  return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: true, rank: { ...(r.rank ?? {}), n_fallback: undefined, metric_effective: "solve", cross_mesh: true }, warnings };
 }
 export function ltKind(o: { scenario: DoeScenario; inputs: { select_base?: string | null } }): LtKind {
   if (o.scenario === "compare") return "compare";

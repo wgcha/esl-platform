@@ -918,7 +918,8 @@ def bd_post(spec: dict, echo=print) -> dict:
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
     S_ = _sm_post(c)
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]),
-                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"]} if S_ else {}))
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
+                    "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     for x in R["ranking"]:
         for p in x["per_esl"]:
@@ -1037,7 +1038,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절·한계 안내, §6 최상위 metric·lin_form
         ctx["stiffness"] = dict(S_)
         out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
-                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"])
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"],
+                   **({"n_fallback": R["n_fallback"]} if "n_fallback" in R else {}))
     if L is not None:
         out["load_transfer"] = lt_res
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
@@ -3573,7 +3575,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
             results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
     S_ = _sm_post(c)
     R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
-                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"]} if S_ else {}))
+                **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
+                    "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     rk.attach_shapes(R, shapes)
     bias, bias_w, bias_i = _cmp_refine_bias(c, t, doc, results, float(R["ratio_tol"]), echo)     # v0.16.0 C2-D-24
     for x in R["ranking"]:
@@ -3674,7 +3677,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     if S_ is not None:                           # v0.20.0 SM-7 보고서 강성 지표 절, §6 최상위 metric·lin_form
         ctx["stiffness"] = dict(S_)
         out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
-                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"])
+                   metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"],
+                   **({"n_fallback": R["n_fallback"]} if "n_fallback" in R else {}))
     if L is not None:
         out.update(load_transfer=lt_res, view3d_ref=v3_ref or {}, view3d_esl=v3_esl or {})
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}

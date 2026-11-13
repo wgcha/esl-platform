@@ -109,11 +109,15 @@ def pareto_flags(vecs: dict[str, list[float]], baseline: list[float] | None = No
 
 
 def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 1e-6,
-         extra_failed: dict | None = None, metric: str = "solve", lin_form: str = sm.LIN_FORM_DEFAULT) -> dict:
+         extra_failed: dict | None = None, metric: str = "solve", lin_form: str = sm.LIN_FORM_DEFAULT,
+         lin_valid: float | None = None) -> dict:
     """result.json 목록(베이스라인 포함) → DoeResultOut 순위 부분(+ ESL별 개선 지표, 행의 per_esl).
 
     extra_failed = 추가 실패 상태 {상태: n_failed 키}(④ ``{"FAILED_SIZE": "size"}`` — 없으면 ①②③ 결과 그대로).
-    metric·lin_form = 순위 지표(SM-2) — 기본 solve = 옛 정의 바이트 동일, lin 은 새 스냅샷(per_esl 에 C_lin) 에서만."""
+    metric·lin_form = 순위 지표(SM-2) — 기본 solve = 옛 정의 바이트 동일, lin 은 새 스냅샷(per_esl 에 C_lin) 에서만.
+    lin_valid(R-SM-1 결정 2026-11-13, lin 일 때만): |ρ−1| > lin_valid 인 ESL 이 있는 안은 그 안의 순위 값을 재풀이 C 로 대체
+    (score = max_i C_solve / C_ref_solve, ESL별 비 = C_solve / 베이스라인 C_solve) — 행 basis "solve" + sm_warn [SM_LIN_RANGE],
+    나머지 basis "lin", 최상위 n_fallback. None = 대체 없음(옛 동작)."""
     key = sm.metric_key(metric, lin_form)
     fail_key = dict(_FAIL_KEY, **(extra_failed or {}))
     by = {r["id"]: r for r in results}
@@ -137,6 +141,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     rows, n_sk, n_fl, n_other = [], {v: 0 for v in _SKIP_KEY.values()}, {v: 0 for v in fail_key.values()}, 0
     tl = ratio_tol(noise_floor, tol)
     base_C = {p["entry_id"]: float(p[key]) for p in b.get("per_esl") or []}
+    base_S = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
+    fb_on = key != "C" and lin_valid is not None
     order = [p["entry_id"] for p in b.get("per_esl") or [] if float(p[key]) > 0]
     warns_extra = [{"code": "BASELINE_ESL_ZERO", "entry_ids": [e for e, c in base_C.items() if not c > 0]}] \
         if any(not c > 0 for c in base_C.values()) else []
@@ -156,11 +162,13 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
         if key != "C" and any(p.get(key) is None for p in r.get("per_esl") or []):
             n_fl["sm"] += 1                     # 강성 지표 진단 실패(SM_SKIPPED) — lin 순위 밖
             continue
-        a = _agg(r, key)
-        s = a["C"] / C_ref
+        fb = fb_on and sm.out_of_range(r.get("per_esl") or [], lin_valid)
+        k_r, ref_r, base_r = ("C", C_ref_solve, base_S) if fb else (key, C_ref, base_C)
+        a = _agg(r, k_r)
+        s = a["C"] / ref_r
         imp = 1.0 - s
         pe = {p["entry_id"]: p for p in r.get("per_esl") or []}
-        per = [{"entry_id": e, "C": float(pe[e][key]), "ratio": float(pe[e][key]) / base_C[e],
+        per = [{"entry_id": e, "C": float(pe[e][k_r]), "ratio": float(pe[e][k_r]) / base_r[e],
                 "umax": float(pe[e]["umax"]), "epsmax": float(pe[e]["epsmax"])} for e in order if e in pe]
         if new:
             for x in per:
@@ -173,7 +181,11 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                "umax_all": a["umax_all"], "epsmax_all": a["epsmax_all"],
                "noise": None if noise_floor is None else bool(abs(imp) < float(noise_floor)),
                "warnings_n": len(r.get("warnings") or []), **met, "per_esl": per,
-               "C": {p["entry_id"]: float(p[key]) for p in r.get("per_esl") or []}}
+               "C": {p["entry_id"]: float(p[k_r]) for p in r.get("per_esl") or []}}
+        if fb_on:
+            row["basis"] = "solve" if fb else "lin"
+            if fb:
+                row["sm_warn"] = ["SM_LIN_RANGE"]
         if new:
             row.update(_sm_aux(r, a, C_ref_solve), C_solve={p["entry_id"]: float(p["C"]) for p in r.get("per_esl") or []})
         rows.append(row)
@@ -193,6 +205,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     if new:
         out["baseline"].update(_sm_aux(b, ba, C_ref_solve))
         out.update(metric=metric, lin_form=lin_form, C_ref_solve=C_ref_solve)
+    if fb_on:
+        out["n_fallback"] = sum(1 for x in rows if x.get("basis") == "solve")
     return out
 
 

@@ -2372,6 +2372,8 @@ export interface DoeRankCfg {
   /** 결정 A(결과의 rank 에만): 순위에 실제로 쓴 지표·다른 메시 비교 여부 */
   metric_effective?: DoeRankMetric | null;
   cross_mesh?: boolean | null;
+  /** R-SM-1 결정: 1차 범위 밖이라 재풀이 C 로 대체한 안 수(lin 결과만) */
+  n_fallback?: number | null;
 }
 export interface DoeSettingsOut {
   /** v0.20.0 순위 지표 설정(옛 서버면 없음) */
@@ -2991,6 +2993,9 @@ export interface DoeRankRow {
   rho_min?: number | null;
   rho_max?: number | null;
   umax_def?: number | null;
+  /** R-SM-1 결정(lin 결과만): 순위 값 기준 — lin(1차 지표) | solve(|ρ−1| > lin_valid 라 재풀이 C 로 대체), 대체 안 sm_warn ["SM_LIN_RANGE"] */
+  basis?: "lin" | "solve" | null;
+  sm_warn?: string[] | null;
   /** v0.20.0 ESL별 재풀이 C(entry_id → C) — 새 스냅샷만 */
   C_solve?: Record<string, number> | null;
 }

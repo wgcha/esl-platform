@@ -112,3 +112,31 @@ def test_lin_baseline_missing_fails():
         rk.rank(rs, metric="lin")
     assert e.value.code == "BASELINE_FAILED"
     assert rk.rank(rs, metric="solve")["n_ok"] == 4             # solve 는 지표 없어도 그대로
+
+
+def test_lin_range_fallback_per_design():
+    """R-SM-1 결정(2026-11-13): metric lin 에서 |ρ−1| > lin_valid 인 ESL 이 있는 안만 순위 값 = 재풀이 C(C_solve / C_ref_solve,
+    basis solve·sm_warn SM_LIN_RANGE), 범위 안 안은 지표 그대로(basis lin), n_fallback. lin_valid 없음 = 옛 동작, solve(④) 불변."""
+    rs = [new("d000", [(10.0, 1.0), (20.0, 1.0)]),
+          new("d001", [(9.0, 1.1), (19.0, 1.05)]),           # 범위 안(|ρ−1| ≤ 0.3) → lin
+          new("d002", [(21.0, 3.0), (22.0, 1.5)]),           # ρ 3·1.5 → 재풀이 C(거짓 개선 ritz 0.67 대신)
+          new("d003", [(18.0, 1.0), (40.0, 0.5)])]           # ρ 0.5 → 재풀이 C
+    base = rk.rank(json.loads(json.dumps(rs)), metric="lin", lin_form="ritz")
+    R = rk.rank(json.loads(json.dumps(rs)), metric="lin", lin_form="ritz", lin_valid=0.3)
+    by = {x["id"]: x for x in R["ranking"]}
+    assert "n_fallback" not in base and all("basis" not in x for x in base["ranking"])
+    assert R["n_fallback"] == 2 and R["C_ref"] == base["C_ref"] and R["C_ref_solve"] == 20.0
+    assert by["d001"]["basis"] == "lin" and "sm_warn" not in by["d001"]
+    b1 = {x["id"]: x for x in base["ranking"]}["d001"]
+    assert by["d001"]["score"] == b1["score"] and by["d001"]["per_esl"] == b1["per_esl"]
+    for did, want in (("d002", 22.0 / 20.0), ("d003", 40.0 / 20.0)):
+        x = by[did]
+        assert x["basis"] == "solve" and x["sm_warn"] == ["SM_LIN_RANGE"]
+        assert x["score"] == pytest.approx(want, rel=1e-12) and x["score"] == pytest.approx(x["score_solve"], rel=1e-12)
+        assert x["C"] == x["C_solve"] and [p["ratio"] for p in x["per_esl"]] == [p["C_solve"] / c for p, c in
+                                                                                   zip(x["per_esl"], (10.0, 20.0))]
+    assert [x["id"] for x in R["ranking"]] == ["d001", "d002", "d003"]       # 거짓 개선(d002 ritz) 사라짐
+    assert [x["id"] for x in base["ranking"]][0] == "d002"
+    s1 = rk.rank(json.loads(json.dumps(rs)), metric="solve", lin_form="ritz")    # ④·옛 ③(solve) — lin_valid 무관
+    s2 = rk.rank(json.loads(json.dumps(rs)), metric="solve", lin_form="ritz", lin_valid=0.3)
+    assert _dump(s1) == _dump(s2) and "n_fallback" not in s2

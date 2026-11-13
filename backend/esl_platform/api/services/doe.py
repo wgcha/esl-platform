@@ -1807,6 +1807,8 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         out["cross_mesh"] = bool(r.get("cross_mesh"))
         if isinstance(out["rank"], dict):
             out["rank"] = {**out["rank"], "metric_effective": out["metric_effective"], "cross_mesh": out["cross_mesh"]}
+            if isinstance(r.get("n_fallback"), int):          # R-SM-1 결정: 1차 범위 밖 → 재풀이 C 로 대체한 안 수(행 basis)
+                out["rank"]["n_fallback"] = int(r["n_fallback"])
     if isinstance(r.get("C_ref_solve"), (int, float)) and not isinstance(r.get("C_ref_solve"), bool):
         out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
     for k in ("view3d_ref", "view3d_esl"):

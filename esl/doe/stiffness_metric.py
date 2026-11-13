@@ -223,6 +223,12 @@ def metric_key(metric: str, lin_form: str = LIN_FORM_DEFAULT) -> str:
     raise EslError("CONFIG_INVALID", f"rank.metric {metric} — {list(METRICS)}")
 
 
+def out_of_range(per_esl: list[dict], lin_valid: float) -> bool:
+    """R-SM-1 결정(2026-11-13): 한 안의 ESL 중 하나라도 |ρ−1| > lin_valid(1차 근사 범위 밖)면 참 — 그 안의 순위 값은 재풀이 C.
+    ρ 가 없는(null) ESL 은 판정에서 뺌."""
+    return any(p.get("rho") is not None and abs(float(p["rho"]) - 1.0) > float(lin_valid) for p in per_esl)
+
+
 def score(per_esl: list[dict], metric: str, lin_form: str = LIN_FORM_DEFAULT) -> dict:
     """한 안의 per_esl → {M{entry_id: 값|None}, worst(argmax, 동률 = 앞), M_max, missing[entry_id]}.
     값이 None(SM_SKIPPED) 인 ESL 은 missing 에 모으고 최악 계산에서 뺌."""

@@ -12,14 +12,22 @@ describe("순위 지표 규칙(화면 쪽 함수·mock)", () => {
     expect(isLinResult({ metric: "solve" })).toBe(false);
     expect(isLinResult({ metric: "lin" })).toBe(true);
   });
-  it("withMetric: 순위 순서 유지, score_solve 에 옛 score, 불평형·ρ·umax_def 채움", () => {
+  it("withMetric: score_solve 에 옛 score, 불평형·ρ·umax_def 채움, |ρ−1|>lin_valid 안 = 재풀이 C 대체(basis solve)", () => {
     const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
     const base = makeCompareResult(makeComparePrep(compareIds([sh("a", true), sh("b"), sh("c"), sh("d")]), "step"), ["le-1", "le-2"]);
     const r = withMetric(base);
     expect(r.metric).toBe("lin");
-    expect(r.ranking.map((x) => x.id)).toEqual(base.ranking.map((x) => x.id));
-    expect(r.ranking[0].score_solve).toBe(base.ranking[0].score);
-    expect(r.ranking[0].umax_def).toBeLessThan(r.ranking[0].umax);
+    expect([...r.ranking.map((x) => x.id)].sort()).toEqual([...base.ranking.map((x) => x.id)].sort());
+    const orig = new Map(base.ranking.map((x) => [x.id, x.score]));
+    for (const x of r.ranking) {
+      expect(x.score_solve).toBe(orig.get(x.id));
+      expect(x.umax_def).toBeLessThan(x.umax);
+      const out = Math.abs((x.rho_min ?? 1) - 1) > 0.3 || Math.abs((x.rho_max ?? 1) - 1) > 0.3;
+      expect(x.basis).toBe(out ? "solve" : "lin");
+      if (out) expect(x.score).toBe(x.score_solve);
+    }
+    expect(r.rank?.n_fallback).toBe(r.ranking.filter((x) => x.basis === "solve").length);
+    expect(r.ranking.map((x) => x.score)).toEqual([...r.ranking.map((x) => x.score)].sort((a, b) => a - b));
   });
   it("결정 A withCrossMesh: score = 재풀이 비, ρ·불평형 없음, metric_effective solve·cross_mesh·SM_CROSS_MESH", () => {
     const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
@@ -81,6 +89,12 @@ describe("② 결과 — doe-21(metric lin, 같은 메시)", () => {
     expect(rows.some((r) => !r.classList.contains("sm-faded"))).toBe(true);
     // 경고 목록: SM_LIN_RANGE
     expect(screen.getByText(/1차 근사가 개선을 과장/)).toBeTruthy();
+    // R-SM-1 결정: 범위 밖 안 = 주 열 값 옆 '재풀이' 표시(툴팁), 새 버튼·토글 없음
+    const fb = within(t).getAllByTestId(/^basis-solve-/);
+    expect(fb.length).toBeGreaterThan(0);
+    expect(fb[0].textContent).toBe("재풀이");
+    expect(fb[0].getAttribute("title")).toBe("1차 근사 범위 밖(|ρ−1|>0.3) — 재풀이 C로 순위");
+    expect(rows.length - fb.length).toBeGreaterThan(0);
   }, 20000);
 
 });
@@ -97,6 +111,7 @@ describe("④ 결과 — doe-20(결정 A: 다른 메시 비교)", () => {
     expect(heads).toEqual(expect.arrayContaining(["umax", "εmax"]));
     expect(screen.queryByTestId("rank-aux-toggle")).toBeNull();
     expect(screen.queryByTestId("sm-verify-note")).toBeNull();
+    expect(within(t).queryAllByTestId(/^basis-solve-/).length).toBe(0);        // ④ 불변(전부 solve — 대체 표시 없음)
     expect(screen.queryAllByText(/1차 강성 지표를 쓰지 않고/).length).toBe(0); // 서버 경고 문구는 안내 1줄로 대신
   }, 20000);
 

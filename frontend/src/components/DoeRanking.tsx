@@ -177,7 +177,14 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                     <ShapeNameCell name={r.shape?.name ?? "–"} shape={r.shape} testId={`rank-method-${r.id}`} />
                   </th>
                 )}
-                <td className="num mono">{r.score.toFixed(2)}</td>
+                <td className="num mono">
+                  {r.score.toFixed(2)}
+                  {lin && r.basis === "solve" && (
+                    <span className="badge neutral small" data-testid={`basis-solve-${r.id}`} title={`1차 근사 범위 밖(|ρ−1|>${th.linValid ?? "lin_valid"}) — 재풀이 C로 순위`}>
+                      재풀이
+                    </span>
+                  )}
+                </td>
                 <td className={`num ${r.improvement > 0 ? "ok-text" : "error-text"}`}>
                   {pctText(r.improvement)}
                   {r.noise && (

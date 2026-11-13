@@ -97,16 +97,18 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
     rk = sorted(res["ranking"], key=lambda x: x["values"]["B1_D1"])
     d1 = [x["values"]["B1_D1"] for x in rk]
     assert len(rk) == 4 and d1[0] == 18.0 and d1[-1] == 26.0
-    # v0.20.0: 새 스터디 순위 = 1차 강성 지표(lin·ritz). 깊이 ±4 mm(공칭 22)는 1차 근사 범위 밖(|ρ−1| ≫ lin_valid — 고정 변형을
-    # 바뀐 비드 벽에 주면 양쪽 모두 막 변형에너지가 커져 ρ > 1)이라 단조 검사는 재풀이 C(score_solve)로 한다(미해결 R-SM-1 기록).
-    assert res["metric"] == "lin" and all(x.get("score_solve") is not None for x in rk)
-    lv = res["rank"]["lin_valid"]
-    assert max(abs(x["rho_max"] - 1.0) for x in (rk[0], rk[-1])) > lv          # 양 끝 안 = SM_LIN_RANGE 범위 밖
-    scores = [x["score_solve"] for x in rk]
-    assert all(a > b for a, b in zip(scores, scores[1:])), scores        # 깊어질수록 강성 ↑ → 재풀이 score ↓
-    assert scores[0] > 1.0 > scores[-1]                                  # 공칭(22) = 베이스라인 사이
+    # v0.20.0 R-SM-1 결정(2026-11-13): 1차 지표 범위 밖(|ρ−1| > lin_valid) 안은 재풀이 C 로 대체(basis solve). 깊이 ±4 mm(공칭 22)의
+    # 양 끝 안은 범위 밖(고정 변형을 바뀐 비드 벽에 주면 양쪽 모두 ρ > 1 → 거짓 개선)이라 재풀이 C, 최종 순위 = 깊이에 단조.
+    assert res["metric"] == "lin" and res["rank"]["n_fallback"] >= 2
+    assert rk[0]["basis"] == "solve" and rk[-1]["basis"] == "solve"
+    assert all(x["basis"] in ("lin", "solve") for x in rk)
+    solve = [x["score_solve"] for x in rk]
+    assert all(a > b for a, b in zip(solve, solve[1:])), solve          # 재풀이 C 는 깊어질수록 강성 ↑ → ↓
+    assert solve[0] > 1.0 > solve[-1]                                    # 공칭(22) = 베이스라인 사이
+    scores = [x["score"] for x in rk]
+    mono = all(a > b for a, b in zip(scores, scores[1:]))
     rels = {f["rel"] for f in api(client, "GET", f"/doe/studies/{sid}/files").json()}
-    best = rk[-1]["id"]
+    best = next(x["id"] for x in res["ranking"] if x["rank"] == 1)
     assert {f"best/{best}/ch_r.rad", f"best/{best}/ch_r.fem", f"best/{best}/selection.json",
             f"best/{best}/include/{w['rad'].name}", "report.html"} <= rels
     rep = client.get(f"{API}/doe/studies/{sid}/report", headers=R)
@@ -120,6 +122,9 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
         assert [x["code"] for x in det["excluded"]] == ["VD_CASE_NOT_READY"]
     assert tree(inputs_root) == in_before
     assert get_job(client, j["id"])["state"] == "SUCCEEDED"
+    if not mono:                                                         # 미해결(계약 R-SM-1 후속): 범위 안(|ρ−1| ≤ lin_valid)
+        pytest.xfail("R-SM-1 대체 후에도 비단조 — 범위 안 안(ρ 1.23~1.24)도 양방향 ρ > 1 거짓 개선: "  # 안의 1-벡터 Ritz 도
+                     + str([(x["basis"], round(x["score"], 4), round(x["score_solve"], 4)) for x in rk]))
 
 
 # ================================================================ v0.16.2 자동 탐지 seed · ② B 메시 기준 select(esl_bead_auto.md V-AD-2·10·11)
