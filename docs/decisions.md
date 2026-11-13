@@ -268,3 +268,7 @@
 
 ## 2026-11-13 (v0.19.1)
 - (0.19.1 BG-D-47, 2026-11-13, 근거 이슈 #63 B10_D·B11_D BG_BASIS_LEAK) 기저·검사 공용 노드 규칙 `zones.movable_nodes` + 걸친 섬의 바깥 벽(접합 구역 단차 벽) 접촉 노드도 hold(후보 A, 접합 구역 자동 포함 B 기각 — 합성 stepboss 에서 B 는 단차 벽 3.9 mm 이동·뒤집힘 22), beadgraph 1.1.0·MORPH_RULES 2, 다른 변수 기저 바이트 동일.
+
+## 2026-11-13 (v0.20.0)
+- (0.20.0 D-0.20.0-LT-1~14, 2026-11-13, 근거 이슈 #63 진단 — d000 에서 셀 매핑 하중 상관 0.02~0.04·umax ×18~58) ④ 하중 전달 = 일 등가 W(f_t = Tᵀf_A, 같은 메시면 ① 과 비트 동일)·셀 C(셀 크기 선택) 둘 다, 모든 형상 같은 규칙, 지지 이전·평가 영역·3D 같은 ESL, 진단 load_transfer_diag. 계약 esl_load_transfer.md §0~12.
+- (0.20.0 D-0.20.0-LT-15~24, 2026-11-13 17:10 사용자 결정) 하중 전달(work·cell)을 ①②③④ 모든 모드의 독립 옵션으로 — `esl/doe/load_transfer.py` = 모드 무관 순수 모듈(esl.doe import 금지, 전략 등록 identity·work·cell), 모드 차이는 선언형 전달 계획 표 1곳(`transfer_plan.py`: ① case_once·② bmesh_once·③ step_once·옛 ③ step_per_design·④ compare_per_shape), stages 는 `_plan_loads` 하나로 호출. 새 스터디 기본 work, 옛 스냅샷 바이트 동일(① 은 work = identity 라 새 스냅샷도 하중·점수 동일). 재사용 = 안이 기준 메시 모핑이면 once(새 ③ 포함), 재메시면 per_target. identity 자동 경로는 work 전용(cell 은 같은 메시도 셀 매핑 — ① 비교용·④ 공정성). ②③ 배치 = 구멍 특징 frame 판정(global|rigid|frame). 진단 스키마 공용, 안마다 score_alt 는 `diag.alt_designs`(auto: ④ 켬·①②③ 끔 — 안 수 ≤ 200 × ESL 수 풀이 비용). 지지 이전·평가 영역·3D 같은 ESL 은 ④ 전용 유지. 설정 `bead_doe.load_transfer` 최상위로 이동(미출시라 별칭 없음). 계약 esl_load_transfer.md §13.
