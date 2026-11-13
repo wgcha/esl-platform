@@ -152,7 +152,7 @@ def _done(client, world, engine, esl_root, extra, rows=None):
     (base / "post" / "result.json").write_text(json.dumps(res), encoding="utf-8")
     (base / "post" / "designs.json").write_text(json.dumps({"designs": [{"id": "d000", "status": "OK"}]}), encoding="utf-8")
     (base / "post" / "per_esl.json").write_text(json.dumps({"esl": [], "ratio_tol": 1e-6, "designs": {"d001": [
-        {"entry_id": "e1", "C": 1.0, "ratio": 0.9, "C_lin": 0.95, "C_ritz": 0.97, "rho": 1.05, "imbalance_rel": 0.03,
+        {"entry_id": "e1", "C": 1.0, "C_solve": 1.2, "ratio": 0.9, "C_lin": 0.95, "C_ritz": 0.97, "rho": 1.05, "imbalance_rel": 0.03,
          "umax_def": 2.5}]}}), encoding="utf-8")
     update_study(engine, s["id"], phase="DONE", result=res)
     return s["id"]
@@ -161,23 +161,31 @@ def _done(client, world, engine, esl_root, extra, rows=None):
 def test_results_pass_metric_fields(client, world, engine, esl_root):
     row = {"id": "d001", "values": {}, "score": 0.9, "improvement": 0.1, "worst_entry_id": "e1", "umax": 3.0, "epsmax": 1e-3,
            "worst_ratio": 0.95, "pareto": True, "rank": 1, "score_solve": 1.4, "imbalance_max": 0.27, "rho_min": 0.9,
-           "rho_max": 1.1, "umax_def": 2.5, "C": 12.0}
+           "rho_max": 1.1, "umax_def": 2.5, "C": 12.0, "C_solve": {"e1": 12.0}}
     warn = {"code": "SM_LIN_RANGE", "message": "1차 근사 밖"}
-    sid = _done(client, world, engine, esl_root, {"metric": "lin", "lin_form": "ritz", "warnings": [warn]}, [row])
+    sid = _done(client, world, engine, esl_root, {"metric": "lin", "lin_form": "ritz", "C_ref_solve": 10.0, "warnings": [warn],
+                                                    "n_failed": {"sm": 2}}, [row])
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] == "lin" and o["lin_form"] == "ritz" and warn in o["warnings"]
+    assert o["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}   # 스터디 스냅샷
+    assert o["C_ref_solve"] == 10.0 and o["n_failed"] == {"sm": 2} and o["ranking"][0]["C_solve"] == {"e1": 12.0}
     r0 = o["ranking"][0]
     assert {k: r0[k] for k in ("score_solve", "imbalance_max", "rho_min", "rho_max", "umax_def")} == {
         "score_solve": 1.4, "imbalance_max": 0.27, "rho_min": 0.9, "rho_max": 1.1, "umax_def": 2.5} and "C" not in r0
     pe = api(client, "GET", f"/doe/studies/{sid}/results/per-esl").json()["designs"][0]["per_esl"][0]
     assert pe["C_lin"] == 0.95 and pe["C_ritz"] == 0.97 and pe["rho"] == 1.05 and pe["imbalance_rel"] == 0.03
-    assert pe["umax_def"] == 2.5
+    assert pe["umax_def"] == 2.5 and pe["C_solve"] == 1.2
 
 
 def test_results_legacy_null_metric(client, world, engine, esl_root):
     sid = _done(client, world, engine, esl_root, {})
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
-    assert o["metric"] is None and o["lin_form"] is None
+    assert o["metric"] is None and o["lin_form"] is None and o["C_ref_solve"] is None
+
+
+def test_settings_rank_block(client, world):
+    s = api(client, "GET", "/doe/settings").json()
+    assert s["rank"] == {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02}
 
 
 def test_openapi_rank_keys():

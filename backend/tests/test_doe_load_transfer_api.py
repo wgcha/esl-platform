@@ -49,7 +49,8 @@ def test_defaults_and_mirror():
 
     d = _cfg().model_dump()
     assert d == {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0], "cell_min_mm": 3.0,
-                 "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01, "far_fail_frac": 0.2},
+                 "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01, "far_fail_frac": 0.2,
+                          "fail_dist_mm": 20.0, "fail_frac": 0.2},
                  "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0, "alt_designs": "auto",
                           "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}}
     dump = BeadDoeCfg().model_dump()
@@ -85,7 +86,8 @@ def test_settings_mirror_into_core_view():
     {"diag": {"cell_sweep_mm": [float(x) for x in range(10, 19)]}}, {"diag": {"alt_designs": "yes"}},
     {"work": {"knn": 0}}, {"work": {"knn": 65}}, {"work": {"proj_tol_mm": 0}}, {"work": {"newton_iter": 0}},
     {"work": {"newton_iter": 51}}, {"work": {"far_warn_frac": 0.3}}, {"work": {"far_fail_frac": 1.1}},
-    {"work": {"far_warn_frac": -0.1}}, {"unknown": 1},
+    {"work": {"far_warn_frac": -0.1}}, {"work": {"fail_dist_mm": 0}}, {"work": {"fail_frac": 1.1}},
+    {"work": {"fail_frac": -0.1}}, {"unknown": 1},
     {"support": "transfer"}, {"region": {"mode": "all"}},                 # 최상위에서는 ④ 전용 키 금지(별칭 없음)
 ])
 def test_config_rejects(tmp_path, bad):
@@ -118,7 +120,7 @@ def test_config_rejects_compare(tmp_path, bad):
     {"cell_choices_mm": [None]}, {"diag": {"cell_sweep_mm": []}}, {"diag": {"alt_cell_size_mm": None}},
     {"diag": {"alt_designs": "on"}}, {"diag": {"alt_designs": "off"}},
     {"work": {"proj_tol_mm": None, "far_warn_frac": 0.0, "far_fail_frac": 0.0}},
-    {"work": {"far_warn_frac": 1.0, "far_fail_frac": 1.0}},
+    {"work": {"far_warn_frac": 1.0, "far_fail_frac": 1.0}}, {"work": {"fail_dist_mm": 0.5, "fail_frac": 0.0}},
     {"cell_choices_mm": [None] + [float(x) for x in range(10, 17)]},                      # 길이 8
 ])
 def test_config_accepts(tmp_path, good):

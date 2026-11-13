@@ -283,6 +283,13 @@ def _lt_settings(c: dict[str, Any]) -> dict[str, Any]:
             "cell_choices_mm": [num(x) for x in lt["cell_choices_mm"]], "cell_min_mm": float(lt["cell_min_mm"])}
 
 
+def _rank_settings(c: dict[str, Any]) -> dict[str, Any]:
+    """settings.rank(esl_stiffness_metric.md §6): 새 스터디 기본 순위 지표·경고 문턱 — 화면 하드코딩 방지(옛 스터디는 solve)."""
+    r = c["rank"]
+    return {"metric": str(r["metric"]), "lin_form": str(r["lin_form"]), "lin_valid": float(r["lin_valid"]),
+            "imbalance_warn": float(r["imbalance_warn"])}
+
+
 LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
 RANK_SCHEMA = 1     # 작업 spec params.doe.rank.schema(esl_stiffness_metric.md §6)
 
@@ -369,6 +376,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "method_sources": method_sources(principal),
             "compare": _compare_settings(ctx, c, st),
             "load_transfer": _lt_settings(c),
+            "rank": _rank_settings(c),
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
                        "max_tiers": int(sc["max_tiers"]),
@@ -1709,6 +1717,15 @@ def _file_entry(base: str, rel: str, lim: int) -> dict[str, Any] | None:
 RESULT_SORT_KEYS = ("score", "worst_ratio", "geo_mean_improvement", "n_worsened", "pareto")
 
 
+def _rank_snapshot_out(ctx: AppContext, sid: str) -> dict[str, Any] | None:
+    with ctx.engine.connect() as conn:
+        pj = doe_repo.latest_job(conn, sid, job_type="DOE_PREP")
+    snap = (((pj or {}).get("params") or {}).get("doe") or {}).get("rank")
+    if not isinstance(snap, dict) or "metric" not in snap:
+        return None
+    return {k: snap.get(k) for k in ("metric", "lin_form", "lin_valid", "imbalance_warn")}
+
+
 def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score") -> dict[str, Any]:
     """DoeResultOut. sort = 순위표 정렬 키(기본 score — rank 필드는 score 순위 그대로, 계약 §11.4)."""
     if sort not in RESULT_SORT_KEYS:
@@ -1782,6 +1799,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     for k in ("metric", "lin_form"):
         if isinstance(r.get(k), str):
             out[k] = r[k]
+    out["rank"] = _rank_snapshot_out(ctx, sid)       # 스터디 스냅샷 doe.rank(경고 문턱 — 화면이 상수 대신 사용), 옛 스터디 = null
+    if isinstance(r.get("C_ref_solve"), (int, float)) and not isinstance(r.get("C_ref_solve"), bool):
+        out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
     for k in ("view3d_ref", "view3d_esl"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}

@@ -949,6 +949,9 @@ class BeadDoeLoadTransferWorkCfg(_M):
     newton_iter: int = Field(default=10, ge=1, le=50)
     far_warn_frac: float = Field(default=0.01, ge=0, le=1)
     far_fail_frac: float = Field(default=0.2, ge=0, le=1)
+    # v0.20.0 코어 추가: 먼 노드 실패 판정 = 거리 > fail_dist_mm 인 하중 Σ|f| 비 > fail_frac(proj_tol_mm 초과는 경고 LT_FAR 만)
+    fail_dist_mm: float = Field(default=20.0, gt=0)
+    fail_frac: float = Field(default=0.2, ge=0, le=1)
 
     @model_validator(mode="after")
     def _order(self) -> "BeadDoeLoadTransferWorkCfg":

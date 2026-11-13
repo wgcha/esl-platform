@@ -1777,6 +1777,8 @@ class DoeSettingsOut(_Out):
     #                                                 {mesh_mode, remesh_available, mesh_input{enabled, formats, max_mb}, step_ready}
     # v0.20.0 하중 전달 설정(모든 모드 공통, §13.6): {method, cell_size_mm, cell_choices_mm, cell_min_mm} — 없으면 화면이 select 를 숨김
     load_transfer: dict[str, Any] | None = None
+    # v0.20.0 강성 지표 설정 {metric, lin_form, lin_valid, imbalance_warn}(새 스터디 기본·경고 문턱)
+    rank: dict[str, Any] | None = None
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
 
@@ -1891,6 +1893,9 @@ class DoeResultOut(_Out):
     # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
     metric: Literal["lin", "solve"] | None = None
     lin_form: Literal["ritz", "taylor"] | None = None
+    # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
+    rank: dict[str, Any] | None = None
+    C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None
 

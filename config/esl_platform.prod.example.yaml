@@ -298,7 +298,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     cell_size_mm: null                # cell 셀 크기(null = 기존 ESL 요약 24×14 격자, 요청 cell_size_mm 로 덮어씀)
     cell_choices_mm: [null, 10.0, 5.0, 3.0]   # 화면 select 의 셀 선택지(null = 기존 격자, 길이 ≤ 8)
     cell_min_mm: 3.0                  # 셀 크기 하한(요청 검사, 상한 200)
-    work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2}   # proj_tol_mm null = 1.0 × h
+    work: {knn: 8, proj_tol_mm: 3.0, newton_iter: 10, far_warn_frac: 0.01, far_fail_frac: 0.2, fail_dist_mm: 20.0, fail_frac: 0.2}   # proj_tol_mm null = 1.0 × h(초과 = 경고 LT_FAR), fail_dist_mm 초과 하중 비 > fail_frac = 실패
     diag:                             # 하중 전달 진단(LT-10·20) — 해시 밖(진단 설정만 바꿔도 주 결과 재사용)
       enabled: true
       alt: true                       # 다른 방식 변이를 베이스라인 진단에 포함(work ↔ cell)

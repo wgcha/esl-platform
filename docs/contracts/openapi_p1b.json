@@ -3167,6 +3167,17 @@
             "title": "C Ref",
             "type": "number"
           },
+          "C_ref_solve": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "C Ref Solve"
+          },
           "baseline": {
             "additionalProperties": true,
             "title": "Baseline",
