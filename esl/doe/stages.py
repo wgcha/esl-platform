@@ -28,7 +28,7 @@ import time
 
 import numpy as np
 
-from esl.doe import FAILED, SKIPPED, load_method_sources, opt_settings, settings
+from esl.doe import DEFAULTS, FAILED, SKIPPED, load_method_sources, opt_settings, settings
 from esl.doe import boundary as bnd
 from esl.doe import evaluate as ev
 from esl.doe import load_transfer as ltm
@@ -350,8 +350,11 @@ def bd_loads(spec: dict, echo=print) -> dict:
     t, bmeta = sc.load_base(c.p("prep"))
     ents = c.entries(raw=True)
     warns, info = [], []
-    loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
-                                  (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
+    if _lt(c) is not None:                       # v0.20.0 하중 전달 계획(①②③ 베이스라인 — 공용 실행기)
+        loads, linfo = _lt_base_loads(c, t, bmeta, ents)
+    else:
+        loads, linfo = sc.entry_loads(t, ents, c.mapping_opts(), c.ocfg["check"]["min_nodes_per_cell"],
+                                      (c.ocfg["grid"]["nx"], c.ocfg["grid"]["ny"]))
     warns += linfo["warnings"]
     loads_sha = sc.save_loads(c.p("prep"), t.mesh["node_id"], loads, c.writer)
     c.progress(80)
@@ -491,6 +494,8 @@ def _design_values(c: Ctx, did: str) -> dict:
 def _cfg_hash(c: Ctx) -> str:
     keep = {"solver": c.solver_cfg(), "mesh": c.cfg["mesh"], "solve": c.cfg["solve"], "grid": c.ocfg["grid"],
             "mapping": c.mapping_opts(), "paicad_options": c.cfg["paicad"].get("options") or {}}
+    if c.scn in ("same", "mesh", "step") and _lt(c) is not None:   # v0.20.0 하중 전달 스냅샷만(legacy 해시 불변)
+        keep["load_transfer"] = ev.config_hash(ltm.hash_view(_lt(c)))
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
         keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
@@ -558,7 +563,10 @@ def _design_mesh(c: Ctx, t, did: str, inp: dict, bmeta: dict, *, fresh: bool) ->
     mesh, meta = mg.run_isolated(brep, md, float(bmeta["h"]), c.cfg, bmeta["props"], opt_cfg=c.ocfg,
                                  normal_ref=t.frame["n"])
     dt = sc.design_target(mesh, t.frame)
-    loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+    if _lt(c) is not None:                       # v0.20.0 ③ 계획 per_target: A → 안 메시
+        loads, _ = _lt_apply(c, dt, c.entries(raw=True), _lt_h_mesh(c, bmeta, dt.mesh))
+    else:
+        loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
     return dt.mesh, list(dt.supports), loads, {"n_nodes": meta["n_nodes"], "n_elems": meta["n_elems"],
                                                 "quad_frac": meta["quad_frac"], "quality": meta["quality"],
                                                 "seconds": meta.get("seconds")}
@@ -742,7 +750,10 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
                         nu=np.full(ne, float(pr["nu"])))
             dt = sc.design_target(mesh, t.frame)
             mesh, sup = dt.mesh, list(dt.supports)
-            loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
+            if _lt(c) is not None:               # v0.20.0 ③ 실행과 같은 공용 실행기
+                loads, _ = _lt_apply(c, dt, c.entries(raw=True), _lt_h_mesh(c, bmeta, dt.mesh))
+            else:
+                loads, _ = sc.entry_loads(dt, c.entries(raw=False), c.mapping_opts())
         else:
             mesh = dict(t.mesh)
             mesh["x0"] = dz["x"]
@@ -2337,10 +2348,10 @@ LT_SEP = "\x1f"                                 # 진단 풀이 하중 id = entr
 
 def _lt(c: Ctx) -> dict | None:
     """스냅샷 doe.load_transfer(해석된 설정) — 없으면 None(legacy, 지금 경로 그대로 LT-11)."""
-    if c.scn != "compare":
+    if c.scn not in TRANSFER_PLAN:              # select 등 = 하중 전달 옵션 없음(지금 경로)
         return None
     if not hasattr(c, "_lt_cache"):
-        c._lt_cache = ltm.resolve(c.D.get("load_transfer"))
+        c._lt_cache = ltm.resolve(c.D.get("load_transfer"), DEFAULTS["compare"]["load_transfer"])
     return c._lt_cache
 
 
@@ -2376,13 +2387,73 @@ def _lt_prep_doc(c: Ctx) -> dict:
     return U.read_json(p) if os.path.isfile(p) else {}
 
 
-def _lt_ctx(c: Ctx, t, mesh: dict, did: str | None, region, h: float) -> tuple[ltm.Ctx, str | None, str]:
-    """W 캐시(prep/shapes/<did>/transfer.npz, 키 = 대상 메시·영역·work 설정) → Ctx."""
+def _lt_ctx(c: Ctx, t, mesh: dict, did: str | None, region, h: float) -> tuple[ltm.Cache, str | None, str]:
+    """W 캐시(prep/shapes/<did>/transfer.npz, 키 = 대상 메시·영역·work 설정) → ltm.Cache."""
     L = _lt(c)
-    key = ltm.work_key(mesh, region, L, h)
+    key = ltm.work_key(mesh, region, L["work"], h)
     path = None if did is None else os.path.join(_lt_shape_dir(c, did), LT_TRANSFER_NPZ)
     W = ltm.load_work(path, key) if path else {}
-    return ltm.Ctx(region, h, c.coord_tol(), c.mapping_opts(), W), path, key
+    return ltm.Cache(W), path, key
+
+
+# 모드별 선언형 전달 계획(src = 선택 ESL 원본 메시·노드힘 → dst). reuse: identity = 같은 메시(자동 identity), once = 베이스라인
+# 1회 옮겨 모든 안 재사용(BD-D-3), per_target = 대상(안·형상)마다. 실행은 공용 ``_lt_apply`` 하나.
+TRANSFER_PLAN = {"same": {"dst": "baseline", "reuse": "identity"}, "mesh": {"dst": "baseline", "reuse": "once"},
+                 "step": {"dst": "design", "reuse": "per_target"}, "compare": {"dst": "shape", "reuse": "per_target"}}
+LT_AUTO_IDENTITY = "work"        # 같은 메시 자동 identity = 일 등가일 때(T = I). 셀은 비교용으로 셀 그대로(공정성 결정 3)
+
+
+def _lt_h_mesh(c: Ctx, bmeta: dict, mesh: dict) -> float:
+    """사영 길이 척도 h: 기준 메타 h(③④ 메시 크기) → 없으면(①②) 대상 메시 모서리 길이 중앙값."""
+    if bmeta.get("h"):
+        return float(bmeta["h"])
+    from esl.opt.mesh_check import _edge_lengths
+    L = _edge_lengths(np.asarray(mesh["x0"], dtype=np.float64), np.asarray(mesh["conn"], dtype=np.int64),
+                      np.asarray(mesh["elem_type"]).astype(int))
+    return float(np.nanmedian(L))
+
+
+def _lt_base_loads(c: Ctx, t, bmeta: dict, ents) -> tuple[list, dict]:
+    """①②③ 베이스라인 하중(계획 dst = baseline): ① 같은 메시 = identity(일 등가 — ① 과 비트 동일)·셀 = Case 메시 셀 매핑,
+    ② = A → B 1회(모핑 안 재사용 BD-D-3), ③ = A → 베이스라인(안은 _design_mesh 에서 안마다). 반환 (loads, linfo)."""
+    h = _lt_h_mesh(c, bmeta, t.mesh)
+    loads, info = _lt_apply(c, t, ents, h)
+    L = _lt(c)
+    linfo = {"method": info["variant"], "fast_path": info["fast_path"], "plan": TRANSFER_PLAN[c.scn],
+             "per_entry": U.jsonable([{"entry_id": p["entry_id"], "strategy": p["strategy"], "dF_rel": p.get("dF_rel"),
+                                       "dM_rel": p.get("dM_rel"), "far_frac": p.get("far_frac")}
+                                      for p in info["per_esl"]]),
+             "warnings": [_lt_warn_text(w) for w in info["warnings"]], "load_transfer": ltm.public(L)}
+    state, ff = ltm.far_state(info, L["work"])
+    if state == "LT_TRANSFER_FAILED":
+        raise EslError("BASELINE_FAILED", _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work']['far_fail_frac']):g}",
+                                                     max_mm=f"{info['transfer']['max_dist_mm']:.3g}"))
+    if state == "LT_FAR_NODES":
+        linfo["warnings"].append(_cmp_text(state, far_n=info["transfer"]["far_n"], far_frac=f"{ff:.3g}",
+                                           max_mm=f"{info['transfer']['max_dist_mm']:.3g}"))
+    c.write_json(os.path.join("prep", LT_JSON), U.jsonable({
+        "schema": ltm.SCHEMA, "scenario": c.scn, "plan": TRANSFER_PLAN[c.scn], "method": L["method"],
+        "cell_size_mm": L.get("cell_size_mm"), "variant": info["variant"], "warnings": list(linfo["warnings"]),
+        "shapes": [{"id": BASELINE, "status": "READY", "fast_path": info["fast_path"], "transfer": info["transfer"],
+                    "warnings": [], "per_esl": [{"entry_id": p["entry_id"],
+                                                 "primary": {k: v for k, v in p.items() if k != "entry_id"}}
+                                                for p in info["per_esl"]]}]}))
+    return loads, linfo
+
+
+def _lt_sources(ents) -> list[dict]:
+    return [ltm.source(e.raw, e.meta.get("frame"), e.summary_for_mapping(), e.meta.get("entry_id")) for e in ents]
+
+
+def _lt_opts(c: Ctx, h: float) -> dict:
+    return {"work": _lt(c)["work"], "h": float(h), "coord_tol": c.coord_tol(), "mapping_opts": c.mapping_opts()}
+
+
+def _lt_apply(c: Ctx, tgt, ents, h: float, region=None, variant=None, cache=None) -> tuple[list, dict]:
+    """공용 실행기 1개: 선택 ESL → 대상(tg.Target, 활성 = region) 노드힘. variant = (method, cell_size_mm) — None = 주 방식."""
+    m, s = variant if variant is not None else ltm.primary_variant(_lt(c))
+    return ltm.run_many(_lt_sources(ents), ltm.target(tgt.mesh, tgt.frame, region), m, s, _lt_opts(c, h),
+                        cache if cache is not None else ltm.Cache(), auto_identity=LT_AUTO_IDENTITY)
 
 
 def _lt_supports(c: Ctx, t, mesh: dict, did: str, region, h: float, ref_sup: list | None) -> tuple:
@@ -2392,7 +2463,7 @@ def _lt_supports(c: Ctx, t, mesh: dict, did: str, region, h: float, ref_sup: lis
         tgt = sc.compare_target(mesh, t.frame, region=region)
         return tgt, {"mode": "auto", "max_dist_mm": None}
     tol = float(L["support_tol_mm"]) if L.get("support_tol_mm") is not None else 2.0 * float(h)
-    sup, info = ltm.transfer_supports(ref_sup, mesh, region, tol)
+    sup, info = sc.transfer_supports(ref_sup, mesh, region, tol)
     tgt = sc.compare_target(mesh, t.frame, supports=sup)
     return tgt, info
 
@@ -2411,9 +2482,9 @@ def _lt_design(c: Ctx, t, did: str, variant=None):
     else:
         ref = next((x for x in pdoc.get("shapes") or [] if x.get("id") == BASELINE), None)
         tgt, _ = _lt_supports(c, t, mesh, did, reg, h, ((ref or {}).get("supports") or {}).get("nodes"))
-    ctx, _path, _key = _lt_ctx(c, t, tgt.mesh, did, reg, h)
-    loads, info = ltm.shape_loads(tgt, c.entries(raw=True), _lt(c), ctx, variant)
-    c._lt_last_ctx = ctx
+    cache, _path, _key = _lt_ctx(c, t, tgt.mesh, did, reg, h)
+    loads, info = _lt_apply(c, tgt, c.entries(raw=True), h, reg, variant, cache)
+    c._lt_last_cache = cache
     return tgt, reg, loads, info
 
 
@@ -2423,10 +2494,10 @@ def _lt_mesh_loads(c: Ctx, t, mesh: dict) -> tuple:
     bmeta = U.read_json(c.p("prep", "base.json"))
     h = _lt_h(c, bmeta)
     ents = c.entries(raw=True)
-    reg, _ = ltm.region_of(mesh, np.asarray(ents[0].raw["x0"], dtype=np.float64), L["region"], h)
+    reg, _ = sc.region_of(mesh, np.asarray(ents[0].raw["x0"], dtype=np.float64), L["region"], h)
     ref = next((x for x in _lt_prep_doc(c).get("shapes") or [] if x.get("id") == BASELINE), None)
     tgt, _ = _lt_supports(c, t, mesh, "refine", reg, h, ((ref or {}).get("supports") or {}).get("nodes"))
-    loads, _ = ltm.shape_loads(tgt, ents, L, ltm.Ctx(reg, h, c.coord_tol(), c.mapping_opts()))
+    loads, _ = _lt_apply(c, tgt, ents, h, reg)
     return tgt, reg, loads
 
 
@@ -2449,7 +2520,7 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
     ccfg = c.cfg["compare"]
     warns, infos = [], []
     ref_mesh = mg.load_mesh(_cmp_mesh_dir(c, BASELINE))
-    reg0, ri0 = ltm.region_of(ref_mesh, a_xyz, rc, h)
+    reg0, ri0 = sc.region_of(ref_mesh, a_xyz, rc, h)
     if reg0 is not None:                         # LT-8 ② 기준 frame·크기 = d000 영역 요소(영역 = 전체면 base 그대로)
         base_keys = {"schema", "scenario", "target", "frame", "supports", "normals", "source", "warnings",
                      "topo_sha256", "n_nodes", "n_elems", "mesh_sha256"}
@@ -2473,9 +2544,9 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
         if did != BASELINE and r["status"] != "READY":
             continue
         mesh = dict(t.mesh) if did == BASELINE else mg.load_mesh(_cmp_mesh_dir(c, did))
-        reg, ri = (reg0, ri0) if did == BASELINE else ltm.region_of(mesh, a_xyz, rc, h)
+        reg, ri = (reg0, ri0) if did == BASELINE else sc.region_of(mesh, a_xyz, rc, h)
         _lt_save_region(c, did, reg)
-        rw, rinf = ltm.region_messages(ri, rc)
+        rw, rinf = sc.region_messages(ri, rc)
         lrow = {"id": did, "status": "READY", "region": {k_: ri.get(k_) for k_ in ("mode", "rule", "n_in", "n_out")},
                 "warnings": []}
         for x in rinf:
@@ -2496,8 +2567,8 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
                 continue
         try:
             tgt, sinfo = _lt_supports(c, t, mesh, did, reg, h, ref_sup)
-            ctx, path, key = _lt_ctx(c, t, tgt.mesh, did, reg, h)
-            loads, info = ltm.shape_loads(tgt, ents, L, ctx)
+            cache, path, key = _lt_ctx(c, t, tgt.mesh, did, reg, h)
+            loads, info = _lt_apply(c, tgt, ents, h, reg, None, cache)
         except EslError as exc:
             if did == BASELINE:
                 raise EslError("BASELINE_FAILED", f"기준 형상 하중 전달 실패 {exc.code}: {exc.message}") from None
@@ -2505,10 +2576,10 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
             ldoc["shapes"].append(lrow)
             echo(f"[{did} {r['name']}] 하중 전달 준비 오류 {exc.code}: {exc.message}")
             continue
-        if ctx.W and path:
+        if cache.W and path:
             c.writer.makedirs(os.path.dirname(path))
-            ltm.save_work(path, ctx.W, key, c.writer)
-        sup_rec = {**sinfo, "nodes": ltm.support_xyz(tgt.mesh, tgt.supports)}
+            ltm.save_work(path, cache.W, key, c.writer)
+        sup_rec = {**sinfo, "nodes": sc.support_xyz(tgt.mesh, tgt.supports)}
         if did == BASELINE:
             ref_sup = sup_rec["nodes"]
         if sinfo["mode"] == "fallback":
@@ -2581,9 +2652,9 @@ def _lt_truth_direct(c: Ctx, t, ents, props: dict, h: float, rc: dict, skip: set
         groups.setdefault(ltm.a_mesh_sha(e.raw), []).append(e)
     for sha, es in groups.items():
         try:
-            am = ltm.a_direct_mesh(es[0].raw, props)
-            reg, _ = ltm.region_of(am, np.asarray(es[0].raw["x0"]), rc, h)
-            sup = ltm.auto_supports(am, reg)
+            am = sc.a_direct_mesh(es[0].raw, props)
+            reg, _ = sc.region_of(am, np.asarray(es[0].raw["x0"]), rc, h)
+            sup = sc.lt_auto_supports(am, reg)
             r = ev.evaluate(am, sup, [(e.meta["entry_id"], np.asarray(e.raw["f"], dtype=np.float64)) for e in es],
                             c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], region=reg)
             for e, p in zip(es, r["per_esl"]):
@@ -2602,7 +2673,7 @@ def _cmp_eval_lt(c: Ctx, t, did: str, dd: str) -> tuple[dict, dict, dict]:
     bmeta = U.read_json(c.p("prep", "base.json"))
     h = _lt_h(c, bmeta)
     tgt, reg, loads, info = _lt_design(c, t, did)
-    ctx = c._lt_last_ctx
+    cache = c._lt_last_cache
     ents = c.entries(raw=True)
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     dg = L.get("diag") or {}
@@ -2612,7 +2683,7 @@ def _cmp_eval_lt(c: Ctx, t, did: str, dd: str) -> tuple[dict, dict, dict]:
         vlist = ltm.sweep_variants(L)[1:] if did == BASELINE else ([ltm.alt_variant(L)] if ltm.alt_variant(L) else [])
         for v in vlist:
             try:
-                vl, vi = ltm.shape_loads(tgt, ents, L, ctx, v)
+                vl, vi = _lt_apply(c, tgt, ents, h, reg, v, cache)
                 variants.append((ltm.variant_label(*v), vl, vi))
             except EslError as exc:
                 dwarn.append({"stage": ltm.variant_label(*v), "err": exc.code})
@@ -2621,7 +2692,7 @@ def _cmp_eval_lt(c: Ctx, t, did: str, dd: str) -> tuple[dict, dict, dict]:
     if did == BASELINE and dg.get("enabled"):
         from esl.opt import target as tg
         for e in ents:
-            if ctx.region is None and ltm.identity_ok(e.raw, tgt.mesh, ctx.coord_tol):
+            if reg is None and ltm.identity_ok(e.raw, tgt.mesh, c.coord_tol()):
                 f, _ = tg.entry_load(tg.Target("S1", tgt.mesh, t.frame, []), e.raw)     # ① direct_nodal 과 같은 코드
                 truth[e.meta["entry_id"]] = {"kind": "direct_nodal", "f": np.asarray(f, dtype=np.float64)}
                 ident_ids.add(e.meta["entry_id"])

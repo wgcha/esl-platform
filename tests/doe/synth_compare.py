@@ -271,7 +271,7 @@ def lt_plate_mesh(Lx: float = 400.0, Lz: float = 300.0, h: float = 3.0, *, bead=
         rr = np.hypot(XX - bx, ZZ - bz)
         Y = Y + np.where(rr < br, bh * (1.0 - rr / br), 0.0)
     X = np.stack([XX.ravel(), Y.ravel(), ZZ.ravel()], axis=1) + np.asarray(offset, dtype=float)
-    nid = lambda i, j: i * (nz + 1) + j   # noqa: E731
+    nid = lambda i, j: i * (nz + 1) + j
     conn, et = [], []
     for i in range(nx):
         for j in range(nz):
@@ -290,7 +290,7 @@ def lt_plate_mesh(Lx: float = 400.0, Lz: float = 300.0, h: float = 3.0, *, bead=
             "thickness": np.full(ne, float(pr["t"])), "E": np.full(ne, float(pr["E"])), "nu": np.full(ne, float(pr["nu"]))}
 
 
-def lt_u_drop(mesh: dict, bend: float = 1.0, local: float = 0.4, sigma: float = 4.0, at=(0.62, 0.35)) -> "np.ndarray":
+def lt_u_drop(mesh: dict, bend: float = 1.0, local: float = 0.4, sigma: float = 4.0, at=(0.62, 0.35)):
     """낙하 변위 근사(병진 (N,3)): 법선 방향 굽힘 P2(ξ) + 국부 가우스 융기(반지름 sigma mm — 이웃 상쇄가 큰 하중)."""
     import numpy as np
 
@@ -305,7 +305,7 @@ def lt_u_drop(mesh: dict, bend: float = 1.0, local: float = 0.4, sigma: float = 
     return q[:, None] * np.asarray(fr["n"])[None, :]
 
 
-def lt_esl_forces(mesh: dict, u) -> "np.ndarray":
+def lt_esl_forces(mesh: dict, u):
     """ESL f_A = K_A u_drop(자유-자유 응축 강성 — 병진만, 자기평형)."""
     from esl.mech.shell import ShellModel
     sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
@@ -316,8 +316,8 @@ def lt_esl_forces(mesh: dict, u) -> "np.ndarray":
 def lt_save_entry(root, eid: str, mesh: dict, f, inch: int = 75):
     """주어진 절점력 f 로 라이브러리 항목 폴더(raw·요약 24×14) — synth_doe.save_entry 와 같은 형식."""
     import numpy as np
-
     import synth_doe as sd
+
     from esl.library import entry as en
     from esl.library import normalize as nz
     X = np.asarray(mesh["x0"], dtype=float)
@@ -341,12 +341,12 @@ def lt_save_entry(root, eid: str, mesh: dict, f, inch: int = 75):
 LT_REGIMES = {"smooth": (6.0, 0.01), "node": (None, 0.003)}   # 잡음 상관 길이 mm(None = 노드 단위), 진폭(× max|u|)
 
 
-def lt_esl_case(mesh: dict, regime: str = "smooth", seed: int = 0) -> "np.ndarray":
+def lt_esl_case(mesh: dict, regime: str = "smooth", seed: int = 0):
     """낙하 ESL 근사 f_A = K_A u: u = 매끈한 굽힘·국부 눌림 압력의 정적 응답 + 법선 잡음(smooth = 상관 길이 6 mm 1 % —
     재메시로 옮길 수 있는 이웃 상쇄, node = 노드 단위 0.3 % — 이슈 #63 처럼 셀 매핑이 d000 에서도 무너지는 이웃 상쇄)."""
     import numpy as np
-
     import synth_doe as sd
+
     from esl.library import normalize as nz
     from esl.mech.shell import ShellModel
     so = sd.so

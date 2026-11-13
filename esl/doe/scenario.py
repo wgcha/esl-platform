@@ -430,3 +430,84 @@ def mapping_resolution(mesh: dict, frame: dict, grid: tuple, min_nodes_per_cell:
     if med < float(min_nodes_per_cell):
         return f"MAPPING_RESOLUTION: 셀당 노드 중앙값 {med:.0f} < {min_nodes_per_cell} ({nx}×{ny} 셀)"
     return None
+
+
+# ---------------------------------------------------------------- v0.20.0 ④ 지지 이전·평가 영역(esl_load_transfer.md LT-7·8 — ④ 전용,
+# 하중 전달 공용 모듈 밖)
+def region_of(mesh: dict, a_xyz, rcfg: dict, h: float) -> tuple[np.ndarray | None, dict]:
+    """LT-8 형상 평가 영역(③ ``step_graph.region_mask`` 재사용) → (요소 bool | None(= 전체), 정보)."""
+    from esl.doe import step_graph as sg
+    cfg = {"select": {"step_graph": {"region": {k: rcfg.get(k) for k in ("mode", "pad_mm", "min_frac")}}}}
+    m, info = sg.region_mask(mesh, a_xyz, cfg, h)
+    return (None if info["n_out"] == 0 else m), info
+
+
+def region_messages(info: dict, rcfg: dict) -> tuple[list[dict], list[dict]]:
+    """(경고 COMPARE_REGION_SMALL, 정보 COMPARE_REGION) 구조화 dict."""
+    warns, infos = [], []
+    if info["n_out"] > 0:
+        infos.append({"code": "COMPARE_REGION", "n_in": info["n_in"], "n_out": info["n_out"],
+                      "out_bbox": info["out_bbox"], "mode": info["mode"]})
+    if float(info["n_in"]) < float(rcfg["min_frac"]) * float(info["n_in"] + info["n_out"]):
+        warns.append({"code": "COMPARE_REGION_SMALL", "frac": info["frac"], "min_frac": float(rcfg["min_frac"])})
+    return warns, infos
+
+
+def region_nodes(mesh: dict, region) -> np.ndarray:
+    from esl.doe import step_graph as sg
+    return sg.region_nodes(mesh, region)
+
+
+def lt_auto_supports(mesh: dict, region) -> list:
+    """영역 노드로 PCA 3-2-1(영역 = 전체면 ``target.auto_supports`` 와 같음)."""
+    if region is None:
+        return tg.auto_supports(mesh)
+    rn = region_nodes(mesh, region)
+    return tg.auto_supports({"x0": np.asarray(mesh["x0"])[rn], "node_id": np.asarray(mesh["node_id"])[rn]})
+
+
+def support_xyz(mesh: dict, supports) -> list[dict]:
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    pos = {int(v): i for i, v in enumerate(nid.tolist())}
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    return [{"node_id": int(n), "dof": str(d), "xyz": X[pos[int(n)]].tolist()} for n, d in supports]
+
+
+def _support_ok(mesh: dict, sup) -> bool:
+    from esl.mech import supports as msup
+    try:
+        sr = tg.support_check(mesh, sup)
+    except EslError:
+        return False
+    return sr["rank"] >= 6 and sr["sigma_ratio"] >= msup.DEGENERATE_RATIO
+
+
+def transfer_supports(ref: list[dict], mesh: dict, region, tol: float) -> tuple[list, dict]:
+    """LT-7 기준 d000 지지점(xyz) → 형상 영역 최근접 노드(동률 = 작은 인덱스), 같은 dof. 거리 > tol 또는 rank < 6 →
+    영역 auto 3-2-1(fallback). 반환 (지지 [(node_id, dof)], {mode, max_dist_mm, reason?})."""
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    rn = np.flatnonzero(region_nodes(mesh, region))
+    sup, dmax = [], 0.0
+    for s in ref:
+        d = np.linalg.norm(X[rn] - np.asarray(s["xyz"], dtype=np.float64), axis=1)
+        j = int(np.argmin(d))
+        dmax = max(dmax, float(d[j]))
+        sup.append((int(nid[rn[j]]), str(s["dof"])))
+    if dmax > float(tol):
+        reason = f"distance {dmax:.3g} mm > {float(tol):g} mm"
+    elif not _support_ok(mesh, sup):
+        reason = "rank < 6"
+    else:
+        return sup, {"mode": "transfer", "max_dist_mm": dmax}
+    return lt_auto_supports(mesh, region), {"mode": "fallback", "max_dist_mm": dmax, "reason": reason}
+
+def a_direct_mesh(raw: dict, props: dict) -> dict:
+    """참값 a_direct 용 A 메시(스터디 물성으로 덮어씀)."""
+    ne = int(np.asarray(raw["elem_type"]).size)
+    m = {k: np.asarray(raw[k]) for k in ("node_id", "x0", "elem_id", "elem_type", "conn")}
+    m["elem_pid"] = np.asarray(raw.get("elem_pid", np.zeros(ne, np.int64)))
+    m["thickness"] = np.full(ne, float(props["t"]))
+    m["E"] = np.full(ne, float(props["E"]))
+    m["nu"] = np.full(ne, float(props["nu"]))
+    return m

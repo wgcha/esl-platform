@@ -12,9 +12,9 @@ import re
 
 import numpy as np
 import pytest
-
 import synth_compare as scmp
 import synth_doe as sd
+
 from esl.doe import DEFAULTS
 from esl.doe import evaluate as ev
 from esl.doe import load_transfer as ltm
@@ -29,7 +29,9 @@ from esl.opt import target as tg
 
 needs_gmsh = pytest.mark.skipif(not mg.available()[0], reason="gmsh 없음")
 SC = {"backend": "superlu", "drill_factor": 1e-4}
-LT = ltm.resolve({"schema": 1, "method": "work"})
+LTD = DEFAULTS["compare"]["load_transfer"]
+LT = ltm.resolve({"schema": 1, "method": "work"}, LTD)
+OPTS = {"work": LT["work"], "h": 3.0, "coord_tol": 0.005, "mapping_opts": None}
 LX, LZ, H0 = 240.0, 180.0, 3.0
 
 
@@ -41,8 +43,14 @@ def _solve(tgt, loads, region=None, keep=()):
     return ev.evaluate(tgt.mesh, list(tgt.supports), loads, SC, reaction_warn=1.0, keep_u=list(keep), region=region)
 
 
-def _loads(tgt, e, variant=None, region=None, h=H0):
-    return ltm.shape_loads(tgt, [e], LT, ltm.Ctx(region, h, 0.005, None), variant)
+def _src(e):
+    return ltm.source(e.raw, e.meta["frame"], e.summary_for_mapping(), e.meta["entry_id"])
+
+
+def _loads(tgt, e, variant=None, region=None, h=H0, auto_identity="work"):
+    m, s = variant if variant is not None else ("work", None)
+    return ltm.run_many([_src(e)], ltm.target(tgt.mesh, tgt.frame, region), m, s, {**OPTS, "h": h}, ltm.Cache(),
+                        auto_identity=auto_identity)
 
 
 @pytest.fixture(scope="module")
@@ -59,23 +67,42 @@ def bead_a(tmp_path_factory):
 def test_defaults_and_resolve():
     d = DEFAULTS["compare"]["load_transfer"]
     assert (d["method"], d["support"], d["region"]["mode"], d["diag"]["enabled"]) == ("work", "transfer", "auto", True)
-    assert ltm.resolve(None) is None
-    r = ltm.resolve({"schema": 1, "method": "work", "cell_size_mm": 5.0})
+    assert ltm.resolve(None, LTD) is None
+    r = ltm.resolve({"schema": 1, "method": "work", "cell_size_mm": 5.0}, LTD)
     assert r["cell_size_mm"] is None                                     # work 의 해석값 = null
-    assert ltm.resolve({"method": "cell", "cell_size_mm": 3.0})["cell_size_mm"] == 3.0
+    assert ltm.resolve({"method": "cell", "cell_size_mm": 3.0}, LTD)["cell_size_mm"] == 3.0
     for bad in ({"method": "cell", "cell_size_mm": 2.0}, {"method": "cell", "cell_size_mm": 201.0}):
         with pytest.raises(EslError) as ei:
-            ltm.resolve(bad)
+            ltm.resolve(bad, LTD)
         assert ei.value.code == "LOAD_TRANSFER_INVALID"
     with pytest.raises(EslError):
-        ltm.resolve({"method": "nope"})
+        ltm.resolve({"method": "nope"}, LTD)
     assert ltm.variant_label("work", None) == "work" and ltm.variant_label("cell", None) == "cell:legacy"
     assert ltm.variant_label("cell", 3.0) == "cell:3"
     assert [ltm.variant_label(*v) for v in ltm.sweep_variants(LT)] == ["work", "cell:3", "cell:legacy", "cell:10", "cell:5"]
-    off = ltm.resolve({"method": "cell", "diag": {"alt": False, "cell_sweep_mm": []}})
+    off = ltm.resolve({"method": "cell", "diag": {"alt": False, "cell_sweep_mm": []}}, LTD)
     assert ltm.alt_variant(off) is None and ltm.sweep_variants(off) == [("cell", None)]
-    assert ltm.alt_variant(ltm.resolve({"method": "cell", "cell_size_mm": 5.0})) == ("work", None)
+    assert ltm.alt_variant(ltm.resolve({"method": "cell", "cell_size_mm": 5.0}, LTD)) == ("work", None)
     assert set(ltm.hash_view(LT)) == {"method", "cell_size_mm", "work", "support", "support_tol_mm", "region"}
+
+
+# ---------------------------------------------------------------- 모듈 독립·전략 등록
+def test_module_independent_and_strategies(bead_a):
+    src = inspect.getsource(ltm)
+    imports = [ln for ln in src.splitlines() if ln.startswith(("import ", "from "))]
+    assert not [ln for ln in imports if "esl.doe" in ln or "esl.opt" in ln], imports        # 시나리오·stages 무관
+    assert set(ltm.STRATEGY_NAMES) == set(ltm.STRATEGIES)
+    A, cases = bead_a
+    f, e = cases["smooth"]
+    tgt = sc.compare_target(A, e.meta["frame"])
+    _, iw = _loads(tgt, e)
+    _, ic = _loads(tgt, e, ("cell", 10.0))
+    _, ia = _loads(tgt, e, ("cell", 10.0), auto_identity="any")
+    _, io = _loads(tgt, e, auto_identity="off")
+    assert iw["per_esl"][0]["strategy"] == "identity" and ic["per_esl"][0]["strategy"] == "cell"
+    assert ia["per_esl"][0]["strategy"] == "identity" and io["per_esl"][0]["strategy"] == "work"
+    with pytest.raises(EslError):
+        _loads(tgt, e, ("nope", None))
 
 
 # ---------------------------------------------------------------- V-LT-1 같은 메시 W = ①
@@ -111,7 +138,7 @@ def test_same_mesh_fast_path_bit_identical(bead_a):
 
 # ---------------------------------------------------------------- V-LT-2 재메시
 def _remesh_ratios(A, f, e):
-    supA = ltm.auto_supports(A, None)
+    supA = sc.lt_auto_supports(A, None)
     ta = sc.compare_target(A, e.meta["frame"], supports=supA)
     ra = _solve(ta, [("E0", f)], keep=("E0",))
     ua, Ca = ra["per_esl"][0]["umax"], ra["per_esl"][0]["C"]
@@ -125,7 +152,7 @@ def _remesh_ratios(A, f, e):
                                         "corr": ltm.load_corr(lv[0][1], f)}
     for h in (2.5, 3.5):
         T = scmp.lt_plate_mesh(Lx=LX, Lz=LZ, h=h, bead=(80.0, 110.0, 5.0), node_base=500001)
-        sup, si = ltm.transfer_supports(ltm.support_xyz(A, supA), T, None, 2 * h)
+        sup, si = sc.transfer_supports(sc.support_xyz(A, supA), T, None, 2 * h)
         assert si["mode"] == "transfer"
         tgt = sc.compare_target(T, e.meta["frame"], supports=sup)
         for v in (("work", None), ("cell", None), ("cell", 3.0)):
@@ -209,7 +236,7 @@ def test_conservation_work_and_cells(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- V-LT-4 공정성·지지
 def test_fairness_same_rule_and_support_transfer(tmp_path):
     src = inspect.getsource(stg)
-    calls = re.findall(r"ltm\.shape_loads\(([^)]*)\)", src)
+    calls = re.findall(r"_lt_apply\(([^)]*)\)", src)
     assert calls and all("did" not in c and "BASELINE" not in c for c in calls)     # (b) d000 만 다른 규칙 없음
     A = scmp.lt_plate_mesh(Lx=LX, Lz=LZ, h=H0, bead=(80.0, 110.0, 5.0))
     f = scmp.lt_esl_case(A, "smooth")
@@ -223,15 +250,15 @@ def test_fairness_same_rule_and_support_transfer(tmp_path):
     assert r1["per_esl"][0]["C"] / r0["per_esl"][0]["C"] == 1.0                       # (a) 같은 메시 = score 1
     # (d) 0.4 mm 평행 이동 → 이전 노드 = 최근접, C 는 지지와 무관(자기평형)
     S = scmp.lt_plate_mesh(Lx=LX + 6.0, Lz=LZ, h=H0, bead=(80.0, 110.0, 5.0), offset=(0.4, 0.0, 0.0), node_base=700001)
-    ref = ltm.support_xyz(t0.mesh, t0.supports)
-    sup, si = ltm.transfer_supports(ref, S, None, 2 * H0)
+    ref = sc.support_xyz(t0.mesh, t0.supports)
+    sup, si = sc.transfer_supports(ref, S, None, 2 * H0)
     assert si["mode"] == "transfer" and si["max_dist_mm"] == pytest.approx(0.4, abs=1e-9)
     ta = sc.compare_target(S, fr)                                                   # auto(형상마다 PCA)
     tt = sc.compare_target(S, fr, supports=sup)
     la, _ = _loads(ta, e)
     ra, rt = _solve(ta, la), _solve(tt, la)
     assert abs(rt["per_esl"][0]["C"] / ra["per_esl"][0]["C"] - 1) <= 1e-9
-    _, sf = ltm.transfer_supports(ref, S, None, 0.1)
+    _, sf = sc.transfer_supports(ref, S, None, 0.1)
     assert sf["mode"] == "fallback" and "distance" in sf["reason"]
 
 
@@ -287,9 +314,9 @@ def test_region_main_sheet(tmp_path):
     e = _entry(tmp_path, A, f)
     M, ne_main = _with_wall(scmp.lt_plate_mesh(Lx=LX, Lz=LZ, h=H0, bead=None))
     rc = {**LT["region"], "pad_mm": 1.0}                                            # 벽 첫 줄 중심 y 1.5 > pad
-    reg, info = ltm.region_of(M, A["x0"], rc, H0)
+    reg, info = sc.region_of(M, A["x0"], rc, H0)
     assert reg is not None and int(reg.sum()) == ne_main and info["n_out"] == M["conn"].shape[0] - ne_main
-    w, inf = ltm.region_messages(info, rc)
+    w, inf = sc.region_messages(info, rc)
     assert [x["code"] for x in inf] == ["COMPARE_REGION"] and not w
     fr = e.meta["frame"]
     ck = sc.shape_check(M, fr, [e], stg.opt_settings()["size"], DEFAULTS["compare"], inch=75, region=reg)
@@ -297,7 +324,7 @@ def test_region_main_sheet(tmp_path):
     assert ck["size"]["L_xi"] == pytest.approx(c0["size"]["L_xi"], rel=1e-9)
     assert ck["size"]["L_eta"] == pytest.approx(c0["size"]["L_eta"], rel=1e-9)
     tgt = sc.compare_target(M, fr, region=reg)
-    rn = ltm.region_nodes(M, reg)
+    rn = sc.region_nodes(M, reg)
     pos = {int(v): i for i, v in enumerate(M["node_id"].tolist())}
     assert all(rn[pos[n]] for n, _ in tgt.supports)
     for v in (("work", None), ("cell", 10.0), ("cell", None)):
@@ -305,7 +332,7 @@ def test_region_main_sheet(tmp_path):
         assert float(np.abs(lv[0][1][~rn]).max()) == 0.0, v                           # 영역 밖 하중 0
     r = _solve(tgt, lv, region=reg, keep=("E0",))
     assert r["per_esl"][0]["umax"] == pytest.approx(float(np.linalg.norm(r["u"]["E0"][rn], axis=1).max()))
-    ra, ia = ltm.region_of(M, A["x0"], {**LT["region"], "mode": "all"}, H0)
+    ra, ia = sc.region_of(M, A["x0"], {**LT["region"], "mode": "all"}, H0)
     assert ra is None and ia["n_out"] == 0
 
 
@@ -372,7 +399,7 @@ def _study(root, ref="case", lt=None, n_shapes=3):
 @needs_gmsh
 def test_pipeline_case_reference_work(tmp_path, monkeypatch):
     out, post, spec, A, ents = _study(str(tmp_path), "case", {"schema": 1, "method": "work"})
-    P = lambda *a: os.path.join(out, *a)   # noqa: E731
+    P = lambda *a: os.path.join(out, *a)
     prep = U.read_json(P("prep", "load_transfer.json"))
     rows = {r["id"]: r for r in prep["shapes"]}
     assert rows["d000"]["fast_path"] == "identity" and rows["d000"]["supports"]["mode"] == "auto"
@@ -422,13 +449,13 @@ def test_pipeline_case_reference_work(tmp_path, monkeypatch):
     # (V-LT-7) 진단 단계 예외 → LT_DIAG_SKIPPED, 주 결과(per_esl) 불변
     before = U.read_json(P("run", "designs", "d002", "result.json"))["per_esl"]
     os.remove(P("run", "designs", "d002", "done.json"))
-    real = ltm.shape_loads
+    real = stg._lt_apply
 
-    def boom(target, entries, lt_, ctx, variant=None):
+    def boom(c, tgt, ents, h, region=None, variant=None, cache=None):
         if variant is not None:
             raise EslError("MAPPING_DEGENERATE", "시험")
-        return real(target, entries, lt_, ctx, variant)
-    monkeypatch.setattr(ltm, "shape_loads", boom)
+        return real(c, tgt, ents, h, region, variant, cache)
+    monkeypatch.setattr(stg, "_lt_apply", boom)
     stg.run_stage(spec("bd_eval", design="d002"), lambda m: None)
     after = U.read_json(P("run", "designs", "d002", "result.json"))["per_esl"]
     assert [(p["entry_id"], p["C"], p["umax"]) for p in after] == [(p["entry_id"], p["C"], p["umax"]) for p in before]

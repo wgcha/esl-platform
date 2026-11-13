@@ -1,20 +1,23 @@
-"""④ 형상 비교 하중 전달 — 일 등가(W) · 셀(C) · 지지 이전 · 평가 영역 · 진단 (계약 esl_load_transfer.md, v0.20.0).
+"""하중 전달 공용 모듈 — 모드 무관·독립(계약 esl_load_transfer.md v0.20.0 + 전 모드 확장).
 
-- 방식 W(D-0.20.0-LT-2): f_t = T_tᵀ f_A. A(ESL 원본 메시) 노드마다 대상 영역 요소 중 최근접점(TRIA = Ericson 점-삼각형,
-  QUAD = 두 삼각형 최근접점 → 쌍선형 (r,s) Gauss-Newton 역사상)의 형상함수로 힘을 나눈다(분할 1 → 합력 보존).
-  동일 메시(노드 ID 집합 같음·좌표 차 ≤ coord_check.max_rel × bbox 대각) = ``target.entry_load`` S1 재배열(① 과 비트 동일).
-- 방식 C(LT-6): cell_size_mm null = 기존 24×14 요약·``mapping.to_target`` 그대로(legacy), 값 s = ESL raw 새 요약(셀마다
-  최소노름 6 제약, 노드 0~2 개·공선 셀은 그 셀 A 노드 힘을 W 로).
-- LT-4 합력·합모멘트 보존 보정(W·새 C): 원본 f_A 의 값으로 영역 노드 최소노름 보정(합 0 강제 아님).
+입력 = 원본(src) 메시(x·conn·type)·노드힘 + 대상(dst) 메시(+ 선택 활성 요소 마스크) + 방식 → 대상 노드힘 + 진단 행.
+esl.doe 시나리오·stages 를 import 하지 않는다(지지 이전·평가 영역 계산은 호출자 몫 — 여기서는 dst 활성 마스크만 받음).
+
+- 전략 등록 ``STRATEGIES``: ``identity``(노드 ID 재배열 — ``target.entry_load`` S1 과 같은 식, 비트 동일),
+  ``work``(LT-2 일 등가 f_t = Tᵀ f_A: A 노드마다 대상 요소 최근접점(TRIA = Ericson 점-삼각형, QUAD = 두 삼각형 최근접점 →
+  쌍선형 (r,s) Gauss-Newton 역사상) 형상함수 — 분할 1 → 합력 보존), ``cell``(LT-6: cell_size_mm null = 기존 24×14 요약·
+  ``mapping.to_target`` 그대로, 값 s = ESL raw 새 요약·셀 최소노름 6 제약, 노드 0~2 개·공선 셀은 그 셀 A 노드 힘을 W 로).
+- 실행기 ``run``·``run_many``: 같은 메시(노드 ID 집합 같음·좌표 차 ≤ coord_tol × bbox 대각, 활성 = 전체)면 ``auto_identity``
+  규칙으로 identity, 아니면 방식 전략 → LT-4 합력·합모멘트 보존 보정(원본 f_A 값으로, 활성 노드 최소노름 — 합 0 강제 아님).
+- 진단 스키마 1개(``row``·``diag_rows``·``summary``) — 모드 무관.
 - 대규모: 사영은 A 노드 청크(``CHUNK``) × 요소 중심 cKDTree k 후보 — 피크 메모리 O(N_A + N_e + 청크·k).
-
-함수: ``resolve``·``region_of``·``build_work``·``apply_work``·``conserve``·``cell_loads``·``shape_loads``·
-``transfer_supports``·``load_corr``·``mac``·``diag_rows``·``summary``. 매핑·대상·평가·그래프 모듈은 가져다 쓰기만.
 """
 from __future__ import annotations
 
 import hashlib
+import os
 import time
+import zipfile
 
 import numpy as np
 
@@ -25,8 +28,10 @@ from esl.library import normalize as nz
 SCHEMA = 1
 DIAG_SCHEMA = "esl/doe_load_transfer_diag/1"
 METHODS = ("work", "cell")
+STRATEGY_NAMES = ("identity", "work", "cell")
 SUPPORTS = ("transfer", "auto")
 REGION_MODES = ("auto", "a_bbox", "largest", "all")
+AUTO_IDENTITY = ("work", "any", "off")   # 같은 메시 자동 identity 규칙(work = 일 등가만 — T = I 이므로 결과 같음)
 CHUNK = 20000                 # 사영 A 노드 청크
 BATCH_MIN_CELLS = 10000       # LT-6: 셀 1만 개 이상 = 6×6 정규방정식 일괄 풀이
 TIE_REL = 1e-12               # LT-2 거리 동률(× h) → 작은 요소 번호
@@ -34,16 +39,22 @@ NEWTON_TOL = 1e-10            # LT-2 잔차 ≤ 1e-10·h (자연좌표 증분)
 CELL_MAX_MM = 200.0
 UNBALANCED_REL = 1e-6         # LT-4 LT_ESL_UNBALANCED
 
-
 # ====================================================================== 설정
-def resolve(spec_lt: dict | None) -> dict | None:
-    """스냅샷 ``doe.load_transfer``(해석된 dict) → 기본값 위에 합친 설정. None = legacy(키 없음)."""
+def _merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in (over or {}).items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def resolve(spec_lt: dict | None, defaults: dict) -> dict | None:
+    """스냅샷 ``doe.load_transfer``(해석된 dict) → ``defaults``(설정 DEFAULTS 절) 위에 합친 설정. None = legacy(키 없음)."""
     if spec_lt is None:
         return None
-    from esl.doe import DEFAULTS, _deep_merge
     if not isinstance(spec_lt, dict):
         raise EslError("CONFIG_INVALID", "load_transfer 는 매핑이어야 함")
-    lt = _deep_merge(DEFAULTS["compare"]["load_transfer"], {k: v for k, v in spec_lt.items() if k != "schema"})
+    import copy
+    lt = _merge(copy.deepcopy(defaults), copy.deepcopy({k: v for k, v in spec_lt.items() if k != "schema"}))
 
     def bad(msg):
         raise EslError("CONFIG_INVALID", f"load_transfer.{msg}")
@@ -99,7 +110,6 @@ def public(lt: dict) -> dict:
             "region_mode": (lt.get("region") or {}).get("mode")}
 
 
-# ====================================================================== 메시 도우미
 def a_mesh_sha(raw: dict) -> str:
     """ESL 원본 메시 sha(앞 16자) — node_id·x0·conn·elem_type."""
     h = hashlib.sha256(b"esl/lt_amesh/1\n")
@@ -112,30 +122,6 @@ def a_mesh_sha(raw: dict) -> str:
 
 def mesh_sha(mesh: dict) -> str:
     return a_mesh_sha(mesh)
-
-
-def region_of(mesh: dict, a_xyz, rcfg: dict, h: float) -> tuple[np.ndarray | None, dict]:
-    """LT-8 형상 평가 영역(③ ``step_graph.region_mask`` 재사용) → (요소 bool | None(= 전체), 정보)."""
-    from esl.doe import step_graph as sg
-    cfg = {"select": {"step_graph": {"region": {k: rcfg.get(k) for k in ("mode", "pad_mm", "min_frac")}}}}
-    m, info = sg.region_mask(mesh, a_xyz, cfg, h)
-    return (None if info["n_out"] == 0 else m), info
-
-
-def region_messages(info: dict, rcfg: dict) -> tuple[list[dict], list[dict]]:
-    """(경고 COMPARE_REGION_SMALL, 정보 COMPARE_REGION) 구조화 dict."""
-    warns, infos = [], []
-    if info["n_out"] > 0:
-        infos.append({"code": "COMPARE_REGION", "n_in": info["n_in"], "n_out": info["n_out"],
-                      "out_bbox": info["out_bbox"], "mode": info["mode"]})
-    if float(info["n_in"]) < float(rcfg["min_frac"]) * float(info["n_in"] + info["n_out"]):
-        warns.append({"code": "COMPARE_REGION_SMALL", "frac": info["frac"], "min_frac": float(rcfg["min_frac"])})
-    return warns, infos
-
-
-def region_nodes(mesh: dict, region) -> np.ndarray:
-    from esl.doe import step_graph as sg
-    return sg.region_nodes(mesh, region)
 
 
 def _corners(mesh: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -162,6 +148,62 @@ def identity_ok(raw: dict, t_mesh: dict, tol_rel: float) -> bool:
     dmax = float(np.max(np.linalg.norm(xa - xt, axis=1))) if xa.size else 0.0
     return dmax <= float(tol_rel) * (diag or 1.0)
 
+
+# ====================================================================== 원본·대상
+def source(raw: dict, frame: dict | None = None, summary: dict | None = None, entry_id=None) -> dict:
+    """원본 = {id, node_id, x0, conn, elem_type, f, frame(셀 요약 frame), summary(legacy 셀 24×14 요약), sha}."""
+    s = {"id": entry_id, "frame": frame, "summary": summary,
+         **{k: np.asarray(raw[k]) for k in ("node_id", "x0", "conn", "elem_type")},
+         "f": np.asarray(raw["f"], dtype=np.float64)}
+    s["sha"] = a_mesh_sha(s)
+    return s
+
+
+def target(mesh: dict, frame: dict, active=None) -> dict:
+    """대상 = {node_id, x0, conn, elem_type, frame, active(요소 bool | None = 전체), nodes(활성 노드 인덱스)}."""
+    d = {k: np.asarray(mesh[k]) for k in ("node_id", "x0", "conn", "elem_type")}
+    d["x0"] = np.asarray(d["x0"], dtype=np.float64)
+    d["frame"] = frame
+    d["active"] = None if active is None else np.asarray(active, bool)
+    d["nodes"] = np.flatnonzero(active_nodes(d, d["active"]))
+    return d
+
+
+def active_nodes(mesh: dict, active) -> np.ndarray:
+    """활성 요소가 쓰는 노드(bool) — None = 전부."""
+    n = np.asarray(mesh["x0"]).shape[0]
+    if active is None:
+        return np.ones(n, bool)
+    C4, _ = _corners(mesh)
+    out = np.zeros(n, bool)
+    out[C4[np.asarray(active, bool)].ravel()] = True
+    return out
+
+
+def _centroids(mesh: dict) -> np.ndarray:
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    C4, q = _corners(mesh)
+    k = np.where(q, 4.0, 3.0)
+    s = X[C4].sum(axis=1) - np.where(q[:, None], 0.0, X[C4[:, 3]])
+    return s / k[:, None]
+
+
+class Cache:
+    """W 연산자(원본 메시 sha 별)·동일 메시 판정 캐시 — 같은 대상에 여러 ESL·variant 를 옮길 때 공유."""
+
+    def __init__(self, W: dict | None = None):
+        self.W = dict(W or {})
+        self.ident: dict = {}
+
+    def work(self, src: dict, dst: dict, opts: dict) -> dict:
+        if src["sha"] not in self.W:
+            self.W[src["sha"]] = build_work(src["x0"], dst, dst["active"], opts["work"], opts["h"])
+        return self.W[src["sha"]]
+
+    def same(self, src: dict, dst: dict, opts: dict) -> bool:
+        if src["sha"] not in self.ident:
+            self.ident[src["sha"]] = dst["active"] is None and identity_ok(src, dst, opts.get("coord_tol", 0.005))
+        return self.ident[src["sha"]]
 
 # ====================================================================== 사영 (LT-2)
 def _closest_tri(p, a, b, c):
@@ -257,8 +299,6 @@ def build_work(a_x, t_mesh: dict, region, wcfg: dict, h: float) -> dict:
     """LT-2 W 연산자: A 노드 → 대상 영역 요소 최근접점 형상함수. 반환 {elem, nodes (N_A,4), w (N_A,4), dist,
     newton_fallback_n, max_dist_mm, seconds}. 좌표 = 전역 원좌표."""
     from scipy.spatial import cKDTree
-
-    from esl.doe import step_graph as sg
     t0 = time.monotonic()
     XA = np.asarray(a_x, dtype=np.float64)
     X = np.asarray(t_mesh["x0"], dtype=np.float64)
@@ -266,7 +306,7 @@ def build_work(a_x, t_mesh: dict, region, wcfg: dict, h: float) -> dict:
     elems = np.arange(C4.shape[0]) if region is None else np.flatnonzero(np.asarray(region, bool))
     if elems.size == 0:
         raise EslError("MAPPING_DEGENERATE", "하중 전달 대상 영역 요소가 없음")
-    cen = sg.centroids({"x0": X, "conn": t_mesh["conn"], "elem_type": t_mesh["elem_type"]})[elems]
+    cen = _centroids(t_mesh)[elems]
     tree = cKDTree(cen)
     k = int(min(int(wcfg["knn"]), elems.size))
     na = XA.shape[0]
@@ -346,7 +386,6 @@ def far_mask(W: dict, wcfg: dict, h: float) -> np.ndarray:
     tol = float(wcfg["proj_tol_mm"]) if wcfg.get("proj_tol_mm") is not None else 1.0 * float(h)
     return np.asarray(W["dist"]) > tol
 
-
 # ====================================================================== 보존 보정 (LT-4)
 def _sabs(f) -> float:
     return float(np.linalg.norm(np.asarray(f, dtype=np.float64), axis=1).sum())
@@ -384,7 +423,6 @@ def conserve(X_t, f_t, rn_idx, b: dict) -> tuple[np.ndarray, dict]:
         corr = float(np.linalg.norm(d, axis=1).sum() / st) if st > 0 else 0.0
     dF1, dM1 = _errs(X, f, b)
     return f, {"dF_rel_before": dF0, "dM_rel_before": dM0, "dF_rel": dF1, "dM_rel": dM1, "corr_rel": corr}
-
 
 # ====================================================================== 셀 (LT-6)
 def _cell_members(cid: np.ndarray, n_cells: int) -> tuple[np.ndarray, np.ndarray]:
@@ -482,30 +520,52 @@ def cell_loads(raw: dict, efr: dict, t_mesh: dict, t_frame: dict, rn_idx: np.nda
     return f, info
 
 
-# ====================================================================== 대상 하중 (LT-1)
-class Ctx:
-    """shape_loads 문맥: 영역·h·좌표 허용·매핑 옵션 + W 캐시(A 메시 sha 별)."""
-
-    def __init__(self, region=None, h: float = 3.0, coord_tol: float = 0.005, mapping_opts: dict | None = None,
-                 W: dict | None = None):
-        self.region = None if region is None else np.asarray(region, bool)
-        self.h = float(h)
-        self.coord_tol = float(coord_tol)
-        self.mapping_opts = mapping_opts
-        self.W = dict(W or {})
-        self.ident: dict = {}
+# ====================================================================== 전략 (identity·work·cell)
+STRATEGIES: dict = {}
 
 
-def _work_of(ctx: Ctx, sha: str, raw: dict, t_mesh: dict, wcfg: dict) -> dict:
-    if sha not in ctx.W:
-        ctx.W[sha] = build_work(raw["x0"], t_mesh, ctx.region, wcfg, ctx.h)
-    return ctx.W[sha]
+def strategy(name: str):
+    def deco(fn):
+        STRATEGIES[name] = fn
+        return fn
+    return deco
 
 
-def _ident(ctx: Ctx, sha: str, raw: dict, t_mesh: dict) -> bool:
-    if sha not in ctx.ident:
-        ctx.ident[sha] = ctx.region is None and identity_ok(raw, t_mesh, ctx.coord_tol)
-    return ctx.ident[sha]
+@strategy("identity")
+def _s_identity(src: dict, dst: dict, cell_size_mm, opts: dict, cache: Cache):
+    """노드 ID 재배열(``target.entry_load`` S1 과 같은 식 — ① direct_nodal 과 비트 동일). 보정 없음."""
+    tn = np.asarray(dst["node_id"], dtype=np.int64)
+    sn = np.asarray(src["node_id"], dtype=np.int64)
+    order = np.argsort(sn, kind="stable")
+    pos = np.searchsorted(sn[order], tn)
+    pos = np.minimum(pos, sn.size - 1)
+    if not np.array_equal(sn[order][pos], tn):
+        raise EslError("MODEL_MISMATCH", "identity 전달: 대상 노드 ID 가 ESL 노드 ID 와 다름")
+    return np.asarray(src["f"], dtype=np.float64)[order][pos].copy(), {"fast_path": "identity"}, False, None
+
+
+@strategy("work")
+def _s_work(src: dict, dst: dict, cell_size_mm, opts: dict, cache: Cache):
+    W = cache.work(src, dst, opts)
+    return apply_work(W, src["f"], dst["x0"].shape[0]), {}, True, W
+
+
+@strategy("cell")
+def _s_cell(src: dict, dst: dict, cell_size_mm, opts: dict, cache: Cache):
+    X = dst["x0"]
+    if cell_size_mm is None:                      # legacy 격자: ``target.entry_load`` S2 와 같은 옵션·함수(활성 노드만)
+        if src.get("summary") is None:
+            raise EslError("INPUT_INVALID", "legacy 셀 매핑에는 ESL 요약(summary) 필요")
+        o = {"moment_scale": "preserve", "equilibrate": True}
+        o.update(opts.get("mapping_opts") or {})
+        idx = dst["nodes"]
+        fr, info = mp.to_target(src["summary"], X[idx], dst["frame"], o)
+        f = np.zeros_like(X)
+        f[idx] = np.asarray(fr, dtype=np.float64)
+        return f, {"corr_rel": float(info.get("equilibrate_correction_rel") or 0.0)}, False, None
+    f0, extra = cell_loads(src, src["frame"], dst, dst["frame"], dst["nodes"], float(cell_size_mm),
+                           lambda: cache.work(src, dst, opts), float(opts.get("min_spread", mp.MIN_SPREAD)))
+    return f0, {k: extra[k] for k in ("small_frac", "n_cells_loaded", "n_cells_small")}, True, cache.W.get(src["sha"])
 
 
 def _metrics(f, extra: dict) -> dict:
@@ -513,79 +573,68 @@ def _metrics(f, extra: dict) -> dict:
     return {"sum_abs_f": float(a.sum()), "max_abs_f": float(a.max()) if a.size else 0.0, **extra}
 
 
-def shape_loads(target, entries, lt: dict, ctx: Ctx, variant: tuple | None = None) -> tuple[list, dict]:
-    """LT-1 모든 형상(d000 포함) 같은 함수. entries = raw 포함 LibraryEntry, variant = (method, cell_size_mm) — None =
-    스터디 주 방식. 반환 ([(entry_id, F (N,3))], {variant, fast_path, per_esl[…], transfer{…}, warnings[]})."""
-    from esl.opt import target as tg
-    method, s = variant if variant is not None else primary_variant(lt)
-    wcfg = lt["work"]
-    mesh = target.mesh
-    X = np.asarray(mesh["x0"], dtype=np.float64)
-    n_t = X.shape[0]
-    rn_idx = np.flatnonzero(region_nodes(mesh, ctx.region))
+def pick(method: str, src: dict, dst: dict, opts: dict, cache: Cache, auto_identity: str = "work") -> str:
+    """전략 선택: 같은 메시 ∧ (auto_identity = any 또는 = work 이고 방식 work) → identity, 아니면 방식."""
+    if method not in METHODS:
+        raise EslError("CONFIG_INVALID", f"load_transfer method work|cell: {method!r}")
+    if auto_identity not in AUTO_IDENTITY:
+        raise EslError("CONFIG_INVALID", f"auto_identity work|any|off: {auto_identity!r}")
+    auto = auto_identity == "any" or (auto_identity == "work" and method == "work")
+    return "identity" if auto and cache.same(src, dst, opts) else method
+
+
+def run(src: dict, dst: dict, method: str, cell_size_mm, opts: dict, cache: Cache | None = None, *,
+        auto_identity: str = "work") -> tuple[np.ndarray, dict]:
+    """원본 1개 → 대상 노드힘 (N_t,3) + 진단 행(§5 primary 키: sum_abs_f, max_abs_f, dF_rel, dM_rel_before, dM_rel,
+    corr_rel, far_frac, fast_path?, small_frac?…, strategy)."""
+    cache = cache if cache is not None else Cache()
+    name = pick(method, src, dst, opts, cache, auto_identity)
+    s = None if method == "work" else cell_size_mm
+    X = dst["x0"]
+    b = balance(src["x0"], src["f"])
+    f0, extra, need_cons, W = STRATEGIES[name](src, dst, s, opts, cache)
+    if need_cons:
+        f, cons = conserve(X, f0, dst["nodes"], b)
+    else:
+        f = f0
+        dF, dM = _errs(X, f, b)
+        cons = {"dF_rel": dF, "dM_rel_before": dM, "dM_rel": dM, "corr_rel": float(extra.pop("corr_rel", 0.0))}
+    far_frac = 0.0 if name == "identity" else None
+    if W is not None:
+        fm = far_mask(W, opts["work"], opts["h"])
+        far_frac = float(np.linalg.norm(src["f"][fm], axis=1).sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
+    row = _metrics(f, {**cons, "far_frac": far_frac, **extra, "strategy": name})
+    return f, row
+
+
+def run_many(srcs: list[dict], dst: dict, method: str, cell_size_mm, opts: dict, cache: Cache | None = None, *,
+             auto_identity: str = "work") -> tuple[list, dict]:
+    """원본 여러 개(ESL) → ([(id, F)], {variant, method, cell_size_mm, fast_path, per_esl[행 + entry_id], transfer{max_dist_mm,
+    far_n, newton_fallback_n, seconds}(원본 메시마다 1회), warnings[LT_ESL_UNBALANCED]})."""
+    cache = cache if cache is not None else Cache()
+    s = None if method == "work" else cell_size_mm
     out, per, warns = [], [], []
     tr = {"max_dist_mm": 0.0, "far_n": 0, "newton_fallback_n": 0, "seconds": 0.0}
-    seen_sha: set = set()
-    fast_all = True
-    for e in entries:
-        eid = e.meta.get("entry_id")
-        raw = e.raw
-        sha = a_mesh_sha(raw)
-        b = balance(raw["x0"], raw["f"])
+    seen: set = set()
+    for src in srcs:
+        b = balance(src["x0"], src["f"])
         if b["sabs"] > 0 and float(np.linalg.norm(b["F"])) / b["sabs"] > UNBALANCED_REL:
-            warns.append({"code": "LT_ESL_UNBALANCED", "entry_id": eid,
+            warns.append({"code": "LT_ESL_UNBALANCED", "entry_id": src["id"],
                           "rel": float(np.linalg.norm(b["F"])) / b["sabs"]})
-        row: dict = {"entry_id": eid}
-        if method == "work" and _ident(ctx, sha, raw, mesh):
-            f, _ = tg.entry_load(tg.Target("S1", mesh, target.frame, []), raw)     # ① direct_nodal 과 같은 코드
-            dF, dM = _errs(X, f, b)
-            row.update(_metrics(f, {"dF_rel": dF, "dM_rel_before": dM, "dM_rel": dM, "corr_rel": 0.0,
-                                    "far_frac": 0.0, "fast_path": "identity"}))
-            out.append((eid, np.asarray(f, dtype=np.float64)))
-            per.append(row)
-            continue
-        fast_all = False
-        if method == "cell" and s is None:                   # legacy 격자(지금 to_target 그대로, 영역 노드만)
-            st = tg.Target("S2", {"x0": X[rn_idx], "node_id": np.asarray(mesh["node_id"])[rn_idx]}, target.frame, [])
-            fr, _info = tg.entry_load(st, None, e.summary_for_mapping(), ctx.mapping_opts)
-            f = np.zeros((n_t, 3))
-            f[rn_idx] = fr
-            dF, dM = _errs(X, f, b)
-            row.update(_metrics(f, {"dF_rel": dF, "dM_rel_before": dM, "dM_rel": dM,
-                                    "corr_rel": float(_info.get("equilibrate_correction_rel") or 0.0),
-                                    "far_frac": None}))
-            out.append((eid, f))
-            per.append(row)
-            continue
-        W = None
-        if method == "work":
-            W = _work_of(ctx, sha, raw, mesh, wcfg)
-            f0 = apply_work(W, raw["f"], n_t)
-            extra = {}
-        else:
-            f0, extra = cell_loads(raw, e.meta["frame"], mesh, target.frame, rn_idx, float(s),
-                                   lambda sha=sha, raw=raw: _work_of(ctx, sha, raw, mesh, wcfg))
-            W = ctx.W.get(sha)
-        f, cons = conserve(X, f0, rn_idx, b)
-        far_frac = None
-        if W is not None:
-            fm = far_mask(W, wcfg, ctx.h)
-            far_frac = float(np.linalg.norm(np.asarray(raw["f"])[fm], axis=1).sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
-            if sha not in seen_sha:
-                seen_sha.add(sha)
-                tr["max_dist_mm"] = max(tr["max_dist_mm"], float(W["max_dist_mm"]))
-                tr["far_n"] += int(fm.sum())
-                tr["newton_fallback_n"] += int(W["newton_fallback_n"])
-                tr["seconds"] += float(W["seconds"])
-        row.update(_metrics(f, {**cons, "far_frac": far_frac,
-                                **({"small_frac": extra["small_frac"], "n_cells_loaded": extra["n_cells_loaded"],
-                                    "n_cells_small": extra["n_cells_small"]} if extra else {})}))
-        out.append((eid, f))
-        per.append(row)
+        f, row = run(src, dst, method, s, opts, cache, auto_identity=auto_identity)
+        W = cache.W.get(src["sha"]) if row["strategy"] != "identity" else None
+        if W is not None and src["sha"] not in seen:
+            seen.add(src["sha"])
+            fm = far_mask(W, opts["work"], opts["h"])
+            tr["max_dist_mm"] = max(tr["max_dist_mm"], float(W["max_dist_mm"]))
+            tr["far_n"] += int(fm.sum())
+            tr["newton_fallback_n"] += int(W["newton_fallback_n"])
+            tr["seconds"] += float(W["seconds"])
+        out.append((src["id"], f))
+        per.append({"entry_id": src["id"], **row})
+    fast = bool(per) and all(p["strategy"] == "identity" for p in per)
     return out, {"variant": variant_label(method, s), "method": method, "cell_size_mm": s,
-                 "fast_path": "identity" if (fast_all and method == "work" and entries) else None,
-                 "per_esl": per, "transfer": tr, "warnings": warns}
-
+                 "fast_path": "identity" if fast else None, "per_esl": per, "transfer": tr, "warnings": warns}
 
 def far_state(info: dict, wcfg: dict) -> tuple[str | None, float]:
     """먼 노드 판정(LT-5): (None | LT_FAR_NODES | LT_TRANSFER_FAILED, ESL 최대 far_frac)."""
@@ -595,55 +644,6 @@ def far_state(info: dict, wcfg: dict) -> tuple[str | None, float]:
     if ff > float(wcfg["far_warn_frac"]):
         return "LT_FAR_NODES", ff
     return None, ff
-
-
-# ====================================================================== 지지 (LT-7)
-def auto_supports(mesh: dict, region) -> list:
-    """영역 노드로 PCA 3-2-1(영역 = 전체면 ``target.auto_supports`` 와 같음)."""
-    from esl.opt import target as tg
-    if region is None:
-        return tg.auto_supports(mesh)
-    rn = region_nodes(mesh, region)
-    return tg.auto_supports({"x0": np.asarray(mesh["x0"])[rn], "node_id": np.asarray(mesh["node_id"])[rn]})
-
-
-def support_xyz(mesh: dict, supports) -> list[dict]:
-    nid = np.asarray(mesh["node_id"], dtype=np.int64)
-    pos = {int(v): i for i, v in enumerate(nid.tolist())}
-    X = np.asarray(mesh["x0"], dtype=np.float64)
-    return [{"node_id": int(n), "dof": str(d), "xyz": X[pos[int(n)]].tolist()} for n, d in supports]
-
-
-def _support_ok(mesh: dict, sup) -> bool:
-    from esl.mech import supports as msup
-    from esl.opt import target as tg
-    try:
-        sr = tg.support_check(mesh, sup)
-    except EslError:
-        return False
-    return sr["rank"] >= 6 and sr["sigma_ratio"] >= msup.DEGENERATE_RATIO
-
-
-def transfer_supports(ref: list[dict], mesh: dict, region, tol: float) -> tuple[list, dict]:
-    """LT-7 기준 d000 지지점(xyz) → 형상 영역 최근접 노드(동률 = 작은 인덱스), 같은 dof. 거리 > tol 또는 rank < 6 →
-    영역 auto 3-2-1(fallback). 반환 (지지 [(node_id, dof)], {mode, max_dist_mm, reason?})."""
-    X = np.asarray(mesh["x0"], dtype=np.float64)
-    nid = np.asarray(mesh["node_id"], dtype=np.int64)
-    rn = np.flatnonzero(region_nodes(mesh, region))
-    sup, dmax = [], 0.0
-    for s in ref:
-        d = np.linalg.norm(X[rn] - np.asarray(s["xyz"], dtype=np.float64), axis=1)
-        j = int(np.argmin(d))
-        dmax = max(dmax, float(d[j]))
-        sup.append((int(nid[rn[j]]), str(s["dof"])))
-    if dmax > float(tol):
-        reason = f"distance {dmax:.3g} mm > {float(tol):g} mm"
-    elif not _support_ok(mesh, sup):
-        reason = "rank < 6"
-    else:
-        return sup, {"mode": "transfer", "max_dist_mm": dmax}
-    return auto_supports(mesh, region), {"mode": "fallback", "max_dist_mm": dmax, "reason": reason}
-
 
 # ====================================================================== 진단 (LT-10)
 def load_corr(f_m, f_ref) -> float | None:
@@ -727,34 +727,33 @@ def sweep_variants(lt: dict) -> list[tuple[str, float | None]]:
             uniq.append((m, s))
     return uniq
 
-
-def a_direct_mesh(raw: dict, props: dict) -> dict:
-    """참값 a_direct 용 A 메시(스터디 물성으로 덮어씀)."""
-    ne = int(np.asarray(raw["elem_type"]).size)
-    m = {k: np.asarray(raw[k]) for k in ("node_id", "x0", "elem_id", "elem_type", "conn")}
-    m["elem_pid"] = np.asarray(raw.get("elem_pid", np.zeros(ne, np.int64)))
-    m["thickness"] = np.full(ne, float(props["t"]))
-    m["E"] = np.full(ne, float(props["E"]))
-    m["nu"] = np.full(ne, float(props["nu"]))
-    return m
-
-
 # ====================================================================== W 저장
 def save_work(path: str, Ws: dict, key: str, writer=None) -> str:
     """prep/shapes/<did>/transfer.npz: 키 = A 메시 sha 앞 16자(+ _elem·_nodes·_w·_dist), key = 대상 메시·영역·설정 해시."""
-    from esl.doe.mesh_gmsh import save_npz_det
     arr = {"key": np.asarray(key)}
     for sha, W in Ws.items():
         arr.update({f"{sha}_elem": W["elem"], f"{sha}_nodes": W["nodes"], f"{sha}_w": W["w"], f"{sha}_dist": W["dist"],
                     f"{sha}_meta": np.asarray([W["newton_fallback_n"], W["max_dist_mm"], W["seconds"]], np.float64)})
     g = writer.guard if writer is not None else (lambda p: p)
-    save_npz_det(g(path), arr)
+    _save_npz_det(g(path), arr)
     return path
+
+
+def _save_npz_det(path: str, arrays: dict) -> None:
+    """allow_pickle=False 로 읽히는 npz(zip 날짜 고정·키 정렬 — 바이트 결정성)."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for k in sorted(arrays):
+            zi = zipfile.ZipInfo(f"{k}.npy", date_time=(1980, 1, 1, 0, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = 0o644 << 16
+            with zf.open(zi, "w", force_zip64=True) as fh:
+                np.lib.format.write_array(fh, np.ascontiguousarray(arrays[k]), allow_pickle=False)
+    os.replace(tmp, path)
 
 
 def load_work(path: str, key: str) -> dict:
     """save_work 역(키 다르면 빈 dict — 다시 만듦)."""
-    import os
     if not os.path.isfile(path):
         return {}
     with np.load(path, allow_pickle=False) as z:
@@ -770,9 +769,9 @@ def load_work(path: str, key: str) -> dict:
         return out
 
 
-def work_key(t_mesh: dict, region, lt: dict, h: float) -> str:
+def work_key(t_mesh: dict, region, wcfg: dict, h: float) -> str:
     h_ = hashlib.sha256(b"esl/lt_work/1\n")
     h_.update(mesh_sha(t_mesh).encode())
     h_.update(b"-" if region is None else np.packbits(np.asarray(region, bool)).tobytes())
-    h_.update(repr((sorted((lt.get("work") or {}).items()), float(h))).encode())
+    h_.update(repr((sorted((wcfg or {}).items()), float(h))).encode())
     return h_.hexdigest()
