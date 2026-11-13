@@ -1,7 +1,7 @@
-# v200-core 인계 (esl_load_transfer.md core-geom)
+# v200-core 인계 (esl_load_transfer.md §13 + esl_stiffness_metric.md (b))
 
-- 상태: WIP. 신규 esl/doe/load_transfer.py, scenario.compare_target(supports, region)·shape_check(region),
-  stages.py ④ 분기(_lt, _cmp_loads_lt, _cmp_eval_lt, _lt_post, _lt_view3d_ref, _lt_mesh_loads, CSV 끝 열),
-  report_doe 하중 전달 절, DEFAULTS compare.load_transfer, doe_messages LT_* 코드, synth_compare lt_* 함수.
-- 남음: tests/doe/test_load_transfer.py(V-LT-1~7·12), regress 대조(reg200/run.sh wt-191=main 기준 완료), 합성 비교 수치.
-- 회귀 기준: scratchpad/reg200/out/main_* (wt-191 = 40dcc6d 트리 동일).
+- LT 완료(커밋): load_transfer.py 순수 모듈(전략 identity·work·cell, run_transfer_plan, place, build_disp), transfer_plan.py(계획 표 +
+  sm 열), compare_lt.py(④ 지지·영역·W 파일 캐시), stages `_plan_loads` 단일 하중 자리·모든 모드 진단·post·CSV·report.
+- 시험: test_load_transfer.py(모듈), test_transfer_plan.py, test_lt_modes.py(①②③④). tests/doe 전체 통과(392 + 4 skip).
+- 회귀: scratchpad/reg200 (wt-191 = 40dcc6d) — regress none·cad·auto·sel_regress·selreg 바이트 동일(경로·시각만 다름).
+- 남음 (b): v200-sm merge, stages SM(eval·post·view3d u_def), DEFAULTS rank.*, messages SM_*, report, 시험.

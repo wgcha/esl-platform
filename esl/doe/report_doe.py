@@ -269,7 +269,7 @@ def convergence_html(shapes: list, bias: dict, esl: list) -> str:
 
 LT_METHOD_KO = {"work": "일 등가(원본 절점력 → 형상 면 최근접점 형상함수)", "cell": "셀 매핑"}
 LT_SUPPORT_KO = {"transfer": "기준 지지 → 형상 최근접 노드", "auto": "형상마다 자동 3-2-1", "fallback": "이전 실패 → 자동 3-2-1"}
-LT_TRUTH_KO = {"direct_nodal": "① 원본 절점력 직접(기준 = ESL 메시)", "a_direct": "ESL 원본 메시 직접 풀이(같은 물성)",
+LT_TRUTH_KO = {"direct_nodal": "① 원본 절점력 직접(기준 = ESL 메시)", "a_direct": "ESL 원본 메시 직접 풀이",
                "mixed": "ESL 마다 다름"}
 
 
@@ -296,10 +296,11 @@ def load_transfer_html(lt: dict | None) -> str:
     diag = lt.get("diag") or {}
     cs = res.get("cell_size_mm")
     alt = res.get("alt") or None
-    pairs = [("하중 전달", LT_METHOD_KO.get(res.get("method"), res.get("method"))
+    pairs = [("전달 계획", res.get("plan") or "—"),
+             ("하중 전달", LT_METHOD_KO.get(res.get("method"), res.get("method"))
               + ("" if res.get("method") != "cell" else (" 기존 24×14" if cs is None else f" {_f(cs)} mm"))),
-             ("지지", LT_SUPPORT_KO.get(res.get("support"), res.get("support"))),
-             ("평가 영역", res.get("region_mode")),
+             ("지지", LT_SUPPORT_KO.get(res.get("support"), res.get("support") or "—")),
+             ("평가 영역", res.get("region_mode") or "—"),
              ("다른 방식(진단)", "—" if not alt else lt_variant_ko("work" if alt.get("method") == "work" else (
                  "cell:legacy" if alt.get("cell_size_mm") is None else f"cell:{float(alt['cell_size_mm']):g}"))),
              ("기준 참값", LT_TRUTH_KO.get(res.get("truth"), res.get("truth") or "—")),
@@ -307,7 +308,7 @@ def load_transfer_html(lt: dict | None) -> str:
     inner = H.kv_table(pairs)
     sm = res.get("summary") or []
     if sm:
-        inner += "<h3>기준 d000 — 참값 대비</h3>" + H.table(
+        inner += "<h3>베이스라인(d000) — 참값 대비</h3>" + H.table(
             ["variant", "umax 배율", "C 배율", "MAC 최소", "하중 상관 최소"],
             [[lt_variant_ko(x["variant"]), _rng(x.get("umax_ratio")), _rng(x.get("C_ratio")), x.get("mac_min"),
               x.get("load_corr_min")] for x in sm], num=(3, 4))
@@ -318,7 +319,7 @@ def load_transfer_html(lt: dict | None) -> str:
                            r.get("sum_abs_ratio"), r.get("max_abs_ratio"), r.get("umax_ratio"), r.get("C_ratio"),
                            r.get("mac")] for r in rows], num=(2, 3, 4, 5, 6, 7))
     shp = diag.get("shapes") or []
-    if shp:
+    if len(shp) > 1:                                        # once 계획 = 베이스라인 1행 → 형상 표 생략
         trs = []
         for x in shp:
             prim = [p.get("primary") or {} for p in x.get("per_esl") or []]
@@ -330,8 +331,12 @@ def load_transfer_html(lt: dict | None) -> str:
                         sp.get("max_dist_mm"), (x.get("region") or {}).get("n_out")])
         inner += "<h3>형상별</h3>" + H.table(["id", "상태", "score(다른 방식)", "먼 노드 하중 비", "모멘트 오차(보정 전)",
                                               "지지", "지지 이전 거리 mm", "영역 밖 요소"], trs, num=(2, 3, 4, 6, 7))
-    inner += ("<p class='small muted'>배율 = variant ÷ 참값(같은 d000 지지·물성·영역). 하중 상관 = 3N 성분 코사인, MAC = "
-              "(u·u_ref)²/((u·u)(u_ref·u_ref)) — 기준이 ESL 메시와 같을 때만. 전체는 post/load_transfer_diag.json</p>")
+    model_diff = res.get("truth") == "a_direct" and (res.get("plan") or "") in ("bmesh_once", "step_once",
+                                                                                 "step_per_design")
+    inner += ("<p class='small muted'>배율 = variant ÷ 참값(같은 베이스라인(d000) 지지·물성·영역). 하중 상관 = 3N 성분 코사인, MAC = "
+              "(u·u_ref)²/((u·u)(u_ref·u_ref)) — 기준이 ESL 메시와 같을 때만. "
+              + ("②③ 참값 = ESL 원본 메시 직접 풀이라 배율에 모델 차(A ≠ B)가 포함됩니다 — 방식 간 상대 비교용. "
+                 if model_diff else "") + "전체는 post/load_transfer_diag.json</p>")
     return inner
 
 
@@ -609,6 +614,9 @@ def render(ctx: dict) -> str:
               f"{H.esc(ns.get('fixed', 0))}·형상 {H.esc(ns.get('geom', 0))} · 실패 모핑 {H.esc(nf.get('morph', 0))}·메시 "
               f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "4. 순위", inner))
+    lt_html = load_transfer_html(ctx.get("load_transfer"))
+    if lt_html:                                             # v0.20.0 LT-13·20(새 스냅샷만 — legacy 보고서 바이트 불변)
+        S.append(H.section("load_transfer", "하중 전달", lt_html))
     # 5. 민감도
     S.append(H.section("sensitivity", "5. 파라미터 민감도", sensitivity_svg(res.get("sensitivity"))))
     # 6. 경계 경고
