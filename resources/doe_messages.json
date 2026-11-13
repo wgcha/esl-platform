@@ -248,7 +248,7 @@
   "FIXED_XFER_NONE": "(정보) A 고정점을 옮기지 못했습니다({reason}) — 고정 층을 직접 칠하세요. (Info: A fixed points not transferred ({reason}) — paint the fixed layer.)",
   "FIXED_XFER_UNMATCHED": "(정보) A 고정 {label} 을 B 에서 찾지 못함(최소 거리 {d_mm} mm) — 고정 층에서 확인하세요. (Info: A fixed {label} not matched on B.)",
   "LOAD_TRANSFER_INVALID": "하중 전달 설정이 올바르지 않습니다(일 등가에는 셀 크기를 줄 수 없고, 셀 크기는 {min}..{max} mm). (Invalid load transfer settings.)",
-  "LT_TRANSFER_FAILED": "ESL 원본 메시를 이 형상에 옮길 수 없습니다 — 먼 노드 하중 비 {far_frac}(> {fail}), 최대 거리 {max_mm} mm. (ESL source mesh cannot be transferred to this shape.)",
+  "LT_TRANSFER_FAILED": "ESL 원본 메시를 이 형상에 옮길 수 없습니다(배치 오류) — {dist} mm 넘게 떨어진 노드의 하중 비 {far_frac}(> {fail}), 최대 거리 {max_mm} mm. 셀 방식을 고르거나 기준 모델·좌표계를 확인하세요. (ESL source mesh cannot be placed on this shape.)",
   "LT_FAR_NODES": "형상 면에서 먼 ESL 노드 {far_n} 개(하중 비 {far_frac}, 최대 거리 {max_mm} mm) — 그 하중은 가장 가까운 면 위치로 옮겼습니다. (ESL nodes far from the shape surface; their load was moved to the nearest point.)",
   "LT_SUPPORT_FALLBACK": "기준 지지점을 이 형상에 옮기지 못해({reason}) 형상 자체 3-2-1 지지로 풀었습니다(공정성 예외). (Support transfer failed; auto 3-2-1 used for this shape.)",
   "LT_ESL_UNBALANCED": "ESL {entry_id} 자체 합력이 0 이 아닙니다(‖ΣF‖/Σ|F| {rel}) — 불평형을 그대로 옮깁니다. (ESL is not self-balanced.)",

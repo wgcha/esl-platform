@@ -20,7 +20,8 @@ from esl.library import normalize as nz
 from esl.opt import target as tg
 
 SC = {"backend": "superlu", "drill_factor": 1e-4}
-WORK = {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01, "far_fail_frac": 0.2}
+WORK = {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01, "far_fail_frac": 0.2,
+        "fail_dist_mm": 20.0, "fail_frac": 0.2}
 LX, LZ, H0 = 240.0, 180.0, 3.0
 BEAD = (80.0, 110.0, 5.0)
 
@@ -67,7 +68,7 @@ def test_module_imports_only_allowed():
         elif isinstance(n, ast.ImportFrom):
             mods.add(n.module or "")
     assert not [m for m in mods if m.startswith("esl.doe")], mods                   # 시나리오·stages·DEFAULTS 금지
-    assert mods <= {"__future__", "hashlib", "time", "numpy", "scipy.spatial", "esl.errors", "esl.library",
+    assert mods <= {"__future__", "hashlib", "time", "numpy", "scipy", "scipy.spatial", "esl.errors", "esl.library",
                     "esl.opt", "esl.opt.target"}, mods
     src = inspect.getsource(ltm)
     assert "open(" not in src and "zipfile" not in src and "os." not in src         # 파일 IO 없음
@@ -280,8 +281,15 @@ def test_far_nodes_boss_and_thresholds(tmp_path):
     p = iw["per_esl"][0]
     assert iw["transfer"]["far_n"] > 0 and iw["transfer"]["max_dist_mm"] > 3.0 and p["far_frac"] > 0
     assert np.linalg.norm(lw[0][1].sum(axis=0) - f.sum(axis=0)) <= 1e-9 * p["sum_abs_f"]   # 버리지 않음(합력 보존)
-    for ff, want in ((0.0099, None), (0.0101, "LT_FAR_NODES"), (0.199, "LT_FAR_NODES"), (0.201, "LT_TRANSFER_FAILED")):
-        assert ltm.far_state({"per_esl": [{"far_frac": ff}]}, WORK)[0] == want, ff
+    assert p["fail_frac"] == 0.0                                                    # 보스 9 mm < fail_dist 20 mm = 실패 아님
+    for ff, fl, want in ((0.0099, 0.0, None), (0.0101, 0.0, "LT_FAR_NODES"), (0.9, 0.199, "LT_FAR_NODES"),
+                         (0.9, 0.201, "LT_TRANSFER_FAILED")):                         # 실패 = fail_dist 초과 하중 비만
+        assert ltm.far_state({"per_esl": [{"far_frac": ff, "fail_frac": fl}]}, WORK)[0] == want, (ff, fl)
+    W2 = dict(WORK, fail_dist_mm=5.0)                                                # 보스 높이 9 mm > 5 → 그 하중 비
+    m2 = dict(_method(), work=W2)
+    _, info2 = ltm.run_transfer_plan({"identity": {"key": "none"}}, [_src(e)], ltm.dst_mesh(T, e.meta["frame"], None, H0),
+                                     m2, {})
+    assert 0 < info2["per_esl"][0]["fail_frac"] <= info2["per_esl"][0]["far_frac"]
 
 
 # ---------------------------------------------------------------- 진단 함수(모드 무관 스키마)

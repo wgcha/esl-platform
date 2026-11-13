@@ -198,9 +198,10 @@ def test_pipeline_case_reference_work(tmp_path, monkeypatch):
         e = en.load(ent["dir"], raw=True)
         fd, _ = tg.entry_load(tg.Target("S1", t.mesh, t.frame, []), e.raw)
         assert np.array_equal(F, fd)
-    # (V-LT-5) 비드 깊이 5 mm > proj_tol 3 mm 위 하중 비 > 0.2 → FAILED_SIZE LT_TRANSFER_FAILED, 아니면 경고·지지 이전
+    # (V-LT-5) 먼 노드 = 경고·지지 이전
     cmp_ = {r["id"]: r for r in U.read_json(P("prep", "compare.json"))["shapes"]}
-    assert cmp_["d001"]["status"] == "FAILED_SIZE" and cmp_["d001"]["code"] == "LT_TRANSFER_FAILED"
+    # 2026-11-13 개정: 비드 깊이 차(5 mm)로 먼 노드 = 경고만(실패는 fail_dist_mm 20 mm 초과 하중 비 — 배치 오류)
+    assert cmp_["d001"]["status"] == "READY" and "LT_FAR_NODES" in cmp_["d001"]["warnings"]
     assert cmp_["d002"]["status"] == "READY" and "LT_FAR_NODES" in cmp_["d002"]["warnings"]
     assert rows["d002"]["supports"]["mode"] == "transfer" and rows["d002"]["supports"]["max_dist_mm"] == 0.0
     assert os.path.isfile(P("prep", "shapes", "d002", "transfer.npz"))
@@ -435,7 +436,7 @@ def test_bmesh_once_work_placement_and_cell_legacy(tmp_path, monkeypatch):
     _a, _d, doe_h = _mesh_doe(tmp_path / "H", bh)
     with pytest.raises(EslError) as ei:
         _scn_run(str(tmp_path / "Hrun"), doe_h, bh, rel="b.rad",
-                 lt={"schema": 1, "method": "work", "work": {"far_warn_frac": 0.0, "far_fail_frac": 0.0}})
+                 lt={"schema": 1, "method": "work", "work": {"fail_dist_mm": 1.0, "fail_frac": 0.0}})
     assert ei.value.code == "BASELINE_FAILED" and "LT_TRANSFER_FAILED" in ei.value.message
 
 

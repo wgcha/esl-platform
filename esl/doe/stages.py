@@ -2490,7 +2490,8 @@ def _lt_far_text(L: dict, info: dict) -> tuple[str | None, str | None]:
     state, ff = ltm.far_state(info, L["work"])
     tr = info["transfer"]
     if state == "LT_TRANSFER_FAILED":
-        return state, _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work']['far_fail_frac']):g}",
+        return state, _cmp_text(state, far_frac=f"{ff:.3g}", fail=f"{float(L['work'].get('fail_frac', 0.2)):g}",
+                                dist=f"{float(L['work'].get('fail_dist_mm', 20.0)):g}",
                                 max_mm=f"{tr['max_dist_mm']:.3g}")
     if state == "LT_FAR_NODES":
         return state, _cmp_text(state, far_n=tr["far_n"], far_frac=f"{ff:.3g}", max_mm=f"{tr['max_dist_mm']:.3g}")

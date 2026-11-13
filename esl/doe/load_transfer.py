@@ -638,12 +638,16 @@ def transfer(src: dict, dst: dict, method: dict, placement: dict | None = None, 
     else:
         f, cons = conserve(X, f0, dst["nodes"], b)
     far_frac = 0.0 if strat == "identity" else None
+    fail_frac = 0.0 if strat == "identity" else None
     if W is not None:
         fm = far_mask(W, method["work"], dst["h"])
-        far_frac = float(np.linalg.norm(sp["f"][fm], axis=1).sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
+        fa = np.linalg.norm(sp["f"], axis=1)
+        far_frac = float(fa[fm].sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
+        fx = np.asarray(W["dist"]) > float(method["work"].get("fail_dist_mm", 20.0))
+        fail_frac = float(fa[fx].sum() / b["sabs"]) if b["sabs"] > 0 else 0.0
         extra["_far"] = (int(fm.sum()), float(W["max_dist_mm"]), int(W["newton_fallback_n"]), float(W["seconds"]),
                          sp["mesh_sha"])
-    row = _metrics(f, {**cons, "far_frac": far_frac, **extra, "strategy": strat})
+    row = _metrics(f, {**cons, "far_frac": far_frac, "fail_frac": fail_frac, **extra, "strategy": strat})
     return f, row
 
 
@@ -684,10 +688,12 @@ def run_transfer_plan(plan: dict, srcs: list[dict], dst: dict, method: dict, cac
                  "fast_path": "identity" if fast else None, "per_esl": per, "transfer": tr, "warnings": warns}
 
 def far_state(info: dict, wcfg: dict) -> tuple[str | None, float]:
-    """먼 노드 판정(LT-5): (None | LT_FAR_NODES | LT_TRANSFER_FAILED, ESL 최대 far_frac)."""
+    """먼 노드 판정(LT-5, 2026-11-13 개정): 실패 = 배치 오류 — fail_dist_mm 초과 노드 하중 비(fail_frac) > work.fail_frac
+    → LT_TRANSFER_FAILED(값 = 그 비), 아니면 proj_tol 초과 하중 비(far_frac) > far_warn_frac → LT_FAR_NODES(진단·경고만)."""
+    fl = max([float(p.get("fail_frac") or 0.0) for p in info["per_esl"]] or [0.0])
+    if fl > float(wcfg.get("fail_frac", 0.2)):
+        return "LT_TRANSFER_FAILED", fl
     ff = max([float(p.get("far_frac") or 0.0) for p in info["per_esl"]] or [0.0])
-    if ff > float(wcfg["far_fail_frac"]):
-        return "LT_TRANSFER_FAILED", ff
     if ff > float(wcfg["far_warn_frac"]):
         return "LT_FAR_NODES", ff
     return None, ff

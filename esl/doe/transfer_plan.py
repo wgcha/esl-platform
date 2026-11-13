@@ -102,6 +102,8 @@ def resolve(spec_lt: dict | None, scenario: str, defaults: dict | None = None) -
         bad("work.knn 1..64, newton_iter 1..50")
     if not 0.0 <= float(w["far_warn_frac"]) <= float(w["far_fail_frac"]) <= 1.0:
         bad("work 0 ≤ far_warn_frac ≤ far_fail_frac ≤ 1")
+    if not float(w.get("fail_dist_mm", 20.0)) > 0 or not 0.0 <= float(w.get("fail_frac", 0.2)) <= 1.0:
+        bad("work.fail_dist_mm > 0, 0 ≤ fail_frac ≤ 1")
     return lt
 
 

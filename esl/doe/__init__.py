@@ -193,8 +193,11 @@ DEFAULTS: dict = {
     # 거울). 새 스터디 스냅샷(doe.load_transfer)에만 쓰임 — 스냅샷에 키 없는 옛 스터디 = 각 모드 지금 경로(legacy)
     "load_transfer": {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0],
                       "cell_min_mm": 3.0,
+                      # far_*: proj_tol 초과(먼 노드) 하중 비 — 진단·경고(LT_FAR_NODES)만(far_fail_frac 는 거울 호환용, 판정에
+                      # 안 씀). 실패(FAILED_SIZE·BASELINE_FAILED LT_TRANSFER_FAILED) = 배치 오류 판정: fail_dist_mm 초과 노드의
+                      # 하중 비 > fail_frac(2026-11-13 메인 결정 — 비드 깊이 차 수 mm 는 정상)
                       "work": {"knn": 8, "proj_tol_mm": 3.0, "newton_iter": 10, "far_warn_frac": 0.01,
-                               "far_fail_frac": 0.2},
+                               "far_fail_frac": 0.2, "fail_dist_mm": 20.0, "fail_frac": 0.2},
                       "diag": {"enabled": True, "alt": True, "alt_cell_size_mm": 3.0, "alt_designs": "auto",
                                "cell_sweep_mm": [None, 10.0, 5.0, 3.0]}},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
