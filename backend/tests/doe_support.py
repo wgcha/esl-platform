@@ -232,7 +232,8 @@ SELECT_KEYS_V0161 = (("fixed_policy",), ("island",), ("hold",), ("quality", "fai
                      ("step_graph",))
 COMPARE_KEYS_V0161 = tuple(("defeature", k) for k in (
     "kinds", "hole_max_d_mm", "slot_max_w_mm", "slot_max_l_mm", "flange_max_h_mm", "fillet_max_r_mm", "narrow_w_factor",
-    "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),)
+    "feature_max_mm", "plane_tol_mm", "compound", "region_pad_factor", "max_features", "list_max")) + (("mesh_input", "diag"),
+                                                                                                    ("load_transfer",))   # v0.20.0 LT — 코어 병합 전 대조 생략
 
 
 def _has(d: Any, path: tuple) -> bool:

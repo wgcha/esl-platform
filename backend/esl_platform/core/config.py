@@ -930,6 +930,79 @@ class BeadDoeCompareQualityCfg(_M):
     tria_pct: QualityLimitCfg = _ql(10.0, 15.0)
 
 
+LT_CELL_MAX_MM = 200.0                      # v0.20.0 LT 셀 크기 상한(계약 esl_load_transfer.md §4.1) — 요청 검사(서비스)도 이 값
+LT_LIST_MAX = 8                             # cell_choices_mm·cell_sweep_mm 길이 상한
+
+
+class BeadDoeCompareLoadTransferWorkCfg(_M):
+    """v0.20.0 방식 W(일 등가) 사영(LT-2·5): 후보 요소 kNN·Newton 역사상 횟수·먼 노드 허용 거리와 경고·실패 비율."""
+
+    knn: int = Field(default=8, ge=1, le=64)
+    proj_tol_mm: float | None = Field(default=3.0, gt=0)          # null = 1.0 × h
+    newton_iter: int = Field(default=10, ge=1, le=50)
+    far_warn_frac: float = Field(default=0.01, ge=0, le=1)
+    far_fail_frac: float = Field(default=0.2, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _order(self) -> "BeadDoeCompareLoadTransferWorkCfg":
+        if not self.far_warn_frac <= self.far_fail_frac:
+            raise ValueError(f"load_transfer.work.far_warn_frac {self.far_warn_frac:g} ≤ far_fail_frac "
+                             f"{self.far_fail_frac:g} 이어야 합니다")
+        return self
+
+
+class BeadDoeCompareLoadTransferRegionCfg(_M):
+    """v0.20.0 ④ 평가 영역(LT-8, ③ SG-D-19 와 같은 값·뜻)."""
+
+    mode: Literal["auto", "a_bbox", "largest", "all"] = "auto"
+    pad_mm: float | None = Field(default=None, gt=0)
+    min_frac: float = Field(default=0.5, gt=0, le=1)
+
+
+def _lt_cells(name: str, v: list[float | None], cell_min: float, *, min_len: int) -> None:
+    if not min_len <= len(v) <= LT_LIST_MAX:
+        raise ValueError(f"load_transfer.{name} 길이는 {min_len}..{LT_LIST_MAX}: {len(v)}")
+    if len(set(v)) != len(v):
+        raise ValueError(f"load_transfer.{name} 에 중복이 있습니다: {v}")
+    for x in v:
+        if x is not None and not cell_min <= x <= LT_CELL_MAX_MM:
+            raise ValueError(f"load_transfer.{name} 원소는 null 또는 cell_min_mm {cell_min:g}..{LT_CELL_MAX_MM:g}: {x:g}")
+
+
+class BeadDoeCompareLoadTransferDiagCfg(_M):
+    """v0.20.0 하중 전달 진단(LT-10): 다른 방식 점수(alt)·d000 셀 크기 훑기. 해시 밖(진단 설정만 바꿔도 주 결과 재사용)."""
+
+    enabled: bool = True
+    alt: bool = True
+    alt_cell_size_mm: float | None = Field(default=3.0, gt=0)      # 주 방식 work 일 때 alt cell 의 셀 크기(null = 기존 격자)
+    cell_sweep_mm: list[float | None] = Field(default_factory=lambda: [None, 10.0, 5.0, 3.0])   # 0 개 = 훑기 끔
+
+
+class BeadDoeCompareLoadTransferCfg(_M):
+    """v0.20.0 ④ 하중 전달(계약 esl_load_transfer.md §4.1). 새 스터디 기본 = 일 등가·지지 이전·영역 auto·진단 켬(사용자 확정
+    2026-11-13). 요청으로는 method·cell_size_mm 만 덮어씀. 옛 스터디(스냅샷에 키 없음)는 이 설정과 무관(legacy)."""
+
+    method: Literal["work", "cell"] = "work"
+    cell_size_mm: float | None = Field(default=None, gt=0)          # null = 기존 ESL 요약 24×14 격자
+    cell_choices_mm: list[float | None] = Field(default_factory=lambda: [None, 10.0, 5.0, 3.0])
+    cell_min_mm: float = Field(default=3.0, ge=1, le=LT_CELL_MAX_MM)
+    work: BeadDoeCompareLoadTransferWorkCfg = BeadDoeCompareLoadTransferWorkCfg()
+    support: Literal["transfer", "auto"] = "transfer"
+    support_tol_mm: float | None = Field(default=None, gt=0)       # null = 2h
+    region: BeadDoeCompareLoadTransferRegionCfg = BeadDoeCompareLoadTransferRegionCfg()
+    diag: BeadDoeCompareLoadTransferDiagCfg = BeadDoeCompareLoadTransferDiagCfg()
+
+    @model_validator(mode="after")
+    def _cells(self) -> "BeadDoeCompareLoadTransferCfg":
+        m = self.cell_min_mm
+        _lt_cells("cell_choices_mm", self.cell_choices_mm, m, min_len=1)
+        _lt_cells("diag.cell_sweep_mm", self.diag.cell_sweep_mm, m, min_len=0)
+        for name, x in (("cell_size_mm", self.cell_size_mm), ("diag.alt_cell_size_mm", self.diag.alt_cell_size_mm)):
+            if x is not None and not m <= x <= LT_CELL_MAX_MM:
+                raise ValueError(f"load_transfer.{name} 은 null 또는 cell_min_mm {m:g}..{LT_CELL_MAX_MM:g}: {x:g}")
+        return self
+
+
 class BeadDoeCompareCfg(_M):
     """v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4). 섹션 없으면 기본값(enabled true — 전역 bead_doe.enabled·gmsh 필요)."""
 
@@ -947,6 +1020,7 @@ class BeadDoeCompareCfg(_M):
     refine: BeadDoeCompareRefineCfg = BeadDoeCompareRefineCfg()               # v0.16.0 C2-D-18~24
     freeform: BeadDoeCompareFreeformCfg = BeadDoeCompareFreeformCfg()         # v0.16.3 C2-D-26
     tria: BeadDoeCompareTriaCfg = BeadDoeCompareTriaCfg()                     # v0.16.3 C2-D-28
+    load_transfer: BeadDoeCompareLoadTransferCfg = BeadDoeCompareLoadTransferCfg()   # v0.20.0 LT-1~14
 
 
 class BeadDoeSelectWidthCfg(_M):

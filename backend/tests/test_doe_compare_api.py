@@ -101,7 +101,9 @@ def test_settings_compare_block(client, world):
         # v0.16.1 §4.4(esl_select_relax.md): 사다리(defeature 포함)·작은 형상 억제 기준
         "mesh": {"ladder": ["cad", "refine_local", "refine_global", "freeform", "defeature", "tria"]},   # v0.16.3
         "defeature": {"hole_max_d_mm": 8.0, "min_bead_height_mm": 2.0, "fillet_max_r_mm": 1.5,
-                      "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"]}}
+                      "kinds": ["flange", "hole", "slot", "bead", "fillet", "narrow"]},
+        # v0.20.0 ④ 하중 전달(esl_load_transfer.md §4.1): 기본 method·셀 크기·선택지·하한
+        "load_transfer": {"method": "work", "cell_size_mm": None, "cell_choices_mm": [None, 10.0, 5.0, 3.0], "cell_min_mm": 3.0}}
 
 
 @pytest.mark.parametrize("case", ["paicad_low", "paicad_missing", "no_gmsh", "no_gmsh_no_mesh_input", "compare_off",

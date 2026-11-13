@@ -881,6 +881,34 @@ COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status"
                       "fallback_stage", "stage_times")
 
 
+LT_SHAPE_KEYS = ("supports", "region", "transfer")     # prep/load_transfer.json 형상 행 중 준비 요약에 싣는 키(계약 §5 형식)
+
+
+def _compare_lt_prep(ddir: str, shapes: list[dict[str, Any]], warns: list[dict[str, Any]], msgs: dict[str, str]) -> None:
+    """v0.20.0 ④ 하중 전달(esl_load_transfer.md §2 ⑤·§6): 코어가 쓴 prep/load_transfer.json(새 스냅샷만 — 옛 스터디는 파일 없음 =
+    아무것도 안 함) 의 경고(LT_FAR_NODES·LT_SUPPORT_FALLBACK·LT_ESL_UNBALANCED·COMPARE_REGION*)를 준비 경고에 합치고, 형상 행에
+    ``lt`` = {supports, region, transfer, warnings[{code, message}]} 를 붙인다(화면 상태 배지 칸 — 기존 형상 키는 불변)."""
+    doc = _doe_json(os.path.join(ddir, "prep", "load_transfer.json"))
+    if not isinstance(doc, dict):
+        return
+    for w in doc.get("warnings") or []:
+        x = _doe_warning(w, msgs)
+        if x is not None and x not in warns:
+            warns.append(x)
+    rows = {r["id"]: r for r in doc.get("shapes") or [] if isinstance(r, dict) and r.get("id")}
+    for x in shapes:
+        r = rows.get(x.get("id"))
+        if r is None:
+            continue
+        lt = {k: r[k] for k in LT_SHAPE_KEYS if isinstance(r.get(k), dict)}
+        ws = [y for y in (_doe_warning(w, msgs) for w in r.get("warnings") or []) if y is not None]
+        lt["warnings"] = ws
+        x["lt"] = lt
+        for y in ws:
+            if y not in warns:
+                warns.append(y)
+
+
 def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> dict[str, Any]:
     """④ BD_PREP_REGISTER(esl_step_compare.md §5): phase READY, prep = {n_beads 0, n_params 0, paicad_version null,
     warnings, boundary null, n_shapes, n_ready, failed[{id, status, code}], reference_source, shapes[{id, name, file_name,
@@ -916,6 +944,7 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
             x.pop("defeature", None)
         if not isinstance(x.get("diag"), dict):
             x.pop("diag", None)
+    _compare_lt_prep(ddir, shapes, warns, msgs)
     prep = {"n_beads": 0, "n_params": 0, "paicad_version": None, "warnings": warns, "boundary": None,
             "n_shapes": len(shapes), "n_ready": len(shapes) - len(failed), "failed": failed,
             # v0.16.1 R3: 작은 형상 억제(defeature) 단계로 메시한 형상 수

@@ -2464,6 +2464,17 @@
             ],
             "title": "Bead Source"
           },
+          "cell_size_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell Size Mm"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -2485,6 +2496,21 @@
               }
             ],
             "title": "Inch"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "cell"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh_mode": {
             "anyOf": [
@@ -2631,6 +2657,18 @@
             },
             "title": "Entries",
             "type": "array"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh": {
             "anyOf": [
@@ -3166,6 +3204,18 @@
             "title": "Excluded",
             "type": "array"
           },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
+          },
           "n_failed": {
             "additionalProperties": {
               "type": "integer"
@@ -3298,6 +3348,34 @@
             },
             "title": "View3D",
             "type": "array"
+          },
+          "view3d_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Esl"
+          },
+          "view3d_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Ref"
           },
           "warnings": {
             "items": {
@@ -3849,6 +3927,17 @@
             ],
             "title": "Bead Source"
           },
+          "cell_size_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cell Size Mm"
+          },
           "entry_ids": {
             "items": {
               "type": "string"
@@ -3870,6 +3959,21 @@
               }
             ],
             "title": "Inch"
+          },
+          "load_transfer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "cell"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Transfer"
           },
           "mesh_mode": {
             "anyOf": [

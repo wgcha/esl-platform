@@ -275,6 +275,56 @@ def method_sources(principal: Principal | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- GET /doe/settings
+def _lt_settings(cc: dict[str, Any]) -> dict[str, Any]:
+    lt = cc["load_transfer"]
+    num = lambda x: None if x is None else float(x)     # noqa: E731
+    return {"method": str(lt["method"]), "cell_size_mm": num(lt["cell_size_mm"]),
+            "cell_choices_mm": [num(x) for x in lt["cell_choices_mm"]], "cell_min_mm": float(lt["cell_min_mm"])}
+
+
+LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
+
+
+def _lt_invalid(msg: str, **extra: Any):
+    return unprocessable("LOAD_TRANSFER_INVALID", msg, **extra)
+
+
+def lt_only_compare(body) -> None:
+    """compare 가 아닌 시나리오에 load_transfer·cell_size_mm(명시적 null 포함) → 422 INVALID_PARAMS(§4.2)."""
+    if body.load_transfer is not None or "cell_size_mm" in body.model_fields_set:
+        raise unprocessable("INVALID_PARAMS", "load_transfer·cell_size_mm 은 '형상 직접 비교'에서만 지정합니다")
+
+
+def resolve_load_transfer(c: dict[str, Any], body) -> dict[str, Any]:
+    """④ 하중 전달 해석(LT-11, §4.2): 설정 bead_doe.compare.load_transfer 를 요청 method·cell_size_mm 만 덮어 4.1 전체 dict(+schema).
+    work 는 셀 크기 없음(cell_size_mm 값을 주면 422, 해석값 null). cell 은 cell_size_mm 생략 = 설정값, 명시적 null = 기존 격자.
+    범위 = cell_min_mm..LT_CELL_MAX_MM(422 LOAD_TRANSFER_INVALID, detail min·max)."""
+    from ...core.config import LT_CELL_MAX_MM
+
+    spec = copy.deepcopy(c["compare"]["load_transfer"])
+    method = body.load_transfer or spec["method"]
+    given = "cell_size_mm" in body.model_fields_set
+    size = body.cell_size_mm if given else spec["cell_size_mm"]
+    if method == "work":
+        if given and size is not None:
+            raise _lt_invalid("일 등가(work) 방식에는 셀 크기(cell_size_mm)를 지정할 수 없습니다 — 셀 매핑(cell)에서만 씁니다")
+        size = None
+    elif size is not None:
+        lo = float(spec["cell_min_mm"])
+        if not (lo <= float(size) <= LT_CELL_MAX_MM):
+            raise _lt_invalid(f"셀 크기 {size:g} mm 는 {lo:g}..{LT_CELL_MAX_MM:g} mm 안이어야 합니다(bead_doe.compare.load_transfer."
+                              f"cell_min_mm)", min=lo, max=LT_CELL_MAX_MM)
+        size = float(size)
+    spec.update(method=method, cell_size_mm=size, schema=LT_SCHEMA)
+    return spec
+
+
+def lt_summary(spec: dict[str, Any]) -> dict[str, Any]:
+    """해석된 하중 전달의 공개 요약 {method, cell_size_mm, support, region_mode} — check-inputs 응답·inputs.load_transfer."""
+    return {"method": spec["method"], "cell_size_mm": spec["cell_size_mm"], "support": spec["support"],
+            "region_mode": spec["region"]["mode"]}
+
+
 def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) -> dict[str, Any]:
     """④ 블록(SC-D-3 + v0.16.0 §6): mesh_mode(설정 기본), remesh_available, mesh_input{enabled, formats, max_mb},
     step_ready(= gmsh.ready — STEP 형상 사용 가능)."""
@@ -290,7 +340,9 @@ def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) ->
             # v0.16.1(esl_select_relax.md §4.4): 사다리(defeature 포함)·작은 형상 억제 기준(화면 툴팁)
             "mesh": {"ladder": list(cc["mesh"]["ladder"])},
             "defeature": {"hole_max_d_mm": float(df["hole_max_d_mm"]), "min_bead_height_mm": float(df["min_bead_height_mm"]),
-                          "fillet_max_r_mm": float(df["fillet_max_r_mm"]), "kinds": list(df["kinds"])}}
+                          "fillet_max_r_mm": float(df["fillet_max_r_mm"]), "kinds": list(df["kinds"])},
+            # v0.20.0(esl_load_transfer.md §4.1): 화면 select 의 기본·선택지·하한(요청 덮어쓰기는 method·cell_size_mm 두 개뿐)
+            "load_transfer": _lt_settings(cc)}
 
 
 def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
@@ -425,6 +477,7 @@ def check_inputs(ctx: AppContext, principal: Principal, body, *, _internal: bool
     if body.scenario == "compare":
         r = _compare_check(ctx, principal, body, c)
         return r if _internal else r["out"]
+    lt_only_compare(body)
     if body.shapes is not None:
         raise unprocessable("INVALID_PARAMS", "shapes 는 '형상 직접 비교'에서만 지정합니다")
     src, sbase = select_kind(body)
@@ -768,6 +821,7 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
     except (EslError, KeyError, ValueError) as exc:
         raise unprocessable("MESH_INVALID", f"기준 ESL 메시에서 물성 기본값을 얻지 못했습니다: {exc}") from None
     props_default = {"t": float(pd["t"]), "E": float(pd["E"]), "nu": float(pd["nu"])}
+    lt = resolve_load_transfer(c, body)         # v0.20.0 §4.2: 기존 검사 순서 뒤
     # SC-D-4 형상 id: 기준 STEP = d000, 나머지 요청 순서 d001…(기준 미지정이면 d000 = Case 메시, STEP 은 d001…)
     order = ([i for i in range(len(mat_shapes)) if mat_shapes[i]["reference"]]
              + [i for i in range(len(mat_shapes)) if not mat_shapes[i]["reference"]])
@@ -791,11 +845,11 @@ def _compare_check(ctx: AppContext, principal: Principal, body, c: dict[str, Any
     out = {"ok": True, "step": None, "shapes": out_shapes, "reference_source": src, "base": base_out,
            "mesh": None, "entries": [{"entry_id": e["id"], "ok": True, "reason": None} for e in rows], "size": None,
            "props_default": props_default, "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "warnings": warns,
-           "mesh_mode": mode, "remesh_available": ra}
+           "mesh_mode": mode, "remesh_available": ra, "load_transfer": lt_summary(lt)}
     mat = {"rows": rows, "step": None, "shapes": [mat_shapes[i] for i in order], "reference_source": src,
            "base": base_mat, "base_db": base_db, "mesh": None, "props_default": props_default,
            "mesh_size_default_mm": float(cc["mesh"]["size_mm"]), "mesh_mode": mode,
-           "mesh_refine": body.mesh_refine, "mesh_ladder": ladder}
+           "mesh_refine": body.mesh_refine, "mesh_ladder": ladder, "load_transfer": lt}
     return {"out": _jsonable(out), "mat": mat}
 
 
@@ -1080,7 +1134,9 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
     # v0.16.0 §3: inputs.shapes[] += {source, part_id}, inputs += {mesh_mode}(요청 또는 설정 — v0.15.x 스터디는 없음 = cad)
     # mesh_refine(요청 원값, null = 설정)·mesh_ladder(적용 사다리 — 워커가 auto 에서 이 순서로 시도)
     inputs = {"shapes": shapes_db, "reference_source": mat["reference_source"], "inch": body.inch, "props": props,
-              "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"]}
+              "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"],
+              # v0.20.0 LT-11: 해석된 값 고정(옛 스터디 = 키 없음 = legacy)
+              "load_transfer": lt_summary(mat["load_transfer"])}
     doe = {"id": sid, "scenario": "compare", "title": title,
            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "cfg": _snapshot_cfg(ctx),
            "core": copy.deepcopy(ctx.config.core or {}), "mapping": (lib_cfg or {}).get("mapping"),
@@ -1088,7 +1144,7 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
                        for e in rows],
            "shapes": [dict(x) for x in mat["shapes"]], "reference_source": mat["reference_source"],
            "inch": body.inch, "props": props, "mesh_mode": mat["mesh_mode"], "mesh_refine": mat["mesh_refine"],
-           "mesh_ladder": list(mat["mesh_ladder"])}
+           "mesh_ladder": list(mat["mesh_ladder"]), "load_transfer": copy.deepcopy(mat["load_transfer"])}
     if mat["base"]:
         doe["base"] = dict(mat["base"])
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
@@ -1556,6 +1612,10 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
     d = {k: copy.deepcopy(v) for k, v in old.items() if k not in ("rev", "spec", "matrix_sha256", "run",
                                                                    "paicad_version", "design", "paicad", "selection")}
     sel_copy, sel_warns = _select().clone_selection(ctx, s, cfg(ctx))
+    if isinstance(d.get("load_transfer"), dict):
+        # v0.20.0 LT-11: 복제 = 원 스터디의 method·cell_size_mm·support·region(+work·지지 허용) 유지, diag 만 지금 설정.
+        # 옛 스냅샷(키 없음)은 키를 주입하지 않음 — 복제도 legacy 그대로(이어하기 해시·바이트 동일 경로 보존)
+        d["load_transfer"]["diag"] = copy.deepcopy(cfg(ctx)["compare"]["load_transfer"]["diag"])
     new_title = (title or "").strip() or f"{s['title']} (복제)"[:200]
     d.update(id=nid, title=new_title, created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
              cfg=_snapshot_cfg(ctx), core=copy.deepcopy(ctx.config.core or {}))
@@ -1690,6 +1750,12 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     rs = r.get("summary") if isinstance(r.get("summary"), dict) else {}
     if "best_clean" in rs or "best_clean" in r:
         out["summary"] = {"best_clean": rs.get("best_clean", r.get("best_clean"))}
+    # v0.20.0 ④ 하중 전달 진단 요약·3D 같은 ESL 대응표(esl_load_transfer.md §5·LT-9) — 새 스냅샷만(legacy = 결과에 키 없음 → null)
+    if isinstance(r.get("load_transfer"), dict):
+        out["load_transfer"] = r["load_transfer"]
+    for k in ("view3d_ref", "view3d_esl"):
+        if isinstance(r.get(k), dict):
+            out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}
     return _jsonable(out)
 
 
