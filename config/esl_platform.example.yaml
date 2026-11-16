@@ -293,6 +293,11 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       alt_cell_size_mm: 3.0           # 주 방식이 work 일 때 alt cell 의 셀 크기(null = 기존 격자)
       alt_designs: auto               # 안마다 다른 방식 점수 score_alt: auto(④ 켬·①②③ 끔) | on | off
       cell_sweep_mm: [null, 10.0, 5.0, 3.0]   # 베이스라인 셀 크기 훑기(참값 대비 변형만, 0 개 = 끔)
+  redrop:                             # v0.22.0 REDROP 재낙하 입력 묶음 받기(계약 esl_redrop_bundle.md §6) — 섹션 없으면 아래 기본
+    enabled: true                     # false = GET .../designs/{did}/redrop 503 REDROP_DISABLED
+    name_max_chars: 40                # zip 이름의 엔트리 slug 최대 글자 수(8..120)
+    tmp_ttl_s: 3600                   # _redrop/<token> 잔여 폴더 정리 기준(초, 1..86400)
+    base_coord_tol_mm: 0.0            # 원본 입력 좌표 ↔ 스터디 기준 메시 허용 차(≥ 0, 0 = 정확히 같아야 함)
   shape_rules:                        # v0.21.0 BEAD_SHAPE(계약 esl_bead_shape_v021.md §6) — 새 스터디 스냅샷 doe.shape_rules 원본(옛 스터디 = 키 없음 = v0.20.0 동작). 섹션 없으면 아래 기본
     enabled: true                     # false = 새 스터디도 스냅샷을 쓰지 않음
     w_partial: true                   # 항목 1 — 그래프 비드 W 를 폭 정보 있는 구간(S_W)에만
