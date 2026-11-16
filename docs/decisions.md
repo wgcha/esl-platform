@@ -291,3 +291,13 @@
 - (0.21.0 SH-30, 2026-11-16 구현 반영) 기저 지지 없음 = skipped short, `BG_SEGMENT_SHORT` 라도 기저가 있으면 점검(w_clamp 와 같은 후보 — V-SH-9).
 - (0.21.0 SH-31·32, 2026-11-16 통합) BD_LOADS 점검 seed = ③ `_sel_auto_step` 선택(①② 코어 auto_seed)·고정 = derive 의 `_sel_fixed_ids`, 접점 직접 호출(`_kwcall`·`_mroute` 제거 — RG_FAILED 는 실제 예외만), `worker/esl_worker/register.py` COMPARE_SHAPE_KEYS route·mq·③ mesh.route·quality 전달은 메인 승인(계약 §12 소유 절).
 - (0.21.0 R-SH-9, 2026-11-16 미해결) H6 링 D 15개가 한 묶음 → `combo.max_group` 8 초과로 조합 점검 생략(`RG_COMBO_SKIPPED`) — 후속 묶음 분할.
+
+## 2026-11-16 (v0.22.0)
+- (0.22.0 D-0.22.0-RD-1, 2026-11-16, 근거 결과 받기(`doe_bundle`)가 이미 동기 `stream_zip` 이라 선례와 가장 덜 어긋남) 재낙하 입력 = 동기 스트리밍 + `<esl_root>/_redrop/<token>` 임시 폴더(완료·오류·ttl 정리), job·DB 행 없음. 계약 esl_redrop_bundle.md.
+- (0.22.0 D-0.22.0-RD-2, 2026-11-16, 근거 `identity` 는 "work 전달의 같은 메시 판정 키"라 의미가 다름) 허용 판정 = 계획 표 새 열 `redrop`(`node_id`|`none`), 시나리오 이름 분기 없음.
+- (0.22.0 D-0.22.0-RD-3, 2026-11-16, 근거 순위·`best/` 밖 안도 받기 — 사용자 확정 2) 좌표 출처 = `design.npz`, 노드 집합 = base_mesh 와 정확히 일치, 원본 좌표 = base `x0`(`base_coord_tol_mm` 0).
+- (0.22.0 D-0.22.0-RD-4, 2026-11-16, 근거 AGENTS.md 코드 구조 원칙·패치 코드 한 곳) 패치는 `esl/verify/patch.py:patch_design` 한 곳(검증낙하 `vd_patch` 공용), `vd_patch` 산출 바이트 동일.
+- (0.22.0 D-0.22.0-RD-5, 2026-11-16, 근거 사용자 확정 1·3 — 제출·입력 폴더 쓰기 없음) zip = `input/`(폐포 전체 + 엔진 rad, 결과 파일 없음) + manifest + README, 권한 = 스터디 읽기.
+- (0.22.0 D-0.22.0-RD-6, 2026-11-16 사용자 확정, 근거 필수 요소만) 씬 범위 = 엔트리 선택 후 1개씩(`entry_id` 쿼리, Case 는 엔트리에서만), UI = 엔트리 선택칸 1개 + 버튼 1개.
+- (0.22.0 D-0.22.0-RD-7, 2026-11-16 사용자 확정, 근거 제출 불가 묶음 방지) 엔진 rad 없음 = `VD_ENGINE_MISSING` 거부 유지(검증낙하와 같은 `input_set` 규칙).
+- (0.22.0 R-RD-7, 2026-11-16 미해결) 본문 시작 전 끊김은 ttl 정리에만 의존, 스트리밍이 `tmp_ttl_s` 초과 시 다른 요청 ttl 정리와 경합 가능. 후속: `downloadFile` 이 `filename*` 우선 사용.

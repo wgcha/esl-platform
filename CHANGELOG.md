@@ -2,6 +2,16 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.22.0] - 2026-11-16
+### 추가
+- **재낙하 입력 묶음 받기(① 같은 Case 기준)**: 순위표에서 안(순위 밖 포함)을 고르고 엔트리 선택칸(기본 = 기준 엔트리)에서 엔트리를 고른 뒤 "재낙하 입력 받기" — 그 안의 모핑 좌표를 그 엔트리 원 낙하 입력(rad·include·엔진 rad)의 `/NODE` 줄에만 넣은 zip 을 받아 HPC 에 직접 제출한다(플랫폼 제출 없음). zip = `input/`(입력 폐포 전체, 바뀐 노드 줄 외 바이트 동일) + `redrop_manifest.json` + `REDROP_README.txt`, 결과 파일 없음. `GET /doe/studies/{sid}/designs/{did}/redrop?entry_id=`, 스터디 응답 `redrop_ok`·`redrop_blocked`·`redrop_entries`(목록 응답은 null). 새 메시를 쓰는 모드(B 메시·STEP·④ 비교)는 불가(안내 문구). 입력·SPDM 폴더에는 쓰지 않고 임시 폴더는 응답 뒤 정리
+- 거부 코드 `REDROP_DISABLED`·`REDROP_UNSUPPORTED`·`REDROP_DESIGN_NOT_FOUND`·`REDROP_DESIGN_NOT_READY`·`REDROP_ENTRY_NOT_IN_STUDY`·`REDROP_ENTRY_NOT_READY`·`REDROP_CASE_NOT_READY`·`REDROP_NODESET_MISMATCH`·`REDROP_BASE_CHANGED`(누적 Case·include 배치·엔진 rad 없음은 기존 `VD_*`)
+- 설정 `bead_doe.redrop`(enabled·name_max_chars·tmp_ttl_s·base_coord_tol_mm), 계획 표 새 열 `redrop`(`transfer_plan.PLANS`)
+### 변경
+- 검증 낙하와 재낙하가 같은 노드 패치 함수(`esl/verify/patch.py:patch_design`)를 쓴다 — 검증 낙하 산출 바이트 동일
+- 프런트 저장 파일명은 `redrop_<안>_<엔트리 id 앞 8자>.zip`(서버 Content-Disposition 미사용 — 후속 개선)
+- DB migration 없음
+
 ## [0.21.0] - 2026-11-16
 ### 추가
 - **비드 W 구간별 적용(①②③ 그래프 선택)**: 비드 폭 W 를 폭 정보가 있는 구간(입구 선이 양쪽에 있는 세그먼트)에만 적용하고 나머지 구간은 깊이 D 만 바꾼다. 예전에는 한 구간이라도 폭 정보가 없으면 그 비드에 W 변수가 없었다. 비드 칩 `D · W(부분 2/3)`, 세그먼트 줄 `W —`, 변수 표 꼬리표 "부분"(툴팁 = 적용 구간·길이 비율), 정보 `BG_W_PARTIAL`
