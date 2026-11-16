@@ -35,9 +35,9 @@
 
 | 메서드·경로 | 쿼리 | 응답 |
 |---|---|---|
-| `GET /doe/studies/{sid}/designs/{did}/redrop` | `entry_id`(선택, 기본 = 스터디 `base.entry_id`; `s["entry_ids"]` 안의 값만). `case_id` 쿼리는 **없음** — Case 는 엔트리에서만 정한다(`get_entry(conn, entry_id)["case_id"]`) | 200 `application/zip` 스트리밍(`zip_response` 와 같은 헤더 — `Content-Disposition: attachment; filename="redrop_<did>_<엔트리 이름 slug>_<sid 앞 8자>.zip"`(+ RFC 5987 `filename*=UTF-8''…`), `X-Bundle-Files`, `X-Bundle-Bytes`). OpenAPI 는 `ZIP_RESPONSE` |
+| `GET /doe/studies/{sid}/designs/{did}/redrop` | `entry_id`(선택, 기본 = 스터디 `base.entry_id`; `s["entry_ids"]` 안의 값만). `case_id` 쿼리는 **없음** — Case 는 엔트리에서만 정한다(`get_entry(conn, entry_id)["case_id"]`) | 200 `application/zip` 스트리밍(`zip_response` 와 같은 헤더 — `Content-Disposition: attachment; filename="…"; filename*=UTF-8''…`(**항상** `filename*` 포함, 이름 `redrop_<did>_<엔트리 이름 slug>_<sid 앞 8자>.zip`), `X-Bundle-Files`, `X-Bundle-Bytes`). OpenAPI 는 `ZIP_RESPONSE` |
 
-- 엔트리 이름 slug: `_entry_label(e)` 를 NFC 정규화 → `[\\/:*?"<>|\s]+` 를 `_` 로, 앞뒤 `_`·`.` 제거, 최대 `bead_doe.redrop.name_max_chars` 자(기본 40). 비면 `entry_id` 앞 8자. ASCII 대체 `filename=` 은 비 ASCII 를 `_` 로 바꾼 값.
+- 엔트리 이름 slug: `_entry_label(e)` 를 NFC 정규화 → `[\\/:*?"<>|\s]+` 를 `_` 로, 앞뒤 `_`·`.` 제거, 최대 `bead_doe.redrop.name_max_chars` 자(기본 40). 비면 `entry_id` 앞 8자. slug 는 zip 최상위 폴더명·manifest 에만 쓰이고 프런트 저장 파일명에는 쓰이지 않는다(§7). ASCII 대체 `filename=` 은 비 ASCII 를 `_` 로 바꾼 값.
 
 - **동기 스트리밍 + 임시 폴더**로 한다(D-0.22.0-RD-1). 근거: 결과 받기(`doe_bundle`)가 이미 동기 `stream_zip(files, prefix)` 이고 `stream_zip` 은 디스크 파일 목록만 받으므로, 패치 파일을 esl_root 아래 임시 폴더에 쓰고 원본 경로와 섞은 목록을 넘기는 것이 선례와 가장 덜 어긋난다(job·DB 행 추가 없음).
 - 순서(전부 요청 안, 응답 시작 전): 권한 → 설정 → 안·계획 검사 → Case·`input_set` → 크기 사전 검사(원본 합계 + 메타 여유 `ui.max_bundle_bytes`) → 임시 폴더 생성 → `rd_prepare`(§5.3) → 파일 목록 확정 → 스트리밍. **응답이 시작된 뒤에는 오류 코드가 없다**(파일 목록·패치가 모두 끝난 뒤 스트리밍).
@@ -70,7 +70,7 @@
 | 503 | `REDROP_DISABLED` | `bead_doe.redrop.enabled = false` | – |
 | 422 | `REDROP_UNSUPPORTED` | 계획 열 `redrop == "none"` | `plan`(계획 id) |
 | 404 | `REDROP_DESIGN_NOT_FOUND` | `run/designs/<did>/` 폴더 없음(그런 안 없음) | `design_id` |
-| 409 | `REDROP_DESIGN_NOT_READY` | 폴더는 있으나 `design.npz` 없음(평가 실패·미평가) | `design_id`, `status`(result.json 의 status, 없으면 null) |
+| 409 | `REDROP_DESIGN_NOT_READY` | 폴더는 있으나 `design.npz` 없음(평가 실패·미평가), 또는 스터디 기준 메시 `prep/base_mesh.npz` 없음 | `design_id`, `status`(result.json 의 status, 없으면 null) |
 | 422 | `REDROP_ENTRY_NOT_IN_STUDY` | `entry_id` 가 `s["entry_ids"]` 에 없음 | `entry_id` |
 | 409 | `REDROP_ENTRY_NOT_READY` | 엔트리 행 없음·다른 프로젝트 | `entry_id` |
 | 409 | `REDROP_CASE_NOT_READY` | 엔트리의 Case 없음·보관됨·다른 프로젝트, rad 파일 없음 | `entry_id`, `case_id` |
@@ -154,6 +154,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 - `esl/verify/redrop.py` 는 **numpy·`esl.errors` 만 import**. `esl.doe`·`esl_platform`·`esl_worker` import 금지, 파일 IO·설정 해석 없음(AGENTS.md 독립 모듈 규칙).
 - `esl/verify/patch.py` 는 기존처럼 `esl.errors`·`esl.fsutil`·`esl.rad.parser` 만 import(`esl.doe` 금지 유지).
 - **`vd_patch` 회귀**: `coords = {…}` + `patch_node_files(…, required=nid.tolist(), …)` 두 줄을 `patch_design(spec["files"], nid, X, spec["out"], max_line=…)` 한 줄로 바꾼다. 그 밖(morphed_coords·morph.npz·echo·result json)은 그대로. 산출 파일·result json 바이트 동일(V-RD-12). `required` 를 리스트 대신 배열로 넘겨도 `set(int(x) …)` 이라 동일.
+- **구현 반영(2026-11-16, 계약과 달라진 수용 항목)**: ① `esl/verify/redrop.py` 에 `RedropError(EslError)`(detail 실음) 신설 — `REDROP_NODESET_MISMATCH`·`REDROP_BASE_CHANGED` 가 사용. ② `PLAN_COLS` 에서 `redrop` 은 `bs_wpart` 앞(`sm_rank` 다음). ③ `Content-Disposition` 은 항상 `filename*` 포함. ④ `merge_coords` 에 키워드 `design_node_id`(design 순서 정렬용) 추가.
 - 패치 계산을 재낙하 쪽에서 새로 구현하지 않는다(줄 해석·포맷 `FIX_FMT`·임시 `.vdtmp`·`atomic_replace` 모두 patch.py 한 곳).
 
 ### 5.2 모드별 계획 표 (`esl/doe/transfer_plan.py`)
@@ -200,7 +201,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 
 - `DoeStudy.tsx` 의 `Downloads extra` 자리(검증 낙하 버튼 옆)에 **엔트리 선택칸 `<select>` 1개 + `BundleButton` 1개**.
   - 선택칸: 옵션 = `study.redrop_entries`(순서 그대로, 표시 = `label`, 기준이면 " (기준)"), 기본 선택 = `is_base` 엔트리(그것이 `ok=false` 면 첫 `ok` 엔트리). `ok=false` 옵션은 `disabled` + `title = blocked`(사유 툴팁). `redrop_entries` 가 null·빈 목록이면 선택칸 숨김·버튼 비활성.
-  - 버튼: `label="재낙하 입력 받기"`, `url = doe.redropUrl(study.id, pick, entryId)`, `filename` = 서버 `Content-Disposition` 을 따르되 기본값 `redrop_<pick>_<entry_id 앞 8자>.zip`, title "선택한 안의 모핑 좌표를 선택한 엔트리의 원 낙하 입력(rad·include)에 넣은 zip — 받아서 HPC 에 직접 제출".
+  - 버튼: `label="재낙하 입력 받기"`, `url = doe.redropUrl(study.id, pick, entryId)`, `filename` = `redrop_<pick>_<entry_id 앞 8자>.zip` 고정(공용 `downloadFile`(`F/api/client.ts`, blob + `a.download`)이 서버 `Content-Disposition` 을 쓰지 않음), title "선택한 안의 모핑 좌표를 선택한 엔트리의 원 낙하 입력(rad·include)에 넣은 zip — 받아서 HPC 에 직접 제출".
 - 비활성: `!study.redrop_ok`(툴팁 = `redrop_blocked`), `pick` 없음, 선택 엔트리 `ok=false`. 비교(④) 화면에도 같은 규칙(서버 플래그로만 판정 — 프런트 시나리오 분기 없음).
 - 413 은 `BundleButton` 기존 안내, 그 밖 4xx 는 `errorText`(서버 메시지) 그대로. 새 대화상자 없음.
 - `api/doe.ts`: `redropUrl(id, did, entryId)` = `${API_PREFIX}/doe/studies/${id}/designs/${encodeURIComponent(did)}/redrop?entry_id=${encodeURIComponent(entryId)}`.
@@ -242,6 +243,9 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 - R-RD-4 비 ASCII 노드 줄은 `VD_PATCH_ENCODING` 으로 실패(검증낙하와 같음).
 - R-RD-5 검증낙하의 `scenario not in ("same","select")` 이름 검사는 그대로 남는다(이번에 고치지 않음 — 별도 정리 후보).
 - R-RD-6 design.npz 좌표는 평가 메시 좌표(paicad 모핑 결과를 읽은 값). `best/<did>/include` 사본과 마지막 자리까지 같다는 보장은 없다(검증낙하와 재낙하 zip 이 상위 안에서 1e-13 상대 수준으로 다를 수 있음) — 자릿수는 `FIX_FMT %20.13E` 로 같다.
+
+- R-RD-7 본문 시작 전 클라이언트 끊김은 ttl 정리(②)에만 의존한다. 스트리밍이 `tmp_ttl_s` 를 넘기면 다른 요청의 ttl 정리와 경합해 진행 중 임시 폴더가 지워질 수 있다(기본 3600 s 라 드묾).
+- 후속: 공용 `downloadFile` 이 `Content-Disposition` 의 `filename*` 를 우선 사용하도록 고친다(별도 작업 — 그때까지 프런트 저장 파일명은 `redrop_<did>_<entry_id 앞 8자>.zip`).
 
 ## 10. 제약
 

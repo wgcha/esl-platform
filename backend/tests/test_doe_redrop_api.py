@@ -293,7 +293,7 @@ def test_rd14_rejections(client, engine, world, esl_root, inputs_root, tmp_path,
     assert r.status_code == 409 and _code(r) == "REDROP_DESIGN_NOT_READY"
     assert r.json()["detail"]["design_id"] == "d003" and r.json()["detail"]["status"] == "FAILED_MESH"
     r = _get(client, sid, "d404")
-    assert r.status_code == 404 and _code(r) == "REDROP_DESIGN_NOT_FOUND"
+    assert r.status_code == 404 and _code(r) == "REDROP_DESIGN_NOT_FOUND" and r.json()["detail"]["design_id"] == "d404"
     for bad in ("D001", "d-1", "x" * 65):
         r = _get(client, sid, bad)
         assert r.status_code == 422 and _code(r) == "INVALID_PARAMS", bad
@@ -357,6 +357,17 @@ def test_rd14_base_changed(client, world, esl_root):
     r = _get(client, world["sid"])
     assert r.status_code == 409 and _code(r) == "REDROP_BASE_CHANGED"
     assert r.json()["detail"]["n_changed"] == 1 and r.json()["detail"]["max_diff"] == pytest.approx(79.0)
+    assert _redrop_left(esl_root) == []
+
+
+def test_rd14_base_mesh_missing(client, world, esl_root):
+    base = next((esl_root / "_doe" / world["sid"]).glob("prep/base_mesh.npz"), None) or \
+        (esl_root / "_doe" / world["sid"] / "prep" / "base_mesh.npz")
+    assert base.is_file()
+    base.unlink()
+    r = _get(client, world["sid"])
+    assert r.status_code == 409 and _code(r) == "REDROP_DESIGN_NOT_READY"
+    assert r.json()["detail"]["design_id"] == "d001"
     assert _redrop_left(esl_root) == []
 
 

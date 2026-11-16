@@ -23,7 +23,7 @@ from typing import Any
 
 from ...core.auth import Principal
 from ...core.config import bead_doe_settings
-from ...core.errors import DomainError, conflict, not_found, unprocessable
+from ...core.errors import DomainError, conflict, unprocessable
 from ...core.opt_core import doe_transfer_plan, verify_redrop, verify_stages
 from ...core.paths import REDROP_DIR, esl_subdir
 from ...core.repositories import cases as cases_repo
@@ -208,7 +208,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, did: str, entry_id: 
     base = study_dir(ctx, s)
     ddir = os.path.join(base, "run", "designs", did)
     if os.path.islink(ddir) or not os.path.isdir(ddir):
-        raise not_found("REDROP_DESIGN_NOT_FOUND", "그런 안이 없습니다")
+        raise DomainError("REDROP_DESIGN_NOT_FOUND", "그런 안이 없습니다", status=404, design_id=did)
     dres = _json(os.path.join(ddir, "result.json")) or {}
     dnpz = os.path.join(ddir, "design.npz")
     if os.path.islink(dnpz) or not os.path.isfile(dnpz):
