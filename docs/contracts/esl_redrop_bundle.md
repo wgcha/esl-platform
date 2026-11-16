@@ -1,6 +1,6 @@
 # 계약: 재낙하 입력 묶음 받기 — 강성 평가 스터디 설계안 1개 → Radioss 입력 zip (REDROP, v0.22.0)
 
-- 상태: **초안** (2026-11-16). 사용자 확정(아래) 반영, 결정 질문 2개(§12)는 기본안을 적용해 구현 가능.
+- 상태: **확정** (2026-11-16). 사용자 확정(아래) 반영, 결정 질문 2개(§12) 확정 — 엔트리 선택 후 1개씩, 엔진 rad 없음 거부.
 - 버전: **v0.22.0** 제안 (main d809f31 = v0.21.0 기준 작성). migration **불필요**(DB 변경 없음 — §11).
 - 관계: 검증 낙하(esl_scx_relay.md, `vd_patch`)와 **같은 원본 입력 폐포(`input_set`)·같은 노드 패치 코드(`esl/verify/patch.py`)** 를 쓴다. 다른 점은 좌표 출처(`best/<did>/include` 모핑 사본 → `run/designs/<did>/design.npz`), 순위 제한 없음, 플랫폼 제출 없음(zip 으로 내려받기만).
 - ID 규칙: 결정 `D-0.22.0-RD-n`(decisions.md), 시험 `V-RD-n`, 리스크 `R-RD-n`.
@@ -10,7 +10,7 @@
 2. 순위 1~`keep_files_top` 밖의 안(예: d020, d002, d025)도 받을 수 있다(`best/<did>/include` 에 의존하지 않음).
 3. **SPDM·입력 폴더(input_roots·upload_root·Case 원본 폴더)에는 쓰지 않는다.** 쓰기는 `storage.esl_root` 아래만.
 4. 값 하드코딩 금지: 기본값은 `esl/doe/__init__.py` DEFAULTS · backend pydantic · `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml` 에 같은 이름.
-5. UI 는 필수 버튼 1개: 순위표에서 선택한 안에 대한 **"재낙하 입력 받기"**.
+5. UI 는 필수 요소만: 순위표에서 선택한 안에 대해 **엔트리 선택칸(select) 1개 + "재낙하 입력 받기" 버튼 1개**(2026-11-16 확정 — 엔트리 선택 후 1개씩).
 6. AGENTS.md 코드 구조 원칙(공용 계산 독립 모듈, 모드 차이는 계획 표 열, 시나리오 이름 분기 금지).
 
 ## 0. 조사 결과 (근거, main d809f31)
@@ -22,20 +22,22 @@
 | 검증낙하 패치 단계 | `esl/verify/stages.py:vd_patch(spec)` — `model.npz`(node_id, x0) + `nodes.morphed_coords(best_dir, best_rels, …)` → `coords` → `patch_node_files(required=nid)` → `morph.npz`·result json | `patch_design` 호출로 바꾸되 **산출 바이트 동일**(V-RD-12) |
 | 안별 좌표 | `_doe/<sid>/run/designs/<did>/design.npz` = `node_id` int64 (N,), `x` (N,3) float64 (`esl/doe/evaluate.py:save_design`·`load_design`, `DESIGN_NPZ`). 평가 실패(`FAILED_MESH` 등)면 파일 없음 | 좌표 출처 |
 | 기준 메시 | `_doe/<sid>/prep/base_mesh.npz`(`MESH_KEYS` — `node_id`, `x0` …) + `prep/base.json`(`esl/doe/scenario.py:load_base`, `BASE_NPZ`·`BASE_JSON`) | 노드 집합·이동량 기준 |
-| 스터디 → 원 Case | `bead_does.base`(JSONB: `entry_id, case_id, case_title, part_title, rad_path, rad_file_name …` — `services/opt.py:_s1_base` → `services/doe.py` 의 `base_db`), `bead_does.entry_ids` → 라이브러리 항목 `case_id` | 기본 = `base.case_id` |
+| 스터디 → 엔트리 → 원 Case | `bead_does.entry_ids`(스터디 ESL 엔트리 id 목록) → `core/repositories/library.py:get_entry(conn, eid)` → 행 `case_id`·`project_id`(검증낙하 `_plan` 의 씬 후보와 같은 매핑). 이름 = `services/doe.py:_entry_label(e)`(모델 이름·drop_type·scene_no). 기준 = `bead_does.base.entry_id`(JSONB: `entry_id, case_id, case_title, part_title, rad_path …` — `services/opt.py:_s1_base` → `base_db`) | 엔트리 1개 선택 → 그 Case. 기본 = `base.entry_id` |
 | 모드 표 | `esl/doe/transfer_plan.py:PLANS`/`PLAN_COLS`/`PLAN_OF`/`plan_for(scenario, select_base)` — `case_once`(same, select+case)만 원 Case 노드 ID 를 그대로 씀(`identity: topo`). `bmesh_once`·`step_once`·`step_per_design`·`compare_per_shape` 는 새 메시(새 노드 ID) | 새 열 `redrop`(§5.2) |
 | select_base | 스터디 `inputs.select_base`(`"mesh"`\|`"step"`, ① = 키 없음 = `case`) | `plan_for` 인수 |
 | zip 선례 | `api/routers/doe.py:doe_bundle` → `services/doe.py:bundle` → `{files[(abs, rel)], prefix, filename, size}` → `routers/results.py:zip_response` → `services/bundle.py:stream_zip(files, prefix)`; 크기 `bundle._check_size(ctx, files, where)` → 413 `BUNDLE_TOO_LARGE`(`ui.max_bundle_bytes`) | 같은 경로 재사용 |
 | 쓰기 폴더 | `core/paths.py:esl_subdir(settings, *parts)`(루트 탈출·링크 검사), 상수 `EXPORTS_DIR="_exports"`·`VERIFY_DIR="_verify"`·`DOE_DIR="_doe"` | 새 상수 `REDROP_DIR="_redrop"` |
 | 권한 | `services/doe.py:_viewable(ctx, principal, sid)` = `load_study`(404 `DOE_NOT_FOUND`) + `require_view` | 같은 함수 |
 | 안 id 형식 | `services/doe.py:DID_RE = ^[0-9a-z_]{1,64}$` | 같은 정규식 |
-| 프런트 | `F/components/DoeRanking.tsx`(`selected`·`onSelect`), `F/pages/doe/DoeStudy.tsx`(`pick` 상태, `Downloads extra=…`, `vdButton`), `F/components/BundleButton.tsx`(413 안내 내장, `label` prop), `F/api/doe.ts`(`bundleUrl`·`downloadUrl`) | 버튼 1개 |
+| 프런트 | `F/components/DoeRanking.tsx`(`selected`·`onSelect`), `F/pages/doe/DoeStudy.tsx`(`pick` 상태, `Downloads extra=…`, `vdButton`), `F/components/BundleButton.tsx`(413 안내 내장, `label` prop), `F/api/doe.ts`(`bundleUrl`·`downloadUrl`) | 엔트리 선택칸 1개 + 버튼 1개 |
 
 ## 1. API
 
 | 메서드·경로 | 쿼리 | 응답 |
 |---|---|---|
-| `GET /doe/studies/{sid}/designs/{did}/redrop` | `case_id`(선택, 기본 = 스터디 `base.case_id`; 스터디 ESL 의 출처 Case 중 하나만) | 200 `application/zip` 스트리밍(`zip_response` — `Content-Disposition: attachment; filename="redrop_<did>_<sid 앞 8자>.zip"`, `X-Bundle-Files`, `X-Bundle-Bytes`). OpenAPI 는 `ZIP_RESPONSE` |
+| `GET /doe/studies/{sid}/designs/{did}/redrop` | `entry_id`(선택, 기본 = 스터디 `base.entry_id`; `s["entry_ids"]` 안의 값만). `case_id` 쿼리는 **없음** — Case 는 엔트리에서만 정한다(`get_entry(conn, entry_id)["case_id"]`) | 200 `application/zip` 스트리밍(`zip_response` 와 같은 헤더 — `Content-Disposition: attachment; filename="redrop_<did>_<엔트리 이름 slug>_<sid 앞 8자>.zip"`(+ RFC 5987 `filename*=UTF-8''…`), `X-Bundle-Files`, `X-Bundle-Bytes`). OpenAPI 는 `ZIP_RESPONSE` |
+
+- 엔트리 이름 slug: `_entry_label(e)` 를 NFC 정규화 → `[\\/:*?"<>|\s]+` 를 `_` 로, 앞뒤 `_`·`.` 제거, 최대 `bead_doe.redrop.name_max_chars` 자(기본 40). 비면 `entry_id` 앞 8자. ASCII 대체 `filename=` 은 비 ASCII 를 `_` 로 바꾼 값.
 
 - **동기 스트리밍 + 임시 폴더**로 한다(D-0.22.0-RD-1). 근거: 결과 받기(`doe_bundle`)가 이미 동기 `stream_zip(files, prefix)` 이고 `stream_zip` 은 디스크 파일 목록만 받으므로, 패치 파일을 esl_root 아래 임시 폴더에 쓰고 원본 경로와 섞은 목록을 넘기는 것이 선례와 가장 덜 어긋난다(job·DB 행 추가 없음).
 - 순서(전부 요청 안, 응답 시작 전): 권한 → 설정 → 안·계획 검사 → Case·`input_set` → 크기 사전 검사(원본 합계 + 메타 여유 `ui.max_bundle_bytes`) → 임시 폴더 생성 → `rd_prepare`(§5.3) → 파일 목록 확정 → 스트리밍. **응답이 시작된 뒤에는 오류 코드가 없다**(파일 목록·패치가 모두 끝난 뒤 스트리밍).
@@ -50,10 +52,13 @@
 
 | 스키마 | 필드 |
 |---|---|
-| `DoeStudyOut` (추가) | `redrop_ok: bool`(계획 열·설정·base Case 기준 — 안별 검사는 요청 때), `redrop_blocked: str \| null`(불가 사유 한 줄, 가능하면 null) |
+| `DoeStudyOut` (추가) | `redrop_ok: bool`(계획 열·설정 기준 — 안별·엔트리별 세부 검사는 요청 때), `redrop_blocked: str \| null`(불가 사유 한 줄, 가능하면 null), `redrop_entries: RedropEntryOut[] \| null` |
+| `RedropEntryOut` (신규) | `entry_id: str`, `label: str`(`_entry_label`), `case_id: str \| null`, `case_title: str \| null`, `is_base: bool`, `ok: bool`, `blocked: str \| null`(불가 사유 한 줄 — `ok` 이면 null) |
 
-- `redrop_ok` = `bead_doe.redrop.enabled` ∧ 계획 열 `redrop == "node_id"` ∧ 스터디 `base.case_id` 있음. Case 상태·`input_set` 은 목록 응답이 느려지므로 **계산하지 않는다**(요청 때 판정).
-- `redrop_blocked` 문구: 계획 불가 = "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)", 꺼짐 = "재낙하 입력 받기가 꺼져 있습니다", base 없음 = "기준 Case 정보가 없습니다".
+- `redrop_ok` = `bead_doe.redrop.enabled` ∧ 계획 열 `redrop == "node_id"` ∧ `redrop_entries` 중 `ok` 가 하나 이상(목록 응답에서는 엔트리 계산 없이 앞 두 조건만).
+- `redrop_entries`: `s["entry_ids"]` 순서 그대로(기준 엔트리 `is_base=true`). **상세 응답(GET `/doe/studies/{sid}` 및 상세를 돌려주는 기존 POST 들)에서만 채우고, 목록(GET `/doe/studies`)에서는 null**(`study_out(..., with_redrop=False)` — 목록 N+1 조회 방지). `redrop_ok=false`(계획·설정 불가)면 모든 행 `ok=false`, `blocked` = `redrop_blocked`.
+- 엔트리 `ok` 판정(DB 만, 파일 스캔 없음): 엔트리 존재 ∧ 같은 프로젝트 ∧ Case 존재·ACTIVE·같은 프로젝트 ∧ Case `extract_summary.cumulative` 아님. 사유 문구: "엔트리가 없습니다" / "원 Case 가 없거나 보관됨" / "누적 Case — 재낙하 입력 불가". `input_set`(include 배치·엔진 rad)·노드 검사는 **요청 때** 판정(§1 오류 코드) — 목록이 ok 여도 요청이 422 일 수 있다.
+- `redrop_blocked` 문구: 계획 불가 = "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)", 꺼짐 = "재낙하 입력 받기가 꺼져 있습니다", 가능한 엔트리 없음 = "재낙하 입력을 만들 수 있는 엔트리가 없습니다".
 
 ### 오류 코드
 
@@ -61,13 +66,14 @@
 |---|---|---|---|
 | 404 | `DOE_NOT_FOUND` | 스터디 없음(기존) | – |
 | 403 | (기존 `require_view`) | 읽기 권한 없음 | – |
-| 422 | `INVALID_PARAMS` | `did` 가 `DID_RE` 불일치, `case_id` 형식 오류 | – |
+| 422 | `INVALID_PARAMS` | `did` 가 `DID_RE` 불일치, `entry_id` 형식 오류(UUID 아님), 기본 엔트리가 필요한데 스터디 `base.entry_id` 없음 | – |
 | 503 | `REDROP_DISABLED` | `bead_doe.redrop.enabled = false` | – |
 | 422 | `REDROP_UNSUPPORTED` | 계획 열 `redrop == "none"` | `plan`(계획 id) |
 | 404 | `REDROP_DESIGN_NOT_FOUND` | `run/designs/<did>/` 폴더 없음(그런 안 없음) | `design_id` |
 | 409 | `REDROP_DESIGN_NOT_READY` | 폴더는 있으나 `design.npz` 없음(평가 실패·미평가) | `design_id`, `status`(result.json 의 status, 없으면 null) |
-| 422 | `REDROP_CASE_NOT_IN_STUDY` | `case_id` 가 스터디 ESL 의 출처 Case 가 아님 | `case_id` |
-| 409 | `REDROP_CASE_NOT_READY` | Case 없음·보관됨·다른 프로젝트, rad 파일 없음 | `case_id` |
+| 422 | `REDROP_ENTRY_NOT_IN_STUDY` | `entry_id` 가 `s["entry_ids"]` 에 없음 | `entry_id` |
+| 409 | `REDROP_ENTRY_NOT_READY` | 엔트리 행 없음·다른 프로젝트 | `entry_id` |
+| 409 | `REDROP_CASE_NOT_READY` | 엔트리의 Case 없음·보관됨·다른 프로젝트, rad 파일 없음 | `entry_id`, `case_id` |
 | 422 | `VD_CUMULATIVE_EXCLUDED` · `VD_INCLUDE_LAYOUT` · `VD_ENGINE_MISSING` | `input_set` problems(첫 항목 코드) | `problems[{code, reason}]` 전부(경로 마스킹) |
 | 409 | `REDROP_NODESET_MISMATCH` | design.npz `node_id` 집합 ≠ base_mesh `node_id` 집합, 또는 중복 ID | `n_base`, `n_design`, `n_only_base`, `n_only_design` |
 | 422 | `VD_NODES_MISSING` | 대상 노드가 입력 폐포 `/NODE` 에 없음(코어 오류 그대로) | 메시지에 개수·상위 10 |
@@ -81,7 +87,7 @@
 ## 2. zip 구성
 
 ```
-redrop_<did>_<sid8>/
+redrop_<did>_<엔트리 slug>_<sid8>/
   REDROP_README.txt
   redrop_manifest.json
   input/
@@ -104,7 +110,8 @@ redrop_<did>_<sid8>/
 | `created_at` | UTC ISO8601 |
 | `study` | `{id, title, scenario, select_base, plan}` (`plan` = 계획 id, 예 `case_once`) |
 | `design` | `{id, rank \| null, status \| null, values{변수: 값}}` — values·status = `run/designs/<did>/result.json`, rank = `post/result.json` ranking 행(없으면 null) |
-| `case` | `{id, title, part_title, rad_file_name}` (절대경로 넣지 않음) |
+| `entry` | `{id, label, is_base}` — label = `_entry_label(e)`(zip 이름 slug 의 원문) |
+| `case` | `{id, title, part_title, rad_file_name}` (엔트리의 `case_id`, 절대경로 넣지 않음) |
 | `files` | `[{rel, source: "orig" \| "patched", n_patched, size, sha256}]` — `input/` 기준 rel, 패치 함수 반환 그대로(원본 행의 sha256 = 원본 파일) |
 | `changed` | `source == "patched"` 인 rel 목록 |
 | `nodes` | `{n_target, n_moved, n_patched_lines, max_disp, max_disp_node_id, units: "model"}` — `n_target` = base_mesh 노드 수, `n_moved` = ‖x_design − x0‖ > 0 인 노드 수, `max_disp` = 그 최댓값 |
@@ -118,7 +125,7 @@ redrop_<did>_<sid8>/
 1. 스터디 읽기 권한, `bead_doe.redrop.enabled`.
 2. 계획 열 `redrop == "node_id"`(§5.2) — **시나리오 이름으로 판정하지 않는다**.
 3. `run/designs/<did>/design.npz` 존재. 순위·`keep_files_top`·`best/` 와 **무관**(순위 밖 안 허용, 사용자 확정 2). 스터디 phase 가 DONE 이 아니어도 그 안의 design.npz 가 있으면 허용.
-4. Case: 기본 `base.case_id`, 또는 스터디 ESL 의 출처 Case 중 `case_id`. ACTIVE·같은 프로젝트·rad 존재. 추출(model.npz) 최신 여부는 **요구하지 않음**(좌표는 design.npz·base_mesh 에서).
+4. 엔트리: 기본 `base.entry_id`, 또는 `s["entry_ids"]` 안의 `entry_id`. 엔트리 → `get_entry(conn, eid)["case_id"]` → Case ACTIVE·같은 프로젝트·rad 존재. 추출(model.npz) 최신 여부는 **요구하지 않음**(좌표는 design.npz·base_mesh 에서).
 5. `input_set` problems 없음(누적 씬·include 배치·엔진 rad 없음은 거부).
 6. 노드 불변식(§4 I-1·I-2) 통과, 크기 ≤ `ui.max_bundle_bytes`.
 
@@ -174,15 +181,16 @@ redrop_<did>_<sid8>/
 
 ### 5.4 백엔드 서비스 (`backend/esl_platform/api/services/redrop.py`, 신규)
 
-`bundle(ctx, principal, sid, did, case_id) -> {files, prefix, filename, size, cleanup}` + `sweep(ctx)`. `_viewable` → 설정 → `DID_RE` → 계획 열 → 안 폴더/npz → Case(§3-4) → `verify_drop.input_set` → `bundle._check_size` → `esl_subdir(REDROP_DIR, token)` → `rd_prepare` → 파일 목록 `[(abs, "input/<rel>")…] + [(manifest, "redrop_manifest.json"), (readme, "REDROP_README.txt")]`. `EslError` → `DomainError`(§1 표 HTTP). 라우터는 `zip_response` 와 같은 헤더로 `StreamingResponse(_with_cleanup(stream_zip(...), tmp))`.
+`bundle(ctx, principal, sid, did, entry_id) -> {files, prefix, filename, size, cleanup}` + `sweep(ctx)` + `entries(ctx, conn, s) -> list[RedropEntryOut dict]`(§1 엔트리 판정 — `study_out` 이 호출). `_viewable` → 설정 → `DID_RE` → 계획 열 → 안 폴더/npz → 엔트리(`s["entry_ids"]` 포함 검사 → `lib_repo.get_entry`) → Case(§3-4) → `verify_drop.input_set` → `bundle._check_size` → `esl_subdir(REDROP_DIR, token)` → `rd_prepare` → 파일 목록 `[(abs, "input/<rel>")…] + [(manifest, "redrop_manifest.json"), (readme, "REDROP_README.txt")]`. `EslError` → `DomainError`(§1 표 HTTP). 라우터는 `zip_response` 와 같은 헤더로 `StreamingResponse(_with_cleanup(stream_zip(...), tmp))`.
 - `zip_response` 를 고치지 않기 위해 라우터에서 정리 제너레이터로 감싼 뒤 `StreamingResponse` 를 직접 만든다(헤더 3개 동일).
-- `study_out`(services/doe.py)에 `redrop_ok`·`redrop_blocked` 두 칸만 추가(계산 = `redrop.flags(ctx, s)`).
+- `study_out`(services/doe.py)에 `redrop_ok`·`redrop_blocked`·`redrop_entries` 세 칸과 키워드 `with_redrop: bool = True` 만 추가(계산 = `redrop.flags(ctx, s)`·`redrop.entries(ctx, conn, s)`). 목록 `list_studies` 호출만 `with_redrop=False`.
 
 ## 6. 설정 (`bead_doe.redrop:` — 섹션 없으면 기본값)
 
 | 키 | 기본 | 의미 |
 |---|---|---|
 | `enabled` | `true` | false → 503 `REDROP_DISABLED`, `redrop_ok` false |
+| `name_max_chars` | `40` | zip 이름의 엔트리 slug 최대 글자 수(8..120) |
 | `tmp_ttl_s` | `3600` | `_redrop/<token>` 잔여 폴더 정리 기준(초, 1..86400) |
 | `base_coord_tol_mm` | `0.0` | I-2 허용 차(≥ 0). 0 = 정확히 같아야 함 |
 
@@ -190,11 +198,13 @@ redrop_<did>_<sid8>/
 
 ## 7. UI (frontend)
 
-- `DoeStudy.tsx` 의 `Downloads extra` 자리(검증 낙하 버튼 옆)에 `BundleButton` 1개: `label="재낙하 입력 받기"`, `url = doe.redropUrl(study.id, pick)`, `filename = redrop_<pick>_<id 앞 8자>.zip`, title "선택한 안의 모핑 좌표를 원 낙하 입력(rad·include)에 넣은 zip — 받아서 HPC 에 직접 제출".
-- 비활성: `!study.redrop_ok`(툴팁 = `redrop_blocked`) 또는 `pick` 없음. 비교(④) 화면에도 같은 규칙(서버 플래그로만 판정 — 프런트 시나리오 분기 없음).
-- 413 은 `BundleButton` 기존 안내, 그 밖 4xx 는 `errorText`(서버 메시지) 그대로. 새 대화상자·Case 선택 UI 없음(`case_id` 쿼리는 API 전용).
-- `api/doe.ts`: `redropUrl(id, did, caseId?)` = `${API_PREFIX}/doe/studies/${id}/designs/${encodeURIComponent(did)}/redrop` (+ `?case_id=`).
-- mock: `mock/doedata.ts`(`redrop_ok`·`redrop_blocked` 채움), `mock/server.ts`(GET redrop → 작은 zip blob, did `d999` → 409 `REDROP_DESIGN_NOT_READY`).
+- `DoeStudy.tsx` 의 `Downloads extra` 자리(검증 낙하 버튼 옆)에 **엔트리 선택칸 `<select>` 1개 + `BundleButton` 1개**.
+  - 선택칸: 옵션 = `study.redrop_entries`(순서 그대로, 표시 = `label`, 기준이면 " (기준)"), 기본 선택 = `is_base` 엔트리(그것이 `ok=false` 면 첫 `ok` 엔트리). `ok=false` 옵션은 `disabled` + `title = blocked`(사유 툴팁). `redrop_entries` 가 null·빈 목록이면 선택칸 숨김·버튼 비활성.
+  - 버튼: `label="재낙하 입력 받기"`, `url = doe.redropUrl(study.id, pick, entryId)`, `filename` = 서버 `Content-Disposition` 을 따르되 기본값 `redrop_<pick>_<entry_id 앞 8자>.zip`, title "선택한 안의 모핑 좌표를 선택한 엔트리의 원 낙하 입력(rad·include)에 넣은 zip — 받아서 HPC 에 직접 제출".
+- 비활성: `!study.redrop_ok`(툴팁 = `redrop_blocked`), `pick` 없음, 선택 엔트리 `ok=false`. 비교(④) 화면에도 같은 규칙(서버 플래그로만 판정 — 프런트 시나리오 분기 없음).
+- 413 은 `BundleButton` 기존 안내, 그 밖 4xx 는 `errorText`(서버 메시지) 그대로. 새 대화상자 없음.
+- `api/doe.ts`: `redropUrl(id, did, entryId)` = `${API_PREFIX}/doe/studies/${id}/designs/${encodeURIComponent(did)}/redrop?entry_id=${encodeURIComponent(entryId)}`.
+- mock: `mock/doedata.ts`(`redrop_ok`·`redrop_blocked`·`redrop_entries` 채움 — 기준 1 + 일반 1 + 불가 1), `mock/server.ts`(GET redrop → 작은 zip blob, did `d999` → 409 `REDROP_DESIGN_NOT_READY`).
 
 ## 8. 시험 (V-RD-n)
 
@@ -211,14 +221,18 @@ redrop_<did>_<sid8>/
 | 7 | 계획 열: 모든 `PLANS` 행에 `redrop` 이 있고 값 ∈ `RD_VALUES`, `case_once` 만 `node_id`. 열 지우면 `plan_for` → `CONFIG_INVALID` | `tests/doe/test_transfer_plan.py` |
 | 8 | API identity 거부: mesh·step·compare 스터디 → 422 `REDROP_UNSUPPORTED`, `redrop_ok=false`·`redrop_blocked` 문구. 서비스 코드에 시나리오 이름 문자열 비교 없음(정적 grep) | `backend/tests/test_doe_redrop_api.py` |
 | 9 | 순위 밖 안: keep_files_top=3, `best/` 에 없는 d020 → 200, manifest `design.rank` = 순위 행 값, `best/d020` 미생성 | 〃 |
-| 10 | zip 구조: 최상위 `redrop_<did>_<sid8>/`, `input/` rel 집합 = `input_set` rel 집합(I-7), 엔진 rad 포함, h3d·`A001`·`.out` 이 Case 폴더에 있어도 zip 에 없음, manifest 고정 키·`changed`·`nodes.max_disp` 가 numpy 계산과 일치, README 존재 | 〃 |
+| 10 | zip 구조: 최상위 `redrop_<did>_<엔트리 slug>_<sid8>/`, `input/` rel 집합 = `input_set` rel 집합(I-7), 엔진 rad 포함, h3d·`A001`·`.out` 이 Case 폴더에 있어도 zip 에 없음, manifest 고정 키·`changed`·`nodes.max_disp` 가 numpy 계산과 일치, README 존재 | 〃 |
 | 11 | 입력 폴더 무쓰기: 요청 전후 Case 폴더·upload_root·`_doe/<sid>` 트리(이름·mtime·sha256) 동일 | 〃 |
 | 12 | `vd_patch` 회귀: 기존 `tests/verify/test_vd_patch.py` 전부 통과 + 같은 spec 로 리팩터 전후 산출 파일·result json 바이트 동일(골든 sha256) | `tests/verify/test_vd_patch.py`(추가 1건) |
 | 13 | 임시 폴더 정리: 정상 완료 → `_redrop/` 비어 있음. 스트림 도중 제너레이터 close → 비어 있음. 4xx(노드 누락) → 비어 있음. ttl 지난 잔여 폴더는 다음 요청에서 지워지고, 32-hex 가 아닌 이름·링크는 건드리지 않음 | `backend/tests/test_doe_redrop_api.py` |
-| 14 | 거부 코드: design.npz 없음 409 `REDROP_DESIGN_NOT_READY`, 없는 안 404, 잘못된 did 422, 누적 Case 422 `VD_CUMULATIVE_EXCLUDED`(problems[] 포함), 절대경로 include 422 `VD_INCLUDE_LAYOUT`, 엔진 없음 422, 스터디 밖 case_id 422, 보관 Case 409, `enabled=false` 503, 크기 상한 413(임시 폴더 생성 전) | 〃 |
+| 14 | 거부 코드: design.npz 없음 409 `REDROP_DESIGN_NOT_READY`, 없는 안 404, 잘못된 did 422, 누적 Case 422 `VD_CUMULATIVE_EXCLUDED`(problems[] 포함), 절대경로 include 422 `VD_INCLUDE_LAYOUT`, 엔진 없음 422, 보관 Case 409, `enabled=false` 503, 크기 상한 413(임시 폴더 생성 전) | 〃 |
 | 15 | 권한: 프로젝트 viewer 200, 프로젝트 밖 사용자 403, 없는 스터디 404 | 〃 |
 | 16 | 설정 동기: `DEFAULTS["redrop"]` == `BeadDoeRedropCfg()` == 두 예시 yaml 블록 | `backend/tests/test_doe_config.py`(추가) |
-| 17 | 프런트: 버튼 비활성(redrop_ok false → 툴팁, pick 없음), 활성 시 URL·파일명, 409 메시지 표시, 413 안내, `check:api` 통과 | `frontend/src/__tests__/doe_redrop.test.tsx` |
+| 17 | 프런트: 버튼 비활성(redrop_ok false → 툴팁, pick 없음, 선택 엔트리 ok=false), 활성 시 URL(`entry_id` 포함)·파일명, 409 메시지 표시, 413 안내, `check:api` 통과 | `frontend/src/__tests__/doe_redrop.test.tsx` |
+| 18 | 엔트리 선택(백엔드): 2개 Case 스터디에서 기준이 아닌 엔트리 지정 → 200, zip `input/` = 그 엔트리 Case 의 `input_set` 폐포, 이름에 그 엔트리 slug, manifest `entry.id/label/is_base=false`·`case.id` 일치. `entry_id` 생략 → 기준 엔트리(`is_base=true`) | `backend/tests/test_doe_redrop_api.py` |
+| 19 | 엔트리 거부: 스터디에 없는 엔트리(다른 스터디·다른 프로젝트의 실제 엔트리 포함) → 422 `REDROP_ENTRY_NOT_IN_STUDY`, 임시 폴더 미생성. 엔트리 행 삭제됨 → 409 `REDROP_ENTRY_NOT_READY` | 〃 |
+| 20 | `redrop_entries`: 상세 응답에서 `entry_ids` 순서·`is_base`·label 일치, 보관 Case·누적 Case 엔트리 `ok=false`+사유, mesh 스터디는 전 행 `ok=false`, 목록 응답은 null. slug 규칙(금지 문자·길이·빈 이름 대체)과 `Content-Disposition` 의 `filename*` | 〃 |
+| 21 | 프런트 엔트리 선택칸: 기본 = `is_base` 엔트리, `ok=false` 옵션 disabled + 사유 title, 바꾸면 URL 의 `entry_id` 가 바뀜, 기준 엔트리가 불가면 첫 `ok` 엔트리로 | `frontend/src/__tests__/doe_redrop.test.tsx` |
 
 ## 9. 리스크
 
@@ -248,11 +262,13 @@ redrop_<did>_<sid8>/
 | D-0.22.0-RD-3 | 좌표 출처 = `design.npz`(순위·`best/` 무관), 노드 집합 = base_mesh 와 정확히 일치, 원본 좌표 = base `x0`(tol 0) |
 | D-0.22.0-RD-4 | 패치는 `esl/verify/patch.py:patch_design` 한 곳(검증낙하 공용), `vd_patch` 산출 바이트 동일 |
 | D-0.22.0-RD-5 | zip = `input/`(폐포 전체 + 엔진 rad, 결과 파일 없음) + manifest + README, 권한 = 스터디 읽기 |
+| D-0.22.0-RD-6 | 씬 범위 = 엔트리 선택 후 1개씩(`entry_id` 쿼리, Case 는 엔트리에서만), UI = 엔트리 선택칸 1개 + 버튼 1개 (사용자 확정 2026-11-16) |
+| D-0.22.0-RD-7 | 엔진 rad 없음 = `VD_ENGINE_MISSING` 거부 유지 (사용자 확정 2026-11-16) |
 
-## 12. 결정 질문 (기본안 적용 상태로 구현 가능)
+## 12. 결정 질문 — **확정** (2026-11-16)
 
-1. **씬(Case) 범위** — 스터디 ESL 이 여러 Case(낙하 씬)에서 왔을 때 zip 에 무엇을 넣나? **기본안: 기준 Case(`base.case_id`) 1개**, 다른 씬은 API `case_id` 쿼리로만(UI 없음). 대안: 씬마다 `input_<case 이름>/` 을 한 zip 에 모두.
-2. **엔진 rad 없음** — `VD_ENGINE_MISSING` 을 거부할까? **기본안: 거부**(검증낙하와 같은 `input_set` 규칙, 제출 불가 묶음 방지). 대안: 경고만 manifest `warnings[]` 에 남기고 starter + include 만 넣음.
+1. **씬(Case) 범위** — **확정: 엔트리 선택 후 1개씩**(D-0.22.0-RD-6). UI 엔트리 선택칸(기본 = 기준 엔트리) → API `entry_id` → 그 엔트리의 Case 1개만 zip 에. 모든 씬 한 zip 안은 채택하지 않음.
+2. **엔진 rad 없음** — **확정: 거부 유지**(D-0.22.0-RD-7, 검증낙하와 같은 `input_set` 규칙, 제출 불가 묶음 방지). 엔트리 목록 `ok` 는 이것을 미리 보지 않으므로 요청 때 422.
 
 ## 13. 파일 소유권 (겹침 0)
 
@@ -260,10 +276,10 @@ redrop_<did>_<sid8>/
 
 | 갈래 | 파일(소유) | 시험 |
 |---|---|---|
-| **Impl-Backend** | `esl/verify/patch.py`(`patch_design`·`read_node_coords` 추가), `esl/verify/redrop.py`(신규), `esl/verify/stages.py`(`vd_patch` 한 줄 교체 + `rd_prepare` 추가), `esl/doe/transfer_plan.py`(`redrop` 열·`RD_VALUES`), `esl/doe/__init__.py`(`DEFAULTS["redrop"]`), `B/core/config.py`(`BeadDoeRedropCfg`·`BeadDoeCfg.redrop`), `B/core/paths.py`(`REDROP_DIR`), `B/core/opt_core.py`(`verify_stages` 어댑터 항목), `B/api/services/redrop.py`(신규), `B/api/services/doe.py`(`study_out` 2칸만), `B/api/routers/doe.py`(GET redrop), `B/api/schemas.py`(`DoeStudyOut.redrop_ok`·`redrop_blocked`), `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml`(`bead_doe.redrop` 블록), `docs/contracts/openapi_p1b.json`(재생성), `tests/fixtures/redrop/*`(신규), `tests/verify/test_redrop.py`(신규), `tests/verify/test_vd_patch.py`(회귀 1건 추가), `tests/doe/test_transfer_plan.py`(열 검사 추가), `backend/tests/test_doe_redrop_api.py`(신규), `backend/tests/test_doe_config.py`(동기 검사 추가) | V-RD-1~16 |
-| **Impl-Frontend** | `F/api/doe.ts`(`redropUrl`), `F/api/types.ts`(`DoeStudyOut` 2칸), `F/pages/doe/DoeStudy.tsx`(버튼 1개), `F/mock/doedata.ts`·`F/mock/server.ts`, `F/__tests__/doe_redrop.test.tsx`(신규) | V-RD-17 |
-| **통합(메인)** | `VERSION`(0.22.0), `CHANGELOG.md`, `docs/decisions.md`(D-0.22.0-RD-1~5), 이 계약 문서 | – |
+| **Impl-Backend** | `esl/verify/patch.py`(`patch_design`·`read_node_coords` 추가), `esl/verify/redrop.py`(신규), `esl/verify/stages.py`(`vd_patch` 한 줄 교체 + `rd_prepare` 추가), `esl/doe/transfer_plan.py`(`redrop` 열·`RD_VALUES`), `esl/doe/__init__.py`(`DEFAULTS["redrop"]`), `B/core/config.py`(`BeadDoeRedropCfg`·`BeadDoeCfg.redrop`), `B/core/paths.py`(`REDROP_DIR`), `B/core/opt_core.py`(`verify_stages` 어댑터 항목), `B/api/services/redrop.py`(신규), `B/api/services/doe.py`(`study_out` 2칸만), `B/api/routers/doe.py`(GET redrop), `B/api/schemas.py`(`DoeStudyOut.redrop_ok`·`redrop_blocked`·`redrop_entries`, `RedropEntryOut`), `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml`(`bead_doe.redrop` 블록), `docs/contracts/openapi_p1b.json`(재생성), `tests/fixtures/redrop/*`(신규), `tests/verify/test_redrop.py`(신규), `tests/verify/test_vd_patch.py`(회귀 1건 추가), `tests/doe/test_transfer_plan.py`(열 검사 추가), `backend/tests/test_doe_redrop_api.py`(신규), `backend/tests/test_doe_config.py`(동기 검사 추가) | V-RD-1~16, 18~20 |
+| **Impl-Frontend** | `F/api/doe.ts`(`redropUrl`), `F/api/types.ts`(`DoeStudyOut` 3칸 + `RedropEntryOut`), `F/pages/doe/DoeStudy.tsx`(엔트리 선택칸 1개 + 버튼 1개), `F/mock/doedata.ts`·`F/mock/server.ts`, `F/__tests__/doe_redrop.test.tsx`(신규) | V-RD-17, 21 |
+| **통합(메인)** | `VERSION`(0.22.0), `CHANGELOG.md`, `docs/decisions.md`(D-0.22.0-RD-1~7), 이 계약 문서 | – |
 
-- **고정 접점 2개**: ① `DoeStudyOut.redrop_ok`·`redrop_blocked`(schemas.py ↔ types.ts, `npm run check:api`), ② 경로 `GET /doe/studies/{sid}/designs/{did}/redrop`(+`case_id`)와 §1 오류 코드.
+- **고정 접점 2개**: ① `DoeStudyOut.redrop_ok`·`redrop_blocked`·`redrop_entries` + `RedropEntryOut`(schemas.py ↔ types.ts, `npm run check:api`), ② 경로 `GET /doe/studies/{sid}/designs/{did}/redrop?entry_id=` 와 §1 오류 코드.
 - `F/components/BundleButton.tsx`·`DoeRanking.tsx` 는 고치지 않는다(기존 `label`·`selected` 사용). `B/api/services/verify_drop.py`·`bundle.py`·`B/api/routers/results.py` 는 import 만.
 - 순서: Backend(transfer_plan 열·patch_design 먼저, vd_patch 회귀 확인) ∥ Frontend(mock) → openapi 재생성 → check:api → 통합.
