@@ -771,7 +771,7 @@ function RedropControl({ study, pick }: { study: DoeStudyOut; pick: string | nul
   return (
     <span className="redrop" data-testid="redrop">
       {entries.length > 0 && (
-        <select className="select small" aria-label="재낙하 엔트리" data-testid="redrop-entry" value={cur ?? ""} onChange={(e) => setChosen(e.target.value)}>
+        <select className="select small" style={{ marginRight: 6 }} aria-label="재낙하 엔트리" data-testid="redrop-entry" value={cur ?? ""} onChange={(e) => setChosen(e.target.value)}>
           {cur === null && <option value="" disabled>—</option>}
           {entries.map((e) => (
             <option key={e.entry_id} value={e.entry_id} disabled={!e.ok} title={e.blocked ?? undefined}>
