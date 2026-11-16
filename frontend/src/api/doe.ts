@@ -282,6 +282,8 @@ export const doe = {
   thumbUrl: (id: string, did: string) => `${API_PREFIX}/doe/studies/${id}/preview/thumb/${encodeURIComponent(did)}`,
   downloadUrl: (id: string, rel: string) => `${API_PREFIX}/doe/studies/${id}/download?rel=${encodeURIComponent(rel)}`,
   bundleUrl: (id: string, parts = "best,report,ranking") => `${API_PREFIX}/doe/studies/${id}/bundle?parts=${encodeURIComponent(parts)}`,
+  /** v0.22.0 REDROP — 선택한 안의 모핑 좌표를 선택한 엔트리의 원 낙하 입력에 넣은 zip */
+  redropUrl: (id: string, did: string, entryId: string) => `${API_PREFIX}/doe/studies/${id}/designs/${encodeURIComponent(did)}/redrop?entry_id=${encodeURIComponent(entryId)}`,
   reportUrl: (id: string) => `${API_PREFIX}/doe/studies/${id}/report`,
   /** 3D 비교 manifest(기존 view3d 파일 API 규칙 — 파일 URL 은 manifest 의 geometry_url·values_url) */
   view3dPath: (id: string, did: string, file = "manifest.json") => `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/${file}`,

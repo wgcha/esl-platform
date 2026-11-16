@@ -27,7 +27,7 @@ import { fetchBinary, fileUrls } from "../../view3d/fetchFiles";
 import { parseGlb } from "../../view3d/glb";
 import { SectionMini } from "../../components/SectionMini";
 import { STEP_LABEL } from "../../api/history";
-import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, View3dOut } from "../../api/types";
+import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/ui";
@@ -740,6 +740,59 @@ function DownloadLink({ id, rel, label }: { id: string; rel: string; label: stri
         {label}
       </a>
       {error && <span className="small error-text"> {error}</span>}
+    </span>
+  );
+}
+
+// ================================================================ v0.22.0 재낙하 입력 받기(esl_redrop_bundle.md §7)
+export const REDROP_LABEL = "재낙하 입력 받기";
+const REDROP_TITLE = "선택한 안의 모핑 좌표를 선택한 엔트리의 원 낙하 입력(rad·include)에 넣은 zip — 받아서 HPC 에 직접 제출";
+/** 기본 선택 = is_base 엔트리, 불가면 첫 ok 엔트리(없으면 null) */
+export function redropDefault(entries: RedropEntryOut[] | null | undefined): string | null {
+  const list = entries ?? [];
+  return (list.find((e) => e.is_base && e.ok) ?? list.find((e) => e.ok))?.entry_id ?? null;
+}
+/** 엔트리 선택칸 1개 + 버튼 1개. 판정은 서버 플래그(redrop_ok·entries[].ok)만 — 시나리오 분기 없음 */
+function RedropControl({ study, pick }: { study: DoeStudyOut; pick: string | null }) {
+  const entries = study.redrop_entries ?? [];
+  const [chosen, setChosen] = useState<string | null>(null);
+  const def = redropDefault(entries);
+  const cur = chosen && entries.some((e) => e.entry_id === chosen) ? chosen : def;
+  const ent = entries.find((e) => e.entry_id === cur) ?? null;
+  const reason = !study.redrop_ok
+    ? study.redrop_blocked ?? "재낙하 입력을 만들 수 없습니다"
+    : entries.length === 0
+      ? "재낙하 입력을 만들 수 있는 엔트리가 없습니다"
+      : !pick
+        ? "순위표에서 안을 고르세요"
+        : !ent || !ent.ok
+          ? ent?.blocked ?? "재낙하 입력을 만들 수 있는 엔트리가 없습니다"
+          : null;
+  return (
+    <span className="redrop" data-testid="redrop">
+      {entries.length > 0 && (
+        <select className="select small" aria-label="재낙하 엔트리" data-testid="redrop-entry" value={cur ?? ""} onChange={(e) => setChosen(e.target.value)}>
+          {cur === null && <option value="">—</option>}
+          {entries.map((e) => (
+            <option key={e.entry_id} value={e.entry_id} disabled={!e.ok} title={e.blocked ?? undefined}>
+              {e.label}
+              {e.is_base ? " (기준)" : ""}
+            </option>
+          ))}
+        </select>
+      )}
+      {reason || !pick || !cur ? (
+        <span className="primary-wrap" title={reason ?? undefined}>
+          <button type="button" className="btn small" disabled aria-disabled="true" data-testid="redrop-btn">
+            {REDROP_LABEL}
+          </button>
+          {reason && <span className="sr-only">{reason}</span>}
+        </span>
+      ) : (
+        <span data-testid="redrop-btn">
+          <BundleButton key={`${pick}|${cur}`} url={doe.redropUrl(study.id, pick, cur)} filename={`redrop_${pick}_${cur.slice(0, 8)}.zip`} label={REDROP_LABEL} title={REDROP_TITLE} />
+        </span>
+      )}
     </span>
   );
 }
@@ -1488,7 +1541,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                   </div>
                 </div>
               )}
-              <Downloads study={s} result={result.data} extra={isCompare ? undefined : vdButton} />
+              <Downloads study={s} result={result.data} extra={<>{isCompare ? null : vdButton}<RedropControl study={s} pick={pick} /></>} />
               <div className="small muted">
                 {isCompare
                   ? "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 억제는 CAD 메시가 실패한 형상만 — 형상 표 '형상 단순화'). 방법·한계는 보고서에."
