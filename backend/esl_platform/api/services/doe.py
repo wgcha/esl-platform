@@ -1017,8 +1017,8 @@ def _doe_out(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str,
 
 def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | None = None, *,
               c: dict[str, Any] | None = None, with_job_lookup: bool = True, principal: Principal | None = None,
-              fl: dict[str, Any] | None = None) -> dict[str, Any]:
-    """fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
+              fl: dict[str, Any] | None = None, with_redrop: bool = True) -> dict[str, Any]:
+    """with_redrop = False 면 redrop_entries 계산 없이 null(목록 N+1 방지 — v0.22.0). fl = 목록이 한 번에 계산한 {id: (can_delete, delete_blocked)}(없으면 이 항목만 계산 — v0.19.0)."""
     c = c or cfg(ctx)
     if job is None and with_job_lookup:
         job = doe_repo.latest_job(conn, s["id"])
@@ -1059,6 +1059,11 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
            "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
            "result_ready": rr, "created_by_name": s["created_by_name"], "created_at": s["created_at"],
            "selection": _select().selection_summary(s)}
+    from . import redrop as redrop_svc      # v0.22.0 REDROP — 순환 import 를 피해 지연
+
+    rents = redrop_svc.entries(ctx, conn, s) if with_redrop else None
+    out["redrop_ok"], out["redrop_blocked"] = redrop_svc.flags(ctx, s, rents)
+    out["redrop_entries"] = rents
     item_delete.apply_flags(out, fl if fl is not None else item_delete.flags(ctx, conn, principal, "DOE", [s]), s["id"])
     return out
 
@@ -1075,8 +1080,8 @@ def list_studies(ctx: AppContext, principal: Principal, project_id: str | None) 
             rows = doe_repo.list_studies(conn, project_ids=list(principal.roles))
         jobs = doe_repo.latest_jobs(conn, [r["id"] for r in rows])
         fl = item_delete.flags(ctx, conn, principal, "DOE", rows)
-        return [study_out(ctx, conn, r, jobs.get(r["id"]), c=c, with_job_lookup=False, principal=principal, fl=fl)
-                for r in rows]
+        return [study_out(ctx, conn, r, jobs.get(r["id"]), c=c, with_job_lookup=False, principal=principal, fl=fl,
+                          with_redrop=False) for r in rows]
 
 
 def get_study(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
