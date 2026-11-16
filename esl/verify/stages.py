@@ -28,7 +28,7 @@ def _write_json(path: str, obj) -> None:
 
 def vd_patch(spec: dict, echo=print) -> dict:
     from esl.doe import nodes as nd
-    from esl.verify.patch import patch_node_files
+    from esl.verify.patch import patch_design
 
     with np.load(spec["model_npz"], allow_pickle=False) as z:
         nid = np.asarray(z["node_id"], dtype=np.int64)
@@ -40,10 +40,8 @@ def vd_patch(spec: dict, echo=print) -> dict:
     X, info = nd.morphed_coords(best, rels, nid, x0, max_line=spec.get("max_line"))
     echo(f"[vd_patch] 모핑 사본 {len(rels)}개 — 대상 파트 노드 {nid.size}, 사본에서 찾음 {info['n_found']}, "
          f"움직임 {info['n_moved']}(최대 {info['max_disp']:.4g})")
-    coords = {int(nid[i]): tuple(X[i]) for i in range(nid.size)}
     os.makedirs(spec["out"], exist_ok=True)
-    res = patch_node_files([(r, p) for r, p in spec["files"]], coords, spec["out"], required=nid.tolist(),
-                           max_line=spec.get("max_line"))
+    res = patch_design([(r, p) for r, p in spec["files"]], nid, X, spec["out"], max_line=spec.get("max_line"))
     res["morph"] = {k: info[k] for k in ("n_found", "n_moved", "max_disp")}
     moved = np.linalg.norm(X - x0, axis=1) > 0
     np.savez_compressed(spec["morph_out"], node_id=nid[moved], x=X[moved])
@@ -54,6 +52,39 @@ def vd_patch(spec: dict, echo=print) -> dict:
          f"줄 {res['n_patched']})")
     _write_json(spec["result_out"], res)
     return res
+
+
+def rd_prepare(spec: dict, echo=print) -> dict:
+    """재낙하 입력 만들기(계약 esl_redrop_bundle.md §5.3) — 백엔드 동기 호출 전용(``STAGES``·``run_stage`` 에 없음).
+    spec: base_npz, design_npz, files[(rel, abs)], out(= <token>/input), meta_out(= <token>), max_line, base_coord_tol_mm,
+    manifest_extra. 바뀐 파일만 ``out/<rel>``, manifest·README 는 ``meta_out``. 반환 = manifest dict."""
+    from esl.verify import redrop as rd
+    from esl.verify.patch import patch_design, read_node_coords
+
+    with np.load(spec["base_npz"], allow_pickle=False) as z:
+        bnid = np.asarray(z["node_id"], dtype=np.int64)
+        x0 = np.asarray(z["x0"], dtype=np.float64)
+    with np.load(spec["design_npz"], allow_pickle=False) as z:
+        dnid = np.asarray(z["node_id"], dtype=np.int64)
+        xd = np.asarray(z["x"], dtype=np.float64)
+    rd.check_nodeset(bnid, dnid)
+    files = [(r, p) for r, p in spec["files"]]
+    max_line = spec.get("max_line")
+    xf, found = read_node_coords(files, bnid, max_line=max_line)
+    tol = float(spec.get("base_coord_tol_mm") or 0.0)
+    xp, stats = rd.merge_coords(bnid, xd, x0, xf, tol, design_node_id=dnid)
+    echo(f"[rd_prepare] 대상 노드 {bnid.size}, 입력에서 찾음 {int(found.sum())}, 움직임 {stats['n_moved']}(최대 {stats['max_disp']:.4g})")
+    os.makedirs(spec["out"], exist_ok=True)
+    res = patch_design(files, bnid, xp, spec["out"], max_line=max_line)
+    m = rd.manifest(spec["manifest_extra"], res, stats, n_target=int(bnid.size), tol=tol)
+    os.makedirs(spec["meta_out"], exist_ok=True)
+    _write_json(os.path.join(spec["meta_out"], rd.MANIFEST_NAME), m)
+    tmp = os.path.join(spec["meta_out"], rd.README_NAME + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(rd.readme_text(m))
+    atomic_replace(tmp, os.path.join(spec["meta_out"], rd.README_NAME))
+    echo(f"[rd_prepare] 파일 {len(files)}개(고친 파일 {len(m['changed'])}개, 줄 {res['n_patched']})")
+    return m
 
 
 def vd_compare(spec: dict, echo=print) -> dict:
@@ -86,4 +117,4 @@ def run_stage(spec: dict, echo=print) -> dict:
     raise EslError("INPUT_INVALID", f"검증 낙하 단계 {st} — {list(STAGES)}")
 
 
-__all__ = ["STAGES", "run_stage", "vd_patch", "vd_compare"]
+__all__ = ["STAGES", "run_stage", "vd_patch", "vd_compare", "rd_prepare"]

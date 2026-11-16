@@ -34,30 +34,30 @@ CELL_MAX_MM = 200.0          # 셀 크기 상한 — 한 곳(backend core.config
 #   bs_mq    = base(기준 메시 품질 → 결과 경고 1건) | shapes(형상마다 → 순위 행 ⚠) | none.
 #   스냅샷 doe.shape_rules 가 있을 때만 쓰임(키 없음 = v0.20.0). PLAN_VERSION 은 올리지 않음(hash_view 불변) — 규칙 판은 shape_rules.schema.
 PLANS = {
-    "case_once": {"dst": "baseline", "reuse": "once", "identity": "topo", "placement": "global", "mask": "none",
+    "case_once": {"redrop": "node_id", "dst": "baseline", "reuse": "once", "identity": "topo", "placement": "global", "mask": "none",
                   "truth": "self_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none"},
-    "bmesh_once": {"dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "none",
+    "bmesh_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "none",
                    "truth": "a_direct", "alt_designs": False,
                    "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
                    "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none"},
-    "step_once": {"dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "step_region",
+    "step_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "step_region",
                   "truth": "a_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "step_region", "sm_rank": "metric",
                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "base", "bs_mq": "base"},
-    "step_per_design": {"dst": "design", "reuse": "per_target", "identity": "none", "placement": "auto", "mask": "none",
+    "step_per_design": {"redrop": "none", "dst": "design", "reuse": "per_target", "identity": "none", "placement": "auto", "mask": "none",
                         "truth": "a_direct", "alt_designs": False,
                         "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "all", "sm_rank": "solve",
                         "bs_wpart": "none", "bs_guard": "none", "bs_route": "none", "bs_mq": "none"},
-    "compare_per_shape": {"dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
+    "compare_per_shape": {"redrop": "none", "dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
                           "mask": "compare_region", "truth": "compare", "alt_designs": True,
                           "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "compare_region",
                           "sm_rank": "solve",
                           "bs_wpart": "none", "bs_guard": "none", "bs_route": "shapes", "bs_mq": "shapes"},
 }
 PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
-            "sm_rank", "bs_wpart", "bs_guard", "bs_route", "bs_mq")
+            "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq")
 PLAN_OF = {("same", None): "case_once", ("select", "case"): "case_once", ("mesh", None): "bmesh_once",
            ("select", "mesh"): "bmesh_once", ("select", "step"): "step_once", ("step", None): "step_per_design",
            ("compare", None): "compare_per_shape"}
@@ -76,6 +76,8 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
     badv = [k for k, vs in BS_VALUES.items() if row[k] not in vs]
     if badv:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 형상 규칙 열 값 오류: {badv}")
+    if row["redrop"] not in RD_VALUES:
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} redrop 열 값 오류: {row['redrop']}")
     return {"id": pid, **row}
 
 
@@ -127,6 +129,8 @@ def resolve(spec_lt: dict | None, scenario: str, defaults: dict | None = None) -
     return lt
 
 
+# v0.22.0 REDROP 열(esl_redrop_bundle.md §5.2): 재낙하 입력 좌표 치환 방식 — node_id(원 Case 노드 ID 그대로 /NODE 패치) | none(새 메시·새 ID).
+RD_VALUES = ("node_id", "none")
 BS_VALUES = {"bs_wpart": ("graph", "none"), "bs_guard": ("basis", "none"), "bs_route": ("base", "shapes", "none"),
              "bs_mq": ("base", "shapes", "none")}
 SHAPE_SCHEMA = 1

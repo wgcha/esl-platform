@@ -1807,6 +1807,18 @@ class DoeCheckOut(_Out):
     load_transfer: dict[str, Any] | None = None
 
 
+class RedropEntryOut(_Out):
+    """v0.22.0 REDROP 엔트리 선택 항목(esl_redrop_bundle.md §1 — 이름 고정)."""
+
+    entry_id: str
+    label: str
+    case_id: str | None = None
+    case_title: str | None = None
+    is_base: bool
+    ok: bool
+    blocked: str | None = None
+
+
 class DoeStudyOut(_Out):
     id: str
     project_id: str
@@ -1827,6 +1839,9 @@ class DoeStudyOut(_Out):
     can_delete: bool                      # v0.19.0 삭제 권한만 반영(등록자·전역 관리자 + 실행 권한, item_delete.enabled)
     delete_blocked: str | None = None     # v0.19.0 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null)
     selection: dict[str, Any] | None = None        # v0.15.0 select 요약 {rev, sha256, mesh_sha256, n_beads, n_warnings, updated_by_name, updated_at}
+    redrop_ok: bool = False                        # v0.22.0 재낙하 입력 받기 가능(설정·계획 열 ∧ 가능한 엔트리, 목록 응답은 앞 두 조건만)
+    redrop_blocked: str | None = None              # v0.22.0 불가 사유 한 줄(가능하면 null)
+    redrop_entries: list[RedropEntryOut] | None = None   # v0.22.0 엔트리 선택 목록(상세 응답만, 목록 응답은 null)
 
 
 class DoeParamsOut(_Out):

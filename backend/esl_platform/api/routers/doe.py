@@ -166,6 +166,29 @@ def doe_bundle(sid: str, request: Request, parts: str | None = Query(default=Non
     return zip_response(svc.bundle(get_ctx(request), principal, sid, parts))
 
 
+def _with_cleanup(it, cleanup):
+    """스트림이 끝나거나 닫히면(클라이언트 끊김 포함) 임시 폴더를 지운다."""
+    try:
+        yield from it
+    finally:
+        cleanup()
+
+
+@router.get("/doe/studies/{sid}/designs/{did}/redrop", response_class=StreamingResponse, responses=ZIP_RESPONSE)
+def doe_redrop(sid: str, did: str, request: Request, entry_id: str | None = Query(default=None, max_length=64),
+               principal: Principal = Depends(get_principal)) -> StreamingResponse:
+    """재낙하 입력 받기(zip, v0.22.0 REDROP): 안 1개의 모핑 좌표를 엔트리 1개의 원 낙하 입력(rad·include)에 넣은 묶음.
+    entry_id 생략 = 스터디 기준 엔트리. 검사·패치는 응답 시작 전에 끝난다(오류 코드는 계약 §1)."""
+    from ..services import bundle as bundle_svc
+    from ..services import redrop as rd_svc
+
+    b = rd_svc.bundle(get_ctx(request), principal, sid, did, entry_id)
+    return StreamingResponse(_with_cleanup(bundle_svc.stream_zip(b["files"], b["prefix"]), b["cleanup"]),
+                             media_type="application/zip",
+                             headers={"Content-Disposition": rd_svc.content_disposition(b["filename"]),
+                                      "X-Bundle-Files": str(len(b["files"])), "X-Bundle-Bytes": str(b["size"])})
+
+
 @router.get("/doe/studies/{sid}/report", response_class=HTMLResponse)
 def doe_report(sid: str, request: Request, download: bool = False,
                principal: Principal = Depends(get_principal)) -> Response:

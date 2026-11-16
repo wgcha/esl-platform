@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 
 import numpy as np
@@ -188,3 +189,44 @@ def test_patch_non_ascii_node_line_is_vd_patch_encoding(tmp_path):
         patch_node_files(files, {int(n): X[i] for i, n in enumerate(nid)}, str(out))
     assert ei.value.code == "VD_PATCH_ENCODING" and "a.inc" in ei.value.message
     assert not (out / "inc" / "a.inc").exists()                       # 최종 출력 파일은 만들지 않음
+
+
+def _golden_run(tmp_path, stage_fn):
+    """V-RD-12: 고정 spec(여러 파일·형식·줄바꿈 혼합, 노드 4개 이동)로 vd_patch 를 돌려 산출 파일·result json 의 sha256."""
+    d, files, nid, xs = _model(tmp_path)
+    best = tmp_path / "best" / "d007" / "include"
+    (best / "inc").mkdir(parents=True)
+    moved = {2: (10.5, 0.25, 1.125), 8: (10.0, 30.0, -2.5), 10: (0.0, 30.0, 3.0), 11: (10.0, 30.0, 3.5)}
+    rows = {i: tuple(xs[i - 1]) for i in range(1, 13)} | moved
+    (best / "m_0000.rad").write_text("/NODE\n" + "".join(_fix(i, *rows[i]) + "\n" for i in range(1, 7)))
+    (best / "inc" / "a.inc").write_text("/NODE\n" + "".join(_fix(i, *rows[i]) + "\n" for i in (7, 8, 9)))
+    (best / "inc" / "b.inc").write_text("/NODE\n" + "".join(_fix(i, *rows[i]) + "\n" for i in (10, 11, 12)))
+    mz = tmp_path / "model.npz"
+    np.savez(mz, node_id=nid, x0=xs)
+    out = tmp_path / "stage"
+    stage_fn({"model_npz": str(mz), "best_dir": str(best), "best_rels": ["m_0000.rad", "inc/a.inc", "inc/b.inc"],
+              "files": files, "out": str(out), "result_out": str(tmp_path / "patch.json"),
+              "morph_out": str(tmp_path / "morph.npz")}, echo=lambda *_: None)
+    shas = {str(p.relative_to(out)): _sha(p) for p in sorted(out.rglob("*")) if p.is_file()}
+    res = json.loads((tmp_path / "patch.json").read_text(encoding="utf-8"))
+    for f in res["files"]:                                              # 경로는 tmp 마다 다름 — sha·크기만 비교
+        f["path"] = os.path.relpath(f["path"], tmp_path) if f["source"] == "patched" else f["rel"]
+    return shas, json.dumps(res, sort_keys=True), np.load(tmp_path / "morph.npz")["x"].tolist()
+
+
+def test_vd_patch_refactor_byte_identical_to_golden(tmp_path):
+    """V-RD-12: vd_patch 가 patch_design 을 부르도록 바꾼 뒤에도 산출 파일 바이트·result json 이 리팩터 전과 같다(골든 sha256)."""
+    from esl.verify import stages
+
+    shas, resj, mx = _golden_run(tmp_path, stages.vd_patch)
+    assert shas == GOLDEN_SHAS
+    assert hashlib.sha256(resj.encode()).hexdigest() == GOLDEN_RESULT_SHA
+    assert mx == GOLDEN_MORPH
+
+
+# 리팩터 전(patch_node_files 직접 호출) vd_patch 로 만든 골든 값
+GOLDEN_SHAS = {'inc/a.inc': '872c71c7f1d99a60f1f0dcec232361578856ea4acfccf9faed6ff87089cea32e',
+               'inc/b.inc': 'f54283ef462533fd53dd5d9d8c109578ec0bce389fc91115a808d2cec903ebd1',
+               'm_0000.rad': '64c494baa41b7be4056c16c60a6e1be09d540e162fd5c3046909d29ebdc1cc07'}
+GOLDEN_RESULT_SHA = '40ca518bdae916a659ec297846b293b1e95897b61b355e356545500ddcc24659'
+GOLDEN_MORPH = [[10.5, 0.25, 1.125], [10.0, 30.0, -2.5], [0.0, 30.0, 3.0], [10.0, 30.0, 3.5]]

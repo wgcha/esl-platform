@@ -127,3 +127,22 @@ def test_check_cli_bead_doe_items(tmp_path, engine):
         assert _paicad_record(c).status == "OK"
     d.pop("bead_doe")
     assert [i.status for i in check_bead_doe(load_config_dict(d, environ={}).settings, "linux")] == ["SKIP"]
+
+
+def test_redrop_section_mirror():
+    """V-RD-16: DEFAULTS["redrop"] == BeadDoeRedropCfg() == 두 예시 yaml 블록(같은 이름·값), 섹션 없으면 기본, 경계값 검사."""
+    from esl.doe import DEFAULTS
+    from esl_platform.core.config import BeadDoeCfg, BeadDoeRedropCfg, bead_doe_settings
+    from pydantic import ValidationError
+
+    d = BeadDoeRedropCfg().model_dump()
+    assert d == {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0}
+    assert DEFAULTS["redrop"] == d and BeadDoeCfg().model_dump()["redrop"] == d
+    for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
+        y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]
+        assert y["redrop"] == d, p
+    assert bead_doe_settings(None)["redrop"] == d
+    for bad in ({"name_max_chars": 7}, {"name_max_chars": 121}, {"tmp_ttl_s": 0}, {"tmp_ttl_s": 86401},
+                {"base_coord_tol_mm": -0.1}):
+        with pytest.raises(ValidationError):
+            BeadDoeRedropCfg(**bad)

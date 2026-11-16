@@ -1066,6 +1066,15 @@ class BeadDoeShapeRulesCfg(_M):
     mesh_route: BeadDoeShapeMeshRouteCfg = BeadDoeShapeMeshRouteCfg()
 
 
+class BeadDoeRedropCfg(_M):
+    """v0.22.0 REDROP 재낙하 입력 묶음 받기(esl_redrop_bundle.md §6). 섹션 없으면 기본값."""
+
+    enabled: bool = True
+    name_max_chars: int = Field(default=40, ge=8, le=120)       # zip 이름의 엔트리 slug 최대 글자 수
+    tmp_ttl_s: int = Field(default=3600, ge=1, le=86400)        # _redrop/<token> 잔여 폴더 정리 기준(초)
+    base_coord_tol_mm: float = Field(default=0.0, ge=0)         # I-2 허용 차(0 = 정확히 같아야 함)
+
+
 class BeadDoeCompareLoadTransferRegionCfg(_M):
     """v0.20.0 ④ 평가 영역(LT-8, ③ SG-D-19 와 같은 값·뜻)."""
 
@@ -1360,6 +1369,7 @@ class BeadDoeCfg(_M):
     settings_cache_s: float = Field(default=300, ge=0)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
     load_transfer: BeadDoeLoadTransferCfg = BeadDoeLoadTransferCfg()   # v0.20.0 모든 모드 공통(esl_load_transfer.md §13.6)
+    redrop: BeadDoeRedropCfg = BeadDoeRedropCfg()                      # v0.22.0 REDROP(esl_redrop_bundle.md §6)
     shape_rules: BeadDoeShapeRulesCfg = BeadDoeShapeRulesCfg()         # v0.21.0 BEAD_SHAPE(esl_bead_shape_v021.md §6)
     select: BeadDoeSelectCfg = BeadDoeSelectCfg()            # v0.15.0 select(esl_bead_select.md §10)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
@@ -1814,6 +1824,7 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("compare", {}), BeadDoeCompareCfg().model_dump())
     _fill_missing(d.setdefault("load_transfer", {}), BeadDoeLoadTransferCfg().model_dump())
     _fill_missing(d.setdefault("shape_rules", {}), BeadDoeShapeRulesCfg().model_dump())   # v0.21.0
+    _fill_missing(d.setdefault("redrop", {}), BeadDoeRedropCfg().model_dump())             # v0.22.0
     _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
     return d
 

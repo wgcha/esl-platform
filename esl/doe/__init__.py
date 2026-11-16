@@ -215,6 +215,8 @@ DEFAULTS: dict = {
                                                "max_vars": 120}},
                     "mesh_route": {"relaxed_direct": {"enabled": True, "min_faces": 1500, "min_step_mb": None},
                                    "rank_quality": {"fail_ratio": 0.10, "tria_pct": None}}},
+    # v0.22.0 REDROP(esl_redrop_bundle.md §6) — 재낙하 입력 묶음 받기(pydantic BeadDoeRedropCfg·두 yaml 거울 — 같은 이름)
+    "redrop": {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
     # 여기에는 차단 상한·뒤집힘 각만(백엔드 BeadDoeSelectCfg 거울 — 계약 없이 키 추가 금지).
     # v0.16.1(esl_select_relax.md §4.4): fixed_policy·quality.fail_policy = warn(경고만, 뒤집힘만 제외) | skip(v0.16.0 동작),

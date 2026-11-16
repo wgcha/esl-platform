@@ -153,6 +153,7 @@ DOE_DIR = "_doe"
 # v0.10.0 라이브러리 다중 내보내기(esl_menu_restructure.md §6.2): <esl_root>/_exports/<batch_id>/{batch.json, <NN>_<label>/, logs/}.
 # 원본은 라이브러리 항목 폴더(읽기만), Case 폴더에는 쓰지 않는다.
 EXPORTS_DIR = "_exports"
+REDROP_DIR = "_redrop"      # v0.22.0 재낙하 입력 임시 폴더 <esl_root>/_redrop/<token>/ (esl_redrop_bundle.md §1)
 VERIFY_DIR = "_verify"      # v0.12.0 검증 낙하 <esl_root>/_verify/<id>/ (esl_scx_relay.md §4)
 _SEG =re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 

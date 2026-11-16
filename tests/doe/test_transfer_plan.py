@@ -186,3 +186,25 @@ def test_stages_read_shape_columns_only():
         assert not re.search(r"c\.scn\b|scenario\s*==|select_base\(", src), fn.__name__
     assert "bs_route" in inspect.getsource(stg._route_of) and "bs_mq" in inspect.getsource(stg._cmp_mq_rank)
     assert 'bs_guard' in inspect.getsource(stg._sel_prepare) and 'bs_guard' in inspect.getsource(stg._sel_loads)
+
+
+def test_redrop_column():
+    """V-RD-7: 모든 PLANS 행에 redrop 열 + 값 ∈ RD_VALUES, case_once 만 node_id, 열 지우면 CONFIG_INVALID."""
+    assert tp.RD_VALUES == ("node_id", "none") and "redrop" in tp.PLAN_COLS
+    for pid, row in tp.PLANS.items():
+        assert row["redrop"] in tp.RD_VALUES, pid
+    assert [k for k, r in tp.PLANS.items() if r["redrop"] == "node_id"] == ["case_once"]
+    for key in tp.PLAN_OF:
+        p = tp.plan_for(*key)
+        assert p["redrop"] == ("node_id" if p["id"] == "case_once" else "none")
+    saved = tp.PLANS["step_once"].pop("redrop")
+    try:
+        with pytest.raises(EslError) as ei:
+            tp.plan_for("select", "step")
+        assert ei.value.code == "CONFIG_INVALID"
+        tp.PLANS["step_once"]["redrop"] = "bogus"
+        with pytest.raises(EslError) as ei:
+            tp.plan_for("select", "step")
+        assert ei.value.code == "CONFIG_INVALID"
+    finally:
+        tp.PLANS["step_once"]["redrop"] = saved

@@ -18,6 +18,8 @@ import hashlib
 import os
 from collections.abc import Callable, Iterable
 
+import numpy as np
+
 from esl.errors import EslError
 from esl.fsutil import atomic_replace
 from esl.rad.parser import _decode, _f, _i, bounded_readline
@@ -196,4 +198,58 @@ def patch_node_files(files: Iterable[tuple[str, str]], coords: dict[int, tuple],
     return {"files": res, "n_patched": total, "found": len(found), "missing": []}
 
 
-__all__ = ["patch_node_files", "FIX_FMT"]
+def patch_design(files: Iterable[tuple[str, str]], node_id, x, out_dir: str, *, max_line: int | None = None,
+                 guard: Callable[[str], str] | None = None) -> dict:
+    """안 1개의 좌표(node_id (N,), x (N,3))를 원 입력 세트에 패치 — 검증 낙하(``vd_patch``)·재낙하(``rd_prepare``) 공통 입구
+    (계약 esl_redrop_bundle.md §5.1). ``coords = {node_id[i]: x[i]}``, ``required`` = node_id 전체. 결과는 ``patch_node_files`` 그대로."""
+    nid = np.asarray(node_id)
+    xx = np.asarray(x, dtype=np.float64)
+    coords = {int(nid[i]): tuple(xx[i]) for i in range(nid.size)}
+    return patch_node_files(files, coords, out_dir, required=nid.tolist(), max_line=max_line, guard=guard)
+
+
+def read_node_coords(files: Iterable[tuple[str, str]], node_id, *, max_line: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """입력 세트 ``/NODE`` 에서 node_id 의 좌표를 읽는다(쓰기 없음) → (X (N,3) float64 — 없는 노드 NaN, found bool (N,)).
+
+    줄 해석 = ``_scan`` 과 같음(``_is_node_header``·``_parse``·``bounded_readline``, ``#``·``$`` 주석). 같은 ID 가 서로 다른 좌표로
+    두 번 나오면 ``RAD_PARSE_ERROR``(같은 좌표의 중복은 허용 — 패치는 모든 줄에 같은 값을 쓴다)."""
+    nid = np.asarray(node_id, dtype=np.int64)
+    pos = {int(v): i for i, v in enumerate(nid.tolist())}
+    X = np.full((nid.size, 3), np.nan, dtype=np.float64)
+    found = np.zeros(nid.size, dtype=bool)
+    for rel, path in files:
+        if not os.path.isfile(path):
+            raise EslError("INPUT_INVALID", f"입력 파일이 없음: {rel}")
+        in_node = False
+        with open(path, "rb") as fh:
+            readline = bounded_readline(fh, path, max_line)
+            while True:
+                raw = readline()
+                if not raw:
+                    break
+                if raw[:1] in (b"#", b"$"):
+                    continue
+                hd = _is_node_header(raw)
+                if hd is not None:
+                    in_node = hd
+                    continue
+                if not in_node:
+                    continue
+                body, _ = _eol(raw)
+                if not body.strip():
+                    continue
+                p = _parse(_decode(body))
+                if p is None or p[1] not in pos:
+                    continue
+                i = pos[p[1]]
+                v = [float(t) for t in p[2]]
+                if found[i]:
+                    if v != X[i].tolist():
+                        raise EslError("RAD_PARSE_ERROR", f"노드 {p[1]} 가 입력 세트 여러 줄에 다른 좌표로 있음({rel})")
+                else:
+                    X[i] = v
+                    found[i] = True
+    return X, found
+
+
+__all__ = ["patch_node_files", "patch_design", "read_node_coords", "FIX_FMT"]

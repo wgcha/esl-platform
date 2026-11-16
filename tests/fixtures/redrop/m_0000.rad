@@ -1,0 +1,29 @@
+#RADIOSS STARTER
+/BEGIN
+redrop fixture
+       2024         0
+                  kg                  mm                   s
+                  kg                  mm                   s
+/NODE
+# target part nodes 1-4, non-target 101-102
+         1            0.000000            0.000000            1.500000
+         2           10.000000            0.000000            1.500000
+         3           20.000000            0.000000            1.500000
+         4           30.000000            0.000000            1.500000
+       101          500.000000          500.000000            0.000000
+       102          510.000000          500.000000            0.000000
+/SHELL/7
+# shell card
+         1         1         2         6         5
+/PART/7
+Chassis rear
+         7         7         1
+/INTER/TYPE7/5
+tie like
+         7         8
+/RBODY/9
+rb
+       101         0         0         1         0         0         0         0
+#include inc/a.inc
+#include sub/b.inc
+/END

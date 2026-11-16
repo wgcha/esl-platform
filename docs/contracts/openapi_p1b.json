@@ -4341,6 +4341,36 @@
             "title": "Project Id",
             "type": "string"
           },
+          "redrop_blocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redrop Blocked"
+          },
+          "redrop_entries": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RedropEntryOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redrop Entries"
+          },
+          "redrop_ok": {
+            "default": false,
+            "title": "Redrop Ok",
+            "type": "boolean"
+          },
           "result_ready": {
             "title": "Result Ready",
             "type": "boolean"
@@ -8662,6 +8692,68 @@
           "h_mm"
         ],
         "title": "RectIn",
+        "type": "object"
+      },
+      "RedropEntryOut": {
+        "description": "v0.22.0 REDROP 엔트리 선택 항목(esl_redrop_bundle.md §1 — 이름 고정).",
+        "properties": {
+          "blocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "case_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Title"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "is_base": {
+            "title": "Is Base",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id",
+          "label",
+          "is_base",
+          "ok"
+        ],
+        "title": "RedropEntryOut",
         "type": "object"
       },
       "ReviewError": {
@@ -16395,6 +16487,76 @@
           }
         },
         "summary": "Doe Delete Check",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/designs/{did}/redrop": {
+      "get": {
+        "description": "재낙하 입력 받기(zip, v0.22.0 REDROP): 안 1개의 모핑 좌표를 엔트리 1개의 원 낙하 입력(rad·include)에 넣은 묶음.\nentry_id 생략 = 스터디 기준 엔트리. 검사·패치는 응답 시작 전에 끝난다(오류 코드는 계약 §1).",
+        "operationId": "doe_redrop_esl_api_doe_studies__sid__designs__did__redrop_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "did",
+            "required": true,
+            "schema": {
+              "title": "Did",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entry_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "zip(스트리밍)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Redrop",
         "tags": [
           "doe"
         ]
