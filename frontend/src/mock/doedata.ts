@@ -4,7 +4,7 @@
 import type {
   DoeDefeatureFeature, DoeDefeatureList, DoeRankWarn,
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeShapeRules, DoeSpec, DoeStudyOut, DoeWarning, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeShapeRules, DoeSpec, DoeStudyOut, DoeWarning, RedropEntryOut, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
@@ -1095,9 +1095,23 @@ export function mockMeshParts(mainFile: string): DoeMeshPart[] {
     : [{ id: 1001, title: "chassis_rear", n_shells: 182_400 }];
 }
 
+// ---------------------------------------------------------------- v0.22.0 REDROP(esl_redrop_bundle.md §1)
+export const REDROP_BLOCKED_PLAN = "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)";
+export const REDROP_ENTRY_ARCHIVED = "보관된 Case 라 재낙하 입력을 만들 수 없습니다";
+/** 계획 열 redrop=node_id 에 해당하는 모드만(① same · select+case) 허용 — 서버 판정 흉내(프런트는 이 값을 계산하지 않고 받기만 한다). 엔트리: 첫째 = 기준, 셋째 = 불가 */
+export function redropFlags(o: { scenario: DoeScenario; entry_ids: string[]; inputs: { select_base?: string | null } }, withEntries = true): Pick<DoeStudyOut, "redrop_ok" | "redrop_blocked" | "redrop_entries"> {
+  const planOk = o.scenario === "same" || (o.scenario === "select" && o.inputs.select_base !== "mesh" && o.inputs.select_base !== "step");
+  if (!planOk) return { redrop_ok: false, redrop_blocked: REDROP_BLOCKED_PLAN, redrop_entries: withEntries ? o.entry_ids.map((id, i) => redropEntry(id, i, REDROP_BLOCKED_PLAN)) : null };
+  return { redrop_ok: true, redrop_blocked: null, redrop_entries: withEntries ? o.entry_ids.map((id, i) => redropEntry(id, i, null)) : null };
+}
+function redropEntry(id: string, i: number, planBlock: string | null): RedropEntryOut {
+  const blocked = planBlock ?? (i === 2 ? REDROP_ENTRY_ARCHIVED : null);
+  return { entry_id: id, label: `낙하 ${id.slice(-4)}`, case_id: `case-${id}`, case_title: `Case ${id.slice(-4)}`, is_base: i === 0, ok: blocked === null, blocked };
+}
+
 // ---------------------------------------------------------------- 상태
 interface Rec {
-  out: Omit<DoeStudyOut, "job" | "result_ready" | "can_delete" | "delete_blocked">;
+  out: Omit<DoeStudyOut, "job" | "result_ready" | "can_delete" | "delete_blocked" | "redrop_ok" | "redrop_blocked" | "redrop_entries">;
   jobIds: string[];
   /** 진행 중 미리보기의 행렬(끝나면 preview 로) */
   pending: DoeMatrixOut | null;
@@ -1648,10 +1662,10 @@ export class DoeMock {
     }
   }
 
-  private studyOut(r: Rec): DoeStudyOut {
+  private studyOut(r: Rec, withRedrop = true): DoeStudyOut {
     this.sync(r);
     const selection = r.out.scenario === "select" ? (r.sel ? { rev: r.sel.rev, sha256: r.sel.sha256, mesh_sha256: r.sel.derived.mesh_sha256 ?? null, n_beads: r.sel.input.beads.length, n_warnings: r.sel.derived.warnings?.length ?? 0, updated_by_name: r.sel.updated_by_name, updated_at: r.sel.updated_at } : null) : undefined;
-    return { ...r.out, ...this.ctx.deleteFlags("DOE", r.out.id), ...(selection !== undefined ? { selection } : {}), job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
+    return { ...r.out, ...this.ctx.deleteFlags("DOE", r.out.id), ...redropFlags(r.out, withRedrop), ...(selection !== undefined ? { selection } : {}), job: this.job(r.jobIds[r.jobIds.length - 1]), result_ready: r.out.phase === "DONE" };
   }
 
   // ---------------------------------------------------------------- v0.15.0 select
@@ -2262,7 +2276,7 @@ export class DoeMock {
     }
     if (method === "GET" && path === "/doe/studies") {
       const pid = query.get("project_id");
-      return ok(this.recs.filter((x) => !pid || x.out.project_id === pid).map((x) => this.studyOut(x)).reverse());
+      return ok(this.recs.filter((x) => !pid || x.out.project_id === pid).map((x) => this.studyOut(x, false)).reverse());
     }
     if ((r = path.match(/^\/doe\/studies\/([^/]+)(\/.*)?$/))) {
       const rec = this.recs.find((x) => x.out.id === r![1]);
@@ -2372,6 +2386,17 @@ export class DoeMock {
       }
       if (method === "GET" && sub === "/download" && query.get("rel") === "post/load_transfer_diag.json" && rec.result && rec.out.inputs.load_transfer)
         return ok(makeLtDiag(rec.result, rec.out.entry_ids, rec.out.inputs.load_transfer, ltKind(rec.out)));
+      if ((r = sub.match(/^\/designs\/([^/]+)\/redrop$/)) && method === "GET") {
+        const did = decodeURIComponent(r[1]);
+        const fl = redropFlags(rec.out);
+        if (!fl.redrop_ok) return err(422, "REDROP_UNSUPPORTED", fl.redrop_blocked ?? "재낙하 입력을 만들 수 없습니다");
+        const eid = query.get("entry_id") ?? rec.out.entry_ids[0];
+        const ent = fl.redrop_entries?.find((x) => x.entry_id === eid);
+        if (!ent) return err(422, "REDROP_ENTRY_NOT_IN_STUDY", "이 스터디에 없는 엔트리입니다.");
+        if (!ent.ok) return err(409, "REDROP_CASE_NOT_READY", ent.blocked ?? "Case 가 준비되지 않았습니다.");
+        if (did === "d999") return err(409, "REDROP_DESIGN_NOT_READY", "이 안은 평가가 끝나지 않아 재낙하 입력을 만들 수 없습니다.");
+        return { status: 200, body: "PK mock redrop zip\n" };
+      }
       if (method === "GET" && (sub === "/download" || sub === "/bundle")) return rec.result ? { status: 200, body: sub === "/bundle" ? "PK mock zip\n" : "mock file\n" } : err(404, "NOT_READY", "결과가 아직 없습니다.");
       if (method === "GET" && sub === "/report") return rec.result ? { status: 200, body: "<html><body>mock DOE report</body></html>" } : err(404, "NOT_READY", "보고서가 아직 없습니다.");
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {

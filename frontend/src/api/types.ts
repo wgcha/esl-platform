@@ -2858,6 +2858,16 @@ export interface DoePreviewOut {
   /** v0.16.1 판정 규칙 판이 옛 미리보기(grid_manifest.rules 없음, §7.4) */
   rules_outdated?: boolean | null;
 }
+/** v0.22.0 REDROP(esl_redrop_bundle.md §1) — 재낙하 입력 받기 엔트리 1행 */
+export interface RedropEntryOut {
+  entry_id: string;
+  label: string;
+  case_id: string | null;
+  case_title: string | null;
+  is_base: boolean;
+  ok: boolean;
+  blocked: string | null;
+}
 export interface DoeStudyOut {
   id: string;
   project_id: string;
@@ -2934,6 +2944,12 @@ export interface DoeStudyOut {
   can_delete: boolean;
   /** 비종료 job·검증 낙하·SCX 제출이 있을 때 짧은 사유(없으면 null) */
   delete_blocked: string | null;
+  /** v0.22.0 REDROP: 계획 열·설정 기준 허용 여부 */
+  redrop_ok: boolean;
+  /** v0.22.0 REDROP: 불가 사유 한 줄(가능하면 null) */
+  redrop_blocked: string | null;
+  /** v0.22.0 REDROP: 엔트리별 판정 — 상세 응답만, 목록 응답은 null */
+  redrop_entries: RedropEntryOut[] | null;
 }
 export interface DoeBead {
   id: string;
