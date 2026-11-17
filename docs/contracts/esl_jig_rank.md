@@ -217,6 +217,7 @@ DOE_RUN
 | `design_response` | `design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None) -> {"rows": respond 행(u 없음), "stats": {"seconds", "n_solves", "backend"}}` = `respond(factor(…), …)` |
 | `hash_view` | `hash_view(jig_cfg: dict) -> dict` — 임계값 3개(`mac_min`·`umax_err_max`·`tie_rel_warn`) 뺀 사본(해시용, D-JIG-11) |
 
+- 구현 가산(Core 2026-11-17, 시그니처 불변·키만 추가): `select_regions` 반환 += `n_fill`(규칙상 보충 수)·`n_found`(필터 통과 접촉 영역 수 — jig.json `surf.n_found`)·`n_cells`(비어 있지 않은 패치 셀 수); 접촉 Region += `gap_mm`(법선 부호 자유 판정용 — `load_basis` 가 읽음); `Basis` += `n_nodes`; `fit_report` += `tie_rel`; 공개 보조 `nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes) -> {dist, tri, q}`(거리 계산 본체, 후보 없음 = inf·−1). `regions_from` 은 실제 결과 기준(1 ≤ n_c < min_regions 인데 패치 후보 소진으로 n_patch = 0 이면 `contact`, `fill_reason` 은 그대로 기록). `factor` 의 `solver_cfg` 키 = `drill_factor`·`backend`(+ 해 검사 키), 없으면 1e-4·auto.
 - 결정성: 같은 입력 → 비트 동일(정렬 키·동률 규칙 고정, BVLS, numpy 결정적 합 순서). 진단은 순수 dict(파일 쓰기는 stages).
 - 성능 예산: 베이스라인 = 분해 1 + solve (nb + K) 회 + 거리 계산 1회. 안 = 분해 **1 추가** + solve K 회(기존 3-2-1 해석과 별도 — R-JIG-3). 거리 계산 N_c = 30만·T = 200만에서 ≤ 60 s·추가 피크 ≤ 400 MB(V-JIG-8).
 - 참고 스킬: 대규모 최근접 구현은 `geom-proximity-scaling` 지침(청크·KD-tree·비트 동일)을 따른다.
@@ -337,6 +338,8 @@ DOE_RUN
 | V-JIG-13 | **deck 표면**: 쉘·SH3N·BRICK·TETRA10(여러 줄)·BRIC20·PENTA6 외곽 면 = `assem_full.solid_segments(EXT)` 와 같은 면 집합, 대상 파트 제외, 상자 밖 요소 제외(상자 경계 걸친 면 보존), `max_tris` 초과 = `JIG_SURF_TOO_LARGE`; 파서 가산 변경 후 `parse_rad`·`parse_rad_part` 결과 바이트 동일(기존 시험 + 골든 1건), `scan` 시간 증가 ≤ 5 % | `tests/doe/test_jig_surf.py` |
 | V-JIG-14 | **API·순위**: `rank(metric="jig")` = C_jig 키 순위·ESL별 비·pareto, C_jig null 안 = `n_failed["jig"]`, 행 `score_jig`·`umax_jig`·`C_jig{}`; 결과 응답 `jig`(DoeJigOut)·`metric_effective "jig"` 통과·옛 결과 jig null; openapi 갱신 | `tests/doe/test_rank_metric.py` · `backend/tests/test_doe_rank_metric_api.py` |
 | V-JIG-15 | **모드 무관 모듈**: `jig.py` AST 검사(esl.doe·파일 IO·`open(` 없음), 같은 배열 입력 → 어느 계획에서 불러도 비트 동일, `stages.py` 에 시나리오 이름으로 지그 분기 없음(정적 grep `jig` 주변) | `tests/doe/test_jig.py` |
+
+- V-JIG-4 구현 관찰(Core 2026-11-17, **결정 대기**): 목표에 막(면내) 자기평형 변형(#63 의 원인 — V-SM-3·11 꼴 국부 막 압축)이 있으면 맞춤이 면내 접선·체적력 상쇄 하중을 써서(막 강성 ≫ 굽힘 강성 → 면내 맞춤 하중이 가압 법선 하중보다 10²~10³배) `cancel_rel` ≈ 0.76 이 되어 `≤ 0.5` 를 원리적으로 못 맞춘다(ridge 1e-8~1e-2 무관). 시험 픽스처 = 중앙 가압(지그 응답) + 가압 영역 밖 국부 막 압축, 나머지 상한(반력·F_sum_abs 비 0.076·umax_jig 비 ≤ 1.96·score 변화 ≤ 재풀이의 1/5)은 통과, `cancel_rel` 단정만 `xfail(strict)`. 순수 막 압축 목표(V-SM-11 그대로)는 umax_jig 비도 56~615(면내 하중이 비드에서 굽힘으로 전환).
 
 ## 9. 리스크
 
