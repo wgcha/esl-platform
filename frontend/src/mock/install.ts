@@ -59,6 +59,8 @@ export function installMockFetch() {
   if (params.get("demoStepSel") === "1") server.doe.demoStepSel();
   // v0.21.0 형상 규칙 시연: ?demoShape=1 doe-30(① 부분 W·guard) · doe-31(④ 완화 직행·메시 품질 ⚠) · doe-32(③ 기준 메시 품질 미달 띠)
   if (params.get("demoShape") === "1") server.doe.demoShape();
+  // v0.23.0 지그 순위 시연: ?demoJig=1 doe-40(지그 ok) · doe-41(재현 미달) · doe-42(지그 불가 → 재풀이 C)
+  if (params.get("demoJig") === "1") server.doe.demoJig();
   if (params.get("demoPc") === "1") {
     server.p3.addToken("p-body", "KIM-PC (DESKTOP-7F3K2)", "REVOKED");
     server.p3.addToken("p-body", "KIM-NOTEBOOK (LT-0412)");
