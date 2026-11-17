@@ -3086,9 +3086,13 @@ export interface DoeRankRow {
   C_solve?: Record<string, number> | null;
   /** v0.21.0 ④ 메시 품질 미달 형상(걸린 형상만 — 새 스냅샷) */
   mq?: DoeRankMq | null;
+  /** v0.23.0 지그 값(esl_jig_rank.md §4 — 지그 블록이 있을 때만): 지그 C 비·umax(지그) 비(기준 d000 = 1)·ESL별 C_jig(N·mm) */
+  score_jig?: number | null;
+  umax_jig?: number | null;
+  C_jig?: Record<string, number> | null;
 }
 /** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
-export type DoeRankMetric = "lin" | "solve";
+export type DoeRankMetric = "lin" | "solve" | "jig";
 /** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
 export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS" | "MESH_QUALITY_RANK";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
@@ -3141,6 +3145,62 @@ export interface DoeFileOut {
   size?: number;
   downloadable?: boolean;
 }
+/** v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드 — schemas.py ↔ 이 파일, check:api) */
+export interface DoeJigThOut {
+  mac_min: number;
+  umax_err_max: number;
+  tie_rel_warn: number;
+  /** 정보 표시 임계(경고 없음) */
+  cancel_warn: number;
+  /** 일 효율 미달 임계 → JIG_LOAD_CANCEL */
+  work_eff_min: number;
+}
+export interface DoeJigEntryOut {
+  entry_id: string;
+  label: string;
+  /** 모드 포함 */
+  mac: number;
+  umax_err: number;
+  /** 모드 제외 맞춤(모드 0 = null) */
+  mac_nomodes: number | null;
+  umax_err_nomodes: number | null;
+  err_p95: number;
+  n_active: number;
+  /** N */
+  F_sum_abs: number;
+  /** 정보용 */
+  cancel_rel: number;
+  /** 일 효율 |Σf·u| / Σ‖f‖‖u‖ — JIG_LOAD_CANCEL 판정 값 */
+  work_eff: number;
+  /** 지그 노드 Kabsch 회전각(도) */
+  rot_deg: number;
+}
+export interface DoeJigOut {
+  status: "ok" | "poor" | "fallback" | "unsupported";
+  /** fallback·unsupported 사유 코드 1개(ok·poor = null) */
+  code: string | null;
+  region_source: "contact" | "mixed" | "patch" | null;
+  n_jig: number;
+  n_regions: number;
+  n_contact: number;
+  n_patch: number;
+  fit_mac_min: number | null;
+  fit_umax_err_max: number | null;
+  /** 모드 제외 맞춤 값(모드 0 = null) */
+  fit_mac_min_nomodes: number | null;
+  fit_umax_err_max_nomodes: number | null;
+  cancel_rel_max: number | null;
+  /** 엔트리 최솟값 — JIG_LOAD_CANCEL 판정 값 */
+  fit_work_eff_min: number | null;
+  tie_rel_max: number | null;
+  /** 실제 쓴 모드 수(끔·실패 = 0), 지그 구속 고유진동수 Hz, 3-2-1 기준 Hz, 비 hz_jig[0]/hz_321[0] */
+  n_modes: number;
+  hz_jig: number[];
+  hz_321: number[] | null;
+  hz_ratio: number | null;
+  th: DoeJigThOut;
+  entries: DoeJigEntryOut[];
+}
 export interface DoeResultOut {
   C_ref: number;
   baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null };
@@ -3185,6 +3245,8 @@ export interface DoeResultOut {
   cross_mesh?: boolean | null;
   /** v0.20.0 d000 재풀이 C 기준(max_i C_solve) */
   C_ref_solve?: number | null;
+  /** v0.23.0 지그 순위 진단(없는 스냅샷·옛 스터디 = null/키 없음 = 화면 그대로) */
+  jig?: DoeJigOut | null;
   /** v0.20.0 하중 전달 요약(LT-13 — legacy = 키 없음) */
   load_transfer?: DoeLoadTransferSummary | null;
   /** v0.20.0 3D 같은 ESL: entry_id → 기준 view3d id(`d000_e<kk>`), did → 그 형상 최악 ESL entry_id. result.view3d 목록에는 안 들어감(LT-9) */

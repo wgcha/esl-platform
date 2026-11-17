@@ -11,7 +11,7 @@ import type { DoeParam, DoeResultOut, DoeShapeRules, EntryOut } from "../api/typ
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { SM_CODE_TEXT, isCrossMesh, isLinResult, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
+import { JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 /** v0.21.0 메시 품질 미달 행(mq 키 또는 warn 코드 — 새 스냅샷 ④ 만) */
@@ -48,15 +48,24 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   /** SM-11: 새 스냅샷의 주 열 = result.rank.metric_effective(기본 solve = 재풀이 C). 1차 지표 값이 있으면 보조 열로(값 유무만 봄) */
   const solveNew = !lin && (result.rank?.metric_effective ?? result.metric_effective) === "solve";
   const auxLin = solveNew && result.ranking.some((r) => r.score_lin != null);
+  /** v0.23.0 지그 순위(metric_effective jig): 주 열 = 지그 C. 보조 열 = 재풀이 C 비·불평형·umax(지그) 비(값 있는 것만). jig 가 아니면서 score_jig 가 있으면 "지그 C 비" 1개 */
+  const jigOn = !lin && isJigResult(result);
+  const jig = result.jig ?? null;
+  const has = (k: "score_solve" | "imbalance_max" | "umax_jig" | "score_jig") => result.ranking.some((r) => r[k] != null);
+  const jigAux = jigOn
+    ? ([has("score_solve") && "solve", has("imbalance_max") && "imb", has("umax_jig") && "umax"].filter(Boolean) as ("solve" | "imb" | "umax")[])
+    : !lin && has("score_jig") ? (["jig"] as const) : [];
   const um = (r: { umax: number; umax_def?: number | null }) => (solveNew && r.umax_def != null ? r.umax_def : r.umax);
   const [aux, setAux] = useState(false);
+  const jigAuxOn = (k: "solve" | "imb" | "umax" | "jig") => aux && (jigAux as readonly string[]).includes(k);
   const th = rankThresholds(result, rankCfg);
   const fade = (r: { imbalance_max?: number | null }) => (lin || auxLin) && th.imbalanceWarn != null && (r.imbalance_max ?? 0) > th.imbalanceWarn;
+  const jigImbWarn = (r: { imbalance_max?: number | null }) => th.imbalanceWarn != null && (r.imbalance_max ?? 0) > th.imbalanceWarn;
   const rhoOut = (r: { rho_min?: number | null; rho_max?: number | null }) =>
     th.linValid != null && r.rho_min != null && (Math.abs(r.rho_min - 1) > th.linValid || Math.abs((r.rho_max ?? 1) - 1) > th.linValid);
   /** ④ 형상 비교(이름 열) */
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
-  const cols = 14 + varNames.length + (named ? 1 : 0) + (lin ? (aux ? 3 : -2) : auxLin && aux ? 3 : 0);
+  const cols = 14 + varNames.length + (named ? 1 : 0) + (lin ? (aux ? 3 : -2) : auxLin && aux ? 3 : 0) + (aux ? jigAux.length : 0);
   const b = result.baseline;
   if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>순위가 없습니다</Empty>;
   const rows = sortRanking(result.ranking, sortKey);
@@ -97,9 +106,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       );
     })()}
     <div className="doe-metric-bar small">
-      <span className="muted">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : cross ? "score(재풀이 C — 다른 메시 비교)" : solveNew ? "score(재풀이 C)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
-      {(lin || auxLin) && (
-        <label className="check" title={lin ? "재풀이 C 비·불평형·ρ·강체 제거 umax·εmax — 순위에 쓰지 않는 값" : "1차 강성 지표 비·불평형·ρ — 순위에 쓰지 않는 값"}>
+      <span className="muted">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : jigOn ? "score(지그 C)" : cross ? "score(재풀이 C — 다른 메시 비교)" : solveNew ? "score(재풀이 C)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</span>
+      {(lin || auxLin || jigAux.length > 0) && (
+        <label className="check" title={jigAux.length ? "재풀이 C 비·불평형·umax(지그) 비 등 순위에 쓰지 않는 값" : lin ? "재풀이 C 비·불평형·ρ·강체 제거 umax·εmax — 순위에 쓰지 않는 값" : "1차 강성 지표 비·불평형·ρ — 순위에 쓰지 않는 값"}>
           <input type="checkbox" data-testid="rank-aux-toggle" aria-label="보조 열 보기" checked={aux} onChange={(e) => setAux(e.target.checked)} /> 보조 열 보기
         </label>
       )}
@@ -107,7 +116,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
         <summary aria-label="지표 정의">ⓘ 지표 정의</summary>
         <ul data-testid="metric-defs">
           <li>
-            {lin
+            {jigOn
+              ? `score: max(C_jig 안) / max(C_jig 기준) — 기준 낙하 변형을 재현하도록 맞춘 몇 곳의 가압 하중${jig ? `(영역 ${jig.n_regions}개${jig.region_source ? `, ${JIG_SOURCE_NAME[jig.region_source]}` : ""})` : ""}을 같은 지그·같은 하중으로 안마다 재풀이한 컴플라이언스. 작을수록 좋음`
+              : lin
               ? `score: max(C_안) / max(C_베이스라인) — C = 재풀이 없는 1차 강성 지표(${result.lin_form === "taylor" ? "C_ref(2−ρ)" : "C_ref/ρ"}, ρ = 변형에너지 비). 작을수록 좋음`
               : cross
                 ? "score: max(C_안) / max(C_기준) — C = 형상마다 work 하중을 옮겨 재풀이한 컴플라이언스(다른 메시 비교 — 1차 강성 지표 미적용, 정밀도 낮음)"
@@ -127,6 +138,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
         </ul>
       </details>
     </div>
+    {jig && <JigLine jig={jig} />}
     <div className="table-wrap scroll doe-rank-wrap">
       <table className="table compact doe-rank" aria-label="순위표">
         <thead>
@@ -134,12 +146,16 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <th className="num">순위</th>
             <th>안</th>
             {named && <th className="doe-name-col">이름</th>}
-            {sortTh("score", lin ? "강성 지표" : solveNew ? "재풀이 C" : "score", lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : solveNew ? "max_i C / C_ref — 안마다 재풀이한 컴플라이언스(기본), 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
+            {sortTh("score", lin ? "강성 지표" : jigOn ? "지그 C" : solveNew ? "재풀이 C" : "score", jigOn ? "max_i C_jig / C_ref — 체결부(tie) 고정 + 맞춤 가압 하중으로 안마다 재풀이(하중 제어), 작을수록 좋음" : lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : solveNew ? "max_i C / C_ref — 안마다 재풀이한 컴플라이언스(기본), 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
             {!lin && <th className="num" title={solveNew ? "최악 ESL 기준, 강체 6자유도 제거" : "최악 ESL 기준(전 ESL 최대는 툴팁)"}>umax</th>}
             {!lin && <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>}
             {lin && aux && <th className="num" title="안마다 재풀이한 C 로 같은 식(최악 ESL 비) — 보조">재풀이 C 비</th>}
+            {jigAuxOn("solve") && <th className="num" title="안마다 재풀이한 C(3-2-1 지지·고정 하중) 비 — 순위에 쓰지 않음">재풀이 C 비</th>}
+            {jigAuxOn("imb") && <th className="num" title="max_i |F − K·u| / Σ|F| — 재풀이 C 가 무른 모드에 오염된 정도(순위에 쓰지 않음)">불평형</th>}
+            {jigAuxOn("umax") && <th className="num" title="max_i umax_jig,안 / umax_jig,기준 — 지그 재풀이 최대 변위 비">umax(지그) 비</th>}
+            {jigAuxOn("jig") && <th className="num" title="지그 C 로 같은 식(최악 ESL 비) — 순위에 쓰지 않음">지그 C 비</th>}
             {auxLin && aux && <th className="num" title="재풀이 없는 1차 강성 지표로 같은 식(최악 ESL 비) — 보조">강성 지표 비</th>}
             {(lin || auxLin) && aux && <th className="num" title="max_i |F − K·u| / Σ|F| — 클수록 재풀이 값이 무른 모드에 오염">불평형</th>}
             {(lin || auxLin) && aux && <th className="num" title="변형에너지 비 ρ 범위(1 에서 멀수록 1차 근사 밖)">ρ</th>}
@@ -178,6 +194,10 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             {(lin || auxLin) && aux && <td className="num muted">–</td>}
             {lin && aux && <td className="num mono muted">{b.umax_def != null ? `${b.umax_def.toFixed(2)} mm` : "–"}</td>}
             {lin && aux && <td className="num mono muted">{(b.epsmax * 100).toFixed(2)} %</td>}
+            {jigAuxOn("solve") && <td className="num mono">1.00</td>}
+            {jigAuxOn("imb") && <td className="num muted">–</td>}
+            {jigAuxOn("umax") && <td className="num mono">1.00</td>}
+            {jigAuxOn("jig") && <td className="num mono">1.00</td>}
             <td />
             <td className="num muted">기준</td>
             <td />
@@ -246,6 +266,15 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 )}
                 {lin && aux && <td className="num mono muted" title="강체 6자유도 제거 · 해석값(순위와 무관)">{r.umax_def != null ? `${r.umax_def.toFixed(2)} mm` : "–"}</td>}
                 {lin && aux && <td className="num mono muted">{(r.epsmax * 100).toFixed(2)} %</td>}
+                {jigAuxOn("solve") && <td className="num mono" data-testid={`aux-solve-${r.id}`}>{r.score_solve != null ? r.score_solve.toFixed(2) : "–"}</td>}
+                {jigAuxOn("imb") && (
+                  <td className={`num mono ${jigImbWarn(r) ? "warn-text" : ""}`} data-testid={`aux-imb-${r.id}`} title={jigImbWarn(r) ? SM_CODE_TEXT.SM_IMBALANCE : undefined}>
+                    {r.imbalance_max != null ? `${(r.imbalance_max * 100).toFixed(1)} %` : "–"}
+                    {jigImbWarn(r) ? " ⚠" : ""}
+                  </td>
+                )}
+                {jigAuxOn("umax") && <td className="num mono" data-testid={`aux-umaxjig-${r.id}`}>{r.umax_jig != null ? r.umax_jig.toFixed(2) : "–"}</td>}
+                {jigAuxOn("jig") && <td className="num mono" data-testid={`aux-jig-${r.id}`}>{r.score_jig != null ? r.score_jig.toFixed(2) : "–"}</td>}
                 <td data-testid={`allimp-${r.id}`}>
                   {r.all_improved == null ? (
                     <span className="muted">–</span>
@@ -323,7 +352,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
               )}
               <td className="num muted">–</td>
               <td className="num muted">–</td>
-              {Array.from({ length: lin ? (aux ? 11 : 6) : 8 }, (_, k) => <td key={k} />)}
+              {Array.from({ length: lin ? (aux ? 11 : 6) : 8 + (aux ? jigAux.length : 0) }, (_, k) => <td key={k} />)}
               {varNames.map((n) => (
                 <td key={n} className="num mono doe-vcol muted">
                   {x.values?.[n] ?? "–"}
@@ -341,5 +370,34 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       </table>
     </div>
     </>
+  );
+}
+
+/** v0.23.0 기준 재현 한 줄(esl_jig_rank.md §7) — 순위표 바로 위 muted 1줄. 엔트리별 값·임계값은 title 툴팁(줄 늘리지 않음) */
+function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
+  const pct = (v: number | null) => (v == null ? "–" : `${(v * 100).toFixed(1)} %`);
+  const tip = (jig.entries ?? [])
+    .map((e) => `${e.label || e.entry_id}: MAC ${e.mac.toFixed(3)}${e.mac_nomodes != null ? ` (모드 제외 ${e.mac_nomodes.toFixed(3)})` : ""} · umax 오차 ${pct(e.umax_err)} · P95 ${pct(e.err_p95)} · 활성 영역 ${e.n_active} · ΣF ${e.F_sum_abs.toPrecision(3)} N · 일 효율 ${e.work_eff.toFixed(2)} · 상쇄비 ${e.cancel_rel.toFixed(2)}${e.cancel_rel > jig.th.cancel_warn ? " ↑" : ""} · 회전 ${e.rot_deg.toFixed(1)}°`)
+    .join("\n");
+  if (jig.status === "fallback" || jig.status === "unsupported") {
+    const why = jig.code ? JIG_CODE_TEXT[jig.code] ?? jig.code : null;
+    return (
+      <div className={`small ${jig.status === "fallback" ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={jig.code ?? undefined}>
+        {jig.status === "fallback" ? "⚠ " : ""}지그 순위 불가{why ? ` — ${why}` : ""}, 재풀이 C 로 순위
+      </div>
+    );
+  }
+  const poor = jig.status === "poor";
+  const cancel = jig.fit_work_eff_min != null && jig.fit_work_eff_min < jig.th.work_eff_min;
+  const modes = jig.n_modes > 0;
+  const hz = jig.hz_jig?.length ? `지그 1차 ${jig.hz_jig[0].toPrecision(3)} Hz${jig.hz_ratio != null ? ` (3-2-1 대비 ×${jig.hz_ratio.toFixed(2)})` : ""}` : "";
+  const tie = jig.tie_rel_max != null && jig.tie_rel_max > jig.th.tie_rel_warn;
+  const extra = [poor ? jigPoorText(jig.th) : "", jig.region_source && jig.region_source !== "contact" ? JIG_CODE_TEXT.JIG_REGION_FALLBACK : "", tie ? JIG_CODE_TEXT.JIG_TIE_RELATIVE : "", cancel ? `${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})` : "", hz].filter(Boolean);
+  return (
+    <div className={`small ${poor ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={[...extra, tip].filter(Boolean).join("\n") || undefined}>
+      {poor ? "⚠ " : ""}기준 재현(지그): MAC(모드 포함) ≥ {jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–"}{modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ {pct(jig.fit_umax_err_max)} · 하중 영역 {jig.n_regions}개(접촉 {jig.n_contact} · 패치 {jig.n_patch}) · 지그 노드 {jig.n_jig}
+      {tie ? " · ⚠ 체결부 상대 변형" : ""}
+      {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})`}> ⚠</span>}
+    </div>
   );
 }
