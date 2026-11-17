@@ -22,7 +22,7 @@ from esl.errors import EslError
 
 LIN_FORM_DEFAULT = "ritz"            # Q-SM-1 확정: ritz C_ref/ρ (taylor 는 설정 rank.lin_form 으로 선택)
 LIN_FORMS = ("taylor", "ritz")
-METRICS = ("lin", "solve")
+METRICS = ("lin", "solve", "jig")
 LIN_VALID_DEFAULT = 0.3
 IMBALANCE_WARN_DEFAULT = 0.02
 
@@ -213,9 +213,11 @@ def ts_err(F_A, T, u_t6, u_ref6, C_ref: float) -> float:
 
 # ---------------------------------------------------------------- 순위 값 (§2(4))
 def metric_key(metric: str, lin_form: str = LIN_FORM_DEFAULT) -> str:
-    """per_esl 행에서 순위 값으로 쓸 키: solve → C, lin → C_ritz | C_lin."""
+    """per_esl 행에서 순위 값으로 쓸 키: solve → C, lin → C_ritz | C_lin, jig → C_jig(esl_jig_rank.md)."""
     if metric == "solve":
         return "C"
+    if metric == "jig":
+        return "C_jig"
     if metric == "lin":
         if lin_form not in LIN_FORMS:
             raise EslError("CONFIG_INVALID", f"rank.lin_form {lin_form} — {list(LIN_FORMS)}")

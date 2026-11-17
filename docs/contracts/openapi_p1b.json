@@ -2840,6 +2840,189 @@
         "title": "DoeFileOut",
         "type": "object"
       },
+      "DoeJigEntryOut": {
+        "properties": {
+          "F_sum_abs": {
+            "title": "F Sum Abs",
+            "type": "number"
+          },
+          "cancel_rel": {
+            "title": "Cancel Rel",
+            "type": "number"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "err_p95": {
+            "title": "Err P95",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "mac": {
+            "title": "Mac",
+            "type": "number"
+          },
+          "n_active": {
+            "title": "N Active",
+            "type": "integer"
+          },
+          "umax_err": {
+            "title": "Umax Err",
+            "type": "number"
+          }
+        },
+        "required": [
+          "entry_id",
+          "label",
+          "mac",
+          "umax_err",
+          "err_p95",
+          "n_active",
+          "F_sum_abs",
+          "cancel_rel"
+        ],
+        "title": "DoeJigEntryOut",
+        "type": "object"
+      },
+      "DoeJigOut": {
+        "description": "v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드명 — types.ts DoeJigOut 와 check:api 대조).",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DoeJigEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "fit_mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Mac Min"
+          },
+          "fit_umax_err_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Umax Err Max"
+          },
+          "n_contact": {
+            "title": "N Contact",
+            "type": "integer"
+          },
+          "n_jig": {
+            "title": "N Jig",
+            "type": "integer"
+          },
+          "n_patch": {
+            "title": "N Patch",
+            "type": "integer"
+          },
+          "n_regions": {
+            "title": "N Regions",
+            "type": "integer"
+          },
+          "region_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "contact",
+                  "mixed",
+                  "patch"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Source"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "poor",
+              "fallback",
+              "unsupported"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "th": {
+            "$ref": "#/components/schemas/DoeJigThOut"
+          },
+          "tie_rel_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Rel Max"
+          }
+        },
+        "required": [
+          "status",
+          "n_jig",
+          "n_regions",
+          "n_contact",
+          "n_patch",
+          "th",
+          "entries"
+        ],
+        "title": "DoeJigOut",
+        "type": "object"
+      },
+      "DoeJigThOut": {
+        "properties": {
+          "mac_min": {
+            "title": "Mac Min",
+            "type": "number"
+          },
+          "tie_rel_warn": {
+            "title": "Tie Rel Warn",
+            "type": "number"
+          },
+          "umax_err_max": {
+            "title": "Umax Err Max",
+            "type": "number"
+          }
+        },
+        "required": [
+          "mac_min",
+          "umax_err_max",
+          "tie_rel_warn"
+        ],
+        "title": "DoeJigThOut",
+        "type": "object"
+      },
       "DoeMatrixIn": {
         "additionalProperties": false,
         "properties": {
@@ -3226,6 +3409,16 @@
             "title": "Excluded",
             "type": "array"
           },
+          "jig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeJigOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lin_form": {
             "anyOf": [
               {
@@ -3258,7 +3451,8 @@
               {
                 "enum": [
                   "lin",
-                  "solve"
+                  "solve",
+                  "jig"
                 ],
                 "type": "string"
               },
@@ -3273,7 +3467,8 @@
               {
                 "enum": [
                   "lin",
-                  "solve"
+                  "solve",
+                  "jig"
                 ],
                 "type": "string"
               },

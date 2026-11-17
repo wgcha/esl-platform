@@ -511,6 +511,46 @@ class BeadDoeView3dCfg(_M):
     top_k: int = Field(default=3, ge=0, le=50)
 
 
+_JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
+
+
+class BeadDoeRankJigCfg(_M):
+    """v0.23.0 지그 순위(esl.doe.DEFAULTS["rank"]["jig"] 거울, 계약 esl_jig_rank.md §6)."""
+
+    enabled: bool = True
+    fix_kinds: list[str] = Field(default_factory=lambda: ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], min_length=1,
+                                 max_length=7)
+    contact_gap_mm: float = Field(default=2.0, gt=0)
+    knn: int = Field(default=8, ge=1, le=64)
+    chunk_nodes: int = Field(default=65536, ge=1024, le=2 ** 20)
+    max_surf_tris: int = Field(default=20000000, ge=1)
+    max_regions: int = Field(default=8, ge=1, le=32)
+    min_regions: int = Field(default=2, ge=1)
+    min_region_nodes: int = Field(default=3, ge=1)
+    min_region_area_mm2: float = Field(default=25.0, ge=0)
+    patch_count: int = Field(default=6, ge=1, le=32)
+    body_force: bool = True
+    ridge: float = Field(default=1e-8, ge=0)
+    active_tol: float = Field(default=1e-3, gt=0, lt=1)
+    mac_min: float = Field(default=0.9, gt=0, le=1)
+    umax_err_max: float = Field(default=0.2, gt=0)
+    tie_rel_warn: float = Field(default=0.1, gt=0)
+
+    @field_validator("fix_kinds")
+    @classmethod
+    def _kinds(cls, v: list[str]) -> list[str]:
+        bad = [k for k in v if k not in _JIG_FIXED_KINDS]
+        if bad or len(set(v)) != len(v):
+            raise ValueError(f"fix_kinds 는 {list(_JIG_FIXED_KINDS)} 중 중복 없이: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _regions(self):
+        if self.min_regions > self.max_regions:
+            raise ValueError("min_regions ≤ max_regions")
+        return self
+
+
 class BeadDoeRankCfg(_M):
     """v0.10.0 ESL별 개선 지표(esl.doe.DEFAULTS["rank"] 거울): ratio_tol = '변화 없음' 허용치(③ 은 max(값, noise_floor)),
     per_esl_inline_max = 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수, 넘으면 GET …/results/per-esl)."""
@@ -520,10 +560,18 @@ class BeadDoeRankCfg(_M):
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 지표 metric lin(재풀이 없는 1차 섭동 C_lin, 새 스터디 기본)|solve(재풀이 C — 옛 동작),
     # lin_form ritz(C_ref/ρ — 사용자 확정 기본)|taylor(C_ref(2−ρ)), lin_valid = |ρ−1| 초과 → SM_LIN_RANGE, imbalance_warn = 불평형
     # imbalance_rel 초과 → SM_IMBALANCE. 새 스냅샷에만 doe.rank 로 고정(옛 스냅샷 = 키 없음 = solve)
-    metric: Literal["lin", "solve"] = "solve"            # 기본 재풀이 C(D-0.20.0-SM-11), lin = 선택(1차 지표 순위)
+    # v0.23.0: metric 기본 jig(지그 순위 — 새 스터디, 옛 스냅샷 = 키 없음 = solve), rank.jig = 지그 설정(§6)
+    metric: Literal["lin", "solve", "jig"] = "jig"
     lin_form: Literal["ritz", "taylor"] = "ritz"
     lin_valid: float = Field(default=0.3, gt=0)
     imbalance_warn: float = Field(default=0.02, gt=0, le=1)
+    jig: BeadDoeRankJigCfg = Field(default_factory=BeadDoeRankJigCfg)
+
+    @model_validator(mode="after")
+    def _jig_metric(self):
+        if self.metric == "jig" and not self.jig.enabled:
+            raise ValueError("rank.metric jig 는 rank.jig.enabled 가 참이어야 함(CONFIG_INVALID)")
+        return self
 
 
 class BeadDoeLimitsCfg(_M):

@@ -454,6 +454,7 @@ class _Deck:
         self.path_map = dict(path_map) if path_map else None
         self.node_segs: list[_Seg] = []
         self.shell_segs: list[_Seg] = []
+        self.elem_segs: list[_Seg] = []        # v0.23.0 쉘 아닌 요소 블록(cnt > 0)의 위치 — 지그 표면 읽기(esl.doe.jig_surf)
         self.inishe_segs: list[_Seg] = []
         self.state_files: list[dict] = []
         self.main_begin: list[str] | None = None
@@ -541,6 +542,7 @@ class _Deck:
                                 state["kinds_set"].add("geometry")
                         elif cnt:
                             self.other_elem_parts[cur.hid] = self.other_elem_parts.get(cur.hid, 0) + cnt
+                            self.elem_segs.append(seg)
                     else:
                         back, seg.nlines = self._consume(readline)
                         if cur.kw == "NODE":
@@ -753,6 +755,69 @@ class _Deck:
         xyz = np.empty((n, 3), dtype=np.float64)
         xyz[:, 0], xyz[:, 1], xyz[:, 2] = X, Y, Z
         return xyz, np.array(U, dtype=np.int64), np.frombuffer(bytes(seen), dtype=np.uint8).astype(bool)
+
+    def load_nodes_box(self, lo, hi) -> tuple[np.ndarray, np.ndarray]:
+        """상자 ``lo ≤ x ≤ hi`` 안 노드만 → (node_id (n,) int64 오름차순, xyz (n,3)). 모든 /NODE 행을 ``load_nodes`` 와 같은 규칙
+        (중복 ID = 마지막 정의 우선, 단 상태 파일 정의가 rad 정의보다 항상 우선)으로 읽되 상자 안만 보관한다 — 나중 정의가 상자
+        밖이면 앞 정의를 버린다. ``max_ids``·``node_state`` 등 deck 상태는 바꾸지 않는다(가산 메서드, parse_rad 결과 불변)."""
+        lo = np.asarray(lo, dtype=np.float64).reshape(3)
+        hi = np.asarray(hi, dtype=np.float64).reshape(3)
+        lx, ly, lz = (float(v) for v in lo)
+        hx, hy, hz = (float(v) for v in hi)
+        kept: dict[int, tuple] = {}          # nid → (x, y, z, 상태 정의?)
+        st_out: set[int] = set()             # 상자 밖 상태 정의 ID(뒤의 rad 정의가 이기지 못함)
+        files: dict[str, Any] = {}
+        try:
+            for seg in self.node_segs:
+                fh = files.get(seg.file) or files.setdefault(seg.file, open(seg.file, "rb"))
+                st = seg.state
+                fh.seek(seg.off)
+                readline = fh.readline
+                for i in range(seg.nlines):
+                    raw = readline()
+                    if not raw:
+                        break
+                    if raw[:1] == _B_HASH:
+                        continue
+                    lineno = seg.line0 + i
+                    try:
+                        nid = int(raw[0:10])
+                    except ValueError:
+                        line = _decode(raw)
+                        if not line.strip():
+                            continue
+                        try:
+                            nid = _i(line[0:10])
+                            if nid is None:
+                                raise ValueError("노드 ID 누락")
+                        except ValueError as exc:
+                            raise _err(f"/NODE 행 해석 실패 ({seg.file}:{lineno}): {exc}") from None
+                    old = kept.get(nid)
+                    if not st and (nid in st_out or (old is not None and old[3])):
+                        continue                    # 이미 상태 정의 → rad 정의 버림
+                    line = self._line(raw)
+                    try:
+                        try:
+                            x, y, z = (float(line[10:30]) or 0.0), (float(line[30:50]) or 0.0), \
+                                (float(line[50:70]) or 0.0)
+                        except ValueError:
+                            x, y, z = (_f(line[10:30]) or 0.0), (_f(line[30:50]) or 0.0), (_f(line[50:70]) or 0.0)
+                    except ValueError as exc:
+                        raise _err(f"/NODE 행 해석 실패 ({seg.file}:{lineno}): {exc}") from None
+                    if lx <= x <= hx and ly <= y <= hy and lz <= z <= hz:
+                        kept[nid] = (x, y, z, bool(st))
+                        st_out.discard(nid)
+                    else:
+                        if old is not None:
+                            del kept[nid]
+                        if st:
+                            st_out.add(nid)
+        finally:
+            for fh in files.values():
+                fh.close()
+        ids = np.array(sorted(kept), dtype=np.int64)
+        xyz = np.array([kept[i][:3] for i in ids.tolist()], dtype=np.float64).reshape(-1, 3)
+        return ids, xyz
 
     # ------------------------------------------------------------ include·카드
     def _include(self, spec: str, src: str, depth: int, lineno: int) -> None:

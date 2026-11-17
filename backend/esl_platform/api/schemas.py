@@ -1876,6 +1876,40 @@ class DoeMatrixOut(_Out):
     warnings: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DoeJigThOut(_Out):
+    mac_min: float
+    umax_err_max: float
+    tie_rel_warn: float
+
+
+class DoeJigEntryOut(_Out):
+    entry_id: str
+    label: str
+    mac: float
+    umax_err: float
+    err_p95: float
+    n_active: int
+    F_sum_abs: float          # N
+    cancel_rel: float
+
+
+class DoeJigOut(_Out):
+    """v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드명 — types.ts DoeJigOut 와 check:api 대조)."""
+
+    status: Literal["ok", "poor", "fallback", "unsupported"]
+    code: str | None = None                                 # fallback·unsupported 사유 코드 1개(ok·poor = null)
+    region_source: Literal["contact", "mixed", "patch"] | None = None
+    n_jig: int
+    n_regions: int
+    n_contact: int
+    n_patch: int
+    fit_mac_min: float | None = None                        # 엔트리 최솟값
+    fit_umax_err_max: float | None = None                   # 엔트리 최댓값
+    tie_rel_max: float | None = None
+    th: DoeJigThOut
+    entries: list[DoeJigEntryOut]
+
+
 class DoeResultOut(_Out):
     scenario: DoeScenarioLit | None = None          # v0.14.0
     reference_source: Literal["step", "case"] | None = None    # ④ 만
@@ -1908,15 +1942,18 @@ class DoeResultOut(_Out):
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric(lin|solve)·lin_form(ritz|taylor) — 옛 스터디 = null(solve).
     # ranking 행(dict) += score_solve·imbalance_max·rho_min·rho_max·umax_def, per_esl 행 += C_lin·C_ritz·rho·imbalance_rel·umax_def·ts_err?
     # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
-    metric: Literal["lin", "solve"] | None = None
+    metric: Literal["lin", "solve", "jig"] | None = None
     lin_form: Literal["ritz", "taylor"] | None = None
     # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
     rank: dict[str, Any] | None = None
     # 결정 A(2026-11-13): 순위에 실제로 쓴 지표(lin = 같은 메시 1차 강성 지표 | solve) — 다른 메시 비교(옛 ③·④)는 solve·cross_mesh true
     # (경고 SM_CROSS_MESH, 정밀도 낮음). rank{…} 에도 같은 두 키. 옛 스터디 = null
-    metric_effective: Literal["lin", "solve"] | None = None
+    metric_effective: Literal["lin", "solve", "jig"] | None = None
     cross_mesh: bool | None = None
     C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
+    # v0.23.0 지그 순위(esl_jig_rank.md §4): 지그 블록(옛 스터디·지그 블록 없는 스냅샷 = null). ranking 행(dict) += score_jig·umax_jig·C_jig{},
+    # per_esl 행 += C_jig·umax_jig, n_failed.jig = 지그 재풀이 실패 수 — 코어가 쓴 대로 통과
+    jig: "DoeJigOut | None" = None
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None
 

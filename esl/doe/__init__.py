@@ -80,8 +80,13 @@ DEFAULTS: dict = {
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
     # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
     # metric 기본 solve(재풀이 C — 2026-11-13 사용자 결정 D-0.20.0-SM-11), lin(ritz|taylor) 은 선택·보조 열
-    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "solve", "lin_form": "ritz", "lin_valid": 0.3,
-             "imbalance_warn": 0.02},
+    # v0.23.0 지그 순위(esl_jig_rank.md §6): metric 기본 jig(새 스터디), rank.jig = 새 스냅샷 doe.rank.jig 로 고정되는 지그 설정
+    "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
+             "imbalance_warn": 0.02,
+             "jig": {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], "contact_gap_mm": 2.0,
+                     "knn": 8, "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2,
+                     "min_region_nodes": 3, "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True,
+                     "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1}},
     "settings_cache_s": 300,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
     # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).

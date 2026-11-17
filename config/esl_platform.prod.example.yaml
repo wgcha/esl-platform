@@ -181,10 +181,28 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
     ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
     per_esl_inline_max: 2000          # 순위 행 per_esl 상한(안 수 × ESL 수)
-    metric: solve                     # solve(재풀이 C, 새 스터디 기본 — SM-11) | lin(재풀이 없는 1차 지표 순위, lin_form 식 — 선택). 옛 스터디(스냅샷에 없음)는 solve
+    metric: jig                       # jig(지그 순위 — v0.23.0 새 스터디 기본, 계약 esl_jig_rank.md) | solve(재풀이 C) | lin(재풀이 없는 1차 지표). 옛 스터디(스냅샷에 없음)는 solve
     lin_form: ritz                    # ritz(C_ref/ρ, 사용자 확정 기본) | taylor(C_ref(2−ρ))
     lin_valid: 0.3                    # |ρ−1| 초과 → 경고 SM_LIN_RANGE(1차 근사 밖)
     imbalance_warn: 0.02              # 불평형 imbalance_rel 초과 → 경고 SM_IMBALANCE(보조 값 흐림)
+    jig:                              # v0.23.0 지그 순위 — 새 스냅샷 doe.rank.jig 로 고정(metric 과 무관하게 항상 계산)
+      enabled: true
+      fix_kinds: [INTER_TYPE2_SECONDARY, INTER_TYPE2_MAIN]   # 지그 노드 = 이 종류 체결 노드(FIXED_KINDS 이름)
+      contact_gap_mm: 2.0             # 다른 부품 표면까지 거리 ≤ 이 값 = 가압 후보
+      knn: 8                          # 거리 후보 삼각형 수
+      chunk_nodes: 65536              # 거리 계산 노드 청크(메모리 상한)
+      max_surf_tris: 20000000         # 상자 안 표면 삼각형 상한(넘으면 패치)
+      max_regions: 8
+      min_regions: 2                  # 접촉 영역이 이보다 적으면 패치로 부족분 보충
+      min_region_nodes: 3
+      min_region_area_mm2: 25.0
+      patch_count: 6
+      body_force: true                # 체적력 3성분 기저
+      ridge: 1.0e-8                   # 정규화 λ(열 정규화 후)
+      active_tol: 1.0e-3              # 활성 영역 판정(최대 합력 대비)
+      mac_min: 0.9                    # 미달 → JIG_FIT_POOR (해시 밖)
+      umax_err_max: 0.2               # 초과 → JIG_FIT_POOR (해시 밖)
+      tie_rel_warn: 0.1               # 초과 → JIG_TIE_RELATIVE (해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true

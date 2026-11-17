@@ -105,7 +105,7 @@ def test_plan_sm_columns():
         assert ei.value.code == "CONFIG_INVALID"
     finally:
         tp.PLANS["bmesh_once"] = saved
-    assert DEFAULTS["rank"]["metric"] == "solve" and DEFAULTS["rank"]["lin_form"] == "ritz"   # SM-11 기본 재풀이 C
+    assert DEFAULTS["rank"]["metric"] == "jig" and DEFAULTS["rank"]["lin_form"] == "ritz"    # v0.23.0 새 스터디 기본 지그(옛 = 스냅샷 값)
     assert DEFAULTS["rank"]["lin_valid"] == 0.3 and DEFAULTS["rank"]["imbalance_warn"] == 0.02
     w = DEFAULTS["load_transfer"]["work"]
     assert (w["fail_dist_mm"], w["fail_frac"]) == (20.0, 0.2)
@@ -123,7 +123,7 @@ def test_shape_plan_columns_and_resolve():
     for pid, row in want.items():
         assert tuple(tp.PLANS[pid][k] for k in ("bs_wpart", "bs_guard", "bs_route", "bs_mq")) == row, pid
     assert tp.plan_for("select", "case")["bs_guard"] == "basis" and tp.plan_for("compare")["bs_route"] == "shapes"
-    assert tp.PLAN_COLS[-4:] == ("bs_wpart", "bs_guard", "bs_route", "bs_mq")
+    assert tp.PLAN_COLS[-7:-3] == ("bs_wpart", "bs_guard", "bs_route", "bs_mq")
     for col in ("bs_wpart", "bs_guard", "bs_route", "bs_mq"):
         saved = dict(tp.PLANS["step_once"])
         try:
@@ -208,3 +208,34 @@ def test_redrop_column():
         assert ei.value.code == "CONFIG_INVALID"
     finally:
         tp.PLANS["step_once"]["redrop"] = saved
+
+
+# ---------------------------------------------------------------- v0.23.0 JIG(esl_jig_rank.md V-JIG-10)
+def test_jig_plan_columns():
+    """V-JIG-10: 5행 sm_jig·jig_fix·jig_ctx = §5.2 표, 값 ∈ JIG_VALUES, 열 지우면 CONFIG_INVALID, 불변식, metric_effective 4조합."""
+    want = {"case_once": ("base", "fixed", "case"), "bmesh_once": ("base", "fixed", "mesh"),
+            "step_once": ("base", "xfer", "none"), "step_per_design": ("none", "none", "none"),
+            "compare_per_shape": ("none", "none", "none")}
+    assert tp.PLAN_COLS[-3:] == ("sm_jig", "jig_fix", "jig_ctx")
+    for pid, row in want.items():
+        p = tp.PLANS[pid]
+        assert (p["sm_jig"], p["jig_fix"], p["jig_ctx"]) == row, pid
+        for k, vs in tp.JIG_VALUES.items():
+            assert p[k] in vs
+        if p["sm_jig"] == "base":                  # 불변식
+            assert p["sm_ref"] == "base" and p["sm_disp"][1] == "I" and p["sm_rank"] == "metric"
+        for ok in (True, False):
+            exp = "jig" if (p["sm_jig"] == "base" and p["sm_rank"] == "metric" and ok) else "solve"
+            assert tp.metric_effective(p, "jig", ok) == exp
+        assert tp.metric_effective(p, "lin") == ("lin" if p["sm_rank"] == "metric" else "solve")   # 기존 호출 불변
+        assert tp.metric_effective(p, "solve") == "solve"
+    for col in ("sm_jig", "jig_fix", "jig_ctx"):
+        for bad in ("", "bogus"):
+            saved = dict(tp.PLANS["case_once"])
+            try:
+                tp.PLANS["case_once"][col] = bad
+                with pytest.raises(EslError) as ei:
+                    tp.plan_for("same")
+                assert ei.value.code == "CONFIG_INVALID"
+            finally:
+                tp.PLANS["case_once"] = saved
