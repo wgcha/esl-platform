@@ -205,14 +205,15 @@ stage = ranStage ? "result" : hasPreview ? "preview" : "setup"
 | 6 | 버튼 묶음: `doe-downloads` 가 결과 카드 머리에, 파일 링크는 "파일 ▾" 안, `doe-pick-actions` 에 재낙하·검증 낙하, `vd-open` 1개, vd title 에 권고 문구 | 〃 + doe·doe_compare·verify 갱신 |
 | 7 | ⓘ 지표 정의에 rank-sort·per-esl-note(·④ result-note) | 〃 |
 | 8 | 새 스터디: `.doe-inputs-cols` 두 열, 설명 첫 문장 보임·나머지 ⓘ details | 〃 |
-| 9 | 회귀: vitest 전부·typecheck·build·check:api | – |
-| 10 | 렌더(2560×1440, mock): 정리 전·후 정보 목록 대조(문구·title·버튼), 결과 단계 높이 | 검증 보고(사람·스크립트) |
+| 9 | 상태 띠 칩(지그·1위 경고·품질 미달·기준 메시 품질) 키보드 펼침: 포커스·`aria-expanded`·Enter/Space 로 전체 문구 DOM 텍스트(지그 = 하중 영역·지그 노드) | 〃 |
+| 10 | 회귀: vitest 전부·typecheck·build·check:api | – |
+| 11 | 렌더(2560×1440, mock): 정리 전·후 정보 목록 대조(문구·title·버튼), 결과 단계 높이 | 검증 보고(사람·스크립트) |
 
 ## 12. 리스크
 
 - R-UI-1 접힌 카드 안 3D 뷰어(hidden)는 펼칠 때 크기 0 → 뷰어 ResizeObserver 에 의존. 다시 열었을 때 빈 캔버스면 창 크기 바꾸기로 복구 — 현장 확인.
 - R-UI-2 높이 예산은 순위 행 수·ESL 수·브라우저 확대율에 따라 넘칠 수 있다(내부 스크롤로 흡수). select 는 접힌 막대 4줄(①, ②|③, ④|⑤, ⑥) ≈ 250px 로 200px 목표를 넘을 수 있음 — 측정 보고.
-- R-UI-3 칩 문구를 짧게 하면서 이전 줄 전체는 title 로만 보임(터치 기기는 툴팁 불편). 사내 데스크톱 기준.
+- R-UI-3 칩 문구를 짧게 하면서 이전 줄 전체는 title 로 남기되, 키보드·터치용으로 칩을 눌러 펼치면 같은 문구가 띠 아래 보인다(D-0.23.1-UI-8). 펼친 칩은 각자 열려 여러 개면 줄이 늘 수 있음.
 - R-UI-4 `details name` 배타 펼침은 쓰지 않음(MsgFold 와 섞임) — 두 상세가 동시에 열릴 수 있음.
 
 ## 13. 결정 (decisions.md)
@@ -226,3 +227,4 @@ stage = ranStage ? "result" : hasPreview ? "preview" : "setup"
 | D-0.23.1-UI-5 | 정렬 문구·ESL별 표 설명·④ 결과 안내문은 ⓘ 지표 정의 안, ①②③ 검증 권고는 검증 낙하 툴팁 + VerifyDropCard 머리말 |
 | D-0.23.1-UI-6 | 버튼 두 묶음(스터디 받기 = 결과 머리, 선택 안 작업 = 오른쪽 열 머리), 파일 링크는 "파일 ▾", 결과 2열(≤2200px 1열)·높이 식은 2201px 이상만 |
 | D-0.23.1-UI-7 | 새 스터디 ① 2열(≤2200px 1열), 카드 아래 설명은 첫 문장만 상시·나머지 ⓘ, 경계 경고·요소·노드 수는 ① right 1곳 |
+| D-0.23.1-UI-8 | 지그·1위 경고·메시 품질 미달·기준 메시 품질 칩 = `ChipDetail`(details/summary 방식 — 클릭·Enter·Space 로 띠 아래 전체 문구 1개, `aria-expanded`, 각자 열림, title 유지, 기본 줄 수 불변). 근거: 전체 문구가 title 에만 있으면 키보드·터치로 못 봄 |

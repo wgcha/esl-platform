@@ -34,7 +34,7 @@ import { Badge, Card, Empty, ErrorLine, PrimaryButton, type CardFold } from "../
 import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, rowSource, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
 import { DoeThumbGrid, previewSummary, valuesText } from "../../components/DoeThumbGrid";
-import { BestCleanChip, BestCleanMqChip, DoeRanking, JigLine, hasBestClean, hasBestCleanMq } from "../../components/DoeRanking";
+import { BestCleanChip, ChipDetail, BestCleanMqChip, DoeRanking, JigLine, hasBestClean, hasBestCleanMq } from "../../components/DoeRanking";
 import { DoePerEslTable, perEslNote } from "../../components/DoePerEslTable";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
@@ -1613,9 +1613,9 @@ function StatusBand({ studyId, result }: { studyId: string; result: DoeResultOut
     jig && <JigLine key="jig" jig={jig} />,
     result.load_transfer && <LoadTransferDiag key="lt" studyId={studyId} result={result} />,
     mqBase && (
-      <span key="mq" className="doe-chip warn-text" data-testid="mq-base-strip" title={`⚠ ${warnText(mqBase)}`}>
+      <ChipDetail key="mq" testid="mq-base-strip" className="doe-chip warn-text" title={`⚠ ${warnText(mqBase)}`} full={`⚠ ${warnText(mqBase)}`}>
         ⚠ 기준 메시 품질 미달
-      </span>
+      </ChipDetail>
     ),
     <BestCleanMqChip key="bcmq" result={result} />,
     <BestCleanChip key="bc" result={result} />,

@@ -5,7 +5,7 @@
 // v0.14.0 ④ 형상 직접 비교: 변수 열 대신 '이름' 열(행 머리, shape.name), 베이스라인 = 기준 형상, 값 펼치기 없음.
 // v0.16.1 경고 안(SR-D-11): 순위 그대로 + 상태 칸 ⚠ + 1위가 경고 안이면 "경고 없는 최상위" 1줄(Q1 = A).
 // v0.16.0 이름 옆 짧은 '메시 방식' 배지(세분화·재메시·메시 입력 — CAD 는 생략), 툴팁 = 충실도·시도·수렴 δ.
-import { Fragment, useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { METRIC_DEFS, RANK_WARN_NAME, STATUS_NAME, isSkipped, mqTip, pctText, sortRanking, type RankSortKey } from "../api/doe";
 import type { DoeParam, DoeResultOut, DoeShapeRules, EntryOut } from "../api/types";
 import { entryKey } from "./ModeSelect";
@@ -353,6 +353,30 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   );
 }
 
+/** v0.23.1 상태 띠 칩 펼침(D-0.23.1-UI-8): 칩 = details summary(짧은 값, title 툴팁 유지) → 클릭·Enter·Space 로 띠 아래에 전체 문구 1개. 키보드 포커스·aria-expanded. 하중 전달 칩(lt-summary)과 같은 .doe-chip-detail 모양 */
+export function ChipDetail({ testid, className, status, title, full, children }: { testid: string; className: string; status?: string; title: string; full: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const toggle = (e: { preventDefault: () => void }) => { e.preventDefault(); setOpen((v) => !v); };
+  return (
+    <details className="doe-chip-detail" open={open} data-testid={`${testid}-details`}>
+      <summary
+        className={className}
+        data-testid={testid}
+        data-status={status}
+        title={title}
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggle}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggle(e); }}
+        onKeyUp={(e) => { if (e.key === " ") e.preventDefault(); }}
+      >
+        {children}
+      </summary>
+      {open && <div className="small" data-testid={`${testid}-full`}>{full}</div>}
+    </details>
+  );
+}
+
 /** v0.23.1 1위 경고 칩(결과 상태 띠 — esl_doe_ui_tidy.md §4 칩 4). Q1 = A: 1위가 경고 안이면 순위는 그대로 두고 "경고 없는 최상위". 이전 1줄 전체 = title */
 const warnOf = (r: { warn?: string[] | null }) => (r.warn ?? []).filter((w) => w !== "MESH_QUALITY_RANK");
 const topOf = (result: DoeResultOut) => result.ranking.find((r) => r.rank === 1) ?? result.ranking[0];
@@ -364,9 +388,9 @@ export function BestCleanChip({ result }: { result: DoeResultOut }) {
   const clean = result.summary?.best_clean ?? result.ranking.filter((r) => !warnOf(r).length).sort((a, c) => a.rank - c.rank)[0]?.id ?? null;
   const full = `⚠ 1위가 경고 안입니다(${warnOf(top).map((w) => RANK_WARN_NAME[w] ?? w).join(" · ")}) — 경고 없는 최상위: ${clean ?? "없음"}`;
   return (
-    <span className="doe-chip warn-text" data-testid="best-clean" title={full}>
+    <ChipDetail testid="best-clean" className="doe-chip warn-text" title={full} full={full}>
       ⚠ 1위 경고 안 · 경고 없는 최상위 {clean ? <b className="mono">{clean}</b> : "없음"}
-    </span>
+    </ChipDetail>
   );
 }
 /** v0.23.1 메시 품질 미달 칩(§4 칩 3'). Q-SH-3 = A: 순위·행 그대로 + "품질 통과 최상위"(새 스냅샷 ④ — mq·MESH_QUALITY_RANK 가 있을 때) */
@@ -377,10 +401,11 @@ export function BestCleanMqChip({ result }: { result: DoeResultOut }) {
   const id = result.summary && "best_clean_mq" in result.summary ? result.summary.best_clean_mq ?? null : [...result.ranking].filter((r) => !isMq(r)).sort((a, c) => a.rank - c.rank)[0]?.id ?? null;
   const row = id ? result.ranking.find((r) => r.id === id) : null;
   const best = id ? `${id}${row?.shape?.name ? ` ${row.shape.name}` : ""}` : "없음";
+  const full = `⚠ 메시 품질 미달 형상 ${flagged.length}개(순위는 그대로) — 품질 통과 최상위: ${best}`;
   return (
-    <span className="doe-chip warn-text" data-testid="best-clean-mq" title={`⚠ 메시 품질 미달 형상 ${flagged.length}개(순위는 그대로) — 품질 통과 최상위: ${best}`}>
+    <ChipDetail testid="best-clean-mq" className="doe-chip warn-text" title={full} full={full}>
       ⚠ 품질 미달 {flagged.length}개 · 통과 최상위 {id ? <b className="mono">{id}</b> : "없음"}
-    </span>
+    </ChipDetail>
   );
 }
 
@@ -394,9 +419,9 @@ export function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
     const why = jig.code ? JIG_CODE_TEXT[jig.code] ?? jig.code : null;
     const full = `지그 순위 불가${why ? ` — ${why}` : ""}, 재풀이 C 로 순위`;
     return (
-      <span className={`doe-chip ${jig.status === "fallback" ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={[full, jig.code].filter(Boolean).join("\n")}>
+      <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip ${jig.status === "fallback" ? "warn-text" : "muted"}`} title={[full, jig.code].filter(Boolean).join("\n")} full={full}>
         지그 순위 불가 · 재풀이 C
-      </span>
+      </ChipDetail>
     );
   }
   const poor = jig.status === "poor";
@@ -410,9 +435,9 @@ export function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
   const mac = jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–";
   const full = `기준 재현(지그): MAC(모드 포함) ≥ ${mac}${modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ ${pct(jig.fit_umax_err_max)} · 하중 영역 ${jig.n_regions}개(접촉 ${jig.n_contact} · 패치 ${jig.n_patch}) · 지그 노드 ${jig.n_jig}`;
   return (
-    <span className={`doe-chip ${poor ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={[full, ...extra, tip].filter(Boolean).join("\n")}>
+    <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip ${poor ? "warn-text" : "muted"}`} title={[full, ...extra, tip].filter(Boolean).join("\n")} full={full}>
       기준 재현(지그) MAC ≥ {mac} · umax 오차 ≤ {pct(jig.fit_umax_err_max)}
       {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})`}> ⚠</span>}
-    </span>
+    </ChipDetail>
   );
 }

@@ -1,4 +1,4 @@
-// v0.23.1 강성 스터디 화면 정리(esl_doe_ui_tidy.md §11 V-UI-1~8): Card 접기 · 단계 초점 · 진행 띠 · 한 정보 한 자리 · 상태 띠 · 버튼 두 묶음 · ⓘ 지표 정의 · 새 스터디 2열
+// v0.23.1 강성 스터디 화면 정리(esl_doe_ui_tidy.md §11 V-UI-1~9): Card 접기 · 단계 초점 · 진행 띠 · 한 정보 한 자리 · 상태 띠 · 버튼 두 묶음 · ⓘ 지표 정의 · 새 스터디 2열
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Card } from "../components/ui";
@@ -159,4 +159,27 @@ describe("V-UI-8 새 스터디", () => {
     expect(more.open).toBe(false);
     expect(more.textContent).toMatch(/입력 폴더는 읽기만 합니다\./);
   }, 15000);
+});
+
+describe("V-UI-9 상태 띠 칩 키보드·터치 펼침(D-0.23.1-UI-8)", () => {
+  it("지그 칩: 포커스 가능 · aria-expanded · Enter 로 하중 영역·지그 노드 전체 문구가 DOM 텍스트로 보임, 칩 1개 유지", async () => {
+    renderApp("/p/p-body/doe/doe-40", "power", (s) => s.doe.demoJig());
+    await screen.findByRole("table", { name: "순위표" });
+    const chip = await screen.findByTestId("jig-line");
+    expect(chip.tagName).toBe("SUMMARY");
+    expect(chip.getAttribute("title")).toMatch(/하중 영역/); // 툴팁 유지
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(chip.tabIndex).toBe(0);
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+    fireEvent.keyDown(chip, { key: "Enter" });
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    expect((screen.getByTestId("jig-line-details") as HTMLDetailsElement).open).toBe(true);
+    const full = screen.getByTestId("jig-line-full").textContent ?? "";
+    expect(full).toMatch(/하중 영역 \d+개/);
+    expect(full).toMatch(/지그 노드 \d+/);
+    expect(document.querySelectorAll("[data-testid=jig-line]").length).toBe(1);
+    fireEvent.keyDown(chip, { key: " " });
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+  }, 20000);
 });
