@@ -530,11 +530,21 @@ class BeadDoeRankJigCfg(_M):
     min_region_area_mm2: float = Field(default=25.0, ge=0)
     patch_count: int = Field(default=6, ge=1, le=32)
     body_force: bool = True
+    basis_tangential: bool = True
+    n_modes: int = Field(default=4, ge=0, le=20)
+    rho_t_mm3: float = Field(default=7.85e-9, gt=0)
+    modes_sigma: float = 0.0
+    modes_tol: float = Field(default=1e-8, ge=0)
+    modes_maxiter: int = Field(default=2000, ge=1, le=100000)
+    modes_ref321: bool = True
+    w_inplane: float = Field(default=0.1, ge=0, le=1)
+    reg_force: float = Field(default=1e-3, ge=0)
     ridge: float = Field(default=1e-8, ge=0)
     active_tol: float = Field(default=1e-3, gt=0, lt=1)
     mac_min: float = Field(default=0.9, gt=0, le=1)
     umax_err_max: float = Field(default=0.2, gt=0)
     tie_rel_warn: float = Field(default=0.1, gt=0)
+    cancel_warn: float = Field(default=0.5, gt=0, le=1)
 
     @field_validator("fix_kinds")
     @classmethod

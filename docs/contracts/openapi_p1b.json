@@ -2866,13 +2866,39 @@
             "title": "Mac",
             "type": "number"
           },
+          "mac_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac Nomodes"
+          },
           "n_active": {
             "title": "N Active",
             "type": "integer"
           },
+          "rot_deg": {
+            "title": "Rot Deg",
+            "type": "number"
+          },
           "umax_err": {
             "title": "Umax Err",
             "type": "number"
+          },
+          "umax_err_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Umax Err Nomodes"
           }
         },
         "required": [
@@ -2883,7 +2909,8 @@
           "err_p95",
           "n_active",
           "F_sum_abs",
-          "cancel_rel"
+          "cancel_rel",
+          "rot_deg"
         ],
         "title": "DoeJigEntryOut",
         "type": "object"
@@ -2891,6 +2918,17 @@
       "DoeJigOut": {
         "description": "v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드명 — types.ts DoeJigOut 와 check:api 대조).",
         "properties": {
+          "cancel_rel_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Rel Max"
+          },
           "code": {
             "anyOf": [
               {
@@ -2920,6 +2958,17 @@
             ],
             "title": "Fit Mac Min"
           },
+          "fit_mac_min_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Mac Min Nomodes"
+          },
           "fit_umax_err_max": {
             "anyOf": [
               {
@@ -2931,12 +2980,61 @@
             ],
             "title": "Fit Umax Err Max"
           },
+          "fit_umax_err_max_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Umax Err Max Nomodes"
+          },
+          "hz_321": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hz 321"
+          },
+          "hz_jig": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Hz Jig",
+            "type": "array"
+          },
+          "hz_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hz Ratio"
+          },
           "n_contact": {
             "title": "N Contact",
             "type": "integer"
           },
           "n_jig": {
             "title": "N Jig",
+            "type": "integer"
+          },
+          "n_modes": {
+            "default": 0,
+            "title": "N Modes",
             "type": "integer"
           },
           "n_patch": {
@@ -3002,6 +3100,10 @@
       },
       "DoeJigThOut": {
         "properties": {
+          "cancel_warn": {
+            "title": "Cancel Warn",
+            "type": "number"
+          },
           "mac_min": {
             "title": "Mac Min",
             "type": "number"
@@ -3018,7 +3120,8 @@
         "required": [
           "mac_min",
           "umax_err_max",
-          "tie_rel_warn"
+          "tie_rel_warn",
+          "cancel_warn"
         ],
         "title": "DoeJigThOut",
         "type": "object"

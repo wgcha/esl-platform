@@ -186,11 +186,21 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       min_region_area_mm2: 25.0
       patch_count: 6
       body_force: true                # 체적력 3성분 기저
-      ridge: 1.0e-8                   # 정규화 λ(열 정규화 후)
+      basis_tangential: true          # 영역 접선 2성분(false = 법선만 — 비교용)
+      n_modes: 4                      # 지그 구속 저차 모드 관성 기저 수(0 = 끔) — D-JIG-15
+      rho_t_mm3: 7.85e-9              # 집중질량 밀도 [t/mm³] — Hz 환산 보고에만 영향(모드 형상·하중 불변, 해시 밖)
+      modes_sigma: 0.0                # shift-invert σ(ω² 단위). 0 = 지그 정적 분해 재사용(추가 분해 0)
+      modes_tol: 1.0e-8               # eigsh tol
+      modes_maxiter: 2000             # eigsh maxiter
+      modes_ref321: true              # 3-2-1 지지 고유진동수 비교 정보(베이스라인 분해 1 추가, 해시 밖)
+      w_inplane: 0.1                  # 맞춤 가중의 면내 성분 비(법선 성분 = 1) — D-JIG-16
+      reg_force: 1.0e-3               # 접선·체적력·모드 계수 Tikhonov(ḡ_N 배)
+      ridge: 1.0e-8                   # 수치 안정 λ(열 정규화 후)
       active_tol: 1.0e-3              # 활성 영역 판정(최대 합력 대비)
       mac_min: 0.9                    # 미달 → JIG_FIT_POOR (해시 밖)
       umax_err_max: 0.2               # 초과 → JIG_FIT_POOR (해시 밖)
       tie_rel_warn: 0.1               # 초과 → JIG_TIE_RELATIVE (해시 밖)
+      cancel_warn: 0.5                # cancel_rel 초과 → JIG_LOAD_CANCEL (해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true
