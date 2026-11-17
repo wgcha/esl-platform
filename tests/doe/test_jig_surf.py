@@ -171,3 +171,31 @@ def test_parser_additive_elem_segs(tmp_path):
     assert sorted(s.hid for s in d.elem_segs) == [4, 5, 6, 7]                    # 쉘 아닌 요소 블록 위치
     assert sorted(d.other_elem_parts) == [4, 5, 6, 7]
     assert sorted(s.hid for s in d.shell_segs) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------- D-JIG-19 삼각형별 두께(요소 카드 > /PROP/SHELL > 0), 솔리드 = 0
+def test_tri_thickness_from_card_prop_and_solid(tmp_path):
+    from esl.rad import writer as wr
+    p = tmp_path / "t.rad"
+    rows, idx = _grid_nodes(1, 2, 2, 0.0)                         # 대상 파트 1(z = 0)
+    tgt = [[100 + k, idx[(i, j)], idx[(i + 1, j)], idx[(i + 1, j + 1)], idx[(i, j + 1)]]
+           for k, (i, j) in enumerate([(0, 0), (1, 0), (0, 1), (1, 1)])]
+    r2, i2 = _grid_nodes(201, 1, 1, 2.0)                          # 파트 2: PROP/SHELL 두께 1.2(카드 두께 없음)
+    r3, i3 = _grid_nodes(301, 1, 1, 3.0)                          # 파트 3: 요소 카드 두께 2.5(PROP 두께 1.2 보다 우선)
+    r4, i4 = _grid_nodes(401, 1, 1, 4.0)                          # 파트 4: /PART 없음 → 모름(0)
+    rh, hx = _hex(501, 0.0, 0.0, -12.0, nx=1, ny=1)               # 파트 5: 솔리드 → 0(앎)
+    q = lambda i: [i[(0, 0)], i[(1, 0)], i[(1, 1)], i[(0, 1)]]     # noqa: E731
+    L = ["#RADIOSS STARTER", "/BEGIN", "t", _nodes(rows + r2 + r3 + r4 + rh).rstrip("\n")]
+    L += wr._prop_shell(20, "p20", 1.2) + wr._part(1, "tgt", 20, 1) + wr._part(2, "p2", 20, 1) + wr._part(3, "p3", 20, 1)
+    L += [_el("SHELL", 1, tgt).rstrip("\n"), _el("SHELL", 2, [[200] + q(i2)]).rstrip("\n")]
+    L += ["/SHELL/3", wr._i10(300) + "".join(wr._i10(v) for v in q(i3)) + " " * 30 + wr._r20(2.5)]
+    L += [_el("SHELL", 4, [[400] + q(i4)]).rstrip("\n"), _el("BRICK", 5, [[500] + hx[0]]).rstrip("\n"), "/END"]
+    p.write_text("\n".join(L) + "\n")
+    s = js.other_surfaces(str(p), 1, [0, 0, 0], [20, 20, 0], pad_mm=50.0)
+    th = {int(pt): sorted(set(np.round(s["tri_thick"][s["tri_part"] == pt], 9).tolist())) for pt in np.unique(s["tri_part"])}
+    assert th == {2: [1.2], 3: [2.5], 4: [0.0], 5: [0.0]}
+    n4 = int((s["tri_part"] == 4).sum())
+    assert s["tri_thick"].shape == (s["tri"].shape[0],)
+    assert s["thickness_known"] == pytest.approx(1.0 - n4 / s["tri"].shape[0])
+    e = js.other_surfaces(str(p), 1, [0, 0, 0], [20, 20, 0], pad_mm=0.5)       # 상자 밖 = 삼각형 0 → None
+    assert e["tri"].shape[0] == 0 and e["thickness_known"] is None and e["tri_thick"].shape == (0,)

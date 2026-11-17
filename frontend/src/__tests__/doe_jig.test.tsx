@@ -22,8 +22,8 @@ describe("지그 결과 mock·규칙", () => {
       const base = s.doe.recs.find((r) => r.out.id === "doe-21")!.result!;
       const ok = withJig(withSolveMetric(withMetric(base)), "ok");
       expect(ok.metric_effective).toBe("jig");
-      expect(Object.keys(ok.jig!).sort()).toEqual(["cancel_rel_max", "code", "entries", "fit_mac_min", "fit_mac_min_nomodes", "fit_umax_err_max", "fit_umax_err_max_nomodes", "fit_work_eff_min", "hz_321", "hz_jig", "hz_ratio", "n_contact", "n_jig", "n_modes", "n_patch", "n_regions", "region_source", "status", "th", "tie_rel_max"]);
-      expect(Object.keys(ok.jig!.th).sort()).toEqual(["cancel_warn", "mac_min", "tie_rel_warn", "umax_err_max", "work_eff_min"]);
+      expect(Object.keys(ok.jig!).sort()).toEqual(["cancel_rel_max", "code", "entries", "fit_mac_min", "fit_mac_min_nomodes", "fit_umax_err_max", "fit_umax_err_max_nomodes", "fit_work_eff_min", "hz_321", "hz_jig", "hz_ratio", "n_contact", "n_jig", "n_modes", "n_patch", "n_regions", "region_source", "status", "th", "tie_rel_max", "tie_spread"]);
+      expect(Object.keys(ok.jig!.th).sort()).toEqual(["cancel_warn", "mac_min", "tie_rel_warn", "tie_spread_min", "umax_err_max", "work_eff_min"]);
       expect(Object.keys(ok.jig!.entries[0]).sort()).toEqual(["F_sum_abs", "cancel_rel", "entry_id", "err_p95", "label", "mac", "mac_nomodes", "n_active", "rot_deg", "umax_err", "umax_err_nomodes", "work_eff"]);
       expect(ok.ranking.map((r) => r.score)).toEqual([...ok.ranking.map((r) => r.score)].sort((a, b) => a - b));
       expect(ok.ranking.every((r) => r.score_jig === r.score && r.umax_jig != null && r.C_jig)).toBe(true);
@@ -77,6 +77,8 @@ describe("지그 poor·fallback", () => {
     expect(screen.getByTestId("jig-cancel").title).toContain(JIG_CODE_TEXT.JIG_LOAD_CANCEL);
     expect(screen.getByTestId("jig-cancel").title).toMatch(/일 효율 0\.030 < 0\.05/);   // JIG_LOAD_CANCEL ⚠ 1개, 같은 줄
     expect(line.querySelectorAll("[data-testid=jig-cancel]").length).toBe(1);
+    expect((line.textContent ?? "").split("⚠").length - 1).toBe(1);                  // D-JIG-19: 줄 안 ⚠ = JIG_LOAD_CANCEL 1개만
+    expect(line.title).toContain(JIG_CODE_TEXT.JIG_SUPPORT_WEAK);                    // tie 몰림·FIT_POOR 는 툴팁
     expect(line.parentElement!.querySelectorAll("[data-testid=jig-line]").length).toBe(1);
     expect(within(t).getAllByTestId(/^rank-d/).length).toBeGreaterThan(0);
   }, 20000);
@@ -87,6 +89,7 @@ describe("지그 poor·fallback", () => {
     expect(heads(t)).not.toContain("지그 C");
     const line = screen.getByTestId("jig-line");
     expect(line.textContent).toContain(`지그 순위 불가 — ${JIG_CODE_TEXT.JIG_NO_TIE}, 재풀이 C 로 순위`);
+    expect(line.textContent).not.toContain("⚠");
     expect(line.className).toContain("warn-text");
     expect(screen.getByText(/정렬: score\(재풀이 C\)/)).toBeTruthy();
     expect(screen.queryByTestId("metric-defs")!.textContent).not.toMatch(/C_jig/);
@@ -136,5 +139,18 @@ describe("JIG_LOAD_CANCEL 판정 = 일 효율(D-JIG-18)", () => {
       rec.result = { ...r, jig: { ...r.jig!, cancel_rel_max: 0.1, fit_work_eff_min: 0.01 } };
     });
     await waitFor(() => expect(screen.getByTestId("jig-cancel")).toBeTruthy());
+  }, 20000);
+  it("JIG_TIE_RELATIVE·JIG_SUPPORT_WEAK 는 ⚠ 없이 title 툴팁만(D-JIG-19)", async () => {
+    renderApp("/p/p-body/doe/doe-21", "power", (s) => {
+      const rec = s.doe.recs.find((r) => r.out.id === "doe-21")!;
+      const r = withJig(withSolveMetric(withMetric(rec.result!)), "ok");
+      rec.result = { ...r, jig: { ...r.jig!, tie_rel_max: 0.5, tie_spread: 0.005 } };
+    });
+    await waitFor(() => expect(screen.getByTestId("jig-line")).toBeTruthy());
+    const line = screen.getByTestId("jig-line");
+    expect(line.textContent).not.toContain("⚠");
+    expect(screen.queryByTestId("jig-cancel")).toBeNull();
+    expect(line.title).toContain(JIG_CODE_TEXT.JIG_TIE_RELATIVE);
+    expect(line.title).toMatch(new RegExp(`${JIG_CODE_TEXT.JIG_SUPPORT_WEAK.slice(0, 10)}.*분포 0\\.0050 < 0\\.02`));
   }, 20000);
 });

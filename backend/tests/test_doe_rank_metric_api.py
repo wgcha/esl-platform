@@ -27,9 +27,10 @@ from test_doe_compare_api import (  # noqa: F401  (픽스처·도우미 재사�
 JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], "contact_gap_mm": 2.0, "knn": 8,
                "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2, "min_region_nodes": 3,
                "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
-               "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": True,
+               "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": False,
                "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0, "ridge": 1e-8, "active_tol": 1e-3,
-               "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05}
+               "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05,
+               "tie_spread_min": 0.02}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "jig": JIG_DEFAULT}
 # v0.23.0: 새 스냅샷 = metric 기본 jig + rank.jig 설정 전체 + schema 2(esl_jig_rank.md §4)
@@ -239,9 +240,10 @@ def test_openapi_rank_keys():
 # ================================================================ v0.23.0 지그 블록 통과(esl_jig_rank.md V-JIG-14)
 JIG_BLOCK = {"status": "poor", "code": None, "region_source": "mixed", "n_jig": 12, "n_regions": 3, "n_contact": 1, "n_patch": 2,
              "fit_mac_min": 0.82, "fit_umax_err_max": 0.31, "fit_mac_min_nomodes": 0.6,
-             "fit_umax_err_max_nomodes": 0.5, "cancel_rel_max": 0.1, "fit_work_eff_min": 0.9, "tie_rel_max": 0.02, "n_modes": 4,
+             "fit_umax_err_max_nomodes": 0.5, "cancel_rel_max": 0.1, "fit_work_eff_min": 0.9, "tie_rel_max": 0.02, "tie_spread": 0.15, "n_modes": 4,
              "hz_jig": [3.1, 5.2, 7.7, 9.9], "hz_321": [0.75, 1.5], "hz_ratio": 4.13,
-             "th": {"mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05},
+             "th": {"mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05,
+                    "tie_spread_min": 0.02},
              "entries": [{"entry_id": "e1", "label": "E1", "mac": 0.82, "umax_err": 0.31, "mac_nomodes": 0.6,
                           "umax_err_nomodes": 0.5, "err_p95": 0.2, "n_active": 2, "F_sum_abs": 410.0, "cancel_rel": 0.1,
                           "work_eff": 0.9, "rot_deg": 12.5}]}
@@ -281,9 +283,10 @@ def test_openapi_jig_schemas():
     assert "jig" in sc["DoeResultOut"]["properties"]
     assert set(sc["DoeJigOut"]["properties"]) == {"status", "code", "region_source", "n_jig", "n_regions", "n_contact", "n_patch",
                                                   "fit_mac_min", "fit_umax_err_max", "fit_mac_min_nomodes",
-                                                  "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "n_modes",
-                                                  "hz_jig", "hz_321", "hz_ratio", "th", "entries"}
-    assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min"}
+                                                  "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "tie_spread",
+                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries"}
+    assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min",
+                                                         "tie_spread_min"}
     assert set(sc["DoeJigEntryOut"]["properties"]) == {"entry_id", "label", "mac", "umax_err", "mac_nomodes",
                                                        "umax_err_nomodes", "err_p95", "n_active", "F_sum_abs", "cancel_rel",
                                                        "work_eff", "rot_deg"}

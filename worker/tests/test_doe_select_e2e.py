@@ -49,7 +49,7 @@ def fake_relay(tmp_path):
 @pytest.fixture()
 def settings_dict(tmp_path, exe, fake_relay, request):  # noqa: F811
     """DOE(가짜 paicad) + 검증 낙하(가짜 SCX 릴레이) — 검증 낙하 계획 진입(§8.4)만 본다. 시험 인자 rank_metric = lin 이면
-    bead_doe.rank.metric 강제(없으면 설정 기본 = solve)."""
+    bead_doe.rank.metric 강제(없으면 설정 기본 = jig — v0.23.0 D-JIG-8)."""
     from verify_support import verify_settings
 
     d = doe_worker_settings(tmp_path, exe)
@@ -106,10 +106,19 @@ def test_select_e2e_depth_ranking(client, engine, worker, esl_root, inputs_root,
     assert all(a > b for a, b in zip(solve, solve[1:])), solve          # 재풀이 C 는 깊어질수록 강성 ↑ → ↓
     assert solve[0] > 1.0 > solve[-1]                                    # 공칭(22) = 베이스라인 사이
     if rank_metric is None:
-        # v0.20.0 SM-11(2026-11-13 사용자 결정): 기본 순위 = 재풀이 C — 깊이에 단조, 1차 지표(ritz)는 보조 열 score_lin
-        assert res["metric"] == "solve" and res["rank"]["metric"] == "solve" and res["rank"]["metric_effective"] == "solve"
+        # v0.23.0 D-JIG-8: 새 스터디 기본 순위 지표 = jig(rank.metric = 스냅샷 값, 최상위 metric = 실제 순위 지표). 지그 가능
+        # (ok·poor)이면 score = score_jig, 불가(fallback — 합성 비드 Case 는 tie 없음 = JIG_NO_TIE)면 재풀이 C
+        assert res["rank"]["metric"] == "jig" and res["jig"] is not None
+        eff = res["rank"]["metric_effective"]
+        assert res["metric"] == eff == ("jig" if res["jig"]["status"] in ("ok", "poor") else "solve"), \
+            (eff, res["jig"]["status"], res["jig"]["code"])
+        assert res["jig"]["status"] in ("ok", "poor") or res["jig"]["code"]
         assert "n_fallback" not in res["rank"] and all("basis" not in x for x in rk)
-        assert [x["score"] for x in rk] == solve and all(x.get("score_lin") is not None for x in rk)
+        assert all(x.get("score_lin") is not None for x in rk)
+        if eff == "solve":
+            assert [x["score"] for x in rk] == solve
+        else:
+            assert [x["score"] for x in rk] == [x["score_jig"] for x in rk]
     else:
         # metric lin 강제(R-SM-1 실측 기록): 범위 밖(|ρ−1| > lin_valid) 양 끝 안만 재풀이 C 로 대체 — 가운데 두 안(ρ 1.23~1.24)은
         # 1-벡터 Ritz 거짓 개선이 남아 최종 순위가 비단조(계약 R-SM-1, 단언하지 않음)

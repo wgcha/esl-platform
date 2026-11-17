@@ -143,10 +143,10 @@ def test_node_weights_match_shell_area(base):
 
 def test_hash_view_drops_thresholds():
     cfg = dict(JIG, enabled=True, fix_kinds=list(jig.TIE_KINDS), mac_min=0.9, umax_err_max=0.2, tie_rel_warn=0.1,
-               modes_ref321=True)
+               modes_ref321=True, tie_spread_min=0.02)
     hv = jig.hash_view(cfg)
     assert set(cfg) - set(hv) == set(jig.HASH_EXCLUDE) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn",
-                                                         "work_eff_min", "rho_t_mm3", "modes_ref321"}
+                                                         "work_eff_min", "rho_t_mm3", "modes_ref321", "tie_spread_min"}
     for k in ("n_modes", "modes_sigma", "modes_tol", "modes_maxiter", "w_inplane", "reg_force", "basis_tangential", "ridge"):
         assert hv[k] == cfg[k]
     assert "mac_min" in cfg                                              # 원본 불변
@@ -766,3 +766,43 @@ def test_v_jig_15_stages_no_scenario_branch():
     for ln in open(STAGES_PY, encoding="utf-8").read().splitlines():
         if re.search(r"jig", ln, re.I):
             assert not any(n in ln for n in names), ln
+
+
+# ---------------------------------------------------------------- D-JIG-19 두께 반영 접촉 판정 · 지그 노드 분포
+def test_contact_gap_uses_half_thickness():
+    """두께 3 mm 판 두 장, 중립면 간격 4 mm → 틈 = 4 − (3 + 3)/2 = 1 ≤ gap 2 → 접촉(이전 정의 = 중립면 거리 4 > 2 → 없음)."""
+    mesh = sj.plate(nx=8, ny=4, Lx=80.0, Lz=40.0, t=3.0)
+    assert np.allclose(mesh["thickness"], 3.0)
+    w = jig.node_weights(mesh)
+    Xs, Qs = _grid(10, 100.0, 4.0, off=-10.0)                    # y = 4 평면(대상 판 y = 0, 법선 Y)
+    tri = np.concatenate([Qs[:, [0, 1, 2]], Qs[:, [0, 2, 3]]])
+    base_s = {"x": Xs, "tri": tri, "tri_part": np.full(tri.shape[0], 5, dtype=np.int64)}
+    cand = np.ones(mesh["node_id"].size, bool)
+
+    def run(surf, weights):
+        return jig.contact_regions(mesh, cand, surf, gap_mm=2.0, knn=8, chunk_nodes=65536, max_regions=8, min_regions=2,
+                                   min_nodes=3, min_area_mm2=25.0, weights=weights)
+    old = run(base_s, {**w, "thick": np.zeros_like(w["thick"])})              # 두께 0 = 이전 정의
+    assert old["n_contact_nodes"] == 0 and old["regions"] == []
+    new = run({**base_s, "tri_thick": np.full(tri.shape[0], 3.0)}, w)
+    assert new["n_contact_nodes"] == cand.sum() and len(new["regions"]) == 1 and new["regions"][0]["part"] == 5
+    near = jig.nearest_tri(mesh["x0"], {**base_s, "tri_thick": np.full(tri.shape[0], 3.0)}, gap_mm=2.0, knn=8,
+                           chunk_nodes=65536, thick_q=w["thick"])
+    assert np.allclose(near["dist"], 4.0) and np.allclose(near["clear"], 1.0)
+    half = run(base_s, w)                                                     # 상대 두께 모름(0) → 틈 = 4 − 1.5 = 2.5 > 2
+    assert half["n_contact_nodes"] == 0
+    z = jig.nearest_tri(mesh["x0"], base_s, gap_mm=5.0, knn=8, chunk_nodes=65536)   # 두께 없음 = clear == dist(비트 동일)
+    assert np.array_equal(z["clear"], z["dist"])
+
+
+def test_support_spread_clustered_boss():
+    """1200×600 판(5 mm 격자)의 한 보스(반지름 5.5 mm, 노드 5개)에 몰린 tie → tie_spread < 0.02, 짧은 변 tie 묶음들 → 충분."""
+    mesh = sj.plate(nx=240, ny=120, Lx=1200.0, Lz=600.0)
+    X = mesh["x0"]
+    boss = np.flatnonzero(np.linalg.norm(X[:, [0, 2]] - X[0, [0, 2]] - np.array([200.0, 200.0]), axis=1) <= 5.5)
+    assert boss.size == 5
+    r = jig.support_spread(X, boss)
+    assert r["tie_spread"] < 0.02 and len(r["jig_std"]) == 3 and r["part_std"][0] > 0
+    far = sj.jig_of(sj.tie_groups(mesh))
+    assert jig.support_spread(X, far)["tie_spread"] > 0.02
+    assert jig.support_spread(X, boss[:1])["tie_spread"] is None

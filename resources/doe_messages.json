@@ -272,6 +272,7 @@
   "JIG_BASIS_NULL": "응답이 0 인 하중 기저 {n}개는 하중 0 으로 고정했습니다. (Null basis columns.)",
   "JIG_FIT_POOR": "기준 재현 품질 미달 — {detail}. 순위는 산출했지만 기준 낙하 대표성이 낮을 수 있습니다. (Jig fit poor.)",
   "JIG_TIE_RELATIVE": "지그 노드끼리도 상대 변위가 있습니다(최대 {tie_rel} > {tie_rel_warn}) — 고정 지그로는 기준 변형을 완전히 재현할 수 없습니다. (Tie nodes move relatively.)",
+  "JIG_SUPPORT_WEAK": "지그 노드가 한곳에 몰려 있습니다(분포 {tie_spread} < {tie_spread_min}, 대상 파트 크기 대비) — 지그 지지가 약해 순위가 체결부 근처 국부 강성에 민감할 수 있습니다(순위는 산출). (Jig nodes are clustered; weak support.)",
   "JIG_DESIGN_FAILED": "안 {did} 의 지그 재풀이에 실패했습니다({err}) — 지그 순위에서 빠집니다. (Jig re-solve failed for design.)",
   "JIG_MODES_FAILED": "지그 모드 계산이 완전하지 않습니다({stage} {err}, 수렴 {n_conv}개) — 수렴한 모드만(없으면 모드 기저 없이) 진행합니다. (Jig modes incomplete.)",
   "JIG_LOAD_CANCEL": "맞춤 하중이 하는 일에 비해 과대합니다({label}: 일 효율 {work_eff}, 하중 절댓값 합 {F_sum_abs} N) — 서로 상쇄하는 하중일 수 있어 순위는 산출했지만 기준 재현 하중을 확인하세요. (Fitted loads are large relative to the work they do.)",

@@ -115,7 +115,8 @@ def build_mesh(tmp_path):
                "step": {"path": str(step), "file_name": "b.step"}, "inch": 75, "load_transfer": LT}
 
 
-def run(root, doe, mesh, *, rank=None, fixed=True, kinds=("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"), rel="model.rad"):
+def run(root, doe, mesh, *, rank=None, fixed=True, kinds=("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"), rel="model.rad",
+        groups=None):
     """bd_input → bd_loads → bd_matrix → bd_eval(d000 + 안, 가짜 paicad) → bd_post. 반환 (out, post 결과, 안 id)."""
     if rank is not None:
         doe = {**doe, "rank": rank}
@@ -126,7 +127,7 @@ def run(root, doe, mesh, *, rank=None, fixed=True, kinds=("INTER_TYPE2_SECONDARY
     stg.run_stage(spec("bd_input"), lambda s: None)
     sd.write_extract(os.path.join(out, "prep", "extract"), sd.features_doc(mesh, 1))
     if fixed:
-        sd.write_fixed(os.path.join(out, "prep", "fixed"), mesh, tie_groups(), kinds=kinds)
+        sd.write_fixed(os.path.join(out, "prep", "fixed"), mesh, tie_groups() if groups is None else groups, kinds=kinds)
     elif doe["scenario"] == "mesh":
         sd.write_fixed(os.path.join(out, "prep", "fixed"), mesh, [], kinds=("RBE2",))
     stg.run_stage(spec("bd_loads"), lambda s: None)
@@ -178,8 +179,12 @@ def test_case_once_contact_regions_and_outputs(case_run):
     assert res["baseline"]["score_jig"] == pytest.approx(1.0, abs=1e-12)                 # d000 = 기준 그대로
     jb = res["jig"]
     assert jb["status"] in ("ok", "poor") and jb["region_source"] == "contact" and jb["n_regions"] == 2
-    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min")}
+    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "tie_spread_min")}
     assert {e["entry_id"] for e in jb["entries"]} == {"E0", "E1"} and jb["fit_mac_min"] is not None
+    assert jb["tie_spread"] == pytest.approx(jd["tie_spread"]) and jb["tie_spread"] > jb["th"]["tie_spread_min"]
+    assert not any("JIG_SUPPORT_WEAK" in str(w) for w in res["warnings"])                 # 두 짧은 변 tie = 분포 충분
+    sf = jd["surf"]                                                                        # 쉘 파트 8 = 두께 모름(카드·PROP 없음)
+    assert sf["thickness_known"] == pytest.approx(1.0 - 2 * sf["n_shell"] / sf["n_tris"])   # 솔리드 외곽 면 = 0(앎)
     for x in res["ranking"]:
         assert x["score"] == pytest.approx(x["score_jig"], rel=1e-12) and x["umax_jig"] is not None
         assert set(x["C_jig"]) == {"E0", "E1"}
@@ -263,7 +268,7 @@ def test_sm_metric_default_and_hash(tmp_path):
     h_off = stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=False, metric="solve")))
     assert h_on != h_off
     for k, v in (("mac_min", 0.5), ("umax_err_max", 0.9), ("tie_rel_warn", 0.5), ("cancel_warn", 0.9), ("work_eff_min", 0.5),
-                 ("rho_t_mm3", 3e-8), ("modes_ref321", False)):                             # HASH_EXCLUDE 6키 = 해시 밖
+                 ("rho_t_mm3", 3e-8), ("modes_ref321", True), ("tie_spread_min", 0.5)):     # HASH_EXCLUDE = 해시 밖
         assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(**{k: v})))) == h_on
     for k, v in (("contact_gap_mm", 3.0), ("n_modes", 2), ("modes_sigma", -1.0), ("modes_tol", 1e-6), ("modes_maxiter", 500),
                  ("w_inplane", 0.5), ("reg_force", 1e-2), ("reg_modes", 1e-2), ("basis_tangential", False)):
@@ -311,8 +316,14 @@ def test_stages_no_scenario_branch_in_jig():
 
 # ---------------------------------------------------------------- V-JIG-22·18·21 모드 관성(D-JIG-15)·정규화(D-JIG-16)
 def test_modes_default_outputs_and_hz_rescale(tmp_path):
+    assert DEFAULTS["rank"]["jig"]["modes_ref321"] is False                                # D-JIG-19: 3-2-1 비교는 켰을 때만
+    mesh, doe = build_same(tmp_path / "d")
+    out0, post0, _ = run(str(tmp_path / "d" / "o"), doe, mesh, rank=rank_snap())
+    md0 = U.read_json(os.path.join(out0, "prep", "jig.json"))["modes"]
+    assert md0["n_conv"] >= 1 and md0["hz_321"] is None and md0["hz_ratio"] is None
+    assert "mode_lam_321" not in U.load_npz(os.path.join(out0, "prep", "jig.npz")) and post0["jig"]["hz_321"] is None
     mesh, doe = build_same(tmp_path)
-    rk0 = rank_snap()
+    rk0 = rank_snap(jig=jcfg(modes_ref321=True))
     out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rk0)
     jd = U.read_json(os.path.join(out, "prep", "jig.json"))
     md = jd["modes"]
@@ -331,7 +342,7 @@ def test_modes_default_outputs_and_hz_rescale(tmp_path):
     assert jb["th"]["cancel_warn"] == 0.5 and jb["th"]["work_eff_min"] == 0.05 and 0 < jb["fit_work_eff_min"] <= 1 and all(e["rot_deg"] >= 0 and e["mac_nomodes"] is not None for e in jb["entries"])
     assert jb["hz_jig"][0] == pytest.approx(md["hz"][0], rel=1e-12)
     # ρ_t 4배 → hz ½ (해시 밖 — 재실행 없이 bd_post 만)
-    rk4 = rank_snap(jig=jcfg(rho_t_mm3=4 * DEFAULTS["rank"]["jig"]["rho_t_mm3"]))
+    rk4 = rank_snap(jig=jcfg(modes_ref321=True, rho_t_mm3=4 * DEFAULTS["rank"]["jig"]["rho_t_mm3"]))
     d4 = {**doe, "rank": rk4, "rev": 1}
     p4 = stg.run_stage({"stage": "bd_post", "out": out, "doe": d4}, lambda s: None)["result"]
     assert p4["jig"]["hz_jig"] == pytest.approx([h / 2 for h in jb["hz_jig"]], rel=1e-12)
@@ -391,3 +402,60 @@ def test_load_cancel_warning_only(tmp_path):
     _, post2, _ = run(str(tmp_path / "b" / "o"), doe2, mesh2, rank=rank_snap(jig=jcfg(work_eff_min=1e-6)))
     assert not any("상쇄" in str(w) for w in post2["warnings"])
     assert [(x["id"], x["score"]) for x in post["ranking"]] == [(x["id"], x["score"]) for x in post2["ranking"]]
+
+
+# ---------------------------------------------------------------- D-JIG-19 (Verifier 지적) 예외·경로·지그 분포
+def test_baseline_unexpected_exception_falls_back(tmp_path, monkeypatch):
+    """지그 함수가 예상 밖 예외(RuntimeError)를 내도 d000 은 성공 — JIG_SKIPPED(detail = 종류·메시지) + fallback → solve 순위."""
+    from esl.doe import jig as jg
+
+    def boom(*a, **k):
+        raise RuntimeError("synthetic jig crash")
+    monkeypatch.setattr(jg, "select_regions", boom)
+    mesh, doe = build_same(tmp_path)
+    out, post, ids = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap())
+    r0 = U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))
+    assert r0["sm"]["jig"] == {"status": "fallback", "code": "JIG_SKIPPED"} and all(p["C_jig"] is None for p in r0["per_esl"])
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    assert jd["status"] == "fallback" and jd["code"] == "JIG_SKIPPED"
+    assert "RuntimeError" in jd["detail"] and "synthetic jig crash" in jd["detail"]
+    assert any(str(w).startswith("JIG_SKIPPED") and "RuntimeError" in str(w) for w in r0["warnings"])
+    assert post["metric_effective"] == "solve" and post["jig"]["status"] == "fallback" and post["jig"]["code"] == "JIG_SKIPPED"
+    assert len(post["ranking"]) == len(ids) - 1
+
+
+def test_surface_deck_link_or_escape_rejected(tmp_path):
+    """원 Case deck 이 링크(또는 허용 폴더 밖)면 읽지 않음 → JIG_SURF_UNAVAILABLE(PATH_OUTSIDE_ROOT) + 패치."""
+    mesh, doe = build_same(tmp_path)
+    real = doe["base"]["rad_path"]
+    lnk = os.path.join(os.path.dirname(real), "link.rad")
+    os.symlink(real, lnk)
+    out = tmp_path / "_doe"
+    (out / "prep").mkdir(parents=True)
+    U.write_json(str(out / "prep" / "input.json"), {"part_id": sd.PART_ID})
+    J = jcfg()
+    fit = np.ones(mesh["node_id"].size, bool)
+    plan = {"jig_ctx": "case"}
+    for rad, case_dir in ((lnk, os.path.dirname(real)), (real, str(tmp_path / "elsewhere"))):
+        c = stg.Ctx({"stage": "bd_post", "out": str(out), "doe": {**doe, "base": {**doe["base"], "rad_path": rad,
+                                                                                  "case_dir": case_dir}}})
+        warns = []
+        surf, why, info = stg._jig_surface(c, plan, mesh, fit, J, warns)
+        assert surf is None and why == "surf_failed" and info is None
+        assert len(warns) == 1 and warns[0].startswith("JIG_SURF_UNAVAILABLE") and "PATH_OUTSIDE_ROOT" in warns[0]
+    c = stg.Ctx({"stage": "bd_post", "out": str(out), "doe": doe})                            # 정상 경로 = 읽음
+    surf, why, info = stg._jig_surface(c, plan, mesh, fit, J, [])
+    assert surf is not None and why is None and info["n_tris"] > 0
+
+
+def test_support_weak_clustered_ties(tmp_path):
+    """tie 가 한 보스(모서리 한 묶음)에 몰리면 JIG_SUPPORT_WEAK 경고 1개(순위 계속), tie_spread 는 jig.json·result.json 에."""
+    mesh, doe = build_same(tmp_path)
+    one = [tie_groups()[0]]
+    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(jig=jcfg(tie_spread_min=0.15)), groups=one)
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    assert jd["status"] == "ok" and jd["fix"]["n_jig"] == 4 and 0 < jd["tie_spread"] < 0.15
+    jb = post["jig"]
+    assert jb["tie_spread"] == pytest.approx(jd["tie_spread"]) and jb["th"]["tie_spread_min"] == 0.15
+    assert sum(str(w).startswith("JIG_SUPPORT_WEAK") for w in post["warnings"]) == 1
+    assert post["metric_effective"] == "jig" and jb["status"] in ("ok", "poor") and post["ranking"]

@@ -1882,6 +1882,7 @@ class DoeJigThOut(_Out):
     tie_rel_warn: float
     cancel_warn: float
     work_eff_min: float
+    tie_spread_min: float | None = None     # D-JIG-19 JIG_SUPPORT_WEAK 임계(스냅샷 값)
 
 
 class DoeJigEntryOut(_Out):
@@ -1916,6 +1917,7 @@ class DoeJigOut(_Out):
     cancel_rel_max: float | None = None                     # 정보
     fit_work_eff_min: float | None = None                   # 엔트리 최솟값(JIG_LOAD_CANCEL 판정 값)
     tie_rel_max: float | None = None
+    tie_spread: float | None = None                         # D-JIG-19 지그 노드 분포(2번째 주축 표준편차 / 파트 특성 길이)
     n_modes: int = 0                                        # 실제 쓴 모드 수(실패·끔 = 0)
     hz_jig: list[float] = []                                # 지그 구속 고유진동수 Hz(ρ_t 기준), 끔·실패 = []
     hz_321: list[float] | None = None                       # 3-2-1 기준(modes_ref321 거짓·실패 = null)

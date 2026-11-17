@@ -32,7 +32,7 @@ REGION_CONTACT = 1
 REGION_PATCH = 2
 KIND_NAME = {REGION_CONTACT: "contact", REGION_PATCH: "patch"}
 HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "rho_t_mm3",
-                "modes_ref321")   # 해시 밖(D-JIG-11)
+                "modes_ref321", "tie_spread_min")   # 해시 밖(D-JIG-11)
 TIE_REL = 1e-12            # 최근접 삼각형 동률 폭(× gap)
 SIGN_FREE_REL = 1e-9       # 접촉 법선 부호 자유 판정(× ΣA·max(gap, 1))
 
@@ -142,6 +142,24 @@ def select_jig_nodes(mesh, node_id, *, kind_mask=None, kind_bits=0) -> dict:
     return out
 
 
+def support_spread(x, jig_idx, part_mask=None) -> dict:
+    """지그 노드 분포 점검(D-JIG-19 진단): tie_spread = 지그 노드 좌표 PCA 2번째 표준편차 / 대상 파트 노드 PCA 1번째 표준편차
+    (특성 길이). 쉘 지그 노드는 대개 한 면 위라 3번째 표준편차 ≈ 0 → 면 안 분포의 최솟값(1·2 주축 중 작은 쪽 = 2번째)을 쓴다.
+    part_mask None = 모든 노드. 반환 {"tie_spread": float | None(지그 2점 미만·파트 크기 0), "jig_std": [3], "part_std": [3]}."""
+    X = np.asarray(x, dtype=np.float64).reshape(-1, 3)
+    J = np.asarray(jig_idx, dtype=np.int64).reshape(-1)
+    P = X if part_mask is None else X[np.asarray(part_mask, bool)]
+
+    def std3(Y):
+        if Y.shape[0] < 2:
+            return np.zeros(3)
+        s = np.linalg.svd(Y - Y.mean(axis=0), compute_uv=False) / np.sqrt(Y.shape[0])
+        return np.concatenate([s, np.zeros(3 - s.size)])
+    sj, sp_ = std3(X[J]), std3(P)
+    val = float(sj[1] / sp_[0]) if J.size >= 2 and sp_[0] > 0 else None
+    return {"tie_spread": val, "jig_std": [float(v) for v in sj], "part_std": [float(v) for v in sp_]}
+
+
 # ====================================================================== (2) 목표 변형
 def target_disp(x, u3, jig_idx, fit_mask) -> dict:
     """지그 노드 Kabsch **유한 회전** 강체 제거(D-JIG-2·16): (R, t) = kabsch.fit(x_J, x_J + u_J),
@@ -218,19 +236,25 @@ def _closest_tri(p, a, b, c):
     return lam[..., 0:1] * a + lam[..., 1:2] * b + lam[..., 2:3] * c
 
 
-def nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes) -> dict:
-    """노드 xq (n,3) → 최근접 표면 삼각형(거리 ≤ gap 후보만): {"dist" (n,) (후보 없음 = inf), "tri" (n,) (−1 = 없음),
-    "q" (n,3)}. 동률(≤ 1e-12·gap) = 작은 삼각형 번호. 삼각형 중심 cKDTree + 노드 청크 → 메모리 O(T + chunk·knn)."""
+def nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes, thick_q=None) -> dict:
+    """노드 xq (n,3) → 최근접 표면 삼각형(틈 ≤ gap 후보만): {"dist" (n,) 중립면 거리 (후보 없음 = inf), "clear" (n,) 틈
+    = dist − (thick_q + tri_thick)/2 (D-JIG-19, 두께 없음 = dist), "tri" (n,) (−1 = 없음), "q" (n,3)}. 최근접 = 틈 최소,
+    동률(≤ 1e-12·gap) = 작은 삼각형 번호. surf["tri_thick"] (T,) 없음 = 0, thick_q None = 0 (기존과 비트 동일).
+    삼각형 중심 cKDTree + 노드 청크 → 메모리 O(T + chunk·knn)."""
     xq = np.asarray(xq, dtype=np.float64).reshape(-1, 3)
     n = xq.shape[0]
     P = np.asarray(surf["x"], dtype=np.float64).reshape(-1, 3)
     tri = np.asarray(surf["tri"], dtype=np.int64).reshape(-1, 3)
     T = tri.shape[0]
     dist = np.full(n, np.inf)
+    clear = np.full(n, np.inf)
     best = np.full(n, -1, dtype=np.int64)
     qq = np.zeros((n, 3))
     if n == 0 or T == 0:
-        return {"dist": dist, "tri": best, "q": qq}
+        return {"dist": dist, "clear": clear, "tri": best, "q": qq}
+    tt = surf.get("tri_thick") if isinstance(surf, dict) else None
+    tt = np.zeros(T) if tt is None else np.maximum(np.asarray(tt, dtype=np.float64).reshape(-1), 0.0)
+    tq = np.zeros(n) if thick_q is None else np.maximum(np.asarray(thick_q, dtype=np.float64).reshape(-1), 0.0)
     gap = float(gap_mm)
     ctr = np.empty((T, 3))
     rmax = 0.0
@@ -245,7 +269,7 @@ def nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes) -> dict:
         rmax = max(rmax, float(r.max()))
     tree = cKDTree(ctr)
     k = int(min(int(knn), T))
-    ub = gap + rmax
+    ub = gap + rmax + 0.5 * (float(tq.max()) + float(tt.max()))     # 틈 ≤ gap ⇔ 중립면 거리 ≤ gap + 반두께 합
     ub = float(np.nextafter(ub, np.inf)) * (1.0 + 1e-12)   # 경계 포함(보수적)
     tol = TIE_REL * gap
     for s in range(0, n, step):
@@ -258,15 +282,18 @@ def nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes) -> dict:
         qc = _closest_tri(xc[:, None, :], P[tc[..., 0]], P[tc[..., 1]], P[tc[..., 2]])
         d = np.linalg.norm(qc - xc[:, None, :], axis=-1)
         d[~valid] = np.inf
-        dmin = d.min(axis=1)
-        key = np.where(valid & (d <= dmin[:, None] + tol), ii, T + 1)
+        g = d - 0.5 * (tq[s:s + step, None] + tt[ic])                 # 틈(두께 0 이면 g = d 그대로)
+        g[~valid] = np.inf
+        dmin = g.min(axis=1)
+        key = np.where(valid & (g <= dmin[:, None] + tol), ii, T + 1)
         j = np.argmin(key, axis=1)
         has = np.isfinite(dmin)
         r = np.arange(xc.shape[0])
         dist[s:s + step] = np.where(has, d[r, j], np.inf)
+        clear[s:s + step] = np.where(has, g[r, j], np.inf)
         best[s:s + step] = np.where(has, ii[r, j], -1)
         qq[s:s + step] = np.where(has[:, None], qc[r, j], 0.0)
-    return {"dist": dist, "tri": best, "q": qq}
+    return {"dist": dist, "clear": clear, "tri": best, "q": qq}
 
 
 def _region(kind, part, nodes, X, A, sign_ref) -> dict:
@@ -280,14 +307,17 @@ def _region(kind, part, nodes, X, A, sign_ref) -> dict:
 
 def contact_regions(mesh, cand_mask, surf, *, gap_mm, knn, chunk_nodes, max_regions, min_regions, min_nodes,
                     min_area_mm2, weights) -> dict:
-    """접촉 영역만(보충 없음, D-JIG-3): 후보 노드 중 표면까지 거리 ≤ gap 인 노드 → 같은 상대 파트의 대상 메시 연결 성분
+    """접촉 영역만(보충 없음, D-JIG-3·19): 후보 노드 중 틈(중립면 거리 − (t_대상 + t_상대)/2, t_대상 = weights["thick"],
+    t_상대 = surf["tri_thick"] — 없으면 0) ≤ gap 인 노드 → 같은 상대 파트의 대상 메시 연결 성분
     (양 끝이 모두 집합 안·같은 파트인 변) → 노드 수·면적 필터 → (−면적, part, 최소 노드) 상위 max_regions."""
     X = np.asarray(mesh["x0"], dtype=np.float64)
     N = X.shape[0]
     A = np.asarray(weights["area"], dtype=np.float64)
     cand = np.flatnonzero(np.asarray(cand_mask, bool))
-    near = nearest_tri(X[cand], surf, gap_mm=gap_mm, knn=knn, chunk_nodes=chunk_nodes)
-    hit = near["dist"] <= float(gap_mm)
+    tw = weights.get("thick") if isinstance(weights, dict) else None
+    near = nearest_tri(X[cand], surf, gap_mm=gap_mm, knn=knn, chunk_nodes=chunk_nodes,
+                       thick_q=None if tw is None else np.asarray(tw, dtype=np.float64)[cand])
+    hit = near["clear"] <= float(gap_mm)
     cn = cand[hit]
     part = np.full(N, -1, dtype=np.int64)
     tri_part = np.asarray(surf["tri_part"], dtype=np.int64).reshape(-1)

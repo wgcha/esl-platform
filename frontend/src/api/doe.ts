@@ -442,6 +442,7 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_FIT_POOR: "기준 낙하 변형 재현이 임계값에 못 미칩니다(MAC 낮음 또는 umax 오차 큼) — 순위는 계산하되 참고용으로 보세요",
   JIG_TIE_RELATIVE: "체결 노드끼리도 변형됩니다(고정 지그의 한계) — 기준 재현이 낮아질 수 있습니다",
   JIG_DESIGN_FAILED: "그 안의 지그 재풀이에 실패했습니다",
+  JIG_SUPPORT_WEAK: "체결 노드가 한곳에 몰려 지그 지지가 약합니다 — 순위가 체결부 근처 국부 강성에 민감할 수 있습니다",
 };
 /** 지그 하중 영역 출처 이름 */
 export const JIG_SOURCE_NAME: Record<string, string> = { contact: "접촉", mixed: "접촉+패치", patch: "패치" };

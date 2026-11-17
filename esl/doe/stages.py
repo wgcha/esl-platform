@@ -3639,6 +3639,24 @@ def _jig_nodes(c: Ctx, plan: dict, mesh: dict, J: dict, infos: list) -> dict:
     return {**out, "source": src}
 
 
+def _jig_deck_path(c: Ctx, ctx: str) -> str:
+    """jig_ctx 의 deck 시작 파일(case = 원 Case starter, mesh = input/mesh 사본). `_sel_rad_files` 선례와 같은 검사(D-JIG-19):
+    링크·허용 루트(case = case_dir | starter 폴더, mesh = input/mesh) 밖 = PATH_OUTSIDE_ROOT, 확장자·파일 아님 = RAD_PARSE_ERROR."""
+    if ctx == "case":
+        b = c.D.get("base") or {}
+        rad = os.path.normpath(os.path.abspath(b["rad_path"]))
+        root = os.path.normpath(os.path.abspath(b.get("case_dir") or os.path.dirname(rad)))
+    else:
+        inp = U.read_json(c.p("prep", "input.json"))
+        root = os.path.normpath(os.path.abspath(c.p("input", "mesh")))
+        rad = os.path.normpath(os.path.join(root, *str(inp["mesh"]["main"]).replace("\\", "/").split("/")))
+    if os.path.islink(rad) or not U.is_within(U.real_path(rad), U.real_path(root)):
+        raise EslError("PATH_OUTSIDE_ROOT", f"지그 표면 deck 이 링크이거나 허용 폴더 밖: {os.path.basename(rad)}")
+    if os.path.splitext(rad)[1].lower() not in sc.MESH_EXT or not os.path.isfile(rad):
+        raise EslError("RAD_PARSE_ERROR", f"지그 표면 deck 파일이 아님: {os.path.basename(rad)}")
+    return rad
+
+
 def _jig_surface(c: Ctx, plan: dict, mesh: dict, fit_mask, J: dict, warns: list):
     """계획 열 jig_ctx → (surf | None, 사유 | None, 요약 | None). 읽기 실패·상한 초과는 경고 후 패치로(deck 읽기만 — 쓰기 없음)."""
     from esl.doe import jig_surf as js
@@ -3646,14 +3664,9 @@ def _jig_surface(c: Ctx, plan: dict, mesh: dict, fit_mask, J: dict, warns: list)
     if ctx == "none":
         return None, "no_deck", None
     try:
-        if ctx == "case":
-            rad = (c.D.get("base") or {})["rad_path"]
-            kw = c.parse_kw()
-            ipm, depth = kw["include_path_map"], kw["max_include_depth"]
-        else:
-            inp = U.read_json(c.p("prep", "input.json"))
-            rad = c.p("input", "mesh", *str(inp["mesh"]["main"]).split("/"))
-            ipm, depth = c.parse_kw()["include_path_map"], c.parse_kw()["max_include_depth"]
+        rad = _jig_deck_path(c, ctx)
+        kw = c.parse_kw()
+        ipm, depth = kw["include_path_map"], kw["max_include_depth"]
         pid = int(U.read_json(c.p("prep", "input.json"))["part_id"])
         X = np.asarray(mesh["x0"], dtype=np.float64)
         Xf = X[np.asarray(fit_mask, bool)]
@@ -3668,7 +3681,8 @@ def _jig_surface(c: Ctx, plan: dict, mesh: dict, fit_mask, J: dict, warns: list)
         warns.append(_cmp_text("JIG_SURF_UNAVAILABLE", err=type(exc).__name__))
         return None, "surf_failed", None
     return surf, None, {"source": ctx, "n_tris": int(surf["tri"].shape[0]), "n_parts": surf["n_parts"],
-                        "n_shell": surf["n_shell"], "n_solid_faces": surf["n_solid_faces"], "seconds": surf["seconds"]}
+                        "n_shell": surf["n_shell"], "n_solid_faces": surf["n_solid_faces"],
+                        "thickness_known": surf.get("thickness_known"), "seconds": surf["seconds"]}
 
 
 def _jig_basis_of(z: dict, nb: int) -> dict:
@@ -3751,6 +3765,7 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     if sel["code"] is not None:
         raise EslError(sel["code"], json.dumps(U.jsonable(sel["detail"]), ensure_ascii=False))
     jidx = np.asarray(sel["idx"], dtype=np.int64)
+    spread = jg.support_spread(X, jidx)                       # D-JIG-19 진단: 지그 노드 분포(판정은 BD_POST)
     fit = omega.copy()
     fit[jidx] = False                                          # F = Ω \ J(맞춤 노드)
     z = U.load_npz(c.p("prep", SM_REF_NPZ))                    # 참조 변위: 베이스라인 once 해
@@ -3848,7 +3863,9 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     mg.save_npz_det(c.writer.guard(c.p("prep", JIG_NPZ)), doc_npz)
     doc = {"schema": jg.SCHEMA, "status": "ok", "code": None,
            "fix": {"source": sel["source"], "kinds": list(J["fix_kinds"]) if sel["source"] == "fixed" else None,
-                   "n_jig": int(jidx.size), "n_comp": int(sel["n_comp"]), "n_missing": int((sel["detail"] or {}).get("n_missing", 0))},
+                   "n_jig": int(jidx.size), "n_comp": int(sel["n_comp"]), "n_missing": int((sel["detail"] or {}).get("n_missing", 0)),
+                   "jig_std": spread["jig_std"], "part_std": spread["part_std"]},
+           "tie_spread": spread["tie_spread"],
            "regions_from": rs["regions_from"], "n_contact": int(rs["n_contact"]), "n_patch": int(rs["n_patch"]),
            "surf": None if surf_info is None else {**surf_info, "n_contact_nodes": int(rs["n_contact_nodes"]),
                                                    "n_found": int(rs.get("n_found", rs["n_contact"]))},
@@ -3923,9 +3940,10 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
                     code, detail = "JIG_SKIPPED", exc.code
                 _jig_fallback(c, code, detail, warns)
                 c._jig_status = {"status": "fallback", "code": code}
-            except (OSError, KeyError, ValueError, np.linalg.LinAlgError) as exc:
-                warns.append(_cmp_text("JIG_SKIPPED", stage="baseline", err=type(exc).__name__))
-                _jig_fallback(c, "JIG_SKIPPED", type(exc).__name__, warns)
+            except Exception as exc:                                # noqa: BLE001 — D-JIG-19: 지그 때문에 BASELINE_FAILED 금지
+                det = f"{type(exc).__name__}: {exc}"[:500]
+                warns.append(_cmp_text("JIG_SKIPPED", stage="baseline", err=det))
+                _jig_fallback(c, "JIG_SKIPPED", det, warns)
                 c._jig_status = {"status": "fallback", "code": "JIG_SKIPPED"}
         else:
             got = _jig_design(c, did, mesh, loads)
@@ -3947,11 +3965,12 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     if J is None:
         return None, []
     th = {"mac_min": float(J["mac_min"]), "umax_err_max": float(J["umax_err_max"]), "tie_rel_warn": float(J["tie_rel_warn"]),
-          "cancel_warn": float(J["cancel_warn"]), "work_eff_min": float(J["work_eff_min"])}
+          "cancel_warn": float(J["cancel_warn"]), "work_eff_min": float(J["work_eff_min"]),
+          "tie_spread_min": float(J["tie_spread_min"])}
     empty = {"region_source": None, "n_jig": 0, "n_regions": 0, "n_contact": 0, "n_patch": 0, "fit_mac_min": None,
              "fit_umax_err_max": None, "fit_mac_min_nomodes": None, "fit_umax_err_max_nomodes": None,
-             "cancel_rel_max": None, "fit_work_eff_min": None, "tie_rel_max": None, "n_modes": 0, "hz_jig": [], "hz_321": None, "hz_ratio": None,
-             "th": th, "entries": []}
+             "cancel_rel_max": None, "fit_work_eff_min": None, "tie_rel_max": None, "tie_spread": None, "n_modes": 0, "hz_jig": [], "hz_321": None,
+             "hz_ratio": None, "th": th, "entries": []}
     plan = _lt_plan(c)
     if plan["sm_jig"] != "base":
         return {"status": "unsupported", "code": "JIG_UNSUPPORTED", **empty}, \
@@ -4009,10 +4028,13 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     tmax = max(ties) if ties else None
     if tmax is not None and tmax > th["tie_rel_warn"]:
         warns.append(_cmp_text("JIG_TIE_RELATIVE", tie_rel=f"{tmax:.3g}", tie_rel_warn=f"{th['tie_rel_warn']:.3g}"))
+    tsp = None if jd.get("tie_spread") is None else float(jd["tie_spread"])
+    if tsp is not None and tsp < th["tie_spread_min"]:                       # D-JIG-19: 지그 노드 몰림(경고만, 순위 계속)
+        warns.append(_cmp_text("JIG_SUPPORT_WEAK", tie_spread=f"{tsp:.3g}", tie_spread_min=f"{th['tie_spread_min']:.3g}"))
     return {"status": "poor" if poor else "ok", "code": None, **base, "fit_mac_min": min(macs) if macs else None,
             "fit_umax_err_max": max(errs) if errs else None, "fit_mac_min_nomodes": min(nms) if nms else None,
             "fit_umax_err_max_nomodes": max(nes) if nes else None, "cancel_rel_max": max(cans) if cans else None, "fit_work_eff_min": min(wes) if wes else None,
-            "tie_rel_max": tmax, "n_modes": len(hz_j), "hz_jig": hz_j, "hz_321": hz_3, "hz_ratio": ratio,
+            "tie_rel_max": tmax, "tie_spread": tsp, "n_modes": len(hz_j), "hz_jig": hz_j, "hz_321": hz_3, "hz_ratio": ratio,
             "th": th, "entries": out_e}, warns
 
 

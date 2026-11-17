@@ -383,7 +383,7 @@ function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
     const why = jig.code ? JIG_CODE_TEXT[jig.code] ?? jig.code : null;
     return (
       <div className={`small ${jig.status === "fallback" ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={jig.code ?? undefined}>
-        {jig.status === "fallback" ? "⚠ " : ""}지그 순위 불가{why ? ` — ${why}` : ""}, 재풀이 C 로 순위
+        지그 순위 불가{why ? ` — ${why}` : ""}, 재풀이 C 로 순위
       </div>
     );
   }
@@ -392,11 +392,12 @@ function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
   const modes = jig.n_modes > 0;
   const hz = jig.hz_jig?.length ? `지그 1차 ${jig.hz_jig[0].toPrecision(3)} Hz${jig.hz_ratio != null ? ` (3-2-1 대비 ×${jig.hz_ratio.toFixed(2)})` : ""}` : "";
   const tie = jig.tie_rel_max != null && jig.tie_rel_max > jig.th.tie_rel_warn;
-  const extra = [poor ? jigPoorText(jig.th) : "", jig.region_source && jig.region_source !== "contact" ? JIG_CODE_TEXT.JIG_REGION_FALLBACK : "", tie ? JIG_CODE_TEXT.JIG_TIE_RELATIVE : "", cancel ? `${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})` : "", hz].filter(Boolean);
+  const weak = jig.tie_spread != null && jig.th.tie_spread_min != null && jig.tie_spread < jig.th.tie_spread_min;
+  // D-JIG-19: 줄 안 ⚠ 는 JIG_LOAD_CANCEL 1개만 — JIG_FIT_POOR·JIG_TIE_RELATIVE·JIG_SUPPORT_WEAK 등은 title 툴팁
+  const extra = [poor ? jigPoorText(jig.th) : "", jig.region_source && jig.region_source !== "contact" ? JIG_CODE_TEXT.JIG_REGION_FALLBACK : "", tie ? JIG_CODE_TEXT.JIG_TIE_RELATIVE : "", weak ? `${JIG_CODE_TEXT.JIG_SUPPORT_WEAK} (분포 ${jig.tie_spread!.toPrecision(2)} < ${jig.th.tie_spread_min})` : "", cancel ? `${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})` : "", hz].filter(Boolean);
   return (
     <div className={`small ${poor ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={[...extra, tip].filter(Boolean).join("\n") || undefined}>
-      {poor ? "⚠ " : ""}기준 재현(지그): MAC(모드 포함) ≥ {jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–"}{modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ {pct(jig.fit_umax_err_max)} · 하중 영역 {jig.n_regions}개(접촉 {jig.n_contact} · 패치 {jig.n_patch}) · 지그 노드 {jig.n_jig}
-      {tie ? " · ⚠ 체결부 상대 변형" : ""}
+      기준 재현(지그): MAC(모드 포함) ≥ {jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–"}{modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ {pct(jig.fit_umax_err_max)} · 하중 영역 {jig.n_regions}개(접촉 {jig.n_contact} · 패치 {jig.n_patch}) · 지그 노드 {jig.n_jig}
       {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})`}> ⚠</span>}
     </div>
   );

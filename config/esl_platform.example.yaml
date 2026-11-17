@@ -192,7 +192,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       modes_sigma: 0.0                # shift-invert σ(ω² 단위). 0 = 지그 정적 분해 재사용(추가 분해 0)
       modes_tol: 1.0e-8               # eigsh tol
       modes_maxiter: 2000             # eigsh maxiter
-      modes_ref321: true              # 3-2-1 지지 고유진동수 비교 정보(베이스라인 분해 1 추가, 해시 밖)
+      modes_ref321: false             # 3-2-1 지지 고유진동수 비교 정보(켜면 베이스라인 전체 SuperLU 분해 1 추가 — 대형 모델 시간·메모리 주의, 해시 밖)
       w_inplane: 0.1                  # 맞춤 가중의 면내 성분 비(법선 성분 = 1) — D-JIG-16
       reg_force: 1.0e-3               # 접선력·체적력 계수 Tikhonov(ḡ_N 배)
       reg_modes: 0.0                  # 모드 계수 Tikhonov(ḡ_N 배, 0=정규화 없음)
@@ -203,6 +203,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       tie_rel_warn: 0.1               # 초과 → JIG_TIE_RELATIVE (해시 밖)
       cancel_warn: 0.5                # cancel_rel 정보 표시 임계(경고 아님 — D-JIG-18, 해시 밖)
       work_eff_min: 0.05              # 일 효율 미달 → JIG_LOAD_CANCEL (D-JIG-18, 해시 밖)
+      tie_spread_min: 0.02            # 지그 노드 분포(2번째 주축 표준편차 / 대상 파트 1번째 주축 표준편차) 미달 → JIG_SUPPORT_WEAK (해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true

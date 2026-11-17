@@ -301,5 +301,20 @@
 - (0.22.0 D-0.22.0-RD-6, 2026-11-16 사용자 확정, 근거 필수 요소만) 씬 범위 = 엔트리 선택 후 1개씩(`entry_id` 쿼리, Case 는 엔트리에서만), UI = 엔트리 선택칸 1개 + 버튼 1개.
 - (0.22.0 D-0.22.0-RD-7, 2026-11-16 사용자 확정, 근거 제출 불가 묶음 방지) 엔진 rad 없음 = `VD_ENGINE_MISSING` 거부 유지(검증낙하와 같은 `input_set` 규칙).
 - (0.22.0 R-RD-7, 2026-11-16 미해결) 본문 시작 전 끊김은 ttl 정리에만 의존, 스트리밍이 `tmp_ttl_s` 초과 시 다른 요청 ttl 정리와 경합 가능. 후속: `downloadFile` 이 `filename*` 우선 사용.
+
+## 2026-11-17 (v0.23.0)
+- (0.23.0 D-0.23.0-JIG-1, 2026-11-17 사용자 확정 1·3, 근거 제품 모델 체결 = tie 만·ShellModel spc 병진만) 지그 = tie 노드(`fix_kinds` 기본 INTER_TYPE2 둘) 병진 123 고정·회전 자유, 출처 = 계획 열 `jig_fix`(fixed|xfer|none). 노드 0 = `JIG_NO_TIE`, 성분마다 ≥ 3 비공선 아님 = `JIG_SUPPORT_DEGENERATE`. 계약 esl_jig_rank.md.
+- (0.23.0 D-0.23.0-JIG-2·16, 2026-11-17 메인, 근거 미소 강체 제거가 큰 회전에서 O(θ²L) 가짜 면내 잔여를 남겨 상쇄 하중 유발) 목표 변형 = sm_ref 병진에서 지그 노드 Kabsch 유한 회전 제거, 맞춤 가중 W = A(nnᵀ + w_inplane(I − nnᵀ))(기본 0.1), 접선·체적력 Tikhonov `reg_force`(1e-3), `basis_tangential` false = 법선만(비교용). tie_rel 은 진단·경고만(강제 변위는 후속).
+- (0.23.0 D-0.23.0-JIG-3·14 = Q-JIG-2, 2026-11-17 사용자 확정, 근거 h3d 에 다른 부품 없음·T01 분포 없음·물리 접촉 영역 보존) 가압 후보 = 대상 파트 밖 deck 표면(쉘 + 솔리드 외곽 면, 변형 전)과의 접촉 노드, 상대 파트별 연결 성분 상위 max_regions. 부족분(min_regions − n_c)만 PCA 격자 패치로 보충(접촉 0 = 전부 패치, `JIG_REGION_FALLBACK`), 규칙 = `jig.select_regions` 한 곳.
+- (0.23.0 D-0.23.0-JIG-4·5, 2026-11-17, 근거 접촉은 밀기만·몇 곳 하중 = 상쇄 없음) 기저 = 영역마다 법선 1 + 접선 2 단위 합력(면적 가중 = RBE3 등가) + 체적력 3, 보정 = 가중 최소제곱 + 접촉 법선 ≥ 0 + ridge, BVLS(결정적).
+- (0.23.0 D-0.23.0-JIG-6, 2026-11-17 사용자 확정 2, 근거 사내 서버 실험 없이 화면에서 판단) 플랫폼이 기준 재현(MAC·umax 오차·P95·잔차비·영역 합력·반력 평형)을 스스로 보고, 임계 미달 = `JIG_FIT_POOR` 경고(순위 계속).
+- (0.23.0 D-0.23.0-JIG-7, 2026-11-17 사용자 확정 1, 근거 하중 제어 비교) 설계 비교 = 같은 지그·같은 노드 하중 F_i 로 K_d 재풀이, C_jig·umax_jig, 순위 구조 BD-D-6 그대로, 같은 메시 계획만(결정 A).
+- (0.23.0 D-0.23.0-JIG-8, 2026-11-17 사용자 확정 4, 근거 #63 현 지표 신뢰 불가) 새 스터디 기본 `rank.metric = jig`, 지그 불가·실패 = solve 순위 + `jig.status`. 옛 스냅샷(metric 키 없음) = solve 명시.
+- (0.23.0 D-0.23.0-JIG-9·10, 2026-11-17, 근거 AGENTS.md 코드 구조 원칙) 공용 순수 모듈 `esl/doe/jig.py` + IO `esl/doe/jig_surf.py`, 계획 표 열 `sm_jig`·`jig_fix`·`jig_ctx`(PLAN_VERSION 불변, 시나리오 이름 분기 없음).
+- (0.23.0 D-0.23.0-JIG-11·12, 2026-11-17, 근거 LT-12·SM-6 선례) 스냅샷에 `rank.jig` 가 있을 때만 이어하기 해시에 jig(`HASH_EXCLUDE` = 임계값·보고용 키 밖), 결과 = per_esl C_jig·umax_jig, `post/result.json.jig`(DoeJigOut), ranking.csv 끝 열 4개(새 스냅샷만).
+- (0.23.0 D-0.23.0-JIG-13 = Q-JIG-1, 2026-11-17 사용자 확정, 근거 SM-6 — metric 은 해시 밖) 새 스냅샷은 metric 과 무관하게 항상 지그 재풀이(안마다 분해 +1).
+- (0.23.0 D-0.23.0-JIG-15, 2026-11-17 17:44 사용자, 근거 덴팅 = 섀시 전역 굽힘·비틀림 휘청 — 균일 체적력은 관성 분포를 못 담음) 기준 설계 지그 구속 집중질량 저차 모드 관성 하중 g_k = Mφ_k(n_modes 기본 4, σ = 0 = 지그 분해 재사용)를 기저에 추가, 설계마다 재계산 금지, 실패 = `JIG_MODES_FAILED` 후 모드 없이.
 - (0.23.0 D-0.23.0-JIG-17, 2026-11-17 메인, 근거 Impl-Core 438a7e7 보고 — 고차 모드 합력 ≈ 0 의 상쇄 오탐·모드 열 과억제) 지그 상쇄비 = 1 − Σ_n‖Σ_k a_k f_k(n)‖ / Σ_kΣ_n‖a_k f_k(n)‖(기저 열 사이 상쇄만, F_sum_abs 는 정보), 하중 정규화 분리 = `reg_force`(접선·체적력) · `reg_modes`(모드, 기본 0.0, 해시 안) · 법선 = ridge 만. 서로 다른 영역의 반대 방향 하중은 이 상쇄비로 잡히지 않음(F_sum_abs 로 봄).
 - (0.23.0 D-0.23.0-JIG-18, 2026-11-17 메인, 근거 결합력 상쇄 지표는 낙하의 정당한 상쇄(관성력 vs 접촉력·양면 가압)와 구별 불가) 지그 상쇄 판정 = 일 효율 work_eff = |Σ f·u_fit| / Σ‖f‖‖u_fit‖(병진, 비지그 노드) < `work_eff_min`(기본 0.05, 해시 밖) → `JIG_LOAD_CANCEL`. cancel_rel·F_sum_abs 는 정보용, `cancel_warn` = 정보 표시 임계(경고 없음).
+- (0.23.0 D-0.23.0-JIG-19, 2026-11-17 Verifier 지적 반영, 근거 BASELINE_FAILED 방지·입력 경로 안전·대형 모델 시간·접촉 판정 정확도) (1) 베이스라인 지그 계산의 모든 예외 = `JIG_SKIPPED`(detail = 예외 종류·메시지) + fallback, (2) deck 표면 읽기 시작 파일에 `_sel_rad_files` 와 같은 링크·허용 루트 검사(`PATH_OUTSIDE_ROOT` → 패치), (3) `modes_ref321` 기본 false(전체 SuperLU 분해 1 추가 — 켰을 때만 3-2-1 비교), (4) 접촉 판정 = 중립면 거리 − (t_대상 + t_상대)/2 ≤ contact_gap_mm(상대 두께 = 쉘 요소 카드 > /PROP/SHELL, 솔리드 외곽 면 0, 모름 = 0 + `surf.thickness_known` 비율), (5) 지그 노드 분포 tie_spread = 지그 노드 PCA 2번째 표준편차 / 대상 파트 PCA 1번째 표준편차 < `tie_spread_min`(기본 0.02, 해시 밖) → 경고 `JIG_SUPPORT_WEAK`(순위 계속) — 3번째(최소) 표준편차는 같은 면 위 tie 에서 ≈ 0 이라 면 안 최소(2번째)를 씀, (6) 화면 줄 안 ⚠ = `JIG_LOAD_CANCEL` 1개만(FIT_POOR·TIE_RELATIVE·SUPPORT_WEAK 은 툴팁).
+- (0.23.0 보류, 2026-11-17 17:44 사용자) 시간 증분 ESL(DiESL식 — 같은 메시 기준 재현 참조) 보류(설계 활용 목적상 지그 ESL 주력), 지그 노드 강제 변위(R-JIG-1)·메시 독립 하중 전달(v0.24.0 후보)은 후속.

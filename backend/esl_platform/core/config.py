@@ -536,7 +536,7 @@ class BeadDoeRankJigCfg(_M):
     modes_sigma: float = 0.0
     modes_tol: float = Field(default=1e-8, ge=0)
     modes_maxiter: int = Field(default=2000, ge=1, le=100000)
-    modes_ref321: bool = True
+    modes_ref321: bool = False
     w_inplane: float = Field(default=0.1, ge=0, le=1)
     reg_force: float = Field(default=1e-3, ge=0)
     reg_modes: float = Field(default=0.0, ge=0)
@@ -547,6 +547,7 @@ class BeadDoeRankJigCfg(_M):
     tie_rel_warn: float = Field(default=0.1, gt=0)
     cancel_warn: float = Field(default=0.5, gt=0, le=1)
     work_eff_min: float = Field(default=0.05, gt=0, lt=1)
+    tie_spread_min: float = Field(default=0.02, ge=0, lt=1)
 
     @field_validator("fix_kinds")
     @classmethod
