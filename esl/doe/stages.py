@@ -509,6 +509,9 @@ def _cfg_hash(c: Ctx) -> str:
         keep["load_transfer"] = ev.config_hash(tp.hash_view(_lt(c)))
     if c.scn != "compare" and _sm(c) is not None:   # v0.20.0 SM-6 강성 지표 스키마(스냅샷에 키 있을 때만, metric 은 해시 밖)
         keep["stiffness"] = SM_SCHEMA
+    if c.scn != "compare" and _jig(c) is not None:   # v0.23.0 JIG-11: 스냅샷에 rank.jig 가 있을 때만(legacy 해시 불변, 임계값 3개 제외)
+        from esl.doe import jig as jg
+        keep["jig"] = ev.config_hash(jg.hash_view(_jig(c)))
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
         keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
@@ -651,6 +654,8 @@ def bd_eval(spec: dict, echo=print) -> dict:
         if _sm(c) is not None:                   # v0.20.0 SM-1·6: 강성 지표(재풀이 없음) — per_esl 키 추가
             sm_w = _sm_apply(c, t, did, mesh, loads, reg_e, _lt_h(c, bmeta, mesh), r)
             r["warnings"] = list(r["warnings"]) + sm_w
+            if _jig(c) is not None:              # v0.23.0 지그 순위(esl_jig_rank.md §2): metric 과 무관하게 항상(Q-JIG-1)
+                r["warnings"] = list(r["warnings"]) + _jig_apply(c, t, did, mesh, loads, reg_e, r)
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
         keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
         ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if keep_mesh else None, c.writer)
@@ -678,6 +683,8 @@ def bd_eval(spec: dict, echo=print) -> dict:
         p_ = _lt_plan(c)
         doc["sm"] = {"metric": S_["metric"], "lin_form": S_["lin_form"], "ref": p_["sm_ref"],
                      "disp": p_["sm_disp"][0 if did == BASELINE else 1], "C_ref": getattr(c, "_sm_cref", None)}
+        if did == BASELINE and getattr(c, "_jig_status", None) is not None:   # v0.23.0 베이스라인만
+            doc["sm"]["jig"] = dict(c._jig_status)
     if mw:
         doc["morph_warnings"] = mw
     if sw:
@@ -753,15 +760,16 @@ def _sm_csv(rank: dict, r: dict, x: dict | None, entry_ids: list[str], sm_key: s
 
 
 def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: list[str],
-                 lt_cols: dict | None = None, sm_key: str | None = None) -> str:
+                 lt_cols: dict | None = None, sm_key: str | None = None, jig: dict | None = None) -> str:
     """①②③ ranking.csv. v0.20.0 LT-13·20 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt.
-    sm_key(강성 지표 스냅샷 — per_esl 의 metric 키) = 가운데 열 SM_CSV_MID·C_<i>(metric)·C_solve_<i>(§6)."""
+    sm_key(강성 지표 스냅샷 — per_esl 의 metric 키) = 가운데 열 SM_CSV_MID·C_<i>(metric)·C_solve_<i>(§6).
+    jig(v0.23.0 — {"block": DoeJigOut | None}, 스냅샷에 지그 있을 때만) = 맨 끝 열 JIG_CSV_COLS."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     mid_h = (SM_CSV_MID + [f"C_{e}" for e in entry_ids] + [f"C_solve_{e}" for e in entry_ids]) if sm_key else \
         (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
     w.writerow(["id", "rank", "status"] + names + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
-               + (LT_CSV_COLS if lt_cols is not None else []))
+               + (LT_CSV_COLS if lt_cols is not None else []) + (JIG_CSV_COLS if jig is not None else []))
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
@@ -783,7 +791,8 @@ def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: l
             row = row[:3 + len(names)] + _sm_csv(rank, r, x, entry_ids, sm_key)
         else:
             row = row + [C.get(e, "") for e in entry_ids]
-        w.writerow(row + extra + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else []))
+        w.writerow(row + extra + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else [])
+                   + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else []))
     return buf.getvalue()
 
 
@@ -969,13 +978,15 @@ def bd_post(spec: dict, echo=print) -> dict:
         except (EslError, OSError, ValueError, KeyError) as exc:
             lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", err=getattr(exc, "code", type(exc).__name__))]
             lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
+    jblk, jig_w = _jig_post(c, S_, labels)       # v0.23.0 지그 블록·경고(스냅샷에 rank.jig 있을 때만)
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_ranking_csv(R, results, names, [e["id"] for e in c.D["entries"]], lt_cols,
-                              smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None))
+                              smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None,
+                              {"block": jblk} if _jig_snap(c) is not None else None))
     c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
                                                                     "code": r.get("code"), "score": r.get("score")}
                                                                    for r in results]})
-    warns = [w["code"] for w in R["warnings"]] + lt_w + _sm_post_warn(S_)
+    warns = [w["code"] for w in R["warnings"]] + lt_w + _sm_post_warn(S_) + jig_w
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
@@ -1060,6 +1071,9 @@ def bd_post(spec: dict, echo=print) -> dict:
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
         if lt_diag is not None:
             c.write_json(os.path.join("post", LT_DIAG_JSON), U.jsonable(lt_diag))
+    if jblk is not None:                         # v0.23.0 D-JIG-12: result.json 최상위 jig{DoeJigOut}, 보고서 1줄 자료
+        out["jig"] = jblk
+        ctx["jig"] = jblk
     from esl.doe import report_doe
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
@@ -3268,14 +3282,18 @@ SM_ROW_KEYS = ("C_lin", "C_ritz", "rho", "imbalance_rel", "umax_def")
 
 
 def _sm(c: Ctx) -> dict | None:
-    """스냅샷 doe.rank(새 스터디) → {metric, lin_form, lin_valid, imbalance_warn}. 없으면 None(옛 = solve, 지표 계산 없음)."""
+    """스냅샷 doe.rank(새 스터디) → {metric, lin_form, lin_valid, imbalance_warn, jig}. 없으면 None(옛 = solve, 지표 계산 없음).
+    v0.23.0 D-JIG-8: 스냅샷 rank 에 metric 키가 없으면 solve(DEFAULTS 기본이 jig 로 바뀌어도 옛 동작 유지). jig = 스냅샷 rank.jig 를
+    설정 기본 위에 합친 값(스냅샷에 없으면 None)."""
     r = c.D.get("rank")
     if not isinstance(r, dict) or c.scn not in ("same", "mesh", "step", "compare", "select"):
         return None
     base = settings()["rank"]
-    out = {k: r.get(k, base[k]) for k in ("metric", "lin_form", "lin_valid", "imbalance_warn")}
+    out = {k: r.get(k, base[k]) for k in ("lin_form", "lin_valid", "imbalance_warn")}
+    out["metric"] = r.get("metric", "solve")
     if out["metric"] not in smm.METRICS or out["lin_form"] not in smm.LIN_FORMS:
         raise EslError("CONFIG_INVALID", f"rank.metric {out['metric']} / lin_form {out['lin_form']}")
+    out["jig"] = {**base["jig"], **r["jig"]} if isinstance(r.get("jig"), dict) else None
     return out
 
 
@@ -3285,7 +3303,11 @@ def _sm_post(c: Ctx) -> dict | None:
     if S_ is None:
         return None
     plan = _lt_plan(c)
-    return {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"]), "cross_mesh": tp.cross_mesh(plan)}
+    jig_ok = False
+    if S_["metric"] == "jig" and _jig(c) is not None:         # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
+        jd = _jig_doc(c)
+        jig_ok = bool(jd and jd.get("status") == "ok")
+    return {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"], jig_ok), "cross_mesh": tp.cross_mesh(plan)}
 
 
 def _sm_post_warn(S_: dict | None) -> list:
@@ -3544,6 +3566,353 @@ def _sm_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, h: float, r:
     return warns
 
 
+# ---------------------------------------------------------------- v0.23.0 지그 순위 (esl_jig_rank.md — 공용 순수 모듈 esl.doe.jig, 계획 열 sm_jig·jig_fix·jig_ctx)
+JIG_NPZ = "jig.npz"
+JIG_JSON = "jig.json"
+JIG_CSV_COLS = ["C_jig", "umax_jig", "jig_fit_mac", "jig_umax_err"]      # 새 스냅샷만(끝 열)
+
+
+def _jig(c: Ctx) -> dict | None:
+    """지그 설정: 스냅샷 rank.jig 가 있고 enabled 이고 계획 sm_jig = base 일 때만(아니면 None). 시나리오 이름 분기 없음."""
+    S_ = _sm(c)
+    if S_ is None or S_.get("jig") is None or not S_["jig"].get("enabled"):
+        return None
+    return S_["jig"] if _lt_plan(c)["sm_jig"] == "base" else None
+
+
+def _jig_snap(c: Ctx) -> dict | None:
+    """스냅샷에 지그 설정이 있는가(계획 무관 — ④ post 의 unsupported 블록·CSV 끝 열 판정)."""
+    S_ = _sm(c)
+    if S_ is None or S_.get("jig") is None or not S_["jig"].get("enabled"):
+        return None
+    return S_["jig"]
+
+
+def _jig_doc(c: Ctx) -> dict | None:
+    p = c.p("prep", JIG_JSON)
+    return U.read_json(p) if os.path.isfile(p) else None
+
+
+def _jig_hmax(mesh: dict) -> float:
+    """대상 최대 요소 변 길이(deck 표면 읽기 상자 여유)."""
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    C = np.asarray(mesh["conn"], dtype=np.int64)
+    quad = np.asarray(mesh["elem_type"]) != 3
+    h = 0.0
+    for a, b, only_quad in ((0, 1, False), (1, 2, False), (2, 3, True), (3, 0, True)):
+        ok = (C[:, a] >= 0) & (C[:, b] >= 0) & (quad if only_quad else True)
+        if np.any(ok):
+            h = max(h, float(np.linalg.norm(X[C[ok, a]] - X[C[ok, b]], axis=1).max()))
+    tri = (~quad) & (C[:, 2] >= 0)
+    if np.any(tri):
+        h = max(h, float(np.linalg.norm(X[C[tri, 2]] - X[C[tri, 0]], axis=1).max()))
+    return h
+
+
+def _jig_nodes(c: Ctx, plan: dict, mesh: dict, J: dict, infos: list) -> dict:
+    """계획 열 jig_fix → 지그 노드(select_jig_nodes 결과). 출처 없음·읽기 실패 = JIG_NO_TIE 로 취급."""
+    from esl.doe import jig as jg
+    src = plan["jig_fix"]
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    if src == "fixed":
+        d = c.p("prep", "fixed")
+        try:
+            if not os.path.isfile(os.path.join(d, pio.SCAN_JSON)):
+                raise EslError("FIXED_INFO_MISSING", "prep/fixed 없음")
+            fx = pio.read_fixed(d, c.max_mb)
+        except EslError:
+            return {"idx": np.zeros(0, np.int64), "node_id": np.zeros(0, np.int64), "n_comp": 0, "code": "JIG_NO_TIE",
+                    "detail": {"reason": "FIXED_INFO_MISSING", "n_missing": 0}, "source": src}
+        bits = 0
+        for k in J["fix_kinds"]:
+            bits |= 1 << pio.FIXED_KINDS.index(k)
+        out = jg.select_jig_nodes(mesh, np.asarray(fx["node_id"], dtype=np.int64),
+                                  kind_mask=np.asarray(fx["kind_mask"], dtype=np.int64), kind_bits=bits)
+    elif src == "xfer":
+        p = c.p("prep", "select", "fixed_transfer.json")
+        ids = np.asarray(U.read_json(p).get("node_id") or [], dtype=np.int64) if os.path.isfile(p) \
+            else np.zeros(0, np.int64)
+        out = jg.select_jig_nodes(mesh, ids)
+        infos.append(_cmp_text("JIG_FIX_UNFILTERED"))
+    else:
+        raise EslError("JIG_NO_TIE", "지그 노드 출처 없음(jig_fix none)")
+    return {**out, "source": src}
+
+
+def _jig_surface(c: Ctx, plan: dict, mesh: dict, fit_mask, J: dict, warns: list):
+    """계획 열 jig_ctx → (surf | None, 사유 | None, 요약 | None). 읽기 실패·상한 초과는 경고 후 패치로(deck 읽기만 — 쓰기 없음)."""
+    from esl.doe import jig_surf as js
+    ctx = plan["jig_ctx"]
+    if ctx == "none":
+        return None, "no_deck", None
+    try:
+        if ctx == "case":
+            rad = (c.D.get("base") or {})["rad_path"]
+            kw = c.parse_kw()
+            ipm, depth = kw["include_path_map"], kw["max_include_depth"]
+        else:
+            inp = U.read_json(c.p("prep", "input.json"))
+            rad = c.p("input", "mesh", *str(inp["mesh"]["main"]).split("/"))
+            ipm, depth = c.parse_kw()["include_path_map"], c.parse_kw()["max_include_depth"]
+        pid = int(U.read_json(c.p("prep", "input.json"))["part_id"])
+        X = np.asarray(mesh["x0"], dtype=np.float64)
+        Xf = X[np.asarray(fit_mask, bool)]
+        surf = js.other_surfaces(rad, pid, Xf.min(axis=0), Xf.max(axis=0), include_path_map=ipm, max_include_depth=depth,
+                                 max_line_bytes=c.max_line(), max_tris=int(J["max_surf_tris"]),
+                                 pad_mm=float(J["contact_gap_mm"]) + _jig_hmax(mesh))
+    except EslError as exc:
+        code = "JIG_SURF_TOO_LARGE" if exc.code == "JIG_SURF_TOO_LARGE" else "JIG_SURF_UNAVAILABLE"
+        warns.append(_cmp_text(code, err=exc.code))
+        return None, "surf_failed", None
+    except (OSError, KeyError, ValueError) as exc:
+        warns.append(_cmp_text("JIG_SURF_UNAVAILABLE", err=type(exc).__name__))
+        return None, "surf_failed", None
+    return surf, None, {"source": ctx, "n_tris": int(surf["tri"].shape[0]), "n_parts": surf["n_parts"],
+                        "n_shell": surf["n_shell"], "n_solid_faces": surf["n_solid_faces"], "seconds": surf["seconds"]}
+
+
+def _jig_basis_of(z: dict, nb: int) -> dict:
+    return {"reg_ptr": z["reg_ptr"], "reg_node": z["reg_node"], "reg_w": z["reg_w"], "reg_dir": z["reg_dir"],
+            "reg_sign": z["reg_sign"], "reg_kind": z["reg_kind"], "reg_part": z["reg_part"],
+            "body_w": z["body_w"] if "body_w" in z else None, "nb": int(nb), "n_normal_free": 0}
+
+
+def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, warns: list) -> dict:
+    """베이스라인: 지그 노드 → 목표 변형 → 영역 → 기저 → 맞춤 → 기준 재현 → prep/jig.{npz,json}. 반환 {C_jig{eid}, umax_jig{eid}}.
+    EslError = 호출자가 fallback 으로 처리(JIG_NO_TIE·JIG_SUPPORT_DEGENERATE 는 코드 그대로, 그 밖 JIG_SKIPPED)."""
+    from esl.doe import jig as jg
+    plan = _lt_plan(c)
+    infos: list = []
+    tm: dict = {}
+    t0 = time.monotonic()
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    N = nid.size
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    om = _sm_omega(plan, region)
+    omega = np.ones(N, bool) if om is None else np.asarray(ltm.active_nodes(mesh, om), bool)
+    sel = _jig_nodes(c, plan, mesh, J, infos)
+    if sel["code"] is not None:
+        raise EslError(sel["code"], json.dumps(U.jsonable(sel["detail"]), ensure_ascii=False))
+    jidx = np.asarray(sel["idx"], dtype=np.int64)
+    fit = omega.copy()
+    fit[jidx] = False                                          # F = Ω \ J(맞춤 노드)
+    z = U.load_npz(c.p("prep", SM_REF_NPZ))                    # 참조 변위: 베이스라인 once 해
+    eids_ref = [str(e) for e in z["entry_ids"].tolist()]
+    nb_ = np.asarray(z["node_id"], dtype=np.int64)
+    ordn = np.argsort(nb_)
+    pos = ordn[np.searchsorted(nb_, nid, sorter=ordn).clip(0, nb_.size - 1)]
+    eids = [e for e, _F in loads]
+    u3 = {e: np.asarray(z["u"][eids_ref.index(e)], dtype=np.float64)[pos][:, :3] for e in eids}
+    tg_ = {e: jg.target_disp(X, u3[e], jidx, fit) for e in eids}
+    tm["surf"] = time.monotonic()
+    surf, why, surf_info = _jig_surface(c, plan, mesh, fit, J, warns)
+    tm["surf"] = time.monotonic() - tm["surf"]
+    wts = jg.node_weights(mesh)
+    tm["regions"] = time.monotonic()
+    rs = jg.select_regions(mesh, fit, jidx, surf, gap_mm=float(J["contact_gap_mm"]), knn=int(J["knn"]),
+                           chunk_nodes=int(J["chunk_nodes"]), max_regions=int(J["max_regions"]),
+                           min_regions=int(J["min_regions"]), min_nodes=int(J["min_region_nodes"]),
+                           min_area_mm2=float(J["min_region_area_mm2"]), patch_count=int(J["patch_count"]), weights=wts,
+                           surf_reason=why)
+    tm["regions"] = time.monotonic() - tm["regions"]
+    if rs["fill_reason"] is not None:
+        warns.append(_cmp_text("JIG_REGION_FALLBACK", reason=rs["fill_reason"], n_contact=rs["n_contact"],
+                               n_patch=rs["n_patch"]))
+    tm["basis"] = time.monotonic()
+    basis = jg.load_basis(mesh, rs["regions"], wts, omega, body_force=bool(J["body_force"]))
+    h = jg.factor(mesh, jidx, c.solver_cfg())
+    BR = jg.basis_response(h, basis, fit)
+    tm["basis"] = time.monotonic() - tm["basis"]
+    if basis["n_normal_free"]:
+        infos.append(_cmp_text("JIG_NORMAL_FREE", n=int(basis["n_normal_free"])))
+    if BR["null_cols"]:
+        infos.append(_cmp_text("JIG_BASIS_NULL", n=len(BR["null_cols"])))
+    area = np.asarray(wts["area"], dtype=np.float64)
+    w_fit = area[fit] / max(float(area[fit].mean()), 1e-300)
+    tm["fit"] = time.monotonic()
+    fits = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, basis, ridge=float(J["ridge"])) for e in eids}
+    F_i = {e: jg.forces(basis, fits[e]["a"], N) for e in eids}
+    tm["fit"] = time.monotonic() - tm["fit"]
+    tm["respond"] = time.monotonic()
+    rows = {x["entry_id"]: x for x in jg.respond(h, [(e, F_i[e]) for e in eids], umax_mask=omega, keep_u=True)}
+    tm["respond"] = time.monotonic() - tm["respond"]
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    ents, a_mat = [], []
+    for e in eids:
+        ur = np.asarray(rows[e]["u"], dtype=np.float64)
+        rep = jg.fit_report(ur[:, :3] if ur.shape[1] > 3 else ur, tg_[e]["u_tgt"], fit, w_fit_full(area, fit), basis,
+                            fits[e]["a"], jig_idx=jidx, active_tol=float(J["active_tol"]))
+        a_mat.append(fits[e]["a"])
+        ents.append({"entry_id": e, "label": labels.get(e, e[:8]), **{k: rep[k] for k in (
+            "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "cancel_rel", "n_active")},
+            "tie_rel": tg_[e]["tie_rel"], "react_rel": rows[e]["react_rel"], "body": rep["body"],
+            "forces": [{k: f[k] for k in ("region", "F_n", "F_t1", "F_t2", "F", "active")} for f in rep["forces"]],
+            "C_ref": float(rows[e]["C_jig"]), "umax_ref": float(rows[e]["umax_jig"])})
+    regs = []
+    for k, rg in enumerate(rs["regions"]):
+        regs.append({"id": k, "kind": "contact" if int(rg["kind"]) == jg.REGION_CONTACT else "patch",
+                     "part": int(rg["part"]) if int(rg["kind"]) == jg.REGION_CONTACT else None,
+                     "n_nodes": int(np.asarray(rg["nodes"]).size), "area_mm2": float(rg["area"]),
+                     "center": [float(v) for v in rg["center"]], "normal": [float(v) for v in basis["reg_dir"][k][0]],
+                     "sign": int(basis["reg_sign"][k])})
+    doc_npz = {"schema": np.asarray(jg.SCHEMA), "node_id": nid, "jig_idx": jidx, "omega": omega,
+               "reg_ptr": basis["reg_ptr"], "reg_node": basis["reg_node"], "reg_w": basis["reg_w"],
+               "reg_dir": basis["reg_dir"], "reg_sign": basis["reg_sign"], "reg_kind": basis["reg_kind"],
+               "reg_part": basis["reg_part"], "entry_ids": np.asarray(eids), "a": np.stack(a_mat),
+               "C_ref": np.asarray([rows[e]["C_jig"] for e in eids], dtype=np.float64),
+               "umax_ref": np.asarray([rows[e]["umax_jig"] for e in eids], dtype=np.float64)}
+    if basis["body_w"] is not None:
+        doc_npz["body_w"] = np.asarray(basis["body_w"], dtype=np.float64)
+    c.writer.makedirs(c.p("prep"))
+    mg.save_npz_det(c.writer.guard(c.p("prep", JIG_NPZ)), doc_npz)
+    doc = {"schema": jg.SCHEMA, "status": "ok", "code": None,
+           "fix": {"source": sel["source"], "kinds": list(J["fix_kinds"]) if sel["source"] == "fixed" else None,
+                   "n_jig": int(jidx.size), "n_comp": int(sel["n_comp"]), "n_missing": int((sel["detail"] or {}).get("n_missing", 0))},
+           "regions_from": rs["regions_from"], "n_contact": int(rs["n_contact"]), "n_patch": int(rs["n_patch"]),
+           "surf": None if surf_info is None else {**surf_info, "n_contact_nodes": int(rs["n_contact_nodes"]),
+                                                   "n_found": int(rs.get("n_found", rs["n_contact"]))},
+           "regions": regs, "nb": int(basis["nb"]), "body_force": bool(J["body_force"]), "ridge": float(J["ridge"]),
+           "entries": ents, "info": infos, "warnings": list(warns),
+           "seconds": {k: round(v, 3) for k, v in tm.items()}, "seconds_total": round(time.monotonic() - t0, 3)}
+    if rs["fill_reason"] is not None:
+        doc["fill_reason"] = rs["fill_reason"]
+    c.write_json(os.path.join("prep", JIG_JSON), doc)
+    return {"C_jig": {e: float(rows[e]["C_jig"]) for e in eids}, "umax_jig": {e: float(rows[e]["umax_jig"]) for e in eids}}
+
+
+def w_fit_full(area, fit):
+    """fit_report 의 weights 인수: 노드 면적 가중(전 노드 (N,), F 밖은 0 — 맞춤 노드만 쓰임)."""
+    w = np.where(fit, np.asarray(area, dtype=np.float64), 0.0)
+    return w / max(float(w[fit].mean()), 1e-300) if fit.any() else w
+
+
+def _jig_fallback(c: Ctx, code: str, detail: str | None, warns: list) -> None:
+    """베이스라인 지그 실패 = prep/jig.json status fallback + code(베이스라인 실패로 만들지 않음). 낡은 jig.npz 는 지우지 않고 무시(status 우선)."""
+    from esl.doe import jig as jg
+    c.write_json(os.path.join("prep", JIG_JSON), {"schema": jg.SCHEMA, "status": "fallback", "code": code,
+                                                  "detail": detail, "warnings": list(warns)})
+    p = c.p("prep", JIG_NPZ)
+    if os.path.isfile(p):
+        os.remove(c.writer.guard(p))
+
+
+def _jig_design(c: Ctx, did: str, mesh: dict, loads: list) -> dict | None:
+    """안: prep/jig.npz → 하중 F_i = forces(basis, a_i) → design_response(안 mesh, 같은 지그 노드). None = 지그 없음(npz 없음·fallback)."""
+    from esl.doe import jig as jg
+    jd = _jig_doc(c)
+    pz = c.p("prep", JIG_NPZ)
+    if jd is None or jd.get("status") != "ok" or not os.path.isfile(pz):
+        return None
+    z = U.load_npz(pz)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    nb_ = np.asarray(z["node_id"], dtype=np.int64)
+    if np.array_equal(nb_, nid):
+        jidx, omega = np.asarray(z["jig_idx"], dtype=np.int64), np.asarray(z["omega"], bool)
+    else:                                                      # 같은 노드 ID 로 찾음
+        o = np.argsort(nid)
+        jidx = o[np.searchsorted(nid, nb_[z["jig_idx"]], sorter=o)]
+        omega = np.zeros(nid.size, bool)
+        omega[o[np.searchsorted(nid, nb_[np.asarray(z["omega"], bool)], sorter=o)]] = True
+    eids = [str(e) for e in z["entry_ids"].tolist()]
+    basis = _jig_basis_of(z, int(z["a"].shape[1]))
+    ld = [(e, jg.forces(basis, np.asarray(z["a"][eids.index(e)], dtype=np.float64), nb_.size)) for e, _F in loads]
+    r = jg.design_response(mesh, jidx, ld, c.solver_cfg(), umax_mask=omega)
+    return {x["entry_id"]: x for x in r["rows"]}
+
+
+def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) -> list:
+    """bd_eval 훅: per_esl 행에 C_jig·umax_jig. 예외는 잡아 null + JIG_SKIPPED(베이스라인 — fallback) | JIG_DESIGN_FAILED(안).
+    반환 = 경고 문자열."""
+    J = _jig(c)
+    warns: list = []
+    rows: dict | None = None
+    try:
+        if did == BASELINE:
+            try:
+                got = _jig_baseline(c, t, mesh, loads, region, r, J, warns)
+                rows = {e: {"C_jig": got["C_jig"][e], "umax_jig": got["umax_jig"][e]} for e in got["C_jig"]}
+                c._jig_status = {"status": "ok", "code": None}
+            except EslError as exc:
+                if exc.code in ("JIG_NO_TIE", "JIG_SUPPORT_DEGENERATE"):
+                    det = {}
+                    try:
+                        det = json.loads(exc.message)
+                    except ValueError:
+                        pass
+                    warns.append(_cmp_text(exc.code, **{k: v for k, v in det.items() if isinstance(v, (int, float, str))}))
+                    code, detail = exc.code, exc.message
+                else:
+                    warns.append(_cmp_text("JIG_SKIPPED", stage="baseline", err=exc.code))
+                    code, detail = "JIG_SKIPPED", exc.code
+                _jig_fallback(c, code, detail, warns)
+                c._jig_status = {"status": "fallback", "code": code}
+            except (OSError, KeyError, ValueError, np.linalg.LinAlgError) as exc:
+                warns.append(_cmp_text("JIG_SKIPPED", stage="baseline", err=type(exc).__name__))
+                _jig_fallback(c, "JIG_SKIPPED", type(exc).__name__, warns)
+                c._jig_status = {"status": "fallback", "code": "JIG_SKIPPED"}
+        else:
+            got = _jig_design(c, did, mesh, loads)
+            rows = None if got is None else {e: {"C_jig": x["C_jig"], "umax_jig": x["umax_jig"]} for e, x in got.items()}
+    except (EslError, OSError, KeyError, ValueError, np.linalg.LinAlgError) as exc:
+        rows = None
+        warns.append(_cmp_text("JIG_DESIGN_FAILED" if did != BASELINE else "JIG_SKIPPED", did=did,
+                               stage="design", err=getattr(exc, "code", type(exc).__name__)))
+    for p in r["per_esl"]:
+        add = (rows or {}).get(p["entry_id"]) or {}
+        p["C_jig"] = None if add.get("C_jig") is None else float(add["C_jig"])
+        p["umax_jig"] = None if add.get("umax_jig") is None else float(add["umax_jig"])
+    return warns
+
+
+def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]:
+    """BD_POST 지그 블록 DoeJigOut(§4) + 경고 문자열(JIG_FIT_POOR·JIG_TIE_RELATIVE·JIG_UNSUPPORTED). 스냅샷에 지그 없음 = (None, [])."""
+    J = _jig_snap(c)
+    if J is None:
+        return None, []
+    th = {"mac_min": float(J["mac_min"]), "umax_err_max": float(J["umax_err_max"]), "tie_rel_warn": float(J["tie_rel_warn"])}
+    empty = {"region_source": None, "n_jig": 0, "n_regions": 0, "n_contact": 0, "n_patch": 0, "fit_mac_min": None,
+             "fit_umax_err_max": None, "tie_rel_max": None, "th": th, "entries": []}
+    plan = _lt_plan(c)
+    if plan["sm_jig"] != "base":
+        return {"status": "unsupported", "code": "JIG_UNSUPPORTED", **empty}, \
+            ([_cmp_text("JIG_UNSUPPORTED")] if S_ is not None and S_["metric"] == "jig" else [])
+    jd = _jig_doc(c)
+    if jd is None:
+        return {"status": "fallback", "code": "JIG_SKIPPED", **empty}, []
+    fx = jd.get("fix") or {}
+    base = {"region_source": jd.get("regions_from"), "n_jig": int(fx.get("n_jig") or 0),
+            "n_regions": len(jd.get("regions") or []), "n_contact": int(jd.get("n_contact") or 0),
+            "n_patch": int(jd.get("n_patch") or 0)}
+    if jd.get("status") != "ok":
+        return {"status": "fallback", "code": jd.get("code"), **{**empty, **base}, "th": th}, []
+    ents = jd.get("entries") or []
+    out_e = [{"entry_id": e["entry_id"], "label": labels.get(e["entry_id"], e.get("label") or e["entry_id"][:8]),
+              "mac": float(e["mac"]), "umax_err": float(e["umax_err"]), "err_p95": float(e["err_p95"]),
+              "n_active": int(e["n_active"]), "F_sum_abs": float(e["F_sum_abs"]), "cancel_rel": float(e["cancel_rel"])}
+             for e in ents]
+    macs = [float(e["mac"]) for e in ents]
+    errs = [float(e["umax_err"]) for e in ents]
+    ties = [float(e["tie_rel"]) for e in ents if e.get("tie_rel") is not None]
+    warns: list = []
+    poor = [e for e in out_e if e["mac"] < th["mac_min"] or e["umax_err"] > th["umax_err_max"]]
+    if poor:
+        det = ", ".join(f"{e['label']} MAC {e['mac']:.3f}·umax 오차 {e['umax_err'] * 100:.1f} %" for e in poor)
+        warns.append(_cmp_text("JIG_FIT_POOR", detail=det))
+    tmax = max(ties) if ties else None
+    if tmax is not None and tmax > th["tie_rel_warn"]:
+        warns.append(_cmp_text("JIG_TIE_RELATIVE", tie_rel=f"{tmax:.3g}", tie_rel_warn=f"{th['tie_rel_warn']:.3g}"))
+    return {"status": "poor" if poor else "ok", "code": None, **base, "fit_mac_min": min(macs) if macs else None,
+            "fit_umax_err_max": max(errs) if errs else None, "tie_rel_max": tmax, "th": th, "entries": out_e}, warns
+
+
+def _jig_csv(rank: dict, rid: str, x: dict | None, blk: dict | None) -> list:
+    """끝 열 JIG_CSV_COLS: C_jig = 행 score_jig(비), umax_jig = 행 umax_jig(비), jig_fit_mac·jig_umax_err = 스터디 공통(지그 없음 = 빈 칸)."""
+    src = rank["baseline"] if rid == BASELINE else x
+    vals = [(src or {}).get("score_jig"), (src or {}).get("umax_jig"), (blk or {}).get("fit_mac_min"),
+            (blk or {}).get("fit_umax_err_max")]
+    return ["" if v is None else v for v in vals]
+
+
 MQ_CSV_COLS = ["mq_fail_ratio", "mq_tria_pct"]       # v0.21.0 SH-23 끝 열(새 스냅샷만)
 
 
@@ -3593,7 +3962,7 @@ def _cmp_mq_rank(c: Ctx, R: dict, shapes: dict) -> dict | None:
 
 
 def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str], lt_cols: dict | None = None,
-                     sm_key: str | None = None, mq_cols: bool = False) -> str:
+                     sm_key: str | None = None, mq_cols: bool = False, jig: dict | None = None) -> str:
     """④ ranking.csv: 변수 열 대신 name·file_name. v0.16.0 끝 열(§7·C2-D-22) = source·mesh_method·hausdorff_mm·refine_h_mm·
     elem_ratio_ref(기존 열 위치 불변). v0.20.0 LT-13 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt."""
     buf = io.StringIO()
@@ -3601,7 +3970,8 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
     mid_h = (SM_CSV_MID + [f"C_{e}" for e in entry_ids] + [f"C_solve_{e}" for e in entry_ids]) if sm_key else \
         (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
     w.writerow(["id", "rank", "status", "name", "file_name"] + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
-               + MESH_CSV_COLS + (LT_CSV_COLS if lt_cols is not None else []) + (MQ_CSV_COLS if mq_cols else []))
+               + MESH_CSV_COLS + (LT_CSV_COLS if lt_cols is not None else []) + (MQ_CSV_COLS if mq_cols else [])
+               + (JIG_CSV_COLS if jig is not None else []))
     rr = {x["id"]: x for x in rank["ranking"]}
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
@@ -3624,7 +3994,8 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
         mqv = (x or {}).get("mq") if mq_cols else None
         w.writerow(row + extra + _mesh_csv(sh)
                    + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else [])
-                   + (([mqv["fail_ratio"], mqv["tria_pct"]] if mqv else ["", ""]) if mq_cols else []))
+                   + (([mqv["fail_ratio"], mqv["tria_pct"]] if mqv else ["", ""]) if mq_cols else [])
+                   + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else []))
     return buf.getvalue()
 
 
@@ -3836,10 +4207,11 @@ def _cmp_post(c: Ctx, echo) -> dict:
         except (EslError, OSError, ValueError, KeyError) as exc:
             lt_w = [_cmp_text("LT_DIAG_SKIPPED", stage="post", err=getattr(exc, "code", type(exc).__name__))]
             lt_res, lt_cols = {**tp.public(L), "summary": [], "warnings_n": 1}, {}
+    jblk, jig_w = _jig_post(c, S_, labels)       # v0.23.0 ④ = unsupported 블록(스냅샷에 rank.jig 있을 때만)
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols,
                                   smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None,
-                                  mq_cols=mq_res is not None))
+                                  mq_cols=mq_res is not None, jig={"block": jblk} if _jig_snap(c) is not None else None))
 
     def shp(did):
         s = shapes.get(did) or {}
@@ -3853,7 +4225,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
     if doc["reference_source"] == "case":
         warns.append(f"COMPARE_REF_CASE_MESH: {REF_CASE_MSG}")
     warns += [w for w in doc.get("warnings") or [] if str(w).split(":", 1)[0] in MESH_HEAD_CODES] + bias_w + lt_w \
-        + _sm_post_warn(S_)
+        + _sm_post_warn(S_) + jig_w
     if mq_res is not None and mq_res["warning"] is not None:      # v0.21.0 SH-23: 문자열은 작업 경고, 구조화 dict 는 결과 warnings
         warns.append(mq_res["warning"]["message"])
     k = int(c.cfg["view3d"]["top_k"])
@@ -3914,6 +4286,9 @@ def _cmp_post(c: Ctx, echo) -> dict:
         out.update(metric=R.get("metric"), lin_form=R.get("lin_form"), C_ref_solve=R.get("C_ref_solve"),
                    metric_effective=S_["metric_effective"], cross_mesh=S_["cross_mesh"],
                    **({"n_fallback": R["n_fallback"]} if "n_fallback" in R else {}))
+    if jblk is not None:                         # v0.23.0 ④ jig = unsupported 블록
+        out["jig"] = jblk
+        ctx["jig"] = jblk
     if L is not None:
         out.update(load_transfer=lt_res, view3d_ref=v3_ref or {}, view3d_esl=v3_esl or {})
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}
