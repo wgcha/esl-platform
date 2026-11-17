@@ -6,7 +6,7 @@
 // ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
 // v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8): ① 입력 카드 물성 칸 아래 '고급 설정'(접힘) = 메시 방식 [자동 | CAD | 재메시] + '실패 시 세분화 허용'.
 // 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
@@ -30,12 +30,12 @@ import { STEP_LABEL } from "../../api/history";
 import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
-import { Badge, Card, Empty, ErrorLine, PrimaryButton } from "../../components/ui";
+import { Badge, Card, Empty, ErrorLine, PrimaryButton, type CardFold } from "../../components/ui";
 import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, rowSource, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
-import { DoeThumbGrid, previewSummary } from "../../components/DoeThumbGrid";
-import { DoeRanking } from "../../components/DoeRanking";
-import { DoePerEslTable } from "../../components/DoePerEslTable";
+import { DoeThumbGrid, previewSummary, valuesText } from "../../components/DoeThumbGrid";
+import { BestCleanChip, BestCleanMqChip, DoeRanking, JigLine, hasBestClean, hasBestCleanMq } from "../../components/DoeRanking";
+import { DoePerEslTable, perEslNote } from "../../components/DoePerEslTable";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
 import { BundleButton } from "../../components/BundleButton";
@@ -55,7 +55,7 @@ import { VerifyDropDialog } from "../../components/VerifyDropDialog";
 import { VerifyDropCard } from "../../components/VerifyDropCard";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { FixedViolNote } from "../../components/FixedViol";
-import { JobFailBanner, failedStep, isFailedJob, progressText } from "../../components/JobFailBanner";
+import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFailBanner";
 import { BlockErr, MsgFold } from "../../components/MsgFold";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
@@ -411,24 +411,33 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
           <Empty>불러오는 중…</Empty>
         )}
       </Card>
-      <div className="small muted">
-        {isCompare
-          ? "입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음). 준비 결과를 확인한 뒤 '비교 실행'."
+      {(() => {
+        // v0.23.1 긴 글(esl_doe_ui_tidy.md §7): 첫 문장(다음 동작)만 상시, 나머지는 ⓘ 접기. 라이브러리 링크(ESL 미선택)는 그대로
+        const [lead, ...rest] = isCompare
+          ? ["입력 준비에서 형상마다 같은 설정으로 메시를 만들고 크기·정렬을 검사합니다(비드 인식·미리보기 없음).", "준비 결과를 확인한 뒤 '비교 실행'."]
           : stepBase
-            ? "입력 준비에서 STEP 을 ④ 와 같은 설정으로 메시한 뒤 메시 분류기가 비드 네트워크를 찾고, A 모델 고정점을 옮겨 고정 층을 채웁니다 — 고친 뒤 '선택 저장'. 결과는 메시(ch_r.rad)만 받습니다."
-          : isAuto
-            ? "입력 준비에서 메시 분류기가 비드 네트워크(세그먼트·접합)를 찾아 3D 선택을 채웁니다 — 고친 뒤 '선택 저장'. STEP 은 없어도 됩니다(있으면 참고 힌트). 분류가 실패해도 직접 칠할 수 있습니다."
-            : isSelect
-              ? "입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."
-              : "입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."}{" "}
-        {meshBase || stepBase ? `하중은 셀 매핑, 지지는 ${stepBase ? "STEP 메시" : "B 메시"} 자동 3-2-1 입니다. ` : ""}입력 폴더는 읽기만 합니다.
-        {!ids.length && (
-          <>
-            {" "}
-            <Link to={libPath(projectId)}>라이브러리</Link>에서 ESL 을 고르세요.
-          </>
-        )}
-      </div>
+            ? ["입력 준비에서 STEP 을 ④ 와 같은 설정으로 메시한 뒤 메시 분류기가 비드 네트워크를 찾고, A 모델 고정점을 옮겨 고정 층을 채웁니다 — 고친 뒤 '선택 저장'.", "결과는 메시(ch_r.rad)만 받습니다."]
+            : isAuto
+              ? ["입력 준비에서 메시 분류기가 비드 네트워크(세그먼트·접합)를 찾아 3D 선택을 채웁니다 — 고친 뒤 '선택 저장'.", "STEP 은 없어도 됩니다(있으면 참고 힌트).", "분류가 실패해도 직접 칠할 수 있습니다."]
+              : isSelect
+                ? ["입력 준비가 끝나면 3D 에서 비드 바닥을 클릭해 고르고(같은 법선 자동 확장), 사면·경계를 자동으로 잡은 뒤 '선택 저장'."]
+                : ["입력 준비가 끝나면 비드·변수 표와 평면도가 열립니다(형상 엔진 paicad 가 STEP 에서 비드를 인식)."];
+        const more = [...rest, ...(meshBase || stepBase ? [`하중은 셀 매핑, 지지는 ${stepBase ? "STEP 메시" : "B 메시"} 자동 3-2-1 입니다.`] : []), "입력 폴더는 읽기만 합니다."].join(" ");
+        return (
+          <div className="small muted" data-testid="new-note">
+            {lead}{" "}
+            <details className="doe-note-more" data-testid="new-note-more">
+              <summary aria-label="자세한 안내">ⓘ</summary> {more}
+            </details>
+            {!ids.length && (
+              <>
+                {" "}
+                <Link to={libPath(projectId)}>라이브러리</Link>에서 ESL 을 고르세요.
+              </>
+            )}
+          </div>
+        );
+      })()}
     </>
   );
 }
@@ -588,7 +597,7 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
 // ================================================================ v0.20.0 ④ 하중 전달 진단(esl_load_transfer.md §7)
 const fx = (x: number | null | undefined, d = 2) => (x == null || !Number.isFinite(x) ? "–" : x.toFixed(d));
 const pct = (x: number) => `${(x * 100).toFixed(x > 0 && x < 0.001 ? 2 : 1)} %`;
-/** 순위 아래 요약 1줄 + 접힘 표 2개(d000 참값 대비 · 형상별). 새 결과(load_transfer 있음)만 */
+/** 상태 띠 칩(v0.23.1 esl_doe_ui_tidy.md §4 칩 2): 칩 = details summary(짧은 값, title = 이전 요약 줄 전체) → 펼치면 띠 아래 접힘 표 2개(d000 참값 대비 · 형상별). 새 결과(load_transfer 있음)만 */
 function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeResultOut }) {
   const lt = result.load_transfer;
   const [diag, setDiag] = useState<DoeLoadTransferDiag | null>(null);
@@ -605,16 +614,14 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
   };
   const eslLabel = (id: string, label?: string | null) => label ?? result.esl?.find((e) => e.entry_id === id)?.label ?? id.slice(0, 8);
   const nameOf = (id: string) => result.ranking.find((r) => r.id === id)?.shape?.name ?? "";
+  const full = `${ltSummaryLine(lt)}${result.scenario !== "compare" && lt.truth === "a_direct" ? " (모델 차 포함)" : ""}${lt.rank_alt_same != null ? ` · 다른 방식 순위 ${lt.rank_alt_same ? "같음" : "다름"}` : ""}${lt.warnings_n ? ` · 경고 ${lt.warnings_n}` : ""}`;
   return (
-    <div className="doe-lt" data-testid="lt-block">
-      <div className="small" data-testid="lt-summary">
-        {ltSummaryLine(lt)}
-        {result.scenario !== "compare" && lt.truth === "a_direct" ? " (모델 차 포함)" : ""}
-        {lt.rank_alt_same != null ? ` · 다른 방식 순위 ${lt.rank_alt_same ? "같음" : "다름"}` : ""}
-        {lt.warnings_n ? ` · 경고 ${lt.warnings_n}` : ""}
-      </div>
-      <details data-testid="lt-details" onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && load()}>
-        <summary className="small">하중 전달 진단 표</summary>
+    <span className="doe-lt" data-testid="lt-block">
+      <details className="doe-chip-detail" data-testid="lt-details" onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && load()}>
+        <summary className="doe-chip muted" data-testid="lt-summary" title={full}>
+          하중 전달 {ltVariantLabel(ltKey(lt.method, lt.cell_size_mm))}{lt.warnings_n ? ` · 경고 ${lt.warnings_n}` : ""} · 진단 표
+        </summary>
+        <div className="small" data-testid="lt-full">{full}</div>
         {state === "loading" && <div className="small muted">불러오는 중…</div>}
         {state === "done" && !diag && <div className="small muted" data-testid="lt-nodiag">진단 자료가 없습니다(진단 끔 또는 진단 단계 건너뜀)</div>}
         {diag && (
@@ -669,7 +676,7 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
           </>
         )}
       </details>
-    </div>
+    </span>
   );
 }
 
@@ -797,24 +804,34 @@ function RedropControl({ study, pick }: { study: DoeStudyOut; pick: string | nul
   );
 }
 
-function Downloads({ study, result, extra }: { study: DoeStudyOut; result: DoeResultOut; extra?: ReactNode }) {
+/** v0.23.1 "스터디 받기" 묶음(esl_doe_ui_tidy.md §5) — 결과 카드 머리. [결과 받기(zip)] [순위 CSV] [파일 ▾ = 최적 안 파일 링크] */
+function Downloads({ study, result }: { study: DoeStudyOut; result: DoeResultOut }) {
   const files = result.best?.files ?? [];
   const mesh = files.filter((f) => /\.(inc|rad|fem)$/i.test(f.rel));
   const geom = files.filter((f) => /\.(brep|step|stp)$/i.test(f.rel));
   const name = (rel: string) => rel.split("/").pop() ?? rel;
+  const best = result.best ? `최적 ${result.best.id}` : null;
   return (
-    <div className="inline-actions" data-testid="doe-downloads">
-      <span className="small muted">받기{result.best ? ` · 최적 ${result.best.id}` : ""}</span>
-      {mesh.map((f) => (
-        <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={`${study.scenario === "step" || study.scenario === "compare" || study.inputs.select_base === "step" ? "메시" : "include"} ${name(f.rel)}`} />
-      ))}
-      {geom.map((f) => (
-        <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={name(f.rel).split(".").pop()!.toUpperCase()} />
-      ))}
-      <DownloadLink id={study.id} rel="post/ranking.csv" label="순위 CSV" />
+    <span className="inline-actions doe-dl" data-testid="doe-downloads">
       <BundleButton url={doe.bundleUrl(study.id)} filename={`doe_${study.id}.zip`} />
-      {extra}
-    </div>
+      <DownloadLink id={study.id} rel="post/ranking.csv" label="순위 CSV" />
+      {mesh.length + geom.length > 0 ? (
+        <details className="doe-files-menu" data-testid="doe-files-menu">
+          <summary className="btn small">파일 ▾</summary>
+          <div className="doe-files-pop inline-actions">
+            {best && <span className="small muted">받기 · {best}</span>}
+            {mesh.map((f) => (
+              <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={`${study.scenario === "step" || study.scenario === "compare" || study.inputs.select_base === "step" ? "메시" : "include"} ${name(f.rel)}`} />
+            ))}
+            {geom.map((f) => (
+              <DownloadLink key={f.rel} id={study.id} rel={f.rel} label={name(f.rel).split(".").pop()!.toUpperCase()} />
+            ))}
+          </div>
+        </details>
+      ) : (
+        best && <span className="small muted">받기 · {best}</span>
+      )}
+    </span>
   );
 }
 
@@ -910,6 +927,9 @@ function SelectVarsPlan(p: {
   foldKey?: string;
   /** v0.21.0 스터디 스냅샷 형상 규칙(없으면 v0.20.0 화면) */
   shapeRules?: import("../../api/types").DoeShapeRules | null;
+  /** v0.23.1 단계 초점 접기(esl_doe_ui_tidy.md §2) */
+  fold4?: CardFold | null;
+  fold5?: CardFold | null;
 }) {
   const { pd, rows, form, st, plan } = p;
   const params = pd?.params ?? [];
@@ -932,7 +952,7 @@ function SelectVarsPlan(p: {
   const view = plan ? selectViewData({ plan, chips, active: planVar, meshBase: p.meshBase, stepBase: p.stepBase, st, nWarn: p.nWarn, scene, sceneLayers: sceneLayers(p.ctrl) }) : null;
   return (
     <div className="doe-grid">
-      <Card title="④ 변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
+      <Card title="④ 변수" fold={p.fold4} right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
         {!p.ready ? (
           <div className="empty small" data-testid="vars-next">
             {p.ctrl.state?.beads.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
@@ -957,7 +977,7 @@ function SelectVarsPlan(p: {
           <Empty>{p.planError ?? "불러오는 중…"}</Empty>
         )}
       </Card>
-      <Card title="⑤ 평면도 · 단면" right={p.meshBase || p.stepBase ? <span className="small">경계 경고 {p.nWarn ?? 0}</span> : undefined}>
+      <Card title="⑤ 평면도 · 단면" fold={p.fold5}>
         {!p.ready ? (
           <Empty>비드 선택을 저장하면 평면도가 열립니다</Empty>
         ) : view ? (
@@ -1279,14 +1299,35 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const job = s?.job ?? null;
   const jobActive = !!job && (job.state === "QUEUED" || job.state === "RUNNING");
   const vd = useVerifyDrop(projectId, s, result.data, pick, allowed, !!me?.is_global_admin);
+  const lin = !!result.data && isLinResult(result.data);
+  /** v0.23.1 검증 권고(§5): 검증 낙하 툴팁 + VerifyDropCard 머리말 — 이전 sm-verify-note·결과 하단 안내문 */
+  const vdAdvice = [lin ? SM_VERIFY_NOTE : null, RESULT_NOTE].filter(Boolean).join("\n");
   const vdButton = (
-    <span className="primary-wrap" title={vd.reason ?? "고른 안을 SCX 에서 Radioss 낙하로 다시 돌려 원 낙하와 비교"}>
+    <span className="primary-wrap" title={`${vd.reason ?? "고른 안을 SCX 에서 Radioss 낙하로 다시 돌려 원 낙하와 비교"}\n${vdAdvice}`}>
       <button type="button" className="btn small" disabled={!!vd.reason} aria-disabled={!!vd.reason} onClick={() => setVdOpen(true)} data-testid="vd-open">
         {VD_BUTTON}
       </button>
       {vd.reason && <span className="sr-only">{vd.reason}</span>}
     </span>
   );
+
+  // v0.23.1 단계 초점(esl_doe_ui_tidy.md §2): 지금 단계 카드만 기본 펼침, 실행 중·실패 단계 카드는 locked
+  const stage: "setup" | "preview" | "result" = ranStage ? "result" : hasPreview ? "preview" : "setup";
+  const pvFailed = isFailedJob(job) && job.job_type === "DOE_PREVIEW";
+  const foldOf = (k: string, cardStage: typeof stage, locked = false): CardFold => ({ storeKey: `${id}:${k}`, defaultOpen: cardStage === stage, locked });
+  // §3 진행 띠(현재 작업 1개)
+  const progPrep = !!job && (phase === "PREP" || (phase === "FAILED" && !s?.prep));
+  const progPreview = !!job && phase === "PREVIEW";
+  const progRun = !!job && (phase === "RUN" || (phase === "FAILED" && ranStage));
+  // §8 #17·18·19: 경계 경고 수·요소·노드 수는 ① 머리 1곳
+  const bPrep = s?.prep?.boundary?.n_warn ?? null;
+  const bRes = result.data && (showLinks || meshBaseSel) ? result.data.boundary_warnings_n : null;
+  const bShown = !!s?.prep?.boundary && (stepBaseSel || meshBaseSel || showLinks);
+  const bTail = bRes == null ? "" : !bShown ? ` · 경계 경고 ${bRes}` : bRes !== bPrep ? `(결과 ${bRes})` : "";
+  const exactNodes = isSelect && ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : undefined;
+  // §6 결과 오른쪽 열 머리: 선택 안
+  const pickRow = pick && result.data ? result.data.ranking.find((r) => r.id === pick) ?? null : null;
+  const pickHead = !result.data ? null : !pick ? "순위표에서 안을 고르세요" : `선택 안 ${pick}${pickRow?.shape?.name ? ` ${pickRow.shape.name}` : pickRow && Object.keys(pickRow.values ?? {}).length ? ` · ${valuesText(pd?.params ?? [], pickRow.values)}` : ""}`;
 
   return (
     <>
@@ -1322,30 +1363,37 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       {st?.paicad.warning && !isCompare && !isSelect && <div className="small warn-text">{st.paicad.warning}</div>}
       <JobFailBanner job={s?.job} compact />
       {error ? <ErrorLine text={error} onClose={() => setError(null)} /> : <ErrorLine text={study.error ?? stError} />}
+      {job && (progPrep || progPreview || progRun) && (
+        <div className="doe-progress" data-testid="doe-progress">
+          {progPreview && (
+            <div className="small" data-testid="preview-progress">
+              미리보기 진행 중 · {progressText(job) ?? "대기 중"}
+            </div>
+          )}
+          <Steps job={job} />
+          {progRun ? (jobActive || phase === "FAILED") && <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} /> : <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />}
+        </div>
+      )}
       {s && (
         <Card
           title="① 입력"
+          fold={foldOf("c1", "setup", phase === "PREP" || (phase === "FAILED" && !s.prep))}
           right={
             s.prep ? (
-              <span className="small muted">
+              <span className="small muted" data-testid="input-head" title={exactNodes}>
                 {isCompare
                   ? `형상 ${s.prep.n_shapes ?? s.inputs.shapes?.length ?? "?"} · 준비됨 ${s.prep.n_ready ?? "?"} · 요소 ${st?.compare?.mesh_size_mm ?? 3} mm`
                   : stepBaseSel
                     ? `STEP 메시 ${((s.prep.n_nodes ?? 0) / 1e4).toFixed(1)}만 노드 ✓${s.prep.mesh?.method ? ` · 메시 ${meshMethodName(s.prep.mesh.method)}${s.prep.mesh.route?.path === "cad_relaxed" ? "(완화 직행)" : ""}` : ""} · 고정: ${s.prep.fixed?.source === "a_transfer" && s.prep.fixed.n > 0 ? `A 이전 ${s.prep.fixed.n} 노드 ✓` : "없음 ⚠"}${s.prep.boundary ? ` · 경계 경고 ${s.prep.boundary.n_warn}` : ""}`
                   : isSelect
                     ? `${meshBaseSel ? "B 메시" : "Ch/R"} ${((s.prep.n_nodes ?? 0) / 1e4).toFixed(1)}만 노드 ✓ · 고정: ${s.prep.fixed?.source === "none" || !s.prep.fixed ? "없음 ⚠" : `fixed-scan ${s.prep.fixed.n} 노드 ✓`}${meshBaseSel && s.prep.boundary ? ` · 경계 경고 ${s.prep.boundary.n_warn}` : ""}`
-                    : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}`}
+                    : `비드 ${s.prep.n_beads ?? "?"} · 변수 ${s.prep.n_params ?? "?"} · paicad ${s.prep.paicad_version ?? "?"}${showLinks && s.prep.boundary ? ` · 경계 경고 ${s.prep.boundary.n_warn}` : ""}`}
+                {bTail}
               </span>
             ) : undefined
           }
         >
           <DoeInputsSummary study={s} entries={entries} />
-          {(phase === "PREP" || (phase === "FAILED" && !s.prep)) && job && (
-            <>
-              <Steps job={job} />
-              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />
-            </>
-          )}
           <MsgFold items={prepWarns.map((w) => ({ text: warnText(w), info: isInfoWarn(w) }))} storeKey={`${id}:prep`} testId="prep-warn" />
         </Card>
       )}
@@ -1354,7 +1402,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           {warnText({ code: "SELECTION_DROPPED" })}
         </div>
       )}
-      {beadPrep && isSelect && <BeadSelectCards ctrl={ctrl} editable={editable} st={st} fixedMissing={!stepBaseSel && s?.prep?.fixed?.source === "none"} auto={autoView} stepInfo={stepInfo} shapeRules={s?.inputs.shape_rules ?? null} />}
+      {beadPrep && isSelect && <BeadSelectCards ctrl={ctrl} editable={editable} st={st} fixedMissing={!stepBaseSel && s?.prep?.fixed?.source === "none"} auto={autoView} stepInfo={stepInfo} shapeRules={s?.inputs.shape_rules ?? null} fold2={foldOf("c2", "setup")} fold3={foldOf("c3", "setup")} />}
       {beadPrep && isSelect && (
         <SelectVarsPlan
           ready={!!selSha}
@@ -1378,11 +1426,13 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           beadPngUrl={(b) => doe.beadPngUrl(id, b)}
           foldKey={id}
           shapeRules={s?.inputs.shape_rules ?? null}
+          fold4={foldOf("c4", "setup")}
+          fold5={foldOf("c5", "setup")}
         />
       )}
       {beadPrep && !isSelect && (
         <div className="doe-grid">
-          <Card title="② 비드·변수" right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
+          <Card title="② 비드·변수" fold={foldOf("c4", "setup")} right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
             {pd && rows && form && st ? (
               <>
                 <DoeParamTable data={pd} rows={rows} setRows={setRows} readOnly={!editable} beadPngUrl={(b) => doe.beadPngUrl(id, b)} />
@@ -1392,7 +1442,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
               <Empty>{params.error ?? "불러오는 중…"}</Empty>
             )}
           </Card>
-          <Card title={showLinks ? "③ 평면도 · 경계 매핑" : "③ 평면도"} right={showLinks && s?.prep ? <span className="small">경고 {s.prep.boundary?.n_warn ?? 0}</span> : undefined}>
+          <Card title={showLinks ? "③ 평면도 · 경계 매핑" : "③ 평면도"} fold={foldOf("c5", "setup")}>
             {plan.data && st ? (
               <PartView data={legacyViewData({ plan: plan.data, showLinks, st, nWarn: s?.prep?.boundary?.n_warn ?? null, mesh: d000Mesh })} testId="pv-legacy" />
             ) : (
@@ -1404,6 +1454,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       {beadPrep && s && (
         <Card
           title={`${isSelect ? "⑥" : "④"} 미리보기 ${pv ? previewSummary(pv, (pv.cells?.length ?? 0) + 1) : s.doe ? `(${s.doe.n_designs})` : ""}`}
+          fold={foldOf("pv", "preview", phase === "PREVIEW" || pvFailed)}
           right={
             <span className="inline-actions">
               {s.doe && <span className="small muted">seed {s.doe.spec.seed ?? "–"} · {s.doe.spec.method}</span>}
@@ -1417,27 +1468,16 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
             </span>
           }
         >
-          {phase === "PREVIEW" && job && (
-            <>
-              <div className="small" data-testid="preview-progress">
-                미리보기 진행 중 · {progressText(job) ?? "대기 중"}
-              </div>
-              <Steps job={job} />
-              <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />
-            </>
-          )}
           {pv && selStale && editable && (
             <div className="small warn-text" data-testid="selection-stale">
               <span className="badge warn">선택 변경됨 — 다시 미리보기</span>
             </div>
           )}
           {pv && matrix && !fresh && !selStale && editable && <div className="small warn-text" data-testid="preview-stale">DOE 설정이 이 미리보기와 다릅니다 — 실행하려면 미리보기를 다시 하세요</div>}
-          {phase !== "PREVIEW" && isFailedJob(job) && job.job_type === "DOE_PREVIEW" && (
-            <BlockErr
-              testId="preview-failed"
-              title={`미리보기가 끝나지 못했습니다 — 단계 ${failedStep(job)?.step_no ?? "?"} ${STEP_LABEL[failedStep(job)?.step_key ?? ""] ?? failedStep(job)?.step_key ?? ""}${(failedStep(job)?.failure_code ?? job.failure_code) ? ` · ${failedStep(job)?.failure_code ?? job.failure_code}` : ""}`}
-              detail={`위 실패 줄의 [자세히] → [로그 보기]에서 원인을 확인하고 다시 [미리보기]${pv ? " (아래는 이전 미리보기)" : ""}`}
-            />
+          {phase !== "PREVIEW" && pvFailed && (
+            <div className="small warn-text" data-testid="preview-failed">
+              미리보기가 끝나지 못했습니다 — 위 실패 줄의 [자세히] → [로그 보기]에서 원인을 확인하고 다시 [미리보기]{pv ? " (아래는 이전 미리보기)" : ""}
+            </div>
           )}
           {phase !== "PREVIEW" && pv && pv.ok === 0 && (pv.cells?.length ?? 0) > 0 && (
             <div className="warn-box small" role="alert" data-testid="preview-zero-ok">
@@ -1476,77 +1516,58 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         </Card>
       )}
       {ranStage && s && (
-        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data && (showLinks || meshBaseSel) ? <span className="small">경계 경고 {result.data.boundary_warnings_n}</span> : undefined}>
-          {job && (phase === "RUN" || phase === "FAILED") && (
-            <>
-              <Steps job={job} />
-              {(jobActive || phase === "FAILED") && <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} />}
-            </>
-          )}
+        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data ? <Downloads study={s} result={result.data} /> : undefined}>
           <ErrorLine text={result.error} />
           {result.data && (
             <>
+              <StatusBand studyId={id} result={result.data} />
               {(() => {
-                // v0.21.0 ③ 기준 메시 품질 미달 = 결과 띠 1줄(모든 안이 같은 메시 — 행 표시 없음). 목록에서는 뺌
-                const mqBase = result.data.warnings.find((w) => w.code === "MESH_QUALITY_RANK" && w.scope === "base");
-                const rest = result.data.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH" && w !== mqBase);
+                const r = result.data;
+                const sensShown = !(isCompare || r.sensitivity_reason);
+                const solo = r.view3d.filter((d) => d !== "d000").length === 0 && !sensShown;
                 return (
-                  <>
-                    {mqBase && (
-                      <div className="small warn-text" data-testid="mq-base-strip">
-                        ⚠ {warnText(mqBase)}
+                  <div className={`doe-result-2col${solo ? " solo" : ""}`} data-testid="doe-result-2col">
+                    <div className="doe-result-left">
+                      <DoeRanking
+                        result={r}
+                        params={pd?.params ?? []}
+                        entries={entries}
+                        selected={pick}
+                        onSelect={setPick}
+                        varNames={varNames}
+                        rankCfg={st}
+                        shapeRules={s?.inputs.shape_rules ?? null}
+                        perEslNote={perEslNote(r, pick)}
+                        resultNote={isCompare ? COMPARE_NOTE : null}
+                      />
+                      <div className="sub-title">ESL별 개선율</div>
+                      <DoePerEslTable studyId={id} result={r} entries={entries} pick={pick} />
+                    </div>
+                    <div className="doe-result-right">
+                      <div className="inline-actions doe-pick-bar">
+                        <span className="small" data-testid="doe-pick-head">{pickHead}</span>
+                        <span className="spacer" />
+                        <span className="inline-actions" data-testid="doe-pick-actions">
+                          <RedropControl study={s} pick={pick} />
+                          {isCompare ? null : vdButton}
+                        </span>
                       </div>
-                    )}
-                    {rest.length > 0 && (
-                      <ul className="reasons small warn-text">
-                        {rest.map((w, i) => (
-                          <li key={i}>{warnText(w)}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
+                      <div className="sub-title">3D 비교</div>
+                      <Compare3D studyId={id} result={r} pick={pick} setPick={setPick} />
+                      {sensShown ? (
+                        <div>
+                          <div className="sub-title">민감도</div>
+                          <Sensitivity sens={r.sensitivity} params={pd?.params ?? []} warnings={r.warnings} />
+                        </div>
+                      ) : (
+                        <div className="small muted" data-testid="sens-hidden">
+                          민감도: {SENS_REASON[r.sensitivity_reason ?? "COMPARE_NO_PARAMS"] ?? r.sensitivity_reason}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 );
               })()}
-              <DoeRanking result={result.data} params={pd?.params ?? []} entries={entries} selected={pick} onSelect={setPick} varNames={varNames} rankCfg={st} shapeRules={s?.inputs.shape_rules ?? null} />
-              {isLinResult(result.data) && (
-                <div className="small muted" data-testid="sm-verify-note">
-                  1차 강성 지표 순위입니다(재풀이 없음) — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요.
-                </div>
-              )}
-              {!isLinResult(result.data) && isCrossMesh(result.data) && (
-                <div className="small warn-text" data-testid="sm-cross-note">
-                  다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 재풀이 C 로 순위를 매겼습니다. 상위 안은 Radioss 검증 낙하로 확인하세요.
-                </div>
-              )}
-              <LoadTransferDiag studyId={id} result={result.data} />
-              <div className="sub-title">ESL별 개선율</div>
-              <DoePerEslTable studyId={id} result={result.data} entries={entries} pick={pick} />
-              {isCompare || result.data.sensitivity_reason ? (
-                <>
-                  <div className="small muted" data-testid="sens-hidden">
-                    민감도: {SENS_REASON[result.data.sensitivity_reason ?? "COMPARE_NO_PARAMS"] ?? result.data.sensitivity_reason}
-                  </div>
-                  <div className="sub-title">3D 비교</div>
-                  <Compare3D studyId={id} result={result.data} pick={pick} setPick={setPick} />
-                </>
-              ) : (
-                <div className="doe-result-grid">
-                  <div>
-                    <div className="sub-title">민감도</div>
-                    <Sensitivity sens={result.data.sensitivity} params={pd?.params ?? []} warnings={result.data.warnings} />
-                  </div>
-                  <div>
-                    <div className="sub-title">3D 비교</div>
-                    <Compare3D studyId={id} result={result.data} pick={pick} setPick={setPick} />
-                  </div>
-                </div>
-              )}
-              <Downloads study={s} result={result.data} extra={<>{isCompare ? null : vdButton}<RedropControl study={s} pick={pick} /></>} />
-              <div className="small muted">
-                {isCompare
-                  ? "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 억제는 CAD 메시가 실패한 형상만 — 형상 표 '형상 단순화'). 방법·한계는 보고서에."
-                  : "선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에."}
-              </div>
             </>
           )}
         </Card>
@@ -1554,7 +1575,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       {done && !isCompare && (
         <ErrorBoundary>
           <ErrorLine text={vd.listError} />
-          <VerifyDropCard drops={vd.drops} entries={entries} allowed={allowed} onChanged={vd.reload} />
+          <VerifyDropCard drops={vd.drops} entries={entries} allowed={allowed} onChanged={vd.reload} note={vdAdvice.replace(/\n/g, " ")} />
         </ErrorBoundary>
       )}
       {vdOpen && s && (
@@ -1572,6 +1593,40 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         />
       )}
     </>
+  );
+}
+
+// ================================================================ v0.23.1 결과 상태 띠(esl_doe_ui_tidy.md §4)
+const SM_VERIFY_NOTE = "1차 강성 지표 순위입니다(재풀이 없음) — 상위 안은 산출물로 Radioss 검증 낙하를 돌려 확인하세요.";
+const SM_CROSS_NOTE = "다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 재풀이 C 로 순위를 매겼습니다. 상위 안은 Radioss 검증 낙하로 확인하세요.";
+const RESULT_NOTE = "선형 강성 상대 비교입니다(낙하 응답 재현 아님) — 최적 안은 검증 낙하 1회로 확인하세요. 방법·출처·한계는 보고서에.";
+const COMPARE_NOTE = "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 억제는 CAD 메시가 실패한 형상만 — 형상 표 '형상 단순화'). 방법·한계는 보고서에.";
+
+/** 칩 1줄: 지그 · 하중 전달 · 메시 품질 · 1위 경고 · 경고 n. 칩 testid = 이전 줄 testid, 이전 줄 전체 = title */
+function StatusBand({ studyId, result }: { studyId: string; result: DoeResultOut }) {
+  // v0.21.0 ③ 기준 메시 품질 미달(모든 안이 같은 메시 — 행 표시 없음). 목록에서는 뺌
+  const mqBase = result.warnings.find((w) => w.code === "MESH_QUALITY_RANK" && w.scope === "base");
+  const rest = result.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH" && w !== mqBase);
+  const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w) }))];
+  const jig = result.jig ?? null;
+  const chips = [
+    jig && <JigLine key="jig" jig={jig} />,
+    result.load_transfer && <LoadTransferDiag key="lt" studyId={studyId} result={result} />,
+    mqBase && (
+      <span key="mq" className="doe-chip warn-text" data-testid="mq-base-strip" title={`⚠ ${warnText(mqBase)}`}>
+        ⚠ 기준 메시 품질 미달
+      </span>
+    ),
+    <BestCleanMqChip key="bcmq" result={result} />,
+    <BestCleanChip key="bc" result={result} />,
+  ];
+  const any = !!jig || !!result.load_transfer || !!mqBase || items.length > 0 || hasBestClean(result) || hasBestCleanMq(result);
+  if (!any) return null;
+  return (
+    <div className="doe-status" data-testid="doe-status">
+      {chips}
+      <MsgFold items={items} storeKey={`${studyId}:result-warn`} testId="result-warn" />
+    </div>
   );
 }
 

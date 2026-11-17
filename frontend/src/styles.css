@@ -3050,6 +3050,189 @@ th[aria-sort="ascending"] .th-sort::after {
   min-width: 0;
 }
 
+/* ---- v0.23.1 강성 스터디 화면 정리(esl_doe_ui_tidy.md) — 색·폰트 새로 없음 ---- */
+/* §1 Card 접기: 접힘 = 본문 hidden(.card-body 의 display:grid 보다 우선) */
+.card-body[hidden] {
+  display: none;
+}
+.card.folded > .card-head {
+  border-bottom: 0;
+}
+.card-fold-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.card-fold-btn:hover,
+.card-fold-btn:focus-visible {
+  text-decoration: underline;
+}
+/* §3 진행 띠 */
+.doe-progress {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* §4 상태 띠: 칩 1줄, 펼친 상세(하중 전달 표·경고 목록)는 띠 아래 전폭 */
+.doe-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  min-width: 0;
+}
+.doe-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: help;
+}
+.doe-lt {
+  display: contents;
+}
+details.doe-chip-detail > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details.doe-chip-detail > summary::-webkit-details-marker {
+  display: none;
+}
+details.doe-chip-detail > summary::after {
+  content: " ▾";
+}
+details.doe-chip-detail[open] {
+  flex-basis: 100%;
+  order: 98;
+  display: grid;
+  gap: 0.4rem;
+  justify-items: start;
+  min-width: 0;
+}
+details.doe-chip-detail[open] > :not(summary) {
+  justify-self: stretch;
+}
+.doe-status > .msg-fold {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.doe-status > .msg-fold:has(.msg-fold-list) {
+  flex-basis: 100%;
+  order: 99;
+}
+/* §5 버튼 묶음 */
+.doe-dl {
+  flex-wrap: nowrap;
+}
+.doe-files-menu {
+  position: relative;
+}
+.doe-files-menu > summary {
+  list-style: none;
+}
+.doe-files-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.doe-files-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 20;
+  width: max-content;
+  max-width: 40rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.doe-pick-bar {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* §6 결과 2열(≤2200px 1열) */
+.doe-result-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.doe-result-2col.solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.doe-result-left,
+.doe-result-right {
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+  min-width: 0;
+}
+@media (max-width: 2200px) {
+  .doe-result-2col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* §6.1 높이 예산(2201px 이상만 — 결과 단계 페이지 세로 스크롤 없이 결과 카드) */
+@media (min-width: 2201px) {
+  .doe-result-2col {
+    --doe-res-h: calc(100vh - var(--topbar-h) - 21rem);
+  }
+  .doe-result-left .doe-rank-wrap {
+    --tbl-max: calc(var(--doe-res-h) - 17rem);
+  }
+  .doe-result-left .doe-per-esl-wrap {
+    --tbl-max: 12rem;
+  }
+  .doe-result-right .doe-compare-grid .v3d-host {
+    height: calc(var(--doe-res-h) * 0.45);
+  }
+  .doe-result-right .doe-sens svg {
+    max-height: calc(var(--doe-res-h) * 0.3);
+  }
+}
+/* §7 새 스터디 ① 2열(≤2200px 1열) · 설명 ⓘ */
+.doe-inputs-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem var(--gap);
+  align-items: start;
+}
+.doe-inputs-left,
+.doe-inputs-right {
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+  min-width: 0;
+}
+@media (max-width: 2200px) {
+  .doe-inputs-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+details.doe-note-more {
+  display: inline;
+}
+details.doe-note-more > summary {
+  display: inline;
+  cursor: pointer;
+  color: var(--accent);
+}
+
 /* ---- v0.10.0 메뉴 재구성(esl_menu_restructure.md §4·§5.3·§6.3·§8) ---- */
 .topbar-menus {
   display: inline-flex;
