@@ -963,7 +963,7 @@ def bd_post(spec: dict, echo=print) -> dict:
     sp = m["spec"]
     nom = mx.nominal_values(sp, params_table(c))
     samples = [{"values": {**nom, **(r["values"] if r["id"] != BASELINE else {})}, "score": r["score"]}
-               for r in results if r.get("status") == "OK"]
+               for r in results if r.get("status") == "OK" and r.get("score") is not None]   # 순위 밖(지표 null) 안 제외
     sens = rk.sensitivity(samples, sp["params"], method=sp["method"], levels=sp.get("levels"),
                           round_mm=c.cfg["doe"]["round_mm"])
     c.progress(20)
@@ -3948,10 +3948,11 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
         else:
             got = _jig_design(c, did, mesh, loads)
             rows = None if got is None else {e: {"C_jig": x["C_jig"], "umax_jig": x["umax_jig"]} for e, x in got.items()}
-    except (EslError, OSError, KeyError, ValueError, np.linalg.LinAlgError) as exc:
-        rows = None
+    except Exception as exc:                                    # noqa: BLE001 — D-JIG-19: 지그 때문에 안 평가 실패 금지
+        rows = None                                             # 그 안의 C_jig·umax_jig 만 null(계약: metric jig = 순위 밖 n_failed["jig"])
+        err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:500]
         warns.append(_cmp_text("JIG_DESIGN_FAILED" if did != BASELINE else "JIG_SKIPPED", did=did,
-                               stage="design", err=getattr(exc, "code", type(exc).__name__)))
+                               stage="design", err=err))
     for p in r["per_esl"]:
         add = (rows or {}).get(p["entry_id"]) or {}
         p["C_jig"] = None if add.get("C_jig") is None else float(add["C_jig"])

@@ -459,3 +459,27 @@ def test_support_weak_clustered_ties(tmp_path):
     assert jb["tie_spread"] == pytest.approx(jd["tie_spread"]) and jb["th"]["tie_spread_min"] == 0.15
     assert sum(str(w).startswith("JIG_SUPPORT_WEAK") for w in post["warnings"]) == 1
     assert post["metric_effective"] == "jig" and jb["status"] in ("ok", "poor") and post["ranking"]
+
+
+def test_design_unexpected_exception_only_drops_jig(tmp_path, monkeypatch):
+    """안 지그 재풀이가 예상 밖 예외(RuntimeError)를 내도 안 평가는 OK — 그 안 C_jig·umax_jig 만 null + JIG_DESIGN_FAILED
+    (detail 종류·메시지), metric jig 순위에서는 계약대로 순위 밖(n_failed["jig"])."""
+    from esl.doe import jig as jg
+    real = jg.design_response
+    calls = []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic design crash")
+        return real(*a, **k)
+    monkeypatch.setattr(jg, "design_response", flaky)
+    mesh, doe = build_same(tmp_path)
+    out, post, ids = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap())
+    bad = ids[1]
+    r = U.read_json(os.path.join(out, "run", "designs", bad, "result.json"))
+    assert r["status"] == "OK" and all(p["C_jig"] is None and p["umax_jig"] is None for p in r["per_esl"])
+    assert all(p.get("C") is not None for p in r["per_esl"])                              # 기존 재풀이 C 는 그대로
+    assert any(str(w).startswith("JIG_DESIGN_FAILED") and "RuntimeError: synthetic design crash" in str(w) for w in r["warnings"])
+    assert post["metric_effective"] == "jig" and post["n_failed"].get("jig") == 1
+    assert bad not in {x["id"] for x in post["ranking"]} and len(post["ranking"]) == len(ids) - 2

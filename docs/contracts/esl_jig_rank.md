@@ -242,7 +242,7 @@ DOE_RUN
 | `JIG_FIT_POOR` | 경고 | post | MAC < mac_min 또는 umax 오차 > umax_err_max 인 엔트리(라벨·값) — 순위 계속 |
 | `JIG_TIE_RELATIVE` | 경고 | post | tie_rel > tie_rel_warn — 지그 노드끼리도 변형(고정 지그 한계) |
 | `JIG_SUPPORT_WEAK` | 경고 | post | (D-JIG-19) `tie_spread < jig.tie_spread_min`(기본 0.02) — 지그 노드가 한곳(보스)에 몰려 지지가 약함, 순위 계속(status 불변). 쉘 tie 는 대개 같은 면 위라 3번째(최소) 표준편차 ≈ 0 → 면 안 최소인 2번째 표준편차 사용 |
-| `JIG_DESIGN_FAILED` | 경고 | design | 안 지그 재풀이 실패(`err`) → 그 안 C_jig null(metric jig 이면 순위 밖 `n_failed["jig"]`) |
+| `JIG_DESIGN_FAILED` | 경고 | design | 안 지그 재풀이 실패(`err`) → 그 안 C_jig null(metric jig 이면 순위 밖 `n_failed["jig"]`). **D-JIG-19**: 안 분기도 `Exception` 전체를 잡음(EslError = 코드, 그 밖 `종류: 메시지`) — 안 평가(기존 C·solve 지표)는 OK, 순위 밖 안은 민감도 표본에서도 제외 |
 
 ## 5. 구조 — 공용 모듈 / 계획 표 / 독립성
 
