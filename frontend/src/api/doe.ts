@@ -425,6 +425,28 @@ export const SM_CODE_TEXT: Record<string, string> = {
   SM_SKIPPED: "강성 지표를 계산하지 못했습니다(그 안은 순위 밖)",
   SM_CROSS_MESH: "다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 work 하중을 옮겨 재풀이한 C 로 순위를 매깁니다",
 };
+/** v0.23.0 지그 순위 문구(서버 message 가 없을 때 — 원본 resources/doe_messages.json, esl_jig_rank.md §4) */
+export const JIG_CODE_TEXT: Record<string, string> = {
+  JIG_UNSUPPORTED: "이 모드는 지그 순위를 지원하지 않습니다",
+  JIG_NO_TIE: "체결부(tie) 노드가 없어 지그를 만들 수 없습니다",
+  JIG_SUPPORT_DEGENERATE: "체결부 노드가 부족하거나 한 직선 위에 있어 지그가 모델을 고정하지 못합니다",
+  JIG_SKIPPED: "지그 계산을 하지 못했습니다",
+  JIG_SURF_UNAVAILABLE: "인접 부품 표면을 읽지 못해 가압 영역을 패치로 잡았습니다",
+  JIG_SURF_TOO_LARGE: "인접 부품 표면이 너무 커서 가압 영역을 패치로 잡았습니다",
+  JIG_REGION_FALLBACK: "접촉 영역이 부족해 부족분을 패치 영역으로 보충했습니다",
+  JIG_FIX_UNFILTERED: "체결 노드를 종류 구분 없이 사용했습니다",
+  JIG_NORMAL_FREE: "접촉 방향이 모호한 영역이 있어 하중 부호를 제한하지 않았습니다",
+  JIG_BASIS_NULL: "응답이 없는 하중 기저가 있어 0 으로 두었습니다",
+  JIG_FIT_POOR: "기준 낙하 변형 재현이 임계값에 못 미칩니다(MAC 낮음 또는 umax 오차 큼) — 순위는 계산하되 참고용으로 보세요",
+  JIG_TIE_RELATIVE: "체결 노드끼리도 변형됩니다(고정 지그의 한계) — 기준 재현이 낮아질 수 있습니다",
+  JIG_DESIGN_FAILED: "그 안의 지그 재풀이에 실패했습니다",
+};
+/** 지그 하중 영역 출처 이름 */
+export const JIG_SOURCE_NAME: Record<string, string> = { contact: "접촉", mixed: "접촉+패치", patch: "패치" };
+/** 순위 지표가 지그인가(metric_effective — 지그 불가·실패로 solve 가 되면 false). 옛 결과·키 없음 = false */
+export const isJigResult = (r: { metric_effective?: string | null; rank?: { metric_effective?: string | null } | null }) => (r.rank?.metric_effective ?? r.metric_effective) === "jig";
+/** JIG_FIT_POOR 툴팁 — 임계값은 결과 jig.th 의 값 */
+export const jigPoorText = (th: { mac_min: number; umax_err_max: number }) => `${JIG_CODE_TEXT.JIG_FIT_POOR} · 기준: MAC ≥ ${th.mac_min}, umax 오차 ≤ ${(th.umax_err_max * 100).toFixed(0)} %`;
 /** 새 결과(순위 지표 lin)인가 — 옛 결과·solve 는 기존 표시 그대로 */
 export const isLinResult = (r: { metric?: string | null; rank?: { metric?: string | null } | null }) => (r.metric ?? r.rank?.metric) === "lin";
 /** SM_LIN_RANGE 문구·'재풀이' 표시 툴팁 — 임계값은 rankThresholds() 의 실제 lin_valid(없으면 이름만) */
@@ -444,7 +466,7 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
     ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
     : "") ||
   autoWarnText(w) ||
-  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || w.code;
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || JIG_CODE_TEXT[w.code] || w.code;
 /** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
 export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && AUTO_INFO.has(w.code));
 
