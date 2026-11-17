@@ -2,6 +2,19 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.23.0] - 2026-11-17
+### 추가
+- **지그 순위(새 스터디 기본 순위 지표 `jig`)**: 실물 지그 시험처럼 chassis rear 를 체결부(tie, `/INTER/TYPE2`) 노드에서 고정하고, 기준 낙하 변형(베이스라인 ESL 해)을 재현하도록 몇 곳의 가압 하중(인접 부품 접촉 영역 — 부족하면 공간 패치로 보충)·체적력·지그 구속 저차 모드 관성 하중을 맞춘 뒤, 안마다 **같은 지그·같은 하중으로 재풀이**한 컴플라이언스 C_jig 로 순위를 매긴다(작을수록 강함). 기존 재풀이 C 순위에서 30안 모두 불평형 3~15 %·umax 수백~수천 mm 로 순위가 모핑량에 지배되던 문제(#63 — 대회전 상쇄 하중 + 3-2-1 지지의 무른 모드) 대책. 같은 메시 모드(①②, 새 ③ STEP 기준)만 — ④·옛 ③ 은 재풀이 C(`JIG_UNSUPPORTED`)
+- 기준 재현 진단: 결과 화면 순위표 위 한 줄 "기준 재현(지그): MAC(모드 포함) ≥ … · umax 오차 ≤ … · 하중 영역 n개(접촉·패치) · 지그 노드 n", 엔트리별 값·지그 1차 고유진동수는 툴팁, 맞춤 하중이 하는 일에 비해 과대하면 ⚠ 1개(`JIG_LOAD_CANCEL`). 재현 미달 `JIG_FIT_POOR`·체결부 상대 변형 `JIG_TIE_RELATIVE`·체결 노드 몰림 `JIG_SUPPORT_WEAK` 은 경고(순위는 계속, 툴팁). 지그 불가(tie 없음 등)면 "지그 순위 불가 — 사유, 재풀이 C 로 순위"
+- 결과 API `jig`(DoeJigOut — status·region_source·영역·MAC·umax 오차·일 효율·tie_spread·고유진동수·임계값·엔트리별 값), 순위 행 `score_jig`·`umax_jig`·`C_jig{}`, per_esl `C_jig`·`umax_jig`, ranking.csv 끝 열 `C_jig, umax_jig, jig_fit_mac, jig_umax_err`, 진단 파일 `prep/jig.npz`·`prep/jig.json`(스키마 `esl/doe_jig/1`), 보고서 강성 지표 절 1줄
+- 설정 `bead_doe.rank.jig`(enabled·fix_kinds·contact_gap_mm·영역·패치·모드·정규화·임계값 — 계약 esl_jig_rank.md §6), 계획 표 새 열 `sm_jig`·`jig_fix`·`jig_ctx`
+### 변경
+- 새 스터디 기본 순위 지표 `bead_doe.rank.metric` = `jig`(지그 불가·실패면 재풀이 C). 지그는 metric 과 무관하게 항상 계산해 보조 열 "지그 C 비"로 비교 가능(안마다 분해 1회 추가)
+- 접촉 판정은 두 면의 중립면 거리에서 반두께 합을 뺀 틈으로 본다(상대 두께 = 쉘 요소 카드 > /PROP/SHELL, 솔리드 0, 모르면 0 — `surf.thickness_known`)
+- 3-2-1 지지 고유진동수 비교(`rank.jig.modes_ref321`)는 기본 꺼짐(대형 모델 전체 분해 시간·메모리) — 켰을 때만 툴팁에 비 표시
+- 이미 만든 스터디(스냅샷에 `rank.jig` 없음)는 예전 순위·결과 그대로(바이트 동일). 복제하면 원 스터디 값 유지
+- DB migration 없음
+
 ## [0.22.0] - 2026-11-16
 ### 추가
 - **재낙하 입력 묶음 받기(① 같은 Case 기준)**: 순위표에서 안(순위 밖 포함)을 고르고 엔트리 선택칸(기본 = 기준 엔트리)에서 엔트리를 고른 뒤 "재낙하 입력 받기" — 그 안의 모핑 좌표를 그 엔트리 원 낙하 입력(rad·include·엔진 rad)의 `/NODE` 줄에만 넣은 zip 을 받아 HPC 에 직접 제출한다(플랫폼 제출 없음). zip = `input/`(입력 폐포 전체, 바뀐 노드 줄 외 바이트 동일) + `redrop_manifest.json` + `REDROP_README.txt`, 결과 파일 없음. `GET /doe/studies/{sid}/designs/{did}/redrop?entry_id=`, 스터디 응답 `redrop_ok`·`redrop_blocked`·`redrop_entries`(목록 응답은 null). 새 메시를 쓰는 모드(B 메시·STEP·④ 비교)는 불가(안내 문구). 입력·SPDM 폴더에는 쓰지 않고 임시 폴더는 응답 뒤 정리
