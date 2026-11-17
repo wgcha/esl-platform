@@ -178,7 +178,7 @@ def test_case_once_contact_regions_and_outputs(case_run):
     assert res["baseline"]["score_jig"] == pytest.approx(1.0, abs=1e-12)                 # d000 = 기준 그대로
     jb = res["jig"]
     assert jb["status"] in ("ok", "poor") and jb["region_source"] == "contact" and jb["n_regions"] == 2
-    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn")}
+    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min")}
     assert {e["entry_id"] for e in jb["entries"]} == {"E0", "E1"} and jb["fit_mac_min"] is not None
     for x in res["ranking"]:
         assert x["score"] == pytest.approx(x["score_jig"], rel=1e-12) and x["umax_jig"] is not None
@@ -262,7 +262,7 @@ def test_sm_metric_default_and_hash(tmp_path):
     h_on = stg._cfg_hash(c)
     h_off = stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=False, metric="solve")))
     assert h_on != h_off
-    for k, v in (("mac_min", 0.5), ("umax_err_max", 0.9), ("tie_rel_warn", 0.5), ("cancel_warn", 0.9),
+    for k, v in (("mac_min", 0.5), ("umax_err_max", 0.9), ("tie_rel_warn", 0.5), ("cancel_warn", 0.9), ("work_eff_min", 0.5),
                  ("rho_t_mm3", 3e-8), ("modes_ref321", False)):                             # HASH_EXCLUDE 6키 = 해시 밖
         assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(**{k: v})))) == h_on
     for k, v in (("contact_gap_mm", 3.0), ("n_modes", 2), ("modes_sigma", -1.0), ("modes_tol", 1e-6), ("modes_maxiter", 500),
@@ -328,7 +328,7 @@ def test_modes_default_outputs_and_hz_rescale(tmp_path):
     jb = post["jig"]
     assert jb["n_modes"] == m and len(jb["hz_jig"]) == m and jb["hz_321"] is not None and jb["hz_ratio"] > 0
     assert jb["fit_mac_min_nomodes"] is not None and jb["cancel_rel_max"] is not None
-    assert jb["th"]["cancel_warn"] == 0.5 and all(e["rot_deg"] >= 0 and e["mac_nomodes"] is not None for e in jb["entries"])
+    assert jb["th"]["cancel_warn"] == 0.5 and jb["th"]["work_eff_min"] == 0.05 and 0 < jb["fit_work_eff_min"] <= 1 and all(e["rot_deg"] >= 0 and e["mac_nomodes"] is not None for e in jb["entries"])
     assert jb["hz_jig"][0] == pytest.approx(md["hz"][0], rel=1e-12)
     # ρ_t 4배 → hz ½ (해시 밖 — 재실행 없이 bd_post 만)
     rk4 = rank_snap(jig=jcfg(rho_t_mm3=4 * DEFAULTS["rank"]["jig"]["rho_t_mm3"]))
@@ -383,11 +383,11 @@ def test_modes_failure_continues_without_modes(tmp_path, monkeypatch):
 
 def test_load_cancel_warning_only(tmp_path):
     mesh, doe = build_same(tmp_path)
-    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(jig=jcfg(cancel_warn=1e-12)))
+    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(jig=jcfg(work_eff_min=0.9999)))
     assert post["jig"]["status"] in ("ok", "poor") and post["metric_effective"] == "jig" and post["ranking"]
-    assert post["jig"]["th"]["cancel_warn"] == 1e-12 and post["jig"]["cancel_rel_max"] > 1e-12
+    assert post["jig"]["th"]["work_eff_min"] == 0.9999 and post["jig"]["fit_work_eff_min"] < 0.9999
     assert sum("상쇄" in str(w) for w in post["warnings"]) == 1                      # 경고 1개(순위 계속)
     mesh2, doe2 = build_same(tmp_path / "b")
-    _, post2, _ = run(str(tmp_path / "b" / "o"), doe2, mesh2, rank=rank_snap(jig=jcfg(cancel_warn=1.0)))
+    _, post2, _ = run(str(tmp_path / "b" / "o"), doe2, mesh2, rank=rank_snap(jig=jcfg(work_eff_min=1e-6)))
     assert not any("상쇄" in str(w) for w in post2["warnings"])
     assert [(x["id"], x["score"]) for x in post["ranking"]] == [(x["id"], x["score"]) for x in post2["ranking"]]

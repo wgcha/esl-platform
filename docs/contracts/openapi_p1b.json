@@ -2899,6 +2899,10 @@
               }
             ],
             "title": "Umax Err Nomodes"
+          },
+          "work_eff": {
+            "title": "Work Eff",
+            "type": "number"
           }
         },
         "required": [
@@ -2910,6 +2914,7 @@
           "n_active",
           "F_sum_abs",
           "cancel_rel",
+          "work_eff",
           "rot_deg"
         ],
         "title": "DoeJigEntryOut",
@@ -2990,6 +2995,17 @@
               }
             ],
             "title": "Fit Umax Err Max Nomodes"
+          },
+          "fit_work_eff_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Work Eff Min"
           },
           "hz_321": {
             "anyOf": [
@@ -3115,13 +3131,18 @@
           "umax_err_max": {
             "title": "Umax Err Max",
             "type": "number"
+          },
+          "work_eff_min": {
+            "title": "Work Eff Min",
+            "type": "number"
           }
         },
         "required": [
           "mac_min",
           "umax_err_max",
           "tie_rel_warn",
-          "cancel_warn"
+          "cancel_warn",
+          "work_eff_min"
         ],
         "title": "DoeJigThOut",
         "type": "object"

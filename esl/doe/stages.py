@@ -3791,12 +3791,13 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     tm["fit"] = time.monotonic()
     n_fit = np.asarray(wts["normal"], dtype=np.float64)[fit]
     fits = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, n_fit, basis, ridge=float(J["ridge"]),
-                            w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"])) for e in eids}
+                            w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"]),
+                            reg_modes=float(J["reg_modes"])) for e in eids}
     fits_nm = {}
     if basis["mode_f"] is not None:                                        # 모드 제외 맞춤(진단 — 추가 solve 없음)
         fits_nm = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, n_fit, basis, ridge=float(J["ridge"]),
                                    w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"]),
-                                   drop_kinds=(jg.COL_MODE,)) for e in eids}
+                                   reg_modes=float(J["reg_modes"]), drop_kinds=(jg.COL_MODE,)) for e in eids}
     F_i = {e: jg.forces(basis, fits[e]["a"], N) for e in eids}
     tm["fit"] = time.monotonic() - tm["fit"]
     tm["respond"] = time.monotonic()
@@ -3811,7 +3812,8 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
                             fits[e]["a"], jig_idx=jidx, active_tol=float(J["active_tol"]), u_fit_nomodes=unm)
         a_mat.append(fits[e]["a"])
         ents.append({"entry_id": e, "label": labels.get(e, e[:8]), **{k: rep[k] for k in (
-            "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "cancel_rel", "n_active")},
+            "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "cancel_rel", "work_eff",
+            "n_active")},
             "tie_rel": tg_[e]["tie_rel"], "rot_deg": float(tg_[e]["rot_deg"]), "react_rel": rows[e]["react_rel"],
             "with_modes": rep["with_modes"], "without_modes": rep["without_modes"], "modes": rep["modes"],
             "body": rep["body"],
@@ -3852,7 +3854,7 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
                                                    "n_found": int(rs.get("n_found", rs["n_contact"]))},
            "regions": regs, "nb": int(basis["nb"]), "body_force": bool(J["body_force"]), "ridge": float(J["ridge"]),
            "tangential": bool(J["basis_tangential"]), "w_inplane": float(J["w_inplane"]),
-           "reg_force": float(J["reg_force"]), "g_N": float(next(iter(fits.values()))["g_N"]) if fits else None,
+           "reg_force": float(J["reg_force"]), "reg_modes": float(J["reg_modes"]), "g_N": float(next(iter(fits.values()))["g_N"]) if fits else None,
            "modes": mo["doc"], "entries": ents, "info": infos, "warnings": list(warns),
            "seconds": {k: round(v, 3) for k, v in tm.items()}, "seconds_total": round(time.monotonic() - t0, 3)}
     if rs["fill_reason"] is not None:
@@ -3945,10 +3947,10 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     if J is None:
         return None, []
     th = {"mac_min": float(J["mac_min"]), "umax_err_max": float(J["umax_err_max"]), "tie_rel_warn": float(J["tie_rel_warn"]),
-          "cancel_warn": float(J["cancel_warn"])}
+          "cancel_warn": float(J["cancel_warn"]), "work_eff_min": float(J["work_eff_min"])}
     empty = {"region_source": None, "n_jig": 0, "n_regions": 0, "n_contact": 0, "n_patch": 0, "fit_mac_min": None,
              "fit_umax_err_max": None, "fit_mac_min_nomodes": None, "fit_umax_err_max_nomodes": None,
-             "cancel_rel_max": None, "tie_rel_max": None, "n_modes": 0, "hz_jig": [], "hz_321": None, "hz_ratio": None,
+             "cancel_rel_max": None, "fit_work_eff_min": None, "tie_rel_max": None, "n_modes": 0, "hz_jig": [], "hz_321": None, "hz_ratio": None,
              "th": th, "entries": []}
     plan = _lt_plan(c)
     if plan["sm_jig"] != "base":
@@ -3972,6 +3974,7 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
               "mac": float(e["mac"]), "umax_err": float(e["umax_err"]), "mac_nomodes": _nm(e, "mac"),
               "umax_err_nomodes": _nm(e, "umax_err"), "err_p95": float(e["err_p95"]),
               "n_active": int(e["n_active"]), "F_sum_abs": float(e["F_sum_abs"]), "cancel_rel": float(e["cancel_rel"]),
+              "work_eff": float(e.get("work_eff") if e.get("work_eff") is not None else 1.0),
               "rot_deg": float(e.get("rot_deg") or 0.0)}
              for e in ents]
     md = jd.get("modes") or {}
@@ -3997,17 +4000,18 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     if poor:
         det = ", ".join(f"{e['label']} MAC {e['mac']:.3f}·umax 오차 {e['umax_err'] * 100:.1f} %" for e in poor)
         warns.append(_cmp_text("JIG_FIT_POOR", detail=det))
-    lc = [e for e in out_e if e["cancel_rel"] > th["cancel_warn"]]
+    wes = [e["work_eff"] for e in out_e]
+    lc = [e for e in out_e if e["work_eff"] < th["work_eff_min"]]            # D-JIG-18: 일 효율 미달 = 상쇄(경고만)
     if lc:
-        w0 = max(lc, key=lambda e: e["cancel_rel"])
-        warns.append(_cmp_text("JIG_LOAD_CANCEL", label=w0["label"], cancel_rel=f"{w0['cancel_rel']:.2f}",
+        w0 = min(lc, key=lambda e: e["work_eff"])
+        warns.append(_cmp_text("JIG_LOAD_CANCEL", label=w0["label"], work_eff=f"{w0['work_eff']:.3f}",
                                F_sum_abs=f"{w0['F_sum_abs']:.3g}", n=len(lc)))
     tmax = max(ties) if ties else None
     if tmax is not None and tmax > th["tie_rel_warn"]:
         warns.append(_cmp_text("JIG_TIE_RELATIVE", tie_rel=f"{tmax:.3g}", tie_rel_warn=f"{th['tie_rel_warn']:.3g}"))
     return {"status": "poor" if poor else "ok", "code": None, **base, "fit_mac_min": min(macs) if macs else None,
             "fit_umax_err_max": max(errs) if errs else None, "fit_mac_min_nomodes": min(nms) if nms else None,
-            "fit_umax_err_max_nomodes": max(nes) if nes else None, "cancel_rel_max": max(cans) if cans else None,
+            "fit_umax_err_max_nomodes": max(nes) if nes else None, "cancel_rel_max": max(cans) if cans else None, "fit_work_eff_min": min(wes) if wes else None,
             "tie_rel_max": tmax, "n_modes": len(hz_j), "hz_jig": hz_j, "hz_321": hz_3, "hz_ratio": ratio,
             "th": th, "entries": out_e}, warns
 

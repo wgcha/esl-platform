@@ -382,8 +382,8 @@ def _jig_line(j: dict) -> str:
             f"{'—' if err is None else format(float(err) * 100, '.1f') + ' %'} · 영역 {j.get('n_regions')}개"
             f"(접촉 {j.get('n_contact')} · 패치 {j.get('n_patch')}) · 지그 노드 {j.get('n_jig')}"
             + (" · 기준 재현 품질 미달(JIG_FIT_POOR)" if j.get("status") == "poor" else "")
-            + (" ⚠ 맞춤 하중 상쇄(JIG_LOAD_CANCEL)" if j.get("cancel_rel_max") is not None
-               and j.get("th") and float(j["cancel_rel_max"]) > float(j["th"].get("cancel_warn", 1.0)) else ""))
+            + (" ⚠ 맞춤 하중 상쇄(JIG_LOAD_CANCEL)" if j.get("fit_work_eff_min") is not None
+               and j.get("th") and float(j["fit_work_eff_min"]) < float(j["th"].get("work_eff_min", 0.0)) else ""))
 
 
 def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20, jig: dict | None = None) -> str:

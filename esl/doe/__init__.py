@@ -89,7 +89,7 @@ DEFAULTS: dict = {
                      "basis_tangential": True, "n_modes": 4, "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8,
                      "modes_maxiter": 2000, "modes_ref321": True, "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0,
                      "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1,
-                     "cancel_warn": 0.5}},
+                     "cancel_warn": 0.5, "work_eff_min": 0.05}},
     "settings_cache_s": 300,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
     # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).

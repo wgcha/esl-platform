@@ -213,7 +213,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       mac_min: 0.9                    # 미달 → JIG_FIT_POOR (해시 밖)
       umax_err_max: 0.2               # 초과 → JIG_FIT_POOR (해시 밖)
       tie_rel_warn: 0.1               # 초과 → JIG_TIE_RELATIVE (해시 밖)
-      cancel_warn: 0.5                # cancel_rel 초과 → JIG_LOAD_CANCEL (해시 밖)
+      cancel_warn: 0.5                # cancel_rel 정보 표시 임계(경고 아님 — D-JIG-18, 해시 밖)
+      work_eff_min: 0.05              # 일 효율 미달 → JIG_LOAD_CANCEL (D-JIG-18, 해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true

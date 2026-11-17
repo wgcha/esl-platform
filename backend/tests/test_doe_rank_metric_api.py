@@ -29,7 +29,7 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
                "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": True,
                "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0, "ridge": 1e-8, "active_tol": 1e-3,
-               "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5}
+               "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "jig": JIG_DEFAULT}
 # v0.23.0: 새 스냅샷 = metric 기본 jig + rank.jig 설정 전체 + schema 2(esl_jig_rank.md §4)
@@ -60,7 +60,7 @@ def test_rank_defaults_mirror():
     {"jig": {"active_tol": 1}}, {"jig": {"mac_min": 1.5}}, {"jig": {"umax_err_max": 0}}, {"jig": {"unknown": 1}},
     {"jig": {"ridge": -1}}, {"jig": {"n_modes": 21}}, {"jig": {"n_modes": -1}}, {"jig": {"rho_t_mm3": 0}},
     {"jig": {"modes_tol": -1}}, {"jig": {"modes_maxiter": 0}}, {"jig": {"w_inplane": 1.1}}, {"jig": {"reg_force": -1}}, {"jig": {"reg_modes": -1}},
-    {"jig": {"cancel_warn": 0}}, {"jig": {"cancel_warn": 1.1}},
+    {"jig": {"cancel_warn": 0}}, {"jig": {"cancel_warn": 1.1}}, {"jig": {"work_eff_min": 0}}, {"jig": {"work_eff_min": 1}},
 ])
 def test_rank_config_rejects(tmp_path, bad):
     from esl_platform.core.config import load_config_dict
@@ -74,7 +74,7 @@ def test_rank_config_rejects(tmp_path, bad):
 @pytest.mark.parametrize("good", [{"metric": "solve"}, {"lin_form": "taylor"}, {"lin_valid": 5.0}, {"imbalance_warn": 1.0},
                                   {"metric": "solve", "jig": {"enabled": False}}, {"jig": {"fix_kinds": ["RBE2"], "knn": 64}},
                                   {"jig": {"n_modes": 0, "basis_tangential": False, "modes_sigma": 5.0, "reg_force": 0,
-                                           "w_inplane": 0, "cancel_warn": 1.0}},
+                                           "w_inplane": 0, "cancel_warn": 1.0, "work_eff_min": 0.5, "reg_modes": 0.1}},
                                   {"metric": "lin", "lin_form": "ritz", "lin_valid": 0.01, "imbalance_warn": 0.001}])
 def test_rank_config_accepts(tmp_path, good):
     from esl_platform.core.config import load_config_dict
@@ -239,12 +239,12 @@ def test_openapi_rank_keys():
 # ================================================================ v0.23.0 지그 블록 통과(esl_jig_rank.md V-JIG-14)
 JIG_BLOCK = {"status": "poor", "code": None, "region_source": "mixed", "n_jig": 12, "n_regions": 3, "n_contact": 1, "n_patch": 2,
              "fit_mac_min": 0.82, "fit_umax_err_max": 0.31, "fit_mac_min_nomodes": 0.6,
-             "fit_umax_err_max_nomodes": 0.5, "cancel_rel_max": 0.1, "tie_rel_max": 0.02, "n_modes": 4,
+             "fit_umax_err_max_nomodes": 0.5, "cancel_rel_max": 0.1, "fit_work_eff_min": 0.9, "tie_rel_max": 0.02, "n_modes": 4,
              "hz_jig": [3.1, 5.2, 7.7, 9.9], "hz_321": [0.75, 1.5], "hz_ratio": 4.13,
-             "th": {"mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5},
+             "th": {"mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05},
              "entries": [{"entry_id": "e1", "label": "E1", "mac": 0.82, "umax_err": 0.31, "mac_nomodes": 0.6,
                           "umax_err_nomodes": 0.5, "err_p95": 0.2, "n_active": 2, "F_sum_abs": 410.0, "cancel_rel": 0.1,
-                          "rot_deg": 12.5}]}
+                          "work_eff": 0.9, "rot_deg": 12.5}]}
 
 
 def test_results_pass_jig_block(client, world, engine, esl_root):
@@ -262,7 +262,7 @@ def test_results_pass_jig_block(client, world, engine, esl_root):
                                                              "region_source": None, "entries": [], "fit_mac_min": None,
                                                              "fit_umax_err_max": None, "tie_rel_max": None,
                                                              "fit_mac_min_nomodes": None, "fit_umax_err_max_nomodes": None,
-                                                             "cancel_rel_max": None, "n_modes": 0, "hz_jig": [],
+                                                             "cancel_rel_max": None, "fit_work_eff_min": None, "n_modes": 0, "hz_jig": [],
                                                              "hz_321": None, "hz_ratio": None}})
     o2 = api(client, "GET", f"/doe/studies/{sid2}/results").json()
     assert o2["jig"]["status"] == "unsupported" and o2["jig"]["code"] == "JIG_UNSUPPORTED" and o2["metric_effective"] == "solve"
@@ -281,12 +281,12 @@ def test_openapi_jig_schemas():
     assert "jig" in sc["DoeResultOut"]["properties"]
     assert set(sc["DoeJigOut"]["properties"]) == {"status", "code", "region_source", "n_jig", "n_regions", "n_contact", "n_patch",
                                                   "fit_mac_min", "fit_umax_err_max", "fit_mac_min_nomodes",
-                                                  "fit_umax_err_max_nomodes", "cancel_rel_max", "tie_rel_max", "n_modes",
+                                                  "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "n_modes",
                                                   "hz_jig", "hz_321", "hz_ratio", "th", "entries"}
-    assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn"}
+    assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min"}
     assert set(sc["DoeJigEntryOut"]["properties"]) == {"entry_id", "label", "mac", "umax_err", "mac_nomodes",
                                                        "umax_err_nomodes", "err_p95", "n_active", "F_sum_abs", "cancel_rel",
-                                                       "rot_deg"}
+                                                       "work_eff", "rot_deg"}
     assert "jig" in json.dumps(sc["DoeResultOut"]["properties"]["metric"])
 
 

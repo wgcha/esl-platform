@@ -546,6 +546,7 @@ class BeadDoeRankJigCfg(_M):
     umax_err_max: float = Field(default=0.2, gt=0)
     tie_rel_warn: float = Field(default=0.1, gt=0)
     cancel_warn: float = Field(default=0.5, gt=0, le=1)
+    work_eff_min: float = Field(default=0.05, gt=0, lt=1)
 
     @field_validator("fix_kinds")
     @classmethod

@@ -1881,6 +1881,7 @@ class DoeJigThOut(_Out):
     umax_err_max: float
     tie_rel_warn: float
     cancel_warn: float
+    work_eff_min: float
 
 
 class DoeJigEntryOut(_Out):
@@ -1893,7 +1894,8 @@ class DoeJigEntryOut(_Out):
     err_p95: float
     n_active: int
     F_sum_abs: float          # N
-    cancel_rel: float
+    cancel_rel: float         # 정보
+    work_eff: float           # 일 효율(JIG_LOAD_CANCEL 판정 값)
     rot_deg: float            # 지그 노드 Kabsch 회전각
 
 
@@ -1911,7 +1913,8 @@ class DoeJigOut(_Out):
     fit_umax_err_max: float | None = None                   # 엔트리 최댓값(모드 포함)
     fit_mac_min_nomodes: float | None = None                # 모드 제외 맞춤(모드 0 = null)
     fit_umax_err_max_nomodes: float | None = None
-    cancel_rel_max: float | None = None
+    cancel_rel_max: float | None = None                     # 정보
+    fit_work_eff_min: float | None = None                   # 엔트리 최솟값(JIG_LOAD_CANCEL 판정 값)
     tie_rel_max: float | None = None
     n_modes: int = 0                                        # 실제 쓴 모드 수(실패·끔 = 0)
     hz_jig: list[float] = []                                # 지그 구속 고유진동수 Hz(ρ_t 기준), 끔·실패 = []
