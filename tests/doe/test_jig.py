@@ -30,7 +30,8 @@ STAGES_PY = os.path.join(ROOT, "esl", "doe", "stages.py")
 JIG = {"contact_gap_mm": 2.0, "knn": 8, "chunk_nodes": 65536, "max_regions": 8, "min_regions": 2, "min_region_nodes": 3,
        "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
        "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1.0e-8, "modes_maxiter": 2000, "w_inplane": 0.1,
-       "reg_force": 1.0e-3, "ridge": 1.0e-8, "active_tol": 1.0e-3, "cancel_warn": 0.5}
+       "reg_force": 1.0e-3, "reg_modes": 0.0, "ridge": 1.0e-8, "active_tol": 1.0e-3, "cancel_warn": 0.5,
+       "work_eff_min": 0.05}
 EXACT = {"ridge": 0.0, "reg_force": 0.0, "n_modes": 0}     # 정확 재현 시험(정규화 편향 없음)
 
 
@@ -79,7 +80,7 @@ def _pipeline(c, u_ref, sel, **over):
     B = jig.load_basis(m, sel["regions"], w, c["omega"], body_force=p["body_force"], tangential=p["basis_tangential"],
                        modes=g)
     br = jig.basis_response(h, B, fit)
-    kw = {"ridge": p["ridge"], "w_inplane": p["w_inplane"], "reg_force": p["reg_force"]}
+    kw = {"ridge": p["ridge"], "w_inplane": p["w_inplane"], "reg_force": p["reg_force"], "reg_modes": p["reg_modes"]}
     args = (br["U"], td["u_tgt"][fit], w["area"][fit], w["normal"][fit], B)
     fl = jig.fit_loads(*args, **kw)
     unm = None
@@ -145,7 +146,7 @@ def test_hash_view_drops_thresholds():
                modes_ref321=True)
     hv = jig.hash_view(cfg)
     assert set(cfg) - set(hv) == set(jig.HASH_EXCLUDE) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn",
-                                                         "rho_t_mm3", "modes_ref321"}
+                                                         "work_eff_min", "rho_t_mm3", "modes_ref321"}
     for k in ("n_modes", "modes_sigma", "modes_tol", "modes_maxiter", "w_inplane", "reg_force", "basis_tangential", "ridge"):
         assert hv[k] == cfg[k]
     assert "mac_min" in cfg                                              # 원본 불변
@@ -181,9 +182,21 @@ def test_v_jig_2_load_recovery(exact):
     f0 = r["rep"]["forces"][0]
     assert (f0["F_n"], f0["F_t1"], f0["F_t2"]) == pytest.approx((50.0, 5.0, -3.0), rel=1e-6)
     assert r["rep"]["body"] == pytest.approx([1.5, -10.0, 0.5], rel=1e-6)
-    R = sum(np.asarray(f["F"]) for f in r["rep"]["forces"]) + np.asarray(r["rep"]["body"])
     fs = sum(np.linalg.norm(f["F"]) for f in r["rep"]["forces"]) + np.linalg.norm(r["rep"]["body"])
-    assert r["rep"]["F_sum_abs"] == pytest.approx(fs) and r["rep"]["cancel_rel"] == pytest.approx(1 - np.linalg.norm(R) / fs)
+    assert r["rep"]["F_sum_abs"] == pytest.approx(fs)
+    # 상쇄비(D-JIG-17) = 1 − Σ_n‖Σ_k a_k f_k(n)‖ / Σ_kΣ_n‖a_k f_k(n)‖ — 열마다 하중을 만들어 직접 계산
+    B, N = r["B"], c["mesh"]["x0"].shape[0]
+    cols = [jig.forces(B, a[k] * np.eye(B["nb"])[k], N) for k in range(B["nb"])]
+    den = sum(np.linalg.norm(f, axis=1).sum() for f in cols)
+    num = np.linalg.norm(sum(cols), axis=1).sum()
+    assert r["rep"]["F_col_abs"] == pytest.approx(den, rel=1e-12) and r["rep"]["F_node_abs"] == pytest.approx(num, rel=1e-12)
+    assert r["rep"]["cancel_rel"] == pytest.approx(1 - num / den, abs=1e-12)
+    # 일 효율(D-JIG-18) = |Σ f·u_fit| / Σ‖f‖‖u_fit‖ (비지그 노드)
+    nj = np.ones(N, bool)
+    nj[c["J"]] = False
+    Fa, ua = sum(cols)[nj], r["row"]["u"][nj]
+    we = abs(np.sum(Fa * ua)) / np.sum(np.linalg.norm(Fa, axis=1) * np.linalg.norm(ua, axis=1))
+    assert r["rep"]["work_eff"] == pytest.approx(we, rel=1e-12) and 0 < we <= 1
 
 
 def test_v_jig_2_normal_bound(exact):
@@ -293,6 +306,7 @@ def test_v_jig_4_solve_amplified_jig_stable(soft_amp):
     assert soft_amp["oop_frac"] >= 0.9
     assert rep["cancel_rel"] <= 0.5
     assert rep["F_sum_abs"] / soft_amp["esl_abs"] <= 0.1
+    assert rep["work_eff"] >= JIG["work_eff_min"]                      # JIG_LOAD_CANCEL 없음(D-JIG-18)
 
 
 # ---------------------------------------------------------------- V-JIG-17~21 공용 픽스처
@@ -342,9 +356,13 @@ def test_v_jig_17_mode_inertia(wide, monkeypatch):
     Ft = sum(ck * mass[:, None] * md["phi"][k, :, :3] for k, ck in enumerate(cmix))
     u = h.solve(Ft)[0][:, :3]
     sel = _sel(c)
-    r = _pipeline(c, u, sel, reg_force=0.0)
+    r = _pipeline(c, u, sel)                                            # 기본 설정(reg_modes 0 — D-JIG-17)
     wm, wo = r["rep"]["with_modes"], r["rep"]["without_modes"]
-    assert wm["mac"] >= 1 - 1e-8 and wm["umax_err"] <= 1e-6 and r["rep"]["mac"] == wm["mac"]
+    assert wm["mac"] >= 1 - 1e-10 and wm["umax_err"] <= 1e-6 and r["rep"]["mac"] == wm["mac"]
+    # 단일 열의 자기평형(고차 모드 합력 ≈ 0)은 상쇄 아님 — 모드 하중은 φ 방향으로 일을 함
+    assert r["rep"]["cancel_rel"] <= 0.5 and r["rep"]["work_eff"] >= JIG["work_eff_min"]
+    rp = _pipeline(c, u, sel, reg_modes=1e-3)["rep"]                     # 모드 정규화를 켜면 고차 모드 열이 줄어 손실
+    assert rp["mac"] < wm["mac"]
     assert wo["mac"] <= 0.95 and wm["mac"] - wo["mac"] >= 0.05
     assert [x["k"] for x in r["rep"]["modes"]] == [0, 1, 2, 3]
     B = r["B"]
@@ -501,8 +519,12 @@ def test_v_jig_21_normal_weight_regularization(reg_case):
     u = reg_case["u_ex"] + reg_case["u_in"]
     rb = _pipeline(c, u, sel)["rep"]
     assert rb["cancel_rel"] <= JIG["cancel_warn"] and rb["F_sum_abs"] <= 1.1 * reg_case["F_exact"]
+    assert rb["work_eff"] >= JIG["work_eff_min"] and ra["work_eff"] >= JIG["work_eff_min"]   # 경고 없음
     r0 = _pipeline(c, u, sel, reg_force=0.0, w_inplane=1.0)["rep"]
-    assert r0["cancel_rel"] > JIG["cancel_warn"] and r0["F_sum_abs"] > 100 * reg_case["F_exact"]
+    assert r0["F_sum_abs"] > 100 * reg_case["F_exact"]                  # 정규화 끔 = 면내 하중 폭주
+    assert r0["work_eff"] < JIG["work_eff_min"]                          # → JIG_LOAD_CANCEL(D-JIG-18 일 효율)
+    # D-JIG-17 상쇄비는 같은 노드에서 열끼리 지우는 것만 잼 — 서로 다른 패치의 반대 방향 면내 하중은 노드가 달라 잡히지 않음
+    assert r0["cancel_rel"] < rb["cancel_rel"] + 0.5 and r0["F_node_abs"] > 100 * reg_case["F_exact"]
     # (c) 법선만
     rc = _pipeline(c, u, sel, basis_tangential=False)
     B = rc["B"]

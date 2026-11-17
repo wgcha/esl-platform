@@ -94,7 +94,7 @@ K₀ φ = λ M φ,  spc = J 병진 123 (지그 구속)   — λ_1 ≤ … ≤ λ
 g_k,n = m_n · φ_k,n[:3] / Σ_n ‖m_n φ_k,n[:3]‖     (관성 하중 = M φ, Σ‖·‖ = 1 N 정규화; 부호 = 최대 절댓값 성분이 양수)
 hz_k  = √λ_k / (2π)            (ρ_t 기준 — 보고용. ρ_t 는 균일 배율이라 φ·g 에 영향 없음, λ ∝ 1/ρ_t)
 ```
-- 크기 a_k 는 **부호 자유**(법선 제약 없음). 모드 열도 §1(5) 하중 정규화 대상.
+- 크기 a_k 는 **부호 자유**(법선 제약 없음). 모드 열의 정규화는 `reg_modes`(기본 0 — D-JIG-17, §1(5)).
 - 고유치 실패(수렴 안 됨·λ ≤ 0·OPinv 오류·예외) → 정보 `JIG_MODES_FAILED{err, n_conv}`, **모드 기저 없이 진행**(m = 0, 나머지 동일). 일부만 수렴하면 수렴한 것만(n_conv).
 - 비교 정보 `hz_321`: 같은 M 으로 3-2-1 지지(스터디 `t.supports`, 기존 해석과 같은 spc) 최저 m 개(`jig.modes_ref321` 참일 때, 별도 splu 분해 1회 — 베이스라인만), `hz_ratio = hz_jig_1 / hz_321_1`. 실패는 null + 같은 정보 코드(stage 321).
 - **설계 비교에서 모드 재계산 금지**: g_k 는 기준에서 1회 계산한 **고정 노드 하중 벡터**(같은 메시·같은 노드 ID)로 F_i 에 들어가고 안마다 그대로 쓴다(하중 제어 유지, §1(7)).
@@ -107,13 +107,13 @@ n̂_n = 노드 법선(node_weights.normal),  P_n = n̂_n n̂_nᵀ
 W_n = (A_n / mean_F A) · (P_n + w_ip (I − P_n))     (w_ip = jig.w_inplane, 기본 0.1 — 면외 성분 우선, 면내 잔여 경시)
 G = Σ_{n∈F} U_k,nᵀ W_n U_j,n (nb×nb),  h_i,k = Σ_{n∈F} U_k,nᵀ W_n u_tgt,i,n,  s_k = √G_kk (s_k = 0 열은 a_k = 0 고정 + 정보 JIG_BASIS_NULL)
 ḡ_N = mean_{k: col_kind = 1} G_kk                    (단위 법선 가압의 가중 응답 제곱 — 정규화 척도)
-목적: min_a (U a − u_tgt)ᵀ W (U a − u_tgt) + reg_force · ḡ_N · Σ_{k: col_kind ∈ {2,3,4}} a_k²     (D = I — 열이 이미 1 N 단위, §1(4))
-정규화 좌표 b = D_s a (D_s = diag(s)):  Ĝ = D_s⁻¹ G D_s⁻¹ + λ I + diag(reg_force · ḡ_N / G_kk · [col_kind_k ≠ 1])   (λ = jig.ridge)
+목적: min_a (U a − u_tgt)ᵀ W (U a − u_tgt) + ḡ_N · (reg_force · Σ_{k: col_kind ∈ {2,3}} a_k² + reg_modes · Σ_{k: col_kind = 4} a_k²)   (D-JIG-17 분리)     (D = I — 열이 이미 1 N 단위, §1(4))
+정규화 좌표 b = D_s a (D_s = diag(s)):  Ĝ = D_s⁻¹ G D_s⁻¹ + λ I + diag(ρ_k · ḡ_N / G_kk),  ρ_k = reg_force(접선·체적력) | reg_modes(모드) | 0(법선 — ridge 만)   (λ = jig.ridge)
 L = chol(Ĝ),  b* = argmin ‖Lᵀ b − L⁻¹ D_s⁻¹ h_i‖²  s.t.  b_k ≥ 0 (접촉 영역 법선 열, reg_sign = +1), 그 밖 자유
 a_i = D_s⁻¹ b*   [N]          scipy.optimize.lsq_linear(method="bvls", tol=1e-12) — 결정적
 F_i = Σ_k a_i,k f_k  (N,3)
 ```
-- 법선 열은 정규화하지 않는다(가압 = 이 방법의 주 하중). 접선·체적력·모드 열은 "같은 크기의 법선 가압이 내는 응답" 척도로 벌점 → 면내(막) 응답만 내는 열은 크게 억제되고, 면외 굽힘을 내는 열(면외 체적력·모드)은 거의 그대로.
+- 법선 열은 정규화하지 않는다(가압 = 이 방법의 주 하중). 접선·체적력 열은(모드 열은 `reg_modes`, 기본 0 — D-JIG-17) "같은 크기의 법선 가압이 내는 응답" 척도로 벌점 → 면내(막) 응답만 내는 열은 크게 억제되고, 면외 굽힘을 내는 열(면외 체적력·모드)은 거의 그대로.
 - **`reg_force` 기본 1.0e-3 근거(합성 측정, 2026-11-17 계약자, synth_sm.plate 600×300 t 0.8, 짧은 두 변 tie 6 묶음, 패치 6 + 체적력)**: 열별 G_kk / ḡ_N = 접선(가로) 6.4e-7 · 접선(세로) 5.8e-4 · 면내 체적력 8.3e-6·1.1e-5 · 면외 체적력 0.68. 축소 계수 ≈ 1/(1 + reg·ḡ_N/G_kk) → 면외 체적력 0.9985(reg 1e-3), 면내 열 ≤ 0.37~6e-4. 측정: (a) 법선 + 면외 체적력으로 만든 정확 목표 — reg ∈ {1e-4, 1e-3, 1e-2} 모두 MAC 1 − <1e-6, umax 오차 < 1e-6(손실 없음); (b) 같은 목표 + 면내 자기평형 잔여(최대 면외 변위의 5 %) — reg 0 이면 cancel 0.73·Σ|R| 20 234 N(w_ip 1) / 0.69·2 608 N(w_ip 0.1), reg ≥ 1e-4 이면 cancel 0.03·Σ|R| 206 N(정확 목표 하중 205.6 N 과 같음)·MAC 0.9941 그대로. → 1e-3 은 억제 하한(1e-4)과 손실 시작 위(1e-2 에서도 손실 없음) 사이 가운데 자릿수. Impl-Core 가 V-JIG-21 에서 같은 수치를 재확인한다.
 - 메모리 = U(nb × |F| × 3 float64) 1벌(R-JIG-4), W_n 은 노드마다 즉석 계산(3×3 저장 안 함).
 
@@ -125,12 +125,16 @@ err_p95,i  = P95_F ‖u_fit − u_tgt‖ / umax_tgt                             
 resid_rel,i= √( Σ_F A‖u_fit − u_tgt‖² / Σ_F A‖u_tgt‖² )
 R_r = 영역 r 합력 벡터 = Σ_d a_{r,d} d  [N],  (F_n, F_t1, F_t2) = 영역 틀 성분,  R_b = 체적력 합력 [N],  R_m,k = a_k Σ_n g_k,n [N](모드 열 합력)
 F_sum_abs,i = Σ_r ‖R_r‖ + ‖R_b‖ + Σ_k |a_k|(모드 — 1 N 정규화라 |a_k| = 그 열의 Σ‖f‖)
-cancel_rel,i = 1 − ‖Σ_r R_r + R_b + Σ_k R_m,k‖ / F_sum_abs   (0 = 모두 같은 방향, 1 = 완전 상쇄 — 하중이 서로 지우는 정도)
+F_sum_abs 는 정보용(D-JIG-17).
+cancel_rel,i = 1 − Σ_n ‖Σ_k a_k f_k(n)‖ / Σ_k Σ_n ‖a_k f_k(n)‖   (D-JIG-17 — 노드별 병진 하중 노름, k = 기저 열; 분자 = F_node_abs, 분모 = F_col_abs)
+             (단일 열의 자기평형 — 고차 모드 합력 ≈ 0 — 은 상쇄 아님: 한 열만 쓰면 0, 같은 노드에서 열끼리 반대로 크게 쓰면 1 에 가까움.
+              주의: 서로 다른 노드 집합(다른 영역)의 반대 방향 하중은 노드가 겹치지 않아 잡히지 않음 — 이 폭주는 F_sum_abs 로 봄)
 active_r   = ‖R_r‖ > jig.active_tol · max_r ‖R_r‖,   n_active,i = Σ active
 react_rel,i= ‖Σ F_i + Σ_J 반력‖ / Σ_n ‖F_i,n‖                               (정적 평형 확인 ≤ 1e-9)
 ```
 - **모드 포함/제외 두 번 보고**(D-JIG-15): `with_modes` = 위 맞춤(주 결과 — 순위 하중 F_i 는 이것), `without_modes` = 같은 G·h 에서 모드 열을 뺀 부분 문제를 같은 방법으로 다시 풀어 mac·umax_err·err_p95·resid_rel 만(추가 solve 없음 — u_fit = U a). 모드 m = 0 이면 without_modes = null(같은 값). 화면·JIG_FIT_POOR 판정은 with_modes.
-- cancel_rel > `jig.cancel_warn`(기본 0.5) 인 엔트리 → 경고 `JIG_LOAD_CANCEL{label, cancel_rel, F_sum_abs}`(BD_POST 판정, 순위 계속). 단, 지그 사이를 S 자로 굽히는 목표처럼 정당한 반대 방향 가압도 값이 커질 수 있어 경고만.
+- **일 효율(D-JIG-18 — 상쇄 판정 지표)**: `work_eff,i = |Σ_n f_i,n·u_fit,i,n| / Σ_n ‖f_i,n‖‖u_fit,i,n‖`(병진, 비지그 노드 n ∉ J, f_i = 맞춘 전체 하중 F_i, u_fit = 맞춘 응답). 물리 하중 O(0.1~1), 서로 상쇄하며 폭주하는 하중 → 0. 결합력 기준 상쇄비는 낙하의 정당한 상쇄(관성력 vs 접촉력, 양면 가압)와 구별이 안 되어 판정에 쓰지 않는다.
+- work_eff < `jig.work_eff_min`(기본 0.05, 해시 밖) 인 엔트리 → 경고 `JIG_LOAD_CANCEL{label, work_eff, F_sum_abs}`(BD_POST 판정, 순위 계속). `cancel_rel`(D-JIG-17 정의)·`F_sum_abs` 는 **정보용**(fit_report·jig.json·결과 엔트리), `jig.cancel_warn` 은 **정보 표시 임계**(경고·status 없음 — 화면 툴팁에서 cancel_rel 강조용, 해시 밖).
 - `mac < jig.mac_min` 또는 `umax_err > jig.umax_err_max` 인 엔트리가 하나라도 있으면 경고 `JIG_FIT_POOR`(BD_POST 판정, **순위는 계속 산출**, 화면 ④ 한 줄에 표시). 임계값은 해시 밖(설정만 바꿔 BD_POST 재실행으로 판정 갱신).
 
 **(7) 설계 비교 (D-JIG-7)** — 같은 메시 계획(once, sm_ref base)에서만:
@@ -184,6 +188,8 @@ DOE_RUN
 | D-0.23.0-JIG-14 | (Q-JIG-2 확정 2026-11-17) 접촉 영역 유지 + 부족분(min_regions − n_c)만 PCA 격자 패치 보충, 패치 후보 = 비지그 ∖ 접촉 영역 노드, 영역 kind contact\|patch·묶음 regions_from contact\|mixed\|patch 기록, 접촉 0 = 전부 패치, 보충 시 `JIG_REGION_FALLBACK`. 규칙 = `jig.select_regions` 한 곳 | 물리 접촉 영역 보존(사용자 확정) |
 | D-0.23.0-JIG-15 | (2026-11-17 17:44 사용자) **모드 관성 기저**: 기준 설계 지그 구속 집중질량(A·t·ρ_t) 저차 탄성 모드 φ_k(k ≤ n_modes, 기본 4) 를 eigsh shift-invert(σ = 0 = 지그 분해 재사용)로 구하고 g_k = Mφ_k(Σ‖·‖ = 1 N, 부호 자유)를 기저에 추가. 설계마다 재계산 금지(고정 노드 하중). 실패 = `JIG_MODES_FAILED` 후 모드 없이. 진단 = 모드 포함/제외 MAC·umax 오차, 지그·3-2-1 고유진동수(Hz). jig.npz 에 영역·체적력·모드 하중을 노드 면적당 밀도(N/mm²)로도 저장(v0.24.0 메시 독립 전달용, §5.5 키 고정) | 덴팅 = 섀시 전역 굽힘·비틀림 휘청(처짐 ≫ 두께) — 균일 체적력은 휘청 관성 분포를 못 담음 |
 | D-0.23.0-JIG-16 | (2026-11-17 메인, Impl-Core af0385b 보고) **유한 회전 목표·법선 가중·하중 정규화·상쇄 경고**: u_tgt = 지그 노드 Kabsch 유한 회전 제거(§1(2)), 맞춤 가중 W_n = A(nnᵀ + w_inplane(I − nnᵀ))(기본 0.1), 접선·체적력·모드 계수에 Tikhonov reg_force·ḡ_N·Σa²(기본 1e-3 — §1(5) 합성 근거), cancel_rel > cancel_warn(0.5) = `JIG_LOAD_CANCEL`(순위 계속), `basis_tangential` false = 법선만(비교용) | 면내 자기평형 잔여 목표에서 맞춤이 면내 하중을 상쇄시켜 씀(cancel 0.76, 면내 하중 = 법선력 10²~10³ 배, ridge 로 불변) — #63 상쇄 하중 재발 위험 |
+| D-0.23.0-JIG-17 | (2026-11-17 메인, Impl-Core 438a7e7 보고) **상쇄비 재정의·정규화 분리**: cancel_rel = 1 − Σ_n‖Σ_k a_k f_k(n)‖ / Σ_kΣ_n‖a_k f_k(n)‖(노드별 병진 하중 노름, 기저 열 사이 상쇄만 — 단일 열의 자기평형은 상쇄 아님), F_sum_abs 는 정보용. reg_force 는 접선·체적력 열만, 모드 열은 새 키 `reg_modes`(기본 0.0, 해시 안), 법선 열은 ridge 만 | 고차 모드 관성 하중은 합력 ≈ 0 이라 옛 정의로는 cancel ≈ 1(JIG_LOAD_CANCEL 오탐), reg_force 1e-3 이 고차 모드 열을 2~7 % 줄여 휘청 재현 손실 |
+| D-0.23.0-JIG-18 | (2026-11-17 메인, Impl-Core fbe16b1 보고) **상쇄 판정 = 일 효율**: work_eff = \|Σ f·u_fit\| / Σ ‖f‖‖u_fit‖(병진, 비지그 노드) < `work_eff_min`(기본 0.05, 해시 밖) → `JIG_LOAD_CANCEL`. cancel_rel(D-JIG-17)·F_sum_abs 는 정보용, `cancel_warn` 은 정보 표시 임계(경고 없음) | 결합력 기준 상쇄 지표는 낙하의 정당한 상쇄(관성력 vs 접촉력, 양면 가압)와 구별 안 됨 — 진짜 증상은 '하는 일에 비해 하중 과대' |
 
 ### 3.1 보류(후속, 이번 범위 아님)
 
@@ -202,9 +208,9 @@ DOE_RUN
 | 스키마 | 필드 |
 |---|---|
 | `DoeResultOut` (변경) | `metric: Literal["lin","solve","jig"] \| None`, `metric_effective: Literal["lin","solve","jig"] \| None`, **`jig: DoeJigOut \| None = None`**(옛 스터디·지그 블록 없는 스냅샷 = null) |
-| `DoeJigOut` (신규) | `status: Literal["ok","poor","fallback","unsupported"]`, `code: str \| None`(fallback·unsupported 사유 코드 1개, ok·poor = null), `region_source: Literal["contact","mixed","patch"] \| None`(= jig.json `regions_from`), `n_jig: int`, `n_regions: int`, `n_contact: int`, `n_patch: int`, `fit_mac_min: float \| None`(엔트리 최솟값, **모드 포함**), `fit_umax_err_max: float \| None`(엔트리 최댓값, 모드 포함), `fit_mac_min_nomodes: float \| None`, `fit_umax_err_max_nomodes: float \| None`(모드 제외 맞춤 — 모드 0 이면 null), `cancel_rel_max: float \| None`, `tie_rel_max: float \| None`, `n_modes: int`(실제 쓴 모드 수, 실패·끔 = 0), `hz_jig: list[float]`(지그 구속 1..n_modes 고유진동수 Hz, ρ_t 기준 — 끔·실패 = []), `hz_321: list[float] \| None`(3-2-1 기준, `modes_ref321` 거짓·실패 = null), `hz_ratio: float \| None`(hz_jig[0] / hz_321[0]), `th: DoeJigThOut`, `entries: list[DoeJigEntryOut]` |
-| `DoeJigThOut` (신규) | `mac_min: float`, `umax_err_max: float`, `tie_rel_warn: float`, `cancel_warn: float`(스냅샷 값) |
-| `DoeJigEntryOut` (신규) | `entry_id: str`, `label: str`, `mac: float`(모드 포함), `umax_err: float`(모드 포함), `mac_nomodes: float \| None`, `umax_err_nomodes: float \| None`, `err_p95: float`, `n_active: int`, `F_sum_abs: float`(N), `cancel_rel: float`, `rot_deg: float`(지그 노드 Kabsch 회전각) |
+| `DoeJigOut` (신규) | `status: Literal["ok","poor","fallback","unsupported"]`, `code: str \| None`(fallback·unsupported 사유 코드 1개, ok·poor = null), `region_source: Literal["contact","mixed","patch"] \| None`(= jig.json `regions_from`), `n_jig: int`, `n_regions: int`, `n_contact: int`, `n_patch: int`, `fit_mac_min: float \| None`(엔트리 최솟값, **모드 포함**), `fit_umax_err_max: float \| None`(엔트리 최댓값, 모드 포함), `fit_mac_min_nomodes: float \| None`, `fit_umax_err_max_nomodes: float \| None`(모드 제외 맞춤 — 모드 0 이면 null), `cancel_rel_max: float \| None`(정보), `fit_work_eff_min: float \| None`(엔트리 최솟값 — JIG_LOAD_CANCEL 판정 값), `tie_rel_max: float \| None`, `n_modes: int`(실제 쓴 모드 수, 실패·끔 = 0), `hz_jig: list[float]`(지그 구속 1..n_modes 고유진동수 Hz, ρ_t 기준 — 끔·실패 = []), `hz_321: list[float] \| None`(3-2-1 기준, `modes_ref321` 거짓·실패 = null), `hz_ratio: float \| None`(hz_jig[0] / hz_321[0]), `th: DoeJigThOut`, `entries: list[DoeJigEntryOut]` |
+| `DoeJigThOut` (신규) | `mac_min: float`, `umax_err_max: float`, `tie_rel_warn: float`, `cancel_warn: float`(정보 표시 임계), `work_eff_min: float`(스냅샷 값) |
+| `DoeJigEntryOut` (신규) | `entry_id: str`, `label: str`, `mac: float`(모드 포함), `umax_err: float`(모드 포함), `mac_nomodes: float \| None`, `umax_err_nomodes: float \| None`, `err_p95: float`, `n_active: int`, `F_sum_abs: float`(N), `cancel_rel: float`(정보), `work_eff: float`, `rot_deg: float`(지그 노드 Kabsch 회전각) |
 | ranking 행 dict(통과, `DoeRankRow` 문서화) | `score_jig?: number \| null`, `umax_jig?: number \| null`(비), `C_jig?: Record<entry_id, number> \| null`(N·mm) — 지그 값이 있을 때만 |
 | per_esl 행(통과) | `C_jig: float \| null`(N·mm), `umax_jig: float \| null`(mm) |
 | `DoeRankMetric`(types.ts) | `"lin" \| "solve" \| "jig"` |
@@ -231,7 +237,7 @@ DOE_RUN
 | `JIG_NORMAL_FREE` | 정보 | baseline | 접촉 영역 법선 부호 모호(간격 0) → 부호 자유 영역 수 |
 | `JIG_BASIS_NULL` | 정보 | baseline | 응답 0 기저 열(a = 0 고정) 수 |
 | `JIG_MODES_FAILED` | 정보 | baseline | 지그(또는 3-2-1 정보) 고유치 실패(`stage` jig\|321, `err`, `n_conv`) → 수렴한 모드만·없으면 모드 기저 없이 진행 |
-| `JIG_LOAD_CANCEL` | 경고 | post | cancel_rel > cancel_warn 인 엔트리(라벨·값·F_sum_abs) — 맞춤 하중이 서로 상쇄(#63 꼴 위험), 순위 계속 |
+| `JIG_LOAD_CANCEL` | 경고 | post | work_eff < work_eff_min 인 엔트리(라벨·work_eff·F_sum_abs) — 하는 일에 비해 맞춤 하중이 과대(서로 상쇄하며 폭주, #63 꼴 위험), 순위 계속(D-JIG-18) |
 | `JIG_FIT_POOR` | 경고 | post | MAC < mac_min 또는 umax 오차 > umax_err_max 인 엔트리(라벨·값) — 순위 계속 |
 | `JIG_TIE_RELATIVE` | 경고 | post | tie_rel > tie_rel_warn — 지그 노드끼리도 변형(고정 지그 한계) |
 | `JIG_DESIGN_FAILED` | 경고 | design | 안 지그 재풀이 실패(`err`) → 그 안 C_jig null(metric jig 이면 순위 밖 `n_failed["jig"]`) |
@@ -260,11 +266,11 @@ DOE_RUN
 | `forces` | `forces(basis, a, n_nodes) -> (N,3) float64` — a (nb,), §1(4) 선형 조합(희소 합, 결정적 순서) |
 | `factor` | `factor(mesh, jig_idx, solver_cfg) -> FactorizedSolve` — `ShellModel(…, drill_factor, backend, **solver_check_kwargs(solver_cfg)).factorize([(i,"123") for i in jig_idx])`. `SOLVER_SINGULAR` → `EslError("JIG_SUPPORT_DEGENERATE")`. 모드용 K 는 `h.model.K()`(같은 조립) |
 | `basis_response` | `basis_response(h, basis, fit_mask) -> {"U": (nb, M, 3) float64, "null_cols": [k]}` — M = fit_mask 수, solve nb 회 |
-| `fit_loads` | `fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, drop_kinds=()) -> {"a": (nb,) N, "resid_rel": float, "n_bound_active": int, "g_N": float}` — §1(5). u_tgt_fit (M,3), w_fit (M,) 면적, n_fit (M,3) 노드 법선. `drop_kinds=(4,)` = 모드 제외 맞춤(그 열 a = 0) |
+| `fit_loads` | `fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, reg_modes=0.0, drop_kinds=()) -> {"a": (nb,) N, "resid_rel": float, "n_bound_active": int, "g_N": float}` — §1(5). u_tgt_fit (M,3), w_fit (M,) 면적, n_fit (M,3) 노드 법선. `drop_kinds=(4,)` = 모드 제외 맞춤(그 열 a = 0) |
 | `respond` | `respond(h, loads, *, umax_mask=None) -> [{"entry_id", "C_jig", "umax_jig", "react_rel", "u": (N,3) \| None}]` — loads = [(entry_id, F (N,3))], keep_u 는 베이스라인 진단에만(`keep_u=True` 키워드) |
-| `fit_report` | `fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol, u_fit_nomodes=None) -> {"with_modes": {"mac", "umax_err", "err_p95", "resid_rel"}, "without_modes": {같은 4키} \| None, "modes": [{"k", "a"}], "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "cancel_rel", "n_active", "body": [3] \| None, "forces": [{"region", "kind", "part", "F_n", "F_t1", "F_t2", "F": [3], "active"}]}` — §1(6) |
+| `fit_report` | `fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol, u_fit_nomodes=None) -> {"with_modes": {"mac", "umax_err", "err_p95", "resid_rel"}, "without_modes": {같은 4키} \| None, "modes": [{"k", "a"}], "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "F_node_abs", "F_col_abs", "cancel_rel", "n_active", "body": [3] \| None, "forces": [{"region", "kind", "part", "F_n", "F_t1", "F_t2", "F": [3], "active"}]}` — §1(6) |
 | `design_response` | `design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None) -> {"rows": respond 행(u 없음), "stats": {"seconds", "n_solves", "backend"}}` = `respond(factor(…), …)` |
-| `hash_view` | `hash_view(jig_cfg: dict) -> dict` — `HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "rho_t_mm3", "modes_ref321")` 뺀 사본(해시용, D-JIG-11) |
+| `hash_view` | `hash_view(jig_cfg: dict) -> dict` — `HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "rho_t_mm3", "modes_ref321")` 뺀 사본(해시용, D-JIG-11) |
 
 - 구현 가산(Core 2026-11-17, 시그니처 불변·키만 추가): `select_regions` 반환 += `n_fill`(규칙상 보충 수)·`n_found`(필터 통과 접촉 영역 수 — jig.json `surf.n_found`)·`n_cells`(비어 있지 않은 패치 셀 수); 접촉 Region += `gap_mm`(법선 부호 자유 판정용 — `load_basis` 가 읽음); `Basis` += `n_nodes`·`tangential`; `fit_report` += `tie_rel`; `jig_modes` 반환 += `ok`·`err`(일부 수렴·λ ≤ 0 제외 = ok false + 수렴분, 쓸 모드 0 = `EslError("JIG_MODES_FAILED")` + `.detail = {n_conv, err}`); 공개 보조 `nearest_tri(xq, surf, *, gap_mm, knn, chunk_nodes) -> {dist, tri, q}`(거리 계산 본체, 후보 없음 = inf·−1)·`load_density(basis, weights) -> {node_area, reg_area, reg_q, body_q, mode_q}`(§5.5 밀도 키 계산 — stages 는 그대로 저장)·상수 `COL_NORMAL..COL_MODE = 1..4`·`HASH_EXCLUDE`. 지그 구속 dof = `[6·p + d for p, d in h.cons]`(FactorizedSolve). `regions_from` 은 실제 결과 기준(1 ≤ n_c < min_regions 인데 패치 후보 소진으로 n_patch = 0 이면 `contact`, `fill_reason` 은 그대로 기록). `factor` 의 `solver_cfg` 키 = `drill_factor`·`backend`(+ 해 검사 키), 없으면 1e-4·auto. `fit_loads` 의 `w_fit` 는 면적 그대로(안에서 mean 정규화), `resid_rel` = W 가중.
 - 결정성: 같은 입력 → 비트 동일(정렬 키·동률 규칙 고정, BVLS, numpy 결정적 합 순서). 진단은 순수 dict(파일 쓰기는 stages).
@@ -319,9 +325,9 @@ DOE_RUN
   regions_from: "contact"|"mixed"|"patch", n_contact, n_patch, fill_reason?: "few_contact"|"no_deck"|"surf_failed",
   surf: {source: "case"|"mesh", n_tris, n_parts, n_shell, n_solid_faces, n_contact_nodes, n_found, seconds} | null,
   regions: [{id, kind: "contact"|"patch", part|null, n_nodes, area_mm2, center[3], normal[3], sign: 1|0}],
-  nb, body_force: bool, tangential: bool, ridge, w_inplane, reg_force, g_N,
+  nb, body_force: bool, tangential: bool, ridge, w_inplane, reg_force, reg_modes, g_N,
   modes: {n_req, n_conv, sigma, lam[], hz[], rho_t_used, hz_321[]|null, hz_ratio|null, ok: bool, err?} ,
-  entries: [{entry_id, mac, umax_tgt, umax_fit, umax_err, err_p95, resid_rel, tie_rel, rot_deg, n_active, F_sum_abs, cancel_rel,
+  entries: [{entry_id, mac, umax_tgt, umax_fit, umax_err, err_p95, resid_rel, tie_rel, rot_deg, n_active, F_sum_abs, cancel_rel, work_eff,
              with_modes{mac, umax_err, err_p95, resid_rel}, without_modes{…}|null, modes[{k, a}],
              react_rel, body[3]|null, forces[{region, F_n, F_t1, F_t2, F[3], active}], C_ref, umax_ref}],
   info: [..], warnings: [..], seconds: {surf, regions, basis, fit, respond} }
@@ -359,16 +365,18 @@ DOE_RUN
       modes_maxiter: 2000           # eigsh maxiter
       modes_ref321: true            # 3-2-1 지지 고유진동수 비교 정보(베이스라인 분해 1 추가, 해시 밖)
       w_inplane: 0.1                # 맞춤 가중의 면내 성분 비(법선 성분 = 1) — D-JIG-16
-      reg_force: 1.0e-3             # 접선·체적력·모드 계수 Tikhonov(ḡ_N 배) — §1(5) 근거
+      reg_force: 1.0e-3             # 접선·체적력 계수 Tikhonov(ḡ_N 배) — §1(5) 근거 (해시 안)
+      reg_modes: 0.0                # 모드 관성 계수 Tikhonov(ḡ_N 배) — D-JIG-17 분리, 0 = 모드 정확 재현 (해시 안)
       ridge: 1.0e-8                 # 수치 안정 λ(열 정규화 후)
       active_tol: 1.0e-3            # 활성 영역 판정(최대 합력 대비)
       mac_min: 0.9                  # 미달 → JIG_FIT_POOR (해시 밖)
       umax_err_max: 0.2             # 초과 → JIG_FIT_POOR (해시 밖)
       tie_rel_warn: 0.1             # 초과 → JIG_TIE_RELATIVE (해시 밖)
-      cancel_warn: 0.5              # cancel_rel 초과 → JIG_LOAD_CANCEL (해시 밖)
+      cancel_warn: 0.5              # cancel_rel 정보 표시 임계(경고 아님 — D-JIG-18, 해시 밖)
+      work_eff_min: 0.05            # 일 효율 미달 → JIG_LOAD_CANCEL (D-JIG-18, 해시 밖)
 ```
-- pydantic `BeadDoeRankJigCfg`: `fix_kinds` 원소 ∈ `FIXED_KINDS`·1..7개·중복 금지, `contact_gap_mm` > 0, `knn` 1..64, `chunk_nodes` 1024..2²⁰, `max_surf_tris` ≥ 1, `max_regions` 1..32, `1 ≤ min_regions ≤ max_regions`, `min_region_nodes` ≥ 1, `min_region_area_mm2` ≥ 0, `patch_count` 1..32, `n_modes` 0..20, `rho_t_mm3` > 0, `modes_sigma` 실수(≤ 0 권장 — > 0 이면 경고 없이 허용), `modes_tol` ≥ 0, `modes_maxiter` 1..100000, `0 ≤ w_inplane ≤ 1`, `reg_force` ≥ 0, `0 < cancel_warn ≤ 1`, `ridge` ≥ 0, `0 < active_tol < 1`, `0 < mac_min ≤ 1`, `umax_err_max` > 0, `tie_rel_warn` > 0. `metric == "jig"` ∧ `not jig.enabled` → 오류.
-- **해시**: `jig.hash_view` 의 `HASH_EXCLUDE`(`mac_min`·`umax_err_max`·`tie_rel_warn`·`cancel_warn`·`rho_t_mm3`·`modes_ref321`) 밖의 모든 키는 해시 안(`n_modes`·`modes_sigma`·`modes_tol`·`modes_maxiter`·`w_inplane`·`reg_force`·`basis_tangential` 포함 — 하중이 바뀜). ρ_t 는 모드 형상·정규화 하중을 바꾸지 않고(균일 배율) Hz 는 BD_POST 가 환산, `modes_ref321` 은 정보만.
+- pydantic `BeadDoeRankJigCfg`: `fix_kinds` 원소 ∈ `FIXED_KINDS`·1..7개·중복 금지, `contact_gap_mm` > 0, `knn` 1..64, `chunk_nodes` 1024..2²⁰, `max_surf_tris` ≥ 1, `max_regions` 1..32, `1 ≤ min_regions ≤ max_regions`, `min_region_nodes` ≥ 1, `min_region_area_mm2` ≥ 0, `patch_count` 1..32, `n_modes` 0..20, `rho_t_mm3` > 0, `modes_sigma` 실수(≤ 0 권장 — > 0 이면 경고 없이 허용), `modes_tol` ≥ 0, `modes_maxiter` 1..100000, `0 ≤ w_inplane ≤ 1`, `reg_force` ≥ 0, `reg_modes` ≥ 0, `0 < cancel_warn ≤ 1`, `0 < work_eff_min < 1`, `ridge` ≥ 0, `0 < active_tol < 1`, `0 < mac_min ≤ 1`, `umax_err_max` > 0, `tie_rel_warn` > 0. `metric == "jig"` ∧ `not jig.enabled` → 오류.
+- **해시**: `jig.hash_view` 의 `HASH_EXCLUDE`(`mac_min`·`umax_err_max`·`tie_rel_warn`·`cancel_warn`·`work_eff_min`·`rho_t_mm3`·`modes_ref321`) 밖의 모든 키는 해시 안(`n_modes`·`modes_sigma`·`modes_tol`·`modes_maxiter`·`w_inplane`·`reg_force`·`reg_modes`·`basis_tangential` 포함 — 하중이 바뀜). ρ_t 는 모드 형상·정규화 하중을 바꾸지 않고(균일 배율) Hz 는 BD_POST 가 환산, `modes_ref321` 은 정보만.
 - `GET /doe/settings` `rank`: 기존 4키 그대로(`metric` 값에 jig 가능). 화면 임계값은 결과 `jig.th` 로만.
 
 ## 7. 화면 (Impl-Frontend, `DoeRanking.tsx` — 2560×1440, 높이 늘리지 않음)
@@ -390,15 +398,15 @@ DOE_RUN
 | V-JIG-1 | **정확 재현**: u_ref = K_jig⁻¹F(a_true)(접촉 영역 3개 + 체적력) + 임의 **유한** 강체 운동(u = R(x+u_el)+t−x, 회전 10°·이동 50 mm; u_el[J] = 0) → target_disp 가 강체 제거(1e-10), fit → MAC ≥ 1 − 1e-10, umax_err ≤ 1e-8, err_p95 ≤ 1e-8, react_rel ≤ 1e-9 | `tests/doe/test_jig.py` |
 | V-JIG-2 | **하중 위치·크기 복원**: V-JIG-1 의 a_true(일부 영역 0) → 복원 a 상대오차 ≤ 1e-6, 0 영역 = 비활성(active false), 법선 ≥ 0 제약에서 a_true 법선 음수 영역을 넣으면 해당 성분 = 0(경계 활성)·MAC < 1 | 같은 파일 |
 | V-JIG-3 | **물리 방향**: 리브 비드 α ∈ {0, 0.5, 1}(깊이 증가) → C_jig·umax_jig 단조 감소(score_jig(α=1) < score_jig(0.5) < 1), 같은 F·같은 J | 같은 파일 |
-| V-JIG-4 | **상쇄·무른 모드 무관(D-JIG-16 개정)**: V-SM-11 꼴(긴 얇은 판, F = K₀u_drop) + 국부 비드 α 0.1/0.5/1 → 재풀이 C(3-2-1) umax ×≥ 10·imbalance ≥ 5 %(재현) ↔ 지그(기본 설정): react_rel ≤ 1e-9, umax_jig 비 ≤ 3, |score_jig − 1| ≤ 재풀이 C 변화의 1/5. **면외 지배 목표**(u_drop 면외 성분 ≥ 90 %)에서 hard assert cancel_rel ≤ 0.5·F_sum_abs / Σ‖F_ESL‖ ≤ 0.1. 면내 자기평형 목표 사례는 V-JIG-21 로(경고 확인) | 같은 파일 |
+| V-JIG-4 | **상쇄·무른 모드 무관(D-JIG-16 개정)**: V-SM-11 꼴(긴 얇은 판, F = K₀u_drop) + 국부 비드 α 0.1/0.5/1 → 재풀이 C(3-2-1) umax ×≥ 10·imbalance ≥ 5 %(재현) ↔ 지그(기본 설정): react_rel ≤ 1e-9, umax_jig 비 ≤ 3, |score_jig − 1| ≤ 재풀이 C 변화의 1/5. **면외 지배 목표**(u_drop 면외 성분 ≥ 90 %)에서 hard assert cancel_rel ≤ 0.5·F_sum_abs / Σ‖F_ESL‖ ≤ 0.1·work_eff ≥ work_eff_min(경고 없음, D-JIG-18). 면내 자기평형 목표 사례는 V-JIG-21 로(경고 확인) | 같은 파일 |
 | V-JIG-5 | **패치 전부(접촉 0)**: surf None(no_deck)·접촉 0 → `regions_from patch`·`fill_reason`·패치 수 = min(patch_count, max_regions, 비어 있지 않은 셀), 지그 노드가 어느 패치에도 없음, 두 번 실행 비트 동일, 부호 자유, `JIG_REGION_FALLBACK` | 같은 파일 |
 | V-JIG-16 | **혼합 보충**: 인접 부품 1개(접촉 영역 1) + min_regions 3 → `regions_from mixed`·n_contact 1·n_patch 2, 접촉 영역 노드·kind contact·part 가 접촉만일 때와 비트 동일, 패치 노드 ∩ (접촉 노드 ∪ J) = ∅, 영역 순서 접촉 → 패치, reg_kind·jig.json `regions[].kind` 기록, `JIG_REGION_FALLBACK{few_contact, n_contact 1, n_patch 2}`; 접촉 ≥ min_regions → 보충 없음·경고 없음; 후보 소진(C_p 비어 있음) → n_patch < n_fill 로 진행; 보충 영역 포함 V-JIG-1 식 정확 재현(MAC ≥ 1 − 1e-10) | 같은 파일 |
-| V-JIG-17 | **모드 관성 재현**: 합성 평판(600×300, t 0.8, 짧은 두 변 tie)·m 4 — 목표 u_tgt = K_jig⁻¹(Σ c_k M φ_k)(c 임의, 모드 2~3 개 섞음) → 모드 기저 포함 MAC ≥ 1 − 1e-8·umax_err ≤ 1e-6, **모드 제외**(영역 + 균일 체적력만) MAC ≤ 0.95 이고 with − without ≥ 0.05; jig.npz `mode_f`·`mode_q`·`node_area`·`reg_q`·`body_q` 키·모양·`mode_q·node_area = mode_f`(1e-12); 안 평가가 모드를 다시 풀지 않음(eigsh 호출 0 — 모의 객체) | `tests/doe/test_jig.py` |
+| V-JIG-17 | **모드 관성 재현**: 합성 평판(600×300, t 0.8, 짧은 두 변 tie)·m 4 — 목표 u_tgt = K_jig⁻¹(Σ c_k M φ_k)(c 임의, 모드 2~3 개 섞음) → **기본 설정(reg_modes 0 — D-JIG-17)** 모드 기저 포함 MAC ≥ 1 − 1e-10·umax_err ≤ 1e-6·cancel_rel ≤ 0.5(단일 모드 열의 자기평형은 상쇄 아님)·work_eff ≥ work_eff_min(모드 하중은 φ 방향으로 일을 함 — 경고 없음), reg_modes 1e-3 이면 MAC 이 낮아짐, **모드 제외**(영역 + 균일 체적력만) MAC ≤ 0.95 이고 with − without ≥ 0.05; jig.npz `mode_f`·`mode_q`·`node_area`·`reg_q`·`body_q` 키·모양·`mode_q·node_area = mode_f`(1e-12); 안 평가가 모드를 다시 풀지 않음(eigsh 호출 0 — 모의 객체) | `tests/doe/test_jig.py` |
 | V-JIG-18 | **모드 끔 = 바이트 동일**: `n_modes 0` → a·F_i·C_jig·jig.json(모드 키 제외 영역)·jig.npz(모드 키 없음)가 모드 기능 이전 경로와 비트 동일, without_modes null, `hz_jig []`, eigsh 호출 0 | 같은 파일 + `tests/doe/test_jig_stages.py` |
 | V-JIG-19 | **고유치 실패**: eigsh 가 ArpackNoConvergence(일부 수렴 1개)·전부 실패·OPinv 회전 우변 → `JIG_MODES_FAILED{n_conv}` 정보, 수렴분만(또는 모드 없이) 진행·순위 산출, status ok/poor(실패 아님), `modes.ok false`; `modes_ref321` 실패는 hz_321 null 만 | 같은 파일 |
 | V-JIG-20 | **유한 회전 목표**: (a) 지그 노드 회전 ≤ 0.1° → `kabsch.fit` 경로와 `remove_linear_rigid` 경로 u_tgt 차 ≤ 1e-6·umax_tgt (b) 회전 10° 의 순수 강체 + 면외 굽힘 → u_tgt = 굽힘 성분(1e-10), 선형 경로는 O(θ²L) 면내 잔여가 남음(차 ≥ 1e-3·L) (c) `rot_deg` 보고 | 같은 파일 |
-| V-JIG-21 | **법선 가중·하중 정규화·상쇄 경고**: §1(5) 합성 사례 재현 — (a) 법선 + 면외 체적력 정확 목표: reg_force 1e-3 MAC 손실 ≤ 1e-3(측정 < 1e-6)·umax_err ≤ 1e-3 (b) 같은 목표 + 면내 자기평형 잔여: 기본(w_inplane 0.1·reg 1e-3) cancel_rel ≤ 0.5·F_sum_abs ≤ 1.1 × 정확 하중 합, `reg_force 0`·`w_inplane 1` → cancel_rel > 0.5 이고 BD_POST 경고 `JIG_LOAD_CANCEL` 1개(순위 계속) (c) `basis_tangential false` → col_kind 에 2 없음·nb = R + 3 + m | 같은 파일 + `tests/doe/test_jig_stages.py` |
-| V-JIG-22 | **필드·설정(모드·정규화)**: DoeJigOut 새 필드(`fit_mac_min_nomodes`·`fit_umax_err_max_nomodes`·`cancel_rel_max`·`n_modes`·`hz_jig`·`hz_321`·`hz_ratio`, th.`cancel_warn`, 엔트리 `mac_nomodes`·`umax_err_nomodes`·`rot_deg`) 통과·`check:api`, 설정 4곳 거울(새 9키), `HASH_EXCLUDE` 키 변경은 해시 불변·그 밖 새 키 변경은 해시 변경, `rho_t_mm3` 4배 → hz_jig ½(BD_POST 환산, 재실행 없음) | `backend/tests/test_doe_config.py` · `backend/tests/test_doe_rank_metric_api.py` · `tests/doe/test_jig_stages.py` |
+| V-JIG-21 | **법선 가중·하중 정규화·상쇄 경고**: §1(5) 합성 사례 재현 — (a) 법선 + 면외 체적력 정확 목표: reg_force 1e-3 MAC 손실 ≤ 1e-3(측정 < 1e-6)·umax_err ≤ 1e-3 (b) 같은 목표 + 면내 자기평형 잔여: 기본(w_inplane 0.1·reg 1e-3) cancel_rel ≤ 0.5·F_sum_abs ≤ 1.1 × 정확 하중 합·**work_eff ≥ work_eff_min(경고 없음, 측정 0.916)**, `reg_force 0`·`w_inplane 1` → F_sum_abs > 100 × 정확 하중 합(6.9e5 N)·**work_eff < 0.05(측정 0.014) → BD_POST 경고 `JIG_LOAD_CANCEL` 1개(순위 계속)** — 통합 시험(test_jig_stages)도 이 일 효율 정의로(D-JIG-18) (c) `basis_tangential false` → col_kind 에 2 없음·nb = R + 3 + m | 같은 파일 + `tests/doe/test_jig_stages.py` |
+| V-JIG-22 | **필드·설정(모드·정규화)**: DoeJigOut 새 필드(`fit_mac_min_nomodes`·`fit_umax_err_max_nomodes`·`cancel_rel_max`·`fit_work_eff_min`·`n_modes`·`hz_jig`·`hz_321`·`hz_ratio`, th.`cancel_warn`·`work_eff_min`, 엔트리 `mac_nomodes`·`umax_err_nomodes`·`rot_deg`·`work_eff`) 통과·`check:api`, 설정 4곳 거울(새 11키 — `reg_modes`·`work_eff_min` 포함), `HASH_EXCLUDE` 키 변경은 해시 불변·그 밖 새 키 변경은 해시 변경, `rho_t_mm3` 4배 → hz_jig ½(BD_POST 환산, 재실행 없음) | `backend/tests/test_doe_config.py` · `backend/tests/test_doe_rank_metric_api.py` · `tests/doe/test_jig_stages.py` |
 | V-JIG-6 | **지그 없음·퇴화**: RBE2 만 → `JIG_NO_TIE`; 공선 tie 3점·성분 하나에 지그 없음 → `JIG_SUPPORT_DEGENERATE`(분해 전 판정). 통합: metric jig 스터디가 fallback → `metric_effective` solve, `jig.status` fallback·code, ranking 순위·score 열이 metric solve 스터디와 같음 | `test_jig.py` + `tests/doe/test_jig_stages.py` |
 | V-JIG-7 | **regress 바이트 동일**: (a) 스냅샷 `rank` 없음 (b) `rank` 있음·`jig` 없음(v0.20~0.22 스냅샷) → result.json·ranking.csv·report.html·done.json 해시가 main 685df7d 와 같음(기존 regress 골든). (c) `rank` 에 metric 키 없음 → solve | `tests/doe/test_jig_stages.py` + 기존 regress |
 | V-JIG-8 | **대규모 거리 메모리**: 후보 노드 25만 × 삼각형 200만(평행 격자) → 결과 = 전수 brute(표본 2 000 노드) 와 일치, tracemalloc 추가 피크 ≤ 400 MB, 노드 2배 → 피크 증가 ≤ 10 %, ≤ 60 s(`@pytest.mark.slow`) | `tests/doe/test_jig.py` |
@@ -410,7 +418,7 @@ DOE_RUN
 | V-JIG-14 | **API·순위**: `rank(metric="jig")` = C_jig 키 순위·ESL별 비·pareto, C_jig null 안 = `n_failed["jig"]`, 행 `score_jig`·`umax_jig`·`C_jig{}`; 결과 응답 `jig`(DoeJigOut)·`metric_effective "jig"` 통과·옛 결과 jig null; openapi 갱신 | `tests/doe/test_rank_metric.py` · `backend/tests/test_doe_rank_metric_api.py` |
 | V-JIG-15 | **모드 무관 모듈**: `jig.py` AST 검사(esl.doe·파일 IO·`open(` 없음), 같은 배열 입력 → 어느 계획에서 불러도 비트 동일, `stages.py` 에 시나리오 이름으로 지그 분기 없음(정적 grep `jig` 주변) | `tests/doe/test_jig.py` |
 
-- Core 구현 관찰(2026-11-17, D-JIG-16 반영 후): V-JIG-4 는 기본 설정(모드 4·w_inplane 0.1·reg_force 1e-3)에서 hard assert 전부 통과(픽스처 = 중앙 가압 + 가압 영역 밖 국부 막 압축 — cancel 0.000·F_sum_abs/Σ‖F_ESL‖ < 1e-4·umax_jig 비 ≤ 0.99·score_jig 0.99/0.95/0.92 vs 재풀이 C ×25/504/1840). **시험 정의와 다른 점 3개**: (1) V-JIG-20(a) 두 경로 차는 O(θ·umax + θ²L)(선형 경로는 탄성분도 회전된 채 남김) — 1e-6·umax 는 θ ≲ 1e-6 rad 에서만 성립하므로 5e-5° 에서 1e-6, 0.01°·0.1° 는 2(θ·umax + θ²L) 로 단정. (2) V-JIG-17 정확 재현은 `reg_force 0`(기본 1e-3 은 고차 모드 열을 G_kk/ḡ_N ≈ 0.42·0.025·0.013 이라 2~7 % 줄여 MAC 손실 ~3e-4·umax 오차 ~2 %). (3) V-JIG-1·2·16 정확 재현은 `ridge 0·reg_force 0·n_modes 0`(정규화 편향 없음). 참고: 고차 모드 관성 하중은 자체 합력 ≈ 0 이라 모드 열을 크게 쓰는 맞춤은 정의상 cancel_rel ≈ 1(JIG_LOAD_CANCEL 오탐 가능).
+- Core 구현 관찰(2026-11-17, D-JIG-16·17·18 반영 후, Impl-Core): 기본 설정 work_eff = V-JIG-4 0.9999 · V-JIG-17 0.933 · V-JIG-21 (a)·(b) 0.916 · V-JIG-1 사례 0.50 (모두 ≥ 0.05, 경고 없음), V-JIG-21 reg 0·w_ip 1 = 0.014(F_sum 6.9e5 N, 경고). V-JIG-4 hard assert 전부 통과(중앙 가압 + 가압 영역 밖 국부 막 압축 — cancel 0.001·F_sum_abs/Σ‖F_ESL‖ ≈ 1e-5·umax_jig 비 ≤ 0.99·score_jig 0.99/0.95/0.92 vs 재풀이 C ×25/504/1840). V-JIG-17 기본(reg_modes 0) 1 − MAC 1e-14, reg_modes 1e-3 → 4e-3. **시험 정의와 다른 점**: (1) V-JIG-20(a) 두 경로 차는 O(θ·umax + θ²L) — 1e-6·umax 는 5e-5° 에서, 0.01°·0.1° 는 2(θ·umax + θ²L) 로 단정. (2) V-JIG-1·2·16 정확 재현은 `ridge 0·reg_force 0·n_modes 0`.
 
 ## 9. 리스크
 
