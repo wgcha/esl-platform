@@ -377,7 +377,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
 function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
   const pct = (v: number | null) => (v == null ? "–" : `${(v * 100).toFixed(1)} %`);
   const tip = (jig.entries ?? [])
-    .map((e) => `${e.label || e.entry_id}: MAC ${e.mac.toFixed(3)}${e.mac_nomodes != null ? ` (모드 제외 ${e.mac_nomodes.toFixed(3)})` : ""} · umax 오차 ${pct(e.umax_err)} · P95 ${pct(e.err_p95)} · 활성 영역 ${e.n_active} · ΣF ${e.F_sum_abs.toPrecision(3)} N · 상쇄 ${e.cancel_rel.toFixed(2)} · 회전 ${e.rot_deg.toFixed(1)}°`)
+    .map((e) => `${e.label || e.entry_id}: MAC ${e.mac.toFixed(3)}${e.mac_nomodes != null ? ` (모드 제외 ${e.mac_nomodes.toFixed(3)})` : ""} · umax 오차 ${pct(e.umax_err)} · P95 ${pct(e.err_p95)} · 활성 영역 ${e.n_active} · ΣF ${e.F_sum_abs.toPrecision(3)} N · 일 효율 ${e.work_eff.toFixed(2)} · 상쇄비 ${e.cancel_rel.toFixed(2)}${e.cancel_rel > jig.th.cancel_warn ? " ↑" : ""} · 회전 ${e.rot_deg.toFixed(1)}°`)
     .join("\n");
   if (jig.status === "fallback" || jig.status === "unsupported") {
     const why = jig.code ? JIG_CODE_TEXT[jig.code] ?? jig.code : null;
@@ -388,16 +388,16 @@ function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
     );
   }
   const poor = jig.status === "poor";
-  const cancel = jig.cancel_rel_max != null && jig.cancel_rel_max > jig.th.cancel_warn;
+  const cancel = jig.fit_work_eff_min != null && jig.fit_work_eff_min < jig.th.work_eff_min;
   const modes = jig.n_modes > 0;
   const hz = jig.hz_jig?.length ? `지그 1차 ${jig.hz_jig[0].toPrecision(3)} Hz${jig.hz_ratio != null ? ` (3-2-1 대비 ×${jig.hz_ratio.toFixed(2)})` : ""}` : "";
   const tie = jig.tie_rel_max != null && jig.tie_rel_max > jig.th.tie_rel_warn;
-  const extra = [poor ? jigPoorText(jig.th) : "", jig.region_source && jig.region_source !== "contact" ? JIG_CODE_TEXT.JIG_REGION_FALLBACK : "", tie ? JIG_CODE_TEXT.JIG_TIE_RELATIVE : "", cancel ? `${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (cancel_rel ${jig.cancel_rel_max!.toFixed(2)} > ${jig.th.cancel_warn})` : "", hz].filter(Boolean);
+  const extra = [poor ? jigPoorText(jig.th) : "", jig.region_source && jig.region_source !== "contact" ? JIG_CODE_TEXT.JIG_REGION_FALLBACK : "", tie ? JIG_CODE_TEXT.JIG_TIE_RELATIVE : "", cancel ? `${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})` : "", hz].filter(Boolean);
   return (
     <div className={`small ${poor ? "warn-text" : "muted"}`} data-testid="jig-line" data-status={jig.status} title={[...extra, tip].filter(Boolean).join("\n") || undefined}>
       {poor ? "⚠ " : ""}기준 재현(지그): MAC(모드 포함) ≥ {jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–"}{modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ {pct(jig.fit_umax_err_max)} · 하중 영역 {jig.n_regions}개(접촉 {jig.n_contact} · 패치 {jig.n_patch}) · 지그 노드 {jig.n_jig}
       {tie ? " · ⚠ 체결부 상대 변형" : ""}
-      {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (cancel_rel ${jig.cancel_rel_max!.toFixed(2)})`}> ⚠</span>}
+      {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})`}> ⚠</span>}
     </div>
   );
 }

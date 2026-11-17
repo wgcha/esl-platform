@@ -438,7 +438,7 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_NORMAL_FREE: "접촉 방향이 모호한 영역이 있어 하중 부호를 제한하지 않았습니다",
   JIG_BASIS_NULL: "응답이 없는 하중 기저가 있어 0 으로 두었습니다",
   JIG_MODES_FAILED: "지그 저차 모드 계산에 실패해 모드 하중 없이 맞췄습니다(순위는 그대로 산출)",
-  JIG_LOAD_CANCEL: "맞춤 가압 하중이 서로 상쇄합니다(합력 대비 절대합이 큼) — 순위는 참고용으로 보세요",
+  JIG_LOAD_CANCEL: "하는 일에 비해 맞춤 가압 하중이 과대합니다(서로 상쇄하며 커짐) — 순위는 참고용으로 보세요",
   JIG_FIT_POOR: "기준 낙하 변형 재현이 임계값에 못 미칩니다(MAC 낮음 또는 umax 오차 큼) — 순위는 계산하되 참고용으로 보세요",
   JIG_TIE_RELATIVE: "체결 노드끼리도 변형됩니다(고정 지그의 한계) — 기준 재현이 낮아질 수 있습니다",
   JIG_DESIGN_FAILED: "그 안의 지그 재풀이에 실패했습니다",

@@ -3150,7 +3150,10 @@ export interface DoeJigThOut {
   mac_min: number;
   umax_err_max: number;
   tie_rel_warn: number;
+  /** 정보 표시 임계(경고 없음) */
   cancel_warn: number;
+  /** 일 효율 미달 임계 → JIG_LOAD_CANCEL */
+  work_eff_min: number;
 }
 export interface DoeJigEntryOut {
   entry_id: string;
@@ -3165,7 +3168,10 @@ export interface DoeJigEntryOut {
   n_active: number;
   /** N */
   F_sum_abs: number;
+  /** 정보용 */
   cancel_rel: number;
+  /** 일 효율 |Σf·u| / Σ‖f‖‖u‖ — JIG_LOAD_CANCEL 판정 값 */
+  work_eff: number;
   /** 지그 노드 Kabsch 회전각(도) */
   rot_deg: number;
 }
@@ -3184,6 +3190,8 @@ export interface DoeJigOut {
   fit_mac_min_nomodes: number | null;
   fit_umax_err_max_nomodes: number | null;
   cancel_rel_max: number | null;
+  /** 엔트리 최솟값 — JIG_LOAD_CANCEL 판정 값 */
+  fit_work_eff_min: number | null;
   tie_rel_max: number | null;
   /** 실제 쓴 모드 수(끔·실패 = 0), 지그 구속 고유진동수 Hz, 3-2-1 기준 Hz, 비 hz_jig[0]/hz_321[0] */
   n_modes: number;
