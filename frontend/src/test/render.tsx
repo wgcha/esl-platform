@@ -16,3 +16,12 @@ export function renderApp(path: string, user: MockUserKey = "power", setup?: (se
   );
   return { server, ...view };
 }
+
+/** v0.23.1 단계 초점(esl_doe_ui_tidy.md §2)으로 접힌 카드를 펼친다 — 사용자가 카드 제목(펼치기)을 한 번 누르는 것과 같음 */
+export async function openCard(title: string | RegExp) {
+  const { screen, fireEvent } = await import("@testing-library/react");
+  const name = typeof title === "string" ? new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) : title;
+  const b = await screen.findByRole("button", { name, expanded: false }, { timeout: 8000 });
+  fireEvent.click(b);
+  return b;
+}

@@ -29,7 +29,7 @@ import { designViewData } from "../view3d/part/adapters";
 import type { PartMesh } from "../view3d/part/types";
 import { BeadList } from "./BeadList";
 import { FixedViolNote } from "./FixedViol";
-import { Card, ErrorLine } from "./ui";
+import { Card, ErrorLine, type CardFold } from "./ui";
 
 export { NO_3D } from "../view3d/part/PartStage";
 import { NO_3D } from "../view3d/part/PartStage";
@@ -1087,7 +1087,7 @@ function StepInfoBar({ info }: { info: StepInfoView }) {
   );
 }
 
-export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepInfo, shapeRules }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null; stepInfo?: StepInfoView | null; shapeRules?: DoeShapeRules | null }) {
+export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepInfo, shapeRules, fold2, fold3 }: { ctrl: BeadSelectCtrl; editable: boolean; st: DoeSettingsOut | null; fixedMissing: boolean; auto?: AutoSeedView | null; stepInfo?: StepInfoView | null; shapeRules?: DoeShapeRules | null; /** v0.23.1 단계 초점 접기(esl_doe_ui_tidy.md §2) — 주면 ② 머리 요소·노드 수는 ① 입력 머리로(§8 #19) */ fold2?: CardFold | null; fold3?: CardFold | null }) {
   const [tool, setTool] = useState<Tool>("click");
   const [gtool, setGtool] = useState<GraphTool>("pick");
   const [brushPx, setBrushPx] = useState(20);
@@ -1104,7 +1104,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepIn
   const painting = !gClick || ctrl.layer?.kind === "fixed" || ctrl.layer?.kind === "exclude";
   return (
     <div className="bs-grid">
-      <Card title="② 비드 선택" right={<span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
+      <Card title="② 비드 선택" fold={fold2} right={fold2 ? undefined : <span className="small muted">{ctrl.data ? `요소 ${ctrl.data.manifest.n_elems.toLocaleString()} · 노드 ${ctrl.data.manifest.n_nodes.toLocaleString()}` : ""}</span>}>
         {auto && <AutoSeedBar auto={auto} graph={ctrl.schema === 2} />}
         {stepInfo && <StepInfoBar info={stepInfo} />}
         {ctrl.graphFailText && (
@@ -1247,7 +1247,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepIn
         )}
         <ErrorLine text={ctrl.deriveError} />
       </Card>
-      <Card title="③ 비드 목록·도구">
+      <Card title="③ 비드 목록·도구" fold={fold3}>
         <BeadList ctrl={ctrl} editable={editable} st={st} hideDirty={!!auto?.unsaved} shapeRules={shapeRules} />
       </Card>
     </div>
