@@ -21,13 +21,17 @@ import synth_sm as ss
 from esl.doe import jig
 from esl.doe import stiffness_metric as smm
 from esl.errors import EslError
+from esl.mech import kabsch
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 JIG_PY = os.path.join(ROOT, "esl", "doe", "jig.py")
 STAGES_PY = os.path.join(ROOT, "esl", "doe", "stages.py")
 
 JIG = {"contact_gap_mm": 2.0, "knn": 8, "chunk_nodes": 65536, "max_regions": 8, "min_regions": 2, "min_region_nodes": 3,
-       "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "ridge": 1.0e-8, "active_tol": 1.0e-3}
+       "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
+       "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1.0e-8, "modes_maxiter": 2000, "w_inplane": 0.1,
+       "reg_force": 1.0e-3, "ridge": 1.0e-8, "active_tol": 1.0e-3, "cancel_warn": 0.5}
+EXACT = {"ridge": 0.0, "reg_force": 0.0, "n_modes": 0}     # 정확 재현 시험(정규화 편향 없음)
 
 
 def _sel(c, surf="default", jig_idx=None, cand=None, surf_reason=None, **over):
@@ -51,24 +55,56 @@ def _wfit(c):
     return a / a.mean()
 
 
-def _pipeline(c, u_ref, sel, ridge=0.0, body=True):
-    """베이스라인 경로(§2): target → basis → factor → U → fit → respond(keep_u) → fit_report."""
+def _modes(c, h, n, **over):
+    p = dict(JIG, **over)
+    N = c["mesh"]["x0"].shape[0]
+    mass = jig.lumped_mass(c["w"], p["rho_t_mm3"])
+    fixed = np.array([6 * q + d for q, d in h.cons], dtype=np.int64)
+    md = jig.jig_modes(h.model.K(), jig.mass_diag6(mass), fixed, n, p["modes_sigma"], opinv=jig.opinv_from(h, N),
+                       tol=p["modes_tol"], maxiter=p["modes_maxiter"])
+    return md, jig.mode_loads(md["phi"], mass)
+
+
+def _pipeline(c, u_ref, sel, **over):
+    """베이스라인 경로(§2): target → factor → [모드] → basis → U → fit(모드 포함·제외) → respond(keep_u) → fit_report.
+    over = JIG 키 덮어쓰기(기본 = 계약 §6 기본값)."""
+    p = dict(JIG, **over)
     m, J, N = c["mesh"], c["J"], c["mesh"]["x0"].shape[0]
-    td = jig.target_disp(m["x0"], u_ref, J, c["fit"])
-    B = jig.load_basis(m, sel["regions"], c["w"], c["omega"], body_force=body)
+    fit, w = c["fit"], c["w"]
+    td = jig.target_disp(m["x0"], u_ref, J, fit)
     h = jig.factor(m, J, sj.SOLVER)
-    br = jig.basis_response(h, B, c["fit"])
-    fl = jig.fit_loads(br["U"], td["u_tgt"][c["fit"]], _wfit(c), B, ridge=ridge)
+    md, g = (None, None)
+    if p["n_modes"] > 0:
+        md, g = _modes(c, h, p["n_modes"], **over)
+    B = jig.load_basis(m, sel["regions"], w, c["omega"], body_force=p["body_force"], tangential=p["basis_tangential"],
+                       modes=g)
+    br = jig.basis_response(h, B, fit)
+    kw = {"ridge": p["ridge"], "w_inplane": p["w_inplane"], "reg_force": p["reg_force"]}
+    args = (br["U"], td["u_tgt"][fit], w["area"][fit], w["normal"][fit], B)
+    fl = jig.fit_loads(*args, **kw)
+    unm = None
+    if g is not None:
+        fl0 = jig.fit_loads(*args, drop_kinds=(jig.COL_MODE,), **kw)
+        unm = np.einsum("k,kmi->mi", fl0["a"], br["U"])
     F = jig.forces(B, fl["a"], N)
     row = jig.respond(h, [("E1", F)], keep_u=True)[0]
-    rep = jig.fit_report(row["u"], td["u_tgt"], c["fit"], c["w"], B, fl["a"], jig_idx=J, active_tol=JIG["active_tol"])
-    return {"td": td, "B": B, "h": h, "U": br, "fit": fl, "F": F, "row": row, "rep": rep}
+    rep = jig.fit_report(row["u"], td["u_tgt"], fit, w, B, fl["a"], jig_idx=J, active_tol=p["active_tol"],
+                         u_fit_nomodes=unm)
+    return {"td": td, "B": B, "h": h, "U": br, "fit": fl, "F": F, "row": row, "rep": rep, "modes": md}
 
 
-def _rigid(x, seed=0, scale=0.3, rot=2e-3):
-    rng = np.random.default_rng(seed)
-    a, w = rng.normal(size=3) * scale, rng.normal(size=3) * rot
-    return a + np.cross(w, x - x.mean(axis=0))
+def _rot(axis, deg):
+    k = np.asarray(axis, float) / np.linalg.norm(axis)
+    th = np.radians(deg)
+    Kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(th) * Kx + (1 - np.cos(th)) * Kx @ Kx
+
+
+def _finite(x, u_el, deg=10.0, move=50.0, axis=(0.3, 1.0, -0.4)):
+    """유한 강체 운동: u = R(x + u_el) + t − x (회전 deg°, 이동 |t| = move)."""
+    R = _rot(axis, deg)
+    t = move * np.array([0.6, -0.48, 0.64])
+    return (x + u_el) @ R.T + t - x
 
 
 @pytest.fixture(scope="module")
@@ -89,7 +125,8 @@ def exact(base):
     a_true[-3:] = (1.5, -10.0, 0.5)                # 체적력 (영역 1 = 0)
     N = c["mesh"]["x0"].shape[0]
     u_true = sj.solve_jig(c["mesh"], c["J"], jig.forces(B, a_true, N))[0][:, :3]
-    u_ref = u_true + _rigid(c["mesh"]["x0"])
+    u_ref = _finite(c["mesh"]["x0"], u_true)                     # 회전 10°·이동 50 mm (u_el[J] = 0)
+    assert np.abs(u_true[c["J"]]).max() == 0.0
     return {"c": c, "sel": sel, "a_true": a_true, "u_true": u_true, "u_ref": u_ref}
 
 
@@ -104,17 +141,22 @@ def test_node_weights_match_shell_area(base):
 
 
 def test_hash_view_drops_thresholds():
-    cfg = dict(JIG, enabled=True, fix_kinds=list(jig.TIE_KINDS), mac_min=0.9, umax_err_max=0.2, tie_rel_warn=0.1)
+    cfg = dict(JIG, enabled=True, fix_kinds=list(jig.TIE_KINDS), mac_min=0.9, umax_err_max=0.2, tie_rel_warn=0.1,
+               modes_ref321=True)
     hv = jig.hash_view(cfg)
-    assert set(cfg) - set(hv) == {"mac_min", "umax_err_max", "tie_rel_warn"} and hv["ridge"] == cfg["ridge"]
+    assert set(cfg) - set(hv) == set(jig.HASH_EXCLUDE) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn",
+                                                         "rho_t_mm3", "modes_ref321"}
+    for k in ("n_modes", "modes_sigma", "modes_tol", "modes_maxiter", "w_inplane", "reg_force", "basis_tangential", "ridge"):
+        assert hv[k] == cfg[k]
     assert "mac_min" in cfg                                              # 원본 불변
 
 
 # ---------------------------------------------------------------- V-JIG-1
 def test_v_jig_1_exact_reproduction(exact):
     c = exact["c"]
-    r = _pipeline(c, exact["u_ref"], exact["sel"], ridge=0.0)
+    r = _pipeline(c, exact["u_ref"], exact["sel"], **EXACT)
     um = np.abs(exact["u_true"]).max()
+    assert r["td"]["rot_deg"] == pytest.approx(10.0, abs=1e-9)
     assert np.abs(r["td"]["u_tgt"] - exact["u_true"]).max() <= 1e-10 * um          # 미소 강체 제거
     rep = r["rep"]
     assert rep["mac"] >= 1 - 1e-10
@@ -122,14 +164,14 @@ def test_v_jig_1_exact_reproduction(exact):
     assert r["row"]["react_rel"] <= 1e-9
     assert rep["tie_rel"] == pytest.approx(r["td"]["tie_rel"]) and rep["tie_rel"] <= 1e-9
     # 기본 ridge(1e-8)도 MAC 은 정확, umax 오차는 편향 수준
-    rd = _pipeline(c, exact["u_ref"], exact["sel"], ridge=JIG["ridge"])["rep"]
+    rd = _pipeline(c, exact["u_ref"], exact["sel"], **dict(EXACT, ridge=JIG["ridge"]))["rep"]
     assert rd["mac"] >= 1 - 1e-10 and rd["umax_err"] <= 1e-6
 
 
 # ---------------------------------------------------------------- V-JIG-2
 def test_v_jig_2_load_recovery(exact):
     c, a_true = exact["c"], exact["a_true"]
-    r = _pipeline(c, exact["u_ref"], exact["sel"], ridge=0.0)
+    r = _pipeline(c, exact["u_ref"], exact["sel"], **EXACT)
     a = r["fit"]["a"]
     assert np.abs(a - a_true).max() <= 1e-6 * np.abs(a_true).max()
     act = [f["active"] for f in r["rep"]["forces"]]
@@ -153,7 +195,7 @@ def test_v_jig_2_normal_bound(exact):
     a_bad[0] = -50.0
     N = c["mesh"]["x0"].shape[0]
     u = sj.solve_jig(c["mesh"], c["J"], jig.forces(B, a_bad, N))[0][:, :3]
-    r = _pipeline(c, u, sel, ridge=0.0)
+    r = _pipeline(c, u, sel, **EXACT)
     assert r["fit"]["a"][0] == 0.0 and r["fit"]["n_bound_active"] >= 1
     assert r["rep"]["mac"] < 1 - 1e-6 and r["fit"]["resid_rel"] > 1e-6
     for k in (3, 6):                                                 # 다른 법선 열도 제약 만족
@@ -180,7 +222,7 @@ def test_v_jig_2_contact_normal_direction(base):
 # ---------------------------------------------------------------- V-JIG-3
 def test_v_jig_3_rib_monotone(exact):
     c = exact["c"]
-    r = _pipeline(c, exact["u_ref"], exact["sel"], ridge=JIG["ridge"])
+    r = _pipeline(c, exact["u_ref"], exact["sel"])                 # 기본 설정(모드 4·정규화)
     loads = [("E1", r["F"])]
     rows = {}
     for al in (0.0, 0.5, 1.0):
@@ -223,7 +265,7 @@ def soft_amp():
     F_esl = ss.esl_force(m, u_push + u_in)
     u0, C0, um0, _ = ss.solve(m, F_esl)
     uref = smm.remove_rigid(m["x0"], u0)
-    r = _pipeline(c, uref[:, :3], sel, ridge=JIG["ridge"])
+    r = _pipeline(c, uref[:, :3], sel)                             # 기본 설정(모드 4·w_inplane 0.1·reg_force 1e-3)
     rows = []
     for al in (0.1, 0.5, 1.0):
         x = ss.bead_x(m, al, depth=10.0, center=(-0.5, 0.0), r=0.15)
@@ -233,25 +275,258 @@ def soft_amp():
         rows.append({"alpha": al, "solve": C1 / C0, "umax": um1 / um0, "imb": imb,
                      "score_jig": d["C_jig"] / r["row"]["C_jig"], "umax_jig": d["umax_jig"] / r["row"]["umax_jig"],
                      "react": d["react_rel"]})
-    return {"r": r, "rows": rows, "esl_abs": float(np.linalg.norm(F_esl, axis=1).sum())}
+    ud = u_push + u_in
+    oop = float(np.sum(ud[:, 1] ** 2) / np.sum(ud ** 2))           # 면외(Y) 성분 비(에너지 아닌 변위 제곱합)
+    return {"r": r, "rows": rows, "esl_abs": float(np.linalg.norm(F_esl, axis=1).sum()), "oop_frac": oop}
 
 
 def test_v_jig_4_solve_amplified_jig_stable(soft_amp):
     r, rows = soft_amp["r"], soft_amp["rows"]
     rep = r["rep"]
     assert r["row"]["react_rel"] <= 1e-9 and rep["mac"] >= 0.99
-    assert rep["F_sum_abs"] / soft_amp["esl_abs"] <= 0.1
     for x in rows:
         assert x["umax"] >= 10 and x["imb"] >= 0.05                   # 재풀이(3-2-1) 증폭 재현
         assert x["react"] <= 1e-9
         assert x["umax_jig"] <= 3
         assert abs(x["score_jig"] - 1) <= abs(x["solve"] - 1) / 5
+    # 면외 지배 목표(u_drop 면외 ≥ 90 %) → 상쇄 없음·작은 하중
+    assert soft_amp["oop_frac"] >= 0.9
+    assert rep["cancel_rel"] <= 0.5
+    assert rep["F_sum_abs"] / soft_amp["esl_abs"] <= 0.1
 
 
-@pytest.mark.xfail(strict=True, reason="계약 V-JIG-4 cancel_rel ≤ 0.5: 목표에 막(면내) 자기평형 변형(#63 원인)이 있으면 맞춤이 "
-                                        "면내 상쇄 하중(접선·체적력)을 써서 원리적으로 ~0.76 — 계약 결정 필요(반환 보고)")
-def test_v_jig_4_cancel_rel_bound(soft_amp):
-    assert soft_amp["r"]["rep"]["cancel_rel"] <= 0.5
+# ---------------------------------------------------------------- V-JIG-17~21 공용 픽스처
+def _wide(which=("shell_a", "shell_b", "brick")):
+    """§1(5) 근거 합성: synth_sm.plate 600×300 t 0.8, 짧은 두 변 tie 6 묶음."""
+    m = ss.plate(nx=30, ny=15, Lx=600.0, Lz=300.0, t=0.8, bow=0.0, n_tria_cols=4)
+    N = m["x0"].shape[0]
+    J = sj.jig_of(sj.tie_groups(m, n_groups=6, z_pos=(0.15, 0.5, 0.85)))
+    omega = np.ones(N, bool)
+    fit = omega.copy()
+    fit[J] = False
+    surf = sj.surface(sj.neighbors(m, gap=1.0, which=which)) if which else None
+    return {"mesh": m, "J": J, "omega": omega, "fit": fit, "w": jig.node_weights(m), "surf": surf}
+
+
+@pytest.fixture(scope="module")
+def wide():
+    return _wide()
+
+
+class _NoEigsh:
+    calls = 0
+
+    def __call__(self, *a, **k):
+        type(self).calls += 1
+        raise AssertionError("eigsh 호출 금지")
+
+
+# ---------------------------------------------------------------- V-JIG-17
+def test_v_jig_17_mode_inertia(wide, monkeypatch):
+    c = wide
+    m, J, N = c["mesh"], c["J"], c["mesh"]["x0"].shape[0]
+    h = jig.factor(m, J, sj.SOLVER)
+    md, _ = _modes(c, h, JIG["n_modes"])
+    assert md["ok"] and md["n_conv"] == 4 and np.all(np.diff(md["lam"]) > 0) and md["phi"].shape == (4, N, 6)
+    assert np.allclose(md["hz"], np.sqrt(md["lam"]) / (2 * np.pi))
+    mass = jig.lumped_mass(c["w"], JIG["rho_t_mm3"])
+    md2 = jig.jig_modes(h.model.K(), jig.mass_diag6(mass), np.array([6 * q + d for q, d in h.cons]), 4, 0.0,
+                        tol=JIG["modes_tol"], maxiter=JIG["modes_maxiter"])            # splu 경로 = 분해 재사용 경로
+    assert np.allclose(md2["lam"], md["lam"], rtol=1e-8)
+    g = jig.mode_loads(md["phi"], mass)
+    assert np.allclose(np.linalg.norm(g, axis=2).sum(axis=1), 1.0, rtol=1e-12)
+    for k in range(4):
+        v = g[k].ravel()
+        assert v[np.argmax(np.abs(v))] > 0
+    cmix = (0.0, 0.5, 1.0, 0.0)                                          # 모드 2·3 섞음
+    Ft = sum(ck * mass[:, None] * md["phi"][k, :, :3] for k, ck in enumerate(cmix))
+    u = h.solve(Ft)[0][:, :3]
+    sel = _sel(c)
+    r = _pipeline(c, u, sel, reg_force=0.0)
+    wm, wo = r["rep"]["with_modes"], r["rep"]["without_modes"]
+    assert wm["mac"] >= 1 - 1e-8 and wm["umax_err"] <= 1e-6 and r["rep"]["mac"] == wm["mac"]
+    assert wo["mac"] <= 0.95 and wm["mac"] - wo["mac"] >= 0.05
+    assert [x["k"] for x in r["rep"]["modes"]] == [0, 1, 2, 3]
+    B = r["B"]
+    assert list(B["col_kind"][-4:]) == [4] * 4 and B["mode_f"].shape == (4, N, 3)
+    # jig.npz 밀도 키(§5.5)
+    dn = jig.load_density(B, c["w"])
+    R = B["reg_dir"].shape[0]
+    assert dn["node_area"].shape == (N,) and dn["reg_area"].shape == (R,) and dn["reg_q"].shape == (R, 3, 3)
+    assert dn["body_q"].shape == (N,) and dn["mode_q"].shape == (4, N, 3)
+    assert np.abs(dn["mode_q"] * dn["node_area"][None, :, None] - B["mode_f"]).max() <= 1e-12 * np.abs(B["mode_f"]).max()
+    assert np.allclose(dn["body_q"] * dn["node_area"], B["body_w"], rtol=0, atol=1e-15)
+    for q in range(R):
+        s0, e0 = B["reg_ptr"][q], B["reg_ptr"][q + 1]
+        assert dn["reg_area"][q] == pytest.approx(c["w"]["area"][B["reg_node"][s0:e0]].sum())
+        assert np.allclose(dn["reg_q"][q] * dn["reg_area"][q], B["reg_dir"][q])
+    # 안 평가 = 고정 하중 벡터 재풀이(모드 재계산 없음)
+    monkeypatch.setattr(jig, "eigsh", _NoEigsh())
+    _NoEigsh.calls = 0
+    d = jig.design_response(dict(m, x0=sj.rib_x(m, 0.5)), J, [("E1", r["F"])], sj.SOLVER)
+    assert _NoEigsh.calls == 0 and d["rows"][0]["C_jig"] > 0
+
+
+# ---------------------------------------------------------------- V-JIG-18 (모듈)
+def test_v_jig_18_modes_off_identical(exact, monkeypatch):
+    c = exact["c"]
+    monkeypatch.setattr(jig, "eigsh", _NoEigsh())
+    _NoEigsh.calls = 0
+    r = _pipeline(c, exact["u_ref"], exact["sel"], n_modes=0)
+    assert _NoEigsh.calls == 0 and r["rep"]["without_modes"] is None and r["rep"]["modes"] == []
+    assert r["B"]["mode_f"] is None and jig.COL_MODE not in r["B"]["col_kind"]
+    # 모드 인수 없는 옛 호출 경로와 비트 동일
+    m, J, N = c["mesh"], c["J"], c["mesh"]["x0"].shape[0]
+    B0 = jig.load_basis(m, exact["sel"]["regions"], c["w"], c["omega"], body_force=True)
+    B1 = jig.load_basis(m, exact["sel"]["regions"], c["w"], c["omega"], body_force=True, tangential=True,
+                        modes=np.zeros((0, N, 3)))
+    for k in B0:
+        v0, v1 = B0[k], B1[k]
+        assert (v0 is None and v1 is None) or np.array_equal(v0, v1), k
+    for k in ("reg_ptr", "reg_node", "reg_w", "reg_dir", "col_kind"):
+        assert np.array_equal(B0[k], r["B"][k])
+    assert np.array_equal(jig.forces(B0, r["fit"]["a"], N), r["F"])
+    assert jig.load_density(B0, c["w"])["mode_q"] is None
+
+
+# ---------------------------------------------------------------- V-JIG-19 (모듈)
+def test_v_jig_19_modes_failure(wide, monkeypatch):
+    from scipy.sparse.linalg import ArpackNoConvergence
+    c = wide
+    m, J, N = c["mesh"], c["J"], c["mesh"]["x0"].shape[0]
+    h = jig.factor(m, J, sj.SOLVER)
+    mass = jig.lumped_mass(c["w"], JIG["rho_t_mm3"])
+    M6 = jig.mass_diag6(mass)
+    fixed = np.array([6 * q + d for q, d in h.cons])
+    md, _ = _modes(c, h, 4)
+    free = np.setdiff1d(np.arange(6 * N), fixed)
+    v1 = md["phi"][0].ravel()[free][:, None]
+    real = jig.eigsh
+
+    def partial(*a, **k):
+        raise ArpackNoConvergence("no conv", np.array([md["lam"][0]]), v1)
+
+    monkeypatch.setattr(jig, "eigsh", partial)
+    r1 = jig.jig_modes(h.model.K(), M6, fixed, 4, 0.0, opinv=jig.opinv_from(h, N))
+    assert not r1["ok"] and r1["n_conv"] == 1 and r1["err"] == "ARPACK_NO_CONVERGENCE"
+    assert np.allclose(np.abs(r1["phi"][0]), np.abs(md["phi"][0]))
+    g1 = jig.mode_loads(r1["phi"], mass)                                 # 수렴분만으로 진행
+    B = jig.load_basis(m, _sel(c)["regions"], c["w"], c["omega"], body_force=True, modes=g1)
+    assert int((B["col_kind"] == jig.COL_MODE).sum()) == 1
+
+    def none(*a, **k):
+        raise ArpackNoConvergence("no conv", np.zeros(0), np.zeros((free.size, 0)))
+
+    monkeypatch.setattr(jig, "eigsh", none)
+    with pytest.raises(EslError) as e:
+        jig.jig_modes(h.model.K(), M6, fixed, 4, 0.0, opinv=jig.opinv_from(h, N))
+    assert e.value.code == "JIG_MODES_FAILED" and e.value.detail["n_conv"] == 0
+    monkeypatch.setattr(jig, "eigsh", real)
+    # OPinv 회전 우변: 회전 질량이 있으면 M·x 에 회전 성분 → 지그 분해 재사용 불가
+    op = jig.opinv_from(h, N)
+    b = np.zeros(free.size)
+    rot = np.flatnonzero(free % 6 >= 3)
+    b[rot[0]] = 1.0
+    with pytest.raises(EslError) as e:
+        op.matvec(b)
+    assert e.value.code == "JIG_MODES_FAILED"
+    M6r = M6.copy()
+    M6r[3::6] = mass
+    with pytest.raises(EslError) as e:
+        jig.jig_modes(h.model.K(), M6r, fixed, 4, 0.0, opinv=jig.opinv_from(h, N))
+    assert e.value.code == "JIG_MODES_FAILED" and e.value.detail["n_conv"] == 0
+
+
+# ---------------------------------------------------------------- V-JIG-20
+def test_v_jig_20_finite_rotation_target(exact):
+    c = exact["c"]
+    x, J, fit = c["mesh"]["x0"], c["J"], c["fit"]
+    u_el = exact["u_true"]
+
+    def linear(u):
+        _, a, w = kabsch.remove_linear_rigid(x[J], u[J])
+        return u - a - np.cross(w, x - x[J].mean(axis=0))
+
+    # (a) 작은 회전: 두 경로 일치. 차 = O(θ·umax + θ²L)(선형 경로는 탄성분도 회전된 채 남김) → 1e-6·umax 는 θ ≲ 1e-6 rad
+    L = float(np.ptp(x, axis=0).max())
+    for deg in (5e-5, 0.01, 0.1):
+        u_s = _finite(x, u_el, deg=deg, move=2.0)
+        ts = jig.target_disp(x, u_s, J, fit)
+        th = np.radians(deg)
+        diff = np.abs(ts["u_tgt"] - linear(u_s)).max()
+        assert diff <= 2 * (th * ts["umax_tgt"] + th ** 2 * L)
+        assert ts["rot_deg"] == pytest.approx(deg, rel=1e-6)
+        if deg == 5e-5:
+            assert diff <= 1e-6 * ts["umax_tgt"]
+    # (b) 회전 10° 순수 강체 + 면외 굽힘
+    u_b = _finite(x, u_el, deg=10.0, move=50.0)
+    tb = jig.target_disp(x, u_b, J, fit)
+    assert np.abs(tb["u_tgt"] - u_el).max() <= 1e-10 * np.abs(u_el).max()
+    assert np.abs(linear(u_b) - u_el).max() >= 1e-3 * L                # 선형 경로 = O(θ²L) 면내 잔여
+    # (c) 보고
+    assert tb["rot_deg"] == pytest.approx(10.0, abs=1e-9) and np.allclose(tb["R"], _rot((0.3, 1.0, -0.4), 10.0))
+    assert tb["tie_rel"] <= 1e-10 and tb["t"].shape == (3,)
+
+
+# ---------------------------------------------------------------- V-JIG-21 (모듈)
+@pytest.fixture(scope="module")
+def reg_case():
+    """§1(5) 근거 재현: 패치 6 + 체적력(+ 모드 4 기본), 정확 목표 = 법선 가압 3 + 면외 체적력."""
+    c = _wide(which=None)
+    m, J, N = c["mesh"], c["J"], c["mesh"]["x0"].shape[0]
+    sel = _sel(c, surf=None)
+    assert sel["regions_from"] == "patch" and sel["n_patch"] == 6
+    B = jig.load_basis(m, sel["regions"], c["w"], c["omega"], body_force=True)
+    R = len(sel["regions"])
+    a_true = np.zeros(B["nb"])
+    a_true[[0, 3, 9]] = (60.0, 25.0, 40.0)
+    a_true[3 * R + 1] = -30.0
+    u_ex = sj.solve_jig(m, J, jig.forces(B, a_true, N))[0][:, :3]
+    X = m["x0"]
+    s = 2 * (X[:, 0] - X[:, 0].min()) / np.ptp(X[:, 0]) - 1
+    t = 2 * (X[:, 2] - X[:, 2].min()) / np.ptp(X[:, 2]) - 1
+    g = np.exp(-(s ** 2 + t ** 2) / 0.1)
+    u_in = np.zeros((N, 3))
+    u_in[:, 0], u_in[:, 2] = -s * g, -t * g                             # 면내 자기평형(수렴) 잔여
+    u_in *= 0.05 * np.abs(u_ex[:, 1]).max() / np.linalg.norm(u_in, axis=1).max()
+    return {"c": c, "sel": sel, "u_ex": u_ex, "u_in": u_in, "F_exact": float(np.abs(a_true).sum())}
+
+
+def test_v_jig_21_normal_weight_regularization(reg_case):
+    c, sel = reg_case["c"], reg_case["sel"]
+    # (a) 정확 목표 — reg 1e-3 손실 없음
+    ra = _pipeline(c, reg_case["u_ex"], sel)["rep"]
+    assert 1 - ra["mac"] <= 1e-3 and ra["umax_err"] <= 1e-3
+    # (b) + 면내 자기평형 잔여: 기본 = 상쇄 없음, 정규화 끔·면내 가중 1 = 상쇄
+    u = reg_case["u_ex"] + reg_case["u_in"]
+    rb = _pipeline(c, u, sel)["rep"]
+    assert rb["cancel_rel"] <= JIG["cancel_warn"] and rb["F_sum_abs"] <= 1.1 * reg_case["F_exact"]
+    r0 = _pipeline(c, u, sel, reg_force=0.0, w_inplane=1.0)["rep"]
+    assert r0["cancel_rel"] > JIG["cancel_warn"] and r0["F_sum_abs"] > 100 * reg_case["F_exact"]
+    # (c) 법선만
+    rc = _pipeline(c, u, sel, basis_tangential=False)
+    B = rc["B"]
+    assert jig.COL_TANGENT not in B["col_kind"] and B["nb"] == len(sel["regions"]) + 3 + JIG["n_modes"]
+    assert all(f["F_t1"] == 0.0 and f["F_t2"] == 0.0 for f in rc["rep"]["forces"])
+    assert rc["row"]["react_rel"] <= 1e-9
+
+
+def test_fit_loads_g_N_and_drop(reg_case):
+    """ḡ_N = 법선 열 G_kk 평균, drop_kinds 열 a = 0."""
+    c, sel = reg_case["c"], reg_case["sel"]
+    r = _pipeline(c, reg_case["u_ex"], sel)
+    fit = c["fit"]
+    U = r["U"]["U"]
+    aw = c["w"]["area"][fit] / c["w"]["area"][fit].mean()
+    n = c["w"]["normal"][fit]
+    ck = r["B"]["col_kind"]
+    Gd = [float(np.sum(aw[:, None] * (0.1 * U[k] + 0.9 * np.sum(U[k] * n, axis=1)[:, None] * n) * U[k]))
+          for k in np.flatnonzero(ck == jig.COL_NORMAL)]
+    assert r["fit"]["g_N"] == pytest.approx(np.mean(Gd), rel=1e-12)
+    td = r["td"]
+    f0 = jig.fit_loads(U, td["u_tgt"][fit], c["w"]["area"][fit], n, r["B"], ridge=JIG["ridge"], w_inplane=0.1,
+                       reg_force=1e-3, drop_kinds=(jig.COL_MODE, jig.COL_BODY))
+    assert np.all(f0["a"][np.isin(ck, (jig.COL_MODE, jig.COL_BODY))] == 0.0)
 
 
 # ---------------------------------------------------------------- V-JIG-5
@@ -312,8 +587,8 @@ def test_v_jig_16_mixed_fill(base):
     a_true = np.zeros(B["nb"])
     a_true[[0, 3, 4, 7, 8]] = (30.0, 6.0, -2.0, -4.0, 1.0)
     a_true[-2] = -3.0
-    u = sj.solve_jig(c["mesh"], c["J"], jig.forces(B, a_true, N))[0][:, :3] + _rigid(c["mesh"]["x0"], seed=3)
-    r = _pipeline(c, u, s, ridge=0.0)
+    u = _finite(c["mesh"]["x0"], sj.solve_jig(c["mesh"], c["J"], jig.forces(B, a_true, N))[0][:, :3], deg=3.0, move=5.0)
+    r = _pipeline(c, u, s, **EXACT)
     assert r["rep"]["mac"] >= 1 - 1e-10 and np.abs(r["fit"]["a"] - a_true).max() <= 1e-6 * np.abs(a_true).max()
     assert [f["kind"] for f in r["rep"]["forces"]] == ["contact", "patch", "patch"]
     assert r["rep"]["forces"][1]["part"] is None
@@ -455,8 +730,8 @@ def test_v_jig_15_pure_module():
 
 def test_v_jig_15_deterministic(exact):
     c = exact["c"]
-    r1 = _pipeline(c, exact["u_ref"], _sel(c), ridge=JIG["ridge"])
-    r2 = _pipeline(dict(c, w=jig.node_weights(c["mesh"])), exact["u_ref"].copy(), _sel(c), ridge=JIG["ridge"])
+    r1 = _pipeline(c, exact["u_ref"], _sel(c))
+    r2 = _pipeline(dict(c, w=jig.node_weights(c["mesh"])), exact["u_ref"].copy(), _sel(c))
     assert np.array_equal(r1["fit"]["a"], r2["fit"]["a"]) and np.array_equal(r1["F"], r2["F"])
     assert r1["row"]["C_jig"] == r2["row"]["C_jig"] and r1["rep"] == r2["rep"]
 
