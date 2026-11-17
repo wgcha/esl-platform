@@ -3740,7 +3740,7 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     ents, a_mat = [], []
     for e in eids:
         ur = np.asarray(rows[e]["u"], dtype=np.float64)
-        rep = jg.fit_report(ur[:, :3] if ur.shape[1] > 3 else ur, tg_[e]["u_tgt"], fit, w_fit_full(area, fit), basis,
+        rep = jg.fit_report(ur[:, :3] if ur.shape[1] > 3 else ur, tg_[e]["u_tgt"], fit, wts, basis,
                             fits[e]["a"], jig_idx=jidx, active_tol=float(J["active_tol"]))
         a_mat.append(fits[e]["a"])
         ents.append({"entry_id": e, "label": labels.get(e, e[:8]), **{k: rep[k] for k in (
@@ -3778,12 +3778,6 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
         doc["fill_reason"] = rs["fill_reason"]
     c.write_json(os.path.join("prep", JIG_JSON), doc)
     return {"C_jig": {e: float(rows[e]["C_jig"]) for e in eids}, "umax_jig": {e: float(rows[e]["umax_jig"]) for e in eids}}
-
-
-def w_fit_full(area, fit):
-    """fit_report 의 weights 인수: 노드 면적 가중(전 노드 (N,), F 밖은 0 — 맞춤 노드만 쓰임)."""
-    w = np.where(fit, np.asarray(area, dtype=np.float64), 0.0)
-    return w / max(float(w[fit].mean()), 1e-300) if fit.any() else w
 
 
 def _jig_fallback(c: Ctx, code: str, detail: str | None, warns: list) -> None:
