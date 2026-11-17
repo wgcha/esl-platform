@@ -539,6 +539,7 @@ class BeadDoeRankJigCfg(_M):
     modes_ref321: bool = True
     w_inplane: float = Field(default=0.1, ge=0, le=1)
     reg_force: float = Field(default=1e-3, ge=0)
+    reg_modes: float = Field(default=0.0, ge=0)
     ridge: float = Field(default=1e-8, ge=0)
     active_tol: float = Field(default=1e-3, gt=0, lt=1)
     mac_min: float = Field(default=0.9, gt=0, le=1)

@@ -28,7 +28,7 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2, "min_region_nodes": 3,
                "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
                "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": True,
-               "w_inplane": 0.1, "reg_force": 1e-3, "ridge": 1e-8, "active_tol": 1e-3,
+               "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0, "ridge": 1e-8, "active_tol": 1e-3,
                "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "jig": JIG_DEFAULT}
@@ -59,7 +59,7 @@ def test_rank_defaults_mirror():
     {"jig": {"chunk_nodes": 1000}}, {"jig": {"max_regions": 33}}, {"jig": {"min_regions": 9}}, {"jig": {"patch_count": 0}},
     {"jig": {"active_tol": 1}}, {"jig": {"mac_min": 1.5}}, {"jig": {"umax_err_max": 0}}, {"jig": {"unknown": 1}},
     {"jig": {"ridge": -1}}, {"jig": {"n_modes": 21}}, {"jig": {"n_modes": -1}}, {"jig": {"rho_t_mm3": 0}},
-    {"jig": {"modes_tol": -1}}, {"jig": {"modes_maxiter": 0}}, {"jig": {"w_inplane": 1.1}}, {"jig": {"reg_force": -1}},
+    {"jig": {"modes_tol": -1}}, {"jig": {"modes_maxiter": 0}}, {"jig": {"w_inplane": 1.1}}, {"jig": {"reg_force": -1}}, {"jig": {"reg_modes": -1}},
     {"jig": {"cancel_warn": 0}}, {"jig": {"cancel_warn": 1.1}},
 ])
 def test_rank_config_rejects(tmp_path, bad):

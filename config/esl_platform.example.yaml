@@ -194,7 +194,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       modes_maxiter: 2000             # eigsh maxiter
       modes_ref321: true              # 3-2-1 지지 고유진동수 비교 정보(베이스라인 분해 1 추가, 해시 밖)
       w_inplane: 0.1                  # 맞춤 가중의 면내 성분 비(법선 성분 = 1) — D-JIG-16
-      reg_force: 1.0e-3               # 접선·체적력·모드 계수 Tikhonov(ḡ_N 배)
+      reg_force: 1.0e-3               # 접선력·체적력 계수 Tikhonov(ḡ_N 배)
+      reg_modes: 0.0                  # 모드 계수 Tikhonov(ḡ_N 배, 0=정규화 없음)
       ridge: 1.0e-8                   # 수치 안정 λ(열 정규화 후)
       active_tol: 1.0e-3              # 활성 영역 판정(최대 합력 대비)
       mac_min: 0.9                    # 미달 → JIG_FIT_POOR (해시 밖)
