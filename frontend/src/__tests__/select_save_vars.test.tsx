@@ -23,7 +23,7 @@ vi.mock("../view3d/loadThree", () => ({
   }),
 }));
 
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 
 // jsdom 에는 PointerEvent 가 없다 — MouseEvent 로 흉내(button·clientX 전달)
 if (typeof globalThis.PointerEvent === "undefined") {
@@ -81,6 +81,8 @@ describe("select: 저장 선택 없음 → 선택 저장 → 변수 표", () => 
 
   it("지우개·층 비우기·비드 ✕·단 삭제(v0.15.1): 확인 후 지움, Ctrl+Z 로 되돌림, 저장 선택이 있으면 '선택 변경됨' + 미리보기 무효", async () => {
     const r = renderApp("/p/p-body/doe/doe-6", "power");
+    await openCard("② 비드 선택"); // v0.23.1 미리보기 단계 = 설정 카드 접힘
+    await openCard("③ 비드 목록·도구");
     await waitFor(() => expect(screen.getByTestId("bs-host").getAttribute("data-phase")).toBe("ready"));
     await waitFor(() => expect(screen.getByTestId("bead-b2")).toBeTruthy());
     const okConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -190,6 +192,8 @@ describe("select: 저장 선택 없음 → 선택 저장 → 변수 표", () => 
     renderApp("/p/p-body/doe/doe-6", "power", (s) => {
       s.doe.recs.find((x) => x.out.id === "doe-6")!.out.phase = "DONE";
     });
+    await openCard("② 비드 선택"); // v0.23.1 결과 단계 = 설정 카드 접힘
+    await openCard("③ 비드 목록·도구");
     await waitFor(() => expect(screen.getByTestId("bead-b1")).toBeTruthy());
     for (const name of ["B1 삭제", "이 비드 초기화", "전체 초기화", "층 비우기", "지우개", "B1 단 1 편집", "+ 비드"]) {
       const b = screen.getByRole("button", { name }) as HTMLButtonElement;

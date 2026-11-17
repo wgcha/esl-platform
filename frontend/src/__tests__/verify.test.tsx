@@ -244,7 +244,8 @@ describe("검증 낙하 — 화면", () => {
   it("비활성: 대시보드 드라이브 쓰기 꺼짐 사유(일반 사용자는 짧게)", async () => {
     renderApp(STUDY, "power", (s) => (s.scx.verifyMode = "writes_off"));
     const open = (await screen.findByTestId("vd-open")) as HTMLButtonElement;
-    await waitFor(() => expect(open.closest(".primary-wrap")!.getAttribute("title")).toBe("대시보드 드라이브 쓰기가 꺼져 있습니다"), LONG);
+    // v0.23.1: 툴팁 = 사유 1줄 + 검증 권고(esl_doe_ui_tidy.md §5)
+    await waitFor(() => expect(open.closest(".primary-wrap")!.getAttribute("title")!.split("\n")[0]).toBe("대시보드 드라이브 쓰기가 꺼져 있습니다"), LONG);
     expect(open.disabled).toBe(true);
   });
 

@@ -4,7 +4,7 @@
 // v0.16.1 V-SR-14(esl_select_relax.md §11): ⚠ 배지·문구, 비드 행 체크 1개(고정 없으면 비활성), "섬 n · 구멍 m", 순위 ⚠·best_clean, 규칙 띠 — 맨 아래 describe.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 import { doeBlockedReason, isInfoWarn, normalizeDoeSettings, scenarioBlocked, warnText } from "../api/doe";
 import { makeDoeSettings } from "../mock/doedata";
 import { blendSmall } from "../components/DoeParamTable";
@@ -170,7 +170,9 @@ describe("상세(doe-6: 미리보기 완료)", () => {
     fireEvent.click(screen.getByTestId("thumb-d001"));
     await waitFor(() => expect(screen.getByRole("region", { name: "안 d001 3D 보기" })).toBeTruthy());
     expect(screen.getByRole("radio", { name: "공칭" })).toBeTruthy();
-    // 선택 편집 → 미리보기 무효
+    // 선택 편집 → 미리보기 무효(v0.23.1 미리보기 단계 = 설정 카드 접힘 → 펼침)
+    await openCard("② 비드 선택");
+    await openCard("③ 비드 목록·도구");
     await waitFor(() => expect(screen.getByTestId("bead-b1")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "묶기" }));
     await waitFor(() => expect(screen.getByTestId("selection-stale")).toBeTruthy());
@@ -223,20 +225,23 @@ describe("V-SR-14 v0.16.1 경고 안·섬·체결 구멍 둘레 고정(mock)", (
 describe("V-SR-14 순위 ⚠·경고 없는 최상위(Q1 = A)", () => {
   it("1위가 경고 안이면 순위는 그대로 + ⚠ + '경고 없는 최상위' 1줄, 1위가 깨끗하면 줄 없음", async () => {
     const { render } = await import("@testing-library/react");
-    const { DoeRanking } = await import("../components/DoeRanking");
+    const { BestCleanChip, DoeRanking } = await import("../components/DoeRanking");
     const row = (rank: number, id: string, warn?: ("FIXED_MOVED" | "QUALITY_WARN")[]) => ({
       rank, id, values: {}, score: 0.8 + rank / 100, improvement: 0.2, worst_entry_id: "le-1", umax: 1, epsmax: 0.001, umax_all: 1, epsmax_all: 0.001, warnings_n: 0, ...(warn ? { warn } : {}),
     });
     const base = { C_ref: 1, baseline: { id: "d000" as const, score: 1, umax: 1, epsmax: 0.001 }, n_ok: 3, n_skipped: {}, n_failed: {}, excluded: [], sensitivity: null, boundary_warnings_n: 0, view3d: [], best: null, warnings: [] };
     const res = { ...base, ranking: [row(1, "d004", ["FIXED_MOVED"]), row(2, "d009", ["QUALITY_WARN"]), row(3, "d002")], summary: { best_clean: "d002" } };
-    const r = render(<DoeRanking result={res} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} />);
-    expect(within(r.container).getByTestId("best-clean").textContent).toBe("⚠ 1위가 경고 안입니다(체결 위치 어긋남) — 경고 없는 최상위: d002");
+    // v0.23.1: '경고 없는 최상위' 줄 = 결과 상태 띠 칩(BestCleanChip) — 이전 1줄 전체 = title
+    const r = render(<><BestCleanChip result={res} /><DoeRanking result={res} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} /></>);
+    expect(within(r.container).getByTestId("best-clean").getAttribute("title")).toBe("⚠ 1위가 경고 안입니다(체결 위치 어긋남) — 경고 없는 최상위: d002");
+    expect(within(r.container).getByTestId("best-clean").textContent).toBe("⚠ 1위 경고 안 · 경고 없는 최상위 d002");
     expect(within(r.container).getByTestId("rank-warn-d004").getAttribute("title")).toBe("체결 위치 어긋남");
     expect(within(r.container).getByTestId("rank-warn-d009").getAttribute("title")).toBe("품질 경고");
     expect(within(r.container).queryByTestId("rank-warn-d002")).toBeNull();
     expect(within(r.container).getByTestId("rank-d004").querySelector("td")!.textContent).toBe("1");
     r.unmount();
-    const r2 = render(<DoeRanking result={{ ...base, ranking: [row(1, "d002"), row(2, "d004", ["FIXED_MOVED"])], summary: { best_clean: "d002" } }} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} />);
+    const res2 = { ...base, ranking: [row(1, "d002"), row(2, "d004", ["FIXED_MOVED"])], summary: { best_clean: "d002" } };
+    const r2 = render(<><BestCleanChip result={res2} /><DoeRanking result={res2} params={[]} entries={[]} selected={null} onSelect={() => undefined} varNames={[]} /></>);
     expect(within(r2.container).queryByTestId("best-clean")).toBeNull();
   });
 });

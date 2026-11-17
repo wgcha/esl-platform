@@ -120,8 +120,10 @@ describe("④ 결과 — doe-20(하중 전달 work, 새 결과)", () => {
   it("요약 1줄 + 접힘 표 2개(진단 파일) + 입력 요약 '· 하중 일 등가'", async () => {
     renderApp("/p/p-body/doe/doe-20");
     const line = await screen.findByTestId("lt-summary");
-    expect(line.textContent).toMatch(/^하중 전달: 일 등가 · 기준 대비 A 메시 직접 풀이: umax ×1\.03~1\.09 · C ×1\.02~1\.08/);
-    expect(line.textContent).toMatch(/\|\s+셀 3 mm: umax ×/);
+    // v0.23.1 상태 띠 칩(summary): 짧은 값 + 이전 요약 줄 전체 = title(펼치면 lt-full 에도)
+    expect(line.textContent).toMatch(/^하중 전달 일 등가/);
+    expect(line.title).toMatch(/^하중 전달: 일 등가 · 기준 대비 A 메시 직접 풀이: umax ×1\.03~1\.09 · C ×1\.02~1\.08/);
+    expect(line.title).toMatch(/\|\s+셀 3 mm: umax ×/);
     expect(screen.getByTestId("doe-input-summary").textContent).toMatch(/· 하중 일 등가/);
     const det = screen.getByTestId("lt-details") as HTMLDetailsElement;
     expect(det.open).toBe(false);
@@ -194,8 +196,8 @@ describe("② 결과 — doe-21(plan once)", () => {
   it("요약 줄 끝 '(모델 차 포함)', 베이스라인 표만(형상 표 생략), 3D 안내 불변", async () => {
     renderApp("/p/p-body/doe/doe-21");
     const line = await screen.findByTestId("lt-summary");
-    expect(line.textContent).toMatch(/^하중 전달: 일 등가 · 기준 대비 A 메시 직접 풀이:/);
-    expect(line.textContent).toMatch(/\(모델 차 포함\)$/);
+    expect(line.title).toMatch(/^하중 전달: 일 등가 · 기준 대비 A 메시 직접 풀이:/);
+    expect(line.title).toMatch(/\(모델 차 포함\)$/);
     const det = screen.getByTestId("lt-details") as HTMLDetailsElement;
     det.open = true;
     fireEvent(det, new Event("toggle"));
