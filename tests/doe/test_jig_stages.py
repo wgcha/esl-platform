@@ -178,7 +178,7 @@ def test_case_once_contact_regions_and_outputs(case_run):
     assert res["baseline"]["score_jig"] == pytest.approx(1.0, abs=1e-12)                 # d000 = 기준 그대로
     jb = res["jig"]
     assert jb["status"] in ("ok", "poor") and jb["region_source"] == "contact" and jb["n_regions"] == 2
-    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn")}
+    assert jb["th"] == {k: DEFAULTS["rank"]["jig"][k] for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn")}
     assert {e["entry_id"] for e in jb["entries"]} == {"E0", "E1"} and jb["fit_mac_min"] is not None
     for x in res["ranking"]:
         assert x["score"] == pytest.approx(x["score_jig"], rel=1e-12) and x["umax_jig"] is not None
@@ -212,7 +212,7 @@ def test_fallback_no_tie_ranks_like_solve(tmp_path):
     mesh2, doe2 = build_same(tmp_path / "b")
     out2, post2, _ = run(str(tmp_path / "b" / "o"), doe2, mesh2, rank=rank_snap(metric="solve"), fixed=False)
     assert [(x["id"], x["score"]) for x in post["ranking"]] == [(x["id"], x["score"]) for x in post2["ranking"]]
-    assert any("JIG_NO_TIE" in str(w) for w in post["warnings"])
+    assert any("체결부" in str(w) or "tie" in str(w).lower() for w in r0["warnings"])      # 베이스라인 결과 경고(문구)
 
 
 # ---------------------------------------------------------------- ② 업로드 사본: 인접 부품 없음 → 패치 보충
@@ -262,9 +262,12 @@ def test_sm_metric_default_and_hash(tmp_path):
     h_on = stg._cfg_hash(c)
     h_off = stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=False, metric="solve")))
     assert h_on != h_off
-    for k, v in (("mac_min", 0.5), ("umax_err_max", 0.9), ("tie_rel_warn", 0.5)):          # 임계값 3개 = 해시 밖
+    for k, v in (("mac_min", 0.5), ("umax_err_max", 0.9), ("tie_rel_warn", 0.5), ("cancel_warn", 0.9),
+                 ("rho_t_mm3", 3e-8), ("modes_ref321", False)):                             # HASH_EXCLUDE 6키 = 해시 밖
         assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(**{k: v})))) == h_on
-    assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(contact_gap_mm=3.0)))) != h_on
+    for k, v in (("contact_gap_mm", 3.0), ("n_modes", 2), ("modes_sigma", -1.0), ("modes_tol", 1e-6), ("modes_maxiter", 500),
+                 ("w_inplane", 0.5), ("reg_force", 1e-2), ("reg_modes", 1e-2), ("basis_tangential", False)):
+        assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(**{k: v})))) != h_on, k     # 하중을 바꾸는 키 = 해시 안
     assert stg._cfg_hash(_ctx(tmp_path, rank_snap(metric="solve"))) == h_on                  # metric 도 해시 밖(SM-6)
     assert stg._jig(_ctx(tmp_path, rank_snap(jig=jcfg(enabled=False), metric="solve"))) is None
 
@@ -304,3 +307,87 @@ def test_stages_no_scenario_branch_in_jig():
     src = "".join(inspect.getsource(getattr(stg, n)) for n in dir(stg) if n.startswith("_jig"))
     assert "c.scn" not in src and "scenario" not in src
     assert not re.search(r"""["'](case_once|bmesh_once|step_once|step_per_design|compare_per_shape)["']""", src)
+
+
+# ---------------------------------------------------------------- V-JIG-22·18·21 모드 관성(D-JIG-15)·정규화(D-JIG-16)
+def test_modes_default_outputs_and_hz_rescale(tmp_path):
+    mesh, doe = build_same(tmp_path)
+    rk0 = rank_snap()
+    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rk0)
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    md = jd["modes"]
+    assert md["n_req"] == 4 and md["n_conv"] >= 1 and md["ok"] and len(md["lam"]) == md["n_conv"] == len(md["hz"])
+    assert md["rho_t_used"] == DEFAULTS["rank"]["jig"]["rho_t_mm3"] and md["hz_321"] is not None and md["hz_ratio"] is not None
+    assert jd["tangential"] is True and jd["w_inplane"] == 0.1 and jd["reg_force"] == 1e-3
+    z = U.load_npz(os.path.join(out, "prep", "jig.npz"))
+    m, N = md["n_conv"], z["node_id"].size
+    assert z["mode_f"].shape == (m, N, 3) and z["mode_q"].shape == (m, N, 3) and z["mode_lam"].shape == (m,)
+    assert z["mode_rho_t"].shape == (1,) and "mode_lam_321" in z and {"node_area", "reg_q", "reg_area", "body_q", "col_kind"} <= set(z)
+    assert np.allclose(z["mode_q"] * z["node_area"][None, :, None], z["mode_f"], atol=1e-12)
+    assert int((z["col_kind"] == 4).sum()) == m and z["a"].shape[1] == z["col_kind"].size
+    jb = post["jig"]
+    assert jb["n_modes"] == m and len(jb["hz_jig"]) == m and jb["hz_321"] is not None and jb["hz_ratio"] > 0
+    assert jb["fit_mac_min_nomodes"] is not None and jb["cancel_rel_max"] is not None
+    assert jb["th"]["cancel_warn"] == 0.5 and all(e["rot_deg"] >= 0 and e["mac_nomodes"] is not None for e in jb["entries"])
+    assert jb["hz_jig"][0] == pytest.approx(md["hz"][0], rel=1e-12)
+    # ρ_t 4배 → hz ½ (해시 밖 — 재실행 없이 bd_post 만)
+    rk4 = rank_snap(jig=jcfg(rho_t_mm3=4 * DEFAULTS["rank"]["jig"]["rho_t_mm3"]))
+    d4 = {**doe, "rank": rk4, "rev": 1}
+    p4 = stg.run_stage({"stage": "bd_post", "out": out, "doe": d4}, lambda s: None)["result"]
+    assert p4["jig"]["hz_jig"] == pytest.approx([h / 2 for h in jb["hz_jig"]], rel=1e-12)
+    assert p4["jig"]["hz_321"] == pytest.approx([h / 2 for h in jb["hz_321"]], rel=1e-12)
+    assert p4["jig"]["hz_ratio"] == pytest.approx(jb["hz_ratio"], rel=1e-12)
+    assert [(x["id"], x["score"]) for x in p4["ranking"]] == [(x["id"], x["score"]) for x in post["ranking"]]
+
+
+def test_modes_off_no_eigsh_and_deterministic(tmp_path, monkeypatch):
+    from esl.doe import jig as jg
+
+    def boom(*a, **k):
+        raise AssertionError("eigsh 호출 금지(n_modes 0)")
+    monkeypatch.setattr(jg, "eigsh", boom)
+    outs = []
+    for k in ("a", "b"):
+        mesh, doe = build_same(tmp_path / k)
+        outs.append(run(str(tmp_path / k / "o"), doe, mesh, rank=rank_snap(jig=jcfg(n_modes=0))))
+    out, post, _ = outs[0]
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    assert jd["status"] == "ok" and jd["modes"]["n_req"] == 0 and jd["modes"]["lam"] == [] and jd["modes"]["hz_321"] is None
+    assert all(e["without_modes"] is None and e["modes"] == [] for e in jd["entries"])
+    z = U.load_npz(os.path.join(out, "prep", "jig.npz"))
+    assert not ({"mode_f", "mode_q", "mode_lam", "mode_rho_t", "mode_lam_321"} & set(z)) and not (z["col_kind"] == 4).any()
+    jb = post["jig"]
+    assert jb["n_modes"] == 0 and jb["hz_jig"] == [] and jb["hz_321"] is None and jb["hz_ratio"] is None
+    assert jb["fit_mac_min_nomodes"] is None and all(e["mac_nomodes"] is None for e in jb["entries"])
+    b = lambda o: open(os.path.join(o[0], "prep", "jig.npz"), "rb").read()          # noqa: E731
+    assert b(outs[0]) == b(outs[1])                                                  # 결정적(비트 동일)
+
+
+def test_modes_failure_continues_without_modes(tmp_path, monkeypatch):
+    from esl.doe import jig as jg
+    from esl.errors import EslError
+
+    def bad(*a, **k):
+        ex = EslError("JIG_MODES_FAILED", "x")
+        ex.detail = {"n_conv": 0, "err": "TEST"}
+        raise ex
+    monkeypatch.setattr(jg, "jig_modes", bad)
+    mesh, doe = build_same(tmp_path)
+    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap())
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    assert jd["status"] == "ok" and jd["modes"]["ok"] is False and jd["modes"]["n_conv"] == 0
+    assert any("JIG_MODES_FAILED" in str(i) or "모드 계산" in str(i) for i in jd["info"])
+    assert post["jig"]["status"] in ("ok", "poor") and post["jig"]["n_modes"] == 0 and post["jig"]["hz_321"] is None
+    assert post["metric_effective"] == "jig"
+
+
+def test_load_cancel_warning_only(tmp_path):
+    mesh, doe = build_same(tmp_path)
+    out, post, _ = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(jig=jcfg(cancel_warn=1e-12)))
+    assert post["jig"]["status"] in ("ok", "poor") and post["metric_effective"] == "jig" and post["ranking"]
+    assert post["jig"]["th"]["cancel_warn"] == 1e-12 and post["jig"]["cancel_rel_max"] > 1e-12
+    assert sum("상쇄" in str(w) for w in post["warnings"]) == 1                      # 경고 1개(순위 계속)
+    mesh2, doe2 = build_same(tmp_path / "b")
+    _, post2, _ = run(str(tmp_path / "b" / "o"), doe2, mesh2, rank=rank_snap(jig=jcfg(cancel_warn=1.0)))
+    assert not any("상쇄" in str(w) for w in post2["warnings"])
+    assert [(x["id"], x["score"]) for x in post["ranking"]] == [(x["id"], x["score"]) for x in post2["ranking"]]

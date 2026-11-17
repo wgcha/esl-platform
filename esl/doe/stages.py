@@ -3674,7 +3674,64 @@ def _jig_surface(c: Ctx, plan: dict, mesh: dict, fit_mask, J: dict, warns: list)
 def _jig_basis_of(z: dict, nb: int) -> dict:
     return {"reg_ptr": z["reg_ptr"], "reg_node": z["reg_node"], "reg_w": z["reg_w"], "reg_dir": z["reg_dir"],
             "reg_sign": z["reg_sign"], "reg_kind": z["reg_kind"], "reg_part": z["reg_part"],
-            "body_w": z["body_w"] if "body_w" in z else None, "nb": int(nb), "n_normal_free": 0}
+            "body_w": z["body_w"] if "body_w" in z else None, "col_kind": z["col_kind"],
+            "mode_f": z["mode_f"] if "mode_f" in z else None, "nb": int(nb), "n_normal_free": 0}
+
+
+def _jig_modes(c: Ctx, t, mesh: dict, h, wts: dict, jidx, J: dict, infos: list) -> dict:
+    """베이스라인 모드 관성(D-JIG-15): 집중질량 → 지그 구속 최저 n 개(σ = 0 이면 지그 분해 재사용) → g_k, 그리고 3-2-1 정보 모드.
+    실패 = infos 에 JIG_MODES_FAILED 후 모드 없이(g None). 반환 {g, lam, lam321, doc}."""
+    from esl.doe import jig as jg
+    n_req = int(J["n_modes"])
+    rho = float(J["rho_t_mm3"])
+    sg = float(J["modes_sigma"])
+    N = int(np.asarray(mesh["node_id"]).size)
+    doc = {"n_req": n_req, "n_conv": 0, "sigma": sg, "lam": [], "hz": [], "rho_t_used": rho, "hz_321": None,
+           "hz_ratio": None, "ok": True}
+    out = {"g": None, "lam": None, "lam321": None, "doc": doc}
+    if n_req <= 0:
+        return out
+    m = jg.lumped_mass(wts, rho)
+    M6 = jg.mass_diag6(m)
+    K = h.model.K()
+    fixed = np.asarray([6 * int(p) + int(d) for p, d in h.cons], dtype=np.int64)
+    tol, mi = float(J["modes_tol"]), int(J["modes_maxiter"])
+
+    def fail(stage: str, ex: EslError | None, md: dict | None) -> None:
+        det = getattr(ex, "detail", None) or {}
+        err = (md or {}).get("err") or det.get("err") or (ex.code if ex is not None else "UNKNOWN")
+        nc = int((md or {}).get("n_conv", det.get("n_conv", 0)))
+        infos.append(_cmp_text("JIG_MODES_FAILED", stage=stage, err=err, n_conv=nc))
+        if stage == "jig":
+            doc["ok"], doc["err"] = False, str(err)
+
+    try:
+        md = jg.jig_modes(K, M6, fixed, n_req, sg, opinv=jg.opinv_from(h, N) if sg == 0.0 else None, tol=tol, maxiter=mi)
+        out["g"] = jg.mode_loads(md["phi"], m)
+        out["lam"] = np.asarray(md["lam"], dtype=np.float64)
+        doc["n_conv"] = int(md["n_conv"])
+        doc["lam"] = [float(v) for v in out["lam"]]
+        doc["hz"] = [float(v) for v in md["hz"]]
+        if not md.get("ok", True):
+            fail("jig", None, md)
+    except EslError as ex:
+        if ex.code != "JIG_MODES_FAILED":
+            raise
+        fail("jig", ex, None)
+    if bool(J["modes_ref321"]):
+        try:
+            spc = ev.spc_of(mesh, list(t.supports))
+            f3 = np.asarray([6 * int(p) + int(ch) - 1 for p, d in spc for ch in str(d)], dtype=np.int64)
+            m3 = jg.jig_modes(K, M6, np.unique(f3), n_req, sg, tol=tol, maxiter=mi)
+            out["lam321"] = np.asarray(m3["lam"], dtype=np.float64)
+            doc["hz_321"] = [float(v) for v in m3["hz"]]
+            if doc["hz"]:
+                doc["hz_ratio"] = float(doc["hz"][0] / doc["hz_321"][0]) if doc["hz_321"][0] > 0 else None
+        except EslError as ex:
+            if ex.code != "JIG_MODES_FAILED":
+                raise
+            fail("321", ex, None)
+    return out
 
 
 def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, warns: list) -> dict:
@@ -3703,7 +3760,7 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     pos = ordn[np.searchsorted(nb_, nid, sorter=ordn).clip(0, nb_.size - 1)]
     eids = [e for e, _F in loads]
     u3 = {e: np.asarray(z["u"][eids_ref.index(e)], dtype=np.float64)[pos][:, :3] for e in eids}
-    tg_ = {e: jg.target_disp(X, u3[e], jidx, fit) for e in eids}
+    tg_ = {e: jg.target_disp(X, u3[e], jidx, fit) for e in eids}          # 유한 회전 Kabsch(D-JIG-16)
     tm["surf"] = time.monotonic()
     surf, why, surf_info = _jig_surface(c, plan, mesh, fit, J, warns)
     tm["surf"] = time.monotonic() - tm["surf"]
@@ -3719,8 +3776,10 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
         warns.append(_cmp_text("JIG_REGION_FALLBACK", reason=rs["fill_reason"], n_contact=rs["n_contact"],
                                n_patch=rs["n_patch"]))
     tm["basis"] = time.monotonic()
-    basis = jg.load_basis(mesh, rs["regions"], wts, omega, body_force=bool(J["body_force"]))
     h = jg.factor(mesh, jidx, c.solver_cfg())
+    mo = _jig_modes(c, t, mesh, h, wts, jidx, J, infos)                    # 모드 관성(D-JIG-15) — 실패 = 모드 없이
+    basis = jg.load_basis(mesh, rs["regions"], wts, omega, body_force=bool(J["body_force"]),
+                          tangential=bool(J["basis_tangential"]), modes=mo["g"])
     BR = jg.basis_response(h, basis, fit)
     tm["basis"] = time.monotonic() - tm["basis"]
     if basis["n_normal_free"]:
@@ -3730,7 +3789,14 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     area = np.asarray(wts["area"], dtype=np.float64)
     w_fit = area[fit] / max(float(area[fit].mean()), 1e-300)
     tm["fit"] = time.monotonic()
-    fits = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, basis, ridge=float(J["ridge"])) for e in eids}
+    n_fit = np.asarray(wts["normal"], dtype=np.float64)[fit]
+    fits = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, n_fit, basis, ridge=float(J["ridge"]),
+                            w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"])) for e in eids}
+    fits_nm = {}
+    if basis["mode_f"] is not None:                                        # 모드 제외 맞춤(진단 — 추가 solve 없음)
+        fits_nm = {e: jg.fit_loads(BR["U"], tg_[e]["u_tgt"][fit], w_fit, n_fit, basis, ridge=float(J["ridge"]),
+                                   w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"]),
+                                   drop_kinds=(jg.COL_MODE,)) for e in eids}
     F_i = {e: jg.forces(basis, fits[e]["a"], N) for e in eids}
     tm["fit"] = time.monotonic() - tm["fit"]
     tm["respond"] = time.monotonic()
@@ -3740,12 +3806,15 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     ents, a_mat = [], []
     for e in eids:
         ur = np.asarray(rows[e]["u"], dtype=np.float64)
+        unm = None if e not in fits_nm else np.einsum("k,kmi->mi", fits_nm[e]["a"], BR["U"])
         rep = jg.fit_report(ur[:, :3] if ur.shape[1] > 3 else ur, tg_[e]["u_tgt"], fit, wts, basis,
-                            fits[e]["a"], jig_idx=jidx, active_tol=float(J["active_tol"]))
+                            fits[e]["a"], jig_idx=jidx, active_tol=float(J["active_tol"]), u_fit_nomodes=unm)
         a_mat.append(fits[e]["a"])
         ents.append({"entry_id": e, "label": labels.get(e, e[:8]), **{k: rep[k] for k in (
             "mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "F_sum_abs", "cancel_rel", "n_active")},
-            "tie_rel": tg_[e]["tie_rel"], "react_rel": rows[e]["react_rel"], "body": rep["body"],
+            "tie_rel": tg_[e]["tie_rel"], "rot_deg": float(tg_[e]["rot_deg"]), "react_rel": rows[e]["react_rel"],
+            "with_modes": rep["with_modes"], "without_modes": rep["without_modes"], "modes": rep["modes"],
+            "body": rep["body"],
             "forces": [{k: f[k] for k in ("region", "F_n", "F_t1", "F_t2", "F", "active")} for f in rep["forces"]],
             "C_ref": float(rows[e]["C_jig"]), "umax_ref": float(rows[e]["umax_jig"])})
     regs = []
@@ -3756,13 +3825,23 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
                      "center": [float(v) for v in rg["center"]], "normal": [float(v) for v in basis["reg_dir"][k][0]],
                      "sign": int(basis["reg_sign"][k])})
     doc_npz = {"schema": np.asarray(jg.SCHEMA), "node_id": nid, "jig_idx": jidx, "omega": omega,
-               "reg_ptr": basis["reg_ptr"], "reg_node": basis["reg_node"], "reg_w": basis["reg_w"],
+               "col_kind": np.asarray(basis["col_kind"], dtype=np.int8), "reg_ptr": basis["reg_ptr"], "reg_node": basis["reg_node"], "reg_w": basis["reg_w"],
                "reg_dir": basis["reg_dir"], "reg_sign": basis["reg_sign"], "reg_kind": basis["reg_kind"],
                "reg_part": basis["reg_part"], "entry_ids": np.asarray(eids), "a": np.stack(a_mat),
                "C_ref": np.asarray([rows[e]["C_jig"] for e in eids], dtype=np.float64),
                "umax_ref": np.asarray([rows[e]["umax_jig"] for e in eids], dtype=np.float64)}
     if basis["body_w"] is not None:
         doc_npz["body_w"] = np.asarray(basis["body_w"], dtype=np.float64)
+    dens = jg.load_density(basis, wts)                                     # §5.5 면적당 밀도 키(v0.24.0 전달용 — 저장만)
+    for k in ("node_area", "reg_area", "reg_q", "body_q", "mode_q"):
+        if dens[k] is not None:
+            doc_npz[k] = np.asarray(dens[k], dtype=np.float64)
+    if basis["mode_f"] is not None:
+        doc_npz["mode_f"] = np.asarray(basis["mode_f"], dtype=np.float64)
+        doc_npz["mode_lam"] = np.asarray(mo["lam"], dtype=np.float64)
+        doc_npz["mode_rho_t"] = np.asarray([mo["doc"]["rho_t_used"]], dtype=np.float64)
+    if mo["lam321"] is not None:
+        doc_npz["mode_lam_321"] = np.asarray(mo["lam321"], dtype=np.float64)
     c.writer.makedirs(c.p("prep"))
     mg.save_npz_det(c.writer.guard(c.p("prep", JIG_NPZ)), doc_npz)
     doc = {"schema": jg.SCHEMA, "status": "ok", "code": None,
@@ -3772,7 +3851,9 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
            "surf": None if surf_info is None else {**surf_info, "n_contact_nodes": int(rs["n_contact_nodes"]),
                                                    "n_found": int(rs.get("n_found", rs["n_contact"]))},
            "regions": regs, "nb": int(basis["nb"]), "body_force": bool(J["body_force"]), "ridge": float(J["ridge"]),
-           "entries": ents, "info": infos, "warnings": list(warns),
+           "tangential": bool(J["basis_tangential"]), "w_inplane": float(J["w_inplane"]),
+           "reg_force": float(J["reg_force"]), "g_N": float(next(iter(fits.values()))["g_N"]) if fits else None,
+           "modes": mo["doc"], "entries": ents, "info": infos, "warnings": list(warns),
            "seconds": {k: round(v, 3) for k, v in tm.items()}, "seconds_total": round(time.monotonic() - t0, 3)}
     if rs["fill_reason"] is not None:
         doc["fill_reason"] = rs["fill_reason"]
@@ -3863,9 +3944,12 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     J = _jig_snap(c)
     if J is None:
         return None, []
-    th = {"mac_min": float(J["mac_min"]), "umax_err_max": float(J["umax_err_max"]), "tie_rel_warn": float(J["tie_rel_warn"])}
+    th = {"mac_min": float(J["mac_min"]), "umax_err_max": float(J["umax_err_max"]), "tie_rel_warn": float(J["tie_rel_warn"]),
+          "cancel_warn": float(J["cancel_warn"])}
     empty = {"region_source": None, "n_jig": 0, "n_regions": 0, "n_contact": 0, "n_patch": 0, "fit_mac_min": None,
-             "fit_umax_err_max": None, "tie_rel_max": None, "th": th, "entries": []}
+             "fit_umax_err_max": None, "fit_mac_min_nomodes": None, "fit_umax_err_max_nomodes": None,
+             "cancel_rel_max": None, "tie_rel_max": None, "n_modes": 0, "hz_jig": [], "hz_321": None, "hz_ratio": None,
+             "th": th, "entries": []}
     plan = _lt_plan(c)
     if plan["sm_jig"] != "base":
         return {"status": "unsupported", "code": "JIG_UNSUPPORTED", **empty}, \
@@ -3880,10 +3964,31 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     if jd.get("status") != "ok":
         return {"status": "fallback", "code": jd.get("code"), **{**empty, **base}, "th": th}, []
     ents = jd.get("entries") or []
+    def _nm(e, k):
+        wo = e.get("without_modes")
+        return None if not wo or wo.get(k) is None else float(wo[k])
+
     out_e = [{"entry_id": e["entry_id"], "label": labels.get(e["entry_id"], e.get("label") or e["entry_id"][:8]),
-              "mac": float(e["mac"]), "umax_err": float(e["umax_err"]), "err_p95": float(e["err_p95"]),
-              "n_active": int(e["n_active"]), "F_sum_abs": float(e["F_sum_abs"]), "cancel_rel": float(e["cancel_rel"])}
+              "mac": float(e["mac"]), "umax_err": float(e["umax_err"]), "mac_nomodes": _nm(e, "mac"),
+              "umax_err_nomodes": _nm(e, "umax_err"), "err_p95": float(e["err_p95"]),
+              "n_active": int(e["n_active"]), "F_sum_abs": float(e["F_sum_abs"]), "cancel_rel": float(e["cancel_rel"]),
+              "rot_deg": float(e.get("rot_deg") or 0.0)}
              for e in ents]
+    md = jd.get("modes") or {}
+    lam = [float(v) for v in md.get("lam") or []]
+    rho_u = float(md.get("rho_t_used") or 0.0)
+    rho_now = float(J["rho_t_mm3"])
+    sc_ = (rho_u / rho_now) if rho_now > 0 and rho_u > 0 else 1.0           # λ ∝ 1/ρ_t → hz = √(λ·ρ_used/ρ_now)/2π
+
+    def _hz(ls):
+        return [float(np.sqrt(v * sc_) / (2.0 * np.pi)) for v in ls]
+
+    hz_j = _hz(lam)
+    hz_3 = None if md.get("hz_321") is None else _hz([(2.0 * np.pi * v) ** 2 for v in md["hz_321"]])
+    ratio = (hz_j[0] / hz_3[0]) if hz_j and hz_3 and hz_3[0] > 0 else None
+    nms = [e["mac_nomodes"] for e in out_e if e["mac_nomodes"] is not None]
+    nes = [e["umax_err_nomodes"] for e in out_e if e["umax_err_nomodes"] is not None]
+    cans = [e["cancel_rel"] for e in out_e]
     macs = [float(e["mac"]) for e in ents]
     errs = [float(e["umax_err"]) for e in ents]
     ties = [float(e["tie_rel"]) for e in ents if e.get("tie_rel") is not None]
@@ -3892,11 +3997,19 @@ def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]
     if poor:
         det = ", ".join(f"{e['label']} MAC {e['mac']:.3f}·umax 오차 {e['umax_err'] * 100:.1f} %" for e in poor)
         warns.append(_cmp_text("JIG_FIT_POOR", detail=det))
+    lc = [e for e in out_e if e["cancel_rel"] > th["cancel_warn"]]
+    if lc:
+        w0 = max(lc, key=lambda e: e["cancel_rel"])
+        warns.append(_cmp_text("JIG_LOAD_CANCEL", label=w0["label"], cancel_rel=f"{w0['cancel_rel']:.2f}",
+                               F_sum_abs=f"{w0['F_sum_abs']:.3g}", n=len(lc)))
     tmax = max(ties) if ties else None
     if tmax is not None and tmax > th["tie_rel_warn"]:
         warns.append(_cmp_text("JIG_TIE_RELATIVE", tie_rel=f"{tmax:.3g}", tie_rel_warn=f"{th['tie_rel_warn']:.3g}"))
     return {"status": "poor" if poor else "ok", "code": None, **base, "fit_mac_min": min(macs) if macs else None,
-            "fit_umax_err_max": max(errs) if errs else None, "tie_rel_max": tmax, "th": th, "entries": out_e}, warns
+            "fit_umax_err_max": max(errs) if errs else None, "fit_mac_min_nomodes": min(nms) if nms else None,
+            "fit_umax_err_max_nomodes": max(nes) if nes else None, "cancel_rel_max": max(cans) if cans else None,
+            "tie_rel_max": tmax, "n_modes": len(hz_j), "hz_jig": hz_j, "hz_321": hz_3, "hz_ratio": ratio,
+            "th": th, "entries": out_e}, warns
 
 
 def _jig_csv(rank: dict, rid: str, x: dict | None, blk: dict | None) -> list:

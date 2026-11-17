@@ -375,11 +375,15 @@ def _jig_line(j: dict) -> str:
     if j.get("status") in ("fallback", "unsupported"):
         return f"지그 순위 불가({j.get('code')}) — 재풀이 C 로 순위"
     mac, err = j.get("fit_mac_min"), j.get("fit_umax_err_max")
+    mnm = j.get("fit_mac_min_nomodes")
+    nm = f" (모드 제외 {float(mnm):.3f})" if int(j.get("n_modes") or 0) > 0 and mnm is not None else ""
     return (f"score = max C_jig(안) / max C_jig(기준), 체결부(tie) 고정 + 맞춤 가압 하중을 같은 지그·같은 하중으로 안마다 재풀이 · 기준 재현 "
-            f"MAC ≥ {'—' if mac is None else format(float(mac), '.3f')} · umax 오차 ≤ "
+            f"MAC(모드 포함) ≥ {'—' if mac is None else format(float(mac), '.3f')}{nm} · umax 오차 ≤ "
             f"{'—' if err is None else format(float(err) * 100, '.1f') + ' %'} · 영역 {j.get('n_regions')}개"
             f"(접촉 {j.get('n_contact')} · 패치 {j.get('n_patch')}) · 지그 노드 {j.get('n_jig')}"
-            + (" · 기준 재현 품질 미달(JIG_FIT_POOR)" if j.get("status") == "poor" else ""))
+            + (" · 기준 재현 품질 미달(JIG_FIT_POOR)" if j.get("status") == "poor" else "")
+            + (" ⚠ 맞춤 하중 상쇄(JIG_LOAD_CANCEL)" if j.get("cancel_rel_max") is not None
+               and j.get("th") and float(j["cancel_rel_max"]) > float(j["th"].get("cancel_warn", 1.0)) else ""))
 
 
 def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20, jig: dict | None = None) -> str:
