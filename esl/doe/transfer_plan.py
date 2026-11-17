@@ -37,27 +37,32 @@ PLANS = {
     "case_once": {"redrop": "node_id", "dst": "baseline", "reuse": "once", "identity": "topo", "placement": "global", "mask": "none",
                   "truth": "self_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
-                  "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none"},
+                  "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none",
+                 "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "case"},
     "bmesh_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "none",
                    "truth": "a_direct", "alt_designs": False,
                    "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
-                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none"},
+                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none",
+                  "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "mesh"},
     "step_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "step_region",
                   "truth": "a_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "step_region", "sm_rank": "metric",
-                  "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "base", "bs_mq": "base"},
+                  "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "base", "bs_mq": "base",
+                 "sm_jig": "base", "jig_fix": "xfer", "jig_ctx": "none"},
     "step_per_design": {"redrop": "none", "dst": "design", "reuse": "per_target", "identity": "none", "placement": "auto", "mask": "none",
                         "truth": "a_direct", "alt_designs": False,
                         "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "all", "sm_rank": "solve",
-                        "bs_wpart": "none", "bs_guard": "none", "bs_route": "none", "bs_mq": "none"},
+                        "bs_wpart": "none", "bs_guard": "none", "bs_route": "none", "bs_mq": "none",
+                       "sm_jig": "none", "jig_fix": "none", "jig_ctx": "none"},
     "compare_per_shape": {"redrop": "none", "dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
                           "mask": "compare_region", "truth": "compare", "alt_designs": True,
                           "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "compare_region",
                           "sm_rank": "solve",
-                          "bs_wpart": "none", "bs_guard": "none", "bs_route": "shapes", "bs_mq": "shapes"},
+                          "bs_wpart": "none", "bs_guard": "none", "bs_route": "shapes", "bs_mq": "shapes",
+                         "sm_jig": "none", "jig_fix": "none", "jig_ctx": "none"},
 }
 PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
-            "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq")
+            "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq", "sm_jig", "jig_fix", "jig_ctx")
 PLAN_OF = {("same", None): "case_once", ("select", "case"): "case_once", ("mesh", None): "bmesh_once",
            ("select", "mesh"): "bmesh_once", ("select", "step"): "step_once", ("step", None): "step_per_design",
            ("compare", None): "compare_per_shape"}
@@ -76,6 +81,9 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
     badv = [k for k, vs in BS_VALUES.items() if row[k] not in vs]
     if badv:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 형상 규칙 열 값 오류: {badv}")
+    badj = [k for k, vs in JIG_VALUES.items() if row[k] not in vs]
+    if badj:
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 지그 열 값 오류: {badj}")
     if row["redrop"] not in RD_VALUES:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} redrop 열 값 오류: {row['redrop']}")
     return {"id": pid, **row}
@@ -134,6 +142,9 @@ RD_VALUES = ("node_id", "none")
 BS_VALUES = {"bs_wpart": ("graph", "none"), "bs_guard": ("basis", "none"), "bs_route": ("base", "shapes", "none"),
              "bs_mq": ("base", "shapes", "none")}
 SHAPE_SCHEMA = 1
+# v0.23.0 JIG 열(esl_jig_rank.md §5.2): sm_jig = base(베이스라인 1회 지그 계산 → 같은 메시 안 비교) | none, jig_fix = 지그 노드 출처
+# fixed(prep/fixed) | xfer(A 체결점 이전) | none, jig_ctx = 다른 부품 deck 출처 case(원 Case) | mesh(업로드 사본) | none(패치).
+JIG_VALUES = {"sm_jig": ("base", "none"), "jig_fix": ("fixed", "xfer", "none"), "jig_ctx": ("case", "mesh", "none")}
 
 
 def resolve_shape(spec: dict | None, defaults: dict | None = None, *, flip_deg: float | None = None) -> dict | None:
@@ -224,8 +235,11 @@ def shape_hash_view(rules: dict | None) -> dict | None:
     return {"schema": rules.get("schema"), "w_partial": rules.get("w_partial"), "range_guard": rg}
 
 
-def metric_effective(plan: dict, metric: str) -> str:
-    """순위에 실제로 쓰는 지표(결정 A): 계획 열 sm_rank = metric 이면 스냅샷 metric 그대로, solve 면 solve(다른 메시 비교)."""
+def metric_effective(plan: dict, metric: str, jig_ok: bool = True) -> str:
+    """순위에 실제로 쓰는 지표(결정 A): 계획 열 sm_rank = metric 이면 스냅샷 metric 그대로, solve 면 solve(다른 메시 비교).
+    metric = jig 는 계획 sm_jig = base ∧ sm_rank = metric ∧ jig_ok(베이스라인 지그 status ok) 일 때만 jig, 아니면 solve(D-JIG-8)."""
+    if str(metric) == "jig":
+        return "jig" if plan["sm_jig"] == "base" and plan["sm_rank"] == "metric" and jig_ok else "solve"
     return str(metric) if plan["sm_rank"] == "metric" else "solve"
 
 

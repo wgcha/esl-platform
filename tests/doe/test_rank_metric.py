@@ -140,3 +140,58 @@ def test_lin_range_fallback_per_design():
     s1 = rk.rank(json.loads(json.dumps(rs)), metric="solve", lin_form="ritz")    # ④·옛 ③(solve) — lin_valid 무관
     s2 = rk.rank(json.loads(json.dumps(rs)), metric="solve", lin_form="ritz", lin_valid=0.3)
     assert _dump(s1) == _dump(s2) and "n_fallback" not in s2
+
+
+# ---------------------------------------------------------------- v0.23.0 지그 순위(esl_jig_rank.md V-JIG-14)
+def jg(did, rows, status="OK"):
+    """rows = [(C_solve, C_jig | None, umax_jig | None)] — C_lin = C_ritz = C(ρ = 1 흉내)."""
+    per = []
+    for i, (c, cj, uj) in enumerate(rows):
+        per.append({"entry_id": f"E{i + 1}", "C": c, "umax": 100 * c, "epsmax": 0.01 * c, "reaction_rel": 0.0,
+                    "umax_def": 7 * c, "imbalance_rel": 0.01, "rho": 1.0, "C_lin": c, "C_ritz": c,
+                    "C_jig": cj, "umax_jig": uj})
+    return {"id": did, "status": status, "values": {}, "per_esl": per if status == "OK" else [], "warnings": []}
+
+
+def _jset():
+    return [jg("d000", [(10.0, 100.0, 1.0), (20.0, 50.0, 2.0)]),
+            jg("d001", [(30.0, 80.0, 0.9), (19.0, 45.0, 1.8)]),     # jig: 80/100, 45/50 → worst 0.8·… score = 80/100
+            jg("d002", [(9.0, 120.0, 1.2), (25.0, 40.0, 1.5)]),     # jig worst 120 → 1.2
+            jg("d003", [(8.0, None, None), (18.0, 30.0, 1.0)]),     # 지그 재풀이 실패(JIG_DESIGN_FAILED)
+            jg("d004", [], "FAILED_SOLVE")]
+
+
+def test_metric_key_jig():
+    assert smm.metric_key("jig") == "C_jig" and "jig" in smm.METRICS
+
+
+def test_rank_jig_metric_structure_and_aux():
+    R = rk.rank(_jset(), metric="jig")
+    assert R["metric"] == "jig" and R["C_ref"] == 100.0
+    ids = [x["id"] for x in R["ranking"]]
+    assert ids == ["d001", "d002"]                                          # d003 = 순위 밖
+    assert R["n_failed"]["jig"] == 1 and R["n_failed"]["solve"] == 1
+    x1, x2 = R["ranking"]
+    assert x1["score"] == pytest.approx(0.8) and x1["worst_entry_id"] == "E1" and x2["score"] == pytest.approx(1.2)
+    assert x1["C"] == {"E1": 80.0, "E2": 45.0}                              # row C = metric 키 값(lin 과 같은 규칙)
+    assert [p["ratio"] for p in x1["per_esl"]] == pytest.approx([0.8, 0.9])
+    assert x1["score_jig"] == pytest.approx(0.8)
+    assert x1["umax_jig"] == pytest.approx(max(0.9, 1.8) / 2.0)             # max_i umax / max_i 기준 umax(=2.0)
+    assert x1["C_jig"] == {"E1": 80.0, "E2": 45.0}
+    assert "score_solve" in x1 and R["baseline"]["score_jig"] == 1.0 and R["baseline"]["umax_jig"] == 1.0
+    assert not R.get("n_fallback")                                          # lin_valid 대체 없음(jig 는 1차 범위 대체 비적용)
+
+
+def test_rank_jig_baseline_missing_and_other_metrics_have_aux():
+    rs = _jset()
+    rs[0]["per_esl"][0]["C_jig"] = None
+    with pytest.raises(EslError) as e:
+        rk.rank(rs, metric="jig")
+    assert e.value.code == "BASELINE_FAILED"
+    R = rk.rank(_jset(), metric="solve")                                     # metric 과 무관하게 지그 보조 열
+    assert [x["id"] for x in R["ranking"]][0] in ("d001", "d002", "d003") and "score_jig" in R["ranking"][0]
+    d3 = next(x for x in R["ranking"] if x["id"] == "d003")
+    assert d3["score_jig"] is None and d3["C_jig"] is None and d3["umax_jig"] is None
+    R2 = rk.rank(_set(), metric="lin")                                       # 옛 스냅샷 = 지그 키 없음(바이트 불변)
+    assert all("score_jig" not in x for x in R2["ranking"]) and "score_jig" not in R2["baseline"]
+    assert "jig" not in R2["n_failed"]
