@@ -702,10 +702,11 @@ def _weighted(V, a, n, w_ip):
     return a[:, None] * (w_ip * V + (1.0 - w_ip) * vn[..., None] * n)
 
 
-def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, drop_kinds=()) -> dict:
+def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, reg_modes=0.0, drop_kinds=()) -> dict:
     """법선/면내 가중 최소제곱 + 하중 Tikhonov(D-JIG-5·16):
-    min (Ua − u)ᵀW(Ua − u) + reg_force·ḡ_N·Σ_{col_kind ∈ 2,3,4} a², W_n = (A_n/mean A)(nnᵀ + w_ip(I − nnᵀ)),
-    ḡ_N = mean_{법선 열} G_kk. 정규화 b = D_s a: Ĝ = D_s⁻¹GD_s⁻¹ + λI + diag(reg·ḡ_N/G_kk·[비법선]) = LLᵀ,
+    min (Ua − u)ᵀW(Ua − u) + ḡ_N·(reg_force·Σ_{col_kind ∈ 2,3} a² + reg_modes·Σ_{col_kind = 4} a²) (D-JIG-17 분리),
+    W_n = (A_n/mean A)(nnᵀ + w_ip(I − nnᵀ)), ḡ_N = mean_{법선 열} G_kk. 법선 열 = ridge 만.
+    정규화 b = D_s a: Ĝ = D_s⁻¹GD_s⁻¹ + λI + diag(ρ_k·ḡ_N/G_kk) = LLᵀ (ρ_k = reg_force | reg_modes | 0),
     b* = BVLS argmin ‖Lᵀb − L⁻¹D_s⁻¹h‖² (접촉 법선 b ≥ 0). drop_kinds 열은 a = 0(모드 제외 맞춤 = (4,))."""
     U = np.asarray(U, dtype=np.float64)
     nb = U.shape[0]
@@ -739,7 +740,9 @@ def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force,
     n_bound = 0
     if act.size:
         d = s[act]
-        pen = float(reg_force) * gN / dg[act] * (ck[act] != COL_NORMAL)
+        rho = np.where(np.isin(ck[act], (COL_TANGENT, COL_BODY)), float(reg_force),
+                       np.where(ck[act] == COL_MODE, float(reg_modes), 0.0))
+        pen = rho * gN / dg[act]
         Gh = G[np.ix_(act, act)] / d[:, None] / d[None, :] + np.diag(float(ridge) + pen)
         Gh = 0.5 * (Gh + Gh.T)
         try:
@@ -801,8 +804,28 @@ def _quality(f, t, A):
     return {"mac": float(mac), "umax_err": float(umax_err), "err_p95": float(p95), "resid_rel": resid}, umax_tgt, umax_fit
 
 
+def _col_abs(basis, a) -> float:
+    """Σ_k Σ_n ‖a_k f_k(n)‖ — 열마다 노드 하중 노름 합(영역 = |a|·Σw, 체적력 = |a|·Σbody_w, 모드 = |a|·Σ‖g‖)."""
+    a = np.asarray(a, dtype=np.float64)
+    R, nc, b0, m0, nm = _layout(basis)
+    ptr, w = basis["reg_ptr"], basis["reg_w"]
+    tot = 0.0
+    for r in range(R):
+        sw = float(w[ptr[r]:ptr[r + 1]].sum())
+        for j in range(nc):
+            tot += abs(float(a[nc * r + j])) * sw * float(np.linalg.norm(basis["reg_dir"][r, j]))
+    if basis.get("body_w") is not None:
+        sb = float(np.abs(basis["body_w"]).sum())
+        tot += sb * float(np.abs(a[b0:b0 + 3]).sum())
+    for k in range(nm):
+        tot += abs(float(a[m0 + k])) * float(np.linalg.norm(basis["mode_f"][k], axis=1).sum())
+    return tot
+
+
 def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol, u_fit_nomodes=None) -> dict:
-    """MAC·umax 오차·P95·잔차비(모드 포함 with_modes / 제외 without_modes)·영역 합력·모드 계수·활성 수·상쇄비(D-JIG-6·15).
+    """MAC·umax 오차·P95·잔차비(모드 포함 with_modes / 제외 without_modes)·영역 합력·모드 계수·활성 수·상쇄비(D-JIG-6·15·17).
+    cancel_rel = 1 − Σ_n‖F_n‖ / Σ_kΣ_n‖a_k f_k(n)‖ (열 사이 상쇄만, F_node_abs·F_col_abs 함께), F_sum_abs = Σ 영역 합력 노름
+    + ‖체적력‖ + Σ|a_모드| (정보).
     u_fit_nomodes = 모드 제외 맞춤 변위((N,3) 또는 맞춤 노드 (M,3) — U a), None = without_modes null. tie_rel 도 함께."""
     fm = np.asarray(fit_mask, bool)
     uf = np.asarray(u_fit, dtype=np.float64)[:, :3]
@@ -833,20 +856,23 @@ def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol
                      "part": int(basis["reg_part"][r]) if k == REGION_CONTACT else None,
                      "F_n": float(a[nc * r]), "F_t1": ft[0], "F_t2": ft[1],
                      "F": [float(x) for x in Rv[r]], "active": act})
-    tot = np.sum(Rv, axis=0) if R else np.zeros(3)
     fsum = float(sum(mags))
     if body is not None:
-        tot = tot + body
         fsum += float(np.linalg.norm(body))
     modes = []
     for k in range(nm):
         ak = float(a[m0 + k])
         modes.append({"k": k, "a": ak})
-        tot = tot + ak * basis["mode_f"][k].sum(axis=0)
         fsum += abs(ak)
-    cancel = 1.0 - float(np.linalg.norm(tot)) / fsum if fsum > 0 else 0.0
+    # 상쇄비(D-JIG-17): 기저 열 사이 상호 상쇄만 — 1 − Σ_n ‖Σ_k a_k f_k(n)‖ / Σ_k Σ_n ‖a_k f_k(n)‖
+    # (단일 열의 자기평형 — 고차 모드 합력 ≈ 0 — 은 상쇄 아님. 한 열만 쓰면 0)
+    Fn = forces(basis, a, int(basis["n_nodes"]))
+    num = float(np.linalg.norm(Fn, axis=1).sum())
+    den = _col_abs(basis, a)
+    cancel = 1.0 - num / den if den > 0 else 0.0
     return {"with_modes": wm, "without_modes": wo, "modes": modes, **wm, "umax_tgt": umax_tgt, "umax_fit": umax_fit,
-            "F_sum_abs": fsum, "cancel_rel": float(cancel), "n_active": int(sum(r_["active"] for r_ in rows)),
+            "F_sum_abs": fsum, "F_node_abs": num, "F_col_abs": den, "cancel_rel": float(max(cancel, 0.0)),
+            "n_active": int(sum(r_["active"] for r_ in rows)),
             "body": None if body is None else [float(x) for x in body], "forces": rows, "tie_rel": float(tie_rel)}
 
 
