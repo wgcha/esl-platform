@@ -126,10 +126,10 @@ stage = ranStage ? "result" : hasPreview ? "preview" : "setup"
 ```
 --doe-chrome: 접힌 막대들 + 제목줄 + 진행 띠 (목표 ≤ 200px, 측정 보고)
 .doe-result-2col { --doe-res-h: calc(100vh - var(--topbar-h) - 21rem); }        /* ≈ 1440 − 54 − 357 ≈ 1030px */
-.doe-result-left  .doe-rank-wrap    { --tbl-max: calc(var(--doe-res-h) - 17rem); }  /* 순위표가 남는 높이 */
+.doe-result-left  .doe-rank-wrap    { --tbl-max: calc(var(--doe-res-h) - 23rem); }  /* 순위표가 남는 높이 */
 .doe-result-left  .doe-per-esl-wrap { --tbl-max: 12rem; }                           /* ESL별 고정 상한 */
-.doe-result-right .doe-compare-grid .v3d-host { height: calc(var(--doe-res-h) * 0.45); }
-.doe-result-right .doe-sens svg { max-height: calc(var(--doe-res-h) * 0.3); }
+.doe-result-right .doe-compare-grid .v3d-host { height: calc(var(--doe-res-h) * 0.26); }
+.doe-result-right .doe-sens svg { max-height: calc(var(--doe-res-h) * 0.15); }
 ```
 - ≤2200px 에서는 이 재정의를 적용하지 않음(기존 clamp 값 그대로 — 1열 세로 흐름).
 - 목표: 결과 단계에서 결과 카드 아래 끝 ≤ 뷰포트 + VerifyDropCard. 렌더 측정값은 검증 보고에 적고, 넘으면 사용자 현장 확인 항목.

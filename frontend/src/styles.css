@@ -3057,6 +3057,8 @@ th[aria-sort="ascending"] .th-sort::after {
 }
 .card.folded > .card-head {
   border-bottom: 0;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
 }
 .card-fold-btn {
   display: inline-flex;
@@ -3168,7 +3170,7 @@ details.doe-chip-detail[open] > :not(summary) {
 /* §6 결과 2열(≤2200px 1열) */
 .doe-result-2col {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
   gap: var(--gap);
   align-items: start;
 }
@@ -3193,16 +3195,21 @@ details.doe-chip-detail[open] > :not(summary) {
     --doe-res-h: calc(100vh - var(--topbar-h) - 21rem);
   }
   .doe-result-left .doe-rank-wrap {
-    --tbl-max: calc(var(--doe-res-h) - 17rem);
+    --tbl-max: calc(var(--doe-res-h) - 23rem);
+  }
+  /* 좁아진 왼쪽 열에서 셀 줄바꿈으로 행이 높아지지 않게(넘치면 표 안 가로 스크롤) */
+  .doe-result-left .doe-rank td,
+  .doe-result-left .doe-rank th {
+    white-space: nowrap;
   }
   .doe-result-left .doe-per-esl-wrap {
     --tbl-max: 12rem;
   }
   .doe-result-right .doe-compare-grid .v3d-host {
-    height: calc(var(--doe-res-h) * 0.45);
+    height: calc(var(--doe-res-h) * 0.26);
   }
   .doe-result-right .doe-sens svg {
-    max-height: calc(var(--doe-res-h) * 0.3);
+    max-height: calc(var(--doe-res-h) * 0.15);
   }
 }
 /* §7 새 스터디 ① 2열(≤2200px 1열) · 설명 ⓘ */
