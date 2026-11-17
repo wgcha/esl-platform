@@ -31,7 +31,8 @@ TIE_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN")   # 문서용 — 비�
 REGION_CONTACT = 1
 REGION_PATCH = 2
 KIND_NAME = {REGION_CONTACT: "contact", REGION_PATCH: "patch"}
-HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "rho_t_mm3", "modes_ref321")   # 해시 밖(D-JIG-11)
+HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "rho_t_mm3",
+                "modes_ref321")   # 해시 밖(D-JIG-11)
 TIE_REL = 1e-12            # 최근접 삼각형 동률 폭(× gap)
 SIGN_FREE_REL = 1e-9       # 접촉 법선 부호 자유 판정(× ΣA·max(gap, 1))
 
@@ -824,8 +825,8 @@ def _col_abs(basis, a) -> float:
 
 def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol, u_fit_nomodes=None) -> dict:
     """MAC·umax 오차·P95·잔차비(모드 포함 with_modes / 제외 without_modes)·영역 합력·모드 계수·활성 수·상쇄비(D-JIG-6·15·17).
-    cancel_rel = 1 − Σ_n‖F_n‖ / Σ_kΣ_n‖a_k f_k(n)‖ (열 사이 상쇄만, F_node_abs·F_col_abs 함께), F_sum_abs = Σ 영역 합력 노름
-    + ‖체적력‖ + Σ|a_모드| (정보).
+    work_eff = |Σ f·u_fit| / Σ ‖f‖‖u_fit‖ (병진, 비지그 노드 — JIG_LOAD_CANCEL 판정, D-JIG-18). 정보용: cancel_rel =
+    1 − Σ_n‖F_n‖ / Σ_kΣ_n‖a_k f_k(n)‖ (열 사이 상쇄, F_node_abs·F_col_abs), F_sum_abs = Σ 영역 합력 노름 + ‖체적력‖ + Σ|a_모드|.
     u_fit_nomodes = 모드 제외 맞춤 변위((N,3) 또는 맞춤 노드 (M,3) — U a), None = without_modes null. tie_rel 도 함께."""
     fm = np.asarray(fit_mask, bool)
     uf = np.asarray(u_fit, dtype=np.float64)[:, :3]
@@ -870,8 +871,15 @@ def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol
     num = float(np.linalg.norm(Fn, axis=1).sum())
     den = _col_abs(basis, a)
     cancel = 1.0 - num / den if den > 0 else 0.0
+    # 일 효율(D-JIG-18 — JIG_LOAD_CANCEL 판정): |Σ f·u_fit| / Σ ‖f‖‖u_fit‖ (병진, 비지그 노드)
+    nj = np.ones(Fn.shape[0], bool)
+    nj[J] = False
+    fw, uw_ = Fn[nj], uf[nj]
+    wden = float(np.sum(np.linalg.norm(fw, axis=1) * np.linalg.norm(uw_, axis=1)))
+    work_eff = abs(float(np.sum(fw * uw_))) / wden if wden > 0 else 0.0
     return {"with_modes": wm, "without_modes": wo, "modes": modes, **wm, "umax_tgt": umax_tgt, "umax_fit": umax_fit,
             "F_sum_abs": fsum, "F_node_abs": num, "F_col_abs": den, "cancel_rel": float(max(cancel, 0.0)),
+            "work_eff": float(work_eff),
             "n_active": int(sum(r_["active"] for r_ in rows)),
             "body": None if body is None else [float(x) for x in body], "forces": rows, "tie_rel": float(tie_rel)}
 
