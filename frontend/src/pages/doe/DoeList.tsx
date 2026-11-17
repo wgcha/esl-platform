@@ -1,4 +1,4 @@
-// 비드 DOE 목록(esl_bead_doe.md §12.1 라이브러리 탭 [비드 DOE]): 연구별 시나리오·ESL·DOE·상태·최적 개선율. 결과는 라이브러리에 넣지 않는다.
+// 비드 DOE 목록(esl_bead_doe.md §12.1 라이브러리 탭 [비드 DOE]): 연구별 만든 시각·제목(STEP)·시나리오·ESL·DOE·미리보기·상태. 결과는 라이브러리에 넣지 않는다(v0.23.1 주석 정정 — 최적 개선율 열은 없음).
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { METHOD_NAME, PHASE_NAME, doe, doePath, studyScenarioLabel } from "../../api/doe";
