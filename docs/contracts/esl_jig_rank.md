@@ -1,9 +1,9 @@
 # 계약: 지그 순위 — 체결부 고정 + 맞춤 가압 하중으로 설계안 비교 · 기준 재현 진단 (JIG_RANK, v0.23.0)
 
-- 상태: **초안(결정 질문 2개 — §12, 기본안으로 진행 가능)**. 2026-11-17 작성(main 685df7d = v0.22.0 기준, 브랜치 release/v0.23.0).
+- 상태: **확정 대기 없음 — 결정 질문 2개 확정(2026-11-17 사용자, §12)**: Q-JIG-1 기본안, Q-JIG-2 대안(접촉 영역 유지 + 부족분 패치 보충). 2026-11-17 작성(main 685df7d = v0.22.0 기준, 브랜치 release/v0.23.0).
 - 버전: **v0.23.0**. migration **불필요**(새 값은 `bead_does.doe` 스냅샷·`result` JSONB·작업 폴더 파일만 — §11).
 - 관계: `esl_stiffness_metric.md` 의 **순위 지표 선택지에 `jig` 를 더한다**(BD-D-6 구조 = 최악 ESL 비·오름차순·동률 규칙 그대로, 값만 바뀜). 참조 변위는 같은 계약의 `prep/sm_ref.npz`(once 계획의 베이스라인 해) 를 그대로 읽는다. 결정 A(같은 메시 안에서만)·계획 표 원칙(AGENTS.md)을 따른다. 충돌 시 순위 지표 `jig` 범위에서 이 문서 우선.
-- ID 규칙: 결정 `D-0.23.0-JIG-n`, 시험 `V-JIG-n`, 리스크 `R-JIG-n`, 결정 질문 `Q-JIG-n`.
+- ID 규칙: 결정 `D-0.23.0-JIG-n`, 시험 `V-JIG-n`(1~16), 리스크 `R-JIG-n`, 결정 질문 `Q-JIG-n`.
 - 근거: 이슈 #63 (2026-11-16·17 진단) — 현 순위(ESL F = K₀u₀ 전 노드 하중, 3-2-1 지지, K₁ 재풀이 C·umax)는 30안 모두 `SM_IMBALANCE` 3~15 %, umax 300~4 300 mm, score~imbalance R² 0.507 → 순위가 모핑량에 지배됨. 원인: u₀ 대회전이 만든 거대 상쇄 하중 + 3-2-1 지지의 0.75 Hz 인공 무른 모드가 잔차 r = −(K₁−K₀)u₀ 를 K₁⁻¹ 로 증폭.
 
 ### 사용자 확정 (2026-11-17, 변경 금지)
@@ -61,7 +61,13 @@ tie_rel,i  = max_{n∈J} ‖u_tgt,i,n‖ / umax_tgt,i                      (지�
 - 후보 노드 C = F(맞춤 노드 = Ω \ J).
 - `case`·`mesh`: deck 에서 **대상 파트 밖** 모든 파트의 표면 삼각형 S(쉘 = 요소 자체, 쿼드 = 삼각형 2개 (0,1,2)(0,2,3); 솔리드 = 파트 안에서 공유되지 않는 외곽 면 — `assem_full.SOLID_FACES`·`_faces`·`_clean`, EXT 규칙)를 **변형 전 좌표**로 읽는다(§5.4). 노드 n ∈ C 의 접촉 판정: d_n = min_{s∈S} dist(x_n, s) ≤ `jig.contact_gap_mm`. 최근접 삼각형(동률 ≤ 1e-12·gap 은 작은 삼각형 번호)의 파트 p_n·최근접점 q_n 기록.
 - 영역 = 같은 p_n 을 가진 접촉 노드의 **대상 메시 연결 성분**(요소 변 그래프, 양 끝이 모두 집합 안인 변만). 노드 수 < `jig.min_region_nodes` 또는 면적 Σ A_n < `jig.min_region_area_mm2` 인 성분은 버림. 정렬 키 (−면적, p, 최소 노드 인덱스) 로 상위 `jig.max_regions` 개.
-- 남은 영역 수 < `jig.min_regions`, 또는 `jig_ctx = none`, 또는 deck 읽기 실패(`JIG_SURF_UNAVAILABLE`)·삼각형 상한 초과(`JIG_SURF_TOO_LARGE`) → **패치 fallback**(Q-JIG-2 기본안 = 패치만): 경고 `JIG_REGION_FALLBACK{reason, n_contact}`. 패치 = C 노드를 C 의 PCA 주축 2개(1·2축, 부호 = 각 축 최대 절댓값 성분이 양수)의 격자 g₁ × g₂ 로 분할(g₁ = max(1, round(√(P·L₁/L₂))), g₂ = max(1, ceil(P/g₁)), P = `jig.patch_count`, L = 축 방향 폭), 셀(행 우선) 중 노드 ≥ `min_region_nodes` 인 것만, 같은 정렬 키(p = −1)로 상위 `max_regions`.
+- **패치 보충(Q-JIG-2 확정 — 접촉 영역 유지 + 부족분만 패치)**: 접촉 영역 수 n_c(위 규칙으로 남은 것) < `jig.min_regions` 이면 n_fill 개를 공간 패치로 보충한다. `jig_ctx = none`·deck 읽기 실패(`JIG_SURF_UNAVAILABLE`)·삼각형 상한 초과(`JIG_SURF_TOO_LARGE`)는 n_c = 0 으로 본다.
+  - n_c ≥ min_regions → 보충 없음(영역 = 접촉만).
+  - 1 ≤ n_c < min_regions → n_fill = min_regions − n_c(**혼합**). n_c = 0 → n_fill = min(`jig.patch_count`, `max_regions`)(**전부 패치** = 옛 fallback 과 같음).
+  - 패치 후보 노드 C_p = C \ (접촉 영역 노드 ∪ J) — 접촉 영역에 이미 속한 노드·지그 노드는 패치에 넣지 않음(영역끼리 노드 겹침 0).
+  - 패치 = C_p 를 C_p 의 PCA 주축 2개(1·2축, 부호 = 각 축 최대 절댓값 성분이 양수)의 격자 g₁ × g₂ 로 분할(g₁ = max(1, round(√(P·L₁/L₂))), g₂ = max(1, ceil(P/g₁)), P = `jig.patch_count`(보충 수와 무관하게 같은 격자 — 패치 크기가 혼합·전부 패치에서 같음), L = 축 방향 폭), 셀(행 우선) 중 노드 ≥ `min_region_nodes` 인 것만, 정렬 키 (−면적, −1, 최소 노드 인덱스) 로 상위 n_fill 개.
+  - 최종 영역 순서 = 접촉 영역(위 정렬) 뒤에 패치(위 정렬), 합계 ≤ `max_regions`. 영역마다 출처 `kind = contact | patch` 를 jig.npz(`reg_kind`)·jig.json(`regions[].kind`)·진단에 기록, 영역 묶음 출처 `regions_from = contact | mixed | patch`.
+  - 보충이 일어나면(n_fill > 0) 경고 `JIG_REGION_FALLBACK{reason, n_contact, n_patch}`(reason = `few_contact`(1 ≤ n_c, 또는 deck 은 읽었으나 접촉 0) \| `no_deck`(`jig_ctx = none`) \| `surf_failed`(읽기 실패·상한 초과)). C_p 가 비어 n_fill 을 다 못 채워도 진행(있는 영역으로 보정, `n_patch` 에 실제 수).
 - 거리 계산(대규모): 삼각형 중심 cKDTree + 노드 청크(`jig.chunk_nodes`)마다 `query(k = min(jig.knn, T), distance_upper_bound = gap + R_max)`(R_max = 삼각형 중심→꼭짓점 최대 거리) → 후보 삼각형만 정확 점-삼각형 거리(Ericson, `load_transfer` LT-2 와 같은 식). 메모리 O(T + chunk·knn) — **N×T 배열 금지**(V-JIG-8). knn 근사는 LT-2 와 같은 수준(후보 밖 더 가까운 삼각형을 놓칠 수 있음 — 판정 경계에서만 영향).
 
 **(4) 하중 기저 (D-JIG-4)** — 영역 r = 1..R, 노드 집합 N_r:
@@ -112,7 +118,7 @@ u_d,i = K_d⁻¹ F_i,   C_jig,d,i = Σ_n F_i,n·u_d,i,n [N·mm],   umax_jig,d,i 
 DOE_RUN
   BD_BASELINE d000  (기존) 주 해석 + _sm_apply → prep/sm_ref.npz
                     (신규) _jig_apply(base):  jig_fix → J → select_jig_nodes 검사
-                           → u_tgt(sm_ref u) → [jig_ctx 면 deck 표면 읽기(jig_surf)] → contact_regions | patch_regions
+                           → u_tgt(sm_ref u) → [jig_ctx 면 deck 표면 읽기(jig_surf)] → select_regions(접촉 + 부족분 패치 보충)
                            → load_basis → factor(K₀, J) → U(nb solves) → fit_loads(K 엔트리) → respond(F_i) = u_fit·C_jig_ref
                            → prep/jig.npz + prep/jig.json(진단), per_esl += C_jig·umax_jig
                            실패 = jig.json status fallback + code(베이스라인 실패로 만들지 않음 — BASELINE_FAILED 금지)
@@ -123,7 +129,7 @@ DOE_RUN
                     (신규) jig 블록(jig.json + 임계값 판정 JIG_FIT_POOR·JIG_TIE_RELATIVE) → post/result.json.jig, ranking.csv 끝 열 4개
 ```
 - 계산 위치는 sm_ref 와 같이 **베이스라인 평가 1회**(파일은 `prep/`), 안은 `design_response` 만. 워커 변경 없음(지그 노드 출처 `prep/fixed`·`fixed_transfer.json` 은 이미 있음).
-- 지그는 스냅샷에 `rank.jig` 가 있고 `jig.enabled` 이고 계획 `sm_jig = base` 이면 **metric 과 무관하게 항상 계산**(Q-JIG-1 기본안 — SM-6 과 같은 이유: metric 은 해시 밖, BD_POST 만 바꿔 비교).
+- 지그는 스냅샷에 `rank.jig` 가 있고 `jig.enabled` 이고 계획 `sm_jig = base` 이면 **metric 과 무관하게 항상 계산**(Q-JIG-1 확정 — SM-6 과 같은 이유: metric 은 해시 밖, BD_POST 만 바꿔 비교).
 
 ## 3. 결정
 
@@ -131,7 +137,7 @@ DOE_RUN
 |---|---|---|
 | D-0.23.0-JIG-1 | 지그 = tie 노드(`fix_kinds`, 기본 INTER_TYPE2 둘) 병진 123 고정, 회전 자유. 출처 = 계획 열 `jig_fix`(fixed\|xfer\|none). 노드 0 = `JIG_NO_TIE`, 성분마다 ≥ 3 비공선 아님 = `JIG_SUPPORT_DEGENERATE` | 사용자 확정 1·3. ShellModel spc 는 병진만 |
 | D-0.23.0-JIG-2 | u_tgt = sm_ref 병진에서 지그 노드 최소제곱 **미소** 강체(`kabsch.remove_linear_rigid`) 제거. tie_rel 진단·경고만, 강제 변위는 후속 | u_ref 는 선형 해(강체 = K 영공간의 미소 회전) |
-| D-0.23.0-JIG-3 | 가압 후보 = 대상 파트 밖 deck 표면(쉘 + 솔리드 외곽 면, 변형 전) 까지 거리 ≤ gap 인 비지그 노드, 상대 파트별 연결 성분, 면적 상위 max_regions. 부족·deck 없음 = PCA 격자 패치(Q-JIG-2). 거리 = cKDTree 청크(메모리 O(T + chunk·knn)) | h3d 에 다른 부품 없음(사용자 확정 3), T01 분포 없음 |
+| D-0.23.0-JIG-3 | 가압 후보 = 대상 파트 밖 deck 표면(쉘 + 솔리드 외곽 면, 변형 전) 까지 거리 ≤ gap 인 비지그 노드, 상대 파트별 연결 성분, 면적 상위 max_regions. 부족·deck 없음 = **접촉 영역 유지 + 부족분(min_regions − n_c)만 PCA 격자 패치로 보충**(패치 후보 = 접촉 영역·지그 노드 제외, 접촉 0 = 전부 패치 — Q-JIG-2 확정). 영역마다 kind 기록. 거리 = cKDTree 청크(메모리 O(T + chunk·knn)) | h3d 에 다른 부품 없음(사용자 확정 3), T01 분포 없음 |
 | D-0.23.0-JIG-4 | 기저 = 영역마다 법선 1 + 접선 2 단위 합력(면적 가중 분산 = RBE3 등가) + 체적력 3(면적×두께). 접촉 법선은 상대 부품 → 대상 방향 | 접촉은 밀기만, 몇 곳 하중 = 상쇄 없음 |
 | D-0.23.0-JIG-5 | 보정 = 면적 가중 최소제곱, 접촉 법선 ≥ 0, ridge λ, 정규방정식 + BVLS(결정적) | nb ≤ 3·max_regions + 3 작음, 메모리 = U 1벌 |
 | D-0.23.0-JIG-6 | 기준 재현 진단 MAC·umax 오차·P95·잔차비·영역 합력·활성 수·상쇄비·반력 평형을 플랫폼이 보고. 임계 미달 = `JIG_FIT_POOR` 경고(순위 계속) | 사용자 확정 2 |
@@ -141,6 +147,8 @@ DOE_RUN
 | D-0.23.0-JIG-10 | 계획 표 열 3개 `sm_jig`·`jig_fix`·`jig_ctx`(§5.2), `PLAN_VERSION` 불변. 시나리오 이름 분기 없음 | 결정 A·AGENTS.md |
 | D-0.23.0-JIG-11 | 이어하기: 스냅샷에 `rank.jig` 가 있을 때만 `_cfg_hash` keep 에 `jig = config_hash(jig_hash_view(jig))`(임계값 `mac_min`·`umax_err_max`·`tie_rel_warn` 제외). legacy 해시 불변 | LT-12·SM-6 선례 |
 | D-0.23.0-JIG-12 | 결과: per_esl `C_jig`·`umax_jig`, 행 `score_jig`·`umax_jig`·`C_jig{}`, result.json 최상위 `jig{…}`, ranking.csv 끝 열 `C_jig, umax_jig, jig_fit_mac, jig_umax_err`(새 스냅샷만 — 기존 열 순서 불변). 화면 = 정의 문구 + 기준 재현 한 줄 | 사용자 지시 10·필수 정보만 |
+| D-0.23.0-JIG-13 | (Q-JIG-1 확정 2026-11-17) 새 스냅샷은 metric 과 무관하게 항상 지그 재풀이(안마다 분해 +1) | metric 만 BD_POST 에서 바꿔 같은 실행으로 비교(SM-6 원칙) |
+| D-0.23.0-JIG-14 | (Q-JIG-2 확정 2026-11-17) 접촉 영역 유지 + 부족분(min_regions − n_c)만 PCA 격자 패치 보충, 패치 후보 = 비지그 ∖ 접촉 영역 노드, 영역 kind contact\|patch·묶음 regions_from contact\|mixed\|patch 기록, 접촉 0 = 전부 패치, 보충 시 `JIG_REGION_FALLBACK`. 규칙 = `jig.select_regions` 한 곳 | 물리 접촉 영역 보존(사용자 확정) |
 
 ## 4. API · 스키마 · 고정 필드명
 
@@ -151,7 +159,7 @@ DOE_RUN
 | 스키마 | 필드 |
 |---|---|
 | `DoeResultOut` (변경) | `metric: Literal["lin","solve","jig"] \| None`, `metric_effective: Literal["lin","solve","jig"] \| None`, **`jig: DoeJigOut \| None = None`**(옛 스터디·지그 블록 없는 스냅샷 = null) |
-| `DoeJigOut` (신규) | `status: Literal["ok","poor","fallback","unsupported"]`, `code: str \| None`(fallback·unsupported 사유 코드 1개, ok·poor = null), `region_source: Literal["contact","patch"] \| None`, `n_jig: int`, `n_regions: int`, `fit_mac_min: float \| None`(엔트리 최솟값), `fit_umax_err_max: float \| None`(엔트리 최댓값), `tie_rel_max: float \| None`, `th: DoeJigThOut`, `entries: list[DoeJigEntryOut]` |
+| `DoeJigOut` (신규) | `status: Literal["ok","poor","fallback","unsupported"]`, `code: str \| None`(fallback·unsupported 사유 코드 1개, ok·poor = null), `region_source: Literal["contact","mixed","patch"] \| None`(= jig.json `regions_from`), `n_jig: int`, `n_regions: int`, `n_contact: int`, `n_patch: int`, `fit_mac_min: float \| None`(엔트리 최솟값), `fit_umax_err_max: float \| None`(엔트리 최댓값), `tie_rel_max: float \| None`, `th: DoeJigThOut`, `entries: list[DoeJigEntryOut]` |
 | `DoeJigThOut` (신규) | `mac_min: float`, `umax_err_max: float`, `tie_rel_warn: float`(스냅샷 값) |
 | `DoeJigEntryOut` (신규) | `entry_id: str`, `label: str`, `mac: float`, `umax_err: float`, `err_p95: float`, `n_active: int`, `F_sum_abs: float`(N), `cancel_rel: float` |
 | ranking 행 dict(통과, `DoeRankRow` 문서화) | `score_jig?: number \| null`, `umax_jig?: number \| null`(비), `C_jig?: Record<entry_id, number> \| null`(N·mm) — 지그 값이 있을 때만 |
@@ -175,7 +183,7 @@ DOE_RUN
 | `JIG_SKIPPED` | 경고 | baseline·design | 지그 계산 예외(`stage`, `err` 코드) — 베이스라인이면 fallback solve |
 | `JIG_SURF_UNAVAILABLE` | 경고 | baseline | `jig_ctx` 가 deck 인데 읽기 실패(파일 없음·`RAD_PARSE_ERROR`·`PATH_OUTSIDE_ROOT`) → 패치 |
 | `JIG_SURF_TOO_LARGE` | 경고 | baseline | 상자 안 표면 삼각형 > `jig.max_surf_tris` → 패치 |
-| `JIG_REGION_FALLBACK` | 경고 | baseline | 패치 영역 사용(`reason` = few_contact \| no_deck \| surf_failed, `n_contact`) |
+| `JIG_REGION_FALLBACK` | 경고 | baseline | 접촉 영역 < min_regions 라 패치로 보충함(혼합 또는 전부 패치 — `reason` = few_contact \| no_deck \| surf_failed, `n_contact`, `n_patch`). 보충 없으면 없음 |
 | `JIG_FIX_UNFILTERED` | 정보 | baseline | `jig_fix = xfer`(종류 필터 없음) |
 | `JIG_NORMAL_FREE` | 정보 | baseline | 접촉 영역 법선 부호 모호(간격 0) → 부호 자유 영역 수 |
 | `JIG_BASIS_NULL` | 정보 | baseline | 응답 0 기저 열(a = 0 고정) 수 |
@@ -196,8 +204,9 @@ DOE_RUN
 | `node_weights` | `node_weights(mesh) -> {"area": (N,) float64 mm², "normal": (N,3) 단위(부호 = 이웃 요소 법선 면적 가중 합), "thick": (N,) mm, "elem_area": (E,), "elem_normal": (E,3)}` — 고립 노드 area 0·normal 0 |
 | `select_jig_nodes` | `select_jig_nodes(mesh, node_id, *, kind_mask=None, kind_bits=0) -> {"idx": (J,) int64 정렬, "node_id": (J,), "n_comp": int, "code": None \| "JIG_NO_TIE" \| "JIG_SUPPORT_DEGENERATE", "detail": dict}` — `kind_mask is None` = 필터 없음(xfer), 아니면 `kind_mask & kind_bits ≠ 0`. 메시에 없는 ID 는 버림(`detail.n_missing`) |
 | `target_disp` | `target_disp(x, u3, jig_idx, fit_mask) -> {"u_tgt": (N,3), "a": (3,), "omega": (3,), "xbar": (3,), "umax_tgt": float, "tie_rel": float}` — §1(2). `fit_mask (N,) bool` = F |
-| `contact_regions` | `contact_regions(mesh, cand_mask, surf, *, gap_mm, knn, chunk_nodes, max_regions, min_regions, min_nodes, min_area_mm2, weights) -> {"regions": [Region], "n_contact_nodes": int, "n_found": int, "ok": bool}` — `surf = {"x": (P,3), "tri": (T,3) int64, "tri_part": (T,) int64}`, `ok = len(regions) ≥ min_regions`. `Region = {"kind": 1, "part": int, "nodes": (m,) int64 정렬, "area": float, "center": (3,), "sign_ref": (3,) = Σ A(x − q)}` |
-| `patch_regions` | `patch_regions(mesh, cand_mask, *, patch_count, max_regions, min_nodes, weights) -> {"regions": [Region(kind 2, part −1, sign_ref 0)]}` |
+| `contact_regions` | `contact_regions(mesh, cand_mask, surf, *, gap_mm, knn, chunk_nodes, max_regions, min_regions, min_nodes, min_area_mm2, weights) -> {"regions": [Region], "n_contact_nodes": int, "n_found": int, "ok": bool}` — 접촉 영역만(보충 없음, 순서 = 정렬 키 상위 max_regions). `surf = {"x": (P,3), "tri": (T,3) int64, "tri_part": (T,) int64}`, `ok = len(regions) ≥ min_regions`(정보용 — 보충 판단은 `select_regions`). `Region = {"kind": 1, "part": int, "nodes": (m,) int64 정렬, "area": float, "center": (3,), "sign_ref": (3,) = Σ A(x − q)}` |
+| `patch_regions` | `patch_regions(mesh, cand_mask, *, exclude_mask, n_fill, patch_count, min_nodes, weights) -> {"regions": [Region(kind 2, part −1, sign_ref 0)], "n_cells": int}` — 후보 = `cand_mask & ~exclude_mask`(exclude = 접촉 영역 노드 ∪ J), 격자 P = `patch_count`, 상위 `n_fill` 개(§1(3)). `n_fill = 0` → 빈 목록 |
+| `select_regions` | `select_regions(mesh, cand_mask, jig_idx, surf, *, gap_mm, knn, chunk_nodes, max_regions, min_regions, min_nodes, min_area_mm2, patch_count, weights, surf_reason=None) -> {"regions": [Region], "regions_from": "contact"\|"mixed"\|"patch", "n_contact": int, "n_patch": int, "fill_reason": None\|"few_contact"\|"no_deck"\|"surf_failed", "n_contact_nodes": int}` — **보충 규칙의 유일한 구현**: `surf is None`(no_deck·surf_failed = `surf_reason`) → n_c = 0, 아니면 `contact_regions`; n_fill = 0 (n_c ≥ min_regions) \| min_regions − n_c (1 ≤ n_c) \| min(patch_count, max_regions) (n_c = 0); `patch_regions(exclude_mask = 접촉 노드 ∪ J)`; 결과 = 접촉 + 패치(합계 ≤ max_regions). stages 는 이 함수만 부름 |
 | `load_basis` | `load_basis(mesh, regions, weights, omega_mask, *, body_force: bool) -> Basis` — `Basis = {"reg_ptr": (R+1,) int64, "reg_node": (Σm,) int64, "reg_w": (Σm,) float64(영역마다 합 1), "reg_dir": (R,3,3)(행 = n, t1, t2), "reg_sign": (R,) int8(+1 = 법선 ≥ 0 제약, 0 = 자유), "reg_kind": (R,) int8, "reg_part": (R,) int64, "body_w": (N,) float64(합 1, Ω 밖 0) \| None, "nb": int, "n_normal_free": int}` |
 | `forces` | `forces(basis, a, n_nodes) -> (N,3) float64` — a (nb,), §1(4) 선형 조합(희소 합, 결정적 순서) |
 | `factor` | `factor(mesh, jig_idx, solver_cfg) -> FactorizedSolve` — `ShellModel(…, drill_factor, backend, **solver_check_kwargs(solver_cfg)).factorize([(i,"123") for i in jig_idx])`. `SOLVER_SINGULAR` → `EslError("JIG_SUPPORT_DEGENERATE")` |
@@ -254,7 +263,7 @@ DOE_RUN
 ```text
 { schema: "esl/doe_jig/1", status: "ok"|"fallback", code: null|<코드>, detail?,
   fix: {source: "fixed"|"xfer", kinds: [..]|null, n_jig, n_comp, n_missing},
-  regions_from: "contact"|"patch", fallback_reason?: "few_contact"|"no_deck"|"surf_failed",
+  regions_from: "contact"|"mixed"|"patch", n_contact, n_patch, fill_reason?: "few_contact"|"no_deck"|"surf_failed",
   surf: {source: "case"|"mesh", n_tris, n_parts, n_shell, n_solid_faces, n_contact_nodes, n_found, seconds} | null,
   regions: [{id, kind: "contact"|"patch", part|null, n_nodes, area_mm2, center[3], normal[3], sign: 1|0}],
   nb, body_force: bool, ridge,
@@ -300,7 +309,7 @@ DOE_RUN
 
 - 판정: `jigOn = (result.rank?.metric_effective ?? result.metric_effective) === "jig"`.
 - **jigOn**: 주 열 이름 "지그 C", 정렬 표시 "score(지그 C)", 주 열 title "max_i C_jig / C_ref — 체결부(tie) 고정 + 맞춤 가압 하중으로 안마다 재풀이(하중 제어), 작을수록 좋음". 정의 `<li>` 1개: "score: max(C_jig 안) / max(C_jig 기준) — 기준 낙하 변형을 재현하도록 맞춘 몇 곳의 가압 하중(영역 n개, 접촉|패치)을 같은 지그·같은 하중으로 안마다 재풀이한 컴플라이언스. 작을수록 좋음". 보조 토글 열 = 기존 "재풀이 C 비"(`score_solve`)·불평형(기존 컴포넌트 그대로) + umax(지그) 비(`umax_jig`).
-- **기준 재현 한 줄**(jig 블록이 있으면 항상, 순위 표 바로 위 기존 안내 줄과 같은 `muted` 줄 — 새 줄 1개만): `기준 재현(지그): MAC ≥ {fit_mac_min} · umax 오차 ≤ {fit_umax_err_max %} · 하중 영역 {n_regions}개({접촉|패치}) · 지그 노드 {n_jig}` + status `poor` 이면 경고색 + `JIG_FIT_POOR` 문구 title, `fallback`·`unsupported` 이면 "지그 순위 불가 — {JIG_CODE_TEXT[code]}, 재풀이 C 로 순위". 엔트리별 값은 title 툴팁(줄 늘리지 않음).
+- **기준 재현 한 줄**(jig 블록이 있으면 항상, 순위 표 바로 위 기존 안내 줄과 같은 `muted` 줄 — 새 줄 1개만): `기준 재현(지그): MAC ≥ {fit_mac_min} · umax 오차 ≤ {fit_umax_err_max %} · 하중 영역 {n_regions}개(접촉 {n_contact} · 패치 {n_patch}) · 지그 노드 {n_jig}` + status `poor` 이면 경고색 + `JIG_FIT_POOR` 문구 title, `fallback`·`unsupported` 이면 "지그 순위 불가 — {JIG_CODE_TEXT[code]}, 재풀이 C 로 순위". 엔트리별 값은 title 툴팁(줄 늘리지 않음).
 - metric_effective ≠ jig 이고 행에 `score_jig` 가 있으면 보조 토글에 "지그 C 비" 열 1개.
 - legacy·지그 블록 없는 결과 = 지금 화면 그대로(바이트 단위 DOM 스냅샷 동일).
 - `api/doe.ts`: `JIG_CODE_TEXT`(§4 표 코드 문구), `isJigResult(r)`. `api/types.ts`: §4 고정 필드.
@@ -316,7 +325,8 @@ DOE_RUN
 | V-JIG-2 | **하중 위치·크기 복원**: V-JIG-1 의 a_true(일부 영역 0) → 복원 a 상대오차 ≤ 1e-6, 0 영역 = 비활성(active false), 법선 ≥ 0 제약에서 a_true 법선 음수 영역을 넣으면 해당 성분 = 0(경계 활성)·MAC < 1 | 같은 파일 |
 | V-JIG-3 | **물리 방향**: 리브 비드 α ∈ {0, 0.5, 1}(깊이 증가) → C_jig·umax_jig 단조 감소(score_jig(α=1) < score_jig(0.5) < 1), 같은 F·같은 J | 같은 파일 |
 | V-JIG-4 | **상쇄·무른 모드 무관**: V-SM-11 꼴(긴 얇은 판, F = K₀u_drop) + 국부 비드 α 0.1/0.5/1 → 재풀이 C(3-2-1) umax ×≥ 10·imbalance ≥ 5 %(재현) ↔ 지그: react_rel ≤ 1e-9, F_sum_abs / Σ‖F_ESL‖ ≤ 0.1, cancel_rel ≤ 0.5, umax_jig 비 ≤ 3, |score_jig − 1| ≤ 재풀이 C 변화의 1/5 | 같은 파일 |
-| V-JIG-5 | **패치 fallback**: surf None·접촉 0·1개 → `ok False`, patch_regions 수 = min(patch_count, 비어 있지 않은 셀), 두 번 실행 비트 동일, 부호 자유 | 같은 파일 |
+| V-JIG-5 | **패치 전부(접촉 0)**: surf None(no_deck)·접촉 0 → `regions_from patch`·`fill_reason`·패치 수 = min(patch_count, max_regions, 비어 있지 않은 셀), 지그 노드가 어느 패치에도 없음, 두 번 실행 비트 동일, 부호 자유, `JIG_REGION_FALLBACK` | 같은 파일 |
+| V-JIG-16 | **혼합 보충**: 인접 부품 1개(접촉 영역 1) + min_regions 3 → `regions_from mixed`·n_contact 1·n_patch 2, 접촉 영역 노드·kind contact·part 가 접촉만일 때와 비트 동일, 패치 노드 ∩ (접촉 노드 ∪ J) = ∅, 영역 순서 접촉 → 패치, reg_kind·jig.json `regions[].kind` 기록, `JIG_REGION_FALLBACK{few_contact, n_contact 1, n_patch 2}`; 접촉 ≥ min_regions → 보충 없음·경고 없음; 후보 소진(C_p 비어 있음) → n_patch < n_fill 로 진행; 보충 영역 포함 V-JIG-1 식 정확 재현(MAC ≥ 1 − 1e-10) | 같은 파일 |
 | V-JIG-6 | **지그 없음·퇴화**: RBE2 만 → `JIG_NO_TIE`; 공선 tie 3점·성분 하나에 지그 없음 → `JIG_SUPPORT_DEGENERATE`(분해 전 판정). 통합: metric jig 스터디가 fallback → `metric_effective` solve, `jig.status` fallback·code, ranking 순위·score 열이 metric solve 스터디와 같음 | `test_jig.py` + `tests/doe/test_jig_stages.py` |
 | V-JIG-7 | **regress 바이트 동일**: (a) 스냅샷 `rank` 없음 (b) `rank` 있음·`jig` 없음(v0.20~0.22 스냅샷) → result.json·ranking.csv·report.html·done.json 해시가 main 685df7d 와 같음(기존 regress 골든). (c) `rank` 에 metric 키 없음 → solve | `tests/doe/test_jig_stages.py` + 기존 regress |
 | V-JIG-8 | **대규모 거리 메모리**: 후보 노드 25만 × 삼각형 200만(평행 격자) → 결과 = 전수 brute(표본 2 000 노드) 와 일치, tracemalloc 추가 피크 ≤ 400 MB, 노드 2배 → 피크 증가 ≤ 10 %, ≤ 60 s(`@pytest.mark.slow`) | `tests/doe/test_jig.py` |
@@ -353,10 +363,10 @@ DOE_RUN
 - **migration 불필요**: DB 열·테이블 변경 없음(스냅샷 JSONB `doe.rank.jig`, result JSONB, 작업 폴더 파일).
 - decisions.md: D-0.23.0-JIG-1~12(§3) + Q-JIG 확정 결과.
 
-## 12. 결정 질문 (2개 — 기본안으로 진행 가능)
+## 12. 결정 질문 — **확정** (2026-11-17 사용자)
 
-1. **Q-JIG-1 지그 계산 시점** — 기본안: **새 스냅샷은 metric 과 무관하게 항상 지그 재풀이**(안마다 분해 +1, 실행 시간 ≈ ×1.6~2; metric 을 BD_POST 에서만 바꿔 solve·lin·jig 를 같은 실행으로 비교 가능, SM-6 과 같은 원칙). 대안: metric = jig 일 때만(시간 그대로, 다른 지표로 바꾸면 재실행 필요).
-2. **Q-JIG-2 접촉 영역 부족 시 대체** — 기본안: **패치만**(접촉 영역 버리고 PCA 격자 patch_count 개, 경고 `JIG_REGION_FALLBACK`) — 단순·결정적, fallback 이 화면에 분명히 보임. 대안: 찾은 접촉 영역은 유지하고 나머지 후보 노드를 패치로 보충해 min_regions 까지(물리 영역 보존, 규칙 복잡).
+1. **Q-JIG-1 지그 계산 시점** — **확정: 기본안**(D-0.23.0-JIG-13). 새 스냅샷은 metric 과 무관하게 항상 지그 재풀이(안마다 분해 +1, 실행 시간 ≈ ×1.6~2; metric 을 BD_POST 에서만 바꿔 solve·lin·jig 를 같은 실행으로 비교, SM-6 과 같은 원칙). 채택 안 함: metric = jig 일 때만.
+2. **Q-JIG-2 접촉 영역 부족 시 대체** — **확정: 대안**(D-0.23.0-JIG-14). 찾은 접촉 영역은 유지하고 부족분(min_regions − n_c)만 공간 패치로 보충, 패치는 접촉 영역 노드·지그 노드를 뺀 나머지 비지그 노드에서(§1(3)), 영역 출처 kind = contact | patch 를 jig.npz·jig.json·진단에 기록, 접촉 0 = 전부 패치(옛 fallback 과 같음), 보충 발생 시 경고 `JIG_REGION_FALLBACK`. 구현 = `jig.select_regions` 한 곳. 채택 안 함: 패치만(접촉 영역 버림).
 
 ## 13. 파일 소유권 (겹침 0)
 
@@ -364,7 +374,7 @@ DOE_RUN
 
 | 갈래 | 파일(소유) | 시험 |
 |---|---|---|
-| **Impl-Core** | `esl/doe/jig.py`(신규), `tests/doe/synth_jig.py`(신규), `tests/doe/test_jig.py`(신규) | V-JIG-1~5, 6(모듈 부분), 8, 15 |
+| **Impl-Core** | `esl/doe/jig.py`(신규), `tests/doe/synth_jig.py`(신규), `tests/doe/test_jig.py`(신규) | V-JIG-1~5, 6(모듈 부분), 8, 15, 16 |
 | **Impl-Backend** | `esl/rad/parser.py`(`elem_segs`·`load_nodes_box` 가산만), `esl/doe/jig_surf.py`(신규), `esl/doe/transfer_plan.py`(열 3·`JIG_VALUES`·`metric_effective` 키워드), `esl/doe/stiffness_metric.py`(`METRICS`·`metric_key` jig 만), `esl/doe/rank.py`(jig 보조 열·`n_failed["jig"]`), `esl/doe/stages.py`(§5.3), `esl/doe/report_doe.py`(1줄), `esl/doe/__init__.py`(`DEFAULTS["rank"]`), `resources/doe_messages.json`(JIG_ 코드), `B/core/config.py`(`BeadDoeRankCfg`·`BeadDoeRankJigCfg`), `B/api/services/doe.py`(`rank_snapshot`·결과 통과 `jig`), `B/api/schemas.py`(§4), `config/esl_platform.example.yaml`·`config/esl_platform.prod.example.yaml`, `docs/contracts/openapi_p1b.json`(재생성), `tests/doe/test_jig_surf.py`(신규), `tests/doe/test_jig_stages.py`(신규), `tests/doe/test_transfer_plan.py`·`tests/doe/test_rank_metric.py`(추가), `backend/tests/test_doe_config.py`·`backend/tests/test_doe_rank_metric_api.py`(추가) | V-JIG-6(통합)·7·10~14 |
 | **Impl-Frontend** | `F/api/types.ts`(§4), `F/api/doe.ts`(`JIG_CODE_TEXT`·`isJigResult`), `F/components/DoeRanking.tsx`(§7), `F/mock/doedata.ts`, `F/__tests__/doe_jig.test.tsx`(신규) | V-JIG-9 |
 | **통합(메인)** | `VERSION`(0.23.0), `CHANGELOG.md`, `docs/decisions.md`(D-0.23.0-JIG-n), 이 계약 문서 | – |
