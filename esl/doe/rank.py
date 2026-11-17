@@ -66,6 +66,27 @@ def _sm_aux(r: dict, a: dict, C_ref_solve: float) -> dict:
             "rho_max": max(rho) if rho else None, "umax_def": a.get("umax_def")}
 
 
+def _jig_ref(b: dict) -> dict | None:
+    """베이스라인 지그 기준(모든 ESL 의 C_jig 가 양수일 때만): {C, umax}. 지그 값 없음 = None(옛 스냅샷·fallback)."""
+    per = b.get("per_esl") or []
+    if not per or any(p.get("C_jig") is None for p in per):
+        return None
+    c = max(float(p["C_jig"]) for p in per)
+    um = [p.get("umax_jig") for p in per]
+    umax = max(float(v) for v in um) if all(v is not None for v in um) else None
+    return {"C": c, "umax": umax} if c > 0 else None
+
+
+def _jig_aux(r: dict, ref: dict) -> dict:
+    """행 보조 열: score_jig(= max_i C_jig / 기준)·umax_jig(비)·C_jig{entry: N·mm}. 안에 지그 값이 없으면 null."""
+    per = r.get("per_esl") or []
+    ok = bool(per) and all(p.get("C_jig") is not None for p in per)
+    um = ok and ref["umax"] and all(p.get("umax_jig") is not None for p in per)
+    return {"score_jig": max(float(p["C_jig"]) for p in per) / ref["C"] if ok else None,
+            "umax_jig": max(float(p["umax_jig"]) for p in per) / ref["umax"] if um else None,
+            "C_jig": {p["entry_id"]: float(p["C_jig"]) for p in per} if ok else None}
+
+
 def ratio_tol(noise_floor: float | None, base_tol: float = 1e-6) -> float:
     """'변화 없음' 허용치: 설정 rank.ratio_tol, ③(잡음 바닥 있음)은 둘 중 큰 값."""
     t = float(base_tol)
@@ -129,8 +150,9 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
         raise EslError("INPUT_INVALID", "rank.metric lin 인데 결과에 강성 지표(C_lin)가 없음 — 옛 스냅샷은 solve")
     if key != "C":
         if any(p.get(key) is None for p in b.get("per_esl") or []):
-            raise EslError("BASELINE_FAILED", "베이스라인 강성 지표가 없음(SM_SKIPPED)")
-        fail_key["__sm__"] = "sm"
+            raise EslError("BASELINE_FAILED", "베이스라인 강성 지표가 없음(SM_SKIPPED)" if key != "C_jig"
+                           else "베이스라인 지그 지표가 없음(JIG_SKIPPED)")
+        fail_key["__sm__" if key != "C_jig" else "__jig__"] = "sm" if key != "C_jig" else "jig"
     ba = _agg(b, key)
     C_ref = ba["C"]
     if not C_ref > 0:
@@ -138,11 +160,12 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     C_ref_solve = _agg(b)["C"] if new else None
     if new and not C_ref_solve > 0:
         raise EslError("BASELINE_FAILED", f"베이스라인 최악 컴플라이언스(solve)가 양수가 아님 ({C_ref_solve})")
+    jig_ref = _jig_ref(b)
     rows, n_sk, n_fl, n_other = [], {v: 0 for v in _SKIP_KEY.values()}, {v: 0 for v in fail_key.values()}, 0
     tl = ratio_tol(noise_floor, tol)
     base_C = {p["entry_id"]: float(p[key]) for p in b.get("per_esl") or []}
     base_S = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
-    fb_on = key != "C" and lin_valid is not None
+    fb_on = key not in ("C", "C_jig") and lin_valid is not None
     lin_key = sm.metric_key("lin", lin_form)
     lin_ref = (_agg(b, lin_key)["C"] if new and all(p.get(lin_key) is not None for p in b.get("per_esl") or [])
                else None)
@@ -164,7 +187,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
             n_other += 1
             continue
         if key != "C" and any(p.get(key) is None for p in r.get("per_esl") or []):
-            n_fl["sm"] += 1                     # 강성 지표 진단 실패(SM_SKIPPED) — lin 순위 밖
+            n_fl["jig" if key == "C_jig" else "sm"] += 1   # 강성 지표(SM_SKIPPED)·지그(JIG_DESIGN_FAILED) 실패 — 순위 밖
             continue
         fb = fb_on and sm.out_of_range(r.get("per_esl") or [], lin_valid)
         k_r, ref_r, base_r = ("C", C_ref_solve, base_S) if fb else (key, C_ref, base_C)
@@ -195,6 +218,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                                 if all(p.get(lin_key) is not None for p in r.get("per_esl") or []) else None)
         if new:
             row.update(_sm_aux(r, a, C_ref_solve), C_solve={p["entry_id"]: float(p["C"]) for p in r.get("per_esl") or []})
+        if jig_ref is not None:                 # 지그 보조 열(metric 과 무관 — 베이스라인에 지그 값이 있을 때만, v0.23.0)
+            row.update(_jig_aux(r, jig_ref))
         rows.append(row)
     full = {x["id"]: [p["ratio"] for p in x["per_esl"]] for x in rows if len(x["per_esl"]) == len(order)}
     pf = pareto_flags(full, [1.0] * len(order))
@@ -211,6 +236,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
            "noise_floor": noise_floor, "ratio_tol": tl, "esl_order": order, "warnings": warns}
     if new:
         out["baseline"].update(_sm_aux(b, ba, C_ref_solve))
+        if jig_ref is not None:
+            out["baseline"].update(_jig_aux(b, jig_ref))
         out.update(metric=metric, lin_form=lin_form, C_ref_solve=C_ref_solve)
     if fb_on:
         out["n_fallback"] = sum(1 for x in rows if x.get("basis") == "solve")

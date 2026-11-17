@@ -311,6 +311,7 @@ def shape_snapshot(c: dict[str, Any]) -> dict[str, Any] | None:
 
 
 LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
+RANK_SCHEMA_JIG = 2
 RANK_SCHEMA = 1     # 작업 spec params.doe.rank.schema(esl_stiffness_metric.md §6)
 
 
@@ -318,8 +319,13 @@ def rank_snapshot(c: dict[str, Any]) -> dict[str, Any]:
     """v0.20.0 SM-2: 새 스터디의 순위 지표 설정 고정 {metric, lin_form, lin_valid, imbalance_warn, schema}(요청 키 없음 — 설정만).
     옛 스터디 = 이 키 없음 = solve. rank.metric 은 이어하기 해시 밖(코어)이라 값은 스냅샷에만 남김."""
     r = c["rank"]
-    return {"metric": r["metric"], "lin_form": r["lin_form"], "lin_valid": float(r["lin_valid"]),
-            "imbalance_warn": float(r["imbalance_warn"]), "schema": RANK_SCHEMA}
+    out = {"metric": r["metric"], "lin_form": r["lin_form"], "lin_valid": float(r["lin_valid"]),
+           "imbalance_warn": float(r["imbalance_warn"]), "schema": RANK_SCHEMA}
+    jig = r.get("jig")
+    if isinstance(jig, dict) and jig.get("enabled"):      # v0.23.0 JIG-11: 지그 설정 전체 고정 + schema 2(꺼짐 = 키 없음·schema 1)
+        out["jig"] = copy.deepcopy(jig)
+        out["schema"] = RANK_SCHEMA_JIG
+    return out
 
 
 def _lt_invalid(msg: str, **extra: Any):
@@ -1847,6 +1853,8 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
                 out["rank"]["n_fallback"] = int(r["n_fallback"])
     if isinstance(r.get("C_ref_solve"), (int, float)) and not isinstance(r.get("C_ref_solve"), bool):
         out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
+    if isinstance(r.get("jig"), dict):                        # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null)
+        out["jig"] = r["jig"]
     for k in ("view3d_ref", "view3d_esl"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}

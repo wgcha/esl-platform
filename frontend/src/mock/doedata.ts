@@ -4,7 +4,7 @@
 import type {
   DoeDefeatureFeature, DoeDefeatureList, DoeRankWarn,
   CompareShapeIn, DoeBead, DoeCheckOut, DoeCheckShape, DoeDesignStatus, DoeExcluded, DoeFileOut, DoeMatrixOut, DoeMethodSources, DoeParam, DoeParamsOut, DoePlanLink, DoePlanOut,
-  DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeShapeRules, DoeSpec, DoeStudyOut, DoeWarning, RedropEntryOut, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
+  DoeJigEntryOut, DoeJigOut, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeRankMetric, DoeLoadTransferResolved, DoeLoadTransferSummary, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoePreviewCell, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeShapeQuality, DoeShapeRef, DoeShapeRules, DoeSpec, DoeStudyOut, DoeWarning, RedropEntryOut, EntryOut, JobOut, JobType, Me, MeshCheckOut, XY,
 } from "../api/types";
 import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
@@ -852,6 +852,62 @@ export function withSolveMetric(res: DoeResultOut): DoeResultOut {
   const st = makeDoeSettings().rank!;
   return { ...r, ranking, metric: "solve", metric_effective: "solve", cross_mesh: false, rank: { ...st, metric: "solve", metric_effective: "solve", cross_mesh: false } };
 }
+/** v0.23.0 지그 순위 결과(esl_jig_rank.md §4·§7): ok·poor = 순위 지표 jig(주 열 = 지그 C, 재풀이 C 비·불평형·umax(지그) 비 보조), fallback = JIG_NO_TIE 로 solve 순위 + 지그 블록(status fallback).
+ *  순위 순서는 지그 score 로 다시 정렬(결정적). 임계값 th 는 계약 예시 설정 값 */
+export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): DoeResultOut {
+  const th = { mac_min: 0.9, umax_err_max: 0.2, tie_rel_warn: 0.1, cancel_warn: 0.5, work_eff_min: 0.05, tie_spread_min: 0.02 };
+  const st = makeDoeSettings().rank!;
+  if (kind === "fallback") {
+    const r = withSolveMetric(res);
+    const jig: DoeJigOut = { status: "fallback", code: "JIG_NO_TIE", region_source: null, n_jig: 0, n_regions: 0, n_contact: 0, n_patch: 0, fit_mac_min: null, fit_umax_err_max: null, fit_mac_min_nomodes: null, fit_umax_err_max_nomodes: null, cancel_rel_max: null, fit_work_eff_min: null, tie_rel_max: null, tie_spread: null, n_modes: 0, hz_jig: [], hz_321: null, hz_ratio: null, th, entries: [] };
+    return { ...r, metric: "jig", rank: { ...(r.rank ?? st), metric: "jig", metric_effective: "solve" }, jig, warnings: [...r.warnings, { code: "JIG_NO_TIE", message: "체결부(tie) 노드가 없어 지그를 만들 수 없습니다 — 재풀이 C 로 순위를 매겼습니다" }] };
+  }
+  const ranking = res.ranking
+    .map((r, i) => {
+      const score = +(1 - (1 - r.score) * 0.7).toFixed(4);
+      return {
+        ...r,
+        score,
+        improvement: +(1 - score).toFixed(4),
+        score_solve: r.score,
+        score_jig: score,
+        umax_jig: +(1 - (1 - r.score) * 0.5).toFixed(3),
+        imbalance_max: [0.011, 0.043, 0.18, 0.27][i % 4],
+        C_jig: Object.fromEntries((r.per_esl ?? []).map((p) => [p.entry_id, +(p.C * 0.9).toFixed(1)])),
+        per_esl: r.per_esl?.map((p) => ({ ...p, C: +(p.C * 0.9).toFixed(1), C_solve: p.C })),
+      };
+    })
+    .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+  const ids = res.baseline && ranking[0]?.per_esl ? ranking[0].per_esl.map((p) => ({ entry_id: p.entry_id, label: p.label ?? p.entry_id })) : (res.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
+  const poor = kind === "poor";
+  const entries: DoeJigEntryOut[] = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, mac: poor && k === 0 ? 0.81 : 0.962 - 0.01 * k, mac_nomodes: poor && k === 0 ? 0.62 : 0.84 - 0.01 * k, umax_err_nomodes: 0.19 + 0.01 * k, rot_deg: 1.8 + 0.4 * k, umax_err: poor && k === 0 ? 0.31 : 0.041 + 0.01 * k, err_p95: 0.083 + 0.02 * k, n_active: 3 - (k % 2), F_sum_abs: 412.5 + 60 * k, cancel_rel: 0.12 + 0.05 * k, work_eff: poor && k === 0 ? 0.03 : 0.93 - 0.02 * k }));
+  const jig: DoeJigOut = {
+    status: poor ? "poor" : "ok",
+    code: null,
+    region_source: poor ? "patch" : "mixed",
+    n_jig: 14,
+    n_regions: 3,
+    n_contact: poor ? 0 : 2,
+    n_patch: poor ? 3 : 1,
+    fit_mac_min: Math.min(...entries.map((e) => e.mac)),
+    fit_umax_err_max: Math.max(...entries.map((e) => e.umax_err)),
+    fit_mac_min_nomodes: Math.min(...entries.map((e) => e.mac_nomodes ?? 1)),
+    fit_umax_err_max_nomodes: Math.max(...entries.map((e) => e.umax_err_nomodes ?? 0)),
+    fit_work_eff_min: Math.min(...entries.map((e) => e.work_eff)),
+    cancel_rel_max: poor ? 0.64 : Math.max(...entries.map((e) => e.cancel_rel)),
+    tie_rel_max: 0.03,
+    tie_spread: poor ? 0.012 : 0.21,
+    n_modes: 4,
+    hz_jig: [11.8, 19.4, 27.1, 35.6],
+    hz_321: [0.75, 6.2, 9.9, 14.0],
+    hz_ratio: +(11.8 / 0.75).toFixed(2),
+    th,
+    entries,
+  };
+  const warnings = poor ? [...res.warnings, { code: "JIG_FIT_POOR", message: `기준 재현이 임계값에 못 미칩니다 — ${entries[0]?.label}: MAC 0.810 · umax 오차 31.0 %` }] : res.warnings;
+  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "jig", metric_effective: "jig", rank: { ...st, metric: "jig", metric_effective: "jig", cross_mesh: false }, jig, warnings };
+}
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
  *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
 export function withCrossMesh(res: DoeResultOut): DoeResultOut {
@@ -1444,6 +1500,19 @@ export class DoeMock {
     const tmpl = this.recs.find((r) => r.out.id === "doe-2")!;
     const r17: Rec = { ...tmpl, out: { ...tmpl.out, id: "doe-17", scenario: "step", title: "QN80J Ch/R 비드 — STEP만(이전 방식)", created_at: "2026-11-10T01:00:00Z", inputs: { ...tmpl.out.inputs, step, mesh: null, props: { t: 1.0, E: 205000, nu: 0.3 }, mesh_size_mm: 3 } }, jobIds: [...tmpl.jobIds] };
     this.recs.push(r17, r15, r16);
+  }
+
+  /** v0.23.0 시연·시험(?demoJig=1): ② B 메시 select — doe-40 지그 ok(접촉 2 + 패치 1) · doe-41 지그 poor(재현 미달) · doe-42 지그 불가(JIG_NO_TIE → 재풀이 C 순위) */
+  demoJig() {
+    if (this.recs.some((r) => r.out.id === "doe-40")) return;
+    const s21 = this.recs.find((r) => r.out.id === "doe-21")!;
+    const mk = (id: string, title: string, at: string, kind: "ok" | "poor" | "fallback"): Rec => ({
+      ...s21,
+      out: { ...s21.out, id, title, created_at: at, inputs: { ...s21.out.inputs, rank_metric: "jig" } },
+      jobIds: [...s21.jobIds],
+      result: withJig(withSolveMetric(withMetric(s21.result!)), kind),
+    });
+    this.recs.push(mk("doe-40", "QN80J Ch/R 비드 — 지그 순위(v0.23)", "2026-11-17T01:00:00Z", "ok"), mk("doe-41", "QN80J Ch/R 비드 — 지그 재현 미달", "2026-11-17T02:00:00Z", "poor"), mk("doe-42", "QN80J Ch/R 비드 — 지그 불가(체결 없음)", "2026-11-17T03:00:00Z", "fallback"));
   }
 
   /** v0.21.0 시연·시험(?demoShape=1): 새 스냅샷(shape_rules) — doe-30 ① 그래프 select(부분 W·guard 꼬리표·미리보기 RG_OUTSIDE_GUARD) · doe-31 ④ 형상 비교(완화 직행 칩·메시 품질 ⚠·품질 통과 최상위) ·

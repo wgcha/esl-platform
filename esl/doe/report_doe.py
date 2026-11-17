@@ -361,7 +361,7 @@ def load_transfer_html(lt: dict | None) -> str:
     return inner
 
 
-SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스"}
+SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스", "jig": "지그 컴플라이언스(체결부 고정 + 맞춤 가압 하중)"}
 SM_FORM_KO = {"ritz": "C_ref / ρ (Ritz)", "taylor": "C_ref (2 − ρ) (Taylor)"}
 SM_CROSS_KO = ("다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 "
                "순위를 매깁니다")
@@ -370,7 +370,23 @@ SM_VERIFY = ("순위는 1차 강성 지표입니다 — 상위 안은 산출물(
              "(ESL 원본 변형을 강제하는 관점이라 하중 재분배·국부 좌굴은 보지 못함).")
 
 
-def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> str:
+def _jig_line(j: dict) -> str:
+    """지그 순위 한 줄(esl_jig_rank.md §5.3): 정의 + 기준 재현 MAC·umax 오차·영역 출처."""
+    if j.get("status") in ("fallback", "unsupported"):
+        return f"지그 순위 불가({j.get('code')}) — 재풀이 C 로 순위"
+    mac, err = j.get("fit_mac_min"), j.get("fit_umax_err_max")
+    mnm = j.get("fit_mac_min_nomodes")
+    nm = f" (모드 제외 {float(mnm):.3f})" if int(j.get("n_modes") or 0) > 0 and mnm is not None else ""
+    return (f"score = max C_jig(안) / max C_jig(기준), 체결부(tie) 고정 + 맞춤 가압 하중을 같은 지그·같은 하중으로 안마다 재풀이 · 기준 재현 "
+            f"MAC(모드 포함) ≥ {'—' if mac is None else format(float(mac), '.3f')}{nm} · umax 오차 ≤ "
+            f"{'—' if err is None else format(float(err) * 100, '.1f') + ' %'} · 영역 {j.get('n_regions')}개"
+            f"(접촉 {j.get('n_contact')} · 패치 {j.get('n_patch')}) · 지그 노드 {j.get('n_jig')}"
+            + (" · 기준 재현 품질 미달(JIG_FIT_POOR)" if j.get("status") == "poor" else "")
+            + (" ⚠ 맞춤 하중 상쇄(JIG_LOAD_CANCEL)" if j.get("fit_work_eff_min") is not None
+               and j.get("th") and float(j["fit_work_eff_min"]) < float(j["th"].get("work_eff_min", 0.0)) else ""))
+
+
+def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20, jig: dict | None = None) -> str:
     """v0.20.0 강성 지표 절(esl_stiffness_metric.md §7·SM-7): 지표 정의·보조 열 표(score_solve·불평형·ρ·umax 강체 제거·εmax)·
     검증 낙하 안내. sm = {metric, lin_form, imbalance_warn} — 없으면 빈 문자열(옛 스냅샷)."""
     if not sm:
@@ -398,6 +414,8 @@ def stiffness_html(sm: dict | None, res: dict, names: dict, top_n: int = 20) -> 
         inner += "<h3>보조 열(재풀이·변위 — 순위와 무관)</h3>" + H.table(
             ["순위", "id", "이름", "score(지표)", "score(재풀이)", "불평형 max", "ρ 범위", "umax 강체 제거", "εmax"], trs,
             num=(0, 3, 4, 7, 8))
+    if jig:                                      # v0.23.0 JIG: 지표 정의 + 기준 재현(MAC·umax 오차·영역 출처) 1줄
+        inner += H.kv_table([("지그 순위", _jig_line(jig))])
     verify = SM_VERIFY_CROSS if sm.get("cross_mesh") else SM_VERIFY
     inner += f"<p class='small muted'>{H.esc(verify)}" + ("" if sm.get("cross_mesh") else
                                                          " 불평형이 큰 행(⚠)은 재풀이 변위가 무른 모드로 부풀 수 있습니다.") + "</p>"
@@ -491,7 +509,7 @@ def render_compare(ctx: dict) -> str:
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
               f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
-    sm_html = stiffness_html(ctx.get("stiffness"), res, names)
+    sm_html = stiffness_html(ctx.get("stiffness"), res, names, jig=ctx.get("jig"))
     if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
         S.append(H.section("stiffness", "강성 지표", sm_html))
     lt_html = load_transfer_html(ctx.get("load_transfer"))
@@ -682,7 +700,7 @@ def render(ctx: dict) -> str:
               f"{H.esc(ns.get('fixed', 0))}·형상 {H.esc(ns.get('geom', 0))} · 실패 모핑 {H.esc(nf.get('morph', 0))}·메시 "
               f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
     S.append(H.section("ranking", "4. 순위", inner))
-    sm_html = stiffness_html(ctx.get("stiffness"), res, {})
+    sm_html = stiffness_html(ctx.get("stiffness"), res, {}, jig=ctx.get("jig"))
     if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
         S.append(H.section("stiffness", "강성 지표", sm_html))
     lt_html = load_transfer_html(ctx.get("load_transfer"))
