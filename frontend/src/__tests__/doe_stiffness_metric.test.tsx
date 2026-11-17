@@ -71,8 +71,8 @@ describe("② 결과 — doe-21(metric lin, 같은 메시)", () => {
   it("주 열 '강성 지표', umax·εmax 열 없음, 보조 열 토글로 5열, 불평형 큰 행 흐림·⚠, 안내 1줄", async () => {
     renderApp("/p/p-body/doe/doe-21");
     const t = await screen.findByRole("table", { name: "순위표" });
-    await waitFor(() => expect(screen.getByTestId("sm-verify-note")).toBeTruthy());
-    expect(screen.getByTestId("sm-verify-note").textContent).toMatch(/Radioss 검증 낙하/);
+    // v0.23.1: 1차 지표 안내 = 검증 낙하 버튼 툴팁(esl_doe_ui_tidy.md §5)
+    await waitFor(() => expect(screen.getByTestId("vd-open").closest(".primary-wrap")!.getAttribute("title")).toMatch(/1차 강성 지표 순위입니다\(재풀이 없음\)[^]*Radioss 검증 낙하/));
     const heads = () => within(t).getAllByRole("columnheader").map((c) => c.textContent);
     expect(heads()).toContain("강성 지표");
     expect(heads()).not.toContain("umax");
@@ -117,8 +117,8 @@ describe("② 결과 — 기본 순위 지표 solve(SM-11, rank.metric_effective
     expect(heads()).toEqual(expect.arrayContaining(["불평형", "ρ"]));
     expect(within(t).getAllByTestId(/^aux-lin-/).length).toBeGreaterThan(0);
     expect(within(t).queryAllByTestId(/^basis-solve-/).length).toBe(0);
-    expect(screen.queryByTestId("sm-verify-note")).toBeNull();
-    expect(screen.queryByTestId("sm-cross-note")).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/1차 강성 지표 순위입니다/);
+    expect(document.body.textContent).not.toMatch(/다른 메시 비교\(정밀도 낮음\)/);
   }, 20000);
   it("withSolveMetric: score = 재풀이 비(오름차순), metric_effective solve, score_lin 보조", () => {
     const sh = (f: string, ref = false) => ({ upload_id: "u", name: f, reference: ref, file_name: `${f}.step`, sha256: f });
@@ -135,14 +135,15 @@ describe("④ 결과 — doe-20(결정 A: 다른 메시 비교)", () => {
   it("주 열 '재풀이 C', 안내 1줄(정밀도 낮음), 지표 보조 토글·1차 안내 없음, umax·εmax 열(강체 제거), 경고 목록에 중복 없음", async () => {
     renderApp("/p/p-body/doe/doe-20");
     const t = await screen.findByRole("table", { name: "순위표" });
-    await waitFor(() => expect(screen.getByTestId("sm-cross-note")).toBeTruthy());
-    expect(screen.getByTestId("sm-cross-note").textContent).toMatch(/다른 메시 비교\(정밀도 낮음\)/);
+    // v0.23.1: 다른 메시 비교 안내 = 결과 경고 접기(result-warn) 첫 항목(경고색 유지)
+    await waitFor(() => expect(screen.getByTestId("result-warn").textContent).toMatch(/다른 메시 비교\(정밀도 낮음\)/));
+    expect(screen.getByTestId("result-warn").className).toMatch(/warn/);
     const heads = within(t).getAllByRole("columnheader").map((c) => c.textContent);
     expect(heads).toContain("재풀이 C");
     expect(heads).not.toContain("강성 지표");
     expect(heads).toEqual(expect.arrayContaining(["umax", "εmax"]));
     expect(screen.queryByTestId("rank-aux-toggle")).toBeNull();
-    expect(screen.queryByTestId("sm-verify-note")).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/1차 강성 지표 순위입니다/);
     expect(within(t).queryAllByTestId(/^basis-solve-/).length).toBe(0);        // ④ 불변(전부 solve — 대체 표시 없음)
     expect(screen.queryAllByText(/1차 강성 지표를 쓰지 않고/).length).toBe(0); // 서버 경고 문구는 안내 1줄로 대신
   }, 20000);
@@ -161,6 +162,6 @@ describe("legacy 결과 — doe-3(metric 없음)", () => {
     expect(heads).toEqual(expect.arrayContaining(["umax", "εmax"]));
     expect(heads).not.toContain("강성 지표");
     expect(screen.queryByTestId("rank-aux-toggle")).toBeNull();
-    expect(screen.queryByTestId("sm-verify-note")).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/1차 강성 지표 순위입니다/);
   }, 15000);
 });

@@ -42,7 +42,9 @@ describe("미리보기 상태 표시", () => {
     expect(screen.queryByTestId("job-fail-msg")).toBeNull();
     fireEvent.click(within(b).getByRole("button", { name: "자세히" }));
     expect(screen.getByTestId("job-fail-msg").textContent).toMatch(/경계 고리 없음/);
-    expect(screen.getByTestId("preview-failed").textContent).toMatch(/단계 2 썸네일 · SELECT_BASIS_FAILED/);
+    // v0.23.1: 단계·코드는 배너 1곳(위에서 확인), 미리보기 칸 = 안내 1줄(같은 실패 반복 없음)
+    expect(screen.getByTestId("preview-failed").textContent).toMatch(/미리보기가 끝나지 못했습니다 — 위 실패 줄의 \[자세히\] → \[로그 보기\]/);
+    expect(screen.getByTestId("preview-failed").textContent).not.toMatch(/SELECT_BASIS_FAILED/);
     fireEvent.click(within(b).getByRole("button", { name: "로그 보기" }));
     await waitFor(() => expect(screen.getByTestId("job-log-tail").textContent).toMatch(/EslError: SELECT_BASIS_FAILED/));
     // 다른 조작(도구 바꾸기)·시간 경과 뒤에도 그대로

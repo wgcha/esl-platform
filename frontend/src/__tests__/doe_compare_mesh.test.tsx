@@ -3,7 +3,7 @@
 // 화면 크기(2560×1440·1920×1080 잘림·가로 스크롤 없음)는 scripts/screenshots-v0160.mjs.
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 import { meshMainCandidates, meshMethodKind, meshMethodLabel, meshMethodTip, normalizeDoeSettings, partIdProblem, shapeFailText, shapeFailTip, shapeKindOf } from "../api/doe";
 import type { DoeStudyOut } from "../api/types";
 import { CompareShapeSummary } from "../components/DoeInputs";
@@ -212,6 +212,7 @@ describe("④ 결과 — doe-7(메시 입력 기준 + CAD·세분화·재메시 
     const { container } = renderApp("/p/p-body/doe/doe-7");
     const t = await screen.findByRole("table", { name: "순위표" });
     await waitFor(() => expect(primaries(container).map((b) => b.textContent)).toEqual(["보고서 보기"]));
+    await openCard("① 입력"); // v0.23.1 결과 단계 = ① 접힘
     const shapeTable = screen.getAllByRole("table", { name: "형상 표" })[0];
     expect(within(shapeTable).getByRole("columnheader", { name: "메시 방식" })).toBeTruthy();
     const m = (id: string) => screen.getByTestId(`prep-method-${id}`);

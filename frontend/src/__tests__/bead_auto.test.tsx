@@ -179,7 +179,9 @@ describe("AD-D-8 순위 ⚠ MORPH_EXTREME_ELEMENTS", () => {
       top.warn = ["MORPH_EXTREME_ELEMENTS"];
     });
     const line = await screen.findByTestId("best-clean");
-    expect(line.textContent).toMatch(/1위가 경고 안입니다\(극단 요소\) — 경고 없는 최상위: d\d{3}/);
+    // v0.23.1 상태 띠 칩: 짧은 값 + 이전 1줄 전체 = title
+    expect(line.getAttribute("title")).toMatch(/1위가 경고 안입니다\(극단 요소\) — 경고 없는 최상위: d\d{3}/);
+    expect(line.textContent).toMatch(/1위 경고 안 · 경고 없는 최상위 d\d{3}/);
     const badge = screen.getAllByTestId(/^rank-warn-/)[0];
     expect(badge.getAttribute("title")).toBe("극단 요소");
   });

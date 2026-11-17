@@ -176,7 +176,7 @@ function Detail({ d, title, allowed, onChanged }: { d: VerifyDropOut; title: str
   );
 }
 
-export function VerifyDropCard({ drops, entries, allowed, onChanged }: { drops: VerifyDropOut[]; entries: EntryOut[]; allowed: boolean; onChanged: () => void }) {
+export function VerifyDropCard({ drops, entries, allowed, onChanged, note }: { drops: VerifyDropOut[]; entries: EntryOut[]; allowed: boolean; onChanged: () => void; /** v0.23.1 검증 권고 머리말 1줄(esl_doe_ui_tidy.md §5) */ note?: string | null }) {
   const [sel, setSel] = useState<string | null>(null);
   const batches = useMemo(() => {
     const m = new Map<string, VerifyDropOut[]>();
@@ -194,7 +194,7 @@ export function VerifyDropCard({ drops, entries, allowed, onChanged }: { drops: 
   if (!drops.length) return null;
   const nActive = drops.filter(isActiveDrop).length;
   return (
-    <Card title="검증 낙하" right={<span className="small muted">Radioss · SCX — 원 낙하와 비교(합격 판정 없음){nActive ? ` · 진행 ${nActive}` : ""}</span>}>
+    <Card title="검증 낙하" right={<span className="small muted">{note ? <span data-testid="vd-note">{note} · </span> : null}Radioss · SCX — 원 낙하와 비교(합격 판정 없음){nActive ? ` · 진행 ${nActive}` : ""}</span>}>
       <div className="vd-batches" data-testid="vd-card">
         {batches.map((b) => (
           <div key={b[0].batch_id} className="vd-batch">

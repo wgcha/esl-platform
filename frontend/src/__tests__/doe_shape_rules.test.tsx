@@ -189,10 +189,12 @@ describe("④ 새 스냅샷(doe-31) — 완화 직행 칩·메시 품질 ⚠·�
     // 품질 통과 최상위 1줄 = summary.best_clean_mq
     const line = screen.getByTestId("best-clean-mq");
     expect(res.summary?.best_clean_mq).toBe("d002");
-    expect(line.textContent).toMatch(/메시 품질 미달 형상 1개\(순위는 그대로\) — 품질 통과 최상위: d002 리브 A안/);
+    expect(line.getAttribute("title")).toMatch(/메시 품질 미달 형상 1개\(순위는 그대로\) — 품질 통과 최상위: d002 리브 A안/);
+    expect(line.textContent).toMatch(/품질 미달 1개 · 통과 최상위 d002/);
     // 기존 SR-D-11 줄은 품질 경고만이면 안 나옴
     expect(screen.queryByTestId("best-clean")).toBeNull();
-    // 결과 경고 목록: 형상 이름·수치
+    // 결과 경고 목록: 형상 이름·수치(v0.23.1 결과 경고 접기 — 한 번 펼침)
+    fireEvent.click(within(screen.getByTestId("result-warn")).getAllByRole("button")[0]);
     expect(document.body.textContent).toMatch(/메시 품질 미달 형상 1개\(F안\(큰 모델\) Fail 55\.5 % · tria 21\.9 %\)/);
     // ③ 띠는 ④ 에서는 없음
     expect(screen.queryByTestId("mq-base-strip")).toBeNull();
@@ -205,7 +207,7 @@ describe("④ 새 스냅샷(doe-31) — 완화 직행 칩·메시 품질 ⚠·�
       rec.result = { ...rec.result!, ranking: rec.result!.ranking.map((x) => ({ ...x, mq: { fail_ratio: 0.2, tria_pct: 3, over: ["fail"] as ("fail" | "tria")[] }, warn: ["MESH_QUALITY_RANK" as const] })), summary: { best_clean_mq: null } };
     });
     await screen.findByRole("table", { name: "순위표" }, { timeout: 15000 });
-    expect(screen.getByTestId("best-clean-mq").textContent).toMatch(/품질 통과 최상위: 없음/);
+    expect(screen.getByTestId("best-clean-mq").getAttribute("title")).toMatch(/품질 통과 최상위: 없음/);
     void r;
   }, 30000);
 });
@@ -215,7 +217,7 @@ describe("③ 새 스냅샷(doe-32) — 기준 메시 품질 미달 결과 띠 1
     const r = renderApp("/p/p-body/doe/doe-32", "power", demo);
     const strip = await screen.findByTestId("mq-base-strip", undefined, { timeout: 20000 });
     const q = r.server.doe.recs.find((x) => x.out.id === "doe-32")!.out.prep!.mesh!.quality!;
-    expect(strip.textContent).toBe(`⚠ 기준 메시 품질 미달(${mqText(q)}) — 모든 안이 같은 메시라 순위 신뢰도가 낮습니다(순위는 유지)`);
+    expect(strip.getAttribute("title")).toBe(`⚠ 기준 메시 품질 미달(${mqText(q)}) — 모든 안이 같은 메시라 순위 신뢰도가 낮습니다(순위는 유지)`);
     expect(document.querySelectorAll('[data-testid="mq-base-strip"]').length).toBe(1);
     expect(screen.queryByTestId("best-clean-mq")).toBeNull();
     expect(document.querySelectorAll('[data-testid^="rank-warn-"][title*="메시 품질"]').length).toBe(0);

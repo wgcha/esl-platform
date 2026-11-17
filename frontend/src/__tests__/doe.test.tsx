@@ -4,7 +4,7 @@
 // 솔버 칸 없음, 설정값(서버 settings)·비활성 사유. 화면 크기 규칙은 스크린샷(scripts/screenshots-v090.mjs)으로 확인.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 import { autoScenario, buildSpec, defaultRows, doe, normalizeDoeSettings, normalizeResult, outsideFeasible, rowProblem } from "../api/doe";
 import { JOB_TYPE_LABEL, currentStepKey, linkPath, stepLabel, summaryText, type HistoryItem } from "../api/history";
 import { DEFAULT_SPEC, PARAMS, makeDoeSettings, makeMatrix, makePlan } from "../mock/doedata";
@@ -241,6 +241,9 @@ describe("새 비드 DOE(§3·§12.2)", () => {
 describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
   it("doe-2(② 미리보기 완료): 비드 표 기본, 범위 밖 배지(차단 아님), 오류 차단, 미리보기 격자 스킵 배지, 경계 경고, DOE 실행 활성", async () => {
     const { container } = renderApp("/p/p-body/doe/doe-2");
+    // v0.23.1 단계 초점: 미리보기 단계 = 설정 카드(②·③) 접힘 → 한 번 펼침
+    await openCard("② 비드·변수");
+    await openCard("③ 평면도");
     const tbl = await screen.findByRole("table", { name: "비드 변수" });
     expect(box("B1 깊이 D 포함").checked).toBe(true);
     expect(box("B1 폭 W 포함").checked).toBe(true);
@@ -279,6 +282,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
 
   it("방식 드롭다운: 풀 팩토리얼 → 수준 칸·안 수 표시, 초과면 사유 / 실제 안 수 = POST /matrix", async () => {
     renderApp("/p/p-body/doe/doe-2");
+    await openCard("② 비드·변수");
     await screen.findByRole("table", { name: "비드 변수" });
     await waitFor(() => expect(screen.getByTestId("doe-count").textContent).toMatch(/실제 25안\(공칭 포함, 중복 0\)/));
     expect((screen.getByRole("spinbutton", { name: "안 수" }) as HTMLInputElement).value).toBe("24");
@@ -293,6 +297,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
 
   it("방법·출처 ⓘ: 요약·방식별 줄(현재 강조)·출처 새 탭·Esc 닫기", async () => {
     renderApp("/p/p-body/doe/doe-2");
+    await openCard("② 비드·변수");
     await screen.findByRole("table", { name: "비드 변수" });
     fireEvent.click(screen.getByRole("button", { name: "방법·출처" }));
     const dlg = screen.getByRole("dialog", { name: "방법·출처" });
@@ -318,6 +323,7 @@ describe("상세 — 비드·변수·미리보기(§5·§12.2)", () => {
 
   it("미리보기 다시 → 진행 중이면 DOE 실행 사유, 끝나면 활성", async () => {
     const { container, server } = renderApp("/p/p-body/doe/doe-2");
+    await openCard("② 비드·변수");
     await screen.findByRole("table", { name: "비드 변수" });
     fireEvent.change(screen.getByRole("spinbutton", { name: "안 수" }), { target: { value: "12" } });
     await waitFor(() => expect(screen.getByTestId("doe-count").textContent).toMatch(/실제 13안/));
@@ -360,8 +366,9 @@ describe("상세 — 결과(§11·§12.2)", () => {
     expect(within(dl).getByRole("link", { name: "BREP" })).toBeTruthy();
     expect(within(dl).getByRole("link", { name: "STEP" })).toBeTruthy();
     expect(within(dl).getByRole("link", { name: "순위 CSV" })).toBeTruthy();
-    // 실행 후 편집 잠금·솔버 칸 없음
-    expect(box("B1 깊이 D 포함").disabled).toBe(true);
+    // 실행 후 편집 잠금·솔버 칸 없음(결과 단계 = ② 접힘 → 펼쳐서 확인)
+    await openCard("② 비드·변수");
+    await waitFor(() => expect(box("B1 깊이 D 포함").disabled).toBe(true));
     noSolver();
   });
 

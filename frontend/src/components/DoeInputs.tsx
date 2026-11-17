@@ -279,8 +279,11 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
   const needStep = isSel ? beadSource === "auto" || stepBase : scenario !== "compare";
   /** STEP 이 참고 힌트일 뿐(① 자동 탐지) */
   const stepHint = isSel && !stepBase;
+  // v0.23.1 ① 2열(esl_doe_ui_tidy.md §7): 왼쪽 = ESL·업로드, 오른쪽 = 형상 표·필드·고급·검사(≤2200px 1열)
   return (
     <div className="doe-inputs">
+      <div className="doe-inputs-cols" data-testid="doe-inputs-cols">
+      <div className="doe-inputs-left">
       <div className="doe-esl" aria-label="선택한 ESL">
         <span className="field-label">ESL ({ids.length})</span>
         {!ids.length ? (
@@ -304,9 +307,7 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
           </button>
         )}
       </div>
-      {scenario === "compare" ? (
-        <CompareShapes projectId={projectId} st={st} form={form} setForm={setForm} allowed={allowed} />
-      ) : isSel && !needStep && !needMesh ? (
+      {scenario === "compare" ? null : isSel && !needStep && !needMesh ? (
         <div className="small muted" data-testid="doe-select-note">
           STEP 없이 기준 Case 의 낙하 메시(노드·요소 ID 그대로)에서 비드를 직접 고릅니다 — 입력 준비 후 3D 에서 선택
         </div>
@@ -344,6 +345,9 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
         )}
       </div>
       )}
+      </div>
+      <div className="doe-inputs-right">
+      {scenario === "compare" && <CompareShapes projectId={projectId} st={st} form={form} setForm={setForm} allowed={allowed} />}
       <div className="form-grid tight doe-fields">
         {needMesh && (
           <Field label="B 파트 제목">
@@ -391,6 +395,8 @@ export function DoeInputs({ projectId, scenario, selectBase, beadSource, st, ent
       {checking && <div className="small muted">입력 검사 중…</div>}
       <ErrorLine text={checkError} />
       {check && <CheckLine check={check} scenario={scenario} stepBase={stepBase} />}
+      </div>
+      </div>
     </div>
   );
 }

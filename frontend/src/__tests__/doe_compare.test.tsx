@@ -2,7 +2,7 @@
 // [입력 준비] → 준비 결과(요소 수·상태 배지·실패 사유) → [비교 실행] 흐름, 결과(이름 열·민감도 숨김·3D 라벨·받기). 화면 크기 규칙은 scripts/screenshots-v0140.mjs.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 import { CODE_TEXT } from "../api/client";
 import { defaultShapeName, doeBlockedReason, normalizeDoeSettings, scenarioBlocked, shapeNameProblem, shapesProblem } from "../api/doe";
 import { compareIds, makeComparePrep, makeCompareResult, makeDoeSettings } from "../mock/doedata";
@@ -260,6 +260,7 @@ describe("④ 결과 — doe-3", () => {
 describe("V-SR-25 ④ 형상 단순화·억제 목록·진단", () => {
   it("doe-7: K안(딤플) 메시 방식 '형상 단순화' + 툴팁 요약·시도, ▸ 펼침 = 억제 목록 표(GET …/shapes/{did}/defeature), 메시 입력 진단 글자", async () => {
     renderApp("/p/p-body/doe/doe-7");
+    await openCard("① 입력"); // v0.23.1 결과 단계 = ① 접힘
     const row = await screen.findByTestId("prep-shape-d005");
     const m = within(row).getByTestId("prep-method-d005");
     expect(m.querySelector(".badge")!.textContent).toBe("형상 단순화");

@@ -26,7 +26,7 @@ import { selDefaultSelection, selPlan } from "../mock/selectmock";
 import { PartView } from "../view3d/part/PartView";
 import { designViewData, legacyViewData, planLayers, selectPlan, selectViewData } from "../view3d/part/adapters";
 import type { Part3DData } from "../view3d/part/types";
-import { renderApp } from "../test/render";
+import { openCard, renderApp } from "../test/render";
 
 const tri: Part3DData["mesh"] = { positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]), indices: new Uint32Array([0, 1, 2]) };
 const st = makeDoeSettings();
@@ -156,6 +156,7 @@ describe("시점 툴바·보기 전환", () => {
 describe("화면 연결(mock)", () => {
   it("V-VU-8 이전 방식 ① 완료(doe-1): ③ 평면도 = PartView, 결과 d000 형상이 있으면 [3D] 보기", async () => {
     renderApp("/p/p-body/doe/doe-1", "power");
+    await openCard("③ 평면도"); // v0.23.1 결과 단계 = ③ 접힘
     await waitFor(() => expect(screen.getByTestId("pv-legacy")).toBeTruthy());
     expect(screen.getByRole("img", { name: "비드·경계 평면도" })).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId("pv-mode-3d")).toBeTruthy());

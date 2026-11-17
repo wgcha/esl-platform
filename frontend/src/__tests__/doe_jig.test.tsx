@@ -44,8 +44,10 @@ describe("지그 ok — doe-40", () => {
     await waitFor(() => expect(heads(t)).toContain("지그 C"));
     expect(heads(t)).not.toContain("재풀이 C");
     const line = screen.getByTestId("jig-line");
-    expect(line.textContent).toMatch(/^기준 재현\(지그\): MAC\(모드 포함\) ≥ 0\.9\d+ \(제외 0\.\d+\) · umax 오차 ≤ \d+\.\d %/);
-    expect(line.textContent).toMatch(/하중 영역 3개\(접촉 2 · 패치 1\) · 지그 노드 14/);
+    // v0.23.1 상태 띠 칩: 짧은 값(MAC·umax 오차) + 이전 한 줄 전체 = title 첫 줄
+    expect(line.textContent).toMatch(/^기준 재현\(지그\) MAC ≥ 0\.9\d+ · umax 오차 ≤ \d+\.\d %/);
+    expect(line.title).toMatch(/^기준 재현\(지그\): MAC\(모드 포함\) ≥ 0\.9\d+ \(제외 0\.\d+\) · umax 오차 ≤ \d+\.\d %/);
+    expect(line.title).toMatch(/하중 영역 3개\(접촉 2 · 패치 1\) · 지그 노드 14/);
     expect(line.className).toContain("muted");
     expect(screen.queryByTestId("jig-cancel")).toBeNull();           // 일 효율 ≥ work_eff_min → ⚠ 없음(cancel_rel 은 툴팁 정보만)
     expect(line.title).toMatch(/지그 1차 11\.8 Hz \(3-2-1 대비 ×15\.73\)/);   // Hz 는 툴팁만
@@ -73,7 +75,7 @@ describe("지그 poor·fallback", () => {
     expect(line.getAttribute("data-status")).toBe("poor");
     expect(line.title).toContain(JIG_CODE_TEXT.JIG_FIT_POOR);
     expect(line.title).toMatch(/MAC ≥ 0\.9, umax 오차 ≤ 20 %/);
-    expect(line.textContent).toMatch(/접촉 0 · 패치 3/);
+    expect(line.title).toMatch(/접촉 0 · 패치 3/);
     expect(screen.getByTestId("jig-cancel").title).toContain(JIG_CODE_TEXT.JIG_LOAD_CANCEL);
     expect(screen.getByTestId("jig-cancel").title).toMatch(/일 효율 0\.030 < 0\.05/);   // JIG_LOAD_CANCEL ⚠ 1개, 같은 줄
     expect(line.querySelectorAll("[data-testid=jig-cancel]").length).toBe(1);
@@ -88,7 +90,8 @@ describe("지그 poor·fallback", () => {
     await waitFor(() => expect(heads(t)).toContain("재풀이 C"));
     expect(heads(t)).not.toContain("지그 C");
     const line = screen.getByTestId("jig-line");
-    expect(line.textContent).toContain(`지그 순위 불가 — ${JIG_CODE_TEXT.JIG_NO_TIE}, 재풀이 C 로 순위`);
+    expect(line.title).toContain(`지그 순위 불가 — ${JIG_CODE_TEXT.JIG_NO_TIE}, 재풀이 C 로 순위`);
+    expect(line.textContent).toMatch(/지그 순위 불가/);
     expect(line.textContent).not.toContain("⚠");
     expect(line.className).toContain("warn-text");
     expect(screen.getByText(/정렬: score\(재풀이 C\)/)).toBeTruthy();

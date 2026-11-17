@@ -19,6 +19,12 @@ export function heatStyle(imp: number | null | undefined): { background?: string
   return { background: imp > 0 ? `rgba(22, 163, 74, ${a.toFixed(2)})` : `rgba(220, 38, 38, ${a.toFixed(2)})` };
 }
 
+/** v0.23.1 표 설명 1줄 — ⓘ 지표 정의 안으로 옮김(esl_doe_ui_tidy.md §4.1). ESL 열이 없으면 null */
+export function perEslNote(result: DoeResultOut, pick: string | null, topN = PER_ESL_TOP_N): string | null {
+  if (!(result.esl ?? []).length) return null;
+  return `셀 = 개선율(1 − C_안 / C_베이스라인, 같은 ESL) · 초록 개선 · 빨강 악화 · 상위 ${topN}개${pick && result.ranking.some((r) => r.id === pick) && !result.ranking.slice(0, topN).some((r) => r.id === pick) ? " + 선택 안" : ""}`;
+}
+
 export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_TOP_N }: {
   studyId: string;
   result: DoeResultOut;
@@ -110,7 +116,6 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
           </tbody>
         </table>
       </div>
-      <div className="small muted">셀 = 개선율(1 − C_안 / C_베이스라인, 같은 ESL) · 초록 개선 · 빨강 악화 · 상위 {topN}개{pick && !result.ranking.slice(0, topN).some((r) => r.id === pick) ? " + 선택 안" : ""}</div>
     </div>
   );
 }
