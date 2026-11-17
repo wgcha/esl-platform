@@ -3150,17 +3150,24 @@ export interface DoeJigThOut {
   mac_min: number;
   umax_err_max: number;
   tie_rel_warn: number;
+  cancel_warn: number;
 }
 export interface DoeJigEntryOut {
   entry_id: string;
   label: string;
+  /** 모드 포함 */
   mac: number;
   umax_err: number;
+  /** 모드 제외 맞춤(모드 0 = null) */
+  mac_nomodes: number | null;
+  umax_err_nomodes: number | null;
   err_p95: number;
   n_active: number;
   /** N */
   F_sum_abs: number;
   cancel_rel: number;
+  /** 지그 노드 Kabsch 회전각(도) */
+  rot_deg: number;
 }
 export interface DoeJigOut {
   status: "ok" | "poor" | "fallback" | "unsupported";
@@ -3173,7 +3180,16 @@ export interface DoeJigOut {
   n_patch: number;
   fit_mac_min: number | null;
   fit_umax_err_max: number | null;
+  /** 모드 제외 맞춤 값(모드 0 = null) */
+  fit_mac_min_nomodes: number | null;
+  fit_umax_err_max_nomodes: number | null;
+  cancel_rel_max: number | null;
   tie_rel_max: number | null;
+  /** 실제 쓴 모드 수(끔·실패 = 0), 지그 구속 고유진동수 Hz, 3-2-1 기준 Hz, 비 hz_jig[0]/hz_321[0] */
+  n_modes: number;
+  hz_jig: number[];
+  hz_321: number[] | null;
+  hz_ratio: number | null;
   th: DoeJigThOut;
   entries: DoeJigEntryOut[];
 }

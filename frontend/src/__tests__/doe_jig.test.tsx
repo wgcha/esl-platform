@@ -22,9 +22,9 @@ describe("지그 결과 mock·규칙", () => {
       const base = s.doe.recs.find((r) => r.out.id === "doe-21")!.result!;
       const ok = withJig(withSolveMetric(withMetric(base)), "ok");
       expect(ok.metric_effective).toBe("jig");
-      expect(Object.keys(ok.jig!).sort()).toEqual(["code", "entries", "fit_mac_min", "fit_umax_err_max", "n_contact", "n_jig", "n_patch", "n_regions", "region_source", "status", "th", "tie_rel_max"]);
-      expect(Object.keys(ok.jig!.th).sort()).toEqual(["mac_min", "tie_rel_warn", "umax_err_max"]);
-      expect(Object.keys(ok.jig!.entries[0]).sort()).toEqual(["F_sum_abs", "cancel_rel", "entry_id", "err_p95", "label", "mac", "n_active", "umax_err"]);
+      expect(Object.keys(ok.jig!).sort()).toEqual(["cancel_rel_max", "code", "entries", "fit_mac_min", "fit_mac_min_nomodes", "fit_umax_err_max", "fit_umax_err_max_nomodes", "hz_321", "hz_jig", "hz_ratio", "n_contact", "n_jig", "n_modes", "n_patch", "n_regions", "region_source", "status", "th", "tie_rel_max"]);
+      expect(Object.keys(ok.jig!.th).sort()).toEqual(["cancel_warn", "mac_min", "tie_rel_warn", "umax_err_max"]);
+      expect(Object.keys(ok.jig!.entries[0]).sort()).toEqual(["F_sum_abs", "cancel_rel", "entry_id", "err_p95", "label", "mac", "mac_nomodes", "n_active", "rot_deg", "umax_err", "umax_err_nomodes"]);
       expect(ok.ranking.map((r) => r.score)).toEqual([...ok.ranking.map((r) => r.score)].sort((a, b) => a - b));
       expect(ok.ranking.every((r) => r.score_jig === r.score && r.umax_jig != null && r.C_jig)).toBe(true);
       expect(ok.jig!.n_regions).toBe(ok.jig!.n_contact + ok.jig!.n_patch);
@@ -44,10 +44,12 @@ describe("지그 ok — doe-40", () => {
     await waitFor(() => expect(heads(t)).toContain("지그 C"));
     expect(heads(t)).not.toContain("재풀이 C");
     const line = screen.getByTestId("jig-line");
-    expect(line.textContent).toMatch(/^기준 재현\(지그\): MAC ≥ 0\.9\d+ · umax 오차 ≤ \d+\.\d %/);
+    expect(line.textContent).toMatch(/^기준 재현\(지그\): MAC\(모드 포함\) ≥ 0\.9\d+ \(제외 0\.\d+\) · umax 오차 ≤ \d+\.\d %/);
     expect(line.textContent).toMatch(/하중 영역 3개\(접촉 2 · 패치 1\) · 지그 노드 14/);
     expect(line.className).toContain("muted");
-    expect(line.title).toMatch(/MAC 0\.9\d+ · umax 오차/);     // 엔트리별 값은 툴팁
+    expect(screen.queryByTestId("jig-cancel")).toBeNull();           // cancel_rel_max ≤ cancel_warn → ⚠ 없음
+    expect(line.title).toMatch(/지그 1차 11\.8 Hz \(3-2-1 대비 ×15\.73\)/);   // Hz 는 툴팁만
+    expect(line.title).toMatch(/MAC 0\.9\d+ \(모드 제외 0\.\d+\) · umax 오차/);     // 엔트리별 값은 툴팁
     expect(screen.getByTestId("metric-defs").textContent).toMatch(/score: max\(C_jig 안\) \/ max\(C_jig 기준\).*영역 3개, 접촉\+패치.*같은 지그·같은 하중/);
     expect(screen.getByText(/정렬: score\(지그 C\)/)).toBeTruthy();
     fireEvent.click(screen.getByTestId("rank-aux-toggle"));
@@ -72,6 +74,9 @@ describe("지그 poor·fallback", () => {
     expect(line.title).toContain(JIG_CODE_TEXT.JIG_FIT_POOR);
     expect(line.title).toMatch(/MAC ≥ 0\.9, umax 오차 ≤ 20 %/);
     expect(line.textContent).toMatch(/접촉 0 · 패치 3/);
+    expect(screen.getByTestId("jig-cancel").title).toContain(JIG_CODE_TEXT.JIG_LOAD_CANCEL);   // JIG_LOAD_CANCEL ⚠ 1개, 같은 줄
+    expect(line.querySelectorAll("[data-testid=jig-cancel]").length).toBe(1);
+    expect(line.parentElement!.querySelectorAll("[data-testid=jig-line]").length).toBe(1);
     expect(within(t).getAllByTestId(/^rank-d/).length).toBeGreaterThan(0);
   }, 20000);
   it("fallback: '지그 순위 불가' + 사유, 주 열 재풀이 C, 지그 열·토글 없음", async () => {

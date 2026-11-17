@@ -855,11 +855,11 @@ export function withSolveMetric(res: DoeResultOut): DoeResultOut {
 /** v0.23.0 지그 순위 결과(esl_jig_rank.md §4·§7): ok·poor = 순위 지표 jig(주 열 = 지그 C, 재풀이 C 비·불평형·umax(지그) 비 보조), fallback = JIG_NO_TIE 로 solve 순위 + 지그 블록(status fallback).
  *  순위 순서는 지그 score 로 다시 정렬(결정적). 임계값 th 는 계약 예시 설정 값 */
 export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): DoeResultOut {
-  const th = { mac_min: 0.9, umax_err_max: 0.2, tie_rel_warn: 0.1 };
+  const th = { mac_min: 0.9, umax_err_max: 0.2, tie_rel_warn: 0.1, cancel_warn: 0.5 };
   const st = makeDoeSettings().rank!;
   if (kind === "fallback") {
     const r = withSolveMetric(res);
-    const jig: DoeJigOut = { status: "fallback", code: "JIG_NO_TIE", region_source: null, n_jig: 0, n_regions: 0, n_contact: 0, n_patch: 0, fit_mac_min: null, fit_umax_err_max: null, tie_rel_max: null, th, entries: [] };
+    const jig: DoeJigOut = { status: "fallback", code: "JIG_NO_TIE", region_source: null, n_jig: 0, n_regions: 0, n_contact: 0, n_patch: 0, fit_mac_min: null, fit_umax_err_max: null, fit_mac_min_nomodes: null, fit_umax_err_max_nomodes: null, cancel_rel_max: null, tie_rel_max: null, n_modes: 0, hz_jig: [], hz_321: null, hz_ratio: null, th, entries: [] };
     return { ...r, metric: "jig", rank: { ...(r.rank ?? st), metric: "jig", metric_effective: "solve" }, jig, warnings: [...r.warnings, { code: "JIG_NO_TIE", message: "체결부(tie) 노드가 없어 지그를 만들 수 없습니다 — 재풀이 C 로 순위를 매겼습니다" }] };
   }
   const ranking = res.ranking
@@ -881,7 +881,7 @@ export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): Do
     .map((r, i) => ({ ...r, rank: i + 1 }));
   const ids = res.baseline && ranking[0]?.per_esl ? ranking[0].per_esl.map((p) => ({ entry_id: p.entry_id, label: p.label ?? p.entry_id })) : (res.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
   const poor = kind === "poor";
-  const entries: DoeJigEntryOut[] = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, mac: poor && k === 0 ? 0.81 : 0.962 - 0.01 * k, umax_err: poor && k === 0 ? 0.31 : 0.041 + 0.01 * k, err_p95: 0.083 + 0.02 * k, n_active: 3 - (k % 2), F_sum_abs: 412.5 + 60 * k, cancel_rel: 0.12 + 0.05 * k }));
+  const entries: DoeJigEntryOut[] = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, mac: poor && k === 0 ? 0.81 : 0.962 - 0.01 * k, mac_nomodes: poor && k === 0 ? 0.62 : 0.84 - 0.01 * k, umax_err_nomodes: 0.19 + 0.01 * k, rot_deg: 1.8 + 0.4 * k, umax_err: poor && k === 0 ? 0.31 : 0.041 + 0.01 * k, err_p95: 0.083 + 0.02 * k, n_active: 3 - (k % 2), F_sum_abs: 412.5 + 60 * k, cancel_rel: 0.12 + 0.05 * k }));
   const jig: DoeJigOut = {
     status: poor ? "poor" : "ok",
     code: null,
@@ -892,7 +892,14 @@ export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): Do
     n_patch: poor ? 3 : 1,
     fit_mac_min: Math.min(...entries.map((e) => e.mac)),
     fit_umax_err_max: Math.max(...entries.map((e) => e.umax_err)),
+    fit_mac_min_nomodes: Math.min(...entries.map((e) => e.mac_nomodes ?? 1)),
+    fit_umax_err_max_nomodes: Math.max(...entries.map((e) => e.umax_err_nomodes ?? 0)),
+    cancel_rel_max: poor ? 0.64 : Math.max(...entries.map((e) => e.cancel_rel)),
     tie_rel_max: 0.03,
+    n_modes: 4,
+    hz_jig: [11.8, 19.4, 27.1, 35.6],
+    hz_321: [0.75, 6.2, 9.9, 14.0],
+    hz_ratio: +(11.8 / 0.75).toFixed(2),
     th,
     entries,
   };
