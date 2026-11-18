@@ -14,7 +14,7 @@
 /H3D/DT
 #       Tstart     Tfreq
         0.0        0.001
-/H3D/NODA/DISP
+/H3D/NODA/DIS
 /H3D/NODA/ACC
 /H3D/NODA/CONT
 /H3D/NODA/CONT2          ← tie 체결력(경계력 full 등급)
