@@ -142,7 +142,7 @@ def doe_results(sid: str, request: Request, sort: str = Query(default="score", m
 
 @router.get("/doe/studies/{sid}/results/per-esl", response_model=DoePerEslOut)
 def doe_results_per_esl(sid: str, request: Request, design: str | None = Query(default=None, max_length=8000),
-                        view: str | None = Query(default=None, max_length=8),
+                        view: str | None = Query(default=None, max_length=16),
                         principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max).
     v0.23.3 view = jig|full: 하중 정의 탭 보기의 값(esl_jig_view.md §2)."""
@@ -154,6 +154,13 @@ def doe_view3d_regenerate(sid: str, request: Request, principal: Principal = Dep
     """v0.23.3 3D 다시 만들기(esl_jig_view.md §3): 지그 응답 3D·지그 진단 3D·하중 정의 보기만 다시 만든다(순위·결과 파일 불변).
     기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 지그 미계산·끝나지 않음 = 409 VIEW3D_REGEN_UNAVAILABLE."""
     return svc.regenerate_view3d(get_ctx(request), principal, sid)
+
+
+@router.post("/doe/studies/{sid}/sources/bforce", response_model=DoeStudyOut, status_code=202)
+def doe_add_bforce(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6): 기존 스터디에서 형상 생성 없이 안마다 경계력 하중 선형 풀이 + 보기·3D(결과 파일 불변).
+    기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 BF_UNSUPPORTED, 끝나지 않음·작업 중 = 409."""
+    return svc.add_bforce(get_ctx(request), principal, sid)
 
 
 @router.get("/doe/studies/{sid}/files", response_model=list[DoeFileOut])

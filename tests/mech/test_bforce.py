@@ -178,3 +178,31 @@ def test_v0240_module_independent():
             mods.add(n.module or "")
     assert not any(m.startswith(("esl.doe", "esl.pipeline", "esl.io", "esl.library")) for m in mods)
     assert not ({"os", "io", "json", "pathlib", "pickle", "shutil", "yaml"} & mods)
+
+
+def test_v0240_case_config_bforce_section():
+    """Case 설정 bforce(선택 절): 없으면 BFORCE_DEFAULTS(주입 안 함), 부분 지정 = 그 키만, 잘못된 값 = CONFIG_INVALID."""
+    import copy
+
+    import yaml
+
+    from esl import config as cf
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    base = yaml.safe_load(open(os.path.join(root, "config", "esl.example.yaml"), encoding="utf-8"))
+    assert "bforce" not in base
+    cfg = cf.validate_settings(copy.deepcopy(base))
+    assert "bforce" not in cfg and cf.bforce_settings(cfg) == cf.BFORCE_DEFAULTS
+    assert cf.BFORCE_DEFAULTS["result_names"]["cont"][0] == "Contact Forces"
+    assert cf.BFORCE_DEFAULTS["result_names"]["acc"][0] == "Acceleration"
+    c2 = copy.deepcopy(base)
+    c2["bforce"] = {"use_inertia": False, "result_names": {"cont": ["KF"]}, "signs": {"fint": -1}}
+    s = cf.bforce_settings(cf.validate_settings(c2))
+    assert s["use_inertia"] is False and s["result_names"]["cont"] == ["KF"]
+    assert s["result_names"]["acc"] == ["Acceleration", "ACC"] and s["signs"] == {"cont": 1, "cont2": 1, "fint": -1}
+    for bad in ({"balance": "foo"}, {"vec_comps": ["X", "Y"]}, {"result_names": {"zz": ["a"]}}, {"default_rho": 0},
+                {"signs": {"cont": 2}}):
+        c3 = copy.deepcopy(base)
+        c3["bforce"] = bad
+        with pytest.raises(EslError) as e:
+            cf.validate_settings(c3)
+        assert e.value.code == "CONFIG_INVALID"

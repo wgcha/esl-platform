@@ -516,6 +516,14 @@ class BeadDoeView3dCfg(_M):
     regen_keep_backups: int = Field(default=1, ge=0, le=20)      # v0.23.3 3D 다시 만들기가 옮긴 이전 진단 폴더(_backup) 유지 개수(0 = 백업 안 함, esl_jig_view.md §3)
 
 
+class BeadDoeBforceCfg(_M):
+    """v0.24.0 경계력 ESL(esl_bforce.md §9): enabled = 계산(Case 에 경계력 결과가 있을 때), grades = 순위에 쓸 데이터 등급, view3d = 3D."""
+
+    enabled: bool = True
+    grades: list[Literal["full", "fint", "contact"]] = Field(default_factory=lambda: ["full", "fint", "contact"], min_length=1)
+    view3d: bool = True
+
+
 _JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
 
 
@@ -1431,6 +1439,7 @@ class BeadDoeCfg(_M):
     solve: BeadDoeSolveCfg = BeadDoeSolveCfg()
     boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()
     view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
+    bforce: BeadDoeBforceCfg = BeadDoeBforceCfg()                # v0.24.0 경계력 ESL
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()

@@ -2018,6 +2018,40 @@ class DoeRankViewOut(_Out):
 class DoeRankViewsOut(_Out):
     jig: DoeRankViewOut | None = None
     full: DoeRankViewOut | None = None
+    bforce: DoeRankViewOut | None = None              # v0.24.0 경계력 ESL 보기(사이드카 post/bforce_view.json — esl_bforce.md §7)
+
+
+class DoeBforceEntryOut(_Out):
+    """v0.24.0 엔트리별 경계력 ESL 자료(Case 04_esl/bforce.json 요약 — 데이터 등급·평형·재현)."""
+
+    entry_id: str
+    label: str
+    grade: str
+    mass_source: str | None = None
+    source: str | None = None
+    eq_force_rel: float | None = None
+    eq_moment_rel: float | None = None
+    abar_g: float | None = None
+    corr_rel: float | None = None
+    recon_mac: float | None = None
+    recon_umax_err: float | None = None
+    reaction_rel: float | None = None
+    limits: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class DoeBforceOut(_Out):
+    """v0.24.0 경계력 ESL 블록: status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구."""
+
+    status: str
+    code: str | None = None
+    reason: str | None = None
+    grade_min: str | None = None
+    entries: list[DoeBforceEntryOut] = Field(default_factory=list)
+    limits: list[str] = Field(default_factory=list)
+    limit_text: list[str] = Field(default_factory=list)
+    n_designs: int = 0
+    n_failed: int = 0
 
 
 class DoeView3dRegenOut(_Out):
@@ -2084,6 +2118,13 @@ class DoeResultOut(_Out):
     jig_diag: "DoeJigDiagOut | None" = None
     rank_views: "DoeRankViewsOut | None" = None
     view3d_regen: "DoeView3dRegenOut | None" = None
+    # v0.24.0 경계력 ESL(esl_bforce.md §7 — 사이드카 post/bforce_view.json, 없으면 null): 블록·3D(안 응답 {did: "<did>_bf"}·{did: entry}·
+    # {entry: "d000_bf_e<kk>"})·추가 계산 가능 여부(available = 계획 bf base ∧ (사이드카 없음 ∨ Case 쪽 경계력이 더 새것))
+    bforce: "DoeBforceOut | None" = None
+    view3d_bf: dict[str, str] | None = None
+    view3d_bf_esl: dict[str, str] | None = None
+    view3d_bf_ref: dict[str, str] | None = None
+    bforce_add: "DoeView3dRegenOut | None" = None
 
 
 class DoePerEslDesign(_Out):
