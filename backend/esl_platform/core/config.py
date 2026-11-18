@@ -509,6 +509,8 @@ class BeadDoeBoundaryCfg(_M):
 
 class BeadDoeView3dCfg(_M):
     top_k: int = Field(default=3, ge=0, le=50)
+    jig: bool = True                                             # v0.23.2 지그 응답 3D(esl_v0232_fixes.md §4.2)
+    jig_support_max: int = Field(default=64, ge=1, le=2000)      # 지그 3D tie 고정 마커 최대 수(표시만)
 
 
 _JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")

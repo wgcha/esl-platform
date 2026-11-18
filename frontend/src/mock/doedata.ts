@@ -906,7 +906,21 @@ export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): Do
     entries,
   };
   const warnings = poor ? [...res.warnings, { code: "JIG_FIT_POOR", message: `기준 재현이 임계값에 못 미칩니다 — ${entries[0]?.label}: MAC 0.810 · umax 오차 31.0 %` }] : res.warnings;
-  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "jig", metric_effective: "jig", rank: { ...st, metric: "jig", metric_effective: "jig", cross_mesh: false }, jig, warnings };
+  // v0.23.2 지그 응답 3D(esl_v0232_fixes.md §4): 표시 안마다 지그 기준 최악 엔트리
+  const shown = res.view3d.filter((d) => d !== "d000");
+  const view3d_jig: Record<string, string> = {};
+  const view3d_jig_esl: Record<string, string> = {};
+  const view3d_jig_ref: Record<string, string> = {};
+  const eorder = ids.map((e) => e.entry_id);
+  for (const d of shown) {
+    const r = ranking.find((x) => x.id === d);
+    const e = r?.worst_entry_id ?? eorder[0];
+    if (!e) continue;
+    view3d_jig[d] = `${d}_jig`;
+    view3d_jig_esl[d] = e;
+    view3d_jig_ref[e] = `d000_jig_e${String(Math.max(0, eorder.indexOf(e))).padStart(2, "0")}`;
+  }
+  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "jig", metric_effective: "jig", rank: { ...st, metric: "jig", metric_effective: "jig", cross_mesh: false }, jig, warnings, ...(shown.length ? { view3d_jig, view3d_jig_esl, view3d_jig_ref } : {}) };
 }
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
  *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
@@ -1988,6 +2002,9 @@ export class DoeMock {
       rec.result = rec.out.scenario === "compare" || rec.out.scenario === "step" ? withCrossMesh(rec.result) : rec.out.inputs.rank_metric === "lin" ? withMetric(rec.result) : withSolveMetric(rec.result);
     const lt = rec.out.inputs.load_transfer;
     if (rec.result && lt && !rec.result.load_transfer) rec.result = withLoadTransfer(rec.result, rec.out.entry_ids, lt, ltKind(rec.out));
+    // v0.23.2 지그 블록 없는 결과: 복제하면 지그 계산되는가(서버 = rank 스냅샷 있음 ∧ 계획 sm_jig base — 목은 rank_metric 있음 ∧ ①②·select)
+    if (rec.result && !rec.result.jig && rec.result.jig_on_clone == null)
+      rec.result = { ...rec.result, jig_on_clone: !!rec.out.inputs.rank_metric && rec.out.scenario !== "compare" && rec.out.scenario !== "step" };
   }
 
   private check(b: Record<string, unknown>): MockResponse {
@@ -2470,12 +2487,19 @@ export class DoeMock {
       if (method === "GET" && sub === "/report") return rec.result ? { status: 200, body: "<html><body>mock DOE report</body></html>" } : err(404, "NOT_READY", "보고서가 아직 없습니다.");
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {
         const did = decodeURIComponent(r[1]);
-        const isRef = Object.values(rec.result?.view3d_ref ?? {}).includes(did);
-        if (!rec.result?.view3d.includes(did) && !isRef) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");
-        const m = mockView3d().manifest(`doe-${rec.out.id}-${did}`);
-        const row = rec.result!.ranking.find((x) => x.id === did);
-        const ratio = row ? row.umax / rec.result!.baseline.umax : 1;
-        return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
+        const res = rec.result;
+        const isRef = Object.values(res?.view3d_ref ?? {}).includes(did);
+        // v0.23.2 지그 3D: <did>_jig · d000_jig_e<kk>(esl_run_id = 지그 엔트리, 지지 = tie 고정 "123")
+        const jigOf = Object.entries(res?.view3d_jig ?? {}).find(([, v]) => v === did)?.[0] ?? null;
+        const jigRefE = Object.entries(res?.view3d_jig_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null;
+        if (!res?.view3d.includes(did) && !isRef && !jigOf && !jigRefE) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");
+        const src = jigOf ?? (jigRefE ? "d000" : did);
+        const row = res!.ranking.find((x) => x.id === src);
+        const eid = jigOf ? res!.view3d_jig_esl?.[jigOf] ?? null : jigRefE ?? (isRef ? Object.entries(res!.view3d_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null : row?.worst_entry_id ?? res!.esl?.[0]?.entry_id ?? null);
+        const m = mockView3d().manifest(eid ?? `doe-${rec.out.id}-${did}`);
+        const jigView = !!(jigOf || jigRefE);
+        const ratio = (row ? row.umax / res!.baseline.umax : 1) * (jigView ? 0.12 : 1);
+        return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: m.supports.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
       }
       return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
     }

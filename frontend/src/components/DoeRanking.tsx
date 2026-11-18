@@ -409,6 +409,23 @@ export function BestCleanMqChip({ result }: { result: DoeResultOut }) {
   );
 }
 
+/** v0.23.2 지그 미계산 칩(esl_v0232_fixes.md §3): 결과에 지그 블록이 없는 스터디(지그 순위 도입 전 순위 설정). jig_on_clone = 복제하면 계산 */
+export function jigNoneText(onClone: boolean | null | undefined): { chip: string; full: string } {
+  const chip = onClone ? "지그: 미계산(이전 설정 스터디 — 복제하면 계산)" : "지그: 미계산(이전 설정 스터디 — 이 방식은 지그 순위 없음)";
+  const why = onClone
+    ? "이 스터디는 지그 순위 도입(v0.23.0) 전 순위 설정으로 만들어져 지그 C 를 계산하지 않았습니다. 복제하면 지금 순위 설정(지그 포함)으로 다시 계산합니다."
+    : "이 스터디는 지그 순위 도입(v0.23.0) 전 순위 설정으로 만들어져 지그 C 를 계산하지 않았고, 이 방식(형상마다 다른 메시이거나 옛 스냅샷)은 복제해도 지그 순위를 쓰지 않습니다.";
+  return { chip, full: `${chip} — ${why}` };
+}
+export function JigNoneChip({ onClone }: { onClone: boolean | null | undefined }) {
+  const t = jigNoneText(onClone);
+  return (
+    <ChipDetail testid="jig-line" status="none" className="doe-chip" title={t.full} full={t.full}>
+      {t.chip}
+    </ChipDetail>
+  );
+}
+
 /** v0.23.0 기준 재현(esl_jig_rank.md §7) → v0.23.1 상태 띠 칩 1(esl_doe_ui_tidy.md §4): 짧은 값 + 이전 한 줄 전체·엔트리별 값·임계값은 title 툴팁 */
 export function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
   const pct = (v: number | null) => (v == null ? "–" : `${(v * 100).toFixed(1)} %`);
@@ -419,7 +436,7 @@ export function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
     const why = jig.code ? JIG_CODE_TEXT[jig.code] ?? jig.code : null;
     const full = `지그 순위 불가${why ? ` — ${why}` : ""}, 재풀이 C 로 순위`;
     return (
-      <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip ${jig.status === "fallback" ? "warn-text" : "muted"}`} title={[full, jig.code].filter(Boolean).join("\n")} full={full}>
+      <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip${jig.status === "fallback" ? " warn-text" : ""}`} title={[full, jig.code].filter(Boolean).join("\n")} full={full}>
         지그 순위 불가 · 재풀이 C
       </ChipDetail>
     );
@@ -435,7 +452,7 @@ export function JigLine({ jig }: { jig: NonNullable<DoeResultOut["jig"]> }) {
   const mac = jig.fit_mac_min != null ? jig.fit_mac_min.toFixed(3) : "–";
   const full = `기준 재현(지그): MAC(모드 포함) ≥ ${mac}${modes && jig.fit_mac_min_nomodes != null ? ` (제외 ${jig.fit_mac_min_nomodes.toFixed(3)})` : ""} · umax 오차 ≤ ${pct(jig.fit_umax_err_max)} · 하중 영역 ${jig.n_regions}개(접촉 ${jig.n_contact} · 패치 ${jig.n_patch}) · 지그 노드 ${jig.n_jig}`;
   return (
-    <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip ${poor ? "warn-text" : "muted"}`} title={[full, ...extra, tip].filter(Boolean).join("\n")} full={full}>
+    <ChipDetail testid="jig-line" status={jig.status} className={`doe-chip${poor ? " warn-text" : ""}`} title={[full, ...extra, tip].filter(Boolean).join("\n")} full={full}>
       기준 재현(지그) MAC ≥ {mac} · umax 오차 ≤ {pct(jig.fit_umax_err_max)}
       {cancel && <span className="warn-text" data-testid="jig-cancel" title={`${JIG_CODE_TEXT.JIG_LOAD_CANCEL} (일 효율 ${jig.fit_work_eff_min!.toFixed(3)} < ${jig.th.work_eff_min})`}> ⚠</span>}
     </ChipDetail>

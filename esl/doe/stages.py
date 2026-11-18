@@ -996,6 +996,8 @@ def bd_post(spec: dict, echo=print) -> dict:
             v3.append(_view3d(c, t, bmeta, did, inp, res))
         except EslError as exc:
             warns.append(f"VIEW3D_FAILED: {did} {exc.code}")
+    v3_jig, vjw = _jig_view3d(c, t, results, [BASELINE] + top)     # v0.23.2 지그 응답 3D(지그 계산된 스냅샷만 — 그 밖 바이트 동일)
+    warns += vjw
     c.progress(60)
     keep_k = int(c.cfg["paicad"]["keep_files_top"])
     best_ids = [x["id"] for x in R["ranking"][:max(1, min(k, keep_k))]]
@@ -1020,6 +1022,8 @@ def bd_post(spec: dict, echo=print) -> dict:
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
            "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise,
            "matrix_sha256": m["matrix_sha256"], "warnings": warns}
+    if v3_jig:
+        out.update(v3_jig)
     mqb = None
     if c.scn == "select":
         out["summary"] = {"best_clean": best_clean}
@@ -3912,6 +3916,86 @@ def _jig_design(c: Ctx, did: str, mesh: dict, loads: list) -> dict | None:
     ld = [(e, jg.forces(basis, np.asarray(z["a"][eids.index(e)], dtype=np.float64), nb_.size)) for e, _F in loads]
     r = jg.design_response(mesh, jidx, ld, c.solver_cfg(), umax_mask=omega)
     return {x["entry_id"]: x for x in r["rows"]}
+
+
+def _jig_view_mesh(c: Ctx, t, did: str) -> dict:
+    """지그 3D 의 안 메시(계획 sm_jig base = reuse once — 기준 메시 위상 + 안 좌표, ``_view3d`` 의 같은 메시 분기와 같음)."""
+    mesh = dict(t.mesh)
+    if did != BASELINE:
+        mesh["x0"] = ev.load_design(design_dir(c, did))["x"]
+    return mesh
+
+
+def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
+    """v0.23.2 지그 3D(esl_v0232_fixes.md §4.1): 3D 비교 대상 안마다 e_d = 순위 행 worst 엔트리(rank._agg(per_esl, "C_jig") — 순위표 '최악 ESL' 과 같은 함수·값)로 지그 응답
+    변위장 → post/view3d/<did>_jig/, 베이스라인은 쓰인 엔트리마다 d000_jig_e<kk>/. 조건 = 지그 계산됨(jig.json ok·jig.npz) ∧ 설정
+    view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열)."""
+    from esl.doe import jig as jg
+    from esl.view3d import build_view
+    vc = c.cfg["view3d"]
+    jd = _jig_doc(c)
+    pz = c.p("prep", JIG_NPZ)
+    if not vc.get("jig") or _jig(c) is None or jd is None or jd.get("status") != "ok" or not os.path.isfile(pz):
+        return {}, []
+    z = U.load_npz(pz)
+    zeids = [str(e) for e in z["entry_ids"].tolist()]
+    order = [str(e["id"]) for e in c.D["entries"]]
+    basis = _jig_basis_of(z, int(z["a"].shape[1]))
+    nb_ = np.asarray(z["node_id"], dtype=np.int64)
+    by = {r["id"]: r for r in results}
+    pick: dict = {}
+    for did in shown:
+        if did == BASELINE:
+            continue
+        per = (by.get(did) or {}).get("per_esl") or []
+        if not per or any(p.get("C_jig") is None for p in per):
+            continue                                            # C_jig 없음 = 그 안만 지그 3D 없음
+        e = str(rk._agg({"id": did, "per_esl": per}, "C_jig")["worst"])     # 순위 행 worst 와 같은 함수(D-0.23.2-n) — 별도 규칙 계산 금지
+        if e in zeids:
+            pick[did] = e
+    if not pick:
+        return {}, []
+    smax = int(vc["jig_support_max"])
+    out = {"view3d_jig": {}, "view3d_jig_esl": {}, "view3d_jig_ref": {}}
+    warns: list = []
+
+    def _write(name: str, did: str, ents: list) -> dict:
+        mesh = _jig_view_mesh(c, t, did)
+        nid = np.asarray(mesh["node_id"], dtype=np.int64)
+        if np.array_equal(nb_, nid):
+            jidx = np.asarray(z["jig_idx"], dtype=np.int64)
+        else:
+            o = np.argsort(nid)
+            jidx = o[np.searchsorted(nid, nb_[z["jig_idx"]], sorter=o)]
+        ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
+        rows = jg.design_response(mesh, jidx, ld, c.solver_cfg(), keep_u=True)["rows"]
+        sup = [{"node_id": int(nid[i]), "dof": "123"} for i in jg.support_sample(mesh["x0"], jidx, smax)]
+        names = {}
+        for (e, F), row in zip(ld, rows):
+            nm = name if name else f"{BASELINE}_jig_e{order.index(e):02d}"
+            od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
+            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=row["u"],
+                       supports=sup, key=f"doe/{nm}", esl_run_id=str(e))
+            names[e] = nm
+        return names
+
+    for did in [d for d in shown if d in pick]:
+        try:
+            _write(f"{did}_jig", did, [pick[did]])
+            out["view3d_jig"][did] = f"{did}_jig"
+            out["view3d_jig_esl"][did] = pick[did]
+        except Exception as exc:                                # noqa: BLE001 — 지그 3D 때문에 BD_POST 실패 금지
+            warns.append(f"VIEW3D_FAILED: {did}_jig {getattr(exc, 'code', type(exc).__name__)}")
+    need = sorted({e for e in out["view3d_jig_esl"].values()}, key=order.index)
+    if need:
+        try:
+            out["view3d_jig_ref"] = _write("", BASELINE, need)
+        except Exception as exc:                                # noqa: BLE001
+            warns.append(f"VIEW3D_FAILED: {BASELINE}_jig {getattr(exc, 'code', type(exc).__name__)}")
+            return {}, warns                                     # 기준 없이 안만 = 비교 불가 → 지그 3D 없음(화면은 기존 컨투어)
+    if not out["view3d_jig"]:
+        return {}, warns
+    return out, warns
 
 
 def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) -> list:

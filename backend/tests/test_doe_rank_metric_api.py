@@ -129,8 +129,43 @@ def test_snapshot_follows_config_and_clone(tmp_path, engine, fake_dashboard, clo
     with _app(tmp_path, engine, fake_dashboard, clock, d2) as c:
         r = c.post(f"{API}/doe/studies/{s['id']}/clone", json={}, headers=W)
         assert r.status_code == 201, r.text
-        assert r.json()["inputs"]["rank_metric"] == "solve"                    # 복제 = 원 스터디 값 유지
-        assert _job(engine, r.json()["job"]["id"])["params"]["doe"]["rank"] == want
+        # v0.23.2 D-0.23.2-1: 복제 = 지금 설정으로 순위 설정 갱신(이전 v0.20.0~v0.23.1 은 원 값 유지)
+        assert r.json()["inputs"]["rank_metric"] == "lin"
+        j = _job(engine, r.json()["job"]["id"])
+        assert j["params"]["doe"]["rank"] == {**SNAP, "metric": "lin"}
+        assert [w for w in j["params"]["warnings"] if w.get("code") == "RANK_REFRESHED"] == \
+            [{"code": "RANK_REFRESHED", "message": "순위 설정을 지금 설정으로 갱신했습니다(원 스터디 순위 지표 solve → lin)"}]
+
+
+def test_clone_refreshes_old_rank_schema1(client, world, engine):
+    """V-0232-1: 원 스냅샷 rank schema 1(metric solve, jig 없음 — v0.20.0~v0.22.x) → 복제 = 지금 설정 rank_snapshot(schema 2·jig),
+    경고 RANK_REFRESHED 1개, load_transfer 유지(diag 만 갱신)·설계안 상태(doe) 없음 그대로. 같은 설정 재복제 = 경고 없음."""
+    from sqlalchemy import text
+
+    s = api(client, "POST", "/doe/studies", json=body([world["a"], world["b"]], upload_step(client))).json()
+    job = _job(engine, s["job"]["id"])
+    params = copy.deepcopy(job["params"])
+    params["doe"]["rank"] = {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1}
+    params["doe"]["load_transfer"]["method"] = "cell"
+    inp = {**s["inputs"], "rank_metric": "solve"}
+    with engine.begin() as c:
+        c.execute(text("UPDATE jobs SET params=CAST(:p AS JSONB) WHERE id=:i"), {"p": json.dumps(params), "i": job["id"]})
+        c.execute(text("UPDATE bead_does SET inputs=CAST(:p AS JSONB) WHERE id=:i"), {"p": json.dumps(inp), "i": s["id"]})
+    finish_job(engine, s["job"]["id"])
+    r = api(client, "POST", f"/doe/studies/{s['id']}/clone", json={})
+    assert r.status_code == 201, r.text
+    cl = r.json()
+    j = _job(engine, cl["job"]["id"])
+    assert j["params"]["doe"]["rank"] == SNAP and cl["inputs"]["rank_metric"] == "jig"
+    assert [w["code"] for w in j["params"]["warnings"]].count("RANK_REFRESHED") == 1
+    assert "지그 계산 추가" in next(w["message"] for w in j["params"]["warnings"] if w["code"] == "RANK_REFRESHED")
+    assert j["params"]["doe"]["load_transfer"]["method"] == "cell"                       # 다른 복제 정책 그대로
+    assert not {"spec", "rev", "matrix_sha256", "design"} & set(j["params"]["doe"]) and cl["doe"] is None
+    finish_job(engine, cl["job"]["id"])
+    r2 = api(client, "POST", f"/doe/studies/{cl['id']}/clone", json={})                    # 이미 지금 설정 = 경고 없음
+    assert r2.status_code == 201, r2.text
+    j2 = _job(engine, r2.json()["job"]["id"])
+    assert j2["params"]["doe"]["rank"] == SNAP and "RANK_REFRESHED" not in [w.get("code") for w in j2["params"]["warnings"]]
 
 
 def test_legacy_study_has_no_rank_key(client, world, engine):
@@ -156,8 +191,8 @@ def test_legacy_study_has_no_rank_key(client, world, engine):
 
 
 # ================================================================ 결과 통과
-def _done(client, world, engine, esl_root, extra, rows=None):
-    s = api(client, "POST", "/doe/studies", json=cbody(world, shapes3(client))).json()
+def _done(client, world, engine, esl_root, extra, rows=None, req=None):
+    s = api(client, "POST", "/doe/studies", json=req or cbody(world, shapes3(client))).json()
     finish_job(engine, s["job"]["id"])
     base = study_dir(esl_root, s["id"])
     (base / "post").mkdir(parents=True)
@@ -303,3 +338,66 @@ def test_rank_snapshot_jig_enabled_flag():
     off_cfg = BeadDoeCfg.model_validate({"rank": {"metric": "solve", "jig": {"enabled": False}}}).model_dump()
     off = rank_snapshot(off_cfg)
     assert off == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1}
+
+
+# ================================================================ v0.23.2 지그 미계산 표시·지그 3D 통과(esl_v0232_fixes.md §3·§4.3)
+def _strip_rank(engine, sid):
+    from sqlalchemy import text
+
+    from esl_platform.core.db.tables import jobs as jobs_t
+
+    with engine.begin() as c:
+        for jid, params in c.execute(jobs_t.select().with_only_columns(jobs_t.c.id, jobs_t.c.params)
+                                     .where(jobs_t.c.bead_doe_id == sid)).all():
+            p = copy.deepcopy(params)
+            p["doe"].pop("rank", None)
+            c.execute(text("UPDATE jobs SET params=CAST(:p AS JSONB) WHERE id=:i"), {"p": json.dumps(p), "i": jid})
+
+
+def test_results_jig_on_clone(client, world, engine, esl_root):
+    """V-0232-2: jig 블록 없는 결과 — rank 있음 ∧ 계획 sm_jig base(①) = true, ④ = false, rank 없음 = false, 블록 있으면 null."""
+    same = body([world["a"], world["b"]], upload_step(client))
+    sid = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz"}, req=same)
+    o = api(client, "GET", f"/doe/studies/{sid}/results").json()
+    assert o["jig"] is None and o["jig_on_clone"] is True
+    sid4 = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz"})          # ④ compare
+    assert api(client, "GET", f"/doe/studies/{sid4}/results").json()["jig_on_clone"] is False
+    sidl = _done(client, world, engine, esl_root, {}, req=body([world["a"], world["b"]], upload_step(client)))
+    _strip_rank(engine, sidl)                                                                       # 옛 스냅샷(rank 없음)
+    assert api(client, "GET", f"/doe/studies/{sidl}/results").json()["jig_on_clone"] is False
+    sidj = _done(client, world, engine, esl_root, {"metric": "jig", "metric_effective": "jig", "cross_mesh": False,
+                                                    "jig": JIG_BLOCK,
+                                                    "view3d_jig": {"d001": "d001_jig"}, "view3d_jig_esl": {"d001": "e1"},
+                                                    "view3d_jig_ref": {"e1": "d000_jig_e00"}}, req=same | {})
+    oj = api(client, "GET", f"/doe/studies/{sidj}/results").json()
+    assert oj["jig_on_clone"] is None and oj["view3d_jig"] == {"d001": "d001_jig"}
+    assert oj["view3d_jig_esl"] == {"d001": "e1"} and oj["view3d_jig_ref"] == {"e1": "d000_jig_e00"}
+    assert o["view3d_jig"] is None
+
+
+def test_openapi_v0232_keys():
+    spec = json.loads((Path(REPO) / "docs" / "contracts" / "openapi_p1b.json").read_text(encoding="utf-8"))
+    props = spec["components"]["schemas"]["DoeResultOut"]["properties"]
+    assert {"view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_on_clone"} <= set(props)
+
+
+def test_view3d_cfg_mirror():
+    """V-0232-5: DEFAULTS["view3d"] == BeadDoeView3dCfg() == 두 예시 yaml(jig·jig_support_max)."""
+    from esl.doe import DEFAULTS
+    from esl_platform.core.config import BeadDoeCfg
+
+    want = {"top_k": 3, "jig": True, "jig_support_max": 64}
+    assert DEFAULTS["view3d"] == want and BeadDoeCfg().model_dump()["view3d"] == want
+    for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
+        y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
+        assert y["bead_doe"]["view3d"] == want, p
+
+
+@pytest.mark.parametrize("bad", [{"jig_support_max": 0}, {"jig_support_max": 2001}, {"jig": "x"}])
+def test_view3d_cfg_rejects(tmp_path, bad):
+    from esl_platform.core.config import load_config_dict
+
+    d = make_settings_dict(tmp_path)
+    d["bead_doe"] = {"enabled": True, "view3d": bad}
+    lc = load_config_dict(d, environ={})
+    assert not lc.ok and any(k.startswith("bead_doe.view3d") for k in lc.error_keys()), lc.errors()

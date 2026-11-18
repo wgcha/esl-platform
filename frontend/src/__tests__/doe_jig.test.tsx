@@ -48,7 +48,7 @@ describe("지그 ok — doe-40", () => {
     expect(line.textContent).toMatch(/^기준 재현\(지그\) MAC ≥ 0\.9\d+ · umax 오차 ≤ \d+\.\d %/);
     expect(line.title).toMatch(/^기준 재현\(지그\): MAC\(모드 포함\) ≥ 0\.9\d+ \(제외 0\.\d+\) · umax 오차 ≤ \d+\.\d %/);
     expect(line.title).toMatch(/하중 영역 3개\(접촉 2 · 패치 1\) · 지그 노드 14/);
-    expect(line.className).toContain("muted");
+    expect(line.className).not.toContain("muted");                    // v0.23.2 D-0.23.2-3: 중립 상태 = 기본 글자색
     expect(screen.queryByTestId("jig-cancel")).toBeNull();           // 일 효율 ≥ work_eff_min → ⚠ 없음(cancel_rel 은 툴팁 정보만)
     expect(line.title).toMatch(/지그 1차 11\.8 Hz \(3-2-1 대비 ×15\.73\)/);   // Hz 는 툴팁만
     expect(line.title).toMatch(/MAC 0\.9\d+ \(모드 제외 0\.\d+\) · umax 오차/);     // 엔트리별 값은 툴팁
@@ -112,14 +112,16 @@ describe("solve 결과 + score_jig, legacy", () => {
     fireEvent.click(screen.getByTestId("rank-aux-toggle"));
     await waitFor(() => expect(heads(t).filter((h) => h === "지그 C 비").length).toBe(1));
     expect(within(t).getAllByTestId(/^aux-jig-/).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("jig-line")).toBeNull();      // 지그 블록 없음 = 한 줄 없음
+    // v0.23.2: 지그 블록 없음 = 미계산 칩(doe-21 = ① 새 스냅샷 → 복제하면 계산)
+    expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("none");
+    expect(screen.getByTestId("jig-line").textContent).toBe("지그: 미계산(이전 설정 스터디 — 복제하면 계산)");
   }, 20000);
   it("legacy(doe-3)·지그 블록 없는 결과: 지그 줄·열·토글 없음", async () => {
     renderApp("/p/p-body/doe/doe-3");
     const t = await screen.findByRole("table", { name: "순위표" });
     expect(heads(t)).toEqual(expect.arrayContaining(["score", "umax", "εmax"]));
     expect(heads(t).some((h) => /지그/.test(h ?? ""))).toBe(false);
-    expect(screen.queryByTestId("jig-line")).toBeNull();
+    expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("none");     // v0.23.2 칩 항상(옛 = 미계산)
     expect(screen.queryByTestId("rank-aux-toggle")).toBeNull();
     expect(screen.getByTestId("metric-defs").textContent).not.toMatch(/지그/);
   }, 15000);
