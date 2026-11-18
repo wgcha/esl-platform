@@ -34,7 +34,7 @@ import { Badge, Card, Empty, ErrorLine, PrimaryButton, type CardFold } from "../
 import { DoeInputs, DoeInputsSummary, EMPTY_INPUTS, propsProblem, rowSource, type InputsForm } from "../../components/DoeInputs";
 import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoeParamTable";
 import { DoeThumbGrid, previewSummary, valuesText } from "../../components/DoeThumbGrid";
-import { BestCleanChip, ChipDetail, BestCleanMqChip, DoeRanking, JigLine, hasBestClean, hasBestCleanMq } from "../../components/DoeRanking";
+import { BestCleanChip, ChipDetail, BestCleanMqChip, DoeRanking, JigLine, JigNoneChip } from "../../components/DoeRanking";
 import { DoePerEslTable, perEslNote } from "../../components/DoePerEslTable";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
@@ -680,24 +680,41 @@ function LoadTransferDiag({ studyId, result }: { studyId: string; result: DoeRes
   );
 }
 
+/** v0.23.2 3D 비교 하중 조건 한 줄(esl_v0232_fixes.md §4.4): 하중 · 지지 · 엔트리 */
+export function v3dCondText(jigMode: boolean, nJig: number | null, eslNames: (string | null)[]): string {
+  const names = [...new Set(eslNames.filter((x): x is string => !!x))];
+  const ent = names.length === 0 ? "–" : names.length === 1 ? names[0] : `기준 ${eslNames[0] ?? "–"} · 안 ${eslNames[1] ?? "–"}`;
+  return `하중: ${jigMode ? "지그 하중" : "전 노드 ESL 재풀이"} · 지지: ${jigMode ? `tie 고정(${nJig ?? "?"}점)` : "3-2-1"} · 엔트리: ${ent}`;
+}
+
 function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const nameOf = (d: string) => result.ranking.find((r) => r.id === d)?.shape?.name ?? null;
   const did = pick && others.includes(pick) ? pick : others[0] ?? null;
+  // v0.23.2: 지그 응답 3D(있을 때 기본) — 왼쪽 = 같은 엔트리의 d000 지그 응답, 오른쪽 = 안 지그 응답. 토글로 기존 전 노드 ESL 컨투어
+  const jigDir = did ? result.view3d_jig?.[did] ?? null : null;
+  const jigEsl = did ? result.view3d_jig_esl?.[did] ?? null : null;
+  const jigRef = jigEsl ? result.view3d_jig_ref?.[jigEsl] ?? null : null;
+  const jigAvail = !!jigDir && !!jigRef;
+  const [mode, setMode] = useState<"jig" | "esl">("jig");
+  const jigMode = jigAvail && mode === "jig";
   // v0.20.0(LT-9): 좌측 = 선택 형상 최악 ESL 의 기준 view3d_ref, 없으면(legacy) d000
   const eslId = did ? result.view3d_esl?.[did] ?? null : null;
   const refId = eslId ? result.view3d_ref?.[eslId] ?? null : null;
-  const eslLabel = refId && eslId ? result.esl?.find((e) => e.entry_id === eslId)?.label ?? eslId.slice(0, 8) : null;
-  const base = useDoeView(studyId, refId ?? (result.view3d.includes("d000") ? "d000" : null));
-  const cand = useDoeView(studyId, did);
+  const labelOf = (e: string | null | undefined) => (e ? result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8) : null);
+  const eslLabel = jigMode ? labelOf(jigEsl) : refId && eslId ? labelOf(eslId) : null;
+  const base = useDoeView(studyId, jigMode ? jigRef : refId ?? (result.view3d.includes("d000") ? "d000" : null));
+  const cand = useDoeView(studyId, jigMode ? jigDir : did);
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
   const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
-  const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(linMode ? { dispLabel: "변위 |u| (mm) — 강체 제거" } : {}) });
+  const dispLabel = jigMode ? "변위 |u| (mm) — 지그 고정(강체 성분 없음)" : linMode ? "변위 |u| (mm) — 강체 제거" : null;
+  const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(dispLabel ? { dispLabel } : {}) });
   if (!others.length) return <Empty>3D 비교 자료가 없습니다</Empty>;
+  const cond = v3dCondText(jigMode, result.jig?.n_jig ?? null, [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)]);
   return (
     <div className="doe-compare">
       <div className="inline-actions">
@@ -711,7 +728,18 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
             </option>
           ))}
         </select>
+        {jigAvail && (
+          <div className="seg" role="group" aria-label="3D 하중 조건" data-testid="v3d-mode">
+            {([["jig", "지그 하중"], ["esl", "전 노드 ESL"]] as const).map(([k, l]) => (
+              <button key={k} type="button" className={mode === k ? "on" : ""} aria-pressed={mode === k} onClick={() => { setMode(k); setManual(null); }}>
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
+        <span className="small" data-testid="v3d-cond">{cond}</span>
         <span className="small muted">{(() => {
+          if (jigMode) return `색 = 변위 |u| · ESL ${eslLabel ?? "–"}(지그 기준 최악), 두 그림 같은 지그·같은 하중·같은 범위`;
           const base = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
           return linMode ? `${base} · 강체 제거, 해석값(순위와 무관)` : base;
         })()}</span>
@@ -1610,7 +1638,8 @@ function StatusBand({ studyId, result }: { studyId: string; result: DoeResultOut
   const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w) }))];
   const jig = result.jig ?? null;
   const chips = [
-    jig && <JigLine key="jig" jig={jig} />,
+    // v0.23.2 D-0.23.2-3: 지그 칩은 항상 첫 칩(계산됨 = 기존, 미계산 = 복제 안내)
+    jig ? <JigLine key="jig" jig={jig} /> : <JigNoneChip key="jig" onClone={result.jig_on_clone} />,
     result.load_transfer && <LoadTransferDiag key="lt" studyId={studyId} result={result} />,
     mqBase && (
       <ChipDetail key="mq" testid="mq-base-strip" className="doe-chip warn-text" title={`⚠ ${warnText(mqBase)}`} full={`⚠ ${warnText(mqBase)}`}>
@@ -1620,8 +1649,7 @@ function StatusBand({ studyId, result }: { studyId: string; result: DoeResultOut
     <BestCleanMqChip key="bcmq" result={result} />,
     <BestCleanChip key="bc" result={result} />,
   ];
-  const any = !!jig || !!result.load_transfer || !!mqBase || items.length > 0 || hasBestClean(result) || hasBestCleanMq(result);
-  if (!any) return null;
+  // 지그 칩이 항상 있으므로 띠는 결과마다 그린다(v0.23.2)
   return (
     <div className="doe-status" data-testid="doe-status">
       {chips}

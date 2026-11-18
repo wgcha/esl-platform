@@ -3256,6 +3256,12 @@ export interface DoeResultOut {
   /** v0.20.0 3D 같은 ESL: entry_id → 기준 view3d id(`d000_e<kk>`), did → 그 형상 최악 ESL entry_id. result.view3d 목록에는 안 들어감(LT-9) */
   view3d_ref?: Record<string, string> | null;
   view3d_esl?: Record<string, string> | null;
+  /** v0.23.2 지그 응답 3D(esl_v0232_fixes.md §4): did → `<did>_jig`, did → 지그 기준 최악 entry_id, entry_id → `d000_jig_e<kk>`(지그 계산된 결과만) */
+  view3d_jig?: Record<string, string> | null;
+  view3d_jig_esl?: Record<string, string> | null;
+  view3d_jig_ref?: Record<string, string> | null;
+  /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
+  jig_on_clone?: boolean | null;
   warnings: DoeWarning[];
 }
 /** post/result.json.load_transfer(esl_load_transfer.md §5) */
