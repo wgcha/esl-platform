@@ -5,7 +5,7 @@
 
 모드 무관 독립 모듈(AGENTS.md D-0.20.0-CODE): ``esl.doe`` 를 import 하지 않고 파일 IO·설정 해석을 하지 않는다 —
 값은 모두 인수(기본값은 호출자가 DEFAULTS["rank"]["jig"] 에서 해석해 키워드로 넘김).
-import 허용 = numpy · scipy(sparse·csgraph·spatial·optimize) · esl.errors · esl.mech.shell · esl.mech.kabsch.
+import 허용 = numpy · scipy(sparse·csgraph·spatial·optimize) · esl.errors · esl.mech.shell · esl.mech.kabsch · esl.mech.mass.
 
 결정성: 같은 입력 → 비트 동일(정렬 키·동률 규칙 고정, BVLS, bincount·고정 순서 합).
 대규모 거리: 삼각형 중심 cKDTree + 노드 청크 → 후보 삼각형만 정확 점-삼각형 거리(Ericson). 메모리 O(T + chunk·knn),
@@ -24,6 +24,7 @@ from scipy.spatial import cKDTree
 
 from esl.errors import EslError
 from esl.mech import kabsch
+from esl.mech.mass import elem_area_normal
 from esl.mech.shell import ShellModel, solver_check_kwargs
 
 SCHEMA = "esl/doe_jig/1"
@@ -71,15 +72,7 @@ def node_weights(mesh) -> dict:
     conn, et = _conn(mesh)
     N, E = X.shape[0], conn.shape[0]
     q = et == 4
-    v = np.empty((E, 3))
-    p0, p1, p2 = X[conn[:, 0]], X[conn[:, 1]], X[conn[:, 2]]
-    v[~q] = np.cross(p1[~q] - p0[~q], p2[~q] - p0[~q])
-    if q.any():
-        p3 = X[conn[q, 3]]
-        v[q] = np.cross(p2[q] - p0[q], p3 - p1[q])
-    nrm = np.linalg.norm(v, axis=1)
-    A = 0.5 * nrm
-    m = np.divide(v, nrm[:, None], out=np.zeros_like(v), where=nrm[:, None] > 0)
+    A, m = elem_area_normal(X, conn, et)          # 면적·법선 식 한 곳(esl.mech.mass — 경계력 ESL 질량과 공유, v0.24.0)
     nn = np.where(q, 4, 3)
     rows = np.concatenate([conn[:, 0], conn[:, 1], conn[:, 2], conn[q, 3]])
     eidx = np.concatenate([np.arange(E)] * 3 + [np.flatnonzero(q)])
