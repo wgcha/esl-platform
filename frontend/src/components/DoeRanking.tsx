@@ -54,6 +54,8 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   const auxLin = solveNew && result.ranking.some((r) => r.score_lin != null);
   /** v0.23.0 지그 순위(metric_effective jig): 주 열 = 지그 C. 보조 열 = 재풀이 C 비·불평형·umax(지그) 비(값 있는 것만). jig 가 아니면서 score_jig 가 있으면 "지그 C 비" 1개 */
   const jigOn = !lin && isJigResult(result);
+  /** v0.24.0 경계력 ESL 보기(하중 정의 탭 — metric_effective bf): 주 열 = 경계력 C */
+  const bfOn = (result.rank?.metric_effective ?? result.metric_effective) === ("bf" as string);
   const jig = result.jig ?? null;
   const has = (k: "score_solve" | "imbalance_max" | "umax_jig" | "score_jig") => result.ranking.some((r) => r[k] != null);
   const jigAux = jigOn
@@ -96,7 +98,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
       <details className="doe-metric-help">
         <summary aria-label="지표 정의">ⓘ 지표 정의</summary>
         <ul data-testid="metric-defs">
-          <li data-testid="rank-sort">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : jigOn ? "score(지그 C)" : cross ? "score(재풀이 C — 다른 메시 비교)" : solveNew ? "score(재풀이 C)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</li>
+          <li data-testid="rank-sort">정렬: {sortKey === "score" ? (lin ? "score(1차 강성 지표)" : jigOn ? "score(지그 C)" : bfOn ? "score(경계력 C)" : cross ? "score(재풀이 C — 다른 메시 비교)" : solveNew ? "score(재풀이 C)" : "score(최악 ESL 절대값)") : METRIC_DEFS.find((d) => d.key === sortKey)?.label}</li>
           <li>
             {jigOn
               ? `score: max(C_jig 안) / max(C_jig 기준) — 기준 낙하 변형을 재현하도록 맞춘 몇 곳의 가압 하중${jig ? `(영역 ${jig.n_regions}개${jig.region_source ? `, ${JIG_SOURCE_NAME[jig.region_source]}` : ""})` : ""}을 같은 지그·같은 하중으로 안마다 재풀이한 컴플라이언스. 작을수록 좋음`
@@ -129,7 +131,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <th className="num">순위</th>
             <th>안</th>
             {named && <th className="doe-name-col">이름</th>}
-            {sortTh("score", lin ? "강성 지표" : jigOn ? "지그 C" : solveNew ? "재풀이 C" : "score", jigOn ? "max_i C_jig / C_ref — 체결부(tie) 고정 + 맞춤 가압 하중으로 안마다 재풀이(하중 제어), 작을수록 좋음" : lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : solveNew ? "max_i C / C_ref — 안마다 재풀이한 컴플라이언스(기본), 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
+            {sortTh("score", lin ? "강성 지표" : jigOn ? "지그 C" : bfOn ? "경계력 C" : solveNew ? "재풀이 C" : "score", jigOn ? "max_i C_jig / C_ref — 체결부(tie) 고정 + 맞춤 가압 하중으로 안마다 재풀이(하중 제어), 작을수록 좋음" : bfOn ? "max_i C_bf / C_ref — 낙하 해석의 접촉력·관성(관성 이완 자기평형) 하중을 같은 3-2-1 지지로 안마다 재풀이(하중 제어), 작을수록 좋음" : lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : solveNew ? "max_i C / C_ref — 안마다 재풀이한 컴플라이언스(기본), 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
             {!lin && <th className="num" title={jigOn ? "지그 재풀이 최대 변위(최악 ESL, tie 고정 — 전 ESL 최대는 툴팁)" : solveNew ? "최악 ESL 기준, 강체 6자유도 제거" : "최악 ESL 기준(전 ESL 최대는 툴팁)"}>umax</th>}

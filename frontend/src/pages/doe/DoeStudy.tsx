@@ -57,7 +57,7 @@ import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { FixedViolNote } from "../../components/FixedViol";
 import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFailBanner";
 import { BlockErr, MsgFold } from "../../components/MsgFold";
-import { LOAD_SOURCES, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type TabState, type View3dKind } from "./doeTabs";
+import { BF_ADD_HINT, BF_GRADE_TEXT, LOAD_SOURCES, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -688,6 +688,76 @@ export function v3dCondText(jigMode: boolean, nJig: number | null, eslNames: (st
   return `하중: ${jigMode ? "지그 하중" : "전 노드 ESL 재풀이"} · 지지: ${jigMode ? `tie 고정(${nJig ?? "?"}점)` : "3-2-1"} · 엔트리: ${ent}`;
 }
 
+/** v0.24.0 응답 쌍 3D 조건 줄(경계력 ESL — 출처 표 열 pairKeys.load) */
+export function v3dPairCondText(load: string, grade: string | null, eslNames: (string | null)[]): string {
+  const names = [...new Set(eslNames.filter((x): x is string => !!x))];
+  const ent = names.length === 0 ? "–" : names.length === 1 ? names[0] : `기준 ${eslNames[0] ?? "–"} · 안 ${eslNames[1] ?? "–"}`;
+  return `하중: ${load}${grade ? `(등급 ${grade})` : ""} · 지지: 3-2-1 · 엔트리: ${ent}`;
+}
+
+/** v0.24.0 경계력 ESL 추가 계산 버튼(esl_bforce.md §6) — 같은 메시 계획(bforce_add.available)일 때만, allowed 아니면 비활성 + 이유 */
+function BfAddButton({ studyId, result, onQueued }: { studyId: string; result: DoeResultOut; onQueued?: () => void }) {
+  const a = result.bforce_add ?? null;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!a?.available) return null;
+  const why = a.allowed ? null : a.reason ?? "경계력 ESL 을 계산할 수 없습니다";
+  return (
+    <span className="primary-wrap" title={why ?? `형상 생성 없이 안마다 경계력 하중으로 선형 풀이해 [경계력 ESL] 탭 자료를 만듭니다(기존 결과 파일 그대로). ${BF_ADD_HINT}`}>
+      <button
+        type="button"
+        className="btn small"
+        data-testid="v3d-bf-add"
+        disabled={!!why || busy}
+        aria-disabled={!!why || busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            await doe.addBforce(studyId);
+            onQueued?.();
+          } catch (e) {
+            setErr(errorText(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        경계력 ESL 계산
+      </button>
+      {err && <span className="small error-text"> {err}</span>}
+    </span>
+  );
+}
+
+/** v0.24.0 경계력 ESL 칩(데이터 등급·재현·평형 보정·한계 문구) — 문구는 순수 함수(시험용) */
+export function bfChipText(b: NonNullable<DoeResultOut["bforce"]>): { line: string; title: string; warn: boolean } {
+  const ents = b.entries ?? [];
+  const macs = ents.map((e) => e.recon_mac).filter((v): v is number => v != null);
+  const errs = ents.map((e) => e.recon_umax_err).filter((v): v is number => v != null);
+  const corr = ents.map((e) => e.corr_rel).filter((v): v is number => v != null);
+  const mac = macs.length ? Math.min(...macs) : null;
+  const err = errs.length ? errs.reduce((a, v) => (Math.abs(v) > Math.abs(a) ? v : a), 0) : null;
+  const cr = corr.length ? Math.max(...corr) : null;
+  const lim = (b.limit_text ?? []).join(" · ");
+  const line = `경계력 ESL · 등급 ${b.grade_min ?? "–"} · 재현 MAC ${mac == null ? "–" : mac.toFixed(2)} · umax 오차 ${err == null ? "–" : `${(err * 100).toFixed(0)}%`} · 평형 보정 ${cr == null ? "–" : `${(cr * 100).toFixed(0)}%`}${lim ? ` · ⚠ ${lim}` : ""}`;
+  const title = ents
+    .map((e) => `${e.label}: 등급 ${BF_GRADE_TEXT[e.grade] ?? e.grade}, 질량 ${e.mass_source ?? "–"}, ā ${e.abar_g == null ? "–" : e.abar_g.toFixed(1)} g, 평형 보정 ${e.corr_rel == null ? "–" : `${(e.corr_rel * 100).toFixed(1)}%`}, 불평형(힘) ${e.eq_force_rel == null ? "–" : e.eq_force_rel.toExponential(2)}, 재현 MAC ${e.recon_mac == null ? "–" : e.recon_mac.toFixed(3)}, 반력 ${e.reaction_rel == null ? "–" : e.reaction_rel.toExponential(1)}`)
+    .join("\n");
+  return { line, title, warn: (b.limits ?? []).length > 0 || (mac != null && mac < 0.9) };
+}
+
+function BfChip({ result }: { result: DoeResultOut }) {
+  const b = result.bforce ?? null;
+  if (!b || b.status !== "ok") return null;
+  const t = bfChipText(b);
+  return (
+    <span className={`doe-chip${t.warn ? " warn-text" : ""}`} data-testid="bf-chip" title={t.title}>
+      {t.line}
+    </span>
+  );
+}
+
 /** v0.23.3 지그 탭 3D 다시 만들기 버튼(esl_jig_view.md §3·§7.2) — available 일 때만, allowed 아니면 비활성 + 이유 */
 function RegenButton({ studyId, result, onQueued }: { studyId: string; result: DoeResultOut; onQueued?: () => void }) {
   const rg = result.view3d_regen ?? null;
@@ -886,36 +956,40 @@ function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: Doe
   );
 }
 
-function Compare3D({ studyId, result, pick, setPick, kind = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; onRegen?: () => void }) {
+function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; onRegen?: () => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const nameOf = (d: string) => result.ranking.find((r) => r.id === d)?.shape?.name ?? null;
   const did = pick && others.includes(pick) ? pick : others[0] ?? null;
   // v0.23.3 하중 정의 탭(D-0.23.3-4): 지그 탭 = [설계 비교(지그 응답) | 지그 진단], 전 노드 탭 = 기존 전 노드 ESL 컨투어(v0.23.2 토글 제거)
-  const jigTab = kind === "jig";                 // 출처 표 열 view3d(출처 이름 아님)
-  const jigDir = did ? result.view3d_jig?.[did] ?? null : null;
-  const jigEsl = did ? result.view3d_jig_esl?.[did] ?? null : null;
-  const jigRef = jigEsl ? result.view3d_jig_ref?.[jigEsl] ?? null : null;
-  const jigAvail = jigTab && !!jigDir && !!jigRef;
+  const jigTab = kind === "jig";                 // 출처 표 열 view3d(출처 이름 아님) — 지그 진단 세그먼트
+  const pairTab = kind === "jig" || kind === "pair";   // v0.24.0 응답 쌍(출처 표 열 pairKeys 의 view3d 키)
+  const pk: PairKeys | null = pairKeys ?? (jigTab ? { dir: "view3d_jig", esl: "view3d_jig_esl", ref: "view3d_jig_ref", load: "지그 하중" } : null);
+  const jigDir = did && pk ? result[pk.dir]?.[did] ?? null : null;
+  const jigEsl = did && pk ? result[pk.esl]?.[did] ?? null : null;
+  const jigRef = jigEsl && pk ? result[pk.ref]?.[jigEsl] ?? null : null;
+  const jigAvail = pairTab && !!jigDir && !!jigRef;
   const [jmode, setJmode] = useState<"design" | "diag">("design");
-  const jigMode = jigAvail && jmode === "design";
+  const jigMode = jigAvail && (kind === "pair" || jmode === "design");
+  const bfMode = jigMode && kind === "pair";
   // v0.20.0(LT-9): 좌측 = 선택 형상 최악 ESL 의 기준 view3d_ref, 없으면(legacy) d000
   const eslId = did ? result.view3d_esl?.[did] ?? null : null;
   const refId = eslId ? result.view3d_ref?.[eslId] ?? null : null;
   const labelOf = (e: string | null | undefined) => (e ? result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8) : null);
   const eslLabel = jigMode ? labelOf(jigEsl) : refId && eslId ? labelOf(eslId) : null;
-  const showFull = !jigTab;
+  const showFull = !pairTab;
   const base = useDoeView(studyId, jigMode ? jigRef : showFull ? refId ?? (result.view3d.includes("d000") ? "d000" : null) : null);
   const cand = useDoeView(studyId, jigMode ? jigDir : showFull ? did : null);
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
   const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
-  const dispLabel = jigMode ? "변위 |u| (mm) — 지그 고정(강체 성분 없음)" : linMode ? "변위 |u| (mm) — 강체 제거" : null;
+  const dispLabel = bfMode ? "변위 |u| (mm) — 3-2-1(자기평형 하중)" : jigMode ? "변위 |u| (mm) — 지그 고정(강체 성분 없음)" : linMode ? "변위 |u| (mm) — 강체 제거" : null;
   const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(dispLabel ? { dispLabel } : {}) });
-  if (!others.length && !jigTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
-  const cond = v3dCondText(jigMode, result.jig?.n_jig ?? null, [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)]);
+  if (!others.length && !pairTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
+  const names = [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)];
+  const cond = bfMode ? v3dPairCondText(pk?.load ?? "", result.bforce?.grade_min ?? null, names) : v3dCondText(jigMode, result.jig?.n_jig ?? null, names);
   const modeSeg = jigTab ? (
     <div className="seg" role="group" aria-label="지그 3D 보기" data-testid="v3d-jig-mode">
       {([["design", "설계 비교"], ["diag", "지그 진단"]] as const).map(([k, l]) => (
@@ -927,7 +1001,13 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, onRegen }: { s
   ) : null;
   // 다시 만들기 필요: 지그 탭 = 진단·보기·선택 안 지그 응답 중 하나 없음, 그 밖 탭 = 사이드카(rank_views) 없음 → 탭이 비활성이어도 눌러 만들 수 있게 활성 탭과 무관(§7.2)
   const needRegen = jigTab ? !result.jig_diag || !result.rank_views || (!!did && !jigDir) : !result.rank_views;
-  const regen = needRegen ? <RegenButton studyId={studyId} result={result} onQueued={onRegen} /> : null;
+  // v0.24.0 경계력 ESL 추가 계산: 같은 메시 계획이고 경계력 보기가 없을 때 활성 탭 3D 머리에(탭이 비활성이어도 만들 수 있게)
+  const regen = (
+    <>
+      {needRegen && kind !== "pair" ? <RegenButton studyId={studyId} result={result} onQueued={onRegen} /> : null}
+      {!result.rank_views?.bforce ? <BfAddButton studyId={studyId} result={result} onQueued={onRegen} /> : null}
+    </>
+  );
   if (jigTab && jmode === "diag")
     return (
       <JigDiag
@@ -957,16 +1037,21 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, onRegen }: { s
         </select>
         {modeSeg}
         {regen}
-        {(!jigTab || jigMode) && <span className="small" data-testid="v3d-cond">{cond}</span>}
+        {(!pairTab || jigMode) && <span className="small" data-testid="v3d-cond">{cond}</span>}
         <span className="small muted">{(() => {
-          if (jigTab && !jigMode) return "";
+          if (pairTab && !jigMode) return "";
+          if (bfMode) return `색 = 변위 |u| · 화살표 = 경계력 하중 · ESL ${eslLabel ?? "–"}(경계력 기준 최악), 두 그림 같은 하중·같은 범위`;
           if (jigMode) return `색 = 변위 |u| · ESL ${eslLabel ?? "–"}(지그 기준 최악), 두 그림 같은 지그·같은 하중·같은 범위`;
           const base = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
           return linMode ? `${base} · 강체 제거, 해석값(순위와 무관)` : base;
         })()}</span>
       </div>
-      {jigTab && !jigAvail ? (
-        <Empty>지그 응답 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>
+      {pairTab && !jigAvail ? (
+        kind === "pair" ? (
+          <Empty>경계력 응답 3D 가 없습니다{result.bforce_add?.available ? " — [경계력 ESL 계산]으로 만드세요" : ""}</Empty>
+        ) : (
+          <Empty>지그 응답 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>
+        )
       ) : (
         <div className="doe-compare-grid">
           {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
@@ -1827,7 +1912,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} onRegen={() => void study.reload()} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} onRegen={() => void study.reload()} />
                       {sensShown ? (
                         <div>
                           <div className="sub-title">민감도</div>
@@ -1891,7 +1976,7 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
   const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w) }))];
   const jig = result.jig ?? null;
   // v0.23.3 출처 표(LOAD_SOURCES.chips)의 칩만 그림 — 출처 이름 분기 없음. src 없음(④·탭 없음) = 기존 전부
-  const kinds: readonly ChipKind[] = src ? src.chips : ["jig", "lt", "mq", "best_clean_mq", "best_clean"];
+  const kinds: readonly ChipKind[] = src ? src.chips : ["jig", "lt", "mq", "best_clean_mq", "best_clean"];   // 탭 없음(④) = 기존 칩만
   const chip: Record<ChipKind, ReactNode> = {
     // v0.23.2 D-0.23.2-3: 지그 칩(계산됨 = 기존, 미계산 = 복제 안내)
     jig: jig ? <JigLine key="jig" jig={jig} /> : <JigNoneChip key="jig" onClone={result.jig_on_clone} />,
@@ -1903,6 +1988,7 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
     ),
     best_clean_mq: <BestCleanMqChip key="bcmq" result={result} />,
     best_clean: <BestCleanChip key="bc" result={result} />,
+    bf: <BfChip key="bf" result={result} />,
   };
   return (
     <div className="doe-status" data-testid="doe-status">

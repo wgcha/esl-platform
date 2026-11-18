@@ -5,7 +5,7 @@ import { renderApp } from "../test/render";
 
 vi.mock("../pages/doe/doeTabs", async (orig) => {
   const m = await orig<typeof import("../pages/doe/doeTabs")>();
-  return { ...m, LOAD_SOURCES: m.LOAD_SOURCES.filter((s) => s.key !== "full") };
+  return { ...m, LOAD_SOURCES: m.LOAD_SOURCES.filter((s) => s.key !== "full" && s.key !== "bforce") };   // v0.24.0 경계력 행도 빼서 지그 1행만
 });
 
 afterEach(cleanup);

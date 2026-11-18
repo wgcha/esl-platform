@@ -272,6 +272,8 @@ export const doe = {
     request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(","), ...(view ? { view } : {}) } }),
   /** v0.23.3 3D 다시 만들기(esl_jig_view.md §3 — 202 작업, 403 권한, 409 작업 중·지그 없음) */
   regenerateView3d: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/view3d/regenerate`),
+  /** v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6) */
+  addBforce: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/sources/bforce`),
   /** v0.23.3 지그 진단 영역(d000_jigdiag_e<kk>_fit/regions.json) */
   jigRegions: (id: string, did: string) => request<DoeJigRegionsFile>("GET", `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/regions.json`),
   files: (id: string) => request<DoeFileOut[]>("GET", `/doe/studies/${id}/files`),

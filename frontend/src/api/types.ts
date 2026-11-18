@@ -633,6 +633,27 @@ export interface EslForces {
   moment_rel?: number | null;
   max_f: { node_id: number; mag: number } | null;
   noise: { force_rel: number | null; hotspot_strain_rel: number | null; disp_precision?: string | null };
+  /** v0.24.0 경계력 ESL 요약(esl_bforce.md §4 — ESL 단계 요약, 이전 실행 = 없음) */
+  bforce?: EslBforceSummary | null;
+}
+
+/** v0.24.0 ESL 단계 경계력 ESL 요약 한 줄 자료 */
+export interface EslBforceSummary {
+  grade: string | null;
+  code?: string | null;
+  reason?: string | null;
+  mass_source?: string | null;
+  sum_abs?: number | null;
+  sum_abs_ratio_full?: number | null;
+  abar_g?: number | null;
+  corr_rel?: number | null;
+  eq_force_rel?: number | null;
+  eq_moment_rel?: number | null;
+  recon?: string | null;
+  mac?: number | null;
+  umax_err?: number | null;
+  reaction_rel?: number | null;
+  limits?: string[];
 }
 
 export interface EslRunOut {
@@ -3268,7 +3289,44 @@ export interface DoeResultOut {
   rank_views?: DoeRankViewsOut | null;
   /** v0.23.3 3D 다시 만들기 가능 여부(§3) — 지그 블록 ok/poor 결과만 */
   view3d_regen?: DoeView3dRegenOut | null;
+  /** v0.24.0 경계력 ESL 블록(esl_bforce.md §5.6 — 사이드카 post/bforce_view.json, 없으면 null) */
+  bforce?: DoeBforceOut | null;
+  /** v0.24.0 경계력 응답 3D: did → `<did>_bf`, did → 최악 entry_id, entry_id → `d000_bf_e<kk>` */
+  view3d_bf?: Record<string, string> | null;
+  view3d_bf_esl?: Record<string, string> | null;
+  view3d_bf_ref?: Record<string, string> | null;
+  /** v0.24.0 경계력 ESL 추가 계산 가능 여부(§6) — 같은 메시 계획만 */
+  bforce_add?: DoeView3dRegenOut | null;
   warnings: DoeWarning[];
+}
+/** v0.24.0 엔트리별 경계력 ESL 자료(데이터 등급·평형·재현) */
+export interface DoeBforceEntryOut {
+  entry_id: string;
+  label: string;
+  grade: string;
+  mass_source?: string | null;
+  source?: string | null;
+  eq_force_rel?: number | null;
+  eq_moment_rel?: number | null;
+  abar_g?: number | null;
+  corr_rel?: number | null;
+  recon_mac?: number | null;
+  recon_umax_err?: number | null;
+  reaction_rel?: number | null;
+  limits?: string[];
+  reason?: string | null;
+}
+/** v0.24.0 경계력 ESL 블록 */
+export interface DoeBforceOut {
+  status: string;
+  code?: string | null;
+  reason?: string | null;
+  grade_min?: string | null;
+  entries?: DoeBforceEntryOut[];
+  limits?: string[];
+  limit_text?: string[];
+  n_designs?: number;
+  n_failed?: number;
 }
 /** v0.23.3 지그 진단 영역(esl_jig_view.md §5) */
 export interface DoeJigDiagRegionOut {
@@ -3356,6 +3414,7 @@ export interface DoeRankViewOut {
 export interface DoeRankViewsOut {
   jig?: DoeRankViewOut | null;
   full?: DoeRankViewOut | null;
+  bforce?: DoeRankViewOut | null;
 }
 export interface DoeView3dRegenOut {
   available: boolean;
