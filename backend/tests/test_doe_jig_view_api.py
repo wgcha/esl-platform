@@ -24,12 +24,19 @@ from test_doe_compare_api import (  # noqa: F401  (픽스처·도우미 재사�
 from test_doe_rank_metric_api import JIG_BLOCK, _done
 
 DIAG = {"schema": "esl/doe_jig_diag/1", "n_jig": 12, "tie_spread": 0.15, "n_contact": 1, "n_patch": 2, "regions_from": "mixed",
-        "regions": [{"id": 0, "kind": "contact", "part": 7, "n_nodes": 30, "area_mm2": 900.0, "center": [1.0, 2.0, 3.0]},
-                    {"id": 1, "kind": "patch", "part": None, "n_nodes": 20, "area_mm2": 400.0, "center": [4.0, 5.0, 6.0]}],
+        "regions": [{"id": 0, "kind": "contact", "part": 7, "part_title": "PANEL", "n_nodes": 30, "area_mm2": 900.0,
+                     "center": [1.0, 2.0, 3.0]},
+                    {"id": 1, "kind": "patch", "part": None, "part_title": None, "n_nodes": 20, "area_mm2": 400.0,
+                     "center": [4.0, 5.0, 6.0]}],
+        "tie_groups": [{"other_part_id": 78, "other_part_title": "PANEL", "n_nodes": 10, "n_clusters": 3, "bbox_mm": [900.0, 1.0, 500.0],
+                        "cluster_dmax_mm": 12.0, "kinds": ["SECONDARY"]},
+                       {"other_part_id": None, "other_part_title": None, "n_nodes": 2, "n_clusters": 1, "bbox_mm": [5.0, 0.0, 1.0],
+                        "cluster_dmax_mm": 5.0, "kinds": []}],
+        "tie_partner_source": "deck",
         "entries": [{"entry_id": "e1", "label": "E1", "kk": 0,
                      "dirs": {"tgt": "d000_jigdiag_e00_tgt", "fit": "d000_jigdiag_e00_fit", "err": "d000_jigdiag_e00_err"},
                      "mac": 0.159, "umax_err": 0.839, "mac_nomodes": 0.12, "umax_err_nomodes": 0.9, "work_eff": 0.4,
-                     "tie_rel": 0.05, "rot_deg": 3.2, "umax_tgt": 40.0, "umax_fit": 6.4, "err_max": 38.0, "tgt_out_frac": 0.7,
+                     "tie_rel": 0.05, "tie_rel_groups": [0.05, 0.01], "rot_deg": 3.2, "umax_tgt": 40.0, "umax_fit": 6.4, "err_max": 38.0, "tgt_out_frac": 0.7,
                      "contrib": {"region": 0.8, "body": 0.3, "mode": 0.1},
                      "forces": [{"region": 0, "kind": "contact", "F": [0.0, 10.0, 0.0], "F_mag": 10.0, "F_n": 10.0, "F_t1": 0.0,
                                  "F_t2": 0.0, "active": True}],
@@ -72,6 +79,8 @@ def test_results_merge_sidecar(client, world, engine, esl_root):
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["jig_diag"] == {k: v for k, v in DIAG.items() if k != "schema"} | {"entries": o["jig_diag"]["entries"]}
     assert o["jig_diag"]["entries"][0]["contrib"] == {"region": 0.8, "body": 0.3, "mode": 0.1}
+    assert o["jig_diag"]["tie_groups"] == DIAG["tie_groups"] and o["jig_diag"]["entries"][0]["tie_rel_groups"] == [0.05, 0.01]
+    assert o["jig_diag"]["regions"][0]["part_title"] == "PANEL"
     assert o["rank_views"]["jig"]["metric"] == "jig" and o["rank_views"]["full"]["C_ref"] == 7.0
     assert o["view3d_jig"] == {"d001": "d001_jig"} and o["view3d_jig_ref"] == {"e1": "d000_jig_e00"}   # result.json 에 없을 때 사이드카
     assert o["view3d_regen"] == {"available": True, "allowed": True, "reason": None}

@@ -2935,6 +2935,14 @@
             "title": "Tie Rel",
             "type": "number"
           },
+          "tie_rel_groups": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Tie Rel Groups",
+            "type": "array"
+          },
           "umax_err": {
             "title": "Umax Err",
             "type": "number"
@@ -3076,6 +3084,30 @@
             ],
             "title": "Regions From"
           },
+          "tie_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DoeJigTieGroupOut"
+            },
+            "title": "Tie Groups",
+            "type": "array"
+          },
+          "tie_partner_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deck",
+                  "none",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Partner Source"
+          },
           "tie_spread": {
             "anyOf": [
               {
@@ -3138,6 +3170,17 @@
               }
             ],
             "title": "Part"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
           }
         },
         "required": [
@@ -3477,6 +3520,68 @@
           "work_eff_min"
         ],
         "title": "DoeJigThOut",
+        "type": "object"
+      },
+      "DoeJigTieGroupOut": {
+        "description": "v0.23.3 지그 노드 상대 부품별 요약(esl_jig_view.md §1.6 — 현장 2026-11-18 추가, 보고만).",
+        "properties": {
+          "bbox_mm": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Bbox Mm",
+            "type": "array"
+          },
+          "cluster_dmax_mm": {
+            "title": "Cluster Dmax Mm",
+            "type": "number"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "n_clusters": {
+            "title": "N Clusters",
+            "type": "integer"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "other_part_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Part Id"
+          },
+          "other_part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Part Title"
+          }
+        },
+        "required": [
+          "n_nodes",
+          "n_clusters",
+          "bbox_mm",
+          "cluster_dmax_mm",
+          "kinds"
+        ],
+        "title": "DoeJigTieGroupOut",
         "type": "object"
       },
       "DoeMatrixIn": {
@@ -15607,7 +15712,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.23.2"
+    "version": "0.23.3"
   },
   "openapi": "3.1.0",
   "paths": {
