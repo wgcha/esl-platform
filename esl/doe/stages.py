@@ -4284,6 +4284,36 @@ def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, sh
     return doc
 
 
+def _prune_view3d_backups(c: Ctx, keep: int) -> list:
+    """§3 다시 만들기 백업 한도: `<out>/_backup/<ts>/post/view3d/…` 만 담은 백업(= 다시 만들기가 옮긴 이전 진단 폴더)을 최근 keep 개만
+    남기고 삭제(keep 0 = 모두). 다른 단계 백업(_backup/<ts> 안에 post/view3d 외 내용)은 건드리지 않는다. 스터디 폴더 안·링크 아님만 지움
+    (심볼릭 링크는 따라가지 않고 링크 자체도 두며, 실제 경로가 출력 루트 밖이면 건너뜀). 반환 = 지운 ts 이름."""
+    root = os.path.join(c.out, "_backup")
+    if keep < 0 or not os.path.isdir(root) or os.path.islink(root):
+        return []
+    mine = []
+    for ts in sorted(os.listdir(root)):
+        d = os.path.join(root, ts)
+        if os.path.islink(d) or not os.path.isdir(d):
+            continue
+        if os.listdir(d) != ["post"]:
+            continue
+        pd = os.path.join(d, "post")
+        if os.path.islink(pd) or os.listdir(pd) != ["view3d"] or os.path.islink(os.path.join(pd, "view3d")):
+            continue
+        mine.append(ts)
+    gone = []
+    for ts in (mine[:-keep] if keep > 0 else mine):
+        d = os.path.join(root, ts)
+        try:
+            c.writer.guard(d)                                 # 실제 경로가 출력 루트 밖이면 EslError — 지우지 않음
+        except EslError:
+            continue
+        shutil.rmtree(d, ignore_errors=True)
+        gone.append(ts)
+    return gone
+
+
 def _post_view3d(c: Ctx, echo=print) -> dict:
     """§3 3D 다시 만들기(post_mode view3d): post/view3d/<새 폴더>·post/jig_view.json 만 쓴다(ranking.csv·result.json·per_esl.json·
     designs.json·report.html·best/·안 result.json 불변). result.json 에 지그 응답 3D 가 없으면(v0.23.1 실행) 만들어 사이드카에."""
@@ -4307,6 +4337,9 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
     if doc is not None and vjw:
         doc["warnings"] = list(doc.get("warnings") or []) + vjw
         c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
+    gone = _prune_view3d_backups(c, int(c.cfg["view3d"].get("regen_keep_backups", 1)))
+    if gone:
+        echo(f"[bd_post view3d] 이전 진단 백업 {len(gone)}개 삭제(최근 {c.cfg['view3d'].get('regen_keep_backups', 1)}개만 유지)")
     echo(f"[bd_post view3d] 지그 진단 {'있음' if doc and doc.get('jig_diag') else '없음'}"
          f" · 하중 정의 보기 {'있음' if doc and doc.get('rank_views') else '없음'}"
          f" · 지그 응답 3D {'새로 만듦' if v3 else '기존 유지'}")

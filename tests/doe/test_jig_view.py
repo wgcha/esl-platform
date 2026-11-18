@@ -208,6 +208,38 @@ def test_regen_keeps_result_files(tmp_path):
     assert "view3d_jig" not in _side(out)
 
 
+def test_regen_backup_retention(tmp_path):
+    """D-0.23.3-n: 다시 만들기가 옮긴 이전 진단 폴더 백업 = 최근 regen_keep_backups 개만(0 = 없음), 다른 단계 백업·링크는 건드리지 않음."""
+    mesh, doe = T.build_same(tmp_path)
+    out, _post, _ids = T.run(str(tmp_path / "o"), doe, mesh, rank=T.rank_snap())
+    root = os.path.join(out, "_backup")
+    os.makedirs(os.path.join(root, "20200101T000000_000000Z", "prep"))               # 다른 단계 백업 — 보존
+    open(os.path.join(root, "20200101T000000_000000Z", "prep", "x.txt"), "w").write("keep")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "k.txt").write_text("keep")
+    os.makedirs(os.path.join(root, "20200102T000000_000000Z", "post"))               # post/view3d 링크 = 따라가지 않음
+    os.symlink(str(outside), os.path.join(root, "20200102T000000_000000Z", "post", "view3d"))
+
+    def regen(keep):
+        d = {**doe, "rank": T.rank_snap(), "rev": 1, "post_mode": "view3d", "cfg": {**T.CFG_FULL, "bead_doe": {"enabled": True, "view3d": {"regen_keep_backups": keep}}}}
+        stg.run_stage({"stage": "bd_post", "out": out, "doe": d}, lambda s: None)
+
+    def mine():
+        return [t for t in sorted(os.listdir(root)) if os.listdir(os.path.join(root, t)) == ["post"] and not t.startswith("2020")]
+
+    for _ in range(3):
+        regen(1)
+    assert len(mine()) == 1                                                         # 3번 다시 만들어도 최근 1개만
+    assert os.path.isfile(os.path.join(root, "20200101T000000_000000Z", "prep", "x.txt"))
+    assert (outside / "k.txt").read_text() == "keep" and os.path.islink(os.path.join(root, "20200102T000000_000000Z", "post", "view3d"))
+    regen(2)
+    regen(2)
+    assert len(mine()) == 2
+    regen(0)
+    assert mine() == []                                                             # 0 = 백업 안 함
+
+
 def test_regen_requires_result(tmp_path):
     mesh, doe = T.build_same(tmp_path)
     out = str(tmp_path / "o")

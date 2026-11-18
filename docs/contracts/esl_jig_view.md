@@ -101,7 +101,7 @@
 | `perEslKey`·`sensKey`·`sort`(정보·기본 정렬) | C_jig · rank_views.jig.sensitivity · score | C · rank_views.full.sensitivity · score |
 | `unavailable`(보기 없을 때 탭 사유) | 지그 칩 문구(미계산·불가) 또는 다시 만들기 안내 | 다시 만들기 안내 |
 
-- 기본 탭 = `primaryFor` 에 metric_effective 가 있는 행(없으면 가능한 첫 행, 하나도 없으면 투영 없이 주 결과·탭 모두 비활성). 불가 출처의 첫 칩(사유)은 현재 탭 띠 앞에 원 결과로(v0.23.2 지그 미계산·불가 칩 유지).
+- 기본 탭 = `primaryFor` 에 metric_effective 가 있는 행(없으면 가능한 첫 행). metric_effective 가 없는 옛 결과는 `rank.metric_effective ?? metric_effective ?? metric ?? "solve"` 로 보아 전 노드 탭이 주 출처(§7.1 — 옛 결과도 전 노드 탭 가능, 지그 없는 스터디라 '3D 다시 만들기' 안내 문구는 나오지 않음). 가능한 행이 정말 하나도 없으면(주 출처 행을 뺀 표) 투영 없이 주 결과. 불가 출처의 첫 칩(사유)은 현재 탭 띠 앞에 원 결과로(v0.23.2 지그 미계산·불가 칩 유지).
 - 백엔드 결과 키 규칙: 이미 있는 키는 유지(`view3d_jig*`·`jig`·`jig_diag`), 새 출처별 키는 출처 접두(`<key>_…`) 또는 `rank_views[<key>]`·사이드카 `per_esl[<key>]` 아래.
 
 ## 3. 3D 다시 만들기 (D-0.23.3-3)
@@ -110,6 +110,8 @@
 - 작업: 기존 큐 · 기존 유형 `DOE_RUN`, params = 마지막 성공 DOE_RUN params 사본 + `kind: "VIEW3D"` + `doe.post_mode: "view3d"`, `resume_from_step = BD_POST 번호(3)` → BD_BASELINE·BD_DESIGNS SKIPPED, BD_POST = 코어 `bd_post` 가 `post_mode == "view3d"` 면 `_post_view3d` 만, BD_REGISTER = 워커가 `kind == "VIEW3D"` 면 `register_doe_view3d`(스터디 존재 확인만, **DB 변경 없음** — phase DONE 유지). 스터디 phase 는 바꾸지 않는다(결과 계속 보임).
 - `_post_view3d(c)`: `post/result.json` 필요(없으면 `RESULT_NOT_READY`). 결과 목록 `_collect`(읽기만), 표시 안 = result.json `view3d` 목록. result.json 에 `view3d_jig` 가 없으면(v0.23.1 실행) `_jig_view3d` 로 지그 응답 3D 생성 → 사이드카에. 그다음 §1·§2 (`_jig_extras`). **쓰는 곳 = `post/view3d/<새 폴더>`·`post/jig_view.json` 만**(fresh_dir 백업은 `_backup/`). ranking.csv·result.json·per_esl.json·designs.json·report.html·best/·안 result.json 은 바이트 불변(V-0233-4).
 - 응답 `DoeResultOut.view3d_regen: {available: bool, allowed: bool, reason: str|null}` — available = 지그 블록 status ok/poor; allowed = 위 권한·작업 조건; reason = 막힌 이유 문구. 화면 버튼은 available 일 때만, allowed 아니면 비활성 + title.
+
+- 백업 한도(D-0.23.3-8): 다시 만들기 때 `fresh_dir` 가 옮긴 이전 진단 폴더는 `<스터디>/_backup/<ts>/post/view3d/…`. 끝에서 이런 백업(= `post/view3d` 만 담은 ts 폴더)을 최근 `bead_doe.view3d.regen_keep_backups`(기본 1) 개만 남기고 삭제(0 = 백업 안 함). 스터디 폴더 안에서만, 링크는 따라가지 않으며(링크 자체도 둠) 실제 경로가 출력 루트 밖이면 건너뜀. 다른 단계 백업(`prep` 등 다른 내용)은 건드리지 않음.
 
 ## 4. 사이드카 `post/jig_view.json` (`esl/doe_jig_view/1`)
 `{schema, source: "bd_post"|"view3d_regen", view3d_jig?, view3d_jig_esl?, view3d_jig_ref?, jig_diag?, rank_views?: {jig, full}, per_esl?: {jig?: {id: [...]}, full?: {...}}, warnings: [str]}`
@@ -138,17 +140,19 @@
 |---|---|---|
 | `bead_doe.view3d.jig_diag` | `true` | 지그 계산된 스터디의 BD_POST·다시 만들기에서 지그 진단 3D(엔트리별 목표·맞춤·오차)와 하중 정의 탭 자료(rank_views)를 만듦 |
 | `bead_doe.view3d.jig_tie_gap_mm` | `5.0` | (§1.6) 지그 노드 상대 부품 찾기 거리 — deck 표면 최근접 틈 상한(보고만, 0..1000) |
+| `bead_doe.view3d.regen_keep_backups` | `1` | (§3) 3D 다시 만들기가 옮긴 이전 진단 폴더 백업 유지 개수(0..20, 0 = 백업 안 함) |
 
 ## 7. 화면 (`DoeStudy.tsx`, D-0.23.3-4·5)
 
 ### 7.1 하중 정의 탭 (사용자 결정 2026-11-18 15:47 — v0.23.1 "탭 도입 안 함" 을 이 탭 하나에 한해 개정)
 - 결과 카드 **머리 오른쪽**(받기 묶음 왼쪽, 같은 줄 — 높이 불변)에 `.seg` 1개 `data-testid="doe-load-tab"`: [지그 ESL | 전 노드 ESL]. 버튼 `data-tab="jig"|"full"`.
-- 기본 탭 = `metric_effective == "jig"` 이면 jig, 아니면 full. 지그 탭 가능 = `rank_views.jig` 있음 ∨ (rank_views 없음 ∧ metric_effective jig — 옛 사이드카 없는 지그 스터디는 주 결과 그대로). 전 노드 탭 가능 = `rank_views.full` ∨ metric_effective ≠ jig. 불가 탭 = 비활성 + title(지그: 기존 칩 문구 — 미계산·fallback·unsupported, 전 노드: "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다").
+- 기본 탭 = `metric_effective == "jig"` 이면 jig, 아니면 full. 지그 탭 가능 = `rank_views.jig` 있음 ∨ (rank_views 없음 ∧ metric_effective jig — 옛 사이드카 없는 지그 스터디는 주 결과 그대로). 전 노드 탭 가능 = `rank_views.full` ∨ metric_effective ≠ jig(metric_effective 없는 옛 결과 = metric → 없으면 "solve" 로 보아 가능). 불가 탭 = `aria-disabled`(키보드 포커스는 가능 — 사유를 읽을 수 있게, 클릭·선택만 막음) + title(지그: 기존 칩 문구 — 미계산·fallback·unsupported, 전 노드: "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다").
 - 탭 투영 `tabResult(result, tab)`(순수 함수): rank_views[tab] 의 ranking·baseline·C_ref·n_*·per_esl_inline·sensitivity(_reason)·summary.best_clean 으로 바꾸고 `metric_effective`·`rank.metric_effective` = 그 보기 metric, 지그 탭은 jig 블록 유지, 전 노드 탭은 `jig = null`(지그 값·칩 숨김). 순위표·ESL별 표·민감도·3D·상태 띠는 투영 결과만 본다 → 다른 탭 값이 DOM 에 없음.
 - 상태 띠: 지그 탭 = 지그 칩 + 지그 경고(코드 `JIG_*`) + 공통 경고; 전 노드 탭 = 지그 미계산 칩(지그 탭 불가일 때만 — v0.23.2 칩 유지)·하중 전달·기준 메시 품질·경고 없는 최상위 칩 + 전 노드 경고(`SM_*`·`LT_*`·`MESH_QUALITY_*`) + 공통 경고. 공통 = 그 밖 코드.
 - 순위표: 지그 탭 umax 열 = 지그 umax(mm, 열 title "지그 재풀이 최대 변위(최악 ESL)"), εmax = "–". 보조 열 토글은 그 탭 값만(지그 탭 = umax(지그) 비, 전 노드 탭 = 기존 lin/solve 보조 열).
 - ESL별 개선율 표: 투영 결과의 per_esl(지그 탭 = C_jig 비), 인라인이 아니면 `?view=` 로 읽음.
 - 받기·재낙하·검증 낙하(선택 안 작업) = 탭 공통. 선택 안(pick)도 탭 공통.
+- 탭 키보드·접근성(D-0.23.3-8): `role=tablist`(aria-label 하중 정의) · 버튼 `role=tab` + `aria-selected` + `aria-controls="doe-load-panel"`(결과 본문 `role=tabpanel`), roving tabindex(선택 탭만 tab 순서). 좌우 화살표·Home·End = 포커스 이동(비활성 탭 포함), 클릭·Enter·Space = 선택(비활성이면 무시). 비활성 탭에 포커스가 오면 사유를 탭 아래 절대 위치 한 줄(`data-testid="doe-load-tab-why"`, 높이 불변)로 보이고 `aria-describedby` 로도 연결(sr-only 문구).
 
 ### 7.2 3D (오른쪽 열 "3D 비교" 자리 — 새 카드 없음)
 - 전 노드 탭: 기존 전 노드 ESL 컨투어(3-2-1)만. v0.23.2 토글 [지그 하중 | 전 노드 ESL] **제거**.
@@ -156,12 +160,12 @@
   - 설계 비교 = v0.23.2 지그 응답 쌍(view3d_jig_ref | view3d_jig). 없으면 Empty "지그 응답 3D 가 없습니다" + [3D 다시 만들기].
   - 지그 진단(`JigDiag`): 엔트리 선택 `<select className="select small">`(재낙하 엔트리 선택과 같은 방식, `data-testid="jig-diag-entry"`, 기본 = 선택 안의 지그 최악 엔트리 → 없으면 첫 엔트리) + 세그먼트 `data-testid="jig-diag-view"` [목표·맞춤 | 오차 | 영역].
     - 목표·맞춤: 왼쪽 `_tgt`(목표 u_tgt — 지그 노드 기준 강체 제거) | 오른쪽 `_fit`(맞춤 u_fit + 영역 합력 화살표). 같은 색 범위(두 u_max 중 큰 값)·같은 변형 배율·같은 변형 켜기(공유 상태).
-    - 오차: 왼쪽 `_err`(|u_fit − u_tgt|, 색 범위 = 목표·맞춤과 같은 범위) | 오른쪽 `_fit`.
+    - 오차: 왼쪽 `_err`(|u_fit − u_tgt|) | 오른쪽 `_fit`. 같은 색 범위는 목표|맞춤 두 그림에만 적용 — 오차 그림은 err manifest 자체 범위(0..err u_max), 맞춤 그림은 맞춤 자체 범위(목표·오차 범위와 섞지 않음). 수동 범위는 오차 그림·나머지 그림이 각각 따로.
     - 영역: 왼쪽 = `_fit` 형상에 영역 색(접촉 = 진한 파랑 계열, 패치 = 옅은 파랑 계열, 영역 밖 = 회색) + tie 마커 + 영역 합력 화살표 | 오른쪽 `_fit`.
     - 한 줄 `data-testid="jig-diag-line"`: `{엔트리} · MAC {mac}(모드 제외 {mac_nm}) · umax 오차 {%} · work_eff {} · tie_rel {}` — 목표 미달(mac < th.mac_min 또는 오차 > th.umax_err_max)은 warn-text. title(툴팁) = rot_deg·영역 수(접촉/패치)·지그 노드 수·tie_spread·기여(영역/체적력/모드)·면외 에너지 비·영역별 합력.
     - 체적력·모드 계수 = 같은 줄 끝 작은 글씨 `data-testid="jig-diag-coef"`(`체적력 (Fx, Fy, Fz) N · 모드 a1… N`).
   - 화살표 = 기존 3D 화살표(`buildArrow` 군집형, 길이 ∝ |F|, 라벨 `R{id} 접촉|패치 {|F|} N`) — View3DCard 선택 속성 `arrowsOverride`. 영역 색 = 선택 속성 `fieldOverride`. 공유 배율 = 선택 속성 `deformSync`. 속성을 안 주면 기존 동작 그대로.
-  - [3D 다시 만들기] `data-testid="v3d-regen"`: 지그 탭 3D 머리 줄 끝, `view3d_regen.available` 이고 (지그 진단 없음 ∨ 선택 안 지그 응답 없음 ∨ rank_views 없음)일 때만. allowed 아니면 비활성 + title reason. 누르면 POST → 작업 진행 띠(기존).
+  - [3D 다시 만들기] `data-testid="v3d-regen"`: 3D 머리 줄(모드 세그먼트 옆 — 결과 카드 머리·받기 묶음 옆이 아님, 높이 불변). `view3d_regen.available` 이고 필요할 때만: 지그 탭 = (지그 진단 없음 ∨ 선택 안 지그 응답 없음 ∨ rank_views 없음), 그 밖 탭(전 노드) = rank_views 없음 — 지그는 계산됐는데 metric 이 solve·lin 이고 사이드카가 없어 지그 탭이 비활성인 스터디도 활성 탭(전 노드)의 3D 머리에서 눌러 만들 수 있다. allowed 아니면 비활성 + title reason. 누르면 POST → 작업 진행 띠(기존).
 - 높이: 머리 줄 1줄·두 그림 높이 그대로(2560×1440 결과 단계 높이 불변 — v0.23.1 예산).
 
 ## 8. 시험 (V-0233-n)
@@ -178,6 +182,7 @@
 | 7 | 설정 거울 `view3d.jig_diag` | `backend/tests/test_doe_config.py` 또는 rank 시험 |
 | 8 | 화면: 탭 기본 규칙(jig/solve), 지그 미계산 = 지그 탭 비활성 + 사유, 탭별 DOM 섞임 0(지그 탭에 재풀이 C·불평형 열·LT 칩 없음, 전 노드 탭에 지그 C·지그 칩·지그 진단 없음), 민감도 탭별, 3D 지그 탭 세그먼트·진단 라벨·세그먼트 3종, 다시 만들기 버튼 조건 | `frontend/src/__tests__/doe_v0233.test.tsx` |
 | 8b | 출처 표: 코어 RANK_SOURCES 행 제거 → 그 rank_views 없음(`tests/doe/test_jig_view.py`), 화면 LOAD_SOURCES 행 제거 mock → 탭 1개·화면 정상(`F/__tests__/doe_v0233_sources.test.tsx`) | – |
+| 10 | 보완(D-0.23.3-8): 옛 결과(metric_effective 없음) 전 노드 탭 가능·사유에 다시 만들기 없음, 지그 계산됨+solve+사이드카 없음 → 전 노드 탭에서 다시 만들기 버튼, 탭 키보드(role·aria·화살표·사유 포커스), 다시 만들기 백업 최근 N개만(`test_regen_backup_retention`) | `doe_v0233.test.tsx`·`tests/doe/test_jig_view.py` |
 | 9 | 회귀·스크린샷: pytest 4묶음, vitest·typecheck·build·check:api, openapi `--check`; Playwright 2560×1440 mock `/home/claude/shots/v0233_{diag_tgtfit,diag_err,diag_regions,tab_jig,tab_full}.png` | – |
 
 ## 9. 결정 (decisions.md)
@@ -191,3 +196,4 @@
 | D-0.23.3-7 | (사용자 16:26) 하중 출처 표 1곳(코어 RANK_SOURCES ↔ 화면 LOAD_SOURCES) — 순위표·ESL별 표·3D·민감도·칩은 행의 열만 읽고 출처 이름 분기 없음, 출처 추가·제거 = 행만. 새 결과 키는 출처 접두·rank_views[key] 규칙 |
 | D-0.23.3-6 | (현장 jig.json 2026-11-18) 진단에 상대 부품별 tie 요약(tie_groups — 기하 최근접 deck 표면 파트, `view3d.jig_tie_gap_mm`)·엔트리 tie_rel_groups·영역 part_title 추가, 진단 3D tie 마커 = 그룹 색 + 범례. 계산 불변·jig.json 불변(BD_POST 위치) |
 | D-0.23.3-5 | 지그 탭 3D = [설계 비교(지그 응답) | 지그 진단], 진단 = 엔트리 선택 + [목표·맞춤 | 오차 | 영역], 같은 색 범위·같은 배율, 영역 합력 화살표(기존 화살표·크기 비례), 체적력·모드 계수는 한 줄 글씨 |
+| D-0.23.3-8 | (Verifier 지적 반영) 옛 결과(metric_effective 없음)도 전 노드 탭 가능("solve" 간주), 다시 만들기 버튼은 활성 탭과 무관하게 필요할 때(rank_views 없음) 3D 머리에 보임, 오차 보기 색 범위 = err 자체(같은 범위는 목표|맞춤 두 그림만), 다시 만들기 백업 최근 `view3d.regen_keep_backups`(기본 1)개, 탭 키보드·aria |
