@@ -105,9 +105,10 @@ def test_v0240_j_contact_grade_stage(runs):
 
 
 def test_v0240_j_no_data_and_full_esl_unchanged(runs):
-    d = _j(os.path.join(runs["plain"], "04_esl", "bforce.json"))
-    assert d["grade"] == "none" and d["code"] == "BF_NO_DATA"
+    assert not os.path.isfile(os.path.join(runs["plain"], "04_esl", "bforce.json"))     # 산출물 집합 불변(이전 추출물)
     assert not os.path.isfile(os.path.join(runs["plain"], "04_esl", "bforce.npz"))
+    st = _j(os.path.join(runs["plain"], "run.json"))["stages"]["esl"]["summary"]["bforce"]
+    assert st["grade"] == "none" and st["code"] == "BF_NO_DATA"
     assert not os.path.isfile(os.path.join(runs["plain"], "01_extract", "bforce.json"))   # 옛 추출물 = 쓰지 않음
     for fn in ("f_eq.npz", "u_rel.npz"):
         a = np.load(os.path.join(runs["bf"], "04_esl", fn), allow_pickle=False)

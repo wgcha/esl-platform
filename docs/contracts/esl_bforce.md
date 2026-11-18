@@ -28,8 +28,8 @@
 - 시점: 패스 C 의 후보 프레임 D(변위 `disp.csv` 와 같은 프레임 — t* 는 Python 이 D 중에서 고름, 기존 선택 그대로). 노드 = 대상 파트 노드 청크(`disp.csv` 와 같은 청크).
 - 종류 k ∈ {`cont`, `cont2`, `acc`, `mass`, `fint`} 마다 결과 유형 이름 후보(`bf_names_<k>`, `|` 구분)를 `GetDataTypeList` 에서 `match_name` 규칙(정확 → 대소문자·공백·밑줄 무시)으로 찾는다. 벡터 성분 = `bf_vec_comps`(기본 `X Y Z`, 각 성분 후보 `|` 구분 가능), 스칼라(mass) 성분 = `scalar_comps` 후보.
 - 출력: 찾은 종류마다 `bf_<k>.csv` — 벡터 `frame_index,node_id,x,y,z`, 스칼라 `frame_index,node_id,v`. 값 없는 노드는 행을 쓰지 않음(Python 이 0 으로 채우고 수를 기록).
-- 없는 유형·쿼리 실패는 **실패가 아님**: done.json `bforce = {"on": true, "frames": D, "kinds": {k: …}}`, 없는 종류 `{"type": null, "reason": "..."}`, 찾은 종류 `{"type", "comps", "rows"}`(쿼리 실패 = 그 CSV 삭제 + type null). `bf_on 0` → `bforce = {"on": false}`. done.json 에 `bforce` 키가 없으면(이전 TCL) Python 은 등급 none(`BF_NO_DATA`).
-- request.txt 새 키(없으면 TCL 기본 = 설정 기본과 같은 값): `bf_on`(1), `bf_names_cont`, `bf_names_cont2`, `bf_names_acc`, `bf_names_mass`, `bf_names_fint`, `bf_vec_comps`. 워커 `h3d.bforce_request(core_settings)` 가 설정 `bforce.result_names`·`vec_comps`·`enabled` 에서 만든다.
+- 없는 유형·쿼리 실패는 **실패가 아님**: done.json `bforce = {"on": true, "frames": D, "kinds": {k: …}}`, 없는 종류 `{"type": null, "reason": "..."}`, 찾은 종류 `{"type", "comps", "rows"}`(쿼리 실패 = 그 CSV 삭제 + type null). `bf_on 0` → done.json 에 `bforce` 없음(이전과 같음). done.json 에 `bforce` 키가 없으면(이전 TCL) Python 은 등급 none(`BF_NO_DATA`).
+- request.txt 새 키: `bf_on`(TCL 기본 **0 = 끔** — request 에 bf 키가 없으면 done.json·CSV 가 이전 버전과 바이트 동일(v0.7.2 TCL 골든 V-CI-B1), 워커는 설정 `bforce.enabled` 로 1, PC 수동 실행은 request.txt 에 `bf_on<TAB>1`), 이름 목록 기본 = 설정 기본과 같은 값: `bf_names_cont`, `bf_names_cont2`, `bf_names_acc`, `bf_names_mass`, `bf_names_fint`, `bf_vec_comps`. 워커 `h3d.bforce_request(core_settings)` 가 설정 `bforce.result_names`·`vec_comps`·`enabled` 에서 만든다.
 - dump 모드(strain_tensor 원시 덤프 경로)는 이번 범위 밖(R-BF-5) — `bforce` 키 없음 = none.
 
 ## 2. 패킹 (`esl/io/bforce_csv.py:pack_bforce(results_dir, node_id, out_dir) -> dict`)
@@ -83,7 +83,7 @@
 - `04_esl/bforce.npz`: `node_id`, `f`(= 풀이 하중 F_bal, 기준계), `f_raw`(전역 F), `m`, `u_val`(재현 변위, 강체 제거), 등급 none 이면 파일 없음.
 
 ## 4. ESL 생성 단계 (Case `stage_esl` — D-0.24.0-BF-4)
-- 기존 전 노드 ESL 계산·파일은 그대로(바이트 동일 — `esl_summary.json` 불변). 그다음 `bforce` 설정 `enabled`(기본 true) 이면 `01_extract/bforce.npz` 의 선택 프레임 자료로 §3 → `04_esl/bforce.json`·`bforce.npz`. 자료 없음 = 등급 none json 만.
+- 기존 전 노드 ESL 계산·파일은 그대로(바이트 동일 — `esl_summary.json` 불변). 그다음 `bforce` 설정 `enabled`(기본 true) 이면 `01_extract/bforce.npz` 의 선택 프레임 자료로 §3 → `04_esl/bforce.json`·`bforce.npz`. 추출물에 경계력 자료가 아예 없으면(이전 추출·bf_on 0) 04_esl 에 아무것도 쓰지 않고(산출물 집합 불변 — V-CI-B1) 단계 요약만 `{grade: none, code: BF_NO_DATA}`, 경계력 추출은 했는데 접촉력·내력 유형이 없으면 등급 none json 만.
 - 기준 재현: 같은 3-2-1 지지(S4 `pick_321`)로 K₀ u = F_bal(직접법 메모리 규칙 = `full_solve_decision` — 안 되면 `recon.status skipped`), u_val → 파트 전 노드 Kabsch 강체 제거 → u_rel 과 MAC·umax 오차, 반력 크기. MAC < `recon_mac_min`(0.9) 또는 |umax 오차| > `recon_umax_err_max`(0.2) = 경고 `BF_RECON_POOR`(실패 아님), 반력 비 > `reaction_warn_rel`(1e-3) = 경고 `BF_REACTION`.
 - 경계력 단계 예외는 ESL 단계를 실패시키지 않는다(경고 `BF_FAILED` + json `{grade, code, reason}`).
 - 단계 요약(반환·ESL 실행 `forces.bforce`): `{grade, mass_source, sum_abs, sum_abs_ratio_full, abar_g, corr_rel, mac, umax_err, reaction_rel, limits}` → ESL 화면 결과 카드 한 줄(`data-testid="esl-bforce-line"`). 3D·OptiStruct 내보내기는 후속(R-BF-1·2).

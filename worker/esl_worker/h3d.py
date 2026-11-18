@@ -215,7 +215,7 @@ def strain_request(core_settings: dict | None) -> dict[str, str]:
 
 def bforce_request(core_settings: dict | None) -> dict[str, str]:
     """경계력 ESL 결과 유형 이름 키(계약 esl_bforce.md §1) — 설정 bforce.enabled·result_names·vec_comps → request.txt
-    bf_on·bf_names_<kind>(후보 '|' 구분)·bf_vec_comps(공백 구분). 코어 없는 설치본 = 빈 dict(TCL 기본값 = 같은 값)."""
+    bf_on·bf_names_<kind>(후보 '|' 구분)·bf_vec_comps(공백 구분). 코어 없는 설치본 = 빈 dict(TCL 기본 bf_on 0 = 끔 — 이전 출력 그대로)."""
     from . import core_adapter
 
     try:

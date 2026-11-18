@@ -50,7 +50,7 @@
 #   hot_k (200, no upper cap; > 1000 warns), top_n (5), reach_rtol (1e-6), chunk (50000),
 #   elem_selection / node_selection (optional HyperView selection string, e.g. "component 12"),
 #   strain_system (elemental | analysis | global | none; default elemental).
-#   v0.24.0 boundary-force ESL: bf_on (1), bf_names_<kind> ("a|b" result type candidates: cont "Contact Forces|...",
+#   v0.24.0 boundary-force ESL: bf_on (0 = off, no "bforce" in done.json; the server worker sends 1), bf_names_<kind> ("a|b" result type candidates: cont "Contact Forces|...",
 #   cont2, acc "Acceleration|...", mass, fint), bf_vec_comps ("X Y Z", each "X|x" candidates). A missing type is recorded
 #   as {"type":null,"reason"} in done.json bforce.kinds (never an extraction failure).
 #   -hot_k / -top_n arguments override request.txt.
@@ -743,7 +743,7 @@ proc ::esl::read_config {path extra} {
         names_strain_tensor "Strain" names_max_stress "Max_Stress" \
         comp_xx "XX" comp_yy "YY" comp_zz "ZZ" comp_xy "XY" vm_comps "vonMises|von Mises" \
         scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" layer_prefer "Lower|Upper" dump_max_bytes 0 dump_free_bytes "" \
-        bf_on 1 bf_names_cont "Contact Forces|Contact Force|CONT" \
+        bf_on 0 bf_names_cont "Contact Forces|Contact Force|CONT" \
         bf_names_cont2 "Tied Contact Forces|Contact Forces (TYPE2)|CONT2" bf_names_acc "Acceleration|ACC" \
         bf_names_mass "Nodal Mass|Mass|MASS" bf_names_fint "Internal Forces|Internal Force|FINT" bf_vec_comps "X Y Z"]
     set cfg [::esl::read_request $path $defaults]
@@ -2002,7 +2002,11 @@ proc ::esl::run {arglist} {
             lappend bfk_js "[::esl::jstr $bk]:\{\"type\":[::esl::jstr $bdt],\"comps\":[::esl::jarr $bcomps],\"rows\":[dict get $bfrows $bk]\}"
         }
     }
-    set bf_json [expr {[dict get $cfg bf_on] eq "1" ? "\{\"on\":true,\"frames\":[::esl::jints $D],\"kinds\":\{[join $bfk_js ,]\}\}" : "\{\"on\":false\}"}]
+    # bf_on 0 (default when request.txt has no bf keys) -> no "bforce" member: outputs identical to earlier versions
+    set bf_extra {}
+    if {[dict get $cfg bf_on] eq "1"} {
+        set bf_extra [list bforce "\{\"on\":true,\"frames\":[::esl::jints $D],\"kinds\":\{[join $bfk_js ,]\}\}"]
+    }
     lappend ::esl::passes "\"C\":\{\"frames\":[::esl::jints $D],\"prev_frames\":[::esl::jints $P],\"strain_frames\":[::esl::jints $CF],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
     ::esl::progress "pass C done ([::esl::secs $t0] s)"
     ::esl::progress "disp done"
@@ -2075,7 +2079,7 @@ proc ::esl::run {arglist} {
         disp_value_format [::esl::jstr $::esl::numfmt] value_format [::esl::jstr $::esl::numfmt] \
         strain_system [::esl::jstr $::esl::sys_req] \
         strain_system_call [::esl::jstr $::esl::sys_applied] \
-        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] bforce $bf_json {*}$cum_extra {*}$::esl::src_members]] eq ""} {
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$bf_extra {*}$cum_extra {*}$::esl::src_members]] eq ""} {
         error "done.json could not be written"
     }
     set ::esl::written 1

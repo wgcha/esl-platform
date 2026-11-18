@@ -35,7 +35,7 @@ def test_v0240_f_tcl_bforce_default_names(tmp_path):
     nid = np.arange(1, 13)
     extra, vals = _bf_mock({"Contact Forces": (["X", "Y", "Z"], False), "Acceleration": (["X", "Y", "Z", "Mag"], False)},
                            nid)
-    m, ref, drv, out = tm._setup(tmp_path, mock_extra=extra)
+    m, ref, drv, out = tm._setup(tmp_path, mock_extra=extra, extra_req="bf_on\t1\n")   # 워커는 bf_on 1 + 이름 목록을 보냄
     r = tm._run(drv)
     assert r.returncode == 0, r.stderr
     done = json.loads((out / "done.json").read_text())
@@ -62,7 +62,7 @@ def test_v0240_f_tcl_bforce_default_names(tmp_path):
 def test_v0240_f_tcl_bforce_alt_names_and_off(tmp_path):
     nid = np.arange(1, 13)
     extra, vals = _bf_mock({"KontaktKraft": (["x", "y", "z"], False), "Node Mass": (["Scalar value"], True)}, nid)
-    req = ("bf_names_cont\tFoo|kontakt_kraft\n"                          # 대소문자·밑줄 무시 일치
+    req = ("bf_on\t1\nbf_names_cont\tFoo|kontakt_kraft\n"                          # 대소문자·밑줄 무시 일치
            "bf_names_mass\tNode Mass\n"
            "bf_vec_comps\tX|x Y|y Z|z\n")
     m, ref, drv, out = tm._setup(tmp_path, mock_extra=extra, extra_req=req)
@@ -75,12 +75,12 @@ def test_v0240_f_tcl_bforce_alt_names_and_off(tmp_path):
     D = doc["frames"]
     dat, _ = frame_data(str(tmp_path / "x"), D[0])
     assert np.array_equal(dat["mass"], vals["Node Mass"][D[0], :, 0])
-    # bf_on 0 → bforce {"on": false}, bf 파일 없음
+    # request 에 bf 키 없음(기본 bf_on 0) → done.json 에 bforce 없음·bf 파일 없음(이전 출력과 같음 — v0.7.2 TCL 골든)
     tmp2 = tmp_path / "off"
     tmp2.mkdir()
-    m, ref, drv, out = tm._setup(tmp2, mock_extra=extra, extra_req="bf_on\t0\n")
+    m, ref, drv, out = tm._setup(tmp2, mock_extra=extra)
     assert tm._run(drv).returncode == 0
-    assert json.loads((out / "done.json").read_text())["bforce"] == {"on": False}
+    assert "bforce" not in json.loads((out / "done.json").read_text())
     assert not any(f.startswith("bf_") for f in os.listdir(out))
 
 

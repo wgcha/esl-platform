@@ -1137,9 +1137,11 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
         return {"grade": None, "code": "BF_DISABLED"}
     data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), int(sel["frame_index"]))
     have = sorted(k for k, v in data.items() if v is not None)
+    if xdoc is None:                              # 추출물에 경계력 자료 없음(이전 TCL·bf_on 0) = 04_esl 에 쓰지 않음(산출물 집합 불변)
+        why = "추출물에 경계력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행"
+        return {"grade": "none", "code": "BF_NO_DATA", "reason": why}
     if bfm.grade_of(have) == "none":
-        why = ("추출물에 경계력 결과 없음(v0.24.0 이전 TCL 이거나 bf_on 0) — h3d 추출을 다시 실행" if xdoc is None
-               else f"접촉력·내력 결과 유형이 h3d 에 없음(있는 종류 {have})")
+        why = f"접촉력·내력 결과 유형이 h3d 에 없음(있는 종류 {have})"
         doc = {"schema": bfm.SCHEMA, "grade": "none", "code": "BF_NO_DATA", "reason": why,
                "kinds": {k: data.get(k) is not None for k in bfm.KINDS},
                "result_types": None if xdoc is None else xdoc.get("kinds")}

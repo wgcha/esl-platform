@@ -2718,14 +2718,17 @@ def _lt_method(c: Ctx, variant=None) -> dict:
     return tp.method_of(_lt(c), variant, c.mapping_opts())
 
 
-def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None) -> tuple[list, dict | None]:
+def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None,
+                srcs: list | None = None) -> tuple[list, dict | None]:
     """하중 자리 하나(§13.3): reuse once 이고 안(did ≠ d000) = 베이스라인 노드 하중(prep/loads.npz) 그대로, 그 밖 = 공용 실행기
-    ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식."""
-    if plan["reuse"] == "once" and did != BASELINE and variant is None:
+    ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식.
+    srcs = 전달할 원천 하중(v0.24.0 경계력 ESL — esl_bforce.md §5.2), None = 엔트리 전 노드 ESL(기존)."""
+    if plan["reuse"] == "once" and did != BASELINE and variant is None and srcs is None:
         _, loads = sc.load_loads(c.p("prep"))
         return loads, None
     rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}, "placement": _lt_placement(c, plan)}
-    return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)), dst, _lt_method(c, variant), cache if cache is not None else {})
+    return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)) if srcs is None else srcs, dst, _lt_method(c, variant),
+                                 cache if cache is not None else {})
 
 
 def _lt_target_loads(c: Ctx, did: str, tgt, region, h: float) -> list:
@@ -4492,10 +4495,8 @@ def _bf_prep(c: Ctx, t, bmeta: dict, fresh: bool = False) -> dict:
                 h = _lt_h(c, bmeta, t.mesh)
                 reg = _bf_region(c)
                 dst = ltm.dst_mesh(t.mesh, t.frame, reg if plan["mask"] != "none" else None, h)
-                rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()},
-                      "placement": _lt_placement(c, plan)}
                 lsrc = [ltm.src_load(eid, e.raw, f, e.meta.get("frame"), None) for eid, e, f in srcs]
-                loads, _info = ltm.run_transfer_plan(rp, lsrc, dst, _lt_method(c, None), {})
+                loads, _info = _plan_loads(c, plan, BASELINE, dst, None, {}, srcs=lsrc)   # 공용 전달 자리 1곳(계획 그대로)
                 F = np.stack([np.asarray(f, dtype=np.float64) for _, f in loads])
             else:
                 for eid, e, f in srcs:
