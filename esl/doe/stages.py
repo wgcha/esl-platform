@@ -4038,6 +4038,66 @@ def _jig_ready(c: Ctx) -> tuple[dict, dict] | None:
     return jd, U.load_npz(pz)
 
 
+def _jig_tie_info(c: Ctx, mesh: dict, jidx) -> dict:
+    """§1.6 지그 노드의 상대 부품(계산 불변·보고만): deck 표면(계획 jig_ctx — 지그 노드 상자) 최근접 삼각형의 파트(틈 ≤ view3d.jig_tie_gap_mm),
+    fixed-scan 클러스터·종류(jig_fix fixed). 상대 부품을 못 얻으면(deck 없음·실패) 모두 −1 → 클러스터 크기 분포만."""
+    from esl.doe import jig as jg
+    plan = _lt_plan(c)
+    J = _jig(c)
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    jidx = np.asarray(jidx, dtype=np.int64)
+    cluster = kinds = None
+    if plan["jig_fix"] == "fixed" and os.path.isfile(os.path.join(c.p("prep", "fixed"), pio.SCAN_JSON)):
+        try:
+            fx = pio.read_fixed(c.p("prep", "fixed"), c.max_mb)
+            fid = np.asarray(fx["node_id"], dtype=np.int64)
+            o = np.argsort(fid, kind="stable")
+            pos = np.searchsorted(fid[o], nid[jidx]).clip(0, max(fid.size - 1, 0))
+            hit = fid.size > 0
+            hit = np.zeros(jidx.size, bool) if not hit else fid[o][pos] == nid[jidx]
+            src = o[pos] if fid.size else pos
+            cluster = np.where(hit, np.asarray(fx["cluster"], dtype=np.int64)[src] if fid.size else -1, -1)
+            km = np.where(hit, np.asarray(fx["kind_mask"], dtype=np.int64)[src] if fid.size else 0, 0)
+            bs, bm = 1 << pio.FIXED_KINDS.index("INTER_TYPE2_SECONDARY"), 1 << pio.FIXED_KINDS.index("INTER_TYPE2_MAIN")
+            kinds = ["SECONDARY" if int(k) & bs else "MAIN" if int(k) & bm else "" for k in km.tolist()]
+        except (EslError, OSError, KeyError, ValueError):
+            cluster = kinds = None
+    partner = np.full(jidx.size, -1, dtype=np.int64)
+    titles: dict = {}
+    source = "none"
+    mask = np.zeros(nid.size, bool)
+    mask[jidx] = True
+    surf, why, _info = _jig_surface(c, plan, mesh, mask, J, [])
+    if surf is not None:
+        source = "deck"
+        titles = dict(surf.get("part_titles") or {})
+        if int(np.asarray(surf["tri"]).shape[0]):
+            r = jg.nearest_tri(X[jidx], surf, gap_mm=float(c.cfg["view3d"]["jig_tie_gap_mm"]), knn=int(J["knn"]),
+                               chunk_nodes=int(J["chunk_nodes"]))
+            ok = np.asarray(r["tri"]) >= 0
+            partner[ok] = np.asarray(surf["tri_part"], dtype=np.int64)[np.asarray(r["tri"])[ok]]
+    elif why == "surf_failed":
+        source = "failed"
+    tg = jg.tie_groups(X, jidx, partner, cluster=cluster, kinds=kinds, titles=titles)
+    return {**tg, "titles": titles, "source": source}
+
+
+def _jig_group_sample(X, jidx, group_of, smax: int):
+    """진단 3D tie 마커: 상대 부품 그룹마다 최원점 샘플(그룹 몫 = max(1, round(smax·n_g/|J|))) — 작은 그룹도 보이게. 반환 (노드 인덱스, 그룹)."""
+    from esl.doe import jig as jg
+    jidx = np.asarray(jidx, dtype=np.int64)
+    g = np.asarray(group_of, dtype=np.int64)
+    idx, grp = [], []
+    for k in sorted(set(g.tolist())):
+        Jg = jidx[g == k]
+        m = max(1, int(round(smax * Jg.size / max(jidx.size, 1))))
+        s_ = jg.support_sample(X, Jg, m)
+        idx += [int(v) for v in s_]
+        grp += [k] * int(s_.size)
+    return np.asarray(idx, dtype=np.int64), grp
+
+
 def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
     """§1 기준 d000 엔트리별 지그 진단: u_tgt(sm_ref + target_disp — 베이스라인과 같은 함수)·u_fit(jig.npz a → 종류별 하중 → 같은 지그
     분해) → post/view3d/d000_jigdiag_e<kk>_{tgt,fit,err}/ + _fit/regions.json, 반환 jig_diag(§1.5). 계산 불변(보고만)."""
@@ -4065,16 +4125,19 @@ def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
     basis = _jig_basis_of(z, int(z["a"].shape[1]))
     wts = jg.node_weights(mesh)
     h = jg.factor(mesh, jidx, c.solver_cfg())
-    sup_idx = jg.support_sample(X, jidx, int(vc["jig_support_max"]))
+    ti = _jig_tie_info(c, mesh, jidx)                             # §1.6 상대 부품별 tie 요약(보고만)
+    titles = ti["titles"]
+    sup_idx, sup_grp = _jig_group_sample(X, jidx, ti["group_of"], int(vc["jig_support_max"]))
     sup = [{"node_id": int(nid[i]), "dof": "123"} for i in sup_idx]
     jents = {e["entry_id"]: e for e in jd.get("entries") or []}
-    jregs = jd.get("regions") or []
+    jregs = [{**g, "part_title": None if g.get("part") is None else titles.get(int(g["part"]))} for g in jd.get("regions") or []]
     rverts = jg.region_vertices(basis)
     reg_doc = {"schema": JIG_REGIONS_SCHEMA,
-               "regions": [{**{k: g.get(k) for k in ("id", "kind", "part", "n_nodes", "area_mm2", "center", "normal")},
+               "regions": [{**{k: g.get(k) for k in ("id", "kind", "part", "part_title", "n_nodes", "area_mm2", "center",
+                                                      "normal")},
                             "vertices": [int(v) for v in (rverts[k] if k < len(rverts) else [])]}
                            for k, g in enumerate(jregs)],
-               "jig_vertices": [int(v) for v in sup_idx]}
+               "jig_vertices": [int(v) for v in sup_idx], "jig_groups": sup_grp}
     ents = []
     for e in [x for x in order if x in zeids]:
         kk = order.index(e)
@@ -4084,6 +4147,7 @@ def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
         u_tgt = jg.target_disp(X, np.asarray(sr["u"][eids_ref.index(e)], dtype=np.float64)[pos][:, :3], jidx, fit)["u_tgt"]
         u_fit = kr["u"]
         rep = jg.diag_report(u_tgt, u_fit, kr["parts"], wts, fit)
+        tr_g = jg.group_tie_rel(u_tgt, jidx, ti["group_of"], len(ti["groups"]), rep["umax_tgt"])
         dirs = {}
         for tag, u in (("tgt", u_tgt), ("fit", u_fit), ("err", u_fit - u_tgt)):
             nm = f"{BASELINE}_jigdiag_e{kk:02d}_{tag}"
@@ -4105,7 +4169,8 @@ def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
                      "mac_nomodes": None if wo.get("mac") is None else float(wo["mac"]),
                      "umax_err_nomodes": None if wo.get("umax_err") is None else float(wo["umax_err"]),
                      "work_eff": float(je.get("work_eff") if je.get("work_eff") is not None else 1.0),
-                     "tie_rel": float(je.get("tie_rel") or 0.0), "rot_deg": float(je.get("rot_deg") or 0.0),
+                     "tie_rel": float(je.get("tie_rel") or 0.0), "tie_rel_groups": tr_g,
+                     "rot_deg": float(je.get("rot_deg") or 0.0),
                      "umax_tgt": rep["umax_tgt"], "umax_fit": rep["umax_fit"], "err_max": rep["err_max"],
                      "contrib": rep["contrib"], "tgt_out_frac": rep["tgt_out_frac"], "forces": fz,
                      "F_region_sum": [float(v) for v in np.sum([f["F"] for f in fz], axis=0)] if fz else [0.0, 0.0, 0.0],
@@ -4116,8 +4181,10 @@ def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
             "tie_spread": None if jd.get("tie_spread") is None else float(jd["tie_spread"]),
             "n_contact": int(jd.get("n_contact") or 0), "n_patch": int(jd.get("n_patch") or 0),
             "regions_from": jd.get("regions_from"),
-            "regions": [{"id": int(g["id"]), "kind": g["kind"], "part": g.get("part"), "n_nodes": int(g["n_nodes"]),
-                         "area_mm2": float(g["area_mm2"]), "center": [float(v) for v in g["center"]]} for g in jregs],
+            "regions": [{"id": int(g["id"]), "kind": g["kind"], "part": g.get("part"), "part_title": g.get("part_title"),
+                         "n_nodes": int(g["n_nodes"]), "area_mm2": float(g["area_mm2"]),
+                         "center": [float(v) for v in g["center"]]} for g in jregs],
+            "tie_groups": ti["groups"], "tie_partner_source": ti["source"],
             "entries": ents}
 
 

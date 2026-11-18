@@ -1932,9 +1932,22 @@ class DoeJigDiagRegionOut(_Out):
     id: int
     kind: Literal["contact", "patch"]
     part: int | None = None
+    part_title: str | None = None
     n_nodes: int
     area_mm2: float
     center: list[float]
+
+
+class DoeJigTieGroupOut(_Out):
+    """v0.23.3 지그 노드 상대 부품별 요약(esl_jig_view.md §1.6 — 현장 2026-11-18 추가, 보고만)."""
+
+    other_part_id: int | None = None
+    other_part_title: str | None = None
+    n_nodes: int
+    n_clusters: int
+    bbox_mm: list[float]
+    cluster_dmax_mm: float
+    kinds: list[str]
 
 
 class DoeJigDiagForceOut(_Out):
@@ -1959,6 +1972,7 @@ class DoeJigDiagEntryOut(_Out):
     umax_err_nomodes: float | None = None
     work_eff: float
     tie_rel: float
+    tie_rel_groups: list[float] = []
     rot_deg: float
     umax_tgt: float
     umax_fit: float
@@ -1980,6 +1994,8 @@ class DoeJigDiagOut(_Out):
     n_patch: int
     regions_from: str | None = None
     regions: list[DoeJigDiagRegionOut]
+    tie_groups: list[DoeJigTieGroupOut] = []
+    tie_partner_source: Literal["deck", "none", "failed"] | None = None
     entries: list[DoeJigDiagEntryOut]
 
 

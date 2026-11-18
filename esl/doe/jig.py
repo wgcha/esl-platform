@@ -999,3 +999,42 @@ def region_vertices(basis) -> list:
     """영역마다 노드 인덱스(정렬) — reg_ptr·reg_node 그대로."""
     ptr, nd = np.asarray(basis["reg_ptr"]), np.asarray(basis["reg_node"], dtype=np.int64)
     return [np.sort(nd[ptr[r]:ptr[r + 1]]) for r in range(ptr.size - 1)]
+
+
+def tie_groups(x, jig_idx, partner, *, cluster=None, kinds=None, titles=None) -> dict:
+    """v0.23.3(esl_jig_view.md §1.6) 지그 노드를 상대 부품별로 묶은 요약. partner (J,) = 지그 노드마다 상대 부품 id(−1 = 모름),
+    cluster (J,) = fixed-scan 클러스터 id(−1 = 없음), kinds (J,) = "SECONDARY"|"MAIN"|"" , titles = {part: 제목}.
+    반환 {"groups": [{other_part_id|None, other_part_title|None, n_nodes, n_clusters, bbox_mm[3], cluster_dmax_mm, kinds[]}],
+    "group_of": (J,) 그룹 번호}. 정렬 = (모름은 끝, −노드 수, 부품 id). 순수·결정적."""
+    J = np.asarray(jig_idx, dtype=np.int64)
+    P = np.asarray(x, dtype=np.float64)[J]
+    pt = np.asarray(partner, dtype=np.int64).reshape(-1)
+    cl = np.full(J.size, -1, np.int64) if cluster is None else np.asarray(cluster, dtype=np.int64).reshape(-1)
+    kd = [""] * J.size if kinds is None else [str(k) for k in kinds]
+    keys = sorted(set(pt.tolist()), key=lambda q: (q < 0, -int(np.sum(pt == q)), q))
+    group_of = np.zeros(J.size, dtype=np.int64)
+    out = []
+    for g, q in enumerate(keys):
+        m = pt == q
+        group_of[m] = g
+        Pm = P[m]
+        cids = sorted({int(v) for v in cl[m].tolist() if v >= 0})
+        dmax = 0.0
+        for cid in cids:
+            Q = Pm[cl[m] == cid]
+            if Q.shape[0] > 1:
+                dmax = max(dmax, float(np.linalg.norm(Q.max(axis=0) - Q.min(axis=0))))
+        out.append({"other_part_id": None if q < 0 else int(q),
+                    "other_part_title": None if q < 0 else (titles or {}).get(int(q)),
+                    "n_nodes": int(m.sum()), "n_clusters": len(cids),
+                    "bbox_mm": [float(v) for v in (Pm.max(axis=0) - Pm.min(axis=0))],
+                    "cluster_dmax_mm": dmax, "kinds": sorted({k for k, mm in zip(kd, m.tolist()) if mm and k})})
+    return {"groups": out, "group_of": group_of}
+
+
+def group_tie_rel(u_tgt, jig_idx, group_of, n_groups: int, umax_tgt: float) -> list:
+    """엔트리 tie_rel 의 상대 부품별 값: 그룹마다 max_{n∈그룹} ‖u_tgt,n‖ / umax_tgt(지그 노드 기준 강체 제거 틀 — 고정과 맞지 않는 체결 찾기)."""
+    J = np.asarray(jig_idx, dtype=np.int64)
+    nrm = np.linalg.norm(np.asarray(u_tgt, dtype=np.float64)[J], axis=1)
+    g = np.asarray(group_of, dtype=np.int64)
+    return [float(nrm[g == k].max() / umax_tgt) if umax_tgt > 0 and np.any(g == k) else 0.0 for k in range(int(n_groups))]

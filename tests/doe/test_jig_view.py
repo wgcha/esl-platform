@@ -19,6 +19,10 @@ from esl.view3d import unpack_values
 def jrun(tmp_path_factory):
     t = tmp_path_factory.mktemp("jigview")
     mesh, doe = T.build_same(t)
+    rad = doe["base"]["rad_path"]                                   # 상대 부품 /PART 제목(§1.6 — 영역·tie 그룹 제목)
+    txt = open(rad).read()
+    i = txt.rindex("/END") if "/END" in txt else len(txt)
+    open(rad, "w").write(txt[:i] + "/PART/8\nNEIGHBOR_SHELL\n         1         1\n/PART/9\nNEIGHBOR_BLOCK\n         1         1\n" + txt[i:])
     out, post, ids = T.run(str(t / "o"), doe, mesh, rank=T.rank_snap())
     return out, post, ids, {**doe, "rank": T.rank_snap(), "rev": 1}
 
@@ -211,3 +215,38 @@ def test_regen_requires_result(tmp_path):
     with pytest.raises(stg.EslError) as ei:
         stg.run_stage({"stage": "bd_post", "out": out, "doe": {**doe, "rev": 1, "post_mode": "view3d"}}, lambda s: None)
     assert ei.value.code == "RESULT_NOT_READY"
+
+
+# ---------------------------------------------------------------- V-0233-2b 상대 부품별 tie 요약(§1.6, 현장 2026-11-18 추가)
+def test_tie_groups_pure():
+    x = np.array([[0, 0, 0], [1, 0, 0], [0, 2, 0], [10, 0, 0], [10, 3, 0], [50, 50, 0]], dtype=float)
+    J = np.arange(6)
+    tg = jg.tie_groups(x, J, [78, 78, 78, 12, 12, -1], cluster=[0, 0, 1, 2, 2, -1],
+                       kinds=["SECONDARY", "SECONDARY", "MAIN", "SECONDARY", "SECONDARY", ""], titles={78: "PANEL", 12: "BRKT"})
+    g = tg["groups"]
+    assert [x_["other_part_id"] for x_ in g] == [78, 12, None] and tg["group_of"].tolist() == [0, 0, 0, 1, 1, 2]
+    assert g[0] == {"other_part_id": 78, "other_part_title": "PANEL", "n_nodes": 3, "n_clusters": 2, "bbox_mm": [1.0, 2.0, 0.0],
+                    "cluster_dmax_mm": 1.0, "kinds": ["MAIN", "SECONDARY"]}
+    assert g[2]["other_part_title"] is None and g[2]["n_clusters"] == 0
+    u = np.zeros((6, 3))
+    u[4] = [0, 0, 2.0]
+    assert jg.group_tie_rel(u, J, tg["group_of"], 3, 4.0) == [0.0, 0.5, 0.0]
+
+
+def test_tie_groups_in_diag(jrun):
+    out = jrun[0]
+    dg = _side(out)["jig_diag"]
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    assert dg["tie_partner_source"] == "deck" and sum(g["n_nodes"] for g in dg["tie_groups"]) == jd["fix"]["n_jig"]
+    for g in dg["tie_groups"]:
+        assert set(g) == {"other_part_id", "other_part_title", "n_nodes", "n_clusters", "bbox_mm", "cluster_dmax_mm", "kinds"}
+        assert g["kinds"] and set(g["kinds"]) <= {"SECONDARY", "MAIN"}
+    for e in dg["entries"]:
+        je = next(x for x in jd["entries"] if x["entry_id"] == e["entry_id"])
+        assert len(e["tie_rel_groups"]) == len(dg["tie_groups"])
+        assert max(e["tie_rel_groups"]) == pytest.approx(je["tie_rel"], rel=1e-9)        # 그룹 최대 = 전체 tie_rel
+    contact = [r for r in dg["regions"] if r["kind"] == "contact"]
+    assert contact and {r["part"]: r["part_title"] for r in contact} == {8: "NEIGHBOR_SHELL", 9: "NEIGHBOR_BLOCK"}
+    rg = U.read_json(os.path.join(out, "post", "view3d", dg["entries"][0]["dirs"]["fit"], stg.JIG_REGIONS_JSON))
+    assert len(rg["jig_groups"]) == len(rg["jig_vertices"]) and set(rg["jig_groups"]) == set(range(len(dg["tie_groups"])))
+    assert [r["part_title"] for r in rg["regions"]] == [r["part_title"] for r in dg["regions"]]

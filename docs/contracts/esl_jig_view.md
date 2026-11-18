@@ -44,6 +44,15 @@
 ### 1.4 `regions.json` (`esl/doe_jig_regions/1`)
 `{schema, regions: [{id, kind: "contact"|"patch", part|null, n_nodes, area_mm2, center[3], normal[3], vertices: [int]}], jig_vertices: [int](tie 부분집합 정점)}` — vertices = 기준 메시 노드 인덱스 = view3d 정점 번호.
 
+### 1.6 상대 부품별 tie 요약 (현장 jig.json 2026-11-18 추가 — 보고·표시만)
+- 근거(현장): n_jig 4002, jig_std ≈ part_std(tie 가 패널 전면에 분포), tie_rel 0.89~0.99(전 엔트리), MAC 0.13~0.44, 지그 1차 148~168 Hz, 접촉 영역 0 = part 78 98 024노드·85만 mm²(패널 거의 전체, 법선 −z), 영역 1 = part 78 25 062노드 → 어느 체결이 '고정'과 맞지 않는지·영역이 어느 부품인지 보이게.
+- 상대 부품 = 지그 노드마다 deck 표면(계획 `jig_ctx` 의 deck — 지그 노드 상자, `jig_surf.other_surfaces` 재사용) 최근접 삼각형의 파트, 틈(중립면 거리) ≤ `bead_doe.view3d.jig_tie_gap_mm`(기본 5.0). `/INTER/TYPE2` 의 상대 그룹을 직접 파싱하지 않고 기하로 찾는다(계약 메모: TYPE2 파서 없음 — 기하 최근접은 tie 쌍이 붙어 있는 제품 모델에서 같은 답). 못 찾음·deck 없음(`jig_ctx none`)·읽기 실패 = −1(“상대 부품 모름”) → 클러스터 크기 분포만. 제목 = deck `/PART` 제목(카드·제목 있는 것만, `other_surfaces` 반환 가산 키 `part_titles`).
+- 클러스터·종류 = `prep/fixed` fixed-scan 의 `cluster`·`kind_mask`(SECONDARY/MAIN), `jig_fix = xfer` 는 없음.
+- 공용 순수 함수(`jig.py`): `tie_groups(x, jig_idx, partner, *, cluster, kinds, titles) -> {groups, group_of}` — 그룹 = 상대 부품(정렬 = 모름은 끝, −노드 수, id), 필드 `{other_part_id|null, other_part_title|null, n_nodes, n_clusters, bbox_mm[3], cluster_dmax_mm, kinds[]}`; `group_tie_rel(u_tgt, jig_idx, group_of, n_groups, umax_tgt)` = 그룹마다 max_{n∈그룹} ‖u_tgt,n‖ / umax_tgt(지그 전체 Kabsch 틀 — 그룹 최대 = 기존 tie_rel).
+- 결과: `jig_diag.tie_groups[]`·`tie_partner_source`(deck|none|failed), 엔트리 `tie_rel_groups[]`(tie_groups 순서), 영역 `part_title`. `regions.json` += 영역 `part_title`, `jig_groups[]`(jig_vertices 마다 그룹 번호). 진단 3D tie 마커 = 그룹마다 최원점 샘플(몫 = max(1, round(jig_support_max·n_g/|J|)) — 작은 그룹도 보이게).
+- 화면: 진단 보기 tie 마커 색 = 그룹 색(모름 = 회색), 같은 줄 범례 `data-testid="jig-tie-legend"`(▲ part id 제목 (노드 수), 5개까지 + 나머지 수), 툴팁에 그룹별 노드·클러스터·지름·종류·tie_rel, 영역 화살표 라벨·툴팁에 상대 부품 제목.
+- 위치: BD_POST 진단(§1.1) — jig.json 은 바꾸지 않는다(옛 스터디도 다시 만들기로 같은 정보).
+
 ### 1.5 결과 `jig_diag` (사이드카 §4, 응답 `DoeResultOut.jig_diag`)
 ```text
 { schema: "esl/doe_jig_diag/1", n_jig, tie_spread, n_contact, n_patch, regions_from,
@@ -86,9 +95,10 @@
 | 스키마 | 필드 |
 |---|---|
 | `DoeResultOut` (+) | `jig_diag: DoeJigDiagOut \| None`, `rank_views: DoeRankViewsOut \| None`, `view3d_regen: DoeView3dRegenOut \| None` |
-| `DoeJigDiagOut` | `n_jig: int`, `tie_spread: float \| None`, `n_contact: int`, `n_patch: int`, `regions_from: str \| None`, `regions: list[DoeJigDiagRegionOut]`, `entries: list[DoeJigDiagEntryOut]` |
-| `DoeJigDiagRegionOut` | `id: int`, `kind: Literal["contact","patch"]`, `part: int \| None`, `n_nodes: int`, `area_mm2: float`, `center: list[float]` |
-| `DoeJigDiagEntryOut` | `entry_id, label: str`, `kk: int`, `dirs: dict[str,str]`(tgt·fit·err), `mac, umax_err: float`, `mac_nomodes, umax_err_nomodes: float \| None`, `work_eff, tie_rel, rot_deg, umax_tgt, umax_fit, err_max, tgt_out_frac: float`, `contrib: dict[str, float]`, `forces: list[DoeJigDiagForceOut]`, `F_region_sum: list[float]`, `body: list[float] \| None`, `modes: list[dict]` |
+| `DoeJigDiagOut` | `n_jig: int`, `tie_spread: float \| None`, `n_contact: int`, `n_patch: int`, `regions_from: str \| None`, `regions: list[DoeJigDiagRegionOut]`, `tie_groups: list[DoeJigTieGroupOut]`, `tie_partner_source: Literal["deck","none","failed"] \| None`, `entries: list[DoeJigDiagEntryOut]` |
+| `DoeJigDiagRegionOut` | `id: int`, `kind: Literal["contact","patch"]`, `part: int \| None`, `part_title: str \| None`, `n_nodes: int`, `area_mm2: float`, `center: list[float]` |
+| `DoeJigTieGroupOut` | `other_part_id: int \| None`, `other_part_title: str \| None`, `n_nodes: int`, `n_clusters: int`, `bbox_mm: list[float]`, `cluster_dmax_mm: float`, `kinds: list[str]` |
+| `DoeJigDiagEntryOut` | `entry_id, label: str`, `kk: int`, `dirs: dict[str,str]`(tgt·fit·err), `mac, umax_err: float`, `mac_nomodes, umax_err_nomodes: float \| None`, `work_eff, tie_rel, rot_deg, umax_tgt, umax_fit, err_max, tgt_out_frac: float`, `tie_rel_groups: list[float]`, `contrib: dict[str, float]`, `forces: list[DoeJigDiagForceOut]`, `F_region_sum: list[float]`, `body: list[float] \| None`, `modes: list[dict]` |
 | `DoeJigDiagForceOut` | `region: int`, `kind: str`, `F: list[float]`, `F_mag, F_n, F_t1, F_t2: float`, `active: bool` |
 | `DoeRankViewsOut` | `jig: DoeRankViewOut \| None`, `full: DoeRankViewOut \| None` |
 | `DoeRankViewOut` | `metric: str`, `C_ref: float`, `baseline: dict`, `n_ok: int`, `n_skipped: dict[str,int]`, `n_failed: dict[str,int]`, `ranking: list[dict]`, `per_esl_inline: bool`, `sensitivity: dict \| None`, `sensitivity_reason: str \| None`, `best_clean: str \| None` |
@@ -100,6 +110,7 @@
 | 키 | 기본 | 뜻 |
 |---|---|---|
 | `bead_doe.view3d.jig_diag` | `true` | 지그 계산된 스터디의 BD_POST·다시 만들기에서 지그 진단 3D(엔트리별 목표·맞춤·오차)와 하중 정의 탭 자료(rank_views)를 만듦 |
+| `bead_doe.view3d.jig_tie_gap_mm` | `5.0` | (§1.6) 지그 노드 상대 부품 찾기 거리 — deck 표면 최근접 틈 상한(보고만, 0..1000) |
 
 ## 7. 화면 (`DoeStudy.tsx`, D-0.23.3-4·5)
 
@@ -132,6 +143,7 @@
 |---|---|---|
 | 1 | 순수: `kind_forces` 합 = `forces`(1e-12), `kind_response` u = Σ a_k U_k(basis_response U 로 맞춤 노드 1e-9 상대), `diag_report` contrib·tgt_out_frac(순수 면외 목표 = 1, 순수 면내 = 0) | `tests/doe/test_jig_view.py` |
 | 2 | 코어 진단: 지그 ok 합성 스터디 BD_POST → `d000_jigdiag_e<kk>_{tgt,fit,err}` manifest·values(u_fit 저장값 ≈ Σ a_k U_k — 양자화 허용), regions.json 영역 vertices = reg_node, 화살표 합 F_region_sum = Σ 영역 합력 = 영역 열 하중 합(`kind_forces.region` 합, 1e-9), jig_diag 키, `view3d.jig_diag false` → 없음, 지그 없는 스냅샷 → 사이드카 없음 | `tests/doe/test_jig_view.py` |
+| 2b | 상대 부품 tie 요약(§1.6): `tie_groups` 순수(그룹·제목·클러스터 수·지름·종류, group_tie_rel), 통합: 노드 합 = n_jig, 그룹 최대 tie_rel = jig.json tie_rel, 접촉 영역 part_title = deck /PART 제목, regions.json jig_groups | `tests/doe/test_jig_view.py` |
 | 3 | rank_views: jig 보기 순위 = `rank(metric jig)`, full 보기 = `rank(metric solve)`, 섞임 키 없음(jig 행에 score_solve·imbalance 없음, full 행에 score_jig·umax_jig·C_jig 없음), 민감도 보기별 | 같은 파일 |
 | 4 | 다시 만들기: BD_POST 후 `post_mode view3d` 실행 → ranking.csv·result.json·per_esl.json·designs.json·report.html·안 result.json 해시 불변, 사이드카·진단 폴더 생김; v0.23.1 형(result.json 에 view3d_jig 없음) → 사이드카에 view3d_jig* | 같은 파일 |
 | 5 | API: 사이드카 병합(jig_diag·rank_views·view3d_jig 대체), per-esl `view`, regenerate 202(DOE_RUN resume 3·kind VIEW3D·phase DONE 유지)·403(작성자 아님·admin 아님)·409(지그 없음·작업 중), view3d_regen 필드, `regions.json` 제공 | `backend/tests/test_doe_jig_view_api.py` |
@@ -148,4 +160,5 @@
 | D-0.23.3-2 | 하중 정의 탭 자료 rank_views{jig, full} = BD_POST 에서 두 지표로 각각 rank + 민감도, 섞이는 키 제거(지그 보기 umax = 지그 umax, εmax 없음). ranking.csv·result.json 불변(사이드카 `post/jig_view.json`) |
 | D-0.23.3-3 | 3D 다시 만들기 = 새 작업 유형 없이 기존 DOE_RUN 큐 + resume_from_step(BD_POST) + params kind VIEW3D/post_mode view3d, 등록은 DB 무변경, phase DONE 유지, 권한 admin ∨ 작성자. 쓰기 = post/view3d 새 폴더·사이드카만(기존 결과 파일 바이트 불변). migration 없음 |
 | D-0.23.3-4 | (사용자 2026-11-18 15:47) 결과 카드 하중 정의 탭 [지그 ESL | 전 노드 ESL] 1개 — v0.23.1 '탭 도입 안 함'을 이 탭에 한해 개정. 기본 = metric_effective, 탭마다 순위표·ESL별 표·3D·민감도·상태 띠 칩이 그 하중 정의 값만. 받기·재낙하·검증 낙하는 공통. v0.23.2 3D 토글 제거 |
+| D-0.23.3-6 | (현장 jig.json 2026-11-18) 진단에 상대 부품별 tie 요약(tie_groups — 기하 최근접 deck 표면 파트, `view3d.jig_tie_gap_mm`)·엔트리 tie_rel_groups·영역 part_title 추가, 진단 3D tie 마커 = 그룹 색 + 범례. 계산 불변·jig.json 불변(BD_POST 위치) |
 | D-0.23.3-5 | 지그 탭 3D = [설계 비교(지그 응답) | 지그 진단], 진단 = 엔트리 선택 + [목표·맞춤 | 오차 | 영역], 같은 색 범위·같은 배율, 영역 합력 화살표(기존 화살표·크기 비례), 체적력·모드 계수는 한 줄 글씨 |

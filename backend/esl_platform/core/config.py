@@ -512,6 +512,7 @@ class BeadDoeView3dCfg(_M):
     jig: bool = True                                             # v0.23.2 지그 응답 3D(esl_v0232_fixes.md §4.2)
     jig_support_max: int = Field(default=64, ge=1, le=2000)      # 지그 3D tie 고정 마커 최대 수(표시만)
     jig_diag: bool = True                                        # v0.23.3 지그 진단 3D·하중 정의 탭 자료(esl_jig_view.md §6)
+    jig_tie_gap_mm: float = Field(default=5.0, ge=0.0, le=1000.0)  # v0.23.3 지그 노드 상대 부품 찾기 거리(deck 표면 최근접, 보고만)
 
 
 _JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
