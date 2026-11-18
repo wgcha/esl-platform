@@ -13,6 +13,8 @@
 
 ## 0. 데이터 등급 (D-0.24.0-BF-1)
 
+> **보완(2026-11-18 22:34, D-0.24.0-BF-12 — `esl_fint.md` §0)**: 경계력 ESL 은 **접촉력 전용**(등급 full·contact·none). 아래 표의 `fint` 행은 별도 하중 출처 "내력 ESL"(`esl_fint.md`)로 옮겼다 — FINT 가 있어도 경계력은 접촉력으로 계산하고, full 이면 FINT 검산만 한다. DOE `bead_doe.bforce.grades` 기본 [full, contact].
+
 | 등급 | 필요 결과 | 하중(전역계, 노드 n) | 비고 |
 |---|---|---|---|
 | `full` | CONT + CONT2 (+ ACC, MASS 또는 deck 질량) | F = s_c·CONT + s_t·CONT2 − M·ACC | FINT 있으면 검산 ‖F − s_f·FINT‖/‖s_f·FINT‖ |

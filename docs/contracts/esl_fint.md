@@ -32,7 +32,7 @@ unbalanced = def.force_rel > fint.unbalanced_force_rel ∨ def.moment_rel > fint
 지지 = 같은 3-2-1(S4 pick_321), 기준 재현(MAC·umax 오차·반력)은 경계력 ESL 과 같은 규칙·같은 설정(recon_mac_min·recon_umax_err_max·reaction_warn_rel)
 ```
 - 근거: 부품 요소 내력은 요소마다 자기평형(병진 합 0, 노드 모멘트 포함 모멘트 합 0) → 노드 합도 0. 잔차가 크면 공유 노드 혼입(§2)·추출 누락 의심. 질량·가속도 불필요(관성 이완을 쓸 때만 질량).
-- 반환 `{F_bal, F_raw, m, doc}` — doc 는 `esl/bforce/1` 과 같은 필드(grade "fint", formula "F = s·FINT", decomposed false, `kinds`, `signs{fint}`, `fint_sign_source`, `eq_raw{def, ref}`, `eq_bal`, `abar*`·`corr_rel`(이완 안 하면 0), `sum_abs*`, `max_f`, `limits`([] — 한계는 §4 문구), `warnings`) + **`source: "fint"`** + 블록 `fint{residual{force_rel, moment_rel}, tol{force_rel, moment_rel}, unbalanced, balance, balance_applied, shared_nodes, rot_nodes}`.
+- 반환 `{F_bal, F_raw, m, doc}` — doc 는 `esl/bforce/1` 과 같은 필드(grade "fint", formula "F = s·FINT", decomposed false, `kinds`, `signs{fint}`, `fint_sign_source`, `eq_raw{def, ref}`, `eq_bal`, `abar*`·`corr_rel`(이완 안 하면 0), `sum_abs*`, `max_f`, `limits`(회전 연결 노드가 있으면 `FINT_ROT_LINKS` — 문구 "회전 연결 노드(RBODY·스프링·빔) 노드 모멘트 미사용", 원본 `bforce.LIMIT_TEXT`), `warnings`) + **`source: "fint"`** + 블록 `fint{residual{force_rel, moment_rel}, tol{force_rel, moment_rel}, unbalanced, balance, balance_applied, shared_nodes, rot_nodes}`.
 
 ## 2. 공유 노드 · 회전 연결 노드 진단 (`esl/rad/shared.py:node_links` — D-0.24.0-BF-14)
 
@@ -155,3 +155,10 @@ unbalanced = def.force_rel > fint.unbalanced_force_rel ∨ def.moment_rel > fint
 - R-FI-1 공유 노드 내력 분리(다른 부품 요소 힘을 요소 응력에서 다시 계산해 빼기).
 - R-FI-2 노드 모멘트 출력(/H3D/NODA/… 회전 성분)이 있으면 회전 자유도 하중으로.
 - R-FI-3 /GRNOD 그룹 형식(PART·BOX·GRNOD 조합) 해석.
+
+## 부록 A. 구현 반영 (2026-11-18, 계약과 다른 점·보충)
+- A-1 버튼 testid: 경계력 `v3d-bf-add`(유지)·내력 `v3d-fi-add` — 3D 머리에 보기가 없는 노드 힘 출처마다 버튼 1개(표 행 순회).
+- A-2 내력 Case 경고 문자열 코드: `FINT_UNBALANCED`·`FINT_SHARED_NODES`·`FINT_NO_MASS`·`FINT_RECON_POOR`·`FINT_REACTION`·`FINT_FAILED`(재현 판정은 경계력과 같은 공용 `_nodal_recon`, 접두만 다름).
+- A-3 사이드카 문서 키: `post/<file>_view.json` 에 `load_source`(출처 키) 추가(기존 `source` = bd_post|add 의미 유지), prep·design 문서에 `source`(출처 키).
+- A-4 평가 영역 스냅샷 형식: `doe.rank.eval_region = {mode, free_edge_mm, boxes}`(코어는 문자열 + `eval_*` 평면 키도 허용).
+- A-5 합성 검증 수치(V-0240-F): (a) 요소 내력(K u) 대회전 35° 얹은 FINT — 잔차 힘 3.4e-12·모멘트 6.5e-5(선형 u×F), 재현 MAC 1.000000·umax 오차 −6.5e-12. (b) 경계 공유 11노드 혼입 — 잔차 힘 0.289·모멘트 0.168(FINT_UNBALANCED), A 요소만 힘 1.4e-12(모멘트는 경계 굽힘 전달로 남음 — 한계 근거).

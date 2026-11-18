@@ -4,14 +4,19 @@
 
 ## [0.24.0] - 2026-11-18
 ### 추가
-- **경계력 ESL(새 ESL 종류)**: 낙하 해석이 실제로 계산한 노드 힘을 하중으로 쓴다 — F = 접촉력 + tie 체결력 − 질량·가속도(= 노드 내력). 전 노드 ESL(K₀·u₀)처럼 대회전 낙하 변위에서 1e8 N 급 가짜 상쇄 하중이 생기지 않는다. 데이터 등급 full(접촉+tie−관성) · fint(내력) · **contact(접촉−관성 — 지금 현장 h3d)** · none
+- **경계력 ESL(새 ESL 종류)**: 낙하 해석이 실제로 계산한 노드 힘을 하중으로 쓴다 — F = 접촉력 + tie 체결력 − 질량·가속도(= 노드 내력). 전 노드 ESL(K₀·u₀)처럼 대회전 낙하 변위에서 1e8 N 급 가짜 상쇄 하중이 생기지 않는다. 데이터 등급 full(접촉+tie−관성) · **contact(접촉−관성 — 지금 현장 h3d)** · none — 접촉력 전용(FINT 가 있어도 접촉력으로 계산, full 이면 FINT 검산만)
+- **내력 ESL(별도 하중 출처 — 탭 [내력 ESL])**: h3d 에 노드 내력(FINT)이 있으면 F = s·FINT(부호 자동 — 내력이 변형에 양의 일), 파트 회전 보정, 3-2-1 로 풀어 경계력 ESL 과 나란히 비교한다. 부품 요소 내력은 자기평형이라 관성 이완을 기본으로 하지 않고, 변형 형상 합력·합모멘트 잔차를 보고(허용치 초과 = 경고 FINT_UNBALANCED, 설정 `bforce.fint.balance: inertia_relief` 면 그때만 관성 이완). 질량 불필요
+- **공유 노드 진단(내력 ESL)**: 원 deck 에서 대상 파트 노드 중 다른 부품 요소(쉘·솔리드·스프링·빔 등)가 참조하는 노드 수·부품·위치(상자)를 찾아 표시(경고 FINT_SHARED_NODES — 그 노드 내력에 다른 부품 힘이 섞임, 값은 그대로 사용). RBODY 종속·스프링·빔 연결 노드는 회전 연결 노드로 표시(FINT 는 병진 힘만 — 노드 모멘트 미사용 한계 문구)
+- **소성 진단**: t*(최대 변형 시점) 소성 변형률로 소성 요소 면적 비율·최대 εᵖ 를 Case ESL 화면 한 줄과 스터디 칩에 표시(문턱 설정 `bforce.plastic_eps_min`, 결과 없으면 '없음'). 계산은 바꾸지 않음
+- **순위 보조 지표 umax(평가 영역)**: 주 순위는 모든 탭이 컴플라이언스 비(엔트리 최악) 그대로, 순위표에 "umax(평가 영역)" 열 추가 — 설정 `bead_doe.rank.eval_region`(part = 대상 파트 전체 · exclude_free_edges = 자유 경계에서 `eval_free_edge_mm` 이내 제외 · box = `eval_boxes` 상자 안). 새 스터디만(옛 스터디 결과 그대로)
 - **contact 등급(현장)**: h3d 에 접촉력("Contact Forces")·가속도("Acceleration")만 있어도 계산한다. 질량은 deck 밀도·두께·면적으로 근사(질량 스케일링 추가 질량 미포함 경고, 밀도 없으면 설정 기본 밀도 + 경고). tie 체결력이 빠져 생긴 불평형은 **관성 이완**(강체 가속도 ā 로 돌림)으로 맞추고 3-2-1 로 풀어 반력 ≈ 0 을 확인한다. 화면에 "tie 체결력 미포함 — 조립 부품 하중 누락" 한계 문구
 - **h3d 추출**: 후보 프레임(변위와 같은 프레임·노드)에서 접촉력·tie 체결력·가속도·질량·내력을 결과 유형 이름 목록(설정 `bforce.result_names`, 대체 이름 허용)으로 찾아 덤프. 없는 유형은 '없음'으로 기록(추출 실패 아님). 추출을 다시 실행해야 경계력 자료가 생긴다
 - **ESL 단계**: 기존 전 노드 ESL 결과는 그대로, 경계력 ESL 을 함께 계산해 기준 재현(같은 3-2-1, 파트 전체 강체 제거 MAC·umax 오차·반력)을 보고. ESL 화면 결과 카드에 한 줄 요약(등급·Σ|F|(전 노드 대비)·ā(g)·평형 보정·재현 MAC·umax 오차·반력)
 - **강성 스터디 하중 정의 탭 [경계력 ESL]**: 같은 경계력 하중·같은 3-2-1 로 설계안 재풀이한 순위(경계력 C)·ESL별 표·민감도·3D(기준 | 안 응답 컨투어 + 하중 화살표)·칩(등급·재현 MAC·umax 오차·평형 보정). 데이터 등급이 없거나 설정 등급 밖이면 탭이 꺼지고 이유가 툴팁에. 같은 메시 비교 방식(①·②·새 ③)만 — ④·옛 ③ 은 미지원
 - **기존 스터디에 [경계력 ESL 계산]**: Case 에서 ESL 을 다시 만든 뒤 끝난 스터디에서 형상 생성 없이 안마다 선형 풀이만 해 경계력 탭 자료를 만든다(관리자·작성자, 기존 작업 큐). 순위·CSV·보고서 등 기존 결과 파일은 그대로
-- 결과 API `bforce`·`bforce_add`·`view3d_bf*`·`rank_views.bforce`, `POST /doe/studies/{id}/sources/bforce`, per-esl `?view=bforce`, ESL 실행 `forces.bforce`. 설정 `bforce`(Case 코어 — 결과 유형 이름·관성·관성 이완·부호·기본 밀도·재현 기준), `bead_doe.bforce`(enabled·grades·view3d). DB migration 없음
-- 안내: 기준 모델을 다시 해석할 때 Engine 파일에 `/H3D/NODA/CONT2`·`/H3D/NODA/MASS`·`/H3D/NODA/FINT` 를 더하면 full 등급(tie 체결력 포함)이 된다 — 예시는 계약 `docs/contracts/esl_bforce.md` 부록 A
+- **기존 스터디에 [내력 ESL 계산]**: 경계력과 같은 방식(3D 머리 버튼 — 보기가 없는 출처마다 1개)
+- 결과 API `bforce`·`bforce_add`·`view3d_bf*`·`rank_views.bforce`, `fint`·`fint_add`·`view3d_fi*`·`rank_views.fint`·`eval_region`, 순위 행 `umax_ev`·`umax_ev_all`, `POST /doe/studies/{id}/sources/{src}`(bforce·fint), per-esl `?view=bforce|fint`, ESL 실행 `forces.bforce`·`forces.fint`·`forces.plastic`. 설정 `bforce`(Case 코어 — 결과 유형 이름·관성·관성 이완·부호·기본 밀도·재현 기준·`fint`·`plastic_eps_min`), `bead_doe.bforce`·`bead_doe.fint`(enabled·grades·view3d), `bead_doe.rank.eval_region`·`eval_free_edge_mm`·`eval_boxes`. DB migration 없음
+- 안내: 기준 모델을 다시 해석할 때 Engine 파일에 `/H3D/NODA/CONT2`·`/H3D/NODA/MASS`·`/H3D/NODA/FINT` 를 더하면 full 등급(tie 체결력 포함)·내력 ESL 이 된다 — 예시는 계약 `docs/contracts/esl_bforce.md` 부록 A, 현장 확인 절차는 `docs/manual/field_check_v0240.md`
 
 ## [0.23.3] - 2026-11-18
 ### 추가

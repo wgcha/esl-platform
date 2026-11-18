@@ -1,4 +1,4 @@
-// v0.24.0 화면 증적(mock, 2560×1440): 하중 정의 탭 [경계력 ESL] · Case ESL 화면 경계력 요약 한 줄 · 경계력 자료 없음(contact/none 진단) + 문서 높이.
+// v0.24.0 화면 증적(mock, 2560×1440): 하중 정의 탭 [경계력 ESL]·[내력 ESL](탭 4개) · Case ESL 화면 경계력·내력·소성 줄 · 자료 없음(사유·계산 버튼) + 문서 높이.
 // 사용: npm run build:mock && node scripts/screenshots-v0240.mjs [출력폴더]
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -49,6 +49,18 @@ try {
   await page.waitForTimeout(2000);
   await page.getByTestId("doe-load-tab").locator("[data-tab=bforce]").focus();
   await shot("v0240_contact_diag.png", "doe-load-tab-why");
+  // 2b) v0.24.0 보완 내력 ESL 탭(doe-50 — 잔차·공유 노드·소성 칩, 순위표 umax(평가 영역))
+  await page.goto(`${base}/p/p-body/doe/doe-50?${Q}`);
+  await page.getByTestId("doe-load-tab").first().waitFor();
+  await page.waitForTimeout(2000);
+  await page.getByTestId("doe-load-tab").locator("[data-tab=fint]").click();
+  await shot("v0240_tab_fint.png", "nodal-chip-fint");
+  // 2c) 탭 4개 · 내력 자료 없음(doe-51) — 내력 탭 비활성 사유(키보드 포커스) + [경계력 ESL 계산]·[내력 ESL 계산]
+  await page.goto(`${base}/p/p-body/doe/doe-51?${Q}`);
+  await page.getByTestId("doe-load-tab").first().waitFor();
+  await page.waitForTimeout(2000);
+  await page.getByTestId("doe-load-tab").locator("[data-tab=fint]").focus();
+  await shot("v0240_tabs4.png", "doe-load-tab-why");
   // 3) Case ESL 화면 경계력 요약 한 줄
   await page.goto(`${base}/p/p-body/c/c-demo/step/3?${Q}`);
   await page.getByTestId("esl-bforce-line").first().waitFor({ timeout: 15000 });
