@@ -98,6 +98,7 @@ def _layers(key, v):
 
 
 STRAIN_SOURCES = ("max_strain", "plastic_strain", "strain_tensor", "max_stress")
+BFORCE_KINDS = ("cont", "cont2", "acc", "mass", "fint")     # 경계력 ESL 결과 종류(esl_bforce.md §1)
 
 
 def _strain_sources(key, v):
@@ -130,6 +131,15 @@ def _name_map(keys: tuple[str, ...]):
         for k, x in v.items():
             _name_list(f"{key}.{k}", x)
     return chk
+
+
+def _vec_comps(key, v):
+    """벡터 성분 이름 3개(각 원소는 '|' 로 대체 후보 — TCL bf_vec_comps)."""
+    if not isinstance(v, list) or len(v) != 3:
+        raise _bad(key, f"성분 이름 3개 목록이어야 함 (값 {v!r})")
+    for x in v:
+        if not isinstance(x, str) or not x.strip() or any(c in x for c in " \t\r\n"):
+            raise _bad(key, f"원소는 공백·탭·줄바꿈 없는 문자열('|' 로 대체 후보) (값 {x!r})")
 
 
 def _time_window(key, v):
@@ -315,6 +325,21 @@ SCHEMA: dict[str, Any] = {
         "stress": _str(),
         "time": _str(),
     },
+    # 선택 절(OPTIONAL_SECTIONS, v0.24.0 esl_bforce.md §9): 경계력 ESL. 없으면 BFORCE_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변)
+    "bforce": {
+        "enabled": _bool,
+        "result_names": _name_map(BFORCE_KINDS),
+        "vec_comps": _vec_comps,
+        "use_inertia": _bool,
+        "balance": _enum("inertia_relief", "none"),
+        "signs": {"cont": _enum(1, -1), "cont2": _enum(1, -1), "fint": _enum(1, -1, "auto")},
+        "default_rho": _num(0.0, lo_open=True),
+        "g_mm_s2": _num(0.0, lo_open=True),
+        "recon_mac_min": _num(0.0, 1.0),
+        "recon_umax_err_max": _num(0.0, lo_open=True),
+        "reaction_warn_rel": _num(0.0, lo_open=True),
+        "fint_check_warn_rel": _num(0.0, lo_open=True),
+    },
 }
 
 
@@ -326,7 +351,20 @@ VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "
 CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
                        "detect": {"prev_floor": 1.0e-6, "min_elems": 10, "rel_tol": 0.05, "mono_frac": 0.99}}
-OPTIONAL_SECTIONS = frozenset({"cumulative"})
+OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce"})
+# v0.24.0 경계력 ESL(계약 esl_bforce.md §9) 기본값 단일 출처 — 선택 절, cfg 에 주입 안 함(설정 해시 불변). 이름 후보 = 현장 확인 이름
+# "Contact Forces"·"Acceleration"(#82) 포함, 나머지는 Radioss 2026 /H3D/NODA 키워드 표시명 후보(현장 확인 후 설정에 더함).
+BFORCE_DEFAULTS = {
+    "enabled": True,
+    "result_names": {"cont": ["Contact Forces", "Contact Force", "CONT"],
+                     "cont2": ["Tied Contact Forces", "Contact Forces (TYPE2)", "CONT2"],
+                     "acc": ["Acceleration", "ACC"], "mass": ["Nodal Mass", "Mass", "MASS"],
+                     "fint": ["Internal Forces", "Internal Force", "FINT"]},
+    "vec_comps": ["X", "Y", "Z"],
+    "use_inertia": True, "balance": "inertia_relief", "signs": {"cont": 1, "cont2": 1, "fint": "auto"},
+    "default_rho": 7.85e-9, "g_mm_s2": 9810.0, "recon_mac_min": 0.9, "recon_umax_err_max": 0.2,
+    "reaction_warn_rel": 1e-3, "fint_check_warn_rel": 0.05,
+}
 # v0.10.0 ② 3-2-1 자동 선택 품질 검사(계약 esl_menu_restructure.md §5.2·§10, 기준값 임시). 기본값 단일 출처 —
 # 설정 파일에 support.auto_check 가 없으면 이 값(support_check_settings), cfg 에는 주입하지 않음(설정 sha256·보고서 불변).
 SUPPORT_CHECK_DEFAULTS = {"min_area_ratio": 0.10, "min_dist_rel": 0.15, "min_cond_ratio": 1.0e-3,
@@ -349,7 +387,9 @@ SOLVER_CHECK_DEFAULTS = {"resid_rel_cap": 1.0e-4, "equilibrium_tol_rel": 1.0e-6}
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
                            *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
-                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS)})
+                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS),
+                           *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
+                           "bforce.signs.fint"})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 
@@ -392,6 +432,21 @@ def extract_source_settings(cfg: dict | None) -> dict:
                 continue
             if isinstance(out[k], dict) and isinstance(v, dict):
                 out[k].update({kk: list(vv) for kk, vv in v.items() if kk in out[k]})
+            else:
+                out[k] = copy.deepcopy(v)
+    return out
+
+
+def bforce_settings(cfg: dict | None) -> dict:
+    """경계력 ESL 설정(없거나 일부만 있으면 BFORCE_DEFAULTS 로 채운 사본 — result_names·signs 는 키 단위). cfg 는 바꾸지 않는다."""
+    out = copy.deepcopy(BFORCE_DEFAULTS)
+    bc = cfg.get("bforce") if isinstance(cfg, dict) else None
+    if isinstance(bc, dict):
+        for k, v in bc.items():
+            if k not in out or v is None:
+                continue
+            if isinstance(out[k], dict) and isinstance(v, dict):
+                out[k].update({kk: copy.deepcopy(vv) for kk, vv in v.items() if kk in out[k]})
             else:
                 out[k] = copy.deepcopy(v)
     return out

@@ -196,6 +196,9 @@ def register_esl(conn: Connection, job: dict[str, Any], case: dict[str, Any], cd
         "noise": {"force_rel": _f(noise.get("force_rel")), "hotspot_strain_rel": _f(noise.get("hotspot_strain_rel")),
                   "disp_precision": noise.get("disp_precision")},
     }
+    bfs = (rec.get("summary") or {}).get("bforce")
+    if isinstance(bfs, dict):                    # v0.24.0 경계력 ESL 요약(esl_bforce.md §4 — forces JSON 새 키, DB 스키마 불변)
+        forces["bforce"] = _jsonable(bfs)
     supports = [{"node_id": int(s["node_id"]), "dof": str(s.get("dof"))} for s in (summ.get("supports") or [])]
     warnings = list(rec.get("warnings") or [])
     want = sorted(int(n) for n in (p.get("support_node_ids") or []))

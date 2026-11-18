@@ -53,6 +53,7 @@ from esl.export import csvout, optistruct, radioss
 from esl.fsutil import atomic_replace
 from esl.io import RESULT_FILES, SCALAR_SOURCES, decide_shear, pack_results, rad_eq, strain_source_of
 from esl.io.results_csv import METRICS
+from esl.io import bforce_csv as _bfcsv
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel, solver_check_kwargs
 from esl.rad import parse_rad, scan_includes
@@ -593,6 +594,8 @@ def stage_extract(ctx: Context) -> dict:
                         coord_check=ctx.cfg.get("coord_check"), shear_convention=ecfg["shear_convention"],
                         dump=_config.dump_settings(ctx.cfg))
     ctx.warnings += list(getattr(model, "warnings", [])) + list(info.get("warnings", []))
+    # v0.24.0 경계력 ESL 원자료(esl_bforce.md §2): done.json 에 bforce 가 있을 때만 01_extract/bforce.* (옛 추출물 = 쓰지 않음)
+    bfx = _bfcsv.pack_bforce(ctx.results, model.node_id, d) if _config.bforce_settings(ctx.cfg)["enabled"] else None
     sfb = info.get("strain_fallback") or {}
     src = info.get("strain_source") or "max_strain"
 
@@ -654,7 +657,7 @@ def stage_extract(ctx: Context) -> dict:
               "includes": [_fingerprint(p, True) for p in model.includes if os.path.isfile(p)],
               "results_dir": ctx.results, "results_files": {}}
     dump_mode = sfb.get("mode") == "dump"
-    for name in RESULT_FILES + ("strain_raw.csv",):
+    for name in RESULT_FILES + ("strain_raw.csv",) + _bfcsv.BF_FILES:
         p = os.path.join(ctx.results, name)
         if os.path.isfile(p):
             # dump 원자료(수십 GB 가능)는 크기·mtime 만(done.json 은 해시) — esl_strain_fallback.md Med2
@@ -675,6 +678,9 @@ def stage_extract(ctx: Context) -> dict:
                                                      "esl_layers")}}
     if cs is not None:
         s["cumulative"] = cs["short"]
+    if bfx is not None:                           # v0.24.0: 찾은 경계력 결과 유형(없는 종류 = null)
+        s["bforce"] = {k: (v.get("type") if isinstance(v, dict) else None) for k, v in (bfx.get("kinds") or {}).items()}
+        ctx.echo(f"[extract] 경계력 ESL 결과 유형: {s['bforce']}")
     ctx.echo(f"[extract] 파트 {model.part_id} '{model.part_title}': 노드 {s['n_nodes']}, 요소 {s['n_elems']} "
              f"(QUAD {s['n_quad']}/TRIA {s['n_tria']}), 이력 프레임 {s['n_frames']}, H {s['n_hot']}요소, "
              f"후보 프레임 D {s['frames_D']}, 전단 {sh['convention']}, 변형률 source {src}"
@@ -1098,10 +1104,112 @@ def stage_esl(ctx: Context) -> dict:
              f"force_rel={noise['force_rel']:.3e} (경고 >{vcfg['noise_force_rel_warn']:g}), "
              f"hotspot_strain_rel={noise['hotspot_strain_rel']:.3e} (≤{vcfg['noise_strain_rel_max']:g})")
     noise_short = {k: noise[k] for k in ("disp_precision", "delta", "n_samples", "force_rel", "hotspot_strain_rel")}
-    return {"noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
+    bshort = _bforce_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F)     # v0.24.0 경계력 ESL(기존 파일 불변 — 새 파일만)
+    return {"bforce": bshort, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
             "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
             "solver": solver_stats(sm), "strain_source": summ["strain_source"]}
+
+
+# ====================================================================== v0.24.0 경계력 ESL (esl_bforce.md §4)
+BF_JSON, BF_NPZ = "bforce.json", "bforce.npz"
+
+
+def _bf_text(code: str, **kw) -> str:
+    msg = {"BF_RHO_DEFAULT": "재료 밀도 없음 → 설정 default_rho {rho:g} 로 deck 질량 근사(재료 {mats})",
+           "BF_MASS_APPROX": "deck 밀도·두께로 근사한 질량으로 관성 항 계산 — 질량 스케일링 추가 질량 미포함",
+           "BF_NO_ACC": "가속도 결과 없음 — 관성 항 없이 접촉력만",
+           "BF_NO_MASS": "질량 없음 — 관성 항 생략",
+           "BF_RECON_POOR": "기준 재현 미달: MAC {mac} (기준 ≥ {mac_min:g}), umax 오차 {err} (기준 ≤ {err_max:g})",
+           "BF_REACTION": "3-2-1 반력 합 / Σ|F| = {rel:.3g} > {th:g} (하중 불평형)",
+           "BF_FINT_CHECK": "FINT 검산 상대 오차 {rel:.3g} > {th:g}",
+           "BF_FAILED": "경계력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로"}.get(code, code)
+    return f"{code}: " + msg.format(**kw)
+
+
+def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, sup, sm: ShellModel, F_full) -> dict:
+    """선택 프레임의 경계력 원자료 → 04_esl/bforce.json(esl/bforce/1)·bforce.npz + 기준 재현(같은 3-2-1). 예외는 ESL 단계를
+    실패시키지 않는다(BF_FAILED). 반환 = 단계 요약(ESL 실행 forces.bforce)."""
+    from esl.mech import bforce as bfm
+    from esl.mech.mass import lumped_mass
+    bc = _config.bforce_settings(ctx.cfg)
+    if not bc["enabled"]:
+        return {"grade": None, "code": "BF_DISABLED"}
+    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), int(sel["frame_index"]))
+    have = sorted(k for k, v in data.items() if v is not None)
+    if bfm.grade_of(have) == "none":
+        why = ("추출물에 경계력 결과 없음(v0.24.0 이전 TCL 이거나 bf_on 0) — h3d 추출을 다시 실행" if xdoc is None
+               else f"접촉력·내력 결과 유형이 h3d 에 없음(있는 종류 {have})")
+        doc = {"schema": bfm.SCHEMA, "grade": "none", "code": "BF_NO_DATA", "reason": why,
+               "kinds": {k: data.get(k) is not None for k in bfm.KINDS},
+               "result_types": None if xdoc is None else xdoc.get("kinds")}
+        _write_json(ctx.f(d, BF_JSON), doc)
+        return {"grade": "none", "code": "BF_NO_DATA", "reason": why}
+    try:
+        mesh = {"x0": model.x0, "conn": model.conn, "elem_type": model.elem_type, "thickness": model.thickness}
+        rho_e, miss = bfm.rho_per_elem(model.elem_mid, model.mats, float(bc["default_rho"]))
+        m_deck = lumped_mass(mesh, rho_e)
+        out = bfm.build(model.x0, u, data, m_deck, R=R, u_rel=u_rel, use_inertia=bool(bc["use_inertia"]),
+                        signs=bc["signs"], balance=bc["balance"], g=float(bc["g_mm_s2"]), F_full=F_full)
+        doc = out["doc"]
+        doc["rho_default_mats"] = miss
+        doc["mass_deck_total"] = float(m_deck.sum())
+        doc["frame"] = {"frame_index": int(sel["frame_index"]), "time": float(sel["time"])}
+        doc["rot_deg"] = float(kabsch.rotation_deg(R))
+        doc["result_types"] = None if xdoc is None else xdoc.get("kinds")
+        nid = model.node_id
+        doc["max_f"] = {"node_id": int(nid[doc["max_f"]["idx"]]), "mag": doc["max_f"]["mag"]}
+        texts = []
+        if miss and doc["mass_source"] == "deck":
+            doc["warnings"].append({"code": "BF_RHO_DEFAULT", "mats": miss})
+            texts.append(_bf_text("BF_RHO_DEFAULT", rho=float(bc["default_rho"]), mats=miss))
+        texts += [_bf_text(w["code"]) for w in doc["warnings"] if w["code"] in ("BF_MASS_APPROX", "BF_NO_ACC", "BF_NO_MASS")]
+        if doc["fint_check_rel"] is not None and doc["fint_check_rel"] > float(bc["fint_check_warn_rel"]):
+            doc["warnings"].append({"code": "BF_FINT_CHECK", "rel": doc["fint_check_rel"]})
+            texts.append(_bf_text("BF_FINT_CHECK", rel=doc["fint_check_rel"], th=float(bc["fint_check_warn_rel"])))
+        # 기준 재현: 같은 3-2-1 로 K₀ u = F_bal → 파트 전 노드 Kabsch 강체 제거 → u_rel 과 비교
+        fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
+        u_val = None
+        if fs["run"]:
+            u6, Rr = _solver_call(ctx, sm.solve, out["F_bal"], list(sup))
+            u_val, _, _, _ = kabsch.remove_rigid(model.x0, u6[:, :3])
+            rep = bfm.recon_report(u_rel, u_val, Rr, out["F_bal"])
+            poor = (rep["mac"] is None or rep["mac"] < float(bc["recon_mac_min"])
+                    or rep["umax_err"] is None or abs(rep["umax_err"]) > float(bc["recon_umax_err_max"]))
+            doc["recon"] = {"status": "poor" if poor else "ok", **rep}
+            if poor:
+                doc["warnings"].append({"code": "BF_RECON_POOR"})
+                texts.append(_bf_text("BF_RECON_POOR", mac="–" if rep["mac"] is None else f"{rep['mac']:.3f}",
+                                      mac_min=float(bc["recon_mac_min"]),
+                                      err="–" if rep["umax_err"] is None else f"{rep['umax_err']:+.1%}",
+                                      err_max=float(bc["recon_umax_err_max"])))
+            if rep["reaction_rel"] > float(bc["reaction_warn_rel"]):
+                doc["warnings"].append({"code": "BF_REACTION", "rel": rep["reaction_rel"]})
+                texts.append(_bf_text("BF_REACTION", rel=rep["reaction_rel"], th=float(bc["reaction_warn_rel"])))
+        else:
+            doc["recon"] = {"status": "skipped", "reason": fs["reason"]}
+        ctx.warnings += texts
+        _write_json(ctx.f(d, BF_JSON), doc)
+        z = {"node_id": nid, "f": out["F_bal"], "f_raw": out["F_raw"], "m": out["m"] if out["m"] is not None
+             else np.zeros(nid.size)}
+        if u_val is not None:
+            z["u_val"] = u_val
+        np.savez_compressed(ctx.f(d, BF_NPZ), **z)
+    except Exception as exc:                                    # noqa: BLE001 — 경계력 때문에 ESL 단계 실패 금지
+        err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+        ctx.warnings.append(_bf_text("BF_FAILED", err=err))
+        _write_json(ctx.f(d, BF_JSON), {"schema": "esl/bforce/1", "grade": bfm.grade_of(have), "code": "BF_FAILED",
+                                        "reason": err})
+        return {"grade": bfm.grade_of(have), "code": "BF_FAILED", "reason": err}
+    rc = doc.get("recon") or {}
+    ctx.echo(f"[esl] 경계력 ESL 등급 {doc['grade']}({doc['formula']}), 질량 {doc['mass_source']}, Σ|F| {doc['sum_abs']:.3e}"
+             f" (전 노드 ×{(doc['sum_abs_ratio_full'] or 0):.3g}), ā {doc['abar_g']:.3g} g·보정 {doc['corr_rel']:.1%}, "
+             f"재현 {rc.get('status')} MAC {rc.get('mac')}")
+    return {"grade": doc["grade"], "mass_source": doc["mass_source"], "sum_abs": doc["sum_abs"],
+            "sum_abs_ratio_full": doc["sum_abs_ratio_full"], "abar_g": doc["abar_g"], "corr_rel": doc["corr_rel"],
+            "eq_force_rel": doc["eq_raw"]["ref"]["force_rel"], "eq_moment_rel": doc["eq_raw"]["ref"]["moment_rel"],
+            "recon": rc.get("status"), "mac": rc.get("mac"), "umax_err": rc.get("umax_err"),
+            "reaction_rel": rc.get("reaction_rel"), "limits": list(doc["limits"])}
 
 
 # ====================================================================== S5 validate
