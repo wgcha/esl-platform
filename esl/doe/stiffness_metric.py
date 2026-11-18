@@ -23,6 +23,7 @@ from esl.errors import EslError
 LIN_FORM_DEFAULT = "ritz"            # Q-SM-1 확정: ritz C_ref/ρ (taylor 는 설정 rank.lin_form 으로 선택)
 LIN_FORMS = ("taylor", "ritz")
 METRICS = ("lin", "solve", "jig")
+VIEW_METRIC_BF = "bf"                          # 하중 출처 보기 지표(경계력 ESL) — rank.rank(metric="bf") → per_esl C_bf
 LIN_VALID_DEFAULT = 0.3
 IMBALANCE_WARN_DEFAULT = 0.02
 
@@ -218,6 +219,8 @@ def metric_key(metric: str, lin_form: str = LIN_FORM_DEFAULT) -> str:
         return "C"
     if metric == "jig":
         return "C_jig"
+    if metric == VIEW_METRIC_BF:              # v0.24.0 경계력 ESL 보기 전용(스터디 rank.metric 선택지 아님 — esl_bforce.md §5.4)
+        return "C_bf"
     if metric == "lin":
         if lin_form not in LIN_FORMS:
             raise EslError("CONFIG_INVALID", f"rank.lin_form {lin_form} — {list(LIN_FORMS)}")

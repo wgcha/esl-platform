@@ -28,6 +28,9 @@ from esl.doe import stiffness_metric as sm
 from esl.errors import EslError
 
 BASELINE = "d000"
+# 하중 출처 지표 키 → (n_failed 이름, 베이스라인 값 없음 문구). 지그(v0.23.0)·경계력 ESL(v0.24.0 esl_bforce.md §5.4)
+_ALT_KEYS = {"C_jig": ("jig", "베이스라인 지그 지표가 없음(JIG_SKIPPED)"),
+             "C_bf": ("bf", "베이스라인 경계력 ESL 지표가 없음(BF_DESIGN_FAILED)")}
 _SKIP_KEY = {"SKIPPED_COLLISION": "collision", "SKIPPED_FIXED": "fixed", "SKIPPED_GEOM": "geom"}
 _FAIL_KEY = {"FAILED_MORPH": "morph", "FAILED_MESH": "mesh", "FAILED_SOLVE": "solve"}
 
@@ -146,13 +149,13 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     if b is None or b.get("status") != "OK":
         raise EslError("BASELINE_FAILED", "베이스라인 d000 결과가 없거나 실패")
     new = _sm_new(b)
-    if key != "C" and not new:
+    alt = _ALT_KEYS.get(key)                    # 다른 하중 출처 지표(지그·경계력) — 값 null 안 = 순위 밖 n_failed[이름]
+    if key != "C" and not new and key != "C_bf":
         raise EslError("INPUT_INVALID", "rank.metric lin 인데 결과에 강성 지표(C_lin)가 없음 — 옛 스냅샷은 solve")
     if key != "C":
         if any(p.get(key) is None for p in b.get("per_esl") or []):
-            raise EslError("BASELINE_FAILED", "베이스라인 강성 지표가 없음(SM_SKIPPED)" if key != "C_jig"
-                           else "베이스라인 지그 지표가 없음(JIG_SKIPPED)")
-        fail_key["__sm__" if key != "C_jig" else "__jig__"] = "sm" if key != "C_jig" else "jig"
+            raise EslError("BASELINE_FAILED", alt[1] if alt else "베이스라인 강성 지표가 없음(SM_SKIPPED)")
+        fail_key[f"__{alt[0] if alt else 'sm'}__"] = alt[0] if alt else "sm"
     ba = _agg(b, key)
     C_ref = ba["C"]
     if not C_ref > 0:
@@ -165,7 +168,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     tl = ratio_tol(noise_floor, tol)
     base_C = {p["entry_id"]: float(p[key]) for p in b.get("per_esl") or []}
     base_S = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
-    fb_on = key not in ("C", "C_jig") and lin_valid is not None
+    fb_on = key not in ("C", "C_jig", "C_bf") and lin_valid is not None
     lin_key = sm.metric_key("lin", lin_form)
     lin_ref = (_agg(b, lin_key)["C"] if new and all(p.get(lin_key) is not None for p in b.get("per_esl") or [])
                else None)
@@ -187,7 +190,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
             n_other += 1
             continue
         if key != "C" and any(p.get(key) is None for p in r.get("per_esl") or []):
-            n_fl["jig" if key == "C_jig" else "sm"] += 1   # 강성 지표(SM_SKIPPED)·지그(JIG_DESIGN_FAILED) 실패 — 순위 밖
+            n_fl[alt[0] if alt else "sm"] += 1      # 강성 지표(SM_SKIPPED)·지그(JIG_DESIGN_FAILED)·경계력(BF_DESIGN_FAILED) 실패 — 순위 밖
             continue
         fb = fb_on and sm.out_of_range(r.get("per_esl") or [], lin_valid)
         k_r, ref_r, base_r = ("C", C_ref_solve, base_S) if fb else (key, C_ref, base_C)
