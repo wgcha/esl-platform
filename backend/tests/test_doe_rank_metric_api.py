@@ -32,9 +32,12 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05,
                "tie_spread_min": 0.02}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
-                "imbalance_warn": 0.02, "jig": JIG_DEFAULT}
+                "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT}
+# v0.24.0 보완(esl_fint.md §6.2): 새 스냅샷에 평가 영역 고정
+EVAL_SNAP = {"mode": "part", "free_edge_mm": 10.0, "boxes": []}
 # v0.23.0: 새 스냅샷 = metric 기본 jig + rank.jig 설정 전체 + schema 2(esl_jig_rank.md §4)
-SNAP = {"metric": "jig", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "jig": JIG_DEFAULT, "schema": 2}
+SNAP = {"metric": "jig", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "jig": JIG_DEFAULT, "schema": 2,
+        "eval_region": EVAL_SNAP}
 
 
 # ================================================================ 설정 거울·검사
@@ -121,7 +124,7 @@ def test_snapshot_follows_config_and_clone(tmp_path, engine, fake_dashboard, clo
         assert r.status_code == 201, r.text
         s = r.json()
         want = {"metric": "solve", "lin_form": "taylor", "lin_valid": 0.5, "imbalance_warn": 0.1, "jig": JIG_DEFAULT,
-                "schema": 2}
+                "schema": 2, "eval_region": EVAL_SNAP}
         assert s["inputs"]["rank_metric"] == "solve" and _job(engine, s["job"]["id"])["params"]["doe"]["rank"] == want
         finish_job(engine, s["job"]["id"])
         d2 = copy.deepcopy(d)
@@ -337,7 +340,8 @@ def test_rank_snapshot_jig_enabled_flag():
     assert on == SNAP
     off_cfg = BeadDoeCfg.model_validate({"rank": {"metric": "solve", "jig": {"enabled": False}}}).model_dump()
     off = rank_snapshot(off_cfg)
-    assert off == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1}
+    assert off == {"metric": "solve", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "schema": 1,
+                   "eval_region": EVAL_SNAP}
 
 
 # ================================================================ v0.23.2 지그 미계산 표시·지그 3D 통과(esl_v0232_fixes.md §3·§4.3)

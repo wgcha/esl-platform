@@ -33,6 +33,7 @@ from esl.doe import FAILED, SKIPPED, load_method_sources, opt_settings, settings
 from esl.doe import boundary as bnd
 from esl.doe import evaluate as ev
 from esl.doe import compare_lt as clt
+from esl.doe import eval_region as evr
 from esl.doe import load_transfer as ltm
 from esl.doe import matrix as mx
 from esl.doe import mesh_gmsh as mg
@@ -1052,6 +1053,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
     if evs is not None:
         out["eval_region"] = evs
+        if evs["n_nodes"] == 0:                  # 빈 영역 = 전 노드로 계산(umax_in) + 경고 1개
+            warns.append("RANK_EVAL_EMPTY: 평가 영역(rank.eval_region)에 노드가 없어 대상 파트 전체로 umax(평가 영역)을 계산")
     if v3_jig:
         out.update(v3_jig)
     mqb = None
@@ -3339,8 +3342,8 @@ def _sm(c: Ctx) -> dict | None:
     out["eval"] = None
     if ev_ is not None:
         mode = ev_.get("mode") if isinstance(ev_, dict) else ev_
-        if mode not in smm.EVAL_MODES:
-            raise EslError("CONFIG_INVALID", f"rank.eval_region {mode} — {list(smm.EVAL_MODES)}")
+        if mode not in evr.EVAL_MODES:
+            raise EslError("CONFIG_INVALID", f"rank.eval_region {mode} — {list(evr.EVAL_MODES)}")
         get = (lambda k, d: ev_.get(k, d)) if isinstance(ev_, dict) else (lambda k, d: r.get("eval_" + k, d))
         out["eval"] = {"mode": mode, "free_edge_mm": float(get("free_edge_mm", base["eval_free_edge_mm"])),
                        "boxes": list(get("boxes", base["eval_boxes"]) or [])}
@@ -4868,7 +4871,7 @@ def _ev_mask(c: Ctx, mesh: dict):
         try:
             t, _bm = sc.load_base(c.p("prep"))
             bn = np.asarray(t.mesh["node_id"], dtype=np.int64)
-            cache["base"] = (bn, smm.eval_mask(t.mesh["x0"], t.mesh["conn"], t.mesh["elem_type"], E["mode"],
+            cache["base"] = (bn, evr.eval_mask(t.mesh["x0"], t.mesh["conn"], t.mesh["elem_type"], E["mode"],
                                                float(E["free_edge_mm"]), E["boxes"]))
         except (EslError, OSError, KeyError):
             cache["base"] = None
@@ -4876,7 +4879,7 @@ def _ev_mask(c: Ctx, mesh: dict):
     base = cache.get("base")
     if base is not None and base[0].size == nid.size and np.array_equal(base[0], nid):
         return base[1]
-    return smm.eval_mask(mesh["x0"], mesh["conn"], mesh["elem_type"], E["mode"], float(E["free_edge_mm"]), E["boxes"])
+    return evr.eval_mask(mesh["x0"], mesh["conn"], mesh["elem_type"], E["mode"], float(E["free_edge_mm"]), E["boxes"])
 
 
 def _ev_summary(c: Ctx, t) -> dict | None:

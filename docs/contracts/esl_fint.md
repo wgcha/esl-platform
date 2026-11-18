@@ -89,7 +89,7 @@ unbalanced = def.force_rel > fint.unbalanced_force_rel ∨ def.moment_rel > fint
 ### 6.2 보조 — umax(평가 영역)
 - 설정(DEFAULTS `rank`·`BeadDoeRankCfg`·yaml 2): `eval_region` = `part`(기본 — 대상 파트 전 노드) | `exclude_free_edges`(자유 경계 노드에서 거리 ≤ `eval_free_edge_mm`(10.0) 인 노드 제외) | `box`(`eval_boxes` = `[{lo: [x,y,z], hi: [x,y,z]}, …]` 합집합 안 노드만, 기준 좌표). 
 - **새 스냅샷만**: `rank_snapshot` 이 `eval_region{mode, free_edge_mm, boxes}` 를 고정. 스냅샷에 키 없음 = 계산 안 함(옛 결과·CSV·result.json 바이트 동일).
-- 공용 순수 함수 `esl/doe/stiffness_metric.py:eval_mask(x0, conn, elem_type, mode, free_edge_mm, boxes) -> bool(N)`(자유 경계 = 한 요소에만 속한 변). 같은 메시 계획 = 기준 메시 마스크를 노드 ID 로, 다른 메시 = 그 메시 좌표로 계산. 빈 마스크 = 전 노드 + 경고 `RANK_EVAL_EMPTY`.
+- 공용 순수 함수 `esl/doe/eval_region.py:eval_mask(x0, conn, elem_type, mode, free_edge_mm, boxes) -> bool(N)`(독립 모듈 — stiffness_metric 은 import 제한 유지)(자유 경계 = 한 요소에만 속한 변). 같은 메시 계획 = 기준 메시 마스크를 노드 ID 로, 다른 메시 = 그 메시 좌표로 계산. 빈 마스크 = 전 노드 + 경고 `RANK_EVAL_EMPTY`.
 - per_esl 키(출처별): 전 노드 `umax_ev`(`_solve6`), 지그 `umax_jig_ev`(`jig.respond` ev_mask), 경계력 `umax_bf_ev`·내력 `umax_fi_ev`(사이드카). 출처 표 열 `uev_pe`.
 - 순위 행·기준 += `umax_ev`(최악 엔트리)·`umax_ev_all`(전 엔트리 최대), 행 per_esl += `umax_ev`. result.json 최상위 += `eval_region{mode, free_edge_mm, boxes, n_nodes, n_total}`. ranking.csv 열은 늘리지 않음.
 - 화면: 순위표 열 "umax(평가 영역)"(값 있는 결과만), ⓘ 지표 정의에 "주 순위 = 컴플라이언스 비(엔트리 최악) · 보조 = 평가 영역 안 최대 변위 — 영역: …" 한 줄.

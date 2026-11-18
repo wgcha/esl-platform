@@ -14,7 +14,7 @@ import test_jig_stages as T
 
 from esl.doe import rank as rk
 from esl.doe import stages as stg
-from esl.doe import stiffness_metric as smm
+from esl.doe import eval_region as evr
 from esl.library import _util as U
 from esl.mech import bforce as bfm
 
@@ -121,19 +121,19 @@ def test_v0240_f_f_eval_mask_modes():
         from tests.mech.test_bforce import plate
         mesh = plate(nx=10, ny=6, Lx=100.0, Ly=60.0)
     X = mesh["x0"]
-    allm = smm.eval_mask(X, mesh["conn"], mesh["elem_type"], "part")
+    allm = evr.eval_mask(X, mesh["conn"], mesh["elem_type"], "part")
     assert allm.all()
-    fe = smm.free_edge_nodes(mesh["conn"], mesh["elem_type"])
+    fe = evr.free_edge_nodes(mesh["conn"], mesh["elem_type"])
     assert fe.size == 2 * (10 + 6)                             # 사각 판 둘레 노드 수
-    ex = smm.eval_mask(X, mesh["conn"], mesh["elem_type"], "exclude_free_edges", 15.0)
+    ex = evr.eval_mask(X, mesh["conn"], mesh["elem_type"], "exclude_free_edges", 15.0)
     from scipy.spatial import cKDTree
     d, _ = cKDTree(X[fe]).query(X)
     assert np.array_equal(ex, d > 15.0) and 0 < ex.sum() < X.shape[0] and not ex[fe].any()
     lo = X.min(axis=0)
-    box = smm.eval_mask(X, mesh["conn"], mesh["elem_type"], "box", boxes=[{"lo": lo.tolist(), "hi": (lo + [30.0, 30.0, 50.0]).tolist()}])
+    box = evr.eval_mask(X, mesh["conn"], mesh["elem_type"], "box", boxes=[{"lo": lo.tolist(), "hi": (lo + [30.0, 30.0, 50.0]).tolist()}])
     assert np.array_equal(box, np.all((X >= lo) & (X <= lo + [30.0, 30.0, 50.0]), axis=1)) and box.sum() > 0
     with pytest.raises(Exception):
-        smm.eval_mask(X, mesh["conn"], mesh["elem_type"], "nope")
+        evr.eval_mask(X, mesh["conn"], mesh["elem_type"], "nope")
 
 
 def test_v0240_f_g_old_snapshot_no_new_keys(tmp_path):
