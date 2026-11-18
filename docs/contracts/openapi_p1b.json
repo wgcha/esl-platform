@@ -2567,6 +2567,17 @@
             ],
             "title": "Recon Umax Err"
           },
+          "sign_suspect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sign Suspect"
+          },
           "source": {
             "anyOf": [
               {
@@ -2653,6 +2664,17 @@
               }
             ],
             "title": "Reason"
+          },
+          "recon_mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Mac Min"
           },
           "status": {
             "title": "Status",

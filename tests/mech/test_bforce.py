@@ -206,3 +206,23 @@ def test_v0240_case_config_bforce_section():
         with pytest.raises(EslError) as e:
             cf.validate_settings(c3)
         assert e.value.code == "CONFIG_INVALID"
+
+
+def test_v0240_sign_suspect(case):
+    """BF-11: CONT 부호 점검 — 정상 부호 = 경고 없음, 일부러 뒤집은 부호 = BF_SIGN_SUSPECT(값 포함·결과 불변)."""
+    c = case
+    for data in ({"cont": c["cont"], "acc": c["acc"]},                                        # contact
+                 {"cont": c["cont"], "cont2": c["cont2"], "acc": c["acc"], "mass": c["m"]}):  # full
+        ok = bf.build(c["X"], None, data, c["m"], use_inertia=True)["doc"]
+        assert ok["sign_check"]["suspect"] is False
+        assert not any(w["code"] == "BF_SIGN_SUSPECT" for w in ok["warnings"])
+        bad = bf.build(c["X"], None, data, c["m"], use_inertia=True, signs={"cont": -1, "cont2": -1})
+        w = [x for x in bad["doc"]["warnings"] if x["code"] == "BF_SIGN_SUSPECT"]
+        assert len(w) == 1 and w[0]["force_rel"] > w[0]["force_rel_flip"] and w[0]["abar_g"] > w[0]["abar_g_flip"]
+        sc = bad["doc"]["sign_check"]
+        assert sc["suspect"] and sc["force_rel"] == w[0]["force_rel"]
+        # 진단만: 설정 부호대로 조립한 결과는 그대로
+        ref = bf.assemble(data, c["m"], use_inertia=True, signs={"cont": -1, "cont2": -1})["F"]
+        assert np.array_equal(bad["F_raw"], ref)
+    only = bf.build(c["X"], None, {"fint": -c["F_true"]}, c["m"], use_inertia=False)["doc"]
+    assert only["grade"] == "fint" and only["sign_check"] is None

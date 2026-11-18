@@ -2033,6 +2033,7 @@ class DoeBforceEntryOut(_Out):
     eq_moment_rel: float | None = None
     abar_g: float | None = None
     corr_rel: float | None = None
+    sign_suspect: bool | None = None                  # CONT 부호 의심(BF_SIGN_SUSPECT — 진단만, 결과 불변). None = 점검 대상 아님(fint 등급)
     recon_mac: float | None = None
     recon_umax_err: float | None = None
     reaction_rel: float | None = None
@@ -2050,6 +2051,7 @@ class DoeBforceOut(_Out):
     entries: list[DoeBforceEntryOut] = Field(default_factory=list)
     limits: list[str] = Field(default_factory=list)
     limit_text: list[str] = Field(default_factory=list)
+    recon_mac_min: float | None = None                # 재현 MAC 경고 기준(설정 bead_doe.bforce.recon_mac_min) — 화면 하드코딩 금지
     n_designs: int = 0
     n_failed: int = 0
 
@@ -2119,7 +2121,7 @@ class DoeResultOut(_Out):
     rank_views: "DoeRankViewsOut | None" = None
     view3d_regen: "DoeView3dRegenOut | None" = None
     # v0.24.0 경계력 ESL(esl_bforce.md §7 — 사이드카 post/bforce_view.json, 없으면 null): 블록·3D(안 응답 {did: "<did>_bf"}·{did: entry}·
-    # {entry: "d000_bf_e<kk>"})·추가 계산 가능 여부(available = 계획 bf base ∧ (사이드카 없음 ∨ Case 쪽 경계력이 더 새것))
+    # {entry: "d000_bf_e<kk>"})·추가 계산(bforce_add: available = 계획 열 bf base 이면 항상, allowed = 권한·작업 조건 — 막힌 이유는 reason)
     bforce: "DoeBforceOut | None" = None
     view3d_bf: dict[str, str] | None = None
     view3d_bf_esl: dict[str, str] | None = None

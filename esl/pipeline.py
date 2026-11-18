@@ -1123,6 +1123,8 @@ def _bf_text(code: str, **kw) -> str:
            "BF_RECON_POOR": "기준 재현 미달: MAC {mac} (기준 ≥ {mac_min:g}), umax 오차 {err} (기준 ≤ {err_max:g})",
            "BF_REACTION": "3-2-1 반력 합 / Σ|F| = {rel:.3g} > {th:g} (하중 불평형)",
            "BF_FINT_CHECK": "FINT 검산 상대 오차 {rel:.3g} > {th:g}",
+           "BF_SIGN_SUSPECT": "CONT 부호 의심: 불평형 ‖ΣF‖/Σ‖F‖ {rel:.3g} (부호 반전 시 {rel_flip:.3g}), ā {ag} g (반전 시 {ag_flip} g) — "
+                              "bead_doe.bforce.signs.cont 확인(결과는 바꾸지 않음)",
            "BF_FAILED": "경계력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로"}.get(code, code)
     return f"{code}: " + msg.format(**kw)
 
@@ -1166,6 +1168,11 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
             doc["warnings"].append({"code": "BF_RHO_DEFAULT", "mats": miss})
             texts.append(_bf_text("BF_RHO_DEFAULT", rho=float(bc["default_rho"]), mats=miss))
         texts += [_bf_text(w["code"]) for w in doc["warnings"] if w["code"] in ("BF_MASS_APPROX", "BF_NO_ACC", "BF_NO_MASS")]
+        for w in doc["warnings"]:
+            if w["code"] == bfm.CODE_SIGN:
+                f_ = lambda v: "–" if v is None else f"{v:.3g}"      # noqa: E731
+                texts.append(_bf_text(w["code"], rel=w["force_rel"], rel_flip=w["force_rel_flip"], ag=f_(w["abar_g"]),
+                                      ag_flip=f_(w["abar_g_flip"])))
         if doc["fint_check_rel"] is not None and doc["fint_check_rel"] > float(bc["fint_check_warn_rel"]):
             doc["warnings"].append({"code": "BF_FINT_CHECK", "rel": doc["fint_check_rel"]})
             texts.append(_bf_text("BF_FINT_CHECK", rel=doc["fint_check_rel"], th=float(bc["fint_check_warn_rel"])))
@@ -1178,7 +1185,7 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
             rep = bfm.recon_report(u_rel, u_val, Rr, out["F_bal"])
             poor = (rep["mac"] is None or rep["mac"] < float(bc["recon_mac_min"])
                     or rep["umax_err"] is None or abs(rep["umax_err"]) > float(bc["recon_umax_err_max"]))
-            doc["recon"] = {"status": "poor" if poor else "ok", **rep}
+            doc["recon"] = {"status": "poor" if poor else "ok", "mac_min": float(bc["recon_mac_min"]), **rep}
             if poor:
                 doc["warnings"].append({"code": "BF_RECON_POOR"})
                 texts.append(_bf_text("BF_RECON_POOR", mac="–" if rep["mac"] is None else f"{rep['mac']:.3f}",
@@ -1211,7 +1218,9 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
             "sum_abs_ratio_full": doc["sum_abs_ratio_full"], "abar_g": doc["abar_g"], "corr_rel": doc["corr_rel"],
             "eq_force_rel": doc["eq_raw"]["ref"]["force_rel"], "eq_moment_rel": doc["eq_raw"]["ref"]["moment_rel"],
             "recon": rc.get("status"), "mac": rc.get("mac"), "umax_err": rc.get("umax_err"),
-            "reaction_rel": rc.get("reaction_rel"), "limits": list(doc["limits"])}
+            "reaction_rel": rc.get("reaction_rel"), "limits": list(doc["limits"]),
+            "limit_text": bfm.limit_text(doc["limits"]),
+            "sign_suspect": bool((doc.get("sign_check") or {}).get("suspect"))}
 
 
 # ====================================================================== S5 validate

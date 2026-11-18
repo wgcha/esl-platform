@@ -24,6 +24,8 @@ GRADE_RANK = {"full": 3, "fint": 2, "contact": 1, "none": 0}
 BALANCES = ("inertia_relief", "none")
 LIMIT_TIE = "BF_TIE_MISSING"          # contact 등급 한계: tie 체결력 미포함 — 조립 부품 하중 누락
 LIMIT_DECOMP = "BF_NO_DECOMP"         # fint 등급: 분해 정보 없음
+LIMIT_TEXT = {LIMIT_TIE: "tie 체결력 미포함 — 조립 부품 하중 누락", LIMIT_DECOMP: "내력만(접촉·관성 분해 없음)"}   # 한계 문구 원본 1곳
+CODE_SIGN = "BF_SIGN_SUSPECT"
 FORMULA = {"full": "F = CONT + CONT2 − M·ACC", "fint": "F = s·FINT", "contact": "F = CONT − M·ACC"}
 
 
@@ -224,6 +226,39 @@ def _eq_short(e: dict) -> dict:
             "force_rel": float(e["force_rel"]), "moment_rel": float(e["moment_rel"])}
 
 
+def limit_text(codes) -> list[str]:
+    return [LIMIT_TEXT.get(x, x) for x in codes]
+
+
+def sign_check(X0, data: dict, m_deck=None, *, use_inertia: bool = True, signs: dict | None = None, R=None,
+               g: float = 9810.0) -> dict | None:
+    """CONT 부호 가정 점검(진단 전용 — 결과를 바꾸지 않음). contact·full 등급에서 접촉 항(CONT·CONT2)의 설정 부호 F 와
+    반전 부호 F′ 의 불평형 force_rel = ‖ΣF‖/Σ‖F‖ 와 관성 이완 ā(g)를 비교한다. 설정 쪽이 force_rel 이 더 크고(질량이 있으면 ā 도
+    더 클 때) = suspect. 해당 없음(fint 등급·접촉력 없음) = None. 반환 {suspect, force_rel, force_rel_flip, abar_g, abar_g_flip}."""
+    have = {k for k in KINDS if data.get(k) is not None}
+    if grade_of(have) not in ("full", "contact"):
+        return None
+    sg = {"cont": 1, "cont2": 1, **{k: v for k, v in (signs or {}).items() if k in ("cont", "cont2")}}
+    flip = {k: -_sign(v, k) for k, v in sg.items()}
+    X0 = np.asarray(X0, dtype=np.float64)
+
+    def _one(sgn: dict) -> tuple[float, float | None]:
+        a = assemble(data, m_deck, use_inertia=use_inertia, signs=sgn, R=R)
+        Fr = a["F_ref"]
+        fr = equilibrium(X0, Fr)["force_rel"]
+        if a["m"] is None or not float(np.sum(a["m"])) > 0:
+            return fr, None
+        ab = inertia_relief(X0, a["m"], Fr)["abar"]
+        return fr, float(np.linalg.norm(ab[:3]) / float(g)) if g else None
+
+    fr, ag = _one(sg)
+    fr_f, ag_f = _one(flip)
+    worse = fr > fr_f
+    if ag is not None and ag_f is not None:
+        worse = worse and ag > ag_f
+    return {"suspect": bool(worse), "force_rel": fr, "force_rel_flip": fr_f, "abar_g": ag, "abar_g_flip": ag_f}
+
+
 def build(X0, u_total, data: dict, m_deck=None, *, R=None, u_rel=None, use_inertia: bool = True,
           signs: dict | None = None, balance: str = "inertia_relief", g: float = 9810.0, F_full=None) -> dict:
     """조립 + 기준 형상 회전 + 균형 + 진단(§3.4·§3.5 — recon 제외). 반환 {F_bal (기준계 풀이 하중), F_raw (전역),
@@ -247,6 +282,14 @@ def build(X0, u_total, data: dict, m_deck=None, *, R=None, u_rel=None, use_inert
         rel = {"abar": [float(v) for v in ir["abar"]], "corr_rel": ir["corr_rel"], "center": ir["center"].tolist(),
                "mass_total": ir["mass_total"]}
     e_bal = equilibrium(X0, Fb)
+    sc = None
+    try:
+        sc = sign_check(X0, data, m_deck, use_inertia=use_inertia, signs=signs, R=R, g=g)
+    except EslError:
+        sc = None
+    if sc is not None and sc["suspect"]:
+        warns.append({"code": CODE_SIGN, "force_rel": sc["force_rel"], "force_rel_flip": sc["force_rel_flip"],
+                      "abar_g": sc["abar_g"], "abar_g_flip": sc["abar_g_flip"]})
     mag = np.linalg.norm(Fb, axis=1)
     imax = int(np.argmax(mag)) if mag.size else 0
     sa_full = None if F_full is None else float(np.linalg.norm(np.asarray(F_full, dtype=np.float64), axis=1).sum())
@@ -258,6 +301,7 @@ def build(X0, u_total, data: dict, m_deck=None, *, R=None, u_rel=None, use_inert
            "use_inertia": bool(use_inertia), "balance": balance,
            "signs": {"cont": (signs or {}).get("cont", 1), "cont2": (signs or {}).get("cont2", 1),
                      "fint": a["fint_sign"] if a["fint_sign"] is not None else (signs or {}).get("fint", "auto")},
+           "sign_check": sc,
            "fint_sign_source": a["fint_sign_source"], "fint_check_rel": a["fint_check_rel"],
            "eq_raw": {"def": _eq_short(e_def), "ref": _eq_short(e_ref)}, "eq_bal": {"ref": _eq_short(e_bal)},
            "omitted_f": [float(-x) for x in e_ref["sum_f"]], "omitted_m": [float(-x) for x in e_ref["sum_m"]],

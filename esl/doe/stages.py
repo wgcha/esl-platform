@@ -656,7 +656,7 @@ def bd_eval(spec: dict, echo=print) -> dict:
             r["warnings"] = list(r["warnings"]) + sm_w
             if _jig(c) is not None:              # v0.23.0 지그 순위(esl_jig_rank.md §2): metric 과 무관하게 항상(Q-JIG-1)
                 r["warnings"] = list(r["warnings"]) + _jig_apply(c, t, did, mesh, loads, reg_e, r)
-        if c.scn != "compare" and _bf_on(c):     # v0.24.0 경계력 ESL 사이드카(result.json 무영향 — esl_bforce.md §5.3)
+        if _bf_on(c):                             # v0.24.0 경계력 ESL 사이드카(result.json 무영향 — esl_bforce.md §5.3)
             _bf_apply(c, t, bmeta, did, mesh, sup, rkw.get("region"))
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
         keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
@@ -4392,7 +4392,6 @@ BF_VIEW_JSON = "bforce_view.json"                  # post/ (보기·블록·3D)
 BF_PREP_SCHEMA = "esl/doe_bforce_prep/1"
 BF_DESIGN_SCHEMA = "esl/doe_bforce_design/1"
 BF_VIEW_SCHEMA = "esl/doe_bforce_view/1"
-BF_LIMIT_TEXT = {"BF_TIE_MISSING": "tie 체결력 미포함 — 조립 부품 하중 누락", "BF_NO_DECOMP": "내력만(접촉·관성 분해 없음)"}
 
 
 def _bf_cfg(c: Ctx) -> dict:
@@ -4403,6 +4402,15 @@ def _bf_cfg(c: Ctx) -> dict:
 def _bf_on(c: Ctx) -> bool:
     """경계력 ESL 계산 여부: 설정 enabled ∧ 계획 열 bf = base(같은 메시 비교 — 시나리오 이름 분기 없음)."""
     return bool(_bf_cfg(c).get("enabled")) and _lt_plan(c)["bf"] == "base"
+
+
+def _bf_mac_min(c: Ctx, pdoc: dict | None = None) -> float:
+    """재현 MAC 경고 기준 = 엔트리 Case 가 재현을 평가할 때 쓴 값(04_esl/bforce.json recon.mac_min — 가장 엄격한 쪽), 없으면 설정 기본."""
+    vals = [r["recon_mac_min"] for r in (pdoc or {}).get("entries") or [] if r.get("recon_mac_min") is not None]
+    if vals:
+        return float(max(vals))
+    from esl.config import bforce_settings
+    return float(bforce_settings({"bforce": _bf_cfg(c)})["recon_mac_min"])
 
 
 def _bf_region(c: Ctx):
@@ -4472,7 +4480,9 @@ def _bf_prep(c: Ctx, t, bmeta: dict, fresh: bool = False) -> dict:
                "eq_force_rel": ((jd.get("eq_raw") or {}).get("ref") or {}).get("force_rel"),
                "eq_moment_rel": ((jd.get("eq_raw") or {}).get("ref") or {}).get("moment_rel"),
                "abar_g": jd.get("abar_g"), "corr_rel": jd.get("corr_rel"),
-               "recon_mac": (jd.get("recon") or {}).get("mac"), "recon_umax_err": (jd.get("recon") or {}).get("umax_err"),
+               "sign_suspect": None if not isinstance(jd.get("sign_check"), dict) else bool(jd["sign_check"].get("suspect")),
+               "recon_mac": (jd.get("recon") or {}).get("mac"),
+               "recon_mac_min": (jd.get("recon") or {}).get("mac_min"), "recon_umax_err": (jd.get("recon") or {}).get("umax_err"),
                "reaction_rel": (jd.get("recon") or {}).get("reaction_rel"), "reason": None if d else why}
         if d is not None:
             rec["sha256"] = U.sha256_file(os.path.join(d, "bforce.npz"))
@@ -4559,15 +4569,21 @@ def _bf_apply(c: Ctx, t, bmeta: dict, did: str, mesh: dict, sup: list, region) -
         pass
 
 
-def _bf_block(pdoc: dict, n_designs: int = 0, n_failed: int = 0) -> dict:
+def _bf_block(pdoc: dict, n_designs: int = 0, n_failed: int = 0, mac_min: float | None = None) -> dict:
     ents = [{k: r.get(k) for k in ("entry_id", "label", "grade", "mass_source", "source", "eq_force_rel", "eq_moment_rel",
-                                   "abar_g", "corr_rel", "recon_mac", "recon_umax_err", "reaction_rel", "limits", "reason")}
+                                   "abar_g", "corr_rel", "sign_suspect", "recon_mac", "recon_umax_err", "reaction_rel", "limits",
+                                   "reason")}
             for r in pdoc.get("entries") or []]
     rk_ = [bfm_rank(r.get("grade")) for r in ents]
     lim = sorted({x for r in ents for x in r.get("limits") or []})
     return {"status": pdoc.get("status"), "code": pdoc.get("code"), "reason": pdoc.get("reason"),
             "grade_min": None if not ents else ents[rk_.index(min(rk_))]["grade"], "entries": ents, "limits": lim,
-            "limit_text": [BF_LIMIT_TEXT.get(x, x) for x in lim], "n_designs": int(n_designs), "n_failed": int(n_failed)}
+            "limit_text": bfm_limit_text(lim), "recon_mac_min": mac_min, "n_designs": int(n_designs), "n_failed": int(n_failed)}
+
+
+def bfm_limit_text(codes) -> list[str]:
+    from esl.mech.bforce import limit_text
+    return limit_text(codes)
 
 
 def bfm_rank(grade) -> int:
@@ -4586,7 +4602,7 @@ def _bf_post(c: Ctx, t, bmeta: dict, m: dict, results: list, noise, S_: dict | N
     warns: list = []
     pdoc = _bf_prep(c, t, bmeta, fresh=fresh_prep)
     if pdoc.get("status") != "ok":
-        doc.update(bforce=_bf_block(pdoc), warnings=warns)
+        doc.update(bforce=_bf_block(pdoc, mac_min=_bf_mac_min(c, pdoc)), warnings=warns)
         c.writer.makedirs(c.p("post"))
         c.write_json(os.path.join("post", BF_VIEW_JSON), U.jsonable(doc))
         return doc
@@ -4628,7 +4644,7 @@ def _bf_post(c: Ctx, t, bmeta: dict, m: dict, results: list, noise, S_: dict | N
                 warns.append(f"VIEW3D_FAILED: bforce {getattr(exc, 'code', type(exc).__name__)}")
     else:
         warns.append("BF_BASELINE_FAILED: 베이스라인 경계력 풀이 없음")
-    doc["bforce"] = _bf_block(pdoc, n_designs=len(side), n_failed=n_fail)
+    doc["bforce"] = _bf_block(pdoc, n_designs=len(side), n_failed=n_fail, mac_min=_bf_mac_min(c, pdoc))
     doc["warnings"] = warns
     c.writer.makedirs(c.p("post"))
     c.write_json(os.path.join("post", BF_VIEW_JSON), U.jsonable(doc))

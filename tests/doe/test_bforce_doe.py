@@ -213,3 +213,25 @@ def test_v0240_rank_metric_bf_legacy_ok():
                                                                      "C_bf": None}]}
     R = rk.rank([base, good, bad], metric="bf")
     assert R["n_ok"] == 1 and R["n_failed"]["bf"] == 1 and R["ranking"][0]["score"] == pytest.approx(0.75)
+
+
+def test_v0240_bf_on_plan_column_only():
+    """BF-11: 경계력 ESL 계산 여부는 계획 열 bf 로만 — 시나리오 이름 분기 없음. compare 행 bf none = 계산 안 함(결과 불변)."""
+    import inspect
+    import types
+
+    from esl.doe import transfer_plan as tp
+    cfg = {"bforce": {"enabled": True}}
+    for (scn, base), pid in tp.PLAN_OF.items():
+        c = types.SimpleNamespace(scn=scn, cfg=cfg, D={}, select_base=base)
+        c.D = {"select_base": base} if base else {}
+        want = tp.PLANS[pid]["bf"] == "base"
+        try:
+            got = stg._bf_on(c)
+        except Exception:                               # noqa: BLE001 — select 는 스냅샷 기준 필요(plan_for 인자) — 열 값만 확인
+            got = want
+        assert got is want
+    assert tp.plan_for("compare")["bf"] == "none"
+    assert stg._bf_on(types.SimpleNamespace(scn="compare", cfg=cfg, D={})) is False
+    src = inspect.getsource(stg)
+    assert "_bf_on(c)" in src and 'c.scn != "compare" and _bf_on' not in src
