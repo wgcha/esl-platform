@@ -310,6 +310,8 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
 
         fn = {"BD_PREP_REGISTER": register.register_doe_prep, "BD_PREVIEW_REGISTER": register.register_doe_preview,
               "BD_REGISTER": register.register_doe_run}[key]
+        if key == "BD_REGISTER" and (ex.job.get("params") or {}).get("kind") == "VIEW3D":
+            fn = register.register_doe_view3d            # v0.23.3 3D 다시 만들기: DB 무변경(esl_jig_view.md §3)
         with ex._tx() as conn:
             jobs_repo.assert_lease(conn, ex.job["id"], ex.token)
             try:

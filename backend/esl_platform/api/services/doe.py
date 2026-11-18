@@ -68,7 +68,10 @@ DID_RE = re.compile(r"^[0-9a-z_]{1,64}$")
 BEAD_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-binary",
-                "values.bin": "application/octet-stream"}
+                "values.bin": "application/octet-stream",
+                "regions.json": "application/json"}      # v0.23.3 지그 진단 영역(esl_jig_view.md §1.4 — d000_jigdiag_*_fit 만)
+JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
+RANK_VIEWS = ("jig", "full")
 ERROR_CODES_422 = ("DOE_PARAM_UNKNOWN", "DOE_RANGE_INVALID", "DOE_TOO_LARGE", "DOE_NO_PARAMS")
 
 
@@ -1885,12 +1888,88 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     for k in ("view3d_ref", "view3d_esl", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}
+    # v0.23.3(esl_jig_view.md §4): 사이드카 병합 — view3d_jig* 는 result.json 우선, jig_diag·rank_views 는 사이드카만
+    side = _jig_view_doc(ctx, s, c)
+    if side is not None:
+        for k in ("view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
+            if k not in out and isinstance(side.get(k), dict):
+                out[k] = {str(a): str(b) for a, b in side[k].items() if a and b}
+        for k in ("jig_diag", "rank_views"):
+            if isinstance(side.get(k), dict):
+                out[k] = side[k]
+    if isinstance(out.get("jig"), dict) and out["jig"].get("status") in ("ok", "poor"):
+        with ctx.engine.connect() as conn:
+            why = _regen_block(conn, principal, s)
+        out["view3d_regen"] = {"available": True, "allowed": why is None, "reason": why}
     return _jsonable(out)
 
 
-def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str | None) -> dict[str, Any]:
-    """§11.4 ESL별 지표(post/per_esl.json): design = 쉼표로 구분한 안 id(없으면 전부, 최대 max_designs)."""
+def _jig_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
+    d = _read_json(os.path.join(study_dir(ctx, s), "post", JIG_VIEW_JSON), _max_mb(c))
+    return d if isinstance(d, dict) else None
+
+
+def _regen_owner(principal: Principal, s: dict[str, Any]) -> bool:
+    """3D 다시 만들기 권한: 실행 권한 ∧ (프로젝트 admin ∨ 스터디 작성자)."""
+    return principal.can_execute(s["project_id"]) and (
+        principal.role(s["project_id"]) == "admin" or s.get("created_by") == principal.user_id)
+
+
+def _regen_block(conn, principal: Principal, s: dict[str, Any]) -> str | None:
+    """3D 다시 만들기를 막는 이유(None = 가능): 권한·끝난 스터디·진행 중 작업·성공한 실행 작업."""
+    if not _regen_owner(principal, s):
+        return "관리자 또는 이 스터디 작성자만 3D 를 다시 만들 수 있습니다"
+    job = doe_repo.latest_job(conn, s["id"])
+    if job is not None and job["state"] not in TERMINAL:
+        return "이 스터디의 작업이 대기 중이거나 실행 중입니다"
+    if _derived_phase(s, job) != "DONE":
+        return "실행이 끝난 스터디만 3D 를 다시 만들 수 있습니다"
+    if doe_repo.latest_job(conn, s["id"], job_type="DOE_RUN", state="SUCCEEDED") is None:
+        return "성공한 실행 작업이 없습니다"
+    return None
+
+
+def regenerate_view3d(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+    """v0.23.3 3D 다시 만들기(esl_jig_view.md §3): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 + kind VIEW3D·doe.post_mode view3d,
+    resume_from_step = BD_POST → BD_POST(지그 3D·진단·하중 정의 보기만) + 등록(DB 무변경). 스터디 phase 는 DONE 그대로."""
+    from ...core.job_types import steps_for
+
     c = cfg(ctx)
+    with ctx.engine.connect() as conn:
+        s0 = load_study(conn, sid)
+    require_execute(principal, s0["project_id"])
+    if not _regen_owner(principal, s0):
+        raise forbidden("관리자 또는 이 스터디 작성자만 3D 를 다시 만들 수 있습니다")
+    require_config_ok(ctx)
+    r = _result_doc(ctx, s0, c)
+    jig = (r or {}).get("jig")
+    if not isinstance(jig, dict) or jig.get("status") not in ("ok", "poor"):
+        raise conflict("VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다")
+    with ctx.engine.begin() as conn:
+        s = load_study(conn, sid, for_update=True)
+        job = doe_repo.latest_job(conn, sid)
+        if job is not None and job["state"] not in TERMINAL:
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
+        why = _regen_block(conn, principal, s)
+        if why is not None:
+            raise conflict("VIEW3D_REGEN_UNAVAILABLE", why)
+        last = doe_repo.latest_job(conn, sid, job_type="DOE_RUN", state="SUCCEEDED")
+        params = copy.deepcopy(last["params"])
+        params["kind"] = "VIEW3D"
+        params["doe"] = {**params["doe"], "post_mode": "view3d"}
+        params["warnings"] = []
+        step = [sd.key for sd in steps_for("DOE_RUN")].index("BD_POST") + 1
+        job = _insert_job(conn, principal, s, "DOE_RUN", params, resume=step)
+        return study_out(ctx, conn, s, job, c=c, principal=principal)
+
+
+def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str | None,
+                    view: str | None = None) -> dict[str, Any]:
+    """§11.4 ESL별 지표(post/per_esl.json): design = 쉼표로 구분한 안 id(없으면 전부, 최대 max_designs).
+    v0.23.3 view = jig|full → 하중 정의 보기의 per_esl(사이드카 post/jig_view.json per_esl[view])."""
+    c = cfg(ctx)
+    if view is not None and view not in RANK_VIEWS:
+        raise unprocessable("INVALID_PARAMS", f"view 는 {list(RANK_VIEWS)} 중 하나", view=view)
     s, job = _viewable(ctx, principal, sid)
     if _derived_phase(s, job) != "DONE":
         raise conflict("RESULT_NOT_READY", "DOE 실행 결과가 아직 없습니다")
@@ -1898,6 +1977,12 @@ def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str
     if not isinstance(d, dict):
         raise conflict("RESULT_NOT_READY", "ESL별 지표(post/per_esl.json)가 없습니다 — v0.10.0 이전 실행은 복제해 다시 실행")
     allv = d.get("designs") or {}
+    if view is not None:
+        side = _jig_view_doc(ctx, s, c) or {}
+        pv = (side.get("per_esl") or {}).get(view)
+        if not isinstance(pv, dict):
+            raise conflict("RESULT_NOT_READY", f"하중 정의 보기({view})의 ESL별 지표가 없습니다(행에 인라인이거나 보기 없음)")
+        allv = pv
     ids = [x for x in (design or "").split(",") if x] if design else sorted(allv)
     if len(ids) > int(c["max_designs"]):
         raise unprocessable("INVALID_PARAMS", f"design 은 최대 {c['max_designs']}개")

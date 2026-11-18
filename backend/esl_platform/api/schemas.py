@@ -1926,6 +1926,92 @@ class DoeJigOut(_Out):
     entries: list[DoeJigEntryOut]
 
 
+class DoeJigDiagRegionOut(_Out):
+    """v0.23.3 지그 진단 영역(esl_jig_view.md §5 — types.ts 와 check:api 대조)."""
+
+    id: int
+    kind: Literal["contact", "patch"]
+    part: int | None = None
+    n_nodes: int
+    area_mm2: float
+    center: list[float]
+
+
+class DoeJigDiagForceOut(_Out):
+    region: int
+    kind: str
+    F: list[float]
+    F_mag: float
+    F_n: float
+    F_t1: float
+    F_t2: float
+    active: bool
+
+
+class DoeJigDiagEntryOut(_Out):
+    entry_id: str
+    label: str
+    kk: int
+    dirs: dict[str, str]
+    mac: float
+    umax_err: float
+    mac_nomodes: float | None = None
+    umax_err_nomodes: float | None = None
+    work_eff: float
+    tie_rel: float
+    rot_deg: float
+    umax_tgt: float
+    umax_fit: float
+    err_max: float
+    tgt_out_frac: float
+    contrib: dict[str, float]
+    forces: list[DoeJigDiagForceOut]
+    F_region_sum: list[float]
+    body: list[float] | None = None
+    modes: list[dict[str, Any]]
+
+
+class DoeJigDiagOut(_Out):
+    """v0.23.3 기준 d000 엔트리별 지그 진단(목표 u_tgt·맞춤 u_fit·오차 3D 폴더 + 진단 값)."""
+
+    n_jig: int
+    tie_spread: float | None = None
+    n_contact: int
+    n_patch: int
+    regions_from: str | None = None
+    regions: list[DoeJigDiagRegionOut]
+    entries: list[DoeJigDiagEntryOut]
+
+
+class DoeRankViewOut(_Out):
+    """v0.23.3 하중 정의 탭 1개의 순위 보기(그 지표로 일관된 순위·score·개선율·최악 ESL·민감도 — 다른 쪽 키 없음)."""
+
+    metric: str
+    C_ref: float
+    baseline: dict[str, Any]
+    n_ok: int
+    n_skipped: dict[str, int]
+    n_failed: dict[str, int]
+    ranking: list[dict[str, Any]]
+    per_esl_inline: bool
+    sensitivity: dict[str, Any] | None = None
+    sensitivity_reason: str | None = None
+    best_clean: str | None = None
+
+
+class DoeRankViewsOut(_Out):
+    jig: DoeRankViewOut | None = None
+    full: DoeRankViewOut | None = None
+
+
+class DoeView3dRegenOut(_Out):
+    """v0.23.3 3D 다시 만들기: available = 지그 계산된 결과, allowed = 권한(admin ∨ 작성자)·작업 조건, reason = 막힌 이유."""
+
+    available: bool
+    allowed: bool
+    reason: str | None = None
+
+
 class DoeResultOut(_Out):
     scenario: DoeScenarioLit | None = None          # v0.14.0
     reference_source: Literal["step", "case"] | None = None    # ④ 만
@@ -1978,6 +2064,10 @@ class DoeResultOut(_Out):
     view3d_jig_esl: dict[str, str] | None = None
     view3d_jig_ref: dict[str, str] | None = None
     jig_on_clone: bool | None = None
+    # v0.23.3(esl_jig_view.md §5): 지그 진단 3D 요약·하중 정의 탭 보기·3D 다시 만들기 가능 여부(사이드카 post/jig_view.json — 없으면 null)
+    jig_diag: "DoeJigDiagOut | None" = None
+    rank_views: "DoeRankViewsOut | None" = None
+    view3d_regen: "DoeView3dRegenOut | None" = None
 
 
 class DoePerEslDesign(_Out):
