@@ -56,7 +56,7 @@
 ### 4.1 저장 방식(코어 BD_POST — 요청 시 계산 아님)
 - 평가(BD_EVAL) 때 안마다 3D 변위를 저장하지 않는다(안 수 × 엔트리 × N×3 — 대형 모델에서 수 GB). 대신 **BD_POST 의 3D 비교 대상(베이스라인 + 상위 k, 기존 `view3d.top_k`)에 대해서만** 지그 응답을 다시 풀어 기존 3D 결과 파일 형식(`build_view`)으로 쓴다. 비용 = 표시 안마다 분해 1회 + 풀이 1회(기존 view3d 와 같은 규모).
 - 조건: 스냅샷 지그가 계산됨(`prep/jig.json` status ok, `prep/jig.npz` 있음) ∧ 설정 `bead_doe.view3d.jig` 참. 아니면 아무것도 쓰지 않음 → 옛 스터디·지그 없는 스터디 결과 바이트 동일.
-- 안 d 의 엔트리 e_d = argmax_i C_jig,d,i / C_ref,i(jig.npz `C_ref`, 동률 = 엔트리 순서 앞) — 지그 기준 최악 ESL(metric jig 이면 순위 행 `worst_entry_id` 와 같음). C_jig 가 없으면 지그 3D 없음(그 안만).
+- 안 d 의 엔트리 e_d = 그 안의 **순위 행 worst 엔트리**(순위표 '최악 ESL' 열 `worst_entry_id` 와 같은 값). 순위 계산과 같은 함수 `rank._agg(per_esl, "C_jig")` 로 얻음(C_jig 절대값 최대, 동률 = 엔트리 순서 앞) — metric jig 이면 순위 행이 쓴 결과 그대로, metric 이 jig 가 아닌 스터디(지그는 계산됨)에서도 지그 행 worst 는 이 정의(순위 행 `worst_entry_id` 는 그 metric 기준이라 다를 수 있음). 별도 규칙(예: C_jig/C_ref 비 최대)을 다시 계산하지 않는다. C_jig 가 하나라도 없으면 그 안만 지그 3D 없음.
 - 파일: 안 `post/view3d/<did>_jig/`, 베이스라인은 쓰인 엔트리마다 `post/view3d/d000_jig_e<kk>/`(kk = 스냅샷 엔트리 순서 2자리, LT-9 `d000_e<kk>` 와 같은 규칙). 내용 = `build_view(node_id, x0 = 안 좌표, conn, elem_type, f = F_e(지그 맞춤 하중, `jig.forces`), u_rel = 지그 응답 u(강체 제거 없음 — tie 고정이라 강체 성분 없음), supports = tie 노드 표시용 부분집합(dof "123"), esl_run_id = e)`.
 - tie 표시 부분집합: 지그 노드 J 에서 최원점 샘플링(첫 점 = J 중 가장 작은 인덱스, 이후 이미 고른 점까지 거리 최대, 동률 = 작은 인덱스)으로 `min(|J|, view3d.jig_support_max)` 점. 전체 수는 결과 `jig.n_jig`.
 - 결과 `post/result.json` 새 키(지그 3D 를 하나라도 썼을 때만): `view3d_jig{did: dir}`, `view3d_jig_esl{did: entry_id}`, `view3d_jig_ref{entry_id: "d000_jig_e<kk>"}`. 실패(예외)는 경고 `VIEW3D_FAILED: <did>_jig <code>` 1줄, 그 안만 빠짐(순위·기존 3D 영향 없음).

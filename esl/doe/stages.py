@@ -3927,7 +3927,7 @@ def _jig_view_mesh(c: Ctx, t, did: str) -> dict:
 
 
 def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
-    """v0.23.2 지그 3D(esl_v0232_fixes.md §4.1): 3D 비교 대상 안마다 지그 기준 최악 엔트리 e_d = argmax C_jig/C_ref 로 지그 응답
+    """v0.23.2 지그 3D(esl_v0232_fixes.md §4.1): 3D 비교 대상 안마다 e_d = 순위 행 worst 엔트리(rank._agg(per_esl, "C_jig") — 순위표 '최악 ESL' 과 같은 함수·값)로 지그 응답
     변위장 → post/view3d/<did>_jig/, 베이스라인은 쓰인 엔트리마다 d000_jig_e<kk>/. 조건 = 지그 계산됨(jig.json ok·jig.npz) ∧ 설정
     view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열)."""
     from esl.doe import jig as jg
@@ -3939,7 +3939,6 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
         return {}, []
     z = U.load_npz(pz)
     zeids = [str(e) for e in z["entry_ids"].tolist()]
-    cref = {e: float(v) for e, v in zip(zeids, np.asarray(z["C_ref"], dtype=np.float64).tolist())}
     order = [str(e["id"]) for e in c.D["entries"]]
     basis = _jig_basis_of(z, int(z["a"].shape[1]))
     nb_ = np.asarray(z["node_id"], dtype=np.int64)
@@ -3948,16 +3947,12 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     for did in shown:
         if did == BASELINE:
             continue
-        best = None
-        for p in (by.get(did) or {}).get("per_esl") or []:
-            e, cj = str(p.get("entry_id")), p.get("C_jig")
-            if cj is None or e not in cref or cref[e] <= 0:
-                continue
-            v = float(cj) / cref[e]
-            if best is None or v > best[0]:                     # 동률 = per_esl 순서(엔트리 순서) 앞
-                best = (v, e)
-        if best is not None:
-            pick[did] = best[1]
+        per = (by.get(did) or {}).get("per_esl") or []
+        if not per or any(p.get("C_jig") is None for p in per):
+            continue                                            # C_jig 없음 = 그 안만 지그 3D 없음
+        e = str(rk._agg({"id": did, "per_esl": per}, "C_jig")["worst"])     # 순위 행 worst 와 같은 함수(D-0.23.2-n) — 별도 규칙 계산 금지
+        if e in zeids:
+            pick[did] = e
     if not pick:
         return {}, []
     smax = int(vc["jig_support_max"])

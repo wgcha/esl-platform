@@ -116,7 +116,7 @@ def build_mesh(tmp_path):
 
 
 def run(root, doe, mesh, *, rank=None, fixed=True, kinds=("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"), rel="model.rad",
-        groups=None):
+        groups=None, before_post=None):
     """bd_input → bd_loads → bd_matrix → bd_eval(d000 + 안, 가짜 paicad) → bd_post. 반환 (out, post 결과, 안 id)."""
     if rank is not None:
         doe = {**doe, "rank": rank}
@@ -137,6 +137,8 @@ def run(root, doe, mesh, *, rank=None, fixed=True, kinds=("INTER_TYPE2_SECONDARY
     for d in m["designs"][1:]:
         sd.write_run(os.path.join(out, "run", "designs", d["id"]), mesh, d["values"], rel=rel)
         assert stg.run_stage(spec("bd_eval", rev=1, design=d["id"], paicad={"ok": True}), lambda s: None)["status"] == "OK"
+    if before_post is not None:
+        before_post(out)
     post = stg.run_stage(spec("bd_post", rev=1), lambda s: None)["result"]
     return out, post, [d["id"] for d in m["designs"]]
 
@@ -207,9 +209,9 @@ def test_jig_view3d_outputs(case_run):
     cref = dict(zip([str(e) for e in z["entry_ids"].tolist()], z["C_ref"].tolist()))
     by = {r["id"]: r for r in post["ranking"]}
     jd = U.read_json(os.path.join(out, "prep", "jig.json"))
-    for d in shown:                                                                        # e_d = argmax C_jig/C_ref
-        want = max(order, key=lambda e: (by[d]["C_jig"][e] / cref[e], -order.index(e)))
-        assert ve[d] == want
+    for d in shown:                                                                        # e_d = 순위 행 worst(C_jig 절대값 최대)
+        want = max(order, key=lambda e: (by[d]["C_jig"][e], -order.index(e)))
+        assert ve[d] == want == by[d]["worst_entry_id"]
         man = U.read_json(os.path.join(out, "post", "view3d", v[d], "manifest.json"))
         assert man["esl_run_id"] == want
         assert {s["dof"] for s in man["supports"]} == {"123"} and len(man["supports"]) == min(jd["fix"]["n_jig"], 64)
@@ -225,6 +227,29 @@ def test_jig_view3d_outputs(case_run):
         assert re.fullmatch(r"d000_jig_e\d\d", name) and name == f"d000_jig_e{order.index(e):02d}"
         assert U.read_json(os.path.join(out, "post", "view3d", name, "manifest.json"))["esl_run_id"] == e
     assert post["view3d"] == ["d000"] + [x["id"] for x in post["ranking"]][:len(post["view3d"]) - 1]   # 기존 목록 불변
+
+
+def test_jig_view3d_entry_is_rank_row_worst(tmp_path):
+    """D-0.23.2-5: C_ref 크기를 엔트리마다 다르게 해 비 최대 ≠ 절대값 최대인 사례 — 3D 엔트리 == 순위 행 worst."""
+    mesh, doe = build_same(tmp_path)
+    skew = {}
+
+    def _skew(out):
+        pz = os.path.join(out, "prep", "jig.npz")
+        z = dict(U.load_npz(pz))
+        z["C_ref"] = np.asarray(z["C_ref"], dtype=np.float64) * np.array([1e3, 1.0])[:np.asarray(z["C_ref"]).size]
+        np.savez(pz, **z)
+        skew["cref"] = dict(zip([str(e) for e in z["entry_ids"].tolist()], z["C_ref"].tolist()))
+    out, post, ids = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(), before_post=_skew)
+    by = {r["id"]: r for r in post["ranking"]}
+    shown = [d for d in post["view3d"] if d != "d000"]
+    assert shown
+    for d in shown:
+        ratio = max(["E0", "E1"], key=lambda e: (by[d]["C_jig"][e] / skew["cref"][e], -["E0", "E1"].index(e)))
+        assert ratio != by[d]["worst_entry_id"]                                            # 사례 성립: 두 규칙이 갈림
+        assert post["view3d_jig_esl"][d] == by[d]["worst_entry_id"]
+        man = U.read_json(os.path.join(out, "post", "view3d", post["view3d_jig"][d], "manifest.json"))
+        assert man["esl_run_id"] == by[d]["worst_entry_id"]
 
 
 def test_jig_view3d_off_by_config(tmp_path):
