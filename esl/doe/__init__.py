@@ -76,7 +76,8 @@ DEFAULTS: dict = {
     "solve": {"reaction_warn": 0.01},
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},
     # v0.23.2 지그 3D(esl_v0232_fixes.md §4.2): 지그 계산된 스터디의 3D 비교에 지그 응답 변위장, tie 마커 최대 수(표시만)
-    "bforce": {"enabled": True, "grades": ["full", "fint", "contact"], "view3d": True},   # v0.24.0 경계력 ESL(esl_bforce.md §9) — 사용 등급·3D
+    "bforce": {"enabled": True, "grades": ["full", "contact"], "view3d": True},   # v0.24.0 경계력 ESL(esl_bforce.md §9) — 사용 등급(접촉력 전용)·3D
+    "fint": {"enabled": True, "grades": ["fint"], "view3d": True},                 # v0.24.0 내력 ESL(esl_fint.md §9) — 같은 블록 형식
     "view3d": {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1},   # v0.23.3 jig_diag = 지그 진단 3D·하중 정의 보기(esl_jig_view.md §6)
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
@@ -85,6 +86,8 @@ DEFAULTS: dict = {
     # v0.23.0 지그 순위(esl_jig_rank.md §6): metric 기본 jig(새 스터디), rank.jig = 새 스냅샷 doe.rank.jig 로 고정되는 지그 설정
     "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
              "imbalance_warn": 0.02,
+             # v0.24.0 보완(esl_fint.md §6.2): 보조 지표 umax(평가 영역) — 새 스냅샷 doe.rank.eval_region 으로 고정(옛 스냅샷 = 없음)
+             "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [],
              "jig": {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], "contact_gap_mm": 2.0,
                      "knn": 8, "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2,
                      "min_region_nodes": 3, "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True,

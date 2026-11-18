@@ -2523,6 +2523,39 @@
             ],
             "title": "Mass Source"
           },
+          "n_shared": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Shared"
+          },
+          "plastic_frac": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plastic Frac"
+          },
+          "plastic_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plastic Max"
+          },
           "reaction_rel": {
             "anyOf": [
               {
@@ -2567,6 +2600,28 @@
             ],
             "title": "Recon Umax Err"
           },
+          "res_force_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Res Force Rel"
+          },
+          "res_moment_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Res Moment Rel"
+          },
           "sign_suspect": {
             "anyOf": [
               {
@@ -2588,6 +2643,17 @@
               }
             ],
             "title": "Source"
+          },
+          "unbalanced": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbalanced"
           }
         },
         "required": [
@@ -2599,7 +2665,7 @@
         "type": "object"
       },
       "DoeBforceOut": {
-        "description": "v0.24.0 경계력 ESL 블록: status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구.",
+        "description": "v0.24.0 노드 힘 출처 블록(경계력·내력 공통 형식 — source): status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구.",
         "properties": {
           "code": {
             "anyOf": [
@@ -2675,6 +2741,17 @@
               }
             ],
             "title": "Recon Mac Min"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           },
           "status": {
             "title": "Status",
@@ -4252,6 +4329,16 @@
               }
             ]
           },
+          "fint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "full": {
             "anyOf": [
               {
@@ -4353,6 +4440,18 @@
             "title": "Esl",
             "type": "array"
           },
+          "eval_region": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Region"
+          },
           "excluded": {
             "items": {
               "additionalProperties": true,
@@ -4360,6 +4459,26 @@
             },
             "title": "Excluded",
             "type": "array"
+          },
+          "fint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeBforceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fint_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeView3dRegenOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "jig": {
             "anyOf": [
@@ -4661,6 +4780,48 @@
               }
             ],
             "title": "View3D Esl"
+          },
+          "view3d_fi": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi"
+          },
+          "view3d_fi_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi Esl"
+          },
+          "view3d_fi_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi Ref"
           },
           "view3d_jig": {
             "anyOf": [
@@ -18858,10 +19019,10 @@
         ]
       }
     },
-    "/esl/api/doe/studies/{sid}/sources/bforce": {
+    "/esl/api/doe/studies/{sid}/sources/{src}": {
       "post": {
-        "description": "v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6): 기존 스터디에서 형상 생성 없이 안마다 경계력 하중 선형 풀이 + 보기·3D(결과 파일 불변).\n기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 BF_UNSUPPORTED, 끝나지 않음·작업 중 = 409.",
-        "operationId": "doe_add_bforce_esl_api_doe_studies__sid__sources_bforce_post",
+        "description": "v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): src = bforce(경계력 ESL) | fint(내력 ESL). 기존 스터디에서 형상\n생성 없이 안마다 출처 하중 선형 풀이 + 보기·3D(결과 파일 불변). 기존 DOE_RUN 큐(BD_POST 부터). 모르는 src = 404 SOURCE_NOT_FOUND,\n권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 <code>_UNSUPPORTED, 끝나지 않음·작업 중 = 409.",
+        "operationId": "doe_add_source_esl_api_doe_studies__sid__sources__src__post",
         "parameters": [
           {
             "in": "path",
@@ -18869,6 +19030,15 @@
             "required": true,
             "schema": {
               "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "src",
+            "required": true,
+            "schema": {
+              "title": "Src",
               "type": "string"
             }
           }
@@ -18895,7 +19065,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Doe Add Bforce",
+        "summary": "Doe Add Source",
         "tags": [
           "doe"
         ]

@@ -789,10 +789,12 @@ def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force,
     return {"a": a, "resid_rel": resid, "n_bound_active": n_bound, "g_N": gN}
 
 
-def respond(h, loads, *, umax_mask=None, keep_u=False) -> list[dict]:
-    """하중 [(entry_id, F (N,3))] → [{entry_id, C_jig = F·u, umax_jig = max_{umax_mask} ‖u‖, react_rel, u}]."""
+def respond(h, loads, *, umax_mask=None, keep_u=False, ev_mask=None) -> list[dict]:
+    """하중 [(entry_id, F (N,3))] → [{entry_id, C_jig = F·u, umax_jig = max_{umax_mask} ‖u‖, react_rel, u}].
+    ev_mask(v0.24.0 평가 영역 노드 bool — 새 스냅샷만) = 행에 umax_ev(영역 노드 최대 ‖u‖, 비면 전 노드)."""
     out = []
     mk = None if umax_mask is None else np.asarray(umax_mask, bool)
+    em = None if ev_mask is None else np.asarray(ev_mask, bool)
     for eid, F in loads:
         F = np.asarray(F, dtype=np.float64)
         u, Rf = h.solve(F)
@@ -804,6 +806,9 @@ def respond(h, loads, *, umax_mask=None, keep_u=False) -> list[dict]:
         rr = float(np.linalg.norm(F.sum(axis=0) + Rf.sum(axis=0)) / sabs) if sabs > 0 else 0.0
         out.append({"entry_id": eid, "C_jig": C, "umax_jig": umax, "react_rel": rr,
                     "u": ut.copy() if keep_u else None})
+        if em is not None:
+            ue = ut[em] if em.any() else ut
+            out[-1]["umax_ev"] = float(np.linalg.norm(ue, axis=1).max()) if ue.size else 0.0
     return out
 
 
@@ -908,12 +913,12 @@ def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol
 
 
 # ====================================================================== (7) 설계 비교
-def design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None, keep_u=False) -> dict:
+def design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None, keep_u=False, ev_mask=None) -> dict:
     """안 d: K_d(안 좌표)·같은 J·같은 F_i(하중 제어 — 모드 하중도 기준 고정 벡터, 재계산 없음) → respond 행 + 통계.
     keep_u = 행에 u (N,3)(v0.23.2 지그 3D — 기본 False 는 이전과 같음)."""
     t0 = time.monotonic()
     h = factor(mesh, jig_idx, solver_cfg)
-    rows = respond(h, loads, umax_mask=umax_mask, keep_u=keep_u)
+    rows = respond(h, loads, umax_mask=umax_mask, keep_u=keep_u, ev_mask=ev_mask)
     return {"rows": rows, "stats": {"seconds": time.monotonic() - t0, "n_solves": int(h.n_solves),
                                     "backend": str(h.model.stats.get("backend"))}}
 

@@ -293,4 +293,4 @@ def test_rank_sources_table_drives_views(jrun, tmp_path, monkeypatch):
     monkeypatch.setattr(stg, "RANK_SOURCES", tuple(s for s in stg.RANK_SOURCES if s["key"] != "full"))
     stg.run_stage({"stage": "bd_post", "out": out, "doe": {**doe, "post_mode": "view3d"}}, lambda s: None)
     assert set(_side(out)["rank_views"]) == {"jig"}
-    assert {s["key"] for s in stg.RANK_SOURCES} == {"jig", "bforce"}       # v0.24.0 경계력 행(사이드카 bforce — jig_view 무관)
+    assert {s["key"] for s in stg.RANK_SOURCES} == {"jig", "bforce", "fint"}   # v0.24.0 경계력·내력 행(사이드카 bforce·fint — jig_view 무관)

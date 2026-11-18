@@ -44,7 +44,7 @@ def _bf_done(client, world, engine, esl_root, mp, side=BSIDE, plan="base", run=T
     from esl_platform.api.services import doe as svc
 
     sid = _done(client, world, engine, esl_root, {})
-    mp.setattr(svc, "_plan_bf", lambda s: plan)
+    mp.setattr(svc, "_plan_col", lambda s, col: plan)
     if side is not None:
         (study_dir(esl_root, sid) / "post" / "bforce_view.json").write_text(json.dumps(side), encoding="utf-8")
     if run:
@@ -112,14 +112,14 @@ def test_openapi_v0240_keys():
     sc = spec["components"]["schemas"]
     assert {"bforce", "bforce_add", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref"} <= set(sc["DoeResultOut"]["properties"])
     assert {"DoeBforceOut", "DoeBforceEntryOut"} <= set(sc) and "bforce" in sc["DoeRankViewsOut"]["properties"]
-    assert "/doe/studies/{sid}/sources/bforce" in json.dumps(spec["paths"])
+    assert "/doe/studies/{sid}/sources/{src}" in json.dumps(spec["paths"])          # v0.24.0 보완: 출처 인자로 일반화(esl_fint.md §5.2)
 
 
 def test_bforce_cfg_mirror():
     from esl.doe import DEFAULTS
     from esl_platform.core.config import BeadDoeCfg
 
-    assert DEFAULTS["bforce"] == BeadDoeCfg().model_dump()["bforce"] == {"enabled": True, "grades": ["full", "fint", "contact"],
+    assert DEFAULTS["bforce"] == BeadDoeCfg().model_dump()["bforce"] == {"enabled": True, "grades": ["full", "contact"],
                                                                          "view3d": True}
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         assert yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]["bforce"] == DEFAULTS["bforce"]

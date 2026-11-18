@@ -156,11 +156,12 @@ def doe_view3d_regenerate(sid: str, request: Request, principal: Principal = Dep
     return svc.regenerate_view3d(get_ctx(request), principal, sid)
 
 
-@router.post("/doe/studies/{sid}/sources/bforce", response_model=DoeStudyOut, status_code=202)
-def doe_add_bforce(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    """v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6): 기존 스터디에서 형상 생성 없이 안마다 경계력 하중 선형 풀이 + 보기·3D(결과 파일 불변).
-    기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 BF_UNSUPPORTED, 끝나지 않음·작업 중 = 409."""
-    return svc.add_bforce(get_ctx(request), principal, sid)
+@router.post("/doe/studies/{sid}/sources/{src}", response_model=DoeStudyOut, status_code=202)
+def doe_add_source(sid: str, src: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): src = bforce(경계력 ESL) | fint(내력 ESL). 기존 스터디에서 형상
+    생성 없이 안마다 출처 하중 선형 풀이 + 보기·3D(결과 파일 불변). 기존 DOE_RUN 큐(BD_POST 부터). 모르는 src = 404 SOURCE_NOT_FOUND,
+    권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 <code>_UNSUPPORTED, 끝나지 않음·작업 중 = 409."""
+    return svc.add_source(get_ctx(request), principal, sid, src)
 
 
 @router.get("/doe/studies/{sid}/files", response_model=list[DoeFileOut])

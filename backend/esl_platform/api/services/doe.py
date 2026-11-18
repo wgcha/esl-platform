@@ -71,9 +71,17 @@ VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-bin
                 "values.bin": "application/octet-stream",
                 "regions.json": "application/json"}      # v0.23.3 지그 진단 영역(esl_jig_view.md §1.4 — d000_jigdiag_*_fit 만)
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
-RANK_VIEWS = ("jig", "full", "bforce")
+RANK_VIEWS = ("jig", "full", "bforce", "fint")
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
-BF_VIEWS = ("bforce",)                                    # 그 사이드카에 있는 보기 키(나머지 = jig_view.json)
+# v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
+# 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.
+NODAL_SOURCES = {
+    "bforce": {"view": BF_VIEW_JSON, "block": "bforce", "v3d": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref"),
+               "add": "bforce_add", "kind": "BFORCE", "cfg": "bforce", "code": "BF", "plan": "bf", "name": "경계력 ESL"},
+    "fint": {"view": "fint_view.json", "block": "fint", "v3d": ("view3d_fi", "view3d_fi_esl", "view3d_fi_ref"),
+             "add": "fint_add", "kind": "FINT", "cfg": "fint", "code": "FINT", "plan": "bf", "name": "내력 ESL"},
+}
+BF_VIEWS = tuple(NODAL_SOURCES)                           # 노드 힘 사이드카에 있는 보기 키(나머지 = jig_view.json)
 ERROR_CODES_422 = ("DOE_PARAM_UNKNOWN", "DOE_RANGE_INVALID", "DOE_TOO_LARGE", "DOE_NO_PARAMS")
 
 
@@ -330,6 +338,10 @@ def rank_snapshot(c: dict[str, Any]) -> dict[str, Any]:
     if isinstance(jig, dict) and jig.get("enabled"):      # v0.23.0 JIG-11: 지그 설정 전체 고정 + schema 2(꺼짐 = 키 없음·schema 1)
         out["jig"] = copy.deepcopy(jig)
         out["schema"] = RANK_SCHEMA_JIG
+    # v0.24.0 보완(esl_fint.md §6.2): 평가 영역 고정(새 스냅샷 — 이 키가 있으면 코어가 umax(평가 영역)을 계산)
+    out["eval_region"] = {"mode": str(r.get("eval_region", "part")), "free_edge_mm": float(r.get("eval_free_edge_mm", 10.0)),
+                          "boxes": [{"lo": [float(v) for v in b["lo"]], "hi": [float(v) for v in b["hi"]]}
+                                    for b in (r.get("eval_boxes") or [])]}
     return out
 
 
@@ -1903,40 +1915,53 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         with ctx.engine.connect() as conn:
             why = _regen_block(conn, principal, s)
         out["view3d_regen"] = {"available": True, "allowed": why is None, "reason": why}
-    # v0.24.0 경계력 ESL 사이드카(esl_bforce.md §7): 블록·보기(rank_views.bforce)·3D. 없으면 키 null(옛 결과 응답 그대로)
-    bside = _bf_view_doc(ctx, s, c)
-    if bside is not None:
-        if isinstance(bside.get("bforce"), dict):
-            out["bforce"] = bside["bforce"]
-        for k in ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref"):
-            if isinstance(bside.get(k), dict):
-                out[k] = {str(a): str(b) for a, b in bside[k].items() if a and b}
-        for k in BF_VIEWS:
-            v = (bside.get("rank_views") or {}).get(k)
+    # v0.24.0 노드 힘 출처 사이드카(esl_bforce.md §7·esl_fint.md §7): 출처 표 행마다 블록·보기(rank_views[key])·3D. 없으면 키 null
+    regen_why: list = []
+    for key, ns in NODAL_SOURCES.items():
+        bside = _ns_view_doc(ctx, s, c, ns)
+        if bside is not None:
+            if isinstance(bside.get(ns["block"]), dict):
+                out[ns["block"]] = bside[ns["block"]]
+            for k in ns["v3d"]:
+                if isinstance(bside.get(k), dict):
+                    out[k] = {str(a): str(b) for a, b in bside[k].items() if a and b}
+            v = (bside.get("rank_views") or {}).get(key)
             if isinstance(v, dict):
-                out["rank_views"] = {**(out.get("rank_views") or {}), k: v}
-    if _plan_bf(s) == "base":                                 # 추가 계산 가능(계획 열 bf — 시나리오 이름 분기 없음)
-        with ctx.engine.connect() as conn:
-            why = _regen_block(conn, principal, s)
-        why = None if why is None else why.replace("3D 를 다시 만들", "경계력 ESL 을 계산할")
-        out["bforce_add"] = {"available": True, "allowed": why is None, "reason": why}
+                out["rank_views"] = {**(out.get("rank_views") or {}), key: v}
+        if _plan_col(s, ns["plan"]) == "base":                # 추가 계산 가능(계획 열 — 시나리오 이름 분기 없음)
+            if not regen_why:
+                with ctx.engine.connect() as conn:
+                    regen_why.append(_regen_block(conn, principal, s))
+            why = regen_why[0]
+            why = None if why is None else why.replace("3D 를 다시 만들", f"{ns['name']} 을 계산할")
+            out[ns["add"]] = {"available": True, "allowed": why is None, "reason": why}
+    if isinstance(r.get("eval_region"), dict):                # v0.24.0 평가 영역 요약(새 스냅샷만)
+        out["eval_region"] = r["eval_region"]
     return _jsonable(out)
 
 
-def _plan_bf(s: dict[str, Any]) -> str | None:
-    """계획 표 열 bf(v0.24.0 — 경계력 ESL 같은 메시 비교 가능 여부). 모르는 조합 = None."""
+def _plan_col(s: dict[str, Any], col: str) -> str | None:
+    """계획 표 열 값(v0.24.0 — 노드 힘 출처 같은 메시 비교 가능 여부 등). 모르는 조합 = None."""
     from ...core.opt_core import EslError, doe_transfer_plan as tp
 
     try:
         sb = (s.get("inputs") or {}).get("select_base")
-        return tp.plan_for(s["scenario"], sb if sb in ("mesh", "step") else "case").get("bf")
+        return tp.plan_for(s["scenario"], sb if sb in ("mesh", "step") else "case").get(col)
     except EslError:
         return None
 
 
-def _bf_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
-    d = _read_json(os.path.join(study_dir(ctx, s), "post", BF_VIEW_JSON), _max_mb(c))
+def _plan_bf(s: dict[str, Any]) -> str | None:
+    return _plan_col(s, "bf")
+
+
+def _ns_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], ns: dict[str, Any]) -> dict[str, Any] | None:
+    d = _read_json(os.path.join(study_dir(ctx, s), "post", ns["view"]), _max_mb(c))
     return d if isinstance(d, dict) else None
+
+
+def _bf_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
+    return _ns_view_doc(ctx, s, c, NODAL_SOURCES["bforce"])
 
 
 def _jig_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any] | None:
@@ -1998,21 +2023,25 @@ def regenerate_view3d(ctx: AppContext, principal: Principal, sid: str) -> dict[s
         return study_out(ctx, conn, s, job, c=c, principal=principal)
 
 
-def add_bforce(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
-    """v0.24.0 기존 스터디 경계력 ESL 추가 계산(esl_bforce.md §6): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 + kind BFORCE·
-    doe.post_mode bforce·doe.bforce_cfg(지금 설정), resume = BD_POST → 형상 생성 없이 안 좌표로 경계력 풀이·보기·3D(사이드카만) +
-    등록(DB 무변경). 권한·조건 = 3D 다시 만들기와 같음, 계획 bf none = 409 BF_UNSUPPORTED."""
+def add_source(ctx: AppContext, principal: Principal, sid: str, src: str) -> dict[str, Any]:
+    """v0.24.0 기존 스터디 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 +
+    kind(출처 행)·doe.post_mode = 출처 키·doe.<cfg>_cfg(지금 설정), resume = BD_POST → 형상 생성 없이 안 좌표로 풀이·보기·3D(사이드카만)
+    + 등록(DB 무변경). 모르는 출처 = 404 SOURCE_NOT_FOUND, 권한·조건 = 3D 다시 만들기와 같음, 계획 열 none = 409 <code>_UNSUPPORTED."""
     from ...core.job_types import steps_for
 
+    ns = NODAL_SOURCES.get(src)
+    if ns is None:
+        raise DomainError("SOURCE_NOT_FOUND", f"추가 계산할 수 없는 하중 출처입니다: {src} (가능: {list(NODAL_SOURCES)})",
+                          status=404, source=src)
     c = cfg(ctx)
     with ctx.engine.connect() as conn:
         s0 = load_study(conn, sid)
     require_execute(principal, s0["project_id"])
     if not _regen_owner(principal, s0):
-        raise forbidden("관리자 또는 이 스터디 작성자만 경계력 ESL 을 계산할 수 있습니다")
+        raise forbidden(f"관리자 또는 이 스터디 작성자만 {ns['name']} 을 계산할 수 있습니다")
     require_config_ok(ctx)
-    if _plan_bf(s0) != "base":
-        raise conflict("BF_UNSUPPORTED", "다른 메시 비교 방식(④·옛 ③)은 경계력 ESL 을 지원하지 않습니다")
+    if _plan_col(s0, ns["plan"]) != "base":
+        raise conflict(f"{ns['code']}_UNSUPPORTED", f"다른 메시 비교 방식(④·옛 ③)은 {ns['name']} 을 지원하지 않습니다")
     with ctx.engine.begin() as conn:
         s = load_study(conn, sid, for_update=True)
         job = doe_repo.latest_job(conn, sid)
@@ -2020,15 +2049,20 @@ def add_bforce(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any
             raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         why = _regen_block(conn, principal, s)
         if why is not None:
-            raise conflict("BF_ADD_UNAVAILABLE", why.replace("3D 를 다시 만들", "경계력 ESL 을 계산할"))
+            raise conflict(f"{ns['code']}_ADD_UNAVAILABLE", why.replace("3D 를 다시 만들", f"{ns['name']} 을 계산할"))
         last = doe_repo.latest_job(conn, sid, job_type="DOE_RUN", state="SUCCEEDED")
         params = copy.deepcopy(last["params"])
-        params["kind"] = "BFORCE"
-        params["doe"] = {**params["doe"], "post_mode": "bforce", "bforce_cfg": dict(c.get("bforce") or {})}
+        params["kind"] = ns["kind"]
+        params["doe"] = {**params["doe"], "post_mode": src, f"{ns['cfg']}_cfg": dict(c.get(ns["cfg"]) or {})}
         params["warnings"] = []
         step = [sd.key for sd in steps_for("DOE_RUN")].index("BD_POST") + 1
         job = _insert_job(conn, principal, s, "DOE_RUN", params, resume=step)
         return study_out(ctx, conn, s, job, c=c, principal=principal)
+
+
+def add_bforce(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+    """v0.24.0 경계력 ESL 추가 계산(호환 — add_source(bforce))."""
+    return add_source(ctx, principal, sid, "bforce")
 
 
 def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str | None,
@@ -2046,7 +2080,7 @@ def results_per_esl(ctx: AppContext, principal: Principal, sid: str, design: str
         raise conflict("RESULT_NOT_READY", "ESL별 지표(post/per_esl.json)가 없습니다 — v0.10.0 이전 실행은 복제해 다시 실행")
     allv = d.get("designs") or {}
     if view is not None:
-        side = (_bf_view_doc(ctx, s, c) if view in BF_VIEWS else _jig_view_doc(ctx, s, c)) or {}
+        side = (_ns_view_doc(ctx, s, c, NODAL_SOURCES[view]) if view in NODAL_SOURCES else _jig_view_doc(ctx, s, c)) or {}
         pv = (side.get("per_esl") or {}).get(view)
         if not isinstance(pv, dict):
             raise conflict("RESULT_NOT_READY", f"하중 정의 보기({view})의 ESL별 지표가 없습니다(행에 인라인이거나 보기 없음)")

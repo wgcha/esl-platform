@@ -2019,6 +2019,7 @@ class DoeRankViewsOut(_Out):
     jig: DoeRankViewOut | None = None
     full: DoeRankViewOut | None = None
     bforce: DoeRankViewOut | None = None              # v0.24.0 경계력 ESL 보기(사이드카 post/bforce_view.json — esl_bforce.md §7)
+    fint: DoeRankViewOut | None = None                # v0.24.0 내력 ESL 보기(사이드카 post/fint_view.json — esl_fint.md §7)
 
 
 class DoeBforceEntryOut(_Out):
@@ -2039,11 +2040,19 @@ class DoeBforceEntryOut(_Out):
     reaction_rel: float | None = None
     limits: list[str] = Field(default_factory=list)
     reason: str | None = None
+    # v0.24.0 보완(esl_fint.md §5.1·§4): 소성 진단(Case — 두 출처 공통), 내력 ESL 잔차·공유 노드(경계력 = null)
+    plastic_frac: float | None = None
+    plastic_max: float | None = None
+    res_force_rel: float | None = None
+    res_moment_rel: float | None = None
+    n_shared: int | None = None
+    unbalanced: bool | None = None
 
 
 class DoeBforceOut(_Out):
-    """v0.24.0 경계력 ESL 블록: status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구."""
+    """v0.24.0 노드 힘 출처 블록(경계력·내력 공통 형식 — source): status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구."""
 
+    source: str | None = None                         # 출처 키(bforce | fint) — 옛 사이드카 = null(경계력)
     status: str
     code: str | None = None
     reason: str | None = None
@@ -2127,6 +2136,14 @@ class DoeResultOut(_Out):
     view3d_bf_esl: dict[str, str] | None = None
     view3d_bf_ref: dict[str, str] | None = None
     bforce_add: "DoeView3dRegenOut | None" = None
+    # v0.24.0 보완 내력 ESL(esl_fint.md §7 — 사이드카 post/fint_view.json): 블록(같은 형식)·3D <did>_fi·d000_fi_e<kk>·추가 계산
+    fint: "DoeBforceOut | None" = None
+    view3d_fi: dict[str, str] | None = None
+    view3d_fi_esl: dict[str, str] | None = None
+    view3d_fi_ref: dict[str, str] | None = None
+    fint_add: "DoeView3dRegenOut | None" = None
+    # v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2): {mode, free_edge_mm, boxes, n_nodes, n_total}
+    eval_region: dict[str, Any] | None = None
 
 
 class DoePerEslDesign(_Out):

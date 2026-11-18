@@ -30,7 +30,9 @@ from esl.errors import EslError
 BASELINE = "d000"
 # 하중 출처 지표 키 → (n_failed 이름, 베이스라인 값 없음 문구). 지그(v0.23.0)·경계력 ESL(v0.24.0 esl_bforce.md §5.4)
 _ALT_KEYS = {"C_jig": ("jig", "베이스라인 지그 지표가 없음(JIG_SKIPPED)"),
-             "C_bf": ("bf", "베이스라인 경계력 ESL 지표가 없음(BF_DESIGN_FAILED)")}
+             "C_bf": ("bf", "베이스라인 경계력 ESL 지표가 없음(BF_DESIGN_FAILED)"),
+             "C_fi": ("fi", "베이스라인 내력 ESL 지표가 없음(FINT_DESIGN_FAILED)")}
+_VIEW_ONLY = frozenset(sm.VIEW_METRICS.values())   # 보기 전용 지표(옛 스냅샷 허용 — 노드 힘 출처)
 _SKIP_KEY = {"SKIPPED_COLLISION": "collision", "SKIPPED_FIXED": "fixed", "SKIPPED_GEOM": "geom"}
 _FAIL_KEY = {"FAILED_MORPH": "morph", "FAILED_MESH": "mesh", "FAILED_SOLVE": "solve"}
 
@@ -47,6 +49,10 @@ def _agg(r: dict, key: str = "C") -> dict:
            "umax_all": float(max(p["umax"] for p in per)), "epsmax_all": float(max(p["epsmax"] for p in per))}
     if key != "C" or "C_lin" in w:
         out["umax_def"] = _f(w.get("umax_def"))
+    if "umax_ev" in w:                          # v0.24.0 평가 영역 umax(새 스냅샷만 — esl_fint.md §6.2)
+        ev = [p.get("umax_ev") for p in per]
+        out["umax_ev"] = _f(w.get("umax_ev"))
+        out["umax_ev_all"] = max(float(v) for v in ev) if all(v is not None for v in ev) else None
     return out
 
 
@@ -150,7 +156,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
         raise EslError("BASELINE_FAILED", "베이스라인 d000 결과가 없거나 실패")
     new = _sm_new(b)
     alt = _ALT_KEYS.get(key)                    # 다른 하중 출처 지표(지그·경계력) — 값 null 안 = 순위 밖 n_failed[이름]
-    if key != "C" and not new and key != "C_bf":
+    if key != "C" and not new and key not in _VIEW_ONLY:
         raise EslError("INPUT_INVALID", "rank.metric lin 인데 결과에 강성 지표(C_lin)가 없음 — 옛 스냅샷은 solve")
     if key != "C":
         if any(p.get(key) is None for p in b.get("per_esl") or []):
@@ -168,7 +174,7 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     tl = ratio_tol(noise_floor, tol)
     base_C = {p["entry_id"]: float(p[key]) for p in b.get("per_esl") or []}
     base_S = {p["entry_id"]: float(p["C"]) for p in b.get("per_esl") or []}
-    fb_on = key not in ("C", "C_jig", "C_bf") and lin_valid is not None
+    fb_on = key not in ("C", "C_jig", *_VIEW_ONLY) and lin_valid is not None
     lin_key = sm.metric_key("lin", lin_form)
     lin_ref = (_agg(b, lin_key)["C"] if new and all(p.get(lin_key) is not None for p in b.get("per_esl") or [])
                else None)
@@ -205,6 +211,9 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                 p = pe[x["entry_id"]]
                 x.update(C_solve=float(p["C"]), rho=_f(p.get("rho")), imbalance_rel=_f(p.get("imbalance_rel")),
                          umax_def=_f(p.get("umax_def")))
+        for x in per:
+            if "umax_ev" in pe[x["entry_id"]]:
+                x["umax_ev"] = _f(pe[x["entry_id"]]["umax_ev"])
         met = per_esl_metrics([x["ratio"] for x in per], tl)
         row = {"id": r["id"], "values": dict(r.get("values") or {}), "score": s, "improvement": imp,
                "worst_entry_id": a["worst"], "umax": a["umax"], "epsmax": a["epsmax"],
@@ -212,6 +221,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                "noise": None if noise_floor is None else bool(abs(imp) < float(noise_floor)),
                "warnings_n": len(r.get("warnings") or []), **met, "per_esl": per,
                "C": {p["entry_id"]: float(p[k_r]) for p in r.get("per_esl") or []}}
+        if "umax_ev" in a:
+            row["umax_ev"], row["umax_ev_all"] = a["umax_ev"], a["umax_ev_all"]
         if fb_on:
             row["basis"] = "solve" if fb else "lin"
             if fb:
@@ -237,6 +248,8 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
                                         "worst_entry_id": ba["worst"]},
            "n_ok": len(rows), "n_skipped": n_sk, "n_failed": n_fl, "n_other": n_other, "ranking": rows,
            "noise_floor": noise_floor, "ratio_tol": tl, "esl_order": order, "warnings": warns}
+    if "umax_ev" in ba:
+        out["baseline"].update(umax_ev=ba["umax_ev"], umax_ev_all=ba["umax_ev_all"])
     if new:
         out["baseline"].update(_sm_aux(b, ba, C_ref_solve))
         if jig_ref is not None:

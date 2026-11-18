@@ -517,11 +517,27 @@ class BeadDoeView3dCfg(_M):
 
 
 class BeadDoeBforceCfg(_M):
-    """v0.24.0 경계력 ESL(esl_bforce.md §9): enabled = 계산(Case 에 경계력 결과가 있을 때), grades = 순위에 쓸 데이터 등급, view3d = 3D."""
+    """v0.24.0 경계력 ESL(esl_bforce.md §9): enabled = 계산(Case 에 경계력 결과가 있을 때), grades = 순위에 쓸 데이터 등급(접촉력 전용 —
+    full·contact, esl_fint.md §0), view3d = 3D."""
 
     enabled: bool = True
-    grades: list[Literal["full", "fint", "contact"]] = Field(default_factory=lambda: ["full", "fint", "contact"], min_length=1)
+    grades: list[Literal["full", "fint", "contact"]] = Field(default_factory=lambda: ["full", "contact"], min_length=1)
     view3d: bool = True
+
+
+class BeadDoeFintCfg(_M):
+    """v0.24.0 내력 ESL(esl_fint.md §9): enabled = 계산(Case 에 FINT 결과가 있을 때), grades = 순위에 쓸 등급(fint), view3d = 3D."""
+
+    enabled: bool = True
+    grades: list[Literal["fint"]] = Field(default_factory=lambda: ["fint"], min_length=1)
+    view3d: bool = True
+
+
+class BeadDoeEvalBox(_M):
+    """평가 영역 상자(기준 좌표, 경계 포함)."""
+
+    lo: list[float] = Field(min_length=3, max_length=3)
+    hi: list[float] = Field(min_length=3, max_length=3)
 
 
 _JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
@@ -591,6 +607,11 @@ class BeadDoeRankCfg(_M):
     lin_form: Literal["ritz", "taylor"] = "ritz"
     lin_valid: float = Field(default=0.3, gt=0)
     imbalance_warn: float = Field(default=0.02, gt=0, le=1)
+    # v0.24.0 보완(esl_fint.md §6.2): 보조 지표 umax(평가 영역) — part(전 노드) | exclude_free_edges(자유 경계에서 거리 ≤ eval_free_edge_mm
+    # 제외) | box(eval_boxes 합집합 안). 새 스냅샷 doe.rank.eval_region 으로 고정(옛 스냅샷 = 없음 — 결과 바이트 동일)
+    eval_region: Literal["part", "exclude_free_edges", "box"] = "part"
+    eval_free_edge_mm: float = Field(default=10.0, ge=0)
+    eval_boxes: list[BeadDoeEvalBox] = Field(default_factory=list)
     jig: BeadDoeRankJigCfg = Field(default_factory=BeadDoeRankJigCfg)
 
     @model_validator(mode="after")
@@ -1440,6 +1461,7 @@ class BeadDoeCfg(_M):
     boundary: BeadDoeBoundaryCfg = BeadDoeBoundaryCfg()
     view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
     bforce: BeadDoeBforceCfg = BeadDoeBforceCfg()                # v0.24.0 경계력 ESL
+    fint: BeadDoeFintCfg = BeadDoeFintCfg()                      # v0.24.0 내력 ESL(esl_fint.md §9)
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
