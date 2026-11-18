@@ -4,7 +4,7 @@ import type {
   DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
-  DoePerEslOut, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
+  DoePerEslOut, DoeJigRegionsFile, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
   DoeGuard, DoeParam as DoeParamRow, DoeRankMq, DoeShapeRoute, DoeShapeRules, XY,
 } from "./types";
@@ -268,8 +268,12 @@ export const doe = {
   clone: (id: string, title?: string | null) => request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: title ? { title } : {} }),
   results: (id: string) => request<DoeResultOut>("GET", `/doe/studies/${id}/results`).then(normalizeResult),
   /** §11.4 ESL별 지표(순위 행에 per_esl 이 없을 때) */
-  perEsl: (id: string, designs: string[]) =>
-    request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(",") } }),
+  perEsl: (id: string, designs: string[], view?: string | null) =>
+    request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(","), ...(view ? { view } : {}) } }),
+  /** v0.23.3 3D 다시 만들기(esl_jig_view.md §3 — 202 작업, 403 권한, 409 작업 중·지그 없음) */
+  regenerateView3d: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/view3d/regenerate`),
+  /** v0.23.3 지그 진단 영역(d000_jigdiag_e<kk>_fit/regions.json) */
+  jigRegions: (id: string, did: string) => request<DoeJigRegionsFile>("GET", `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/regions.json`),
   files: (id: string) => request<DoeFileOut[]>("GET", `/doe/studies/${id}/files`),
   /** v0.20.0 하중 전달 진단(post/load_transfer_diag.json — 다운로드 경로, 없으면 null: legacy·진단 끔·진단 실패) */
   loadTransferDiag: (id: string) =>

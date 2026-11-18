@@ -4027,6 +4027,15 @@ VIEW_DROP_JIG = ("C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin
 VIEW_DROP_FULL = ("C", "C_jig", "score_jig", "umax_jig")
 VIEW_KEYS = ("metric", "C_ref", "baseline", "n_ok", "n_skipped", "n_failed", "ranking", "per_esl_inline", "sensitivity",
              "sensitivity_reason", "best_clean")
+# 하중 출처 표(esl_jig_view.md §2.1 — 사용자 2026-11-18 16:26 "출처별 독립 비교, 나중에 맞는 것만 남기더라도"): 행 = 출처 1개 = rank_views
+# 키 1개. 출처를 빼거나 더할 때 이 표의 행만 바꾼다(호출부는 열만 읽음 — 출처 이름 분기 없음). 열: key·metric(순위 지표 — "effective" =
+# 스터디 metric_effective, 단 jig 이면 solve)·drop(행에서 뺄 다른 출처 키)·drop_pe(per_esl 에서 뺄 키)·umax_pe(umax·εmax 를 바꿀
+# per_esl 키 — None = 그대로). 보기는 베이스라인 C_jig 가 모두 있을 때만 만든다(출처 공통). 화면 거울 = F/pages/doe/doeTabs.ts LOAD_SOURCES
+RANK_SOURCES = (
+    {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def"),
+     "umax_pe": "umax_jig"},
+    {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None},
+)
 
 
 def _jig_ready(c: Ctx) -> tuple[dict, dict] | None:
@@ -4188,28 +4197,23 @@ def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
             "entries": ents}
 
 
-def _view_rows(R: dict, results: list, view: str) -> dict:
-    """§2 보기 행 정리(섞임 금지): 지그 보기 = 재풀이·1차 지표 키 제거, umax = 지그 umax(mm), εmax 없음; 전 노드 보기 = 지그 키 제거."""
-    if view == "full":
-        for x in R["ranking"]:
-            for k in VIEW_DROP_FULL:
-                x.pop(k, None)
-        for k in VIEW_DROP_FULL:
-            R["baseline"].pop(k, None)
-        return R
+def _view_rows(R: dict, results: list, src: dict) -> dict:
+    """§2 보기 행 정리(섞임 금지) — 출처 표 행 src 의 열만 읽음: drop 키 제거, umax_pe 가 있으면 umax·umax_all = 그 per_esl 값(mm,
+    최악 ESL·전 ESL 최대)·εmax 없음(null), per_esl 항목에서 drop_pe 키 제거."""
     pe_all = {r["id"]: {p["entry_id"]: p for p in r.get("per_esl") or []} for r in results}
 
     def fix(x: dict, rid: str) -> None:
+        for k in src["drop"]:
+            x.pop(k, None)
+        if src["umax_pe"] is None:
+            return
         pe = pe_all.get(rid) or {}
-        um = {e: (None if p.get("umax_jig") is None else float(p["umax_jig"])) for e, p in pe.items()}
-        w = x.get("worst_entry_id")
-        x["umax"] = um.get(w)
+        um = {e: (None if p.get(src["umax_pe"]) is None else float(p[src["umax_pe"]])) for e, p in pe.items()}
+        x["umax"] = um.get(x.get("worst_entry_id"))
         x["umax_all"] = max((v for v in um.values() if v is not None), default=None)
         x["epsmax"] = x["epsmax_all"] = None
-        for k in VIEW_DROP_JIG:
-            x.pop(k, None)
         for p in x.get("per_esl") or []:
-            for k in ("C_solve", "rho", "imbalance_rel", "umax_def"):
+            for k in src["drop_pe"]:
                 p.pop(k, None)
             p["umax"] = um.get(p["entry_id"])
             p["epsmax"] = None
@@ -4227,11 +4231,13 @@ def _rank_views(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: 
         return None, {}
     me = S_["metric_effective"]
     views, per = {}, {}
-    for view, metric in (("jig", "jig"), ("full", me if me != "jig" else "solve")):
+    for src in RANK_SOURCES:                                   # 출처 표 행마다(§2.1)
+        view = src["key"]
+        metric = src["metric"] if src["metric"] != "effective" else (me if me != "jig" else "solve")
         R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric,
                     lin_form=S_["lin_form"], lin_valid=float(S_["lin_valid"]))
         best_clean = _annotate(c, R, results, labels)
-        _view_rows(R, results, view)
+        _view_rows(R, results, src)
         sc = {BASELINE: 1.0, **{x["id"]: x["score"] for x in R["ranking"]}}
         sens = _sens(c, m, results, sc)
         inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])

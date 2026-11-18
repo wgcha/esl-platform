@@ -920,7 +920,54 @@ export function withJig(res: DoeResultOut, kind: "ok" | "poor" | "fallback"): Do
     view3d_jig_esl[d] = e;
     view3d_jig_ref[e] = `d000_jig_e${String(Math.max(0, eorder.indexOf(e))).padStart(2, "0")}`;
   }
-  return { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "jig", metric_effective: "jig", rank: { ...st, metric: "jig", metric_effective: "jig", cross_mesh: false }, jig, warnings, ...(shown.length ? { view3d_jig, view3d_jig_esl, view3d_jig_ref } : {}) };
+  const out: DoeResultOut = { ...res, ranking, baseline: { ...res.baseline, umax_def: +(res.baseline.umax * 0.35).toFixed(3) }, metric: "jig", metric_effective: "jig", rank: { ...st, metric: "jig", metric_effective: "jig", cross_mesh: false }, jig, warnings, ...(shown.length ? { view3d_jig, view3d_jig_esl, view3d_jig_ref } : {}) };
+  return withJigViews(out, ids);
+}
+const DROP_JIG_M = ["C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "basis", "sm_warn"];
+const DROP_FULL_M = ["C", "C_jig", "score_jig", "umax_jig"];
+const dropKeys = (x: Record<string, unknown>, ks: string[]) => Object.fromEntries(Object.entries(x).filter(([k]) => !ks.includes(k)));
+/** v0.23.3 하중 정의 탭 보기·지그 진단·3D 다시 만들기(esl_jig_view.md §2·§1.5·§3) — 서버 사이드카 흉내(결정적) */
+export function withJigViews(res: DoeResultOut, ids: { entry_id: string; label: string }[]): DoeResultOut {
+  const jigRows = res.ranking.map((r) => ({ ...dropKeys(r as unknown as Record<string, unknown>, DROP_JIG_M), umax: +(r.umax * 0.12).toFixed(3), umax_all: +(r.umax_all * 0.12).toFixed(3), epsmax: null, epsmax_all: null,
+    per_esl: r.per_esl?.map((p) => ({ entry_id: p.entry_id, label: p.label, C: p.C, ratio: p.ratio, umax: +(p.umax * 0.12).toFixed(3), epsmax: null })) }));
+  const fullRows = res.ranking
+    .map((r) => ({ ...dropKeys(r as unknown as Record<string, unknown>, DROP_FULL_M), score: r.score_solve ?? r.score, improvement: +(1 - (r.score_solve ?? r.score)).toFixed(4),
+      worst_entry_id: [...(r.per_esl ?? [])].sort((a, b) => (b.C_solve ?? b.C) - (a.C_solve ?? a.C))[0]?.entry_id ?? r.worst_entry_id,
+      per_esl: r.per_esl?.map((p) => ({ ...p, C: p.C_solve ?? p.C })) }))
+    .sort((a, b) => (a.score as number) - (b.score as number) || String((a as Record<string, unknown>).id).localeCompare(String((b as Record<string, unknown>).id)))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const b = res.baseline as unknown as Record<string, unknown>;
+  const sensFull = res.sensitivity ? { ...res.sensitivity, r2: +(res.sensitivity.r2 * 0.7).toFixed(3), params: res.sensitivity.params.map((x, i) => ({ ...x, src: +(x.src * (i % 2 ? 0.6 : 1.3)).toFixed(3), spearman: +(x.spearman * (i % 2 ? 0.5 : 1)).toFixed(3) })) } : null;
+  const view = (metric: string, rows: Record<string, unknown>[], base: Record<string, unknown>, sens: DoeResultOut["sensitivity"]) => ({
+    metric, C_ref: res.C_ref, baseline: base, n_ok: res.n_ok, n_skipped: res.n_skipped, n_failed: res.n_failed, ranking: rows, per_esl_inline: true,
+    sensitivity: sens as Record<string, unknown> | null, sensitivity_reason: res.sensitivity_reason ?? null, best_clean: res.summary?.best_clean ?? null });
+  const jb = { ...dropKeys(b, DROP_JIG_M), umax: +(Number(b.umax) * 0.12).toFixed(3), epsmax: null };
+  const regions = [
+    { id: 0, kind: "contact" as const, part: 78, part_title: "PANEL_REAR_COVER", n_nodes: 42, area_mm2: 1820.5, center: [-60, 20, 4] },
+    { id: 1, kind: "contact" as const, part: 47, part_title: "BRKT_STAND", n_nodes: 28, area_mm2: 960.0, center: [70, -25, 4] },
+    { id: 2, kind: "patch" as const, part: null, part_title: null, n_nodes: 36, area_mm2: 1400.0, center: [0, 40, 4] },
+  ];
+  const entries = ids.map((e, k) => {
+    const kk = String(k).padStart(2, "0");
+    const forces = regions.map((g, r) => ({ region: g.id, kind: g.kind, F: [0.6 * (r - 1), -3.2 + r, 18.4 - 4.1 * r - 2 * k], F_mag: 0, F_n: 18.4 - 4.1 * r - 2 * k, F_t1: 0.6 * (r - 1), F_t2: -3.2 + r, active: true }))
+      .map((f) => ({ ...f, F_mag: +Math.hypot(f.F[0], f.F[1], f.F[2]).toFixed(3) }));
+    return { entry_id: e.entry_id, label: e.label, kk: k, dirs: { tgt: `d000_jigdiag_e${kk}_tgt`, fit: `d000_jigdiag_e${kk}_fit`, err: `d000_jigdiag_e${kk}_err` },
+      tie_rel_groups: [0.89 + 0.03 * k, 0.21, 0.05],
+      mac: k === 0 ? 0.159 : 0.62 - 0.1 * k, umax_err: k === 0 ? 0.839 : 0.4 + 0.05 * k, mac_nomodes: k === 0 ? 0.12 : 0.5, umax_err_nomodes: 0.9, work_eff: 0.41 - 0.03 * k, tie_rel: 0.034 + 0.01 * k, rot_deg: 2.6 + 0.5 * k,
+      umax_tgt: 41.2 - 3 * k, umax_fit: 6.6 + k, err_max: 37.5 - 2 * k, tgt_out_frac: 0.71 - 0.05 * k, contrib: { region: 0.82, body: 0.27, mode: 0.11 },
+      forces, F_region_sum: [0, 1, 2].map((j) => +forces.reduce((a, f) => a + f.F[j], 0).toFixed(6)), body: [0.4, -12.5 + k, 1.1], modes: [0, 1, 2, 3].map((m) => ({ k: m, a: +(3.2 - 1.1 * m + 0.3 * k).toFixed(2) })) };
+  });
+  return {
+    ...res,
+    rank_views: { jig: view("jig", jigRows, jb, res.sensitivity), full: view("solve", fullRows, dropKeys(b, DROP_FULL_M), sensFull as DoeResultOut["sensitivity"]) },
+    jig_diag: { n_jig: res.jig?.n_jig ?? 14, tie_spread: res.jig?.tie_spread ?? 0.21, n_contact: 2, n_patch: 1, regions_from: "mixed", regions, entries, tie_partner_source: "deck",
+      tie_groups: [
+        { other_part_id: 78, other_part_title: "PANEL_REAR_COVER", n_nodes: 8, n_clusters: 4, bbox_mm: [918, 0.4, 531], cluster_dmax_mm: 12.5, kinds: ["SECONDARY"] },
+        { other_part_id: 47, other_part_title: "BRKT_STAND", n_nodes: 4, n_clusters: 2, bbox_mm: [140, 0.2, 60], cluster_dmax_mm: 6.0, kinds: ["SECONDARY"] },
+        { other_part_id: null, other_part_title: null, n_nodes: 2, n_clusters: 1, bbox_mm: [8, 0, 3], cluster_dmax_mm: 8.5, kinds: ["MAIN"] },
+      ] },
+    view3d_regen: { available: true, allowed: true, reason: null },
+  };
 }
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
  *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
@@ -2485,11 +2532,32 @@ export class DoeMock {
       }
       if (method === "GET" && (sub === "/download" || sub === "/bundle")) return rec.result ? { status: 200, body: sub === "/bundle" ? "PK mock zip\n" : "mock file\n" } : err(404, "NOT_READY", "결과가 아직 없습니다.");
       if (method === "GET" && sub === "/report") return rec.result ? { status: 200, body: "<html><body>mock DOE report</body></html>" } : err(404, "NOT_READY", "보고서가 아직 없습니다.");
+      if ((r = sub.match(/^\/view3d\/(d000_jigdiag_e\d\d_fit)\/regions\.json$/)) && method === "GET") {
+        const n = mockView3d().manifest("x").n_nodes;
+        const regs = rec.result?.jig_diag?.regions ?? [];
+        if (!regs.length) return err(404, "VIEW3D_NOT_FOUND", "3D 비교 파일이 없습니다");
+        const chunk = Math.max(1, Math.floor(n / 9));
+        const sv = mockView3d().manifest("x").supports.map((x) => x.vertex);
+        return ok({ schema: "esl/doe_jig_regions/1", regions: regs.map((g, i) => ({ ...g, normal: [0, 0, 1], vertices: Array.from({ length: chunk }, (_, j) => (i * 3 + 1) * chunk + j).filter((v) => v < n) })), jig_vertices: sv, jig_groups: sv.map((_, i) => i % 3) });
+      }
+      if (method === "POST" && sub === "/view3d/regenerate") {
+        const rg = rec.result?.view3d_regen;
+        if (!rg?.available) return err(409, "VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다");
+        return ok(rec.out, 202);
+      }
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {
         const did = decodeURIComponent(r[1]);
         const res = rec.result;
         const isRef = Object.values(res?.view3d_ref ?? {}).includes(did);
         // v0.23.2 지그 3D: <did>_jig · d000_jig_e<kk>(esl_run_id = 지그 엔트리, 지지 = tie 고정 "123")
+        // v0.23.3 지그 진단: d000_jigdiag_e<kk>_{tgt,fit,err}(esl_run_id = 엔트리, 지지 = tie 고정 "123")
+        const dg = /^d000_jigdiag_e(\d\d)_(tgt|fit|err)$/.exec(did);
+        const dge = dg ? res?.jig_diag?.entries.find((e) => e.kk === Number(dg[1])) ?? null : null;
+        if (dg && dge) {
+          const m = mockView3d().manifest(dge.entry_id);
+          const f = dg[2] === "tgt" ? 1 : dg[2] === "fit" ? 0.16 : 0.9;
+          return ok({ ...m, key: `${m.key}-${did}`, ranges: { ...m.ranges, u_max: m.ranges.u_max * f }, supports: m.supports.map((x) => ({ ...x, dof: "123" })), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
+        }
         const jigOf = Object.entries(res?.view3d_jig ?? {}).find(([, v]) => v === did)?.[0] ?? null;
         const jigRefE = Object.entries(res?.view3d_jig_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null;
         if (!res?.view3d.includes(did) && !isRef && !jigOf && !jigRefE) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");

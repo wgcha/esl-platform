@@ -77,6 +77,33 @@
 - 민감도: 보기마다 `rk.sensitivity`(표본 score = 그 보기 행 score, 베이스라인 1, 순위 밖 안 제외 — 기존 bd_post 와 같은 식, 공용 `_sens`).
 - ranking.csv·result.json·per_esl.json·report.html 은 **바꾸지 않는다**(CSV 열 추가도 하지 않음).
 
+### 2.1 하중 출처 표 (사용자 2026-11-18 16:26 "컨투어·표가 ESL 출처에 맞게 독립 비교, 나중에 맞는 것만 남기더라도" — D-0.23.3-7)
+- 탭 = 하중 출처(load source) 1개. 출처는 **선언형 표 한 곳**에 행으로 둔다 — 코어 `esl/doe/stages.py:RANK_SOURCES`, 화면 거울 `F/pages/doe/doeTabs.ts:LOAD_SOURCES`. 호출부·화면 부품은 행의 열만 읽고 출처 이름으로 분기하지 않는다(AGENTS.md 계획 표 원칙을 화면에도 적용).
+- 출처를 빼거나(예: 전 노드 ESL 제거) 더할 때(예: 조립체 지그) **표의 행만** 바꾼다. 행이 없는 출처의 rank_views 키는 만들어지지 않고, 화면은 남은 행의 탭만 그린다(V-0233-8b).
+
+| 열(코어 RANK_SOURCES) | jig | full | 뜻 |
+|---|---|---|---|
+| `key` | `jig` | `full` | 출처 키 = `rank_views` 키 = per-esl `?view=` 값 |
+| `metric` | `jig` | `effective`(스터디 metric_effective, jig 이면 solve) | 그 출처 순위 지표 |
+| `drop` | `VIEW_DROP_JIG` | `VIEW_DROP_FULL` | 행·기준에서 뺄 다른 출처 키 |
+| `drop_pe` | C_solve·rho·imbalance_rel·umax_def | – | per_esl 에서 뺄 키 |
+| `umax_pe` | `umax_jig` | None | umax·εmax 를 바꿀 per_esl 키(None = 그대로) |
+
+| 열(화면 LOAD_SOURCES) | jig | full |
+|---|---|---|
+| `label`·`title` | 지그 ESL · 툴팁 | 전 노드 ESL · 툴팁 |
+| `primaryFor`(기본 탭이 되는 metric_effective) | jig | solve, lin |
+| `drop`·`blankUmax`(보기 없는 옛 결과 투영) | 위 drop · umax/εmax "–" | 위 drop · 그대로 |
+| `warnPrefixes`(경고 → 탭, 그 밖 = 공통) | `JIG_` | `SM_`·`LT_`·`MESH_QUALITY` |
+| `hide`(투영 때 비울 결과 키) | load_transfer | jig·view3d_jig·view3d_jig_esl·view3d_jig_ref·jig_diag |
+| `chips`(상태 띠 칩 순서) | jig·best_clean | lt·mq·best_clean_mq·best_clean |
+| `view3d`(3D 보기) | jig = [설계 비교 | 지그 진단] | full = 전 노드 ESL 컨투어(3-2-1) |
+| `perEslKey`·`sensKey`·`sort`(정보·기본 정렬) | C_jig · rank_views.jig.sensitivity · score | C · rank_views.full.sensitivity · score |
+| `unavailable`(보기 없을 때 탭 사유) | 지그 칩 문구(미계산·불가) 또는 다시 만들기 안내 | 다시 만들기 안내 |
+
+- 기본 탭 = `primaryFor` 에 metric_effective 가 있는 행(없으면 가능한 첫 행, 하나도 없으면 투영 없이 주 결과·탭 모두 비활성). 불가 출처의 첫 칩(사유)은 현재 탭 띠 앞에 원 결과로(v0.23.2 지그 미계산·불가 칩 유지).
+- 백엔드 결과 키 규칙: 이미 있는 키는 유지(`view3d_jig*`·`jig`·`jig_diag`), 새 출처별 키는 출처 접두(`<key>_…`) 또는 `rank_views[<key>]`·사이드카 `per_esl[<key>]` 아래.
+
 ## 3. 3D 다시 만들기 (D-0.23.3-3)
 
 - API: `POST /doe/studies/{sid}/view3d/regenerate`(body 없음) → 202 `DoeStudyOut`(작업 포함). 권한 = 실행 권한(power 이상) ∧ (프로젝트 admin ∨ 스터디 작성자) 아니면 403. 조건: 스터디 DONE ∧ 진행 중 작업 없음(409 JOB_ACTIVE) ∧ 지그 블록 status ok/poor ∧ 성공한 DOE_RUN 작업 있음(아니면 409 `VIEW3D_REGEN_UNAVAILABLE`).
@@ -150,6 +177,7 @@
 | 6 | 워커: kind VIEW3D BD_REGISTER = DB 무변경 성공 | `worker/tests/test_doe_view3d_regen.py` |
 | 7 | 설정 거울 `view3d.jig_diag` | `backend/tests/test_doe_config.py` 또는 rank 시험 |
 | 8 | 화면: 탭 기본 규칙(jig/solve), 지그 미계산 = 지그 탭 비활성 + 사유, 탭별 DOM 섞임 0(지그 탭에 재풀이 C·불평형 열·LT 칩 없음, 전 노드 탭에 지그 C·지그 칩·지그 진단 없음), 민감도 탭별, 3D 지그 탭 세그먼트·진단 라벨·세그먼트 3종, 다시 만들기 버튼 조건 | `frontend/src/__tests__/doe_v0233.test.tsx` |
+| 8b | 출처 표: 코어 RANK_SOURCES 행 제거 → 그 rank_views 없음(`tests/doe/test_jig_view.py`), 화면 LOAD_SOURCES 행 제거 mock → 탭 1개·화면 정상(`F/__tests__/doe_v0233_sources.test.tsx`) | – |
 | 9 | 회귀·스크린샷: pytest 4묶음, vitest·typecheck·build·check:api, openapi `--check`; Playwright 2560×1440 mock `/home/claude/shots/v0233_{diag_tgtfit,diag_err,diag_regions,tab_jig,tab_full}.png` | – |
 
 ## 9. 결정 (decisions.md)
@@ -160,5 +188,6 @@
 | D-0.23.3-2 | 하중 정의 탭 자료 rank_views{jig, full} = BD_POST 에서 두 지표로 각각 rank + 민감도, 섞이는 키 제거(지그 보기 umax = 지그 umax, εmax 없음). ranking.csv·result.json 불변(사이드카 `post/jig_view.json`) |
 | D-0.23.3-3 | 3D 다시 만들기 = 새 작업 유형 없이 기존 DOE_RUN 큐 + resume_from_step(BD_POST) + params kind VIEW3D/post_mode view3d, 등록은 DB 무변경, phase DONE 유지, 권한 admin ∨ 작성자. 쓰기 = post/view3d 새 폴더·사이드카만(기존 결과 파일 바이트 불변). migration 없음 |
 | D-0.23.3-4 | (사용자 2026-11-18 15:47) 결과 카드 하중 정의 탭 [지그 ESL | 전 노드 ESL] 1개 — v0.23.1 '탭 도입 안 함'을 이 탭에 한해 개정. 기본 = metric_effective, 탭마다 순위표·ESL별 표·3D·민감도·상태 띠 칩이 그 하중 정의 값만. 받기·재낙하·검증 낙하는 공통. v0.23.2 3D 토글 제거 |
+| D-0.23.3-7 | (사용자 16:26) 하중 출처 표 1곳(코어 RANK_SOURCES ↔ 화면 LOAD_SOURCES) — 순위표·ESL별 표·3D·민감도·칩은 행의 열만 읽고 출처 이름 분기 없음, 출처 추가·제거 = 행만. 새 결과 키는 출처 접두·rank_views[key] 규칙 |
 | D-0.23.3-6 | (현장 jig.json 2026-11-18) 진단에 상대 부품별 tie 요약(tie_groups — 기하 최근접 deck 표면 파트, `view3d.jig_tie_gap_mm`)·엔트리 tie_rel_groups·영역 part_title 추가, 진단 3D tie 마커 = 그룹 색 + 범례. 계산 불변·jig.json 불변(BD_POST 위치) |
 | D-0.23.3-5 | 지그 탭 3D = [설계 비교(지그 응답) | 지그 진단], 진단 = 엔트리 선택 + [목표·맞춤 | 오차 | 영역], 같은 색 범위·같은 배율, 영역 합력 화살표(기존 화살표·크기 비례), 체적력·모드 계수는 한 줄 글씨 |

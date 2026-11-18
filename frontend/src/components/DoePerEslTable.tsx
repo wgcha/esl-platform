@@ -25,8 +25,10 @@ export function perEslNote(result: DoeResultOut, pick: string | null, topN = PER
   return `셀 = 개선율(1 − C_안 / C_베이스라인, 같은 ESL) · 초록 개선 · 빨강 악화 · 상위 ${topN}개${pick && result.ranking.some((r) => r.id === pick) && !result.ranking.slice(0, topN).some((r) => r.id === pick) ? " + 선택 안" : ""}`;
 }
 
-export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_TOP_N }: {
+export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_TOP_N, view = null }: {
   studyId: string;
+  /** v0.23.3 하중 정의 탭 보기(인라인이 아닐 때 ?view= 로 읽음 — esl_jig_view.md §2). null = 기존 */
+  view?: string | null;
   result: DoeResultOut;
   entries: EntryOut[];
   pick: string | null;
@@ -44,7 +46,7 @@ export function DoePerEslTable({ studyId, result, entries, pick, topN = PER_ESL_
     if (!need.length) return;
     let alive = true;
     doe
-      .perEsl(studyId, need)
+      .perEsl(studyId, need, view)
       .then((o) => {
         if (!alive) return;
         setFetched((f) => ({ ...f, ...Object.fromEntries(o.designs.map((d) => [d.id, d.per_esl])) }));

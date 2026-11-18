@@ -11,7 +11,7 @@ const openJig = (id: string) => renderApp(`/p/p-body/doe/${id}`, "power", (s) =>
 describe("지그 칩 3상태", () => {
   it("계산됨 ok = 기본 글자색(muted 없음), 상태 띠 첫 칩", async () => {
     openJig("doe-40");
-    const chip = await screen.findByTestId("jig-line");
+    const chip = await screen.findByTestId("jig-line", {}, { timeout: 8000 });   // v0.23.3: 첫 시험(냉시작) 여유
     expect(chip.getAttribute("data-status")).toBe("ok");
     expect(chip.className).toBe("doe-chip");
     const band = screen.getByTestId("doe-status");
@@ -48,16 +48,13 @@ describe("3D 비교 하중 조건 + 지그 응답", () => {
     expect(v3dCondText(false, null, ["E1", "E2"])).toBe("하중: 전 노드 ESL 재풀이 · 지지: 3-2-1 · 엔트리: 기준 E1 · 안 E2");
     expect(v3dCondText(false, null, [null, null])).toBe("하중: 전 노드 ESL 재풀이 · 지지: 3-2-1 · 엔트리: –");
   });
-  it("지그 3D 있는 스터디: 기본 = 지그 하중(tie 고정 n점), 토글로 전 노드 ESL", async () => {
+  it("지그 3D 있는 스터디: 기본 = 지그 하중(tie 고정 n점), 전 노드 탭으로 전 노드 ESL(v0.23.3 — 토글 대신 탭)", async () => {
     openJig("doe-40");
     const cond = await screen.findByTestId("v3d-cond");
     await waitFor(() => expect(cond.textContent).toMatch(/^하중: 지그 하중 · 지지: tie 고정\(14점\) · 엔트리: \S+/));
-    const seg = screen.getByTestId("v3d-mode");
-    const [jigBtn, eslBtn] = Array.from(seg.querySelectorAll("button"));
-    expect(jigBtn.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(eslBtn);
+    expect(screen.queryByTestId("v3d-mode")).toBeNull();                 // v0.23.2 토글 제거
+    fireEvent.click(screen.getByTestId("doe-load-tab").querySelector("[data-tab=full]")!);
     await waitFor(() => expect(screen.getByTestId("v3d-cond").textContent).toMatch(/^하중: 전 노드 ESL 재풀이 · 지지: 3-2-1 · 엔트리: /));
-    expect(eslBtn.getAttribute("aria-pressed")).toBe("true");
   }, 20000);
   it("지그 3D 없는(옛·지그 없음) 스터디: 토글 없음 + 조건 라벨(전 노드 ESL · 3-2-1)", async () => {
     renderApp("/p/p-body/doe/doe-3");

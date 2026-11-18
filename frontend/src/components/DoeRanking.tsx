@@ -60,6 +60,9 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
     ? ([has("score_solve") && "solve", has("imbalance_max") && "imb", has("umax_jig") && "umax"].filter(Boolean) as ("solve" | "imb" | "umax")[])
     : !lin && has("score_jig") ? (["jig"] as const) : [];
   const um = (r: { umax: number; umax_def?: number | null }) => (solveNew && r.umax_def != null ? r.umax_def : r.umax);
+  /** v0.23.3 하중 정의 탭(지그 보기): umax = 지그 재풀이 umax, εmax 없음(null) → "–" */
+  const mm = (v: number | null | undefined) => (v == null ? "–" : `${v.toFixed(2)} mm`);
+  const pc = (v: number | null | undefined) => (v == null ? "–" : `${(v * 100).toFixed(2)} %`);
   const [aux, setAux] = useState(false);
   const jigAuxOn = (k: "solve" | "imb" | "umax" | "jig") => aux && (jigAux as readonly string[]).includes(k);
   const th = rankThresholds(result, rankCfg);
@@ -129,8 +132,8 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             {sortTh("score", lin ? "강성 지표" : jigOn ? "지그 C" : solveNew ? "재풀이 C" : "score", jigOn ? "max_i C_jig / C_ref — 체결부(tie) 고정 + 맞춤 가압 하중으로 안마다 재풀이(하중 제어), 작을수록 좋음" : lin ? "max_i C_lin / M_ref(베이스라인 최악) — 재풀이 없는 1차 섭동 지표, 작을수록 좋음" : cross ? `max_i C / C_ref — 다른 메시 비교: ${SM_CODE_TEXT.SM_CROSS_MESH}` : solveNew ? "max_i C / C_ref — 안마다 재풀이한 컴플라이언스(기본), 작을수록 좋음" : "max_i C / C_ref(베이스라인 최악) — 작을수록 좋음")}
             <th className="num">개선율</th>
             <th>최악 ESL</th>
-            {!lin && <th className="num" title={solveNew ? "최악 ESL 기준, 강체 6자유도 제거" : "최악 ESL 기준(전 ESL 최대는 툴팁)"}>umax</th>}
-            {!lin && <th className="num" title="최악 ESL 기준 최대 등가 변형률(선형)">εmax</th>}
+            {!lin && <th className="num" title={jigOn ? "지그 재풀이 최대 변위(최악 ESL, tie 고정 — 전 ESL 최대는 툴팁)" : solveNew ? "최악 ESL 기준, 강체 6자유도 제거" : "최악 ESL 기준(전 ESL 최대는 툴팁)"}>umax</th>}
+            {!lin && <th className="num" title={jigOn ? "지그 재풀이는 변형률을 내지 않음(–)" : "최악 ESL 기준 최대 등가 변형률(선형)"}>εmax</th>}
             {lin && aux && <th className="num" title="안마다 재풀이한 C 로 같은 식(최악 ESL 비) — 보조">재풀이 C 비</th>}
             {jigAuxOn("solve") && <th className="num" title="안마다 재풀이한 C(3-2-1 지지·고정 하중) 비 — 순위에 쓰지 않음">재풀이 C 비</th>}
             {jigAuxOn("imb") && <th className="num" title="max_i |F − K·u| / Σ|F| — 재풀이 C 가 무른 모드에 오염된 정도(순위에 쓰지 않음)">불평형</th>}
@@ -167,8 +170,8 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
             <td className="num mono">{b.score.toFixed(2)}</td>
             <td className="num">기준</td>
             <td className="small muted">{named ? "기준 형상" : "공칭"}</td>
-            {!lin && <td className="num mono">{um(b).toFixed(2)} mm</td>}
-            {!lin && <td className="num mono">{(b.epsmax * 100).toFixed(2)} %</td>}
+            {!lin && <td className="num mono">{mm(um(b))}</td>}
+            {!lin && <td className="num mono">{pc(b.epsmax)}</td>}
             {(lin || auxLin) && aux && <td className="num mono">1.00</td>}
             {(lin || auxLin) && aux && <td className="num muted">–</td>}
             {(lin || auxLin) && aux && <td className="num muted">–</td>}
@@ -221,13 +224,13 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 </td>
                 <td className="small">{esl(r.worst_entry_id)}</td>
                 {!lin && (
-                  <td className="num mono" title={`전 ESL 최대 ${r.umax_all.toFixed(2)} mm`}>
-                    {um(r).toFixed(2)} mm
+                  <td className="num mono" title={`전 ESL 최대 ${mm(r.umax_all)}`}>
+                    {mm(um(r))}
                   </td>
                 )}
                 {!lin && (
-                  <td className="num mono" title={`전 ESL 최대 ${(r.epsmax_all * 100).toFixed(2)} %`}>
-                    {(r.epsmax * 100).toFixed(2)} %
+                  <td className="num mono" title={`전 ESL 최대 ${pc(r.epsmax_all)}`}>
+                    {pc(r.epsmax)}
                   </td>
                 )}
                 {lin && aux && <td className="num mono" data-testid={`aux-solve-${r.id}`}>{r.score_solve != null ? r.score_solve.toFixed(2) : "–"}</td>}

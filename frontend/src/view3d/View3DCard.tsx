@@ -6,7 +6,7 @@ import { errorText } from "../api/client";
 import { Card } from "../components/ui";
 import { ColorLegend, countOut, useLegendRange, type Range } from "../components/ColorLegend";
 import { f3 } from "../lib/colormap";
-import { N_STAGES, buildArrowSpecs, stageText } from "./arrows";
+import { N_STAGES, buildArrowSpecs, stageText, type ArrowSpec } from "./arrows";
 import { BLUES_GRADIENT } from "./colors";
 import { EXP_MAX, EXP_MIN, EXP_STEP, defaultScaleExp, scaleFromExp, scaleLabel } from "./deform";
 import { fetchBinary, fileUrls } from "./fetchFiles";
@@ -42,6 +42,14 @@ export interface View3DOptions {
   /** 변위 색 범례 문구(기본 "변위 |u| (mm)") — v0.20.0 강체 제거 표기 */
   dispLabel?: string;
   onRangeChange?: (r: Range | null) => void;
+  /** v0.23.3 지그 진단(esl_jig_view.md §7.2): 화살표를 manifest top/군집 대신 이 사양으로(영역 합력). 주면 화살표 단계 슬라이더 숨김 */
+  arrowsOverride?: ArrowSpec[] | null;
+  /** v0.23.3 표면 색을 이 정점 값으로(영역 색 — NaN = 회색). 범례 문구 label, 범위 min~max */
+  fieldOverride?: { values: Float32Array; min: number; max: number; label: string } | null;
+  /** v0.23.3 카드 여럿이 같은 변형 켜기·배율·실제 크기를 쓰게(공유 상태). 안 주면 카드마다 따로(기존) */
+  deformSync?: { on: boolean; kexp: number | null; real: boolean; set: (s: { on?: boolean; kexp?: number | null; real?: boolean }) => void } | null;
+  /** v0.23.3 지지 기호 색(정점 → 색, null = 기본) — 지그 노드 상대 부품별 */
+  supportColor?: ((vertex: number) => string | null) | null;
 }
 
 /** |u| (mm) 정점 값 */
@@ -60,9 +68,16 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "nowebgl" | "error">("idle");
   const [phaseErr, setPhaseErr] = useState<string | null>(null);
   const [data, setData] = useState<Loaded | null>(null);
-  const [deformOn, setDeformOn] = useState(false);
-  const [real, setReal] = useState(false);
-  const [kexp, setKexp] = useState<number | null>(null);
+  const [deformOnL, setDeformOnL] = useState(false);
+  const [realL, setRealL] = useState(false);
+  const [kexpL, setKexpL] = useState<number | null>(null);
+  const ds = options?.deformSync ?? null;
+  const deformOn = ds ? ds.on : deformOnL;
+  const real = ds ? ds.real : realL;
+  const kexp = ds ? ds.kexp : kexpL;
+  const setDeformOn = (f: (x: boolean) => boolean) => (ds ? ds.set({ on: f(ds.on) }) : setDeformOnL(f));
+  const setReal = (f: (x: boolean) => boolean) => (ds ? ds.set({ real: f(ds.real) }) : setRealL(f));
+  const setKexp = (v: number) => (ds ? ds.set({ kexp: v }) : setKexpL(v));
   const [proj, setProj] = useState<Projection>(readProjection);
   const projRef = useRef(proj);
   projRef.current = proj;
@@ -153,14 +168,16 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   };
 
   // ---- 표면 색: 면압 |Fn|/A (MPa), 없으면 |Fn| (N). 옵션 disp = |u| (mm)
+  const fo = options?.fieldOverride ?? null;
   const field = useMemo(() => {
     if (!data) return null;
+    if (fo && fo.values.length === data.glb.positions.length / 3) return { values: fo.values, unit: "mm" as const };
     if (colorBy === "disp") {
       const v = dispField(data.vals.u);
       return v ? { values: v, unit: "mm" as const } : null;
     }
     return colorField(data.vals);
-  }, [data, colorBy]);
+  }, [data, colorBy, fo]);
   const unit = field?.unit ?? (colorBy === "disp" ? "mm" : "MPa");
   const auto = useMemo(() => {
     if (colorBy === "disp") return { min: 0, max: manifest?.ranges.u_max && manifest.ranges.u_max > 0 ? manifest.ranges.u_max : 1 };
@@ -169,7 +186,9 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
     return { min: 0, max: top };
   }, [manifest, unit, colorBy]);
   const localLegend = useLegendRange(view.runId, "load", unit === "MPa" ? "pa" : unit === "mm" ? "u" : "fn", "zero", auto);
-  const legend = options?.range
+  const legend = fo
+    ? { range: { min: fo.min, max: fo.max }, manual: false, apply: () => undefined, reset: () => undefined }
+    : options?.range
     ? { range: options.range, manual: !!options.rangeManual, apply: (r: Range) => options.onRangeChange?.(r), reset: () => options.onRangeChange?.(null) }
     : localLegend;
   const outCount = useMemo(() => (field ? countOut(field.values, legend.range) : { above: 0, below: 0 }), [field, legend.range]);
@@ -185,9 +204,14 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
 
   // ---- 화살표·지지 기호
   const uForArrows = data?.vals.u ?? null;
-  const arrows = useMemo(() => (manifest ? buildArrowSpecs(manifest, mode, uForArrows, deformOn ? k : 0) : []), [manifest, mode, uForArrows, deformOn, k]);
+  const ao = options?.arrowsOverride ?? null;
+  const arrows = useMemo(() => (ao ?? (manifest ? buildArrowSpecs(manifest, mode, uForArrows, deformOn ? k : 0) : [])), [ao, manifest, mode, uForArrows, deformOn, k]);
   arrowKeysRef.current = arrows.map((a) => a.key);
-  const supports = useMemo(() => (manifest ? buildSupportSpecs(manifest.supports, uForArrows, deformOn ? k : 0, manifest.bbox.diag) : []), [manifest, uForArrows, deformOn, k]);
+  const sc = options?.supportColor ?? null;
+  const supports = useMemo(() => {
+    const out = manifest ? buildSupportSpecs(manifest.supports, uForArrows, deformOn ? k : 0, manifest.bbox.diag) : [];
+    return sc ? out.map((x) => ({ ...x, color: sc(x.vertex) ?? undefined })) : out;
+  }, [manifest, uForArrows, deformOn, k, sc]);
   useEffect(() => {
     if (data && sceneRef.current) sceneRef.current.setArrows(arrows, null);
   }, [data, arrows]);
@@ -224,7 +248,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
       ) : (
         <div className="v3d">
           <div className="v3d-tools">
-            <label className="range-field" title="화살표 개수 — 왼쪽 끝 100 노드, 오른쪽으로 갈수록 줄고 마지막 4칸은 공간 군집 합력(5·4·3·2)">
+            {!ao && <label className="range-field" title="화살표 개수 — 왼쪽 끝 100 노드, 오른쪽으로 갈수록 줄고 마지막 4칸은 공간 군집 합력(5·4·3·2)">
               <span>화살표</span>
               <input
                 type="range"
@@ -239,7 +263,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
               <span className="mono small range-val" data-testid="v3d-stage">
                 {stageText(stage)}
               </span>
-            </label>
+            </label>}
             <button type="button" className={`btn small ghost toggle${deformOn ? " on" : ""}`} aria-pressed={deformOn} disabled={!hasU} onClick={() => setDeformOn((x) => !x)} title="u_rel × 배율로 변형된 형상을 보입니다(표시 전용)">
               변형 형상
             </button>
@@ -286,12 +310,12 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
           <div className="v3d-foot">
             <span className="small muted" data-testid="v3d-note">
               화살표 최대 = {f3(fref)} N · 길이 ∝ |F| (최소 길이 제한)
-              {mode.kind === "cluster" ? " · 군집 모드: ΣF ≈ 0 (자기평형)" : ""}
+              {ao ? " · 영역 합력" : mode.kind === "cluster" ? " · 군집 모드: ΣF ≈ 0 (자기평형)" : ""}
             </span>
             {field && (
               <ColorLegend
                 kind="zero"
-                label={unit === "mm" ? options?.dispLabel ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
+                label={fo ? fo.label : unit === "mm" ? options?.dispLabel ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
                 range={legend.range}
                 manual={legend.manual}
                 gradient={BLUES_GRADIENT}

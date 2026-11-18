@@ -30,6 +30,8 @@ export interface SupportSpec {
   symbol: SupportSymbol;
   /** 구속 축 선분 (노드 양쪽, 길이 0.04·diag 씩) */
   segments: [V3, V3][];
+  /** v0.23.3 기호 색(없으면 SUPPORT_COLOR) — 지그 진단의 상대 부품별 색 */
+  color?: string;
 }
 
 export function buildSupportSpecs(supports: View3dSupport[], u: ArrayLike<number> | null, kscale: number, diag: number): SupportSpec[] {

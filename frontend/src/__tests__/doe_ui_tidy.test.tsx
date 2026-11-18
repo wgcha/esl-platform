@@ -112,14 +112,18 @@ describe("V-UI-4·5·6·7 결과 카드(한 정보 한 자리 · 상태 띠 · �
     await waitFor(() => expect(screen.getByTestId("doe-pick-head").textContent).toMatch(/^선택 안 d\d{3} · /));
   }, 20000);
 
-  it("doe-40(지그)·doe-21(LT): 상태 띠 칩 순서(지그 → 하중 전달), 칩 testid 1개씩, LT 펼침 = 진단 표", async () => {
+  it("doe-40(지그)·doe-21(LT): 상태 띠 칩 탭별(지그 탭 = 지그, 전 노드 탭 = 하중 전달), 칩 testid 1개씩, LT 펼침 = 진단 표", async () => {
     renderApp("/p/p-body/doe/doe-40", "power", (s) => s.doe.demoJig());
     await screen.findByRole("table", { name: "순위표" });
     const band = await screen.findByTestId("doe-status");
     const ids = [...band.querySelectorAll("[data-testid]")].map((e) => e.getAttribute("data-testid")).filter((x) => ["jig-line", "lt-summary", "best-clean", "best-clean-mq", "mq-base-strip", "result-warn"].includes(x!));
-    expect(ids.slice(0, 2)).toEqual(["jig-line", "lt-summary"]);
+    // v0.23.3 하중 정의 탭: 지그 탭 = 지그 칩만, 하중 전달 칩은 전 노드 탭으로(D-0.23.3-4)
+    expect(ids[0]).toBe("jig-line");
+    expect(ids).not.toContain("lt-summary");
     expect(document.querySelectorAll("[data-testid=jig-line]").length).toBe(1);
-    expect(document.querySelectorAll("[data-testid=lt-summary]").length).toBe(1);
+    fireEvent.click(screen.getByTestId("doe-load-tab").querySelector("[data-tab=full]")!);
+    await waitFor(() => expect(document.querySelectorAll("[data-testid=lt-summary]").length).toBe(1));
+    expect(document.querySelectorAll("[data-testid=jig-line]").length).toBe(0);
     const det = screen.getByTestId("lt-details") as HTMLDetailsElement;
     det.open = true;
     fireEvent(det, new Event("toggle"));

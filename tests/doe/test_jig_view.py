@@ -250,3 +250,15 @@ def test_tie_groups_in_diag(jrun):
     rg = U.read_json(os.path.join(out, "post", "view3d", dg["entries"][0]["dirs"]["fit"], stg.JIG_REGIONS_JSON))
     assert len(rg["jig_groups"]) == len(rg["jig_vertices"]) and set(rg["jig_groups"]) == set(range(len(dg["tie_groups"])))
     assert [r["part_title"] for r in rg["regions"]] == [r["part_title"] for r in dg["regions"]]
+
+
+def test_rank_sources_table_drives_views(jrun, tmp_path, monkeypatch):
+    """§2.1 출처 표: 행을 지우면 그 보기만 빠짐(호출부 분기 없음)."""
+    import shutil
+    out0, post, ids, doe = jrun
+    out = str(tmp_path / "o")
+    shutil.copytree(out0, out)
+    monkeypatch.setattr(stg, "RANK_SOURCES", tuple(s for s in stg.RANK_SOURCES if s["key"] != "full"))
+    stg.run_stage({"stage": "bd_post", "out": out, "doe": {**doe, "post_mode": "view3d"}}, lambda s: None)
+    assert set(_side(out)["rank_views"]) == {"jig"}
+    assert {s["key"] for s in stg.RANK_SOURCES} == {"jig"}
