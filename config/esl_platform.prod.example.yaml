@@ -177,7 +177,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
-  view3d: {top_k: 3}
+  view3d: {top_k: 3, jig: true, jig_support_max: 64}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
     ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
     per_esl_inline_max: 2000          # 순위 행 per_esl 상한(안 수 × ESL 수)

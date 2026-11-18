@@ -195,6 +195,47 @@ def test_case_once_contact_regions_and_outputs(case_run):
     assert "지그" in _txt(os.path.join(out, "report.html"))
 
 
+# ---------------------------------------------------------------- V-0232-3 지그 응답 3D(esl_v0232_fixes.md §4.1)
+def test_jig_view3d_outputs(case_run):
+    from esl.doe import jig as jg
+    out, post, ids = case_run
+    v, ve, vr = post["view3d_jig"], post["view3d_jig_esl"], post["view3d_jig_ref"]
+    shown = [d for d in post["view3d"] if d != "d000"]
+    assert shown and set(v) == set(shown) and all(v[d] == f"{d}_jig" for d in shown)
+    order = ["E0", "E1"]
+    z = U.load_npz(os.path.join(out, "prep", "jig.npz"))
+    cref = dict(zip([str(e) for e in z["entry_ids"].tolist()], z["C_ref"].tolist()))
+    by = {r["id"]: r for r in post["ranking"]}
+    jd = U.read_json(os.path.join(out, "prep", "jig.json"))
+    for d in shown:                                                                        # e_d = argmax C_jig/C_ref
+        want = max(order, key=lambda e: (by[d]["C_jig"][e] / cref[e], -order.index(e)))
+        assert ve[d] == want
+        man = U.read_json(os.path.join(out, "post", "view3d", v[d], "manifest.json"))
+        assert man["esl_run_id"] == want
+        assert {s["dof"] for s in man["supports"]} == {"123"} and len(man["supports"]) == min(jd["fix"]["n_jig"], 64)
+        # 같은 하중·같은 지그 재풀이 u 와 일치(u_max)
+        mesh = dict(stg.sc.load_base(os.path.join(out, "prep"))[0].mesh)
+        mesh["x0"] = stg.ev.load_design(os.path.join(out, "run", "designs", d))["x"]
+        basis = stg._jig_basis_of(z, int(z["a"].shape[1]))
+        F = jg.forces(basis, z["a"][[str(e) for e in z["entry_ids"].tolist()].index(want)], z["node_id"].size)
+        u = jg.design_response(mesh, z["jig_idx"], [(want, F)], {"backend": "superlu"}, keep_u=True)["rows"][0]["u"]
+        assert man["ranges"]["u_max"] == pytest.approx(float(np.linalg.norm(u, axis=1).max()), rel=1e-6)
+    assert set(vr) == set(ve.values())
+    for e, name in vr.items():
+        assert re.fullmatch(r"d000_jig_e\d\d", name) and name == f"d000_jig_e{order.index(e):02d}"
+        assert U.read_json(os.path.join(out, "post", "view3d", name, "manifest.json"))["esl_run_id"] == e
+    assert post["view3d"] == ["d000"] + [x["id"] for x in post["ranking"]][:len(post["view3d"]) - 1]   # 기존 목록 불변
+
+
+def test_jig_view3d_off_by_config(tmp_path):
+    mesh, doe = build_same(tmp_path)
+    doe["cfg"] = {**CFG_FULL, "bead_doe": {"enabled": True, "view3d": {"jig": False}}}
+    out, post, ids = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap())
+    assert post["jig"]["status"] in ("ok", "poor")
+    assert not {"view3d_jig", "view3d_jig_esl", "view3d_jig_ref"} & set(post)
+    assert not [n for n in os.listdir(os.path.join(out, "post", "view3d")) if "jig" in n]
+
+
 def test_metric_solve_still_computes_jig(tmp_path):
     mesh, doe = build_same(tmp_path)
     out, post, ids = run(str(tmp_path / "o"), doe, mesh, rank=rank_snap(metric="solve"))
@@ -237,6 +278,7 @@ def test_legacy_snapshots_have_no_jig(tmp_path):
     mesh, doe = build_same(tmp_path / "n")
     out, post, ids = run(str(tmp_path / "n" / "o"), doe, mesh)                               # (a) rank 없음
     assert not os.path.exists(os.path.join(out, "prep", "jig.json")) and "jig" not in post and "metric" not in post
+    assert "view3d_jig" not in post and not [n for n in os.listdir(os.path.join(out, "post", "view3d")) if "jig" in n]
     head, _ = _csv(out)
     assert not set(stg.JIG_CSV_COLS) & set(head)
     assert all("C_jig" not in p for p in U.read_json(os.path.join(out, "run", "designs", "d000", "result.json"))["per_esl"])

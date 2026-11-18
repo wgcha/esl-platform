@@ -1686,14 +1686,28 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         # v0.20.0 LT-11: 복제 = 원 스터디의 method·cell_size_mm·support·region(+work·지지 허용) 유지, diag 만 지금 설정.
         # 옛 스냅샷(키 없음)은 키를 주입하지 않음 — 복제도 legacy 그대로(이어하기 해시·바이트 동일 경로 보존)
         d["load_transfer"]["diag"] = copy.deepcopy(cfg(ctx)["load_transfer"]["diag"])
+    inputs_new = dict(s.get("inputs") or {})
+    rank_warns = []
+    if isinstance(d.get("rank"), dict):
+        # v0.23.2 D-0.23.2-1: 순위 설정 = 지금 설정(평가·후처리 전용 — 행렬·미리보기·selection 무영향, 새 폴더라 이어하기 무관).
+        # 옛 스냅샷(rank 없음, v0.20.0 이전)은 주입하지 않음(load_transfer legacy 와 짝)
+        new_rank = rank_snapshot(cfg(ctx))
+        if new_rank != d["rank"]:
+            om, nm = d["rank"].get("metric", "solve"), new_rank["metric"]
+            add = ", 지그 계산 추가" if "jig" in new_rank and "jig" not in d["rank"] else ""
+            rank_warns.append({"code": "RANK_REFRESHED",
+                               "message": f"순위 설정을 지금 설정으로 갱신했습니다(원 스터디 순위 지표 {om} → {nm}{add})"})
+        d["rank"] = new_rank
+        inputs_new["rank_metric"] = new_rank["metric"]
     new_title = (title or "").strip() or f"{s['title']} (복제)"[:200]
     d.update(id=nid, title=new_title, created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
              cfg=_snapshot_cfg(ctx), core=copy.deepcopy(ctx.config.core or {}))
     params = {"bead_doe_id": nid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{nid}", "doe": d,
-              "warnings": list(prep_job["params"].get("warnings") or []) + sel_warns}
+              "warnings": [w for w in prep_job["params"].get("warnings") or []               # 앞 복제의 갱신 경고는 물려주지 않음
+                           if not (isinstance(w, dict) and w.get("code") == "RANK_REFRESHED")] + sel_warns + rank_warns}
     return _insert_study_job(ctx, principal, sid=nid, project_id=s["project_id"], scenario=s["scenario"],
                              title=new_title, entry_ids=list(s["entry_ids"]), base_db=s.get("base"),
-                             inputs=dict(s.get("inputs") or {}), params=params, warns=sel_warns, selection=sel_copy)
+                             inputs=inputs_new, params=params, warns=sel_warns + rank_warns, selection=sel_copy)
 
 
 # 연구 진행 순서(phase) — 오래된 작업 재시도·등록이 연구를 되돌리지 않게(검증 지적)
@@ -1762,6 +1776,17 @@ def _rank_snapshot_out(ctx: AppContext, sid: str) -> dict[str, Any] | None:
     if not isinstance(snap, dict) or "metric" not in snap:
         return None
     return {k: snap.get(k) for k in ("metric", "lin_form", "lin_valid", "imbalance_warn")}
+
+
+def _plan_sm_jig(s: dict[str, Any]) -> str | None:
+    """계획 표 열 sm_jig(시나리오 이름 분기 없음 — transfer_plan.plan_for). 모르는 조합 = None."""
+    from ...core.opt_core import EslError, doe_transfer_plan as tp
+
+    try:
+        sb = (s.get("inputs") or {}).get("select_base")
+        return tp.plan_for(s["scenario"], sb if sb in ("mesh", "step") else "case")["sm_jig"]   # 코어 select_base() 와 같은 기본
+    except EslError:
+        return None
 
 
 def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score") -> dict[str, Any]:
@@ -1855,7 +1880,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
     if isinstance(r.get("jig"), dict):                        # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null)
         out["jig"] = r["jig"]
-    for k in ("view3d_ref", "view3d_esl"):
+    else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가
+        out["jig_on_clone"] = out["rank"] is not None and _plan_sm_jig(s) == "base"
+    for k in ("view3d_ref", "view3d_esl", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}
     return _jsonable(out)

@@ -806,3 +806,30 @@ def test_support_spread_clustered_boss():
     far = sj.jig_of(sj.tie_groups(mesh))
     assert jig.support_spread(X, far)["tie_spread"] > 0.02
     assert jig.support_spread(X, boss[:1])["tie_spread"] is None
+
+
+# ---------------------------------------------------------------- V-0232-4 지그 3D 보조(esl_v0232_fixes.md §4.1)
+def test_support_sample_farthest_point_deterministic():
+    from esl.doe import jig as jg
+    x = np.array([[0.0, 0, 0], [1, 0, 0], [10, 0, 0], [5, 0, 0], [0, 7, 0], [2, 2, 0]])
+    J = np.array([5, 0, 1, 2, 3, 4])
+    s = jg.support_sample(x, J, 3)
+    assert s.tolist() == [0, 2, 4]                                  # 첫 = 최소 인덱스, 다음 = 가장 먼 점(10,0,0), 그다음 (0,7,0)
+    assert jg.support_sample(x, J, 3).tolist() == s.tolist()
+    assert jg.support_sample(x, J, 10).tolist() == [0, 1, 2, 3, 4, 5]   # m ≥ |J| = 전부(정렬)
+    assert jg.support_sample(x, J, 0).size == 0 and jg.support_sample(x, [], 3).size == 0
+
+
+def test_design_response_keep_u_additive():
+    from esl.doe import jig as jg
+    import synth_sm as ss
+    mesh = ss.plate(8, 6, 300.0, 200.0, 1.0, 0.0, 0)
+    n = mesh["x0"].shape[0]
+    J = np.array([0, 1, 2, n - 1, n - 2, n - 3])
+    F = np.zeros((n, 3))
+    F[n // 2, 1] = 1.0
+    a = jg.design_response(mesh, J, [("e", F)], {"backend": "superlu"})
+    b = jg.design_response(mesh, J, [("e", F)], {"backend": "superlu"}, keep_u=True)
+    assert a["rows"][0]["u"] is None and b["rows"][0]["u"].shape == (n, 3)
+    assert a["rows"][0]["C_jig"] == b["rows"][0]["C_jig"] and a["rows"][0]["umax_jig"] == b["rows"][0]["umax_jig"]
+    assert float(np.sum(F * b["rows"][0]["u"])) == pytest.approx(b["rows"][0]["C_jig"], rel=1e-12)

@@ -915,13 +915,33 @@ def fit_report(u_fit, u_tgt, fit_mask, weights, basis, a, *, jig_idx, active_tol
 
 
 # ====================================================================== (7) 설계 비교
-def design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None) -> dict:
-    """안 d: K_d(안 좌표)·같은 J·같은 F_i(하중 제어 — 모드 하중도 기준 고정 벡터, 재계산 없음) → respond 행 + 통계."""
+def design_response(mesh, jig_idx, loads, solver_cfg, *, umax_mask=None, keep_u=False) -> dict:
+    """안 d: K_d(안 좌표)·같은 J·같은 F_i(하중 제어 — 모드 하중도 기준 고정 벡터, 재계산 없음) → respond 행 + 통계.
+    keep_u = 행에 u (N,3)(v0.23.2 지그 3D — 기본 False 는 이전과 같음)."""
     t0 = time.monotonic()
     h = factor(mesh, jig_idx, solver_cfg)
-    rows = respond(h, loads, umax_mask=umax_mask)
+    rows = respond(h, loads, umax_mask=umax_mask, keep_u=keep_u)
     return {"rows": rows, "stats": {"seconds": time.monotonic() - t0, "n_solves": int(h.n_solves),
                                     "backend": str(h.model.stats.get("backend"))}}
+
+
+def support_sample(x, jig_idx, m: int) -> np.ndarray:
+    """v0.23.2 지그 3D tie 마커(표시만): 지그 노드에서 최원점 샘플링 min(|J|, m) 개 — 첫 점 = 가장 작은 노드 인덱스, 이후 고른 점들까지
+    최소 거리가 최대인 점(동률 = 작은 인덱스). 반환 = 노드 인덱스(고른 순서). 결정적."""
+    J = np.unique(np.asarray(jig_idx, dtype=np.int64))
+    m = int(m)
+    if m <= 0 or J.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    if J.size <= m:
+        return J
+    P = np.asarray(x, dtype=np.float64)[J]
+    pick = [0]
+    d = np.linalg.norm(P - P[0], axis=1)
+    for _ in range(m - 1):
+        k = int(np.argmax(d))                       # argmax = 첫 최대(작은 인덱스 — J 정렬)
+        pick.append(k)
+        d = np.minimum(d, np.linalg.norm(P - P[k], axis=1))
+    return J[np.asarray(pick, dtype=np.int64)]
 
 
 def hash_view(jig_cfg: dict) -> dict:

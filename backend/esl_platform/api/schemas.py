@@ -1972,6 +1972,12 @@ class DoeResultOut(_Out):
     jig: "DoeJigOut | None" = None
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None
+    # v0.23.2 지그 3D(esl_v0232_fixes.md §4): 지그 응답 변위장 view3d 폴더 {did: "<did>_jig"}·{did: entry_id}·{entry_id: "d000_jig_e<kk>"}
+    # (지그 계산된 새 결과만 — 없으면 null). jig_on_clone = 지그 블록 없는 결과에서 "복제하면 지그 계산" 여부(블록 있으면 null)
+    view3d_jig: dict[str, str] | None = None
+    view3d_jig_esl: dict[str, str] | None = None
+    view3d_jig_ref: dict[str, str] | None = None
+    jig_on_clone: bool | None = None
 
 
 class DoePerEslDesign(_Out):
