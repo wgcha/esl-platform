@@ -150,21 +150,25 @@ def test_v0240_i_inertia_toggle_and_density(case):
 
 
 def test_v0240_grades_and_fint():
+    """v0.24.0 보완(D-0.24.0-BF-12): 경계력 등급은 접촉력 전용 — FINT 가 있어도 contact, FINT 만 = none(내력 ESL 은 별도 출처)."""
     n = 4
     z = np.zeros((n, 3))
     assert bf.grade_of({"cont", "cont2", "acc"}) == "full"
-    assert bf.grade_of({"cont", "fint"}) == "fint"
+    assert bf.grade_of({"cont", "fint"}) == "contact"
+    assert bf.grade_of({"fint"}) == "none" and bf.fint_grade_of({"fint"}) == "fint" and bf.fint_grade_of({"cont"}) == "none"
     assert bf.grade_of({"cont", "acc", "mass"}) == "contact"
     assert bf.grade_of({"acc", "mass"}) == "none"
     with pytest.raises(EslError) as e:
         bf.assemble({"acc": z}, None)
     assert e.value.code == "BF_NO_DATA"
+    with pytest.raises(EslError):
+        bf.assemble({"fint": z}, None)
     Fi = np.arange(12.0).reshape(n, 3)
-    a = bf.assemble({"fint": Fi}, None, u_rel=-Fi)                       # 일 양수 규칙 → s = −1
-    assert a["grade"] == "fint" and a["fint_sign"] == -1.0 and a["fint_sign_source"] == "work_positive"
-    assert bf.LIMIT_DECOMP in a["limits"]
-    a2 = bf.assemble({"fint": Fi}, None, signs={"fint": 1})
-    assert a2["fint_sign_source"] == "config" and np.array_equal(a2["F"], Fi)
+    a = bf.assemble({"cont": Fi, "fint": Fi}, None, use_inertia=False)          # contact: FINT 검산 없음
+    assert a["grade"] == "contact" and a["fint_sign"] is None and a["fint_check_rel"] is None
+    assert np.array_equal(a["F"], Fi)
+    assert bf.fint_sign_of(Fi, "auto", u_rel=-Fi) == (-1.0, "work_positive")   # 일 양수 규칙 → s = −1
+    assert bf.fint_sign_of(Fi, 1) == (1.0, "config")
 
 
 def test_v0240_module_independent():
@@ -224,5 +228,4 @@ def test_v0240_sign_suspect(case):
         # 진단만: 설정 부호대로 조립한 결과는 그대로
         ref = bf.assemble(data, c["m"], use_inertia=True, signs={"cont": -1, "cont2": -1})["F"]
         assert np.array_equal(bad["F_raw"], ref)
-    only = bf.build(c["X"], None, {"fint": -c["F_true"]}, c["m"], use_inertia=False)["doc"]
-    assert only["grade"] == "fint" and only["sign_check"] is None
+    assert bf.sign_check(c["X"], {"fint": -c["F_true"]}, c["m"], use_inertia=False) is None   # 접촉력 없음 = 해당 없음

@@ -23,7 +23,7 @@ CFG64_TEXT = open(CFG, encoding="utf-8").read().replace("disp_precision: float32
 A0 = np.array([300.0, -9810.0 * 150.0, 2.0e5])           # 강체 감속(가속도) — 관성 이완이 지움
 
 
-def _add_bforce(c, csv_dir):
+def _add_bforce(c, csv_dir, fint_sign=None):
     done_p = os.path.join(csv_dir, "done.json")
     done = json.load(open(done_p, encoding="utf-8"))
     D = list(done["frames_D"])
@@ -35,7 +35,7 @@ def _add_bforce(c, csv_dir):
     assert np.allclose(model.x0, X0)
     Fi1, Fi2 = c["F_app"] + c["R"], c["F2"] + c["R2"]     # 내력 = K u (지지 반력 포함 — 자기평형)
     axis = [0.3, -0.5, 0.8]
-    rows_c, rows_a = [], []
+    rows_c, rows_a, rows_f = [], [], []
     for k in D:
         Q = synth_case.rot(axis, np.radians(25.0) * k / synth_case.T_STAR_FRAME)
         Fint = (synth_case.A_T[k] * Fi1 + synth_case.B_T[k] * Fi2) @ Q.T
@@ -44,6 +44,12 @@ def _add_bforce(c, csv_dir):
         for i, n in enumerate(c["node_id"]):
             rows_c.append(f"{k},{n},{float(cont[i, 0])!r},{float(cont[i, 1])!r},{float(cont[i, 2])!r}")
             rows_a.append(f"{k},{n},{float(acc[i, 0])!r},{float(acc[i, 1])!r},{float(acc[i, 2])!r}")
+            if fint_sign is not None:                     # v0.24.0 보완: FINT(부호 반전 가능 — auto 복원 시험)
+                fv = fint_sign * Fint[i]
+                rows_f.append(f"{k},{n},{float(fv[0])!r},{float(fv[1])!r},{float(fv[2])!r}")
+    if rows_f:
+        with open(os.path.join(csv_dir, "bf_fint.csv"), "w", encoding="utf-8") as fh:
+            fh.write("frame_index,node_id,x,y,z\n" + "\n".join(rows_f) + "\n")
     with open(os.path.join(csv_dir, "bf_cont.csv"), "w", encoding="utf-8") as fh:
         fh.write("frame_index,node_id,x,y,z\n" + "\n".join(rows_c) + "\n")
     with open(os.path.join(csv_dir, "bf_acc.csv"), "w", encoding="utf-8") as fh:
@@ -52,7 +58,8 @@ def _add_bforce(c, csv_dir):
     done["bforce"] = {"on": True, "frames": D, "kinds": {
         "cont": {"type": "Contact Forces", "comps": ["X", "Y", "Z"], "rows": len(rows_c)},
         "acc": {"type": "Acceleration", "comps": ["X", "Y", "Z"], "rows": len(rows_a)},
-        "cont2": nul, "mass": nul, "fint": nul}}
+        "cont2": nul, "mass": nul,
+        "fint": nul if not rows_f else {"type": "Internal Forces", "comps": ["X", "Y", "Z"], "rows": len(rows_f)}}}
     json.dump(done, open(done_p, "w", encoding="utf-8"))
     return m
 
@@ -65,9 +72,12 @@ def runs(tmp_path_factory):
     open(cfg, "w", encoding="utf-8").write(CFG64_TEXT)
     plain = os.path.join(root, "in", "csv_plain")
     shutil.copytree(c["csv"], plain)
+    fi = os.path.join(root, "in", "csv_fint")
+    shutil.copytree(c["csv"], fi)
     m = _add_bforce(c, c["csv"])
+    _add_bforce(c, fi, fint_sign=-1.0)                    # 접촉력 + 부호 반전 FINT(V-0240-F-c·e)
     outs = {}
-    for name, csv in (("bf", c["csv"]), ("plain", plain)):
+    for name, csv in (("bf", c["csv"]), ("plain", plain), ("fi", fi)):
         out = os.path.join(root, "out_" + name)
         pipeline.run(cfg, c["rad"], csv, out, stage="extract", echo=lambda *_: None)
         pipeline.run(cfg, c["rad"], csv, out, stage="tstar", echo=lambda *_: None)
@@ -120,3 +130,30 @@ def test_v0240_j_no_data_and_full_esl_unchanged(runs):
     assert "bforce" not in sa
     for k in ("forces", "kabsch", "supports", "frame"):
         assert sa[k] == sb[k], k
+
+
+def test_v0240_f_e_bforce_contact_with_fint_and_fint_source(runs):
+    """V-0240-F-e·c·h: FINT 가 있어도 경계력 = 접촉력 기반(contact, 같은 하중), 내력 = s·FINT(부호 반전 → auto s = −1 복원)."""
+    a = _j(os.path.join(runs["bf"], "04_esl", "bforce.json"))
+    b = _j(os.path.join(runs["fi"], "04_esl", "bforce.json"))
+    assert b["grade"] == "contact" and b["formula"] == a["formula"] and b["fint_check_rel"] is None
+    fa = np.load(os.path.join(runs["bf"], "04_esl", "bforce.npz"))["f"]
+    fb = np.load(os.path.join(runs["fi"], "04_esl", "bforce.npz"))["f"]
+    assert np.allclose(fa, fb, rtol=0, atol=1e-9 * np.abs(fa).max())
+    f = _j(os.path.join(runs["fi"], "04_esl", "fint.json"))
+    assert f["schema"] == "esl/bforce/1" and f["source"] == "fint" and f["grade"] == "fint"
+    assert f["signs"]["fint"] == -1.0 and f["fint_sign_source"] == "work_positive"
+    assert f["fint"]["residual"]["force_rel"] < 1e-9 and f["fint"]["unbalanced"] is False
+    assert f["fint"]["balance"] == "none" and f["fint"]["balance_applied"] == "none" and f["mass_source"] is None
+    assert f["fint"]["shared_nodes"]["status"] == "ok"
+    assert f["recon"]["status"] == "ok" and f["recon"]["mac"] > 0.999 and abs(f["recon"]["umax_err"]) < 0.01
+    z = np.load(os.path.join(runs["fi"], "04_esl", "fint.npz"))
+    assert np.allclose(z["f"], fb, rtol=0, atol=1e-6 * np.abs(fb).max())      # 같은 내력(관성 이완 전 접촉 − 관성 = 내력)
+    st = _j(os.path.join(runs["fi"], "run.json"))["stages"]["esl"]["summary"]
+    assert st["fint"]["grade"] == "fint" and st["fint"]["unbalanced"] is False and st["fint"]["sign"] == -1.0
+    assert st["plastic"]["status"] in ("ok", "none") and f["plastic"] == st["plastic"] and b["plastic"] == st["plastic"]
+    # FINT 없는 추출 = fint.json none(사유), 경계력 자료 자체가 없는 추출 = 쓰지 않음
+    n = _j(os.path.join(runs["bf"], "04_esl", "fint.json"))
+    assert n["grade"] == "none" and n["code"] == "FINT_NO_DATA" and "/H3D/NODA/FINT" in n["reason"]
+    assert not os.path.isfile(os.path.join(runs["plain"], "04_esl", "fint.json"))
+    assert _j(os.path.join(runs["plain"], "run.json"))["stages"]["esl"]["summary"]["fint"]["code"] == "FINT_NO_DATA"

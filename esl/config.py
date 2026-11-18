@@ -339,6 +339,11 @@ SCHEMA: dict[str, Any] = {
         "recon_umax_err_max": _num(0.0, lo_open=True),
         "reaction_warn_rel": _num(0.0, lo_open=True),
         "fint_check_warn_rel": _num(0.0, lo_open=True),
+        # v0.24.0 보완(esl_fint.md §9): 내력 ESL·소성 진단
+        "fint": {"enabled": _bool, "balance": _enum("none", "inertia_relief"),
+                 "unbalanced_force_rel": _num(0.0, lo_open=True), "unbalanced_moment_rel": _num(0.0, lo_open=True),
+                 "shared_nodes": _bool},
+        "plastic_eps_min": _num(0.0),
     },
 }
 
@@ -364,6 +369,11 @@ BFORCE_DEFAULTS = {
     "use_inertia": True, "balance": "inertia_relief", "signs": {"cont": 1, "cont2": 1, "fint": "auto"},
     "default_rho": 7.85e-9, "g_mm_s2": 9810.0, "recon_mac_min": 0.9, "recon_umax_err_max": 0.2,
     "reaction_warn_rel": 1e-3, "fint_check_warn_rel": 0.05,
+    # v0.24.0 보완(esl_fint.md §9 — D-0.24.0-BF-13·14·17): 내력 ESL(F = s·FINT, 균형 기본 none — 잔차 허용치 초과 때만
+    # inertia_relief 옵션, 공유 노드 deck 진단), 소성 진단 문턱(εᵖ > 이 값 = 소성 요소)
+    "fint": {"enabled": True, "balance": "none", "unbalanced_force_rel": 1e-3, "unbalanced_moment_rel": 1e-3,
+             "shared_nodes": True},
+    "plastic_eps_min": 0.002,
 }
 # v0.10.0 ② 3-2-1 자동 선택 품질 검사(계약 esl_menu_restructure.md §5.2·§10, 기준값 임시). 기본값 단일 출처 —
 # 설정 파일에 support.auto_check 가 없으면 이 값(support_check_settings), cfg 에는 주입하지 않음(설정 sha256·보고서 불변).
@@ -389,7 +399,7 @@ OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumula
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
                            "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS),
                            *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
-                           "bforce.signs.fint"})
+                           "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"])})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 

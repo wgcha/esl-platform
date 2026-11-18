@@ -1104,8 +1104,10 @@ def stage_esl(ctx: Context) -> dict:
              f"force_rel={noise['force_rel']:.3e} (경고 >{vcfg['noise_force_rel_warn']:g}), "
              f"hotspot_strain_rel={noise['hotspot_strain_rel']:.3e} (≤{vcfg['noise_strain_rel_max']:g})")
     noise_short = {k: noise[k] for k in ("disp_precision", "delta", "n_samples", "force_rel", "hotspot_strain_rel")}
-    bshort = _bforce_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F)     # v0.24.0 경계력 ESL(기존 파일 불변 — 새 파일만)
-    return {"bforce": bshort, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
+    plastic = _plastic_diag(ctx, model, int(sel["frame_index"]))       # v0.24.0 소성 진단(esl_fint.md §4 — 계산 변경 없음)
+    bshort = _bforce_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)   # v0.24.0 경계력 ESL(기존 파일 불변 — 새 파일만)
+    fshort = _fint_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)     # v0.24.0 내력 ESL(esl_fint.md §3)
+    return {"bforce": bshort, "fint": fshort, "plastic": plastic, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
             "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
             "solver": solver_stats(sm), "strain_source": summ["strain_source"]}
@@ -1125,13 +1127,71 @@ def _bf_text(code: str, **kw) -> str:
            "BF_FINT_CHECK": "FINT 검산 상대 오차 {rel:.3g} > {th:g}",
            "BF_SIGN_SUSPECT": "CONT 부호 의심: 불평형 ‖ΣF‖/Σ‖F‖ {rel:.3g} (부호 반전 시 {rel_flip:.3g}), ā {ag} g (반전 시 {ag_flip} g) — "
                               "bead_doe.bforce.signs.cont 확인(결과는 바꾸지 않음)",
-           "BF_FAILED": "경계력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로"}.get(code, code)
+           "BF_FAILED": "경계력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로",
+           # v0.24.0 보완 내력 ESL(esl_fint.md §1·§2)
+           "FINT_UNBALANCED": "내력 합 잔차 ‖ΣF‖/Σ‖F‖ {rel:.3g} · 모멘트 {mrel:.3g} > 허용치 {tol:g} — 공유 노드 혼입·추출 누락 의심{relief}",
+           "FINT_SHARED_NODES": "대상 파트 노드 {n}개를 다른 부품 요소가 공유(파트 {parts}) — 그 노드 내력에 다른 부품 힘이 섞임(그대로 사용)",
+           "FINT_NO_MASS": "질량 없음 — 관성 이완 생략",
+           "FINT_RECON_POOR": "기준 재현 미달: MAC {mac} (기준 ≥ {mac_min:g}), umax 오차 {err} (기준 ≤ {err_max:g})",
+           "FINT_REACTION": "3-2-1 반력 합 / Σ|F| = {rel:.3g} > {th:g} (기준 형상 잔차)",
+           "FINT_FAILED": "내력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로"}.get(code, code)
     return f"{code}: " + msg.format(**kw)
 
 
-def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, sup, sm: ShellModel, F_full) -> dict:
+def _plastic_diag(ctx: Context, model: StoredModel, frame_index: int) -> dict:
+    """소성 진단(esl_fint.md §4): strain_frames.npz epsp(t*) → 면적 비율·최대(εᵖ > bforce.plastic_eps_min). 없음 = status none."""
+    from esl.mech import bforce as bfm
+    from esl.mech.mass import elem_area_normal
+    try:
+        eps_min = float(_config.bforce_settings(ctx.cfg)["plastic_eps_min"])
+        p = ctx.p(D_EXTRACT, "strain_frames.npz")
+        if not os.path.isfile(p) or ((_frames_meta(ctx).get("strain_fallback") or {}).get("epsp_available")) is False:
+            return {"status": "none"}
+        with np.load(p, allow_pickle=False) as z:
+            if "epsp" not in z.files:
+                return {"status": "none"}
+            hit = np.flatnonzero(np.asarray(z["frame_index"]).astype(np.int64) == int(frame_index))
+            if hit.size != 1:
+                return {"status": "none"}
+            ep = np.asarray(z["epsp"][int(hit[0])], dtype=np.float64)
+        A, _ = elem_area_normal(model.x0, model.conn, model.elem_type)
+        return bfm.plastic_diag(ep, A, eps_min)
+    except (EslError, OSError, KeyError, ValueError) as exc:
+        return {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def _nodal_recon(ctx: Context, bc: dict, model: StoredModel, sm: ShellModel, sup, u_rel, F_bal, doc: dict, texts: list,
+                 pre: str):
+    """기준 재현(경계력·내력 공용 — 같은 3-2-1·같은 설정): K₀ u = F_bal → 파트 전 노드 Kabsch 강체 제거 → u_rel 과 MAC·umax 오차·반력.
+    doc["recon"]·경고(<pre>_RECON_POOR·<pre>_REACTION)를 채우고 u_val(생략이면 None)을 돌려준다."""
+    from esl.mech import bforce as bfm
+    fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
+    if not fs["run"]:
+        doc["recon"] = {"status": "skipped", "reason": fs["reason"]}
+        return None
+    u6, Rr = _solver_call(ctx, sm.solve, F_bal, list(sup))
+    u_val, _, _, _ = kabsch.remove_rigid(model.x0, u6[:, :3])
+    rep = bfm.recon_report(u_rel, u_val, Rr, F_bal)
+    poor = (rep["mac"] is None or rep["mac"] < float(bc["recon_mac_min"])
+            or rep["umax_err"] is None or abs(rep["umax_err"]) > float(bc["recon_umax_err_max"]))
+    doc["recon"] = {"status": "poor" if poor else "ok", "mac_min": float(bc["recon_mac_min"]), **rep}
+    if poor:
+        doc["warnings"].append({"code": f"{pre}_RECON_POOR"})
+        texts.append(_bf_text(f"{pre}_RECON_POOR", mac="–" if rep["mac"] is None else f"{rep['mac']:.3f}",
+                              mac_min=float(bc["recon_mac_min"]),
+                              err="–" if rep["umax_err"] is None else f"{rep['umax_err']:+.1%}",
+                              err_max=float(bc["recon_umax_err_max"])))
+    if rep["reaction_rel"] > float(bc["reaction_warn_rel"]):
+        doc["warnings"].append({"code": f"{pre}_REACTION", "rel": rep["reaction_rel"]})
+        texts.append(_bf_text(f"{pre}_REACTION", rel=rep["reaction_rel"], th=float(bc["reaction_warn_rel"])))
+    return u_val
+
+
+def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, sup, sm: ShellModel, F_full,
+                plastic: dict | None = None) -> dict:
     """선택 프레임의 경계력 원자료 → 04_esl/bforce.json(esl/bforce/1)·bforce.npz + 기준 재현(같은 3-2-1). 예외는 ESL 단계를
-    실패시키지 않는다(BF_FAILED). 반환 = 단계 요약(ESL 실행 forces.bforce)."""
+    실패시키지 않는다(BF_FAILED). 반환 = 단계 요약(ESL 실행 forces.bforce). v0.24.0 보완: 접촉력 전용(FINT 는 full 검산만 —
+    D-0.24.0-BF-12), plastic = 소성 진단(json 에 그대로)."""
     from esl.mech import bforce as bfm
     from esl.mech.mass import lumped_mass
     bc = _config.bforce_settings(ctx.cfg)
@@ -1143,7 +1203,7 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
         why = "추출물에 경계력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행"
         return {"grade": "none", "code": "BF_NO_DATA", "reason": why}
     if bfm.grade_of(have) == "none":
-        why = f"접촉력·내력 결과 유형이 h3d 에 없음(있는 종류 {have})"
+        why = f"접촉력 결과 유형이 h3d 에 없음(있는 종류 {have})"
         doc = {"schema": bfm.SCHEMA, "grade": "none", "code": "BF_NO_DATA", "reason": why,
                "kinds": {k: data.get(k) is not None for k in bfm.KINDS},
                "result_types": None if xdoc is None else xdoc.get("kinds")}
@@ -1177,26 +1237,8 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
             doc["warnings"].append({"code": "BF_FINT_CHECK", "rel": doc["fint_check_rel"]})
             texts.append(_bf_text("BF_FINT_CHECK", rel=doc["fint_check_rel"], th=float(bc["fint_check_warn_rel"])))
         # 기준 재현: 같은 3-2-1 로 K₀ u = F_bal → 파트 전 노드 Kabsch 강체 제거 → u_rel 과 비교
-        fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
-        u_val = None
-        if fs["run"]:
-            u6, Rr = _solver_call(ctx, sm.solve, out["F_bal"], list(sup))
-            u_val, _, _, _ = kabsch.remove_rigid(model.x0, u6[:, :3])
-            rep = bfm.recon_report(u_rel, u_val, Rr, out["F_bal"])
-            poor = (rep["mac"] is None or rep["mac"] < float(bc["recon_mac_min"])
-                    or rep["umax_err"] is None or abs(rep["umax_err"]) > float(bc["recon_umax_err_max"]))
-            doc["recon"] = {"status": "poor" if poor else "ok", "mac_min": float(bc["recon_mac_min"]), **rep}
-            if poor:
-                doc["warnings"].append({"code": "BF_RECON_POOR"})
-                texts.append(_bf_text("BF_RECON_POOR", mac="–" if rep["mac"] is None else f"{rep['mac']:.3f}",
-                                      mac_min=float(bc["recon_mac_min"]),
-                                      err="–" if rep["umax_err"] is None else f"{rep['umax_err']:+.1%}",
-                                      err_max=float(bc["recon_umax_err_max"])))
-            if rep["reaction_rel"] > float(bc["reaction_warn_rel"]):
-                doc["warnings"].append({"code": "BF_REACTION", "rel": rep["reaction_rel"]})
-                texts.append(_bf_text("BF_REACTION", rel=rep["reaction_rel"], th=float(bc["reaction_warn_rel"])))
-        else:
-            doc["recon"] = {"status": "skipped", "reason": fs["reason"]}
+        u_val = _nodal_recon(ctx, bc, model, sm, sup, u_rel, out["F_bal"], doc, texts, "BF")
+        doc["plastic"] = plastic if plastic is not None else {"status": "none"}
         ctx.warnings += texts
         _write_json(ctx.f(d, BF_JSON), doc)
         z = {"node_id": nid, "f": out["F_bal"], "f_raw": out["F_raw"], "m": out["m"] if out["m"] is not None
@@ -1221,6 +1263,101 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
             "reaction_rel": rc.get("reaction_rel"), "limits": list(doc["limits"]),
             "limit_text": bfm.limit_text(doc["limits"]),
             "sign_suspect": bool((doc.get("sign_check") or {}).get("suspect"))}
+
+
+# ====================================================================== v0.24.0 내력 ESL (esl_fint.md §1~§3)
+FI_JSON, FI_NPZ = "fint.json", "fint.npz"
+FINT_NO_DATA_TEXT = "내력 출력 없음 — 낙하 Engine 에 /H3D/NODA/FINT 추가"
+
+
+def _fint_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, sup, sm: ShellModel, F_full,
+              plastic: dict | None = None) -> dict:
+    """선택 프레임 FINT → 04_esl/fint.json(esl/bforce/1 + source fint)·fint.npz + 기준 재현(같은 3-2-1). 경계력 ESL 과 독립 —
+    예외는 ESL 단계를 실패시키지 않는다(FINT_FAILED). 반환 = 단계 요약(ESL 실행 forces.fint)."""
+    from esl.mech import bforce as bfm
+    from esl.mech.mass import lumped_mass
+    from esl.rad.shared import safe_node_links
+    bc = _config.bforce_settings(ctx.cfg)
+    fc = bc["fint"]
+    if not bc["enabled"] or not fc["enabled"]:
+        return {"grade": None, "code": "FINT_DISABLED"}
+    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), int(sel["frame_index"]))
+    kinds = {k: data.get(k) is not None for k in bfm.KINDS}
+    if xdoc is None:                              # 추출물에 경계력 자료 없음 = 04_esl 에 쓰지 않음(산출물 집합 불변)
+        return {"grade": "none", "code": "FINT_NO_DATA",
+                "reason": "추출물에 경계력·내력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행"}
+    if data.get("fint") is None:
+        _write_json(ctx.f(d, FI_JSON), {"schema": bfm.SCHEMA, "source": bfm.FINT_SCHEMA_SOURCE, "grade": "none",
+                                        "code": "FINT_NO_DATA", "reason": FINT_NO_DATA_TEXT, "kinds": kinds,
+                                        "result_types": xdoc.get("kinds"), "plastic": plastic or {"status": "none"}})
+        return {"grade": "none", "code": "FINT_NO_DATA", "reason": FINT_NO_DATA_TEXT}
+    try:
+        links = {"status": "skipped"}
+        if fc["shared_nodes"]:
+            c = ctx.cfg["case"]
+            links = safe_node_links(ctx.rad, model.part_id, model.node_id, model.x0,
+                                    include_path_map=c["include_path_map"] or None,
+                                    max_include_depth=c["rad_include_max_depth"], max_line_bytes=max_line_bytes_of(c))
+        m, msrc, miss = None, None, []
+        if fc["balance"] == "inertia_relief":            # 질량은 관성 이완을 쓸 때만(h3d MASS > deck 근사)
+            if data.get("mass") is not None:
+                m, msrc = data["mass"], "h3d"
+            else:
+                rho_e, miss = bfm.rho_per_elem(model.elem_mid, model.mats, float(bc["default_rho"]))
+                m = lumped_mass({"x0": model.x0, "conn": model.conn, "elem_type": model.elem_type,
+                                 "thickness": model.thickness}, rho_e)
+                msrc = "deck"
+        out = bfm.fint_build(model.x0, u, data["fint"], m, mass_source=msrc, R=R, u_rel=u_rel, sign=bc["signs"]["fint"],
+                             balance=fc["balance"], tol_force=float(fc["unbalanced_force_rel"]),
+                             tol_moment=float(fc["unbalanced_moment_rel"]), links=links, kinds=kinds,
+                             g=float(bc["g_mm_s2"]), F_full=F_full)
+        doc = out["doc"]
+        nid = model.node_id
+        doc["frame"] = {"frame_index": int(sel["frame_index"]), "time": float(sel["time"])}
+        doc["rot_deg"] = float(kabsch.rotation_deg(R))
+        doc["result_types"] = xdoc.get("kinds")
+        doc["max_f"] = {"node_id": int(nid[doc["max_f"]["idx"]]), "mag": doc["max_f"]["mag"]}
+        if msrc == "deck" and doc["fint"]["balance_applied"] == "inertia_relief":
+            doc["rho_default_mats"] = miss
+        texts = []
+        for w in doc["warnings"]:
+            if w["code"] == bfm.CODE_UNBAL:
+                texts.append(_bf_text(w["code"], rel=w["force_rel"], mrel=w["moment_rel"], tol=w["tol_force"],
+                                      relief=" — 관성 이완 적용" if doc["fint"]["balance_applied"] == "inertia_relief" else ""))
+            elif w["code"] == bfm.CODE_SHARED:
+                texts.append(_bf_text(w["code"], n=w["n"], parts=",".join(sorted((w.get("by_part") or {}).keys()))))
+            elif w["code"] == "FINT_NO_MASS":
+                texts.append(_bf_text(w["code"]))
+        u_val = _nodal_recon(ctx, bc, model, sm, sup, u_rel, out["F_bal"], doc, texts, "FINT")
+        doc["plastic"] = plastic if plastic is not None else {"status": "none"}
+        ctx.warnings += texts
+        _write_json(ctx.f(d, FI_JSON), doc)
+        z = {"node_id": nid, "f": out["F_bal"], "f_raw": out["F_raw"],
+             "m": out["m"] if out["m"] is not None else np.zeros(nid.size)}
+        if u_val is not None:
+            z["u_val"] = u_val
+        np.savez_compressed(ctx.f(d, FI_NPZ), **z)
+    except Exception as exc:                                    # noqa: BLE001 — 내력 ESL 때문에 ESL 단계 실패 금지
+        err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+        ctx.warnings.append(_bf_text("FINT_FAILED", err=err))
+        _write_json(ctx.f(d, FI_JSON), {"schema": bfm.SCHEMA, "source": bfm.FINT_SCHEMA_SOURCE, "grade": "fint",
+                                        "code": "FINT_FAILED", "reason": err})
+        return {"grade": "fint", "code": "FINT_FAILED", "reason": err}
+    rc = doc.get("recon") or {}
+    fi = doc["fint"]
+    ctx.echo(f"[esl] 내력 ESL ({doc['formula']}, s {doc['signs']['fint']:+g} {doc['fint_sign_source']}), Σ|F| {doc['sum_abs']:.3e}, "
+             f"잔차 {fi['residual']['force_rel']:.2e}/{fi['residual']['moment_rel']:.2e}, 공유 노드 "
+             f"{(fi['shared_nodes'] or {}).get('n_shared', '–')}, 재현 {rc.get('status')} MAC {rc.get('mac')}")
+    return {"grade": "fint", "sum_abs": doc["sum_abs"], "sum_abs_ratio_full": doc["sum_abs_ratio_full"],
+            "abar_g": doc["abar_g"], "corr_rel": doc["corr_rel"],
+            "eq_force_rel": doc["eq_raw"]["ref"]["force_rel"], "eq_moment_rel": doc["eq_raw"]["ref"]["moment_rel"],
+            "res_force_rel": fi["residual"]["force_rel"], "res_moment_rel": fi["residual"]["moment_rel"],
+            "unbalanced": fi["unbalanced"], "balance_applied": fi["balance_applied"],
+            "shared_status": (fi["shared_nodes"] or {}).get("status"),
+            "n_shared": (fi["shared_nodes"] or {}).get("n_shared"), "n_rot": fi["rot_nodes"]["n"],
+            "recon": rc.get("status"), "mac": rc.get("mac"), "umax_err": rc.get("umax_err"),
+            "reaction_rel": rc.get("reaction_rel"), "limits": list(doc["limits"]),
+            "limit_text": bfm.limit_text(doc["limits"]), "sign": doc["signs"]["fint"]}
 
 
 # ====================================================================== S5 validate
