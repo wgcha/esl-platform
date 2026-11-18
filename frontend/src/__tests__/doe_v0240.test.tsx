@@ -43,10 +43,16 @@ describe("경계력 탭 순수 함수", () => {
     expect(t.line).toContain("tie 체결력 미포함");
     expect(t.warn).toBe(true);
     expect(t.title).toContain("ā");
+    // 재현 MAC 경고 기준은 응답의 recon_mac_min(하드코딩 0.9 아님)
+    const mk = (min: number | null, mac: number) => ({ ...ok.bforce!, limits: [], limit_text: [], recon_mac_min: min, entries: [{ ...ok.bforce!.entries![0], recon_mac: mac }] });
+    expect(bfChipText(mk(0.95, 0.93)).warn).toBe(true);
+    expect(bfChipText(mk(0.8, 0.85)).warn).toBe(false);
+    expect(bfChipText(mk(null, 0.5)).warn).toBe(false);
+    expect(bfChipText({ ...mk(0.9, 0.99), entries: [{ ...ok.bforce!.entries![0], recon_mac: 0.99, sign_suspect: true }] }).warn).toBe(true);
     expect(v3dPairCondText("경계력 ESL", "contact", ["E1", "E1"])).toBe("하중: 경계력 ESL(등급 contact) · 지지: 3-2-1 · 엔트리: E1");
   });
   it("Case ESL 화면 요약 한 줄", () => {
-    const c = bforceLineText({ grade: "contact", mass_source: "deck", sum_abs: 1.5e5, sum_abs_ratio_full: 0.0031, abar_g: 41.2, corr_rel: 0.23, recon: "ok", mac: 0.962, umax_err: -0.041, reaction_rel: 2e-12, limits: ["BF_TIE_MISSING"] });
+    const c = bforceLineText({ grade: "contact", mass_source: "deck", sum_abs: 1.5e5, sum_abs_ratio_full: 0.0031, abar_g: 41.2, corr_rel: 0.23, recon: "ok", mac: 0.962, umax_err: -0.041, reaction_rel: 2e-12, limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"] });
     expect(c.text).toContain("등급 contact");
     expect(c.text).toContain("×0.0031");
     expect(c.text).toContain("ā = 41.2 g");
@@ -54,6 +60,11 @@ describe("경계력 탭 순수 함수", () => {
     expect(c.text).toContain("tie 체결력 미포함");
     expect(c.warn).toBe(true);
     expect(bforceLineText({ grade: "none", code: "BF_NO_DATA" }).text).toContain("자료 없음");
+    // 한계 문구는 백엔드 limit_text 그대로(화면 표 없음), 부호 의심 표시
+    const w = bforceLineText({ grade: "contact", recon: "ok", mac: 0.97, limits: ["BF_TIE_MISSING"], limit_text: ["백엔드 문구"], sign_suspect: true });
+    expect(w.text).toContain("백엔드 문구");
+    expect(w.text).toContain("CONT 부호 의심");
+    expect(w.warn).toBe(true);
   });
 });
 

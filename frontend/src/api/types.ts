@@ -654,6 +654,8 @@ export interface EslBforceSummary {
   umax_err?: number | null;
   reaction_rel?: number | null;
   limits?: string[];
+  limit_text?: string[];
+  sign_suspect?: boolean | null;
 }
 
 export interface EslRunOut {
@@ -3310,6 +3312,7 @@ export interface DoeBforceEntryOut {
   eq_moment_rel?: number | null;
   abar_g?: number | null;
   corr_rel?: number | null;
+  sign_suspect?: boolean | null;
   recon_mac?: number | null;
   recon_umax_err?: number | null;
   reaction_rel?: number | null;
@@ -3325,6 +3328,7 @@ export interface DoeBforceOut {
   entries?: DoeBforceEntryOut[];
   limits?: string[];
   limit_text?: string[];
+  recon_mac_min?: number | null;
   n_designs?: number;
   n_failed?: number;
 }

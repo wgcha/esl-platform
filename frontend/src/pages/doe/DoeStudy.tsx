@@ -744,7 +744,7 @@ export function bfChipText(b: NonNullable<DoeResultOut["bforce"]>): { line: stri
   const title = ents
     .map((e) => `${e.label}: 등급 ${BF_GRADE_TEXT[e.grade] ?? e.grade}, 질량 ${e.mass_source ?? "–"}, ā ${e.abar_g == null ? "–" : e.abar_g.toFixed(1)} g, 평형 보정 ${e.corr_rel == null ? "–" : `${(e.corr_rel * 100).toFixed(1)}%`}, 불평형(힘) ${e.eq_force_rel == null ? "–" : e.eq_force_rel.toExponential(2)}, 재현 MAC ${e.recon_mac == null ? "–" : e.recon_mac.toFixed(3)}, 반력 ${e.reaction_rel == null ? "–" : e.reaction_rel.toExponential(1)}`)
     .join("\n");
-  return { line, title, warn: (b.limits ?? []).length > 0 || (mac != null && mac < 0.9) };
+  return { line, title, warn: (b.limits ?? []).length > 0 || ents.some((e) => e.sign_suspect === true) || (mac != null && b.recon_mac_min != null && mac < b.recon_mac_min) };
 }
 
 function BfChip({ result }: { result: DoeResultOut }) {
@@ -2013,7 +2013,8 @@ function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; 
   };
   const focusReason = focus && !ts.ok[focus] ? ts.reason[focus] : null;
   return (
-    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab" style={{ position: "relative" }}>
+    <span className="doe-load-tabwrap" style={{ position: "relative", display: "inline-flex", verticalAlign: "middle" }}>
+    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab">
       {sources.map((s, i) => {
         const ok = ts.ok[s.key];
         const why = ts.reason[s.key];
@@ -2049,13 +2050,14 @@ function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; 
           </Fragment>
         );
       })}
-      {/* 키보드 포커스 사유(비활성 탭) — 절대 위치, 높이 불변 */}
+    </div>
+      {/* 키보드 포커스 사유(비활성 탭) — .seg(overflow:hidden) 밖, 절대 위치(높이 불변) */}
       {focusReason && (
-        <span className="small warn-text" data-testid="doe-load-tab-why" role="status" style={{ position: "absolute", top: "100%", left: 0, zIndex: 5, whiteSpace: "nowrap", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 4, padding: "0 0.4rem" }}>
+        <span className="small warn-text" data-testid="doe-load-tab-why" role="status" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, whiteSpace: "nowrap", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 4, padding: "0 0.4rem" }}>
           {focusReason}
         </span>
       )}
-    </div>
+    </span>
   );
 }
 

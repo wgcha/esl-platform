@@ -975,7 +975,7 @@ export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut
   const add = { available: true, allowed: true, reason: null };
   if (kind === "none") {
     const entries = ids.map((e) => ({ entry_id: e.entry_id, label: e.label, grade: "none", limits: [], reason: "BF_NOT_FOUND: Case 에 경계력 ESL 결과가 없음 — Case 에서 h3d 추출(v0.24.0)·ESL 을 다시 실행" }));
-    return { ...res, bforce: { status: "unavailable", code: "BF_NOT_FOUND", reason: entries[0]?.reason ?? null, grade_min: "none", entries, limits: [], limit_text: [], n_designs: 0, n_failed: 0 }, bforce_add: add };
+    return { ...res, bforce: { status: "unavailable", code: "BF_NOT_FOUND", reason: entries[0]?.reason ?? null, grade_min: "none", entries, limits: [], limit_text: [], recon_mac_min: 0.9, n_designs: 0, n_failed: 0 }, bforce_add: add };
   }
   const rows = res.ranking
     .map((r, i) => {
@@ -998,12 +998,12 @@ export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut
     ve[d] = e;
     vr[e] = "d000_bf_e00";
   }
-  const entries = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, grade: "contact", mass_source: "deck", source: `/esl/cases/${e.entry_id}/runs/r1/04_esl`, eq_force_rel: 0.118 + 0.02 * k, eq_moment_rel: 0.031, abar_g: 38.5 + 4 * k, corr_rel: 0.21 + 0.03 * k, recon_mac: 0.94 - 0.02 * k, recon_umax_err: -0.06 - 0.01 * k, reaction_rel: 3e-12, limits: ["BF_TIE_MISSING"], reason: null }));
+  const entries = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, grade: "contact", mass_source: "deck", source: `/esl/cases/${e.entry_id}/runs/r1/04_esl`, eq_force_rel: 0.118 + 0.02 * k, eq_moment_rel: 0.031, abar_g: 38.5 + 4 * k, corr_rel: 0.21 + 0.03 * k, recon_mac: 0.94 - 0.02 * k, recon_umax_err: -0.06 - 0.01 * k, reaction_rel: 3e-12, sign_suspect: false, limits: ["BF_TIE_MISSING"], reason: null }));
   const sens = res.sensitivity ? { ...res.sensitivity, r2: +(res.sensitivity.r2 * 0.8).toFixed(3) } : null;
   return {
     ...res,
     rank_views: { ...(res.rank_views ?? {}), bforce: { metric: "bf", C_ref: +(res.C_ref * 0.0012).toFixed(4), baseline: base, n_ok: res.n_ok, n_skipped: res.n_skipped, n_failed: { ...res.n_failed, bf: 0 }, ranking: rows, per_esl_inline: true, sensitivity: sens as Record<string, unknown> | null, sensitivity_reason: res.sensitivity_reason ?? null, best_clean: res.summary?.best_clean ?? null } },
-    bforce: { status: "ok", code: null, reason: null, grade_min: "contact", entries, limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], n_designs: res.n_ok + 1, n_failed: 0 },
+    bforce: { status: "ok", code: null, reason: null, grade_min: "contact", entries, limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], recon_mac_min: 0.9, n_designs: res.n_ok + 1, n_failed: 0 },
     bforce_add: add,
     ...(shown.length ? { view3d_bf: v, view3d_bf_esl: ve, view3d_bf_ref: vr } : {}),
   };

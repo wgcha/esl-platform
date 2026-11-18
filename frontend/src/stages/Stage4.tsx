@@ -15,15 +15,13 @@ import { blockReason, eslPrereq, submitJob, useAction } from "./common";
 import { dofText } from "../lib/format";
 import { stepPath, stepState } from "../shell/StageStepper";
 
-const BF_LIMIT: Record<string, string> = { BF_TIE_MISSING: "tie 체결력 미포함 — 조립 부품 하중 누락", BF_NO_DECOMP: "내력만(분해 없음)" };
-
 /** v0.24.0 경계력 ESL 요약 한 줄(esl_bforce.md §8) — 순수 문구(시험용) */
 export function bforceLineText(b: EslBforceSummary): { text: string; warn: boolean } {
   if (!b.grade || b.grade === "none" || b.code === "BF_NO_DATA")
     return { text: "경계력 ESL: 자료 없음 — h3d 추출(v0.24.0 TCL)을 다시 실행하면 접촉력·가속도로 계산합니다", warn: false };
   if (b.code === "BF_FAILED") return { text: `경계력 ESL: 계산 실패(${b.reason ?? "–"}) — 전 노드 ESL 결과는 그대로`, warn: true };
   const f = (v: number | null | undefined, d = 2) => (v == null ? "–" : v.toFixed(d));
-  const lim = (b.limits ?? []).map((x) => BF_LIMIT[x] ?? x);
+  const lim = b.limit_text ?? b.limits ?? [];
   const parts = [
     `경계력 ESL: 등급 ${b.grade}`,
     `Σ|F| ${b.sum_abs == null ? "–" : b.sum_abs.toExponential(2)} N (전 노드 ESL 대비 ×${b.sum_abs_ratio_full == null ? "–" : b.sum_abs_ratio_full.toPrecision(2)})`,
@@ -31,7 +29,7 @@ export function bforceLineText(b: EslBforceSummary): { text: string; warn: boole
     b.recon === "skipped" ? "재현 생략(메모리)" : `재현 MAC ${f(b.mac, 3)} · umax 오차 ${b.umax_err == null ? "–" : `${(b.umax_err * 100).toFixed(1)}%`}`,
     `반력 ${b.reaction_rel == null ? "–" : b.reaction_rel.toExponential(1)}`,
   ];
-  return { text: parts.join(" · ") + (lim.length ? ` · ⚠ ${lim.join(" · ")}` : ""), warn: lim.length > 0 || b.recon === "poor" };
+  return { text: parts.join(" · ") + (lim.length ? ` · ⚠ ${lim.join(" · ")}` : "") + (b.sign_suspect ? " · ⚠ CONT 부호 의심(설정 signs.cont 확인)" : ""), warn: lim.length > 0 || b.sign_suspect === true || b.recon === "poor" };
 }
 
 function BforceLine({ b }: { b: EslBforceSummary }) {

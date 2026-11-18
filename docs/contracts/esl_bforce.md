@@ -70,7 +70,7 @@
 ### 3.5 진단 스키마 `04_esl/bforce.json` (`esl/bforce/1`, 1개)
 ```text
 { schema, grade, decomposed, formula, kinds{k: bool}, mass_source, mass_total, mass_deck_total, rho_default_mats[],
-  use_inertia, balance, signs{cont, cont2, fint}, fint_sign_source, fint_check_rel|null,
+  use_inertia, balance, signs{cont, cont2, fint}, sign_check{suspect, force_rel, force_rel_flip, abar_g, abar_g_flip}|null, fint_sign_source, fint_check_rel|null,
   frame{frame_index, time}, rot_deg,
   eq_raw {def: {sum_f, sum_m, force_rel, moment_rel}, ref: {...}}, eq_bal {ref: {...}},
   omitted_f[3], omitted_m[3], abar[6], abar_g, abar_rot, corr_rel,
@@ -79,6 +79,7 @@
   recon {status: ok|poor|skipped|failed, mac, umax_ref, umax_val, umax_err, reaction_rel, reaction_max_rel, reason?},
   limits[]: ["BF_TIE_MISSING", ...], warnings[] }
 ```
+- `sign_check`(D-0.24.0-BF-11, 진단 전용 — 결과 불변): contact·full 등급에서 접촉 항(CONT·CONT2)의 설정 부호 F 와 반전 부호 F′(관성 항은 그대로)의 불평형 `force_rel = ‖ΣF‖/Σ‖F‖`(기준 형상)·관성 이완 ā(g)를 비교. 설정 쪽 force_rel 이 더 크고 ∧(질량이 있으면) ā 도 더 크면 `suspect` + 경고 `BF_SIGN_SUSPECT`(값 4개 포함). fint 등급·접촉력 없음 = `null`. 순수 함수 `bforce.sign_check(X0, data, m_deck, *, use_inertia, signs, R, g)`, `build()` 가 호출.
 - 등급 none = `{schema, grade: "none", code: "BF_NO_DATA", reason, kinds}` 만.
 - `04_esl/bforce.npz`: `node_id`, `f`(= 풀이 하중 F_bal, 기준계), `f_raw`(전역 F), `m`, `u_val`(재현 변위, 강체 제거), 등급 none 이면 파일 없음.
 
@@ -129,10 +130,10 @@
 | 스키마 | 필드 |
 |---|---|
 | `DoeResultOut` (+) | `bforce: DoeBforceOut \| None`, `bforce_add: DoeView3dRegenOut \| None`, `view3d_bf`, `view3d_bf_esl`, `view3d_bf_ref: dict[str,str] \| None`, `rank_views.bforce: DoeRankViewOut \| None` |
-| `DoeBforceOut` | `status: str`, `code, reason: str \| None`, `grade_min: str \| None`, `entries: list[DoeBforceEntryOut]`, `limits: list[str]`, `limit_text: list[str]`, `n_designs: int`, `n_failed: int` |
-| `DoeBforceEntryOut` | `entry_id, label, grade: str`, `mass_source: str \| None`, `source: str \| None`, `eq_force_rel, eq_moment_rel, abar_g, corr_rel, recon_mac, recon_umax_err, reaction_rel: float \| None`, `limits: list[str]`, `reason: str \| None` |
+| `DoeBforceOut` | `status: str`, `code, reason: str \| None`, `grade_min: str \| None`, `entries: list[DoeBforceEntryOut]`, `limits: list[str]`, `limit_text: list[str]`(문구 원본 = `bforce.LIMIT_TEXT` 1곳), `recon_mac_min: float \| None`(재현 MAC 경고 기준 — 엔트리 Case 가 쓴 `recon.mac_min` 중 가장 엄격한 값, 없으면 설정 기본), `n_designs: int`, `n_failed: int` |
+| `DoeBforceEntryOut` | `entry_id, label, grade: str`, `mass_source: str \| None`, `source: str \| None`, `eq_force_rel, eq_moment_rel, abar_g, corr_rel, recon_mac, recon_umax_err, reaction_rel: float \| None`, `sign_suspect: bool \| None`, `limits: list[str]`, `reason: str \| None` |
 | per-esl | `?view=bforce` (사이드카 `bforce_view.json` per_esl) |
-| ESL 실행 | `EslRunOut.forces.bforce`(JSON — 스키마 변경 없음) |
+| ESL 실행 | `EslRunOut.forces.bforce`(JSON — 스키마 변경 없음; 키 `limit_text`·`sign_suspect` 추가, 화면은 문구 표를 갖지 않고 이 값을 그대로 씀) |
 
 ## 8. 화면
 - 강성 스터디 결과 카드 탭 세그먼트에 `[경계력 ESL]` 1개(높이 불변). `LOAD_SOURCES` 행 `bforce`: label 경계력 ESL, primaryFor [] (기본 탭 아님), drop = 코어 거울, warnPrefixes `BF_`, hide = 지그·전 노드 3D·블록, chips `bf`·`best_clean`, view3d `pair`(`pairKeys` = view3d_bf·view3d_bf_esl·view3d_bf_ref), unavailable = 블록 사유(데이터 등급·미계산 → "추가 계산" 안내).
@@ -175,6 +176,7 @@
 | BF-8 | rank metric `bf`(C_bf) — 옛 스냅샷 허용, 순위 밖 n_failed["bf"] |
 | BF-9 | 3D = 기존 view3d 형식 `<did>_bf`·`d000_bf_e<kk>`(하중 화살표 = 기존 manifest) |
 | BF-10 | 추가 계산 = DOE_RUN resume BD_POST + kind BFORCE·post_mode bforce, DB 무변경 |
+| BF-11 | 시나리오 이름 분기 제거(`_bf_on` 한 곳, 계획 열 bf 만), CONT 부호 점검 `sign_check`·경고 `BF_SIGN_SUSPECT`(결과 불변), 재현 MAC 기준·한계 문구는 백엔드 값 1곳(화면 하드코딩 없음), 비활성 탭 사유는 `.seg` 밖 |
 
 ## 12. 후속 (R-BF-n)
 - R-BF-1 Case 화면 경계력 3D(하중 화살표·재현 비교) — 기존 `useLoadView` 는 run 의 f_eq 고정이라 별도 경로 필요.
@@ -209,3 +211,4 @@
 - B-4 하중 찾기 일치 조건 = 노드 ID 동일 ∧ u_rel 동일(atol 1e-9·max|u|) — 같은 Case·같은 t*·같은 모델의 ESL 다시 실행이면 성립.
 - B-5 `pack_bforce` 는 CSV 형식 오류도 그 종류만 type null(추출 실패 아님).
 - B-6 Case 단계 경계력 예외·재현 미달은 ESL 단계 경고 문자열(`BF_*: …`)로, 한계(`BF_TIE_MISSING`)는 경고가 아니라 요약 줄 문구.
+- B-7 (BF-11) 비활성 탭 사유 줄(`doe-load-tab-why`)은 `.seg{overflow:hidden}` 밖 래퍼 `.doe-load-tabwrap`(relative) 안 절대 위치 — 높이 불변(2560×1440 결과 카드 높이 동일). 경고 `BF_SIGN_SUSPECT` 는 DOE 칩에서 엔트리 `sign_suspect` 로 경고색.
