@@ -27,6 +27,8 @@
 #   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (B)
 #   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
 #   disp.csv           frame_index,node_id,ux,uy,uz                     (C)
+#   bf_<kind>.csv      frame_index,node_id,x,y,z (mass: frame_index,node_id,v)  (C: frames D, v0.24.0 boundary-force ESL,
+#                      kind = cont cont2 acc mass fint; only the kinds found in the h3d, done.json "bforce")
 #   done.json          {"ok":true,"candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"frames_D",
 #                       "prev_frames" (f-1 >= 0 of each f in D),"strain_frames" (D U prev),
 #                       "hot_k","reach_rtol","passes":{...},...} or {"ok":false,"code","error","failed_step",
@@ -48,6 +50,9 @@
 #   hot_k (200, no upper cap; > 1000 warns), top_n (5), reach_rtol (1e-6), chunk (50000),
 #   elem_selection / node_selection (optional HyperView selection string, e.g. "component 12"),
 #   strain_system (elemental | analysis | global | none; default elemental).
+#   v0.24.0 boundary-force ESL: bf_on (1), bf_names_<kind> ("a|b" result type candidates: cont "Contact Forces|...",
+#   cont2, acc "Acceleration|...", mass, fint), bf_vec_comps ("X Y Z", each "X|x" candidates). A missing type is recorded
+#   as {"type":null,"reason"} in done.json bforce.kinds (never an extraction failure).
 #   -hot_k / -top_n arguments override request.txt.
 #
 # Strain source fallback (contract esl_strain_fallback.md, v0.12.1): unless strain_type or epsp_type is given

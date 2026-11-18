@@ -200,6 +200,9 @@ export function makeEslRun(id: string, caseId: string, supportSetId: string, fra
       moment_rel: 1.1e-10,
       max_f: { node_id: 3542, mag: 18420.5 },
       noise: { force_rel: 0.0042, hotspot_strain_rel: 0.0011, disp_precision: "float32" },
+      // v0.24.0 경계력 ESL 요약(contact 등급 — 현장 h3d: 접촉력·가속도만)
+      bforce: { grade: "contact", mass_source: "deck", sum_abs: 1.52e5, sum_abs_ratio_full: 0.066, abar_g: 41.2, corr_rel: 0.23, eq_force_rel: 0.118, eq_moment_rel: 0.031,
+        recon: "ok", mac: 0.962, umax_err: -0.041, reaction_rel: 2.4e-12, limits: ["BF_TIE_MISSING"] },
     },
     supports: [
       { node_id: CORNER_IDS[0], dof: "123" },

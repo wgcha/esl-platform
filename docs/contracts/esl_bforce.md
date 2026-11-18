@@ -28,7 +28,7 @@
 - 시점: 패스 C 의 후보 프레임 D(변위 `disp.csv` 와 같은 프레임 — t* 는 Python 이 D 중에서 고름, 기존 선택 그대로). 노드 = 대상 파트 노드 청크(`disp.csv` 와 같은 청크).
 - 종류 k ∈ {`cont`, `cont2`, `acc`, `mass`, `fint`} 마다 결과 유형 이름 후보(`bf_names_<k>`, `|` 구분)를 `GetDataTypeList` 에서 `match_name` 규칙(정확 → 대소문자·공백·밑줄 무시)으로 찾는다. 벡터 성분 = `bf_vec_comps`(기본 `X Y Z`, 각 성분 후보 `|` 구분 가능), 스칼라(mass) 성분 = `scalar_comps` 후보.
 - 출력: 찾은 종류마다 `bf_<k>.csv` — 벡터 `frame_index,node_id,x,y,z`, 스칼라 `frame_index,node_id,v`. 값 없는 노드는 행을 쓰지 않음(Python 이 0 으로 채우고 수를 기록).
-- 없는 유형·쿼리 실패는 **실패가 아님**: done.json `bforce.<k> = {"type": null, "reason": "..."}`. 찾은 유형 = `{"type", "comps", "rows"}`. `bf_on 0` → `bforce = {"on": false}`. done.json 에 `bforce` 키가 없으면(이전 TCL) Python 은 등급 none(`BF_NO_DATA`).
+- 없는 유형·쿼리 실패는 **실패가 아님**: done.json `bforce = {"on": true, "frames": D, "kinds": {k: …}}`, 없는 종류 `{"type": null, "reason": "..."}`, 찾은 종류 `{"type", "comps", "rows"}`(쿼리 실패 = 그 CSV 삭제 + type null). `bf_on 0` → `bforce = {"on": false}`. done.json 에 `bforce` 키가 없으면(이전 TCL) Python 은 등급 none(`BF_NO_DATA`).
 - request.txt 새 키(없으면 TCL 기본 = 설정 기본과 같은 값): `bf_on`(1), `bf_names_cont`, `bf_names_cont2`, `bf_names_acc`, `bf_names_mass`, `bf_names_fint`, `bf_vec_comps`. 워커 `h3d.bforce_request(core_settings)` 가 설정 `bforce.result_names`·`vec_comps`·`enabled` 에서 만든다.
 - dump 모드(strain_tensor 원시 덤프 경로)는 이번 범위 밖(R-BF-5) — `bforce` 키 없음 = none.
 
@@ -105,7 +105,7 @@
 
 ### 5.3 설계안 풀이 (BD_EVAL 훅 `_bf_apply` · 추가 계산 공용 `_bf_design`)
 - 같은 3-2-1 지지(그 안의 지지 — 전 노드 ESL 풀이와 같음)로 `evaluate.evaluate(mesh, sup, F_bf)` (분해 +1/안, 지그와 같은 방식). C_bf = Σ F·u, umax_bf = max‖u‖(전 노드 ESL 과 같은 규칙), epsmax_bf, reaction_rel.
-- 결과는 **사이드카** `run/designs/<did>/bforce.json`(`esl/doe_bforce_design/1`: `{did, status, per_esl[{entry_id, C_bf, umax_bf, epsmax_bf, reaction_rel}], warnings}`) — 안 `result.json`·`design.npz`·`done.json` 은 바꾸지 않는다. 예외 = 그 안 경계력만 null(`BF_DESIGN_FAILED`).
+- 결과는 **사이드카** `run/designs/<did>/bforce.json`(`esl/doe_bforce_design/1`: `{did, status, loads_sha, per_esl[{entry_id, C_bf, umax_bf, epsmax_bf, reaction_rel}], warnings, solve}`) — 안 `result.json`·`design.npz`·`done.json` 은 바꾸지 않는다. BD_EVAL 훅은 예외를 삼키고(안 평가 무영향), BD_POST 가 사이드카 없는(이어하기 재사용 안 포함)·하중 sha 가 다른 안을 다시 푼다. 그래도 실패 = 그 안 경계력만 null(`BF_DESIGN_FAILED`, 순위 밖 n_failed["bf"]).
 - 3D 대상(베이스라인 + `view3d` 목록 안)은 변위를 남겨 BD_POST 에서 3D(§5.5).
 
 ### 5.4 순위 보기 (BD_POST · 추가 계산 공용 `_bf_post`)
@@ -123,14 +123,14 @@
 ## 6. 기존 스터디 추가 계산 (D-0.24.0-BF-10)
 - API `POST /doe/studies/{sid}/sources/bforce` → 202 `DoeStudyOut`. 권한·조건 = 3D 다시 만들기와 같음(실행 권한 ∧ (admin ∨ 작성자), DONE, 진행 중 작업 없음, 성공한 DOE_RUN). 계획 열 bf none = 409 `BF_UNSUPPORTED`.
 - 작업: 기존 DOE_RUN 큐, params = 마지막 성공 DOE_RUN params 사본 + `kind: "BFORCE"` + `doe.post_mode: "bforce"` + `doe.bforce_cfg`(지금 설정 `bead_doe.bforce`), resume = BD_POST. 코어 `bd_post` → `_post_bforce`: §5.2 하중 → OK 안마다 `design.npz` 좌표(형상 생성 없음)로 §5.3 → §5.4·§5.5. 쓰는 곳 = `prep/bforce*`·`run/designs/<did>/bforce.json`·`post/bforce_view.json`·`post/view3d/*_bf*` 만(기존 결과 파일 바이트 불변 — V-0240-g). 워커 BD_REGISTER `kind BFORCE` = DB 무변경(`register_doe_view3d` 와 같은 함수).
-- 응답 `DoeResultOut.bforce_add: {available, allowed, reason}` — available = 계획 bf base ∧ (사이드카 없음 ∨ Case 쪽 bforce.npz 가 사이드카보다 새것); 화면 버튼 `data-testid="v3d-bf-add"`(3D 머리, 다시 만들기 버튼 옆).
+- 응답 `DoeResultOut.bforce_add: {available, allowed, reason}` — available = 계획 bf base(다시 계산 가능 — 매번 prep 하중을 새로 찾고 하중 sha 가 바뀐 안만 다시 풀이), allowed = 3D 다시 만들기와 같은 권한·작업 조건; 화면 버튼 `data-testid="v3d-bf-add"`(활성 탭 3D 머리) = available ∧ `rank_views.bforce` 없음.
 
 ## 7. API · 고정 필드 (schemas.py ↔ types.ts)
 | 스키마 | 필드 |
 |---|---|
 | `DoeResultOut` (+) | `bforce: DoeBforceOut \| None`, `bforce_add: DoeView3dRegenOut \| None`, `view3d_bf`, `view3d_bf_esl`, `view3d_bf_ref: dict[str,str] \| None`, `rank_views.bforce: DoeRankViewOut \| None` |
-| `DoeBforceOut` | `status: str`, `code, reason: str \| None`, `grade_min: str \| None`, `entries: list[DoeBforceEntryOut]`, `limits: list[str]`, `n_designs: int`, `n_failed: int` |
-| `DoeBforceEntryOut` | `entry_id, label, grade: str`, `mass_source: str \| None`, `source: str \| None`, `eq_force_rel, eq_moment_rel, abar_g, corr_rel, recon_mac, recon_umax_err, reaction_rel: float \| None`, `limits: list[str]` |
+| `DoeBforceOut` | `status: str`, `code, reason: str \| None`, `grade_min: str \| None`, `entries: list[DoeBforceEntryOut]`, `limits: list[str]`, `limit_text: list[str]`, `n_designs: int`, `n_failed: int` |
+| `DoeBforceEntryOut` | `entry_id, label, grade: str`, `mass_source: str \| None`, `source: str \| None`, `eq_force_rel, eq_moment_rel, abar_g, corr_rel, recon_mac, recon_umax_err, reaction_rel: float \| None`, `limits: list[str]`, `reason: str \| None` |
 | per-esl | `?view=bforce` (사이드카 `bforce_view.json` per_esl) |
 | ESL 실행 | `EslRunOut.forces.bforce`(JSON — 스키마 변경 없음) |
 
@@ -201,3 +201,11 @@
         10
 ```
 - 추출 후 HyperView 결과 유형 표시명(예: "Contact Forces", "Acceleration")을 확인해 다르면 설정 `bforce.result_names` 에 이름을 더한다(코드 변경 불필요). 결과 유형이 없으면 그 종류는 '없음'으로 기록되고 등급이 내려간다(contact → full 은 CONT2 가 생기면 자동).
+
+## 부록 B. 구현 반영 (2026-11-18, 계약과 다른 점·보충)
+- B-1 화면 출처 표 `LOAD_SOURCES` 에 열 `pairKeys`(응답 쌍 3D 키 + 조건 줄 하중 문구)를 더했다 — 지그(view3d_jig*)·경계력(view3d_bf*)·전 노드(null). `View3dKind` += `pair`(진단 세그먼트 없는 응답 쌍), 칩 종류 += `bf`.
+- B-2 순위표 주 열 이름: metric_effective `bf` = "경계력 C"(지그 = "지그 C" 와 같은 방식, DoeRanking).
+- B-3 경계력 탭 비활성 사유 = 블록 사유(엔트리별 등급·`BF_NOT_FOUND`·`BF_GRADE_EXCLUDED`) 또는 "미계산 — Case 에서 h3d 추출·ESL 을 다시 실행한 뒤 [경계력 ESL 계산]", 다른 메시 계획 = 미지원 문구. 경계력 미계산 칩은 띠에 넣지 않는다(옛 스터디 띠 불변).
+- B-4 하중 찾기 일치 조건 = 노드 ID 동일 ∧ u_rel 동일(atol 1e-9·max|u|) — 같은 Case·같은 t*·같은 모델의 ESL 다시 실행이면 성립.
+- B-5 `pack_bforce` 는 CSV 형식 오류도 그 종류만 type null(추출 실패 아님).
+- B-6 Case 단계 경계력 예외·재현 미달은 ESL 단계 경고 문자열(`BF_*: …`)로, 한계(`BF_TIE_MISSING`)는 경고가 아니라 요약 줄 문구.
