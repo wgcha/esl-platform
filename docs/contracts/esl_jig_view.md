@@ -23,7 +23,7 @@
 ## 1. 지그 진단 산출 (코어 BD_POST — D-0.23.3-1)
 
 ### 1.1 조건 · 위치
-- 조건: 스냅샷 지그 계산됨(`_jig(c)` ∧ `prep/jig.json` status ok ∧ `prep/jig.npz`) ∧ 설정 `bead_doe.view3d.jig_diag` 참. 아니면 아무것도 쓰지 않음(지그 없는 스터디 결과 바이트 동일).
+- 조건: 스냅샷 지그 계산됨(`_jig(c)` ∧ `prep/jig.json` status ok ∧ `prep/jig.npz`) ∧ 설정 `bead_doe.view3d.jig_diag` 참(진단 3D 폴더는 `view3d.jig` 도 참일 때만 — 끄면 jig 이름 폴더 0, v0.23.2 시험 유지; 하중 정의 보기 rank_views 는 jig_diag 만 봄). 아니면 아무것도 쓰지 않음(지그 없는 스터디 결과 바이트 동일).
 - 위치: BD_POST(새 실행) **와** 3D 다시 만들기(§3) 가 같은 함수 `stages._jig_extras` 를 부른다. 베이스라인 계산(BD_BASELINE·`prep/jig.*`)은 바꾸지 않는다 — 진단은 jig.npz 값을 재사용하고 u_tgt·u_fit 만 다시 푼다(분해 1 + solve 3 × 엔트리).
 - 기준 재현 계산(맞춤·순위)은 **바꾸지 않는다**(보고만).
 
@@ -130,8 +130,8 @@
 
 | id | 내용 | 위치 |
 |---|---|---|
-| 1 | 순수: `kind_forces` 합 = `forces`(1e-12), `kind_response` u = Σ a_k U_k(basis_response U 로 맞춤 노드 1e-9 상대), `diag_report` contrib·tgt_out_frac(순수 면외 목표 = 1, 순수 면내 = 0) | `tests/doe/test_jig.py` |
-| 2 | 코어 진단: 지그 ok 합성 스터디 BD_POST → `d000_jigdiag_e<kk>_{tgt,fit,err}` manifest·values(u_fit 저장값 ≈ Σ a_k U_k — 양자화 허용), regions.json 영역 vertices = reg_node, 화살표 합 F_region_sum = Σ 영역 합력 = 영역 열 하중 합(`kind_forces.region` 합, 1e-9), jig_diag 키, `view3d.jig_diag false` → 없음, 지그 없는 스냅샷 → 사이드카 없음 | `tests/doe/test_jig_stages.py` |
+| 1 | 순수: `kind_forces` 합 = `forces`(1e-12), `kind_response` u = Σ a_k U_k(basis_response U 로 맞춤 노드 1e-9 상대), `diag_report` contrib·tgt_out_frac(순수 면외 목표 = 1, 순수 면내 = 0) | `tests/doe/test_jig_view.py` |
+| 2 | 코어 진단: 지그 ok 합성 스터디 BD_POST → `d000_jigdiag_e<kk>_{tgt,fit,err}` manifest·values(u_fit 저장값 ≈ Σ a_k U_k — 양자화 허용), regions.json 영역 vertices = reg_node, 화살표 합 F_region_sum = Σ 영역 합력 = 영역 열 하중 합(`kind_forces.region` 합, 1e-9), jig_diag 키, `view3d.jig_diag false` → 없음, 지그 없는 스냅샷 → 사이드카 없음 | `tests/doe/test_jig_view.py` |
 | 3 | rank_views: jig 보기 순위 = `rank(metric jig)`, full 보기 = `rank(metric solve)`, 섞임 키 없음(jig 행에 score_solve·imbalance 없음, full 행에 score_jig·umax_jig·C_jig 없음), 민감도 보기별 | 같은 파일 |
 | 4 | 다시 만들기: BD_POST 후 `post_mode view3d` 실행 → ranking.csv·result.json·per_esl.json·designs.json·report.html·안 result.json 해시 불변, 사이드카·진단 폴더 생김; v0.23.1 형(result.json 에 view3d_jig 없음) → 사이드카에 view3d_jig* | 같은 파일 |
 | 5 | API: 사이드카 병합(jig_diag·rank_views·view3d_jig 대체), per-esl `view`, regenerate 202(DOE_RUN resume 3·kind VIEW3D·phase DONE 유지)·403(작성자 아님·admin 아님)·409(지그 없음·작업 중), view3d_regen 필드, `regions.json` 제공 | `backend/tests/test_doe_jig_view_api.py` |

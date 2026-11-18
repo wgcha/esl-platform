@@ -947,3 +947,55 @@ def support_sample(x, jig_idx, m: int) -> np.ndarray:
 def hash_view(jig_cfg: dict) -> dict:
     """해시용 사본: HASH_EXCLUDE(임계값·보고용 키) 제외(D-JIG-11)."""
     return {k: v for k, v in dict(jig_cfg).items() if k not in HASH_EXCLUDE}
+
+
+# ====================================================================== v0.23.3 지그 진단 뷰(esl_jig_view.md §1.2) — 보고만, 계산 불변
+DIAG_KINDS = (("region", (COL_NORMAL, COL_TANGENT)), ("body", (COL_BODY,)), ("mode", (COL_MODE,)))
+
+
+def kind_forces(basis, a, n_nodes) -> dict:
+    """열 종류별 하중 {region: 법선·접선 열, body: 체적력 열, mode: 모드 열} (N,3) — 각 = forces(basis, a·[col_kind ∈ 종류]).
+    선형이라 합 = forces(basis, a)(누적 순서만 달라 1e-12 상대 안)."""
+    a = np.asarray(a, dtype=np.float64).reshape(-1)
+    ck = np.asarray(basis["col_kind"])
+    return {name: forces(basis, np.where(np.isin(ck, ks), a, 0.0), n_nodes) for name, ks in DIAG_KINDS}
+
+
+def kind_response(h, parts: dict) -> dict:
+    """종류별 하중 parts{k: (N,3)} 를 같은 분해로 풀어 {u: Σ u_k (N,3), parts: {k: u_k (N,3)}}(하중 0 종류는 solve 생략·0)."""
+    out, tot = {}, None
+    for k, F in parts.items():
+        F = np.asarray(F, dtype=np.float64)
+        if not np.any(F):
+            uk = np.zeros_like(F)
+        else:
+            uk = np.asarray(h.solve(F)[0], dtype=np.float64)[:, :3]
+        out[k] = uk
+        tot = uk.copy() if tot is None else tot + uk
+    return {"u": tot, "parts": out}
+
+
+def diag_report(u_tgt, u_fit, parts, weights, fit_mask) -> dict:
+    """진단 보강(맞춤 노드 F): contrib{k} = ‖u_k‖_F/‖u_fit‖_F(병진 L2 — 종류끼리 상쇄하면 합 > 1), tgt_out_frac = 목표 면외 에너지 비
+    Σ A (n̂·u_tgt)² / Σ A ‖u_tgt‖²(면내 = 1 − 값), err_max = max ‖u_fit − u_tgt‖, umax_tgt·umax_fit."""
+    fm = np.asarray(fit_mask, bool)
+    t = np.asarray(u_tgt, dtype=np.float64)[fm]
+    f = np.asarray(u_fit, dtype=np.float64)[fm]
+    A = np.asarray(weights["area"], dtype=np.float64)[fm]
+    n = np.asarray(weights["normal"], dtype=np.float64)[fm]
+    nf = float(np.linalg.norm(f))
+    contrib = {k: (float(np.linalg.norm(np.asarray(v, dtype=np.float64)[fm])) / nf if nf > 0 else 0.0)
+               for k, v in parts.items()}
+    tot = float(np.sum(A * np.sum(t * t, axis=1)))
+    out_e = float(np.sum(A * np.sum(t * n, axis=1) ** 2))
+    e = np.linalg.norm(f - t, axis=1)
+    return {"contrib": contrib, "tgt_out_frac": out_e / tot if tot > 0 else 0.0,
+            "err_max": float(e.max()) if e.size else 0.0,
+            "umax_tgt": float(np.linalg.norm(t, axis=1).max()) if t.size else 0.0,
+            "umax_fit": float(np.linalg.norm(f, axis=1).max()) if f.size else 0.0}
+
+
+def region_vertices(basis) -> list:
+    """영역마다 노드 인덱스(정렬) — reg_ptr·reg_node 그대로."""
+    ptr, nd = np.asarray(basis["reg_ptr"]), np.asarray(basis["reg_node"], dtype=np.int64)
+    return [np.sort(nd[ptr[r]:ptr[r + 1]]) for r in range(ptr.size - 1)]

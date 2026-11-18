@@ -914,9 +914,43 @@ def _cleanup(c: Ctx, keep: set[str]) -> int:
     return freed
 
 
+def _annotate(c: Ctx, R: dict, results: list, labels: dict) -> str | None:
+    """순위 행 주석(주 순위·v0.23.3 하중 정의 보기 공용): per_esl 라벨, select 경고 행 warn·경고 없는 최상위(SR-D-11),
+    극단 요소 경고(AD-D-8). 반환 = best_clean(select 만, 아니면 None)."""
+    for x in R["ranking"]:
+        for p in x["per_esl"]:
+            p["label"] = labels.get(p["entry_id"], p["entry_id"][:8])
+    best_clean = None
+    if c.scn == "select":                        # v0.16.1 SR-D-11: 경고 안도 순위 그대로 + 행 warn, 경고 없는 최상위
+        rw = {r["id"]: [str(w["code"]).replace("SELECT_", "", 1) for w in r.get("select_warnings") or []]
+              for r in results}
+        for x in R["ranking"]:
+            if rw.get(x["id"]):
+                x["warn"] = rw[x["id"]]
+        best_clean = next((x["id"] for x in R["ranking"] if not x.get("warn")), None)
+    mwn = {r["id"]: [str(w["code"]) for w in r.get("morph_warnings") or []] for r in results}
+    for x in R["ranking"]:                       # v0.16.2 AD-D-8: 극단 요소 경고 안 ⚠(시나리오 무관 — 없으면 키 없음, 바이트 불변)
+        if mwn.get(x["id"]):
+            x["warn"] = list(x.get("warn") or []) + [k for k in mwn[x["id"]] if k not in (x.get("warn") or [])]
+    return best_clean
+
+
+def _sens(c: Ctx, m: dict, results: list, score: dict) -> dict:
+    """민감도(주 순위·하중 정의 보기 공용): 표본 = OK 이고 score 가 있는 안(베이스라인 = 공칭 값). score = {id: 값 | None}."""
+    sp = m["spec"]
+    nom = mx.nominal_values(sp, params_table(c))
+    samples = [{"values": {**nom, **(r["values"] if r["id"] != BASELINE else {})}, "score": score.get(r["id"])}
+               for r in results if r.get("status") == "OK" and score.get(r["id"]) is not None]   # 순위 밖(지표 null) 안 제외
+    return rk.sensitivity(samples, sp["params"], method=sp["method"], levels=sp.get("levels"),
+                          round_mm=c.cfg["doe"]["round_mm"])
+
+
 def bd_post(spec: dict, echo=print) -> dict:
-    """순위·민감도 → post/, view3d(베이스라인 + 상위 k), 산출물 best/, report.html, 파일 정리 → post/result.json."""
+    """순위·민감도 → post/, view3d(베이스라인 + 상위 k), 산출물 best/, report.html, 파일 정리 → post/result.json.
+    v0.23.3: 스펙 doe.post_mode == "view3d" = 3D 다시 만들기(_post_view3d — 지그 3D·진단·하중 정의 보기만, 결과 파일 불변)."""
     c = Ctx(spec)
+    if c.D.get("post_mode") == "view3d":
+        return _post_view3d(c, echo)
     if c.scn == "compare":
         return _cmp_post(c, echo)
     c.progress(0)
@@ -936,22 +970,8 @@ def bd_post(spec: dict, echo=print) -> dict:
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
-    for x in R["ranking"]:
-        for p in x["per_esl"]:
-            p["label"] = labels.get(p["entry_id"], p["entry_id"][:8])
+    best_clean = _annotate(c, R, results, labels)
     by = {x["id"]: x for x in R["ranking"]}
-    best_clean = None
-    if c.scn == "select":                        # v0.16.1 SR-D-11: 경고 안도 순위 그대로 + 행 warn, 경고 없는 최상위
-        rw = {r["id"]: [str(w["code"]).replace("SELECT_", "", 1) for w in r.get("select_warnings") or []]
-              for r in results}
-        for x in R["ranking"]:
-            if rw.get(x["id"]):
-                x["warn"] = rw[x["id"]]
-        best_clean = next((x["id"] for x in R["ranking"] if not x.get("warn")), None)
-    mwn = {r["id"]: [str(w["code"]) for w in r.get("morph_warnings") or []] for r in results}
-    for x in R["ranking"]:                       # v0.16.2 AD-D-8: 극단 요소 경고 안 ⚠(시나리오 무관 — 없으면 키 없음, 바이트 불변)
-        if mwn.get(x["id"]):
-            x["warn"] = list(x.get("warn") or []) + [k for k in mwn[x["id"]] if k not in (x.get("warn") or [])]
     for r in results:
         if r["id"] == BASELINE:
             r["score"] = 1.0
@@ -961,11 +981,7 @@ def bd_post(spec: dict, echo=print) -> dict:
         if os.path.isfile(p):
             U.write_json(c.writer.guard(p), r)
     sp = m["spec"]
-    nom = mx.nominal_values(sp, params_table(c))
-    samples = [{"values": {**nom, **(r["values"] if r["id"] != BASELINE else {})}, "score": r["score"]}
-               for r in results if r.get("status") == "OK" and r.get("score") is not None]   # 순위 밖(지표 null) 안 제외
-    sens = rk.sensitivity(samples, sp["params"], method=sp["method"], levels=sp.get("levels"),
-                          round_mm=c.cfg["doe"]["round_mm"])
+    sens = _sens(c, m, results, {r["id"]: r.get("score") for r in results})
     c.progress(20)
     c.writer.makedirs(c.p("post"))
     names = [p["name"] for p in sp["params"]]
@@ -998,6 +1014,7 @@ def bd_post(spec: dict, echo=print) -> dict:
             warns.append(f"VIEW3D_FAILED: {did} {exc.code}")
     v3_jig, vjw = _jig_view3d(c, t, results, [BASELINE] + top)     # v0.23.2 지그 응답 3D(지그 계산된 스냅샷만 — 그 밖 바이트 동일)
     warns += vjw
+    _jig_extras(c, t, m, results, noise, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post")   # v0.23.3 사이드카(새 파일만)
     c.progress(60)
     keep_k = int(c.cfg["paicad"]["keep_files_top"])
     best_ids = [x["id"] for x in R["ranking"][:max(1, min(k, keep_k))]]
@@ -3996,6 +4013,233 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     if not out["view3d_jig"]:
         return {}, warns
     return out, warns
+
+
+# ---------------------------------------------------------------- v0.23.3 지그 진단 뷰 · 하중 정의 탭 · 3D 다시 만들기 (esl_jig_view.md)
+JIG_VIEW_JSON = "jig_view.json"                    # post/ 사이드카(새 파일 — result.json·ranking.csv 불변)
+JIG_VIEW_SCHEMA = "esl/doe_jig_view/1"
+JIG_DIAG_SCHEMA = "esl/doe_jig_diag/1"
+JIG_REGIONS_SCHEMA = "esl/doe_jig_regions/1"
+JIG_REGIONS_JSON = "regions.json"
+# 하중 정의 보기에서 다른 쪽 값(섞임 금지 — §2): 지그 보기에서 뺄 키 / 전 노드 보기에서 뺄 키
+VIEW_DROP_JIG = ("C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max",
+                 "umax_def", "basis", "sm_warn")
+VIEW_DROP_FULL = ("C", "C_jig", "score_jig", "umax_jig")
+VIEW_KEYS = ("metric", "C_ref", "baseline", "n_ok", "n_skipped", "n_failed", "ranking", "per_esl_inline", "sensitivity",
+             "sensitivity_reason", "best_clean")
+
+
+def _jig_ready(c: Ctx) -> tuple[dict, dict] | None:
+    """지그 계산됨(_jig ∧ jig.json ok ∧ jig.npz) → (jig.json, jig.npz), 아니면 None."""
+    jd = _jig_doc(c)
+    pz = c.p("prep", JIG_NPZ)
+    if _jig(c) is None or jd is None or jd.get("status") != "ok" or not os.path.isfile(pz):
+        return None
+    return jd, U.load_npz(pz)
+
+
+def _jig_diag(c: Ctx, t, jd: dict, z: dict, labels: dict) -> dict:
+    """§1 기준 d000 엔트리별 지그 진단: u_tgt(sm_ref + target_disp — 베이스라인과 같은 함수)·u_fit(jig.npz a → 종류별 하중 → 같은 지그
+    분해) → post/view3d/d000_jigdiag_e<kk>_{tgt,fit,err}/ + _fit/regions.json, 반환 jig_diag(§1.5). 계산 불변(보고만)."""
+    from esl.doe import jig as jg
+    from esl.view3d import build_view
+    vc = c.cfg["view3d"]
+    mesh = dict(t.mesh)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    N = nid.size
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    nb_ = np.asarray(z["node_id"], dtype=np.int64)
+    if not np.array_equal(nb_, nid):
+        raise EslError("OUTPUT_INCONSISTENT", "jig.npz 노드 ID 가 기준 메시와 다름")
+    jidx = np.asarray(z["jig_idx"], dtype=np.int64)
+    omega = np.asarray(z["omega"], bool)
+    fit = omega.copy()
+    fit[jidx] = False
+    zeids = [str(e) for e in z["entry_ids"].tolist()]
+    order = [str(e["id"]) for e in c.D["entries"]]
+    sr = U.load_npz(c.p("prep", SM_REF_NPZ))
+    eids_ref = [str(e) for e in sr["entry_ids"].tolist()]
+    nr = np.asarray(sr["node_id"], dtype=np.int64)
+    ordn = np.argsort(nr)
+    pos = ordn[np.searchsorted(nr, nid, sorter=ordn).clip(0, nr.size - 1)]
+    basis = _jig_basis_of(z, int(z["a"].shape[1]))
+    wts = jg.node_weights(mesh)
+    h = jg.factor(mesh, jidx, c.solver_cfg())
+    sup_idx = jg.support_sample(X, jidx, int(vc["jig_support_max"]))
+    sup = [{"node_id": int(nid[i]), "dof": "123"} for i in sup_idx]
+    jents = {e["entry_id"]: e for e in jd.get("entries") or []}
+    jregs = jd.get("regions") or []
+    rverts = jg.region_vertices(basis)
+    reg_doc = {"schema": JIG_REGIONS_SCHEMA,
+               "regions": [{**{k: g.get(k) for k in ("id", "kind", "part", "n_nodes", "area_mm2", "center", "normal")},
+                            "vertices": [int(v) for v in (rverts[k] if k < len(rverts) else [])]}
+                           for k, g in enumerate(jregs)],
+               "jig_vertices": [int(v) for v in sup_idx]}
+    ents = []
+    for e in [x for x in order if x in zeids]:
+        kk = order.index(e)
+        a = np.asarray(z["a"][zeids.index(e)], dtype=np.float64)
+        F = jg.forces(basis, a, N)
+        kr = jg.kind_response(h, jg.kind_forces(basis, a, N))
+        u_tgt = jg.target_disp(X, np.asarray(sr["u"][eids_ref.index(e)], dtype=np.float64)[pos][:, :3], jidx, fit)["u_tgt"]
+        u_fit = kr["u"]
+        rep = jg.diag_report(u_tgt, u_fit, kr["parts"], wts, fit)
+        dirs = {}
+        for tag, u in (("tgt", u_tgt), ("fit", u_fit), ("err", u_fit - u_tgt)):
+            nm = f"{BASELINE}_jigdiag_e{kk:02d}_{tag}"
+            od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
+            build_view(od, node_id=nid, x0=X, conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=u,
+                       supports=sup, key=f"doe/{nm}", esl_run_id=e)
+            if tag == "fit":
+                U.write_json(c.writer.guard(os.path.join(od, JIG_REGIONS_JSON)), reg_doc)
+            dirs[tag] = nm
+        je = jents.get(e) or {}
+        wo = je.get("without_modes") or {}
+        kinds = {int(g["id"]): g.get("kind") for g in jregs}
+        fz = [{"region": int(f["region"]), "kind": kinds.get(int(f["region"]), "patch"),
+               "F": [float(v) for v in f["F"]], "F_mag": float(np.linalg.norm(f["F"])), "F_n": float(f["F_n"]),
+               "F_t1": float(f["F_t1"]), "F_t2": float(f["F_t2"]), "active": bool(f["active"])}
+              for f in je.get("forces") or []]
+        ents.append({"entry_id": e, "label": labels.get(e, e[:8]), "kk": kk, "dirs": dirs,
+                     "mac": float(je.get("mac", 0.0)), "umax_err": float(je.get("umax_err", 0.0)),
+                     "mac_nomodes": None if wo.get("mac") is None else float(wo["mac"]),
+                     "umax_err_nomodes": None if wo.get("umax_err") is None else float(wo["umax_err"]),
+                     "work_eff": float(je.get("work_eff") if je.get("work_eff") is not None else 1.0),
+                     "tie_rel": float(je.get("tie_rel") or 0.0), "rot_deg": float(je.get("rot_deg") or 0.0),
+                     "umax_tgt": rep["umax_tgt"], "umax_fit": rep["umax_fit"], "err_max": rep["err_max"],
+                     "contrib": rep["contrib"], "tgt_out_frac": rep["tgt_out_frac"], "forces": fz,
+                     "F_region_sum": [float(v) for v in np.sum([f["F"] for f in fz], axis=0)] if fz else [0.0, 0.0, 0.0],
+                     "body": None if je.get("body") is None else [float(v) for v in je["body"]],
+                     "modes": [{"k": int(m["k"]), "a": float(m["a"])} for m in je.get("modes") or []]})
+    fx = jd.get("fix") or {}
+    return {"schema": JIG_DIAG_SCHEMA, "n_jig": int(fx.get("n_jig") or jidx.size),
+            "tie_spread": None if jd.get("tie_spread") is None else float(jd["tie_spread"]),
+            "n_contact": int(jd.get("n_contact") or 0), "n_patch": int(jd.get("n_patch") or 0),
+            "regions_from": jd.get("regions_from"),
+            "regions": [{"id": int(g["id"]), "kind": g["kind"], "part": g.get("part"), "n_nodes": int(g["n_nodes"]),
+                         "area_mm2": float(g["area_mm2"]), "center": [float(v) for v in g["center"]]} for g in jregs],
+            "entries": ents}
+
+
+def _view_rows(R: dict, results: list, view: str) -> dict:
+    """§2 보기 행 정리(섞임 금지): 지그 보기 = 재풀이·1차 지표 키 제거, umax = 지그 umax(mm), εmax 없음; 전 노드 보기 = 지그 키 제거."""
+    if view == "full":
+        for x in R["ranking"]:
+            for k in VIEW_DROP_FULL:
+                x.pop(k, None)
+        for k in VIEW_DROP_FULL:
+            R["baseline"].pop(k, None)
+        return R
+    pe_all = {r["id"]: {p["entry_id"]: p for p in r.get("per_esl") or []} for r in results}
+
+    def fix(x: dict, rid: str) -> None:
+        pe = pe_all.get(rid) or {}
+        um = {e: (None if p.get("umax_jig") is None else float(p["umax_jig"])) for e, p in pe.items()}
+        w = x.get("worst_entry_id")
+        x["umax"] = um.get(w)
+        x["umax_all"] = max((v for v in um.values() if v is not None), default=None)
+        x["epsmax"] = x["epsmax_all"] = None
+        for k in VIEW_DROP_JIG:
+            x.pop(k, None)
+        for p in x.get("per_esl") or []:
+            for k in ("C_solve", "rho", "imbalance_rel", "umax_def"):
+                p.pop(k, None)
+            p["umax"] = um.get(p["entry_id"])
+            p["epsmax"] = None
+
+    for x in R["ranking"]:
+        fix(x, x["id"])
+    fix(R["baseline"], BASELINE)
+    return R
+
+
+def _rank_views(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: dict) -> tuple[dict | None, dict]:
+    """§2 하중 정의 보기 {jig, full}(베이스라인 C_jig 가 모두 있을 때만) + 인라인이 아닐 때 per_esl{view: {id: [...]}}."""
+    b = next((r for r in results if r["id"] == BASELINE), None)
+    if S_ is None or b is None or b.get("status") != "OK" or rk._jig_ref(b) is None:
+        return None, {}
+    me = S_["metric_effective"]
+    views, per = {}, {}
+    for view, metric in (("jig", "jig"), ("full", me if me != "jig" else "solve")):
+        R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric,
+                    lin_form=S_["lin_form"], lin_valid=float(S_["lin_valid"]))
+        best_clean = _annotate(c, R, results, labels)
+        _view_rows(R, results, view)
+        sc = {BASELINE: 1.0, **{x["id"]: x["score"] for x in R["ranking"]}}
+        sens = _sens(c, m, results, sc)
+        inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
+        if not inline:
+            per[view] = {x["id"]: x["per_esl"] for x in R["ranking"]}
+        views[view] = {"metric": metric, "C_ref": R["C_ref"], "baseline": R["baseline"], "n_ok": R["n_ok"],
+                       "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
+                       "ranking": [{k: v for k, v in x.items() if k != "C" and (k != "per_esl" or inline)}
+                                   for x in R["ranking"]],
+                       "per_esl_inline": inline, "sensitivity": None if sens.get("null") else sens,
+                       "sensitivity_reason": sens.get("reason"), "best_clean": best_clean}
+    return views, per
+
+
+def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, shown: list, v3_jig: dict | None,
+                source: str) -> dict | None:
+    """BD_POST·3D 다시 만들기 공용(§1·§2·§4): 지그 진단 3D + 하중 정의 보기 → post/jig_view.json. v3_jig = result.json 에 지그 응답 3D 가
+    없을 때 새로 만들 값(다시 만들기), BD_POST 는 None. 조건 밖(지그 미계산·view3d.jig_diag 끔) = 아무것도 쓰지 않음(None)."""
+    ready = _jig_ready(c)
+    if ready is None or not c.cfg["view3d"].get("jig_diag"):
+        return None
+    jd, z = ready
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    doc: dict = {"schema": JIG_VIEW_SCHEMA, "source": source}
+    warns: list = []
+    if v3_jig:
+        doc.update(v3_jig)
+    try:
+        if c.cfg["view3d"].get("jig"):                      # 진단 3D 는 지그 3D(view3d.jig) 도 켜져 있을 때만 — 끄면 jig 이름 폴더 0(V-0232-3)
+            doc["jig_diag"] = _jig_diag(c, t, jd, z, labels)
+    except Exception as exc:                                # noqa: BLE001 — 진단 때문에 BD_POST 실패 금지
+        warns.append(f"VIEW3D_FAILED: jigdiag {getattr(exc, 'code', type(exc).__name__)}")
+    try:
+        views, per = _rank_views(c, m, results, noise, S_, labels)
+        if views is not None:
+            doc["rank_views"] = views
+            if per:
+                doc["per_esl"] = per
+    except Exception as exc:                                # noqa: BLE001
+        warns.append(f"VIEW3D_FAILED: rank_views {getattr(exc, 'code', type(exc).__name__)}")
+    doc["warnings"] = warns
+    c.writer.makedirs(c.p("post"))
+    c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
+    return doc
+
+
+def _post_view3d(c: Ctx, echo=print) -> dict:
+    """§3 3D 다시 만들기(post_mode view3d): post/view3d/<새 폴더>·post/jig_view.json 만 쓴다(ranking.csv·result.json·per_esl.json·
+    designs.json·report.html·best/·안 result.json 불변). result.json 에 지그 응답 3D 가 없으면(v0.23.1 실행) 만들어 사이드카에."""
+    c.progress(0)
+    rp = c.p("post", "result.json")
+    if not os.path.isfile(rp):
+        raise EslError("RESULT_NOT_READY", "post/result.json 이 없습니다 — 실행이 끝난 스터디만 3D 를 다시 만들 수 있습니다")
+    res0 = U.read_json(rp)
+    t, _bmeta = sc.load_base(c.p("prep"))
+    m = _matrix(c)
+    results, _pv = _collect(c, m)
+    for r in results:                                         # 순위 score 는 bd_post 가 안 result.json 에 써 둔 값(읽기만)
+        if r["id"] == BASELINE:
+            r["score"] = 1.0
+    noise = res0.get("noise_floor")
+    S_ = _sm_post(c)
+    shown = [str(d) for d in res0.get("view3d") or [] if d]
+    v3, vjw = ({}, []) if isinstance(res0.get("view3d_jig"), dict) else _jig_view3d(c, t, results, shown)
+    c.progress(40)
+    doc = _jig_extras(c, t, m, results, noise, S_, shown=shown, v3_jig=v3 or None, source="view3d_regen")
+    if doc is not None and vjw:
+        doc["warnings"] = list(doc.get("warnings") or []) + vjw
+        c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
+    echo(f"[bd_post view3d] 지그 진단 {'있음' if doc and doc.get('jig_diag') else '없음'}"
+         f" · 하중 정의 보기 {'있음' if doc and doc.get('rank_views') else '없음'}"
+         f" · 지그 응답 3D {'새로 만듦' if v3 else '기존 유지'}")
+    c.progress(100)
+    files = [] if doc is None else ["post/" + JIG_VIEW_JSON]
+    return {"files": files, "warnings": list((doc or {}).get("warnings") or vjw), "result": None}
 
 
 def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) -> list:
