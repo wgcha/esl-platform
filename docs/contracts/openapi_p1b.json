@@ -2840,6 +2840,359 @@
         "title": "DoeFileOut",
         "type": "object"
       },
+      "DoeJigDiagEntryOut": {
+        "properties": {
+          "F_region_sum": {
+            "items": {
+              "type": "number"
+            },
+            "title": "F Region Sum",
+            "type": "array"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "contrib": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Contrib",
+            "type": "object"
+          },
+          "dirs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Dirs",
+            "type": "object"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "err_max": {
+            "title": "Err Max",
+            "type": "number"
+          },
+          "forces": {
+            "items": {
+              "$ref": "#/components/schemas/DoeJigDiagForceOut"
+            },
+            "title": "Forces",
+            "type": "array"
+          },
+          "kk": {
+            "title": "Kk",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "mac": {
+            "title": "Mac",
+            "type": "number"
+          },
+          "mac_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac Nomodes"
+          },
+          "modes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "rot_deg": {
+            "title": "Rot Deg",
+            "type": "number"
+          },
+          "tgt_out_frac": {
+            "title": "Tgt Out Frac",
+            "type": "number"
+          },
+          "tie_rel": {
+            "title": "Tie Rel",
+            "type": "number"
+          },
+          "tie_rel_groups": {
+            "default": [],
+            "items": {
+              "type": "number"
+            },
+            "title": "Tie Rel Groups",
+            "type": "array"
+          },
+          "umax_err": {
+            "title": "Umax Err",
+            "type": "number"
+          },
+          "umax_err_nomodes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Umax Err Nomodes"
+          },
+          "umax_fit": {
+            "title": "Umax Fit",
+            "type": "number"
+          },
+          "umax_tgt": {
+            "title": "Umax Tgt",
+            "type": "number"
+          },
+          "work_eff": {
+            "title": "Work Eff",
+            "type": "number"
+          }
+        },
+        "required": [
+          "entry_id",
+          "label",
+          "kk",
+          "dirs",
+          "mac",
+          "umax_err",
+          "work_eff",
+          "tie_rel",
+          "rot_deg",
+          "umax_tgt",
+          "umax_fit",
+          "err_max",
+          "tgt_out_frac",
+          "contrib",
+          "forces",
+          "F_region_sum",
+          "modes"
+        ],
+        "title": "DoeJigDiagEntryOut",
+        "type": "object"
+      },
+      "DoeJigDiagForceOut": {
+        "properties": {
+          "F": {
+            "items": {
+              "type": "number"
+            },
+            "title": "F",
+            "type": "array"
+          },
+          "F_mag": {
+            "title": "F Mag",
+            "type": "number"
+          },
+          "F_n": {
+            "title": "F N",
+            "type": "number"
+          },
+          "F_t1": {
+            "title": "F T1",
+            "type": "number"
+          },
+          "F_t2": {
+            "title": "F T2",
+            "type": "number"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "region": {
+            "title": "Region",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "region",
+          "kind",
+          "F",
+          "F_mag",
+          "F_n",
+          "F_t1",
+          "F_t2",
+          "active"
+        ],
+        "title": "DoeJigDiagForceOut",
+        "type": "object"
+      },
+      "DoeJigDiagOut": {
+        "description": "v0.23.3 기준 d000 엔트리별 지그 진단(목표 u_tgt·맞춤 u_fit·오차 3D 폴더 + 진단 값).",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DoeJigDiagEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "n_contact": {
+            "title": "N Contact",
+            "type": "integer"
+          },
+          "n_jig": {
+            "title": "N Jig",
+            "type": "integer"
+          },
+          "n_patch": {
+            "title": "N Patch",
+            "type": "integer"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/DoeJigDiagRegionOut"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "regions_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regions From"
+          },
+          "tie_groups": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DoeJigTieGroupOut"
+            },
+            "title": "Tie Groups",
+            "type": "array"
+          },
+          "tie_partner_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deck",
+                  "none",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Partner Source"
+          },
+          "tie_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Spread"
+          }
+        },
+        "required": [
+          "n_jig",
+          "n_contact",
+          "n_patch",
+          "regions",
+          "entries"
+        ],
+        "title": "DoeJigDiagOut",
+        "type": "object"
+      },
+      "DoeJigDiagRegionOut": {
+        "description": "v0.23.3 지그 진단 영역(esl_jig_view.md §5 — types.ts 와 check:api 대조).",
+        "properties": {
+          "area_mm2": {
+            "title": "Area Mm2",
+            "type": "number"
+          },
+          "center": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Center",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "contact",
+              "patch"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part"
+          },
+          "part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Title"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "n_nodes",
+          "area_mm2",
+          "center"
+        ],
+        "title": "DoeJigDiagRegionOut",
+        "type": "object"
+      },
       "DoeJigEntryOut": {
         "properties": {
           "F_sum_abs": {
@@ -3169,6 +3522,68 @@
         "title": "DoeJigThOut",
         "type": "object"
       },
+      "DoeJigTieGroupOut": {
+        "description": "v0.23.3 지그 노드 상대 부품별 요약(esl_jig_view.md §1.6 — 현장 2026-11-18 추가, 보고만).",
+        "properties": {
+          "bbox_mm": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Bbox Mm",
+            "type": "array"
+          },
+          "cluster_dmax_mm": {
+            "title": "Cluster Dmax Mm",
+            "type": "number"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "n_clusters": {
+            "title": "N Clusters",
+            "type": "integer"
+          },
+          "n_nodes": {
+            "title": "N Nodes",
+            "type": "integer"
+          },
+          "other_part_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Part Id"
+          },
+          "other_part_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Part Title"
+          }
+        },
+        "required": [
+          "n_nodes",
+          "n_clusters",
+          "bbox_mm",
+          "cluster_dmax_mm",
+          "kinds"
+        ],
+        "title": "DoeJigTieGroupOut",
+        "type": "object"
+      },
       "DoeMatrixIn": {
         "additionalProperties": false,
         "properties": {
@@ -3490,6 +3905,126 @@
         "title": "DoeProps",
         "type": "object"
       },
+      "DoeRankViewOut": {
+        "description": "v0.23.3 하중 정의 탭 1개의 순위 보기(그 지표로 일관된 순위·score·개선율·최악 ESL·민감도 — 다른 쪽 키 없음).",
+        "properties": {
+          "C_ref": {
+            "title": "C Ref",
+            "type": "number"
+          },
+          "baseline": {
+            "additionalProperties": true,
+            "title": "Baseline",
+            "type": "object"
+          },
+          "best_clean": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Clean"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "n_failed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "N Failed",
+            "type": "object"
+          },
+          "n_ok": {
+            "title": "N Ok",
+            "type": "integer"
+          },
+          "n_skipped": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "N Skipped",
+            "type": "object"
+          },
+          "per_esl_inline": {
+            "title": "Per Esl Inline",
+            "type": "boolean"
+          },
+          "ranking": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Ranking",
+            "type": "array"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          },
+          "sensitivity_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity Reason"
+          }
+        },
+        "required": [
+          "metric",
+          "C_ref",
+          "baseline",
+          "n_ok",
+          "n_skipped",
+          "n_failed",
+          "ranking",
+          "per_esl_inline"
+        ],
+        "title": "DoeRankViewOut",
+        "type": "object"
+      },
+      "DoeRankViewsOut": {
+        "properties": {
+          "full": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jig": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "DoeRankViewsOut",
+        "type": "object"
+      },
       "DoeResultOut": {
         "properties": {
           "C_ref": {
@@ -3559,6 +4094,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DoeJigOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jig_diag": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeJigDiagOut"
               },
               {
                 "type": "null"
@@ -3680,6 +4225,16 @@
               }
             ],
             "title": "Rank"
+          },
+          "rank_views": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ranking": {
             "items": {
@@ -3849,6 +4404,16 @@
               }
             ],
             "title": "View3D Ref"
+          },
+          "view3d_regen": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeView3dRegenOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "warnings": {
             "items": {
@@ -4816,6 +5381,36 @@
           "can_delete"
         ],
         "title": "DoeStudyOut",
+        "type": "object"
+      },
+      "DoeView3dRegenOut": {
+        "description": "v0.23.3 3D 다시 만들기: available = 지그 계산된 결과, allowed = 권한(admin ∨ 작성자)·작업 조건, reason = 막힌 이유.",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "available",
+          "allowed"
+        ],
+        "title": "DoeView3dRegenOut",
         "type": "object"
       },
       "EntryCreate": {
@@ -15117,7 +15712,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.23.2"
+    "version": "0.23.3"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -17392,7 +17987,7 @@
     },
     "/esl/api/doe/studies/{sid}/results/per-esl": {
       "get": {
-        "description": "ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max).",
+        "description": "ESL별 C·비율·umax·εmax(순위 행에 per_esl 이 없을 때 — 안 수 × ESL 수 > rank.per_esl_inline_max).\nv0.23.3 view = jig|full: 하중 정의 탭 보기의 값(esl_jig_view.md §2).",
         "operationId": "doe_results_per_esl_esl_api_doe_studies__sid__results_per_esl_get",
         "parameters": [
           {
@@ -17419,6 +18014,23 @@
                 }
               ],
               "title": "Design"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 8,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "View"
             }
           }
         ],
@@ -17928,6 +18540,49 @@
           }
         },
         "summary": "Doe Shape Defeature",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/view3d/regenerate": {
+      "post": {
+        "description": "v0.23.3 3D 다시 만들기(esl_jig_view.md §3): 지그 응답 3D·지그 진단 3D·하중 정의 보기만 다시 만든다(순위·결과 파일 불변).\n기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 지그 미계산·끝나지 않음 = 409 VIEW3D_REGEN_UNAVAILABLE.",
+        "operationId": "doe_view3d_regenerate_esl_api_doe_studies__sid__view3d_regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe View3D Regenerate",
         "tags": [
           "doe"
         ]

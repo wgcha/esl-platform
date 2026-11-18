@@ -3207,7 +3207,7 @@ export interface DoeJigOut {
 }
 export interface DoeResultOut {
   C_ref: number;
-  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null };
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
   n_ok: number;
   n_skipped: Record<string, number>;
   n_failed: Record<string, number>;
@@ -3262,7 +3262,113 @@ export interface DoeResultOut {
   view3d_jig_ref?: Record<string, string> | null;
   /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
   jig_on_clone?: boolean | null;
+  /** v0.23.3 기준 d000 엔트리별 지그 진단(목표·맞춤·오차 3D + 값, esl_jig_view.md §1.5) — 사이드카 없으면 null */
+  jig_diag?: DoeJigDiagOut | null;
+  /** v0.23.3 하중 정의 탭 보기 {jig, full}(§2) — 지그 계산된 결과만 */
+  rank_views?: DoeRankViewsOut | null;
+  /** v0.23.3 3D 다시 만들기 가능 여부(§3) — 지그 블록 ok/poor 결과만 */
+  view3d_regen?: DoeView3dRegenOut | null;
   warnings: DoeWarning[];
+}
+/** v0.23.3 지그 진단 영역(esl_jig_view.md §5) */
+export interface DoeJigDiagRegionOut {
+  id: number;
+  kind: "contact" | "patch";
+  part?: number | null;
+  /** 상대 부품 /PART 제목(deck — 없으면 null) */
+  part_title?: string | null;
+  n_nodes: number;
+  area_mm2: number;
+  center: number[];
+}
+/** v0.23.3 지그 노드 상대 부품별 요약(§1.6) */
+export interface DoeJigTieGroupOut {
+  other_part_id?: number | null;
+  other_part_title?: string | null;
+  n_nodes: number;
+  n_clusters: number;
+  bbox_mm: number[];
+  cluster_dmax_mm: number;
+  kinds: string[];
+}
+export interface DoeJigDiagForceOut {
+  region: number;
+  kind: string;
+  F: number[];
+  F_mag: number;
+  F_n: number;
+  F_t1: number;
+  F_t2: number;
+  active: boolean;
+}
+export interface DoeJigDiagEntryOut {
+  entry_id: string;
+  label: string;
+  kk: number;
+  /** tgt · fit · err → view3d 폴더 이름(d000_jigdiag_e<kk>_<tag>) */
+  dirs: Record<string, string>;
+  mac: number;
+  umax_err: number;
+  mac_nomodes?: number | null;
+  umax_err_nomodes?: number | null;
+  work_eff: number;
+  tie_rel: number;
+  /** tie_rel 의 상대 부품 그룹별 값(tie_groups 순서) */
+  tie_rel_groups?: number[];
+  rot_deg: number;
+  umax_tgt: number;
+  umax_fit: number;
+  err_max: number;
+  /** 목표 면외 에너지 비(면내 = 1 − 값) */
+  tgt_out_frac: number;
+  /** 기저 종류별 변위 노름 비 region · body · mode */
+  contrib: Record<string, number>;
+  forces: DoeJigDiagForceOut[];
+  F_region_sum: number[];
+  body?: number[] | null;
+  modes: Record<string, unknown>[];
+}
+export interface DoeJigDiagOut {
+  n_jig: number;
+  tie_spread?: number | null;
+  n_contact: number;
+  n_patch: number;
+  regions_from?: string | null;
+  regions: DoeJigDiagRegionOut[];
+  tie_groups?: DoeJigTieGroupOut[];
+  tie_partner_source?: "deck" | "none" | "failed" | null;
+  entries: DoeJigDiagEntryOut[];
+}
+/** v0.23.3 하중 정의 탭 1개 보기 — 그 지표로 일관된 순위·score·최악 ESL·민감도(다른 쪽 키 없음) */
+export interface DoeRankViewOut {
+  metric: string;
+  C_ref: number;
+  baseline: Record<string, unknown>;
+  n_ok: number;
+  n_skipped: Record<string, number>;
+  n_failed: Record<string, number>;
+  ranking: Record<string, unknown>[];
+  per_esl_inline: boolean;
+  sensitivity?: Record<string, unknown> | null;
+  sensitivity_reason?: string | null;
+  best_clean?: string | null;
+}
+export interface DoeRankViewsOut {
+  jig?: DoeRankViewOut | null;
+  full?: DoeRankViewOut | null;
+}
+export interface DoeView3dRegenOut {
+  available: boolean;
+  allowed: boolean;
+  reason?: string | null;
+}
+/** v0.23.3 지그 진단 regions.json(d000_jigdiag_e<kk>_fit/) */
+export interface DoeJigRegionsFile {
+  schema: string;
+  regions: { id: number; kind: "contact" | "patch"; part?: number | null; part_title?: string | null; n_nodes: number; area_mm2: number; center: number[]; normal?: number[]; vertices: number[] }[];
+  jig_vertices: number[];
+  /** jig_vertices 마다 tie 그룹 번호(jig_diag.tie_groups 순서) */
+  jig_groups?: number[];
 }
 /** post/result.json.load_transfer(esl_load_transfer.md §5) */
 export interface DoeLoadTransferSummary {

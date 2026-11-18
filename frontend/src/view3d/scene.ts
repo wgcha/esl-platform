@@ -674,7 +674,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       const pts: number[] = [];
       for (const s of list) {
         for (const [a, b] of s.segments) pts.push(...a, ...b);
-        const sp = textSprite(s.symbol.label, SYMBOL_GLYPH[s.symbol.kind], { color: SUPPORT_COLOR, bg: "rgba(255,255,255,0.78)", px: 22 });
+        const sp = textSprite(s.symbol.label, SYMBOL_GLYPH[s.symbol.kind], { color: s.color ?? SUPPORT_COLOR, bg: "rgba(255,255,255,0.78)", px: 22 });
         sp.position.set(s.position[0], s.position[1], s.position[2]);
         sp.center.set(0.1, 1.0); // 기호 꼭짓점이 노드에 닿도록
         scene.add(sp);

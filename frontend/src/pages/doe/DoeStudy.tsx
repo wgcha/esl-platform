@@ -6,7 +6,7 @@
 // ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
 // v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8): ① 입력 카드 물성 칸 아래 '고급 설정'(접힘) = 메시 방식 [자동 | CAD | 재메시] + '실패 시 세분화 허용'.
 // 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
@@ -27,7 +27,7 @@ import { fetchBinary, fileUrls } from "../../view3d/fetchFiles";
 import { parseGlb } from "../../view3d/glb";
 import { SectionMini } from "../../components/SectionMini";
 import { STEP_LABEL } from "../../api/history";
-import type { DoeCheckOut, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
+import type { DoeCheckOut, DoeJigDiagEntryOut, DoeJigDiagOut, DoeJigRegionsFile, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton, type CardFold } from "../../components/ui";
@@ -41,9 +41,9 @@ import { JobProgress } from "../../components/JobProgress";
 import { BundleButton } from "../../components/BundleButton";
 import { openReport } from "../../components/ReportLink";
 import type { Range } from "../../components/ColorLegend";
-import { View3DCard } from "../../view3d/View3DCard";
+import { View3DCard, type View3DOptions } from "../../view3d/View3DCard";
 import type { LoadView } from "../../view3d/useLoadView";
-import { nearestEnabledStage, stageEnabled, stageMode } from "../../view3d/arrows";
+import { buildArrow, nearestEnabledStage, stageEnabled, stageMode, type ArrowSpec } from "../../view3d/arrows";
 import { reconcile, visibleKeys, type Selection } from "../../view3d/selection";
 import type { V3 } from "../../view3d/pick";
 import { usePolling } from "../../lib/usePolling";
@@ -57,6 +57,7 @@ import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { FixedViolNote } from "../../components/FixedViol";
 import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFailBanner";
 import { BlockErr, MsgFold } from "../../components/MsgFold";
+import { LOAD_SOURCES, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -687,34 +688,260 @@ export function v3dCondText(jigMode: boolean, nJig: number | null, eslNames: (st
   return `하중: ${jigMode ? "지그 하중" : "전 노드 ESL 재풀이"} · 지지: ${jigMode ? `tie 고정(${nJig ?? "?"}점)` : "3-2-1"} · 엔트리: ${ent}`;
 }
 
-function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void }) {
+/** v0.23.3 지그 탭 3D 다시 만들기 버튼(esl_jig_view.md §3·§7.2) — available 일 때만, allowed 아니면 비활성 + 이유 */
+function RegenButton({ studyId, result, onQueued }: { studyId: string; result: DoeResultOut; onQueued?: () => void }) {
+  const rg = result.view3d_regen ?? null;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!rg?.available) return null;
+  const why = rg.allowed ? null : rg.reason ?? "3D 를 다시 만들 수 없습니다";
+  return (
+    <span className="primary-wrap" title={why ?? "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)"}>
+      <button
+        type="button"
+        className="btn small"
+        data-testid="v3d-regen"
+        disabled={!!why || busy}
+        aria-disabled={!!why || busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            await doe.regenerateView3d(studyId);
+            onQueued?.();
+          } catch (e) {
+            setErr(errorText(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        3D 다시 만들기
+      </button>
+      {err && <span className="small error-text"> {err}</span>}
+    </span>
+  );
+}
+
+/** v0.23.3 지그 진단 3D 보기 종류(목표·맞춤 | 오차 | 영역) */
+type DiagView = "tf" | "err" | "reg";
+const DIAG_VIEW_LABEL: Record<DiagView, string> = { tf: "목표·맞춤", err: "오차", reg: "영역" };
+const fmt3 = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2));
+
+/** 진단 한 줄 문구·툴팁(순수 — 시험용) */
+export function jigDiagText(e: DoeJigDiagEntryOut, d: DoeJigDiagOut): { line: string; title: string; coef: string } {
+  const nm = e.mac_nomodes != null ? `(모드 제외 ${e.mac_nomodes.toFixed(3)})` : "";
+  const line = `${e.label} · MAC ${e.mac.toFixed(3)}${nm} · umax 오차 ${(e.umax_err * 100).toFixed(1)} % · work_eff ${e.work_eff.toFixed(2)} · tie_rel ${e.tie_rel.toFixed(3)}`;
+  const cb = (k: string) => (e.contrib[k] ?? 0).toFixed(2);
+  const rname = (id: number) => {
+    const g = d.regions.find((r) => r.id === id);
+    return g?.part != null ? ` part ${g.part}${g.part_title ? ` ${g.part_title}` : ""}` : "";
+  };
+  const forces = e.forces.map((f) => `R${f.region + 1}(${f.kind === "contact" ? "접촉" : "패치"}${rname(f.region)}) ${fmt3(f.F_mag)} N`).join(", ");
+  const groups = (d.tie_groups ?? []).map((g, i) => `${tieGroupName(g)} ${g.n_nodes}노드·클러스터 ${g.n_clusters}·지름 ≤ ${g.cluster_dmax_mm.toFixed(0)} mm${g.kinds.length ? `·${g.kinds.join("/")}` : ""} · tie_rel ${(e.tie_rel_groups?.[i] ?? 0).toFixed(3)}`);
+  const title = [
+    `지그 노드 기준 강체 회전 ${e.rot_deg.toFixed(2)}° · 지그 노드 ${d.n_jig}개 · tie_spread ${d.tie_spread == null ? "–" : d.tie_spread.toFixed(3)}`,
+    `하중 영역 ${d.regions.length}개(접촉 ${d.n_contact} · 패치 ${d.n_patch})${forces ? ` — ${forces}` : ""}`,
+    `맞춤 응답 기여(변위 노름 비): 영역 ${cb("region")} · 체적력 ${cb("body")} · 모드 ${cb("mode")}`,
+    `목표 변형 에너지: 면외 ${(e.tgt_out_frac * 100).toFixed(0)} % · 면내 ${((1 - e.tgt_out_frac) * 100).toFixed(0)} %`,
+    `umax 목표 ${e.umax_tgt.toFixed(2)} mm · 맞춤 ${e.umax_fit.toFixed(2)} mm · 오차 최대 ${e.err_max.toFixed(2)} mm`,
+    e.umax_err_nomodes != null ? `모드 제외 umax 오차 ${(e.umax_err_nomodes * 100).toFixed(1)} %` : "",
+    groups.length ? `체결(tie) 상대 부품별:\n  ${groups.join("\n  ")}` : "",
+  ].filter(Boolean).join("\n");
+  const body = e.body ? `체적력 (${e.body.map(fmt3).join(", ")}) N` : "체적력 없음";
+  const modes = e.modes.length ? ` · 모드 ${e.modes.map((m) => `a${Number(m.k) + 1} ${fmt3(Number(m.a))}`).join(" ")} N` : "";
+  return { line, title, coef: body + modes };
+}
+
+/** v0.23.3 지그 노드 상대 부품 그룹 색(§1.6 — 범례와 같은 순서, 모름 = 회색) */
+export const TIE_GROUP_COLORS = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#1f78b4"];
+export const tieGroupColor = (g: { other_part_id?: number | null }, i: number) => (g.other_part_id == null ? "#6b7280" : TIE_GROUP_COLORS[i % TIE_GROUP_COLORS.length]);
+export const tieGroupName = (g: { other_part_id?: number | null; other_part_title?: string | null }) =>
+  g.other_part_id == null ? "상대 부품 모름" : `part ${g.other_part_id}${g.other_part_title ? ` ${g.other_part_title}` : ""}`;
+
+/** 영역 색 값(정점별): 접촉 = 0.62~1.0(진한 파랑), 패치 = 0.2~0.42(옅은 파랑), 영역 밖 = NaN(회색) */
+export function regionField(n: number, regs: DoeJigRegionsFile["regions"]): Float32Array {
+  const v = new Float32Array(n).fill(NaN);
+  regs.forEach((g, i) => {
+    const val = g.kind === "contact" ? 0.62 + 0.19 * (i % 3) : 0.2 + 0.11 * (i % 3);
+    for (const k of g.vertices) if (k >= 0 && k < n) v[k] = val;
+  });
+  return v;
+}
+
+/** 영역 합력 화살표(기존 화살표 — 길이 ∝ |F|) */
+export function regionArrows(e: DoeJigDiagEntryOut, d: DoeJigDiagOut, diag: number): ArrowSpec[] {
+  const fref = e.forces.reduce((a, f) => Math.max(a, f.F_mag), 0);
+  const out: ArrowSpec[] = [];
+  for (const f of e.forces) {
+    const g = d.regions.find((r) => r.id === f.region);
+    if (!g || !(f.F_mag > 0)) continue;
+    const a = buildArrow(`R${f.region + 1}`, "cluster", [g.center[0], g.center[1], g.center[2]], f.F, f.F_mag, fref, diag, null, `R${f.region + 1} ${f.kind === "contact" ? `접촉${g.part_title ? ` ${g.part_title}` : g.part != null ? ` part ${g.part}` : ""}` : "패치"} ${fmt3(f.F_mag)} N`);
+    if (a) out.push(a);
+  }
+  return out;
+}
+
+function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: DoeResultOut; lead: ReactNode; pick: string | null }) {
+  const d = result.jig_diag ?? null;
+  const ents = d?.entries ?? [];
+  const def = (pick && result.view3d_jig_esl?.[pick]) || (pick && result.ranking.find((r) => r.id === pick)?.worst_entry_id) || ents[0]?.entry_id || null;
+  const [chosen, setChosen] = useState<string | null>(null);
+  const cur = ents.find((x) => x.entry_id === (chosen ?? def)) ?? ents[0] ?? null;
+  const [view, setView] = useState<DiagView>("tf");
+  const left = useDoeView(studyId, cur ? (view === "err" ? cur.dirs.err : view === "reg" ? cur.dirs.fit : cur.dirs.tgt) : null);
+  const right = useDoeView(studyId, cur ? cur.dirs.fit : null);
+  const [regs, setRegs] = useState<DoeJigRegionsFile | null>(null);
+  const fitDir = cur?.dirs.fit ?? null;
+  useEffect(() => {
+    setRegs(null);
+    if (!fitDir) return;
+    let alive = true;
+    doe.jigRegions(studyId, fitDir).then((r) => alive && setRegs(r)).catch(() => alive && setRegs(null));
+    return () => {
+      alive = false;
+    };
+  }, [studyId, fitDir]);
+  const [ds, setDs] = useState<{ on: boolean; kexp: number | null; real: boolean }>({ on: false, kexp: null, real: false });
+  const sync = { ...ds, set: (p: Partial<typeof ds>) => setDs((x) => ({ ...x, ...p })) };
+  const [manual, setManual] = useState<Range | null>(null);
+  const [manualErr, setManualErr] = useState<Range | null>(null);
+  if (!d || !cur) return <Empty>지그 진단 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>;
+  const txt = jigDiagText(cur, d);
+  const th = result.jig?.th;
+  const poor = !!th && (cur.mac < th.mac_min || cur.umax_err > th.umax_err_max);
+  // 목표·맞춤·영역 = 두 그림 같은 범위(목표·맞춤 u_max 중 큰 값). 오차 보기 = 오차 그림은 err manifest 자체 범위(목표·맞춤과 안 섞음), 맞춤 그림은 맞춤 자체 범위(계약 §7.2)
+  const errView = view === "err";
+  const umax = errView
+    ? Math.max(cur.umax_fit, right?.manifest?.ranges.u_max ?? 0)
+    : Math.max(cur.umax_tgt, cur.umax_fit, left?.manifest?.ranges.u_max ?? 0, right?.manifest?.ranges.u_max ?? 0);
+  const range: Range | null = manual ?? (umax > 0 ? { min: 0, max: umax } : null);
+  const errMax = left?.manifest?.ranges.u_max ?? 0;
+  const rangeErr: Range | null = manualErr ?? (errMax > 0 ? { min: 0, max: errMax } : null);
+  const arrows = right?.manifest ? regionArrows(cur, d, right.manifest.bbox.diag) : null;
+  const n = right?.manifest?.n_nodes ?? 0;
+  const fo = view === "reg" && regs && n ? { values: regionField(n, regs.regions), min: 0, max: 1, label: "하중 영역 — 진한 파랑 접촉 · 옅은 파랑 패치 · 회색 영역 밖" } : null;
+  const tgs = d.tie_groups ?? [];
+  const vg = new Map<number, number>((regs?.jig_vertices ?? []).map((v, i) => [v, regs?.jig_groups?.[i] ?? -1]));
+  const supportColor = (v: number) => {
+    const g = vg.get(v);
+    return g == null || g < 0 || !tgs[g] ? null : tieGroupColor(tgs[g], g);
+  };
+  const opts = (title: string, extra: Partial<View3DOptions> = {}) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, deformSync: sync, supportColor, ...extra });
+  return (
+    <div className="doe-compare" data-testid="jig-diag">
+      <div className="inline-actions">
+        {lead}
+        <select className="select small" aria-label="지그 진단 엔트리" data-testid="jig-diag-entry" value={cur.entry_id} onChange={(e) => setChosen(e.target.value)}>
+          {ents.map((x) => (
+            <option key={x.entry_id} value={x.entry_id}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+        <div className="seg" role="group" aria-label="지그 진단 보기" data-testid="jig-diag-view">
+          {(Object.keys(DIAG_VIEW_LABEL) as DiagView[]).map((k) => (
+            <button key={k} type="button" className={view === k ? "on" : ""} aria-pressed={view === k} data-view={k} onClick={() => setView(k)}>
+              {DIAG_VIEW_LABEL[k]}
+            </button>
+          ))}
+        </div>
+        <span className={`small${poor ? " warn-text" : ""}`} data-testid="jig-diag-line" title={txt.title} style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+          {txt.line}
+        </span>
+        {/* 계수·tie 범례 = 한 줄(넘치면 말줄임, 전체 = title) — 3D 머리 2줄 유지(설계 비교와 같은 높이) */}
+        <span style={{ display: "flex", gap: 12, flex: "1 1 100%", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap" }}>
+        <span className="small muted" data-testid="jig-diag-coef" title={txt.title} style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+          {txt.coef}
+        </span>
+        {tgs.length > 0 && (
+          <span className="small" data-testid="jig-tie-legend" title={txt.title} style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            tie:{" "}
+            {tgs.slice(0, 5).map((g, i) => (
+              <span key={i} style={{ color: tieGroupColor(g, i), marginRight: 6 }} data-testid="jig-tie-group">
+                ▲ {tieGroupName(g)} ({g.n_nodes})
+              </span>
+            ))}
+            {tgs.length > 5 ? `+${tgs.length - 5}` : ""}
+          </span>
+        )}
+        </span>
+      </div>
+      <div className="doe-compare-grid">
+        {left && (
+          <View3DCard
+            view={left}
+            options={
+              view === "tf"
+                ? opts(`목표 u_tgt · ${cur.label} — 지그 노드 기준 강체 제거한 낙하 변형`, { dispLabel: "목표 변위 |u_tgt| (mm)" })
+                : view === "err"
+                  ? opts(`오차 |u_fit − u_tgt| · ${cur.label}`, { dispLabel: "오차 |u_fit − u_tgt| (mm)", range: rangeErr, rangeManual: !!manualErr, onRangeChange: setManualErr })
+                  : opts(`하중 영역 · ${cur.label}`, { fieldOverride: fo, arrowsOverride: arrows })
+            }
+          />
+        )}
+        {right && <View3DCard view={right} options={opts(`지그 맞춤 응답 u_fit · ${cur.label}`, { dispLabel: "맞춤 변위 |u_fit| (mm) — tie 고정", arrowsOverride: arrows })} />}
+      </div>
+    </div>
+  );
+}
+
+function Compare3D({ studyId, result, pick, setPick, kind = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; onRegen?: () => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const nameOf = (d: string) => result.ranking.find((r) => r.id === d)?.shape?.name ?? null;
   const did = pick && others.includes(pick) ? pick : others[0] ?? null;
-  // v0.23.2: 지그 응답 3D(있을 때 기본) — 왼쪽 = 같은 엔트리의 d000 지그 응답, 오른쪽 = 안 지그 응답. 토글로 기존 전 노드 ESL 컨투어
+  // v0.23.3 하중 정의 탭(D-0.23.3-4): 지그 탭 = [설계 비교(지그 응답) | 지그 진단], 전 노드 탭 = 기존 전 노드 ESL 컨투어(v0.23.2 토글 제거)
+  const jigTab = kind === "jig";                 // 출처 표 열 view3d(출처 이름 아님)
   const jigDir = did ? result.view3d_jig?.[did] ?? null : null;
   const jigEsl = did ? result.view3d_jig_esl?.[did] ?? null : null;
   const jigRef = jigEsl ? result.view3d_jig_ref?.[jigEsl] ?? null : null;
-  const jigAvail = !!jigDir && !!jigRef;
-  const [mode, setMode] = useState<"jig" | "esl">("jig");
-  const jigMode = jigAvail && mode === "jig";
+  const jigAvail = jigTab && !!jigDir && !!jigRef;
+  const [jmode, setJmode] = useState<"design" | "diag">("design");
+  const jigMode = jigAvail && jmode === "design";
   // v0.20.0(LT-9): 좌측 = 선택 형상 최악 ESL 의 기준 view3d_ref, 없으면(legacy) d000
   const eslId = did ? result.view3d_esl?.[did] ?? null : null;
   const refId = eslId ? result.view3d_ref?.[eslId] ?? null : null;
   const labelOf = (e: string | null | undefined) => (e ? result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8) : null);
   const eslLabel = jigMode ? labelOf(jigEsl) : refId && eslId ? labelOf(eslId) : null;
-  const base = useDoeView(studyId, jigMode ? jigRef : refId ?? (result.view3d.includes("d000") ? "d000" : null));
-  const cand = useDoeView(studyId, jigMode ? jigDir : did);
+  const showFull = !jigTab;
+  const base = useDoeView(studyId, jigMode ? jigRef : showFull ? refId ?? (result.view3d.includes("d000") ? "d000" : null) : null);
+  const cand = useDoeView(studyId, jigMode ? jigDir : showFull ? did : null);
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
   const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
   const dispLabel = jigMode ? "변위 |u| (mm) — 지그 고정(강체 성분 없음)" : linMode ? "변위 |u| (mm) — 강체 제거" : null;
   const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(dispLabel ? { dispLabel } : {}) });
-  if (!others.length) return <Empty>3D 비교 자료가 없습니다</Empty>;
+  if (!others.length && !jigTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
   const cond = v3dCondText(jigMode, result.jig?.n_jig ?? null, [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)]);
+  const modeSeg = jigTab ? (
+    <div className="seg" role="group" aria-label="지그 3D 보기" data-testid="v3d-jig-mode">
+      {([["design", "설계 비교"], ["diag", "지그 진단"]] as const).map(([k, l]) => (
+        <button key={k} type="button" className={jmode === k ? "on" : ""} aria-pressed={jmode === k} data-mode={k} onClick={() => setJmode(k)}>
+          {l}
+        </button>
+      ))}
+    </div>
+  ) : null;
+  // 다시 만들기 필요: 지그 탭 = 진단·보기·선택 안 지그 응답 중 하나 없음, 그 밖 탭 = 사이드카(rank_views) 없음 → 탭이 비활성이어도 눌러 만들 수 있게 활성 탭과 무관(§7.2)
+  const needRegen = jigTab ? !result.jig_diag || !result.rank_views || (!!did && !jigDir) : !result.rank_views;
+  const regen = needRegen ? <RegenButton studyId={studyId} result={result} onQueued={onRegen} /> : null;
+  if (jigTab && jmode === "diag")
+    return (
+      <JigDiag
+        studyId={studyId}
+        result={result}
+        pick={did}
+        lead={
+          <>
+            {modeSeg}
+            {regen}
+          </>
+        }
+      />
+    );
   return (
     <div className="doe-compare">
       <div className="inline-actions">
@@ -728,26 +955,24 @@ function Compare3D({ studyId, result, pick, setPick }: { studyId: string; result
             </option>
           ))}
         </select>
-        {jigAvail && (
-          <div className="seg" role="group" aria-label="3D 하중 조건" data-testid="v3d-mode">
-            {([["jig", "지그 하중"], ["esl", "전 노드 ESL"]] as const).map(([k, l]) => (
-              <button key={k} type="button" className={mode === k ? "on" : ""} aria-pressed={mode === k} onClick={() => { setMode(k); setManual(null); }}>
-                {l}
-              </button>
-            ))}
-          </div>
-        )}
-        <span className="small" data-testid="v3d-cond">{cond}</span>
+        {modeSeg}
+        {regen}
+        {(!jigTab || jigMode) && <span className="small" data-testid="v3d-cond">{cond}</span>}
         <span className="small muted">{(() => {
+          if (jigTab && !jigMode) return "";
           if (jigMode) return `색 = 변위 |u| · ESL ${eslLabel ?? "–"}(지그 기준 최악), 두 그림 같은 지그·같은 하중·같은 범위`;
           const base = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
           return linMode ? `${base} · 강체 제거, 해석값(순위와 무관)` : base;
         })()}</span>
       </div>
-      <div className="doe-compare-grid">
-        {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
-        {cand && <View3DCard view={cand} options={opts(`${named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
-      </div>
+      {jigTab && !jigAvail ? (
+        <Empty>지그 응답 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>
+      ) : (
+        <div className="doe-compare-grid">
+          {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
+          {cand && <View3DCard view={cand} options={opts(`${named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -1101,6 +1326,16 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const plan = usePolling(() => (varsReady ? selGuard(doe.planView(id)) : Promise.resolve(null)), 0, [id, varsReady, selSha]);
   const done = phase === "DONE";
   const result = usePolling(() => (done ? doe.results(id) : Promise.resolve(null)), 0, [id, done]);
+  // v0.23.3 하중 정의 탭(D-0.23.3-4): 기본 = metric_effective, 탭마다 투영 결과만 화면에
+  const tabs = useMemo(() => (result.data && !isCompare ? tabState(result.data, LOAD_SOURCES) : null), [result.data, isCompare]);
+  const [ltab, setLtab] = useState<LoadTab | null>(null);
+  const curTab: LoadTab = tabs ? (ltab && tabs.ok[ltab] ? ltab : tabs.def ?? "") : "";
+  const curSrc = tabs && curTab ? sourceOf(curTab, LOAD_SOURCES) : null;
+  const tabR = useMemo(() => (result.data ? (curSrc ? tabResult(result.data, curTab, LOAD_SOURCES) : result.data) : null), [result.data, curSrc, curTab]);
+  /** 불가 출처의 첫 칩(사유 — v0.23.2 지그 미계산·불가 칩 유지)을 현재 탭 띠 앞에(원 결과로). 탭 없음(curSrc null) = 띠 기본 칩 전부 */
+  const reasonChips = tabs && curSrc && result.data
+    ? LOAD_SOURCES.filter((x) => !tabs.ok[x.key] && x.chips.length).map((x) => <StatusChipOnly key={x.key} result={result.data!} kind={x.chips[0]} />)
+    : null;
 
   const [rows, setRows] = useState<ParamRow[] | null>(null);
   const [form, setForm] = useState<SpecForm | null>(null);
@@ -1346,7 +1581,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   // §3 진행 띠(현재 작업 1개)
   const progPrep = !!job && (phase === "PREP" || (phase === "FAILED" && !s?.prep));
   const progPreview = !!job && phase === "PREVIEW";
-  const progRun = !!job && (phase === "RUN" || (phase === "FAILED" && ranStage));
+  const progRun = !!job && (phase === "RUN" || (phase === "FAILED" && ranStage) || (phase === "DONE" && jobActive));   // v0.23.3 3D 다시 만들기 작업(DONE 유지)
   // §8 #17·18·19: 경계 경고 수·요소·노드 수는 ① 머리 1곳
   const bPrep = s?.prep?.boundary?.n_warn ?? null;
   const bRes = result.data && (showLinks || meshBaseSel) ? result.data.boundary_warnings_n : null;
@@ -1399,7 +1634,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
             </div>
           )}
           <Steps job={job} />
-          {progRun ? (jobActive || phase === "FAILED") && <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} /> : <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />}
+          {progRun ? (jobActive || phase === "FAILED") && <JobProgress jobId={job.id} allowed={allowed} onDone={() => { void study.reload(); void result.reload(); }} /> : <JobProgress jobId={job.id} allowed={allowed} onDone={() => void study.reload()} compact />}
         </div>
       )}
       {s && (
@@ -1544,19 +1779,30 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         </Card>
       )}
       {ranStage && s && (
-        <Card title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${result.data.n_ok}${isCompare ? "개 형상" : "안"}` : ""}`} right={result.data ? <Downloads study={s} result={result.data} /> : undefined}>
+        <Card
+          title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${(tabR ?? result.data).n_ok}${isCompare ? "개 형상" : "안"}` : ""}`}
+          right={
+            result.data ? (
+              <span className="inline-actions">
+                {tabs && <LoadTabSeg ts={tabs} tab={curTab} setTab={setLtab} sources={LOAD_SOURCES} />}
+                <Downloads study={s} result={result.data} />
+              </span>
+            ) : undefined
+          }
+        >
           <ErrorLine text={result.error} />
-          {result.data && (
+          {result.data && tabR && (
             <>
-              <StatusBand studyId={id} result={result.data} />
+              <StatusBand studyId={id} result={tabR} src={curSrc} lead={reasonChips} />
               {(() => {
-                const r = result.data;
+                const r = tabR;
                 const sensShown = !(isCompare || r.sensitivity_reason);
                 const solo = r.view3d.filter((d) => d !== "d000").length === 0 && !sensShown;
                 return (
-                  <div className={`doe-result-2col${solo ? " solo" : ""}`} data-testid="doe-result-2col">
+                  <div className={`doe-result-2col${solo ? " solo" : ""}`} data-testid="doe-result-2col" id="doe-load-panel" role="tabpanel" aria-label="하중 정의 결과">
                     <div className="doe-result-left">
                       <DoeRanking
+                        key={`rank-${curTab}`}
                         result={r}
                         params={pd?.params ?? []}
                         entries={entries}
@@ -1569,7 +1815,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         resultNote={isCompare ? COMPARE_NOTE : null}
                       />
                       <div className="sub-title">ESL별 개선율</div>
-                      <DoePerEslTable studyId={id} result={r} entries={entries} pick={pick} />
+                      <DoePerEslTable key={`pe-${curTab}`} studyId={id} result={r} entries={entries} pick={pick} view={curSrc && (result.data?.rank_views as Record<string, unknown> | null | undefined)?.[curTab] ? curTab : null} />
                     </div>
                     <div className="doe-result-right">
                       <div className="inline-actions doe-pick-bar">
@@ -1581,7 +1827,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D studyId={id} result={r} pick={pick} setPick={setPick} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} onRegen={() => void study.reload()} />
                       {sensShown ? (
                         <div>
                           <div className="sub-title">민감도</div>
@@ -1631,29 +1877,98 @@ const RESULT_NOTE = "선형 강성 상대 비교입니다(낙하 응답 재현 �
 const COMPARE_NOTE = "선형 강성 상대 비교입니다 — 형상마다 새 메시라 작은 차이는 메시 차이일 수 있고, 같은 좌표계 STEP 을 전제합니다(작은 형상 억제는 CAD 메시가 실패한 형상만 — 형상 표 '형상 단순화'). 방법·한계는 보고서에.";
 
 /** 칩 1줄: 지그 · 하중 전달 · 메시 품질 · 1위 경고 · 경고 n. 칩 testid = 이전 줄 testid, 이전 줄 전체 = title */
-function StatusBand({ studyId, result }: { studyId: string; result: DoeResultOut }) {
+/** v0.23.3 불가 출처 사유 칩 1개(원 결과로 — 지그 미계산·지그 불가) */
+function StatusChipOnly({ result, kind }: { result: DoeResultOut; kind: ChipKind }) {
+  if (kind !== "jig") return null;
+  const jig = result.jig ?? null;
+  return jig ? <JigLine jig={jig} /> : <JigNoneChip onClone={result.jig_on_clone} />;
+}
+
+function StatusBand({ studyId, result, src = null, lead = null }: { studyId: string; result: DoeResultOut; src?: LoadSource | null; lead?: ReactNode }) {
   // v0.21.0 ③ 기준 메시 품질 미달(모든 안이 같은 메시 — 행 표시 없음). 목록에서는 뺌
   const mqBase = result.warnings.find((w) => w.code === "MESH_QUALITY_RANK" && w.scope === "base");
   const rest = result.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH" && w !== mqBase);
   const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w) }))];
   const jig = result.jig ?? null;
-  const chips = [
-    // v0.23.2 D-0.23.2-3: 지그 칩은 항상 첫 칩(계산됨 = 기존, 미계산 = 복제 안내)
-    jig ? <JigLine key="jig" jig={jig} /> : <JigNoneChip key="jig" onClone={result.jig_on_clone} />,
-    result.load_transfer && <LoadTransferDiag key="lt" studyId={studyId} result={result} />,
-    mqBase && (
+  // v0.23.3 출처 표(LOAD_SOURCES.chips)의 칩만 그림 — 출처 이름 분기 없음. src 없음(④·탭 없음) = 기존 전부
+  const kinds: readonly ChipKind[] = src ? src.chips : ["jig", "lt", "mq", "best_clean_mq", "best_clean"];
+  const chip: Record<ChipKind, ReactNode> = {
+    // v0.23.2 D-0.23.2-3: 지그 칩(계산됨 = 기존, 미계산 = 복제 안내)
+    jig: jig ? <JigLine key="jig" jig={jig} /> : <JigNoneChip key="jig" onClone={result.jig_on_clone} />,
+    lt: result.load_transfer && <LoadTransferDiag key="lt" studyId={studyId} result={result} />,
+    mq: mqBase && (
       <ChipDetail key="mq" testid="mq-base-strip" className="doe-chip warn-text" title={`⚠ ${warnText(mqBase)}`} full={`⚠ ${warnText(mqBase)}`}>
         ⚠ 기준 메시 품질 미달
       </ChipDetail>
     ),
-    <BestCleanMqChip key="bcmq" result={result} />,
-    <BestCleanChip key="bc" result={result} />,
-  ];
-  // 지그 칩이 항상 있으므로 띠는 결과마다 그린다(v0.23.2)
+    best_clean_mq: <BestCleanMqChip key="bcmq" result={result} />,
+    best_clean: <BestCleanChip key="bc" result={result} />,
+  };
   return (
     <div className="doe-status" data-testid="doe-status">
-      {chips}
+      {lead}
+      {kinds.map((k) => chip[k])}
       <MsgFold items={items} storeKey={`${studyId}:result-warn`} testId="result-warn" />
+    </div>
+  );
+}
+
+/** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유 */
+function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; setTab: (t: LoadTab) => void; sources: readonly LoadSource[] }) {
+  const [focus, setFocus] = useState<LoadTab | null>(null);
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  /** 좌우 화살표(·Home·End) = 포커스만 이동(가능 여부와 무관 — 비활성 탭도 사유를 읽을 수 있게), Enter·Space = 선택 */
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const n = sources.length;
+    const j = e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    refs.current[sources[j].key]?.focus();
+  };
+  const focusReason = focus && !ts.ok[focus] ? ts.reason[focus] : null;
+  return (
+    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab" style={{ position: "relative" }}>
+      {sources.map((s, i) => {
+        const ok = ts.ok[s.key];
+        const why = ts.reason[s.key];
+        return (
+          <Fragment key={s.key}>
+          <button
+            ref={(el) => {
+              refs.current[s.key] = el;
+            }}
+            id={`doe-load-tab-${s.key}`}
+            type="button"
+            role="tab"
+            data-tab={s.key}
+            className={tab === s.key ? "on" : ""}
+            aria-selected={tab === s.key}
+            aria-controls="doe-load-panel"
+            aria-disabled={!ok}
+            aria-describedby={!ok && why ? `doe-load-why-${s.key}` : undefined}
+            tabIndex={tab === s.key || (!ts.ok[tab] && i === 0) ? 0 : -1}
+            title={ok ? s.title : why ?? undefined}
+            onFocus={() => setFocus(s.key)}
+            onBlur={() => setFocus((f) => (f === s.key ? null : f))}
+            onKeyDown={(e) => onKey(e, i)}
+            onClick={() => ok && setTab(s.key)}
+          >
+            {s.label}
+          </button>
+          {!ok && why && (
+            <span id={`doe-load-why-${s.key}`} className="sr-only">
+              {why}
+            </span>
+          )}
+          </Fragment>
+        );
+      })}
+      {/* 키보드 포커스 사유(비활성 탭) — 절대 위치, 높이 불변 */}
+      {focusReason && (
+        <span className="small warn-text" data-testid="doe-load-tab-why" role="status" style={{ position: "absolute", top: "100%", left: 0, zIndex: 5, whiteSpace: "nowrap", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 4, padding: "0 0.4rem" }}>
+          {focusReason}
+        </span>
+      )}
     </div>
   );
 }

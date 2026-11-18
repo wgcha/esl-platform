@@ -212,4 +212,7 @@ def other_surfaces(rad_path, target_part_id: int, box_lo, box_hi, *, include_pat
             "tri_part": TP.astype(np.int64), "tri_thick": TT.astype(np.float64),
             "thickness_known": float(TK.mean()) if TK.size else None,
             "n_parts": int(np.unique(TP).size), "n_shell": int(n_shell),
+            # v0.23.3(esl_jig_view.md §1.6) 상대 부품 제목 — 삼각형에 나온 파트만(가산 키)
+            "part_titles": {int(q): str(deck.parts[int(q)]["title"]) for q in np.unique(TP).tolist()
+                            if (deck.parts.get(int(q)) or {}).get("title")},   # /PART 카드·제목 있는 것만
             "n_solid_faces": int(n_solid), "n_skipped": int(n_skipped), "seconds": round(time.monotonic() - t0, 3)}

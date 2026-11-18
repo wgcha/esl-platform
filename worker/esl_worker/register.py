@@ -1051,6 +1051,18 @@ def register_doe_run(conn: Connection, job: dict[str, Any], case: Any, ddir: str
             "best": (res.get("best") or {}).get("id"), "report": has_report}
 
 
+def register_doe_view3d(conn: Connection, job: dict[str, Any], case: Any, ddir: str) -> dict[str, Any]:
+    """v0.23.3 3D 다시 만들기(DOE_RUN · params kind VIEW3D, esl_jig_view.md §3) 의 BD_REGISTER: **DB 무변경** — 스터디 존재·사이드카
+    확인만(phase DONE 그대로, result 그대로 — 결과 응답은 post/jig_view.json 을 파일에서 읽음)."""
+    from esl_platform.core.repositories import doe as doe_repo
+
+    s = doe_repo.get_study(conn, job["bead_doe_id"])
+    if s is None:
+        raise RegisterError("DOE_NOT_FOUND", "강성 평가 스터디 행이 없습니다")
+    return {"bead_doe_id": s["id"], "phase": s.get("phase"), "view3d": True,
+            "sidecar": os.path.isfile(os.path.join(ddir, "post", "jig_view.json"))}
+
+
 REGISTER = {"CASE_EXTRACT": register_extract, "ESL_SOLVE": register_esl, "VALIDATE": register_validation,
             "EXPORT": register_export, "CASE_REPORT": register_case_report, "LIB_ANALYZE": register_lib_analyze,
             "LIB_COMPARE": register_lib_compare, "OPT_RUN": register_opt_run}

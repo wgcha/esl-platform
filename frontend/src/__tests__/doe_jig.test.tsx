@@ -38,7 +38,7 @@ describe("지그 결과 mock·규칙", () => {
 });
 
 describe("지그 ok — doe-40", () => {
-  it("주 열 '지그 C'·정의 문구·기준 재현 한 줄(MAC·umax 오차·영역 수)·보조 토글 3열", async () => {
+  it("주 열 '지그 C'·정의 문구·기준 재현 한 줄(MAC·umax 오차·영역 수)·보조 토글 = 지그 값만(v0.23.3 탭)", async () => {
     open("doe-40");
     const t = await screen.findByRole("table", { name: "순위표" });
     await waitFor(() => expect(heads(t)).toContain("지그 C"));
@@ -55,9 +55,12 @@ describe("지그 ok — doe-40", () => {
     expect(screen.getByTestId("metric-defs").textContent).toMatch(/score: max\(C_jig 안\) \/ max\(C_jig 기준\).*영역 3개, 접촉\+패치.*같은 지그·같은 하중/);
     expect(screen.getByText(/정렬: score\(지그 C\)/)).toBeTruthy();
     fireEvent.click(screen.getByTestId("rank-aux-toggle"));
-    await waitFor(() => expect(heads(t)).toEqual(expect.arrayContaining(["재풀이 C 비", "불평형", "umax(지그) 비"])));
+    // v0.23.3 하중 정의 탭(D-0.23.3-4): 지그 탭 보조 열 = 지그 값만(재풀이 C 비·불평형은 전 노드 탭으로)
+    await waitFor(() => expect(heads(t)).toContain("umax(지그) 비"));
+    expect(heads(t)).not.toContain("재풀이 C 비");
+    expect(heads(t)).not.toContain("불평형");
     expect(within(t).getAllByTestId(/^aux-umaxjig-/).length).toBeGreaterThan(0);
-    expect(within(t).getAllByTestId(/^aux-solve-/).length).toBeGreaterThan(0);
+    expect(within(t).queryAllByTestId(/^aux-solve-/).length).toBe(0);
     expect(screen.queryByTestId("sm-verify-note")).toBeNull();
     // 열 수 일치(행마다 셀 수 = 머리 수 — 보조 열 켠 상태)
     const n = heads(t).length;
@@ -100,7 +103,7 @@ describe("지그 poor·fallback", () => {
 });
 
 describe("solve 결과 + score_jig, legacy", () => {
-  it("metric_effective solve 에 행 score_jig 가 있으면 보조 토글에 '지그 C 비' 1열", async () => {
+  it("metric_effective solve 에 행 score_jig 가 있어도 전 노드 탭에는 '지그 C 비' 없음(v0.23.3 탭 분리)", async () => {
     renderApp("/p/p-body/doe/doe-21", "power", (s) => {
       const rec = s.doe.recs.find((r) => r.out.id === "doe-21")!;
       const r = withSolveMetric(rec.result!);
@@ -109,9 +112,13 @@ describe("solve 결과 + score_jig, legacy", () => {
     const t = await screen.findByRole("table", { name: "순위표" });
     await waitFor(() => expect(heads(t)).toContain("재풀이 C"));
     expect(heads(t)).not.toContain("지그 C 비");
-    fireEvent.click(screen.getByTestId("rank-aux-toggle"));
-    await waitFor(() => expect(heads(t).filter((h) => h === "지그 C 비").length).toBe(1));
-    expect(within(t).getAllByTestId(/^aux-jig-/).length).toBeGreaterThan(0);
+    const tog = screen.queryByTestId("rank-aux-toggle");
+    if (tog) fireEvent.click(tog);
+    await waitFor(() => expect(heads(t).filter((h) => h === "지그 C 비").length).toBe(0));
+    expect(within(t).queryAllByTestId(/^aux-jig-/).length).toBe(0);
+    const jigTab = screen.getByTestId("doe-load-tab").querySelector("[data-tab=jig]") as HTMLButtonElement;
+    expect(jigTab.getAttribute("aria-disabled")).toBe("true");                                   // 지그 블록 없음 = 지그 탭 비활성 + 사유(칩 문구)
+    expect(jigTab.title).toMatch(/지그 순위 도입\(v0\.23\.0\) 전/);
     // v0.23.2: 지그 블록 없음 = 미계산 칩(doe-21 = ① 새 스냅샷 → 복제하면 계산)
     expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("none");
     expect(screen.getByTestId("jig-line").textContent).toBe("지그: 미계산(이전 설정 스터디 — 복제하면 계산)");
