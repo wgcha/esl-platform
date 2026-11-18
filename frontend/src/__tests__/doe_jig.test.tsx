@@ -117,7 +117,7 @@ describe("solve 결과 + score_jig, legacy", () => {
     await waitFor(() => expect(heads(t).filter((h) => h === "지그 C 비").length).toBe(0));
     expect(within(t).queryAllByTestId(/^aux-jig-/).length).toBe(0);
     const jigTab = screen.getByTestId("doe-load-tab").querySelector("[data-tab=jig]") as HTMLButtonElement;
-    expect(jigTab.disabled).toBe(true);                                   // 지그 블록 없음 = 지그 탭 비활성 + 사유(칩 문구)
+    expect(jigTab.getAttribute("aria-disabled")).toBe("true");                                   // 지그 블록 없음 = 지그 탭 비활성 + 사유(칩 문구)
     expect(jigTab.title).toMatch(/지그 순위 도입\(v0\.23\.0\) 전/);
     // v0.23.2: 지그 블록 없음 = 미계산 칩(doe-21 = ① 새 스냅샷 → 복제하면 계산)
     expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("none");

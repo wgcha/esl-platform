@@ -247,6 +247,10 @@ select:disabled {
   color: var(--text-2);
   font-size: 0.86rem;
 }
+.seg button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .seg button + button {
   border-left: 1px solid var(--line-strong);
 }

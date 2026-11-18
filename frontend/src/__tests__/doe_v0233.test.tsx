@@ -133,7 +133,7 @@ describe("지그 미계산·fallback", () => {
     openJig("doe-42");
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
-    expect(tabBtn("jig").disabled).toBe(true);
+    expect(tabBtn("jig").getAttribute("aria-disabled")).toBe("true");
     expect(tabBtn("jig").title).toMatch(/^지그 순위 불가 — /);
     expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("fallback");
   }, 30000);
@@ -152,4 +152,51 @@ describe("진단 순수 도우미", () => {
     expect(a[0].length).toBeGreaterThan(a[1].length);                    // 길이 ∝ |F|
     expect(jigDiagText(e, d).coef).toBe("체적력 없음");
   });
+});
+
+describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)", () => {
+  it("F1 metric_effective 없는 옛 결과: 전 노드 탭 가능(사유에 다시 만들기 안내 없음)", () => {
+    const base = { ranking: [], baseline: { id: "d000", score: 1, umax: 1, epsmax: 0.001 }, warnings: [], view3d: [], esl: [], excluded: [], n_ok: 0, n_skipped: {}, n_failed: {}, C_ref: 1 } as unknown as DoeResultOut;
+    const ts = tabState(base);
+    expect(ts.ok.full).toBe(true);
+    expect(ts.def).toBe("full");
+    expect(ts.ok.jig).toBe(false);
+    expect(ts.reason.jig ?? "").not.toMatch(/3D 다시 만들기/);
+    expect(ts.reason.full).toBeNull();
+  });
+
+  it("F2 지그 계산됨 + solve + 사이드카 없음: 전 노드 탭에서도 3D 다시 만들기 버튼", async () => {
+    openJig("doe-40", (r) => ({ ...r, rank_views: null, metric_effective: "solve", rank: { ...r.rank!, metric_effective: "solve" } }));
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
+    expect(tabBtn("jig").getAttribute("aria-disabled")).toBe("true");
+    const btn = (await screen.findByTestId("v3d-regen")) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  }, 30000);
+
+  it("탭 키보드: tablist/tab·aria-selected·aria-controls, 좌우 화살표 포커스 이동, 비활성 탭 포커스 시 사유 표시", async () => {
+    openJig("doe-42");
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    const list = screen.getByRole("tablist", { name: "하중 정의" });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((t) => t.getAttribute("data-tab"))).toEqual(["jig", "full"]);
+    for (const t of tabs) {
+      expect(t.getAttribute("aria-controls")).toBe("doe-load-panel");
+      expect(document.getElementById("doe-load-panel")!.getAttribute("role")).toBe("tabpanel");
+    }
+    expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
+    expect(tabBtn("full").tabIndex).toBe(0);
+    tabBtn("full").focus();
+    fireEvent.keyDown(tabBtn("full"), { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tabBtn("jig"));                  // 비활성 탭도 포커스 가능(사유 읽기)
+    const why = await screen.findByTestId("doe-load-tab-why");
+    expect(why.textContent).toMatch(/^지그 순위 불가 — /);
+    expect(tabBtn("jig").getAttribute("aria-describedby")).toBeTruthy();
+    expect(document.getElementById(tabBtn("jig").getAttribute("aria-describedby")!)!.textContent).toMatch(/^지그 순위 불가/);
+    fireEvent.click(tabBtn("jig"));                                      // 비활성 클릭 = 무시
+    expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(tabBtn("jig"), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabBtn("full"));
+    expect(screen.queryByTestId("doe-load-tab-why")).toBeNull();
+  }, 30000);
 });

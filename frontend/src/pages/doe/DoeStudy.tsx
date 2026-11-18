@@ -6,7 +6,7 @@
 // ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
 // v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8): ① 입력 카드 물성 칸 아래 '고급 설정'(접힘) = 메시 방식 [자동 | CAD | 재메시] + '실패 시 세분화 허용'.
 // 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
@@ -805,12 +805,19 @@ function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: Doe
   const [ds, setDs] = useState<{ on: boolean; kexp: number | null; real: boolean }>({ on: false, kexp: null, real: false });
   const sync = { ...ds, set: (p: Partial<typeof ds>) => setDs((x) => ({ ...x, ...p })) };
   const [manual, setManual] = useState<Range | null>(null);
+  const [manualErr, setManualErr] = useState<Range | null>(null);
   if (!d || !cur) return <Empty>지그 진단 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>;
   const txt = jigDiagText(cur, d);
   const th = result.jig?.th;
   const poor = !!th && (cur.mac < th.mac_min || cur.umax_err > th.umax_err_max);
-  const umax = Math.max(cur.umax_tgt, cur.umax_fit, left?.manifest?.ranges.u_max ?? 0, right?.manifest?.ranges.u_max ?? 0);
+  // 목표·맞춤·영역 = 두 그림 같은 범위(목표·맞춤 u_max 중 큰 값). 오차 보기 = 오차 그림은 err manifest 자체 범위(목표·맞춤과 안 섞음), 맞춤 그림은 맞춤 자체 범위(계약 §7.2)
+  const errView = view === "err";
+  const umax = errView
+    ? Math.max(cur.umax_fit, right?.manifest?.ranges.u_max ?? 0)
+    : Math.max(cur.umax_tgt, cur.umax_fit, left?.manifest?.ranges.u_max ?? 0, right?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (umax > 0 ? { min: 0, max: umax } : null);
+  const errMax = left?.manifest?.ranges.u_max ?? 0;
+  const rangeErr: Range | null = manualErr ?? (errMax > 0 ? { min: 0, max: errMax } : null);
   const arrows = right?.manifest ? regionArrows(cur, d, right.manifest.bbox.diag) : null;
   const n = right?.manifest?.n_nodes ?? 0;
   const fo = view === "reg" && regs && n ? { values: regionField(n, regs.regions), min: 0, max: 1, label: "하중 영역 — 진한 파랑 접촉 · 옅은 파랑 패치 · 회색 영역 밖" } : null;
@@ -868,7 +875,7 @@ function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: Doe
               view === "tf"
                 ? opts(`목표 u_tgt · ${cur.label} — 지그 노드 기준 강체 제거한 낙하 변형`, { dispLabel: "목표 변위 |u_tgt| (mm)" })
                 : view === "err"
-                  ? opts(`오차 |u_fit − u_tgt| · ${cur.label}`, { dispLabel: "오차 |u_fit − u_tgt| (mm)" })
+                  ? opts(`오차 |u_fit − u_tgt| · ${cur.label}`, { dispLabel: "오차 |u_fit − u_tgt| (mm)", range: rangeErr, rangeManual: !!manualErr, onRangeChange: setManualErr })
                   : opts(`하중 영역 · ${cur.label}`, { fieldOverride: fo, arrowsOverride: arrows })
             }
           />
@@ -918,7 +925,8 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, onRegen }: { s
       ))}
     </div>
   ) : null;
-  const needRegen = jigTab && (!result.jig_diag || !result.rank_views || (!!did && !jigDir));
+  // 다시 만들기 필요: 지그 탭 = 진단·보기·선택 안 지그 응답 중 하나 없음, 그 밖 탭 = 사이드카(rank_views) 없음 → 탭이 비활성이어도 눌러 만들 수 있게 활성 탭과 무관(§7.2)
+  const needRegen = jigTab ? !result.jig_diag || !result.rank_views || (!!did && !jigDir) : !result.rank_views;
   const regen = needRegen ? <RegenButton studyId={studyId} result={result} onQueued={onRegen} /> : null;
   if (jigTab && jmode === "diag")
     return (
@@ -1791,7 +1799,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                 const sensShown = !(isCompare || r.sensitivity_reason);
                 const solo = r.view3d.filter((d) => d !== "d000").length === 0 && !sensShown;
                 return (
-                  <div className={`doe-result-2col${solo ? " solo" : ""}`} data-testid="doe-result-2col">
+                  <div className={`doe-result-2col${solo ? " solo" : ""}`} data-testid="doe-result-2col" id="doe-load-panel" role="tabpanel" aria-label="하중 정의 결과">
                     <div className="doe-result-left">
                       <DoeRanking
                         key={`rank-${curTab}`}
@@ -1907,23 +1915,60 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
 
 /** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유 */
 function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; setTab: (t: LoadTab) => void; sources: readonly LoadSource[] }) {
+  const [focus, setFocus] = useState<LoadTab | null>(null);
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  /** 좌우 화살표(·Home·End) = 포커스만 이동(가능 여부와 무관 — 비활성 탭도 사유를 읽을 수 있게), Enter·Space = 선택 */
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const n = sources.length;
+    const j = e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    refs.current[sources[j].key]?.focus();
+  };
+  const focusReason = focus && !ts.ok[focus] ? ts.reason[focus] : null;
   return (
-    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab">
-      {sources.map((s) => (
-        <button
-          key={s.key}
-          type="button"
-          role="tab"
-          data-tab={s.key}
-          className={tab === s.key ? "on" : ""}
-          aria-selected={tab === s.key}
-          disabled={!ts.ok[s.key]}
-          title={ts.ok[s.key] ? s.title : ts.reason[s.key] ?? undefined}
-          onClick={() => setTab(s.key)}
-        >
-          {s.label}
-        </button>
-      ))}
+    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab" style={{ position: "relative" }}>
+      {sources.map((s, i) => {
+        const ok = ts.ok[s.key];
+        const why = ts.reason[s.key];
+        return (
+          <Fragment key={s.key}>
+          <button
+            ref={(el) => {
+              refs.current[s.key] = el;
+            }}
+            id={`doe-load-tab-${s.key}`}
+            type="button"
+            role="tab"
+            data-tab={s.key}
+            className={tab === s.key ? "on" : ""}
+            aria-selected={tab === s.key}
+            aria-controls="doe-load-panel"
+            aria-disabled={!ok}
+            aria-describedby={!ok && why ? `doe-load-why-${s.key}` : undefined}
+            tabIndex={tab === s.key || (!ts.ok[tab] && i === 0) ? 0 : -1}
+            title={ok ? s.title : why ?? undefined}
+            onFocus={() => setFocus(s.key)}
+            onBlur={() => setFocus((f) => (f === s.key ? null : f))}
+            onKeyDown={(e) => onKey(e, i)}
+            onClick={() => ok && setTab(s.key)}
+          >
+            {s.label}
+          </button>
+          {!ok && why && (
+            <span id={`doe-load-why-${s.key}`} className="sr-only">
+              {why}
+            </span>
+          )}
+          </Fragment>
+        );
+      })}
+      {/* 키보드 포커스 사유(비활성 탭) — 절대 위치, 높이 불변 */}
+      {focusReason && (
+        <span className="small warn-text" data-testid="doe-load-tab-why" role="status" style={{ position: "absolute", top: "100%", left: 0, zIndex: 5, whiteSpace: "nowrap", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 4, padding: "0 0.4rem" }}>
+          {focusReason}
+        </span>
+      )}
     </div>
   );
 }

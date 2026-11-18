@@ -84,7 +84,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
   },
 ];
 
-const metricEff = (r: DoeResultOut) => r.rank?.metric_effective ?? r.metric_effective ?? null;
+const metricEff = (r: DoeResultOut) => r.rank?.metric_effective ?? r.metric_effective ?? r.metric ?? "solve";
 export const sourceOf = (key: LoadTab, sources: readonly LoadSource[] = LOAD_SOURCES) => sources.find((s) => s.key === key) ?? null;
 
 export interface TabState {
@@ -98,7 +98,7 @@ export interface TabState {
 
 /** 탭 가능 여부·기본 탭: 주 출처 = metric_effective 를 primaryFor 로 가진 행(없으면 없음). 보기(rank_views)가 없으면 주 출처만 가능 */
 export function tabState(r: DoeResultOut, sources: readonly LoadSource[] = LOAD_SOURCES): TabState {
-  const me = metricEff(r) ?? "";
+  const me = metricEff(r);
   const primary = sources.find((s) => s.primaryFor.includes(me))?.key ?? null;
   const views = (r.rank_views ?? {}) as Record<string, unknown>;
   const ok: Record<string, boolean> = {};

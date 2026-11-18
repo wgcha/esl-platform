@@ -27,7 +27,7 @@ describe("출처 표 한 행 제거", () => {
     const seg = await screen.findByTestId("doe-load-tab");
     const btns = [...seg.querySelectorAll("button")];
     expect(btns.map((b) => b.getAttribute("data-tab"))).toEqual(["jig"]);
-    expect((btns[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(btns[0].getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByTestId("jig-line").getAttribute("data-status")).toBe("none");
   }, 30000);
 });
