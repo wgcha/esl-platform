@@ -203,6 +203,11 @@ export function makeEslRun(id: string, caseId: string, supportSetId: string, fra
       // v0.24.0 경계력 ESL 요약(contact 등급 — 현장 h3d: 접촉력·가속도만)
       bforce: { grade: "contact", mass_source: "deck", sum_abs: 1.52e5, sum_abs_ratio_full: 0.066, abar_g: 41.2, corr_rel: 0.23, eq_force_rel: 0.118, eq_moment_rel: 0.031,
         recon: "ok", mac: 0.962, umax_err: -0.041, reaction_rel: 2.4e-12, limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], sign_suspect: false },
+      // v0.24.0 보완 내력 ESL 요약(FINT 출력이 있는 재해석 — 잔차·공유 노드) · 소성 진단
+      fint: { grade: "fint", sum_abs: 1.31e5, sum_abs_ratio_full: 0.057, abar_g: 0, corr_rel: 0, eq_force_rel: 2.1e-6, eq_moment_rel: 3.4e-3,
+        res_force_rel: 2.1e-6, res_moment_rel: 4.2e-4, unbalanced: false, balance_applied: "none", shared_status: "ok", n_shared: 12, n_rot: 4,
+        recon: "ok", mac: 0.985, umax_err: -0.021, reaction_rel: 2.8e-3, limits: ["FINT_ROT_LINKS"], limit_text: ["회전 연결 노드(RBODY·스프링·빔) 노드 모멘트 미사용"], sign: -1 },
+      plastic: { status: "ok", eps_min: 0.002, frac: 0.031, max: 0.0421, n: 214, n_total: 9874 },
     },
     supports: [
       { node_id: CORNER_IDS[0], dof: "123" },

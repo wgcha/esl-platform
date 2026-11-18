@@ -272,7 +272,9 @@ export const doe = {
     request<DoePerEslOut>("GET", `/doe/studies/${id}/results/per-esl`, { query: { design: designs.join(","), ...(view ? { view } : {}) } }),
   /** v0.23.3 3D 다시 만들기(esl_jig_view.md §3 — 202 작업, 403 권한, 409 작업 중·지그 없음) */
   regenerateView3d: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/view3d/regenerate`),
-  /** v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6) */
+  /** v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2 — src = bforce | fint) */
+  addSource: (id: string, src: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/sources/${encodeURIComponent(src)}`),
+  /** v0.24.0 경계력 ESL 추가 계산(호환) */
   addBforce: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/sources/bforce`),
   /** v0.23.3 지그 진단 영역(d000_jigdiag_e<kk>_fit/regions.json) */
   jigRegions: (id: string, did: string) => request<DoeJigRegionsFile>("GET", `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/regions.json`),
@@ -432,6 +434,29 @@ export const SM_CODE_TEXT: Record<string, string> = {
   SM_CROSS_MESH: "다른 메시 비교(정밀도 낮음) — 형상마다 메시가 달라 1차 강성 지표 대신 work 하중을 옮겨 재풀이한 C 로 순위를 매깁니다",
 };
 /** v0.23.0 지그 순위 문구(서버 message 가 없을 때 — 원본 resources/doe_messages.json, esl_jig_rank.md §4) */
+/** v0.24.0 보기 전용 순위 지표(노드 힘 출처 — esl_fint.md §5.1·§8): 순위표 주 열 이름·정렬 문구·열 툴팁·지표 정의 — 출처 이름 분기 대신 표 1곳 */
+export const VIEW_METRIC_TEXT: Record<string, { col: string; sort: string; title: string; def: string }> = {
+  bf: {
+    col: "경계력 C",
+    sort: "score(경계력 C)",
+    title: "max_i C_bf / C_ref — 낙하 해석의 접촉력·관성(관성 이완 자기평형) 하중을 같은 3-2-1 지지로 안마다 재풀이(하중 제어), 작을수록 좋음",
+    def: "score: max(C_bf 안) / max(C_bf 기준) — 경계력 ESL(접촉력 − 관성) 하중을 같은 3-2-1 지지로 안마다 재풀이한 컴플라이언스. 작을수록 좋음",
+  },
+  fi: {
+    col: "내력 C",
+    sort: "score(내력 C)",
+    title: "max_i C_fi / C_ref — 낙하 해석의 노드 내력(FINT — 자기평형) 하중을 같은 3-2-1 지지로 안마다 재풀이(하중 제어), 작을수록 좋음",
+    def: "score: max(C_fi 안) / max(C_fi 기준) — 내력 ESL(노드 내력 FINT) 하중을 같은 3-2-1 지지로 안마다 재풀이한 컴플라이언스. 작을수록 좋음",
+  },
+};
+
+/** v0.24.0 평가 영역 문구(esl_fint.md §6.2): part = 대상 파트 전체, exclude_free_edges = 자유 경계 d mm 이내 제외, box = 상자 n개 안 */
+export function evalRegionText(e: { mode: string; free_edge_mm?: number | null; boxes?: unknown[] | null; n_nodes?: number | null; n_total?: number | null } | null | undefined): string {
+  if (!e) return "대상 파트 전체";
+  const base = e.mode === "exclude_free_edges" ? `자유 경계 ${e.free_edge_mm ?? "–"} mm 이내 제외` : e.mode === "box" ? `상자 ${(e.boxes ?? []).length}개 안` : "대상 파트 전체";
+  return e.n_nodes != null && e.n_total != null && e.mode !== "part" ? `${base}(노드 ${e.n_nodes}/${e.n_total})` : base;
+}
+
 export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_UNSUPPORTED: "이 모드는 지그 순위를 지원하지 않습니다",
   JIG_NO_TIE: "체결부(tie) 노드가 없어 지그를 만들 수 없습니다",

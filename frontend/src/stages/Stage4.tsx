@@ -1,6 +1,6 @@
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
-import type { EslBforceSummary } from "../api/types";
+import type { EslBforceSummary, EslFintSummary, EslPlasticSummary } from "../api/types";
 import { warnText } from "../api/client";
 import { history } from "../api/history";
 import { PastFrame } from "../components/PastBadge";
@@ -36,6 +36,43 @@ function BforceLine({ b }: { b: EslBforceSummary }) {
   const t = bforceLineText(b);
   return (
     <div className={`small${t.warn ? " warn-text" : " muted"}`} data-testid="esl-bforce-line" title={`질량 ${b.mass_source ?? "–"} · 불평형(힘) ${b.eq_force_rel == null ? "–" : b.eq_force_rel.toExponential(2)} · (모멘트) ${b.eq_moment_rel == null ? "–" : b.eq_moment_rel.toExponential(2)}`}>
+      {t.text}
+    </div>
+  );
+}
+
+/** v0.24.0 보완 내력 ESL 요약 한 줄(esl_fint.md §8) — 순수 문구(시험용) */
+export function fintLineText(b: EslFintSummary): { text: string; warn: boolean } {
+  if (!b.grade || b.grade === "none" || b.code === "FINT_NO_DATA")
+    return { text: `내력 ESL: 자료 없음 — ${b.reason ?? "내력 출력 없음 — 낙하 Engine 에 /H3D/NODA/FINT 추가"}`, warn: false };
+  if (b.code === "FINT_FAILED") return { text: `내력 ESL: 계산 실패(${b.reason ?? "–"}) — 전 노드 ESL 결과는 그대로`, warn: true };
+  if (b.code === "FINT_DISABLED") return { text: "내력 ESL: 설정에서 꺼짐(bforce.fint.enabled)", warn: false };
+  const f = (v: number | null | undefined, d = 2) => (v == null ? "–" : v.toFixed(d));
+  const e = (v: number | null | undefined) => (v == null ? "–" : v.toExponential(1));
+  const lim = b.limit_text ?? b.limits ?? [];
+  const sh = b.shared_status === "ok" ? `공유 노드 ${b.n_shared ?? 0}${(b.n_rot ?? 0) > 0 ? `(회전 연결 ${b.n_rot})` : ""}` : `공유 노드 ${b.shared_status === "failed" ? "확인 실패" : "–"}`;
+  const parts = [
+    `내력 ESL: F = ${b.sign != null && b.sign < 0 ? "−" : ""}FINT`,
+    `Σ|F| ${b.sum_abs == null ? "–" : b.sum_abs.toExponential(2)} N (전 노드 ESL 대비 ×${b.sum_abs_ratio_full == null ? "–" : b.sum_abs_ratio_full.toPrecision(2)})`,
+    `잔차 힘 ${e(b.res_force_rel)} · 모멘트 ${e(b.res_moment_rel)}${b.balance_applied === "inertia_relief" ? "(관성 이완 적용)" : ""}`,
+    sh,
+    b.recon === "skipped" ? "재현 생략(메모리)" : `재현 MAC ${f(b.mac, 3)} · umax 오차 ${b.umax_err == null ? "–" : `${(b.umax_err * 100).toFixed(1)}%`}`,
+    `반력 ${e(b.reaction_rel)}`,
+  ];
+  const warn = b.unbalanced === true || (b.n_shared ?? 0) > 0 || b.recon === "poor";
+  return { text: parts.join(" · ") + (b.unbalanced ? " · ⚠ 내력 합 불평형(공유 노드·추출 누락 의심)" : "") + (lim.length ? ` · ⚠ ${lim.join(" · ")}` : ""), warn };
+}
+
+/** v0.24.0 소성 진단 한 줄(esl_fint.md §4) — 순수 문구 */
+export function plasticLineText(p: EslPlasticSummary): string {
+  if (p.status !== "ok") return `소성(t*): 없음${p.status === "failed" ? `(읽기 실패 ${p.reason ?? ""})` : "(소성 변형률 결과 없음)"}`;
+  return `소성(t*): 면적 ${((p.frac ?? 0) * 100).toFixed(1)}%(εᵖ > ${p.eps_min ?? "–"}, 요소 ${p.n ?? 0}/${p.n_total ?? "–"}) · 최대 εᵖ ${p.max == null ? "–" : p.max.toFixed(4)} — 선형 ESL 은 소성 영역을 재현하지 못함`;
+}
+
+function FintLine({ b }: { b: EslFintSummary }) {
+  const t = fintLineText(b);
+  return (
+    <div className={`small${t.warn ? " warn-text" : " muted"}`} data-testid="esl-fint-line" title={`부호 ${b.sign ?? "–"} · 균형 ${b.balance_applied ?? "–"} · 기준 형상 불평형(힘) ${b.eq_force_rel == null ? "–" : b.eq_force_rel.toExponential(2)} · (모멘트) ${b.eq_moment_rel == null ? "–" : b.eq_moment_rel.toExponential(2)} — 노드 모멘트 미사용(병진 내력만)`}>
       {t.text}
     </div>
   );
@@ -98,6 +135,12 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               <Stat label="하중 노드 수" value={r.forces?.n_nodes_loaded?.toLocaleString() ?? "–"} />
             </div>
             {r.forces?.bforce && <BforceLine b={r.forces.bforce} />}
+            {r.forces?.fint && <FintLine b={r.forces.fint} />}
+            {r.forces?.plastic && (
+              <div className={`small${r.forces.plastic.status === "ok" && (r.forces.plastic.frac ?? 0) > 0 ? " warn-text" : " muted"}`} data-testid="esl-plastic-line">
+                {plasticLineText(r.forces.plastic)}
+              </div>
+            )}
             {r.warnings.length > 0 && (
               <ul className="reasons">
                 {r.warnings.map((w) => (

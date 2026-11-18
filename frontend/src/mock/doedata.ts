@@ -1008,6 +1008,52 @@ export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut
     ...(shown.length ? { view3d_bf: v, view3d_bf_esl: ve, view3d_bf_ref: vr } : {}),
   };
 }
+/** v0.24.0 보완 내력 ESL(esl_fint.md §5·§7): kind ok = 내력 보기·3D·칩(잔차·공유 노드·소성) + 새 스냅샷 평가 영역 umax, none = Case 에 FINT 없음
+ *  (탭 비활성 + [내력 ESL 계산]). 경계력 블록에도 소성 진단을 붙임(같은 Case) */
+export function withFint(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut {
+  const ids = (res.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
+  const add = { available: true, allowed: true, reason: null };
+  if (kind === "none") {
+    const why = "FINT_NO_DATA: 내력 출력 없음 — 낙하 Engine 에 /H3D/NODA/FINT 추가";
+    const entries = ids.map((e) => ({ entry_id: e.entry_id, label: e.label, grade: "none", limits: [], reason: why }));
+    return { ...res, fint: { source: "fint", status: "unavailable", code: "FINT_NO_DATA", reason: why, grade_min: "none", entries, limits: [], limit_text: [], recon_mac_min: 0.9, n_designs: 0, n_failed: 0 }, fint_add: add };
+  }
+  const ev = (u: number) => +(u * 0.82).toFixed(3);                      // 평가 영역(자유 경계 10 mm 제외) umax
+  const rows = res.ranking
+    .map((r, i) => {
+      const s = +(1 - (1 - (r.score_solve ?? r.score)) * 1.2 + 0.003 * ((i + 1) % 3)).toFixed(4);
+      const per = r.per_esl?.map((p, k) => ({ entry_id: p.entry_id, label: p.label, C: +((p.C_solve ?? p.C) * 0.0015 * (1 + 0.08 * k)).toFixed(4), ratio: +(s + 0.008 * k).toFixed(4), umax: +(2.2 * s + 0.1 * k).toFixed(3), epsmax: +(1.4e-3 * s).toExponential(3), umax_ev: ev(2.2 * s + 0.1 * k) }));
+      return { ...dropKeys(r as unknown as Record<string, unknown>, [...DROP_JIG_M, "C_bf", "C_fi", "umax_jig"]), id: r.id, score: s, improvement: +(1 - s).toFixed(4), umax: +(2.2 * s).toFixed(3), umax_all: +(2.4 * s).toFixed(3), epsmax: +(1.4e-3 * s).toExponential(3), epsmax_all: +(1.5e-3 * s).toExponential(3), umax_ev: ev(2.2 * s), umax_ev_all: ev(2.4 * s), worst_entry_id: per?.[0]?.entry_id ?? r.worst_entry_id, per_esl: per };
+    })
+    .sort((a, b) => (a.score as number) - (b.score as number) || String(a.id).localeCompare(String(b.id)))
+    .map((x, i) => ({ ...x, rank: i + 1 }));
+  const b = res.baseline as unknown as Record<string, unknown>;
+  const base = { ...dropKeys(b, [...DROP_JIG_M, "umax_jig"]), umax: 2.2, umax_all: 2.4, epsmax: 1.4e-3, epsmax_all: 1.5e-3, umax_ev: ev(2.2), umax_ev_all: ev(2.4), worst_entry_id: ids[0]?.entry_id };
+  const shown = res.view3d.filter((d) => d !== "d000");
+  const v: Record<string, string> = {};
+  const ve: Record<string, string> = {};
+  const vr: Record<string, string> = {};
+  for (const d of shown) {
+    const e = ids[0]?.entry_id;
+    if (!e) continue;
+    v[d] = `${d}_fi`;
+    ve[d] = e;
+    vr[e] = "d000_fi_e00";
+  }
+  const plastic = (k: number) => ({ plastic_frac: +(0.031 + 0.012 * k).toFixed(3), plastic_max: +(0.042 + 0.01 * k).toFixed(3) });
+  const entries = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, grade: "fint", mass_source: null, source: `/esl/cases/${e.entry_id}/runs/r1/04_esl`, eq_force_rel: 2.1e-6, eq_moment_rel: 3.4e-3, abar_g: 0, corr_rel: 0, recon_mac: 0.985 - 0.01 * k, recon_umax_err: -0.02 - 0.01 * k, reaction_rel: 2.8e-3, sign_suspect: null, limits: k === 0 ? ["FINT_ROT_LINKS"] : [], reason: null, res_force_rel: 2.1e-6 + 1e-6 * k, res_moment_rel: 4.2e-4, n_shared: k === 0 ? 12 : 0, unbalanced: false, ...plastic(k) }));
+  const sens = res.sensitivity ? { ...res.sensitivity, r2: +(res.sensitivity.r2 * 0.85).toFixed(3) } : null;
+  const bf = res.bforce ? { ...res.bforce, entries: (res.bforce.entries ?? []).map((e, k) => ({ ...e, ...plastic(k) })) } : res.bforce;
+  return {
+    ...res,
+    bforce: bf,
+    rank_views: { ...(res.rank_views ?? {}), fint: { metric: "fi", C_ref: +(res.C_ref * 0.0015).toFixed(4), baseline: base, n_ok: res.n_ok, n_skipped: res.n_skipped, n_failed: { ...res.n_failed, fi: 0 }, ranking: rows, per_esl_inline: true, sensitivity: sens as Record<string, unknown> | null, sensitivity_reason: res.sensitivity_reason ?? null, best_clean: res.summary?.best_clean ?? null } },
+    fint: { source: "fint", status: "ok", code: null, reason: null, grade_min: "fint", entries, limits: ["FINT_ROT_LINKS"], limit_text: ["회전 연결 노드(RBODY·스프링·빔) 노드 모멘트 미사용"], recon_mac_min: 0.9, n_designs: res.n_ok + 1, n_failed: 0 },
+    fint_add: add,
+    eval_region: { mode: "exclude_free_edges", free_edge_mm: 10, boxes: [], n_nodes: 8120, n_total: 9874 },
+    ...(shown.length ? { view3d_fi: v, view3d_fi_esl: ve, view3d_fi_ref: vr } : {}),
+  };
+}
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
  *  withMetric 결과에서 score = 재풀이 비(score_solve)로 되돌리고 ρ·불평형은 비움(강체 제거 umax 는 유지) */
 export function withCrossMesh(res: DoeResultOut): DoeResultOut {
@@ -1624,9 +1670,9 @@ export class DoeMock {
       ...s40,
       out: { ...s40.out, id, title, created_at: at },
       jobIds: [...s40.jobIds],
-      result: withBforce(s40.result!, kind),
+      result: withFint(withBforce(s40.result!, kind), kind),          // v0.24.0 보완: 내력 ESL 함께(doe-50 ok · doe-51 FINT 없음)
     });
-    this.recs.push(mk("doe-50", "QN80J Ch/R 비드 — 경계력 ESL(v0.24)", "2026-11-18T09:00:00Z", "ok"), mk("doe-51", "QN80J Ch/R 비드 — 경계력 자료 없음", "2026-11-18T10:00:00Z", "none"));
+    this.recs.push(mk("doe-50", "QN80J Ch/R 비드 — 경계력·내력 ESL(v0.24)", "2026-11-18T09:00:00Z", "ok"), mk("doe-51", "QN80J Ch/R 비드 — 경계력·내력 자료 없음", "2026-11-18T10:00:00Z", "none"));
   }
 
   /** v0.21.0 시연·시험(?demoShape=1): 새 스냅샷(shape_rules) — doe-30 ① 그래프 select(부분 W·guard 꼬리표·미리보기 RG_OUTSIDE_GUARD) · doe-31 ④ 형상 비교(완화 직행 칩·메시 품질 ⚠·품질 통과 최상위) ·
@@ -2593,9 +2639,13 @@ export class DoeMock {
         const sv = mockView3d().manifest("x").supports.map((x) => x.vertex);
         return ok({ schema: "esl/doe_jig_regions/1", regions: regs.map((g, i) => ({ ...g, normal: [0, 0, 1], vertices: Array.from({ length: chunk }, (_, j) => (i * 3 + 1) * chunk + j).filter((v) => v < n) })), jig_vertices: sv, jig_groups: sv.map((_, i) => i % 3) });
       }
-      if (method === "POST" && sub === "/sources/bforce") {      // v0.24.0 경계력 ESL 추가 계산(esl_bforce.md §6)
-        const a = rec.result?.bforce_add;
-        if (!a?.available) return err(409, "BF_UNSUPPORTED", "다른 메시 비교 방식(④·옛 ③)은 경계력 ESL 을 지원하지 않습니다");
+      if (method === "POST" && (r = sub.match(/^\/sources\/([^/]+)$/))) {      // v0.24.0 노드 힘 출처 추가 계산(esl_fint.md §5.2)
+        const src = decodeURIComponent(r[1]);
+        const NS: Record<string, { add: "bforce_add" | "fint_add"; code: string; name: string }> = { bforce: { add: "bforce_add", code: "BF", name: "경계력 ESL" }, fint: { add: "fint_add", code: "FINT", name: "내력 ESL" } };
+        const ns = NS[src];
+        if (!ns) return err(404, "SOURCE_NOT_FOUND", `추가 계산할 수 없는 하중 출처입니다: ${src}`);
+        const a = rec.result?.[ns.add];
+        if (!a?.available) return err(409, `${ns.code}_UNSUPPORTED`, `다른 메시 비교 방식(④·옛 ③)은 ${ns.name} 을 지원하지 않습니다`);
         return ok(rec.out, 202);
       }
       if (method === "POST" && sub === "/view3d/regenerate") {
@@ -2617,12 +2667,17 @@ export class DoeMock {
           return ok({ ...m, key: `${m.key}-${did}`, ranges: { ...m.ranges, u_max: m.ranges.u_max * f }, supports: m.supports.map((x) => ({ ...x, dof: "123" })), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
         }
         // v0.24.0 경계력 응답 3D: <did>_bf · d000_bf_e<kk>(esl_run_id = 엔트리, 지지 = 3-2-1, 하중 화살표 = manifest)
-        const bfOf = Object.entries(res?.view3d_bf ?? {}).find(([, v]) => v === did)?.[0] ?? null;
-        const bfRefE = Object.entries(res?.view3d_bf_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null;
-        if (bfOf || bfRefE) {
-          const m = mockView3d().manifest(bfOf ? res!.view3d_bf_esl?.[bfOf] ?? "e" : bfRefE!);
-          const row = (res!.rank_views?.bforce?.ranking ?? []).find((x) => x.id === bfOf) as { umax?: number } | undefined;
-          const ratio = bfOf && row?.umax ? row.umax / 1.9 : 1;
+        // v0.24.0 보완 내력 응답 3D: <did>_fi · d000_fi_e<kk> — 같은 형식(출처 키만 다름)
+        const pairOf = (pk: "bf" | "fi") => ({ of: Object.entries((res?.[`view3d_${pk}`] as Record<string, string> | null | undefined) ?? {}).find(([, v]) => v === did)?.[0] ?? null,
+          refE: Object.entries((res?.[`view3d_${pk}_ref`] as Record<string, string> | null | undefined) ?? {}).find(([, v]) => v === did)?.[0] ?? null, pk });
+        const pp = [pairOf("bf"), pairOf("fi")].find((x) => x.of || x.refE) ?? null;
+        const bfOf = pp?.of ?? null;
+        const bfRefE = pp?.refE ?? null;
+        if (pp && (bfOf || bfRefE)) {
+          const m = mockView3d().manifest(bfOf ? (res![`view3d_${pp.pk}_esl`] as Record<string, string> | null | undefined)?.[bfOf] ?? "e" : bfRefE!);
+          const view = pp.pk === "bf" ? res!.rank_views?.bforce : res!.rank_views?.fint;
+          const row = (view?.ranking ?? []).find((x) => x.id === bfOf) as { umax?: number } | undefined;
+          const ratio = bfOf && row?.umax ? row.umax / (pp.pk === "bf" ? 1.9 : 2.2) : 1;
           return ok({ ...m, key: `${m.key}-${did}`, ranges: { ...m.ranges, u_max: m.ranges.u_max * 0.05 * ratio }, geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
         }
         const jigOf = Object.entries(res?.view3d_jig ?? {}).find(([, v]) => v === did)?.[0] ?? null;
