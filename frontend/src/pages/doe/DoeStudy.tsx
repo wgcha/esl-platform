@@ -58,8 +58,9 @@ import { FixedViolNote } from "../../components/FixedViol";
 import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFailBanner";
 import { BlockErr, MsgFold } from "../../components/MsgFold";
 import { SourceTabs } from "../../view3d/SourceTabs";
+import { loadRangeTop, loadUnitOf } from "../../view3d/values";
 import type { SourceTabItem } from "../../view3d/sources";
-import { BF_GRADE_TEXT, LOAD_SOURCES, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { BF_GRADE_TEXT, LOAD_SOURCES, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -697,27 +698,28 @@ export function v3dPairCondText(load: string, grade: string | null, eslNames: (s
   return `하중: ${load}${grade ? `(등급 ${grade})` : ""} · 지지: 3-2-1 · 엔트리: ${ent}`;
 }
 
-/** v0.24.0 노드 힘 출처 추가 계산 버튼(esl_bforce.md §6·esl_fint.md §5.2) — 출처 열 nodal 만 읽음: 같은 메시 계획(<add>.available)일 때만,
- *  allowed 아니면 비활성 + 이유 */
-function NodalAddButton({ studyId, result, nodal, label, onQueued }: { studyId: string; result: DoeResultOut; nodal: NodalCols; label: string; onQueued?: () => void }) {
-  const a = result[nodal.add] ?? null;
+/** v0.24.1 자료 만들기 버튼(esl_view3d_sources.md §6.3) — 출처 행 add 열만 읽음(출처 이름 분기 없음): 지그 3D 다시 만들기·경계력/내력 ESL 계산 공용.
+ *  화면에 최대 1개: 계산 가능한 빈 탭 본문(SourceAddPanel) 또는 활성 탭 3D 의 빈 칸 안. 가능 여부 = 결과 source_add[key](없으면 옛 거울 키), allowed 아니면 비활성 + 이유 */
+function SourceAddButton({ studyId, result, src, onQueued }: { studyId: string; result: DoeResultOut; src: LoadSource; onQueued?: () => void }) {
+  const a = sourceAddOf(result, src);
+  const add = src.add;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  if (!a?.available) return null;
-  const why = a.allowed ? null : a.reason ?? `${label} 을 계산할 수 없습니다`;
+  if (!add || !a?.available) return null;
+  const why = a.allowed ? null : a.reason ?? `${src.label} 자료를 만들 수 없습니다`;
   return (
-    <span className="primary-wrap" title={why ?? `형상 생성 없이 안마다 ${label} 하중으로 선형 풀이해 [${label}] 탭 자료를 만듭니다(기존 결과 파일 그대로). ${nodal.addHint}`}>
+    <span className="primary-wrap" title={why ?? add.title}>
       <button
         type="button"
         className="btn small"
-        data-testid={nodal.addTestid}
+        data-testid={add.testid}
         disabled={!!why || busy}
         aria-disabled={!!why || busy}
         onClick={async () => {
           setBusy(true);
           setErr(null);
           try {
-            await doe.addSource(studyId, nodal.src);
+            await doe.addSource(studyId, add.src);
             onQueued?.();
           } catch (e) {
             setErr(errorText(e));
@@ -726,10 +728,22 @@ function NodalAddButton({ studyId, result, nodal, label, onQueued }: { studyId: 
           }
         }}
       >
-        {nodal.addLabel}
+        {add.label}
       </button>
       {err && <span className="small error-text"> {err}</span>}
     </span>
+  );
+}
+
+/** v0.24.1 계산 가능한 빈 탭 본문: 사유 한 줄 + 그 행 add 버튼 1개(순위표·ESL별 표·3D 대신) */
+function SourceAddPanel({ studyId, result, src, why, onQueued }: { studyId: string; result: DoeResultOut; src: LoadSource; why: string | null; onQueued?: () => void }) {
+  return (
+    <div id="doe-load-panel" role="tabpanel" aria-label="하중 정의 결과" data-testid="doe-source-add" data-src={src.key} className="inline-actions" style={{ padding: "0.5rem 0" }}>
+      <span className="small muted" data-testid="doe-source-add-why">
+        {why}
+      </span>
+      <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onQueued} />
+    </div>
   );
 }
 
@@ -775,41 +789,6 @@ function NodalChip({ result, src }: { result: DoeResultOut; src: LoadSource }) {
   return (
     <span className={`doe-chip${t.warn ? " warn-text" : ""}`} data-testid={n.chipTestid} title={t.title}>
       {t.line}
-    </span>
-  );
-}
-
-/** v0.23.3 지그 탭 3D 다시 만들기 버튼(esl_jig_view.md §3·§7.2) — available 일 때만, allowed 아니면 비활성 + 이유 */
-function RegenButton({ studyId, result, onQueued }: { studyId: string; result: DoeResultOut; onQueued?: () => void }) {
-  const rg = result.view3d_regen ?? null;
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  if (!rg?.available) return null;
-  const why = rg.allowed ? null : rg.reason ?? "3D 를 다시 만들 수 없습니다";
-  return (
-    <span className="primary-wrap" title={why ?? "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)"}>
-      <button
-        type="button"
-        className="btn small"
-        data-testid="v3d-regen"
-        disabled={!!why || busy}
-        aria-disabled={!!why || busy}
-        onClick={async () => {
-          setBusy(true);
-          setErr(null);
-          try {
-            await doe.regenerateView3d(studyId);
-            onQueued?.();
-          } catch (e) {
-            setErr(errorText(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        3D 다시 만들기
-      </button>
-      {err && <span className="small error-text"> {err}</span>}
     </span>
   );
 }
@@ -873,7 +852,7 @@ export function regionArrows(e: DoeJigDiagEntryOut, d: DoeJigDiagOut, diag: numb
   return out;
 }
 
-function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: DoeResultOut; lead: ReactNode; pick: string | null }) {
+function JigDiag({ studyId, result, lead, pick, addBtn = null }: { studyId: string; result: DoeResultOut; lead: ReactNode; pick: string | null; addBtn?: ReactNode }) {
   const d = result.jig_diag ?? null;
   const ents = d?.entries ?? [];
   const def = (pick && result.view3d_jig_esl?.[pick]) || (pick && result.ranking.find((r) => r.id === pick)?.worst_entry_id) || ents[0]?.entry_id || null;
@@ -897,7 +876,15 @@ function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: Doe
   const sync = { ...ds, set: (p: Partial<typeof ds>) => setDs((x) => ({ ...x, ...p })) };
   const [manual, setManual] = useState<Range | null>(null);
   const [manualErr, setManualErr] = useState<Range | null>(null);
-  if (!d || !cur) return <Empty>지그 진단 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>;
+  if (!d || !cur)
+    return (
+      <div className="doe-compare">
+        {lead && <div className="inline-actions">{lead}</div>}
+        <Empty>
+          지그 진단 3D 가 없습니다{addBtn ? " — [3D 다시 만들기]로 만드세요" : ""} {addBtn}
+        </Empty>
+      </div>
+    );
   const txt = jigDiagText(cur, d);
   const th = result.jig?.th;
   const poor = !!th && (cur.mac < th.mac_min || cur.umax_err > th.umax_err_max);
@@ -977,7 +964,7 @@ function JigDiag({ studyId, result, lead, pick }: { studyId: string; result: Doe
   );
 }
 
-function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; onRegen?: () => void }) {
+function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; onRegen?: () => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
@@ -1007,7 +994,25 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
   const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
   const dispLabel = bfMode ? "변위 |u| (mm) — 3-2-1(자기평형 하중)" : jigMode ? "변위 |u| (mm) — 지그 고정(강체 성분 없음)" : linMode ? "변위 |u| (mm) — 강체 제거" : null;
-  const opts = (title: string) => ({ title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(dispLabel ? { dispLabel } : {}) });
+  // v0.24.1 하중 색(§6.2): [응답 변위 | 하중] — 모든 출처·두 카드 공통. 하중 범위 = 두 manifest 선택 성분 p99(없으면 max) 중 큰 값
+  const [colorSel, setColorSel] = useState<"disp" | "load">("disp");
+  const [manualL, setManualL] = useState<Range | null>(null);
+  const loadTops = [base?.manifest, cand?.manifest].filter((m): m is View3dOut => !!m).map((m) => loadRangeTop(m.ranges, null, loadUnitOf(m)));
+  const rangeL: Range | null = manualL ?? (loadTops.length ? { min: 0, max: Math.max(...loadTops) } : null);
+  const loadColor = colorSel === "load";
+  const opts = (title: string) =>
+    loadColor
+      ? { title, colorBy: "load" as const, range: rangeL, rangeManual: !!manualL, onRangeChange: setManualL }
+      : { title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, ...(dispLabel ? { dispLabel } : {}) };
+  const colorSeg = (
+    <div className="seg" role="group" aria-label="3D 색" data-testid="v3d-color">
+      {([["disp", "응답 변위"], ["load", "하중"]] as const).map(([k, l]) => (
+        <button key={k} type="button" className={colorSel === k ? "on" : ""} aria-pressed={colorSel === k} data-color={k} title={k === "disp" ? "색 = 변위 |u| (mm)" : "색 = 하중 면압 |Fn|/A (MPa) — 두 그림 같은 범위"} onClick={() => setColorSel(k)}>
+          {l}
+        </button>
+      ))}
+    </div>
+  );
   if (!others.length && !pairTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
   const names = [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)];
   const cond = bfMode ? v3dPairCondText(pk?.load ?? "", (nodal ? result[nodal.block]?.grade_min : null) ?? null, names) : v3dCondText(jigMode, result.jig?.n_jig ?? null, names);
@@ -1020,29 +1025,16 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
       ))}
     </div>
   ) : null;
-  // 다시 만들기 필요: 지그 탭 = 진단·보기·선택 안 지그 응답 중 하나 없음, 그 밖 탭 = 사이드카(rank_views) 없음 → 탭이 비활성이어도 눌러 만들 수 있게 활성 탭과 무관(§7.2)
-  const needRegen = jigTab ? !result.jig_diag || !result.rank_views || (!!did && !jigDir) : !result.rank_views;
-  // v0.24.0 경계력 ESL 추가 계산: 같은 메시 계획이고 경계력 보기가 없을 때 활성 탭 3D 머리에(탭이 비활성이어도 만들 수 있게)
-  const regen = (
-    <>
-      {needRegen && kind !== "pair" ? <RegenButton studyId={studyId} result={result} onQueued={onRegen} /> : null}
-      {LOAD_SOURCES.filter((x) => x.nodal && !(result.rank_views as Record<string, unknown> | null | undefined)?.[x.key]).map((x) => (
-        <NodalAddButton key={`add-${x.key}`} studyId={studyId} result={result} nodal={x.nodal!} label={x.label} onQueued={onRegen} />
-      ))}
-    </>
-  );
+  // v0.24.1 자료 만들기 버튼은 활성 탭 3D 의 빈 칸 안에만(§6.3 — 다른 출처 버튼을 머리에 두지 않음, D-0.23.3-8 ② 개정)
+  const addBtn = src ? <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onRegen} /> : null;
   if (jigTab && jmode === "diag")
     return (
       <JigDiag
         studyId={studyId}
         result={result}
         pick={did}
-        lead={
-          <>
-            {modeSeg}
-            {regen}
-          </>
-        }
+        lead={modeSeg}
+        addBtn={addBtn}
       />
     );
   return (
@@ -1059,7 +1051,7 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
           ))}
         </select>
         {modeSeg}
-        {regen}
+        {colorSeg}
         {(!pairTab || jigMode) && <span className="small" data-testid="v3d-cond">{cond}</span>}
         <span className="small muted">{(() => {
           if (pairTab && !jigMode) return "";
@@ -1071,9 +1063,13 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
       </div>
       {pairTab && !jigAvail ? (
         kind === "pair" ? (
-          <Empty>{pk?.load ?? ""} 응답 3D 가 없습니다{nodal && result[nodal.add]?.available ? ` — [${nodal.addLabel}]으로 만드세요` : ""}</Empty>
+          <Empty>
+            {pk?.load ?? ""} 응답 3D 가 없습니다{addBtn && src?.add ? ` — [${src.add.label}]으로 만드세요` : ""} {addBtn}
+          </Empty>
         ) : (
-          <Empty>지그 응답 3D 가 없습니다{result.view3d_regen?.available ? " — [3D 다시 만들기]로 만드세요" : ""}</Empty>
+          <Empty>
+            지그 응답 3D 가 없습니다{addBtn && src?.add ? ` — [${src.add.label}]로 만드세요` : ""} {addBtn}
+          </Empty>
         )
       ) : (
         <div className="doe-compare-grid">
@@ -1437,7 +1433,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   // v0.23.3 하중 정의 탭(D-0.23.3-4): 기본 = metric_effective, 탭마다 투영 결과만 화면에
   const tabs = useMemo(() => (result.data && !isCompare ? tabState(result.data, LOAD_SOURCES) : null), [result.data, isCompare]);
   const [ltab, setLtab] = useState<LoadTab | null>(null);
-  const curTab: LoadTab = tabs ? (ltab && tabs.ok[ltab] ? ltab : tabs.def ?? "") : "";
+  const curTab: LoadTab = tabs ? (ltab && (tabs.ok[ltab] || tabs.add[ltab]) ? ltab : tabs.def ?? "") : "";
+  /** v0.24.1: 보기 없음 ∧ 자료 만들기 가능한 탭 = 본문이 사유 + 버튼 1개 */
+  const addTab = !!tabs && !!curTab && !tabs.ok[curTab] && !!tabs.add[curTab];
   const curSrc = tabs && curTab ? sourceOf(curTab, LOAD_SOURCES) : null;
   const tabR = useMemo(() => (result.data ? (curSrc ? tabResult(result.data, curTab, LOAD_SOURCES) : result.data) : null), [result.data, curSrc, curTab]);
   /** 불가 출처의 첫 칩(사유 — v0.23.2 지그 미계산·불가 칩 유지)을 현재 탭 띠 앞에(원 결과로). 탭 없음(curSrc null) = 띠 기본 칩 전부 */
@@ -1899,7 +1897,10 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           }
         >
           <ErrorLine text={result.error} />
-          {result.data && tabR && (
+          {result.data && tabR && addTab && curSrc && (
+            <SourceAddPanel studyId={id} result={result.data} src={curSrc} why={tabs?.reason[curTab] ?? null} onQueued={() => void study.reload()} />
+          )}
+          {result.data && tabR && !addTab && (
             <>
               <StatusBand studyId={id} result={tabR} src={curSrc} lead={reasonChips} />
               {(() => {
@@ -1935,7 +1936,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} onRegen={() => void study.reload()} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} onRegen={() => void study.reload()} />
                       {sensShown ? (
                         <div>
                           <div className="sub-title">민감도</div>
@@ -2025,7 +2026,7 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
 /** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유.
  *  v0.24.1: 범용 SourceTabs(view3d/SourceTabs.tsx)로 그린다 — 같은 DOM·testid. */
 function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; setTab: (t: LoadTab) => void; sources: readonly LoadSource[] }) {
-  const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key] }));
+  const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key], add: ts.add[s.key] }));
   return <SourceTabs items={items} tab={tab} setTab={setTab} label="하중 정의" prefix="doe-load" testId="doe-load-tab" whyTestId="doe-load-tab-why" />;
 }
 

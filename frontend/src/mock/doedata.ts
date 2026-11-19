@@ -2641,10 +2641,11 @@ export class DoeMock {
       }
       if (method === "POST" && (r = sub.match(/^\/sources\/([^/]+)$/))) {      // v0.24.0 노드 힘 출처 추가 계산(esl_fint.md §5.2)
         const src = decodeURIComponent(r[1]);
-        const NS: Record<string, { add: "bforce_add" | "fint_add"; code: string; name: string }> = { bforce: { add: "bforce_add", code: "BF", name: "경계력 ESL" }, fint: { add: "fint_add", code: "FINT", name: "내력 ESL" } };
+        const NS: Record<string, { add: "bforce_add" | "fint_add" | "view3d_regen"; code: string; name: string }> = { jig: { add: "view3d_regen", code: "VIEW3D_REGEN", name: "지그 3D" }, bforce: { add: "bforce_add", code: "BF", name: "경계력 ESL" }, fint: { add: "fint_add", code: "FINT", name: "내력 ESL" } };
         const ns = NS[src];
         if (!ns) return err(404, "SOURCE_NOT_FOUND", `추가 계산할 수 없는 하중 출처입니다: ${src}`);
         const a = rec.result?.[ns.add];
+        if (src === "jig") return a?.available ? ok(rec.out, 202) : err(409, "VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다");
         if (!a?.available) return err(409, `${ns.code}_UNSUPPORTED`, `다른 메시 비교 방식(④·옛 ③)은 ${ns.name} 을 지원하지 않습니다`);
         return ok(rec.out, 202);
       }
