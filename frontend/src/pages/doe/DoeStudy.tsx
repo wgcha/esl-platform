@@ -6,7 +6,7 @@
 // ④ 는 ② 비드·변수 · ③ 평면도 · ④ 미리보기 카드를 숨기고, 결과는 같은 카드(이름 열 · 민감도 숨김 · 3D 기준 vs 선택 형상).
 // v0.16.0 ④ 메시 옵션(esl_compare_mesh_options.md §8): ① 입력 카드 물성 칸 아래 '고급 설정'(접힘) = 메시 방식 [자동 | CAD | 재메시] + '실패 시 세분화 허용'.
 // 재메시 미지원(remesh_available false)이면 비활성 + 사유 툴팁, 메시 형상만 있으면 숨김.
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
@@ -57,6 +57,8 @@ import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { FixedViolNote } from "../../components/FixedViol";
 import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFailBanner";
 import { BlockErr, MsgFold } from "../../components/MsgFold";
+import { SourceTabs } from "../../view3d/SourceTabs";
+import type { SourceTabItem } from "../../view3d/sources";
 import { BF_GRADE_TEXT, LOAD_SOURCES, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
@@ -590,7 +592,7 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
   const requestFocus = useCallback((p: V3) => setFocusReq((r) => ({ point: p, seq: (r?.seq ?? 0) + 1 })), []);
   const runId = did ? `doe:${studyId}:${did}` : null;
   return useMemo(
-    () => (runId ? { runId, manifest, error, fallback: null, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload } : null),
+    () => (runId ? { runId, src: null, rangeKey: runId, manifest, error, fallback: null, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload } : null),
     [runId, manifest, error, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload],
   );
 }
@@ -2020,66 +2022,11 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
   );
 }
 
-/** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유 */
+/** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유.
+ *  v0.24.1: 범용 SourceTabs(view3d/SourceTabs.tsx)로 그린다 — 같은 DOM·testid. */
 function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; setTab: (t: LoadTab) => void; sources: readonly LoadSource[] }) {
-  const [focus, setFocus] = useState<LoadTab | null>(null);
-  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
-  /** 좌우 화살표(·Home·End) = 포커스만 이동(가능 여부와 무관 — 비활성 탭도 사유를 읽을 수 있게), Enter·Space = 선택 */
-  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    const n = sources.length;
-    const j = e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
-    if (j < 0) return;
-    e.preventDefault();
-    refs.current[sources[j].key]?.focus();
-  };
-  const focusReason = focus && !ts.ok[focus] ? ts.reason[focus] : null;
-  return (
-    <span className="doe-load-tabwrap" style={{ position: "relative", display: "inline-flex", verticalAlign: "middle" }}>
-    <div className="seg" role="tablist" aria-label="하중 정의" data-testid="doe-load-tab">
-      {sources.map((s, i) => {
-        const ok = ts.ok[s.key];
-        const why = ts.reason[s.key];
-        return (
-          <Fragment key={s.key}>
-          <button
-            ref={(el) => {
-              refs.current[s.key] = el;
-            }}
-            id={`doe-load-tab-${s.key}`}
-            type="button"
-            role="tab"
-            data-tab={s.key}
-            className={tab === s.key ? "on" : ""}
-            aria-selected={tab === s.key}
-            aria-controls="doe-load-panel"
-            aria-disabled={!ok}
-            aria-describedby={!ok && why ? `doe-load-why-${s.key}` : undefined}
-            tabIndex={tab === s.key || (!ts.ok[tab] && i === 0) ? 0 : -1}
-            title={ok ? s.title : why ?? undefined}
-            onFocus={() => setFocus(s.key)}
-            onBlur={() => setFocus((f) => (f === s.key ? null : f))}
-            onKeyDown={(e) => onKey(e, i)}
-            onClick={() => ok && setTab(s.key)}
-          >
-            {s.label}
-          </button>
-          {!ok && why && (
-            <span id={`doe-load-why-${s.key}`} className="sr-only">
-              {why}
-            </span>
-          )}
-          </Fragment>
-        );
-      })}
-    </div>
-      {/* 키보드 포커스 사유(비활성 탭) — .seg(overflow:hidden) 밖, 절대 위치(높이 불변) */}
-      {focusReason && (
-        <span className="small warn-text" data-testid="doe-load-tab-why" role="status" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, whiteSpace: "nowrap", background: "var(--surface)", border: "1px solid var(--line-strong)", borderRadius: 4, padding: "0 0.4rem" }}>
-          {focusReason}
-        </span>
-      )}
-    </span>
-  );
+  const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key] }));
+  return <SourceTabs items={items} tab={tab} setTab={setTab} label="하중 정의" prefix="doe-load" testId="doe-load-tab" whyTestId="doe-load-tab-why" />;
 }
 
 export function DoeStudy() {

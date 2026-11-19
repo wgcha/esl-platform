@@ -5,6 +5,7 @@ import type { ForcesOut, View3dTopRow } from "../api/types";
 import { Badge, Card, Empty } from "../components/ui";
 import { vec } from "../lib/format";
 import { clusterOf, nodeCount } from "./arrows";
+import { fallbackAllowed } from "./sources";
 import { clusterRowSelected, nodeRowSelected } from "./selection";
 import type { LoadView } from "./useLoadView";
 
@@ -144,7 +145,7 @@ export function LoadTable({ view }: { view: LoadView }) {
           </table>
         </div>
       ) : (
-        <Empty>{view.loading ? "불러오는 중…" : "표를 불러오지 못했습니다"}</Empty>
+        <Empty>{view.loading ? "불러오는 중…" : view.error && !fallbackAllowed(view.src) ? view.error : "표를 불러오지 못했습니다"}</Empty>
       )}
     </Card>
   );

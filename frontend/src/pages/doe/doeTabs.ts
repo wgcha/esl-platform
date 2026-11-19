@@ -4,6 +4,13 @@
 import { JIG_CODE_TEXT } from "../../api/doe";
 import type { DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
 import { jigNoneText } from "../../components/DoeRanking";
+import { SOURCE_ROWS } from "../../view3d/sources";
+
+const SR = (key: string) => {
+  const r = SOURCE_ROWS.find((x) => x.key === key);
+  if (!r) throw new Error(`SOURCE_ROWS 에 ${key} 없음`);
+  return r;
+};
 
 /** 하중 출처 키 = 백엔드 rank_views 키 */
 export type LoadTab = string;
@@ -86,8 +93,8 @@ export const NODAL_FI: NodalCols = { block: "fint", add: "fint_add", src: "fint"
 export const LOAD_SOURCES: readonly LoadSource[] = [
   {
     key: "jig",
-    label: "지그 ESL",
-    title: "지그 ESL: 체결부(tie) 고정 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도",
+    label: SR("jig").label,
+    title: SR("jig").title,
     primaryFor: ["jig"],
     drop: ["C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "basis", "sm_warn"],
     blankUmax: true,
@@ -109,8 +116,8 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
   },
   {
     key: "full",
-    label: "전 노드 ESL",
-    title: "전 노드 ESL(기존): 전 노드 ESL 하중·3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도",
+    label: SR("full").label,
+    title: SR("full").title,
     primaryFor: ["solve", "lin"],
     drop: ["C", "C_jig", "score_jig", "umax_jig"],
     blankUmax: false,
@@ -128,8 +135,8 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
   {
     // v0.24.0 경계력 ESL(esl_bforce.md §8): 낙하 해석이 계산한 노드 힘(접촉력 − 관성, 관성 이완) — 같은 3-2-1 로 설계안 재풀이
     key: "bforce",
-    label: "경계력 ESL",
-    title: "경계력 ESL: 낙하 해석의 접촉력·관성(·tie 체결력)으로 만든 자기평형 하중, 3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도",
+    label: SR("bforce").label,
+    title: SR("bforce").title,
     primaryFor: [],
     drop: ["C", "C_solve", "C_jig", "C_bf", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
@@ -147,8 +154,8 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
   {
     // v0.24.0 보완 내력 ESL(esl_fint.md §8): 낙하 해석 노드 내력 FINT(자기평형) — 같은 3-2-1 로 설계안 재풀이
     key: "fint",
-    label: "내력 ESL",
-    title: "내력 ESL: 낙하 해석의 노드 내력(FINT — 부품 요소 내력, 자기평형)을 하중으로 3-2-1 지지 재풀이해 비교한 순위·표·3D·민감도",
+    label: SR("fint").label,
+    title: SR("fint").title,
     primaryFor: [],
     drop: ["C", "C_solve", "C_jig", "C_bf", "C_fi", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
