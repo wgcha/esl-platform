@@ -57,7 +57,7 @@ from sqlalchemy.exc import IntegrityError
 
 from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES, VERIFY_JOB_TYPES
 
-from . import doe_jobs, esl_snapshot, h3d, inproc, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
+from . import bf_ondemand, core_adapter, doe_jobs, esl_snapshot, h3d, inproc, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -354,11 +354,18 @@ class Executor:
                 with self._tx() as conn:
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {st["core_stage"]: {"status": "done"}})
             elif st["core_stage"]:
-                self._run_core(st, log_path)
-                outputs = {"core_stage": st["core_stage"]}
+                bfd = None
+                if st["core_stage"] == "esl" and self.job["job_type"] == "ESL_SOLVE":
+                    bfd = self._bf_ondemand(st, log_path)      # v0.24.2 경계력 원자료 보충(코어 자식 시작 전)
+                self._run_core(st, log_path, extra_outputs={"bf_ondemand": bfd} if bfd else None)
+                outputs = {"core_stage": st["core_stage"], **({"bf_ondemand": bfd} if bfd else {})}
                 rels = [self._stage_dir(st["core_stage"]), "run.json", log_rel]
                 if st["core_stage"] == "esl":
                     rels.insert(0, "03_bc")
+                    if bfd:        # 기록을 남겼으면(status 무관) 존재하는 01_extract 산물 등록
+                        rels += [r for r in ("01_extract/bforce.npz", "01_extract/bforce.json",
+                                             "01_extract/bforce_ondemand.json")
+                                 if os.path.isfile(os.path.join(self.cdir, r))]
                 # v0.12.3: 산출물 sha256(파일당 ≤ 256 MB)은 트랜잭션(assert_lease FOR UPDATE) 밖 작업 스레드에서 미리
                 shas = inproc.call(self, lambda: register.artifact_shas(self.cdir, rels), label="산출물 sha256")
                 with self._tx() as conn:
@@ -459,7 +466,8 @@ class Executor:
 
         return STAGE_DIRS.get(stage, stage)
 
-    def _run_core(self, st: dict[str, Any], log_path: str, spec_over: dict[str, Any] | None = None) -> None:
+    def _run_core(self, st: dict[str, Any], log_path: str, spec_over: dict[str, Any] | None = None,
+                  extra_outputs: dict[str, Any] | None = None) -> None:
         """코어 자식 1회. spec_over = 검증 낙하(VERIFY_*)처럼 Case 폴더가 아닌 입력·출력(키 덮어쓰기)."""
         p = self.job["params"] or {}
         case = self.case
@@ -487,7 +495,8 @@ class Executor:
         applied = limiter.after_start(self.worker, self.proc, gate)  # 자원 제한(Windows Job) → 자식 시작 신호
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"],
-                                  outputs={"pid": self.proc.pid, "core_stage": stage, "limiter": applied})
+                                  outputs={"pid": self.proc.pid, "core_stage": stage, "limiter": applied,
+                                           **(extra_outputs or {})})
         w = self.settings.worker
         last_renew = last_cancel = time.monotonic()
         poll = min(0.2, w.cancel_check_interval_s, w.heartbeat_interval_s)
@@ -553,6 +562,212 @@ class Executor:
             if self._cancel_requested():
                 raise _Canceled()
 
+    # ---------------------------------------------------------------- ESL 경계력 원자료 보충(v0.24.2, esl_bforce_ondemand.md §1·§3)
+    def _bf_facts(self, p: dict[str, Any], frame: int, extract_dir: str, settings: dict[str, Any]):
+        """판정 사실 모으기(DB 없음 — 파일·설정만). 반환 (Facts, names|None, tcl)."""
+        from esl_platform.core.config import default_extract_tcl
+
+        f = bf_ondemand.Facts(input_kind=str(self.case.get("input_kind") or "RESULTS"))
+        names = None
+        try:
+            x = core_adapter.bforce_settings(settings)
+            f.enabled = bool(x.get("enabled", True))
+            f.on_demand = bool(x.get("on_demand", True))
+        except core_adapter.CoreError as exc:
+            f.settings_error = exc.code
+        if f.settings_error is None:
+            try:
+                names = bf_ondemand.names_from(settings)
+            except core_adapter.CoreError as exc:
+                f.settings_error = exc.code
+        if f.enabled is False or f.on_demand is False or f.input_kind != "H3D":
+            return f, names, None
+        try:
+            f.has_frame = core_adapter.bforce_has_frame(extract_dir, frame)
+        except core_adapter.CoreError as exc:
+            f.has_frame = None
+            f.unknown_code = exc.code
+        if f.has_frame is False and names is not None:
+            try:
+                f.no_types = core_adapter.bforce_no_types_before(extract_dir, names)
+            except core_adapter.CoreError:
+                f.no_types = None
+        h3d_path = self.case.get("h3d_path")
+        f.h3d_ok = bool(h3d_path) and os.path.isfile(h3d_path) and os.access(h3d_path, os.R_OK)
+        tcl = default_extract_tcl()
+        hw = self.settings.altair.hw_exe_path
+        f.hw_ok = bool(hw) and os.path.isfile(hw) and os.path.isfile(tcl)
+        return f, names, tcl
+
+    def _bf_ondemand(self, st: dict[str, Any], log_path: str) -> dict[str, Any] | None:
+        """③ ESL 때 선택 프레임의 경계력 원자료가 01_extract 에 없으면 hw(TCL bf 전용)로 그 프레임만 보충·병합.
+        반환 = step outputs·result 의 summary(없으면 None). ESL 은 어떤 결과에도 계속(취소·lease 상실만 전파)."""
+        p = self.job["params"] or {}
+        frame = p.get("frame_index")
+        if frame is None or self.case is None:
+            return None
+        frame = int(frame)
+        settings = p.get("settings") or {}
+        extract_dir = os.path.join(self.cdir, "01_extract")
+
+        def echo(msg: str) -> None:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+
+        facts, names, tcl = self._bf_facts(p, frame, extract_dir, settings)
+        dec = bf_ondemand.decide(facts)
+        if dec.action == "none":
+            if dec.note == "have":
+                echo(bf_ondemand.LOG["have"].format(frame=frame))
+            elif dec.note == "unknown":
+                echo(bf_ondemand.LOG["unknown"].format(code=getattr(facts, "unknown_code", "?")))
+            return None
+        s = self.settings
+        h3d_path = self.case["h3d_path"]
+        out_rel_base = f"_h3d/{self.case['folder_name']}/{bf_ondemand.WORK_SUB}/{bf_ondemand.RAW_SUB}"
+        t0 = time.time()
+        cause: str | None = dec.cause
+        detail = ""
+        kinds = merge = None
+        if dec.action == "skip":
+            detail = bf_ondemand.detail_text(cause, **self._bf_args(
+                at=str((facts.no_types or {}).get("at", "?")), code=facts.settings_error or ""))
+        else:
+            try:
+                cause, detail, kinds, merge = self._bf_fill(st, frame, settings, names, tcl, echo, log_path,
+                                                            extract_dir, out_rel_base)
+            except (_Canceled, LeaseLost, _StepFailed):
+                raise
+            except Exception as exc:  # noqa: BLE001 - 보충 오류는 ESL 을 막지 않는다(§1.4)
+                log.exception("작업 %s 경계력 보충 오류", self.job["id"])
+                cause = "HW_FAILED"
+                detail = bf_ondemand.detail_text(cause, **{**self._bf_args(), "msg": f"{type(exc).__name__}: {exc}"[:200]})
+                kinds = merge = None
+        seconds = None if dec.action == "skip" else time.time() - t0
+        attempt = bf_ondemand.attempt_record(frame=frame, job_id=self.job["id"], cause=cause, detail=detail,
+                                             seconds=seconds, h3d_path=h3d_path, out_rel=out_rel_base, names=names,
+                                             kinds=kinds, merge=merge)
+        try:
+            inproc.call(self, lambda: core_adapter.bforce_record(extract_dir, attempt), label="경계력 보충 기록")
+        except core_adapter.CoreError as exc:
+            self._bf_warn(f"BF_ONDEMAND_RECORD_FAILED: 경계력 보충 기록을 쓰지 못함({exc.code}: {exc.message})")
+        except OSError as exc:
+            self._bf_warn(f"BF_ONDEMAND_RECORD_FAILED: 경계력 보충 기록을 쓰지 못함({exc})")
+        summary = bf_ondemand.summary_of(attempt)
+        if cause is None:
+            m = merge or {}
+            echo(bf_ondemand.LOG["ok"].format(frame=frame, kinds=bf_ondemand.kinds_text(kinds), sec=seconds or 0.0,
+                                              before=list(m.get("frames_before") or []), added=list(m.get("added") or [])))
+        else:
+            echo(bf_ondemand.LOG[attempt["status"]].format(cause=cause, detail=detail))
+        with self._tx() as conn:
+            jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"],
+                                  outputs={"bf_ondemand": summary, "hw_acquired": False})
+            jobs_repo.patch_result(conn, self.job["id"], self.token, {"bf_ondemand": summary})
+        return summary
+
+    def _bf_warn(self, text: str) -> None:
+        with self._tx() as conn:
+            jobs_repo.add_warnings(conn, self.job["id"], self.token, [text])
+
+    def _bf_args(self, *, at: str = "?", code: str = "") -> dict[str, Any]:
+        """CAUSE_TEXT 자리값(altair 설정 + 상황값)."""
+        return {"at": at, "name": os.path.basename(self.case.get("h3d_path") or ""), "code": code, "limit": self.settings.altair.max_concurrent_hw,
+                "wait": float(self.settings.altair.bf_on_demand_wait_s),
+                "timeout": float(self.settings.altair.bf_on_demand_timeout_s), "msg": ""}
+
+    def _bf_fill(self, st: dict[str, Any], frame: int, settings: dict[str, Any], names: dict, tcl: str, echo,
+                 log_path: str, extract_dir: str, out_rel: str):
+        """보충 실행 1회: 요청 → hw → 평가 → 병합. 반환 (cause|None, detail, kinds, merge). 세마포어는 항상 해제."""
+        from esl_platform.core.paths import h3d_work_dir
+
+        s = self.settings
+        no = st["step_no"]
+        h3d_path = self.case["h3d_path"]
+        args = self._bf_args()
+
+        def fail(cause: str, msg: str = ""):
+            return cause, bf_ondemand.detail_text(cause, **{**args, "msg": msg}), None, None
+
+        try:
+            work = os.path.join(h3d_work_dir(s, self.case["folder_name"]), bf_ondemand.WORK_SUB)
+            out_dir = os.path.join(work, bf_ondemand.RAW_SUB)
+            os.makedirs(out_dir, exist_ok=True)
+            prev = h3d.backup_previous(out_dir)
+            if prev:
+                echo(f"[esl-worker] 이전 보충 산출물을 옮김: {prev}")
+            request = os.path.join(work, "request.txt")
+            h3d.write_request(request, part=self.case["part_title"], hot_k=1, top_n=1,
+                              extra=bf_ondemand.request_keys(settings, [frame]))
+            argv = h3d.build_argv(list(s.commands.h3d_extract), h3d.values_for(
+                hw=s.altair.hw_exe_path, tcl=tcl, h3d=h3d_path, request=request, out_dir=out_dir,
+                part=self.case["part_title"], hot_k=1, top_n=1))
+        except core_adapter.CoreError as exc:
+            return "SETTINGS", bf_ondemand.detail_text("SETTINGS", **{**args, "code": exc.code}), None, None
+        except (h3d.H3dError, DomainError, OSError) as exc:
+            return fail("HW_FAILED", str(getattr(exc, "message", exc))[:200])
+        t = bf_ondemand.frame_time(extract_dir, frame)
+        echo(bf_ondemand.LOG["start"].format(frame=frame, t=f"(t={t:g})" if t is not None else "", h3d=h3d_path,
+                                             out=out_dir))
+        limit, wait_s, timeout_s = s.altair.max_concurrent_hw, float(s.altair.bf_on_demand_wait_s), \
+            float(s.altair.bf_on_demand_timeout_s)
+        env = dict(os.environ)
+        env.update({"ESL_INPUT": h3d.fwd(h3d_path), "ESL_OUTPUT": h3d.fwd(out_dir),
+                    "ESL_PART": str(self.case["part_title"]), "ESL_CONFIG": h3d.fwd(request)})
+        try:
+            log_start = os.path.getsize(log_path)
+        except OSError:
+            log_start = 0
+        t0 = time.time()
+        try:
+            res = self._hw_session(
+                argv, work=work, out_dir=out_dir, step_no=no, h3d_path=h3d_path, env=env, echo=echo,
+                log_path=log_path, limit=limit,
+                wait_msg=bf_ondemand.LOG["wait"].format(limit=limit, wait=wait_s),
+                got_msg=bf_ondemand.LOG["got"],
+                head=lambda: echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False)),
+                pid_msg=lambda pid, applied: bf_ondemand.LOG["pid"].format(pid=pid, applied=applied, timeout=timeout_s),
+                beat=lambda t00, trk, last: bf_ondemand.LOG["beat"].format(
+                    min=(time.time() - t00) / 60, step=f", 마지막 단계 {last}" if last else ""),
+                wait_s=wait_s, timeout_s=timeout_s, write_pct=False,
+                running_outputs={"bf_ondemand": {"state": "running", "frame": frame}})
+        except _StepFailed as exc:
+            self._bf_release(no)
+            return fail("HW_FAILED", f"{exc.code}: {exc.message}"[:200])
+        except BaseException:
+            self._bf_release(no, quiet=True)
+            raise
+        self._bf_release(no)
+        if res["status"] == "wait":
+            return "WAIT", bf_ondemand.detail_text("WAIT", **args), None, None
+        if res["status"] == "timeout":
+            return "TIMEOUT", bf_ondemand.detail_text("TIMEOUT", **args), None, None
+        hw_text = bf_ondemand.read_hw_text(log_path, log_start)
+        ok, cause, detail, done = bf_ondemand.evaluate(res["code"], out_dir, [frame], hw_text)
+        if not ok:
+            return cause, bf_ondemand.detail_text(cause, **{**args, "msg": detail}), None, None
+        try:
+            merge = inproc.call(self, lambda: core_adapter.bforce_merge(
+                self.cdir, out_dir, [frame], tag=self.job["id"], names=names), label="경계력 원자료 병합")
+        except core_adapter.CoreError as exc:
+            cause = "MISMATCH" if exc.code == "BF_FILL_MISMATCH" else "MERGE"
+            return cause, bf_ondemand.detail_text(cause, **{**args, "msg": exc.message[:200]}), None, None
+        except OSError as exc:
+            return fail("MERGE", str(exc)[:200])
+        kinds = dict(merge.get("kinds") or {})
+        for w in merge.get("warnings") or []:
+            echo(f"[esl-worker] 경고: {w}")
+        return None, "", kinds, merge
+
+    def _bf_release(self, step_no: int, quiet: bool = False) -> None:
+        """보충 뒤 hw 세마포어 즉시 해제(코어 풀이 동안 다른 추출이 hw 사용). quiet = 예외 전파 중이라 오류 삼킴."""
+        try:
+            with self._tx() as conn:
+                jobs_repo.release_hw(conn, self.job["id"], self.token, step_no)
+        except Exception:  # noqa: BLE001
+            if not quiet:
+                raise
+
     def _run_h3d(self, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         from esl_platform.core.config import default_extract_tcl
         from esl_platform.core.paths import h3d_work_dir
@@ -605,10 +820,11 @@ class Executor:
         if cum:
             echo(f"[esl-worker] 누적 씬: 상태 파일 {[os.path.basename(x) for x in cum['state_files']]}, "
                  f"prev.csv {cum['n']}요소 → request prev_file·frame0_pass·cum_min_incr")
+        bf_warn: list[str] = []
         try:
             # 변형률 결과 대체 키(esl_strain_fallback.md §2, 설정 = job params.settings) + 누적 씬 키
             extra = {**h3d.strain_request((self.job["params"] or {}).get("settings") or {}),
-                     **h3d.bforce_request((self.job["params"] or {}).get("settings") or {}),   # v0.24.0 경계력 ESL
+                     **h3d.bforce_request((self.job["params"] or {}).get("settings") or {}, bf_warn),   # v0.24.0 경계력 ESL
                      **h3d.cumulative_request(cum, prev_csv)}
             free = h3d.free_bytes(out_dir, float(getattr(getattr(s, "upload", None), "min_free_gb", 0.0) or 0.0))
             if free is not None:
@@ -616,6 +832,11 @@ class Executor:
             h3d.write_request(request, part=p["part"], hot_k=p["hot_k"], top_n=p["top_n"], extra=extra)
         except h3d.H3dError as exc:
             raise _StepFailed(exc.code, exc.message) from None
+        if bf_warn:          # v0.24.2 BF_REQUEST_DEFAULTED(esl_bforce_ondemand.md §3.7): 로그 + 작업 경고, 추출은 계속
+            for w in bf_warn:
+                echo(f"[esl-worker] 경고: {w}")
+            with self._tx() as conn:
+                jobs_repo.add_warnings(conn, self.job["id"], self.token, bf_warn)
         try:
             argv = h3d.build_argv(list(s.commands.h3d_extract), h3d.values_for(
                 hw=hw, tcl=tcl, h3d=p["h3d_path"], request=request, out_dir=out_dir, part=p["part"],
@@ -623,30 +844,71 @@ class Executor:
         except h3d.H3dError as exc:
             raise _StepFailed(exc.code, exc.message) from None
 
-        # hw 동시 실행 한도(DB 세마포어) — 잡을 때까지 대기
-        tick = {"renew": time.monotonic(), "cancel": time.monotonic()}
+        env = dict(os.environ)
+        env.update({"ESL_INPUT": h3d.fwd(p["h3d_path"]), "ESL_OUTPUT": h3d.fwd(out_dir), "ESL_PART": str(p["part"]),
+                    "ESL_CONFIG": h3d.fwd(request)})
         limit = s.altair.max_concurrent_hw
+
+        def head() -> None:
+            echo(f"[esl-worker] H3D_EXTRACT: {p['h3d_path']} → {out_dir} (part={p['part']}, hot_k={p['hot_k']}, "
+                 f"top_n={p['top_n']})")
+            echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False))
+
+        def beat(t0: float, trk, last_step: str) -> str:
+            return (f"[esl-worker] 추출 진행 중… 경과 {(time.time() - t0) / 60:.1f}분, "
+                    f"출력 폴더 크기 {h3d.dir_size_mb(out_dir):.1f} MB, 진행률 {trk.pct:.0f}%"
+                    + (f", 마지막 단계 {last_step}" if last_step else ""))
+
+        t0 = time.time()
+        res = self._hw_session(
+            argv, work=work, out_dir=out_dir, step_no=no, h3d_path=p["h3d_path"], env=env, echo=echo, log_path=log_path,
+            limit=limit,
+            wait_msg=f"[esl-worker] hw 동시 실행 한도 {limit}개(altair.max_concurrent_hw) — 다른 추출이 끝나기를 기다립니다",
+            got_msg="[esl-worker] hw 실행 권한을 얻었습니다", head=head,
+            pid_msg=lambda pid, applied: f"[esl-worker] hw pid {pid} 시작, 자원 제한 {applied}", beat=beat,
+            wait_s=None, timeout_s=None, write_pct=True, running_outputs={})
+        code = res["code"]
+        ok, msg, lines, done = h3d.evaluate(code, out_dir, slim=bool(p.get("slim")))
+        for ln in lines:
+            echo(ln)
+        echo(f"[esl-worker] hw 종료코드 {code} ({time.time() - t0:.1f}s) — {'성공' if ok else '실패: ' + msg}")
+        if ok:
+            echo("[esl-worker] extract done -> pack")
+        if not ok:
+            raise _StepFailed(h3d.FAILURE, msg, code)
+        return {"done": h3d.done_summary(done), "exit_code": code, "hw_acquired": False}
+
+    def _hw_session(self, argv: list[str], *, work: str, out_dir: str, step_no: int, h3d_path: str,
+                    env: dict[str, str], echo, log_path: str, limit: int, wait_msg: str, got_msg: str | None, head, pid_msg, beat,
+                    wait_s: float | None, timeout_s: float | None, write_pct: bool,
+                    running_outputs: dict[str, Any]) -> dict[str, Any]:
+        """공용 hw 실행(H3D_EXTRACT·경계력 보충 — esl_bforce_ondemand.md §3.3): 세마포어 대기 → command 기록 → start →
+        제한기 부착 → progress.log 옮기기·하트비트·취소·lease → 트리 정리. 반환 {status: done|wait|timeout, code, log_start}.
+        wait_s None = 무제한 대기, 아니면 그 시간 넘으면 hw 를 띄우지 않고 status wait(세마포어는 잡지 않은 상태).
+        timeout_s None = 시간 한도 없음, 아니면 hw 시작부터 넘으면 트리 종료·status timeout. 세마포어는 해제하지 않는다(호출부)."""
+        s = self.settings
+        no = step_no
+        tick = {"renew": time.monotonic(), "cancel": time.monotonic()}
+        deadline = None if wait_s is None else time.monotonic() + float(wait_s)
         waited = False
         while True:
             with self._tx() as conn:
                 if jobs_repo.acquire_hw(conn, self.job["id"], self.token, no, limit):
                     break
+            if deadline is not None and time.monotonic() >= deadline:
+                return {"status": "wait", "code": None}
             if not waited:
-                echo(f"[esl-worker] hw 동시 실행 한도 {limit}개(altair.max_concurrent_hw) — 다른 추출이 끝나기를 기다립니다")
+                echo(wait_msg)
                 waited = True
             time.sleep(min(0.5, s.worker.claim_interval_s))
             self._wait_tick(tick)
-        if waited:
-            echo("[esl-worker] hw 실행 권한을 얻었습니다")
+        if waited and got_msg:
+            echo(got_msg)
         with self._tx() as conn:
             jobs_repo.step_update(conn, self.job["id"], self.token, no, command=argv)
-        echo(f"[esl-worker] H3D_EXTRACT: {p['h3d_path']} → {out_dir} (part={p['part']}, hot_k={p['hot_k']}, "
-             f"top_n={p['top_n']})")
-        echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False))
-        env = dict(os.environ)
-        env.update({"ESL_INPUT": h3d.fwd(p["h3d_path"]), "ESL_OUTPUT": h3d.fwd(out_dir), "ESL_PART": str(p["part"]),
-                    "ESL_CONFIG": h3d.fwd(request)})
+        head()
         t0 = time.time()
+        timed_out = False
         with open(log_path, "ab") as log_fh:
             try:
                 self.hw_proc = h3d.start(argv, cwd=work, log_fh=log_fh, env=env,
@@ -660,13 +922,14 @@ class Executor:
                 self.hw_proc = None
                 raise _StepFailed(limiter.FAILURE_CODE, str(exc)) from None
             pid = self.hw_proc.pid
-            echo(f"[esl-worker] hw pid {pid} 시작, 자원 제한 {applied}")
+            echo(pid_msg(pid, applied))
+            mono0 = time.monotonic()
             with self._tx() as conn:
                 jobs_repo.step_update(conn, self.job["id"], self.token, no,
-                                      outputs={"hw_acquired": True, "pid": pid, "limiter": applied})
+                                      outputs={**running_outputs, "hw_acquired": True, "pid": pid, "limiter": applied})
             # hw(GUI 서브시스템)는 Tcl stdout 을 로그로 내보내지 않을 수 있어 TCL 이 출력 폴더에 쓰는 progress.log 를 옮긴다
             tail = h3d.ProgressTail(out_dir)
-            trk = h3d.ProgressTracker(h3d.expected_load_s(p["h3d_path"]))
+            trk = h3d.ProgressTracker(h3d.expected_load_s(h3d_path))
             hb_s = float(getattr(s.worker, "progress_heartbeat_s", h3d.PROGRESS_HEARTBEAT_S))
             last_poll = last_out = time.monotonic()
             shown = [0]
@@ -677,7 +940,7 @@ class Executor:
                     echo(ln)
                     trk.feed(ln)
                 pct = trk.tick()
-                if int(pct) > shown[0]:        # 정수 % 가 바뀔 때만 DB 기록(단조 증가)
+                if write_pct and int(pct) > shown[0]:        # 정수 % 가 바뀔 때만 DB 기록(단조 증가)
                     shown[0] = int(pct)
                     with self._tx() as conn:
                         jobs_repo.step_update(conn, self.job["id"], self.token, no, progress_pct=float(shown[0]))
@@ -687,30 +950,26 @@ class Executor:
                 time.sleep(0.1)
                 self._wait_tick(tick)
                 now = time.monotonic()
+                if timeout_s is not None and now - mono0 >= float(timeout_s):
+                    timed_out = True
+                    break
                 if now - last_poll >= h3d.PROGRESS_POLL_S:
                     last_poll = now
                     if drain():
                         last_out = now
                     elif now - last_out >= hb_s:
                         last_out = now
-                        echo(f"[esl-worker] 추출 진행 중… 경과 {(time.time() - t0) / 60:.1f}분, "
-                             f"출력 폴더 크기 {h3d.dir_size_mb(out_dir):.1f} MB, 진행률 {trk.pct:.0f}%"
-                             + (f", 마지막 단계 {trk.last_step}" if trk.last_step else ""))
-            code = self.hw_proc.returncode
+                        echo(beat(t0, trk, trk.last_step))
+            code = self.hw_proc.poll()
             drain(flush=True)
             # 그룹에 남은 자식(hw 가 띄운 프로세스)도 정리
             h3d.kill_tree(self.hw_proc, s.worker.terminate_grace_s, self.lim)
+            if code is None:
+                code = self.hw_proc.returncode
             self.hw_proc = None
         self._renew()
-        ok, msg, lines, done = h3d.evaluate(code, out_dir, slim=bool(p.get("slim")))
-        for ln in lines:
-            echo(ln)
-        echo(f"[esl-worker] hw 종료코드 {code} ({time.time() - t0:.1f}s) — {'성공' if ok else '실패: ' + msg}")
-        if ok:
-            echo("[esl-worker] extract done -> pack")
-        if not ok:
-            raise _StepFailed(h3d.FAILURE, msg, code)
-        return {"done": h3d.done_summary(done), "exit_code": code, "hw_acquired": False}
+        return {"status": "timeout" if timed_out else "done", "code": code}
+
 
 
 def is_revalidate(job: dict[str, Any]) -> bool:

@@ -213,20 +213,30 @@ def strain_request(core_settings: dict | None) -> dict[str, str]:
     return out
 
 
-def bforce_request(core_settings: dict | None) -> dict[str, str]:
-    """경계력 ESL 결과 유형 이름 키(계약 esl_bforce.md §1) — 설정 bforce.enabled·result_names·vec_comps → request.txt
-    bf_on·bf_names_<kind>(후보 '|' 구분)·bf_vec_comps(공백 구분). 코어 없는 설치본 = 빈 dict(TCL 기본 bf_on 0 = 끔 — 이전 출력 그대로)."""
-    from . import core_adapter
-
-    try:
-        x = core_adapter.bforce_settings(core_settings or {})
-    except core_adapter.CoreError:
-        return {}
+def bforce_keys(x: dict) -> dict[str, str]:
+    """core_adapter.bforce_settings 결과 → request.txt 키(bf_on·bf_names_<kind>·bf_vec_comps). 추출·보충(bf 전용) 공용."""
     out = {"bf_on": "1" if x["enabled"] else "0"}
     for k, v in x["result_names"].items():
         out[f"bf_names_{k}"] = "|".join(v)
     out["bf_vec_comps"] = " ".join(x["vec_comps"])
     return out
+
+
+def bforce_request(core_settings: dict | None, warn: list[str] | None = None) -> dict[str, str]:
+    """경계력 ESL 결과 유형 이름 키(계약 esl_bforce.md §1) — 설정 bforce.enabled·result_names·vec_comps → request.txt
+    bf_on·bf_names_<kind>(후보 '|' 구분)·bf_vec_comps(공백 구분). 코어 없는 설치본·설정 오류 = 빈 dict(TCL 기본 bf_on 0 = 끔).
+    v0.24.2(esl_bforce_ondemand.md §3.7): CoreError 는 더 이상 조용히 삼키지 않는다 — warn 이 있으면 BF_REQUEST_DEFAULTED
+    경고 문구를 넣는다(추출은 계속 — 기존 동작)."""
+    from . import core_adapter
+
+    try:
+        x = core_adapter.bforce_settings(core_settings or {})
+    except core_adapter.CoreError as exc:
+        if warn is not None:
+            warn.append(f"BF_REQUEST_DEFAULTED: 경계력 설정을 읽지 못해 bf 키 없이 추출합니다"
+                        f"(bf_on 0 — 경계력·내력 자료 없음): {exc.code}: {exc.message}")
+        return {}
+    return bforce_keys(x)
 
 
 def free_bytes(path: str, reserve_gb: float = 0.0) -> int | None:

@@ -190,6 +190,9 @@ class AltairCfg(_M):
     # 실행 파일 경로는 코드에 두지 않는다(esl.md §2) — 예시·설치 설정이 채움(2026.1 기본 경로). None = 서버 h3d 추출 불가
     hw_exe_path: str | None = None
     max_concurrent_hw: int = Field(default=2, ge=1, le=MAX_SLOTS)   # 동시 hw 수(라이선스 한도) — DB 세마포어
+    # v0.24.2 경계력 원자료 ESL 때 보충(esl_bforce_ondemand.md §9): hw 1회 시간 한도·hw 동시 실행 한도 대기 한도(초)
+    bf_on_demand_timeout_s: int = Field(default=1800, ge=60)
+    bf_on_demand_wait_s: int = Field(default=600, ge=0)               # 0 = hw 차례를 한 번만 시도
     # v0.7.0 비드 최적화(esl_opt_run.md §8): OptiStruct 실행 파일(optistruct.bat). None = 서버 최적화 불가(503)
     optistruct_path: str | None = None
     max_concurrent_os: int = Field(default=1, ge=1, le=MAX_SLOTS)   # 동시 OptiStruct 수 — DB 세마포어(acquire_os)
