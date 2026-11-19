@@ -44,7 +44,7 @@ def forces(run_id: str, request: Request, top: int = Query(default=50, ge=1, le=
 
 # ---------------------------------------------------------------- ④ 3D 하중 보기(계약 esl_3d_load.md §4)
 VIEW3D_CACHE_CONTROL = "private, max-age=0, must-revalidate"
-VIEW3D_FILE_RESPONSES = {
+VIEW3D_FILE_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {"content": {"model/gltf-binary": {"schema": {"type": "string", "format": "binary"}},
                       "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
           "description": "바이너리(ETag = manifest key, If-None-Match 일치 시 304)"},
@@ -214,7 +214,7 @@ def case_report(case_id: str, request: Request, download: bool = False,
     return html_report(path, name, download)
 
 
-ZIP_RESPONSE = {200: {"content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+ZIP_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
                       "description": "zip(스트리밍)"}}
 
 

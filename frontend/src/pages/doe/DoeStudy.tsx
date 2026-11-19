@@ -732,6 +732,11 @@ function SourceAddButton({ studyId, result, src, onQueued }: { studyId: string; 
       >
         {add.label}
       </button>
+      {why && (
+        <span className="small muted" data-testid="source-add-why" style={{ marginLeft: "0.5rem" }}>
+          {why}
+        </span>
+      )}
       {err && <span className="small error-text"> {err}</span>}
     </span>
   );

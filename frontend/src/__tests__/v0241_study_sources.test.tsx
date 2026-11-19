@@ -103,6 +103,37 @@ describe("현장 피드백: 계산했는데 prep 결과가 불가 — 사유를 
     expect(nodalNote(none, LOAD_SOURCES.find((s) => s.key === "full")!)).toBeNull();
     expect(nodalNote(withFint({ ...base }, "none" as never), LOAD_SOURCES.find((s) => s.key === "fint")!) ?? "").toMatch(/^$|내력 ESL 불가/);
   });
+  it("nodalNote 권한 없음(source_add·옛 거울 키 allowed=false): '다시 누르세요' 대신 작성자·관리자 요청 + 서버 사유", () => {
+    const none = withBforce({ ...base }, "none");
+    const bf = LOAD_SOURCES.find((s) => s.key === "bforce")!;
+    const viaNew = nodalNote({ ...none, source_add: { bforce: { available: true, allowed: false, reason: "작성자만 가능" } } }, bf)!;
+    const viaOld = nodalNote({ ...none, bforce_add: { available: true, allowed: false, reason: "작성자만 가능" } } as DoeResultOut, bf)!;
+    for (const t of [viaNew, viaOld]) {
+      expect(t).toContain("BF_NOT_FOUND");
+      expect(t).toContain("h3d 추출부터 ESL 을 다시 실행한 뒤 작성자·관리자에게 [경계력 ESL 계산]을 요청하세요");
+      expect(t).toContain("작성자만 가능");
+      expect(t).not.toContain("다시 누르세요");
+    }
+    const ok = nodalNote({ ...none, source_add: { bforce: { available: true, allowed: true, reason: null } } }, bf)!;
+    expect(ok).toContain("[경계력 ESL 계산] 다시 누르세요");
+    expect(ok).not.toContain("요청하세요");
+  });
+  it("권한 없음 빈 3D 칸: 사유가 마우스 없이 보이는 한 줄(source-add-why) + 버튼은 비활성 그대로", async () => {
+    renderApp("/p/p-body/doe/doe-50", "power", (s) => {
+      s.doe.demoBforce();
+      const rec = s.doe.recs.find((r) => r.out.id === "doe-50")!;
+      rec.result = { ...rec.result!, view3d_bf_recon: null, source_add: { bforce: { available: true, allowed: false, reason: "작성자만 가능" } } };
+    });
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    fireEvent.click(tabBtn("bforce"));
+    await waitFor(() => expect(tabBtn("bforce").getAttribute("aria-selected")).toBe("true"));
+    fireEvent.click((await screen.findByTestId("v3d-recon-mode")).querySelector("[data-mode=diag]")!);
+    const why = await screen.findByTestId("source-add-why");
+    expect(why.textContent).toContain("작성자만 가능");
+    const btn = screen.getByTestId("v3d-bf-add") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(addCount()).toBe(1);
+  }, 30000);
   it("doe-51 화면: 활성 탭이 달라도 불가 사유 줄이 보이고, 그 빈 탭 본문에는 한 번만(+ 버튼 유지)", async () => {
     open("doe-51");
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });

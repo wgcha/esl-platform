@@ -315,7 +315,7 @@ DoeResultOut += source_add: {str: DoeView3dRegenOut}|null, view3d_bf_recon|view3
 
 - R-V3D-1 Case 지그 ESL(엔트리 Case 에서 지그 분해 — 지금은 스터디 기준 메시 전용).
 - R-V3D-2 (P3 를 미루면) 스터디 노드 힘 재현 진단.
-- R-V3D-3 출처별 캐시 백업 정리(지금 legacy 와 같이 `_backup` 누적 — `regen_keep_backups` 같은 상한 검토).
+- R-V3D-3 출처별 캐시 백업 정리(지금 legacy 와 같이 `_backup` 누적 — `regen_keep_backups` 같은 상한 검토). **후속 유지.** 실측(v0.24.1 검증): 실행당 파생 캐시 최대 약 58 MB, 30만 노드 하중 보기 첫 요청 약 2 s·RSS +약 90 MB.
 - R-V3D-4 하중 보기 geometry 공유(LOD 가 하중 p 에 의존하므로 LOD 없는 부품만 — 디스크 절약).
 - R-V3D-5 백엔드 응답 형식이 바뀌면 `frontend/src/__tests__/fixtures/real_v0241.json` 재생성(§15.3).
 
@@ -346,7 +346,8 @@ DoeResultOut += source_add: {str: DoeView3dRegenOut}|null, view3d_bf_recon|view3
 |---|---|
 | 머리 버튼 → 빈 탭 본문 이동 | D-0.24.1-V3D-9 에 따라 v0.24.0 의 3D 머리 버튼 위치가 바뀌어 옛 시험 4건의 조회 위치를 수정(기능 삭제 없음) |
 | 옛 거울 키 폴백 | `view3d_regen`·`bforce_add`·`fint_add` 는 `source_add` 가 없는 옛 서버 응답용으로 유지 |
-| 권한 없음 사유 | 자료 만들기 권한이 없으면 버튼 대신 사유 문구를 보인다 |
+| 권한 없음 사유 | `source_add[src].allowed=false`(없으면 옛 거울 키)일 때: 버튼은 비활성 그대로 두고 그 옆에 서버 사유를 한 줄(`data-testid=source-add-why`, `small muted`)로 항상 보인다(마우스·포커스 불필요). 불가 사유 줄(`nodal-unavail-note`)은 "…다시 실행한 뒤 작성자·관리자에게 [버튼 라벨]을 요청하세요 (서버 사유)" 로 바뀌고 "다시 누르세요" 는 allowed 일 때만 |
+| Case ③ 3D 도구 줄 높이 | 하중 색 `<select>` 가 줄을 36px 로 키우던 것을 `.v3d-tools select`(box-sizing·height 2rem = 같은 줄 check-field 높이)로 범위 한정해 v0.24.0 높이(34px)로 유지(V-21) |
 | 옛 서버 폴백 | `/view3d/sources` 404 등 → 출처 탭 없이 v0.24.0 화면 그대로(`useCaseSources.failed`) |
 | recon 로딩 중 | 응답·오차 보기를 여는 동안 0장(빈 화면) — 로딩 표시만, 이전 보기 값을 섞지 않음 |
 | nodal-unavail-note | 현장 피드백으로 추가한 불가 사유 가시 줄(`data-testid=nodal-unavail-note`, 출처별) |

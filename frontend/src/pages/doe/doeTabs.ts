@@ -236,7 +236,17 @@ export function nodalNote(r: DoeResultOut, s: LoadSource): string | null {
   const n = s.nodal;
   const b = n ? r[n.block] ?? null : null;
   if (!n || !b || b.status === "ok") return null;
-  const next = s.add ? ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 [${s.add.label}] 다시 누르세요` : "";
+  const sa = sourceAddOf(r, s);
+  const denied = !!sa && sa.allowed === false;
+  const lab = s.add?.label ?? "";
+  const last = lab.charCodeAt(lab.length - 1) - 0xac00;
+  const josa = last >= 0 && last < 11172 && last % 28 === 0 ? "를" : "을";
+  // 권한 없음: "다시 누르세요" 대신 작성자·관리자 요청 안내 + 서버 사유(권한은 source_add[키].allowed — 옛 거울 키 폴백)
+  const next = !s.add
+    ? ""
+    : denied
+      ? ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 작성자·관리자에게 [${lab}]${josa} 요청하세요${sa?.reason ? ` (${sa.reason})` : ""}`
+      : ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 [${lab}] 다시 누르세요`;
   return nodalUnavailable(r, n, s.label) + next;
 }
 

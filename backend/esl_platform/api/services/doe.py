@@ -77,7 +77,7 @@ RANK_VIEWS = ("jig", "full", "bforce", "fint")
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
 # v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
 # 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.
-NODAL_SOURCES = {
+NODAL_SOURCES: dict[str, dict[str, Any]] = {
     "bforce": {"view": BF_VIEW_JSON, "block": "bforce",
                "v3d": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "view3d_bf_recon"),
                "add": "bforce_add", "kind": "BFORCE", "cfg": "bforce", "code": "BF", "plan": "bf", "name": "경계력 ESL"},
@@ -89,7 +89,7 @@ BF_VIEWS = tuple(NODAL_SOURCES)                           # 노드 힘 사이드
 # v0.24.1 자료 만들기 표(esl_view3d_sources.md §2.4·§5.2 — D-0.24.1-V3D-8): 행 = 자료 만들기 가능한 출처(순서 = 출처 표 KEYS, 행 없음 = 404).
 # kind·post_mode = 작업 params.kind·doe.post_mode(코어 dispatch 그대로), cfg = 작업 doe.<cfg>_cfg 사본(None = 없음), need = 조건(NEED 표),
 # code = 실패 코드 접두(need 실패 = code + NEED 접미, 막힘 = code + block), verb = 문구 동사구, name = 문구, legacy = 옛 응답 키(거울).
-SOURCE_ADD = {
+SOURCE_ADD: dict[str, dict[str, Any]] = {
     "jig": {"kind": "VIEW3D", "post_mode": "view3d", "cfg": None, "need": "jig_ok", "plan": None, "code": "VIEW3D_REGEN",
             "block": "_UNAVAILABLE", "name": "지그 3D", "verb": "3D 를 다시 만들", "legacy": "view3d_regen"},
     **{k: {"kind": ns["kind"], "post_mode": k, "cfg": ns["cfg"], "need": "plan", "plan": ns["plan"], "code": ns["code"],
