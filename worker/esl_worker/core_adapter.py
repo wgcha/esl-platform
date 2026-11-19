@@ -191,6 +191,11 @@ def extract_source_settings(core_settings: dict | None = None) -> dict:
     return _wrap(_attr("esl.config", "extract_source_settings"), core_settings or {})
 
 
+def bforce_settings(core_settings: dict | None = None) -> dict:
+    """설정 bforce(경계력 ESL, 기본값 채움 — 계약 esl_bforce.md §9)."""
+    return _wrap(_attr("esl.config", "bforce_settings"), core_settings or {})
+
+
 def dump_settings(core_settings: dict | None = None) -> dict:
     """extract.dump_keep·dump_max_bytes(기본값 채움)."""
     return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})

@@ -608,6 +608,7 @@ class Executor:
         try:
             # 변형률 결과 대체 키(esl_strain_fallback.md §2, 설정 = job params.settings) + 누적 씬 키
             extra = {**h3d.strain_request((self.job["params"] or {}).get("settings") or {}),
+                     **h3d.bforce_request((self.job["params"] or {}).get("settings") or {}),   # v0.24.0 경계력 ESL
                      **h3d.cumulative_request(cum, prev_csv)}
             free = h3d.free_bytes(out_dir, float(getattr(getattr(s, "upload", None), "min_free_gb", 0.0) or 0.0))
             if free is not None:

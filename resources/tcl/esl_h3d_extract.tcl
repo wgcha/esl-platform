@@ -27,6 +27,8 @@
 #   history.csv        frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (B)
 #   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
 #   disp.csv           frame_index,node_id,ux,uy,uz                     (C)
+#   bf_<kind>.csv      frame_index,node_id,x,y,z (mass: frame_index,node_id,v)  (C: frames D, v0.24.0 boundary-force ESL,
+#                      kind = cont cont2 acc mass fint; only the kinds found in the h3d, done.json "bforce")
 #   done.json          {"ok":true,"candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"frames_D",
 #                       "prev_frames" (f-1 >= 0 of each f in D),"strain_frames" (D U prev),
 #                       "hot_k","reach_rtol","passes":{...},...} or {"ok":false,"code","error","failed_step",
@@ -48,6 +50,9 @@
 #   hot_k (200, no upper cap; > 1000 warns), top_n (5), reach_rtol (1e-6), chunk (50000),
 #   elem_selection / node_selection (optional HyperView selection string, e.g. "component 12"),
 #   strain_system (elemental | analysis | global | none; default elemental).
+#   v0.24.0 boundary-force ESL: bf_on (0 = off, no "bforce" in done.json; the server worker sends 1), bf_names_<kind> ("a|b" result type candidates: cont "Contact Forces|...",
+#   cont2, acc "Acceleration|...", mass, fint), bf_vec_comps ("X Y Z", each "X|x" candidates). A missing type is recorded
+#   as {"type":null,"reason"} in done.json bforce.kinds (never an extraction failure).
 #   -hot_k / -top_n arguments override request.txt.
 #
 # Strain source fallback (contract esl_strain_fallback.md, v0.12.1): unless strain_type or epsp_type is given
@@ -737,7 +742,10 @@ proc ::esl::read_config {path extra} {
         names_max_strain "Max_Strain" names_plastic_strain "Plastic Strain|Plastic_Strain" \
         names_strain_tensor "Strain" names_max_stress "Max_Stress" \
         comp_xx "XX" comp_yy "YY" comp_zz "ZZ" comp_xy "XY" vm_comps "vonMises|von Mises" \
-        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" layer_prefer "Lower|Upper" dump_max_bytes 0 dump_free_bytes ""]
+        scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" layer_prefer "Lower|Upper" dump_max_bytes 0 dump_free_bytes "" \
+        bf_on 0 bf_names_cont "Contact Forces|Contact Force|CONT" \
+        bf_names_cont2 "Tied Contact Forces|Contact Forces (TYPE2)|CONT2" bf_names_acc "Acceleration|ACC" \
+        bf_names_mass "Nodal Mass|Mass|MASS" bf_names_fint "Internal Forces|Internal Force|FINT" bf_vec_comps "X Y Z"]
     set cfg [::esl::read_request $path $defaults]
     # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
     set ::esl::forced 0
@@ -768,6 +776,9 @@ proc ::esl::read_config {path extra} {
     if {[llength [dict get $cfg disp_comps]] != 3} { ::esl::fail INPUT_INVALID "disp_comps needs 3 names" }
     set f0 [dict get $cfg frame0_pass]
     if {$f0 ne "0" && $f0 ne "1"} { ::esl::fail INPUT_INVALID "frame0_pass must be 0 or 1: $f0" }
+    set bo [dict get $cfg bf_on]
+    if {$bo ne "0" && $bo ne "1"} { ::esl::fail INPUT_INVALID "bf_on must be 0 or 1: $bo" }
+    if {[llength [dict get $cfg bf_vec_comps]] != 3} { ::esl::fail INPUT_INVALID "bf_vec_comps needs 3 names" }
     set mi [dict get $cfg cum_min_incr]
     if {![string is double -strict $mi] || $mi < 0} { ::esl::fail INPUT_INVALID "cum_min_incr must be >= 0: $mi" }
     return $cfg
@@ -1005,6 +1016,40 @@ proc ::esl::six {vs} {
 }
 
 # Dump pass (strain_tensor source): every frame, all part elements x layers -> strain_raw.csv, all part
+# ---- boundary-force ESL (esl_bforce.md 1): node result types of the candidate frames D -> bf_<kind>.csv.
+# Kinds cont cont2 acc mass fint; names from request bf_names_<kind> ("a|b" candidates, match_name rule).
+# A missing type / component is recorded (type null + reason), never an extraction failure.
+# Returns {kinds_found json_members}: kinds_found = list of {kind dtype comps fields}.
+proc ::esl::bf_resolve {res sc dtypes cfg} {
+    set found {}
+    set js {}
+    if {[dict get $cfg bf_on] ne "1"} { return [list {} {}] }
+    foreach k {cont cont2 acc mass fint} {
+        set dt [::esl::match_name $dtypes [::esl::cands [dict get $cfg bf_names_$k]]]
+        if {$dt eq ""} {
+            lappend js "[::esl::jstr $k]:\{\"type\":null,\"reason\":[::esl::jstr "not in h3d: [dict get $cfg bf_names_$k]"]\}"
+            continue
+        }
+        set have [::esl::comp_list $res $sc $dt]
+        if {$k eq "mass"} { set want [list [dict get $cfg scalar_comps]] } else { set want [dict get $cfg bf_vec_comps] }
+        set comps {}
+        set bad ""
+        foreach w $want {
+            set cm [::esl::match_comp $have [::esl::cands $w]]
+            if {$cm eq ""} { set bad $w; break }
+            lappend comps $cm
+        }
+        if {$bad ne ""} {
+            lappend js "[::esl::jstr $k]:\{\"type\":null,\"reason\":[::esl::jstr "component '$bad' of '$dt' not in h3d (available: $have)"]\}"
+            continue
+        }
+        set fields {}
+        foreach cm $comps { lappend fields [list $dt $cm "" 0] }
+        lappend found [list $k $dt $comps $fields]
+    }
+    return [list $found $js]
+}
+
 # nodes -> disp.csv. No ranking (the core rebuilds the max-hold series). vm_hv = 0 when the type has no
 # vonMises component, epsp = 0 when there is no plastic strain result.
 proc ::esl::dump_pass {out res post con qry cfg src layers epsp_ok echunks nchunks dfields nsim} {
@@ -1891,6 +1936,17 @@ proc ::esl::run {arglist} {
     ::esl::progress "pass C start ([llength $CF] frames)"
     set fs [::esl::open_csv [file join $out strain_frames.csv] "frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
     set fds [::esl::open_csv [file join $out disp.csv] "frame_index,node_id,ux,uy,uz"]
+    # boundary-force ESL node results (esl_bforce.md 1) on the same frames D / node chunks as disp.csv
+    lassign [::esl::bf_resolve $res $sc $dtypes $cfg] bfk bfjs
+    set bfdead [dict create]
+    set bfrows [dict create]
+    foreach b $bfk {
+        lassign $b bk bdt bcomps bfields
+        set hdr [expr {$bk eq "mass" ? "frame_index,node_id,v" : "frame_index,node_id,x,y,z"}]
+        set bfh($bk) [::esl::open_csv [file join $out bf_$bk.csv] $hdr]
+        dict set bfrows $bk 0
+        ::esl::progress "bforce: $bk = $bdt [list $bcomps]"
+    }
     set srows 0
     set drows 0
     set k 0
@@ -1919,10 +1975,38 @@ proc ::esl::run {arglist} {
             incr drows $n
             if {$m > 0} { ::esl::note "pass C: nodes without all displacement values skipped" $m }
             unset acc
+            foreach b $bfk {
+                lassign $b bk bdt bcomps bfields
+                if {[dict exists $bfdead $bk]} { continue }
+                if {[catch {::esl::collect $con $qry [lindex $ch 0] node $bfields "bf $bk frame $fi chunk $ci" "" 1} acc]} {
+                    dict set bfdead $bk "query failed: [::esl::short $acc 200]"
+                    ::esl::warn "bforce $bk ($bdt): query failed, recorded as missing: [::esl::short $acc 200]"
+                    continue
+                }
+                lassign [::esl::emit $bfh($bk) "$fi," $acc [llength $bcomps] 0] n m
+                dict incr bfrows $bk $n
+                unset acc
+            }
         }
     }
     close $fs
     close $fds
+    set bfk_js $bfjs
+    foreach b $bfk {
+        lassign $b bk bdt bcomps bfields
+        close $bfh($bk)
+        if {[dict exists $bfdead $bk]} {
+            file delete -force [file join $out bf_$bk.csv]
+            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":null,\"reason\":[::esl::jstr [dict get $bfdead $bk]]\}"
+        } else {
+            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":[::esl::jstr $bdt],\"comps\":[::esl::jarr $bcomps],\"rows\":[dict get $bfrows $bk]\}"
+        }
+    }
+    # bf_on 0 (default when request.txt has no bf keys) -> no "bforce" member: outputs identical to earlier versions
+    set bf_extra {}
+    if {[dict get $cfg bf_on] eq "1"} {
+        set bf_extra [list bforce "\{\"on\":true,\"frames\":[::esl::jints $D],\"kinds\":\{[join $bfk_js ,]\}\}"]
+    }
     lappend ::esl::passes "\"C\":\{\"frames\":[::esl::jints $D],\"prev_frames\":[::esl::jints $P],\"strain_frames\":[::esl::jints $CF],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
     ::esl::progress "pass C done ([::esl::secs $t0] s)"
     ::esl::progress "disp done"
@@ -1995,7 +2079,7 @@ proc ::esl::run {arglist} {
         disp_value_format [::esl::jstr $::esl::numfmt] value_format [::esl::jstr $::esl::numfmt] \
         strain_system [::esl::jstr $::esl::sys_req] \
         strain_system_call [::esl::jstr $::esl::sys_applied] \
-        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$cum_extra {*}$::esl::src_members]] eq ""} {
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$bf_extra {*}$cum_extra {*}$::esl::src_members]] eq ""} {
         error "done.json could not be written"
     }
     set ::esl::written 1

@@ -33,6 +33,7 @@ from esl.doe import FAILED, SKIPPED, load_method_sources, opt_settings, settings
 from esl.doe import boundary as bnd
 from esl.doe import evaluate as ev
 from esl.doe import compare_lt as clt
+from esl.doe import eval_region as evr
 from esl.doe import load_transfer as ltm
 from esl.doe import matrix as mx
 from esl.doe import mesh_gmsh as mg
@@ -656,6 +657,9 @@ def bd_eval(spec: dict, echo=print) -> dict:
             r["warnings"] = list(r["warnings"]) + sm_w
             if _jig(c) is not None:              # v0.23.0 지그 순위(esl_jig_rank.md §2): metric 과 무관하게 항상(Q-JIG-1)
                 r["warnings"] = list(r["warnings"]) + _jig_apply(c, t, did, mesh, loads, reg_e, r)
+        for ns in NODAL_SOURCES:                  # v0.24.0 노드 힘 출처(경계력·내력) 사이드카(result.json 무영향 — esl_fint.md §5)
+            if _ns_on(c, ns):                     # 계산 여부 = 설정 enabled ∧ 계획 열(_bf_on(c) 과 같은 규칙 — 출처 행마다)
+                _ns_apply(c, ns, t, bmeta, did, mesh, sup, rkw.get("region"))
         per, warns, solve = r["per_esl"], r["warnings"], r["stats"]
         keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"
         ev.save_design(dd, mesh["node_id"], mesh["x0"], mesh if keep_mesh else None, c.writer)
@@ -951,6 +955,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
     if c.D.get("post_mode") == "view3d":
         return _post_view3d(c, echo)
+    if c.D.get("post_mode") in NODAL_BY_KEY:            # v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2)
+        return _post_nodal(c, NODAL_BY_KEY[c.D["post_mode"]], echo)
     if c.scn == "compare":
         return _cmp_post(c, echo)
     c.progress(0)
@@ -1015,6 +1021,11 @@ def bd_post(spec: dict, echo=print) -> dict:
     v3_jig, vjw = _jig_view3d(c, t, results, [BASELINE] + top)     # v0.23.2 지그 응답 3D(지그 계산된 스냅샷만 — 그 밖 바이트 동일)
     warns += vjw
     _jig_extras(c, t, m, results, noise, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post")   # v0.23.3 사이드카(새 파일만)
+    for ns in NODAL_SOURCES:                     # v0.24.0 노드 힘 출처 사이드카(새 파일만 — 결과·순위 무영향)
+        try:
+            _ns_post(c, ns, t, bmeta, m, results, noise, S_, shown=[BASELINE] + top, source="bd_post", echo=echo)
+        except Exception as exc:                 # noqa: BLE001
+            echo(f"[bd_post] {ns['name']} 생략: {getattr(exc, 'code', type(exc).__name__)}")
     c.progress(60)
     keep_k = int(c.cfg["paicad"]["keep_files_top"])
     best_ids = [x["id"] for x in R["ranking"][:max(1, min(k, keep_k))]]
@@ -1039,6 +1050,11 @@ def bd_post(spec: dict, echo=print) -> dict:
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
            "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise,
            "matrix_sha256": m["matrix_sha256"], "warnings": warns}
+    evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
+    if evs is not None:
+        out["eval_region"] = evs
+        if evs["n_nodes"] == 0:                  # 빈 영역 = 전 노드로 계산(umax_in) + 경고 1개
+            warns.append("RANK_EVAL_EMPTY: 평가 영역(rank.eval_region)에 노드가 없어 대상 파트 전체로 umax(평가 영역)을 계산")
     if v3_jig:
         out.update(v3_jig)
     mqb = None
@@ -2710,14 +2726,17 @@ def _lt_method(c: Ctx, variant=None) -> dict:
     return tp.method_of(_lt(c), variant, c.mapping_opts())
 
 
-def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None) -> tuple[list, dict | None]:
+def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None,
+                srcs: list | None = None) -> tuple[list, dict | None]:
     """하중 자리 하나(§13.3): reuse once 이고 안(did ≠ d000) = 베이스라인 노드 하중(prep/loads.npz) 그대로, 그 밖 = 공용 실행기
-    ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식."""
-    if plan["reuse"] == "once" and did != BASELINE and variant is None:
+    ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식.
+    srcs = 전달할 원천 하중(v0.24.0 경계력 ESL — esl_bforce.md §5.2), None = 엔트리 전 노드 ESL(기존)."""
+    if plan["reuse"] == "once" and did != BASELINE and variant is None and srcs is None:
         _, loads = sc.load_loads(c.p("prep"))
         return loads, None
     rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}, "placement": _lt_placement(c, plan)}
-    return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)), dst, _lt_method(c, variant), cache if cache is not None else {})
+    return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)) if srcs is None else srcs, dst, _lt_method(c, variant),
+                                 cache if cache is not None else {})
 
 
 def _lt_target_loads(c: Ctx, did: str, tgt, region, h: float) -> list:
@@ -3058,6 +3077,9 @@ def _ev(c: Ctx, mesh: dict, sup, loads, region=None, keep_u=(), six=False) -> di
         return ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
                            keep_u=list(keep_u), **rkw)
     prim = [e for e, _ in loads if LT_SEP not in str(e)]
+    evm = _ev_mask(c, mesh)                      # v0.24.0 평가 영역(새 스냅샷만 — esl_fint.md §6.2)
+    if evm is not None:
+        rkw["eval_nodes"] = evm
     return _solve6(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"],
                    keep_u=list(dict.fromkeys(list(keep_u) + prim)), keep6=prim if six else (), **rkw)
 
@@ -3315,6 +3337,16 @@ def _sm(c: Ctx) -> dict | None:
     if out["metric"] not in smm.METRICS or out["lin_form"] not in smm.LIN_FORMS:
         raise EslError("CONFIG_INVALID", f"rank.metric {out['metric']} / lin_form {out['lin_form']}")
     out["jig"] = {**base["jig"], **r["jig"]} if isinstance(r.get("jig"), dict) else None
+    # v0.24.0 평가 영역(esl_fint.md §6.2): 스냅샷에 eval_region 이 있을 때만(옛 스냅샷 = None — 계산·키 없음)
+    ev_ = r.get("eval_region")
+    out["eval"] = None
+    if ev_ is not None:
+        mode = ev_.get("mode") if isinstance(ev_, dict) else ev_
+        if mode not in evr.EVAL_MODES:
+            raise EslError("CONFIG_INVALID", f"rank.eval_region {mode} — {list(evr.EVAL_MODES)}")
+        get = (lambda k, d: ev_.get(k, d)) if isinstance(ev_, dict) else (lambda k, d: r.get("eval_" + k, d))
+        out["eval"] = {"mode": mode, "free_edge_mm": float(get("free_edge_mm", base["eval_free_edge_mm"])),
+                       "boxes": list(get("boxes", base["eval_boxes"]) or [])}
     return out
 
 
@@ -3337,7 +3369,7 @@ def _sm_post_warn(S_: dict | None) -> list:
 
 
 def _solve6(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), keep6=(),
-            region=None) -> dict:
+            region=None, eval_nodes=None) -> dict:
     """``evaluate.evaluate`` 와 같은 계산(같은 식·같은 순서 — per_esl·warnings·stats 비트 동일) + keep6 ESL 의 6 dof 해
     (회전 포함, 강성 지표 참조 변위용). evaluate.py 는 변경하지 않는다(회전을 돌려주는 인자가 없어 여기서 같은 흐름)."""
     from esl.mech import supports as msup
@@ -3375,6 +3407,8 @@ def _solve6(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: flo
         if rr > float(reaction_warn):
             warns.append({"code": "REACTION_RESIDUAL", "entry_id": eid, "ratio": rr})
         per.append({"entry_id": eid, "C": C, "umax": umax, "epsmax": epsmax, "reaction_rel": rr})
+        if eval_nodes is not None:                       # v0.24.0 평가 영역 umax(새 스냅샷만 — esl_fint.md §6.2)
+            per[-1]["umax_ev"] = ev.umax_in(ut, eval_nodes)
         if eid in want:
             keep[eid] = ut.copy()
         if eid in want6:
@@ -3837,7 +3871,8 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     F_i = {e: jg.forces(basis, fits[e]["a"], N) for e in eids}
     tm["fit"] = time.monotonic() - tm["fit"]
     tm["respond"] = time.monotonic()
-    rows = {x["entry_id"]: x for x in jg.respond(h, [(e, F_i[e]) for e in eids], umax_mask=omega, keep_u=True)}
+    rows = {x["entry_id"]: x for x in jg.respond(h, [(e, F_i[e]) for e in eids], umax_mask=omega, keep_u=True,
+                                                 ev_mask=_ev_mask(c, mesh))}
     tm["respond"] = time.monotonic() - tm["respond"]
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     ents, a_mat = [], []
@@ -3898,7 +3933,10 @@ def _jig_baseline(c: Ctx, t, mesh: dict, loads: list, region, r: dict, J: dict, 
     if rs["fill_reason"] is not None:
         doc["fill_reason"] = rs["fill_reason"]
     c.write_json(os.path.join("prep", JIG_JSON), doc)
-    return {"C_jig": {e: float(rows[e]["C_jig"]) for e in eids}, "umax_jig": {e: float(rows[e]["umax_jig"]) for e in eids}}
+    out = {"C_jig": {e: float(rows[e]["C_jig"]) for e in eids}, "umax_jig": {e: float(rows[e]["umax_jig"]) for e in eids}}
+    if all("umax_ev" in rows[e] for e in eids):          # v0.24.0 평가 영역(새 스냅샷만)
+        out["umax_jig_ev"] = {e: float(rows[e]["umax_ev"]) for e in eids}
+    return out
 
 
 def _jig_fallback(c: Ctx, code: str, detail: str | None, warns: list) -> None:
@@ -3931,7 +3969,7 @@ def _jig_design(c: Ctx, did: str, mesh: dict, loads: list) -> dict | None:
     eids = [str(e) for e in z["entry_ids"].tolist()]
     basis = _jig_basis_of(z, int(z["a"].shape[1]))
     ld = [(e, jg.forces(basis, np.asarray(z["a"][eids.index(e)], dtype=np.float64), nb_.size)) for e, _F in loads]
-    r = jg.design_response(mesh, jidx, ld, c.solver_cfg(), umax_mask=omega)
+    r = jg.design_response(mesh, jidx, ld, c.solver_cfg(), umax_mask=omega, ev_mask=_ev_mask(c, mesh))
     return {x["entry_id"]: x for x in r["rows"]}
 
 
@@ -4031,10 +4069,24 @@ VIEW_KEYS = ("metric", "C_ref", "baseline", "n_ok", "n_skipped", "n_failed", "ra
 # 키 1개. 출처를 빼거나 더할 때 이 표의 행만 바꾼다(호출부는 열만 읽음 — 출처 이름 분기 없음). 열: key·metric(순위 지표 — "effective" =
 # 스터디 metric_effective, 단 jig 이면 solve)·drop(행에서 뺄 다른 출처 키)·drop_pe(per_esl 에서 뺄 키)·umax_pe(umax·εmax 를 바꿀
 # per_esl 키 — None = 그대로). 보기는 베이스라인 C_jig 가 모두 있을 때만 만든다(출처 공통). 화면 거울 = F/pages/doe/doeTabs.ts LOAD_SOURCES
+# v0.24.0(esl_bforce.md §5.4): 열 eps_pe(εmax 를 바꿀 per_esl 키 — None = umax_pe 가 있으면 εmax 없음)·need(베이스라인 per_esl 에 모두 있어야
+# 보기를 만드는 키)·sidecar(보기를 쓰는 사이드카 — jig = post/jig_view.json(_jig_extras), bforce = post/bforce_view.json(_bf_post)).
+VIEW_DROP_BF = ("C", "C_solve", "C_jig", "C_bf", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max",
+                "umax_def", "umax_jig", "basis", "sm_warn")
+# v0.24.0 보완(esl_fint.md §5.1·§6.2): 행 fint(내력 ESL — 사이드카 post/fint_view.json(_ns_post)), 열 uev_pe(umax(평가 영역)을 바꿀
+# per_esl 키 — 새 스냅샷만 값이 있음, 없으면 행에서 umax_ev 를 뺌 — 다른 출처 값 섞임 금지).
+VIEW_DROP_NODAL = VIEW_DROP_BF
 RANK_SOURCES = (
     {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def"),
-     "umax_pe": "umax_jig"},
-    {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None},
+     "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_jig_ev"},
+    {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None, "eps_pe": None,
+     "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_ev"},
+    {"key": "bforce", "metric": "bf", "drop": VIEW_DROP_NODAL,
+     "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_bf",
+     "eps_pe": "epsmax_bf", "need": "C_bf", "sidecar": "bforce", "uev_pe": "umax_bf_ev"},
+    {"key": "fint", "metric": "fi", "drop": VIEW_DROP_NODAL,
+     "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_fi",
+     "eps_pe": "epsmax_fi", "need": "C_fi", "sidecar": "fint", "uev_pe": "umax_fi_ev"},
 )
 
 
@@ -4205,18 +4257,35 @@ def _view_rows(R: dict, results: list, src: dict) -> dict:
     def fix(x: dict, rid: str) -> None:
         for k in src["drop"]:
             x.pop(k, None)
+        uk = src.get("uev_pe")                                 # v0.24.0 umax(평가 영역) — 그 출처 per_esl 키만(없으면 뺌)
+        if "umax_ev" in x or uk is not None:
+            pe_ = pe_all.get(rid) or {}
+            ue = {e: (None if p.get(uk) is None else float(p[uk])) for e, p in pe_.items()} if uk else {}
+            if uk and pe_ and all(uk in p for p in pe_.values()):
+                x["umax_ev"] = ue.get(x.get("worst_entry_id"))
+                x["umax_ev_all"] = max((v for v in ue.values() if v is not None), default=None)
+                for p in x.get("per_esl") or []:
+                    p["umax_ev"] = ue.get(p["entry_id"])
+            else:
+                x.pop("umax_ev", None)
+                x.pop("umax_ev_all", None)
+                for p in x.get("per_esl") or []:
+                    p.pop("umax_ev", None)
         if src["umax_pe"] is None:
             return
         pe = pe_all.get(rid) or {}
         um = {e: (None if p.get(src["umax_pe"]) is None else float(p[src["umax_pe"]])) for e, p in pe.items()}
         x["umax"] = um.get(x.get("worst_entry_id"))
         x["umax_all"] = max((v for v in um.values() if v is not None), default=None)
-        x["epsmax"] = x["epsmax_all"] = None
+        ek = src.get("eps_pe")                                 # v0.24.0 열 eps_pe(None = εmax 없음 — 지그 그대로)
+        em = {e: (None if ek is None or p.get(ek) is None else float(p[ek])) for e, p in pe.items()}
+        x["epsmax"] = em.get(x.get("worst_entry_id")) if ek else None
+        x["epsmax_all"] = max((v for v in em.values() if v is not None), default=None) if ek else None
         for p in x.get("per_esl") or []:
             for k in src["drop_pe"]:
                 p.pop(k, None)
             p["umax"] = um.get(p["entry_id"])
-            p["epsmax"] = None
+            p["epsmax"] = em.get(p["entry_id"]) if ek else None
 
     for x in R["ranking"]:
         fix(x, x["id"])
@@ -4229,27 +4298,41 @@ def _rank_views(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: 
     b = next((r for r in results if r["id"] == BASELINE), None)
     if S_ is None or b is None or b.get("status") != "OK" or rk._jig_ref(b) is None:
         return None, {}
-    me = S_["metric_effective"]
     views, per = {}, {}
-    for src in RANK_SOURCES:                                   # 출처 표 행마다(§2.1)
-        view = src["key"]
-        metric = src["metric"] if src["metric"] != "effective" else (me if me != "jig" else "solve")
-        R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric,
-                    lin_form=S_["lin_form"], lin_valid=float(S_["lin_valid"]))
-        best_clean = _annotate(c, R, results, labels)
-        _view_rows(R, results, src)
-        sc = {BASELINE: 1.0, **{x["id"]: x["score"] for x in R["ranking"]}}
-        sens = _sens(c, m, results, sc)
-        inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
-        if not inline:
-            per[view] = {x["id"]: x["per_esl"] for x in R["ranking"]}
-        views[view] = {"metric": metric, "C_ref": R["C_ref"], "baseline": R["baseline"], "n_ok": R["n_ok"],
-                       "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
-                       "ranking": [{k: v for k, v in x.items() if k != "C" and (k != "per_esl" or inline)}
-                                   for x in R["ranking"]],
-                       "per_esl_inline": inline, "sensitivity": None if sens.get("null") else sens,
-                       "sensitivity_reason": sens.get("reason"), "best_clean": best_clean}
+    for src in RANK_SOURCES:                                   # 출처 표 행마다(§2.1) — 이 사이드카(jig_view) 행만
+        if src["sidecar"] != "jig":
+            continue
+        views[src["key"]], pv = _rank_view_one(c, m, results, noise, S_, labels, src)
+        if pv is not None:
+            per[src["key"]] = pv
     return views, per
+
+
+def _src_ready(b: dict | None, src: dict) -> bool:
+    """출처 행 열 need: 베이스라인 OK 이고 per_esl 의 need 값이 모두 있고 최대 > 0."""
+    if b is None or b.get("status") != "OK":
+        return False
+    per = b.get("per_esl") or []
+    return bool(per) and all(p.get(src["need"]) is not None for p in per) and max(float(p[src["need"]]) for p in per) > 0
+
+
+def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: dict, src: dict) -> tuple[dict, dict | None]:
+    """출처 행 하나의 보기(§2 — 출처 표 열만 읽음): rank(metric) → 주석 → 행 정리 → 민감도. 반환 (보기, 인라인 아니면 per_esl)."""
+    me = S_["metric_effective"] if S_ else "solve"
+    metric = src["metric"] if src["metric"] != "effective" else (me if me != "jig" else "solve")
+    kw = {"lin_form": S_["lin_form"], "lin_valid": float(S_["lin_valid"])} if S_ else {}
+    R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric, **kw)
+    best_clean = _annotate(c, R, results, labels)
+    _view_rows(R, results, src)
+    sc = {BASELINE: 1.0, **{x["id"]: x["score"] for x in R["ranking"]}}
+    sens = _sens(c, m, results, sc)
+    inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
+    view = {"metric": metric, "C_ref": R["C_ref"], "baseline": R["baseline"], "n_ok": R["n_ok"],
+            "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
+            "ranking": [{k: v for k, v in x.items() if k != "C" and (k != "per_esl" or inline)} for x in R["ranking"]],
+            "per_esl_inline": inline, "sensitivity": None if sens.get("null") else sens,
+            "sensitivity_reason": sens.get("reason"), "best_clean": best_clean}
+    return view, (None if inline else {x["id"]: x["per_esl"] for x in R["ranking"]})
 
 
 def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, shown: list, v3_jig: dict | None,
@@ -4348,6 +4431,466 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
     return {"files": files, "warnings": list((doc or {}).get("warnings") or vjw), "result": None}
 
 
+# ---------------------------------------------------------------- v0.24.0 노드 힘 출처 — 경계력·내력 ESL (esl_bforce.md §5·§6, esl_fint.md §5)
+BF_PREP_JSON = "bforce.json"                       # prep/ (엔트리별 출처·등급) — 경계력 행 파일 이름(아래 표 file 열과 같음)
+BF_LOADS_NPZ = "bforce_loads.npz"                  # prep/ (기준 메시 노드 하중 K×N×3)
+BF_DESIGN_JSON = "bforce.json"                     # run/designs/<did>/ (안 사이드카 — result.json 불변)
+BF_VIEW_JSON = "bforce_view.json"                  # post/ (보기·블록·3D)
+BF_PREP_SCHEMA = "esl/doe_bforce_prep/1"           # 스키마는 노드 힘 출처 공통(진단 스키마 1개 — 문서 source 키로 구분)
+BF_DESIGN_SCHEMA = "esl/doe_bforce_design/1"
+BF_VIEW_SCHEMA = "esl/doe_bforce_view/1"
+# 노드 힘 출처 표(esl_fint.md §5.1 — D-0.24.0-BF-15): 행 = 출처 1개. 호출부(_ns_*)는 열만 읽고 출처 이름으로 분기하지 않는다.
+# file = Case 04_esl/<file>.{json,npz}·prep/<file>.json·prep/<file>_loads.npz·run/designs/<did>/<file>.json·post/<file>_view.json,
+# pe = per_esl 키 C_<pe>·umax_<pe>·epsmax_<pe>·umax_<pe>_ev·rank metric·3D <did>_<pe>·응답 view3d_<pe>*, cfg = bead_doe.<cfg>·작업
+# doe.<cfg>_cfg, code = 코드 접두, kind = 추가 계산 작업 params.kind, plan = 계획 표 열(base = 같은 메시 비교만), name = 문구.
+NODAL_SOURCES = (
+    {"key": "bforce", "file": "bforce", "pe": "bf", "cfg": "bforce", "code": "BF", "kind": "BFORCE", "plan": "bf",
+     "name": "경계력 ESL"},
+    {"key": "fint", "file": "fint", "pe": "fi", "cfg": "fint", "code": "FINT", "kind": "FINT", "plan": "bf",
+     "name": "내력 ESL"},
+)
+NODAL_BY_KEY = {ns["key"]: ns for ns in NODAL_SOURCES}
+
+
+def _nf(ns: dict, what: str) -> str:
+    """출처 행의 파일 이름: prep·design·case_json = <file>.json, loads = <file>_loads.npz, view = <file>_view.json, case_npz = <file>.npz."""
+    f = ns["file"]
+    return {"prep": f"{f}.json", "design": f"{f}.json", "case_json": f"{f}.json", "case_npz": f"{f}.npz",
+            "loads": f"{f}_loads.npz", "view": f"{f}_view.json"}[what]
+
+
+def _pk(ns: dict, k: str) -> str:
+    """per_esl 키: C → C_<pe>, umax → umax_<pe>, epsmax → epsmax_<pe>, umax_ev → umax_<pe>_ev."""
+    return f"umax_{ns['pe']}_ev" if k == "umax_ev" else f"{k}_{ns['pe']}"
+
+
+def _ns_cfg(c: Ctx, ns: dict) -> dict:
+    """bead_doe.<cfg>(스펙 cfg 기본값 위) + 추가 계산 작업의 지금 설정 doe.<cfg>_cfg."""
+    from esl.doe import DEFAULTS
+    return {**(c.cfg.get(ns["cfg"]) or DEFAULTS[ns["cfg"]]), **(c.D.get(f"{ns['cfg']}_cfg") or {})}
+
+
+def _ns_on(c: Ctx, ns: dict) -> bool:
+    """노드 힘 출처 계산 여부: 설정 enabled ∧ 계획 열(plan) = base(같은 메시 비교 — 시나리오 이름 분기 없음)."""
+    return bool(_ns_cfg(c, ns).get("enabled")) and _lt_plan(c)[ns["plan"]] == "base"
+
+
+def _bf_cfg(c: Ctx) -> dict:
+    return _ns_cfg(c, NODAL_BY_KEY["bforce"])
+
+
+def _bf_on(c: Ctx) -> bool:
+    """경계력 ESL 계산 여부(호환 — _ns_on(경계력 행))."""
+    return _ns_on(c, NODAL_BY_KEY["bforce"])
+
+
+def _ns_mac_min(c: Ctx, ns: dict, pdoc: dict | None = None) -> float:
+    """재현 MAC 경고 기준 = 엔트리 Case 가 재현을 평가할 때 쓴 값(04_esl/<file>.json recon.mac_min — 가장 엄격한 쪽), 없으면 설정 기본."""
+    vals = [r["recon_mac_min"] for r in (pdoc or {}).get("entries") or [] if r.get("recon_mac_min") is not None]
+    if vals:
+        return float(max(vals))
+    from esl.config import bforce_settings
+    return float(bforce_settings({})["recon_mac_min"])
+
+
+def _bf_region(c: Ctx):
+    if _is_step_base(c):
+        from esl.doe import step_graph as sg
+        return sg.load_region(c.p("prep"))
+    return None
+
+
+def _ns_find(ns: dict, meta: dict, raw: dict) -> tuple[str | None, dict | None, str]:
+    """엔트리의 출처 하중 찾기(읽기만, esl_bforce.md §5.2): 엔트리 스냅샷 04_esl → 같은 Case 의 runs/*/04_esl(최근순)·현재 04_esl 중
+    <file>.npz 가 있고 노드 ID·변형(u_rel)이 엔트리와 같은 것. 반환 (04_esl 폴더 | None, <file>.json | None, 사유)."""
+    fj, fz = _nf(ns, "case_json"), _nf(ns, "case_npz")
+    src = meta.get("source") or {}
+    cd = src.get("case_dir")
+    cands = []
+    if src.get("snapshot_dir"):
+        cands.append(os.path.join(src["snapshot_dir"], "04_esl"))
+    if cd and os.path.isdir(os.path.join(cd, "runs")):
+        rs = [os.path.join(cd, "runs", r, "04_esl") for r in sorted(os.listdir(os.path.join(cd, "runs")))]
+        rs = [d for d in rs if os.path.isfile(os.path.join(d, fz))]
+        cands += sorted(rs, key=lambda d: os.path.getmtime(os.path.join(d, fz)), reverse=True)
+    if cd:
+        cands.append(os.path.join(cd, "04_esl"))
+    nid = np.asarray(raw["node_id"], dtype=np.int64)
+    ur = np.asarray(raw["u_rel"], dtype=np.float64)
+    tol = 1e-9 * max(float(np.abs(ur).max()) if ur.size else 0.0, 1e-30)
+    why, jd_none = (f"{ns['code']}_NOT_FOUND: Case 에 {ns['name']} 결과가 없음 — Case 에서 h3d 추출(v0.24.0)·ESL 을 다시 실행",
+                    None)
+    seen = set()
+    for d in cands:
+        if d in seen or not os.path.isdir(d):
+            continue
+        seen.add(d)
+        try:
+            uz = U.load_npz(os.path.join(d, "u_rel.npz"))
+            if not np.array_equal(np.asarray(uz["node_id"], dtype=np.int64), nid) or \
+                    not np.allclose(np.asarray(uz["u_rel"], dtype=np.float64), ur, rtol=0.0, atol=tol):
+                continue
+            jp = os.path.join(d, fj)
+            jd = U.read_json(jp) if os.path.isfile(jp) else None
+        except (EslError, OSError, KeyError, ValueError):
+            continue
+        if os.path.isfile(os.path.join(d, fz)) and isinstance(jd, dict) and jd.get("grade") not in (None, "none"):
+            return d, jd, ""
+        if isinstance(jd, dict) and jd_none is None:
+            jd_none = jd
+            why = f"{jd.get('code') or ns['code'] + '_NO_DATA'}: {jd.get('reason') or ns['name'] + ' 자료 없음'}"
+    return None, jd_none, why
+
+
+def _bf_find(meta: dict, raw: dict) -> tuple[str | None, dict | None, str]:
+    return _ns_find(NODAL_BY_KEY["bforce"], meta, raw)
+
+
+def _ns_entry(jd: dict) -> dict:
+    """Case 출처 json → 엔트리 진단 값(블록 공통 필드 — 없는 값 null)."""
+    rc = jd.get("recon") or {}
+    fi = jd.get("fint") if isinstance(jd.get("fint"), dict) else {}
+    pl = jd.get("plastic") if isinstance(jd.get("plastic"), dict) else {}
+    sh = fi.get("shared_nodes") if isinstance(fi.get("shared_nodes"), dict) else {}
+    return {"grade": jd.get("grade") or "none", "frame_index": (jd.get("frame") or {}).get("frame_index"),
+            "mass_source": jd.get("mass_source"), "limits": list(jd.get("limits") or []),
+            "eq_force_rel": ((jd.get("eq_raw") or {}).get("ref") or {}).get("force_rel"),
+            "eq_moment_rel": ((jd.get("eq_raw") or {}).get("ref") or {}).get("moment_rel"),
+            "abar_g": jd.get("abar_g"), "corr_rel": jd.get("corr_rel"),
+            "sign_suspect": None if not isinstance(jd.get("sign_check"), dict) else bool(jd["sign_check"].get("suspect")),
+            "recon_mac": rc.get("mac"), "recon_mac_min": rc.get("mac_min"), "recon_umax_err": rc.get("umax_err"),
+            "reaction_rel": rc.get("reaction_rel"),
+            "res_force_rel": (fi.get("residual") or {}).get("force_rel"),
+            "res_moment_rel": (fi.get("residual") or {}).get("moment_rel"),
+            "unbalanced": fi.get("unbalanced") if fi else None,
+            "n_shared": sh.get("n_shared") if sh.get("status") == "ok" else None,
+            "plastic_frac": pl.get("frac") if pl.get("status") == "ok" else None,
+            "plastic_max": pl.get("max") if pl.get("status") == "ok" else None}
+
+
+def _ns_prep(c: Ctx, ns: dict, t, bmeta: dict, fresh: bool = False) -> dict:
+    """§5.2 엔트리 하중 → 기준 메시(계획 그대로 run_transfer_plan · legacy = 같은 노드 ID) → prep/<file>_loads.npz + prep/<file>.json.
+    이미 있으면 읽기(fresh = 다시 계산 — 추가 계산 경로). 반환 prep 문서(status ok | unavailable | unsupported)."""
+    pj, pz = c.p("prep", _nf(ns, "prep")), c.p("prep", _nf(ns, "loads"))
+    if not fresh and os.path.isfile(pj):
+        return U.read_json(pj)
+    cfg = _ns_cfg(c, ns)
+    grades = list(cfg.get("grades") or [])
+    ents = c.entries(raw=True)
+    rows, srcs = [], []
+    code = ns["code"]
+    for e_d, e in zip(c.D["entries"], ents):
+        eid = str(e_d["id"])
+        d, jd, why = _ns_find(ns, e.meta, e.raw)
+        rec = {"entry_id": eid, "label": e_d.get("label") or eid[:8], **_ns_entry(jd or {}), "source": d, "sha256": None,
+               "reason": None if d else why}
+        if d is not None:
+            rec["sha256"] = U.sha256_file(os.path.join(d, _nf(ns, "case_npz")))
+            if rec["grade"] not in grades:
+                rec["reason"] = f"{code}_GRADE_EXCLUDED: 등급 {rec['grade']} 는 설정 bead_doe.{ns['cfg']}.grades {grades} 밖"
+            else:
+                z = U.load_npz(os.path.join(d, _nf(ns, "case_npz")))
+                srcs.append((eid, e, np.asarray(z["f"], dtype=np.float64)))
+        rows.append(rec)
+    doc = {"schema": BF_PREP_SCHEMA, "source": ns["key"], "status": "ok", "code": None, "reason": None, "entries": rows,
+           "grades": grades, "loads_sha": None}
+    bad = [r for r in rows if r["reason"]]
+    if bad:
+        doc.update(status="unavailable", code=bad[0]["reason"].split(":")[0], reason=bad[0]["reason"])
+    else:
+        nb = np.asarray(t.mesh["node_id"], dtype=np.int64)
+        L, plan = _lt(c), _lt_plan(c)
+        try:
+            if L is not None:
+                h = _lt_h(c, bmeta, t.mesh)
+                reg = _bf_region(c)
+                dst = ltm.dst_mesh(t.mesh, t.frame, reg if plan["mask"] != "none" else None, h)
+                lsrc = [ltm.src_load(eid, e.raw, f, e.meta.get("frame"), None) for eid, e, f in srcs]
+                loads, _info = _plan_loads(c, plan, BASELINE, dst, None, {}, srcs=lsrc)   # 공용 전달 자리 1곳(계획 그대로)
+                F = np.stack([np.asarray(f, dtype=np.float64) for _, f in loads])
+            else:
+                for eid, e, f in srcs:
+                    if not np.array_equal(np.asarray(e.raw["node_id"], dtype=np.int64), nb):
+                        raise EslError(f"{code}_UNSUPPORTED", f"엔트리 {eid} 메시가 기준 메시와 다름(하중 전달 설정 없는 옛 스터디)")
+                F = np.stack([f for _, _, f in srcs])
+        except EslError as exc:
+            doc.update(status="unavailable", code=exc.code if exc.code.startswith(code + "_") else f"{code}_TRANSFER_FAILED",
+                       reason=f"{exc.code}: {exc.message}"[:500])
+            F = None
+        if F is not None:
+            c.writer.makedirs(c.p("prep"))
+            np.savez_compressed(c.writer.guard(pz), node_id=nb, entry_ids=np.array([x[0] for x in srcs]), f=F)
+            doc["loads_sha"] = U.sha256_file(pz)
+    c.write_json(os.path.join("prep", _nf(ns, "prep")), U.jsonable(doc))
+    return doc
+
+
+def _ns_loads(c: Ctx, ns: dict, mesh: dict) -> list:
+    """prep 하중을 이 메시 노드 순서로(같은 위상 — 노드 ID 로) → [(entry_id, F)]."""
+    z = U.load_npz(c.p("prep", _nf(ns, "loads")))
+    nb = np.asarray(z["node_id"], dtype=np.int64)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    if np.array_equal(nb, nid):
+        pos = np.arange(nid.size)
+    else:
+        o = np.argsort(nb)
+        pos = o[np.searchsorted(nb, nid, sorter=o).clip(0, nb.size - 1)]
+        if not np.array_equal(nb[pos], nid):
+            raise EslError(f"{ns['code']}_UNSUPPORTED", f"안 메시 노드가 기준 메시와 다름({ns['name']} 은 같은 메시 비교만)")
+    return [(str(e), np.asarray(z["f"][k], dtype=np.float64)[pos]) for k, e in enumerate(z["entry_ids"].tolist())]
+
+
+def _bf_loads(c: Ctx, mesh: dict) -> list:
+    return _ns_loads(c, NODAL_BY_KEY["bforce"], mesh)
+
+
+def _ns_design(c: Ctx, ns: dict, did: str, mesh: dict, sup: list, region, keep_u=()) -> tuple[dict, dict]:
+    """§5.3 같은 3-2-1 지지로 K_d u = F(분해 +1) → 사이드카 run/designs/<did>/<file>.json. 반환 (문서, {entry: u}).
+    새 스냅샷(평가 영역)이면 per_esl 에 umax_<pe>_ev."""
+    pdoc = U.read_json(c.p("prep", _nf(ns, "prep")))
+    loads = _ns_loads(c, ns, mesh)
+    rkw = {"region": region} if region is not None else {}
+    evm = _ev_mask(c, mesh)
+    if evm is not None:
+        rkw["eval_nodes"] = evm
+    r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], keep_u=list(keep_u),
+                    **rkw)
+    per = []
+    for p in r["per_esl"]:
+        x = {"entry_id": p["entry_id"], _pk(ns, "C"): p["C"], _pk(ns, "umax"): p["umax"], _pk(ns, "epsmax"): p["epsmax"],
+             "reaction_rel": p["reaction_rel"]}
+        if "umax_ev" in p:
+            x[_pk(ns, "umax_ev")] = p["umax_ev"]
+        per.append(x)
+    doc = {"schema": BF_DESIGN_SCHEMA, "source": ns["key"], "did": did, "status": "OK", "loads_sha": pdoc.get("loads_sha"),
+           "per_esl": per, "warnings": [w["code"] for w in r["warnings"]], "solve": r["stats"]}
+    dd = design_dir(c, did)
+    c.writer.makedirs(dd)
+    U.write_json(c.writer.guard(os.path.join(dd, _nf(ns, "design"))), U.jsonable(doc))
+    return doc, r["u"]
+
+
+def _ns_apply(c: Ctx, ns: dict, t, bmeta: dict, did: str, mesh: dict, sup: list, region) -> None:
+    """BD_EVAL 훅: 베이스라인이면 prep 하중을 먼저 만들고, OK 안의 출처 사이드카를 쓴다. 예외는 삼킴(안 평가·result.json 무영향 —
+    BD_POST 가 없는 사이드카를 다시 계산)."""
+    try:
+        doc = _ns_prep(c, ns, t, bmeta, fresh=did == BASELINE) \
+            if did == BASELINE or os.path.isfile(c.p("prep", _nf(ns, "prep"))) else None
+        if doc is not None and doc.get("status") == "ok":
+            _ns_design(c, ns, did, mesh, sup, region)
+    except Exception:                                           # noqa: BLE001 — 출처 때문에 안 평가 실패 금지(BD_POST 재시도)
+        pass
+
+
+BLOCK_ENTRY_KEYS = ("entry_id", "label", "grade", "mass_source", "source", "eq_force_rel", "eq_moment_rel", "abar_g", "corr_rel",
+                    "sign_suspect", "recon_mac", "recon_umax_err", "reaction_rel", "limits", "reason", "plastic_frac",
+                    "plastic_max", "n_shared", "unbalanced", "res_force_rel", "res_moment_rel")
+
+
+def _ns_block(ns: dict, pdoc: dict, n_designs: int = 0, n_failed: int = 0, mac_min: float | None = None) -> dict:
+    ents = [{k: r.get(k) for k in BLOCK_ENTRY_KEYS} for r in pdoc.get("entries") or []]
+    rk_ = [bfm_rank(r.get("grade")) for r in ents]
+    lim = sorted({x for r in ents for x in r.get("limits") or []})
+    return {"source": ns["key"], "status": pdoc.get("status"), "code": pdoc.get("code"), "reason": pdoc.get("reason"),
+            "grade_min": None if not ents else ents[rk_.index(min(rk_))]["grade"], "entries": ents, "limits": lim,
+            "limit_text": bfm_limit_text(lim), "recon_mac_min": mac_min, "n_designs": int(n_designs), "n_failed": int(n_failed)}
+
+
+def bfm_limit_text(codes) -> list[str]:
+    from esl.mech.bforce import limit_text
+    return limit_text(codes)
+
+
+def bfm_rank(grade) -> int:
+    from esl.mech.bforce import GRADE_RANK
+    return int(GRADE_RANK.get(grade or "none", 0))
+
+
+def _ns_post(c: Ctx, ns: dict, t, bmeta: dict, m: dict, results: list, noise, S_: dict | None, *, shown: list, source: str,
+             fresh_prep: bool = False, echo=print) -> dict | None:
+    """BD_POST·추가 계산 공용(esl_bforce.md §5.4·§5.5·§6): prep 하중 → 사이드카 없는(또는 하중이 바뀐) OK 안 계산 → 보기·3D·블록 →
+    post/<file>_view.json. 계획 열 none·설정 끔 = 아무것도 쓰지 않음(None)."""
+    if not _ns_on(c, ns):
+        return None
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    doc: dict = {"schema": BF_VIEW_SCHEMA, "source": source, "load_source": ns["key"], "settings": _ns_cfg(c, ns)}
+    warns: list = []
+    vj = os.path.join("post", _nf(ns, "view"))
+    pdoc = _ns_prep(c, ns, t, bmeta, fresh=fresh_prep)
+    if pdoc.get("status") != "ok":
+        doc.update({ns["key"]: _ns_block(ns, pdoc, mac_min=_ns_mac_min(c, ns, pdoc)), "warnings": warns})
+        c.writer.makedirs(c.p("post"))
+        c.write_json(vj, U.jsonable(doc))
+        return doc
+    region = _bf_region(c)
+    sup = list(t.supports)
+    side: dict = {}
+    n_fail = 0
+    for r in [r for r in results if r.get("status") == "OK"]:
+        did = r["id"]
+        sp = os.path.join(design_dir(c, did), _nf(ns, "design"))
+        sd = U.read_json(sp) if os.path.isfile(sp) else None
+        if not isinstance(sd, dict) or sd.get("loads_sha") != pdoc.get("loads_sha"):
+            try:
+                sd, _ = _ns_design(c, ns, did, _jig_view_mesh(c, t, did), sup, region)
+            except Exception as exc:                            # noqa: BLE001 — 그 안 값만 null
+                err = exc.code if isinstance(exc, EslError) else type(exc).__name__
+                warns.append(f"{ns['code']}_DESIGN_FAILED: {did} {err}")
+                n_fail += 1
+                continue
+        side[did] = {p["entry_id"]: p for p in sd.get("per_esl") or []}
+    keys = [_pk(ns, k) for k in ("C", "umax", "epsmax")]
+    kev = _pk(ns, "umax_ev")
+    res2 = []
+    for r in results:
+        x = dict(r)
+        if r.get("per_esl"):
+            rows_ = []
+            for p in r["per_esl"]:
+                sx = (side.get(r["id"]) or {}).get(p["entry_id"], {})
+                q = {**p, **{kk: sx.get(kk) for kk in keys}}
+                if kev in sx:                                  # 평가 영역 umax(새 스냅샷만)
+                    q[kev] = sx[kev]
+                rows_.append(q)
+            x["per_esl"] = rows_
+        res2.append(x)
+    src = next(s_ for s_ in RANK_SOURCES if s_["sidecar"] == ns["key"])
+    b = next((r for r in res2 if r["id"] == BASELINE), None)
+    if _src_ready(b, src):
+        view, per = _rank_view_one(c, m, res2, noise, S_, labels, src)
+        doc["rank_views"] = {src["key"]: view}
+        if per is not None:
+            doc["per_esl"] = {src["key"]: per}
+        if _ns_cfg(c, ns).get("view3d") and c.cfg["view3d"].get("top_k") is not None:
+            try:
+                doc.update(_ns_view3d(c, ns, t, res2, shown, sup, region, warns))
+            except Exception as exc:                            # noqa: BLE001 — 3D 때문에 보기 실패 금지
+                warns.append(f"VIEW3D_FAILED: {ns['key']} {getattr(exc, 'code', type(exc).__name__)}")
+    else:
+        warns.append(f"{ns['code']}_BASELINE_FAILED: 베이스라인 {ns['name']} 풀이 없음")
+    doc[ns["key"]] = _ns_block(ns, pdoc, n_designs=len(side), n_failed=n_fail, mac_min=_ns_mac_min(c, ns, pdoc))
+    doc["warnings"] = warns
+    c.writer.makedirs(c.p("post"))
+    c.write_json(vj, U.jsonable(doc))
+    echo(f"[bd_post {ns['key']}] 등급 {doc[ns['key']]['grade_min']} · 안 {len(side)}(실패 {n_fail}) · 보기 "
+         f"{'있음' if doc.get('rank_views') else '없음'}")
+    return doc
+
+
+def _bf_post(c: Ctx, t, bmeta: dict, m: dict, results: list, noise, S_: dict | None, *, shown: list, source: str,
+             fresh_prep: bool = False, echo=print) -> dict | None:
+    return _ns_post(c, NODAL_BY_KEY["bforce"], t, bmeta, m, results, noise, S_, shown=shown, source=source,
+                    fresh_prep=fresh_prep, echo=echo)
+
+
+def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, warns: list) -> dict:
+    """§5.5 3D: 표시 안마다 순위 행 worst 엔트리(rank._agg(per_esl, C_<pe>)) 응답 + 하중 화살표 → post/view3d/<did>_<pe>/, 기준
+    d000_<pe>_e<kk>/ (기존 view3d 형식)."""
+    from esl.view3d import build_view
+    pe, ck = ns["pe"], _pk(ns, "C")
+    order = [str(e["id"]) for e in c.D["entries"]]
+    by = {r["id"]: r for r in res2}
+    pick = {}
+    for did in [d for d in shown if d != BASELINE]:
+        per = (by.get(did) or {}).get("per_esl") or []
+        if per and all(p.get(ck) is not None for p in per):
+            pick[did] = str(rk._agg({"id": did, "per_esl": per}, ck)["worst"])
+    kd, ke, kr = f"view3d_{pe}", f"view3d_{pe}_esl", f"view3d_{pe}_ref"
+    out = {kd: {}, ke: {}, kr: {}}
+    supd = [{"node_id": int(n), "dof": str(d)} for n, d in sup]
+
+    def _write(did: str, ents: list, name_of) -> dict:
+        mesh = _jig_view_mesh(c, t, did)
+        _, us = _ns_design(c, ns, did, mesh, sup, region, keep_u=ents)
+        loads = dict(_ns_loads(c, ns, mesh))
+        names = {}
+        for e in ents:
+            nm = name_of(e)
+            od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
+            build_view(od, node_id=mesh["node_id"], x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"],
+                       f=loads[e], u_rel=us[e], supports=supd, key=f"doe/{nm}", esl_run_id=str(e))
+            names[e] = nm
+        return names
+
+    for did, e in pick.items():
+        try:
+            _write(did, [e], lambda _e, d=did: f"{d}_{pe}")
+            out[kd][did] = f"{did}_{pe}"
+            out[ke][did] = e
+        except Exception as exc:                                # noqa: BLE001
+            warns.append(f"VIEW3D_FAILED: {did}_{pe} {getattr(exc, 'code', type(exc).__name__)}")
+    need = sorted(set(out[ke].values()), key=order.index)
+    if need:
+        out[kr] = _write(BASELINE, need, lambda e: f"{BASELINE}_{pe}_e{order.index(e):02d}")
+    return out if out[kd] else {}
+
+
+def _post_nodal(c: Ctx, ns: dict, echo=print) -> dict:
+    """§6 기존 스터디 추가 계산(post_mode = 출처 키): 형상 생성 없이 design.npz 좌표로 풀이 → prep/<file>*·run/designs/<did>/
+    <file>.json·post/<file>_view.json·post/view3d/*_<pe>* 만 쓴다(기존 결과 파일 바이트 불변)."""
+    c.progress(0)
+    rp = c.p("post", "result.json")
+    if not os.path.isfile(rp):
+        raise EslError("RESULT_NOT_READY", f"post/result.json 이 없습니다 — 실행이 끝난 스터디만 {ns['name']} 을 추가할 수 있습니다")
+    if _lt_plan(c)[ns["plan"]] != "base":
+        raise EslError(f"{ns['code']}_UNSUPPORTED", f"다른 메시 비교 방식은 {ns['name']} 을 지원하지 않습니다")
+    res0 = U.read_json(rp)
+    t, bmeta = sc.load_base(c.p("prep"))
+    m = _matrix(c)
+    results, _pv = _collect(c, m)
+    shown = [str(d) for d in res0.get("view3d") or [] if d]
+    c.progress(10)
+    doc = _ns_post(c, ns, t, bmeta, m, results, res0.get("noise_floor"), _sm_post(c), shown=shown, source="add",
+                   fresh_prep=True, echo=echo)
+    c.progress(100)
+    return {"files": [] if doc is None else ["post/" + _nf(ns, "view")], "warnings": list((doc or {}).get("warnings") or []),
+            "result": None}
+
+
+def _post_bforce(c: Ctx, echo=print) -> dict:
+    return _post_nodal(c, NODAL_BY_KEY["bforce"], echo)
+
+
+# ---------------------------------------------------------------- v0.24.0 평가 영역 마스크 (esl_fint.md §6.2)
+def _ev_cfg(c: Ctx) -> dict | None:
+    """새 스냅샷 평가 영역 {mode, free_edge_mm, boxes} — 스냅샷 doe.rank 에 eval_region 이 없으면 None(옛 = 계산 안 함)."""
+    S_ = _sm(c)
+    return None if S_ is None else S_.get("eval")
+
+
+def _ev_mask(c: Ctx, mesh: dict):
+    """메시의 평가 영역 노드 bool(새 스냅샷만, 아니면 None). 같은 메시(기준 노드 ID 와 같음) = 기준 메시 마스크(캐시 — 노드 ID 순서),
+    다른 메시 = 그 메시 좌표로 계산."""
+    E = _ev_cfg(c)
+    if E is None:
+        return None
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    cache = getattr(c, "_ev_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            t, _bm = sc.load_base(c.p("prep"))
+            bn = np.asarray(t.mesh["node_id"], dtype=np.int64)
+            cache["base"] = (bn, evr.eval_mask(t.mesh["x0"], t.mesh["conn"], t.mesh["elem_type"], E["mode"],
+                                               float(E["free_edge_mm"]), E["boxes"]))
+        except (EslError, OSError, KeyError):
+            cache["base"] = None
+        c._ev_cache = cache
+    base = cache.get("base")
+    if base is not None and base[0].size == nid.size and np.array_equal(base[0], nid):
+        return base[1]
+    return evr.eval_mask(mesh["x0"], mesh["conn"], mesh["elem_type"], E["mode"], float(E["free_edge_mm"]), E["boxes"])
+
+
+def _ev_summary(c: Ctx, t) -> dict | None:
+    """result.json eval_region 요약(새 스냅샷만): {mode, free_edge_mm, boxes, n_nodes, n_total}."""
+    E = _ev_cfg(c)
+    if E is None:
+        return None
+    mk = _ev_mask(c, t.mesh)
+    return {**E, "n_nodes": int(np.sum(mk)), "n_total": int(mk.size)}
+
+
 def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) -> list:
     """bd_eval 훅: per_esl 행에 C_jig·umax_jig. 예외는 잡아 null + JIG_SKIPPED(베이스라인 — fallback) | JIG_DESIGN_FAILED(안).
     반환 = 경고 문자열."""
@@ -4358,7 +4901,8 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
         if did == BASELINE:
             try:
                 got = _jig_baseline(c, t, mesh, loads, region, r, J, warns)
-                rows = {e: {"C_jig": got["C_jig"][e], "umax_jig": got["umax_jig"][e]} for e in got["C_jig"]}
+                rows = {e: {"C_jig": got["C_jig"][e], "umax_jig": got["umax_jig"][e],
+                            **({"umax_ev": got["umax_jig_ev"][e]} if "umax_jig_ev" in got else {})} for e in got["C_jig"]}
                 c._jig_status = {"status": "ok", "code": None}
             except EslError as exc:
                 if exc.code in ("JIG_NO_TIE", "JIG_SUPPORT_DEGENERATE"):
@@ -4381,7 +4925,8 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
                 c._jig_status = {"status": "fallback", "code": "JIG_SKIPPED"}
         else:
             got = _jig_design(c, did, mesh, loads)
-            rows = None if got is None else {e: {"C_jig": x["C_jig"], "umax_jig": x["umax_jig"]} for e, x in got.items()}
+            rows = None if got is None else {e: {"C_jig": x["C_jig"], "umax_jig": x["umax_jig"],
+                                                 **({"umax_ev": x["umax_ev"]} if "umax_ev" in x else {})} for e, x in got.items()}
     except Exception as exc:                                    # noqa: BLE001 — D-JIG-19: 지그 때문에 안 평가 실패 금지
         rows = None                                             # 그 안의 C_jig·umax_jig 만 null(계약: metric jig = 순위 밖 n_failed["jig"])
         err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:500]
@@ -4391,6 +4936,8 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
         add = (rows or {}).get(p["entry_id"]) or {}
         p["C_jig"] = None if add.get("C_jig") is None else float(add["C_jig"])
         p["umax_jig"] = None if add.get("umax_jig") is None else float(add["umax_jig"])
+        if _ev_cfg(c) is not None:                              # v0.24.0 평가 영역(새 스냅샷만 — 옛 결과 키 없음)
+            p["umax_jig_ev"] = None if add.get("umax_ev") is None else float(add["umax_ev"])
     return warns
 
 
@@ -4857,6 +5404,9 @@ def _cmp_post(c: Ctx, echo) -> dict:
     if jblk is not None:                         # v0.23.0 ④ jig = unsupported 블록
         out["jig"] = jblk
         ctx["jig"] = jblk
+    evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만)
+    if evs is not None:
+        out["eval_region"] = evs
     if L is not None:
         out.update(load_transfer=lt_res, view3d_ref=v3_ref or {}, view3d_esl=v3_esl or {})
         ctx["load_transfer"] = {"result": lt_res, "diag": lt_diag}

@@ -101,6 +101,7 @@
 | `perEslKey`·`sensKey`·`sort`(정보·기본 정렬) | C_jig · rank_views.jig.sensitivity · score | C · rank_views.full.sensitivity · score |
 | `unavailable`(보기 없을 때 탭 사유) | 지그 칩 문구(미계산·불가) 또는 다시 만들기 안내 | 다시 만들기 안내 |
 
+- (v0.24.0 보완 — `esl_bforce.md` §5.4·`esl_fint.md` §5.1) 행 `bforce`(경계력 ESL)·`fint`(내력 ESL) 추가, 코어 열 `eps_pe`·`need`·`sidecar`·`uev_pe`(umax(평가 영역) per_esl 키 — jig `umax_jig_ev`, full `umax_ev`, bforce `umax_bf_ev`, fint `umax_fi_ev`), 화면 열 `pairKeys`·`nodal`. 탭 = [지그 ESL | 전 노드 ESL | 경계력 ESL | 내력 ESL].
 - 기본 탭 = `primaryFor` 에 metric_effective 가 있는 행(없으면 가능한 첫 행). metric_effective 가 없는 옛 결과는 `rank.metric_effective ?? metric_effective ?? metric ?? "solve"` 로 보아 전 노드 탭이 주 출처(§7.1 — 옛 결과도 전 노드 탭 가능, 지그 없는 스터디라 '3D 다시 만들기' 안내 문구는 나오지 않음). 가능한 행이 정말 하나도 없으면(주 출처 행을 뺀 표) 투영 없이 주 결과. 불가 출처의 첫 칩(사유)은 현재 탭 띠 앞에 원 결과로(v0.23.2 지그 미계산·불가 칩 유지).
 - 백엔드 결과 키 규칙: 이미 있는 키는 유지(`view3d_jig*`·`jig`·`jig_diag`), 새 출처별 키는 출처 접두(`<key>_…`) 또는 `rank_views[<key>]`·사이드카 `per_esl[<key>]` 아래.
 

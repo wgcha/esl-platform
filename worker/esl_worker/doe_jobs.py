@@ -69,6 +69,11 @@ class PrepareFailed(Exception):
 
 
 # ---------------------------------------------------------------- 준비
+
+# BD_POST 만 다시 하는 작업 종류(params.kind) — 등록 = DB 무변경(register_doe_view3d): v0.23.3 3D 다시 만들기, v0.24.0 경계력·내력 ESL
+# 추가 계산(코어 esl/doe/stages.py NODAL_SOURCES 의 kind 열 거울)
+POST_ONLY_KINDS = frozenset({"VIEW3D", "BFORCE", "FINT"})
+
 def prepare(ex) -> tuple[str, dict[str, Any]]:
     """작업 폴더(_doe/<id>, 링크·탈출 검사) + spec["lib"] = {doe, kind, job_id}. 항목 폴더 존재·라이브러리 안 확인
     (STEP 업로드는 BD_INPUT 이 sha256 대조 후 input/step 으로 복사 — 이후 step 은 그 사본만 쓴다)."""
@@ -310,8 +315,8 @@ def run_step(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
 
         fn = {"BD_PREP_REGISTER": register.register_doe_prep, "BD_PREVIEW_REGISTER": register.register_doe_preview,
               "BD_REGISTER": register.register_doe_run}[key]
-        if key == "BD_REGISTER" and (ex.job.get("params") or {}).get("kind") == "VIEW3D":
-            fn = register.register_doe_view3d            # v0.23.3 3D 다시 만들기: DB 무변경(esl_jig_view.md §3)
+        if key == "BD_REGISTER" and (ex.job.get("params") or {}).get("kind") in POST_ONLY_KINDS:
+            fn = register.register_doe_view3d            # 3D 다시 만들기·노드 힘 출처 추가 계산: DB 무변경(esl_jig_view.md §3·esl_fint.md §5.2)
         with ex._tx() as conn:
             jobs_repo.assert_lease(conn, ex.job["id"], ex.token)
             try:

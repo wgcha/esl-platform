@@ -123,7 +123,7 @@ def test_shape_plan_columns_and_resolve():
     for pid, row in want.items():
         assert tuple(tp.PLANS[pid][k] for k in ("bs_wpart", "bs_guard", "bs_route", "bs_mq")) == row, pid
     assert tp.plan_for("select", "case")["bs_guard"] == "basis" and tp.plan_for("compare")["bs_route"] == "shapes"
-    assert tp.PLAN_COLS[-7:-3] == ("bs_wpart", "bs_guard", "bs_route", "bs_mq")
+    assert tp.PLAN_COLS[-8:-4] == ("bs_wpart", "bs_guard", "bs_route", "bs_mq")
     for col in ("bs_wpart", "bs_guard", "bs_route", "bs_mq"):
         saved = dict(tp.PLANS["step_once"])
         try:
@@ -216,7 +216,7 @@ def test_jig_plan_columns():
     want = {"case_once": ("base", "fixed", "case"), "bmesh_once": ("base", "fixed", "mesh"),
             "step_once": ("base", "xfer", "none"), "step_per_design": ("none", "none", "none"),
             "compare_per_shape": ("none", "none", "none")}
-    assert tp.PLAN_COLS[-3:] == ("sm_jig", "jig_fix", "jig_ctx")
+    assert tp.PLAN_COLS[-4:-1] == ("sm_jig", "jig_fix", "jig_ctx") and tp.PLAN_COLS[-1] == "bf"
     for pid, row in want.items():
         p = tp.PLANS[pid]
         assert (p["sm_jig"], p["jig_fix"], p["jig_ctx"]) == row, pid

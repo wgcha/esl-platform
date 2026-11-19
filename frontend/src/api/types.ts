@@ -633,6 +633,56 @@ export interface EslForces {
   moment_rel?: number | null;
   max_f: { node_id: number; mag: number } | null;
   noise: { force_rel: number | null; hotspot_strain_rel: number | null; disp_precision?: string | null };
+  /** v0.24.0 경계력 ESL 요약(esl_bforce.md §4 — ESL 단계 요약, 이전 실행 = 없음) */
+  bforce?: EslBforceSummary | null;
+  /** v0.24.0 내력 ESL 요약(esl_fint.md §3) */
+  fint?: EslFintSummary | null;
+  /** v0.24.0 소성 진단(esl_fint.md §4 — t* 소성 변형률) */
+  plastic?: EslPlasticSummary | null;
+}
+
+/** v0.24.0 ESL 단계 내력 ESL 요약 */
+export interface EslFintSummary extends EslBforceSummary {
+  res_force_rel?: number | null;
+  res_moment_rel?: number | null;
+  unbalanced?: boolean | null;
+  balance_applied?: string | null;
+  shared_status?: string | null;
+  n_shared?: number | null;
+  n_rot?: number | null;
+  sign?: number | null;
+}
+
+/** v0.24.0 소성 진단(status none = 소성 변형률 결과 없음) */
+export interface EslPlasticSummary {
+  status: "ok" | "none" | "failed" | string;
+  eps_min?: number | null;
+  frac?: number | null;
+  max?: number | null;
+  n?: number | null;
+  n_total?: number | null;
+  reason?: string | null;
+}
+
+/** v0.24.0 ESL 단계 경계력 ESL 요약 한 줄 자료 */
+export interface EslBforceSummary {
+  grade: string | null;
+  code?: string | null;
+  reason?: string | null;
+  mass_source?: string | null;
+  sum_abs?: number | null;
+  sum_abs_ratio_full?: number | null;
+  abar_g?: number | null;
+  corr_rel?: number | null;
+  eq_force_rel?: number | null;
+  eq_moment_rel?: number | null;
+  recon?: string | null;
+  mac?: number | null;
+  umax_err?: number | null;
+  reaction_rel?: number | null;
+  limits?: string[];
+  limit_text?: string[];
+  sign_suspect?: boolean | null;
 }
 
 export interface EslRunOut {
@@ -3090,6 +3140,9 @@ export interface DoeRankRow {
   score_jig?: number | null;
   umax_jig?: number | null;
   C_jig?: Record<string, number> | null;
+  /** v0.24.0 보조 지표 umax(평가 영역)(esl_fint.md §6.2 — 새 스냅샷만): 최악 엔트리·전 엔트리 최대(mm, 그 출처 해석값) */
+  umax_ev?: number | null;
+  umax_ev_all?: number | null;
 }
 /** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
 export type DoeRankMetric = "lin" | "solve" | "jig";
@@ -3111,6 +3164,8 @@ export interface DoePerEsl {
   rho?: number | null;
   imbalance_rel?: number | null;
   umax_def?: number | null;
+  /** v0.24.0 umax(평가 영역)(새 스냅샷만) */
+  umax_ev?: number | null;
 }
 export interface DoePerEslDesign {
   id: string;
@@ -3207,7 +3262,7 @@ export interface DoeJigOut {
 }
 export interface DoeResultOut {
   C_ref: number;
-  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
+  baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; umax_ev?: number | null; umax_ev_all?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
   n_ok: number;
   n_skipped: Record<string, number>;
   n_failed: Record<string, number>;
@@ -3268,7 +3323,71 @@ export interface DoeResultOut {
   rank_views?: DoeRankViewsOut | null;
   /** v0.23.3 3D 다시 만들기 가능 여부(§3) — 지그 블록 ok/poor 결과만 */
   view3d_regen?: DoeView3dRegenOut | null;
+  /** v0.24.0 경계력 ESL 블록(esl_bforce.md §5.6 — 사이드카 post/bforce_view.json, 없으면 null) */
+  bforce?: DoeBforceOut | null;
+  /** v0.24.0 경계력 응답 3D: did → `<did>_bf`, did → 최악 entry_id, entry_id → `d000_bf_e<kk>` */
+  view3d_bf?: Record<string, string> | null;
+  view3d_bf_esl?: Record<string, string> | null;
+  view3d_bf_ref?: Record<string, string> | null;
+  /** v0.24.0 경계력 ESL 추가 계산 가능 여부(§6) — 같은 메시 계획만 */
+  bforce_add?: DoeView3dRegenOut | null;
+  /** v0.24.0 보완 내력 ESL 블록(esl_fint.md §7 — 사이드카 post/fint_view.json, 경계력과 같은 형식) */
+  fint?: DoeBforceOut | null;
+  /** 내력 응답 3D: did → `<did>_fi`, did → 최악 entry_id, entry_id → `d000_fi_e<kk>` */
+  view3d_fi?: Record<string, string> | null;
+  view3d_fi_esl?: Record<string, string> | null;
+  view3d_fi_ref?: Record<string, string> | null;
+  fint_add?: DoeView3dRegenOut | null;
+  /** v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2) */
+  eval_region?: DoeEvalRegionOut | null;
   warnings: DoeWarning[];
+}
+/** v0.24.0 평가 영역(보조 지표 umax(평가 영역)) */
+export interface DoeEvalRegionOut {
+  mode: "part" | "exclude_free_edges" | "box" | string;
+  free_edge_mm?: number | null;
+  boxes?: { lo: number[]; hi: number[] }[];
+  n_nodes?: number | null;
+  n_total?: number | null;
+}
+/** v0.24.0 엔트리별 경계력 ESL 자료(데이터 등급·평형·재현) */
+export interface DoeBforceEntryOut {
+  entry_id: string;
+  label: string;
+  grade: string;
+  mass_source?: string | null;
+  source?: string | null;
+  eq_force_rel?: number | null;
+  eq_moment_rel?: number | null;
+  abar_g?: number | null;
+  corr_rel?: number | null;
+  sign_suspect?: boolean | null;
+  recon_mac?: number | null;
+  recon_umax_err?: number | null;
+  reaction_rel?: number | null;
+  limits?: string[];
+  reason?: string | null;
+  /** v0.24.0 보완(esl_fint.md §4·§5.1): 소성 진단(면적 비율·최대 εᵖ — Case), 내력 ESL 잔차·공유 노드(경계력 = null) */
+  plastic_frac?: number | null;
+  plastic_max?: number | null;
+  res_force_rel?: number | null;
+  res_moment_rel?: number | null;
+  n_shared?: number | null;
+  unbalanced?: boolean | null;
+}
+/** v0.24.0 노드 힘 출처 블록(경계력·내력 공통 — source) */
+export interface DoeBforceOut {
+  source?: string | null;
+  status: string;
+  code?: string | null;
+  reason?: string | null;
+  grade_min?: string | null;
+  entries?: DoeBforceEntryOut[];
+  limits?: string[];
+  limit_text?: string[];
+  recon_mac_min?: number | null;
+  n_designs?: number;
+  n_failed?: number;
 }
 /** v0.23.3 지그 진단 영역(esl_jig_view.md §5) */
 export interface DoeJigDiagRegionOut {
@@ -3356,6 +3475,8 @@ export interface DoeRankViewOut {
 export interface DoeRankViewsOut {
   jig?: DoeRankViewOut | null;
   full?: DoeRankViewOut | null;
+  bforce?: DoeRankViewOut | null;
+  fint?: DoeRankViewOut | null;
 }
 export interface DoeView3dRegenOut {
   available: boolean;

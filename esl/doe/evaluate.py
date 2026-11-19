@@ -33,11 +33,13 @@ def spc_of(mesh: dict, supports) -> list[tuple[int, str]]:
     return out
 
 
-def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), region=None) -> dict:
+def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: float, keep_u=(), region=None,
+             eval_nodes=None) -> dict:
     """mesh(x0 = 안 좌표) + 지지 + [(entry_id, F)] → {per_esl[{entry_id, C, umax, epsmax}], warnings, stats, u{eid: u3}}.
 
     keep_u = 변위 (N,3) 를 돌려줄 entry_id 목록(view3d 용). region(v0.18.0 SG-D-20e, 요소 bool — select_base step 만) =
-    umax·epsmax 를 영역 노드·요소만으로(C = F·u 는 전체 — 하중이 영역에만 있음). None = 지금 동작(바이트 불변)."""
+    umax·epsmax 를 영역 노드·요소만으로(C = F·u 는 전체 — 하중이 영역에만 있음). None = 지금 동작(바이트 불변).
+    eval_nodes(v0.24.0 esl_fint.md §6.2, 노드 bool — 새 스냅샷 평가 영역) = per_esl 에 umax_ev(영역 노드 최대 ‖u‖) 추가. None = 키 없음."""
     from esl.mech.shell import ShellModel, solver_check_kwargs
     from esl.mech.strain import eps_eq_max_layer
     from esl.mech import supports as msup
@@ -73,11 +75,21 @@ def evaluate(mesh: dict, supports, loads, solver_cfg: dict, *, reaction_warn: fl
         if rr > float(reaction_warn):
             warns.append({"code": "REACTION_RESIDUAL", "entry_id": eid, "ratio": rr})
         per.append({"entry_id": eid, "C": C, "umax": umax, "epsmax": epsmax, "reaction_rel": rr})
+        if eval_nodes is not None:
+            per[-1]["umax_ev"] = umax_in(ut, eval_nodes)
         if eid in want:
             keep[eid] = ut.copy()
     return {"per_esl": per, "warnings": warns, "u": keep,
             "stats": {"n_factorizations": int(sm.stats.get("n_factorizations", 0)), "n_solves": h.n_solves,
                       "backend": sm.stats.get("backend"), "seconds": round(time.monotonic() - t0, 3)}}
+
+
+def umax_in(ut, nodes) -> float:
+    """평가 영역 노드(bool (N,)) 최대 ‖u‖ — 영역이 비면 전 노드(호출자가 RANK_EVAL_EMPTY 경고)."""
+    ut = np.asarray(ut, dtype=np.float64)
+    mk = np.asarray(nodes, bool)
+    uu = ut[mk] if mk.any() else ut
+    return float(np.linalg.norm(uu, axis=1).max()) if uu.size else 0.0
 
 
 def parallel_limit(n_nodes: int, parallel: int, memory_margin: float, backend: str = "auto",

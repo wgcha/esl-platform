@@ -2446,6 +2446,324 @@
         "title": "DispFieldOut",
         "type": "object"
       },
+      "DoeBforceEntryOut": {
+        "description": "v0.24.0 엔트리별 경계력 ESL 자료(Case 04_esl/bforce.json 요약 — 데이터 등급·평형·재현).",
+        "properties": {
+          "abar_g": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abar G"
+          },
+          "corr_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corr Rel"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "eq_force_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Force Rel"
+          },
+          "eq_moment_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eq Moment Rel"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "mass_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mass Source"
+          },
+          "n_shared": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Shared"
+          },
+          "plastic_frac": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plastic Frac"
+          },
+          "plastic_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plastic Max"
+          },
+          "reaction_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Rel"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "recon_mac": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Mac"
+          },
+          "recon_umax_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Umax Err"
+          },
+          "res_force_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Res Force Rel"
+          },
+          "res_moment_rel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Res Moment Rel"
+          },
+          "sign_suspect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sign Suspect"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "unbalanced": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unbalanced"
+          }
+        },
+        "required": [
+          "entry_id",
+          "label",
+          "grade"
+        ],
+        "title": "DoeBforceEntryOut",
+        "type": "object"
+      },
+      "DoeBforceOut": {
+        "description": "v0.24.0 노드 힘 출처 블록(경계력·내력 공통 형식 — source): status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DoeBforceEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "grade_min": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Min"
+          },
+          "limit_text": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limit Text",
+            "type": "array"
+          },
+          "limits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "n_designs": {
+            "default": 0,
+            "title": "N Designs",
+            "type": "integer"
+          },
+          "n_failed": {
+            "default": 0,
+            "title": "N Failed",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "recon_mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Mac Min"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DoeBforceOut",
+        "type": "object"
+      },
       "DoeCheckIn": {
         "additionalProperties": false,
         "properties": {
@@ -4001,6 +4319,26 @@
       },
       "DoeRankViewsOut": {
         "properties": {
+          "bforce": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "full": {
             "anyOf": [
               {
@@ -4059,6 +4397,26 @@
             ],
             "title": "Best"
           },
+          "bforce": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeBforceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bforce_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeView3dRegenOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "boundary_warnings_n": {
             "title": "Boundary Warnings N",
             "type": "integer"
@@ -4082,6 +4440,18 @@
             "title": "Esl",
             "type": "array"
           },
+          "eval_region": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Region"
+          },
           "excluded": {
             "items": {
               "additionalProperties": true,
@@ -4089,6 +4459,26 @@
             },
             "title": "Excluded",
             "type": "array"
+          },
+          "fint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeBforceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fint_add": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeView3dRegenOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "jig": {
             "anyOf": [
@@ -4335,6 +4725,48 @@
             "title": "View3D",
             "type": "array"
           },
+          "view3d_bf": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Bf"
+          },
+          "view3d_bf_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Bf Esl"
+          },
+          "view3d_bf_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Bf Ref"
+          },
           "view3d_esl": {
             "anyOf": [
               {
@@ -4348,6 +4780,48 @@
               }
             ],
             "title": "View3D Esl"
+          },
+          "view3d_fi": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi"
+          },
+          "view3d_fi_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi Esl"
+          },
+          "view3d_fi_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Fi Ref"
           },
           "view3d_jig": {
             "anyOf": [
@@ -15712,7 +16186,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.23.3"
+    "version": "0.24.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -18023,7 +18497,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 8,
+                  "maxLength": 16,
                   "type": "string"
                 },
                 {
@@ -18540,6 +19014,58 @@
           }
         },
         "summary": "Doe Shape Defeature",
+        "tags": [
+          "doe"
+        ]
+      }
+    },
+    "/esl/api/doe/studies/{sid}/sources/{src}": {
+      "post": {
+        "description": "v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): src = bforce(경계력 ESL) | fint(내력 ESL). 기존 스터디에서 형상\n생성 없이 안마다 출처 하중 선형 풀이 + 보기·3D(결과 파일 불변). 기존 DOE_RUN 큐(BD_POST 부터). 모르는 src = 404 SOURCE_NOT_FOUND,\n권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 <code>_UNSUPPORTED, 끝나지 않음·작업 중 = 409.",
+        "operationId": "doe_add_source_esl_api_doe_studies__sid__sources__src__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "title": "Sid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "src",
+            "required": true,
+            "schema": {
+              "title": "Src",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoeStudyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Doe Add Source",
         "tags": [
           "doe"
         ]

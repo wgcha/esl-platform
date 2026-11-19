@@ -23,6 +23,9 @@ from esl.errors import EslError
 LIN_FORM_DEFAULT = "ritz"            # Q-SM-1 확정: ritz C_ref/ρ (taylor 는 설정 rank.lin_form 으로 선택)
 LIN_FORMS = ("taylor", "ritz")
 METRICS = ("lin", "solve", "jig")
+VIEW_METRIC_BF = "bf"                          # 하중 출처 보기 지표(경계력 ESL) — rank.rank(metric="bf") → per_esl C_bf
+# v0.24.0 보완(esl_fint.md §5.1): 보기 전용 지표 표 1곳(스터디 rank.metric 선택지 아님) — 노드 힘 출처 per_esl C_<pe>
+VIEW_METRICS = {VIEW_METRIC_BF: "C_bf", "fi": "C_fi"}
 LIN_VALID_DEFAULT = 0.3
 IMBALANCE_WARN_DEFAULT = 0.02
 
@@ -218,6 +221,8 @@ def metric_key(metric: str, lin_form: str = LIN_FORM_DEFAULT) -> str:
         return "C"
     if metric == "jig":
         return "C_jig"
+    if metric in VIEW_METRICS:                # v0.24.0 경계력·내력 ESL 보기 전용(스터디 rank.metric 선택지 아님 — esl_fint.md §5.1)
+        return VIEW_METRICS[metric]
     if metric == "lin":
         if lin_form not in LIN_FORMS:
             raise EslError("CONFIG_INVALID", f"rank.lin_form {lin_form} — {list(LIN_FORMS)}")
@@ -245,3 +250,4 @@ def score(per_esl: list[dict], metric: str, lin_form: str = LIN_FORM_DEFAULT) ->
         if w is None or float(x) > wv:
             w, wv = p["entry_id"], float(x)
     return {"key": k, "M": M, "worst": w, "M_max": wv, "missing": miss}
+

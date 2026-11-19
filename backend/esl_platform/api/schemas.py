@@ -2018,6 +2018,51 @@ class DoeRankViewOut(_Out):
 class DoeRankViewsOut(_Out):
     jig: DoeRankViewOut | None = None
     full: DoeRankViewOut | None = None
+    bforce: DoeRankViewOut | None = None              # v0.24.0 경계력 ESL 보기(사이드카 post/bforce_view.json — esl_bforce.md §7)
+    fint: DoeRankViewOut | None = None                # v0.24.0 내력 ESL 보기(사이드카 post/fint_view.json — esl_fint.md §7)
+
+
+class DoeBforceEntryOut(_Out):
+    """v0.24.0 엔트리별 경계력 ESL 자료(Case 04_esl/bforce.json 요약 — 데이터 등급·평형·재현)."""
+
+    entry_id: str
+    label: str
+    grade: str
+    mass_source: str | None = None
+    source: str | None = None
+    eq_force_rel: float | None = None
+    eq_moment_rel: float | None = None
+    abar_g: float | None = None
+    corr_rel: float | None = None
+    sign_suspect: bool | None = None                  # CONT 부호 의심(BF_SIGN_SUSPECT — 진단만, 결과 불변). None = 점검 대상 아님(fint 등급)
+    recon_mac: float | None = None
+    recon_umax_err: float | None = None
+    reaction_rel: float | None = None
+    limits: list[str] = Field(default_factory=list)
+    reason: str | None = None
+    # v0.24.0 보완(esl_fint.md §5.1·§4): 소성 진단(Case — 두 출처 공통), 내력 ESL 잔차·공유 노드(경계력 = null)
+    plastic_frac: float | None = None
+    plastic_max: float | None = None
+    res_force_rel: float | None = None
+    res_moment_rel: float | None = None
+    n_shared: int | None = None
+    unbalanced: bool | None = None
+
+
+class DoeBforceOut(_Out):
+    """v0.24.0 노드 힘 출처 블록(경계력·내력 공통 형식 — source): status ok | unavailable(데이터 등급·하중 찾기 사유), 등급 최솟값, 한계 문구."""
+
+    source: str | None = None                         # 출처 키(bforce | fint) — 옛 사이드카 = null(경계력)
+    status: str
+    code: str | None = None
+    reason: str | None = None
+    grade_min: str | None = None
+    entries: list[DoeBforceEntryOut] = Field(default_factory=list)
+    limits: list[str] = Field(default_factory=list)
+    limit_text: list[str] = Field(default_factory=list)
+    recon_mac_min: float | None = None                # 재현 MAC 경고 기준(설정 bead_doe.bforce.recon_mac_min) — 화면 하드코딩 금지
+    n_designs: int = 0
+    n_failed: int = 0
 
 
 class DoeView3dRegenOut(_Out):
@@ -2084,6 +2129,21 @@ class DoeResultOut(_Out):
     jig_diag: "DoeJigDiagOut | None" = None
     rank_views: "DoeRankViewsOut | None" = None
     view3d_regen: "DoeView3dRegenOut | None" = None
+    # v0.24.0 경계력 ESL(esl_bforce.md §7 — 사이드카 post/bforce_view.json, 없으면 null): 블록·3D(안 응답 {did: "<did>_bf"}·{did: entry}·
+    # {entry: "d000_bf_e<kk>"})·추가 계산(bforce_add: available = 계획 열 bf base 이면 항상, allowed = 권한·작업 조건 — 막힌 이유는 reason)
+    bforce: "DoeBforceOut | None" = None
+    view3d_bf: dict[str, str] | None = None
+    view3d_bf_esl: dict[str, str] | None = None
+    view3d_bf_ref: dict[str, str] | None = None
+    bforce_add: "DoeView3dRegenOut | None" = None
+    # v0.24.0 보완 내력 ESL(esl_fint.md §7 — 사이드카 post/fint_view.json): 블록(같은 형식)·3D <did>_fi·d000_fi_e<kk>·추가 계산
+    fint: "DoeBforceOut | None" = None
+    view3d_fi: dict[str, str] | None = None
+    view3d_fi_esl: dict[str, str] | None = None
+    view3d_fi_ref: dict[str, str] | None = None
+    fint_add: "DoeView3dRegenOut | None" = None
+    # v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2): {mode, free_edge_mm, boxes, n_nodes, n_total}
+    eval_region: dict[str, Any] | None = None
 
 
 class DoePerEslDesign(_Out):

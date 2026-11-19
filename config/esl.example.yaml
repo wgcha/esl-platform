@@ -109,3 +109,30 @@ export:
   csv: {delimiter: ",", float_format: "{:.9E}"}
 
 units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표시용. 변환 없음
+
+# (선택, v0.24.0 계약 esl_bforce.md §9) 경계력 ESL — 낙하 해석이 계산한 노드 힘(접촉력·tie 체결력·관성·내력)을 하중으로. 절이 없으면 아래 값.
+# bforce:
+#   enabled: true                    # ESL 단계에서 경계력 ESL 도 계산(h3d 추출에 결과가 있을 때)
+#   result_names:                    # h3d 결과 유형 이름 후보(정확 일치 → 대소문자·공백·밑줄 무시 일치). 현장 확인 이름을 앞에
+#     cont: [Contact Forces, Contact Force, CONT]          # /H3D/NODA/CONT (현장 #82 확인)
+#     cont2: [Tied Contact Forces, Contact Forces (TYPE2), CONT2]   # /H3D/NODA/CONT2 (tie 체결력, 표시명 미확인)
+#     acc: [Acceleration, ACC]                              # /H3D/NODA/ACC (현장 #82 확인)
+#     mass: [Nodal Mass, Mass, MASS]                        # /H3D/NODA/MASS (표시명 미확인)
+#     fint: [Internal Forces, Internal Force, FINT]         # /H3D/NODA/FINT (표시명 미확인)
+#   vec_comps: [X, Y, Z]             # 벡터 성분 이름('|' 로 대체 후보, 예 "X|x")
+#   use_inertia: true                # 관성 항 −M·ACC 포함(false = 접촉력만)
+#   balance: inertia_relief          # inertia_relief(관성 이완 — tie 누락 불평형을 강체 가속도로) | none
+#   signs: {cont: 1, cont2: 1, fint: auto}   # 접촉력 = 노드에 작용하는 힘. fint auto = 분해와 맞는 부호/일 양수
+#   default_rho: 7.85e-9             # 재료 밀도가 없을 때 deck 질량 근사 밀도(t/mm³, 경고 BF_RHO_DEFAULT)
+#   g_mm_s2: 9810.0                  # ā 를 g 로 표시할 때(모델 단위)
+#   recon_mac_min: 0.9               # 기준 재현 MAC 이 이보다 작으면 경고 BF_RECON_POOR
+#   recon_umax_err_max: 0.2          # |umax 오차| 가 이보다 크면 경고 BF_RECON_POOR
+#   reaction_warn_rel: 1.0e-3        # 3-2-1 반력 합/Σ|F| 가 이보다 크면 경고 BF_REACTION
+#   fint_check_warn_rel: 0.05        # full 등급 FINT 검산 상대 오차 경고
+#   fint:                            # (v0.24.0 보완, esl_fint.md) 내력 ESL — F = s·FINT(별도 출처 '내력 ESL', 경계력 ESL 은 접촉력 전용)
+#     enabled: true                  # FINT 결과가 있으면 계산
+#     balance: none                  # none(기본 — 부품 내력은 자기평형) | inertia_relief(잔차가 허용치를 넘을 때만 관성 이완)
+#     unbalanced_force_rel: 1.0e-3   # 변형 형상 ‖ΣF‖/Σ‖F‖ 허용치(넘으면 FINT_UNBALANCED — 공유 노드 혼입·추출 누락 의심)
+#     unbalanced_moment_rel: 1.0e-3  # 변형 형상 ‖ΣM‖/(Σ‖F‖·L) 허용치
+#     shared_nodes: true             # 원 deck 에서 다른 부품 요소가 참조하는 대상 파트 노드(공유 노드)·회전 연결 노드 진단
+#   plastic_eps_min: 0.002           # 소성 진단 문턱(t* 소성 변형률 εᵖ > 이 값인 요소 면적 비율·최대 εᵖ 표시 — 계산 변경 없음)

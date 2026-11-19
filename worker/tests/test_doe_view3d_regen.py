@@ -36,5 +36,9 @@ def test_register_view3d_keeps_study(engine, tmp_path):
 
 
 def test_run_step_dispatches_view3d_register():
+    """v0.24.0 보완: kind VIEW3D 는 BD_POST 만 다시 하는 종류 표 POST_ONLY_KINDS 에 있고, 그 종류의 등록 = register_doe_view3d(DB 무변경)."""
+    from esl_worker import doe_jobs
+
     src = Path(__file__).resolve().parents[1].joinpath("esl_worker", "doe_jobs.py").read_text(encoding="utf-8")
-    assert 'get("kind") == "VIEW3D"' in src and "register.register_doe_view3d" in src
+    assert "VIEW3D" in doe_jobs.POST_ONLY_KINDS
+    assert 'get("kind") in POST_ONLY_KINDS' in src and "register.register_doe_view3d" in src

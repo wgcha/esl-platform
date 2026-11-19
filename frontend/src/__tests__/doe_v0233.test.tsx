@@ -37,7 +37,7 @@ describe("탭 순수 함수", () => {
     const r = withJig(withSolveMetric(withMetric({ ...base })), "ok");
     const ts = tabState(r);
     expect(ts.def).toBe("jig");
-    expect(ts.ok).toEqual({ jig: true, full: true });
+    expect(ts.ok).toEqual({ jig: true, full: true, bforce: false, fint: false });   // v0.24.0 경계력·내력 행(보기 없음 = 비활성)
     const j = tabResult(r, "jig");
     const f = tabResult(r, "full");
     expect(j.rank?.metric_effective).toBe("jig");
@@ -179,7 +179,7 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     const list = screen.getByRole("tablist", { name: "하중 정의" });
     const tabs = within(list).getAllByRole("tab");
-    expect(tabs.map((t) => t.getAttribute("data-tab"))).toEqual(["jig", "full"]);
+    expect(tabs.map((t) => t.getAttribute("data-tab"))).toEqual(["jig", "full", "bforce", "fint"]);   // v0.24.0 경계력·내력 탭 추가
     for (const t of tabs) {
       expect(t.getAttribute("aria-controls")).toBe("doe-load-panel");
       expect(document.getElementById("doe-load-panel")!.getAttribute("role")).toBe("tabpanel");
