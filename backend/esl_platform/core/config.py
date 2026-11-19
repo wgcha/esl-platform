@@ -514,6 +514,7 @@ class BeadDoeView3dCfg(_M):
     jig_diag: bool = True                                        # v0.23.3 지그 진단 3D·하중 정의 탭 자료(esl_jig_view.md §6)
     jig_tie_gap_mm: float = Field(default=5.0, ge=0.0, le=1000.0)  # v0.23.3 지그 노드 상대 부품 찾기 거리(deck 표면 최근접, 보고만)
     regen_keep_backups: int = Field(default=1, ge=0, le=20)      # v0.23.3 3D 다시 만들기가 옮긴 이전 진단 폴더(_backup) 유지 개수(0 = 백업 안 함, esl_jig_view.md §3)
+    recon: bool = True                                           # v0.24.1 노드 힘 출처 기준 3D 재현 진단(recon.json·recon.bin, esl_view3d_sources.md §5.2)
 
 
 class BeadDoeBforceCfg(_M):
@@ -1577,6 +1578,18 @@ class View3dCfg(_M):
     cluster_k_max: int = Field(default=5, ge=2, le=8)
     kmeans_max_iter: int = Field(default=50, ge=1, le=1000)
     build_wait_s: float = Field(default=60.0, ge=0.0)                # 생성 세마포어 대기, 초과 시 503 VIEW3D_BUSY
+    case_src_default: str = "full"     # v0.24.1 Case ③ 3D 기본 출처 탭(esl_view3d_sources.md §7) — 출처 표 KEYS 중 하중 보기가 있는 행
+
+    @field_validator("case_src_default")
+    @classmethod
+    def _src_has_load(cls, v: str) -> str:
+        from esl_worker.core_adapter import view3d_src_plan
+
+        rows = {r["key"]: r for r in view3d_src_plan()["rows"]}
+        if v not in rows or rows[v]["load"] is None:
+            ok = [k for k, r in rows.items() if r["load"] is not None]
+            raise ValueError(f"view3d.case_src_default 는 {ok} 중 하나여야 합니다(받은 값 {v!r})")
+        return v
 
 
 class LibraryCfg(_M):

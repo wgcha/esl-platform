@@ -12,7 +12,18 @@ from ...core.errors import DomainError
 from ..display_json import DisplayJSONResponse
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
-from ..schemas import ArtifactOut, DispFieldOut, EslRunOut, FieldOut, ForcesOut, SectionOut, ValidationOut, View3dOut
+from ..schemas import (
+    ArtifactOut,
+    DispFieldOut,
+    EslRunOut,
+    FieldOut,
+    ForcesOut,
+    SectionOut,
+    ValidationOut,
+    View3dOut,
+    View3dReconOut,
+    View3dSourcesOut,
+)
 from ..services import bundle as bundle_svc
 from ..services import results as svc
 from ..services import view3d as view3d_svc
@@ -57,24 +68,70 @@ def _busy_response(exc: DomainError) -> Response:
     return DisplayJSONResponse(status_code=exc.status, content={"detail": exc.detail()}, headers={"Retry-After": "5"})
 
 
-@router.get("/esl-runs/{run_id}/view3d", response_model=View3dOut, responses={304: {"description": "변경 없음"}})
-def view3d_manifest(run_id: str, request: Request, response: Response,
-                    principal: Principal = Depends(get_principal)) -> Any:
-    """3D 하중 보기 manifest(상위 100행·군집 K=2..5·범위·지지점·파일 URL). 첫 요청이 파생 캐시를 만든다(runs/<id>/view3d)."""
+SRC_QUERY = Query(default=None, max_length=32, description="v0.24.1 하중 출처 키(jig·full·bforce·fint — 없음 = 전 노드 ESL 옛 URL). "
+                                                             "모르는 출처 404 SOURCE_NOT_FOUND, 산출 없음 409 V3D_SOURCE_UNAVAILABLE")
+
+
+def _busy_or_raise(fn):
     try:
-        m, key = view3d_svc.manifest(get_ctx(request), run_id)
+        return fn()
     except DomainError as exc:
         if exc.code == "VIEW3D_BUSY":
             return _busy_response(exc)
         raise
+
+
+@router.get("/esl-runs/{run_id}/view3d", response_model=View3dOut, responses={304: {"description": "변경 없음"}})
+def view3d_manifest(run_id: str, request: Request, response: Response, src: str | None = SRC_QUERY,
+                    principal: Principal = Depends(get_principal)) -> Any:
+    """3D 하중 보기 manifest(상위 100행·군집 K=2..5·범위·지지점·파일 URL). 첫 요청이 파생 캐시를 만든다(runs/<id>/<출처 dir>).
+    `src` 없음 = 전 노드 ESL(v0.24.0 과 같은 폴더·키·URL·ETag), 그 밖 출처는 파일 URL 에 `?src=` 가 붙는다."""
+    res = _busy_or_raise(lambda: view3d_svc.manifest(get_ctx(request), run_id, src))
+    if isinstance(res, Response):
+        return res
+    m, key = res
     if _not_modified(request, key):
         return Response(status_code=304, headers=_etag_headers(key))
     response.headers.update(_etag_headers(key))
     return m
 
 
-def _view3d_file(request: Request, run_id: str, name: str, key: str | None) -> Response:
-    path, media, k = view3d_svc.file(get_ctx(request), run_id, name, key)
+@router.get("/esl-runs/{run_id}/view3d/sources", response_model=View3dSourcesOut)
+def view3d_sources(run_id: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.24.1 하중 출처 목록(출처 표 순서 — 가능 여부·사유·응답 변위 유무·강체 제거 규칙). 파일을 만들지 않는다."""
+    return view3d_svc.sources(get_ctx(request), run_id)
+
+
+@router.get("/esl-runs/{run_id}/view3d/recon", response_model=View3dReconOut,
+            responses={304: {"description": "변경 없음"}})
+def view3d_recon(run_id: str, request: Request, response: Response, src: str | None = SRC_QUERY,
+                 principal: Principal = Depends(get_principal)) -> Any:
+    """v0.24.1 재현(목표·응답·오차) — 저장된 응답 변위(경계력·내력 = ESL 단계 u_val, 전 노드 = ⑤ compare_disp)만 쓴다(새로 풀지 않음).
+    첫 요청이 runs/<id>/<출처 recon_dir> 를 만든다. 응답 없음 = 409 V3D_RECON_UNAVAILABLE{src, code, reason}."""
+    res = _busy_or_raise(lambda: view3d_svc.recon(get_ctx(request), run_id, src))
+    if isinstance(res, Response):
+        return res
+    d, key = res
+    if _not_modified(request, key):
+        return Response(status_code=304, headers=_etag_headers(key))
+    response.headers.update(_etag_headers(key))
+    return d
+
+
+@router.get("/esl-runs/{run_id}/view3d/recon.bin", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
+def view3d_recon_bin(run_id: str, request: Request, src: str | None = SRC_QUERY,
+                     key: str | None = Query(default=None, max_length=64),
+                     principal: Principal = Depends(get_principal)) -> Response:
+    """재현 배열(tgt·fit·err int16×3, 배치는 recon.arrays). `key`(선택) = recon.key, 다르면 409 VIEW3D_STALE."""
+    path, media, k = view3d_svc.recon_file(get_ctx(request), run_id, key, src)
+    headers = _etag_headers(k)
+    if _not_modified(request, k):
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type=media, headers=headers)
+
+
+def _view3d_file(request: Request, run_id: str, name: str, key: str | None, src: str | None = None) -> Response:
+    path, media, k = view3d_svc.file(get_ctx(request), run_id, name, key, src)
     headers = _etag_headers(k)
     if _not_modified(request, k):
         return Response(status_code=304, headers=headers)
@@ -83,23 +140,23 @@ def _view3d_file(request: Request, run_id: str, name: str, key: str | None) -> R
 
 @router.get("/esl-runs/{run_id}/view3d/part.glb", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
 def view3d_part(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
-                principal: Principal = Depends(get_principal)) -> Response:
+                src: str | None = SRC_QUERY, principal: Principal = Depends(get_principal)) -> Response:
     """부품 표면 GLB(mm, Z-up, 정점 = 노드 순서). `key`(선택) = manifest.key, 다르면 409 VIEW3D_STALE."""
-    return _view3d_file(request, run_id, "part.glb", key)
+    return _view3d_file(request, run_id, "part.glb", key, src)
 
 
 @router.get("/esl-runs/{run_id}/view3d/part_lod.glb", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
 def view3d_part_lod(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
-                    principal: Principal = Depends(get_principal)) -> Response:
+                    src: str | None = SRC_QUERY, principal: Principal = Depends(get_principal)) -> Response:
     """저해상도(LOD) 표면 GLB(N > view3d.lod_min_nodes 일 때만, 없으면 404 VIEW3D_LOD_NONE). `_SRC` = 원 정점 번호."""
-    return _view3d_file(request, run_id, "part_lod.glb", key)
+    return _view3d_file(request, run_id, "part_lod.glb", key, src)
 
 
 @router.get("/esl-runs/{run_id}/view3d/values.bin", response_class=FileResponse, responses=VIEW3D_FILE_RESPONSES)
 def view3d_values(run_id: str, request: Request, key: str | None = Query(default=None, max_length=64),
-                  principal: Principal = Depends(get_principal)) -> Response:
-    """노드 값 바이너리(면압 p·Fn·|F|·u_rel 양자화, 배치는 manifest.values.arrays)."""
-    return _view3d_file(request, run_id, "values.bin", key)
+                  src: str | None = SRC_QUERY, principal: Principal = Depends(get_principal)) -> Response:
+    """노드 값 바이너리(면압 p·Fn·|F|·u 양자화, 배치는 manifest.values.arrays)."""
+    return _view3d_file(request, run_id, "values.bin", key, src)
 
 
 @router.get("/validations/{vid}", response_model=ValidationOut)

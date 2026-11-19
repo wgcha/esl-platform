@@ -504,6 +504,63 @@ class View3dOut(_Out):
     lod_url: str | None = None
     values_url: str
 
+
+class View3dSourceRow(_Out):
+    """v0.24.1 Case 3D 하중 출처 행(esl_view3d_sources.md §5.3). code·reason = 출처 불가 사유(코드·문구 — 사유 부분만),
+    resp_* = 응답 변위(재현) 불가 사유, rigid = 재현 쌍 강체 제거 규칙."""
+
+    key: str
+    available: bool
+    code: str | None = None
+    reason: str | None = None
+    resp: bool
+    resp_code: str | None = None
+    resp_reason: str | None = None
+    rigid: Literal["kabsch", "linear"] | None = None
+
+
+class View3dSourcesOut(_Out):
+    """v0.24.1 `GET /esl-runs/{id}/view3d/sources` — 행 순서 = 출처 표 KEYS(jig·full·bforce·fint), default = 기본 탭(설정
+    view3d.case_src_default)."""
+
+    esl_run_id: str
+    default: str
+    rows: list[View3dSourceRow]
+
+
+class View3dReconArray(_Out):
+    key: Literal["tgt", "fit", "err"]
+    dtype: Literal["int16"]
+    comps: int
+    offset: int
+    scale: list[float]
+
+
+class View3dReconRanges(_Out):
+    tgt_max: float
+    fit_max: float
+    err_max: float
+
+
+class View3dReconOut(_Out):
+    """v0.24.1 재현(목표·응답·오차) — recon.json(스키마 esl/view3d_recon/1) + values_url(recon.bin). 정점 순서 = 하중 보기와 같음."""
+
+    schema_: str = Field(alias="schema")
+    recon_version: int
+    key: str
+    src: str
+    esl_run_id: str
+    n_nodes: int
+    rigid: str
+    bytes: int
+    arrays: list[View3dReconArray]
+    ranges: View3dReconRanges
+    mac: float | None = None
+    umax_tgt: float
+    umax_fit: float
+    umax_err: float | None = None
+    values_url: str
+
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 
@@ -2144,6 +2201,12 @@ class DoeResultOut(_Out):
     fint_add: "DoeView3dRegenOut | None" = None
     # v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2): {mode, free_edge_mm, boxes, n_nodes, n_total}
     eval_region: dict[str, Any] | None = None
+    # v0.24.1(esl_view3d_sources.md §5.2): 자료 만들기 가능 출처 {jig|bforce|fint: 가능·허용·사유} — 백엔드 표 SOURCE_ADD 한 루프
+    # (조건을 만족하는 행만, 없으면 null). 옛 키 view3d_regen·bforce_add·fint_add 는 같은 값 거울. 노드 힘 출처 재현 진단 폴더
+    # {entry: "d000_<pe>_e<kk>"}(사이드카에 있을 때만 — 그 폴더의 recon.json·recon.bin)
+    source_add: "dict[str, DoeView3dRegenOut] | None" = None
+    view3d_bf_recon: dict[str, str] | None = None
+    view3d_fi_recon: dict[str, str] | None = None
 
 
 class DoePerEslDesign(_Out):
