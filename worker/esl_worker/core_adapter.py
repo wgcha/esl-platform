@@ -325,6 +325,22 @@ def view3d_builder_version() -> int:
     return int(_attr("esl.view3d", "BUILDER_VERSION"))
 
 
+def view3d_recon_build(out_dir: str, **kw) -> dict:
+    """v0.24.1 ``esl.view3d.build_recon`` — out_dir 에 recon.bin·recon.json(목표·응답·오차) 을 쓰고 recon dict 를 돌려준다."""
+    return _wrap(_attr("esl.view3d", "build_recon"), out_dir, **kw)
+
+
+def view3d_src_plan() -> dict:
+    """v0.24.1 3D 하중 출처 표(``esl.view3d_src``): {keys, rows(CASE_PLAN), recon_version}. 행은 읽기 전용으로 쓴다."""
+    return {"keys": tuple(_attr("esl.view3d_src", "KEYS")), "rows": tuple(_attr("esl.view3d_src", "CASE_PLAN")),
+            "recon_version": int(_attr("esl.view3d", "RECON_VERSION"))}
+
+
+def view3d_case_status(**kw) -> dict:
+    """v0.24.1 ``esl.view3d_src.case_status``(row, summary, have, doc_reason) — 순수 판정."""
+    return _wrap(_attr("esl.view3d_src", "case_status"), **kw)
+
+
 # ====================================================================== P2: 라이브러리(§1~§5, §11)
 def _lib_cfg(cfg: dict) -> dict:
     """JSON 왕복(작업 params) 뒤의 라이브러리 설정 정리: ISTA 6 면 번호 키를 정수로."""

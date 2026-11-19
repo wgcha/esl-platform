@@ -69,19 +69,33 @@ BEAD_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-binary",
                 "values.bin": "application/octet-stream",
-                "regions.json": "application/json"}      # v0.23.3 지그 진단 영역(esl_jig_view.md §1.4 — d000_jigdiag_*_fit 만)
+                "regions.json": "application/json",      # v0.23.3 지그 진단 영역(esl_jig_view.md §1.4 — d000_jigdiag_*_fit 만)
+                "recon.json": "application/json",        # v0.24.1 노드 힘 출처 재현 진단(esl_view3d_sources.md §5.2 — d000_<pe>_e<kk> 만)
+                "recon.bin": "application/octet-stream"}
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
 RANK_VIEWS = ("jig", "full", "bforce", "fint")
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
 # v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
 # 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.
-NODAL_SOURCES = {
-    "bforce": {"view": BF_VIEW_JSON, "block": "bforce", "v3d": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref"),
+NODAL_SOURCES: dict[str, dict[str, Any]] = {
+    "bforce": {"view": BF_VIEW_JSON, "block": "bforce",
+               "v3d": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "view3d_bf_recon"),
                "add": "bforce_add", "kind": "BFORCE", "cfg": "bforce", "code": "BF", "plan": "bf", "name": "경계력 ESL"},
-    "fint": {"view": "fint_view.json", "block": "fint", "v3d": ("view3d_fi", "view3d_fi_esl", "view3d_fi_ref"),
+    "fint": {"view": "fint_view.json", "block": "fint",
+             "v3d": ("view3d_fi", "view3d_fi_esl", "view3d_fi_ref", "view3d_fi_recon"),
              "add": "fint_add", "kind": "FINT", "cfg": "fint", "code": "FINT", "plan": "bf", "name": "내력 ESL"},
 }
 BF_VIEWS = tuple(NODAL_SOURCES)                           # 노드 힘 사이드카에 있는 보기 키(나머지 = jig_view.json)
+# v0.24.1 자료 만들기 표(esl_view3d_sources.md §2.4·§5.2 — D-0.24.1-V3D-8): 행 = 자료 만들기 가능한 출처(순서 = 출처 표 KEYS, 행 없음 = 404).
+# kind·post_mode = 작업 params.kind·doe.post_mode(코어 dispatch 그대로), cfg = 작업 doe.<cfg>_cfg 사본(None = 없음), need = 조건(NEED 표),
+# code = 실패 코드 접두(need 실패 = code + NEED 접미, 막힘 = code + block), verb = 문구 동사구, name = 문구, legacy = 옛 응답 키(거울).
+SOURCE_ADD: dict[str, dict[str, Any]] = {
+    "jig": {"kind": "VIEW3D", "post_mode": "view3d", "cfg": None, "need": "jig_ok", "plan": None, "code": "VIEW3D_REGEN",
+            "block": "_UNAVAILABLE", "name": "지그 3D", "verb": "3D 를 다시 만들", "legacy": "view3d_regen"},
+    **{k: {"kind": ns["kind"], "post_mode": k, "cfg": ns["cfg"], "need": "plan", "plan": ns["plan"], "code": ns["code"],
+           "block": "_ADD_UNAVAILABLE", "name": ns["name"], "verb": f"{ns['name']} 을 계산할", "legacy": ns["add"]}
+       for k, ns in NODAL_SOURCES.items()},
+}
 ERROR_CODES_422 = ("DOE_PARAM_UNKNOWN", "DOE_RANGE_INVALID", "DOE_TOO_LARGE", "DOE_NO_PARAMS")
 
 
@@ -1911,12 +1925,7 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         for k in ("jig_diag", "rank_views"):
             if isinstance(side.get(k), dict):
                 out[k] = side[k]
-    if isinstance(out.get("jig"), dict) and out["jig"].get("status") in ("ok", "poor"):
-        with ctx.engine.connect() as conn:
-            why = _regen_block(conn, principal, s)
-        out["view3d_regen"] = {"available": True, "allowed": why is None, "reason": why}
     # v0.24.0 노드 힘 출처 사이드카(esl_bforce.md §7·esl_fint.md §7): 출처 표 행마다 블록·보기(rank_views[key])·3D. 없으면 키 null
-    regen_why: list = []
     for key, ns in NODAL_SOURCES.items():
         bside = _ns_view_doc(ctx, s, c, ns)
         if bside is not None:
@@ -1928,13 +1937,19 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
             v = (bside.get("rank_views") or {}).get(key)
             if isinstance(v, dict):
                 out["rank_views"] = {**(out.get("rank_views") or {}), key: v}
-        if _plan_col(s, ns["plan"]) == "base":                # 추가 계산 가능(계획 열 — 시나리오 이름 분기 없음)
-            if not regen_why:
-                with ctx.engine.connect() as conn:
-                    regen_why.append(_regen_block(conn, principal, s))
-            why = regen_why[0]
-            why = None if why is None else why.replace("3D 를 다시 만들", f"{ns['name']} 을 계산할")
-            out[ns["add"]] = {"available": True, "allowed": why is None, "reason": why}
+    # v0.24.1 자료 만들기(esl_view3d_sources.md §5.2): SOURCE_ADD 한 루프 — 조건(need) 만족 행만 {가능·허용·사유}, 옛 키(legacy 열) 거울
+    regen_why: list = []
+    adds: dict[str, Any] = {}
+    for key, row in SOURCE_ADD.items():
+        if not _need_ok(row, s, lambda: out):
+            continue
+        if not regen_why:
+            with ctx.engine.connect() as conn:
+                regen_why.append(_regen_block(conn, principal, s))
+        why = _verb_why(row, regen_why[0])
+        adds[key] = out[row["legacy"]] = {"available": True, "allowed": why is None, "reason": why}
+    if adds:
+        out["source_add"] = adds
     if isinstance(r.get("eval_region"), dict):                # v0.24.0 평가 영역 요약(새 스냅샷만)
         out["eval_region"] = r["eval_region"]
     return _jsonable(out)
@@ -1953,6 +1968,29 @@ def _plan_col(s: dict[str, Any], col: str) -> str | None:
 
 def _plan_bf(s: dict[str, Any]) -> str | None:
     return _plan_col(s, "bf")
+
+
+# v0.24.1 자료 만들기 조건 표(SOURCE_ADD.need → (판정 함수, need 실패 코드 접미, 문구)) — 열 값으로 함수 선택(AGENTS.md).
+# 판정 함수 (행, 스터디, get_r) → bool, get_r() = 결과 dict(jig 블록 — 필요한 판정만 부름).
+def _jig_ok(row: dict[str, Any], s: dict[str, Any], get_r) -> bool:
+    jig = (get_r() or {}).get("jig")
+    return isinstance(jig, dict) and jig.get("status") in ("ok", "poor")
+
+
+NEED = {
+    "jig_ok": (_jig_ok, "_UNAVAILABLE", lambda row: "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다"),
+    "plan": (lambda row, s, get_r: _plan_col(s, row["plan"]) == "base", "_UNSUPPORTED",
+             lambda row: f"다른 메시 비교 방식(④·옛 ③)은 {row['name']} 을 지원하지 않습니다"),
+}
+
+
+def _need_ok(row: dict[str, Any], s: dict[str, Any], get_r) -> bool:
+    return bool(NEED[row["need"]][0](row, s, get_r))
+
+
+def _verb_why(row: dict[str, Any], why: str | None) -> str | None:
+    """_regen_block 문구(3D 다시 만들기 기준)를 행 동사구로(지그 행 = 그대로)."""
+    return None if why is None else why.replace("3D 를 다시 만들", row["verb"])
 
 
 def _ns_view_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], ns: dict[str, Any]) -> dict[str, Any] | None:
@@ -1990,58 +2028,32 @@ def _regen_block(conn, principal: Principal, s: dict[str, Any]) -> str | None:
 
 
 def regenerate_view3d(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
-    """v0.23.3 3D 다시 만들기(esl_jig_view.md §3): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 + kind VIEW3D·doe.post_mode view3d,
-    resume_from_step = BD_POST → BD_POST(지그 3D·진단·하중 정의 보기만) + 등록(DB 무변경). 스터디 phase 는 DONE 그대로."""
-    from ...core.job_types import steps_for
-
-    c = cfg(ctx)
-    with ctx.engine.connect() as conn:
-        s0 = load_study(conn, sid)
-    require_execute(principal, s0["project_id"])
-    if not _regen_owner(principal, s0):
-        raise forbidden("관리자 또는 이 스터디 작성자만 3D 를 다시 만들 수 있습니다")
-    require_config_ok(ctx)
-    r = _result_doc(ctx, s0, c)
-    jig = (r or {}).get("jig")
-    if not isinstance(jig, dict) or jig.get("status") not in ("ok", "poor"):
-        raise conflict("VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다")
-    with ctx.engine.begin() as conn:
-        s = load_study(conn, sid, for_update=True)
-        job = doe_repo.latest_job(conn, sid)
-        if job is not None and job["state"] not in TERMINAL:
-            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
-        why = _regen_block(conn, principal, s)
-        if why is not None:
-            raise conflict("VIEW3D_REGEN_UNAVAILABLE", why)
-        last = doe_repo.latest_job(conn, sid, job_type="DOE_RUN", state="SUCCEEDED")
-        params = copy.deepcopy(last["params"])
-        params["kind"] = "VIEW3D"
-        params["doe"] = {**params["doe"], "post_mode": "view3d"}
-        params["warnings"] = []
-        step = [sd.key for sd in steps_for("DOE_RUN")].index("BD_POST") + 1
-        job = _insert_job(conn, principal, s, "DOE_RUN", params, resume=step)
-        return study_out(ctx, conn, s, job, c=c, principal=principal)
+    """v0.23.3 3D 다시 만들기(esl_jig_view.md §3) — v0.24.1 = ``add_source(src="jig")`` 별칭(요청·202 응답·409 코드·작업 params 동일,
+    esl_view3d_sources.md §5.2 D-0.24.1-V3D-8)."""
+    return add_source(ctx, principal, sid, "jig")
 
 
 def add_source(ctx: AppContext, principal: Principal, sid: str, src: str) -> dict[str, Any]:
-    """v0.24.0 기존 스터디 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 +
-    kind(출처 행)·doe.post_mode = 출처 키·doe.<cfg>_cfg(지금 설정), resume = BD_POST → 형상 생성 없이 안 좌표로 풀이·보기·3D(사이드카만)
-    + 등록(DB 무변경). 모르는 출처 = 404 SOURCE_NOT_FOUND, 권한·조건 = 3D 다시 만들기와 같음, 계획 열 none = 409 <code>_UNSUPPORTED."""
+    """기존 스터디 자료 만들기(v0.24.0 노드 힘 출처 추가 계산 esl_bforce.md §6·esl_fint.md §5.2 + v0.24.1 지그 3D 다시 만들기 일반화
+    esl_view3d_sources.md §5.2): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 + kind·doe.post_mode(행)·doe.<cfg>_cfg(행 cfg 가 있으면
+    지금 설정), resume = BD_POST + 등록(DB 무변경, 스터디 phase DONE 그대로). 표 SOURCE_ADD 의 열만 읽음(출처 이름 분기 없음).
+    모르는 출처(행 없음 — full 포함) = 404 SOURCE_NOT_FOUND, 조건(need) 실패 = 409 <code><NEED 접미>, 막힘 = 409 <code><block>."""
     from ...core.job_types import steps_for
 
-    ns = NODAL_SOURCES.get(src)
-    if ns is None:
-        raise DomainError("SOURCE_NOT_FOUND", f"추가 계산할 수 없는 하중 출처입니다: {src} (가능: {list(NODAL_SOURCES)})",
+    row = SOURCE_ADD.get(src)
+    if row is None:
+        raise DomainError("SOURCE_NOT_FOUND", f"추가 계산할 수 없는 하중 출처입니다: {src} (가능: {list(SOURCE_ADD)})",
                           status=404, source=src)
+    _fn, need_sfx, need_msg = NEED[row["need"]]
     c = cfg(ctx)
     with ctx.engine.connect() as conn:
         s0 = load_study(conn, sid)
     require_execute(principal, s0["project_id"])
     if not _regen_owner(principal, s0):
-        raise forbidden(f"관리자 또는 이 스터디 작성자만 {ns['name']} 을 계산할 수 있습니다")
+        raise forbidden(f"관리자 또는 이 스터디 작성자만 {row['verb']} 수 있습니다")
     require_config_ok(ctx)
-    if _plan_col(s0, ns["plan"]) != "base":
-        raise conflict(f"{ns['code']}_UNSUPPORTED", f"다른 메시 비교 방식(④·옛 ③)은 {ns['name']} 을 지원하지 않습니다")
+    if not _need_ok(row, s0, lambda: _result_doc(ctx, s0, c)):
+        raise conflict(f"{row['code']}{need_sfx}", need_msg(row))
     with ctx.engine.begin() as conn:
         s = load_study(conn, sid, for_update=True)
         job = doe_repo.latest_job(conn, sid)
@@ -2049,11 +2061,12 @@ def add_source(ctx: AppContext, principal: Principal, sid: str, src: str) -> dic
             raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
         why = _regen_block(conn, principal, s)
         if why is not None:
-            raise conflict(f"{ns['code']}_ADD_UNAVAILABLE", why.replace("3D 를 다시 만들", f"{ns['name']} 을 계산할"))
+            raise conflict(f"{row['code']}{row['block']}", _verb_why(row, why))
         last = doe_repo.latest_job(conn, sid, job_type="DOE_RUN", state="SUCCEEDED")
         params = copy.deepcopy(last["params"])
-        params["kind"] = ns["kind"]
-        params["doe"] = {**params["doe"], "post_mode": src, f"{ns['cfg']}_cfg": dict(c.get(ns["cfg"]) or {})}
+        params["kind"] = row["kind"]
+        params["doe"] = {**params["doe"], "post_mode": row["post_mode"],
+                         **({f"{row['cfg']}_cfg": dict(c.get(row["cfg"]) or {})} if row["cfg"] else {})}
         params["warnings"] = []
         step = [sd.key for sd in steps_for("DOE_RUN")].index("BD_POST") + 1
         job = _insert_job(conn, principal, s, "DOE_RUN", params, resume=step)

@@ -991,12 +991,14 @@ export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut
   const v: Record<string, string> = {};
   const ve: Record<string, string> = {};
   const vr: Record<string, string> = {};
+  const rcv: Record<string, string> = {};
   for (const d of shown) {
     const e = ids[0]?.entry_id;
     if (!e) continue;
     v[d] = `${d}_bf`;
     ve[d] = e;
     vr[e] = "d000_bf_e00";
+    rcv[e] = "d000_bf_e00";
   }
   const entries = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, grade: "contact", mass_source: "deck", source: `/esl/cases/${e.entry_id}/runs/r1/04_esl`, eq_force_rel: 0.118 + 0.02 * k, eq_moment_rel: 0.031, abar_g: 38.5 + 4 * k, corr_rel: 0.21 + 0.03 * k, recon_mac: 0.94 - 0.02 * k, recon_umax_err: -0.06 - 0.01 * k, reaction_rel: 3e-12, sign_suspect: false, limits: ["BF_TIE_MISSING"], reason: null }));
   const sens = res.sensitivity ? { ...res.sensitivity, r2: +(res.sensitivity.r2 * 0.8).toFixed(3) } : null;
@@ -1005,7 +1007,7 @@ export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut
     rank_views: { ...(res.rank_views ?? {}), bforce: { metric: "bf", C_ref: +(res.C_ref * 0.0012).toFixed(4), baseline: base, n_ok: res.n_ok, n_skipped: res.n_skipped, n_failed: { ...res.n_failed, bf: 0 }, ranking: rows, per_esl_inline: true, sensitivity: sens as Record<string, unknown> | null, sensitivity_reason: res.sensitivity_reason ?? null, best_clean: res.summary?.best_clean ?? null } },
     bforce: { status: "ok", code: null, reason: null, grade_min: "contact", entries, limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], recon_mac_min: 0.9, n_designs: res.n_ok + 1, n_failed: 0 },
     bforce_add: add,
-    ...(shown.length ? { view3d_bf: v, view3d_bf_esl: ve, view3d_bf_ref: vr } : {}),
+    ...(shown.length ? { view3d_bf: v, view3d_bf_esl: ve, view3d_bf_ref: vr, view3d_bf_recon: rcv } : {}),
   };
 }
 /** v0.24.0 보완 내력 ESL(esl_fint.md §5·§7): kind ok = 내력 보기·3D·칩(잔차·공유 노드·소성) + 새 스냅샷 평가 영역 umax, none = Case 에 FINT 없음
@@ -1033,12 +1035,14 @@ export function withFint(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut {
   const v: Record<string, string> = {};
   const ve: Record<string, string> = {};
   const vr: Record<string, string> = {};
+  const rcv: Record<string, string> = {};
   for (const d of shown) {
     const e = ids[0]?.entry_id;
     if (!e) continue;
     v[d] = `${d}_fi`;
     ve[d] = e;
     vr[e] = "d000_fi_e00";
+    rcv[e] = "d000_fi_e00";
   }
   const plastic = (k: number) => ({ plastic_frac: +(0.031 + 0.012 * k).toFixed(3), plastic_max: +(0.042 + 0.01 * k).toFixed(3) });
   const entries = ids.map((e, k) => ({ entry_id: e.entry_id, label: e.label, grade: "fint", mass_source: null, source: `/esl/cases/${e.entry_id}/runs/r1/04_esl`, eq_force_rel: 2.1e-6, eq_moment_rel: 3.4e-3, abar_g: 0, corr_rel: 0, recon_mac: 0.985 - 0.01 * k, recon_umax_err: -0.02 - 0.01 * k, reaction_rel: 2.8e-3, sign_suspect: null, limits: k === 0 ? ["FINT_ROT_LINKS"] : [], reason: null, res_force_rel: 2.1e-6 + 1e-6 * k, res_moment_rel: 4.2e-4, n_shared: k === 0 ? 12 : 0, unbalanced: false, ...plastic(k) }));
@@ -1051,7 +1055,7 @@ export function withFint(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut {
     fint: { source: "fint", status: "ok", code: null, reason: null, grade_min: "fint", entries, limits: ["FINT_ROT_LINKS"], limit_text: ["회전 연결 노드(RBODY·스프링·빔) 노드 모멘트 미사용"], recon_mac_min: 0.9, n_designs: res.n_ok + 1, n_failed: 0 },
     fint_add: add,
     eval_region: { mode: "exclude_free_edges", free_edge_mm: 10, boxes: [], n_nodes: 8120, n_total: 9874 },
-    ...(shown.length ? { view3d_fi: v, view3d_fi_esl: ve, view3d_fi_ref: vr } : {}),
+    ...(shown.length ? { view3d_fi: v, view3d_fi_esl: ve, view3d_fi_ref: vr, view3d_fi_recon: rcv } : {}),
   };
 }
 /** 결정 A(2026-11-13): 다른 메시 비교(④·옛 ③ 새 스냅샷) — 지표 미적용, 순위 = 재풀이 C(metric_effective solve)·cross_mesh·SM_CROSS_MESH.
@@ -2641,10 +2645,11 @@ export class DoeMock {
       }
       if (method === "POST" && (r = sub.match(/^\/sources\/([^/]+)$/))) {      // v0.24.0 노드 힘 출처 추가 계산(esl_fint.md §5.2)
         const src = decodeURIComponent(r[1]);
-        const NS: Record<string, { add: "bforce_add" | "fint_add"; code: string; name: string }> = { bforce: { add: "bforce_add", code: "BF", name: "경계력 ESL" }, fint: { add: "fint_add", code: "FINT", name: "내력 ESL" } };
+        const NS: Record<string, { add: "bforce_add" | "fint_add" | "view3d_regen"; code: string; name: string }> = { jig: { add: "view3d_regen", code: "VIEW3D_REGEN", name: "지그 3D" }, bforce: { add: "bforce_add", code: "BF", name: "경계력 ESL" }, fint: { add: "fint_add", code: "FINT", name: "내력 ESL" } };
         const ns = NS[src];
         if (!ns) return err(404, "SOURCE_NOT_FOUND", `추가 계산할 수 없는 하중 출처입니다: ${src}`);
         const a = rec.result?.[ns.add];
+        if (src === "jig") return a?.available ? ok(rec.out, 202) : err(409, "VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다");
         if (!a?.available) return err(409, `${ns.code}_UNSUPPORTED`, `다른 메시 비교 방식(④·옛 ③)은 ${ns.name} 을 지원하지 않습니다`);
         return ok(rec.out, 202);
       }
@@ -2652,6 +2657,13 @@ export class DoeMock {
         const rg = rec.result?.view3d_regen;
         if (!rg?.available) return err(409, "VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다");
         return ok(rec.out, 202);
+      }
+      if ((r = sub.match(/^\/view3d\/([^/]+)\/recon\.json$/)) && method === "GET") {      // v0.24.1 노드 힘 출처 재현 진단
+        const did = decodeURIComponent(r[1]);
+        const all = [...Object.values(rec.result?.view3d_bf_recon ?? {}), ...Object.values(rec.result?.view3d_fi_recon ?? {})];
+        if (!all.includes(did)) return err(404, "VIEW3D_NOT_FOUND", "재현 진단 파일이 없습니다");
+        const { values_url: _u, ...rj } = mockView3d().recon(did, did.includes("_fi_") ? "fint" : "bforce");
+        return ok({ ...rj, key: `${rj.key}-${did}` });
       }
       if ((r = sub.match(/^\/view3d\/([^/]+)\/manifest\.json$/)) && method === "GET") {
         const did = decodeURIComponent(r[1]);

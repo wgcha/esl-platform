@@ -4,6 +4,13 @@
 import { JIG_CODE_TEXT } from "../../api/doe";
 import type { DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
 import { jigNoneText } from "../../components/DoeRanking";
+import { SOURCE_ROWS } from "../../view3d/sources";
+
+const SR = (key: string) => {
+  const r = SOURCE_ROWS.find((x) => x.key === key);
+  if (!r) throw new Error(`SOURCE_ROWS 에 ${key} 없음`);
+  return r;
+};
 
 /** 하중 출처 키 = 백엔드 rank_views 키 */
 export type LoadTab = string;
@@ -39,6 +46,23 @@ export interface NodalCols {
   showResidual: boolean;
 }
 
+/** v0.24.1 자료 만들기 열(esl_view3d_sources.md §2.4·§6.3): POST /doe/studies/{id}/sources/{src}. 가능 여부는 결과 source_add[key](옛 거울 legacy 키 폴백) */
+export interface SourceAddCols {
+  src: string;
+  /** 버튼 문구·testid */
+  label: string;
+  testid: string;
+  /** 미계산 사유 안내(탭 title·빈 칸 문구) */
+  hint: string;
+  /** 버튼 title(가능할 때) */
+  title: string;
+  /** 옛 거울 키(source_add 가 없는 응답 폴백) */
+  legacy: "view3d_regen" | "bforce_add" | "fint_add";
+}
+
+/** v0.24.1 재현 진단 열: jigdiag = 지그 진단(JigDiag) · sidecar = 범용 ReconDiag(결과 키 = 엔트리 → 폴더) · null = 해당 없음(V3D_RECON_NA) */
+export type ReconCols = { kind: "jigdiag" } | { kind: "sidecar"; key: "view3d_bf_recon" | "view3d_fi_recon" } | null;
+
 export interface LoadSource {
   key: LoadTab;
   label: string;
@@ -70,6 +94,10 @@ export interface LoadSource {
   unavailable: (r: DoeResultOut) => string;
   /** v0.24.0 노드 힘 출처 열(경계력·내력 — 그 밖 null) */
   nodal: NodalCols | null;
+  /** v0.24.1 재현 진단 열 */
+  recon: ReconCols;
+  /** v0.24.1 자료 만들기 열(그 밖 null) */
+  add: SourceAddCols | null;
 }
 
 export const REGEN_HINT_FULL = "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다";
@@ -83,11 +111,25 @@ export const FI_ADD_HINT = "낙하 Engine 에 /H3D/NODA/FINT 를 더해 재해�
 export const NODAL_BF: NodalCols = { block: "bforce", add: "bforce_add", src: "bforce", addLabel: "경계력 ESL 계산", addTestid: "v3d-bf-add", chipTestid: "bf-chip", addHint: BF_ADD_HINT, showResidual: false };
 export const NODAL_FI: NodalCols = { block: "fint", add: "fint_add", src: "fint", addLabel: "내력 ESL 계산", addTestid: "v3d-fi-add", chipTestid: "nodal-chip-fint", addHint: FI_ADD_HINT, showResidual: true };
 
+export const V3D_RECON_NA_TEXT = "목표 변위(sm_ref)가 이 하중의 응답 자체 — 재현 비교 해당 없음";
+export const V3D_RECON_NONE_TEXT = (addLabel: string | null) => `재현 진단 없음${addLabel ? ` — [${addLabel}]로 다시 계산하면 생깁니다` : ""}`;
+
+/** 노드 힘 출처 자료 만들기 열 값 — NodalCols 의 값을 그대로 옮김(testid·문구 동일) */
+const addOfNodal = (n: NodalCols): SourceAddCols => ({
+  src: n.src,
+  label: n.addLabel,
+  testid: n.addTestid,
+  hint: n.addHint,
+  title: `형상 생성 없이 안마다 ${n.addLabel.replace(/ 계산$/, "")} 하중으로 선형 풀이해 [${n.addLabel.replace(/ 계산$/, "")}] 탭 자료를 만듭니다(기존 결과 파일 그대로). ${n.addHint}`,
+  legacy: n.add,
+});
+const ADD_JIG: SourceAddCols = { src: "jig", label: "지그 3D 다시 만들기", testid: "v3d-regen", hint: REGEN_HINT_JIG, title: "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)", legacy: "view3d_regen" };
+
 export const LOAD_SOURCES: readonly LoadSource[] = [
   {
     key: "jig",
-    label: "지그 ESL",
-    title: "지그 ESL: 체결부(tie) 고정 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도",
+    label: SR("jig").label,
+    title: SR("jig").title,
     primaryFor: ["jig"],
     drop: ["C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "basis", "sm_warn"],
     blankUmax: true,
@@ -106,11 +148,13 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
       return REGEN_HINT_JIG;
     },
     nodal: null,
+    recon: { kind: "jigdiag" },
+    add: ADD_JIG,
   },
   {
     key: "full",
-    label: "전 노드 ESL",
-    title: "전 노드 ESL(기존): 전 노드 ESL 하중·3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도",
+    label: SR("full").label,
+    title: SR("full").title,
     primaryFor: ["solve", "lin"],
     drop: ["C", "C_jig", "score_jig", "umax_jig"],
     blankUmax: false,
@@ -124,12 +168,14 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     sort: "score",
     unavailable: () => REGEN_HINT_FULL,
     nodal: null,
+    recon: null,
+    add: null,
   },
   {
     // v0.24.0 경계력 ESL(esl_bforce.md §8): 낙하 해석이 계산한 노드 힘(접촉력 − 관성, 관성 이완) — 같은 3-2-1 로 설계안 재풀이
     key: "bforce",
-    label: "경계력 ESL",
-    title: "경계력 ESL: 낙하 해석의 접촉력·관성(·tie 체결력)으로 만든 자기평형 하중, 3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도",
+    label: SR("bforce").label,
+    title: SR("bforce").title,
     primaryFor: [],
     drop: ["C", "C_solve", "C_jig", "C_bf", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
@@ -143,12 +189,14 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     sort: "score",
     unavailable: (r) => nodalUnavailable(r, NODAL_BF, "경계력 ESL"),
     nodal: NODAL_BF,
+    recon: { kind: "sidecar", key: "view3d_bf_recon" },
+    add: addOfNodal(NODAL_BF),
   },
   {
     // v0.24.0 보완 내력 ESL(esl_fint.md §8): 낙하 해석 노드 내력 FINT(자기평형) — 같은 3-2-1 로 설계안 재풀이
     key: "fint",
-    label: "내력 ESL",
-    title: "내력 ESL: 낙하 해석의 노드 내력(FINT — 부품 요소 내력, 자기평형)을 하중으로 3-2-1 지지 재풀이해 비교한 순위·표·3D·민감도",
+    label: SR("fint").label,
+    title: SR("fint").title,
     primaryFor: [],
     drop: ["C", "C_solve", "C_jig", "C_bf", "C_fi", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
@@ -162,8 +210,16 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     sort: "score",
     unavailable: (r) => nodalUnavailable(r, NODAL_FI, "내력 ESL"),
     nodal: NODAL_FI,
+    recon: { kind: "sidecar", key: "view3d_fi_recon" },
+    add: addOfNodal(NODAL_FI),
   },
 ];
+
+/** 자료 만들기 가능 여부(행 add 열): 결과 source_add[key], 없으면 옛 거울 키(응답 폴백) */
+export function sourceAddOf(r: DoeResultOut, s: LoadSource): { available: boolean; allowed: boolean; reason?: string | null } | null {
+  if (!s.add) return null;
+  return r.source_add?.[s.key] ?? r[s.add.legacy] ?? null;
+}
 
 /** 노드 힘 출처 탭 비활성 사유(블록 사유·데이터 등급 → 문구) — 열만 읽음 */
 export function nodalUnavailable(r: DoeResultOut, n: NodalCols, label: string): string {
@@ -172,6 +228,26 @@ export function nodalUnavailable(r: DoeResultOut, n: NodalCols, label: string): 
   const bad = (b.entries ?? []).filter((e) => e.reason);
   const why = bad.length ? `${bad[0].label}: 등급 ${BF_GRADE_TEXT[bad[0].grade] ?? bad[0].grade} — ${bad[0].reason}` : b.reason ?? b.status;
   return `${label} 불가 — ${why}`;
+}
+
+/** v0.24.1 현장 피드백: 노드 힘 출처 블록(result.bforce·fint)이 있는데 status 가 ok 가 아니면(예: BF_NOT_FOUND) 마우스 없이 보이는 한 줄 —
+ *  nodalUnavailable 문구 + 다음 행동. 블록 없음·ok = null(열 nodal·add 만 읽음) */
+export function nodalNote(r: DoeResultOut, s: LoadSource): string | null {
+  const n = s.nodal;
+  const b = n ? r[n.block] ?? null : null;
+  if (!n || !b || b.status === "ok") return null;
+  const sa = sourceAddOf(r, s);
+  const denied = !!sa && sa.allowed === false;
+  const lab = s.add?.label ?? "";
+  const last = lab.charCodeAt(lab.length - 1) - 0xac00;
+  const josa = last >= 0 && last < 11172 && last % 28 === 0 ? "를" : "을";
+  // 권한 없음: "다시 누르세요" 대신 작성자·관리자 요청 안내 + 서버 사유(권한은 source_add[키].allowed — 옛 거울 키 폴백)
+  const next = !s.add
+    ? ""
+    : denied
+      ? ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 작성자·관리자에게 [${lab}]${josa} 요청하세요${sa?.reason ? ` (${sa.reason})` : ""}`
+      : ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 [${lab}] 다시 누르세요`;
+  return nodalUnavailable(r, n, s.label) + next;
 }
 
 /** 경계력 탭 비활성 사유(호환) */
@@ -189,6 +265,8 @@ export interface TabState {
   keys: LoadTab[];
   ok: Record<LoadTab, boolean>;
   reason: Record<LoadTab, string | null>;
+  /** v0.24.1 보기 없음 ∧ 자료 만들기 가능(available) ∧ allowed — 선택 가능한 빈 탭(본문 = 사유 + 버튼 1개) */
+  add: Record<LoadTab, boolean>;
 }
 
 /** 탭 가능 여부·기본 탭: 주 출처 = metric_effective 를 primaryFor 로 가진 행(없으면 없음). 보기(rank_views)가 없으면 주 출처만 가능 */
@@ -198,12 +276,17 @@ export function tabState(r: DoeResultOut, sources: readonly LoadSource[] = LOAD_
   const views = (r.rank_views ?? {}) as Record<string, unknown>;
   const ok: Record<string, boolean> = {};
   const reason: Record<string, string | null> = {};
+  const add: Record<string, boolean> = {};
   for (const s of sources) {
     ok[s.key] = !!views[s.key] || s.key === primary;
     reason[s.key] = ok[s.key] ? null : s.unavailable(r);
+    const sa = sourceAddOf(r, s);
+    add[s.key] = !ok[s.key] && !!sa?.available && sa.allowed;
+    // 만들 수 있는데 권한이 없거나 작업 중이면 탭 비활성 + 그 사유를 덧붙임(정보 삭제 없음)
+    if (!ok[s.key] && sa?.available && !sa.allowed && sa.reason) reason[s.key] = `${reason[s.key]} (${sa.reason})`;
   }
   const def = primary && ok[primary] ? primary : sources.find((s) => ok[s.key])?.key ?? null;
-  return { def, keys: sources.map((s) => s.key), ok, reason };
+  return { def, keys: sources.map((s) => s.key), ok, reason, add };
 }
 
 /** 경고 코드 → 출처 키(접두가 맞는 첫 행), 없으면 "common" */

@@ -1916,6 +1916,57 @@ export interface View3dOut {
   values_url: string;
 }
 
+/** v0.24.1 3D 하중 출처(esl_view3d_sources.md §5.3) — GET /esl-runs/{id}/view3d/sources */
+export type View3dRigid = "kabsch" | "linear";
+export interface View3dSourceRow {
+  key: string;
+  available: boolean;
+  code: string | null;
+  reason: string | null;
+  /** 응답·오차(재현) 보기 가능 */
+  resp: boolean;
+  resp_code: string | null;
+  resp_reason: string | null;
+  rigid: View3dRigid | null;
+}
+export interface View3dSourcesOut {
+  esl_run_id: string;
+  default: string;
+  rows: View3dSourceRow[];
+}
+export interface View3dReconArray {
+  key: "tgt" | "fit" | "err";
+  dtype: "int16";
+  comps: number;
+  offset: number;
+  scale: number[];
+}
+export interface View3dReconRanges {
+  tgt_max: number;
+  fit_max: number;
+  err_max: number;
+}
+/** 스터디 폴더 recon.json = View3dReconOut 에서 values_url 만 없음 */
+export type DoeReconFile = Omit<View3dReconOut, "values_url">;
+/** GET /esl-runs/{id}/view3d/recon?src= */
+export interface View3dReconOut {
+  schema: "esl/view3d_recon/1" | string;
+  recon_version: number;
+  key: string;
+  src: string;
+  esl_run_id: string;
+  n_nodes: number;
+  rigid: string;
+  bytes: number;
+  arrays: View3dReconArray[];
+  ranges: View3dReconRanges;
+  mac: number | null;
+  umax_tgt: number;
+  umax_fit: number;
+  umax_err: number | null;
+  values_url: string;
+}
+
 // ---------------------------------------------------------------- v0.7.0 비드 최적화 서버 실행 (esl_opt_run.md §5.2)
 // 기준 = 백엔드 openapi(components.schemas) — 인터페이스 이름 = 스키마 이름(check:api 대조). 자유 형식(dict) 필드는
 // 백엔드 서비스(api/services/opt*.py)·코어(esl/opt/mesh_check.py·select.py·post.py)·워커(register.py) 실제 값 기준.
@@ -3338,6 +3389,11 @@ export interface DoeResultOut {
   view3d_fi_esl?: Record<string, string> | null;
   view3d_fi_ref?: Record<string, string> | null;
   fint_add?: DoeView3dRegenOut | null;
+  /** v0.24.1 자료 만들기 가능 여부(SOURCE_ADD 행마다 — jig·bforce·fint). 옛 키 view3d_regen·bforce_add·fint_add 는 같은 값 거울 */
+  source_add?: Record<string, DoeView3dRegenOut> | null;
+  /** v0.24.1 노드 힘 출처 재현 진단: entry_id → 폴더(`d000_bf_e<kk>` — recon.json·recon.bin) */
+  view3d_bf_recon?: Record<string, string> | null;
+  view3d_fi_recon?: Record<string, string> | null;
   /** v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2) */
   eval_region?: DoeEvalRegionOut | null;
   warnings: DoeWarning[];

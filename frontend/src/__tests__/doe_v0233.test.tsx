@@ -113,15 +113,18 @@ describe("하중 정의 탭(doe-40 지그 ok)", () => {
     expect(screen.queryByTestId("v3d-regen")).toBeNull();                 // 진단·보기 다 있음 = 버튼 없음
   }, 30000);
 
-  it("진단 자료 없는 지그 결과: 3D 다시 만들기 버튼(작성자) — 권한 없으면 비활성 + 이유", async () => {
+  it("진단 자료 없는 지그 결과: 3D 다시 만들기 버튼은 지그 진단 빈 칸 안에만(v0.24.1 §6.3) — 권한 없으면 비활성 + 이유", async () => {
     openJig("doe-40", (r) => ({ ...r, jig_diag: null }));
     const seg = await screen.findByTestId("v3d-jig-mode");
-    const btn = await screen.findByTestId("v3d-regen");
-    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId("v3d-regen")).toBeNull();                 // 머리에 두지 않음 — 설계 비교 보기는 자료가 있음
     fireEvent.click(seg.querySelector("[data-mode=diag]")!);
     await screen.findByText(/지그 진단 3D 가 없습니다 — \[3D 다시 만들기\]로 만드세요/);
+    const btn = await screen.findByTestId("v3d-regen");
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getAllByTestId("v3d-regen").length).toBe(1);
     cleanup();
     openJig("doe-40", (r) => ({ ...r, jig_diag: null, view3d_regen: { available: true, allowed: false, reason: "관리자 또는 이 스터디 작성자만 3D 를 다시 만들 수 있습니다" } }));
+    fireEvent.click((await screen.findByTestId("v3d-jig-mode")).querySelector("[data-mode=diag]")!);
     const b2 = (await screen.findByTestId("v3d-regen")) as HTMLButtonElement;
     expect(b2.disabled).toBe(true);
     expect(b2.closest("[title]")!.getAttribute("title")).toMatch(/작성자만/);
@@ -165,13 +168,23 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     expect(ts.reason.full).toBeNull();
   });
 
-  it("F2 지그 계산됨 + solve + 사이드카 없음: 전 노드 탭에서도 3D 다시 만들기 버튼", async () => {
+  it("F2 지그 계산됨 + solve + 사이드카 없음: 지그 탭 = 선택 가능한 빈 탭(+), 본문 = 사유 + 3D 다시 만들기 버튼 1개, 전 노드 탭에는 버튼 없음(v0.24.1)", async () => {
     openJig("doe-40", (r) => ({ ...r, rank_views: null, metric_effective: "solve", rank: { ...r.rank!, metric_effective: "solve" } }));
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
-    expect(tabBtn("jig").getAttribute("aria-disabled")).toBe("true");
+    expect(screen.queryByTestId("v3d-regen")).toBeNull();
+    expect(tabBtn("jig").getAttribute("aria-disabled")).toBe("false");
+    expect(tabBtn("jig").textContent).toBe("지그 ESL +");
+    fireEvent.click(tabBtn("jig"));
+    const panel = await screen.findByTestId("doe-source-add");
+    expect(panel.getAttribute("data-src")).toBe("jig");
+    expect(screen.queryByRole("table", { name: "순위표" })).toBeNull();
     const btn = (await screen.findByTestId("v3d-regen")) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
+    expect(screen.getAllByTestId("v3d-regen").length).toBe(1);
+    fireEvent.click(tabBtn("full"));
+    await screen.findByRole("table", { name: "순위표" });
+    expect(screen.queryByTestId("v3d-regen")).toBeNull();
   }, 30000);
 
   it("탭 키보드: tablist/tab·aria-selected·aria-controls, 좌우 화살표 포커스 이동, 비활성 탭 포커스 시 사유 표시", async () => {

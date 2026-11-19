@@ -4,7 +4,7 @@ import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, RunAllOut, StageState, StepKey, StepStatus, SupportAuto, SupportProblem,
-  SupportSetOut, ValidationOut,
+  SupportSetOut, ValidationOut, View3dSourcesOut,
 } from "../api/types";
 import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
 import {
@@ -79,6 +79,20 @@ export class MockServer {
   user: MockUserKey;
   /** v0.5.8 3D 하중 보기: 오류 시연(413/503/404) */
   view3dMode: "ok" | "too_large" | "busy" | "disabled" = "ok";
+  /** v0.24.1 /view3d/sources: ok = 출처 4행(아래 v3dSources) · old = 404(옛 서버 — 출처 탭 없이 legacy 화면) */
+  view3dSourcesMode: "ok" | "old" = "ok";
+  v3dSources: View3dSourcesOut = {
+    esl_run_id: "",
+    default: "full",
+    rows: [
+      { key: "jig", available: false, code: "V3D_STUDY_ONLY", reason: "강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)", resp: false, resp_code: "V3D_STUDY_ONLY", resp_reason: "강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)", rigid: null },
+      { key: "full", available: true, code: null, reason: null, resp: true, resp_code: null, resp_reason: null, rigid: "linear" },
+      { key: "bforce", available: true, code: null, reason: null, resp: true, resp_code: null, resp_reason: null, rigid: "kabsch" },
+      { key: "fint", available: false, code: "V3D_SRC_NOT_RUN", reason: "이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다", resp: false, resp_code: "V3D_SRC_NOT_RUN", resp_reason: "이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다", rigid: null },
+    ],
+  };
+  /** v0.24.1 재현 오류 시연: 응답 없음(409 V3D_RECON_UNAVAILABLE) */
+  v3dReconFail = false;
   cases: CaseOut[] = [];
   jobs: JobOut[] = [];
   logs: Record<string, string[]> = {};
@@ -740,6 +754,21 @@ export class MockServer {
         return { status: 201, body: nj };
       }
     }
+    if ((r = m(/^\/esl-runs\/([^/]+)\/view3d\/sources$/)) && method === "GET") {
+      const run = this.runs.find((x) => x.id === r![1]);
+      if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
+      if (this.view3dSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
+      return { status: 200, body: { ...this.v3dSources, esl_run_id: run.id } };
+    }
+    if ((r = m(/^\/esl-runs\/([^/]+)\/view3d\/recon$/)) && method === "GET") {
+      const run = this.runs.find((x) => x.id === r![1]);
+      if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
+      const src = query.get("src") ?? "full";
+      const row = this.v3dSources.rows.find((x) => x.key === src);
+      if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src });
+      if (this.v3dReconFail || !row.resp) return err(409, "V3D_RECON_UNAVAILABLE", row.resp_reason ?? "응답 변위 없음", { src, reason_code: row.resp_code, reason: row.resp_reason });
+      return { status: 200, body: mockView3d().recon(run.id, query.get("src"), row.rigid ?? "kabsch") };
+    }
     if ((r = m(/^\/esl-runs\/([^/]+)\/view3d$/)) && method === "GET") {
       const run = this.runs.find((x) => x.id === r![1]);
       if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
@@ -747,7 +776,13 @@ export class MockServer {
         return err(413, "VIEW3D_TOO_LARGE", "부품이 너무 커서 3D 보기를 만들 수 없습니다(노드 2,000,000 초과).", { limits: { max_nodes: 2000000 } });
       if (this.view3dMode === "busy") return err(503, "VIEW3D_BUSY", "3D 자료를 만드는 중입니다. 잠시 후 다시 시도하세요.");
       if (this.view3dMode === "disabled") return err(404, "VIEW3D_DISABLED", "3D 보기가 꺼져 있습니다.");
-      return { status: 200, body: mockView3d().manifest(run.id) };
+      const src = query.get("src");
+      if (src) {
+        const row = this.v3dSources.rows.find((x) => x.key === src);
+        if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src, keys: this.v3dSources.rows.map((x) => x.key) });
+        if (!row.available) return err(409, "V3D_SOURCE_UNAVAILABLE", row.reason ?? "출처 없음", { src, reason_code: row.code, reason: row.reason });
+      }
+      return { status: 200, body: mockView3d().manifest(run.id, src) };
     }
     if ((r = m(/^\/esl-runs\/([^/]+)(\/forces)?$/)) && method === "GET") {
       const run = this.runs.find((x) => x.id === r![1]);
@@ -1714,17 +1749,17 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     }
     if (method === "PUT" && server.p3.putDelayMs) await new Promise((r) => setTimeout(r, server.p3.putDelayMs));
     if (method === "PUT") server.p3.chunkShas.push(new Headers(init?.headers).get("X-Chunk-Sha256"));
-    const bin = /^\/esl\/api\/esl-runs\/[^/]+\/view3d\/(part\.glb|values\.bin)$/.exec(url.pathname);
+    const bin = /^\/esl\/api\/esl-runs\/[^/]+\/view3d\/(part\.glb|values\.bin|recon\.bin)$/.exec(url.pathname);
     if (bin && method === "GET") {
       if (server.view3dMode !== "ok") return new Response(JSON.stringify({ detail: { code: "VIEW3D_STALE", message: "3D 자료가 바뀌었습니다. 다시 불러오세요." } }), { status: 409 });
       const v = mockView3d();
-      return new Response(bin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+      return new Response(bin[1] === "part.glb" ? v.glb : bin[1] === "recon.bin" ? v.reconBin : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
     // v0.9.0 비드 DOE 3D 비교 파일(목: 같은 메시·값)
-    const dbin = /^\/esl\/api\/doe\/studies\/[^/]+\/view3d\/[^/]+\/(part\.glb|values\.bin)$/.exec(url.pathname);
+    const dbin = /^\/esl\/api\/doe\/studies\/[^/]+\/view3d\/[^/]+\/(part\.glb|values\.bin|recon\.bin)$/.exec(url.pathname);
     if (dbin && method === "GET") {
       const v = mockView3d();
-      return new Response(dbin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+      return new Response(dbin[1] === "part.glb" ? v.glb : dbin[1] === "recon.bin" ? v.reconBin : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
     const raw = init?.body;
     const isBuf = raw instanceof ArrayBuffer || ArrayBuffer.isView(raw as ArrayBufferView);

@@ -88,13 +88,16 @@ describe("경계력 탭 화면", () => {
     await waitFor(() => expect(screen.getByTestId("v3d-cond").textContent).toContain("경계력 ESL"));
     expect(screen.queryByTestId("v3d-bf-add")).toBeNull();                        // 보기가 있으면 계산 버튼 없음
   }, 30000);
-  it("doe-51: 경계력 탭 비활성 + 사유, 활성 탭 3D 머리에 [경계력 ESL 계산]", async () => {
+  it("doe-51: 경계력 탭 = 선택 가능한 빈 탭(+), 본문에 [경계력 ESL 계산] 1개(v0.24.1 §6.3)", async () => {
     open("doe-51");
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     const b = tabBtn("bforce");
-    expect(b.getAttribute("aria-disabled")).toBe("true");
+    expect(b.getAttribute("aria-disabled")).toBe("false");
     expect(b.getAttribute("title")).toContain("경계력 ESL 불가");
+    expect(screen.queryByTestId("v3d-bf-add")).toBeNull();                        // 활성 탭(전 노드) 머리에 다른 출처 버튼 없음
+    fireEvent.click(b);
     const add = await screen.findByTestId("v3d-bf-add");
     expect((add as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId("v3d-fi-add")).toBeNull();
   }, 30000);
 });

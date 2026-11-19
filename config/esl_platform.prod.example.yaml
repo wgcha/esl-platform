@@ -118,6 +118,7 @@ view3d:                               # ④ ESL 3D 하중 보기 파생 캐시(�
   cluster_k_max: 5
   kmeans_max_iter: 50
   build_wait_s: 60                    # 생성 대기 초과 시 503 VIEW3D_BUSY
+  case_src_default: full              # v0.24.1 Case ③ 3D 기본 출처 탭(jig·full·bforce·fint 중 Case 하중 보기가 있는 것 — esl_view3d_sources.md §7)
 library:                              # 라이브러리·종합분석·덱(esl.library.settings): config_path 또는 settings
   config_path: library.yaml           # library.yaml 의 library.ista6 = ista6.yaml(같은 폴더). 블록을 지우면 라이브러리 쓰기 API 503
 opt_run:                              # v0.7.0 비드 최적화 서버 실행(계약 esl_opt_run.md §11). 섹션이 없으면 enabled: false
@@ -177,7 +178,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
-  view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함)
+  view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1, recon: true}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함), v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단(목표 sm_ref)
   bforce: {enabled: true, grades: [full, contact], view3d: true}   # v0.24.0 경계력 ESL(esl_bforce.md §9) — Case 에 접촉력 결과가 있으면 하중 정의 탭 [경계력 ESL]: grades = 순위에 쓸 데이터 등급(접촉력 전용, contact = tie 체결력 미포함), view3d = 응답 컨투어 + 하중 화살표
   fint: {enabled: true, grades: [fint], view3d: true}   # v0.24.0 내력 ESL(esl_fint.md §9) — Case 에 FINT(/H3D/NODA/FINT) 결과가 있으면 탭 [내력 ESL](F = s·FINT, 3-2-1 재풀이)
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)

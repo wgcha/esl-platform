@@ -1,0 +1,20 @@
+{
+ "build_view": {
+  "lod": {
+   "manifest.json": "8f2281025b4f819ac8ff3469e7948ccf4b4137c34a5778cc5e457056d1f7c783",
+   "part.glb": "763ba615c4b30ba203856708d64071579c648b39c28ee4ef047418f0ebec415c",
+   "part_lod.glb": "4ec402d46d2fcaf0c8dcd2b030b8ed13f5c08b18b383ea60242f87d63e0f2780",
+   "values.bin": "786c77238b411648ac76479025492e856f354f13c3719701c66b8669c9c034e6"
+  },
+  "plain": {
+   "manifest.json": "5ab54ba8918bddf45ac712cf63e7270ce0091c52ab87487334b11ddb4b32886d",
+   "part.glb": "60a62d1473738e2f7dfef611d41c5ef273ba004b8243ae1dddc11e7457260dde",
+   "values.bin": "6c09a083b0142d56fe97be25f97c96ca787498c49003cba75f3ad8ec547a8f40"
+  }
+ },
+ "pack_values": {
+  "lod": "febc9fa102623ce9cc1a98db2fec40cf7eaa35e84f19f8a7273afb2f7696628f",
+  "plain": "d442db86c0b445039dc80e32855f93326baea78112c8fdfa827910a5c41b8721"
+ },
+ "recorded_at_commit": "f29eeec0 (= v0.24.0 view3d code)"
+}

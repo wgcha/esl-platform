@@ -1,0 +1,290 @@
+{
+ "recorded_at_commit": "f29eeec0 (= v0.24.0 regenerate)",
+ "trace": {
+  "accepted": {
+   "body": {
+    "can_delete": true,
+    "created_at": "<ts>",
+    "created_by_name": "파워",
+    "delete_blocked": "대기 중이거나 실행 중인 작업이 있습니다 — 끝나거나 취소된 뒤에 삭제하세요",
+    "doe": null,
+    "entry_ids": [
+     "<uuid>",
+     "<uuid>"
+    ],
+    "id": "<sid>",
+    "inputs": {
+     "inch": null,
+     "load_transfer": {
+      "cell_size_mm": null,
+      "method": "work",
+      "region_mode": "auto",
+      "support": "transfer"
+     },
+     "mesh_mode": "auto",
+     "mesh_refine": null,
+     "props": {
+      "E": 210000.0,
+      "nu": 0.3,
+      "t": 1.5
+     },
+     "rank_metric": "jig",
+     "reference_source": "step",
+     "shape_rules": {
+      "mesh_route": {
+       "rank_quality": {
+        "fail_ratio": 0.1,
+        "tria_pct": 15.0
+       },
+       "relaxed_direct": {
+        "enabled": true,
+        "min_faces": 1500,
+        "min_step_mb": null
+       }
+      },
+      "range_guard": {
+       "area_ratio_min": 0.2,
+       "budget": {
+        "matrix_timeout_s": 60,
+        "max_evals": 4000,
+        "max_vars": 120,
+        "prep_timeout_s": 180
+       },
+       "combo": {
+        "enabled": true,
+        "full_max_vars": 4,
+        "max_group": 8,
+        "samples": 16
+       },
+       "flip_deg": 60.0,
+       "jac_min": 0.3,
+       "max_new_fail_ratio": null,
+       "min_keep_frac": 0.25,
+       "steps": 5,
+       "tria_angle_min_deg": 10.0
+      },
+      "schema": 1,
+      "w_partial": true
+     },
+     "shapes": [
+      {
+       "file_name": "s0.step",
+       "id": "d000",
+       "name": "기준 평판",
+       "part_id": null,
+       "reference": true,
+       "rel": "rad/s0.step",
+       "sha256": "b9281fcfa031f1680664d80c57fb252d1bea922e73fb119a3784edce88cc405d",
+       "source": "step",
+       "upload_id": "<uuid>"
+      },
+      {
+       "file_name": "s1.step",
+       "id": "d001",
+       "name": "비드 1",
+       "part_id": null,
+       "reference": false,
+       "rel": "rad/s1.step",
+       "sha256": "8ce5e0fb9a70477977c2770faa27a5c8cfdfa5131be74e6d20b8b74fe04fbb25",
+       "source": "step",
+       "upload_id": "<uuid>"
+      },
+      {
+       "file_name": "s2.step",
+       "id": "d002",
+       "name": "비드 2",
+       "part_id": null,
+       "reference": false,
+       "rel": "rad/s2.step",
+       "sha256": "5ab5972fd13c1f7e9b84899550f4cc63ebe7e8c071739f3025e09ccc592ac06d",
+       "source": "step",
+       "upload_id": "<uuid>"
+      }
+     ]
+    },
+    "job": {
+     "analysis_id": null,
+     "cancel_requested": false,
+     "case_id": null,
+     "comparison_id": null,
+     "created_at": "<ts>",
+     "created_by": "u-power",
+     "created_by_name": "파워",
+     "current_step_no": null,
+     "failure_code": null,
+     "failure_message": null,
+     "finished_at": null,
+     "id": "<jid>",
+     "job_type": "DOE_RUN",
+     "lane": "SLOT",
+     "opt_run_id": null,
+     "params": {
+      "bead_doe_id": "<sid>",
+      "kind": "VIEW3D",
+      "matrix_sha256": null,
+      "out_rel": "_doe/<sid>",
+      "rev": null
+     },
+     "progress_label": null,
+     "progress_pct": null,
+     "project_id": "p-1",
+     "queue_position": 1,
+     "queued_at": "<ts>",
+     "result": null,
+     "resume_from_step": 3,
+     "retry_of_job_id": null,
+     "run_all_id": null,
+     "stage": 11,
+     "started_at": null,
+     "state": "QUEUED",
+     "steps": [
+      {
+       "core_stage": "bd_eval",
+       "exit_code": null,
+       "failure_code": null,
+       "failure_message": null,
+       "finished_at": null,
+       "kind": "INTERNAL",
+       "progress_pct": null,
+       "started_at": null,
+       "state": "SKIPPED",
+       "step_key": "BD_BASELINE",
+       "step_no": 1
+      },
+      {
+       "core_stage": null,
+       "exit_code": null,
+       "failure_code": null,
+       "failure_message": null,
+       "finished_at": null,
+       "kind": "LOCAL",
+       "progress_pct": null,
+       "started_at": null,
+       "state": "SKIPPED",
+       "step_key": "BD_DESIGNS",
+       "step_no": 2
+      },
+      {
+       "core_stage": "bd_post",
+       "exit_code": null,
+       "failure_code": null,
+       "failure_message": null,
+       "finished_at": null,
+       "kind": "INTERNAL",
+       "progress_pct": null,
+       "started_at": null,
+       "state": "PENDING",
+       "step_key": "BD_POST",
+       "step_no": 3
+      },
+      {
+       "core_stage": null,
+       "exit_code": null,
+       "failure_code": null,
+       "failure_message": null,
+       "finished_at": null,
+       "kind": "INTERNAL",
+       "progress_pct": null,
+       "started_at": null,
+       "state": "PENDING",
+       "step_key": "BD_REGISTER",
+       "step_no": 4
+      }
+     ],
+     "updated_at": "<ts>",
+     "upload_id": null,
+     "verify_drop_id": null,
+     "version": 1,
+     "warnings": []
+    },
+    "phase": "DONE",
+    "prep": null,
+    "project_id": "p-1",
+    "redrop_blocked": "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)",
+    "redrop_entries": [
+     {
+      "blocked": "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)",
+      "case_id": "c1",
+      "case_title": "Case c1",
+      "entry_id": "<uuid>",
+      "is_base": false,
+      "label": "55QX10A Corner 1",
+      "ok": false
+     },
+     {
+      "blocked": "이 모드는 원 Case 노드 번호를 쓰지 않아 재낙하 입력을 만들 수 없습니다(① 같은 Case 기준만)",
+      "case_id": "c1",
+      "case_title": "Case c1",
+      "entry_id": "<uuid>",
+      "is_base": false,
+      "label": "55QX10A Corner 2",
+      "ok": false
+     }
+    ],
+    "redrop_ok": false,
+    "result_ready": true,
+    "scenario": "compare",
+    "selection": null,
+    "title": "형상 직접 비교 비드 1 외 2",
+    "version": 2
+   },
+   "status": 202
+  },
+  "active": {
+   "code": "JOB_ACTIVE",
+   "message": "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다",
+   "status": 409
+  },
+  "general": {
+   "code": "FORBIDDEN",
+   "message": "이 프로젝트에서 실행 권한(power 이상)이 없습니다",
+   "status": 403
+  },
+  "job_type": "DOE_RUN",
+  "needs_jig": {
+   "code": "VIEW3D_REGEN_UNAVAILABLE",
+   "message": "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다",
+   "status": 409
+  },
+  "no_run": {
+   "code": "VIEW3D_REGEN_UNAVAILABLE",
+   "message": "성공한 실행 작업이 없습니다",
+   "status": 409
+  },
+  "params": {
+   "bead_doe_id": "<sid>",
+   "doe": {
+    "entries": [],
+    "id": "<sid>",
+    "post_mode": "view3d",
+    "scenario": "compare"
+   },
+   "kind": "VIEW3D",
+   "out_rel": "_doe/<sid>",
+   "warnings": []
+  },
+  "power2": {
+   "code": "FORBIDDEN",
+   "message": "관리자 또는 이 스터디 작성자만 3D 를 다시 만들 수 있습니다",
+   "status": 403
+  },
+  "steps": [
+   [
+    "BD_BASELINE",
+    "SKIPPED"
+   ],
+   [
+    "BD_DESIGNS",
+    "SKIPPED"
+   ],
+   [
+    "BD_POST",
+    "PENDING"
+   ],
+   [
+    "BD_REGISTER",
+    "PENDING"
+   ]
+  ]
+ }
+}

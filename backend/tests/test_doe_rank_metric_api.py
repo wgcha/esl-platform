@@ -390,7 +390,8 @@ def test_view3d_cfg_mirror():
     from esl.doe import DEFAULTS
     from esl_platform.core.config import BeadDoeCfg
 
-    want = {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1}   # v0.23.3
+    want = {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,   # v0.23.3
+            "recon": True}                                                                    # v0.24.1 재현 진단(esl_view3d_sources.md §7)
     assert DEFAULTS["view3d"] == want and BeadDoeCfg().model_dump()["view3d"] == want
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))

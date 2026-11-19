@@ -1,0 +1,43 @@
+{
+ "lod": {
+  "disk": {
+   "manifest.json": "e2d387d9e3bd2813c69fcac75416d483ea5b631c4e527ee15973bfd294a20068",
+   "part.glb": "ba26fa88c059963e59d8e47ef1fed9de98c378f3af2b4ef788d4d4118c7b461b",
+   "part_lod.glb": "5f5c296064682def2656f03ff2992e1d37d6df0757bd3801ff9d5307eb55cdc6",
+   "values.bin": "041a3fd308b1da41697d77550e6e8ed691263918da831e1dc4a1d6eb54b7deec"
+  },
+  "etag": "\"fcaf307b0ec23569\"",
+  "files": {
+   "part.glb": "ba26fa88c059963e59d8e47ef1fed9de98c378f3af2b4ef788d4d4118c7b461b",
+   "part_lod.glb": "5f5c296064682def2656f03ff2992e1d37d6df0757bd3801ff9d5307eb55cdc6",
+   "values.bin": "041a3fd308b1da41697d77550e6e8ed691263918da831e1dc4a1d6eb54b7deec"
+  },
+  "json_sha": "743b49ad9d5d30c1992a043d865ca1fb266e8d0aa7d6ecda35087fc93f2858bd",
+  "run_id": "00000000-0000-0000-0000-0000000003ee",
+  "runs_dirs": [
+   "03_bc",
+   "04_esl",
+   "view3d"
+  ]
+ },
+ "plain": {
+  "disk": {
+   "manifest.json": "d88e9c69b0bfe54cc11ba5f5e8a23f7bdb5bfd03bec8ed469efdd782bda88d2d",
+   "part.glb": "ba26fa88c059963e59d8e47ef1fed9de98c378f3af2b4ef788d4d4118c7b461b",
+   "values.bin": "041a3fd308b1da41697d77550e6e8ed691263918da831e1dc4a1d6eb54b7deec"
+  },
+  "etag": "\"5c478cc1dd77605a\"",
+  "files": {
+   "part.glb": "ba26fa88c059963e59d8e47ef1fed9de98c378f3af2b4ef788d4d4118c7b461b",
+   "values.bin": "041a3fd308b1da41697d77550e6e8ed691263918da831e1dc4a1d6eb54b7deec"
+  },
+  "json_sha": "723dfecd5c3884e4bcab44f98433384f5f67efbb61e9552be9fb28b8e8a9be2d",
+  "run_id": "00000000-0000-0000-0000-000000000006",
+  "runs_dirs": [
+   "03_bc",
+   "04_esl",
+   "view3d"
+  ]
+ },
+ "recorded_at_commit": "f29eeec0 (= v0.24.0 view3d API)"
+}

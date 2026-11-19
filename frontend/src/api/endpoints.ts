@@ -4,7 +4,7 @@ import type {
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
-  ValidationOut, View3dOut,
+  ValidationOut, View3dOut, View3dReconOut, View3dSourcesOut,
 } from "./types";
 
 export const api = {
@@ -45,7 +45,11 @@ export const api = {
   eslRun: (id: string) => request<EslRunOut>("GET", `/esl-runs/${id}`),
   forces: (id: string, top = 50) => request<ForcesOut>("GET", `/esl-runs/${id}/forces`, { query: { top } }),
   /** v0.5.8: 3D 하중 보기 manifest(상위 100행·군집·지지·범위). 파일은 view3dFile 로 받는다 */
-  view3d: (id: string) => request<View3dOut>("GET", `/esl-runs/${id}/view3d`),
+  view3d: (id: string, src?: string) => request<View3dOut>("GET", `/esl-runs/${id}/view3d`, src ? { query: { src } } : {}),
+  /** v0.24.1: 하중 출처 목록(행마다 가능 여부·응답 가능·사유) — manifest 와 별도 경로(EslRunOut 불변) */
+  view3dSources: (id: string) => request<View3dSourcesOut>("GET", `/esl-runs/${id}/view3d/sources`),
+  /** v0.24.1: 재현(목표·재현·오차) 진단 — 첫 요청이 파생 캐시를 만든다. src 없음 = 전 노드(legacy) */
+  view3dRecon: (id: string, src?: string) => request<View3dReconOut>("GET", `/esl-runs/${id}/view3d/recon`, src ? { query: { src } } : {}),
   validations: (caseId: string) => request<ValidationOut[]>("GET", `/cases/${caseId}/validations`),
   validation: (id: string) => request<ValidationOut>("GET", `/validations/${id}`),
   artifacts: (caseId: string) => request<ArtifactOut[]>("GET", `/cases/${caseId}/artifacts`),

@@ -152,15 +152,18 @@ def doe_results_per_esl(sid: str, request: Request, design: str | None = Query(d
 @router.post("/doe/studies/{sid}/view3d/regenerate", response_model=DoeStudyOut, status_code=202)
 def doe_view3d_regenerate(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """v0.23.3 3D 다시 만들기(esl_jig_view.md §3): 지그 응답 3D·지그 진단 3D·하중 정의 보기만 다시 만든다(순위·결과 파일 불변).
-    기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 지그 미계산·끝나지 않음 = 409 VIEW3D_REGEN_UNAVAILABLE."""
+    기존 DOE_RUN 큐(BD_POST 부터). 권한 = 관리자 ∨ 작성자(403), 지그 미계산·끝나지 않음 = 409 VIEW3D_REGEN_UNAVAILABLE.
+    v0.24.1: `POST /doe/studies/{sid}/sources/jig` 의 별칭(요청·응답·코드 동일 — esl_view3d_sources.md §5.2)."""
     return svc.regenerate_view3d(get_ctx(request), principal, sid)
 
 
 @router.post("/doe/studies/{sid}/sources/{src}", response_model=DoeStudyOut, status_code=202)
 def doe_add_source(sid: str, src: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    """v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2): src = bforce(경계력 ESL) | fint(내력 ESL). 기존 스터디에서 형상
-    생성 없이 안마다 출처 하중 선형 풀이 + 보기·3D(결과 파일 불변). 기존 DOE_RUN 큐(BD_POST 부터). 모르는 src = 404 SOURCE_NOT_FOUND,
-    권한 = 관리자 ∨ 작성자(403), 다른 메시 비교 = 409 <code>_UNSUPPORTED, 끝나지 않음·작업 중 = 409."""
+    """출처 자료 만들기(v0.24.0 노드 힘 출처 추가 계산 esl_bforce.md §6·esl_fint.md §5.2 + v0.24.1 지그 3D 다시 만들기 일반화
+    esl_view3d_sources.md §5.2): src = jig(지그 3D 다시 만들기 — /view3d/regenerate 와 같음) | bforce(경계력 ESL) | fint(내력 ESL).
+    기존 스터디에서 형상 생성 없이 보기·3D 만 만든다(결과 파일 불변). 기존 DOE_RUN 큐(BD_POST 부터). 모르는 src(full 포함) = 404
+    SOURCE_NOT_FOUND, 권한 = 관리자 ∨ 작성자(403), 조건 실패 = 409 VIEW3D_REGEN_UNAVAILABLE(jig)·<code>_UNSUPPORTED(노드 힘),
+    끝나지 않음·작업 중 = 409."""
     return svc.add_source(get_ctx(request), principal, sid, src)
 
 

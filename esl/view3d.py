@@ -438,6 +438,82 @@ def unpack_values(buf: bytes, arrays: list[dict[str, Any]], n: int) -> dict[str,
     return out
 
 
+# ====================================================================== v0.24.1 재현(목표·응답·오차) — esl_view3d_sources.md §3
+RECON_SCHEMA = "esl/view3d_recon/1"
+RECON_VERSION = 1
+RECON_JSON, RECON_BIN = "recon.json", "recon.bin"
+RECON_KEYS = ("tgt", "fit", "err")
+
+
+def _umax(u: np.ndarray) -> float:
+    return float(np.linalg.norm(u, axis=1).max()) if u.shape[0] else 0.0
+
+
+def recon_fields(u_tgt, u_fit) -> dict[str, Any]:
+    """재현 수치(순수): err = u_fit − u_tgt, 색 범위 tgt_max·fit_max·err_max(노드 변위 크기 최대), mac·umax_* =
+    ``esl.mech.bforce.mac``·``recon_report`` 정의 그대로(식 복제 없음 — 목표 = 기준, 응답 = 재현)."""
+    from esl.mech import bforce as bfm
+
+    t = np.asarray(u_tgt, np.float64).reshape(-1, 3)
+    f = np.asarray(u_fit, np.float64).reshape(-1, 3)
+    if t.shape != f.shape:
+        raise EslError("OUTPUT_INCONSISTENT", "목표·응답 변위 크기가 서로 다릅니다")
+    err = f - t
+    rep = bfm.recon_report(t, f, None, np.zeros((0, 3)))
+    return {"err": err, "tgt_max": _umax(t), "fit_max": _umax(f), "err_max": _umax(err), "mac": rep["mac"],
+            "umax_tgt": rep["umax_ref"], "umax_fit": rep["umax_val"], "umax_err": rep["umax_err"]}
+
+
+def pack_disp(named) -> tuple[bytes, list[dict[str, Any]]]:
+    """변위 배열 여러 개 → (bytes, arrays). 배열마다 int16×3(성분별 s_c = max|u_c|/32767 — ``pack_values`` 의 u 규칙과 같음,
+    전부 0 이면 s = 0·q = 0), 정점별 x,y,z 교차, 4바이트 정렬(패딩 0). named = [(key, (N,3)), …] 순서 그대로."""
+    buf = bytearray()
+    arrays = []
+    for key, u in named:
+        v = np.asarray(u, np.float64).reshape(-1, 3)
+        scale = (np.abs(v).max(axis=0) if v.shape[0] else np.zeros(3)) / 32767
+        s = np.where(scale > 0, scale, 1.0)
+        q = np.clip(np.rint(v / s), -32767, 32767).astype("<i2")
+        buf += b"\x00" * (-len(buf) % 4)
+        arrays.append({"key": str(key), "dtype": "int16", "comps": 3, "offset": len(buf),
+                       "scale": [float(x) for x in scale]})
+        buf += q.tobytes()
+    buf += b"\x00" * (-len(buf) % 4)
+    return bytes(buf), arrays
+
+
+def build_recon(out_dir: str, *, node_id, u_tgt, u_fit, key: str, src: str, rigid: str,
+                esl_run_id: str = "") -> dict[str, Any]:
+    """out_dir 에 recon.bin(tgt·fit·err int16×3) 을 먼저, recon.json 을 마지막에 쓰고 recon dict 를 돌려준다(build_view 와 같은
+    "출력 폴더에 쓰는 빌더" 계열 — json 이 없으면 미완성). 정점 순서 = 입력 순서(호출부가 model/메시 노드 순서로 맞춰 넘김)."""
+    nid = np.asarray(node_id, np.int64).reshape(-1)
+    t = np.asarray(u_tgt, np.float64)
+    f = np.asarray(u_fit, np.float64)
+    n = nid.size
+    if t.shape != (n, 3) or f.shape != (n, 3):
+        raise EslError("OUTPUT_INCONSISTENT", "node_id·목표·응답 변위 크기가 서로 다릅니다")
+    if not (np.isfinite(t).all() and np.isfinite(f).all()):
+        raise EslError("OUTPUT_INVALID", "목표·응답 변위에 NaN/inf 가 있습니다")
+    r = recon_fields(t, f)
+    b, arrays = pack_disp([("tgt", t), ("fit", f), ("err", r["err"])])
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, RECON_BIN), "wb") as fh:
+        fh.write(b)
+    doc = {"schema": RECON_SCHEMA, "recon_version": RECON_VERSION, "key": str(key), "src": str(src),
+           "esl_run_id": str(esl_run_id), "n_nodes": int(n), "rigid": str(rigid), "bytes": len(b), "arrays": arrays,
+           "ranges": {"tgt_max": r["tgt_max"], "fit_max": r["fit_max"], "err_max": r["err_max"]},
+           "mac": r["mac"], "umax_tgt": r["umax_tgt"], "umax_fit": r["umax_fit"], "umax_err": r["umax_err"]}
+    with open(os.path.join(out_dir, RECON_JSON), "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, ensure_ascii=False, allow_nan=False)
+    return doc
+
+
+def unpack_disp(buf: bytes, arrays: list[dict[str, Any]], n: int) -> dict[str, np.ndarray]:
+    """recon.bin 복원(시험·검증용 — 프런트 decodeDisp 와 같은 계산): q·s, (n,3)."""
+    return {a["key"]: np.frombuffer(buf, np.dtype("<i2"), count=n * 3, offset=int(a["offset"])).astype(np.float64)
+            .reshape(n, 3) * np.asarray(a["scale"], np.float64).reshape(1, 3) for a in arrays}
+
+
 # ====================================================================== 범위
 def _p99(v: np.ndarray) -> float | None:
     """⑤ DP-10 과 같은 견고한 범위(P99, 유효숫자 2자리 올림). 값이 없으면 None."""
