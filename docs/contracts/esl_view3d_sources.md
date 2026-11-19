@@ -141,6 +141,7 @@
 | `V3D_SRC_NOT_RUN` | 이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다 |
 | `BF_DISABLED` · `FINT_DISABLED` | 설정에서 꺼짐(bforce.enabled · bforce.fint.enabled) |
 | `BF_NO_DATA` · `FINT_NO_DATA` · `*_FAILED` | Case 요약 `reason` 그대로(예: FINT_NO_DATA_TEXT) |
+| `BF_EXTRACT_FAILED` · `BF_EXTRACT_SKIPPED`(v0.24.2, `esl_bforce_ondemand.md` §5) | Case 요약 `reason` 그대로(경계력·내력 같은 문구) — `REASON_TEXT` 에 넣지 않음(기존 `reason_text` 경로, 코드 변경 없음) |
 | `V3D_RESP_NEED_VAL` | 응답 변위 없음 — ⑤ 검증에서 전체 풀이(validation.full_solve)를 하면 보입니다 |
 | `V3D_RESP_SKIPPED` | 응답 변위 없음 — ESL 단계 재현 풀이 생략(<recon.reason>) |
 | `V3D_RECON_NA`(스터디 full) | 목표 변위(sm_ref)가 이 하중의 응답 자체 — 재현 비교 해당 없음 |
