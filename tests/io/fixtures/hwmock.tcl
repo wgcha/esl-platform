@@ -93,8 +93,12 @@ proc ::mock::model_GetResultCtrlHandle {h} {
     ::mock::obj $h res
 }
 proc ::mock::model_GetQueryCtrlHandle {h} { ::mock::obj $h qry }
+# call log (v0.24.2 bf-only tests): selection set types created, result types set on the contour control
+set ::mock::addset_calls {}
+set ::mock::dtype_calls {}
 proc ::mock::model_AddSelectionSet {type} {
     variable seq; variable sets
+    lappend ::mock::addset_calls $type
     incr seq
     set sets($seq,type) $type
     set sets($seq,ids) {}
@@ -178,7 +182,7 @@ proc ::mock::res_GetContourCtrlHandle {h} { ::mock::obj $h con }
 set ::mock::sim_calls {}
 set ::mock::fail_query_dtype {}
 proc ::mock::res_SetCurrentSimulation {i} { set ::mock::st(sim) $i; lappend ::mock::sim_calls $i }
-proc ::mock::con_SetDataType {t} { set ::mock::st(dtype) $t; set ::mock::st(layer) "" }
+proc ::mock::con_SetDataType {t} { lappend ::mock::dtype_calls $t; set ::mock::st(dtype) $t; set ::mock::st(layer) "" }
 proc ::mock::con_SetDataComponent {c} { set ::mock::st(comp) $c }
 proc ::mock::con_SetLayer {l} { set ::mock::st(layer) $l }
 # result system: only "SetResolvedIn {Elemental System}" style is accepted, unless ::mock::no_system is set

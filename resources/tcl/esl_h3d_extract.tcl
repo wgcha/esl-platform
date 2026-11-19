@@ -28,7 +28,8 @@
 #   strain_frames.csv  frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp   (C: frames D and P)
 #   disp.csv           frame_index,node_id,ux,uy,uz                     (C)
 #   bf_<kind>.csv      frame_index,node_id,x,y,z (mass: frame_index,node_id,v)  (C: frames D, v0.24.0 boundary-force ESL,
-#                      kind = cont cont2 acc mass fint; only the kinds found in the h3d, done.json "bforce")
+#                      kind = cont cont2 acc mass fint; only the kinds found in the h3d, done.json "bforce";
+#                      bf-only mode: frames bf_frames, the only CSV files written)
 #   done.json          {"ok":true,"candidate_frames":{"max_strain":[..],"plastic_strain":[..]},"frames_D",
 #                       "prev_frames" (f-1 >= 0 of each f in D),"strain_frames" (D U prev),
 #                       "hot_k","reach_rtol","passes":{...},...} or {"ok":false,"code","error","failed_step",
@@ -53,6 +54,13 @@
 #   v0.24.0 boundary-force ESL: bf_on (0 = off, no "bforce" in done.json; the server worker sends 1), bf_names_<kind> ("a|b" result type candidates: cont "Contact Forces|...",
 #   cont2, acc "Acceleration|...", mass, fint), bf_vec_comps ("X Y Z", each "X|x" candidates). A missing type is recorded
 #   as {"type":null,"reason"} in done.json bforce.kinds (never an extraction failure).
+#   v0.24.2 bf-only mode (esl_bforce_ondemand.md 2): bf_only (0 = off, default; 1 needs bf_on 1), bf_frames
+#   (blank separated distinct frame indices >= 0, any order). With bf_only 1 the run selects the part nodes only and
+#   writes bf_<kind>.csv for the bf_frames (no strain source, element selection, frames/model/elems/strain/disp CSV
+#   or ranking; the strain/disp/ranking keys are validated but unused, -hot_k / -top_n ignored) and done.json
+#   {"ok":true,"mode":"bf_only","n_frames" (subcase frames),"n_nodes","frames","frame_times","bforce",
+#   "passes":{"BF":{...}},...}; a frame >= n_frames -> H3D_MISSING_RESULT. Failure json: + "mode":"bf_only".
+#   Without bf_only (or 0) the outputs are unchanged.
 #   -hot_k / -top_n arguments override request.txt.
 #
 # Strain source fallback (contract esl_strain_fallback.md, v0.12.1): unless strain_type or epsp_type is given
@@ -745,8 +753,11 @@ proc ::esl::read_config {path extra} {
         scalar_comps "Scalar value|Scalar" layer_exclude "Max|Min" layer_prefer "Lower|Upper" dump_max_bytes 0 dump_free_bytes "" \
         bf_on 0 bf_names_cont "Contact Forces|Contact Force|CONT" \
         bf_names_cont2 "Tied Contact Forces|Contact Forces (TYPE2)|CONT2" bf_names_acc "Acceleration|ACC" \
-        bf_names_mass "Nodal Mass|Mass|MASS" bf_names_fint "Internal Forces|Internal Force|FINT" bf_vec_comps "X Y Z"]
+        bf_names_mass "Nodal Mass|Mass|MASS" bf_names_fint "Internal Forces|Internal Force|FINT" bf_vec_comps "X Y Z" \
+        bf_only 0 bf_frames ""]
     set cfg [::esl::read_request $path $defaults]
+    # v0.24.2 bf-only mode: the failure json carries "mode" once the request asks for it
+    if {[dict get $cfg bf_only] eq "1"} { set ::esl::mode bf_only }
     # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
     set ::esl::forced 0
     if {$path ne "" && [file isfile $path]} {
@@ -779,9 +790,30 @@ proc ::esl::read_config {path extra} {
     set bo [dict get $cfg bf_on]
     if {$bo ne "0" && $bo ne "1"} { ::esl::fail INPUT_INVALID "bf_on must be 0 or 1: $bo" }
     if {[llength [dict get $cfg bf_vec_comps]] != 3} { ::esl::fail INPUT_INVALID "bf_vec_comps needs 3 names" }
+    ::esl::check_bf_only $cfg
     set mi [dict get $cfg cum_min_incr]
     if {![string is double -strict $mi] || $mi < 0} { ::esl::fail INPUT_INVALID "cum_min_incr must be >= 0: $mi" }
     return $cfg
+}
+
+# v0.24.2 bf-only request keys (esl_bforce_ondemand.md 2.1): bf_only 0|1; with 1: bf_on 1 and bf_frames = distinct
+# integers >= 0 (blank separated, any order). Sets ::esl::bf_frames (ascending).
+proc ::esl::check_bf_only {cfg} {
+    set bo [dict get $cfg bf_only]
+    if {$bo ne "0" && $bo ne "1"} { ::esl::fail INPUT_INVALID "bf_only must be 0 or 1: $bo" }
+    set ::esl::bf_frames {}
+    if {$bo ne "1"} { return }
+    if {[dict get $cfg bf_on] ne "1"} { ::esl::fail INPUT_INVALID "bf_only needs bf_on 1" }
+    set raw [dict get $cfg bf_frames]
+    if {[catch {llength $raw} n] || $n == 0} { ::esl::fail INPUT_INVALID "bf_frames is empty or not a list (bf_only 1): $raw" }
+    set seen {}
+    foreach f $raw {
+        # decimal digits only (no sign, no octal reading of leading zeros)
+        if {![regexp {^[0-9]+$} $f] || [scan $f %d v] != 1} { ::esl::fail INPUT_INVALID "bf_frames: not a frame index >= 0: $f" }
+        if {[lsearch -exact -integer $seen $v] >= 0} { ::esl::fail INPUT_INVALID "bf_frames: frame $v twice" }
+        lappend seen $v
+    }
+    set ::esl::bf_frames [lsort -integer $seen]
 }
 
 # Cumulative scene (optional request key prev_file): CSV elem_id,prev_epsp,prev_eq written by the worker
@@ -1048,6 +1080,55 @@ proc ::esl::bf_resolve {res sc dtypes cfg} {
         lappend found [list $k $dt $comps $fields]
     }
     return [list $found $js]
+}
+
+# Shared by pass C and the bf-only mode (v0.24.2, esl_bforce_ondemand.md 2.6): one bf_<kind>.csv per found kind.
+# fhvar = caller array (kind -> channel), rowsvar = caller dict (kind -> rows).
+proc ::esl::bf_open {out bfk fhvar rowsvar} {
+    upvar 1 $fhvar bfh $rowsvar bfrows
+    foreach b $bfk {
+        lassign $b bk bdt bcomps bfields
+        set hdr [expr {$bk eq "mass" ? "frame_index,node_id,v" : "frame_index,node_id,x,y,z"}]
+        set bfh($bk) [::esl::open_csv [file join $out bf_$bk.csv] $hdr]
+        dict set bfrows $bk 0
+        ::esl::progress "bforce: $bk = $bdt [list $bcomps]"
+    }
+}
+
+# One node chunk (selection set setid) of frame fi x every found kind -> rows "<fi>,<node>,..." (current simulation).
+# A query failure marks the kind dead (deadvar dict: kind -> reason) and skips it from then on (never fails).
+proc ::esl::bf_chunk {con qry setid fi ci bfk fhvar deadvar rowsvar} {
+    upvar 1 $fhvar bfh $deadvar bfdead $rowsvar bfrows
+    foreach b $bfk {
+        lassign $b bk bdt bcomps bfields
+        if {[dict exists $bfdead $bk]} { continue }
+        if {[catch {::esl::collect $con $qry $setid node $bfields "bf $bk frame $fi chunk $ci" "" 1} acc]} {
+            dict set bfdead $bk "query failed: [::esl::short $acc 200]"
+            ::esl::warn "bforce $bk ($bdt): query failed, recorded as missing: [::esl::short $acc 200]"
+            continue
+        }
+        lassign [::esl::emit $bfh($bk) "$fi," $acc [llength $bcomps] 0] n m
+        dict incr bfrows $bk $n
+        unset acc
+    }
+}
+
+# Close the bf CSVs; dead kinds: file deleted, type null + reason. Returns the json members of bforce.kinds
+# (bfjs = members of the kinds not found by bf_resolve, first).
+proc ::esl::bf_close {out bfk bfjs fhvar deadvar rowsvar} {
+    upvar 1 $fhvar bfh $deadvar bfdead $rowsvar bfrows
+    set bfk_js $bfjs
+    foreach b $bfk {
+        lassign $b bk bdt bcomps bfields
+        close $bfh($bk)
+        if {[dict exists $bfdead $bk]} {
+            file delete -force [file join $out bf_$bk.csv]
+            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":null,\"reason\":[::esl::jstr [dict get $bfdead $bk]]\}"
+        } else {
+            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":[::esl::jstr $bdt],\"comps\":[::esl::jarr $bcomps],\"rows\":[dict get $bfrows $bk]\}"
+        }
+    }
+    return $bfk_js
 }
 
 # nodes -> disp.csv. No ranking (the core rebuilds the max-hold series). vm_hv = 0 when the type has no
@@ -1439,6 +1520,124 @@ proc ::esl::write_done {out ok extra {raw ""}} {
     return [::esl::write_json $out done.json esl_extract_done_fallback.json "\{$body\}"]
 }
 
+# ---- v0.24.2 bf-only mode (esl_bforce_ondemand.md 2.2-2.5): request bf_only 1 + bf_frames "f ...".
+# Same session / part / subcase / node selection rules as the full extraction; no strain source, no element
+# selection, no frames/model/elems/strain/disp CSV, no ranking. Writes bf_<kind>.csv (requested frames only) and
+# done.json {"mode":"bf_only","n_frames","n_nodes","frames","frame_times","bforce",...}.
+proc ::esl::run_bf_only {out cfg spec} {
+    variable h3d
+    set frames $::esl::bf_frames
+    set sc [dict get $cfg subcase]
+    set csize [dict get $cfg chunk]
+    ::esl::progress "open session and load model/results (can take minutes for a large h3d)"
+    set hd [::esl::open_model $h3d]
+    set post [dict get $hd C]
+    set model [dict get $hd M]
+    set res [dict get $hd R]
+    set qry [dict get $hd Q]
+    set x $::esl::sfx
+
+    set need_list [expr {$spec eq "" || ![string is integer -strict $spec]}]
+    if {[catch {::esl::list_components $model $qry 0} e]} {
+        if {$need_list} { error "component list failed at $::esl::cur_step: $e" }
+        ::esl::warn "component list failed: $e"
+    }
+    ::esl::step resolve_part
+    if {$spec eq ""} {
+        ::esl::fail INPUT_INVALID "no part given: pass -part <title or id> (e.g. -part chassis_rear); see components in done.json"
+    }
+    set pid [::esl::resolve_part $spec]
+    set ::esl::part_id $pid
+    set ptitle ""
+    foreach c $::esl::comps {
+        if {[lindex $c 0] eq $pid} { set ptitle [lindex $c 1] }
+    }
+
+    ::esl::step GetSubcaseList
+    set subcases {}
+    catch {set subcases [::esl::do GetSubcaseList {$res GetSubcaseList}]}
+    if {[llength $subcases] == 0} {
+        catch {::esl::do SetResult_retry {$model SetResult $h3d}}
+        catch {set subcases [::esl::do GetSubcaseList_retry {$res GetSubcaseList}]}
+    }
+    if {[lsearch -exact $subcases $sc] < 0} {
+        ::esl::fail H3D_MISSING_RESULT "subcase $sc not in h3d (available: $subcases)"
+    }
+    ::esl::do SetCurrentSubcase {$res SetCurrentSubcase $sc}
+    set sims [::esl::do GetSimulationList {$res GetSimulationList $sc}]
+    set nsim [llength $sims]
+    if {$nsim == 0} { ::esl::fail H3D_MISSING_RESULT "subcase $sc has no simulations" }
+    set dtypes [::esl::do GetDataTypeList {$res GetDataTypeList $sc}]
+    ::esl::step check_frames
+    foreach f $frames {
+        if {$f >= $nsim} { ::esl::fail H3D_MISSING_RESULT "bf_frames: frame $f not in subcase $sc ($nsim frames)" }
+    }
+    set con esl_con_$x
+    ::esl::do GetContourCtrlHandle {$res GetContourCtrlHandle $con}
+
+    # ---- part nodes (same selection rule as the full extraction), node chunk sets
+    set nset esl_nset_$x
+    set nset_id [::esl::do AddSelectionSet_node {$model AddSelectionSet node}]
+    ::esl::do GetSelectionSetHandle_node {$model GetSelectionSetHandle $nset $nset_id}
+    ::esl::step select_part_node
+    set nsel [::esl::select_part $nset $pid [dict get $cfg node_selection]]
+    ::esl::step node_ids
+    set nids [::esl::set_ids $nset $qry $nset_id node]
+    ::esl::progress "bf-only: part $pid ($ptitle): [llength $nids] nodes, $nsim frames, frames {$frames}"
+    set nchunks [::esl::make_chunks $model $qry node $nids $csize $nset_id node]
+    set nn_ch [llength $nchunks]
+
+    # ---- boundary-force kinds (bf_resolve rule), requested frames x node chunks
+    ::esl::step bf_resolve
+    lassign [::esl::bf_resolve $res $sc $dtypes $cfg] bfk bfjs
+    set bfdead [dict create]
+    set bfrows [dict create]
+    ::esl::bf_open $out $bfk bfh bfrows
+    set t0 [::esl::ms]
+    set times {}
+    set K [llength $frames]
+    set k 0
+    foreach fi $frames {
+        incr k
+        lappend times [::esl::num [::esl::sim_time $sims $fi]]
+        if {[llength $bfk] == 0} { continue }
+        ::esl::set_sim $res $post $fi
+        set ci 0
+        foreach ch $nchunks {
+            incr ci
+            ::esl::progress "bf-only frame $fi ($k/$K) nodes chunk $ci/$nn_ch"
+            ::esl::bf_chunk $con $qry [lindex $ch 0] $fi $ci $bfk bfh bfdead bfrows
+        }
+    }
+    set bfk_js [::esl::bf_close $out $bfk $bfjs bfh bfdead bfrows]
+    set rows 0
+    dict for {bk n} $bfrows {
+        if {![dict exists $bfdead $bk]} { incr rows $n }
+    }
+    lappend ::esl::passes "\"BF\":\{\"frames\":[::esl::jints $frames],\"node_chunks\":$nn_ch,\"rows\":$rows,\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "bf-only done ([::esl::secs $t0] s, $rows rows)"
+
+    ::esl::step CloseStack
+    catch {hwi CloseStack}
+    ::esl::step write_done
+    set ::esl::cur_step "done"
+    lappend ::esl::steps_done write_csv
+    set ch_json {}
+    dict for {k2 v2} $::esl::chunk_how { lappend ch_json "[::esl::jstr $k2]:[::esl::jstr $v2]" }
+    if {[::esl::write_done $out 1 [list mode [::esl::jstr bf_only] part_id $pid part_title [::esl::jstr $ptitle] \
+        part_spec [::esl::jstr $spec] subcase [::esl::jstr $sc] n_frames $nsim n_nodes [llength $nids] \
+        node_selection [::esl::jstr [lindex $nsel 0]] chunk $csize chunks "\{[join $ch_json ,]\}" \
+        frames [::esl::jints $frames] frame_times "\[[join $times ,]\]" \
+        bforce "\{\"on\":true,\"frames\":[::esl::jints $frames],\"kinds\":\{[join $bfk_js ,]\}\}" \
+        passes "\{[join $::esl::passes ,]\}" value_format [::esl::jstr $::esl::numfmt] \
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]]]] eq ""} {
+        error "done.json could not be written"
+    }
+    set ::esl::written 1
+    ::esl::progress "extract done: bf-only mode (frames {$frames}), [llength $nids] nodes"
+    ::esl::plog_close
+}
+
 proc ::esl::run {arglist} {
     variable h3d
     ::esl::step args
@@ -1469,6 +1668,11 @@ proc ::esl::run {arglist} {
     set ::esl::sys_req [dict get $cfg strain_system]
     if {[lsearch -exact {elemental analysis global none} [string tolower $::esl::sys_req]] < 0} {
         ::esl::fail INPUT_INVALID "strain_system must be elemental|analysis|global|none: $::esl::sys_req"
+    }
+    if {$::esl::mode eq "bf_only"} {
+        # v0.24.2 (esl_bforce_ondemand.md 2.2): node selection + boundary-force queries of bf_frames only
+        ::esl::run_bf_only $out $cfg $spec
+        return
     }
     set rtol [dict get $cfg reach_rtol]
     set top_n [dict get $cfg top_n]
@@ -1940,13 +2144,7 @@ proc ::esl::run {arglist} {
     lassign [::esl::bf_resolve $res $sc $dtypes $cfg] bfk bfjs
     set bfdead [dict create]
     set bfrows [dict create]
-    foreach b $bfk {
-        lassign $b bk bdt bcomps bfields
-        set hdr [expr {$bk eq "mass" ? "frame_index,node_id,v" : "frame_index,node_id,x,y,z"}]
-        set bfh($bk) [::esl::open_csv [file join $out bf_$bk.csv] $hdr]
-        dict set bfrows $bk 0
-        ::esl::progress "bforce: $bk = $bdt [list $bcomps]"
-    }
+    ::esl::bf_open $out $bfk bfh bfrows
     set srows 0
     set drows 0
     set k 0
@@ -1975,33 +2173,12 @@ proc ::esl::run {arglist} {
             incr drows $n
             if {$m > 0} { ::esl::note "pass C: nodes without all displacement values skipped" $m }
             unset acc
-            foreach b $bfk {
-                lassign $b bk bdt bcomps bfields
-                if {[dict exists $bfdead $bk]} { continue }
-                if {[catch {::esl::collect $con $qry [lindex $ch 0] node $bfields "bf $bk frame $fi chunk $ci" "" 1} acc]} {
-                    dict set bfdead $bk "query failed: [::esl::short $acc 200]"
-                    ::esl::warn "bforce $bk ($bdt): query failed, recorded as missing: [::esl::short $acc 200]"
-                    continue
-                }
-                lassign [::esl::emit $bfh($bk) "$fi," $acc [llength $bcomps] 0] n m
-                dict incr bfrows $bk $n
-                unset acc
-            }
+            ::esl::bf_chunk $con $qry [lindex $ch 0] $fi $ci $bfk bfh bfdead bfrows
         }
     }
     close $fs
     close $fds
-    set bfk_js $bfjs
-    foreach b $bfk {
-        lassign $b bk bdt bcomps bfields
-        close $bfh($bk)
-        if {[dict exists $bfdead $bk]} {
-            file delete -force [file join $out bf_$bk.csv]
-            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":null,\"reason\":[::esl::jstr [dict get $bfdead $bk]]\}"
-        } else {
-            lappend bfk_js "[::esl::jstr $bk]:\{\"type\":[::esl::jstr $bdt],\"comps\":[::esl::jarr $bcomps],\"rows\":[dict get $bfrows $bk]\}"
-        }
-    }
+    set bfk_js [::esl::bf_close $out $bfk $bfjs bfh bfdead bfrows]
     # bf_on 0 (default when request.txt has no bf keys) -> no "bforce" member: outputs identical to earlier versions
     set bf_extra {}
     if {[dict get $cfg bf_on] eq "1"} {
@@ -2089,6 +2266,8 @@ proc ::esl::run {arglist} {
 
 set ::esl::part_spec ""
 set ::esl::part_id ""
+set ::esl::mode ""
+set ::esl::bf_frames {}
 set ::esl::tried {}
 set ::esl::forced 0
 set ::esl::layer_basis ""
@@ -2105,7 +2284,9 @@ if {[catch {::esl::run $::argv} ::esl::err ::esl::opts]} {
     catch {hwi CloseStack}
     if {!$::esl::written} {
         set ::esl::pidj [expr {[string is integer -strict $::esl::part_id] ? $::esl::part_id : "null"}]
-        if {[catch {::esl::write_done $::esl::outdir 0 [list code [::esl::jstr $::esl::code] \
+        # bf-only request (v0.24.2): "mode" after code; other requests: members unchanged
+        set ::esl::mode_m [expr {$::esl::mode eq "" ? {} : [list mode [::esl::jstr $::esl::mode]]}]
+        if {[catch {::esl::write_done $::esl::outdir 0 [list code [::esl::jstr $::esl::code] {*}$::esl::mode_m \
                 part_spec [::esl::jstr $::esl::part_spec] part_id $::esl::pidj \
                 passes "\{[join $::esl::passes ,]\}" strain_tried [::esl::tried_json]] \
                 [::esl::diag_members $::esl::err $::esl::opts]} ::esl::werr]} {
