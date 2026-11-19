@@ -54,6 +54,8 @@ from esl.fsutil import atomic_replace
 from esl.io import RESULT_FILES, SCALAR_SOURCES, decide_shear, pack_results, rad_eq, strain_source_of
 from esl.io.results_csv import METRICS
 from esl.io import bforce_csv as _bfcsv
+from esl.io import bforce_ondemand as _bfod
+from esl.io.backup import BACKUP_DIR, BACKUP_TS_FMT
 from esl.mech import kabsch, strain, supports, tstar
 from esl.mech.shell import ShellModel, solver_check_kwargs
 from esl.rad import parse_rad, scan_includes
@@ -66,7 +68,6 @@ VERIFY_STAGES = ("vd_patch", "vd_compare")
 EXPORT_TARGETS = ("radioss_inc", "fem", "csv")
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT, D_REPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export", "07_report")
-BACKUP_DIR = "_backup"
 RUN_JSON = "run.json"
 HOT_K_WARN = 1000          # extract.hot_k 상한은 없고 이보다 크면 경고
 _HASH_CHUNK = 4 * 1024 * 1024
@@ -1134,8 +1135,56 @@ def _bf_text(code: str, **kw) -> str:
            "FINT_NO_MASS": "질량 없음 — 관성 이완 생략",
            "FINT_RECON_POOR": "기준 재현 미달: MAC {mac} (기준 ≥ {mac_min:g}), umax 오차 {err} (기준 ≤ {err_max:g})",
            "FINT_REACTION": "3-2-1 반력 합 / Σ|F| = {rel:.3g} > {th:g} (기준 형상 잔차)",
-           "FINT_FAILED": "내력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로"}.get(code, code)
+           "FINT_FAILED": "내력 ESL 계산 실패({err}) — 전 노드 ESL 결과는 그대로",
+           # v0.24.2 경계력 원자료 ESL 때 보충(esl_bforce_ondemand.md §5) — 경계력·내력 같은 code·reason, detail = 워커 CAUSE_TEXT
+           "BF_EXTRACT_FAILED": "경계력 원자료 보충 실패 — 프레임 {frame}: {detail}. ③ ESL 을 다시 계산하면 다시 시도합니다",
+           "BF_EXTRACT_SKIPPED": "경계력 원자료 보충 생략 — 프레임 {frame}: {detail}"}.get(code, code)
     return f"{code}: " + msg.format(**kw)
+
+
+# 선택 프레임 경계력 원자료가 01_extract 에 없고 보충 기록도 없을 때(BF_NO_DATA·FINT_NO_DATA) 사유 — 실제 원인별(v0.24.2).
+# old = 비덤프 추출인데 bforce 자료 없음(v0.24.0 이전 TCL·bf_on 0 — v0.24.1 문구 그대로), dump = 덤프 방식 추출(TCL 덤프 경로는
+# 경계력을 추출하지 않음), frame = 경계력 자료는 있으나 선택 프레임이 없음(보충 병합 뒤 다른 프레임 선택 등).
+_BF_NO_DATA_WHY = {
+    ("bforce", "old"): "추출물에 경계력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행",
+    ("fint", "old"): "추출물에 경계력·내력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행",
+    ("bforce", "dump"): "덤프 방식 추출(변형률 텐서 전 프레임)에는 경계력 결과가 없음 — h3d 입력 Case 는 ③ ESL 계산 때 "
+                        "선택 프레임만 보충(bforce.on_demand)",
+    ("fint", "dump"): "덤프 방식 추출(변형률 텐서 전 프레임)에는 경계력·내력 결과가 없음 — h3d 입력 Case 는 ③ ESL 계산 때 "
+                      "선택 프레임만 보충(bforce.on_demand)",
+    ("bforce", "frame"): "선택 프레임 {frame} 의 경계력 결과가 추출물에 없음(있는 프레임 {frames}) — h3d 입력 Case 는 ③ ESL "
+                         "계산 때 보충(bforce.on_demand)",
+    ("fint", "frame"): "선택 프레임 {frame} 의 경계력·내력 결과가 추출물에 없음(있는 프레임 {frames}) — h3d 입력 Case 는 ③ ESL "
+                       "계산 때 보충(bforce.on_demand)",
+}
+
+
+def _bf_missing(ctx: Context, frame: int) -> dict | None:
+    """선택 프레임의 경계력 원자료 "없음" 판정(경계력·내력 공용 — esl_bforce_ondemand.md §5). 있으면 None.
+
+    없으면 {code, reason(경계력)|why(원인 키), warn}: 이 작업(ctx.tag)의 보충 시도가 실패·생략이면 그 code
+    (BF_EXTRACT_FAILED·SKIPPED)·문구(경계력·내력 같은 reason, warn = 경고 문구), 기록이 없으면 BF_NO_DATA 계열(원인 키 why)."""
+    xd = ctx.p(D_EXTRACT)
+    if _bfcsv.has_frame(xd, frame):
+        return None
+    n = _bfod.note(xd, frame, ctx.tag)
+    if n is not None and n["code"] in ("BF_EXTRACT_FAILED", "BF_EXTRACT_SKIPPED"):
+        w = _bf_text(n["code"], frame=frame, detail=n["detail"])
+        return {"code": n["code"], "reason": w[len(n["code"]) + 2:], "warn": w}
+    doc = _bfcsv.read_doc(xd)
+    if doc is not None and _bfcsv.doc_frames(doc):
+        why = "frame"
+    else:
+        try:
+            dump = ((_frames_meta(ctx).get("strain_fallback") or {}).get("mode")) == "dump"
+        except (OSError, ValueError):
+            dump = False
+        why = "dump" if dump else "old"
+    return {"code": None, "why": why, "frames": _bfcsv.doc_frames(doc)}
+
+
+def _bf_no_data_why(kind: str, miss: dict, frame: int) -> str:
+    return _BF_NO_DATA_WHY[(kind, miss["why"])].format(frame=frame, frames=miss["frames"])
 
 
 def _plastic_diag(ctx: Context, model: StoredModel, frame_index: int) -> dict:
@@ -1197,11 +1246,15 @@ def _bforce_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R
     bc = _config.bforce_settings(ctx.cfg)
     if not bc["enabled"]:
         return {"grade": None, "code": "BF_DISABLED"}
-    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), int(sel["frame_index"]))
+    fi = int(sel["frame_index"])
+    miss = _bf_missing(ctx, fi)
+    if miss is not None:                          # 선택 프레임 원자료 없음 = 04_esl 에 쓰지 않음(산출물 집합 불변)
+        if miss["code"]:                          # v0.24.2 보충 실패·생략(경고 1번 — 내력은 넣지 않음)
+            ctx.warnings.append(miss["warn"])
+            return {"grade": "none", "code": miss["code"], "reason": miss["reason"]}
+        return {"grade": "none", "code": "BF_NO_DATA", "reason": _bf_no_data_why("bforce", miss, fi)}
+    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), fi)
     have = sorted(k for k, v in data.items() if v is not None)
-    if xdoc is None:                              # 추출물에 경계력 자료 없음(이전 TCL·bf_on 0) = 04_esl 에 쓰지 않음(산출물 집합 불변)
-        why = "추출물에 경계력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행"
-        return {"grade": "none", "code": "BF_NO_DATA", "reason": why}
     if bfm.grade_of(have) == "none":
         why = f"접촉력 결과 유형이 h3d 에 없음(있는 종류 {have})"
         doc = {"schema": bfm.SCHEMA, "grade": "none", "code": "BF_NO_DATA", "reason": why,
@@ -1281,11 +1334,14 @@ def _fint_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, 
     fc = bc["fint"]
     if not bc["enabled"] or not fc["enabled"]:
         return {"grade": None, "code": "FINT_DISABLED"}
-    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), int(sel["frame_index"]))
+    fi = int(sel["frame_index"])
+    miss = _bf_missing(ctx, fi)
+    if miss is not None:                          # 선택 프레임 원자료 없음 = 04_esl 에 쓰지 않음(산출물 집합 불변)
+        if miss["code"]:                          # v0.24.2 보충 실패·생략 = 경계력과 같은 code·reason
+            return {"grade": "none", "code": miss["code"], "reason": miss["reason"]}
+        return {"grade": "none", "code": "FINT_NO_DATA", "reason": _bf_no_data_why("fint", miss, fi)}
+    data, xdoc = _bfcsv.frame_data(ctx.p(D_EXTRACT), fi)
     kinds = {k: data.get(k) is not None for k in bfm.KINDS}
-    if xdoc is None:                              # 추출물에 경계력 자료 없음 = 04_esl 에 쓰지 않음(산출물 집합 불변)
-        return {"grade": "none", "code": "FINT_NO_DATA",
-                "reason": "추출물에 경계력·내력 결과 없음(v0.24.0 이전 추출이거나 bf_on 0) — h3d 추출을 다시 실행"}
     if data.get("fint") is None:
         _write_json(ctx.f(d, FI_JSON), {"schema": bfm.SCHEMA, "source": bfm.FINT_SCHEMA_SOURCE, "grade": "none",
                                         "code": "FINT_NO_DATA", "reason": FINT_NO_DATA_TEXT, "kinds": kinds,
@@ -1992,7 +2048,7 @@ def run(config_path=None, rad=None, results=None, out=None, stage: str = "all", 
             record = _read_json(rj)
         except (OSError, ValueError):
             record = _new_record(out)
-    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime(BACKUP_TS_FMT)
     inv = {"started_at": _utcnow(), "stage": stage, "frame": frame, "support_nodes": support_nodes,
            "export_targets": list(targets), "tag": tag,
            "rad": rad, "results": results, "argv": argv, "ok": False, "error": None}
