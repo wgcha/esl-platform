@@ -1941,6 +1941,11 @@ export interface View3dReconArray {
   offset: number;
   scale: number[];
 }
+export interface View3dReconRanges {
+  tgt_max: number;
+  fit_max: number;
+  err_max: number;
+}
 /** 스터디 폴더 recon.json = View3dReconOut 에서 values_url 만 없음 */
 export type DoeReconFile = Omit<View3dReconOut, "values_url">;
 /** GET /esl-runs/{id}/view3d/recon?src= */
@@ -1954,7 +1959,7 @@ export interface View3dReconOut {
   rigid: string;
   bytes: number;
   arrays: View3dReconArray[];
-  ranges: { tgt_max: number; fit_max: number; err_max: number };
+  ranges: View3dReconRanges;
   mac: number | null;
   umax_tgt: number;
   umax_fit: number;

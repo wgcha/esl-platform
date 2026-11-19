@@ -766,7 +766,7 @@ export class MockServer {
       const src = query.get("src") ?? "full";
       const row = this.v3dSources.rows.find((x) => x.key === src);
       if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src });
-      if (this.v3dReconFail || !row.resp) return err(409, "V3D_RECON_UNAVAILABLE", row.resp_reason ?? "응답 변위 없음", { src, code: row.resp_code, reason: row.resp_reason });
+      if (this.v3dReconFail || !row.resp) return err(409, "V3D_RECON_UNAVAILABLE", row.resp_reason ?? "응답 변위 없음", { src, reason_code: row.resp_code, reason: row.resp_reason });
       return { status: 200, body: mockView3d().recon(run.id, query.get("src"), row.rigid ?? "kabsch") };
     }
     if ((r = m(/^\/esl-runs\/([^/]+)\/view3d$/)) && method === "GET") {
@@ -780,7 +780,7 @@ export class MockServer {
       if (src) {
         const row = this.v3dSources.rows.find((x) => x.key === src);
         if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src, keys: this.v3dSources.rows.map((x) => x.key) });
-        if (!row.available) return err(409, "V3D_SOURCE_UNAVAILABLE", row.reason ?? "출처 없음", { src, code: row.code, reason: row.reason });
+        if (!row.available) return err(409, "V3D_SOURCE_UNAVAILABLE", row.reason ?? "출처 없음", { src, reason_code: row.code, reason: row.reason });
       }
       return { status: 200, body: mockView3d().manifest(run.id, src) };
     }

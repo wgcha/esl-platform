@@ -317,8 +317,42 @@ DoeResultOut += source_add: {str: DoeView3dRegenOut}|null, view3d_bf_recon|view3
 - R-V3D-2 (P3 를 미루면) 스터디 노드 힘 재현 진단.
 - R-V3D-3 출처별 캐시 백업 정리(지금 legacy 와 같이 `_backup` 누적 — `regen_keep_backups` 같은 상한 검토).
 - R-V3D-4 하중 보기 geometry 공유(LOD 가 하중 p 에 의존하므로 LOD 없는 부품만 — 디스크 절약).
+- R-V3D-5 백엔드 응답 형식이 바뀌면 `frontend/src/__tests__/fixtures/real_v0241.json` 재생성(§15.3).
 
 ## 14. 미결 (가정대로 진행 가능)
 
 - **Q1** 전 노드 ESL 의 응답·재현을 ⑤ 검증 없이도 보이게 ESL 단계에서 3-2-1 풀이를 추가할까? — **가정: 안 함**(검증 compare_disp 사용 — ESL 시간 증가·⑤ 와 중복 회피). 하면 full 행 resp 위치만 `esl` 로 바뀌고 나머지 계약은 그대로.
 - **Q2** 스터디 재현 진단의 목표를 sm_ref(기준 메시 전 노드 ESL 응답 — 지그 진단과 같은 기준) 대신 Case 낙하 변위 u_rel 을 기준 메시로 옮긴 값으로 할까? — **가정: sm_ref**(지그 진단과 같은 목표 — 출처 간 수치 비교 가능). 바꾸면 MAC·오차 수치가 달라짐(구조 불변).
+
+## 15. 구현 메모(2026-11-19)
+
+통합(release/v0.24.1)에서 양쪽 인계 파일의 '계약과 다른 점'을 옮긴 표. 본문(§1~14)은 계약 원안 — 아래가 구현 사실이다.
+
+### 15.1 백엔드·코어
+
+| 항목 | 계약 | 구현 |
+|---|---|---|
+| 409 V3D_SOURCE_UNAVAILABLE·V3D_RECON_UNAVAILABLE detail | `{code(출처 사유), message, src, reason}` | `{code(오류 코드), message, src, reason_code, reason}` — detail.code 가 오류 코드라 출처 사유 코드는 `reason_code`. 화면은 `message`/`reason` 만 읽는다 |
+| SOURCE_ADD 표 열 | key·kind·need 등 | 열 3개 추가: `plan`(계획 열 이름 — need plan 용), `block`(막힘 코드 접미 `_UNAVAILABLE`\|`_ADD_UNAVAILABLE`), `verb`(문구 동사구) |
+| NEED 표 | — | (판정 함수, need 실패 접미 `_UNAVAILABLE`\|`_UNSUPPORTED`, 문구) |
+| `DoeResultOut.source_add` | 행 전부 | need 를 만족하는 행만, 없으면 `null` — 옛 키(view3d_regen·bforce_add·fint_add)와 정확한 거울 |
+| 404 SOURCE_NOT_FOUND 문구 | 가능 목록 | 목록 = SOURCE_ADD 키(jig 포함) |
+| recon.json | created_at 포함 가능 | `created_at` 없음(재현 키·바이트 결정적) |
+| 코어 공개 함수 | build_recon 등 | 추가: `view3d.unpack_disp`(시험·검증용), `view3d_src.reason_text·has_load·legacy_key·COLUMNS` |
+
+### 15.2 프런트
+
+| 항목 | 내용 |
+|---|---|
+| 머리 버튼 → 빈 탭 본문 이동 | D-0.24.1-V3D-9 에 따라 v0.24.0 의 3D 머리 버튼 위치가 바뀌어 옛 시험 4건의 조회 위치를 수정(기능 삭제 없음) |
+| 옛 거울 키 폴백 | `view3d_regen`·`bforce_add`·`fint_add` 는 `source_add` 가 없는 옛 서버 응답용으로 유지 |
+| 권한 없음 사유 | 자료 만들기 권한이 없으면 버튼 대신 사유 문구를 보인다 |
+| 옛 서버 폴백 | `/view3d/sources` 404 등 → 출처 탭 없이 v0.24.0 화면 그대로(`useCaseSources.failed`) |
+| recon 로딩 중 | 응답·오차 보기를 여는 동안 0장(빈 화면) — 로딩 표시만, 이전 보기 값을 섞지 않음 |
+| nodal-unavail-note | 현장 피드백으로 추가한 불가 사유 가시 줄(`data-testid=nodal-unavail-note`, 출처별) |
+
+### 15.3 통합에서 맞춘 불일치
+
+- `types.ts`: `View3dReconRanges` interface 추가(`View3dReconOut.ranges` 가 사용) → `check:api` 통과.
+- 프런트 목 서버(`mock/server.ts`) 409 detail 의 출처 사유 키 `code` → `reason_code`(실제 백엔드와 동일). 화면 코드는 detail.code 를 출처 사유로 읽지 않음(확인).
+- 실제 백엔드 응답 대조: `frontend/src/__tests__/fixtures/real_v0241.json`(Case run 1개 — /view3d/sources, ?src=bforce·fint 매니페스트·glb·values.bin, /view3d/recon·recon.bin) 을 `v0241_real_backend.test.ts` 가 프런트 파서(caseTabItems·defaultCaseSource·parseGlb·decodeValues·decodeDisp)에 먹여 정점 수·순서(재현 n_nodes = 하중 n_nodes = glb 정점 수, values.u ≈ recon.tgt)·배열 이름(tgt·fit·err)·범위 키(ranges.*_max = 복원 최대 크기)를 확인한다.

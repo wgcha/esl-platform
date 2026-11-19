@@ -381,3 +381,6 @@
 - (0.24.1 D-0.24.1-V3D-9, 2026-11-19, 근거 v0.24.0 화면에 버튼 최대 3개·활성 탭과 무관, "버튼은 필요할 때만", §6.3) 계산 가능한 빈 출처 탭은 선택 가능(본문 = 사유 + 버튼 1개), 보기 있는 탭의 부분 누락은 그 탭 3D 빈 칸에 그 행 버튼 — 화면 최대 1개. D-0.23.3-8 ② 개정(다른 출처 버튼을 활성 탭 3D 머리에 두지 않음, 기능 삭제 없음).
 - (0.24.1 D-0.24.1-V3D-10, 2026-11-19, 근거 AGENTS.md 하드코딩 금지, §7·§8) 설정 `view3d.case_src_default`(full)·`bead_doe.view3d.recon`(true) = DEFAULTS·pydantic·yaml 2개. DB migration 없음, 옛 Case·스터디 결과·3D 바이트 동일.
 - (0.24.1 후속) R-V3D-1 Case 지그 ESL, R-V3D-2 (미루면) 스터디 재현 진단, R-V3D-3 출처별 캐시 백업 상한, R-V3D-4 LOD 없는 부품 geometry 공유.
+- (0.24.1 D-0.24.1-V3D-11, 2026-11-19, 근거 detail.code 가 오류 코드와 충돌, §15.1) 409 V3D_SOURCE_UNAVAILABLE·V3D_RECON_UNAVAILABLE detail 의 출처 사유 코드 = `reason_code`(계약 원안 `code` 대신), 화면은 message·reason 만 읽음.
+- (0.24.1 D-0.24.1-V3D-12, 2026-11-19, 근거 옛 키와 정확한 거울) `source_add` = need 를 만족하는 행만(없으면 null), 프런트는 옛 거울 키 폴백 유지.
+- (0.24.1 D-0.24.1-V3D-13, 2026-11-19, 근거 통합 확인) 프런트-백엔드 맞물림 시험 = 실제 백엔드 응답 JSON 픽스처(`frontend/src/__tests__/fixtures/real_v0241.json`) 대조 vitest. 후속: 백엔드 응답 형식이 바뀌면 픽스처 재생성(R-V3D-5).
