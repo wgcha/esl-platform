@@ -367,3 +367,17 @@
 - (0.24.0 D-0.24.0-BF-18, 2026-11-18) 화면 출처 표 LOAD_SOURCES 행 fint + 열 nodal(block·add·src·addLabel·addTestid·chipTestid·addHint·showResidual) — 칩(chip 종류 nodal)·[계산] 버튼·비활성 사유·3D 조건 줄은 열만 읽음(경계력 행도 같은 열), 보기 지표 문구 표 VIEW_METRIC_TEXT{bf, fi}, Case ESL 줄 esl-fint-line·esl-plastic-line. 탭 버튼 1개 추가(높이 불변).
 - (0.24.0 후속) R-BF-1 Case 화면 경계력 3D, R-BF-2 내보내기(OptiStruct·Radioss) 경계력 하중, R-BF-3 설계안 경계력 풀이 분해 공유, R-BF-4 CONT2·MASS·FINT 재해석 현장 검증(표시명 확인 → 설정), R-BF-5 dump 모드, R-BF-6 생략 tie 하중 분포 추정.
 
+
+## 2026-11-19 (v0.24.1)
+
+- (0.24.1 D-0.24.1-V3D-1, 2026-11-19 사용자 "3d컨투어가 전체esl만 되고 다른건 안되는데 범용적으로 개선", 근거 AGENTS.md 계획 표 원칙·감사 C1~C3, 계약 esl_view3d_sources.md §2.1) 3D 하중 출처 키 하나 jig·full·bforce·fint(순서 = RANK_SOURCES) — 코어 `esl/view3d_src.CASE_PLAN`(Case)·`stages.RANK_SOURCES`(스터디)·화면 `view3d/sources.ts:SOURCE_ROWS`(이름 한 곳), 호출부는 열만 읽고 출처 이름 분기 없음. 새 출처 = 행 추가.
+- (0.24.1 D-0.24.1-V3D-2, 2026-11-19, 근거 출처마다 같은 비교가 가능해야 함·§2.2) 출처 3D 구성 = 보기 [하중(면압·법선·크기)|목표|응답|오차] + 하중 화살표, 출처가 가진 값만 — 없으면 비활성 + 사유 코드(Case 문구 = `view3d_src.REASON_TEXT` 한 곳, 형식 `unavailText` 공용).
+- (0.24.1 D-0.24.1-V3D-3, 2026-11-19, 근거 옛 URL·캐시 바이트 동일 + ETag 304 로 옛 JSON 재사용 위험, §5.1) Case `GET /esl-runs/{id}/view3d?src=`: 없음 = legacy 행 full(키 문서·폴더·파일·응답·ETag 동일), 그 밖 = 행 dir 폴더·키 문서 src, 모르는 출처 404 SOURCE_NOT_FOUND, 산출 없음 409 V3D_SOURCE_UNAVAILABLE. 출처 목록 = 새 `GET …/view3d/sources`(EslRunOut·View3dOut 불변).
+- (0.24.1 D-0.24.1-V3D-4, 2026-11-19, 근거 직접법 80 KB/요소 × 30만 ≈ 24 GB — API 프로세스 풀이 불가, ESL 단계 추가 풀이는 ⑤ 검증과 중복, §4) 응답 변위는 새로 풀지 않음: bforce·fint = ESL 단계 `u_val`, full = ⑤ `compare_disp.npz` d_val·d_rel. 없으면 응답·오차 비활성 + 사유. 재현 = 첫 요청 파생 캐시(하중 보기와 다른 폴더·키, ≈ 18 B/노드).
+- (0.24.1 D-0.24.1-V3D-5, 2026-11-19, 근거 AGENTS.md 공용 모듈·진단 스키마 1개, §3) 재현 형식 = 공용 `esl/view3d.build_recon`(recon.json + recon.bin tgt·fit·err int16×3, 스키마 esl/view3d_recon/1) — Case·스터디 같은 빌더, 수치 = `bforce.mac`·`recon_report` 정의 호출. `pack_values`·`build_view` 수정 금지(바이트 동일).
+- (0.24.1 D-0.24.1-V3D-6, 2026-11-19, 근거 2560×1440 세로 불변·사용성, §6.1) Case ③ 3D = 카드 머리 줄 출처 탭(스터디 LoadTabSeg → 범용 `view3d/SourceTabs`), 도구 줄 보기 세그먼트·하중 색·재현 한 줄. 표는 선택 출처 manifest, `/forces` 폴백은 계획 열 fallback(legacy 행)만.
+- (0.24.1 D-0.24.1-V3D-7, 2026-11-19, 근거 감사 C7·C8, §6.2) 스터디 3D = [응답 변위 | 하중] 색 토글(모든 출처 — values.bin 에 이미 있음) + 노드 힘 출처 [설계 비교 | 재현 진단](목표 = sm_ref, 둘 다 Kabsch 강체 제거, 지그 진단과 같은 배치), full 재현 해당 없음(V3D_RECON_NA), 지그 진단 그대로.
+- (0.24.1 D-0.24.1-V3D-8, 2026-11-19 사용자 범위 추가 "3D 다시 만들기도 출처 표 기반 일반화", 근거 감사 §0.3 — 두 경로가 kind·post_mode 만 다름) 자료 만들기 = `POST /doe/studies/{sid}/sources/{src}`(백엔드 표 SOURCE_ADD 행 jig·bforce·fint, full 없음), `/view3d/regenerate` = sources/jig 별칭(요청·응답·409 코드 동일), 응답 `source_add{key}` + 옛 키 view3d_regen·bforce_add·fint_add 거울. 코어 dispatch 불변.
+- (0.24.1 D-0.24.1-V3D-9, 2026-11-19, 근거 v0.24.0 화면에 버튼 최대 3개·활성 탭과 무관, "버튼은 필요할 때만", §6.3) 계산 가능한 빈 출처 탭은 선택 가능(본문 = 사유 + 버튼 1개), 보기 있는 탭의 부분 누락은 그 탭 3D 빈 칸에 그 행 버튼 — 화면 최대 1개. D-0.23.3-8 ② 개정(다른 출처 버튼을 활성 탭 3D 머리에 두지 않음, 기능 삭제 없음).
+- (0.24.1 D-0.24.1-V3D-10, 2026-11-19, 근거 AGENTS.md 하드코딩 금지, §7·§8) 설정 `view3d.case_src_default`(full)·`bead_doe.view3d.recon`(true) = DEFAULTS·pydantic·yaml 2개. DB migration 없음, 옛 Case·스터디 결과·3D 바이트 동일.
+- (0.24.1 후속) R-V3D-1 Case 지그 ESL, R-V3D-2 (미루면) 스터디 재현 진단, R-V3D-3 출처별 캐시 백업 상한, R-V3D-4 LOD 없는 부품 geometry 공유.
