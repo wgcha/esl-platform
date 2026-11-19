@@ -60,7 +60,7 @@ import { BlockErr, MsgFold } from "../../components/MsgFold";
 import { SourceTabs } from "../../view3d/SourceTabs";
 import { loadRangeTop, loadUnitOf } from "../../view3d/values";
 import type { SourceTabItem } from "../../view3d/sources";
-import { BF_GRADE_TEXT, LOAD_SOURCES, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { BF_GRADE_TEXT, LOAD_SOURCES, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -1897,8 +1897,18 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           }
         >
           <ErrorLine text={result.error} />
+          {/* 계산했는데 prep 결과가 불가인 노드 힘 출처: 사유를 마우스 없이 한 줄로(활성 빈 탭 본문이 이미 보이면 생략) */}
+          {result.data &&
+            LOAD_SOURCES.map((x) => {
+              const t = x.key === curTab && addTab ? null : nodalNote(result.data!, x);
+              return t ? (
+                <div key={`nn-${x.key}`} className="small warn-text" role="status" data-testid="nodal-unavail-note" data-src={x.key}>
+                  {t}
+                </div>
+              ) : null;
+            })}
           {result.data && tabR && addTab && curSrc && (
-            <SourceAddPanel studyId={id} result={result.data} src={curSrc} why={tabs?.reason[curTab] ?? null} onQueued={() => void study.reload()} />
+            <SourceAddPanel studyId={id} result={result.data} src={curSrc} why={nodalNote(result.data, curSrc) ?? tabs?.reason[curTab] ?? null} onQueued={() => void study.reload()} />
           )}
           {result.data && tabR && !addTab && (
             <>

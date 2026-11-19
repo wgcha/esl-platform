@@ -1941,7 +1941,9 @@ export interface View3dReconArray {
   offset: number;
   scale: number[];
 }
-/** GET /esl-runs/{id}/view3d/recon?src= (스터디 recon.json = values_url 만 없음) */
+/** 스터디 폴더 recon.json = View3dReconOut 에서 values_url 만 없음 */
+export type DoeReconFile = Omit<View3dReconOut, "values_url">;
+/** GET /esl-runs/{id}/view3d/recon?src= */
 export interface View3dReconOut {
   schema: "esl/view3d_recon/1" | string;
   recon_version: number;

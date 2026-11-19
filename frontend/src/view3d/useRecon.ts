@@ -2,8 +2,9 @@
 // 응답 변위는 서버가 새로 풀지 않고 저장된 해로 파생 캐시를 만든다 — 첫 요청이 느릴 수 있어 응답·오차 보기를 열 때만 부른다.
 import { useEffect, useState } from "react";
 import { api } from "../api/endpoints";
-import { errorText } from "../api/client";
-import type { View3dReconOut, View3dSourcesOut } from "../api/types";
+import { API_PREFIX, errorText, request } from "../api/client";
+import { doe } from "../api/doe";
+import type { DoeReconFile, View3dReconOut, View3dSourcesOut } from "../api/types";
 import { fetchBinary, resolveFileUrl } from "./fetchFiles";
 import { decodeDisp, type DecodedDisp } from "./values";
 
@@ -74,5 +75,34 @@ export function useCaseSources(runId: string | null, enabled: boolean): SourcesS
       alive = false;
     };
   }, [runId, enabled]);
+  return st;
+}
+
+export interface StudyReconState {
+  recon: DoeReconFile | null;
+  disp: DecodedDisp | null;
+  error: string | null;
+}
+
+/** 스터디 폴더 `did` 의 재현 자료(recon.json + recon.bin — /doe/studies/{id}/view3d/{did}/…). did 없음 = 아무것도 안 부름 */
+export function useStudyRecon(studyId: string, did: string | null): StudyReconState {
+  const [st, setSt] = useState<StudyReconState>({ recon: null, disp: null, error: null });
+  useEffect(() => {
+    setSt({ recon: null, disp: null, error: null });
+    if (!did) return;
+    let alive = true;
+    (async () => {
+      try {
+        const recon = await request<DoeReconFile>("GET", doe.view3dPath(studyId, did, "recon.json"));
+        const buf = await fetchBinary(resolveFileUrl(studyId, `${API_PREFIX}${doe.view3dPath(studyId, did, "recon.bin")}`, recon.key));
+        if (alive) setSt({ recon, disp: decodeDisp(buf, recon), error: null });
+      } catch (e) {
+        if (alive) setSt({ recon: null, disp: null, error: errorText(e) });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [studyId, did]);
   return st;
 }

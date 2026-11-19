@@ -230,6 +230,16 @@ export function nodalUnavailable(r: DoeResultOut, n: NodalCols, label: string): 
   return `${label} 불가 — ${why}`;
 }
 
+/** v0.24.1 현장 피드백: 노드 힘 출처 블록(result.bforce·fint)이 있는데 status 가 ok 가 아니면(예: BF_NOT_FOUND) 마우스 없이 보이는 한 줄 —
+ *  nodalUnavailable 문구 + 다음 행동. 블록 없음·ok = null(열 nodal·add 만 읽음) */
+export function nodalNote(r: DoeResultOut, s: LoadSource): string | null {
+  const n = s.nodal;
+  const b = n ? r[n.block] ?? null : null;
+  if (!n || !b || b.status === "ok") return null;
+  const next = s.add ? ` → Case ③ 에서 h3d 추출부터 ESL 을 다시 실행한 뒤 [${s.add.label}] 다시 누르세요` : "";
+  return nodalUnavailable(r, n, s.label) + next;
+}
+
 /** 경계력 탭 비활성 사유(호환) */
 export function bfUnavailable(r: DoeResultOut): string {
   return nodalUnavailable(r, NODAL_BF, "경계력 ESL");
