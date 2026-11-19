@@ -449,3 +449,13 @@ FAILED at step '<step>': <code>: <msg>                              (기존 실�
 | 서명·반환 키·오류 코드 | 어긋남 없음 — 실제 A 함수(`bforce_csv.has_frame`·`bforce_ondemand.merge`·`record`·`no_types_before`)와 B 래퍼·executor·판정이 그대로 맞물림(코드 수정 없음) |
 | 통합 시험 7 | `worker/tests/test_bf_ondemand_integration.py`(새): 덤프 Case → ESL → hw 1회(실제 TCL) → 실제 병합·등록 → 경계력 등급 contact·내력 none(사유) → 같은 ESL 재실행 hw 0. 값 비트 동일(%.17g) 확인 |
 | 통합 시험 8·9·11 보강 | 실제 TCL 실패(done.json ok false·mode bf_only → HW_FAILED), 라이선스, 시간 초과, 생략(HW_UNAVAILABLE), 프레임 수 다른 h3d(MISMATCH, 01_extract 쓰기 없음), 종류 없음(ok·kinds 전부 null → 다음 ESL hw 0), NO_TYPES 왕복, 행 4a, 비덤프 + 경계력 있음(hw 0·04_esl 바이트가 on_demand false 와 같음), 다시 추출 = 보충분 백업 |
+
+### 17.4 독립 Verifier 지적 수정(release/v0.24.2)
+
+| 항목 | 내용 |
+|---|---|
+| 화면 문구(§6) | `bforceLineText` 의 `BF_NO_DATA`·등급 없음 분기가 reason 을 무시하고 "h3d 추출을 다시 실행하면…" 고정 문구를 내던 것을 고침 — reason 이 있으면 reason(내력 줄·출처 탭과 같은 방식), 없을 때만 옛 문구(옛 Case 하위 호환). 덤프 Case(기록 없음·on_demand false·결과 폴더 입력·행 4a)에서 다시 추출 안내가 나오지 않음 |
+| LICENSE 오분류(§3.4) | 평가가 보는 hw 출력 = hw 시작 직전 바이트부터(`_hw_session` 이 `log_start` 반환 — argv·경로 줄 제외)이고, 그 안에서도 `[esl-worker]` 줄·TCL 진행 줄(progress.log 옮김·`ESL extract`)은 뺌(경로를 담을 수 있음). 경로·폴더명에 license 가 있어도 HW_FAILED. done.json 의 `error`·`errorInfo` 는 그대로 대상 |
+| bf_only 질의 상태(§2) | **같음 — 코드 변경 없음.** 비덤프 패스 C(`esl_h3d_extract.tcl` 2126~2188)가 `bf_chunk`(2176) 전에 만드는 상태와 bf_only(`run_bf_only` 1527~1640)가 같다: SetCurrentSubcase(1741 / 1566)·GetContourCtrlHandle(1806 / 1576)·`set_sim`(2155 / 1604)·노드 선택 집합(`select_part`+`make_chunks`, 같은 `node_selection`)이 같고, 질의마다 `collect`→`set_contour`(1498~1503: DataType·Component·AverageMode none·EnableState)가 상태를 다시 정한다. 결과 좌표계(`set_system` 600~632)는 tensor=1 필드에서만 호출되고 bf 필드는 tensor 0(`bf_resolve` 1081)이라 두 모드 모두 호출하지 않는다. 남는 차이는 패스 C 앞 요소 질의가 남긴 SetLayer 뿐 — bf 필드는 layer "" 라 두 모드 모두 SetLayer 를 부르지 않고(패스 C 의 바로 앞 변위 질의도 같은 조건), 노드 벡터 결과에는 층이 없다 |
+| 병합 실패 정리 | `merge` 가 실패(예외·재시도)하면 이번 호출(pid)의 임시 파일(`bforce.json.tmp-<pid>`·`bforce.npz.tmp-<pid>`)을 finally 에서 지운다 — 이전 파일·다른 pid 의 tmp 는 건드리지 않음 |
+| 비 EslError 분류 | `merge` 가 EslError 가 아닌 예외(npz 손상 등)를 `BF_FILL_MERGE`(워커 cause MERGE)로 바꿔 올림 |

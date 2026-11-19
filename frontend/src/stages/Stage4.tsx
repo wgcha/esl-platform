@@ -18,8 +18,11 @@ export function bforceLineText(b: EslBforceSummary): { text: string; warn: boole
   // v0.24.2(esl_bforce_ondemand.md §6): 등급 none + code(BF_NO_DATA 제외) + reason → reason 그대로(BF_EXTRACT_* 등, code 목록은 화면에 두지 않음)
   if (b.grade === "none" && b.code && b.code !== "BF_NO_DATA" && b.reason)
     return { text: `경계력 ESL: 자료 없음 — ${b.reason}`, warn: false };
-  if (!b.grade || b.grade === "none" || b.code === "BF_NO_DATA")
+  if (!b.grade || b.grade === "none" || b.code === "BF_NO_DATA") {
+    // 규칙: reason 이 있으면 reason(덤프 Case 등 다시 추출해도 소용없는 경우 포함), 없을 때만 옛 Case 하위 호환 문구
+    if (b.reason) return { text: `경계력 ESL: 자료 없음 — ${b.reason}`, warn: false };
     return { text: "경계력 ESL: 자료 없음 — h3d 추출(v0.24.0 TCL)을 다시 실행하면 접촉력·가속도로 계산합니다", warn: false };
+  }
   if (b.code === "BF_FAILED") return { text: `경계력 ESL: 계산 실패(${b.reason ?? "–"}) — 전 노드 ESL 결과는 그대로`, warn: true };
   const f = (v: number | null | undefined, d = 2) => (v == null ? "–" : v.toFixed(d));
   const lim = b.limit_text ?? b.limits ?? [];

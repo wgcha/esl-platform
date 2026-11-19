@@ -10,9 +10,16 @@ describe("v0.24.2 경계력·내력 줄 — 보충 실패·생략", () => {
     expect(bforceLineText({ grade: "none", code: "BF_EXTRACT_FAILED", reason: FAILED })).toEqual({ text: `경계력 ESL: 자료 없음 — ${FAILED}`, warn: false });
     expect(bforceLineText({ grade: "none", code: "BF_EXTRACT_SKIPPED", reason: SKIPPED })).toEqual({ text: `경계력 ESL: 자료 없음 — ${SKIPPED}`, warn: false });
   });
-  it("BF_NO_DATA·reason 없음·그 밖 분기는 그대로", () => {
+  it("BF_NO_DATA·덤프 Case reason 이 있으면 reason 그대로(다시 추출 안내 없음)", () => {
+    const dump = "덤프 Case — 기록 없음(on_demand false, 결과 폴더 입력)";
+    const t = bforceLineText({ grade: "none", code: "BF_NO_DATA", reason: dump });
+    expect(t).toEqual({ text: `경계력 ESL: 자료 없음 — ${dump}`, warn: false });
+    expect(t.text).not.toContain("다시 실행");
+    expect(bforceLineText({ grade: "none", reason: dump }).text).toBe(`경계력 ESL: 자료 없음 — ${dump}`);
+  });
+  it("BF_NO_DATA·reason 없음·그 밖 분기는 그대로(옛 Case 하위 호환)", () => {
     const old = "경계력 ESL: 자료 없음 — h3d 추출(v0.24.0 TCL)을 다시 실행하면 접촉력·가속도로 계산합니다";
-    expect(bforceLineText({ grade: "none", code: "BF_NO_DATA", reason: "추출물에 경계력 결과 없음" }).text).toBe(old);
+    expect(bforceLineText({ grade: "none", code: "BF_NO_DATA" }).text).toBe(old);
     expect(bforceLineText({ grade: "none", code: "BF_EXTRACT_FAILED" }).text).toBe(old);
     expect(bforceLineText({ grade: "none" }).text).toBe(old);
     const ok = bforceLineText({ grade: "contact", recon: "ok", mac: 0.97, limits: [] });

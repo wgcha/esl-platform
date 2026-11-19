@@ -239,6 +239,37 @@ def test_v0242_bfd4f_leftover_tmp_ignored(tmp_path):
         assert z["frame_index"].tolist() == [1, 2]
 
 
+# ------------------------------------------------------------------ 병합 실패 정리·분류(v0.24.2 Verifier 후속)
+def test_v0242_bfd4_failed_merge_cleans_own_tmp_keeps_old(tmp_path, monkeypatch):
+    case, xd = _case(tmp_path, D=[1])
+    before = _snap(xd)
+    other = os.path.join(xd, "bforce.json.tmp-99999999")
+    open(other, "w").write("other")
+    from esl.io import backup as bk
+
+    def boom(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(bk, "replace", boom)
+    with pytest.raises(EslError) as ei:
+        bfo.merge(case, _fill(tmp_path, [2]), [2], tag="j", names=NAMES)
+    assert ei.value.code == "BF_FILL_MERGE"
+    assert not [f for f in os.listdir(xd) if f.endswith(f".tmp-{os.getpid()}")]       # 이번 호출 tmp 삭제
+    assert open(other).read() == "other"                                          # 남의 tmp 는 그대로
+    after = _snap(xd)
+    assert {k: after[k] for k in before} == before                                 # 이전 파일 바이트 동일
+
+
+def test_v0242_bfd4_non_esl_error_classified_merge(tmp_path, monkeypatch):
+    case, xd = _case(tmp_path, D=[1])
+
+    def bad(*a, **k):
+        raise ValueError("npz corrupt")
+    monkeypatch.setattr(bfo, "_old_arrays", bad)
+    with pytest.raises(EslError) as ei:
+        bfo.merge(case, _fill(tmp_path, [2]), [2], tag="j", names=NAMES)
+    assert ei.value.code == "BF_FILL_MERGE" and "ValueError" in ei.value.message
+
+
 # ------------------------------------------------------------------ (g) 시도 기록
 def _att(frame, job, status, **kw):
     a = {"frame_index": frame, "job_id": job, "status": status, "cause": kw.pop("cause", None),

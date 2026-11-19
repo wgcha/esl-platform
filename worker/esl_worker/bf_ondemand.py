@@ -174,14 +174,19 @@ def evaluate(exit_code: int | None, out_dir: str, frames: list[int], hw_text: st
     return False, cause, msg, done
 
 
+_NOT_HW = re.compile(r"^(\[esl-worker\]|ESL extract |\d{4}-\d\d-\d\d \d\d:\d\d:\d\d )")
+
+
 def read_hw_text(log_path: str, start: int) -> str:
-    """이번 hw 실행이 step 로그에 남긴 출력(start 바이트 이후, 상한 HW_TEXT_MAX) — LICENSE 판정용."""
+    """이번 hw 프로세스 출력만(start = hw 시작 직전 바이트 — argv·경로 줄은 그 앞, 상한 HW_TEXT_MAX) — LICENSE 판정용.
+    워커 줄([esl-worker])과 TCL 진행 줄(progress.log 옮김·ESL extract)은 경로를 담을 수 있어 제외."""
     try:
         with open(log_path, "rb") as fh:
             fh.seek(max(0, int(start)))
-            return fh.read(HW_TEXT_MAX).decode("utf-8", errors="replace")
+            raw = fh.read(HW_TEXT_MAX).decode("utf-8", errors="replace")
     except OSError:
         return ""
+    return "\n".join(ln for ln in raw.splitlines() if not _NOT_HW.match(ln))
 
 
 # ---------------------------------------------------------------- 기록·요약

@@ -714,10 +714,6 @@ class Executor:
         env = dict(os.environ)
         env.update({"ESL_INPUT": h3d.fwd(h3d_path), "ESL_OUTPUT": h3d.fwd(out_dir),
                     "ESL_PART": str(self.case["part_title"]), "ESL_CONFIG": h3d.fwd(request)})
-        try:
-            log_start = os.path.getsize(log_path)
-        except OSError:
-            log_start = 0
         t0 = time.time()
         try:
             res = self._hw_session(
@@ -742,7 +738,7 @@ class Executor:
             return "WAIT", bf_ondemand.detail_text("WAIT", **args), None, None
         if res["status"] == "timeout":
             return "TIMEOUT", bf_ondemand.detail_text("TIMEOUT", **args), None, None
-        hw_text = bf_ondemand.read_hw_text(log_path, log_start)
+        hw_text = bf_ondemand.read_hw_text(log_path, res.get("log_start", 0))
         ok, cause, detail, done = bf_ondemand.evaluate(res["code"], out_dir, [frame], hw_text)
         if not ok:
             return cause, bf_ondemand.detail_text(cause, **{**args, "msg": detail}), None, None
@@ -909,6 +905,10 @@ class Executor:
         head()
         t0 = time.time()
         timed_out = False
+        try:
+            log_start = os.path.getsize(log_path)     # hw 출력 시작 위치(argv·경로 줄은 이 앞) — LICENSE 판정 범위
+        except OSError:
+            log_start = 0
         with open(log_path, "ab") as log_fh:
             try:
                 self.hw_proc = h3d.start(argv, cwd=work, log_fh=log_fh, env=env,
@@ -968,7 +968,7 @@ class Executor:
                 code = self.hw_proc.returncode
             self.hw_proc = None
         self._renew()
-        return {"status": "timeout" if timed_out else "done", "code": code}
+        return {"status": "timeout" if timed_out else "done", "code": code, "log_start": log_start}
 
 
 

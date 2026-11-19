@@ -187,7 +187,7 @@ def _combine(old_doc, old_frames, old_arr, old_have, add, new_kinds, new_arr, ni
     return after, kinds, arrays
 
 
-def merge(case_dir: str, fill_out: str, frames, *, tag: str | None, names: dict | None) -> dict:
+def _merge(case_dir: str, fill_out: str, frames, *, tag: str | None, names: dict | None) -> dict:
     """bf 전용 추출 출력(fill_out) → Case 01_extract/bforce.npz·bforce.json 병합(계약 §4.1·§4.2).
 
     반환 {frames_before, frames_after, added, dup, kinds: {k: type|null}(이번 추출), rows: {k: n}(이번 행),
@@ -229,30 +229,49 @@ def merge(case_dir: str, fill_out: str, frames, *, tag: str | None, names: dict 
         doc = {"schema": _bf.SCHEMA, "on": True, "kinds": kinds, "frames": after, "fills": fills}
         jp, zp = os.path.join(xd, _bf.JSON), os.path.join(xd, _bf.NPZ)
         jtmp, ztmp = f"{jp}.tmp-{os.getpid()}", f"{zp}.tmp-{os.getpid()}"
-        if write_npz:                                 # 1) 임시 파일
-            savez_stream(ztmp, frame_index=np.asarray(after, dtype=np.int32), node_id=nid, **arrays)
-        with open(jtmp, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, ensure_ascii=False, indent=1)
-        cur = _bf.read_doc(xd)
-        if _bf.doc_frames(cur) != old_frames or (cur is None) != (old_doc is None):
-            for t in (jtmp, ztmp):                     # 2) 그사이 바뀜 → 처음부터 다시(임시 파일만 지움)
-                if os.path.isfile(t):
-                    os.remove(t)
-            continue
-        olds = [p for p in ((zp, jp) if write_npz else (jp,)) if os.path.isfile(p)]
-        if olds:                                      # 3) 이전 파일 사본 → <Case>/_backup/<UTC>/01_extract/
-            bdir = os.path.join(case_dir, _bk.BACKUP_DIR, _bk.utc_stamp(), EXTRACT)
-            for p in olds:
-                _bk.keep_copy(p, bdir)
-            res["backup"] = os.path.relpath(bdir, case_dir).replace(os.sep, "/")
-        if write_npz:                                 # 4) npz → json 순 교체
-            _bk.replace(ztmp, zp)
-        _bk.replace(jtmp, jp)
-        return res
+        try:
+            if write_npz:                                 # 1) 임시 파일
+                savez_stream(ztmp, frame_index=np.asarray(after, dtype=np.int32), node_id=nid, **arrays)
+            with open(jtmp, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh, ensure_ascii=False, indent=1)
+            cur = _bf.read_doc(xd)
+            if _bf.doc_frames(cur) != old_frames or (cur is None) != (old_doc is None):
+                for t in (jtmp, ztmp):                     # 2) 그사이 바뀜 → 처음부터 다시(임시 파일만 지움)
+                    if os.path.isfile(t):
+                        os.remove(t)
+                continue
+            olds = [p for p in ((zp, jp) if write_npz else (jp,)) if os.path.isfile(p)]
+            if olds:                                      # 3) 이전 파일 사본 → <Case>/_backup/<UTC>/01_extract/
+                bdir = os.path.join(case_dir, _bk.BACKUP_DIR, _bk.utc_stamp(), EXTRACT)
+                for p in olds:
+                    _bk.keep_copy(p, bdir)
+                res["backup"] = os.path.relpath(bdir, case_dir).replace(os.sep, "/")
+            if write_npz:                                 # 4) npz → json 순 교체
+                _bk.replace(ztmp, zp)
+            _bk.replace(jtmp, jp)
+            return res
+        finally:                                      # 실패·재시도로 남은 이번 호출(pid)의 임시 파일만 지움(이전 파일은 건드리지 않음)
+            for t in (jtmp, ztmp):
+                try:
+                    if os.path.isfile(t):
+                        os.remove(t)
+                except OSError:
+                    pass
     raise EslError("BF_FILL_MERGE", f"01_extract/bforce.json 이 병합 중 계속 바뀜({MERGE_TRIES}회) — 다시 계산하면 재시도")
 
 
+def merge(case_dir: str, fill_out: str, frames, *, tag: str | None, names: dict | None) -> dict:
+    """_merge + EslError 가 아닌 예외(npz 손상 BadZipFile·ValueError·KeyError 등)는 BF_FILL_MERGE 로 분류(워커는 MERGE)."""
+    try:
+        return _merge(case_dir, fill_out, frames, tag=tag, names=names)
+    except EslError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise EslError("BF_FILL_MERGE", f"병합 중 예기치 않은 오류 {type(exc).__name__}: {str(exc)[:200]}") from None
+
+
 # ====================================================================== 시도 기록
+
 def _record_path(extract_dir: str) -> str:
     return os.path.join(extract_dir, RECORD)
 

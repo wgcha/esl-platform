@@ -527,3 +527,28 @@ def test_cause_text_complete():
     from esl_worker import bf_ondemand as b
 
     assert set(b.CAUSE_TEXT) == set(b.SKIPPED_CAUSES) | set(b.FAILED_CAUSES)
+
+
+def test_read_hw_text_scope(tmp_path):
+    """LICENSE 판정 범위: start 앞(argv·경로 줄)과 워커·진행 줄은 제외, hw 프로세스 출력만."""
+    from esl_worker import bf_ondemand as b
+
+    lg = tmp_path / "step.log"
+    lg.write_bytes("[esl-worker] argv: [\"hw\", \"/data/license_dir/x.h3d\"]\n".encode())
+    start = lg.stat().st_size
+    with open(lg, "ab") as fh:
+        fh.write(b"[esl-worker] pid 1 /data/License/x\n2026-01-01 00:00:00 open /data/licence/a.h3d\n"
+                 b"ESL extract 00:00:01 open /lic/license\nreal hw output\n")
+    txt = b.read_hw_text(str(lg), start)
+    assert "real hw output" in txt and not b.LICENSE_RE.search(txt)
+    assert b.evaluate(1, str(tmp_path / "none"), [3], txt)[1] == "HW_FAILED"
+
+
+def test_license_in_path_not_misclassified(client, synth_inputs, worker_factory, esl_root, monkeypatch, fcore, bf_src):
+    """경로(폴더명)에 license 가 든 Case 에서 hw 실패 → HW_FAILED(LICENSE 아님)."""
+    w = worker_factory()
+    case = _ready(client, w, synth_inputs, monkeypatch, folder="license_case")
+    monkeypatch.setenv("FAKE_HW_MODE", "nodone")
+    j = _esl(client, w, case)
+    b = j["result"]["bf_ondemand"]
+    assert b["status"] == "failed" and b["cause"] == "HW_FAILED", b
