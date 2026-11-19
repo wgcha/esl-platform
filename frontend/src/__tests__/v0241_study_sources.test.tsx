@@ -1,7 +1,53 @@
 // V-0241-V3D-19·20(프런트) + 현장 피드백: 스터디 자료 만들기 버튼 ≤ 1 · 하중 색 토글 · 재현 진단 · 불가 사유 가시 줄.
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PickEvent } from "../view3d/sceneApi";
+
+const h = vi.hoisted(() => ({ webgl: true, scenes: [] as unknown[], loadFails: false }));
+
+vi.mock("../view3d/webgl", () => ({ hasWebGL: () => h.webgl }));
+vi.mock("../view3d/loadThree", () => ({
+  loadScene: async () => {
+    if (h.loadFails) throw new Error("chunk");
+    return {
+      createScene: (_c: unknown, opts: unknown) => {
+        const calls: Record<string, unknown[][]> = {};
+        let pick: ((e: PickEvent) => void) | null = null;
+        const rec = (name: string) => (...a: unknown[]) => {
+          (calls[name] ??= []).push(a);
+        };
+        let proj = (opts as { projection?: string }).projection ?? "ortho";
+        const api = {
+          calls,
+          opts,
+          setProjection: (p: string) => {
+            rec("setProjection")(p);
+            proj = p;
+          },
+          projection: () => proj,
+          emit: (e: PickEvent) => pick?.(e),
+          setGeometry: rec("setGeometry"),
+          setColors: rec("setColors"),
+          setDeform: rec("setDeform"),
+          setArrows: rec("setArrows"),
+          setSupports: rec("setSupports"),
+          select: rec("select"),
+          focus: rec("focus"),
+          fit: rec("fit"),
+          setView: rec("setView"),
+          onPick: (cb: (e: PickEvent) => void) => (pick = cb),
+          stats: () => ({ renders: 0 }),
+          dispose: rec("dispose"),
+        };
+        h.scenes.push(api);
+        return api;
+      },
+    };
+  },
+}));
+
 import { renderApp } from "../test/render";
+import { mockView3d } from "../mock/view3dmock";
 import { LOAD_SOURCES, nodalNote, sourceAddOf, tabState } from "../pages/doe/doeTabs";
 import { withBforce, withFint, withJig, withMetric, withSolveMetric } from "../mock/doedata";
 import type { DoeResultOut } from "../api/types";
@@ -82,4 +128,77 @@ describe("V-0241-V3D-20 소스 규율", () => {
     expect(LOAD_SOURCES.map((s) => s.recon?.kind ?? null)).toEqual(["jigdiag", null, "sidecar", "sidecar"]);
     expect(LOAD_SOURCES.map((s) => s.add?.testid ?? null)).toEqual(["v3d-regen", null, "v3d-bf-add", "v3d-fi-add"]);
   });
+});
+
+const diagOf = async (doe: string, tab: string, segId = "v3d-recon-mode") => {
+  open(doe);
+  await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+  fireEvent.click(tabBtn(tab));
+  await waitFor(() => expect(tabBtn(tab).getAttribute("aria-selected")).toBe("true"));
+  const seg = await screen.findByTestId(segId);
+  fireEvent.click(seg.querySelector("[data-mode=diag]")!);
+};
+const lastLegend = () => screen.getAllByTestId("v3d-legend");
+const rmax = (el: HTMLElement) => Number(el.getAttribute("data-range-max"));
+
+describe("V-0241-V3D-20 하중 색 · 재현 진단(스터디)", () => {
+  it("v3d-color [응답 변위 | 하중]: 두 카드 같은 하중 범위(p99), 응답 변위로 되돌리면 변위 범례", async () => {
+    open("doe-50");
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    const seg = await screen.findByTestId("v3d-color");
+    expect(seg.querySelector("[data-color=disp]")!.getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(lastLegend().length).toBe(2), { timeout: 8000 });
+    expect(lastLegend()[0].textContent).toContain("변위");
+    fireEvent.click(seg.querySelector("[data-color=load]")!);
+    await waitFor(() => expect(lastLegend()[0].textContent).toContain("면압 |Fn|/A (MPa)"));
+    const p99 = mockView3d().manifest("x").ranges.pa.p99!;
+    const ls = lastLegend();
+    expect(ls.length).toBe(2);
+    expect(rmax(ls[0])).toBeCloseTo(p99, 6);
+    expect(rmax(ls[1])).toBeCloseTo(p99, 6);
+    fireEvent.click(seg.querySelector("[data-color=disp]")!);
+    await waitFor(() => expect(lastLegend()[0].textContent).toContain("변위"));
+  }, 30000);
+
+  it("경계력 탭 [설계 비교 | 재현 진단]: sidecar 행 → ReconDiag, 목표·재현 / 오차, 재현 한 줄", async () => {
+    await diagOf("doe-50", "bforce");
+    const line = await screen.findByTestId("recon-diag-line", {}, { timeout: 8000 });
+    await waitFor(() => expect(line.textContent).toContain("재현 MAC 0.934"), { timeout: 8000 });
+    expect(line.textContent).toContain("강체 제거 Kabsch(S4)");
+    expect(screen.getByTestId("recon-diag-entry")).toBeTruthy();
+    await waitFor(() => expect(lastLegend().length).toBe(2), { timeout: 8000 });
+    const rc = mockView3d().recon("x", "bforce");
+    expect(lastLegend()[0].textContent).toContain("목표 변위 |u_tgt| (mm)");
+    expect(lastLegend()[1].textContent).toContain("재현 변위 |u_fit| (mm)");
+    expect(rmax(lastLegend()[0])).toBeCloseTo(Math.max(rc.ranges.tgt_max, rc.ranges.fit_max), 6);
+    expect(rmax(lastLegend()[1])).toBeCloseTo(rmax(lastLegend()[0]), 6);
+    fireEvent.click(screen.getByTestId("recon-diag-view").querySelector("[data-view=err]")!);
+    await waitFor(() => expect(lastLegend()[0].textContent).toContain("오차 |u_fit − u_tgt| (mm)"));
+    expect(rmax(lastLegend()[0])).toBeCloseTo(rc.ranges.err_max, 6);
+    expect(rmax(lastLegend()[1])).toBeCloseTo(rc.ranges.fit_max, 6);
+    expect(screen.queryByTestId("v3d-color")).toBeNull();             // 진단 보기에는 하중 색 토글 없음
+  }, 30000);
+
+  it("재현 사이드카 없는 경계력 탭(옛 결과): 진단 빈 칸 = V3D_RECON_NONE 문구 + 자료 만들기 버튼 1개", async () => {
+    renderApp("/p/p-body/doe/doe-50", "power", (s) => {
+      s.doe.demoBforce();
+      const rec = s.doe.recs.find((r) => r.out.id === "doe-50")!;
+      rec.result = { ...rec.result!, view3d_bf_recon: null, source_add: { bforce: { available: true, allowed: true, reason: null } } };
+    });
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    fireEvent.click(tabBtn("bforce"));
+    await waitFor(() => expect(tabBtn("bforce").getAttribute("aria-selected")).toBe("true"));
+    fireEvent.click((await screen.findByTestId("v3d-recon-mode")).querySelector("[data-mode=diag]")!);
+    await screen.findByText(/재현 진단 없음 — \[경계력 ESL 계산\]로 다시 계산하면 생깁니다/);
+    expect(screen.getAllByTestId("v3d-bf-add").length).toBe(1);
+    expect(addCount()).toBe(1);
+  }, 30000);
+
+  it("jig 탭 [설계 비교 | 지그 진단] 은 그대로(testid v3d-jig-mode), 재현 진단 세그먼트와 따로", async () => {
+    open("doe-40");
+    await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
+    expect(await screen.findByTestId("v3d-jig-mode")).toBeTruthy();
+    expect(screen.queryByTestId("v3d-recon-mode")).toBeNull();
+    expect(screen.getByTestId("v3d-color")).toBeTruthy();
+  }, 30000);
 });

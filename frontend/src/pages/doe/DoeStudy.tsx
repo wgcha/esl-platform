@@ -59,8 +59,10 @@ import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFa
 import { BlockErr, MsgFold } from "../../components/MsgFold";
 import { SourceTabs } from "../../view3d/SourceTabs";
 import { loadRangeTop, loadUnitOf } from "../../view3d/values";
+import { reconLineText } from "../../view3d/sources";
+import { useStudyRecon } from "../../view3d/useRecon";
 import type { SourceTabItem } from "../../view3d/sources";
-import { BF_GRADE_TEXT, LOAD_SOURCES, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { BF_GRADE_TEXT, LOAD_SOURCES, V3D_RECON_NONE_TEXT, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -964,6 +966,82 @@ function JigDiag({ studyId, result, lead, pick, addBtn = null }: { studyId: stri
   );
 }
 
+/** v0.24.1 재현 진단 3D(§6.2) — 출처 행 recon.kind == "sidecar": 결과 키(reconKey) = 엔트리 → 폴더(recon.json·recon.bin).
+ *  [목표·재현 | 오차] 두 카드(왼쪽 목표 또는 오차, 오른쪽 재현 — JigDiag 와 같은 배치·변형 공유), 데이터 = 그 폴더 manifest·glb·values + recon.bin(dispOverride) */
+type ReconView = "tf" | "err";
+function ReconDiag({ studyId, result, src, reconKey, lead, pick, addBtn = null }: { studyId: string; result: DoeResultOut; src: LoadSource; reconKey: "view3d_bf_recon" | "view3d_fi_recon"; lead: ReactNode; pick: string | null; addBtn?: ReactNode }) {
+  const map = (result[reconKey] ?? null) as Record<string, string> | null;
+  const entryIds = Object.keys(map ?? {});
+  const labelOf = (e: string) => result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8);
+  const worst = pick && src.pairKeys ? result[src.pairKeys.esl]?.[pick] ?? null : null;
+  const [chosen, setChosen] = useState<string | null>(null);
+  const eid = (chosen && entryIds.includes(chosen) ? chosen : worst && entryIds.includes(worst) ? worst : entryIds[0]) ?? null;
+  const dir = eid && map ? map[eid] ?? null : null;
+  const [view, setView] = useState<ReconView>("tf");
+  const left = useDoeView(studyId, dir);
+  const right = useDoeView(studyId, dir);
+  const rc = useStudyRecon(studyId, dir);
+  const [ds, setDs] = useState<{ on: boolean; kexp: number | null; real: boolean }>({ on: false, kexp: null, real: false });
+  const sync = { ...ds, set: (p: Partial<typeof ds>) => setDs((x) => ({ ...x, ...p })) };
+  const [manTF, setManTF] = useState<Range | null>(null);
+  const [manErr, setManErr] = useState<Range | null>(null);
+  const [manFit, setManFit] = useState<Range | null>(null);
+  if (!dir)
+    return (
+      <div className="doe-compare" data-testid="recon-diag">
+        <div className="inline-actions">{lead}</div>
+        <Empty>
+          {V3D_RECON_NONE_TEXT(addBtn && src.add ? src.add.label : null)} {addBtn}
+        </Empty>
+      </div>
+    );
+  const rg = rc.recon?.ranges;
+  const errView = view === "err";
+  const rTF: Range | null = manTF ?? (rg && Math.max(rg.tgt_max, rg.fit_max) > 0 ? { min: 0, max: Math.max(rg.tgt_max, rg.fit_max) } : null);
+  const rErr: Range | null = manErr ?? (rg && rg.err_max > 0 ? { min: 0, max: rg.err_max } : null);
+  const rFit: Range | null = errView ? manFit ?? (rg && rg.fit_max > 0 ? { min: 0, max: rg.fit_max } : null) : rTF;
+  const lab = labelOf(eid ?? "");
+  const mk = (title: string, range: Range | null, man: Range | null, setMan: (r: Range | null) => void, u: Float32Array | null | undefined, label: string): View3DOptions => ({
+    title,
+    colorBy: "disp",
+    range,
+    rangeManual: !!man,
+    onRangeChange: setMan,
+    deformSync: sync,
+    dispLabel: label,
+    dispOverride: u ? { u, label } : null,
+  });
+  const line = rc.recon ? `${lab} · ${reconLineText(rc.recon)}` : rc.error ? `${lab} · ${rc.error}` : `${lab} · 재현 자료 읽는 중…`;
+  return (
+    <div className="doe-compare" data-testid="recon-diag">
+      <div className="inline-actions">
+        {lead}
+        <select className="select small" aria-label="재현 진단 엔트리" data-testid="recon-diag-entry" value={eid ?? ""} onChange={(e) => setChosen(e.target.value)}>
+          {entryIds.map((x) => (
+            <option key={x} value={x}>
+              {labelOf(x)}
+            </option>
+          ))}
+        </select>
+        <div className="seg" role="group" aria-label="재현 진단 보기" data-testid="recon-diag-view">
+          {([["tf", "목표·재현"], ["err", "오차"]] as const).map(([k, l]) => (
+            <button key={k} type="button" className={view === k ? "on" : ""} aria-pressed={view === k} data-view={k} onClick={() => setView(k)}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <span className={`small${rc.error ? " warn-text" : ""}`} data-testid="recon-diag-line" title={line} style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+          {line}
+        </span>
+      </div>
+      <div className="doe-compare-grid">
+        {rc.disp && left && (errView ? <View3DCard view={left} options={mk(`오차 |u_fit − u_tgt| · ${lab}`, rErr, manErr, setManErr, rc.disp?.err, "오차 |u_fit − u_tgt| (mm)")} /> : <View3DCard view={left} options={mk(`목표 u_tgt · ${lab} — 강체 제거한 낙하 변형`, rTF, manTF, setManTF, rc.disp?.tgt, "목표 변위 |u_tgt| (mm)")} />)}
+        {rc.disp && right && <View3DCard view={right} options={mk(`재현 응답 u_fit · ${lab}`, rFit, errView ? manFit : manTF, errView ? setManFit : setManTF, rc.disp?.fit, "재현 변위 |u_fit| (mm) — 3-2-1")} />}
+      </div>
+    </div>
+  );
+}
+
 function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; onRegen?: () => void }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
@@ -1016,9 +1094,12 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   if (!others.length && !pairTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
   const names = [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)];
   const cond = bfMode ? v3dPairCondText(pk?.load ?? "", (nodal ? result[nodal.block]?.grade_min : null) ?? null, names) : v3dCondText(jigMode, result.jig?.n_jig ?? null, names);
-  const modeSeg = jigTab ? (
-    <div className="seg" role="group" aria-label="지그 3D 보기" data-testid="v3d-jig-mode">
-      {([["design", "설계 비교"], ["diag", "지그 진단"]] as const).map(([k, l]) => (
+  // v0.24.1 재현 진단(§6.2): 행 recon.kind — jigdiag = 지그 진단(JigDiag), sidecar = 범용 ReconDiag, null = 세그먼트 없음
+  const reconCol = src?.recon ?? null;
+  const sideRecon = reconCol?.kind === "sidecar" ? reconCol : null;
+  const modeSeg = jigTab || sideRecon ? (
+    <div className="seg" role="group" aria-label={jigTab ? "지그 3D 보기" : "재현 3D 보기"} data-testid={jigTab ? "v3d-jig-mode" : "v3d-recon-mode"}>
+      {([["design", "설계 비교"], ["diag", jigTab ? "지그 진단" : "재현 진단"]] as const).map(([k, l]) => (
         <button key={k} type="button" className={jmode === k ? "on" : ""} aria-pressed={jmode === k} data-mode={k} onClick={() => setJmode(k)}>
           {l}
         </button>
@@ -1027,6 +1108,8 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   ) : null;
   // v0.24.1 자료 만들기 버튼은 활성 탭 3D 의 빈 칸 안에만(§6.3 — 다른 출처 버튼을 머리에 두지 않음, D-0.23.3-8 ② 개정)
   const addBtn = src ? <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onRegen} /> : null;
+  if (sideRecon && src && jmode === "diag")
+    return <ReconDiag studyId={studyId} result={result} src={src} reconKey={sideRecon.key} pick={did} lead={modeSeg} addBtn={addBtn} />;
   if (jigTab && jmode === "diag")
     return (
       <JigDiag

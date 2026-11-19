@@ -1756,10 +1756,10 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
       return new Response(bin[1] === "part.glb" ? v.glb : bin[1] === "recon.bin" ? v.reconBin : v.values, { status: 200, headers: { "Content-Type": bin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
     // v0.9.0 비드 DOE 3D 비교 파일(목: 같은 메시·값)
-    const dbin = /^\/esl\/api\/doe\/studies\/[^/]+\/view3d\/[^/]+\/(part\.glb|values\.bin)$/.exec(url.pathname);
+    const dbin = /^\/esl\/api\/doe\/studies\/[^/]+\/view3d\/[^/]+\/(part\.glb|values\.bin|recon\.bin)$/.exec(url.pathname);
     if (dbin && method === "GET") {
       const v = mockView3d();
-      return new Response(dbin[1] === "part.glb" ? v.glb : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+      return new Response(dbin[1] === "part.glb" ? v.glb : dbin[1] === "recon.bin" ? v.reconBin : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
     }
     const raw = init?.body;
     const isBuf = raw instanceof ArrayBuffer || ArrayBuffer.isView(raw as ArrayBufferView);
