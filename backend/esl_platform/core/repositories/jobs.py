@@ -232,7 +232,9 @@ def running_slot_count(conn: Connection) -> int:
 
 
 # ---------------------------------------------------------------- hw 세마포어(P3-UX §6, altair.max_concurrent_hw)
-HW_STEP_KEYS = ("H3D_EXTRACT", "OPT_POST")      # v0.7.0: 비드 후처리(OPT_POST hw TCL)도 hw 세마포어 공유(esl_opt_run.md §9)
+# v0.7.0: 비드 후처리(OPT_POST hw TCL)도 hw 세마포어 공유(esl_opt_run.md §9).
+# v0.24.2: ESL_SOLVE 의 ESL step 도 경계력 원자료 보충 동안만 잡는다(esl_bforce_ondemand.md §3.3 — 끝나면 release_hw)
+HW_STEP_KEYS = ("H3D_EXTRACT", "OPT_POST", "ESL")
 
 
 def _hw_held():
@@ -259,6 +261,16 @@ def acquire_hw(conn: Connection, job_id: str, token: str, step_no: int, limit: i
     conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
                  .values(outputs={**(st or {}), "hw_acquired": True}))
     return True
+
+
+def release_hw(conn: Connection, job_id: str, token: str, step_no: int) -> None:
+    """hw 실행 권한을 즉시 돌려준다(step outputs.hw_acquired false, 다른 키 유지). 경계력 보충 뒤 코어 풀이 동안 hw 를 비운다."""
+    assert_lease(conn, job_id, token)
+    conn.execute(select(func.pg_advisory_xact_lock(HW_LOCK_KEY)))
+    st = conn.execute(select(job_steps.c.outputs).where(and_(job_steps.c.job_id == job_id,
+                                                             job_steps.c.step_no == step_no))).scalar()
+    conn.execute(update(job_steps).where(and_(job_steps.c.job_id == job_id, job_steps.c.step_no == step_no))
+                 .values(outputs={**(st or {}), "hw_acquired": False}))
 
 
 # ---------------------------------------------------------------- OptiStruct 세마포어(esl_opt_run.md §8.1, altair.max_concurrent_os)
