@@ -11,5 +11,8 @@
    - `backend/tests/test_doe_v3d_src_api.py::test_regenerate_equals_v0240_golden` → `backend/tests/fixtures/doe_regen_v0240.json`
    - `tests/doe/test_v3d_recon_doe.py::test_existing_view3d_files_equal_v0240_golden` → `tests/fixtures/view3d/doe_view3d_v0240.json`(환경 서명 일치 시만)
    - 골든은 다시 기록 금지(`ESL_GOLDEN_RECORD=1` 은 파일이 없을 때만 씀).
-2. [ ] A 코어: esl/view3d.py(recon_fields·pack_disp·build_recon), esl/view3d_src.py, core_adapter 래퍼, stages._ns_view3d 재현, DEFAULTS view3d.recon
+2. [x] A 코어: esl/view3d.py(recon_fields·pack_disp·build_recon·unpack_disp 추가만), esl/view3d_src.py(새 — KEYS·CASE_PLAN·REASON_TEXT·
+   plan·case_status·check_plan·reason_text·has_load), core_adapter 래퍼(view3d_recon_build·view3d_src_plan·view3d_case_status),
+   stages._ns_recon_ref·_ns_recon_one·_ns_view3d(기준 폴더 recon + view3d_<pe>_recon), DEFAULTS bead_doe.view3d.recon=True.
+   시험: tests/test_view3d_src.py(V-1·2·4·5), tests/doe/test_v3d_recon_doe.py(V-13 + 골든).
 3. [ ] B 백엔드: services/view3d.py ?src·sources·recon, routers, services/doe.py SOURCE_ADD, schemas, config, yaml, openapi

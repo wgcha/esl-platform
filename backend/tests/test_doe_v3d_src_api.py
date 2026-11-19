@@ -50,7 +50,7 @@ def _detail(r) -> dict:
     return {"status": r.status_code, **{k: d[k] for k in sorted(d) if k != "request_id"}}
 
 
-def regen_trace(client, world, engine, esl_root, path_of) -> dict:
+def regen_trace(client, world, engine, esl_root, path_of) -> dict:  # noqa: F811
     """v0.24.0 regenerate 시험(test_regenerate_queues_run_from_post·needs_jig) 순서를 그대로 따라 응답을 모은다.
     path_of(sid) = 요청 경로(옛 /view3d/regenerate 또는 새 /sources/jig)."""
     from esl_platform.core.repositories import jobs as jobs_repo
@@ -80,7 +80,7 @@ def regen_trace(client, world, engine, esl_root, path_of) -> dict:
     return out
 
 
-def test_regenerate_equals_v0240_golden(client, world, engine, esl_root):  # noqa: F811
+def test_regenerate_equals_v0240_golden(client, world, engine, esl_root):  # noqa: F811 — 픽스처
     cur = regen_trace(client, world, engine, esl_root, lambda sid: f"/doe/studies/{sid}/view3d/regenerate")
     if os.environ.get("ESL_GOLDEN_RECORD") == "1" and not GOLDEN.is_file():
         GOLDEN.parent.mkdir(parents=True, exist_ok=True)

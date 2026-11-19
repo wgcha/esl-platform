@@ -16,10 +16,10 @@ import pytest
 from test_view3d_api import R, Seed, code, mk, world  # noqa: F401  (픽스처 재사용)
 
 sys_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts")
-import sys  # noqa: E402
+import sys
 
 sys.path.insert(0, sys_path)
-from gen_view3d_fixture import synth_mesh  # noqa: E402
+from gen_view3d_fixture import synth_mesh
 
 GOLDEN = Path(__file__).parent / "fixtures" / "view3d_case_v0240.json"
 CREATED_AT = "2026-11-19T00:00:00Z"

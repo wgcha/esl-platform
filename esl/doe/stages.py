@@ -4783,9 +4783,42 @@ def _bf_post(c: Ctx, t, bmeta: dict, m: dict, results: list, noise, S_: dict | N
                     fresh_prep=fresh_prep, echo=echo)
 
 
+def _ns_recon_ref(c: Ctx) -> dict | None:
+    """v0.24.1 재현 진단 목표(esl_view3d_sources.md §5.2): 설정 bead_doe.view3d.recon 이 켜져 있고 prep/sm_ref.npz 가 once 형식
+    (u·node_id — per_target 형식 u_a_<k> 만 있으면 없음)일 때 {node_id, u, entry_ids}, 아니면 None(키 없음·경고 없음)."""
+    if not c.cfg["view3d"].get("recon"):
+        return None
+    p = c.p("prep", SM_REF_NPZ)
+    if not os.path.isfile(p):
+        return None
+    sr = U.load_npz(p)
+    if "u" not in sr or "node_id" not in sr or "entry_ids" not in sr:
+        return None
+    return {"node_id": np.asarray(sr["node_id"], dtype=np.int64), "u": sr["u"],
+            "entry_ids": [str(e) for e in sr["entry_ids"].tolist()]}
+
+
+def _ns_recon_one(od: str, ns: dict, nm: str, mesh: dict, ref: dict, e: str, u_fit) -> None:
+    """기준 폴더 od 에 재현 진단(recon.json·recon.bin): 목표 = sm_ref u[엔트리](노드 ID 정렬, [:, :3] — 지그 진단과 같은 읽기),
+    응답 = 같은 폴더 응답 u, 둘 다 Kabsch 강체 제거(Case 재현과 같은 규칙). 공용 빌더 esl.view3d.build_recon."""
+    from esl.mech import kabsch
+    from esl.view3d import build_recon
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    nr = ref["node_id"]
+    ordn = np.argsort(nr, kind="stable")
+    pos = ordn[np.searchsorted(nr, nid, sorter=ordn).clip(0, max(nr.size - 1, 0))]
+    if nr.size == 0 or not np.array_equal(nr[pos], nid):
+        raise EslError("OUTPUT_INCONSISTENT", "sm_ref 노드 ID 가 기준 메시와 다름")
+    u_tgt = np.asarray(ref["u"][ref["entry_ids"].index(e)], dtype=np.float64)[pos][:, :3]
+    build_recon(od, node_id=nid, u_tgt=kabsch.remove_rigid(X, u_tgt)[0],
+                u_fit=kabsch.remove_rigid(X, np.asarray(u_fit, dtype=np.float64)[:, :3])[0], key=f"doe/{nm}",
+                src=ns["key"], rigid="kabsch", esl_run_id=str(e))
+
+
 def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, warns: list) -> dict:
     """§5.5 3D: 표시 안마다 순위 행 worst 엔트리(rank._agg(per_esl, C_<pe>)) 응답 + 하중 화살표 → post/view3d/<did>_<pe>/, 기준
-    d000_<pe>_e<kk>/ (기존 view3d 형식)."""
+    d000_<pe>_e<kk>/ (기존 view3d 형식). v0.24.1: 기준 폴더에 재현 진단(recon.*) 추가 → view3d_<pe>_recon{엔트리: 폴더}(있을 때만)."""
     from esl.view3d import build_view
     pe, ck = ns["pe"], _pk(ns, "C")
     order = [str(e["id"]) for e in c.D["entries"]]
@@ -4799,7 +4832,9 @@ def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, 
     out = {kd: {}, ke: {}, kr: {}}
     supd = [{"node_id": int(n), "dof": str(d)} for n, d in sup]
 
-    def _write(did: str, ents: list, name_of) -> dict:
+    recon: dict = {}
+
+    def _write(did: str, ents: list, name_of, ref: dict | None = None) -> dict:
         mesh = _jig_view_mesh(c, t, did)
         _, us = _ns_design(c, ns, did, mesh, sup, region, keep_u=ents)
         loads = dict(_ns_loads(c, ns, mesh))
@@ -4810,6 +4845,12 @@ def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, 
             build_view(od, node_id=mesh["node_id"], x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"],
                        f=loads[e], u_rel=us[e], supports=supd, key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
+            if ref is not None and str(e) in ref["entry_ids"]:
+                try:                                            # 재현 진단 실패 = 경고만(3D·보기 실패 아님)
+                    _ns_recon_one(od, ns, nm, mesh, ref, str(e), us[e])
+                    recon[str(e)] = nm
+                except Exception as exc:                        # noqa: BLE001
+                    warns.append(f"VIEW3D_FAILED: {nm} recon {getattr(exc, 'code', type(exc).__name__)}")
         return names
 
     for did, e in pick.items():
@@ -4821,7 +4862,9 @@ def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, 
             warns.append(f"VIEW3D_FAILED: {did}_{pe} {getattr(exc, 'code', type(exc).__name__)}")
     need = sorted(set(out[ke].values()), key=order.index)
     if need:
-        out[kr] = _write(BASELINE, need, lambda e: f"{BASELINE}_{pe}_e{order.index(e):02d}")
+        out[kr] = _write(BASELINE, need, lambda e: f"{BASELINE}_{pe}_e{order.index(e):02d}", _ns_recon_ref(c))
+    if recon:
+        out[f"view3d_{pe}_recon"] = recon
     return out if out[kd] else {}
 
 

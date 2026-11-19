@@ -19,7 +19,7 @@ from esl import view3d
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-from gen_view3d_fixture import synth_mesh  # noqa: E402
+from gen_view3d_fixture import synth_mesh
 
 GOLDEN = os.path.join(ROOT, "tests", "fixtures", "view3d", "golden_v0240.json")
 CREATED_AT = "2026-11-19T00:00:00Z"
