@@ -260,9 +260,9 @@ def _load(inp: Inputs) -> dict[str, Any]:
     tf, ta = inp.row["target"][1], inp.row["target"][2]
     try:
         model = _load_model(inp.model)
-        with np.load(inp.load, allow_pickle=False) as z:
+        with np.load(inp.load or "", allow_pickle=False) as z:          # resolve 가 존재를 확인함(None 아님)
             fz = {"node_id": z["node_id"], "f": z[la]}
-        with np.load(inp.target, allow_pickle=False) as z:
+        with np.load(inp.target or "", allow_pickle=False) as z:
             uz = {"node_id": z["node_id"], "u_rel": z[ta]}
     except (OSError, ValueError, KeyError) as exc:
         raise conflict("PREREQUISITE_MISSING", f"ESL 산출물을 읽을 수 없습니다: {exc}", missing=["esl"]) from None
@@ -487,9 +487,9 @@ def _build_recon(r: Recon) -> dict[str, Any]:
     cfg = r.ctx.settings.view3d
     try:
         nid = np.asarray(_load_model(r.model)["node_id"], np.int64)
-        with np.load(r.tgt, allow_pickle=False) as z:
+        with np.load(r.tgt or "", allow_pickle=False) as z:              # recon_resolve 가 존재를 확인함
             ut = _by_id(nid, z["node_id"], z[r.row["recon_tgt"][2]], r.row["recon_tgt"][1])
-        with np.load(r.fit, allow_pickle=False) as z:
+        with np.load(r.fit or "", allow_pickle=False) as z:
             uf = _by_id(nid, z["node_id"], z[r.row["resp"][2]], r.row["resp"][1])
     except (OSError, ValueError, KeyError) as exc:
         raise conflict("PREREQUISITE_MISSING", f"재현 입력을 읽을 수 없습니다: {exc}", missing=["esl"]) from None

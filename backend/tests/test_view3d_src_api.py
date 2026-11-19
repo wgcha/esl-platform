@@ -303,6 +303,9 @@ def test_recon_full_from_validation(mk, seed, world):
     r = _recon(c, seed, "full")
     assert r.status_code == 200, r.text
     j = r.json()
+    assert j["schema"] == "esl/view3d_recon/1" and j["recon_version"] == 1
+    assert set(j) == {"schema", "recon_version", "key", "src", "esl_run_id", "n_nodes", "rigid", "bytes", "arrays", "ranges",
+                      "mac", "umax_tgt", "umax_fit", "umax_err", "values_url"}
     assert j["rigid"] == "linear" and j["src"] == "full" and j["n_nodes"] == seed.m["node_id"].size
     assert j["values_url"] == f"/esl-runs/{seed.run_id}/view3d/recon.bin"                       # legacy 행 = ?src 없음
     assert r.headers["etag"] == f'"{j["key"]}"' and _recon(c, seed).json() == j                  # src 없음 = full
