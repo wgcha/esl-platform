@@ -179,10 +179,11 @@ def row_status(loc: RunLoc, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _unavailable(row: dict[str, Any], st: dict[str, Any]) -> DomainError:
+    """409 V3D_SOURCE_UNAVAILABLE{src, reason_code, reason}(detail.code = 오류 코드라 출처 사유 코드는 reason_code)."""
     if st["code"] == "PREREQUISITE_MISSING":          # legacy 행 산출물 없음 = v0.24.0 오류 그대로
         return conflict("PREREQUISITE_MISSING", _PREREQ_TEXT, missing=["esl"])
     return conflict("V3D_SOURCE_UNAVAILABLE", f"{row['key']} 3D 하중 보기 불가 — {st['reason']}", src=row["key"],
-                    code=st["code"], reason=st["reason"])
+                    reason_code=st["code"], reason=st["reason"])
 
 
 # ---------------------------------------------------------------- 하중 보기 입력
@@ -451,7 +452,7 @@ def recon_resolve(ctx: AppContext, run_id: str, src: str | None = None) -> Recon
         raise _unavailable(row, st)
     if not st["resp"]:
         raise conflict("V3D_RECON_UNAVAILABLE", f"{row['key']} 재현 비교 불가 — {st['resp_reason']}", src=row["key"],
-                       code=st["resp_code"], reason=st["resp_reason"])
+                       reason_code=st["resp_code"], reason=st["resp_reason"])
     return Recon(loc, row, int(_plan()["recon_version"]))
 
 
