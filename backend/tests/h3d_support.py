@@ -6,6 +6,9 @@
 - FAKE_HW_MODE=fail: done.json ok=false(code·failed_step·error·errorInfo) + 종료코드 1
 - FAKE_HW_MODE=nodone: 아무것도 쓰지 않고 종료코드 3
 - FAKE_HW_MODE=hang: 손자 프로세스를 하나 띄우고 둘 다 오래 잔다(pid 를 FAKE_HW_PIDS 파일에 기록) — 취소 시 트리 종료 확인
+- FAKE_HW_MODE=license: 라이선스 실패 문구 출력 + 종료코드 1(done.json 없음)
+- request bf_only 1(v0.24.2): FAKE_HW_BF_SRC 의 bf_<k>.csv 에서 bf_frames 행만 복사, done.json mode bf_only
+  (FAKE_HW_BF_NFRAMES·FAKE_HW_BF_TIMES·FAKE_HW_BF_TYPE·FAKE_HW_BF_NOFRAMES 로 조정)
 - FAKE_HW_DELAY=<초>: 시작 시 대기(동시 실행 한도 시험)
 argv 는 <output>/../argv_<pid>.json 에 남긴다.
 """
@@ -85,6 +88,39 @@ if mode == "fail":
               open(os.path.join(out, "done.json"), "w"))
     print("ESL extract failed at step 'GetResultCtrlHandle'", flush=True)
     sys.exit(1)
+if mode == "license":
+    print("ERROR: License checkout failed (no licenses available)", flush=True)
+    sys.exit(1)
+req = {{}}
+if opt("-config") and os.path.isfile(opt("-config")):
+    for ln in open(opt("-config"), encoding="utf-8"):
+        if "\t" in ln and not ln.startswith("#"):
+            k, v = ln.rstrip("\n").split("\t", 1)
+            req[k] = v
+if req.get("bf_only") == "1":
+    # bf 전용 흉내(계약 esl_bforce_ondemand.md §2): FAKE_HW_BF_SRC 의 bf_<k>.csv 에서 요청 프레임 행만 쓴다
+    frames = sorted(int(x) for x in req["bf_frames"].split())
+    bsrc = os.environ["FAKE_HW_BF_SRC"]
+    kinds = {{}}
+    for name in sorted(os.listdir(bsrc)):
+        if name.startswith("bf_") and name.endswith(".csv"):
+            k = name[3:-4]
+            with open(os.path.join(bsrc, name), encoding="utf-8") as fi, open(os.path.join(out, name), "w", encoding="utf-8") as fo:
+                rows = 0
+                fo.write(fi.readline())
+                for ln in fi:
+                    if int(ln.split(",", 1)[0]) in frames:
+                        fo.write(ln); rows += 1
+            kinds[k] = {{"type": os.environ.get("FAKE_HW_BF_TYPE", "Contact Forces"), "comps": ["X", "Y", "Z"], "rows": rows}}
+    times = json.loads(os.environ.get("FAKE_HW_BF_TIMES", "{{}}"))
+    bf_frames = [] if os.environ.get("FAKE_HW_BF_NOFRAMES") else frames
+    json.dump({{"ok": True, "mode": "bf_only", "h3d": opt("-input"), "part_spec": opt("-part"),
+               "n_frames": int(os.environ.get("FAKE_HW_BF_NFRAMES", "0")), "frames": frames,
+               "frame_times": [times.get(str(f), f * 0.001) for f in frames],
+               "bforce": {{"on": True, "frames": bf_frames, "kinds": kinds}}, "warnings": []}},
+              open(os.path.join(out, "done.json"), "w"))
+    print("ESL bf-only done", flush=True)
+    sys.exit(0)
 src = os.environ["FAKE_HW_SRC"]
 for name in os.listdir(src):
     if name != "done.json" and os.path.isfile(os.path.join(src, name)):
