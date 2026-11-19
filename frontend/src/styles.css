@@ -4205,3 +4205,10 @@ details.card.fold > .fold-body {
 .sg-now {
   cursor: help;
 }
+
+/* v0.24.1 Case ③ 3D 카드 머리의 출처 탭: 제목(h3)보다 낮게 — 카드 머리 높이 불변(esl_view3d_sources.md §6.1) */
+.v3d-src-tabwrap .seg button {
+  padding-top: 0.05rem;
+  padding-bottom: 0.05rem;
+  line-height: 1.2;
+}

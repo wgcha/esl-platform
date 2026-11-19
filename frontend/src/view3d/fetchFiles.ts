@@ -9,7 +9,8 @@ export function resolveFileUrl(runId: string, urlOrName: string, key?: string): 
   if (/^https?:\/\//.test(urlOrName)) url = urlOrName;
   else if (urlOrName.startsWith("/")) url = urlOrName.startsWith(`${API_PREFIX}/`) ? urlOrName : API_PREFIX + urlOrName;
   else url = `${API_PREFIX}/esl-runs/${runId}/view3d/${urlOrName.replace(/^\.?\//, "")}`;
-  return key && !url.includes("?") ? `${url}?key=${encodeURIComponent(key)}` : url;
+  // v0.24.1(C5): 출처 쿼리(`?src=`)가 이미 있으면 `&key=` — 409 VIEW3D_STALE 감지 유지. legacy URL 문자열은 그대로
+  return key ? `${url}${url.includes("?") ? "&" : "?"}key=${encodeURIComponent(key)}` : url;
 }
 
 export function fileUrls(m: View3dOut): { geometry: string; lod: string | null; values: string } {

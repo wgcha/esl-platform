@@ -1,7 +1,7 @@
 // ④ 3D 하중 보기 카드(계약 §5~§8). 컨트롤은 한 줄: 화살표 단계 · 변형 형상 · 배율 · 실제 크기 · 원근 · 맞춤.
 // 원근 체크 해제 = 직교(기본). 선택은 브라우저별 localStorage(esl.v3d.projection.v1)에 기억.
 // three 는 loadScene() 동적 import 로만 들어온다. WebGL 이 없거나 청크 적재가 실패하면 안내 문구만 보이고 표는 그대로.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../api/client";
 import { Card } from "../components/ui";
 import { ColorLegend, countOut, useLegendRange, type Range } from "../components/ColorLegend";
@@ -19,7 +19,8 @@ import type { SceneApi } from "./sceneApi";
 import { PartStage } from "./part/PartStage";
 import { buildSupportSpecs } from "./supports";
 import type { LoadView } from "./useLoadView";
-import { colorField, decodeValues, type DecodedValues } from "./values";
+import { fallbackAllowed, type LoadComp } from "./sources";
+import { colorField, decodeValues, loadFieldOf, loadRangeTop, maxNorm3, type DecodedValues } from "./values";
 import { hasWebGL } from "./webgl";
 
 export const NO_3D_TEXT = "이 브라우저에서 3D 보기를 쓸 수 없습니다";
@@ -50,6 +51,15 @@ export interface View3DOptions {
   deformSync?: { on: boolean; kexp: number | null; real: boolean; set: (s: { on?: boolean; kexp?: number | null; real?: boolean }) => void } | null;
   /** v0.23.3 지지 기호 색(정점 → 색, null = 기본) — 지그 노드 상대 부품별 */
   supportColor?: ((vertex: number) => string | null) | null;
+  /** v0.24.1 카드 머리 오른쪽(제목 줄 — 새 줄 없음): Case ③ 출처 탭 */
+  headRight?: ReactNode;
+  /** v0.24.1 도구 줄 앞·끝에 붙일 요소(보기 세그먼트·하중 색 선택 / 재현 한 줄) — 새 블록 줄 없음 */
+  toolsLead?: ReactNode;
+  toolsTail?: ReactNode;
+  /** v0.24.1 변위 색·변형·화살표 변형에 쓸 u(3n, mm) — 목표·재현·오차. 안 주면 values.bin u(=목표 u_rel) */
+  dispOverride?: { u: Float32Array; label: string } | null;
+  /** v0.24.1 하중 색 성분: pa 면압 · fn 법선 · fmag 크기. null/없음 = 지금 colorField(면압, 없으면 |Fn|) */
+  loadField?: LoadComp | null;
 }
 
 /** |u| (mm) 정점 값 */
@@ -85,12 +95,16 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const arrowKeysRef = useRef<string[]>([]);
 
   const diag = manifest?.bbox.diag ?? 1;
-  const umax = manifest?.ranges.u_max ?? 0;
+  const dov = options?.dispOverride ?? null;
+  const n0 = manifest?.n_nodes ?? 0;
+  const ovU = dov && dov.u.length === n0 * 3 ? dov.u : null;
+  const umax = useMemo(() => (ovU ? maxNorm3(ovU) : manifest?.ranges.u_max ?? 0), [ovU, manifest]);
   useEffect(() => {
     if (manifest && kexp === null) setKexp(defaultScaleExp(diag, umax));
   }, [manifest, kexp, diag, umax]);
   const k = real ? 1 : scaleFromExp(kexp ?? 0);
-  const hasU = !!data?.vals.u;
+  const uEff = ovU ?? data?.vals.u ?? null;
+  const hasU = !!uEff;
 
   // ---- 장면·자료 적재 (manifest key 가 바뀔 때만)
   const mkey = manifest?.key ?? null;
@@ -169,23 +183,24 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
 
   // ---- 표면 색: 면압 |Fn|/A (MPa), 없으면 |Fn| (N). 옵션 disp = |u| (mm)
   const fo = options?.fieldOverride ?? null;
+  const loadComp = options?.loadField ?? null;
   const field = useMemo(() => {
     if (!data) return null;
     if (fo && fo.values.length === data.glb.positions.length / 3) return { values: fo.values, unit: "mm" as const };
     if (colorBy === "disp") {
-      const v = dispField(data.vals.u);
+      const v = dispField(uEff);
       return v ? { values: v, unit: "mm" as const } : null;
     }
-    return colorField(data.vals);
-  }, [data, colorBy, fo]);
+    return loadComp ? loadFieldOf(data.vals, loadComp) : colorField(data.vals);
+  }, [data, colorBy, fo, uEff, loadComp]);
   const unit = field?.unit ?? (colorBy === "disp" ? "mm" : "MPa");
   const auto = useMemo(() => {
-    if (colorBy === "disp") return { min: 0, max: manifest?.ranges.u_max && manifest.ranges.u_max > 0 ? manifest.ranges.u_max : 1 };
-    const r = unit === "MPa" ? manifest?.ranges.pa : manifest?.ranges.fn_abs;
-    const top = r && r.p99 != null && r.p99 > 0 ? r.p99 : r && r.max > 0 ? r.max : 1;
-    return { min: 0, max: top };
-  }, [manifest, unit, colorBy]);
-  const localLegend = useLegendRange(view.runId, "load", unit === "MPa" ? "pa" : unit === "mm" ? "u" : "fn", "zero", auto);
+    if (colorBy === "disp") return { min: 0, max: umax > 0 ? umax : 1 };
+    if (!manifest) return { min: 0, max: 1 };
+    return { min: 0, max: loadRangeTop(manifest.ranges, loadComp, unit === "MPa" ? "MPa" : "N") };
+  }, [manifest, unit, colorBy, umax, loadComp]);
+  const legendLayer = unit === "MPa" ? "pa" : unit === "mm" ? "u" : loadComp === "fmag" ? "fmag" : "fn";
+  const localLegend = useLegendRange(view.rangeKey ?? view.runId, "load", legendLayer, "zero", auto);
   const legend = fo
     ? { range: { min: fo.min, max: fo.max }, manual: false, apply: () => undefined, reset: () => undefined }
     : options?.range
@@ -199,11 +214,11 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   // ---- 변형 형상
   useEffect(() => {
     if (!data || !sceneRef.current) return;
-    sceneRef.current.setDeform(deformOn ? data.vals.u : null, k);
-  }, [data, deformOn, k]);
+    sceneRef.current.setDeform(deformOn ? uEff : null, k);
+  }, [data, deformOn, k, uEff]);
 
   // ---- 화살표·지지 기호
-  const uForArrows = data?.vals.u ?? null;
+  const uForArrows = uEff;
   const ao = options?.arrowsOverride ?? null;
   const arrows = useMemo(() => (ao ?? (manifest ? buildArrowSpecs(manifest, mode, uForArrows, deformOn ? k : 0) : [])), [ao, manifest, mode, uForArrows, deformOn, k]);
   arrowKeysRef.current = arrows.map((a) => a.key);
@@ -238,16 +253,17 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const failed = !manifest && !!error;
 
   return (
-    <Card title={options?.title ?? "3D 하중 보기"}>
+    <Card title={options?.title ?? "3D 하중 보기"} right={options?.headRight}>
       {failed ? (
         <div className="small warn-text" role="alert" data-testid="v3d-error">
-          {error} — 3D 보기를 건너뛰고 아래 표만 보입니다.
+          {error}{fallbackAllowed(view.src) ? " — 3D 보기를 건너뛰고 아래 표만 보입니다." : ""}
         </div>
       ) : !manifest ? (
         <div className="empty small">불러오는 중…</div>
       ) : (
         <div className="v3d">
           <div className="v3d-tools">
+            {options?.toolsLead}
             {!ao && <label className="range-field" title="화살표 개수 — 왼쪽 끝 100 노드, 오른쪽으로 갈수록 줄고 마지막 4칸은 공간 군집 합력(5·4·3·2)">
               <span>화살표</span>
               <input
@@ -287,6 +303,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
               <input type="checkbox" checked={proj === "persp"} onChange={(e) => toggleProj(e.target.checked)} data-testid="v3d-persp" />
               <span>원근</span>
             </label>
+            {options?.toolsTail}
           </div>
           {/* v0.17.3 칸·시점 툴바 = 공통 PartStage(esl_view_unify.md VU-D-2) — 장면·화살표·색은 이 카드가 그대로 맡음 */}
           <PartStage
@@ -315,7 +332,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
             {field && (
               <ColorLegend
                 kind="zero"
-                label={fo ? fo.label : unit === "mm" ? options?.dispLabel ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : "|Fn| 면외 하중 (N)"}
+                label={fo ? fo.label : unit === "mm" ? options?.dispLabel ?? dov?.label ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : loadComp === "fmag" ? "|F| 하중 크기 (N)" : "|Fn| 면외 하중 (N)"}
                 range={legend.range}
                 manual={legend.manual}
                 gradient={BLUES_GRADIENT}

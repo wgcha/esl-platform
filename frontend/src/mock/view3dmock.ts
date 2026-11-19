@@ -1,6 +1,6 @@
 // mock 3D 하중 보기 자료(계약 esl_3d_load.md §3.3·§3.5·§3.6): 합성 굽은 판(플랜지) GLB(≤100 KB) + values.bin + manifest.
 // 서버 쪽 Python(esl/view3d.py)과 같은 배치·양자화 규칙을 TS 로 흉내 낸다. 결정적(난수 없음).
-import type { View3dClusterRow, View3dOut, View3dTopRow, View3dValuesArray } from "../api/types";
+import type { View3dClusterRow, View3dOut, View3dReconOut, View3dTopRow, View3dValuesArray } from "../api/types";
 
 const NX = 48;
 const NY = 30;
@@ -304,10 +304,32 @@ export function weightedClusters(x: ArrayLike<number>, f: ArrayLike<number>, u: 
   return { k_actual: rows.length, rows };
 }
 
+/** v0.24.1 recon.bin 모양(pack_disp): 배열마다 int16×3, 성분별 배율, 4바이트 정렬 */
+export function packDisp(n: number, named: [("tgt" | "fit" | "err"), Float64Array][]): { buf: ArrayBuffer; arrays: View3dReconOut["arrays"] } {
+  const size = pad4(n * 6);
+  const buf = new ArrayBuffer(size * named.length);
+  const dv = new DataView(buf);
+  const arrays: View3dReconOut["arrays"] = [];
+  named.forEach(([key, a], k) => {
+    const sc = [0, 1, 2].map((c) => {
+      let mm = 0;
+      for (let i = 0; i < n; i++) mm = Math.max(mm, Math.abs(a[i * 3 + c]));
+      return mm / 32767;
+    });
+    for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) dv.setInt16(k * size + i * 6 + c * 2, sc[c] ? Math.round(a[i * 3 + c] / sc[c]) : 0, true);
+    arrays.push({ key, dtype: "int16", comps: 3, offset: k * size, scale: sc });
+  });
+  return { buf, arrays };
+}
+
 export interface MockView3d {
   glb: ArrayBuffer;
   values: ArrayBuffer;
-  manifest: (runId: string) => View3dOut;
+  /** src 없음 = legacy(옛 URL·키 그대로). 있으면 키·파일 URL 에 출처를 단다 */
+  manifest: (runId: string, src?: string | null) => View3dOut;
+  reconBin: ArrayBuffer;
+  /** 재현 진단(목표 = values u, 응답 = 0.93·u + 굴곡, 오차 = 응답 − 목표) */
+  recon: (runId: string, src: string | null, rigid?: string) => View3dReconOut;
 }
 
 let cache: MockView3d | null = null;
@@ -373,13 +395,44 @@ export function mockView3d(): MockView3d {
   const clusters: View3dOut["clusters"] = {};
   for (const K of [2, 3, 4, 5]) clusters[String(K)] = weightedClusters(m.x, f, u, m.nodeIds, K);
   const umax = Math.max(...Array.from({ length: n }, (_, i) => Math.hypot(u[i * 3], u[i * 3 + 1], u[i * 3 + 2])));
+  const fit = new Float64Array(n * 3);
+  const err = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const w = 1 + 0.25 * Math.sin((m.x[i * 3] - X0) / 90) * Math.cos(m.x[i * 3 + 1] / 70);
+    for (let c = 0; c < 3; c++) {
+      fit[i * 3 + c] = u[i * 3 + c] * 0.93 * w;
+      err[i * 3 + c] = fit[i * 3 + c] - u[i * 3 + c];
+    }
+  }
+  const pd = packDisp(n, [["tgt", u], ["fit", fit], ["err", err]]);
+  const maxN = (a: Float64Array) => Math.max(...Array.from({ length: n }, (_, i) => Math.hypot(a[i * 3], a[i * 3 + 1], a[i * 3 + 2])));
+  const rg = { tgt_max: maxN(u), fit_max: maxN(fit), err_max: maxN(err) };
+  const q = (src: string | null) => (src ? `?src=${src}` : "");
   const built: MockView3d = {
     glb,
     values: packed.buf,
-    manifest: (runId) => ({
+    reconBin: pd.buf,
+    recon: (runId, src, rigid = "kabsch") => ({
+      schema: "esl/view3d_recon/1",
+      recon_version: 1,
+      key: `mockrecon${src ?? "full"}`,
+      src: src ?? "full",
+      esl_run_id: runId,
+      n_nodes: n,
+      rigid,
+      bytes: pd.buf.byteLength,
+      arrays: pd.arrays,
+      ranges: rg,
+      mac: 0.934,
+      umax_tgt: rg.tgt_max,
+      umax_fit: rg.fit_max,
+      umax_err: (rg.fit_max - rg.tgt_max) / rg.tgt_max,
+      values_url: `/esl-runs/${runId}/view3d/recon.bin${q(src)}`,
+    }),
+    manifest: (runId, src = null) => ({
       schema: "esl/view3d/1",
       builder_version: 1,
-      key: "mock0123456789ab",
+      key: src ? `mock0123456789ab-${src}` : "mock0123456789ab",
       esl_run_id: runId,
       n_nodes: n,
       n_elems: m.quads.length,
@@ -400,9 +453,9 @@ export function mockView3d(): MockView3d {
       supports: supVerts.map((v, k) => ({ node_id: m.nodeIds[v], vertex: v, dof: supDof[k], x0: [m.x[v * 3], m.x[v * 3 + 1], m.x[v * 3 + 2]] })),
       top,
       clusters,
-      geometry_url: `/esl-runs/${runId}/view3d/part.glb`,
+      geometry_url: `/esl-runs/${runId}/view3d/part.glb${q(src)}`,
       lod_url: null,
-      values_url: `/esl-runs/${runId}/view3d/values.bin`,
+      values_url: `/esl-runs/${runId}/view3d/values.bin${q(src)}`,
       created_at: "2026-10-28T03:00:00Z",
     }),
   };

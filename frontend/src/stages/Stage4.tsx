@@ -5,9 +5,7 @@ import { warnText } from "../api/client";
 import { history } from "../api/history";
 import { PastFrame } from "../components/PastBadge";
 import { Badge, Card, Empty, Stat } from "../components/ui";
-import { LoadTable } from "../view3d/LoadTable";
-import { View3DCard } from "../view3d/View3DCard";
-import { useLoadView } from "../view3d/useLoadView";
+import { CaseView3D } from "../view3d/CaseView3D";
 import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmtFixed, pct, sci, vec } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -92,7 +90,6 @@ export function Stage4({ c, reload, allowed }: StageProps) {
 
   // 3D 하중 보기 + 상위 표(과거 실행은 availability = full 일 때만)
   const showLoad = !!r && !(pastRunId && review.data?.result.availability !== "full");
-  const view = useLoadView(runId ?? null, showLoad);
 
   const prereq = eslPrereq(c);
 
@@ -151,16 +148,18 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               </ul>
             )}
           </Card>
-          {showLoad && view && (
-            <>
-              <View3DCard view={view} />
-              {c.extract_summary?.cumulative && (
-                <div className="small muted" data-testid="v3d-state-note">
-                  형상: 이전 런 변형 상태
-                </div>
-              )}
-              <LoadTable view={view} />
-            </>
+          {showLoad && runId && (
+            <CaseView3D
+              runId={runId}
+              enabled={showLoad}
+              note={
+                c.extract_summary?.cumulative ? (
+                  <div className="small muted" data-testid="v3d-state-note">
+                    형상: 이전 런 변형 상태
+                  </div>
+                ) : null
+              }
+            />
           )}
         </>
       )}

@@ -99,14 +99,20 @@ describe("내력 탭 화면", () => {
     expect(screen.queryByTestId("nodal-chip-fint")).toBeNull();
     expect(heads(screen.getByRole("table", { name: "순위표" })).join(" ")).not.toContain("내력 C");
   }, 30000);
-  it("doe-51: 내력 탭 비활성 + FINT 사유, [경계력 ESL 계산]·[내력 ESL 계산] 버튼", async () => {
+  it("doe-51: 내력·경계력 탭 = 선택 가능한 빈 탭(+) + 사유, 탭마다 본문 버튼 1개(v0.24.1 §6.3)", async () => {
     open("doe-51");
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
-    expect(tabBtn("fint").getAttribute("aria-disabled")).toBe("true");
+    expect(tabBtn("fint").getAttribute("aria-disabled")).toBe("false");
     expect(tabBtn("fint").getAttribute("title")).toContain("/H3D/NODA/FINT");
+    expect(screen.queryByTestId("v3d-bf-add")).toBeNull();
+    expect(screen.queryByTestId("v3d-fi-add")).toBeNull();
+    fireEvent.click(tabBtn("bforce"));
     expect(await screen.findByTestId("v3d-bf-add")).toBeTruthy();
+    expect(screen.queryByTestId("v3d-fi-add")).toBeNull();
+    fireEvent.click(tabBtn("fint"));
     const fi = (await screen.findByTestId("v3d-fi-add")) as HTMLButtonElement;
     expect(fi.textContent).toBe("내력 ESL 계산");
     expect(fi.disabled).toBe(false);
+    expect(screen.queryByTestId("v3d-bf-add")).toBeNull();
   }, 30000);
 });

@@ -40,7 +40,7 @@ describe("지그 결과 mock·규칙", () => {
 describe("지그 ok — doe-40", () => {
   it("주 열 '지그 C'·정의 문구·기준 재현 한 줄(MAC·umax 오차·영역 수)·보조 토글 = 지그 값만(v0.23.3 탭)", async () => {
     open("doe-40");
-    const t = await screen.findByRole("table", { name: "순위표" });
+    const t = await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     await waitFor(() => expect(heads(t)).toContain("지그 C"));
     expect(heads(t)).not.toContain("재풀이 C");
     const line = screen.getByTestId("jig-line");
