@@ -414,3 +414,38 @@ FAILED at step '<step>': <code>: <msg>                              (기존 실�
 - R-BFD-2 덤프 추출 직후 후보 프레임 D 전체를 bf 전용으로 미리 보충(선택 — 추출 시간 +수 분, 사용자 결정 1 과 달라 별도 결정 필요).
 - R-BFD-3 작업 진행 화면에 "경계력 원자료 보충 중(HyperView)" 표시(step outputs `bf_ondemand.state` 사용).
 - R-BFD-4 Case `extract_summary.bforce`(결과 유형) 를 보충 결과로 갱신(지금은 추출 때 값 그대로).
+
+## 17. 구현 메모(2026-11-19)
+
+통합(release/v0.24.2)에서 양쪽 인계 파일의 '계약과 다른 점'을 옮긴 표. 본문(§1~16)은 계약 원안 — 아래가 구현 사실이다.
+
+### 17.1 묶음 A(TCL·코어)
+
+| 항목 | 계약 | 구현 |
+|---|---|---|
+| `merge` 오류 코드 | `BF_FILL_OUTPUT`·`BF_FILL_MISMATCH` | `BF_FILL_MERGE` 추가(01_extract frames.json·model.npz 읽기 실패, 병합 중 bforce.json 이 계속 바뀜). 워커는 `BF_FILL_MISMATCH` = cause MISMATCH, 그 밖 모두 = MERGE(통합 시험 확인) |
+| 프레임이 이미 있음(dup 만) | 기존 자료 유지·dup·경고 | 아무것도 쓰지 않고 반환(`added []`, npz·json·백업 없음). 시도 기록은 워커가 남김 |
+| 병합 이전 파일 백업 | `_backup/<UTC>/01_extract/` 로 이동 후 replace | 이동 대신 하드 링크(안 되면 복사)로 남기고 tmp → replace — 원래 자리에 늘 완전한 파일(중간 실패 시 옛 자료 유지). 결과 상태는 이동과 같음 |
+| `record` 의 `code` | attempt 에 code 포함 | `code` 가 없으면 status 로 정함(failed → BF_EXTRACT_FAILED, skipped → BF_EXTRACT_SKIPPED, ok → null), `at` 없으면 지금. 깨진 기존 기록 파일은 `<Case>/_backup/<UTC>/01_extract/` 로 옮기고 새로 |
+| `note` | `note(extract_dir, frame, tag)` | 같음 — `str(job_id) == str(tag)` 비교, tag None = None(워커는 직접 부르지 않음 — 코어 ESL 단계가 부름) |
+| `no_types_before` 반환 | "시도" | 가장 최근 ok 시도 dict 전체(`at` 포함 — 워커가 NO_TYPES 문구에 사용). 이름 비교 = 정렬 json |
+| TCL request | `bf_on 1`·`bf_only 1`·`bf_frames` | 같음(`bf_frames "37 …"` 공백 구분) |
+| done.json | §2.4 | `value_format` 추가. 실패 json 은 기존 형식 + `mode "bf_only"`(`bf_only` 를 읽은 뒤). 범위 밖 프레임 = `failed_step check_frames` |
+| 덤프 Case 기록 없음 사유 | BF_NO_DATA 문구 v0.24.1 그대로 | 코드 `BF_NO_DATA`·`FINT_NO_DATA` 유지, reason 만 원인에 맞게: 덤프 방식 = "덤프 방식 추출(변형률 텐서 전 프레임)에는 경계력 결과가 없음 — … 보충(bforce.on_demand)", 병합 뒤 다른 프레임 = "선택 프레임 f 의 경계력 결과가 추출물에 없음(있는 프레임 […])". 비덤프 옛 추출 = v0.24.1 문구 그대로 |
+
+### 17.2 묶음 B·C(워커·플랫폼·화면)
+
+| 항목 | 계약 | 구현 |
+|---|---|---|
+| DECIDE 행 4a | (표에 없음) | 코어 `has_frame` 가 CoreError = 보충 없이 v0.24.1 동작(hw 0·기록 없음·로그 1줄 `unknown`). 실제 `has_frame` 은 읽기 오류를 False 로 삼키므로 현실에서는 코어 import 실패 때만 |
+| 산출물 등록 | 기록을 남기면 rels 에 있는 것만 | 실제 코어 병합에서는 `bforce.npz`·`bforce.json`·`bforce_ondemand.json` 3개가 이 ESL 작업 job_id 로 등록(통합 시험 7). 종류가 0 이면 npz 없이 json 만 |
+| hw 평가 ok 조건 | §3.4 | 같음 + 병합 오류 매핑: MISMATCH·MERGE(위 17.1) |
+| 시험용 가짜 hw | `FAKE_HW_MODE` 에 bf 전용 흉내 | `FAKE_HW_TCL_DATA` 가 있으면 실제 `esl_h3d_extract.tcl` 을 tclsh + hwmock 으로 실행(`h3d_support.write_tcl_bf_env`) — 출력이 실제 TCL 형식. 없으면 단순 흉내(done.json 에 `n_nodes`·`value_format`·`passes` 추가) |
+
+### 17.3 통합에서 고친 것
+
+| 항목 | 내용 |
+|---|---|
+| 서명·반환 키·오류 코드 | 어긋남 없음 — 실제 A 함수(`bforce_csv.has_frame`·`bforce_ondemand.merge`·`record`·`no_types_before`)와 B 래퍼·executor·판정이 그대로 맞물림(코드 수정 없음) |
+| 통합 시험 7 | `worker/tests/test_bf_ondemand_integration.py`(새): 덤프 Case → ESL → hw 1회(실제 TCL) → 실제 병합·등록 → 경계력 등급 contact·내력 none(사유) → 같은 ESL 재실행 hw 0. 값 비트 동일(%.17g) 확인 |
+| 통합 시험 8·9·11 보강 | 실제 TCL 실패(done.json ok false·mode bf_only → HW_FAILED), 라이선스, 시간 초과, 생략(HW_UNAVAILABLE), 프레임 수 다른 h3d(MISMATCH, 01_extract 쓰기 없음), 종류 없음(ok·kinds 전부 null → 다음 ESL hw 0), NO_TYPES 왕복, 행 4a, 비덤프 + 경계력 있음(hw 0·04_esl 바이트가 on_demand false 와 같음), 다시 추출 = 보충분 백업 |

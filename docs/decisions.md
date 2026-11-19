@@ -398,3 +398,4 @@
 - (0.24.2 D-0.24.2-BFD-8, 2026-11-19, 근거 h3d.py:223-224 가 CoreError 를 조용히 삼켜 bf_on 0 — #82 원인은 아님) 워커 h3d.bforce_request 는 CoreError 때 경고 BF_REQUEST_DEFAULTED(step 로그 + 작업 경고)를 남기고 빈 dict(추출 계속 — 기존 동작).
 - (0.24.2 D-0.24.2-BFD-9, 2026-11-19) 하위 호환: DB migration 없음, 옛 ESL 결과 불변, 비덤프(bf 있음)·이미 프레임 있는 Case 는 hw 호출 0·산출물 바이트 동일, 01_extract 는 보충 때 bforce.*·bforce_ondemand.json 만 바뀜, 다시 추출하면 EXTRACT 단계가 01_extract 전체(보충분 포함)를 백업. 미결(기본 가정): 옛 비덤프(bforce 없음) Case 도 보충함, hw 대기 600 s 넘으면 생략.
 - (0.24.2 후속) R-BFD-1 결과 폴더 입력 Case 보충 경로, R-BFD-2 덤프 직후 후보 프레임 D 미리 보충(별도 결정), R-BFD-3 작업 진행 화면 보충 표시, R-BFD-4 extract_summary.bforce 갱신.
+- (0.24.2 D-0.24.2-BFD-10, 2026-11-19, 근거 통합 시험 7 — 실제 A 함수 + 실제 TCL(tclsh+hwmock)) 워커↔코어 접합 확인: 서명·반환 키·오류 코드 어긋남 없음(BF_FILL_MERGE 는 워커에서 MERGE 로 매핑, 코드 수정 없음). 시험용 가짜 hw 는 FAKE_HW_TCL_DATA 로 실제 esl_h3d_extract.tcl bf 전용 출력을 낸다. 계약 §17 구현 메모에 A·B 의 계약과 다른 점을 정리.
