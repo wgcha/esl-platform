@@ -328,6 +328,7 @@ SCHEMA: dict[str, Any] = {
     # 선택 절(OPTIONAL_SECTIONS, v0.24.0 esl_bforce.md §9): 경계력 ESL. 없으면 BFORCE_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변)
     "bforce": {
         "enabled": _bool,
+        "on_demand": _bool,                     # v0.24.2 esl_bforce_ondemand.md §9: ③ ESL 때 선택 프레임 원자료 보충
         "result_names": _name_map(BFORCE_KINDS),
         "vec_comps": _vec_comps,
         "use_inertia": _bool,
@@ -361,6 +362,9 @@ OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce"})
 # "Contact Forces"·"Acceleration"(#82) 포함, 나머지는 Radioss 2026 /H3D/NODA 키워드 표시명 후보(현장 확인 후 설정에 더함).
 BFORCE_DEFAULTS = {
     "enabled": True,
+    # v0.24.2(esl_bforce_ondemand.md §9 — D-0.24.2-BFD-7): ③ ESL 때 선택 프레임의 경계력 원자료가 01_extract 에 없으면 h3d 에서
+    # 그 프레임만 보충(h3d 입력 Case, 워커가 읽음). false = v0.24.1 동작
+    "on_demand": True,
     "result_names": {"cont": ["Contact Forces", "Contact Force", "CONT"],
                      "cont2": ["Tied Contact Forces", "Contact Forces (TYPE2)", "CONT2"],
                      "acc": ["Acceleration", "ACC"], "mass": ["Nodal Mass", "Mass", "MASS"],

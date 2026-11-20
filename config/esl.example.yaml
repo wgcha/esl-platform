@@ -113,6 +113,7 @@ units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표�
 # (선택, v0.24.0 계약 esl_bforce.md §9) 경계력 ESL — 낙하 해석이 계산한 노드 힘(접촉력·tie 체결력·관성·내력)을 하중으로. 절이 없으면 아래 값.
 # bforce:
 #   enabled: true                    # ESL 단계에서 경계력 ESL 도 계산(h3d 추출에 결과가 있을 때)
+#   on_demand: true                  # (v0.24.2) ③ ESL 때 선택 프레임 원자료가 추출물에 없으면(덤프 방식 등) h3d 에서 그 프레임만 보충(h3d 입력 Case). false = 보충 안 함
 #   result_names:                    # h3d 결과 유형 이름 후보(정확 일치 → 대소문자·공백·밑줄 무시 일치). 현장 확인 이름을 앞에
 #     cont: [Contact Forces, Contact Force, CONT]          # /H3D/NODA/CONT (현장 #82 확인)
 #     cont2: [Tied Contact Forces, Contact Forces (TYPE2), CONT2]   # /H3D/NODA/CONT2 (tie 체결력, 표시명 미확인)

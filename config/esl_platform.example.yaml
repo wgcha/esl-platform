@@ -66,6 +66,8 @@ altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §
   version_label: "2026.1"
   hw_exe_path: "C:/Program Files/Altair/2026.1/hwdesktop/hw/bin/win64/hw.exe"   # 공백 허용(실행 파일만). 환경 점검이 존재 확인
   max_concurrent_hw: 2                # 동시 hw 수(HyperWorks 라이선스 한도에 맞춰 조정) — DB 세마포어, 넘으면 대기
+  bf_on_demand_timeout_s: 1800        # v0.24.2 ③ ESL 때 경계력 원자료 보충(hw 1회) 시간 한도(초, ≥ 60). 넘으면 hw 트리 종료·BF_EXTRACT_FAILED(ESL 은 계속)
+  bf_on_demand_wait_s: 600            # 보충 때 hw 동시 실행 한도를 기다리는 한도(초, 0 = 한 번만 시도). 넘으면 BF_EXTRACT_SKIPPED(ESL 은 계속)
   optistruct_path: "C:/Program Files/Altair/2026.1/hwsolvers/scripts/optistruct.bat"   # 비드 최적화(v0.7.0). 없거나 파일이 없으면 503
   max_concurrent_os: 1                # 동시 OptiStruct 수(라이선스 한도) — DB 세마포어
 commands:                             # argv 템플릿(esl.md §4.4): argv[0] = {hw} 만. 허용 placeholder: hw, extract_tcl(_fwd), h3d(_fwd),

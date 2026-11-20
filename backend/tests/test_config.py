@@ -107,3 +107,22 @@ def test_write_api_503_when_config_invalid(tmp_path, engine, fake_dashboard):
         # 형식: {key, message}[] (프런트 ConfigIssue)
         assert all(set(e) == {"key", "message"} and all(isinstance(v, str) for v in e.values())
                    for e in st["config"]["errors"])
+
+
+# ---------------------------------------------------------------- v0.24.2 경계력 보충 설정 거울(V-0242-BFD-12)
+def test_bf_on_demand_keys_mirror(tmp_path):
+    import yaml
+    from esl_platform.core.config import AltairCfg
+
+    assert AltairCfg().bf_on_demand_timeout_s == 1800 and AltairCfg().bf_on_demand_wait_s == 600
+    root = PLATFORM_EXAMPLE.parent
+    for name in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
+        alt = yaml.safe_load((root / name).read_text(encoding="utf-8"))["altair"]
+        assert alt["bf_on_demand_timeout_s"] == 1800 and alt["bf_on_demand_wait_s"] == 600, name
+    lc = load_config(str(PLATFORM_EXAMPLE), environ={})
+    assert lc.settings.altair.bf_on_demand_timeout_s == 1800 and lc.settings.altair.bf_on_demand_wait_s == 600
+    assert redacted_settings(lc.settings)["altair"]["bf_on_demand_wait_s"] == 600
+    for key, val in (("bf_on_demand_timeout_s", 59), ("bf_on_demand_wait_s", -1)):
+        lc = _bad(tmp_path, lambda d, k=key, v=val: d.__setitem__("altair", {k: v}))
+        assert not lc.ok and any(e == f"altair.{key}" or e.startswith(f"altair.{key}") for e in lc.error_keys()), lc.errors()
+    assert _bad(tmp_path, lambda d: d.__setitem__("altair", {"bf_on_demand_wait_s": 0})).ok

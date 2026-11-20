@@ -196,6 +196,26 @@ def bforce_settings(core_settings: dict | None = None) -> dict:
     return _wrap(_attr("esl.config", "bforce_settings"), core_settings or {})
 
 
+def bforce_has_frame(extract_dir: str, frame: int) -> bool:
+    """01_extract 에 그 프레임의 경계력 원자료가 있나(계약 esl_bforce_ondemand.md §1.3)."""
+    return bool(_wrap(_attr("esl.io.bforce_csv", "has_frame"), extract_dir, int(frame)))
+
+
+def bforce_merge(case_dir: str, fill_out: str, frames: list[int], *, tag: str, names: dict) -> dict:
+    """bf 전용 추출 출력 → 01_extract/bforce.* 병합(§4.1). 오류 = CoreError(BF_FILL_OUTPUT·BF_FILL_MISMATCH 등)."""
+    return _wrap(_attr("esl.io.bforce_ondemand", "merge"), case_dir, fill_out, list(frames), tag=tag, names=names)
+
+
+def bforce_record(extract_dir: str, attempt: dict) -> None:
+    """보충 시도 1건을 01_extract/bforce_ondemand.json 에 누적(§4.6)."""
+    return _wrap(_attr("esl.io.bforce_ondemand", "record"), extract_dir, attempt)
+
+
+def bforce_no_types_before(extract_dir: str, names: dict) -> dict | None:
+    """판정 5: 같은 이름 후보로 종류를 하나도 못 찾은 이전 보충 기록(없으면 None)."""
+    return _wrap(_attr("esl.io.bforce_ondemand", "no_types_before"), extract_dir, names)
+
+
 def dump_settings(core_settings: dict | None = None) -> dict:
     """extract.dump_keep·dump_max_bytes(기본값 채움)."""
     return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})

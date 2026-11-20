@@ -229,3 +229,32 @@ def test_v0240_sign_suspect(case):
         ref = bf.assemble(data, c["m"], use_inertia=True, signs={"cont": -1, "cont2": -1})["F"]
         assert np.array_equal(bad["F_raw"], ref)
     assert bf.sign_check(c["X"], {"fint": -c["F_true"]}, c["m"], use_inertia=False) is None   # 접촉력 없음 = 해당 없음
+
+
+def test_v0242_bfd12_on_demand_setting_mirror():
+    """V-0242-BFD-12(코어): bforce.on_demand — BFORCE_DEFAULTS(true) = 스키마(_bool) = esl.example.yaml bforce 주석 줄,
+    선택 키(OPTIONAL_KEYS, cfg 에 주입 안 함), 부분 지정 = 그 키만."""
+    import copy
+    import re
+
+    import yaml
+
+    from esl import config as cf
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    text = open(os.path.join(root, "config", "esl.example.yaml"), encoding="utf-8").read()
+    assert cf.BFORCE_DEFAULTS["on_demand"] is True and "bforce.on_demand" in cf.OPTIONAL_KEYS
+    block = text[text.index("# bforce:"):]
+    m = re.search(r"^#\s+on_demand:\s*(\S+)\s+#", block, re.M)
+    assert m and yaml.safe_load(m.group(1)) is cf.BFORCE_DEFAULTS["on_demand"]
+    base = yaml.safe_load(text)
+    cfg = cf.validate_settings(copy.deepcopy(base))
+    assert "bforce" not in cfg and cf.bforce_settings(cfg)["on_demand"] is True
+    c2 = copy.deepcopy(base)
+    c2["bforce"] = {"on_demand": False}
+    s = cf.bforce_settings(cf.validate_settings(c2))
+    assert s["on_demand"] is False and s["enabled"] is True
+    c3 = copy.deepcopy(base)
+    c3["bforce"] = {"on_demand": "yes"}
+    with pytest.raises(EslError) as e:
+        cf.validate_settings(c3)
+    assert e.value.code == "CONFIG_INVALID"

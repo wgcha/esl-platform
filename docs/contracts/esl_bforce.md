@@ -33,6 +33,7 @@
 - 없는 유형·쿼리 실패는 **실패가 아님**: done.json `bforce = {"on": true, "frames": D, "kinds": {k: …}}`, 없는 종류 `{"type": null, "reason": "..."}`, 찾은 종류 `{"type", "comps", "rows"}`(쿼리 실패 = 그 CSV 삭제 + type null). `bf_on 0` → done.json 에 `bforce` 없음(이전과 같음). done.json 에 `bforce` 키가 없으면(이전 TCL) Python 은 등급 none(`BF_NO_DATA`).
 - request.txt 새 키: `bf_on`(TCL 기본 **0 = 끔** — request 에 bf 키가 없으면 done.json·CSV 가 이전 버전과 바이트 동일(v0.7.2 TCL 골든 V-CI-B1), 워커는 설정 `bforce.enabled` 로 1, PC 수동 실행은 request.txt 에 `bf_on<TAB>1`), 이름 목록 기본 = 설정 기본과 같은 값: `bf_names_cont`, `bf_names_cont2`, `bf_names_acc`, `bf_names_mass`, `bf_names_fint`, `bf_vec_comps`. 워커 `h3d.bforce_request(core_settings)` 가 설정 `bforce.result_names`·`vec_comps`·`enabled` 에서 만든다.
 - dump 모드(strain_tensor 원시 덤프 경로)는 이번 범위 밖(R-BF-5) — `bforce` 키 없음 = none.
+- > **v0.24.2 보완**(`esl_bforce_ondemand.md`, D-0.24.2-BFD-1): dump 모드는 추출에서 경계력을 덤프하지 않고, ③ ESL 때 선택 프레임만 TCL bf 전용 모드(request `bf_only`·`bf_frames`)로 읽어 `01_extract/bforce.*` 에 병합·재사용한다(덤프·비덤프 공통 규칙 "선택 프레임이 없으면 보충"). 패스 C 경계력 루프는 공용 proc `::esl::bf_chunk`(출력 바이트 동일).
 
 ## 2. 패킹 (`esl/io/bforce_csv.py:pack_bforce(results_dir, node_id, out_dir) -> dict`)
 
@@ -89,6 +90,7 @@
 - 기존 전 노드 ESL 계산·파일은 그대로(바이트 동일 — `esl_summary.json` 불변). 그다음 `bforce` 설정 `enabled`(기본 true) 이면 `01_extract/bforce.npz` 의 선택 프레임 자료로 §3 → `04_esl/bforce.json`·`bforce.npz`. 추출물에 경계력 자료가 아예 없으면(이전 추출·bf_on 0) 04_esl 에 아무것도 쓰지 않고(산출물 집합 불변 — V-CI-B1) 단계 요약만 `{grade: none, code: BF_NO_DATA}`, 경계력 추출은 했는데 접촉력·내력 유형이 없으면 등급 none json 만.
 - 기준 재현: 같은 3-2-1 지지(S4 `pick_321`)로 K₀ u = F_bal(직접법 메모리 규칙 = `full_solve_decision` — 안 되면 `recon.status skipped`), u_val → 파트 전 노드 Kabsch 강체 제거 → u_rel 과 MAC·umax 오차, 반력 크기. MAC < `recon_mac_min`(0.9) 또는 |umax 오차| > `recon_umax_err_max`(0.2) = 경고 `BF_RECON_POOR`(실패 아님), 반력 비 > `reaction_warn_rel`(1e-3) = 경고 `BF_REACTION`.
 - 경계력 단계 예외는 ESL 단계를 실패시키지 않는다(경고 `BF_FAILED` + json `{grade, code, reason}`).
+- > **v0.24.2 보완**(`esl_bforce_ondemand.md` §5): 선택 프레임 자료가 없고 이 ESL 작업의 보충 기록(`01_extract/bforce_ondemand.json`)이 실패·생략이면 요약 `{grade: none, code: BF_EXTRACT_FAILED|BF_EXTRACT_SKIPPED, reason}`(04_esl 파일 없음, 내력 요약도 같은 code·reason). 기록이 없으면 위 규칙 그대로.
 - 단계 요약(반환·ESL 실행 `forces.bforce`): `{grade, mass_source, sum_abs, sum_abs_ratio_full, abar_g, corr_rel, mac, umax_err, reaction_rel, limits}` → ESL 화면 결과 카드 한 줄(`data-testid="esl-bforce-line"`). 3D·OptiStruct 내보내기는 후속(R-BF-1·2).
 - 라이브러리 항목은 바꾸지 않는다(`raw.npz` 키 불변) — DOE 가 Case 폴더에서 찾는다(§5.2).
 
@@ -185,7 +187,7 @@
 - R-BF-2 OptiStruct·Radioss 내보내기(`06_export`) 경계력 하중 선택.
 - R-BF-3 설계안 경계력 풀이를 전 노드 풀이와 같은 분해로(분해 +1 제거).
 - R-BF-4 CONT2·MASS·FINT 출력 재해석 후 full·fint 현장 검증(결과 유형 표시명 확인 → 설정 목록 갱신).
-- R-BF-5 dump 모드(strain_tensor) 경계력 덤프.
+- R-BF-5 dump 모드(strain_tensor) 경계력 덤프. → **v0.24.2 해결**: ESL 때 선택 프레임 보충(`esl_bforce_ondemand.md`).
 - R-BF-6 contact 등급의 생략 tie 하중을 tie 노드 분포로 추정(지금은 관성 이완으로 전체에 분산).
 
 ## 부록 A. 낙하 해석 Engine 파일 출력 카드 예시 (사용자 안내)

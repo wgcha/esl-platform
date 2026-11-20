@@ -43,6 +43,7 @@ unbalanced = def.force_rel > fint.unbalanced_force_rel ∨ def.moment_rel > fint
 - 설정 `bforce.fint.shared_nodes`(기본 true) — false 면 deck 을 읽지 않음(status skipped).
 
 ## 3. Case ESL 단계 (`stage_esl` — D-0.24.0-BF-12·13)
+- > **v0.24.2 보완**(`esl_bforce_ondemand.md` §1·§5): 덤프 방식 추출처럼 선택 프레임의 원자료(FINT 포함)가 01_extract 에 없으면 워커가 ③ ESL 전에 그 프레임만 h3d 에서 보충한다. 보충이 실패·생략이면 내력 요약 = 경계력과 같은 `{grade: none, code: BF_EXTRACT_FAILED|BF_EXTRACT_SKIPPED, reason}`(fint.json 없음).
 - `_bforce_esl`(경계력 — 접촉력 전용) 다음 `_fint_esl`. 추출물에 경계력 자료가 없으면(이전 TCL·bf_on 0) 둘 다 04_esl 에 쓰지 않음(산출물 집합 불변). 추출은 했는데 FINT 없음 = `fint.json {schema, source: fint, grade: none, code: FINT_NO_DATA, reason: "내력 출력 없음 — 낙하 Engine 에 /H3D/NODA/FINT 추가", kinds}` 만. 예외 = 경고 `FINT_FAILED` + json `{grade, code, reason}`(ESL 단계 실패 아님).
 - `04_esl/fint.npz`: `node_id`, `f`(풀이 하중, 기준계), `f_raw`(전역), `m`(이완 안 하면 0), `u_val`(재현 변위).
 - 단계 요약(ESL 실행 `forces.fint`): bforce 요약과 같은 키 + `res_force_rel`·`res_moment_rel`(변형 형상)·`unbalanced`·`n_shared`·`n_rot`·`balance_applied`. 경고 문자열 `FINT_*:` 는 ESL 단계 경고로.
