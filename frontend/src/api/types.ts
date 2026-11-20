@@ -1942,23 +1942,53 @@ export interface ValidationSourceRow {
   limit_text: string[];
   /** false = '비교용 아님' 한계 포함, null = 알 수 없음 */
   comparable: boolean | null;
-  /** v0.24.4 P3(C3 가정 — B3 형식 대기): false = 비드 최적화가 이 출처 지지를 못 씀(normal·prescribed·spring). 없으면 화면 표(optUnsupported)·서버 422 UNSUPPORTED 가 판단 */
-  opt_supported?: boolean | null;
-  opt_reason?: string | null;
 }
 export interface ValidationSourcesOut {
   validation_id: string;
   default: string;
   rows: ValidationSourceRow[];
 }
-/** v0.24.4 P3 묶음 판정 GET /library/entries/sources?ids= (C3 가정 — 항목별 `/validations/{vid}/sources` 묶음. 검증 없는 항목 = rows 빈 배열·validation_id null) */
+/** v0.24.4 P3 출처 하중 등급(esl_jig_case.md §9) — 나쁜 쪽이 뒤: PASS < caution < not_comparable < UNDETERMINED < FAIL < NO_RESULT */
+export type LoadGrade = "PASS" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT";
+/** v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급 */
+export interface EntrySourceRow extends ValidationSourceRow {
+  load_available: boolean;
+  load_code?: string | null;
+  load_reason?: string | null;
+  grade: LoadGrade;
+  flags: LoadGrade[];
+}
+/** v0.24.4 P3 묶음 판정 GET /library/entries/sources?ids= (검증 없는 항목 = 모든 행 available false·code VAL_SRC_NOT_RUN, validation_id null) */
 export interface EntrySourcesItem {
   entry_id: string;
-  validation_id: string | null;
-  rows: ValidationSourceRow[];
+  validation_id?: string | null;
+  rows: EntrySourceRow[];
+}
+export interface EntrySourceEntry {
+  entry_id: string;
+  validation_id?: string | null;
+  status?: ValidationStatus | null;
+  comparable?: boolean | null;
+  grade: LoadGrade;
+  flags: LoadGrade[];
+  limits: string[];
+  load_available: boolean;
+  load_code?: string | null;
+  load_reason?: string | null;
+}
+export interface EntrySourceSummary {
+  key: string;
+  label?: string | null;
+  worst: LoadGrade;
+  n: number;
+  unavailable_entry_ids: string[];
+  needs_confirm: boolean;
+  entries: EntrySourceEntry[];
 }
 export interface EntrySourcesOut {
+  ids: string[];
   items: EntrySourcesItem[];
+  sources: EntrySourceSummary[];
 }
 /** v0.24.4 P3 스냅샷 load_source_check(esl_jig_case.md §9) */
 export interface LoadSourceCheckEntry {
@@ -1970,7 +2000,7 @@ export interface LoadSourceCheckEntry {
 export interface LoadSourceCheck {
   key: string;
   entries: LoadSourceCheckEntry[];
-  worst: string | null;
+  worst: LoadGrade | null;
 }
 export interface ValidationSourcesHistItem {
   validation_id: string;
@@ -2451,11 +2481,9 @@ export interface OptRunOut {
   size?: { entries?: unknown[]; template?: unknown; warnings?: string[] } | null;
   /** 실행 스냅샷 */
   design: { bead: BeadIn; nondesign_pids: number[]; keepout: { rects: KeepoutRect[]; auto: { hole: boolean; edge: boolean } } };
-  options: { objective_norm: ObjectiveNorm; load_strategy: LoadStrategy; k: number | null; supports: SupportIn[] | null };
+  /** v0.24.4 P3 스냅샷 = options.load_source·load_source_check(옛 실행 = 키 없음) */
+  options: { objective_norm: ObjectiveNorm; load_strategy: LoadStrategy; k: number | null; supports: SupportIn[] | null; load_source?: string | null; load_source_check?: LoadSourceCheck | null };
   load_strategy: LoadStrategy;
-  /** v0.24.4 P3 스냅샷(옛 실행 = 키 없음) */
-  load_source?: string | null;
-  load_source_check?: LoadSourceCheck | null;
   k?: number | null;
   objective_norm: ObjectiveNorm;
   job_id?: string | null;
@@ -3080,12 +3108,10 @@ export interface DoeStudyOut {
     select_schema?: 1 | 2 | null;
     /** v0.21.0 형상 규칙 스냅샷(esl_bead_shape_v021.md §2.1 — 옛 스터디 = 키 없음/null) */
     shape_rules?: DoeShapeRules | null;
-    /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) — C3 가정: inputs 아래(최상위에 와도 읽음) */
+    /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
     load_source?: string | null;
     load_source_check?: LoadSourceCheck | null;
   };
-  load_source?: string | null;
-  load_source_check?: LoadSourceCheck | null;
   phase: DoePhase;
   version: number;
   prep: {

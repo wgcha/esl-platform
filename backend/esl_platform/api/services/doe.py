@@ -445,7 +445,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
     st = status(ctx)
     d = c["doe"]
     sc = c["select"]
-    return {**st, "max_entries": int(c["max_entries"]), "max_designs": int(c["max_designs"]),
+    return {**st, "load_source_default": c.get("load_source_default"), "max_entries": int(c["max_entries"]), "max_designs": int(c["max_designs"]),
             "doe": {"methods": ["lhs", "halton", "fullfact"], "default_method": d["default_method"],
                     "default_n": int(d["default_n"]), "seed": int(d["seed"]), "levels_default": int(d["levels_default"]),
                     "levels_max": int(d["levels_max"]), "default_types": list(d["default_types"])},

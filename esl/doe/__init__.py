@@ -108,6 +108,9 @@ DEFAULTS: dict = {
     # enabled false = 준비 호출 0, timeout_s null = bead_doe.paicad.timeout_s.fixed_scan(pydantic BeadDoeCaseJigCfg·yaml 2개 거울)
     "case_jig": {"enabled": True, "timeout_s": None},
     "settings_cache_s": 300,
+    # v0.24.4 P3 하위 작업(스터디) 하중 출처 기본값(esl_jig_case.md §9·§11 — pydantic BeadDoeCfg·yaml 2개 거울). null = 지금 동작
+    # (rank.metric → metric_effective). 화면 안내용 설정 — 요청에 load_source 가 없으면 서버는 이 값을 적용하지 않는다(스냅샷·해시 불변)
+    "load_source_default": None,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
     # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).
     # 이슈 #53(Radioss Ch/R 3 mm BatchMesher param·criteria, docs/reference/radioss_chr_3mm_batchmesh.md) 근사:

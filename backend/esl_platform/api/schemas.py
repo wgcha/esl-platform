@@ -1642,6 +1642,7 @@ class OptLoadsSettings(_Out):
 
 
 class OptSettingsOut(_Out):
+    load_source_default: str | None = None          # v0.24.4 P3 설정 opt_run.load_source_default(기본 "full", 안내용)
     enabled: bool
     solver_ready: bool
     solver_reason: str | None = None
@@ -1909,6 +1910,7 @@ class DoeRunIn(_Req):
 
 
 class DoeSettingsOut(_Out):
+    load_source_default: str | None = None          # v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준, 안내용)
     enabled: bool
     reason: str | None = None
     paicad: dict[str, Any]

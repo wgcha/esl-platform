@@ -155,6 +155,7 @@ opt_run:                              # v0.7.0 비드 최적화 서버 실행(�
   check: {bead_width_elem_factor: 2.0, min_nodes_per_cell: 64, max_aspect: 10.0, max_warp_deg: 15.0}
   grid: {nx: 24, ny: 14}
   ui: {max_preview_points: 20000}     # 평면도(plan-view) 요소 점 최대 수
+  load_source_default: full            # v0.24.4 P3 비드 최적화 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). full = 지금 동작
 bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §14). 섹션이 없으면 enabled: false
   enabled: true                       # 실행에는 paicad(≥ min_version, OCP 포함)가 필요 — 워커가 점검해 기록(없으면 화면 비활성)
   part_title: "chassis rear"          # ② B 메시 기본 파트 제목(case.part_title 과 같은 규칙)
@@ -236,6 +237,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       spring_k_value: null            # value 모드에서 필수(N/mm, > 0)
       spring_alpha_scan: []           # 현장 진단용 α 목록(예 [0.01, 0.1, 1]) — 출처 행 아님(해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
+  load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true
     max_shapes: 20                    # 형상(STEP) 수 상한

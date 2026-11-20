@@ -165,3 +165,8 @@ units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표�
 #   # 그 밖: knn·chunk_nodes·max_surf_tris·min_region_nodes·min_region_area_mm2·body_force·basis_tangential·rho_t_mm3·modes_sigma·
 #   # modes_tol·modes_maxiter·modes_ref321·reg_force·reg_modes·ridge·active_tol·cancel_warn·work_eff_min·tie_spread_min
 #   # (스터디 bead_doe.rank.jig 와 같은 이름·뜻)
+
+# (참고, v0.24.4 P3 계약 esl_jig_case.md §9·§11) 하위 작업 하중 출처 기본값 — 플랫폼 설정 키(코어 esl.doe·esl.opt DEFAULTS 와 같은 이름·값).
+# 코어 Case 설정 파일의 절이 아니므로 주석으로만 둔다(플랫폼 yaml: bead_doe.load_source_default·opt_run.load_source_default).
+#   bead_doe.load_source_default: null    # 스터디. null = 지금 동작(순위 지표 기준 rank.metric → metric_effective)
+#   opt_run.load_source_default: full     # 비드 최적화. full = 지금 동작(항목 자신의 하중·3-2-1)

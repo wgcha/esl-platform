@@ -7,17 +7,18 @@ import { ApiError } from "../api/client";
 import { LoadSourceChip, LoadSourceConfirmDialog } from "../components/LoadSourcePicker";
 import { loadSourceBody, loadSourceChipOf, loadSourceErrorText, loadSourceOptions, unconfirmedOf } from "../view3d/loadSource";
 import { renderApp } from "../test/render";
-import type { EntrySourcesItem, ValidationSourceRow } from "../api/types";
+import type { EntrySourceRow, EntrySourcesItem } from "../api/types";
 import type { MockServer } from "../mock/server";
 
-const blank = (key: string): ValidationSourceRow => ({ key, available: false, code: null, reason: null, status: null, fail_reasons: [], undetermined_reason: null, reaction_role: null, reaction_tol: null, reaction_tol_key: null, reaction_warn: null, reaction_warned: null, cond_text: null, note: null, limits: [], limit_text: [], comparable: null });
-const pass = (key: string, o: Partial<ValidationSourceRow> = {}): ValidationSourceRow => ({ ...blank(key), available: true, status: "PASS", comparable: true, ...o });
-const rowsOk = (): ValidationSourceRow[] => [
+// B3 실제 형식: ④ 출처 행 + load_available·load_code·load_reason·grade·flags
+const blank = (key: string): EntrySourceRow => ({ load_available: true, load_code: null, load_reason: null, grade: "NO_RESULT", flags: ["NO_RESULT"], key, available: false, code: null, reason: null, status: null, fail_reasons: [], undetermined_reason: null, reaction_role: null, reaction_tol: null, reaction_tol_key: null, reaction_warn: null, reaction_warned: null, cond_text: null, note: null, limits: [], limit_text: [], comparable: null });
+const pass = (key: string, o: Partial<EntrySourceRow> = {}): EntrySourceRow => ({ ...blank(key), available: true, status: "PASS", comparable: true, grade: "PASS", flags: ["PASS"], ...o });
+const rowsOk = (): EntrySourceRow[] => [
   pass("jig"),
   pass("jig_disp", { limits: ["JIG_DISP_FROM_TARGET"], limit_text: ["tie 변위 강제"] }),
-  { ...blank("jig_spring"), code: "JIG_NOT_RUN", reason: "이 ESL 결과에는 지그 스프링 계산이 없습니다" },
+  { ...blank("jig_spring"), code: "JIG_NOT_RUN", reason: "이 ESL 결과에는 지그 스프링 계산이 없습니다", load_available: false, load_code: "JIG_NOT_RUN", load_reason: "이 ESL 결과에는 지그 스프링 계산이 없습니다" },
   pass("full"),
-  pass("bforce", { status: "FAIL", comparable: false, limits: ["BF_TIE_MISSING"] }),
+  pass("bforce", { status: "FAIL", comparable: false, limits: ["BF_TIE_MISSING"], grade: "FAIL", flags: ["FAIL", "not_comparable"] }),
   { ...blank("fint"), code: "VAL_SRC_NOT_RUN", reason: "검증 전" },
 ];
 const item = (id: string, rows = rowsOk()): EntrySourcesItem => ({ entry_id: id, validation_id: `v-${id}`, rows });
@@ -46,12 +47,12 @@ describe("출처 옵션(순수)", () => {
     const worse = rowsOk().map((r) => (r.key === "full" ? pass("full", { status: "FAIL" }) : r));
     const o = byKey(loadSourceOptions([item("a"), item("b", worse)], "doe"));
     expect(o.full.mark!.text).toBe("FAIL");
-    const gone = rowsOk().map((r) => (r.key === "full" ? { ...blank("full"), code: "NO_LOAD", reason: "하중 파일 없음" } : r));
+    const gone = rowsOk().map((r) => (r.key === "full" ? { ...blank("full"), code: "NO_LOAD", reason: "하중 파일 없음", load_available: false, load_code: "NO_LOAD", load_reason: "하중 파일 없음" } : r));
     const o2 = byKey(loadSourceOptions([item("a"), item("b", gone)], "doe"));
     expect(o2.full.disabled).toBe(true);
     expect(o2.full.why).toContain("하중 파일 없음");
   });
-  it("비드 최적화: 지그 변위·스프링 = 열(optUnsupported) 사유로 선택 불가, 스터디는 가능; opt_supported false 행도 불가", () => {
+  it("비드 최적화: 지그 변위·스프링 = 열(optUnsupported) 사유로 선택 불가, 스터디는 가능", () => {
     const o = byKey(loadSourceOptions([item("a", rowsOk().map((r) => (r.key === "jig_spring" ? pass("jig_spring") : r)))], "opt"));
     expect(o.jig_disp.disabled).toBe(true);
     expect(o.jig_disp.why).toContain("지그 고정(병진 고정)만 지원");
@@ -59,10 +60,6 @@ describe("출처 옵션(순수)", () => {
     expect(o.jig.disabled).toBe(false);
     expect(o.full.disabled).toBe(false);
     expect(byKey(loadSourceOptions([item("a", rowsOk().map((r) => (r.key === "jig_spring" ? pass("jig_spring") : r)))], "doe")).jig_spring.disabled).toBe(false);
-    const normal = rowsOk().map((r) => (r.key === "jig" ? pass("jig", { opt_supported: false, opt_reason: "tie 구속이 normal(국부) — 병진 고정만 지원" }) : r));
-    const o3 = byKey(loadSourceOptions([item("a", normal)], "opt"));
-    expect(o3.jig.disabled).toBe(true);
-    expect(o3.jig.why).toContain("병진 고정만 지원");
   });
   it("판정 정보 없음(null) = 표식 없이 모두 선택 가능, optional 행은 응답에 없으면 숨김", () => {
     const all = loadSourceOptions(null, "doe");
@@ -78,10 +75,10 @@ describe("출처 옵션(순수)", () => {
     expect(loadSourceBody("full", true)).toEqual({ load_source: "full", load_source_ack: true });
   });
   it("422 본문 해석 · 오류 문구 · 결과 칩", () => {
-    const uc = new ApiError(422, { code: "LOAD_SOURCE_UNCONFIRMED", message: "확인 필요", entries: [{ entry_id: "a", status: "FAIL", comparable: false }], worst: "FAIL" });
-    expect(unconfirmedOf(uc)).toEqual({ entries: [{ entry_id: "a", status: "FAIL", comparable: false }], worst: "FAIL" });
+    const uc = new ApiError(422, { code: "LOAD_SOURCE_UNCONFIRMED", message: "확인 필요", entries: [{ entry_id: "a", status: "FAIL", comparable: false, grade: "FAIL", flags: ["FAIL", "not_comparable"], limits: [] }], worst: "FAIL" });
+    expect(unconfirmedOf(uc)).toEqual({ entries: [{ entry_id: "a", status: "FAIL", comparable: false, grade: "FAIL", flags: ["FAIL", "not_comparable"], limits: [] }], worst: "FAIL" });
     expect(unconfirmedOf(new ApiError(422, { code: "X", message: "m" }))).toBeNull();
-    expect(loadSourceErrorText(new ApiError(422, { code: "LOAD_SOURCE_UNAVAILABLE", message: "m", entry_ids: ["a"], reasons: ["하중 없음"] }))).toBe("하중 출처를 쓸 수 없습니다 — 하중 없음 (항목 a)");
+    expect(loadSourceErrorText(new ApiError(422, { code: "LOAD_SOURCE_UNAVAILABLE", message: "m", entry_ids: ["a"], reasons: { a: "하중 없음" } }))).toBe("하중 출처를 쓸 수 없습니다 — 하중 없음 (항목 a)");
     expect(loadSourceErrorText(new ApiError(422, { code: "LOAD_SOURCE_UNSUPPORTED", message: "m", reason: "spring 은 후속" }))).toContain("spring 은 후속");
     expect(loadSourceErrorText(new ApiError(500, { code: "X", message: "m" }))).toBeNull();
     const chip = loadSourceChipOf("bforce", { key: "bforce", worst: "FAIL", entries: [{ entry_id: "a", status: "PASS", comparable: true, validation_id: null }, { entry_id: "b", status: "FAIL", comparable: false, validation_id: "v" }] });
@@ -112,7 +109,7 @@ describe("확인 대화·칩(부품)", () => {
 });
 
 /** 목 서버 handle 가로채기: 묶음 판정 응답 + POST 본문 기록 + 첫 요청(ack 없음) 422 확인 요청 */
-function patch(server: MockServer, rows: ValidationSourceRow[], calls: Record<string, unknown>[], confirm: boolean, postPath: string) {
+function patch(server: MockServer, rows: EntrySourceRow[], calls: Record<string, unknown>[], confirm: boolean, postPath: string) {
   const orig = server.handle.bind(server);
   server.handle = (method, rawPath, q, body, size) => {
     const p = rawPath.replace(/^\/esl\/api/, "");
@@ -205,7 +202,7 @@ describe("스터디 생성 화면(DoeStudy 새로 만들기)", () => {
 });
 
 describe("결과 화면 사용 출처 칩", () => {
-  const check = { key: "bforce", worst: "FAIL", entries: [{ entry_id: "le-1", status: "FAIL" as const, comparable: false, validation_id: "v1" }] };
+  const check = { key: "bforce", worst: "FAIL" as const, entries: [{ entry_id: "le-1", status: "FAIL" as const, comparable: false, validation_id: "v1" }] };
   it("스터디 결과 상태 띠: 스냅샷 load_source 칩(최악 표식) · 스냅샷 없으면 칩 없음", async () => {
     renderApp("/p/p-body/doe/doe-40", "power", (s) => {
       s.doe.demoJig();
@@ -233,7 +230,7 @@ describe("결과 화면 사용 출처 칩", () => {
       const orig = s.handle.bind(s);
       s.handle = (m, p, q, b, z) => {
         const r = orig(m, p, q, b, z);
-        if (m === "GET" && /\/opt\/runs\/opt-1$/.test(p) && r.body) return { ...r, body: { ...(r.body as object), load_source: "bforce", load_source_check: check } };
+        if (m === "GET" && /\/opt\/runs\/opt-1$/.test(p) && r.body) { const o = r.body as { options: Record<string, unknown> }; return { ...r, body: { ...o, options: { ...o.options, load_source: "bforce", load_source_check: check } } }; }
         return r;
       };
     });

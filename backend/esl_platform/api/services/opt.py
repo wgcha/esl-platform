@@ -91,7 +91,8 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
         log.warning("방법·출처 자료를 읽지 못함(GET /opt/settings method_sources.error): %s", exc.message)
         ms = {"error": exc.message if principal is not None and principal.is_global_admin else "방법·출처 자료를 읽지 못했습니다(관리자 문의)"}
     lo = o["loads"]
-    return {"enabled": bool(o["enabled"]), "solver_ready": ready, "solver_reason": reason,
+    return {"load_source_default": o.get("load_source_default"),
+            "enabled": bool(o["enabled"]), "solver_ready": ready, "solver_reason": reason,
             "size": {k: o["size"][k] for k in ("tol_rel", "plate_tol_rel", "require_inch")},
             "bead_defaults": {k: float(o["bead_defaults"][k]) for k in ("angle", "min_width", "height")},
             "keepout_auto": {k: float(o["keepout"][k]) for k in ("hole_radius_mm", "edge_band_mm")},

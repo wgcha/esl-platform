@@ -4,7 +4,7 @@ import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, RunAllOut, StageState, StepKey, StepStatus, SupportAuto, SupportProblem,
-  SupportSetOut, ValidationOut, View3dSourceRow, View3dSourcesOut,
+  SupportSetOut, ValidationOut, View3dSourceRow, View3dSourcesOut, EntrySourceRow, LoadGrade,
 } from "../api/types";
 import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
 import {
@@ -888,9 +888,23 @@ export class MockServer {
         const e = this.entries.find((x) => x.id === id);
         const vid = e?.validation_id ?? this.runs.find((x) => x.id === e?.esl_run_id)?.latest_validation_id ?? this.validations[0]?.id;
         const v = e ? this.validations.find((x) => x.id === vid) : null;
-        return { entry_id: id, validation_id: v?.id ?? null, rows: e ? valSourceRows(v ? this.validationOut(v) : (STUB_VALIDATION as unknown as ValidationOut), mode, true, this.jigRows) : [] };
+        const base = e ? valSourceRows(v ? this.validationOut(v) : (STUB_VALIDATION as unknown as ValidationOut), mode, true, this.jigRows) : [];
+        // B3 실제 형식: 행마다 load_available·load_code·load_reason·grade·flags(검증 전 = 하중은 있음)
+        const rows: EntrySourceRow[] = base.map((r) => {
+          const ok = r.available || r.code === "VAL_SRC_NOT_RUN";
+          const g: LoadGrade = !r.available ? "NO_RESULT" : r.status === "FAIL" ? "FAIL" : r.status === "UNDETERMINED" ? "UNDETERMINED" : r.comparable === false ? "not_comparable" : r.limits.length ? "caution" : "PASS";
+          return { ...r, load_available: ok, load_code: ok ? null : r.code, load_reason: ok ? null : r.reason, grade: g, flags: [g] };
+        });
+        return { entry_id: id, validation_id: v?.id ?? null, rows };
       });
-      return { status: 200, body: { items } };
+      const order: LoadGrade[] = ["PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"];
+      const sources = (items[0]?.rows ?? []).map((_r, k) => {
+        const ents = items.map((it) => ({ entry_id: it.entry_id, validation_id: it.validation_id, status: it.rows[k].status, comparable: it.rows[k].comparable, grade: it.rows[k].grade, flags: it.rows[k].flags, limits: it.rows[k].limits, load_available: it.rows[k].load_available, load_code: it.rows[k].load_code, load_reason: it.rows[k].load_reason }));
+        const worst = ents.reduce<LoadGrade>((a, x) => (order.indexOf(x.grade) > order.indexOf(a) ? x.grade : a), "PASS");
+        const un = ents.filter((x) => !x.load_available).map((x) => x.entry_id);
+        return { key: items[0].rows[k].key, label: null, worst, n: ents.length, unavailable_entry_ids: un, needs_confirm: !un.length && worst !== "PASS", entries: ents };
+      });
+      return { status: 200, body: { ids, items, sources } };
     }
     if (path === "/library/entries" && method === "GET") {
       const f = (k: string) => query.get(k);

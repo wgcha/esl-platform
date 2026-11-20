@@ -388,6 +388,7 @@ class OptRunCfg(_M):
     check: OptCheckCfg = OptCheckCfg()
     grid: OptGridCfg = OptGridCfg()
     ui: OptUiCfg = OptUiCfg()
+    load_source_default: str | None = Field(default="full", min_length=1, max_length=32)   # v0.24.4 P3(esl_jig_case.md §9·§11)
 
 
 # ---------------------------------------------------------------- v0.9.0 비드 DOE(esl_bead_doe.md §14)
@@ -1505,6 +1506,7 @@ class BeadDoeCfg(_M):
     case_jig: BeadDoeCaseJigCfg = BeadDoeCaseJigCfg()            # v0.24.4 Case 지그 tie 준비(esl_jig_case.md §5.1)
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
+    load_source_default: str | None = Field(default=None, min_length=1, max_length=32)   # v0.24.4 P3(esl_jig_case.md §9·§11)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
     load_transfer: BeadDoeLoadTransferCfg = BeadDoeLoadTransferCfg()   # v0.20.0 모든 모드 공통(esl_load_transfer.md §13.6)
     redrop: BeadDoeRedropCfg = BeadDoeRedropCfg()                      # v0.22.0 REDROP(esl_redrop_bundle.md §6)

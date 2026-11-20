@@ -1545,7 +1545,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
     : null;
 
   /** v0.24.4 P3 사용 하중 출처 칩(스냅샷 load_source — 옛 스터디 = 칩 없음) */
-  const loadSourceChip = loadSourceChipOf(s?.inputs.load_source ?? s?.load_source, s?.inputs.load_source_check ?? s?.load_source_check);
+  const loadSourceChip = loadSourceChipOf(s?.inputs.load_source, s?.inputs.load_source_check);
 
   const [rows, setRows] = useState<ParamRow[] | null>(null);
   const [form, setForm] = useState<SpecForm | null>(null);

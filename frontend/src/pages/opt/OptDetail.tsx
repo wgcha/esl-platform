@@ -236,7 +236,7 @@ export function OptDetail() {
   const run = usePolling(() => opt.run(optId).catch(goneToList(nav, `${libPath(projectId)}?tab=opt`)), poll, [optId]);
   const settings = usePolling(() => opt.settings(), 0, []);
   const r = run.data;
-  const lsChip = loadSourceChipOf(r?.load_source, r?.load_source_check);
+  const lsChip = loadSourceChipOf(r?.options?.load_source, r?.options?.load_source_check);
   const done = r?.state === "SUCCEEDED";
   const full = isFullResult(r?.result) ? r?.result ?? null : null;
   useEffect(() => {

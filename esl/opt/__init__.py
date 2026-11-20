@@ -68,6 +68,9 @@ DEFAULTS: dict = {
     # 정규화 격자(라이브러리와 같은 24×14) — S2 셀 매핑
     "grid": {"nx": 24, "ny": 14},
     "ui": {"max_preview_points": 20000},
+    # v0.24.4 P3 비드 최적화 하중 출처 기본값(esl_jig_case.md §9·§11 — pydantic OptRunCfg·yaml 2개 거울). "full" = 지금 동작(항목 자신의
+    # 하중·3-2-1). 화면 안내용 설정 — 요청에 load_source 가 없으면 서버는 이 값을 params 에 넣지 않는다(바이트 불변)
+    "load_source_default": "full",
 }
 
 STRATEGIES = ("A", "B", "C")

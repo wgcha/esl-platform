@@ -2,7 +2,7 @@
 // 안 고르면(기본) 요청에 load_source 를 넣지 않는다 = 지금과 같은 요청. 항목 판정은 묶음 /library/entries/sources(실패하면 표식 없이 모두 선택 가능 — 서버가 최종 판정).
 import { useEffect, useMemo, useState } from "react";
 import { library } from "../api/library";
-import type { EntrySourcesItem, ValidationStatus } from "../api/types";
+import type { EntrySourcesItem, LoadGrade } from "../api/types";
 import { checkEntryMark, loadSourceOptions, type LoadSourceCtx, type UnconfirmedDetail } from "../view3d/loadSource";
 import { sourceRow, type TabMark } from "../view3d/sources";
 
@@ -66,7 +66,8 @@ export function LoadSourcePicker({
   );
 }
 
-const STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
+/** 최악 등급(B3 worst = LoadGrade) 문구 */
+const GRADE_TEXT: Record<LoadGrade, string> = { PASS: "PASS", caution: "주의", not_comparable: "비교용 아님", UNDETERMINED: "판정 불가", FAIL: "FAIL", NO_RESULT: "결과 없음" };
 
 /** 서버 확인 요청(422 LOAD_SOURCE_UNCONFIRMED) 대화상자 — 항목별 판정·비교 여부를 보이고 [확인하고 계속] 으로 load_source_ack 재요청 */
 export function LoadSourceConfirmDialog({
@@ -79,7 +80,7 @@ export function LoadSourceConfirmDialog({
   onCancel: () => void;
 }) {
   const label = sourceRow(sourceKey)?.label ?? sourceKey;
-  const worst = detail.worst ? STATUS_TEXT[detail.worst as ValidationStatus] ?? detail.worst : null;
+  const worst = detail.worst ? GRADE_TEXT[detail.worst] ?? detail.worst : null;
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && !busy && onCancel()}>
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="ls-confirm-title" data-testid="ls-confirm">
