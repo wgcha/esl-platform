@@ -1916,6 +1916,41 @@ export interface View3dOut {
   values_url: string;
 }
 
+/** v0.24.3 ④ 검증 출처(esl_validate_sources.md §7.2) — GET /validations/{id}/sources · /cases/{id}/validations/sources */
+export interface ValidationSourceRow {
+  key: string;
+  /** 이 출처의 검증 결과가 있음(판정 PASS·FAIL·판정 불가) */
+  available: boolean;
+  code: string | null;
+  reason: string | null;
+  status: ValidationStatus | null;
+  fail_reasons: string[];
+  undetermined_reason: string | null;
+  /** judge = 반력도 판정 · info = 지지 반력(정보) */
+  reaction_role: "judge" | "info" | null;
+  /** 하중 프레임·지지·균형·응답 한 줄(탭 툴팁) */
+  cond_text: string | null;
+  /** 변위 비교 설명 줄 */
+  note: string | null;
+  limits: string[];
+  limit_text: string[];
+  /** false = '비교용 아님' 한계 포함, null = 알 수 없음 */
+  comparable: boolean | null;
+}
+export interface ValidationSourcesOut {
+  validation_id: string;
+  default: string;
+  rows: ValidationSourceRow[];
+}
+export interface ValidationSourcesHistItem {
+  validation_id: string;
+  rows: ValidationSourceRow[];
+}
+export interface ValidationSourcesHistOut {
+  case_id: string;
+  items: ValidationSourcesHistItem[];
+}
+
 /** v0.24.1 3D 하중 출처(esl_view3d_sources.md §5.3) — GET /esl-runs/{id}/view3d/sources */
 export type View3dRigid = "kabsch" | "linear";
 export interface View3dSourceRow {

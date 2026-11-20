@@ -4217,3 +4217,9 @@ details.card.fold > .fold-body {
   padding-bottom: 0.05rem;
   line-height: 1.2;
 }
+
+/* v0.24.3 ④ 검증 출처 탭: 판정 카드 머리 줄 높이 불변(보고서 링크 버튼 높이 이하) — 탭 4개 + 표식이 같은 줄에 */
+.val-src-tabwrap .seg button {
+  padding-top: 0.15rem;
+  padding-bottom: 0.15rem;
+}

@@ -1,6 +1,6 @@
 // v0.24.1 3D 하중 출처 표(esl_view3d_sources.md §2.1) — 화면 쪽 한 곳. 키·순서·이름 = 코어 view3d_src.KEYS · RANK_SOURCES.
 // Case ③ 출처 탭·스터디 하중 정의 탭(doeTabs.LOAD_SOURCES)이 이 표의 label·title 을 같이 쓴다. 호출부는 열만 읽고 출처 이름으로 분기하지 않는다(AGENTS.md).
-import type { View3dReconOut, View3dSourceRow, View3dSourcesOut } from "../api/types";
+import type { ValidationSourceRow, ValidationSourcesOut, ValidationStatus, View3dReconOut, View3dSourceRow, View3dSourcesOut } from "../api/types";
 
 export interface SourceRow {
   key: string;
@@ -44,16 +44,78 @@ export interface SourceTabItem {
   why: string | null;
   /** true = 자료를 만들 수 있는 빈 탭 — 선택 가능(흐린 글자 + "+" 접미), title = why */
   add?: boolean;
+  /** v0.24.3 ④ 검증: 탭 라벨 뒤 판정·한계 표식(선택 속성 — 없으면 DOM 이 v0.24.2 와 같음) */
+  mark?: TabMark;
+}
+
+/** 탭 표식(④ 검증: 판정 + 한계) */
+export interface TabMark {
+  text: string;
+  tone: "ok" | "bad" | "warn" | "muted";
+}
+
+/** 출처 탭 상태(순수 — Case ③·④ 검증 공용): 표 순서·이름 + 행의 가능 여부·사유. rows 없음 = null(탭을 그리지 않음) */
+export function tabItemsOf(rows: readonly { key: string; available: boolean; reason: string | null }[] | null): SourceTabItem[] | null {
+  if (!rows) return null;
+  return SOURCE_ROWS.map((r) => {
+    const row = rows.find((x) => x.key === r.key);
+    const ok = !!row?.available;
+    return { key: r.key, label: r.label, title: r.title, ok, why: ok ? null : unavailText(r.label, row?.reason ?? "이 ESL 결과에서 출처 정보를 받지 못했습니다") };
+  });
 }
 
 /** Case 출처 탭 상태(순수): 표 순서·이름 + 응답 행의 가능 여부·사유. sources 없음 = null(탭을 그리지 않음) */
 export function caseTabItems(sources: View3dSourcesOut | null): SourceTabItem[] | null {
-  if (!sources) return null;
-  return SOURCE_ROWS.map((r) => {
-    const row = sources.rows.find((x) => x.key === r.key);
-    const ok = !!row?.available;
-    return { key: r.key, label: r.label, title: r.title, ok, why: ok ? null : unavailText(r.label, row?.reason ?? "이 ESL 결과에서 출처 정보를 받지 못했습니다") };
+  return tabItemsOf(sources?.rows ?? null);
+}
+
+/** ④ 검증 결과가 없는 이 검증(v0.24.3 이전)의 출처 사유 코드 — 탭은 선택 가능(본문의 [검증 다시 실행]) */
+export const VAL_NOT_RUN_CODE = "VAL_SRC_NOT_RUN";
+
+const MARK_STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
+const MARK_STATUS_TONE: Record<ValidationStatus, TabMark["tone"]> = { PASS: "ok", FAIL: "bad", UNDETERMINED: "muted", LEGACY: "muted" };
+const MARK_LIMIT_NOT_COMPARABLE = "비교용 아님";
+const MARK_LIMIT_CAUTION = "⚠";
+
+/** ④ 검증 탭 표식(순수): 판정 + 한계. comparable === false → "<판정> · 비교용 아님"(경고색), 한계는 있으나 비교용 → "<판정> ⚠". 결과 없음 = null */
+export function markOf(row: Pick<ValidationSourceRow, "available" | "status" | "limits" | "comparable"> | null | undefined): TabMark | null {
+  if (!row?.available || !row.status) return null;
+  const base = MARK_STATUS_TEXT[row.status];
+  if (row.comparable === false) return { text: `${base} · ${MARK_LIMIT_NOT_COMPARABLE}`, tone: "warn" };
+  if (row.limits.length > 0) return { text: `${base} ${MARK_LIMIT_CAUTION}`, tone: MARK_STATUS_TONE[row.status] };
+  return { text: base, tone: MARK_STATUS_TONE[row.status] };
+}
+
+/** 탭 툴팁: 조건 한 줄(cond_text) + 한계 문구. 없으면 표의 정적 설명 */
+function valTitle(row: ValidationSourceRow | undefined, fallback: string): string {
+  const lines = [row?.cond_text, ...(row?.limit_text ?? [])].filter((x): x is string => !!x && x.trim() !== "");
+  return lines.length ? lines.join("\n") : fallback;
+}
+
+/** ④ 검증 탭 항목(순수): 표 순서·이름·사유 = tabItemsOf, + 판정·한계 표식(mark)·조건 툴팁(title). `canRun` 이면 결과 없는 탭(VAL_SRC_NOT_RUN)은 선택 가능(add) */
+export function valTabItems(sources: ValidationSourcesOut | null, canRun: boolean): SourceTabItem[] | null {
+  const items = tabItemsOf(sources?.rows ?? null);
+  if (!items || !sources) return null;
+  return items.map((it) => {
+    const row = sources.rows.find((x) => x.key === it.key);
+    const out: SourceTabItem = { ...it, title: valTitle(row, it.title) };
+    const mark = markOf(row);
+    if (mark) out.mark = mark;
+    if (!it.ok && canRun && row?.code === VAL_NOT_RUN_CODE) out.add = true;
+    return out;
   });
+}
+
+/** ④ 검증 기본 탭: 응답 default(가능할 때) → 가능한 첫 탭 → null */
+export function defaultValSource(sources: ValidationSourcesOut | null): string | null {
+  const items = tabItemsOf(sources?.rows ?? null);
+  if (!items || !sources) return null;
+  if (items.some((i) => i.key === sources.default && i.ok)) return sources.default;
+  return items.find((i) => i.ok)?.key ?? null;
+}
+
+export function valRowOf(sources: ValidationSourcesOut | null, key: string | null): ValidationSourceRow | null {
+  return (key && sources?.rows.find((r) => r.key === key)) || null;
 }
 
 /** 기본 탭: 응답 default(가능할 때) → 가능한 첫 탭 → null */

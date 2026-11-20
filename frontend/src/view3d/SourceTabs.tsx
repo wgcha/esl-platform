@@ -17,6 +17,10 @@ export interface SourceTabsProps {
   whyTestId: string;
 }
 
+// 표식이 있는 탭만(없으면 DOM 이 v0.24.2 와 같음): 머리 줄이 넘치면 라벨 말줄임(전체 = title)
+const MARK_BTN = { maxWidth: "15rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
+const MARK_COLOR: Record<NonNullable<SourceTabItem["mark"]>["tone"], string> = { ok: "var(--ok)", bad: "var(--bad)", warn: "var(--wait)", muted: "var(--muted)" };
+
 export function SourceTabs({ items, tab, setTab, label, prefix, testId, whyTestId }: SourceTabsProps) {
   const [focus, setFocus] = useState<string | null>(null);
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -54,7 +58,7 @@ export function SourceTabs({ items, tab, setTab, label, prefix, testId, whyTestI
                 aria-disabled={!usable}
                 aria-describedby={!s.ok && s.why ? `${prefix}-why-${s.key}` : undefined}
                 tabIndex={sel || (!cur?.ok && !cur?.add && i === 0) ? 0 : -1}
-                style={s.add && !sel ? { opacity: 0.6 } : undefined}
+                style={s.add && !sel ? (s.mark ? { ...MARK_BTN, opacity: 0.6 } : { opacity: 0.6 }) : s.mark ? MARK_BTN : undefined}
                 title={s.ok ? s.title : s.why ?? undefined}
                 onFocus={() => setFocus(s.key)}
                 onBlur={() => setFocus((f) => (f === s.key ? null : f))}
@@ -62,6 +66,11 @@ export function SourceTabs({ items, tab, setTab, label, prefix, testId, whyTestI
                 onClick={() => usable && setTab(s.key)}
               >
                 {s.label}
+                {s.mark && (
+                  <span className="small" data-testid={`${prefix}-mark-${s.key}`} data-tone={s.mark.tone} style={{ marginLeft: "0.35rem", color: MARK_COLOR[s.mark.tone], fontWeight: 650 }}>
+                    {s.mark.text}
+                  </span>
+                )}
                 {s.add ? " +" : ""}
               </button>
               {!s.ok && s.why && (
