@@ -1736,7 +1736,7 @@ def _jig_method(ctx: Context, model: StoredModel, d: str, J: dict, m: str, sh: d
     info = [_jig_text(c, **lkw) for c in fl["info"]]
     en = {**r["energy"], "aux_reaction_rel": float(r["aux_reaction_rel"])}
     sp = None
-    if row["tie_stiff"] == "spring":
+    if row["tie_stiff"] != "hard":                      # 열 값(스프링 행) — 방식 이름 분기 없음
         kk = np.asarray(BC["sp_k"], dtype=np.float64)
         sp = {"k_mode": J["spring_k_mode"], "alpha": float(J["spring_alpha"]), "k_value": J["spring_k_value"],
               "k_stats": {"min": float(kk.min()), "median": float(np.median(kk)), "max": float(kk.max())} if kk.size else None,
@@ -1847,7 +1847,7 @@ def _jig_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u_rel, sup, sm
         try:
             tg = jig_bc.target(row["frame"], model.x0, u_rel, sh["J"], sh["fit"])
             k = None
-            if row["tie_stiff"] == "spring":
+            if row["tie_stiff"] != "hard":                      # 열 값(스프링 행) — 방식 이름 분기 없음
                 k = jig_bc.spring_k(sm, sh["tie"], mode=str(J["spring_k_mode"]), alpha=float(J["spring_alpha"]),
                                     value=J["spring_k_value"])
             BC = jig_bc.build_bc(row, sh["tie"], sh["aux"], tg["u_tgt"], k=k)

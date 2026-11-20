@@ -341,3 +341,27 @@ def test_reaction_tol_config_override_and_hash_neutral():
     assert ec.validation_sources_settings({})["reaction_warn"] == {"fint": 0.05}
     for k in ("validation.sources.reaction_tol", "validation.sources.reaction_warn"):
         assert k in ec.OPTIONAL_KEYS
+
+
+# ---------------------------------------------------------------- v0.24.4 지그 행 문구·한계(V-0244-JIG-9 순수 부분)
+def test_v0244_jig_support_text_limits_and_classes():
+    J, JD = vs.plan("jig"), vs.plan("jig_disp")
+    doc = {"bc": {"tie_text": "tie 면외(법선)", "n_jig": 12, "n_aux": 3}, "limits": ["JIG_DISP_FROM_TARGET", "JIG_AUX_REACTION"],
+           "limit_text": ["tie 강제 — 유리", "면내 반력 큼"]}
+    assert vs.support_text("jig", doc) == "지그 경계(tie 면외(법선) 12 + 3-2-1 면내 3)"
+    assert vs.support_text("jig", None) == "지그 경계(– – + 3-2-1 면내 –)"                    # 진단 없음 = "–"
+    assert vs.support_text("bc321", doc) == vs.SUPPORT_TEXT["bc321"]                          # 자리 없는 문구 그대로
+    t = vs.cond_text(JD, doc)
+    assert t == ("하중 " + vs.LOAD_FRAME_TEXT["ref_basis"] + " · 지지 지그 경계(tie 면외(법선) 12 + 3-2-1 면내 3) · 균형 "
+                 + vs.BALANCE_TEXT["jig_disp"] + " · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이")
+    # 한계: 코드 = 진단 json limits, 문구 = 같은 자리 limit_text(LIMIT_TEXT 에 없는 코드), 등급 caution → 비교 가능
+    assert vs.limit_doc_text(J, doc) == {"JIG_DISP_FROM_TARGET": "tie 강제 — 유리", "JIG_AUX_REACTION": "면내 반력 큼"}
+    sb = vs.src_block(JD, doc, 3.0)
+    assert sb["limits"] == doc["limits"] and sb["limit_text"] == doc["limit_text"] and sb["comparable"] is True
+    assert vs.limit_class("JIG_DISP_FROM_TARGET") == vs.limit_class("JIG_AUX_REACTION") == "caution"
+    assert vs.limit_doc_text(J, {"limits": ["X"], "limit_text": []}) == {}                    # 길이 다름 = 무시
+    assert vs.limit_doc_text(vs.plan("full"), doc) == {}
+    # 기존 출처: LIMIT_TEXT 문구 우선(진단 json limit_text 가 있어도 바이트 불변)
+    bf = {"limits": ["BF_TIE_MISSING"], "limit_text": ["다른 문구"]}
+    assert vs.src_block(vs.plan("bforce"), bf, 1.0)["limit_text"] == [bfm.LIMIT_TEXT["BF_TIE_MISSING"]]
+    assert vs.reason_text("JIG_NOT_RUN") == view3d_src.REASON_TEXT["JIG_NOT_RUN"] and "JIG_NOT_RUN" not in vs.REASON_TEXT

@@ -284,6 +284,23 @@ def test_tie_groups_in_diag(jrun):
     assert [r["part_title"] for r in rg["regions"]] == [r["part_title"] for r in dg["regions"]]
 
 
+def test_v0244_rank_sources_jig_method_rows_s2min():
+    """v0.24.4 S2-min(esl_jig_case.md §6.1): jig_disp·jig_spring 행 = 사이드카 jig·need C_jd·C_js(P2c 가 채움)·drop 은 다른 지그
+    방식 값 제외·drop_pe = jig 행과 같음, VIEW_METRICS jd·js(보기 전용 지표)."""
+    from esl.doe import stiffness_metric as smm
+    rows = {s["key"]: s for s in stg.RANK_SOURCES}
+    assert [s["key"] for s in stg.RANK_SOURCES][:3] == ["jig", "jig_disp", "jig_spring"]
+    assert all(set(r) == set(rows["jig"]) for r in rows.values())                # 모든 행 모든 열
+    for k, pe, other in (("jig_disp", "jd", "js"), ("jig_spring", "js", "jd")):
+        r = rows[k]
+        assert (r["metric"], r["need"], r["sidecar"], r["umax_pe"], r["eps_pe"], r["uev_pe"]) == (
+            pe, f"C_{pe}", "jig", f"umax_{pe}", None, f"umax_{pe}_ev")
+        assert r["drop_pe"] == rows["jig"]["drop_pe"]
+        assert set(r["drop"]) == set(stg.VIEW_DROP_JIG) | {"C_jig", "umax_jig", f"C_{other}", f"umax_{other}"}
+        assert smm.VIEW_METRICS[pe] == f"C_{pe}" and smm.metric_key(pe) == f"C_{pe}"
+    assert rows["jig"]["drop"] == stg.VIEW_DROP_JIG and rows["jig"]["need"] == "C_jig"           # jig 행 그대로
+
+
 def test_rank_sources_table_drives_views(jrun, tmp_path, monkeypatch):
     """§2.1 출처 표: 행을 지우면 그 보기만 빠짐(호출부 분기 없음)."""
     import shutil
@@ -292,5 +309,5 @@ def test_rank_sources_table_drives_views(jrun, tmp_path, monkeypatch):
     shutil.copytree(out0, out)
     monkeypatch.setattr(stg, "RANK_SOURCES", tuple(s for s in stg.RANK_SOURCES if s["key"] != "full"))
     stg.run_stage({"stage": "bd_post", "out": out, "doe": {**doe, "post_mode": "view3d"}}, lambda s: None)
-    assert set(_side(out)["rank_views"]) == {"jig"}
-    assert {s["key"] for s in stg.RANK_SOURCES} == {"jig", "bforce", "fint"}   # v0.24.0 경계력·내력 행(사이드카 bforce·fint — jig_view 무관)
+    assert set(_side(out)["rank_views"]) == {"jig"}       # v0.24.4 jig_disp·jig_spring 행 = need(C_jd·C_js) 없음 → 보기 없음
+    assert {s["key"] for s in stg.RANK_SOURCES} == {"jig", "jig_disp", "jig_spring", "bforce", "fint"}   # v0.24.0 경계력·내력 행(사이드카 bforce·fint — jig_view 무관)
