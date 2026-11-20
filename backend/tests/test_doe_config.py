@@ -26,6 +26,15 @@ def test_defaults_mirror_core():
     for k in ("mode", "ladder"):
         if k not in (core_cmp.get("mesh") or {}):
             dump["compare"]["mesh"].pop(k)
+    # v0.24.4 B2: bead_doe.case_jig·rank.jig 새 키 9개(JIG_NEW_KEYS)는 코어 DEFAULTS 병합 전에는 빼고 대조(병합 후에는 전체 대조 —
+    # 이 분기는 아무것도 빼지 않음). 이름·값 거울은 test_jig_case_api.py(V-0244-JIG-15)
+    if "case_jig" not in DEFAULTS:
+        dump.pop("case_jig")
+    core_jig = (DEFAULTS.get("rank") or {}).get("jig") or {}
+    for k in ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reaction_warn", "spring_k_mode",
+              "spring_alpha", "spring_k_value", "spring_alpha_scan"):
+        if k not in core_jig:
+            dump["rank"]["jig"].pop(k)
     from doe_support import core_view_v0161
 
     assert core_view_v0161(dump, DEFAULTS) == DEFAULTS                # 숫자는 한 곳(코어 기본값 거울)과 같게(v0.16.1 키는 코어 병합 후)
