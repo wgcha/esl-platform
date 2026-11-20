@@ -9,7 +9,7 @@
 2. [x] 모듈 이동(esl/mech/jig.py·esl/rad/surface.py·esl/rad/solid_faces.py·esl/io/fixed_scan.py·esl/io/messages.py + 심 = sys.modules 별칭) — 골든 통과
 3. [x] ShellModel 확장(FactorizedSolve.solve(F, values)·factorize_bc·BcSolve) + esl/mech/jig_bc.py
 4. [x] 시험 tests/mech/test_shell_bc.py(10)·tests/mech/test_jig_bc.py(20)·tests/doe/test_jig_move.py(6)
-5. [ ] 전체 pytest tests/ (허용 실패 3건 외 0) → 최종 커밋
+5. [x] 전체 pytest tests/: 1506 passed · 192 skipped · 3 failed(허용 3건만) — 이후 mixed-rank 시험 1개 추가(통과)
 
 ## P2b 가 쓸 API (esl/mech/jig_bc.py — 계약 §4.2 + 추가)
 - 표: METHODS·TIE_DOFS·LEGACY_ABSENT·check_plan()·factor_groups(methods)·tie_dofs_of(cfg)·methods_of(cfg)·check_cfg(cfg)
