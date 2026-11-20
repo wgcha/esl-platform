@@ -6,7 +6,7 @@
 ## 진행
 1. [x] 골든 먼저 — tests/doe/test_jig_move.py + tests/fixtures/jig_case/golden_v0243.json (study 41 파일, case 36 파일, 413620c1 코드로 기록)
 2. [x] 모듈 이동(esl/mech/jig.py·esl/rad/surface.py·esl/rad/solid_faces.py·esl/io/fixed_scan.py·esl/io/messages.py + 심 = sys.modules 별칭) — 골든 통과
-3. [ ] jig_bc(3방식·tie_dofs·3-2-1 면내) + ShellModel 확장
+3. [~] jig_bc(3방식·tie_dofs·3-2-1 면내) + ShellModel 확장 — 코드·test_shell_bc 완료, test_jig_bc 작성 중
 4. [ ] 지표 Π + 합성 시험
 
 ## 결정·계약과 다른 점(반환에 명시)

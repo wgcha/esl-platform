@@ -484,9 +484,12 @@ def mass_diag6(m) -> np.ndarray:
 
 def opinv_from(h, n_nodes) -> LinearOperator:
     """지그 정적 분해 h(FactorizedSolve) → 자유 dof 우변 b 에 K_ff⁻¹ b (σ = 0 shift-invert, 추가 분해 0).
-    ARPACK mode 3 은 OPinv 를 M·x 에만 적용 → 회전 우변 0. 회전 성분 ≠ 0(> 1e-14·‖b‖) = JIG_MODES_FAILED."""
+    ARPACK mode 3 은 OPinv 를 M·x 에만 적용 → 회전 우변 0. 회전 성분 ≠ 0(> 1e-14·‖b‖) = JIG_MODES_FAILED.
+    v0.24.4: h 가 변환 공간 해법(``BcSolve`` — ``solve_t``·``free_t`` 속성)이면 K̃_ff⁻¹ b(국부 틀 공간 — 고유치 문제를
+    K̃·fixed_t 로 풀고 φ = h.to_global(φ̃), 질량은 병진 등방이라 회전 불변). 없으면 지금 그대로(바이트 동일)."""
     N = int(n_nodes)
-    free = np.asarray(h.free, dtype=np.int64)
+    bc = hasattr(h, "solve_t")
+    free = np.asarray(h.free_t if bc else h.free, dtype=np.int64)
     nf = free.size
 
     def mv(b):
@@ -497,6 +500,8 @@ def opinv_from(h, n_nodes) -> LinearOperator:
         nb_ = float(np.linalg.norm(b))
         if np.linalg.norm(f6[:, 3:]) > 1e-14 * nb_:
             raise EslError("JIG_MODES_FAILED", "OPinv 우변에 회전 성분 — 지그 분해 재사용 불가(σ ≠ 0 또는 회전 질량)")
+        if bc:
+            return h.solve_t(b)
         u, _ = h.solve(f6[:, :3].copy())
         return u.reshape(-1)[free]
 
@@ -736,14 +741,14 @@ def factor(mesh, jig_idx, solver_cfg):
 
 
 def basis_response(h, basis, fit_mask) -> dict:
-    """U_k = u[F, :3] (k = 1..nb) — 같은 분해로 nb 회 solve."""
+    """U_k = u[F, :3] (k = 1..nb) — 같은 분해로 nb 회 solve(동차 — 강제 값·스프링 바닥 0; v0.24.4 BcSolve 도 같음)."""
     nb = int(basis["nb"])
     N = int(h.model.n_nodes)
     fm = np.asarray(fit_mask, bool)
     U = np.zeros((nb, int(fm.sum()), 3))
     null = []
     for k in range(nb):
-        u, _ = h.solve(forces(basis, _unit(nb, k), N))
+        u = h.solve(forces(basis, _unit(nb, k), N))[0]      # FactorizedSolve (u, R) · BcSolve (u, R, rc, fs) 공통
         U[k] = u[fm, :3]
         if not np.any(U[k]):
             null.append(k)
@@ -827,7 +832,8 @@ def respond(h, loads, *, umax_mask=None, keep_u=False, ev_mask=None) -> list[dic
     em = None if ev_mask is None else np.asarray(ev_mask, bool)
     for eid, F in loads:
         F = np.asarray(F, dtype=np.float64)
-        u, Rf = h.solve(F)
+        sol = h.solve(F)
+        u, Rf = sol[0], sol[1]
         ut = u[:, :3]
         C = float(np.sum(F * ut))
         uu = ut if mk is None else ut[mk]

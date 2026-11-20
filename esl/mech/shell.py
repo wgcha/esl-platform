@@ -274,6 +274,97 @@ def _check_equilibrium(F, R, stats: dict, tol: float = EQUIL_TOL_REL) -> float:
     return e
 
 
+def _check_equilibrium_bc(F, R, stats: dict, tol: float = EQUIL_TOL_REL, force_scale: float = 0.0) -> float:
+    """v0.24.4 경계 확장 해(강제 값·스프링)의 반력 평형: e = |ΣR+ΣF|∞ / max(|ΣF|∞, Σ|F|, Σ|R|, force_scale, tiny).
+    F = 외력 + 스프링 힘(N,3). 강제 변위만 준 해(F = 0)는 반력끼리 평형이라 규모를 Σ|R| 로, 강체 이동만 강제한 해(반력 ≈ 0)는
+    ``force_scale`` = ‖K_ff‖∞·max|u|(강제 운동의 힘 규모)로 잡는다(기존 ``_check_equilibrium`` 은 그대로 — 옛 경로 불변)."""
+    F = np.asarray(F, dtype=np.float64)
+    R = np.asarray(R, dtype=np.float64)
+    sf = np.abs(F.sum(axis=0)).max() if F.size else 0.0
+    scale = max(float(sf), float(np.abs(F).sum()), float(np.abs(R).sum()), float(force_scale), np.finfo(float).tiny)
+    e = float(np.abs(R.sum(axis=0) + F.sum(axis=0)).max()) / scale if F.size else 0.0
+    if not np.isfinite(e) or e > tol:
+        raise EslError("SOLVER_SINGULAR", f"반력 평형 불일치 |ΣR+ΣF|/Σ|F,R|={e:.2e}(허용 ≤ {tol:.0e}) — "
+                       "구속되지 않은 강체 모드 또는 특이 K_ff 의심")
+    stats["solve_equilibrium_rel"] = e
+    return e
+
+
+def mesh_components(conn, elem_type, n_nodes: int) -> tuple[int, np.ndarray]:
+    """요소 변 그래프 연결 성분 (n_comp, label (N,)) — ``ShellModel._check_restraint`` 와 같은 변 정의."""
+    conn = np.asarray(conn, dtype=np.int64)
+    q = np.asarray(elem_type).astype(np.int64) == 4
+    rows, cols = [], []
+    for a, b in ((0, 1), (1, 2), (2, 3), (3, 0)):
+        mask = q if (a == 3 or b == 3) else np.ones_like(q)
+        rows.append(conn[mask, a])
+        cols.append(conn[mask, b])
+    rows.append(conn[~q, 2])
+    cols.append(conn[~q, 0])
+    r = np.concatenate(rows)
+    c = np.concatenate(cols)
+    G = sp.coo_matrix((np.ones(r.size), (r, c)), shape=(int(n_nodes),) * 2)
+    return connected_components(G, directed=False)
+
+
+def rigid_rank(x0, labels, n_comp: int, nodes, dirs, *, rel_tol: float = 1e-8) -> list[dict]:
+    """연결 성분마다 구속·스프링 방향 행이 막는 강체 모드 수(``_check_restraint`` 일반화 — 축 dof 대신 임의 단위 방향 d̂).
+    행 A = [d̂ᵀ, ((x − c)/L × d̂)ᵀ] (병진 3 + 중심 기준 회전 3, L = 성분 반지름). rank = σ > rel_tol·σmax 개수(행 0 = 0).
+    반환 [{comp, n_nodes, n_rows, rank, free = 6 − rank}] — 요소 없는 고립 노드 성분도 포함(호출자가 거름)."""
+    X = np.asarray(x0, dtype=np.float64)
+    lab = np.asarray(labels, dtype=np.int64)
+    nd = np.asarray(nodes, dtype=np.int64).reshape(-1)
+    D = np.asarray(dirs, dtype=np.float64).reshape(-1, 3)
+    out = []
+    for k in range(int(n_comp)):
+        members = np.flatnonzero(lab == k)
+        sel = lab[nd] == k if nd.size else np.zeros(0, bool)
+        rank = 0
+        if sel.any():
+            P0 = X[members]
+            ctr = P0.mean(axis=0)
+            L = max(float(np.max(np.linalg.norm(P0 - ctr, axis=1))), 1e-300)
+            P = (X[nd[sel]] - ctr) / L
+            A = np.concatenate([D[sel], np.cross(P, D[sel])], axis=1)
+            s = np.linalg.svd(A, compute_uv=False)
+            rank = int(np.sum(s > rel_tol * s[0])) if s.size and s[0] > 0 else 0
+        out.append({"comp": int(k), "n_nodes": int(members.size), "n_rows": int(sel.sum()), "rank": rank,
+                    "free": 6 - rank})
+    return out
+
+
+def _rows(spec, what: str, n_nodes: int, with_k: bool = False):
+    """경계 행 정규화: {"node","dir"[,"k"]} | (node (m,), dir (m,3)[, k (m,)]) numpy 배열 튜플 | [(node, d̂[, k])] → 배열.
+    d̂ 는 단위로(노름 0 = 오류)."""
+    need = 3 if with_k else 2
+    if spec is None:
+        z = (np.zeros(0, np.int64), np.zeros((0, 3)))
+        return z + ((np.zeros(0),) if with_k else ())
+    if isinstance(spec, dict):
+        parts = [spec["node"], spec["dir"]] + ([spec["k"]] if with_k else [])
+    elif isinstance(spec, tuple) and len(spec) == need and all(isinstance(a, np.ndarray) for a in spec):
+        parts = list(spec)
+    else:
+        rows = list(spec)
+        parts = [[r[0] for r in rows], [r[1] for r in rows]] + ([[r[2] for r in rows]] if with_k else [])
+    n = np.asarray(parts[0], dtype=np.int64).reshape(-1)
+    d = np.asarray(parts[1], dtype=np.float64).reshape(-1, 3)
+    if d.shape[0] != n.size:
+        raise EslError("INPUT_INVALID", f"{what}: 노드·방향 행 수가 다름")
+    if n.size and (n.min() < 0 or n.max() >= n_nodes):
+        raise EslError("INPUT_INVALID", f"{what} 노드 인덱스 범위 밖")
+    nr = np.linalg.norm(d, axis=1)
+    if np.any(~np.isfinite(nr)) or np.any(nr <= 0):
+        raise EslError("INPUT_INVALID", f"{what}: 방향 노름 0·비유한")
+    d = d / nr[:, None]
+    if not with_k:
+        return n, d
+    k = np.asarray(parts[2], dtype=np.float64).reshape(-1)
+    if k.size != n.size or np.any(~np.isfinite(k)) or np.any(k <= 0):
+        raise EslError("INPUT_INVALID", f"{what}: 스프링 강성 k > 0·유한·행 수 일치 필요")
+    return n, d, k
+
+
 OOM_CODE = "SOLVER_OUT_OF_MEMORY"
 _OOM_HINT = ("서버 메모리·worker.max_memory_gb(POSIX 는 × worker.vm_headroom) 확인, 동시 작업 줄이기 또는 "
              "solver.backend: iterative")
@@ -939,6 +1030,118 @@ class ShellModel:
             yield h.solve(F)
 
     # ------------------------------------------------------------------
+    # v0.24.4 경계 확장(esl_jig_case.md §4.2, D-0.24.4-JIG-10): 임의 단위 방향 구속(국부 틀) + 접지 스프링. 추가만 — 위 경로 불변.
+    @_oom_guard("정적 해 분해(K̃_ff — 국부 구속·스프링)")
+    def factorize_bc(self, dirs, *, springs=None) -> "BcSolve":
+        """구속 행 dirs = (node, d̂)(d̂ᵀu_node = 값), 스프링 행 springs = (node, d̂, k)(접지 스프링 ½k(d̂ᵀu − g)²) → 분해 1회.
+
+        구속 노드마다 국부 정규직교 틀 Q_n(첫 열들 = 그 노드 구속 방향을 입력 순서대로 Gram–Schmidt, 나머지 = 보완 축)으로
+        병진 dof 를 회전(T 블록 대각), K̃ = Tᵀ(K₀ + K_s)T, 국부 구속 dof 를 빼고 ``_factorize``(같은 백엔드). 한 노드의 구속
+        방향이 서로 종속(남은 노름 < 1e-8)이면 INPUT_INVALID. 사전검사 = 연결 성분마다 (구속 + 스프링) 행이 강체 6모드를 막는지
+        (``rigid_rank`` — 못 막으면 SOLVER_SINGULAR). 축 방향 구속만이면 ``factorize`` 와 같은 해(반올림 수준)."""
+        N = self.n_nodes
+        cn, cd = _rows(dirs, "구속", N)
+        sn, sd, sk = _rows(springs, "스프링", N, with_k=True)
+        self._check_coverage()
+        ncomp, lab = mesh_components(self.conn, self.elem_type, N)
+        used = np.zeros(N, bool)
+        q = self.elem_type == 4
+        used[self.conn[q].ravel()] = True
+        used[self.conn[~q, :3].ravel()] = True
+        for c in rigid_rank(self.x0, lab, ncomp, np.r_[cn, sn], np.concatenate([cd, sd], axis=0)):
+            if c["free"] > 0 and used[lab == c["comp"]].any():
+                raise EslError("SOLVER_SINGULAR", f"연결 성분 {c['comp']}(노드 {c['n_nodes']}개): 구속·스프링 행 "
+                                                  f"{c['n_rows']}개가 강체 모드 {c['free']}개를 막지 못함")
+        # 노드별 국부 틀(입력 순서 Gram–Schmidt) — 행 → (노드 위치, 국부 번호)
+        tnodes = np.unique(cn)
+        tpos = np.full(N, -1, dtype=np.int64)
+        tpos[tnodes] = np.arange(tnodes.size)
+        Q = np.zeros((tnodes.size, 3, 3))
+        Rm = np.zeros((tnodes.size, 3, 3))
+        nk = np.zeros(tnodes.size, dtype=np.int64)
+        row_loc = np.zeros(cn.size, dtype=np.int64)
+        for r in range(cn.size):
+            t = tpos[cn[r]]
+            k = int(nk[t])
+            if k >= 3:
+                raise EslError("INPUT_INVALID", f"노드 {int(cn[r])} 구속 방향 > 3")
+            w = cd[r].copy()
+            for j in range(k):
+                Rm[t, j, k] = float(Q[t, :, j] @ w)
+                w = w - Rm[t, j, k] * Q[t, :, j]
+            nr = float(np.linalg.norm(w))
+            if nr < 1e-8:
+                raise EslError("INPUT_INVALID", f"노드 {int(cn[r])} 구속 방향이 서로 종속(남은 노름 {nr:.1e})")
+            Rm[t, k, k] = nr
+            Q[t, :, k] = w / nr
+            row_loc[r] = k
+            nk[t] = k + 1
+        for t in range(tnodes.size):                 # 보완 축: 사영이 작은 전역 축 순서로 Gram–Schmidt(결정적)
+            k = int(nk[t])
+            for ax in np.argsort(np.abs(Q[t, :, :k]).sum(axis=1), kind="stable"):
+                if k >= 3:
+                    break
+                w = np.eye(3)[ax]
+                for j in range(k):
+                    w = w - float(Q[t, :, j] @ w) * Q[t, :, j]
+                nr = float(np.linalg.norm(w))
+                if nr > 1e-6:
+                    Q[t, :, k] = w / nr
+                    k += 1
+        K6 = self._block_K()
+        data = K6.data.copy()
+        indptr, indices = K6.indptr, K6.indices
+        if sn.size:                                  # 접지 스프링(전역계) → 노드 대각 블록
+            dpos = np.array([indptr[n] + int(np.searchsorted(indices[indptr[n]:indptr[n + 1]], n)) for n in sn],
+                            dtype=np.int64)
+            np.add.at(data[:, :3, :3], dpos, sk[:, None, None] * sd[:, :, None] * sd[:, None, :])
+        brow = np.repeat(np.arange(N, dtype=np.int64), np.diff(indptr))
+        isT = tpos >= 0
+        mask = isT[brow] | isT[indices]
+        if mask.any():
+            I6 = np.eye(6)
+            T6 = np.broadcast_to(I6, (tnodes.size, 6, 6)).copy()
+            T6[:, :3, :3] = Q
+            bi = np.flatnonzero(mask)
+            Tr = np.where(isT[brow[bi]][:, None, None], T6[np.maximum(tpos[brow[bi]], 0)], I6)
+            Tc = np.where(isT[indices[bi]][:, None, None], T6[np.maximum(tpos[indices[bi]], 0)], I6)
+            data[bi] = np.einsum("bki,bkl,blj->bij", Tr, data[bi], Tc)
+        Kt_b = sp.bsr_matrix((data, indices, indptr), shape=(6 * N, 6 * N), blocksize=(6, 6))
+        Kt = Kt_b.tocsr()
+        Kt.has_sorted_indices = True
+        fixed = np.sort(np.concatenate([6 * tnodes[t] + np.arange(nk[t]) for t in range(tnodes.size)])
+                        if tnodes.size else np.zeros(0, np.int64)).astype(np.int64)
+        free = np.setdiff1d(np.arange(6 * N), fixed)
+
+        def iter_setup():
+            dk = np.flatnonzero(indices == brow)
+            D = data[dk].copy()
+            nd_, dd = np.divmod(fixed, 6)
+            D[nd_, dd, :] = 0.0
+            D[nd_, :, dd] = 0.0
+            D[nd_, dd, dd] = 1.0
+            M = sp.bsr_matrix((np.linalg.inv(D), np.arange(N), np.arange(N + 1)), shape=(6 * N, 6 * N)).tocsr()
+            X = self.x0 - self.x0.mean(axis=0)
+            B = np.zeros((N, 6, 6))
+            for i in range(3):
+                w = np.zeros(3)
+                w[i] = 1.0
+                B[:, i, i] = 1.0
+                B[:, :3, 3 + i] = np.cross(w, X)
+                B[:, 3 + i, 3 + i] = 1.0
+            B[tnodes, :3, :] = np.einsum("nji,njk->nik", Q, B[tnodes, :3, :])
+            return {"blocks": _principal_submatrix(M, free), "near_null": B.reshape(-1, 6)[free]}
+
+        Kff = _principal_submatrix(Kt, free)
+        norm_K = _norm_inf(Kff)
+        lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
+                        iter_opts=self.iter_opts, iter_setup=iter_setup)
+        del Kff, Kt_b, data
+        self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
+        return BcSolve(self, Kt, lu, free, fixed, norm_K, tnodes=tnodes, Q=Q, Rm=Rm, nk=nk, bc_node=cn, bc_dir=cd,
+                       row_loc=row_loc, sp_node=sn, sp_dir=sd, sp_k=sk)
+
+    # ------------------------------------------------------------------
     @_oom_guard("변형률 회복")
     def strains(self, u) -> np.ndarray:
         """u (N,6) → eps (E,2,3): 요소 중심, layer 0=bottom(z=−t/2), 1=top(+t/2), 국부 텐서 (exx,eyy,exy)."""
@@ -982,7 +1185,11 @@ class FactorizedSolve:
         self.n_solves = 0
 
     @_oom_guard("정적 해(K_ff, 분해 재사용)")
-    def solve(self, F):
+    def solve(self, F, values=None):
+        """F (N,3) → (u (N,6), R (N,3)). v0.24.4 ``values``(len(cons), ``cons`` 순서 = (노드, dof) 정렬): 구속 dof 강제 값
+        u[fixed] = v, 우변 F − K_fc v(같은 분해 — 지그 prescribed). None = 이전 경로 그대로(산술·통계 불변)."""
+        if values is not None:
+            return self._solve_values(F, values)
         m = self.model
         F = np.asarray(F, dtype=np.float64)
         if F.shape != (m.n_nodes, 3):
@@ -1012,3 +1219,178 @@ class FactorizedSolve:
         _check_equilibrium(F, R, m.stats, m.equil_tol_rel)
         self.n_solves += 1
         return u.reshape(m.n_nodes, 6), R
+
+    def _solve_values(self, F, values):
+        """강제 값 해(v0.24.4): u[fixed] = v, K_ff u_f = f_f − K_fc v(반복 개선 1회·잔차 검사 같음), 반력 R = (K u − f)[fixed],
+        평형 = ``_check_equilibrium_bc``(F = 0 이어도 반력 규모로 판정)."""
+        m = self.model
+        F = np.asarray(F, dtype=np.float64)
+        if F.shape != (m.n_nodes, 3):
+            raise EslError("INPUT_INVALID", "F 는 (N,3)")
+        v = np.asarray(values, dtype=np.float64).reshape(-1)
+        if v.size != len(self.cons) or not np.all(np.isfinite(v)):
+            raise EslError("INPUT_INVALID", f"values 길이 {v.size} ≠ 구속 dof {len(self.cons)}(또는 비유한)")
+        ndof = 6 * m.n_nodes
+        f = np.zeros(ndof)
+        f[(np.arange(m.n_nodes)[:, None] * 6 + np.arange(3)).ravel()] = F.ravel()
+        fixed = np.array([6 * p + d for p, d in self.cons], dtype=np.int64)
+        K, free, lu = self.K, self.free, self.lu
+        u = np.zeros(ndof)
+        u[fixed] = v
+        rhs = f[free] - (K @ u)[free]
+
+        def resid(uf):
+            u[free] = uf
+            return (K @ u - f)[free]
+
+        uf = lu.solve(rhs)
+        if not isinstance(lu, _CG):
+            uf = uf - lu.solve(resid(uf))
+        res = resid(uf)
+        _record_iter(lu, m.stats["K_ff"])
+        _check_resid(lu, uf, res, rhs, self.norm_K, m.stats, m.resid_backward_tol, m.resid_rel_cap)
+        u[free] = uf
+        reac = (K @ u - f).reshape(m.n_nodes, 6)[:, :3]
+        R = np.zeros((m.n_nodes, 3))
+        for p, d in self.cons:
+            R[p, d] = reac[p, d]
+        _check_equilibrium_bc(F, R, m.stats, m.equil_tol_rel, self.norm_K * float(np.abs(u).max(initial=0.0)))
+        self.n_solves += 1
+        return u.reshape(m.n_nodes, 6), R
+
+
+class BcSolve:
+    """``ShellModel.factorize_bc`` 결과(v0.24.4): 국부 틀 회전 공간 K̃_ff 분해로 여러 하중·강제 값·스프링 바닥을 푼다.
+
+    속성: ``K_t``(K̃, 6N×6N csr)·``free_t``·``fixed_t``(변환 공간 dof)·``to_local``/``to_global``(병진 회전)·``solve_t``(모드용
+    K̃_ff⁻¹ b) — ``esl.mech.jig.opinv_from`` 이 이 속성으로 변환 공간에서 동작. 구속 행 순서 = 입력 순서(``bc_node``·``bc_dir``)."""
+
+    def __init__(self, model: ShellModel, K_t, lu, free, fixed, norm_K: float, *, tnodes, Q, Rm, nk, bc_node, bc_dir,
+                 row_loc, sp_node, sp_dir, sp_k):
+        self.model = model
+        self.K_t = K_t
+        self.lu = lu
+        self.free_t = np.asarray(free, dtype=np.int64)
+        self.fixed_t = np.asarray(fixed, dtype=np.int64)
+        self.free = self.free_t                       # 옛 이름 호환(FactorizedSolve.free 와 같은 뜻 — 변환 공간)
+        self.norm_K = float(norm_K)
+        self.tnodes, self.Q, self.Rm, self.nk = tnodes, Q, Rm, nk
+        self.bc_node, self.bc_dir, self.row_loc = bc_node, bc_dir, row_loc
+        self.sp_node, self.sp_dir, self.sp_k = sp_node, sp_dir, sp_k
+        self.n_solves = 0
+        tp = np.full(model.n_nodes, -1, dtype=np.int64)
+        tp[tnodes] = np.arange(tnodes.size)
+        self._tpos = tp
+
+    # ---------------------------------------------------------------- 좌표 변환(병진 성분만 — 회전 dof 는 변환 밖)
+    def _apply(self, x, local: bool):
+        x = np.array(x, dtype=np.float64, copy=True)
+        if x.shape[-2] != self.model.n_nodes or x.shape[-1] not in (3, 6):
+            raise EslError("INPUT_INVALID", "변환 배열은 (…, N, 3|6)")
+        if self.tnodes.size:
+            sub = x[..., self.tnodes, :3]
+            sub = np.einsum("nji,...nj->...ni", self.Q, sub) if local else np.einsum("nij,...nj->...ni", self.Q, sub)
+            x[..., self.tnodes, :3] = sub
+        return x
+
+    def to_local(self, x):
+        """전역 → 국부(구속 노드 병진 = Q_nᵀ x_n). x (…, N, 3|6)."""
+        return self._apply(x, True)
+
+    def to_global(self, x):
+        """국부 → 전역(구속 노드 병진 = Q_n x̃_n). x (…, N, 3|6) — 모드 φ̃ 를 전역으로."""
+        return self._apply(x, False)
+
+    # ---------------------------------------------------------------- 해
+    def _local_values(self, values):
+        """행 값 v(입력 순서) → 국부 구속 dof 값 x̃_c(노드마다 Rᵀ x̃ = v, R = Gram–Schmidt 상삼각)."""
+        m = self.bc_node.size
+        v = np.zeros(m) if values is None else np.asarray(values, dtype=np.float64).reshape(-1)
+        if v.size != m or not np.all(np.isfinite(v)):
+            raise EslError("INPUT_INVALID", f"values 길이 {v.size} ≠ 구속 행 {m}(또는 비유한)")
+        loc = np.zeros((self.tnodes.size, 3))
+        vv = np.zeros((self.tnodes.size, 3))
+        t = self._tpos[self.bc_node]
+        vv[t, self.row_loc] = v
+        for i in range(self.tnodes.size):
+            k = int(self.nk[i])
+            loc[i, :k] = np.linalg.solve(self.Rm[i, :k, :k].T, vv[i, :k]) if k else 0.0
+        return loc
+
+    @_oom_guard("정적 해(K̃_ff, 분해 재사용)")
+    def solve(self, F, values=None, ground=None):
+        """F (N,3), values (m,)(구속 행 d̂ᵀu = v, None = 0), ground (ms,)(스프링 바닥 g, None = 0) →
+        (u (N,6) 전역, R (N,3) 구속 반력(파트에 작용), rc (m,) 행 반력(d̂ 방향 라그랑주 승수), fs (ms,) 스프링 힘 k(g − d̂ᵀu)).
+        평형 F + R + Σ f_s d̂_s = 0 검사(``_check_equilibrium_bc``)."""
+        mdl = self.model
+        N = mdl.n_nodes
+        F = np.asarray(F, dtype=np.float64)
+        if F.shape != (N, 3):
+            raise EslError("INPUT_INVALID", "F 는 (N,3)")
+        ms = self.sp_node.size
+        g = np.zeros(ms) if ground is None else np.asarray(ground, dtype=np.float64).reshape(-1)
+        if g.size != ms or not np.all(np.isfinite(g)):
+            raise EslError("INPUT_INVALID", f"ground 길이 {g.size} ≠ 스프링 행 {ms}(또는 비유한)")
+        Fe = F.copy()
+        if ms:
+            np.add.at(Fe, self.sp_node, (self.sp_k * g)[:, None] * self.sp_dir)
+        f6 = np.zeros((N, 6))
+        f6[:, :3] = Fe
+        ft = self.to_local(f6).ravel()
+        ut = np.zeros(6 * N)
+        loc = self._local_values(values)
+        for i, n in enumerate(self.tnodes):
+            k = int(self.nk[i])
+            ut[6 * n:6 * n + k] = loc[i, :k]
+        K, free, lu = self.K_t, self.free_t, self.lu
+        rhs = ft[free] - (K @ ut)[free]
+
+        def resid(uf):
+            ut[free] = uf
+            return (K @ ut - ft)[free]
+
+        uf = lu.solve(rhs)
+        if not isinstance(lu, _CG):
+            uf = uf - lu.solve(resid(uf))
+        res = resid(uf)
+        _record_iter(lu, mdl.stats["K_ff"])
+        _check_resid(lu, uf, res, rhs, self.norm_K, mdl.stats, mdl.resid_backward_tol, mdl.resid_rel_cap)
+        ut[free] = uf
+        rt = (K @ ut - ft).reshape(N, 6)
+        R = np.zeros((N, 3))
+        rc = np.zeros(self.bc_node.size)
+        lam = np.zeros((self.tnodes.size, 3))
+        for i, n in enumerate(self.tnodes):
+            k = int(self.nk[i])
+            r_loc = rt[n, :k]
+            R[n] = self.Q[i, :, :k] @ r_loc
+            lam[i, :k] = np.linalg.solve(self.Rm[i, :k, :k], r_loc)
+        if self.bc_node.size:
+            rc = lam[self._tpos[self.bc_node], self.row_loc]
+        u = self.to_global(ut.reshape(N, 6))
+        fs = self.sp_k * (g - np.einsum("si,si->s", self.sp_dir, u[self.sp_node, :3])) if ms else np.zeros(0)
+        Ft = F.copy()
+        if ms:
+            np.add.at(Ft, self.sp_node, fs[:, None] * self.sp_dir)
+        _check_equilibrium_bc(Ft, R, mdl.stats, mdl.equil_tol_rel, self.norm_K * float(np.abs(ut).max(initial=0.0)))
+        self.n_solves += 1
+        return u, R, rc, fs
+
+    def solve_t(self, b):
+        """변환 공간 자유 dof 우변 b → K̃_ff⁻¹ b(반복 개선 1회·잔차 검사) — 모드 shift-invert(σ = 0) 연산자용."""
+        b = np.asarray(b, dtype=np.float64).reshape(-1)
+        mdl = self.model
+        K, free, lu = self.K_t, self.free_t, self.lu
+        ut = np.zeros(6 * mdl.n_nodes)
+
+        def resid(x):
+            ut[free] = x
+            return (K @ ut)[free] - b
+
+        x = lu.solve(b)
+        if not isinstance(lu, _CG):
+            x = x - lu.solve(resid(x))
+        _record_iter(lu, mdl.stats["K_ff"])
+        _check_resid(lu, x, resid(x), b, self.norm_K, mdl.stats, mdl.resid_backward_tol, mdl.resid_rel_cap)
+        self.n_solves += 1
+        return x
