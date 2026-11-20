@@ -37,6 +37,8 @@ SOURCES: dict[str, dict[str, str]] = {
     "fint": {"accept": "grade", "code": "FINT", "hint": _HINT_ESL},
 }
 ACCEPT = ("raw", "grade", "status")
+# CASE_PLAN support 열 값 → 지지 = 하중 파일의 구속 배열인가(지그 3방식 공통 "jig") / 엔트리 3-2-1("bc")
+SUPPORT_FROM_LOAD = {"jig": True, "bc": False}
 BC_ID_KEYS = ("bc_node", "sp_node")
 BC_KEYS = ("bc_node", "bc_dir", "bc_val", "bc_kind", "sp_node", "sp_dir", "sp_k", "sp_g")
 
@@ -55,6 +57,8 @@ def check_plan() -> None:
     for k, row in SOURCES.items():
         if any(not row.get(c) for c in ("accept", "code", "hint")) or row["accept"] not in ACCEPT:
             raise EslError("CONFIG_INVALID", f"source_load.SOURCES[{k}] 열 오류 {row}")
+        if _plan_row(k)["support"] not in SUPPORT_FROM_LOAD:
+            raise EslError("CONFIG_INVALID", f"CASE_PLAN[{k}].support 값을 source_load 가 모름")
 
 
 def row(key: str) -> dict[str, Any]:
@@ -156,7 +160,7 @@ def find(key: str, meta: dict, raw: dict, *, code: str | None = None, name: str 
                 return d, jd, None, None, ""
             f, z = _load_f(os.path.join(d, fz), rw["npz_key"], nid)
             bc = None
-            if rw["support"] == "jig":                       # 열 값(지지 = 하중 파일의 구속 배열)
+            if SUPPORT_FROM_LOAD[rw["support"]]:              # 열 값(지지 = 하중 파일의 구속 배열)
                 bc = _bc_ids(z, np.asarray(z["node_id"], dtype=np.int64) if "node_id" in z else nid)
             return d, jd, f, bc, ""
         if isinstance(jd, dict) and jd_none is None:

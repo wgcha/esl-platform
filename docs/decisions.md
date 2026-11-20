@@ -456,3 +456,7 @@
 - (0.24.4 D-0.24.4-JIG-23, 2026-11-20) 워커 register_esl 은 출처 표 summary 열의 키를 모두 ESL 실행 forces 에 옮긴다(이름 분기 없음) — 3D·검증 출처 상태가 지그 요약·사유 코드를 읽음. 지그 스프링 3D 표식은 sp_node 를 tie 로 더함.
 - (0.24.4 D-0.24.4-JIG-24, 2026-11-20) 출처 표 KEYS 6·Case 의 지그 행 사유 JIG_NOT_RUN(이전 V3D_STUDY_ONLY) — 계약 §12-6 의도 변경, 기대값 갱신. RANK_VIEWS 에 jig_disp·jig_spring.
 
+- (0.24.4 D-0.24.4-JIG-25, 2026-11-21 P2c) 스터디 새/옛 판정 = 스냅샷 rank.jig **원본** 키(설정 기본 병합 전 — 기본이 normal·세 방식이어도 옛 스냅샷은 LEGACY_ABSENT). 방식 1개 ∧ 옛 산술 경로 열이면 v0.23 흐름 그대로(translation·fixed 새 스냅샷도 옛 바이트). 시험 도구 test_jig_stages.jcfg() 는 옛 키 집합(이 파일들은 v0.23 지그 시험 — 계약 §12-3 의도 변경).
+- (0.24.4 D-0.24.4-JIG-26, 2026-11-21 P2c, 근거 §3.7 기준 고정) 스터디 방식 npz 는 bc_val·sp_g 를 엔트리마다(K × 행) 저장(Case 는 엔트리 1개라 1차원), 분해 묶음 키 = pattern_sha(값 제외). prep/jig_basis.npz 대신 방식 npz 가 기저 배열 전부를 가짐(지그 3D·진단이 같은 함수로 읽음 — 계약 §7 의 공유 파일은 생략).
+- (0.24.4 D-0.24.4-JIG-27, 2026-11-21 P3 A3) source_load.find 의 bc 는 노드 ID(bc_node·sp_node — 비드 최적화 대상 메시 지지가 노드 ID), f 는 엔트리 raw 노드 순서. 지그 지지 전달 = 열(tie_value zero ∧ tie_stiff hard ∧ dirs xyz ∧ aux321 none) + 자료(스프링 없음·값 0·노드마다 전역 3축) 확인, 그 밖 LOAD_SOURCE_UNSUPPORTED → R-VAL-7.
+- (0.24.4 D-0.24.4-JIG-28, 2026-11-21 P3 A3) 스터디 load_source: 순위·ranking.csv·보고서 기준 = RANK_SOURCES 행 metric 열, 노드 힘 출처는 안 사이드카 값을 순위 입력 사본에만 합침(result.json 불변), 베이스라인에 그 출처 값이 없으면 실패 대신 기본 지표 + LOAD_SOURCE_FALLBACK 경고(생성 때 B3 가 422 로 막지만 실행 중 실패 대비).

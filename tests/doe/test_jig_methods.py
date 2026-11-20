@@ -328,3 +328,23 @@ def test_load_source_bforce_unready_falls_back(tmp_path, mp_mod):
     post = r["post"]
     assert post["load_source"] == "bforce" and post["metric_effective"] == "jig"
     assert any(str(w).startswith("LOAD_SOURCE_FALLBACK") for w in post["warnings"])
+
+
+# ---------------------------------------------------------------- V-0244-JIG-10 이름 분기 없음(스터디·A3 코드)
+def test_no_method_or_source_name_branch_in_study_and_a3_code():
+    """스터디 지그 3방식·load_source·source_load·opt 지그 지지 코드에 방식·출처·구속 성분 이름 문자열 비교 없음(열 값만)."""
+    import inspect
+    import re
+
+    from esl import view3d_src
+    from esl.library import source_load as srcl
+    from esl.opt import target as tg
+    names = "|".join(list(jig_bc.METHODS) + list(jig_bc.TIE_DOFS) + list(view3d_src.KEYS))
+    pat = re.compile(rf"""(==|!=|\bin\b)\s*\(?\s*["']({names})["']""")
+    for fn in (stg._jig_plan, stg._jig_single_legacy, stg._jig_legacy, stg._jig_tie_legacy, stg._jig_stage,
+               stg._jig_method_base, stg._jig_methods_base, stg._jig_design_multi, stg._jig_apply_multi, stg._jig_apply,
+               stg._jig_post, stg._jig_csv_arg, stg._jig_resp_rows, stg._jig_any_ready, stg._jig_extras,
+               stg._ls_rank_input, stg._ns_merge, tg.jig_support_reason, tg.jig_supports, tg.source_supports):
+        assert not pat.findall(inspect.getsource(fn)), fn.__name__
+    src = inspect.getsource(srcl)
+    assert not pat.findall(src)

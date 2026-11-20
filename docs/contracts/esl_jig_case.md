@@ -590,3 +590,27 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
 - 가짜 paicad 는 RBE2 종류 클러스터를 돌려주므로 연동 시험은 코어 `jig.fix_kinds: [RBE2]` 로 연다(실제 paicad = INTER_TYPE2_*).
 - Q-JIGC-1(α)·2(kink 45°)·3(3-2-1 면내 값) 사용자 확인 대기. A.2 의 `jig_prep.json` 형식 설명(attempts 목록)은 코어 읽기 쪽 허용 형식이고 워커는 단일 사전을 씀.
 
+
+### A.5 P2c S2(스터디 세 방식)·P3 A3(load_source 코어) 구현 기록 (2026-11-21)
+
+계약과 다른 점·더한 것(W3·B3·C3 가 읽는 형식)
+
+| 항목 | 구현 |
+|---|---|
+| 새/옛 판정 | 스냅샷 `rank.jig` **원본**(설정 기본 병합 전)의 키로만: `stages._jig_plan` = (`jig_bc.tie_dofs_of`, `methods_of`) — 키 없음 = LEGACY_ABSENT. 방식 1개 ∧ 옛 산술 경로(METHODS tie_value zero·tie_stiff hard + TIE_DOFS dirs xyz·aux321 none) = v0.23 흐름 그대로(`_jig_baseline`·`_jig_design`). 스냅샷 `doe.load_source` 가 지그 계열(METHODS.src 열)이면 그 방식을 목록 끝에 보장(B3 도 스냅샷에 넣음 — 이미 있으면 그대로) |
+| 공유 단계 | `_jig_stage` 1회(지그 노드·sm_ref·표면·영역·분해·모드·기저·기저 응답). 분해 = TIE_DOFS 열: 옛 성분 = `jig.factor`(옛 산술), 그 밖 `jig_bc.factorize`(공유 기저 방식 값 0 BC). translation 새 스냅샷의 prescribed 는 같은 분해를 `jig_bc.SpcSolve` 로 감쌈. `_jig_modes` 는 BcSolve(fixed_t)면 `jig_bc.modes` |
+| prep 파일 | 방식마다 `prep/<src>.json`(`esl/doe_jig/1` — 옛 jig.json 이름 + method·method_name·tie_dofs·bc{tie_dofs, tie_text, n_jig, n_tie_rows, n_aux, pattern_sha, shared_factor}·normals·aux321·rigid_free·spring{k_mode, alpha, k_value, k_stats, alpha_scan []}·limits·entries[].energy{C_mix, E, W_F, W_g, R_sum, aux_reaction_rel}·aux_eq·warnings·info)·`prep/<src>.npz`(옛 jig.npz 이름 전부 + bc 패턴 bc_node·bc_dir·bc_kind·sp_node·sp_dir·sp_k(엔트리 공통) + **bc_val·sp_g (K × 행 — 엔트리마다 기준 목표 고정)** + Cmix_ref·E_ref·WF_ref·Wg_ref·method·tie_dofs·pattern_sha). 계약의 `prep/jig_basis.npz` 는 만들지 않음 — 방식 npz 가 자기 기저 배열을 모두 가짐(지그 3D·진단이 같은 함수로 읽음) |
+| per_esl 키 | pe = RANK_SOURCES need 열(C_<pe> → jig·jd·js). 새 경로 = C_<pe>(= E_0 + ΔC_mix, 기준 = E_0)·umax_<pe>·WF_<pe>·Wg_<pe>(·umax_<pe>_ev 새 평가 영역 스냅샷), 옛 경로 방식 = C_jig·umax_jig(·umax_jig_ev) 그대로. 실패 방식 = 그 키만 null(`rank._ALT_KEYS` += C_jd·C_js → n_failed jd·js) |
+| 격리 | 베이스라인: 공유 단계 예외 = 모든 방식 fallback(옛 규칙 코드), 방식 단계 예외 = `prep/<src>.json` status fallback·code JIG_SKIPPED·detail(낡은 npz 는 지우지 않음 — status 우선). 안: 패턴 sha 묶음마다 try — 실패 묶음 방식만 null + JIG_DESIGN_FAILED(err 앞에 src) |
+| 분해 수 | 베이스라인 = 공유 1 + (패턴이 다른 방식 — spring) 1, 안마다 = 패턴 묶음 수(normal 기본 2: fixed·prescribed 1 + spring 1). spring k = 기준 K₀ 로 1회(`spring_k`), 안은 npz sp_k |
+| d000 result.json | `sm.jig` += `methods{src: {status, code}}`(새 스냅샷만), 머리 status·code = 공유 기저 방식(`jig_bc.basis_method()`) 행 |
+| BD_POST | `_rank_views` 행마다 need(`_src_ready` — jig·full 은 옛 `_jig_ref` 와 같은 조건), `_jig_extras` 는 고정 실패여도 다른 방식 준비면 사이드카(진단 3D 는 고정 준비일 때만). result.json `jig` 블록 += `tie_dofs`·`methods{src: {method, method_name, tie_dofs, status, code, detail, fit_mac_min, fit_umax_err_max, warnings, limits, n_jig, bc, spring}}`(새 스냅샷만). ranking.csv 끝 열 C_jd·umax_jd·C_js·umax_js = max_i 값(안)/max_i 값(기준) 비(계획 순서, C_jig 열이 아닌 방식만). 지그 3D(`_jig_view3d`)·진단(`_jig_diag`)은 새 npz 면 저장 BC(엔트리 값·바닥)로 재풀이(+ u_g). 스터디 jd·js 3D = R-JIGC-2(이번에 안 함) |
+| A3 `esl/library/source_load.py` | `find(key, meta, raw, *, code=None, name=None, load=True) -> (dir, doc, f, bc, why)`(계약 서명 + 선택 인자). 표 `SOURCES`(accept raw·grade·status, code, hint) + CASE_PLAN load·doc·support 열. full = 엔트리 raw f(dir·doc None). **f = 엔트리 raw 노드 순서**, **bc = 지그 계열만, bc_node·sp_node = 노드 ID**(bc_dir·bc_val·bc_kind·sp_dir·sp_k·sp_g 그대로). `summary_for_mapping(entry, f)`(S2 셀 요약 재생성 — 등록과 같은 grid_summary). `stages._ns_find` = `find(load=False)`(같은 순서·조건·문구) |
+| A3 `esl/opt/target.py` | `source_entry_load(target, raw, f)`(entry_load 재배열 — info.source "load_source"), `jig_support_reason(doc)`(열: tie_value zero ∧ tie_stiff hard ∧ dirs xyz ∧ aux321 none → None, 그 밖 사유), `jig_supports(doc, bc)` → [(노드 ID, "123")] 또는 EslError LOAD_SOURCE_UNSUPPORTED(사상 불가·값 ≠ 0·스프링·축 아님)·LOAD_SOURCE_UNAVAILABLE(bc 없음), `source_supports(target, {eid: sup})`(모두 같아야 — 다름 UNSUPPORTED, NODE_NOT_IN_PART, rank < 6 SUPPORT_DEGENERATE). W3(3ebbf843)는 같은 규칙을 워커 안에 따로 가짐 — 서명·의미 같음 |
+| A3 스터디 | `_sm_post` += load_source·metric_default(스냅샷 `doe.load_source` 있을 때만), `_ls_rank_input`: 행 metric 열(effective = 기본 지표 그대로), 노드 힘 출처는 안 사이드카 per_esl 을 사본에 합침(result.json 불변), 베이스라인 need 없음·다른 메시 = 기본 지표 + 경고 `LOAD_SOURCE_FALLBACK`(문구 resources/doe_messages.json). 순위·ranking.csv(C_<e> = 그 지표)·보고서(SM_METRIC_KO jd·js·bf·fi) 기준. result.json += load_source·metric_default. 하중 정의 보기의 전 노드 행은 metric_default 로(바뀐 기준과 무관) |
+
+합성 기록(이 환경 — numpy·scipy 같은 서명)
+- `tests/doe/test_jig_methods.py`(판 24×16 + x 방향 리브 비드 2줄 D0 6 mm + 이웃 쉘·솔리드, 양 짧은 변 tie 각 5, normal·α 0.01): 비드 깊이
+  ×0.5·1·1.5 → s fixed 2.445·1·0.597, prescribed 2.396·1·0.608, spring 2.391·1·0.610(세 방식 엄격 감소). 스터디 전체(입력·하중·행렬·평가
+  3·후처리) ≈ 2.2 s(2코어). translation 새 스냅샷 fixed = 옛 스냅샷 prep/jig.npz·jig.json·per_esl C_jig 바이트 동일, translation·fixed 1개 =
+  per_esl.json·ranking.csv 까지 동일. 골든(옛 스터디 41 파일) 통과.
