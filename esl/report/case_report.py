@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 import esl
+from esl import val_src as _vs
 from esl.display import display_path
 from esl.report import field as F
 from esl.report import html as H
@@ -54,6 +55,7 @@ class _Case:
         self.feq = self.npz(D_ESL, "f_eq.npz")
         self.val = self.json(D_VAL, "validation.json")
         self.field = self.npz(D_VAL, "compare_field.npz")
+        self.val_sources = self.optional_json(D_VAL, _vs.SOURCES_JSON)      # v0.24.3 — 없으면 None(missing 에 넣지 않음)
 
     def _p(self, sub, name):
         return os.path.join(self.dir, name) if sub is None else os.path.join(self.dir, sub, name)
@@ -64,6 +66,14 @@ class _Case:
             self.missing.append(f"{sub}/{name}" if sub else name)
             return None
         return _read_json(p)
+
+    def optional_json(self, sub, name):
+        """선택 산출물(없거나 읽을 수 없으면 None — missing 목록에 넣지 않음, 옛 Case 보고서 불변)."""
+        p = self._p(sub, name)
+        try:
+            return _read_json(p) if os.path.isfile(p) else None
+        except (OSError, ValueError):
+            return None
 
     def npz(self, sub, name):
         p = self._p(sub, name)
@@ -366,7 +376,56 @@ def _sec_validation(c: _Case) -> str:
                + (H.table(["rank", "elem", "ε_rad", "ε_val", "오차 %"], hs, num=(0, 1, 2, 3, 4)) if hs else _none("비교한 hotspot 없음")))
     if ex:
         out.append("<h3>비교 제외 hotspot</h3>" + H.table(["rank", "elem", "사유"], ex, num=(0, 1)))
+    out.append(_sec_val_sources(c))
     return "".join(out)
+
+
+VAL_SRC_STATUS_TEXT = {"unavailable": "불가", "failed": "계산 실패", "disabled": "꺼짐", "na": "해당 없음"}
+
+
+def _sec_val_sources(c: _Case) -> str:
+    """v0.24.3 출처별 판정 요약 표(esl_validate_sources.md §4.5·§10) — 05_val/sources.json 이 있을 때만(없으면 빈 문자열 =
+    v0.24.2 보고서). 행 = 계획 표 순서 중 하중 열이 있는 출처, 같은 정의·같은 기준값의 판정 + 한계('비교용 아님')."""
+    sj = c.val_sources
+    if not isinstance(sj, dict) or not isinstance(sj.get("rows"), list):
+        return ""
+    by_key = {r.get("key"): r for r in sj["rows"] if isinstance(r, dict)}
+    rows = []
+    for pr in _vs.VAL_PLAN:
+        if pr["load"] is None:
+            continue
+        r = by_key.get(pr["key"]) or _vs.empty_row(pr, {"status": "unavailable", "code": "VAL_SRC_NOT_RUN",
+                                                        "reason": _vs.reason_text("VAL_SRC_NOT_RUN")})
+        m = r.get("metrics") or {}
+        if r.get("status") == "done":
+            st = str(r.get("verdict") or "")
+            cell = (H.badge(st) if st in ("PASS", "FAIL") else
+                    f'<span class="badge na">{H.esc(STATUS_TEXT.get(st, st or "—"))}</span>')
+            if r.get("fail_reasons"):
+                cell += f' <span class="small muted">{H.esc(", ".join(r["fail_reasons"]))}</span>'
+            if r.get("undetermined_reason"):
+                cell += f' <span class="small muted">{H.esc(r["undetermined_reason"])}</span>'
+            why = r.get("cond_text") or ""
+        else:
+            sx = str(r.get("status") or "")
+            cell = f'<span class="badge na">{H.esc(VAL_SRC_STATUS_TEXT.get(sx, sx or "—"))}</span>'
+            why = r.get("reason") or r.get("code") or ""
+        lim = "; ".join(r.get("limit_text") or [])
+        if r.get("comparable") is False:
+            lim = f"{_vs.LIMIT_CLASS_TEXT['not_comparable']} — {lim}" if lim else _vs.LIMIT_CLASS_TEXT["not_comparable"]
+        reac = m.get("reaction_rel")
+        role = r.get("reaction_role")
+        rows.append((_vs.LABEL.get(pr["key"], pr["key"]) + (" (기준)" if pr["legacy"] else ""), cell,
+                     m.get("disp_rms_rel"), m.get("disp_max_rel"),
+                     H.esc(H.fmt(reac)) + ("" if role in (None, "judge") else ' <span class="small muted">정보</span>')
+                     + ("" if role not in (None, "judge") or r.get("reaction_tol") is None
+                        else f' <span class="small muted">(허용치 ≤{H.esc(H.fmt(r["reaction_tol"]))})</span>'),
+                     lim or "—", why))
+    cap = ('<p class="small muted">같은 정의(목표 u_rel·양쪽 선형 강체 제거·Σ‖R‖/Σ‖F‖)·같은 기준값으로 출처마다 검증한 결과. '
+           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다.</p>")
+    return ("<!--val-src--><h3>출처별 판정</h3>" + cap
+            + H.table(["출처", "판정", "변위 RMS/U", "변위 최대/U", "반력 Σ‖R‖/Σ‖F‖", "한계", "조건·사유"], rows,
+                      num=(2, 3, 4), raw=(1, 4)) + "<!--/val-src-->")
 
 
 def _field_summary(c: _Case) -> str:

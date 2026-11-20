@@ -37,6 +37,9 @@ export function installMockFetch() {
   // ?demoValidation=FAIL|UNDETERMINED|LEGACY_FAIL: 첫 검증(c-demo)을 바꿔 ④ 등록 거부 사유 시연
   const dv = params.get("demoValidation") as Parameters<typeof variantValidation>[1] | null;
   if (dv) server.validations[0] = variantValidation(server.validations[0], dv);
+  // v0.24.3 ④ 검증 출처별 시연: ?demoValSrc=ok(출처 탭·판정 표식·한계) | notrun(출처 결과 없음 — 빈 탭 + [검증 다시 실행])
+  const dvs = params.get("demoValSrc");
+  if (dvs === "ok" || dvs === "notrun") server.valSourcesMode = dvs;
   // v0.12.0 검증 낙하 시연: ?demoVerify=1 doe-1 에 완료·실행 중·결과 모름 검증 낙하, ?verifyMode=disabled|writes_off
   if (params.get("demoVerify") === "1") server.verify.seedDemo("doe-1");
   const vm = params.get("verifyMode");

@@ -44,12 +44,14 @@ function draw(cv: HTMLCanvasElement | null, f: DispFieldOut | undefined, range: 
   }
 }
 
-export function DispOverlay({ vid, disp, sec }: { vid: string; disp: DispSummary; sec?: SectionMap }) {
+/** src = 검증 출처 키(legacy 는 안 넘김 — 옛 URL 그대로, v0.24.3) */
+export function DispOverlay({ vid, disp, sec, src }: { vid: string; disp: DispSummary; sec?: SectionMap; src?: string }) {
   const data = usePolling(
-    () => Promise.all((["err", "rel", "val"] as DispLayer[]).map((l) => api.dispField(vid, l))).then(([err, rel, val]) => ({ err, rel, val })),
+    () => Promise.all((["err", "rel", "val"] as DispLayer[]).map((l) => api.dispField(vid, l, undefined, src))).then(([err, rel, val]) => ({ err, rel, val })),
     0,
-    [vid],
+    [vid, src],
   );
+  const lgKey = src ? `${vid}|${src}` : vid; // 출처마다 수동 범위를 따로 기억
   const [layer, setLayer] = useState<DispLayer>("err");
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
   const { ref, width } = useWidth<HTMLDivElement>(760);
@@ -61,9 +63,9 @@ export function DispOverlay({ vid, disp, sec }: { vid: string; disp: DispSummary
     return (f && autoRange("zero", f.color_range_robust, f.color_range)) || { min: 0, max: 1 };
   };
   // 훅은 항상 같은 순서로(레이어마다 자기 키로 기억)
-  const lgErr = useLegendRange(vid, "disp", "err", "zero", useMemo(() => autoOf("err"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
-  const lgRel = useLegendRange(vid, "disp", "rel", "zero", useMemo(() => autoOf("rel"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
-  const lgVal = useLegendRange(vid, "disp", "val", "zero", useMemo(() => autoOf("val"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
+  const lgErr = useLegendRange(lgKey, "disp", "err", "zero", useMemo(() => autoOf("err"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
+  const lgRel = useLegendRange(lgKey, "disp", "rel", "zero", useMemo(() => autoOf("rel"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
+  const lgVal = useLegendRange(lgKey, "disp", "val", "zero", useMemo(() => autoOf("val"), [d])); // eslint-disable-line react-hooks/exhaustive-deps
   const lg = layer === "err" ? lgErr : layer === "rel" ? lgRel : lgVal;
   const range = lg.range;
   const geo = useMemo(() => (d ? geometry(d.err, width) : null), [d, width]);

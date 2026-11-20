@@ -1,0 +1,307 @@
+{
+ "cases": {
+  "bf": {
+   "files": {
+    "05_val/compare.csv": "bb3dd2b580e1d198e5e1264816b3301b9a2fbbedac8f9411878478bd03e68522",
+    "05_val/compare_disp.npz": "23d0d84b89ab434b9a53dcb71c9d8f4719bb9754bc692eefbd7cf21f69d4431a",
+    "05_val/compare_field.npz": "c0587dfc2c93ffeca84ab11aa57279ca01c309904f8778e9aeeefd16addc247e",
+    "05_val/validation.csv": "74881e40a9218b275ce2879b789f8eafa0f861a09847aed533e9e1932427a6cb",
+    "05_val/validation.json": "a5e773f38347b407875a21b5562f65c69d00f551a590f0afd5c3de6553698bed",
+    "06_export/esl_bcs.inc": "867a6463de2a6220befc3244b936e882651683c4dac6ca2f13c3a4ee5cdbc4b1",
+    "06_export/esl_cload.inc": "38b2624ff46c5c760e06bdbb1c241e0bb1fe6f34c63e2b9e8f7eb73cc6f6dbb4",
+    "06_export/esl_force.fem": "862786316ed0b0cc100d13f4b30cd6e2e3a8aeed93a0167cb6553fa24970a9b0",
+    "06_export/f_eq.csv": "b9a3ad2e3812072350f4f7e488dcc1cfc939769860e592c7e20ce0e604f0600b",
+    "06_export/hotspots.csv": "2bd9c508381ac4584bac89a29fc7be7257e3dd4bcc2df465dc1d2059fa9017af",
+    "06_export/reactions_321.csv": "314f8e571935b6cb5bdd29ef34cd9b333a96b0821039eecb15d70fdfac903583",
+    "06_export/tstar_candidates.csv": "d2a135c96ba4c5a09dbfd3afe643f3bfed7db97c24959407b684a15dc7312a00",
+    "06_export/u_rel.csv": "d15e6c761ea19028d1cb270ff7b43af5ceaf3804346545aea1dfb7276e5d0a9c",
+    "06_export/validation.csv": "74881e40a9218b275ce2879b789f8eafa0f861a09847aed533e9e1932427a6cb",
+    "07_report/report.html": "a3644bdb78625657cbb8988c8ade23ccd0c50c4fcaefbb42f2f961ed9b8bad61"
+   },
+   "summary": {
+    "disp_max_rel": 4.4009020591533013e-11,
+    "disp_noise_rel": 2.577172868993243e-13,
+    "disp_rms_rel": 1.1350961244350903e-11,
+    "fail_reasons": [],
+    "field": {
+     "max_err_pct": 4.3182733223313823e-07,
+     "n_elems": 1144,
+     "n_rising": 1133,
+     "n_valid": 889,
+     "p90_err_pct": 3.4781198573281687e-06,
+     "prev_source": "strain_frames"
+    },
+    "full_solve": {
+     "mode": "auto",
+     "reason": "auto: 직접법, 메모리 충분",
+     "run": true
+    },
+    "hotspot1_rel_err": 4.318273322331382e-09,
+    "n_hotspots_compared": 3,
+    "n_hotspots_excluded": 0,
+    "noise_force_rel": 1.0042703801101402e-07,
+    "noise_hotspot_strain_rel": 2.164330750764797e-09,
+    "noise_source": "esl_summary",
+    "reaction_rel": 1.1487006846410828e-11,
+    "reaction_sum_rel": 1.0181720645626459e-11,
+    "solver": {
+     "K_ff": {
+      "backend": "superlu",
+      "backend_used": "superlu",
+      "mem_direct_est_mb": 39.0,
+      "mem_est_mb": 16.5,
+      "n": 6636,
+      "nnz_A": 336362,
+      "nnz_L": 1443419
+     },
+     "backend": "superlu",
+     "backend_requested": "auto",
+     "n_elems": 1144,
+     "n_nodes": 1107,
+     "nnz_K": 336636,
+     "nnz_blocks": 9351,
+     "solve_backward_err": 1.6364016716334804e-17,
+     "solve_equilibrium_rel": 6.838017793311265e-12,
+     "solve_resid_rel": 1.131654209804873e-09
+    },
+    "strain_ref": {
+     "exceeded": false,
+     "frac_exceed": 0.0,
+     "frac_exceed_valid": 0.0,
+     "n_exceed": 0,
+     "n_plastic": 41,
+     "p99_err_pct": 4.83344237294972e-06
+    },
+    "strain_source": "max_strain",
+    "undetermined_reason": null,
+    "verdict": "PASS"
+   }
+  },
+  "never": {
+   "files": {
+    "05_val/compare_field.npz": "6e1f5410e542bd1d83ed43d6155e231861ac7c0fcd356e49e50174816aedab81",
+    "05_val/validation.csv": "c092db3e4fa06ecb39ab8b3f29e5ce0798f5dda6cf3ef901b69261abfeca89ea",
+    "05_val/validation.json": "394f2791859db094a2b667d6e4d5ac90cf2f1fa2545ef051e4d7ffa65c29fe8e",
+    "06_export/esl_bcs.inc": "d0fb55ec4f817f3891cecef68c5a7d2020dbb713cdb73cdd42265d0d7fe3b3a5",
+    "06_export/esl_cload.inc": "87b640507c51764a8aec3e3476bc8b5e9e44383dccc697e926aa8b3083810e8b",
+    "06_export/esl_force.fem": "d273a2760f6ef1427d9b86c70d6497d7150418c3a54069a66a5f46e7d440ffb6",
+    "06_export/f_eq.csv": "b9a3ad2e3812072350f4f7e488dcc1cfc939769860e592c7e20ce0e604f0600b",
+    "06_export/hotspots.csv": "2bd9c508381ac4584bac89a29fc7be7257e3dd4bcc2df465dc1d2059fa9017af",
+    "06_export/reactions_321.csv": "eb7887c43d2ac014a9a3e4f86659a697268ca9855b5dee65a960ea73f1569d66",
+    "06_export/tstar_candidates.csv": "d2a135c96ba4c5a09dbfd3afe643f3bfed7db97c24959407b684a15dc7312a00",
+    "06_export/u_rel.csv": "d15e6c761ea19028d1cb270ff7b43af5ceaf3804346545aea1dfb7276e5d0a9c",
+    "06_export/validation.csv": "c092db3e4fa06ecb39ab8b3f29e5ce0798f5dda6cf3ef901b69261abfeca89ea",
+    "07_report/report.html": "d450aea73916ea125dc8589bd3f087f40c7c381aa161053258c00c504e9affd6"
+   },
+   "summary": {
+    "disp_max_rel": null,
+    "disp_noise_rel": 2.577172868993243e-13,
+    "disp_rms_rel": null,
+    "fail_reasons": [],
+    "field": {
+     "max_err_pct": 4.2795341011595023e-07,
+     "n_elems": 1144,
+     "n_rising": 1133,
+     "n_valid": 889,
+     "p90_err_pct": 3.4790591405499856e-06,
+     "prev_source": "strain_frames"
+    },
+    "full_solve": {
+     "mode": "never",
+     "reason": "설정 never",
+     "run": false
+    },
+    "hotspot1_rel_err": 4.2795341011595026e-09,
+    "n_hotspots_compared": 3,
+    "n_hotspots_excluded": 0,
+    "noise_force_rel": 1.0042703801101402e-07,
+    "noise_hotspot_strain_rel": 2.164330750764797e-09,
+    "noise_source": "esl_summary",
+    "reaction_rel": null,
+    "reaction_sum_rel": null,
+    "solver": {
+     "K_rr": {
+      "backend": "superlu",
+      "backend_used": "superlu",
+      "mem_direct_est_mb": 9.8,
+      "mem_est_mb": 4.1,
+      "n": 3321,
+      "nnz_A": 84159,
+      "nnz_L": 362591
+     },
+     "backend": "superlu",
+     "backend_requested": "auto",
+     "n_elems": 1144,
+     "n_nodes": 1107,
+     "nnz_blocks": 9351
+    },
+    "strain_ref": {
+     "exceeded": false,
+     "frac_exceed": 0.0,
+     "frac_exceed_valid": 0.0,
+     "n_exceed": 0,
+     "n_plastic": 41,
+     "p99_err_pct": 4.8258172565740685e-06
+    },
+    "strain_source": "max_strain",
+    "undetermined_reason": "NO_FULL_SOLVE",
+    "verdict": "UNDETERMINED"
+   }
+  },
+  "plain": {
+   "files": {
+    "05_val/compare.csv": "bb3dd2b580e1d198e5e1264816b3301b9a2fbbedac8f9411878478bd03e68522",
+    "05_val/compare_disp.npz": "23d0d84b89ab434b9a53dcb71c9d8f4719bb9754bc692eefbd7cf21f69d4431a",
+    "05_val/compare_field.npz": "c0587dfc2c93ffeca84ab11aa57279ca01c309904f8778e9aeeefd16addc247e",
+    "05_val/validation.csv": "74881e40a9218b275ce2879b789f8eafa0f861a09847aed533e9e1932427a6cb",
+    "05_val/validation.json": "a5e773f38347b407875a21b5562f65c69d00f551a590f0afd5c3de6553698bed",
+    "06_export/esl_bcs.inc": "867a6463de2a6220befc3244b936e882651683c4dac6ca2f13c3a4ee5cdbc4b1",
+    "06_export/esl_cload.inc": "38b2624ff46c5c760e06bdbb1c241e0bb1fe6f34c63e2b9e8f7eb73cc6f6dbb4",
+    "06_export/esl_force.fem": "862786316ed0b0cc100d13f4b30cd6e2e3a8aeed93a0167cb6553fa24970a9b0",
+    "06_export/f_eq.csv": "b9a3ad2e3812072350f4f7e488dcc1cfc939769860e592c7e20ce0e604f0600b",
+    "06_export/hotspots.csv": "2bd9c508381ac4584bac89a29fc7be7257e3dd4bcc2df465dc1d2059fa9017af",
+    "06_export/reactions_321.csv": "314f8e571935b6cb5bdd29ef34cd9b333a96b0821039eecb15d70fdfac903583",
+    "06_export/tstar_candidates.csv": "d2a135c96ba4c5a09dbfd3afe643f3bfed7db97c24959407b684a15dc7312a00",
+    "06_export/u_rel.csv": "d15e6c761ea19028d1cb270ff7b43af5ceaf3804346545aea1dfb7276e5d0a9c",
+    "06_export/validation.csv": "74881e40a9218b275ce2879b789f8eafa0f861a09847aed533e9e1932427a6cb",
+    "07_report/report.html": "a3644bdb78625657cbb8988c8ade23ccd0c50c4fcaefbb42f2f961ed9b8bad61"
+   },
+   "summary": {
+    "disp_max_rel": 4.4009020591533013e-11,
+    "disp_noise_rel": 2.577172868993243e-13,
+    "disp_rms_rel": 1.1350961244350903e-11,
+    "fail_reasons": [],
+    "field": {
+     "max_err_pct": 4.3182733223313823e-07,
+     "n_elems": 1144,
+     "n_rising": 1133,
+     "n_valid": 889,
+     "p90_err_pct": 3.4781198573281687e-06,
+     "prev_source": "strain_frames"
+    },
+    "full_solve": {
+     "mode": "auto",
+     "reason": "auto: 직접법, 메모리 충분",
+     "run": true
+    },
+    "hotspot1_rel_err": 4.318273322331382e-09,
+    "n_hotspots_compared": 3,
+    "n_hotspots_excluded": 0,
+    "noise_force_rel": 1.0042703801101402e-07,
+    "noise_hotspot_strain_rel": 2.164330750764797e-09,
+    "noise_source": "esl_summary",
+    "reaction_rel": 1.1487006846410828e-11,
+    "reaction_sum_rel": 1.0181720645626459e-11,
+    "solver": {
+     "K_ff": {
+      "backend": "superlu",
+      "backend_used": "superlu",
+      "mem_direct_est_mb": 39.0,
+      "mem_est_mb": 16.5,
+      "n": 6636,
+      "nnz_A": 336362,
+      "nnz_L": 1443419
+     },
+     "backend": "superlu",
+     "backend_requested": "auto",
+     "n_elems": 1144,
+     "n_nodes": 1107,
+     "nnz_K": 336636,
+     "nnz_blocks": 9351,
+     "solve_backward_err": 1.6364016716334804e-17,
+     "solve_equilibrium_rel": 6.838017793311265e-12,
+     "solve_resid_rel": 1.131654209804873e-09
+    },
+    "strain_ref": {
+     "exceeded": false,
+     "frac_exceed": 0.0,
+     "frac_exceed_valid": 0.0,
+     "n_exceed": 0,
+     "n_plastic": 41,
+     "p99_err_pct": 4.83344237294972e-06
+    },
+    "strain_source": "max_strain",
+    "undetermined_reason": null,
+    "verdict": "PASS"
+   }
+  },
+  "stress": {
+   "files": {
+    "05_val/compare.csv": "bb3dd2b580e1d198e5e1264816b3301b9a2fbbedac8f9411878478bd03e68522",
+    "05_val/compare_disp.npz": "23d0d84b89ab434b9a53dcb71c9d8f4719bb9754bc692eefbd7cf21f69d4431a",
+    "05_val/compare_field.npz": "8bc5409389827230159de05805bd734f4f097dfb444d8a06b429fe9a585c32ab",
+    "05_val/validation.csv": "4d42f079b33fe0a85e2fe4381e70c23d192bf99f0cd2f6e2213535f3440c2cb7",
+    "05_val/validation.json": "0627526bc92069340ada835eaa947d736ac9471fcbded55cadec286e58a826c8",
+    "06_export/esl_bcs.inc": "867a6463de2a6220befc3244b936e882651683c4dac6ca2f13c3a4ee5cdbc4b1",
+    "06_export/esl_cload.inc": "38b2624ff46c5c760e06bdbb1c241e0bb1fe6f34c63e2b9e8f7eb73cc6f6dbb4",
+    "06_export/esl_force.fem": "862786316ed0b0cc100d13f4b30cd6e2e3a8aeed93a0167cb6553fa24970a9b0",
+    "06_export/f_eq.csv": "b9a3ad2e3812072350f4f7e488dcc1cfc939769860e592c7e20ce0e604f0600b",
+    "06_export/hotspots.csv": "527a0f48f760cc0eb2f352d5881a8e37b2ccbcd1c288a54387ce35ca4b9374ac",
+    "06_export/reactions_321.csv": "314f8e571935b6cb5bdd29ef34cd9b333a96b0821039eecb15d70fdfac903583",
+    "06_export/tstar_candidates.csv": "e253ccf719c08a14c8793c7b8eb3546031ab4affb8e75b8c439fa0fe1b3cefd7",
+    "06_export/u_rel.csv": "d15e6c761ea19028d1cb270ff7b43af5ceaf3804346545aea1dfb7276e5d0a9c",
+    "06_export/validation.csv": "4d42f079b33fe0a85e2fe4381e70c23d192bf99f0cd2f6e2213535f3440c2cb7",
+    "07_report/report.html": "772ff2343e21c2318b3333c4d618af464d2a3f7ccd0a1756cbb0918cb1da246a"
+   },
+   "summary": {
+    "disp_max_rel": 4.4009020591533013e-11,
+    "disp_noise_rel": 2.577172868993243e-13,
+    "disp_rms_rel": 1.1350961244350903e-11,
+    "fail_reasons": [],
+    "field": {
+     "max_err_pct": null,
+     "n_elems": 1144,
+     "n_rising": 1133,
+     "n_valid": 889,
+     "p90_err_pct": null,
+     "prev_source": "strain_frames"
+    },
+    "full_solve": {
+     "mode": "auto",
+     "reason": "auto: 직접법, 메모리 충분",
+     "run": true
+    },
+    "hotspot1_rel_err": null,
+    "n_hotspots_compared": 3,
+    "n_hotspots_excluded": 0,
+    "noise_force_rel": 1.0042703801101402e-07,
+    "noise_hotspot_strain_rel": null,
+    "noise_source": "esl_summary",
+    "reaction_rel": 1.1487006846410828e-11,
+    "reaction_sum_rel": 1.0181720645626459e-11,
+    "solver": {
+     "K_ff": {
+      "backend": "superlu",
+      "backend_used": "superlu",
+      "mem_direct_est_mb": 39.0,
+      "mem_est_mb": 16.5,
+      "n": 6636,
+      "nnz_A": 336362,
+      "nnz_L": 1443419
+     },
+     "backend": "superlu",
+     "backend_requested": "auto",
+     "n_elems": 1144,
+     "n_nodes": 1107,
+     "nnz_K": 336636,
+     "nnz_blocks": 9351,
+     "solve_backward_err": 1.6364016716334804e-17,
+     "solve_equilibrium_rel": 6.838017793311265e-12,
+     "solve_resid_rel": 1.131654209804873e-09
+    },
+    "strain_ref": {
+     "exceeded": false,
+     "frac_exceed": null,
+     "frac_exceed_valid": null,
+     "n_exceed": null,
+     "n_plastic": 41,
+     "p99_err_pct": null
+    },
+    "strain_source": "max_stress",
+    "undetermined_reason": null,
+    "verdict": "PASS"
+   }
+  }
+ },
+ "recorded_at_commit": "d1eb8927 (= v0.24.2 stage_validate code)"
+}

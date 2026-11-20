@@ -69,7 +69,7 @@ export interface SectionCtl {
 }
 
 /** 단면 위치 상태 + 요청(디바운스 200 ms, (vid, axis, at 소수 2자리) 캐시, 대기 중에는 직전 그래프 유지) */
-export function useSectionCtl(vid: string | null, enabled: boolean): SectionCtl {
+export function useSectionCtl(vid: string | null, enabled: boolean, src?: string): SectionCtl {
   const [axis, setAxisS] = useState<SectionAxis>("eta");
   const [at, setAtS] = useState(0.5);
   const [pick, setPick] = useState<SectionPick>("manual");
@@ -84,11 +84,11 @@ export function useSectionCtl(vid: string | null, enabled: boolean): SectionCtl 
     setData(null);
     setError(null);
     setPick("manual");
-  }, [vid]);
+  }, [vid, src]);
 
   useEffect(() => {
     if (!vid || !enabled) return;
-    const key = `${vid}|${axis}|${at.toFixed(2)}`;
+    const key = `${vid}|${src ?? ""}|${axis}|${at.toFixed(2)}`;
     const hit = cache.current.get(key);
     if (hit) {
       setData(hit);
@@ -99,7 +99,7 @@ export function useSectionCtl(vid: string | null, enabled: boolean): SectionCtl 
     const t = setTimeout(
       () => {
         api
-          .section(vid, axis, Number(at.toFixed(2)))
+          .section(vid, axis, Number(at.toFixed(2)), src)
           .then((r) => {
             cache.current.set(key, r);
             if (alive) {
@@ -115,7 +115,7 @@ export function useSectionCtl(vid: string | null, enabled: boolean): SectionCtl 
       alive = false;
       clearTimeout(t);
     };
-  }, [vid, axis, at, enabled]);
+  }, [vid, src, axis, at, enabled]);
 
   const suggest = data?.suggest ?? [];
   const coord = (key: SectionSuggestKey, a: SectionAxis) => {

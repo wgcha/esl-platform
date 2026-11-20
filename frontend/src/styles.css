@@ -4217,3 +4217,26 @@ details.card.fold > .fold-body {
   padding-bottom: 0.05rem;
   line-height: 1.2;
 }
+
+/* v0.24.3 ④ 검증 출처 탭: 판정 카드 머리 줄 높이 불변(보고서 링크 버튼 높이 이하) — 탭 4개 + 표식이 같은 줄에 */
+.val-src-tabwrap .seg button {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+/* 판정 카드 머리는 항상 1줄(제목·탭·판정·버튼) — 제목이 눌려 접히지 않게, 오른쪽 묶음은 줄바꿈 없이.
+   등록 불가 사유 문구는 머리 밖(카드 본문 첫 줄, .reg-reason). */
+.card-head:has(.val-src-tabwrap) h3 {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.card-head:has(.val-src-tabwrap) > .inline-actions {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.reg-reason {
+  margin: 0 0 -0.5rem; /* 카드 본문 grid gap 일부를 상쇄 — 사유 줄이 더하는 높이를 줄임 */
+  line-height: 1.2;
+}

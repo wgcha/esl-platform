@@ -147,7 +147,7 @@ describe("⑤ 검증 화면 P2", () => {
     const server = serverWith("FAIL");
     const { container } = renderServer(server, STAGE5);
     const blk = await screen.findByTestId("reg-block");
-    expect(blk.textContent).toContain(REG_NOT_PASS);
+    expect((await screen.findByTestId("reg-reason")).textContent).toContain(REG_NOT_PASS); // 사유 = 카드 본문 첫 줄(머리는 1줄 유지)
     expect((within(blk).getByRole("button", { name: "라이브러리에 등록" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(primaries(container)[0].textContent).toBe("검증 실행");

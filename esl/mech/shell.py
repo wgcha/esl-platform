@@ -579,6 +579,11 @@ def _principal_submatrix(K: sp.csr_matrix, keep: np.ndarray) -> sp.csr_matrix:
 
 # ======================================================================
 class ShellModel:
+    # v0.24.3(esl_validate_sources.md §4.1): keep_factor 가 참이면 ``solve`` 가 쓴 분해를 ``kept_factor``(FactorizedSolve)로
+    # 남긴다 — 검증이 같은 3-2-1 분해로 출처 하중을 더 푼다(분해 1회). 기본 거짓 = 이전과 같음(산술·통계 불변).
+    keep_factor = False
+    kept_factor = None
+
     def __init__(self, x0, conn, elem_type, thickness, E, nu, drill_factor: float = 1e-4,
                  backend: str = "auto", iter_rtol: float = 1e-10, iter_maxiter: int | None = None,
                  resid_backward_tol: float = RESID_BACKWARD_TOL, resid_rel_cap: float = RESID_REL_CAP,
@@ -872,6 +877,7 @@ class ShellModel:
         res = resid(uf)
         _record_iter(lu, self.stats["K_ff"])
         _check_resid(lu, uf, res, rhs, norm_K, self.stats, self.resid_backward_tol, self.resid_rel_cap)
+        keep = FactorizedSolve(self, K, lu, cons, free, norm_K) if self.keep_factor else None
         del lu
         u[free] = uf
         reac = (K @ u - f).reshape(self.n_nodes, 6)[:, :3]
@@ -879,6 +885,8 @@ class ShellModel:
         for p, d in cons:
             R[p, d] = reac[p, d]
         _check_equilibrium(F, R, self.stats, self.equil_tol_rel)
+        if keep is not None:
+            self.kept_factor = keep
         return u.reshape(self.n_nodes, 6), R
 
     # ------------------------------------------------------------------

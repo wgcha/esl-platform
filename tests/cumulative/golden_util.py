@@ -15,12 +15,19 @@ import re
 
 import numpy as np
 
+from esl import val_src as _vs
+
 TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?")
 VER = re.compile(r"(?:esl|ESL)[ _-]?v?\d+\.\d+\.\d+|\bv?0\.\d+\.\d+\b")
 TIME_KEYS = {"created_at", "started_at", "finished_at", "updated_at", "elapsed", "elapsed_s", "seconds",
              "esl_version", "version", "timing", "wall_s", "time_s"}
 # v0.12.1(esl_strain_fallback.md §5): 기존 JSON 에 키 추가만 — 골든(v0.7.2) 비교에서는 뺀다(나머지 내용은 그대로 같아야 함)
 ADDED_KEYS = {"strain_source", "strain_fallback"}
+# v0.24.3(esl_validate_sources.md §4.5·§13): ④ 검증 출처별 — 새 파일(05_val/sources.json·05_val/<출처 dir>/)과 07_report 5절 끝
+# 출처 표 블록(<!--val-src--> 표식)은 골든 비교에서 뺀다(기존 파일·나머지 내용은 그대로 같아야 함 — 같은 원칙)
+ADDED_FILES = {f"05_val/{_vs.SOURCES_JSON}"}
+ADDED_DIRS = tuple(f"05_val/{r['dir']}/" for r in _vs.VAL_PLAN if r["dir"])
+ADDED_HTML = re.compile(r"<!--val-src-->.*?<!--/val-src-->", re.DOTALL)
 
 
 def _text(s: str, root: str) -> str:
@@ -47,6 +54,8 @@ def digest(out: str, root: str) -> dict:
         for f in sorted(files):
             p = os.path.join(base, f)
             rel = os.path.relpath(p, out).replace(os.sep, "/")
+            if rel in ADDED_FILES or rel.startswith(ADDED_DIRS):
+                continue
             if f.endswith(".npz"):
                 with np.load(p, allow_pickle=False) as z:
                     res[rel] = {k: [str(z[k].dtype), list(z[k].shape),
@@ -66,6 +75,7 @@ def digest(out: str, root: str) -> dict:
                 try:
                     t = _text(b.decode("utf-8"), root)
                     if f.endswith(".html"):
+                        t = ADDED_HTML.sub("", t)
                         t = re.sub(r"\d+(?:\.\d+)?\s*(?:s|초)\b", "<DUR>", t)
                     res[rel] = hashlib.sha256(t.encode()).hexdigest()[:16]
                 except UnicodeDecodeError:

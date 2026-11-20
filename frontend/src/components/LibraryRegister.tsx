@@ -53,7 +53,7 @@ export function useRegistration(projectId: string, v: ValidationOut | null, allo
 export type Registration = ReturnType<typeof useRegistration>;
 
 /** 판정 카드 안 표시: 등록됨 · 보기 / 등록 불가 사유 한 줄 */
-export function LibraryRegister({ projectId, reg }: { projectId: string; reg: Registration }) {
+export function LibraryRegister({ projectId, reg, reasonBelow }: { projectId: string; reg: Registration; reasonBelow?: boolean }) {
   if (!reg.loaded) return null;
   if (reg.done)
     return (
@@ -72,10 +72,22 @@ export function LibraryRegister({ projectId, reg }: { projectId: string; reg: Re
             {REGISTER_LABEL}
           </button>
         </span>
-        <span className="small muted" role="note">
-          {reg.reason}
-        </span>
+        {!reasonBelow && (
+          <span className="small muted" role="note">
+            {reg.reason}
+          </span>
+        )}
       </span>
     );
   return null;
+}
+
+/** 등록 불가 사유 한 줄 — 판정 카드 머리를 1줄로 두려고 머리 밖(카드 본문 첫 줄)에 그린다(LibraryRegister reasonBelow 와 짝) */
+export function RegisterReason({ reg }: { reg: Registration }) {
+  if (!reg.loaded || reg.done || !reg.reason) return null;
+  return (
+    <div className="small muted reg-reason" role="note" data-testid="reg-reason">
+      {reg.reason}
+    </div>
+  );
 }

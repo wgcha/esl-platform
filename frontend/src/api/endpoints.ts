@@ -4,7 +4,7 @@ import type {
   SectionOut,
   ArtifactOut, CaseCreate, CaseOut, EslRunOut, ExportTarget, ForcesOut, InspectH3dResult, InspectRadResult, InspectResultsResult, JobOut,
   JobType, LogOut, Me, Metric, Preview, Project, QueueOut, StatusOut, SupportSetOut, SupportSuggestOut, TstarView,
-  ValidationOut, View3dOut, View3dReconOut, View3dSourcesOut,
+  ValidationOut, ValidationSourcesHistOut, ValidationSourcesOut, View3dOut, View3dReconOut, View3dSourcesOut,
 } from "./types";
 
 export const api = {
@@ -51,20 +51,25 @@ export const api = {
   /** v0.24.1: 재현(목표·재현·오차) 진단 — 첫 요청이 파생 캐시를 만든다. src 없음 = 전 노드(legacy) */
   view3dRecon: (id: string, src?: string) => request<View3dReconOut>("GET", `/esl-runs/${id}/view3d/recon`, src ? { query: { src } } : {}),
   validations: (caseId: string) => request<ValidationOut[]>("GET", `/cases/${caseId}/validations`),
-  validation: (id: string) => request<ValidationOut>("GET", `/validations/${id}`),
+  /** v0.24.3: src(legacy 가 아닌 출처 키) 없음 = 옛 URL 그대로 */
+  validation: (id: string, src?: string) => request<ValidationOut>("GET", `/validations/${id}`, src ? { query: { src } } : {}),
+  /** v0.24.3: ④ 검증 출처별 판정·조건·한계 행 */
+  validationSources: (id: string) => request<ValidationSourcesOut>("GET", `/validations/${id}/sources`),
+  validationsSources: (caseId: string) => request<ValidationSourcesHistOut>("GET", `/cases/${caseId}/validations/sources`),
   artifacts: (caseId: string) => request<ArtifactOut[]>("GET", `/cases/${caseId}/artifacts`),
   downloadUrl: (artifactId: string) => `${API_PREFIX}/artifacts/${artifactId}/download`,
   exportJob: (caseId: string, esl_run_id: string, targets: ExportTarget[]) =>
     request<JobOut>("POST", `/cases/${caseId}/jobs`, { body: { job_type: "EXPORT", params: { esl_run_id, targets } } }),
 
   // ---- P2 (계약 esl_p2_library.md §11)
-  field: (vid: string, layer: FieldLayer, maxPoints?: number) =>
-    request<FieldOut>("GET", `/validations/${vid}/field`, { query: { layer, max_points: maxPoints } }),
+  field: (vid: string, layer: FieldLayer, maxPoints?: number, src?: string) =>
+    request<FieldOut>("GET", `/validations/${vid}/field`, { query: { layer, max_points: maxPoints, src } }),
   /** v0.5.7(esl_disp_primary §7): 변위 전 노드 컨투어. full_solve 미수행·LEGACY 는 409 PREREQUISITE_MISSING(missing: disp_compare) */
-  dispField: (vid: string, layer: DispLayer, maxPoints?: number) =>
-    request<DispFieldOut>("GET", `/validations/${vid}/disp-field`, { query: { layer, max_points: maxPoints } }),
+  dispField: (vid: string, layer: DispLayer, maxPoints?: number, src?: string) =>
+    request<DispFieldOut>("GET", `/validations/${vid}/disp-field`, { query: { layer, max_points: maxPoints, src } }),
   /** axis 기본 eta(길이 방향 단면), at = 고정 좌표의 0~1 정규화 위치 */
-  section: (vid: string, axis: SectionAxis = "eta", at = 0.5) => request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at } }),
+  section: (vid: string, axis: SectionAxis = "eta", at = 0.5, src?: string) =>
+    request<SectionOut>("GET", `/validations/${vid}/section`, { query: { axis, at, src } }),
   caseReportUrl: (caseId: string) => `${API_PREFIX}/cases/${caseId}/report`,
   libraryEntries: (q: EntryQuery) => request<EntryOut[]>("GET", "/library/entries", { query: { ...q } }),
   libraryEntry: (id: string) => request<EntryOut>("GET", `/library/entries/${id}`),

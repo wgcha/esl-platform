@@ -590,6 +590,43 @@ class ValidationOut(_Out):
     strain_ref: dict[str, Any] | None = None
 
 
+class ValidationSourceRow(_Out):
+    """④ 검증 출처 1행(계약 esl_validate_sources.md §7.2)."""
+    key: str
+    available: bool
+    code: str | None = None
+    reason: str | None = None
+    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    fail_reasons: list[str]
+    undetermined_reason: str | None = None
+    reaction_role: Literal["judge", "info"] | None = None
+    reaction_tol: float | None = None
+    reaction_tol_key: str | None = None
+    reaction_warn: float | None = None
+    reaction_warned: bool | None = None
+    cond_text: str | None = None
+    note: str | None = None
+    limits: list[str]
+    limit_text: list[str]
+    comparable: bool | None = None
+
+
+class ValidationSourcesOut(_Out):
+    validation_id: str
+    default: str
+    rows: list[ValidationSourceRow]
+
+
+class ValidationSourcesHistItem(_Out):
+    validation_id: str
+    rows: list[ValidationSourceRow]
+
+
+class ValidationSourcesHistOut(_Out):
+    case_id: str
+    items: list[ValidationSourcesHistItem]
+
+
 class ArtifactOut(_Out):
     id: str
     case_id: str
