@@ -19,8 +19,8 @@ describe("경계력 탭 순수 함수", () => {
   it("탭 상태·경고 분류·투영 섞임 0", () => {
     const r = withBforce(withJig(withSolveMetric(withMetric({ ...base })), "ok"), "ok");
     const ts = tabState(r);
-    expect(ts.keys).toEqual(["jig", "full", "bforce", "fint"]);
-    expect(ts.ok).toEqual({ jig: true, full: true, bforce: true, fint: false });   // 내력 블록 없음(미계산)
+    expect(ts.keys).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);
+    expect(ts.ok).toEqual({ jig: true, jig_disp: false, jig_spring: false, full: true, bforce: true, fint: false });   // 내력 블록 없음(미계산)
     expect(ts.def).toBe("jig");                                                   // 경계력은 기본 탭이 아님(primaryFor 없음)
     expect(warnTab("BF_RECON_POOR")).toBe("bforce");
     const b = tabResult(r, "bforce");
@@ -73,7 +73,7 @@ describe("경계력 탭 화면", () => {
     open("doe-50");
     const t = await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     const seg = await screen.findByTestId("doe-load-tab");
-    expect([...seg.querySelectorAll("button")].map((b) => b.getAttribute("data-tab"))).toEqual(["jig", "full", "bforce", "fint"]);
+    expect([...seg.querySelectorAll("button")].map((b) => b.getAttribute("data-tab"))).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);
     expect(tabBtn("bforce").getAttribute("aria-disabled")).toBe("false");
     fireEvent.click(tabBtn("bforce"));
     await waitFor(() => expect(tabBtn("bforce").getAttribute("aria-selected")).toBe("true"));

@@ -59,7 +59,7 @@ import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFa
 import { BlockErr, MsgFold } from "../../components/MsgFold";
 import { SourceTabs } from "../../view3d/SourceTabs";
 import { loadRangeTop, loadUnitOf } from "../../view3d/values";
-import { reconLineText } from "../../view3d/sources";
+import { groupFieldsOf, reconLineText } from "../../view3d/sources";
 import { useStudyRecon } from "../../view3d/useRecon";
 import type { SourceTabItem } from "../../view3d/sources";
 import { BF_GRADE_TEXT, LOAD_SOURCES, V3D_RECON_NONE_TEXT, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
@@ -2124,7 +2124,7 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
 /** v0.23.3 하중 정의 탭 세그먼트(결과 카드 머리 — 높이 불변). 출처 표 행마다 버튼 1개, 불가 = 비활성 + title 사유.
  *  v0.24.1: 범용 SourceTabs(view3d/SourceTabs.tsx)로 그린다 — 같은 DOM·testid. */
 function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; setTab: (t: LoadTab) => void; sources: readonly LoadSource[] }) {
-  const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key], add: ts.add[s.key] }));
+  const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key], add: ts.add[s.key], ...groupFieldsOf(s.key, sources.map((x) => x.key)) }));
   return <SourceTabs items={items} tab={tab} setTab={setTab} label="하중 정의" prefix="doe-load" testId="doe-load-tab" whyTestId="doe-load-tab-why" />;
 }
 

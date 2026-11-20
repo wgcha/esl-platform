@@ -16,7 +16,7 @@ const nv = (real.nv as unknown as { sources: ValidationSourcesOut }).sources;
 
 describe("v0.24.3 실제 백엔드 응답 ↔ 프런트(④ 검증 출처별)", () => {
   it("출처 행: 표 키·순서·이름이 화면 SOURCE_ROWS 와 같다(코어 LABEL 은 시험 V-4 가 확인)", () => {
-    for (const s of [bf, plain, old, nv]) expect(s.rows.map((r) => r.key)).toEqual(SOURCE_ROWS.map((r) => r.key));
+    for (const s of [bf, plain, old, nv]) expect(s.rows.map((r) => r.key)).toEqual(SOURCE_ROWS.filter((r) => !r.optional).map((r) => r.key));   // 실제 v0.24.3 백엔드 = 4행(v0.24.4 새 행은 optional)
     expect(bf.default).toBe("full");
   });
 

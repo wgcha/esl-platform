@@ -18,11 +18,11 @@ const base = { ranking: [], baseline: { id: "d000", score: 1, umax: 1, epsmax: 0
 
 describe("내력 탭 순수 함수", () => {
   it("출처 표 4행·노드 힘 열, 탭 상태·투영 섞임 0", () => {
-    expect(LOAD_SOURCES.map((s) => s.key)).toEqual(["jig", "full", "bforce", "fint"]);
+    expect(LOAD_SOURCES.map((s) => s.key)).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);
     expect(LOAD_SOURCES.filter((s) => s.nodal).map((s) => s.nodal!.block)).toEqual(["bforce", "fint"]);
     const r = withFint(withBforce(withJig(withSolveMetric(withMetric({ ...base })), "ok"), "ok"), "ok");
     const ts = tabState(r);
-    expect(ts.ok).toEqual({ jig: true, full: true, bforce: true, fint: true });
+    expect(ts.ok).toEqual({ jig: true, jig_disp: false, jig_spring: false, full: true, bforce: true, fint: true });
     expect(ts.def).toBe("jig");
     expect(warnTab("FINT_UNBALANCED")).toBe("fint");
     expect(warnTab("BF_RECON_POOR")).toBe("bforce");

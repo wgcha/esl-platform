@@ -56,8 +56,10 @@ const SRC: ValidationSourcesOut = {
 describe("V-0243-VAL-17 탭 항목·표식·기본 탭 (순수)", () => {
   it("항목 = 표 순서·이름 + 응답의 가능 여부·사유(unavailText), caseTabItems 와 같은 규칙", () => {
     const items = valTabItems(SRC, true)!;
-    expect(items.map((i) => i.key)).toEqual(SOURCE_ROWS.map((r) => r.key));
-    expect(items.map((i) => i.label)).toEqual(SOURCE_ROWS.map((r) => r.label));
+    // 응답 4행(v0.24.3 형식) = optional 열 행(jig_disp·jig_spring)은 그리지 않고 jig 는 단독 탭 "지그 ESL"
+    const shown = SOURCE_ROWS.filter((r) => !r.optional);
+    expect(items.map((i) => i.key)).toEqual(shown.map((r) => r.key));
+    expect(items.map((i) => i.label)).toEqual(["지그 ESL", ...shown.slice(1).map((r) => r.label)]);
     expect(items.map((i) => i.ok)).toEqual([false, true, true, true]);
     expect(items[0].why).toBe(unavailText("지그 ESL", SRC.rows[0].reason));
     // tabItemsOf = caseTabItems 의 공통 규칙(ok·why 동일)

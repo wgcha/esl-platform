@@ -37,7 +37,7 @@ describe("탭 순수 함수", () => {
     const r = withJig(withSolveMetric(withMetric({ ...base })), "ok");
     const ts = tabState(r);
     expect(ts.def).toBe("jig");
-    expect(ts.ok).toEqual({ jig: true, full: true, bforce: false, fint: false });   // v0.24.0 경계력·내력 행(보기 없음 = 비활성)
+    expect(ts.ok).toEqual({ jig: true, jig_disp: false, jig_spring: false, full: true, bforce: false, fint: false });   // v0.24.0 경계력·내력 행(보기 없음 = 비활성) · v0.24.4 지그 방식 행(옛 스냅샷 = 비활성)
     const j = tabResult(r, "jig");
     const f = tabResult(r, "full");
     expect(j.rank?.metric_effective).toBe("jig");
@@ -174,7 +174,7 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
     expect(screen.queryByTestId("v3d-regen")).toBeNull();
     expect(tabBtn("jig").getAttribute("aria-disabled")).toBe("false");
-    expect(tabBtn("jig").textContent).toBe("지그 ESL +");
+    expect(tabBtn("jig").textContent).toBe("고정 +");
     fireEvent.click(tabBtn("jig"));
     const panel = await screen.findByTestId("doe-source-add");
     expect(panel.getAttribute("data-src")).toBe("jig");
@@ -192,7 +192,7 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     const list = screen.getByRole("tablist", { name: "하중 정의" });
     const tabs = within(list).getAllByRole("tab");
-    expect(tabs.map((t) => t.getAttribute("data-tab"))).toEqual(["jig", "full", "bforce", "fint"]);   // v0.24.0 경계력·내력 탭 추가
+    expect(tabs.map((t) => t.getAttribute("data-tab"))).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);   // v0.24.0 경계력·내력 탭 추가 · v0.24.4 지그 방식 탭 2개
     for (const t of tabs) {
       expect(t.getAttribute("aria-controls")).toBe("doe-load-panel");
       expect(document.getElementById("doe-load-panel")!.getAttribute("role")).toBe("tabpanel");
@@ -200,7 +200,7 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
     expect(tabBtn("full").tabIndex).toBe(0);
     tabBtn("full").focus();
-    fireEvent.keyDown(tabBtn("full"), { key: "ArrowLeft" });
+    for (let i = 0; i < 3; i++) fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });   // v0.24.4 지그 방식 탭 2개가 full 앞에 있음(full ← 스프링 ← 변위 ← 고정)
     expect(document.activeElement).toBe(tabBtn("jig"));                  // 비활성 탭도 포커스 가능(사유 읽기)
     const why = await screen.findByTestId("doe-load-tab-why");
     expect(why.textContent).toMatch(/^지그 순위 불가 — /);
@@ -208,7 +208,7 @@ describe("D-0.23.3-n 보완(옛 결과·다시 만들기 위치·탭 키보드)"
     expect(document.getElementById(tabBtn("jig").getAttribute("aria-describedby")!)!.textContent).toMatch(/^지그 순위 불가/);
     fireEvent.click(tabBtn("jig"));                                      // 비활성 클릭 = 무시
     expect(tabBtn("full").getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(tabBtn("jig"), { key: "ArrowRight" });
+    for (let i = 0; i < 3; i++) fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
     expect(document.activeElement).toBe(tabBtn("full"));
     expect(screen.queryByTestId("doe-load-tab-why")).toBeNull();
   }, 30000);
