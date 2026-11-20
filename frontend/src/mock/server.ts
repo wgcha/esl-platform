@@ -76,6 +76,9 @@ const err = (status: number, code: string, message: string, extra: Record<string
 
 type Run = EslRunOut & { inputs: string };
 
+/** 시드 라이브러리 항목은 검증 레코드가 없어 묶음 출처 판정 목이 쓰는 PASS 뼈대(목 전용) */
+const STUB_VALIDATION = { verdict: "PASS", status: "PASS", fail_reasons: [], undetermined_reason: null, disp_rms_rel: 1e-6, disp_max_rel: 1e-5, reaction_rel: 1e-8, criteria: {} };
+
 export class MockServer {
   user: MockUserKey;
   /** v0.5.8 3D 하중 보기: 오류 시연(413/503/404) */
@@ -876,6 +879,19 @@ export class MockServer {
   /** 라이브러리 API (계약 §11, openapi EntryOut·AnalysisOut) */
   private library(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>): MockResponse {
     let r: RegExpMatchArray | null;
+    // v0.24.4 P3 묶음 출처 판정(esl_jig_case.md §9 — 항목별 /validations/{vid}/sources). 옛 서버 모양(valSourcesMode old) = 404
+    if (path === "/library/entries/sources" && method === "GET") {
+      const mode = this.valSourcesMode;
+      if (mode === "old") return err(404, "NOT_FOUND", "Not Found");
+      const ids = (query.get("ids") ?? "").split(",").filter(Boolean);
+      const items = ids.map((id) => {
+        const e = this.entries.find((x) => x.id === id);
+        const vid = e?.validation_id ?? this.runs.find((x) => x.id === e?.esl_run_id)?.latest_validation_id ?? this.validations[0]?.id;
+        const v = e ? this.validations.find((x) => x.id === vid) : null;
+        return { entry_id: id, validation_id: v?.id ?? null, rows: e ? valSourceRows(v ? this.validationOut(v) : (STUB_VALIDATION as unknown as ValidationOut), mode, true, this.jigRows) : [] };
+      });
+      return { status: 200, body: { items } };
+    }
     if (path === "/library/entries" && method === "GET") {
       const f = (k: string) => query.get(k);
       const out = this.entries.filter(
