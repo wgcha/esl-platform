@@ -1758,11 +1758,13 @@ def _jig_method(ctx: Context, model: StoredModel, d: str, J: dict, m: str, sh: d
            "fit": fit, "recon": recon, "energy": en, "spring": sp, "limits": limits, "limit_text": limit_text,
            "warnings": [t.split(":", 1)[0] for t in texts], "warning_text": texts, "info": [t.split(":", 1)[0] for t in info],
            "info_text": info, "seconds": {"fit": round(t_fit, 3), "total": t_tot}}
-    _write_json(ctx.f(d, f"{src}.json"), doc)
     zz = {"node_id": nid, "f": np.asarray(r["F"], dtype=np.float64), "a": np.asarray(r["a"], dtype=np.float64),
           "u_val": np.asarray(u_val, dtype=np.float64), **jig_bc.save_bc(BC), "jig_idx": sh["J"],
           "basis_sha": np.asarray(sh["basis_sha"])}
-    np.savez_compressed(ctx.f(d, f"{src}.npz"), **zz)
+    tmp = ctx.f(d, f"{src}.tmp.npz")                   # 하중 파일 = 완성본만(tmp → replace), 상태 원본 json 은 마지막
+    np.savez_compressed(tmp, **zz)
+    atomic_replace(tmp, ctx.f(d, f"{src}.npz"))
+    _write_json(ctx.f(d, f"{src}.json"), doc)
     ctx.warnings.extend(texts)
     ctx.echo(f"[esl] {label}({jig_bc.TIE_DOFS[sh['td']]['text']} {int(sh['J'].size)} + 3-2-1 면내 "
              f"{int(np.asarray(sh['aux']['node']).size)}): 맞춤 MAC {rep['mac']:.3f}, 재현 MAC "
@@ -1776,6 +1778,21 @@ def _jig_method(ctx: Context, model: StoredModel, d: str, J: dict, m: str, sh: d
             "C_mix": en["C_mix"], "E": en["E"], "recon": recon["status"], "limits": limits, "limit_text": limit_text,
             "seconds": t_tot}
     return summ, doc
+
+
+def _jig_park(ctx: Context, d: str, name: str) -> None:
+    """이번 실행이 쓴 지그 파일을 불가 행에서 치움 — 삭제 대신 _backup/<ts>/04_esl/ 로 이동(fresh_dir 와 같은 보존 규칙)."""
+    for nm in (name, name.replace(".npz", ".tmp.npz")):
+        p = os.path.join(d, nm)
+        if os.path.isfile(p):
+            root = ctx.guard(ctx.p(BACKUP_DIR, ctx.ts, D_ESL))
+            os.makedirs(root, exist_ok=True)
+            dst = os.path.join(root, nm)
+            k = 1
+            while os.path.lexists(dst):
+                dst = os.path.join(root, f"{nm}.{k}")
+                k += 1
+            atomic_replace(ctx.guard(p), ctx.guard(dst))
 
 
 def _jig_unavail(code: str, reason: str, *, m: str, td: str | None) -> dict:
@@ -1877,10 +1894,7 @@ def _jig_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u_rel, sup, sm
             reason = _jig_reason("JIG_FAILED", stage=m, err=err)
             ctx.warnings.append(_jig_text("JIG_FAILED", stage=m, err=err))
             out[src] = _jig_unavail("JIG_FAILED", reason, m=m, td=sh["td"])
-            for f_ in (f"{src}.npz",):                         # 부분 파일 없음(json 이 상태 원본)
-                p_ = ctx.p(D_ESL, f_)
-                if os.path.isfile(p_):
-                    os.remove(ctx.guard(p_))
+            _jig_park(ctx, d, f"{src}.npz")                   # 불가 행에 하중 파일 없음(지우지 않고 _backup 으로)
             _write_json(ctx.f(d, f"{src}.json"), {"schema": CASE_JIG_SCHEMA, "source": src, "method": m,
                                                   "tie_dofs": sh["td"], "status": "unavailable", "code": "JIG_FAILED",
                                                   "reason": reason, **{k_: sh["doc"][k_] for k_ in ("fix", "rigid_free")},
