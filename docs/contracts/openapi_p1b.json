@@ -14754,6 +14754,215 @@
         "title": "ValidationOut",
         "type": "object"
       },
+      "ValidationSourceRow": {
+        "description": "④ 검증 출처 1행(계약 esl_validate_sources.md §7.2).",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "comparable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparable"
+          },
+          "cond_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cond Text"
+          },
+          "fail_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fail Reasons",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "limit_text": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limit Text",
+            "type": "array"
+          },
+          "limits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reaction_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "judge",
+                  "info"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Role"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNDETERMINED",
+                  "LEGACY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "undetermined_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undetermined Reason"
+          }
+        },
+        "required": [
+          "key",
+          "available",
+          "fail_reasons",
+          "limits",
+          "limit_text"
+        ],
+        "title": "ValidationSourceRow",
+        "type": "object"
+      },
+      "ValidationSourcesHistItem": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationSourceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "validation_id": {
+            "title": "Validation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "validation_id",
+          "rows"
+        ],
+        "title": "ValidationSourcesHistItem",
+        "type": "object"
+      },
+      "ValidationSourcesHistOut": {
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationSourcesHistItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case_id",
+          "items"
+        ],
+        "title": "ValidationSourcesHistOut",
+        "type": "object"
+      },
+      "ValidationSourcesOut": {
+        "properties": {
+          "default": {
+            "title": "Default",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationSourceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "validation_id": {
+            "title": "Validation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "validation_id",
+          "default",
+          "rows"
+        ],
+        "title": "ValidationSourcesOut",
+        "type": "object"
+      },
       "VerifyCompare": {
         "properties": {
           "hot": {
@@ -17606,6 +17815,49 @@
           }
         },
         "summary": "List Validations",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/cases/{case_id}/validations/sources": {
+      "get": {
+        "description": "이력: /cases/{id}/validations 와 같은 순서·개수의 검증마다 출처 행.",
+        "operationId": "case_validation_sources_esl_api_cases__case_id__validations_sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationSourcesHistOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Case Validation Sources",
         "tags": [
           "results"
         ]
@@ -23889,6 +24141,25 @@
               "title": "Vid",
               "type": "string"
             }
+          },
+          {
+            "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+              "title": "Src"
+            }
           }
         ],
         "responses": {
@@ -23963,6 +24234,25 @@
                 }
               ],
               "title": "Max Points"
+            }
+          },
+          {
+            "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+              "title": "Src"
             }
           }
         ],
@@ -24039,6 +24329,25 @@
               ],
               "title": "Max Points"
             }
+          },
+          {
+            "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+              "title": "Src"
+            }
           }
         ],
         "responses": {
@@ -24108,6 +24417,25 @@
               "title": "At",
               "type": "number"
             }
+          },
+          {
+            "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+            "in": "query",
+            "name": "src",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). 모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE",
+              "title": "Src"
+            }
           }
         ],
         "responses": {
@@ -24133,6 +24461,49 @@
           }
         },
         "summary": "Validation Section",
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/esl/api/validations/{vid}/sources": {
+      "get": {
+        "description": "④ 검증 출처별 판정·조건·한계 행(KEYS 순서). 파일을 쓰지 않는다.",
+        "operationId": "validation_sources_esl_api_validations__vid__sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vid",
+            "required": true,
+            "schema": {
+              "title": "Vid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationSourcesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validation Sources",
         "tags": [
           "results"
         ]

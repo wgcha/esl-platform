@@ -229,38 +229,26 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
     ref = val.get("esl_ref")
     if run is None or (ref is not None and co.esl_tag(cdir) is not None and ref != run["job_id"]):
         raise RegisterError("OUTPUT_INVALID", "validation.json 이 대상 ESL 결과의 검증이 아닙니다")
-    hots = []
-    for h in val.get("hotspots") or []:
-        hots.append({"elem_id": h.get("elem_id"), "eps_rad": _f(h.get("eps_rad")),
-                     "eps_val": _f(h.get("eps_val", h.get("eps_os"))), "rel_err": _f(h.get("rel_err")),
-                     "rank": h.get("rank")})
-    # 코어 validation.json 키는 hotspots_excluded(이전 형식 excluded 도 허용)
-    excluded = [{"elem_id": e.get("elem_id"), "reason": e.get("reason")}
-                for e in (val.get("hotspots_excluded") or val.get("excluded") or []) if isinstance(e, dict)]
-    verdict = val.get("verdict")
+    vf = co.validation_fields(val)      # 계약 esl_validate_sources.md §7.4 — 출처 ValidationOut 과 같은 변환
+    verdict = vf["verdict"]
     if verdict not in ("PASS", "FAIL", "UNDETERMINED"):
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict 오류: {verdict}")
     # 계약 esl_disp_primary.md §7: verdict_scheme 이 있으면 scheme 에 저장, 없으면(schema 2) NULL = LEGACY
-    scheme = val.get("verdict_scheme") or None
+    scheme = vf["scheme"]
     if scheme is not None and scheme not in VERDICT_SCHEMES:
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict_scheme 오류: {scheme}")
-    reason = val.get("undetermined_reason") or None
+    reason = vf["undetermined_reason"]
     if verdict == "UNDETERMINED" and (scheme is None or reason is None):
         raise RegisterError("OUTPUT_INVALID", "UNDETERMINED 판정에는 verdict_scheme·undetermined_reason 이 필요합니다")
-    disp = co.metric_value(val, "disp_rms_rel")
-    reac = co.metric_value(val, "reaction_rel")
-    disp_max = co.metric_value(val, "disp_max_rel")
-    disp_noise = co.metric_value(val, "disp_noise_rel")
-    fld = val.get("field") if isinstance(val.get("field"), dict) else None
-    dsp = val.get("disp") if isinstance(val.get("disp"), dict) else None
-    sref = val.get("strain_ref") if isinstance(val.get("strain_ref"), dict) else None
+    disp, reac, disp_max, disp_noise = (vf["disp_rms_rel"], vf["reaction_rel"], vf["disp_max_rel"],
+                                        vf["disp_noise_rel"])
     v = cases_repo.insert_validation(
         conn, esl_run_id=p["esl_run_id"], case_id=case["id"], job_id=job["id"], disp_rms_rel=disp,
-        reaction_rel=reac, hotspots=hots, excluded=excluded, verdict=verdict,
-        fail_reasons=list(val.get("fail_reasons") or []), criteria=dict(val.get("criteria") or {}),
-        field=_jsonable(fld) if fld is not None else None, dir_rel=co.D_VAL,
+        reaction_rel=reac, hotspots=vf["hotspots"], excluded=vf["excluded"], verdict=verdict,
+        fail_reasons=vf["fail_reasons"], criteria=vf["criteria"],
+        field=vf["field"], dir_rel=co.D_VAL,
         scheme=scheme, disp_max_rel=disp_max, disp_noise_rel=disp_noise, undetermined_reason=reason,
-        disp=_jsonable(dsp) if dsp is not None else None, strain_ref=_jsonable(sref) if sref is not None else None,
+        disp=vf["disp"], strain_ref=vf["strain_ref"],
     )
     # 이 실행의 검증 스냅샷 runs/<esl_run_id>/05_val (라이브러리 등록·겹쳐보기 API 가 이후 검증과 무관하게 읽음)
     if os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):

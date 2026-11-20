@@ -20,6 +20,8 @@ from ..schemas import (
     ForcesOut,
     SectionOut,
     ValidationOut,
+    ValidationSourcesHistOut,
+    ValidationSourcesOut,
     View3dOut,
     View3dReconOut,
     View3dSourcesOut,
@@ -29,6 +31,9 @@ from ..services import results as svc
 from ..services import view3d as view3d_svc
 
 router = APIRouter(tags=["results"])
+
+VAL_SRC_QUERY = Query(default=None, max_length=32, description="v0.24.3 검증 출처 키(jig·full·bforce·fint — 없음·전 노드 ESL 키 = 옛 응답). "
+                                                               "모르는 출처 404 SOURCE_NOT_FOUND, 결과 없음 409 VAL_SOURCE_UNAVAILABLE")
 
 
 @router.get("/esl-runs/{run_id}", response_model=EslRunOut)
@@ -160,14 +165,28 @@ def view3d_values(run_id: str, request: Request, key: str | None = Query(default
 
 
 @router.get("/validations/{vid}", response_model=ValidationOut)
-def get_validation(vid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    return svc.get_validation(get_ctx(request), vid)
+def get_validation(vid: str, request: Request, src: str | None = VAL_SRC_QUERY,
+                   principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    return svc.get_validation(get_ctx(request), vid, src)
+
+
+@router.get("/validations/{vid}/sources", response_model=ValidationSourcesOut)
+def validation_sources(vid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """④ 검증 출처별 판정·조건·한계 행(KEYS 순서). 파일을 쓰지 않는다."""
+    return svc.val_sources(get_ctx(request), vid)
 
 
 @router.get("/cases/{case_id}/validations", response_model=list[ValidationOut])
 def list_validations(case_id: str, request: Request, principal: Principal = Depends(get_principal)
                      ) -> list[dict[str, Any]]:
     return svc.list_validations(get_ctx(request), case_id)
+
+
+@router.get("/cases/{case_id}/validations/sources", response_model=ValidationSourcesHistOut)
+def case_validation_sources(case_id: str, request: Request, principal: Principal = Depends(get_principal)
+                            ) -> dict[str, Any]:
+    """이력: /cases/{id}/validations 와 같은 순서·개수의 검증마다 출처 행."""
+    return svc.case_val_sources(get_ctx(request), case_id)
 
 
 @router.get("/cases/{case_id}/artifacts", response_model=list[ArtifactOut])
@@ -184,27 +203,27 @@ def download(aid: str, request: Request, principal: Principal = Depends(get_prin
 
 @router.get("/validations/{vid}/field", response_model=FieldOut)
 def validation_field(vid: str, request: Request, layer: Literal["rad", "esl", "err"] = "rad",
-                     max_points: int | None = Query(default=None, ge=10),
+                     max_points: int | None = Query(default=None, ge=10), src: str | None = VAL_SRC_QUERY,
                      principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """전 요소 비교 2D 점(요소 중심 PCA 평면 좌표 + 값), 2D 셀 격자 다운샘플(≤ ui.max_preview_points)."""
-    return svc.field(get_ctx(request), vid, layer, max_points)
+    return svc.field(get_ctx(request), vid, layer, max_points, src)
 
 
 @router.get("/validations/{vid}/disp-field", response_model=DispFieldOut)
 def validation_disp_field(vid: str, request: Request, layer: Literal["err", "rel", "val"] = "err",
-                          max_points: int | None = Query(default=None, ge=10),
+                          max_points: int | None = Query(default=None, ge=10), src: str | None = VAL_SRC_QUERY,
                           principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """변위 전 노드 분석 2D 점(err = e/U, rel = ‖d_rel‖, val = ‖d_val‖). 다운샘플 셀 대표 = e 최대 노드."""
-    return svc.disp_field(get_ctx(request), vid, layer, max_points)
+    return svc.disp_field(get_ctx(request), vid, layer, max_points, src)
 
 
 @router.get("/validations/{vid}/section", response_model=SectionOut)
 def validation_section(vid: str, request: Request, axis: Literal["xi", "eta"] = "eta",
-                       at: float = Query(default=0.5, ge=0.0, le=1.0),
+                       at: float = Query(default=0.5, ge=0.0, le=1.0), src: str | None = VAL_SRC_QUERY,
                        principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """단면선: 정규화 좌표 axis = at 고정 띠의 요소를 다른 축 방향으로 bin 평균(면외 변위 Radioss·ESL, 초기 면외 좌표).
     axis=eta(기본): 판 길이 방향 단면, axis=xi: 판 폭 방향 단면. Δw·통계·지도용 선·추천 단면 포함."""
-    return svc.section(get_ctx(request), vid, axis, at)
+    return svc.section(get_ctx(request), vid, axis, at, src)
 
 
 @router.get("/cases/{case_id}/report", response_class=HTMLResponse)

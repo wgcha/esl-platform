@@ -250,6 +250,40 @@ def metric_value(val: dict[str, Any], name: str) -> float | None:
     return None if v is None else float(v)
 
 
+def _fnum(v: Any) -> float | None:
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def jsonable(o: Any) -> Any:
+    return json.loads(json.dumps(o, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x)))
+
+
+def validation_fields(doc: dict[str, Any]) -> dict[str, Any]:
+    """validation.json → 검증 행 필드(계약 esl_validate_sources.md §7.4). 워커 DB 등록(register_validation)과
+    백엔드 출처 ``ValidationOut`` 이 같은 변환을 쓴다. 검증(verdict·scheme 허용값)은 호출부 몫 — 읽기만."""
+    hots = []
+    for h in doc.get("hotspots") or []:
+        hots.append({"elem_id": h.get("elem_id"), "eps_rad": _fnum(h.get("eps_rad")),
+                     "eps_val": _fnum(h.get("eps_val", h.get("eps_os"))), "rel_err": _fnum(h.get("rel_err")),
+                     "rank": h.get("rank")})
+    # 코어 validation.json 키는 hotspots_excluded(이전 형식 excluded 도 허용)
+    excluded = [{"elem_id": e.get("elem_id"), "reason": e.get("reason")}
+                for e in (doc.get("hotspots_excluded") or doc.get("excluded") or []) if isinstance(e, dict)]
+    fld = doc.get("field") if isinstance(doc.get("field"), dict) else None
+    dsp = doc.get("disp") if isinstance(doc.get("disp"), dict) else None
+    sref = doc.get("strain_ref") if isinstance(doc.get("strain_ref"), dict) else None
+    return {"hotspots": hots, "excluded": excluded, "verdict": doc.get("verdict"),
+            "scheme": doc.get("verdict_scheme") or None, "undetermined_reason": doc.get("undetermined_reason") or None,
+            "disp_rms_rel": metric_value(doc, "disp_rms_rel"), "reaction_rel": metric_value(doc, "reaction_rel"),
+            "disp_max_rel": metric_value(doc, "disp_max_rel"), "disp_noise_rel": metric_value(doc, "disp_noise_rel"),
+            "fail_reasons": list(doc.get("fail_reasons") or []), "criteria": dict(doc.get("criteria") or {}),
+            "field": jsonable(fld) if fld is not None else None, "disp": jsonable(dsp) if dsp is not None else None,
+            "strain_ref": jsonable(sref) if sref is not None else None}
+
+
 # ---------------------------------------------------------------- ESL 실행 스냅샷(runs/<esl_run_id>/)
 # 코어 04_esl·03_bc 는 ESL 계산마다 새로 쓰인다(이전 것은 _backup 으로 이동). 등록 시 그 내용을
 # runs/<esl_run_id>/{03_bc,04_esl} 로 보존(하드링크, 안 되면 복사)해 두고, 검증·내보내기 직전에 디스크의
