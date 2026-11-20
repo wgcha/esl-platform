@@ -361,7 +361,7 @@ score(C_mix_d, C_mix_0, E_0) -> float;  pattern_sha(BC) -> str;  save_bc(dict)/l
 | SOURCE_ROWS | `frontend/src/view3d/sources.ts` | label 지그 고정·short 고정·group jig | 지그 변위·변위·jig | 지그 스프링·스프링·jig |
 
 - 스터디 화면 `doeTabs.LOAD_SOURCES` 에 같은 두 행(열: primaryFor·drop·warnPrefixes `JIG_`·view3d·perEslKey `C_jd`/`C_js`·unavailable 문구). `stiffness_metric.VIEW_METRICS += {"jd": "C_jd", "js": "C_js"}`(보기·P3 주 지표 허용).
-- 스터디가 그 방식을 계산하지 않은 결과(옛 스냅샷·P2c 전) = need 없음 → 탭 비활성 사유 `JIG_METHOD_NOT_RUN`("이 스터디는 지그 <이름>을 계산하지 않았습니다 — 새 스터디·복제에서 계산(rank.jig.methods)").
+- 스터디가 그 방식을 계산하지 않은 결과(옛 스냅샷·P2c 전) = need 없음 → 탭 비활성 사유 `JIG_METHOD_NOT_RUN`("이 스터디에서 계산하지 않은 지그 방식입니다: <이름> — 새 스터디·복제에서 계산(rank.jig.methods)" — 조사가 붙는 {name}을 구조로 피함).
 
 ### 6.2 화면 — 그룹 탭 (Case ③ 3D·④ 검증·스터디 결과 공통 `SourceTabs`)
 

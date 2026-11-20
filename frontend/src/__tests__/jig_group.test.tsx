@@ -56,7 +56,7 @@ describe("출처 표 열(소스)", () => {
     const ts = tabState(r);
     expect(ts.ok.jig).toBe(true);
     expect(ts.ok.jig_disp).toBe(false);
-    expect(ts.reason.jig_disp).toBe("이 스터디는 지그 변위을 계산하지 않았습니다 — 새 스터디·복제에서 계산(rank.jig.methods)");
+    expect(ts.reason.jig_disp).toBe("이 스터디에서 계산하지 않은 방식입니다: 지그 변위 — 새 스터디·복제에서 계산(rank.jig.methods)");
     expect(ts.reason.jig_spring).toContain("지그 스프링");
     expect(groupFieldsOf("jig_disp")).toMatchObject({ group: "jig", short: "변위" });
     expect(groupFieldsOf("full")).toEqual({});

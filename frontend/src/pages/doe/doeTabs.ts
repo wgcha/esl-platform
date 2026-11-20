@@ -104,7 +104,7 @@ export interface LoadSource {
 const JIG_VIEW_DROP = ["C", "C_solve", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"] as const;
 const JIG_VIEW_HIDE: readonly (keyof DoeResultOut)[] = ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"];
 /** 이 스터디가 그 지그 방식을 계산하지 않은 탭 사유(JIG_METHOD_NOT_RUN — 옛 스냅샷·P2c 전) */
-export const JIG_METHOD_NOT_RUN_TEXT = (label: string) => `이 스터디는 ${label}을 계산하지 않았습니다 — 새 스터디·복제에서 계산(rank.jig.methods)`;
+export const JIG_METHOD_NOT_RUN_TEXT = (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 새 스터디·복제에서 계산(rank.jig.methods)`;
 function jigMethodUnavailable(_r: DoeResultOut, key: string): string {
   return JIG_METHOD_NOT_RUN_TEXT(SR(key).label);
 }
