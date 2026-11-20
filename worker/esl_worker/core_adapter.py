@@ -784,35 +784,14 @@ def jig_method_names() -> tuple[str, ...]:
 
 def jig_support_reason(doc: dict | None) -> str | None:
     """지그 ESL 진단 json(doc: method·tie_dofs)이 비드 최적화에 전달 가능한가 — 가능 = None, 아니면 사유 문구.
-    이번 버전 = 병진 구속(tie 방향 xyz) ∧ 값 0 ∧ 강체 고정(방식 표 tie_value zero·tie_stiff hard)만(전역 SPC 로 정확). 열 값만 읽음."""
-    jb = _mod("esl.mech.jig_bc")
-    d = doc or {}
-    m = jb.METHODS.get(str(d.get("method")))
-    td = jb.TIE_DOFS.get(str(d.get("tie_dofs")))
-    if m is None or td is None:
-        return "지그 ESL 의 방식·구속 성분을 알 수 없습니다"
-    if m["tie_value"] == "zero" and m["tie_stiff"] == "hard" and td["dirs"] == "xyz":
-        return None
-    return (f"비드 최적화는 병진 구속 + 고정 지그만 전달합니다(이 ESL = {td['text']} · {m['name']}) — "
-            "국부 구속·강제 변위·스프링은 후속")
+    규칙 원본은 코어 ``esl.opt.target.jig_support_reason`` 한 곳(열 값만 읽음) — 이 함수는 위임만 한다."""
+    return _attr("esl.opt.target", "jig_support_reason")(doc)
 
 
 def opt_jig_supports(doc: dict | None, bc: dict | None) -> list[tuple[int, str]]:
-    """지그 ESL(doc, bc 배열) → 대상 지지 [(노드 ID, "123")](tie 노드, 정렬). 전달 불가 = LOAD_SOURCE_UNSUPPORTED."""
-    import numpy as np
-
-    why = jig_support_reason(doc)
-    if why is not None:
-        raise CoreError("LOAD_SOURCE_UNSUPPORTED", why)
-    jb = _mod("esl.mech.jig_bc")
-    if not bc:
-        raise CoreError("LOAD_SOURCE_UNAVAILABLE", "지그 ESL 의 구속(bc) 배열이 없습니다")
-    kind = np.asarray(bc["bc_kind"]).astype(np.int64)
-    sel = kind == int(jb.KIND_TIE)
-    nodes = np.unique(np.asarray(bc["bc_node"], dtype=np.int64)[sel])
-    if nodes.size == 0 or np.any(np.asarray(bc["bc_val"], dtype=np.float64)[sel] != 0.0):
-        raise CoreError("LOAD_SOURCE_UNSUPPORTED", "지그 tie 구속이 없거나 값이 0 이 아닙니다")
-    return [(int(n), "123") for n in nodes.tolist()]
+    """지그 ESL(doc, bc 배열) → 대상 지지 [(노드 ID, "123")](tie 노드, 정렬). 전달 불가 = LOAD_SOURCE_UNSUPPORTED.
+    규칙 원본은 코어 ``esl.opt.target.jig_supports`` 한 곳 — 코어 EslError 는 CoreError 로 바꿔 돌려준다."""
+    return _wrap(_attr("esl.opt.target", "jig_supports"), doc, bc)
 
 
 def _opt_source_find(L: dict, row: dict, e):
@@ -834,15 +813,7 @@ def _opt_source_supports(L: dict, row: dict, t, echo) -> list[tuple[int, str]]:
         _f, _d, doc, bc = _opt_source_find(L, row, e)
         sets[it["id"]] = opt_jig_supports(doc, bc)
         del e
-    first_id = next(iter(sets))
-    sup = sets[first_id]
-    diff = [i for i, v in sets.items() if v != sup]
-    if diff:
-        raise CoreError("LOAD_SOURCE_UNSUPPORTED", f"항목마다 지그 지지가 다릅니다(기준 {first_id} 와 다른 항목 {len(diff)}개) — "
-                        "한 최적화는 지지 하나만 씁니다")
-    sr = tg.support_check(t.mesh, sup)    # 대상 메시에 없는 노드 → NODE_NOT_IN_PART
-    if sr["rank"] < 6:
-        raise CoreError("SUPPORT_DEGENERATE", f"지그 지지가 강체 6모드를 구속하지 못함(rank {sr['rank']})")
+    sup = _wrap(tg.source_supports, t, sets)        # 항목 간 같은 지지·대상 메시 노드·강체 6모드 — 코어 한 곳
     echo(f"[opt_prep] 하중 출처 {row['key']}: 지그 지지 {len(sup)}개 노드(병진 123) — 3-2-1 대신 사용")
     return sup
 

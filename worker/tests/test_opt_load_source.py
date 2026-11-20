@@ -271,3 +271,30 @@ def test_s2_jig_source_unsupported(world):
     with pytest.raises(ca.CoreError) as ei:
         run_stages(world, s2_lib(world, "jig"), world["tmp"] / "s", stages=("opt_prep",))
     assert ei.value.code == "LOAD_SOURCE_UNSUPPORTED"
+
+
+def test_worker_jig_support_rule_is_the_core_function(world):
+    """통합 D-0.24.4-JIG: 워커 지그 지지 규칙 = 코어 esl.opt.target 한 곳(core_adapter 는 위임) — 결과·오류 코드 일치."""
+    import esl.opt.target as tg
+    from esl.errors import EslError
+
+    nodes = tie_nodes(world["mesh"])
+    cases = [
+        ({"method": "fixed", "tie_dofs": "translation"}, jig_bc(world["mesh"], nodes)),
+        ({"method": "fixed", "tie_dofs": "normal"}, jig_bc(world["mesh"], nodes)),
+        ({"method": "spring", "tie_dofs": "translation"}, jig_bc(world["mesh"], nodes)),
+        ({"method": "fixed", "tie_dofs": "translation"}, jig_bc(world["mesh"], nodes, val=0.5)),
+        ({"method": "fixed", "tie_dofs": "translation"}, None),
+        (None, None),
+    ]
+    for doc, bc in cases:
+        assert ca.jig_support_reason(doc) == tg.jig_support_reason(doc)
+        try:
+            want = ("ok", tg.jig_supports(doc, bc))
+        except EslError as exc:
+            want = ("err", exc.code)
+        try:
+            got = ("ok", ca.opt_jig_supports(doc, bc))
+        except ca.CoreError as exc:
+            got = ("err", exc.code)
+        assert got == want
