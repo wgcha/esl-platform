@@ -30,7 +30,13 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": False,
                "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0, "ridge": 1e-8, "active_tol": 1e-3,
                "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05,
-               "tie_spread_min": 0.02}
+               "tie_spread_min": 0.02,
+               # v0.24.4 새 키(esl.mech.jig.JIG_NEW_KEYS 거울 — spring_alpha 기본 0.01: 메인 결정, α=1 은 prescribed 와 구분 안 됨)
+               "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
+               "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 0.01,
+               "spring_k_value": None, "spring_alpha_scan": []}
+NEW_JIG = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reaction_warn", "spring_k_mode", "spring_alpha",
+           "spring_k_value", "spring_alpha_scan")
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT}
 # v0.24.0 보완(esl_fint.md §6.2): 새 스냅샷에 평가 영역 고정
@@ -51,7 +57,13 @@ def test_rank_defaults_mirror():
         assert y["bead_doe"]["rank"] == RANK_DEFAULT, p
     from esl.doe import DEFAULTS
 
-    assert DEFAULTS["rank"] == RANK_DEFAULT                                  # 코어 DEFAULTS 거울(jig 절 포함)
+    # 코어 DEFAULTS 거울(jig 절 포함). v0.24.4 새 키(JIG_NEW_KEYS)는 코어 DEFAULTS 에 통합 때 더해진다 — 있는 키는 값이 같아야 하고
+    # (spring_alpha 만 코어 JIG_DEFAULTS 가 1.0 → 0.01 로 바뀌기 전 값을 허용), 없는 키는 건너뜀(test_jig_case_api 가 이름·값 거울을 따로 확인)
+    core = DEFAULTS["rank"]
+    assert {k: v for k, v in core.items() if k != "jig"} == {k: v for k, v in RANK_DEFAULT.items() if k != "jig"}
+    for k, v in core["jig"].items():
+        assert v == JIG_DEFAULT[k] or (k == "spring_alpha" and v == 1.0), k
+    assert all(k in core["jig"] or k in NEW_JIG for k in JIG_DEFAULT)
 
 
 @pytest.mark.parametrize("bad", [

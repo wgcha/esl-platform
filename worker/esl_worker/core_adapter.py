@@ -1210,3 +1210,49 @@ def doe_parallel_limit(n_nodes: int, parallel: int, memory_margin: float, backen
 
 def doe_messages() -> dict:
     return _wrap(_attr("esl.doe", "load_messages"))
+
+
+# ====================================================================== v0.24.4 Case 지그 tie 준비(계약 esl_jig_case.md §5.1)
+# 워커 jig_prep 가 쓰는 코어 호출(코어 호출은 이 어댑터만). 계산(지그 3방식)은 코어 stage_esl 이 한다 — 워커는 tie(paicad fixed-scan)만 준비.
+def jig_settings(core_settings: dict | None) -> dict:
+    """코어 Case 절 ``jig.*`` → 해석된 설정(기본 = ``esl.mech.jig.JIG_DEFAULTS``). 코어 ``esl.config.jig_settings`` 가 있으면 그것(스키마 검사 포함),
+    없으면(코어 병합 전) 기본값 위에 ``jig`` 절을 얹는다. 설정 오류 = CoreError."""
+    fn = getattr(_mod("esl.config"), "jig_settings", None)
+    if fn is not None:
+        return _wrap(fn, core_settings or {})
+    base = copy.deepcopy(_attr("esl.mech.jig", "JIG_DEFAULTS"))
+    sect = (core_settings or {}).get("jig")
+    if sect is None:
+        return base
+    if not isinstance(sect, dict):
+        raise CoreError("CONFIG_INVALID", "jig 절은 매핑이어야 함")
+    base.update(copy.deepcopy(sect))
+    return base
+
+
+def jig_model_files(starter: str, roots: list[str], *, include_path_map: dict | None, max_depth: int,
+                    engine_rad: bool = False) -> list[str]:
+    """starter include 트리 전체 파일(정규화 절대경로, 첫 항목 = starter) — 지그 캐시 키 매니페스트용(assem_full.model_closure 재사용)."""
+    return _wrap(_attr("esl.doe.assem_full", "model_closure"), starter, list(roots), include_path_map=include_path_map,
+                 max_depth=max_depth, engine_rad=engine_rad)
+
+
+def assem_full_to(dest: str, starter: str, case_dir: str, roots: list[str], *, max_mb: float, max_depth: int,
+                  include_path_map: dict | None, engine_rad: bool, fixed_scan: dict | None, guard: Callable) -> dict:
+    """모델 전체 사본 → ``dest``(Case 안 ``_jig/assem_full`` — 호출부가 비운 폴더) + 스캔 정규화(esl.doe.assem_full). 매니페스트.
+    guard = 쓰기 경로 검사(호출부가 Case 의 ``_jig`` 아래만 허용). 연구 Writer 를 쓰지 않는 Case 용."""
+    import os
+
+    A = _mod("esl.doe.assem_full")
+    os.makedirs(guard(dest), exist_ok=True)
+    return _wrap(A.copy_model_full, starter, case_dir, list(roots), dest, max_mb=max_mb, include_path_map=include_path_map,
+                 max_depth=max_depth, engine_rad=engine_rad, fixed_scan=fixed_scan, guard=guard)
+
+
+def fixed_scan_summary(scan_dir: str, max_mb: float = 64) -> dict:
+    """fixed-scan 출력 읽기 검증(esl.io.fixed_scan.read_fixed) → {n_nodes, n_clusters, kinds{종류 비트: 노드 수}}. 읽기 실패 = CoreError."""
+    r = _wrap(_attr("esl.io.fixed_scan", "read_fixed"), scan_dir, max_mb)
+    km = r["kind_mask"]
+    names = list(_attr("esl.io.fixed_scan", "FIXED_KINDS"))
+    return {"n_nodes": int(len(r["node_id"])), "n_clusters": len(r["clusters"]),
+            "kinds": {k: int(sum(1 for m in km if (int(m) >> i) & 1)) for i, k in enumerate(names)}}
