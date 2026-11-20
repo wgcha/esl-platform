@@ -614,3 +614,15 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
   ×0.5·1·1.5 → s fixed 2.445·1·0.597, prescribed 2.396·1·0.608, spring 2.391·1·0.610(세 방식 엄격 감소). 스터디 전체(입력·하중·행렬·평가
   3·후처리) ≈ 2.2 s(2코어). translation 새 스냅샷 fixed = 옛 스냅샷 prep/jig.npz·jig.json·per_esl C_jig 바이트 동일, translation·fixed 1개 =
   per_esl.json·ranking.csv 까지 동일. 골든(옛 스터디 41 파일) 통과.
+
+### A.6 P2c·P3 통합 메모 (2026-11-21 — 코어 P2c+A3 · 워커·백엔드 W3+B3 · 프런트 C3 병합 뒤)
+
+| 항목 | 결정·결과 |
+|---|---|
+| 묶음 응답(B3 실제) | `GET /library/entries/sources?ids=` → `{ids, items[{entry_id, validation_id, rows[④ 출처 행 + load_available·load_code·load_reason·grade·flags]}], sources[{key, label, worst, n, unavailable_entry_ids, needs_confirm, entries[…]}]}`. 등급 순서 PASS < caution < not_comparable < UNDETERMINED < FAIL < NO_RESULT. 검증 없는 항목 = 모든 행 available false·code VAL_SRC_NOT_RUN(하중 파일은 따로 판정) |
+| C3 가정과 다른 점(프런트가 B3 에 맞춤) | `ValidationSourceRow.opt_supported·opt_reason` 없음(삭제) · 스냅샷 위치 = 스터디 `inputs.load_source(_check)`, 비드 최적화 `options.load_source(_check)`(최상위 키 아님) · 422 UNCONFIRMED entries 에 grade·flags·limits 추가, worst 는 등급 · UNAVAILABLE.reasons 는 `{entry_id: 사유}` 사전 · UNSUPPORTED = `{reason, reasons, entry_ids}` · 선택 불가 판정에 `load_available` 사용 |
+| 설정 | `bead_doe.load_source_default`(null)·`opt_run.load_source_default`("full") — 코어 DEFAULTS·pydantic·yaml 2·esl.example.yaml(주석), `GET /doe/settings`·`/opt/settings` 최상위. 안내용(서버 미적용) |
+| 지지 규칙 | 코어 `esl.opt.target.jig_support_reason·jig_supports·source_supports` 가 원본, 워커 `core_adapter.jig_support_reason·opt_jig_supports` 와 `_opt_source_supports` 는 위임(코어 EslError → CoreError). 시험 `worker/tests/test_opt_load_source.py::test_worker_jig_support_rule_is_the_core_function` |
+| 실연동 시험 | `worker/tests/test_load_source_e2e.py`: 비드 최적화(load_source 없음 = params·target 에 키 없음, full = 하중 같음, jig translation+fixed → tie 123 지지 = 선정·덱 SPC1, jig_disp 422 UNSUPPORTED, fint 422 UNAVAILABLE, 모르는 키 422, bforce FAIL → 422 UNCONFIRMED → ack 로 성공) · 스터디(없음·jig_spring → metric js·C_js 열·jig 방식 블록·bforce → metric bf, 결과 API 에 load_source·metric_default). 프런트 픽스처 `frontend/src/__tests__/fixtures/real_v0244_p3.json` + `v0244_p3_real_backend.test.ts` |
+| 실연동에서 고친 것 | ① 결과 API(`DoeResultOut.metric·metric_effective`)가 jd·js·bf·fi 를 거부(500) → `RankMetricLit` 확장 ② `load_source`·`metric_default` 가 API 응답에서 빠짐 → 통과 ③ 프런트 types 의 DoeRankMetric 확장 |
+| 알려진 한계 | 설정 `*.load_source_default` 가 null 이 아닌 값(또는 opt 기본 full 이 아닌 값)이어도 요청에 출처가 없으면 서버는 적용하지 않는다(화면 안내 문구만 바뀜) — 필요하면 후속(R-JIGC-9). 실제 paicad·hw·OptiStruct 는 여전히 가짜(합성) |

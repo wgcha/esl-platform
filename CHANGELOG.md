@@ -7,8 +7,13 @@
 - **지그 ESL 세 방식(Case ③·④)**: 체결부(tie)를 고정하는 방식 하나였던 지그 ESL 을 고정·강제 변위·스프링 세 방식으로 계산한다. tie 는 법선 방향 구속(기본)이고 3-2-1 면내 구속을 더하며, 면내 반력이 0 이 되도록 맞춘다. 스프링 기본 강성 비율 α 는 0.01.
 - Case ③ ESL 때 워커가 paicad 로 tie 를 준비한다(`01_extract/jig_fixed`, 설정 `bead_doe.case_jig`). paicad 가 없거나 실패해도 ESL 은 그대로 끝나고 지그 세 행만 사유(JIG_FIXED_SKIPPED·JIG_FIXED_FAILED 등)와 함께 꺼진다.
 - 3D 하중 보기·④ 검증에 출처 3개("지그 고정"·"지그 변위"·"지그 스프링")가 더해져 모두 6개이고, 화면에서는 "지그 ESL" 그룹 탭으로 묶인다. 변위 방식은 낙하 결과 변위를 그대로 강제하므로 재현 지표가 유리하게 나온다는 주의 표식이 붙는다. 3D 지지 표식은 tie(채움)와 3-2-1 면내(반 채움)로 구분한다.
-- 스터디 하중 정의 보기 키에 jig_disp·jig_spring 가 더해졌다(스터디의 세 방식 계산은 다음 버전).
+- 스터디 하중 정의 보기 키에 jig_disp·jig_spring 가 더해졌다(스터디의 세 방식 계산은 다음 버전 → 같은 0.24.4 의 아래 P2c 에서 들어갔다).
 - 설정: `bead_doe.rank.jig` 새 키 9개(tie_dofs·methods·normal_kink_deg·aux321_dup_deg·aux_reaction_warn·spring_k_mode·spring_alpha·spring_k_value·spring_alpha_scan), `bead_doe.case_jig`, 코어 `jig` 절(선택). DB migration 없음.
+- **강성 평가 스터디의 지그 세 방식(P2c)**: 스터디가 지그 고정·강제 변위·스프링을 모두 계산한다(분해는 방식끼리 공유, 방식 하나가 실패해도 나머지는 그대로). 결과 순위 CSV 끝에 `C_jd`·`umax_jd`·`C_js`·`umax_js` 열이 더해지고, 하중 정의 보기에서 변위·스프링 탭이 열린다. 옛 스터디 결과·해시는 바이트 그대로이고, 새 스터디만 세 방식이 계산된다.
+- **하중 출처 선택(P3)**: 강성 평가 스터디와 비드 최적화를 만들 때 하중 출처(지그 고정·변위·스프링, 전 노드, 경계력, 내력) 중 하나를 고를 수 있다. 안 고르면 지금과 똑같이 동작한다(요청·결과 바이트 동일). 선택 화면에 선택한 항목들의 출처별 ④ 판정(최악 기준)이 표식으로 보이고, 하중이 없는 출처는 사유와 함께 선택할 수 없다. 검증 미통과·비교용 아님·주의 출처는 확인 대화를 거쳐야 만들어지며(확인하면 `load_source_ack` 로 다시 요청), 만든 뒤 결과 화면에 사용한 출처 칩이 보인다.
+- 스터디: 고른 출처의 지표가 기본 탭·보고서·순위 CSV 기준이 된다(`result.json` 의 `load_source`·`metric_default`). 지그 계열을 고르면 그 방식이 스냅샷에 포함되어 계산된다.
+- 비드 최적화: 고른 출처의 하중으로 선정·덱을 만든다. 지그 고정(병진 구속 + 고정)은 tie 노드 지지를 3-2-1 대신 덱에 넣는다. 법선 구속·강제 변위·스프링 지그와 템플릿(S2) 지그는 아직 지원하지 않아 `LOAD_SOURCE_UNSUPPORTED` 사유와 함께 막힌다.
+- API: `GET /library/entries/sources?ids=`(항목별 출처 판정·하중 존재·최악 등급), 스터디·비드 최적화 생성 요청에 `load_source`·`load_source_ack`(없으면 생략), 422 `LOAD_SOURCE_UNCONFIRMED`·`LOAD_SOURCE_UNAVAILABLE`·`LOAD_SOURCE_UNSUPPORTED`, 스터디 결과에 `load_source`·`metric_default`. 설정: `bead_doe.load_source_default`(기본 null)·`opt_run.load_source_default`(기본 full) — 화면 안내용이며 요청에 출처가 없으면 서버는 적용하지 않는다.
 ### 변경
 - 이전 버전 Case 의 지그 행 사유가 "강성 평가 스터디에서만 계산됩니다"에서 "이 ESL 결과에는 지그 ESL 이 없습니다 — ESL 을 다시 계산하면 생깁니다"로 바뀐다.
 - 첫 ESL 이 지그 계산만큼 길어진다(tie 준비와 표면 캐시는 첫 번째에만). 이전 스터디 결과·해시는 바이트 그대로다.
