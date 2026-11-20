@@ -85,6 +85,19 @@ describe("출처 옵션(순수)", () => {
     expect(chip!.text).toBe("하중 출처 경계력 ESL · FAIL · 비교용 아님");
     expect(chip!.short).toBe("경계력 ESL · FAIL · 비교용 아님");
     expect(chip!.tone).toBe("warn");
+    // 최악 등급(worst)으로 caution(⚠)·not_comparable·FAIL·UNDETERMINED·NO_RESULT 표식(markOf 재사용)
+    const ok = { entry_id: "a", status: "PASS" as const, comparable: true, validation_id: null };
+    const c = (worst: "PASS" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT" | null, entries = [ok]) => loadSourceChipOf("fint", { key: "fint", worst, entries });
+    expect(c("caution")!.short).toBe("내력 ESL · PASS ⚠");
+    expect(c("caution")!.tone).toBe("ok");
+    expect(c("not_comparable", [{ ...ok, comparable: false }])!.short).toBe("내력 ESL · PASS · 비교용 아님");
+    expect(c("not_comparable", [{ ...ok, comparable: false }])!.tone).toBe("warn");
+    expect(c("FAIL", [{ ...ok, status: "FAIL" }])!.short).toBe("내력 ESL · FAIL");
+    expect(c("FAIL", [{ ...ok, status: "FAIL" }])!.tone).toBe("bad");
+    expect(c("UNDETERMINED", [{ ...ok, status: "UNDETERMINED" }])!.short).toBe("내력 ESL · 판정 불가");
+    expect(c("NO_RESULT", [])!.short).toBe("내력 ESL · 검증 전");
+    expect(c("PASS")!.short).toBe("내력 ESL · PASS");
+    expect(c(null)!.short).toBe("내력 ESL · PASS");        // worst 없음(옛 스냅샷) = 항목에서 계산(이전과 같음)
     expect(loadSourceChipOf(null, null)).toBeNull();
     expect(loadSourceChipOf("full", null)!.text).toBe("하중 출처 전 노드 ESL");
   });

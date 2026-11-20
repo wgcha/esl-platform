@@ -126,14 +126,22 @@ export function checkEntryMark(x: { status: ValidationStatus | null; comparable:
   return markOf({ available: true, status: x.status, limits: [], comparable: x.comparable }) ?? { text: "판정 불가", tone: "muted" };
 }
 
-/** 결과 칩(순수): "하중 출처 <이름> · <최악 표식>" — 스냅샷 없으면 null(옛 작업 = 칩 없음) */
+/** 최악 등급(B3·스냅샷 worst) → 표식(markOf 재사용): caution = "PASS ⚠", not_comparable = "<판정> · 비교용 아님", FAIL·UNDETERMINED, NO_RESULT = 검증 전. 판정은 최악 항목 상태를 따름 */
+export function gradeMark(grade: LoadGrade, entries: readonly { status: ValidationStatus | null; comparable: boolean | null }[] = []): TabMark {
+  if (grade === "NO_RESULT") return MARK_NOT_RUN;
+  const nc = entries.find((x) => x.comparable === false);
+  const status: ValidationStatus = grade === "FAIL" ? "FAIL" : grade === "UNDETERMINED" ? "UNDETERMINED" : grade === "not_comparable" ? nc?.status ?? "PASS" : "PASS";
+  return markOf({ available: true, status, limits: grade === "caution" ? ["caution"] : [], comparable: grade === "not_comparable" || ((grade === "FAIL" || grade === "UNDETERMINED") && !!nc) ? false : true }) ?? { text: "판정 불가", tone: "muted" };
+}
+
+/** 결과 칩(순수): "하중 출처 <이름> · <최악 표식>" — 스냅샷 없으면 null(옛 작업 = 칩 없음). 최악은 load_source_check.worst(caution·not_comparable 포함), 없으면 항목에서 계산 */
 export function loadSourceChipOf(key: string | null | undefined, check: LoadSourceCheck | null | undefined): { text: string; short: string; tone: TabMark["tone"] | "none"; title: string } | null {
   if (!key) return null;
   const label = sourceRow(key)?.label ?? key;
   const entries = check?.entries ?? [];
   const sev = (x: { status: ValidationStatus | null; comparable: boolean | null }) => (x.status === "FAIL" ? 5 : !x.status || x.status === "UNDETERMINED" ? 4 : x.comparable === false ? 3 : x.status === "LEGACY" ? 1 : 0);
   const worst = entries.reduce<LoadSourceCheck["entries"][number] | null>((a, x) => (!a || sev(x) > sev(a) ? x : a), null);
-  const mark = worst ? checkEntryMark(worst) : null;
+  const mark = check?.worst ? gradeMark(check.worst, entries) : worst ? checkEntryMark(worst) : null;
   const lines = entries.map((x) => `${x.entry_id}: ${checkEntryMark(x).text}`);
   const short = mark ? `${label} · ${mark.text}` : label;
   return { text: `하중 출처 ${short}`, short, tone: mark?.tone ?? "none", title: lines.length ? `만들 때의 ④ 판정(최악 기준)\n${lines.join("\n")}` : "하중 출처" };
