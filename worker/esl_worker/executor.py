@@ -57,7 +57,7 @@ from sqlalchemy.exc import IntegrityError
 
 from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES, VERIFY_JOB_TYPES
 
-from . import bf_ondemand, core_adapter, doe_jobs, esl_snapshot, h3d, inproc, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
+from . import bf_ondemand, core_adapter, doe_jobs, esl_snapshot, h3d, inproc, jig_prep, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -354,11 +354,13 @@ class Executor:
                 with self._tx() as conn:
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {st["core_stage"]: {"status": "done"}})
             elif st["core_stage"]:
-                bfd = None
+                bfd = jpd = None
                 if st["core_stage"] == "esl" and self.job["job_type"] == "ESL_SOLVE":
                     bfd = self._bf_ondemand(st, log_path)      # v0.24.2 경계력 원자료 보충(코어 자식 시작 전)
-                self._run_core(st, log_path, extra_outputs={"bf_ondemand": bfd} if bfd else None)
-                outputs = {"core_stage": st["core_stage"], **({"bf_ondemand": bfd} if bfd else {})}
+                    jpd = self._jig_prep(st, log_path)         # v0.24.4 지그 tie(paicad fixed-scan) 준비(코어 자식 시작 전)
+                extras = {**({"bf_ondemand": bfd} if bfd else {}), **({"jig_prep": jpd} if jpd else {})}
+                self._run_core(st, log_path, extra_outputs=extras or None)
+                outputs = {"core_stage": st["core_stage"], **extras}
                 rels = [self._stage_dir(st["core_stage"]), "run.json", log_rel]
                 if st["core_stage"] == "esl":
                     rels.insert(0, "03_bc")
@@ -366,6 +368,9 @@ class Executor:
                         rels += [r for r in ("01_extract/bforce.npz", "01_extract/bforce.json",
                                              "01_extract/bforce_ondemand.json")
                                  if os.path.isfile(os.path.join(self.cdir, r))]
+                    if jpd:        # v0.24.4 지그 tie 준비를 시도했으면(status 무관) 존재하는 01_extract 산물 등록
+                        rels += [r for r in ("01_extract/jig_prep.json", "01_extract/jig_fixed")
+                                 if os.path.lexists(os.path.join(self.cdir, r))]
                 # v0.12.3: 산출물 sha256(파일당 ≤ 256 MB)은 트랜잭션(assert_lease FOR UPDATE) 밖 작업 스레드에서 미리
                 shas = inproc.call(self, lambda: register.artifact_shas(self.cdir, rels), label="산출물 sha256")
                 with self._tx() as conn:
@@ -664,6 +669,20 @@ class Executor:
             jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"],
                                   outputs={"bf_ondemand": summary, "hw_acquired": False})
             jobs_repo.patch_result(conn, self.job["id"], self.token, {"bf_ondemand": summary})
+        return summary
+
+    def _jig_prep(self, st: dict[str, Any], log_path: str) -> dict[str, Any] | None:
+        """③ ESL 때 Case 지그 tie(paicad fixed-scan)를 01_extract/jig_fixed 에 준비(jig_prep.run — 판정·캐시·기록은 그 모듈).
+        반환 = step outputs·result 의 summary(끔·캐시 일치 = None). ESL 은 어떤 결과에도 계속(취소·lease 상실만 전파)."""
+        def echo(msg: str) -> None:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+
+        summary = jig_prep.run(self, None, echo)
+        if summary is not None:
+            with self._tx() as conn:
+                jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"], outputs={"jig_prep": summary})
+                jobs_repo.patch_result(conn, self.job["id"], self.token, {"jig_prep": summary})
         return summary
 
     def _bf_warn(self, text: str) -> None:

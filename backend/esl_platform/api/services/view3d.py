@@ -26,6 +26,7 @@ import numpy as np
 
 from ...core import core_outputs as co
 from ...core.atomic import atomic_replace
+from ...core.config import BeadDoeView3dCfg
 from ...core.errors import DomainError, conflict, not_found
 from ...core.repositories import cases as cases_repo
 from ..context import AppContext
@@ -39,7 +40,11 @@ RECON_JSON, RECON_BIN = "recon.json", "recon.bin"
 _BUILD_LOCK = threading.Semaphore(1)      # 프로세스당 생성 1개(메모리 상한)
 _CFG_KEYS = ("max_nodes", "max_glb_bytes", "lod_min_nodes", "lod_target_vertices", "top_max", "cluster_k_max",
              "kmeans_max_iter")
-SUPPORT_FILES = {"bc": (co.D_BC, "support.json")}   # 계획 열 support 값 → ESL 산출물 기준 상대 위치
+SUPPORT_FILES = {"bc": (co.D_BC, "support.json"),   # 계획 열 support 값 → ESL 산출물 기준 상대 위치
+                 "jig": None}                       # v0.24.4 지그 3방식: 행 load npz 의 구속 배열(bc_node·bc_kind)이 곧 지지(esl_jig_case.md §5.4)
+JIG_BC_KEYS = ("bc_node", "bc_kind")
+JIG_KIND_TIE, JIG_KIND_AUX = 1, 2                   # esl.mech.jig_bc.KIND_TIE·KIND_AUX 와 같은 값(백엔드는 scipy 를 끄는 모듈을 import 하지 않음)
+JIG_TIE_DOF, JIG_AUX_DOF = "123", "ij"              # 표식 dof 문자열(supportSymbol — 숫자 = 채움 기호, 그 밖 = 글자 수로 빈 기호): tie · 3-2-1 면내
 _PREREQ_TEXT = "ESL 산출물(04_esl/f_eq.npz·u_rel.npz 또는 01_extract/model.npz)이 없습니다"
 
 
@@ -198,6 +203,7 @@ class Inputs:
         self.target = loc.path(row["target"])
         sp = SUPPORT_FILES.get(row["support"]) if row["support"] else None
         self.support = os.path.join(loc.src_dir, *sp) if sp else None
+        self.support_npz = self.load if (row["support"] and row["support"] in SUPPORT_FILES and sp is None) else None
         self.model = loc.model()
         self.dir = os.path.join(loc.cdir, co.RUNS_DIR, loc.run["id"], row["dir"])
         self.key = self._key()
@@ -275,8 +281,49 @@ def _load(inp: Inputs) -> dict[str, Any]:
             "u_rel": np.asarray(uz["u_rel"], np.float64)}
 
 
-def _supports(inp: Inputs) -> list[dict[str, Any]]:
-    """03_bc/support.json 의 supports(없거나 못 읽으면 run.supports)."""
+def jig_support_sample(x0: np.ndarray, idx: np.ndarray, m: int) -> np.ndarray:
+    """지그 표식 샘플(표시만) — 최원점 샘플링 min(|idx|, m) 개(첫 점 = 가장 작은 노드 인덱스, 이후 최소 거리 최대, 동률 = 작은 인덱스,
+    결정적). ``esl.mech.jig.support_sample`` 과 같은 정의(그 모듈은 scipy 를 끌어와 백엔드 import 경로에 넣지 않음 — 시험이 같음 확인)."""
+    J = np.unique(np.asarray(idx, dtype=np.int64))
+    m = int(m)
+    if m <= 0 or J.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    if J.size <= m:
+        return J
+    P = np.asarray(x0, dtype=np.float64)[J]
+    pick = [0]
+    d = np.linalg.norm(P - P[0], axis=1)
+    for _ in range(m - 1):
+        k = int(np.argmax(d))
+        pick.append(k)
+        d = np.minimum(d, np.linalg.norm(P - P[k], axis=1))
+    return J[np.asarray(pick, dtype=np.int64)]
+
+
+def _jig_supports(inp: Inputs, node_id: np.ndarray, x0: np.ndarray) -> list[dict[str, Any]]:
+    """지그 행: load npz 의 bc_node(노드 인덱스)·bc_kind → tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드(전부, 최대 3개).
+    읽지 못하면 빈 목록(표식 없음 — 3D 자체는 계속)."""
+    try:
+        with np.load(inp.support_npz or "", allow_pickle=False) as z:
+            bn = np.asarray(z["bc_node"], dtype=np.int64)
+            bk = np.asarray(z["bc_kind"]).astype(np.int64)
+    except (OSError, ValueError, KeyError):
+        return []
+    n = int(node_id.size)
+    ok = (bn >= 0) & (bn < n)
+    bd = getattr(inp.ctx.settings, "bead_doe", None)
+    m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
+    tie = jig_support_sample(x0, np.unique(bn[ok & (bk == JIG_KIND_TIE)]), m)
+    aux = np.unique(bn[ok & (bk == JIG_KIND_AUX)])
+    shown = set(tie.tolist())
+    return ([{"node_id": int(node_id[i]), "dof": JIG_TIE_DOF} for i in tie]
+            + [{"node_id": int(node_id[i]), "dof": JIG_AUX_DOF} for i in aux if int(i) not in shown])
+
+
+def _supports(inp: Inputs, data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """03_bc/support.json 의 supports(없거나 못 읽으면 run.supports). 지그 행 = load npz 의 구속(_jig_supports)."""
+    if inp.support_npz is not None and data is not None:
+        return _jig_supports(inp, data["node_id"], data["x0"])
     sup = None
     if inp.support is not None:
         try:
@@ -326,7 +373,7 @@ def _build(inp: Inputs) -> dict[str, Any]:
     try:
         m = core_adapter.view3d_build(
             tmp, node_id=data["node_id"], x0=data["x0"], conn=data["conn"], elem_type=data["elem_type"], f=data["f"],
-            u_rel=data["u_rel"], supports=_supports(inp), key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
+            u_rel=data["u_rel"], supports=_supports(inp, data), key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
             cfg={k: getattr(cfg, k) for k in ("lod_min_nodes", "lod_target_vertices", "top_max", "cluster_k_max",
                                               "kmeans_max_iter")})
         glb = m["geometry"]["bytes"] + (m["lod"]["bytes"] if m.get("lod") else 0)

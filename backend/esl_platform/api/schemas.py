@@ -520,7 +520,7 @@ class View3dSourceRow(_Out):
 
 
 class View3dSourcesOut(_Out):
-    """v0.24.1 `GET /esl-runs/{id}/view3d/sources` — 행 순서 = 출처 표 KEYS(jig·full·bforce·fint), default = 기본 탭(설정
+    """v0.24.1 `GET /esl-runs/{id}/view3d/sources` — 행 순서 = 출처 표 KEYS(jig·jig_disp·jig_spring·full·bforce·fint — v0.24.4 지그 3방식), default = 기본 탭(설정
     view3d.case_src_default)."""
 
     esl_run_id: str
